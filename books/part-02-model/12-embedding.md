@@ -88,6 +88,12 @@ X = [[
 
 此时模型有了可计算向量，但还不知道 token 的位置，也没有让任意 token 读取上下文。
 
+### 数值对象可以使用结构编码，而不是把词表编号当大小
+
+普通词表ID只是类别；若输入对象本身是数值，可另定义一份结构编码，而不是让任意ID的大小冒充数值关系。一条受限分支保留可学习NUM向量，再加上float64的符号、指数和尾数位编码，并附倒数的位表示、补齐到hidden宽度；输出NUM时另由number head预测bits。它减少每个数值的序列位置，却同时改变输入坐标、输出头与loss，不是给旧checkpoint热换tokenizer，也不是为所有实数建词表行。
+
+[受限小模型对照](https://arxiv.org/html/2510.06824v1#S5)中，bitwise BCE不随数值误差单调，单token还把多次逐位解码压成一次预测；比较和单步算术获益，并不使平均、幂或标准差同样可靠，单任务mean反而有多token优势。浮点舍入、±0/NaN规范、科学记数法与溢出解析都须与number head共同验收，编码可表示不等模型会计算。Curriculum、任务重采样、额外head、训练与数值/文本回归均付费，未测大模型与真实解析不授生产收益；精度、格式或质量不合时，保留原数字subword/逐位输出和显式计算工具，不让较少tokens替数值正确性签字。<!-- source-family:SF-2025-ARXIV-2510-06824 -->
+
 ## 向量关系从训练目标中形成
 
 Embedding 通常随机初始化或由已有 checkpoint 加载。沿输入 lookup 路径，最终 loss 的梯度会流回本次出现 token 对应的 rows；若输入与输出共享参数，同一张表还会接收输出侧梯度，后文再区分这两条路径。
@@ -99,6 +105,10 @@ cos(x, y) = (x dot y) / (||x|| * ||y||)
 ```
 
 但不能把距离近当作语义的完整定义。几何由训练数据、目标、模型架构和参数化共同塑造；不同 checkpoint 的坐标系不能直接逐维比较，token embedding 的近邻也不必等同于人类定义的同义词。
+
+几何形成的时间也必须绑定测量对象和时钟：词对距离与语言标签的相关很早达到平台，不代表每一行向量已经不动，更不代表后续任务能力停止改善。[两条开放训练轨迹的受限诊断](https://arxiv.org/html/2510.07613v1#S5)中，高频词按训练step较早接近末期几何，但改用预期曝光次数作横轴后，每次曝光的变化更慢；词频与功能词身份仍共线，不能据此识别唯一频率因果。低频行与随机初值仍有关系，也不等这些词没有学会，输入和输出表各自关联语言构念更不证明两表已经彼此对齐。应保存checkpoint、词表子集、距离/相关定义、词频来源与step或曝光时钟，再另验实际任务；多checkpoint读取、成对距离和标注比较都付费。样本、频率代理或下游支持不足时，保留原查表与完整训练回归，不用一张相似度平台图批准提前停训、冻结embedding或把初始化偏差当作全部语义。
+
+<!-- source-family:SF-2025-ARXIV-2510-07613 -->
 
 邻近几何若要支持共享统计，还需给出预测分布的条件：当真实process的logits确实满足已知Lipschitz、近似误差与读出范数约束时，邻近项的分布才可能成为有界KL side information，帮助稀疏count估计；任意embedding最近邻不自动满足这份合同。[受限语义平滑分析](https://arxiv.org/html/2605.07994v1)给出这种有条件的共享边界，但取较好source端点的上界不证明实际启发式混合权重达到同一界，固定维度的渐近率也不外推任意大维度/小样本。小规模bigram与部分oracle构造不替现代LM端到端perplexity或加速验收。近邻搜索、embedding、计数、尺度/权重校准都付费；真实分布、常数或support不可核时保留独立count、成熟平滑与留出likelihood，不把距离、共享参数或一个上界批准语义真实性和部署收益。<!-- source-family:SF-2026-ARXIV-2605-07994 -->
 
@@ -117,9 +127,24 @@ cos(x, y) = (x dot y) / (||x|| * ||y||)
 
 <!-- source-family:SF-2025-ARXIV-2509-02017 -->
 
+离散ID的几何还可以由关系监督塑造，而不只要求量化后还原原始feature：先按关系类型聚合实体邻居，再为不同实体类型维护多级残差码本，以量化向量重建观测链接，最后将所得ID交给语言骨干预测目标实体及相关属性。[一条受限结构表示分支](https://arxiv.org/html/2509.12350v1)由此把“哪些关系值得保留”写入codec目标；它不同于仅继承现成codebook行的初始化，也不使相近前缀成为完整语义、真实因果或唯一实体身份。图中未出现的边不自动是真负例，随机ID替换的收益还混入信息内容、码容量和训练预算，不能宣称图目标必然优于feature重构。实体类型/关系、图快照、码本、ID分配与下游输入输出词表须共同绑定，先确认训练可见前缀，再验链接支持、碰撞和真实任务；新图或新实体也不能只沿用一个数字便假定已对齐。图构建与编码、全部码本/辅助目标训练、生成和合法ID解析及更新回归都付费，不由较小语言骨干承诺整个系统更省。关系支持、身份或净质量失配时，保留原feature编码、明确ID和独立下游监督，不以更好的推荐分数代替信息无损或服务SLO。
+
+<!-- source-family:SF-2025-ARXIV-2509-12350 -->
+
+关系还可以直接成为运算载荷，而不只作为塑造embedding的监督：在明确实体域与Boolean关系下，用指标对齐、张量乘缩并配阈值表达join与projection，再把规则的离散语义与可学习数值近似分开。[受限张量逻辑分支](https://arxiv.org/html/2510.12269v1#S3)提供共同表达接口，不使任意连续向量的相似自动成为实体相等或规则成立。离散事实域、轴/变量绑定、阈值及规则版本须保存，软化与学习后的读出另验支持和反例；低温sigmoid不能把任意learned Gram矩阵变成identity，因此不能由同一einsum语法签发soundness或无幻觉。关系规模、乘缩中间态、训练/阈值与独立规则检查均付费，声明可在GPU表达也不等统一runtime已实测，具体CUDA执行仍是另一层。域、数值或语义支持失配时，保显式符号关系/可信solver、原向量表示与独立事实核验，不由可微近似和共同算子批准逻辑正确或通用性能。
+
+<!-- source-family:SF-2025-ARXIV-2510-12269 -->
+
+多级离散表示还可以按下游任务重新组合，而不把每一级码当作固定同权输入：保留各级RVQ结果，让任务条件的soft gate加权聚合，再经声明的离散lookup交给task Transformer。[受限图任务分支](https://arxiv.org/html/2510.12369v1#S4)改变的是码到消费者的接口，gate读取全部层时并没有省掉未选层的计算，也不由重权创造缺失信息。Encoder/码本、层级/索引、task gate、离散化与消费者须共同保存，分别验码重构、任务质量与真实执行量；摘要冻结与正文联合训练/梯度描述不齐时，不据此签精确更新recipe，count balancing也不自动可微。局部任务和seed对照仍有反退，较晚early-stop或更大驻留不抵消成“所有token更省”。全部预训、量化、gate/lookup、任务训练与独立回归均付费；层级、梯度身份或净质量失配时，保原固定聚合、连续feature与已验单任务表示，不由可学习gate批准基础模型泛化、信息无损和稀疏加速。
+<!-- source-family:SF-2025-ARXIV-2510-12369 -->
+
 词表扩展后的model merge也不能把所有行当作同一来源的可平均参数。一条新增speech tokens的有限分支，让embedding与output head的旧词表行取原模型、新speech行取适配stage，再仅对其它同形参数插值；输入行、输出行与token type因此各有来源身份，不能用没有新行的基座去平均新增符号。保旧行仍不等旧函数保持，因为其它层和后续训练会改变读出。[有限stage/merge对照](https://arxiv.org/html/2604.00007v1)恢复部分text/vision能力，却牺牲相对未merge stage的ASR/TTS；共享旧行也平均与全Stage1词表有不同取舍，不授typed-row万能最优。额外stage、merge、重训和回归均计费；行身份、shape或旧新任务不兼容时，保留独立模型、原词表路径与明确的局部适配，不能由保留原embedding行自签零遗忘。<!-- source-family:SF-2026-ARXIV-2604-00007 -->
 
 连续输出目标还会改变这组坐标是否可辨识。Categorical softmax 的分母让正确 token 与其他候选竞争；若改为只回归目标 embedding 的方向、最小化 $1-\cos(E_y,H)$，同时让目标表与预测器一起移动，则把所有非零目标行和所有输出置于同一方向就能得到零 loss。这是 complete collapse，不只是某些方向的 dimensional collapse；训练 loss 低因而不能单独验收符号区分能力。[匹配初始化的有限对照](https://arxiv.org/html/2602.17287v1#S4.SS5)中，random/NMT/regularized-NMT 初始化只要继续训练目标表，未加约束的连续输出都退至BLEU0；冻结目标表或对它加入great-circle sliced dispersion 可以恢复部分区分，但随机初始化下正则分支33.2仍低于冻结表33.9，不证明正则普遍更好。冻结目标限制适配，分散正则则增加投影、排序、采样与权重调参费用，并可能损害其他层的表示；34M WMT19/singleH100/50k步的翻译结果不能外推为语言模型语义真值或量化加速因果。需要共同训练目标时，应同时验收目标可分性与任务质量；退化或预算不足时，保留冻结目标、原categorical输出或已核验的局部正则，不用几何diversity替代语义与下游质量。<!-- source-family:SF-2026-ARXIV-2602-17287 -->
+
+冻结目标还可以来自预先分配的类别码本，而不必先学习每类的输出权重：为label固定一个几何中心，训练时只取本batch对应的中心，让encoder输出靠近它；部署再用同一度量在完整码本中找候选类别。[这一受限分类分支](https://arxiv.org/html/2510.04090v1#S3)省去的是随类别增长的可训练head及其optimizer状态，不是省去类别表、监督支持或解码。完整码本仍须构造和驻留，精确近邻一般仍比较候选，近似索引还要另验误差；只按标签gather的训练费用不能代替部署搜索成本。预定中心的角度或距离也不是类别语义，降维、投影与插值会改变分离margin，加入更多中心不表示有限encoder已能区分任意多类。类ID、中心、归一化/距离、encoder和decoder必须共同版本化，零范数、同中心与并列候选另设可核退路。固定旧中心尤其不等旧行为不变：更新共享encoder仍会移动旧输入的表示，新增类别须同时验新类接纳、旧类保留和真正持出泛化，实例ID训练拟合不能冒百万语义类泛化。全部码本/标签制备、训练、索引搜索、择维和旧新人口回归均计费；margin、语义支持或净预算不合时，保可训练或分片head、已验metric学习及replay/原checkpoint，不由少GPU参数批准无限容量、零检索费或无遗忘。
+
+<!-- source-family:SF-2025-ARXIV-2510-04090 -->
 
 更重要的是，模型不直接在初始 embedding 上完成大部分任务。后续 layers 会不断读取上下文并改写 hidden states。
 
@@ -161,8 +186,22 @@ Pool 会丢失局部顺序和细节，扰动又改变 server 的输入分布，�
 
 [SIF的受限对照](https://arxiv.org/html/2604.15650v1#S4)支持这条输入表示分支，不证明量化无损或所有收益都来自snapshot：item-only消融同时取消字段混合，分组数量与跨表GAUC口径也有不一致，不能照抄完整精确配方。只存indices的算术比例不含码本、离线特征制作、存取、当前投影、两轴attention和训练全费；业务A/B亦不是通用语言模型质量或服务SLO。字段/schema、事件时间、slot/codebook与当前投影应作为同一输入产物验收，检查真实可用历史、信息损失与最终任务；兼容或预算不合适时，保留item ID加少量可信特征、连续事件表示及原序列模型，不为“sample token”名称扩张输入复杂度。<!-- source-family:SF-2026-ARXIV-2604-15650 -->
 
+图信息也可在送入任务模型前一次性传播，而不要求新增encoder端到端训练：冻结文本encoder，先用item标题得到向量，以已有交互汇总用户表示，再在这份图快照上预处理传播。[受限文本图分支](https://arxiv.org/html/2510.12461v1#S3)省去的是这一路新增参数适配，不是免交互历史、目标域信息或图构建；新域无调参也不等从未见过其节点/边。Title/encoder、可用交互截止、聚合与传播次数、目标图和下游读出须共同绑定，另训双塔则形成另一付费artifact，不能把两路结果混成training-free。跨年数据不由声称cutoff自动认证无预训练污染，局部单epoch更快也可伴总训练更慢。Embedding服务、图预处理/刷新、检索与独立域回归均付费；新用户/新item支持、图可见性或净效用不足时，保原title表示、明确冷启动与已验协同/单塔路径，不由一次传播批准无历史泛化、零训练成本和线上SLO。
+<!-- source-family:SF-2025-ARXIV-2510-12461 -->
+
+内容embedding还可以把协同行为作为训练参照，而不在每次检索都读取完整交互序列：将图文/音频等内容形成共同表示，再以sequence或ID教师的协同目标约束它，交给后续内容检索消费者。[受限协同蒸馏分支](https://arxiv.org/html/2510.12709v1#S3)把行为来源、表示载荷与最终任务分开；协同相关不是用户真实偏好因果，音频均值也会丢时间顺序，较高NMI/rank或更易映射不认证业务充分量。原交互截止、内容encoder/融合、teacher/蒸馏目标、负例与索引版本须共同保存，按validation相似度选数据和高相似负例过滤也不使标签/false-negative资格自动正确。部分任务的增强仍损别的召回，离线与线上目标、原流量/不确定性要分别验。全部内容/行为制备、教师/encoder训练、采样/筛选、重建索引和独立用户/检索回归都付费；协同支持、时间信息或净效用失配时，保原内容表示、明确交互路径/较弱蒸馏及独立目标监督，不由更多模态或大规模行为量批准真实意图、通用泛化与线上SLO。
+
+<!-- source-family:SF-2025-ARXIV-2510-12709 -->
+
 输入单位也可以是带关系的观测，而不只是一个实体编号或一组独立字段。[一条受限分支](https://arxiv.org/html/2506.22706v1)先用图encoder组织节点、边和当前状态，再把latent映到简单噪声坐标，以transport相关目标与解码训练组织表示支持，后续策略读取这份表示来选择对象与动作。表示可与策略共同适配，也可先预训再冻结；重构、transport与policy reward因而各有更新身份，不能把latent中的间隙填平当作新观测已合法或策略能应对任意拓扑。训练已见拓扑间切换仍可能退化，节点置换下稳定也可能只是所有图encoder共享的性质，而非transport独有；更多预训、不同奖励归一与测试环境适配不能藏进同一泛化分数。应联合保存观测schema、编码/映射、冻结时点与策略版本，并分别验表示支持、实际动作结果与未见条件。图构造、预训、采样/解码、策略与切换全付费，支持或预算不合适时保留稳定编号/可信字段、已验图表示与对应专用策略，不由漂亮几何或合成网络reward签发真实安全。
 <!-- source-family:SF-2025-ARXIV-2506-22706 -->
+
+同一张图也可先在几种几何空间分别编码，再按局部结构软组合，最后与文本表示对齐，而不先要求一种统一距离解释全部邻域。[受限多几何分支](https://arxiv.org/html/2510.12085v1#S4)把空间选择与最终读出分开；这种soft融合仍消费多个分支，不是Top-k稀疏MoE，也不能由树/环的直觉证明某类图必需某一种几何。图快照、邻域、各空间/summary、融合和文本目标须共同版本化，分别验几何proxy、节点任务与迁移；消融同时改变容量或对齐时，不能把总增益唯一归于解决结构冲突。未闭的相关性目标/参数依赖不补成完整优化recipe，已在训练域出现的图亦不称全部OOD。所有分支编码、邻域/摘要制备、对齐搜索和独立任务回归均付费，局部少样本切片仍可退步；几何、支持或总预算失配时，保留单空间/普通concat与已验图encoder，不由融合权重或更漂亮的结构表示批准语义真值和普遍泛化。
+<!-- source-family:SF-2025-ARXIV-2510-12085 -->
+
+输入表示还可另带一份拓扑摘要，而不要求普通向量距离独自表达连通与孔洞：把特征组织成多参数网格，按行读取持久性，再以可学习的silhouette和MLP汇聚，形成作用回原backbone的gate。[受限拓扑载荷分支](https://arxiv.org/html/2510.12795v1#S4)将离散结构提取、连续向量化和下游消费分开；union-find输出的可变长度与mask须保存，straight-through也不是原离散操作的真实梯度。给定稳定的单参数向量化后，对指定逐行求和距离的稳定界，不能升级为完整深网、像素扰动或真实语义不变保证，soft正则同样不是每次满足硬结构约束。网格/切片、向量化、gate与backbone冻结/梯度路径应共同绑定，局部分类切片仍会退步。额外decoder、排序/持久性计算、汇聚与全训练费须合计，cubical模块的CPU/GPU计时不代整模型加速。结构支持、梯度接口或净质量失配时，保原连续表示、普通pooling与独立任务监督，不由拓扑名称、局部稳定界和可微近似批准全部表示鲁棒与语义正确。
+
+<!-- source-family:SF-2025-ARXIV-2510-12795 -->
 
 ## 参数量与 Tokenizer 的联动
 
@@ -199,9 +238,20 @@ Weight tying 是架构选择，不是 Embedding 的定义。不同模型可能�
 离散单位也可以来自独立item目录，而不必先把ID拼成多个文本token：为每个item存一行较窄向量，经共享投影与文本embedding交错送入同一骨干，再从末位置hidden直接读一个item；训练还须包含与部署一致的ID-only输入，不能只用丰富metadata监督便假定裸ID可用。[一个受限目录生成分支](https://arxiv.org/html/2509.03746v1)将输出概率分成cluster概率与cluster内条件概率，训练已知target时只访问对应内层；这改变了读出参数化，不证明与原flat softmax等价。层次遍历可用cluster概率上界剪掉不可能胜出的组，ANN近似则另省略了随query变化的组内归一项，须单独验近似误差与任务质量，不把一轮decode或近邻命中签成精确推荐。短输入/少decode步要与新增item表、投影、cluster/索引、全部训练和检索费用分账，有限小目录及外引时延估算不授百万级端到端加速或无损。目录/行身份、ID训练支持或近似质量失配时，保留原文本/明确ID路径、可承受的full softmax或已验层次读出，不由减少token自行批准语义、排序与真实行动。
 <!-- source-family:SF-2025-ARXIV-2509-03746 -->
 
+请求还可作为独立的embedding控制通道，而不重新生成整个item序列或让teacher逐项在线打分：离线以teacher的item-value参照训练dual encoder，线上将request编码后与item向量匹配，再和原排序共同消费。[受限请求蒸馏分支](https://arxiv.org/html/2510.12742v1#S3)把控制意图、教师量尺与检索载荷分开；合成偏好不是真实用户偏好，最优query可达性也不等人类满意。原文概念分数相加与实际分别rank后混合不是同一规则，request/item版本、teacher/训练人口、归一与rank-mixing须一起保存，不由单个相似度代签完整推荐。短时少量用户的点击无显著差，不证明长期engagement无损，库扫描的倍率估算也不是实测部署净速。全部item准备/teacher、encoder训练、全库向量存取与独立用户/任务回归均付费；语义支持、控制或总费失配时，保原ranker、明确过滤/人工偏好与较窄请求路径，不由更多可控方向或高reachability批准真实效用、零重建与生产SLO。
+
+<!-- source-family:SF-2025-ARXIV-2510-12742 -->
+
+教师偏好还可以通过当前学生的score分层来选取训练比较，而不一次给全库打分：从各score区间抽候选，交给较重teacher在小组内排序，再转成pairwise目标更新embedding消费者。[受限表示教学分支](https://arxiv.org/html/2510.12014v1#S3)冻结文字端、适配图像端，改变的是比较标签的生产与学生度量；teacher tournament的赢家percentile不是真人满意或top-1成功，偏好不传递时还依赖配对顺序。Persona/候选库、分层区间、teacher/排序转pair与encoder版本须共同保存，未闭bin端点或对比数量不补默认recipe；validation选点和独立test分开。全部teacher/API、候选制备、训练、全库重编码与独立真人/任务回归均付费，不由少量分组推算精确总调用预算。教师量尺、分层支持或净效用失配时保原embedding/普通配对标签、较窄库与独立用户评价，不由赢过教师挑出的对手批准真实偏好、无损泛化和部署净速。
+
+<!-- source-family:SF-2025-ARXIV-2510-12014 -->
+
 独立输出头还会留下一个容易误读的坐标自由度。固定产生 hidden vector 的整个函数 `h=f(x)`，令输出类别向量为 `e_i`、logit 为 `h·e_i`；给所有类别共同加同一个向量 `v`，新 logits 只多出所有类别相同的 `h·v`，softmax 的分子、分母同时乘相同因子，因而每个输入的预测分布完全不变。这个等价类只改独立输出头，不改输入表和 `f`；如果头与输入 tying 后一起平移，`f` 也可能改变，不能直接沿用证明。额外 normalization 或非 softmax 读出也须另核，不能把它搬到任意表示或相似度模型。
 
 保持预测不变，却不一定保持类别向量的 cosine。对不同向量 `a≠b`，共同平移 `v=−(a+b)/2` 后两者为相反的非零向量，cosine 是 `−1`；选择 `v=−a+(b−a)/2` 后两者为同向非零向量，cosine 是 `+1`。[精确输出头反例](https://arxiv.org/html/2603.29488v1)因此排除了不说明参数化便把 cosine 当作预测概率或语义关系的普遍保证，而没有证明某个固定 checkpoint 的所有 cosine 统计都无用。解释时应明确测的是输入还是输出、头是否独立及坐标约定，并用预测概率、任务行为或受控干预验证；这些诊断仍有采样/评价成本，也不替代原来的 lookup、共享权重或已验收模型。<!-- source-family:SF-2026-ARXIV-2603-29488 -->
+
+词表还改变了监督透露的信息，而不只是向量存储大小：固定单位词表zₖ、用argmax zₖ·h读出时，一个正确token只说明h落在该token胜出的决策区域，并没有给出teacher的完整连续方向；相反，直接监督归一化连续向量会约束更多方向信息。[受限token-perceptron分析](https://arxiv.org/html/2610.32788v1#S4)因此让词表的几何进入学习问题，即使宽度与词表大小相同也不必有同一曲线。随机固定词表的近似posterior分析偏向先约束高variance方向，但低variance若能区分竞争token仍有价值；这里的先后随样本量变化，不是实际SGD时间顺序。IID监督、冻结embedding与replica/spectral近似不认证真实NTP、共同学习的词表或严格Bayes最优；构造、求解和任务回归都有费，假设或预测失配时保直接持出行为与原CE训练，不从一个特征值或几何curve批准能力、裁维或更新顺序。
+<!-- source-family:SF-2026-ARXIV-2610-32788 -->
 
 普通转置共享适合参数预算优先的路径；若还要求线性 hidden→logits→embedding 的往返恢复，可将输入表与输出头耦合为下面的左逆构造，其中 `Z [V,d]` 列正交，`T [d,d]` 可逆，作者以 SPD 参数化学习 T：
 
@@ -266,6 +316,10 @@ Factorized embedding 通常从训练开始共同学习 `E`、`P` 和后续网络
 
 [ALBERT 的 §3.1 与 §4.4](https://arxiv.org/html/1909.11942v6)提供因式分解设计与宽度对照实验，支持这是一条可行分支，没有证明普遍无损。验收应固定 tokenizer、数据与可比较的训练预算，同时比较 held-out loss、任务质量及稀有符号／语言切片，并把允许的退化范围与参数、显存、吞吐收益一起规定；压缩已有表时，重构误差只是额外诊断，不能代替行为测试。质量收益不足时保留较宽接口，checkpoint layout 与 weight-tying contract 也应随架构选择一起冻结。
 
+输入本来是连续数值时，还要把“数值怎样变化”与“来自哪一列”分开，而不能沿用词表编号的任意顺序。若每格标量都经共享仿射映射`z=wx+b`，固定列跨样本居中后的矩阵只是外积，秩至多1；在归一化后另加、只依赖列的身份向量会被这种居中消去，不扩大该列的数值变化方向。一个[受限表格模型分析](https://arxiv.org/html/2606.04485v1)进一步区分：固定gain/bias的LayerNorm使这组数值token位于至多二维affine子空间，第一层只沿同列样本、用H个头做归一化加权时，每个输出token对这些数值的Jacobian秩至多`2H`。这是入口与单输出的条件界，不是归一化后仍秩1、整模型全局低秩或宽度无用的证明；标量曲线维、取样矩阵秩和任务能力也不是同一量。
+
+可以先把真实数值展开为多个局部basis响应，再投影到模型宽度，而不是只增加线性坐标；论文还定义按soft log-magnitude分箱、由每格两个正标量共享调节整组RBF中心和宽度的分支。非线性取样可改变输入几何，却不增加原始标量的信息，也不自动保证严格尺度等变、语义或质量更好。该数学定义与同家族更早公开的hard exponent/逐kernel调幅实现不同，不能由旧代码、同名权重或较高rank读数替新式签实现与收益归因；消融中固定RBF带宽又可胜过可学带宽，也不宜拼成唯一最优recipe。应联合保存列统计拟合人口、basis/gate和checkpoint，按匹配数据与预算独立验质量，并计全部展开、门控、投影、训练和搜索费用；分布、数值稳定性或净收益不合时，保留共享仿射、普通MLP或已验证的数值编码，不把这条连续输入分支反套成词表ID的有序数值。<!-- source-family:SF-2026-ARXIV-2606-04485 -->
+
 多来源表示的压缩还可先保留各自的子空间，而不是把全部坐标拼起后只做一个统一投影：分别归一并降维，再按来源权重缩放、拼接并归一，把每路维数与可为零的权重作为联合选择。[一个受限融合分支](https://arxiv.org/html/2507.06622v1#S3)对文本和两种知识图表示采用这种接口，但保方差的SVD不保证保任务充分信息，零权重也不证明该来源没有真实价值。维数、投影拟合人口、来源版本和下游consumer须共同保存；拟合与验证的隔离不能只凭保留train/test名字默认成立。原对照同时改变每路容量与总维数，局部得分仍有反退，不把收益全归投影顺序或称普遍无损。来源编码/图构建、压缩拟合、维数权重搜索与任务验证都付费；覆盖、质量或总成本失配时保留普通concat、统一投影或较宽表示，以独立任务评价而非更短向量签收。
 
 <!-- source-family:SF-2025-ARXIV-2507-06622 -->
@@ -273,6 +327,9 @@ Factorized embedding 通常从训练开始共同学习 `E`、`P` 和后续网络
 较窄的线性表并不是唯一的参数共享方式。如果词表参数挤占了上下文网络的预算，也可以只保留较小的共享 codebooks，再由可训练的非线性函数生成每个 id 的输入向量。一条受限分支把 id 分解成多维离散坐标，按各坐标查共享表、求和得到 seed，再经投影、归一化、sigmoid 和 B-spline 基函数的可分离聚合生成 `d_model` 维表示。它仍输出同一份 residual 输入契约，却不再等价于固定的低秩线性表 `EP`；共享的是生成函数及坐标表，而不是预设 token 的语义邻接。id 的多维排列是任意词表编号的编码，连续插值能力不能证明相邻编号语义相近，也不允许把离散 token 本身当作连续变量。<!-- source-family:SF-2026-ARXIV-2601-22040 -->
 
 这条分支把存储换成了入口计算，必须与普通 lookup 分账。[Leviathan 的受限 scratch 对照](https://arxiv.org/html/2601.22040v1)只覆盖约 60–420M 模型和固定 token 流：同 backbone 对照同时改变输入生成器与输出 tying，不能把收益全归因于输入表示；同参数对照则把省下的预算用于更深的网络，既不同计算量，也不同串行深度。模型仍保留独立的词表输出头，须另计其参数与计算，不能用输入表压缩比例代表整模型压缩。作者报告的训练吞吐下降说明参数更少不等于 lookup 更便宜；硬件未披露，不能据此给线上延迟保证。采用时应同时验 held-out 质量、训练与推理成本、输出头配置及预算重分配，无法承受额外计算或未获局部净收益时，保留较宽 lookup、线性因式分解或原来的 tying 分支。接下来仍要检查这些表示获得了什么训练支持，不能只因生成器共享参数就认定稀有符号已被学会。
+
+已有lookup表需要缩小驻留时，也可先固定原向量作为拟合目标，以分组残差量化保存离散索引，再由窄码表与非线性corrector补近似误差；[受限词表压缩分支](https://arxiv.org/html/2510.12721v1#S4)不需原训练语料，却仍训练校正器，与从头学习输入生成器不同。按ID查有限表是它可预拟合的条件，不能直接搬成任意连续activation的同样开销；平均bit数也包含码本/corrector，不是实际kernel整数位宽。原表/ID、各级group码、corrector、输出是否tying与后续Transformer量化须共同绑定，分别验重构、语言/任务与真实HBM/latency；误差可被后续低比特权重放大，embedding在大模型中占比变小也限制整机收益。全表拟合、校正/lookup、索引和独立组合回归均付费，少FLOPs不等零延迟；质量或执行预算失配时，保原表、更高精度/更宽码与已验独立输出头，不由局部bit压缩批准整模型无损或端到端加速。
+<!-- source-family:SF-2025-ARXIV-2510-12721 -->
 
 ### 共享矩阵中的稀有符号：先检查训练支持
 
@@ -372,6 +429,9 @@ u_t = alpha_t v_t
 
 前面的分支改变了宽度、训练支持、身份路径或词法容量，最后都要回答同一个验收问题：表示是否更有用？参数量和 tensor shape 只能说明存了多少数，余弦近邻只能说明某种距离下谁更接近，都不能直接证明任务能力。几何诊断的价值在于定位可能的问题，再设计实验，而不是用一条曲线代替质量验收。
 
+任务能力内部还要分清“可以读出”与“当前度量已经使用”：线性分类器能从固定向量读出某属性，不保证按cosine取近邻时该属性有足够权重。可同时比较同一表示上的probe、目标属性检索及实际consumer，再用有监督投影重定度量，而不把新head说成取得了新事实。[有限句向量对照](https://arxiv.org/html/2610.32122v1#S6)支持这种分离，但面向情感的窄表示会损害一般语义相似；拼回原向量仍有质量和存储代价。先用完整标签训练head、再用少量标签读出，也不是全流程少样本，绝对cosine间隔更不能跨坐标直接排能力。标签、编码、head训练与专项/原任务回归均计费；标签支持、迁移或总预算不合时，保留原表示、简单已验读出或分设专项索引，不让一个probe或更短向量批准无损通用替换。
+<!-- source-family:SF-2026-ARXIV-2610-32122 -->
+
 ### 先分清向量宽度、维度读数与任务能力
 
 `d_model` 是每行存储的坐标数；“内在维度”则试图描述点集或分布局部变化需要多少维。一个平面可以放在三维坐标里，坐标数与平面的维度并不相同。但模型的表示分布不是一个已知平面，只能从有限样本估计，而且必须先说明估计的数学对象。
@@ -379,6 +439,10 @@ u_t = alpha_t v_t
 因此还要进一步分清三件事：估计器在有限样本上的**读数**，对某个测度或支持集所定义的**数学维度**，以及模型在任务中的**可用能力**。测度描述概率质量如何分布，支持集描述分布可能出现的位置；它们的维度定义也不能任意互换。维度读数可以提出容量假设，却没有直接给出任务能力或可删除的参数数目。
 
 希望一份 embedding 在多个前缀宽度都可用时，应把这种可截断性写进训练，而不是从较低维度读数直接批准删坐标。一条受限分支让完整 CLS 表示提出 token 重要性，为更短前缀选择更小的嵌套 top-k token 集，约束其 attention 关系与表示相似性；再以相邻层、相邻宽度 checkpoint 的对比目标逐级传递监督。[必要组件和宽度对照](https://arxiv.org/html/2604.24374v1)支持这一接口，不证明所选 token 就是真实语义骨架或完整信息已无损保留；原文中心化矩阵的形状写法未闭合，这里不照录为已核实现公式。更多 alignment/InfoNCE 显著降低所测训练吞吐，移除辅助 projector 只说明部署图没有它，不是实测零延迟。层位、宽度、top-k 与训练/评价人口必须联合验收；短前缀、迁移或总成本不合适时，保留原完整 embedding、较宽前缀和独立任务质量，不让 CKA 或压缩率替能力签收。<!-- source-family:SF-2026-ARXIV-2604-24374 -->
+
+多宽度表示也可以按相邻维度逐级训练，而不让所有宽度同时争同一份更新：固定已经形成的阶段，用维度选择模块提出下一较小表示，再训练相应读出；冻结backbone时，把其特征而非后置FC结果存入FIFO供后续阶段读取。[受限逐级压缩分支](https://arxiv.org/html/2510.12474v1#S3)把特征生产、选维与可更新投影分开，缓存可复用的前提是producer未变，不能由一份旧特征保证全部下游状态无陈旧。Gumbel/soft权重也不自动是恰好无重复的k维硬选择，原式未闭时不补完整执行配方。维度/阶段冻结、cache来源、选择/投影与各宽度消费者须共同保存，分别验全部宽度、迁移和缓存时序；局部梯度variance不证明所有联合训练必失败或语义无损。全部阶段训练、cache驻留/检索、选择与独立任务回归均付费，相同total epochs非相同墙钟或生命周期预算。宽度、producer或质量失配时，保联合多宽度训练、较宽原表示/重建cache与独立持出，不由更稳定训练曲线批准压缩免费和全任务保真。
+
+<!-- source-family:SF-2025-ARXIV-2510-12474 -->
 
 ### 为什么最近邻读数会受少数行支配
 
@@ -436,6 +500,16 @@ Embedding 把无序类别 id 映射为可学习的连续坐标。Lookup 与 one-
 额外的身份或词法路径是否有用，取决于训练支持、上下文使用方式及参数与执行预算；几何读数只能帮助诊断，不能独自证明收益。无论选择哪条分支，这些表示都还没有解释同一符号位于不同位置时的差别。下一章会在不混淆符号身份与顺序的前提下，引入位置关系。
 
 ## Review notes
+
+- `SF-2025-ARXIV-2510-12014` — Herschel，Daily2025-10-16补Oct15；消费Cicero R36 exact-v1 §2/3/5/D首次必要，2+1+2=5，仅student-score分层候选/teacher排序→pairwiseBT标签生产差额。保50val/50testpersona/三catalog、teacher tournament非真人/top1、bin与4096/8191pair计数冲突、3090Ti/1000APIstep及全部制备/训练/重建费，不授独立质量或精确调用预算。未第二Methods/代码/复现；PRE/SAVE/selfread/solePOST只canonical实际层。
+
+- `SF-2025-ARXIV-2510-04090` — Arendt，Daily2025-10-08补Oct07；原6，直接采用root R370唯一exact-v1 S3–7/Alg1/Eq1–12/T1–10及S2.3必要，不第二Methods。仅预定外部类别中心→batch目标gather→独立近邻decoder与head/容量/旧新行为分责；保root全套/投影不保距/Anr重排非改全集几何、插值margin、百万实例标签训练与改分辨率/LR不冒语义heldout、旧中心固定非encoder不变及表反退。全部CPU码本/索引/训练/择参与replay/旧新验收费保，不采无限类免费、cosine普胜或无遗忘，未核图像素/代码/复现；PRE/SAVE/fullselfread/solePOST仅本日canonical真实后到层，不以本注预签。
+
+- `SF-2025-ARXIV-2510-06824` — Daily2025-10-10补Oct09BJT；[BitTokens exact-v1](https://arxiv.org/html/2510.06824v1)作者首次必要§3/5–7/C1–3/D3；2+1+3=6，唯一MODEL-EMBEDDING Ch12的结构数值输入/number-head消费差额深入。保bitloss非数值连续、mean多token反胜、联合任务删三难项、float/parser/overflow和全部适配费，不采§4一般不可能性、所有实数唯一编码、通用算法掌握或大模型/生产加速。117M/10B/context1024条件，未核代码/复现；本日canonical实际PRE/SAVE/fullselfread/Jason solePOST后到，不以此预签。 Jason R9唯一actualPOST已实际通过，本指定窄位释放；仅同步既成态，不授DAY。
+
+- `SF-2026-ARXIV-2606-04485` — supp_20260605_author，Daily2026-06-05补Jun04；[exact-v1](https://arxiv.org/html/2606.04485v1) §B.2 ThmB.1/§B.3 PropB.2/§4.2 Eq1–10/T2–5/C.3必要。正式2+1+2=5，仅收窄的新value-rank分析/soft shared center-width数学分支，旧2M/RBF/hard exponent/smf去重不重算。保preLN居中rank1/LN二维affine/每输出2H分责、stacked自然N界、无全模型瓶颈，旧artifact不签新式实现或收益归因/严格尺度等变；fixed RBF带宽反侧、拟合人口与全部展开/门控/训练搜索费及普通数值编码退路近正文。未核新式实现/复现。reader R85必要/5分/actualowner及两处消歧后原两段PRE已通过，root新窄授后真实保存于ALBERT完整段后/多来源压缩完整段前，reader R87唯一非writer actualPOST已通过，整合生效/本指定窄位释放；新增I18＋旧Kimi1合19，仅行政同步，不授DAY。
+
+- `SF-2025-ARXIV-2509-12350` — Socrates，Daily2025-09-18补Sep17；[KGTB exact-v1](https://arxiv.org/html/2509.12350v1) Methodology/式1–8、ExperimentalSetup、T2–5/相关必要正文与F3caption，2+1+2=5/结构关系监督codec到生成ID接口差额深入。426→Helmholtz337必要一次采用通过，保观测关系非真负例/无损或唯一身份、图/偏好历史前缀未闭、随机ID/骨干预算混杂、Eq7符号与层级码本印式不补recipe及全图/码本/生成费；未核coldstart/全部附录像素、代码或复现，不授任意OOD/统一净省或SLO。原三项经Helmholtz343纯PRE、root本轮actual fresh独立新窄授后真实保存与完整自读，Helmholtz347唯一actualPOST通过，I46生效/指定窄位释放；不第三Source/书文。
 
 - `SF-2026-ARXIV-2605-07994` — Daily2026-05-12补May11；[exact-v1](https://arxiv.org/html/2605.07994v1)必要Source精确域与反侧沿本日reader实际结果复用，采用范围/评分见[本日唯一SUP A4.42](../../papers/2026/05/_sources/daily-20260512/SUP_SOURCES_20261018.md)。reader实际Source/具体owner/逐字PRE已通过，root授本指定一段/本人注，已按稿保存待非writer actual POST；不授DAY。未核实现/复现，不以原件可读冒全附件审阅。 截至本轮后续有效结论：本项独立reader已实际完整新增/直接两侧/本人注非writer POST通过，root已接纳并释放指定窄位；此前“待”仅过程时态，本次纯行政同步、不重Source/正文、不预授DAY。
 
@@ -500,3 +574,27 @@ Primary-source 校验入口：
 - `SF-2025-ARXIV-2508-21206` — Godel，Daily2025-09-02补Sep01；[exact-v1](https://arxiv.org/html/2508.21206v1)§3–6/Tables1–4必要Source，2+1+2=5，输入参数化/真实重切分边界。仅固定token字形表→共享projector/原output词表；保word-vs-BPE、clean切分假设、多语PPL非语义/Latin反退/字体长词与全费，不授攻击免疫/无OOV或普遍质量。E=R·P/同版验收与退路为项目推导；未看像素/代码或复现。Newton38实际必要Source/具体owner/本逐字PRE通过；root协调01772独立marker后/初始表示标题前指定一段，仅首句区分固定字形producer，projector仍可学。已按稿保存，Newton39一次真实完整新增/直接两侧/本人注POST通过，指定窄位即时生效释放；不预整日DAY。
 
 - `SF-2025-ARXIV-2509-03746` — Godel，Daily2025-09-06补Sep5；[exact-v1](https://arxiv.org/html/2509.03746v1)§3–6，2+2+2=6，输入item行/训练/层次与近似ANN读出consumer具体差额深入。保ID-only监督、factorization非flat、ANN组归一近似、Arts反退/小目录与外引latency估算/额外表和全费，不采5–14x普效或无损。未核代码/图像素或复现；Newton必要Source/具体owner/逐字PRE已通过，root已协调本指定一段/独立marker/本人注窄位；已按批准稿实际保存，Newton17一次实际完整新增/完整直接两侧/本人注非writer POST通过，按已协调规则本指定窄位生效释放；不代整日DAY。
+
+- `SF-2026-ARXIV-2610-32122` — Daily2026-10-27，exact-v1§III–VI，2+1+2=5，probe可读与metric可消费的具体缺口深入。保4000全head标签非2shot公平、STS/小模型反侧、AAG尺度/异方差与缺简投影对照，不采普遍objective因果、低方差数学保证、无损或E2E净省。未核代码/复现，PRE/实际POST以本日REVIEW为准，未DAY。
+
+- `SF-2026-ARXIV-2610-32788` — Daily2026-10-27，exact-v1 II.1–3/III.1/IV.1–3/V必要，2+1+3=6；仅token决策cell监督与固定embedding几何的受限学习边界。保IID/quenched/线性teacher、nonrigorousRS/spectralclosure及d≥D反侧、数据load非SGD时间、小variance仍可有用及全费；不采用未核finite-recovery阈值/严格Bayes界/真实LM复杂度，未核全proof/代码/复现。
+
+- `SF-2025-ARXIV-2510-07613` — Aquinas，Daily2025-10-11补Oct10；exact-v1实际闭合§3–7，partial156842/176422 bytes、exit28，断尾AppE词频regex清单，不宣全body/附录。2+1+2=5，仅训练step/预期曝光、RDM平台与row变化、input/output读取分责；保339为checkpoint非独立seed、fullword/构念/频率代理与function共线、两模型局部和全费，不采频率因果、通用形成规律或提前停训。未核全部附录像素/断尾regex、代码或复现；PRE/真实SAVE/唯一POST仅按本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-12369` — Herschel，Daily2025-10-16补Oct15；消费Cicero R35 exact-v1 §4.1–4.3/5.1–5.4首必要，2+1+2=5，仅四级RVQ/task softgate→聚合/离散lookup→task Transformer差额深入。保frozen/joint梯度叙述冲突、shape/index/count归约未闭、NC/LP反退及全费，不采稀疏计算/所有foundation token。未第二Methods/代码/复现；整体PRE/SAVE/fullselfread/solePOST仅本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-12461` — Herschel，Daily2025-10-16补Oct15；消费Cicero R49 exact-v1 §3.2/4–6/7.3/8.2/9.1/9.4首必要，2+1+2=5，仅title→user交互均值→一次图预处理/冻结与另训分支分责差额深入。保目标graph可见、cutoff非无污染、单epoch/总训练反侧及全费，不授无历史冷启动/线上SLO。未第二Methods/代码/复现；整体PRE/SAVE/fullselfread/solePOST仅本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-12085` — Herschel，Daily2025-10-16补Oct15；消费Cicero R20 exact-v1 §4.2–4.3/5.3–5.7首必要，2+1+2=5，仅多几何soft分支→局部融合→text消费差额深入。保非稀疏MoE/无树环必需定理、Eq7/10未闭、History反退与全部费用，不采唯一因果/全OOD。未第二Methods/代码/复现；整体PRE/真实SAVE/fullselfread/solePOST仅本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-12721` — Herschel，Daily2025-10-16补Oct15；消费Cicero R40 exact-v1 §4/5/7首必要，2+1+2=5，仅离散embedding lookup表groupRVQ/非线性corrector消费差额深入。保500iter训练非免训、平均bits非kernel位宽、非tying/连续activation、AWQ组合反退及全费，不采E2E净速。未第二Methods/代码/复现；整体PRE/SAVE/fullselfread/solePOST仅本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-12795` — Herschel，Daily2025-10-16补Oct15；消费Cicero R49 exact-v1 §4/5/A/D首次必要，2+1+2=5，仅多参数逐行persistence/learnable向量化/gate载荷差额深入。保给定SP稳定性和逐行sum距离条件、STE非真实离散梯度/soft非hard、冻结base路径及ISIC/Glaucoma/DDSM反退，4090模块计时非全链/全部额外费用。不采医学应用论点或全深网鲁棒，未第二Methods/代码/复现；PRE/SAVE/fullselfread/solePOST只本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-12269` — Herschel，Daily2025-10-16补Oct15；消费Cicero R11 exact-v1 §3.1–3.3/5–7首次必要，2+2+2=6，仅Boolean join/projection张量接口与numeric relaxation资格差额深入。保low-temp sigmoid不能使任意learned Gram成identity，明确不采用v1 immune-hallucination/sound learned-embedding保证；CUDA仍future/无通用benchmark，不授已测统一runtime，全部关系/中间态/训练费。未借v3、第二Methods/代码/复现；PRE/SAVE/fullselfread/solePOST只本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-12709` — Herschel，Daily2025-10-16补Oct15；消费Cicero R40 exact-v1 §3.1–3.3/4.1–4.4首次必要，2+2+2=6，仅content carrier/sequence-ID collaborative teacher与实际检索消费差额深入。保CLAP mean丢序、NMI/rank/bijection非用户因果、CRE损Copair、多源soft采样/单dataset batch/false-negative proxy、10B数据/多NPU型号数精度未齐、线上流量/CI/SLO未知与全费；Ch27不复制组批机制。未第二Methods/代码/复现；PRE/SAVE/fullselfread/solePOST只本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-12474` — Herschel，Daily2025-10-16补Oct15；消费Cicero R32 exact-v1 §3.2–3.4/4.1–4.2/5.1–5.4首次必要，2+1+2=5，仅逐级邻维/冻结阶段、Gumbel选维与FC前frozen-feature FIFO差额深入。保ADS非已闭无重复k选择、局部gradient/variance非所有MRL必重训、WARE/维数口径未齐、totalepochs非净时延及全费，不授semantic无损。未第二Methods/代码/复现；PRE/SAVE/fullselfread/solePOST只本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-12742` — Herschel，Daily2025-10-16补Oct15；消费Cicero R30 exact-v1 §3/4.1–4.3/C1首次必要，2+1+2=5，仅offline item-value teacher/dualencoder与线上request匹配/原ranking消费差额深入。保22万合成preference非真人、实际rank后混非score线性和、19人各8分钟/点击无显著非长期无损、A6000实测与1e7item/1000请求1e8倍率估算分开、全制备/训练/向量费，不授部署净速/SLO。未第二Methods/代码/复现；PRE/SAVE/fullselfread/solePOST只本日canonical实际层。

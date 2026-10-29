@@ -1,0 +1,1044 @@
+When LRP Diverges from Leave-One-Out in Transformers
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+Error in Bilinear Layers.
+Error in Softmax Layers.
+2 Background
+2.1 Leave-One-Out (LOO) Attribution
+2.2 Heuristic LOO approximations
+2.3 A Principled LOO Alternative: Layer-Wise Relevance Propagation (LRP)
+Epsilon Rule for Linear Layers.
+Rules for Bilinear Layers.
+Rule for the Softmax Layer.
+3 Why does LRP still approximate LOO poorly?
+3.1 Part 1: Bilinear Propagation in LRP Violates Implementation Invariance
+Model A Derivation
+Model B Derivation
+3.2 Part 2: Softmax Propagation as a Second Source of Error
+4 Experiments
+4.1 Experimental Setup
+Tasks and Datasets.
+Models.
+Evaluation Metrics.
+Details for Pearson Correlation Computation and LOO.
+4.2 Baselines
+4.3 Results and Analysis
+(RQ1) The Bilinear Rule in LRP is Not Implementation Invariant.
+(RQ2) Bypassing Softmax Improves Alignment with LOO.
+(RQ3) Identifying the most impacted layers.
+Summary of Findings.
+5 Related Work
+Approximating Feature Importance.
+Implementation Invariance and Canonization.
+Perspectives on Bilinear Layers.
+Evaluating Explanations.
+6 Conclusion
+References
+A Comparison with Integrated Gradients
+B Experiment Details
+B.1 Hyperparameters
+B.1.1 MNIST Linear Attention Experiments
+B.1.2 Text Experiments
+LOO granularity.
+MoRF/LeRF granularity.
+B.2 Full Results
+License: CC BY 4.0
+arXiv:2510.18810v1 [cs.LG] 21 Oct 2025
+When LRP Diverges from Leave-One-Out in Transformers
+Weiqiu You†
+Siqi Zeng‡
+Yao-Hung Hubert Tsai§
+Makoto Yamada§
+Han Zhao‡
+Affiliation: †University of Pennsylvania, Philadelphia, PA, USA
+Affiliation: ‡University of Illinois Urbana-Champaign, Urbana, IL, USA
+Affiliation: §Okinawa Institute of Science and Technology, Okinawa, Japan
+Abstract
+Leave-One-Out (LOO) provides an intuitive measure of feature importance but is computationally prohibitive.
+While Layer-Wise Relevance Propagation (LRP) offers a potentially efficient alternative, its axiomatic soundness in modern Transformers remains largely under-examined.
+In this work, we first show that the bilinear propagation rules used in recent advances of AttnLRP violate the implementation invariance axiom.
+We prove this analytically and confirm it empirically in linear attention layers.
+Second, we also revisit CP-LRP as a diagnostic baseline and find that bypassing relevance propagation through the softmax layer---backpropagating relevance only through the value matrices---significantly improves alignment with LOO, particularly in middle-to-late Transformer layers.
+Overall, our results suggest that (i) bilinear factorization sensitivity and (ii) softmax propagation error potentially jointly undermine LRP’s ability to approximate LOO in Transformers. 11
+1
+Correspondence to weiqiuy@seas.upenn.edu. Code is available at https://github.com/fallcat/attn_loo.
+1 Introduction
+x1x_{1}x2x_{2}x3x_{3}h=x1​x2h=x_{1}x_{2}y=h​x3y=hx_{3}Network ALeft-associativex1=2,Rx1=6x_{1}=2,R_{x_{1}}=6x2=3,Rx2=6x_{2}=3,R_{x_{2}}=6x3=4,Rx3=12x_{3}=4,R_{x_{3}}=12x1x_{1}x2x_{2}x3x_{3}h′=x2​x3h^{\prime}=x_{2}x_{3}y=x1​h′y=x_{1}h^{\prime}Network BRight-associativex1=2,Rx1=12x_{1}=2,R_{x_{1}}=12x2=3,Rx2=6x_{2}=3,R_{x_{2}}=6x3=4,Rx3=6x_{3}=4,R_{x_{3}}=6
+Figure 1: Two functionally equivalent network factorizations of the same function y=x1​x2​x3y=x_{1}x_{2}x_{3}. Despite identical outputs, LRP’s ε\varepsilon-rule assigns different relevance to inputs depending on factorization.
+As Transformer-based machine learning models become central to high-stakes domains like healthcare (Tjoa and Guan, 2019; Hameed et al., 2023) and legal systems (Zeng et al., 2016; Wexler, 2017), the need for faithful explanations is critical.
+In particular, unfaithful explanations risk misleading domain experts, thereby undermining their ability to make informed decisions.
+An intuitive but computationally prohibitive explanation method is Leave-One-Out (LOO), which measures the impact of removing each feature on a model’s prediction. To approximate LOO efficiently, AttentionRollout (Abnar and Zuidema, 2020) was introduced to move beyond simplistic single-layer attention scores by composing them across layers, offering a more intuitive way to track information flow. However, these methods are incomplete as they propagate only attention scores while ignoring other key components like values and hidden states.
+Layer-Wise Relevance Propagation (LRP) (Bach et al., 2015) redistributes a model’s output score backward through the network while conserving relevance across layers, offering a more principled framework for approximating LOO.
+Recent advances in LRP for attention rules in Transformers (Vaswani et al., 2017) include CP-LRP (Ali et al., 2022) and AttnLRP (Achtibat et al., 2024).
+CP-LRP regards the matrix multiplication between attention weights and value as a linear layer, propagating relevance scores only through the value vectors (Ali et al., 2022).
+AttnLRP critiques CP-LRP for being unfaithful by ignoring the propagation through the attention weights, and proposes a new rule for bilinear layer using deep taylor decomposition (DTD), which improves upon insertion and deletion related metrics (Achtibat et al., 2024).
+However, previous works have shown that LRP in general violates implementation invariance axiom—the principle that functionally identical networks should yield identical explanations (Sundararajan et al., 2017).
+This flaw was first shown in a counterexample where two networks, differing only in their internal arrangement of ReLU operations, produced different LRP attributions despite being functionally equivalent (Sundararajan et al., 2017).
+With the recent CP-LRP and AttnLRP, it has not yet been shown whether this flaw still exists or whether these LRP variants can approximate LOO in Transformers well despite these limitations.
+In this work, we provide the first formal proof that LRP’s axiomatic failure is not a rare corner case but still exists in AttnLRP’s new rule for bilinear layers.
+We establish this through both theory and experiments: first, by proving the violation with a simple analytical example, and then by empirically demonstrating it in a one-layer linear attention model.
+Moreover, we empirically find that, although CP-LRP lags behind AttnLRP in insertion and deletion based metrics, CP-LRP is actually a better approximation for LOO.
+Ablating their application layer by layer, we find that treating attention weights as constants and bypassing softmax-layer backpropagation (as in CP-LRP) improves LOO alignment in middle-to-late layers, whereas AttnLRP’s bilinear propagation can be more beneficial in earlier layers.
+This is observed in our layerwise analysis (Section 4), where several middle-to-late layers exhibit flatter attention distributions.
+Our contributions are twofold and relate to different parts of attention mechanisms:
+Error in Bilinear Layers.
+To the best of our knowledge, we are the first to formally prove that AttnLRP’s propagation rule for bilinear layers violates the implementation invariance axiom. We identify a fundamental source of LOO estimation error that extends beyond previously studied nonlinearities to the core bilinear operations underlying modern attention mechanisms. Using a small linear attention model trained on MNIST (LeCun, 1998), we empirically confirm that LRP attributions differ between left- and right-associative bilinear factorizations: their scores are not fully correlated and exhibit inconsistent alignment with LOO.
+Error in Softmax Layers.
+We compare the two Transformer-based LRP variants, CP-LRP (LRP for Transformers without softmax propagation) and AttnLRP (LRP for Transformers with bilinear and softmax propagation), and show that CP-LRP correlates with LOO better in BERT (Devlin et al., 2019) on SST (Socher et al., 2013) and IMDB (Maas et al., 2011).
+We conduct a layer-wise ablation and show that regarding the attention weights as constant like CP-LRP in the middle-to-late layers in Transformers is the most helpful for approximating LOO.
+2 Background
+In this section, we build the foundation for our analysis by first establishing the desired properties of an attribution method and then detailing the mechanics of LRP as a popular approximation. We begin by formally defining LOO attribution, establishing it as a conceptual benchmark due to its faithfulness and implementation invariance.
+As LOO has a prohibitive computational cost, there is a pressing need for efficient alternatives. We then introduce LRP, a method designed to overcome the limitations of both LOO and early heuristics that only requires one forward pass of models. We will describe its core principles of relevance conservation and layer-wise decomposition before examining its specific adaptations for the Transformer architecture, setting the stage for our theoretical critique.
+2.1 Leave-One-Out (LOO) Attribution
+A central challenge in attribution evaluation is identifying a reliable reference metric that reflects the true contribution of each input feature. The LOO score provides such a reference by measuring the change in the model’s output when a single feature is removed. Formally, for an input xx and feature ii, the LOO score is calculated as:
+LOOi=f⁡(x)−f⁡(x∖i)\text{LOO}_{i}=f(x)-f(x_{\setminus i})
+(LOO)
+where x∖ix_{\setminus i} denotes the input with feature ii removed. Because this definition depends only on the model’s functional behavior, the abstract rule that defines an operation as a mapping from inputs to outputs—rather than its specific implementation—the particular procedure to realize that mapping, LOO, is invariant to specific implementations and satisfies the implementation invariance axiom.
+LOO is widely regarded as a common baseline for feature importance (Ancona et al., 2018; Covert et al., 2021).
+However, computing LOO scores exactly requires one forward pass per feature, which is computationally prohibitive for modern deep models. This motivates the development of scalable attribution methods that aim to approximate LOO scores efficiently while preserving their desirable properties.
+2.2 Heuristic LOO approximations
+Early attempts to approximate LOO in Transformers focused on the attention mechanism itself, as attention weights provide an intuitive story for how information is combined across the input. Methods like Attention Rollout (Abnar and Zuidema, 2020) sought to address the limitation of using raw, single-layer attention weights by composing them across layers. The intuition is to recursively propagate attention scores from the final layer to the input. The effective attention from layer ll down to the input is computed by recursively multiplying attention matrices:
+A~(l)=A(l)⋅A~(l−1)\tilde{A}^{(l)}=A^{(l)}\cdot\tilde{A}^{(l-1)}
+(Rollout)
+where A(l)A^{(l)} is the attention matrix at layer ll and the rollout begins with an identity matrix.
+However, such heuristic methods are incomplete approximations of LOO. By focusing exclusively on attention matrices (AA), they ignore the contributions of other critical components, such as the value projections (VV), feed-forward networks, and residual connections. The true final prediction is a function of the entire computation path, not just the attention patterns. The significance of this limitation becomes clear when considering findings that Transformer performance can be surprisingly robust even when learned attention is replaced with hard-coded, non-data-dependent patterns (You et al., 2020). This suggests that much of the model’s predictive power is encoded in the value transformations and subsequent layers—a significant part of the model that attention-only methods completely disregard.
+2.3 A Principled LOO Alternative: Layer-Wise Relevance Propagation (LRP)
+To overcome the shortcomings of heuristic methods, more principled approaches like LRP have been adapted for Transformers.
+LRP offers a complete decomposition of the model’s prediction by propagating relevance backward from the output to the input layer-by-layer.
+It operates on a conservation principle, where the model’s output score f⁡(x)f(x) is decomposed into a sum of relevance scores RiR_{i} for each input feature, such that f⁡(x)=∑iRif(x)=\sum_{i}R_{i}.
+This is achieved by propagating the total relevance backward through the network, conserving it at each layer.
+In purely linear networks, this relevance redistribution is mathematically equivalent to computing Leave-One-Out (LOO) scores,
+making LRP a natural, computationally efficient approximation to LOO in more complex architectures that include nonlinear or multiplicative operations.
+Epsilon Rule for Linear Layers.
+For standard linear layers, a common propagation choice is the ε\varepsilon-rule,
+which distributes relevance from a neuron to its inputs in proportion to their contribution to its activation:
+Ri(l−1)=∑jzi​jlin∑kzk​jlin+ε⋅sign⁡(∑kzk​jlin)​Rj(l),R^{(l-1)}_{i}=\sum_{j}\frac{z^{\mathrm{lin}}_{ij}}{\sum_{k}z^{\mathrm{lin}}_{kj}+\varepsilon\cdot\mathrm{sign}\left(\sum_{k}z^{\mathrm{lin}}_{kj}\right)}\,R^{(l)}_{j},
+(1)
+where zi​jlin=xi(l−1)​Wi​jz^{\mathrm{lin}}_{ij}=x^{(l-1)}_{i}W_{ij} represents the contribution of input neuron ii to neuron jj.
+A small stabilizer ε>0\varepsilon>0 is added in the denominator to prevent division by zero
+when the sum of input contributions ∑kzk​jlin\sum_{k}z^{\mathrm{lin}}_{kj} is close to zero and to ensure numerical stability.
+In this linear case where f⁡(x)=W​xf(x)=Wx, the resulting relevance assignments Ri=xi​WiR_{i}=x_{i}W_{i}
+exactly match the LOO scores.
+However, commonly used networks nowadays contain nonlinear and multiplicative components
+(e.g., ReLU, bilinear attention, and softmax), for which this linear assumption no longer holds.
+To extend LRP beyond the linear case, the Deep Taylor Decomposition (DTD) framework (Montavon et al., 2017)
+locally approximates nonlinear functions by their first-order Taylor expansion around a reference point.
+Relevance is then redistributed according to each input’s contribution in this linearized neighborhood,
+ensuring local conservation but introducing potential approximation errors when activations interact nonlinearly.
+This DTD principle underlies the propagation rules that follow for bilinear and softmax layers.
+Rules for Bilinear Layers.
+We make the attention forward pass explicit:
+Z\displaystyle Z
+=1dk​Q​K⊤,\displaystyle=\frac{1}{\sqrt{d_{k}}}\,QK^{\top},
+(2)
+A\displaystyle A
+=softmax⁡(Z)​(row-wise),\displaystyle=\softmax(Z)\ \text{(row-wise)},
+O\displaystyle O
+=A​V.\displaystyle=AV.
+Bilinearity exists in two places: O=A​VO=AV and Z=Q​K⊤/dkZ=QK^{\top}/\sqrt{d_{k}}.
+CP-LRP (Ali et al., 2022) treats O=A​VO=AV as linear in VV (holding AA fixed), backpropagating relevance only through VV while AA (and Q,KQ,K as well) gets zero relevance scores.
+AttnLRP (Achtibat et al., 2024) instead uses DTD (Montavon et al., 2017) to split relevance between both factors. With a small stabilizer ε>0\varepsilon>0:
+Incoming relevance at Oj​pO_{jp} (denoted Rj​p(l)R^{(l)}_{jp}) is split to AA and VV as
+RAj​i(l−1)\displaystyle R^{(l-1)}_{A_{ji}}
+=∑pAj​i​Vi​p 2​Oj​p+ε​sign​(Oj​p)​Rj​p(l),\displaystyle=\sum_{p}\frac{A_{ji}\,V_{ip}}{\,2\,O_{jp}+\varepsilon\,\mathrm{sign}(O_{jp})\,}\;R^{(l)}_{jp},
+(3a)
+RVi​p(l−1)\displaystyle R^{(l-1)}_{V_{ip}}
+=∑jAj​i​Vi​p 2​Oj​p+ε​sign​(Oj​p)​Rj​p(l).\displaystyle=\sum_{j}\frac{A_{ji}\,V_{ip}}{\,2\,O_{jp}+\varepsilon\,\mathrm{sign}(O_{jp})\,}\;R^{(l)}_{jp}.
+(3b)
+Relevance is split in half, assigning the same value to two values that multiply together inside matrices in bilinear operations.
+The sum of relevance in attention AA is the same as the sum in value VV: RA(l−1)=RV(l−1)=12​RO(l)R^{(l-1)}_{A}=R_{V}^{(l-1)}=\frac{1}{2}R_{O}^{(l)}, in the limit ε→0\varepsilon\rightarrow 0.
+Similarly, the relevance score from the pre-softmax attention logits Z=Q​K⊤/dkZ=QK^{\top}/\sqrt{d_{k}}, where we define cj​i​r≜Qj​r​Ki​rdkc_{jir}\!\triangleq\!\frac{Q_{jr}K_{ir}}{\sqrt{d_{k}}} so that Zj​i=∑rcj​i​rZ_{ji}=\sum_{r}c_{jir}, can be split to QQ and KK as
+RQj​r(l−1)\displaystyle R^{(l-1)}_{Q_{jr}}
+=∑icj​i​r 2​Zj​i+ε​sign​(Zj​i)​RZj​i(l),\displaystyle=\sum_{i}\frac{c_{jir}}{\,2\,Z_{ji}+\varepsilon\,\mathrm{sign}(Z_{ji})\,}\;R^{(l)}_{Z_{ji}},
+(4a)
+RKi​r(l−1)\displaystyle R^{(l-1)}_{K_{ir}}
+=∑jcj​i​r 2​Zj​i+ε​sign​(Zj​i)​RZj​i(l).\displaystyle=\sum_{j}\frac{c_{jir}}{\,2\,Z_{ji}+\varepsilon\,\mathrm{sign}(Z_{ji})\,}\;R^{(l)}_{Z_{ji}}.
+(4b)
+The sum of relevance in query QQ is the same as the sum in key KK: RQ(l−1)=RK(l−1)=12​RZ(l)R^{(l-1)}_{Q}=R_{K}^{(l-1)}=\frac{1}{2}R_{Z}^{(l)}, in the limit ε→0\varepsilon\rightarrow 0.
+These AttnLRP bilinear rules are used with the softmax rule in the next subsection. For the whole backward propagation process,
+relevance is first split at O→(A,V)O\!\to\!(A,V) via Equation 3,
+then passed through A=softmax⁡(Z)A=\softmax(Z) (Equation 5),
+and finally split at Z→(Q,K)Z\!\to\!(Q,K) via Equation 4.
+Rule for the Softmax Layer.
+AttnLRP also derives rules for softmax layers using DTD. Let ZZ be the logits and A=softmax⁡(Z)A=\softmax(Z) the attention weights.
+We write superscripts (l),(l−1)(l),(l\!-\!1) for the layers indicating propagation direction and use subscripts to denote tensors (Z,A,VZ,A,V).
+Following Achtibat et al. (2024), a first-order Taylor expansion leads to the element-wise rule
+RZj​i(l−1)=Zj​i​(RAj​i(l)−Aj​i​∑i′RAj​i′(l)),\displaystyle R^{(l-1)}_{Z_{ji}}\;=\;Z_{ji}\!\left(R^{(l)}_{A_{ji}}-A_{ji}\sum\nolimits_{i^{\prime}}R^{(l)}_{A_{ji^{\prime}}}\right),
+(5)
+Aj​i=softmax(Zj:)i,\displaystyle A_{ji}=\softmax(Z_{j:})_{i},
+which is applied entry-wise over (j,i)(j,i) to ZZ and AA.
+Rule Equation 5 moves relevance from AA back to the logits ZZ; from there, the bilinear rule for ZZ distributes relevance to QQ and KK (see Equation 4).
+Together with Equation 3, these rules conserve relevance locally while making explicit which components (attention weights vs. values vs. logits) carry the propagated mass.
+Since CP-LRP treats bilinear layers as linear, relevance is not propagated through AA, and consequently, the softmax propagation rule— which depends on relevance scores from the attention—does not apply.
+While these rules are derived from a principled framework and satisfy local relevance conservation, they rely on intermediate activations from the forward pass (e.g. zi​jz_{ij} in the ε\varepsilon-rule, which is computed using the input activation from the previous layer, and Oj​pO_{jp} in the bilinear rule), making them sensitive to the precise order of computations. This stands in contrast to the associative property found in standard arithmetic, which will cause failure for approximating LOO.
+This sensitivity to computation order hints at a deeper limitation of LRP: even in simple multiplicative settings, its attributions can depend on implementation details rather than functional behavior, which we formalize next.
+3 Why does LRP still approximate LOO poorly?
+While LRP’s layer-local propagation rules guarantee relevance conservation, they do not guarantee consistent explanations for functionally equivalent networks. We first analyze how this axiomatic failure arises from the bilinear operations at the core of Transformer attention, formally proving that AttnLRP’s propagation rule is sensitive to the factorization of these operations. To probe the second potential source of error, we compare AttnLRP to a CP-LRP which bypasses the softmax step, allowing us to isolate softmax layer’s impact from bilinear operations on LOO correlation. Taken together, these two perspectives—on bilinear factorization and softmax propagation—reveal fundamental weaknesses in current LRP variants as approximations to LOO.
+3.1 Part 1: Bilinear Propagation in LRP Violates Implementation Invariance
+Implementation invariance requires that two networks computing the same function produce identical explanations (Sundararajan et al., 2017). While methods like Integrated Gradients satisfy this axiom by design, propagation-based methods such as LRP can violate it.
+Earlier works demonstrate that LRP is not implementation invariant when applying its propagation rules to ReLU and BatchNorm layers (Sundararajan et al., 2017; Guillemot et al., 2020; Yeom et al., 2021). We extend this analysis to bilinear operations, a core component of Transformer attention, and show that the ε\varepsilon-rule for bilinear layers introduced in AttnLRP (Achtibat et al., 2024) are sensitive to the computational factorization of these operations, even when the underlying function remains identical.
+We demonstrate this flaw with a simple scalar example. Consider the function f⁡(x1,x2,x3)=x1​x2​x3f(x_{1},x_{2},x_{3})=x_{1}x_{2}x_{3}, which can be implemented in two computationally equivalent ways:
+•
+Model A (Left-associative): y=(x1​x2)​x3y=(x_{1}x_{2})x_{3}
+•
+Model B (Right-associative): y=x1​(x2​x3)y=x_{1}(x_{2}x_{3})
+As illustrated in Figure 1, let x1=2,x2=3,x3=4x_{1}=2,x_{2}=3,x_{3}=4, yielding an output y=24y=24. If we assign this output as the total relevance, Ry=24R_{y}=24, the standard LRP rule for multiplication (equal splitting) distributes relevance at each step.
+Model A Derivation
+The relevance is propagated backward as follows:
+•
+First, the relevance Ry=24R_{y}=24 is split between (x1​x2)(x_{1}x_{2}) and x3x_{3}, so each receives 12.
+•
+Then, the 12 assigned to (x1​x2)(x_{1}x_{2}) is split between x1x_{1} and x2x_{2}, so each receives 6.
+This yields final relevance scores of:
+Rx1=6,Rx2=6,Rx3=12R_{x_{1}}=6,\quad R_{x_{2}}=6,\quad R_{x_{3}}=12
+Model B Derivation
+In contrast, the right-associative model’s propagation is:
+•
+First, the relevance Ry=24R_{y}=24 is split between x1x_{1} and (x2​x3)(x_{2}x_{3}), so each receives 12.
+•
+Then, the 12 assigned to (x2​x3)(x_{2}x_{3}) is split between x2x_{2} and x3x_{3}, so each receives 6.
+This results in different final relevance scores:
+Rx1=12,Rx2=6,Rx3=6R_{x_{1}}=12,\quad R_{x_{2}}=6,\quad R_{x_{3}}=6
+The relevance scores for x1x_{1} and x3x_{3} are swapped based on the grouping of operations, even though the function, output, and gradients are identical. In sharp contrast, the LOO scores for both implementations are identical. Setting any single input to zero makes the final output zero, causing a change of 24 from the original output (L​O​O1=24,L​O​O2=24,L​O​O3=24LOO_{1}=24,LOO_{2}=24,LOO_{3}=24). This is because LOO depends only on functional behavior, not on the specific parameterization.
+This discrepancy not only exists in this specific example. More generally, any operation that does not satisfy the associative property can lead to implementation-dependent differences in LRP attributions. For instance, in linear attention variants that omit the softmax, the term Q​K⊤​VQK^{\top}V becomes associative and can be computed as either (Q​K⊤)​V(QK^{\top})V or Q⁡(K⊤​V)Q(K^{\top}V) (Katharopoulos et al., 2020).
+Although the softmax activation in standard attention obscures the underlying associativity, our analysis of two bilinear factorizations suggests that standard attention may also violate implementation invariance for certain mathematical operations.
+3.2 Part 2: Softmax Propagation as a Second Source of Error
+In addition to bilinear operations, as another key component of the attention mechanism, we further hypothesize that the propagation rules in softmax layers are also problematic. There are at least two types of error introduced by softmax propagation.
+(1) Structural bias: when the logits are uniform, the softmax layer outputs a nonzero, uniform attention distribution that reflects a default behavior rather than input-dependent evidence.
+LRP then spreads relevance evenly across inputs, whereas ground-truth LOO would assign near-zero relevance to each feature if all features are actually close to 0.
+(2) Linearization error:
+As introduced in the DTD framework (Section 2.3),
+the softmax propagation rule relies on a first-order Taylor expansion (Equation 5) around the observed logits. When the logits are large but similar, the attention distribution appears flat even though individual inputs can strongly influence the output.
+In this regime, the local Jacobian provides little discriminative signal, and the linearization fails to capture the large non-local effect of removing individual inputs—leading to systematic misallocation of relevance.
+To isolate the effect of softmax from bilinear operations in LRP, we revisit CP-LRP as a diagnostic baseline against AttnLRP. CP-LRP treats the value readout O=A​VO=AV as linear in VV while holding AA fixed (Section 2), thereby bypassing propagation through both the attention weights and, particularly, the softmax layer A=softmax⁡(Z)A=\softmax(Z). This makes CP-LRP a natural baseline for isolating the impact of softmax propagation: any gap between CP-LRP and AttnLRP on LOO reflects the added effect of the softmax rule and the bilinear split into AA (Equations 3 and 5).
+If CP-LRP shows higher LOO agreement, it suggests that softmax propagation is a key source of attribution error.
+4 Experiments
+We empirically evaluate these two error sources through three research questions:
+•
+RQ1: Does LRP’s ε\varepsilon-rule for bilinear layers produce different attributions for functionally equivalent factorizations (i.e., show implementation variance)?
+•
+RQ2: If we handle the attention step like CP-LRP (send all relevance at OO to VV and skip softmax), do the attributions agree better with LOO than AttnLRP?
+•
+RQ3: Which layers were affected the most from bypassing softmax propagation in Transformer attention as in CP-LRP?
+4.1 Experimental Setup
+Tasks and Datasets.
+We evaluate attribution methods across three complementary settings:
+(1) a synthetic bilinear setting using the MNIST dataset (LeCun, 1998),
+(2) two standard text classification benchmarks, SST (Socher et al., 2013) and IMDB (Maas et al., 2011), and
+(3) BERT-base (Devlin et al., 2019) for realistic Transformer-based evaluation.
+For MNIST, we resize the images to 14×1414\times 14 and use them to probe LRP’s behavior in controlled bilinear networks while retaining nontrivial real inputs.
+For SST and IMDB, we follow standard text preprocessing and fine-tune BERT-base for classification.
+Implementation details are provided in Appendix B.
+Models.
+For MNIST experiments, we design two synthetic QKV networks with linear attention without softmax layers, which differ only in how their bilinear computations are factorized (left- vs. right-associative; see Section 3.1). These models are lightweight but allow us to cleanly test implementation invariance on real data. Note that real
+Transformers insert a softmax layer between bilinear computations, preventing a direct associativity test. For SST and IMDB, we use a standard 12-layer BERT-base encoder.
+Evaluation Metrics.
+Our primary metric is the Pearson correlation (rr) between attribution scores and ground-truth feature importance derived from Leave-One-Out (LOO). As a secondary metric, we use the Area Over the Perturbation Curve (AOPC) for Insertion and Deletion (Petsiuk et al., 2018; Samek et al., 2017), which measures how the model’s prediction changes when features are removed in order of importance.
+Additionally, we compute two standard perturbation curves:
+MoRF (Most Relevant First) and LeRF (Least Relevant First) (Samek et al., 2017; Petsiuk et al., 2018).
+For MoRF, features are progressively removed in decreasing order of relevance, and the model’s output is recorded after each step; faithful explanations should cause rapid prediction degradation.
+LeRF performs the same procedure but removes features from least to most relevant, where higher LeRF indicates more faithful explanation.
+We summarize each curve using the Area Over the Perturbation Curve (AOPC) and report LeRF, MoRF, and their difference Δ=LeRF−MoRF\Delta=\text{LeRF}-\text{MoRF}, which reflects how well the attribution separates relevant from irrelevant features (higher is better).
+Details for Pearson Correlation Computation and LOO.
+For each example, we compute the Pearson correlation between token- or pixel-level attribution scores and their corresponding LOO scores, then report the mean correlation across the dataset. All attribution maps are normalized to sum to one per example. To compute LOO scores, we remove each feature individually and measure the change in the model’s predicted logit. For text, this is done by masking out each token using the attention mask. For images, we zero out each pixel one at a time.
+4.2 Baselines
+We evaluate Integrated Gradients (IG) (Sundararajan et al., 2017), Attention Rollout (Abnar and Zuidema, 2020), AttnLRP (Achtibat et al., 2024), and CP-LRP (Ali et al., 2022).
+4.3 Results and Analysis
+(RQ1) The Bilinear Rule in LRP is Not Implementation Invariant.
+To test whether LRP’s ε\varepsilon-rule for bilinear layers exhibits implementation variance, we construct two functionally equivalent QKV linear attention networks that have two bilinear layers and differ only in the order of matrix multiplication. Each consists of three learned projections (WQW_{Q}, WKW_{K}, WVW_{V}), followed by two matrix multiplications and a linear output layer. Neither includes softmax, so the bilinear operation is associative. The only difference is whether the product is evaluated right-associatively (Q​K⊤)​V(QK^{\top})V or left-associatively Q⁡(K⊤​V)Q(K^{\top}V) as we proposed at the end of Section 3.1.
+Both networks are trained on 14×1414\times 14 MNIST ( 85% accuracy) with shared weights, ensuring identical functions but different computational graphs.
+We compute attributions using LOO, IG, and AttnLRP, and measure Pearson correlations between left and right models and with LOO (Table 1). LOO is perfectly invariant (r=1.0r=1.0), and IG also yields perfect left–right agreement, consistent with its axiomatic invariance. AttnLRP, however, is implementation dependent (r=0.79r=0.79). Compared to LOO, IG shows a negative but nonzero correlation (r=−0.37r=-0.37), whereas AttnLRP exhibits near-zero correlation (r≈0.07r\approx 0.07 left; r≈−0.07r\approx-0.07 right), indicating both implementation dependence and poor alignment.
+These results show that implementation invariance is necessary but not sufficient: IG passes the invariance test but does not reliably align with LOO—sometimes exhibiting negative or later shown near-zero correlations—while AttnLRP fails on both.
+Additional analysis on formulation of IG is in Appendix A.
+(RQ2) Bypassing Softmax Improves Alignment with LOO.
+To isolate the effect of softmax propagation in AttnLRP, we compare its performance with CP-LRP. As shown in Table 2, CP-LRP substantially improves correlation with LOO on SST over AttnLRP (e.g., r=0.52r=0.52 on SST versus r=0.22r=0.22 for AttnLRP). Improvements on IMDB are smaller, potentially because its longer sentences lead to more correlated features. These findings support the claim that the softmax propagation rule is a major source of attribution error.
+Table 1: LRP fails implementation invariance and alignment with LOO in bilinear layers. We compare feature attributions between left- and right-associative QKV bilinear networks that compute the same function. LOO and IG exhibit perfect implementation invariance (L vs R = 1), whereas AttnLRP does not. Correlations with LOO are computed separately for the left and right models (identical for LOO by definition), showing that IG has negative but nontrivial correlation whereas AttnLRP is near zero, indicating that invariance alone is not sufficient for faithfulness.
+Explainer
+L vs R
+L vs LOO
+R vs LOO
+LOO
+1.0000
+1.0000
+1.0000
+IG
+1.0000
+−0.3707-0.3707
+−0.3707-0.3707
+AttnLRP
+0.7865
+0.07300.0730
+−0.0698-0.0698
+Table 2: Baselines on attribution metrics (SST top, IMDB bottom).
+CP-LRP shows substantially higher agreement with LOO than AttnLRP,
+highlighting the softmax propagation rule as a source of error.
+Metrics: LOO rr, LeRF, MoRF, and Δ=LeRF−MoRF\Delta=\text{LeRF}-\text{MoRF}.
+First place is bolded and second place is italicized (LOO’s correlation with itself excluded).
+Method
+LOO rr ↑\uparrow
+LeRF ↑\uparrow
+MoRF ↓\downarrow
+Δ↑\Delta\uparrow
+SST
+LOO
+1.00
+1.11
+0.33
+0.78
+IG
+-0.05
+0.48
+0.36
+0.12
+AttentionRollout
+0.08
+0.72
+0.38
+0.35
+LRP variants
+AttnLRP
+0.22
+0.88
+0.05
+0.83
+CP-LRP
+0.52
+1.00
+0.22
+0.79
+IMDB
+LOO
+1.00
+2.20
+-0.94
+3.14
+IG
+0.00
+1.98
+2.70
+-0.72
+AttentionRollout
+0.04
+2.85
+1.38
+1.47
+LRP variants
+AttnLRP
+0.25
+3.72
+-2.64
+6.36
+CP-LRP
+0.26
+3.73
+-3.02
+6.75
+(a) SST LOO rr
+(b) IMDB LOO rr
+(c) SST Δ=LeRF−MoRF\Delta=\text{LeRF}-\text{MoRF}
+(d) IMDB Δ=LeRF−MoRF\Delta=\text{LeRF}-\text{MoRF}
+Figure 2:
+Layerwise impact of bypassing softmax with CP-LRP on attribution faithfulness.
+We compare Pearson correlation with LOO (rr, higher is better) and the AOPC difference (Δ=LeRF−MoRF\Delta=\text{LeRF}-\text{MoRF}, higher is better) on SST and IMDB.
+We ablate the softmax propagation rule by removing it from: the first kk layers (Front-to-Back), the last kk layers (Back-to-Front), or only a single layer.
+The dashed red line indicates the performance of the standard AttnLRP baseline; points above this line show an improvement in faithfulness.
+The largest gains appear in several middle and later layers, consistent across both metrics.
+For complete numerical results, see Table A3 in the appendix.
+(RQ3) Identifying the most impacted layers.
+We localize where softmax propagation contributes most by applying the CP-LRP in three ways: (1) a single layer at a time, (2) cumulatively from the first kk layers (front-to-back), and (3) cumulatively from the last kk layers (back-to-front).
+Figure 2 shows that correlation with LOO improves most when modifying middle and later layers.
+Note that applying the identity at all layers coincides with CP-LRP’s behavior at the attention step.
+On SST, for example, the “Single layer” ablation peaks around layers 6 and 10, while the “Front-to-Back” curve shows a steep rise starting from layer 6. These results indicate that the softmax rule introduces the most attribution error in the model’s middle-to-late layers, where feature interactions are more complex.
+Summary of Findings.
+Our experiments yield three takeaways.
+(1) In a controlled bilinear setting without softmax, AttnLRP’s ε\varepsilon-rule for bilinear layers violates implementation invariance, assigning different attributions to functionally identical factorizations.
+(2) The softmax step is a major source of attribution error in Transformers: CP-LRP achieves higher agreement with LOO where on SST, rr rises from 0.22 (AttnLRP) to 0.52 (CP-LRP).
+(3) Layer-wise ablations show that gains concentrate in middle-to-late layers, indicating where softmax propagation harms faithfulness most.
+5 Related Work
+Approximating Feature Importance.
+Much research has sought efficient approximations for the computationally prohibitive Leave-One-Out (LOO) method.
+Early heuristics such as Attention Rollout (Abnar and Zuidema, 2020) offered intuitive ways to trace information flow through attention layers, but attention weights themselves have been challenged as faithful explanations (Jain and Wallace, 2019), with follow-up work clarifying conditions under which they can be informative (Wiegreffe and Pinter, 2019).
+More principled approaches based on relevance conservation, most notably Layer-Wise Relevance Propagation (LRP) (Bach et al., 2015), provide efficient single-pass alternatives, spurring adaptations for Transformers (Ali et al., 2022) and extensions to bilinear settings and attention mechanisms, including BiLRP for dot-product similarity models (Eberle et al., 2022) and AttnLRP for Transformers (Achtibat et al., 2024).
+These methods focus on deriving propagation rules and have shown promise as efficient substitutes for LOO, but their axiomatic properties remain underexplored—especially in modern architectures with complex bilinear interactions.
+Implementation Invariance and Canonization.
+The reliability of attribution methods is often judged by formal axioms (Sundararajan et al., 2017), among which implementation invariance plays a central role: explanations should depend only on a model’s function, not its specific parameterization (Kindermans et al., 2022).
+While methods like Integrated Gradients (IG) satisfy this axiom by design, propagation-based methods such as LRP (Montavon et al., 2018; Shrikumar et al., 2017) do not.
+Sundararajan et al. (2017) first illustrated this flaw by rearranging ReLU nonlinearities in functionally equivalent networks, leading to different LRP attributions.
+Subsequent works find similar violations in BatchNorm layers and solve it with model canonization: merging BatchNorm with preceding convolutions to stabilize explanations and reduce implementation-dependent artifacts (Guillemot et al., 2020; Yeom et al., 2021).
+While effective for CNNs, these techniques do not address the core propagation rules for bilinear and softmax layers in Transformers, which rely on LayerNorm instead of BatchNorm.
+Perspectives on Bilinear Layers.
+Bilinear layers, a core component of attention, have been studied from both axiomatic and mechanistic perspectives.
+From an axiomatic standpoint, recent theoretical results show that no attribution method assigning relevance to individual features can faithfully explain polynomial functions with correlated inputs, motivating group-based attributions in bilinear settings (You et al., 2025a).
+Mechanistic interpretability work treats bilinear operations as the structural backbone of “attention circuits,” enabling reverse-engineering of model computations (Elhage et al., 2021; Nanda et al., 2023).
+Bilinear layers have also been shown to admit linear tensor decompositions that expose pairwise interactions, making them mathematically tractable for analysis (Sharkey, 2023).
+By contrast, our work focuses on implementation invariance, formally proving that LRP’s propagation rules for bilinear layers violate this axiom even in simplified settings.
+Evaluating Explanations.
+Evaluating explanations involves multiple desiderata that capture different aspects of explanatory quality, since no single metric suffices (Jacovi et al., 2021; Atanasova et al., 2023).
+Key desiderata include faithfulness, stability and consistency, structural properties, and expert alignment.
+Faithfulness assesses how well explanations reflect the model’s behavior. Standard approaches include sanity checks (Adebayo et al., 2018), retraining-based benchmarks (Hooker et al., 2018), and post-hoc metrics such as Leave-One-Out (LOO) and insertion/deletion curves (Lundberg and Lee, 2017; Petsiuk et al., 2018; Samek et al., 2017; Atanasova et al., 2023; Feng et al., 2018).
+Stability assesses the robustness of explanations to perturbations in explanations or inputs (Slack et al., 2021; Xue et al., 2023; Kim et al., 2024; Jin et al., 2025b; You et al., 2025b).
+Structural properties, such as contiguity or sparsity, evaluate whether explanations form coherent and interpretable patterns rather than fragmented noise (Kim et al., 2024; You et al., 2025a).
+Beyond these, other work has proposed causal or environment-invariant criteria for explanations, aiming to identify rationales that remain predictive across different environments (Chang et al., 2020).
+Expert alignment measures agreement with human or domain-expert expectations (Doshi-Velez and Kim, 2017; Jin et al., 2025a; Havaldar et al., 2025; Lage et al., 2019; Nguyen, 2018).
+In this work, we focus on efficiently approximating LOO and complement it with standard perturbation-based metrics.
+6 Conclusion
+We study when LRP-style attributions align with Leave-One-Out (LOO) in Transformers and identify two key mismatches:
+(1) bilinear rules in AttnLRP violate implementation invariance, and
+(2) softmax propagation introduces linearization errors.
+Empirically, bypassing softmax and propagating only through values, as in CP-LRP, yields better LOO alignment.
+A promising fix is to canonize larger attention blocks during relevance propagation,
+reducing both bilinear implementation variance and softmax linearization errors—analogous to merging BatchNorm with preceding layers in CNNs.
+Such block-wise propagation may offer a more faithful approximation to LOO and guide future work on efficient, theoretically grounded attribution methods.
+Limitations
+This study is limited to a toy analytic example, BERT, and a simple linear attention network; generalization to other attention-based architectures remains to be explored. Our analysis focuses on attention layers under a specific set of LRP design choices, and does not exhaustively compare alternative propagation rules or gradient-based attribution methods. Our LOO reference is based on masking-based removal, which may induce distribution shift.
+Evaluation primarily relies on Pearson correlation with LOO and perturbation-based metrics, though other evaluation metrics exist.
+Finally, while we identify several failure modes of current LRP variants, we do not propose a remedy; developing axiomatically grounded and efficient alternatives is left for future work.
+Acknowledgments
+Part of this work was done when Weiqiu You and Siqi Zeng were visiting research students at Okinawa Institute of Science and Technology.
+WY was supported by a gift from AWS AI to Penn Engineering’s ASSET Center for Trustworthy AI. SZ and HZ were partly supported by an NSF IIS grant No. 2416897 and an NSF CAREER Award No. 2442290. HZ would like to thank the support of a Google Research Scholar Award and Nvidia Academic Grant Award. MY was partly supported by JSPS KAKENHI Grant Number 24K03004 and by JST ASPIRE JPMJAP2302. The views and conclusions expressed in this paper are solely those of the authors and do not necessarily reflect the official policies or positions of the supporting companies and government agencies.
+References
+Abnar and Zuidema (2020)
+Samira Abnar and Willem Zuidema. 2020.
+Quantifying attention flow in transformers.
+In Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 4190–4197, Online. Association for Computational Linguistics.
+Achtibat et al. (2024)
+Reduan Achtibat, Sayed Mohammad Vakilzadeh Hatefi, Maximilian Dreyer, Aakriti Jain, Thomas Wiegand, Sebastian Lapuschkin, and Wojciech Samek. 2024.
+AttnLRP: Attention-aware layer-wise relevance propagation for transformers.
+In Proceedings of the 41st International Conference on Machine Learning, volume 235 of Proceedings of Machine Learning Research, pages 135–168. PMLR.
+Adebayo et al. (2018)
+Julius Adebayo, Justin Gilmer, Michael Muelly, Ian Goodfellow, Moritz Hardt, and Been Kim. 2018.
+Sanity checks for saliency maps.
+In Advances in Neural Information Processing Systems, volume 31. Curran Associates, Inc.
+Ali et al. (2022)
+Ameen Ali, Thomas Schnake, Oliver Eberle, Grégoire Montavon, Klaus-Robert Müller, and Lior Wolf. 2022.
+XAI for transformers: Better explanations through conservative propagation.
+In Proceedings of the 39th International Conference on Machine Learning, volume 162 of Proceedings of Machine Learning Research, pages 435–451. PMLR.
+Ancona et al. (2018)
+Marco Ancona, Enea Ceolini, Cengiz Öztireli, and Markus Gross. 2018.
+Towards better understanding of gradient-based attribution methods for deep neural networks.
+In International Conference on Learning Representations.
+Atanasova et al. (2023)
+Pepa Atanasova, Oana-Maria Camburu, Christina Lioma, Thomas Lukasiewicz, Jakob Grue Simonsen, and Isabelle Augenstein. 2023.
+Faithfulness tests for natural language explanations.
+In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers), pages 283–294, Toronto, Canada. Association for Computational Linguistics.
+Bach et al. (2015)
+Sebastian Bach, Alexander Binder, Grégoire Montavon, Frederick Klauschen, Klaus-Robert Müller, and Wojciech Samek. 2015.
+On pixel-wise explanations for non-linear classifier decisions by layer-wise relevance propagation.
+PloS one, 10(7):e0130140.
+Chang et al. (2020)
+Shiyu Chang, Yang Zhang, Mo Yu, and Tommi Jaakkola. 2020.
+Invariant rationalization.
+In Proceedings of the 37th International Conference on Machine Learning, volume 119 of Proceedings of Machine Learning Research, pages 1448–1458. PMLR.
+Covert et al. (2021)
+Ian Covert, Scott Lundberg, and Su-In Lee. 2021.
+Explaining by removing: A unified framework for model explanation.
+Journal of Machine Learning Research, 22(209):1–90.
+Devlin et al. (2019)
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019.
+BERT: Pre-training of deep bidirectional transformers for language understanding.
+In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers), pages 4171–4186, Minneapolis, Minnesota. Association for Computational Linguistics.
+Doshi-Velez and Kim (2017)
+Finale Doshi-Velez and Been Kim. 2017.
+Towards a rigorous science of interpretable machine learning.
+Preprint, arXiv:1702.08608.
+Eberle et al. (2022)
+Oliver Eberle, Jochen Buttner, Florian Krautli, Klaus-Robert Muller, Matteo Valleriani, and Gregoire Montavon. 2022.
+Building and Interpreting Deep Similarity Models .
+IEEE Transactions on Pattern Analysis & Machine Intelligence, 44(03):1149–1161.
+Elhage et al. (2021)
+Nelson Elhage, Neel Nanda, Catherine Olsson, Tom Henighan, Nicholas Joseph, Ben Mann, Amanda Askell, Yuntao Bai, Anna Chen, Tom Conerly, Nova DasSarma, Dawn Drain, Deep Ganguli, Zac Hatfield-Dodds, Danny Hernandez, Andy Jones, Jackson Kernion, Liane Lovitt, Kamal Ndousse, and 6 others. 2021.
+A mathematical framework for transformer circuits.
+Transformer Circuits Thread.
+Feng et al. (2018)
+Shi Feng, Eric Wallace, Alvin Grissom II, Mohit Iyyer, Pedro Rodriguez, and Jordan Boyd-Graber. 2018.
+Pathologies of neural models make interpretations difficult.
+In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, pages 3719–3728, Brussels, Belgium. Association for Computational Linguistics.
+Guillemot et al. (2020)
+Mathilde Guillemot, Catherine Heusele, Rodolphe Korichi, Sylvianne Schnebert, and Liming Chen. 2020.
+Breaking batch normalization for better explainability of deep neural networks through layer-wise relevance propagation.
+Preprint, arXiv:2002.11018.
+Hameed et al. (2023)
+Mohamed Saif Hameed, Simon Laplante, Caterina Masino, Muhammad Khalid, Haochi Zhang, Sergey Protserov, Jaryd Hunter, Pouria Mashouri, Andras Fecso, Michael Brudno, and Amin Madani. 2023.
+What is the educational value and clinical utility of artifcial intelligence for intraoperative and postoperative video analysis? a survey of surgeons and trainees.
+Surgical Endoscopy, 37.
+Havaldar et al. (2025)
+Shreya Havaldar, Helen Jin, Chaehyeon Kim, Anton Xue, Weiqiu You, Gary E. Weissman, Rajat Deo, Sameed Khatana, Helen Qu, Marco Gatti, Daniel A. Hashimoto, Amin Madani, Masao Sako, Bhuvnesh Jain, Lyle Ungar, and Eric Wong. 2025.
+T-fix: Text-based explanations with features interpretable to experts.
+Hooker et al. (2018)
+Sara Hooker, D. Erhan, Pieter-Jan Kindermans, and Been Kim. 2018.
+A benchmark for interpretability methods in deep neural networks.
+In Neural Information Processing Systems.
+Jacovi et al. (2021)
+Alon Jacovi, Ana Marasović, Tim Miller, and Yoav Goldberg. 2021.
+Formalizing trust in artificial intelligence: Prerequisites, causes and goals of human trust in ai.
+In Proceedings of the 2021 ACM Conference on Fairness, Accountability, and Transparency, FAccT ’21, page 624–635, New York, NY, USA. Association for Computing Machinery.
+Jain and Wallace (2019)
+Sarthak Jain and Byron C. Wallace. 2019.
+Attention is not Explanation.
+In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers), pages 3543–3556, Minneapolis, Minnesota. Association for Computational Linguistics.
+Jin et al. (2025a)
+Helen Jin, Shreya Havaldar, Chaehyeon Kim, Anton Xue, Weiqiu You, Helen Qu, Marco Gatti, Daniel A Hashimoto, Bhuvnesh Jain, Amin Madani, Masao Sako, Lyle Ungar, and Eric Wong. 2025a.
+The FIX benchmark: Extracting features interpretable to experts.
+Journal of Data-centric Machine Learning Research.
+Jin et al. (2025b)
+Helen Jin, Anton Xue, Weiqiu You, Surbhi Goel, and Eric Wong. 2025b.
+Probabilistic stability guarantees for feature attributions.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems.
+Katharopoulos et al. (2020)
+Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret. 2020.
+Transformers are RNNs: Fast autoregressive transformers with linear attention.
+In Proceedings of the 37th International Conference on Machine Learning, volume 119 of Proceedings of Machine Learning Research, pages 5156–5165. PMLR.
+Kim et al. (2024)
+Chaehyeon Kim, Weiqiu You, Shreya Havaldar, and Eric Wong. 2024.
+Evaluating groups of features via consistency, contiguity, and stability.
+In The Second Tiny Papers Track at ICLR 2024.
+Kindermans et al. (2022)
+Pieter-Jan Kindermans, Sara Hooker, Julius Adebayo, Maximilian Alber, Kristof T. Schütt, Sven Dähne, Dumitru Erhan, and Been Kim. 2022.
+The (Un)reliability of Saliency Methods, page 267–280.
+Springer-Verlag, Berlin, Heidelberg.
+Lage et al. (2019)
+Isaac Lage, Emily Chen, Jeffrey He, Menaka Narayanan, Been Kim, Samuel J. Gershman, and Finale Doshi-Velez. 2019.
+Human evaluation of models built for interpretability.
+Proceedings of the AAAI Conference on Human Computation and Crowdsourcing, 7(1):59–67.
+LeCun (1998)
+Yann LeCun. 1998.
+The mnist database of handwritten digits.
+http://yann. lecun. com/exdb/mnist/.
+Lundberg and Lee (2017)
+Scott M. Lundberg and Su-In Lee. 2017.
+A unified approach to interpreting model predictions.
+In Proceedings of the 31st International Conference on Neural Information Processing Systems, NIPS’17, page 4768–4777, Red Hook, NY, USA. Curran Associates Inc.
+Maas et al. (2011)
+Andrew L. Maas, Raymond E. Daly, Peter T. Pham, Dan Huang, Andrew Y. Ng, and Christopher Potts. 2011.
+Learning word vectors for sentiment analysis.
+In Proceedings of the 49th Annual Meeting of the Association for Computational Linguistics: Human Language Technologies, pages 142–150, Portland, Oregon, USA. Association for Computational Linguistics.
+Montavon et al. (2017)
+Grégoire Montavon, Sebastian Lapuschkin, Alexander Binder, Wojciech Samek, and Klaus-Robert Müller. 2017.
+Explaining nonlinear classification decisions with deep taylor decomposition.
+Pattern Recognition, 65:211–222.
+Montavon et al. (2018)
+Grégoire Montavon, Wojciech Samek, and Klaus-Robert Müller. 2018.
+Methods for interpreting and understanding deep neural networks.
+Digital Signal Processing, 73:1–15.
+Nanda et al. (2023)
+Neel Nanda, Lawrence Chan, Tom Lieberum, Jess Smith, and Jacob Steinhardt. 2023.
+Progress measures for grokking via mechanistic interpretability.
+In The Eleventh International Conference on Learning Representations.
+Nguyen (2018)
+Dong Nguyen. 2018.
+Comparing automatic and human evaluation of local explanations for text classification.
+In Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long Papers), pages 1069–1078, New Orleans, Louisiana. Association for Computational Linguistics.
+Petsiuk et al. (2018)
+Vitali Petsiuk, Abir Das, and Kate Saenko. 2018.
+Rise: Randomized input sampling for explanation of black-box models.
+In British Machine Vision Conference.
+Samek et al. (2017)
+Wojciech Samek, Alexander Binder, Gregoire Montavon, Sebastian Lapuschkin, and Klaus-Robert Müller. 2017.
+Evaluating the visualization of what a deep neural network has learned.
+IEEE Transactions on Neural Networks and Learning Systems, 28:2660–2673.
+Sharkey (2023)
+Lee Sharkey. 2023.
+A technical note on bilinear layers for interpretability.
+Preprint, arXiv:2305.03452.
+Shrikumar et al. (2017)
+Avanti Shrikumar, Peyton Greenside, and Anshul Kundaje. 2017.
+Learning important features through propagating activation differences.
+In Proceedings of the 34th International Conference on Machine Learning - Volume 70, ICML’17, page 3145–3153. JMLR.org.
+Slack et al. (2021)
+Dylan Z Slack, Sophie Hilgard, Himabindu Lakkaraju, and Sameer Singh. 2021.
+Counterfactual explanations can be manipulated.
+In Advances in Neural Information Processing Systems.
+Socher et al. (2013)
+Richard Socher, Alex Perelygin, Jean Wu, Jason Chuang, Christopher D. Manning, Andrew Ng, and Christopher Potts. 2013.
+Recursive deep models for semantic compositionality over a sentiment treebank.
+In Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing, pages 1631–1642, Seattle, Washington, USA. Association for Computational Linguistics.
+Sundararajan et al. (2017)
+Mukund Sundararajan, Ankur Taly, and Qiqi Yan. 2017.
+Axiomatic attribution for deep networks.
+In Proceedings of the 34th International Conference on Machine Learning - Volume 70, ICML’17, page 3319–3328. JMLR.org.
+Tjoa and Guan (2019)
+Erico Tjoa and Cuntai Guan. 2019.
+A survey on explainable artificial intelligence (XAI): towards medical XAI.
+CoRR, abs/1907.07374.
+Vaswani et al. (2017)
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Ł ukasz Kaiser, and Illia Polosukhin. 2017.
+Attention is all you need.
+In Advances in Neural Information Processing Systems, volume 30. Curran Associates, Inc.
+Wexler (2017)
+Rebecca Wexler. 2017.
+When a computer program keeps you in jail: How computers are harming criminal justice.
+The New York Times.
+Opinion.
+Wiegreffe and Pinter (2019)
+Sarah Wiegreffe and Yuval Pinter. 2019.
+Attention is not not explanation.
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pages 11–20, Hong Kong, China. Association for Computational Linguistics.
+Xue et al. (2023)
+Anton Xue, Rajeev Alur, and Eric Wong. 2023.
+Stability guarantees for feature attributions with multiplicative smoothing.
+In Thirty-seventh Conference on Neural Information Processing Systems.
+Yeom et al. (2021)
+Seul-Ki Yeom, Philipp Seegerer, Sebastian Lapuschkin, Alexander Binder, Simon Wiedemann, Klaus-Robert Müller, and Wojciech Samek. 2021.
+Pruning by explaining: A novel criterion for deep neural network pruning.
+Pattern Recognition, 115:107899.
+You et al. (2025a)
+Weiqiu You, Helen Qu, Marco Gatti, Bhuvnesh Jain, and Eric Wong. 2025a.
+Sum-of-parts: Self-attributing neural networks with end-to-end learning of feature groups.
+In Forty-second International Conference on Machine Learning.
+You et al. (2020)
+Weiqiu You, Simeng Sun, and Mohit Iyyer. 2020.
+Hard-coded Gaussian attention for neural machine translation.
+In Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, pages 7689–7700, Online. Association for Computational Linguistics.
+You et al. (2025b)
+Weiqiu You, Anton Xue, Shreya Havaldar, Delip Rao, Helen Jin, Chris Callison-Burch, and Eric Wong. 2025b.
+Probabilistic soundness guarantees in LLM reasoning chains.
+In The 2025 Conference on Empirical Methods in Natural Language Processing.
+Zeng et al. (2016)
+Jiaming Zeng, Berk Ustun, and Cynthia Rudin. 2016.
+Interpretable classification models for recidivism prediction.
+Journal of the Royal Statistical Society Series A: Statistics in Society, 180(3):689–722.
+Table A3: Layer-wise effects for bypassing softmax in backpropagation on attribution metrics (SST top, IMDB bottom). Metrics: LOO rr, LeRF, MoRF, and Δ=LeRF−MoRF\Delta=\text{LeRF}-\text{MoRF}. L:3L_{:3} means removing layers 1-3. L7:L_{7:} means removing layers 7-12.
+Front →\rightarrow Back
+Back →\rightarrow Front
+Single Layer
+Rm Layers
+LOO rr
+LeRF
+MoRF
+Δ\Delta
+Rm Layers
+LOO rr
+LeRF
+MoRF
+Δ\Delta
+Rm Layer
+LOO rr
+LeRF
+MoRF
+Δ\Delta
+SST
+L:1L_{:1}
+0.22
+0.92
+0.05
+0.87
+L12:L_{12:}
+0.22
+0.89
+-0.02
+0.91
+L1L_{1}
+0.22
+0.92
+0.05
+0.87
+L:2L_{:2}
+0.23
+0.89
+0.05
+0.84
+L11:L_{11:}
+0.26
+0.91
+0.05
+0.86
+L2L_{2}
+0.23
+0.89
+0.05
+0.84
+L:3L_{:3}
+0.23
+0.89
+-0.01
+0.90
+L10:L_{10:}
+0.38
+0.90
+0.04
+0.86
+L3L_{3}
+0.22
+0.88
+0.04
+0.84
+L:4L_{:4}
+0.24
+0.90
+0.05
+0.84
+L9:L_{9:}
+0.47
+0.97
+0.10
+0.87
+L4L_{4}
+0.23
+0.84
+0.06
+0.78
+L:5L_{:5}
+0.26
+0.88
+-0.02
+0.90
+L8:L_{8:}
+0.53
+0.93
+0.18
+0.75
+L5L_{5}
+0.24
+0.91
+0.05
+0.86
+L:6L_{:6}
+0.29
+0.88
+0.06
+0.82
+L7:L_{7:}
+0.55
+0.97
+0.20
+0.77
+L6L_{6}
+0.24
+0.90
+0.12
+0.78
+L:7L_{:7}
+0.33
+0.82
+0.02
+0.81
+L6:L_{6:}
+0.54
+0.96
+0.18
+0.78
+L7L_{7}
+0.27
+0.89
+0.15
+0.74
+L:8L_{:8}
+0.36
+0.82
+0.14
+0.68
+L5:L_{5:}
+0.54
+1.06
+0.17
+0.88
+L8L_{8}
+0.25
+0.96
+0.05
+0.91
+L:9L_{:9}
+0.41
+0.91
+0.14
+0.77
+L4:L_{4:}
+0.53
+1.01
+0.18
+0.83
+L9L_{9}
+0.28
+0.93
+0.09
+0.83
+L:10L_{:10}
+0.50
+0.85
+0.14
+0.72
+L3:L_{3:}
+0.53
+1.11
+0.16
+0.95
+L10L_{10}
+0.32
+0.93
+-0.01
+0.93
+L:11L_{:11}
+0.52
+0.94
+0.18
+0.77
+L2:L_{2:}
+0.52
+1.12
+0.13
+0.98
+L11L_{11}
+0.26
+0.91
+0.04
+0.87
+L:12L_{:12}
+0.52
+1.00
+0.22
+0.79
+L1:L_{1:}
+0.52
+1.00
+0.22
+0.79
+L12L_{12}
+0.22
+0.89
+-0.02
+0.91
+IMDB
+L:1L_{:1}
+0.25
+3.72
+-2.66
+6.38
+L12:L_{12:}
+0.23
+3.72
+-2.81
+6.53
+L1L_{1}
+0.25
+3.72
+-2.66
+6.38
+L:2L_{:2}
+0.25
+3.72
+-2.69
+6.41
+L11:L_{11:}
+0.20
+3.72
+-2.95
+6.67
+L2L_{2}
+0.25
+3.72
+-2.68
+6.40
+L:3L_{:3}
+0.25
+3.73
+-2.68
+6.40
+L10:L_{10:}
+0.21
+3.72
+-3.00
+6.72
+L3L_{3}
+0.25
+3.72
+-2.64
+6.37
+L:4L_{:4}
+0.26
+3.73
+-2.65
+6.38
+L9:L_{9:}
+0.25
+3.73
+-3.02
+6.75
+L4L_{4}
+0.26
+3.72
+-2.63
+6.35
+L:5L_{:5}
+0.28
+3.73
+-2.67
+6.39
+L8:L_{8:}
+0.25
+3.72
+-3.02
+6.74
+L5L_{5}
+0.26
+3.72
+-2.65
+6.37
+L:6L_{:6}
+0.29
+3.72
+-2.65
+6.37
+L7:L_{7:}
+0.26
+3.72
+-3.01
+6.73
+L6L_{6}
+0.26
+3.72
+-2.63
+6.35
+L:7L_{:7}
+0.30
+3.73
+-2.64
+6.37
+L6:L_{6:}
+0.27
+3.73
+-3.00
+6.73
+L7L_{7}
+0.27
+3.72
+-2.64
+6.36
+L:8L_{:8}
+0.30
+3.72
+-2.62
+6.33
+L5:L_{5:}
+0.27
+3.73
+-3.01
+6.74
+L8L_{8}
+0.26
+3.72
+-2.63
+6.34
+L:9L_{:9}
+0.30
+3.73
+-2.69
+6.41
+L4:L_{4:}
+0.27
+3.73
+-3.00
+6.74
+L9L_{9}
+0.28
+3.72
+-2.71
+6.43
+L:10L_{:10}
+0.29
+3.74
+-2.81
+6.55
+L3:L_{3:}
+0.27
+3.73
+-3.01
+6.74
+L10L_{10}
+0.25
+3.73
+-2.77
+6.49
+L:11L_{:11}
+0.28
+3.74
+-2.94
+6.68
+L2:L_{2:}
+0.26
+3.74
+-3.02
+6.76
+L11L_{11}
+0.21
+3.72
+-2.82
+6.55
+L:12L_{:12}
+0.26
+3.73
+-3.02
+6.75
+L1:L_{1:}
+0.26
+3.73
+-3.02
+6.75
+L12L_{12}
+0.23
+3.72
+-2.81
+6.53
+Appendix A Comparison with Integrated Gradients
+Integrated Gradients (IG) is an axiomatically-sound method that satisfies implementation invariance by design (Sundararajan et al., 2017). It computes feature attributions by integrating gradients along a path from a baseline input x′x^{\prime} to the actual input xx:
+IGi​(x)=(xi−xi′)​∫01∂f⁡(x′+α⁡(x−x′))∂xi​𝑑α\mathrm{IG}_{i}(x)=(x_{i}-x^{\prime}_{i})\int_{0}^{1}\frac{\partial f(x^{\prime}+\alpha(x-x^{\prime}))}{\partial x_{i}}\,d\alpha
+Because IG’s attribution depends only on the function ff and not the network’s specific architecture, it would produce identical explanations for both the scalar and attention counterexamples discussed in Section 3, regardless of how the operations are grouped. While IG is computationally more intensive, this contrast highlights a fundamental trade-off: propagation-based methods like LRP offer efficiency but can fail to preserve fundamental axioms.
+Appendix B Experiment Details
+B.1 Hyperparameters
+B.1.1 MNIST Linear Attention Experiments
+For MNIST, we train simple models QKVLeftAssoc_Seq_NoSoftmax and QKVRightAssoc_Seq_NoSoftmax, which are linear attention networks without softmax normalization. Input images are resized from 28×2828\times 28 to 14×1414\times 14 and flattened into sequences of length 196196. Both models use an embedding dimension of 3232 and predict over 1010 classes. We train each model for 5 epochs using Adam (learning rate 0.0010.001, β1=0.9\beta_{1}=0.9, β2=0.999\beta_{2}=0.999, ϵ=10−8\epsilon=10^{-8}) with cross-entropy loss.
+For LOO, we remove single pixels on the 14×1414\times 14 resized images by setting them to zero and measuring the change in the predicted class logit (batch size 8 for pixel sweeps). Attribution is computed with LRP-ε\varepsilon (ε=10−6\varepsilon=10^{-6}), and attributions are normalized to sum to 1 before computing Pearson correlation with LOO, complemented by MoRF/LeRF perturbation curves.
+B.1.2 Text Experiments
+For text experiments, we use pretrained BERT-base models from Hugging Face. For SST, we use textattack/bert-base-uncased-SST-2, and fabriceyhc/bert-base-uncased-imdb for IMDB. Both models are standard BERT-base architectures fine-tuned for sentiment classification.
+LOO granularity.
+For both SST and IMDB, LOO is computed at the single-token level by masking one token at a time and measuring the change in the predicted class logit.
+MoRF/LeRF granularity.
+For IMDB only, MoRF and LeRF perturbation curves are computed over non-overlapping contiguous 16-token chunks to make perturbation more computationally tractable on long sequences. For SST, MoRF and LeRF use single-token removals. This grouping affects only the perturbation curves; all LOO–based correlations use single-token LOO.
+B.2 Full Results
+Table A3 provides the full numerical results for our layer-wise softmax ablation study, corresponding to the data visualized in Figure 2 in the main text.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

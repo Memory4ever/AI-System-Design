@@ -1,0 +1,940 @@
+Warning: truncated output (original token count: 28013)
+Total output lines: 1171
+
+https://arxiv.org/html/2610.28770v1
+ReAPO: Retry-Aware Policy Optimization for Efficient Exploration in LLM Reasoning
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Preliminaries
+GRPO.
+Stochastic Shortest Paths.
+3 ReAPO: Retry-Aware Policy Optimization
+3.1 Verifier-Conditioned Exploration
+3.2 Assigning Credit with Multiple attempts
+3.3 Implementing ReAPO
+4 Experiments
+4.1 Experimental Setup
+Models and training data.
+Evaluation.
+Metrics.
+4.2 ReAPO Efficiently Outperforms GRPO
+4.3 Gains Persist at Larger Scales
+4.4 Attempt-Level Credit and Conditional Retries Matter
+Additional baselines.
+Increasing the reattempt budget.
+Sensitivity to prompt and verifier conditioning.
+4.5 Serial Sampling Encourages Exploration
+5 Discussion and Related Work
+Related work.
+Limitations and future work.
+References
+A Related Work
+Knowledge distillation.
+Self-distillation and self-revision.
+Stochastic shortest paths.
+Multi-attempt reinforcement learning.
+B Discussion and Future Work
+Normalization across attempts.
+Diminishing returns from additional attempts.
+Token allocation and truncation.
+Verifier reliability and task coverage.
+Compatibility with other policy-optimization methods.
+C Experimental Details
+C.1 Qwen3-0.6B Experiments
+C.2 Qwen3-1.7B-Base and Qwen3-4B-Base Experiments
+C.3 Ablation Setup
+Number of retry attempts.
+Retry prompt.
+Attempt-level credit assignment.
+D Additional Results
+D.1 Per-Benchmark Training Curves
+D.2 Solution Coverage
+D.3 Token-Normalized Performance
+D.4 Training Dynamics
+D.5 Ablations on Qwen3-1.7B-Base
+D.6 Sequential versus Parallel Sampling
+E Formal Derivation of ReAPO
+E.1 Derivation of the Policy Gradient Decomposition
+E.2 The Effect of Truncation
+E.3 The Effect of Advantage Normalization
+License: CC BY 4.0
+arXiv:2610.28770v1 [cs.LG] 20 Oct 2026
+ReAPO: Retry-Aware Policy Optimization for Efficient Exploration in LLM Reasoning
+Nghi Dao
+† † thanks: nmd2167@columbia.edu
+Affiliation: Columbia University
+Calder Morton-Ferguson
+† † thanks: calder.morton-ferguson@yale.edu
+Affiliation: Yale University
+Noah Golowich
+† † thanks: nzg@cs.utexas.edu
+Affiliation: UT Austin
+Adam Block
+† † thanks: adam.block@columbia.edu
+Affiliation: Columbia University
+Abstract
+RLVR improves language-model reasoning, but commonly relies on independent stochastic rollouts for exploration, which can repeatedly sample similar failed strategies. Prior work has seen success with approaches that guide exploration by introducing dependence into the sampling process by including incorrect solutions in the context for subsequent attempts. Still, these methods introduce the additional question of how to assign credit to each attempt. We propose to view the credit assignment through the lens of Stochastic Shortest Paths , a framework in classical reinforcement learning that seeks to minimize the expected cumulative cost to reach a terminal state (in our case, a verified successful response). We show that, under suitable simplifying assumptions, this perspective naturally leads to a simple modification to GRPO, which we call Retry-Aware Policy Optimization (ReAPO) . ReAPO allocates additional generation to failed trajectories, allowing successful retries to be reinforced without rewarding preceding failures, and assigns credit in a theoretically principled way to each attempt.
+Across Qwen3 and OLMo-2 models from 0.6B to 4B and eight mathematical and scientific reasoning benchmarks, ReAPO improves first-attempt performance over GRPO as well as natural recent baseline algorithms, while additional ablations demonstrate the utility of both serial sampling and ReAPO’s credit assignment. On Qwen3-0.6B, ReAPO also outperforms GRPO with twice the group size or twice the training steps, reaching their peak accuracy with 39% and 31% fewer generated tokens, respectively. Taken together, our results suggest that ReAPO is a simple yet effective approach for improving LM reasoning performance through improved exploration and retry-aware credit assignment. 1 1
+1
+All code to reproduce our results can be found at https://github.com/Nghi-Dao/ReAPO .
+1 Introduction
+Reinforcement learning with verifiable rewards (RLVR) has emerged as an effective approach for improving the reasoning capabilities of large language models (LLMs) without requiring human-written reasoning traces
+( Shao et al., 2024 ; Guo et al., 2025 ; Wen et al., 2025 ; Lambert et al., 2025 ; Hu et al., 2025 ; Zeng et al., 2025 ) .
+Given a problem with an easily verifiable answer (e.g., formalized mathematics or compilable code), RLVR samples multiple responses from a policy, evaluates each response, and reinforces responses that receive higher rewards. Most contemporary approaches to RLVR are based on the seminal algorithm Group Relative Policy Optimization (GRPO), which estimates the quality of individual responses by comparing verified rewards within the group of sampled responses.
+Despite the success of GRPO, the algorithm is limited by its reliance on policy stochasticity to explore semantically distinct reasoning trajectories. Indeed, like many policy gradient methods, GRPO does not explicitly encourage exploration, the process by which a model actively seeks out novel reasoning strategies; moreover, this deficiency has been noted in prior work that questions the ability of RL methods to drive genuine reasoning improvements beyond the capabilities of the base model ( Yue et al., 2025 ; Karan and Du, 2025 ; Huang et al., 2025b ; Chen et al., 2026 ; Wen et al., 2025 ; Huang et al., 2025a ) .
+Prompt LLM Attempt 1 Attempt 2 Rollout 1: Rollout 2: Rollout 3: y 1 , 1 y_{1,1} × \times y 1 , 2 y_{1,2} ✓ \checkmark y 2 , 1 y_{2,1} ✓ \checkmark y 3 , 1 y_{3,1} × \times y 3 , 2 y_{3,2} × \times
+x retry = x_{\mathrm{retry}}={} “Your answer is wrong. Reflect on your previous answer and try something else.”
+Normalize attempt rewards A ^ i , j = r i , j − μ 𝒜 σ 𝒜 + ε \displaystyle\hat{A}_{i,j}=\frac{r_{i,j}-\mu_{\mathcal{A}}}{\sigma_{\mathcal{A}}+\varepsilon} Assign A ^ i , j \hat{A}_{i,j} to response y i , j y_{i,j} ∀ t ∈ y i , j : A t = A ^ i , j \displaystyle\forall\,t\in y_{i,j}:\quad A_{t}=\hat{A}_{i,j} GRPO objective max θ ⁡ ℒ GRPO ​ ( θ , A ^ i , j ) \displaystyle\max_{\theta}\;\mathcal{L}_{\mathrm{GRPO}}(\theta;\hat{A}_{i,j}) Update policy
+Figure 1 :
+Overview of ReAPO. Each rollout begins with an independent response; failed responses receive a verifier-conditioned retry, while successful rollouts terminate. Advantages are computed for each attempt separately, ensuring that credit is assigned appropriately to both initial and retry attempts, before applying a policy update with the GRPO loss.
+Critically, GRPO relies on independently sampled rollouts to explore different reasoning trajectories, which can result in repeated exploration of the same incorrect paths and inefficient use of computational resources. Indeed, if a model is unlikely to solve a given problem, it may well be the case that independent rollouts make the same mistake again and again, leading to no useful training signal for the model to learn from its mistakes and wasting valuable computational resources in generating redundant and uninformative tokens.
+Recent work has demonstrated that introducing dependence into the generation process can help improve coverage and potentially improve RLVR ( Snell et al., 2024 ; Madaan et al., 2023 ; Sprague et al., 2026 ; Kumar et al., 2024 ; Li et al., 2026 ) , but the best way to do so remains unclear. We thus ask: How can we introduce structured dependence in the sampling process to improve exploration, and how should we assign credit to each attempt?
+In this work, we propose Retry-Aware Policy Optimization (ReAPO) ( Algorithm 1 ), a simple yet effective modification to GRPO that explicitly encourages exploration by allowing the model to generate retries after failed attempts and assigning credit to each attempt in a theoretically principled manner. ReAPO is compatible with any verifier-based reward function and does not require additional supervision or auxiliary objectives; moreover, ReAPO can be easily integrated into existing training pipelines, requiring minimal changes to existing code.
+In more detail, our motivating question breaks into two parts whose combination yields ReAPO: (i) introducing beneficial dependence into generation and (ii) correctly assigning credit to individual attempts. Prior work has demonstrated the efficacy of keeping information in context to encourage language models to reflect on prior mistakes and correct themselves ( Kumar et al., 2024 ; He et al., 2026 ; Bensal et al., 2025 ; Guo et al., 2025 ) . We build on this idea and propose failure-conditioned repeated attempts : given a prompt and response, we grade the answer and, if the answer is incorrect, append an instruction to the model to try again. This process can then be repeated either until a correct answer is generated or until some maximum budget of attempts (or tokens) is reached. Critically, unlike GRPO, where each attempt is fully independent, future attempts can learn from prior incorrect solutions, thereby achieving better coverage than mere independent sampling ( Snell et al., 2024 ) . While taking this idea to the extreme would entirely replace the parallel sampling of GRPO with serial sampling, in practice, the system’s benefits of parallelization lead us to instead rollout multiple sequences of attempts independently, thereby introducing dependence within but not among distinct rollouts.
+Failure-conditioning has additional benefits beyond exploration: serial sampling
+can be viewed as a way to dynamically assign additional compute (measured in generated tokens) to more difficult problems where early attempts are less likely to achieve success. Differentially allocating compute based on problem difficulty has been observed to lead to significant improvements in token and wall-clock efficiency ( Yu et al., 2025 ; Xiong et al., 2025 ; Microsoft AI Team, 2024 ) , and is likely partially responsible for ReAPO’s efficiency.
+Given a group of sequences of attempts as described above, it is not obvious how to assign credit to a given sub-attempt within a larger sequence. We propose to minimize the expected number of incorrect attempts before a correct solution is provided , which is an instance of a stochastic shortest path problem from the classical RL literature ( Bertsekas and Tsitsiklis, 1991 ) . Under natural simplifying assumptions, the resulting policy gradient computes response-level advantages , i.e., we treat each attempt within a sequence independently and assign each attempt’s advantage only to the tokens relevant to that attempt, thereby allowing different attempts within a single sequence to receive different advantages. This approach encourages the model to produce correct solutions quickly while at the same time allowing the RL process to retain the benefits of conditioned sampling. The resulting algorithm is represented visually in Figure 1 , demonstrating how failed responses are incorporated into context and how correct and incorrect responses are scored.
+We now summarize the remainder of the paper. In Section 2 we introduce the prerequisite notions to our derivation of ReAPO. Then, in Section 3 , we formally derive ReAPO’s objective under natural simplifying assumptions on the generation process. In Section 4 , we investigate ReAPO empirically across four models from two families (0.6B to 4B parameters) and eight mathematical and scientific reasoning benchmarks, comparing against GRPO, compute-matched GRPO variants and other recent baselines, and ablating each component. We briefly discuss related work in Section 5 , and defer further discussion, additional experiments and all proofs to the appendix.
+2 Preliminaries
+We now provide a brief overview of RLVR as well as the popular Group Relative Policy Optimization (GRPO) algorithm.
+As is common in RL for language models, we consider a language model to be a policy π θ \pi_{\theta} that maps a prompt x x to a distribution over responses y y . In this work, we always assume that the model is autoregressive, i.e., the response is generated one token at a time so that for each time step t t , the model produces a token y t ∼ π θ ( ⋅ | x , y < t ) y_{t}\sim\pi_{\theta}(\cdot|x,y_{<t}) conditioned on the prompt and all previously generated tokens. To train the model, we assume that there is a verifier r r that can determine whether a given response y y is correct for a given prompt x x , and our goal is to optimize the model to maximize the probability of generating correct responses.
+More precisely, we let 𝒟 = { x } \mathcal{D}=\{x\} be a dataset of problems x x . Given a problem x x , the model generates a response y ∼ π θ ( ⋅ | x ) y\sim\pi_{\theta}(\cdot|x) , and the verifier r r produces a binary reward r ⁡ ( x , y ) ∈ { 0 , 1 } r(x,y)\in\{0,1\} indicating whether the response is correct, with the goal of maximizing 𝔼 X ∼ 𝒟 𝔼 y ∼ π θ ( ⋅ | x ) [ r ( x , y ) ] \mathbb{E}_{X\sim\mathcal{D}}\mathbb{E}_{y\sim\pi_{\theta(\cdot|x)}}\left[r(x,y)\right] .
+GRPO.
+The most popular approach to RLVR is Group Relative Policy Optimization (GRPO) Shao et al. (2024) ; Guo et al. (2025) . For a given prompt x x , GRPO samples a group { y i } i = 1 G ∼ π θ old ( ⋅ ∣ x ) \{y_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\mathrm{old}}}(\cdot\mid x) of G G responses from the current policy and obtains rewards r i = r ⁡ ( x , y i ) r_{i}=r(x,y_{i}) for each response. The rewards are then centered and normalized within the group to produce the response-level advantages
+A ^ i = r i − μ r σ r + ε , μ r = 1 G ​ ∑ i = 1 G r i , σ r = 1 G ​ ∑ i = 1 G ( r i − μ r ) 2 , \displaystyle\hat{A}_{i}=\frac{r_{i}-\mu_{r}}{\sigma_{r}+\varepsilon},\qquad\mu_{r}=\frac{1}{G}\sum_{i=1}^{G}r_{i},\qquad\sigma_{r}=\sqrt{\frac{1}{G}\sum_{i=1}^{G}(r_{i}-\mu_{r})^{2}},
+(2)
+where ε > 0 \varepsilon>0 provides numerical stability.
+GRPO maximizes the PPO objective Schulman et al. (2017)
+𝒥 GRPO ​ ( θ ) = 𝔼 ⁡ [ 1 T ​ ∑ i = 1 G ∑ t = 1 | y i | ( min ⁡ { ρ i , t ​ ( θ ) ​ A ^ i , clip ⁡ ( ρ i , t ​ ( θ ) , 1 − ε , 1 + ε ) ​ A ^ i } − β ​ d KL i , t ​ ( θ ) ) ] , \displaystyle\mathcal{J}_{\mathrm{GRPO}}(\theta)=\mathbb{E}\left[\frac{1}{T}\sum_{i=1}^{G}\sum_{t=1}^{|y_{i}|}\left(\min\left\{\rho_{i,t}(\theta)\hat{A}_{i},\,\operatorname{clip}\left(\rho_{i,t}(\theta),1-\varepsilon,1+\varepsilon\right)\hat{A}_{i}\right\}-\beta d_{\mathrm{KL}}^{i,t}(\theta)\right)\right],
+(3)
+where ρ i , t ​ ( θ ) = π θ ​ ( y i , t ∣ x , y i , < t ) / π θ old ​ ( y i , t ∣ x , y i , < t ) \rho_{i,t}(\theta)=\nicefrac{{\pi_{\theta}(y_{i,t}\mid x,y_{i,<t})}}{{\pi_{\theta_{\mathrm{old}}}(y_{i,t}\mid x,y_{i,<t})}} for token y i , t y_{i,t} is the importance weight, T = ∑ i = 1 G | y i | T=\sum_{i=1}^{G}|y_{i}| is the total number of response tokens, clip ⁡ ( z , a , b ) = min ⁡ { max ⁡ { z , a } , b } \operatorname{clip}(z,a,b)=\min\{\max\{z,a\},b\} clips z z to the interval [ a , b ] [a,b] ,
+ε > 0 \varepsilon>0 is the clipping parameter, β ≥ 0 \beta\geq 0 is the KL-regularization coefficient, and d KL i , t ​ ( θ ) d_{\mathrm{KL}}^{i,t}(\theta) is the per-token KL divergence from the reference policy. Following recent work ( Yu et al., 2025 ; Tajwar et al., 2026 ; Hu et al., 2025 ) , we set β = 0 \beta=0 and therefore do not apply explicit reference-policy KL regularization in our experiments; moreover we always have θ = θ old \theta=\theta_{\mathrm{old}} .
+Stochastic Shortest Paths.
+SSP problems are a classical subfield of RL concerned with undiscounted MDPs whose objective is to reach a terminal state while minimizing cumulative cost ( Bertsekas and Tsitsiklis, 1991 ) . In the context of LLM reasoning, we conceptualize each ‘attempt’ as an action and the concatenation of the problem and previous attempts as a state, with the cumulative cost being the total number of attempts until a correct solution (the terminal state) is reached; for further details on classical SSPs, see Bertsekas and Tsitsiklis (1996) .
+Algorithm 1 Retry-Aware Policy Optimization (ReAPO)
+Require : Base model π θ \pi_{\theta} , dataset batch 𝒟 = { ( x , a ) } i = 1 N \mathcal{D}=\{(x,a)\}_{i=1}^{N} , verifier r ⁡ ( y , a ) r(y,a) , group size G G , max attempts K K , retry prompt P retry P_{\text{retry}} , and stabilizing value ε > 0 \varepsilon>0 .
+for ( x , a ) ∈ 𝒟 (x,a)\in\mathcal{D} do
+%% Multi-Attempt Group Rollout
+for g = 1 ​ … ​ G g=1\dots G do
+Initialize C ← [ x ] C\leftarrow[x]
+for k = 1 ​ … ​ K k=1\dots K do
+Sample y g , k ∼ π θ ( ⋅ ∣ C ) y_{g,k}\sim\pi_{\theta}(\cdot\mid C)
+Compute r g , k ← r ⁡ ( y g , k , a ) r_{g,k}\leftarrow r(y_{g,k},a)
+if r g , k = 1 r_{g,k}=1 or k = K k=K then
+k g ← k k_{g}\leftarrow k
+break
+Update context C ← C ∪ y g , k ∪ P retry C\leftarrow C\cup y_{g,k}\cup P_{\text{retry}}
+%% Multi-Attempt Advantage Estimation & Optimization
+Construct 𝒜 = { r g , k ∣ g ∈ 1 … G , k ∈ 1 … k g } \mathcal{A}=\{r_{g,k}\mid g\in 1\dots G,\,k\in 1\dots k_{g}\} , where:
+Compute mean μ 𝒜 \mu_{\mathcal{A}} and standard deviation σ 𝒜 \sigma_{\mathcal{A}}
+for r g , k ∈ 𝒜 r_{g,k}\in\mathcal{A} do
+A ^ g , k ← r g , k − μ 𝒜 σ 𝒜 + ε \hat{A}_{g,k}\leftarrow\frac{r_{g,k}-\mu_{\mathcal{A}}}{\sigma_{\mathcal{A}}+\varepsilon} (%% Compute relative advantage)
+Assign A ^ g , k \hat{A}_{g,k} uniformly to all tokens in the response y g , k y_{g,k}
+Update θ \theta by taking a gradient step in the direction of Equation ( 8 ).
+3 ReAPO: Retry-Aware Policy Optimization
+In this section we introduce our algorithm Retry-Aware Policy Optimization (ReAPO) , summarized in Algorithm 1 .
+ReAPO has two key components on top of the standard GRPO pipeline: (1) verifier-conditioned exploration , which allows the model to generate retries after failed attempts, and (2) attempt-level credit assignment , which correctly assigns credit to each attempt based on its relative performance within the group. We describe each component in detail below.
+3.1 Verifier-Conditioned Exploration
+In GRPO, each model rollout is sampled independently and thus can repeatedly explore the same (incorrect and useless) reasoning trajectories, wasting compute and failing to learn from its mistakes. Motivated by prior work ( Sprague et al., 2026 ; Kumar et al., 2024 ; Chung et al., 2025 ) , we instead propose verifier-conditioned exploration .
+More precisely, for each problem x x , ReAPO begins with the same initial group of G G rollouts as standard GRPO. Each rollout first generates an independent response y g , 1 y_{g,1} . If the verifier marks this response as correct, the rollout terminates. If it is incorrect , however, the response is appended to the context together with a retry prompt , that explicitly instructs the model to reconsider its previous answer and attempt a different reasoning strategy. Our ablations demonstrate that the exact wording of the retry prompt is not critical, and we use “ Your answer is wrong. Reflect on your previous answer and try something else. ” for most of our experiments.
+The model then generates a second response y g , 2 y_{g,2} conditioned on the problem, its previous response, and the verifier feedback. This process can continue until the model produces a correct response or reaches the maximum number of (per-problem) attempts K K , or hits its token budget.
+Because retries are generated only after failures, ReAPO dynamically expands the training group according to the observed difficulty of the problem under the current policy, which is known to help improve efficiency in modern RL for language modeling ( Zhang et al., 2025 ; Xiong et al., 2025 ; Yang et al., 2026 ) . Problems for which most initial responses are correct receive few additional generations, whereas problems with many incorrect responses receive more retries. This conditioned sampling allows for greater exploration of the model’s reasoning space; for example in Figure 15 in the appendix, we observe a substantial reduction in the required number of attempts in order to achieve a target pass@ k k accuracy relative to naïve independent sampling, even for just the base model.
+3.2 Assigning Credit with Multiple attempts
+Verifier-conditioned exploration helps solve the problem of repeated incorrect reasoning by allowing the model to condition its retries on previous failures, but it raises the question of how to properly assign credit to individual attempts within a multi-attempt trajectory. We propose minimizing the expected number of failed attempts to reach a correct solution as a natural objective. Note that in so doing, we are encouraging the model to produce correct solutions earlier, including on the first attempt, which is the desideratum during evaluation.
+More formally, fix a problem x x and let y k y_{k} denote the k k -th attempt generated for this problem, with r k = r ⁡ ( x , y k ) r_{k}=r(x,y_{k}) the binary reward; letting τ = inf { k ≥ 1 ∣ r k = 1 } \tau=\inf\left\{k\geq 1\mid r_{k}=1\right\} denote the index of the first successful attempt, we aim to minimize 𝔼 π θ ​ [ τ − 1 ] \mathbb{E}_{\pi_{\theta}}\left[\tau-1\right] . This is an example of a Stochastic Shortest Path (SSP) problem, where the terminal state is a correct answer and the cost is constant per action Bertsekas and Tsitsiklis (1991) . In order to derive a practical policy gradient, we make the following simplifying assumption: the rewards of attempts are sufficient statistics for the probability of a future attempt being correct, i.e., incorrect attempts affect the probability of a future attempt being correct only through the fact that they are incorrect. This is certainly an overly conservative assumption as, in practice, knowing that a prior failed attempt is wrong is likely to help the model attempt something qualitatively different, but its simplicity allows for a simple derivation. To state the next result, we introduce the following notation. Let q m ​ ( θ ) = ℙ π θ ​ ( r m = 1 | r j = 0 ​ for ​ j < m ) q_{m}(\theta)=\mathbb{P}_{\pi_{\theta}}(r_{m}=1|r_{j}=0\text{ for }j<m) be the probability of success on the m t ​ h m^{th} attempt and let α m ​ ( π θ ) = ℙ ⁡ ( τ ≥ m ) \alpha_{m}(\pi_{\theta})=\mathbb{P}\left(\tau\geq m\right) be the probability that we need at least m m attempts in order to be successful. Finally, let
+c m ​ ( π θ ) = ∑ k = m ∞ ∏ j = m + 1 k ( 1 − q j ​ ( θ ) ) \displaystyle c_{m}(\pi_{\theta})=\sum_{k=m}^{\infty}\prod_{j=m+1}^{k}\left(1-q_{j}(\theta)\right)
+(4)
+denote the expected number of additional attempts until a correct response is obtained, starting from attempt m + 1 m+1 given that the first m m attempts have failed. We have the following result.
+Proposition 1 .
+Fix a prompt x x and let π θ \pi_{\theta} be the policy generating attempts for this problem. If τ \tau denotes the index of the first successful attempt and c m ​ ( π θ ) c_{m}(\pi_{\theta}) is defined as in Equation ( 4 ) , then the policy gradient of the expected number of failed attempts can be decomposed as
+− ∇ θ 𝔼 π θ [ τ − 1 ] = ∑ m = 1 ∞ α m ( π θ ) c m ( π θ ) ∇ q m ( θ ) . \displaystyle-\nabla_{\theta}\mathbb{E}_{\pi_{\theta}}[\tau-1]=\sum_{m=1}^{\infty}\alpha_{m}(\pi_{\theta})c_{m}(\pi_{\theta})\nabla q_{m}(\theta).
+(5)
+The proof of this (and all other) results can be found in Appendix E . Unfortunately, the decomposition in Equation ( 5 ) possesses two deficiencies. First, it requires knowledge of c m ​ ( π θ ) c_{m}(\pi_{\theta}) , which depends on the probabilities of success for all future attempts and is therefore not directly observable or easily estimated. Second, the infinite sum may be impractical to compute in practice, necessitating truncation or approximation strategies. Thus, in order to derive a practical policy gradient estimator, we make the further assumption that c m ​ ( π θ ) c_{m}(\pi_{\theta}) is independent of m m . Under this assumption, a natural advantage estimation strategy recovers the form of Equation ( 5 ) with a constant c m ​ ( π θ ) c_{m}(\pi_{\theta}) .
+Indeed, suppose that we roll out G G sequences of attempts per problem and denote by
+𝒜 ⁡ ( x ) = { r g , k | g ∈ [ G ] ​ and ​ k ≥ 1 } \displaystyle\mathcal{A}(x)=\left\{r_{g,k}|g\in[G]\text{ and }k\geq 1\right\}
+(6)
+the collection of rewards from all generated attempts. We claim that a GRPO-like advantage estimation is proportional in expectation to the true policy gradient of Equation ( 5 ) under the assumption that c m ​ ( π θ ) c_{m}(\pi_{\theta}) is independent of m m .
+Proposition 2 .
+Let 𝒜 ⁡ ( x ) \mathcal{A}(x) be as above. Assume that c m ​ ( π θ ) = C ⁡ ( π θ ) c_{m}(\pi_{\theta})=C(\pi_{\theta}) for all m m , and let
+∇ θ ℒ ​ ( π θ ) = 𝔼 π θ ​ [ 1 G ​ ∑ g = 1 G ∑ k = 1 τ g r g , k ⋅ ∇ θ ​ log ​ π θ ​ ( y g , k ∣ h g , k − 1 ) ] , \displaystyle\nabla_{\theta}\mathcal{L}(\pi_{\theta})=\mathbb{E}_{\pi_{\theta}}\left[\frac{1}{G}\sum_{g=1}^{G}\sum_{k=1}^{\tau_{g}}r_{g,k}\cdot\nabla_{\theta}\log\pi_{\theta}(y_{g,k}\mid h_{g,k-1})\right],
+(7)
+where h g , k − 1 = ( x , y g , 1 , … , y g , k − 1 ) h_{g,k-1}=(x,y_{g,1},\dots,y_{g,k-1}) . Then it holds that
+− ∇ θ 𝔼 π θ ​ [ τ − 1 ] = C ⁡ ( π θ ) ⋅ ∇ θ ℒ ​ ( π θ ) . -\nabla_{\theta}\mathbb{E}_{\pi_{\theta}}[\tau-1]=C(\pi_{\theta})\cdot\nabla_{\theta}\mathcal{L}(\pi_{\theta}).
+Under the simplifying assumptions above, weighting each generated attempt by its own unnormalized reward yields an update proportional to the negative gradient of the expected number of failed attempts. This result motivates the attempt-level credit assignment used in ReAPO.
+Critically, we are only applying the attempt-level advantage to the tokens making up that attempt, rather than distributing the advantage across all tokens in the trajectory ( Kumar et al., 2024 ; Chung et al., 2025 ) .
+Figure 2 : Training efficiency on GSM8K-Platinum with Qwen3-0.6B-Base. The first three panels plot accuracy (mean@32) against optimization steps, cumulative generated response tokens, and wall-clock time, respectively. The final panel plots Pass@32 against optimization steps. The GRPO-2 × \times Steps control extends standard GRPO to 1,160 steps in the compute-normalized panels. Curves show means across eight seeds and shaded regions show standard errors. SCoRe-Stage2 is evaluated on its second response, which is generated regardless of the first response’s correctness and without verifier feedback at inference. Every other method is evaluated on its first response.
+Figure 3 : Training efficiency on GSM8K-Platinum with OLMo-2-0425-1B-SFT. The first three panels plot first-attempt Mean@32 against optimization steps, cumulative generated response tokens, and wall-clock time; the final panel plots Pass@32 against optimization steps. Results are from a single training seed.
+3.3 Implementing ReAPO
+We now turn to the practical implementation of ReAPO, making
+two key design modifications to the method suggested by Proposition 2 . First, practical constraints limit the maximum number of attempts per problem that we can actually sample, due to the quadratic increase in computational cost and linear increase in memory with the number of attempts, along with the reduced parallelization. We thus enforce a hard cap K K on the number of attempts per problem, which acts to bias the policy gradient estimate by truncating the infinite sum in Equation ( 5 ) to the first K K attempts. A theoretical account of this bias can be found in Appendix E . Second, we follow GRPO and center and normalize the advantages by the standard deviation (offset by a small term to ensure numerical stability) ( Shao et al., 2024 ) . Exploring the effect of ablating this normalization in the style of Dr.GRPO Liu et al. (2025) is an interesting direction for future research, although we briefly discuss the theoretical consequences of normalization in Appendix E ; centering, meanwhile, introduces a small bias of order ∇ θ 𝔼 π θ ​ [ 1 / τ ] \nabla_{\theta}\mathbb{E}_{\pi_{\theta}}[\nicefrac{{1}}{{\tau}}] (see Appendix E ).
+After these modifications we are left with the following algorithm. Let r g , k r_{g,k} denote the reward obtained for the k k -th attempt of the g g -th group. Letting A ^ g , k \hat{A}_{g,k} be defined as in Equation ( 2 ), where the mean and standard deviation are computed over all r g , k r_{g,k} , and T = ∑ g = 1 G ∑ k = 1 τ g | y g , k | T=\sum_{g=1}^{G}\sum_{k=1}^{\tau_{g}}|y_{g,k}| is the total number of generated response tokens across all attempts, the ReAPO update direction is given by
+∇ θ 𝒥 ReAPO ​ ( θ ) = 𝔼 x ∼ 𝒟 ​ 𝔼 π θ ​ [ 1 T ​ ∑ g = 1 G ∑ k = 1 τ g A ^ g , k ⋅ ∇ θ ​ log ​ π θ ​ ( y g , k ∣ x , y g , < k ) ] \displaystyle\nabla_{\theta}\mathcal{J}_{\mathrm{ReAPO}}(\theta)=\mathbb{E}_{x\sim\mathcal{D}}\mathbb{E}_{\pi_{\theta}}\left[\frac{1}{T}\sum_{g=1}^{G}\sum_{k=1}^{\tau_{g}}\hat{A}_{g,k}\cdot\nabla_{\theta}\log\pi_{\theta}(y_{g,k}\mid x,y_{g,<k})\right]
+(8)
+As clarified in Section 2 , in our experiments we always roll out on-policy (i.e. π θ old = π θ \pi_{\theta_{\mathrm{old}}}=\pi_{\theta} ) and omit the KL regularization term; both can be incorporated into Equation ( 8 ) in a straightforward manner.
+To reiterate, the advantage A ^ g , k \hat{A}_{g,k} is assigned only to tokens belonging to the response y g , k y_{g,k} . Thus, when an incorrect first attempt is followed by a correct retry, the failed response retains its lower advantage while the successful retry receives a higher advantage. The retry does not retroactively reward the reasoning that led to the initial failure. Likewise, a retry that repeats an incorrect answer receives another zero reward and a negative relative advantage whenever the pooled reward collection contains any successful attempts. If every generated attempt receives the same reward, all normalized advantages are zero and the problem contributes no policy-gradient signal, much as in GRPO.
+The pseudocode for ReAPO is presented in Algorithm 1 .
+4 Experiments
+Table 1: First-attempt accuracy across model scales and benchmarks. Qwen3-1.7B-Base results are mean ± \pm standard error across seven seeds at the end of training; Qwen3-4B-Base results use three seeds and are evaluated at step 500.
+Model / Method
+Beyond
+AIME
+AIME
+2024
+AIME
+2025
+HMMT
+2025
+MATH
+500
+Minerva
+GPQA
+Diamond
+Avg.
+Qwen3-1.7B
+1.2 1.2
+4.2 4.2
+3.1 3.1
+0.2 0.2
+57.2 57.2
+21.9 21.9
+10.8 10.8
+14.1 14.1
+GRPO
+1.3 ± 0.1 1.3\pm 0.1
+11.5 ± 0.4 11.5\pm 0.4
+6.2 ± 0.3 6.2\pm 0.3
+1.3 ± 0.1 1.3\pm 0.1
+72.0 ± 0.5 72.0\pm 0.5
+30.9 ± 0.2 30.9\pm 0.2
+24.1 ± 0.7 24.1\pm 0.7
+21.1 ± 0.3 21.1\pm 0.3
+ReAPO (ours)
+1.6 ± 0.1 \mathbf{1.6\pm 0.1}
+13.7 ± 0.3 \mathbf{13.7\pm 0.3}
+7.4 ± 0.3 \mathbf{7.4\pm 0.3}
+1.3 ± 0.2 1.3\pm 0.2
+72.9 ± 0.3 \mathbf{72.9\pm 0.3}
+31.7 ± 0.2 \mathbf{31.7\pm 0.2}
+25.6 ± 0.3 \mathbf{25.6\pm 0.3}
+22.0 ± 0.1 \mathbf{22.0\pm 0.1}
+Qwen3-4B
+4.1 4.1
+9.4 9.4
+6.4 6.4
+0.9 0.9
+67.9 67.9
+27.4 27.4
+17.2 17.2
+19.0 19.0
+GRPO
+7.6 ± 0.3 7.6\pm 0.3
+19.5 ± 1.1 19.5\pm 1.1
+16.5 ± 1.7 16.5\pm 1.7
+5.5 ± 0.8 5.5\pm 0.8
+83.0 ± 0.6 83.0\pm 0.6
+40.8 ± 0.5 40.8\pm 0.5
+28.6 ± 0.6 28.6\pm 0.6
+28.8 ± 0.7 28.8\pm 0.7
+ReAPO (ours)
+8.8 ± 0.4 \mathbf{8.8\pm 0.4}
+22.4 ± 0.7 \mathbf{22.4\pm 0.7}
+19.0 ± 0.9 \mathbf{19.0\pm 0.9}
+9.6 ± 0.5 \mathbf{9.6\pm 0.5}
+85.3 ± 0.3 \mathbf{85.3\pm 0.3}
+41.3 ± 0.3 41.3\pm 0.3
+30.4 ± 0.7 \mathbf{30.4\pm 0.7}
+31.0 ± 0.1 \mathbf{31.0\pm 0.1}
+We now present a comprehensive evaluation of ReAPO, comparing it against standard GRPO and other relevant baselines across model scales, mathematical reasoning benchmarks, and compute budgets. We begin by describing our empirical setup (deferring additional details to Appendix C ), then we examine the training efficiency in a number of configurations on a small model, before scaling up to larger models and more challenging benchmarks. We then thoroughly investigate the impact of the choices that underlie ReAPO’s design, including the advantages of serial sampling.
+4.1 Experimental Setup
+Models and training data.
+We train OLMo-2-0425-1B-SFT, Qwen3-0.6B-Base, Qwen3-1.7B-Base, and Qwen3-4B-Base Yang et al. (2025) . All methods default to G = 16 G=16 rollouts per problem, which is the default group size used by recent works Tajwar et al. (2026) , and K = 2 K=2 attempts in ReAPO due to the limitations of context length. The smallest model is trained on GSM-8K ( Cobbe et al., 2021 ) with a cumulative limit of 2,048 generated response tokens per trajectory and the 1.7B/4B models on Polaris-53K An et al. (2025) with a cumulative limit of 4,096 generated response tokens per trajectory. Within each model scale, all methods use the same per-trajectory response-token limit, shared across attempts. All hyperparameters are provided in Tables 2 and 3 in the appendix.
+Evaluation.
+We validate on standard mathematical and scientific reasoning benchmarks. For Qwen3-0.6B-Base, we evaluate on GSM8K-Platinum Vendrow et al. (2025) , while for Qwen3-1.7B-Base and Qwen3-4B-Base, we evaluate on BeyondAIME ByteDance-Seed (2025) , AIME 2024, AIME 2025 Zhang and Math-AI (2024) ; Zhang and Math-AI (2025) , HMMT 2025 Dekoninck et al. (2026) , MATH-500 Lightman et al. (2023) ; Hendrycks et al. (2021) , Minerva Lewkowycz et al. (2022) , and GPQA-Diamond Rein et al. (2024) .
+Metrics.
+Unless stated otherwise, we evaluate only the first response, without verifier feedback at inference .
+Mean@32 is the average accuracy of 32 evaluated responses per problem, while Pass@32 is the fraction of problems solved by at least one of those responses. These metrics use first responses for all methods except SCoRe-Stage2, for which they use second responses, which are generated regardless of whether its first response is correct. Error bars denote the standard error across seeds.
+4.2 ReAPO Efficiently Outperforms GRPO
+We begin by examining the training efficiency of ReAPO relative to GRPO on the small Qwen3-0.6B-Base model. Critically, while the maximum number of tokens per trajectory is fixed across methods at each model scale, due to the reattempts present in ReAPO, it may well be that the average number of tokens per trajectory is much higher. Thus, in order to form a fair comparison among methods, we compare the training efficiency in terms of optimizer steps, the total number of generated tokens, and the wall clock time of each run. In Figure 2 , ReAPO outperforms GRPO at every training step; measured by generated tokens and wall-clock time, GRPO is competitive early in training, but ReAPO overtakes it and reaches a higher final accuracy. Prior work has found that RL can often improve pass@1 performance without a concomitant increase in higher pass@k accuracy Yue et al. (2025) ; we thus also examine the effect of ReAPO on pass@32 throughout training and find directionally similar gains. Because pass@32 is almost saturated at this benchmark, however, the magnitude of the gains is much smaller.
+In addition to GRPO, we consider three baselines that isolate the source of ReAPO’s gains. First, we train GRPO for twice as many steps, substantially increasing both generated-token and wall-clock compute. Even with this additional compute, GRPO plateaus below ReAPO ( Figure 2 ). Second, to test whether the gains arise simply from generating more responses rather than from serial sampling, we double the GRPO group size to G = 32 G=32 . This matches the maximum number of attempts that ReAPO can generate from G = 16 G=16 initial rollouts with K = 2 K=2 , but keeps all responses independent and doubles the compute budget. This baseline again plateaus below ReAPO and is substantially less token-efficient; indeed, ReAPO requires 39% fewer generated tokens to reach the peak accuracy of GRPO with twice the group size and 31% fewer to reach the best performance of GRPO with twice the steps .
+Figure 4 : First-attempt Pass@ k k for Qwen3-4B-Base. Pass@ k k accuracy for each of BeyondAIME, AIME 2025, MATH-500, and Minerva for ReAPO, GRPO, and the base model. GRPO and ReAPO curves are means across three training seeds, with shaded regions denoting standard errors.
+Third, because our comparison concerns how multi-turn training assigns rewards across attempts, we evaluate a SCoRe Stage-II-only baseline ( Kumar et al., 2024 ) 2 2
+2
+SCoRe’s Stage I is a separate RL initialization that improves second-attempt performance while KL-constraining first attempts toward the base policy, which we omit; all algorithms start from the same checkpoint. . Starting from Qwen3-0.6B-Base, this baseline jointly optimizes both attempts and a progress bonus to the second-attempt reward. Its second response is generated regardless of the first response’s correctness and requires no verifier feedback at inference, so we report its second-attempt performance. Our results are reported in Figure 2 : due to the lack of verifier-conditioning, SCoRe is substantially less token- and compute-efficient relative to ReAPO and the different credit assignment does not encourage exploration sufficiently to match ReAPO’s performance in mean@32, although the pass@32 performance is slightly improved. A summary of these results can be found in Table 5 in the appendix. To test whether these gains extend beyond the Qwen family, we repeat the GSM8K experiment with OLMo-2-0425-1B-SFT ( Figure 3 ). ReAPO again improves both Mean@32 and Pass@32 over GRPO throughout training, and surpasses GRPO in token and wall-clock-normalized comparisons within GRPO’s budget.
+4.3 Gains Persist at Larger Scales
+While we showed above that ReAPO significantly improves training efficiency relative to GRPO on the small Qwen3-0.6B-Base model, it is important to verify whether these gains persist as we scale to larger models and more challenging benchmarks. In Table 1 , we report (first-attempt) accuracy at the selected checkpoints, where at both the 1.7B and 4B scales we see that ReAPO improves on GRPO (and the base model) on nearly every benchmark. Moreover, in Figure 4 , we show that ReAPO maintains its advantage over GRPO even as the inference-time sampling budget increases for the 4B scale. A similar trend is observed for the 1.7B scale, deferred to Appendix Figure 9 . More fine-grained results are reported in Table 6 in the appendix.
+Figure 5 : Ablations on Qwen3-0.6B-Base and GSM8K-Platinum. We compare ReAPO with K ∈ { 2 , 3 } K\in\{2,3\} , ReAPO with an alternative retry prompt, an unconditional-retry variant that generates a second attempt regardless of whether the first attempt is correct,
+a multi-turn variant that assigns one advantage to the complete trajectory, and MaxRL. The first three panels report first-attempt Mean@32 against training steps, cumulative generated response tokens, and wall-clock time, respectively; the final panel reports first-attempt Pass@32 against training steps.
+4.4 Attempt-Level Credit and Conditional Retries Matter
+Additional baselines.
+In Figure 5 , we compare ReAPO to two additional baselines. MaxRL ( Tajwar et al., 2026 ) is a recent method that aims to improve pass@k performance by modifying the advantage computation and has seen success in mathematical reasoning tasks. Multi-Attempt GRPO Chung et al. (2025) treats an entire sequence of attempts as a single multi-turn rollout. The model repeatedly attempts the problem, conditioned on its previous attempts, until it either produces a correct answer or reaches the maximum number of attempts; the entire trajectory is assigned a single reward. Consequently, failed attempts that precede a successful retry receive the same credit as the successful attempt itself. This baseline isolates the benefit of ReAPO’s attempt-level credit assignment from that of verifier-conditioned multi-turn sampling alone. ReAPO consistently outperforms both baselines, demonstrating the utility of our proposed credit assignment.
+Increasing the reattempt budget.
+One of the chief hyperparameters of ReAPO is the attempt budget K K , which determines the maximum number of attempts per trajectory. While increasing K K offers more opportunities to correct mistakes, it comes at the cost of more tokens per trajectory. Our results show that increasing to K = 3 K=3 on the 0.6B model yields limited gains (shown in Figure 5 and Table 5 ). We believe this is because the 0.6B model saturates on GSM8K by the second attempt, and so the third provides little learning signal. More importantly, by the end of training, more than 90 % 90\% of trajectories succeed within the first two attempts, suggesting that the third attempt is rarely needed. On the other hand, the 1.7B model yields a more consistent gain in mathematical reasoning benchmarks (shown in Table 4 ), although this gain does not appear to hold for scientific reasoning benchmarks (GPQA-Diamond). Since the result of the 1.7B is on a single seed, we view this as suggestive.
+Sensitivity to prompt and verifier conditioning.
+Another hyperparameter of ReAPO is how we prompt the model after a failure. In Figure 5 , we compare a different prompt (given in Section C.3 ), and find minimal difference in performance.
+We then consider a ReAPO variant that generates a second attempt regardless of first-attempt correctness.
+Because this variant retries even after a correct first attempt, the retry is no longer conditioned on a known failure, and part of the additional generation is spent on problems that are already solved. It uses more tokens than ReAPO and reaches lower accuracy ( Figure 5 ).
+4.5 Serial Sampling Encourages Exploration
+We conclude our experiments by examining how serial sampling affects exploration. We first examine the extent to which retries lead to more diverse solutions relative to independent sampling. In Figure 6 (left), we compare the fraction of duplicate (independent) first attempts for ReAPO and GRPO throughout training and see that these are roughly comparable. In contradistinction to independent sampling, in the middle plot of that figure, we examine the fraction of second-attempt answers that exactly match the failed first-attempt answer, and observe that this quickly falls to near zero, demonstrating that the second attempt is highly likely to explore a different solution. A table summary of commonly generated phrase can be found in Table 8 and Table 7 .
+Finally, we investigate whether the increased success of ReAPO comes at the cost of solution coverage by examining how pass@ k k accuracy improves with k k for different sampling budgets at the end of training. We find in Table 5 that ReAPO maintains or improves solution coverage relative to GRPO and matches MaxRL, which is designed specifically to improve pass@ k k performance.
+Figure 6 : Answer diversity, retry behavior, and solution coverage. ( Left ) Percentage of incorrect first-attempt answers that are duplicates within the same question group on AIME 2025 for Qwen3-4B-Base.
+( Middle ) The percentage of second-attempt answers that exactly match the failed first-attempt answer.
+( Right ) Pass@ k k on GSM8K-Platinum for Qwen3-0.6B-Base. The SCoRe-Stage2 curve uses second responses generated regardless of first-attempt correctness; all other curves use first responses.
+5 Discussion and Related Work
+Related work.
+ReAPO builds on prior work that has emphasized the importance of models reflecting on prior failed attempts during reasoning, such as self-correction, self-distillation, and multi-attempt reinforcement learning Madaan et al. (2023) ; Kumar et al. (2024) ; Guo et al. (2025) ; Chung et al. (2025) ; Bensal et al. (2025) ; Sprague et al. (2026) . In particular, earlier works like Kumar et al. (2024) use multi-turn RL to jointly optimize multiple attempts, but does not use verifier conditioning (leading to potentially inefficient exploration) and also relies on a complicated and somewhat bespoke reward shaping. Other works like Chung et al. (2025) ; Bensal et al. (2025) ; Sprague et al. (2026) explore various aspects of multi-attempt reasoning and self-reflection, but typically do not integrate verifier-conditioned retries with attempt-level credit assignment as ReAPO does. Unlike these other methods, ReAPO’s credit assignment is motivated by considering the multi-attempt RL problem as a Stochastic Shortest Paths problem ( Bertsekas and Tsitsiklis, 1991 ) and leveraging the rich understanding of such problems from classical RL to inform the design of our algorithm. Further discussion can be found in Appendix A .
+Limitations and future work.
+We demonstrated the efficacy of ReAPO across a range of mathematical and scientific reasoning tasks, but resource constraints prohibited investigation into additional domains such as code or agentic settings. We also leave further scaling of the retry budget K K with larger inference-time token budgets to future work, which may well offer further gains in reasoning accuracy.
+Acknowledgments
+We gratefully acknowledge use of the research computing resources of the Empire AI Consortium, Inc, with support from Empire State Development of the State of New York, the Simons Foundation, and the Secunda Family Foundation. We also thank the Yale Center for Research Computing and the Texas Advanced Computing Center (TACC) at The University of Texas at Austin for providing additional computational resources.
+References
+Agarwal et al. (2024)
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos…5013 tokens truncated…ges to the answer tokens of each attempt.
+Closest to our work is the recent, independent work of Ildiz et al. [2026] , which also studies verifier-conditioned multi-attempt reasoning and assigns credit to individual attempts. Their calibrated method optimizes Ver@ K K , the probability that at least one of the first K K attempts succeeds. ReAPO is instead motivated by minimizing the expected number of failed attempts before success and primarily evaluates first-response performance. This distinction matters when only the first response is scored or reliable verifier feedback is unavailable at inference. On MATH, CAL-GRPO’s Ver@2 advantage over naive attempt-level GRPO comes primarily from stronger correction after a failed first attempt, while the naive variant attains higher first-attempt success. Their MATH comparison includes trajectory-level, naive attempt-level, and calibrated GRPO on multi-attempt rollouts, but no independent single-attempt GRPO control; our experiments include standard GRPO trained and evaluated on the same models and benchmarks as ReAPO. More concretely, CAL-GRPO normalizes rewards within each attempt stage and weights attempts by the estimated probability that later attempts fail, whereas ReAPO pools rewards across generated attempts and assigns each advantage only to its corresponding response tokens ( Section 3 ).
+Together, these methods show that conditioning later generations on earlier attempts can improve reasoning. ReAPO specifically combines retries triggered by verifier-confirmed failures with pooled attempt-level normalization, providing direct contrast between successful and unsuccessful attempted responses.
+Appendix B Discussion and Future Work
+Normalization across attempts.
+Standard GRPO normalizes rewards among responses generated from the same prompt, whereas ReAPO pools initial responses with retries that are additionally conditioned on a failed response and verifier feedback. The attempts in the expanded group therefore do not share identical conditioning contexts. For open-ended reasoning problems, where many distinct trajectories can lead to either correct or incorrect answers, observing one failed solution may provide relatively little information about the correct solution. Nevertheless, this assumption may become problematic in restricted answer spaces. For example, in multiple-choice or true–false tasks, revealing that an answer is incorrect can substantially narrow the remaining possibilities without requiring improved reasoning. In such settings, gains could partly reflect answer elimination rather than structured exploration. Future work could study how this affects performance and possible ways to account for this.
+Diminishing returns from additional attempts.
+Sequential retries introduce additional generation cost and training latency. Moreover, each successive attempt is generated only for the subset of trajectories that failed every preceding attempt, so as early attempts solve easy questions, later attempts are concentrated on increasingly difficult problems and may have a low probability of success. This behavior is already visible in our three-attempt ablation on the 0.6B model: first-attempt accuracy exceeds 80 % 80\% , cumulative accuracy after the second attempt exceeds 90 % 90\% , and consequently fewer than 10 % 10\% of trajectories remain eligible for a third attempt. The third attempt therefore provides little additional training signal and yields no clear improvement over the two-attempt configuration. Future work could study how this method scales as the number of attempts increases.
+Token allocation and truncation.
+ReAPO allocates a fixed cumulative response-token budget to each trajectory, shared across its attempts. This can be inefficient when an early attempt consumes a large number of tokens before failing, particularly when the complete interaction is constrained by a shared token budget. In the Qwen3-4B-Base experiments, more than 50 % 50\% of ReAPO trajectories reach the maximum generation length near the end of training, compared with under 10 % 10\% for GRPO (Figure 13 ). This rise in truncation coincides with ReAPO’s sharper decline in validation performance after approximately 600 steps; GRPO also declines, but without a comparable rise in truncation. A separate token budget for each attempt, or an adaptive allocation that reserves sufficient capacity for retries, could allow later attempts to complete their reasoning even when earlier attempts are long.
+Verifier reliability and task coverage.
+ReAPO assumes that the verifier can reliably identify an incorrect response. A false-negative verification causes the model to receive misleading failure feedback and may incorrectly penalize a valid solution, while a false positive prevents a potentially useful retry. Our experiments focus primarily on mathematical and scientific reasoning tasks with automatically checkable answers. Evaluating robustness to noisy or learned verifiers, and extending the method to code generation, tool use, and domains with less reliable outcome feedback, are important directions for future work.
+Compatibility with other policy-optimization methods.
+Verifier-conditioned rollout collection and attempt-level credit assignment are not specific to the standard GRPO objective. The same construction could be combined with alternative normalization and optimization methods, including Dr.GRPO Liu et al. [2025] , DAPO Yu et al. [2025] , and MaxRL Tajwar et al. [2026] . Studying these combinations could determine whether retry-aware exploration provides complementary improvements when paired with objectives designed to address other weaknesses of GRPO.
+Appendix C Experimental Details
+Except for the training of SCoRe Stage-II baseline, we adopt the training and evaluation hyperparameters used by MaxRL Tajwar et al. [2026] .
+C.1 Qwen3-0.6B Experiments
+The Qwen3-0.6B-Base was trained Yang et al. [2025] on the GSM8K training set Cobbe et al. [2021] and evaluated on GSM8K-Platinum Vendrow et al. [2025] . The string “Let’s think step by step and output the final answer within \boxed{} .” was appended to each problem and format the resulting
+conversation using the Qwen3 tokenizer chat template. If the first response is incorrect, the retry instruction is appended as a new user message. An example is shown below.
+Qwen3-0.6B and OLMo-2-0425-1B-SFT Chat Template
+<|im_start|>user
+Natalia sold clips to 48 of her friends in April,
+and then she sold half as many clips in May. How
+many clips did Natalia sell altogether in April
+and May?
+Let’s think step by step and output the final
+answer within \boxed {}.
+<|im_end|>
+<|im_start|>assistant
+{first attempt}
+<|im_end|>
+<|im_start|>user
+Your answer is wrong. Reflect on your previous
+answer and try something else.
+<|im_end|>
+<|im_start|>assistant
+{retry}
+<|im_end|>
+We implement all experiments using VERL Sheng et al. [2024] and train each model on four NVIDIA B200 GPUs provided by Empire AI Bloom et al. [2025] . Training is fully on-policy, so we do not use importance ratios or associated clipping. For all Qwen3-0.6B runs except the SCoRe Stage-II-only baseline, we disable the KL penalty and entropy bonus. The SCoRe baseline starts from Qwen3-0.6B-Base without Stage I training and follows the Stage II objective and SCoRe-specific hyperparameters reported for MATH by Kumar et al. [2024] , including the progress-bonus weight α = 10 \alpha=10 and reference-policy KL weight β 1 = 0.01 \beta_{1}=0.01 . Training rollouts are sampled at temperature 1.0 1.0 , while validation uses temperature 0.6 0.6 , top- p = 0.95 p=0.95 , and no top- k k restriction.
+Table 2: Qwen3-0.6B-Base training hyperparameters. Results are aggregated across eight training seeds. The maximum-attempt setting K K applies to ReAPO; GRPO uses one attempt. The KL is 0 for every experiment besides SCoRe. These default values are used for all 0.6B experiments unless stated otherwise.
+Hyperparameter
+Value
+Hyperparameter
+Value
+Training dataset
+GSM8K
+Training hardware
+4 × 4\times NVIDIA B200
+Group size
+16 16
+Maximum attempts
+2 2
+Maximum prompt length
+1,024 1{,}024
+Maximum response length
+2,048 2{,}048
+Training batch size
+64 64
+Actor learning rate
+1 × 10 − 6 1\times 10^{-6}
+Learning-rate warmup
+0 0 steps
+Gradient clipping
+0.3 0.3
+KL-loss coefficient
+0 0
+Entropy coefficient
+0 0
+Training temperature
+1.0 1.0
+Validation samples
+32 32 per prompt
+Validation temperature
+0.6 0.6
+Validation top- p p
+0.95 0.95
+Validation top- k k
+None
+Step
+580 580
+C.2 Qwen3-1.7B-Base and Qwen3-4B-Base Experiments
+We train Qwen3-1.7B-Base and Qwen3-4B-Base Yang et al. [2025] on Polaris-53K An et al. [2025] . We use the answer provided by Polaris-53K as the reference answer and use math_verify to assign a binary correctness reward to each attempt separately.
+We append “Please reason step by step, and put your final answer within \boxed{} .” to each problem and format the resulting conversation using the Qwen3 tokenizer chat template. If the first response is incorrect, the retry instruction is appended as a new user message. An example is shown below. For evaluation, we sample 256 responses per problem for BeyondAIME, AIME 2024, AIME 2025, and HMMT 2025, and 64 responses per problem for MATH-500, Minerva, and GPQA-Diamond. At the selected checkpoint, we run a separate high-sample evaluation for Pass@ k k and report its corresponding first-attempt mean accuracy in Table 1 .
+Qwen3-1.7B/4B-Base Chat Template
+<|im_start|>user
+All the complex roots of (z + 1)^4 = 16z^4,
+when plotted in the complex plane, lie on a
+circle. Find the radius of this circle.
+Please reason step by step, and put your final
+answer within \boxed {}.
+<|im_end|>
+<|im_start|>assistant
+{first attempt}
+<|im_end|>
+<|im_start|>user
+Your answer is wrong. Reflect on your previous
+answer and try something else.
+<|im_end|>
+<|im_start|>assistant
+{retry}
+<|im_end|>
+We implement all experiments using VERL Sheng et al. [2024] and train each model on four NVIDIA B200 GPUs provided by Empire AI Bloom et al. [2025] . We use the same training configuration for Qwen3-1.7B-Base and Qwen3-4B-Base. Training is fully on-policy, so we do not use importance ratios or associated clipping. We also disable the KL penalty and entropy bonus. Training rollouts are sampled at temperature 1.0 1.0 , while validation uses temperature 0.6 0.6 , top- p = 0.95 p=0.95 , and no top- k k restriction.
+Table 3: Qwen3-1.7B-Base and Qwen3-4B-Base training hyperparameters. Results are aggregated across seven seeds for Qwen3-1.7B-Base and three seeds for Qwen3-4B-Base. The maximum-attempt setting applies to ReAPO; GRPO uses one attempt.
+Hyperparameter
+Value
+Hyperparameter
+Value
+Training dataset
+Polaris-53K
+Training hardware
+4 × 4\times NVIDIA B200
+Group size
+16 16
+Maximum attempts
+2 2
+Maximum prompt length
+1,024 1{,}024
+Maximum response length
+4,096 4{,}096
+Training batch size
+256 256
+Actor learning rate
+1 × 10 − 6 1\times 10^{-6}
+Learning-rate warmup
+0 0 steps
+Gradient clipping
+0.3 0.3
+KL-loss coefficient
+0 0
+Entropy coefficient
+0 0
+Training temperature
+1.0 1.0
+Validation samples
+32 32 per prompt
+Validation temperature
+0.6 0.6
+Validation top- p p
+0.95 0.95
+Validation top- k k
+None
+Step
+1,040 1{,}040
+C.3 Ablation Setup
+Number of retry attempts.
+Our default ReAPO configuration permits at most K = 2 K=2 attempts per trajectory. To study the effect of a larger retry budget, we additionally train a variant with K = 3 K=3 , allowing a second retry when the first two attempts are incorrect.
+Retry prompt.
+The default retry instruction is “Your answer is wrong. Reflect on your previous answer and try something else.” We compare this against a shorter prompt, “Try again,” while keeping all other training settings fixed.
+Attempt-level credit assignment.
+To isolate the effect of ReAPO’s credit assignment, we consider a multi-turn baseline that uses the same verifier-conditioned retry process but treats the entire sequence of attempts as a single rollout. The model continues attempting the problem until it produces a correct answer or reaches the retry limit, after which the complete trajectory receives a single binary reward and one trajectory-level advantage is applied to all tokens in the sequence.
+Appendix D Additional Results
+D.1 Per-Benchmark Training Curves
+Figures 7 and 8 report first-attempt Pass@1 and Pass@32 throughout training. For Qwen3-1.7B-Base, ReAPO generally improves more steadily than GRPO and finishes ahead on most benchmarks for both metrics. The difference is particularly consistent on BeyondAIME, MATH-500, and Minerva. The Pass@32 results indicate that the improvement in first-attempt accuracy does not come from collapsing onto a narrower set of solutions.
+Figure 7 : Per-benchmark training curves for Qwen3-1.7B-Base. The top row reports first-attempt Pass@1 and the bottom row reports Pass@32. Curves are averages across seven training seeds and shaded regions denote standard errors.
+For Qwen3-4B-Base, ReAPO reaches stronger performance than GRPO on most benchmarks during the first 500–600 training steps. After this point, however, the performance of both methods declines on several tasks. Because the 4B experiments use the same optimization hyperparameters as the 1.7B experiments, this shared degradation suggests that these settings may be overly aggressive or otherwise insufficiently stable for the larger model. We therefore report results at step 500, rather than at the final training step. During training, we selected checkpoints using MATH-500 validation with 32 responses per prompt (Table 3 ), before running the larger per-step evaluations. Both ReAPO and GRPO peaked near step 500 under this validation procedure, so we report the step-500 checkpoint rather than the final checkpoint. However, model-scale-specific tuning of the learning rate and other optimization parameters may further improve both methods.
+Figure 8 : Per-benchmark training curves for Qwen3-4B-Base. The top row reports first-attempt Pass@1 and the bottom row reports Pass@32. Curves are averages across three training seeds and shaded regions denote standard errors.
+Figure 9 : First-attempt Pass@ k k for Qwen3-1.7B-Base at the last checkpoint. GRPO and ReAPO curves are means across seven training seeds, with shaded regions denoting standard errors.
+Figure 10 : Attempt budget, group size, and response length on Qwen3-1.7B-Base (MATH-500) using one training seed. First-attempt accuracy against optimization steps (left two panels) and cumulative generated response tokens (right two panels) for maximum response lengths of 4,096 and 8,192 tokens per trajectory.
+Table 4: Qwen3-1.7B-Base, seed 42, with different attempt budgets, group sizes, and maximum response lengths. First-attempt accuracy (%) from the high-sample evaluation at the selected checkpoint (as in Table 1 ). Single seed; the best value in each response-length group is bold.
+Model / Method
+Beyond
+AIME
+AIME
+2024
+AIME
+2025
+HMMT
+2025
+MATH
+500
+Minerva
+GPQA
+Diamond
+Avg.
+Qwen3-1.7B
+1.2 1.2
+4.2 4.2
+3.1 3.1
+0.2 0.2
+57.2 57.2
+21.9 21.9
+10.8 10.8
+14.1 14.1
+Max response length 4,096
+GRPO
+0.8 0.8
+10.4 10.4
+6.2 6.2
+1.0 1.0
+71.2 71.2
+30.5 30.5
+21.2 21.2
+20.2 20.2
+GRPO ( 2 × 2\times group size)
+1.8 1.8
+12.6 12.6
+7.7 7.7
+1.8 \mathbf{1.8}
+73.1 73.1
+32.5 \mathbf{32.5}
+25.0 25.0
+22.1 \mathbf{22.1}
+ReAPO ( K = 2 K{=}2 )
+1.4 1.4
+13.9 \mathbf{13.9}
+7.3 7.3
+1.1 1.1
+72.6 72.6
+32.0 32.0
+26.2 \mathbf{26.2}
+22.1 \mathbf{22.1}
+ReAPO ( K = 3 K{=}3 )
+1.9 \mathbf{1.9}
+13.5 13.5
+8.0 \mathbf{8.0}
+1.4 1.4
+74.7 \mathbf{74.7}
+32.0 32.0
+22.2 22.2
+22.0 22.0
+Max response length 8,192
+GRPO
+1.3 1.3
+12.9 12.9
+7.6 7.6
+1.9 1.9
+72.9 72.9
+31.2 31.2
+25.8 25.8
+21.9 21.9
+GRPO ( 2 × 2\times group size)
+1.4 1.4
+12.9 12.9
+9.0 9.0
+2.8 2.8
+74.7 74.7
+32.4 32.4
+26.2 26.2
+22.8 22.8
+ReAPO ( K = 2 K{=}2 )
+1.9 \mathbf{1.9}
+13.9 13.9
+11.8 \mathbf{11.8}
+2.9 2.9
+75.0 75.0
+32.0 32.0
+26.5 \mathbf{26.5}
+23.4 23.4
+ReAPO ( K = 3 K{=}3 )
+1.9 \mathbf{1.9}
+15.7 \mathbf{15.7}
+9.4 9.4
+3.7 \mathbf{3.7}
+76.3 \mathbf{76.3}
+33.0 \mathbf{33.0}
+24.6 24.6
+23.5 \mathbf{23.5}
+Table 5: Qwen3-0.6B-Base results on GSM8K-Platinum at step 580. All columns except SCoRe-Stage2 report first-response accuracy; SCoRe-Stage2 reports second-response accuracy without verifier feedback at inference. Values are mean ± \pm standard error across eight seeds.
+Metric
+Qwen3-0.6B
+Base
+GRPO
+GRPO
+(2 × \times Rollouts)
+MaxRL
+SCoRe
+(Stage 2)
+ReAPO
+( K = 2 K{=}2 )
+ReAPO
+( K = 3 K{=}3 )
+Mean@32
+44.3 ± 0.1 44.3\pm 0.1
+79.3 ± 0.2 79.3\pm 0.2
+80.5 ± 0.3 80.5\pm 0.3
+77.8 ± 0.1 77.8\pm 0.1
+78.4 ± 0.1 78.4\pm 0.1
+81.5 ± 0.2 \mathbf{81.5\pm 0.2}
+81.2 ± 0.3 \mathbf{81.2\pm 0.3}
+Pass@32
+92.6 ± 0.1 92.6\pm 0.1
+94.1 ± 0.2 94.1\pm 0.2
+94.5 ± 0.3 94.5\pm 0.3
+95.3 ± 0.1 95.3\pm 0.1
+96.1 ± 0.1 \mathbf{96.1\pm 0.1}
+95.7 ± 0.2 95.7\pm 0.2
+95.3 ± 0.2 95.3\pm 0.2
+Figure 11 : Percentage of second answers exactly matching the failed first answer on AIME 2025, for one seed. Exact repetition decreases less for the smaller model than for the larger models. Larger models seem to generate less repetitively than smaller ones.
+D.2 Solution Coverage
+Table 6 reports Pass@32 at the selected checkpoints. ReAPO numerically exceeds GRPO on all seven benchmarks at both model scales. For Qwen3-1.7B-Base, the improvement is statistically significant under the reported standard errors on six benchmarks, with the largest gain occurring on GPQA-Diamond. For Qwen3-4B-Base, ReAPO produces particularly large gains on AIME 2024, HMMT 2025, and GPQA-Diamond. However, reinforcement learning does not uniformly improve coverage over the base model: on GPQA-Diamond, the Qwen3-4B-Base base model retains higher Pass@32 than both trained policies.
+Table 6: Pass@32 results at the selected checkpoints. Values are percentages. GRPO and ReAPO are reported as mean ± \pm standard error across training seeds, while base-model results use a single evaluation. A result is bold when its uncertainty interval lies strictly above those of the competing methods.
+Model / Method
+Beyond
+AIME
+AIME
+2024
+AIME
+2025
+HMMT
+2025
+MATH
+500
+Minerva
+GPQA
+Diamond
+Qwen3-1.7B-Base
+12.5 12.5
+26.9 26.9
+28.1 28.1
+5.5 5.5
+90.6 90.6
+52.9 52.9
+70.6 70.6
+GRPO
+13.4 ± 0.6 13.4\pm 0.6
+30.8 ± 0.3 30.8\pm 0.3
+28.7 ± 0.3 28.7\pm 0.3
+12.2 ± 1.0 12.2\pm 1.0
+91.6 ± 0.3 91.6\pm 0.3
+55.1 ± 0.3 55.1\pm 0.3
+70.4 ± 2.6 70.4\pm 2.6
+ReAPO (ours)
+15.9 ± 0.4 \mathbf{15.9\pm 0.4}
+31.1 ± 0.6 31.1\pm 0.6
+29.9 ± 0.9 \mathbf{29.9\pm 0.9}
+14.5 ± 0.9 \mathbf{14.5\pm 0.9}
+92.5 ± 0.2 \mathbf{92.5\pm 0.2}
+56.3 ± 0.2 \mathbf{56.3\pm 0.2}
+78.5 ± 1.0 \mathbf{78.5\pm 1.0}
+Qwen3-4B-Base
+18.2 18.2
+38.5 38.5
+37.9 37.9
+17.0 17.0
+94.2 94.2
+58.5 58.5
+73.5 \mathbf{73.5}
+GRPO
+25.1 ± 1.8 25.1\pm 1.8
+42.8 ± 0.9 42.8\pm 0.9
+39.3 ± 1.5 39.3\pm 1.5
+20.5 ± 0.9 20.5\pm 0.9
+94.8 ± 0.1 94.8\pm 0.1
+57.1 ± 0.5 57.1\pm 0.5
+59.5 ± 2.3 59.5\pm 2.3
+ReAPO (ours)
+28.1 ± 1.3 28.1\pm 1.3
+48.0 ± 1.7 \mathbf{48.0\pm 1.7}
+42.9 ± 2.5 42.9\pm 2.5
+24.5 ± 0.9 \mathbf{24.5\pm 0.9}
+95.6 ± 0.4 \mathbf{95.6\pm 0.4}
+58.5 ± 0.9 58.5\pm 0.9
+69.5 ± 1.5 69.5\pm 1.5
+D.3 Token-Normalized Performance
+Because ReAPO generates retries following incorrect responses, it generally produces more response tokens per optimization step than GRPO. Figure 12 therefore compares the methods as a function of cumulative generated response tokens. Within the range in which both methods have observations, ReAPO remains competitive or stronger on most benchmarks. The clearest improvements occur on AIME 2025 and MATH-500 for the 4B model, while differences on Minerva are smaller. Thus, the improvements cannot be explained solely by ReAPO performing more generation within each optimization step.
+Figure 12 : Token-normalized first-attempt accuracy. Performance is plotted against cumulative generated response tokens for Qwen3-1.7B-Base (top) and Qwen3-4B-Base (bottom). Curves show means across seven and three seeds, respectively, and shaded regions denote standard errors. Within the range of overlapping token counts, ReAPO is competitive with or outperforms GRPO on most benchmarks.
+D.4 Training Dynamics
+Figure 13 : Training dynamics for Qwen3-0.6B-Base, Qwen3-1.7B-Base, and Qwen3-4B-Base. From top to bottom, the rows report results for Qwen3-0.6B-Base, Qwen3-1.7B-Base, and Qwen3-4B-Base, averaged across eight, seven, and three seeds, respectively.
+For Qwen3-1.7B-Base and Qwen3-0.6B-Base, ReAPO maintains higher actor entropy than GRPO throughout most of training (shown in Figure 13 ), indicating a less concentrated token distribution. Higher entropy is not inherently better, but its persistence is consistent with ReAPO retaining more stochasticity while improving validation accuracy. For Qwen3-4B-Base, the sharp late increase in response length and clipping coincides with the decline in validation performance observed in Figure 8 . This suggests that the later checkpoints experience increasing truncation pressure, although these diagnostics alone do not establish a causal relationship.
+Table 7: Common phrases in first and second attempts. Response-level phrase frequencies for Qwen3-1.7B-Base on MATH-500 at training step 1,040. Percentages are computed over nonempty first attempts and nonempty verifier-conditioned retries extracted from one seed’s per-step evaluation outputs.
+First-attempt phrase
+Responses
+Second-attempt phrase
+Responses
+“We need to find …”
+76.3%
+“Let’s approach this problem differently”
+75.8%
+“Step by step”
+58.4%
+“We need to find …”
+74.9%
+“We are given …”
+43.8%
+“Use the fact that …”
+37.9%
+“The final answer is …”
+34.2%
+“Let’s consider …”
+16.8%
+“Solve the problem”
+34.1%
+“We need to check …”
+15.5%
+“Understand the problem”
+32.7%
+“Use a simpler approach”
+13.8%
+“Use the fact that …”
+16.6%
+“Use a different method”
+13.0%
+“We will follow these steps”
+12.8%
+“We need to re-evaluate …”
+9.9%
+“Ensure we get the correct answer”
+8.6%
+Table 8: Common phrases in first and second attempts. Response-level phrase frequencies for Qwen3-4B-Base on MATH-500 at training step 500. Percentages are computed over nonempty first attempts and nonempty verifier-conditioned retries extracted from one seed’s per-step evaluation outputs.
+First-attempt phrase
+Responses
+Second-attempt phrase
+Responses
+“Step by step”
+84.0%
+“We need to find …”
+63.6%
+“Final answer”
+77.5%
+“Let’s rethink this”
+37.1%
+“To find the …”
+68.0%
+“Let’s try a different approach”
+33.5%
+“We need to find …”
+43.7%
+“Let’s think differently”
+28.8%
+“To determine the …”
+15.8%
+“I didn’t arrive at the correct final answer”
+25.7%
+“We can use …”
+10.5%
+“Let’s consider …”
+22.3%
+“Follow these steps”
+10.1%
+“Let’s think about …”
+16.7%
+“Let’s consider …”
+8.4%
+“Use the fact that …”
+12.6%
+“I didn’t consider …”
+10.7%
+Problem Evaluate ( 1 + 2 ​ i ) ​ 6 − 3 ​ i (1+2i)6-3i . Please reason step by step, and put your final answer within \boxed {} .
+Attempt 1
+To evaluate the expression ( 1 + 2 ​ i ) ​ ( 6 − 3 ​ i ) (1+2i)(6-3i) , let’s proceed step by step.
+Step 1: Apply the Distributive Property (FOIL Method)
+( 1 + 2 ​ i ) ​ ( 6 − 3 ​ i ) = 6 − 3 ​ i + 12 ​ i − 6 ​ i 2 . (1+2i)(6-3i)=6-3i+12i-6i^{2}.
+…Recall that i 2 = − 1 i^{2}=-1 , so 6 − 3 ​ i + 12 ​ i + 6 = 12 + 9 ​ i . 6-3i+12i+6=12+9i.
+Final answer: 12 + 9 ​ i \boxed{12+9i}
+Incorrect × \bm{\times}
+Retry prompt
+“Your answer is wrong. Reflect on your previous answer and try something else.”
+Attempt 2
+You’re right, I didn’t read the problem correctly. The expression is ( 1 + 2 ​ i ) ​ 6 − 3 ​ i (1+2i)6-3i , not ( 1 + 2 ​ i ) ​ ( 6 − 3 ​ i ) (1+2i)(6-3i) . Let’s try again.
+…Distribute the 6 6 and combine the imaginary terms: 6 ​ ( 1 + 2 ​ i ) − 3 ​ i = 6 + 12 ​ i − 3 ​ i = 6 + 9 ​ i . 6(1+2i)-3i=6+12i-3i=6+9i.
+Final answer: 6 + 9 ​ i \boxed{6+9i}
+Correct ✓ \checkmark
+Figure 14 : A verifier-conditioned retry from ReAPO on MATH-500. The retry feedback causes the model to revisit its initial interpretation and recover the correct answer.
+D.5 Ablations on Qwen3-1.7B-Base
+Figure 10 and Table 4 compare GRPO, GRPO with twice the group size, and ReAPO with K ∈ { 2 , 3 } K\in\{2,3\} on Qwen3-1.7B-Base at maximum response lengths of 4,096 and 8,192 tokens, using a single training seed. Three observations stand out. First, ReAPO matches or exceeds GRPO with twice the group size while generating about 20 % 20\% to 30 % 30\% fewer tokens. Second, a longer response budget helps every method, and ReAPO with a 4,096-token budget performs on par with GRPO given 8,192 tokens ( 22.1 % 22.1\% versus 21.9 % 21.9\% ). Third, increasing the attempt budget to K = 3 K=3 slightly improves the mathematical benchmarks but reduces GPQA-Diamond accuracy (see Section 4 ).
+D.6 Sequential versus Parallel Sampling
+To isolate the benefit of serial dependence during inference, we compare sequential retry sampling against parallel independent sampling on AIME 2025 using Qwen3-1.7B-Base, as shown in Figure 15 . For a fixed total sampling budget k k , the parallel baseline draws k k independent first attempts, whereas sequential sampling draws k / 2 k/2 trajectories with up to two verifier-conditioned attempts per trajectory. At very small sampling budgets, parallel sampling performs slightly better, suggesting that independent draws can be preferable when only a handful of samples are available. As the budget increases, however, sequential sampling becomes more sample-efficient: in Figure 15 , it reaches the success rate attained by parallel Pass@2048 using approximately 1.7 × 1.7\times fewer generated responses. This indicates that conditioning later attempts on previous failures improves solution coverage in the higher-budget regime, even though parallel sampling remains competitive at very low budgets.
+Figure 15 : Sequential versus parallel sampling on AIME 2025 with Qwen3-1.7B-Base.
+At total sampling budget k k , parallel sampling draws k k independent first attempts, while sequential sampling draws k / 2 k/2 trajectories with up to two verifier-conditioned attempts each. The dotted lines indicate the sampling budgets required to reach the same success rate, and the annotation reports their ratio.
+Appendix E Formal Derivation of ReAPO
+In this section we provide the formal derivation of the credit assignment mechanism used in ReAPO as well as the proofs of Propositions 1 and 2 . Finally, we bound the bias introduced by the truncation of the number of attempts allowed that we instantiate in practice and discuss the theoretical implications of normalizing our advantages by their standard deviation.
+To begin we recall the notation of Section 3 . We conduct our analysis entirely with respect to a single fixed prompt x x and thus omit the dependence on x x in the subsequent derivations and notation. Recall that the model π θ \pi_{\theta} generates a sequence of attempts y 1 , y 2 , … y_{1},y_{2},\dots associated with a sequence of binary rewards r 1 , r 2 , … r_{1},r_{2},\dots until the stopping condition that r m = 1 r_{m}=1 for some m m , at which point the interaction terminates. We define
+τ = inf { m ≥ 1 | r m = 1 } \displaystyle\tau=\inf\left\{m\geq 1|r_{m}=1\right\}
+(9)
+to be the stopping time at which the first successful attempt occurs. We assume that the interaction continues until a successful attempt is made, i.e., τ < ∞ \tau<\infty almost surely and moreover that 𝔼 ⁡ [ τ ] < ∞ \mathbb{E}\left[\tau\right]<\infty . Our primary objective, as motivated by the stochastic shortest paths literature Bertsekas and Tsitsiklis [1991] , is to minimize the expected number of failed attempts before the first success, i.e.,
+ℒ ⁡ ( π θ ) = 𝔼 π θ ​ [ τ − 1 ] . \displaystyle\mathcal{L}(\pi_{\theta})=\mathbb{E}_{\pi_{\theta}}\left[\tau-1\right].
+(10)
+In order to conduct our analysis, we let
+q m ​ ( π θ ) = ℙ π θ ​ ( r m = 1 | r 1 = ⋯ = r m − 1 = 0 ) , \displaystyle q_{m}(\pi_{\theta})=\mathbb{P}_{\pi_{\theta}}(r_{m}=1|r_{1}=\cdots=r_{m-1}=0),
+(11)
+i.e. the probability that the m m -th attempt is successful given that all previous attempts have failed. We make the simplifying assumption that q m ​ ( π θ ) q_{m}(\pi_{\theta}) depends on the history only through the fact that all previous attempts have failed and does not depend on the specific outcomes of those previous attempts.
+We also introduce
+α m ​ ( π θ ) = ℙ π θ ​ ( τ ≥ m ) = ∏ j = 1 m − 1 ( 1 − q j ​ ( π θ ) ) , \displaystyle\alpha_{m}(\pi_{\theta})=\mathbb{P}_{\pi_{\theta}}(\tau\geq m)=\prod_{j=1}^{m-1}\left(1-q_{j}(\pi_{\theta})\right),
+(12)
+the probability that the interaction has not terminated before the m m -th attempt. Thus, while q m ​ ( π θ ) q_{m}(\pi_{\theta}) may not be monotone in m m , α m \alpha_{m} is always decreasing. Finally, we define
+c m ​ ( π θ ) = ∑ k = m ∞ ∏ j = m + 1 k ( 1 − q j ​ ( π θ ) ) , \displaystyle c_{m}(\pi_{\theta})=\sum_{k=m}^{\infty}\prod_{j=m+1}^{k}\left(1-q_{j}(\pi_{\theta})\right),
+(13)
+the expected number of additional attempts needed starting from attempt m + 1 m+1 , given that the first m m attempts have failed. Here the empty product in the k = m k=m term equals 1 1 , accounting for attempt m + 1 m+1 .
+E.1 Derivation of the Policy Gradient Decomposition
+We now restate and prove Proposition 1 .
+Proposition 3 .
+Suppose that for all θ \theta in a sufficiently small neighborhood of θ 0 \theta_{0} , it holds that 𝔼 π θ ​ [ τ ] < ∞ \mathbb{E}_{\pi_{\theta}}[\tau]<\infty . Suppose further that for all m ≥ 1 m\geq 1 , it holds that
+ℙ π θ ​ ( r m = 1 | x , y 1 , … , y m − 1 ) = q m ​ ( π θ ) , \displaystyle\mathbb{P}_{\pi_{\theta}}(r_{m}=1|x,y_{1},\dots,y_{m-1})=q_{m}(\pi_{\theta}),
+(14)
+i.e. the probability that the m m -th attempt is successful depends only on the fact that all previous attempts have failed and not on the specific outcomes of those attempts. Let α m \alpha_{m} and c m c_{m} be defined as in Equation ( 12 ) and Equation ( 13 ) , respectively. Moreover suppose that
+q m ​ ( θ ) ≥ q min > 0 and ‖ ∇ θ q m ​ ( θ ) ‖ ≤ B . \displaystyle q_{m}(\theta)\geq q_{\min}>0\quad\text{and}\quad\left\|\nabla_{\theta}q_{m}(\theta)\right\|\leq B.
+(15)
+Then it holds that
+− ∇ θ ℒ ​ ( π θ ) = ∑ m = 1 ∞ α m ​ ( π θ ) ​ ∇ θ q m ​ ( π θ ) ​ c m ​ ( π θ ) . \displaystyle-\nabla_{\theta}\mathcal{L}(\pi_{\theta})=\sum_{m=1}^{\infty}\alpha_{m}(\pi_{\theta})\nabla_{\theta}q_{m}(\pi_{\theta})c_{m}(\pi_{\theta}).
+(16)
+Proof.
+We first observe that by the tail sum formula for expectations,
+ℒ ⁡ ( π θ ) = ∑ m = 2 ∞ ℙ π θ ​ ( τ ≥ m ) = ∑ m = 2 ∞ α m ​ ( π θ ) = ∑ k = 1 ∞ α k + 1 ​ ( π θ ) . \displaystyle\mathcal{L}(\pi_{\theta})=\sum_{m=2}^{\infty}\mathbb{P}_{\pi_{\theta}}(\tau\geq m)=\sum_{m=2}^{\infty}\alpha_{m}(\pi_{\theta})=\sum_{k=1}^{\infty}\alpha_{k+1}(\pi_{\theta}).
+(17)
+Now, for all k ≥ 1 k\geq 1 , it is immediate by definition that
+α k + 1 ​ ( π θ ) = ∏ j = 1 k ( 1 − q j ​ ( π θ ) ) . \displaystyle\alpha_{k+1}(\pi_{\theta})=\prod_{j=1}^{k}(1-q_{j}(\pi_{\theta})).
+(18)
+By Equation ( 15 ), we can differentiate under the infinite sum. Differentiating, we have
+− ∇ θ α k + 1 ​ ( π θ ) = ∑ m = 1 k α m ​ ( π θ ) ​ ∇ θ q m ​ ( π θ ) ​ ∏ j = m + 1 k ( 1 − q j ​ ( π θ ) ) . \displaystyle-\nabla_{\theta}\alpha_{k+1}(\pi_{\theta})=\sum_{m=1}^{k}\alpha_{m}(\pi_{\theta})\nabla_{\theta}q_{m}(\pi_{\theta})\prod_{j=m+1}^{k}(1-q_{j}(\pi_{\theta})).
+(19)
+Summing over k k from 1 1 to ∞ \infty , we obtain
+− ∇ θ ℒ ​ ( π θ ) \displaystyle-\nabla_{\theta}\mathcal{L}(\pi_{\theta})
+= ∑ k = 1 ∞ − ∇ θ α k + 1 ( π θ ) \displaystyle=\sum_{k=1}^{\infty}-\nabla_{\theta}\alpha_{k+1}(\pi_{\theta})
+(20)
+= ∑ k = 1 ∞ ∑ m = 1 k α m ​ ( π θ ) ​ ∇ θ q m ​ ( π θ ) ​ ∏ j = m + 1 k ( 1 − q j ​ ( π θ ) ) \displaystyle=\sum_{k=1}^{\infty}\sum_{m=1}^{k}\alpha_{m}(\pi_{\theta})\nabla_{\theta}q_{m}(\pi_{\theta})\prod_{j=m+1}^{k}(1-q_{j}(\pi_{\theta}))
+(21)
+= ∑ m = 1 ∞ α m ​ ( π θ ) ​ ∇ θ q m ​ ( π θ ) ​ ∑ k = m ∞ ∏ j = m + 1 k ( 1 − q j ​ ( π θ ) ) \displaystyle=\sum_{m=1}^{\infty}\alpha_{m}(\pi_{\theta})\nabla_{\theta}q_{m}(\pi_{\theta})\sum_{k=m}^{\infty}\prod_{j=m+1}^{k}(1-q_{j}(\pi_{\theta}))
+(22)
+= ∑ m = 1 ∞ α m ​ ( π θ ) ​ ∇ θ q m ​ ( π θ ) ​ c m ​ ( π θ ) . \displaystyle=\sum_{m=1}^{\infty}\alpha_{m}(\pi_{\theta})\nabla_{\theta}q_{m}(\pi_{\theta})c_{m}(\pi_{\theta}).
+(23)
+The result holds.
+∎
+The inclusion of c m ​ ( π θ ) c_{m}(\pi_{\theta}) is inconvenient due to its dependence on a quantity that is hard to estimate. We thus make a stronger assumption, namely that c m ​ ( π θ ) c_{m}(\pi_{\theta}) is independent of m m and denote this common value by c ⁡ ( π θ ) c(\pi_{\theta}) . This assumption significantly simplifies the policy gradient expression. We now restate and prove Proposition 2 .
+Proposition 4 .
+Under the assumptions of Proposition 3 , suppose that c m ​ ( π θ ) c_{m}(\pi_{\theta}) is independent of m m with common value c ⁡ ( π θ ) c(\pi_{\theta}) . Define
+∇ θ ℒ ReAPO ​ ( π θ ) := 𝔼 π θ ​ [ 1 G ​ ∑ g = 1 G ∑ k = 1 τ g r g , k ⋅ ∇ θ ​ log ​ π θ ​ ( y g , k ∣ h g , k − 1 ) ] . \displaystyle\nabla_{\theta}\mathcal{L}_{\mathrm{ReAPO}}(\pi_{\theta}):=\mathbb{E}_{\pi_{\theta}}\left[\frac{1}{G}\sum_{g=1}^{G}\sum_{k=1}^{\tau_{g}}r_{g,k}\cdot\nabla_{\theta}\log\pi_{\theta}(y_{g,k}\mid h_{g,k-1})\right].
+(24)
+Then it holds that
+− ∇ θ ℒ ​ ( π θ ) = c ⁡ ( π θ ) ​ ∑ m = 1 ∞ α m ​ ( π θ ) ​ ∇ θ q m ​ ( π θ ) = c ⁡ ( π θ ) ⋅ ∇ θ ℒ ReAPO ​ ( π θ ) . \displaystyle-\nabla_{\theta}\mathcal{L}(\pi_{\theta})=c(\pi_{\theta})\sum_{m=1}^{\infty}\alpha_{m}(\pi_{\theta})\nabla_{\theta}q_{m}(\pi_{\theta})=c(\pi_{\theta})\cdot\nabla_{\theta}\mathcal{L}_{\mathrm{ReAPO}}(\pi_{\theta}).
+(25)
+Proof.
+The first equality follows immediately from Proposition 3 and the assumption that c m ​ ( π θ ) c_{m}(\pi_{\theta}) is independent of m m . For the second equality, fix a history h = h g , k − 1 h=h_{g,k-1} on which attempt k k is reached. The history-independence assumption holds in a neighborhood of the parameter being differentiated, so ∑ y π θ ​ ( y ∣ h ) ​ r ​ ( x , y ) = q k ​ ( π θ ) \sum_{y}\pi_{\theta}(y\mid h)r(x,y)=q_{k}(\pi_{\theta}) . Holding h h fixed and differentiating gives
+𝔼 π θ ​ [ r g , k ​ ∇ θ ​ log ⁡ π θ ​ ( y g , k ∣ h ) ∣ h g , k − 1 = h ] \displaystyle\mathbb{E}_{\pi_{\theta}}\left[r_{g,k}\nabla_{\theta}\log\pi_{\theta}(y_{g,k}\mid h)\mid h_{g,k-1}=h\right]
+= ∑ y r ⁡ ( x , y ) ​ ∇ θ π θ ​ ( y ∣ h ) = ∇ θ q k ​ ( π θ ) . \displaystyle=\sum_{y}r(x,y)\nabla_{\theta}\pi_{\theta}(y\mid h)=\nabla_{\theta}q_{k}(\pi_{\theta}).
+(26)
+Finally, attempt k k is reached with probability α k ​ ( π θ ) \alpha_{k}(\pi_{\theta}) . Averaging over reached histories and summing over attempts gives
+∇ θ ℒ ReAPO ​ ( π θ ) = ∑ k = 1 ∞ α k ​ ( π θ ) ​ ∇ θ q k ​ ( π θ ) , \displaystyle\nabla_{\theta}\mathcal{L}_{\mathrm{ReAPO}}(\pi_{\theta})=\sum_{k=1}^{\infty}\alpha_{k}(\pi_{\theta})\nabla_{\theta}q_{k}(\pi_{\theta}),
+(27)
+which proves the second equality.
+∎
+To illustrate the conclusion of Proposition 4 , consider the simple setting where the first attempt succeeds with probability p θ = q 1 ​ ( π θ ) p_{\theta}=q_{1}(\pi_{\theta}) and for m > 1 m>1 , the success probability is q m ​ ( π θ ) = q θ q_{m}(\pi_{\theta})=q_{\theta} . In words, after the first attempt, each attempt succeeds with a constant probability. Then it is immediate that c m ​ ( π θ ) = q θ − 1 c_{m}(\pi_{\theta})=q_{\theta}^{-1} for all m ≥ 1 m\geq 1 , and hence
+− ∇ θ ℒ ​ ( π θ ) = ∇ θ ℒ ReAPO ​ ( π θ ) q θ . \displaystyle-\nabla_{\theta}\mathcal{L}(\pi_{\theta})=\frac{\nabla_{\theta}\mathcal{L}_{\mathrm{ReAPO}}(\pi_{\theta})}{q_{\theta}}.
+(28)
+E.2 The Effect of Truncation
+While the above theory was derived assuming an infinite number of attempts, in practice, we often truncate the number of attempts to a finite maximum K K . This truncation introduces a bias in the policy gradient estimate, as it ignores the contributions from attempts beyond the K K -th one. To better understand the effect of the bias, consider the truncated objective
+ℒ K ​ ( π θ ) = 𝔼 π θ ​ [ ( τ − 1 ) ∧ K ] , \displaystyle\mathcal{L}_{K}(\pi_{\theta})=\mathbb{E}_{\pi_{\theta}}\left[(\tau-1)\wedge K\right],
+(29)
+i.e. the expected number of failed attempts, truncated at K K . We first observe that as K ↑ ∞ K\uparrow\infty , the truncated objective ℒ K ​ ( π θ ) \mathcal{L}_{K}(\pi_{\theta}) converges to the original objective ℒ ⁡ ( π θ ) \mathcal{L}(\pi_{\theta}) at an exponential rate under a mild condition on q m ​ ( π θ ) q_{m}(\pi_{\theta}) for m > 1 m>1 .
+Proposition 5 .
+For any choice of K K and any π θ \pi_{\theta} , it holds that
+ℒ ⁡ ( π θ ) − ℒ K ​ ( π θ ) = 𝔼 π θ ​ [ ( τ − 1 − K ) + ] = ∑ m = K + 1 ∞ α m + 1 ​ ( π θ ) . \displaystyle\mathcal{L}(\pi_{\theta})-\mathcal{L}_{K}(\pi_{\theta})=\mathbb{E}_{\pi_{\theta}}\left[\left(\tau-1-K\right)_{+}\right]=\sum_{m=K+1}^{\infty}\alpha_{m+1}(\pi_{\theta}).
+(30)
+Moreover, if for all m ≥ 1 m\geq 1 it holds that q m ​ ( π θ ) ≥ q min > 0 q_{m}(\pi_{\theta})\geq q_{\min}>0 uniformly in m m , then
+ℒ ⁡ ( π θ ) − ℒ K ​ ( π θ ) ≤ ( 1 − q min ) K + 1 q min . \displaystyle\mathcal{L}(\pi_{\theta})-\mathcal{L}_{K}(\pi_{\theta})\leq\frac{(1-q_{\min})^{K+1}}{q_{\min}}.
+(31)
+Proof.
+The first statement is immediate from the tail-sum formula. For the second statement, observe that if q m ​ ( π θ ) ≥ q min q_{m}(\pi_{\theta})\geq q_{\min} then
+α m + 1 = ∏ k = 1 m ( 1 − q k ​ ( π θ ) ) ≤ ( 1 − q min ) m . \displaystyle\alpha_{m+1}=\prod_{k=1}^{m}(1-q_{k}(\pi_{\theta}))\leq(1-q_{\min})^{m}.
+(32)
+Summing over m = K + 1 , K + 2 , … m=K+1,K+2,\dots gives the result.
+∎
+Note that a consequence of the previous result suggests that as long as K ≳ − log ⁡ ( q min ​ ε ) q min K\gtrsim-\frac{\log(q_{\min}\varepsilon)}{q_{\min}} , it holds that ℒ K ​ ( π θ ) ≈ ℒ ⁡ ( π θ ) \mathcal{L}_{K}(\pi_{\theta})\approx\mathcal{L}(\pi_{\theta}) up to an error of at most ε \varepsilon .
+Differentiating the tail-sum representation above, we obtain
+∇ θ ℒ ​ ( π θ ) − ∇ θ ℒ K ​ ( π θ ) \displaystyle\nabla_{\theta}\mathcal{L}(\pi_{\theta})-\nabla_{\theta}\mathcal{L}_{K}(\pi_{\theta})
+= ∑ m = K + 1 ∞ ∇ θ α m + 1 ​ ( π θ ) \displaystyle=\sum_{m=K+1}^{\infty}\nabla_{\theta}\alpha_{m+1}(\pi_{\theta})
+(33)
+= − ∑ m = K + 1 ∞ ∑ j = 1 m α j ( π θ ) ∇ θ q j ( π θ ) ∏ ℓ = j + 1 m ( 1 − q ℓ ( π θ ) ) . \displaystyle=-\sum_{m=K+1}^{\infty}\sum_{j=1}^{m}\alpha_{j}(\pi_{\theta})\nabla_{\theta}q_{j}(\pi_{\theta})\prod_{\ell=j+1}^{m}(1-q_{\ell}(\pi_{\theta})).
+(34)
+In particular, if q m ​ ( π θ ) ≥ q min > 0 q_{m}(\pi_{\theta})\geq q_{\min}>0 and
+‖ ∇ θ q m ​ ( π θ ) ‖ ≤ B \left\|\nabla_{\theta}q_{m}(\pi_{\theta})\right\|\leq B uniformly in m m ,
+then
+‖ ∇ θ ℒ ​ ( π θ ) − ∇ θ ℒ K ​ ( π θ ) ‖ \displaystyle\left\|\nabla_{\theta}\mathcal{L}(\pi_{\theta})-\nabla_{\theta}\mathcal{L}_{K}(\pi_{\theta})\right\|
+(35)
+≤ B ​ ∑ m = K + 1 ∞ m ​ ( 1 − q min ) m − 1 \displaystyle\qquad\leq B\sum_{m=K+1}^{\infty}m(1-q_{\min})^{m-1}
+(36)
+= B ⁡ ( ( K + 1 ) ​ ( 1 − q min ) K q min + ( 1 − q min ) K + 1 q min 2 ) . \displaystyle\qquad=B\left(\frac{(K+1)(1-q_{\min})^{K}}{q_{\min}}+\frac{(1-q_{\min})^{K+1}}{q_{\min}^{2}}\right).
+(37)
+Thus, the bias in the policy gradient due to truncation decays
+exponentially with K K .
+E.3 The Effect of Advantage Normalization
+While Proposition 4 provides a clear motivation for ReAPO, we note that the loss does not use the GRPO baseline we implement in practice. The following corollary formalizes the connection between the ReAPO objective and the time-invariant policy gradient form.
+Corollary 1 .
+Under the same assumptions as Proposition 4 , let τ g \tau_{g} denote the number of attempts for group g g and let
+A g , k = r g , k − ∑ g = 1 G ∑ k = 1 τ g r g , k ∑ g = 1 G τ g . \displaystyle A_{g,k}=r_{g,k}-\frac{\sum_{g=1}^{G}\sum_{k=1}^{\tau_{g}}r_{g,k}}{\sum_{g=1}^{G}\tau_{g}}.
+(38)
+Suppose that K = ∞ K=\infty , and define
+∇ θ ℒ ReAPO − center ​ ( π θ ) := 𝔼 π θ ​ [ 1 G ​ ∑ g = 1 G ∑ k = 1 τ g A g , k ​ ∇ θ ​ log ⁡ π θ ​ ( y g , k ∣ h g , k − 1 ) ] . \displaystyle\nabla_{\theta}\mathcal{L}_{\mathrm{ReAPO-center}}(\pi_{\theta}):=\mathbb{E}_{\pi_{\theta}}\left[\frac{1}{G}\sum_{g=1}^{G}\sum_{k=1}^{\tau_{g}}A_{g,k}\nabla_{\theta}\log\pi_{\theta}(y_{g,k}\mid h_{g,k-1})\right].
+(39)
+Then, writing τ = ∑ g = 1 G τ g \tau=\sum_{g=1}^{G}\tau_{g} ,
+∇ θ ℒ ReAPO − center ​ ( π θ ) = ∇ θ ℒ ReAPO ​ ( π θ ) − ∇ θ 𝔼 π θ ​ [ 1 τ ] . \displaystyle\nabla_{\theta}\mathcal{L}_{\mathrm{ReAPO-center}}(\pi_{\theta})=\nabla_{\theta}\mathcal{L}_{\mathrm{ReAPO}}(\pi_{\theta})-\nabla_{\theta}\mathbb{E}_{\pi_{\theta}}\left[\frac{1}{\tau}\right].
+(40)
+Consequently,
+− ∇ θ L ​ ( π θ ) = c ⁡ ( π θ ) ​ ( ∇ θ L center ​ ( π θ ) + ∇ θ 𝔼 π θ ​ [ 1 τ ] ) . \displaystyle-\nabla_{\theta}L(\pi_{\theta})=c(\pi_{\theta})\left(\nabla_{\theta}L_{\mathrm{center}}(\pi_{\theta})+\nabla_{\theta}\mathbb{E}_{\pi_{\theta}}\left[\frac{1}{\tau}\right]\right).
+(41)
+Proof.
+First note that because τ g < ∞ \tau_{g}<\infty almost surely and r g , k = 0 r_{g,k}=0 for k < τ g k<\tau_{g} , it holds that
+∑ g = 1 G ∑ k = 1 τ g r g , k = G . \displaystyle\sum_{g=1}^{G}\sum_{k=1}^{\tau_{g}}r_{g,k}=G.
+(42)
+Thus,
+A g , k = r g , k − G τ , \displaystyle A_{g,k}=r_{g,k}-\frac{G}{\tau},
+(43)
+and the result follows from Proposition 4 and the linearity of the gradient.
+∎
+Note that the centering by the mean, as done in ℒ ReAPO − center \mathcal{L}_{\mathrm{ReAPO-center}} thus does not exactly correspond to minimizing 𝔼 π θ ​ [ τ − 1 ] \mathbb{E}_{\pi_{\theta}}[\tau-1] , but that the correction term ∇ θ 𝔼 π θ ​ [ 1 τ ] \nabla_{\theta}\mathbb{E}_{\pi_{\theta}}\left[\frac{1}{\tau}\right] accounts for this discrepancy and also serves to encourage τ \tau to be as small as possible.
+While all of the above theory was developed in the context of unnormalized advantages, i.e. using rewards directly without centring or dividing by the standard deviation, in practice we use advantage normalization, dividing by the standard deviation of the rewards in addition to centring by the mean, as is done in GRPO [ Shao et al., 2024 ] . Following Dr.GRPO Liu et al. [2025] , we can analyze the effect of this normalization on the bias and variance of the policy gradient estimator. In the setting of interest where rewards are binary and the probability of a given attempt being correct is μ K \mu_{K} , then it holds that the standard deviation is σ K = μ K ​ ( 1 − μ K ) \sigma_{K}=\sqrt{\mu_{K}(1-\mu_{K})} . In the limit as K ↑ ∞ K\uparrow\infty , it holds that
+μ ∞ = G ∑ g = 1 G τ g . \displaystyle\mu_{\infty}=\frac{G}{\sum_{g=1}^{G}\tau_{g}}.
+(44)
+Thus, as G → ∞ G\to\infty , it holds that μ ∞ → 1 / 𝔼 θ ​ [ τ ] \mu_{\infty}\to\nicefrac{{1}}{{\mathbb{E}_{\theta}[\tau]}} .
+Thus for each prompt x x in the limit as K , G ↑ ∞ K,G\uparrow\infty , the standard deviation of the rewards is
+σ ∞ ​ ( x ) = 𝔼 ⁡ [ τ ⁡ ( x ) − 1 ] 𝔼 ⁡ [ τ ⁡ ( x ) ] , \displaystyle\sigma_{\infty}(x)=\frac{\sqrt{\mathbb{E}\left[\tau(x)-1\right]}}{\mathbb{E}\left[\tau(x)\right]},
+(45)
+where we have now restored the dependence on the prompt to allow for considerations of multiple prompts and their respective attempt distributions. Thus the standard deviation normalization has no effect on the direction of the gradient, but does lead to a rescaling of the gradient magnitude, about on the order of 𝔼 ⁡ [ τ ] \sqrt{\mathbb{E}[\tau]} for each prompt x x . In particular, more difficult problems with larger expected numbers of attempts will have their policy gradient contributions up-weighted relative to easier problems with smaller expected numbers of attempts.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

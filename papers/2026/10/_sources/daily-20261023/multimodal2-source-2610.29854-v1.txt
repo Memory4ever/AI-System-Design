@@ -1,0 +1,292 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.29854v1
+Original retrieval 2026-10-23 BJT. Preservation is not a review-completion claim. Reviewed necessary scope is SOURCE_MULTIMODAL2.md.
+Abstract
+How do diffusion transformers (DiTs) represent image content and learn rules for reusing it to generalize?
+We develop an aggregator–predictor view of DiTs as input-adaptive local denoisers , in which context aggregation and patch prediction provide functional roles for interpreting attention and MLPs.
+We first establish that, for Gaussian Markov random field (GMRF) priors, the global Bayes denoiser can be approximated using only a subset of context patches, with error decaying exponentially in context radius.
+We further show that patchwise linear denoisers, often invoked to explain diffusion generalization, recover the empirical local denoiser with sufficiently informative aggregation.
+Within this view, AdaLN-modulated attention naturally parameterizes an input- and noise-dependent aggregator, while the MLP admits a learned key–value representation for tokenwise patch prediction.
+Our experiments support this view.
+DiTs trained on real images exhibit noise-dependent denoising contexts resembling those in the analytic GMRF setting, while attention mass exhibits a qualitatively corresponding broadening pattern.
+In a controlled CelebA64 study, shared-memory patch predictors used in place of DiT MLPs achieve competitive denoising and generative performance.
+Finally, cross-dataset component transplantation reveals compatibility patterns consistent with the proposed roles of QK in spatial weighting, VO in feature transport, and MLPs in patch prediction.
+Together, these results provide a component-level account of DiT denoising and motivate architecture-specific fine-tuning and controlled intervention.
+ Figure 1: In each row, a CelebA source checkpoint is fine-tuned on the AAHQ, FFHQ, AFHQ, or STL-10 dataset.
+The source and fine-tuned generated images are shown in columns (000) and (111).
+In the middle columns, attention QK/VO and MLP weights of the source checkpoint are replaced with the corresponding fine-tuned weights; e.g., (001) means only MLP is replaced, while QK/VO are retained.
+ For face-to-face fine-tuning, replacing only QK generates source-like faces, while replacing MLP brings visual changes: cartoon faces, bald heads, or dogs. 
+Among the tested CelebA \to STL-10 hybrids, coherent target-like structure appears primarily in the joint endpoint (111); reverting VO (101) leaves fragmented texture.
+See Sec.  5.3 and Appendix  E.4 .
+ 1 Introduction
+Diffusion and flow-matching models are widely used for image generation ( Song et al., 2021 ; Lipman et al., 2023 ) , with Diffusion Transformers (DiTs) becoming a standard backbone
+ ( Peebles and Xie, 2023 ; Esser et al., 2024 ; Xie et al., 2025 ; Li and He, 2026 ) .
+Growing evidence connects their generalization to representations of images and rules for reusing them .
+Diffusion features encode semantic and geometric information ( Baranchuk et al., 2022 ; Tang et al., 2023 ) , and aligning them with pretrained representations improves training ( Yu et al., 2025 ) .
+Models also generate combinations absent from the training data, as shown by analyses of synthetic hierarchical data ( Okawa et al., 2023 ; Favero et al., 2025 ) .
+How components of DiTs realize these capabilities remains unclear.
+Existing explanations connect diffusion-model generalization to geometry-adaptive harmonic or balanced representations ( Kadkhodaie et al., 2024 ; Zhang et al., 2026 ) , and inductive biases toward spatial locality and translation equivariance ( Kamb and Ganguli, 2025 ; Niedoba et al., 2025 ) .
+These accounts leave open how DiT components divide the denoising computation.
+ Rosu et al. (2025) show that attention can implement exact score-based denoising, but they consider whole-image tokens, leaving interactions among spatial patches unresolved.
+ An et al. (2025) associate DiT generalization with attention mimicking CNN-like spatial locality, but attention can also select input-dependent, spatially non-contiguous context (Sec.  5.1 ).
+We ask: How do attention, MLPs, and adaptive layer normalization (AdaLN) divide the work of representing image content and learning context-dependent rules for generalization? 
+Understanding these component roles matters for intervention: domain adaptation, concept editing, and controlled generation require deciding which computations to modify and which to preserve.
+In language models, interpreting MLPs as key–value memories has motivated methods for editing stored associations ( Geva et al., 2021 ; Meng et al., 2022 ; Meng et al., 2023 ) , with related analyses in multimodal transformers ( Pan et al., 2024a ; Basu et al., 2024a ) .
+A functional account of DiTs could similarly guide component-wise adaptation across domains and interventions that change image content while preserving desired spatial relationships.
+Related work is reviewed in Appendix  A .
+We address this question by proposing an aggregator–predictor view of DiTs as input-adaptive local denoisers , supported by a statistical foundation and a set of architectural and empirical observations:
+ (1) A statistical foundation for local denoising. 
+We justify local denoiser, in which each patch is denoised using only a subset of context patches, by identifying its statistical target and establishing when it approximates the global Bayes denoiser.
+Specifically, for Gaussian Markov random field (GMRF) image priors, the global denoiser can be approximated by a radius- r local denoiser with error decaying exponentially in r (Thm.  1 ).
+We further connect existing patchwise retrieval-based explanations of generalization to this target by showing that, with sufficiently informative aggregation, a patchwise linear denoiser exactly recovers the empirical local denoiser (Thm.  3 ).
+ (2) An aggregator–predictor interpretation of DiT components. 
+We decompose the local denoising into context aggregation followed by patch prediction (Def.  2 ).
+Under this view, the algebraic structure of AdaLN-modulated attention implements an input- and noise-dependent aggregation rule: QK parameterizes spatial compatibility weights, while VO transforms the corresponding features (Sec.  4.1 ).
+In turn, MLP admits a key–value memory interpretation and operates on the resulting contextualized token (Sec.  4.2 ).
+These algebraic correspondences are exact for the isolated branches considered in Sec.  4 ; in a multilayer residual stack, the proposed roles interact and need not remain functionally separable (Appendix  D.5 ).
+This view extends existing fixed spatial-locality accounts by allowing the relevant context to depend on the image and noise level and to include spatially non-contiguous patches.
+It further suggests the possibility of replacing DiT MLPs with more interpretable memory-based components, as supported by our experiments (Sec.  5.2 ).
+ (3) Empirical evidence consistent with the proposed component roles. 
+Across real-image datasets, DiT sensitivity fields exhibit noise-dependent context broadening resembling the GMRF setting, while attention mass shows a related qualitative trend (Sec.  5.1 ).
+We further construct explicit shared-memory patch predictors that retain competitive denoising and generation performance in a controlled CelebA64 study (Sec.  5.2 ).
+Finally, cross-domain component transplantation reveals systematic component-compatibility patterns associated with source–target spatial similarity. These patterns are consistent with, but do not uniquely identify, the proposed roles in context aggregation and patch prediction (Sec.  5.3 ).
+ 2 Background and Problem Setup
+Let X_{0}=(X_{0,1},\ldots,X_{0,M})\in\mathbb{R}^{Md_{p}} be a clean image with M patches, where X_{0,m}\in\mathbb{R}^{d_{p}} is patch m .
+At time t , consider X_{t}=a_{t}X_{0}+b_{t}\varepsilon , with a_{t},b_{t}>0 and \varepsilon\sim\mathcal{N}(0,I_{Md_{p}}) independent of X_{0} .
+This formulation includes variance-exploding (VE) and variance-preserving (VP) diffusion ( Song et al., 2021 ) , as well as linear Gaussian interpolation paths used in flow matching ( Lipman et al., 2023 ) .
+We define the normalized observation Y_{t}:=X_{t}/a_{t}=X_{0}+\sigma_{t}\varepsilon and the effective noise level \sigma_{t}:=b_{t}/a_{t} .
+Under standard squared-loss objectives, population-optimal clean-image, noise, and velocity predictions are related by known affine transformations to the denoiser ( Li and He, 2026 ) 
+ \displaystyle D_{m,t}^{\ast}(y):=\mathbb{E}[X_{0,m}\mid Y_{t}=y,t],\qquad m\in\{1,\ldots,M\}. 
+ (1) 
+Throughout the paper, unless otherwise specified, expectations involving Y_{t} are over X_{0}\sim p_{0} and the independent Gaussian corruption.
+We call ( 1 ) a population global denoiser because the prediction conditions on all noisy patches.
+For training images \{x^{(i)}\}_{i=1}^{n} and the empirical prior \hat{p}_{0}=n^{-1}\sum_{i=1}^{n}\delta_{x^{(i)}} , the empirical version of the global denoiser ( 1 ) is a weighted sum of whole images:
+ \displaystyle\hat{D}_{m,t}(y) 
+ \displaystyle=\sum_{i=1}^{n}\operatorname{sm}_{i}\left\{-\frac{1}{2\sigma_{t}^{2}}\left\|y-x^{(j)}\right\|^{2}\right\}_{j\in[n]}x_{m}^{(i)}, 
+ (2) 
+where the softmax \operatorname{sm} is taken over the n training images.
+This creates a tension between training-loss minimization and generalization in diffusion models: under exact reverse dynamics and the corresponding terminal initialization, the empirical denoiser reproduces training images at the clean endpoint ( Biroli et al., 2024 ; Kamb and Ganguli, 2025 ) .
+Even when these conditions are not met, the shared mixture weights across patches keep the full-image prediction in the convex hull of whole training images, restricting its ability to recombine their local content independently ( Kamb and Ganguli, 2025 ; Niedoba et al., 2025 ) .
+This raises the question of why trained models often generalize beyond memorizing training images.
+Several works attribute this to compositional generation, in which retrieval weights vary across patch locations ( Niedoba et al., 2025 ; Kamb and Ganguli, 2025 ; Lukoianov et al., 2025 ) .
+We formalize the estimator underlying the compositional accounts as a patchwise linear denoiser (PLD) .
+PLD depends on y only through the context patches y_{\mathcal{B}_{m,t}} and allows different output patches to combine content from different training images.
+It is linear in how the context patches are aggregated.
+ Definition 1 (Patchwise linear denoiser (PLD)) . 
+ Fix a context set \mathcal{B}_{m,t}\subseteq\{1,\ldots,M\} and a matrix S_{m,t}\in\mathbb{R}^{d_{h}\times Md_{p}} with full row rank whose l th block of columns, [S_{m,t}]_{l}\in\mathbb{R}^{d_{h}\times d_{p}} , is zero for l\notin\mathcal{B}_{m,t} .
+Given a symmetric positive definite \Gamma_{m,t}\in\mathbb{R}^{d_{h}\times d_{h}} , define the patchwise linear denoiser (PLD) by 
+ \displaystyle\hat{D}_{m,t}^{\mathrm{pld}}(y)=\sum_{i=1}^{n}\operatorname{sm}_{i}\left\{-\frac{1}{2}\left\|S_{m,t}(y-x^{(j)})\right\|^{2}_{\Gamma_{m,t}}\right\}_{j\in[n]}x_{m}^{(i)}, 
+ (3) 
+ where \|u\|_{\Gamma_{m,t}}^{2}:=u^{\top}\Gamma_{m,t}u and x_{m}^{(i)} is patch m of training image i . 
+However, it is not clear when PLD achieves low population denoising risk or how a neural architecture can implement it.
+In the following sections, we address three central questions: what statistical target does the PLD approximate, when is that target close to the population denoiser, and how can a DiT implement such an estimator?
+ 3 Local denoiser can approximate global denoiser
+We first show when global denoising can be accurately approximated using only a local subset of patches.
+Suppose that the clean patches jointly follow a Markov random field (MRF) with respect to a graph G_{0}=([M],E_{0}) , and let B_{r}(m)\subseteq[M] be a graph-radius context set , containing all patches within graph distance r of patch m .
+This subset need not be spatially contiguous (Fig.  2 (a)).
+Define
+ \displaystyle D_{m,t}^{\ast}(y):=\mathbb{E}\!\left[X_{0,m}\mid Y_{t}=y,t\right],\qquad D_{m,t}^{\ast,r}(y):=\mathbb{E}\!\left[X_{0,m}\mid Y_{t,B_{r}(m)}=y_{B_{r}(m)},t\right] 
+as the global denoiser and B_{r}(m) -local denoiser , respectively.
+We define their mean-squared discrepancy \mathbb{E}\!\left\|D_{m,t}^{\ast}(Y_{t})-D_{m,t}^{\ast,r}(Y_{t})\right\|_{2}^{2} as the locality error and say that p_{0} is exponentially local with respect to G_{0} if the following holds.
+ Assumption 1 (Exponential locality) . 
+ For every t , there exists a constant c_{t}>0 such that, for every patch m and integer r\geq 0 , \mathbb{E}\left\|D_{m,t}^{\ast}(Y_{t})-D_{m,t}^{\ast,r}(Y_{t})\right\|_{2}^{2}\lesssim_{t}\exp(-c_{t}r) . 
+An explicit example is a Gaussian MRF image prior X_{0}\sim\mathcal{N}(0,Q^{-1}) with positive definite block precision Q\in\mathbb{R}^{Md_{p}\times Md_{p}} supported on G_{0} .
+Here, the global denoiser has the closed form D_{m,t}^{\ast}(y)=[(I+\sigma_{t}^{2}Q)^{-1}y]_{m} .
+Although this denoiser generally depends on all noisy patches, analyticity of the inverse function and the graph sparsity of Q allow approximation using only radius- r context, with error decaying exponentially in r ( Benzi and Razouk, 2007 ) .
+ Figure 2: Exact context set in a Gaussian MRF prior. 
+The known graph and precision matrix allow exact analysis of context set in this synthetic setting.
+(a) Radius-3 contexts B_{3}(m) for two selected patches. Defined by graph distance, these sets need not be spatially contiguous.
+(b) Exact and certified radii at \epsilon=10^{-3} . Corollary  2 guarantees that the certified radius is nondecreasing up to \sigma_{\mathrm{abs}} (dotted lines); the exact radii can be substantially smaller.
+(c) 90%/95% sensitivity radii (Sec.  5.1 ), showing that relative influence spreads over a broader context as noise increases.
+Details in Appendix  E.1 .
+ Theorem 1 (Exponential locality of GMRF, informal) . 
+ A Gaussian MRF is exponentially local in the sense of Assump.  1 .
+The full bound and conditions are in Appendix  C.1 . 
+Intuitively, noisier patches provide weaker evidence individually, making broader context useful for denoising.
+The following guarantee formalizes this intuition for the bound; the optimal local denoiser may achieve the same tolerance with less context (Fig.  2 (b)).
+ Corollary 2 (Bounded-range monotonicity of the locality radius, informal) . 
+ For any error tolerance \epsilon>0 , the smallest radius r_{\epsilon}(\sigma_{t}) certified by the explicit exponential bound is nondecreasing in noise on 0\leq\sigma_{t}\leq\sigma_{\mathrm{abs}} , where \sigma_{\mathrm{abs}}>0 depends on Q .
+The full statement, radius formula, and noise threshold are in Appendix  C.2 . 
+This guarantee concerns a bounded noise range: at extreme noise, the posterior mean approaches the zero prior mean and the absolute bound vanishes.
+Fig.  2 illustrates the context B_{r}(m) defined by graph distance and the radius guarantee in Cor.  2 using a synthetic GMRF prior.
+Similar locality patterns appear in DiTs trained on real images (Sec.  5.1 ).
+ 3.1 Aggregator–predictor decomposition of local denoiser
+We next interpret PLD and DiTs as estimators of the same local denoiser.
+Without assuming that the image prior is an MRF, fix a patch m , a time t , and a context set \mathcal{B}_{m,t} .
+We define the following population target as the \mathcal{B}_{m,t} -local denoiser 
+ \displaystyle D_{m,t}^{\ast,\mathcal{B}}(y):=\mathbb{E}[X_{0,m}\mid Y_{t,\mathcal{B}_{m,t}}=y_{\mathcal{B}_{m,t}},t]. 
+ (4) 
+We decompose its estimation in two stages: local aggregation of the relevant context , followed by patch prediction from the aggregated statistic .
+Specifically, a measurable map \mathcal{S}_{m,t}:\mathbb{R}^{Md_{p}}\to\mathbb{R}^{d_{h}} is a \mathcal{B}_{m,t} -local aggregator if y_{\mathcal{B}_{m,t}}=y^{\prime}_{\mathcal{B}_{m,t}} implies \mathcal{S}_{m,t}(y)=\mathcal{S}_{m,t}(y^{\prime}) for all y,y^{\prime} .
+It depends only on the context patches and maps them, possibly nonlinearly, to a statistic in \mathbb{R}^{d_{h}} .
+A measurable map g_{m,t}:\mathbb{R}^{d_{h}}\to\mathbb{R}^{d_{p}} , called a patch predictor , then predicts the clean patch from this statistic.
+For a given local aggregator, a predictor recovering the local conditional mean exists if and only if \operatorname{sf}(D_{m,t}^{\ast,\mathcal{B}}(Y_{t}))\subseteq\operatorname{sf}(\mathcal{S}_{m,t}(Y_{t})) ; that is, local aggregation preserves all information needed to recover the local conditional mean.
+The aggregator may discard details that are unnecessary for determining this mean.
+In that case, the tower property shows that such predictor can be chosen as g_{m,t}^{\ast}(s)=\mathbb{E}[X_{0,m}\mid\mathcal{S}_{m,t}(Y_{t})=s,t] .
+ Definition 2 (Aggregator–predictor decomposition) . 
+ A pair of measurable maps (\mathcal{S}_{m,t}^{\ast},g_{m,t}^{\ast}) is an aggregator–predictor decomposition of D_{m,t}^{\ast,\mathcal{B}} if \mathcal{S}_{m,t}^{\ast} is \mathcal{B}_{m,t} -local and, for P_{Y_{t}} -almost every y , D_{m,t}^{\ast,\mathcal{B}}(y)=(g_{m,t}^{\ast}\circ\mathcal{S}_{m,t}^{\ast})(y) . 
+This decomposition is generally nonunique but provides a framework for separately estimating the aggregator and predictor of the local denoiser ( 4 ).
+The PLD is one instance; for a patch m and time t with \sigma_{t}>0 , setting \Gamma_{m,t}=(\sigma_{t}^{2}S_{m,t}S_{m,t}^{\top})^{-1} in Def.  1 , the PLD is decomposed into \mathcal{S}_{m,t}^{\mathrm{lin}} , the linear aggregator , and g_{m,t}^{\mathrm{rbf}} , the radial basis function (RBF) predictor :
+ \displaystyle\begin{split}\hat{D}_{m,t}^{\mathrm{pld}}(y)&=\left(g_{m,t}^{\mathrm{rbf}}\circ\mathcal{S}^{\mathrm{lin}}_{m,t}\right)(y),\\
+\mathcal{S}_{m,t}^{\mathrm{lin}}(y)&=S_{m,t}y,\qquad g_{m,t}^{\mathrm{rbf}}(s)=\sum_{i=1}^{n}\operatorname{sm}_{i}\left\{-\frac{1}{2}\left\|s-\mathcal{S}_{m,t}^{\mathrm{lin}}(x^{(j)})\right\|^{2}_{(\sigma_{t}^{2}S_{m,t}S_{m,t}^{\top})^{-1}}\right\}_{j\in[n]}x_{m}^{(i)}.\end{split} 
+ (5) 
+Bayes’ rule identifies the predictor g_{m,t}^{\mathrm{rbf}}(s) with \mathbb{E}_{\hat{p}_{0}}[X_{0,m}\mid\mathcal{S}_{m,t}^{\mathrm{lin}}(Y_{t})=s,t] , the conditional mean given the aggregated statistic s under the empirical prior; see Appendix  C.3 .
+This correspondence has been noted in prior work ( Niedoba et al., 2025 ; Kamb and Ganguli, 2025 ; Lukoianov et al., 2025 ) .
+In our framework, these approaches correspond to using cropping matrices, prescribed neighborhood masks, or thresholded Wiener-filter sensitivity masks for S_{m,t} , respectively.
+We go a step further and show that, with a sufficiently expressive aggregator, \hat{D}_{m,t}^{\mathrm{pld}} exactly recovers the local denoiser under the empirical observation law.
+ Theorem 3 (PLD recovers the empirical local denoiser) . 
+ Under the setup above, let \sigma_{t}>0 and take \Gamma_{m,t}=(\sigma_{t}^{2}S_{m,t}S_{m,t}^{\top})^{-1} in Def.  1 . If \mathcal{S}_{m,t}^{\mathrm{lin}} preserves the empirical local conditional mean, i.e., \operatorname{sf}(\mathbb{E}_{\hat{p}_{0}}[X_{0,m}\mid Y_{t,\mathcal{B}_{m,t}},t])\subseteq\operatorname{sf}(\mathcal{S}_{m,t}^{\mathrm{lin}}(Y_{t})) , then, almost surely under the empirical observation law, \hat{D}_{m,t}^{\mathrm{pld}}(y)=\mathbb{E}_{\hat{p}_{0}}[X_{0,m}\mid Y_{t,\mathcal{B}_{m,t}}=y_{\mathcal{B}_{m,t}},t] . 
+The condition holds whenever the full local observation can be recovered from the aggregate, as with a patch-selection matrix.
+A compressive linear aggregator can also suffice: when the training contexts restricted to \mathcal{B}_{m,t} lie in a lower-dimensional affine subspace, a fixed linear aggregator whose row space contains their difference subspace is sufficient; see ( 17 ).
+Theorem  3 therefore connects the PLD, used to explain generalization by composition, to the population local denoiser ( 4 ): with sufficient aggregation, retrieval recovers its empirical counterpart exactly.
+However, requiring all training-context differences to lie in a single low-dimensional subspace is restrictive.
+This motivates the nonlinear DiT aggregator considered next.
+ 4 DiTs as Adaptive Local Denoisers
+We next relate DiT attention and MLPs to the aggregator and predictor roles of the local-denoising framework.
+We consider a single layer without residual connections \hat{D}_{m,t}^{\mathrm{dit}}(y)=(g_{t}^{\mathrm{mlp}}\circ\mathcal{S}^{\mathrm{attn}}_{m,t})(y) , where the attention aggregator \mathcal{S}^{\mathrm{attn}}_{m,t} and MLP predictor g_{t}^{\mathrm{mlp}} are defined in the following sections.
+Appendix  D gives the derivation and residual-stack extension; Fig.  6 summarizes the component mapping.
+Note that in a residual stack, VO and MLP updates can alter later QK routing, and attention can affect later MLP updates, so the branch-level algebra does not necessarily imply a functionally separable decomposition of the full network.
+ 4.1 Attention as an input-adaptive aggregator
+PLD’s linear aggregator ( 5 ) uses a fixed context rule across inputs.
+A more flexible denoiser can adapt its context to the input, drawing on different patches as their relevance changes with the image and noise level.
+We express this through an input-adaptive aggregator 
+ \displaystyle\mathcal{S}_{m,t}(Y_{t})=\sum_{l=1}^{M}S_{ml}(Y_{t};t)\Phi(Y_{t,l};t,l). 
+ (6) 
+Here \Phi(Y_{t,l};t,l)\in\mathbb{R}^{d_{h}} represents patch l together with its position and noise level, while S_{ml}(Y_{t};t)\in\mathbb{R}^{d_{h}\times d_{h}} determines how it contributes to the context for denoising patch m .
+DiT attention, incorporating patch, position, and time embeddings together with AdaLN conditioning, provides a factorized parameterization of such an input-adaptive aggregator.
+Let E\in\mathbb{R}^{d_{h}\times d_{p}} be the patch projection, e_{l}\in\mathbb{R}^{d_{h}} the positional embedding, and \phi_{t,l}(Y_{t}):=\Phi^{\mathrm{attn}}(EY_{t,l};e_{l},t) the feature formed by patch embedding, position embedding, and AdaLN.
+For each of \tilde{H} equal-width heads, \tilde{W}_{h}^{Q} , \tilde{W}_{h}^{K} , and \tilde{W}_{h}^{V} are the query (Q), key (K), and value (V) projections, and \tilde{W}_{h}^{O} is the output (O) projection.
+Writing the attention AdaLN residual gate as \tilde{\alpha}_{t}\in\mathbb{R}^{d_{h}} , the attention branch constitutes an attention aggregator defined as
+ \displaystyle\begin{split}\mathcal{S}_{m,t}^{\mathrm{attn}}(Y_{t})&=\sum_{l=1}^{M}S_{ml}^{\mathrm{attn}}(Y_{t};t)\phi_{t,l}(Y_{t}),\\
+S_{ml}^{\mathrm{attn}}(Y_{t};t)&=\sum_{h=1}^{\tilde{H}}\operatorname{sm}_{l}\left\{\frac{\langle\tilde{W}_{h}^{Q}\phi_{t,m}(Y_{t}),\tilde{W}_{h}^{K}\phi_{t,j}(Y_{t})\rangle}{(d_{h}/\tilde{H})^{1/2}}\right\}_{j\in[M]}\operatorname{diag}(\tilde{\alpha}_{t})\tilde{W}_{h}^{O}\tilde{W}_{h}^{V}.\end{split} 
+ (7) 
+ A single attention branch separates QK spatial weighting from VO value transformation and mixing  ( 7 ).
+The QK projections determine the compatibility scores of patches through (\tilde{W}_{h}^{Q})^{\top}\tilde{W}_{h}^{K} , and softmax converts these scores into spatial weights.
+By smoothly suppressing patches with low relative scores, attention performs soft thresholding and forms an approximately local aggregator when its weights concentrate on a suitable context.
+In this branch-level sense, QK parameterizes which patch positions receive greater or smaller weight in the constructed context, depending on image content, position, and noise level.
+Appendix  D.3 details the local approximation.
+VO transforms and combines the selected features through the shared, time-dependent channel operators \operatorname{diag}(\tilde{\alpha}_{t})\tilde{W}_{h}^{O}\tilde{W}_{h}^{V} .
+Attention thus combines \tilde{H} shared channel operators with input-dependent spatial weights, rather than learning an independent operator for every patch pair.
+This decomposition motivates an aggregator interpretation: for fixed input features, QK directly controls relative spatial weights, while VO applies patch-shared channel operators to the weighted features.
+The downstream impact of an attention weight also depends on the value features, channel operators, and residual interactions.
+These roles interact through learned features and across layers, but the distinction motivates examining QK and VO separately in Sec.  5.3 .
+ 4.2 MLP and shared-memory patch predictors
+Within the single-layer model, the DiT MLP g_{t}^{\mathrm{mlp}} acts on the attention-aggregated context s=\mathcal{S}_{m,t}^{\mathrm{attn}}(Y_{t}) in the patch-predictor role; in a residual stack, its output is a tokenwise feature update.
+The framework also allows alternative patch predictors, such as the RBF predictor g_{m,t}^{\mathrm{rbf}} in ( 5 ), which explicitly retrieves from training patches.
+In a multilayer residual stack (Appendix  D.5 ), these predictors can share memory across layers, just as g_{m,t}^{\mathrm{rbf}} would consult the same training patches at each layer.
+This motivates a sequence of shared-memory patch predictors connecting explicit patch retrieval to an ordinary MLP.
+We present simplified forms below; Appendix  D.4 gives the full parameterizations, including biases, output gates, compatibility projections, and multiple heads.
+We first note that g_{t}^{\mathrm{mlp}} and g_{m,t}^{\mathrm{rbf}} admit similar key–value memory interpretations ( Geva et al., 2021 ) .
+If coupled with the attention aggregator, g_{m,t}^{\mathrm{rbf}} retrieves from patch-specific values \{x_{m}^{(i)}\}_{1:n} using contextualized training images \mathcal{S}_{m,t}^{\mathrm{attn}}(x^{(i)}) as keys.
+A transformer MLP of hidden width R likewise consists of learnable key–value pairs \{k^{(r)},v^{(r)}\in\mathbb{R}^{d_{h}}\}_{r=1}^{R} .
+In DiTs, AdaLN modulates the memory query to produce time-dependent retrieval weights:
+ \displaystyle g^{\mathrm{mlp}}_{t}(s) 
+ \displaystyle=\sum_{r=1}^{R}\operatorname{gelu}\!\left(\operatorname{AdaLN}_{t}(s)^{\top}k^{(r)}\right)v^{(r)}. 
+ (8) 
+Compared with g_{m,t}^{\mathrm{rbf}} in ( 5 ), there are three differences: (i) the memory is learned rather than drawn from training patches, (ii) the same bank of memory is used across patches, and (iii) the retrieval weights are unnormalized and may have either sign.
+These differences motivate three patch-predictor variants that start from g_{m,t}^{\mathrm{rbf}} and progressively resemble g_{t}^{\mathrm{mlp}} : we first make the memory learnable, then share it across patches, and finally replace normalized retrieval weights with unnormalized, potentially signed coefficients.
+All predictors act on the same contextualized patch s=\mathcal{S}_{m,t}^{\mathrm{attn}}(Y_{t}) .
+Let W^{Q},W^{K},W^{V} be layerwise projections, with softmax taken over the R memory entries.
+ \displaystyle g^{\mathrm{lpld}}_{m,t}(s) 
+ \displaystyle=\sum_{r=1}^{R}\operatorname{sm}_{r}\left\{\operatorname{AdaLN}_{t}(s)^{\top}(W^{Q})^{\top}W^{K}\mathcal{S}_{m,t}^{\mathrm{attn}}(z^{(j)})\right\}_{j\in[R]}W^{V}z_{m}^{(r)}, 
+ (9) 
+ \displaystyle g^{\mathrm{sca}}_{t}(s) 
+ \displaystyle=\sum_{r=1}^{R}\operatorname{sm}_{r}\left\{\operatorname{AdaLN}_{t}(s)^{\top}(W^{Q})^{\top}W^{K}k^{(j)}\right\}_{j\in[R]}W^{V}v^{(r)}, 
+ (10) 
+ \displaystyle g^{\mathrm{smlp}}_{t}(s) 
+ \displaystyle=\sum_{r=1}^{R}\operatorname{gelu}\!\left(\operatorname{AdaLN}_{t}(s)^{\top}(W^{Q})^{\top}W^{K}k^{(r)}\right)W^{V}v^{(r)}. 
+ (11) 
+Compared to PLD, the first variant ( 9 ) replaces the training images with a learned memory bank \{z^{(r)}\in\mathbb{R}^{Md_{h}^{\prime}}\}_{r=1}^{R} shared across layers, and RBF retrieval with softmax.
+Just as a training image x^{(i)} consists of M patches, each memory entry z^{(r)} consists of M learnable patches z_{m}^{(r)}\in\mathbb{R}^{d_{h}^{\prime}} .
+The memory width d_{h}^{\prime} may equal the context width d_{h} or differ from it; a learned compatibility projection shared across layers accommodates differing widths.
+Together, these choices define the learned PLD (LPLD) predictor g^{\mathrm{lpld}}_{m,t} .
+LPLD uses the attention-aggregated memory z^{(r)} to form keys, whereas the value is taken directly from its m th patch.
+Storing a separate set of memory patches at each patch position can be redundant, especially given that patchification is an architectural choice.
+In ( 10 ) and ( 11 ), the patch-specific memory bank in g^{\mathrm{lpld}}_{m,t} is replaced with an untied key–value bank \{k^{(r)},v^{(r)}\in\mathbb{R}^{d_{h}^{\prime}}\}_{r=1}^{R} shared across patches and layers.
+Coupled with the softmax retrieval, this gives a shared cross-attention (SCA) predictor g^{\mathrm{sca}}_{t} .
+Finally, we replace normalized softmax weights with unnormalized GELU coefficients for a more flexible retrieval rule.
+This gives a shared MLP (SMLP) predictor g^{\mathrm{smlp}}_{t} .
+Absorbing the projection matrices into the keys and values allows SMLP to recover the MLP form ( 8 ).
+For all three variants, sharing the memory bank across layers can reduce the parameter count, allowing us to allocate more capacity to predictor heads at matched parameter budgets.
+ 5 Experiments
+Our experiments examine whether trained DiT denoisers exhibit locality patterns resembling those of the oracle GMRF denoiser (Sec.  5.1 ), and whether, as suggested by our aggregator–predictor framework, layerwise MLPs can be replaced with more interpretable, shared-memory patch predictors (Sec.  5.2 ).
+Finally, we use component transplantation to examine whether compatibility patterns among jointly adapted QK, VO, and MLP parameters are consistent with this framework (Sec.  5.3 ).
+Experimental details and additional results are in Appendix  E .
+ 5.1 Real-image denoising echoes GMRF locality
+ Figure 3: Sensitivity-defined contexts broaden with noise, with attention mass showing a related trend. 
+Gold/white contours enclose 50%/95% of normalized squared sensitivity or attention mass; ticks point inward and cyan dots mark target patches.
+Right: 95% radii averaged over target patches; Details in Appendix  E.2 .
+An exact analysis as in Fig.  2 is unavailable for real images.
+Instead, we identify context sets using sensitivity weights , which quantify how the prediction of patch m responds to perturbations of input patch l , based on a trained DiT’s Jacobian, similar to Niedoba et al. (2025) .
+The population denoiser’s Jacobian measures posterior dependence between clean patches given the noisy patches ( Dytso et al., 2021 ) .
+Based on these weights, we define the q -sensitivity radius as the smallest radius of a square centered on patch m containing at least a fraction q of the total weight.
+The sensitivity context set contains the fewest patches carrying at least that fraction.
+ Denoising sensitivity exhibits GMRF-like broadening; attention shows a related trend. 
+For the synthetic GMRF where the true Jacobian is available, Fig.  2 (c) shows that sensitivity spreads over broader contexts as noise increases.
+Denoising real images echoes this pattern: Fig.  3 shows concentrated sensitivity at low noise and broader, sometimes disconnected contexts at higher noise, together with increasing sensitivity radii.
+Notably, replacing sensitivity weights with attention mass yields analogous attention contexts and radii, which also generally broaden with noise.
+Together, these observations support the GMRF setting as a tractable reference model for denoising locality and the interpretation of attention as an input-adaptive context aggregator.
+Sensitivity and attention mass measure different quantities, so the comparison concerns a shared qualitative trend rather than identical context sets.
+Additional results appear in Appendix  E.2 .
+ Figure 4: Shared-memory patch predictors at comparable parameter budgets. 
+Models are trained on CelebA64 for 400 epochs; see Appendix  E.3 for details.
+ 5.2 Shared-memory predictors can replace MLPs in a controlled setting
+We replace DiT MLPs with LPLD, SCA, and SMLP on CelebA64.
+We compare similar parameter budgets using a common backbone architecture, with modest models and one training seed per configuration for unconditional 64\times 64 face generation.
+Figure  4 reports held-out velocity loss, denoising error, and FID at epoch 400.
+Three patterns appear; first, the patch-shared SCA and SMLP banks outperform the position-specific LPLD bank at comparable parameter budgets, showing that competitive prediction need not assign separate memory for every patch position.
+Second, SMLP improves on SCA, supporting unnormalized GELU retrieval as an effective alternative to softmax.
+Third, SMLP with H=8 achieves competitive denoising and lower FID than the ordinary MLP, despite sharing its base memory across layers.
+Multiple predictor heads generally improve performance, suggesting that multiple projections of the shared bank can be useful.
+Together, these results demonstrate that an explicit, layer-shared memory bank can support competitive patch prediction in this controlled setting.
+We note that these results by themselves do not establish that layerwise MLP parameters generally encode a single shared memory or that this design transfers unchanged to larger conditional DiTs.
+Training details and limitations are in Appendix  E.3 .
+ Figure 5: QK, VO, and MLP component transplants. 
+(a) Source-QK compatibility is higher across spatially similar datasets.
+(b) VO reversion costs more as joint non-additivity increases.
+(c) Natural-image source QK retains partial agreement on face targets.
+See Appendix  E.4.2 .
+ 5.3 Component transplants support the aggregator–predictor view
+ Transplanting jointly adapted components probes compatibility and coadaptation. 
+To examine compatibility patterns in relation to the proposed component roles, we fine-tune a pretrained source model on a target dataset.
+We then transplant combinations of the adapted components into the source checkpoint.
+When the datasets have similar spatial structure, our framework suggests that source QK may remain compatible with adapted VO and MLP parameters.
+Larger spatial shifts may be associated with stronger coadaptation.
+We study twelve transfer directions between face and natural-image datasets.
+For clarity, we jointly fine-tune only QK, VO, and MLP, leaving AdaLN and all other parameters fixed, assuming that the learned time conditioning transfers across domains.
+Each of the eight resulting hybrids is labeled by QK/VO/MLP bits: 0 for source weights and 1 for jointly adapted weights.
+These transplants probe the compatibility and coadaptation of parameters learned jointly; they do not measure the performance obtainable by training QK-, VO-, or MLP-only models.
+Separately, under the same target-domain update budget, QK-only and QK+VO-only fine-tuning generally fall further behind joint adaptation on larger domain shifts (Appendix  E.4.5 ).
+Following work on patch self-similarity and spatial normalization ( Tumanyan et al., 2022 ; Singh et al., 2026 ) , we measure spatial distance between datasets using MMD 2 of patch self-similarity descriptors.
+We compare each hybrid’s outputs with the fully adapted model’s using matched initial noise.
+We measure this agreement using DINOv2 global features for endpoint agreement (EA) and patch self-similarity patterns for spatial agreement (SA).
+Both scores assign 0 to the source and 1 to the fully adapted model.
+Full protocols and results are in Appendix  E.4 .
+ QK compatibility is higher for spatially similar datasets, while VO reversion penalties track component coadaptation. 
+With source QK retained (011), CelebA \to AAHQ/FFHQ/AFHQ produces recognizable faces.
+In contrast, among the tested CelebA \to STL-10 hybrids, coherent target-like structure emerges primarily only when all jointly adapted components are present (111; Figs.  1 and  13 ).
+Consistent with this pattern, the QK reversion penalty tends to increase with spatial distance (Fig.  5 (a)), which also accompanies stronger component coadaptation (Appendix  E.4.3 ).
+Additionally, restoring source VO (101) yields fragmented textures in the natural-image-to-face transfers (Figs.  14 and  15 ).
+Its reversion penalty increases with joint non-additivity—the gain from joint adaptation beyond the sum of isolated component changes (Fig.  5 (b)).
+ Source QK from broader natural-image domains retains partial compatibility on face targets. 
+With source QK retained (011), STL-10 hybrids recover human and animal face structure, including a blurred face for STL-10 \to CelebA, while joint adaptation produces clearer results (Fig.  14 ).
+This contrasts with the poorly formed scene in the reverse CelebA \to STL-10 direction (Fig.  1 ); additional examples in Appendix  E.4.4 .
+Figure  5 (c) supports this asymmetry: source QK from STL-10 retains greater endpoint agreement on CelebA than in the reverse direction, while QK from natural-image domains retains partial agreement on face targets at levels comparable to CelebA QK.
+ 6 Conclusion and limitations
+We presented an aggregator–predictor view of diffusion transformers as input-adaptive local denoisers.
+Our theory justifies local denoising under GMRF priors and connects patchwise linear denoisers to the empirical local denoising target.
+Within this framework, QK determines spatial context weights, VO transports features, and MLPs perform contextualized patch prediction.
+Experiments provide complementary evidence through noise-dependent denoising contexts, competitive shared-memory predictors, and cross-domain component compatibility patterns.
+Together, these findings offer a statistical and architectural perspective on DiT denoising and motivate further work on interpretable predictors and targeted model adaptation.
+Our experiments focus on modest-sized, unconditional DiTs operating on 64\times 64 images across a limited collection of face and natural-image datasets.
+In particular, the shared-memory predictor comparison uses CelebA64 with one training seed per configuration, leaving its robustness across datasets, model scales, and training seeds unresolved.
+The transfer study examines twelve directions while keeping AdaLN and global parameters fixed; its component transplants probe compatibility among jointly adapted weights and do not uniquely identify the proposed functional roles.
+Testing these patterns in larger conditional models, at higher resolutions, and under broader adaptation protocols is an important next step.
+AI use statement
+Generative AI tools were used as research assistants for literature review, refining the presentation of the work, writing and cleaning up code, assisting with experiment execution, cleaning up proofs, providing feedback on the manuscript, and polishing the text.
+All AI-assisted results were independently reviewed and verified by the authors.
+The authors made the final scientific and methodological decisions and take full responsibility for the contents of the paper.
+Reproducibility statement
+Assumptions and proofs are in Appendix  B .
+Appendix  E documents the datasets, model configurations, training and evaluation protocols, and metric definitions for all three experiments.
+We provide code and reproduction instructions for dataset preparation, training, evaluation, and regeneration of the figures and tables, together with the small numerical summaries used to render the reported plots.
+

@@ -1,0 +1,1936 @@
+Deterministic Differentiable Structured Pruning for Large Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminary
+2.1 Unified Masking Formulation
+Multi-head attention.
+MLP channels.
+2.2 Mask Optimization by ℓ0\ell_{0} Regularization
+Hard-Concrete Relaxation.
+2.3 Drawbacks of Hard-Concrete Relaxation
+3 Method
+3.1 Deterministic Differentiable Pruning
+3.2 Analysis
+3.3 Extensions
+Distillation.
+MoE.
+Fine-grained Sparsity Control.
+4 Related Work
+One-shot Pruning
+Sparsity-aware Training
+Mask-only Optimization
+5 Experiments
+5.1 Experimental Settings
+Models and Setup
+Evaluation
+Implementation Details
+Baseline Selection
+5.2 Main Results
+5.2.1 Dense LLMs
+5.2.2 Mixture-of-Experts LLMs
+5.3 Ablation Study
+5.3.1 Ablation on Individual Components
+5.3.2 Sparsity Granularities
+5.3.3 Tokens
+5.3.4 Datasets
+5.4 Optimal Sparsity Pattern
+5.5 Speedup
+6 Conclusion
+References
+A Algorithm
+B Theoretical Discussion
+Discrete PP-budget formulation.
+Relaxed keep budget.
+B.1 A basic property of the deterministic surrogate mapping
+B.2 Binarization loss
+B.3 Convergence of deterministic augmented Lagrangian optimization
+Step 1: Boundedness of gradients and ν~t\tilde{\nu}_{t}.
+Step 2: Feasibility of accumulation points.
+Step 3: KKT stationarity at accumulation points.
+B.4 Final theorem
+C Additional Implementation Details
+D Full Results
+E Analysis
+Dense models (LLaMA-7B).
+MoE models (DeepSeekMoE-16B).
+License: CC BY 4.0
+arXiv:2603.08065v1 [cs.LG] 09 Mar 2026
+Deterministic Differentiable Structured Pruning for Large Language Models
+Weiyu Huang
+Affiliation: Department of Computer Science and Technology, Tsinghua University, Beijing, China
+Affiliation: Ant Group, Beijing, China
+Pengle Zhang
+Affiliation: Department of Computer Science and Technology, Tsinghua University, Beijing, China
+Xiaolu Zhang
+Affiliation: Ant Group, Beijing, China
+Jun Zhou
+Affiliation: Ant Group, Beijing, China
+Jun Zhu
+Affiliation: Department of Computer Science and Technology, Tsinghua University, Beijing, China
+Jianfei Chen
+Affiliation: Department of Computer Science and Technology, Tsinghua University, Beijing, China
+Correspondence to: jianfeic@tsinghua.edu.cn
+Abstract
+Structured pruning reduces LLM inference cost by removing low-importance architectural components. This can be viewed as learning a multiplicative gate for each component under an ℓ0\ell_{0} sparsity constraint. Due to the discreteness of the ℓ0\ell_{0} norm, prior work typically adopts stochastic hard-concrete relaxations to enable differentiable optimization; however, this stochasticity can introduce a train–test mismatch when sampled masks are discretized for deployment and restricts masks to a bounded, near-binary range. To address this, we propose Deterministic Differentiable Pruning (DDP), a mask-only optimization method that eliminates stochasticity by directly optimizing a deterministic soft surrogate of the discrete ℓ0\ell_{0} objective. Compared with prior approaches, DDP offers greater expressiveness, reduced train–test mismatch, and faster convergence. We apply our method to several dense and MoE models, including Qwen3-32B and Qwen3-30B-A3B, achieving a performance loss as small as 1% on downstream tasks while outperforming previous methods at 20% sparsity. We further demonstrate end-to-end inference speedups in realistic deployment settings with vLLM.
+Keywords: Machine Learning, ICML
+††affiliationnotice: Equal contribution
+1 Introduction
+Large language models (LLMs) (Vaswani et al., 2017; Brown et al., 2020; Guo et al., 2025a) have demonstrated remarkable performance across a wide range of challenging tasks, including reasoning, code generation, and decision making. Despite these advances, deploying LLMs at scale remains resource-intensive, often requiring substantial compute, memory, and serving infrastructure. These costs pose a significant barrier to practical deployment, especially in budget-constrained settings.
+Structured pruning (Ma et al., 2023; Zhang et al., 2024; Li et al., 2024) offers a promising way to reduce these costs by removing entire architectural components—e.g., attention heads, hidden dimensions, or MLP channels—to reduce model size and inference cost. Unlike unstructured sparsity (Frantar and Alistarh, 2023; Sun et al., 2023), which prunes individual weights and often requires specialized support for speedups, structured pruning is compatible with standard dense operators and existing hardware, enabling efficient execution without added system complexity.
+Despite its appeal, most structured pruning methods for modern LLMs rely on efficient one-shot approaches (Li et al., 2024; Guo et al., 2025b) that select components using heuristic importance scores. While fast, these heuristics can be brittle and often incur substantial quality degradation under aggressive sparsity. In contrast, learning sparsity via end-to-end weight updates is typically prohibitive at LLM scale, leaving a gap between practicality and quality.
+A key observation motivating our approach is that mask-only optimization provides a practical middle ground between heuristic one-shot pruning and full weight tuning. Here, a mask is a set of learnable gating variables that determine whether each architectural component (e.g., a head or channel) is kept or pruned. In our setting, all pre-trained weights are frozen and only the masks are optimized. This is feasible because the search space is much smaller—even smaller than LoRA modules: for DeepSeek-R1 (Guo et al., 2025a) with 685B parameters, the number of mask variables is only on the order of tens of millions, enabling scalable gradient-based optimization that converges within a small token budget (e.g., <30<30M tokens). As a result, mask learning can discover higher-quality sparsity patterns than heuristic one-shot pruning without the cost of full-model training.
+Prior approaches that learn sparsity masks (Guo et al., 2023; Xia et al., 2024; Liu et al., 2025) improve over heuristic pruning, but they do not fully meet our goal of lightweight, scalable mask-only optimization. First, they typically learn masks together with weight updates (full or LoRA fine-tuning), which increases training cost and often requires large-scale pretraining-style data for stable recovery. Second, they commonly rely on stochastic hard-concrete relaxations (Louizos et al., 2018); in a mask-only setting, this constrains masks to a bounded, near-binary range and introduces sampling noise, leading to slower convergence and a potential train–test mismatch when deterministic masks are required for sparsity control and deployment.
+To address these issues, we propose Deterministic Differentiable Pruning (DDP), a lightweight mask-only structured pruning framework that learns structured sparsity patterns via gradient-based optimization. We formulate pruning as an ℓ0\ell_{0}-regularized optimization problem and enforce the sparsity constraint with an augmented Lagrangian method (ALM). To handle the non-differentiability of the ℓ0\ell_{0} norm, DDP introduces a deterministic smooth surrogate that is annealed to a sharp ℓ0\ell_{0} objective during training, removing sampling noise and avoiding the train–test mismatch induced by stochastic masks. Furthermore, DDP decouples the mask values used in the forward pass from those used for regularization, expanding the effective mask value range beyond near-binary constraints and improving performance. In addition, DDP includes an explicit binarization loss that encourages mask polarization, leading to faster and more stable convergence. We further show that knowledge distillation integrates naturally into our framework with minimal additional overhead. We validate DDP across both dense and mixture-of-experts (MoE) models, scaling to flagship open-source models with tens of billions of parameters. Across multiple LLM families and standard benchmarks, DDP consistently delivers superior quality–efficiency trade-offs compared to prior state-of-the-art methods.
+2 Preliminary
+This section provides a mathematical formulation of mask optimization for structured pruning. We first introduce a unified masking framework for pruning LLM submodules (Section 2.1), then cast targeted pruning as a constrained optimization problem and review how prior hard-concrete reparameterization methods address it (Section 2.2). We further analyze the objective mismatch of these approaches in the context of structured LLM pruning (Section 2.3).
+2.1 Unified Masking Formulation
+Transformer-based LLMs are composed of repeated submodules such as multi-head attention and MLPs, whose outputs can be written as a sum of KK independent components (e.g., attention heads or intermediate channels). We model structured pruning by attaching a multiplicative mask to each component; given input 𝐗\mathbf{X}, the module output is
+𝐲=∑k=1Kmk​𝐟k​(𝐗),mk∈ℝ,\mathbf{y}\;=\;\sum_{k=1}^{K}m_{k}\,\mathbf{f}_{k}(\mathbf{X}),\qquad m_{k}\in\mathbb{R},
+(1)
+where 𝐟k​(⋅)\mathbf{f}_{k}(\cdot) is the kk-th component and mkm_{k} is the corresponding gate (mk=0m_{k}=0 prunes; mk≠0m_{k}\neq 0 keeps). For dense LLMs, we apply this to both attention and MLP blocks.
+Multi-head attention.
+For a multi-head attention layer with HH heads, we take K=HK=H and define the contribution of the hh-th head as
+𝐟hattn​(𝐗)=Attn⁡(𝐗𝐖Q(h),𝐗𝐖K(h),𝐗𝐖V(h))​𝐖O(h),\mathbf{f}^{\text{attn}}_{h}(\mathbf{X})=\mathrm{Attn}\!\big(\mathbf{X}\mathbf{W}^{(h)}_{Q},\;\mathbf{X}\mathbf{W}^{(h)}_{K},\;\mathbf{X}\mathbf{W}^{(h)}_{V}\big)\,\mathbf{W}^{(h)}_{O},
+(2)
+where Attn⁡(⋅)\mathrm{Attn}(\cdot) is the scaled dot-product attention.
+MLP channels.
+For a (gated) MLP with intermediate width CC, we set K=CK=C and write
+𝐟jmlp​(𝐗)=(φ⁡(𝐗𝐮j)⊙(𝐗𝐠j))​𝐯j,\mathbf{f}^{\text{mlp}}_{j}(\mathbf{X})=\big(\varphi(\mathbf{X}\mathbf{u}_{j})\odot(\mathbf{X}\mathbf{g}_{j})\big)\,\mathbf{v}_{j},
+(3)
+where 𝐮j,𝐠j\mathbf{u}_{j},\mathbf{g}_{j} are the jj-th up/gate columns, 𝐯j\mathbf{v}_{j} is the corresponding down-projection row, and φ⁡(⋅)\varphi(\cdot) denotes the element-wise nonlinearity (e.g., GELU).
+Given an LL-layer model, the mask variables are summarized in Table 1.
+Table 1: Mask variables for attention and MLP pruning.
+Submodule
+Attention
+MLP
+Masks
+𝒎attn∈ℝH\boldsymbol{m}^{\text{attn}}\in\mathbb{R}^{H} (×L\times L)
+𝒎mlp∈ℝC\boldsymbol{m}^{\text{mlp}}\in\mathbb{R}^{C} (×L\times L)
+2.2 Mask Optimization by ℓ0\ell_{0} Regularization
+Our goal is to optimize the collection of structured masks M={𝒎attn,𝒎mlp}M=\{\boldsymbol{m}^{\text{attn}},\boldsymbol{m}^{\text{mlp}}\} that minimize the language modeling objective while meeting a prescribed sparsity budget. For notational convenience, we drop the explicit set notation and use 𝒎\boldsymbol{m} to denote a generic structured mask in MM. A natural starting point is ℓ0\ell_{0}-regularized training,
+min𝒎⁡ℒce​(θ,𝒎)+λ​‖𝒎‖0,\min_{\boldsymbol{m}}\;\mathcal{L}_{\mathrm{ce}}(\theta,\boldsymbol{m})\;+\;\lambda\|\boldsymbol{m}\|_{0},
+(4)
+where ℒce\mathcal{L}_{\mathrm{ce}} denotes the cross-entropy loss and ‖𝒎‖0\|\boldsymbol{m}\|_{0} is the ℓ0\ell_{0}-norm, which counts the number of active components.
+In practice, deployment often requires an explicit sparsity level rather than tuning a regularization strength λ\lambda. Therefore, Equation 4 can be further cast into a constrained optimization problem,
+min𝒎∈𝒮⁡ℒce​(θ,𝒎),\min_{\boldsymbol{m}\in\mathcal{S}}\;\mathcal{L}_{\mathrm{ce}}(\theta,\boldsymbol{m}),
+(5)
+where 𝒮\mathcal{S} denotes the target constraint set. In particular, we enforce a targeted keep ratio ρ\rho for 𝒎\boldsymbol{m} (equivalently, a pruning/sparsity ratio of α≜1−ρ\alpha\triangleq 1-\rho)
+m¯≜1K​‖𝒎‖0=1K​∑k=1K‖mk‖0=ρ,\bar{m}\triangleq\frac{1}{K}\|\boldsymbol{m}\|_{0}\;=\;\frac{1}{K}\sum_{k=1}^{K}\|m_{k}\|_{0}\;=\;\rho,
+(6)
+where m¯\bar{m} denotes the average keep ratio of ‖𝒎‖0\|\boldsymbol{m}\|_{0}.
+Directly solving Equation 5 is difficult in the large-scale LLM setting because current optimization methods are based on gradient descent and are tailored to unconstrained, smooth objectives. A common remedy is to convert the constraint into an unconstrained objective via an augmented Lagrangian method (ALM). Specifically, we add a sparsity penalty for each 𝒎\boldsymbol{m} that takes the form:
+ℒsparsity​(‖𝒎‖0)≜λ1​(m¯−ρ)+λ2​(m¯−ρ)2,\mathcal{L}_{\text{sparsity}}(\|\boldsymbol{m}\|_{0})\triangleq\lambda_{1}(\bar{m}-\rho)+\lambda_{2}(\bar{m}-\rho)^{2},
+(7)
+where λ1\lambda_{1} and λ2\lambda_{2} act as the Lagrange multiplier and quadratic penalty, respectively.
+Hard-Concrete Relaxation.
+While the augmented Lagrangian enforces an explicit sparsity constraint, the fundamental difficulty remains: the ℓ0\ell_{0} regularizer is discrete and non-differentiable. To enable gradient-based optimization, prior work (Fang et al., 2024; Wang et al., 2020; Xia et al., 2024) adopts the hard-concrete relaxation (Louizos et al., 2018), redefining 𝒎\boldsymbol{m} as a [0,1][0,1]-valued random mask variable to model ℓ0\ell_{0} norm. In the forward pass, masks 𝒎\boldsymbol{m} are generated using the hard-concrete mapping, with randomness injected via auxiliary variable 𝒖\boldsymbol{u}, we define the projection 𝒎=Φ⁡(𝒛,𝒖)\boldsymbol{m}=\Phi(\boldsymbol{z},\boldsymbol{u}) as:
+𝒖\displaystyle\boldsymbol{u}
+∼U(0,1),𝒗=σ(log𝒖−log(1−𝒖)+𝒛),\displaystyle\sim U(0,1),\quad\boldsymbol{v}=\sigma\!\big(\log\boldsymbol{u}-\log(1-\boldsymbol{u})+\boldsymbol{z}\big),
+(8)
+𝒗¯\displaystyle\bar{\boldsymbol{v}}
+=𝒗(r−l)+l,𝒎=Clamp(𝒗¯,0,1).\displaystyle=\boldsymbol{v}\,(r-l)+l,\quad\boldsymbol{m}=\mathrm{Clamp}(\bar{\boldsymbol{v}},0,1).
+where σ⁡(⋅)\sigma(\cdot) is the sigmoid function and l<0<1<rl<0<1<r are stretching parameters concentrating probability mass onto {0,1}\{0,1\}. This relaxation yields a closed-form surrogate for the expected ℓ0\ell_{0} norm:
+𝔼[∥𝒎∥0]=∑k=1Kℙ(mk>0)=∑k=1Kσ(zk−log(−l/r)).\mathbb{E}\big[\|\boldsymbol{m}\|_{0}\big]=\sum_{k=1}^{K}\mathbb{P}(m_{k}>0)=\sum_{k=1}^{K}\sigma\!\left(z_{k}-\log(-l/r)\right).
+(9)
+Since the mask 𝒎\boldsymbol{m} is now a random variable, the expected keep ratio 𝔼⁡[‖𝒎‖0]\mathbb{E}\big[\|\boldsymbol{m}\|_{0}\big] can replace ‖𝒎‖0\|\boldsymbol{m}\|_{0} in the augmented Lagrangian penalty in Equation 7 to enforce the target sparsity level.
+2.3 Drawbacks of Hard-Concrete Relaxation
+The resulting objective used by hard-concrete methods is
+min𝒛⁡𝔼𝒖∼U⁡(0,1)​[ℒce​(θ,𝒎)+ℒsparsity​(‖𝒎‖0)],\min_{\boldsymbol{z}}\;\mathbb{E}_{\boldsymbol{u}\sim U(0,1)}\Big[\mathcal{L}_{\mathrm{ce}}\big(\theta,\boldsymbol{m}\big)+\mathcal{L}_{\mathrm{sparsity}}\big(\|\boldsymbol{m}\|_{0}\big)\Big],
+(10)
+where 𝒎=Φ⁡(𝒛,𝒖)\boldsymbol{m}=\Phi(\boldsymbol{z},\boldsymbol{u}) is the hard-concrete mapping from noise 𝒖\boldsymbol{u} and logits 𝒛\boldsymbol{z} to a bounded mask.
+We discover two main drawbacks in this formulation. (1) Train–Test Mismatch. While masks 𝒎\boldsymbol{m} are sampled during training, evaluation and deployment require deterministic masks. Converting these random variables into discrete values at inference creates a train–test mismatch, which can lead to unstable sparsity enforcement and degraded performance. Moreover, by introducing randomness into training, the optimization objective becomes an expectation over random variable 𝒖\boldsymbol{u}. This introduces noise into both the forward and backward passes, causing slow convergence. (2) Limited mask expressivity. In the unified masked formulation (Equation 4), the masking variables 𝒎\boldsymbol{m} are naturally real-valued when calculating language modeling loss ℒce\mathcal{L}_{\mathrm{ce}}. However, the hard-concrete mapping constrains 𝒎\boldsymbol{m} to a bounded, near-binary range during training, shrinking the effective search space and potentially hindering the discovery of high-quality sparsity patterns.
+3 Method
+Figure 1:
+Deterministic Differentiable Pruning overview.
+Left: Masked formulation for dense and MoE models. For dense models, we prune attention heads and MLP channels; for MoE models, we prune expert channels only.
+Right: Mask-only optimization with decoupled forward masks and retention scores for regularization, enabling deterministic training and an expanded mask range.
+To address these issues, we introduce Deterministic Differentiable Pruning (DDP), a fully deterministic mask-only optimization framework that operates over a continuous mask space. We present the method in Section 3.1, followed by a convergence analysis in Section 3.2 and several practical extensions in Section 3.3. An overview of the method is shown in Figure 1.
+3.1 Deterministic Differentiable Pruning
+First, given the latent real-valued parameter 𝒛\boldsymbol{z}, we replace the stochastic hard-concrete sampling in Equation 8 with a deterministic ReLU gate in the forward pass:
+𝒎=ReLU⁡(𝒛).\boldsymbol{m}=\mathrm{ReLU}(\boldsymbol{z}).
+(11)
+This expands the forward mask space from near binary values to mk∈[0,∞)m_{k}\in[0,\infty), enabling continuous scaling of component contributions while avoiding negative mask values that could induce sign flips and undesired cancellation.
+Furthermore, to address the non-differentiability of the ℓ0\ell_{0} norm without introducing stochastic sampling, we construct an annealed soft surrogate that is used when computing the augmented Lagrangian sparsity term in Equation 7. Rather than regularizing the forward mask 𝒎\boldsymbol{m} directly, we apply a deterministic mapping that projects logits 𝒛\boldsymbol{z} to retention surrogate scores 𝒔∈[0,1]\boldsymbol{s}\in[0,1], where each sks_{k} measures how strongly the kk-th component is retained. At iteration tt, the mapping 𝒔=ϕ⁡(𝒛,μt)\boldsymbol{s}=\phi(\boldsymbol{z};\mu_{t}) is defined as
+𝒗=σ⁡((𝒛−μt)​C0μt),\displaystyle\boldsymbol{v}=\sigma\!\Big((\boldsymbol{z}-\mu_{t})\tfrac{C_{0}}{\mu_{t}}\Big),
+𝒗¯=𝒗⁡(r−l)+l,\displaystyle\boldsymbol{\bar{v}}=\boldsymbol{v}\,(r-l)+l,
+(12)
+𝒔=Clamp\displaystyle\boldsymbol{s}=\mathrm{Clamp}
+(𝒗¯,0,1).\displaystyle(\boldsymbol{\bar{v}},0,1).
+where μt\mu_{t} is an annealed sharpness parameter controlling how quickly the mapping transitions from 00 to 11. We fix l=−0.1l=-0.1, r=1.1r=1.1, and C0≈2.4C_{0}\approx 2.4 such that s⁡(0)=0s(0)=0 and s⁡(2​μt)=1s(2\mu_{t})=1. In particular, for any zk≥2​μtz_{k}\geq 2\mu_{t}, the score saturates to sk=1s_{k}=1, and the corresponding component is treated as fully retained in regularization.
+The resulting 𝒔\boldsymbol{s} are then used in the Lagrangian regularization term to enforce the target keep ratio ρ\rho. Denote s¯=1K​∑ksk\bar{s}=\frac{1}{K}\sum_{k}s_{k} as their mean. The penalty is given as:
+ℒsparsity​(𝒔)=λ1​(s¯−ρ)+λ2​(s¯−ρ)2.\mathcal{L}_{\text{sparsity}}(\boldsymbol{s})=\lambda_{1}(\bar{s}-\rho)+\lambda_{2}(\bar{s}-\rho)^{2}.
+(13)
+Let TT denote the total number of training steps. During training, we anneal μt\mu_{t} according to
+μt=μ0−(μ0−μT)​tT.\mu_{t}=\mu_{0}-(\mu_{0}-\mu_{T})\,\sqrt{\frac{t}{T}}.
+(14)
+We set μ0=0.5\mu_{0}=0.5 and initialize zk=1z_{k}=1 for all kk, corresponding to a dense forward pass at the start of training, and then anneal μt\mu_{t} close to 0. As illustrated in Figure 2, the mapping becomes increasingly sharp over time, so the surrogate mapping falls back to exact ℓ0\ell_{0} behavior when μt→0\mu_{t}\rightarrow 0. We implement clamping and ReLU with a straight-through estimator (STE) to preserve gradients.
+Figure 2:
+Deterministic surrogate mapping in DDP. Annealing μ\mu sharpens the soft sigmoid projection, progressively approximating ℓ0\ell_{0} regularization.
+Finally, while Equation 13 enforces the average keep ratio, it does not by itself encourage individual retention scores to become decisively binary when μt\mu_{t} is still large. To accelerate convergence, we introduce an additional binarization regularizer on {sk}k=1K\{s_{k}\}_{k=1}^{K}:
+ℒbin​(𝒔)=λ3​1K​∑k=1Ksk​(1−sk),\mathcal{L}_{\text{bin}}(\boldsymbol{s})=\lambda_{3}\frac{1}{K}\sum_{k=1}^{K}s_{k}(1-s_{k}),
+(15)
+which mostly penalizes intermediate values and is minimized at endpoints, thereby pushing each sks_{k} toward {0,1}\{0,1\}. Combined with the deterministic surrogate mapping, this term stabilizes optimization by encouraging ambiguous components to commit early. In practice, we update the λ\lambda coefficients via gradient ascent alongside the mask parameters so as to enforce the target sparsity constraint during training. Finally, after training we prune components whose mask values are zero and fold the remaining nonzero masks into the model parameters for deployment. We summarize our workflow in Appendix A.
+3.2 Analysis
+Our final training objective is
+min𝒛⁡ℒce​(θ,𝒎)+ℒsparsity​(𝒔)+ℒbin​(𝒔),\min_{\boldsymbol{z}}\mathcal{L}_{\mathrm{ce}}(\theta,\boldsymbol{m})+\mathcal{L}_{\mathrm{sparsity}}(\boldsymbol{s})+\mathcal{L}_{\mathrm{bin}}(\boldsymbol{s}),
+(16)
+where we optimize mask logits 𝒛\boldsymbol{z} with a deterministic forward gate
+𝒎=ReLU⁡(𝒛)\boldsymbol{m}=\mathrm{ReLU}(\boldsymbol{z}) and annealed retention scores
+𝒔=ϕ⁡(𝒛,μ)\boldsymbol{s}=\phi(\boldsymbol{z};\mu) enforcing the keep budget.
+In the appendix, we show the following guarantee. For any fixed annealing level μ\mu , the updates used in our implementation define a fully deterministic constrained optimization procedure for the relaxed constraint ∑ksk=P\sum_{k}s_{k}=P (with P=[ρ​K]P=[\rho K]): under mild conditions, the resulting iterates admit accumulation points that are feasible and first-order stationary.
+Moreover, when we run the procedure in stages with μ↓0\mu\downarrow 0 and the binarization term drives 𝒔\boldsymbol{s} toward {0,1}K\{0,1\}^{K}, the relaxed budget ∑ksk=P\sum_{k}s_{k}=P becomes equivalent to the discrete hard budget induced by the forward mask,
+∑k𝕀[zk>0]=P\sum_{k}\mathbb{I}[z_{k}>0]=P.
+Consequently, for sufficiently large stages rr, DDP outputs masks that satisfy the target ℓ0\ell_{0} keep budget exactly, while each stage solution is a KKT point of the corresponding relaxed constrained surrogate.
+Theorem 3.1 (Exact budget recovery (informal)).
+Consider the staged optimization of Equation 16 with annealing μ↓0\mu\downarrow 0.
+Under certain assumptions, for each stage r=1,2,3..r=1,2,3.. (with fixed μr\mu_{r}), the deterministic augmented-Lagrangian updates generate iterates whose accumulation points are
+(i) feasible for the relaxed equality constraint ∑ksk=P\sum_{k}s_{k}=P, and
+(ii) first-order stationary (KKT) for the corresponding relaxed constrained surrogate under the same STE gradients used in practice.
+If in addition the binarization loss drives 𝐬\boldsymbol{s} near {0,1}K\{0,1\}^{K} and the logits become separated from the ReLU threshold for large rr,
+then for sufficiently large stages the KKT points produce mask satisfies the exact hard budget
+∑k=1K𝕀[zk>0]=P.\sum_{k=1}^{K}\mathbb{I}[z_{k}>0]=P.
+Proofs and detailed analysis are in Appendix B.
+3.3 Extensions
+Distillation.
+Since we keep the pre-trained weights fixed and optimize only the masks, the dense model serves as a parameter-free teacher. This incurs no extra optimizer memory and requires only two forward passes. We define the KL divergence between the teacher and student as:
+ℒkl(𝒎,θ)=∑iDkl(Pt(𝐗,i)∥Ps(𝐗,i)),\mathcal{L}_{\mathrm{kl}}(\boldsymbol{m},\theta)=\sum_{i}D_{\mathrm{kl}}\!\left(P_{t}(\mathbf{X},i)\,\|\,P_{s}(\mathbf{X},i)\right),
+(17)
+where Pt​(𝐗,i)P_{t}(\mathbf{X},i) and Ps​(𝐗,i)P_{s}(\mathbf{X},i) are the teacher/student next-token distributions over the vocabulary at position ii, respectively. We add the distillation loss to ℒce\mathcal{L}_{\mathrm{ce}} during training.
+MoE.
+For Mixture-of-Experts (MoE) models, since most parameters reside in the expert MLPs, we apply pruning only to the experts and keep the attention blocks unchanged. We use the same channel-wise decomposition within each expert and weight expert outputs by the router scores πe​(𝐗)\pi_{e}(\mathbf{X}):
+MoE⁡(𝐗)=∑e=1Eπe​(𝐗)​∑j=1Cme,j​𝐟e,jmlp​(𝐗),\mathrm{MoE}(\mathbf{X})=\sum_{e=1}^{E}\pi_{e}(\mathbf{X})\sum_{j=1}^{C}m_{e,j}\,\mathbf{f}^{\text{mlp}}_{e,j}(\mathbf{X}),
+(18)
+where EE is the number of experts and CC is the intermediate channel dimension per expert. Accordingly, the mask parameters for a single MoE layer are 𝒎moe∈ℝE×C\boldsymbol{m}^{\text{moe}}\in\mathbb{R}^{E\times C}.
+Fine-grained Sparsity Control.
+Deterministic Differentiable Pruning supports different sparsity granularities by applying the sparsity regularizer in Equation 13 at the group level. We can partition mask entries into groups 𝒢\mathcal{G} (e.g., per layer or per expert) and enforce a per-group keep-ratio budget:
+ℒsparsity​(𝒔)=1|𝒢|​∑g∈𝒢[λ1​(s¯g−ρ)+λ2​(s¯g−ρ)2],\mathcal{L}_{\text{sparsity}}(\boldsymbol{s})=\frac{1}{|\mathcal{G}|}\sum_{g\in\mathcal{G}}\Big[\lambda_{1}\big(\bar{s}_{g}-\rho\big)+\lambda_{2}\big(\bar{s}_{g}-\rho\big)^{2}\Big],
+(19)
+where s¯g=1|g|​∑k∈gsk\bar{s}_{g}=\frac{1}{|g|}\sum_{k\in g}s_{k} is the average retention score in group gg. This enables uniform sparsity across layers or within each MoE expert, and often improves speedups by yielding more regular, hardware-friendly patterns.
+Table 2: Performance of pruned dense LLMs under different methods. All baseline methods are evaluated after fine-tuning. Bold indicates the best performance at the same pruning ratio.
+Model
+LLaMA-7B
+LLaMA-2-7B
+LLaMA-13B
+Sparsity Ratio
+20%
+50%
+20%
+50%
+20%
+50%
+Method
+Wiki2↓\downarrow
+Mean Acc↑\uparrow
+Wiki2↓\downarrow
+Mean Acc↑\uparrow
+Wiki2↓\downarrow
+Mean Acc↑\uparrow
+Wiki2↓\downarrow
+Mean Acc↑\uparrow
+Wiki2↓\downarrow
+Mean Acc↑\uparrow
+Wiki2↓\downarrow
+Mean Acc↑\uparrow
+Original (Dense)
+12.62
+65.96
+12.62
+65.96
+12.18
+66.63
+12.18
+66.63
+11.58
+68.79
+11.58
+68.79
+LoRAPrune
+16.80
+60.05
+30.12
+49.71
+–
+–
+–
+–
+–
+–
+–
+–
+LoRAP
+16.35
+61.70
+30.90
+52.17
+14.67
+61.20
+26.26
+52.31
+13.58
+64.71
+22.66
+58.20
+SlimLLM
+15.55
+62.41
+26.71
+53.16
+15.28
+61.70
+27.29
+52.02
+13.35
+64.21
+25.64
+54.75
+Ours
+15.20
+64.13
+26.70
+56.07
+14.39
+64.82
+26.34
+56.70
+12.71
+66.89
+20.32
+62.14
+Table 3: Performance of pruned Mixture-of-Experts LLMs under different methods. Bold indicates the best performance at the same pruning ratio.
+Model
+DeepSeekMoE-16B-Base
+Qwen3-30B-A3B
+Sparsity Ratio
+20%
+40%
+60%
+20%
+40%
+60%
+Method
+C4↓\downarrow
+Mean Acc↑\uparrow
+C4↓\downarrow
+Mean Acc↑\uparrow
+C4↓\downarrow
+Mean Acc↑\uparrow
+C4↓\downarrow
+Mean Acc↑\uparrow
+C4↓\downarrow
+Mean Acc↑\uparrow
+C4↓\downarrow
+Mean Acc↑\uparrow
+Original (Dense)
+9.05
+62.28
+9.05
+62.28
+9.05
+62.28
+12.13
+71.08
+12.13
+71.08
+12.13
+71.08
+NAEE
+10.07
+60.51
+12.80
+54.94
+29.44
+45.28
+12.44
+69.94
+13.87
+65.77
+19.37
+57.13
+D2\text{D}^{2}-MoE
+12.62
+58.97
+17.22
+54.32
+34.54
+46.72
+18.52
+66.35
+35.48
+62.77
+68.36
+52.02
+Camera-P
+9.84
+61.03
+11.68
+58.58
+18.10
+51.62
+12.25
+69.94
+15.58
+67.46
+24.48
+59.03
+HEAPr
+9.85
+60.62
+12.34
+57.70
+21.25
+51.38
+-
+-
+-
+-
+-
+-
+Ours
+9.38
+61.84
+10.75
+60.38
+12.65
+58.18
+11.58
+70.04
+12.10
+67.65
+13.54
+63.35
+4 Related Work
+Based on how pruning decisions are obtained and whether model weights are updated, existing methods can be grouped into (i) one-shot pruning, (ii) sparsity-aware training, and (iii) mask-only optimization.
+One-shot Pruning
+One-shot pruning methods remove structures using heuristic importance criteria. For dense LLMs, LLM-Pruner (Ma et al., 2023) scores weights or modules via gradient-based sensitivity, while LoRAPrune (Zhang et al., 2024) estimates importance through lightweight LoRA (Hu et al., 2022) updates. LoRAP (Li et al., 2024) further combines a gradient-free channel criterion with low-rank attention compression, and SlimLLM (Guo et al., 2025b) prunes attention heads and MLP channels using similarity-based scores. For MoE architectures, NAEE (Lu et al., 2024) prunes experts via (approximate) search over expert combinations, while D2D^{2}-MoE (Gu et al., 2025) constructs shared experts via weighted merging. Camera (Xu et al., 2025) and HEAPr (Li et al., 2025) treat expert channels as prunable units and rely on Hessian- or activation-based importance to identify redundancy. Though fast, these methods can incur larger performance drops because they rely on handcrafted metrics.
+Sparsity-aware Training
+Another line of work learns sparsity patterns while updating model weights through loss-based training, often using hard-concrete relaxations (Louizos et al., 2018) to enable gradient-based mask learning. For example, ShearedLLaMA (Xia et al., 2024) learns pruning masks during continued training, while Compresso (Guo et al., 2023) and PAT (Liu et al., 2025) combine mask learning with LoRA-based fine-tuning. Compared with mask-only optimization, these approaches typically require orders of magnitude more training compute due to more trainable parameters and larger token budgets. For semi-structured setting, AST (Huang et al., 2025a) and CAST (Huang et al., 2025b) achieve lossless 2:4 models on LLaMA2 and LLaMA3 models.
+Mask-only Optimization
+Relatively few works focus on mask-only optimization. Recently, MaskLLM (Fang et al., 2024) explores this setting for N:MN\!:\!M sparsity using modified hard-concrete relaxations (Louizos et al., 2018).
+5 Experiments
+5.1 Experimental Settings
+Models and Setup
+We evaluate our pruning method on a diverse set of model families. We report results on LLaMA (Touvron et al., 2023) and Qwen3 (Yang et al., 2025) model families as dense baselines. For MoE baselines, we include DeepSeekMoE-16B (Dai et al., 2024) and Qwen3-30B-A3B (Yang et al., 2025). We define sparsity ratio α=1−ρ\alpha=1-\rho as the fraction of pruned units (attention heads and MLP channels for dense models; expert channels for MoE models).
+Evaluation
+We evaluate on a broad suite of downstream benchmarks. For dense models, we report WikiText-2 (Merity et al., 2017) perplexity. For MoE models, since some baselines are calibrated on WikiText, we instead evaluate perplexity on C4 (Raffel et al., 2020) to avoid potential train–test overlap. For zero-shot evaluation, we use EleutherAI’s LM Evaluation Harness (Gao et al., 2021) on ARC-Easy and ARC-Challenge (Clark et al., 2018), OpenBookQA (Mihaylov et al., 2018), WinoGrande (Sakaguchi et al., 2021), PIQA (Bisk et al., 2020), HellaSwag (Zellers et al., 2019), MathQA (Amini et al., 2019), RTE (Wang et al., 2018), and BoolQ (Clark et al., 2019).
+Implementation Details
+Unless otherwise specified, we train masks on a 30M-token subset of FineWeb-Edu (Penedo et al., 2024). Experiments are run on 4 NVIDIA H20 GPUs. Hyperparameters are robust across different model families and sparsity ratios, so we use the same configuration for all runs. Since sparsity is enforced through a training objective, the achieved sparsity can deviate slightly from the target; in all experiments, we keep the difference within 1%. Additional details are provided in Appendix C.
+Baseline Selection
+We focus on strong one-shot structured pruning baselines for fair and practical comparison. For dense LLMs, most one-shot methods rely on post-pruning fine-tuning with LoRA to recover accuracy; we therefore include LoRAP (Li et al., 2024), LoRAPrune (Zhang et al., 2024), and SlimLLM (Guo et al., 2025b), and report their results under a matched tuning token budget comparable to our mask-learning cost (30M tokens). For MoE models, prior structured pruning baselines are typically training-free and do not apply fine-tuning; accordingly, we compare against the strongest reported training-free methods, including NAEE (Lu et al., 2024), D2D^{2}-MoE (Gu et al., 2025), Camera-P (Xu et al., 2025), and HEAPr (Li et al., 2025). We further include comparison with hard-concrete relaxation in the ablation section. We do not compare against weight updating training methods, as they typically use substantially more compute (e.g., ∼\sim50B tokens for ShearedLLaMA (Xia et al., 2024)), making them less comparable to our lightweight setting. In practice, our method requires only ∼\sim20 minutes per run for LLaMA-7B and ∼\sim40 minutes for DeepSeekMoE-16B.
+5.2 Main Results
+5.2.1 Dense LLMs
+Table 2 reports pruning results on dense LLaMA models using WikiText-2 perplexity and mean zero-shot accuracy. Across model sizes and sparsity levels, DDP achieves the best or near-best performance. On LLaMA-7B, it improves mean accuracy from 62.41 to 64.13 at 20% sparsity and from 53.16 to 56.07 at 50%, while also reducing perplexity. On LLaMA-13B, the gains are larger under aggressive pruning, improving mean accuracy by >7>7 points at 50% sparsity over baselines. Overall, these results highlight the benefit of directly optimizing masks, compared to one-shot pruning approaches followed by fine-tuning.
+5.2.2 Mixture-of-Experts LLMs
+Table 3 summarizes MoE pruning results using C4 perplexity and mean zero-shot accuracy. Across both DeepSeekMoE-16B and Qwen3-30B-A3B, Deterministic Differentiable Pruning (DDP) achieves the best accuracy and lowest perplexity at every sparsity level. The advantage grows with sparsity: on DeepSeekMoE-16B at 60% sparsity, we outperform the strongest baseline by +6.6 mean-accuracy points (58.18 vs. 51.62) while substantially reducing perplexity (12.65 vs. 18.10). Qwen3-30B-A3B exhibits the same trend, with DDP remaining notably more stable under aggressive pruning. Full results as well as performance on additional models are provided in Appendix D.
+5.3 Ablation Study
+Table 4: Ablation on mask-learning components at 20% sparsity. We report perplexity and zero-shot mean accuracy on LLaMA-7B and DeepSeekMoE-16B. HC: stochastic hard-concrete; Det. HC: deterministic hard-concrete; +EM: expanded-mask parameterization. Bold indicates the best performance among pruned variants at the same sparsity.
+LLaMA-7B
+DeepSeekMoE-16B
+Method
+PPL↓\downarrow
+Mean Acc↑\uparrow
+PPL↓\downarrow
+Mean Acc↑\uparrow
+Dense (0%)
+12.62
+65.96
+9.05
+62.28
+HC
+16.52
+59.95
+9.55
+61.58
+Det. HC
+16.30
+61.74
+9.52
+61.65
+Det. HC + EM
+15.36
+63.92
+9.42
+61.80
+Ours
+15.20
+64.13
+9.38
+61.84
+5.3.1 Ablation on Individual Components
+We conduct an ablation study to quantify the contribution of each component in our method. Relative to the standard hard-concrete relaxation, our approach introduces three key changes: (i) removing the stochastic term and enabling deterministic mask optimization with binarization loss; (ii) using ReLU gating in the forward pass for an expanded, more expressive mask parameterization; and (iii) the use of knowledge distillation.
+Table 4 quantifies the contribution of each design choice at 20% sparsity on LLaMA-7B and DeepSeekMoE-16B. Starting from hard-concrete (HC), we obtain a deterministic variant by removing the sampling noise 𝒖\boldsymbol{u} in Equation 8 during the forward pass and using the deterministic mask value in the regularizer, together with a binary regularizer to encourage discrete masks. This change yields consistent gains on both dense and MoE models, suggesting that sampling noise can hinder stable mask optimization. Introducing the expanded mask parameterization (+EM) further improves perplexity and accuracy, highlighting the benefit of decoupling forward gating from sparsity control. Finally, combining deterministic optimization, expanded masks, and distillation achieves the best performance across both models, substantially narrowing the gap to dense baselines and indicating that these components contribute additively.
+5.3.2 Sparsity Granularities
+We primarily report results under global sparsity for comparability with prior work; here we summarize the impact of using alternative granularities in Table 5. For dense models, we evaluate layer-wise uniform sparsity, while for MoE models we consider both layer-wise and expert-wise sparsity. Layer-wise sparsity causes only a small degradation on LLaMA-7B, but both alternatives lead to larger drops on DeepSeekMoE-16B, with expert-wise sparsity being the most restrictive, suggesting that global sparsity is particularly well-suited for MoE models because it can adapt to highly skewed expert activation frequencies, preserving frequently used experts while pruning rarely routed ones more aggressively. Overall, global sparsity yields the best accuracy, while finer-grained constraints provide a practical trade-off when hardware-friendly or deployment-specific sparsity patterns are required.
+Table 5: Sparsity granularity ablation at 20% sparsity. We report the change in perplexity and zero-shot mean accuracy relative to global sparsity for LLaMA-7B and DeepSeekMoE-16B.
+LLaMA-7B
+DeepSeekMoE-16B
+Metric
+Layer-wise
+Layer-wise
+Expert-wise
+Δ\Delta Perplexity ↓\downarrow
++0.04
++0.47
++1.17
+Δ\Delta Mean Acc. (pp) ↑\uparrow
+-0.48
+-1.09
+-1.97
+5.3.3 Tokens
+We study how the token budget for mask learning affects performance. We run our method on LLaMA-7B and DeepSeekMoE-16B at 20% target sparsity and track both perplexity and zero-shot accuracy as we increase the number of training tokens. As shown in Figure 3, both metrics converge within a 60M-token budget, which we attribute to the low-dimensional nature of structured sparsity decisions. Since mask learning saturates quickly with minimal token budget, additional gains can be obtained by seamlessly transitioning to continued training on the pruned model. Notably, zero-shot performance recovers rapidly and saturates within ∼\sim10M tokens for both models, whereas perplexity improves more gradually and continues to decrease up to 60M tokens. We attribute this gap to knowledge distillation: it provides task-agnostic guidance that quickly preserves high-level capabilities and downstream generalization, while further perplexity reductions benefit from longer optimization to better match token-level distributions.
+(a) DeepSeekMoE-16B at 20% sparsity.
+(b) LLaMA-7B at 20% sparsity.
+Figure 3: Effect of different training tokens on perplexity and zero-shot mean accuracy on different models.
+5.3.4 Datasets
+Table 6: Dataset ablation at 20% sparsity. We report the change in WikiText-2 perplexity and zero-shot mean accuracy relative to training masks on our default dataset (FineWeb-Edu) for LLaMA-7B and DeepSeekMoE-16B. Negative Δ\DeltaPPL and positive Δ\DeltaAcc indicate improvement.
+LLaMA-7B
+DeepSeekMoE-16B
+Metric
+C4
+LaMini
+C4
+LaMini
+Δ\Delta WikiText-2 PPL ↓\downarrow
++0.35
+-0.10
++0.21
++0.11
+Δ\Delta Mean Acc. (pp) ↑\uparrow
+-1.14
+-0.53
+-0.68
+-0.87
+We ablate the dataset used for mask learning by training on either a weaker general pretraining corpus (C4) or an instruction-tuned corpus (LaMini). As shown in Table 6, both alternatives generally degrade performance, suggesting that dataset mismatch can harm the learned sparsity pattern. In particular, instruction-style data may bias masks toward behaviors that do not transfer to pretraining-style evaluation. Overall, these results indicate that high-quality pretraining-like data is preferred for mask learning.
+5.4 Optimal Sparsity Pattern
+Our method automatically discovers structured sparsity patterns that are also interpretable. For dense models, sparsity tends to concentrate in later layers, and attention exhibits higher cross-layer variance than MLPs, indicating greater redundancy in multi-head attention. For MoE models, we observe large variance in sparsity across experts, which helps explain the relative robustness of MoE pruning: masks primarily remove rarely routed experts. Accordingly, expert activation frequency strongly correlates with the final pruned ratio, with less frequently activated experts pruned more aggressively. Overall, these trends align with prior heuristic measures and the common conjecture that later layers contribute less to the output distribution (Gupta et al., 2025) and that MoE capacity is unevenly distributed across experts. Detailed results can be found in Appendix E.
+5.5 Speedup
+Table 7: End-to-end speedup results on dense models. We report Throughput (requests per second) and speedup ratio.
+Model
+GPU
+0%
+20%
+50%
+LLaMA-7B
+RTX 5090
+Through.
+10.88
+14.75
+23.98
+Speedup
+1.00×
+1.36x
+2.20x
+LLaMA-13B
+B200
+Through.
+27.20
+32.14
+38.56
+Speedup
+1.00×
+1.18x
+1.42x
+Table 8: End-to-end speedup results on MoE models. We report Throughput (requests per second) and speedup ratio.
+Model
+GPU
+0%
+20%
+40%
+60%
+Qwen3
+30B-A3B
+B200
+Through.
+29.86
+33.25
+37.42
+45.16
+Speedup
+1.00×
+1.11x
+1.25x
+1.51x
+We measure end-to-end speedups with vLLM (Kwon et al., 2023) on 1,000 ShareGPT prompts and show the results in Tables 7 and 8. Speedups grow with sparsity and are more pronounced on memory-constrained devices. On RTX 5090, pruning LLaMA-7B achieves 1.36×1.36\times speedup at 20% sparsity and 2.20×2.20\times at 50% sparsity. On B200, gains are smaller but remain consistently positive. For MoE, Qwen3-30B-A3B on B200 scales well with expert pruning, reaching 1.11×1.11\times, 1.25×1.25\times, and 1.51×1.51\times speedup at 20%, 40%, and 60% sparsity, respectively. More implementation details are provided in Appendix C.
+6 Conclusion
+In this paper, we formulate structured pruning as an ℓ0\ell_{0}-constrained mask optimization problem and propose a deterministic, mask-only approach that improves convergence stability and pruning quality with minimal compute. Across both dense and MoE LLMs, our method consistently outperforms prior pruning baselines by a large margin, and we further demonstrate practical deployability via end-to-end speedups. Future work will explore continued training to further close the accuracy gap under higher sparsity.
+Acknowledgements
+The authors thank Siying Tao for assistance with figure preparation and Litong Deng for helpful discussions on the mathematical proofs. This work was supported by Ant Group, and we thank colleagues and collaborators at Ant Group for valuable discussions and technical support.
+Impact Statement
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here.
+References
+Amini et al. (2019)
+A. Amini, S. Gabriel, S. Lin, R. Koncel-Kedziorski, Y. Choi, and H. Hajishirzi
+MathQA: towards interpretable math word problem solving with operation-based formalisms.
+In Proceedings of NAACL-HLT,
+pp. 2357–2367.
+Cited by: §5.1.
+Bisk et al. (2020)
+Y. Bisk, R. Zellers, R. L. Bras, J. Gao, and Y. Choi
+PIQA: reasoning about physical commonsense in natural language.
+In Thirty-Fourth AAAI Conference on
+Artificial Intelligence,
+Cited by: §5.1.
+Brown et al. (2020)
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and D. Amodei
+Language models are few-shot learners.
+In Advances in Neural Information Processing Systems,
+Vol. 33, pp. 1877–1901.
+Cited by: §1.
+Clark et al. (2019)
+C. Clark, K. Lee, M. Chang, T. Kwiatkowski, M. Collins, and K. Toutanova
+BoolQ: exploring the surprising difficulty of natural yes/no questions.
+External Links: 1905.10044
+Cited by: §5.1.
+Clark et al. (2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? Try ARC, the AI2 reasoning challenge.
+External Links: abs/1803.05457
+Cited by: §5.1.
+Dai et al. (2024)
+D. Dai, C. Deng, C. Zhao, R. X. Xu, H. Gao, D. Chen, J. Li, W. Zeng, X. Yu, Y. Wu, Z. Xie, Y. K. Li, P. Huang, F. Luo, C. Ruan, Z. Sui, and W. Liang
+DeepSeekMoE: towards ultimate expert specialization in mixture-of-experts language models.
+External Links: 2401.06066
+Cited by: §5.1.
+Fang et al. (2024)
+G. Fang, H. Yin, S. Muralidharan, G. Heinrich, J. Pool, J. Kautz, P. Molchanov, and X. Wang
+MaskLLM: learnable semi-structured sparsity for large language models.
+Advances in Neural Information Processing Systems 37, pp. 7736–7758.
+Cited by: §2.2,
+§4.
+Frantar and Alistarh (2023)
+E. Frantar and D. Alistarh
+SparseGPT: Massive language models can be accurately pruned in one-shot.
+In ICML,
+pp. 10323–10337.
+Cited by: §1.
+Gao et al. (2021)
+L. Gao, J. Tow, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, K. McDonell, N. Muennighoff, et al.
+A framework for few-shot language model evaluation.
+Version v0. 0.1. Sept, pp. 8.
+Cited by: §5.1.
+Gu et al. (2025)
+H. Gu, W. Li, L. Li, Z. Qiyuan, M. G. Lee, S. Sun, W. Xue, and Y. Guo
+Delta decompression for moe-based llms compression.
+In Forty-second International Conference on Machine Learning,
+Cited by: §4,
+§5.1.
+Guo et al. (2025a)
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Xu, H. Ding, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Chen, J. Yuan, J. Tu, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. You, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Zhou, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang
+DeepSeek-R1 incentivizes reasoning in LLMs through reinforcement learning.
+Nature 645 (8081), pp. 633–638.
+External Links: ISSN 1476-4687,
+Document
+Cited by: §1,
+§1.
+Guo et al. (2025b)
+J. Guo, X. Chen, Y. Tang, and Y. Wang
+SlimLLM accurate structured pruning for large language models.
+In Forty-second International Conference on Machine Learning,
+Cited by: §1,
+§4,
+§5.1.
+Guo et al. (2023)
+S. Guo, J. Xu, L. L. Zhang, and M. Yang
+Compresso: structured pruning with collaborative prompting learns compact large language models.
+CoRR.
+Cited by: §1,
+§4.
+Gupta et al. (2025)
+A. Gupta, J. Yeung, G. Anumanchipalli, and A. Ivanova
+How do llms use their depth?.
+arXiv preprint arXiv:2510.18871.
+Cited by: §5.4.
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al.
+LoRA: low-rank adaptation of large language models..
+ICLR 1 (2), pp. 3.
+Cited by: §4.
+Huang et al. (2025a)
+W. Huang, Y. Hu, G. Jian, J. Zhu, and J. Chen
+Pruning large language models with semi-structural adaptive sparse training.
+Proceedings of the AAAI Conference on Artificial Intelligence 39 (23), pp. 24167–24175.
+External Links: Document
+Cited by: §4.
+Huang et al. (2025b)
+W. Huang, Y. Hu, J. Zhu, and J. Chen
+CAST: continuous and differentiable semi-structured sparsity-aware training for large language models.
+arXiv preprint arXiv:2509.25996.
+Cited by: §4.
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with PagedAttention.
+In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles,
+Cited by: §5.5.
+Li et al. (2024)
+G. Li, Y. Tang, and W. Zhang
+LoRAP: transformer sub-layers deserve differentiated structured compression for large language models.
+arXiv preprint arXiv:2404.09695.
+Cited by: §1,
+§1,
+§4,
+§5.1.
+Li et al. (2025)
+K. Li, Z. Yang, Z. Zhou, F. Xue, Z. Jiang, and W. Wang
+HEAPr: hessian-based efficient atomic expert pruning in output space.
+arXiv preprint arXiv:2509.22299.
+Cited by: §4,
+§5.1.
+Liu et al. (2025)
+Y. Liu, H. Yang, Y. Chen, R. Zhang, M. Wang, Y. Du, and L. Du
+PAT: pruning-aware tuning for large language models.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 39, pp. 24686–24695.
+Cited by: §1,
+§4.
+Louizos et al. (2018)
+C. Louizos, M. Welling, and D. P. Kingma
+Learning sparse neural networks through l_0 regularization.
+In International Conference on Learning Representations,
+Cited by: §1,
+§2.2,
+§4,
+§4.
+Lu et al. (2024)
+X. Lu, Q. Liu, Y. Xu, A. Zhou, S. Huang, B. Zhang, J. Yan, and H. Li
+Not all experts are equal: efficient expert pruning and skipping for mixture-of-experts large language models.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 6159–6172.
+Cited by: §4,
+§5.1.
+Ma et al. (2023)
+X. Ma, G. Fang, and X. Wang
+LLM-Pruner: on the structural pruning of large language models.
+In Advances in Neural Information Processing Systems,
+Cited by: §1,
+§4.
+Merity et al. (2017)
+S. Merity, C. Xiong, J. Bradbury, and R. Socher
+Pointer sentinel mixture models.
+In International Conference on Learning Representations,
+Cited by: §5.1.
+Mihaylov et al. (2018)
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal
+Can a suit of armor conduct electricity? a new dataset for open book question answering.
+In EMNLP,
+pp. 2381–2391.
+Cited by: §5.1.
+Penedo et al. (2024)
+G. Penedo, H. Kydlíček, A. Lozhkov, M. Mitchell, C. A. Raffel, L. Von Werra, T. Wolf, et al.
+The fineweb datasets: decanting the web for the finest text data at scale.
+Advances in Neural Information Processing Systems 37, pp. 30811–30849.
+Cited by: §5.1.
+Raffel et al. (2020)
+C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu
+Exploring the limits of transfer learning with a unified text-to-text transformer.
+Journal of machine learning research 21 (140), pp. 1–67.
+Cited by: §5.1.
+Sakaguchi et al. (2021)
+K. Sakaguchi, R. L. Bras, C. Bhagavatula, and Y. Choi
+Winogrande: An adversarial winograd schema challenge at scale.
+Communications of the ACM 64 (9), pp. 99–106.
+Cited by: §5.1.
+Sun et al. (2023)
+M. Sun, Z. Liu, A. Bair, and J. Z. Kolter
+A simple and effective pruning approach for large language models.
+In ICML,
+Cited by: §1.
+Touvron et al. (2023)
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar, et al.
+LLaMA: open and efficient foundation language models.
+arXiv preprint arXiv:2302.13971.
+Cited by: §5.1.
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need.
+In Advances in Neural Information Processing Systems,  I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (Eds.),
+Vol. 30, pp. .
+Cited by: §1.
+Wang et al. (2018)
+A. Wang, A. Singh, J. Michael, F. Hill, O. Levy, and S. Bowman
+GLUE: a multi-task benchmark and analysis platform for natural language understanding.
+In Proceedings of the 2018 EMNLP workshop BlackboxNLP: Analyzing and interpreting neural networks for NLP,
+pp. 353–355.
+Cited by: §5.1.
+Wang et al. (2020)
+Z. Wang, J. Wohlwend, and T. Lei
+Structured pruning of large language models.
+In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP),  B. Webber, T. Cohn, Y. He, and Y. Liu (Eds.),
+Online.
+Cited by: §2.2.
+Xia et al. (2024)
+M. Xia, T. Gao, Z. Zeng, and D. Chen
+SHEARED LLAMA: accelerating language model pre-training via structured pruning.
+In 12th International Conference on Learning Representations, ICLR 2024,
+Cited by: §1,
+§2.2,
+§4,
+§5.1.
+Xu et al. (2025)
+Y. Xu, X. Han, Y. Zhang, Y. Wang, Y. Liu, S. Ji, Q. Zhu, and W. Che
+CAMERA: multi-matrix joint compression for moe models via micro-expert redundancy analysis.
+arXiv preprint arXiv:2508.02322.
+Cited by: §4,
+§5.1.
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+Qwen3 technical report.
+External Links: 2505.09388
+Cited by: §5.1.
+Zellers et al. (2019)
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi
+HellaSwag: Can a machine really finish your sentence?.
+In ACL,
+pp. 4791–4800.
+Cited by: §5.1.
+Zhang et al. (2024)
+M. Zhang, H. Chen, C. Shen, Z. Yang, L. Ou, X. Yu, and B. Zhuang
+LoRAPrune: structured pruning meets low-rank parameter-efficient fine-tuning.
+In Findings of the Association for Computational Linguistics: ACL 2024,
+pp. 3013–3026.
+Cited by: §1,
+§4,
+§5.1.
+Appendix A Algorithm
+Algorithm 1  Deterministic Differentiable Pruning: Structured Pruning via Mask-Only Optimization
+1:
+Input: target keep ratio ρ\rho; total iterations TT; number of heads HH; MLP width CC; number of layers LL; prunable module types 𝒩\mathcal{N} (dense: {attn,mlp}\{\text{attn},\text{mlp}\}; MoE: {expert}\{\text{expert}\}); distillation weight η\eta
+2:
+Initialize: for each τ∈𝒩\tau\in\mathcal{N}, initialize mask parameters 𝒛τ←𝟏\boldsymbol{z}^{\tau}\leftarrow\mathbf{1} and multipliers λ1τ←0\lambda_{1}^{\tau}\leftarrow 0, λ2τ←0\lambda_{2}^{\tau}\leftarrow 0, λ3τ←0\lambda_{3}^{\tau}\leftarrow 0.
+3:
+for t=1,2,…,Tt=1,2,\ldots,T do
+4:
+Compute progress pt←t/Tp_{t}\leftarrow t/T and update mapping sharpness μt←μ0−(μ0−μT)​pt\mu_{t}\leftarrow\mu_{0}-(\mu_{0}-\mu_{T})\sqrt{p_{t}}
+5:
+for τ∈𝒩\tau\in\mathcal{N} do
+6:
+Compute forward masks 𝒎τ←ReLU⁡(𝒛τ)\boldsymbol{m}^{\tau}\leftarrow\mathrm{ReLU}(\boldsymbol{z}^{\tau})
+7:
+Compute retention scores 𝒔τ\boldsymbol{s}^{\tau} from 𝒛τ\boldsymbol{z}^{\tau} (Eq. (12))
+8:
+Compute ℒsparsityτ\mathcal{L}^{\tau}_{\text{sparsity}} and ℒbinτ\mathcal{L}^{\tau}_{\text{bin}} (Eqs. (13), (15))
+9:
+end for
+10:
+Forward dense teacher and masked student to obtain output distributions PtP_{t} and PsP_{s} respectively, compute ℒkl\mathcal{L}_{\mathrm{kl}} (Eq. (17))
+11:
+Form ℒtotal=ℒce​(θ,𝒎)+η​ℒkl​(θ,𝒎)+ℒsparsity​(𝒔)+ℒbin​(𝒔)\mathcal{L}_{\text{total}}=\mathcal{L}_{\mathrm{ce}}(\theta,\boldsymbol{m})+\eta\mathcal{L}_{\mathrm{kl}}(\theta,\boldsymbol{m})+\mathcal{L}_{\mathrm{sparsity}}(\boldsymbol{s})+\mathcal{L}_{\mathrm{bin}}(\boldsymbol{s})
+12:
+for τ∈𝒩\tau\in\mathcal{N} do
+13:
+Update 𝒛τ\boldsymbol{z}^{\tau} by gradient descent on ℒtotal\mathcal{L}_{\text{total}}.
+14:
+Update λ1τ,λ2τ,λ3τ\lambda_{1}^{\tau},\lambda_{2}^{\tau},\lambda_{3}^{\tau} by gradient ascent.
+15:
+end for
+16:
+end for
+17:
+Pruning: remove components whose corresponding mask value is 0 in 𝒎τ\boldsymbol{m}^{\tau} and merge nonzero mask values into model weights for each τ∈𝒩\tau\in\mathcal{N}, yielding the final pruned model.
+Appendix B Theoretical Discussion
+This section provides formal justification for the theoretical claims discussed in Section 3.
+We study Deterministic Differentiable Pruning (DDP) by (i) relating its relaxed keep budget constraint to the discrete ℓ0\ell_{0} active-set constraint, (ii) characterizing the effect of the binarization regularizer, and (iii) establishing a standard KKT-type convergence guarantee for deterministic augmented Lagrangian optimization on the (STE-induced) constrained surrogate. These ingredients are then combined to justify recovery of the exact hard PP-budget in the annealed limit.
+Discrete PP-budget formulation.
+DDP parameterizes structured masks by logits 𝒛∈ℝK\boldsymbol{z}\in\mathbb{R}^{K} and applies a ReLU gate in the forward pass,
+𝒎⁡(𝒛)=ReLU⁡(𝒛)\boldsymbol{m}(\boldsymbol{z})=\mathrm{ReLU}(\boldsymbol{z}).
+Under this parameterization, enforcing an exact keep budget is equivalent to constraining the number of positive logits.
+We therefore define the discrete hard budget problem as
+min𝒛J(𝒛)s.t.∑k=1K𝕀[zk>0]=P,\min_{\boldsymbol{z}}\;J(\boldsymbol{z})\quad\text{s.t.}\quad\sum_{k=1}^{K}\mathbb{I}[z_{k}>0]=P,
+(20)
+where PP is the target number of active components. In terms of the keep ratio ρ\rho, we set P=[ρ​K]P=[\rho K]
+(or P=ρ​KP=\rho K when ρ​K\rho K is an integer). Throughout, J⁡(z)J(z) can be any deterministic training objective; for example,
+J⁡(𝒛)=ℒce​(θ,𝒎⁡(𝒛))+η​ℒkl​(θ,𝒎⁡(𝒛)),J(\boldsymbol{z})\;=\;\mathcal{L}_{\mathrm{ce}}\big(\theta,\boldsymbol{m}(\boldsymbol{z})\big)\;+\;\eta\,\mathcal{L}_{\mathrm{kl}}\big(\theta,\boldsymbol{m}(\boldsymbol{z})\big),
+with an optional distillation term ℒkl\mathcal{L}_{\mathrm{kl}}.
+Relaxed keep budget.
+To obtain a differentiable surrogate for the discrete active-set count, DDP uses the deterministic surrogate mapping
+sk=ϕ⁡(zk,μ)∈[0,1]s_{k}=\phi(z_{k};\mu)\in[0,1] (cf. Equation 12) and defines the relaxed keep budget
+Sμ​(𝒛)=∑k=1Kϕ⁡(zk,μ),cμ​(𝒛)≜Sμ​(𝒛)−P.S_{\mu}(\boldsymbol{z})=\sum_{k=1}^{K}\phi(z_{k};\mu),\qquad c_{\mu}(\boldsymbol{z})\triangleq S_{\mu}(\boldsymbol{z})-P.
+(21)
+We emphasize that SμS_{\mu} is used only for enforcing the budget constraint (via an augmented Lagrangian), while the forward mask is
+𝒎⁡(𝒛)=ReLU⁡(𝒛)\boldsymbol{m}(\boldsymbol{z})=\mathrm{ReLU}(\boldsymbol{z}).
+B.1 A basic property of the deterministic surrogate mapping
+We start with a lightweight fact about ϕ⁡(⋅,μ)\phi(\cdot;\mu) that underlies the hard budget recovery argument:
+as μ↓0\mu\downarrow 0, the relaxed keep budget Sμ​(𝒛)S_{\mu}(\boldsymbol{z}) approaches the discrete count ∑k𝕀[zk>0]\sum_{k}\mathbb{I}[z_{k}>0] whenever
+the logits are separated from the ReLU threshold by a margin.
+Lemma B.1 (Margin-separated relaxation approaches the discrete count).
+Assume ϕ⁡(⋅,μ)\phi(\cdot;\mu) is nondecreasing in zz for each μ>0\mu>0 and satisfies pointwise convergence
+ϕ(z;μ)→𝕀[z>0]\phi(z;\mu)\to\mathbb{I}[z>0] as μ↓0\mu\downarrow 0 for all z≠0z\neq 0 (as induced by Equation 12).
+Fix δ>0\delta>0 and define the active set 𝒜⁡(𝐳)={k:zk>0}\mathcal{A}(\boldsymbol{z})=\{k:z_{k}>0\}.
+Then there exists μ¯​(δ)>0\bar{\mu}(\delta)>0 such that for all μ∈(0,μ¯​(δ))\mu\in(0,\bar{\mu}(\delta)) and all 𝐳\boldsymbol{z} obeying the margin condition
+zk≥δfor ​k∈𝒜⁡(𝒛),zk≤−δfor ​k∉𝒜⁡(𝒛),z_{k}\geq\delta\ \ \text{for }k\in\mathcal{A}(\boldsymbol{z}),\qquad z_{k}\leq-\delta\ \ \text{for }k\notin\mathcal{A}(\boldsymbol{z}),
+we have
+|Sμ​(𝒛)−|𝒜⁡(𝒛)||≤12.\big|S_{\mu}(\boldsymbol{z})-|\mathcal{A}(\boldsymbol{z})|\big|\;\leq\;\tfrac{1}{2}.
+In particular, since both Sμ​(𝐳)S_{\mu}(\boldsymbol{z}) and |𝒜⁡(𝐳)||\mathcal{A}(\boldsymbol{z})| are integers whenever Sμ​(𝐳)=PS_{\mu}(\boldsymbol{z})=P, this implies
+Sμ​(𝐳)=P⇒|𝒜⁡(𝐳)|=PS_{\mu}(\boldsymbol{z})=P\Rightarrow|\mathcal{A}(\boldsymbol{z})|=P for sufficiently small μ\mu under the margin condition.
+Proof.
+By pointwise convergence, for the fixed δ>0\delta>0 there exists μ¯​(δ)>0\bar{\mu}(\delta)>0 such that for all μ∈(0,μ¯​(δ))\mu\in(0,\bar{\mu}(\delta)),
+ϕ⁡(δ,μ)≥1−14​K,ϕ⁡(−δ,μ)≤14​K.\phi(\delta;\mu)\geq 1-\frac{1}{4K},\qquad\phi(-\delta;\mu)\leq\frac{1}{4K}.
+By monotonicity, for k∈𝒜⁡(𝒛)k\in\mathcal{A}(\boldsymbol{z}) we have ϕ⁡(zk,μ)≥ϕ⁡(δ,μ)\phi(z_{k};\mu)\geq\phi(\delta;\mu), and for k∉𝒜⁡(𝒛)k\notin\mathcal{A}(\boldsymbol{z}) we have
+ϕ⁡(zk,μ)≤ϕ⁡(−δ,μ)\phi(z_{k};\mu)\leq\phi(-\delta;\mu). Summing yields
+Sμ​(𝒛)=∑k∈𝒜⁡(𝒛)ϕ⁡(zk,μ)+∑k∉𝒜⁡(𝒛)ϕ⁡(zk,μ)∈[|𝒜⁡(𝒛)|​(1−14​K),|𝒜⁡(𝒛)|+K−|𝒜⁡(𝒛)|4​K],S_{\mu}(\boldsymbol{z})=\sum_{k\in\mathcal{A}(\boldsymbol{z})}\phi(z_{k};\mu)+\sum_{k\notin\mathcal{A}(\boldsymbol{z})}\phi(z_{k};\mu)\in\Big[|\mathcal{A}(\boldsymbol{z})|\Big(1-\tfrac{1}{4K}\Big),\ |\mathcal{A}(\boldsymbol{z})|+\tfrac{K-|\mathcal{A}(\boldsymbol{z})|}{4K}\Big],
+hence |Sμ​(𝒛)−|𝒜⁡(𝒛)||≤12\big|S_{\mu}(\boldsymbol{z})-|\mathcal{A}(\boldsymbol{z})|\big|\leq\tfrac{1}{2}.
+∎
+B.2 Binarization loss
+We next analyze the role of the binarization loss, which encourages the relaxed scores
+𝒔=ϕ⁡(𝒛,μ)\boldsymbol{s}=\phi(\boldsymbol{z};\mu) to commit to {0,1}\{0,1\} under the keep-budget constraint.
+Proposition B.2 (Binarization regularizer drives 𝒔\boldsymbol{s} toward {0,1}\{0,1\}).
+Fix μ>0\mu>0 and recall the relaxed keep budget
+Sμ​(𝐳)=∑k=1Kϕ⁡(zk,μ)S_{\mu}(\boldsymbol{z})=\sum_{k=1}^{K}\phi(z_{k};\mu) and constraint
+cμ​(𝐳)=Sμ​(𝐳)−Tc_{\mu}(\boldsymbol{z})=S_{\mu}(\boldsymbol{z})-T.
+Define
+B⁡(𝒛)≜1K​∑k=1Ksk​(1−sk),sk=ϕ⁡(zk,μ)∈[0,1],B(\boldsymbol{z})\triangleq\frac{1}{K}\sum_{k=1}^{K}s_{k}(1-s_{k}),\qquad s_{k}=\phi(z_{k};\mu)\in[0,1],
+and the (scaled) binarization loss
+ℒbin​(𝒛)≜λ3​B​(𝒛).\mathcal{L}_{\mathrm{bin}}(\boldsymbol{z})\triangleq\lambda_{3}\,B(\boldsymbol{z}).
+Consider the constrained problem
+min𝒛⁡J⁡(𝒛)+ℒbin​(𝒛)s.t.cμ​(𝒛)=0,\min_{\boldsymbol{z}}\;J(\boldsymbol{z})+\mathcal{L}_{\mathrm{bin}}(\boldsymbol{z})\quad\text{s.t.}\quad c_{\mu}(\boldsymbol{z})=0,
+(22)
+where J⁡(𝐳)J(\boldsymbol{z}) is any deterministic objective and
+𝐦⁡(𝐳)=ReLU⁡(𝐳)\boldsymbol{m}(\boldsymbol{z})=\mathrm{ReLU}(\boldsymbol{z}) is the forward gate.
+Assume: (i) JJ is bounded below on the feasible set {𝐳:cμ​(𝐳)=0}\{\boldsymbol{z}:c_{\mu}(\boldsymbol{z})=0\} by JinfJ_{\inf}; and
+(ii) there exists a binary feasible point 𝐳bin\boldsymbol{z}^{\mathrm{bin}} such that
+cμ​(𝐳bin)=0c_{\mu}(\boldsymbol{z}^{\mathrm{bin}})=0 and 𝐬⁡(𝐳bin)∈{0,1}K\boldsymbol{s}(\boldsymbol{z}^{\mathrm{bin}})\in\{0,1\}^{K}
+(hence B⁡(𝐳bin)=0B(\boldsymbol{z}^{\mathrm{bin}})=0 and ℒbin​(𝐳bin)=0\mathcal{L}_{\mathrm{bin}}(\boldsymbol{z}^{\mathrm{bin}})=0).
+Let 𝐳λ3\boldsymbol{z}_{\lambda_{3}} be any global minimizer of (22). Then
+B⁡(𝒛λ3)≤J⁡(𝒛bin)−Jinfλ3,B(\boldsymbol{z}_{\lambda_{3}})\leq\frac{J(\boldsymbol{z}^{\mathrm{bin}})-J_{\inf}}{\lambda_{3}},
+(23)
+and the average distance of 𝐬\boldsymbol{s} to the binary set is bounded by
+1K​∑k=1Kmin⁡{sk, 1−sk}≤ 2​B​(𝒛λ3)≤2​(J⁡(𝒛bin)−Jinf)λ3.\frac{1}{K}\sum_{k=1}^{K}\min\{s_{k},\,1-s_{k}\}\;\leq\;2\,B(\boldsymbol{z}_{\lambda_{3}})\;\leq\;\frac{2\big(J(\boldsymbol{z}^{\mathrm{bin}})-J_{\inf}\big)}{\lambda_{3}}.
+(24)
+Consequently, as λ3→∞\lambda_{3}\to\infty, any sequence of minimizers {𝐳λ3}\{\boldsymbol{z}_{\lambda_{3}}\} satisfies
+B⁡(𝐳λ3)→0B(\boldsymbol{z}_{\lambda_{3}})\to 0, and the relaxed scores 𝐬\boldsymbol{s} become (on average) arbitrarily close to {0,1}K\{0,1\}^{K}.
+Proof.
+Let 𝒛λ3\boldsymbol{z}_{\lambda_{3}} be a global minimizer of (22), and let 𝒛bin\boldsymbol{z}^{\mathrm{bin}} be the binary feasible point.
+Since both are feasible and ℒbin​(𝒛bin)=0\mathcal{L}_{\mathrm{bin}}(\boldsymbol{z}^{\mathrm{bin}})=0, optimality implies
+J⁡(𝒛λ3)+λ3​B​(𝒛λ3)≤J⁡(𝒛bin)+λ3​B​(𝒛bin)=J⁡(𝒛bin).J(\boldsymbol{z}_{\lambda_{3}})+\lambda_{3}B(\boldsymbol{z}_{\lambda_{3}})\;\leq\;J(\boldsymbol{z}^{\mathrm{bin}})+\lambda_{3}B(\boldsymbol{z}^{\mathrm{bin}})=J(\boldsymbol{z}^{\mathrm{bin}}).
+Rearranging gives
+λ3​B​(𝒛λ3)≤J⁡(𝒛bin)−J⁡(𝒛λ3)≤J⁡(𝒛bin)−Jinf,\lambda_{3}B(\boldsymbol{z}_{\lambda_{3}})\leq J(\boldsymbol{z}^{\mathrm{bin}})-J(\boldsymbol{z}_{\lambda_{3}})\leq J(\boldsymbol{z}^{\mathrm{bin}})-J_{\inf},
+where the last inequality uses J⁡(𝒛λ3)≥JinfJ(\boldsymbol{z}_{\lambda_{3}})\geq J_{\inf} on the feasible set. Dividing by λ3\lambda_{3} yields
+(23).
+For (24), note that for any s∈[0,1]s\in[0,1],
+min⁡{s,1−s}≤2​s​(1−s).\min\{s,1-s\}\leq 2s(1-s).
+Applying this elementwise and averaging gives
+1K​∑k=1Kmin⁡{sk,1−sk}≤1K​∑k=1K2​sk​(1−sk)=2​B​(𝒛λ3),\frac{1}{K}\sum_{k=1}^{K}\min\{s_{k},1-s_{k}\}\leq\frac{1}{K}\sum_{k=1}^{K}2s_{k}(1-s_{k})=2B(\boldsymbol{z}_{\lambda_{3}}),
+and the final bound follows from (23).
+∎
+B.3 Convergence of deterministic augmented Lagrangian optimization
+For any fixed μ>0\mu>0, the equality-constrained surrogate induced by the deterministic mapping ϕ⁡(⋅,μ)\phi(\cdot;\mu) can be optimized
+with an inexact augmented Lagrangian / method-of-multipliers scheme.
+The following theorem states a standard KKT accumulation-point guarantee for the deterministic iterates, under an STE-surrogate interpretation.
+Theorem B.3 (Deterministic inexact ALM yields KKT accumulation points (STE surrogate)).
+Fix an annealing level μ>0\mu>0 and a binarization weight λ3≥0\lambda_{3}\geq 0, and define the relaxed keep budget
+Sμ​(𝒛)≜∑k=1Kϕ⁡(zk,μ),c⁡(𝒛)≜Sμ​(𝒛)−P,S_{\mu}(\boldsymbol{z})\triangleq\sum_{k=1}^{K}\phi(z_{k};\mu),\qquad c(\boldsymbol{z})\triangleq S_{\mu}(\boldsymbol{z})-P,
+where ϕ⁡(⋅,μ)\phi(\cdot;\mu) is the deterministic surrogate mapping in Equation 12 and PP is the target number of active components.
+Let the forward gate be 𝐦⁡(𝐳)=ReLU⁡(𝐳)\boldsymbol{m}(\boldsymbol{z})=\mathrm{ReLU}(\boldsymbol{z}) as in Equation 11. Define the relaxed-score vector
+𝐬⁡(𝐳)∈[0,1]K\boldsymbol{s}(\boldsymbol{z})\in[0,1]^{K} by sk​(𝐳)=ϕ⁡(zk,μ)s_{k}(\boldsymbol{z})=\phi(z_{k};\mu), and
+B⁡(𝒛)≜1K​∑k=1Ksk​(𝒛)​(1−sk​(𝒛)),ℒbin​(𝒛)≜λ3​B​(𝒛).B(\boldsymbol{z})\triangleq\frac{1}{K}\sum_{k=1}^{K}s_{k}(\boldsymbol{z})\bigl(1-s_{k}(\boldsymbol{z})\bigr),\qquad\mathcal{L}_{\mathrm{bin}}(\boldsymbol{z})\triangleq\lambda_{3}\,B(\boldsymbol{z}).
+Let
+F⁡(𝒛)≜J⁡(𝒛)+ℒbin​(𝒛),F(\boldsymbol{z})\triangleq J(\boldsymbol{z})+\mathcal{L}_{\mathrm{bin}}(\boldsymbol{z}),
+where J⁡(𝐳)J(\boldsymbol{z}) can be any deterministic training loss (e.g., ℒce​(θ,𝐦​(𝐳))\mathcal{L}_{\mathrm{ce}}(\theta,\boldsymbol{m}(\boldsymbol{z})) plus optional distillation terms).
+Consider the equality-constrained STE-induced surrogate problem
+min𝒛⁡F⁡(𝒛)s.t.c⁡(𝒛)=0.\min_{\boldsymbol{z}}\;F(\boldsymbol{z})\quad\text{s.t.}\quad c(\boldsymbol{z})=0.
+(25)
+Let {𝐳t,νt,γt}\{\boldsymbol{z}_{t},\nu_{t},\gamma_{t}\} be generated by an inexact method-of-multipliers (augmented Lagrangian) scheme applied to
+ℒγt​(𝒛,ν)≜F⁡(𝒛)+ν​c​(𝒛)+γt2​c​(𝒛)2,\mathcal{L}_{\gamma_{t}}(\boldsymbol{z},\nu)\triangleq F(\boldsymbol{z})+\nu\,c(\boldsymbol{z})+\frac{\gamma_{t}}{2}\,c(\boldsymbol{z})^{2},
+i.e., each outer iteration performs (possibly inexact) descent steps on 𝐳\boldsymbol{z} and then updates
+νt+1=νt+γt​c​(𝒛t),\nu_{t+1}=\nu_{t}+\gamma_{t}\,c(\boldsymbol{z}_{t}),
+with γt\gamma_{t} nondecreasing (and increased when feasibility stalls).
+Assume:
+(A1)
+(STE-surrogate regularity) FF and cc are continuously differentiable on a neighborhood containing all iterates,
+where ∇F\nabla F and ∇c\nabla c are interpreted as the gradients induced by the chosen STE for ReLU/Clamp\mathrm{ReLU}/\mathrm{Clamp}.
+(A2)
+(Constraint nondegeneracy on iterates) There exists γ¯>0\underline{\gamma}>0 such that
+‖∇c​(𝒛t)‖≥γ¯\|\nabla c(\boldsymbol{z}_{t})\|\geq\underline{\gamma} for all sufficiently large tt.
+(In particular, this implies LICQ at feasible limit points.)
+(A3)
+(Inexact primal stationarity) The inexact primal update satisfies
+‖∇𝒛ℒγt​(𝒛t,νt)‖≤εt,with ​εt→0.\bigl\|\nabla_{\boldsymbol{z}}\mathcal{L}_{\gamma_{t}}(\boldsymbol{z}_{t},\nu_{t})\bigr\|\leq\varepsilon_{t},\qquad\text{with }\varepsilon_{t}\to 0.
+(A4)
+(Bounded iterates and penalty growth) The iterates {𝒛t}\{\boldsymbol{z}_{t}\} remain in a compact set, {γt}\{\gamma_{t}\} is nondecreasing,
+and γt\gamma_{t} is increased without bound if feasibility stalls (i.e., if |c⁡(𝒛t)||c(\boldsymbol{z}_{t})| does not decrease sufficiently).
+Then any accumulation point 𝐳⋆\boldsymbol{z}^{\star} of {𝐳t}\{\boldsymbol{z}_{t}\} is feasible (c⁡(𝐳⋆)=0c(\boldsymbol{z}^{\star})=0), and there exists
+ν⋆\nu^{\star} such that (𝐳⋆,ν⋆)(\boldsymbol{z}^{\star},\nu^{\star}) satisfies the first-order KKT conditions of (25):
+∇F(𝒛⋆)+ν⋆∇c(𝒛⋆)=0,c(𝒛⋆)=0.\nabla F(\boldsymbol{z}^{\star})+\nu^{\star}\nabla c(\boldsymbol{z}^{\star})=0,\qquad c(\boldsymbol{z}^{\star})=0.
+Proof.
+Fix μ>0\mu>0 and λ3≥0\lambda_{3}\geq 0, and write c⁡(𝒛)=Sμ​(𝒛)−Pc(\boldsymbol{z})=S_{\mu}(\boldsymbol{z})-P.
+Define the effective multiplier
+ν~t≜νt+γt​c​(𝒛t).\tilde{\nu}_{t}\triangleq\nu_{t}+\gamma_{t}\,c(\boldsymbol{z}_{t}).
+By the multiplier update, ν~t=νt+1\tilde{\nu}_{t}=\nu_{t+1}.
+The inexact primal condition (A3) expands as
+∥∇F(𝒛t)+ν~t∇c(𝒛t)∥=∥∇𝒛ℒγt(𝒛t,νt)∥≤εt.\Bigl\|\nabla F(\boldsymbol{z}_{t})+\tilde{\nu}_{t}\,\nabla c(\boldsymbol{z}_{t})\Bigr\|=\bigl\|\nabla_{\boldsymbol{z}}\mathcal{L}_{\gamma_{t}}(\boldsymbol{z}_{t},\nu_{t})\bigr\|\leq\varepsilon_{t}.
+(26)
+Step 1: Boundedness of gradients and ν~t\tilde{\nu}_{t}.
+By (A4), {𝒛t}\{\boldsymbol{z}_{t}\} lies in some compact set 𝒵\mathcal{Z}.
+By (A1), ∇F\nabla F and ∇c\nabla c are continuous on 𝒵\mathcal{Z} and thus bounded:
+there exists G<∞G<\infty such that ‖∇F​(𝒛)‖≤G\|\nabla F(\boldsymbol{z})\|\leq G for all 𝒛∈𝒵\boldsymbol{z}\in\mathcal{Z}.
+Combining (26) with the triangle inequality yields
+|ν~t|​‖∇c​(𝒛t)‖≤‖∇F​(𝒛t)‖+εt≤G+εt.|\tilde{\nu}_{t}|\,\|\nabla c(\boldsymbol{z}_{t})\|\leq\|\nabla F(\boldsymbol{z}_{t})\|+\varepsilon_{t}\leq G+\varepsilon_{t}.
+Using (A2), for all sufficiently large tt we have ‖∇c​(𝒛t)‖≥γ¯\|\nabla c(\boldsymbol{z}_{t})\|\geq\underline{\gamma}, hence
+|ν~t|≤G+εtγ¯,|\tilde{\nu}_{t}|\leq\frac{G+\varepsilon_{t}}{\underline{\gamma}},
+(27)
+so {ν~t}\{\tilde{\nu}_{t}\} (equivalently {νt+1}\{\nu_{t+1}\}) is bounded for all large tt.
+Step 2: Feasibility of accumulation points.
+Let 𝒛⋆\boldsymbol{z}^{\star} be any accumulation point of {𝒛t}\{\boldsymbol{z}_{t}\}, and suppose for contradiction that
+c⁡(𝒛⋆)≠0c(\boldsymbol{z}^{\star})\neq 0.
+Then there exists a subsequence tjt_{j} such that 𝒛tj→𝒛⋆\boldsymbol{z}_{t_{j}}\to\boldsymbol{z}^{\star}, and by continuity of cc,
+|c⁡(𝒛tj)|→|c⁡(𝒛⋆)|>0|c(\boldsymbol{z}_{t_{j}})|\to|c(\boldsymbol{z}^{\star})|>0, i.e., |c⁡(𝒛tj)||c(\boldsymbol{z}_{t_{j}})| is bounded away from 00 for large jj.
+Under (A4), persistent nonvanishing constraint violation triggers γtj→∞\gamma_{t_{j}}\to\infty along such a subsequence.
+But then
+ν~tj=νtj+γtj​c​(𝒛tj)=νtj+1\tilde{\nu}_{t_{j}}=\nu_{t_{j}}+\gamma_{t_{j}}c(\boldsymbol{z}_{t_{j}})=\nu_{t_{j}+1}
+must diverge in magnitude because γtj​|c⁡(𝒛tj)|→∞\gamma_{t_{j}}|c(\boldsymbol{z}_{t_{j}})|\to\infty, contradicting the boundedness of {ν~t}\{\tilde{\nu}_{t}\}
+from (27). Therefore, every accumulation point must satisfy c⁡(𝒛⋆)=0c(\boldsymbol{z}^{\star})=0.
+Step 3: KKT stationarity at accumulation points.
+Take a convergent subsequence 𝒛tj→𝒛⋆\boldsymbol{z}_{t_{j}}\to\boldsymbol{z}^{\star}. By Step 2, c⁡(𝒛⋆)=0c(\boldsymbol{z}^{\star})=0.
+By Step 1, {νtj+1}={ν~tj}\{\nu_{t_{j}+1}\}=\{\tilde{\nu}_{t_{j}}\} is bounded and hence admits a convergent sub-subsequence; relabel so that
+νtj+1→ν⋆\nu_{t_{j}+1}\to\nu^{\star}.
+From (26),
+∥∇F(𝒛tj)+νtj+1∇c(𝒛tj)∥≤εtj→0.\Bigl\|\nabla F(\boldsymbol{z}_{t_{j}})+\nu_{t_{j}+1}\nabla c(\boldsymbol{z}_{t_{j}})\Bigr\|\leq\varepsilon_{t_{j}}\to 0.
+Using continuity of ∇F\nabla F and ∇c\nabla c (A1), letting j→∞j\to\infty yields
+∇F(𝒛⋆)+ν⋆∇c(𝒛⋆)=0\nabla F(\boldsymbol{z}^{\star})+\nu^{\star}\nabla c(\boldsymbol{z}^{\star})=0.
+Together with feasibility c⁡(𝒛⋆)=0c(\boldsymbol{z}^{\star})=0, this is exactly the first-order KKT condition for (25).
+∎
+Remark (iterates need not be feasible).
+The primal iterates 𝒛t\boldsymbol{z}_{t} produced by the (inexact) descent steps generally do not satisfy c⁡(𝒛t)=0c(\boldsymbol{z}_{t})=0.
+Instead, the augmented penalty term γt2​c​(𝒛)2\frac{\gamma_{t}}{2}c(\boldsymbol{z})^{2} and multiplier update drive feasibility over outer iterations,
+and the theorem guarantees feasibility only at accumulation points.
+B.4 Final theorem
+We now combine Lemma B.1 (relaxed budget approaches the discrete count under a margin),
+Proposition B.2 (binarization drives 𝒔\boldsymbol{s} toward {0,1}K\{0,1\}^{K}),
+and Theorem B.3 (deterministic ALM admits KKT accumulation points at each fixed μ\mu),
+to justify that staged DDP recovers the exact hard PP-budget for sufficiently small annealing levels.
+Theorem B.4 (DDP recovers the exact hard PP-budget in the annealed limit).
+Let 𝐦⁡(𝐳)=ReLU⁡(𝐳)\boldsymbol{m}(\boldsymbol{z})=\mathrm{ReLU}(\boldsymbol{z}) and define the discrete hard-budget problem
+min𝒛J(𝒛)s.t.∑k=1K𝕀[zk>0]=P,\min_{\boldsymbol{z}}\;J(\boldsymbol{z})\quad\text{s.t.}\quad\sum_{k=1}^{K}\mathbb{I}[z_{k}>0]=P,
+(28)
+where J⁡(𝐳)J(\boldsymbol{z}) is any deterministic training objective (e.g., ℒce​(θ,𝐦​(𝐳))\mathcal{L}_{\mathrm{ce}}(\theta,\boldsymbol{m}(\boldsymbol{z}))
+plus optional distillation terms) and P=[ρ​K]P=[\rho K].
+For each μ>0\mu>0, define the relaxed keep budget and constraint
+Sμ​(𝒛)≜∑k=1Kϕ⁡(zk,μ),cμ​(𝒛)≜Sμ​(𝒛)−P,S_{\mu}(\boldsymbol{z})\triangleq\sum_{k=1}^{K}\phi(z_{k};\mu),\qquad c_{\mu}(\boldsymbol{z})\triangleq S_{\mu}(\boldsymbol{z})-P,
+where ϕ⁡(⋅,μ)\phi(\cdot;\mu) is the deterministic surrogate mapping in Equation 12. Define the relaxed-score vector
+𝐬μ​(𝐳)∈[0,1]K\boldsymbol{s}_{\mu}(\boldsymbol{z})\in[0,1]^{K} by sμ,k​(𝐳)=ϕ⁡(zk,μ)s_{\mu,k}(\boldsymbol{z})=\phi(z_{k};\mu), and the (unscaled) binarization measure
+Bμ​(𝒛)≜1K​∑k=1Ksμ,k​(𝒛)​(1−sμ,k​(𝒛)),ℒbin​(𝒛)≜λ3​Bμ​(𝒛).B_{\mu}(\boldsymbol{z})\triangleq\frac{1}{K}\sum_{k=1}^{K}s_{\mu,k}(\boldsymbol{z})\bigl(1-s_{\mu,k}(\boldsymbol{z})\bigr),\qquad\mathcal{L}_{\mathrm{bin}}(\boldsymbol{z})\triangleq\lambda_{3}\,B_{\mu}(\boldsymbol{z}).
+Consider the relaxed constrained surrogate at annealing level μ\mu:
+min𝒛⁡Fμ,λ3​(𝒛)≜J⁡(𝒛)+ℒbin​(𝒛)s.t.cμ​(𝒛)=0.\min_{\boldsymbol{z}}\;F_{\mu,\lambda_{3}}(\boldsymbol{z})\triangleq J(\boldsymbol{z})+\mathcal{L}_{\mathrm{bin}}(\boldsymbol{z})\quad\text{s.t.}\quad c_{\mu}(\boldsymbol{z})=0.
+(29)
+Run DDP in outer rounds r=1,2,…r=1,2,\dots with μr↓0\mu_{r}\downarrow 0 and λ3,r↑∞\lambda_{3,r}\uparrow\infty.
+At round rr, apply an inexact method-of-multipliers (augmented Lagrangian) scheme (with STE-induced gradients for
+ReLU/Clamp\mathrm{ReLU}/\mathrm{Clamp}) to (29) using
+ℒγ​(𝒛,ν)=Fμr,λ3,r​(𝒛)+ν​cμr​(𝒛)+γ2​cμr​(𝒛)2,ν←ν+γ​cμr​(𝒛).\mathcal{L}_{\gamma}(\boldsymbol{z},\nu)=F_{\mu_{r},\lambda_{3,r}}(\boldsymbol{z})+\nu\,c_{\mu_{r}}(\boldsymbol{z})+\frac{\gamma}{2}c_{\mu_{r}}(\boldsymbol{z})^{2},\qquad\nu\leftarrow\nu+\gamma\,c_{\mu_{r}}(\boldsymbol{z}).
+Assume the following hold for each round rr:
+(A1)
+(Regularity of the STE surrogate)
+Under the STE-induced surrogate interpretation, Fμr,λ3,rF_{\mu_{r},\lambda_{3,r}} and cμrc_{\mu_{r}} are C1C^{1} on a neighborhood containing the iterates,
+and ∇cμr​(𝒛⋆)≠0\nabla c_{\mu_{r}}(\boldsymbol{z}^{\star})\neq 0 at any feasible accumulation point 𝒛⋆\boldsymbol{z}^{\star} (LICQ-type nondegeneracy).
+(A2)
+(KKT accumulation point at round rr)
+The round-rr iterates remain bounded and admit an accumulation point 𝒛(r)\boldsymbol{z}^{(r)} such that
+cμr(𝒛(r))=0,∃ν(r):∇Fμr,λ3,r(𝒛(r))+ν(r)∇cμr(𝒛(r))=0.c_{\mu_{r}}(\boldsymbol{z}^{(r)})=0,\qquad\exists\,\nu^{(r)}:\ \nabla F_{\mu_{r},\lambda_{3,r}}(\boldsymbol{z}^{(r)})+\nu^{(r)}\nabla c_{\mu_{r}}(\boldsymbol{z}^{(r)})=0.
+(A3)
+(Binarization)
+Bμr​(𝒛(r))→0B_{\mu_{r}}(\boldsymbol{z}^{(r)})\to 0 as r→∞r\to\infty
+(equivalently, ℒbin​(𝒛(r))/λ3,r→0\mathcal{L}_{\mathrm{bin}}(\boldsymbol{z}^{(r)})/\lambda_{3,r}\to 0), e.g., as ensured by Proposition B.2
+under its conditions.
+(A4)
+(ReLU-stable margin)
+There exists δ>0\delta>0 and r0r_{0} such that for all r≥r0r\geq r_{0},
+zk(r)≥δ​for ​k∈𝒜(r)≜{k:zk(r)>0},zk(r)≤−δ​for ​k∉𝒜(r).z^{(r)}_{k}\geq\delta\ \text{for }k\in\mathcal{A}^{(r)}\triangleq\{k:z^{(r)}_{k}>0\},\qquad z^{(r)}_{k}\leq-\delta\ \text{for }k\notin\mathcal{A}^{(r)}.
+Then there exists r1r_{1} such that for all r≥r1r\geq r_{1}, the discrete mask
+𝐛(r)∈{0,1}K\boldsymbol{b}^{(r)}\in\{0,1\}^{K} induced by the forward gate,
+bk(r)≜𝕀[mk(zk(r))>0]=𝕀[zk(r)>0],b^{(r)}_{k}\triangleq\mathbb{I}[m_{k}(z^{(r)}_{k})>0]=\mathbb{I}[z^{(r)}_{k}>0],
+satisfies the exact hard budget:
+∑k=1Kbk(r)=P.\sum_{k=1}^{K}b^{(r)}_{k}=P.
+Proof of Theorem B.4.
+Fix any round rr. By (A2), 𝒛(r)\boldsymbol{z}^{(r)} is feasible for the relaxed constraint, hence
+Sμr​(𝒛(r))=PS_{\mu_{r}}(\boldsymbol{z}^{(r)})=P.
+Let 𝒜(r)={k:zk(r)>0}\mathcal{A}^{(r)}=\{k:z^{(r)}_{k}>0\}, so the hard-budget count equals
+∑k=1K𝕀[zk(r)>0]=|𝒜(r)|\sum_{k=1}^{K}\mathbb{I}[z^{(r)}_{k}>0]=|\mathcal{A}^{(r)}|.
+By the margin condition (A4), zk(r)≥δz^{(r)}_{k}\geq\delta for k∈𝒜(r)k\in\mathcal{A}^{(r)} and zk(r)≤−δz^{(r)}_{k}\leq-\delta otherwise.
+Since ϕ⁡(⋅,μ)\phi(\cdot;\mu) is monotone and converges pointwise to 𝕀[z>0]\mathbb{I}[z>0] as μ↓0\mu\downarrow 0 (by the construction in Equation 12),
+there exists μ¯​(δ)>0\bar{\mu}(\delta)>0 such that for all μ∈(0,μ¯​(δ))\mu\in(0,\bar{\mu}(\delta)),
+ϕ⁡(δ,μ)≥1−14​K,ϕ⁡(−δ,μ)≤14​K.\phi(\delta;\mu)\geq 1-\frac{1}{4K},\qquad\phi(-\delta;\mu)\leq\frac{1}{4K}.
+Choose r1r_{1} such that μr<μ¯​(δ)\mu_{r}<\bar{\mu}(\delta) for all r≥r1r\geq r_{1}.
+For such rr, using monotonicity of ϕ⁡(⋅,μr)\phi(\cdot;\mu_{r}),
+∑k∈𝒜(r)ϕ⁡(zk(r),μr)≥|𝒜(r)|(1−14​K),∑k∉𝒜(r)ϕ⁡(zk(r),μr)≤(K−|𝒜(r)|)​14​K.\sum_{k\in\mathcal{A}^{(r)}}\phi(z^{(r)}_{k};\mu_{r})\geq|\mathcal{A}^{(r)}|\Big(1-\frac{1}{4K}\Big),\qquad\sum_{k\notin\mathcal{A}^{(r)}}\phi(z^{(r)}_{k};\mu_{r})\leq(K-|\mathcal{A}^{(r)}|)\frac{1}{4K}.
+Hence
+|Sμr(𝒛(r))−|𝒜(r)||=|∑k=1Kϕ(zk(r);μr)−∑k=1K𝕀[zk(r)>0]|≤12.\Big|S_{\mu_{r}}(\boldsymbol{z}^{(r)})-|\mathcal{A}^{(r)}|\Big|=\Big|\sum_{k=1}^{K}\phi(z^{(r)}_{k};\mu_{r})-\sum_{k=1}^{K}\mathbb{I}[z^{(r)}_{k}>0]\Big|\leq\frac{1}{2}.
+But Sμr​(𝒛(r))=PS_{\mu_{r}}(\boldsymbol{z}^{(r)})=P and |𝒜(r)||\mathcal{A}^{(r)}| are integers, so the only possibility is
+|𝒜(r)|=P|\mathcal{A}^{(r)}|=P, i.e., ∑k=1K𝕀[zk(r)>0]=P\sum_{k=1}^{K}\mathbb{I}[z^{(r)}_{k}>0]=P.
+Finally, (A3) (e.g., Proposition B.2) provides a sufficient condition under which increasing λ3,r\lambda_{3,r}
+drives the unscaled binarization measure Bμr​(𝒛(r))B_{\mu_{r}}(\boldsymbol{z}^{(r)}) toward 00, which empirically promotes the margin separation (A4)
+by discouraging fractional relaxed scores.
+∎
+Appendix C Additional Implementation Details
+In this section, we report the hyperparameters used in our experiments. Unless otherwise noted, we optimize mask parameters with AdamW (β1=0.9\beta_{1}{=}0.9, β2=0.999\beta_{2}{=}0.999) using a batch size of 16, 1,000 training steps, and a context length of 2,048. We use μT=0.05\mu_{T}=0.05 and apply a linear warmup stage followed by a cosine decay schedule for the learning rate. We search for the distillation coefficient η\eta and use η=2\eta{=}2 for all models in the main results. We select a learning rate of 2×10−22\times 10^{-2} for all latent variable 𝒛\boldsymbol{z} as well as λ1\lambda_{1} and λ3\lambda_{3}; for λ2\lambda_{2} we select a learning rate of 8×10−18\times 10^{-1}.
+For the vLLM speedup experiments, we follow the default settings in the official repository and evaluate our pruned models on 1,000 real prompts sampled from ShareGPT. We use the default scheduler and measure end-to-end wall-clock latency/throughput on same GPU for both dense and pruned models.
+Appendix D Full Results
+This section provides detailed results supporting the main text and additional pruning results on other model families, including dense Qwen3 models (Tables 9, 11 and 10). Across the Qwen3 dense series, we observe a clear scaling trend: pruning is consistently less lossy for larger models. For example, at 20% pruning, Qwen3-32B only drops slightly in average zero-shot accuracy (72.12→\rightarrow71.09), while Qwen3-4B degrades more noticeably (65.38→\rightarrow62.99). At 50% pruning, the gap widens further (32B: 66.48 vs. 4B: 47.63), suggesting substantially higher redundancy and robustness at larger scale.
+Table 9: Detailed performance of pruned dense LLMs under different pruning methods. All pruning baseline methods are evaluated after fine-tuning. Bold indicates the best performance at the same pruning ratio.
+Ratio
+Method
+Wiki2
+BoolQ
+PIQA
+HellaSwag
+WinoGrande
+ARC-e
+ARC-c
+OBQA
+Average
+LLaMA-7B
+Dense
+Original
+12.62
+76.50
+79.35
+76.00
+69.53
+72.10
+44.28
+44.00
+65.96
+20%
+LoRAPrune
+16.80
+65.62
+79.31
+70.00
+62.76
+65.87
+37.69
+39.14
+60.05
+LoRAP
+16.35
+72.94
+76.93
+70.90
+65.75
+64.31
+39.93
+41.20
+61.70
+SlimLLM
+15.55
+74.71
+76.61
+71.23
+66.54
+66.96
+40.61
+40.20
+62.41
+Ours
+15.20
+74.10
+77.97
+73.20
+69.22
+69.65
+42.41
+42.40
+64.13
+50%
+LoRAPrune
+30.12
+61.88
+71.53
+47.86
+55.01
+45.13
+31.62
+34.98
+49.71
+LoRAP
+30.90
+63.00
+69.64
+54.42
+58.41
+51.94
+32.00
+35.80
+52.17
+SlimLLM
+26.71
+62.78
+68.99
+54.73
+61.01
+54.55
+33.28
+36.80
+53.16
+Ours
+26.70
+67.77
+71.49
+60.36
+62.67
+58.54
+35.49
+36.20
+56.07
+LLaMA-2-7B
+Dense
+Original
+12.18
+79.30
+78.29
+76.11
+69.85
+73.86
+44.80
+44.20
+66.63
+20%
+LoRAP
+14.67
+70.89
+78.13
+69.93
+65.67
+65.99
+38.48
+39.60
+61.2
+SlimLLM
+15.28
+72.29
+78.02
+70.95
+64.88
+67.17
+38.99
+39.60
+61.70
+Ours
+14.39
+75.11
+77.31
+73.70
+68.90
+72.35
+43.00
+43.40
+64.82
+50%
+LoRAP
+26.26
+63.27
+70.78
+55.14
+57.85
+52.15
+30.97
+36.00
+52.31
+SlimLLM
+27.29
+64.19
+69.04
+53.60
+55.33
+52.53
+32.08
+37.40
+52.02
+Ours
+26.34
+66.27
+72.42
+60.39
+62.59
+61.03
+36.60
+37.60
+56.70
+LLaMA-13B
+Dense
+Original
+11.58
+79.88
+79.87
+79.33
+73.48
+73.23
+48.38
+47.40
+68.79
+20%
+LoRAP
+13.58
+73.39
+78.73
+75.54
+69.30
+70.62
+43.00
+42.40
+64.71
+SlimLLM
+13.35
+74.13
+77.53
+74.73
+69.30
+70.45
+42.32
+41.00
+64.21
+Ours
+12.71
+77.00
+78.94
+77.14
+71.98
+70.29
+45.90
+47.00
+66.89
+50%
+LoRAP
+22.66
+72.29
+74.10
+63.29
+62.83
+60.82
+35.24
+38.80
+58.20
+SlimLLM
+25.64
+62.31
+72.20
+60.84
+60.62
+55.60
+33.87
+37.80
+54.75
+Ours
+20.32
+75.08
+75.30
+69.74
+69.85
+64.90
+39.51
+40.60
+62.14
+Table 10: Detailed performance of pruned Qwen3 dense LLMs using our method.
+Ratio
+Method
+Wiki2
+BoolQ
+OBQA
+RTE
+WinoGrande
+HellaSwag
+PIQA
+MathQA
+ARC-e
+ARC-c
+Average
+Qwen3-32B
+Dense
+Original
+7.61
+86.33
+46.20
+76.53
+72.93
+82.57
+82.15
+58.32
+83.21
+60.84
+72.12
+20%
+Ours
+7.25
+81.77
+46.80
+76.17
+75.37
+80.44
+80.58
+52.26
+83.63
+62.80
+71.09
+50%
+Ours
+9.78
+82.81
+44.80
+74.37
+71.19
+73.31
+77.80
+37.76
+80.89
+55.38
+66.48
+Qwen3-14B
+Dense
+Original
+8.65
+89.30
+46.20
+77.62
+72.45
+78.82
+80.03
+56.85
+82.87
+60.32
+71.61
+20%
+Ours
+8.78
+88.01
+46.20
+77.26
+73.95
+77.26
+79.76
+50.32
+82.91
+60.32
+70.67
+50%
+Ours
+14.24
+76.09
+41.40
+60.65
+63.77
+64.14
+74.54
+28.44
+71.68
+45.73
+58.49
+Qwen3-8B
+Dense
+Original
+9.72
+86.51
+41.40
+77.62
+68.03
+74.93
+77.48
+49.45
+80.68
+56.23
+68.04
+20%
+Ours
+9.75
+84.16
+39.60
+75.45
+68.90
+72.77
+77.53
+42.81
+77.69
+54.10
+65.89
+50%
+Ours
+17.31
+66.02
+34.80
+55.23
+59.67
+55.64
+69.75
+24.32
+63.72
+37.20
+51.82
+Qwen3-4B
+Dense
+Original
+13.67
+85.08
+40.00
+75.81
+65.90
+68.32
+74.76
+46.50
+78.20
+53.84
+65.38
+20%
+Ours
+11.71
+82.08
+40.80
+71.48
+65.67
+66.17
+75.84
+38.36
+76.94
+49.57
+62.99
+50%
+Ours
+20.16
+51.44
+33.40
+53.79
+56.67
+49.58
+69.64
+23.28
+58.21
+32.68
+47.63
+Table 11: Detailed performance of compressed Mixture of Experts LLMs under different pruning methods. Bold indicates the best performance at the same pruning ratio.
+Ratio
+Method
+C4
+BoolQ
+OBQA
+RTE
+WinoGrande
+HellaSwag
+PIQA
+MathQA
+ARC-e
+ARC-c
+Average
+DeepSeekMoE-16B-Base
+Dense
+Original
+9.05
+72.45
+44.00
+63.54
+70.24
+77.37
+80.68
+31.52
+72.89
+47.86
+62.28
+20%
+NAEE
+10.07
+67.83
+42.40
+62.09
+69.53
+74.63
+78.34
+30.99
+72.56
+46.24
+60.51
+D2\text{D}^{2}-MoE
+12.62
+69.32
+41.40
+61.01
+69.22
+69.87
+76.44
+29.45
+71.29
+42.75
+58.97
+Camera-P
+9.84
+68.01
+44.00
+64.62
+70.17
+75.02
+78.62
+31.46
+71.80
+45.56
+61.03
+HEAPr
+9.85
+64.77
+44.60
+56.68
+70.72
+76.59
+79.87
+31.83
+73.91
+46.59
+60.62
+Ours
+9.38
+74.10
+43.00
+59.93
+71.11
+77.19
+80.14
+32.03
+72.18
+46.93
+61.84
+40%
+NAEE
+12.80
+62.26
+39.60
+57.40
+63.69
+66.16
+75.41
+27.37
+64.06
+38.48
+54.94
+D2\text{D}^{2}-MoE
+17.22
+66.05
+36.60
+57.03
+66.77
+58.74
+71.44
+27.67
+66.03
+38.57
+54.32
+Camera-P
+11.68
+70.64
+43.20
+58.48
+68.51
+69.04
+75.41
+29.01
+70.71
+42.24
+58.58
+HEAPr
+12.34
+62.05
+41.20
+52.71
+68.59
+70.72
+76.88
+30.18
+72.10
+44.88
+57.70
+Ours
+10.75
+73.64
+42.40
+56.32
+70.48
+74.93
+79.05
+30.99
+71.17
+44.45
+60.38
+60%
+NAEE
+29.44
+51.65
+30.60
+58.48
+53.67
+47.50
+65.88
+22.31
+48.90
+28.50
+45.28
+D2\text{D}^{2}-MoE
+34.54
+61.78
+31.60
+53.43
+61.09
+43.29
+63.87
+23.65
+50.59
+31.14
+46.72
+Camera-P
+18.10
+62.60
+40.20
+56.32
+64.33
+56.53
+67.90
+26.16
+54.88
+35.67
+51.62
+HEAPr
+21.25
+61.83
+39.40
+53.79
+63.22
+53.70
+69.97
+26.43
+61.07
+33.02
+51.38
+Ours
+12.65
+71.53
+42.40
+55.60
+67.48
+71.15
+78.02
+27.40
+67.89
+42.15
+58.18
+Qwen3-30B-A3B
+Dense
+Original
+12.13
+88.81
+45.20
+82.67
+70.32
+77.68
+80.79
+58.96
+79.17
+56.14
+71.08
+20%
+NAEE
+12.44
+88.74
+44.40
+83.39
+69.85
+77.32
+80.14
+49.27
+77.31
+56.31
+69.64
+D2\text{D}^{2}-MoE
+18.52
+85.90
+42.80
+80.87
+68.19
+74.26
+78.40
+48.81
+71.46
+46.50
+66.35
+Camera-P
+12.25
+88.50
+44.40
+82.67
+70.56
+78.51
+80.30
+52.80
+78.33
+54.43
+69.94
+Ours
+11.58
+87.61
+46.60
+78.98
+71.67
+78.16
+80.69
+51.66
+78.91
+56.14
+70.04
+40%
+NAEE
+13.87
+87.21
+43.00
+74.01
+68.74
+73.50
+77.74
+42.91
+72.72
+52.13
+65.77
+D2\text{D}^{2}-MoE
+35.48
+85.50
+42.00
+76.53
+64.33
+69.87
+71.44
+40.90
+69.78
+44.62
+62.77
+Camera-P
+15.58
+86.97
+43.00
+79.42
+67.64
+73.79
+78.51
+44.96
+77.31
+55.55
+67.46
+Ours
+12.10
+85.20
+44.00
+78.70
+72.77
+77.22
+80.09
+39.40
+77.35
+54.27
+67.65
+60%
+NAEE
+19.37
+72.23
+36.60
+68.95
+63.93
+62.06
+71.87
+28.68
+66.92
+42.92
+57.13
+D2\text{D}^{2}-MoE
+68.36
+70.64
+35.40
+64.62
+59.12
+58.21
+63.23
+26.00
+57.37
+33.57
+52.02
+Camera-P
+24.48
+82.08
+41.00
+68.95
+64.64
+64.90
+73.01
+30.89
+62.46
+43.35
+59.03
+Ours
+13.54
+80.34
+43.80
+69.68
+70.17
+73.36
+77.04
+31.66
+73.70
+50.43
+63.35
+Appendix E Analysis
+We visualize learned sparsity patterns across model families. For dense models, we plot (i) attention-head sparsity as a layer-by-head heatmap and (ii) layer-wise MLP sparsity (number of zeroed channels per layer). Results for LLaMA-7B at 20% and 50% sparsity are shown in Figures 4 and 5. For MoE models, we plot expert sparsity as a layer-by-expert heatmap in Figure 6.
+Dense models (LLaMA-7B).
+At 20% sparsity, head pruning is conservative, with most heads retained and sparsity concentrated in a small subset of layers/heads (Figure 4(b)). At 50% sparsity, the head map becomes markedly more selective and structured (Figure 5(b)), indicating substantial redundancy in multi-head attention and a tendency to concentrate capacity into fewer effective heads. For MLP channels, we observe a “U-shaped” layer-wise trend: higher sparsity in the first layers, a denser early-to-mid region, and increasing sparsity toward later layers with a slight drop at the end (Figures 4(a) and 5(a)).
+MoE models (DeepSeekMoE-16B).
+Expert sparsity is highly non-uniform: even at 20% sparsity, pruning concentrates on consistently under-utilized experts (Figure 6(a)). As sparsity increases (40%–60%), the model preserves a core set of frequently routed experts while pruning rarely selected ones more aggressively (Figures 6(b) and 6(c)). This imbalance helps explain MoE robustness under pruning, since large savings can be obtained by removing low-utility experts with limited impact on the dominant computation paths.
+(a) MLP channel sparsity (per layer).
+(b) Attention-head sparsity (layer×\timeshead).
+Figure 4: Dense-model sparsity patterns (LLaMA-7B, 20% sparsity). Left: layer-wise MLP channel sparsity. Right: learned head sparsity map.
+(a) MLP channel sparsity (per layer).
+(b) Attention-head sparsity (layer×\timeshead).
+Figure 5: Dense-model sparsity patterns (LLaMA-7B, 50% sparsity). Sparsity increases toward later layers, and head pruning becomes more selective under higher compression.
+(a) 20% sparsity.
+(b) 40% sparsity.
+(c) 60% sparsity.
+Figure 6: MoE expert sparsity patterns (DeepSeekMoE-16B). Expert-wise sparsity maps at different target sparsities, showing that pruning increasingly concentrates on rarely activated experts.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

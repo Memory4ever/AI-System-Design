@@ -1,0 +1,96 @@
+# Jun05 模型主题发现
+
+2026-10-25实际查询；87唯一DOI标题导航，一页且无next。不是87候选或全文工作队列。完整题摘筛选仅按另文已读项，不由标题直接判全部贡献。registered只是发现日过滤，单篇仍须联合日证。停止位置：本主题标题导航已读；其余Agent/系统/多模态同义差额与有界官方title backstop普通。查询UTC00起点只是局部发现，最终主题需补BJT日界Jun04T16:00起点差额（不以当前87授覆盖）。
+
+查询：https://api.datacite.org/dois?client-id=arxiv.content&query=registered%3A%5B2026-06-05T00%3A00%3A00Z+TO+2026-06-05T15%3A59%3A59Z%5D+AND+%28titles.title%3A%28%22large+language%22+OR+%22language+model%22+OR+transformer+OR+%22mixture+of+experts%22+OR+%22foundation+model%22+OR+%22world+model%22+OR+%22vision+language+action%22%29+OR+descriptions.description%3A%28%22large+language+model%22+OR+%22foundation+models%22%29%29&page%5Bsize%5D=1000
+meta={"total": 87, "totalPages": 1, "page": 1}
+links={"self": "https://api.datacite.org/dois?client-id=arxiv.content&query=registered%3A%5B2026-06-05T00%3A00%3A00Z+TO+2026-06-05T15%3A59%3A59Z%5D+AND+%28titles.title%3A%28%22large+language%22+OR+%22language+model%22+OR+transformer+OR+%22mixture+of+experts%22+OR+%22foundation+model%22+OR+%22world+model%22+OR+%22vision+language+action%22%29+OR+descriptions.description%3A%28%22large+language+model%22+OR+%22foundation+models%22%29%29&page%5Bsize%5D=1000"}
+- 10.48550/arxiv.2606.06473 — MLEvolve: A Self-Evolving Framework for Automated Machine Learning Algorithm Discovery
+- 10.48550/arxiv.2606.06239 — Foundation Models for Wireless Communications: From PHY Intelligence to Network Autonomy
+- 10.48550/arxiv.2606.05737 — Let It Be Simple: One-Step Action Generation for Vision-Language-Action Models
+- 10.48550/arxiv.2606.06155 — AffordanceVLA: A Vision-Language-Action Model Empowering Action Generation through Affordance-Aware Understanding
+- 10.48550/arxiv.2606.06461 — Flow-based Policy Adaptation without Policy Updates
+- 10.48550/arxiv.2606.06373 — LatentWave: JEPA Pretraining for Wireless Foundation Models
+- 10.48550/arxiv.2606.05828 — Statistical Priors for Implicit Preferences: Decoupling Skill Selection as a Local Harness in Personal Agents
+- 10.48550/arxiv.2606.05961 — Political Persuasion and Endorsement in Large Language Models
+- 10.48550/arxiv.2606.06256 — RedKnot: Efficient Long-Context LLM Serving with Head-Aware KV Reuse and SegPagedAttention
+- 10.48550/arxiv.2606.06245 — MPCoT: Reward-Guided Multi-Path Latent Reasoning for Test-Time Scalable Vision-Language-Action
+- 10.48550/arxiv.2606.06037 — SpeechJBB: Probing Safety Alignment and Comprehension in Large Audio Language Models under Code-Switched Speech
+- 10.48550/arxiv.2606.05725 — An Embarrassingly Simple Detector for Model Extraction Attacks in Large Language Model API Traffic
+- 10.48550/arxiv.2606.05925 — Towards World Models in Biomedical Research
+- 10.48550/arxiv.2606.05177 — MCBench: A Multicontext Safety Assessment Benchmark for Omni Large Language Models
+- 10.48550/arxiv.2606.05799 — CaliDist: Calibrating Large Language Models via Behavioral Robustness to Distraction
+- 10.48550/arxiv.2606.05976 — The Self-Correction Illusion: Role Relabeling Gates Explicit Error Flagging in Large Language Models
+- 10.48550/arxiv.2606.05176 — PEFT of SLM for Telecommunications Customer Support: A Comparative Study of LoRA Configurations with Energy Consumption Analysis
+- 10.48550/arxiv.2606.06491 — TempoVLA: Learning Speed-Controllable Vision-Language-Action Policies
+- 10.48550/arxiv.2606.05558 — Autoregressive Diffusion World Models for Off-Policy Evaluation of LLM Agents
+- 10.48550/arxiv.2606.05981 — Inverting the Streaming-Diffusion Bottleneck: Video-Rate MLLM-Conditioned Edit Diffusion on a Consumer GPU
+- 10.48550/arxiv.2606.05622 — AdaPlanBench: Evaluating Adaptive Planning in Large Language Model Agents under World and User Constraints
+- 10.48550/arxiv.2606.05194 — Temporal Preference Concepts and their Functions in a Large Language Model
+- 10.48550/arxiv.2606.05950 — Edit-R2: Context-Aware Reinforcement Learning for Multi-Turn Image Editing
+- 10.48550/arxiv.2606.05367 — Task-Vector Arithmetic for Emotional Expressivity Control in Language-Model-Based Text-to-Speech
+- 10.48550/arxiv.2606.05833 — Learning Geometric Representations from Videos for Spatial Intelligent Multimodal Large Language Models
+- 10.48550/arxiv.2606.05739 — Do speech foundation models perceive speaker similarity as humans do?
+- 10.48550/arxiv.2606.05861 — LLMCodec: Adapting Video Codecs for Efficient Weight Compression of Large Language Models
+- 10.48550/arxiv.2606.05878 — TS-ICL: A Flexible Time-Indexed Foundation Model for Time Series via In-Context Learning
+- 10.48550/arxiv.2606.05774 — LiAuto-GeoX: Efficient Grounded Driving Transformer
+- 10.48550/arxiv.2606.06360 — An Infectious Disease Spread Simulation Based on Large Language Model Decision Making
+- 10.48550/arxiv.2606.05441 — GOTabPFN: From Feature Ordering to Compact Tokenization for Tabular Foundation Models on High-Dimensional Data
+- 10.48550/arxiv.2606.06397 — The Post-GCN Decade Revisited: Curvature-Stratified Evaluation of Relational Learning
+- 10.48550/arxiv.2606.06042 — LoomVideo: Unifying Multimodal Inputs into Video Generation and Editing
+- 10.48550/arxiv.2606.06444 — USAD 2.0: Scaling Representation Distillation for Universal Audio Understanding
+- 10.48550/arxiv.2606.06390 — HomeWorld: A Unified Floorplan-to-Furnished Framework for Generating Controllable, Densely Interactive Whole-Home Scenes
+- 10.48550/arxiv.2606.06363 — GMBFormer: An NDVI-Guided Global Memory Bank Transformer for Urban Green-Space Extraction from Ultra-High-Resolution Imagery
+- 10.48550/arxiv.2606.06285 — TRACE: A Temporal Conditional Estimation for Multimodal Time Series Foundation Models
+- 10.48550/arxiv.2606.06284 — ToolChoiceConfusion: Causal Minimal Tool Filtering for Reliable LLM Agents
+- 10.48550/arxiv.2606.06238 — Generative Criticality in Large Language Model Temperature Scaling
+- 10.48550/arxiv.2606.06235 — Design a Reliable LLM-Integrated Interface for Mortality Forecasting
+- 10.48550/arxiv.2606.06188 — The Tell-Tale Norm: $\ell_2$ Magnitude as a Signal for Reasoning Dynamics in Large Language Models
+- 10.48550/arxiv.2606.06154 — Amortizing Federated Adaptation: Hypernetwork Driven LoRA for Personalized Foundation Models
+- 10.48550/arxiv.2606.06147 — WorldFly: A World-Model-Based Vision-Language-Action Model for UAV Navigation
+- 10.48550/arxiv.2606.06139 — MotionDisco: Motion Discovery for Extreme Humanoid Loco-Manipulation
+- 10.48550/arxiv.2606.06109 — Harnessing Structural Context for Entity Alignment Foundation Models
+- 10.48550/arxiv.2606.06099 — CogManip: Benchmarking Manipulative Behavior in Multi-Turn Interactions with Large Language Model
+- 10.48550/arxiv.2606.06098 — IR3DE: A Linear Router for Large Language Models
+- 10.48550/arxiv.2606.06073 — Edge-Aware Curvature Modeling for Graph Understanding in Large Language Models
+- 10.48550/arxiv.2606.06025 — EGTR-Review: Efficient Evidence-Grounded Scientific Peer Review Generation via Multi-Agent Teacher Distillation
+- 10.48550/arxiv.2606.05999 — ATT-CR: Adaptive Triangular Transformer for Cloud Removal
+- 10.48550/arxiv.2606.05997 — Multimodal Sexism Identification and Characterization using Large Language Models and Gradient Boosting
+- 10.48550/arxiv.2606.05979 — World-Language-Action Model for Unified World Modeling, Language Reasoning, and Action Synthesis
+- 10.48550/arxiv.2606.05958 — Steering Vectors are an Adversarial Attack Surface
+- 10.48550/arxiv.2606.05937 — Large Language Models are Perplexed by some Political Parties
+- 10.48550/arxiv.2606.05933 — Beyond Greedy Chunking: SLO-Aware Sliding-Window Scheduling for LLM Inference
+- 10.48550/arxiv.2606.05875 — QCFuse: Query-Aware Cache Fusion via Compressed View for Efficient RAG Serving
+- 10.48550/arxiv.2606.05874 — Evaluating Stochastic Collapse and Implicit Bias in Multimodal Large Language Models
+- 10.48550/arxiv.2606.05873 — LadderMan: Learning Humanoid Perceptive Ladder Climbing
+- 10.48550/arxiv.2606.05864 — Analysis of the Neglect-Zero Effect in Large Language Models
+- 10.48550/arxiv.2606.05817 — Consistency Training Along the Transformer Stack
+- 10.48550/arxiv.2606.05804 — Can LLMs Be Constrained to the Past? Improving Knowledge Cutoff through Recall-Based Prompting
+- 10.48550/arxiv.2606.05773 — PiL-World: A Chunk-Wise World Model for VLA Policy-in-the-Loop Evaluation
+- 10.48550/arxiv.2606.05748 — UNIVID: Unified Vision-Language Model for Video Moderation
+- 10.48550/arxiv.2606.05688 — Value-and-Structure Alignment for Routing-Consistent Quantization of Mixture-of-Experts Models
+- 10.48550/arxiv.2606.05641 — Multi-Task Crack Foundation Model for Engineering-Reliable Crack Representation and Topology Preservation in Civil Infrastructure
+- 10.48550/arxiv.2606.05639 — Q-GNN: Query-Conditioned Graph Neural Networks with Type Awareness for Knowledge Graph Completion
+- 10.48550/arxiv.2606.05564 — Using Large Language Models to Support High Volume Application Review for an Undergraduate Research Program
+- 10.48550/arxiv.2606.05559 — CLaaS: Continual learning as a service for sample efficient online learning
+- 10.48550/arxiv.2606.05537 — PHKT:Personalized Dynamic Hypergraph-enhanced KAN-Transformer for Multi-behavior Sequential Recommendation
+- 10.48550/arxiv.2606.05511 — RH+: Row-Hit-Optimized Scheduling for PIM-based LLM Inference
+- 10.48550/arxiv.2606.05489 — LLM-Guided ANN Index Optimization for Human-Object Interaction Retrieval
+- 10.48550/arxiv.2606.05486 — Localizing Prompt Ambiguity in Large Language Models with Probe-Targeted Attribution
+- 10.48550/arxiv.2606.05481 — Towards Unified and Data-Efficient Prognostics and Health Management with Tabular Foundation Models
+- 10.48550/arxiv.2606.05429 — Minimizing the Hidden Cost of Scales: Graph-Guided Ultra-Low-Bit Quantization for Large Language Models
+- 10.48550/arxiv.2606.05395 — VASO: Formally Verifiable Self-Evolving Skills for Physical AI Agents
+- 10.48550/arxiv.2606.05346 — Trajectory Dynamics in Language Model Hidden States Predict Human Processing Costs Beyond Surprisal
+- 10.48550/arxiv.2606.05332 — GITCO: Gated Inference-Time Context Optimization in TSFMs
+- 10.48550/arxiv.2606.05285 — Toward decision-aware AI for LSST-scale time-domain astronomy
+- 10.48550/arxiv.2606.05265 — Data-efficient flood depth prediction through domain-aware coreset selection and tabular foundation models
+- 10.48550/arxiv.2606.05257 — Scaling Laws for Behavioral Foundation Models over User Event Sequences
+- 10.48550/arxiv.2606.05250 — Towards Persistent Case-Based Memory for Autonomous Data Science: A CBR-Augmented R&amp;D-Agent with a Locally Deployable Small Language Model
+- 10.48550/arxiv.2606.05232 — Differentiable Efficient Operator Search
+- 10.48550/arxiv.2606.05228 — Where Do Large Language Models Fail on Competitive Programming? A Taxonomy of Failures by Algorithm Type and Difficulty Rating
+- 10.48550/arxiv.2606.05208 — Transformer-Enhanced Reinforcement Learning: Fundamentals and Applications in Communication Networks
+- 10.48550/arxiv.2606.05187 — Geographic Bias and Diversity in AI Evaluation
+- 10.48550/arxiv.2606.05170 — ERRORQUAKE: Heavy-Tailed Error Severity Distributions in Open-Weight Large Language Models
+- 10.48550/arxiv.2606.05169 — The Evaluation Blind Spot: A Stereological Theory of Benchmark Coverage for Large Language Models
+
+

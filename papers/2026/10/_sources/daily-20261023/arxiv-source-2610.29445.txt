@@ -1,0 +1,1423 @@
+https://arxiv.org/html/2610.29445v1
+Deciding Scale Placement in MXFP4 Dot Products with Integer Arithmetic
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 The Rewrite and Its Legality Question
+2.1 Formats
+2.2 Binary32 arithmetic
+2.3 The two programs
+2.4 The equivalence relation
+2.5 The guard
+2.6 Floating-point SMT as a baseline
+3 An Exact Integer Semantics
+3.1 One shared grid
+3.2 The rounding primitive
+3.3 The state machine
+3.4 Faithfulness
+3.5 The integer query
+4 Certified Bands
+4.1 A safe endpoint for any tree
+4.2 The lower endpoint
+4.3 Sharpness
+4.4 Signed zeros
+4.5 Revisiting the example
+5 Evaluation
+5.1 Setup
+5.2 Validation of the encoding
+5.3 Validating sharpness
+5.4 Certification time measurement
+5.5 Hardware conformance
+6 Using the Guard in a Compiler
+6.1 The rewrite rule
+6.2 An MLIR prototype
+6.3 Beyond MXFP4
+7 Related Work
+Microscaling.
+Verifying floating-point optimizations.
+Floating-point decision procedures.
+Exact reasoning about floating-point networks.
+Mixed precision and silent errors.
+8 Limitations
+9 Conclusion
+References
+0.A Single-Level NVFP4
+0.B RTX 5080 Scale-Placement Measurements
+License: CC BY 4.0
+arXiv:2610.29445v1 [cs.LO] 21 Oct 2026
+Deciding Scale Placement in MXFP4 Dot Products with Integer Arithmetic
+Shreyas Vinayakumar
+Abstract
+Block-scaled formats represent a group of values as low-bit elements
+multiplied by one shared scale. The Open Compute Project’s microscaling
+(MX) family includes MXFP4, which stores 32 four-bit elements with a shared
+power-of-two scale. While lowering a dot-product reduction for execution,
+a compiler can apply these scales before the reduction, or defer scaling until afterwards.
+Although equivalent over real numbers, these formulations can produce
+different IEEE binary32 results through overflow or underflow, with
+equivalence also depending on the reduction tree. We study the legality of compiler
+rewrites in either direction by deriving conditions under
+which the two formulations are bitwise equivalent.
+To decide rewrite legality, we construct an integer state machine
+that exploits the finite element alphabet and shared power-of-two
+scales, modeling overflow, NaN, and subnormal rounding.
+We prove its faithfulness under bounded scale codes and integer
+coefficients, yielding an exact encoding of the equivalence query
+in quantifier-free linear integer arithmetic( QF_LIA ).
+For MXFP4, we derive a closed-form sufficient upper bound on the sum
+of scale exponents for any fixed binary reduction tree within the supported
+coefficient range. This bound depends on the size of the largest proper subtree.
+For four tree shapes at block lengths k ∈ { 2 , 3 , 4 , 8 , 16 , 32 } k\in\{2,3,4,8,16,32\} and
+two shapes at k = 64 k=64 , SMT finds counterexamples when this upper
+bound is increased by one exponent step.
+We evaluate the computational cost of this approach against the standard direct encoding in quantifier-free floating-point
+arithmetic ( QF_FP ). On matched queries, cvc5 proves the integer version in seconds but reaches
+a configured one-CPU-hour limit on the floating-point proof even at k = 2 k=2 .
+The implementation was cross-checked using an
+independent floating-point encoding, exhaustive and stratified binary32 execution, and
+GPU replay of counterexamples. An MLIR lowering prototype demonstrates
+selection between the two formulations using the certified conditions as
+static or runtime guards.
+Keywords: floating point microscaling MXFP4 compiler
+correctness SMT equivalence checking
+1 Introduction
+As ML models, particularly large language models, continue to grow in size,
+they require substantial memory and computational resources to store and process their parameters
+and intermediate activations. Reducing the number of bits used to represent each value
+can improve throughput and reduce energy use on supporting hardware compared to full
+32-bit floating-point arithmetic, by reducing data movement and enabling efficient arithmetic.
+However, reducing bit width affects precision and dynamic range,
+and requires care to preserve numerical accuracy and to avoid overflow or underflow.
+Block scaling formats like Open Compute Project’s microscaling (MX) formats, which
+store a tensor as blocks of narrow elements that share one scale [ 24 , 27 ] ,
+extend the dynamic range of the elements while keeping storage costs moderate.
+These formats have become so important that major vendors
+have added native support: NVIDIA’s Blackwell tensor cores and AMD’s matrix cores support multiplying
+block-scaled matrices [ 23 , 5 ] .
+On the software end, frameworks like Triton expose the operation as dot_scaled
+and emulate it on other targets [ 31 ] , and torchao emulates it by
+dequantizing to a wide type and calling an ordinary matrix
+multiply [ 26 ] .
+In MXFP4, a block holds 32 four-bit E2M1(2 bit exponent, 1 bit mantissa) elements and one eight-bit E8M0
+scale, and the scale is a power of two. For an E2M1 element with sign bit S S , exponent field E E , and mantissa bit M M ,
+its nonzero normalized decoded value is
+( − 1 ) S ​ 2 E − 1 ​ ( 1 + M 2 ) , (-1)^{S}2^{E-1}\left(1+\frac{M}{2}\right),
+which is then multiplied by the block scale. An E8M0 scale has the decoded value 2 e − 127 2^{e-127} ,
+where e e is the unsigned integer stored in the scale byte.
+Consider the dot product of two k-sized MXFP4 blocks with scales s A s_{A} , s B s_{B} and
+elements a 1 , … , a k a_{1},\dots,a_{k} and b 1 , … , b k b_{1},\dots,b_{k} . A way to compute the dot product is to dequantize
+elements from each block, and perform a reduction as shown below:
+∑ i = 1 k ( s A ​ a i ) ​ ( s B ​ b i ) , \sum_{i=1}^{k}(s_{A}a_{i})(s_{B}b_{i}),
+Another way to compute it would be to perform reduction over the original element values without dequantization,
+and then multiply the result with scales of both blocks:
+( s A ​ s B ) ​ ∑ i = 1 k a i ​ b i . (s_{A}s_{B})\sum_{i=1}^{k}a_{i}b_{i}.
+We call these the direct and
+hoisted forms respectively,
+because it hoists the common scale for each element of a block.
+The hoisted form performs k + 2 k+2 multiplications instead of 3 ​ k 3k ; at k = 32 k=32 that is
+34 instead of 96. Both scale placements occur in practice: the OCP specification
+uses the hoisted form while writing the block dot product but leaves the internal
+precision and the order of operations to the implementation [ 24 ] .
+On the other hand, torchao’s emulation dequantizes operands before
+matrix multiplication [ 26 ] .
+Under real arithmetic, the distributive law makes the two forms equivalent.
+This identity motivates scale hoisting as a compiler optimization.
+In binary32 arithmetic, rewriting can change the answer significantly.
+Take k = 32 k=32 , scale codes e A = 120 e_{A}=120 and e B = 252 e_{B}=252 , which
+denote s A = 2 − 7 s_{A}=2^{-7} and s B = 2 125 s_{B}=2^{125} , and a block with twenty-nine lanes of
+a i = b i = 6 a_{i}=b_{i}=6 followed by the pairs ( − 6 , 6 ) (-6,6) , ( − 2 , 2 ) (-2,2) , and ( 0 , 0 ) (0,0) . The exact
+dot product is 1004 ⋅ 2 118 ≈ 3.34 × 10 38 1004\cdot 2^{118}\approx 3.34\times 10^{38} . This is below the
+binary32 overflow threshold, and the hoisted form returns it. The direct
+form, summed from left to right, yields 29 ⋅ 36 ⋅ 2 118 = 4176 ⋅ 2 116 29\cdot 36\cdot 2^{118}=4176\cdot 2^{116}
+after twenty-nine lanes; that exceeds 2 128 2^{128} , and the running sum overflows to
++ ∞ +\infty before the remaining terms can be added. The direct
+form returns + ∞ +\infty . Summed as a balanced tree instead, the direct form
+never builds that prefix and returns the finite value. One input has
+three plausible lowerings, and whether the results agree depends on the shape
+of the reduction. Table 1 makes the resulting
+failure of rewrite equivalence explicit. Section 6.2 shows the
+direct and hoisted forms as an MLIR pass emits them.
+Table 1: The same 32-lane input evaluated by three plausible lowerings.
+The linear direct reduction is not equivalent to the hoisted form, so
+scale hoisting is not a legal result-preserving rewrite for this input and
+reduction tree.
+Form
+Reduction shape
+Binary32 result
+direct
+linear (left fold)
++ ∞ +\infty ( 0x7f800000 )
+direct
+balanced tree
+1004 ⋅ 2 118 1004\cdot 2^{118} ( 0x7f7b0000 )
+hoisted
+either shape
+1004 ⋅ 2 118 1004\cdot 2^{118} ( 0x7f7b0000 )
+Existing compilers have two ways to deal with this today. Under strict IEEE semantics,
+rewriting is forbidden, because it can change the returned value. Under
+fast-math flags it is allowed, together with every other reassociation. For example,
+LLVM’s language reference warns that reassociation may “dramatically change
+results” [ 20 ] . Neither option uses the unique constraints known
+about this particular operation: the element alphabet has sixteen codes(4 bits per element), the
+scale is a power of two, the block length is fixed by the format, and the
+compiler itself chooses the reduction tree. We derive sufficient guards for
+rewrites between the direct and hoisted forms under a fixed reduction tree,
+and establish sharpness for the configurations evaluated here.
+Bit-precise SMT supports bounded equivalence checking of floating-point
+programs [ 22 , 21 ] , but the direct encoding
+is expensive even for small instances of this family
+(Section 2.6 ). Our contribution is an exact reduction to
+quantifier-free linear integer arithmetic( QF_LIA )
+that exposes the arithmetic structure of these queries.
+Every E2M1 product is a quarter-integer of
+magnitude at most 36, and the scales are powers of two. Under an upper bound on
+each scale code and a bound on the magnitudes of intermediate integer
+coefficients, both programs can be represented by a state machine consisting of
+an integer coefficient and a tag in { fin , + ∞ , − ∞ , NaN } \{\mathrm{fin},+\infty,-\infty,\mathrm{NaN}\} .
+These bounds ensure exactness in the normal range, while overflow
+and subnormal rounding can be expressed as conditions on integers.
+The resulting query in QF_LIA is
+equisatisfiable with the floating-point query under these bounds,
+and counterexamples translate constructively in both directions
+(Theorem 3.1 , Section 3 ).
+We use the following vocabulary throughout: A lane is an index
+i ∈ { 1 , … , k } i\in\{1,\dots,k\} , one position in a block. A scale code is the
+eight-bit E8M0 field e e of a block, and its scale is 2 e − 127 2^{e-127} . The
+exponent sum t = ( e A − 127 ) + ( e B − 127 ) t=(e_{A}-127)+(e_{B}-127) is the exponent of the combined
+scale s A ​ s B s_{A}s_{B} . A band is an interval of exponent sums. The
+guard is the condition on the pair of scale codes under which we prove
+the rewrite exact; it consists of an upper cap on each code and a band on the
+exponent sum. A band is certified for a block length and a tree when
+the solver has proved that no block inside it separates the two forms, and it
+is sharp when widening it by one exponent step admits a
+counterexample. A witness is a concrete block, elements and scale
+codes together, on which the two forms return different binary32 values.
+This paper makes the following contributions.
+•
+An exact reduction of a family of floating-point equivalence queries to
+QF_LIA , with a faithfulness proof and constructive counterexample
+translations on the domain of interest (Section 3 ).
+•
+A closed-form sufficient guard using MXFP4’s element and scale encodings
+for any fixed binary reduction tree
+within the coefficient budget, with solver-established sharpness for
+four shapes at block lengths 2,3,4,8,16,32 lanes and for two shapes at 64 lanes
+(Sections 4 and 5.3 ).
+•
+A prototype implementation of a rewrite guard based on the certified
+bands (Section 6.2 ) in an MLIR lowering pass, and
+a description of which parts of the construction carry over to
+other block formats(Section 6 ).
+•
+A comparison of the two theories,
+evaluating the relative cost using the same solver and
+validating the encoding against an independently written floating-point
+encoding, against exhaustive and stratified binary32 execution, and by
+replaying witnesses on a GPU(Section 5 ).
+2 The Rewrite and Its Legality Question
+2.1 Formats
+An E2M1 element has a sign bit, two exponent bits, and one mantissa bit. Its
+sixteen codes denote 0 0 , ± 0.5 \pm 0.5 , ± 1 \pm 1 , ± 1.5 \pm 1.5 , ± 2 \pm 2 , ± 3 \pm 3 , ± 4 \pm 4 ,
+and ± 6 \pm 6 , with separate codes for + 0 +0 and − 0 -0 ; there are no codes for
+infinity or NaN. We write an element as a = m / 2 a=m/2 with
+m ∈ M = { 0 , ± 1 , ± 2 , ± 3 , ± 4 , ± 6 , ± 8 , ± 12 } , m\in M=\{0,\pm 1,\pm 2,\pm 3,\pm 4,\pm 6,\pm 8,\pm 12\},
+and note that every nonzero | m | |m| has at most two significant bits.
+An E8M0 scale is an eight-bit exponent without sign or mantissa. Code
+e ∈ [ 0,254 ] e\in[0,254] denotes 2 e − 127 2^{e-127} , so the scales run from 2 − 127 2^{-127} to
+2 127 2^{127} ; code 255 is NaN. We denote x = e A − 127 x=e_{A}-127 and y = e B − 127 y=e_{B}-127 for the two
+unbiased exponents, which implies s A = 2 x s_{A}=2^{x} and s B = 2 y s_{B}=2^{y} , and t = x + y t=x+y for the
+exponent sum. The OCP block length for MXFP4 is k = 32 k=32 [ 24 ] .
+2.2 Binary32 arithmetic
+All arithmetic is IEEE binary32 with round to nearest, ties to even, and
+gradual underflow [ 15 ] . We denote fl ⁡ ( v ) \operatorname{fl}(v) for the correctly rounded value of a
+real number v v ; every operation returns fl \operatorname{fl} of its exact result. We use
+the following facts:
+The smallest positive value is δ = 2 − 149 \delta=2^{-149} , and every subnormal value is
+an integer multiple of δ \delta . A real v v is representable,
+and hence fl ⁡ ( v ) = v \operatorname{fl}(v)=v , if v = 0 v=0 , or if
+| v | < 2 − 126 |v|<2^{-126} and v v is a multiple of δ \delta , or if
+2 − 126 ≤ | v | < 2 128 2^{-126}\leq|v|<2^{128} and v v has at most 24 significant bits.
+Infinity and NaN follow IEEE rules: ∞ + ( − ∞ ) \infty+(-\infty) and 0 ⋅ ∞ 0\cdot\infty produce NaN,
+an infinity absorbs any finite value, and NaN propagates through every operation.
+2.3 The two programs
+A reduction tree ρ \rho over k k lanes is a fixed binary tree with the lanes
+as leaves; each internal node performs one binary32 addition of its two
+children. For a tree ρ \rho , the direct form computes
+p i \displaystyle p_{i}
+= fl ⁡ ( fl ⁡ ( s A ​ a i ) ⋅ fl ⁡ ( s B ​ b i ) ) , \displaystyle=\operatorname{fl}\big(\operatorname{fl}(s_{A}a_{i})\cdot\operatorname{fl}(s_{B}b_{i})\big),
+r D ρ \displaystyle r_{\mathrm{D}}^{\rho}
+= reduce ρ ⁡ ( p 1 , … , p k ) , \displaystyle=\operatorname{reduce}_{\rho}(p_{1},\dots,p_{k}),
+(1)
+and the hoisted form computes
+q i \displaystyle q_{i}
+= fl ⁡ ( a i ​ b i ) , \displaystyle=\operatorname{fl}(a_{i}b_{i}),
+r H ρ \displaystyle r_{\mathrm{H}}^{\rho}
+= fl ⁡ ( fl ⁡ ( s A ​ s B ) ⋅ reduce ρ ⁡ ( q 1 , … , q k ) ) . \displaystyle=\operatorname{fl}\big(\operatorname{fl}(s_{A}s_{B})\cdot\operatorname{reduce}_{\rho}(q_{1},\dots,q_{k})\big).
+(2)
+Each multiplication and addition is a separate rounded operation; we do not
+model fused multiply-add. We consider four trees for the reduce operation in (1) and (2): the left fold ,
+which adds lanes in order into a running sum; the right fold , which
+does the same starting from the last lane; the balanced tree , which
+halves the lane sequence recursively; and a quarter-skew tree , which
+places max ⁡ ( 1 , ⌊ n / 4 ⌋ ) \max(1,\lfloor n/4\rfloor) of an n n -lane node’s lanes in its left
+child and splits both children recursively. The last shape is there to test
+a tree that is neither a chain nor balanced.
+2.4 The equivalence relation
+We compare results with a relation ≃ \simeq under which + 0 ≃ − 0 +0\simeq-0 , any two
+NaNs are equal, and finite values and infinities must match exactly.
+In SMT-LIB this is expressed by fp.eq augmented with a test
+that both operands are NaN [ 30 ] .
+A checker for scalar IEEE optimizations must also distinguish the sign of
+zero [ 22 ] ; we write ≡ \equiv for that stricter
+relation. We state results for ≃ \simeq and show in
+Section 4.4 that the two relations agree on the certified
+domain, so the choice does not affect the guard.
+2.5 The guard
+Without restrictions the two forms are not equivalent, and the solver finds
+several kinds of witness: either form can overflow to ± ∞ \pm\infty while the other is
+finite, as in Section 1 ; either form can produce NaN (from
+∞ − ∞ \infty-\infty or from 0 ⋅ ∞ 0\cdot\infty ) while the other is finite;
+the direct form can accumulate subnormal
+values while the hoisted form’s combined scale fl ⁡ ( s A ​ s B ) \operatorname{fl}(s_{A}s_{B}) underflows to zero.
+Every witness found pushes a value to the end of the binary32 range.
+We seek a scale-only condition P P on the two scale codes such that, for k ≥ 2 k\geq 2 ,
+∀ a , b , e A , e B . P ⁡ ( e A , e B ) ⟹ r D ρ ≃ r H ρ . \forall a,b,e_{A},e_{B}.\quad P(e_{A},e_{B})\implies r_{\mathrm{D}}^{\rho}\simeq r_{\mathrm{H}}^{\rho}.
+(3)
+We consider guards P B P_{B} consisting of two parts: individual bounds on the scale
+codes and an interval constraint on their exponent sum.
+The examples below show how equivalence can fail when these restrictions are relaxed.
+We subsequently establish sufficiency and determine the largest admissible upper endpoint.
+We impose the following individual bounds on scale codes:
+0 ≤ e A , e B ≤ 252 . 0\leq e_{A},\,e_{B}\leq 252.
+(4)
+Codes 253 and 254 are excluded because each breaks the rewrite on its own.
+With e A = 254 e_{A}=254 , e B = 0 e_{B}=0 , and ( a 1 , b 1 ) = ( 6 , 0.5 ) (a_{1},b_{1})=(6,0.5) , the direct form computes
+fl ⁡ ( s A ​ a 1 ) = fl ⁡ ( 6 ⋅ 2 127 ) = + ∞ \operatorname{fl}(s_{A}a_{1})=\operatorname{fl}(6\cdot 2^{127})=+\infty in its first lane, while the hoisted
+form computes fl ⁡ ( 2 0 ⋅ 3 ) = 3 \operatorname{fl}(2^{0}\cdot 3)=3 ; code 253 fails the same way one exponent
+lower. The bound is a property of the rewrite. Code 0, representing 2 − 127 2^{-127} ,
+is admitted, and code 255 is the NaN encoding which is
+never admitted. We use the term
+capped domain to refer to the blocks whose codes satisfy ( 4 ).
+We impose this interval constraint on the exponent sum t t :
+− 147 ≤ t ≤ B , -147\leq t\leq B,
+(5)
+with a parameter B B to be determined. The lower endpoint is based on
+underflow. At t = − 148 t=-148 , two lanes with a i = b i = 0.5 a_{i}=b_{i}=0.5 yield
+p i = fl ⁡ ( 2 − 150 ) = 0 p_{i}=\operatorname{fl}(2^{-150})=0 for the direct form,
+since 2 − 150 2^{-150} lies halfway between 0 0 and δ \delta
+and ties go to the even side, while the hoisted form yields
+fl ⁡ ( 2 − 148 ⋅ 0.5 ) = δ \operatorname{fl}(2^{-148}\cdot 0.5)=\delta exactly.
+Next, we determine the largest admissible upper endpoint.
+Let B ρ max ​ ( k ) B^{\max}_{\rho}(k) be the largest B B for which ( 3 )
+holds with the guard ( 4 ), ( 5 ).
+Section 4 derives a closed-form sufficient endpoint
+B ^ ρ ​ ( k ) ≤ B ρ max ​ ( k ) \widehat{B}_{\rho}(k)\leq B^{\max}_{\rho}(k) , and the solver establishes equality
+for the configurations analyzed in Section 5 .
+In terms of the eight-bit codes the guard can be written as
+e A ≤ 252 , e B ≤ 252 , 107 ≤ e A + e B ≤ 254 + B , e_{A}\leq 252,\qquad e_{B}\leq 252,\qquad 107\leq e_{A}+e_{B}\leq 254+B,
+(6)
+four comparisons on two bytes. This is what a compiler needs to evaluate, statically
+or at run time.
+2.6 Floating-point SMT as a baseline
+The negation of query ( 3 ) for a fixed k k is a quantifier-free network of
+binary32 operations with bounded elements
+and codes. We encoded it directly in SMT-LIB
+floating-point theory ( QF_FP , using QF_BVFP for the bit-vector inputs).
+To isolate the effect of theory choice from solver choice, we use paired left-fold
+queries with identical domains: 1 ≤ e A , e B ≤ 252 1\leq e_{A},e_{B}\leq 252 and − B ≤ t ≤ B -B\leq t\leq B .
+cvc5 [ 1 ] proves the two- and four-lane integer queries in under one second
+on average, but the corresponding floating-point proofs reach the
+configured one-CPU-hour cap. Among the FP solvers tested, Bitwuzla is
+fastest on the completed safe-boundary queries: it proves four lanes in
+499 CPU seconds and completes eight lanes after at least 69 238 CPU seconds,
+as bounded by the last progress sample. At eight lanes, cvc5’s integer query averages
+4.78 wall-clock seconds. These comparison queries use a narrower domain
+than the full guard certified in Section 5 .
+Table 2: Matched left-fold safe-boundary queries on the comparison domain
+( 1 ≤ e A , e B ≤ 252 1\leq e_{A},e_{B}\leq 252 , | t | ≤ B |t|\leq B ). LIA timings are average wall-clock seconds over
+three runs; FP timings are CPU seconds from one run.
+“cap” denotes termination at the configured 3600-second CPU limit;
+the eight-lane Bitwuzla query returned unsat , with CPU time bounded
+below by the last progress sample before completion.
+A dash denotes an unmeasured query.
+k k
+B B
+cvc5 LIA
+cvc5 FP
+Bitwuzla FP
+Z3 FP
+2
+122
+0.46
+cap
+14.10
+1251.02
+4
+121
+0.89
+cap
+499.10
+—
+8
+120
+4.78
+—
+≥ 69 238 \geq 69\,238
+—
+3 An Exact Integer Semantics
+The floating-point encoding asks the solver to reason about 32 pairs of
+four-bit codes, two scale codes, and a network of roughly a hundred binary32
+operations, each of which can in principle round. On the capped domain
+very few of them do. We identify a single power-of-two grid
+on which every value of both programs lies,
+reduce each operation to integer arithmetic on that grid plus an overflow test and a
+subnormal rounding step, and prove that the reduced semantics computes
+exactly what binary32 computes.
+3.1 One shared grid
+Let
+n i = m a , i ​ m b , i , | n i | ≤ 144 , E = t − 2 . n_{i}=m_{a,i}\,m_{b,i},\qquad|n_{i}|\leq 144,\qquad E=t-2.
+Exact raw products in the hoisted form are of the form q i = n i / 4 q_{i}=n_{i}/4 . They are multiples
+of 2 − 2 2^{-2} with a coefficient below 2 8 2^{8} , representable in binary32.
+Under the coefficient-budget assumption 144 ​ k ≤ 2 24 144k\leq 2^{24} ,
+any partial sum of raw products is N / 4 N/4 with | N | ≤ 144 ​ k ≤ 2 24 |N|\leq 144k\leq 2^{24} .
+It is exactly representable, so the hoisted raw reduction is exact for any fixed tree.
+Under ( 4 ), each scaled element of the direct form
+is exactly representable in binary32 as a finite value:
+fl ⁡ ( 2 x ​ a i ) = m a , i ​ 2 x − 1 . \operatorname{fl}(2^{x}a_{i})=m_{a,i}\,2^{x-1}.
+(7)
+The magnitude is at most 12 ⋅ 2 124 12\cdot 2^{124} ,
+below the largest finite value Ω = ( 2 24 − 1 ) ​ 2 104 \Omega=(2^{24}-1)\,2^{104} ;
+in the normal range the coefficient has at most two significant bits; and in the subnormal
+range the value is a multiple of 2 x − 1 ≥ 2 − 128 2^{x-1}\geq 2^{-128} , hence of δ \delta .
+Individual scaling is the step that requires the cap, since codes 253 and 254 would overflow without it.
+The exact real product of the scaled elements is n i ​ 2 E n_{i}2^{E} , so the direct leaf obtained after rounding is
+p i = fl ⁡ ( n i ​ 2 E ) . p_{i}=\operatorname{fl}(n_{i}\,2^{E}).
+(8)
+Every finite intermediate of the direct form is therefore an integer multiple
+of 2 E 2^{E} , or, after rounding into the subnormal range, an integer multiple of
+δ \delta . The whole computation of both programs therefore takes place on one grid whose
+spacing 2 E 2^{E} is determined by the two scale codes.
+3.2 The rounding primitive
+The next step is to demonstrate that fl \operatorname{fl} operating on a grid value still produces representable values.
+For an integer n n
+with | n | ≤ 2 24 |n|\leq 2^{24} and E ∈ [ − 256,248 ] E\in[-256,248] , the range the capped domain produces,
+fl ⁡ ( n ​ 2 E ) = { sign ⁡ ( n ) ⋅ ∞ , | n | ​ 2 E ≥ 2 128 , n ​ 2 E , E ≥ − 149 ​ and no overflow , RNE ⁡ ( n / 2 d ) ​ δ , E ≤ − 150 , d = − 149 − E . \operatorname{fl}(n\,2^{E})=\begin{cases}\operatorname{sign}(n)\cdot\infty,&|n|\,2^{E}\geq 2^{128},\\
+n\,2^{E},&E\geq-149\text{ and no overflow},\\
+\operatorname{RNE}(n/2^{d})\,\delta,&E\leq-150,\ d=-149-E.\end{cases}
+(9)
+Here RNE ⁡ ( n / 2 d ) \operatorname{RNE}(n/2^{d}) is the integer nearest to n / 2 d n/2^{d} , with ties to the even
+integer. The middle case is exactness: a multiple of 2 E 2^{E} with a
+coefficient of magnitude at most 2 24 2^{24} has at most 24 significant bits, and
+when E ≥ − 149 E\geq-149 it is a multiple of δ \delta , so it is representable whether it
+lands in the normal or the subnormal range. The last case is subnormal
+rounding: for E ≤ − 150 E\leq-150 the magnitude is at most 2 24 ⋅ 2 − 150 = 2 − 126 2^{24}\cdot 2^{-150}=2^{-126} ,
+every representable value below 2 − 125 2^{-125} is a multiple of δ \delta , and IEEE
+rounding onto the uniform grid δ ​ ℤ \delta\mathbb{Z} with ties to even is the
+integer shift.
+The first case requires a separate argument, because binary32 does not overflow at 2 128 2^{128} .
+It overflows at Ω + = 2 128 − 2 103 \Omega^{+}=2^{128}-2^{103} : a value in ( Ω , Ω + ) (\Omega,\Omega^{+})
+rounds down to Ω \Omega , and a value in [ Ω + , 2 128 ) [\Omega^{+},2^{128}) rounds up to
+∞ \infty . If a grid value could land in ( Ω , 2 128 ) (\Omega,2^{128}) , the integer test
+in ( 9 ) would be wrong on one side or the other. None can. A
+grid value can reach Ω \Omega only if 2 E ≥ Ω / 2 24 > 2 103 2^{E}\geq\Omega/2^{24}>2^{103} , so
+E ≥ 104 E\geq 104 ; and for E ≥ 104 E\geq 104 the multiples of 2 E 2^{E} skip the whole interval
+( Ω , 2 128 ) (\Omega,2^{128}) , whose width 2 104 2^{104} does not exceed their spacing, the
+largest multiple below 2 128 2^{128} being 2 128 − 2 E ≤ Ω 2^{128}-2^{E}\leq\Omega . The simpler
+test | n | ​ 2 E ≥ 2 128 |n|2^{E}\geq 2^{128} is therefore exact on this domain. At k ≤ 32 k\leq 32 the coefficient
+bound 4608 4608 tightens the threshold to E ≥ 116 E\geq 116 , which is the window the
+encoding expands over; in general overflow requires
+E ≥ 128 − ⌊ log 2 ⁡ 144 ​ k ⌋ E\geq 128-\lfloor\log_{2}144k\rfloor , and Section 5.4 shows the failure
+mode at k = 64 k=64 if an encoding keeps the 32-lane window.
+3.3 The state machine
+For E ≥ − 149 E\geq-149 we represent the direct reduction by a state
+( 𝑘𝑖𝑛𝑑 , S ) , 𝑘𝑖𝑛𝑑 ∈ { fin , + ∞ , − ∞ , NaN } , (\mathit{kind},S),\qquad\mathit{kind}\in\{\mathrm{fin},+\infty,-\infty,\mathrm{NaN}\},
+where a finite state denotes the value S ​ 2 E S\,2^{E} . A leaf starts as
+( fin , n i ) (\mathrm{fin},n_{i}) unless | n i | ​ 2 E ≥ 2 128 |n_{i}|2^{E}\geq 2^{128} , in which case it is
+± ∞ \pm\infty . Adding two finite states adds their integers and applies the
+overflow test of ( 9 ) to the sum. Every other combination
+follows the IEEE rules: a finite state and an infinity yield the infinity,
+opposite infinities give NaN, and NaN is absorbing. There is no other source
+of NaN in the direct form, because by ( 7 ) every
+multiplication has two finite exact operands.
+For E ≤ − 150 E\leq-150 every leaf rounds to RNE ⁡ ( n i / 2 d ) ​ δ \operatorname{RNE}(n_{i}/2^{d})\delta ,
+where d = − 149 − E ≥ 1 d=-149-E\geq 1 . The partial sums are then multiples of
+δ \delta with coefficient magnitude at most 72 ​ k 72k . Under 144 ​ k ≤ 2 24 144k\leq 2^{24} ,
+every partial is exactly representable. Even if the leaves round,
+every addition is exact including at the smallest normal value.
+The hoisted form needs the same primitive twice. The combined scale is
+fl ⁡ ( 2 x ​ 2 y ) = fl ⁡ ( 2 t ) \operatorname{fl}(2^{x}2^{y})=\operatorname{fl}(2^{t}) , which is 2 t 2^{t} for − 149 ≤ t ≤ 127 -149\leq t\leq 127 , 0 0 for
+t ≤ − 150 t\leq-150 , and + ∞ +\infty for t ≥ 128 t\geq 128 . The raw reduction is exact, as
+shown above, and the final multiplication is fl ⁡ ( N ​ 2 E ) \operatorname{fl}(N\,2^{E}) , which is
+( 9 ) again, with the two special cases
+∞ ⋅ 0 = NaN \infty\cdot 0=\mathrm{NaN} and 0 ⋅ N = ± 0 0\cdot N=\pm 0 when the scale is infinite or
+zero.
+3.4 Faithfulness
+The argument above is organized as six lemmas. Each has a short proof from
+the representability characterization and the RNE overflow threshold, and
+each finite-domain lemma is also checked exhaustively against
+binary32 (Section 5.2 ).
+L1, single-scale exactness.
+For x ∈ [ − 127,125 ] x\in[-127,125] and every E2M1 code,
+fl ⁡ ( 2 x ​ a i ) \operatorname{fl}(2^{x}a_{i}) equals m a , i ​ 2 x − 1 m_{a,i}2^{x-1} exactly and is finite.
+L2, rounding primitive.
+For | n | ≤ 2 24 |n|\leq 2^{24} and E ∈ [ − 256,248 ] E\in[-256,248] ,
+( 9 ) computes fl ⁡ ( n ​ 2 E ) \operatorname{fl}(n2^{E}) .
+L3, grid addition.
+If u = s 1 ​ 2 g u=s_{1}2^{g} and w = s 2 ​ 2 g w=s_{2}2^{g} are binary32 values
+with g ≥ − 149 g\geq-149 and | s 1 + s 2 | ≤ 2 24 |s_{1}+s_{2}|\leq 2^{24} , then fl ⁡ ( u + w ) = ( s 1 + s 2 ) ​ 2 g \operatorname{fl}(u+w)=(s_{1}+s_{2})2^{g} unless
+| s 1 + s 2 | ​ 2 g ≥ 2 128 |s_{1}+s_{2}|2^{g}\geq 2^{128} , in which case it is ± ∞ \pm\infty by the sign of
+the sum.
+L4, the overflow gap.
+No value n ​ 2 E n2^{E} with integer 1 ≤ n ≤ 2 24 1\leq n\leq 2^{24}
+lies in ( Ω , Ω + ) (\Omega,\Omega^{+}) , and none lies in [ Ω + , 2 128 ) [\Omega^{+},2^{128}) .
+L5, raw products.
+fl ⁡ ( a i ​ b i ) = n i / 4 \operatorname{fl}(a_{i}b_{i})=n_{i}/4 for all 256 code pairs;
+if 144 ​ k ≤ 2 24 144k\leq 2^{24} , every partial sum equals N / 4 N/4 exactly, for any tree.
+L6, the scale product.
+fl ⁡ ( 2 x ​ 2 y ) = 2 t \operatorname{fl}(2^{x}2^{y})=2^{t} for − 149 ≤ t ≤ 127 -149\leq t\leq 127 , 0 0
+for t ≤ − 150 t\leq-150 , and + ∞ +\infty for t ≥ 128 t\geq 128 .
+Theorem 3.1 (Faithfulness)
+Let k k satisfy 144 ​ k ≤ 2 24 144k\leq 2^{24} , let the scale codes satisfy ( 4 ),
+let all operations be binary32 with round to nearest even and gradual
+underflow, and let ρ \rho be any fixed binary reduction tree. Then the
+integer state machine computes a value equivalent under ≃ \simeq to
+the direct form ( 1 ) and, separately, to the hoisted form
+( 2 ).
+Proof
+For the direct form with E ≥ − 149 E\geq-149 , L1 makes both
+factors of every leaf exact, so the leaf is fl ⁡ ( n i ​ 2 E ) \operatorname{fl}(n_{i}2^{E}) , and L2 gives its
+state. By induction over the tree, every finite node holds an exact multiple
+S ​ 2 E S2^{E} with | S | ≤ 144 ​ k |S|\leq 144k , and L3 says its addition is exact unless the
+integer sum overflows, in which case the sign of the sum selects the
+infinity. The infinity and NaN cases follow from the IEEE rules. For
+E ≤ − 150 E\leq-150 , L2 rounds each leaf onto the δ \delta grid and L3 with g = − 149 g=-149
+makes every later addition exact. For the hoisted form, L6 gives the
+combined scale, L5 the exact raw reduction, and L2 the final multiplication;
+the cases of an infinite or zero scale are again the IEEE rules. Since the
+machine preserves both results under ≃ \simeq , its disagreement predicate
+and the floating-point predicate have the same truth value.
+The bound 144 ​ k ≤ 2 24 144k\leq 2^{24} , that is k ≤ 116 508 k\leq 116\,508 , is required for representability
+of partial sums in L3 and L5. It is far above block lengths specified by the format.
+The theorem establishes that the integer state machine captures the floating-point behavior up to ≃ \simeq under the stated assumptions.
+An unsat proof of the integer query is a proof of the floating-point statement,
+and a satisfying assignment of the integer query yields a concrete witness.
+Each concrete block determines n i = m a , i ​ m b , i n_{i}=m_{a,i}m_{b,i} and t = x + y t=x+y ;
+conversely, every integer in the 37-element product alphabet factors into two E2M1 codes,
+and every t ∈ [ − 254,250 ] t\in[-254,250] splits into two capped exponents.
+We validate each reported witness by reconstructing the E2M1 and E8M0 codes
+and replaying computation in binary32.
+3.5 The integer query
+Our integer encoder turns the state machine into a QF_LIA formula for Z3. Each
+lane is represented by one integer variable n i n_{i} constrained to the 37 signed
+values that arise as products of two elements of M M . One further integer
+variable t t carries the exponent sum under the band ( 5 );
+E = t − 2 E=t-2 needs no variable of its own. The formula for k k lanes has k + 3 k+3
+assertions: one alphabet constraint per lane, the two band bounds, and the
+negation of r D ρ ≃ r H ρ r_{\mathrm{D}}^{\rho}\simeq r_{\mathrm{H}}^{\rho} .
+The reduction tree is a function from a lane interval to two subintervals,
+applied recursively, so a tree shape is a parameter of the encoding rather than a
+separate encoding. Each internal node combines two ( 𝑘𝑖𝑛𝑑 , S ) (\mathit{kind},S)
+states. The overflow test | S | ​ 2 E ≥ 2 128 |S|2^{E}\geq 2^{128} is not linear in E E , so the
+encoding expands it over the finitely many exponents at which overflow is
+possible, E ≥ 128 − ⌊ log 2 ⁡ 144 ​ k ⌋ E\geq 128-\lfloor\log_{2}144k\rfloor , as a nested conditional with
+one integer comparison per exponent. The subnormal branch is handled the
+same way: for each shift d d from 1 1 to 1 + ⌊ log 2 ⁡ n max ⌋ 1+\lfloor\log_{2}n_{\max}\rfloor ,
+where n max n_{\max} is 144 at a direct leaf and 144 ​ k 144k at the hoisted root,
+division and remainder by the constant 2 d 2^{d} implement round to nearest even,
+including the parity test on ties; for larger d d every coefficient rounds to
+zero. Division by a constant is linear, so the formula stays in QF_LIA .
+The hoisted side is shared across tree shapes because its raw reduction is
+exact and shape-invariant.
+For a fixed product alphabet bounded by C C and a fixed exponent sum,
+each node has O ⁡ ( C ​ k ) O(Ck) direct ( 𝑘𝑖𝑛𝑑 , S ) (\mathit{kind},S) states.
+In addition, raw sums contribute the same number giving O ⁡ ( ( C ​ k ) 2 ) O((Ck)^{2}) joint states.
+Bottom-up enumeration can be used to decide disagreement in polynomial time in k k
+for fixed C C and the finite set of exponents in the band.
+While QF_LIA is NP-complete in general, the restricted query family
+allows for polynomial-time decision procedures.
+4 Certified Bands
+Searching over B B with solver queries determines B ρ max ​ ( k ) B^{\max}_{\rho}(k) .
+We derive a sufficient upper endpoint from the maximum absolute
+partial sum possible at a proper subtree of the reduction tree. This endpoint
+matches the solver results for the tested configurations.
+4.1 A safe endpoint for any tree
+Let m ρ m_{\rho} be the largest number of leaves below any proper (non-root) node for fixed k ≥ 2 k\geq 2 ,
+m ρ = 1 m_{\rho}=1 when k = 2 k=2 . Let P ρ = 144 ​ m ρ P_{\rho}=144m_{\rho} be the largest integer coefficient a proper node
+can hold. For a left or right fold m ρ = k − 1 m_{\rho}=k-1 , for a balanced tree
+m ρ = ⌈ k / 2 ⌉ m_{\rho}=\lceil k/2\rceil , and for the quarter-skew tree we read m ρ m_{\rho} off
+its recursive split.
+Inside the band, the direct form and the hoisted form can differ only if
+some node of the direct reduction overflows while the hoisted root does not,
+or the other way around. The hoisted root and the direct root see the same
+integer, so they overflow together. A proper node of the direct tree,
+however, holds a partial sum that the hoisted form never rounds, and if that
+partial sum overflows, the infinity persists to the root while the hoisted
+form may still be finite. Keeping every proper node finite at the top of
+the band requires P ρ ​ 2 B − 2 < 2 128 P_{\rho}2^{B-2}<2^{128} , that is B < 130 − log 2 ⁡ P ρ B<130-\log_{2}P_{\rho} .
+Since P ρ P_{\rho} is a multiple of nine it is not a power of two, so the largest
+admissible integer is
+B ^ ρ ​ ( k ) = ⌊ 130 − log 2 ⁡ P ρ ⌋ = 129 − ⌊ log 2 ⁡ P ρ ⌋ . \widehat{B}_{\rho}(k)=\lfloor 130-\log_{2}P_{\rho}\rfloor=129-\lfloor\log_{2}P_{\rho}\rfloor.
+(10)
+Theorem 4.1 (Safe band)
+Assume separate binary32 operations with round to nearest even and gradual
+underflow. For k ≥ 2 k\geq 2 with 144 ​ k ≤ 2 24 144k\leq 2^{24} , any fixed binary tree ρ \rho ,
+and scale codes satisfying ( 4 ) and − 147 ≤ t ≤ B ^ ρ ​ ( k ) -147\leq t\leq\widehat{B}_{\rho}(k) ,
+r D ρ ≃ r H ρ r_{\mathrm{D}}^{\rho}\simeq r_{\mathrm{H}}^{\rho} .
+Proof
+Since t ≥ − 147 t\geq-147 , E ≥ − 149 E\geq-149 , so by L1 and L2 every direct leaf is the exact
+grid value n i ​ 2 E n_{i}2^{E} : no leaf overflows, because
+| n i | ​ 2 E ≤ 144 ⋅ 2 B ^ − 2 < 2 128 |n_{i}|2^{E}\leq 144\cdot 2^{\widehat{B}-2}<2^{128} , and no leaf is rounded, because
+E ≥ − 149 E\geq-149 . We show by induction over the tree that every proper node holds
+the exact value S ​ 2 E S2^{E} of its subset sum. For a proper node with finite
+exact children, L3 makes the addition exact unless | S | ​ 2 E ≥ 2 128 |S|2^{E}\geq 2^{128} ; but
+| S | ≤ 144 ​ m ρ = P ρ |S|\leq 144m_{\rho}=P_{\rho} and t ≤ B ^ ρ ​ ( k ) t\leq\widehat{B}_{\rho}(k) give
+| S | ​ 2 E ≤ P ρ ​ 2 B ^ − 2 < 2 128 |S|2^{E}\leq P_{\rho}2^{\widehat{B}-2}<2^{128} . At the root, L3 gives either the exact
+sum N ​ 2 E N2^{E} or ± ∞ \pm\infty by the sign of N N , according to whether
+| N | ​ 2 E ≥ 2 128 |N|2^{E}\geq 2^{128} . On the hoisted side, L6 gives the combined scale 2 t 2^{t}
+exactly, since − 147 ≤ t ≤ B ^ ≤ 127 -147\leq t\leq\widehat{B}\leq 127 ; L5 gives the raw sum N / 4 N/4 exactly;
+and the final multiplication is fl ⁡ ( N ​ 2 E ) \operatorname{fl}(N2^{E}) , which by L2 is the exact value
+or ± ∞ \pm\infty under the same test with the same sign. The two results are
+equal, including when both are infinite.
+The above proof does not rely on a solver, and it holds for every binary tree, not
+only the four we measure.
+4.2 The lower endpoint
+The lower endpoint − 147 -147 is independent of the reduction tree. For t ≥ − 147 t\geq-147 ,
+E ≥ − 149 E\geq-149 satisfying the condition used in the previous proof. At t = − 148 t=-148
+the two-lane witness of
+Section 2.5 establishes non-equivalence for any tree, since both lanes
+are leaves and we can pad with zero lanes.
+Consequently, the certified band cannot be extended below − 147 -147 .
+4.3 Sharpness
+Theorem 4.1 establishes that the band is safe. Its sharpness also depends on the element
+alphabet. To establish sharpness at B ^ ρ ​ ( k ) + 1 \widehat{B}_{\rho}(k)+1 , a sufficient proof is to construct an input whose
+coefficient magnitude reaches 2 129 − B ^ 2^{129-\widehat{B}} while later lanes or a sibling subtree cancel enough of it that the
+root stays below the threshold. The construction must use only the 37 admissible product values.
+Such examples were found for all tested block lengths and trees,
+and Section 5.3 reports the solver’s confirmation that B ρ max ​ ( k ) = B ^ ρ ​ ( k ) B^{\max}_{\rho}(k)=\widehat{B}_{\rho}(k) in
+all 26 measured cases.
+Sharpness for every binary tree remains unproven but holds for the ones we have checked.
+4.4 Signed zeros
+Our relation ≃ \simeq identifies + 0 +0 with − 0 -0 . Inside the certified band
+the stricter relation ≡ \equiv gives the same verdict: every direct leaf is
+exactly 2 t 2^{t} times its hoisted leaf and has the same zero sign, grid
+additions are exact and combine the same signed operands at corresponding
+nodes, and the positive final scale preserves the sign of a zero root. So
+r D ρ ≃ r H ρ r_{\mathrm{D}}^{\rho}\simeq r_{\mathrm{H}}^{\rho} if and only if r D ρ ≡ r H ρ r_{\mathrm{D}}^{\rho}\equiv r_{\mathrm{H}}^{\rho} on the
+certified domain, and nothing in the guard depends on the choice of
+relation.
+Below the band, the 2 forms differ in the signs of zero. At t = − 151 t=-151 , with
+capped codes e A = 1 e_{A}=1 , e B = 102 e_{B}=102 , a = ( 1 , − 2 ) a=(1,-2) , and b = ( 1 , 1 ) b=(1,1) , the direct form
+returns + 0 +0 and the hoisted form − 0 -0 . Exhaustive enumeration at k = 2 k=2
+finds the largest such t t at − 148 -148 , one step below the lower endpoint.
+4.5 Revisiting the example
+The block in Section 1 has k = 32 k=32 and t = 118 t=118 .
+For a left fold reduction tree, m ρ = 31 m_{\rho}=31 and P ρ = 4464 P_{\rho}=4464 , giving
+⌊ log 2 ⁡ 4464 ⌋ = 12 \lfloor\log_{2}4464\rfloor=12 and B ^ = 117 \widehat{B}=117 .
+It therefore lies one exponent step above the certified band.
+Its 29-lane prefix has coefficient 4176 > 4096 4176>4096 , causing overflow
+at a proper node of the reduction tree.
+For the balanced tree, m ρ = 16 m_{\rho}=16 and P ρ = 2304 P_{\rho}=2304 , giving
+B ^ = 118 \widehat{B}=118 for the block, placing it within the certified band.
+The two 16-lane subtrees have raw sums 576 576 and 428 428 ,
+corresponding to coefficients 2304 2304 and 1712 1712 , both below
+the overflow threshold 4096 4096 .
+Theorem 4.1 therefore guarantees that the balanced
+direct form and the hoisted form return the same result,
+consistent with the evaluation in Section 1 .
+5 Evaluation
+We evaluate the encoding’s fidelity
+(Section 5.2 ), sharpness of endpoints (Section 5.3 ),
+certification cost (Section 5.4 ),
+and conformance with modeled hardware arithmetic (Section 5.5 ).
+5.1 Setup
+The matched-query comparison uses cvc5 1.4.1, Bitwuzla 0.9.1, and
+Z3 5.0.0, with Python 3.12 and NumPy 2.5, on a four-vCPU WSL2 host with
+about 8 GiB of memory. The matched-query measurements used two concurrent
+solver processes; the separate Z3 certification study reports idle-host wall times.
+The integer encoder, the independent floating-point encoder, the
+lemma checks, the differential tests, and the witness concretizer are Python
+scripts of a few hundred lines each.
+5.2 Validation of the encoding
+We validate the implementation against the mathematical model and against binary32 execution at three
+levels.
+First, each finite-domain lemma is checked over its entire domain against
+NumPy’s binary32. For the rounding checks, the reference calculates n ​ 2 E n2^{E}
+exactly in binary64 and converts it once to binary32 using round-to-nearest,
+ties-to-even. The checks covered all 16 × 253 16\times 253
+single-scale products (L1), all 9217 × 505 9217\times 505 scaled-integer points (L2),
+all 256 raw code-pair products (L5), all 505 exponent sums of the scale
+product (L6), and the exact integers around the overflow gap (L4). Grid
+addition (L3) has a two-dimensional domain, so the analytical proofs were supplemented by
+200 000 tests in the region near the overflow boundary.
+Second, the composed state machine is compared under ≃ \simeq with binary32
+execution of both programs: exhaustively for k = 1 k=1 , over every code pair and
+every exponent sum, and on 140 000 stratified random blocks for
+k ∈ { 2 , 3 , 4 , 8 , 32 } k\in\{2,3,4,8,32\} , and a separate balanced-tree test covering k = 16 k=16 .
+Sampling was done at code 0, in deep underflow, at the subnormal
+transition, in the central exact range, at the overflow boundary, and at
+scale-product overflow. No mismatches were detected.
+Third, the QF_LIA query and the independently written QF_FP query were checked
+for agreement on the same boundaries at k = 2 k=2 and k = 4 k=4 . They agree on all four
+verdicts: satisfiable at B = 123 B=123 and unsatisfiable at B = 122 B=122 for two lanes,
+satisfiable at B = 122 B=122 and unsatisfiable at B = 121 B=121 for four. Every witness
+the integer query reports was factored into E2M1 and E8M0 codes
+and replayed in binary32 reproducing every reported divergence.
+5.3 Validating sharpness
+Table 3 lists B ρ max ​ ( k ) B^{\max}_{\rho}(k) for six block lengths
+and four trees. Each entry is a pair of solver runs: unsat at the listed
+B B and sat at B + 1 B+1 . For the larger satisfiable queries we pin t = B + 1 t=B+1
+instead of leaving it free in the band, which restricts the search to the edge
+and does not weaken the certificate, since a witness at a single t t is a
+witness for the band. All 24 entries equal B ^ ρ ​ ( k ) \widehat{B}_{\rho}(k) from
+( 10 ), as do the two k = 64 k=64 entries in Table 4 .
+Table 3: Largest certified endpoint B ρ max ​ ( k ) B^{\max}_{\rho}(k) under the cap
+0 ≤ e A , e B ≤ 252 0\leq e_{A},e_{B}\leq 252 and the band − 147 ≤ t ≤ B -147\leq t\leq B . Every entry is
+unsat at B B and sat at B + 1 B+1 .
+k k
+left fold
+balanced
+right fold
+quarter-skew
+2
+122
+122
+122
+122
+3
+121
+121
+121
+121
+4
+121
+121
+121
+121
+8
+120
+120
+120
+120
+16
+118
+119
+118
+119
+32
+117
+118
+117
+118
+The boundaries for the left and right folds are identical with
+m ρ = k − 1 m_{\rho}=k-1 . The balanced tree minimizes the size of the largest
+proper subtree with size m ρ = ⌈ k / 2 ⌉ m_{\rho}=\lceil k/2\rceil .
+The quarter-skew tree has m ρ = 1 , 2 , 3 , 6 , 12 , 24 m_{\rho}=1,2,3,6,12,24
+at the listed lengths, larger than the corresponding balanced values for k ≥ 4 k\geq 4 but
+yielding the same value of
+⌊ log 2 ⁡ ( 144 ​ m ρ ) ⌋ \lfloor\log_{2}(144m_{\rho})\rfloor in ( 10 ). The boundaries are
+identical across all 4 shapes at tabulated lengths through k = 8 k=8 .
+For k = 16 k=16 and k = 32 k=32 , there is an additional admissible exponent
+step for balanced and quarter-skew trees relative to folds.
+At k = 32 k=32 , the balanced and quarter-skew tree guards accept
+the block of Section 1 , while the fold guards do not.
+5.4 Certification time measurement
+Table 4 reports Z3 unsat proofs at each boundary for
+left-fold and balanced trees, at block lengths from 2 to 64. Each query was
+run in three fresh processes on an otherwise idle four-vCPU WSL2 guest;
+CPU-load observations and all individual logs are included in the artifact.
+Wall time includes formula construction, DAG counting and solving, and
+excludes imports, process startup and log writing. Assertions are top-level
+constraints; DAG size counts distinct Z3 AST nodes reachable from all
+assertions before simplification, counting shared nodes once.
+All 36 runs returned unsat . Mean times range from 0.11 to 6.92 seconds.
+At 32 lanes, the left fold averages 1.76 seconds and the balanced tree
+2.36 seconds. Formula size grows with k k ; the two shapes have identical
+node counts at each length because only their wiring differs. These
+measurements report certification cost for this implementation and host;
+three repetitions do not establish a general solver-scaling law.
+Table 4: QF_LIA unsat proofs at the certified endpoint, using the
+supplied encoding. Times are means and ranges of three wall-clock runs
+of Z3 on an otherwise idle host. The table is generated from the
+individual run records included in the artifact.
+Tree
+k k
+B max B^{\max}
+Asserts
+DAG
+Time (s)
+Range (s)
+left fold
+2
+122
+5
+954
+0.17
+0.10–0.26
+left fold
+4
+121
+7
+1629
+0.76
+0.68–0.86
+left fold
+8
+120
+11
+2954
+1.17
+1.09–1.22
+left fold
+16
+118
+19
+5579
+1.74
+1.67–1.82
+left fold
+32
+117
+35
+10805
+1.76
+1.37–2.15
+left fold
+64
+116
+67
+21489
+3.12
+2.49–3.64
+balanced
+2
+122
+5
+954
+0.11
+0.10–0.12
+balanced
+4
+121
+7
+1629
+0.71
+0.55–0.84
+balanced
+8
+120
+11
+2954
+0.94
+0.80–1.18
+balanced
+16
+119
+19
+5579
+1.40
+1.25–1.68
+balanced
+32
+118
+35
+10805
+2.36
+2.23–2.57
+balanced
+64
+117
+67
+21489
+6.92
+6.78–7.13
+The k = 64 k=64 rows also illustrate the overflow window of
+Section 3.5 . At 64 lanes the coefficient bound is 9216 9216 , so
+overflow is possible from E = 115 E=115 rather than E = 116 E=116 . An encoding that
+keeps the 32-lane window silently misses the E = 115 E=115 case and reports a
+boundary one step too high. With the window derived from k k , both 64-lane
+boundaries match ( 10 ): 116 for the fold and 117 for the balanced
+tree.
+5.5 Hardware conformance
+Theorem 3.1 is about separate binary32 operations with round
+to nearest even and gradual underflow. To check that this models something
+real, we wrote the direct and hoisted forms as CUDA C++ kernels for an NVIDIA
+RTX 5080, compiled with fused multiply-add disabled, and confirmed by
+inspecting the generated PTX and SASS that the emitted code contains the
+modeled multiplications and additions and no fused or flush-to-zero
+instructions. The 32-lane block of Section 1 replays bit for
+bit: the left-fold direct kernel returns 0x7f800000 , and the hoisted
+and balanced-tree kernels return 0x7f7b0000 . Across 65 536 random
+blocks per tree with codes inside the guard, the direct and hoisted kernels
+agree bitwise; across the same number outside the guard they differ on
+99.8% of blocks. A 512 × 512 × 1024 512\times 512\times 1024 matrix product built from
+guarded blocks matches bitwise across eight build variants. These runs are a
+consistency check on the model, not evidence for the theorem: no random draw
+lands near B ^ ρ ​ ( k ) \widehat{B}_{\rho}(k) , where the first divergence lives, which is
+exactly why a proof is needed.
+6 Using the Guard in a Compiler
+6.1 The rewrite rule
+The compiler rule, in terms of the eight-bit scale fields, is
+e A ≤ 252 e B ≤ 252 107 ≤ e A + e B ≤ 254 + B ^ ρ ​ ( k ) r D ρ ↝ r H ρ \frac{e_{A}\leq 252\qquad e_{B}\leq 252\qquad 107\leq e_{A}+e_{B}\leq 254+\widehat{B}_{\rho}(k)}{r_{\mathrm{D}}^{\rho}\;\rightsquigarrow\;r_{\mathrm{H}}^{\rho}}
+(11)
+where r D ρ ↝ r H ρ r_{\mathrm{D}}^{\rho}\rightsquigarrow r_{\mathrm{H}}^{\rho} means that the direct form may be
+replaced by the hoisted form, and the replacement preserves ≃ \simeq on every
+block whose codes satisfy the condition. Since ≃ \simeq is symmetric, the same
+condition can be used to justify the reverse replacement, and an implementation may lower it to
+per-lane dequantization. At k = 32 k=32 the condition is 107 ≤ e A + e B ≤ 371 107\leq e_{A}+e_{B}\leq 371
+for a fold and ≤ 372 \leq 372 for a balanced tree.
+The solver certifies bounds for a specific format, block length, reduction tree and
+accumulator semantics. These choices can vary across kernel configurations,
+like tiling, split-K and autotuning, meaning certification may not simply be once per format.
+Our low-cost certification allows us to check the guard for each configuration efficiently,
+allowing it to serve as a legality oracle for automated kernel generation and
+rewrite search where many candidates need to be checked.
+In our prototype, the bound B ^ ρ ​ ( k ) \widehat{B}_{\rho}(k) is computed offline,
+when a lowering rule for a given block length and tree is written, and stored with the rule; the solver
+is not on the compilation path. At lowering time the condition is checked
+in one of two ways. With static range metadata , a quantizer or
+runtime states a guaranteed range for each operand’s scale codes, range
+propagation checks the condition once, and the compiler emits the hoisted form
+with no branch. Without static ranges, the compiler emits a runtime
+check of the four comparisons per block, or per group of blocks, taking the
+hoisted form when it passes and the direct form otherwise.
+This rule differs from attaching reassoc , nnan , and
+ninf flags. When the condition holds, it is guaranteed that the rewrite
+preserves the value, including the exceptional values; if it doesn’t the
+compiler may still rewrite under an approximate policy, but cannot guarantee that the
+result is value-preserving.
+6.2 An MLIR prototype
+We implemented the rule in an MLIR [ 17 ] prototype based on LLVM revision
+3f170b5b . In our implementation, an operation mxfp4.block_dot carries the
+element type, the scale type, the block length, the reduction tree, and
+optional scale-code ranges, which the guard needs and
+which a generic lowering to scalar arith operations would discard.
+The pass mxfp4-lower-block-dot emits target-independent scalar IR
+without fast-math flags. It uses the certified bounds for eleven
+( k , ρ ) (k,\rho) pairs, all fold lengths of Table 3 and balanced
+trees for k ∈ { 2 , 4 , 8 , 16 , 32 } k\in\{2,4,8,16,32\} . Pairs without certified bounds use the direct form.
+With static ranges the pass emits the hoisted form only
+if both ranges lie inside [ 0,252 ] [0,252] and every possible code sum satisfies the guard.
+With runtime checking it emits an scf.if whose condition checks the 4
+comparisons on widened i16 values and selects the hoisted form if they all pass,
+and otherwise keeps the direct form with the requested tree.
+Figure 1 shows the two lowerings on the block from
+Section 1 . On this block the direct form with a left fold returns +inf
+and the hoisted form returns 3.3363623 × 10 38 3.3363623\times 10^{38} .
+Lit tests check the certified constants, runtime guard construction,
+fallback behavior, and rejection of malformed metadata.
+// direct form
+%2 = arith.scaling_extf %0, %arg2 : f4E2M1FN, f8E8M0FNU to f32
+%3 = arith.scaling_extf %1, %arg3 : f4E2M1FN, f8E8M0FNU to f32
+%4 = arith.mulf %2, %3 : f32
+// ... lanes 1--31, then 31 arith.addf in the requested tree ...
+return %190 : f32
+// hoisted form
+%2 = arith.extf %0 : f4E2M1FN to f32
+%3 = arith.extf %1 : f4E2M1FN to f32
+%4 = arith.mulf %2, %3 : f32
+// ... lanes 1--31, then 31 arith.addf in the requested tree ...
+%191 = arith.extf %arg2 : f8E8M0FNU to f32
+%192 = arith.extf %arg3 : f8E8M0FNU to f32
+%193 = arith.mulf %191, %192 : f32
+%194 = arith.mulf %193, %190 : f32
+return %194 : f32
+Figure 1: The two lowerings of one mxfp4.block_dot as emitted by
+mxfp4-opt ; lane 0 is shown and the other lanes are elided. On
+the block of Section 1 with a left fold, the direct form
+returns +inf ( 0x7f800000 ) and the hoisted form returns
+3.3363623 × 10 38 3.3363623\times 10^{38} ( 0x7f7b0000 ).
+The guard rejects hoisting with a left fold reduction tree.
+At k = 32 k=32 , when static scale ranges fulfil the guard conditions,
+the hoisted lowering emits 34 arith.mulf operations and
+no branch, while the direct lowering emits 64 scale applications and 32 products.
+Which lowering is faster or more efficient depends on the target. On the RTX
+5080, experiments with software-emulated binary32 MXFP4 matrix multiply show that the relative
+performance of the two lowerings depends on the tile/decode configuration
+(Appendix 0.B ).
+These measurements motivate treating scale placement
+as a target-dependent optimization choice.
+The prototype demonstrates how certified guards permit the compiler
+to choose between
+the two forms while preserving the specified binary32 semantics.
+6.3 Beyond MXFP4
+The construction of Section 3 uses three structural
+assumptions: element products lie on a common power-of-two grid with a bounded
+integer coefficients, scales are powers of two, and the reduction tree is
+fixed. Coefficient bounds are the primary format-dependent property.
+The state machine can be applied by representing elements
+as m ​ 2 − f m2^{-f} with | m | ≤ M |m|\leq M . The coefficient budget for k k lanes is M 2 ​ k M^{2}k ,
+with E = t − 2 ​ f E=t-2f , provided that M 2 ​ k < 2 24 M^{2}k<2^{24}
+and that the cap is adjusted so that M ​ 2 x − f M2^{x-f} stays below Ω \Omega .
+Raw products and individually scaled operands must be exactly representable.
+E2M1 exactness is enabled by its two significant bits and its narrow range:
+its nonzero magnitudes range from 0.5 0.5 to 6 6 , represented with f = 1 f=1 , yielding M = 12 M=12 .
+The OCP formats MXFP6 (E2M3 and E3M2 elements) and MXINT8 also satisfy the budget at k = 32 k=32 .
+The exactness argument does not extend to MXFP8:
+E4M3 elements range over eighteen binades, from 2 − 9 2^{-9} to
+448 448 , so two lane products in one block can differ in scale by more than 2 35 2^{35} ,
+and a sum of such products need not fit in 24 bits even though each product
+alone does.
+NVFP4 uses an E4M3 scale instead of the power-of-two scale,
+whose nontrivial significands can introduce rounding in subsequent operations.
+Appendix 0.A shows that, for positive finite E4M3 scales
+and k ≤ 16 k\leq 16 , every operation in both forms is exact in the single-level
+model, so the rewrite is legal without a band. Including the per-tensor binary32 scale, as
+NVFP4 uses in practice, permits addition rounding at every node.
+The present exactness argument does not cover this setting.
+The implementation and certified bounds presented here cover MXFP4 with E2M1 elements and E8M0 scales.
+7 Related Work
+Microscaling.
+The OCP specification defines the MX formats and leaves the internal
+precision and operation order of a dot product to the
+implementation [ 24 ] ; Rouhani et al. evaluate them for training
+and inference [ 27 ] . Cuyckens et al. treat the
+reduction tree of an MX datapath as a hardware design
+parameter [ 7 ] ; our results say that the parameter
+also changes which rewrites are legal. MX+ exploits the shared exponent to
+detect outliers during serving [ 18 ] . Rout and Tine describe
+a fused dot-product unit for mixed-precision tensor cores that scales
+operands before the multiply-add [ 28 ] , which is the direct
+form.
+Verifying floating-point optimizations.
+LifeJacket checks LLVM’s floating-point peephole rules with bit-precise SMT
+and found incorrect ones [ 22 ] ; Alive2 performs bounded
+translation validation for LLVM IR [ 21 ] . Both reason
+about scalar rules over arbitrary floating-point inputs and utilize floating-point theory.
+We fix the element alphabet, scale format, and
+tree, which allow bypassing the theory, and we produce a parametric region
+rather than a decision on a single rule.
+Icing provides a verified semantics for fast-math rewrites inside the CakeML
+compiler [ 2 ] - the programmer indicates which rewrites are allowed
+through annotations. Our guard instead proves that the specific rewrite is value-preserving
+on its domain. Valpey et al. formalize the mixed-precision dot products of
+three tensor-core generations in SMT [ 32 ] ; such bit-precise
+hardware models are complementary to our work, supplying the accumulator semantics under
+which a band would have to be re-derived (Section 6.3 ).
+Volta checks the equivalence of GPU
+kernels, including matrix multiplication and attention, over expressions in
+the real numbers [ 10 ] ; over reals the direct and
+hoisted forms are equal by distributivity, and the witness of
+Section 1 does not exist.
+Floating-point decision procedures.
+Alternative routes include FP-to-bit-vector encoding [ 12 ] ,
+abstract CDCL over floating-point intervals in
+MathSAT [ 3 ] , real-arithmetic axiomatization with
+rounding lemmas [ 6 ] , and a lossless reduction to
+exact arithmetic [ 19 ] , and translation of mixed real–floating-point formulas into
+equisatisfiable real-arithmetic ones [ 29 ] .
+Our method trades their
+generality for an exact linear-integer model of a restricted family.
+Leeser et al. ignore subnormals and non-real results, whereas overflow,
+NaN, and subnormal rounding are central to the rewrite studied here.
+Gadelha et al. report performance differences across solver backends.
+To control for this, we compare the floating-point and
+integer encodings using the same solver.
+Exact reasoning about floating-point networks.
+SELTZO verifies floating-point accumulation networks with a
+precision-independent abstraction that reduces to integer
+reasoning [ 33 ] ; our reduction is in the same spirit but
+exploits a finite alphabet and a shared exponent, and it is exact rather than
+approximate on its domain. FLoPS formalizes P3109 scalar formats and their
+operations in Lean [ 4 ] ; it does not model MX blocks or
+reductions.
+Herbie and Daisy improve or bound rounding
+error [ 25 , 8 ] ; our property is
+equality, including of infinities and NaN, which error bounds do not express.
+Fasi and Mikaitis emulate stochastic rounding on IEEE
+hardware [ 11 ] ; a stochastically rounded implementation
+would need a distributional rather than a bitwise notion of equivalence.
+Mixed precision and silent errors.
+Low-precision arithmetic has spread beyond ML into numerical linear
+algebra [ 13 ] and is being adopted in scientific
+codes [ 16 ] , where results are checked against references
+rather than validation scores.
+Fleet-scale result checking for silent data corruptions [ 14 , 9 ]
+has been used for detecting rare, input-dependent,
+and quiet divergences like the one in
+Section 1 . In contrast, a miscompilation is deterministic, and
+its condition can be proved once rather than watched for unlike a hardware fault.
+8 Limitations
+The guarantees in this paper apply to a specific execution model:
+each operation evaluated separately in binary32 with round
+to nearest ties-to-even and gradual underflow. Within the certified band every lane
+product is exactly representable in binary32, so replacing the multiplication followed by addition
+with a fused multiply-add removes no rounding and preserves the result.
+However, wider accumulators, flush-to-zero, or a reduction tree other than the one
+certified can change the behavior and require a separate equivalence argument.
+In particular, the lower endpoint − 147 -147 relies on gradual underflow which would not hold under flush-to-zero.
+In a full matrix multiplication, there is a cross-block accumulation, and the block-local
+rewrite composes with it only if both implementations use the same outer accumulation order and arithmetic.
+Theorems 3.1
+and 4.1 have mathematical proofs supported by exhaustive and differential checks,
+but haven’t been mechanized. Formalizing the integer semantics and its connection to an
+existing IEEE formalization is future work. Sharpness is
+established using the solver for the specific trees and lengths in
+Tables 3 and 4 .
+The MLIR prototype generates reference scalar IR implementing the semantics.
+The rewrite proof does not verify subsequent LLVM transformations or machine-code
+generation. The prototype does not provide a production kernel.
+9 Conclusion
+An exact reduction to linear integer arithmetic makes a specific family
+of floating-point equivalence queries tractable, while preserving the
+behavior at range boundaries that determines legality. Implementing
+the reduction for MXFP4 helps derive a sufficient condition
+for the legality of rewrites in the form of a cap on each scale code and
+a band for their sum, depending only on
+the size of the largest proper subtree of the reduction tree.
+Solver queries establish that the condition is also necessary for
+several representative configurations. An MLIR prototype utilizes the results
+in static or runtime checks consisting of a few simple conditions
+to verify the legality of rewrites.
+Retaining the format and reduction structure in the IR
+enables checking legality conditions to guide lowering choices.
+References
+[1]
+Barbosa, H., Barrett, C.W., Brain, M., Kremer, G., Lachnitt, H., Mann, M.,
+Mohamed, A., Mohamed, M., Niemetz, A., Nötzli, A., Ozdemir, A., Preiner,
+M., Reynolds, A., Sheng, Y., Tinelli, C., Zohar, Y.: cvc5: A versatile and
+industrial-strength SMT solver. In: Tools and Algorithms for the
+Construction and Analysis of Systems. Lecture Notes in Computer Science, vol.
+13243, pp. 415–442. Springer (2022). https://doi.org/10.1007/978-3-030-99524-9_24
+[2]
+Becker, H., Darulova, E., Myreen, M.O., Tatlock, Z.: Icing: Supporting
+fast-math style optimizations in a verified compiler. In: Computer Aided
+Verification. Lecture Notes in Computer Science, vol. 11562, pp. 155–173.
+Springer (2019). https://doi.org/10.1007/978-3-030-25543-5_10
+[3]
+Brain, M., D’Silva, V., Griggio, A., Haller, L., Kroening, D.: Deciding
+floating-point logic with abstract conflict driven clause learning. Formal
+Methods in System Design 45 , 213–245 (2014).
+https://doi.org/10.1007/s10703-013-0203-7
+[4]
+Chang, T.C., Park, S., Lim, J.P., Nagarakatte, S.: FLoPS: Semantics,
+operations, and properties of P3109 floating-point representations in
+Lean. Tech. Rep. DCS-TR-762, Rutgers University Department of Computer
+Science (2026). https://doi.org/10.48550/arXiv.2602.15965
+[5]
+Colfax Research: CUTLASS tutorial: Hardware-supported block-scaling with
+NVIDIA Blackwell GPUs.
+https://research.colfax-intl.com/cutlass-tutorial-hardware-supported-block-scaling-with-nvidia-blackwell-gpus/
+(2025), accessed August 2, 2026
+[6]
+Conchon, S., Iguernlala, M., Ji, K., Melquiond, G., Fumex, C.: A three-tier
+strategy for reasoning about floating-point numbers in SMT. In: Computer
+Aided Verification. Lecture Notes in Computer Science, vol. 10427, pp.
+419–435 (2017). https://doi.org/10.1007/978-3-319-63390-9_22
+[7]
+Cuyckens, S., Yi, X., Geens, R., Dumoulin, J., Wiesner, M.T., Fang, C.,
+Verhelst, M.: Precision-scalable microscaling datapaths with optimized
+reduction tree for efficient NPU integration. In: 2026 31st Asia and South
+Pacific Design Automation Conference (ASP-DAC). pp. 611–617 (2026).
+https://doi.org/10.1109/ASP-DAC66049.2026.11420756
+[8]
+Darulova, E., Izycheva, A., Nasir, F., Ritter, F., Becker, H., Bastian, R.:
+Daisy—framework for analysis and optimization of numerical programs. In:
+Tools and Algorithms for the Construction and Analysis of Systems. Lecture
+Notes in Computer Science, vol. 10805, pp. 270–287. Springer (2018).
+https://doi.org/10.1007/978-3-319-89960-2_15
+[9]
+Dixit, H.D., Pendharkar, S., Beadon, M., Mason, C., Chakravarthy, T., Muthiah,
+B., Sankar, S.: Silent data corruptions at scale. CoRR
+abs/2102.11245 (2021). https://doi.org/10.48550/arXiv.2102.11245
+[10]
+Dubey, K., Driscoll, B., Wei, A., Kayal, N., Sharma, R., Aiken, A.: Equivalence
+checking of ML GPU kernels. CoRR abs/2511.12638 (2025).
+https://doi.org/10.48550/arXiv.2511.12638
+[11]
+Fasi, M., Mikaitis, M.: Algorithms for stochastically rounded elementary
+arithmetic operations in IEEE 754 floating-point arithmetic. IEEE
+Transactions on Emerging Topics in Computing 9 (3), 1451–1466
+(2021). https://doi.org/10.1109/TETC.2021.3069165
+[12]
+Gadelha, M.R., Cordeiro, L.C., Nicole, D.A.: An efficient floating-point
+bit-blasting API for verifying C programs. CoRR abs/2004.12699
+(2020), https://arxiv.org/abs/2004.12699
+[13]
+Higham, N.J., Mary, T.: Mixed precision algorithms in numerical linear algebra.
+Acta Numerica 31 , 347–414 (2022). https://doi.org/10.1017/S0962492922000022
+[14]
+Hochschild, P.H., Turner, P., Mogul, J.C., Govindaraju, R., Ranganathan, P.,
+Culler, D.E., Vahdat, A.: Cores that don’t count. In: Proceedings of the
+Workshop on Hot Topics in Operating Systems. pp. 9–16 (2021).
+https://doi.org/10.1145/3458336.3465297
+[15]
+IEEE: IEEE standard for floating-point arithmetic (2019).
+https://doi.org/10.1109/IEEESTD.2019.8766229
+[16]
+Kashi, A., Lu, H., Brewer, W., Rogers, D., Matheson, M., Shankar, M., Wang, F.:
+Mixed-precision numerics in scientific applications: Survey and perspectives.
+CoRR abs/2412.19322 (2024). https://doi.org/10.48550/arXiv.2412.19322
+[17]
+Lattner, C., Amini, M., Bondhugula, U., Cohen, A., Davis, A., Pienaar, J.,
+Riddle, R., Shpeisman, T., Vasilache, N., Zinenko, O.: MLIR: Scaling
+compiler infrastructure for domain specific computation. In: 2021 IEEE/ACM
+International Symposium on Code Generation and Optimization (CGO). pp. 2–14
+(2021). https://doi.org/10.1109/CGO51591.2021.9370308
+[18]
+Lee, J., Park, J., Cha, S., Cho, J., Sim, J.: MX+: Pushing the limits of
+microscaling formats for efficient large language model serving. In:
+Proceedings of the 58th IEEE/ACM International Symposium on
+Microarchitecture. pp. 869–883 (2025). https://doi.org/10.1145/3725843.3756118
+[19]
+Leeser, M., Mukherjee, S., Ramachandran, J., Wahl, T.: Make it real: Effective
+floating-point reasoning via exact arithmetic. In: Design, Automation and
+Test in Europe Conference and Exhibition. pp. 1–4 (2014),
+https://www1.ece.neu.edu/~saoni/files/Leeser_DATE_2014.pdf
+[20]
+LLVM Project: LLVM language reference manual: Fast-math flags.
+https://llvm.org/docs/LangRef.html#fast-math-flags (2026), accessed
+July 22, 2026
+[21]
+Lopes, N.P., Lee, J., Hur, C.K., Liu, Z., Regehr, J.: Alive2: Bounded
+translation validation for LLVM. In: Proceedings of the 42nd ACM SIGPLAN
+International Conference on Programming Language Design and Implementation.
+pp. 65–79 (2021). https://doi.org/10.1145/3453483.3454030
+[22]
+Nötzli, A., Brown, F.: Lifejacket: Verifying precise floating-point
+optimizations in LLVM. In: Proceedings of the 5th ACM SIGPLAN International
+Workshop on State Of the Art in Program Analysis. pp. 24–29 (2016).
+https://doi.org/10.1145/2931021.2931024
+[23]
+NVIDIA: CUTLASS Blackwell narrow-precision block-scaled GEMM examples.
+https://github.com/NVIDIA/cutlass/tree/main/examples/72_blackwell_narrow_precision_gemm
+(2026), accessed August 2, 2026
+[24]
+Open Compute Project: OCP microscaling formats (MX) specification. Tech.
+Rep. Version 1.0, Open Compute Project Foundation (Sep 2023),
+https://www.opencompute.org/documents/ocp-microscaling-formats-mx-v1-0-spec-final-pdf
+[25]
+Panchekha, P., Sanchez-Stern, A., Wilcox, J.R., Tatlock, Z.: Automatically
+improving accuracy for floating point expressions. In: Proceedings of the
+36th ACM SIGPLAN Conference on Programming Language Design and
+Implementation. pp. 1–11 (2015). https://doi.org/10.1145/2737924.2737959
+[26]
+PyTorch: torchao : MX format prototype.
+https://github.com/pytorch/ao/tree/main/torchao/prototype/mx_formats
+(2026), accessed August 2, 2026
+[27]
+Rouhani, B.D., et al.: Microscaling data formats for deep learning. CoRR
+abs/2310.10537 (2023). https://doi.org/10.48550/arXiv.2310.10537
+[28]
+Rout, N., Tine, B.: Ten-four: An open-source fused dot product unit for
+mixed-precision GPGPU tensor cores. https://arxiv.org/abs/2512.00053
+(2025)
+[29]
+Salvia, R., Titolo, L., Feliú, M.A., Moscato, M.M., Muñoz, C.A.,
+Rakamarić, Z.: A mixed real and floating-point solver. In: NASA Formal
+Methods. Lecture Notes in Computer Science, vol. 11460, pp. 363–370.
+Springer (2019). https://doi.org/10.1007/978-3-030-20652-9_25
+[30]
+Tinelli, C., Brain, M.: SMT-LIB FloatingPoint theory.
+https://smt-lib.org/theories-FloatingPoint.shtml (2024), SMT-LIB
+Version 2.7
+[31]
+Triton Project: triton.language.dot_scaled .
+https://triton-lang.org/main/python-api/generated/triton.language.dot_scaled.html
+(2026), accessed August 2, 2026
+[32]
+Valpey, B., Li, X., Pai, S., Gopalakrishnan, G.: An SMT formalization of
+mixed-precision matrix multiplication: Modeling three generations of tensor
+cores. In: NASA Formal Methods. Lecture Notes in Computer Science, vol.
+15682, pp. 360–379. Springer (2025). https://doi.org/10.1007/978-3-031-93706-4_21
+[33]
+Zhang, D.K., Aiken, A.: Automatic verification of floating-point accumulation
+networks. In: Computer Aided Verification. Lecture Notes in Computer Science,
+vol. 15933, pp. 215–237. Springer (2025). https://doi.org/10.1007/978-3-031-98682-6_12
+Appendix 0.A Single-Level NVFP4
+We consider E2M1 elements, positive nonzero finite E4M3 block scales,
+1 ≤ k ≤ 16 1\leq k\leq 16 , and the separate binary32 operations of
+( 1 ) and ( 2 ). Additional per-tensor scales
+are not included. Non-power-of-two scales raise the possibility of
+rounding-induced divergence away from range boundaries. The significand
+bound below excludes this behavior in the single-level model.
+We denote each E4M3 scale as u ​ 2 v u2^{v} with integer 1 ≤ u ≤ 15 1\leq u\leq 15 , and denote
+each element as m / 2 m/2 with | m | ≤ 12 |m|\leq 12 . Each individually scaled element
+requires at most six significant bits, the scale product at most eight,
+and each scaled lane product at most twelve. For any subset of lanes,
+the common-scale coefficient is bounded by
+u A ​ u B ​ | ∑ i m a , i ​ m b , i | ≤ 225 ⋅ 144 ​ k ≤ 518 400 < 2 24 . u_{A}u_{B}\left|\sum_{i}m_{a,i}m_{b,i}\right|\leq 225\cdot 144k\leq 518\,400<2^{24}.
+Therefore, every partial sum fits within binary32’s 24-bit significand.
+The scale range [ 2 − 9 , 448 ] [2^{-9},448] places every nonzero scaled subset sum
+between 2 − 20 2^{-20} and 16 ⋅ 36 ⋅ 448 2 < 2 27 16\cdot 36\cdot 448^{2}<2^{27} in magnitude;
+the other nonzero intermediates are also normal and finite. Thus all
+operations are exact, and both forms return the exact real dot product
+for any fixed binary tree in this range. Positive scales preserve the
+signs of zero, and corresponding exact additions follow the same zero-sign
+rules, so the forms also agree bitwise.
+This was validated through enumeration of all
+16 2 ⋅ 126 2 = 4 064 256 16^{2}\cdot 126^{2}=4\,064\,256 one-lane cases and replay of 200 000 random
+blocks for k ∈ { 2 , 4 , 16 } k\in\{2,4,16\} . No divergences or deviations
+from the exact real result were observed. The direct SMT query returned
+unsat at k = 1 k=1 ;
+at k = 2 k=2 , unsat results for the multiplication and sum-distributivity
+lemmas establish equivalence by composition. For larger block lengths,
+the SMT queries exceeded the five-minute time limit. The result through
+k = 16 k=16 therefore follows from the preceding argument, with replay
+providing supporting validation.
+Scale hoisting is therefore valid throughout this single-level domain. MXFP4’s divergences arise at range
+boundaries that remain unreachable with E4M3 scales in this setting.
+The result does not cover full NVFP4 with an additional per-tensor scale.
+Appendix 0.B RTX 5080 Scale-Placement Measurements
+Table 5 reports the complete twelve-configuration sweep
+of a software-emulated MXFP4 matrix multiplication with
+( M , N , K ) = ( 4096 , 2560 , 2560 ) (M,N,K)=(4096,2560,2560) and 32-lane blocks. The hand-written CUDA
+kernels implement separate binary32 operations with round-to-nearest-even,
+gradual underflow, a left-fold block reduction, and binary32 output.
+They implement the modeled arithmetic but are not generated by the MLIR
+prototype. These measurements concern software emulation, not native
+block-scaled tensor-core instructions.
+The recorded environment is an NVIDIA GeForce RTX 5080 (16 GiB,
+sm_120 ), driver 590.48.01, NVRTC and ptxas 12.8,
+and PyTorch 2.11.0+cu128. Both compilation stages disable FMA contraction;
+the kernels explicitly use rounded binary32 multiply and add instructions.
+Inputs are Gaussian tensors generated with seed 5 and quantized once;
+quantization and compilation are outside the timed region. Each entry is
+the median of 15 CUDA-event measurements after five warmups. Configurations
+are visited in the table’s order, with direct measured before hoisted at
+each configuration. The historical log retains medians, not individual
+timing samples, so no confidence intervals are inferred from this sweep.
+Table 5: Recorded RTX 5080 kernel times. Micro-tile gives the output
+elements computed per thread; thread block gives the two-dimensional
+thread arrangement. ALU denotes bit-assembly decoding and LUT a
+shared-memory lookup table. Δ = 100 ​ ( T D − T H ) / T D \Delta=100(T_{D}-T_{H})/T_{D} is the percentage
+reduction in elapsed time; negative values indicate a slowdown.
+Every configuration reports zero bitwise mismatches between the forms
+and against the first configuration’s direct output.
+Micro-tile
+Thread block
+Decode
+T D T_{D} (ms)
+T H T_{H} (ms)
+Δ \Delta (%)
+2 × 2 2\times 2
+16 × 16 16\times 16
+ALU
+24.342
+24.180
++ 0.67 +0.67
+2 × 2 2\times 2
+16 × 16 16\times 16
+LUT
+27.392
+22.669
++ 17.24 +17.24
+4 × 4 4\times 4
+16 × 16 16\times 16
+ALU
+13.720
+14.070
+− 2.56 -2.56
+4 × 4 4\times 4
+16 × 16 16\times 16
+LUT
+12.074
+11.151
++ 7.64 +7.64
+4 × 4 4\times 4
+8 × 32 8\times 32
+ALU
+13.559
+14.340
+− 5.76 -5.76
+4 × 4 4\times 4
+8 × 32 8\times 32
+LUT
+11.765
+11.447
++ 2.71 +2.71
+4 × 8 4\times 8
+16 × 8 16\times 8
+ALU
+12.015
+12.941
+− 7.71 -7.71
+4 × 8 4\times 8
+16 × 8 16\times 8
+LUT
+15.960
+15.240
++ 4.51 +4.51
+8 × 4 8\times 4
+8 × 16 8\times 16
+ALU
+13.471
+13.969
+− 3.69 -3.69
+8 × 4 8\times 4
+8 × 16 8\times 16
+LUT
+15.645
+13.892
++ 11.20 +11.20
+8 × 8 8\times 8
+8 × 16 8\times 16
+ALU
+10.361
+11.460
+− 10.61 -10.61
+8 × 8 8\times 8
+8 × 16 8\times 16
+LUT
+18.374
+13.798
++ 24.91 +24.91
+Hoisting reduces the measured time at all six LUT configurations and at
+one of the six ALU configurations. Configuration choice dominates the
+best observed result: the fastest direct configuration takes 10.361 ms,
+whereas the fastest hoisted configuration takes 11.151 ms, or 7.6% longer.
+This finite sweep establishes neither a global optimum nor a general
+speedup. It supports considering scale placement alongside other compiler
+choices, with certified guards establishing when a candidate rewrite is legal.
+The experiment compares direct and statically hoisted forms; it does not
+measure the cost of runtime guard evaluation.
+The artifact includes the original median log, environment record, benchmark
+source, and a CPU-only table-regeneration script. Its optional GPU command
+reruns all twelve configurations on a separately configured CUDA system;
+the CPU reproduction path checks the recorded data and regenerates the
+table without claiming a new GPU measurement.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

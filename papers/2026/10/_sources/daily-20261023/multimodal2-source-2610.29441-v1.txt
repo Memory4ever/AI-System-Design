@@ -1,0 +1,525 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.29441v1
+Original retrieval 2026-10-23 BJT. Preservation is not a review-completion claim. Reviewed necessary scope is SOURCE_MULTIMODAL2.md.
+Abstract
+Full 3D attention is costly in video Diffusion Transformers.
+Block-sparse attention reduces this cost by computing only selected attention blocks.
+However, existing methods either overlook the potential to optimize sparsity allocation or rely on heuristic rules or local metrics to guide it.
+In this work, we observe that sparsifying attention in different layers and at different denoising steps affects final-video fidelity to substantially different degrees. Yet the identities of the most sensitive layer–step pairs remain nearly unchanged across inputs.
+Building on these findings, we propose A llocating L ayer–step L atency by O utput T ests ( ALLOT ), a training-free sparsity allocation method.
+Treating each layer–step pair as a cell, ALLOT estimates each cell’s contribution to final-video error through (i) cell probing and (ii) trajectory calibration, then jointly optimizes cell densities under a measured-latency budget. It preserves existing selection strategies and kernels, replacing only the allocation component.
+At equal or shorter wall-clock time, ALLOT outperforms every compared allocation strategy with XAttention, with an 11.8 dB PSNR gain on HunyuanVideo. Extensive experiments across four additional published pipelines on Wan2.1, Wan2.2, and HunyuanVideo show that ALLOT outperforms or ties the default in all nine settings.
+ Figure 1 : Changing only the allocation at equal wall-clock time. 
+Left: dense, baseline and + ALLOT (top to bottom), with blue-box insets; prompts are near the median gain.
+Right: paired PSNR gains (ALLOT - baseline) with 95% CIs for Tabs.   1 and  2 ; open markers denote ties. 
+ 1 Introduction
+Diffusion Transformers (DiTs)  [ 17 ] have been widely adopted for video generation. Models such as Wan  [ 19 ] and HunyuanVideo  [ 11 ] produce high-quality, spatio-temporally consistent videos, yet the cost of their full 3D attention grows quadratically with the number of tokens  [ 18 ] .
+On a single GPU, Wan2.1-14B takes roughly one hour to generate a 720p, 81-frame video, and attention accounts for more than half of the end-to-end time.
+Sparse attention has been widely studied as a means of reducing this computational cost, with existing approaches broadly categorized as either training-free or training-based.
+Many training-free methods  [ 25 , 29 , 24 , 14 ] adopt block-sparse attention , which partitions query and key tokens into blocks. These methods estimate the importance of each query–key block pair and compute dense attention only for selected pairs. These works primarily address two questions: which blocks participate in the attention computation, and how to execute the resulting sparse computation efficiently at the kernel level.
+Notably, beyond determining which blocks participate in the computation, the number of blocks retained in each layer at each denoising step also significantly affects generation quality and latency.
+In threshold-based methods  [ 24 , 29 , 14 ] , the thresholds serve as an implicit allocation rule.
+With all other conditions identical, changing only the allocation can substantially alter final-video fidelity.
+Despite the existence of some explicit allocation approaches, existing methods generally have the following two limitations:
+ • 
+ Heuristic rules do not transfer reliably across settings. 
+Many works use fixed rules, such as keeping the first layer or the first 10–30% of denoising steps dense  [ 14 , 12 , 25 ] . Our measurements in § 3 show that effective allocations vary across models and selection strategies. Consequently, a rule tuned for one setting does not reliably transfer to another and must be re-tuned.
+ • 
+ Local metrics do not capture final-video effects. 
+Automatic allocation methods commonly rely on local proxies, such as cumulative attention mass  [ 24 , 14 ] , Hellinger distance  [ 36 ] , and one-step output error  [ 3 , 35 ] , rather than direct measurements of final-video error. Our analysis in § 3 shows that the rankings induced by these proxies disagree with those based on final-video error, and allocations guided by these metrics can even yield lower final-video fidelity than a uniform baseline.
+To address these limitations, we term each (layer, step) pair a cell and evaluate it directly by its sensitivity , defined as the degradation it induces in the final video relative to the dense output. Building on this formulation, we propose A llocating L ayer–step L atency by O utput T ests (ALLOT), a training-free latency allocation method.
+ALLOT estimates each cell’s sensitivity from two factors: cell probing measures the error injected at its step, and trajectory calibration measures how subsequent denoising steps amplify or attenuate that error.
+It then jointly allocates all cell densities under a measured-latency budget, so warm-up length and dense layers emerge from the solution rather than hand-set rules.
+Because sensitivity rankings remain stable across inputs for a fixed model and selection strategy (§ 3 ), we perform both measurements once offline and reuse their results across prompts.
+During inference, ALLOT looks up densities in a precomputed table and changes only the allocation in existing block-sparse attention pipelines.
+Overall, our main contributions are threefold:
+ • 
+We show that final-video sensitivity varies by orders of magnitude across layers and steps and is misjudged by local metrics, while sensitivity rankings remain stable across inputs.
+ • 
+We propose ALLOT, which estimates each cell’s error by combining a one-step cell probe with a trajectory gain and jointly solves for all cell densities under a measured-latency budget, replacing only the allocation of existing pipelines.
+ • 
+Extensive experiments across six selection strategies and three model families show that ALLOT outperforms or ties every compared allocation at equal or shorter wall-clock time (§ 5 ).
+ 2 Related Work
+Block-sparse attention.
+Block-sparse attention methods for video DiTs are either trained or training-free.
+Trained methods (VSA  [ 30 ] , VMoBA  [ 21 ] , NABLA  [ 15 ] ) train or fine-tune the model with sparse attention.
+Training-free methods either apply static masks  [ 31 , 12 , 36 ] or select blocks at run time  [ 22 , 29 , 25 , 24 , 14 , 23 ] .
+ALLOT retains the selection strategies and kernels of existing methods, replacing only the allocation (§ 4.5 ).
+Allocation in existing methods.
+Existing methods allocate density, a threshold or a sparse pattern per layer  [ 3 ] , per (layer, head)  [ 14 , 35 , 1 ] , per step  [ 33 , 9 ] , per (layer, step)  [ 28 ] , or per (step, layer, head)  [ 36 , 27 ] , based on attention mass, Hellinger distance, one-step output error or other local metrics. Across steps, most use a heuristic warm-up or a preset shape, or treat all steps equally.
+ALLOT also allocates per (layer, step) but calibrates each cell against the final video to capture cross-step error amplification and solves for all cells jointly under a measured-latency budget.
+ 3 Motivation and Key Observations
+ Figure 2 : Layer and step sensitivity. 
+(a) Single-layer one-step error ( b{=}0.30 , t{=}0.85 ; bars), attention-map metrics  [ 14 , 36 ] (lines), and final-video MSE with that layer sparse throughout (diamonds). Titles give the most sensitive layer and its metric ranks.
+(b) Wan2.1-1.3B window errors versus local metrics  [ 33 ] ; annotations give first/last-window ratios.
+(c) Window errors across four models. 
+Setup.
+Let \ell index layers and s index denoising steps. The sensitivity S(\ell,s;b) of cell (\ell,s) measures how much sparsifying that cell to density  b degrades the final video relative to the dense reference.
+Measuring this directly for every cell would require thousands of full generations and is therefore impractical. We instead decompose it into two cheaper signals: the one-step output error when one layer is sparsified and the final-video error when a window of steps is sparsified (§ 4.2 , § 4.3 ).
+Observation 1: Layer sensitivity varies widely and is not reliably reflected by attention-map metrics.
+As shown in Figure   2 (a), the first one or two layers have one-step errors up to 154 times the median-layer error. When evaluated on the final video, the most sensitive layers coincide with these high-error layers.
+Attention-map metrics (attention mass  [ 14 ] and Hellinger distance  [ 36 ] ) yield different sensitivity rankings, and allocations based on them degrade fidelity (Appendix  B ).
+Cell probes therefore provide a more reliable basis for layer allocation.
+The most sensitive layer varies across models, and a fixed “first layer dense” rule therefore does not transfer reliably across settings.
+Observation 2: Final-video effects vary sharply across denoising steps and are understated by one-step errors.
+As shown in Figure   2 (b, c), earlier windows produce markedly larger final-video errors than later ones under the same sparsification configuration. The first-to-last-window MSE ratio reaches several hundred for some models.
+By contrast, the corresponding one-step errors show a much smaller difference and even reverse the ordering of the first and last windows on Wan2.2.
+One-step errors therefore require trajectory calibration before guiding per-step density.
+Observation 3: Sensitivity rankings remain stable across inputs for a fixed model and selection strategy.
+Across all tested models, per-input sensitivity rankings closely match rankings aggregated over calibration inputs, with median Spearman correlations of 0.80–1.00 (Appendix  D ).
+Prior work reports similar input stability for attention-map metrics  [ 14 , 36 ] .
+Our results extend this observation to output-error sensitivity, allowing cell probes and trajectory gains to be measured offline and reused across prompts.
+ 4 ALLOT
+ Figure 3 : ALLOT overview. 
+\scriptsize1⃝ Offline: measure cell probes \hat{e}_{\ell} , trajectory gains w(s) and kernel latency r(b) ; solve a density table for each latency budget  C (§ 4.4 ).
+\scriptsize2⃝ Inference: look up each cell’s density for any prompt, using dense attention when b_{\ell s}{=}1 and the existing sparse kernel otherwise. 
+ALLOT jointly optimizes the density of every (layer, step) cell under a measured-latency budget, minimizing the estimated total sensitivity.
+It consists of three modules: cell probing (§ 4.2 ), trajectory calibration (§ 4.3 ) and latency-constrained allocation (§ 4.4 ), built on the first-order analysis and calibrated estimate of § 4.1 . § 4.5 describes inference and integration with existing pipelines.
+ 4.1 Problem formulation
+With thousands of cells in one denoising process, measuring each one on the final video is prohibitively expensive. We therefore approximate the final-video error as a sum of per-cell contributions and let a solver optimize the result.
+First-order motivation and calibrated estimate.
+The error introduced at one step is carried to the final video by every subsequent step  [ 13 , 7 ] .
+Let \epsilon_{s} denote the error that step  s ’s sparse approximation introduces in the velocity prediction, and \epsilon_{\ell s} denote the velocity-prediction change when only layer  \ell is sparsified.
+A first-order perturbation analysis around the dense trajectory approximates the final-latent deviation as
+ \delta\approx\sum_{s}P_{s}\epsilon_{s}, 
+ (1) 
+where P_{s} is the linearized propagation operator from a velocity error at step  s to its effect on the final latent (Appendix  E ).
+We make two approximations.
+ (a) Additivity : layer perturbations superpose to first order within one step ( \epsilon_{s}\approx\sum_{\ell}\epsilon_{\ell s} ), and errors of different cells are orthogonal in expectation.
+ (b) Separability : downstream amplification after step  s depends only on  s , not on the layer (Appendix  E ).
+Under these approximations,
+ \mathbb{E}\lVert\delta\rVert^{2}\approx\sum_{\ell,s}g(s)\,\mathbb{E}\lVert\epsilon_{\ell s}\rVert^{2}, 
+ (2) 
+where g(s) is the propagation gain after step  s in the first-order model.
+Equation ( 2 ) motivates factorizing each cell’s contribution into within-step error and downstream amplification.
+Because scalar within-step MSE does not specify how an error propagates, the analysis does not determine w(s) (Appendix  E ).
+We calibrate w(s) using final videos generated with one window sparsified (§ 4.3 ).
+Together with the cell probes, this gives the estimate of the sensitivity defined in § 3 :
+ \hat{S}(\ell,s;b)=w(s)\,\hat{e}_{\ell}(t_{s},b). 
+ (3) 
+Here t_{s} is the step’s noise level and \hat{e} is the within-step cell probe (§ 4.2 ).
+The two factors serve complementary roles: the cell probe distinguishes layers and candidate densities within a step, whereas w(s) places different steps on a common final-video-error scale.
+Only relative sensitivities affect allocation: uniformly scaling the estimated error does not change the optimal table at a fixed latency budget.
+Optimization problem.
+Given a latency budget C , find the density b_{\ell s} of every cell:
+ \min_{b_{\ell s}}\;\sum_{\ell,s}\hat{S}(\ell,s;b_{\ell s})\quad\text{s.t.}\;\sum_{\ell,s}r(b_{\ell s})\leq C, 
+ (4) 
+where b_{\ell s}{=}1 means fully dense (error counted as zero).
+ r(b) is the measured wall-clock time of a single cell’s attention at density  b (the latency table, § 4.4 ). r and C are both normalized so that a dense cell equals 1.
+Because non-attention computation does not change with allocation, constraining attention time approximately constrains end-to-end latency.
+ 4.2 Cell probing on the model output
+The cell probe \hat{e}_{\ell}(t,b) measures a layer’s output error within one step. It is used to compare layers within the same step (Observation 1) and to compare one cell’s error across densities.
+We add noise at level  t to a small number of real videos, sparsify only layer  \ell to density  b while keeping all other layers dense, and measure the MSE between this step’s velocity prediction and the dense model’s prediction  [ 3 ] .
+At deployment, all other layers are sparse at the same time, unlike the measurement condition. This difference is analyzed in Appendix  F .
+Each measurement needs only one forward pass.
+By Observation 3, layer rankings are input-stable, so a few probing videos suffice (§ 5.6 ). Since rankings differ across selection strategies, probes are by default measured under the selection strategy used at deployment.
+We tabulate probes on a grid over density and noise level, average over the probing videos, and interpolate in \log b – \log\hat{e} when solving (grid in § 5.1 ).
+ 4.3 Trajectory calibration against the final video
+The trajectory gain w(s) supplies the inter-step amplification that one-step errors cannot capture (Observation 2).
+It reuses the window experiments of Figure   2 (b, c). Denoising steps are divided into contiguous windows. Only window  \Omega_{k} has all layers sparsified to a fixed window density  b_{0} , with the remaining steps dense. The generated video’s pixel MSE against the dense reference is  M_{k} .
+Let E_{k}=\sum_{s\in\Omega_{k}}\sum_{\ell}\hat{e}_{\ell}(t_{s},b_{0}) be the sum of the probes of all cells sparsified in this run. The gain is the final-video error per unit of probe error, shared by all steps in the window:
+ w(s)=M_{k}/E_{k},\qquad s\in\Omega_{k}. 
+ (5) 
+By construction, summing Equation ( 3 ) over the window’s cells recovers the measured M_{k} . The solver uses only the product w(s)\,\hat{e}_{\ell}(t_{s},b) .
+Calibrating on sparse-window runs retains the error structure of the sparse-attention path used to measure M_{k} .
+The resulting w(s) captures downstream propagation, average cross-layer interactions and latent-to-pixel conversion. Appendix  E provides an oracle diagnostic of this choice.
+Sharing w(s) across layers is the separability approximation.
+Each window therefore needs one generation per prompt with all layers sparsified together, independent of the number of layers and the density grid (settings in § 5.1 ).
+ 4.4 Latency-constrained allocation
+Latency table.
+ r(b) is the time of one attention call at density  b divided by that of dense FlashAttention  [ 2 ] on the same shape, measured with the kernel and resolution used at deployment.
+ r(b) is not proportional to density. A sparse kernel is faster than dense only below a crossover density. Assuming cost proportional to density or FLOPs would therefore overestimate the gain from sparsity.
+When solving, r is clipped to 1, and cells whose density would lie above the crossover are set to dense.
+Solver.
+Equation ( 4 ) is solved by Lagrangian relaxation  [ 3 ] .
+The candidate density set  \mathcal{B} is a set of equally spaced sparse densities plus dense ( b{=}1 ). Cell probes are interpolated to  \mathcal{B} and the step’s noise level, then multiplied by  w(s) to obtain \hat{S}(\ell,s;b) for each candidate.
+The solver runs a bisection on  \lambda . Given  \lambda , each cell independently picks the density minimizing \hat{S}(\ell,s;b)+\lambda\,r(b) over  \mathcal{B} , yielding a density table. If the table’s total cost exceeds  C , \lambda is increased. Otherwise, it is decreased. This process continues until convergence (Algorithm 1, Appendix  F ).
+ Proposition 1 
+ For any \lambda\geq 0 , the density table b^{\lambda} obtained by independently minimizing \hat{S}(\ell,s;b)+\lambda\,r(b) over  \mathcal{B} for each cell is an exact optimum of Eq. ( 4 ) (restricted to  \mathcal{B} ) when the budget equals the table’s own total cost  [ 6 ] . The result applies to the discrete estimated objective and requires no convexity (Appendix  E ). 
+The bisection locates the two Lagrangian tables bracketing  C , which typically differ in only one cell (Appendix  E ).
+Warm-up length, which layers stay dense and how density varies across steps all emerge from the solver without heuristic rules (Appendices  F and  J ).
+ 4.5 Inference and integration with existing selection strategies
+Inference.
+The density table is solved offline, once per model, selection strategy and latency budget.
+At generation time, the density of each layer is set from the table before each step  s . Cells with b_{\ell s}{=}1 use the original dense attention. All other cells are sparsified by the selection strategy at density  b_{\ell s} and computed by the original kernel.
+The same table is used for all prompts. Changing the budget only requires re-solving one table.
+Integration.
+ALLOT keeps each selection strategy’s kernel and ranking, replacing only the cutoff that determines how many ranked blocks or clusters are retained.
+Threshold-based defaults (SVOO, SVG2, SpargeAttn and XAttention) are converted to a density cutoff. For SpargeAttn, this uses its official top- k API.
+This removes native per-head or per-input adaptation. Splitting by SVOO’s head densities is 1.44 dB worse than an equal split (Appendices  B and  F ).
+Throughout, “changing only the allocation” refers to this integration.
+Supported interfaces.
+ALLOT applies when a selection strategy supports a controllable per-cell density and its latency can be measured. Fixed-mask strategies such as Radial are restricted to densities reachable by their mask parameters.
+Density denotes retained blocks for mean-pooled top- k , SpargeAttn, Radial and XAttention, and retained key tokens for the variable-size clusters of SVOO and SVG2.
+ 5 Experiments
+ 5.1 Experimental setup
+Models and data.
+Four models: Wan2.1-T2V-1.3B and 14B (hereafter 1.3B and 14B), Wan2.2-T2V-A14B  [ 19 ] and HunyuanVideo  [ 11 ] .
+Resolution and frame count are given in each table, following a published setting where one exists. The analyses in § 3 use 480p \times 33. All use 50 denoising steps.
+Wan2.2 results are in Tabs.   3 and  2 , and HunyuanVideo results are in Tab.   2 and Appendices  G and  J .
+The evaluation set consists of 32 VBench  [ 10 ] prompts.
+Metrics.
+Fidelity metrics (PSNR, SSIM  [ 20 ] and LPIPS  [ 32 ] ) measure similarity to the dense reference (same prompt and seed) rather than absolute generation quality.
+Perceptual quality is measured by VBench  [ 10 ] , weighted over the six dimensions used by HEART  [ 35 ] .
+At matched or shorter wall-clock time, a win requires a positive lower bound of the paired 95% PSNR-difference interval and lower mean LPIPS, while a loss requires a negative upper bound and higher mean LPIPS.
+All other cases are ties, and VBench does not enter the verdict (Appendix  A ).
+Baselines.
+Published pipelines  [ 24 , 14 , 29 , 12 , 25 ] follow their documented settings (SVG2 uses HEART’s five-step warm-up), while allocation baselines  [ 35 , 3 , 36 , 33 , 27 , 9 , 28 ] are re-implemented from their papers (Appendices  G and  H ).
+For mean-pooled top- k , the uniform baseline keeps the first 15 steps dense. The strengthened baseline additionally keeps layer 0 dense and tunes the warm-up on 1.3B (Appendix  J ).
+Implementation details.
+Mean-pooled top- k (the coarse stage of VSA  [ 30 ] ) reorders tokens cube by cube ( 3{\times}4{\times}4 cubes) and groups every 64 consecutive tokens into a block.
+Cell probes are measured on four OpenVid  [ 16 ] real videos over a grid of 8 densities \times 9 noise levels.
+Trajectory gains are measured using 10 five-step windows at window density b_{0}{=}0.30 .
+ 5.2 Comparison with other allocation methods
+To compare allocation strategies in isolation, we fix XAttention’s selection strategy and kernel, changing only the allocation ( Tab.   1 ).
+ALLOT outperforms every compared allocation method, all of which use hand-set rules or local metrics, by 1.53–7.31 dB.
+The effect of density truncation depends on the selection strategy: it lowers SVOO’s PSNR but improves XAttention’s.
+ALLOT further improves on XAttention’s density-cutoff default at matched wall-clock time (Appendix  F ).
+VBench scores remain close to those of the baselines.
+ALLOT also outperforms every compared allocation method on additional XAttention settings spanning higher resolution and HunyuanVideo, all at equal or shorter wall-clock time (Appendix  G ).
+ Table 1: Comparison with other allocation methods (XAttention on Wan2.1-1.3B 480p \times 81, n{=}32 ).
+Default: XAttention’s published configuration. Rows grouped by wall-clock time, with ALLOT re-solved for each of the first two groups. The third group applies HEART’s cross-step mask reuse (TMR) to both sides. Bold: best PSNR/SSIM/LPIPS in group. Details in Appendix  G .
+ Allocation 
+ PSNR \uparrow 
+ SSIM \uparrow 
+ LPIPS \downarrow 
+ VBench \uparrow 
+ Wall-clock (s) 
+ Speedup 
+ Dense 
+ — 
+ — 
+ — 
+ 72.35 
+ 183.8 
+ 1.00 \times 
+ Default 
+ 18.14 
+ 0.659 
+ 0.268 
+ 70.27 
+ 148.7 
+ 1.24 \times 
+ CalibAtt-style 
+ 19.67 
+ 0.700 
+ 0.222 
+ 70.79 
+ 149.6 
+ 1.23 \times 
+ ALLOT 
+ 25.37 
+ 0.835 
+ 0.106 
+ 71.24 
+ 148.6 
+ 1.24 \times 
+ HEART (EBC) 
+ 19.43 
+ 0.699 
+ 0.221 
+ 72.02 
+ 151.7 
+ 1.21 \times 
+ Efficient-vDiT 
+ 19.08 
+ 0.702 
+ 0.225 
+ 72.32 
+ 151.1 
+ 1.22 \times 
+ DiTFastAttn-style 
+ 19.38 
+ 0.708 
+ 0.219 
+ 72.27 
+ 152.2 
+ 1.21 \times 
+ ScalingAttention (FAST) 
+ 22.75 
+ 0.790 
+ 0.141 
+ 71.09 
+ 152.9 
+ 1.20 \times 
+ PASA 
+ 21.91 
+ 0.768 
+ 0.163 
+ 71.25 
+ 151.8 
+ 1.21 \times 
+ DFSAttn-style 
+ 24.86 
+ 0.834 
+ 0.107 
+ 71.20 
+ 151.3 
+ 1.21 \times 
+ ALLOT 
+ 26.39 
+ 0.854 
+ 0.089 
+ 71.38 
+ 151.3 
+ 1.21 \times 
+ HEART (EBC + TMR) 
+ 19.54 
+ 0.706 
+ 0.214 
+ 71.62 
+ 145.0 
+ 1.27 \times 
+ ALLOT + TMR 
+ 26.13 
+ 0.847 
+ 0.094 
+ 71.34 
+ 146.0 
+ 1.26 \times 
+ Figure 4 : Qualitative comparison. Dense, baseline and + ALLOT (left to right) at the first and last frames; bottom rows enlarge the boxed regions, with inner boxes marking larger baseline deviations from dense. Headers give PSNR to dense, gain and wall-clock time. Prompts are near the median gain. Settings: Tab.   1 (XAttention), Appendix  H (SpargeAttn 720p), and Tab.   2 (SpargeAttn 480p). 
+ 5.3 Integration with published pipelines
+We integrate ALLOT into the official pipelines of SVOO  [ 14 ] , SVG2  [ 25 ] , SpargeAttn  [ 29 ] and Radial  [ 12 ] , changing only the allocation ( Tab.   2 , details in Appendix  H ).
+ALLOT outperforms the default in six of the nine settings (by up to 5.03 dB in PSNR) and ties in the other three (Appendix  H ).
+Notably, on HunyuanVideo (13B) with SVOO, ALLOT improves PSNR by 3.38 dB while increasing end-to-end speedup from 1.75 \times to 1.90 \times .
+ Figure   4 shows qualitative comparisons.
+To compare across speeds, we solve ALLOT’s tables at several latency budgets on three published pipelines (1.3B 720p) and plot PSNR against end-to-end speedup ( Figure   5 ).
+All of the pipelines’ own settings (open circles) lie below ALLOT’s curve.
+ Table 2: Integration with published pipelines, changing only the allocation ( n{=}32 ; speedup = dense wall-clock / row wall-clock; dense times and paired intervals in Appendix  H ).
+Bold: best PSNR/SSIM/LPIPS in each setting.
+ Pipeline & setup 
+ Allocation 
+ PSNR \uparrow 
+ SSIM \uparrow 
+ LPIPS \downarrow 
+ VBench \uparrow 
+ Wall-clock (s) 
+ Speedup 
+ Wan2.1-1.3B 480p \times 81 
+ Default 
+ 22.67 
+ 0.768 
+ 0.150 
+ 70.03 
+ 147.7 
+ 1.24 \times 
+ SpargeAttn 
+ + ALLOT 
+ 27.70 
+ 0.876 
+ 0.070 
+ 71.58 
+ 145.8 
+ 1.26 \times 
+ Wan2.1-1.3B 720p \times 81 
+ Default 
+ 26.44 
+ 0.832 
+ 0.143 
+ 71.71 
+ 448.9 
+ 1.62 \times 
+ Radial 
+ + ALLOT 
+ 26.83 
+ 0.837 
+ 0.138 
+ 71.08 
+ 441.5 
+ 1.65 \times 
+ Wan2.1-1.3B 720p \times 81 
+ Default 
+ 24.25 
+ 0.808 
+ 0.151 
+ 71.09 
+ 410.9 
+ 1.66 \times 
+ SVG2 
+ + ALLOT 
+ 25.60 
+ 0.819 
+ 0.156 
+ 70.75 
+ 410.5 
+ 1.66 \times 
+ Wan2.1-1.3B 720p \times 81 
+ Default 
+ 30.08 
+ 0.893 
+ 0.082 
+ 72.12 
+ 451.6 
+ 1.55 \times 
+ SVOO 
+ + ALLOT 
+ 30.73 
+ 0.890 
+ 0.095 
+ 71.45 
+ 447.7 
+ 1.56 \times 
+ Wan2.1-14B 720p \times 81 
+ Default 
+ 24.75 
+ 0.839 
+ 0.128 
+ 71.70 
+ 2296.9 
+ 1.56 \times 
+ Radial 
+ + ALLOT 
+ 25.28 
+ 0.850 
+ 0.115 
+ 71.65 
+ 2290.7 
+ 1.56 \times 
+ Wan2.1-14B 720p \times 81 
+ Default 
+ 28.15 
+ 0.903 
+ 0.068 
+ 71.67 
+ 2603.5 
+ 1.31 \times 
+ SVOO 
+ + ALLOT 
+ 31.70 
+ 0.930 
+ 0.044 
+ 71.59 
+ 2586.6 
+ 1.32 \times 
+ Wan2.2-A14B 720p \times 81 
+ Default 
+ 25.36 
+ 0.853 
+ 0.089 
+ 74.25 
+ 2735.8 
+ 1.23 \times 
+ SVOO 
+ + ALLOT 
+ 30.23 
+ 0.911 
+ 0.044 
+ 73.93 
+ 2732.2 
+ 1.23 \times 
+ HunyuanVideo 720p \times 129 
+ Default 
+ 28.08 
+ 0.893 
+ 0.112 
+ 70.96 
+ 1814.2 
+ 1.76 \times 
+ Radial 
+ + ALLOT 
+ 27.53 
+ 0.892 
+ 0.121 
+ 70.55 
+ 1805.2 
+ 1.77 \times 
+ HunyuanVideo 720p \times 129 
+ Default 
+ 27.55 
+ 0.884 
+ 0.118 
+ 71.71 
+ 1842.7 
+ 1.75 \times 
+ SVOO 
+ + ALLOT 
+ 30.93 
+ 0.923 
+ 0.071 
+ 71.46 
+ 1697.0 
+ 1.90 \times 
+ Figure 5 : Fidelity–speedup curves (Wan2.1-1.3B 720p; prompts as in Tab.   2 ; y-ranges differ). Open circles: pipeline settings (SpargeAttn: default, two released and one retuned checkpoint; Radial: default and decay 1.0; SVOO: default). Arrows show gains at the default’s speed. 
+ 5.4 Cross-model comparison
+On the three Wan models with mean-pooled top- k , ALLOT outperforms both the uniform and the strengthened baseline ( Tab.   3 ). We extend this comparison to HunyuanVideo at equal density in Appendix  J .
+ Figure   6 shows what a fixed rule misses: the first few layers and certain deeper layers stay dense longest, while density decreases over several intermediate steps rather than dropping at a single step.
+The best rule also changes with the budget, so we test the baselines at other budgets: ALLOT remains above the uniform baseline across budgets at 720p \times 81 (1.3B and 14B, Appendix  H ). On 1.3B 480p \times 33, it also outperforms the strengthened baseline with its warm-up re-searched at each of three budgets (Appendix  J ).
+ Table 3: Cross-model comparison (mean-pooled top- k selection with the VSA kernel; groups differ only in density tables; \Delta PSNR is the mean paired difference). Details in Appendix  J .
+ Model & setup 
+ Speedup 
+ n 
+ PSNR \uparrow (uniform \to ALLOT) 
+ \Delta PSNR vs. uniform 
+ \Delta PSNR vs. strengthened 
+ Wan2.1-1.3B, 480p \times 33 
+ 1.14 \times 
+ 32 
+ 19.59 \to 25.99 
+ + 6.40 
+ + 2.55 
+ Wan2.1-14B, 720p \times 81 
+ 1.29 \times 
+ 16 
+ 24.87 \to 31.25 
+ + 6.38 
+ + 0.76 
+ Wan2.2-A14B, 480p \times 33 
+ 1.09 \times 
+ 32 
+ 19.36 \to 25.86 
+ + 6.50 
+ + 1.67 
+ Figure 6 : Solved density tables for XAttention ( Tab.   1 ) and HunyuanVideo (equal density; Appendix  J ); white contours mark dense cells. Right: mean density per step, including Wan2.1-14B ( Tab.   3 ), versus a rule keeping the first 30% of steps dense and using 0.30 thereafter. 
+ 5.5 Ablation study
+Each ablation replaces one component in the XAttention setup of Tab.   1 at ALLOT’s cost.
+Trajectory calibration is dominant: setting w(s)=1 for every step lowers PSNR by 7.05 dB, and DiTFastAttn’s greedy rule on the same one-step errors reaches a similar 19.38 dB ( Tabs.   1 and  4 ).
+A shared density across layers and a parametric shape rule also underperform, whereas density-proportional cost makes no significant difference after wall-clock alignment.
+Mean-pooled top- k ablations and an LPIPS-calibrated variant are reported in Appendix  I .
+ 5.6 Verification, robustness and offline cost
+Verifying the sensitivity estimate.
+The solver ranks density tables by their estimated total sensitivity, the sum of \hat{S} over all cells (Eq. ( 3 )).
+We validate this ranking against measured final-video error.
+At fixed total cost, permuting ALLOT’s densities among cells lowers PSNR on every prompt, and the measured ordering matches the prediction.
+Across 80 tables at multiple budgets on held-out prompts, the predicted and measured rankings agree strongly (pooled Kendall \tau=0.83 , Appendix  E ).
+Number of calibration inputs.
+Cell probes use four probing videos and trajectory calibration uses eight prompts.
+With a single probing video or calibration prompt, most cells keep the same dense/sparse status.
+On the XAttention setting of Tab.   1 , eight probing videos bring no significant gain over four, and one or two lose less than a tenth of ALLOT’s gain (Appendix  K ).
+Window density and probe resolution have mild effects. Calibration with SpargeAttn rather than mean-pooled top- k gives a 0.993 correlation in w and 96.0–96.5% cell-decision agreement (Appendix  K ).
+Offline cost.
+Measurement takes roughly 6–23 GPU-hours per model (over 30 for the two experts of Wan2.2) and is done once per model and selection strategy (Appendix  F ).
+Changing the latency budget or the number of steps only requires re-solving the table, which takes about 4 s on CPU. With 30 steps, CFG 7.5 or the Euler sampler, ALLOT still outperforms the default without re-measuring (Appendix  K ).
+ Table 4: Ablation (XAttention, Wan2.1-1.3B 480p \times 81, n{=}32 ; one module replaced per row at the same cost as ALLOT; full metrics in Appendix  I ).
+ Module 
+ Replaced with 
+ PSNR 
+ \Delta PSNR 
+ — 
+ ALLOT 
+ 26.39 
+ — 
+ Cell prob. 
+ Same density for all layers 
+ 25.32 
+ - 1.07 
+ Traj. cal. 
+ w\equiv 1 
+ 19.34 
+ - 7.05 
+ Per-cell solve 
+ Parametric shape rule 
+ 24.63 
+ - 1.76 
+ Latency table 
+ Density-proportional cost 
+ 26.27 
+ - 0.12 
+ 6 Conclusion
+We showed that layer–step sensitivity varies across models and selection strategies, is not reliably captured by local metrics, yet is nearly input-invariant for a fixed model and strategy.
+ALLOT turns these findings into a training-free allocator by calibrating one-step errors against final-video damage and optimizing a latency-constrained density table.
+Ablations identify trajectory calibration as the dominant component, while the same offline measurements remain effective across budgets, step counts, guidance scales and samplers without re-measurement.
+Across three model families, ALLOT outperforms every compared allocation method on XAttention and outperforms or ties the default on four other published pipelines, all at equal or shorter wall-clock time.
+Limitations.
+ALLOT requires offline calibration, and switching selection strategies requires new cell probes.
+Its additive, layer-separable estimate predicts rankings more reliably than error magnitudes, while the common density interface replaces native threshold adaptation.
+Modeling cell interactions and preserving adaptive thresholds are directions for future work.
+

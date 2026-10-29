@@ -80,6 +80,8 @@ Transport 加密或 OAuth 只回答连接身份的一部分，不证明 tool act
 
 Primitive 类型不是安全等级。Resource 可能泄密，Prompt 可能包含恶意指令，Tool 可能执行任意代码。
 
+当 Resource 承载可交互页面时，还应区分资源可读、页面仍驻留与业务结果已保存。短时页面随隐藏销毁可减少资源占用；长任务编辑器可向特定 Host 显式请求后台保留，但空长轮询不应被当作业务进展无限续期。[ZCode 的固定实现](https://github.com/zai-org/zcode-plugins/commit/d33f6c0ce7b011147410e3141329e2d865ec6a22)用资源 `_meta.ui.backgroundRetention` 声明和仅取得实际任务时回传的 `_meta["zcode/activity"]` 更新活性；这些是 host-specific 扩展，不是 MCP 标准或任意 client 都识别的保证。回收会丢失未保存页面内存，因此驻留许可不等于 durable storage，也不证明工具副作用已提交；无法协商时应保存/重建状态或使用前台简单路径。metadata/contract test 只证明该声明与任务标记，host 回收及跨平台安全另需验证。<!-- source-family:SF-2026-ZCODE-BOUNDED-BACKGROUND-RETENTION -->
+
 ## Lifecycle 与 Version Contract
 
 在仍广泛部署的 `2025-11-25` 规范和对应 SDK 中，基本 session 流程是：
@@ -99,6 +101,8 @@ Client 与 Server 必须处理不支持的 version/capability，而不是猜测�
 
 [MiMo-Code 的固定实现](https://github.com/XiaomiMiMo/MiMo-Code/pull/2657)只把 startup Deferred 的等待限制为3秒，其后的 host refresh 仍可能同步建立连接，所以这不是 `tools()` 的端到端3秒 SLO。通常管理访问等待全 settle，`clients(context)` 则可返回捕获的 turn 视图，不能概括成所有 accessor 一律等待。它以视图变化、重试及取消清理的成本换较早开始，localhost 手动释放慢连接的 fixture 只验证子集到后续完整视图，不证明公网时延或完整生命周期无泄漏。首轮必须用齐目录、或后续重发现无法确认时，应保留全 settle 或明确 defer，避免把早期缺项固化成模型的能力判断。<!-- source-family:SF-2026-GITHUB-MIMO-CODE-PR2657 -->
 
+在仍使用旧session式SDK的部署中，还须把“响应流断了”与“能力会话已经失效”分开。[一个固定连接管理实现](https://github.com/MoonshotAI/kimi-code/pull/4283)将SSE重连耗尽作为weak evidence，先以有界ping探测；stdio子进程退出则直接进入失败恢复。首次连接失败时工具从未注册，不能指望只有调用工具才触发的healing补救，因此需要独立的连接恢复入口。新旧连接、探测、关闭及OAuth失效处理按server串行或join，并用attempt身份丢弃旧回调，才不会由迟到失败覆盖新连接。这增加退避等待和生命周期状态；配置/协议/静态凭据错误不应无限重试，需重新授权的连接先停用。该实现只对workspace baseline启用自动恢复，局部HTTP回归不证明任意server可用性；重连成功也不证明先前工具副作用没有提交，动作协调仍回第78章。<!-- source-family:SF-2026-KIMI-CODE-OCT27 -->
+
 ### 协议比较必须拆开五类契约
 
 用 transport 或产品名称给 Agent protocol 分类，会把不同层的问题混在一起。更稳定的比较坐标是：counterparty 决定谁与谁通信，payload 定义传递什么，interaction state 描述请求、流式和回调如何推进，discovery 负责能力如何被找到，schema 则约束数据与错误的可解释性。认证、delivery、ordering、backpressure 与 effect semantics 仍是横跨这些维度的独立保证，不能从“同属一种协议”推导互操作。
@@ -106,6 +110,8 @@ Client 与 Server 必须处理不支持的 version/capability，而不是猜测�
 Protocol adapter 拥有五维映射与 version negotiation，session/runtime owner 持有 delivery、ordering 与 backpressure，policy owner 仍决定 authorization 与 effect commit。
 
 在单进程 Agent 中，配置、连接和动作执行往往由同一应用持有，这种实现简单且便于排障。嵌入 IDE 或接入外部客户端后，则应分别确认配置来源、MCP 连接执行者与动作执行者。客户端传来 URL、headers 或 stdio command，只说明配置从哪里来，不证明连接或工具调用已转移到客户端；保留同一个 tool name/schema 而更换 backend，也只保留参数接口，不保证工作环境、权限和生命周期等价。
+
+同一 Session 内改变 MCP 选择，还要把 requested settings、实际连接与 catalog 投影分开版本化：保留原 AgentDefinition、Skills 和审批 policy，显式配置命令只推进 Session-local revision，并沿原 Runtime 对账。[Qwen Code 的固定管理合同](https://github.com/QwenLM/qwen-code/blob/4ee2bb4e4744c2f688401eb4f00cf5791bd1e9eb/docs/design/2026-10-22-managed-session-mcp-management.md)要求 restart 先取得旧连接 release receipt，再取得新 configuration receipt；refresh catalog 不能代替这两项证据。unknown 原命令保留 identity、阻塞冲突变更，read-only 管理查询也不应隐式唤醒 cold Session。额外 revision、receipt 和 owner 绑定增加维护成本；简单固定目录仍可保留，无法核对原操作时拒绝变更，而不是在另一 daemon 或 Runtime 重做。该合同不证明任意客户端、执行环境或已在途 tool 的安全热切换。<!-- source-family:SF-2026-QWEN-CODE-MCP-MANAGEMENT -->
 
 [Kimi CLI 0.68 的固定实现](https://github.com/MoonshotAI/kimi-cli/tree/d5ae5b809d19086db2d823ca6f1997bd68c3db2d/src/kimi_cli/acp)展示了这两条不同路径：ACP 客户端提供的 MCP 配置由 CLI 转换并建立 FastMCP 连接；Shell 则只在 local 模式、客户端声明 terminal 能力时改由客户端终端执行，执行前仍请求原 runtime approval。委托执行增加了 session/terminal handle 关联、输出截断、超时和清理责任；timeout 中显式 kill 与 finally 中 release 不是同一件事，取消后释放 handle 也不能自动证明进程已停止。无法确认执行状态时应走第81章的恢复/协调路径，而不是仅凭客户端能力声明重复提交。该静态实现只支持所述分支，不证明任意客户端的隔离、终止或生产可靠性；协议版本、执行环境或 backend 改变后仍须重新验证。<!-- source-family:SF-2025-MOONSHOT-KIMI-CLI-0-68 -->
 
@@ -183,6 +189,8 @@ HTTP authorization 解决 client 代表 resource owner 访问 server 的协议�
 这种两阶段边界把“谁可以加入能力目录”与“谁可以调用某次动作”分开，收益是阻止未知或变更后的 server 仅凭自述进入 trusted path；代价是 key/root 生命周期、revocation、metadata 漂移、false rejection 和生态兼容成本。Attestation root 被攻破、server 更新后未重验或 sensitivity 欠报时，admission 也会给出错误信心。封闭部署可继续使用 pinned package digest 与人工 allowlist；无法验证时回退 sandbox、只读最小能力或拒绝注册。`arXiv:2605.24248v1` 的 §3 与 §5 支持作者 wire format、verification 与受测安全合同，§6 不证明任意 MCP implementation、供应链或 attestation root 都可信，也不替代调用时授权。
 
 <!-- source-family:SF-2026-ARXIV-2605-24248 -->
+
+即使名称、schema与version pin未变，服务端的响应行为仍可能漂移。可在受信准入时保存schema-valid探针的参考输出，使用前比较当前响应，并将绝对偏差与候选间差额分别设门；[这种行为核验分支](https://arxiv.org/html/2610.33633v1)只证明在给定探针分布下与reference可分辨，不是密码学身份或完整工具安全。样本界要求受信reference、随机抽样及足够分离度，“决定且判错”的联合界不等于所有已接受请求的条件风险；有状态前置条件或未覆盖的嵌套参数可令两个实现对全部探针相同，加大预算也无效。探针本身会执行工具，应只用隔离、只读或可重置环境；reference采集、每候选调用、重校准与bank维护均计费，反复暴露同一bank还会给自适应对手学习机会。无法区分时应abstain并回到固定已验包、sandbox或人工核对，不凭一次task success替响应真实性签字，实际调用的授权与effect仍走原gate。<!-- source-family:SF-2026-ARXIV-2610-33633 -->
 
 固定 schema 与静态 adapter 易审计；只有多方确实需要运行时演化词汇时，解释规则自身才成为新的 admission 对象。接收者应持有独立 dialect registry，以 name/content identity 分派和拒绝冲突；安装时检查 core 不可重定义、template dependency 无环与声明资源界限，每次展开仍执行 depth、size、fuel 和 timeout，耗尽即拒绝。安装合法与这次请求可完成是两道门，生成的业务请求随后仍走原 principal/参数/authorization/effect gate，dialect 声明不能给自己授权。
 
@@ -289,6 +297,8 @@ user-scoped catalog
 Catalog/index owner 负责 schema version、refresh 与 deletion ordering；authorization filter 必须在 retrieval 前后都守住 tenant scope；executor 只接受 discovery 返回的精确 identity，不能让模型猜 tool/server 名。Search confidence 也不是授权，低 recall、描述质量差、index staleness 和 workflow-step confusion 都可能让正确工具缺席。
 
 全量注入在工具少、context 富余或 discovery 服务不可用时仍是清晰 fallback。Selective discovery 用额外检索 latency、index lifecycle、embedding dependency 与 observability 换 context 容量；生产 claim 必须绑定 catalog size、query set、top-k、latency 分布、fallback rate 与 client revisions，不能把单个企业目录的 token reduction 写成 MCP 协议常数。
+
+跨组织发现还须单列名字解析之后的依赖：endpoint、capability、协议与证书绑定若分散在不同registry，少一次主查询并不等完成整条发现链。一个[DNS条件预算算例](https://arxiv.org/html/2606.02314v1#S4)用API endpoint和静态MCP tool名称近似metadata，提示应把内容、签名、证书关联和后续lookup一起预算；独立P90相乘不是联合分位数，少数可解析server也不代表全生态。字节能装入UDP不证明实际wire完整、毫秒SLO、可信agent或业务授权，签名/格式与额外registry变化都须重测。解析、验证、刷新和fallback均计费；元数据不完整、包预算不足或依赖不可用时，保留显式registry/HTTPS发现及已批准端点，不让名字可解析替执行权限签字。<!-- source-family:SF-2026-ARXIV-2606-02314 -->
 
 ### Tool Description 是可执行的 Discovery Interface
 
@@ -418,6 +428,16 @@ payload 纳入同一 spill/recovery 路径。保守保留会增加 context 与�
 MCP 提供可演进的连接协议，让 AI host 以统一方式发现和调用外部能力。它标准化接口，不授予信任。最后一章讨论平台如何在这些连接之上治理完整 Agent lifecycle。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2610-33633` — `live1028_china`，Daily2026-10-28/Oct27首公告，2+2+2=6，安全受影响域深入；[exact-v1](https://arxiv.org/html/2610.33633v1)§3/Alg1/§4、§5.1–5.5/6与AppP817–868必要域，唯一reader已独核相关域及actual owner/整段PRE。仅trusted behavioral reference的可分辨域，不采用.956强制选择为安全率、joint界为conditional风险、CPU/GPU时间混比或生态malice率。保两零margin工具、固定bank暴露、16任务/同源agent-judge、135111 probe调用与setup额外成本；未运行artifact或复现。实际SAVE/POST见本日ARXIV_AGENT/REVIEW，不由本注预签。
+
+- `SF-2026-KIMI-CODE-OCT27` — `live1028_china`，同家族Oct27实施事件[#4283](https://github.com/MoonshotAI/kimi-code/pull/4283)，精确`4be3f0b741e13677f441c84eee40795ccc1df1db`；2+2+2=6。仅旧session式SDK weak/hard活性、operation/attempt隔离；manager389–448/580–752及HTTP healthy/dead弱证据测试1288–1418已读。退避名义基值/上限带0.5–1倍jitter，workspace-only、不授任意重试安全/生产可用性，未运行。必要/实际owner/整体PRE已独核；SAVE/POST以本日CHINA/REVIEW后到为准。
+
+- `SF-2026-ARXIV-2606-02314`：exact-v1 §3–5；2+2+1=5。仅条件metadata/lookup预算，保静态parser/21.7%、P90与完整wire、无实测时延反侧；未核实现或复现。 Source/逐字PRE经独立复核通过，root已实际保存；非writer真实完整写后复核已通过（SUP_RESUME_REVIEW_20261024 R12）。
+
+- `SF-2026-QWEN-CODE-MCP-MANAGEMENT` — Daily2026-10-23，Qwen家族2+2+2=6；固定68行contract全部必要域，requested/physical/catalog分离、原Runtime/Session revision及release→configure证据，不授任意tool热切换/生产安全。独立reader Source/actualowner/PRE通过，root已存段，独立reader实际POST已通过，未运行。
+
+- `SF-2026-ZCODE-BOUNDED-BACKGROUND-RETENTION` — Daily2026-10-23，Oct22精确d33f6c0 commit的server/automation、retention测试与craft-ui-validation说明。1+2+2=5，只采host-specific驻留声明及真实task活性资格，非MCP标准。测试无空poll负例或host回收实现，120秒为保持的文档约束；九页metadata不等九编辑器视觉/跨平台验证，未运行测试或复现。独立reader必要Source/实际owner/精确PRE通过；root已保存本单段，独立reader实际POST已通过。
 
 - `SF-2026-ARXIV-2605-06933` — [MAGIQ exact-v1](https://arxiv.org/html/2605.06933v1)，Daily2026-05-12补充。2+2+3=7；双方必要§2.3/3、4.1、5 theorem/sketch、6.1–2/6.8，作者另§4.2–4.4/6.3–6.7；未核完整F proof或实现/复现。只采session-bound可核销task-msg预算、Merkle子额/ACL/clock分责；保static-corruption及CA/受信user/provider/至少一honest端条件、不授语义安全/DoS、36s签名预计算/异框架成本与6.8数值冲突。reader Source/实际owner/逐字PRE通过、root指定窄授权后保存，reader R13已实际完整新增/两侧/本人注非writer POST通过，root接纳整合并释放指定窄位；仅同步既成事实。
 

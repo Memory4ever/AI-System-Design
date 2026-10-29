@@ -1,0 +1,893 @@
+Source: https://arxiv.org/html/2605.27788v1
+Main text extraction; fulltext_chars=113319
+
+arXiv:2605.27788v1 [cs.LG] 27 May 2026 
+ 
+ 
+ Knowing When to Ask: Segment-Level Credit Assignment for LLM Tool Use 
+
+ 
+ 
+ 
+ Abhijit Kumar
+ † † thanks:  Corresponding author. 
+ Affiliation:  Microsoft AI
+ 
+    
+ Zoey Wu
+ 
+ Affiliation:  Redmond, WA
+ 
+    
+ Mohit Suley
+ 
+ Affiliation:  {abhijitkumar, guwu, mosuley}@microsoft.com 
+ 
+
+ Abstract 
+    
+ Humans know when to reach for help e.g.  347 × 28 347\times 28  warrants a calculator while  2 + 2 2+2  does not. Language models, by default, do not. Prompt-based approaches can instruct a model when to invoke tools, but this external scaffolding does not teach the model to recognize the boundary of its own knowledge. Reinforcement learning approaches that assign a single outcome reward to the whole trajectory fare no better: trajectory-level credit cannot isolate which tool call in a successful episode actually helped, nor penalize unnecessary calls. We propose  CARL  ( C ompetence- A ware  R einforcement  L earning), which trains a critic on the model’s own rollouts to learn where the model’s parametric knowledge suffices and where it needs external help. By decomposing each rollout at natural tool-use boundaries (e.g., code fence delimiters and context block transitions), CARL assigns independent credit to each segment from a single binary outcome, without external judges or step-level annotations, addressing the credit-assignment limitations of trajectory-level methods. As a result, erroneous tool calls, incorrect extractions, and unnecessary calls each receive appropriately signed advantages. We show that the trained critic captures the model’s domain competence: it separates parametrically solvable from tool-dependent questions with AUC 0.93 at 7B. On five benchmarks spanning arithmetic, multi-hop factual QA, and numerical reasoning over financial tables, CARL improves exact-match accuracy by 6.7 points at 7B and 9.7 points at 3B over the best RL baseline (Search-R1 PPO at 7B, Search-R1 GRPO at 3B), with the largest gain (+8.3 EM at 7B, +9.0 EM at 3B) on Musique, the most compositional multi-hop benchmark. Compared to the best RL baseline (Search-R1 PPO), the model issues 53% fewer tool calls on questions answerable from parametric knowledge while remaining  ∼ 10 {\sim}10  EM points more accurate on those same questions, an emergent consequence of the critic learning where this model’s competence ends. Gains are largest at small scale: the 3B model improvement is  1.4 × 1.4\times  the 7B improvement, suggesting that knowing when to ask for help disproportionately benefits models with smaller parametric memory. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Out of the box, large language models do not come equipped with the machinery that makes their outputs reliable. They lack reliable access to current information, arithmetic precision, and a means of verifying their own claims. Prompt-based techniques such as retrieval-augmented generation, ReAct, and tool-augmented prompting typically bolt a calculator and a search box onto the model at inference time, yet the model still invokes tools without knowing whether the task actually requires them. Humans do not behave this way. We do not need to be told that  347 × 28 347\times 28  warrants a calculator while  2 + 2 2+2  does not, or that the capital of an unfamiliar country requires a search while the capital of our own does not. We recognize the edge of our own knowledge and reach for help precisely when we need it. Our goal is to train language models to do the same, not by being instructed when to use tools, but by learning it. 
+
+ 
+ 
+ 
+ Recent RL approaches train LLMs on tool-use trajectories with a single outcome reward  ( 6 ;  7 ;  9 ;  21 ;  22 ) , creating two coupled problems: credit assignment (a good search and a bad search in the same successful trajectory are reinforced identically) and tool-use selectivity (model lacks awareness of its own competence boundary, so unnecessary tool calls still receive positive reinforcement). Prior attempts enrich the reward or score steps with an external judge (§ 2 ), but either retain a single trajectory-level scalar or rely on a judge whose knowledge may diverge from the student’s. 
+
+ 
+ 
+ 
+ Our starting observation is that tool-use trajectories have something pure reasoning trajectories lack:  structurally observable boundaries  (§ 3.1 , Figure  1 ). At each boundary the context changes observably making a central RL problem tractable: identifying meaningful decision boundaries in generation, a challenge discussed at length in prior work  ( 15 ;  13 ;  2 ) . A critic that estimates, at each boundary, the probability that the current context will lead to a correct answer can be trained from binary outcome reward alone without requiring step-level annotations or ambiguous step-boundary heuristics. Given such a critic, the advantage of a segment is simply how much it changed the expected probability of success e.g. a good search raises it, a bad search lowers it, an unnecessary search on an easy question leaves it roughly unchanged. Because the critic is trained on  this model’s own rollouts , it learns a competence-aware value function, one that reflects what this model can do. 
+
+ 
+ 
+ 
+ We instantiate this as CARL ( C ompetence- A ware  R einforcement  L earning). Our contributions: 
+
+ 
+ 
+ 
+ 
+ 1.  
+ 
+ A value function that encodes the model’s own competence boundary.  From binary outcome reward alone,  V ⁡ ( s 0 ) V(s_{0})  learns to separate parametrically solvable from tool-dependent questions (AUC 0.93 at 7B, 0.85 at 3B), producing 53% fewer unnecessary tool calls than the best RL baseline. 
+
+ 
+ 
+ 2.  
+ 
+ Per-segment credit from a single outcome.  We derive per-segment advantages from the Semi-Markov Decision Process (SMDP)  ( 12 )  Bellman equation at structurally observable tool-use boundaries. A good search paired with a bad extraction produces opposing signs within the same trajectory. Trajectory-level methods cannot make this distinction. 
+
+ 
+ 
+ 
+ 
+ 
+ On five benchmarks, CARL improves over Search-R1 PPO, the strongest RL baseline, on the three search-based datasets, with the largest gains on multi-hop out-of-distribution tasks and up to 36% fewer tokens. Gains are largest at small scale ( 1.4 × 1.4\times  at 3B vs. 7B). 
+
+ 
+ 
+ 
+ 
+ 2  Related Work 
+
+ 
+
+ 
+ Three lines of work are most relevant. Prompt-based methods (RAG, ReAct) attach tools at inference time but cannot train selectivity. Trajectory-level RL methods train on outcome reward but cannot assign differential credit within a trajectory. Step-level credit methods attempt finer credit but rely on external judges whose knowledge may diverge from the student’s. We position CARL against all three, with trajectory-level RL as our direct experimental baseline. 
+
+ 
+ 
+ 
+ Trajectory-level RL for tool use. 
+
+ 
+
+ 
+ Search-R1  ( 6 ) , ToRL  ( 7 ) , ReSearch  ( 21 ) , and R3-RAG  ( 22 )  train LLMs on tool-use trajectories with a single outcome reward. Because the reward is shared across all segments, the contribution of any single tool call is hard to isolate, and unnecessary tool calls on easy questions still receive positive reinforcement when the episode succeeds. ToolRL  ( 9 )  enriches the reward with tool-name and argument-quality components but applies the result as a single trajectory-level scalar, so it refines what the reward evaluates without changing which segment each signal reaches. StepTool  ( 27 )  scores each step with GPT-4 during PPO, but the external judge can only score calls that were made, not penalize calls that should not have been, and its knowledge may diverge from the student’s. The two approaches are orthogonal: a richer ToolRL-style reward could in principle be combined with CARL’s segment-level credit assignment. 
+
+ 
+ 
+ 
+ 
+ Options, SMDPs, and credit assignment. 
+
+ 
+
+ 
+ CARL instantiates the Options framework  ( 12 ) : each segment is an option, termination fires at a structural delimiter, and the SMDP Bellman equation gives the per-segment advantage (§ 3.2 ). SPO  ( 14 )  independently arrives at segment-level credit but uses arbitrary cutpoints and critic-free MC estimation on single-turn math; CARL’s boundaries are SMDP environment transitions and its critic encodes a cross-question competence boundary (Appendix  L ). Recent work applies Options vocabulary to LLM agents (ARC  ( 3 ) , Agent-as-Tool  ( 4 ) ) but trains with trajectory-level GRPO; CARL derives per-option advantages from a value function. HICRA  ( 5 )  addresses credit assignment differently, heuristically weighting optimization toward attention-identified planning tokens. Among credit-assignment methods, EGCA  ( 2 )  localizes credit in code generation via execution-trace comparison but requires reference solutions; PAVs  ( 13 )  share our  V ⁡ ( s t + 1 ) − V ⁡ ( s t ) V(s_{t+1})-V(s_{t})  form but require step-level annotation; VinePPO  ( 15 )  found token-level value networks unreliable, a problem our segment-level setting avoids because boundaries number in single digits and each corresponds to a large context change. Earlier return-decomposition work (RUDDER  ( 1 ) ) shares the potential-based form of our advantages but operates at the token level. Extended per-paper comparisons are in Appendix  L . 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Methodology 
+
+ 
+
+ 
+ CARL has three components: a decomposition of tool-use trajectories into segments with structurally observable boundaries (§ 3.1 ), a value-function-based advantage derived from the SMDP Bellman equation (§ 3.2 ), and a critic trained on outcome reward with curated warm-up data (§ 3.3 ). These plug into standard PPO  ( 11 )  (§ 3.4 ). 
+
+ 
+ 
+ 
+ 3.1  Segment Decomposition and Tool Interface 
+
+ 
+
+ 
+ A tool-use trajectory consists of a sequence of segments, each an option in the sense of  Sutton et al. (12) . A trajectory with  K K  tool calls has  2 ​ K + 1 2K+1  segments; a trajectory with no tool calls is a single commit segment. The tool interface is Python code blocks: the model writes arithmetic, calls a predefined  search()  function, or implements custom logic. Figure  1  shows the rollout control flow. 
+
+ 
+ 
+ 
+ Figure 1:  Rollout pipeline in CARL. 
+Each tool-use trajectory decomposes into three segment types ( invoke ,  assimilate ,  commit ) with structurally observable boundaries. After invoke, the rollout loop executes the code and captures stdout; after assimilate, it replaces the raw stdout with the model’s  <context>  block. The critic  V ϕ V_{\phi}  evaluates the context at each boundary; the advantage of each segment is the change in  V ϕ V_{\phi}  across it, with the terminal reward  R R  replacing the final  V ϕ V_{\phi}  at EOS. 
+ 
+ 
+ The  invoke  segment generates reasoning followed by a code block (terminated at the closing code fence); the rollout loop executes the code and appends stdout  o k raw o_{k}^{\text{raw}} . The  assimilate  segment reads tool output and writes a  <context>  block distilling the relevant information (terminated at  </context> ); the rollout loop replaces  o k raw o_{k}^{\text{raw}}  with the extraction  e k + 1 e_{k+1} . The  commit  segment produces the final answer (terminated at EOS). Because raw tool output is replaced before the next generation begins, each segment’s target contains only model-produced tokens and gradient masking is unnecessary (formalized in Appendix  B ). 
+
+ 
+ 
+ 
+ Reward. 
+
+ 
+
+ 
+ A single terminal reward  R = EM ​ ( prediction , gold ) ∈ { 0 , 1 } R=\text{EM}(\text{prediction},\text{gold})\in\{0,1\}  after standard normalization. No intermediate rewards, execution penalties, or format rewards. 
+
+ 
+ 
+ 
+ 
+ 
+ 3.2  Segment-Level Advantage 
+
+ 
+
+ 
+ Given only a terminal reward  R ∈ { 0 , 1 } R\in\{0,1\} , how do we assign credit per segment? From the SMDP Bellman equation (Appendix  A ), under terminal-only reward and finite horizon ( γ = 1 \gamma=1 ), the per-segment advantage reduces to: 
+
+ 
+ 
+
+ 
+ 
+ A ⁡ ( seg k ) = { V ϕ ​ ( s k + 1 ) − V ϕ ​ ( s k ) , k < N (intermediate segment) , R − V ϕ ​ ( s N ) , k = N (final segment) . A(\text{seg}_{k})=\begin{cases}V_{\phi}(s_{k+1})-V_{\phi}(s_{k}),&k<N\quad\text{(intermediate segment)},\\[2.0pt]
+R-V_{\phi}(s_{N}),&k=N\quad\text{(final segment)}.\end{cases} 
+ 
+ (1) 
+ 
+
+ 
+ For a single tool-interaction trajectory with segments (invoke, assimilate, commit), this yields three independent advantages from one binary outcome. Summing per-segment advantages telescopes to  R − V ϕ ​ ( s 0 ) R-V_{\phi}(s_{0}) , preserving the same total credit as trajectory-level PPO (Appendix  A ). 
+
+ 
+ 
+ 
+ Per-segment advantages in a tool interaction. 
+
+ 
+
+ 
+ Each invoke–assimilate pair passes through two distinct states: a  transient  state  s ~ k + 1 \tilde{s}_{k+1} , containing the raw tool output immediately after invoke, and the next  persistent  state  s k + 2 s_{k+2} , in which the assimilate segment has replaced raw output with its  <context>  block (formalized in Appendix  B ). The critic  V ϕ V_{\phi}  evaluates at both, yielding separate advantages for query quality and extraction quality.
+For a single tool call starting at boundary  k k , Equation  1  produces the following invoke–assimilate–commit triple: 
+
+ 
+ 
+
+ 
+ 
+ A ⁡ ( invoke ) \displaystyle A(\text{invoke}) 
+ = V ϕ ​ ( s ~ k + 1 ) − V ϕ ​ ( s k ) \displaystyle=V_{\phi}(\tilde{s}_{k+1})-V_{\phi}(s_{k}) 
+ 
+ (query quality) , \displaystyle\text{(query quality)}, 
+ 
+ 
+ 
+ A ⁡ ( assimilate ) \displaystyle A(\text{assimilate}) 
+ = V ϕ ​ ( s k + 2 ) − V ϕ ​ ( s ~ k + 1 ) \displaystyle=V_{\phi}(s_{k+2})-V_{\phi}(\tilde{s}_{k+1}) 
+ 
+ (extraction quality) , \displaystyle\text{(extraction quality)}, 
+ 
+ 
+ 
+ A ⁡ ( commit ) \displaystyle A(\text{commit}) 
+ = R − V ϕ ​ ( s k + 2 ) \displaystyle=R-V_{\phi}(s_{k+2}) 
+ 
+ (answer commitment) . \displaystyle\text{(answer commitment)}. 
+ 
+ (2) 
+ 
+
+ 
+ All tokens within a segment share their segment’s advantage, enabling invoke and assimilate to receive opposing credit within the same trajectory. 
+
+ 
+ 
+ 
+ 
+ 
+ 3.3  The Critic 
+
+ 
+
+ 
+ Architecture. 
+
+ 
+
+ 
+ A two-layer MLP value head attached to the shared LLM backbone produces  V ϕ ​ ( s ) ∈ [ 0 , 1 ] V_{\phi}(s)\in[0,1]  at each segment boundary. Critic gradients update both the head and backbone, with the backbone learning rate  10 × 10\times  smaller to preserve policy representations (architecture details in Appendix  D ). 
+
+ 
+ 
+ 
+ 
+ Training target. 
+
+ 
+
+ 
+ The critic is trained with Monte Carlo targets: MSE between  V ϕ ​ ( s ) V_{\phi}(s)  and the terminal reward  R R , averaged across boundary states. MC targets are preferred because they are unbiased and their variance is bounded by the binary reward. 
+
+ 
+ 
+ 
+ 
+ Warm-up. 
+
+ 
+
+ 
+ Critic warm-up before PPO has been demonstrated to help in prior RLHF work  ( 23 )  and is essential here: without it, early random critic gradients corrupt the shared backbone, and the policy must unlearn them. The warm-up set is built from base-model rollouts labeled by final correctness, with no human annotation or external judge. Questions are classified as Tier 1 (beyond parametric competence) or Tier 2 (within it) via multi-rollout consistency, and each is rolled out under forced-tool and no-tool prompts. This produces four outcome buckets that teach  V ϕ V_{\phi}  to separate what the model knows from what it does not (details in Appendix  C ). This warm-up is also applied to our Search-R1 PPO baseline so that both methods start from the same critic-quality baseline; even with matched warm-up, segment-level credit retains a margin that grows with critic calibration (Appendix  H ). The cold-start ablation (no warm-up) trails our full method by  ∼ {\sim} 9 EM on HotpotQA at 7B (Appendix  H ). Figure  2 (a) shows the resulting calibration curves: curated warm-up tracks the diagonal (ECE = 0.043), random-data compresses the slope (ECE = 0.137), and cold-start is near-flat (ECE = 0.238). 
+
+ 
+ 
+ 
+ 
+ 
+ 3.4  Training Objective 
+
+ 
+
+ 
+ With segments defined (§ 3.1 ), advantages derived (§ 3.2 ), and the critic trained (§ 3.3 ), the training objective is standard PPO applied at the segment level. For each segment  k k , the PPO clipped surrogate objective is 
+
+ 
+ 
+
+ 
+ 
+ ℒ k CLIP = 1 | g k | ​ ∑ t ∈ g k min ⁡ ( r t ​ ( θ ) ​ A ​ ( seg k ) , clip ​ ( r t ​ ( θ ) ,  1 − ϵ ,  1 + ϵ ) ​ A ​ ( seg k ) ) , \mathcal{L}^{\text{CLIP}}_{k}=\frac{1}{|g_{k}|}\sum_{t\in g_{k}}\min\!\Big(r_{t}(\theta)\,A(\text{seg}_{k}),\;\text{clip}\big(r_{t}(\theta),\,1-\epsilon,\,1+\epsilon\big)\,A(\text{seg}_{k})\Big), 
+ 
+ (3) 
+ 
+
+ 
+ where  g k g_{k}  is the set of model-generated tokens in segment  k k  and  r t ​ ( θ ) = π θ ​ ( a t ∣ c t ) / π θ old ​ ( a t ∣ c t ) r_{t}(\theta)=\pi_{\theta}(a_{t}\mid c_{t})/\pi_{\theta_{\text{old}}}(a_{t}\mid c_{t})  is the per-token importance ratio. Each segment receives its own advantage scalar, applied uniformly to all tokens within it. This enables invoke and assimilate to receive opposing credit when query quality and extraction quality disagree. 
+
+ 
+ 
+ 
+ The critic is trained with the MC loss introduced in § 3.3 , formalized as  ℒ critic = 1 N + 1 ​ ∑ k = 0 N ( V ϕ ​ ( s k ) − R ) 2 \mathcal{L}^{\text{critic}}=\frac{1}{N+1}\sum_{k=0}^{N}(V_{\phi}(s_{k})-R)^{2} . The total trajectory loss combines the two:  ℒ = − ∑ k = 0 N ℒ CLIP k + c v ℒ critic \mathcal{L}=-\sum_{k=0}^{N}\mathcal{L}^{\text{CLIP}}_{k}+c_{v}\mathcal{L}^{\text{critic}} , with the advantage treated as constant during policy-gradient computation. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Experiments 
+
+ 
+
+ 
+ We evaluated CARL on five benchmarks spanning two tool types, two model scales, and a range of credit-assignment complexity. Our experiments answer three questions: does CARL outperform trajectory-level baselines (§ 4.3 ), does the critic actually learn the competence boundary we claim (§ 4.4 ), and what bounds the remaining gains (§ 4.5 )? We also verify that GSM8K performance is preserved (97% Tier 2 at 7B), that baseline generative capabilities remain intact when tools are removed (Appendix  K , Table  15 ), and that the model degrades gracefully when tools return useless output (Appendix  K , Table  16 ). 
+
+ 
+ 
+ 
+ 4.1  Datasets 
+
+ 
+
+ 
+ We selected five benchmarks that jointly vary two axes: the typical number of tool calls per question, and the fraction of questions the base model can answer from parametric knowledge alone. A  hop  refers to one invoke–assimilate pair requiring an external tool call. We classify each question as  Tier 2  (within parametric competence) if the base model answers it correctly in at least one of five independent no-tool rollouts, and  Tier 1  (beyond parametric competence) if all five rollouts produce incorrect answers. Table  1  summarizes the five benchmarks. 
+
+ 
+ 
+ 
+ Table 1:  Dataset characteristics. Tier 1 is the fraction of evaluation questions the base model answers incorrectly without tool access. 
+ 
+ 
+ 
+ Dataset 
+ Tool 
+ Hops 
+ Tier 1 (3B) 
+ Tier 1 (7B) 
+ In training? 
+ 
+ 
+ 
+ GSM8K 
+ Python 
+ 1 
+ 8% 
+ 3% 
+ Yes 
+ 
+ HotpotQA 
+ BM25 search 
+ 2 
+ 84% 
+ 76% 
+ Yes 
+ 
+ 2WikiMQA 
+ BM25 search 
+ 2 
+ 68% 
+ 57% 
+ Yes 
+ 
+ FinQA 
+ Python 
+ 2–3 
+ 95% 
+ 91% 
+ No 
+ 
+ Musique 
+ BM25 search 
+ 2–4 
+ 96% 
+ 93% 
+ No 
+ 
+ 
+
+ 
+ 
+ 
+ GSM8K  ( 16 )  is our pure selectivity test: almost entirely Tier 2, the question is whether the model learns to skip calling a tool. HotpotQA  ( 17 )  sits in the middle of the tool-necessity spectrum. Among the three search-based benchmarks, 2WikiMQA  ( 18 )  has the highest Tier 2 rate among search benchmarks (43% at 7B), making it the strongest test of learning to skip searches the model does not need (Table  1 ). FinQA  ( 19 )  is held out from training and tests generalization to heterogeneous tool routing (search followed by computation). Musique  ( 20 )  is our hardest benchmark: compositional 3–4 hop questions, also held out. 
+
+ 
+ 
+ 
+ Training data. 
+
+ 
+
+ 
+ We train on the merged training splits of the three in-training datasets (HotpotQA, 2WikiMQA, GSM8K), totaling approximately 170K questions, matching the data scale of Search-R1  ( 6 ) . FinQA and Musique are reserved entirely for out-of-distribution evaluation. For search benchmarks, we use BM25 retrieval over per-dataset Wikipedia passages with top- k = 3 k=3 . 
+
+ 
+ 
+ 
+ 
+ Evaluation. 
+
+ 
+
+ 
+ We evaluate on the full development sets, following the protocol of Search-R1  ( 6 )  and ReSearch  ( 21 ) . Exact Match is computed after normalization. For multi-word entity answers, we also accept predictions whose normalized form contains the normalized gold as a substring. 
+
+ 
+ 
+ 
+ 
+ 
+ 4.2  Methods 
+
+ 
+
+ 
+ We compare four trained methods and one prompting baseline. Each of the three RL methods occupies a distinct point on the credit-assignment granularity spectrum: Search-R1 GRPO applies a single trajectory-level scalar to all tokens, Search-R1 PPO uses a token-level value function, and CARL applies a segment-level value function at invoke/assimilate/commit boundaries. Reading the main table in order traces coarse  → \to  fine  → \to  boundary-aligned credit. 
+
+ 
+ 
+ 
+ CoT + Tools. 
+
+ 
+
+ 
+ A ReAct-style agent loop  ( 26 )  over Qwen2.5-7B-Instruct with access to the same retrieval corpus as the trained methods (BM25, inline tables, Python); no fine-tuning. We run  always-use  (tools on every question) and  optional-use  (model discretion) variants as references for retrieval quality and prompting-only selectivity respectively. 
+
+ 
+ 
+ 
+ 
+ SFT (rejection-sampled). 
+
+ 
+
+ 
+ We supervised-fine-tune Qwen2.5-Instruct on its own correct (EM = = 1) tool-use trajectories, providing a supervised-learning baseline without RL credit assignment. 
+
+ 
+ 
+ 
+ 
+ Search-R1 (GRPO and PPO). 
+
+ 
+
+ 
+ We trained both variants in the open-source codebase  ( 6 )  on our training data with matched retrieval infrastructure, carefully tuning hyperparameters to give these baselines every advantage. For Search-R1 PPO, we additionally apply the same curated critic warm-up as CARL so that both methods start from the same critic quality; we report results with and without warm-up in Appendix  H , where even the strongest Search-R1 PPO configuration exceeds published numbers yet CARL retains a margin that grows with calibration. 
+
+ 
+ 
+ 
+ 
+ CARL (ours). 
+
+ 
+
+ 
+ Segment decomposition (§ 3.1 ) with segment-level PPO (§ 3.4 ). Full hyperparameters are in Appendix  D ; retrieval setup, compute, and reproducibility details are in Appendix  O . 
+
+ 
+ 
+ 
+ Methods using richer supervision (e.g. StepTool’s GPT-4 judgments) operate under a different assumption and are not directly comparable; we discuss them in § 2  and Appendix  L . 
+
+ 
+ 
+ 
+ 
+ 
+ 4.3  Main Results 
+
+ 
+
+ 
+ Table  2  reports per-dataset accuracy and average tokens per episode across all methods and both scales. Search-R1 is a search-only framework and does not support non-search tools (e.g., calculator for GSM8K/FinQA); we therefore compare against Search-R1 PPO and GRPO on the three search-based datasets (HotpotQA, 2WikiMQA, Musique). The table supports three claims. 
+
+ 
+ 
+ 
+
+ Table 2:  Main results.  Accuracy or EM ( ↑ \uparrow ) and generation length in tokens ( ↓ \downarrow ).  † Training data; dashes indicate Search-R1 is not applicable. CARL and Search-R1 PPO report mean ± \pm std over 3 seeds; tokens are means. Prompting baselines, SFT, and GRPO are single runs. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ GSM8K 
+ HotpotQA † 
+ 2Wiki † 
+ FinQA 
+ Musique 
+ Avg 5  / Avg 3 
+ 
+ Policy 
+ Method 
+ Acc 
+ Tok 
+ EM 
+ Tok 
+ EM 
+ Tok 
+ Acc 
+ Tok 
+ EM 
+ Tok 
+ Sc 
+ Tok 
+ 
+ 
+ 
+ 3B-Inst. 
+ 
+ CoT+Tools (always) 
+ 86.3 
+ 823 
+ 22.2 
+ 1943 
+ 19.4 
+ 2028 
+ 38.4 
+ 1962 
+ 4.6 
+ 2781 
+ 34.2 / 15.4 
+ 1907 / 2251 
+ 
+ CoT+Tools (selective) 
+ 86.7 
+ 391 
+ 19.1 
+ 1685 
+ 21.2 
+ 1732 
+ 28.2 
+ 2096 
+ 5.3 
+ 2792 
+ 32.1 / 15.2 
+ 1739 / 2070 
+ 
+ SFT (rej. sampled) 
+ 81.8 
+ 412 
+ 24.6 
+ 1818 
+ 25.1 
+ 1791 
+ 25.7 
+ 2014 
+ 4.8 
+ 2867 
+ 32.4 / 18.2 
+ 1780 / 2159 
+ 
+ Search-R1 GRPO 
+ – 
+ – 
+ 34.3 
+ 1921 
+ 34.3 
+ 1960 
+ – 
+ – 
+ 8.6 
+ 2778 
+ – / 25.7 
+ – / 2220 
+ 
+ Search-R1 PPO 
+ – 
+ – 
+ 30.2 ± \pm 0.5 
+ 1809 
+ 32.1 ± \pm 0.6 
+ 1861 
+ – 
+ – 
+ 12.1 ± \pm 0.4 
+ 2755 
+ – / 24.8 
+ – / 2142 
+ 
+ CARL (ours) 
+ 87.2 ± \pm 0.3 
+ 384 
+ 40.4 ± \pm 0.2 
+ 1324 
+ 44.7 ± \pm 0.3 
+ 1394 
+ 46.6 ± \pm 0.4 
+ 1737 
+ 21.1 ± \pm 0.2 
+ 2546 
+ 48.0 / 35.4 
+ 1477 / 1755 
+ 
+ 
+ Δ \Delta  vs. 2nd 
+ +0.5 
+ ↓ \downarrow 7 
+ +6.1 
+ ↓ \downarrow 361 
+ +10.4 
+ ↓ \downarrow 338 
+ +8.2 
+ ↓ \downarrow 225 
+ +9.0 
+ ↓ \downarrow 209 
+ +13.8 / 9.7 
+ ↓ \downarrow 262 / 315 
+ 
+ 
+ 
+ 7B-Inst. 
+ 
+ CoT+Tools (always) 
+ 91.8 
+ 781 
+ 30.8 
+ 1862 
+ 26.6 
+ 1938 
+ 56.2 
+ 1623 
+ 11.4 
+ 2674 
+ 43.4 / 22.9 
+ 1776 / 2158 
+ 
+ CoT+Tools (selective) 
+ 91.4 
+ 367 
+ 31.1 
+ 1621 
+ 27.1 
+ 1641 
+ 55.7 
+ 1785 
+ 9.8 
+ 2708 
+ 43.0 / 22.7 
+ 1624 / 1990 
+ 
+ SFT (rej. sampled) 
+ 89.4 
+ 389 
+ 33.7 
+ 1712 
+ 32.6 
+ 1683 
+ 51.3 
+ 1864 
+ 8.9 
+ 2756 
+ 43.2 / 25.1 
+ 1681 / 2050 
+ 
+ Search-R1 GRPO 
+ – 
+ – 
+ 39.1 
+ 1779 
+ 36.8 
+ 1827 
+ – 
+ – 
+ 18.5 
+ 2579 
+ – / 31.5 
+ – / 2062 
+ 
+ Search-R1 PPO 
+ – 
+ – 
+ 42.8 ± \pm 0.6 
+ 1837 
+ 41.7 ± \pm 0.7 
+ 1775 
+ – 
+ – 
+ 22.1 ± \pm 0.6 
+ 2682 
+ – / 35.5 
+ – / 2098 
+ 
+ CARL (ours) 
+ 91.5 ± \pm 0.2 
+ 341 
+ 47.9 ± \pm 0.3 
+ 1193 
+ 48.3 ± \pm 0.4 
+ 1139 
+ 59.3 ± \pm 0.4 
+ 1389 
+ 30.4 ± \pm 0.4 
+ 2511 
+ 55.5 / 42.2 
+ 1315 / 1614 
+ 
+ 
+ Δ \Delta  vs. 2nd 
+ − - 0.3 
+ ↓ \downarrow 26 
+ +5.1 
+ ↓ \downarrow 428 
+ +6.6 
+ ↓ \downarrow 502 
+ +3.1 
+ ↓ \downarrow 234 
+ +8.3 
+ ↓ \downarrow 68 
+ +12.1 / 6.7 
+ ↓ \downarrow 309 / 376 
+ 
+ 
+
+ 
+ 
+ Paired  Δ \Delta  (CARL i   − -  SR1-PPO i , same seed) — 7B: HotpotQA  + 5.1 ± 0.3 {+}5.1{\pm}0.3 , 2Wiki  + 6.6 ± 0.5 {+}6.6{\pm}0.5 , Musique  + 8.3 ± 0.4 {+}8.3{\pm}0.4 ; 3B:  + 10.2 ± 0.4 {+}10.2{\pm}0.4 ,  + 12.6 ± 0.4 {+}12.6{\pm}0.4 ,  + 9.0 ± 0.3 {+}9.0{\pm}0.3 . 
+
+ 
+ 
+ 
+ Credit-assignment granularity matters most at the boundary level. 
+
+ 
+ 1 1 
+             1 
+            
+            
+            
+          Evaluation subsets vary by analysis. Table  2  evaluates all methods on the complete dev set of each benchmark ( ∼ {\sim} 2,500 questions total). Table  3  restricts to Tier 2 (parametrically solvable) questions from the three search benchmarks ( ∼ {\sim} 370 questions) to isolate selectivity behavior. Figure  2 (b) tracks held-out accuracy over training on four benchmarks (excluding GSM8K, which is calculator-only). Figure  2 (c) plots Tier 2 tool-use rate across all five benchmarks. 
+ 
+ At 7B, moving from trajectory-level credit (Search-R1 GRPO) to token-level credit (Search-R1 PPO) adds +4.0 average EM. Moving from token-level to segment-level (CARL) adds a further +6.7. The gain from aligning the critic’s boundaries with semantic transitions is larger than the gain from making credit finer-grained at the token level: segment-level credit operates at positions where the state actually changes, while token-level credit operates mostly at positions where it does not. 
+
+ 
+ 
+ 
+ 
+ Gains concentrate on multi-hop questions. 
+
+ 
+
+ 
+ Per-dataset CARL gains over Search-R1 PPO at 7B are +5.1 on HotpotQA, +6.6 on 2WikiMQA, and +8.3 on Musique. The Musique gain, on a 3–4 hop fully held-out benchmark, is the largest. The pattern repeats and amplifies at 3B: +10.2, +12.6, and +9.0 respectively, with the average 3B gain on these three search datasets (+10.6) running  1.6 × 1.6\times  the corresponding 7B gain (+6.7) (Appendix  J ). Smaller models benefit disproportionately, consistent with the abstract’s claim that knowing when to ask matters most when parametric memory is small (Appendix  J  decomposes this scaling asymmetry into three contributing mechanisms). SFT lifts in-domain HotpotQA and 2WikiMQA over the prompting ceiling (+2–6 EM at both scales) but does not transfer: it regresses on FinQA and is essentially neutral on Musique, suggesting that imitation captures successful patterns but not selective tool use. 
+
+ 
+ 
+ 
+ 
+ Tool-use efficiency improves substantially. 
+
+ 
+
+ 
+ At 7B on the three PPO-comparable datasets, CARL averages 1,614 tokens per episode versus 2,098 for Search-R1 PPO, a 23% reduction concentrated on the search tasks where calibrated  V ⁡ ( s 0 ) V(s_{0})  lets the model skip retrieval on Tier 2 questions 2 2 
+                 2 
+                
+                
+                
+              Tier 2 = answerable from parametric knowledge; Tier 1 = requires tool use to answer correctly. Definition: § 4.1  (35–36% fewer tokens on HotpotQA and 2WikiMQA). Musique tokens remain high ( − - 6%) because its questions are inherently Tier 1 and require retrieval at every hop. Per-episode tool-call counts (Appendix  E ) confirm that the reduction is driven by selective invocation. 
+
+ 
+ 
+ 
+ 
+ 
+ 4.4  How and Why CARL Works 
+
+ 
+
+ 
+ We next show that the critic learns what the model knows, and that this drives both faster training (Figure  2 b) and selective tool use (Figure  2 c, Table  3 ). 
+
+ 
+ 
+ 
+ Figure 2:  V ⁡ ( s 0 ) V(s_{0})  calibration drives faster training and emergent selectivity.  (a)  Calibration of  V ⁡ ( s 0 ) V(s_{0})  under three warm-up regimes (Appendix  H ).  (b)  Held-out accuracy across 500 PPO steps (4-dataset average). CARL surpasses Search-R1 PPO at step  ∼ {\sim} 100 (7B) /  ∼ {\sim} 150 (3B).  (c)  Tier 2 tool-use rate. CARL peaks then settles ( ∼ {\sim} 46% at 7B); Search-R1 PPO climbs monotonically toward 84–88%. 
+ 
+ 
+ A calibrated competence boundary. 
+
+ 
+
+ 
+ V ⁡ ( s 0 ) V(s_{0})  classifies Tier 1 from Tier 2 questions with AUC 0.93 at 7B and 0.85 at 3B (Figure  4 ; calibration shape in Figure  2 (a)). Calibration matters as well as ranking: random-data warm-up reaches AUC 0.72 but ECE 0.137, producing advantages that carry the right sign more often than the right magnitude. The critic also signs intermediate steps correctly:  V V  rises after successful extraction 79.4% of the time and drops when assimilation loses a surfaced answer (72.1%), a within-trajectory sign divergence that trajectory-level methods cannot produce (per-segment sign statistics in Appendix  I.1 , Table  12 ). 
+
+ 
+ 
+ 
+ Figure 3:  Qualitative analysis of the CARL critic on a compositional query.  The same prompt elicits distinct critic behaviour at each scale ( V ⁡ ( s 0 ) V(s_{0}) : 3B = 0.32, 7B = 0.71).  (i)  A search raises  V V  at 3B but not 7B, which already knows the answer.  (ii)  Faithful extraction raises  V V ; a unit-error extraction lowers it, showing opposing signs within one trajectory.  (iii)  At 7B, calculator use earns  V ↑ V{\uparrow}  while mental math earns  V ↓ V{\downarrow} . All advantages arise from binary reward alone. 
+ 
+ 
+ 
+ Calibration drives faster training. 
+
+ 
+
+ 
+ Once explained variance crosses 0.60 (around step  ∼ {\sim} 100 at 7B,  ∼ {\sim} 150 at 3B), CARL pulls ahead of Search-R1 PPO (Figure  2 (b)) and the gap widens monotonically. Before this point, segment-level advantages are noisy enough that token-level credit performs comparably; after it, they reliably point in the right direction. Explained variance rises from 0.52 after warm-up to 0.79 at convergence (Appendix  I.2 , Table  13 ). Warm-up amplifies the gap monotonically: CARL leads Search-R1 PPO at every warm-up level (cold, random, curated), and the margin grows from  + 1.5 +1.5  to  + 5.1 +5.1  EM on HotpotQA at 7B as calibration improves (Appendix  H ). 
+
+ 
+ 
+ 
+ Table 3:  Tool-use selectivity at convergence (Qwen2.5-7B), evaluated over Tier 2 questions from HotpotQA, 2WikiMQA, and Musique ( ∼ \sim 370 questions total). These are the three datasets where Search-R1 was trained in its public release, so all comparisons are apples-to-apples. Tier 1 tool rate confirms CARL still invokes tools when needed. Tier 2 tool rate measures unnecessary tool calls. Tier 2 EM measures accuracy on these questions, regardless of whether the method invoked tools. 
+ 
+ 
+ 
+ Method 
+ Tier 1 tool rate 
+ Tier 2 tool rate 
+ Tier 2 EM 
+ 
+ 
+ 
+ CoT+Tools (always) 
+ 100.0% 
+ 100.0% 
+ 72.4 
+ 
+ Search-R1 GRPO 
+ 96.2% 
+ 87.5% 
+ 75.1 
+ 
+ Search-R1 PPO 
+ 95.4% 
+ 82.6% 
+ 77.2 
+ 
+ CARL (ours) 
+ 97.8% 
+ 38.6% 
+ 87.0 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Calibration drives emergent selectivity. 
+
+ 
+
+ 
+ Because  V ⁡ ( s 0 ) V(s_{0})  is high on Tier 2 questions, the invoke advantage on those questions is small by construction, and the policy receives a stronger gradient from answering directly. This is the mechanism producing the gap in Figure  2 (c) and the convergence numbers in Table  3 : at 7B, CARL invokes tools on 38.6% of Tier 2 questions versus 87.5% for Search-R1 GRPO, despite using no explicit uncertainty heuristic, indicating that selectivity emerges from  V ⁡ ( s 0 ) V(s_{0}) , a learned competence estimate. Despite calling tools far less often, CARL achieves 87.0 Tier 2 EM compared to 77.2 for Search-R1 PPO and 75.1 for GRPO, achieving fewer tool calls and higher accuracy on the same questions. CARL also reduces hallucination on Tier 1 questions, where  V ⁡ ( s 0 ) V(s_{0})  consistently routes to tool use rather than fabrication (Appendix  N ). 
+
+ 
+ 
+ 
+ The 3B selectivity peak is higher and later because the less sharp  V ⁡ ( s 0 ) V(s_{0})  (AUC 0.85) provides less counter-pressure; 3B gains exceed 7B at every hop count (Appendix  M ,  J ). 
+
+ 
+ 
+ 
+ 
+ 
+ 4.5  What Bounds CARL’s Gains 
+
+ 
+
+ 
+ Manual analysis on Musique (Appendix  F ) finds that 48% of CARL’s remaining errors trace to irrelevant BM25 retrieval, with another 14% to query formulation; combined, retrieval-side failures account for 62% of remaining errors, with the dominant category (irrelevant retrieval) stable across hop counts (47–50%). Replacing BM25 with a commercial search API (Appendix  G ) lifts CARL’s Musique accuracy from 30.4 to 45.0 EM, bringing a 7B open-weight model into the range typically reported for substantially larger models on Musique. These results suggest retrieval quality, not the credit-assignment method, sets the ceiling on Musique. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Limitations 
+
+ 
+
+ 
+ Warm-up cost.  Segment-level credit requires a reasonably calibrated critic before PPO. Our warm-up procedure (§ 3.3 ) mitigates the cold-start problem, but an initial training phase, during which the critic learns from base-model rollouts without policy updates, remains an inherent overhead. Moreover, the warm-up ablation (Appendix  H ) shows the benefit of curated warm-up scales with model size: at 3B even random-data warm-up suffices for CARL to lead Search-R1 PPO, while at 7B curated warm-up is needed to realize the full  + 5.1 +5.1  EM margin (Appendix  H  Table  9 ); CARL still leads at every warm-up level, but the margin shrinks from  + 5.1 +5.1  to  + 1.5 +1.5  EM as warm-up degrades. 
+
+ 
+ 
+ 
+ Segment granularity.  All tokens within a segment share one advantage value, so intra-segment variation (e.g., a partly useful extraction) is not captured; credit is uniform within each segment even when individual tokens contribute unequally. 
+
+ 
+ 
+ 
+ Computational overhead.  Each tool call adds two segments and corresponding critic forward passes. Current serving stacks (vLLM, TGI, SGLang) are optimized for uninterrupted decode-to-EOS and do not natively support mid-generation pause, K/V cache surgery, or synchronous tool calls, so segment boundaries currently require per-segment round-trips and partial re-prefill. This is an engineering gap in the serving layer rather than a methodological one, and we expect it to narrow as inference engines add first-class tool-call primitives. 
+
+ 
+ 
+ 
+ 
+ 6  Conclusion 
+
+ 
+
+ 
+ Tool-use trajectories have structurally observable boundaries that pure reasoning trajectories lack. CARL exploits this structure: a critic trained on the model’s own rollouts turns binary outcome reward into per-segment advantages grounded in the SMDP Bellman equation, giving each tool interaction its own credit without external judges or step-level annotations. The result is a model that learns not just  how  to use tools but  when , issuing fewer unnecessary calls, formulating better queries, and extracting more faithfully, with gains concentrating on multi-hop tasks where credit assignment is hardest. 
+
+ 
+ 
+ 
+ Several directions follow naturally. The invoke/assimilate/commit decomposition applies unchanged to richer tool ecosystems (code execution, API calls, multi-agent coordination) where trajectory-level credit becomes even less informative. The competence boundary encoded in  V ⁡ ( s 0 ) V(s_{0})  could serve as a routing signal at inference time, dispatching to specialized tools or larger models only when predicted success probability is low. More broadly, our finding that smaller models benefit disproportionately suggests that segment-level credit assignment is a practical alternative to scaling parametric memory for tail-distribution knowledge, particularly relevant for resource-constrained settings such as on-device assistants and local coding agents where smaller models with strong tool-use behavior offer a viable alternative to API-bound large models. 
+
+ 
+ 
+ 
+ 
+ 

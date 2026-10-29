@@ -1,0 +1,95 @@
+{
+  "total_count": 1,
+  "incomplete_results": false,
+  "items": [
+    {
+      "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/778",
+      "repository_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni",
+      "labels_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/778/labels{/name}",
+      "comments_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/778/comments",
+      "events_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/778/events",
+      "html_url": "https://github.com/ByteDance-Seed/VeOmni/pull/778",
+      "id": 4498497778,
+      "node_id": "PR_kwDOOQA4gs7eItCH",
+      "number": 778,
+      "title": "[model, data, ci] refactor: collapse multimodal metadata to a single grid_thw key",
+      "user": {
+        "login": "TimYangst",
+        "id": 4544577,
+        "node_id": "MDQ6VXNlcjQ1NDQ1Nzc=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/4544577?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/TimYangst",
+        "html_url": "https://github.com/TimYangst",
+        "followers_url": "https://api.github.com/users/TimYangst/followers",
+        "following_url": "https://api.github.com/users/TimYangst/following{/other_user}",
+        "gists_url": "https://api.github.com/users/TimYangst/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/TimYangst/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/TimYangst/subscriptions",
+        "organizations_url": "https://api.github.com/users/TimYangst/orgs",
+        "repos_url": "https://api.github.com/users/TimYangst/repos",
+        "events_url": "https://api.github.com/users/TimYangst/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/TimYangst/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "labels": [
+        {
+          "id": 9790128608,
+          "node_id": "LA_kwDOOQA4gs8AAAACR4mB4A",
+          "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/labels/ci",
+          "name": "ci",
+          "color": "86ef35",
+          "default": false,
+          "description": "",
+          "archived_at": null,
+          "archived_by": null
+        }
+      ],
+      "state": "closed",
+      "locked": false,
+      "assignees": [
+
+      ],
+      "milestone": null,
+      "comments": 0,
+      "created_at": "2026-05-21T23:11:04Z",
+      "updated_at": "2026-05-22T05:15:27Z",
+      "closed_at": "2026-05-22T05:15:26Z",
+      "assignee": null,
+      "author_association": "COLLABORATOR",
+      "issue_field_values": [
+
+      ],
+      "type": null,
+      "active_lock_reason": null,
+      "draft": false,
+      "pull_request": {
+        "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/pulls/778",
+        "html_url": "https://github.com/ByteDance-Seed/VeOmni/pull/778",
+        "diff_url": "https://github.com/ByteDance-Seed/VeOmni/pull/778.diff",
+        "patch_url": "https://github.com/ByteDance-Seed/VeOmni/pull/778.patch",
+        "merged_at": "2026-05-22T05:15:26Z"
+      },
+      "body": "### What does this PR do?\r\n\r\nFollow-up to #772 (multimodal forward metadata precompute). Addresses two\r\nreview TODOs from that PR: the redundant dual representation of the grid\r\nmetadata, and the per-modality `vit_*` kwarg threading.\r\n\r\n**Item 1 — single key, no per-sample list sidecar.**\r\nPreviously the data transform called `per_sample_metadata()` to `.tolist()`\r\neach sample's `image_grid_thw` / `video_grid_thw` CPU tensor into a parallel\r\n`*_grid_thw_list` Python list, and `PackingCollator` special-cased flattening\r\nthose lists across the batch — a second representation of information already\r\ncarried by the `*_grid_thw` tensors. Now:\r\n\r\n- `veomni/data/mm_metadata.py` is deleted. `per_sample_metadata` is gone;\r\n  `merge_position_id_returns` is inlined into `data_transform.py` as a plain\r\n  `position_ids` copy.\r\n- The `_process_sample_qwen_vl_base` / `process_sample_qwen_omni` transforms\r\n  emit only the HF processor's `image_grid_thw` / `video_grid_thw` CPU\r\n  tensors — which already flow through the collator via the existing\r\n  `DataCollateInfo` (`pack_dim=0` `torch.cat`).\r\n- `PackingCollator` drops the `*_grid_thw_list` special-case flatten.\r\n- Each model's `collate_multimodal_metadata` hook reads the packed\r\n  `batch[\"image_grid_thw\"]` tensor and does `.tolist()` once (CPU, inside the\r\n  dataloader worker — no host-device sync). The grid tensor stays in the\r\n  batch as the HF `get_image_features` arg; the hook only reads it.\r\n\r\n**Item 2 — one `vit_metadata` sub-dict instead of 3 kwargs.**\r\nPreviously `Model.forward` unpacked `multimodal_metadata` into 3 separate\r\nper-modality kwargs (`vit_grid_thw_list` / `vit_cu_seqlens` / `vit_max_seqlen`)\r\nthreaded to `get_image_features` / `get_video_features` → `ViT.forward`. Now\r\n`Model.forward` bundles them into one `vit_metadata` sub-dict per modality;\r\n`ViT.forward` pops the single `vit_metadata` kwarg. `dummy_forward` (FSDP\r\npath) builds the same sub-dict. `qwen2_5_vl` / `qwen2_5_omni` (fallback-only,\r\nwindow-attention ViT) drain it with one `pop`.\r\n\r\nThe `multimodal_metadata` top-level dict contract is unchanged.\r\n\r\n### Checklist Before Starting\r\n\r\n- Follow-up to #772 (\"Follow-up TODO\" items 1 + 2).\r\n- PR title follows `[{modules}] {type}: {description}` format.\r\n\r\n### Test\r\n\r\nValidated on an A100 worker:\r\n\r\n- `pytest tests/models/test_model_forward_no_implicit_sync.py` — sync gate,\r\n  **8/8 PASSED**. The allowlist is AST-function-keyed, so the line shifts from\r\n  regeneration don't matter; observed-sync counts are unchanged (the precompute\r\n  fast path and the runtime fallback both behave as before). This PR also adds\r\n  a `qwen3_5_vl-sdpa` case to the gate: the existing qwen3_5 cases are\r\n  text-only sub-configs that never reach the vision tower, so the qwen3_5-family\r\n  ViT precompute consumer was previously ungated.\r\n- `pytest tests/models/test_models_logits_equal_v5.py -k qwen` — **16/16\r\n  PASSED**, no numeric regression across the qwen2.5 / qwen3 multimodal lineage.\r\n- `pytest tests/data/test_mm_metadata.py` — **4/4 PASSED** (rewritten for the\r\n  collator-hook protocol: hook handoff, `preforward` nested-dict device move,\r\n  hook picklability + temporal-unroll correctness).\r\n- `make quality` — passes.\r\n- `python -m veomni.patchgen.check_patchgen` — all generated files in sync.\r\n\r\n### API and Usage Example\r\n\r\nNo public API change. Internal:\r\n\r\n- `ViT.forward` now takes a single optional `vit_metadata` dict kwarg instead\r\n  of 3 `vit_*` kwargs. All optional, all with runtime fallback.\r\n- `veomni/data/mm_metadata.py` removed; its `per_sample_metadata` /\r\n  `merge_position_id_returns` helpers are gone (the first deleted, the second\r\n  inlined).\r\n\r\nThe full producer/consumer contract is in `.agents/knowledge/multimodal_metadata.md`.\r\n\r\n### Design & Code Changes\r\n\r\n- `veomni/data/mm_metadata.py` — **deleted**.\r\n- `veomni/data/data_transform.py` — transforms emit `*_grid_thw` tensors +\r\n  `position_ids` (inlined); no `per_sample_metadata` / `merge_position_id_returns`.\r\n- `veomni/data/data_collator.py` — `PackingCollator` drops the `*_grid_thw_list`\r\n  flatten special-case.\r\n- `veomni/models/transformers/{qwen3_vl,qwen3_vl_moe,qwen3_5,qwen3_5_moe,qwen3_omni_moe}/*_gpu_patch_gen_config.py`\r\n  — `collate_multimodal_metadata` reads the packed grid tensor; `Model.forward`\r\n  builds the `vit_metadata` sub-dict; `ViT.forward` / `dummy_forward` consume it.\r\n- `veomni/models/transformers/{qwen2_5vl,qwen2_5_omni}/*_gpu_patch_gen_config.py`\r\n  — drain the renamed `vit_metadata` kwarg (fallback-only).\r\n- All affected `generated/` files regenerated via patchgen.\r\n- `tests/data/test_mm_metadata.py` — rewritten for the collator-hook protocol.\r\n- `tests/models/test_model_forward_no_implicit_sync.py` — added the\r\n  `qwen3_5_vl-sdpa` case so the qwen3_5-family ViT is gated for syncs\r\n  (SDPA because FA2 NaNs on the qwen3_5 toy config; ViT metadata syncs are\r\n  attention-implementation-independent). Two allowlist entries: the non-FA\r\n  `Qwen3_5VisionAttention.forward` varlen split (`HF-eager-only` — production\r\n  uses FA2) and `get_rope_index` (algorithm-essential mrope).\r\n- `.agents/knowledge/multimodal_metadata.md` — rewritten for the single-key\r\n  contract; added an \"Adding the hook to a new model\" checklist.\r\n- `.agents/skills/veomni-new-model/SKILL.md` + `veomni-migrate-transformers-v5/SKILL.md`\r\n  — added the multimodal-metadata-hook checklist.\r\n\r\n### Follow-up work (not in this PR)\r\n\r\n- Wire `qwen2_vl` (no metadata hook yet).\r\n- Full `qwen2_5_vl` / `qwen2_5_omni` ViT integration — their window-attention\r\n  layout derives `cu_window_seqlens` from `get_window_index` (config-dependent),\r\n  so the hook needs a `partial(..., window_size=...)`; needs GPU\r\n  `logits_equal_v5` verification.\r\n\r\n### Checklist Before Submitting\r\n\r\n- [x] Read the [Contribute Guide](https://github.com/ByteDance-Seed/VeOmni/blob/main/CONTRIBUTING.md)\r\n- [x] Applied pre-commit checks\r\n- [x] Added/updated documentation (`.agents/knowledge/multimodal_metadata.md` + 2 skills)\r\n- [x] Added tests to CI workflow (`tests/data/test_mm_metadata.py` rewritten; sync gate + logits_equal_v5 already wired into `gpu_unit_tests_v5`)\r\n",
+      "reactions": {
+        "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/778/reactions",
+        "total_count": 1,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 1
+      },
+      "timeline_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/778/timeline",
+      "performed_via_github_app": null,
+      "state_reason": null,
+      "score": 1.0
+    }
+  ],
+  "search_type": "lexical"
+}

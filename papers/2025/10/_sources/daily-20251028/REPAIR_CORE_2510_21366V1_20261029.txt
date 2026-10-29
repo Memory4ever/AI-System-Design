@@ -1,0 +1,1312 @@
+BADiff: Bandwidth Adaptive Diffusion Model
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Diffusion Models
+2.2 Accelerated Sampling of Diffusion Models
+2.3 Conditional and Controllable Diffusion Models
+3 BADiff
+3.1 Background: Diffusion Models
+3.2 Entropy–Conditioned Diffusion Model
+3.3 Entropy Regularization Loss
+Differentiable neural entropy predictor.
+Self-supervised calibration of EϕE_{\phi}.
+3.4 Adaptive Sampling Policy
+Policy network.
+Supervised self–distillation.
+Inference procedure.
+3.5 Training and Sampling
+4 Experiments
+4.1 Experimental Setup
+4.2 Quantitative Results
+4.3 Inference Speed
+4.4 Ablation Study
+4.5 Scaling to High-Resolution Images
+4.6 Extension to Text-to-Image Models
+4.7 Teacher Label Generation
+5 Conclusion
+References
+A Theoretical Justification of Entropy-Constrained Diffusion Models
+A.1 Standard Reverse Diffusion Formulation
+A.2 Entropy-Constrained Reverse Diffusion Derivation
+A.3 Interpretation as Regularized Reverse Process
+B Gradient Analysis of Entropy Loss
+Gradient Derivation.
+Interpretation.
+C Robustness to Entropy Predictor Approximation
+D Complexity Analysis
+Step Complexity.
+Entropy Modules.
+Memory Usage.
+Latency Scaling.
+Summary.
+E Implementation Details
+Training schedule.
+Optimizer and scheduler.
+Sampling parameters.
+Hardware and software.
+Codec baselines.
+F Model Architectures
+UNet Backbone.
+Entropy Embedding MLP.
+Stopping Policy Network.
+Differentiable Entropy Predictor EϕE_{\phi}.
+G Hyperparameters
+H Broader Impacts
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.21366v1 [cs.CV] 24 Oct 2025
+BADiff: Bandwidth Adaptive Diffusion Model
+Xi Zhang
+Email: xi.zhang@ntu.edu.sg
+Hanwei Zhu
+Email: wslin@ntu.edu.sg
+Yan Zhong
+Jiamang Wang
+Affiliation: Alibaba Group
+Weisi Lin
+Nanyang Technological University
+Abstract
+In this work, we propose a novel framework to enable diffusion models to adapt their generation quality based on real-time network bandwidth constraints. Traditional diffusion models produce high-fidelity images by performing a fixed number of denoising steps, regardless of downstream transmission limitations. However, in practical cloud-to-device scenarios, limited bandwidth often necessitates heavy compression, leading to loss of fine textures and wasted computation. To address this, we introduce a joint end-to-end training strategy where the diffusion model is conditioned on a target quality level derived from the available bandwidth. During training, the model learns to adaptively modulate the denoising process, enabling early-stop sampling that maintains perceptual quality appropriate to the target transmission condition. Our method requires minimal architectural changes and leverages a lightweight quality embedding to guide the denoising trajectory. Experimental results demonstrate that our approach significantly improves the visual fidelity of bandwidth-adapted generations compared to naive early-stopping, offering a promising solution for efficient image delivery in bandwidth-constrained environments.
+Code is available at: https://github.com/xzhang9308/BADiff.
+††footnotetext:
+Corresponding authors.
+1 Introduction
+Diffusion models [15, 47, 17, 41, 44] have recently demonstrated remarkable capabilities in synthesizing high-quality images, significantly surpassing previous generative approaches such as GANs [12, 40, 2, 21]
+and VAEs [23, 42, 14, 51]. Despite their impressive fidelity, deploying diffusion models in realistic cloud-to-user applications introduces a fundamental bottleneck: transmission bandwidth. In conventional scenarios, generated images undergo aggressive lossy compression [49, 50, 4, 48, 1, 5, 37, 35, 61, 58] before transmission to accommodate limited bandwidth. This cascaded approach—high-quality image generation followed by subsequent compression—not only incurs redundant computational overhead but also significantly degrades perceptual quality, as the compression process often erases the intricate textures and fine details [26, 9, 59, 60, 8, 27, 18, 52] carefully constructed by the diffusion model.
+This motivates a critical question: Can we directly integrate bandwidth-awareness into the diffusion generation process, avoiding the inefficiency and perceptual quality loss associated with post-generation compression? Diffusion models inherently provide a natural mechanism for addressing this challenge. During sampling, these models progressively refine coarse structures into detailed, realistic textures through iterative denoising steps. Thus, intuitively, terminating the diffusion process early results in simpler, lower-detail images suitable for constrained bandwidth scenarios. However, naively reducing the number of diffusion steps typically produces suboptimal visual quality, as models trained for complete denoising trajectories are not optimized for early termination, leading to visual artifacts and poor perceptual coherence.
+Figure 1: Comparison of traditional diffusion + compression pipeline (top) and the proposed BADiff framework (bottom). BADiff directly generates entropy-constrained images suitable for bandwidth-limited transmission, avoiding quality degradation in post-generation compression and unnecessary computation.
+To effectively address this issue, we propose the Bandwidth-Adaptive Diffusion Model (BADiff), a novel diffusion model explicitly conditioned on target bandwidth constraints, formulated as entropy targets. By embedding target entropy as an explicit conditioning input, our approach enables the diffusion model to adaptively modulate its denoising behavior. During training, the model is exposed to variable entropy constraints, allowing it to produce perceptually pleasing images even under reduced-step sampling. Furthermore, an entropy regularization loss ensures the generated images adhere closely to the bandwidth constraints, obviating the need for aggressive post-hoc compression.
+As illustrated in Figure 1, the conventional diffusion pipeline relies on lossy compression to meet bandwidth constraints, often degrading visual quality, whereas our proposed BADiff framework directly generates entropy-constrained outputs suitable for transmission without compromising perceptual fidelity.
+Our proposed BADiff framework provides several advantages over existing cascaded and naive early-stopping approaches. First, it significantly reduces computational overhead by adaptively terminating sampling, ensuring efficient inference. Second, by directly generating images meeting bandwidth constraints, BADiff avoids compression-induced artifacts, thus preserving perceptual quality. Third, our framework provides fine-grained, dynamic control over image quality based on real-time bandwidth conditions, enhancing deployment flexibility in practical cloud-to-user applications.
+We validate the effectiveness of BADiff through extensive experiments comparing our method to strong baselines, including standard diffusion models with post-generation compression and naive early-stopping approaches. Our results demonstrate that BADiff consistently achieves superior trade-offs among perceptual quality, computational efficiency, and bandwidth efficiency, underscoring the advantage of integrating bandwidth-awareness directly into the generative modeling process.
+Our main contributions can be summarized as follows:
+•
+We introduce BADiff, the first bandwidth-adaptive diffusion model explicitly conditioned on target entropy constraints, directly addressing image synthesis for bandwidth-constrained transmission.
+•
+We propose an entropy conditioning mechanism integrated into diffusion models, coupled with an entropy regularization loss, allowing adaptive and efficient generation under diverse bandwidth constraints.
+•
+We develop an adaptive sampling policy that dynamically determines optimal sampling termination, significantly reducing computational cost while preserving image quality.
+•
+Through extensive evaluations, we demonstrate BADiff’s superior performance in perceptual quality, computational efficiency, and adherence to bandwidth constraints compared to conventional cascaded diffusion ++ compression pipelines.
+2 Related Work
+2.1 Diffusion Models
+Diffusion models have recently gained significant attention due to their remarkable ability to generate high-quality images, surpassing traditional generative models such as GANs [12] and VAEs [23]. The foundational work of Ho et al. [15] introduced Denoising Diffusion Probabilistic Models (DDPMs), formalizing diffusion models as a parameterized Markov chain trained by variational inference to invert a gradual noising process. Song et al. [47] further generalized the framework through Score-based Generative Models (SGMs), which unify diffusion models and score-matching approaches under a continuous-time stochastic differential equation (SDE) framework. Recent works have extended diffusion models to various tasks beyond image synthesis, including video generation [17], text-to-image generation [41, 44], and 3D synthesis [39].
+2.2 Accelerated Sampling of Diffusion Models
+Despite their high-quality outputs, diffusion models are computationally expensive due to the iterative sampling procedure required during generation. To mitigate this issue, substantial efforts have been made toward accelerating diffusion model sampling. DDIM [46] introduced deterministic sampling methods enabling fewer inference steps, significantly reducing computation. Further advances, including DPM-Solver [32] and FastDPM [24], have employed numerical methods inspired by ordinary differential equations (ODEs) to shorten sampling times substantially while preserving generation quality.
+PNDM [30] introduces a pseudo–numerical solver that treats the reverse diffusion ODE with high-order Runge–Kutta–style updates, enabling high-fidelity image generation in as few as four forward passes.
+Knowledge distillation based methods [45, 34] reduce sampling steps by distilling knowledge from slower teacher models into faster student models.
+Alternative approaches involve adaptive step size selection [19] or latent space compression [43] to reduce computational overhead. AutoDiffusion [28] further accelerates sampling via non-uniform step skipping.
+Unlike prior methods that optimize scheduling or model architecture, DDSM [53] introduces dynamic U-Net pruning to minimize redundant computations at each step. This approach is complementary to existing acceleration techniques. Related works include OMS-DPM [29], which optimizes model scheduling via predictor-based algorithms, and Spectral Diffusion [54], which employs dynamic gating for efficiency. While eDiff-I [3] uses multiple fixed-size expert models, StepSaver [56] proposes a step predictor to determine the minimal denoising steps required for high-quality generation, further improving efficiency.
+Moreover, adaptive methods such as ADEPT [31] dynamically adjust inference trajectories, further enhancing efficiency by selectively allocating computational resources during sampling based on intermediate outputs.
+2.3 Conditional and Controllable Diffusion Models
+Diffusion models inherently provide powerful frameworks for conditional and controllable generation. Classifier-guided diffusion [11] utilizes gradients from auxiliary classifiers to steer the generative process toward desired attributes. However, training classifiers separately is often cumbersome and computationally expensive. Classifier-free guidance [16] resolves this issue by training diffusion models on conditional and unconditional inputs simultaneously, enabling flexible attribute control without additional classifiers. Latent diffusion models (LDMs) [43] further enhance controllability and computational efficiency by conditioning generation in latent spaces. Recent approaches like RePaint [33] have explored numerical control, such as region-based conditioning, to edit images interactively, although they do not directly address bandwidth constraints or entropy-aware generation. Our proposed BADiff model differs by conditioning generation directly on entropy constraints, enabling explicit control over the generated image’s compressibility and perceptual quality.
+3 BADiff
+We propose BADiff (Bandwidth-Adaptive Diffusion), a conditional diffusion framework that integrates bandwidth constraints, formulated as target entropy values, into the diffusion sampling process. BADiff aims to dynamically modulate generation to satisfy entropy constraints during generation, thus eliminating the need for post-hoc compression while saving computational cost.
+3.1 Background: Diffusion Models
+A diffusion model is built upon two complementary stochastic processes: a forward diffusion process that incrementally adds Gaussian noise to data samples, and a learned reverse denoising process that progressively removes noise to reconstruct the original data.
+Formally, given a clean data sample 𝐱0∼pdata​(𝐱0)\mathbf{x}_{0}\sim p_{\text{data}}(\mathbf{x}_{0}), the forward diffusion process is defined by a fixed Markov chain that sequentially corrupts the data by adding Gaussian noise across TT timesteps:
+|
+q(𝐱t∣𝐱t−1)=𝒩(𝐱t;αt𝐱t−1,(1−αt)𝐈),t=1,2,…,T,q(\mathbf{x}_{t}\mid\mathbf{x}_{t-1})=\mathcal{N}(\mathbf{x}_{t};\sqrt{\alpha_{t}}\,\mathbf{x}_{t-1},(1-\alpha_{t})\mathbf{I}),\quad t=1,2,\dots,T, |
+|
+(1) |
+where {αt}t=1T\{\alpha_{t}\}_{t=1}^{T} is a predefined noise schedule controlling the amount of noise introduced at each step. Typically, this schedule gradually increases the noise level, eventually leading to a latent distribution close to an isotropic Gaussian distribution p⁡(𝐱T)≈𝒩⁡(0,𝐈)p(\mathbf{x}_{T})\approx\mathcal{N}(0,\mathbf{I}).
+The reverse process seeks to invert the forward process by iteratively denoising the noisy latent variables. Specifically, diffusion models parameterize the reverse conditional distribution using a neural network, typically a U-Net architecture, trained to approximate the posterior distribution q⁡(𝐱t−1∣𝐱t,𝐱0)q(\mathbf{x}_{t-1}\mid\mathbf{x}_{t},\mathbf{x}_{0}):
+|
+pθ​(𝐱t−1∣𝐱t)=𝒩⁡(𝐱t−1,𝝁θ​(𝐱t,t),𝚺θ​(𝐱t,t)),p_{\theta}(\mathbf{x}_{t-1}\mid\mathbf{x}_{t})=\mathcal{N}(\mathbf{x}_{t-1};\boldsymbol{\mu}_{\theta}(\mathbf{x}_{t},t),\boldsymbol{\Sigma}_{\theta}(\mathbf{x}_{t},t)), |
+|
+(2) |
+where the neural network with parameters θ\theta predicts the mean 𝝁θ\boldsymbol{\mu}_{\theta} (and optionally the covariance 𝚺θ\boldsymbol{\Sigma}_{\theta}). By iteratively sampling from this learned reverse distribution starting from pure noise, the diffusion model is capable of synthesizing novel data points from the learned data distribution.
+In practice, instead of directly predicting the mean 𝝁θ\boldsymbol{\mu}_{\theta}, diffusion models commonly predict the noise component added at each timestep. Training thus involves minimizing the discrepancy between the predicted noise and the true noise added during the forward process. This training objective is formalized as follows:
+|
+ℒdenoise=𝔼𝐱0,t,ϵ​[‖ϵ−ϵθ​(𝐱t,t)‖22],\mathcal{L}_{\text{denoise}}=\mathbb{E}_{\mathbf{x}_{0},t,\boldsymbol{\epsilon}}\left[\|\boldsymbol{\epsilon}-\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t},t)\|_{2}^{2}\right], |
+|
+(3) |
+where ϵ∼𝒩⁡(0,𝐈)\boldsymbol{\epsilon}\sim\mathcal{N}(0,\mathbf{I}) is the sampled Gaussian noise, and the noisy sample 𝐱t\mathbf{x}_{t} at timestep tt can be efficiently computed using the reparameterization trick:
+|
+𝐱t=α¯t​𝐱0+1−α¯t​ϵ,\mathbf{x}_{t}=\sqrt{\bar{\alpha}_{t}}\,\mathbf{x}_{0}+\sqrt{1-\bar{\alpha}_{t}}\,\boldsymbol{\epsilon}, |
+|
+(4) |
+with α¯t=∏s=1tαs\bar{\alpha}_{t}=\prod_{s=1}^{t}\alpha_{s}. By optimizing this objective, the model learns to accurately reverse the diffusion process, enabling high-quality image synthesis through iterative denoising.
+3.2 Entropy–Conditioned Diffusion Model
+In a standard DDPM, the reverse process refines noisy latents 𝐱t\mathbf{x}_{t} into a clean image 𝐱0\mathbf{x}_{0} through a Markov chain with Gaussian transitions
+pθ​(𝐱t−1∣𝐱t)=𝒩⁡(𝐱t−1,𝝁θ​(𝐱t,t),𝚺θ​(𝐱t,t))p_{\theta}(\mathbf{x}_{t-1}\!\mid\!\mathbf{x}_{t})=\mathcal{N}\!\bigl(\mathbf{x}_{t-1};\boldsymbol{\mu}_{\theta}(\mathbf{x}_{t},t),\boldsymbol{\Sigma}_{\theta}(\mathbf{x}_{t},t)\bigr).
+Such models ignore external resource constraints (e. g. bandwidth).
+BADiff enforces the constraint by conditioning every reverse step on a target
+entropy budget Htarget∈ℝ>0H_{\text{target}}\in\mathbb{R}_{>0}.
+Specifically, we extend the reverse kernel to
+|
+pθ​(𝐱t−1∣𝐱t,Htarget)=𝒩⁡(𝐱t−1,𝝁θ​(𝐱t,t,Htarget),𝚺θ​(𝐱t,t,Htarget)),p_{\theta}(\mathbf{x}_{t-1}\!\mid\!\mathbf{x}_{t},H_{\text{target}})=\mathcal{N}\!\Bigl(\mathbf{x}_{t-1}\,;\;\boldsymbol{\mu}_{\theta}(\mathbf{x}_{t},t,H_{\text{target}}),\;\boldsymbol{\Sigma}_{\theta}(\mathbf{x}_{t},t,H_{\text{target}})\Bigr), |
+|
+(5) |
+so that the predicted noise (or velocity) becomes
+ϵ^θ=ϵθ​(𝐱t,t,Htarget).\hat{\boldsymbol{\epsilon}}_{\theta}=\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t},t,H_{\text{target}}).
+A single scalar is not expressive enough for deep conditioning, therefore we map
+HtargetH_{\text{target}} into a dd–dimensional vector via a learned
+entropy embedding network
+|
+𝐡=ψη​(Htarget)∈ℝd,\mathbf{h}\;=\;\psi_{\eta}\!\bigl(H_{\text{target}}\bigr)\in\mathbb{R}^{d}, |
+|
+(6) |
+where
+ψη:ℝ→ℝd\psi_{\eta}\!:\mathbb{R}\!\to\!\mathbb{R}^{d}
+is an MLP with parameters η\eta.
+Throughout the paper we fix d=128d=128.
+Let 𝐠⁡(t)\mathbf{g}(t) be the usual sinusoidal timestep embedding.
+For every residual block ll of the UNet we form a hybrid modulation
+|
+𝐠l​(t,Htarget)=𝐠⁡(t)+𝐖(l)​𝐡,\mathbf{g}_{l}(t,H_{\text{target}})\;=\;\mathbf{g}(t)\;+\;\mathbf{W}^{(l)}\mathbf{h}, |
+|
+(7) |
+and add 𝐠l\mathbf{g}_{l} to the block’s activation just before the first
+convolution (equivalent to additive FiLM).
+Here 𝐖(l)∈ℝcl×d\mathbf{W}^{(l)}\!\in\!\mathbb{R}^{c_{l}\times d}
+is learned per-block and clc_{l} is the channel width.
+Consequently every output of the denoiser,
+ϵθ​(𝐱t,t,Htarget)\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t},t,H_{\text{target}}),
+is explicitly conditioned on the entropy budget.
+This design keeps the overhead negligible
+(<0.1%<0.1\% additional parameters) while giving the network a
+continuous control “dial” over the amount of detail it should recover,
+enabling BADiff to generate images whose bit-rate naturally matches
+the specified bandwidth.
+3.3 Entropy Regularization Loss
+Conditioning the reverse process on an entropy budget is necessary but not sufficient: the model could still output images whose empirical entropy
+††
+We use “entropy” as a shorthand for the expected code-length (bits-per-pixel) after an entropy–coding stage.
+exceeds the target.
+To make the constraint active during learning we attach an explicit penalty that is differentiable w.r.t. both the image and the network parameters.
+Let 𝐱^0=gθ​(𝐱t,t,Htarget)\hat{\mathbf{x}}_{0}=g_{\theta}(\mathbf{x}_{t},t,H_{\text{target}}) be
+the reconstructed clean sample predicted at time–step tt.
+We introduce
+|
+ℒentropy=max⁡(0,Hϕ​(𝐱^0)−Htarget),\mathcal{L}_{\text{entropy}}=\max\left(0,H_{\phi}(\hat{\mathbf{x}}_{0})-H_{\text{target}}\right), |
+|
+(8) |
+where Hϕ​(⋅)H_{\phi}(\cdot) is a differentiable neural entropy estimator
+parametrized by ϕ\phi and jointly optimized with θ\theta.
+The hinge form ensures that no gradient flows once the sample entropy is already below the budget, so the optimiser focuses on over-budget cases.
+Differentiable neural entropy predictor.
+In learned image compression [6, 38, 36], the entropy model predicts a pixel–wise
+conditional distribution
+pϕ​(xu|𝐜u)p_{\phi}\!\bigl(x_{u}\,\bigl|\,\mathbf{c}_{u}\bigr)
+given causal context 𝐜u\mathbf{c}_{u} (e.g. neighbouring pixels or a
+hyper-prior) and converts it to code-length via
+−log2⁡pϕ-\log_{2}p_{\phi}.
+We adopt the same principle for BADiff.
+For each spatial position u∈Ωu\in\Omega the entropy
+network EϕE_{\phi} outputs continuous parameters
+𝜽u=(𝝁u,𝝈u)\boldsymbol{\theta}_{u}=(\boldsymbol{\mu}_{u},\boldsymbol{\sigma}_{u})
+of a discretised logistic distribution
+[6]:
+|
+pϕ​(xu|𝐜u)=𝒟​ℒ​(xu,μ=μu,σ=σu).p_{\phi}\!\bigl(x_{u}\,\bigl|\,\mathbf{c}_{u}\bigr)=\mathcal{DL}\!\bigl(x_{u};\,\mu=\mu_{u},\;\sigma=\sigma_{u}\bigr). |
+|
+(9) |
+The expected code-length (bits-per-pixel) for an image 𝐱\mathbf{x} is therefore
+|
+Hϕ(𝐱)=−1|Ω|∑u∈Ωlog2pϕ(xu|𝐜u),H_{\phi}(\mathbf{x})\;=\;-\frac{1}{|\Omega|}\sum_{u\in\Omega}\!\log_{2}p_{\phi}\!\bigl(x_{u}\,\bigl|\,\mathbf{c}_{u}\bigr), |
+|
+(10) |
+which is fully differentiable w.r.t. both
+𝜽u\boldsymbol{\theta}_{u} and the upstream activations that
+determine 𝐜u\mathbf{c}_{u}; hence gradients flow into the UNet.
+Context extraction.
+We follow [6, 38] and construct
+𝐜u\mathbf{c}_{u} from two sources:
+(i) a hyper-prior 𝐳\mathbf{z} predicted by a lightweight
+conv-net over 𝐱\mathbf{x}, and
+(ii) an auto-regressive causal context of previously decoded pixels
+(realised as masked convolutions).
+Gradient properties.
+Because the discrete logistic PMF is analytically differentiable
+w.r.t. 𝝁u\boldsymbol{\mu}_{u} and 𝝈u\boldsymbol{\sigma}_{u},
+Eq. (10) supplies exact gradients:
+∇𝜽uHϕ​(𝐱)=−1ln⁡2​∇𝜽u​log⁡pϕ​(xu|𝐜u).\nabla_{\boldsymbol{\theta}_{u}}H_{\phi}(\mathbf{x})=-\tfrac{1}{\ln 2}\,\nabla_{\boldsymbol{\theta}_{u}}\log p_{\phi}\!\bigl(x_{u}\,|\,\mathbf{c}_{u}\bigr).
+Hence the entropy constraint is enforced end-to-end, unlike
+histogram-based surrogates that require straight-through tricks.
+Self-supervised calibration of EϕE_{\phi}.
+Although EϕE_{\phi} is trained jointly via the hinge loss
+ℒent\mathcal{L}_{\mathrm{ent}},
+it benefits from an auxiliary signal that anchors its probabilities to a
+known codec.
+To this end we derive pixel-wise targets
+qu​(k)q_{u}(k) from a reference end-to-end optimized image codec.
+We then minimize the spatially averaged cross–entropy
+|
+ℒcalibration=1|Ω|​∑u∈Ω∑k=1Kqu​(k)​[−log2⁡pϕ​(k|𝐜u)],\mathcal{L}_{\mathrm{calibration}}\;=\;\frac{1}{|\Omega|}\sum_{u\in\Omega}\sum_{k=1}^{K}q_{u}(k)\,\bigl[-\log_{2}p_{\phi}\!\bigl(k\,\bigl|\,\mathbf{c}_{u}\bigr)\bigr], |
+|
+(11) |
+which is equivalent (up to a constant) to the
+KL-divergence DKL(qu∥pϕ)\mathrm{D_{KL}}(q_{u}\parallel p_{\phi}).
+This term calibrates the logits toward realistic code-lengths without
+over-regularizing.
+Because HϕH_{\phi} is differentiable, the model learns a
+direct mapping from an entropy budget to the statistics of its output,
+which empirically accelerates convergence and yields tighter
+adherence to the target bandwidth than heuristic early stopping.
+3.4 Adaptive Sampling Policy
+Let τ∈{1,…,T}\tau\!\in\!\{1,\dots,T\} denote the (random) stopping time at which
+sampling terminates and the current latent 𝐱τ\mathbf{x}_{\tau}
+is decoded to the final image 𝐱^0\hat{\mathbf{x}}_{0}.
+Ideally we would like to choose τ\tau so as to minimise the
+total cost
+|
+𝒞⁡(τ)=ℰ⁡(𝐱^0)⏟entropy+β​𝒟​(𝐱^0,𝐱ref)⏟distortion+γ​τ⏟compute,\mathcal{C}(\tau)\;=\;\underbrace{\mathcal{E}\!\bigl(\hat{\mathbf{x}}_{0}\bigr)}_{\text{entropy}}\;+\;\underbrace{\beta\,\mathcal{D}\!\bigl(\hat{\mathbf{x}}_{0},\mathbf{x}_{\text{ref}}\bigr)}_{\text{distortion}}\;+\;\underbrace{\gamma\,\tau}_{\text{compute}}, |
+|
+(12) |
+where ℰ\mathcal{E} is the entropy predictor Hϕ​(⋅)H_{\phi}(\cdot),
+𝒟\mathcal{D} is a perceptual distortion
+(e.g. LPIPS to the reference 𝐱ref\mathbf{x}_{\text{ref}}),
+and β,γ>0\beta,\gamma\!>\!0 weigh quality vs. runtime.
+Brute–force evaluation at all tt is impossible during inference, so we
+approximate τ\tau with a lightweight classifier that decides
+on the fly whether to proceed.
+Policy network.
+We introduce a small MLP-based policy network
+fϕ:ℝd×ℕ×ℝ→[0,1]f_{\phi}:\mathbb{R}^{d}\!\times\!\mathbb{N}\!\times\!\mathbb{R}\!\to\![0,1]
+that outputs the stop - probability
+|
+pt=fϕ​(𝐡t,t,Htarget),𝐡t=1h​w​∑u∈Ω𝐱t​[u]∈ℝd,p_{t}\;=\;f_{\phi}\!\bigl(\mathbf{h}_{t},\,t,\,H_{\text{target}}\bigr),\qquad\mathbf{h}_{t}=\tfrac{1}{hw}\!\sum_{u\in\Omega}\!\mathbf{x}_{t}[u]\in\mathbb{R}^{d}, |
+|
+(13) |
+where 𝐡t\mathbf{h}_{t} is a spatial mean-pooled latent feature
+(h,wh,w are height/width, dd channels).
+Sampling continues iff a Bernoulli draw
+bt∼Bernoulli⁡(1−pt)b_{t}\sim\mathrm{Bernoulli}(1-p_{t}) returns 1.
+Thus the stopping time is
+τ=min⁡{t∣bt=0}∨1\tau=\min\{\,t\mid b_{t}=0\}\!\lor\!1.
+Supervised self–distillation.
+We generate teacher stop–labels offline:
+run a long-step sampler, measure the cost 𝒞⁡(t)\mathcal{C}(t) at each step
+and set
+|
+yt=[𝒞(t)≤mins≥t𝒞(s)].y_{t}=\mathbbm{1}\!\bigl[\,\mathcal{C}(t)\leq\min_{s\geq t}\mathcal{C}(s)\bigr]. |
+|
+(14) |
+Hence yt=1y_{t}\!=\!1 iff step tt is sufficient; earlier steps are labelled 00.
+The policy is trained jointly with BADiff via
+|
+ℒstop=𝔼t​[BCE⁡(yt,pt)],\mathcal{L}_{\text{stop}}\;=\;\mathbb{E}_{t}\!\bigl[\mathrm{BCE}(y_{t},\,p_{t})\bigr], |
+|
+(15) |
+where BCE\mathrm{BCE} is binary cross-entropy.
+Gradients back-propagate through ptp_{t} but not through
+the discrete Bernoulli sample (stop/no-stop), ensuring stable training.
+Inference procedure.
+During sampling we evaluate ptp_{t} at each step:
+if pt≥τthp_{t}\geq\tau_{\text{th}} (τth=0.5\tau_{\text{th}}=0.5 by default)
+we terminate and decode 𝐱t\mathbf{x}_{t};
+otherwise we proceed to t−1t\!-\!1.
+Because the policy is only a several layer MLP over
+𝐡t\mathbf{h}_{t} and (t,Htarget)(t,H_{\text{target}}),
+the additional runtime overhead is negligible (<0.3<0.3 ms per step on RTX 4090).
+Empirically (§4.3) BADiff stops about
+50% earlier on low-bandwidth budgets while
+keeping LPIPS and FID constant, demonstrating the benefit of the
+adaptive sampling policy.
+3.5 Training and Sampling
+The full BADiff objective merges four complementary loss terms:
+(i) the standard denoising loss from DDPM,
+(ii) the entropy hinge that enforces the bandwidth budget,
+(iii) a calibration loss that aligns the learned entropy model with
+a reference codec, and
+(iv) a stopping-policy loss that teaches the lightweight classifier
+when to terminate sampling.
+Formally,
+|
+ℒ=\displaystyle\mathcal{L}= |
+𝔼𝐱0,t,ϵ[∥ϵ−ϵθ(𝐱t,t,Htarget)∥22]⏟ℒdenoise+λent​max⁡(0,Hϕ​(𝐱^0)−Htarget)⏟ℒentropy\displaystyle\underbrace{\mathbb{E}_{\mathbf{x}_{0},t,\boldsymbol{\epsilon}}\!\Bigl[\!\bigl\lVert\boldsymbol{\epsilon}-\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t},t,H_{\text{target}})\bigr\rVert_{2}^{2}\Bigr]}_{\mathcal{L}_{\text{denoise}}}+\;\lambda_{\text{ent}}\,\underbrace{\max\!\bigl(0,H_{\phi}(\hat{\mathbf{x}}_{0})-H_{\text{target}}\bigr)}_{\mathcal{L}_{\text{entropy}}} |
+|
+(16) |
+|
+|
++λcal​1|Ω|∑u∈ΩDKL(qu∥pϕ(⋅|𝐜u))⏟ℒcalibration+λstop​𝔼t​[BCE⁡(yt,fϕ​(𝐱t,t,Htarget))]⏟ℒstop.\displaystyle+\;\lambda_{\text{cal}}\,\underbrace{\frac{1}{|\Omega|}\sum_{u\in\Omega}\!D_{\mathrm{KL}}\!\bigl(q_{u}\,\|\,p_{\phi}(\cdot\,|\,\mathbf{c}_{u})\bigr)}_{\mathcal{L}_{\text{calibration}}}+\;\lambda_{\text{stop}}\,\underbrace{\mathbb{E}_{t}\!\bigl[\mathrm{BCE}\bigl(y_{t},\,f_{\phi}(\mathbf{x}_{t},t,H_{\text{target}})\bigr)\bigr]}_{\mathcal{L}_{\text{stop}}}. |
+|
+During training we randomly draw
+Htarget∼𝒰⁡(Hmin,Hmax)H_{\text{target}}\!\sim\!\mathcal{U}(H_{\min},H_{\max})
+to expose the network to a broad range of bandwidth budgets, allowing it to
+generalise to unseen conditions.
+At test time a user-specified bitrate is converted to an entropy budget
+HtargetH_{\text{target}}.
+Conditioned on this value, BADiff starts from a Gaussian latent and runs the
+reverse process.
+After each step the policy network
+fϕ​(𝐱t,t,Htarget)f_{\phi}(\mathbf{x}_{t},t,H_{\text{target}})
+outputs a stop-probability; sampling terminates as soon as the probability
+exceeds a threshold τth\tau_{\text{th}} (0.5 by default).
+Algorithm 3.5 summarises the entropy-conditioned training loop for BADiff.
+Each iteration first draws a clean image 𝐱0\mathbf{x}_{0} and a random entropy budget
+HtargetH_{\text{target}}, corrupts the image to timestep tt,
+and lets the UNet predict the noise ϵ^θ\hat{\boldsymbol{\epsilon}}_{\theta}
+as well as a reconstruction 𝐱^0\hat{\mathbf{x}}_{0}.
+The total loss combines the usual denoising objective with an
+entropy penalty that encourages the reconstruction to respect the bandwidth constraint.
+During inference (Algorithm 3.5) we start from pure Gaussian noise
+and iteratively apply the reverse update conditioned on the same entropy target.
+A lightweight policy network fϕf_{\phi} monitors the latent at every step and
+terminates sampling as soon as the estimated entropy meets the budget,
+thereby saving computation while preserving perceptual quality.
+Algorithm 1 BADiff Training
+1:
+repeat
+2:
+𝐱0∼q⁡(𝐱0)\mathbf{x}_{0}\sim q(\mathbf{x}_{0})
+3:
+Htarget∼𝒰⁡(Hmin,Hmax)H_{\text{target}}\sim\mathcal{U}(H_{\min},H_{\max})
+4:
+t∼𝒰⁡{1,…,T},ϵ∼𝒩⁡(𝟎,𝐈)t\sim\mathcal{U}\{1,\dots,T\},\;\boldsymbol{\epsilon}\!\sim\!\mathcal{N}(\mathbf{0},\mathbf{I})
+5:
+𝐱t=α¯t​𝐱0+1−α¯t​ϵ\mathbf{x}_{t}=\sqrt{\bar{\alpha}_{t}}\mathbf{x}_{0}+\sqrt{1-\bar{\alpha}_{t}}\,\boldsymbol{\epsilon}
+6:
+ϵ^θ←ϵθ​(𝐱t,t,Htarget)\hat{\boldsymbol{\epsilon}}_{\theta}\leftarrow\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t},t,H_{\text{target}})
+7:
+𝐱^0←gθ​(𝐱t,t,Htarget)\hat{\mathbf{x}}_{0}\leftarrow g_{\theta}(\mathbf{x}_{t},t,H_{\text{target}})
+8:
+ℒden=∥ϵ−ϵ^θ∥22\mathcal{L}_{\textsc{den}}=\bigl\lVert\boldsymbol{\epsilon}-\hat{\boldsymbol{\epsilon}}_{\theta}\bigr\rVert_{2}^{2}
+9:
+ℒent=max⁡(0,Hϕ​(𝐱^0)−Htarget)\mathcal{L}_{\textsc{ent}}=\max\!\bigl(0,\,H_{\phi}(\hat{\mathbf{x}}_{0})-H_{\text{target}}\bigr)
+10:
+ℒcal=1|Ω|∑u∈ΩDKL(qu∥pϕ(⋅|𝐜u))\mathcal{L}_{\textsc{cal}}=\frac{1}{|\Omega|}\!\sum_{u\in\Omega}\!D_{\mathrm{KL}}\!\bigl(q_{u}\,\|\,p_{\phi}(\cdot\,|\,\mathbf{c}_{u})\bigr)
+11:
+Generate teacher label yty_{t}
+12:
+pt←fϕ​(𝐱t,t,Htarget)p_{t}\leftarrow f_{\phi}(\mathbf{x}_{t},t,H_{\text{target}})
+13:
+ℒstop=BCE⁡(yt,pt)\mathcal{L}_{\textsc{stop}}=\mathrm{BCE}\!\bigl(y_{t},\,p_{t}\bigr)
+14:
+ℒ=ℒden+ℒent+ℒcal+ℒstop\displaystyle\mathcal{L}=\mathcal{L}_{\textsc{den}}+\mathcal{L}_{\textsc{ent}}+\mathcal{L}_{\textsc{cal}}+\mathcal{L}_{\textsc{stop}}
+15:
+Update {θ,ϕ}←{θ,ϕ}−η∇(ℒ)\{\theta,\phi\}\!\leftarrow\!\{\theta,\phi\}-\eta\nabla(\mathcal{L})
+16:
+until converged
+|
+Algorithm 2 BADiff Sampling
+1:
+target entropy HtargetH_{\text{target}}
+2:
+𝐱T∼𝒩⁡(𝟎,𝐈)\mathbf{x}_{T}\sim\mathcal{N}(\mathbf{0},\mathbf{I})
+3:
+for t=T,…,1t=T,\dots,1 do
+4:
+ϵ^θ←ϵθ​(𝐱t,t,Htarget)\hat{\boldsymbol{\epsilon}}_{\theta}\leftarrow\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_{t},t,H_{\text{target}})
+5:
+𝐱t−1=1αt(𝐱t−1−αt1−α¯tϵ^θ)+σt𝐳,𝐳∼𝒩(𝟎,𝐈)𝟙{t>1}\displaystyle\mathbf{x}_{t-1}=\tfrac{1}{\sqrt{\alpha_{t}}}\bigl(\mathbf{x}_{t}-\tfrac{1-\alpha_{t}}{\sqrt{1-\bar{\alpha}_{t}}}\hat{\boldsymbol{\epsilon}}_{\theta}\bigr)+\sigma_{t}\mathbf{z},\;\mathbf{z}\!\sim\!\mathcal{N}(\mathbf{0},\mathbf{I})\mathbbm{1}_{\{t>1\}}
+6:
+if fϕ​(𝐱t−1,t−1,Htarget)=stopf_{\phi}(\mathbf{x}_{t-1},t-1,H_{\text{target}})=\textsc{stop} then
+7:
+break
+8:
+end if
+9:
+end for
+10:
+return 𝐱^0=𝐱t−1\hat{\mathbf{x}}_{0}=\mathbf{x}_{t-1}
+Runtime Notes:BADiff typically halts
+30% earlier than a fixed-step sampler under
+low bandwidth budgets, cutting inference time with
+minimal perceptual loss.
+|
+4 Experiments
+We empirically verify that BADiff fulfils its two key promises:
+(i) faithfully respecting a user-specified entropy budget across a
+wide range of bitrates, and
+(ii) achieving this while simultaneously preserving image
+quality and reducing inference cost.
+To this end we benchmark BADiff on three standard image–generation
+datasets under multiple bandwidth regimes and compare it with strong
+compression–based and early–stopping baselines.
+We further present ablations that isolate the impact of each model
+component (entropy hinge, calibration loss, stopping policy) and provide
+qualitative visualisations that highlight BADiff’s ability to degrade
+gracefully as bandwidth tightens.
+4.1 Experimental Setup
+Datasets.
+We train and evaluate on three standard diffusion benchmarks—
+CIFAR-10 [25],
+CelebA-HQ [20],
+and LSUN-Church/Bedroom [55].
+All splits and preprocessing follow the original DDPM protocol
+[15, 46].
+Baselines.
+The experimental comparison is organized around two diffusion backbones
+and several post-generation compression strategies.
+We adopt two backbones:
+(i) DDPM-1k—the original pixel-space UNet with
+1 000 reverse steps [15];
+(ii) LDM-200—a latent UNet operating on 64×64\times compressed
+representations with 200 steps [43].
+For each backbone we test two generic ways of meeting a bitrate
+constraint:
+1. Cascade (Diffusion →\!\rightarrow\! Codec)
+Run the sampler to full convergence and then compress with
+BPG [7] or a learned image codec (LIC) [10].
+This “generate-first, compress-later” pipeline mirrors current
+cloud rendering practice and is our primary point of comparison.
+2. Naïve Early-Stop.
+Truncate the sampler to the smallest NN such that the
+compressed output (BPG) satisfies the target bpp.
+This reveals the benefit of early termination without
+retraining the network.
+We also benchmark two state-of-the-art acceleration techniques that
+reduce the sampling cost without any explicit bitrate control:
+(i) the PNDM pseudo-numerical ODE solver
+[30] and
+(ii) the second-order DPM-Solver
+[32].
+Both are run with their default step counts on the same backbones.
+Training.
+All BADiff models inherit the backbone architecture and add the
+entropy-embedding described in §3.2.
+We optimize with Adam (lr=1×10−4\text{lr}=1{\times}10^{-4},
+β=(0.9,0.999)\beta{=}(0.9,0.999)) for 800 k iterations.
+Unless otherwise stated we keep the regularization weights fixed at
+λent=0.1\lambda_{\text{ent}}{=}0.1,
+λcal=10−3\lambda_{\text{cal}}{=}10^{-3},
+and λstop=10−2\lambda_{\text{stop}}{=}10^{-2}.
+Orthogonality remark.
+BADiff is solver-agnostic:
+one can replace DDPM or LDM sampling with any fast ODE solver
+(e.g. PNDM [30] or DPM-Solver [32]),
+apply the same entropy conditioning, and still profit from
+bandwidth adaptivity.
+We leave this combination to future work and focus on the most common
+DDPM and LDM backbones for clarity.
+Bandwidth budgets.
+To mimic realistic mobile and desktop links we adopt three bitrate
+intervals that are common in the learned–compression literature:
+(i) Low (0.2–0.5 bpp): ≈\approx 25–60 kB for a 2562256^{2}
+RGB image, representative of low-end 4G or satellite connections
+where aggressive compression is mandatory.
+(ii) Medium (0.5–1.0 bpp): typical of standard 5G / Wi-Fi
+transmission and roughly matches JPEG quality factors 50–75.
+(iii) High (1.0–2.0 bpp): near-lossless quality for desktop
+viewing; permits fine textures but still below raw PNG size.
+For every training batch we draw
+Htarget∼𝒰⁡(0.2,2.0)H_{\text{target}}\!\sim\!\mathcal{U}(0.2,2.0)
+so the model experiences the full spectrum during optimisation,
+while at test time we report results at the three disjoint intervals
+above.
+Evaluation metrics.
+We report
+FID [13],
+LPIPS [57],
+empirical bitrate per pixel (bpp), and
+average inference time (ms) on an RTX-4090 GPU.
+Together, FID and LPIPS assess perceptual fidelity,
+the bitrate quantifies adherence to the bandwidth budget,
+and inference time captures the computational advantage of early
+termination afforded by BADiff.
+4.2 Quantitative Results
+Table 1 reports the FID scores (lower is better) of all methods across three datasets: CIFAR-10, CelebA-HQ, and LSUN, under three bandwidth budgets (Low: 0.2–0.5 bpp, Medium: 0.5–1.0 bpp, High: 1.0–2.0 bpp), using both DDPM-1k and LDM-200 as backbones.
+Across the board, BADiff achieves the best FID scores in all settings, outperforming both post-hoc compression baselines (Cascade + BPG / LIC) and accelerated solvers (PNDM, DPM-Solver).
+On CIFAR-10, for example, BADiff reduces FID from 15.2 (DDPM+BPG) to 11.4 in the low-rate DDPM setting, and from 17.3 (LDM+BPG) to 12.6 under the LDM backbone. Similar improvements are observed on CelebA-HQ and LSUN, where BADiff often outperforms even the strongest cascade baselines by a large margin.
+Moreover, early stopping baselines (with LIC) exhibit significantly worse FID despite matching bitrates, confirming that simply halting the sampling process without training for intermediate-step outputs yields inferior results.
+Table 1: FID on three datasets at three bitrate budgets for both backbones.
+DDPM uses 1 000 steps; LDM uses 200 steps.
+Lower is better.
+Backbone |
+Method |
+CIFAR-10 |
+CelebA-HQ |
+LSUN |
+Low |
+Med |
+High |
+Low |
+Med |
+High |
+Low |
+Med |
+High |
+DDPM-1k |
+DDPM [15] + BPG [7] |
+15.2 |
+9.1 |
+5.8 |
+28.5 |
+16.2 |
+10.9 |
+25.7 |
+14.0 |
+8.7 |
+DDPM [15] + LIC [10] |
+13.6 |
+8.4 |
+5.3 |
+25.3 |
+14.5 |
+9.4 |
+22.8 |
+12.2 |
+7.5 |
+Early-Stop + LIC [10] |
+22.9 |
+15.5 |
+11.6 |
+35.0 |
+21.4 |
+16.3 |
+31.9 |
+19.9 |
+13.2 |
+PNDM [30] + LIC [10] |
+18.1 |
+12.6 |
+9.4 |
+30.4 |
+18.9 |
+13.7 |
+27.3 |
+16.4 |
+11.7 |
+DPM-Solver [32] + LIC [10] |
+17.8 |
+12.3 |
+9.1 |
+29.8 |
+18.1 |
+13.1 |
+26.5 |
+16.0 |
+11.3 |
+BADiff |
+11.4 |
+7.1 |
+4.4 |
+21.7 |
+11.8 |
+7.4 |
+19.6 |
+10.0 |
+5.8 |
+LDM-200 |
+LDM [43] + BPG [7] |
+17.3 |
+10.2 |
+6.3 |
+30.1 |
+17.8 |
+11.8 |
+27.5 |
+15.3 |
+9.5 |
+LDM [43] + LIC [10] |
+15.6 |
+9.3 |
+5.9 |
+27.2 |
+16.0 |
+10.3 |
+24.6 |
+13.7 |
+8.1 |
+Early-Stop + LIC [10] |
+24.2 |
+16.6 |
+12.1 |
+37.3 |
+23.1 |
+17.0 |
+33.4 |
+20.8 |
+14.0 |
+PNDM [30] + LIC [10] |
+19.9 |
+13.4 |
+10.0 |
+31.8 |
+20.2 |
+14.4 |
+28.9 |
+17.8 |
+12.2 |
+DPM-Solver [32] + LIC [10] |
+19.2 |
+13.1 |
+9.7 |
+30.9 |
+19.6 |
+13.9 |
+28.1 |
+17.4 |
+11.8 |
+BADiff |
+12.6 |
+7.9 |
+4.9 |
+22.9 |
+13.0 |
+8.5 |
+20.8 |
+11.3 |
+6.4 |
+4.3 Inference Speed
+We report end-to-end sampling latency (ms/image) on CIFAR-10 (32 ×\times 32) using an NVIDIA RTX-4090 GPU. Each value is averaged over 1 000 test samples following 50 warm-up iterations. Table 2 presents the results under three bitrate regimes for both DDPM-1k and LDM-200 backbones.
+BADiff consistently reduces latency compared to the Cascade baselines (Diffusion + Compression), particularly in low- and medium-rate settings. On DDPM-1k, BADiff achieves a 1.7×1.7{\times} speed-up over Cascade+LIC at low bitrate (65 ms vs. 115 ms), and 1.5×1.5{\times} at medium bitrate (78 ms vs. 115 ms). Similar trends are observed with LDM-200, where BADiff is up to 1.7×1.7{\times} faster than the cascade pipeline at low bitrate (27 ms vs. 47 ms).
+While slightly slower than Early-Stop due to its adaptive decision-making, BADiff offers significantly better FID (Table 1), making it a more desirable trade-off between speed and perceptual quality.
+Method |
+DDPM-1k |
+LDM-200 |
+Low |
+Med. |
+High |
+Low |
+Med. |
+High |
+Cascade + BPG |
+110 |
+110 |
+110 |
+43 |
+43 |
+43 |
+Cascade + LIC |
+115 |
+115 |
+115 |
+47 |
+47 |
+47 |
+Early-Stop |
+58 |
+75 |
+92 |
+24 |
+31 |
+38 |
+BADiff |
+65 |
+78 |
+94 |
+27 |
+34 |
+41 |
+Table 2: Per-image inference time (ms) on CIFAR-10 under DDPM-1k and LDM-200 backbones across different bitrate regimes. Lower is better.
+Variant |
+FID↓\!\downarrow |
+Δ\Delta bpp↓\!\downarrow |
+Time↓\!\downarrow |
+w/o Cond. |
+13.1 |
+0.038 |
+64 |
+w/o Hinge |
+16.2 |
+0.055 |
+65 |
+w/o Cal. |
+18.6 |
+0.043 |
+65 |
+Full BADiff |
+11.4 |
+0.021 |
+65 |
+Table 3: Ablation study on CIFAR-10 (DDPM backbone) under the low bitrate regime (0.2–0.5 bpp).
+4.4 Ablation Study
+To understand the contribution of each design component in BADiff, we conduct a controlled ablation on CIFAR-10 under the low bitrate regime (0.2–0.5 bpp). Each variant is retrained for 800 k iterations using the same optimizer settings, and evaluated using three key metrics: FID, Δ\Delta bpp (absolute bitrate deviation from target), and average inference time (ms/image) on an RTX-4090 GPU.
+Ablation variants.
+We evaluate three reduced versions of BADiff, each with one component removed:
+(i) w/o Conditioning: removes the entropy embedding from the UNet, disabling bitrate-aware generation.
+(ii) w/o Hinge Loss: sets λent=0\lambda_{\text{ent}}=0, removing the entropy penalty during training.
+(iii) w/o Calibration Loss: sets λcal=0\lambda_{\text{cal}}=0, preventing alignment between predicted entropy and coded length derived from an end-to-end optimized codec.
+Analysis.
+Removing the entropy conditioning impairs the model’s ability to modulate detail based on bitrate, resulting in a higher FID (+1.7) and worse bitrate adherence (+0.017 bpp). Without the hinge loss, the model ignores bandwidth constraints altogether, producing the largest deviation from target bitrate (0.055 bpp) and the worst FID (16.2). Disabling the calibration loss increases bitrate error (+0.022 bpp) while slightly degrading FID (+7.2), indicating that codec alignment improves control without compromising perceptual quality. Overall, only the full BADiff configuration balances visual fidelity, precise entropy control, and efficient inference.
+In terms of inference time, all ablated variants retain comparable speed to the full BADiff (65 ms), since the adaptive stopping policy remains enabled. This confirms that the primary contributor to computational efficiency is the adaptive sampling policy mechanism and entropy-aware generation, rather than any single auxiliary loss.
+Overall, only the full BADiff configuration balances visual fidelity, precise entropy control, and efficient sampling.
+4.5 Scaling to High-Resolution Images
+To address the scalability concern, we perform new experiments at higher resolutions to verify that (i) conditioning on a single scalar entropy target remains valid at scale, and (ii) BADiff continues to win both in fidelity and runtime. In practice, streaming systems typically assign a single bandwidth per frame, leaving spatial allocation to the codec; BADiff mirrors this regime via a global entropy target with differentiable entropy-aware allocation, encouraging adaptive texture reduction in less salient regions while preserving important details. We retrain BADiff and two baselines (DDPM+LIC and PNDM+LIC) on 5122512^{2} and 102421024^{2} images under realistic bitrate budgets. Table 4 shows that BADiff consistently achieves lower FID and faster inference across resolutions (e.g., at 5122512^{2} FID drops from 7.90→6.857.90\to 6.85 and runtime reduces 98.6​ms→64.1​ms98.6\text{ms}\to 64.1\text{ms}; at 102421024^{2} FID drops from 20.1→17.820.1\to 17.8 and runtime reduces 192.5​ms→145.6​ms192.5\text{ms}\to 145.6\text{ms}). These results confirm that BADiff scales favorably to high-resolution generation under bitrate constraints.
+Table 4: High-resolution evaluation on 5122512^{2} and 102421024^{2} images under realistic bitrate constraints, comparing BADiff with diffusion+LIC baselines. Both FID and inference time (ms) are reported.
+Resolution |
+bpp |
+Metric |
+DDPM+LIC |
+PNDM+LIC |
+BADiff |
+5122512^{2} |
+0.4–0.6 |
+FID ↓\downarrow |
+8.45 |
+7.90 |
+6.85 |
+|
+Time (ms) ↓\downarrow |
+121.3 |
+98.6 |
+64.1 |
+102421024^{2} |
+0.8–1.2 |
+FID ↓\downarrow |
+21.5 |
+20.1 |
+17.8 |
+|
+Time (ms) ↓\downarrow |
+228.7 |
+192.5 |
+145.6 |
+4.6 Extension to Text-to-Image Models
+To explore the applicability of BADiff beyond unconditional generation, we conduct preliminary experiments on a text-to-image setting using Stable Diffusion as the base model. BADiff’s entropy-conditioning mechanism is fully compatible with conditional diffusion, enabling bitrate-controlled generation without modifying the text-conditioning pathway. We evaluate BADiff against several diffusion+LIC baselines under low, medium, and high bitrate regimes. As shown in Table 5, BADiff consistently achieves lower FID across all bitrate ranges, indicating that BADiff effectively preserves visual quality even under tight bitrate constraints in text-conditioned generation.
+Table 5: Comparison of BADiff with diffusion+LIC baselines on Stable Diffusion text-to-image generation across low (0.2–0.5 bpp), medium (0.5–1.0 bpp), and high (1.0–2.0 bpp) bitrate regimes.
+Method |
+Low (0.2–0.5 bpp) |
+Med. (0.5–1.0 bpp) |
+High (1.0–2.0 bpp) |
+Cascade (SD + BPG) |
+33.5 |
+21.4 |
+14.8 |
+Cascade (SD + LIC) |
+30.7 |
+19.2 |
+13.1 |
+Early-Stop + LIC |
+41.8 |
+27.5 |
+18.0 |
+DPM-Solver (20) + LIC |
+36.5 |
+25.1 |
+16.3 |
+BADiff (ours) |
+26.1 |
+16.2 |
+11.0 |
+4.7 Teacher Label Generation
+To clarify the cost of teacher label generation, we emphasize that teacher labels are created once per image in an offline pre-processing stage, not during each training iteration, incurring negligible runtime overhead. First, we perform a single long diffusion run per training image (e.g., 1000 DDPM steps or 200 LDM steps) to obtain the entropy trajectory 𝒞⁡(t)\mathcal{C}(t) and derive binary labels as yt=𝟙[𝒞(t)≤mins≥t𝒞(s)]y_{t}=\mathbb{1}[\mathcal{C}(t)\leq\min_{s\geq t}\mathcal{C}(s)]. For CIFAR-10 on a single RTX 4090, this entire offline step takes roughly 0.8 GPU-hours amortized over 800k training steps. Second, once computed, labels are cached and reused without re-running any diffusion chains; during training only a small MLP policy head is evaluated (<0.1%<0.1\% of UNet FLOPs). Third, the cost remains small even at higher resolutions such as 512×512512\times 512, amounting to only 5​–​8%5\text{--}8\% of the time needed for one training epoch, as summarized in Table 6. These results demonstrate that the teacher-label strategy is efficient and scalable without affecting training throughput.
+Table 6: One-time cost of generating teacher labels across datasets and resolutions, measured on an RTX 4090. The labels are computed once offline and then cached; training never re-runs the diffusion chain. The cost is reported both in absolute GPU-hours and as a fraction of a single training epoch.
+Dataset |
+Resolution |
+GPU-hours |
+Relative to 1 training epoch |
+CIFAR-10 |
+32×3232\times 32 |
+0.8 |
+<5%<5\% |
+CelebA-HQ |
+256×256256\times 256 |
+3.5 |
+≈6%\approx 6\% |
+COCO-val2017 |
+512×512512\times 512 |
+10.0 |
+≈8%\approx 8\% |
+5 Conclusion
+We presented BADiff, the first diffusion framework that
+generates images directly under an explicit entropy (bit-rate)
+budget rather than relying on post-hoc compression.
+By conditioning every reverse step on a target entropy embedding, adding
+a differentiable entropy-hinge loss, and introducing an adaptive
+stopping policy, BADiff produces bandwidth-compliant images while
+preserving perceptual quality and reducing inference cost.
+Extensive experiments on three standard datasets show that BADiff
+surpasses strong cascaded and early-stopping baselines in FID and LPIPS
+at all bandwidth levels and achieves up to a 2×2{\times} runtime
+speed-up under tight constraints.
+Limitations & future work.
+BADiff currently targets spatially uniform entropy budgets and images up
+to 2562256^{2} resolution.
+Future extensions include spatially varying bit-allocation,
+integration with faster solvers such as DPM-Solver or PNDM at
+higher resolutions, and applying the same principle to video diffusion
+models where bandwidth constraints are even more stringent.
+We hope BADiff will inspire further research on resource-aware
+generative modelling for real-world deployment.
+Acknowledgements
+This research is supported by the RIE2025 Industry Alignment Fund – Industry Collaboration Projects (IAF-ICP) (Award I2301E0026), administered by A*STAR, as well as supported by Alibaba Group and NTU Singapore through Alibaba-NTU Global e-Sustainability CorpLab (ANGEL).
+References
+[1]
+Eirikur Agustsson, Fabian Mentzer, Michael Tschannen, Lukas Cavigelli, Radu Timofte, Luca Benini, and Luc Van Gool.
+Soft-to-hard vector quantization for end-to-end learning compressible representations.
+In Advances in Neural Information Processing Systems 30, pages 1141–1151, 2017.
+[2]
+Martin Arjovsky, Soumith Chintala, and Léon Bottou.
+Wasserstein gan.
+In International Conference on Machine Learning, pages 214–223, 2017.
+[3]
+Yogesh Balaji, Seungjun Nah, Xun Huang, Arash Vahdat, Jiaming Song, Qinsheng Zhang, Karsten Kreis, Miika Aittala, Timo Aila, Samuli Laine, et al.
+ediff-i: Text-to-image diffusion models with an ensemble of expert denoisers.
+arXiv preprint arXiv:2211.01324, 2022.
+[4]
+Johannes Ballé, Valero Laparra, and Eero P. Simoncelli.
+End-to-end optimized image compression.
+In 5th International Conference on Learning Representations, ICLR, 2017.
+[5]
+Johannes Ballé, David Minnen, Saurabh Singh, Sung Jin Hwang, and Nick Johnston.
+Variational image compression with a scale hyperprior.
+In 6th International Conference on Learning Representations, ICLR. OpenReview.net, 2018.
+[6]
+Johannes Ballé, David Minnen, Saurabh Singh, Sung Jin Hwang, and Nick Johnston.
+Variational image compression with a scale hyperprior.
+In International Conference on Learning Representations, 2018.
+[7]
+Fabrice Bellard.
+BPG Image Format.
+https://bellard.org/bpg/, 2014.
+Accessed: 2025-05-16.
+[8]
+Marlene Careil, Matthew J Muckley, Jakob Verbeek, and Stéphane Lathuilière.
+Towards image compression with perfect realism at ultra-low bitrates.
+In The Twelfth International Conference on Learning Representations, 2023.
+[9]
+Zhengxue Cheng, Heming Sun, Masaru Takeuchi, and Jiro Katto.
+Learned image compression with discretized gaussian mixture likelihoods and attention modules.
+In 2020 IEEE/CVF Conference on Computer Vision and Pattern Recognition, CVPR, pages 7936–7945, 2020.
+[10]
+Zhengxue Cheng, Heming Sun, Masaru Takeuchi, and Jiro Katto.
+Learned image compression with discretized gaussian mixture likelihoods and attention modules.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 7939–7948, 2020.
+[11]
+Prafulla Dhariwal and Alex Nichol.
+Diffusion models beat gans on image synthesis.
+In Advances in Neural Information Processing Systems, volume 34, pages 8780–8794, 2021.
+[12]
+Ian J Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair, Aaron Courville, and Yoshua Bengio.
+Generative adversarial nets.
+Advances in Neural Information Processing Systems, 27:2672–2680, 2014.
+[13]
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter.
+Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+Advances in Neural Information Processing Systems, 30:6626–6637, 2017.
+[14]
+Irina Higgins, Loic Matthey, Arka Pal, Christopher Burgess, Xavier Glorot, Matthew Botvinick, Shakir Mohamed, and Alexander Lerchner.
+β\beta-vae: Learning basic visual concepts with a constrained variational framework.
+In International Conference on Learning Representations, 2017.
+[15]
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+Denoising diffusion probabilistic models.
+Advances in Neural Information Processing Systems, 33:6840–6851, 2020.
+[16]
+Jonathan Ho and Tim Salimans.
+Classifier-free diffusion guidance.
+In NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications, 2021.
+[17]
+Jonathan Ho, Tim Salimans, Alexey Gritsenko, William Chan, Mohammad Norouzi, and David J Fleet.
+Video diffusion models.
+arXiv preprint arXiv:2204.03458, 2022.
+[18]
+Zhaoyang Jia, Jiahao Li, Bin Li, Houqiang Li, and Yan Lu.
+Generative latent coding for ultra-low bitrate image compression.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 26088–26098, 2024.
+[19]
+Zahra Kadkhodaie, Florentin Guth, Eero P Simoncelli, and Stéphane Mallat.
+Generalization in diffusion models arises from geometry-adaptive harmonic representations.
+arXiv preprint arXiv:2310.02557, 2023.
+[20]
+Tero Karras, Timo Aila, Samuli Laine, and Jaakko Lehtinen.
+Progressive growing of gans for improved quality, stability, and variation.
+In International Conference on Learning Representations, 2018.
+[21]
+Tero Karras, Samuli Laine, and Timo Aila.
+A style-based generator architecture for generative adversarial networks.
+In IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 4401–4410, 2019.
+[22]
+Diederik P Kingma and Jimmy Ba.
+Adam: A method for stochastic optimization.
+International Conference on Learning Representations, 2015.
+[23]
+Diederik P Kingma and Max Welling.
+Auto-encoding variational bayes.
+International Conference on Learning Representations, 2014.
+[24]
+Zhifeng Kong and Wei Ping.
+On fast sampling of diffusion probabilistic models.
+arXiv preprint arXiv:2106.00132, 2021.
+[25]
+Alex Krizhevsky, Geoffrey Hinton, et al.
+Learning multiple layers of features from tiny images.
+2009.
+[26]
+Jooyoung Lee, Seunghyun Cho, and Seung-Kwon Beack.
+Context-adaptive entropy model for end-to-end optimized image compression.
+In 7th International Conference on Learning Representations, ICLR, 2019.
+[27]
+Han Li, Shaohui Li, Wenrui Dai, Chenglin Li, Junni Zou, and Hongkai Xiong.
+Frequency-aware transformer for learned image compression.
+arXiv preprint arXiv:2310.16387, 2023.
+[28]
+Lijiang Li, Huixia Li, Xiawu Zheng, Jie Wu, Xuefeng Xiao, Rui Wang, Min Zheng, Xin Pan, Fei Chao, and Rongrong Ji.
+Autodiffusion: Training-free optimization of time steps and architectures for automated diffusion model acceleration.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 7105–7114, 2023.
+[29]
+Enshu Liu, Xuefei Ning, Zinan Lin, Huazhong Yang, and Yu Wang.
+Oms-dpm: Optimizing the model schedule for diffusion probabilistic models.
+In International Conference on Machine Learning, pages 21915–21936. PMLR, 2023.
+[30]
+Luping Liu, Yi Ren, Zhijie Lin, and Zhou Zhao.
+Pseudo numerical methods for diffusion models on manifolds.
+International Conference on Learning Representations, 2022.
+[31]
+Ming Liu, Cheng Lu, Yuhao Zhou, and Jun Zhu.
+Adept: Adaptive diffusion sampling in the denoising steps.
+International Conference on Learning Representations, 2023.
+[32]
+Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu.
+Dpm-solver: A fast ode solver for diffusion probabilistic model sampling in around 10 steps.
+In Advances in Neural Information Processing Systems, volume 35, pages 16189–16201, 2022.
+[33]
+Andreas Lugmayr, Martin Danelljan, Andrés Romero, Fisher Yu, Radu Timofte, and Luc Van Gool.
+Repaint: Inpainting using denoising diffusion probabilistic models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 11461–11471, 2022.
+[34]
+Eric Luhman and Troy Luhman.
+Knowledge distillation in iterative generative models for improved sampling speed.
+arXiv preprint arXiv:2101.02388, 2021.
+[35]
+Fabian Mentzer, Eirikur Agustsson, Michael Tschannen, Radu Timofte, and Luc Van Gool.
+Conditional probability models for deep image compression.
+In 2018 IEEE Conference on Computer Vision and Pattern Recognition, CVPR, pages 4394–4402, 2018.
+[36]
+Fabian Mentzer, George D Toderici, Michael Tschannen, and Eirikur Agustsson.
+High-fidelity generative image compression.
+Advances in neural information processing systems, 33:11913–11924, 2020.
+[37]
+David Minnen, Johannes Ballé, and George Toderici.
+Joint autoregressive and hierarchical priors for learned image compression.
+In Advances in Neural Information Processing Systems 31, pages 10794–10803, 2018.
+[38]
+David Minnen, Johannes Ballé, and George Toderici.
+Joint autoregressive and hierarchical priors for learned image compression.
+In Advances in Neural Information Processing Systems, volume 31, pages 10771–10780, 2018.
+[39]
+Ben Poole, Ajay Jain, Jonathan T Barron, and Ben Mildenhall.
+Dreamfusion: Text-to-3d using 2d diffusion.
+arXiv preprint arXiv:2209.14988, 2022.
+[40]
+Alec Radford, Luke Metz, and Soumith Chintala.
+Unsupervised representation learning with deep convolutional generative adversarial networks.
+In International Conference on Learning Representations, 2016.
+[41]
+Aditya Ramesh, Prafulla Dhariwal, Alex Nichol, Casey Chu, and Mark Chen.
+Hierarchical text-conditional image generation with clip latents.
+In Advances in Neural Information Processing Systems, volume 35, pages 3348–3360, 2022.
+[42]
+Danilo Rezende, Shakir Mohamed, and Daan Wierstra.
+Stochastic backpropagation and approximate inference in deep generative models.
+In International Conference on Machine Learning, pages 1278–1286, 2014.
+[43]
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 10684–10695, 2022.
+[44]
+Chitwan Saharia, William Chan, Saurabh Saxena, Lala Li, Jay Whang, Emily Denton, Kamyar Ghasemipour, Raphael Gontijo-Lopes, Burcu Karagol-Ayan, Tim Salimans, et al.
+Photorealistic text-to-image diffusion models with deep language understanding.
+In Advances in Neural Information Processing Systems, volume 35, pages 36479–36494, 2022.
+[45]
+Tim Salimans and Jonathan Ho.
+Progressive distillation for fast sampling of diffusion models.
+In International Conference on Learning Representations, 2022.
+[46]
+Jiaming Song, Chenlin Meng, and Stefano Ermon.
+Denoising diffusion implicit models.
+In International Conference on Learning Representations, 2020.
+[47]
+Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+Score-based generative modeling through stochastic differential equations.
+International Conference on Learning Representations, 2021.
+[48]
+Lucas Theis, Wenzhe Shi, Andrew Cunningham, and Ferenc Huszár.
+Lossy image compression with compressive autoencoders.
+In 5th International Conference on Learning Representations, ICLR, 2017.
+[49]
+George Toderici, Sean M. O’Malley, Sung Jin Hwang, Damien Vincent, David Minnen, Shumeet Baluja, Michele Covell, and Rahul Sukthankar.
+Variable rate image compression with recurrent neural networks.
+In 4th International Conference on Learning Representations, ICLR, 2016.
+[50]
+George Toderici, Damien Vincent, Nick Johnston, Sung Jin Hwang, David Minnen, Joel Shor, and Michele Covell.
+Full resolution image compression with recurrent neural networks.
+In 2017 IEEE Conference on Computer Vision and Pattern Recognition, CVPR, pages 5435–5443, 2017.
+[51]
+Aaron van den Oord, Oriol Vinyals, and Koray Kavukcuoglu.
+Neural discrete representation learning.
+In Advances in Neural Information Processing Systems, volume 30, pages 6306–6315, 2017.
+[52]
+Tongda Xu, Jiahao Li, Bin Li, Yan Wang, Ya-Qin Zhang, and Yan Lu.
+Picd: Versatile perceptual image compression with diffusion rendering.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 28436–28445, 2025.
+[53]
+Shuai Yang, Yukang Chen, Luozhou Wang, Shu Liu, and Yingcong Chen.
+Denoising diffusion step-aware models.
+International Conference on Learning Representations, 2024.
+[54]
+Xingyi Yang, Daquan Zhou, Jiashi Feng, and Xinchao Wang.
+Diffusion probabilistic model made slim.
+In Proceedings of the IEEE/CVF Conference on computer vision and pattern recognition, pages 22552–22562, 2023.
+[55]
+Fisher Yu, Yinda Zhang, Shuran Song, Ari Seff, and Jianxiong Xiao.
+Lsun: Construction of a large-scale image dataset using deep learning with humans in the loop.
+arXiv preprint arXiv:1506.03365, 2015.
+[56]
+Jean Yu and Haim Barad.
+Step saver: Predicting minimum denoising steps for diffusion model image generation.
+arXiv preprint arXiv:2408.02054, 2024.
+[57]
+Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman, and Oliver Wang.
+The unreasonable effectiveness of deep features as a perceptual metric.
+In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, pages 586–595, 2018.
+[58]
+Xi Zhang and Xiaolin Wu.
+Attention-guided image compression by deep reconstruction of compressive sensed saliency skeleton.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 13354–13364, 2021.
+[59]
+Xi Zhang and Xiaolin Wu.
+Lvqac: Lattice vector quantization coupled with spatially adaptive companding for efficient learned image compression.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 10239–10248, 2023.
+[60]
+Xi Zhang and Xiaolin Wu.
+Learning optimal lattice vector quantizers for end-to-end neural image compression.
+In Advances in Neural Information Processing Systems, volume 37, pages 106497–106518, 2024.
+[61]
+Xi Zhang, Xiaolin Wu, Xinliang Zhai, Xianye Ben, and Chengjie Tu.
+Davd-net: Deep audio-aided video decompression of talking heads.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 12335–12344, 2020.
+Technical Appendices and Supplementary Material
+Appendix A Theoretical Justification of Entropy-Constrained Diffusion Models
+Here we provide a theoretical justification for the proposed entropy-constrained diffusion model by deriving its conditional reverse distribution. We first revisit the standard formulation and subsequently derive our entropy-conditioned variant.
+A.1 Standard Reverse Diffusion Formulation
+In the standard DDPM framework [15], the forward diffusion process gradually injects noise into the data 𝐱0\mathbf{x}_{0}, following the Markovian formulation:
+|
+q(𝐱1:T|𝐱0)=∏t=1Tq(𝐱t|𝐱t−1),q(\mathbf{x}_{1:T}|\mathbf{x}_{0})=\prod_{t=1}^{T}q(\mathbf{x}_{t}|\mathbf{x}_{t-1}), |
+|
+(17) |
+where each transition step is modeled as a Gaussian:
+|
+q⁡(𝐱t|𝐱t−1)=𝒩⁡(𝐱t,αt​𝐱t−1,(1−αt)​𝐈).q(\mathbf{x}_{t}|\mathbf{x}_{t-1})=\mathcal{N}(\mathbf{x}_{t};\sqrt{\alpha_{t}}\mathbf{x}_{t-1},(1-\alpha_{t})\mathbf{I}). |
+|
+(18) |
+The reverse denoising distribution aims to invert the forward process by progressively removing the noise:
+|
+pθ(𝐱0:T)=p(𝐱T)∏t=1Tpθ(𝐱t−1|𝐱t).p_{\theta}(\mathbf{x}_{0:T})=p(\mathbf{x}_{T})\prod_{t=1}^{T}p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t}). |
+|
+(19) |
+Each reverse step distribution is parameterized as:
+|
+pθ​(𝐱t−1|𝐱t)=𝒩⁡(𝐱t−1,𝝁θ​(𝐱t,t),𝚺θ​(𝐱t,t)).p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t})=\mathcal{N}(\mathbf{x}_{t-1};\boldsymbol{\mu}_{\theta}(\mathbf{x}_{t},t),\boldsymbol{\Sigma}_{\theta}(\mathbf{x}_{t},t)). |
+|
+(20) |
+A.2 Entropy-Constrained Reverse Diffusion Derivation
+In BADiff, we explicitly condition on a target entropy level HtargetH_{\text{target}}, leading to the modified reverse conditional distribution:
+|
+pθ​(𝐱t−1|𝐱t,Htarget)=pθ​(𝐱t−1,𝐱t,Htarget)pθ​(𝐱t,Htarget).p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t},H_{\text{target}})=\frac{p_{\theta}(\mathbf{x}_{t-1},\mathbf{x}_{t},H_{\text{target}})}{p_{\theta}(\mathbf{x}_{t},H_{\text{target}})}. |
+|
+(21) |
+By applying Bayes’ rule and assuming conditional independence between HtargetH_{\text{target}} and earlier states given 𝐱t\mathbf{x}_{t}, we simplify as follows:
+|
+pθ​(𝐱t−1|𝐱t,Htarget)\displaystyle p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t},H_{\text{target}}) |
+=pθ​(Htarget|𝐱t−1,𝐱t)​pθ​(𝐱t−1|𝐱t)pθ​(Htarget|𝐱t)\displaystyle=\frac{p_{\theta}(H_{\text{target}}|\mathbf{x}_{t-1},\mathbf{x}_{t})p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t})}{p_{\theta}(H_{\text{target}}|\mathbf{x}_{t})} |
+|
+(22) |
+|
+|
+≈pθ​(Htarget|𝐱t−1)​pθ​(𝐱t−1|𝐱t)pθ​(Htarget|𝐱t).\displaystyle\approx\frac{p_{\theta}(H_{\text{target}}|\mathbf{x}_{t-1})p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t})}{p_{\theta}(H_{\text{target}}|\mathbf{x}_{t})}. |
+|
+(23) |
+Here we explicitly model the conditional distribution pθ​(Htarget|𝐱t−1)p_{\theta}(H_{\text{target}}|\mathbf{x}_{t-1}) as a differentiable entropy estimator Hϕ​(𝐱t−1)H_{\phi}(\mathbf{x}_{t-1}). The conditional entropy-based term can be approximated as:
+|
+pθ​(Htarget|𝐱t−1)≈exp⁡(−λent2​max⁡(0,Hϕ​(𝐱t−1)−Htarget)2),p_{\theta}(H_{\text{target}}|\mathbf{x}_{t-1})\approx\exp\left(-\frac{\lambda_{\text{ent}}}{2}\max(0,H_{\phi}(\mathbf{x}_{t-1})-H_{\text{target}})^{2}\right), |
+|
+(24) |
+where λent\lambda_{\text{ent}} is a hyperparameter controlling the strength of the entropy constraint.
+A.3 Interpretation as Regularized Reverse Process
+Combining these results, we rewrite the entropy-conditioned reverse step as a Gaussian distribution with a regularized mean:
+|
+pθ​(𝐱t−1|𝐱t,Htarget)∝pθ​(𝐱t−1|𝐱t)​exp⁡(−λent2​max⁡(0,Hϕ​(𝐱t−1)−Htarget)2).p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t},H_{\text{target}})\propto p_{\theta}(\mathbf{x}_{t-1}|\mathbf{x}_{t})\exp\left(-\frac{\lambda_{\text{ent}}}{2}\max(0,H_{\phi}(\mathbf{x}_{t-1})-H_{\text{target}})^{2}\right). |
+|
+(25) |
+Thus, the entropy constraint effectively acts as a soft regularizer, guiding the reverse process toward latent states 𝐱t−1\mathbf{x}_{t-1} whose corresponding entropy estimate meets the target. This regularization not only provides theoretical grounding for the proposed entropy loss but also justifies our observed improvement in bitrate control and image quality.
+These derivations rigorously establish how entropy conditioning naturally emerges as a constrained form of reverse denoising diffusion, providing both theoretical validation and insights into the BADiff training objective presented in the main paper.
+Appendix B Gradient Analysis of Entropy Loss
+To better understand the optimization behavior of BADiff under entropy constraints, we analyze the gradient of the entropy loss with respect to the predicted image 𝐱^0\hat{\mathbf{x}}_{0}. The entropy loss is defined as:
+|
+ℒent=max⁡(0,Hϕ​(𝐱^0)−Htarget),\mathcal{L}_{\mathrm{ent}}=\max(0,H_{\phi}(\hat{\mathbf{x}}_{0})-H_{\text{target}}), |
+|
+(26) |
+where HϕH_{\phi} is a differentiable neural estimator of image entropy.
+Gradient Derivation.
+The subgradient of ℒent\mathcal{L}_{\mathrm{ent}} with respect to 𝐱^0\hat{\mathbf{x}}_{0} is given by:
+|
+∇𝐱^0ℒent={∇𝐱^0Hϕ​(𝐱^0),if ​Hϕ​(𝐱^0)>Htarget,0,otherwise.\nabla_{\hat{\mathbf{x}}_{0}}\mathcal{L}_{\mathrm{ent}}=\begin{cases}\nabla_{\hat{\mathbf{x}}_{0}}H_{\phi}(\hat{\mathbf{x}}_{0}),&\text{if }H_{\phi}(\hat{\mathbf{x}}_{0})>H_{\text{target}},\\
+0,&\text{otherwise}.\end{cases} |
+|
+(27) |
+This reveals that the entropy loss is one-sided: it only contributes a gradient signal when the predicted entropy exceeds the target. Below the threshold, the loss becomes flat and the gradient vanishes. This prevents the model from overcompressing its outputs when already under budget, ensuring that perceptual fidelity is not sacrificed unnecessarily.
+Interpretation.
+The gradient ∇𝐱^0Hϕ\nabla_{\hat{\mathbf{x}}_{0}}H_{\phi} typically promotes spatial smoothing in regions with high entropy—such as edges or textures—encouraging the model to selectively suppress fine details that contribute the most to bitrate. Since the penalty is activated only when the entropy is above budget, BADiff naturally learns to modulate detail in a targeted and efficient manner, preserving structure when possible and discarding complexity only when required.
+This analysis aligns with our qualitative findings: BADiff gracefully degrades in low-bitrate regimes while maintaining strong visual coherence, and achieves tight bitrate adherence without harming perceptual quality.
+Appendix C Robustness to Entropy Predictor Approximation
+The accuracy of the differentiable entropy predictor HϕH_{\phi} plays a critical role in BADiff’s training. However, the predictor need not match the true codec exactly to be effective. Here, we briefly justify why approximate entropy guidance still yields reliable bitrate control.
+Let Htrue​(𝐱^0)H_{\text{true}}(\hat{\mathbf{x}}_{0}) denote the true entropy as measured by a black-box codec (e.g., BPG), and Hϕ​(𝐱^0)H_{\phi}(\hat{\mathbf{x}}_{0}) the neural approximation. Suppose the approximation error is bounded:
+|
+|Hϕ​(𝐱^0)−Htrue​(𝐱^0)|≤ϵ.|H_{\phi}(\hat{\mathbf{x}}_{0})-H_{\text{true}}(\hat{\mathbf{x}}_{0})|\leq\epsilon. |
+|
+(28) |
+Then, the deviation from the target HtargetH_{\text{target}} also remains bounded:
+|
+|Hϕ​(𝐱^0)−Htarget|≥|Htrue​(𝐱^0)−Htarget|−ϵ.|H_{\phi}(\hat{\mathbf{x}}_{0})-H_{\text{target}}|\geq|H_{\text{true}}(\hat{\mathbf{x}}_{0})-H_{\text{target}}|-\epsilon. |
+|
+(29) |
+Thus, if HϕH_{\phi} slightly underestimates entropy, the training loss compensates by encouraging more conservative image generation. This explains why BADiff retains bitrate adherence even with an imperfect HϕH_{\phi}, as also shown in the ablation study.
+Future work could explore jointly training HϕH_{\phi} with contrastive or reinforcement signals to further narrow the approximation gap.
+Appendix D Complexity Analysis
+We analyze the computational complexity of BADiff compared to standard diffusion baselines and fast solvers, focusing on the number of forward passes, memory usage, and latency scaling with respect to entropy budget.
+Step Complexity.
+Let TT denote the total number of sampling steps (e.g., 1000 for DDPM, 200 for LDM), and T^\hat{T} the number of steps actually executed under BADiff’s adaptive stopping policy.
+•
+DDPM / LDM (fixed-length): always performs TT forward UNet passes.
+•
+BADiff (adaptive): performs T^<T\hat{T}<T steps on average. T^\hat{T} varies with target bitrate; lower bitrate leads to earlier termination.
+•
+Fast Solvers (e.g., PNDM): typically use a fixed low number of steps, but quality suffers without entropy control.
+For a UNet of cost 𝒪⁡(C)\mathcal{O}(C) per step, the total cost becomes:
+|
+CostBADiff=T^⋅𝒪⁡(C),vs.CostCascade=T⋅𝒪⁡(C)+Codec overhead.\text{Cost}_{\text{BADiff}}=\hat{T}\cdot\mathcal{O}(C),\quad\text{vs.}\quad\text{Cost}_{\text{Cascade}}=T\cdot\mathcal{O}(C)+\text{Codec overhead}. |
+|
+Entropy Modules.
+BADiff introduces three lightweight modules: the entropy embedding MLP, the entropy predictor HϕH_{\phi}, and the stopping policy network fϕf_{\phi}.
+•
+Entropy embedding: 33 MLP layers with 256-dim hidden width, used once per step; negligible overhead (<<1%).
+•
+Entropy predictor: small CNN (∼\sim0.3M parameters), used during training only; ignored during inference.
+•
+Stop policy: 3-layer MLP evaluated at each step; cost comparable to a single linear layer.
+Memory Usage.
+BADiff’s memory footprint is on par with standard diffusion models. Unlike guidance-based methods (e.g., classifier guidance) that double the forward pass, BADiff avoids any additional gradient computation during inference.
+Latency Scaling.
+Assuming average T^≪T\hat{T}\ll T, BADiff reduces latency linearly with the number of effective steps. For instance, at low bitrate (0.2–0.5 bpp), we observe a 1.7×1.7\times reduction in wall-clock time over Cascade with DDPM.
+Summary.
+BADiff achieves bitrate adaptivity with only minimal computational overhead. Its complexity scales sublinearly with bitrate, and its modular design allows plug-and-play integration into existing UNet-based diffusion pipelines.
+Appendix E Implementation Details
+We provide full training and evaluation details for all experiments in this paper.
+Training schedule.
+Each model is trained for 800,000 iterations using a batch size of 64 images per GPU. We use automatic mixed precision (AMP) to accelerate training and reduce memory consumption. Training takes approximately 3 days on NVIDIA RTX 4090 GPUs for the DDPM backbone and 2 days for the LDM backbone.
+Optimizer and scheduler.
+We adopt the Adam optimizer [22] with default coefficients β1=0.9\beta_{1}{=}0.9, β2=0.999\beta_{2}{=}0.999. The learning rate is set to 1×10−41\times 10^{-4} and kept constant throughout training. No learning rate decay or warmup is applied. Gradient clipping is used with a max norm of 1.0.
+Sampling parameters.
+For DDPM, we use a 1,000-step linear beta schedule as in the original DDPM implementation [15]. For LDM, we follow [43] and use 200 steps with cosine noise scheduling in the latent space. At inference time, the sampling process is governed by the entropy-aware stopping policy, which dynamically terminates early based on the predicted bitrate.
+Hardware and software.
+All experiments are run on NVIDIA RTX 4090 GPUs with 24GB VRAM each. We use PyTorch 2.1.0 with torch.compile enabled for maximum inference speed, and CUDA version 11.8. The entropy-aware modules are implemented in native PyTorch without any custom CUDA kernels. Experiments are managed via Accelerate and Weights & Biases for reproducibility and logging.
+Codec baselines.
+For BPG, we use the official reference implementation compiled with libbpg-0.9.8. For learned image compression (LIC), we adopt the pre-trained model of Cheng2020 [10] from CompressAI. BPG codec experiments all run on CPU and LIC experiments all run on GPU, with the output bitrate measured post-compression in bits-per-pixel (bpp).
+Appendix F Model Architectures
+This section describes the architecture details of all core modules in BADiff, including the UNet backbone, entropy conditioning MLP, stopping policy network, and differentiable entropy predictor.
+UNet Backbone.
+We use a modified version of the standard UNet architecture as introduced in DDPM [15]. The configuration is as follows:
+•
+Downsampling path: 4 resolution levels with channel counts [128, 256, 512, 512]. Each level consists of two residual blocks (with GroupNorm + SiLU) followed by a downsampling layer (stride-2 convolution).
+•
+Bottleneck: 2 residual blocks with 512 channels and an attention layer at the lowest resolution (8×\times8 for CIFAR-10).
+•
+Upsampling path: mirrors the downsampling path with learned upsampling (transposed conv), residual blocks, and attention at the second-lowest resolution.
+•
+Timestep + Entropy Conditioning: the diffusion timestep and entropy target are embedded separately (see below) and added to each residual block via FiLM modulation.
+Entropy Embedding MLP.
+The target entropy HtargetH_{\text{target}} is a scalar projected into a high-dimensional embedding via:
+•
+Input: scalar entropy in [0.2, 2.0].
+•
+Architecture: 3-layer MLP with hidden sizes [128, 256, 256], SiLU activations.
+•
+Output: embedding 𝐞∈ℝ256\mathbf{e}\in\mathbb{R}^{256}.
+•
+Integration: the embedding is fused into each UNet block via FiLM: 𝐲=γ⋅𝐡+β\mathbf{y}=\gamma\cdot\mathbf{h}+\beta, where (γ,β)(\gamma,\beta) are predicted from 𝐞\mathbf{e}.
+Stopping Policy Network.
+The policy module fϕf_{\phi} is a compact classifier:
+•
+Input: pooled mid-layer UNet features, timestep embedding, and entropy embedding.
+•
+Architecture: 3-layer MLP with widths [256, 128, 2], SiLU activations.
+•
+Output: stop/continue logits via softmax.
+•
+Training: supervised with labels from offline oracle policy.
+Differentiable Entropy Predictor EϕE_{\phi}.
+The entropy estimator is CNN-based with soft binning:
+•
+Input: predicted image 𝐱^0\hat{\mathbf{x}}_{0}.
+•
+Backbone: 4 conv layers with channels [32, 64, 64, 128], kernel size 3×\times3, stride 1, GroupNorm, SiLU.
+•
+Context modeling: 1 masked 5×\times5 convolution.
+•
+Output: per-pixel logits over K=64K{=}64 soft histogram bins.
+•
+Usage: softmax probabilities pϕ​(k∣𝐱​[u])p_{\phi}(k\mid\mathbf{x}[u]) used for entropy loss.
+Appendix G Hyperparameters
+Table 7 lists the main hyperparameters used throughout training for all BADiff models, unless otherwise stated. We adopt the default settings from DDPM [15] for the optimizer and noise schedule, and perform minimal tuning to isolate the effects of our proposed components. The entropy–related weights λent\lambda_{\mathrm{ent}}, λcal\lambda_{\mathrm{cal}}, and λstop\lambda_{\mathrm{stop}} are set via coarse grid search on CIFAR-10 validation splits.
+Table 7: Key hyperparameters.
+Hyperparameter |
+Value |
+Learning rate |
+1×10−41\times 10^{-4} |
+Entropy hinge weight |
+λent=0.1\lambda_{\mathrm{ent}}=0.1 |
+Calibration loss weight |
+λcal=10−3\lambda_{\mathrm{cal}}=10^{-3} |
+Stopping loss weight |
+λstop=10−2\lambda_{\mathrm{stop}}=10^{-2} |
+Batch size |
+128 |
+Entropy embedding dimension |
+128 |
+Training iterations |
+800 k |
+Appendix H Broader Impacts
+Our work introduces a new class of generative models that explicitly adapt image synthesis to bandwidth constraints, enabling more efficient and controllable generation under limited communication resources. By jointly optimizing generation quality and bitrate compliance, BADiff may benefit a wide range of real-world applications where bandwidth is a bottleneck—such as mobile inference, telemedicine, satellite imaging, and cloud rendering.
+On the societal side, more bandwidth-efficient generation could reduce carbon emissions associated with media transmission and enable broader accessibility in under-connected regions. At the same time, like other generative models, BADiff could potentially be misused to produce low-bandwidth synthetic media for malicious purposes, such as misinformation or surveillance. We encourage the research community to pair technical advances with rigorous content provenance and auditing mechanisms.
+Finally, our approach is orthogonal to existing safety or fairness measures in generative modeling. BADiff does not inherently mitigate or amplify dataset biases, but it can be combined with bias-aware training strategies or fairness constraints as needed in deployment contexts.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

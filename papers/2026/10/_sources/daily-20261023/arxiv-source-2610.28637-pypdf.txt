@@ -1,0 +1,1445 @@
+https://arxiv.org/pdf/2610.28637v1
+PAGE 1
+To Keep or Not to Keep: LearningKVCache Retention
+in DisaggregatedLLMServing Systems
+Dong Liu∗
+University of California, Los Angeles
+Los Angeles, CA, USA
+pikeliu@g.ucla.edu
+Yanxuan Yu∗
+Columbia University
+New York, NY, USA
+yy3523@columbia.edu
+Eric Jiang
+University of California, Los Angeles
+Los Angeles, CA, USA
+ericjiang0318@g.ucla.edu
+Shu Wang
+University of California, Los Angeles
+Los Angeles, CA, USA
+shuwang0712@g.ucla.edu
+Ying Nian Wu†
+University of California, Los Angeles
+Los Angeles, CA, USA
+ywu@stat.ucla.edu
+Abstract
+DisaggregatedLLMserving separates prefill and decode into
+distinct node pools, interposing a network fabric between
+the moment a key–value (KV) cache is computed and the
+moment it is consumed. This architectural shift invalidates
+a core assumption of classical cache policies: that the cost
+of a miss is simply recomputation on the same device. In
+disaggregated systems, a miss triggers bothrecomputation
+on a prefill node and anetwork transferof the resultingKV
+block to the decode node—costs that differ by an order of
+magnitude and depend on prefix length, model width, and
+fabric bandwidth. Meanwhile,admittinga block to the global
+KVpool requires an additional transfer at compute time, so
+a poorly chosen keep decision wastes both memory and
+bandwidth even before reuse occurs.
+We presentKVLearn, a learning-based retention frame-
+work that makes keep/evict decisions as first-class cost-
+optimization choices in disaggregatedLLMserving. KVLearn
+consists of three components: (i) a lightweightPrefix Reuse
+Predictor(PRP) that estimates reuse probability from struc-
+tural and temporal prefix features without touching model
+weights; (ii) aCost-A ware Retention Score(CARS) that trans-
+lates reuse probability into a keep/admit signal by account-
+ing for per-block recompute, transfer, and storage costs;
+∗Equal Contributions.
+†Corresponding author.
+This work is licensed under a Creative Commons Attribution 4.0 Interna-
+tional License.
+SYSTOR ’26, Virtual Event, Israel
+©2026 Copyright held by the owner/author(s).
+ACM ISBN 979-8-4007-2473-2/26/09
+https://doi.org/10.1145/3793230.3837769
+and (iii) anAdaptive Threshold Controller(ATC) that ad-
+justs the admission threshold online using closed-loop feed-
+back from observed hit rates and memory pressure. We inte-
+grate KVLearn into a globally disaggregated serving topol-
+ogy and evaluate it on both text and multimodal workloads,
+where image/video-derived tokens create large, expensive-
+to-recomputeKVblocks under heterogeneous reuse dis-
+tributions. KVLearn reduces end-to-end time-to-first-token
+(TTFT) by up to 56% vs. No-Cache (recompute-only), up to
+38% vs. LRU-Pool, and up to 33% vs. Mooncake-style disag-
+gregated baselines. Inter-nodeKVtransfer volume is cut by
+up to 53% vs. LRU-Pool. On MM-Session, throughput stays
+within ∼5%of oracle. Our code implementation of KVLearn
+is available athttps://github.com/FastLM/KVLearn.
+CCS Concepts:•Computer systems organization → Ar-
+chitectures;•Hardware → Emerging technologies;•
+Computing methodologies → Distributed computing
+methodologies.
+Keywords:KV cache; disaggregated LLM serving; cache
+admission; online learning; efficient inference; memory hi-
+erarchy; prefix reuse
+ACM Reference Format:
+Dong Liu, Yanxuan Yu, Eric Jiang, Shu Wang, and Ying Nian Wu.
+2026. To Keep or Not to Keep: LearningKVCache Retention in
+DisaggregatedLLMServing Systems. InThe 19th ACM International
+Systems and Storage Conference (SYSTOR ’26), September 8–9, 2026,
+Virtual Event, Israel.ACM, New York, NY, USA, 14 pages.https:
+//doi.org/10.1145/3793230.3837769
+1 Introduction
+Large language model inference increasingly runs ondisag-
+gregatedserving stacks that physically separate the prefill
+phase (computing full key–value attention states for the
+prompt) from the decode phase (generating tokens one by
+one) [22, 23, 34]. Disaggregation improves cluster utilization:
+1
+arXiv:2610.28637v1  [cs.LG]  10 Aug 2026
+PAGE 2
+SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel Liu et al.
+prefill is compute-bound and benefits from tightly packed
+kernels, while decode is memory-bound and benefits from
+large batches of independent sequences. Production disag-
+gregated deployments now route requests through dedi-
+cated prefill node pools (P-nodes) and decode node pools
+(D-nodes) [23, 34], with the computedKVtensors migrat-
+ing over a high-speed fabric (InfiniBand, NVLink, or RoCE)
+between them.
+The retention gap in disaggregated systems.Prefix
+caching is well-motivated even in single-node deployments:
+when many requests share a common prompt (a system in-
+struction, an image encoding, or a few-shot example), reusing
+theKVblocks for that prefix avoids redundant quadratic at-
+tention computation [8, 33]. Standard policies—LRU, LFU, or
+radix-tree eviction—handle this by retaining recently or fre-
+quently accessed blocks in on-device HBM.Disaggregation
+breaks the cost model underlying these policies.In a disaggre-
+gated cluster, a cache miss now entails:
+1. Dispatching the request to a P-node for recomputation;
+and
+2. Transferring the resultingKVblock over the fabric to the
+D-node before decoding can begin.
+Both costs depend on prefix length, model depth, and fabric
+bandwidth—none of which LRU/LFU tracks. Conversely,ad-
+mittinga block to the sharedKVpool at compute time costs
+an additional transfer (P-node → pool), so indiscriminate
+caching wastes bandwidth and pool memory even for pre-
+fixes that will never be reused. The fundamental asymmetry
+is that in disaggregated serving, keeping a block and not
+keeping a block arebothpolicy choices with concrete, mea-
+surable costs—not an oversight that any uniform threshold
+can fix.
+Multimodal workloads amplify the problem.Mul-
+timodalLLMs encode visual inputs (images, video frames)
+into long token sequences before autoregressive decoding [1,
+9, 18]. A single 448×448 image typically contributes 256–576
+visual tokens; high-resolution images or short video clips
+may produce 4k+ tokens. TheKVfootprint for such prefixes
+is large (128–512 MB for a 13B model in bfloat16), the re-
+compute cost is correspondingly high (∼100–400 ms on an
+A100), yet reuse patterns are uneven: popular images (prod-
+uct thumbnails, dataset evaluation images) are queried many
+times per hour, while user-uploaded photos may never recur.
+A policy that treats all visual prefixes identically—keeping
+all or evicting all—leaves most of the available reuse value
+on the table.
+Our approach: learn the keep decision.We observe
+that prefix reuse is not uniformly random: structural features
+(prefix length, modality, radix-tree depth, session metadata)
+and temporal features (access recency, frequency, time-of-
+day patterns) carry substantial predictive signal for whether
+a block will be requested again within a given horizon. We
+build a lightweight online predictor—trained in the serving
+critical path without any offline profiling—that scores each
+prefix with a reuse probability, and combine it with a closed-
+form cost model to produce a keep/evict signal that is directly
+calibrated to the fabric and memory configuration.
+Contributions.We make four contributions:
+1. We formalize thedisaggregatedKVretention problem(§3):
+a joint admission and eviction decision under heteroge-
+neous recompute, transfer, and storage costs. We prove
+when the optimal admission threshold must vary with
+prefix length (𝑞> 1idealization; Appendix A)—beyond
+what LRU/LFU can express.
+2. We designKVLearn(§4): a three-component framework
+comprisingPRP(prefix reuse predictor),CARS(cost-
+aware retention score), andATC(adaptive threshold
+controller).
+3. We establish that prefix reuse probability islearnable on-
+linefrom lightweight structural and temporal features
+with high accuracy (§5), validating the feasibility of the
+learning-based approach.
+4. We demonstrate end-to-end gains on both language and
+multimodal workloads (§5): up to 56% TTFT reduction vs.
+No-Cache (38% vs. LRU-Pool, 33% vs. Mooncake-LRU),
+53% inter-node transfer volume reduction vs. LRU-Pool,
+and near-Oracle throughput on MM-Session at realistic
+pool sizes.
+2 Background and Related Work
+2.1 Disaggregated LLM serving
+Splitwise [22], DistServe [34], and Mooncake [23] each sep-
+arate prefill and decode to different GPU pools and manage
+KVmigration explicitly. Mooncake introduces a dedicated
+KVcache layer between P- and D-nodes, enabling cache-first
+disaggregation: prefill results are stored in a pooled cache
+and transferred to D-nodes on demand. Our work targets
+exactly this cache layer—specifically,what to keep in itrather
+than how to transfer what has been decided to keep. Prior
+disaggregated work either caches everything (bounded by
+pool capacity with LRU fallback) or mirrors the policy from
+single-node stacks; neither accounts for the asymmetric cost
+structure we formalize in §3. LMCache [3] targets fast pre-
+fill via cross-request cache reuse, InfiniStore [ 2] provides
+RDMA-oriented distributedKVstorage (e.g., integrated with
+vLLM through LMCache), and CXL-based serving systems
+such as CXL-SpecKV [11], SAC [20], and TraCT [30] disag-
+gregateKVonto shared or FPGA-attached CXL memory.
+2
+PAGE 3
+KVLearn SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel
+2.2 Prefix and radix caches
+Open serving stacks—vLLM [ 8], SGLang [33], and TensorRT-
+LLM [21]—focus heavily on single-nodeKVefficiency. Page-
+dAttention in vLLM virtualizesKVblocks to reduce frag-
+mentation. SGLang’s RadixAttention [33] cachesKVin a
+radix tree for automatic prefix sharing, with LRU-based evic-
+tion at capacity. CacheBlend [29] selectively recomputes a
+subset ofKVtokens to amortize staleness. At the serving-
+system layer, TinyServe [10] selects query-relevantKVpages
+at decode time, and PiKV [12] manages expert-shardedKV
+for MoE inference. These single-node systems share the as-
+sumption that miss cost ≈ recompute cost; in disaggregated
+deployments, miss cost also includes network transfer time
+andP-nodedispatch latency. KVLearn is complementary: it
+can replace the eviction policy inside any radix-tree cache
+layer, including Mooncake’s pool, without changing the radix
+structure.
+2.3 Cache admission and online learning
+Admission filters for web caches (TinyLFU [5], LeCaR [26])
+use lightweight frequency sketches or reinforcement learn-
+ing to decide which objects enter cache. Learned caching
+(Belady-inspired predictors [17], CACHEUS [24]) trains of-
+fline on traces. We target anonlinesetting—no offline corpus
+of serving traces is available at deploy time—and incorpo-
+rate a cost-heterogeneous objective specific toKVblocks
+in transformer inference. The closest learning-based work
+is LRB [25] (learning to predict the next-access time); we
+differ in online adaptivity, explicit cost modeling, and the
+multimodal inference context.
+2.4 KV compression and quantization
+Orthogonal to retention, quantization lines reduce bytes
+per block [ 6, 7]. Streaming attention [ 27, 28] discards
+distant tokens within a sequence, and algorithmic cache
+designs reshape in-model reuse—e.g., hardware-aware
+memory-efficient caching [14, 32] and learnable/adaptive
+activation caching for diffusion transformers [ 13, 15, 16].
+These techniques changehow mucheach block costs orhow
+activations are reused; KVLearn changeswhichblocks are
+retained. They compose naturally: a quantized block in the
+pool has the same admissibility decision structure, just with
+smaller|KV 𝑏 |.
+3 Problem Formulation
+3.1 Serving topology
+We consider a globally disaggregated serving cluster with:
+• A set of prefill nodes P={𝑝 1, . . . , 𝑝𝐾 }, each hosting a
+GPU with HBM budget𝑀 𝑃.
+• A set of decode nodes D={𝑑 1, . . . , 𝑑𝑀 }, each with HBM
+budget𝑀 𝐷.
+• A sharedKVpool S of capacity 𝑀𝑆 (DRAM or distributed
+GPU memory), connected to P- and D-nodes via fabric
+with peak bandwidth𝛽(bytes/sec).
+A request 𝑟 carrying prefix 𝑠𝑟 is routed as follows: if KV(𝑠 𝑟 )
+is resident in S or on a P-node’s local cache, it is transferred
+to the scheduled D-node; otherwise, a P-node recomputes
+KV(𝑠 𝑟 )from scratch.
+3.2 Cost model
+Let 𝑏 denote theKVblock for prefix 𝑠 of length 𝐿𝑏 token
+positions. Fix a transformer with ℓ layers, ℎkv key–value
+heads, and head dimension 𝑑ℎ using 𝛿 bytes per element;
+then the block footprint is
+|𝑏|=2ℓ ℎ kv 𝑑ℎ 𝐿𝑏 𝛿bytes.(1)
+We distinguish four elementary costs:
+Recompute cost R (𝑏): the time to run prefill for prefix 𝑠
+on a P-node from the first token, dominated by the qua-
+dratic attention term for long inputs. A good approximation
+for large 𝐿𝑏 is R (𝑏) ≈𝜌·𝐿 2
+𝑏 (with 𝜌 depending on model
+and hardware), though a linear-in- 𝐿𝑏 profile holds when
+flashattention-class kernels bound on memory bandwidth
+rather than compute [4].
+Transfer cost T (𝑏): time to move block 𝑏 from a P-node to
+the KV pool, or from the pool to a D-node.
+T (𝑏)=|𝑏|/𝛽.(2)
+Storage cost U (𝑏,Δ𝑡) : opportunity cost of occupying |𝑏|
+bytes of pool capacity for duration Δ𝑡. We model this as
+U (𝑏,Δ𝑡)=𝛾· |𝑏| ·Δ𝑡 , where 𝛾 is a scalar reflecting how
+many additional requests could have been served had that
+memory been freed.
+Miss penalty M (𝑏): extra latency paid when a request ar-
+rives and 𝑏 is not resident. In disaggregated serving this is
+M (𝑏)=R (𝑏) + T (𝑏) , because the P-node must recompute
+and transfer the block before decode can start.
+3.3 Retention value and the keep/evict decision
+Suppose block 𝑏 was just computed (or is currently resi-
+dent). Over a finite lookahead horizon 𝐻 steps, let 𝑃𝐻 (𝑏)=
+𝑃(reuse within𝐻) be the probability that at least one future
+request shares prefix𝑠. We define theexpected retention value
+of keeping𝑏in full generality as:
+V (𝑏)=𝑃 𝐻 (𝑏) ·
+
+𝐶miss (𝑏) −𝐶 hit(𝑏)
+
+−𝐶 admit (𝑏) −𝐶 storage (𝑏),
+(3)
+where 𝐶miss(𝑏) is the per-request penalty avoided when
+a cached block is served in place of a miss; 𝐶hit(𝑏) is the
+per-request service overhead still incurred on a cache hit;
+3
+PAGE 4
+SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel Liu et al.
+𝐶admit(𝑏) is the one-time cost of writing 𝑏 into the shared
+pool; and 𝐶storage(𝑏) is the ongoing opportunity cost of oc-
+cupying pool capacity.
+Disaggregated instantiation.We apply the following
+simplifications to (3):
+(i)𝐶 miss (𝑏)=R (𝑏) : on a miss a P-node must recompute
+the prefix; the subsequent P-to-D-node fabric transfer
+costs T (𝑏), but an equivalent hop also occurs on a hit
+(see (ii)), so thedifferentialmiss penalty reduces to the
+recompute cost alone.
+(ii)𝐶 hit(𝑏)=T (𝑏) : a cache hit still requires one pool-to-D-
+node transfer; by the uniform-bandwidth assumption
+(|𝑏|/𝛽 for all fabric hops) this equals the P-to-D cost
+paid on a miss, making the per-hop latencies cancel in
+the differential.
+(iii)𝐶 admit (𝑏) ≈ 0: the P-to-pool write is pipelined with
+prefill computation and its latency is amortized at ad-
+mission time.
+(iv)𝐶 storage (𝑏)=U (𝑏,Δ𝑡) : the storage cost follows the
+occupancy model of §3.2.
+Substituting into Eq. (3) yields the working form:
+V (𝑏)=𝑃 𝐻 (𝑏) ·
+
+R (𝑏) − T (𝑏)
+
+− U (𝑏,Δ𝑡).(4)
+Equation (4) captures a key asymmetry:keeping 𝑏 saves
+recompute cost R (𝑏) on a hit but still pays transfer costT (𝑏)
+to move the block to the D-node; not keeping𝑏 pays both on
+a miss. The optimal keep decision isKEEP(𝑏) ⇐ ⇒ V (𝑏)>
+0, which gives a per-block admission threshold
+𝑃 ∗
+𝐻 (𝑏)= U (𝑏,Δ𝑡)
+R (𝑏) − T (𝑏) .(5)
+Proposition 1.When blocks differ in prefix length 𝐿𝑏, under
+the scaling |𝑏| ∝𝐿 𝑏, T (𝑏) ∝𝐿 𝑏, and U (𝑏,Δ𝑡) ∝𝐿 𝑏 at fixed
+Δ𝑡, let R (𝑏)=𝛼𝐿 𝑞
+𝑏 with 𝛼> 0and 𝑞≥ 1. Whenever R (𝑏)>
+T (𝑏): if 𝑞> 1, then 𝑃 ∗
+𝐻 (𝑏) is strictly decreasing in 𝐿𝑏; if
+𝑞=1with linearRandTand fixed positive slopes,𝑃 ∗
+𝐻 (𝑏)is
+independent of𝐿 𝑏.
+Sketch. Substituting these laws into Eq. (5) yields 𝑃 ∗
+𝐻 (𝐿𝑏)=
+𝛾Δ𝑡/(𝛼𝐿 𝑞−1
+𝑏 −𝑐)for positive constants𝛾, 𝑐(Appendix A). If
+𝑞> 1, the denominator increases strictly with 𝐿𝑏, hence 𝑃 ∗
+𝐻
+decreases. If𝑞=1, the denominator is constant.□
+Proposition 1 formalizes the intuition that longer, more
+expensive prefixes admit atlowerreuse probability when
+prefill is super-linear in length ( 𝑞> 1); the 𝑞= 1case is
+length-invariant under the idealization. No single LRU/LFU
+threshold can implement this: LRU ignores R (𝑏) and LFU
+ignoresΔ𝑡(which changes as memory pressure varies).
+3.4 Characterization: reuse in production-like traces
+To motivate the learning approach, Figure 1 characterizes
+prefix reuse on two request streams drawn from public
+serving traces: ShareGPT (language-only) and a multimodal
+stream that mixes LLaVA-Instruct-150K image-QA with
+ActivityNet-QA video-QA requests (details in §5).
+Finding C1:reuse is heavy-tailed and modality-stratified.
+Visual prefixes exhibit dramatically higher per-prefix reuse
+rates (median ≈8 requests/prefix/hour) than text-only system
+prompts (median ≈2), but with a longer tail. The top 5% of
+visual prefixes account for>50% of all hits.
+Finding C2:reuse probability correlates with structural
+features. Prefix length, radix-tree depth, and a 15-minute
+access frequency are jointly predictive of future reuse: a
+static logistic regression over these features alone achieves
+AUC >0.65 on held-out windows, well above the 0.50 random
+baseline, while our online MLP (PRP) reaches AUC > 0.84
+after 200 requests by incorporating pool-state and temporal
+context features (Figure 1B).
+Finding C3:the optimal threshold 𝑃 ∗
+𝐻 varies strongly
+across block sizes. For a 13B model on A100 (𝛽= 200Gbps In-
+finiBand) with Δ𝑡= 5min, 𝑃 ∗
+𝐻 ranges from ≈0.05(4096-token
+blocks) to ≈0.30(128-token prompts) in Figure 1C—about6 ×
+end-to-end—confirming the heterogeneity in Proposition 1
+for𝑞>1.
+These findings jointly validate that (a) the decision prob-
+lem is non-trivial and (b) it is tractable via a lightweight
+predictor, motivating KVLearn.
+4 The KVLearn Framework
+4.1 Overview
+Figure 2 shows the KVLearn architecture within a disaggre-
+gated serving stack. KVLearn adds a thinretention control
+planethat runs on the same hosts as the KV pool coordina-
+tor. The control plane intercepts two events: (1)block arrive,
+when a P-node finishes prefilling a new or updated prefix
+and must decide whether to admit the block to the pool;
+and (2)pool full, when the pool reaches capacity and must
+choose one or more blocks to evict. All decisions are made
+in the critical path of a request, subject to a latency budget
+of≤0.5ms per block.
+4.2 PRP: Prefix Reuse Predictor
+Feature representation.For each prefix 𝑠 of length 𝐿𝑏,
+KVLearn maintains a lightweight feature vectorx (𝑏) ∈R 𝑑
+updated at every block-arrive event. We use 𝑑= 16features
+partitioned into three groups:
+Structural features( 𝑑𝑠 = 6): prefix token length 𝐿𝑏, number
+of radix-tree children (branching factor at the current node),
+tree depth from root, two binary modality flags (is_image,
+4
+PAGE 5
+KVLearn SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel
+10−1 100 101 1020
+0.2
+0.4
+0.6
+0.8
+1
+Reuse Rate (req/hr)
+CDF
+(A) Per-Prefix Reuse Distribution
+Text prompts
+Visual prefixes
+200 400
+0.5
+0.6
+0.7
+0.8
+0.9
+Requests Seen
+AUC (10-min horizon)
+(B) PRP Online Learning
+MLP (MM-Sess.)
+MLP (ShareGPT)
+MLP (Video)
+Static LogReg
+102 103
+0.1
+0.2
+0.3
+0.4
+Prefix Length (tokens)
+Opt. Admission Threshold𝑃 ∗
+𝐻
+(C) Heterogeneous𝑃 ∗
+𝐻 (Prop. 1)
+7B, 200 Gbps
+13B, 200 Gbps
+7B, 400 Gbps
+LRU equiv. (𝜃)
+Figure 1. Prefix reuse characterization.(A)CDF of per-prefix reuse rate for text-only system prompts vs. visual prefixes
+(ShareGPT + LLaVA-Instruct-150K; log-scale𝑥-axis). Visual prefixes exhibit a heavier tail: the top-5% account for >50% of
+hits.(B)AUC of the online PRP vs. requests seen for all three workloads; dashed line = static logistic regression.(C)Optimal
+admission threshold 𝑃 ∗
+𝐻 as a function of prefix length for two model scales and two fabric bandwidths. The dashed line marks a
+uniform threshold 𝑃 ∗,def
+𝐻 = 0.15: it is simultaneously too permissive for short text blocks and too restrictive for long visual ones.
+is_video; text is the implicit baseline), and block footprint
+|𝑏|(log-scaled).
+Temporal features( 𝑑𝑡 = 7): access frequency in the last 1,
+5, and 15 minutes (three exponentially decayed counters),
+recency (seconds since last access, log-scaled), time-of-day
+(sine and cosine encoding of hour, 2 dims), session age (time
+since prefix was first inserted).
+Pool-state features( 𝑑𝑝 = 3): current pool occupancy ratio,
+fraction of bytes in the pool belonging to the same modal-
+ity, current eviction rate (blocks evicted per second in a 30s
+window). Counters are updated incrementally on the radix
+lookup path (𝑂( 1) per touch); atblock arrive,ExtractFea-
+turesreads and whitens these𝑑fields—no full-tree scan.
+Model.ThePRPis a two-layer MLP with ReLU activations
+and a sigmoid output head:
+ˆ𝑃(𝑏)=𝜎  w⊤
+2 ReLU(W1x(𝑏) +b 1) +𝑏 2
+,(6)
+withW 1 ∈R 32×16 andw 2 ∈R 32. Total parameter count:
+32×16+32+32+1=577scalars (<3 KB at float32).
+Online training.Labels arrive after the fact: when a
+block that was admitted is later accessed (hit) or evicted
+without access (miss within the horizon 𝐻), we obtain a
+binary label 𝑦𝑏 ∈ { 0, 1}. We updatePRPparameters via
+stochastic gradient descent on binary cross-entropy loss:
+ℓ(𝑏)=−𝑦 𝑏 log ˆ𝑃(𝑏) − (1−𝑦 𝑏)log(1− ˆ𝑃(𝑏)),(7)
+with a constant learning rate 𝜂PRP = 5 × 10−3 and a 20 000-
+step circular replay buffer to avoid catastrophic forgetting
+on distribution shifts; SGD runs off-path (batched every 100
+labels, §4.6). Blocks that are not admitted never produce
+labels; we handle thisselective labelingproblem by treating
+non-admitted blocks as a separate category and periodically
+sampling them for admission-with-logging to bootstrap the
+label distribution.
+4.3 CARS: Cost-Aware Retention Score
+Hardware-grounded cost parameters.All three cost
+terms in Eq. (4) are derived from the physical serving
+configuration rather than from heuristic weights.
+Recompute cost R (𝑏): measured by offline calibration on
+the target P-node GPU. FlashAttention-class kernels exhibit
+two regimes depending on whether the attention pass is
+memory-bandwidth or compute bound [4]. On A100-80 GB
+(HBM bandwidth 912 GB/s, BF16 throughput 312 TFLOP/s),
+the crossover occurs near 𝐿× ≈ 512tokens. We store a two-
+segment piecewise-linear fit calibrated at deploy time via a
+200-request micro-benchmark:
+R (𝑏) ≈
+(
+𝛼bw ·𝐿𝑏 𝐿𝑏 <𝐿 ×,
+𝛼flop ·𝐿 2
+𝑏 𝐿𝑏 ≥𝐿 ×, (8)
+with coefficients 𝛼bw, 𝛼flop re-calibrated once per model–
+hardware pair. On A100 with LLaMA-3-8B we measure
+𝛼bw ≈ 0.026 ms/token and 𝛼flop ≈ 8 × 10−6 ms/token2,
+giving R (𝑏) ≈ 6.8 ms at 𝐿𝑏 = 512and ≈67 ms at 𝐿𝑏 = 4096
+(super-linear regime).
+Transfer cost T (𝑏)=|𝑏|/𝛽 : determined entirely by block
+footprint and fabric peak bandwidth 𝛽. For a BF16 model
+(𝛿= 2bytes) with ℓ layers, ℎkv grouped-query heads, and
+head dimension𝑑 ℎ:
+|𝑏|=2ℓ ℎ kv 𝑑ℎ 𝐿𝑏 ·2bytes. (9)
+On the test cluster (LLaMA-3-8B:ℓ=32, ℎkv=8, 𝑑ℎ=128; Infini-
+Band HDR 200 Gbps = 25 GB/s), a 512-token block occupies
+5
+PAGE 6
+SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel Liu et al.
+Prefill Pool (P)
+KVLearn Control Plane
+Global KV Pool (S)
+Decode Pool (D)
+P-Node 1
+prefill
+P-Node 2
+prefill
+P-Node 3
+prefill
+...
+KV Blocks
+(DRAM / HBM)
+Radix-Tree
+Metadata
+PRP
+Predictor
+CARS
+Score ATC
+Controller
+D-Node 1
+decode
+D-Node 2
+decode
+D-Node 3
+decode
+...
+admit? hit→transfer
+miss: recompute+fwd
+featuresx(𝑏)
+ˆ𝑃(𝑏)
+𝜃
+hit rateℎ (𝑡)
+CARS(𝑏)>𝜃?
+keep↑/ discard↓
+Figure 2. KVLearn architecture within a disaggregated serving stack.Solid arrows: critical-pathKVblock data flow
+(P-nodes compute, pool stores, D-nodes consume). Dashed arrows: control-plane metadata and feedback signals. At eachblock
+arriveevent, thePRPscores the prefix,CARScombines reuse probability with cost parameters, andATCadjusts the admission
+threshold 𝜃 from pool pressure and observed hit rate. On a cache miss, the red dashed path triggers recomputation on a P-node
+and direct forwarding to the D-node.
+2 × 32 × 8 × 128 × 512 × 2 ≈ 67 MB, giving T (𝑏) ≈ 2.7 ms—
+close to R (𝑏) ≈ 6.8 ms at that length. At 400 Gbps the fabric
+halves T and shifts the cost balance accordingly (Figure 1C).
+Storage cost U (𝑏,Δ𝑡)=𝛾· |𝑏| ·Δ𝑡 : encodes the per-byte-
+per-second opportunity cost of occupying pool DRAM (or
+GPU HBM for GPU-resident pools). 𝛾 is derived from the
+pool capacity target: at 𝜌 ∗ = 0.85, we set 𝛾= ¯R ·𝜆/𝑀 𝑆,
+where ¯R is the running average recompute cost, 𝜆 is the
+current block arrival rate (blocks/s), and 𝑀𝑆 is pool capacity
+in bytes. Δ𝑡est is estimated as the exponentially weighted
+average inter-eviction interval for same-modality blocks in a
+30-second sliding window; ATC (§4.4) keeps𝛾Δ𝑡 est consistent
+with the admission threshold via the pool-pressure feedback
+loop.
+Score computation.Given ˆ𝑃(𝑏) from PRP and the cost
+terms, theCARSscore is
+CARS(𝑏)= ˆ𝑃(𝑏) ·
+
+R (𝑏) − T (𝑏)
+
+− U (𝑏,Δ𝑡 est).(10)
+CARS is a direct estimate of expected retained value V (𝑏)
+(Eq. (4)) under the PRP’s predicted reuse probability. The
+factor R (𝑏) − T (𝑏) is thenet benefit per cache hit: it is large
+when recompute is expensive (long prefixes, slow P-nodes)
+and smaller when the fabric is slow (reducing the gap). On
+a 400 Gbps fabric, T (𝑏) halves, amplifying the net benefit
+and causing CARS to admit more aggressively—exactly the
+behavior mandated by the cost model. Blocks whose transfer
+cost approaches recompute cost (e.g., very short prompts on
+a congested 50 Gbps fabric) yield near-zero net benefit, and
+CARS rejects them unless ˆ𝑃(𝑏) →1.
+Admission.A block is admitted if CARS(𝑏)>𝜃 , where
+𝜃 is adjusted byATC(§4.4). At 𝜃= 0with perfect ˆ𝑃(𝑏) , this
+recovers the optimal threshold in Eq. (5).
+Pool data structure and eviction ordering.The pool
+directory maintains aCARS min-heapkeyed by CARS score:
+block insertion and deletion are 𝑂(log|S|) , and the lowest-
+CARS candidate is accessible in 𝑂( 1). On eviction demand,
+blocks leave in ascending CARS order—removing the lowest-
+expected-value block first. This differs from LRU (ascending
+recency) and LFU (ascending frequency) in that CARS simul-
+taneously encodes block size, predicted reuse, and hardware
+cost: a 4096-token visual block and a 128-token text block
+with thesame access frequencydiffer by more than30 × in
+R (𝑏) and |𝑏| , producing very different CARS values and en-
+suring the visual block is evicted last—a distinction LRU/LFU
+cannot make.
+Lazy score refresh.CARS (𝑏) becomes stale as PRP ac-
+cumulates new labels and pool-state features drift. We adopt
+a lazy refresh policy: when a block is considered for evic-
+tion, its score is recomputed if the last PRP inference is older
+than a staleness threshold 𝜏stale (default: 30 s). In practice,
+re-scoring the bottom 10% of the heap at each eviction pass
+keeps ordering error below 5% of blocks; a full heap rebuild
+is triggered only when the PRP model is updated (every 100
+gradient steps,≈200 ms on a co-located CPU core).
+6
+PAGE 7
+KVLearn SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel
+Algorithm 1KVLearn Block Admission
+Require: Block 𝑏 (prefix 𝑠, size |𝑏| , modality), cost params
+(R,T,U), current threshold𝜃
+1:x(𝑏) ←ExtractFeatures(𝑏)
+2: ˆ𝑃(𝑏) ←PRP(x(𝑏))
+3:CARS(𝑏) ← ˆ𝑃(𝑏) · [R (𝑏) − T (𝑏)] − U (𝑏,Δ𝑡 est)
+4:ifCARS(𝑏)>𝜃then
+5:ifpool has room for|𝑏|then
+6:admit𝑏; register metadata in pool directory
+7:else
+8:runKVLearnEvictuntil|𝑏|bytes freed; admit𝑏
+9:end if
+10:else
+11:discard𝑏(transfer only to requesting D-node)
+12:end if
+13:returnadmission decision
+4.4 ATC: Adaptive Threshold Controller
+The threshold 𝜃 in the CARS admission gate must adapt
+to changing workloads, pool pressure, and PRP calibration
+drift. We use a lightweight PI controller:
+𝑒 (𝑡) =𝜌 (𝑡)
+pool −𝜌 ∗, 𝜃 (𝑡+1) =𝜃 (𝑡) +𝐾 𝑃𝑒 (𝑡) +𝐾 𝐼
+∑︁
+𝑗≤𝑡
+𝑒 (𝑗) ,
+(11)
+where 𝜌 (𝑡)
+pool is current pool utilization and 𝜌 ∗ is the target
+utilization (default 0.85). The controller raises 𝜃 when the
+pool is too full (rejecting marginal blocks earlier) and low-
+ers 𝜃 when the pool is under-utilized (admitting border-
+line blocks). We additionally clamp 𝜃∈ [−𝐶 max, 𝐶max] with
+𝐶max =max 𝑏 |CARS(𝑏)|to prevent oscillation.
+Hit-rate secondary signal.Independently of pool pres-
+sure, if the observed hit rate ℎ (𝑡) drops below a floor ℎfloor
+(indicating the PRP is admitting low-utility blocks), we ap-
+ply an additive bias Δ𝜃hr =𝐾 hr (ℎfloor −ℎ (𝑡) ) to raise the
+threshold. This prevents the pool from filling with blocks
+that satisfy the pressure criterion but have poor reuse quality.
+4.5 Algorithms
+Algorithm 1 and 2 describe the admission and eviction pro-
+cedures. Both operate in the control plane co-located with
+the KV pool coordinator.
+4.6 Complexity and overhead
+Admission costs𝑂(𝑑) forExtractFeatures, 𝑂(𝑑· 32) for the
+MLP forward pass, and𝑂( 1) CARSarithmetic, plus directory
+update (and eviction when the pool is full). The ≤0.5ms
+budget in §4 isadmission latency 𝑇adm (Algorithm 1, p99 over
+105 synthetic events,𝑁meta=104, pool has headroom)—not the
+Algorithm 2KVLearn Pool Eviction
+Require:Target bytes to freeΔ, pool directory
+1: For all resident blocks 𝑏′: recompute CARS(𝑏 ′) with
+refreshed ˆ𝑃if last update>30 s ago
+2:Sort blocks byCARS(𝑏 ′)ascending
+3:freed←0
+4:whilefreed<Δdo
+5:𝑏 ′ ←next block in sorted order
+6:evict𝑏 ′;freed+=|𝑏 ′ |
+7:emit label𝑦 𝑏′ =0to PRP replay buffer
+8:end while
+≈3–10µs MLP forward pass alone; 𝑇feat (radix-counter reads
+on the visited path) is typically a few× larger but both remain
+≪𝑇 adm. Online SGD (≈200 ms per 100-label batch) and inter-
+node RPC are off-path. Eviction is 𝑂(|S|log|S|) , or 𝑂( 1)
+amortized with theCARSheap; p99 ≤5ms for |S|=104 blocks.
+5 Experimental Evaluation
+5.1 Setup
+Hardware.We use two cluster configurations: (a)Small:
+4 A100-80GB P-nodes + 4 A100-80GB D-nodes + 256 GB
+DRAM pool, InfiniBand HDR (200 Gbps); (b)Large: 8 A100-
+80GB P-nodes + 8 A100-80GB D-nodes + 512 GB DRAM pool,
+InfiniBand HDR 2×400 Gbps (bonded). P- and D-nodes are
+connected via the pool; D-nodes have no direct P-node link,
+matching the Mooncake topology [23].
+Models.Language-only: LLaMA-3-8B and LLaMA-3-70B
+(bfloat16). Multimodal: LLaVA-1.5-13B [18] and Qwen-VL-
+Chat (7B) [1], which produce 576 and 256 visual tokens per
+image, respectively, before the text prompt. All models use
+FlashAttention-2-class kernels [4]; bfloat16KVeverywhere
+for byte-level comparability.
+Workloads.We use three request streams:
+1. ShareGPT(language-only): 104 requests sampled from
+the public ShareGPT corpus with realistic session struc-
+ture; prefix overlap arises from shared system prompts
+and few-shot examples.
+2. MM-Session(multimodal): an image-QA request stream
+sampled fromLLaV A-Instruct-150K[ 18], a public
+instruction-tuning corpus with 150 K image-question
+pairs across 412 unique images. We replay 2 000 randomly-
+ordered pairs; the resulting per-image access frequency
+is heavy-tailed (empirical Zipf exponent ˆ𝛼=1.08, fitted
+via MLE), consistent with image-access distributions
+reported for production multimodal serving [19]. Average
+visual prefix: 576 tokens (LLaVA-1.5 ViT-L/14); average
+text continuation: 128 tokens.
+7
+PAGE 8
+SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel Liu et al.
+3. Video-Stream(multimodal): a temporal video-QA stream
+drawn fromActivityNet-QA[ 31], a public benchmark
+with 58 K human-annotated QA pairs over 5 800 videos.
+We select 20 videos (≤3 min each) and replay 1 800 QA
+pairs sampled proportional to each video’s annotation
+density (natural heavy-tailed popularity). Frames are en-
+coded at 1 fps with Qwen-VL’s temporal pooling (12–24
+pooled visual tokens per frame); per-video prefix lengths
+range from 720 to 2 160 tokens. Adjacent temporal seg-
+ments share high token-level overlap by construction of
+the ViT prefix embedding.
+Baselines.
+• No-Cache: always recompute; KV blocks are transferred
+to D-node and discarded immediately.
+• LRU-Pool: standard LRU eviction on the global pool; ad-
+mits every block (no admission filter).
+•LFU-Pool: as above, with LFU eviction.
+• Mooncake-LRU: disaggregated stack with LRU pool pol-
+icy, as in the default Mooncake deployment [23].
+• Oracle: admits a block iff it will actually be reused within
+horizon𝐻=1000requests; provides an upper bound.
+•KVLearn (ours): full system as described in §4.
+Pool capacity is fixed at 256 GB for all baselines (Small clus-
+ter); pool fill rate and hit rate emerge from each policy’s
+admission/eviction behavior.
+Metrics.TTFT (ms), end-to-end throughput (tokens/sec),
+hit rate (fraction of requests served from pool), and inter-
+nodeKVtransfer volume (GiB/hour).
+5.2 End-to-end comparison (Table 1)
+Table 1 summarizes results on all three workloads. KVLearn
+consistently achieves near-Oracle hit rates and TTFT, while
+LRU-Pool and LFU-Pool over-admit short, rarely-reused text
+blocks at the expense of evicting large visual blocks that
+would have higher reuse value. The “Mooncake-LRU” row
+confirms that disaggregation alone does not solve the re-
+tention problem: it is substantially better than No-Cache
+(avoiding redundant recompute) but falls behind KVLearn
+because the admission phase is ignored and pool space is
+wasted on low-value blocks.
+OnMM-Session, KVLearn achieves 41% TTFT reduc-
+tion vs. No-Cache and 27% vs. Mooncake-LRU, because it
+correctly prioritizes the top-5% of visual prefixes (high fre-
+quency in the empirical LLaVA-Instruct-150K access distribu-
+tion, ˆ𝛼=1.08) while rejecting the long tail. OnVideo-Stream,
+per-clipKVblocks (720–1440 pooled visual tokens) occupy
+≈90–180 MB per block (Qwen-VL-7B with GQA, 8 KV heads,
+32 layers, bf16; from Eq. 1); the cost model assigns them a low
+𝑃 ∗
+𝐻 because R (𝑏) is very high, so KVLearn caches them even
+at moderate predicted hit rates. Oracle validates this is the
+100 200 300 400 5000.5
+0.55
+0.6
+0.65
+0.7
+0.75
+0.8
+0.85
+0.9
+AUC=0.84 @ 200 req
+Requests Seen
+AUC (10-min reuse horizon𝐻)
+MM-Session
+ShareGPT
+Video-Stream
+Static LogReg
+Figure 3. PRP online learning convergence.Mean AUC
+±1 std over 5 independent runs for each workload (10-minute
+reuse horizon 𝐻). Shaded bands show run-to-run variance.
+Dashed line: static logistic regression baseline trained on full
+feature set. The MLPPRPsurpasses the static baseline by
+request ≈50 on all workloads; MM-Session converges fastest
+(AUC=0.84 by 200 requests) because visual modality features
+are strongly predictive.
+right decision: all clips with >1 query are worth retaining.
+OnShareGPT, text-only prefixes are shorter and recom-
+pute is cheaper; KVLearn raises 𝑃 ∗
+𝐻 accordingly, leading to a
+more selective pool that has lower hit rate than LRU-Pool
+but higherusefulhit rate (blocks hit before eviction).
+5.3 PRP prediction accuracy (Figure 3)
+Figure 3 showsPRPAUC over training time (request count)
+for all three workloads. The predictor bootstraps quickly:
+after 200 requests, AUC exceeds 0.78 on ShareGPT and 0.84
+on MM-Session (visual modality flags are strongly discrimi-
+native, accelerating early convergence). Video-Stream con-
+verges slower (AUC reaches 0.81 by 500 requests) because
+temporal frame correlations require the 15-minute frequency
+counter to warm up. In all cases, the online predictor sur-
+passes the static logistic regression baseline (AUC ≈0.65)
+by request 50, validating the MLP capacity and the online
+update procedure.
+5.4 Transfer volume and pool utilization (Figure 4)
+Figure 4 plots cumulative inter-nodeKVtransfer volume
+over a 2-hour serving window for MM-Session. LRU-Pool
+and Mooncake-LRU generate the highest transfer: admit-
+ting every block requires one P →pool transfer, and fre-
+quent capacity-driven evictions cause the same blocks to
+be re-admitted on the next request (“churn”). KVLearn’s
+CARS-based admission gate eliminates 53% of total P→pool
+ingress vs. LRU-Pool by rejecting blocks whose expected
+8
+PAGE 9
+KVLearn SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel
+Table 1.End-to-end results on Small cluster (A100 ×8, 256 GB pool, InfiniBand 200 Gbps). TTFT↓, Throughput↑, Hit Rate↑,
+Transfer Volume↓. Best non-oracle in bold.
+Method TTFT (ms)↓Thpt (tok/s)↑Hit (%)↑Xfer (GiB/h)↓
+ShareGPT (language-only, LLaMA-3-8B,𝑁 req=5000)
+No-Cache 89.3 1842 0.0 312
+LRU-Pool 52.1 2980 53.4 198
+LFU-Pool 49.8 3087 55.1 191
+Mooncake-LRU 48.2 3134 56.8 184
+KVLearn 43.5 3460 61.2 146
+Oracle 37.2 3820 68.5 118
+MM-Session (LLaV A-1.5-13B, 80 images, Zipf𝛼=1.1)
+No-Cache 65.0 2901 0.0 521
+LRU-Pool 54.3 3389 52.7 394
+LFU-Pool 51.9 3502 54.2 381
+Mooncake-LRU 52.5 3998 57.2 362
+KVLearn 38.2 4812 71.3 184
+Oracle 34.1 5020 75.8 171
+Video-Stream (Qwen-VL-Chat 7B, 10 clips×60 s, 1 fps)
+No-Cache 112.4 1348 0.0 843
+LRU-Pool 79.1 1892 44.8 598
+LFU-Pool 75.3 1981 46.1 572
+Mooncake-LRU 73.8 2094 48.3 559
+KVLearn 49.2 2891 68.7 397
+Oracle 43.6 3114 73.2 371
+retention value is negative; pool hits then serve D-nodes
+at negligible incremental transfer cost. Mooncake-LRU re-
+duces churn somewhat via smarter request routing, but with-
+out an admission filter it still wastes pool capacity on low-
+reuse blocks. TheATCPI controller (Eq. 11) keeps KVLearn’s
+pool utilization near 𝜌 ∗ = 0.85throughout, preventing both
+under-utilization and the LRU-pool saturation spike visible
+in panel (B).
+5.5 Scaling with pool size and cluster scale
+Figure 5 left shows TTFT vs. pool capacity (fraction of total
+KV working set) for MM-Session on the Small cluster. At
+small pool fractions ( <20%), all caching methods collapse
+to No-Cache performance because most blocks are immedi-
+ately evicted; KVLearn’s advantage appears first because it
+concentrates the scarce pool on high-value blocks. At pool
+fraction = 1.0(unlimited), all methods converge; the sweet
+spot for KVLearn is 30–60% of working set, which matches
+realistic cluster deployments where the KV pool is a fraction
+of total GPU HBM.
+Figure 5 right shows throughput scaling on cluster size.
+KVLearn’s throughput gap over Mooncake-LRU widens with
+scale because more P-nodes means more potential for dis-
+tributed reuse detection; the ATC responds to aggregate pool
+pressure, not per-node signals, giving it a global view that
+per-node LRU cannot leverage.
+5.6 Ablation study
+Table 2 ablates KVLearn’s components on MM-Session. Re-
+movingATC(fixed threshold 𝜃= 0) reduces performance be-
+cause pool pressure is uncontrolled: during request bursts the
+pool fills with marginal blocks, crowding out high-value vi-
+sual prefixes. ReplacingPRPwith a constant ˆ𝑃= 0.5(no pre-
+dictor, cost-model only) degrades hit rate by 12 pp, confirm-
+ing that the learned reuse signal is crucial beyond the cost
+model alone. Removing the modality features fromx (𝑏) re-
+duces AUC and hit rate, underscoring that image/video/text
+have distinct reuse distributions that cross-pollute if treated
+uniformly. The full system is strictly Pareto-dominant across
+all metrics in this ablation.
+5.7 Cost model sensitivity
+We vary fabric bandwidth 𝛽∈ { 50, 100, 200, 400} Gbps to
+simulate heterogeneous cluster configurations. At low 𝛽
+(50 Gbps, e.g., 100GbE), the transfer cost T (𝑏)=|𝑏|/𝛽 rises,
+narrowing the denominator R (𝑏) − T (𝑏) in Eq. (5) and
+thereby raising 𝑃 ∗
+𝐻 : the saving from avoiding recompute
+shrinks relative to what it costs to admit and later serve
+9
+PAGE 10
+SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel Liu et al.
+Table 2. Ablation study(MM-Session, Small cluster). Each row removes one KVLearn component. “Full” = complete system.
+Configuration TTFT (ms) Thpt (tok/s) Hit (%) Xfer (GiB/h)
+Full (KVLearn)38.2 4812 71.3 184
+−ATC (fixed𝜃) 44.7 4391 63.1 221
+−PRP ( ˆ𝑃=0.5) 52.1 4018 59.4 248
+−modality features 41.8 4620 67.2 199
+−cost model (LFU only) 57.3 3740 55.8 276
+Mooncake-LRU 52.5 3998 57.2 394
+Oracle 34.1 5020 75.8 171
+0
+200
+400
+600
+800
+1,000
+−53%
+Cumul. Transfer (GiB)
+(A) Inter-Node KV Transfer (MM-Session)
+No-Cache (recomp.+fwd)
+LRU-Pool
+Mooncake-LRU
+KVLearn (ours)
+0 20 40 60 80 100 120
+0.40.50.60.70.80.91
+Time (minutes)
+Pool Occupancy𝜌
+(B) Pool Occupancy (target𝜌 ∗ =0.85, dashed)
+Target𝜌 ∗
+LRU-Pool
+KVLearn (ours)
+Figure 4. Inter-node KV transfer analysis(MM-Session,
+2 h).(A)Cumulative P →pool transfer volume. KVLearn cuts
+total ingress by 53% vs. LRU-Pool by rejecting low-CARS
+blocks; pool-to-D transfers decrease with saved recompute
+traffic.(B)Pool occupancy over time. TheATCPI con-
+troller (Eq. 11) keeps KVLearn near 𝜌 ∗ = 0.85; LRU-Pool
+saturates at 100% within 25 min and begins evicting high-
+value visual blocks.
+the block via the slower fabric. KVLearn adapts automati-
+cally because T (𝑏) is a configuration parameter fed directly
+into CARS; Mooncake-LRU does not change its behavior. At
+𝛽= 50Gbps, KVLearn’s TTFT advantage over Mooncake-
+LRU widens to49%because it correctly reduces pool admis-
+sion for blocks where transfer cost nearly offsets recompute
+savings.
+5.8 Access-frequency distribution sensitivity
+Because MM-Session derives its access counts from the
+empirically observed frequency distribution in LLaVA-
+Instruct-150K (fitted ˆ𝛼=1.08), we additionally sweep
+𝛼∈ { 0.8, 1.0, 1.1, 1.3, 1.5} byresamplingthe same 2 000
+requests with reweighted per-image probabilities, keeping
+all other parameters fixed. Table 3 reports TTFT and hit rate
+at pool fraction 50%.
+Table 3.TTFT and hit rate vs. access-skew 𝛼 (MM-Session,
+50% pool).
+Method𝛼=0.8𝛼=1.0𝛼=1.1𝛼=1.3𝛼=1.5
+TTFT (ms)
+Mooncake-LRU 55.1 53.8 52.5 51.4 50.2
+KVLearn 46.2 42.6 38.2 35.1 33.4
+Hit Rate (%)
+Mooncake-LRU 51.4 54.3 57.2 59.8 62.4
+KVLearn 61.8 66.5 71.3 75.6 78.2
+KVLearn’s advantage is robust across the full range:
+even at 𝛼=0.8(near-uniform access, most challenging for
+any predictive policy), KVLearn reduces TTFT by 16%
+over Mooncake-LRU. As𝛼increases the advantage widens,
+because a steeper skew creates a sharper head/tail contrast
+that theCARSscore can exploit more aggressively. These
+results confirm that the gains reported at the empirically
+calibrated ˆ𝛼=1.08are not an artifact of an unusually
+favorable skew.
+5.9 Oracle horizon sensitivity
+The Oracle baseline is parametrized by a lookahead horizon
+𝐻: a block is admitted iff it is reused within the next 𝐻
+requests. A finite 𝐻 is necessary because future requests are
+unbounded in practice; we chose𝐻=1000as a conservative
+upper bound (roughly 10× the warm-up window of thePRP).
+Table 4 sweeps𝐻∈ {200,500,1000,2000}on MM-Session.
+Oracle performance saturates beyond 𝐻=500: most reuses
+occur within 500 requests (consistent with the session
+lengths in LLaVA-Instruct-150K and ActivityNet-QA).
+KVLearn’s TTFT is independent of 𝐻 because it uses no
+lookahead; the gap to Oracle grows slightly with 𝐻 as the
+Oracle gains from admitting blocks with extremely long
+inter-arrival times. All figures in the paper use𝐻=1000.
+10
+PAGE 11
+KVLearn SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel
+10% 20% 30% 40% 50% 60% 70% 80% 100%
+40
+50
+60
+70
+sweet spot
+30–50%
+Pool Capacity (fraction of KV working set)
+TTFT (ms)
+(A) TTFT vs. Pool Capacity (MM-Session)
+No-Cache
+LRU-Pool
+Mooncake-LRU
+KVLearn (ours)
+Oracle
+2+2 4+4 6+6 8+8 10+10 12+120
+2,000
+4,000
+6,000
+Cluster Size (P+D node pairs)
+Throughput (tok/s)
+(B) Throughput Scaling (MM-Session, 50% pool)
+No-Cache
+LRU-Pool
+Mooncake-LRU
+KVLearn (ours)
+Oracle
+Ideal linear
+Figure 5. Scaling analysis.(A)TTFT vs. pool capacity fraction on the Small cluster (MM-Session). KVLearn reaches near-
+Oracle TTFT at 40–50% of the working set; LRU/Mooncake improve slowly because they admit low-value blocks that occupy
+the marginal space.(B)Throughput vs. cluster size at 50% pool fraction. KVLearn scales near-linearly (dotted reference)
+because theATCaggregates pool pressure globally and the admission filter prevents churn from growing with the number of
+P-nodes. Mooncake-LRU sub-scales: each new P-node increases admission pressure, accelerating eviction of high-value visual
+blocks.
+Table 4.Oracle and KVLearn TTFT (ms) vs. lookahead hori-
+zon𝐻(MM-Session, 50% pool).
+𝐻=200𝐻=500𝐻=1000𝐻=2000
+Oracle 35.8 34.8 34.1 33.7
+KVLearn 38.2 38.2 38.2 38.2
+Gap (ms) 2.4 2.6 4.1 4.5
+6 Discussion
+Limitations.ThePRPrequires a warm-up of 𝑛0 ≈ 200
+requests (Table 6) before held-out AUC exceeds A0 = 0.75;
+until then, KVLearn uses a cost-model-only policy with uni-
+form prior ˆ𝑃(𝑏) ≡𝑃 ∗,def
+𝐻 = 0.15(the LRU-equivalent thresh-
+old in Figure 1C) rather than the length-heterogeneous𝑃 ∗
+𝐻 (𝑏)
+from Proposition 1. The cost model assumes homogeneous
+P-node hardware; heterogeneous clusters (mixing A100 and
+H100 nodes) require per-nodeR calibration. The ATC PI con-
+troller may oscillate under bursty workloads if gains𝐾 𝑃, 𝐾𝐼
+are mis-tuned; we use conservative defaults validated on
+all three workloads but recommend per-cluster tuning for
+production. Our evaluation uses publicly available academic
+traces (LLaVA-Instruct-150K, ActivityNet-QA, ShareGPT)
+rather than proprietary production logs; while the access-
+skew (§5.8) and horizon (§5.9) sensitivity sweeps confirm the
+results are robust across a wide parameter range, integration
+with a live Mooncake or DistServe cluster and validation
+against closed production traces are reserved for future work.
+Hardware design perspective.From a memory-
+hierarchy standpoint, the disaggregated KV pool is an
+explicit L4 tier: capacity resides in pool DRAM/HBM,
+lines are prefix-granular rather than cache-line–sized, and
+all P-nodes and D-nodes share one logical namespace.
+Proposition 1 implies that utility-maximizing retention
+islength-heterogeneous: at equal predicted reuse, long
+visual prefixes should rank lower for eviction because
+R (𝑏) − T (𝑏) grows with 𝐿𝑏—something LRU/LFU cannot
+capture with recency or frequency alone. KVLearn encodes
+this bias in per-block CARS scores; hardware LLCs pursue a
+similar goal through utility- or size-aware replacement and
+victim structures for large lines. A future pool controller
+could attach footprint and calibrated (R,T ) tags to each
+block and evaluate retention in the memory fabric (e.g.,
+CXL expanders), avoiding per-admission control-plane
+round-trips—a direction we leave to future work.
+Caching per-prefix KV blocks may retain sensitive con-
+tent (user images, PII in prompts) beyond the originating
+request’s lifetime. Deployments must apply retention poli-
+cies consistent with data protection regulations: KVLearn’s
+admission API accepts per-prefix TTL overrides, allowing
+operators to force eviction of sensitive-prefix blocks on a
+schedule.
+7 Conclusion
+We identified and formalized theKVcache retention problem
+in disaggregatedLLMserving: a joint admission–eviction
+decision whose optimal policy depends heterogeneously
+11
+PAGE 12
+SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel Liu et al.
+on prefix length, fabric bandwidth, and recompute cost—
+making classical LRU/LFU inadequate. KVLearn addresses
+this through a lightweight online predictor (PRP), a cost-
+aware scoring function (CARS), and a closed-loop threshold
+controller (ATC). Evaluations on language-only and multi-
+modal workloads show up to 56% TTFT reduction vs. No-
+Cache (38% vs. LRU-Pool), 53% inter-node transfer volume
+reduction vs. LRU-Pool, and near-oracle throughput on MM-
+Session at realistic pool sizes (modestly larger gaps on other
+workloads)—all without modifying model weights or chang-
+ing the serving routing logic.
+The broader takeaway is thatwherea KV block is com-
+puted andwhereit will be consumed are no longer the same
+node in modern disaggregated deployments, and retention
+policies should account for the intervening network as a first-
+class cost. As visual token lengths grow (4k–16k for high-
+resolution and video models) and serving clusters scale to
+hundreds of nodes, the gap between intelligent and naive re-
+tention will only widen. Future directions include hardware
+memory-side retention primitives, joint KV-compression and
+retention co-optimization, and federated reuse prediction
+across cluster boundaries.
+References
+[1] Jinze Bai, Shuai Bai, Shusheng Yang, Shijie Wang, Sinan Tan, Peng
+Wang, Junyang Lin, Chang Zhou, and Jingren Zhou. 2023. Qwen-VL:
+A Versatile Vision-Language Model for Understanding, Localization,
+Text Reading, and Beyond.arXiv preprint arXiv:2308.12966(2023).
+[2] ByteDance. 2025. InfiniStore: High-performance KV store for LLM
+inference clusters.https://github.com/bytedance/InfiniStore
+[3] Yihua Cheng, Yuhan Liu, Jiayi Yao, Yuwei An, Xiaokun Chen, Shaoting
+Feng, Yuyang Huang, Samuel Shen, Kuntai Du, and Junchen Jiang.
+2025. LMCache: An Efficient KV Cache Layer for Enterprise-Scale
+LLM Inference.arXiv preprint arXiv:2510.09665(2025).
+[4] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré.
+2022. FlashAttention: Fast and Memory-Efficient Exact Attention with
+IO-Awareness. InAdvances in Neural Information Processing Systems
+(NeurIPS), Vol. 35. 16344–16359.
+[5] Gil Einziger, Roy Friedman, and Ben Manes. 2017. TinyLFU: A Highly
+Efficient Cache Admission Policy.ACM Transactions on Storage13, 4,
+Article 35 (2017), 31 pages.
+[6] Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael W.
+Mahoney, Yakun Sophia Shao, Kurt Keutzer, and Amir Gholami. 2024.
+KVQuant: Towards 10 Million Context Length LLM Inference with KV
+Cache Quantization.arXiv preprint arXiv:2401.18079(2024).
+[7] Hao Kang, Qingru Zhang, Souvik Kundu, Geonhwa Jeong, Zaoxing
+Liu, Tushar Krishna, and Tuo Zhao. 2024. GEAR: An Efficient KV
+Cache Compression Recipe for Near-Lossless Generative Inference of
+LLM.arXiv preprint arXiv:2403.05527(2024).
+[8] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin
+Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Sto-
+ica. 2023. Efficient Memory Management for Large Language Model
+Serving with PagedAttention. InProceedings of the ACM SIGOPS 29th
+Symposium on Operating Systems Principles (SOSP). 611–626.
+[9] Ji Lin, Hongxu Yin, Wei Ping, Yao Lu, Pavlo Molchanov, Andrew
+Tao, Huizi Mao, Jan Kautz, Mohammad Shoeybi, and Song Han. 2023.
+VILA: On Pre-training for Visual Language Models.arXiv preprint
+arXiv:2312.07533(2023).
+[10] Dong Liu and Yanxuan Yu. 2025. Tinyserve: Query-aware cache se-
+lection for efficient llm serving. InProceedings of the 33rd ACM Inter-
+national Conference on Multimedia. 12529–12537.
+[11] Dong Liu and Yanxuan Yu. 2026. Cxl-speckv: A disaggregated fpga
+speculative kv-cache for datacenter llm serving. InProceedings of the
+2026 ACM/SIGDA International Symposium on Field Programmable Gate
+Arrays. 56–66.
+[12] Dong Liu, Yanxuan Yu, Ben Lengerich, and Ying Nian Wu. 2025. PiKV:
+KV Cache Management System for Mixture of Experts.arXiv preprint
+arXiv:2508.06526(2025).
+[13] Dong Liu, Yanxuan Yu, Ben Lengerich, and Ying Nian Wu. 2026. Ada-
+Correction: Adaptive Offset Cache Correction for Accurate Diffusion
+Transformers.arXiv preprint arXiv:2602.13357(2026).
+[14] Dong Liu, Yanxuan Yu, Ben Lengerich, and Ying Nian Wu. 2026. MKA:
+Memory-Keyed Attention for Efficient Long-Context Reasoning. In
+Proceedings of the 23rd ACM International Conference on Computing
+Frontiers. 280–289.
+[15] Dong Liu, Yanxuan Yu, and Ying Nian Wu. 2026. Accelerating Fre-
+quency Domain Diffusion Models with Error-Feedback Event-Driven
+Caching.arXiv preprint arXiv:2604.22901(2026).
+[16] Dong Liu, Yanxuan Yu, Jiayi Zhang, Yifan Li, Ben Lengerich, and
+Ying Nian Wu. 2025. FastCache: Fast Caching for Diffusion Trans-
+former Through Learnable Linear Approximation.arXiv preprint
+arXiv:2505.20353(2025).
+[17] Evan Zheran Liu, Milad Hashemi, Kevin Swersky, Parthasarathy Ran-
+ganathan, and Junwhan Ahn. 2020. An Imitation Learning Approach
+for Cache Replacement. InProceedings of the 37th International Con-
+ference on Machine Learning (ICML). 6237–6247.
+[18] Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 2023.
+Visual Instruction Tuning. InAdvances in Neural Information Processing
+Systems (NeurIPS), Vol. 36.
+[19] Yuhan Liu, Hanchen Li, Yihua Cheng, Siddhant Ray, Qizheng Zhang,
+Kuntai Du, Jiayi Yao, Shan Lu, and Junchen Jiang. 2024. CacheGen:
+KV Cache Compression and Streaming for Fast Large Language Model
+Serving. InProceedings of ACM SIGCOMM.
+[20] Ruiyang Ma, Teng Ma, Junru Li, Hantian Zha, Xuchun Shang, Qingda
+Hu, Zheng Liu, Xinjun Yang, Tao Ma, and Guojie Luo. 2026. SAC:
+Disaggregated KV Cache System for Sparse Attention LLMs with CXL.
+arXiv preprint arXiv:2606.19746(2026).
+[21] NVIDIA. 2024. TensorRT-LLM.https://github.com/NVIDIA/TensorRT-
+LLM
+[22] Pratyush Patel, Esha Choukse, Chaojie Zhang, Aashaka Shah, Íñigo
+Goiri, Saeed Maleki, and Ricardo Bianchini. 2024. Splitwise: Efficient
+Generative LLM Inference Using Phase Splitting. InProceedings of the
+51st Annual International Symposium on Computer Architecture (ISCA).
+118–132.
+[23] Ruoyu Qin, Zheming Li, Weiran He, Mingxing Zhang, Yongwei Wu,
+Weimin Zheng, and Xinran Xu. 2024. Mooncake: A KV Cache-
+Centric Disaggregated Architecture for LLM Serving.arXiv preprint
+arXiv:2407.00079(2024).
+[24] Liana V. Rodriguez, Farzana M. Yusuf, Steven Lyons, Eysler Paz, Raju
+Rangaswami, Jason Liu, Ming Zhao, and Giri Narasimhan. 2021. Learn-
+ing Cache Replacement with CACHEUS. In19th USENIX Conference
+on File and Storage Technologies (FAST 21). 341–354.
+[25] Zhenyu Song, Daniel S. Berger, Kai Li, and Wyatt Lloyd. 2020. Learning
+Relaxed Belady for Content Distribution Network Caching. In17th
+USENIX Symposium on Networked Systems Design and Implementation
+(NSDI).
+12
+PAGE 13
+KVLearn SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel
+[26] Giuseppe Vietri, Liana V Rodriguez, Wendy A Martinez, Steven Lyons,
+Jason Liu, Raju Rangaswami, Ming Zhao, and Giri Narasimhan. 2018.
+Driving cache replacement with {ML-based} {LeCaR}. In10th USENIX
+Workshop on Hot Topics in Storage and File Systems (HotStorage 18).
+[27] Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Junxian Guo, Shang
+Yang, Haotian Tang, Yao Fu, and Song Han. 2025. Duoattention:
+Efficient long-context llm inference with retrieval and streaming heads.
+InInternational Conference on Learning Representations, Vol. 2025.
+37228–37253.
+[28] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike
+Lewis. 2024. Efficient streaming language models with attention sinks.
+InInternational Conference on Learning Representations, Vol. 2024.
+21875–21895.
+[29] Jiayi Yao, Hanchen Li, Yuhan Liu, Siddhant Ray, Yihua Cheng, Qizheng
+Zhang, Kuntai Du, Shan Lu, and Junchen Jiang. 2024. CacheBlend:
+Fast Large Language Model Serving for RAG with Cached Knowledge
+Fusion.arXiv preprint arXiv:2405.16444(2024).
+[30] Dongha Yoon, Younghoon Min, Hoshik Kim, Sam H Noh, and Jongry-
+ool Kim. 2025. TraCT: Disaggregated LLM serving with CXL shared
+memory KV cache at rack-scale.arXiv preprint arXiv:2512.18194(2025).
+[31] Zhou Yu, Dejing Xu, Jun Yu, Ting Yu, Zhou Zhao, Yueting Zhuang,
+and Dacheng Tao. 2019. ActivityNet-QA: A Dataset for Understanding
+Complex Web Videos via Question Answering. InProceedings of the
+AAAI Conference on Artificial Intelligence, Vol. 33. 9127–9134.
+[32] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin
+Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark
+Barrett, et al. 2023. H2o: Heavy-hitter oracle for efficient generative
+inference of large language models.Advances in neural information
+processing systems36 (2023), 34661–34710.
+[33] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff
+Huang, Cody H Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E
+Gonzalez, et al. 2024. SGLang: Efficient Execution of Structured Lan-
+guage Model Programs.Advances in Neural Information Processing
+Systems (NeurIPS)37 (2024), 62557–62583.
+[34] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xu-
+anzhe Liu, Xin Jin, and Hao Zhang. 2024. DistServe: Disaggregating
+Prefill and Decoding for Goodput-Optimized Large Language Model
+Serving. In18th USENIX Symposium on Operating Systems Design and
+Implementation (OSDI). 193–210.
+A Proof of Proposition 1
+Scaling assumptions.We express costs as functions of
+prefix length 𝐿𝑏 with hardware and model hyper-parameters
+held fixed. From Eq. (1), |𝑏| ∝𝐿 𝑏, so Eq. (2) gives T (𝑏)=
+|𝑏|/𝛽∝𝐿 𝑏; write T (𝐿𝑏)=𝑐 𝐿 𝑏 with 𝑐> 0. The storage model
+in §3.2, U (𝑏,Δ𝑡)=𝛾|𝑏|Δ𝑡 , yields U (𝐿𝑏,Δ𝑡)=𝛾 𝐿 𝑏 Δ𝑡 with
+𝛾> 0. For prefill compute we write R (𝐿𝑏)=𝛼𝐿 𝑞
+𝑏 with 𝛼> 0
+and 𝑞≥ 1: 𝑞= 2reflects quadratic attention in 𝐿𝑏, while
+𝑞= 1can approximate bandwidth-bound kernels whose time
+scales roughly linearly in sequence length.
+Closed form.Whenever R (𝐿𝑏)>T (𝐿 𝑏), Eq. (5) becomes
+𝑃 ∗
+𝐻 (𝐿𝑏)= 𝛾𝐿𝑏 Δ𝑡
+𝛼𝐿 𝑞
+𝑏 −𝑐𝐿 𝑏
+= 𝛾Δ𝑡
+𝛼𝐿 𝑞−1
+𝑏 −𝑐
+.(12)
+This requires 𝛼𝐿 𝑞
+𝑏 >𝑐𝐿 𝑏, i.e. 𝐿𝑞−1
+𝑏 >𝑐/𝛼 when 𝐿𝑏 > 0(for
+𝑞>1, large enough𝐿 𝑏 always satisfies this).
+Let𝑔(𝐿 𝑏)=𝛼𝐿 𝑞−1
+𝑏 −𝑐. For𝑞>1and𝐿 𝑏 >0,
+𝑔′ (𝐿𝑏)=𝛼(𝑞−1)𝐿 𝑞−2
+𝑏 >0,
+so 𝑔 is strictly increasing on  (𝑐/𝛼) 1/(𝑞−1) ,∞ . Thus
+𝑃 ∗
+𝐻 (𝐿𝑏)=𝛾Δ𝑡/𝑔(𝐿 𝑏) is strictly decreasing in 𝐿𝑏 whenever
+𝑔(𝐿𝑏)> 0. For 𝑞= 1, 𝑔(𝐿𝑏)=𝛼−𝑐 is constant; if 𝛼>𝑐 , then
+𝑃 ∗
+𝐻 (𝐿𝑏)=𝛾Δ𝑡/(𝛼−𝑐)does not depend on𝐿 𝑏.
+Standard transformer prefill is typically super-linear in 𝐿𝑏
+(𝑞> 1), so the heterogeneous-threshold regime of Proposi-
+tion 1 applies. FlashAttention-class kernels may reduce the
+effective exponent toward 𝑞≈ 1under sustained bandwidth
+saturation; then 𝑃 ∗
+𝐻 exhibits weaker length dependence un-
+der this idealization.
+B Generalized Cost Model of KVLearn
+Relaxing the cancelling-transfer and amortized-admission
+assumptions of §3.3,
+Δ𝐶(𝑏)=R (𝑏) + T miss(𝑏) − Thit(𝑏),
+𝐶admit(𝑏)=𝜅T P→S (𝑏) +𝐶 ctrl, 𝜅∈ [0,1],
+Vg(𝑏)=𝑃 𝐻 (𝑏)Δ𝐶(𝑏) −𝐶 admit (𝑏) − U (𝑏,Δ𝑡),
+𝑃 ∗,g
+𝐻 (𝑏)= 𝐶admit(𝑏) + U (𝑏,Δ𝑡)
+Δ𝐶(𝑏)
+ Δ𝐶(𝑏)>0 .
+(13)
+Keep iff 𝑃𝐻 (𝑏)>𝑃 ∗,g
+𝐻 (𝑏). Setting Tmiss =T hit =T and 𝜅=
+𝐶ctrl = 0recovers 𝑃 ∗
+𝐻 =U/(R−T ) (Eqs. (4)–(5)); Thit−Tmiss =
+𝛿> 0or 𝜅> 0raises the threshold (more selective) without
+changing the𝐿 𝑏-ordering of Proposition 1 when𝑞>1.
+C Serving Topology and Request Routing
+Notation (consistent with §3.1–3.2).Prefill and decode
+pools are P={𝑝 1, . . . , 𝑝𝐾 } and D={𝑑 1, . . . , 𝑑𝑀 }; the shared
+KVpool is S (capacity 𝑀𝑆). Fabric peak bandwidth is 𝛽
+(bytes/s). For request 𝑟, let 𝑠𝑟 denote its prompt prefix,𝑏𝑟 the
+associatedKVblock, and |𝑏𝑟 | its size from Eq. (1). The coor-
+dinator maintains a radix tree T whose leaves correspond to
+cached prefixes; anexact-prefix hitholds iff 𝑠𝑟 is a registered
+path inTandthe corresponding block is resident inS.
+Residency state.Define the Boolean predicates
+𝐻 pool
+𝑟 =⊮
+
+KV(𝑠 𝑟 ) ∈ S
+
+,(14)
+𝐻 P
+𝑟 =⊮
+
+∃𝑝∈ P: KV(𝑠 𝑟 )resident on𝑝
+
+.(15)
+The logical OR 𝐻𝑟 =𝐻 pool
+𝑟 ∨𝐻 P
+𝑟 is theKV-hitevent that
+avoids full-prefix recompute on a P-node.
+Latency-aware placement.Let QL(𝑡)
+𝑃 (𝑝) and QL(𝑡)
+𝐷 (𝑑) be
+queued work on prefill/decode nodes at arrival time 𝑡. The
+critical-path cost of assigning(𝑝, 𝑑)is
+𝐿(𝑟;𝑝, 𝑑)=(1−𝐻 𝑟 ) QL(𝑡)
+𝑃 (𝑝)+R (𝑏𝑟 ) + T (𝑏𝑟 ) +QL (𝑡)
+𝐷 (𝑑),
+(16)
+13
+PAGE 14
+SYSTOR ’26, September 8–9, 2026, Virtual Event, Israel Liu et al.
+and latency-optimal routing chooses(𝑝 ∗
+𝑟 , 𝑑∗
+𝑟 ) ∈arg min 𝑝,𝑑 𝐿(𝑟 ; 𝑝, 𝑑).
+Under homogeneous fabric bandwidth, a pool hit (𝐻 pool
+𝑟 =1)
+makes the 𝑝-term vanish, so (16) reduces to least-loaded
+decode placement 𝑑 ∗
+𝑟 ∈arg min 𝑑 QL(𝑡)
+𝐷 (𝑑) (ties broken by
+smallest node id); on a miss we likewise pick the least-loaded
+P-node. Relative to forcing a miss on the same (𝑝, 𝑑), a
+KV-hit saves
+Δ𝐿(𝑟;𝑝, 𝑑)=𝐿(𝑟;𝑝, 𝑑)
+
+𝐻𝑟 =0−𝐿(𝑟;𝑝, 𝑑)
+
+𝐻𝑟 =1 =QL (𝑡)
+𝑃 (𝑝)+R (𝑏𝑟 ),
+(17)
+so the differential that retention can avoid is recompute (plus
+P-queue), matching the R (𝑏) − T (𝑏) term that drives V (𝑏)
+in Eq. (4) once the common transfer hop cancels.
+Critical-path timing (idealized).Let 𝑇 route be coordinator
+bookkeeping + radix lookup and 𝑇 decode
+first the decode-side
+first-token work. Ignoring residual queueing beyond (16),
+TTFT(𝑟) ≈𝑇 route +𝐿(𝑟;𝑝 ∗
+𝑟 , 𝑑 ∗
+𝑟 ) +𝑇 decode
+first ,(18)
+with T (𝑏𝑟 ) ≈ |𝑏 𝑟 |/𝛽 on saturated fabric hops (pool →𝑑 or
+P →𝑑 ). Under a stationary pool-hit rate ℎ=Pr(𝐻 pool
+𝑟 =1),
+E[TTFT] therefore decreases linearly in ℎ through the
+(1−𝐻𝑟 ) term of (16)—the quantity that CARS admis-
+sion/eviction directly controls via residency inS.
+Routing policy used in experiments.Upon arrival at the
+pool coordinator:
+1. Radix lookup:Compute 𝐻 pool
+𝑟 via exact-prefix match in T
+and metadata pins inS.
+2. Hit path( 𝐻 pool
+𝑟 =true ): Select 𝑑 ∗
+𝑟 , schedule an asynchro-
+nous transfer S →𝑑 ∗
+𝑟 for KV(𝑠 𝑟 ), and skip P-node prefill
+for𝑠 𝑟 .
+3.Partial P-local hit(𝐻 pool
+𝑟 =false,𝐻 P
+𝑟 =true): Route to the
+holding P-node only for missing suffix tokens; the merged
+block still follows𝑝→𝑑 ∗
+𝑟 delivery before decode.
+4. Miss path( 𝐻𝑟 =false ): Dispatch to the selected P-node,
+run full prefill for 𝑠𝑟 , stream KV(𝑠 𝑟 ) to 𝑑 ∗
+𝑟 , and invoke
+Algorithm 1 for optional replication intoS.
+Measurement.TTFT is taken from request enqueue at the
+coordinator until the client receives the first generated token;
+timestamps exclude WAN/client-side buffering outside the
+cluster boundary used in §5.
+D Experimental Parameters for
+Reproducibility
+Tables 5 and 6 list symbolic parameters aligned with §5
+(GPU generation A100-80GB; Mooncake-style routing [23]).
+T (𝑏)=|𝑏|/𝛽denotes the transfer-cost term in §5.
+Table 5.Symbolic system, model, and workload parame-
+ters (𝑘∈{ 1, 2} orders the cluster–fabric tuple in row 1; 𝑀★
+𝑆
+matches Table 1).
+Param. Value
+ | P𝑘 |,| D 𝑘 |,
+𝑀𝑆,𝑘 , 𝛽 𝑘
+
+ (4,4,256 GB,200 Gbps),
+(8,8,512 GB,2×400 Gbps) 
+𝛽sweep,T (𝑏) {50,100,200,400}Gbps;|𝑏|/𝛽
+routing graph𝑃→ S →𝐷,𝑃↔𝐷
+𝑀★
+𝑆 256 GB
+KV dtype bf16 end-to-end
+Mlm {8B,70B}
+(𝐿lv
+vis,
+𝐿qw
+vis )
+(576,256)tokens/img.
+(LLaVA-1.5-13B [18], Qwen-VL-7B [1])
+𝑁sg 104
+(𝛼,| I |, ¯𝐿vis, ¯𝐿txt ) (1.1,80,576,128)
+(𝑁𝑐, 𝑇𝑐, 𝑓 ,[𝜌 −, 𝜌+ ],
+[𝐿 −
+vis, 𝐿+
+vis ] )
+(10,60 s,1 fps,[12,24]tok/frame,
+[720,1440]tok)
+oracle horizon𝐻1000
+Table 6.SymbolicPRP, feature whitening,ATC, and control-
+plane parameters (Eqs. (6)–(7), (11); Alg. 2).
+Param. Value
+(𝑑, ℎ) (16,32)
+(W1,w 2 ) (R 32×16,R 32 )
+(𝑓 hid, 𝑓 out,L ) (ReLU, 𝜎,BCE)
+(𝜂PRP,| B |,Δ𝑛 opt ) (5×10 −3,2×10 4,100)
+(𝑇auc, 𝑁 seed ) (10 min,5)
+( A0, 𝑃 ∗,def
+𝐻 , 𝑛 0 ) (0.75,0.15,≈200)
+{𝜆 𝑗 }3
+𝑗=1 {60,300,900}s
+(𝑛warm, 𝑘 𝜇 ) (500,1000)requests
+(𝜙, 𝜖) ( 0.99, 10−6 ); ˜𝑥𝑖 =(𝑥𝑖 −𝜇𝑖 )/max(𝜎 𝑖, 𝜖)
+for𝑛>500
+𝑇 cap
+sess 24 h
+(𝜌 ∗, 𝐾 𝑃 , 𝐾 𝐼 , ℎ floor, 𝐾 hr ) ( 0.85, 2×10−2, 5×10−4,
+0.55,1.0×10 −1 )
+𝜃[ −𝐶 max, 𝐶 max ],
+𝐶max=max 𝑏 |CARS(𝑏) |
+( ¯𝑇adm, ¯𝑇ev, 𝑁 meta ) (0.5 ms(p99),5 ms(p99),10 4 )
+Δ𝑡PRP 30 s
+(𝐾𝑃, 𝐾𝐼 , ℎfloor, 𝐾hr) in Table 6 are conservative stability de-
+faults; re-fit from pool-pressure traces in production.
+14

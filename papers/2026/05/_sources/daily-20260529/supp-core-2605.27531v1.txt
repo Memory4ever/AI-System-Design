@@ -1,0 +1,970 @@
+Source: https://arxiv.org/html/2605.27531v1
+Main text extraction; fulltext_chars=93027
+
+arXiv:2605.27531v1 [cs.PL] 26 May 2026 
+ 
+ 
+ Agentic Separation Logic Specification Synthesis 
+
+ 
+ 
+ 
+ Tarun Suresh
+ 
+    
+ David Korczynski
+ 
+    
+ Julien Vanegue
+ 
+ Affiliation:  Bloomberg, NY, USA
+ 
+ Email:  {tsuresh10,dkorczynski,jvanegue}@bloomberg.net 
+ 
+
+ Abstract 
+    
+ Specification synthesis, the task of automatically inferring formal specifications from program implementations and natural language, is important for refactoring, transpilation, optimization, and verification, yet remains an open challenge for large C++ repositories. Existing LLM-based approaches fail to simultaneously scale to such repositories, produce specifications expressive enough to capture systems-code features such as dynamic memory and heap-allocated data structures, and systematically validate those specifications to rule out incorrect candidates. We present Spec-Agent, an agentic system for synthesizing expressive, well-validated specifications across large C++ codebases. Spec-Agent targets a  ladder  of specification languages: propositional logic, first-order logic, propositional separation logic, and first-order separation logic. For each function, Spec-Agent uses static analysis and runtime heap tracing to select the appropriate target specification language, generalizes existing functional tests into fuzz harnesses, and iteratively refines LLM-generated candidates via counterexample-guided feedback. We evaluate Spec-Agent on open source C++ codebases comprising millions of lines of code. Spec-Agent synthesizes valid specifications for  85%  of target functions, with no false positives observed under fuzzing and expert validation, outperforming Claude Code Opus 4.6 at  10 × \times  lower token cost. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ A major problem arising from the success of LLM-based automatic programming  [ 13 ]  is the absence of correctness guarantees for the generated software. Software correctness requires that the code contains no unwanted bugs or security vulnerabilities that could compromise safety  [ 34 ,  11 ] . High-profile incidents of compromised systems underscore the critical need for verifying the correctness of human-written code, let alone LLM-generated code  [ 17 ] . It is therefore of foremost importance that the next generation of program synthesis agents be equipped with sufficient guardrails.
+Unfortunately, software verification is undecidable in general  [ 31 ] , with many interesting program properties provably unprovable. While LLMs approximate such undecidable tasks with impressive success on benchmarks, their accuracy drops sharply on real-world repositories  [ 25 ] . 
+
+ 
+ 
+ 
+ In this paper, we address the problem of  code contract  synthesis at scale. Code contracts  [ 9 ]  capture the intent of code without contingent implementation details and serve as formal documentation by characterizing a function’s  preconditions  and  postconditions : they relate inputs to outputs via conditional logic and capture iterative behaviors in logical form. Code contract synthesis enables several important applications: (1) translators can use contracts to migrate legacy code from one language to another (e.g., C/C++ to Rust), (2) security tools can use contracts to guide bug finding, and (3) developers can use contracts as unambiguous documentation of function intent. 
+
+ 
+ 
+ 
+ Prior work has shown the promise of LLMs for automated code contract synthesis  [ 35 ,  18 ,  26 ,  7 ,  32 ] , but no existing system meets the demands of real-world systems software in a single pipeline. An ideal contract synthesis system must: (1) scale to repositories spanning millions of lines of code, (2) produce preconditions and postconditions expressive enough to capture rich program features such as dynamic memory and heap-allocated data structures, and (3) systematically validate synthesized candidates to rule out incorrect ones. 
+
+ 
+ 
+ 
+ Spec-Agent addresses these gaps by combining two techniques that, to our knowledge, have not previously been brought together for specification synthesis. First, we adopt  separation logic   [ 20 ] , a program logic widely used in verifiers, to express not only the logical intent of a contract but also the resource-aware constraints it imposes on memory, a prerequisite for reasoning about the heap-manipulating code that pervades systems software. Second, we employ  fuzz testing  to drive contract validation: by generalizing each project’s existing unit tests into fuzz harnesses, we obtain far broader execution coverage than unit tests alone, and use that coverage to stress-test every candidate contract before accepting it. 
+
+ 
+ 
+ 
+ While fuzz testing is traditionally a bug-finding technique, we repurpose it as a strong  pseudo-oracle  for specification inference: any input that violates a candidate contract constitutes direct evidence that the contract is wrong, and that input is fed back to the LLM as a counterexample in the next refinement attempt. This is particularly valuable for C++, where no well-established full-program verifier exists and prior verification attempts have proven prohibitively costly  [ 33 ] . To our knowledge, Spec-Agent is the first system to couple fuzz testing with specification inference, and the first to do so at the scale of millions of lines of code. We have applied our system to large, widely-used open source C++ libraries. 
+
+ 
+ 
+ 
+ In summary, our work makes three contributions: 
+
+ 
+ 
+ 
+ 
+ •  
+ 
+ Spec-Agent, an end-to-end agentic system that combines counterexample-guided contract inference with automatically generated fuzz harnesses for systematic validation of synthesized specifications. 
+
+ 
+ 
+ •  
+ 
+ An adaptive specification-language selector spanning four program logics of increasing expressivity (propositional, first-order, propositional separation, and first-order separation logic), enabling Spec-Agent to reason about conditional behavior, iterative loops, and heap structure within a single pipeline. 
+
+ 
+ 
+ •  
+ 
+ An experimental study on widely-used projects totaling over four million lines of C++ code, in which Spec-Agent synthesizes valid contracts for up to  85%  of target functions with  no  false positives observed under fuzzing and expert validation, outperforming Claude Code Opus 4.6 at  10 × \times  lower token cost (Figure  1 ). 
+
+ 
+ 
+ 
+ 
+ 
+ Figure 1 :  Specification validity and cost comparison of Spec-Agent versus Claude Code. 
+ 
+ 
+ The rest of the paper is organized as follows. Section  2  recalls the program logics and specification languages used by Spec-Agent. Section  3  presents Spec-Agent’s design. Section  4  reports our experimental study, including quantitative results and qualitative analysis of the inferred contracts. Section  5  surveys related work, and Section  7  concludes. 
+
+ 
+ 
+ 
+ 
+ 2  Background 
+
+ 
+
+ 
+ We provide necessary background on program logics and specification languages. Figure  3  shows the formal grammars of the specification languages supported by Spec-Agent. 
+
+ 
+ 
+ 
+ Program Verification. 
+
+ 
+
+ 
+ The gold standard of software correctness is program verification, which guarantees that a program always implements the developer’s intent. Pioneered by Floyd  [ 10 ]  and Hoare  [ 12 ] , axiomatic verification provides the ultimate criterion for determining whether software satisfies its specification. In Hoare logic, we write  { P } ​ c ​ { Q } \{P\}\;c\;\{Q\}  where  P P  is the precondition and  Q Q  is the postcondition of code fragment  c c : any state satisfying  P P  leads to a state satisfying  Q Q  after executing  c c , provided  c c  terminates (partial correctness). The role of a prover such as Frama-C  [ 6 ]  is to discharge these proof obligations. Creating a specification is thus the first requirement for verification. 
+
+ 
+ 
+ 
+ 
+ Software Specification. 
+
+ 
+
+ 
+ From propositional logic and its familiar operators conjunction ( ∧ \wedge ), disjunction ( ∨ \vee ), and negation ( ¬ \lnot ), one can already model simple code contracts, including those with conditional code where guards are encoded as disjunctive implications, e.g.,  if   p p   then   q 1 q_{1}   else   q 2 q_{2}  becomes  ( p ⇒ q 1 ) ∨ ( ¬ p ⇒ q 2 ) (p\Rightarrow q_{1})\vee(\lnot p\Rightarrow q_{2}) . Quantifiers are needed for code with loops, where quantifying over objects in a container ensures that they all satisfy desired constraints. Consider the program on the right of Figure  2  that returns  true  if some element of a list satisfies predicate  P P , or  false  otherwise: 
+
+ 
+ 
+ 
+ 
+ 
+ ⬇ 
+    pre :   x ↦ v 1 ⋆ y ↦ v 2 x\mapsto v_{1}\star y\mapsto v_{2} 
+ 
+    swap ( int   * x ,   int   * y )   { 
+ 
+      int   z   =   * x ; 
+ 
+      * x   =   * y ; 
+ 
+      * y   =   z ; 
+ 
+    } 
+ 
+    post :   x ↦ v 2 ⋆ y ↦ v 1 x\mapsto v_{2}\star y\mapsto v_{1} 
+ 
+ 
+ ⬇ 
+   lookup ( std :: list < int >   & lst )   { 
+ 
+     std :: list < int >:: iterator   it   =   lst . begin (); 
+ 
+     while   ( it   !=   lst . end ())   { 
+ 
+      if   ( P ( it ))   return   true ;   it ++; 
+ 
+     } 
+ 
+     return   false ; 
+ 
+    } 
+ 
+ 
+ Figure 2 :  Left: A memory-manipulating program with separation logic annotations. Right: A function with a loop described with first-order specifications. More examples are given in Appendix  C . 
+ 
+ 
+ The specification for the  lookup  function on the right side of Figure  2  becomes  𝑝𝑜𝑠𝑡 : ( ∀ x ∈ 𝑙𝑠𝑡 . ¬ P ( x ) ⇒ 𝑟𝑒𝑡 = false ) ∨ ( ∃ x ∈ 𝑙𝑠𝑡 . P ( x ) ⇒ 𝑟𝑒𝑡 = true ) \mathit{post}\colon(\forall x\in\mathit{lst}.\;\lnot P(x)\Rightarrow\mathit{ret}=\texttt{false})\vee(\exists x\in\mathit{lst}.\;P(x)\Rightarrow\mathit{ret}=\texttt{true}) , with the precondition being simply  true  since no special conditions on the input are needed for the function to execute correctly. 
+
+ 
+ 
+ 
+ 
+ Separation Logic. 
+
+ 
+
+ 
+ Verifying programs with pointers, dynamic memory allocation, and heap-allocated data structures requires separation logic  [ 20 ] , a modular program logic designed for low-level memory-manipulating programs. Separation logic introduces two key constructs: (1) a  maps-to  operator  x ↦ n x\mapsto n , denoting that memory cell  x x  contains value  n n , and (2) a  separating conjunction   ⋆ \star , where  p ⋆ q p\star q  asserts that the memory footprints of  p p  and  q q  are strictly disjoint. This is essential for describing heap data structures such as linked lists, trees, and graphs that pervade low-level systems code. It is also needed for simpler examples like  swap  on the left of Figure  2 : swapping a variable with itself is ill-defined, and the specification must explicitly state that  x x  and  y y  refer to distinct memory locations. Separation logic is at the core of state-of-the-art program verifier  infer   [ 4 ] , enabling compositional reasoning for very large programs, a key enabler for the scalability of our approach. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Logic 
+ Grammar 
+ 
+ 
+ 
+ 
+ Propositional Logic 
+ p     := 
+ true   ∣ \mid   false   ∣ \mid   p p   ∧ \wedge   p p   ∣ \mid   p p   ∨ \vee   p p   ∣ \mid   ¬ p \lnot p 
+ 
+ First Order Logic 
+ fp   := 
+ p p   ∣ \mid   ∃ x . f ​ p ​ ( x ) \exists x.fp(x)   ∣ \mid   ∀ x . f ​ p ​ ( x ) \forall x.fp(x) 
+ 
+ Propositional Separation Logic 
+ sp   := 
+ p p   ∣ \mid   s ​ p sp   ⋆ \star   s ​ p sp   ∣ \mid   x x   ↦ \mapsto   n n 
+ 
+ First Order Separation Logic 
+ fsp  := 
+ s ​ p sp   ∣ \mid   ∃ x . f ​ s ​ p ​ ( x ) \exists x.fsp(x)   ∣ \mid   ∀ x . f ​ s ​ p ​ ( x ) \forall x.fsp(x) 
+ 
+ 
+
+ 
+ Figure 3 :  Program specification languages supported by Spec-Agent. 
+ 
+ 
+ 
+ Specification Inference. 
+
+ 
+
+ 
+ We address the dual problem of program verification: given a code fragment  c c , what are the appropriate  P P  and  Q Q  for any safe execution? This is the specification inference problem, recovering the weakest precondition (the most permissive condition on inputs) and the strongest postcondition (the most informative condition on outputs given the inputs). Inferring preconditions and postconditions using LLM-assisted tools can enable program translation, full program verification, and serve as formal documentation. 
+
+ 
+ 
+ 
+ 
+ Fuzz Testing. 
+
+ 
+
+ 
+ Fuzzing is a technique for dynamically exploring code execution paths  [ 19 ,  37 ] . Coverage-guided fuzzing, exemplified by engines such as libFuzzer  [ 24 ]  (part of the LLVM toolchain), instruments the target software with a coverage-feedback mechanism and employs a genetic algorithm to discover unique inputs that trigger distinct code paths. Fuzzing is most frequently used for security testing, often combined with sanitizers  [ 23 ] , to identify inputs that trigger vulnerabilities. LLMs have shown promise for generating fuzz harnesses  [ 36 ] ; in our work, we leverage coding agents to generate fuzz harnesses for their control-flow exploration capability, using them to stress-test generated contracts far beyond the coverage of unit tests alone. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Spec-Agent Design 
+
+ 
+
+ 
+ We describe the architecture and workflow of Spec-Agent for inferring expressive specifications at the scale of millions of lines of low-level code (Figure  4 ). 
+
+ 
+ 
+ 
+ Figure 4 :  Inside Spec-Agent: Automated fuzz-guided refinement of candidate specifications. The refinement loop iterates until the best possible specification is inferred or the maximum number of retries is reached. 
+ 
+ 
+ Code Mining. 
+
+ 
+
+ 
+ The first step extracts per-function artifacts from the target repositories. For each function  f f , Spec-Agent recovers its source code, in-tree documentation comments, and existing unit tests, then computes a set of program features used by all subsequent stages. Static features, presence of loops, conditionals, and induction-variable usage, are computed via Tree-sitter  [ 30 ]  parsing of  f f . A dynamic feature, whether  f f  accesses the heap, is determined by running the existing tests of  f f  under heap tracing and analyzing the resulting heap profile. 
+
+ 
+ 
+ 
+ 
+ Fuzz Harness Generation. 
+
+ 
+
+ 
+ Fuzz harness generation consists of generalizing existing functional tests into fuzz harnesses. Functional tests target specific hard-coded inputs, while fuzz harnesses are input generators that exercise the function over a wide variety of executions. To produce a harness for function  f f , Spec-Agent prompts a coding agent with  f f ’s signature, source, and existing unit tests. The agent extracts shared test fixtures and setup logic, lifts the hard-coded inputs into fuzzer-controlled parameters, and emits a harness that reuses the original setup while invoking  f f  on fuzzer-generated inputs. This system constitutes a  pseudo-oracle : it can detect when a candidate specification is wrong (via counterexample), but cannot assert correctness, which would require a full C++ program verifier. 
+
+ 
+ 
+ 
+ 
+ Specification Language Selection. 
+
+ 
+
+ 
+ Spec-Agent supports four specification languages: propositional logic (Prop), first-order logic (FOL), propositional separation logic (Prop SL), and first-order separation logic (FOSL). From the code-mining features, this stage selects a target language  L L  for  f f . Whenever  f f  contains a loop, first-order logic is required to model predicates over entire collections (e.g., elements of a list or container). Separation logic is selected when  f f  uses dynamic memory allocation. When both heap reasoning and quantification over collections are required,  L L  is set to FOSL. 
+
+ 
+ 
+ 
+ 
+ Specification Generation. 
+
+ 
+
+ 
+ We instruct a large language model to generate a candidate specification  ⟨ P , Q ⟩ \langle P,Q\rangle  for  f f  based on the selected specification language, the function’s source code, and any documentation comments present in the project. Note that unit tests are not used during the specification generation phase, they are reserved for validation. This step is agnostic to the specific LLM used and treats it as a black-box generator. The prompt includes specific instructions for using the chosen specification language, up to 10 manually-written correct examples in that language, and the formal grammar of the selected logic. 
+
+ 
+ 
+ 
+ 
+ Specification Fuzz Testing. 
+
+ 
+
+ 
+ Each candidate is parsed against the grammar of  L L , compiled to an executable runtime assertion, and stress-tested under libFuzzer. Boolean, arithmetic, and implication operators map to their C++ counterparts. Bounded quantifiers compile to bounded loops over a range  [ a , b ) [a,b) , where the bounds are LLM-supplied expressions over the function’s parameters and standard container/iterator interfaces (e.g.,  0  and  v.size()  for a container,  begin  and  end  for an iterator pair). Separation-logic operators are realized over the observed heap state at runtime: the points-to atom  x ↦ n x\mapsto n  asserts that the cell at address  x x  holds value  n n , and the separating conjunction  p ⋆ q p\star q  tracks each side’s heap footprint and asserts that the two address sets are disjoint. Separating quantifiers extend  ⋆ \star  index-wise across the iteration range. The assertion is exercised by libFuzzer through harnesses lifted from the project’s existing unit tests, ensuring the assertion is checked over a broad fuzzer-driven input distribution rather than a handful of hand-written cases. If any input violates the assertion, the candidate is rejected and the failing input together with the violated assertion is recorded as feedback for the next refinement attempt. 
+
+ 
+ 
+ 
+ 
+ Specification Refinement. 
+
+ 
+
+ 
+ Acceptance requires both that the fuzzer find no counterexample  and  that the candidate be expressed in the targeted logic  L L . The four languages form a partial order  ⊑ \sqsubseteq  depicted in Figure  5 : Prop  ⊑ \sqsubseteq  FOL, Prop  ⊑ \sqsubseteq  Prop SL, FOL  ⊑ \sqsubseteq  FOSL, and Prop SL  ⊑ \sqsubseteq  FOSL, with Prop as the bottom element and FOSL as the top. A candidate sits at the lattice level its operators require, and Spec-Agent accepts it if and only if  L ⊑ ℓ ⁡ ( 𝑐𝑎𝑛𝑑 ) L\sqsubseteq\ell(\mathit{cand}) , that is, the candidate reaches at least the target’s expressivity. This flexibility accounts for the heuristic nature of the selector: a function with a loop may not actually need a quantifier in its contract, and a function without an explicit loop may still benefit from a quantified summary. If  ℓ ⁡ ( 𝑐𝑎𝑛𝑑 ) ⊏ L \ell(\mathit{cand})\sqsubset L  (e.g., a candidate that omits  ↦ \mapsto  for a heap-touching function targeted at FOSL), the candidate is rejected with a structural diagnostic fed back to the LLM in the next attempt. The loop terminates when the candidate is both fuzz-validated and at the target lattice level, or when the retry budget is exhausted. 
+
+ 
+ 
+ 
+ Figure 5 :  The specification lattice: Spec-Agent maintains an order-theoretic lattice of specification state to track progress in synthesizing the most expressive specification, not only a correct one. Boxes in the dashed red rectangle summarize the full architecture view from Figure  4 . 
+ 
+ 
+ 
+ 
+ 4  Evaluation 
+
+ 
+
+ 
+ Experimental Setup. 
+
+ 
+
+ 
+ All experiments run on a single machine with an Intel Xeon Silver 4410Y CPU and four NVIDIA H100 GPUs. Spec-Agent is built on top of  [ 32 ] , using vLLM  [ 14 ]  for model serving, libFuzzer for fuzzing, and Clang  [ 5 ]  with Tree-sitter for C++ parsing. We evaluate Spec-Agent with four open-weight base models spanning general-purpose and code-specialized families at varying scales: Qwen3.5-35B-A3B  [ 22 ] , Qwen2.5-32B-Instruct  [ 28 ] , CWM  [ 27 ] , and Qwen3-Coder-Next  [ 21 ] , each decoding greedily with a maximum of 400 tokens per refinement attempt. As a baseline, we run Claude Code  [ 1 ]  with Claude Sonnet 4.6 and Claude Opus 4.6 on the same function prompts, unit tests, and fuzz harnesses with identical time and parameter budgets. Claude Code can spawn subagents that synthesize and refine candidate contracts under a budget of 6M weighted tokens per repository, larger than the budget consumed by any model with Spec-Agent. We use Claude Code as the baseline because, as Table  4  shows, no prior specification-synthesis system simultaneously targets large C++ codebases, both pre- and postconditions, and separation logic. To make dollar costs comparable, we report Anthropic’s published pricing for Claude and Together AI’s pricing  [ 29 ]  for the open-weight models as a commercial reference point. 
+
+ 
+ 
+ 
+ Following  [ 32 ] , we evaluate on two large open source C++ repositories: BDE  [ 2 ] , a modular C++ library suite of foundational data-structure and utility components used by thousands of developers, and  BlazingMQ   [ 3 ]  (BMQ), a high-performance, fault-tolerant message-queue library used by thousands of low-latency applications. Both ship with well-documented interfaces and strong test suites. We automatically extract the public functions that carry documentation and existing unit tests, yielding 651 functions for BDE and 508 for BMQ. To complement the automated pseudo-oracle, two experts in separation logic and C++ manually reviewed every generated fuzz harness and a random sample of 100 synthesized specifications per repository; both experts were in agreement. This sample is fully detailed in Appendix  D . 
+
+ 
+ 
+ 
+ 
+ Accuracy. 
+
+ 
+
+ 
+ Table  1  compares Spec-Agent against Claude Code Sonnet 4.6 and Opus 4.6 on BDE and BMQ. For each configuration, we report:  Test Valid , the fraction of functions whose synthesized contract passes every instrumented test execution;  Test Invalid , the fraction for which the fuzzing pseudo-oracle produces a counterexample;  Compilation Error , the fraction whose assertion-instrumented build fails;  Trivial , the fraction of valid contracts that reduce to  true ; and  Avg. Atoms , the mean number of logical atoms per synthesized contract. 
+
+ 
+ 
+ 
+ Table 1 :  Model Performance with Spec-Agent on large C++ repositories 
+ 
+ 
+ 
+ 
+ 
+ Repo. 
+ 
+ 
+ 
+ Method 
+ 
+ 
+ 
+ Model 
+ 
+ Test 
+ Test 
+ Compile 
+ Trivial 
+ Avg. 
+ 
+ 
+ 
+ 
+ Valid (%) 
+ Invalid (%) 
+ Error (%) 
+ (%) 
+ Atoms 
+ 
+ 
+ 
+ 
+ 
+ BDE 
+ 
+ 
+ 
+ Claude Code 
+ 
+ 
+ 
+ Sonnet 4.6 
+ 
+ 78.06 
+ 4.52 
+ 17.42 
+ 10.89 
+ 2.24 
+ 
+ 
+ 
+ BDE 
+ 
+ 
+ 
+ Claude Code 
+ 
+ 
+ 
+ Opus 4.6 
+ 
+ 81.48 
+ 4.71 
+ 13.80 
+ 17.34 
+ 2.34 
+ 
+ 
+ 
+ BDE 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ CWM 
+ 
+ 81.00 
+ 0.00 
+ 19.00 
+ 8.30 
+ 2.78 
+ 
+ 
+ 
+ BDE 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ Qwen3.5-35B-A3B 
+ 
+ 85.10 
+ 0.00 
+ 14.90 
+ 10.29 
+ 3.21 
+ 
+ 
+ 
+ BDE 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ Qwen2.5-32B 
+ 
+ 85.85 
+ 0.96 
+ 13.18 
+ 5.63 
+ 3.86 
+ 
+ 
+ 
+ BDE 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ Qwen3-Coder-Next 
+ 
+ 85.87 
+ 0.00 
+ 14.13 
+ 5.84 
+ 3.35 
+ 
+ 
+ 
+ BMQ 
+ 
+ 
+ 
+ Claude Code 
+ 
+ 
+ 
+ Sonnet 4.6 
+ 
+ 62.64 
+ 2.16 
+ 35.19 
+ 14.18 
+ 2.13 
+ 
+ 
+ 
+ BMQ 
+ 
+ 
+ 
+ Claude Code 
+ 
+ 
+ 
+ Opus 4.6 
+ 
+ 66.69 
+ 2.19 
+ 31.12 
+ 11.92 
+ 2.46 
+ 
+ 
+ 
+ BMQ 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ CWM 
+ 
+ 69.77 
+ 0.00 
+ 30.23 
+ 8.94 
+ 3.07 
+ 
+ 
+ 
+ BMQ 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ Qwen2.5-32B 
+ 
+ 72.41 
+ 0.38 
+ 27.20 
+ 6.13 
+ 3.97 
+ 
+ 
+ 
+ BMQ 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ Qwen3.5-35B-A3B 
+ 
+ 76.97 
+ 0.20 
+ 22.84 
+ 17.13 
+ 4.05 
+ 
+ 
+ 
+ BMQ 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ Qwen3-Coder-Next 
+ 
+ 77.73 
+ 0.00 
+ 22.27 
+ 16.94 
+ 4.15 
+ 
+ 
+
+ 
+ 
+ 
+ On BDE, the best Spec-Agent configuration (Qwen3-Coder-Next) synthesizes valid specifications for 85.87% of functions, compared to 81.48% for the strongest Claude Code baseline (Claude Opus 4.6) and 78.06% for Claude Sonnet 4.6. On BMQ, the best Spec-Agent configuration (also Qwen3-Coder-Next) reaches 77.73%, compared to 66.69% for Claude Opus 4.6 and 62.64% for Claude Sonnet 4.6. Furthermore, on BDE and BMQ, the best Spec-Agent configurations average 3.35 and 4.15 atoms per contract, respectively, compared to Claude Opus 4.6’s 2.34 and 2.46. We corroborate the expressivity claim with a language-level breakdown. Table  2  reports the number of functions with valid specifications for Spec-Agent and Claude Code across both repositories at each specification language. Spec-Agent synthesizes substantially more valid contracts using first-order quantifiers and separation-logic operators, while Claude Code is more heavily skewed toward propositional logic. 
+
+ 
+ 
+ 
+ Table 2 :  Number of correctly synthesized specifications per specification language 
+ 
+ 
+ 
+ 
+ 
+ Repo. 
+ 
+ 
+ 
+ Method 
+ 
+ 
+ 
+ Model Name 
+ 
+ Prop 
+ FOL 
+ Prop SL 
+ FOSL 
+ 
+ 
+ 
+ 
+ 
+ BDE 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ Qwen3.5-35B-A3B 
+ 
+ 289 
+ 200 
+ 52 
+ 13 
+ 
+ 
+ 
+ BDE 
+ 
+ 
+ 
+ Claude Code 
+ 
+ 
+ 
+ Claude Opus 4.6 
+ 
+ 369 
+ 118 
+ 42 
+ 1 
+ 
+ 
+ 
+ BMQ 
+ 
+ 
+ 
+ Spec-Agent 
+ 
+ 
+ 
+ Qwen3.5-35B-A3B 
+ 
+ 186 
+ 173 
+ 26 
+ 4 
+ 
+ 
+ 
+ BMQ 
+ 
+ 
+ 
+ Claude Code 
+ 
+ 
+ 
+ Claude Opus 4.6 
+ 
+ 236 
+ 71 
+ 29 
+ 3 
+ 
+ 
+
+ 
+ 
+ 
+ Figure  6  characterizes how the number of valid synthesized specifications scales with the number of retry attempts on BDE for Spec-Agent with Qwen3.5-35B-A3B. The curves grow rapidly through the first five attempts, continue to climb with diminishing returns, and effectively plateau by 20 attempts. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ (a)   Propositional logic (Prop). 
+ 
+ 
+ (b)   First-order logic (FOL). 
+ 
+ 
+ (c)   Propositional separation logic (Prop SL). 
+ 
+ 
+ (d)   First-order separation logic (FOSL). 
+ 
+ Figure 6 :  Number of BDE functions with correctly synthesized specifications by number of refinement attempts, for each target specification language. Results shown for Spec-Agent with Qwen3.5-35B-A3B. 
+ 
+ 
+ We attribute these improvements to Spec-Agent’s more structured refinement loop compared to Claude Code’s. Claude Code delegates to subagents that can explore, manage their own context, and write and execute code. This exploration consumes substantially more tokens per step than a focused refinement pass, which, under a fixed compute budget, reduces the number of effective refinement attempts. In contrast, Spec-Agent’s loop is deterministic: static and dynamic analyses select the target specification language before synthesis; each attempt makes a single LLM call with the candidate, the prompt, and any prior counterexample; the fuzzer runs after every attempt; and acceptance requires both that the fuzzer report no counterexample and that the candidate be expressed in the targeted logic. 
+
+ 
+ 
+ 
+ 
+ Qualitative Analysis. 
+
+ 
+
+ 
+ Figure  6  distinguishes between  correct  contracts (yellow bars) and  strongest  contracts (green bars). Both categories of inferred contracts are correct in that they describe real program behaviors. The strongest contracts describe all possible behaviors of the function, constituting the majority of contracts inferred by Spec-Agent. Spec-Agent achieves this through its specification selection step (Section  3 ), which ensures that conditional code is represented as disjunctive implications, loops are expressed using quantifiers, and memory operations are captured with separation logic operators. A contract is strongest when it characterizes all expected executions as well as all error paths without exception. While Spec-Agent’s performance is strong across most logics, it struggles to discover the strongest contract for the most complex functions where FOSL is selected as the target, as shown in Figure  6 d. This may indicate a ceiling in current techniques for these most expressive specification languages, suggesting that new algorithmic insights may be required. 
+
+ 
+ 
+ 
+ 
+ Impact of Fuzzing on Contract Quality. 
+
+ 
+
+ 
+ Table 3 :  Fuzz testing results:  Passed  = no counterexample,  Violated  = counterexample found,  Timeout  = fuzz binary timed out. 
+ 
+ 
+ 
+ Dataset 
+ Passed 
+ Violated 
+ Timeout 
+ 
+ 
+ 
+ BDE 
+ 98.3% 
+ 0.4% 
+ 1.2% 
+ 
+ BMQ 
+ 92.0% 
+ 8.0% 
+ 0.0% 
+ 
+ 
+
+ 
+ 
+ 
+ A central design choice in Spec-Agent is to generalize the repositories’ existing unit tests into fuzz harnesses for more systematic validation of synthesized specifications. Every candidate entering the fuzzing stage has  already  passed the project’s existing unit tests under our assertion instrumentation. Despite this prior filter, Table  3  shows the fuzzer still rejects 0.4% of BDE survivors and 8.0% of BMQ survivors, demonstrating the value of fuzzing for improving specification validity beyond fixed test suites, especially for projects with weaker unit-test coverage like BMQ. Each rejected contract corresponds to a counterexample that the project’s unit tests alone would have missed, preventing an unsound contract from being accepted. 
+
+ 
+ 
+ 
+ Figure  7  shows the runtime distribution of contract inference (via LLM) and contract testing (via fuzz testing). The choice of target logic does not noticeably influence runtime, as all specification languages are evenly distributed across the timing spectrum. Additionally, the overall runtime is dominated by testing rather than inference, with cumulative per-function means of 170 seconds for inference and 400 seconds for testing. Additional fuzzing-induced coverage measurements for BDE and BMQ are given in Appendix  A . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ (a)   Cumulative inference time. 
+ 
+ 
+ (b)   Cumulative testing time. 
+ 
+ Figure 7 :  Distribution of cumulative inference and testing time for each BDE function with an accepted synthesized specification, for Spec-Agent with Qwen3.5-35B-A3B. 
+ 
+ 
+ 
+ 
+ 5  Related Work 
+
+ 
+
+ 
+ Earlier work in automated specification synthesis includes Daikon  [ 8 ] , which infers likely pre- and postconditions from execution traces against a fixed invariant grammar, and SLING  [ 15 ] , which extends this trace-based approach to separation logic for heap-manipulating C programs. 
+
+ 
+ 
+ 
+ Table 4:  Comparison with prior work.  ✓  denotes the work has this capability, and  ✗  denotes that the capability is not targeted. “Test Gen. / Verification” denotes either dynamically generated or fuzzed tests beyond fixed unit tests, or verifier-based validation of synthesized specifications.  
+ 
+ 
+ 
+ Work 
+ 
+ 
+ Large C++ 
+ Projects 
+ 
+ 
+ 
+ Pre + 
+ Post 
+ 
+ 
+ 
+ Separation 
+ Logic 
+ 
+ 
+ 
+ Adaptive Spec 
+ Lang. Selection 
+ 
+ 
+ 
+ Test Gen. / 
+ Verification 
+ 
+ 
+ 
+ Counterex. 
+ Repair 
+ 
+ 
+ Daikon  [ 8 ] 
+ ✗ 
+ ✓ 
+ ✗ 
+ ✗ 
+ ✗ 
+ ✗ 
+ 
+ SLING  [ 15 ] 
+ ✗ 
+ ✓ 
+ ✓ 
+ ✗ 
+ ✗ 
+ ✗ 
+ 
+ NL2Postcond  [ 7 ] 
+ ✗ 
+ ✗ 
+ ✗ 
+ ✗ 
+ ✗ 
+ ✗ 
+ 
+ LLM-SE  [ 16 ] 
+ ✗ 
+ ✗ 
+ ✓ 
+ ✗ 
+ ✓ 
+ ✗ 
+ 
+ AutoSpec  [ 35 ] 
+ ✗ 
+ ✓ 
+ ✗ 
+ ✗ 
+ ✓ 
+ ✗ 
+ 
+ ClassInvGen  [ 26 ] 
+ ✗ 
+ ✓ 
+ ✗ 
+ ✗ 
+ ✓ 
+ ✓ 
+ 
+ SpecGen  [ 18 ] 
+ ✗ 
+ ✓ 
+ ✗ 
+ ✗ 
+ ✓ 
+ ✗ 
+ 
+ Fun2spec  [ 32 ] 
+ ✓ 
+ ✗ 
+ ✗ 
+ ✗ 
+ ✗ 
+ ✓ 
+ 
+ Spec-Agent  (our work) 
+ ✓ 
+ ✓ 
+ ✓ 
+ ✓ 
+ ✓ 
+ ✓ 
+ 
+ 
+
+ 
+ 
+ 
+ Recent efforts have shifted toward LLM-based specification synthesis, which can leverage natural-language documentation, produce specifications outside any fixed grammar, and incorporate validator feedback into iterative refinement. AutoSpec  [ 35 ]  synthesizes pre- and postconditions for C and validates them with the Frama-C theorem prover; SpecGen  [ 18 ]  synthesizes specifications for Java using OpenJML and a mutation-and-select stage; ClassInvGen  [ 26 ]  synthesizes C++ class invariants using LLM-generated test sequences as the pseudo-oracle; LLM-SE  [ 16 ]  synthesizes separation-logic loop invariants from a fine-tuned LLM with symbolic-execution validation; and NL2Postcond  [ 7 ]  translates natural-language docstrings into postconditions for Python and Java. Much of this prior work focuses on small benchmark programs rather than real-world codebases. Recently, Fun2Spec  [ 32 ]  scales LLM postcondition synthesis to C++ codebases with millions of lines of code, but synthesizes only postconditions, uses propositional and first-order logic without separation logic, and validates against fixed unit tests only. As Table  4  summarizes, Spec-Agent is the first system that simultaneously scales to large C++ repositories and targets pre- and postcondition synthesis, separation logic, adaptive specification-language selection, fuzzing as a non-fixed pseudo-oracle, and counterexample-guided refinement in a unified pipeline. 
+
+ 
+ 
+ 
+ 
+ 6  Limitations 
+
+ 
+
+ 
+ Fuzz Testing vs. Full Verification. 
+
+ 
+
+ 
+ While our specifications are broadly fuzz-tested with high execution coverage and thousands of test inputs per specification (generalizing from narrow functional tests), Spec-Agent does not employ full C++ verification using a logic prover. The most mature code contract tools do not support C++, and fuzz testing constitutes a strong, scalable alternative that supersedes functional testing, the typical approach used to validate inferred specifications in prior work. Implementing a solver for full C++ program verification is out of scope for this paper. 
+
+ 
+ 
+ 
+ 
+ Strongest Specifications. 
+
+ 
+
+ 
+ Our method produced no incorrect specifications under our fuzzing and expert validation regime, with fuzz testing shown to be a cost-effective proxy to full verification in practice. While we instruct the LLM to select logical operators based on the program’s syntactic structure, LLMs are not always capable of generating the strongest possible specification capturing the most general behavior of the program (without contingent implementation details). As a result, some inferred contracts may represent only a subset of all possible program behaviors. This subset satisfies all functional tests and fuzz tests employed by Spec-Agent for validation and therefore constitutes a useful approximation. To our knowledge, no existing algorithm can decide whether a given specification for a function is the strongest possible one. 
+
+ 
+ 
+ 
+ 
+ 
+ 7  Conclusion 
+
+ 
+
+ 
+ Spec-Agent is a new tool for agentic code specification synthesis, tested at scale on millions of lines of C++ code. Spec-Agent synthesizes code contracts in a variety of expressive specification languages for memory-intensive code with loops and conditional reasoning, providing higher accuracy than frontier models at a fraction of the cost. Spec-Agent employs fuzz testing to validate candidate contracts, providing broad code coverage for the synthesized specifications. Automated specification synthesis is key to generating formal code documentation, translating legacy code to modern programming languages, and identifying security vulnerabilities. We expect such capability to become essential as agentic software vulnerability discovery pipelines scale, making automated specification synthesis a necessary countermeasure. 
+
+ 
+ 
+ 
+ 
+ 
+ 

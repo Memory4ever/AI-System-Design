@@ -1,0 +1,1347 @@
+Warning: truncated output (original token count: 27024)
+Total output lines: 1842
+
+https://arxiv.org/html/2610.29241v1
+Encoded but Unused: Bounding the Sources of VLM Errors
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+Detection and Mitigation of Errors in VLMs.
+Interpretability of visual information in VLM.
+3 Quantifying the Rate of Visual-Utilization Failures
+3.1 Problem Formulation
+3.2 Bounds with an Imperfect Probe
+3.3 Visual Evidence in Object-Attribute Queries
+4 The Visual Evidence Lens Method
+4.1 Method Overview and Notation
+4.2 Visual-Evidence Extraction
+4.3 Probe Supervision
+Attribute-Evidence Regression.
+Object-Evidence Regression.
+5 Experimental Setup
+Baseline Methods.
+Pooling Configurations.
+Base Models.
+Dataset.
+6 Results
+6.1 Evaluating the Visual-Evidence Probe
+Our Method Provides the Strongest Attribute Evidence Detection.
+Our Method Generalizes with Limited Supervision and to Unseen Attribute Values.
+6.2 Utilization Failures Are the Main Bottleneck
+VELens Responds Predictably to Changes in Visual Evidence.
+Visual-Utilization Failures Dominate VLM Errors.
+6.3 Tracing Visual Evidence and Improving Its Utilization
+Visual Evidence Emerges Differently Across Attributes and Models.
+Evidence-Positive Errors Are More Easily Corrected.
+7 Discussion
+References
+A Proof of the Visual-Utilization Failure Bounds
+B VELens Method: Complementary Details
+B.1 Object and Attribute Token Set Construction
+Attribute Token Sets.
+Object Token Sets.
+B.2 Aggregation Strategies
+Aggregation Operators.
+Attention Head Aggregation.
+Discussion.
+C Experimental Setup: Complementary Details
+C.1 Attention Baseline
+Attention-Evidence Extraction.
+Attribute-Evidence Regression.
+Object-Evidence Regression.
+C.2 Logit Lens
+C.3 Dataset Preprocessing
+Filtering and normalization.
+Question construction.
+Answer generation.
+D Complementary Results
+D.1 Development-Set Configuration Selection
+Development Split.
+Attribute-Evidence Configurations.
+Object-Evidence Configurations.
+Selected Configurations.
+Differences Across Attribute Categories.
+D.2 Joint Object-and-Attribute AUC
+D.3 ROC Curves
+D.4 Controlled Transformations
+Object Emphasis ( ψ + \psi_{+} ).
+Object Degradation ( ψ − \psi_{-} ).
+D.5 Layer-Wise Visual-Evidence Development
+D.6 Attention Intervention
+Intervention.
+Choosing the Intervention Strength.
+E VELens Beyond the Evaluated Question Set
+E.1 A Taxonomy of Visual Questions
+E.2 Question Classes That Naturally Fit This Formulation
+Attribute questions and verification.
+Object presence and localization.
+Compositional single-object questions.
+E.3 Question Classes Requiring More Substantial Extensions
+License: CC BY 4.0
+arXiv:2610.29241v1 [cs.CV] 21 Oct 2026
+Encoded but Unused: Bounding the Sources of VLM Errors
+Anat Veikherman
+Affiliation: Faculty of Electrical and Computer Engineering, Technion
+Email: anatv@campus.technion.ac.il
+Mor Ventura
+Affiliation: Faculty of Electrical and Computer Engineering, Technion
+Email: roiri@technion.ac.il
+Nitay Calderon
+Affiliation: Faculty of Data and Decision Science, Technion
+Lihi Zelnik-Manor & Roi Reichart
+Affiliation: Faculty of Electrical and Computer Engineering, Technion
+Affiliation: Faculty of Data and Decision Science, Technion
+Abstract
+In this paper, we investigate why vision-language models (VLMs) produce errors by decomposing them into two sources: visual-representation failures , in which the visual evidence required for the correct answer is not encoded, and visual-utilization failures , in which this evidence is encoded but not successfully used. We propose to estimate the visual-utilization failure rate using lightweight probes and derive theoretical bounds on the true rate that account for probe imperfections. We introduce VELens (Visual Evidence Lens), a rank-based probe that traces visual evidence for both a target object and its ground-truth attribute, such as color, material, or shape, across VLM layers. We evaluate VELens on over 6,000 images using LLaVA-1.6-7B and Qwen2.5-VL-7B. Our method achieves ROC-AUC scores of 0.95 and 0.91, respectively, and outperforms alternative probes in both low-resource and unseen-attribute settings. Using it to diagnose errors, we estimate that visual-utilization failures account for 84.4% of LLaVA errors and 70.0% of Qwen errors, with conservative lower bounds of 77.5% and 61.0%, respectively. Overall, our study identifies visual utilization as the dominant bottleneck in VLMs and suggests that a central opportunity for improvement lies in developing better mechanisms to locate, route, and use the visual information they already encode.
+1 Introduction
+Vision-language models (VLMs) increasingly answer questions requiring complex reasoning over images ( Liu et al., 2023 ; Liu et al., 2024c ; Ganz et al., 2024 ; Bai et al., 2025 ) . Yet they still hallucinate, i.e., produce answers inconsistent with the visual content ( Li et al., 2023 ; Tong et al., 2024 ; Wu and Xie, 2024 ; Bai et al., 2024 ; Chen et al., 2026 ) . Consider Figure 1 : the traffic light is red, but the model answers green . For an autonomous vehicle approaching the intersection, such a basic error could determine whether it stops safely. Understanding why it occurs is therefore as important as detecting it: did the error occur because the model never encoded that the traffic light is red, or because it encoded this information but failed to use it when generating the answer?
+These possibilities correspond to two distinct failure modes. In a visual-representation failure , the internal visual representations lack the evidence required for the correct answer. In a visual-utilization failure , that evidence is encoded but not used. The failures are indistinguishable from the final answer, yet point to different limitations and solutions. Representation failures call for improving the visual encoder, whereas utilization failures call for improving how the VLM locates, routes, and incorporates encoded visual evidence during generation. Without separating them, we cannot tell whether VLMs need better visual representations or better utilization.
+Existing work on VLM errors primarily defines and detects incorrect outputs ( Li et al., 2023 ; Gunjal et al., 2024 ; Liu et al., 2024b ; Chen et al., 2026 )
+or mitigates them during training and inference ( Tonmoy et al., 2024 ; Wang et al., 2024 ; Huang et al., 2024 ; Leng et al., 2024 ; Liu et al., 2024a ; Yu et al., 2024 ; Zhao et al., 2025 ) .
+Complementary studies examine VLM internals using hidden-representation probes ( Alain and Bengio, 2017 ; Fu et al., 2025 ; Kogilathota et al., 2026 ) ,
+vocabulary-space projections ( Neo et al., 2025 ; Jiang et al., 2025a ; Jiang et al., 2025b ) , and cross-modal attention and
+information-flow analyses ( Kaduri et al., 2025 ; Liu et al., 2024d ; Zhang et al., 2025 ) . These approaches reveal where visual information appears and how it influences generation,
+but not how often errors reflect missing rather than unused evidence. Even recent multi-stage accounts focus on utilization without showing whether the required visual evidence
+was encoded ( Xiong et al., 2026 ) .
+Figure 1: Diagnosing the source of errors.
+We therefore shift focus from whether a VLM answers correctly to whether it possesses the necessary visual evidence to do so. We quantify the visual-utilization failure rate :
+the fraction of errors for which sufficient evidence is encoded but unsuccessfully used. The rest are visual-representation failures, where the evidence was never encoded.
+We estimate this unobservable rate with a probe trained to extract a target signal from representations.
+However, it might guess correctly from spurious cues or fail to extract present evidence.
+We account for this uncertainty by developing theoretical bounds on the true rate using answer-preserving transformations that vary evidence salience.
+We introduce VELens (Visual Evidence Lens), a lightweight rank-based visual-evidence probe. We evaluate it on target-object attribute questions (“ What is the color of the traffic light? ”), which require object and attribute evidence. Because visual-token representations are not directly interpretable,
+VELens projects each language-model layer’s representations into vocabulary space, providing a window into the VLM’s encoded visual information. It measures whether tokens representing the target concept (the object or correct attribute value) rank above competing tokens and combines these scores across layers to determine whether object and attribute evidence are present.
+To evaluate VELens, we use six thousand object-rich images from the Visual Attributes in the Wild (VAW) dataset ( Pham et al., 2021 ) , focusing on color, material, and shape as a first step toward broader visual evidence, and two VLMs sharing the causal decoder-based design of current models, LLaVA-1.6-7B ( Liu et al., 2024c ) and Qwen2.5-VL-7B ( Bai et al., 2025 ) .
+Across all attribute categories and both VLMs, VELens outperforms every baseline, and combined with the strongest object-evidence probe it reaches joint object-and-attribute ROC-AUCs of 0.95 on LLaVA and 0.91 on Qwen. We additionally test its generalization in low-resource and unseen-value settings, where it also outperforms the corresponding baselines, supporting its use for diagnosing error sources.
+We then use VELens to answer the paper’s central question. On VAW, we estimate that 84.4% of LLaVA errors and 70.0% of Qwen errors are visual-utilization failures. More importantly, our conservative lower bound shows these are at least 77.5% (LLaVA) and 61.0% (Qwen) of errors overall. Thus, the main bottleneck is not representing the visual information, but utilizing it when producing the answer. We find no universal layer at which visual evidence becomes accessible. It depends heavily on the model and attribute. To test whether encoded evidence can be used more successfully, we increase attention toward the target-object region. As predicted, this achieves twice the correction rate on evidence-positive errors as on errors where VELens detects no evidence, as proof of concept that, when visual evidence is encoded, helping the model use it can resolve failures.
+In summary, our contributions are: (1) we formalize the distinction between visual-representation and visual-utilization failures, introduce an estimand for their relative prevalence, and derive bounds that account for an imperfect probe; (2) we introduce VELens, a rank-based probe that traces object and attribute evidence across language-model layers, and characterize its scope and limitations (§ E ); (3) across two VLMs and three attributes, we show that visual utilization is the main bottleneck; and (4) we show that identifying whether the required visual evidence is encoded can guide error mitigation. Together, our study suggests that improving VLM reliability requires not only better encoding, but also better mechanisms to locate, route, and use what VLMs already encode.
+2 Related Work
+Detection and Mitigation of Errors in VLMs.
+VLM responses often describe objects, attributes, or relations inconsistent with the image ( Bai et al., 2024 ; Chen et al., 2026 ; Liu et al., 2024b ) . Prior work has mainly focused on detecting such conflicts ( Li et al., 2023 ; Gunjal et al., 2024 ; Deng et al., 2024 ; Yin et al., 2024 ) ,
+treating VLMs as black boxes ( Jiang et al., 2025a ) . Mitigation methods ( Tonmoy et al., 2024 ) reduce errors through attention-guided grounding or constrained decoding at inference ( Huang et al., 2024 ; Leng et al., 2024 ; Zhao et al., 2025 ) , or visual-text alignment objectives during training ( Liu et al., 2024a ; Yu et al., 2024 ) .
+However, they address the output without identifying its underlying cause. While Xiong et al. (2026) frame VLM errors as failures of internal processing, they analyze utilization without establishing whether the required visual evidence was encoded. We instead distinguish visual-representation failures, where evidence is not encoded, from visual-utilization failures, where encoded evidence is unsuccessfully used ( Calderon et al., 2026 ) .
+Interpretability of visual information in VLM.
+Motivated by evidence that LLM internal representations reveal information underlying model behavior ( Orgad et al., 2025 ; Azaria and Mitchell, 2023 ) , recent work studies how visual information is encoded and utilized within VLMs.
+First, classifier-based methods, including linear probing ( Alain and Bengio, 2017 ; Fu et al., 2025 ; Kogilathota et al., 2026 ) , test whether visual concepts can be recovered from hidden states. Notably, Fu et al. (2025) shows that information easily recoverable from the intermediate vision encoder layers may fail to influence predictions.
+Second, confidence-based methods project hidden states through the LM output head, following the logit lens ( nostalgebraist, 2020 ) , to identify vocabulary concepts supported by intermediate visual representations ( Jiang et al., 2025b ; Neo et al., 2025 ; Jiang et al., 2025a ) . These studies show that object semantics are encoded within visual tokens and localized to corresponding image regions, become increasingly interpretable across layers, and provide early indications of visually unsupported objects in textual responses.
+Finally, cross-modality attention analysis ( Kaduri et al., 2025 ; Jiang et al., 2025b ; Liu et al., 2024d ) tracks how visual features contribute to final outputs and how attention disruptions correlate with errors. Unlike per-layer or per-concept analyses, we analyze objects and attributes jointly across layers.
+3 Quantifying the Rate of Visual-Utilization Failures
+Understanding the source of VLM errors requires distinguishing two failure modes: visual-representation failures , in which the required visual evidence is not encoded, and visual-utilization failures , in which it is encoded but unsuccessfully used. Although the final answer alone cannot distinguish them, they reflect different limitations and call for different interventions. We therefore formalize this distinction and propose an estimand, estimator, and bounds for the proportion of errors from each source.
+3.1 Problem Formulation
+For an input X = ( I , Q ) X=(I,Q) consisting of an image and a query,
+let Y X Y_{X} denote its ground-truth answer and f ⁡ ( X ) f(X) the VLM prediction.
+An error (sometimes referred to as hallucination, and hence the notation) occurs when these answers differ, i.e., H ⁡ ( X ) = 𝕀 ⁡ ( f ⁡ ( X ) ≠ Y X ) H(X)=\mathbb{I}({f(X)\neq Y_{X}}) , and we denote the error event by ℋ := H ⁡ ( X ) = 1 \mathcal{H}:={H(X)=1} . Observing an error does not reveal which failure mode caused it: even with access to the raw VLM representations, whether they contain sufficient visual information to support the correct answer is not directly observable. Let ϕ X ∈ 0 , 1 \phi_{X}\in{0,1} represent this latent state, where ϕ X = 1 \phi_{X}=1 indicates that the representations contain sufficient signal to support Y X Y_{X} . Conditional on an error, the presence of such a signal indicates that the evidence was encoded but not used successfully, and hence that the error is a visual-utilization failure.
+We therefore seek the proportion of errors attributable to visual-utilization failures:
+μ ϕ := ℙ ⁡ ( ϕ X = 1 ∣ ℋ ) . \mu_{\phi}:=\mathbb{P}(\phi_{X}=1\mid\mathcal{H}).
+The remaining fraction, 1 − μ ϕ 1-\mu_{\phi} , corresponds to visual-representation failures. Since ϕ X \phi_{X} is latent, we approximate it using a probe : a lightweight secondary model trained on the VLM’s internal representations to determine whether they contain evidence supporting an answer Y Y . Let M ⁡ ( X , Y ) ∈ { 0 , 1 } M(X,Y)\in\{0,1\} denote the probe output for an input X X and a candidate answer Y Y . Thus, M ⁡ ( X , Y X ) = 1 M(X,Y_{X})=1 indicates that the probe can extract evidence supporting the ground-truth answer Y X Y_{X} . This suggests that the VLM’s visual representations had the potential to support Y X Y_{X} , but that this evidence was not used successfully. Accordingly, the probe-based estimand and its empirical plug-in estimator are:
+μ ϕ probe := ℙ ⁡ ( M ⁡ ( X , Y X ) = 1 ∣ ℋ ) , μ ^ ϕ := ∑ i = 1 n 𝕀 ⁡ { H ⁡ ( x i ) = 1 , M ⁡ ( x i , y i ) = 1 } ∑ i = 1 n 𝕀 { H ( x i ) = 1 } . \mu_{\phi}^{\mathrm{probe}}:=\mathbb{P}\bigl(M(X,Y_{X})=1\mid\mathcal{H}\bigr),\qquad\widehat{\mu}_{\phi}:=\frac{\sum_{i=1}^{n}{\mathbb{I}\{H(x_{i})=1,M(x_{i},y_{i})=1\}}}{\sum_{i=1}^{n}{\mathbb{I}\{H(x_{i})=1\}}}.
+A perfect probe satisfying M ⁡ ( X , Y X ) = ϕ X M(X,Y_{X})=\phi_{X} for every X X makes the probe-based estimand equal μ ϕ \mu_{\phi} . In practice, however, M M is not trained on ϕ X \phi_{X} , which is unobserved, but on labels indicating whether Y Y is correct for X X , so M ⁡ ( X , Y X ) M(X,Y_{X}) is only a proxy: it supports but does not prove ϕ X \phi_{X} in either direction, as a positive prediction may rely on imperfect or spurious cues, and a negative one may fail to extract present signal. To account for this uncertainty, we next derive bounds on μ ϕ \mu_{\phi} .
+3.2 Bounds with an Imperfect Probe
+Let X + = ψ + ​ ( X ) X_{+}=\psi_{+}(X) and X − = ψ − ​ ( X ) X_{-}=\psi_{-}(X) denote answer-preserving transformations (i.e., Y X + = Y X = Y X − Y_{X_{+}}=Y_{X}=Y_{X_{-}} ) designed to make the visual evidence relevant to the query more or less salient, respectively. For example, ψ + \psi_{+} may highlight the relevant object with a bounding box, whereas ψ − \psi_{-} may blur or partially occlude it.
+Consider the probe-dominance assumption (Assumption 1 ), under which the probe’s detection rate after the positive transformation ψ + \psi_{+} and its non-detection rate after the negative transformation ψ − \psi_{-} serve as conservative proxies for its behavior when the original representations genuinely contain or lack the required signal, respectively. Provided that ℙ ⁡ ( M ⁡ ( X + , Y X ) = 1 ∣ ℋ ) > 0 \mathbb{P}(M(X_{+},Y_{X})=1\mid\mathcal{H})>0 and ℙ ⁡ ( M ⁡ ( X − , Y X ) = 0 ∣ ℋ ) > 0 \mathbb{P}(M(X_{-},Y_{X})=0\mid\mathcal{H})>0 , the following bounds hold:
+Theorem 1 (Visual-Utilization Failure Bounds. Proof in § A ) .
+1 − ℙ ⁡ ( M ⁡ ( X , Y X ) = 0 ∣ ℋ ) ℙ ⁡ ( M ⁡ ( X − , Y X ) = 0 ∣ ℋ ) ≤ μ ϕ ≤ ℙ ⁡ ( M ⁡ ( X , Y X ) = 1 ∣ ℋ ) ℙ ⁡ ( M ⁡ ( X + , Y X ) = 1 ∣ ℋ ) . 1-\frac{\mathbb{P}(M(X,Y_{X})=0\mid\mathcal{H})}{\mathbb{P}(M(X_{-},Y_{X})=0\mid\mathcal{H})}\leq\mu_{\phi}\leq\frac{\mathbb{P}(M(X,Y_{X})=1\mid\mathcal{H})}{\mathbb{P}(M(X_{+},Y_{X})=1\mid\mathcal{H})}.
+3.3 Visual Evidence in Object-Attribute Queries
+We now specialize the probe to queries Q Q about an attribute of a target object, such as ‘ What is the color of the car ? ”, where the target object is “car” and the attribute category is “color” . Correct answering requires two components of visual evidence: object visual evidence , indicating that the representation localizes the target object, and attribute visual evidence , indicating that the object-specific representation supports the correct attribute value more strongly than alternative values from the same category. We define M M as a composite probe:
+M ( X , Y ) = 1 ⟺ M obj ( X ) = 1 ∧ M attr ( X , Y ) = 1 . M(X,Y)=1\quad\Longleftrightarrow\quad M_{\mathrm{obj}}(X)=1\ \land M_{\mathrm{attr}}(X,Y)=1.
+Under this operational definition, for the ground-truth answer Y X Y_{X} , at least one required evidence component is not detected when M ⁡ ( X , Y X ) = 0 M(X,Y_{X})=0 , whereas both are detected when M ⁡ ( X , Y X ) = 1 M(X,Y_{X})=1 . In the next section, we present our implementation of both probes.
+Figure 2: Overview of VELens. Top: Visual-token representations from each LLM layer are projected through the output head W V W_{V} to obtain vocabulary rankings. These rankings are converted into local evidence scores and aggregated into one score per layer. The layer-wise scores serve as input to a logistic-regression classifier. Bottom: For each visual token, the vocabulary ranks of target tokens ( 𝒯 + \mathcal{T}^{+} ) and competing tokens ( 𝒯 − \mathcal{T}^{-} ) are compared to produce a local evidence score.
+4 The Visual Evidence Lens Method
+We now introduce VELens, a rank-based implementation of the composite probe M = M obj ∧ M attr M=M_{\mathrm{obj}}\land M_{\mathrm{attr}} (§ 3.3 ) that projects intermediate visual-token representations into the LM’s vocabulary space and traces the resulting evidence across layers (Figure 2 ). As we show experimentally, VELens yields the most reliable probe and hence our most reliable estimate of μ ϕ \mu_{\phi} .
+4.1 Method Overview and Notation
+For an input X = ( I , Q ) X=(I,Q) , the vision encoder transforms the image I I into patch-level representations. The vision-to-language projection then maps these representations into the language model’s embedding space, producing visual tokens k 1 , … , k n k_{1},\ldots,k_{n} . In the autoregressive VLMs considered here, as in most current VLMs, visual tokens precede the question tokens; causal masking therefore prevents their layer-wise representations from attending to Q Q , so they encode only information available from the image. Let h l ​ ( k i ) ∈ ℝ d h_{l}(k_{i})\in\mathbb{R}^{d} denote the representation of visual token k i k_{i} at language-model layer l ∈ { 1 , … , L } l\in\{1,\ldots,L\} .
+To examine the visual evidence encoded in h l ​ ( k i ) h_{l}(k_{i}) , we apply the LM’s output head W V ∈ ℝ | V | × d W_{V}\in\mathbb{R}^{|V|\times d} , obtaining logits over the vocabulary V V and hence a ranking of its tokens, following the logit-lens approach ( nostalgebraist, 2020 ) (§ C.2 ). For each v ∈ V v\in V , let rank l ⁡ ( k i , v ) \operatorname{rank}_{l}(k_{i},v) denote its projected rank, from one (highest scoring) to | V | |V| (lowest scoring). These rankings reveal which vocabulary concepts are most strongly supported by each visual-token representation across LM layers. We use this vocabulary-based lens to quantify visual object and attribute evidence.
+Following the example from Section 3.3 for the question Q = Q= “ What is the color of the car ? ”, let o o denote the target object ( “car” ), b b its annotated bounding box, and Y Y the target attribute value ( “yellow” ). To evaluate attributes, we use the full set of values in the queried category as the closed candidate set 𝒜 \mathcal{A} (e.g., 𝒜 = { yellow , red , blue } \mathcal{A}=\{\textrm{yellow},\textrm{red},\textrm{blue}\} for color ); all values other than Y Y serve as alternatives. Let 𝒦 in \mathcal{K}_{\mathrm{in}} and 𝒦 out \mathcal{K}_{\mathrm{out}} the sets of visual tokens whose corresponding image patches lie inside and outside b b , respectively.
+4.2 Visual-Evidence Extraction
+To measure visual evidence for a specific concept, we define target vocabulary tokens 𝒯 + \mathcal{T}^{+} that represent it and competing tokens 𝒯 − \mathcal{T}^{-} .
+For instance, when probing for the target attribute Y = Y= “yellow” , 𝒯 + \mathcal{T}^{+} contains vocabulary tokens for “yellow”, while 𝒯 − \mathcal{T}^{-} contains tokens for the alternative candidates in 𝒜 \mathcal{A} (e.g., “red”, “blue”). The exact construction of 𝒯 + \mathcal{T}^{+} and 𝒯 − \mathcal{T}^{-} differs for objects and attributes; detailed definitions for each are provided in § B.1 .
+For visual token k i k_{i} and layer l l , we first take the best rank across the variants in the target token set, r l ​ ( k i , 𝒯 + ) := min v ∈ 𝒯 + ⁡ rank l ⁡ ( k i , v ) r_{l}(k_{i},\mathcal{T}^{+}):=\min_{v\in\mathcal{T}^{+}}\operatorname{rank}_{l}(k_{i},v) , and then compare it with the ranks of the competing tokens:
+s l ( k i ) := 1 | 𝒯 − | ∑ u ∈ 𝒯 − 𝕀 { rank l ( k i , u ) > r l ( k i , 𝒯 + ) } . s_{l}(k_{i}):=\frac{1}{|\mathcal{T}^{-}|}\sum_{u\in\mathcal{T}^{-}}\mathbb{I}\!\left\{\operatorname{rank}_{l}(k_{i},u)>r_{l}(k_{i},\mathcal{T}^{+})\right\}.
+(1)
+With ranks ordered from best to worst starting at one, the resulting local evidence score s l ​ ( k i ) ∈ [ 0 , 1 ] s_{l}(k_{i})\in[0,1] is the fraction of competing tokens that appear later in this ordering than the best-ranked target token; larger values therefore indicate stronger relative visual evidence at k i k_{i} .
+To obtain a layer-level score, we summarize the local scores { s l ​ ( k i ) : k i ∈ 𝒦 } \{s_{l}(k_{i}):k_{i}\in\mathcal{K}\} over a specific spatial region 𝒦 \mathcal{K} (e.g., 𝒦 in \mathcal{K}_{\mathrm{in}} or 𝒦 out \mathcal{K}_{\mathrm{out}} ) using the aggregation strategies defined in § B.2 . This produces a layer-level score S l S_{l} ; stacking the scores from all L L layers yields an evidence vector 𝐒 := [ S 1 , … , S L ] ⊤ ∈ ℝ L \mathbf{S}:=[S_{1},\ldots,S_{L}]^{\top}\in\mathbb{R}^{L} .
+4.3 Probe Supervision
+To determine the final presence of visual evidence, we train lightweight logistic-regression probes on the extracted L L -dimensional evidence vectors. Both probes are framed as binary classifiers over 𝐒 ∈ ℝ L \mathbf{S}\in\mathbb{R}^{L} , differing only in how the positive ( z = 1 z=1 ) and negative ( z = 0 z=0 ) examples are sourced.
+Attribute-Evidence Regression.
+For the attribute visual probe, we extract the evidence vector 𝐒 attr ​ ( Y ) ∈ ℝ L \mathbf{S}^{\mathrm{attr}}(Y)\in\mathbb{R}^{L} over the target object’s region 𝒦 in \mathcal{K}_{\mathrm{in}} for a candidate attribute Y Y . Since visual evidence is not directly observable, we supervise the probe using dataset annotations: each evidence vector is paired with z = 1 z=1 when Y Y is annotated as present and z = 0 z=0 when it is annotated as absent. We train a logistic-regression model LR attr : ℝ L → [ 0 , 1 ] \mathrm{LR}_{\mathrm{attr}}:\mathbb{R}^{L}\rightarrow[0,1] on these labeled vectors and apply it to the target-attribute vector 𝐒 attr ​ ( Y ) \mathbf{S}^{\mathrm{attr}}(Y) :
+M attr ( X , Y ) := 𝕀 { LR attr ( 𝐒 attr ( Y ) ) ≥ τ attr } . M_{\mathrm{attr}}(X,Y):=\mathbb{I}\!\left\{\mathrm{LR}_{\mathrm{attr}}\bigl(\mathbf{S}^{\mathrm{attr}}(Y)\bigr)\geq\tau_{\mathrm{attr}}\right\}.
+(2)
+Thus, M attr ​ ( X , Y ) = 1 M_{\mathrm{attr}}(X,Y)=1 when the layer-wise visual evidence for Y Y is classified as a present attribute.
+Object-Evidence Regression.
+For the object visual probe, we instead use spatial regions for supervision. The inside-region vector 𝐒 obj , in ∈ ℝ L \mathbf{S}^{\mathrm{obj,in}}\in\mathbb{R}^{L} is a positive example ( z = 1 z=1 ), while the outside-region vector 𝐒 obj , out ∈ ℝ L \mathbf{S}^{\mathrm{obj,out}}\in\mathbb{R}^{L} , where the object is absent, is negative ( z = 0 z=0 ). We fit LR obj : ℝ L → [ 0 , 1 ] \mathrm{LR}_{\mathrm{obj}}:\mathbb{R}^{L}\rightarrow[0,1] to distinguish the regions and define the object probe as:
+M obj ( X ) := 𝕀 { LR obj ( 𝐒 obj , in ) ≥ τ obj } . M_{\mathrm{obj}}(X):=\mathbb{I}\!\left\{\mathrm{LR}_{\mathrm{obj}}\bigl(\mathbf{S}^{\mathrm{obj,in}}\bigr)\geq\tau_{\mathrm{obj}}\right\}.
+(3)
+5 Experimental Setup
+Baseline Methods.
+We compare our rank-based method with three baseline categories: classifier-based , confidence-based , and attention-based . All keep the VLM frozen and use the same mapping from annotated object regions to visual tokens.
+Classifier-based.
+A standard linear-probing baseline ( Alain and Bengio, 2017 ) trains a separate linear classifier for each attribute value at each LM layer. Target-region visual tokens are spatially aggregated (§ B.2 ) into a full-hidden-dimension vector and used as classifier input. This approach requires knowing the attribute or object space in advance, as each value has its own trained probing classifier. Consequently, it cannot be applied to unseen attributes or used as an object probe.
+Confidence-based.
+Internal Confidence ( Jiang et al., 2025a ) measures whether a concept is represented at an intermediate layer by projecting the representation into vocabulary space, and examining the probability assigned to the tokens corresponding to that concept. The method takes the maximum probability across tokens and layers and passes the scalar to a binary classifier. Unlike VELens, it does not compare to scores of competing tokens and collapses layers into a single scalar. In our evaluation, we restrict the visual tokens to the annotated target-object region.
+Attention-based.
+High attention between a query token representing a concept and visual tokens corresponding to that concept can indicate stronger visual grounding ( Kaduri et al., 2025 ; Jiang et al., 2025b ; Liu et al., 2024d ) . In our implementation, we measure attention from the candidate attribute or target-object query tokens to visual tokens inside and outside the annotated target-object region. At each layer and head, the attention scores are normalized by region size, aggregated over heads within each layer, concatenated across layers, and passed to a binary classifier (§ C.1 ).
+Pooling Configurations.
+For attribute evidence, VELens and the confidence and attention baselines use two configurations: All , one probe shared across all values in a category, and Separate (Sep), one probe per value. The classifier baseline always trains one probe per value, so it has only Separate. For object evidence, the methods use one estimator shared across object categories. We select the aggregation strategy of scores (mean, max, min or median) on a validation subset (§ D.1 ), retrain on the full training set, and evaluate once on held-out test set.
+Base Models.
+We evaluate two VLMs: LLaVA-1.6-7B Liu et al. (2024c) , which connects a pretrained CLIP vision encoder to a Mistral-7B LM, and Qwen2.5-VL-7B Bai et al. (2025) , which pairs the Qwen2.5 LM with a natively trained dynamic-resolution vision encoder.
+Dataset.
+We use the Visual Attributes in the Wild (VAW) dataset ( Pham et al., 2021 ) , which provides each object with a polygon or bounding box and associated attributes. This allows us to identify the target object’s visual region and construct object-attribute questions (§ C.3 ).
+VAW contains natural, object-rich scenes with over 17 objects per image on average.
+We normalize attribute values to canonical forms (§ C.3 ) and sample 6,074 images.
+We focus on color, material, and shape because they can be determined from the target object itself rather than its surrounding context, making them well suited for identifying visual-representation failures. VELens itself is not tied to this setting: § E discusses its scope and limitations.
+6 Results
+6.1 Evaluating the Visual-Evidence Probe
+We estimate the visual-utilization failure rate as the fraction of errors, H ⁡ ( X ) = 1 H(X)=1 , for which M ⁡ ( X , Y X ) = 1 M(X,Y_{X})=1 : the VLM answers incorrectly although both required evidence components can be extracted from its representations. Because this estimate’s reliability depends on how well M M detects supporting visual evidence, we first compare our rank-based probe with the baselines. We report ROC-AUC here and additional metrics and aggregation strategies in § D.1 .
+Table 1: Visual-evidence detection performance. ROC-AUC for attribute, object, and combined probes across methods and VLMs.
+LLaVA
+Qwen
+M attr M_{\mathrm{attr}}
+M obj M_{\mathrm{obj}}
+Color
+N = 1,280 N=1{,}280
+Mater
+N = 1,048 N=1{,}048
+Shape
+N = 800 N=800
+Object
+N = 2,941 N=2{,}941
+Attr × \times Obj
+N = 3,128 N=3{,}128
+Color
+N = 1,280 N=1{,}280
+Mater
+N = 1,048 N=1{,}048
+Shape
+N = 800 N=800
+Object
+N = 2,941 N=2{,}941
+Attr × \times Obj
+N = 3,128 N=3{,}128
+Rank-All
+Rank
+0.95
+0.91
+0.84
+0.90
+0.90
+0.93
+0.87
+0.82
+0.81
+0.86
+Rank-Sep
+Rank
+0.97
+0.97
+0.91
+0.90
+0.94
+0.94
+0.94
+0.87
+0.81
+0.90
+Conf-All
+Conf
+0.79
+0.83
+0.64
+0.53
+0.78
+0.78
+0.82
+0.67
+0.58
+0.77
+Conf-Sep
+Conf
+0.79
+0.83
+0.64
+0.53
+0.80
+0.78
+0.82
+0.67
+0.58
+0.78
+Classifier
+–
+0.93
+0.94
+0.83
+–
+–
+0.92
+0.94
+0.86
+–
+–
+Attention-All
+Attention
+0.81
+0.75
+0.67
+1.00
+0.76
+0.82
+0.77
+0.72
+0.96
+0.78
+Attention-Sep
+Attention
+0.83
+0.78
+0.69
+1.00
+0.78
+0.82
+0.77
+0.73
+0.96
+0.78
+Rank-Sep
+Attention
+0.97
+0.97
+0.91
+1.00
+0.95
+0.94
+0.94
+0.87
+0.96
+0.91
+Our Method Provides the Strongest Attribute Evidence Detection.
+Table 1 compares the performance of probes across attribute, object, and combined visual evidence detection. For attribute evidence detection, Rank-Separate performs best in all three categories on both LLaVA and Qwen. The Attention baseline is strongest for object evidence, with AUCs of 1.00 on LLaVA and 0.96 on Qwen; our Rank-based is second at 0.90 and 0.81, respectively. Combining Rank-Separate as M attr M_{\mathrm{attr}} with Attention as M obj M_{\mathrm{obj}} gives the best combined AUC: 0.95 on LLaVA and 0.91 on Qwen.
+Our Method Generalizes with Limited Supervision and to Unseen Attribute Values.
+For M attr M_{\mathrm{attr}} , VELens uses two pooling configurations: Rank-Separate (Sep) trains one probe per value, while Rank-All shares one across values. Our main results evaluate attribute values seen during training, where Rank-Sep performs best among methods. We next ask how the probe can be extended to a new value. For example, after training on seven colors, how can it detect evidence for an eighth? We consider two options: train a value-specific probe from a few labeled examples (low-resource), or reuse probes trained on known values for out-of-distribution generalization.
+In the low-resource setting, we train a value-specific Separate probe with varying numbers of labeled examples. Figure 3 (left) reports ROC-AUC averaged over five independently sampled subsets for each training size in each of the three attribute categories. VELens outperforms the baselines at every size and remains strong with only a few dozen examples per class. For the unseen-value setting, we hold out one value, train on the remaining n − 1 n-1 , and compute its evidence vector.
+Separate applies the n − 1 n-1 value-specific probes to this vector and averages their predictions, while All applies one probe trained jointly on the n − 1 n-1 values. The middle and right panels show that Rank-All generalizes better to unseen values, while both configurations outperform their baselines. Thus, specialization is preferable in-domain, whereas sharing across values improves transfer: a new value can be handled with a few labeled examples using Separate, or with All when no labels are available.
+Figure 3: Low-resource and unseen-value generalization.
+Left: ROC-AUC as the number of labeled examples per class varies, using Separate and averaging across color, material, and shape, with five independently sampled subsets for each size and category.
+Middle and right: Leave-one-value-out ROC-AUC, averaged over held-out values, using both pooling configurations. For Separate, individual probes are trained on each seen value, and their predictions are averaged for the held-out value. For All, one probe is trained jointly on all seen values and applied to the held-out value. Error bars are computed via 100 bootstraps.
+(a) Controlled transformations
+(b) Estimated error sources
+LLaVA Utilization failures Representation failures Overall 84.4% 15.6 15.6 %
+[77.5–95.4]% Color 86.5% 13.5 13.5 %
+[82.2–97.3]% Material 84.1% 15.9 15.9 %
+[74.7–93.6]% Shape 81.3% 18.7 18.7 %
+[71.3–94.0]% Qwen Utilization failures Representation failures Overall 70.0% 30.0 30.0 %
+[61.0–96.6]% Color 67.9% 32.1 32.1 %
+[59.3–94.6]% Material 73.2% 26.8 26.8 %
+[60.9–97.9]% Shape 69.5% 30.5 30.5 %
+[62.5–97.5]%
+Figure 4: Top: The object region is emphasized by blurring its surroundings (leftmost) or degraded by Gaussian noise, yielding the transformed image X ′ X^{\prime} (…9024 tokens truncated…}p_{l,h,j}^{\mathrm{in}}(a)\right).
+(12)
+Stacking the layer scores yields
+𝐒 att attr ​ ( a ) := [ S 1 , att attr ​ ( a ) , … , S L , att attr ​ ( a ) ] ⊤ \mathbf{S}_{\mathrm{att}}^{\mathrm{attr}}(a):=[S_{1,\mathrm{att}}^{\mathrm{attr}}(a),\ldots,S_{L,\mathrm{att}}^{\mathrm{attr}}(a)]^{\top} , labeled z = 1 z=1 when a a is
+annotated as present on the target object and z = 0 z=0 otherwise.
+Object-Evidence Regression.
+For the target object o o , we retain the two densities as separate features.
+Averaging over its m m concept tokens and aggregating heads as above gives
+S l , att obj , in ​ ( o ) \displaystyle S_{l,\mathrm{att}}^{\mathrm{obj,in}}(o)
+: = Agg h = 1 H ⁡ ( 1 m ​ ∑ j = 1 m d l , h , j in ​ ( o ) ) , \displaystyle:=\operatorname{Agg}_{h=1}^{H}\left(\frac{1}{m}\sum_{j=1}^{m}d_{l,h,j}^{\mathrm{in}}(o)\right),
+(13)
+S l , att obj , out ​ ( o ) \displaystyle S_{l,\mathrm{att}}^{\mathrm{obj,out}}(o)
+: = Agg h = 1 H ⁡ ( 1 m ​ ∑ j = 1 m d l , h , j out ​ ( o ) ) . \displaystyle:=\operatorname{Agg}_{h=1}^{H}\left(\frac{1}{m}\sum_{j=1}^{m}d_{l,h,j}^{\mathrm{out}}(o)\right).
+Stacking the layer scores gives
+𝐒 att obj , in ​ ( o ) \mathbf{S}_{\mathrm{att}}^{\mathrm{obj,in}}(o) and
+𝐒 att obj , out ​ ( o ) \mathbf{S}_{\mathrm{att}}^{\mathrm{obj,out}}(o) . The inside vector is a
+positive example ( z = 1 z=1 ), whereas the outside vector is a negative example
+( z = 0 z=0 ).
+C.2 Logit Lens
+The logit lens ( nostalgebraist, 2020 ) provides a window into the interpretability
+of intermediate representations, by applying the output head at every layer rather than only
+at the last. In VLMs, it relates visual tokens that encode specific visual information to
+vocabulary concepts.
+We apply it to visual tokens: for the representation h l ​ ( k i ) h_{l}(k_{i}) of
+visual token k i k_{i} at layer l l , the head W V ∈ ℝ | V | × d W_{V}\in\mathbb{R}^{|V|\times d} yields logits over
+the vocabulary V V , and the projected rank of each v ∈ V v\in V is
+rank l ⁡ ( k i , v ) := 1 + | { u ∈ V : [ W V ​ h l ​ ( k i ) ] u > [ W V ​ h l ​ ( k i ) ] v } | , \operatorname{rank}_{l}(k_{i},v):=1+\bigl|\{\,u\in V:\ [W_{V}h_{l}(k_{i})]_{u}>[W_{V}h_{l}(k_{i})]_{v}\,\}\bigr|,
+(14)
+running from one (highest scoring) to | V | |V| (lowest scoring). Because causal masking prevents
+visual-token representations from attending to the question Q Q , these rankings depend only on
+the image I I .
+Figure 7 shows this projection for visual tokens sampled inside annotated
+VAW object regions. The depth at which object and attribute semantics emerge varies across
+objects, consistent with prior work placing semantic interpretation in the middle-to-late
+layers ( Neo et al., 2025 ; Jiang et al., 2025a ; Jiang et al., 2025b ) . For the plate, for example, the sampled in-region tokens are
+uninformative in the early layers and decode to plate , white and round
+only from the middle layers onward, covering both the object identity and its attributes, the
+two signals VELens probes.
+Figure 7: Logit-lens projection of visual tokens inside annotated object regions.
+Qualitative examples from VAW in LLaVA, for three target objects: a plate (green), a hat
+(orange), and a bowl (purple).
+Top: For each object, we randomly sample five visual tokens k i k_{i} from
+its inside-region set 𝒦 in \mathcal{K}_{\mathrm{in}} and show, at every layer l l , the
+top-ranked vocabulary token, i.e. the v ∈ V v\in V with rank l ⁡ ( k i , v ) = 1 \operatorname{rank}_{l}(k_{i},v)=1
+(Eq. 14 ). Color intensity indicates the top-1 probability.
+Bottom: The corresponding images, each with the annotated bounding box b b of its
+target object in the matching color.
+Semantics emerge at different depths across the three objects: the plate tokens are
+uninformative until the middle layers and then decode to plate , white and
+round , whereas hat and bowl are already top-ranked in the earliest
+layers, with red and glass following later.
+C.3 Dataset Preprocessing
+Filtering and normalization.
+We preprocess the dataset to ensure unambiguous supervision and improve compatibility with our vocabulary-based analysis. Specifically, (1) we remove object instances containing multiple present attributes within the same category, since such cases do not define a unique target attribute; (2) we filter out images containing multiple instances of the same object category with different attribute annotations, as this may introduce ambiguity regarding which instance the model refers to; and (3) we normalize fine-grained attribute values into canonical forms (e.g., light brown and dark brown → \rightarrow brown ) to reduce label sparsity and improve alignment with vocabulary-level representations, yielding 11 colors, 15 materials, and 5 shapes, with the full mapping given in Table 3 .
+Question construction.
+Each VAW instance provides an object name o o , a region (polygon or bounding box), and a set of present and absent attributes. From every instance we construct one question per attribute category a ∈ { color , material , shape } a\in\{\texttt{color},\texttt{material},\texttt{shape}\} for which the instance carries a ground-truth value. We use the object name exactly as it appears in the annotation. The region is not shown to the model and only serves to select the visual tokens that VELens uses for evidence detection (§ 4.1 ). All questions follow a single template, shared by both models (Figure 8 ).
+Template.
+What is the { a a } of the { o o }? Answer with exactly ONE of the
+following options, and output only the option text: v 1 v_{1} , v 2 v_{2} , …, v k v_{k} .
+Example (category color , object traffic light ).
+What is the color of the traffic light? Answer with exactly ONE of the
+following options, and output only the option text: purple, white, red, brown,
+yellow, black, green, gray, pink, blue, orange.
+Chat format , with the question above as {q} .
+LLaVA:
+[INST] <image> {q} [/INST]
+Qwen:
+<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+<|vision_start|><|image_pad|><|vision_end|>{q}<|im_end|>
+<|im_start|>assistant
+Figure 8: Question template, an example question, and the per-model chat formats.
+The template is filled with the attribute category a a , the object name o o , and the canonical
+option set 𝒱 a \mathcal{V}_{a} in a randomly permuted order. The filled question, denoted
+{q} , is then wrapped in each model’s chat format.
+Here 𝒱 a = { v 1 , … , v k } \mathcal{V}_{a}=\{v_{1},\ldots,v_{k}\} is the canonical option set for category a a (Table 2 ), whose order is randomly permuted per instance so that the correct answer is not tied to a fixed position. Each permutation is drawn once and then cached: every subsequent run reuses the identical stored prompt, including the controlled-transformation conditions of § D.4 , so that differences in behavior across conditions cannot be attributed to a change in option order. The filled template is then wrapped in each model’s own chat format.
+Table 2: Canonical option sets. The options presented to the model for each attribute category.
+Category
+k k
+Options
+Color
+11
+black, blue, brown, gray, green, orange, pink, purple, red, white, yellow
+Material
+15
+wood, metal, glass, plastic, rubber, foam, paper, fabric, leather, fur, ceramic, stone, dirt, snow, water
+Shape
+5
+round, square, curved, triangular, curly
+Table 3: Attribute-value normalization. Each canonical value is listed with the full
+set of raw VAW attribute strings mapped onto it.
+Canonical value
+VAW values mapped onto it
+Color (61 raw → \rightarrow 11 canonical)
+black
+black
+blue
+aqua, blue, bluish, bright blue, dark blue, light blue, navy blue, pale blue, teal, turquoise
+brown
+bronze, brown, dark brown, golden brown, light brown, tan, taupe
+gray
+dark gray, gray, light gray, murky, off white, silver
+green
+bright green, dark green, green, green tinted, light green, lime green, neon green, olive green, pale green
+orange
+orange, rust colored, terracotta
+pink
+dark pink, fuchsia, pink
+purple
+dark purple, purple, purplish, violet
+red
+bright red, burgundy, dark red, light red, maroon, red, reddish
+white
+beige, cream colored, ivory, white
+yellow
+amber, blond, bright yellow, golden, light yellow, sand colored, yellow
+Material (50 raw → \rightarrow 15 canonical)
+wood
+bamboo, hardwood, wicker, wooden
+metal
+aluminum, brass, chrome, iron, metal, stainless steel, steel
+glass
+glass
+plastic
+plastic
+rubber
+rubber
+foam
+foamy, styrofoam
+paper
+cardboard, paper
+fabric
+cloth, denim, fabric, jean, khaki, silk
+leather
+leather
+fur
+fluffy, furry, plush
+ceramic
+ceramic, clay, porcelain, tiled
+stone
+asphalt, brick, cement, cobblestone, concrete, granite, gravel, marble, pebbled, red brick, rocky, stone, stucco
+dirt
+dirt, muddy, sandy
+snow
+snowy
+water
+water
+Shape (20 raw → \rightarrow 5 canonical)
+round
+circular, domed, oval shaped, round, rounded, spherical
+square
+cubed, rectangular, square
+curved
+arch shaped, curved, cylindrical
+triangular
+arrow shaped, diamond shaped, octagonal, pointy, spiky, triangular
+curly
+curled, curly
+Answer generation.
+We keep the VLM frozen and decode greedily ( do_sample=False , num_beams=1 , max_new_tokens=10 ), so answers are reproducible across runs. The answer is generated rather than scored against the candidates, and the option list appears in the prompt only to constrain the output to a known vocabulary, so that predictions can be compared against VAW labels without a free-text matching step.
+Appendix D Complementary Results
+D.1 Development-Set Configuration Selection
+Development Split.
+To choose the configuration of our rank-based method and of each baseline, we randomly divided the
+original training split into 60% for fitting the candidate estimators and 40% for development-set
+evaluation. Only these training-derived subsets were used for configuration selection, leaving the
+test set untouched. Tables 4
+and 5 report development-set performance for every configuration
+considered, on LLaVA and Qwen and separately for color, material, and shape. AUC is threshold-free,
+whereas F1 and accuracy are computed at a probability threshold of 0.5 0.5 , at which a probe declares
+the evidence present.
+Attribute-Evidence Configurations.
+Following Section 5 , we varied two design choices: the aggregation
+strategy used to summarize visual-token signals (§ B.2 ), and the pooling configuration , which
+determines whether one estimator is shared across all values in a category ( All ) or one is
+fitted per value ( Separate ). This yields 18 configurations per model and attribute category (8 rank-based, 2 confidence-based, 2 classifier-based, and 6 attention-based).
+For the rank-based method we crossed both pooling configurations with the minimum, maximum, mean,
+and median aggregation strategies. The confidence-based baseline was evaluated with both pooling
+configurations but requires no aggregation strategy, as it retains a single maximum confidence
+value. The classifier-based baseline is inherently Separate , and we tested the mean and
+maximum strategies. For the attention-based baseline we crossed both pooling configurations with
+the mean, median, and maximum strategies.
+Object-Evidence Configurations.
+For object evidence a single estimator is shared across object categories, so the distinction between
+All and Separate does not apply. We evaluated eight configurations: four rank
+aggregation strategies, the confidence baseline without an aggregation strategy, and three
+attention aggregation strategies. We do not evaluate the classifier baseline for objects, because
+its fixed label space is incompatible with the open-ended object vocabulary.
+Selected Configurations.
+We selected one aggregation strategy per method, shared across attribute categories and across both
+VLMs, favoring the strategy that was strongest across AUC, F1, and accuracy. For attribute evidence this gives the mean strategy for the
+rank- and classifier-based methods and the maximum strategy for the attention-based baseline, and for
+object evidence the median strategy for the rank- and attention-based methods. Pooling is treated
+differently: we keep both All and Separate for the rank-, confidence-, and
+attention-based estimators, as they are two distinct estimators, one shared across the values of a
+category and one fitted per value. After fixing these
+choices we refit each estimator on the complete training split, the 60% fitting and 40% development
+portions combined, and evaluated it once on the held-out test set, giving the results reported in
+Table 1 .
+Differences Across Attribute Categories.
+The rank-based results in Table 4 follow the same ordering in both
+models: color and material yield comparably strong evidence, whereas shape is consistently the most
+challenging. A plausible explanation is the amount of visual context each property requires, even for a
+human observer. A small patch near the center of a red wooden table may be enough to identify its color,
+and the grain visible on that same surface likewise reveals its material. Deciding whether the tabletop is round or rectangular, by contrast, requires seeing its outer
+boundary, so no local region is sufficient. Shape is therefore the property least likely to be recoverable
+from the tokens inside the annotated object region.
+Table 4: Development-set attribute-evidence prediction. AUC, F1, and
+accuracy for the attribute probe M attr M_{\mathrm{attr}} under every combination of
+pooling configuration ( All , Separate ) and aggregation strategy
+(§ B.2 ), reported for LLaVA and Qwen and grouped by attribute
+category. Bold marks the best value in each column within a method and pooling
+configuration.
+LLaVA
+Qwen
+Category
+Method
+Aggregation
+AUC
+F1
+Acc.
+AUC
+F1
+Acc.
+Attribute: Color N LLaVA = N Qwen = 768 N_{\mathrm{LLaVA}}=N_{\mathrm{Qwen}}=768
+Rank-based
+All
+Min
+0.65
+0.54
+0.62
+0.70
+0.61
+0.66
+All
+Max
+0.75
+0.75
+0.70
+0.76
+0.74
+0.70
+All
+Mean
+0.95
+0.89
+0.88
+0.91
+0.82
+0.82
+All
+Median
+0.94
+0.88
+0.88
+0.90
+0.82
+0.81
+Separate
+Min
+0.55
+0.66
+0.53
+0.70
+0.62
+0.66
+Separate
+Max
+0.56
+0.68
+0.53
+0.75
+0.75
+0.72
+Separate
+Mean
+0.96
+0.89
+0.89
+0.92
+0.83
+0.83
+Separate
+Median
+0.96
+0.90
+0.89
+0.90
+0.81
+0.81
+Confidence-based
+All
+–
+0.79
+0.73
+0.70
+0.79
+0.72
+0.71
+Separate
+–
+0.81
+0.76
+0.73
+0.79
+0.73
+0.72
+Classifier-based
+Separate
+Mean
+0.92
+0.85
+0.85
+0.92
+0.84
+0.84
+Separate
+Max
+0.90
+0.82
+0.82
+0.88
+0.78
+0.79
+Attention-based
+All
+Mean
+0.78
+0.71
+0.72
+0.80
+0.73
+0.73
+All
+Median
+0.76
+0.70
+0.71
+0.75
+0.71
+0.70
+All
+Max
+0.79
+0.72
+0.72
+0.79
+0.73
+0.72
+Separate
+Mean
+0.76
+0.70
+0.69
+0.77
+0.70
+0.70
+Separate
+Median
+0.75
+0.69
+0.69
+0.74
+0.68
+0.68
+Separate
+Max
+0.78
+0.72
+0.71
+0.79
+0.73
+0.72
+Attribute: Material N LLaVA = N Qwen = 632 N_{\mathrm{LLaVA}}=N_{\mathrm{Qwen}}=632
+Rank-based
+All
+Min
+0.62
+0.54
+0.59
+0.64
+0.54
+0.59
+All
+Max
+0.75
+0.76
+0.71
+0.81
+0.78
+0.76
+All
+Mean
+0.90
+0.81
+0.81
+0.86
+0.80
+0.80
+All
+Median
+0.89
+0.81
+0.81
+0.86
+0.79
+0.79
+Separate
+Min
+0.77
+0.68
+0.71
+0.67
+0.59
+0.62
+Separate
+Max
+0.83
+0.78
+0.76
+0.86
+0.78
+0.77
+Separate
+Mean
+0.97
+0.91
+0.91
+0.95
+0.86
+0.87
+Separate
+Median
+0.96
+0.90
+0.90
+0.94
+0.85
+0.85
+Confidence-based
+All
+–
+0.85
+0.77
+0.77
+0.83
+0.75
+0.76
+Separate
+–
+0.87
+0.78
+0.78
+0.85
+0.76
+0.77
+Classifier-based
+Separate
+Mean
+0.92
+0.85
+0.84
+0.92
+0.86
+0.85
+Separate
+Max
+0.92
+0.85
+0.85
+0.92
+0.86
+0.86
+Attention-based
+All
+Mean
+0.70
+0.65
+0.64
+0.74
+0.69
+0.67
+All
+Median
+0.70
+0.65
+0.65
+0.71
+0.69
+0.67
+All
+Max
+0.71
+0.65
+0.64
+0.77
+0.72
+0.70
+Separate
+Mean
+0.72
+0.66
+0.67
+0.73
+0.69
+0.68
+Separate
+Median
+0.71
+0.66
+0.65
+0.71
+0.65
+0.64
+Separate
+Max
+0.74
+0.68
+0.67
+0.75
+0.70
+0.69
+Attribute: Shape N LLaVA = N Qwen = 480 N_{\mathrm{LLaVA}}=N_{\mathrm{Qwen}}=480
+Rank-based
+All
+Min
+0.61
+0.55
+0.59
+0.56
+0.44
+0.54
+All
+Max
+0.53
+0.67
+0.54
+0.72
+0.69
+0.66
+All
+Mean
+0.84
+0.76
+0.75
+0.83
+0.74
+0.74
+All
+Median
+0.78
+0.73
+0.72
+0.77
+0.70
+0.70
+Separate
+Min
+0.66
+0.64
+0.62
+0.57
+0.49
+0.57
+Separate
+Max
+0.55
+0.64
+0.54
+0.73
+0.66
+0.65
+Separate
+Mean
+0.90
+0.82
+0.81
+0.88
+0.78
+0.78
+Separate
+Median
+0.85
+0.78
+0.78
+0.82
+0.72
+0.72
+Confidence-based
+All
+–
+0.70
+0.62
+0.64
+0.72
+0.64
+0.66
+Separate
+–
+0.72
+0.63
+0.66
+0.74
+0.66
+0.67
+Classifier-based
+Separate
+Mean
+0.82
+0.74
+0.74
+0.84
+0.77
+0.77
+Separate
+Max
+0.80
+0.75
+0.75
+0.83
+0.76
+0.75
+Attention-based
+All
+Mean
+0.64
+0.62
+0.61
+0.65
+0.61
+0.59
+All
+Median
+0.65
+0.63
+0.62
+0.65
+0.61
+0.61
+All
+Max
+0.67
+0.63
+0.60
+0.63
+0.62
+0.59
+Separate
+Mean
+0.67
+0.62
+0.61
+0.66
+0.61
+0.60
+Separate
+Median
+0.67
+0.63
+0.62
+0.66
+0.61
+0.60
+Separate
+Max
+0.70
+0.65
+0.62
+0.66
+0.64
+0.61
+Table 5: Development-set object-evidence prediction. AUC, F1, and accuracy
+for the object probe M obj M_{\mathrm{obj}} under each aggregation strategy
+(§ B.2 ), reported for LLaVA and Qwen and grouped by the attribute
+category of the query. Pooling does not apply here, as a single estimator is shared
+across object categories. Bold marks the best value in each column within a method.
+LLaVA
+Qwen
+Category
+Aggregation
+AUC
+F1
+Acc.
+AUC
+F1
+Acc.
+Attribute: Color N LLaVA = N Qwen = 1,494 N_{\mathrm{LLaVA}}=N_{\mathrm{Qwen}}=1{,}494
+Rank-based
+Min
+0.52
+0.33
+0.53
+0.75
+0.65
+0.70
+Max
+0.87
+0.75
+0.77
+0.90
+0.82
+0.82
+Mean
+0.88
+0.80
+0.80
+0.81
+0.74
+0.75
+Median
+0.91
+0.83
+0.82
+0.83
+0.76
+0.75
+Confidence-based
+–
+0.54
+0.60
+0.52
+0.56
+0.60
+0.54
+Attention-based
+Mean
+1.00
+0.98
+0.98
+0.96
+0.93
+0.94
+Median
+1.00
+0.99
+0.99
+0.96
+0.93
+0.94
+Max
+1.00
+0.97
+0.97
+0.97
+0.93
+0.93
+Attribute: Material N LLaVA = N Qwen = 1,224 N_{\mathrm{LLaVA}}=N_{\mathrm{Qwen}}=1{,}224
+Rank-based
+Min
+0.51
+0.29
+0.53
+0.74
+0.65
+0.70
+Max
+0.86
+0.75
+0.77
+0.89
+0.80
+0.81
+Mean
+0.89
+0.81
+0.80
+0.83
+0.75
+0.75
+Median
+0.91
+0.84
+0.83
+0.85
+0.78
+0.78
+Confidence-based
+–
+0.52
+0.59
+0.51
+0.58
+0.61
+0.54
+Attention-based
+Mean
+1.00
+0.98
+0.98
+0.97
+0.94
+0.94
+Median
+1.00
+0.99
+0.99
+0.96
+0.93
+0.93
+Max
+0.99
+0.95
+0.96
+0.96
+0.92
+0.92
+Attribute: Shape N LLaVA = N Qwen = 940 N_{\mathrm{LLaVA}}=N_{\mathrm{Qwen}}=940
+Rank-based
+Min
+0.51
+0.34
+0.54
+0.76
+0.67
+0.71
+Max
+0.87
+0.76
+0.78
+0.92
+0.83
+0.83
+Mean
+0.88
+0.80
+0.79
+0.87
+0.80
+0.80
+Median
+0.91
+0.83
+0.81
+0.87
+0.81
+0.80
+Confidence-based
+–
+0.53
+0.62
+0.52
+0.60
+0.61
+0.55
+Attention-based
+Mean
+1.00
+0.98
+0.99
+0.98
+0.95
+0.95
+Median
+1.00
+0.99
+0.99
+0.98
+0.94
+0.94
+Max
+0.99
+0.96
+0.96
+0.97
+0.92
+0.93
+D.2 Joint Object-and-Attribute AUC
+The Attr × \times Obj column of Table 1 evaluates the composite
+probe M = M obj ∧ M attr M=M_{\mathrm{obj}}\land M_{\mathrm{attr}}
+(§ 3.3 ), which is correct only when the target object is
+detected and the attribute decision matches the annotation, whether the attribute is present
+or absent. Reporting this as a single ROC-AUC requires one score per instance. Let
+p attr p_{\mathrm{attr}} and p obj p_{\mathrm{obj}} denote the probabilities produced by the two probes before
+thresholding (Eqs. 2 and 3 ), with the object probe
+evaluated on the inside region 𝒦 in \mathcal{K}_{\mathrm{in}} , and define
+s := p obj ​ ( 2 ​ p attr − 1 ) . s:=p_{\mathrm{obj}}\,(2p_{\mathrm{attr}}-1).
+(15)
+The sign of s s carries the attribute decision and its magnitude the object evidence: positive when
+the target value is supported, negative when it is rejected, and near zero when the object is not
+localized. The two kinds of correct decision therefore fall at opposite ends of the ranking, while
+instances lacking object evidence support neither. We report the area under the ROC curve obtained by ranking
+instances by s s , with y = 1 y=1 when the attribute is annotated as present on the target object and
+y = 0 y=0 otherwise, pooled over color, material, and shape ( N = 3,128 N=3{,}128 ).
+D.3 ROC Curves
+Figure 9 shows the curves behind the attribute AUCs in
+Table 1 . On LLaVA the rank-based probe dominates every baseline across
+the whole range, so its advantage does not depend on the threshold chosen, whereas on Qwen the
+classifier-based baseline is comparable to it.
+Figure 9: ROC curves for attribute-evidence detection. True-positive against false-positive rate
+for each method, shown for LLaVA (top) and Qwen (bottom) and separately for color, material, and shape,
+using the Separate pooling configuration. The areas under these curves are the attribute columns
+of Table 1 . The dashed diagonal marks chance.
+D.4 Controlled Transformations
+Figure 10: Controlled transformations. Five images from the VAW dataset (rows) with each transformation applied (columns): the object emphasized by blurring its surroundings ( ψ + \psi_{+} ), the clean image, and Gaussian noise within the bounding box b b at λ = 0.1 \lambda=0.1 , 0.3 0.3 , and 0.9 0.9 ( ψ − \psi_{-} ).
+We instantiate the answer-preserving transformations ψ + \psi_{+} and ψ − \psi_{-} of Section 3.2 as pixel-level image edits, applied separately for each target-object instance. The positive transformation strengthens the relevant visual signal, while the negative transformation weakens it. Following Section 4.1 , let o o denote the target object and b b its annotated bounding box, and let I p ∈ [ 0 , 1 ] 3 I_{p}\in[0,1]^{3} be the normalized RGB value of pixel p p in I I . Both transformations act only on the image component of the input X = ( I , Q ) X=(I,Q) , so that X + = ( I + , Q ) X_{+}=(I_{+},Q) and X − = ( I − , Q ) X_{-}=(I_{-},Q) . Values are clipped to [ 0 , 1 ] [0,1] and converted back to 8-bit RGB.
+Object Emphasis ( ψ + \psi_{+} ).
+The positive transformation highlights the relevant object, strengthening its visual signal by suppressing the surrounding context while leaving the queried object itself visually unchanged. We blur the full RGB image with a 2D Gaussian filter of kernel size k = 41 k=41 and standard deviation σ = k / 6 ≈ 6.83 \sigma=k/6\approx 6.83 , so that the kernel spans approximately ± 3 ​ σ \pm 3\sigma of the Gaussian, and composite the result with the original using the bounding box b b as a binary object mask:
+( I + ) p = { I p , p ∈ b , ( G σ ∗ I ) p , p ∉ b , (I_{+})_{p}=\begin{cases}I_{p},&p\in b,\\
+(G_{\sigma}*I)_{p},&p\notin b,\end{cases}
+(16)
+where G σ ∗ I G_{\sigma}*I denotes the blurred image. The blur removes the edges, texture, and small structures of the background, leaving only its coarse layout and color, while the appearance of o o inside b b remains identical to I I , so the ground-truth answer is preserved, i.e., Y X + = Y X Y_{X_{+}}=Y_{X} .
+Object Degradation ( ψ − \psi_{-} ).
+The negative transformations corrupt only the pixels in the bounding box b b . For each pixel and RGB channel, we independently sample ε p ∼ 𝒩 ⁡ ( 0 , 1 ) \varepsilon_{p}\sim\mathcal{N}(0,1) and compute
+( I − ) p = { clip [ 0 , 1 ] ⁡ ( 1 − λ ​ I p + λ ​ ε p ) , p ∈ b , I p , p ∉ b . (I_{-})_{p}=\begin{cases}\operatorname{clip}_{[0,1]}\!\left(\sqrt{1-\lambda}\,I_{p}+\sqrt{\lambda}\,\varepsilon_{p}\right),&p\in b,\\
+I_{p},&p\notin b.\end{cases}
+(17)
+As λ \lambda grows, the corrupted region retains less of the original image and more Gaussian noise: at λ = 0.1 \lambda=0.1 the object region is only lightly perturbed, whereas at λ = 0.9 \lambda=0.9 the noise dominates and the original content is almost entirely replaced. We report the noise strength of this diffusion-style Gaussian corruption as 100 ​ λ % 100\lambda\% , so that 10%, 30%, and 90% correspond to λ = 0.1 \lambda=0.1 , 0.3 0.3 , and 0.9 0.9 , respectively. The strength λ \lambda controls a trade-off: it must weaken the relevant visual signal, yet the transformation must remain answer-preserving. On the validation set we therefore select λ = 0.3 \lambda=0.3 as ψ − \psi_{-} , the strength at which the object region is visibly corrupted but the ground-truth answer is still unchanged, i.e., Y X − = Y X Y_{X_{-}}=Y_{X} . Figure 10 illustrates this choice: the target object remains identifiable at λ = 0.3 \lambda=0.3 , whereas at λ = 0.9 \lambda=0.9 it is largely destroyed and the correct answer is no longer recoverable. This is the transformation used to construct the bounds of Theorem 1 .
+D.5 Layer-Wise Visual-Evidence Development
+Figure 11: Visual-evidence development across VLM layers.
+Layer-wise attribute and object evidence for LLaVA (left) and Qwen (right). The figure reports the AUC obtained from each individual layer. The complete trajectory captures evidence that becomes accessible at different depths across attributes and models.
+D.6 Attention Intervention
+Intervention.
+Because evidence does not become accessible at a universal layer
+(Figure 11 ), we intervene at every layer and head rather than at a
+selected one. As in Section C.1 , let A l , h ​ ( q j , k i ) A_{l,h}(q_{j},k_{i}) denote the
+attention from query token q j ∈ Q q_{j}\in Q to visual token k i k_{i} at layer l l and head h h , let
+z l , h ​ ( q j , ⋅ ) z_{l,h}(q_{j},\cdot) be the corresponding pre-softmax logits, and let 𝒦 in \mathcal{K}_{\mathrm{in}} be
+the visual tokens inside the annotated target-object region b b
+(Section 4.1 ). For every query token we add a constant α \alpha to the
+logits of the inside tokens before the softmax:
+A ~ l , h ​ ( q j , u ) = exp ( z l , h ( q j , u ) + α 𝕀 { u ∈ 𝒦 in } ) ∑ u ′ exp ( z l , h ( q j , u ′ ) + α 𝕀 { u ′ ∈ 𝒦 in } ) , \tilde{A}_{l,h}(q_{j},u)=\frac{\exp\bigl(z_{l,h}(q_{j},u)+\alpha\,\mathbb{I}\{u\in\mathcal{K}_{\mathrm{in}}\}\bigr)}{\sum_{u^{\prime}}\exp\bigl(z_{l,h}(q_{j},u^{\prime})+\alpha\,\mathbb{I}\{u^{\prime}\in\mathcal{K}_{\mathrm{in}}\}\bigr)},
+(18)
+where u , u ′ u,u^{\prime} range over all positions attended by q j q_{j} . Because the softmax normalizes over all
+positions, this is equivalent to scaling the attention paid to the inside tokens by e α e^{\alpha} ,
+so attention elsewhere is reduced proportionally rather than removed. A single α \alpha is used for
+every layer, head, and model.
+Choosing the Intervention Strength.
+A larger α \alpha corrects more errors, but it also risks overwriting answers that were already
+correct, so we choose the largest value whose collateral cost stays small. Let 𝒞 \mathcal{C} be the
+examples for color, material, and shape whose open-ended baseline answer already matches the
+ground truth. Re-asking the same question under the intervention, the damage rate is the
+fraction of these that become incorrect:
+DamageRate ( α ) = | { x ∈ 𝒞 : f α ​ ( x ) ​ incorrect } | | 𝒞 | . \mathrm{DamageRate}(\alpha)=\frac{\bigl|\{x\in\mathcal{C}\;:\;f_{\alpha}(x)\text{ incorrect}\}\bigr|}{|\mathcal{C}|}.
+Averaged over the three attributes, it is 3.26 % 3.26\% at α = 1 \alpha{=}1 ( e α ≈ 2.7 e^{\alpha}\!\approx\!2.7 ),
+4.74 % 4.74\% at α = 2 \alpha{=}2 ( ≈ 7.4 \approx\!7.4 ), and 9.99 % 9.99\% at α = 3 \alpha{=}3 ( ≈ 20 \approx\!20 ). We use
+α = 2 \alpha{=}2 , the largest strength that keeps the damage rate below 5 % 5\% .
+Figure 12: Additional examples of the attention intervention. Extends
+Figure 5 . Three evidence-positive
+errors, where VELens detects both object and attribute evidence (scores shown per panel), and
+increasing attention to the annotated target-object region corrects the answer. Each panel shows
+attention from the last prompt token to image patches, averaged over the
+last four decoder layers (head-mean). Left: no intervention. Right: prompt → \rightarrow
+inside-object visual-token attention increased at strength α = 2 \alpha{=}2 , chosen as described in
+§ D.6 .
+Appendix E VELens Beyond the Evaluated Question Set
+Our experiments focus on a controlled class of visual questions: attribute questions about a known target object, with color, material, or shape as the queried category. This setting allows visual-evidence detection to be evaluated precisely, as the evidence required for answering is known and spatially grounded in an annotated object region b b . The formulation of Section 3.1 is not restricted to this class. It asks whether the VLM representations contain sufficient evidence to support the ground-truth answer, while VELens operationalizes that evidence through three inputs: a target token set 𝒯 + \mathcal{T}^{+} , a competing token set 𝒯 − \mathcal{T}^{-} , and the visual tokens 𝒦 \mathcal{K} over which evidence is measured. For object-attribute questions, this evidence is further decomposed into object and attribute components (Section 3.3 ). We characterize here which broader classes of questions admit analogous decompositions, and which require further extensions of the probe.
+E.1 A Taxonomy of Visual Questions
+Visual questions can be categorized along several dimensions. Linguistically, they may be polar questions (“ Is the car yellow? ”) or wh-questions requesting an object, attribute, location, or number (“ What color is the car? ”, “ Where is the dog? ”, “ How many cars are there? ”). Semantically, they may concern object existence or identity, one or several attributes, relations between objects, counting, or information requiring external knowledge. Most importantly for VELens, they differ in the structure of the evidence required for answering them: a single concept in a single region, several concepts associated with the same region, several regions and the relations between them, or global scene-level information.
+This last distinction determines whether VELens applies directly. Let C ⁡ ( Q , Y ) = { c 1 , … , c m } C(Q,Y)=\{c_{1},\ldots,c_{m}\} denote the visual concepts that must hold for Y Y to be the answer to Q Q , each component c j c_{j} measured with its own inputs ( 𝒯 j + , 𝒯 j − , 𝒦 j ) (\mathcal{T}^{+}_{j},\mathcal{T}^{-}_{j},\mathcal{K}_{j}) . The composite probe then generalizes to
+M ⁡ ( X , Y ) = ⋀ j = 1 m M j ​ ( X , Y ) , M(X,Y)=\bigwedge_{j=1}^{m}M_{j}(X,Y),
+where each M j M_{j} tests whether the representations contain the corresponding required evidence, and the object-attribute probe of Section 3.3 is the case C = { object , attribute } C=\{\mathrm{object},\mathrm{attribute}\} . The central requirement is therefore not a particular question form, polar or wh-, but whether the evidence supporting an answer decomposes into identifiable grounded components.
+E.2 Question Classes That Naturally Fit This Formulation
+Attribute questions and verification.
+Our experiments consider wh-style attribute questions such as “ What is the color of the car? ”, but can be naturally extended to verification questions such as “ Is the car yellow? ”, which require the same two evidence components, one for the target object and one for the queried value. When the queried value has a closed candidate set, all three inputs are unchanged and the composite probe applies directly. When it does not, as in “ Is the shirt striped? ”, 𝒯 − \mathcal{T}^{-} extends beyond alternatives from the same category, for example to the rest of the vocabulary as in the object probe, which changes the scale of the score and requires refitting LR attr \mathrm{LR}_{\mathrm{attr}} , but not the formulation itself.
+Object presence and localization.
+Questions such as “ Is there a bicycle in the image? ” require evidence for an object concept rather than an object-attribute pair, with 𝒯 + \mathcal{T}^{+} representing the target object and 𝒯 − \mathcal{T}^{-} competing object concepts. For presence questions, 𝒦 \mathcal{K} covers the whole image, 𝒦 in ∪ 𝒦 out \mathcal{K}_{\mathrm{in}}\cup\mathcal{K}_{\mathrm{out}} , and supervision comes from image-level presence annotations rather than from the in/out contrast of Section 4.3 . Localization questions such as “ Where is the yellow car? ” combine the same two components, but retain the local scores of Eq. 1 instead of aggregating them over 𝒦 \mathcal{K} , so that contiguous high-evidence tokens can be clustered into candidate regions. The same evidence thus answers two different questions, depending on whether it is aggregated or kept per visual token.
+Compositional single-object questions.
+The formulation also extends when several properties of one object jointly determine the answer, as in “ Is the large metal cube red? ”. Each value contributes its own 𝒯 j + \mathcal{T}^{+}_{j} and category-specific 𝒯 j − \mathcal{T}^{-}_{j} , while all components share the object’s region 𝒦 in \mathcal{K}_{\mathrm{in}} , and the composite probe is their conjunction. Syntactic complexity alone therefore poses no difficulty: questions with different surface realizations are handled identically when they reduce to the same grounded components.
+E.3 Question Classes Requiring More Substantial Extensions
+The setting becomes more challenging when the answer cannot be determined from evidence associated with individual concepts within a single object region. Relational and comparative questions , such as “ Is the cat to the left of the dog? ” or “ Which car is larger? ”, require evidence not only for both entities but for the relation between them, and detecting the cat and the dog separately does not establish that one is left of the other. Extending VELens would therefore require components defined over tuples of regions, replacing M j ​ ( X , Y , 𝒦 j ) M_{j}(X,Y;\mathcal{K}_{j}) with evidence functions over 𝒦 1 , … , 𝒦 r \mathcal{K}_{1},\ldots,\mathcal{K}_{r} .
+Counting and global scene questions present a related but distinct challenge. “ How many cars are there? ” requires individuating instances and aggregating them without counting the same evidence twice, whereas “ Is this a crowded street? ” depends on distributed scene-level evidence. Answering either from the local scores of Eq. 1 would require grouping them into instances and counting or summarizing the resulting groups, rather than testing a fixed set of components for their presence.
+Finally, knowledge-dependent questions , such as “ What company manufactures this car? ”, require visual evidence together with knowledge stored parametrically in the language model. The distinction between visual-representation and visual-utilization failures is then less identifiable, as an incorrect answer may reflect missing visual evidence, missing knowledge, or a failure to combine the two. In such cases ϕ X \phi_{X} no longer isolates visual information, and 1 − μ ϕ 1-\mu_{\phi} no longer measures a visual-representation failure rate.
+Overall, our experiments establish VELens in a deliberately controlled setting rather than claiming empirical coverage of the full space of visual questions. Nevertheless, the method is not inherently tied to color, material, and shape questions. Its natural scope is broader: questions for which the evidence supporting an answer can be represented as a structured composition of visually grounded concepts. Extending from single-region components to relations, sets of instances, and mixed visual and parametric evidence offers a natural path toward diagnosing representation and utilization failures in more general multimodal tasks.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

@@ -1,0 +1,1472 @@
+Source: https://arxiv.org/html/2605.28769v1
+Main text extraction; fulltext_chars=97170
+
+arXiv:2605.28769v1 [cs.LG] 27 May 2026 
+ 
+ 
+ \uselogo \reportnumber 
+ n/a 
+
+ 
+ 
+ Multi-Mixer Models: Flexible Sequence Modeling with Shared Representations 
+
+ 
+ 
+ 
+ Kevin Y. Li
+ 
+ Affiliation:  Carnegie Mellon University
+ 
+ Affiliation:  Work done while the author was at Google Research.
+ 
+    
+ Asher Trockman
+ 
+ Affiliation:  Google Research
+ 
+    
+ Ananda Theertha Suresh
+ 
+ Affiliation:  Google Research
+ 
+    
+ Ziteng Sun
+ 
+ Affiliation:  Google Research
+ 
+
+ Abstract 
+    
+ Softmax attention is the cornerstone of modern large language models.
+However, its memory requirements scale linearly with sequence length, and its compute requirements scale quadratically.
+Linear recurrent models, such as linear attention and state space models, have become widely studied as alternatives to softmax attention due to their linear compute and constant memory requirements.
+While these sub-quadratic token mixing methods (mixers) achieve promising efficiency gains and competitive results on a wide range of benchmarks, current linear recurrent models still lag behind on tasks that require long-context retrieval or in-context learning.
+A growing body of work studies hybrid architectures that attempt to mitigate these trade-offs by statically interleaving or merging attention and recurrent blocks.
+In this work, we explore a new axis of developing hybrid models: across the token sequence. We propose  Oryx , a hybrid model that can, throughout a sequence, flexibly switch between different mixers, e.g., quadratic attention, for rich context utilization, and linear recurrences, for efficient generation.
+ Oryx  ties at least 90% of its parameters across mixers, enabling attention and recurrent modes to operate over shared internal representations.
+We validate our design with Mamba-2 and Gated DeltaNet variants, up to 1.4B models.
+Under fixed token budgets and a mixed-training strategy,  Oryx  achieves comparable or better performance than its single-mixer baselines.
+At the 1.4B scale, all instances of  Oryx  outperform their respective baselines by at least  0.7  percentage points on averaged language modeling tasks. On retrieval tasks,  Oryx  achieves performance comparable to the Transformer baseline even when processing only a tiny fraction ( < < 10%) of the tokens in the attention mode.
+These results suggest that attention and linear recurrent models can share internal representations, and motivate sequence-axis hybridization as a promising direction. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ The Transformer architecture and its core softmax attention mechanism remain the dominant foundation for modern large language models (LLMs).
+However, softmax attention maintains a key-value (KV) cache of all previous tokens and queries the full cache at each step, incurring quadratic compute and linear memory requirements in sequence length.
+These costs have motivated
+the recent proliferation of sub-quadratic alternatives, in particular, linear recurrent models, such as linear attention  ( Katharopoulos et al., 2020 ;  Yang et al., 2025a )  and state-space models (SSMs)  ( Gu and Dao, 2024 ;  Dao and Gu, 2024 ) . 1 1 
+             1 
+            
+            
+            
+            
+            
+            
+            
+           In this work, we use attention to refer to the canonical quadratic softmax attention mechanism, and use linear to refer to the general class of linear recurrent mechanisms.
+ 
+These linear models are characterized by their constant-size recurrent state, which is updated after each token, and linearly-scaling compute. While they have demonstrated promising results in many settings, pure recurrent approaches still lag behind on tasks that require strong retrieval or in-context learning abilities  ( Waleffe et al., 2024 ;  Arora et al., 2025a ) .
+Such trade-offs have motivated the development and deployment of hybrid architectures, which combine these linear layers with softmax attention to balance performance and efficiency  ( Waleffe et al., 2024 ;  Kimi Team et al., 2025 ;  NVIDIA et al., 2025 ;  Qwen Team, 2025 ) . 
+
+ 
+ 
+ 
+ Existing hybrid models fall under two main paradigms: inter-layer designs, which interleave softmax attention and linear layers, and intra-layer designs, which fuse the output of attention and linear mechanisms within a single layer or block.
+For both, the computational cost per token and capabilities are largely defined by the predetermined architecture.
+In practice, however, the required modeling capabilities and desired trade-off vary by task: retrieval tasks may benefit from richer attention-based context utilization, whereas standard language generation tasks may be adequately served by linear computation.
+This suggests a complementary form of hybridization: instead of choosing a fixed mixture of mechanisms,  can a model operate with different mixers throughout the sequence? 
+
+ 
+ 
+ 
+ Figure 1 :  
+Comparison of different hybrid architectures.
+(a) Inter-layer hybrid models interleave different mixers along the layer axis;
+(b) Intra-layer hybrid models fuse different mixers within a single layer;
+(c)  Oryx  is a sequence-axis hybrid model that can switch between different mixers across the sequence, allowing different segments of the input to be processed by varying mechanisms.
+ 
+ 
+ 
+ In this work, we propose  Oryx , a sequence-axis hybrid architecture that supports operating in  both  quadratic-attention and linear-recurrent regimes throughout a sequence ( Figure   1 ), trained by a chunked mixed-mode strategy that enables flexible switching during deployment ( Section   3 ).
+A key challenge in supporting mode switching is that attention and recurrent mixers parameterize and update their state differently.
+To bridge these mechanisms,  Oryx  layers maintain a KV cache and a linear recurrent state, updating both jointly at each timestep with key-value pairs obtained from shared weights across mixer types.
+Thus, both mechanisms update states from a shared representation space, avoiding separate state-update features for each mixer.
+Consequently, when the mixer mechanism switches, the new selected mixer can continue from a compatible state accumulated over all preceding tokens.
+This selection flexibility during inference could enable compute allocation at the prompt or token level.
+For example, reasoning traces could be generated with the linear mixer for lower-latency, and the answer could use the attention mode for better retrieval and summarization. 
+
+ 
+ 
+ 
+ We instantiate this design with Mamba-2  ( Dao and Gu, 2024 )  and Gated DeltaNet (GDN)  ( Yang et al., 2025a )  as the linear mixer, with both variants  sharing more than  90 % 90\%  of parameters across mixer modes .
+Although our experimental validation focuses on Mamba-2 and GDN, we underscore that our overall design is not specific to these choices and can extend to other mixers that admit comparable key-value associations.
+Our multi-mixer models can switch between attention and linear sequence processing while incurring little to no degradation in output quality ( Figure   3 ), and
+ under matched parameters and training token budgets ,  Oryx  remains competitive with pure softmax attention, Mamba-2, and GDN baselines on language modeling performance across scale.
+At the 1.4B scale, both attention and linear modes of Mamba-2 and GDN variants of  Oryx  outperform their respective baselines by  more than  0.7 0.7  percentage points on average across downstream language modeling evaluations ( Table   1 ).
+On a variety of real-world retrieval tasks and synthetic retrieval tasks,
+ Oryx  is able to achieve comparable performance compared to the Transformer baseline with  < < 10% of the tokens processed in the attention mode.
+Using this mixed-inference mode,  Oryx   significantly surpasses the linear baselines  by a margin of at least 8.6 percentage points on real-world retrieval tasks and at least 38.6 percentage points on needle-in-a-haystack (NIAH) tests ( Table   3 ), demonstrating that  Oryx  is a promising method for improving the retrieval capabilities of linear models.
+Our findings suggest that  attention and linear recurrent mechanisms can share similar representations  despite differing largely in methodology, opening new opportunities to study their interplay. 
+
+ 
+ 
+ 
+ We first introduce preliminary background on sequence mixers and their connections in  Section   2 .
+We use their commonality to motivate the design of the multi-mixer  Oryx  block in  Section   3  and highlight the main architectural components.
+ Section   4  evaluates the language modeling and mode-switching ability of the  Oryx  model and ablates core design choices. 
+
+ 
+ 
+ 
+ 
+ 2  Preliminaries 
+
+ 
+
+ 
+ Notation. 
+
+ 
+ We use the term  mixer  to denote a transformation that mixes information along a particular axis of the input.
+A  sequence mixer  (e.g., softmax attention) mixes information across the sequence dimension, whereas a  channel mixer  (e.g., an MLP) mixes across the feature or channel dimension.
+We focus on sequence mixer designs in this paper and use the term mixer to refer to sequence mixer unless otherwise specified.
+We denote scalars by non-bold symbols (e.g.,  a a ), vectors by bold lowercase symbols (e.g.,  𝒒 \bm{q} ), and matrices by bold uppercase symbols (e.g.,  𝑿 , 𝑾 \bm{X},\bm{W} ).
+Subscripts index the first axis by default, while superscripts are reserved for identifiers. 
+
+ 
+ 
+ 
+ 
+ Shared Key-Value Association View. 
+
+ 
+ While softmax attention  ( Vaswani et al., 2017 )  and modern linear models, e.g., state-space models  ( Dao and Gu, 2024 ) , linear attention  ( Katharopoulos et al., 2020 ) , and fast-weight programmers  ( Schlag et al., 2021 ;  Yang et al., 2025a ) , differ in how they store and update their state, they can all be unified under the associative memory view  ( Wang et al., 2025 ;  Liu et al., 2024 ) .
+Under this view, each mechanism maintains a memory of key-value associations and uses queries to retrieve relevant values from that memory.
+Their core representations, namely the queries, keys, and values, are obtained through linear projections of the input, parameterized by weight matrices  𝑾 Q , 𝑾 K \bm{W}^{Q},\bm{W}^{K} , and  𝑾 V \bm{W}^{V} . For input  𝒙 ∈ ℝ 1 × D \bm{x}\in\mathbb{R}^{1\times D} , we have 
+
+ 
+ 
+
+ 
+ 
+ 𝒒 = 𝒙 ​ 𝑾 Q , 𝒌 = 𝒙 ​ 𝑾 K , 𝒗 = 𝒙 ​ 𝑾 V , \bm{q}=\bm{x}\bm{W}^{Q},\quad\bm{k}=\bm{x}\bm{W}^{K},\quad\bm{v}=\bm{x}\bm{W}^{V}, 
+ 
+ 
+
+ 
+ where  { 𝑾 Q , 𝑾 K } ∈ ℝ D × D k , 𝑾 V ∈ ℝ D × D v \{\bm{W}^{Q},\bm{W}^{K}\}\in\mathbb{R}^{D\times D_{k}},\bm{W}^{V}\in\mathbb{R}^{D\times D_{v}} . For input sequence  𝑿 := [ 𝒙 1 ; 𝒙 2 ; … ; 𝒙 T ] ∈ ℝ T × D \bm{X}:=[\bm{x}_{1};\bm{x}_{2};\ldots;\bm{x}_{T}]\in\mathbb{R}^{T\times D} , we use  𝑸 = [ 𝒒 1 ; 𝒒 2 ; … ; 𝒒 T ] \bm{Q}=[\bm{q}_{1};\bm{q}_{2};\ldots;\bm{q}_{T}]  to denote all queries, and define  𝑲 \bm{K}  and  𝑽 \bm{V}  similarly.
+This viewpoint provides the basis for the tied-projection design in  Section   3 . 
+
+ 
+ 
+ 
+ 
+ Softmax Attention. 
+
+ 
+ For causal softmax attention, the output  𝒐 t ∈ ℝ 1 × D v \bm{o}_{t}\in\mathbb{R}^{1\times D_{v}}  at timestep  t t  is a weighted aggregation of past values  𝑽 ≤ t \bm{V}_{\leq t}  according to the softmax-normalized similarity between the current query  𝒒 t \bm{q}_{t}  and past keys  𝑲 ≤ t \bm{K}_{\leq t} :  softmax ⁡ ( 𝒒 t ​ 𝑲 ≤ t ⊤ ) ​ 𝑽 ≤ t \softmax\!\left(\bm{q}_{t}\bm{K}_{\leq t}^{\top}\right)\bm{V}_{\leq t} .
+ 2 2 
+               2 
+              
+              
+              
+              
+              
+              
+              
+             We ignore positional encodings and other complementary components, e.g., head structure, head dimension normalization, for clarity. 
+In parallel form, it is expressed as 
+
+ 
+ 
+
+ 
+ 
+ 𝑶 = Mixer attention ​ ( 𝑸 , 𝑲 , 𝑽 ) := softmax ⁡ ( 𝑳 U + ( 𝑸 ​ 𝑲 ⊤ ) ) ​ 𝑽 , \bm{O}=\text{Mixer}_{\attention}(\bm{Q},\bm{K},\bm{V}):=\softmax\!\left(\bm{L}^{U}+(\bm{Q}\bm{K}^{\top})\right)\bm{V}, 
+ 
+ 
+
+ 
+ where
+ 𝑳 U ∈ ℝ T × T , 𝑳 i ​ j U = − ∞ ⋅ 𝕀 [ i < j ] \bm{L}^{U}\in\mathbb{R}^{T\times T},\bm{L}^{U}_{ij}=-\infty\cdot\mathbb{I}[i<j]  is the causal mask.
+Its state, the KV cache, stores the key and value vectors  𝒌 t , 𝒗 t \bm{k}_{t},\bm{v}_{t}  from all previous time steps and therefore grows linearly with sequence length.
+The mixer output  𝑶 \bm{O}  is passed through the output projection  𝑾 O ∈ ℝ D v × D \bm{W}^{O}\in\mathbb{R}^{D_{v}\times D}  to get the final block output in the original input dimension,
+ 𝒀 = 𝑶 ​ 𝑾 O \bm{Y}=\bm{O}\bm{W}^{O} .
+As this output projection step is present in other models, we will ignore it for clarity from this point onward. 
+
+ 
+ 
+ 
+ 
+ Linear Recurrent Neural Networks (RNNs). 
+
+ 
+ In contrast to softmax attention, linear RNNs, which encompass linear attention variants and modern state space models (SSMs), are grounded in their recurrent structure.
+A key characteristic of these models is their fixed-size states, which enable runtime and memory efficiency.
+Despite not having an explicit cache of key-value pairs, the states  are  updated with key-value associations at each timestep.
+In general, a structured transition matrix  𝑨 t ∈ ℝ D k × D k \bm{A}_{t}\in\mathbb{R}^{D_{k}\times D_{k}}  adjusts the prior state  𝑺 t − 1 ∈ ℝ D k × D v \bm{S}_{t-1}\in\mathbb{R}^{D_{k}\times D_{v}}  while the current key-value interaction is incorporated via an outer-product.
+The output is determined using a simple readout with the current query. 
+
+ 
+ 
+
+ 
+ 
+ 𝑺 t = 𝑨 t ​ 𝑺 t − 1 + 𝒌 t ⊤ ​ 𝒗 t , 𝒐 t = 𝒒 t ​ 𝑺 t , \bm{S}_{t}=\bm{A}_{t}\bm{S}_{t-1}+\bm{k}_{t}^{\top}\bm{v}_{t},\qquad\bm{o}_{t}=\bm{q}_{t}\bm{S}_{t}, 
+ 
+ 
+
+ 
+ Thus, its state and output can still be expressed through query, key, and value representations. 
+
+ 
+ 
+ 
+ 
+ Mamba-2. 
+
+ 
+ The discretized Mamba-2 SSM  ( Dao and Gu, 2024 )  is one instantiation of a linear RNN that uses a scalar times identity transition,  𝑨 t = α t ​ 𝑰 \bm{A}_{t}=\alpha_{t}\bm{I} , where  α t \alpha_{t}  is an input-dependent decay factor.
+ 3 3 
+               3 
+              
+              
+              
+              
+              
+              
+              
+             In Mamba-2, queries, keys, and values are referred to as  C , B , x C,B,x  respectively, but we utilize attention terminology to draw similarities.
+We also ignore the discretization parameters and the tied nature of  α t \alpha_{t}  and  𝒗 t \bm{v}_{t}  in this section for clarity. 
+Its parallel form relies on decay-based lower-triangular mask  𝚪 \bm{\Gamma}  applied with a Hadamard product ( ∘ \circ ), which draws connections to attention variants and highlights the value retrieval mechanism. 
+
+ 
+ 
+
+ 
+ 
+ 𝑶 = Mixer Mamba-2 ​ ( 𝑸 , 𝑲 , 𝑽 , 𝑿 ) := ( 𝚪 ∘ ( 𝑸 ​ 𝑲 ⊤ ) ) ​ 𝑽 , 𝚪 = [ 1 α 2 1 α 3 ​ α 2 α 3 1 ⋱ ] \displaystyle\bm{O}=\text{Mixer}_{\mamba}(\bm{Q},\bm{K},\bm{V},\bm{X}):=\left(\bm{\Gamma}\circ\left(\bm{Q}\bm{K}^{\top}\right)\right)\bm{V},\quad\bm{\Gamma}={\scriptstyle\begin{bmatrix}1\\
+\alpha_{2}&1\\
+\alpha_{3}\alpha_{2}&\alpha_{3}&1\\
+\vdots&&&\ddots\end{bmatrix}} 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Gated DeltaNet. 
+
+ 
+ Fast-weight programmers  ( Schlag et al., 2021 ;  Yang et al., 2025b ) , such as Gated DeltaNet  ( Yang et al., 2025a ) , can also be viewed under this lens.
+While the memory is queried the same way, the gated delta update rule enables a more expressive state update mechanism 
+
+ 
+ 
+
+ 
+ 
+ 𝑺 t = ( α t ​ ( 𝑰 − β t ​ 𝒌 t ⊤ ​ 𝒌 t ) ) ​ 𝑺 t − 1 + β t ​ 𝒌 t ⊤ ​ 𝒗 t , 𝒐 t = 𝒒 t ​ 𝑺 t , \displaystyle\bm{S}_{t}=\left(\alpha_{t}\left(\bm{I}-\beta_{t}\bm{k}_{t}^{\top}\bm{k}_{t}\right)\right)\bm{S}_{t-1}+\beta_{t}\bm{k}_{t}^{\top}\bm{v}_{t},\quad\bm{o}_{t}=\bm{q}_{t}\bm{S}_{t}, 
+ 
+ 
+
+ 
+ where  α t , β t \alpha_{t},\beta_{t}  are both data-dependent scalars.
+Like other sub-quadratic alternatives, it also retains a parallel representation.
+Reusing the decay mask  𝚪 \bm{\Gamma}  from the Mamba-2 formulation, we have 
+
+ 
+ 
+
+ 
+ 
+ 𝑶 \displaystyle\bm{O} 
+ = Mixer GDN ⁡ ( 𝑸 , 𝑲 , 𝑽 , 𝚪 , 𝜷 ) := ( 𝚪 ∘ ( 𝑸 ​ 𝑲 ⊤ ) ) ​ [ 𝑰 + strictLower ⁡ ( diag ⁡ ( 𝜷 ) ​ ( 𝚪 ∘ ( 𝑲 ​ 𝑲 ⊤ ) ) ) ] − 1 ​ diag ⁡ ( 𝜷 ) ​ 𝑽 . \displaystyle=\operatorname{Mixer}_{\gdn}(\bm{Q},\bm{K},\bm{V};\bm{\Gamma},\bm{\beta}):=\left(\bm{\Gamma}\circ\left(\bm{Q}\bm{K}^{\top}\right)\right)\left[\bm{I}+\operatorname{strictLower}\!\left(\operatorname{diag}(\bm{\beta})\left(\bm{\Gamma}\circ\left(\bm{K}\bm{K}^{\top}\right)\right)\right)\right]^{-1}\operatorname{diag}(\bm{\beta})\bm{V}. 
+ 
+ 
+
+ 
+ 
+ 
+ While these sequence mixers differ in how they store (e.g., KV cache or fixed state), normalize (e.g., softmax, decay mask), and update (e.g., delta rule) key-value associations, their common query-key-value interaction structure provides a useful lens for connecting softmax attention and linear models.
+This connection motivates the design of our  Oryx  block in  Section   3 , where tied projections are used to update both attention and recurrent states from shared representations. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Designing the Multi-Mixer  Oryx  Shared Block 
+
+ 
+
+ 
+ Figure 2 :  
+General  Oryx  block.
+The block shares the core representations between softmax attention and a linear recurrent mechanism through tied key-value projections and uses additional components critical to the linear mechanism’s performance, e.g., the short convolution and gate.
+During a forward pass, the shared key-value representation updates both the KV cache and linear state, allowing either the softmax attention mixer or linear mixer to be chosen as the mode of operation at each timestep.
+ 
+ 
+ 
+ In this section, we describe the sequence-mixing  Oryx  shared block that supports operating in both softmax attention and linear recurrent mechanisms.
+The resulting block maintains compatible attention and recurrent states and includes architectural components core to the modeling abilities of each mechanism while sharing most of its parameters across mixers ( Figure   2 ).
+We instantiate the linear mixer as Mamba-2 and Gated DeltaNet (GDN) for concreteness, but our design choices  can  be applied with other linear models with similar query-key-value interactions. 
+
+ 
+ 
+ 
+ Shared Key-Values and Mixer-Specific Queries. 
+
+ 
+ Motivated by the key-value associative memory view ( Section   2 ),  Oryx  ties the key and value projections across mixer modes, enabling one set of representations, calculated from one forward pass, to update both the attention KV cache and linear recurrent state.
+While the query projections can also be shared, our empirical results suggest that tying all three core representations across mixers hinders model performance (see details in  Section   4.3 ), and thus, we use unique weights for each mixer’s query projection for stronger performance.
+We conjecture that the differences in their state update and output rules may require different query vectors to extract mode-specific crucial information, a hypothesis supported by empirical results. 
+
+ 
+ 
+ 
+ 
+ Incorporating Additional Linear Model Components. 
+
+ 
+ Oryx  incorporates the short convolution, multiplicative gate, and pre-output projection normalization — common components in current linear models — to retain these important inductive biases.
+In our implementation, the short convolution is applied to only the shared keys and values before they are passed into the selected  Mixer 𝑴 \text{Mixer}_{{\bm{M}}} ; the queries are not convolved due to being mixer-specific. 
+
+ 
+ 
+ 
+ For a selected mixer mode  𝑴 ∈ { attention , Mamba-2 , GDN } {\bm{M}}\in\{\attention,\mamba,\gdn\} , the block computes 4 4 
+               4 
+              
+              
+              
+              
+              
+              
+              
+             Rotary embeddings, the short convolution, etc., are abstracted away in the  Mixer  class.  Appendix   B  details the exact architecture for each  Oryx  variant. 
+
+ 
+ 
+
+ 
+ 
+ 𝑶 \displaystyle\bm{O} 
+ = Mixer 𝑴 ​ ( 𝑿 ​ 𝑾 Q 𝑴 , 𝑿 ​ 𝑾 K , 𝑿 ​ 𝑾 V , 𝑿 , 𝑾 sup. ) , \displaystyle=\text{Mixer}_{{\bm{M}}}(\bm{X}\bm{W}^{Q_{{\bm{M}}}},\bm{X}\bm{W}^{K},\bm{X}\bm{W}^{V},\bm{X};\bm{W}^{\text{sup.}}), 
+ 
+ 
+
+ 
+ where  𝑾 sup. \bm{W}^{\text{sup.}}  denotes the additional mixer-specific supporting parameters, either data-dependent or independent, such as discretization or delta-rule parameters.
+The mixer output is gated element-wise and normalized before the final shared output projection 
+
+ 
+ 
+
+ 
+ 
+ 𝒀 \displaystyle\bm{Y} 
+ = GatedRMSNorm ​ ( 𝑶 , σ ⁡ ( 𝑿 ​ 𝑾 G ) ) ​ 𝑾 O , \displaystyle=\text{GatedRMSNorm}\left(\bm{O},\sigma(\bm{X}\bm{W}^{G})\right)\bm{W}^{O}, 
+ 
+ 
+
+ 
+ where  σ \sigma  is an activation function, usually SiLU  ( Hendrycks and Gimpel, 2016 ) , and  𝑾 G ∈ ℝ D × D v \bm{W}^{G}\in\mathbb{R}^{D\times D_{v}}  is the shared gate projection.
+The exact normalization and supporting parameters depend on the linear mechanism used;
+we detail the specifics of our variants in  Appendix   B .
+Most parameters, including  𝑾 K \bm{W}^{K} ,  𝑾 V \bm{W}^{V} ,  𝑾 G \bm{W}^{G} , and  𝑾 O \bm{W}^{O} , are shared across mixers.
+Thus, these shared representations can be calculated with one shared forward pass.
+The general block structure is visualized in  Figure   2 , and an abstracted version of the pseudocode can be found at Listing  . 
+
+ 
+ 
+ 
+ 
+ Maintaining Compatible States and Head Structures. 
+
+ 
+ At each timestep,  Oryx  computes shared key and value representations and uses them to update both the attention KV cache and linear recurrent state.
+While the selected mixer determines the block output, the joint update allows both states to retain the same token history.
+We note that while both mixer states are maintained, only the updated state of the selected mixer is needed for output computation.
+However, one issue is that different mixers often use differing head structures.
+For instance, modern Transformers use attention in a multi-head (MHA) or grouped-query head (GQA) structure, while Mamba-2 adopts a multi-value (MVA) structure.
+To enable the effective sharing of weight projections, we use the same head structure across mixers, matching that of attention, i.e., MHA in our experiments.
+Despite this constraint applied on the linear mixers, we find that they remain empirically effective for modeling. 
+
+ 
+ 
+ 
+ 
+ Chunked Mixed-Mode Training. 
+
+ 
+ To enable robust mode switching capabilities at inference time, we train  Oryx  with chunked mixed-mode training (see ablation in  Section   4.3 ).
+Each training sequence is partitioned into fixed-length chunks, e.g., of 128 tokens, and each chunk is randomly assigned a mixer mode, e.g., attention or linear mode.
+All  Oryx  blocks use the same chunk assignment, and our experiments find that a 1:3 attention-to-linear chunk training ratio balances the performance. 
+
+ 
+ 
+ 
+ Table 1:  
+Downstream language modeling evaluations on parameter-matched models trained with 100B FineWeb-Edu tokens.
+We compare baseline models,  Oryx -TM (Transformer/Mamba-2), and  Oryx -TG (Transformer/Gated DeltaNet) at each parameter scale.
+Best results for each size are  bolded , and second best are  underlined .
+The  Oryx  results reported below use the same mixer for the entire model and sequence.
+Under a fixed training token budget, both modes of our dual mixer  Oryx  model achieve comparable or better performances than that of single mixer baselines.
+ 
+ 
+ 
+ 
+ 
+ 
+ Family 
+ Mixer 
+ LAMB. 
+ LAMB. 
+ HellaS. 
+ PIQA 
+ Arc-E 
+ Arc-C 
+ WinoGr. 
+ OBQA 
+ Avg. 
+ 
+ 
+ 
+ 
+ ppl  ↓ \downarrow 
+ acc  ↑ \uparrow 
+ acc_n  ↑ \uparrow 
+ acc  ↑ \uparrow 
+ acc  ↑ \uparrow 
+ acc_n  ↑ \uparrow 
+ acc  ↑ \uparrow 
+ acc  ↑ \uparrow 
+ acc  ↑ \uparrow 
+ 
+ 
+ 
+ 130M 
+ 
+ Baseline 
+ Transformer 
+ 42.6 42.6 
+ 32.3 32.3 
+ 39.2 39.2 
+ 66.8 66.8 
+ 58.4 58.4 
+ 28.9 28.9 28.9 
+ 51.1 51.1 
+ 19.4 19.4 
+ 42.3 42.3 
+ 
+ Mamba-2 
+ 41.5 41.5 
+ 29.9 29.9 
+ 40.0 40.0 
+ 67.1 67.1 
+ 60.0 60.0 60.0 
+ 27.9 27.9 
+ 52.6 52.6 
+ 22.8 22.8 22.8 
+ 42.9 42.9 
+ 
+ Gated DeltaNet 
+ 36.5 
+ 32.2 32.2 
+ 40.5 
+ 68.4 
+ 62.7 
+ 28.7 28.7 
+ 51.6 51.6 
+ 22.0 22.0 
+ 43.7 
+ 
+ Oryx -TM 
+ Transformer 
+ 38.2 38.2 38.2 
+ 34.3 
+ 39.3 39.3 
+ 67.7 67.7 67.7 
+ 58.7 58.7 
+ 28.1 28.1 
+ 54.0 
+ 22.4 22.4 
+ 43.5 43.5 43.5 
+ 
+ Mamba-2 
+ 40.3 40.3 
+ 31.1 31.1 
+ 39.8 39.8 
+ 67.4 67.4 
+ 59.0 59.0 
+ 29.0 
+ 53.7 53.7 53.7 
+ 23.2 
+ 43.3 43.3 
+ 
+ Oryx -TG 
+ Transformer 
+ 39.3 39.3 
+ 32.7 32.7 32.7 
+ 39.9 39.9 
+ 67.3 67.3 
+ 59.7 59.7 
+ 28.6 28.6 
+ 50.9 50.9 
+ 21.4 21.4 
+ 42.9 42.9 
+ 
+ Gated DeltaNet 
+ 39.0 39.0 
+ 31.5 31.5 
+ 40.4 40.4 40.4 
+ 67.1 67.1 
+ 59.3 59.3 
+ 27.9 27.9 
+ 48.6 48.6 
+ 20.8 20.8 
+ 42.2 42.2 
+ 
+ 
+ 
+ 380M 
+ 
+ Baseline 
+ Transformer 
+ 19.5 19.5 
+ 41.1 41.1 
+ 51.0 51.0 
+ 70.8 70.8 
+ 68.2 68.2 
+ 33.6 33.6 
+ 55.7 55.7 
+ 23.8 23.8 
+ 49.2 49.2 
+ 
+ Mamba-2 
+ 18.3 18.3 
+ 41.3 41.3 
+ 51.8 
+ 72.1 
+ 68.5 68.5 
+ 35.2 35.2 35.2 
+ 56.6 56.6 
+ 27.0 27.0 
+ 50.4 50.4 
+ 
+ Gated DeltaNet 
+ 16.5 
+ 42.4 
+ 51.4 51.4 
+ 71.2 71.2 
+ 68.6 68.6 
+ 34.6 34.6 
+ 55.3 55.3 
+ 27.2 27.2 27.2 
+ 50.1 50.1 
+ 
+ Oryx -TM 
+ Transformer 
+ 17.8 17.8 17.8 
+ 41.9 41.9 
+ 51.2 51.2 
+ 71.2 71.2 
+ 71.0 
+ 35.1 35.1 
+ 57.0 57.0 
+ 26.8 26.8 
+ 50.6 50.6 50.6 
+ 
+ Mamba-2 
+ 18.5 18.5 
+ 42.3 42.3 42.3 
+ 51.0 51.0 
+ 71.3 71.3 
+ 70.5 70.5 70.5 
+ 36.3 
+ 57.1 57.1 57.1 
+ 28.0 
+ 50.9 
+ 
+ Oryx -TG 
+ Transformer 
+ 19.4 19.4 
+ 40.5 40.5 
+ 51.3 51.3 
+ 71.6 71.6 71.6 
+ 67.1 67.1 
+ 33.8 33.8 
+ 55.9 55.9 
+ 24.4 24.4 
+ 49.2 49.2 
+ 
+ Gated DeltaNet 
+ 18.1 18.1 
+ 40.4 40.4 
+ 51.5 51.5 51.5 
+ 71.3 71.3 
+ 68.6 68.6 
+ 34.8 34.8 
+ 57.5 
+ 25.6 25.6 
+ 50.0 50.0 
+ 
+ 
+ 
+ 810M 
+ 
+ Baseline 
+ Transformer 
+ 13.6 13.6 
+ 46.2 46.2 
+ 57.0 57.0 
+ 73.1 73.1 
+ 71.3 71.3 
+ 37.3 37.3 
+ 58.3 58.3 
+ 28.6 28.6 
+ 53.1 53.1 
+ 
+ Mamba-2 
+ 13.4 13.4 
+ 45.6 45.6 
+ 58.2 58.2 
+ 72.7 72.7 
+ 72.8 72.8 
+ 40.1 
+ 56.0 56.0 
+ 31.2 
+ 53.8 53.8 
+ 
+ Gated DeltaNet 
+ 12.1 12.1 12.1 
+ 47.4 47.4 
+ 58.3 58.3 58.3 
+ 72.5 72.5 
+ 73.3 73.3 
+ 39.8 39.8 39.8 
+ 58.6 58.6 
+ 29.6 29.6 
+ 54.2 54.2 
+ 
+ Oryx -TM 
+ Transformer 
+ 12.5 12.5 
+ 48.0 48.0 48.0 
+ 58.0 58.0 
+ 73.6 73.6 73.6 
+ 73.7 
+ 39.4 39.4 
+ 59.1 59.1 
+ 31.0 31.0 31.0 
+ 54.7 
+ 
+ Mamba-2 
+ 11.9 
+ 48.2 
+ 57.9 57.9 
+ 73.9 
+ 73.7 
+ 39.0 39.0 
+ 59.6 
+ 30.6 30.6 
+ 54.7 
+ 
+ Oryx -TG 
+ Transformer 
+ 13.4 13.4 
+ 46.2 46.2 
+ 58.1 58.1 
+ 72.8 72.8 
+ 71.5 71.5 
+ 37.5 37.5 
+ 58.5 58.5 
+ 27.8 27.8 
+ 53.2 53.2 
+ 
+ Gated DeltaNet 
+ 12.8 12.8 
+ 45.8 45.8 
+ 58.4 
+ 73.1 73.1 
+ 72.4 72.4 
+ 38.5 38.5 
+ 59.4 59.4 59.4 
+ 30.8 30.8 
+ 54.0 54.0 
+ 
+ 
+ 
+ 1.4B 
+ 
+ Baseline 
+ Transformer 
+ 11.4 11.4 
+ 49.9 49.9 
+ 60.6 60.6 
+ 74.1 74.1 
+ 73.6 73.6 
+ 42.1 42.1 
+ 58.0 58.0 
+ 31.2 31.2 
+ 55.6 55.6 
+ 
+ Mamba-2 
+ 11.2 11.2 
+ 48.6 48.6 
+ 60.9 60.9 
+ 74.7 74.7 
+ 74.5 74.5 
+ 42.7 42.7 
+ 58.1 58.1 
+ 30.4 30.4 
+ 55.7 55.7 
+ 
+ Gated DeltaNet 
+ 10.6 10.6 10.6 
+ 49.9 49.9 
+ 61.9 61.9 
+ 75.0 75.0 
+ 75.0 75.0 
+ 42.2 42.2 
+ 60.9 60.9 60.9 
+ 31.4 31.4 
+ 56.6 56.6 56.6 
+ 
+ Oryx -TM 
+ Transformer 
+ 11.1 11.1 
+ 50.2 50.2 50.2 
+ 61.3 61.3 
+ 75.0 75.0 
+ 75.7 75.7 75.7 
+ 42.0 42.0 
+ 58.0 58.0 
+ 31.6 31.6 
+ 56.3 56.3 
+ 
+ Mamba-2 
+ 10.5 
+ 50.4 
+ 62.1 
+ 75.2 
+ 75.3 75.3 
+ 43.6 
+ 58.5 58.5 
+ 31.2 31.2 
+ 56.6 56.6 56.6 
+ 
+ Oryx -TG 
+ Transformer 
+ 10.9 10.9 
+ 49.9 49.9 
+ 61.8 61.8 
+ 74.9 74.9 
+ 75.4 75.4 
+ 41.7 41.7 
+ 59.8 59.8 
+ 31.8 31.8 31.8 
+ 56.5 56.5 
+ 
+ Gated DeltaNet 
+ 10.6 10.6 10.6 
+ 50.0 50.0 
+ 62.1 
+ 75.1 75.1 75.1 
+ 76.2 
+ 43.1 43.1 43.1 
+ 62.0 
+ 32.2 
+ 57.3 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 4  Empirical Results and Properties of  Oryx 
+
+ 
+
+ 
+ We evaluate the empirical performance and capabilities of  Oryx  in the following section.
+ Section   4.1  discusses the language modeling ( Section   4.1.1 ) and retrieval ( Section   4.1.2 ) performance of our models when operating using only one mixer mode.
+ Section   4.2  then explores the mode switching capabilities of the model, and  Section   4.3  ablates architectural and training design choices. 
+
+ 
+ 
+ 
+ Oryx  Setup. 
+
+ 
+ Our model follows the Transformer++ setup originating from  Touvron et al. (2023)  and detailed in  Gu and Dao (2024) , which includes interleaved SwiGLU MLPs.
+We use  Oryx -TM to denote a self-attention (Transformer)/Mamba-2 shared-block model, and  Oryx -TG to denote a self-attention/GDN shared-block model.
+We set the dimensions of the query, key, and value to be equal, i.e.,  D k = D v D_{k}=D_{v}  following standard Transformer convention; however, we fix the head dimension  D k , v = 128 D_{k,v}=128  across all scales to preserve the recurrent state size.
+As the gate increases the active parameters, the resulting mixer-to-MLP parameter ratio increases from the baselines Transformer’s 4:8 to 5:8.
+As the MLPs and most sequence-mixer projections are shared across mixers, more than  90 % 90\%  of the weights are jointly used across modes. 5 5 
+               5 
+              
+              
+              
+              
+              
+              
+              
+             The percentage calculation excludes the embedding in the total parameter count. 
+
+ 
+ 
+ 
+ 
+ Baseline Setup. 
+
+ 
+ Transformer baselines follow the Transformer++ architecture of  Touvron et al. (2023)  and head structure of  Brown et al. (2020) .
+Mamba-2 baselines interleave Mamba-2 blocks, using  D k = 128 , D v = 64 D_{k}=128,D_{v}=64  and expansion factor of 2, with SwiGLU MLPs at a 6:6 parameter ratio.
+Gated DeltaNet baselines similarly interleave GDN blocks, using  D k = 128 , D v = 256 D_{k}=128,D_{v}=256 , with MLPs at the same 6:6 ratio.
+To parameter-match models, we increase the MLP widths of the baselines to compensate for the gate in  Oryx  blocks (the short convolution leads to a negligible increase). 
+
+ 
+ 
+ 
+ 
+ Experimental Setup. 
+
+ 
+ We pretrained models at four different scales, each with 100B tokens of FineWeb-Edu  ( Lozhkov et al., 2024 )  using the GPT-2 tokenizer  ( Radford et al., 2019 )  at 2K context length.
+A cosine scheduler was used with  10 % 10\%  of total steps allocated to warmup, and AdamW  ( Loshchilov and Hutter, 2019 )  with  β = ( 0.9 , 0.95 ) \beta=(0.9,0.95)  and  0.1 0.1  weight decay was used as the optimizer.
+For baselines, peak learning rate was set to  5 × 5\times  that of  Brown et al. (2020) , following  Dao and Gu (2024) .
+A  10 × 10\times  factor was used for  Oryx  models.
+We find the increase improves both mixer performances while preserving training stability, potentially mitigating reduced mixer-specific gradients from chunked-training and different optimization landscapes induced by tied representations.
+Training used bfloat16 mixed precision and a global batch size of 1M tokens for 1B models, and 0.5M for the rest. 
+
+ 
+ 
+ 
+ 
+ Evaluation Setup. 
+
+ 
+ The language modeling abilities of models were evaluated with a suite of standard commonsense reasoning and language understanding tasks: LAMBADA  ( Paperno et al., 2016 ;  Radford et al., 2019 ) , HellaSwag  ( Zellers et al., 2019 ) , PIQA  ( Bisk et al., 2019 ) , Arc-Easy and Challenge  ( Clark et al., 2018 ) , WinoGrande  ( Sakaguchi et al., 2019 ) , and OpenbookQA  ( Mihaylov et al., 2018 ) .
+We also measured the retrieval capabilities of the 1.4B models on both synthetic needle-in-the-haystack (NIAH) tasks  ( Hsieh et al., 2024 )  and real-world retrieval tasks in cloze format  ( Arora et al., 2024 ;  Arora et al., 2025a ) :
+SWDE  ( Arora et al., 2025b ;  Lockard et al., 2019 ) ,
+SQuAD  ( Rajpurkar et al., 2018 ) ,
+FDA  ( Arora et al., 2025b ) ,
+TriviaQA (TQA)  ( Joshi et al., 2017 ) ,
+NQ  ( Kwiatkowski et al., 2019 ) , and
+DROP  ( Dua et al., 2019 ) .
+A context length of 2K was used for all retrieval tasks. 
+
+ 
+ 
+ 
+ 
+ 4.1  Language Modeling and Retrieval with Individual Mixer Modes 
+
+ 
+
+ 
+ 4.1.1  Language Modeling Performance of Individual Mixers 
+
+ 
+
+ 
+ Table   1  reports each  Oryx  model’s performance when using one of its mixer modes in isolation, i.e., either softmax attention or linear mechanism used for the entire sequence, to determine whether each mode remains useful on its own.
+Across scales,  Oryx  modes remain competitive with their corresponding single-mixer baselines  despite  being trained for the same number of tokens.
+At the 1.4B scale, both attention and linear modes of  Oryx -TG and  Oryx -TM outperform the baselines by at least 0.7 percentage points on average.
+Notably, despite these tasks being evaluated “out-of-distribution” — the mode switching training does not explicitly train the entire model with all chunks assigned to the same mixer — the models are still able to generalize to this edge case (the probability that a sample is processed entirely by the linear mechanism is  ( 3 / 4 ) 16 ≈ 1 % (3/4)^{16}\approx 1\%  and  ( 1 / 4 ) 16 ≈ 2.3 × 10 − 8 % (1/4)^{16}\approx 2.3\times 10^{-8}\%  for softmax attention).
+These results suggest that sharing key-value representations and tying the majority of weights do  not  prevent either mixer from learning effective standalone behavior. 
+
+ 
+ 
+ 
+ 
+ 4.1.2  Retrieval Capabilities of Individual Mixers 
+
+ 
+
+ 
+ Table 2:  
+Retrieval results for 1.4B baseline and  Oryx  models on real-world and synthetic retrieval tasks at 2K context length.
+Results reported below use the same mixer for the entire model and sequence.
+ Oryx -TM denotes Transformer/Mamba-2 shared blocks, and  Oryx -TG, Transformer/Gated DeltaNet.
+The isolated modes of  Oryx  remain comparable in to their corresponding baselines.
+ 
+ 
+ 
+ 
+ 
+ 
+ Real-World Retrieval 
+ Synthetic Retrieval 
+ 
+ Family 
+ Mixer 
+ SWDE 
+ SQuAD 
+ FDA 
+ TQA 
+ NQ 
+ DROP 
+ Avg. 
+ NIAH-1 
+ NIAH-2 
+ NIAH-3 
+ Avg. 
+ 
+ 
+ 
+ Baseline 
+ Transformer 
+ 42.3 42.3 
+ 42.8 42.8 
+ 55.2 55.2 
+ 65.9 65.9 
+ 26.7 26.7 
+ 22.9 22.9 
+ 42.6 42.6 
+ 99.0 99.0 
+ 90.4 90.4 
+ 95.0 95.0 
+ 94.8 94.8 
+ 
+ Oryx -TM 
+ 50.1 50.1 
+ 41.7 41.7 
+ 57.6 57.6 
+ 63.9 63.9 
+ 28.3 28.3 
+ 22.5 22.5 
+ 44.0 44.0 
+ 99.8 99.8 
+ 99.4 99.4 
+ 81.6 81.6 
+ 93.6 93.6 
+ 
+ Oryx -TG 
+ 44.5 44.5 
+ 41.2 41.2 
+ 46.4 46.4 
+ 64.8 64.8 
+ 27.8 27.8 
+ 21.7 21.7 
+ 41.1 41.1 
+ 99.4 99.4 
+ 98.6 98.6 
+ 99.4 99.4 
+ 99.1 99.1 
+ 
+ Baseline 
+ Mamba-2 
+ 20.6 20.6 
+ 36.1 36.1 
+ 21.0 21.0 
+ 61.7 61.7 
+ 22.4 22.4 
+ 20.3 20.3 
+ 30.3 30.3 
+ 90.4 90.4 
+ 15.8 15.8 
+ 33.2 33.2 
+ 46.5 46.5 
+ 
+ Oryx -TM 
+ 22.2 22.2 
+ 36.4 36.4 
+ 19.4 19.4 
+ 63.7 63.7 
+ 21.8 21.8 
+ 22.3 22.3 
+ 31.0 31.0 
+ 50.8 50.8 
+ 17.0 17.0 
+ 41.0 41.0 
+ 36.3 36.3 
+ 
+ Baseline 
+ Gated DeltaNet 
+ 27.4 27.4 
+ 36.4 36.4 
+ 24.2 24.2 
+ 63.3 63.3 
+ 23.8 23.8 
+ 21.6 21.6 
+ 32.8 32.8 
+ 99.4 99.4 
+ 39.6 39.6 
+ 32.6 32.6 
+ 57.2 57.2 
+ 
+ Oryx -TG 
+ 29.3 29.3 
+ 37.9 37.9 
+ 18.2 18.2 
+ 64.0 64.0 
+ 23.5 23.5 
+ 22.0 22.0 
+ 32.5 32.5 
+ 99.4 99.4 
+ 60.2 60.2 
+ 82.8 82.8 
+ 80.8 80.8 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ The single-mode retrieval results show that  Oryx  generally preserves the retrieval capabilities of its constituent mixers when using the same mixer for the entire sequence.
+Both Mamba-2 and GDN variants achieve comparable real-world retrieval performance except for the GDN variant on the FDA dataset, which requires extracting information from unstructured data.
+Notably, the GDN mode of  Oryx -TG  substantially  improves NIAH performance over its baseline, achieving more than  2 × 2\times  the accuracy on NIAH-3 and more than  1.5 × 1.5\times  the accuracy on NIAH-2.
+We emphasize that these results on the linear mechanisms were achieved despite using only half and two-thirds of the total state size of the respective Mamba-2 and GDN baselines, which suggests that shared-block model and training can improve downstream capabilities. 6 6 
+                 6 
+                
+                
+                
+                
+                
+                
+                
+               The total recurrent state size of Mamba-2 is  2 ​ D k ​ D model 2D_{k}D_{\text{model}} , GDN is  1.5 ​ D k ​ D model 1.5D_{k}D_{\text{model}} , and  Oryx  is  D k ​ D model D_{k}D_{\text{model}} . 
+
+ 
+ 
+ 
+ 
+ 
+ 4.2  Flexible Mode Switching during Inference 
+
+ 
+
+ 
+ Figure 3 :  
+Smoothed token-level perplexity across token position for pretrained 1.4B  Oryx -TM model trained with chunked mixed-mode training.
+After switching from softmax attention to Mamba-2 and vice versa at different positions, perplexity rapidly approaches the corresponding no-switch baseline, indicating that the mixers share compatible representations.
+ 
+ 
+ 
+ While  Oryx  can be deployed in an attention-only or linear-only mode, our chunk-level mode switching mechanism enables a new axis of exploring hybrid models.
+The models can flexibly change between mixers during prefill with little to no degradation in perplexity as demonstrated in  Figure   3 .
+In the pretrained  Oryx -TM 1.4B model, after a switch, the perplexity rapidly approaches that of the corresponding no-switch baseline in the selected mode.
+The results in  Appendix   D  display the same behaviors for non-chunk-aligned switch boundaries and multiple switches for both TM and TG models, demonstrating the ability of various mixers to share internal representations across sequences. 
+
+ 
+ 
+ 
+ Table 3:  
+Cross-mode retrieval results for 1.4B baseline and  Oryx  models on real-world and synthetic retrieval tasks at 2K context length, grouped by the mixer used for prompt prefill and generation ( Prompt + Gen ).
+Baselines use the same mixer for the entire sequence, while  Oryx  use a different mixer for prefilling the context ( Context ) than for the prompt prefill and generation.
+The  Oryx  modes can remain comparable to baselines despite switching modes, suggesting that the underlying representations required for retrieval are preserved across modes.
+ 
+ 
+ 
+ 
+ 
+ 
+ Real-World Retrieval 
+ Synthetic Retrieval 
+ 
+ Prompt + Gen 
+ Family 
+ Context 
+ SWDE 
+ SQuAD 
+ FDA 
+ TQA 
+ NQ 
+ DROP 
+ Avg. 
+ NIAH-1 
+ NIAH-2 
+ NIAH-3 
+ Avg. 
+ 
+ 
+ 
+ Transformer 
+ Baseline 
+ Transformer 
+ 42.3 42.3 
+ 42.8 42.8 
+ 55.2 55.2 
+ 65.9 65.9 
+ 26.7 26.7 
+ 22.9 22.9 
+ 42.6 42.6 
+ 99.0 99.0 
+ 90.4 90.4 
+ 95.0 95.0 
+ 94.8 94.8 
+ 
+ Oryx -TM 
+ Mamba-2 
+ 50.9 50.9 
+ 40.9 40.9 
+ 56.4 56.4 
+ 64.5 64.5 
+ 28.2 28.2 
+ 22.4 22.4 
+ 43.9 43.9 
+ 99.8 99.8 
+ 97.6 97.6 
+ 58.0 58.0 
+ 85.1 85.1 
+ 
+ Oryx -TG 
+ Gated DeltaNet 
+ 46.1 46.1 
+ 41.1 41.1 
+ 47.9 47.9 
+ 64.1 64.1 
+ 28.0 28.0 
+ 20.9 20.9 
+ 41.4 41.4 
+ 99.0 99.0 
+ 97.6 97.6 
+ 95.8 95.8 
+ 97.5 97.5 
+ 
+ Mamba-2 
+ Baseline 
+ Mamba-2 
+ 20.6 20.6 
+ 36.1 36.1 
+ 21.0 21.0 
+ 61.7 61.7 
+ 22.4 22.4 
+ 20.3 20.3 
+ 30.4 30.4 
+ 90.4 90.4 
+ 15.8 15.8 
+ 33.2 33.2 
+ 46.5 46.5 
+ 
+ Oryx -TM 
+ Transformer 
+ 21.8 21.8 
+ 37.1 37.1 
+ 17.8 17.8 
+ 63.2 63.2 
+ 21.3 21.3 
+ 21.6 21.6 
+ 30.5 30.5 
+ 44.6 44.6 
+ 14.6 14.6 
+ 51.0 51.0 
+ 36.7 36.7 
+ 
+ Gated DeltaNet 
+ Baseline 
+ Gated DeltaNet 
+ 27.4 27.4 
+ 36.4 36.4 
+ 24.2 24.2 
+ 63.3 63.3 
+ 23.8 23.8 
+ 21.6 21.6 
+ 32.8 32.8 
+ 99.4 99.4 
+ 39.6 39.6 
+ 32.6 32.6 
+ 57.2 57.2 
+ 
+ Oryx -TG 
+ Transformer 
+ 29.5 29.5 
+ 38.2 38.2 
+ 17.1 17.1 
+ 63.9 63.9 
+ 24.0 24.0 
+ 21.2 21.2 
+ 32.3 32.3 
+ 99.4 99.4 
+ 73.6 73.6 
+ 88.2 88.2 
+ 87.1 87.1 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ We further evaluate the mode switching ability on retrieval tasks by splitting each sample into a context segment ( Context ) and a prompt/generation segment ( Prompt + Gen ), then processing the two segments with different modes.
+For synthetic NIAH tasks, the context consists of the haystack, and the prompt consists of the needle query.
+For real-world tasks, because the boundary between context and prompt is less distinct due to the cloze format, we designate the first 97.5% of tokens as the context and the remaining tokens as the prompt.
+ Table   3  shows that mode-switching often preserves the retrieval performance of the target prompt/generation mixer, especially on real-world retrieval tasks.
+We highlight that both  Oryx  models are able to prefill with the linear mode and generate with softmax attention, achieving comparable results to the Transformer baseline and  significantly surpassing their linear baselines .
+In particular, with mixed inference mode,  Oryx -TM achieves 13.5 percentage points higher on average for real-world retrieval tasks, and 38.6 percentage points higher for NIAH tests.
+For  Oryx -TG, the numbers are 8.6 and 40.3, respectively.
+We note that synthetic evaluations are more sensitive to switching direction and mixer choice, particularly the Transformer-to-Mamba-2 setting.
+These results suggest that exact retrieval may stress the compatibility of shared representations more strongly than real-world retrieval for certain model configurations. 
+
+ 
+ 
+ 
+ This new capability may enable use cases such as models that vary mechanisms depending on the task, e.g., softmax attention for retrieval-heavy questions, or paradigms where large portions of thinking traces are generated with the linear mixer and verified with the attention one.
+We note that models that deploy with mode switching enabled will require the storage of both the KV cache and linear RNN state, but memory costs would be dominated by that of the KV cache at longer context lengths. 
+
+ 
+ 
+ 
+ 
+ 4.3  Architecture and Training Ablations 
+
+ 
+
+ 
+ In the following section, we ablate the architectural and training choices that enable the strong performance and mode switching abilities of  Oryx  models.
+We explore the impact of the mixer-specific query and additional linear model components on performance and the importance of the chunked mixed-mode training on mode-switching capabilities.
+Ablations are conducted at the 350M scale, unless specified otherwise, with the standard training regime as the final models except trained to Chinchilla scaling law token count ( 20 × 20\times  tokens-to-parameter ratio)  ( Hoffmann et al., 2022 ) .
+When ablating our  Oryx  architecture, we utilize sequence mixed-mode training, where an entire sequence is assigned to only one mixer instead of our final chunked mixed-mode training, as both training regimes result in comparable pretraining loss and findings are consistent under both. 
+
+ 
+ 
+ 
+ Mixer-Specific Queries. 
+
+ 
+ The final shared  Oryx  block uses mixer-specific query projections while sharing key and value projections across mixer modes.
+While query weights can be shared across mixers, which would reduce the total parameter count, it would not reduce the active parameter count and empirically degrades performance ( Table   4 ).
+Thus, we can conclude that attention and recurrent mixers can share the state updating representations, i.e., the key and values, but benefit from separate readout components, i.e., the query, due to their differences in state parameterization.
+We find similar mechanism-specific design requirements for  Oryx -TG.
+For instance, SiLU activations after the short convolution are important, and the query-key normalization should only be applied to the GDN components ( Appendix   B ). 
+
+ 
+ 
+ 
+ 
+ Additional Architectural Components. 
+
+ 
+ Our ablations find that the usage of the short convolution is critical for both softmax attention and the linear model performance, while adding the gate further improves perplexity ( Table   4 ).
+In contrast, applying element-wise gating without the short convolution hurts both performances, underscoring the complex interactions between components that arise when designing shared blocks.
+Because  Oryx  uses separate queries for each mixer and supports mode switching during inference, we apply the short convolution only to the shared keys and values.
+Notably, when these components, normalization, convolution, and gate, are added to the Transformer baseline, the language modeling performance does not improve ( Table   5 ).
+Thus, the strong  Oryx  results observed are unlikely to be caused solely by the addition of these components, but rather by the interaction of the various inductive biases when sharing core representations. 
+
+ 
+ 
+ 
+ Table 4:  
+ Left:  Untied, or disjoint, query weights outperform shared query weights for both types of RMS normalization, and default RMSNorm outperforms grouped RMSNorm.
+ Right:  Adding both an element-wise gate and short convolution on the key and values of a disjoint query model leads to the best performance.
+Model parameter counts are matched across variants; gated models increase the parameter count in the mixer block, so the MLP width is increased in non-gated models to compensate.
+ 
+ 
+ 
+ 
+ 
+ Query 
+ RMSNorm 
+ Attn ppl  ↓ \downarrow 
+ Mamba-2 ppl  ↓ \downarrow 
+ 
+ 
+ 
+ 
+ 
+ Shared 
+ 
+ Default 
+ 16.10 16.10 
+ 16.00 16.00 
+ 
+ Grouped 
+ 17.73 17.73 
+ 17.77 17.77 
+ 
+ 
+ 
+ Disjoint 
+ 
+ Default 
+ 15.93 15.93 
+ 15.82 15.82 
+ 
+ Grouped 
+ 17.47 17.47 
+ 17.57 17.57 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Conv? 
+ Gate? 
+ Attn ppl  ↓ \downarrow 
+ Mamba-2 ppl  ↓ \downarrow 
+ 
+ 
+ 
+ 
+ 
+ ✓ 
+ 
+ ✓ 
+ 15.09 15.09 
+ 15.28 15.28 
+ 
+ ✗ 
+ 15.35 15.35 
+ 15.36 15.36 
+ 
+ 
+ 
+ ✗ 
+ 
+ ✓ 
+ 16.67 16.67 
+ 16.59 16.59 
+ 
+ ✗ 
+ 15.91 15.91 
+ 15.78 15.78 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Table 5:  
+ Left:  Additional architecture components added to fully pretrained, parameter-matched Transformer baselines do not benefit downstream language modeling performance.
+ Right:  The performance of chunked mixed-mode training is comparable to sequence mixed-mode training but results in stronger, more robust mode switching abilities, highlighted in  Figure   3  and  Figure   4 .
+ 
+ 
+ 
+ 
+ 
+ Transformer 1.4B 
+ Avg LM acc  ↑ \uparrow 
+ 
+ 
+ 
+ Baseline 
+ 55.6 55.6 
+ 
+ + Norm 
+ 55.4 55.4 
+ 
+ + Norm + Conv + Gate 
+ 55.6 55.6 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Training 
+ Attn ppl  ↓ \downarrow 
+ Mamba-2 ppl  ↓ \downarrow 
+ 
+ 
+ 
+ Sequence Assignment 
+ 15.09 15.09 
+ 15.28 15.28 
+ 
+ Chunk Assignment 
+ 15.08 15.08 
+ 15.27 15.27 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Figure 4 :  Smoothed perplexity across token index position for  Oryx -TM models trained with and without chunk-level switching. Models trained without mode chunk switching perform slightly worse after switching mixers and can suffer from strong degradation in some cases.
+ 
+ 
+ 
+ 
+ Chunked Mixed-Mode Training. 
+
+ 
+ Our chunk-level mixed-mode training regime is critical in enabling robust mode switching for our  Oryx  model.
+As an alternative, we train our models with a sequence-level mixed-mode scheme where an entire training sequence is processed by only one mixer.
+While these models achieve comparable pretraining losses to chunk-level ( Table   5 ), the mode switching capability does  not consistently  manifest.
+The sequence-level trained models seem to possess mode switching capabilities from softmax attention to Mamba-2, but suffer from massive perplexity degradation when shifting from Mamba-2 to softmax attention at certain scales.
+ Figure   4  displays the smoothed perplexities at each token position for the 125M and 350M models trained with and without chunk switching, and  Appendix   D  discusses further.
+Our ablation suggests that the mixer transitions induced by the chunk-based training encourages the representations to remain more compatible throughout a sequence as compared to sequence-based training. 
+
+ 
+ 
+ 
+ We note that chunked mixed-mode training incurs an increase in computational overhead compared to sequence-level mixed training.
+While softmax attention strictly forgoes the quadratic cost of calculating outputs for unselected sequence chunks, the linear RNN must roll its recurrent state forward across all chunks to preserve output correctness, resulting in a fixed linear compute cost.
+We analyze general compute usage in  Appendix   C  and leave overhead reduction for future work. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 5  Related Work 
+
+ 
+
+ 
+ While some methodologies have been introduced that can change the computational pathway for a given input, e.g., context-dependent segmentation for tokenization  ( Hwang et al., 2025 ) , there is comparatively little prior work that is directly motivated by the prospect of using different sequence mixers throughout generation or prefill.
+Our method, to the best of our knowledge, is among the first to study the flexible switching of sequence mixers in an autoregressive language modeling setting.
+Concurrent work HAM  ( Lufkin et al., 2026 )  combines a linear RNN with attention by using the linear model to compress the full sequence while reserving the KV cache for certain routed tokens, resulting in linear RNN and sparse attention hybrid.
+TransMamba  ( Li et al., 2025 )  processes a sequence with a mixture of softmax attention and Mamba-2 with shared weights, but has a predetermined, fixed switch location at each layer.
+This constraint prevents the flexible usage of various mixers depending on the sequence context, which is further compounded by their unidirectional switch, i.e., only from softmax attention to Mamba once.
+Recent SLA2  ( Zhang et al., 2026 )  also enables mixer-choice through a learned router but is formulated as sparse-linear attention for video diffusion rather than flexible switching for autoregressive prefill or generation.
+Our work provides a general framework for mixer selection in autoregressive language modeling and can serve as a basis for objectives such as learned routing or learned sparsity.
+We further cover related works in  Appendix   A . 
+
+ 
+ 
+ 
+ 
+ 6  Discussion and Conclusion 
+
+ 
+
+ 
+ In our work, we introduce  Oryx , a multi-mixer architecture that enables sequence-axis hybridization where different mixer mechanisms can be utilized across a sequence.
+ Oryx  maintains shared representations across the softmax attention and linear mechanism through tied projections, and achieves strong language modeling performance, preserves retrieval capabilities, and supports mode switching during prefill and generation.
+One consideration to highlight is that our design requires the model to keep and update both the KV cache and state memory at each timestep throughout generation if mode switching is used, but for longer context, the memory cost is dominated by the KV cache.
+Reducing the overhead of maintaining multiple states remains an important direction. 
+
+ 
+ 
+ 
+ Our results suggest several extensions for developing sequence-level hybrid models.
+While our current work relies on static assignment, there exist many approaches to learnable mode-switching, e.g., using RL to train routers that dynamically route tokens using FLOPs saved as the reward.
+In addition, because the  Oryx  design can naturally incorporate other sequence mixers, certain layers that share similar head structures to softmax attention or can utilize its KV cache, e.g., 2-simplicial attention  ( Roy et al., 2025 ) , may further improve performance.
+Finally, the training dynamics of our multi-mixer models remain largely unexplored and may be vastly different than that of standard models.
+As the number of mixers or model scale increases, it remains to be seen whether techniques, such as discriminative learning rates or specialized training objectives, may become more important. 
+
+ 
+ 
+ 
+ More broadly, the sequence-axis hybrid paradigm  opens a new design space  for adaptive compute.
+For instance, linear recurrent modes could serve as efficient drafters for speculative decoding or could rapidly generate the longer intermediate reasoning traces prior to fully synthesizing the answer with quadratic attention.
+Beyond these applications, our work suggests that the representations learned by different mechanisms can overlap and be used jointly, raising crucial questions of when and how different models develop compatible understandings and representations. 
+
+ 
+ 
+ 
+ 
+ 

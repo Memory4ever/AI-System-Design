@@ -1,0 +1,1730 @@
+GroundCount: Grounding Vision-Language Models with Object Detection for Mitigating Counting Hallucinations
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I
+Introduction
+II
+Related Works
+III
+Analysis - Hallucination in Counting Tasks
+III-A
+VQA Benchmark
+III-B
+Selection of VLM and ODM
+III-C
+Results and Discussion
+IV
+Methodology - Augmenting VLMs with Object Detection Model
+IV-A
+GroundCount A: Prompt-Based ODM Augmentation
+IV-B
+GroundCount B: Feature-Level Fusion Architecture
+IV-C
+GroundCount C: Combined Prompt and Fusion
+IV-D
+Implementation Details
+V
+Results & Analysis
+V-A
+Main Results: Comparing GroundCount Strategies
+V-B
+Ablation Study: Decomposing ODM Information
+V-C
+ODM-Only Baseline
+V-D
+Cross-Model Consistency and Architectural Variations
+V-E
+Implications and Future Directions
+VI
+Conclusion
+References
+License: CC BY 4.0
+arXiv:2603.10978v1 [cs.CV] 11 Mar 2026
+GroundCount: Grounding Vision-Language Models with Object Detection for Mitigating Counting Hallucinations
+Boyuan Chen
+Affiliation:
+Tandon School of Engineering, New York University, NY, USA
+Affiliation:
+eBRAIN Lab, Division of Engineering, New York University Abu Dhabi, UAE
+Email:
+boyuan.chen@nyu.edu
+Minghao Shao
+Affiliation:
+Tandon School of Engineering, New York University, NY, USA
+Affiliation:
+eBRAIN Lab, Division of Engineering, New York University Abu Dhabi, UAE
+Email:
+minghao.shao@nyu.edu
+Siddharth Garg
+Affiliation:
+Tandon School of Engineering, New York University, NY, USA
+Email:
+sg175@nyu.edu
+Ramesh Karri
+Affiliation:
+Tandon School of Engineering, New York University, NY, USA
+Email:
+rkarri@nyu.edu
+Muhammad Shafique
+Affiliation:
+eBRAIN Lab, Division of Engineering, New York University Abu Dhabi, UAE
+Email:
+muhammad.shafique@nyu.edu
+Abstract
+Vision Language Models (VLMs) exhibit persistent hallucinations in counting tasks,
+with accuracy substantially lower than other visual reasoning tasks (excluding sentiment). This phenomenon
+persists even in state-of-the-art reasoning-capable VLMs. Conversely, CNN-based
+object detection models (ODMs) such as YOLO excel at spatial localization and
+instance counting with minimal computational overhead. We propose
+GroundCount
+, a framework that augments VLMs with explicit spatial grounding
+from ODMs to mitigate counting hallucinations. In the best case, our prompt-based augmentation strategy achieves 81.3% counting accuracy on the best-performing model (Ovis2.5-2B) - a 6.6pp improvement - while reducing inference time by 22% through elimination of hallucination-driven reasoning loops for stronger models. We conduct
+comprehensive ablation studies demonstrating that positional encoding is a critical
+component, being beneficial for stronger models but detrimental for weaker ones.
+Confidence scores, by contrast, introduce noise for most architectures and their
+removal improves performance in four of five evaluated models. We further evaluate
+feature-level fusion architectures, finding that explicit symbolic grounding via
+structured prompts outperforms implicit feature fusion despite sophisticated
+cross-attention mechanisms. Our approach yields consistent improvements across
+four of five evaluated VLM architectures (6.2–7.5pp), with one architecture
+exhibiting degraded performance due to incompatibility between its iterative
+reflection mechanisms and structured prompts. These results suggest that counting
+failures stem from fundamental spatial-semantic integration limitations rather
+than architecture-specific deficiencies, while highlighting the importance of
+architectural compatibility in augmentation strategies.
+I
+Introduction
+Vision-Language Models (VLMs) have demonstrated remarkable progress across a wide range of multimodal tasks
+[
+1
+]
+, benefiting from large-scale training and fine-tuning on massive image-text corpora. This joint learning paradigm significantly enhances both contextual reasoning and instruction-following abilities
+[
+2
+]
+. Despite such advances, VLMs exhibit
+hallucinations
+by generating object attributes, entities, or spatial relations inconsistent with the visual input
+[
+3
+,
+4
+]
+.
+A growing body of work attributes this issue to an imbalanced cross-modal attention mechanism: the language decoder often over-attends to textual priors while under-utilizing visual tokens
+[
+5
+,
+6
+,
+7
+]
+. Consequently, several methods have been proposed to mitigate hallucination, either through decoding-level adjustments
+[
+8
+,
+9
+,
+10
+]
+or training-level regularization
+[
+11
+,
+12
+]
+. Motivated by layer-level analysis showing that hallucination primarily occurs when later layers deviate from correct logits, another direction proposes steering strategies
+[
+13
+,
+14
+,
+15
+]
+that preserve the correct momentum from earlier layers. These approaches have yielded measurable improvements on popular VLMs, including LLaVA-v1.5
+[
+16
+]
+, LLaVA-v1.6
+[
+2
+]
+, InstructBLIP
+[
+17
+]
+, MiniGPT-2
+[
+18
+]
+, and mPLUG-Owl2
+[
+19
+]
+.
+Recent work jointly trains vision encoders and language decoders on diverse multimodal datasets
+[
+20
+]
+, and incorporates reinforcement learning to enhance reasoning capabilities
+[
+21
+,
+22
+,
+23
+]
+. These efforts have led to significantly stronger multimodal representations and improved factual alignment. However, even state-of-the-art (sota) VLMs continue to exhibit systematic hallucination in
+counting
+tasks. As we demonstrate in Section
+III
+and Table
+I
+, counting consistently remains the lowest-accuracy task across all evaluated VLMs (excluding sentiment, which is relatively subjective), with accuracies ranging from 64.0% to 74.7%. This is substantially lower than other visual reasoning tasks such as object recognition (70.3% to 89.6%) and attribute identification (83.2% to 86.5%). Recent research also supports this finding
+[
+24
+,
+25
+]
+.
+The persistence of counting hallucinations in reasoning-capable VLMs presents a unique challenge. Unlike earlier VLMs where attention steering and decoding adjustments proved effective, modern reasoning VLMs already incorporate reflection mechanisms
+[
+23
+,
+20
+,
+22
+]
+that direct attention to visual modalities. Furthermore, the iterative reasoning process makes it difficult to apply layer-level vector steering, as there is no single ”correct” token to steer toward during multi-step reasoning. This suggests that existing hallucination mitigation strategies, while effective for simpler VLMs, are insufficient for addressing systematic failures in compositional tasks like counting.
+On the other hand, counting the number of occurrences of an object is nearly trivial for object detection models (ODMs), such as YOLO
+[
+26
+]
+and DETR
+[
+27
+]
+. These models achieve very high accuracy in object detection while requiring minimal inference time compared to auto-regressive VLMs. Moreover, ODMs provide structured outputs including bounding boxes, confidence scores, and class labels. This information explicitly addresses the spatial and compositional reasoning needed for accurate counting. This observation suggests a complementary approach: rather than attempting to fix VLM attention mechanisms or reasoning processes, we can augment VLMs with explicit grounding information from specialized object detection models.
+Our contributions are as follows:
+•
+We provide a comprehensive analysis of sota VLMs in counting tasks, demonstrating that counting remains systematically the lowest-accuracy task across all evaluated models despite advances in reasoning capabilities.
+•
+We introduce
+GroundCount
+, an object-detection-driven augmentation pipeline that increases VLM counting accuracy by 6.2 to 7.5pp across four of five evaluated models (up to 81.3% on the PhD benchmark) with negligible memory overhead and reduced inference time for stronger models (Ovis2.5-2B: -22%, Molmo2-4B: -23%).
+•
+We conduct three groups of ablation studies analyzing the impact of different ODM outputs (confidence scores, positional encoding, detection thresholds) on VLM performance, providing insights into why grounding information reduces hallucination.
+•
+We evaluate a fusion architecture that combines VLMs with ODMs at the feature level through fine-tuning, analyzing the trade-offs between prompt-based augmentation and architectural integration.
+TABLE I:
+Correctness rates (%) of different VLMs on the PhD benchmark using greedy decoding, with explicit thinking mode enabled when available (i.e., the output begins with a prior reasoning segment enclosed by special tokens such as
+"<think>...</think>"
+).
+The PhD benchmark consists of questions from five task types listed in the
+Task
+column on the left.
+For each subset (excluding sentiment), the task with the lowest correctness rate is highlighted with a
+light-red
+background.
+Results across all four evaluation settings are shown; baseline corresponds to standard VQA without adversarial context.
+VLM
+Molmo2-4B
+Ovis2.5-2B
+R-4B
+Qwen3-VL-2B
+InternVL3.5-1B
+Task
+base
+sec
+icc
+ccs
+base
+sec
+icc
+ccs
+base
+sec
+icc
+ccs
+base
+sec
+icc
+ccs
+base
+sec
+icc
+ccs
+object
+89.6
+79.2
+65.9
+89.2
+88.5
+85.1
+84.0
+84.6
+87.9
+85.3
+82.1
+90.4
+87.7
+84.3
+83.1
+83.1
+70.3
+68.3
+67.9
+82.0
+attribute
+85.2
+44.7
+15.1
+93.9
+86.5
+76.8
+75.3
+89.2
+86.5
+75.5
+64.5
+92.7
+86.5
+77.8
+74.2
+88.1
+83.2
+75.2
+73.6
+80.9
+positional
+80.8
+66.4
+47.3
+89.1
+80.9
+73.0
+65.3
+88.6
+80.6
+71.5
+54.5
+94.1
+78.3
+71.3
+63.6
+86.8
+70.2
+61.3
+49.2
+85.9
+counting
+67.4
+62.9
+33.1
+87.9
+74.7
+67.6
+52.0
+79.8
+73.7
+69.4
+44.2
+87.9
+69.4
+63.5
+53.3
+83.1
+64.0
+54.0
+41.3
+85.5
+sentiment
+67.3
+52.9
+32.0
+93.6
+68.4
+59.6
+59.2
+94.9
+68.1
+57.9
+50.0
+96.2
+68.1
+50.9
+50.3
+91.0
+66.2
+57.7
+59.7
+83.3
+II
+Related Works
+VLM Hallucination in Counting Tasks
+:
+Vision-Language Models exhibit persistent hallucinations in counting tasks despite advances
+in reasoning capabilities. One major hypothesis attributes this to vision transformers (ViTs)
+having difficulties noticing fine-grained image details
+[
+28
+,
+29
+]
+,
+as ViTs process images through global patch attention rather than the local receptive fields
+that facilitate spatial instance discrimination
+[
+30
+,
+28
+]
+.
+Recent studies
+[
+31
+,
+24
+]
+systematically demonstrate that counting remains a fundamental challenge for VLMs, with
+accuracy substantially lower than other visual reasoning tasks.
+The autoregressive nature of VLM decoding may also contribute to counting errors, as the
+model must maintain accurate object tallies across many generation steps without explicit
+grounding in visual features.
+VLM Hallucination Mitigation Methods
+:
+Existing approaches to mitigate VLM hallucinations operate at multiple levels. Decoding-level
+methods adjust the generation process through contrastive decoding
+[
+12
+]
+,
+layer contrasting
+[
+7
+]
+, or attention-guided decoding
+[
+9
+]
+.
+Training-level approaches incorporate regularization
+[
+11
+]
+or specialized
+fine-tuning objectives. More recent steering strategies
+[
+14
+,
+15
+]
+preserve correct activations from earlier layers to prevent hallucination drift. However, these
+methods primarily target general hallucinations and show limited effectiveness on systematic
+compositional failures like counting, particularly in reasoning-capable VLMs that already
+employ reflection mechanisms.
+Combining CNN with Transformers
+:
+The complementary strengths of CNNs and transformers have motivated hybrid architectures.
+DETR
+[
+27
+]
+pioneered end-to-end object detection by combining CNN backbones
+with transformer decoders, demonstrating how structured CNN features can enhance transformer
+reasoning. More recent work explores various fusion strategies for integrating convolutional
+inductive biases with transformer flexibility
+[
+32
+,
+33
+]
+.
+Our fusion architecture extends this paradigm to multimodal settings by grounding VLM patch
+tokens with CNN-based object detection features.
+Fusion Training and Cross-Modal Integration
+:
+Training multimodal fusion architectures requires careful alignment of features from different
+modalities and architectural paradigms
+[
+34
+,
+35
+]
+.
+Cross-attention mechanisms have proven effective for selectively integrating information across
+modalities
+[
+27
+,
+36
+,
+37
+]
+.
+Feature-wise Linear Modulation (FiLM)
+[
+38
+]
+provides adaptive conditioning
+mechanisms that allow one modality to modulate another’s representations.
+Recent work on vision-language pre-training emphasizes joint optimization of vision encoders
+and language decoders
+[
+20
+]
+, though these typically focus on
+transformer-only architectures. Our fusion approach specifically targets integrating CNN-based
+object detection with transformer-based VLMs, requiring novel architectural components to
+bridge the representational gap between local CNN features and global ViT patch embeddings.
+Object Detection for Visual Reasoning
+:
+Object detection models provide structured, localized visual information that can ground
+higher-level reasoning. YOLO
+[
+39
+]
+and its variants achieve real-time
+detection with high accuracy through efficient CNN architectures. These models excel at spatial
+localization and instance counting, which are precisely the capabilities where VLMs struggle.
+Prior work has explored using detected objects as input to VQA systems
+[
+40
+,
+41
+]
+, but typically through learned feature fusion during
+training rather than explicit textual grounding
+[
+42
+,
+43
+]
+.
+Our prompt-based approach (Plan A) uniquely leverages ODM outputs as interpretable, structured
+prompts that augment VLMs without architectural modification, while Plans B and C extend this
+with feature-level integration for deeper cross-modal grounding.
+III
+Analysis - Hallucination in Counting Tasks
+Fig. 1:
+Structural overview of three strategies in our proposed fusion framework - A, B and C. In
+GroundCount A
+, we run inference with ODM on the image, and then include its output in the VLM prompt. In
+GroundCount B
+, we fuse the VLM and ODM on the visual patch latent vector using a light-weight network. To ensure correct information delivery, we finetune the network with our original counting task mutation from COCO. The fusion block is required to be trained; Other modules - VLM, ODM, and language transformer - are optionally frozen.
+GroundCount C
+incorporates both plans by including both prompt-level information and architectural-level integration. The training data also includes ODM detections in the textual input.
+We first validate that state-of-the-art VLMs systematically exhibit counting hallucinations through controlled experiments. We employ consistent benchmark and model selections across all evaluations in this work.
+III-A
+VQA Benchmark
+We employ the PhD benchmark
+[
+44
+]
+to evaluate vision-language model capabilities. The benchmark comprises 33,688 visual question-answer (VQA) pairs across 16,844 images with binary (yes/no) ground-truth labels. Questions are categorized into five task types:
+attribute
+,
+counting
+,
+object
+,
+positional
+, and
+sentiment
+.
+To assess robustness against misleading information, the benchmark provides three challenge variants: (1)
+sec
+(specious context) with plausible but potentially misleading descriptions, (2)
+icc
+(incorrect context) where VLMs receive explicitly incorrect textual descriptions, and (3)
+ccs
+(contradictory common sense) featuring 1,506 VQA pairs on 753 AI-generated images that violate common-sense expectations. Compared to earlier benchmarks such as POPE
+[
+45
+]
+and CHAIR
+[
+46
+]
+, PhD provides larger sample sizes and more granular task categorization.
+III-B
+Selection of VLM and ODM
+We evaluate five state-of-the-art open-source VLMs with parameters not exceeding 4B: R-4B
+[
+21
+]
+, Ovis2.5-2B
+[
+23
+]
+, Qwen3-VL-2B-Thinking (abbreviated as Qwen3-VL-2B for the rest of the paper)
+[
+47
+]
+, InternVL3.5-1B
+[
+22
+]
+, and Molmo2-4B
+[
+48
+]
+. This selection spans diverse architectural designs, with several incorporating advanced reasoning mechanisms such as reinforcement learning (R-4B) and iterative reflection (InternVL3.5). All models are loaded in
+float32
+precision. We allocate generous computational budgets of 1,024 tokens for both output generation and thinking steps, using greedy decoding to ensure reproducibility.
+For object detection, we utilize YOLOv13x
+[
+26
+]
+as our primary ODM, selected for its state-of-the-art accuracy and minimal inference latency.
+III-C
+Results and Discussion
+Table
+I
+presents the comprehensive evaluation results. Our findings clearly demonstrate:
+counting consistently remains the lowest-accuracy task in standard evaluation, with attribute identification often showing steeper degradation under adversarial contexts in higher-capacity models
+(other than sentiment, which is relatively subjective).
+In the base evaluation setting, counting accuracy ranges from 64.0% to 74.7% (mean: 69.8%), representing a substantial gap compared to other visual reasoning tasks: object recognition achieves 70.3%–89.6% (mean: 84.8%), attribute identification reaches 83.2%–86.5% (mean: 85.6%), and positional reasoning attains 70.2%–80.9% (mean: 78.2%). This represents an average accuracy deficit of 15.0pp and 15.8pp compared to object recognition and attribute identification, respectively.
+Performance degradation under misleading contexts further reveals the fragility of counting abilities. Under
+sec
+and
+icc
+conditions, counting accuracy drops by 4.3–10.0pp and 16.1–34.3pp, respectively, the steepest degradation among all task categories. This suggests that VLM counting mechanisms are particularly susceptible to distraction from textual priors, consistent with hypotheses about imbalanced cross-modal attention
+[
+5
+]
+.
+Interestingly, the
+ccs
+subset reveals a reversal: VLMs achieve substantially higher counting accuracy (79.8%–87.9%) on AI-generated images. We hypothesize this occurs due to cleaner spatial layouts and reduced perceptual ambiguity in synthetic images, though this improved performance does not reflect real-world applicability.
+Model-Specific Patterns.
+Examining individual models reveals that counting failures are not simply correlated with parameter count or training paradigm. Molmo2-4B achieves only 67.4% baseline accuracy despite having the largest parameter count among evaluated models (tied with R-4B at 4B), while the smaller Ovis2.5-2B reaches 74.7%. However, Molmo2 demonstrates the second smallest accuracy drop under misleading contexts (4.5pp for
+sec
+, second to 4.3pp for
+sec
+of R-4B), suggesting robust attention mechanisms. InternVL3.5-1B exhibits the steepest degradation under
+sec
+(10.0pp) in the counting task, indicating that iterative reflection mechanisms require sufficient capacity to filter spurious textual information.
+These findings have critical implications. Despite incorporating advanced reasoning capabilities, modern VLMs continue to exhibit systematic counting failures. This suggests the problem lies not in reasoning depth but in fundamental spatial-semantic integration. Moreover, models explicitly addressing cross-modal attention balance still achieve only 64.0% to 74.7% counting accuracy, indicating that attention rebalancing strategies have limited impact. Layer-level steering strategies
+[
+14
+]
+prove ineffective for iterative reasoning processes where no single ”correct” token exists to steer toward during multi-step counting.
+These observations motivate our approach: rather than refining attention mechanisms within existing VLM paradigms, we augment VLMs with explicit grounding from specialized object detection models that excel precisely where VLMs fail.
+IV
+Methodology - Augmenting VLMs with Object Detection Model
+We propose GroundCount, a framework that augments VLMs with explicit spatial grounding from object detection models to mitigate counting hallucinations. Our approach operates on the observation that CNN-based ODMs excel at spatial localization and instance counting, precisely where VLMs exhibit systematic failures. We present three implementation strategies with different computational trade-offs.
+IV-A
+GroundCount A: Prompt-Based ODM Augmentation
+Fig. 2:
+Our pipeline of converting ODM outputs to descriptive text. The image is #000000000077.jpg from COCO-train2017, showing 5 young people skateboarding.
+The bounding boxes (bbox) come from YOLOv13x’s detection: yellow ones are
+person
+objects; orange ones are
+skateboard
+objects. The location of each object is determined by the center of their corresponding bbox. Two skateboard objects were not included due to low confidence.
+The most straightforward approach augments VLM prompts with structured textual descriptions of ODM detections. As illustrated in Figure
+2
+, we first pass the input image through YOLOv13x to obtain bounding boxes, class labels, and confidence scores, which are then converted into natural language prompts.
+Spatial Encoding:
+We discretize image space into a 3×3 grid (upper/middle/lower × left/center/right) and assign each detection to a grid cell based on its bounding box center coordinates. This coarse spatial encoding preserves relative positioning information while remaining interpretable for language models.
+Object Sequencing:
+Detections are ordered by (1) horizontal position (left-to-right), then (2) vertical position (lower-to-upper). This consistent ordering enables VLMs to maintain spatial coherence when processing multiple instances of the same object class.
+Prompt Construction:
+For each detection, we generate a string in the format:
+"[class] [index] [position]: [confidence]"
+, where the index distinguishes multiple instances of the same class. The complete ODM output is appended to the original user prompt as structured context (see Figure
+2
+).
+This approach requires no architectural modifications or training, enabling plug-and-play augmentation across different VLM families. The computational overhead is minimal: YOLOv13x inference (
+∼
+\sim
+0.1s) is negligible compared to VLM auto-regressive decoding (7-40s depending on model architecture and reasoning complexity), and sometimes reduces total inference time by preventing hallucination-induced reasoning loops, particularly for stronger models (Figure
+3
+).
+IV-B
+GroundCount B: Feature-Level Fusion Architecture
+While prompt augmentation proves effective, it relies on the VLM’s ability to correctly interpret textual descriptions of spatial information. To enable direct feature-level grounding, we propose a fusion architecture that integrates CNN features from the ODM with ViT patch tokens from the VLM’s vision encoder.
+Architecture Overview:
+As shown in Figure
+1
+, our fusion network operates between the VLM’s vision encoder and language decoder. For each ViT patch embedding
+𝐩
+i
+∈
+ℝ
+d
+vit
+\mathbf{p}_{i}\in\mathbb{R}^{d_{\text{vit}}}
+, we extract the corresponding spatial region from the ODM’s final convolutional layer, yielding a local CNN feature
+𝐜
+i
+∈
+ℝ
+d
+cnn
+\mathbf{c}_{i}\in\mathbb{R}^{d_{\text{cnn}}}
+. We additionally extract a global CNN feature vector
+𝐠
+∈
+ℝ
+d
+cnn
+\mathbf{g}\in\mathbb{R}^{d_{\text{cnn}}}
+via adaptive pooling.
+Dual-Branch Fusion:
+The fusion network employs two parallel branches to integrate multimodal features:
+Branch A (Feature Transformation):
+Applies Feature-wise Linear Modulation (FiLM)
+[
+38
+]
+to enable CNN features to adaptively modulate ViT representations:
+𝐡
+i
+A
+=
+FiLM
+​
+(
+𝐩
+i
+,
+𝐜
+i
+)
+=
+𝜸
+i
+⊙
+𝐩
+i
++
+𝜷
+i
+\mathbf{h}_{i}^{A}=\text{FiLM}(\mathbf{p}_{i},\mathbf{c}_{i})=\boldsymbol{\gamma}_{i}\odot\mathbf{p}_{i}+\boldsymbol{\beta}_{i}
+where
+𝜸
+i
+,
+𝜷
+i
+=
+MLP
+​
+(
+𝐜
+i
+)
+\boldsymbol{\gamma}_{i},\boldsymbol{\beta}_{i}=\text{MLP}(\mathbf{c}_{i})
+are learned affine parameters.
+Branch B (Selective Attention):
+Uses cross-attention to allow ViT patches to selectively query relevant CNN features:
+𝐡
+i
+B
+=
+CrossAttn
+​
+(
+𝐩
+i
+,
+[
+𝐜
+i
+,
+𝐠
+]
+)
+\mathbf{h}_{i}^{B}=\text{CrossAttn}(\mathbf{p}_{i},[\mathbf{c}_{i},\mathbf{g}])
+The branches are combined via learned gating:
+𝐡
+i
+=
+α
+i
+​
+𝐡
+i
+A
++
+(
+1
+−
+α
+i
+)
+​
+𝐡
+i
+B
+\mathbf{h}_{i}=\alpha_{i}\mathbf{h}_{i}^{A}+(1-\alpha_{i})\mathbf{h}_{i}^{B}
+, where
+α
+i
+=
+σ
+⁡
+(
+MLP
+​
+(
+[
+𝐩
+i
+,
+𝐜
+i
+]
+)
+)
+\alpha_{i}=\sigma(\text{MLP}([\mathbf{p}_{i},\mathbf{c}_{i}]))
+. This dual-branch design provides robustness. Branch A enforces strong CNN influence through multiplicative modulation, while Branch B enables adaptive selection. This minimizes risk if one fusion strategy proves suboptimal.
+Fig. 3:
+Illustration with real evaluation example for ODM prompt augmentation in GroundCount A. The image is #000000189241.jpg from COCO-val2014, which is used for a counting question in our selected benchmark, PhD. The tested VLM is Qwen3-VL-2B-Thinking. The question asks for a correctness judgment on the number of bowls in the image. There are indeed 2 bowls in the image, with one bowl partially covered by another. The baseline VLM, whose output is showcased in the left frame, fails to find the second bowl and re-thinks iteratively, exhibiting behaviors of hallucination. On the other hand, with information from the object detection model (ODM) appended in the prompt, the VLM successfully finds the second bowl with a double-check.
+Information Bottleneck:
+Following the dual-branch fusion, we apply dimensionality reduction to enforce multimodal information integration. This bottleneck prevents the model from trivially bypassing fusion by relying solely on one modality.
+Training Data Preparation:
+We construct training data from the COCO train2017 dataset
+[
+49
+]
+using ground-truth object annotations. For each image, we apply the same spatial encoding and sequencing rules used for ODM detections in Plan A. Specifically, each ground-truth bounding box is assigned to a 3×3 grid cell based on its center coordinates, and objects are ordered left-to-right, then lower-to-upper.
+The model is trained to generate structured spatial descriptions in the format:
+"[class] [index] in [position]"
+for each object instance. For example, given an image with multiple birds, the target output would be:
+”bird 1 in upper-left; bird 2 in middle-center; bird 3 in lower-right”
+. This format mirrors the ODM detection output structure, enabling the fusion model to learn consistent spatial grounding patterns that align with both ground-truth annotations and runtime ODM predictions.
+Training Strategies:
+We evaluate four training configurations (Table
+II
+):
+•
+B.1
+: Train fusion network only (frozen VLM, frozen ODM)
+•
+B.2
+: Train fusion network + fine-tune VLM and ODM
+•
+B.3
+: Train fusion network + fine-tune language decoder only
+•
+B.4
+: Train fusion network + fine-tune VLM, ODM, and language decoder
+IV-C
+GroundCount C: Combined Prompt and Fusion
+Our final approach combines both strategies: structural fusion (Plan B.4) with prompt augmentation (Plan A). This hybrid design provides complementary benefits. Feature-level fusion enables implicit spatial grounding, while textual prompts offer explicit, interpretable object counts. The combined approach aims to leverage both implicit feature integration and explicit symbolic reasoning.
+IV-D
+Implementation Details
+All experiments use YOLOv13x as the object detection model with default confidence threshold 0.5. For Plan A, we filter detections below this threshold before prompt construction. VLMs are evaluated with greedy decoding, 1024-token output budget, and float32 precision. Fusion network training uses AdamW optimizer (
+β
+1
+=
+0.9
+,
+β
+2
+=
+0.999
+\beta_{1}=0.9,\beta_{2}=0.999
+), learning rate
+2
+×
+10
+−
+5
+2\times 10^{-5}
+with cosine annealing, batch size 1, and training with a maximum training budget of 40k steps; best checkpoints selected per Table
+II
+. All experiments are conducted on NVIDIA A100 GPUs with 80GB memory.
+V
+Results & Analysis
+V-A
+Main Results: Comparing GroundCount Strategies
+Table
+II
+presents a comprehensive comparison of our proposed GroundCount strategies on the PhD benchmark’s counting subset, evaluated on Ovis2.5-2B.
+Prompt Augmentation (Plan A)
+achieves the highest counting accuracy at 81.3%, representing a substantial 6.6pp improvement over the 74.7% baseline. Remarkably, Plan A also reduces average inference time from 10.0s to 7.8s (a 22% speedup). This counterintuitive result stems from VLMs generating fewer tokens when provided with explicit grounding information (Figure
+3
+). The negligible computational overhead of YOLOv13x inference (
+∼
+\sim
+0.1s) is more than offset by reduced VLM generation, making Plan A both more accurate and faster. This efficiency gain is particularly notable in complex reasoning scenarios where VLMs typically engage in extended chain-of-thought generation.
+Fusion Architectures (Plan B)
+demonstrate varied outcomes depending on training configuration. Training only the fusion network (B.1) yields minimal improvement (75.2%), suggesting that frozen VLM and ODM representations remain misaligned. Conversely, jointly fine-tuning the fusion network, VLM, and ODM (B.2) degrades performance to 72.7%, indicating potential catastrophic forgetting. The most effective fusion strategy (B.4) fine-tunes the fusion network, VLM, ODM, and language decoder together, achieving 78.0% accuracy with 7.7s inference time. While this represents a meaningful 3.3pp gain over baseline, it falls short of Plan A’s prompt-based approach.
+Combined Strategy (Plan C)
+integrates prompt augmentation with fusion architecture (B.4), yielding 78.2% accuracy and 4.8s inference (the fastest among approaches that exceed baseline accuracy). The reduced inference time stems from the fine-tuned language decoder generating more concise responses. However, the accuracy remains below Plan A alone, suggesting that the fusion network may introduce noise that partially counteracts the benefits of explicit textual grounding.
+These findings reveal a critical insight: for counting tasks,
+explicit symbolic grounding via prompts outperforms implicit feature-level fusion
+. This aligns with recent work emphasizing the importance of interpretable intermediate representations in multimodal reasoning
+[
+37
+]
+. The fusion architecture’s underperformance likely stems from the fundamental representational gap between CNN spatial features and ViT global patch embeddings.
+Fig. 4:
+Results of GroundCount A across all model families and including ablation studies. Each block contains the accuracy and average inference time for that group of experiment on the PhD counting subset. The bottom row marks the result of running the object detection model only. The right-most column records the special pointing mode for Molmo2 model only.
+V-B
+Ablation Study: Decomposing ODM Information
+Figure
+4
+presents ablation results across five VLM families, systematically removing different components of ODM information.
+Confidence Scores
+: Removing confidence values (NoConfidence) produces mixed results. While Ovis2.5-2B shows a modest 0.7pp accuracy drop, four models (Molmo2-4B, R-4B, Qwen3-VL-2B, InternVL3.5-1B) actually improve by 0.1 to 4.8pp without confidence scores, suggesting that confidence values may introduce noise for certain VLM architectures.
+Positional Encoding
+: The impact of spatial position information reveals a critical architectural divide. Removing positional encoding (NoPosition) causes degradation in the two strongest baseline models: Molmo2-4B (1.8pp loss) and Ovis2.5-2B (0.6pp loss). However, the three weaker models—R-4B, Qwen3-VL-2B, and InternVL3.5-1B—paradoxically
+improve
+by 0.7 to 4.4pp without positional information, suggesting these models struggle to correctly interpret spatial encodings and perform better with position-agnostic object lists.
+Detection Threshold
+: Lowering the confidence threshold from 0.5 to 0.3 (LowThreshold) uniformly harms performance across all models, with accuracy decreasing by 1.3 to 16.9pp relative to the Full ODM augmentation, and inference time increasing by 4.1 to 55.0s relative to the no-augmentation baseline. The degradation is particularly severe for stronger models (Molmo2-4B: 16.9pp, Ovis2.5-2B: 15.0pp). The dramatic slowdown occurs because VLMs must process substantially more false-positive detections. This establishes that
+detection precision substantially outweighs recall
+for counting augmentation.
+Model-Specific Patterns
+: Molmo2-4B uniquely supports a pointing mode where bounding boxes are overlaid on the input image. Interestingly, this visual grounding (71.1%) underperforms textual ODM augmentation (74.9%), suggesting that Molmo’s architecture processes structured textual descriptions more effectively than visual annotations.
+V-C
+ODM-Only Baseline
+Running YOLOv13x alone achieves 72.8% accuracy in 0.1s. This establishes an important reference point: the ODM already captures most counting information, yet VLMs struggle to extract it from raw images. When properly grounded with ODM outputs, the strongest VLMs (Plan A: Ovis2.5-2B at 81.3%) exceed ODM-only performance by 8.5pp, demonstrating that VLMs contribute valuable contextual reasoning when supplied with explicit spatial priors.
+V-D
+Cross-Model Consistency and Architectural Variations
+The benefits of ODM augmentation show significant variation across VLM architectures. Four of five evaluated models exhibit substantial accuracy improvements with Plan A: Molmo2-4B (7.5pp), Ovis2.5-2B (6.6pp), R-4B (6.2pp), and Qwen3-VL-2B (6.2pp).
+However, InternVL3.5-1B presents a notable exception, showing degraded performance (from 64.0% baseline to 62.5% with full ODM augmentation). This reveals that InternVL3.5’s architecture appears incompatible with explicit textual grounding, potentially due to its iterative reflection mechanisms being disrupted by structured prompts. The model’s improvements in NoPosition (+4.4pp) and NoConfidence (+4.8pp) ablations suggest it performs better with minimal explicit guidance.
+This divergence suggests that while counting hallucinations generally stem from fundamental limitations in spatial-semantic integration, the effectiveness of explicit grounding depends critically on architectural compatibility.
+V-E
+Implications and Future Directions
+Our results establish that counting hallucinations in VLMs reflect deeper challenges in spatial-semantic integration. The success of prompt-based augmentation over sophisticated fusion architectures suggests that current VLMs are better equipped to process structured symbolic representations than to learn implicit cross-modal alignments. However, the architectural variation—particularly InternVL3.5’s negative response—indicates that augmentation strategies must be tailored to specific VLM designs.
+Several limitations warrant future investigation. First, our fusion experiments used only 40k training steps on binary classification tasks. More extensive pre-training may unlock greater potential. Second, we focused on CNN-based detectors (YOLO). Exploring transformer-based ODMs like DETR or Grounding DINO could reduce the representational gap. Third, understanding why certain architectures reject explicit grounding could inform better augmentation strategies. Finally, efficient caching for repeated queries would enhance practical applicability.
+TABLE II:
+Performance comparison of different GroundCount schemes - prompt augmentation (Plan A), architectural fusion with training (Plan B), and both (Plan C). Plan A gains the highest accuracy; Plan B.4 and Plan C have the lowest inference time among schemes that exceed baseline accuracy, due to training on language transformer.
+Training Scheme
+Acc(%)
+Time(s)
+Best Steps
+Baseline
+74.7
+10.0
+NA
+Plan A - ODM Prompt Augmentation
+81.3
+7.8
+NA
+Plan B.1 - Fusion only
+75.2
+17.8
+10k
+Plan B.2 - Fusion + VLM, ODM
+72.7
+14.6
+5k
+Plan B.3 - Fusion + LangTrans
+71.4
+4.3
+5k
+Plan B.4 - Fusion + VLM, ODM
+78.0
+7.7
+5k
++ LangTrans
+Plan C - Plan A + Plan B.4
+78.2
+4.8
+5k
+VI
+Conclusion
+We present GroundCount, a framework that mitigates counting hallucinations in VLMs through explicit grounding from object detection models. Our evaluation across five state-of-the-art VLMs shows counting remains the lowest-accuracy task (64.0 to 74.7%, excluding sentiment).
+Our prompt-based augmentation (Plan A) achieves 81.3% counting accuracy—a 6.6pp improvement over baseline—while reducing inference time by 22%. Ablation studies reveal positional encoding is beneficial for stronger models (0.6 to 1.8pp), while detection precision substantially outweighs recall (1.3 to 16.9pp degradation at lower thresholds).
+Critically, we find that explicit symbolic grounding via structured prompts outperforms feature-level fusion on Ovis2.5-2B, while prompt-based augmentation achieves consistent gains across four of five architectures. This indicates counting failures stem from fundamental spatial-semantic integration limitations rather than architecture-specific deficiencies. The gap between ODM-only (72.8%) and augmented VLM performance (81.3%) demonstrates that VLMs contribute valuable contextual reasoning when properly grounded.
+Impact Statement
+This work improves VLM reliability in counting tasks, enhancing trustworthiness for accessibility tools, inventory systems, and educational technologies. We acknowledge that improved counting accuracy could amplify privacy concerns if applied to surveillance without appropriate safeguards. We encourage responsible deployment with proper consent and adherence to privacy regulations. Reducing hallucinations contributes to developing more reliable multimodal AI systems.
+Acknowledgments
+This work has been supported in parts by the NYUAD Center for Cyber Security (CCS), funded by Tamkeen under the NYUAD Research Institute Award G1104. Experiments are performed with NYUAD Jubail High Performance Computing (HPC).
+References
+[1]
+M. Shao
+et al.
+(2024)
+Survey of different large language model architectures: trends, benchmarks, and challenges
+.
+IEEE Access
+.
+Cited by:
+§I
+.
+[2]
+H. Liu
+et al.
+(2024)
+LLaVA-next: improved reasoning, ocr, and world knowledge
+.
+Cited by:
+§I
+,
+§I
+.
+[3]
+L. Zhao
+et al.
+(2025)
+Mitigating object hallucination in large vision-language models via image-grounded guidance
+.
+In
+Forty-second International Conference on Machine Learning
+,
+Cited by:
+§I
+.
+[4]
+X. Zou
+et al.
+(2025)
+Look twice before you answer: memory-space visual retracing for hallucination mitigation in multimodal large language models
+.
+The Forty-second International Conference on Machine Learning (ICML)
+.
+Cited by:
+§I
+.
+[5]
+S. Leng
+et al.
+(2024)
+Mitigating object hallucinations in large vision‑language models through visual contrastive decoding
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 13872–13882
+.
+Cited by:
+§I
+,
+§III-C
+.
+[6]
+X. Wang
+et al.
+(2024)
+Mitigating hallucinations in large vision-language models with instruction contrastive decoding
+.
+In
+Findings of the Association for Computational Linguistics ACL 2024
+,
+pp. 15840–15853
+.
+Cited by:
+§I
+.
+[7]
+Y. Chuang
+et al.
+(2024)
+DoLa: decoding by contrasting layers improves factuality in large language models
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§I
+,
+§II
+.
+[8]
+X. Xu
+et al.
+(2025)
+Mitigating hallucinations in multi-modal large language models via image token attention-guided decoding
+.
+In
+Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)
+,
+Albuquerque, New Mexico
+,
+pp. 1571–1590
+.
+External Links:
+Document
+,
+ISBN 979-8-89176-189-6
+Cited by:
+§I
+.
+[9]
+S. Yin
+et al.
+(2025)
+ClearSight: visual signal enhancement for object hallucination mitigation in multimodal llms
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 16520–16530
+.
+Cited by:
+§I
+,
+§II
+.
+[10]
+Z. Jiang
+et al.
+(2025)
+Devils in middle layers of large vision-language models: interpreting, detecting and mitigating object hallucinations via attention lens
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+Cited by:
+§I
+.
+[11]
+Y. Wu
+et al.
+(2025)
+Antidote: a unified framework for mitigating lvlm hallucinations in counterfactual presupposition and object perception
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 14646–14656
+.
+Cited by:
+§I
+,
+§II
+.
+[12]
+Z. Yang
+et al.
+(2025)
+Mitigating hallucinations in large vision-language models via dpo: on-policy data hold the key
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 10610–10620
+.
+Cited by:
+§I
+,
+§II
+.
+[13]
+Z. Li
+et al.
+(2025)
+The hidden life of tokens: reducing hallucination of large vision-language models via visual information steering
+.
+In
+Forty-second International Conference on Machine Learning
+,
+Cited by:
+§I
+.
+[14]
+K. Wang
+et al.
+(2025)
+DAMO: decoding by accumulating activations momentum for mitigating hallucinations in vision-language models
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§I
+,
+§II
+,
+§III-C
+.
+[15]
+C. Wang
+et al.
+(2025)
+MLLM can see? dynamic correction decoding for hallucination mitigation
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§I
+,
+§II
+.
+[16]
+H. Liu
+et al.
+(2023)
+Visual instruction tuning
+.
+In
+NeurIPS
+,
+Cited by:
+§I
+.
+[17]
+W. Dai
+et al.
+(2023)
+InstructBLIP: towards general-purpose vision-language models with instruction tuning
+.
+External Links:
+2305.06500
+Cited by:
+§I
+.
+[18]
+J. Chen
+et al.
+(2023)
+MiniGPT-v2: large language model as a unified interface for vision-language multi-task learning
+.
+External Links:
+2310.09478
+Cited by:
+§I
+.
+[19]
+Q. Ye
+et al.
+(2024)
+MPLUG-owl2: revolutionizing multi-modal large language model with modality collaboration
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+IEEE/CVF
+.
+Cited by:
+§I
+.
+[20]
+J. Zhu
+et al.
+(2025)
+InternVL3: exploring advanced training and test-time recipes for open-source multimodal models
+.
+External Links:
+2504.10479
+,
+Link
+Cited by:
+§I
+,
+§I
+,
+§II
+.
+[21]
+Q. Yang
+et al.
+(2025)
+R-4b: incentivizing general-purpose auto-thinking capability in mllms via bi-mode annealing and reinforce learning
+.
+External Links:
+2508.21113
+,
+Link
+Cited by:
+§I
+,
+§III-B
+.
+[22]
+W. Wang
+et al.
+(2025)
+InternVL3.5: advancing open-source multimodal models in versatility, reasoning, and efficiency
+.
+External Links:
+2508.18265
+,
+Link
+Cited by:
+§I
+,
+§I
+,
+§III-B
+.
+[23]
+S. Lu
+et al.
+(2025)
+Ovis2.5 technical report
+.
+External Links:
+2508.11737
+,
+Link
+Cited by:
+§I
+,
+§I
+,
+§III-B
+.
+[24]
+A. Vo
+et al.
+(2025)
+Vision language models are biased: counting legs of an animal is surprisingly hard
+.
+In
+2nd AI for Math Workshop @ ICML 2025
+,
+Cited by:
+§I
+,
+§II
+.
+[25]
+X. Guo
+et al.
+(2025)
+Your vision-language model can’t even count to 20: exposing the failures of vlms in compositional counting
+.
+External Links:
+2510.04401
+Cited by:
+§I
+.
+[26]
+M. Lei
+et al.
+(2025)
+YOLOv13: real-time object detection with hypergraph-enhanced adaptive visual perception
+.
+External Links:
+2506.17733
+Cited by:
+§I
+,
+§III-B
+.
+[27]
+N. Carion
+et al.
+(2020)
+End-to-end object detection with transformers
+.
+In
+Computer Vision – ECCV 2020: 16th European Conference, Glasgow, UK, August 23–28, 2020, Proceedings, Part I
+,
+Berlin, Heidelberg
+,
+pp. 213–229
+.
+External Links:
+ISBN 978-3-030-58451-1
+,
+Document
+Cited by:
+§I
+,
+§II
+,
+§II
+.
+[28]
+W. Park
+et al.
+(2025)
+SECOND: mitigating perceptual hallucination in vision-language models via selective and contrastive decoding
+.
+In
+Forty-second International Conference on Machine Learning
+,
+Cited by:
+§II
+.
+[29]
+M. Raghu
+et al.
+(2021)
+Do vision transformers see like convolutional neural networks?
+.
+In
+Proceedings of the 35th International Conference on Neural Information Processing Systems
+,
+NIPS ’21
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713845393
+Cited by:
+§II
+.
+[30]
+M. Naseer
+et al.
+(2021)
+Intriguing properties of vision transformers
+.
+In
+Proceedings of the 35th International Conference on Neural Information Processing Systems
+,
+NIPS ’21
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713845393
+Cited by:
+§II
+.
+[31]
+S. Sengupta
+et al.
+(2025)
+Can vision-language models count? a synthetic benchmark and analysis of attention-based interventions
+.
+External Links:
+2511.17722
+Cited by:
+§II
+.
+[32]
+Z. Liu
+et al.
+(2022)
+A convnet for the 2020s
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 11976–11986
+.
+External Links:
+Document
+Cited by:
+§II
+.
+[33]
+Z. Dai
+et al.
+(2021)
+CoAtNet: marrying convolution and attention for all data sizes
+.
+In
+Proceedings of the 35th International Conference on Neural Information Processing Systems
+,
+NIPS ’21
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713845393
+Cited by:
+§II
+.
+[34]
+J. Lu
+et al.
+(2019)
+ViLBERT: pretraining task-agnostic visiolinguistic representations for vision-and-language tasks
+.
+In
+Proceedings of the 33rd International Conference on Neural Information Processing Systems
+,
+Cited by:
+§II
+.
+[35]
+H. Tan
+et al.
+(2019)
+LXMERT: learning cross-modality encoder representations from transformers
+.
+In
+Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP)
+,
+Hong Kong, China
+,
+pp. 5100–5111
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§II
+.
+[36]
+J. Alayrac
+et al.
+(2022)
+Flamingo: a visual language model for few-shot learning
+.
+In
+Proceedings of the 36th International Conference on Neural Information Processing Systems
+,
+NIPS ’22
+.
+External Links:
+ISBN 9781713871088
+Cited by:
+§II
+.
+[37]
+J. Li
+et al.
+(2023)
+BLIP-2: bootstrapping language-image pre-training with frozen image encoders and large language models
+.
+In
+Proceedings of the 40th International Conference on Machine Learning
+,
+ICML’23
+.
+Cited by:
+§II
+,
+§V-A
+.
+[38]
+E. Perez
+et al.
+(2018)
+FiLM: visual reasoning with a general conditioning layer
+.
+In
+Proceedings of the Thirty-Second AAAI Conference on Artificial Intelligence and Thirtieth Innovative Applications of Artificial Intelligence Conference and Eighth AAAI Symposium on Educational Advances in Artificial Intelligence
+,
+AAAI’18/IAAI’18/EAAI’18
+.
+External Links:
+ISBN 978-1-57735-800-8
+Cited by:
+§II
+,
+§IV-B
+.
+[39]
+J. Redmon
+et al.
+(2016)
+You only look once: unified, real-time object detection
+.
+In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 779–788
+.
+External Links:
+Document
+Cited by:
+§II
+.
+[40]
+D. A. Hudson
+et al.
+(2019)
+GQA: a new dataset for real-world visual reasoning and compositional question answering
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+,
+pp. 6700–6709
+.
+Cited by:
+§II
+.
+[41]
+L. H. Li
+et al.
+(2020)
+What does BERT with vision look at?
+.
+In
+Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics
+,
+Online
+,
+pp. 5265–5275
+.
+External Links:
+Document
+Cited by:
+§II
+.
+[42]
+P. Anderson
+et al.
+(2018)
+Bottom-up and top-down attention for image captioning and visual question answering
+.
+In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition
+,
+pp. 6077–6086
+.
+Cited by:
+§II
+.
+[43]
+Y. Chen
+et al.
+(2020)
+UNITER: universal image-text representation learning
+.
+In
+Proceedings of the European Conference on Computer Vision
+,
+pp. 104–120
+.
+Cited by:
+§II
+.
+[44]
+J. Liu
+et al.
+(2025)
+PhD: a chatgpt-prompted visual hallucination evaluation dataset
+.
+In
+CVPR
+,
+Cited by:
+§III-A
+.
+[45]
+Y. Li
+et al.
+(2023)
+Evaluating object hallucination in large vision-language models
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing
+,
+Singapore
+,
+pp. 292–305
+.
+External Links:
+Document
+Cited by:
+§III-A
+.
+[46]
+A. Rohrbach
+et al.
+(2018)
+Object hallucination in image captioning
+.
+In
+Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 4035–4045
+.
+External Links:
+Document
+Cited by:
+§III-A
+.
+[47]
+S. Bai
+et al.
+(2025)
+Qwen3-vl technical report
+.
+External Links:
+2511.21631
+Cited by:
+§III-B
+.
+[48]
+C. Clark
+et al.
+(2026)
+Molmo2: open weights and data for vision-language models with video understanding and grounding
+.
+External Links:
+2601.10611
+Cited by:
+§III-B
+.
+[49]
+T. Lin
+et al.
+(2014)
+Microsoft coco: common objects in context
+.
+In
+Computer Vision–ECCV 2014: 13th European Conference, Zurich, Switzerland, September 6-12, 2014, Proceedings, Part V 13
+,
+pp. 740–755
+.
+Cited by:
+§IV-B
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

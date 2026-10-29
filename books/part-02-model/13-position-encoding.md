@@ -61,6 +61,12 @@ P in R^(T_max x d_model)
 
 位置向量如何与内容结合，也属于表示设计，而不只是选用哪种编码。相加保持接口简单；concat再投影让模型学习两路组合，逐token scalar gate则在共享维度上调节内容与位置的比例，局部卷积gate还能读取位置邻域。这些分支支付额外参数、计算与训练校准，不保证gate更适合所有长度。[固定encoder的受限配对对照](https://arxiv.org/html/2601.05807v1)支持同时比较编码与fusion operator，但只覆盖小模型文本classification；不同corpus的长度和任务混杂，不能外推为decoder生成或长Context通用优势。原加法已稳定、预算紧或长度迁移未验收时，应保留add基线，不把更复杂融合当作位置编码的必然下一代。<!-- source-family:SF-2026-ARXIV-2601-05807 -->
 
+维持固定宽度还有更直接、但不是无损融合的分支：在每层Q/K投影前，把输入的若干坐标覆写为随绝对位置递增的常数，其余坐标仍读内容，Value是否同改则另作配置。[受限的坐标覆写对照](https://arxiv.org/html/2509.19569v1)让位置占据显式通道，而非与每个内容坐标相加；原输入经residual旁路保留，不等于被覆写的内容仍能参与这一轮Q/K匹配，也没有证明训练自然把不需上下文的信息安排到这些坐标。实数中的不同位置还可能在目标dtype上碰撞，固定缩放改善远端loss也会损伤训练长度附近的质量；短预训模型的perplexity不认证长依赖、指令模型或任意长度外推。位置维数、注入层、Q/K/V与缩放配置须随训练身份保存，另验短长任务与有限精度；数据制备、完整预训、配置搜索、每层注入和数值/任务回归全计费，打印的量化分支索引未闭时不照录执行配方。内容容量、精度或目标长度质量不合时，保留原加法、RoPE与已验证的长度范围，不由较少位置运算批准端到端加速。
+
+<!-- source-family:SF-2025-ARXIV-2509-19569 -->
+
+若问题是内容与位置在同一residual反复混合，也可保留不同宽度的持久AP与semantic坐标：分别norm和投影，再把两路QK分数与relative bias相加，得到共用attention矩阵；两份value输出回各自residual，FFN则读拼接输入。[受限encoder对照](https://arxiv.org/html/2605.30022v1#S3)因此是坐标与接口分责，不是统计独立、完全解耦或“attention中互不影响”。MLM head只读semantic，只切断最终AP output的直接loss路径，早层AP仍可经共同attention/FFN受语义梯度影响；probe读不出也不证明信息不存在。位置结构与任务能力须分测，额外参数、双路读写/投影、完整预训与超参搜索都付费；短512-token encoder的局部收益及反退不授decoder长context或缓存等价。容量、迁移或净预算不合时保add、concat/gate及原RP/RoPE，不把坐标更整齐签成普遍更强或position-free serving。<!-- source-family:SF-2026-ARXIV-2605-30022 -->
+
 ## Sinusoidal encoding 为什么出现
 
 原始 Transformer 使用不同频率的正弦和余弦：
@@ -187,6 +193,9 @@ position 1: R_1 k = [0,1]
 
 真实 RoPE 使用多组频率，不会每个位置都旋转 90 度；例子只用于验证相对几何。
 
+距离调制也可以不只使用预设频率：把Query/Key拆成amplitude与phase两路，以前者内积控制匹配幅度，再用后者的token-pair内积决定距离余弦的相位。[受限token-aware phase分支](https://arxiv.org/html/2509.12635v1#S3)改变的是内容怎样参与位置score，不是把RoPE普遍判为失效，也不由logit统计推出softmax后仍能读取有用远端信息。相关期望/方差结论依赖额外分布条件，未闭的普遍方差下界不能作长窗保证；有限PPL改善还须绑定长窗续训与学习率。两路QK、余弦计算、训练和kernel适配都计费，不采“无新FLOPs”或直接兼容高效Attention的承诺。数值、长短窗质量或总预算失配时，保留原RoPE、经校准scaling与分段检索，不因相位可学习便放弃原位置/缓存身份及长度验收。
+<!-- source-family:SF-2025-ARXIV-2509-12635 -->
+
 相对 reading-order 距离仍没有唯一指定文本结构：相同 token 序列可以被不同 paragraph 边界分段。将 paragraph、sentence、token 坐标分配给不同 RoPE channel 后，可以只改 paragraph 坐标、保持其余坐标和 token 序列不变，检验结构信号是否影响表示。但“出现压缩”本身不证明模型用了真实层级；[受控研究](https://arxiv.org/html/2609.23551v1)的随机 paragraph 轴也产生 compression。其更强的检查是在每个精确 token distance 内比较 paragraph 位移，再按 pair count 加权，同时对照架构、频段、密度和训练预算匹配、每个训练 step 重采样的随机轴；仅线性距离残差或粗 distance bins 不足以消除混杂，旧 bins 甚至能翻转 WikiText 的符号。
 
 真实与随机层级的 compression depth 差在 Code/WikiText 的区间排零，却在 OpenWebText 的 CI [-.059,.093] 不排零；depth 也不等于可稳定识别的 minimum 位置，更不是已识别内容机制或 Riemannian 度量。实验仅为八层/八头、d=512、context 1024、5,000 steps、三 seed，hardware/dtype 未披露；document-cluster bootstrap 刻画固定 corpus 内的抽样，三 seed 方向不构成正式显著性证明。相对 flat RoPE，WikiText/OpenWebText 还付出小 validation-loss 代价，未测大模型、下游或 serving 收益。故层级坐标改变的是需验收的结构假设；真实结构未胜过 matched-random null 或质量 Gate 失败时，flat RoPE 仍应保留，而非因出现几何压缩就推荐新编码。<!-- source-family:SF-2026-ARXIV-2609-23551 -->
@@ -198,6 +207,12 @@ position 1: R_1 k = [0,1]
 
 连续函数改善几何外推，却增加数值敏感性、坐标规范和任务失配风险。exact-v1 只支持作者理论假设与实验设置，不保证任意视觉网格或尺度都优于既有方案；稳定性、aliasing 或下游质量 Gate 失败时，应回退二维 RoPE、learned table 或目标分辨率内的离散位置。arXiv:2605.23719v1
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23719:end -->
+
+图像生成还可以让空间频率随去噪时刻变化，而不在整条采样轨迹使用同一外推编码。一条[受限的动态位置分支](https://arxiv.org/html/2510.20766v1#S3)在高噪声与较干净状态间改变PI/NTK或YaRN式缩放的强度，试图让早期全局布局和后期细节消费不同位置条件；它改的是每次denoise的模型输入，不是增加真实图像证据，也不保证原checkpoint在任意分辨率有效。应共同保存二维网格、编码revision、noise-time约定、完整scheduler与缩放轨迹；“动态”不等严格单调，原端点/零频率式未闭时不补成通用可执行日程，更不能靠位置公式可计算签发质量保证。参数搜索、各分辨率全部采样与独立布局/细节评价都付费，作者L40S/28steps/DrawBench的有限对照不证明任意尺度、无artifact或服务SLO。网格、日程或质量失配时，保原受测分辨率、固定已验PE或较保守外推，不以更大输出尺寸覆盖原低分辨率的合理路径。
+
+<!-- source-family:SF-2025-ARXIV-2510-20766 -->
+
+位置表示若由token-feature之间的相似关系生成，也要把输入扰动、encoding连续性与任务不变分开：先由pairwise kernel得到`S(X)`，再由确定映射`Φ`消费它；在feature有界、两映射于实际支持域Lipschitz且归一分母远离零时，才能把feature扰动传播为encoding的范数界。[受限simPE分析](https://arxiv.org/html/2606.17961v1#S3)的token坐标旋转不自动等于原图旋转后的encoder响应，小角连续界也不授classification不变、margin或整网正确。若kernel本身已使`S(RX)=S(X)`，仅消费同一S的确定Φ不能凭空打破该相等；非不变性须来自实际kernel/上游或额外输入，不能照搬相反解释。常数未估或归一近零时，曲线好看也不证明可用稳定界；局部大角反退仍须保。全部相似矩阵/Φ、归一与数值/任务回归均付费；坐标、非退化条件或质量失配时，保既有二维RoPE、离散位置与受测增强，不由连续、相似或更平滑批准通用旋转鲁棒和无损迁移。<!-- source-family:SF-2026-ARXIV-2606-17961 -->
 
 训练位置的采样分布也是设计变量，而不只是选择 RoPE 或 ALiBi。一条受限分支在训练时排序采样 `[0,1)` 内的随机浮点坐标，使相同序列长度见到不同间距；推理则用确定性坐标 `(2i−1)/(2 max(n_train,n_infer))`，将训练与测试长度放入同一有界支持。这让训练人口不再只覆盖固定整数步长，却不能从坐标永远有定义推出无限长度质量。[作者小模型实验](https://arxiv.org/html/2602.14050v1)有三 seed 合成任务与 GPT-2-base 对照，也有随机分布失配及下游不改善的反侧，未测生产时延/SLO。作为我们的系统推断：若增量生成真的改变该 `max` 分母，旧 token 坐标随之改变，依赖位置的既有 KV 不能直接沿用，须冻结既定长度口径或重算；当分母不变时没有这一额外失效。该 cache 推论不是作者已测结果，质量、预算或身份无法保持时仍用固定坐标与原编码。<!-- source-family:SF-2026-ARXIV-2602-14050 -->
 
@@ -218,6 +233,8 @@ position 1: R_1 k = [0,1]
 | RoPE | 旋转 Query/Key | 点积自然依赖相对偏移 | 频率与长度外推仍有边界 |
 
 表格描述机制层差异，不代表所有现代模型只会选择其中一种。具体实现可能叠加 bias、局部窗口或 scaling 方法。
+
+可学习的位置接口也不必只为每个相对偏移存一条向量：还可以让函数读取位置对`(i,j)`，输出若干共享关系向量的simplex混合系数；若任务角色随有效序列长度变化，再将可靠可得的`n`作为额外条件。[这条受限关系学习分支](https://arxiv.org/html/2510.04130v1#S5)改变的是关系怎样分配和跨位置共享，不是凭长度提示创造未学会的内容算法；简化线性模型中的关系基数也不是标准Transformer算力或自然任务泛化的证书。软混合若用于旋转矩阵，一般不再是旋转，例如`(I+R_pi)/2=0`可抹去向量，不能继承普通RoPE的保范数性质；非分解的成对函数也不自动支持原query/key独立预旋转与KV路径。关系函数、长度口径、实际operator、训练人口与实现费用须一起验收：预padding让短内容见到长物理位置，按所有评价尺度选择最佳checkpoint又让长尺度参与选择，均不等完全未触碰的长度外推。全部关系制备/学习、padding/成对计算和checkpoint搜索均付费；任务结构、有效长度或长短质量失配时，保普通相对位置/APE/RoPE、较短已验窗口与重新训练，不由存在性构造、conjecture或合成任务曲线批准任意长自然语言泛化。<!-- source-family:SF-2025-ARXIV-2510-04130 -->
 
 ## Causal mask 不是 Position Encoding
 
@@ -346,6 +363,14 @@ Learned 与 sinusoidal absolute encoding 在输入端加入位置，relative rep
 
 ## Review notes
 
+- `SF-2025-ARXIV-2510-04130` — Arendt，Daily2025-10-08补Oct07；原2+2+3=7，直接采用root R148 exact-v1 S3–7/AppC/D1–4/E及原式/表III–VI必要，不第二Methods。只关系分配函数/共享向量、有效长度条件与已学operator分责；保POLA去content-QK/softmax/V、disjoint LRC非代数rank/SRC iff仍conjecture、D1/2漏交叉块与D4Infinity/finitecodomain未闭、soft mixture非正交/独立KV不可照搬、padding长物理位/全scale选checkpoint及全部费用。不采完整强proof/自然语言LG保证或净速；未核图像点值/代码/训练复现，PRE/SAVE/POST仅本日canonical真实后到层。 root R155唯一actualPOST已通过，指定正文/本人注窄位释放；本尾仅同步既成末态，不重研究/正文或预DAY。
+
+- `SF-2025-ARXIV-2509-19569` — Aristotle，Daily2025-09-26补Sep25；46→Einstein39精确日门/首次2+1+2=5通过。[ExPe exact-v1](https://arxiv.org/html/2509.19569v1)§2–5/T1–4/B:T5–7/C:T8–9与F1/F2直接caption必要。仅固定宽度下每层Q/K输入坐标覆写、Value与residual分责；保ExQPE Eq5维数/索引未闭、Q/K笔误、fp16可表示数反例、目标dtype碰撞、T2/T7同ev4不合、短长缩放/任务反退与完整数据/预训/搜索/注入/回归费。不授原embedding无损、精确量化配方、任意长context/指令模型/全系统加速；未核A背景综述/D额外图像素、代码或复现。Einstein43当前owner/完整原三项purePRE通过，root本轮actualfresh独立新窄授；作者52已原稿真实SAVE并完整新增/两侧与binding/本人注及保护组自读、限定diffcheck通过，Einstein46本项soleactualPOST已通过，指定正文/本人注窄位生效释放。本注仅同步既成态，不授DAY。
+
+- `SF-2025-ARXIV-2509-12635` — author18，Daily2025-09-18补Sep17；[TAPA exact-v1](https://arxiv.org/html/2509.12635v1)§2–4/Limitations/A/G/H必要，2+1+3=6，token-aware phase位置接口/理论执行反侧深入。保A1与Schwartz density差异/常量iid反例，不采Thm3.3普遍variance floor/softmax或远端语义保证；Llama3-7B/Pile训练LR不同、PG19续训与zero-shot反侧、two-QK/nonflash/额外运算全费，未回填current retrieval或已实现高效kernel，未核图全部点/代码或复现。
+
+- `SF-2026-ARXIV-2605-30022` — Daily2026-05-30补May29，2+1+3=6；exact-May-v1必要Source R63、当前owner/A42原PRE R70通过，只分路persistentresidual/共同attention与MLM消费范围。保早层间接梯度/参数共变/probe非无信息/局部反退与全费，不授长decoder/cache。未核实现/复现。root明确授本单段+本人note，作者实际保存，reader R73 一次完整新增/直接两侧/本人note真实POST通过，窄位释放；仅行政同步既成事实，不重复Source/POST。
+
 - SF-2026-ARXIV-2604-18603 — Daily2026-04-23补Apr22；[exact-v1](https://arxiv.org/html/2604.18603v1#Sx4.SSx2) Methods attention/position/architecture/training/eval、Results argmax/自然语言MLM与Discussion/limitations，2+1+2=5，为方向可见集合/双softmax长期差额深入。保128→64子head/普通64head差异、RoPE拆前施加、NoPE外推反退/长对照p=.15，不授无损full attention或单kernel端到端加速。root必要Source/11日期与18603官方OAI组合/实际owner/修正锚PRE通过，按窄lease保存本人两段及本注；root非作者实际正文/完整邻接/本人注POST通过，指定窄lease释放；作者仅行政同步并读回，未核artifact/复现，不授DAY。
 
 - `SF-2026-ARXIV-2603-11611` — Daily补查 `2026-03-14`；[exact-v1](https://arxiv.org/html/2603.11611v1) §3–6、A/B/C与Table4；2+1+2=5。root 非准备者实际必要原证、Ch13完整局部/Ch12–14交接及逐字PRE通过；root窄写后，非写入者 mar14_supplement 实际顺读新增/完整邻接及本人末注并回对原证，POST通过，窄锁释放，不授DAY。只采旋转子空间容量分配与从头训练 stability/quality 分账；不采通用一成最优、已有checkpoint删维等价、KV/整机显存或服务时延收益。受限训练/任务反侧近文，未核代码或复现实验。
@@ -380,3 +405,7 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2602-22716` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22716v1) §4–5必要方法/消融，2+1+3=6；fresh非旧作者独核prepared原证与actual owner，3D坐标×序列/空间频段预算差额。均分反退/Cartesian控制、序列index非clock、非几何等变、数值条件与搜索训练费用近文；root授Ch13窄写ownership，作者实际正文/完整邻接顺读，root非作者实际正文、完整邻接及自身末注POST通过，窄锁释放。未核实现/复现，非日级Gate。
 
 - `SF-2026-ARXIV-2603-24721` — [exact-v1](https://arxiv.org/html/2603.24721v1) §3–4/T1–5、A Eq11–30及B.2；仅IGRE附加空间分量/非对象零向量接口。非交换多轴的精确相对/几何保证隔离，线性输入不是线性Attention，ASR及Δx/Δy条件人口/训练费用保留。未核artifact/复现或生产SLO。
+
+- `SF-2026-ARXIV-2606-17961` — Daily2026-06-18补Jun17；exact17961v1，消费sole§108必要3–8/10–12/T1–5。仅有条件feature-to-encoding Lipschitz与invariance/stability/task分责，Prop1 Φ可破同S相等的理由不采，不扩医学应用。ViT4encoder/4head/d256/no rotationaug、Fashion30°23.84<learned32.84/Shapes大角反侧、未估L/归一δ与hardware/precision/seeds/SLO未披保留；原5不变，未核code/复现，sole§115完整PRE通过，实际SAVE/selfread，待sole实际POST。
+
+- `SF-2025-ARXIV-2510-20766` — Copernicus，Daily2025-10-25补Oct24BJT；exact-v1 §3/4.1–4.3/5必要，原2+2+2=6，noise-time内空间PE条件身份具体gap深入。只动态缩放分支/受测边界，不采Eq11必单调、Eq12两端log1分母0/13k0未闭日程或任意尺寸质量；保L40S/28steps/FLUX3072/250DrawBench及全部search/sampling费，未核像素/实现/复现。整体PRE/真实SAVE/完整新增邻接本注自读/sole actualPOST仅同日canonical后到层，不预签。

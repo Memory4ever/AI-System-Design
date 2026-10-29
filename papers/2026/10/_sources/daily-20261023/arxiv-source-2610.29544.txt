@@ -1,0 +1,455 @@
+https://arxiv.org/html/2610.29544v1
+RISK-KV: Quality-Aware Selective KV Cache Reconstruction for Distributed LLM Inference
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+I Introduction
+II Related Work
+II-A KV Cache Management and Compression
+II-B Cross-Layer KV Sharing and State Reconstruction
+III The RISK-KV Framework
+III-A System Architecture and KV Cache Model
+III-B Cross-Layer KV Reconstruction from Two-Sided Anchors
+III-C Quality-Constrained KV Recovery Selection
+IV Storage and Recovery Cost
+IV-A Storage and Communication
+IV-B Recovery Latency
+V Performance and Analysis
+V-A Experimental Setup
+V-B Experimental Results
+VI Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.29544v1 [cs.DC] 21 Oct 2026
+RISK-KV: Quality-Aware Selective KV Cache Reconstruction for Distributed LLM Inference
+Wang Yuekai
+Affiliation: Harbin Institute of TechnologyEmail: york.wang.ict@gmail.com
+Abstract
+Request migration and interruption recovery in distributed large language model (LLM) inference rely on historical key–value (KV) caches. Retaining or transferring a complete cache incurs substantial state overhead, whereas replaying historical tokens requires additional computation. This paper proposes RISK-KV, a quality-aware method for selective historical KV reconstruction in pretrained models. RISK-KV uses exact KV states on both sides of a target layer and cross-layer ridge regression to predict the missing layer’s attention-projection input; it then folds in the original model’s KV projection matrices to reduce predictor storage. Reconstruction risk is measured by the change in negative log-likelihood (NLL) caused by actual reconstruction, and low-overhead topology search with quality gating selects the layer groups to reconstruct. Independent tests on three language models show that representative recovery configurations omit 18.2%–33.3% of historical KV, with perplexity changes below 0.5%. In a local request-recovery experiment with a 512-token history, RISK-KV achieves a 1.51–3.31 × \times speedup over full Token Replay. These results indicate that selective KV reconstruction can reduce historical-cache overhead with small changes in predictive quality and improve request-recovery efficiency under the evaluated deployment conditions.
+Keywords:
+KV cache, LLM inference, cache reconstruction, grouped-query attention, state migration, Transformer
+Fig. 1: GQA attention module and cross-layer KV reconstruction in RISK-KV. The left side shows normalization, Q/K/V projections, RoPE, and the attention residual connection. The right side illustrates reconstruction of a target layer’s historical keys and values from exact KV anchors on both sides. In the online implementation, hidden-representation prediction and KV projection are folded into an equivalent mapping.
+I Introduction
+Large language models (LLMs) are increasingly deployed in distributed and edge-computing environments to support interactive and context-intensive applications. Autoregressive inference relies on a key–value (KV) cache to store the attention states of historical tokens and avoid redundant computation during subsequent decoding. However, KV-cache size grows with context length, model depth, and the number of concurrent requests, resulting in substantial memory and data-movement costs. vLLM demonstrates the importance of efficient KV management for LLM serving, while grouped-query attention (GQA) reduces cache size by sharing key/value heads [ 4 , 1 ] . In distributed inference, request migration and interruption recovery also involve transferring and reloading historical states. DistServe and Splitwise illustrate the potential of organizing inference computation across devices and highlight the effect of state management on system efficiency [ 14 , 9 ] . In bandwidth-constrained edge environments, transferring the complete historical KV cache can be costly; discarding it instead requires recomputing the historical prefix, which also increases recovery latency.
+Existing research reduces KV-cache overhead from several directions. H 2 O and SnapKV use attention features to select historical tokens for retention, while KVQuant reduces cache storage through low-precision representations [ 13 , 5 , 3 ] . Another line of work exploits redundancy across Transformer layers: MiniCache compresses the cache by merging states across layers, whereas YOCO reuses KV states through its architectural design [ 7 , 10 ] . For state transfer and recovery, CacheGen studies KV compression and streaming, while HCache uses intermediate activations to restore state and balance computation against I/O costs [ 8 , 2 ] . Krul dynamically selects cross-layer KV-sharing strategies based on attention similarity between layers; EdgeFlow studies KV migration and recovery in geographically distributed edge environments [ 11 , 12 ] . These works show that exploiting cache redundancy and balancing storage, communication, and computation are important ways to improve inference efficiency.
+A key question remains for reconstructing omitted historical KV without modifying a pretrained model: which layers are suitable for reconstruction, and which must retain exact KV to reduce cache overhead while controlling degradation in predictive quality? Existing methods typically make selection decisions using signals such as attention importance, tensor similarity, numerical reconstruction error, or recovery cost, but these signals do not necessarily reflect how reconstructed KV affects language-model predictions [ 13 , 5 , 7 , 6 , 8 , 2 ] . Large numerical errors in KV may cause only a small increase in predictive loss; conversely, reconstruction errors in sensitive layers may propagate through subsequent Transformer layers and substantially change model outputs. Moreover, the effect of reconstructing several layer groups together need not equal the sum of their individual reconstruction losses. Therefore, maximizing the number of omitted layers alone may lead to an unfavorable trade-off between cache savings and model quality.
+A key observation is that actual KV-reconstruction risk varies substantially across models and layers. With the remaining layers’ KV kept exact, historical KV is replaced one layer at a time, and model degradation is measured by the change in negative log-likelihood (NLL) under teacher-forced inference. For example, on TinyLlama-1.1B, reconstructing L2 alone increases mean NLL by only about 0.00010, whereas reconstructing the adjacent layer L3 increases it by about 0.09336. Qwen2.5-0.5B also exhibits a marked risk difference between adjacent layers. Further experiments show that even when artificial Gaussian perturbations are matched in magnitude to actual reconstruction errors, the resulting rankings of layer sensitivity can differ. This indicates that recovery strategies should be calibrated to the target model and the specific reconstruction mechanism, rather than determined solely by layer position, reconstruction error, or generic perturbation sensitivity.
+Based on these observations, this paper introduces RISK-KV, a quality-aware framework for selective historical KV reconstruction in distributed LLM inference. As illustrated in Fig. 1 , in a Transformer with grouped-query attention (GQA), historical KV is obtained by applying the key and value projections to attention-normalized hidden representations, with rotary positional embedding (RoPE) additionally applied to keys. RISK-KV uses exact historical KV retained on both sides of a target layer as cross-layer anchors. A lightweight ridge regressor predicts the target layer’s normalized attention input, and the frozen key and value projection matrices of the original model generate the missing cache. Because both the predicted mapping and KV projections are affine transformations, they can be algebraically folded so that the online stage generates reconstructed KV directly from the anchor states, reducing additional parameter storage and intermediate-representation computation. This process neither modifies pretrained-model parameters nor requires storing complete historical hidden states.
+To identify layer groups suitable for reconstruction, RISK-KV defines functional risk as the mean NLL change caused by replacing actual KV. The system first measures the independent recovery risk of each candidate group and ranks the groups accordingly. It then progressively forms joint recovery configurations along this ranking and remeasures the actual predictive loss for each configuration, rather than simply summing the individual group risks. For G G candidate groups, the method evaluates only 2 ​ G 2G distinct recovery configurations, compared with 2 G 2^{G} for exhaustive search. RISK-KV also uses a conservative quality gate based on bootstrap confidence bounds to select a configuration that satisfies the empirical quality budget while saving substantial historical KV, falling back to exact KV when necessary. Because the search is restricted to a single ordered path, it does not guarantee a global optimum, but it reduces offline configuration-evaluation cost.
+RISK-KV is evaluated on three pretrained models: Qwen2.5-0.5B-Instruct, Qwen2.5-1.5B-Instruct, and TinyLlama-1.1B-Chat-v1.0. On independent test data, representative recovery configurations omit 18.2%–33.3% of historical KV, with changes in perplexity relative to the full exact-KV baseline below 0.5%. The quality-gating experiments further show that more conservative selection can reduce observed budget violations in independent evaluations, typically at the cost of some cache savings. In local request-recovery experiments with a 512-token history, RISK-KV achieves a 1.51–3.31 × \times speedup over full historical Token Replay. The current latency experiments do not cover real wireless cross-node migration, and the complete KV cache is still materialized during subsequent decoding.
+Contributions.
+This paper makes the following contributions:
+1.
+A method is proposed for reconstructing historical KV caches from cross-layer information. To address the loss or unavailability of some historical KV states during request recovery in distributed LLM inference, the method uses real KV retained in other layers to reconstruct missing keys and values in target layers. It requires neither changes to pretrained-model parameters nor storage of complete historical hidden states or recomputation of the entire historical prefix. By folding the model’s KV projection matrices into the predictor, it reduces additional reconstruction storage and provides an implementation path for reducing persistent storage and transfer of historical KV.
+2.
+A functional-risk assessment and adaptive selection method is proposed for KV reconstruction across models and layers. The results show substantial variation in the tolerance of different models and Transformer layers to historical KV-reconstruction errors; KV numerical error or random-perturbation sensitivity alone cannot reliably identify suitable layers. Accordingly, the increase in language-model NLL caused by actual KV reconstruction is used as a measure of model-degradation risk. A small number of singleton recovery experiments assess candidate-layer risks, and low-overhead topology search under a quality constraint, together with conservative quality gating, automatically determines which historical KV states require exact preservation and which can be reconstructed, enabling a controlled trade-off between predictive quality and cache savings.
+II Related Work
+II-A KV Cache Management and Compression
+KV caching avoids recomputing attention states for historical tokens, but its memory footprint grows with context length and request concurrency. Existing methods address this cost in different ways. PagedAttention organizes KV storage in blocks to improve memory allocation efficiency and reduce fragmentation in LLM serving [ 4 ] . Grouped-query attention (GQA) changes the attention architecture by letting multiple query heads share key/value heads, thereby reducing the number of KV heads that must be stored [ 1 ] . Token-selection methods directly reduce the number of retained positions: H 2 O dynamically preserves recent tokens and a small set of attention heavy hitters, while SnapKV selects salient positions based on attention observed near the end of the prompt [ 13 , 5 ] . KVQuant uses low-bit quantization to reduce the storage cost of KV representations [ 3 ] . These methods therefore act on memory allocation, KV head count, token positions, or numerical precision.
+II-B Cross-Layer KV Sharing and State Reconstruction
+Another line of work exploits dependencies across Transformer depth. MiniCache merges KV states from adjacent layers based on their similarity [ 7 ] . FusedKV constructs top-layer KV caches by learning to fuse informative KV states from lower layers [ 6 ] . Krul dynamically selects cross-layer sharing strategies based on attention similarity between layer pairs and combines compressed-cache loading with recomputation to restore state [ 11 ] . These methods explore different mechanisms for cross-layer sharing and restoration. Layer-wise functional risk under a particular reconstruction mechanism cannot be equated directly with attention similarity or tensor similarity.
+Systems for transferring and restoring request state address complementary costs. CacheGen encodes KV caches as compact bitstreams and streams them to reduce context-loading overhead, adapting its compression scheme to changing bandwidth [ 8 ] . HCache restores model state from stored intermediate activations and schedules computation and I/O to balance the use of different resources during restoration [ 2 ] . RISK-KV targets pretrained models. It uses exact historical KV retained on both sides of a target layer as cross-layer information anchors, then learns a mapping to reconstruct the normalized hidden state input to the target layer’s attention module. The pretrained model’s original KV projection matrices then map this reconstructed hidden representation to the missing historical keys and values, combining cross-layer state correlations with the model’s existing projection structure. RISK-KV further measures each layer’s functional risk using the NLL change caused by actual KV reconstruction, and selects which historical KV states to preserve exactly or reconstruct under a given quality budget. This approach trades cache savings against predictive quality.
+III The RISK-KV Framework
+III-A System Architecture and KV Cache Model
+RISK-KV addresses historical KV management and request state restoration in wireless distributed LLM inference. Consider a pretrained autoregressive model with L L Transformer decoder layers. Its parameters remain frozen throughout KV reconstruction. During inference, each layer stores the keys and values of historical tokens to avoid recomputing their attention states during subsequent decoding. Although grouped-query attention (GQA) reduces the number of KV heads, each Transformer layer still maintains its own historical KV cache [ 1 , 4 ] .
+For a history of T T tokens, n kv n_{\mathrm{kv}} KV heads per layer, head dimension d h d_{h} , and q q bytes per cache element, the full historical KV cache occupies
+M KV = 2 ​ L ​ T ​ n kv ​ d h ​ q . M_{\mathrm{KV}}=2LTn_{\mathrm{kv}}d_{h}q.
+(1)
+Fig. 2: Offline calibration and online recovery in RISK-KV.
+As shown in Fig. 2 , RISK-KV combines offline calibration with online recovery. Offline, historical states from the target model train a cross-layer KV predictor; experiments that actually replace KV determine layer-specific functional risk and produce a model-specific retention policy. When a request is migrated or restored online, the system retains or transfers exact historical KV only for selected layers and reconstructs the other layers with the deployed predictor.
+For each candidate recovery group, RISK-KV places exact KV anchors on both sides along Transformer depth. Let G g G_{g} be group g g , with left and right anchor sets 𝒜 g − \mathcal{A}_{g}^{-} and 𝒜 g + \mathcal{A}_{g}^{+} . To reconstruct a target layer’s KV for one historical token, the predictor uses exact anchor KV at the same token position. Anchor layers retain their complete, exact histories and are never reconstructed. The procedure neither changes base-model parameters nor requires a complete historical hidden-state checkpoint or replay of the entire prefix.
+III-B Cross-Layer KV Reconstruction from Two-Sided Anchors
+RISK-KV uses exact historical KV on both sides of a target layer to predict the normalized hidden input to that layer’s attention projections. The pretrained model’s original key and value projections then produce its missing KV.
+For layer ℓ \ell , let H ℓ ∈ ℝ T × d H_{\ell}\in\mathbb{R}^{T\times d} be the hidden representation after attention normalization and before the key/value projections. Its KV projection before rotary position encoding is
+Y ℓ = H ℓ ​ W ℓ + 𝟏 T ​ b ℓ ⊤ , Y_{\ell}=H_{\ell}W_{\ell}+\mathbf{1}_{T}b_{\ell}^{\top},
+(2)
+where Y ℓ = [ K ℓ pre , V ℓ ] Y_{\ell}=[K_{\ell}^{\mathrm{pre}},V_{\ell}] , W ℓ = [ W ℓ K , W ℓ V ] W_{\ell}=[W_{\ell}^{K},W_{\ell}^{V}] , b ℓ b_{\ell} is the frozen projection bias, and 𝟏 T \mathbf{1}_{T} is the all-ones vector of length T T . For a model without a projection bias, b ℓ = 𝟎 b_{\ell}=\mathbf{0} .
+For candidate group G g G_{g} , the method builds cross-layer features from its exact anchors. Keys in a standard KV cache have generally undergone rotary position encoding (RoPE). When the anchor keys come from a post-RoPE cache, inverse RoPE at the original token positions first returns them to pre-RoPE projection coordinates; values need no rotation. The pre-RoPE keys and values from both sides are then concatenated into the input features X g X_{g} .
+Offline, ridge regression learns a mapping from these anchors to the complete attention-projection inputs of the target layers. Let 𝒯 = G g \mathcal{T}=G_{g} be a two-layer target group and 𝒜 = 𝒜 g − ∪ 𝒜 g + \mathcal{A}=\mathcal{A}_{g}^{-}\cup\mathcal{A}_{g}^{+} its exact anchors. Concatenate their pre-RoPE keys and values as input, and the normalized hidden projection inputs of the target layers as labels:
+X 𝒜 \displaystyle X_{\mathcal{A}}
+= Concat j ∈ 𝒜 ⁡ [ K j pre , V j ] , \displaystyle=\operatorname{Concat}_{j\in\mathcal{A}}[K_{j}^{\mathrm{pre}},V_{j}],
+(3)
+H 𝒯 \displaystyle H_{\mathcal{T}}
+= Concat ℓ ∈ 𝒯 ⁡ H ℓ . \displaystyle=\operatorname{Concat}_{\ell\in\mathcal{T}}H_{\ell}.
+Training standardizes the input features, centers only the target, and fits ridge regression with an intercept. After converting the fitted coefficients back to the original input coordinates, the prediction is
+H ^ 𝒯 = X 𝒜 ​ A 𝒯 + 𝟏 T ​ b 𝒯 ⊤ , \hat{H}_{\mathcal{T}}=X_{\mathcal{A}}A_{\mathcal{T}}+\mathbf{1}_{T}b_{\mathcal{T}}^{\top},
+(4)
+where A 𝒯 A_{\mathcal{T}} and b 𝒯 b_{\mathcal{T}} are the predictor weight and bias. The predictor estimates each target layer’s complete normalized attention input, rather than a residual relative to another hidden state. No historical hidden state or residual must therefore be retained as an additional input.
+Form a block-diagonal matrix from the original frozen KV projections of the target layers, P 𝒯 = blkdiag ⁡ ( W ℓ ) ℓ ∈ 𝒯 P_{\mathcal{T}}=\operatorname{blkdiag}(W_{\ell})_{\ell\in\mathcal{T}} , and concatenate their projection biases as c 𝒯 = Concat ℓ ∈ 𝒯 ⁡ b ℓ c_{\mathcal{T}}=\operatorname{Concat}_{\ell\in\mathcal{T}}b_{\ell} . The predicted pre-RoPE KV is
+Z ^ 𝒯 pre = H ^ 𝒯 ​ P 𝒯 + 𝟏 T ​ c 𝒯 ⊤ , \hat{Z}_{\mathcal{T}}^{\mathrm{pre}}=\hat{H}_{\mathcal{T}}P_{\mathcal{T}}+\mathbf{1}_{T}c_{\mathcal{T}}^{\top},
+(5)
+which contains the predicted pre-RoPE keys and values for every target layer in the group.
+Both hidden-state prediction and KV projection are affine. They can therefore be folded algebraically into
+Z ^ 𝒯 pre = X 𝒜 ​ B 𝒯 + 𝟏 T ​ d 𝒯 ⊤ , \hat{Z}_{\mathcal{T}}^{\mathrm{pre}}=X_{\mathcal{A}}B_{\mathcal{T}}+\mathbf{1}_{T}d_{\mathcal{T}}^{\top},
+(6)
+where
+B 𝒯 \displaystyle B_{\mathcal{T}}
+= A 𝒯 ​ P 𝒯 , \displaystyle=A_{\mathcal{T}}P_{\mathcal{T}},
+(7)
+d 𝒯 ⊤ \displaystyle d_{\mathcal{T}}^{\top}
+= b 𝒯 ⊤ ​ P 𝒯 + c 𝒯 ⊤ . \displaystyle=b_{\mathcal{T}}^{\top}P_{\mathcal{T}}+c_{\mathcal{T}}^{\top}.
+The folded predictor generates pre-RoPE KV directly from exact anchors without explicitly materializing the intermediate hidden representation. At historical position t t , RoPE is reapplied only to the predicted key:
+K ^ ℓ , t cache = RoPE t ⁡ ( K ^ ℓ , t pre ) , V ^ ℓ , t cache = V ^ ℓ , t . \hat{K}_{\ell,t}^{\mathrm{cache}}=\operatorname{RoPE}_{t}(\hat{K}_{\ell,t}^{\mathrm{pre}}),\qquad\hat{V}_{\ell,t}^{\mathrm{cache}}=\hat{V}_{\ell,t}.
+(8)
+Folding is algebraically equivalent to explicit hidden-state prediction followed by KV projection in exact arithmetic; finite-precision paths can differ slightly. Online recovery uses only the retained exact anchors and the offline-trained predictor. True target hidden states serve as offline labels only, and neither the omitted exact KV nor the target hidden states are read online.
+III-C Quality-Constrained KV Recovery Selection
+Although two-sided anchors make reconstruction possible, its effect on predictive quality varies substantially by layer. Some layers tolerate numerical KV reconstruction error with little effect on predictions, whereas errors in others cause substantial loss. RISK-KV therefore measures the loss caused by actual KV replacement and selects recovery groups under a quality budget instead of reconstructing all candidates indiscriminately.
+Let 𝒢 = { G 1 , … , G G } \mathcal{G}=\{G_{1},\ldots,G_{G}\} be the candidate groups. A recovery topology S ⊆ 𝒢 S\subseteq\mathcal{G} specifies groups that use predicted KV; all other layers use exact KV. S = ∅ S=\varnothing denotes the full exact cache. For calibration request r r , ℓ r ​ ( S ) \ell_{r}(S) and ℓ r ​ ( ∅ ) \ell_{r}(\varnothing) are mean negative log-likelihoods (NLLs) on the same target tokens. The empirical functional risk is
+D ^ ​ ( S ) = 1 N ​ ∑ r = 1 N [ ℓ r ​ ( S ) − ℓ r ​ ( ∅ ) ] , \hat{D}(S)=\frac{1}{N}\sum_{r=1}^{N}\left[\ell_{r}(S)-\ell_{r}(\varnothing)\right],
+(9)
+where N N is the number of calibration requests. Unlike numerical key/value error, D ^ ​ ( S ) \hat{D}(S) directly measures the effect of reconstructed KV on predictive loss.
+RISK-KV first recovers each group alone, keeping all other layers exact, and obtains singleton risk ρ g = D ^ ​ ( { G g } ) \rho_{g}=\hat{D}(\{G_{g}\}) . It ranks groups by increasing risk per savable byte, ρ g / M g \rho_{g}/M_{g} , where M g = ∑ ℓ ∈ G g M ℓ M_{g}=\sum_{\ell\in G_{g}}M_{\ell} . The groups in our experiments are equally sized, so this is the same as ranking by singleton risk. If π = ( π 1 , … , π G ) \pi=(\pi_{1},\ldots,\pi_{G}) is the resulting order, the combined candidates are
+S k = { G π 1 , … , G π k } , k = 1 , … , G . S_{k}=\{G_{\pi_{1}},\ldots,G_{\pi_{k}}\},\quad k=1,\ldots,G.
+(10)
+Because jointly reconstructed groups can have non-additive effects, each combined topology is evaluated directly; singleton losses are not summed. Counting the exact baseline, G G singletons, and G − 1 G-1 additional prefixes gives 2 ​ G 2G distinct evaluations, versus 2 G 2^{G} for exhaustive enumeration. Restricting the search to this risk-ordered path reduces offline evaluations but offers no general global-optimality guarantee.
+To account for finite calibration samples, RISK-KV bootstraps the paired request losses and computes a one-sided 90% confidence upper bound U 0.90 ​ ( S ) U_{0.90}(S) for mean degradation. Given an allowed mean NLL increase ϵ \epsilon , it accepts only configurations satisfying
+U 0.90 ​ ( S ) ≤ ϵ . U_{0.90}(S)\leq\epsilon.
+(11)
+Among evaluated candidates 𝒞 \mathcal{C} , it then chooses the feasible topology omitting the most historical KV. Algorithm 1 summarizes the offline procedure:
+S ∗ = arg ⁡ max S ∈ 𝒞 \displaystyle S^{*}=\arg\max_{S\in\mathcal{C}}
+M saved ​ ( S ) , \displaystyle M_{\mathrm{saved}}(S),
+(12)
+s . t . \displaystyle\mathrm{s.t.}
+U 0.90 ​ ( S ) ≤ ϵ . \displaystyle U_{0.90}(S)\leq\epsilon.
+M saved ​ ( S ) M_{\mathrm{saved}}(S) is the number of omitted historical KV bytes. If no nonempty candidate passes the gate, recovery falls back to the full exact cache. All risk probing, topology evaluation, and gating occur offline; online request recovery applies the selected topology without remeasuring predictive loss.
+Algorithm 1 Quality-constrained KV recovery topology selection
+0:
+Candidate groups 𝒢 \mathcal{G} , calibration set 𝒟 cal \mathcal{D}_{\mathrm{cal}} , quality budget ϵ \epsilon
+0:
+Recovery topology S ∗ S^{*}
+1:
+Evaluate the full exact-KV baseline
+2:
+𝒞 ← ∅ \mathcal{C}\leftarrow\varnothing
+3:
+for each candidate group G g ∈ 𝒢 G_{g}\in\mathcal{G} do
+4:
+Evaluate singleton risk ρ g = D ^ ​ ( { G g } ) \rho_{g}=\hat{D}(\{G_{g}\})
+5:
+𝒞 ← 𝒞 ∪ { { G g } } \mathcal{C}\leftarrow\mathcal{C}\cup\{\{G_{g}\}\}
+6:
+end for
+7:
+Sort groups by increasing ρ g / M g \rho_{g}/M_{g} to obtain π \pi
+8:
+for k = 2 , … , G k=2,\ldots,G do
+9:
+Form S k = { G π 1 , … , G π k } S_{k}=\{G_{\pi_{1}},\ldots,G_{\pi_{k}}\}
+10:
+Evaluate joint risk D ^ ​ ( S k ) \hat{D}(S_{k})
+11:
+𝒞 ← 𝒞 ∪ { S k } \mathcal{C}\leftarrow\mathcal{C}\cup\{S_{k}\}
+12:
+end for
+13:
+for each S ∈ 𝒞 S\in\mathcal{C} do
+14:
+Compute upper confidence bound U 0.90 ​ ( S ) U_{0.90}(S)
+15:
+end for
+16:
+ℱ ← { S ∈ 𝒞 : U 0.90 ​ ( S ) ≤ ϵ } \mathcal{F}\leftarrow\{S\in\mathcal{C}:U_{0.90}(S)\leq\epsilon\}
+17:
+S ∗ ← ∅ S^{*}\leftarrow\varnothing if ℱ = ∅ \mathcal{F}=\varnothing ; otherwise S ∗ ← arg ⁡ max S ∈ ℱ ​ M saved ​ ( S ) S^{*}\leftarrow\arg\max_{S\in\mathcal{F}}M_{\mathrm{saved}}(S)
+18:
+return S ∗ S^{*}
+IV Storage and Recovery Cost
+Selective historical KV reconstruction reduces retained cache state but adds predictor storage and recovery computation. We analyze these costs for cross-node migration and local request restoration.
+IV-A Storage and Communication
+Let S S be the selected topology and ℒ ⁡ ( S ) \mathcal{L}(S) its reconstructed target layers. The omitted historical KV occupies
+M saved ​ ( S ) = ∑ ℓ ∈ ℒ ⁡ ( S ) M ℓ M_{\mathrm{saved}}(S)=\sum_{\ell\in\mathcal{L}(S)}M_{\ell}
+(13)
+where M ℓ M_{\ell} is layer ℓ \ell ’s historical KV size.
+RISK-KV also stores its folded predictors. If predictor g g has input and output dimensions d x , g d_{x,g} and d y , g d_{y,g} and each weight uses q w q_{w} bytes, the selected predictors occupy
+M pred ​ ( S ) = q w ​ ∑ G g ∈ S d y , g ​ ( d x , g + 1 ) . M_{\mathrm{pred}}(S)=q_{w}\sum_{G_{g}\in S}d_{y,g}(d_{x,g}+1).
+(14)
+Predictor parameters are shared by requests using the same model. For N N requests with the same topology, if omitted KV is actually evicted and the predictor resides at the same storage tier, net savings relative to full KV are
+Δ ​ M store = N ​ M saved ​ ( S ) − M pred ​ ( S ) − M aux , \Delta M_{\mathrm{store}}=NM_{\mathrm{saved}}(S)-M_{\mathrm{pred}}(S)-M_{\mathrm{aux}},
+(15)
+where M aux M_{\mathrm{aux}} denotes additional resident auxiliary state.
+For migration from server A to server B, transfer volumes for full KV and RISK-KV are
+M tx full \displaystyle M_{\mathrm{tx}}^{\mathrm{full}}
+= M KV + M meta , \displaystyle=M_{\mathrm{KV}}+M_{\mathrm{meta}},
+(16)
+M tx RISK ​ ( S ) \displaystyle M_{\mathrm{tx}}^{\mathrm{RISK}}(S)
+= M tx full − M saved ​ ( S ) \displaystyle=M_{\mathrm{tx}}^{\mathrm{full}}-M_{\mathrm{saved}}(S)
++ M extra + I init ​ M pred ​ ( S ) . \displaystyle+M_{\mathrm{extra}}+I_{\mathrm{init}}M_{\mathrm{pred}}(S).
+Here M meta M_{\mathrm{meta}} is common cache metadata, M extra M_{\mathrm{extra}} accounts for additional recovery information and anchor communication, and I init ∈ { 0 , 1 } I_{\mathrm{init}}\in\{0,1\} indicates whether predictors must be transferred. When they are already deployed at the destination, I init = 0 I_{\mathrm{init}}=0 . Net communication savings depend on whether omitted KV exceeds these additional transfer costs.
+IV-B Recovery Latency
+Let R eff R_{\mathrm{eff}} be the effective inter-server rate in bits per second. For serial cross-node migration, the two recovery times can be written as
+t mig full = 8 ​ M tx full R eff + t ov full , t_{\mathrm{mig}}^{\mathrm{full}}=\frac{8M_{\mathrm{tx}}^{\mathrm{full}}}{R_{\mathrm{eff}}}+t_{\mathrm{ov}}^{\mathrm{full}},
+(17)
+t mig RISK ​ ( S ) = \displaystyle t_{\mathrm{mig}}^{\mathrm{RISK}}(S)={}
+8 ​ M tx RISK ​ ( S ) R eff \displaystyle\frac{8M_{\mathrm{tx}}^{\mathrm{RISK}}(S)}{R_{\mathrm{eff}}}
+(18)
++ t ov RISK + t rec ​ ( S ) . \displaystyle+t_{\mathrm{ov}}^{\mathrm{RISK}}+t_{\mathrm{rec}}(S).
+t ov t_{\mathrm{ov}} includes serialization, deserialization, cache assembly, and any necessary predictor loading. t rec ​ ( S ) t_{\mathrm{rec}}(S) covers anchor-feature processing, KV prediction, and RoPE. Their latency difference is t mig full − t mig RISK ​ ( S ) t_{\mathrm{mig}}^{\mathrm{full}}-t_{\mathrm{mig}}^{\mathrm{RISK}}(S) .
+Without migration, a suspended request can retain exact anchors and evict reconstructible historical KV. RISK-KV avoids replaying the entire prefix and reaches the next token in
+t resume RISK = \displaystyle t_{\mathrm{resume}}^{\mathrm{RISK}}={}
+t fetch KV + t rec ​ ( S ) \displaystyle t_{\mathrm{fetch}}^{\mathrm{KV}}+t_{\mathrm{rec}}(S)
+(19)
++ t mat + t dec RISK , \displaystyle+t_{\mathrm{mat}}+t_{\mathrm{dec}}^{\mathrm{RISK}},
+where t fetch KV t_{\mathrm{fetch}}^{\mathrm{KV}} reads retained KV, t mat t_{\mathrm{mat}} assembles the recovered cache, and t dec RISK t_{\mathrm{dec}}^{\mathrm{RISK}} computes the next token. If all historical KV is evicted, token replay instead takes
+t resume replay = t fetch token + t prefill ​ ( T ) + t dec exact , t_{\mathrm{resume}}^{\mathrm{replay}}=t_{\mathrm{fetch}}^{\mathrm{token}}+t_{\mathrm{prefill}}(T)+t_{\mathrm{dec}}^{\mathrm{exact}},
+(20)
+where the terms read historical token IDs and rerun the length- T T prefix to rebuild exact KV. Thus, a recovery benefit depends on whether saved transfer or recomputation time exceeds prediction and cache-assembly costs. Longer contexts may offer greater potential savings against replay, but end-to-end performance depends on hardware, storage, and network conditions. Our local latency measurements cover only 512-token histories.
+V Performance and Analysis
+V-A Experimental Setup
+We evaluate RISK-KV on three pretrained autoregressive language models: Qwen2.5-0.5B-Instruct, Qwen2.5-1.5B-Instruct, and TinyLlama-1.1B-Chat-v1.0, with 24, 28, and 22 Transformer layers, respectively. Base-model parameters remain frozen in every experiment; only the cross-layer KV recovery predictors are fitted on training data.
+Experiments use WikiText-2 with a 512-token historical context. Predictive quality after recovery is evaluated by teacher forcing over the following 512 tokens. The three models have 5, 6, and 5 two-layer candidate recovery groups, respectively, with exact KV always retained at both anchors. Their full historical KV sizes are 6, 14, and 11 MiB.
+RISK-KV predicts each target layer’s complete normalized attention-projection input using ridge regression with an intercept, then generates reconstructed KV through the original frozen projections. Deployment-cost experiments additionally evaluate folded FP32 and FP16 predictors. Every recovery configuration is compared with a full exact-KV baseline.
+We measure predictive quality using mean change in negative log-likelihood ( Δ ​ NLL \Delta\mathrm{NLL} ) and perplexity (PPL). Omitted raw KV bytes and their fraction of the full cache measure potential cache savings. The statistical unit is a request: recovered and exact KV are compared on the same request, and confidence intervals are estimated by bootstrap. Predictive-quality experiments use three random seeds with eight evaluation requests per seed; the local recovery-latency experiment below uses eight validation requests per model.
+The data splits serve distinct purposes. Training data fit the ridge predictors; validation data select recovery groups; an independent test split evaluates the final frozen recovery configurations. The quality-gate experiment also uses separate requests for risk calibration and outcome assessment to avoid reusing evaluation data in selection.
+V-B Experimental Results
+Fig. 3: Functional risk from reconstructing a single layer in each model. Points show mean paired Δ \Delta NLL@512 after reconstructing L2 or L3; error bars show paired 95% bootstrap confidence intervals relative to the exact-KV baseline. Vertical scales differ across panels.
+We first examine how reconstructing different Transformer layers affects predictive quality. Figure 3 compares the singleton recovery risks of adjacent layers L2 and L3 in all three models. Each validation result uses 24 requests (three seeds, eight per seed). Only the specified layer’s historical KV is reconstructed; all other layers retain exact KV. Teacher forcing measures NLL change over the following 512 tokens.
+L3 has a much higher reconstruction loss than L2 in Qwen2.5-0.5B and TinyLlama-1.1B, whereas Qwen2.5-1.5B shows the opposite ordering. Thus, even with the same reconstruction method, adjacent layers can differ greatly in their predictive effect, and the high-risk position changes across models. Layer position alone cannot determine which KV to reconstruct; selection must account for the loss caused by actual reconstruction.
+Figure 4 also compares independent Gaussian KV replacement with RISK-KV reconstruction across all ten deployable recovery layers of Qwen2.5-0.5B-Instruct. Both methods use the same three seeds, training data, two-sided exact anchors, eight validation requests per seed, and 512-token teacher-forced evaluation window. All historical KV outside the target layer remains exact. The Gaussian control matches the K/V normalized root mean square error (NRMSE) of the RISK-KV prediction separately for each request and layer, averaging three noise draws. It controls numerical error magnitude while retaining the difference between random and structured reconstruction-error directions. Gaussian replacement’s largest mean loss is at L11 (0.04277); reconstructed KV’s largest positive mean loss is at L3 (0.02002). Even at matched request-level K/V NRMSE, a sensitivity ranking based on artificial isotropic noise is unsuitable for choosing RISK-KV recovery layers.
+Fig. 4: Per-layer paired Δ ​ NLL ​ @ ​ 512 \Delta\mathrm{NLL}@512 from independent Gaussian KV replacement and RISK-KV reconstructed KV replacement on Qwen2.5-0.5B-Instruct. Both panels use the same three seeds, training data, two-sided exact anchors, and eight validation requests per seed; all historical KV outside the target layer is exact. Gaussian K/V NRMSE is matched to the RISK-KV prediction per request and layer, with three independent draws averaged. Color ranges are scaled separately; compare annotated values rather than colors across panels.
+We next examine the trade-off between predictive quality and cache savings. Table I gives representative results on independent test data. Each topology was selected on validation data and frozen before testing; no test request influenced selection. Each model has 24 paired test requests.
+TABLE I: Representative validation-frozen topologies on the H3 sealed test. Δ \Delta NLL intervals are paired 95% bootstrap confidence intervals. PPL summaries and paired request-level Δ \Delta NLL use different aggregation orders, so Δ \Delta NLL cannot be recovered from the ratio of the two displayed PPL values.
+Model
+Recovered groups
+KV saved
+Exact PPL
+RISK-KV PPL
+Δ \Delta NLL
+95% CI
+Qwen2.5-0.5B
+G2,G3,G4,G5
+2.0 MiB (33.3%)
+22.760
+22.801
+0.001622
+[ − 0.000571 -0.000571 , 0.003962]
+Qwen2.5-1.5B
+G2,G3,G5,G6
+4.0 MiB (28.6%)
+15.205
+15.183
+− 0.000207 -0.000207
+[ − 0.008627 -0.008627 , 0.006686]
+TinyLlama-1.1B
+G2,G5
+2.0 MiB (18.2%)
+12.681
+12.722
+0.003645
+[ − 0.002192 -0.002192 , 0.008021]
+Fig. 5: Historical KV saved versus predictive loss for different recovery topologies. Each point is a validation-preselected configuration evaluated on an independent test set.
+Some configurations have negative Δ \Delta NLL: in the finite test sample, their mean predictive loss is slightly below the exact-KV baseline. This does not establish that approximate reconstruction improves quality in general, because KV replacement changes the predictive distribution and its effect can vary across requests. For example, Qwen2.5-1.5B has mean Δ \Delta NLL − 0.000207 -0.000207 , but its paired 95% interval includes zero; we therefore cannot conclude that quality improved.
+Figure 5 relates historical KV savings to Δ \Delta NLL for other recovery configurations. Configurations with similar cache savings can have different predictive losses, and degradation becomes pronounced for some configurations as more layers are reconstructed. Maximizing cache reduction alone is therefore insufficient; the quality budget should be applied to measured recovery risk.
+For G G candidate groups, RISK-KV measures singleton risk and then evaluates joint configurations along the risk order, requiring 2 ​ G 2G topology evaluations. Five and six candidates require 10 and 12 evaluations, compared with 32 and 64 for exhaustive search. In some quality-budget settings the method matches exhaustive KV savings, but global optimality is not guaranteed. In an independent assessment at ϵ = 0.005 \epsilon=0.005 , mean historical KV savings are 33.3%, 33.3%, and 21.2% for Qwen2.5-0.5B, Qwen2.5-1.5B, and TinyLlama-1.1B, respectively.
+Risk-ranked selection reduces retained historical KV, but cache savings do not ensure that every new request meets the quality budget. Requests differ in sensitivity: a configuration with low mean NLL increase on calibration data can still produce a large loss on a new request.
+We therefore compare three quality gates. Mean Gate accepts a topology based only on mean calibration Δ \Delta NLL. Upper-90 applies a more conservative one-sided 90% upper confidence bound on mean loss. Stable-split additionally checks candidates on an independent confirmation set. Table II reports TinyLlama-1.1B at ϵ = 0.002 \epsilon=0.002 , the allowed mean NLL increase. The violation rate counts independent evaluation requests whose observed Δ \Delta NLL exceeds ϵ \epsilon ; mean KV saved measures the historical cache omitted by each strategy.
+TABLE II: Predictive quality and KV savings of quality gates on TinyLlama-1.1B ( ϵ = 0.002 \epsilon=0.002 , 24 independent evaluation requests).
+Gate
+Budget violations
+Mean KV saved
+Mean Gate
+41.7% (10/24)
+1.667 MiB
+Upper-90
+8.3% (2/24)
+0.667 MiB
+Stable-split
+0% (0/24)
+0.333 MiB
+In this sample, Upper-90 has eight fewer observed violating requests than Mean Gate, but also saves less KV. Stable-split has no observed violations, yet falls back to exact KV for two thirds of requests and saves still less. Exact fallback rates are 0%, 33.3%, and 66.7%, respectively, illustrating the empirical trade-off between quality control and cache reduction. Whether omitted KV covers predictor cost also depends on per-group parameter storage and local recovery overhead.
+To assess the additional storage cost, Table III compares the original ridge predictor with its folded form. Composing the recovery map with the model’s original KV projections markedly reduces predictor storage, and FP16 halves it again. Values are average parameter sizes for one recovery group, rather than selected predictor-bank totals; deployment cost depends on the chosen groups and how many requests share the predictors.
+TABLE III: Mean storage of one predictor group for each model (MiB).
+Model
+Original ridge
+Folded FP32
+Folded FP16
+Qwen2.5-0.5B
+7.007
+2.002
+1.001
+Qwen2.5-1.5B
+24.012
+8.004
+4.002
+TinyLlama-1.1B
+32.016
+8.004
+4.002
+In a representative Qwen2.5-0.5B configuration, RISK-KV omits about 33.3% of historical KV, but the selected Folded FP32 predictor parameters are about four times the KV saved by one request. For a batch of 24 requests, measured GPU prediction and full-cache assembly take 3.974 and 3.810 ms, respectively. At an assumed effective rate of 100 Mbps, the omitted 2 MiB per request corresponds to about 167.8 ms of pure data-transfer time. Thus, selective reconstruction has potential communication benefits if predictors are deployed in advance and shared across requests. This is a byte/rate calculation, not a measured wireless transfer.
+We further compare RISK-KV against replaying the complete history of tokens during request restoration. Token Replay reruns the historical prefix. RISK-KV uses retained exact KV to reconstruct the omitted cache and avoids that full historical recomputation.
+The local experiment uses an RTX 3060 Laptop GPU, a 512-token history, and batch size 1. Each model contributes eight validation requests. After five warm-up iterations, each method is measured 30 times per request. The suspended state resides in local CPU memory. Token Replay reads token IDs and performs one prefill over the 512 historical tokens plus the known current token. RISK-KV transfers retained exact KV for the 512 historical positions, builds two-sided anchor features, reconstructs omitted layers with a Folded FP32 predictor already resident on the GPU, assembles the full cache, and processes that same known current token. Both methods therefore produce next-token logits at the same position. Timing includes CPU-to-GPU state transfer, cache recovery, and the next inference step; the model and predictor are loaded and warmed before measurement. The complete GPU cache is present during subsequent decoding.
+Fig. 6: Request-recovery latency of Token Replay and RISK-KV with a 512-token history. Error bars are sample standard deviations across eight requests per model and 30 repetitions per request.
+As Fig. 6 shows, RISK-KV has lower recovery latency for all three models. For Qwen2.5-0.5B, Qwen2.5-1.5B, and TinyLlama-1.1B, Token Replay averages 60.66, 125.41, and 114.07 ms, whereas RISK-KV averages 40.09, 48.99, and 34.50 ms. The corresponding speedups are 1.51 × \times , 2.56 × \times , and 3.31 × \times . With a resident predictor, reconstructing historical KV from a partial exact cache reduces the work otherwise spent replaying the prefix.
+The selected recovery groups omit 33.3%, 28.6%, and 18.2% of raw historical KV for the three models, respectively. Requests using the same model share the Folded FP32 predictor weights.
+VI Conclusion
+We proposed RISK-KV, a quality-aware method for selective KV-cache reconstruction in distributed LLM inference. It uses exact KV retained on both sides of a target group to reconstruct missing historical KV, assesses functional risk through predictive loss caused by actual reconstruction, and selects groups under a quality budget. Folding the learned recovery map with the model’s original KV projections reduces predictor storage without changing pretrained model weights or replaying the complete historical prefix.
+Across three pretrained language models, layer-specific reconstruction risks vary substantially. Risk-aware selective recovery reduces historical KV storage by 18.2%–33.3% in representative configurations with small observed changes in predictive quality. Conservative quality gates reduce observed budget violations in an independent evaluation sample. For local restoration with a 512-token history, RISK-KV is 1.51 × \times –3.31 × \times faster than complete Token Replay, demonstrating potential to reduce historical-state recomputation. Actual wireless cross-node migration has not yet been evaluated. Future work will examine longer contexts, larger models, and real distributed deployments.
+References
+[1]
+J. Ainslie, J. Lee-Thorp, M. de Jong, Y. Zemlyanskiy, F. Lebron, and S. Sanghai (2023)
+GQA: training generalized multi-query transformer models from multi-head checkpoints .
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,
+Singapore , pp. 4895–4901 .
+External Links: Document ,
+Link
+Cited by: §I ,
+§II-A ,
+§III-A .
+[2]
+S. Gao, Y. Chen, and J. Shu (2025)
+Fast state restoration in LLM serving with HCache .
+In Proceedings of the Twentieth European Conference on Computer Systems ,
+pp. 128–143 .
+External Links: Document ,
+Link
+Cited by: §I ,
+§I ,
+§II-B .
+[3]
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami (2024)
+KVQuant: towards 10 million context length LLM inference with KV cache quantization .
+In Advances in Neural Information Processing Systems ,
+Vol. 37 .
+External Links: Document ,
+Link
+Cited by: §I ,
+§II-A .
+[4]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica (2023)
+Efficient memory management for large language model serving with PagedAttention .
+In Proceedings of the 29th Symposium on Operating Systems Principles ,
+pp. 611–626 .
+External Links: Document ,
+Link
+Cited by: §I ,
+§II-A ,
+§III-A .
+[5]
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen (2024)
+SnapKV: LLM knows what you are looking for before generation .
+In Advances in Neural Information Processing Systems ,
+Vol. 37 .
+External Links: Document ,
+Link
+Cited by: §I ,
+§I ,
+§II-A .
+[6]
+H. Lin, Z. Bai, X. Zhang, X. Li, S. Yang, Y. Xu, J. Liu, Y. Zhao, J. Wang, Y. Xu, W. Su, and B. Zheng (2026)
+Reconstructing KV caches with cross-layer fusion for enhanced transformers .
+In International Conference on Learning Representations ,
+External Links: 2512.03870 ,
+Link
+Cited by: §I ,
+§II-B .
+[7]
+A. Liu, J. Liu, Z. Pan, Y. He, G. Haffari, and B. Zhuang (2024)
+MiniCache: KV cache compression in depth dimension for large language models .
+In Advances in Neural Information Processing Systems ,
+Vol. 37 .
+External Links: Document ,
+Link
+Cited by: §I ,
+§I ,
+§II-B .
+[8]
+Y. Liu, H. Li, K. Du, J. Yao, Y. Cheng, S. Ray, Y. Huang, Q. Zhang, S. Lu, G. Ananthanarayanan, M. Maire, H. Hoffmann, A. Holtzman, and J. Jiang (2024)
+CacheGen: KV cache compression and streaming for fast large language model serving .
+In Proceedings of the ACM SIGCOMM 2024 Conference ,
+pp. 38–56 .
+External Links: Document ,
+Link
+Cited by: §I ,
+§I ,
+§II-B .
+[9]
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini (2024)
+Splitwise: efficient generative LLM inference using phase splitting .
+In Proceedings of the 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 118–132 .
+External Links: Document ,
+Link
+Cited by: §I .
+[10]
+Y. Sun, L. Dong, Y. Zhu, S. Huang, W. Wang, S. Ma, Q. Zhang, J. Wang, and F. Wei (2024)
+You only cache once: decoder-decoder architectures for language models .
+In Advances in Neural Information Processing Systems ,
+Vol. 37 .
+External Links: 2405.05254
+Cited by: §I .
+[11]
+J. Wen, J. Liang, Z. Hong, W. Chen, T. Cai, and Z. Zheng (2025)
+Krul: efficient state restoration for multi-turn conversations with dynamic cross-layer KV sharing .
+External Links: 2507.08045 ,
+Link
+Cited by: §I ,
+§II-B .
+[12]
+M. Zhang, J. Cao, T. Wu, X. Chen, and N. Wang (2026)
+Efficient KV cache migration for geo-distributed LLM inference in collaborative edge computing .
+arXiv preprint arXiv:2610.22172 .
+External Links: 2610.22172
+Cited by: §I .
+[13]
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, Z. Wang, and B. Chen (2023)
+H2O: heavy-hitter oracle for efficient generative inference of large language models .
+In Advances in Neural Information Processing Systems ,
+Vol. 36 .
+External Links: Document ,
+Link
+Cited by: §I ,
+§I ,
+§II-A .
+[14]
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang (2024)
+DistServe: disaggregating prefill and decoding for goodput-optimized large language model serving .
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) ,
+Santa Clara, CA , pp. 193–210 .
+External Links: Link ,
+2401.09670
+Cited by: §I .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

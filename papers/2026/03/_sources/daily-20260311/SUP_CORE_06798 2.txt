@@ -1,0 +1,1124 @@
+1Introduction
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background and Motivation
+3 Nest Overview
+3.1 Categorization of Parallelization Strategies
+3.2 Nest Workflow
+3.3 Nest Memory Modeling
+4 Nest’s Dynamic Programming
+5 Evaluation
+5.1 Methodology and Setup
+5.2 Accelerators with Fat-Tree Execution
+5.2.1 Throughput Improvements
+5.2.2 Intra-operator vs Template-based Parallelism
+5.2.3 Joint Exploration with Microbatch Size
+5.3 H100 GPU Based Spine-Leaf Execution
+5.4 V100 GPU Based Spine–Leaf Execution
+6 Related Works
+Device Placement Frameworks.
+7 Limitation and Discussion
+8 Conclusion
+9 Acknowledgments
+References
+A Artifact Appendix
+A.1 Abstract
+A.2 Artifact check-list (meta-information)
+A.3 Description
+A.3.1 How delivered
+A.3.2 Hardware dependencies
+A.3.3 Software dependencies
+A.3.4 Data sets and Models
+A.4 Installation
+A.5 Experiment workflow
+A.6 Evaluation and expected results
+A.7 Experiment customization
+B Hierarchical Network Topology
+C Mesh and Torus Modeling
+D Ablation Study: ZeRO Optimization
+E  Hardware Validation
+F Microbatch size Scaling at 512 devices
+G Model Configuration for Mist H100 Comparison
+H Memory Estimation
+I Runtime Comparison with Mist
+J Model Configuration for Real System Validation
+K Algorithm for device placement
+License: CC BY 4.0
+arXiv:2603.06798v1 [cs.LG] 06 Mar 2026
+marginparsep has been altered.
+topmargin has been altered.
+marginparwidth has been altered.
+marginparpush has been altered.
+The page layout violates the ICML style.
+Please do not change the page layout, or include packages like geometry,
+savetrees, or fullpage, which change it for you.
+We’re not able to reliably undo arbitrary changes to the style. Please remove
+the offending package(s), or layout-changing commands and try again.
+NEST: Network- and Memory-Aware Device Placement
+For Distributed Deep Learning
+Irene Wang 1
+Vishnu Varma Venkata 1
+Arvind Krishnamurthy 2
+Divya Mahajan 1
+††footnotetext: 1Georgia Institute of Technology, Atlanta, GA, USA
+2University of Washington, Seattle, WA, USA.
+Correspondence to: Irene Wang <irene.wang@gatech.edu>.
+Proceedings of the
+9t​h\mathit{9}^{th} MLSys Conference,
+Bellevue, WA, USA, 2026.
+Copyright 2025 by the author(s).
+Abstract
+The growing scale of deep learning demands distributed training frameworks that jointly reason about parallelism, memory, and network topology. Prior works often rely on heuristic or topology-agnostic search Tarnawski et al. (2020); Zheng et al. (2022); Wang et al. (2024), handling communication and memory separately. Without per-device memory awareness, these methods typically ensure feasibility post hoc by sharding parameters and activations across many devices, increasing synchronization, inflating communication, and underutilizing compute—limiting scalability and efficiency on real datacenter networks.
+We present Nest, a network-, compute-, and memory-aware device placement framework that unifies model parallelism, topology modeling, and memory feasibility via structured dynamic programming. Nest ’s DP operates on operator graphs with tensor and expert parallel configurations, explicit allreduce latencies across hierarchical or arbitrary networks, and memory/compute profiles. By factoring parallelism across tensor, pipeline, data, and expert dimensions, Nest defines a principled search space for hybrid strategies while jointly optimizing co-location, network latency, and memory feasibility.
+Evaluations across diverse hardware and networks show Nest achieves up to 2.43×\times higher throughput, better memory efficiency, and improved scalability over state-of-the-art baselines, providing a foundation for co-designing parallelization strategies and datacenter interconnects for next-generation AI infrastructure.
+The source code of Nest is available at: https://github.com/scai-tech/Nest.
+1 Introduction
+Figure 1: (Left) Nest compared to prior works across network modeling, optimality, scalability, and memory modeling axes. (Right) Comparison of placement with and without integrated memory modeling. Sharded operators are shown through patterns.
+The rapid growth of deep learning in both parameter count and model complexity has made efficient distributed training a key bottleneck in scaling modern AI systems NVIDIA (); NVIDIA (2022); Rasley et al. (2020). Models like GPT-3 and Llama3 are trained on clusters with over 10,000 GPUs Langston (2020); Patel (2024), where efficiency depends on how models are partitioned across devices and how these partitions interact with the physical interconnect. Even with abundant compute, inefficient placement can make the network the performance bottleneck, increasing training time and reducing infrastructure utilization.
+To distribute training, we leverage multiple parallelization strategies, tensor, pipeline, data, expert, and optimizer-level schemes like ZeRO Huang et al. (2019); Narayanan et al. (2019); Krizhevsky et al. (2017); Lepikhin et al. (2020); Rajbhandari et al. (2020). Each of these introduces distinct communication patterns and memory trade-offs, and real-world training systems rely on complex hybrid combinations to meet scaling and efficiency targets.
+Performance thus depends critically on datacenter interconnects, which handle collectives such as all-reduce for gradients and reduce-scatter/all-gather for activations or expert exchanges Lee et al. (2025). Yet, most existing device placement frameworks Tarnawski et al. (2021); Zheng et al. (2022); Tarnawski et al. (2020); Wang et al. (2024); Phanishayee et al. (2025) assume uniform or flat networks, overlooking the heterogeneous, hierarchical, and often oversubscribed nature of real-world topologies. For example, NVIDIA’s DGX SuperPOD links GPUs via NVSwitch within nodes and InfiniBand across nodes NVIDIA (2024); Microsoft’s MAIA clusters use hierarchical RDMA networks with bandwidth-aware routing Microsoft (2024); and Google’s TPU v4 Pods employ torus topologies with non-uniform communication costs Jouppi et al. (2023). These variations in latency and bandwidth can significantly impact performance-critical collectives, often making network interconnects a major bottleneck in distributed training Go et al. (2025).
+Recent works such as Alpa and TopoOpt Zheng et al. (2022); Wang et al. (2023) introduce topology-aware device placement but remain limited in scalability and generality. TopoOpt uses Monte Carlo-based random search, offering no optimality guarantees and scaling poorly as the search space grows. Alpa assumes a simplified 2D mesh and validates communication-driven sharding only after placement, causing over-sharding, excessive communication, and underutilized compute—limiting scalability beyond  64 GPUs or heterogeneous clusters.
+As shown in Figure 1, existing frameworks do not jointly handle model parallelism, memory constraints, and realistic network topology while ensuring scalable, near-optimal search. Bridging this gap is essential for improving training throughput, cost efficiency, and guiding co-design of model architectures and datacenter interconnects. A principled, topology-aware placement framework that integrates computation, communication, and memory can expose how network capabilities and training strategies should co-evolve for maximal efficiency.
+As such, in this work, we introduce Nest, a principled, extensible, and compute–memory–network aware device placement framework that unifies model and network optimization through a novel dynamic programming formulation. Nest ​’s novel dynamic programming optimizer operates over the operator graph augmented with multiple tensor, sequence, expert, and context parallel configurations, precomputed communication latencies across network levels, and profiled compute and memory statistics. It inherently accounts for ZeRO for memory savings, pipeline parallelism for layer splitting, and data parallelism for scalability. This forms the combinatorial search space for the DP optimizer, enabling principled exploration of hybrid parallelism strategies under realistic network and memory constraints.
+A key insight of Nest is its incremental handling of communication and memory costs. Since placement is solved backward, a layer’s communication depends on unknown downstream placements. Nest addresses this by precomputing latencies between abstract network levels (e.g., intra-node, intra-rack, and other topologies) and evaluating transitions across multiple candidate downstream placements, preserving both network accuracy and provable optimality.
+To further enhance efficiency and extensibility, Nest integrates a detailed memory model that tracks activations, gradients, parameters, and optimizer states during optimization, rather than relying on post-placement checks. This allows adaptive application of ZeRO stages to unlock previously infeasible configurations. Parallelism strategies are categorized along orthogonal dimensions, enabling systematic composition of hybrid strategies without exploding the search space. Finally, Nest ​’s flexible network interface supports realistic datacenter topologies—including oversubscribed trees, fat-trees, spine-leaf fabrics, and torus networks—facilitating rigorous evaluation and co-design of model placement and datacenter infrastructure.
+As such, the main contributions of Nest are:
+1.
+Efficient Network-aware dynamic programming algorithm with provable optimality guarantees for hierarchical, heterogeneous interconnects.
+2.
+Unified support for diverse parallelism strategies (tensor, pipeline, data, expert, sequence, context, ZeRO) with structured composition for tractable large-scale search.
+3.
+Comprehensive network and memory modeling that reflects production-scale topologies and enables systematic exploration of placement–infrastructure trade-offs.
+We evaluate Nest on large-scale training workloads with billions of parameters in realistic datacenter settings. Nest consistently outperforms manual, Monte Carlo–based, and state-of-the-art dynamic programming baselines, achieving up to 2.43×\times higher throughput and sustaining performance beyond 1,000 GPUs. It also finds optimal placements under memory constraints by adaptively leveraging ZeRO stages.
+Table 1: Comparison of prior network- and memory- aware device placement works.
+Feature
+TopoOpt
+Wang et al. (2023)
+Alpa
+Zheng et al. (2022)
+Mist
+Zhu et al. (2025)
+Nest (Ours)
+Parallelism Strategies
+Data, Pipeline, Operator
+Pipeline, Intra-operator (including Data)
+Data, Pipeline, Tensor, ZeRO
+Data, Pipeline, Tensor, ZeRO, Expert, Sequence, Context
+Algorithm
+MCMC (random search)
+DP + ILP (joint search)
+Hierarchical MILP + brute-force enumeration
+Dynamic Programming
+Network Awareness
+✔TopoOpt Specific
+◼2D mesh only
+✘Profiles interference for offloading only
+✔Multi-level Hierarchical & oversubscribed
+Memory Modeling
+✘Post-hoc check
+✘Post-hoc check (defaults to over-sharding to fit memory)
+✔Integrated memory optimizations
+✔Native; prunes invalid states and prevents over-sharding while optimization
+Scalability
+◼Poor with large search spaces
+◼Poor beyond ≈\approx64 GPUs
+◼Poor with large search space
+✔Scales to 1000+ GPUs
+Expert & ZeRO Support
+✘Not supported
+✔Integrated in Intra-Operator
+◼ZeRO support only
+✔Native, adaptive support
+Optimality Guarantees
+✘None (random search)
+◼Heuristic, limited by network & partitioning strategy
+◼Yes, limited by network & partitioning strategy
+✔Structured optimality via DP
+2 Background and Motivation
+Distributed Deep Learning.
+Modern frameworks such as Megatron-LM NVIDIA (), NeMo NVIDIA (2022), and DeepSpeed Rasley et al. (2020) enable scalable training via multiple parallelization strategies.
+Intra-layer tensor parallelism (TP) splits individual layers across multiple accelerators, with sequence parallelism (SP) further partitioning activations along the sequence dimension to reduce memory pressure. Expert parallelism (EP) distributes Mixture-of-Experts (MoE) modules across devices, introducing unique all-to-all communication patterns. Context parallelism (CP) Yang et al. (2025) segments the input sequence across multiple GPUs, specifically to handle the quadratic memory scaling of long-context attention mechanisms. Pipeline parallelism assigns layers to different devices, enabling micro-batch processing to reduce per-device memory usage Huang et al. (2019); Narayanan et al. (2019), and data parallelism replicates the model across devices. Memory optimizations like ZeRO Rajbhandari et al. (2020) partition optimizer states, gradients, and parameters to reduce memory usage. Each approach introduces distinct communication patterns and resource trade-offs, requiring careful orchestration for efficient training.
+Datacenter Network Topologies.
+Real-world datacenters are rarely uniform, typically employing hierarchical topologies such as Fat-Tree, Spine-Leaf, or Clos networks to balance scalability, fault tolerance, and cost Microsoft (2024); NVIDIA (2024). Practical deployments often feature oversubscription or non-uniform interconnects due to physical layout and cost constraints, resulting in widely varying latency and bandwidth across intra-node, intra-rack, and inter-rack links. For instance, same-rack communication may use full-bandwidth NVSwitch connectivity, whereas cross-rack transfers traverse spine switches with shared or oversubscribed bandwidth. These hierarchical non-uniformities make distributed training highly topology-dependent. Appendix B illustrates common network configurations.
+Prior Device Placement Techniques.
+Many works have explored automated model partitioning using reinforcement learning Mirhoseini et al. (2017), Markov Chain Monte Carlo (MCMC) Wang et al. (2023), and dynamic programming (DP) Tarnawski et al. (2020); Tarnawski et al. (2021); Wang et al. (2024); Zheng et al. (2022). Early systems such as PipeDream Narayanan et al. (2019) focused primarily on pipeline parallelism, while later frameworks including Tarnawski et al. (2021); Zheng et al. (2022); Zhu et al. (2025); Liu et al. (2024) combined data, operator, and inter-layer parallelism. However, most assume flat or simplified networks and do not fully support emerging strategies such as expert parallelism or memory optimizations like ZeRO.
+In practice, datacenter networks are hierarchical and often oversubscribed, with latency and bandwidth varying across intra-node, intra-rack, and inter-rack links. These differences directly affect performance-critical collectives such as AllReduce, AllGather, and ReduceScatter, which frequently dominate distributed training overhead Won et al. (2023); Go et al. (2025).
+Several topology-aware approaches attempt to address these realities but remain limited in scalability or optimality. TopoOpt explores placements stochastically, lacks optimality guarantees, is sensitive to initialization, and scales poorly as the number of parallelization dimensions grows. Alpa uses dynamic programming, but to keep the search tractable it assumes simplified 2D mesh networks that cannot capture oversubscription or multi-level hierarchy. It prioritizes minimizing communication without jointly modeling compute latency and checks memory feasibility only after generating placement plans (i.e., post hoc).
+The lack of integrated memory modeling further increases search time and reduces the ability to find feasible placements on smaller clusters.
+To meet memory budgets, Alpa aggressively shards parameters and activations across GPUs. On larger clusters, it optimizes each pipeline stage independently and constructs a single pipeline; additional devices are used to further shard layers rather than scale via pipeline replication. This can lead to hardware underutilization and excessive communication, limiting effective scaling beyond roughly 64 GPUs.
+To address these limitations, more recent works shift focus toward memory feasibility and scheduling, though often at the expense of explicit network modeling. Aceso Liu et al. (2024) uses greedy, bottleneck-chasing heuristics to improve memory balance and hardware utilization. However, its local search can stall in suboptimal configurations and provides no global optimality guarantees. Mist Zhu et al. (2025) formulates placement and scheduling using MILP, emphasizing temporal overlap of communication and computation. While it handles memory more robustly than Alpa, it treats network topology as a secondary constraint and relies on hierarchical, brute-force search for parallelization, limiting scalability on large, hierarchical clusters.
+This contrast between prior works is showcased in Table 1.
+Figure 2: Impact of communication latency on training time across different parallelism strategies on an oversubscribed 64-GPU cluster; left bar (without) and right (with) activation recomputation.
+The Need for Topology-Aware Placement.
+As training scales to hundreds of accelerators, small differences in placement can cause large performance variations. Figure 2 illustrates this for GPT3-175B, Llama3-70B, and Mixtral-8×\times7B models on a 2:2 oversubscribed 64-GPU cluster, where communication accounts for a significant portion of total training time. The most efficient parallelization strategy depends on both the model and the underlying topology—what works on a uniform mesh may perform poorly on a hierarchical or bandwidth-asymmetric cluster. Efficient training, therefore, requires a placement framework that explicitly models network hierarchy, asymmetry, and oversubscription.
+Motivation for Nest.
+These limitations highlight the need for a placement framework that (i) Strategy-aware, co-optimizing data, tensor, pipeline, expert, and memory parallelism; (ii) Network-aware, explicitly modeling hierarchical, oversubscribed, and asymmetric interconnects; and (iii) Scalable and principled, using structured optimization like dynamic programming rather than heuristics or sampling.
+We introduce Nest, a network- and memory-aware dynamic programming framework that addresses these gaps. Unlike prior works that rely on stochastic search or simplified topology models, Nest explicitly models hierarchical, oversubscribed, and heterogeneous networks while integrating memory-modeling into its search methodology.
+This enables Nest to systematically explore feasible placements that balance communication, compute, and memory efficiency, scaling effectively across heterogeneous and oversubscribed datacenter architectures.
+Figure 3: Nest search space and workflow. Graph-Global strategies partition entire layers, whereas Sub-Graph strategies partition computations within individual layers. Different colors denote device assignments, and dashed boxes show ZeRO and context parallelism.
+3 Nest Overview
+Nest jointly models compute, memory, and communication during the search process to optimize network-aware device placement and distributed parallelization strategy for large-scale training under realistic data center conditions.
+Figure 3 illustrates the Nest framework and the representative set of parallelization strategies supported by it.
+3.1 Categorization of Parallelization Strategies
+A key insight behind Nest is that distributed training parallelization techniques can be organized along orthogonal dimensions based on their interaction with the model graph and hardware.
+This principled categorization makes the dynamic programming search tractable by separating local, intra-operator transformations from global, inter-operator scheduling decisions.
+It enables Nest to compose strategies such as tensor, pipeline, data, expert, sequence, and context parallelism into hybrid configurations without combinatorial growth of the search space.
+Factoring optimization along these dimensions yields a systematic, extensible framework: new parallelization methods can be integrated seamlessly, and hybrid placements explored efficiently within a unified dynamic programming formulation.
+Building on this principle, Nest classifies strategies into two categories—subgraph and graph-global—each corresponding to a distinct abstraction level in the computation graph.
+Sub-Graph strategies.
+These strategies operate within individual operators or small subgraphs, such as tensor and expert parallelism.
+Nest classifies a strategy as Sub-Graph if it modifies an operator’s internal execution, e.g., by partitioning parameters or adjusting tensor dimensions per accelerator, while preserving the model’s overall control and dataflow (i.e., layer sequence and dependencies).
+Its goal is to alleviate compute and memory bottlenecks within a layer by splitting its workload (e.g., weight matrices or expert activations) across devices. This fine-grained partitioning introduces tightly coupled collective operations, such as AllReduce for tensor parallelism and AllToAll for expert parallelism, AllGather and ReduceScatter for sequence and context parallelism to synchronize results.
+Because these transformations are local and self-contained, Nest profiles their operator-level compute, memory, and communication costs offline. These pre-characterized costs are then composed analytically during higher-level placement, without expanding the dynamic programming (DP) search space.
+Any operator-level technique replacing a layer with an equivalent distributed implementation can be integrated as a Sub-Graph strategy by providing its transformed computation graph and runtime annotations.
+Graph-Global strategies.
+Graph-Global strategies act over the entire model computation graph such as pipeline parallelism (partitioning layers into stages), data parallelism (replicating the full model and synchronizing gradients), and ZeRO-style sharding (distributing optimizer states).
+They decide how layers, parameters, and data batches are distributed and scheduled across multiple devices or nodes, thereby reshaping the global execution plan.
+These strategies affect the global communication structure, memory balance, and inter-stage dependencies, and their impact cannot be localized to individual operators.
+Nest therefore incorporates Graph-Global strategies directly within its novel DP-based search, where it optimizes stage boundaries, replication factors, memory footprint, and communication overhead jointly under system-level constraints.
+Discussion.
+By treating Sub-Graph and Graph-Global strategies as orthogonal dimensions, with local transformations and global scheduling, Nest avoids the combinatorial explosion of enumerating all configurations.
+Instead, it composes pre-profiled local strategies within a globally optimized placement, enabling systematic integration of new parallelism forms (e.g., expert or activation sharding) under a unified compute–memory–communication cost model.
+3.2 Nest Workflow
+NEST constructs a unified optimization workflow across three stages: graph extraction, runtime estimation, and placement search. Importantly, Nest operates strictly as a planning system: it preserves the mathematical equivalence of the original training formulation and does not modify the underlying model code or kernels.
+It takes as input (1) a hardware specification (e.g., GPUs, TPUs, or domain-specific accelerators), (2) the model’s operator graph, and (3) a detailed network configuration specifying topology, bandwidth, latency, and communication protocols.
+Graph Extraction.
+Nest extracts the operator graph from training scripts using symbolic tracing and applies user-specified or predefined logical Sub-Graph transformations to represent standard intra-layer parallelization strategies (e.g., tensor or expert splits). It then inserts the corresponding communication operators into the cost model. Each resulting variant produces a self-contained operator graph that serves as the foundation for runtime modeling.
+Runtime Estimation.
+For each extracted graph, Nest performs an offline analysis to annotate compute and communication operators with platform-specific runtimes. Compute costs are derived from hardware estimators or profilers such as PyTorch PyTorch (2021), while communication costs are estimated using network simulators like AstraSim Won et al. (2023). This provides a unified view of computation, communication, and memory behavior across the hierarchy.
+Solver.
+Given operator graphs annotated with compute and communication costs, per-layer memory usage, and the cluster’s network characteristics, the DP solver explores Graph-Global configurations, including pipeline stage divisions, replication degrees, and data partitions, while incorporating the cost models of Sub-Graph strategies. This structured approach evaluates trade-offs among latency, memory, and bandwidth, identifying placements that maximize end-to-end throughput under memory and communication constraints. The final output is a parallelism configuration and placement plan.
+By integrating fine-grained Sub-Graph modeling with global Graph-Global exploration, Nest achieves scalable and generalizable device placement. Because Nest utilizes established parallel strategies without modifying the underlying mathematical operators, the resulting plan can be executed on standard distributed frameworks such as Megatron-LM NVIDIA () and NeMO NVIDIA (2022) while preserving the mathematical equivalence of the original training formulation.
+3.3 Nest Memory Modeling
+Following the approach in prior works Wang et al. (2024); Zhu et al. (2025); Lin et al. (2024), Nest employs symbolic-based analysis via Torch.fx Reed et al. (2021) to estimate workload memory requirements. During graph extraction, Nest traces the dependency graph to annotate operator metadata, including parameters, input sizes, and activation tensors. This is used by the Solver for memory modeling.
+The peak memory footprint for a contiguous subgraph (stage) SS is modeled during the pipeline’s “steady state” and comprises five components: model weights, accumulated gradients, optimizer states, current intermediate activations, and stashed data(activations held for in-flight microbatches). The volume of stashed data is schedule-dependent: for 1F1B, a stage at index ss from the pipeline end holds (s−1)(s-1) microbatches; for GPipe, this scales by B/dB/d.
+Nest evaluates two recomputation strategies:
+(1) Without Recomputation, where all intermediate activations are stashed; and
+(2) With Recomputation, where only stage-boundary input activations are stashed, with intermediate tensors re-materialized during the backward pass.
+Nest calculates peak memory using the equation:
+Mem​(S,s)=∑Li∈S(2⋅weights+opt_states+activations)+(s−1)⋅stashed_data\text{Mem}(S,s)=\\
+\sum_{L_{i}\in S}\Big(2\cdot\text{weights}+\text{opt\_states}+\text{activations}\Big)+\\
+(s-1)\cdot\text{stashed\_data}
+(1)
+By modeling memory as a linear function of the stage position ss, the solver avoids redundant computations across different pipeline positions, significantly accelerating the search optimization. Nest memory modeling was validated against compiled kernels and validated to be on average within 7% across evaluated models. Summary of the model estimations is in Appendix H
+4 Nest’s Dynamic Programming
+Nest introduces a novel network-, compute-, and memory-aware dynamic programming (DP) formulation that directly embeds network topology characteristics, bandwidth asymmetry, and per-stage compute latency and memory constraints into the optimization process. Even though prior works have employed DP for device placement, none have integrated network, compute, and memory awareness into a unified optimization framework Zheng et al. (2022); Wang et al. (2024); Tarnawski et al. (2021). By doing so, Nest can reason about co-location, overlap, and pruning jointly, ensuring feasible and high-efficiency placements across heterogeneous clusters. This section presents the design of this DP solver, evolving from a baseline formulation to a fully integrated, topology- and memory-conscious optimizer.
+DP Inputs and Search Space.
+Nest ​’s DP takes as input profiled operator graphs capturing multiple candidate configurations for tensor and expert parallelism. Each configuration records operator compute latency, collective communication costs (e.g., AllReduce, AllToAll), and per-layer memory usage. The DP also accounts for memory-saving techniques such as ZeRO sharding (parameters, gradients, optimizer), pipeline parallelism for layer partitioning, and data parallelism for scalable replication.
+These profiled graphs and system characterizations define the DP search space.
+Each state represents a partial assignment of layers, devices, and parallelization strategies, while each DP transition is a feasible extension respecting memory and network constraints.
+By reasoning over this structured search space, Nest systematically explores thousands of hybrid placements without explicit enumeration, balancing compute distribution, communication locality, and memory feasibility within a unified optimization framework.
+Local vs. Global Parallelism in the DP.
+Nest separates subgraph (local) and graph-global strategies within its DP formulation.
+Local strategies, such as tensor and expert parallelism, modify how a layer’s internal computation and parameters are distributed across accelerators. Their effects are captured during profiling and influence the per-stage latency term load​(⋅)\text{load}(\cdot).
+In contrast, graph-global strategies, such as data, pipeline, and ZeRO parallelism, reshape the boundaries between layers or stages and are explicitly explored by the DP during partitioning and placement.
+This separation allows Nest to maintain a tractable state space while still enabling hybrid configurations (e.g., tensor + pipeline + data parallelism) to be composed systematically.
+Subgraph strategies incorporate network awareness by modeling collective communication at multiple locality levels, such as intra-node, inter-node, and inter-rack, allowing the DP to reason about how local communication costs vary with physical placement and topology.
+Baseline DP: Network-Agnostic.
+We start with a simplified baseline that ignores network and memory constraints.
+Let dp[D][k][s] denote the minimum latency of executing a downset DD (a prefix of the layer graph) across kk devices and ss pipeline stages.
+The recurrence enumerates all subgraphs D′⊆DD^{\prime}\subseteq D and possible device allocations aa, considering local strategies such as tensor or expert parallelism width (t,et,e):
+d​pt​[D]​[k]​[s]=minD′⊆D⁡mina​max(d​pt​e​[D′]​[k−a]​[s−1],loadt​e​(D∖D′,a,s))dp^{t}[D][k][s]=\min_{D^{\prime}\subseteq D}\min_{a}\max\\
+\Big(dp^{te}[D^{\prime}][k-a][s-1],\;\text{load}^{te}(D\setminus D^{\prime},a,s)\Big)
+(2)
+Here, D∖D​’D\setminus D’ denotes the new stage assigned to aa devices, while loadt​e​(S,a,s)\text{load}^{te}(S,a,s) estimates the latency of that stage given the chosen tensor and expert parallelism configuration. The recurrence then proceeds recursively, optimizing the remaining layers over the remaining k−ak-a devices and s−1s-1 stages.
+This formulation efficiently prunes suboptimal decompositions but assumes a fully connected, uniform-cost network and ignores memory-induced constraints.
+Challenge and Level-Wise Network Abstraction.
+When network heterogeneity is introduced, a core challenge emerges: each pipeline stage’s latency depends not only on its own compute and backward communication, but also on the unknown placement of its predecessors that produce forward activations.
+Since the DP proceeds backward (from last to first stage), the producer’s location, and thus its communication cost, is unknown at decision time.
+Figure 4: The forward-pass dependency challenge and Nest ​’s level-wise abstraction. The cost from unassigned Layer 22 to Layer 23 is unknown but abstracted as a discrete communication level (e.g., Level 0, 1, or 2).
+Figure 4 illustrates this challenge. When placing layer 23, the backward link to layer 24 (already placed) has a known latency based on their relative placement, but the forward link from layer 22 depends on where that stage will be located (e.g., same node, same rack, or remote). This asymmetry breaks the optimal substructure assumption.
+Level-Wise Network Abstraction.
+To restore tractability, Nest introduces a level-wise abstraction that groups devices by communication locality. Instead of modeling every device pair, Nest treats the network level ll as a discrete DP state variable. This abstraction allows Nest to generalize to real-world topologies by populating a level-wise cost matrix based on physical interconnects. Examples include:
+•
+Hierarchical Fabrics (NVIDIA HGX/Spine-Leaf/Fat Tree): Levels map directly to switch tiers and link types. For example, l0l_{0} represents intra-node NVLink (e.g., 900 GB/s for H100), while l1l_{1} and l2l_{2} capture the significant bandwidth asymmetry of inter-node Ethernet/InfiniBand and oversubscribed inter-rack Spine-Leaf links. This allows the DP to avoid placing high-bandwidth pipeline stages across oversubscribed boundaries.
+•
+Non-Uniform Meshes (TPUv4 Torus): In torus-based systems, levels represent hop-distance or coordinate-affinity classes (e.g., l0l_{0}: same tile, l1l_{1}: 1-hop, l2l_{2}: remote). By mapping these to profiled latencies, Nest accounts for non-uniform communication costs when scaling to thousands of accelerators.
+As shown in Figure 4, the unknown forward cost is represented by a few network levels (typically 3–5). This lets the DP reason over levels instead of all device pairs, reducing combinatorial complexity while preserving hierarchical topology fidelity. Appendix C shows how this abstraction generalizes to non-uniform mesh and torus architectures.
+Key Observation.
+This abstraction is topology-agnostic. By decoupling locality from a fixed hierarchy, the level-wise abstraction allows Nest’s DP to generalize to diverse and future interconnects, preserving scalability while adapting to new topologies and communication models.
+Proposed DP: Network-Aware.
+With this abstraction, the DP recurrence becomes:
+d​pt​e​[l]​[D]​[k]​[s]=minD′⊆D⁡mina​max(d​pt​e​[l′]​[D′]​[k−a]​[s−1],loadlt​e​(D∖D′,a,s))dp^{te}[l][D][k][s]=\min_{D^{\prime}\subseteq D}\min_{a}\max\\
+\Big(dp^{te}[l^{\prime}][D^{\prime}][k-a][s-1],\;\text{load}^{te}_{l}(D\setminus D^{\prime},a,s)\Big)
+(3)
+Here, d​pt​e​[l]​[D]​[k]​[s]dp^{te}[l][D][k][s] denotes the minimum possible latency (i.e., the cost of the bottleneck stage) to execute the suffix of layers DD using kk devices partitioned into ss pipeline stages under tensor/expert parallel configurations (t,e)(t,e). The key new term is ll (level). Since the DP proceeds backward, from the last layer toward the first, the placement of the next stage (e.g., layer 22 in Figure 4) is unknown when placing the current stage (e.g., layer 23). ll represents the assumed communication distance of the yet-unplaced producer stage relative to the first stage in DD, acting as a “deferred forward cost” that preserves optimal substructure.
+Unified Cost Model and Recurrence.
+Equation 3 jointly finds the optimal pipeline cut-point (D′D^{\prime}) and device allocation (aa) for the new stage (D∖D′D\setminus D^{\prime}), exploring transitions across communication levels while pruning memory-infeasible states. The latency estimate loadlt​e​(⋅)\text{load}^{te}_{l}(\cdot) is central to co-optimization, capturing:
+•
+Compute latency: derived from profiled per-operator runtimes, scaled by tensor/expert parallelism degrees.
+•
+Network latency: determined by the level-wise communication cost matrix, accounting for collectives and both forward (from level ll) and backward (to D′D^{\prime}) traffic.
+•
+Memory-Optimization Co-design: AR and ZeRO are natively integrated into the state transition. If a state exceeds device memory, the solver incrementally increases ZeRO levels (1, 2, or 3) until feasibility is reached, adding the resulting collective overhead to the latency. Similarly, recomputation is modeled as a binary optimization choice that reduces the ”stashed data” memory term at the expense of higher compute latency.
+The recurrence uses max⁡(⋅,⋅)\max(\cdot,\cdot) to balance the new stage’s cost (loadlt​e\text{load}^{te}_{l}) with the remaining stages (d​pt​e​[l′]​[D′]​[k−a]​[s−1]dp^{te}[l^{\prime}][D^{\prime}][k-a][s-1]), where l′l^{\prime} encodes the communication level between consecutive stages. This unified model ensures Nest considers only valid configurations, automatically trading off memory reduction (sharding) against communication overhead (co-location). Overall, this formulation lets Nest jointly optimize placement, communication, and memory, favoring co-location of frequently communicating stages while penalizing cross-level traffic.
+Example.
+Consider the example in Figure 4. When placing layer 23, the DP enumerates its possible locations at each communication level relative to layer 24. For each option, it pre-computes the deferred forward costs corresponding to potential placements of layer 22. These partial sub-solutions are stored in dp[l][23,24][2][2]. Later, when placing layer 22, Nest simply uses these precomputed costs to select the globally optimal configuration—achieving optimality without exhaustive enumeration.
+Summary.
+Nest’s dynamic programming is novel in three ways: (1) a hierarchical level-wise abstraction making network-aware placement tractable, (2) a unified compute–network–memory model embedding feasibility in the recurrence, and (3) orthogonal handling of local and global parallelism within a structured optimization framework.
+5 Evaluation
+5.1 Methodology and Setup
+Models: Table 2 lists the large language models used to evaluate Nest, including Llama2-7B Touvron et al. (2023), Llama3-70B Grattafiori et al. (2024) (Hugging Face Wolf et al. (2019)), and BertLarge Devlin et al. (2019), GPT3-175B, and Mixtral8x7B Brown et al. (2020); Jiang et al. (2024) (tensor and expert parallelism; Megatron-LM NVIDIA (); Shoeybi et al. (2020)). Operator graphs are extracted with Torch.fx Reed et al. (2021). A global batch size of 4096, and microbatch size of 1 is used for all experiments, unless stated otherwise.
+Operator-Level Estimates, Runtime Profiles, and Nest Execution: For TPUv4-like accelerators, operator latencies are estimated using hardware-validated libraries Sunstone Olyaiy et al. (2023) (tensor cores) and Tandem Ghodrati et al. (2024) (vector cores), with ILP-based layer scheduling from prior work Wang et al. (2024). For GPUs, compute latencies are profiled at operator and layer levels using the PyTorch Profiler PyTorch (2021), and communication collectives are modeled and validated with AstraSim Won et al. (2023) (Appendix E). Nest runs on an H100 GPU to extract operator graphs and runtime profiles. Experiments use RHEL 9.6, Python 3.10, and a C++ solver compiled with g++ 12.4.0.
+Baselines.
+We compare Nest against five baselines:
+(1) Manual placements from prior work Narayanan et al. (2021b); Wang et al. (2024), scaling data parallelism across cluster sizes.
+(2) Phaze Wang et al. (2024), a network-unaware DP framework built on Piper Tarnawski et al. (2021); we evaluate only its device placement component.
+(3) MCMC-based placement Wang et al. (2023), implemented to explore the same parallelization strategies as Nest.
+(4) Alpa Zheng et al. (2022), a state-of-the-art DP framework leveraging intra-operator parallelism.
+(5) Mist Zhu et al. (2025), a state-of-the-art DP framework focusing on scheduling and memory optimizations.
+For fairness, Nest and baselines, use PipeDream-Flush schedule Narayanan et al. (2021a) and shared cost model. All MCMC baselines were run 10 times, reporting the best-performing result to ensure robust comparison. A key challenge with Alpa at scale is that its native design requires full-cluster access for runtime profiling, which is infeasible for large-scale deployments. To address this, we create an offline variant, Alpa-E (Alpa Estimator), which retains Alpa’s core optimization while replacing its hardware-dependent profiler with our unified estimator. This isolates differences in search efficiency and placement quality under identical cost assumptions. In Section 5.4, we evaluate Alpa’s original profiling-based implementation, Alpa-O, on real hardware where direct profiling is feasible.
+Similarly, the Mist placement search algorithm requires execution on at least one physical device to function, and its current implementation is optimized specifically for NVIDIA architectures. Consequently, we evaluate Mist exclusively in Section 5.3 during our large-scale experiments on NVIDIA H100 GPUs. This ensures that the baseline is evaluated within its intended operational environment. In this evaluation, we compare against Mist’s placement strategy rather than its scheduling optimizations, as we consider those optimizations orthogonal to Nest ’s goals. We expect even larger gains if Nest ’s network-aware placement is combined with Mist’s scheduling algorithm.
+Table 2: Model workloads evaluated using Nest. Hyperparameters: number of layers (#L), attention heads (#AH), and hidden size (H). Distributed strategies for 512 devices specify pipeline depth (p), data-parallel width (d), tensor model-parallel width (t), sequence parallel width (s), expert degree (e), and context-parallel degree (c), formatted as {p, d, t, s, (e,c)}. Sequence-parallel width (s), if applied, equals tensor model-parallel width (t), as both are partitioned across the same set of devices. For Alpa, only the number of pipelines per stage is listed, as it performs intra-operator sharding within each stage.
+Hyper
+Distributed Strategy {p,d,t,s,(e,c)}
+Model
+Model
+Sequence
+parameters
+TMP
+Expert
+Context
+Manual
+MCMC
+Alpa
+Phaze
+Nest
+Recomputation
+Parameters
+Length
+#L, #AH, H
+Widths
+Degree
+Degree
+vs. Stashing
+Llama2 7B
+7B
+4096
+32, 32, 4096
+-
+-
+-
+{8, 64, 1, 1}
+{11, 46, 1, 1}
+{32, -, -, -}
+{6, 85, 1, 1}
+{8, 64, 1, 1}
+Recomputation
+Llama3 70B
+70B
+4096
+80, 64, 8192
+-
+-
+-
+{80, 6, 1, 1}
+{80, 6, 1, 1}
+{52, -, -, -}
+{41, 12, 1, 1}
+{81, 6, 1, 1}
+Recomputation
+Tensor Model Parallel Models
+-
+-
+BertLarge
+350M
+512
+24, 16, 1024
+1,2,4,8
+-
+-
+{8, 64, 1, 1}
+{2, 256, 1, 1}
+{24, -, -, -}
+{1, 512, 1, 1}
+{1, 512, 1, 1}
+Stashing
+Megatron GPT3
+175B
+2048
+96, 96, 12288
+4,8
+-
+-
+{32, 4, 4, 1}
+{9, 7, 8, 1}
+{72, -, -, -}
+{16, 8, 4, 1}
+{16, 8, 4, 4}
+Recomputation
+Expert Parallel Models
+Mixtral 8x7B
+47B
+4096
+32, 32, 14336
+-
+1,2,4,8
+1,2,4,8
+{32, 4, 1, 1, 4, 1}
+{32, 4, 1, 1, 4, 1}
+{32, -, -, -}
+{16, 8, 1, 1, 4, 1}
+{8, 8, 1, 1, 4, 2}
+Recomputation
+Figure 5: Throughput comparison between Nest and baselines on a Fat-Tree network of TPUv4 accelerators. Throughput improvements are relative to the manual baseline’s smallest valid result. “X” indicates cases where the baseline failed to find a valid placement.
+5.2 Accelerators with Fat-Tree Execution
+We evaluate Nest on fat-tree topologies with 64–1,024 TPUv4-like accelerators. Each node has eight accelerators connected via an HGX-style link (900 GB/s), with four nodes per first-level switch (100 GB/s) and second-level aggregation at 400 GB/s (Figure 8(a)). Table 2 lists workloads, and Figure 5 reports throughput gains.
+Alpa is limited to 512 devices due to profiling overhead, which grows rapidly as it enumerates all layer–mesh configurations (up to 48 hours, and in some cases doesn’t converge in 3 days). In contrast, Nest completes optimization in 3 minutes to 1.5 hours—scaling from BertLarge to GPT-3 175B on 1,024 devices—by constructing valid subgraphs per device and using template-based parallelism. MCMC and Phaze show similar runtimes.
+We further study the impact of ZeRO Optimization in Appendix D under a similar network topology.
+5.2.1 Throughput Improvements
+On average, Nest ’s distribution strategy achieves 1.59×\times higher throughput than manual placements, 1.71×\times higher than MCMC-based search, 2.43×\times higher than Alpa-E, and 1.19×\times higher than Phaze. Importantly, Nest scales nearly linearly with cluster size, while other baselines either fail to find valid placements or experience diminishing returns. These results demonstrate the effectiveness of Nest ’s network-aware optimization and systematic search in delivering both high performance and robust scalability.
+Comparison with Random Search Methods (MCMC).
+MCMC-based methods rely on random exploration and offer no optimality guarantees, with performance degrading as cluster size and model scale grow. While small models like BertLarge may see competitive strategies, larger models such as Megatron-GPT3 and Mixtral8x7B require far more iterations for meaningful gains. Even after an extensive search, MCMC underperforms both manual placements and Nest, and is highly sensitive to initialization. For example, on Llama2-7B, MCMC matches Nest only at 512 devices but fails at other scales; GPT3 and Llama3-70B show similar trends. These results motivate Nest: the need for structured, deterministic optimization that efficiently explores the parallelization space without exhaustive search.
+Figure 6: Throughput improvement relative to a manual baseline (microbatch size 1). “X” marks baseline failures due to memory constraints. High memory requirements limit Llama2-7B and Llama3-70B to microbatch sizes 4 and 2, respectively.
+Comparison with Phaze.
+Phaze’s dynamic programming (DP) assumes a flat, uniform network. While it balances computation, it overlooks communication costs, reducing throughput on heterogeneous interconnects—especially at scale.
+In contrast, Nest incorporates network topology and bandwidth heterogeneity directly into its DP solver, co-optimizing across an expanded search space that includes SP and CP.
+Nest incorporates network topology and bandwidth heterogeneity into its DP, selecting parallelism degrees and stage assignments that minimize communication while balancing computation. For example, in Llama2-7B and Mixtral-8×7B, Nest ​’s network-aware partitioning improves pipeline balance and reduces stalls.
+Even under a similar parallelism plan (e.g., GPT3-175B), Nest achieves higher throughput by assigning fewer layers to stages connected via slower links, equalizing total stage time (compute + communication). This topology-adaptive balancing mitigates pipeline bubbles and link bottlenecks, sustaining near-linear scaling as models and clusters grow.
+When the model fits within a single pipeline stage (p=1p=1) or each layer forms its own stage (p=#​Lp=\#L), Phaze and Nest achieve similar throughput (e.g., BertLarge).
+Insight: Topology-adaptive partitioning enables Nest to equalize stage latency across heterogeneous links, maintaining balanced pipelines and sustaining linear scaling where topology-agnostic baselines stall.
+Comparison with Alpa.
+At small scales (≤\leq128 devices), Alpa-E achieves throughput comparable to Nest, with gains up to 3%, stemming from its fine-grained operator and layer sharding. On larger clusters and communication-heavy models like GPT-3-175B and Mixtral 8×7B, Alpa’s performance drops due to three main limitations: (1) memory feasibility is checked only post placements, (2) pipeline stages are optimized independently, limiting data-parallel scaling, and (3) Alpa’s 2D mesh assumes uniform communication, ignoring hierarchical network effects, which leads to over-sharding and suboptimal placements at larger scales.
+Memory Modeling.
+Alpa verifies memory feasibility post hoc, often forcing aggressive sharding of activations and parameters, increasing search time and can fail on large models for small clusters (e.g., GPT3-175B or Llama3-70B on 64 GPUs). In contrast, Nest integrates memory and network constraints into its dynamic programming, evaluating each subgraph placement against memory budgets. Combined with ZeRO-based subgraph decomposition, this enables efficient scaling of large models on fewer devices.
+Effects of Over-sharding.
+Alpa optimizes stages independently, scaling larger clusters by splitting layers across devices rather than replicating pipelines, increasing communication and reducing utilization, especially for smaller models like BertLarge or clusters beyond 128 devices. Nest avoids this by first optimizing intra-stage efficiency and then replicating pipelines to fully utilize hardware while balancing throughput and communication. This enables partial cluster utilization when beneficial, whereas Alpa enforces full device usage even when it lowers per-device efficiency.
+Insight: Explicit memory-aware optimization. Accurate memory modeling enables Nest to detect bottlenecks early and apply targeted optimizations, making training feasible where memory-limited baselines fail.
+5.2.2 Intra-operator vs Template-based Parallelism
+Alpa uses fine-grained intra-operator sharding to maximize parallelism but incurs high communication overhead, limiting performance on larger or heterogeneous clusters (beyond 128 devices). Nest and Phaze use template-based parallelism, such as tensor and expert parallelism, which exploit the repetitive structure of Transformer models with coarser granularity and lower communication. Phaze, however, assumes a flat interconnect and ignores network topology and bandwidth asymmetry, limiting performance at scale (e.g., 1,024 devices).
+Nest overcomes these limitations by integrating network-aware placement into its template-based design, co-optimizing stage partitioning and inter-device communication based on real topology and bandwidth. This ensures balanced stage execution and avoids communication stalls, allowing Nest to match Alpa and Phaze on small clusters while delivering increasing throughput gains as cluster size grows.
+5.2.3 Joint Exploration with Microbatch Size
+Microbatch size and parallelization strategy strongly affect training throughput. Nest incorporates runtime factors like microbatch size and activation recomputation into graph extraction and cost estimation, enabling joint optimization with subgraph-level parallelism.
+Figure 6 shows throughput for Nest and baselines on BertLarge, Llama2-7B, and Llama3-70B across a 256-device cluster; 512-device results in Appendix F show similar trends, except Alpa scales poorly due to oversharding.
+Optimal microbatch size varies by model and strategy. For instance, while Llama models benefit from larger microbatches, BertLarge shows little improvement under Nest and even degrades under manual placement. Changes in microbatch size shift compute intensity and memory footprint, often altering the optimal parallelism configuration (e.g., Llama2-7B shifts from {P​=​8,D​=​64,T​=​1}\{P\text{=}8,D\text{=}64,T\text{=}1\} to {16,32,1}\{16,32,1\} as batch size increases from 1 to 2).
+Alpa-E also benefits from larger microbatches, improving throughput by up to 1.8×\times for small models like BertLarge, but requires over 80 hours to sweep four batch sizes. In contrast, Nest completes the same joint exploration in 50 minutes, over 90×\times faster, while achieving consistently higher throughput, making comprehensive joint optimization practical at scale.
+Figure 7: Throughput comparison between Nest and baselines on a Spine-Leaf network of 1024 H100 GPUs. Throughput improvements are relative to the manual baseline. Mist does not support GPT3-175B and Mixtral-8x7B, as indicated with an ”X”.
+5.3 H100 GPU Based Spine-Leaf Execution
+To demonstrate Nest ’s generality across hierarchical topologies, we evaluate it on a 1,024-GPU H100 spine–leaf cluster based on the real topology in Figure 2. Each node has eight H100-80GB GPUs (NVLink 900 GB/s); first-level switches connect four nodes at 12.5 GB/s to two spine switches, forming a 2:2 oversubscribed topology. Operator runtimes are profiled on H100 GPUs, and collective communication costs are modeled with AstraSim.
+We exclude Alpa-O from this large-scale evaluation because it requires full-cluster access for profiling, which is impractical at this scale. While Alpa-E supports cost estimation, using it here would be inconsistent with our profiled H100-based setup and would prevent a fair comparison. Direct hardware-based comparisons with Alpa-O are instead presented on smaller clusters in Section 5.4. Instead, we compare against Mist Zhu et al. (2025), a state-of-the-art DP framework focusing on scheduling and memory optimizations, which only requires access to a single H100 for strategy tuning.
+We compare against the same set of models listed in Table 2, along with a scaled-down GPT-3 model (GPT3-35B; details in Appendix G). We use this smaller variant because Mist does not support GPT models with a hidden dimension larger than 8192, as used in the standard GPT3-175B configuration. In addition, Mist does not support MoE models such as Mixtral. Figure 5 shows the resulting throughput improvements.
+On average, Nest ’s distribution strategy achieves 1.47×\times higher throughput than manual placements, 1.40×\times higher than MCMC-based search, 1.49×\times higher than Mist, and 1.16×\times higher than Phaze. These gains stem from its ability to align computation stages with available bandwidth, delivering robust and scalable performance across diverse hardware and network configurations.
+Both hardware and network variations strongly influence training performance, determining whether computation or communication becomes the bottleneck. For example, in the Mixtral model, communication can account for up to 10% of total execution time on a constrained network, compared to only 1% on a fat-tree topology. Nest distinguishes itself by explicitly modeling topology and communication costs during workload partitioning, enabling it to balance computation and communication effectively.
+In contrast, Phaze’s network-agnostic strategy can create severe latency imbalances under limited bandwidth, and MCMC-based random search often fails to adapt in oversubscribed settings. For instance, for the BertLarge model, Phaze selects a configuration of p=13, d=78, t=1, which results in frequent cross-node communication and up to 2×\times imbalance in per-stage latency.
+In comparison, Nest recognizes the low inter-node bandwidth of this network configuration and instead selects p=8, d=128, t=1, keeping pipeline communication within a single node. As a result, it reduces inter-stage latency variation to under 2% and consistently achieves higher throughput. This allows Nest to deliver stable throughput gains and strong generalization across diverse hardware and network scales.
+Comparison with Mist. Nest achieves higher throughput across all evaluated models due to its network-aware stage partitioning and placement strategy. For most models, Nest favors shallower pipelines to reduce pipeline bubbles and minimize cross-node communication frequency, instead leveraging higher data-parallel degrees to scale throughput.
+While Mist supports uneven layer partitioning across pipeline stages, this feature is primarily designed to accommodate varying memory optimizations and maximize compute-communication overlap. Because Mist lacks network awareness, it cannot account for bandwidth heterogeneity across links; consequently, it fails to balance the actual communication-to-compute ratio across the cluster. In contrast, Nest’s topology-adaptive approach ensures that stage latencies remain equalized even when crossing oversubscribed rack links.
+Furthermore, Nest demonstrates significantly higher search efficiency than Mist. Across all evaluated models, the Nest solver achieves shorter runtimes, finding optimal placements on average 30% faster than Mist under identical model and hardware configurations. A breakdown of the exploration time for each model is provided in Appendix I.
+5.4 V100 GPU Based Spine–Leaf Execution
+We validate Nest on real hardware using 8- and 16-GPU clusters (2×\timesV100 per node, NVLink 300 GB/s, nodes connected via 12.5 GB/s switches). Alpa’s profiling-based variant (Alpa-O), which performs fine-grained intra- and inter-operator sharding, is highly effective at small scales and serves as a strong baseline.
+We run Alpa-O on the full cluster, while Nest leverages pre-profiled traces and simulator-guided placement to eliminate extensive profiling overhead. On a scaled-down Mixtral model (Appendix J), Nest achieves throughput within 7% of Alpa on the 8-GPU cluster while reducing optimization time from 1 hour to 5 minutes, and outperforms Alpa by 1.8×\times on the 16-GPU cluster. These results show that Nest matches highly optimized, profiling-based strategies on real hardware at small scales while scaling more efficiently to larger clusters.
+6 Related Works
+Device Placement Frameworks.
+Systems such as FlexFlow Jia et al. (2019), Piper Tarnawski et al. (2021), Pip Tarnawski et al. (2020), and RL-based approaches Mirhoseini et al. (2017) automate parallelism configuration using reinforcement learning, dynamic programming, or random search, but typically assume simplified or flat networks and ignore topology heterogeneity. Alpa Zheng et al. (2022) adds limited topology awareness with a two-level mesh and hybrid ILP–DP search, but lacks support for hierarchical or oversubscribed networks, integrated memory modeling, and expert parallelism.
+Recent work expands the design space along different axes. Aceso Liu et al. (2024) emphasizes memory feasibility and utilization via greedy, bottleneck-driven search but relies on local heuristics without global optimality guarantees. Mist Zhu et al. (2025) uses MILP to optimize compute–communication overlap, yet treats topology as secondary and scales poorly to large hierarchical clusters.
+Other systems provide tooling rather than unified optimization. For example, nnScaler Lin et al. (2024) supports manual exploration of scaling strategies but does not jointly optimize compute, memory, and network placement.
+Joint Optimization with Device Placement.
+Phaze Wang et al. (2024) and WHAM Adnan et al. (2024); Phanishayee et al. (2022) optimize part of the search space—including hardware and placement—using ILP for operator scheduling but assume a flat network. TopoOpt Wang et al. (2023) adds topology awareness via FlexNet and MCMC-based placement, yet lacks optimality guarantees, scales poorly in large search spaces, and does not support ZeRO or expert parallelism.
+Nest advances this direction with a dynamic programming framework for placement on fixed accelerator architectures, unifying communication, memory, and topology modeling to enable hybrid parallelism across hierarchical and oversubscribed networks while preserving scalability and optimality.
+Network-Aware Distributed Machine Learning.
+Works such as Cassini Chen et al. (2022) and Themis Rashidi et al. (2022) study network-aware scheduling in multi-tenant ML clusters. Cassini uses geometric abstractions for job placement, while Themis coordinates collective operations to reduce congestion. These approaches mitigate inter-job interference, whereas Nest focuses on optimizing a single distributed training job.
+7 Limitation and Discussion
+Nest uses a flexible, level-wise abstraction of network locality. While applied here to hierarchical topologies such as fat-tree, it is not limited to them. By decoupling logical locality from physical hierarchy, Nest ’s dynamic programming engine generalizes across diverse interconnects.
+For non-hierarchical networks (e.g., 3D torus), levels can represent affinity classes based on hop distance or coordinate proximity, with costs derived from profiled or analytical latencies. This enables Nest to adapt to new architectures by updating the cost model without changing the DP formulation.
+Nest also provides a structured framework for integrating existing and emerging parallelism (e.g., sequence parallelism), while focusing on placement optimization rather than new parallelization techniques.
+8 Conclusion
+We presented Nest, the first structured, network-, compute-, and memory-aware device placement framework that unifies model parallelism and placement via structured dynamic programming. By modeling hierarchical networks and supporting a wide variety of parallelism strategies, Nest enables efficient, scalable training across diverse hardware. Evaluations demonstrate consistent gains in throughput, memory efficiency, and scalability over state-of-the-art baselines, providing a foundation for co-designing parallelization strategies and AI datacenter infrastructure.
+9 Acknowledgments
+We would like to thank Amar Phanishayee for early discussions that helped inspire and shape the initial direction of this project, as well as our shepherd and reviewers for their insightful comments. This project is partially supported by gifts from Google, AMD, and the Natural Sciences and Engineering Research Council of Canada (NSERC), [funding reference number 587440-2024]. This research was supported in part through cyber-infrastructure research resources and services provided by the Partnership for an Advanced Computing Environment (PACE) at the Georgia Institute of Technology, Atlanta, Georgia, USA.
+References
+Adnan et al. (2024)
+M. Adnan, A. Phanishayee, J. Kulkarni, P. J. Nair, and D. Mahajan
+Workload-aware hardware accelerator mining for distributed deep learning training.
+External Links: 2404.14632
+Cited by: §6.
+Brown et al. (2020)
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and D. Amodei
+Language models are few-shot learners.
+In Advances in Neural Information Processing Systems,  H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin (Eds.),
+Vol. 33, pp. 1877–1901.
+Cited by: §5.1.
+Chen et al. (2022)
+Z. Chen, G. Ananthanarayanan, J. Guan Restrepo, S. Kandula, and M. Zhang
+Cassini: a fast and network-aware job scheduler for ml clusters.
+In 19th USENIX Symposium on Networked Systems Design and Implementation (NSDI 22),
+pp. 541–556.
+External Links: ISBN 978-1-939133-27-4
+Cited by: §6.
+Devlin et al. (2019)
+J. Devlin, M. Chang, K. Lee, and K. Toutanova
+BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding.
+External Links: 1810.04805
+Cited by: §5.1.
+Ghodrati et al. (2024)
+S. Ghodrati, S. Kinzer, H. Xu, R. Mahapatra, B. H. Ahn, D. K. Wang, L. Karthikeyan, A. Yazdanbakhsh, J. Park, N. S. Kim, and H. Esmaeilzadeh
+Tandem processor: grappling with emerging operators in neural networks.
+In ASPLOS,
+Cited by: §5.1.
+Go et al. (2025)
+S. Go, J. Park, S. More, H. Wu, I. Wang, A. Jezghani, T. Krishna, and D. Mahajan
+Characterizing the efficiency of distributed training: a power, performance, and thermal perspective.
+In Proceedings of the 58th Annual IEEE/ACM International Symposium on Microarchitecture (MICRO),
+Seoul, South Korea.
+Cited by: §1,
+§2.
+Grattafiori et al. (2024)
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, and et al.
+The llama 3 herd of models.
+External Links: 2407.21783,
+Link
+Cited by: §5.1.
+Huang et al. (2019)
+Y. Huang, Y. Cheng, A. Bapna, O. Firat, D. Chen, M. X. Chen, H. Lee, J. Ngiam, Q. V. Le, Y. Wu, and Z. Chen
+GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism.
+In Advances in Neural Information Processing Systems 32: Annual Conference
+on Neural Information Processing Systems 2019, NeurIPS 2019, 8-14
+December 2019, Vancouver, BC, Canada,
+pp. 103–112.
+Cited by: §1,
+§2.
+Jia et al. (2019)
+Z. Jia, M. Zaharia, and A. Aiken
+Beyond data and model parallelism for deep neural networks..
+In Proceedings of Machine Learning and Systems,  A. Talwalkar, V. Smith, and M. Zaharia (Eds.),
+Vol. 1, pp. 1–13.
+Cited by: §6.
+Jiang et al. (2024)
+A. Q. Jiang, A. Sablayrolles, A. Roux, A. Mensch, B. Savary, C. Bamford, D. S. Chaplot, D. de las Casas, E. B. Hanna, F. Bressand, G. Lengyel, G. Bour, G. Lample, L. R. Lavaud, L. Saulnier, M. Lachaux, P. Stock, S. Subramanian, S. Yang, S. Antoniak, T. L. Scao, T. Gervet, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed
+Mixtral of experts.
+External Links: 2401.04088,
+Link
+Cited by: §5.1.
+Jouppi et al. (2023)
+N. Jouppi, G. Kurian, S. Li, P. Ma, R. Nagarajan, L. Nai, N. Patil, S. Subramanian, A. Swing, B. Towles, C. Young, X. Zhou, Z. Zhou, and D. A. Patterson
+TPU v4: an optically reconfigurable supercomputer for machine learning with hardware support for embeddings.
+In Proceedings of the 50th Annual International Symposium on Computer Architecture,
+ISCA ’23, New York, NY, USA.
+External Links: ISBN 9798400700958,
+Document
+Cited by: §1.
+Krizhevsky et al. (2017)
+A. Krizhevsky, I. Sutskever, and G. E. Hinton
+ImageNet Classification with Deep Convolutional Neural Networks.
+Commun. ACM 60 (6), pp. 84–90.
+Cited by: §1.
+Langston (2020)
+J. LangstonMicrosoft announces new supercomputer, lays out vision for future ai work(Website)
+Note: https://news.microsoft.com/source/features/innovation/openai-azure-supercomputer/
+Cited by: §1.
+Lee et al. (2025)
+S. Lee, J. Oh, S. Go, and D. Mahajan
+Characterizing compute-communication overlap in gpu-accelerated distributed deep learning: performance and power implications.
+In 2025 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS),
+Vol. , pp. 353–355.
+External Links: Document
+Cited by: §1.
+Lepikhin et al. (2020)
+D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen
+GShard: scaling giant models with conditional computation and automatic sharding.
+External Links: 2006.16668,
+Link
+Cited by: §1.
+Lin et al. (2024)
+Z. Lin, Y. Miao, Q. Zhang, F. Yang, Y. Zhu, C. Li, S. Maleki, X. Cao, N. Shang, Y. Yang, W. Xu, M. Yang, L. Zhang, and L. Zhou
+nnScaler: Constraint-Guided parallelization plan generation for deep learning training.
+In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24),
+Santa Clara, CA, pp. 347–363.
+External Links: ISBN 978-1-939133-40-3,
+Link
+Cited by: §3.3,
+§6.
+Liu et al. (2024)
+G. Liu, Y. Miao, Z. Lin, X. Shi, S. Maleki, F. Yang, Y. Bao, and S. Wang
+Aceso: efficient parallel dnn training through iterative bottleneck alleviation.
+In Proceedings of the Nineteenth European Conference on Computer Systems,
+EuroSys ’24, New York, NY, USA, pp. 163–181.
+External Links: ISBN 9798400704376,
+Link,
+Document
+Cited by: §2,
+§2,
+§6.
+Microsoft (2024)
+Microsoft
+Inside maia 100: revolutionizing ai workloads with microsoft’s custom ai accelerator.
+External Links: Link
+Cited by: §1,
+§2.
+Mirhoseini et al. (2017)
+A. Mirhoseini, H. Pham, Q. V. Le, B. Steiner, R. Larsen, Y. Zhou, N. Kumar, M. Norouzi, S. Bengio, and J. Dean
+Device placement optimization with reinforcement learning.
+In Proceedings of the 34th International Conference on Machine Learning - Volume 70,
+ICML’17, pp. 2430–2439.
+Cited by: §2,
+§6.
+Narayanan et al. (2019)
+D. Narayanan, A. Harlap, A. Phanishayee, V. Seshadri, N. R. Devanur, G. R. Ganger, P. B. Gibbons, and M. Zaharia
+PipeDream: Generalized Pipeline Parallelism for DNN Training.
+In Proceedings of the 27th ACM Symposium on Operating Systems Principles,
+pp. 1–15.
+Cited by: §1,
+§2,
+§2.
+Narayanan et al. (2021a)
+D. Narayanan, A. Phanishayee, K. Shi, X. Chen, and M. Zaharia
+Memory-efficient pipeline-parallel DNN training.
+In International Conference on Machine Learning,
+pp. 7937–7947.
+Cited by: §5.1.
+Narayanan et al. (2021b)
+D. Narayanan, M. Shoeybi, J. Casper, P. LeGresley, M. Patwary, V. Korthikanti, D. Vainbrand, P. Kashinkunti, J. Bernauer, B. Catanzaro, A. Phanishayee, and M. Zaharia
+Efficient large-scale language model training on gpu clusters using megatron-lm.
+In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis,
+SC ’21, New York, NY, USA.
+External Links: ISBN 9781450384421,
+Document
+Cited by: §5.1.
+[23]
+NVIDIAH100(Website)
+Note: https://www.nvidia.com/en-us/data-center/h100/
+Cited by: Appendix E.
+[24]
+NVIDIAHGX(Website)
+Note: https://www.nvidia.com/en-us/data-center/hgx/
+Cited by: 8(c).
+[25]
+NVIDIAMegatron-lm(Website)
+Note: https://github.com/NVIDIA/Megatron-LM
+Cited by: §1,
+§2,
+§3.2,
+§5.1.
+NVIDIA (2022)
+NVIDIA
+NeMO.
+External Links: Link
+Cited by: §1,
+§2,
+§3.2.
+NVIDIA (2024)
+NVIDIA
+NVIDIA dgx superpod: next generation scalable infrastructure for ai leadership reference architecture featuring nvidia dgx b200.
+External Links: Link
+Cited by: §1,
+§2.
+Olyaiy et al. (2023)
+M. Olyaiy, C. Ng, A. Fedorova, and M. Lis
+Sunstone: A Scalable and Versatile Scheduler for Mapping Tensor Algebra on Spatial Accelerators.
+In 2023 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS),
+Cited by: §5.1.
+Patel (2024)
+A. Patel
+Wide open: nvidia accelerates inference on meta llama 3.
+Note: https://resources.nvidia.com/en-us-nim/wide-open-accelerate-inference
+Cited by: §1.
+Phanishayee et al. (2022)
+A. Phanishayee, D. Mahajan, J. Kulkarni, M. Castro, and M. Adnan
+Workload-aware hardware architecture recommendations.
+Google Patents.
+Note: US Patent App. 17/965,681
+External Links: Link
+Cited by: §6.
+Phanishayee et al. (2025)
+A. Phanishayee, D. Mahajan, and J. M. Tarnawski
+Integrated hardware architecture and distribution strategy optimization for deep learning models.
+Google Patents.
+Note: US Patent App. 18/452,162
+External Links: Link
+Cited by: §1.
+PyTorch (2021)
+PyTorch
+PyTorch profiler.
+External Links: Link
+Cited by: §3.2,
+§5.1.
+Rajbhandari et al. (2020)
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He
+ZeRO: memory optimizations toward training trillion parameter models.
+In Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis,
+SC ’20.
+External Links: ISBN 9781728199986
+Cited by: §1,
+§2.
+Rashidi et al. (2022)
+S. Rashidi, W. Won, S. Srinivasan, S. Sridharan, and T. Krishna
+Themis: a network bandwidth-aware collective scheduling policy for distributed training of dl models.
+In Proceedings of the 49th Annual International Symposium on Computer Architecture,
+ISCA ’22, New York, NY, USA, pp. 581–596.
+External Links: ISBN 9781450386104,
+Document
+Cited by: §6.
+Rasley et al. (2020)
+J. Rasley, S. Rajbhandari, O. Ruwase, and Y. He
+DeepSpeed: system optimizations enable training deep learning models with over 100 billion parameters.
+In Proceedings of the 26th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining,
+KDD ’20, New York, NY, USA, pp. 3505–3506.
+External Links: ISBN 9781450379984,
+Document
+Cited by: §1,
+§2.
+Reed et al. (2021)
+J. K. Reed, Z. DeVito, H. He, A. Ussery, and J. Ansel
+Torch.fx: practical program capture and transformation for deep learning in python.
+CoRR abs/2112.08429.
+Cited by: §3.3,
+§5.1.
+Shoeybi et al. (2020)
+M. Shoeybi, M. Patwary, R. Puri, P. LeGresley, J. Casper, and B. Catanzaro
+Megatron-lm: training multi-billion parameter language models using model parallelism.
+External Links: 1909.08053
+Cited by: §5.1.
+Tarnawski et al. (2021)
+J. Tarnawski, D. Narayanan, and A. Phanishayee
+Piper: Multidimensional Planner for DNN Parallelization.
+In NeurIPS 2021,
+External Links: Link
+Cited by: §1,
+§2,
+§4,
+§5.1,
+§6.
+Tarnawski et al. (2020)
+J. Tarnawski, A. Phanishayee, N. Devanur, D. Mahajan, and F. N. Paravecino
+Efficient algorithms for device placement of dnn graph operators.
+In Proceedings of the 34th International Conference on Neural Information Processing Systems,
+NIPS ’20, Red Hook, NY, USA.
+External Links: ISBN 9781713829546
+Cited by: §1,
+§2,
+§6,
+Abstract.
+Touvron et al. (2023)
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, D. Bikel, L. Blecher, C. C. Ferrer, M. Chen, G. Cucurull, D. Esiobu, J. Fernandes, J. Fu, W. Fu, B. Fuller, C. Gao, V. Goswami, N. Goyal, A. Hartshorn, S. Hosseini, R. Hou, H. Inan, M. Kardas, V. Kerkez, M. Khabsa, I. Kloumann, A. Korenev, P. S. Koura, M. Lachaux, T. Lavril, J. Lee, D. Liskovich, Y. Lu, Y. Mao, X. Martinet, T. Mihaylov, P. Mishra, I. Molybog, Y. Nie, A. Poulton, J. Reizenstein, R. Rungta, K. Saladi, A. Schelten, R. Silva, E. M. Smith, R. Subramanian, X. E. Tan, B. Tang, R. Taylor, A. Williams, J. X. Kuan, P. Xu, Z. Yan, I. Zarov, Y. Zhang, A. Fan, M. Kambadur, S. Narang, A. Rodriguez, R. Stojnic, S. Edunov, and T. Scialom
+Llama 2: open foundation and fine-tuned chat models.
+External Links: 2307.09288
+Cited by: §5.1.
+Wang et al. (2024)
+I. Wang, J. Tarnawski, A. Phanishayee, and D. Mahajan
+Integrated hardware architecture and device placement search.
+In International Conference on Machine Learning,
+Cited by: §1,
+§2,
+§3.3,
+§4,
+§5.1,
+§5.1,
+§6,
+Abstract.
+Wang et al. (2023)
+W. Wang, M. Khazraee, Z. Zhong, M. Ghobadi, Z. Jia, D. Mudigere, Y. Zhang, and A. Kewitsch
+TopoOpt: co-optimizing network topology and parallelization strategy for distributed training jobs.
+In 20th USENIX Symposium on Networked Systems Design and Implementation (NSDI 23),
+Boston, MA, pp. 739–767.
+External Links: ISBN 978-1-939133-33-5
+Cited by: Table 1,
+§1,
+§2,
+§5.1,
+§6.
+Wolf et al. (2019)
+T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz, and J. Brew
+HuggingFace’s transformers: state-of-the-art natural language processing.
+CoRR abs/1910.03771.
+Cited by: §5.1.
+Won et al. (2023)
+W. Won, T. Heo, S. Rashidi, S. Sridharan, S. Srinivasan, and T. Krishna
+ASTRA-sim2.0: modeling hierarchical networks and disaggregated systems for large-model training at scale.
+In 2023 IEEE International Symposium on Performance Analysis of Systems and Software (ISPASS),
+pp. 283–294.
+External Links: Document
+Cited by: Figure 10,
+§2,
+§3.2,
+§5.1.
+Yang et al. (2025)
+A. Yang, J. Yang, A. Ibrahim, X. Xie, B. Tang, G. Sizov, J. Park, and J. Huang
+Context parallelism for scalable million-token inference.
+In Eighth Conference on Machine Learning and Systems,
+External Links: Link
+Cited by: §2.
+Zheng et al. (2022)
+L. Zheng, Z. Li, H. Zhang, Y. Zhuang, Z. Chen, Y. Huang, Y. Wang, Y. Xu, D. Zhuo, E. P. Xing, J. E. Gonzalez, and I. Stoica
+Alpa: automating inter- and Intra-Operator parallelism for distributed deep learning.
+In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22),
+Carlsbad, CA, pp. 559–578.
+External Links: ISBN 978-1-939133-28-1
+Cited by: Appendix H,
+Table 1,
+§1,
+§1,
+§2,
+§4,
+§5.1,
+§6,
+Abstract.
+Zhu et al. (2025)
+Z. Zhu, C. Giannoula, M. Andoorveedu, Q. Su, K. Mangalam, B. Zheng, and G. Pekhimenko
+Mist: efficient distributed training of large language models via memory-parallelism co-optimization.
+In Proceedings of the Twentieth European Conference on Computer Systems,
+EuroSys ’25, New York, NY, USA, pp. 1298–1316.
+External Links: ISBN 9798400711961,
+Link,
+Document
+Cited by: Table 1,
+§2,
+§2,
+§3.3,
+§5.1,
+§5.3,
+§6.
+Appendix
+Appendix A Artifact Appendix
+A.1 Abstract
+Nest is a network-, compute-, and memory-aware framework for automatic device placement that unifies model parallelism and placement via structured dynamic programming for large-scale distributed training. This artifact provides the source code, bash scripts, and instructions necessary to reproduce the key results in Section 5 for Nest and all evaluated baselines. Nest is compatible with any NVIDIA GPU supporting PyTorch 2.5 and CUDA 12.4 with at least 100 GB of RAM. When using the provided operator graphs and estimates included as part of this artifact, most experiments can also be executed in CPU-only environments with at least 64 GB of RAM. Note that an active Gurobi license is required to run the Nest solver; however, most academic users can obtain a free Gurobi WLS license.
+A.2 Artifact check-list (meta-information)
+•
+Algorithm: Dynamic programming-based network-aware automatic device placement.
+•
+Program: C++ solver for the DP algorithm; Python for graph extraction and workflow management.
+•
+Compilation: C++ solver compiled with g++ version 12.4.0.
+•
+Data set: Large language model operator graphs (GPT-3 175B, Llama2-7B, Llama3-70B, BertLarge, Mixtral-8x7B) from HuggingFace Transformers and Megatron-LM (included in the artifact).
+•
+Run-time environment:
+–
+Python 3.10, PyTorch 2.5 with torch.fx, and Gurobi Optimizer.
+–
+Anaconda/Miniconda for environment management.
+–
+Linux, primarily tested on RHEL 9.6.
+–
+Note: An active Gurobi license is required to run the solver (most academic users can obtain a free Gurobi WLS license).
+–
+Collecting operator graphs from scratch requires CUDA 12.4 or similar.
+•
+Hardware:
+–
+Ideal: Any GPU supporting PyTorch 2.5 and CUDA 12.4 with at least 100 GB RAM.
+–
+If using provided operator graphs/estimates: any CPU with 64 GB RAM is sufficient for most experiments.
+–
+Profiling operator latency from scratch requires an NVIDIA H100 GPU.
+•
+Execution: A single GPU or CPU is sufficient for execution.
+•
+Metrics: Training throughput, optimization time, and scalability up to 1,024 GPUs/accelerators.
+•
+Output: Throughput improvement for each baseline is printed to the console and saved as a plot. Raw throughput results are saved in a .csv file.
+•
+Experiments: Prepared with bash scripts and detailed instructions in the README. Throughput results should be deterministic; however, runtime results may vary based on the execution environment (reported runtime results were primarily obtained on H100 GPUs).
+•
+Disk space required: Under 30 GB for source code, profiles, model graphs, and the Conda environment.
+•
+Preparation time: Approximately 1 hour.
+•
+Experiment time: Approximately 4 hours using the provided profiles and model graphs; over 5 days to collect Alpa-E baseline results (excluded from the Artifact Evaluation).
+•
+Publicly available: Yes.
+•
+Code licenses: MIT License.
+•
+Archived (DOI): 10.5281/zenodo.18826203 (pre-reserved, will be published at the end of artifact evaluation)
+A.3 Description
+A.3.1 How delivered
+The source code and scripts are available at https://github.com/scai-tech/Nest.
+The artifact is also publicly available as a Trovi artifact at https://trovi.chameleoncloud.org/artifacts/a8a96d3d-4921-448e-a9fa-09db5950e26d/
+A.3.2 Hardware dependencies
+Experiments were conducted on H100 and V100 GPUs and also tested on RTX 6000 GPUs (CUDA 12.4, at least 100 GB RAM). When using the provided operator graphs and estimates, any GPU or CPU supporting PyTorch 2.5 or higher with at least 64 GB RAM is sufficient for most experiments.
+A.3.3 Software dependencies
+•
+Requires a Linux environment (tested with RHEL 9.6 and Ubuntu 22.04) with Anaconda or Miniconda. All Python dependencies, including PyTorch 2.5 and the Gurobi Python interface, are managed via the provided environment.yml file.
+•
+g++ version 12.4.0 or higher for the DP solver.
+•
+Gurobi Optimizer license (academic users can obtain a free Gurobi WLS license).
+•
+Python 3.10 with PyTorch 2.5.
+•
+Astra-Sim and Sunstone simulators (included with the source code).
+A.3.4 Data sets and Models
+Extracted operator graphs for all evaluated LLM models are included in the GitHub repository.
+A.4 Installation
+⬇
+git clone https://github.com/scai-tech/Nest.git
+cd Nest
+conda env create -f environment.yml
+conda activate nestenv
+By default, conda activate should set $CONDA_PREFIX automatically. Verify this by running:
+⬇
+echo $CONDA_PREFIX
+If it is not set, please manually export it to point to your Conda environment directory. Then, build the DP solver and simulator components:
+⬇
+./setup.sh
+⬇
+source $CONDA_PREFIX/etc/conda/activate.d/nest_paths.sh
+[Not required for AE] If running on a GPU supporting CUDA 12.4 and you wish to extract graphs from scratch, install the APEX library:
+⬇
+./setup.sh --apex_only
+A.5 Experiment workflow
+We provide scripts for reproducing all results. We recommend following the README.md, which provides detailed explanations for each step.
+1.
+(Optional) Run scripts to collect operator graphs and estimates/profiles from scratch.
+2.
+(Optional) Collect Alpa baseline results.
+3.
+Run the evaluation scripts to execute Nest and the compared baselines (Manual, MCMC, Phaze) across the models and network configurations evaluated in the paper.
+Note: Alpa-E experiments have specific hardware requirements and a long execution time; they are therefore excluded from the standard artifact evaluation. Instead, we provide the pre-collected results presented in the paper. Full instructions for running Alpa-E are available in the repository for completeness.
+A.6 Evaluation and expected results
+The artifact reproduces the results shown in Figures 5 and 6 and Table 7. Outputs are printed to the terminal and saved to scripts/<setup_name>/out; plots are saved to scripts/<setup_name>/plots. The <setup_name> values are tpuv4_fatTree and h100_spineLeaf, corresponding to the network setups evaluated in the paper.
+Expected overall runtimes are based on H100 GPU execution on an HPC cluster with network-mounted storage. Local machines with SSD storage may run faster. First-time runs may be slower due to Python and CUDA compilation caching. Actual Nest solving times are also reported in the execution logs.
+1.
+Figure 5 (TPUv4, Llama2-70B): Reproduce results for the 70B model [≈\approx10 minutes].
+2.
+Figure 5 (All models): Reproduce results for BertLarge, Llama2-7B, Llama3-70B, GPT-3 175B, and Mixtral-8x7B [≈\approx2 hours].
+3.
+Figure 6 (Batch size sweep): Reproduce the micro-batch size sweep with Llama2-7B [≈\approx20 minutes].
+4.
+Figure 7 (H100, Mixtral): Reproduce spine-leaf topology results for Mixtral [≈\approx10 minutes].
+A.7 Experiment customization
+The README.md provides instructions for running Nest with custom network configurations, models, and other parameters.
+Appendix B Hierarchical Network Topology
+(a) Multi-level Hierarchical Tree Topology
+(b) Spine-Leaf Topology
+(c) Intra-Node, HGX-style NVIDIA ()
+Figure 8: Hierarchical Network Topologies
+Modern data centers typically adopt multi-level hierarchical network topologies such as Spine-Leaf or Clos networks, which provide high aggregate bandwidth while maintaining modularity
+and fault tolerance. Fat-Tree is frequently used as a simplified abstraction for evaluation settings, real-world clusters often implement oversubscribed or non-uniform versions of hierarchical topologies due to cost, physical layout, or workload demands. Figure 8 shows representative examples of these common topologies. Nest supports a wide range of such configurations through a flexible modeling interface. Users can provide a network description specifying device identifiers, connectivity between nodes, per-link latencies and bandwidths, and the type of collective communication protocols to be used.
+Appendix C Mesh and Torus Modeling
+Figure 9: Level-Wise Abstraction for Mesh/Torus Topologies. Nest maps physical Manhattan hop distances to discrete communication levels (ll) relative to a reference source node. This abstraction preserves optimal substructure in the DP by grouping nodes into affinity classes (L​1L1: 1-hop, L​2L2: 2-hops, L​3L3: Remote), where each class corresponds to a modeled communication latency or bandwidth constraint.
+Table 3: Models evaluated with resource-constrained architectures. Distributed strategy formatted as {p,d,t}
+Model
+Llama3 70B
+BertLarge
+HBM
+24GB
+120MB
+Number of Device Used
+641
+980
+Distributed Strategy
+{81, 1, 1}
+{25, 1, 1}
+ZeRO
+Layer 0 (embedding)
+None
+ZeRO-2: (degree 2)
+Remaining Layers
+ZeRO-3: (degree 8)
+ZeRO-3: (degree 4)
+For non-uniform meshes or torus architectures like TPU clusters, Nest maps physical proximity to logical levels. As Figure 9 shows, we define coordinate-affinity classes based on Manhattan hop distance or heterogeneous bandwidth (BW) from a source node.
+•
+Level 1 (L​1L1): Represents immediate neighbors (1-hop) or high-bandwidth local tiles with the lowest latency.
+•
+Level 2 (L​2L2): Captures nodes at a 2-hop distance or those connected via intermediate-speed links.
+•
+Level 3 (L​3L3 / Remote): Groups all nodes beyond a specific distance threshold or those limited by low-bandwidth inter-mesh bottlenecks into a “remote” class.
+This mapping allows the DP solver to treat mesh distance and non-uniform link bandwidth with the same mathematical rigor as tree-based switch tiers. By grouping devices based on these performance characteristics, the placement engine remains topology-agnostic while still accurately respecting physical throughput and latency bottlenecks.
+Appendix D Ablation Study: ZeRO Optimization
+Nest incorporates memory optimization techniques, including ZeRO and activation recomputation, to overcome memory bottlenecks and enable training configurations that would otherwise be infeasible. ZeRO is most beneficial when even a single model layer exceeds device memory. Using detailed memory modeling, Nest automatically detects such constraints and applies the appropriate ZeRO stage (1, 2, or 3) as needed, generating valid and efficient training strategies under tight memory budgets.
+Although most evaluated models fit within current hardware (TPUv4 64 GB HBM, H100 80 GB HBM), we perform ablations with reduced-memory configurations to isolate ZeRO’s impact. As shown in Table 3, Nest assigns each layer—including embeddings—to a single pipeline stage and selectively applies ZeRO partitioning, confirming that training becomes infeasible without it.
+For each model, Nest determines the optimal ZeRO configuration at the layer level, identifying which states (optimizer, gradient, or parameter) to partition and how many devices to allocate. This fine-grained strategy ensures every layer fits in memory while minimizing cross-device communication.
+Appendix E Hardware Validation
+Figure 10: Validation of Collective Communication Estimations Won et al. (2023) against H100 GPU nodes
+We validated our framework’s collective communication estimates against real-system measurements on clusters of 4 and 8 NVIDIA H100 SXM5 80GB GPUs NVIDIA (). The GPUs are connected via a switch-based topology with four NVSwitches, each linking eight GPUs through NVLinks offering 450GB/s unidirectional bandwidth. Figure 10 compares end-to-end iteration time (forward+backward) for GPT-3 across batch sizes 1–4, showing up to 2% latency difference between measured and predicted results. Computation latency was measured using PyTorch, while communication latency was simulated.
+Appendix F Microbatch size Scaling at 512 devices
+Figure 11 shows microbatch performance for BertLarge, Llama2-7B, and Llama3-70B on a 512-device cluster. Trends mirror those at 256 devices (Section 5.2), with optimal microbatch size depending on model and parallelization. Alpa benefits from larger microbatches, improving up to 1.5× from size 1 to 8, but its performance on BertLarge drops at 512 devices due to excessive oversharding.
+Appendix G Model Configuration for Mist H100 Comparison
+Table 4 shows the scaled-down GPT-3 model (GPT3-35B) used in Section 5.3. Reduced from 175B parameters to allow comparison with Mist, which supports hidden dimensions ¡8192, contrast with GPT3-175B’s original hidden size of 12,288. A microbatch size of 1 was used in all experiments.
+Table 4: Configuration of the scaled-down GPT3 model.
+Parameter
+Value
+Number of Layers
+64
+Hidden Dimension
+8192
+Number of Heads
+64
+Intermediate Dimension
+16384
+Sequence Length
+2048
+Appendix H Memory Estimation
+Nest memory per-layer modeling estimates is, on average, 7% with compiled executables from Alpa Zheng et al. (2022) across evaluated models.
+Table 5: Per layer Memory requirement estimations between profiled Alpa executables and Nest estimations
+Model
+Alpa Executables (GB)
+Nest Estimates (GB)
+GPT-3 175B
+10.1
+9.7
+Llama3 70B
+24.8
+22.9
+Llama2 7B
+9.8
+8.1
+BertLarge
+0.21
+0.21
+Appendix I Runtime Comparison with Mist
+Nest on average achieves, on average, over 30% faster runtime than Mist across all explore models.
+Table 4 presents the breakdown of each model runtime for each framework
+Table 6: Runtime comparison of Nest against baseline.
+Model
+Baseline (min)
+Nest (min)
+Time Reduction (%)
+GPT-3 35B
+17
+15
+11.8%
+Llama3 70B
+30
+6
+80.0%
+Llama2 7B
+8
+2.3
+71.3%
+BertLarge
+3
+2
+33.3%
+Appendix J Model Configuration for Real System Validation
+Table 7 shows the configuration of the scaled-down Mixtral 8×7B model used in Section 5.4. This model was reduced from the full 47B parameter version to enable feasible profiling and end-to-end execution on the resource-constrained 8- and 16-GPU V100 validation clusters. This model has a total of 790M parameters. Microbatch size of 1 used for the experiments.
+Table 7: Configuration of the scaled-down Mixtral model.
+Parameter
+Value
+Number of Layers
+8
+Number of Experts
+8
+Hidden Dimension
+1024
+Number of Heads
+16
+Intermediate Dimension
+3584
+Sequence Length
+1024
+Appendix K Algorithm for device placement
+Algorithm 1 walks through the full pseudo code of the network-aware device placement algorithm.
+Figure 11: Throughput improvement relative to manual strategy with microbatch size 1 across different parallelization strategies. “X” indicates cases where the baseline fails to find a feasible placement within memory constraints. Llama2-7B and Llama3-70B are realizable only up to batch size 4 and 2 respectively due to high memory requirements.
+Algorithm 1  Device Placement Optimization with Latency and Memory Considerations
+0:
+Layerwise latency/memory estimates, Architecture & Network configs
+0:
+Device placement, tbatcht_{\text{batch}}
+1:
+Init: d​p​[ℓ]​[i​d]​[k]​[s]←(∞,∅)dp[\ell][id][k][s]\leftarrow(\infty,\emptyset)  // dp[level][downset][accelerators][stages]
+2:
+d​p​[ℓ]​[∅]​[∗]​[0]←(0,init)dp[\ell][\emptyset][*][0]\leftarrow(0,\text{init})  // Base case: no layers assigned
+3:
+for i​d∈𝐷𝑜𝑤𝑛𝑠𝑒𝑡𝑠∖{Dfull}id\in\mathit{Downsets}\setminus\{D_{\text{full}}\} do
+4:
+𝑖𝑠𝑍𝑒𝑅𝑂←IsZeroMemory​(LayerMemReq​(i​d))\mathit{isZeRO}\leftarrow\textsc{IsZeroMemory}(\textsc{LayerMemReq}(id))  // ZeRO opt. if applicable
+5:
+for 𝑠𝑢𝑏𝐼𝑑⊂i​d,𝑙𝑜𝑎𝑑←i​d∖𝑠𝑢𝑏𝐼𝑑\mathit{subId}\subset id,\ \mathit{load}\leftarrow id\setminus\mathit{subId} do
+6:
+𝑙𝑜𝑎𝑑𝑠←GetLoadOfStage​(𝑙𝑜𝑎𝑑,𝑖𝑠𝑍𝑒𝑅𝑂)\mathit{loads}\leftarrow\textsc{GetLoadOfStage}(\mathit{load},\mathit{isZeRO})  // Latencies for all placements
+7:
+for s∈[1,Smax],k∈[1,Kmax],a∈ValidAccelCounts​(𝑙𝑜𝑎𝑑)s\in[1,S_{\max}],\ k\in[1,K_{\max}],\ a\in\textsc{ValidAccelCounts}(\mathit{load}) do
+8:
+𝑝𝑟𝑒𝑣←d​p​[GetIdx​(⋅)]​[𝑠𝑢𝑏𝐼𝑑]​[k−a]​[s−1]\mathit{prev}\leftarrow dp[\textsc{GetIdx}(\cdot)][\mathit{subId}][k{-}a][s{-}1]
+9:
+for each level ℓ\ell do
+10:
+c←max(𝑝𝑟𝑒𝑣.latency,𝑙𝑜𝑎𝑑𝑠[ℓ][a].latency)c\leftarrow\max(\mathit{prev}.\text{latency},\ \mathit{loads}[\ell][a].\text{latency})
+11:
+if c<d​p​[ℓ]​[i​d]​[k]​[s].firstc<dp[\ell][id][k][s].\text{first} then
+12:
+d​p​[ℓ]​[i​d]​[k]​[s].first←cdp[\ell][id][k][s].\text{first}\leftarrow c  // Update min-max latency
+13:
+end if
+14:
+end for
+15:
+end for
+16:
+end for
+17:
+end for
+18:
+tmin←∞t_{\min}\leftarrow\infty  // Find best end-to-end batch time
+19:
+for 𝑠𝑢𝑏𝐼𝑑⊂Dfull,F←Dfull∖𝑠𝑢𝑏𝐼𝑑\mathit{subId}\subset D_{\text{full}},\ F\leftarrow D_{\text{full}}\setminus\mathit{subId} do
+20:
+𝑙𝑜𝑎𝑑←GetLoadOfStage​(F,𝑠𝑢𝑏𝐼𝑑)\mathit{load}\leftarrow\textsc{GetLoadOfStage}(F,\mathit{subId})  // Latency for remaining layers
+21:
+for s∈[1,Smax],k∈[1,Kmax],a∈ValidAccelCounts​(F)s\in[1,S_{\max}],\ k\in[1,K_{\max}],\ a\in\textsc{ValidAccelCounts}(F) do
+22:
+𝑝𝑟𝑒𝑣←d​p​[GetIdx​(⋅)]​[𝑠𝑢𝑏𝐼𝑑]​[k−a]​[s−1]\mathit{prev}\leftarrow dp[\textsc{GetIdx}(\cdot)][\mathit{subId}][k{-}a][s{-}1]
+23:
+tstage←max(𝑝𝑟𝑒𝑣.latency,𝑙𝑜𝑎𝑑[ℓ][a].latency)t_{\text{stage}}\leftarrow\max(\mathit{prev}.\text{latency},\ \mathit{load}[\ell][a].\text{latency})
+24:
+tbatch←tstage⋅(m​b​s+s−1)+SyncCost​(F)t_{\text{batch}}\leftarrow t_{\text{stage}}\cdot(mbs+s-1)+\textsc{SyncCost}(F)  // Pipeline + sync
+25:
+if tbatch<tmint_{\text{batch}}<t_{\min} then
+26:
+tmin←tbatcht_{\min}\leftarrow t_{\text{batch}}
+27:
+end if
+28:
+end for
+29:
+end for
+30:
+return ReconstructStages​(d​p,Dfull)\textsc{ReconstructStages}(dp,\ D_{\text{full}})  // Retrieve final device placement
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

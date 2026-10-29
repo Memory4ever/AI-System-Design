@@ -1,0 +1,2869 @@
+
+
+
+LaSeR: Reinforcement Learning with Last-Token Self-Rewarding
+
+
+
+
+
+
+
+
+
+
+
+
+
+Skip to main content
+
+  
+    
+      Report GitHub Issue
+      ×
+    
+
+    
+      Title:
+      
+
+      
+Content selection saved. Describe the issue below:
+
+      Description:
+      
+    
+
+    
+      Submit without GitHub
+      Submit in GitHub
+    
+  
+
+
+
+
+
+  
+  
+    
+  
+  
+    
+      
+    
+  
+    Why HTML?
+    
+      Report Issue
+        
+      Back to Abstract
+    
+    
+      Download PDF
+        
+      Contents
+    
+    
+      Reading mode
+    
+    
+      Colour theme
+    
+
+
+
+
+
+Abstract
+
+1 Introduction
+
+2 Related Work
+
+3 Methodology
+
+
+3.1 Preliminaries
+
+3.2 LaSeR: Reinforcement Learning with Last-Token Self-Rewarding
+
+
+3.2.1 Formal Formulation
+
+
+3.3 Other Techniques
+
+3.4 Brief Discussion
+
+
+4 Experiments
+
+
+4.1 Experimental Settings
+
+4.2 Main Results and Analysis
+
+4.3 Inference-Time Scaling Results
+
+
+5 Analysis and Discussion
+
+
+5.1 The Impact of Simplifying The Reference Log-Probabilities to A Constant
+
+5.2 The Generalizability of LaSeR to General Reasoning Domain
+
+5.3 Further Reduction or Increase of Self-Rewarding Cost
+
+
+6 Conclusion
+
+References
+
+A The Length Bias in Implicit Reward
+
+B Statistics of log⁡πr​e​f​(zc|𝒙,𝒚)\log\pi_{ref}(z_{c}|\bm{x},\bm{y})
+
+C Detailed Training Settings
+
+D Ablation Studies on Self-Rewarding Hyper-Parameters
+
+E The Effect of Class-Level Re-Weighting on The Balanced Self-Verification Capability
+
+F Comparison between Last-Token Self-Rewarding Loss and Supervised Fine-Tuning Loss
+
+G Detailed Self-Verification Results
+
+H Training and Evaluation Settings in General Reasoning Experiments
+
+I Prompt Templates
+
+
+
+
+  
+    License: CC BY 4.0
+  
+  
+arXiv:2510.14943v1 [cs.CL] 16 Oct 2025
+
+
+
+LaSeR: Reinforcement Learning with Last-Token Self-Rewarding
+
+
+Wenkai Yang
+††thanks:  Work done during an internship at Tencent.
+Affiliation: Gaoling School of Artificial Intelligence, Renmin University of China
+
+Email: wenkaiyang@ruc.edu.cn
+
+  
+Weijie Liu
+
+Affiliation: LLM Department, Tencent
+
+Email: yankailin@ruc.edu.cn
+
+  
+Ruobing Xie
+
+Affiliation: LLM Department, Tencent
+
+  
+Yiju Guo
+
+Affiliation: Gaoling School of Artificial Intelligence, Renmin University of China
+
+  
+Lulu Wu
+
+Affiliation: LLM Department, Tencent
+
+  
+Saiyong Yang
+
+Affiliation: LLM Department, Tencent
+
+  
+Yankai Lin
+††thanks:  Corresponding author.
+Affiliation: Gaoling School of Artificial Intelligence, Renmin University of China
+
+
+Abstract
+    
+
+Reinforcement Learning with Verifiable Rewards (RLVR)
+has recently emerged as a core paradigm for enhancing the reasoning capabilities of Large Language Models (LLMs).
+To address the lack of verification signals at test time, prior studies incorporate the training of model’s self-verification capability into the standard RLVR process, thereby unifying reasoning and verification capabilities within a single LLM. However, previous practice requires the LLM to sequentially generate solutions and self-verifications using two separate prompt templates, which significantly reduces efficiency.
+In this work, we theoretically reveal that the closed-form solution to the RL objective of self-verification can be reduced to a remarkably simple form: the true reasoning reward of a solution is equal to its last-token self-rewarding score, which is computed as the difference between the policy model’s next-token log-probability assigned to any pre-specified token at the solution’s last token and a pre-calculated constant, scaled by the KL coefficient. Based on this insight, we propose LaSeR (Reinforcement Learning with Last-Token Self-Rewarding), an algorithm that simply augments the original RLVR loss with a MSE loss that aligns the last-token self-rewarding scores with verifier-based reasoning rewards, jointly optimizing the reasoning and self-rewarding capabilities of LLMs.
+The optimized self-rewarding scores can be utilized in both training and testing to enhance model performance.
+Notably, our algorithm derives these scores from the predicted next-token probability distribution of the last token immediately after generation, incurring only the minimal extra cost of one additional token inference.
+Experiments show that our method not only improves the model’s reasoning performance but also equips it with remarkable self-rewarding capability, thereby boosting its inference-time scaling performance. Code and models are available at https://github.com/RUCBM/LaSeR.
+  
+
+
+
+
+
+
+Figure 1: The full illustration of our method LaSeR. During training, our approach augments the standard RLVR process with an additional MSE loss between the verifier-based rewards (rvr_{v}) and the last-token self-rewarding scores (rsr_{s}), where rsr_{s} is the difference between the policy model’s next-token log-probabilities of a pre-specified special token at the final response token and a pre-calculated constant cr​e​fc_{ref}, scaled by the KL coefficient βv\beta_{v}. The optimized self-rewarding scores can serve as auxiliary reward signals in both training and testing stages to enhance model performance.
+
+
+
+
+
+1 Introduction
+
+
+
+In the past few years, Large Language Models (LLMs) (Achiam et al., 2023; MetaAI, 2024a; Qwen Team, 2024; Liu et al., 2024a) have advanced significantly, excelling in various domains (Li et al., 2023; Wang et al., 2024b). However, they still face limitations in complex reasoning tasks (AI-MO, 2024a; OpenCompass, 2025; Rein et al., 2024; Jain et al., 2025). Recently, Reinforcement Learning with Verifiable Rewards (RLVR) has shown great promise in enhancing the complex reasoning abilities of LLMs, as demonstrated by OpenAI o1 (Jaech et al., 2024) and DeepSeek-R1 (Guo et al., 2025). By rewarding reasoning paths based on the consistency between final outcomes and ground-truth answers through a deterministic verifier, RLVR incentivizes LLMs to produce more deliberate reasoning chains while effectively mitigating the risk of reward hacking (Gao et al., 2023).
+
+
+
+Despite its effectiveness, a limitation of standard RLVR is its inability to continue providing verification signals for model outputs in scenarios where ground truth answers are unavailable, such as during test-time inference (Zuo et al., 2025). To address this, existing works either train an external verifier (Lightman et al., 2023; Snell et al., 2024; Zhang et al., 2024; Gao et al., 2024; Yang et al., 2025b) for evaluating candidate solutions or jointly optimize the self-verification and reasoning capabilities of the same policy model during RLVR (Sareen et al., 2025; Liu et al., 2025a; Zha et al., 2025; Jiang et al., 2025). However, we argue that these methods have a major issue of inefficiency: the external verifier requires additional training on a separate LLM during or after reinforcement learning (RL); while joint optimization involves generating both solutions and self-verifications sequentially under two separate prompt templates, which doubles the per-sample inference cost and reduces generation efficiency.
+
+
+
+In this work, we propose LaSeR (Reinforcement Learning with Last-Token Self-Rewarding), a lightweight and highly effective algorithm that achieves this goal, jointly optimizing reasoning and self-verification capabilities at nearly zero additional cost. Our core insight is that a model’s assessment in its own solution can be captured in the last token’s predicted probability distribution.
+We first show theoretically that the RL objective of self-verification has a closed-form solution, where the true reasoning reward from the verifier is equal to the next-token log-probability ratio between the policy and reference models for a pre-specified special token (an unused token like “<|vision_start|>” that serves as the pre-defined ground truth for verifications on correct candidate solutions) at the last response token, scaled by the KL coefficient. We refer to this scaled log-probability ratio as the last-token self-rewarding score.
+Furthermore, we observe that for a randomly chosen special token, its predicted log-probability under the reference model is practically a constant, small value across all problems and solutions (see Figure 5). This enables us to simplify the self-rewarding score into a remarkably simple form that depends only on the policy model’s outputs and a pre-calculated constant, making it exceptionally efficient to compute.
+
+
+
+Building on above analysis, we replace the explicit RL optimization for self-verification with a simple Mean Squared Error (MSE) loss. As illustrated in Figure 1, we train the model to align its last-token self-rewarding score with the true reasoning reward from the verifier. In specific, after the policy model generates the solution for each problem, we calculate the last-token self-rewarding score based on its last token’s next-token log-probability for the pre-specified special token, and construct the corresponding MSE loss. This MSE objective is added directly to the standard RLVR loss, allowing for seamless joint optimization for both the reasoning and self-rewarding capabilities of the policy model. At both training and testing time, our method generates each candidate solution and computes the self-rewarding score in a single forward pass, incurring the cost of at most one additional token inference with no extra generation required. This is significantly more efficient than prior approaches, which require a separate inference step. The optimized self-rewarding scores can not only complement the original reasoning rewards during RLVR to further enhance training performance, but also be used at test time to rank and weight solutions for more accurate answer aggregation.
+
+
+
+We conduct experiments on both LLaMA (MetaAI, 2024b) and Qwen (Qwen Team, 2024) architectures, including pre-trained, mid-trained and reinforced variants, to demonstrate the effectiveness of our method in broader math reasoning tasks. Experimental results show that our methods not only effectively improve the reasoning performance of the policy model, but also allows its self-rewarding accuracy to reach a high level, thereby equipping the model with better confidence calibration of its own outputs and improving its inference-time scaling performance.
+
+
+
+
+
+2 Related Work
+
+
+
+RLVR for LLM Reasoning Reinforcement Learning with Verifiable Rewards (RLVR), which sorely calculates binary rewards based on the final answers, has been shown to be highly effective in enhancing the reasoning capabilities of LLMs (Jaech et al., 2024; Guo et al., 2025; Team et al., 2025b). Current studies can be categorized into several directions, including but not limited to (1) designing more efficient and effective RLVR algorithms (Schulman et al., 2017; Shao et al., 2024; Yu et al., 2025a; Yue et al., 2025b; Liu et al., 2025b; Zheng et al., 2025), (2) extending RLVR to general reasoning domain (Ma et al., 2025; Zhou et al., 2025; Yu et al., 2025b; Li et al., 2025) and agent scenarios (Wang et al., 2025b; Team et al., 2025a; Dong et al., 2025), (3) collecting diverse verifiable datasets (Hu et al., 2025; He et al., 2025; Liu & Zhang, 2025; Ma et al., 2025; Fan et al., 2025), and (4) analyzing the mechanisms of RLVR (Mukherjee et al., 2025; Yue et al., 2025a; Wen et al., 2025; Huan et al., 2025).
+
+
+
+External Verifiers for LLM Reasoning Training external verifiers to identify the correctness of the LLM-generated solutions is an effective way to enhance the reasoning performance of LLMs in the inference time. External verifiers usually fall into two categories: (1) Scalar Reward Models: Outcome-supervised Reward Models (ORMs) (Cobbe et al., 2021; Yang et al., 2024) and Process-supervised Reward Models (PRMs) (Lightman et al., 2023; Wang et al., 2024a; Skywork-o1, 2024; Yuan et al., 2024) are two representative approaches. ORMs provide supervision by evaluating the final answer, while PRMs offer more fine-grained feedback by assessing the intermediate reasoning steps.
+(2) Generative Verifiers: Recent studies have explored the potential of training LLMs to perform natural language critiques of reasoning solutions generated by the LLM generators, and then to judge their final outcomes (Zhang et al., 2024; Gao et al., 2024; Yang et al., 2025b; Zhao et al., 2025). This paradigm has demonstrated stronger verification performance than scalar reward models, as it enables the LLM verifier to conduct deliberate chain-of-thought reasoning before arriving at the final judgment.
+
+
+
+Self-Verification for LLM Reasoning
+Several recent studies (Sareen et al., 2025; Liu et al., 2025a; Zha et al., 2025; Jiang et al., 2025; Lu et al., 2025) aim to unify the roles of generator and verifier by equipping a single policy model with self-verification capability. The trained self-verification capability can be used in both the RL training and inference-time scaling stages to enhance the model performance. However, these approaches require generating solutions and self-verifications sequentially during training and inference. In contrast, our method derives the self-rewarding signal directly from the next-token probability distribution of the final token of the generated sequence, achieving a more efficient and effective unification of generation and self-verification.
+
+
+
+
+
+3 Methodology
+
+
+
+
+3.1 Preliminaries
+
+
+
+RL Objective We denote π𝜽\pi_{\bm{\theta}} as the target policy model to be optimized, and πref\pi_{\text{ref}} as the reference model from which π𝜽\pi_{\bm{\theta}} is initialized. DD is the query set, 𝒙\bm{x} is an input and 𝒚\bm{y} is the generated response to 𝒙\bm{x}. The standard optimization objective of RL is formalized as
+
+
+
+
+
+𝒪π𝜽=maxπ𝜽𝔼𝒙∼D,𝒚∼π𝜽(⋅|x)[r(𝒙,𝒚)−β𝒟KL(π𝜽||πr​e​f)],\displaystyle\mathcal{O}_{\pi_{\bm{\theta}}}=\max_{\pi_{\bm{\theta}}}\mathbb{E}_{\bm{x}\sim D,\bm{y}\sim\pi_{\bm{\theta}}(\cdot|x)}\left[r(\bm{x},\bm{y})-\beta\mathcal{D}_{\text{KL}}(\pi_{\bm{\theta}}||\pi_{ref})\right],
+
+(1)
+
+
+where r⁡(𝒙,𝒚)r(\bm{x},\bm{y}) represents a reward function to score the response yy given xx, 𝒟KL\mathcal{D}_{\text{KL}} is the Kullback–Leibler (KL) divergence loss regularizing the distance between two model distributions.
+
+
+
+RLVR Recently, RLVR (Guo et al., 2025; Hu et al., 2025) has emerged as a widely adopted and effective paradigm for enhancing the reasoning capabilities of LLMs. In RLVR, the reward function rr is typically chosen as a deterministic verifier rvr_{v}, such as a rule-based verifier, to evaluate whether the final extracted answer 𝒂⊂𝒚\bm{a}\subset\bm{y} matches the ground-truth answer 𝒂∗\bm{a}^{*}, and to produce binary feedback (e.g., {0,1}). That is,
+
+
+
+
+
+rv(𝒙,𝒚)=𝟙{𝒂≡𝒂∗}={1if 𝒂 is semantically equivalent to 𝒂∗,0otherwise.\displaystyle r_{v}(\bm{x},\bm{y})=\mathds{1}_{\{\bm{a}\equiv\bm{a}^{*}\}}=\begin{cases}1&\text{if $\bm{a}$ is semantically equivalent to $\bm{a}^{*}$},\\
+0&\text{otherwise}.\end{cases}
+
+(2)
+
+
+
+
+Policy Gradient Method Policy Gradient (Sutton et al., 1998) is a widely adopted algorithm to optimize the objective of Eq. (1), which updates the policy model via the estimated gradient
+
+
+
+
+
+∇𝜽𝒪π𝜽=𝔼𝒙∼D,𝒚∼π𝜽(⋅|x)[∑t=1TAt∇𝜽logπ𝜽(yt|𝒙,𝒚<t)],\displaystyle\nabla_{\bm{\theta}}\mathcal{O}_{\pi_{\bm{\theta}}}=\mathbb{E}_{\bm{x}\sim D,\bm{y}\sim\pi_{\bm{\theta}}(\cdot|x)}\left[\sum_{t=1}^{T}A_{t}\nabla_{\bm{\theta}}\log\pi_{\bm{\theta}}(y_{t}|\bm{x},\bm{y}_{<t})\right],
+
+(3)
+
+
+where AtA_{t} is the advantage function measuring the relative value of the action ata_{t} (i.e., token yty_{t}) compared to the baseline value under state sts_{t} (i.e., sequence (𝒙,𝒚<t)(\bm{x},\bm{y}_{<t})). In practice, AtA_{t} can be estimated in various ways (Schulman et al., 2017; Ahmadian et al., 2024). For example,
+Group Relative Policy Optimization (GRPO) (Shao et al., 2024) estimates the baseline value as the average reward within a sampled group {𝒚1,⋯,𝒚K}\{\bm{y}^{1},\cdots,\bm{y}^{K}\} for the same problem, and computes the relative advantage for each token ytiy_{t}^{i} in sequence 𝒚i\bm{y}^{i} as
+
+
+
+
+
+Ati=(rvi−mean(rv1,⋯,rvK))/std(rv1,⋯,rvK),rvi=rv(𝒙,𝒚i).\displaystyle A_{t}^{i}=(r_{v}^{i}-\text{mean}(r_{v}^{1},\cdots,r_{v}^{K}))/\text{std}(r_{v}^{1},\cdots,r_{v}^{K}),\quad r_{v}^{i}=r_{v}(\bm{x},\bm{y}^{i}).
+
+(4)
+
+
+
+
+Implicit Reward Previous studies (Rafailov et al., 2023; Peters & Schaal, 2007) have identified that the optimal solution to the objective Eq. (1) satisfies that
+
+
+
+
+
+rv​(𝒙,𝒚)=β​log⁡[π𝜽​(𝒚|𝒙)/πr​e​f​(𝒚|𝒙)]+β​log⁡Z⁡(𝒙),\displaystyle r_{v}(\bm{x},\bm{y})=\beta\log[\pi_{\bm{\theta}}(\bm{y}|\bm{x})/\pi_{ref}(\bm{y}|\bm{x})]+\beta\log Z(\bm{x}),
+
+(5)
+
+
+where Z⁡(𝒙)=∑𝒚πr​e​f​(𝒚|𝒙)​exp⁡(1β​rv​(𝒙,𝒚))Z(\bm{x})=\sum_{\bm{y}}\pi_{ref}(\bm{y}|\bm{x})\exp(\frac{1}{\beta}r_{v}(\bm{x},\bm{y})) is a partition function. β​log⁡π𝜽​(𝒚|𝒙)πr​e​f​(𝒚|𝒙)\beta\log\frac{\pi_{\bm{\theta}}(\bm{y}|\bm{x})}{\pi_{ref}(\bm{y}|\bm{x})} is termed as the implicit reward, which has been used in prior works (Mitchell et al., 2024; Liu et al., 2024b) to analyze the behavioral shift induced by the alignment process.
+
+
+
+
+
+3.2 LaSeR: Reinforcement Learning with Last-Token Self-Rewarding
+
+
+
+
+3.2.1 Formal Formulation
+
+
+
+In training, ground-truth answers can be reliably used to determine the correctness of solutions. At test time, however, when ground-truth answers are unavailable, the use of verifiers becomes crucial for evaluating solution quality and providing feedback signals. To address this problem, in this work, we explore the promising paradigm of jointly optimizing the self-verification and reasoning capabilities of LLMs within the RLVR framework, thereby enabling them not only to produce high-quality reasoning paths but also to evaluate their own outputs at test time.
+
+
+
+According to Eq. (5), as Z⁡(𝒙)Z(\bm{x}) remains the same for all 𝒚\bm{y}, a straight-forward idea is to utilize the implicit reward β​log⁡π𝜽​(𝒚|𝒙)πr​e​f​(𝒚|𝒙)\beta\log\frac{\pi_{\bm{\theta}}(\bm{y}|\bm{x})}{\pi_{ref}(\bm{y}|\bm{x})} as the indicator to rank different generations at test time. However, this approach has a critical drawback: the absolute value of the implicit reward is length-biased, since the absolute value of β​log⁡π𝜽​(𝒚|𝒙)πr​e​f​(𝒚|𝒙)=β​∑ilog⁡π𝜽​(yi|𝒙,𝒚<i)πr​e​f(yi|𝒙,,𝒚<i)\beta\log\frac{\pi_{\bm{\theta}}(\bm{y}|\bm{x})}{\pi_{ref}(\bm{y}|\bm{x})}=\beta\sum_{i}\log\frac{\pi_{\bm{\theta}}(y_{i}|\bm{x},\bm{y}_{<i})}{\pi_{ref}(y_{i}|\bm{x},,\bm{y}_{<i})} increases proportionally with the response length. In reasoning tasks, the incorrect solutions are usually longer than the correct solutions (Hassid et al., 2025), making the implicit reward unreliable in evaluating solution correctness (see Appendix A). Furthermore, disregarding Z⁡(𝒙)Z(\bm{x}) and directly aligning the implicit reward with the true reasoning reward during training degrades the policy model’s generation ability (Cui et al., 2025), since a fundamental gap (i.e., β​log⁡Z​(𝒙)\beta\log Z(\bm{x})) exists between the solution to RLVR and that to reward modeling.
+
+
+
+In this work, we begin by formulating our approach from the RL objective of verification. Given a problem 𝒙\bm{x}, and a candidate solution 𝒚\bm{y}, the model is required to produce a verification 𝒛\bm{z} to identify the correctness of the solution: 𝒛∼π𝜽(⋅|𝒙,𝒚)\bm{z}\sim\pi_{\bm{\theta}}(\cdot|\bm{x},\bm{y}). Thus, the RL objective of verification can be written as
+
+
+
+
+
+𝒱π𝜽=maxπ𝜽𝔼𝒙∼D,𝒚∼πg(⋅|x),𝒛∼π𝜽(⋅|𝒙,𝒚)[r^(𝒙,𝒚,𝒛)−βv𝒟KL(π𝜽||πr​e​f)],\displaystyle\mathcal{V}_{\pi_{\bm{\theta}}}=\max_{\pi_{\bm{\theta}}}\mathbb{E}_{\bm{x}\sim D,\bm{y}\sim\pi_{g}(\cdot|x),\bm{z}\sim\pi_{\bm{\theta}}(\cdot|\bm{x},\bm{y})}\left[\hat{r}(\bm{x},\bm{y},\bm{z})-\beta_{v}\mathcal{D}_{\text{KL}}(\pi_{\bm{\theta}}||\pi_{ref})\right],
+
+(6)
+
+
+where πg\pi_{g} is the generator to solve the problem (can also be the target model π𝜽\pi_{\bm{\theta}} itself in the self-verification setting), r^​(𝒙,𝒚,𝒛)\hat{r}(\bm{x},\bm{y},\bm{z}) is the verification reward that measures the consistency between the true correctness of 𝒚\bm{y} and the verification result of 𝒛\bm{z}:
+
+
+
+
+
+r^​(𝒙,𝒚,𝒛)={1if verification result of 𝒛 matches the true correctness of 𝒚,0otherwise.\displaystyle\hat{r}(\bm{x},\bm{y},\bm{z})=\begin{cases}1&\text{if verification result of $\bm{z}$ matches the true correctness of $\bm{y}$},\\
+0&\text{otherwise}.\end{cases}
+
+(7)
+
+
+In practice, 𝒛\bm{z} can be either a single token—for instance, “Yes” or “No” to directly indicate whether the solution is verified as correct or incorrect—or a sequence that includes both a chain of thought and the final judgment. In this work, we focus on the former setting and simplify the ground-truth label space to two single tokens zcz_{c} (e.g., “Yes”) and ziz_{i} (e.g., “No”). That is, the verification reward is simplified to
+
+
+
+
+
+r^​(𝒙,𝒚,𝒛)={1(𝒛=zc​ and ​rv​(𝒙,𝒚)=1)​ or ​(𝒛=zi​ and ​rv​(𝒙,𝒚)=0)0otherwise.\displaystyle\hat{r}(\bm{x},\bm{y},\bm{z})=\begin{cases}1&(\bm{z}=z_{c}\text{ and }r_{v}(\bm{x},\bm{y})=1)\text{ or }(\bm{z}=z_{i}\text{ and }r_{v}(\bm{x},\bm{y})=0)\\
+0&\text{otherwise}.\end{cases}
+
+(8)
+
+
+
+
+Similarly, following from Eq. (5), the close-form solution to Eq. (6) can be written as
+
+
+
+
+
+r^(𝒙,𝒚,𝒛)=βvlogπ𝜽​(𝒛|𝒙,𝒚)πr​e​f​(𝒛|𝒙,𝒚)+βvlogZ(𝒙,𝒚),Z(𝒙,𝒚)=∑𝒛πr​e​f(𝒛|𝒙,𝒚)exp(1βvr^(𝒙,𝒚,𝒛)).\displaystyle\hat{r}(\bm{x},\bm{y},\bm{z})=\beta_{v}\log\frac{\pi_{\bm{\theta}}(\bm{z}|\bm{x},\bm{y})}{\pi_{ref}(\bm{z}|\bm{x},\bm{y})}+\beta_{v}\log Z(\bm{x},\bm{y}),\quad Z(\bm{x},\bm{y})=\sum_{\bm{z}}\pi_{ref}(\bm{z}|\bm{x},\bm{y})\exp(\frac{1}{\beta_{v}}\hat{r}(\bm{x},\bm{y},\bm{z})).
+
+(9)
+
+
+
+
+Now, let’s take a closer look at Z⁡(𝒙,𝒚)Z(\bm{x},\bm{y}). First, for z∈{zc,zi}\bm{z}\in\{z_{c},z_{i}\}, πr​e​f​(z|x,y)\pi_{ref}(\bm{z}|\bm{x},\bm{y}) is a extremely small positive value for any problem-solution pair (x,y)(\bm{x},\bm{y}), i.e., πr​e​f​(z|x,y)≈0\pi_{ref}(\bm{z}|\bm{x},\bm{y})\approx 0, for z∈{zc,zi}\bm{z}\in\{z_{c},z_{i}\}. The reason is that the model is not specifically optimized for predicting the next token once it completes the generation and produces the final token (typically the “<EOS>” token). We present a numerical analysis to validate this claim in Figure 5, and we can see the value of πr​e​f​(z|x,y)\pi_{ref}(z|\bm{x},\bm{y}) is less than e−9e^{-9} for common tokens and even less than e−20e^{-20} for unused special tokens. Then, we can get that
+
+
+
+
+
+Z⁡(𝒙,𝒚)\displaystyle Z(\bm{x},\bm{y})
+=∑𝒛πr​e​f​(𝒛|𝒙,𝒚)​exp⁡(1βv​r^​(𝒙,𝒚,𝒛))=∑𝒛∉{zc,zi}πr​e​f​(𝒛|𝒙,𝒚)​exp⁡(1βv​r^​(𝒙,𝒚,𝒛))\displaystyle=\sum_{\bm{z}}\pi_{ref}(\bm{z}|\bm{x},\bm{y})\exp(\frac{1}{\beta_{v}}\hat{r}(\bm{x},\bm{y},\bm{z}))=\sum_{\bm{z}\notin\{z_{c},z_{i}\}}\pi_{ref}(\bm{z}|\bm{x},\bm{y})\exp(\frac{1}{\beta_{v}}\hat{r}(\bm{x},\bm{y},\bm{z}))
+
+(10)
+
+
+
+
++πr​e​f​(zc|𝒙,𝒚)​exp⁡(1βv​r^​(𝒙,𝒚,zc))+πr​e​f​(zi|𝒙,𝒚)​exp⁡(1βv​r^​(𝒙,𝒚,zi))\displaystyle+\pi_{ref}(z_{c}|\bm{x},\bm{y})\exp(\frac{1}{\beta_{v}}\hat{r}(\bm{x},\bm{y},z_{c}))+\pi_{ref}(z_{i}|\bm{x},\bm{y})\exp(\frac{1}{\beta_{v}}\hat{r}(\bm{x},\bm{y},z_{i}))
+
+
+
+
+
+=(1−πr​e​f​(zc|𝒙,𝒚)−πr​e​f​(zi|𝒙,𝒚))​exp⁡(0)+(πr​e​f​(zc|𝒙,𝒚)+πr​e​f​(zi|𝒙,𝒚))​exp⁡(1βv)\displaystyle=(1-\pi_{ref}(z_{c}|\bm{x},\bm{y})-\pi_{ref}(z_{i}|\bm{x},\bm{y}))\exp(0)+(\pi_{ref}(z_{c}|\bm{x},\bm{y})+\pi_{ref}(z_{i}|\bm{x},\bm{y}))\exp(\frac{1}{\beta_{v}})
+
+
+
+
+
+≈1×1+0×exp⁡(1βv)=1⟹log⁡Z⁡(𝒙,𝒚)≈0.\displaystyle\approx 1\times 1+0\times\exp(\frac{1}{\beta_{v}})=1\implies\log Z(\bm{x},\bm{y})\approx 0.
+
+
+
+The above analysis reveals that, under our formulation, the partition function that cannot be ignored by previous studies (Cui et al., 2025) can be now naturally discarded. Consequently, the optimal solution to Eq. (6) can be approximately reduced to:
+
+
+
+
+
+r^​(𝒙,𝒚,𝒛)=βv​log⁡[π𝜽​(𝒛|𝒙,𝒚)/πr​e​f​(𝒛|𝒙,𝒚)].\displaystyle\hat{r}(\bm{x},\bm{y},\bm{z})=\beta_{v}\log[\pi_{\bm{\theta}}(\bm{z}|\bm{x},\bm{y})/\pi_{ref}(\bm{z}|\bm{x},\bm{y})].
+
+(11)
+
+
+In particular, the true verification reward when the model verifies a solution as correct is:
+
+
+
+
+
+r^​(𝒙,𝒚,zc)=rv​(𝒙,𝒚)=βv​log⁡[π𝜽​(zc|𝒙,𝒚)/πr​e​f​(zc|𝒙,𝒚)].\displaystyle\hat{r}(\bm{x},\bm{y},z_{c})=r_{v}(\bm{x},\bm{y})=\beta_{v}\log[\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y})/\pi_{ref}(z_{c}|\bm{x},\bm{y})].
+
+(12)
+
+
+The first equation is derived from the definition in Eq. (8). The second equation reveals that the true reasoning reward is equal to log-probability ratio of the policy model to the reference model at
+zcz_{c}, scaled by the KL coefficient. Thus, to optimize the model’s verification capability, we do not need to explicitly perform a RLVR procedure. Instead, we can directly optimize the following MSE loss:
+
+
+
+
+
+L=𝔼𝒙∼D,𝒚∼πg(⋅|x)(βvlog[π𝜽(zc|𝒙,𝒚)/πr​e​f(zc|𝒙,𝒚)]−rv(𝒙,𝒚))2.\displaystyle L=\mathbb{E}_{\bm{x}\sim D,\bm{y}\sim\pi_{g}(\cdot|x)}\left(\beta_{v}\log[\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y})/\pi_{ref}(z_{c}|\bm{x},\bm{y})]-r_{v}(\bm{x},\bm{y})\right)^{2}.
+
+(13)
+
+
+
+
+Thus, in the self-verification setting where πg=π𝜽\pi_{g}=\pi_{\bm{\theta}}, we can directly adds the above loss into the original RLVR loss to jointly optimize the reasoning and self-verification capabilities of the policy model:
+
+
+
+
+
+𝒮π𝜽=maxπ𝜽𝔼𝒙∼D,𝒚∼π𝜽(⋅|x){rv(𝒙,𝒚)−β𝒟KL(π𝜽(𝒚|𝒙)||πr​e​f(𝒚|𝒙))−α[βvlogπ𝜽​(zc|𝒙,𝒚)πr​e​f​(zc|𝒙,𝒚)−rv(𝒙,𝒚)]2},\displaystyle\mathcal{S}_{\pi_{\bm{\theta}}}=\max_{\pi_{\bm{\theta}}}\mathbb{E}_{\bm{x}\sim D,\bm{y}\sim\pi_{\bm{\theta}}(\cdot|x)}\left\{r_{v}(\bm{x},\bm{y})-\beta\mathcal{D}_{\text{KL}}(\pi_{\bm{\theta}}(\bm{y}|\bm{x})||\pi_{ref}(\bm{y}|\bm{x}))-\alpha\left[\beta_{v}\log\frac{\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y})}{\pi_{ref}(z_{c}|\bm{x},\bm{y})}-r_{v}(\bm{x},\bm{y})\right]^{2}\right\},
+
+(14)
+
+
+where α\alpha is a loss balancing coefficient. We refer the term rs=βv​log⁡π𝜽​(zc|𝒙,𝒚)πr​e​f​(zc|𝒙,𝒚)r_{s}=\beta_{v}\log\frac{\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y})}{\pi_{ref}(z_{c}|\bm{x},\bm{y})} to the last-token self-rewarding score, since it depends on the log-probability distributions of the last token in 𝒚\bm{y}.
+
+
+
+
+
+
+3.3 Other Techniques
+
+
+
+Here, we discuss several practical techniques to further simplify and improve the efficiency and effectiveness of the self-rewarding MSE loss introduced above.
+
+
+
+Simplification of the Log-Probability in the Reference Model
+As shown in Figure 5, the quantity
+log⁡πr​e​f​(zc|𝒙,𝒚)\log\pi_{ref}(z_{c}|\bm{x},\bm{y}) remains almost constant, exhibiting only a negligible standard deviation across all 𝒙\bm{x} and 𝒚\bm{y}. Therefore, we can regard it as a pre-calculated constant cr​e​fc_{ref} in calculating the last-token self-rewarding score during both training and inference. This eliminates the need for forwarding
+𝒚\bm{y} through the reference model and thus further enhances efficiency. In specific, cr​e​fc_{ref} is the mean value of log⁡πr​e​f​(zc|𝒙,𝒚)\log\pi_{ref}(z_{c}|\bm{x},\bm{y}) on a small set of pre-generated set of (𝒙,𝒚)(\bm{x},\bm{y}). Furthermore, based on the findings in Figure 5, we select an unused special token as zcz_{c} to make πr​e​f​(zc|𝒙,𝒚)\pi_{ref}(z_{c}|\bm{x},\bm{y}) closer to 0 and to further minimize its impact on the approximation of Z⁡(𝒙,𝒚)=1Z(\bm{x},\bm{y})=1 and the stability of training.
+
+
+
+Self-Rewarding Loss Re-Weighting During training, the numbers of correct and incorrect solutions are imbalanced, and their ratio dynamically changes. To prevent the last-token self-rewarding score from being biased toward the class with more samples, we apply a class-level loss re-weighting strategy within each optimization step. In each step, we calculate the total numbers of correct and incorrect solutions (identified by the deterministic verifier) for all problems in the current batch as NcN_{c} and NiN_{i}. Then, we apply the loss re-weighting as
+
+
+
+
+
+l=1Nc+Ni∑𝒙∑𝒚[wc𝟙{rv(𝒙,𝒚)=1}+wi𝟙{rv(𝒙,𝒚)=0}][βvlogπ𝜽(zc|𝒙,𝒚)−βvcr​e​f−rv(𝒙,𝒚)]2,\displaystyle l=\frac{1}{N_{c}+N_{i}}\sum_{\bm{x}}\sum_{\bm{y}}\left[w_{c}\mathds{1}_{\{r_{v}(\bm{x},\bm{y})=1\}}+w_{i}\mathds{1}_{\{r_{v}(\bm{x},\bm{y})=0\}}\right]\left[\beta_{v}\log\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y})-\beta_{v}c_{ref}-r_{v}(\bm{x},\bm{y})\right]^{2},
+
+(15)
+
+
+where wc=Nc+Ni2×Ncw_{c}=\frac{N_{c}+N_{i}}{2\times N_{c}} and wi=Nc+Ni2×Niw_{i}=\frac{N_{c}+N_{i}}{2\times N_{i}} are re-weighting factors.
+This practice achieves a more balanced self-verification capability. We provide empirical validations on this in Appendix E. Future work can explore more effective ways to address the issue of imbalanced distribution of solutions.
+
+
+
+Integration of Verifier-based and Self-Rewarding-based Advantages The last-token self-rewarding scores can not only be used at test time, but also facilitate the training process through the integration of verifier-based and self-rewarding-based advantages. We believe such practice can help mitigate the issue of misjudgments by rule-based verifiers, which often occur when the format of ground-truth answer is overly complex, and produce more fine-grained rewards. For example, in GRPO, the final advantage can be calculated as:
+
+
+
+
+
+A^ti\displaystyle\hat{A}_{t}^{i}
+=(1−τ)​rvi−mean​(rv1,⋯,rvK)std​(rv1,⋯,rvK)+τ​rsi−mean​(rs1,⋯,rsK)std​(rs1,⋯,rsK),\displaystyle=(1-\tau)\frac{r_{v}^{i}-\text{mean}(r_{v}^{1},\cdots,r_{v}^{K})}{\text{std}(r_{v}^{1},\cdots,r_{v}^{K})}+\tau\frac{r_{s}^{i}-\text{mean}(r_{s}^{1},\cdots,r_{s}^{K})}{\text{std}(r_{s}^{1},\cdots,r_{s}^{K})},
+
+(16)
+
+
+
+
+where ​rvi=rv​(𝒙,𝒚i)​ and ​rsi=βv​log⁡π𝜽​(zc|𝒙,𝒚i)−βv​cr​e​f.\displaystyle\text{where }r_{v}^{i}=r_{v}(\bm{x},\bm{y}^{i})\text{ and }r_{s}^{i}=\beta_{v}\log\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}^{i})-\beta_{v}c_{ref}.
+
+
+
+To stabilize training,
+we adopt a filtering strategy that sets τ=0\tau=0 for any group whenever the standard deviation std​(rs1,⋯,rsK)\text{std}(r_{s}^{1},\cdots,r_{s}^{K})
+within this group falls below a threshold TT, which is set to 0.1.
+
+
+
+Separate Warm-Up of Reasoning and Self-Rewarding Capabilities
+During the initial phase of training, we optimize only the last-token self-rewarding score, without integrating self-rewarding-based advantages into the learning process. After a certain steps when the last-token self-rewarding loss is sufficiently small, we proceed to integrate verifier-based and self-rewarding-based advantages.
+Moreover, when training from base (i.e., pre-trained) models, we first perform standard RLVR without incorporating the last-token self-rewarding loss in order to warm up the model’s reasoning capability, followed by a warm-up phase for the self-rewarding capability before the complete integration of verifier-based and self-rewarding-based advantages.
+
+
+
+By combining all the aforementioned techniques, our full algorithm Reinforcement Learning with Last-Token Self-Rewarding (LaSeR), is summarized in Algorithm 1 and illustrated in Figure 1. During the testing phase, once the model generates a solution, we compute the last-token self-rewarding score based on rs=βv​log⁡π𝜽​(zc|𝒙,𝒚)−βv​cr​e​fr_{s}=\beta_{v}\log\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y})-\beta_{v}c_{ref}. The comparison between this score and 0.5 determines the self-verification outcome of the solution, or the score itself can be further used to perform weighted majority voting.
+
+
+Algorithm 1 LaSeR: Reinforcement Learning with Last-Token Self-Rewarding
+
+Input: Initial policy model π𝜽\pi_{\bm{\theta}}, prompts DD, verifier rvr_{v}, warm-up hyper-parameters wrw_{r} and ws​rw_{sr}, coefficient βv\beta_{v}, pre-specified token zcz_{c}, pre-calculated cr​e​f=𝔼(𝒙,𝒚)​[log⁡πr​e​f​(zc|𝒙,𝒚)]c_{ref}=\mathbb{E}_{(\bm{x},\bm{y})}[\log\pi_{ref}(z_{c}|\bm{x},\bm{y})]
+
+for Step s=1,⋯,Ss=1,\cdots,S do
+
+   1. Set πo​l​d←π𝜽\pi_{old}\leftarrow\pi_{\bm{\theta}};
+
+
+   2. Sample batch prompts DsD_{s} from DD;
+
+
+   3. Generate solutions {𝒚i}i=1K\{\bm{y}^{i}\}_{i=1}^{K} for each 𝒙∈Ds\bm{x}\in D_{s};
+
+
+   4. Calculate verifier-based rewards and advantages (e.g., Eq. (4)), calculate RL loss;
+
+
+   5. If s≥wrs\geq w_{r}, calculate last-token self-rewarding loss based on Eq. (15) and add it to RL loss;
+
+
+   6. If s≥ws​rs\geq w_{sr}, calculate self-rewarding-based advantages and perform advantage integration based on Eq. (16);
+
+
+   7. Update the policy model π𝜽\pi_{\bm{\theta}} using any RL algorithm with integrated loss and advantages;
+
+
+end for
+
+Output: π𝜽\pi_{\bm{\theta}}
+
+
+
+
+
+
+
+
+
+
+3.4 Brief Discussion
+
+
+
+Comparison Between LaSeR and Prior Approaches Compared with previous methods (Sareen et al., 2025; Liu et al., 2025a; Zha et al., 2025) that requires the policy model to perform separate generations for solutions and verifications, our method directly derives the self-rewarding result from the next-token log-probability of the final solution token. In the RL process, the computation of token log-probabilities is typically carried out after all the generations are completed (Sheng et al., 2024). Therefore, we can directly replace the token id of the first padding token with the token id of the pre-specified token before computing the log-probabilities of the sequences, thereby incurring no additional computation cost during training. During inference, our method requires only one more token inference after the solution is completed, which substantially reduces the computational cost compared to previous methods. We also discuss the potential way to further reduce the self-rewarding cost by avoiding any extra token inference in Section 5.3, which can be an interesting future work.
+
+
+
+Difference Between Last-Token Self-Rewarding Loss and Supervised Fine-Tuning Loss An alternative to train the self-verification capability is to optimize the following supervised fine-tuning (SFT) loss by maximizing the next-token probability of the token zcz_{c} or ziz_{i} based on the context (𝒙,𝒚)(\bm{x},\bm{y}):
+
+
+
+
+
+LS​F​T=−𝔼𝒙∼D,𝒚∼πg(⋅|x)[rv(𝒙,𝒚)⋅logπ𝜽(zc|𝒙,𝒚)+(1−rv(𝒙,𝒚))⋅logπ𝜽(zi|𝒙,𝒚)].\displaystyle L_{SFT}=-\mathbb{E}_{\bm{x}\sim D,\bm{y}\sim\pi_{g}(\cdot|x)}\left[r_{v}(\bm{x},\bm{y})\cdot\log\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y})+(1-r_{v}(\bm{x},\bm{y}))\cdot\log\pi_{\bm{\theta}}(z_{i}|\bm{x},\bm{y})\right].
+
+(17)
+
+
+The major difference between SFT loss and our last-token self-rewarding loss in Eq. (13) is that the SFT loss drives
+π𝜽​(zc|𝒙,𝒚)\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}) to fit 11 when rv​(𝒙,𝒚)=1r_{v}(\bm{x},\bm{y})=1, which may lead to strong interference with the optimization of reasoning capability.
+In contrast, our loss drives
+π𝜽​(zc|𝒙,𝒚)\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}) toward
+exp⁡(1/βv)⋅πref​(zc|𝒙,𝒚)\exp(1/\beta_{v})\cdot\pi_{\text{ref}}(z_{c}|\bm{x},\bm{y}) for rv​(𝒙,𝒚)=1.0r_{v}(\bm{x},\bm{y})=1.0.
+When βv\beta_{v} is relatively large,
+π𝜽​(zc|𝒙,𝒚)\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}) remains still very small, thereby exerting only a negligible influence on the original RLVR optimization
+(e.g., π𝜽​(zc|𝒙,𝒚)=e−13\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y})=e^{-13} when
+πref​(zc|𝒙,𝒚)=e−23\pi_{\text{ref}}(z_{c}|\bm{x},\bm{y})=e^{-23} and βv=0.1\beta_{v}=0.1).
+We provide the empirical comparison in Appendix F.
+
+
+
+
+
+
+4 Experiments
+
+
+
+
+4.1 Experimental Settings
+
+
+
+Base Models and Baselines
+We primarily conduct empirical validations on both LLaMA3.2 MetaAI (2024b) and Qwen2.5 (Qwen Team, 2024) architectures, including three base models: OctoThinker-3B-Short-Base (Wang et al., 2025a) (mid-trained version of LLaMA3.2-3B-Base), Qwen2.5-7B-Base (Qwen Team, 2024) (pre-trained model) and Open-Reasoner-Zero-7B (Hu et al., 2025) (reinforced version of Qwen2.5-7B-Base). In principle, our method can be seamlessly integrated into any RLVR framework, as it only introduces an additional MSE loss term. In this work, we adopt the widely used GRPO (Shao et al., 2024) as the base algorithm and primarily investigate the effectiveness of applying our method within GRPO, while leaving the exploration on other RL algorithms in the future work.
+
+
+
+Training and Evaluation Datasets
+We adopt DeepMath-103K (He et al., 2025), a large-scale and high-quality mathematical reasoning dataset, for our RL training data. In testing, we evaluate both the reasoning and self-verification performance of each model on five typical math reasoning benchmarks: MATH500 (Hendrycks et al., 2021), AMC23 (AI-MO, 2024b), AIME24 (AI-MO, 2024a), AIME25 (OpenCompass, 2025), and OlympiadBench (He et al., 2024). We also explore the effectiveness of our method in general reasoning tasks beyond math reasoning in Section 5.2.
+
+
+
+Training Settings The detailed training hyper-parameters of GRPO are put in Appendix C. The prompt template for each model is in Appendix I. When applying our method, we set the hyper-parameters (βv,α,τ)=(0.1,0.1,0.1)(\beta_{v},\alpha,\tau)=(0.1,0.1,0.1), which are empirically determined based on the observations in Appendix D. zcz_{c} is selected as “<vision_start>” for Qwen2.5-7B-Base and Open-Reasoner-Zero-7B, and “<reserved_special_token_0>” for OctoThinker-3B-Short-Base. The simplified constant of the reference log-probability, crefc_{\text{ref}}, is −23.0-23.0 for Qwen2.5-7B-Base and Open-Reasoner-Zero-7B, and −25.0-25.0 for OctoThinker-3B-Short-Base, as estimated from the results in Figure 5. The number of reasoning warm-up steps is set to 200 for both Qwen2.5-7B-Base and OctoThinker-3B-Short-Base, and the number of self-rewarding warm-up steps is 200 across all models.
+
+
+
+Evaluation Settings During generation, we set both the temperature and top_p to 1.01.0 for all models. The max_generation_len is 8192. On MATH500 and OlympiadBench, we sample 2 solutions for each problem; whereas on AMC23, AIME24, and AIME25, we sample 32 solutions per problem. We then report the average Pass@1 accuracy of each model on each benchmark. We also evaluate the self-verification performance of each model by computing the self-verification F1 score, defined as the harmonic mean of self-verification accuracy on self-generated correct and incorrect solutions. Baselines perform self-verification based on the prompt in Appendix I. Any solution without a final answer is automatically treated as incorrect and excluded from the verification accuracy calculation. Detailed self-verification accuracy results are provided in Appendix G.
+
+
+
+
+
+4.2 Main Results and Analysis
+
+
+Table 1: Reasoning and self-verification performance of each model on five mathematical reasoning benchmarks. We do not report the results of OctoThinker-based models on AIME24-25, as the number of correct solutions is quite insufficient for a reliable evaluation.
+
+
+
+
+
+
+
+Method
+
+Reasoning Accuracy
+Self-Verification F1 Score
+
+
+
+
+
+MATH-
+
+500
+
+
+
+
+AMC-
+
+23
+
+
+
+
+AIME-
+
+24
+
+
+
+
+AIME-
+
+25
+
+
+
+
+Olym.-
+
+Bench
+
+
+
+
+Avg.
+
+
+
+
+MATH-
+
+500
+
+
+
+
+AMC-
+
+23
+
+
+
+
+AIME-
+
+24
+
+
+
+
+AIME-
+
+25
+
+
+
+
+Olym.-
+
+Bench
+
+
+
+
+Avg.
+
+
+
+ OctoThinker-3B-Short-Base
+
+
+Base
+03.7
+01.3
+-
+-
+01.0
+02.0
+22.3
+11.2
+-
+-
+13.7
+15.7
+
+
+GRPO
+49.8
+25.3
+-
+-
+17.3
+30.8
+56.9
+47.3
+-
+-
+48.8
+51.0
+
+
+LaSeR
+53.1
+27.0
+-
+-
+18.2
+32.8
+73.6
+70.2
+-
+-
+73.6
+72.5
+
+
+- SWA
+52.9
+26.1
+-
+-
+18.2
+32.4
+80.4
+70.9
+-
+-
+66.0
+72.4
+
+
+ Qwen2.5-7B-Base
+
+
+Base
+35.8
+20.6
+03.5
+01.6
+12.3
+14.8
+36.4
+30.8
+27.6
+32.9
+36.9
+32.9
+
+
+GRPO
+79.9
+55.9
+16.2
+13.8
+43.3
+41.8
+54.6
+59.7
+36.6
+41.5
+53.5
+49.2
+
+
+LaSeR
+80.2
+58.1
+15.4
+15.7
+44.1
+42.7
+83.2
+82.5
+79.6
+74.3
+78.3
+79.6
+
+
+- SWA
+78.0
+58.3
+15.4
+12.3
+41.7
+41.1
+79.7
+80.2
+81.3
+74.9
+83.3
+79.9
+
+
+ Open-Reasoner-Zero-7B
+
+
+Base
+81.9
+60.3
+15.6
+15.1
+46.9
+44.0
+26.7
+51.3
+45.9
+55.2
+37.5
+43.3
+
+
+GRPO
+83.1
+61.9
+18.1
+15.0
+47.1
+45.0
+57.1
+44.8
+14.6
+28.1
+49.5
+38.8
+
+
+LaSeR
+82.8
+62.7
+19.1
+15.1
+47.8
+45.5
+87.2
+79.7
+64.6
+77.7
+78.7
+77.6
+
+
+- SWA
+83.2
+62.6
+19.0
+14.5
+47.6
+45.4
+87.5
+77.7
+63.3
+77.3
+77.9
+76.7
+
+
+
+
+Table 2: Comparison of verification F1 scores between LaSeR (self-rewarding) and external reward models (Qwen2.5-Math-7B-PRM800K, Qwen2.5-Math-PRM-7B, and Qwen2.5-Math-RM-72B) on responses generated by different policy models.
+
+
+
+
+
+
+
+Method
+
+MATH500
+AMC23
+AIME24
+AIME25
+Olym.
+Avg.
+
+
+ Generator: OctoThinker-3B-Short-LaSeR
+
+
+Qwen2.5-Math-7B-PRM800K (7B RM)
+77.0
+68.9
+-
+-
+68.5
+71.5
+
+
+Qwen2.5-Math-PRM-7B (7B RM)
+80.9
+63.5
+-
+-
+64.1
+69.5
+
+
+Qwen2.5-Math-RM-72B (72B RM)
+89.2
+71.7
+-
+-
+72.9
+77.9
+
+
+LaSeR (3B Self-Rewarding)
+73.6
+70.2
+-
+-
+73.6
+72.5
+
+
+ Generator: Qwen2.5-7B-Laser
+
+
+Qwen2.5-Math-7B-PRM800K (7B RM)
+59.4
+52.7
+58.8
+53.8
+52.0
+55.3
+
+
+Qwen2.5-Math-PRM-7B (7B RM)
+82.5
+79.2
+75.1
+72.3
+77.8
+77.4
+
+
+Qwen2.5-Math-RM-72B (72B RM)
+87.8
+80.7
+81.3
+74.8
+75.4
+80.0
+
+
+LaSeR (7B Self-Rewarding)
+83.2
+82.5
+79.6
+74.3
+78.3
+79.6
+
+
+ Generator: Open-Reasoner-Zero-7B-LaSeR
+
+
+Qwen2.5-Math-7B-PRM800K (7B RM)
+56.3
+42.5
+51.4
+50.8
+38.5
+47.9
+
+
+Qwen2.5-Math-PRM-7B (7B RM)
+86.0
+79.6
+70.8
+67.3
+76.0
+75.9
+
+
+Qwen2.5-Math-RM-72B (72B RM)
+86.8
+79.4
+71.0
+71.4
+75.5
+76.8
+
+
+LaSeR (7B Self-Rewarding)
+87.2
+79.7
+64.6
+77.7
+78.7
+77.6
+
+
+
+
+
+We put the main results in Table 1. The key conclusion is that, across different model variants, our method not only yields better reasoning performance for the policy model compared with the baseline, but also substantially enhances its self-verification capability by enabling the self-rewarding scores to achieve remarkably high F1 scores.
+
+
+
+Regarding reasoning performance, applying our algorithm leads to higher accuracy in most settings and consistently yields higher average accuracy on the three base models. We think there are two main reasons for this improvement: (1) First, our method encourages the model to encode its assessment of the overall solution in the final response token, which leads to better confidence calibration. Improved calibration itself can have a positive impact on the model’s learning. (2) Second, by integrating self-rewarding-based advantages into verifier-based advantages, our approach enables more fine-grained advantage estimation, which in turn facilitates more effective learning. For comparison, we report the results without self-rewarding-based advantages (-SWA) in Table 1.
+
+
+
+Regarding self-rewarding performance, applying a simple last-token self-rewarding MSE loss substantially enhances the self-rewarding capability of the models, achieving around 80% self-verification F1 scores. This demonstrates strong self-verification accuracy on both correct and incorrect solutions. To further highlight the self-rewarding capabilities, we display the comparison results of verification F1 scores between LaSeR and three advanced external reward models (Qwen2.5-Math-7B-PRM800K (Zhang et al., 2025), Qwen2.5-Math-PRM-7B (Zhang et al., 2025), and Qwen2.5-Math-RM-72B (Yang et al., 2024)) on evaluating the solutions generated by the different reinforced models, i.e., OctoThinker-3B-Short-LaSeR, Qwen2.5-7B-LaSeR, and Open-Reasoner-Zero-7B-LaSeR. The results in Table 2 show that LaSeR outperforms equally sized state-of-the-art external verifiers in assessing the model’s own solutions, and even matches the verification performance of a 72B reward model, demonstrating its non-trivial effectiveness in enhancing self-rewarding capability.
+Also, our method requires one additional token inference only to compute the self-rewarding scores for enabling the policy model to function simultaneously as both the generator and reward model, which is highly efficient and practical.
+
+
+
+
+
+4.3 Inference-Time Scaling Results
+
+
+
+
+
+(a) Results of OT-3B-based models on MATH500 
+
+
+(b) Results of Qwen2.5-7B-based models on MATH500 
+
+
+(c) Results of ORZ-7B-based models on MATH500 
+
+
+(d) Results of OT-3B-based models on OlympiadBench 
+
+
+(e) Results of Qwen2.5-7B-based models on OlympiadBench 
+
+
+(f) Results of ORZ-7B-based models on OlympiadBench 
+
+Figure 2: The majority voting (Maj@K) and weighted majority voting (RM@K) results on MATH500 and OlympiadBench.
+
+
+
+
+Here, we explore the effectiveness of self-rewarding in the inference-time scaling via weighted majority voting. We compare majority voting results with (RM@K) and without (Maj@K) weighting by the last-token self-rewarding scores, on MATH500 and OlympiadBench.
+The results are shown in Figure 2.
+We denote the three base models by “OT-3B”, “Qwen2.5-7B”, and “ORZ-7B”. The suffixes “-GRPO” and “-LaSeR” indicate the variants trained with GRPO and our method LaSeR, respectively.
+The results show that the optimized self-rewarding capability of the model is highly effective on improving its own inference-time scaling performance.
+
+
+
+
+
+
+5 Analysis and Discussion
+
+
+Table 3: Comparison of reasoning and self-verification performance with and without reference log-probability simplification in our method. Based model is Open-Reasoner-Zero-7B.
+
+
+
+
+
+
+
+Method
+
+Reasoning Accuracy
+Self-Verification F1 Score
+
+
+
+
+
+MATH-
+
+500
+
+
+
+
+AMC-
+
+23
+
+
+
+
+AIME-
+
+24
+
+
+
+
+AIME-
+
+25
+
+
+
+
+Olym.-
+
+Bench
+
+
+
+
+Avg.
+
+
+
+
+MATH-
+
+500
+
+
+
+
+AMC-
+
+23
+
+
+
+
+AIME-
+
+24
+
+
+
+
+AIME-
+
+25
+
+
+
+
+Olym.-
+
+Bench
+
+
+
+
+Avg.
+
+
+
+w/ Simpl.
+82.5
+61.6
+18.8
+16.2
+46.5
+45.1
+82.3
+79.3
+77.9
+79.2
+78.4
+79.4
+
+
+w/o Simpl.
+81.0
+61.2
+17.3
+17.3
+48.3
+45.0
+81.8
+79.2
+79.0
+78.9
+77.5
+79.3
+
+
+
+
+
+
+5.1 The Impact of Simplifying The Reference Log-Probabilities to A Constant
+
+
+
+As discussed in Section 3.3,
+we approximate the log-probability of the pre-specified token under the reference model, log⁡πr​e​f​(zc|𝒙,𝒚)\log\pi_{ref}(z_{c}|\bm{x},\bm{y}), by its mean computed over a small sample set when calculating the last-token self-rewarding scores. Here, we empirically validate this practice by conducting comparison experiments on Open-Reasoner-Zero-7B, with and without reference log-probability simplification in our method. We evaluate
+the checkpoint after 200 optimization steps in each setting (corresponding to the last checkpoint before advantage integration). The results are reported in Table 3. As shown, the simplification does not affect the optimization of reasoning and self-rewarding capabilities, since the performance under the two settings remains comparable. However, it effectively reduces the computational cost of calculating the last-token self-rewarding value by half.
+
+
+
+
+
+5.2 The Generalizability of LaSeR to General Reasoning Domain
+
+
+
+
+
+(a) Evaluation accuracy on MMLU-Pro and GPQA-Diamond 
+
+
+(b) Self-rewarding score distribution on MMLU-Pro 
+
+
+(c) Self-rewarding score distribution on GPQA-Diamond 
+
+Figure 3: The generalizability of LaSeR on general reasoning tasks.
+
+
+
+
+We conduct additional experiments to explore the generalizability of our method to general reasoning domain. We use a filtered version (Yu et al., 2025b) of WebInstruct-verified dataset (Ma et al., 2025), and conduct RL experiments on Qwen3-4B-Base (Yang et al., 2025a). We use the general-verifier-1.5B model from Ma et al. (2025) as the model-based verifier and adopt GRPO as the RL algorithm. For our method, we do not perform the advantage integration strategy here. The reason is that we observe the self-verification F1 score of our method during training is relatively low in the general reasoning setting (only between 65% and 70%, and the self-rewarding score distributions in the test sets shown in Figure 3(b) and Figure 3(c) also reveal this phenomenon). This leads to large noise in the self-rewarding-based advantage estimation, and consequently, the integration of self-rewarding-based advantages results in performance degradation.
+After training, we conduct evaluations on two general reasoning benchmarks: MMLU-Pro (Wang et al., 2024b) and GPQA-Diamond (Rein et al., 2024). We sample 4 solutions per problem on each dataset for each model, and calculate both the average accuracy and the (weighted) majority voting accuracy. Detailed training and evaluation settings are in Appendix H.
+
+
+
+We display the evaluation accuracy in Figure 3(a), and additionally, we display the self-rewarding score distributions on two datasets in Figure 3(b) and Figure 3(c) for reference. First, we observe that jointly optimizing the self-rewarding capability does not impact the model’s general reasoning ability, allowing the policy model to achieve comparable average reasoning accuracy to the baseline. However, as mentioned above, the optimized self-rewarding score on general reasoning tasks does not achieve the high accuracy seen in math reasoning tasks. We can see that the self-rewarding score distributions for correct and incorrect solutions on MMLU-Pro exhibit certain overlap, and the distinction further diminishes on the more challenging benchmark GPQA-Diamond. We speculate that two factors may contribute to this: (1) The model’s general reasoning ability is inherently weaker than its math reasoning ability, which limits the upper bound of its self-rewarding capabilities in the general reasoning domain. (2) The model-based verifier used in the experiment (general-verifier-1.5B) has limited verification ability, resulting in high noise in the reasoning rewards, which in turn affects the optimization of the self-rewarding capability. A promising direction for future work is to further explore and unlock the full potential of our method in the general reasoning domain. Though not perfect, the optimized self-rewarding scores can still provide useful signals during inference time, leading to better weighted majority voting results.
+
+
+
+
+
+5.3 Further Reduction or Increase of Self-Rewarding Cost
+
+
+
+In this section, we discuss two additional variants of LaSeR for future work. In the current method, we calculate the last-token self-rewarding score based on the next-token log-probability distribution of the “<EOS>” token, requiring one additional token inference compared with standard inference. One potential way to further reduce the inference cost of LaSeR is to derive the last-token self-rewarding score directly from the predicted log-probability of pre-specified token zcz_{c} at the “<EOS>” token position. Specifically, let yTy_{T} denote the “<EOS>” token in 𝒚\bm{y}. Then, the reduced last-token self-rewarding score can be defined as rs=βv​log⁡π𝜽​(zc|𝒙,𝒚<T)−βv​cr​e​fr_{s}=\beta_{v}\log\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}_{<T})-\beta_{v}c_{ref}, as we have observed that πref​(zc|𝒙,𝒚<T)\pi_{\text{ref}}(z_{c}|\bm{x},\bm{y}_{<T}) remains nearly constant across (𝒙,𝒚)(\bm{x},\bm{y}) (e.g., approximately e−28e^{-28} for Qwen2.5-7B-Base). In this case, we can achieve ideally zero additional inference cost for self-rewarding compared with standard generation by directly calculating the self-rewarding score from the log-probability distribution at the “<EOS>” token position, without requiring any extra token inference. In theory, this works because setting a relatively large βv\beta_{v} still yields a small value of π𝜽​(zc|𝒙,𝒚<T)\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}_{<T}) (e.g., π𝜽​(zc|𝒙,𝒚<T)=e−18\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}_{<T})=e^{-18} when βv=0.1\beta_{v}=0.1 and cref=−28c_{\text{ref}}=-28), thereby allowing π𝜽​(<EOS>|𝒙,𝒚<T)\pi_{\bm{\theta}}(\texttt{<EOS>}|\bm{x},\bm{y}_{<T}) to still dominate the probability mass. However, although the probability is very low, we observe that the generator may still select zcz_{c} at the end of the sequence in few cases during training, which can adversely affect training stability as the generator continues to generate after zcz_{c}. One straight-forward solution may be to set the sampling hyper-parameter t​o​p​_​ptop\_p to a value less than 1.0. Future work can further investigate advanced strategies to make the above adjustment more principled and robust.
+
+
+
+While reducing the self-rewarding cost improves efficiency, an alternative is to increase the inference cost in exchange for stronger self-rewarding capability. That is, instead of computing the self-rewarding score based on the log-probability distribution of a single token only, we can increase the number of additional inference tokens by calculating it over MM tokens as OPENrs=βv​∑m=1Mlog⁡π𝜽​(zc|𝒙,𝒚,zc,⋯,zc⏟m−1​times))−M​βv​cr​e​fr_{s}=\beta_{v}\sum_{m=1}^{M}\log\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y},\underbrace{z_{c},\cdots,z_{c}}_{m-1\ \text{times}}))-M\beta_{v}c_{ref}. It is a promising direction for future research to explore whether increasing the number of additional inference tokens can yield positive inference-time scaling effect for latent self-rewarding capability.
+
+
+
+
+
+
+6 Conclusion
+
+
+
+In this work, we propose LaSeR, a lightweight and effective algorithm that jointly optimizes the reasoning and self-rewarding capabilities of LLMs. By deriving the closed-form solution to the RL objective of verification, we uncover a concise yet intriguing formula: the true reasoning reward provided by the verifier is equal to the last-token self-rewarding score produced by the model. This self-rewarding score depends on the model’s next-token log-probability for a pre-specified token at the final response token, a pre-calculated constant, and the KL coefficient. Based on this insight, our method simply adds a MSE loss between the verifier-based reasoning rewards and the corresponding last-token self-rewarding scores into the standard RLVR process. The optimized self-rewarding scores can not only be incorporated back into the RL process to further enhance training, but also achieve high verification accuracy at test time, thereby improving solution ranking and selection.
+
+
+
+
+
+References
+
+
+      
+
+Achiam et al. (2023)
+
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+
+
+Gpt-4 technical report.
+
+
+arXiv preprint arXiv:2303.08774, 2023.
+
+
+      
+
+Ahmadian et al. (2024)
+
+Arash Ahmadian, Chris Cremer, Matthias Gallé, Marzieh Fadaee, Julia Kreutzer, Olivier Pietquin, Ahmet Üstün, and Sara Hooker.
+
+
+Back to basics: Revisiting reinforce style optimization for learning from human feedback in llms.
+
+
+arXiv preprint arXiv:2402.14740, 2024.
+
+
+      
+
+AI-MO (2024a)
+
+AI-MO.
+
+
+Aime 2024.
+
+
+https://huggingface.co/datasets/AI-MO/aimo-validation-aime, 2024a.
+
+
+      
+
+AI-MO (2024b)
+
+AI-MO.
+
+
+Amc 2023.
+
+
+https://huggingface.co/datasets/AI-MO/aimo-validation-amc, 2024b.
+
+
+      
+
+Cobbe et al. (2021)
+
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al.
+
+
+Training verifiers to solve math word problems.
+
+
+arXiv preprint arXiv:2110.14168, 2021.
+
+
+      
+
+Cui et al. (2025)
+
+Ganqu Cui, Lifan Yuan, Zefan Wang, Hanbin Wang, Wendi Li, Bingxiang He, Yuchen Fan, Tianyu Yu, Qixin Xu, Weize Chen, et al.
+
+
+Process reinforcement through implicit rewards.
+
+
+arXiv preprint arXiv:2502.01456, 2025.
+
+
+      
+
+Dong et al. (2025)
+
+Guanting Dong, Hangyu Mao, Kai Ma, Licheng Bao, Yifei Chen, Zhongyuan Wang, Zhongxia Chen, Jiazhen Du, Huiyang Wang, Fuzheng Zhang, et al.
+
+
+Agentic reinforced policy optimization.
+
+
+arXiv preprint arXiv:2507.19849, 2025.
+
+
+      
+
+Fan et al. (2025)
+
+Run-Ze Fan, Zengzhi Wang, and Pengfei Liu.
+
+
+Megascience: Pushing the frontiers of post-training datasets for science reasoning.
+
+
+arXiv preprint arXiv:2507.16812, 2025.
+
+
+      
+
+Gao et al. (2024)
+
+Bofei Gao, Zefan Cai, Runxin Xu, Peiyi Wang, Ce Zheng, Runji Lin, Keming Lu, Dayiheng Liu, Chang Zhou, Wen Xiao, et al.
+
+
+Llm critics help catch bugs in mathematics: Towards a better mathematical verifier with natural language feedback.
+
+
+arXiv preprint arXiv:2406.14024, 2024.
+
+
+      
+
+Gao et al. (2023)
+
+Leo Gao, John Schulman, and Jacob Hilton.
+
+
+Scaling laws for reward model overoptimization.
+
+
+In International Conference on Machine Learning, pp.  10835–10866. PMLR, 2023.
+
+
+      
+
+Guo et al. (2025)
+
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+
+
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+
+
+arXiv preprint arXiv:2501.12948, 2025.
+
+
+      
+
+Hassid et al. (2025)
+
+Michael Hassid, Gabriel Synnaeve, Yossi Adi, and Roy Schwartz.
+
+
+Don’t overthink it. preferring shorter thinking chains for improved llm reasoning.
+
+
+arXiv preprint arXiv:2505.17813, 2025.
+
+
+      
+
+He et al. (2024)
+
+Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu, Zhen Thai, Junhao Shen, Jinyi Hu, Xu Han, Yujie Huang, Yuxiang Zhang, et al.
+
+
+Olympiadbench: A challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems.
+
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp.  3828–3850, 2024.
+
+
+      
+
+He et al. (2025)
+
+Zhiwei He, Tian Liang, Jiahao Xu, Qiuzhi Liu, Xingyu Chen, Yue Wang, Linfeng Song, Dian Yu, Zhenwen Liang, Wenxuan Wang, et al.
+
+
+Deepmath-103k: A large-scale, challenging, decontaminated, and verifiable mathematical dataset for advancing reasoning.
+
+
+arXiv preprint arXiv:2504.11456, 2025.
+
+
+      
+
+Hendrycks et al. (2021)
+
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt.
+
+
+Measuring mathematical problem solving with the MATH dataset.
+
+
+In Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2), 2021.
+
+
+URL https://openreview.net/forum?id=7Bywt2mQsCe.
+
+
+      
+
+Hu et al. (2025)
+
+Jingcheng Hu, Yinmin Zhang, Qi Han, Daxin Jiang, Xiangyu Zhang, and Heung-Yeung Shum.
+
+
+Open-reasoner-zero: An open source approach to scaling up reinforcement learning on the base model.
+
+
+arXiv preprint arXiv:2503.24290, 2025.
+
+
+      
+
+Huan et al. (2025)
+
+Maggie Huan, Yuetai Li, Tuney Zheng, Xiaoyu Xu, Seungone Kim, Minxin Du, Radha Poovendran, Graham Neubig, and Xiang Yue.
+
+
+Does math reasoning improve general llm capabilities? understanding transferability of llm reasoning.
+
+
+arXiv preprint arXiv:2507.00432, 2025.
+
+
+      
+
+Jaech et al. (2024)
+
+Aaron Jaech, Adam Kalai, Adam Lerer, Adam Richardson, Ahmed El-Kishky, Aiden Low, Alec Helyar, Aleksander Madry, Alex Beutel, Alex Carney, et al.
+
+
+Openai o1 system card.
+
+
+arXiv preprint arXiv:2412.16720, 2024.
+
+
+      
+
+Jain et al. (2025)
+
+Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia Yan, Tianjun Zhang, Sida Wang, Armando Solar-Lezama, Koushik Sen, and Ion Stoica.
+
+
+Livecodebench: Holistic and contamination free evaluation of large language models for code.
+
+
+In The Thirteenth International Conference on Learning Representations, 2025.
+
+
+URL https://openreview.net/forum?id=chfJJYC3iL.
+
+
+      
+
+Jiang et al. (2025)
+
+Yuhua Jiang, Yuwen Xiong, Yufeng Yuan, Chao Xin, Wenyuan Xu, Yu Yue, Qianchuan Zhao, and Lin Yan.
+
+
+Pag: Multi-turn reinforced llm self-correction with policy as generative verifier.
+
+
+arXiv preprint arXiv:2506.10406, 2025.
+
+
+      
+
+Li et al. (2023)
+
+Xuechen Li, Tianyi Zhang, Yann Dubois, Rohan Taori, Ishaan Gulrajani, Carlos Guestrin, Percy Liang, and Tatsunori B. Hashimoto.
+
+
+Alpacaeval: An automatic evaluator of instruction-following models.
+
+
+https://github.com/tatsu-lab/alpaca_eval, 5 2023.
+
+
+      
+
+Li et al. (2025)
+
+Zongzhao Li, Zongyang Ma, Mingze Li, Songyou Li, Yu Rong, Tingyang Xu, Ziqi Zhang, Deli Zhao, and Wenbing Huang.
+
+
+Star-r1: Spatial transformation reasoning by reinforcing multimodal llms.
+
+
+arXiv preprint arXiv:2505.15804, 2025.
+
+
+      
+
+Lightman et al. (2023)
+
+Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe.
+
+
+Let’s verify step by step.
+
+
+In The Twelfth International Conference on Learning Representations, 2023.
+
+
+      
+
+Liu et al. (2024a)
+
+Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al.
+
+
+Deepseek-v3 technical report.
+
+
+arXiv preprint arXiv:2412.19437, 2024a.
+
+
+      
+
+Liu et al. (2024b)
+
+Alisa Liu, Xiaochuang Han, Yizhong Wang, Yulia Tsvetkov, Yejin Choi, and Noah A. Smith.
+
+
+Tuning language models by proxy.
+
+
+In First Conference on Language Modeling, 2024b.
+
+
+URL https://openreview.net/forum?id=dribhnhm1i.
+
+
+      
+
+Liu & Zhang (2025)
+
+Jiawei Liu and Lingming Zhang.
+
+
+Code-r1: Reproducing r1 for code with reliable rewards.
+
+
+2025.
+
+
+      
+
+Liu et al. (2025a)
+
+Xiaoyuan Liu, Tian Liang, Zhiwei He, Jiahao Xu, Wenxuan Wang, Pinjia He, Zhaopeng Tu, Haitao Mi, and Dong Yu.
+
+
+Trust, but verify: A self-verification approach to reinforcement learning with verifiable rewards.
+
+
+arXiv preprint arXiv:2505.13445, 2025a.
+
+
+      
+
+Liu et al. (2025b)
+
+Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin.
+
+
+Understanding r1-zero-like training: A critical perspective.
+
+
+arXiv preprint arXiv:2503.20783, 2025b.
+
+
+      
+
+Lu et al. (2025)
+
+Songshuo Lu, Hua Wang, Zhi Chen, and Yaohua Tang.
+
+
+Urpo: A unified reward & policy optimization framework for large language models.
+
+
+arXiv preprint arXiv:2507.17515, 2025.
+
+
+      
+
+Ma et al. (2025)
+
+Xueguang Ma, Qian Liu, Dongfu Jiang, Ge Zhang, Zejun Ma, and Wenhu Chen.
+
+
+General-reasoner: Advancing llm reasoning across all domains.
+
+
+arXiv preprint arXiv:2505.14652, 2025.
+
+
+      
+
+MetaAI (2024a)
+
+MetaAI.
+
+
+Introducing llama 3.1: Our most capable models to date.
+
+
+https://ai.meta.com/blog/meta-llama-3-1/, 2024a.
+
+
+      
+
+MetaAI (2024b)
+
+MetaAI.
+
+
+Llama 3.2: Revolutionizing edge ai and vision with open, customizable models.
+
+
+https://ai.meta.com/blog/llama-3-2-connect-2024-vision-edge-mobile-devices/, 2024b.
+
+
+      
+
+Mitchell et al. (2024)
+
+Eric Mitchell, Rafael Rafailov, Archit Sharma, Chelsea Finn, and Christopher D Manning.
+
+
+An emulator for fine-tuning large language models using small language models.
+
+
+In The Twelfth International Conference on Learning Representations, 2024.
+
+
+URL https://openreview.net/forum?id=Eo7kv0sllr.
+
+
+      
+
+Mukherjee et al. (2025)
+
+Sagnik Mukherjee, Lifan Yuan, Dilek Hakkani-Tur, and Hao Peng.
+
+
+Reinforcement learning finetunes small subnetworks in large language models.
+
+
+arXiv preprint arXiv:2505.11711, 2025.
+
+
+      
+
+OpenCompass (2025)
+
+OpenCompass.
+
+
+Aime 2025.
+
+
+https://huggingface.co/datasets/opencompass/AIME2025, 2025.
+
+
+      
+
+Peters & Schaal (2007)
+
+Jan Peters and Stefan Schaal.
+
+
+Reinforcement learning by reward-weighted regression for operational space control.
+
+
+In Proceedings of the 24th international conference on Machine learning, pp.  745–750, 2007.
+
+
+      
+
+Qwen Team (2024)
+
+Qwen Team.
+
+
+Qwen2. 5: A party of foundation models.
+
+
+Qwen (Sept. 2024). url: https://qwenlm. github. io/blog/qwen2, 5, 2024.
+
+
+      
+
+Rafailov et al. (2023)
+
+Rafael Rafailov, Archit Sharma, Eric Mitchell, Christopher D Manning, Stefano Ermon, and Chelsea Finn.
+
+
+Direct preference optimization: Your language model is secretly a reward model.
+
+
+Advances in neural information processing systems, 36:53728–53741, 2023.
+
+
+      
+
+Rein et al. (2024)
+
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R Bowman.
+
+
+Gpqa: A graduate-level google-proof q&a benchmark.
+
+
+In First Conference on Language Modeling, 2024.
+
+
+      
+
+Sareen et al. (2025)
+
+Kusha Sareen, Morgane M Moss, Alessandro Sordoni, Rishabh Agarwal, and Arian Hosseini.
+
+
+Putting the value back in rl: Better test-time scaling by unifying llm reasoners with verifiers.
+
+
+arXiv preprint arXiv:2505.04842, 2025.
+
+
+      
+
+Schulman et al. (2017)
+
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+
+
+Proximal policy optimization algorithms.
+
+
+arXiv preprint arXiv:1707.06347, 2017.
+
+
+      
+
+Shao et al. (2024)
+
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al.
+
+
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+
+
+arXiv preprint arXiv:2402.03300, 2024.
+
+
+      
+
+Sheng et al. (2024)
+
+Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu.
+
+
+Hybridflow: A flexible and efficient rlhf framework.
+
+
+arXiv preprint arXiv: 2409.19256, 2024.
+
+
+      
+
+Skywork-o1 (2024)
+
+Skywork-o1.
+
+
+Skywork-o1 open series.
+
+
+https://huggingface.co/Skywork, November 2024.
+
+
+URL https://huggingface.co/Skywork.
+
+
+      
+
+Snell et al. (2024)
+
+Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar.
+
+
+Scaling llm test-time compute optimally can be more effective than scaling model parameters.
+
+
+arXiv preprint arXiv:2408.03314, 2024.
+
+
+      
+
+Sutton et al. (1998)
+
+Richard S Sutton, Andrew G Barto, et al.
+
+
+Reinforcement learning: An introduction, volume 1.
+
+
+MIT press Cambridge, 1998.
+
+
+      
+
+Team et al. (2025a)
+
+Kimi Team, Yifan Bai, Yiping Bao, Guanduo Chen, Jiahao Chen, Ningxin Chen, Ruijue Chen, Yanru Chen, Yuankun Chen, Yutian Chen, et al.
+
+
+Kimi k2: Open agentic intelligence.
+
+
+arXiv preprint arXiv:2507.20534, 2025a.
+
+
+      
+
+Team et al. (2025b)
+
+Kimi Team, Angang Du, Bofei Gao, Bowei Xing, Changjiu Jiang, Cheng Chen, Cheng Li, Chenjun Xiao, Chenzhuang Du, Chonghua Liao, et al.
+
+
+Kimi k1. 5: Scaling reinforcement learning with llms.
+
+
+arXiv preprint arXiv:2501.12599, 2025b.
+
+
+      
+
+Wang et al. (2024a)
+
+Peiyi Wang, Lei Li, Zhihong Shao, Runxin Xu, Damai Dai, Yifei Li, Deli Chen, Yu Wu, and Zhifang Sui.
+
+
+Math-shepherd: Verify and reinforce llms step-by-step without human annotations.
+
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp.  9426–9439, 2024a.
+
+
+      
+
+Wang et al. (2024b)
+
+Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, et al.
+
+
+Mmlu-pro: A more robust and challenging multi-task language understanding benchmark.
+
+
+arXiv preprint arXiv:2406.01574, 2024b.
+
+
+      
+
+Wang et al. (2025a)
+
+Zengzhi Wang, Fan Zhou, Xuefeng Li, and Pengfei Liu.
+
+
+Octothinker: Mid-training incentivizes reinforcement learning scaling.
+
+
+arXiv preprint arXiv:2506.20512, 2025a.
+
+
+      
+
+Wang et al. (2025b)
+
+Zihan Wang, Kangrui Wang, Qineng Wang, Pingyue Zhang, Linjie Li, Zhengyuan Yang, Xing Jin, Kefan Yu, Minh Nhat Nguyen, Licheng Liu, et al.
+
+
+Ragen: Understanding self-evolution in llm agents via multi-turn reinforcement learning.
+
+
+arXiv preprint arXiv:2504.20073, 2025b.
+
+
+      
+
+Wen et al. (2025)
+
+Xumeng Wen, Zihan Liu, Shun Zheng, Zhijian Xu, Shengyu Ye, Zhirong Wu, Xiao Liang, Yang Wang, Junjie Li, Ziming Miao, et al.
+
+
+Reinforcement learning with verifiable rewards implicitly incentivizes correct reasoning in base llms.
+
+
+arXiv preprint arXiv:2506.14245, 2025.
+
+
+      
+
+Yang et al. (2024)
+
+An Yang, Beichen Zhang, Binyuan Hui, Bofei Gao, Bowen Yu, Chengpeng Li, Dayiheng Liu, Jianhong Tu, Jingren Zhou, Junyang Lin, Keming Lu, Mingfeng Xue, Runji Lin, Tianyu Liu, Xingzhang Ren, and Zhenru Zhang.
+
+
+Qwen2.5-math technical report: Toward mathematical expert model via self-improvement.
+
+
+arXiv preprint arXiv:2409.12122, 2024.
+
+
+      
+
+Yang et al. (2025a)
+
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al.
+
+
+Qwen3 technical report.
+
+
+arXiv preprint arXiv:2505.09388, 2025a.
+
+
+      
+
+Yang et al. (2025b)
+
+Wenkai Yang, Jingwen Chen, Yankai Lin, and Ji-Rong Wen.
+
+
+Deepcritic: Deliberate critique with large language models.
+
+
+arXiv preprint arXiv:2505.00662, 2025b.
+
+
+      
+
+Yu et al. (2025a)
+
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, et al.
+
+
+Dapo: An open-source llm reinforcement learning system at scale.
+
+
+arXiv preprint arXiv:2503.14476, 2025a.
+
+
+      
+
+Yu et al. (2025b)
+
+Tianyu Yu, Bo Ji, Shouli Wang, Shu Yao, Zefan Wang, Ganqu Cui, Lifan Yuan, Ning Ding, Yuan Yao, Zhiyuan Liu, et al.
+
+
+Rlpr: Extrapolating rlvr to general domains without verifiers.
+
+
+arXiv preprint arXiv:2506.18254, 2025b.
+
+
+      
+
+Yuan et al. (2024)
+
+Lifan Yuan, Wendi Li, Huayu Chen, Ganqu Cui, Ning Ding, Kaiyan Zhang, Bowen Zhou, Zhiyuan Liu, and Hao Peng.
+
+
+Free process rewards without process labels.
+
+
+arXiv preprint arXiv:2412.01981, 2024.
+
+
+      
+
+Yue et al. (2025a)
+
+Yang Yue, Zhiqi Chen, Rui Lu, Andrew Zhao, Zhaokai Wang, Shiji Song, and Gao Huang.
+
+
+Does reinforcement learning really incentivize reasoning capacity in llms beyond the base model?
+
+
+arXiv preprint arXiv:2504.13837, 2025a.
+
+
+      
+
+Yue et al. (2025b)
+
+Yu Yue, Yufeng Yuan, Qiying Yu, Xiaochen Zuo, Ruofei Zhu, Wenyuan Xu, Jiaze Chen, Chengyi Wang, TianTian Fan, Zhengyin Du, et al.
+
+
+Vapo: Efficient and reliable reinforcement learning for advanced reasoning tasks.
+
+
+arXiv preprint arXiv:2504.05118, 2025b.
+
+
+      
+
+Zha et al. (2025)
+
+Kaiwen Zha, Zhengqi Gao, Maohao Shen, Zhang-Wei Hong, Duane S Boning, and Dina Katabi.
+
+
+Rl tango: Reinforcing generator and verifier together for language reasoning.
+
+
+arXiv preprint arXiv:2505.15034, 2025.
+
+
+      
+
+Zhang et al. (2024)
+
+Lunjun Zhang, Arian Hosseini, Hritik Bansal, Mehran Kazemi, Aviral Kumar, and Rishabh Agarwal.
+
+
+Generative verifiers: Reward modeling as next-token prediction.
+
+
+arXiv preprint arXiv:2408.15240, 2024.
+
+
+      
+
+Zhang et al. (2025)
+
+Zhenru Zhang, Chujie Zheng, Yangzhen Wu, Beichen Zhang, Runji Lin, Bowen Yu, Dayiheng Liu, Jingren Zhou, and Junyang Lin.
+
+
+The lessons of developing process reward models in mathematical reasoning.
+
+
+arXiv preprint arXiv:2501.07301, 2025.
+
+
+      
+
+Zhao et al. (2025)
+
+Jian Zhao, Runze Liu, Kaiyan Zhang, Zhimu Zhou, Junqi Gao, Dong Li, Jiafei Lyu, Zhouyi Qian, Biqing Qi, Xiu Li, et al.
+
+
+Genprm: Scaling test-time compute of process reward models via generative reasoning.
+
+
+arXiv preprint arXiv:2504.00891, 2025.
+
+
+      
+
+Zheng et al. (2025)
+
+Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, et al.
+
+
+Group sequence policy optimization.
+
+
+arXiv preprint arXiv:2507.18071, 2025.
+
+
+      
+
+Zhou et al. (2025)
+
+Xiangxin Zhou, Zichen Liu, Anya Sims, Haonan Wang, Tianyu Pang, Chongxuan Li, Liang Wang, Min Lin, and Chao Du.
+
+
+Reinforcing general reasoning without verifiers.
+
+
+arXiv preprint arXiv:2505.21493, 2025.
+
+
+      
+
+Zuo et al. (2025)
+
+Yuxin Zuo, Kaiyan Zhang, Li Sheng, Shang Qu, Ganqu Cui, Xuekai Zhu, Haozhan Li, Yuchen Zhang, Xinwei Long, Ermo Hua, et al.
+
+
+Ttrl: Test-time reinforcement learning.
+
+
+arXiv preprint arXiv:2504.16084, 2025.
+
+
+    
+
+
+
+
+
+
+Appendix A The Length Bias in Implicit Reward
+
+
+
+
+
+
+
+Figure 4: Cumulative implicit reward values across 32 reasoning trajectories sampled from Open-Reasoner-Zero-7B on an AIME2024 problem. Red lines correspond to wrong solutions and green lines correspond to correct solutions.
+
+
+
+
+Figure 5: The mean and standard deviation of −log⁡πr​e​f​(zc|𝒙,𝒚)-\log\pi_{ref}(z_{c}|\bm{x},\bm{y}) under different combinations of reference model πr​e​f\pi_{ref} and pre-specified token zcz_{c} over 300 input-output pairs.
+
+
+
+
+Here, we present the trend of the cumulative implicit reward values (log⁡π𝜽​(𝒚<i|𝒙)πr​e​f​(𝒚<i|𝒙)\log\frac{\pi_{\bm{\theta}}(\bm{y}_{<i}|\bm{x})}{\pi_{ref}(\bm{y}_{<i}|\bm{x})} where πr​e​f\pi_{ref} is Qwen2.5-7B-Base) across 32 reasoning trajectories sampled from Open-Reasoner-Zero-7B on an AIME2024 problem, showing how they vary with the increasing trajectory lengths. As illustrated in Figure 5, the curves of all samples exhibit a positive correlation between the implicit reward and the number of tokens, and longer trajectories tend to yield higher final implicit reward scores, indicating a strong length bias in implicit reward. Since incorrect solutions are generally longer than correct ones in reasoning tasks (Hassid et al., 2025), implicit reward is therefore not a reliable indicator of the relative quality of reasoning paths at test time.
+
+
+
+
+
+Appendix B Statistics of log⁡πr​e​f​(zc|𝒙,𝒚)\log\pi_{ref}(z_{c}|\bm{x},\bm{y})
+
+
+
+We present the mean and standard deviation of −log⁡πr​e​f​(zc|𝒙,𝒚)-\log\pi_{ref}(z_{c}|\bm{x},\bm{y}) computed over 300 input-output pairs. The reference model πr​e​f\pi_{ref} is chosen as either Qwen2.5-7B-Base or OctoThinker-3B-Short-Base, and the evaluation is performed under two different choices of zcz_{c} for each reference model (one common token and one unused special token): “Yes” and “<vision_start>” for Qwen2.5-7B-Base, “Yes” and “<|reserved_special_token_0|>” for OctoThinker-3B-Short-Base. The results in Figure 5 indicates that −log⁡πr​e​f​(zc|𝒙,𝒚)-\log\pi_{ref}(z_{c}|\bm{x},\bm{y}) remains nearly constant and extremely small, with only a low standard deviation across different 𝒙\bm{x} and 𝒚\bm{y}. Thus, we can consider log⁡πr​e​f​(zc|𝒙,𝒚)\log\pi_{ref}(z_{c}|\bm{x},\bm{y}) as a constant when calculating the last-token self-rewarding scores, which effectively reduces the computational cost by half.
+
+
+
+
+
+Appendix C Detailed Training Settings
+
+
+
+
+
+Table 4: Basic training hyper-parameters of both GRPO and LaSeR.
+
+
+
+
+Hyper-parameter
+Value
+
+
+Train Batch Size
+128
+
+
+Micro Batch Size
+128
+
+
+Rollout nn
+8
+
+
+Maximum Prompt Length
+2048
+
+
+Maximum Response Length
+8192
+
+
+Temperature
+1.0
+
+
+Top pp
+1.0
+
+
+LR
+1×10−61\times 10^{-6}
+
+
+KL Coefficient
+0.0
+
+
+
+
+Table 5: Unique training hyper-parameters of LaSeR.
+
+
+
+
+Hyper-parameter
+Value
+
+
+Coefficient βv\beta_{v}
+0.1
+
+
+Loss Weight α\alpha
+0.1
+
+
+Self-Rewarding Adv. Weight τ\tau
+0.1
+
+
+Reasoning Warm-Up Steps
+200
+
+
+Self-Rewarding Warm-Up Steps
+200
+
+
+
+
+
+
+We use verl (Sheng et al., 2024) as our RL training framework. The basic training hyper-parameters in both GRPO training and LaSeR training for each model are put in Table 5, and the newly introduced training hyper-parameters for LaSeR are put in Table 5. The number of optimization steps is 1000 for Qwen2.5-7B-Base and OctoThinker-3B-Short-Base, and 500 for Open-Reasoner-Zero-7B.
+In RL, a reasoning reward of 1.0 is given if the final answer and the answer format are both correct; otherwise, it is 0.0. In our method, the reasoning warm-up is performed for Qwen2.5-7B-Base and OctoThinker-3B-Short-Base only, and the self-rewarding warm-up is performed for all models.
+
+
+
+
+
+Appendix D Ablation Studies on Self-Rewarding Hyper-Parameters
+
+
+
+
+
+
+
+
+
+
+
+
+(a) Training rewards with EMA smoothing
+
+
+(b) Training self-verification F1 scores with EMA smoothing
+
+Figure 6: The curves of training rewards and training self-verification F1 scores under different combinations of hyper-parameters with EMA smoothing (EMA coef.=0.9).
+
+
+
+
+Here, we display the curves (with Exponential Moving Average (EMA) smoothing) of training rewards and training self-verification F1 scores of our method under different choices of coefficient βv\beta_{v} and self-rewarding MSE loss weight α\alpha. The experiments are conducted on Open-Reasoner-Zero-7B, which help to skip the reasoning warm-up phase compared with using Qwen2.5-7B-Base and OctoThinker-3B-Short-Base, while the results are similar in other two base models after reasoning warm-up. The dynamics of training rewards and training self-verification F1 scores are displayed in Figure 6. As we can see, assigning a larger weight α\alpha to the last-token self-rewarding loss has a more detrimental impact on the model’s reasoning capabilities. On the other hand, the coefficient βv\beta_{v} has little impact on optimizing the self-rewarding scores, as long as it remains within a reasonable range (0.1∼0.50.1\sim 0.5). However, much smaller values of βv\beta_{v} can impair the model’s reasoning capability, as indicated by the analysis in the end of Section 3.4. For example, when βv=0.05\beta_{v}=0.05, we should have π𝜽​(zc|𝒙,𝒚)=e−3≈0.05\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y})=e^{-3}\approx 0.05 under
+πref​(zc|𝒙,𝒚)=e−23\pi_{\text{ref}}(z_{c}|\bm{x},\bm{y})=e^{-23} and rv​(𝒙,𝒚)=1r_{v}(\bm{x},\bm{y})=1, then the large value of π𝜽​(zc|𝒙,𝒚)\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}) causes large
+interference with the optimization of reasoning capability. In our main experiments, we choose (βv,α)=(0.1,0.1)(\beta_{v},\alpha)=(0.1,0.1).
+
+
+
+
+
+Appendix E The Effect of Class-Level Re-Weighting on The Balanced Self-Verification Capability
+
+
+
+
+
+
+
+
+
+
+
+
+(a) Training rewards with EMA smoothing
+
+
+(b) Training self-verification F1 scores with EMA smoothing
+
+Figure 7: The curves of training rewards and training self-verification F1 scores of our method with and without class-level loss re-weighting practice (EMA coef.=0.9).
+
+
+
+
+We present the training dynamics of our method on Open-Reasoner-Zero-7B, with and without class-level loss re-weighting, in Figure 7 for comparison. As shown, applying loss re-weighting leads to a more balanced self-verification performance by mitigating the bias toward the majority class with larger sample size, while still maintaining high reasoning accuracy.
+
+
+
+
+
+Appendix F Comparison between Last-Token Self-Rewarding Loss and Supervised Fine-Tuning Loss
+
+
+
+Following the discussion in Section 3.4, we compare the training performance of our introduced last-token self-rewarding loss with the supervised fine-tuning (SFT) loss on Open-Reasoner-Zero-7B. The training dynamics are shown in Figure 8. As observed, applying the SFT loss to optimize the self-rewarding capability causes substantial interference with the optimization of reasoning capability, leading to a marked degradation in training rewards. Moreover, the SFT loss degrades extremely slowly, indicating that directly driving π𝜽​(zc|𝒙,𝒚)\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}) from 00 to 11 for rv​(𝒙,𝒚)=1r_{v}(\bm{x},\bm{y})=1 is inherently difficult. However, our method only requires fitting π𝜽​(zc|𝒙,𝒚)\pi_{\bm{\theta}}(z_{c}|\bm{x},\bm{y}) to exp⁡(1/βv)⋅πref​(zc|𝒙,𝒚)\exp(1/\beta_{v})\cdot\pi_{\text{ref}}(z_{c}|\bm{x},\bm{y}) for rv​(𝒙,𝒚)=1r_{v}(\bm{x},\bm{y})=1, which is considerably easier and introduces much less interference.
+
+
+
+
+
+
+
+
+
+
+
+
+(a) Training rewards with EMA smoothing
+
+
+(b) Self-rewarding/SFT loss curve on a log scale
+
+Figure 8: The comparison of the training dynamics between the last-token self-rewarding loss and the SFT loss.
+
+
+
+
+
+
+Appendix G Detailed Self-Verification Results
+
+
+Table 6: Detailed self-verification results.
+
+
+
+
+
+
+
+Method
+
+MATH500
+AMC23
+AIME24
+AIME25
+Olym.
+
+
+Acc.
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+F1
+Acc.
+F1
+
+
+ OctoThinker-3B-Short-Base
+
+
+Base
+60.2
+22.3
+52.3
+11.2
+-
+-
+-
+-
+62.0
+13.7
+
+
+GRPO
+58.2
+56.9
+66.7
+47.3
+-
+-
+-
+-
+66.4
+48.8
+
+
+LaSeR
+77.0
+73.6
+77.3
+70.2
+-
+-
+-
+-
+80.3
+73.6
+
+
+     - SWA
+81.0
+80.4
+84.1
+70.9
+-
+-
+-
+-
+83.5
+66.0
+
+
+ Qwen2.5-7B-Base
+
+
+Base
+45.0
+36.4
+30.7
+30.8
+24.5
+27.6
+28.2
+32.9
+33.8
+36.9
+
+
+GRPO
+76.5
+54.6
+61.1
+59.7
+60.4
+36.6
+72.5
+41.5
+54.6
+53.5
+
+
+LaSeR
+88.0
+83.2
+81.5
+82.5
+92.2
+79.6
+90.5
+74.3
+79.5
+78.3
+
+
+     - SWA
+87.8
+79.7
+79.6
+80.2
+94.3
+81.3
+92.2
+74.9
+83.9
+83.3
+
+
+ Open-Reasoner-Zero-7B
+
+
+Base
+79.6
+26.7
+66.6
+51.3
+39.6
+45.9
+47.6
+55.2
+55.2
+37.5
+
+
+GRPO
+52.9
+57.1
+50.9
+44.8
+66.9
+14.6
+78.9
+28.1
+54.7
+49.5
+
+
+LaSeR
+90.1
+87.2
+77.7
+79.7
+87.2
+64.6
+92.8
+77.7
+80.1
+78.7
+
+
+     - SWA
+89.0
+87.5
+76.2
+77.7
+87.7
+63.3
+93.6
+77.3
+80.2
+77.9
+
+
+
+
+
+We report the detailed self-verification results of each model on self-generated solutions across all benchmarks in Table 6, including both overall accuracy and F1 score. Our method consistently yields significant improvements in model’s self-rewarding and self-verification capabilities, while incurring only minimal additional computational cost.
+
+
+
+
+
+Appendix H Training and Evaluation Settings in General Reasoning Experiments
+
+
+
+The basic training and testing hyper-parameters for experiments on WebInstruct-verified are the same as those in Table 5 and Table 5, while the number of optimization steps here is 800. The simplified constant of the reference log-probability crefc_{\text{ref}} is −23.0-23.0. We do not employ the advantage integration strategy here, as we find that the optimized self-rewarding capability of Qwen3-4B-LaSeR on general reasoning tasks is limited, and introducing self-rewarding-based advantage integration leads to performance degradation.
+
+
+
+
+
+Appendix I Prompt Templates
+
+
+
+We show the training, evaluation and self-verification prompt templates used in our experiments in the end.
+
+
+
+
+Training and Evaluation Prompt Template for OctoThinker-3B-Short-Base
+
+
+<<bos_token>> A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer.
+
+User: You must put your answer inside \boxed{} and Your final answer will be extracted automatically by the \boxed{} tag.
+
+{question}
+
+Assistant:
+
+
+
+
+Training Prompt Template for Qwen2.5-7B-Base
+
+
+<<bos_token>> A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. The reasoning process is enclosed within <<think>> <</think>> and answer is enclosed within <<answer>> <</answer>> tags, respectively, i.e., <<think>> reasoning process here <</think>> <<answer>> answer here <</answer>>.
+
+User: You must put your answer inside <<answer>> <</answer>> tags, i.e., <<answer>> answer here <</answer>>. And your final answer will be extracted automatically by the \boxed{} tag.
+
+This is the problem:
+
+{question}
+
+Assistant: <<think>>
+
+
+
+
+Zero-Shot Evaluation Prompt Template for Qwen2.5-7B-Base
+
+
+<⁣|<|im_start|⁣>|>system
+
+You are a helpful assistant.<⁣|<|im_end|⁣>|>
+
+<⁣|<|im_start|⁣>|>user
+
+{question}
+
+Please reason step by step, and put your final answer within \boxed{}.<⁣|<|im_end|⁣>|>
+
+<⁣|<|im_start|⁣>|>assistant
+
+
+
+
+Training and Evaluation Prompt Template for Open-Reasoner-Zero-7B
+
+
+A conversation between User and Assistant. The User asks a question, and the Assistant solves it. The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. The reasoning process is enclosed within <<think>> <</think>> and answer is enclosed within <<answer>> <</answer>> tags, respectively, i.e., <<think>> reasoning process here <</think>> <<answer>> answer here <</answer>>.
+
+User: You must put your answer inside <<answer>> <</answer>> tags, i.e., <<answer>> answer here <</answer>>. And your final answer will be extracted automatically by the \boxed{} tag.
+
+{question}
+
+Assistant: <<think>>
+
+
+
+
+Training and Evaluation Prompt Template for Qwen3-4B-Base
+
+
+<⁣|<|im_start|⁣>|>user
+
+{question}
+
+Please reason step by step, and put your final answer within \boxed{}.<⁣|<|im_end|⁣>|>
+
+<⁣|<|im_start|⁣>|>assistant
+
+
+
+
+Prompt Template for Self-Verification (Modified from Liu et al. (2025a))
+
+
+Below you are presented with a question and a tentative response. Your task is to evaluate the response and assign a rating to the response based on the following clear criteria:
+
+Rating Criteria:
+
+1. Missing final answer, or incorrect response with the wrong final answer: assign \boxed{0}.
+
+2. Correct response with the correct final answer: assign
+\boxed{1}.
+
+### Question Begin ###
+
+{question}
+
+### Question End ###
+
+### Response Begin ###
+
+{response}
+
+### Response End ###
+
+First provide your evaluation process, then clearly state your final rating value enclosed in \boxed{} at the end.
+
+
+
+
+
+
+
+  
+    Experimental support, please
+    view the build logs
+    for errors. Generated by
+    
+      
+        L
+        A
+        T
+        E
+      
+      xml
+      
+    .
+  
+  
+    
+Instructions for reporting errors
+    
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+    
+      
+Click the "Report Issue" (
+            
+          ) button, located in the page header.
+    
+    
+Tip: You can select the relevant text first, to include it in your report.
+    
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+    
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+  
+
+  
+    
+      
+        We gratefully acknowledge support from our major funders,
+        member institutions, ,
+        and all contributors.
+      
+      
+        About ·
+        Help ·
+        Contact ·
+        Subscribe ·
+        Copyright ·
+        Privacy ·
+        Accessibility ·
+        Operational Status (opens in new tab)
+      
+    
+  
+
+  
+    
+      
+    
+  
+
+

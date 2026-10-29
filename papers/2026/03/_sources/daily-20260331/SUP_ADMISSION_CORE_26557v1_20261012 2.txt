@@ -1,0 +1,129 @@
+https://arxiv.org/html/2603.26557v1
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 MemBoost: Memory-Boosted LLM Serving Framework
+2.1 Problem Setup
+2.2 Overview of MemBoost
+Associative Memory Engine (AME).
+Large-LLM Oracle.
+Meta-Controller (MC).
+2.3 System Cost
+3 Experiments
+3.1 Experiment Setup
+3.2 Results
+4 Conclusion
+References
+A Related Work
+A.1 Retrieval-Augmented Language Modeling
+A.2 Semantic Caching
+A.3 Routing in LLMs
+B Additional Implementation Details
+License: CC BY-SA 4.0
+arXiv:2603.26557v1 [cs.CL] 27 Mar 2026
+MemBoost: A Memory-Boosted Framework for Cost-Aware LLM Inference
+Joris Köster
+Affiliation: Department of Computer Science, Aalto University, Finland
+Zixuan Liu
+Affiliation: Department of Computer Science, Tulane University, LA, USA
+Siavash Khajavi
+Affiliation: Department of Industrial Engineering and Management, Aalto University, Finland{joris.koster,siavash.khajavi}@aalto.fi, {zliu41,zzheng3}@tulane.edu
+Zizhan Zheng
+Affiliation: Department of Computer Science, Tulane University, LA, USA
+Abstract
+Large Language Models (LLMs) deliver strong performance but incur high inference cost in real-world services, especially under workloads with repeated or near-duplicate queries across users and sessions. In this work, we propose MemBoost, a memory-boosted LLM serving framework that enables a lightweight model to reuse previously generated answers and retrieve relevant supporting information for cheap inference, while selectively escalating difficult or uncertain queries to a stronger model. Unlike standard retrieval-augmented generation, which primarily grounds a single response, MemBoost is designed for interactive settings by supporting answer reuse, continual memory growth, and cost-aware routing. Experiments across multiple models under simulated workloads show that MemBoost substantially reduces expensive large-model invocations and overall inference cost, while maintaining high answer quality comparable to the strong model baseline.
+1 Introduction
+Large Language Models (LLMs) Hurst et al. (2024); Team et al. (2023) have demonstrated strong capabilities in natural language understanding, instruction following Chung et al. (2024); Ouyang et al. (2022), coding Gao et al. (2023); Ni et al. (2024), and decision-making Anil et al. (2023); Wei et al. (2022). However, deploying frontier-scale models in real-world services remains expensive, as inference often requires multiple high-end GPUs, especially for long-form reasoning and explanation-heavy responses Kwon et al. (2023); Park et al. (2025). These costs are amplified in production settings where many user queries are repeated or near duplicates, causing redundant computation. A widely adopted direction to mitigate these costs is to shift part of the workload to smaller models with retrieval-augmented generation (RAG) Lewis et al. (2020); Guu et al. (2020); Borgeaud et al. (2022). RAG allows a model to externalize knowledge into a searchable index and condition generation on retrieved evidence, reducing the need to store everything in parameters Izacard et al. (2023); Fan et al. (2025). For example, Atlas Izacard et al. (2023) demonstrates that the RAG model with far fewer parameters can be competitive with, and in some regimes outperform, much larger models on knowledge-intensive tasks.
+However, most existing RAG work primarily targets knowledge grounding, i.e., improving the answer to a single query by retrieving external documents Lewis et al. (2020); Guu et al. (2020). In contrast, interactive LLM services exhibit additional properties that are not addressed by standard RAG alone. First, many queries that are semantically equivalent are repeatedly requested across users and sessions. Recomputing these same answers wastes GPU time. This motivates semantic caching, which retrieves a previously generated response when a new query is semantically similar Gill et al. (2025); Yu et al. (2025); Liu et al. (2025). However, making this reliable requires careful control. Second, deployed LLMs continuously generate new high-quality answers. When these answers are valuable, they should be written back into the retrieval memory so that a semantic cache can serve future similar queries cheaply. However, this write-back mechanism raises practical questions, such as what/when to store it. Finally, although small models augmented with retrieval can be competitive on knowledge-intensive tasks, their capabilities remain limited on more challenging requests. A practical system should therefore enable the small model to escalate to a stronger model when retrieval is insufficient, aligning with recent work on routing across multiple LLMs Ong et al. (2024); Zhang et al. (2025); Moslem and Kelleher (2026) to balance quality and cost.
+These observations suggest a missing system-level paradigm: a unified approach that enables a small model to cheaply reuse supporting knowledge or prior answers from semantic memory, selectively defer to a stronger but costly model when retrieval is insufficient, and continuously write back useful new information into the retrieval memory, while explicitly balancing answer quality and inference cost. In this paper, we introduce MemBoost, a memory-boosted architecture with three components: (1) an Associative Memory Engine (AME) that performs fast semantic retrieval and supports write-back of newly generated answers; (2) a high-capability Large-LLM Oracle that provides an accurate fallback when memory is insufficient; and (3) a lightweight Meta Controller, which is a small LLM that composes the final response by either reusing from memory or routing the query to the oracle, and support write back mechanism for future reuse, thereby balancing quality and cost. Together, MemBoost turns inference into a “retrieve-or-escalate” decision problem, substantially reducing expensive large-model calls while preserving answer quality. Experiments on the MMLU-Pro dataset Wang et al. (2024) under a simulated workload with repeated and near-duplicate queries show that MemBoost substantially reduces calls to the costly large LLM while largely preserving the answer quality of the oracle model.
+2 MemBoost: Memory-Boosted LLM Serving Framework
+2.1 Problem Setup
+Unlike standard single-turn question answering (QA) tasks studied in prior work, we consider a setting with continuous interaction between multiple users and an LLM service, where incoming queries may be exact duplicates or semantic near-duplicates over time. At each time step t, the system receives a user query x_{t} and produces an answer y_{t}. We use a ground-truth quality signal r(x_{t},y_{t}) to measure whether the response is helpful, correct, and aligned with the user’s intent. Our objective is to maximize the average response quality over a horizon T, \max\;\frac{1}{T}\sum_{t=1}^{T}r(x_{t},y_{t}),
+while minimizing the overall inference cost, as formalized in Section 2.3.
+2.2 Overview of MemBoost
+As discussed above, in production settings, repeatedly invoking a frontier model to answer semantically redundant queries wastes substantial compute. To mitigate this inefficiency while balancing quality and cost, we propose MemBoost, a memory-boosted LLM serving system composed of three components: Associative Memory Engine, Large-LLM Oracle and Meta Controller, as illustrated in Figure 1.
+Figure 1: Overview of MemBoost. For each incoming query, the AME retrieves a small set of relevant memory entries. The MC then either composes an answer from the retrieved results or escalates to the Oracle. When the Oracle is used, the MC decides whether to write the new answer back into the AME for future reuse.
+Associative Memory Engine (AME).
+AME maintains an external memory that stores auxiliary knowledge as well as previously answered queries and their associated responses, and supports fast semantic retrieval (details in Appendix B). Concretely, given a new query x_{t} at time t, AME retrieves a small set of K candidate memory entries \mathcal{M}_{t}=\{(x^{(i)},y^{(i)},m^{(i)})\}_{i=1}^{K}, where m^{(i)} denotes metadata (e.g., query category). The AME stores the question-answer pair for retrieval together with the qid (a unique identifier provided by the dataset), the category and the timestamp. In addition, AME supports write-back by storing newly generated high-quality entries (x_{t},y_{t},m_{t}) when instructed by the Meta Controller.
+Large-LLM Oracle.
+The oracle is a high-capability model that produces high-quality answers but incurs high inference cost. We use it as a fallback: the system queries the oracle when retrieval from AME is missing, ambiguous, or deemed unreliable by the Meta Controller. We denote the oracle’s response to query x_{t} as y_{t}^{\star}=\mathrm{Oracle}(x_{t}).
+Meta-Controller (MC).
+MC is a lightweight LLM that orchestrates the interaction among the user, AME, and the oracle. At each step, MC decides whether to answer using information retrieved from AME or to escalate to the oracle. When escalation occurs, MC also determines whether the newly generated query answer pair should be stored in AME for future reuse. Concretely, given a query x_{t}, MC first requests retrieval from AME and obtains \mathcal{M}_{t}. Conditioned on x_{t} and \mathcal{M}_{t}, MC either returns an answer directly, y_{t}=\mathrm{MC}(x_{t},\mathcal{M}_{t}), or calls the oracle to obtain y_{t}^{\star}=\mathrm{Oracle}(x_{t}) and returns y_{t}=y_{t}^{\star}. In the latter case, MC may optionally write (x_{t},y_{t}^{\star},m_{t}) back into AME, where m_{t} denotes metadata inferred by MC. This “retrieve \rightarrow decide \rightarrow escalate (if needed) \rightarrow write-back (if needed)” loop reduces expensive oracle calls under repeated queries while preserving high answer quality when retrieval is insufficient.
+2.3 System Cost
+To model system efficiency, let c_{O}(x_{t}) denote the cost of an oracle call at time t (e.g., GPU time, energy, or monetary cost), c_{M}(x_{t}) the cost of running the lightweight MC, and c_{R}(x_{t}) denote the cost of retrieval (e.g., CPU time). In typical deployments, c_{O}(x_{t}) is much larger than c_{M}(x_{t})+c_{R}(x_{t}), since frontier-model
+inference dominates GPU compute, whereas retrieval is primarily CPU-bound and
+inexpensive relative to large-model generation. Let I_{t}\in\{0,1\} indicate whether the retrieval information from AME is used at time t (I_{t}=1 if memory is used, and I_{t}=1 if the system escalates to the oracle). The
+total cost over T steps is
+C_{T}=\sum_{t=1}^{T}\bigl(c_{M}(x_{t})+c_{R}(x_{t})\bigr)+\sum_{t=1}^{T}(1-I_{t})\,c_{O}(x_{t}).
+By contrast, an oracle-only baseline would cost approximately C_{T}^{\text{oracle}}=\sum_{t=1}^{T}c_{O}(x_{t}). So our framework achieves
+cost savings whenever C_{T}<C_{T}^{\text{oracle}}. Equivalently, this condition can be written as
+\sum_{t=1}^{T}I_{t}\,c_{O}(x_{t})>\sum_{t=1}^{T}\bigl(c_{M}(x_{t})+c_{R}(x_{t})\bigr).
+Putting quality and cost together, our goal is to achieve oracle-level quality with significantly
+fewer oracle invocations:
+\frac{1}{T}\sum_{t=1}^{T}r(x_{t},y_{t})\approx\frac{1}{T}\sum_{t=1}^{T}r\bigl(x_{t},y_{t}^{\star}\bigr),C_{T}<C_{T}^{\text{oracle}}
+3 Experiments
+In this section, we evaluate MemBoost in terms of both (i) reducing inference cost and (ii) retaining high response quality.
+3.1 Experiment Setup
+We evaluate the proposed MemBoost framework on the MMLU-Pro dataset Wang et al. (2024), a widely used and challenging benchmark that covers diverse disciplines and is designed to more rigorously assess LLM capabilities. To emulate real-world LLM-serving workloads where many requests are repeated or near-duplicated, we generate a query stream by sampling MMLU-Pro questions according to a Zipf distribution Zipf (1949). This produces a heavy-tailed access pattern in which a small number of questions occur frequently while most questions appear rarely, capturing the repetition behavior commonly observed in practice. We vary the Zipf parameter (\alpha) to obtain different repetition rates and study how workload skew affects MemBoost. For the lightweight Meta Controller (MC), we evaluate several small-scale LLMs, including Qwen-3.5-2B Qwen Team (2026), Ministral-3-3B-Instruct-2512 Liu et al. (2026), and Qwen3-4B-Instruct-2507-FP8 Yang et al. (2025). For the Large-LLM Oracle, we use Qwen3-14B-FP8-dynamic Yang et al. (2025); Micikevicius et al. (2022). To support fast retrieval in the Associative Memory Engine (AME), we embed stored query-answer pairs using all-MiniLM-L6-v2 Wang et al. (2020); Reimers and Gurevych (2019) and perform approximate nearest-neighbor search with a FAISS cosine-similarity index Douze et al. (2024). Additional implementation details can be found in the Appendix B.
+3.2 Results
+Model
+Accuracy (%)
+Zipf 0.8
+Zipf 1.1
+Zipf 1.4
+Baselines
+Qwen3.5-2B
+50.0
+43.5
+37.1
+Ministral-3-3B-Instruct-2512
+53.8
+46.4
+38.2
+Qwen3-4B-Instruct-2507-FP8
+74.5
+75.6
+80.5
+Qwen3-14B-FP8-dynamic (Oracle)
+76.4
+79.9
+85.0
+MemBoost (ours)
+MemBoost (Qwen3.5-2B)
+76.7
+81.8
+87.4
+MemBoost (Ministral-3-3B-Instruct-2512)
+76.2
+79.7
+85.0
+MemBoost (Qwen3-4B-Instruct-2507-FP8)
+76.1
+79.8
+85.0
+Table 1: Accuracy (%) of different methods on MMLU-Pro under Zipf-sampled query streams with varying repetition rates (Zipf \alpha).
+Table 1 reports accuracy (%) against the MMLU-Pro ground-truth labels for different methods under Zipf-sampled query streams with varying repetition rates (Zipf exponent \alpha). Across all settings, MemBoost consistently improves over the corresponding small-model baselines and achieves performance comparable to the oracle. Notably, MemBoost with Qwen3.5-2B even outperforms the oracle in all three workloads. We attribute this to MemBoost’s ability to reuse previously generated high-quality answers through semantic memory: once a question (or a near-duplicate) has been answered correctly and written back, subsequent occurrences can be served directly from memory, avoiding additional generation errors. Finally, MemBoost exhibits a clear improvement as the workload becomes more skewed (larger \alpha), since higher repetition rates lead to more memory hits, thereby increasing the fraction of queries answered using stored correct responses.
+Figure 2: Average memory-use rate \overline{I}_{t} (200-step window) over a 5,000-step Zipf-sampled query stream. Higher \overline{I}_{t} indicates more queries served from AME and fewer oracle calls, implying lower total inference cost.
+To quantify the serving cost of MemBoost, we report the average memory-use rate over a 200-step window, i.e., \overline{I}_{t}\;=\;\frac{1}{200}\sum_{s=t-199}^{t}I_{s},
+where I_{s}=1 indicates that the system answers using information retrieved from AME (and I_{s}=0 indicates escalation to the oracle). Under our cost model, where the oracle cost c_{O} is assumed to dominate the Meta Controller and retrieval overhead c_{M}+c_{R}, a larger \overline{I}_{t} corresponds to fewer oracle calls and thus lower total cost. Figure 2 plots \overline{I}_{t} over the 5,000-step workload for different MC choices and Zipf distributions. In all settings, \overline{I}_{t} increases over time as AME is progressively populated via the write-back mechanism, indicating that an increasing fraction of queries are served from memory rather than escalated to the oracle. Under our cost model, this implies that MemBoost achieves lower total cost than an oracle-only baseline. Moreover, memory usage is consistently higher under more skewed workloads (larger Zipf \alpha), where repeated queries occur more frequently, further reducing the number of expensive oracle calls.
+In addition to accuracy and system cost, we also report the latency of MemBoost. Figure 3 shows the average response time over the previous 100 steps during the 5,000-step Zipf-sampled workload. As MemBoost increasingly answers queries using AME over time, the average latency steadily decreases and remains well below the oracle-only baseline.
+Overall, these results indicate that MemBoost is particularly effective for repeat-heavy workloads, preserving the strong answer quality of the larger oracle model while significantly reducing system cost and response latency.
+Figure 3: Response latency over time under Zipf-sampled workloads (average over the previous 100 steps). MemBoost reduces latency relative to the oracle-only baseline as an increasing fraction of queries are served from AME.
+4 Conclusion
+In this paper, we introduced MemBoost, a memory-boosted architecture for efficient LLM serving under interactive, repeat-heavy workloads. By combining an Associative Memory Engine, a high-capability Large-LLM Oracle, and a lightweight Meta-Controller for routing and response composition, MemBoost reduces redundant large-model inference while preserving answer quality. We hope MemBoost provides a practical foundation for building next-generation LLM services that jointly optimize quality, cost, and responsiveness.
+Limitations
+While MemBoost shows promising accuracy and reduced inference cost on MMLU-Pro, the framework has not yet been evaluated in more diverse and demanding settings, such as open-ended long-form question answering or coding tasks, where outputs are longer, and error modes may differ. In addition, although Zipf sampling is used to simulate repeat-heavy workloads, the current simulation largely reflects repeated questions drawn from a fixed benchmark. In real deployments, queries are often not exact duplicates but only semantically similar, which can increase the risk of retrieval errors. A more realistic evaluation would therefore include workloads with paraphrased or semantically overlapping queries to stress-test robustness, particularly with respect to potential false hits in AME retrieval.

@@ -1,0 +1,399 @@
+Official exact-v1: https://arxiv.org/html/2610.29702v1
+Preserved main primary text; actual necessary reading and adopted scope in SOURCE_VLA2.md. No appendix/code/reproduction claim.
+Abstract
+Multimodal large language models (MLLMs) have demonstrated promising reasoning capabilities, but deploying them for physical interaction requires reliable planning that accounts for when actions are executable and how they change the world.
+These preconditions and effects are often environment-dependent and are not fully captured by MLLMs, making adaptation to new environments challenging.
+Yet existing adaptation approaches either update model parameters through costly environment-specific training or rely on unstructured interaction experience that is difficult to ground and reuse.
+To address this challenge, we introduce  CausGround , a non-parametric causal interaction grounding framework that distills interaction experience into reusable action-centered causal knowledge.
+CausGround learns from experience by identifying action preconditions and effects, and organizes them in a factorized world-state representation that jointly captures object attributes and inter-object relations.
+At planning time, task-relevant causal dependencies are grounded in the current observation, supporting backward reasoning over action preconditions and forward reasoning over action effects for action selection and multi-step causal planning.
+We demonstrate the effectiveness of CausGround across diverse long-horizon embodied settings spanning simulated high-level planning, interaction reasoning, and real-world robot manipulation.
+Evaluated on the adapted VirtualHome and RoboCasa benchmarks, CausGround consistently improves vision-based high-level planning across MLLM backbones, improving average task success from 24.9% to 53.3% on VirtualHome and closed-loop planning success from 43.0% to 57.0% on RoboCasa.
+Consistent gains are also observed on SWITCH benchmark, with average interaction reasoning accuracy improving from 25.8% to 31.9%, indicating stronger reasoning over action selection, recovery, and verification.
+Moreover, real-world experiments further show that CausGround can reason backward from MLLM-interpreted goal states to derive executable high-level action sequences for sequential manipulation.
+These results demonstrate that explicit action preconditions and effects provide a reusable causal grounding mechanism for long-horizon embodied planning across diverse environments without parameter updates.
+ Project Page : https://causground.github.io 
+ 1 1 footnotetext: Corresponding author. 
+ 1 Introduction
+Embodied agents powered by multimodal large language models (MLLMs) have demonstrated promising reasoning capabilities for high-level planning  ( Chen et al., 2025 ; Driess et al., 2023 ; Feng et al., 2025b ) . Yet successful embodied interaction requires more than knowing what to do: agents must know when an action is executable and how it changes the world. Such interaction knowledge is often environment-dependent, involving available actions, object states, action preconditions, and effects  ( Kim et al., 2025 ; Han et al., 2024 ; Liu et al., 2024 ) . As illustrated in Fig.  1 , a planner may correctly infer that an object should be placed into a fridge, yet attempt the action before satisfying the precondition that the fridge be open. Such precondition violations can accumulate over long-horizon execution, leading to invalid actions, repeated attempts, and costly trial-and-error  ( Raman et al., 2024 ; Zhi et al., 2025 ; Chang et al., 2025 ) . Effective embodied planning therefore requires agents to account for task semantics while adapting their planning to the interaction dynamics of the environment in which the task is executed.
+Existing approaches still fall short in enabling efficient environment adaptation. A direct strategy is to specialize embodied agents through fine-tuning or reinforcement learning  ( Xu et al., 2026 ; Zhai et al., 2024 ; Feng et al., 2025a ) , but such parametric adaptation requires substantial environment-specific interaction data and repeated optimization, making it costly to deploy across diverse environments, particularly in real-world settings.
+Non-parametric approaches instead incorporate interaction feedback or episodic memory at inference time  ( Anwar et al., 2025 ) , but such experience is often retained as unstructured trajectories or task-level memories  ( Ginting et al., 2025 ; Buoso et al., 2025 ) . This makes it difficult to identify which parts of an experience are causally relevant rather than incidental, reuse them across tasks, or ground them in the current visual scene.
+Moreover, existing representations do not always jointly capture the fine-grained object attributes and inter-object relations required to determine whether an action’s preconditions are satisfied  ( Chen et al., 2025 ; Shen et al., 2026 ) .
+This raises a central question: Can interaction experience be distilled into reusable causal knowledge that tells an embodied agent both what must be true before an action and what changes as a result?
+ Figure 1: 
+ Overview of CausGround. CausGround distills open-world interaction experience into reusable action-centered causal knowledge by identifying action preconditions and effects. At planning time, task-relevant causal dependencies are grounded in the current observation to form a local causal graph, supporting backward reasoning over preconditions and forward reasoning over effects for executable long-horizon planning without parameter updates.
+To this end, we introduce CausGround, a non-parametric causal interaction grounding framework for adaptive embodied planning. As illustrated in Fig.  1 , CausGround abstracts interaction experience into action-centered causal knowledge, representing each action through its relevant preconditions and resulting state effects. Rather than storing complete trajectories, it organizes reusable action-centered causal knowledge over a factorized world-state representation that jointly captures object attributes and inter-object relations.
+At planning time, the current observation and task are grounded into the same representation to construct a task-relevant local causal graph from reusable causal knowledge. This allows the planner to reason backward over action preconditions to determine what must happen before an action becomes executable, and forward over state effects to anticipate how the world should change after execution. Composing such causal dependencies provides a structured reference for multi-step planning without updating model parameters.
+We evaluate CausGround across heterogeneous long-horizon embodied settings.
+In simulation, we adapt VirtualHome  ( Puig et al., 2018 ) and RoboCasa  ( Nasiriany et al., 2026 ) for visually grounded high-level planning and observe consistent improvements under both one-shot and closed-loop planning, including an increase in average task success from 24.9% to 53.3% on VirtualHome and from 43.0% to 57.0% under closed-loop planning on RoboCasa.
+Beyond simulation, we evaluate interaction reasoning on SWITCH  ( Cheng et al., 2025 ) , a real-world egocentric long-horizon interaction benchmark, where CausGround improves average accuracy from 25.8% to 31.9%.
+We further validate the framework on real-robot manipulation, where CausGround reasons backward from interpreted goal states to derive executable high-level action sequences and successfully complete multi-step interactions.
+Together, these results show that explicit causal interaction knowledge provides a reusable grounding substrate for long-horizon embodied reasoning across diverse environments.
+Our contributions are summarized as follows:
+ • 
+We formulate embodied interaction knowledge around action preconditions and state effects, and introduce a factorized world-state representation that jointly captures object attributes and inter-object relations, enabling interaction knowledge to be grounded in current visual observations.
+ • 
+We introduce CausGround, a non-parametric framework that distills interaction trajectories into reusable action-centered causal knowledge and dynamically grounds task-relevant causal dependencies for planning. This enables reasoning over both what must hold before an action and how the world changes after it without parameter updates.
+ • 
+We evaluate CausGround across long-horizon embodied settings spanning VirtualHome and RoboCasa simulations, the real-world egocentric SWITCH benchmark, and real-robot manipulation, demonstrating consistent gains in planning and interaction reasoning across environments and MLLM backbones.
+ 2 Related Works
+ Environment Adaptation for Embodied Agents. 
+Embodied agents deployed in new environments often need to adjust their behavior based on newly acquired interaction experience.
+Earlier approaches typically absorb environment-specific experience into model parameters through fine-tuning, imitation learning, or reinforcement learning  ( Kim et al., 2026 ; Kang et al., 2025 ; Tian et al., 2026 ) .
+With the growing capabilities of foundation models, recent work has increasingly explored adaptation without continual parameter updates, using execution feedback  ( Wang et al., 2023 ) , past trajectories  ( Zhao et al., 2024 ) , or external memory  ( Sohn et al., 2026 ) to provide environment-specific information during deployment.
+This shifts environment adaptation from updating the model itself toward leveraging external environment knowledge. Therefore, effective adaptation depends not only on how experience is acquired and accumulated, but also on how the underlying world state is represented.
+ World State Representations for Embodied Planning. 
+Existing world-state representations vary substantially in their level of abstraction.
+Free-form textual representations can flexibly summarize observations and state changes, but often entangle multiple entities and dynamic properties within a shared description  ( Hao et al., 2023 ; Chen et al., 2025 ) .
+Object-centric representations reduce this entanglement by organizing state information around individual entities  ( Yoneda et al., 2024 ; Feng et al., 2026 ) , while more factorized representations further separate each object into explicit attribute-value pairs, enabling finer-grained state tracking  ( Shen et al., 2026 ; Rozanov and Rei, 2025 ) . Yet embodied interaction depends not only on the state of individual objects, but also on relations among them  ( Ju et al., 2026 ; Gu et al., 2024 ) .
+Therefore, a world-state representation for embodied planning should jointly capture fine-grained object attributes and explicit inter-object relations, providing a shared basis for grounding observations and environment-specific interaction knowledge.
+ Interaction-Grounded High-Level Planning. 
+A structured world state provides a basis for grounding environment-specific knowledge, but effective planning further requires turning such knowledge into actionable guidance.
+MLLM-based planners can generate actions or action sequences from current observations and task descriptions  ( Lv et al., 2024 ; Feng et al., 2025b ) , leveraging strong pretrained priors to guide task completion. Before committing actions to the environment, world-model-based planners further predict action-conditioned state changes  ( Li et al., 2026 ; Song et al., 2026 ) and evaluate candidate trajectories through simulation or adaptive latent-space rollouts  ( Liu et al., 2026 ; Yao et al., 2026 ; Lu et al., 2026 ) , providing lookahead for multi-step decisions.
+However, while world models support reasoning about action consequences, action conditions are not always explicitly represented, which can make action proposal less reliable. Moreover, dependencies across multiple actions are typically instantiated only through rollout, requiring repeated simulation during planning. CausGround instead exposes action conditions, effects, and cross-action dependencies as explicit environment-specific knowledge that can be directly reused by the planner.
+ 3 Methodology
+ Figure 2: 
+ Overview of CausGround. 
+ Left: CausGround distills interaction trajectories into reusable action-centered causal knowledge by extracting action preconditions and effects, which are organized into generic and instance-specific knowledge.
+ Right: Given the task description and current world state, task-relevant causal knowledge is grounded to construct a causal graph that provides executable guidance for a frozen planner.
+We aim to adapt embodied planners to environment-specific interaction dynamics without updating model parameters.
+To this end, we introduce CausGround, which distills interaction experience into reusable action-centered causal knowledge that captures both action preconditions and state effects.
+As illustrated in Fig.  2 , CausGround consists of two main stages: causal interaction knowledge construction and task-grounded planning.
+Specifically, we first define a factorized world-state representation that serves as a shared interface between current visual observations and causal interaction knowledge (Sec.  3.1 ).
+We then construct reusable action-centered causal knowledge over this representation by extracting action preconditions and effects from environment interactions (Sec.  3.2 ).
+Finally, we ground task-relevant causal knowledge in the current task and world state to support planning with a frozen planner (Sec.  3.3 ).
+ 3.1 Factorized World-State Representation
+To bridge causal knowledge construction and task-time grounding, CausGround represents the world state extracted from current observations and the preconditions and effects captured by causal knowledge using the same factorized schema (Fig.  2 ).
+Given an RGB observation I_{t} , a frozen MLLM extracts the corresponding factorized world state S_{t} , exposing explicit state factors for matching the action preconditions and effects stored in CausGround. Specifically, we represent the world state at time t as:
+ S_{t}=(O_{t},R_{t}), 
+ (1) 
+where O_{t} is the set of objects in the scene and R_{t} is the set of explicit inter-entity relations.
+Each object o_{i}\in O_{t} is represented by its semantic category c_{i} and a set of attribute-value pairs A_{i} ,
+ o_{i}=(c_{i},A_{i}),\qquad A_{i}=\{(k_{ij},v_{ij})\}_{j=1}^{M_{i}}, 
+ (2) 
+where k_{ij} and v_{ij} denote the j_{th} attribute key and value of object o_{i} , respectively, and M_{i} is the number of its attributes.
+Each relation r_{ij}\in R_{t} is represented as a typed edge between two objects (e.g.,  ON(cup, table) ,  INSIDE(cup, fridge) ).
+Each attribute-value pair and inter-object relation is treated as an explicit state factor that can serve as an action precondition or effect.
+This representation explicitly separates object-local attributes from inter-object relations while preserving both within a unified world state.
+Since observations and causal knowledge share the same factorized schema, action preconditions and effects can be directly matched against the current world state.
+Meanwhile, the factorized representation makes individual state factors explicitly identifiable, allowing CausGround to identify individual factors involved in action execution and state transitions.
+ 3.2 Action-Centered Causal Knowledge Construction
+Building on the factorized world state, CausGround organizes interaction experience at the action level (e.g.,  GRAB ,  OPEN ), using actions as atomic units for extracting reusable preconditions and state effects.
+For an action family a , we collect a set of interaction trajectories under controlled variations of candidate pre-action factors:
+ \mathcal{T}_{a}=\{(S_{i}^{\mathrm{pre}},a(x_{i}),S_{i}^{\mathrm{post}},y_{i})\}_{i=1}^{|\mathcal{T}_{a}|}, 
+ (3) 
+where S_{i}^{\mathrm{pre}} and S_{i}^{\mathrm{post}} are the pre and post-action world states, x_{i} denotes the object or arguments involved in the grounded action, and y_{i} is the execution outcome.
+CausGround abstracts action preconditions and effects from accumulated action-level interaction trajectories. Each pre-action state provides a set of candidate state factors. More specifically, each object attribute-value pair or inter-object relation is treated as an atomic candidate precondition.
+For each grounded action a(x) , CausGround aggregates its corresponding trajectories in \mathcal{T}_{a} , identifies pre-action state factors whose satisfaction consistently distinguishes successful executions from failures, and retains them in the precondition set C(a(x)) , while incidental factors are discarded.
+For action effects, CausGround compares the corresponding pre and post-action states of successful executions. State changes that consistently follow action execution are retained in the effect set E(a(x)) , while incidental changes are discarded.
+Together, C(a(x)) and E(a(x)) characterize what must hold before the grounded action can be executed and what state changes follow from its execution. When an effect of one action satisfies a precondition of another, CausGround connects the two actions through a causal dependency, allowing multi-step interactions to be composed through such dependencies.
+Moreover, CausGround organizes the extracted precondition and effect sets according to their level of specificity.
+Across grounded instances of the same action family a (e.g.,  OPEN(fridge) and  OPEN(microwave) ), CausGround compares their precondition and effect sets to identify causal regularities that generalize across instances. Preconditions and effects that are consistently shared across multiple instances are abstracted into generic action knowledge K_{\mathrm{gen}}(a) , while regularities that remain valid only for particular objects are preserved as instance-specific knowledge K_{\mathrm{spec}}(a(x)) . For example,  OPEN(fridge) and  OPEN(microwave) may share the effect that  openness becomes  open , while requiring different object-specific preconditions for successful execution. In this way, generic knowledge captures reusable causal regularities across grounded instances, while instance-specific knowledge preserves valid object-specific variations. As shown in the left part of Fig.  2 , these two levels together form the reusable action-centered causal knowledge used for task-time grounding.
+ 3.3 Task-Grounded Planning
+As illustrated in the right part of Fig.  2 , CausGround grounds reusable causal knowledge with the current task and world state before providing it to the frozen planner.
+Specifically, given the initial world state S_{0} and task description g , CausGround constructs a task-relevant causal graph through two complementary paths.
+First, we interpret g into a goal state under the same factorized world-state representation and perform backward reasoning from the goal state over action effects and preconditions, yielding goal-directed causal dependencies K_{\mathrm{causal}} .
+In parallel, we semantically retrieve related generic and instance-specific causal knowledge from the CausGround library, denoted as K_{\mathrm{sem}} . The final task knowledge is:
+ K_{\mathrm{task}}=K_{\mathrm{causal}}\cup K_{\mathrm{sem}}. 
+ (4) 
+ K_{\mathrm{task}} is constructed once at the beginning of each task and grounded with the current world state, allowing the frozen planner to reason over task-relevant causal dependencies. At each step, the planner combines the current visual observation and its structured world state with the task description and retrieved task knowledge to select the next action:
+ a_{t}=\pi_{\theta}(I_{t},S_{t},g,K_{\mathrm{task}}). 
+ (5) 
+The grounded causal knowledge provides bidirectional guidance for planning: backward reasoning over action preconditions identifies executable actions, forward reasoning over action effects supports state-transition reasoning, and cross-action dependencies provide structured guidance for long-horizon planning.
+ 4 Experiments
+ Figure 3: 
+Evaluation environments and representative tasks.
+ Left: SWITCH examples covering action selection, error recovery, state verification, and verification action.
+ Right: High-level planning trajectories in RoboCasa and VirtualHome, showing post-action observations. RoboCasa steps correspond to annotated skill stages; VirtualHome uses repaired image observations.
+ 4.1 Experimental Setup
+ Benchmarks and Evaluation Protocols. 
+We evaluate CausGround from two complementary perspectives: visual high-level planning and interaction reasoning. As illustrated in Fig.  3 , we use VirtualHome  ( Puig et al., 2018 ) and RoboCasa  ( Nasiriany et al., 2024 ; Nasiriany et al., 2026 ) to evaluate long-horizon planning from visual observations, and SWITCH  ( Cheng et al., 2025 ) to assess fine-grained reasoning over states, actions, and interaction outcomes.
+Beyond benchmark evaluation, we further validate CausGround on real-world sequential manipulation with a physical robot.
+For  VirtualHome , a simulated household environment with diverse multi-step activities, we focus on the image-based planning setting rather than its text-based counterpart. We correct rendered observations that are inconsistent with the underlying environment state using an image-editing model, with details provided in Appendix  A.1 . We report success rate (SR) and task progress, where progress measures partial completion of the task-specific semantic objectives at episode termination. To examine performance across planning horizons, we further partition tasks into short, medium, and long-horizon subsets according to the number of ground-truth high-level actions.
+For  RoboCasa , a simulation benchmark for household manipulation, we adapt its tasks to high-level visual planning by treating the officially annotated skill stages as atomic actions and using the corresponding simulator observations as intermediate states. We report task success rate under both one-shot planning and closed-loop replanning.
+For  SWITCH , which evaluates a broader range of embodied interaction reasoning capabilities, we focus on four categories that most directly probe action-level state-transition reasoning:  Action ,  Recovery ,  Verification State , and  Verification Action . Together, these categories cover action selection, error recovery, outcome verification, and active verification, forming a complementary reasoning loop around action applicability and effects. We report prediction accuracy for each category.
+ Implementation Details. 
+For each comparison, all methods are evaluated under the same planner backbone, visual observations, task descriptions, and high-level action space. In our main experiments, we instantiate the planner with Qwen3.5-9B, Qwen3.5-27B, and Qwen3.5-35B-A3B, while additional model families are considered in Sec.  4.5 . We compare CausGround against a  Vanilla planner and two latest methods, SelfReVision   ( Park et al., 2025 ) and LookPlanGraph   ( Onishchenko et al., 2025 ) .
+SelfReVision iteratively critiques, revises, and verifies generated procedural plans, while LookPlanGraph maintains a dynamically updated scene-memory graph from visual observations to ground planning.
+We adapt both methods to the same visual observations and high-level action space used by CausGround.
+All planner parameters remain frozen throughout evaluation. Additional implementation details, prompts, and baseline adaptations are provided in Appendix  C .
+ Overview. 
+Our experiments progressively examine CausGround from effectiveness to generalization and analysis. We first evaluate whether CausGround improves visual high-level planning across different task horizons on VirtualHome and RoboCasa (Sec.  4.2 ). Apart from the vanilla planning performance, we evaluate interaction reasoning on SWITCH (Sec.  4.3 ) and generalization across different model families and scales (Sec.  4.5 ). Next, we isolate the contributions of the local world-state graph and causal interaction knowledge through component analysis (Sec.  4.4 ). Finally, we qualitatively analyze how CausGround changes planning behavior in VirtualHome and investigate whether simulation-acquired interaction knowledge can support real-world robot planning (Sec.  4.6 ).
+ Table 1: 
+ High-level planning performance. 
+VirtualHome reports success rate (SR) and final progress (P) across short, medium, and long horizon tasks, with Average denoting the macro-average over the three difficulty levels.
+RoboCasa reports task success rate under one-shot planning and closed-loop replanning.
+Best results are shown in  bold and second-best results are  underlined .
+ Backbone 
+ Method 
+ VirtualHome 
+ RoboCasa 
+ Short 
+ Medium 
+ Long 
+ Average 
+ One-shot 
+ Replan 
+ SR 
+ P 
+ SR 
+ P 
+ SR 
+ P 
+ SR 
+ P 
+ Qwen3.5-9B 
+ Vanilla 
+ 28.0 
+ 34.6 
+ 4.0 
+ 18.1 
+ 0.0 
+ 18.9 
+ 10.7 
+ 23.8 
+ 31.0 
+ 36.7 
+ SelfReVision 
+ 48.0 
+ 52.7 
+ 12.0 
+ 22.5 
+ 8.0 
+ 27.2 
+ 22.7 
+ 34.1 
+ 26.8 
+ 26.5 
+ LookPlanGraph 
+ 44.0 
+ 56.8 
+ 12.0 
+ 35.5 
+ 4.0 
+ 26.9 
+ 20.0 
+ 39.7 
+ 19.7 
+ 28.6 
+ CausGround 
+ 80.0 
+ 83.6 
+ 32.0 
+ 51.3 
+ 20.0 
+ 49.8 
+ 44.0 
+ 61.5 
+ 45.1 
+ 46.9 
+ Qwen3.5-27B 
+ Vanilla 
+ 60.0 
+ 63.3 
+ 28.0 
+ 45.6 
+ 12.0 
+ 31.9 
+ 33.3 
+ 46.9 
+ 27.9 
+ 57.8 
+ SelfReVision 
+ 68.0 
+ 69.3 
+ 36.0 
+ 51.8 
+ 24.0 
+ 43.8 
+ 42.7 
+ 55.0 
+ 18.3 
+ 39.1 
+ LookPlanGraph 
+ 84.0 
+ 84.0 
+ 52.0 
+ 67.6 
+ 32.0 
+ 63.3 
+ 56.0 
+ 71.6 
+ 24.4 
+ 53.1 
+ CausGround 
+ 84.0 
+ 84.0 
+ 60.0 
+ 78.3 
+ 44.0 
+ 77.2 
+ 62.7 
+ 79.8 
+ 27.9 
+ 75.0 
+ Qwen3.5-35B-A3B 
+ Vanilla 
+ 56.0 
+ 59.4 
+ 16.0 
+ 30.4 
+ 20.0 
+ 43.5 
+ 30.7 
+ 44.4 
+ 21.9 
+ 34.4 
+ SelfReVision 
+ 52.0 
+ 55.3 
+ 40.0 
+ 52.7 
+ 20.0 
+ 35.8 
+ 37.3 
+ 47.9 
+ 15.1 
+ 4.9 
+ LookPlanGraph 
+ 64.0 
+ 67.3 
+ 28.0 
+ 45.5 
+ 8.0 
+ 28.9 
+ 33.3 
+ 47.2 
+ 19.2 
+ 23.0 
+ CausGround 
+ 88.0 
+ 90.0 
+ 44.0 
+ 68.1 
+ 28.0 
+ 59.5 
+ 53.3 
+ 72.6 
+ 43.8 
+ 49.2 
+ 4.2 High-Level Planning Performance
+As shown in Table  1 , CausGround achieves the best performance across all planner backbones and task difficulties on VirtualHome, improving the average success rate from 24.9% with Vanilla to 53.3% and the average final progress from 38.4% to 71.3% over Vanilla.
+Although planning becomes increasingly challenging as the horizon grows, CausGround consistently maintains both higher success rates and stronger task progress from short to long-horizon tasks.
+This suggests that causal interaction knowledge not only helps complete more tasks, but also enables the planner to make more sustained progress over extended interaction sequences.
+CausGround shows the same overall advantage on RoboCasa, achieving the strongest performance in most backbones and protocol settings, and improving one-shot planning and closed-loop replanning. Averaged across backbones, CausGround improves one-shot success from 26.9% to 38.9% and replanning success from 43.0% to 57.0% over Vanilla.
+Interestingly, adding more reasoning or structure does not necessarily yield better planning: SelfReVision and LookPlanGraph can even underperform Vanilla. We find that free-form self-reflection may introduce unsupported prerequisites and consequently corrupt an originally valid plan (e.g., incorrectly infer that an object is inside a cabinet and insert unnecessary  OPEN actions). Similarly, discrete scene graphs used in LookPlanGraph can propagate grounding errors into subsequent decisions (e.g., misinterpreting a closed microwave as open), causing the planner to skip necessary actions and produce an invalid plan.
+Above all, the benefit of CausGround is not simply to provide more reasoning context, but to supply a task-relevant causal subgraph of action preconditions and effects that is grounded against the current observation before each planning decision.
+The grounded knowledge supports state-aware action proposal and structured reference for multi-step planning, helping the planner maintain long-horizon progress while adapting to the current executable state and avoiding repeated failures or deadlocks.
+ 4.3 Causal State-Transition Reasoning on SWITCH
+Beyond end-to-end planning, we evaluate interaction reasoning on SWITCH  ( Cheng et al., 2025 ) , which measures an agent’s ability to reason over action execution and state transitions under long-horizon interactions.
+As shown in Table  2 , CausGround consistently improves Vanilla across all MLLM backbones, increasing average accuracy from 25.8% to 31.9%.
+The improvements are consistent across different aspects of interaction reasoning (e.g.,  Action ,  Recovery ,  Verification Action , and  Verification State ), demonstrating that causal interaction knowledge improves reasoning over both action selection and resulting state transitions.
+ Table 2: 
+ Interaction reasoning on SWITCH. 
+Accuracy (%) is reported across four interaction reasoning categories and three different backbones. Best results are shown in bold.
+ Backbone 
+ Method 
+ Action 
+ Recovery 
+ Verification Action 
+ Verification State 
+ Average 
+ Qwen3.5-9B 
+ Vanilla 
+ 24.2 
+ 36.8 
+ 30.2 
+ 19.6 
+ 27.7 
+ CausGround 
+ 28.1 
+ 44.7 
+ 36.5 
+ 22.2 
+ 32.9 
+ Qwen3.5-27B 
+ Vanilla 
+ 31.9 
+ 28.9 
+ 36.5 
+ 14.2 
+ 27.9 
+ CausGround 
+ 33.7 
+ 39.5 
+ 52.4 
+ 15.1 
+ 35.2 
+ Qwen3.5-35B-A3B 
+ Vanilla 
+ 27.1 
+ 23.7 
+ 23.8 
+ 12.0 
+ 21.7 
+ CausGround 
+ 27.4 
+ 28.9 
+ 41.3 
+ 13.3 
+ 27.7 
+ Figure 4: 
+ Case Study. 
+Vanilla identifies the correct chair but repeatedly executes SIT without satisfying the NEAR precondition, while CausGround uses causal knowledge to complete the task.
+ 4.4 Component Ablations
+We disentangle the contributions of the two components in CausGround.
+Causal interaction knowledge provides reusable action preconditions and effects, while the factorized state explicitly organizes the task-relevant state.
+As shown in Table  3 , both components improve over Vanilla, but they contribute in different ways.
+First, explicitly representing the task-relevant world state helps the agent identify what is true in the environment and make more reliable decisions.
+ Table 3: 
+ Component ablations. 
+Contributions of the local graph and causal interaction knowledge.
+ Method 
+ SR 
+ Progress 
+ Vanilla 
+ 33.3 
+ 46.9 
+ + Factorized State 
+ 36.0 
+ 55.1 
+ + Causal Knowledge 
+ 53.3 
+ 70.8 
+ CausGround 
+ 62.7 
+ 79.8 
+Second, causal interaction knowledge provides a structured view of when an action is applicable and how it changes the state, allowing the agent to anticipate consequences before execution.
+Naturally, the full CausGround performs best overall.
+Since the local state and causal knowledge share the same factorized state representation, the planner can directly match the current state against the action preconditions and effects described in the retrieved knowledge.
+This grounds the causal knowledge to what is actually observed, making it useful for planning.
+ 4.5 Cross-Family Generalization
+ Figure 5: 
+ Generalization across model families and scales. 
+CausGround improves SR and final progress across backbones.
+To examine whether the benefit of CausGround depends on a particular planner backbone, we further evaluate six models from three families, including Qwen3.5, InternVL3.5, and Gemma4, covering model sizes from E4B to 38B.
+As shown in Fig.  5 , CausGround consistently improves both task success and final progress over Vanilla across all six backbones.
+Averaged across these models, SR increases from 23.3% to 50.7%, while final progress improves from 38.4% to 67.3%.
+Notably, the improvement is observed for both smaller and larger models and across all three model families, indicating that the benefit of CausGround is not tied to a particular model family or scale.
+These results further support the use of reusable interaction knowledge as a general external prior for different planners.
+ 4.6 Qualitative Analysis
+ Case Study. 
+Figure  4 illustrates a representative failure mode of Vanilla. Although it identifies the target chair, Vanilla repeatedly executes SIT without satisfying the NEAR precondition. CausGround identifies the missing prerequisite through causal knowledge and completes the task.
+ Figure 6: 
+ Real-world Deployment. 
+Given initial observation and task, CausGround retrieves task-relevant causal knowledge from the interpreted goal state and grounds it to executable actions.
+ Real-World Deployment. 
+We validate CausGround on real-world manipulation. Given the task and initial observation, the MLLM interprets the goal state, from which CausGround performs backward reasoning over causal dependencies to retrieve task-relevant causal knowledge and derive executable actions (Open(Microwave), Pick(Bread), and Place(Bread, Plate)), as shown in Fig.  6 .
+ 5 Conclusion
+We introduce CausGround, a causal interaction grounding framework for adapting MLLM-based embodied planners to environment-specific interaction dynamics without parameter updates.
+Instead of storing interaction experience as unstructured trajectories, CausGround distills reusable action-centered causal knowledge by identifying action preconditions and effects, expressed under a shared factorized world-state schema that jointly captures object attributes and inter-object relations.
+At planning time, CausGround grounds task-relevant causal knowledge with the current task and world state, supporting backward reasoning over action preconditions, forward reasoning over action effects, and long-horizon planning.
+These results highlight explicit causal interaction knowledge as a reusable grounding mechanism for long-horizon embodied planning across diverse environments.
+AI use statement
+In this work, we used AI tools for manuscript language refinement and to assist the construction of the adapted VirtualHome visual benchmark.
+Specifically, AI-based image editing was used to repair RGB observations that were visually inconsistent with the underlying simulator states, as described in Appendix  A.1.3 .
+The repaired observations and AI-assisted manuscript edits were reviewed by the authors, who take full responsibility for the final content of this work.
+Reproducibility statement
+We provide detailed benchmark construction and evaluation protocols in Appendix  A , additional methodological details of CausGround in Appendix  B , and matched experimental settings, baseline implementations, library construction, retrieval and grounding procedures, and prompt templates in Appendix  C .
+Additional ablation studies and real-world deployment details are provided in Appendices  D and  E , respectively.

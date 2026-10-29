@@ -1,0 +1,624 @@
+LLM-Integrated Bayesian State Space Modelsfor Multimodal Time-Series Forecasting
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+Multimodal Time-Series Forecasting.
+Bayesian State Space Models.
+3 Preliminaries
+3.1 Multimodal Forecasting
+3.2 Bayesian State Space Models
+Latent dynamical model.
+Training objective.
+4 LBS: LLM-Integrated Bayesian State Space Model
+4.1 Text-conditioned Posterior State Estimation
+Text Compression.
+Posterior Inference.
+4.2 State-conditioned Text Generation
+Shared or Separate LLMs?
+Stateful single-step training.
+5 Experimental Results
+Datasets.
+5.1 Time-Series Forecasting Performance
+Setup.
+Results.
+Text Generation.
+5.2 Uncertainty in Forecasts
+Setup.
+Results.
+5.3 Analysis on Latent State Trajectory
+Setup.
+Results.
+5.4 Effect of LLM Scaling
+Setup.
+Results.
+6 Concluding Remarks
+Limitations.
+References
+A Extended Related Work
+Multimodal Time-Series Forecasting.
+Bayesian State Space Models.
+B Derivation of Training Objective
+C Additional Experiment Details
+Datasets.
+LLM Prompts.
+Models.
+Optimization.
+Loss weighting.
+Full results.
+License: CC BY 4.0
+arXiv:2510.20952v1 [cs.LG] 23 Oct 2025
+LLM-Integrated Bayesian State Space Models
+for Multimodal Time-Series Forecasting
+Sungjun Cho
+Changho Shin
+Suenggwan Jo
+Affiliation: Xinya Yan, Shourjo Aditya Chaudhuri, Frederic Sala
+Affiliation: Department of Computer Sciences
+Affiliation: University of Wisconsin-Madison
+Affiliation: {cho266, cshin23, sjo32, xyan89, sachaudhuri, fsala}@wisc.edu
+Abstract
+Forecasting in the real world requires integrating structured time-series data with unstructured textual information, but existing methods are architecturally limited by fixed input/output horizons and are unable to model or quantify uncertainty. We address this challenge by introducing LLM-integrated Bayesian State space models (LBS), a novel probabilistic framework for multimodal temporal forecasting. At a high level, LBS consists of two components: (1) a state space model (SSM) backbone that captures the temporal dynamics of latent states from which both numerical and textual observations are generated and (2) a pretrained large language model (LLM) that is adapted to encode textual inputs for posterior state estimation and decode textual forecasts consistent with the latent trajectory. This design enables flexible lookback and forecast windows, principled uncertainty quantification, and improved temporal generalization thanks to the well-suited inductive bias of SSMs toward modeling dynamical systems. Experiments on the TextTimeCorpus benchmark demonstrate that LBS improves the previous state-of-the-art by 13.20% while providing human-readable summaries of each forecast. Our work is the first to unify LLMs and SSMs for joint numerical and textual prediction, offering a novel foundation for multimodal temporal reasoning.
+1 Introduction
+Time-series forecasting, a core machine learning task, is traditionally centered on predicting future numerical values from past data [28]. However, in many real-world domains, contextual information expressed in natural language—such as clinical notes, financial reports, or weather descriptions—plays a critical role in forecasting. This complementary modality can offer valuable signals that cannot be fully extracted from numeric data alone [26, 20]. Similarly, generating textual forecasts alongside numerical predictions can improve interpretability. This is particularly useful in high-stakes decision-making scenarios. These opportunities motivate the development of models that not only forecast from multimodal inputs, but also communicate their predictions through natural language, augmenting quantitative accuracy with qualitative explanations.
+Probabilistic state space models (SSMs) offer compelling advantages for time-series forecasting: they can quantify uncertainty and support flexible, variable-length prediction horizons. For this reason, it is intuitive to seek to integrate a probabilistic SSM with a pretrained large language model (LLM), enabling forecasting from and into both numeric and textual modalities. However, this integration presents two fundamental challenges: (C1) Text-conditioned posterior state estimation: How can we update the latent state of the SSM using a pretrained LLM and textual observations? (C2) Latent state-conditioned text generation: How can we adapt the LLM to generate accurate, temporally grounded textual forecasts conditioned on latent state trajectories?
+Figure 1: An illustration of the LBS architecture under for a single-step forecasting scenario. Bottom: To enable variational inference with text, the LLM is tuned to summarize the context into a set of summarization tokens, which are then used together with the target value to obtain the posterior state distribution. Top: Conditioned on the state forecast, the shared LLM is trained to generate its corresponding text. When using instruction-tuned LLMs, both steps are accompanied by prompt templates in order to preserve its capabilities.
+To address these challenges, we propose the LLM-integrated Bayesian State Space Model (LBS), a novel architecture that unifies a probabilistic SSM with a pretrained LLM for joint numeric and textual forecasting (see Figure 1). For (C1), we adapt the LLM to summarize and compress textual inputs into a sequence of summary tokens, which are then together projected into the low-dimensional latent state space for deep Bayesian filtering. For (C2), we leverage the LLM’s in-context generation capabilities by conditioning it on latent state trajectories—treated as non-textual context, akin to images or videos—enabling the model to generate temporally coherent, state-grounded textual forecasts. To our knowledge, LBS is the first framework to tightly couple probabilistic SSMs and LLMs to generate temporally coherent forecasts across both numeric and textual modalities.
+We evaluate LBS on the TimeTextCorpus (TTC), a multimodal benchmark spanning climate and clinical domains. Our model consistently outperforms both unimodal and multimodal baselines, improving numeric forecasting accuracy by an average of 13.20% while generating coherent and contextually relevant textual predictions. Qualitative analyses show further benefits of the Bayesian SSM backbone, including its ability to encode trends and seasonality in low-dimensional latent states and provide principled uncertainty estimates. Finally, we explore LLM scaling by substituting various models from the Qwen2.5 [38] and LLaMA3 [7] families, finding that larger LLMs do not always improve performance, but incorporating textual context enhances robustness especially for long-horizon forecasts.
+The key contributions of our work are the following:
+•
+We present LBS, a novel architecture for multimodal time-series forecasting that integrates a Bayesian state space model with pretrained LLMs to enable conditioning posterior estimates on textual inputs as well as text generation.
+•
+We incorporate techniques from the LLM-based context compression and multimodal instruction tuning literature towards enabling LBS to perform posterior state estimation conditioned on text and state-conditioned text generation.
+•
+We verify the empirical performance of LBS on the multimodal forecasting benchmark, TimeTextCorpus (TTC), achieving excellent performance on climate and medical domains.
+2 Related Work
+We briefly review work related to LBS, specifically those in multimodal time-series forecasting and Bayesian state-space models. An extended discussion on related work can be found in Appendix A.
+Multimodal Time-Series Forecasting.
+Motivated by recent advancements in LLMs, recent studies have explored their potential to enhance time-series forecasting by incorporating textual context. Some approaches use LLMs directly [27, 8], while others finetune them with auxiliary modules. [37] introduce a cross-attention architecture to fuse news and time-series data. [20] propose HybridMMF, a joint model trained on the TimeTextCorpus using shared embeddings for text and time series. [34] develop ChatTime, a foundation model fine-tuned for diverse zero-shot forecasting tasks. [24] present TaTS, which augments standard models with concurrent textual inputs as auxiliary variables.
+These works do not explore the integration of LLMs into state space models, which is the key contribution of our work. By incorporating LLMs into state space models, we not only improve time-series forecasting performance but also exploit the benefits of state space models, such as uncertainty estimation.
+Bayesian State Space Models.
+Bayesian filtering has long been central to time-series modeling, with the classical Kalman filter [17] offering optimal estimation in linear Gaussian systems. To address nonlinear and non-Gaussian dynamics, extensions such as the Extended Kalman Filter, Unscented Kalman Filter [16], Ensemble Kalman Filter [13], and Sequential Monte Carlo [4] have been proposed to approximate posterior distributions using linearization or sampling techniques.
+More recent work combines state space structure with deep neural networks. KVAE [5] and [29] apply neural parameterizations to learn latent dynamics for sequential and multivariate time-series forecasting. In reinforcement learning, models like PlaNet [11], Dreamer [12], and KalmanNet [31] extend these ideas to partially observable, high-dimensional control tasks.
+Despite this progress, most prior work focuses on unimodal data such as images or numerical sequences. Our work is the first to integrate pretrained large language models (LLMs) with a probabilistic state space model for joint numeric and textual forecasting, extending Bayesian state estimation into the realm of multimodal generative modeling.
+3 Preliminaries
+We provide background information on multimodal time-series forecasting (§3.1), followed by a discussion on the latent dynamical system we work with (§3.2). We also derive the multimodal extension of the evidence lower bound that we use for approximate Bayesian inference. Specific architectural choices made to realize LLM integration are discussed in the following section.
+3.1 Multimodal Forecasting
+Given a temporal series of numerical values across tt time steps 𝒚1:t=[𝒚1,…,𝒚t]∈ℝt×M{\bm{y}}_{1:t}=[{\bm{y}}_{1},\dots,{\bm{y}}_{t}]\in\mathbb{R}^{t\times M}, the objective of unimodal time-series forecasting is to predict the target values of next HH steps 𝒚t+1:t+H=[𝒚t+1,…,𝒚t+H]{\bm{y}}_{t+1:t+H}=[{\bm{y}}_{t+1},\dots,{\bm{y}}_{t+H}] where HH denotes the prediction horizon. Depending on the dimension MM of the prediction target, we refer to the TSF problem as univariate (M=1M=1) or multivariate (M>1M>1). In this work, we will focus on the univariate setup; we note that our method can easily be extended to multivariate scenarios.
+In our multimodal forecasting setup, we are additionally given a temporally aligned sequence of textual data 𝓓1:t=[𝓓1,…,𝓓t]\bm{{\mathcal{D}}}_{1:t}=[\bm{{\mathcal{D}}}_{1},\dots,\bm{{\mathcal{D}}}_{t}]. Each such point is itself a sequence of tokens 𝓓t=[w1,…,wlen​(𝓓t)]\bm{{\mathcal{D}}}_{t}=[w_{1},\dots,w_{\text{len}(\bm{{\mathcal{D}}}_{t})}]. Using both target values and textual data, our goal is to train a mapping that predicts future target values as well as corresponding text:
+|
+fΘ:(𝒚1:t,𝓓1:t)↦(𝒚t+1:t+H,𝓓t+1:t+H)\displaystyle f_{\Theta}:({\bm{y}}_{1:t},\bm{{\mathcal{D}}}_{1:t})\mapsto({\bm{y}}_{t+1:t+H},\bm{{\mathcal{D}}}_{t+1:t+H}) |
+|
+Note that existing multimodal forecasters are commonly trained under rigid assumptions on fixed input windows and prediction horizons with no explicit modeling of uncertainty, learning a deterministic mapping fΘ:(𝒚t−L:t,𝓓t−L:t)→(𝒚t+1:t+H,𝓓t+1:t+H)f_{\Theta}:({\bm{y}}_{t-L:t},\bm{{\mathcal{D}}}_{t-L:t})\to({\bm{y}}_{t+1:t+H},\bm{{\mathcal{D}}}_{t+1:t+H}) with finite lookback size LL and prediction horizon HH. This limitation reduces their adaptability to real-world scenarios.
+3.2 Bayesian State Space Models
+On the other hand, state space models offer a much flexible alternative to Transformer-architectures, with an inductive bias that better fits the temporal forecasting scenario. For this reason, we adopt a Bayesian state space modeling approach, providing a principled way to capture the underlying latent dynamics governing both numeric and textual observations in an uncertainty-aware manner.
+Latent dynamical model.
+At each time step tt, we assume that a shared unobservable latent state 𝒙t∈ℝN{\bm{x}}_{t}\in\mathbb{R}^{N} encodes the system’s internal condition, which evolves stochastically over time and gives rise to both types of data as conditionally independent emissions.
+Figure 2: The latent dynamical model assumed by LBS. The SSM serves as a backbone modeling the temporal dynamics of latent states 𝒙t{\bm{x}}_{t}, from which multimodal data 𝒚t{\bm{y}}_{t} and 𝓓t\bm{{\mathcal{D}}}_{t} are generated.
+Formally, the model is defined by three core components (Figure 2). First, the state transition model p⁡(𝒙t∣𝒙t−1)p({\bm{x}}_{t}\mid{\bm{x}}_{t-1}) governs the evolution of latent states over time, modeling the temporal evolution of the system. Second, the numeric emission model p⁡(𝒚t∣𝒙t)p({\bm{y}}_{t}\mid{\bm{x}}_{t}) captures how the target numeric observations are generated from each latent state. Third, the textual emission model p⁡(𝓓t∣𝒙t)p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t}) models the generation of textual descriptions from the same latent state.
+For simplicity, we parameterize the transition distribution p⁡(𝒙t∣𝒙t−1)p({\bm{x}}_{t}\mid{\bm{x}}_{t-1}) as a multivariate Gaussian 𝒩⁡(𝝁t,𝝈t)\mathcal{N}(\bm{\mu}_{t},\bm{\sigma}_{t}), where both the mean 𝝁t\bm{\mu}_{t} and diagonal variance 𝝈t\bm{\sigma}_{t} are produced by a recurrent neural network (e.g., GRU or LSTM) applied to the previous state 𝒙t−1{\bm{x}}_{t-1}. The numeric observation model p⁡(𝒚t∣𝒙t)p({\bm{y}}_{t}\mid{\bm{x}}_{t}) is also modeled as a Gaussian with fixed variance, the mean of which can be computed by passing 𝒙t{\bm{x}}_{t} through a multi-layer perceptron (MLP). Under this formulation, maximizing the likelihood of the numeric data is equivalent to minimizing the mean squared error (MSE) [11].
+Modeling the likelihood of text given contextual information—textual or non-textual—is a core strength of LLMs [25]. In our work, we leverage this capability by incorporating a pretrained LLM to model the conditional distribution p⁡(𝓓t∣𝒙t)p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t}). By finetuning the LLM, we enable it to generate coherent and semantically meaningful text sequences 𝓓t\bm{{\mathcal{D}}}_{t} that reflect the underlying dynamics encoded in each latent state 𝒙t{\bm{x}}_{t}. This design allows LBS to jointly produce interpretable natural language and accurate numerical forecasts, both grounded in a shared latent trajectory.
+Training objective.
+We train the model by maximizing the evidence lower bound (ELBO) on the joint likelihood of the observed numeric and textual data (i.e., our loss function is the negative ELBO). The classical ELBO objective naturally extends to our multimodal setting as
+|
+logp(𝒚1:T,𝓓1:T)=log∫𝒙1:T∏t=1Tp(𝒙t∣𝒙t−1)p(𝒚t∣𝒙t)p(𝓓t∣𝒙t)d𝒙1:T\displaystyle\log p({\bm{y}}_{1:T},\bm{{\mathcal{D}}}_{1:T})=\log\int_{{\bm{x}}_{1:T}}\prod_{t=1}^{T}p({\bm{x}}_{t}\mid{\bm{x}}_{t-1})p({\bm{y}}_{t}\mid{\bm{x}}_{t})p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t})d{\bm{x}}_{1:T} |
+|
+|
+≥∑t=1T𝔼q⁡(𝒙t∣𝒚t,𝓓t)[log⁡p⁡(𝒚t∣𝒙t)⏟value likelihood+log⁡p⁡(𝓓t∣𝒙t)⏟text likelihood]−KL(q(𝒙t∣𝒚1:t,𝓓1:t)∣∣p(𝒙t∣𝒙t−1))⏟temporal regularization\displaystyle\geq\sum_{t=1}^{T}\mathbb{E}_{q({\bm{x}}_{t}\mid{\bm{y}}_{t},\bm{{\mathcal{D}}}_{t})}\bigg[\underbrace{\log p({\bm{y}}_{t}\mid{\bm{x}}_{t})}_{\text{value likelihood}}+\underbrace{\log p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t})}_{\text{text likelihood}}\bigg]-\underbrace{\text{KL}(q({\bm{x}}_{t}\mid{\bm{y}}_{1:t},\bm{{\mathcal{D}}}_{1:t})\mid\mid p({\bm{x}}_{t}\mid{\bm{x}}_{t-1}))}_{\text{temporal regularization}} |
+|
+(1) |
+Replacing the computationally intractable posterior distribution p(𝒙t∣𝒚1:t,𝓓1:t)p({\bm{x}}_{t}\mid{\bm{y}}_{1:t},\bm{{\mathcal{D}}}_{1:t}), we introduce a variational posterior q(𝒙t∣𝒚1:t,𝓓1:t)q({\bm{x}}_{t}\mid{\bm{y}}_{1:t},\bm{{\mathcal{D}}}_{1:t}) over the latent states, parameterized via a deep Kalman filter [22, 10, 11].
+Intuitively, the training objective effectively balances three essential aspects of Bayesian state estimation. First, the expected likelihood terms ensure fidelity to the observed data by encouraging the latent states to retain enough information to accurately reconstruct both the numeric values and textual descriptions. Second, the KL regularizer imposes temporal coherence by penalizing latent trajectories that deviate too strongly from the prior dynamics controlled by the SSM. Lastly, the variational expectation allows the model to predict under uncertainty in the latent trajectory, inducing more robust and generalizable forecasts.
+A full derivation of Appendix B can be found in the appendix.
+Algorithm 1 Stateful training step of LBS
+Input : Previous state and hidden (𝒙^t−1,𝒉t−1)(\hat{{\bm{x}}}_{t-1},{\bm{h}}_{t-1})
+Current text and value (𝓓t,𝒚t)(\bm{{\mathcal{D}}}_{t},{\bm{y}}_{t})
+Output : Current state and hidden (𝒙^t,𝒉t)(\hat{{\bm{x}}}_{t},{\bm{h}}_{t})
+1
+Get prior 𝒩⁡(𝝁t,𝝈t),𝒉t=SSM​(𝒙^t−1,𝒉t−1)\mathcal{N}(\bm{\mu}_{t},\bm{\sigma}_{t}),{\bm{h}}_{t}=\text{SSM}(\hat{{\bm{x}}}_{t-1},{\bm{h}}_{t-1})
+2
+Summarize text 𝒔t=LLMencoder​(𝓓t){\bm{s}}_{t}=\text{LLM}_{\text{encoder}}(\bm{{\mathcal{D}}}_{t})
+3
+Get posterior 𝒩⁡(𝝁^t,𝝈^t)=MLPpost​(𝒉t,𝒚t,𝒔t)\mathcal{N}(\hat{\bm{\mu}}_{t},\hat{\bm{\sigma}}_{t})=\text{MLP}_{\text{post}}({\bm{h}}_{t},{\bm{y}}_{t},{\bm{s}}_{t})
+4
+Sample 𝒙^t∼𝒩⁡(𝝁^t,𝝈^t)\hat{{\bm{x}}}_{t}\sim\mathcal{N}(\hat{\bm{\mu}}_{t},\hat{\bm{\sigma}}_{t}) via reparameterization
+5
+ℒval=‖𝒚t−MLPval​(𝒙^t)‖2{\mathcal{L}}_{\text{val}}=\|{\bm{y}}_{t}-\text{MLP}_{\text{val}}(\hat{{\bm{x}}}_{t})\|^{2}
+6
+ℒtext=LLMdecoder​(𝒙^t,𝓓t){\mathcal{L}}_{\text{text}}=\text{LLM}_{\text{decoder}}(\hat{{\bm{x}}}_{t},\bm{{\mathcal{D}}}_{t})
+7
+ℒKL=KL(𝒩(𝝁^t,𝝈^t)∣∣𝒩(𝝁t,𝝈t)){\mathcal{L}}_{\text{KL}}=\text{KL}(\mathcal{N}(\hat{\bm{\mu}}_{t},\hat{\bm{\sigma}}_{t})\mid\mid\mathcal{N}(\bm{\mu}_{t},\bm{\sigma}_{t}))
+8
+Update parameters via ℒ=ℒval+ℒtext+ℒKL{\mathcal{L}}={\mathcal{L}}_{\text{val}}+{\mathcal{L}}_{\text{text}}+{\mathcal{L}}_{\text{KL}}
+9
+return (𝒙^t,𝒉t)(\hat{{\bm{x}}}_{t},{\bm{h}}_{t})
+Figure 3: Illustration of a single forward pass through LBS.
+4 LBS: LLM-Integrated Bayesian State Space Model
+To integrate textual information into our latent dynamical model, we must address two technical challenges: (C1) How can we design the LLM-based filter that estimates the a posteriori state conditioned on text (i.e., q⁡(xt∣yt,𝒟t)q({\bm{x}}_{t}\mid{\bm{y}}_{t},\bm{{\mathcal{D}}}_{t}))? (C2) How can we model the likelihood of text conditioned on the latent state (i.e. p⁡(𝒟t∣xt)p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t}))? In this section, we detail the architectural components that tackle these two challenges. The components form the foundation of our proposed framework LBS. An illustration of the architecture can be found in Figure 1.
+4.1 Text-conditioned Posterior State Estimation
+To efficiently update our prior state estimates conditioned on text, we draw inspiration from recent work [2, 6] and adapt the pretrained LLM for context compression towards fast one-shot encoding of textual observations into latent state summaries.
+Then, we forward latent state summaries together with the prior state 𝒙t{\bm{x}}_{t} and numeric value 𝒚t{\bm{y}}_{t} for posterior inference.
+Text Compression.
+The core idea is to introduce special tokens unique to the task of summarization, and finetune the LLM to store critical information in the summary tokens for effective posterior inference. Concretely, we first augment the vocabulary of the pretrained LLM with KK special learnable tokens <SUM>k\texttt{<SUM>}_{k}, which facilitate the task of text compression. To encode a textual observation 𝓓t\bm{\mathcal{D}}_{t}, we append all KK summary tokens after the input sequence 𝓓t\bm{\mathcal{D}}_{t}, and forward the augmented sequence through the pretrained LLM. While also possible to randomize the positions of summary tokens during training to mitigate positional biases [2], we empirically found that it leads to negligible changes in performance, possibly due to lack of variance in text length.
+After processing the sequence through the LLM, we extract the final hidden states of the KK inserted summary tokens, then concatenate along the feature dimension to form a single summary vector of 𝓓t\bm{{\mathcal{D}}}_{t}. This vector is then projected through a MLP to obtain a low-dimensional summary vector 𝒔t∈ℝN{\bm{s}}_{t}\in\mathbb{R}^{N} that matches the latent states in dimension.
+Posterior Inference.
+Given the summary vector 𝒔t{\bm{s}}_{t}, we compute the mean and diagonal covariance of the variational posterior distribution q⁡(𝒙t∣𝒚t,𝒔t)q({\bm{x}}_{t}\mid{\bm{y}}_{t},{\bm{s}}_{t}), assumed to be Gaussian, via a neural Kalman filter parameterized by another MLP [22]. This MLP takes as input the summary vector 𝒔t{\bm{s}}_{t}, the corresponding numeric target 𝒚t{\bm{y}}_{t}, the prior latent state 𝒙t{\bm{x}}_{t}, and outputs the mean and log-variance of the posterior distribution. Note the entire process is end-to-end trainable, hence we finetune the LLM using LoRA (14) to effectively encode forecasting-relevant semantic and temporal information into the <SUM>k\texttt{<SUM>}_{k} tokens without significantly altering the generative capabilities within its pretrained weights. The detailed prompt used to compress text can be fo und in the appendix.
+4.2 State-conditioned Text Generation
+Given the posterior distribution, we use the reparameterization trick [21] to generate 𝒙^t∼q⁡(𝒙t∣𝒚t,𝓓t)\hat{{\bm{x}}}_{t}\sim q({\bm{x}}_{t}\mid{\bm{y}}_{t},\bm{{\mathcal{D}}}_{t}), generating Monte-Carlo samples in an end-to-end learnable manner.
+Then, we can model the posterior state-conditioned textual likelihood p⁡(𝓓t∣𝒙^t)p(\bm{{\mathcal{D}}}_{t}\mid\hat{{\bm{x}}}_{t}) by providing a projection of 𝒙^t\hat{{\bm{x}}}_{t} as a prefix to the LLM [23], similarly to vision-text instruction tuning frameworks [25].
+Specifically, we project the sampled low-dimensional latent state vector 𝒙^t\hat{{\bm{x}}}_{t} into a sequence of tokens for the LLM using a linear layer. These projected tokens are then prepended to 𝓓t\bm{{\mathcal{D}}}_{t}, effectively allowing the LLM to condition its generation on the state dynamics captured by the temporal SSM backbone.
+This design assumes that the temporal backbone is capable of encoding time-specific information such as event structure, trends, or contextual shifts within a compact latent space [1]. By projecting this information into the high-dimensional language space and augmenting it with instruction prompts, we provide the LLM with the necessary information to generate fluent and temporally consistent text.
+Shared or Separate LLMs?
+While it is possible to use two separate LLMs for encoding and decoding, for LBS we assume the same LLM weights are shared between the two steps: the LLM that encodes text into compressed embeddings for posterior estimation also serves as the decoder for text generation. This weight sharing not only reduces the computational burden, but also encourages the LLM to encode forecasting-relevant information in a way that it can later reuse for generation, learning prediction and inference in a self-consistent manner.
+Stateful single-step training.
+Ideally, training LBS on long sequences would allow the model to better capture long-range dependencies. However, each timestep tt requires passing 𝓓t\bm{{\mathcal{D}}}_{t} through the LLM twice—once for encoding and once for decoding—making naïve long-horizon training computationally expensive. To address this, we adopt stateful training [39, 18], where the model is trained on single-step batches under its temporal ordering, with hidden states passed onto the next training iteration. The detailed algorithm and illustration of a single training step can be found in Algorithm 1 and Figure 3.
+5 Experimental Results
+We empirically explore the following claims about LBS.
+•
+Claim 1: LBS improves performance in multimodal time-series forecasting. (§5.1)
+•
+Claim 2: LBS can model predictive uncertainty using its probabilistic architecture. (§5.2)
+•
+Claim 3: LBS encodes trends and seasonality within its latent states. (§5.3)
+•
+Claim 4: Scaling the LLM in LBS improves performance. (§5.4)
+Figure 4: Test RMSE results from TTC-Climate (left) and TTC-Medical (right).
+Datasets.
+We perform experiments on the TextTimeCorpus (TTC [20]), a multimodal time-series forecasting benchmark that covers two distinct domains: TTC-Climate consists of daily temperature measurements at Washington DC with textual weather descriptions. TTC-Medical consists of daily heart rate measurements from hospitalized patients accompanied by nursing notes. Following previous work [20], we use a 8-1-1 train-validation-test split across time. Further details on the datasets can be found in the appendix.
+5.1 Time-Series Forecasting Performance
+Setup.
+We first compare our model against existing multimodal forecasters TSFLib [26], TextTime2TextTime (TT2TT [20]), and HybridMMF [20]. For TSFLib, we use Reformer as its time-series forecasting backbone, as it was the best-performing setup. We also compare against unimodal methods, results from which we defer to Appendix C for brevity. Note that all baselines except LBS are specifically trained for each prediction horizon HH. On the other hand, a single LBS model is evaluated on all possible HH to demonstrate its generalizability to arbitrary forecast horizons. All multimodal models adopt LLaMA3.1-8B [7] as the base LLM, and LBS uses a single-layer GRU [3] with latent dimension 16 as the SSM backbone. Further details on training and model hyperparameters can be found in the appendix.
+Table 1: Test RMSE and relative improvements from incorporating textual data in LBS, averaged across all prediction horizons.
+Method |
+TTC-Climate |
+TTC-Medical |
+Unimodal |
+5.644 |
+4.992 |
+Multimodal |
+5.422 |
+4.733 |
+Δ\Delta (%) |
+3.815 |
+5.410 |
+Results.
+Figure 4 presents forecasting results across varying prediction horizons. For most prediction horizons, LBS achieves substantial gains over all baselines, improving the best performances by 5.13% and 21.28% on TTC-Climate and TTC-Medical on average, respectively. Combined with the fact that a single LBS model is evaluated throughout all horizons, this result highlights the strength and generalizability of SSMs in capturing temporal dependencies, validating our choice of using a probabilistic SSM as our temporal backbone. When compared with a unimodal variant of LBS that does not use textual data, Table 1 shows that multimodal LBS enjoys improvements in performance overall due to the additional modality.
+This highlights the model’s ability to leverage textual information for more accurate posterior inference, leading to sharper and more informed forecasts.
+Text Generation.
+Beyond forecasting numeric values, LBS is also capable of generating temporally coherent textual forecasts. Figure 5 shows a sample forecast generated by LBS on the TTC-Climate dataset. While only provided with the prior state embedding and a simple prompt, LBS can produce context-aware descriptions that align well with the ground-truth dynamics without direct access to previous text. This result highlights the latent states’ ability to encode rich semantic structure that can further rationalize model forecasts, and also demonstrates its utility in applications where human-readable justifications are essential alongside quantitative predictions.
+Ground Truth
+Cooler than normal temperatures in the central and eastern U.S., with warmth in the western U.S. A couple of rounds of heavy rain expected in the East, particularly from Friday into Saturday, with moisture from the Gulf of Mexico and western Atlantic contributing to rainfall. Heavy rainfall risks are present for the Mid-Atlantic and southern Plains, with potential local runoff issues due to expected convection. A significant closed upper low/trough will bring much below normal temperatures and an unsettled pattern across the north-central U.S. and Great Lakes. Much above average temperatures with some record values possible in the West Coast and Interior West. High winds anticipated in the Central Rockies, Central Plains, and Northern Rockies on Friday, April 28. Flooding concerns exist in the Upper and Middle Mississippi Valleys, along with parts of the Northern Plains and Great Basin.
+Output from LBS
+From April 28 to May 2, 2023, expect a persistent weather pattern with troughing in the eastern U.S. and ridging in the western U.S. This will lead to a wet pattern in the east and dry conditions in the west. A deep cyclone will track from the Midwest to the Northeast, causing moderate to heavy rainfall, particularly in the Ohio Valley, Appalachians, and Northeast, with potential flooding. Light to moderate precipitation is expected across the Midwest, Great Lakes, and Northeast, with the heaviest rainfall on Friday and Saturday. In contrast, the western U.S. will experience well above normal temperatures (10-20°F above normal) with little to no precipitation, increasing drought concerns. A cold front will bring cooler temperatures to the east, with the first half of May likely seeing above normal temperatures. Flooding is possible in the Southern Plains and the Pacific Northwest, with severe weather forecasted for the Southern Plains on April 28.
+Figure 5: Example text comparison generated by LBS vs. ground truth text from TTC-Climate. LBS is able to textually forecast key characteristics by contextualizing the LLM on the latent states.
+Figure 6: Single-step predictions (H=1H=1) of HybridMMF (top) and LBS (bottom) on the TTC-Climate test set. The shaded region indicates the variance of each prediction of LBS, with true values shown in light blue. Forecasts in the initial winter exhibits relatively larger variance than in the summer, as expected from the high variance in actual data.
+Figure 7: Visualization of ground-truth signals and three t-SNE components of the state trajectory during training on TTC-Climate. The dashed lines indicate yearly intervals. LBS learns states that exhibit the same seasonal patterns as the target values, promoting model transparency.
+5.2 Uncertainty in Forecasts
+Setup.
+In order to observe how LBS allocates uncertainty across forecasting, we compute and report the variance in predictions across 10 states sampled from the prior distribution at each step, during test time on TTC-Climate. We compare results from LBS against those from deterministic HybridMMF.
+Results.
+Figure 6 shows that in contrast to deterministic baselines such as HybridMMF, LBS provides meaningful uncertainty intervals in addition to accurately capturing the overall trend. We observe that the predicted variance increases in regions where the ground-truth data shows higher fluctuation (e.g., the early winter), while periods with lower fluctuation leads to lower predicted variance (e.g., the summer). This property makes LBS particularly suitable for real-world forecasting tasks that require assessing confidence in predictions for risk-aware decision making.
+5.3 Analysis on Latent State Trajectory
+Setup.
+To evaluate the qualitative dynamics of states learned by LBS, we extract the posterior latent state trajectory learned by LBS on the training set of TTC-Climate. For visualization, we apply t-SNE [33] to the full trajectory and plot the top three components with the highest variance.
+Results.
+As shown in Figure 7, the latent states in LBS exhibit strong seasonal periodicity that is closely aligned with the ground-truth signal.
+This alignment promotes transparency: the learned states are not black-box embeddings but instead encode temporally coherent structure and semantics. Such feature supports straightforward validation of the learned dynamics and enables effective diagnosis of potential errors, especially useful in high-stakes scenarios such as finance or healthcare.
+5.4 Effect of LLM Scaling
+Setup.
+As larger LLMs are known to more effectively compress information into compact summaries (2, 6), we verify whether increasing the LLM size also improves forecasting performance by evaluating LBS using a range of backbone LLMs with varying parameter sizes. While larger LLMs are known to exhibit stronger reasoning and generation capabilities, it remains unclear whether these benefits translate to the setting of text-conditioned time-series forecasting. We fix our evaluation domain to TTC-Climate and train LBS while switching the LLM within variants of LLaMA3 (1B, 3B, 8B) [7] and Qwen2.5 (0.5B, 1.5B, 3B, 7B) [38].
+Results.
+Surprisingly, Figure 8 shows that scaling the LLM does not necessarily lead to better forecasting performance: for instance, Qwen2.5-7B is consistently outperformed by its 1.5B variant. There are several plausible explanations. First, the relatively low capacity of the SSM may introduce a representational bottleneck, preventing LBS from fully leveraging the richer representations offered by larger LLMs. Second, the task of compressing text into a single significantly lower dimensional vector followed by textual forecasting may not benefit from scaling as with more conventional language tasks such as question answering or code generation (32). Finally, larger LLMs may tend to memorize training patterns rather than learn generalizable forecasting strategies, diminishing the role of the dynamical model.
+Figure 8: Test RMSE reductions of LBS relative to its unimodal counterpart on TTC-Climate with varying LLMs from the Qwen2.5 (left) and LLaMA3 (right) series. The dashed line indicates the baseline from unimodal LBS. A larger LLM does not consistently lead to better performance, but the gain from textual inputs tends to increase with increasing prediction horizon.
+Nonetheless, we observe an encouraging overall trend: the performance gain from incorporating textual information tends to grow with longer prediction horizons. This suggests that textual information offers complementary context that helps stabilize forecasts over time, making them more robust to compounding noise in autoregressive dynamics.
+In summary, our findings highlight potential directions to better integrate LLMs for multimodal time-series forecasting: better posterior estimation strategies or capacity-aligned training of SSMs could allow larger LLMs to be used more effectively.
+6 Concluding Remarks
+We propose LBS, a novel architecture that integrates a Bayesian SSM with pretrained LLMs for multimodal time-series forecasting. By grounding both numeric and textual observations in a shared latent dynamical system, LBS enables coherent forecasting along with uncertainty estimation and flexible prediction horizons. Experiments on the TTC benchmark demonstrate that LBS outperforms existing baselines, with textual data providing greater gains at longer forecasting horizons. Our findings highlight the promise of probabilistic, LLM-integrated SSMs for robust and interpretable forecasting in real-world scenarios.
+Limitations.
+While LBS generalizes well to long-horizon forecasts despite being trained with single-step batches, performance may further improve with multi-step training strategies such as backpropagation through time [36] or latent overshooting [11]. However, these techniques currently pose computational and compatibility challenges with LLM optimization frameworks like DeepSpeed [30]. Additionally, we leave integration with newer state space architectures such as Mamba [9] to future work, as optimized implementations for stateful training are still in development. We view these as promising directions to further enhance the scalability and flexibility of our framework.
+Broader Impact Statement
+While our model demonstrates the potential of integrating LLMs with state space models for multimodal forecasting, it also raises important societal considerations. In particular, the ability of LLMs to generate coherent, plausible-sounding text conditioned on structured signals—such as forecasts or measurements—poses a risk of misuse. For instance, LLM-generated textual forecasts could be misinterpreted as authoritative or factual, even in the absence of uncertainty quantification or proper context. In high-stakes domains like healthcare or climate science, this may contribute to the spread of misinformation if such outputs are shared uncritically. To mitigate this, it is essential to approach text outputs with caution, clearly communicate model limitations, and consider mechanisms for human oversight and fact verification. As models like ours grow in power and accessibility, fostering responsible use and transparent reporting practices will be critical to ensure positive societal impact.
+References
+[1]
+Y. Cai, A. Choudhry, M. Goswami, and A. Dubrawski.
+Timeseriesexam: A time series understanding exam.
+arXiv preprint arXiv:2410.14752, 2024.
+[2]
+A. Chevalier, A. Wettig, A. Ajith, and D. Chen.
+Adapting language models to compress contexts.
+arXiv preprint arXiv:2305.14788, 2023.
+[3]
+K. Cho, B. Van Merriënboer, C. Gulcehre, D. Bahdanau, F. Bougares, H. Schwenk, and Y. Bengio.
+Learning phrase representations using rnn encoder-decoder for statistical machine translation.
+arXiv preprint arXiv:1406.1078, 2014.
+[4]
+A. Doucet, N. De Freitas, N. J. Gordon, et al.
+Sequential Monte Carlo methods in practice, volume 1.
+Springer, 2001.
+[5]
+M. Fraccaro, S. Kamronn, U. Paquet, and O. Winther.
+A disentangled recognition and nonlinear dynamics model for unsupervised learning.
+Advances in neural information processing systems, 30, 2017.
+[6]
+T. Ge, J. Hu, L. Wang, X. Wang, S.-Q. Chen, and F. Wei.
+In-context autoencoder for context compression in a large language model.
+arXiv preprint arXiv:2307.06945, 2023.
+[7]
+A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan, et al.
+The llama 3 herd of models.
+arXiv preprint arXiv:2407.21783, 2024.
+[8]
+N. Gruver, M. Finzi, S. Qiu, and A. G. Wilson.
+Large language models are zero-shot time series forecasters.
+Advances in Neural Information Processing Systems, 36:19622–19635, 2023.
+[9]
+A. Gu and T. Dao.
+Mamba: Linear-time sequence modeling with selective state spaces.
+arXiv preprint arXiv:2312.00752, 2023.
+[10]
+T. Haarnoja, A. Ajay, S. Levine, and P. Abbeel.
+Backprop kf: Learning discriminative deterministic state estimators.
+Advances in neural information processing systems, 29, 2016.
+[11]
+D. Hafner, T. Lillicrap, I. Fischer, R. Villegas, D. Ha, H. Lee, and J. Davidson.
+Learning latent dynamics for planning from pixels.
+In International conference on machine learning, pages 2555–2565. PMLR, 2019.
+[12]
+D. Hafner, T. Lillicrap, M. Norouzi, and J. Ba.
+Mastering atari with discrete world models.
+arXiv preprint arXiv:2010.02193, 2020.
+[13]
+P. L. Houtekamer and H. L. Mitchell.
+Data assimilation using an ensemble kalman filter technique.
+Monthly weather review, 126(3):796–811, 1998.
+[14]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, W. Chen, et al.
+Lora: Low-rank adaptation of large language models.
+ICLR, 1(2):3, 2022.
+[15]
+F. Jia, K. Wang, Y. Zheng, D. Cao, and Y. Liu.
+Gpt4mts: Prompt-based large language model for multimodal time-series forecasting.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 38, pages 23343–23351, 2024.
+[16]
+S. J. Julier and J. K. Uhlmann.
+Unscented filtering and nonlinear estimation.
+Proceedings of the IEEE, 92(3):401–422, 2004.
+[17]
+R. E. Kalman.
+A new approach to linear filtering and prediction problems.
+Journal of Basic Engineering, 82(1):35–45, 03 1960.
+[18]
+A. Katrompas and V. Metsis.
+Enhancing lstm models with self-attention and stateful training.
+In Intelligent Systems and Applications: Proceedings of the 2021 Intelligent Systems Conference (IntelliSys) Volume 1, pages 217–235. Springer, 2022.
+[19]
+A. Kendall, Y. Gal, and R. Cipolla.
+Multi-task learning using uncertainty to weigh losses for scene geometry and semantics.
+In Proceedings of the IEEE conference on computer vision and pattern recognition, pages 7482–7491, 2018.
+[20]
+K. Kim, H. Tsai, R. Sen, A. Das, Z. Zhou, A. Tanpure, M. Luo, and R. Yu.
+Multi-modal forecaster: Jointly predicting time series and textual data.
+arXiv preprint arXiv:2411.06735, 2024.
+[21]
+D. P. Kingma, M. Welling, et al.
+Auto-encoding variational bayes, 2013.
+[22]
+R. G. Krishnan, U. Shalit, and D. Sontag.
+Deep kalman filters.
+arXiv preprint arXiv:1511.05121, 2015.
+[23]
+X. L. Li and P. Liang.
+Prefix-tuning: Optimizing continuous prompts for generation.
+arXiv preprint arXiv:2101.00190, 2021.
+[24]
+Z. Li, X. Lin, Z. Liu, J. Zou, Z. Wu, L. Zheng, D. Fu, Y. Zhu, H. Hamann, H. Tong, et al.
+Language in the flow of time: Time-series-paired texts weaved into a unified temporal narrative.
+arXiv preprint arXiv:2502.08942, 2025.
+[25]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee.
+Visual instruction tuning.
+Advances in neural information processing systems, 36:34892–34916, 2023.
+[26]
+H. Liu, S. Xu, Z. Zhao, L. Kong, H. Prabhakar Kamarthi, A. Sasanur, M. Sharma, J. Cui, Q. Wen, C. Zhang, et al.
+Time-mmd: Multi-domain multimodal dataset for time series analysis.
+Advances in Neural Information Processing Systems, 37:77888–77933, 2024.
+[27]
+M. A. Merrill, M. Tan, V. Gupta, T. Hartvigsen, and T. Althoff.
+Language models still struggle to zero-shot reason about time series.
+arXiv preprint arXiv:2404.11757, 2024.
+[28]
+Y. Nie, N. H. Nguyen, P. Sinthong, and J. Kalagnanam.
+A time series is worth 64 words: Long-term forecasting with transformers.
+arXiv preprint arXiv:2211.14730, 2022.
+[29]
+S. S. Rangapuram, M. W. Seeger, J. Gasthaus, L. Stella, Y. Wang, and T. Januschowski.
+Deep state space models for time series forecasting.
+Advances in neural information processing systems, 31, 2018.
+[30]
+J. Rasley, S. Rajbhandari, O. Ruwase, and Y. He.
+Deepspeed: System optimizations enable training deep learning models with over 100 billion parameters.
+In Proceedings of the 26th ACM SIGKDD international conference on knowledge discovery & data mining, pages 3505–3506, 2020.
+[31]
+G. Revach, N. Shlezinger, X. Ni, A. L. Escoriza, R. J. Van Sloun, and Y. C. Eldar.
+Kalmannet: Neural network aided kalman filtering for partially known dynamics.
+IEEE Transactions on Signal Processing, 70:1532–1547, 2022.
+[32]
+N. Roberts, N. Chatterji, S. Narang, M. Lewis, and D. Hupkes.
+Compute optimal scaling of skills: Knowledge vs reasoning.
+arXiv preprint arXiv:2503.10061, 2025.
+[33]
+L. Van der Maaten and G. Hinton.
+Visualizing data using t-sne.
+Journal of machine learning research, 9(11), 2008.
+[34]
+C. Wang, Q. Qi, J. Wang, H. Sun, Z. Zhuang, J. Wu, L. Zhang, and J. Liao.
+Chattime: A unified multimodal time series foundation model bridging numerical and textual data.
+arXiv preprint arXiv:2412.11376, 2024.
+[35]
+X. Wang, M. Feng, J. Qiu, J. Gu, and J. Zhao.
+From news to forecast: Integrating event analysis in llm-based time series forecasting with reflection.
+Advances in Neural Information Processing Systems, 37:58118–58153, 2024.
+[36]
+P. J. Werbos.
+Backpropagation through time: what it does and how to do it.
+Proceedings of the IEEE, 78(10):1550–1560, 1990.
+[37]
+Z. Xu, Y. Bian, J. Zhong, X. Wen, and Q. Xu.
+Beyond trend and periodicity: Guiding time series forecasting with textual cues.
+arXiv preprint arXiv:2405.13522, 2024.
+[38]
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, et al.
+Qwen2. 5 technical report.
+arXiv preprint arXiv:2412.15115, 2024.
+[39]
+C.-H. Yen, H. R. Mendis, T.-W. Kuo, and P.-C. Hsiu.
+Stateful neural networks for intermittent systems.
+IEEE Transactions on Computer-Aided Design of Integrated Circuits and Systems, 41(11):4229–4240, 2022.
+[40]
+A. Zeng, M. Chen, L. Zhang, and Q. Xu.
+Are transformers effective for time series forecasting?
+In Proceedings of the AAAI conference on artificial intelligence, volume 37, pages 11121–11128, 2023.
+Appendix A Extended Related Work
+Multimodal Time-Series Forecasting.
+With the recent advancements in LLMs, several approaches have emerged to integrate language models with time-series forecasting. [15] introduces a textual data collection pipeline and a modified transformer architecture that uses pre-trained transformers. [27] examines whether LLMs can perform zero-shot time series forecasting with the aid of textual data, extending [8], and concludes that even frontier models still perform poorly. [37] proposes the Text-Guided Time Series Forecasting framework, which integrates news and descriptive textual data for time-series forecasting and introduces a new architecture that leverages a cross-attention layer for modality fusion. [26] presents the Time-MMD benchmark for evaluating text-time series multimodal models and demonstrates that incorporating additional textual data can improve time-series forecasting. [35] develops a reasoning agent for selecting and analyzing textual (news) data, streamlining the text processing pipeline for multimodal time-series forecasting. [20] develops the TimeText Corpus (TTC), a time-aligned text and time-series dataset for multimodal forecasting, along with a hybrid forecasting model (HybridMMF) that jointly predicts both text and time-series data using shared embeddings. [34] introduces ChatTime, a time-series foundation model that facilitates various zero-shot time-series tasks through continuous pretraining and instruction tuning on pretrained language models. [24] presents Texts as Time Series (TaTS), a multimodal time-series forecasting framework that incorporates concurrent textual data by converting it into auxiliary variables. This approach enables seamless integration of text-augmented time series into existing time-series models.
+While prior work demonstrates the potential of LLMs for time-series forecasting, none integrate them into state-space models—our key contribution.This integration enhances forecasting performance and enables principled uncertainty quantification.
+Bayesian State Space Models.
+Bayesian state estimation has a long-standing history in control theory and time-series analysis. The classical Kalman filter [17], provides an optimal recursive solution for state estimation in linear dynamical systems with Gaussian noise. To accommodate the nonlinearities common in real-world systems, the Extended Kalman Filter was developed by linearizing nonlinear functions via Taylor expansion around the current estimate. Later, the Unscented Kalman Filter was introduced to improve upon EKF by using deterministic sampling to better capture the mean and covariance of nonlinear transformations [16]. Other sampling-based methods, such as the Ensemble Kalman Filter [13] and Sequential Monte Carlo [4], have further advanced Bayesian filtering in nonlinear and non-Gaussian settings by representing posterior distributions through particle ensembles.
+More recently, researchers have sought to combine the structure of state-space models with the flexibility of deep neural networks. For example, KVAE introduced variational approaches to learning latent dynamics in sequential data using neural parameterizations of the transition and emission functions [5]. [29] adapted state-space formulations for multivariate time-series forecasting in large-scale retail demand. In reinforcement learning and model-based control, works such as PlaNet [11], Dreamer [12], and KalmanNet [31] have shown that combining deep neural networks with probabilistic latent dynamics models can yield strong performance across pixel-based partially observable domains.
+Despite these advances, existing work largely targets unimodal data like images or numerical signals.
+In contrast, our work is the first to combine pretrained LLMs with probabilistic state-space models for joint forecasting over numeric and textual inputs, extending Bayesian state estimation to the multimodal setting.
+Appendix B Derivation of Training Objective
+Our training objective in Appendix B can be derived using the autoregressive structure of LBS and Jensen’s inequality.
+|
+|
+logp(𝒚1:T,𝓓1:T)\displaystyle\log p({\bm{y}}_{1:T},\bm{{\mathcal{D}}}_{1:T}) |
+|
+|
+=\displaystyle= |
+log∫𝒙1:Tp(𝒚1:T,𝓓1:T,𝒙1:T)d𝒙1:T\displaystyle\log\int_{{\bm{x}}_{1:T}}p({\bm{y}}_{1:T},\bm{{\mathcal{D}}}_{1:T},{\bm{x}}_{1:T})d{\bm{x}}_{1:T} |
+|
+|
+=\displaystyle= |
+log∫𝒙1:T∏t=1Tp(𝒙t∣𝒙t−1)p(𝒚t∣𝒙t)p(𝓓t∣𝒙t)d𝒙1:T\displaystyle\log\int_{{\bm{x}}_{1:T}}\prod_{t=1}^{T}p({\bm{x}}_{t}\mid{\bm{x}}_{t-1})p({\bm{y}}_{t}\mid{\bm{x}}_{t})p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t})d{\bm{x}}_{1:T} |
+|
+|
+=\displaystyle= |
+log𝔼q(𝒙1:T∣𝒚1:T,𝓓1:T)[∏t=1Tp⁡(𝒙t∣𝒙t−1)​p​(𝒚t∣𝒙t)​p​(𝓓t∣𝒙t)q(𝒙1:T∣𝒚1:T,𝓓1:T)]\displaystyle\log\mathbb{E}_{q({\bm{x}}_{1:T}\mid{\bm{y}}_{1:T},\bm{{\mathcal{D}}}_{1:T})}\left[\dfrac{\prod_{t=1}^{T}p({\bm{x}}_{t}\mid{\bm{x}}_{t-1})p({\bm{y}}_{t}\mid{\bm{x}}_{t})p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t})}{{q({\bm{x}}_{1:T}\mid{\bm{y}}_{1:T},\bm{{\mathcal{D}}}_{1:T})}}\right] |
+|
+|
+≥\displaystyle\geq |
+𝔼q(𝒙1:T∣𝒚1:T,𝓓1:T)[log∏t=1Tp⁡(𝒙t∣𝒙t−1)​p​(𝒚t∣𝒙t)​p​(𝓓t∣𝒙t)q(𝒙1:T∣𝒚1:T,𝓓1:T)]\displaystyle\;\mathbb{E}_{q({\bm{x}}_{1:T}\mid{\bm{y}}_{1:T},\bm{{\mathcal{D}}}_{1:T})}\left[\log\dfrac{\prod_{t=1}^{T}p({\bm{x}}_{t}\mid{\bm{x}}_{t-1})p({\bm{y}}_{t}\mid{\bm{x}}_{t})p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t})}{{q({\bm{x}}_{1:T}\mid{\bm{y}}_{1:T},\bm{{\mathcal{D}}}_{1:T})}}\right] |
+|
+|
+=\displaystyle= |
+𝔼q(𝒙1:T∣𝒚1:T,𝓓1:T)[∑t=1tlogp(𝒚t∣𝒙t)+logp(𝓓t∣𝒙t)+logp⁡(𝒙t∣𝒙t−1)q(𝒙t∣𝒚1:t,𝓓1:t)]\displaystyle\mathbb{E}_{q({\bm{x}}_{1:T}\mid{\bm{y}}_{1:T},\bm{{\mathcal{D}}}_{1:T})}\left[\sum_{t=1}^{t}\log p({\bm{y}}_{t}\mid{\bm{x}}_{t})+\log p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t})+\log\dfrac{p({\bm{x}}_{t}\mid{\bm{x}}_{t-1})}{{q({\bm{x}}_{t}\mid{\bm{y}}_{1:t},\bm{{\mathcal{D}}}_{1:t})}}\right] |
+|
+|
+=\displaystyle= |
+∑t=1T𝔼q⁡(𝒙t∣𝒚t,𝓓t)[log⁡p⁡(𝒚t∣𝒙t)⏟value likelihood+log⁡p⁡(𝓓t∣𝒙t)⏟text likelihood]−KL(q(𝒙t∣𝒚1:t,𝓓1:t)∣∣p(𝒙t∣𝒙t−1))⏟temporal regularization\displaystyle\sum_{t=1}^{T}\mathbb{E}_{q({\bm{x}}_{t}\mid{\bm{y}}_{t},\bm{{\mathcal{D}}}_{t})}\bigg[\underbrace{\log p({\bm{y}}_{t}\mid{\bm{x}}_{t})}_{\text{value likelihood}}+\underbrace{\log p(\bm{{\mathcal{D}}}_{t}\mid{\bm{x}}_{t})}_{\text{text likelihood}}\bigg]-\underbrace{\text{KL}(q({\bm{x}}_{t}\mid{\bm{y}}_{1:t},\bm{{\mathcal{D}}}_{1:t})\mid\mid p({\bm{x}}_{t}\mid{\bm{x}}_{t-1}))}_{\text{temporal regularization}} |
+|
+Appendix C Additional Experiment Details
+Datasets.
+TTC-Climate is consisted of daily temperature measurements at Washington DC, accompanied by textual weather descriptions spanning from January 1st, 2014 to December 1st, 2023. TTC-Medical stores daily heart rate measurements from 73 patients accompanied by nursing notes writing observations and treatment plans. Each patient data spans an average length of 104 days. Following previous work [20], we train the model on the first 80% of all timestamps, validate on the next 10%, then test on the last 10%.
+LLM Prompts.
+For both TTC-Climate and TTC-Medical experiments, we use the following prompts for text-conditioned posterior estimation and state-conditioned text generation, respectively.
+Prompt for text-conditioned posterior estimation
+User: Encode the information into a sequence of vectors. <INSERT TEXT>
+Assistant: <INSERT SUMMARY TOKENS>
+Prompt for state-conditioned text generation
+User: <INSERT STATE> Given this belief state, generate a textual forecast.
+Date: <INSERT FORECAST DATE AS YYYY-MM-DD>
+Assistant:
+Models.
+For the SSM backbone, we use a single layer GRU with state and hidden dimensions both equal to 16. For the LLM, we use LLaMA3.1-8B [7] as the default model, and adapt the MLP weights is all layers using LoRA with rank and alpha parameters equal to 8 and 16, respectively. For text compression, we augment and use a set of 8 summary tokens. Similarly for textual forecasting, we project the states into 8 prefix tokens, which are prepended for in-context generation.
+Optimization.
+For all experiments, we use the AdamW optimizer with a learning rate that follows a cosine annealing schedule, starting from 5e-4 and reduced towards 5e-5 during training. We run a maximum of 20 training epochs, and if the model does not improve its validation loss for 5 consecutive epochs, we stop early to prevent further overfitting. Following previous work [11], we use a free nats parmaeter set to 2.5, which effectively clamps the KL loss and thus allows the model to learn meaningful latents at the beginning of training. This free nats parameters is linearly annealed towards zero during training.
+Our training process uses the AdamW optimizer in combination with a cosine decay schedule that initiates at a learning rate of 5e-4 and anneals gradually to 5e-5. Each model is trained for up to 20 epochs, with early termination triggered if validation performance fails to improve over five successive epochs. Inspired by strategies in prior latent sequence modeling [11], we introduce a "free nats" threshold of 2.5 to restrict the KL penalty early in training. This constraint encourages the model to utilize its latent capacity more effectively at initialization and is gradually reduced to zero as optimization proceeds.
+Loss weighting.
+Despite using a small LoRA rank, the number of trainable parameters in the LLM still far exceeds those in the SSM. Consequently, we find that uniform weighting of the loss components in Equation B tends to bias optimization toward the text likelihood term, often overfitting to language modeling while underfitting on structured numerical predictions. Although dynamic or adaptive weighting schemes (e.g., uncertainty-based or gradient norm balancing) could be employed [19], we find that a simple weighting scheme with αval=αKL=1.0\alpha_{\text{val}}=\alpha_{\text{KL}}=1.0 and αtext=0.1\alpha_{\text{text}}=0.1 provide a good trade-off between tasks without requiring additional tuning.
+Full results.
+Table 2shares the full results on TTC-Climate and TTC-Medical, using all unimodal and multimodal methods considered in our work.
+Method |
+H=1H=1 |
+2 |
+3 |
+4 |
+5 |
+6 |
+7 |
+PatchTST [28] |
+4.912 |
+5.305 |
+6.021 |
+6.576 |
+6.980 |
+7.170 |
+7.360 |
+NLinear [40] |
+4.981 |
+6.129 |
+6.501 |
+6.710 |
+6.834 |
+6.916 |
+6.962 |
+NLinear-Text [40] |
+4.835 |
+5.800 |
+5.951 |
+5.934 |
+6.022 |
+6.024 |
+6.106 |
+TSFLib [26] |
+6.351 |
+6.446 |
+6.143 |
+6.360 |
+6.096 |
+6.379 |
+6.002 |
+TT2TT [20] |
+5.243 |
+5.955 |
+6.724 |
+7.253 |
+7.678 |
+8.034 |
+7.666 |
+HybridMMF [20] |
+4.759 |
+5.597 |
+5.906 |
+6.019 |
+6.133 |
+6.027 |
+6.143 |
+LBS (Unimodal) |
+4.224 |
+5.029 |
+5.523 |
+5.855 |
+6.107 |
+6.303 |
+6.473 |
+LBS (Multimodal) |
+4.117 |
+4.908 |
+5.341 |
+5.627 |
+5.833 |
+5.998 |
+6.133 |
+(a) TTC-Climate
+Method |
+H=1H=1 |
+2 |
+3 |
+4 |
+5 |
+6 |
+PatchTST [28] |
+5.735 |
+6.757 |
+7.350 |
+7.687 |
+7.996 |
+8.470 |
+NLinear [40] |
+5.195 |
+5.279 |
+5.275 |
+5.406 |
+5.562 |
+5.875 |
+NLinear-Text [40] |
+5.117 |
+5.143 |
+5.106 |
+5.300 |
+5.492 |
+5.759 |
+TSFLib [26] |
+6.767 |
+7.066 |
+7.427 |
+7.050 |
+7.165 |
+7.210 |
+TT2TT [20] |
+6.689 |
+6.432 |
+6.022 |
+6.483 |
+6.747 |
+6.731 |
+HybridMMF [20] |
+5.202 |
+5.472 |
+6.620 |
+6.269 |
+8.673 |
+8.454 |
+LBS (Unimodal) |
+3.910 |
+4.598 |
+5.047 |
+5.268 |
+5.473 |
+5.654 |
+LBS (Multimodal) |
+3.583 |
+4.268 |
+4.721 |
+5.043 |
+5.296 |
+5.487 |
+(b) TTC-Medical
+Table 2: Test RMSE results from TTC benchmark. Best results for each prediction horizon HH are highlighted in bold.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

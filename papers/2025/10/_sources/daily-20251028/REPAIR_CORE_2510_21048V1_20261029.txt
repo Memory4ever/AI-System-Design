@@ -1,0 +1,1124 @@
+xMem: A CPU-Based Approach for Accurate Estimation of GPU Memory in Deep Learning Training Workloads
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Background
+2.1 Out-of-Memory Issues
+2.2 Memory Consumption
+2.2.1 Tensors
+2.2.2 Segments
+2.3 Sequence of Memory Activities
+3 Design and Implementation
+3.1 Architecture
+3.2 Analyzer
+3.3 Memory Orchestrator
+3.4 Simulator
+4 Evaluation
+4.1 Evaluation Methodology
+4.1.1 Baselines
+4.1.2 Workload
+4.1.3 Environment Setup
+4.1.4 Experimental Design
+4.1.5 Metrics
+4.2 RQ1: How accurate are the peak memory estimations?
+4.3 RQ2: How reliable are the estimates of peak memory?
+4.4 RQ3: How much GPU memory can be conserved?
+4.5 RQ4: What is the run-time overhead?
+4.6 RQ5: How accurately does the estimator estimate memory for large models?
+5 Related Work
+5.1 Static Analysis Methods
+5.2 Data-Driven Estimation
+5.3 Direct GPU Estimators
+5.4 OOM Mitigation Techniques
+6 Discussion
+6.1 Overhead
+6.2 Distributed Training
+6.3 Mixed-precision Training
+6.4 Generalization and Scalability
+7 Conclusion
+References
+License: CC BY 4.0
+arXiv:2510.21048v1 [cs.PF] 23 Oct 2025
+xMem: A CPU-Based Approach for Accurate Estimation of
+GPU Memory in Deep Learning Training Workloads
+38Conference: 26th ACM Middleware Conference; December 15–19, 2025; Nashville, TN, USA26th ACM Middleware Conference (Middleware ’25), December 15–19, 2025, Nashville, TN, USADOI: 10.1145/3721462.3770773ISBN: 979-8-4007-1554-9/25/12CCS: Software and its engineering Dynamic analysisCCS: Computing methodologies Machine learningCCS: Software and its engineering Extra-functional properties
+Jiabo Shi
+email: 2865808S@student.gla.ac.uk
+Affiliation: University of Glasgow, Glasgow, UK
+,
+Dimitrios Pezaros
+email: dimitrios.pezaros@glasgow.ac.uk
+Affiliation: University of Glasgow, Glasgow, UK
+and
+Yehia Elkhatib
+email: yehia.elkhatib@glasgow.ac.uk
+Affiliation: University of Glasgow, Glasgow, UK
+© cc
+Abstract.
+The global scarcity of GPUs necessitates more sophisticated strategies for Deep Learning jobs in shared cluster environments.
+Accurate estimation of how much GPU memory a job will require is fundamental to enabling advanced
+scheduling and GPU sharing, which helps prevent out-of-memory (OOM) errors and resource underutilization. However, existing estimation methods have limitations. Approaches relying on static analysis or historical data with machine learning often fail to accurately capture runtime dynamics. Furthermore, direct GPU analysis consumes scarce resources, and some techniques require intrusive code modifications. Thus, the key challenge lies in precisely estimating dynamic memory requirements, including memory allocator nuances, without consuming GPU resources and non-intrusive code changes. To address this challenge, we propose xMem, a novel framework that leverages CPU-only dynamic analysis to accurately estimate peak GPU memory requirements a priori. We conducted a thorough evaluation of xMem against state-of-the-art solutions using workloads from 25 different models, including architectures like Convolutional Neural Networks and Transformers. The analysis of 5209 runs, which includes ANOVA and Monte Carlo results, highlights xMem’s benefits: it decreases the median relative error by 91% and significantly reduces the probability of estimation failure as safe OOM thresholds by 75%, meaning that the estimated value can often be used directly without causing OOM. Ultimately, these improvements lead to a 368% increase in memory conservation potential over current solutions.
+Keywords:
+GPU Memory Estimation,
+Dynamic Program Analysis,
+OOM Prevention,
+CPU-based Analysis,
+Resource Management,
+GPU Cluster
+††cc-license: by
+1. Introduction
+Deep Learning (DL) has experienced rapid growth, with Deep Neural Networks (DNNs) seeing widespread adoption across diverse domains (e.g. speech recognition (Xiong et al., 2018), image generation (Wang et al., 2020),
+autonomous driving (Grigorescu et al., 2020),
+system capability description (Zhang et al., 2023))
+and demonstrating performance comparable to human capabilities (Guerriero et al., 2023). As a result, technology companies are significantly increasing investments in high-performance computing infrastructure, particularly Graphics Processing Units (GPUs), which play a crucial role in accelerating model training. This surge in demand has led to an acute worldwide GPU shortage (Clark, 2025), which has affected the AI sector including prominent companies (such as OpenAI (Raza, 2023)), and contributed to technological and geo-economic competition tensions (e.g., (Anthropic, 2025)).
+To maximize the utilization of these scarce and expensive resources, DL training increasingly relies on shared GPU clusters (Weng et al., 2022). However, managing shared environments introduces significant complexities in resource allocation and job scheduling (Xiao et al., 2018; Yu and Chowdhury, 2020; Kokolis et al., 2025). Among these, effective GPU memory management emerges as a particularly critical challenge. Inefficient allocation or unpredictable memory demands frequently lead to underutilization (Weng et al., 2023; Gu et al., 2022; Li et al., 2022; Zhang et al., 2018; Weng et al., 2022; Li et al., 2023; Pavlidakis et al., 2024; Zhang et al., 2024) and disruptive Out-of-Memory (OOM) errors, identified as a major cause of job failures in production clusters (Cheng et al., 2023; Zhang et al., 2020). Therefore, accurate GPU memory estimation is essential to mitigate these costly OOM failures, optimize scheduling, and improve overall cluster efficiency and stability. Specifically, precise GPU memory estimation for DL jobs enables decision systems within shared GPU clusters (of cloud providers, research institutions, and enterprises) to implement more effective and intelligent resource scheduling, leading to substantial GPU memory conservation and optimized asset utilization, which in turn helps mitigate the prevailing GPU scarcity.
+However, developing estimation methodologies that are both accurate and practical for ML training is challenging.
+Firstly, achieving high estimation accuracy is inherently difficult due to the complex and dynamic runtime behavior of GPU memory usage. Factors such as intermediate tensor lifetimes, dynamic operator execution, intricate workings of memory allocators, and even subtle code details such as the precise placement of gradient zeroing operations within a training loop (see Figure 1) can significantly alter memory consumption patterns, making them difficult to model precisely based on a static computation graph (Gao et al., 2020).
+Secondly, for these estimations to be useful in guiding group scheduling decisions, they must be available a priori, before the start of the job execution, imposing a strict constraint crucial to proactive scheduling and resource allocation (Li et al., 2022; Yeung et al., 2022; Li et al., 2023).
+Thirdly, given the scarcity of GPU resources, it is imperative that the estimation process itself operates without consuming target GPU resources, thereby avoiding additional overhead and contention.
+Finding an estimation method that can accurately handle runtime dynamics, provide results before the job starts, require no code changes, and avoid using the target GPU entirely remains the central challenge for reliable and practical GPU memory estimation.
+Figure 1. The impact of optimizer.zero_grad() placement on GPU memory between calling zero_grad() before backward propagation (POS0) versus at the start of iteration (POS1), illustrating runtime sensitivity and allocator impact. While the underlying Tensor memory activity (green/red areas for POS0/POS1) might show similar patterns, the overall Segment memory footprint (solid and dashed lines) differs significantly.Changing the position of the code, such as \texttt{optimizer.zero\_grad()}, also impacts peak memory usage during a training job due to the nature of the dynamic runtime.
+Despite the clear need, existing methodologies for GPU memory estimation struggle to simultaneously satisfy the demanding requirements of high accuracy for dynamic workloads, a priori availability, and zero target-GPU overhead. Static analysis approaches, for instance, examine the computational graph of a model before execution, e.g., DNNMem (Gao et al., 2020) and Horus (Yeung et al., 2022). However, they are fundamentally limited in their ability to capture crucial runtime dynamics. These methods often fail to accurately account for the complex behavior of memory allocators (PyTorch, 2024b) or the significant impact of subtle code changes, such as the placement of gradient zeroing operations (Figure 1), on memory sequences and overall consumption. Consequently, their accuracy can be compromised, particularly for complex models or during the iterative model development cycle, which involves frequent changes.
+Alternatively, data-driven techniques leverage historical execution data or model features to train machine learning estimators, e.g., SchedTune (Albahar et al., 2022), TBEM (Liu et al., 2022a). Although these can provide a priori estimations, they often face challenges with generalization to unseen models (cold start problem (Talha et al., 2023)) and may not precisely capture instantaneous peak memory demands. Another category involves direct GPU interaction through profiling, testing, or partial execution, e.g., LLMem (Kim et al., 2024), Gandiva’s online profiling (Xiao et al., 2018). While these approaches may potentially offer higher accuracy, they directly violate the critical zero target-GPU overhead constraint by consuming valuable GPU resources and adding significant overhead, rendering them unsuitable for fast, pre-scheduling decisions or environments without direct GPU access. Furthermore, some techniques in this category, reportedly including LLMem (Kim et al., 2024), may require intrusive modifications to the user’s training code, hindering practical adoption due to increased developer effort and maintainability concerns.
+Therefore, a significant gap remains: no existing type of solution consistently delivers high-accuracy, dynamic-aware memory predictions a priori without resorting to costly target GPU usage and non-intrusive code changes. This motivates the search for novel approaches. To bridge this gap, we propose xMem, a novel framework designed to accurately estimate the peak GPU memory consumption for DL training jobs using data from a profiler (PyTorch, 2024d), a performance analyzer frequently used during DL model development, thereby eliminating the need for code changes.
+xMem fundamentally departs from GPU-dependent methods by employing entirely CPU-based dynamic analysis. The feasibility of this approach is underpinned by key observations regarding DL framework execution, specifically using PyTorch as our major example:
+(i) reflecting the design goal of deep learning frameworks to execute the same essential training task across different hardware. For example, the high-level logic defined in the Python training script determines a consistent set and count of core tensors, e.g., parameters, activations, gradients, required per iteration, irrespective of the backend (CPU vs. GPU). Although the specific memory footprint and precise lifecycle timing during operator processing can differ based on varying low-level implementations, such as using MKL vs. cuDNN, allocator behavior, or hardware characteristics (Abadi et al., 2016; Paszke et al., 2019);
+(ii) substantial optimization efforts have been invested in common operators for both CPU and GPU platforms, frequently resulting in their core memory footprints being closely comparable during execution; and
+(iii) the behavior of crucial components like memory allocators (e.g., PyTorch’s CUDACachingAllocator (PyTorch, 2024b)) follows deterministic logic that can be simulated if the input sequence of memory events is known, even if derived from CPU execution.
+Based on these principles, xMem utilizes a CPU-based estimation framework that combines CPU trace analysis, memory orchestration, and two-level allocator simulation to estimate peak GPU memory usage before execution. We rigorously evaluated our approach using Analysis of Variance (ANOVA) (Scheffe, 1999) and Monte Carlo simulation (Rubinstein and Kroese, 2017), conducting approximately 5209 runs across 25 models. Our evaluation encompassed a range of model architectures including modern Convolutional Neural Networks (CNNs) like ConvNeXt (Liu et al., 2022b) and recent Transformer models such as Qwen3 (Yang et al., 2025). Comparing against recent solutions — DNNMem (Gao et al., 2020), SchedTune (Albahar et al., 2022), and LLMem (Kim et al., 2024) — xMem demonstrates significant improvements: it decreases Median Relative Error (MRE) by 91%, reduces Probability of Estimation Failure (PEF) by 75%, and increases Memory Conservation Potential (MCP) by 368%.
+These results validate the effectiveness of our CPU-based methodology and its practical benefits. In this paper, we make the following key contributions:
+(1)
+We demonstrate the feasibility of accurately estimating peak GPU memory for DL training a priori using solely CPU-based dynamic analysis.
+(2)
+We present xMem, a novel framework that embodies this approach, detailing its multistage pipeline involving CPU trace analysis, memory orchestration, and allocator simulation.
+(3)
+We empirically show that xMem achieves superior performance when compared to three state-of-the-art methods: significantly increasing accuracy of predicting memory usage, reducing the risk of OOM, and improving memory conservation.
+(4)
+We release xMem as open source
+11
+1
+The xMem source code can be publicly accessed via this repository.
+to the research community, including a valuable Python simulator for the CUDACachingAllocator, to promote adoption and facilitate future work.
+2. Background
+2.1. Out-of-Memory Issues
+Empirical studies identify OOM as a major error category in DL development (Islam et al., 2019), especially worsening in resource-constrained GPU clusters. Nonetheless, even with datacenter-grade GPUs offering larger memory, production clusters at both Microsoft and Meta have attributed 9% of DL training failures to OOM (Cheng et al., 2023; Zhang et al., 2020). These challenges stem from the high memory demands of training DL models, exceeding the limited memory capacity available on GPUs. Furthermore, accurately managing or estimating GPU memory usage is inherently difficult because it is highly sensitive to various factors including training batch size, the choice of optimizer, and even minor code alterations made during the dynamic process of model development and tuning.
+2.2. Memory Consumption
+Understanding memory usage is crucial for the accurate estimation of the model training job. Typically, memory consumption within a training job can be categorized into two key types: memory used directly by Tensors and memory managed by the underlying allocator, namely Segments. We will be focusing on PyTorch as a primary example.
+2.2.1. Tensors
+Tensors represent the core data structures in PyTorch (Paszke et al., 2019), holding model parameters, activations, gradients, and other intermediate values necessary during training. The memory required for these tensors is dynamic and is influenced by factors such as the model architecture, batch size, and allocator memory alignment strategy.
+It is important to note that tensor memory is not allocated directly from the GPU’s raw memory pool. Instead, frameworks such as PyTorch employ a caching allocator (specifically, CUDACachingAllocator (PyTorch, 2024b) is the default for CUDA devices), which preallocates larger blocks of GPU memory, known as Segments, described next.
+This allocator then serves tensor memory requests by splitting blocks from these preallocated Segments. As illustrated in Fig. 2, the memory blocks allocated for individual tensors (represented by solid green rectangles) reside within larger Segments (purple boxes). Furthermore, to ensure efficient memory access and meet hardware alignment requirements, PyTorch’s allocator often rounds up the requested memory size for a tensor; e.g., to the next multiple of 512 bytes.
+Figure 2. An example of how memory blocks are managed in PyTorch for a training job.Diagram illustrates how tensors from datasets and models are bound to GPU memory segments via a framework using different allocation methods.
+2.2.2. Segments
+Segments are larger blocks of memory requested directly from the GPU by PyTorch’s caching allocator. These act as reservoirs from which memory is allocated for individual tensors. When a tensor is no longer needed, its memory block is marked as deallocated within its segment but is not immediately returned to the GPU. The allocator retains these deallocated blocks (cached memory) for potential reuse by future tensor allocations of compatible sizes. This caching strategy significantly reduces the communication overhead with the GPU driver.
+The allocator requests a new Segment from the GPU only when the existing segments are insufficient. Again to minimize GPU communication overhead, the allocator often requests more memory than immediately needed, e.g.,, requesting 2MB for a 1MB tensor need, and caches the excess. The size of these requested Segments is determined by the allocator’s internal strategy balancing speed and fragmentation, as denoted by the purple boxes in Fig. 2. Consequently, the total GPU memory consumption by an estimation should primarily reflect the sum of the sizes of all segments allocated from the GPU, not just the memory actively used by tensors at any given moment. Overlooking the behavior of this caching allocator, as in some prior studies (Yeung et al., 2022; Albahar et al., 2022), can lead to inaccurate estimations of peak GPU memory requirements during training.
+2.3. Sequence of Memory Activities
+Beyond understanding the aforementioned types of memory usage, the temporal sequence of memory allocation and deallocation activities is also critically important in determining peak memory consumption. As shown in Figure 3, merely altering the deallocation timing of one memory block relative to subsequent allocations (Sequence 1 vs. Sequence 2) can dramatically change the peak required GPU segment memory, from 196MB to 118MB, respectively, even when processing identical tensors. This sensitivity highlights the necessity of accurately modeling the dynamic sequence of memory events for reliable peak memory estimation.
+Figure 3. The impact of the sequence of memory activities on GPU memory consumption.The diagram illustrates two sequences demonstrating how memory operations such as allocation, deallocation, and slight changes in memory operation positions influence memory segments over time.
+3. Design and Implementation
+Figure 4. Architecture of the xMem CPU-based memory estimation framework. The pipeline (center) uses CPU profiling data to estimate peak GPU memory via analysis, orchestrator, and simulation.The overall architecture of the \projectnameEstimator Framework is illustrated from left to right: general model development cycle -> \projectnameEstimator Framework -> results. The framework comprises a data analyzer, memory orchestrator, and simulator.
+3.1. Architecture
+The overall architecture of the xMem estimation framework is presented in Figure 4. The process begins by profiling the initial three iterations22
+2
+Persistent states are allocated in the first iteration, with memory stabilizing by iterations 2-3, so three iterations are designed to capture stateful optimizer behavior and stabilized memory. by default of the target DL training job on the CPU. Crucially, xMem only requires profiling data from these initial iterations for its analysis, meaning that the DL training job does not need to proceed further for estimation purposes. This Profiling stage captures detailed execution trace data about operator calls, function calls, and memory allocation/deallocation events, producing data in JSON format.
+The collected profiling data serve as input to the xMem estimation framework, which operates as a sequential pipeline of three main components:
+(1)
+Analyzer: parses raw profiling data, extracts initial memory blocks with CPU lifecycles, filters CUDA-related memory from CPU activities, and attributes filtered events to operators and components like model layers.
+(2)
+Memory Orchestrator: receives the initial memory sequence with CPU-based lifecycles. It refines these timings to more accurately reflect expected GPU memory lifecycles, based on analysis of execution patterns observed in real-world workloads on target GPUs and framework semantics.
+(3)
+Memory Simulator: replays the orchestrated sequence using a high-fidelity, two-level allocator simulation (DL framework and device interactions) to accurately estimate memory usage over time and mimic target GPU behavior.
+The key result produced by the framework is an estimated peak memory required for the job on a target GPU, along with an optional detailed memory usage curve over time. As depicted in Figure 4, these results can be subsequently provided to other decision-making systems such as cluster schedulers, although such systems are outside the scope of this work. As introduced in Section 1, the viability of this CPU-only pipeline is based on key observations of modern DL frameworks. In the following subsections, we introduce each xMem component, using PyTorch (Paszke et al., 2019) as our primary platform and GPU as the primary device.
+Circled numbers (e.g., 1) indicate key data transfers between system components, as marked in Figure 4.
+3.2. Analyzer
+As the first component of the xMem pipeline, the Analyzer’s main role is to 1 parse raw CPU profiling data and 2 produce filtered GPU-relevant structured memory events, connecting each allocation/deallocation to its originating operation or component. The Analyzer consumes the detailed data generated by PyTorch Profiler (PyTorch, 2024d) during the initial 3–5 iterations of the target DL training job executed on the CPU. For its analysis, xMem focuses primarily on four event types.
+(1)
+python_function: These trace the execution of Python calls, enabling the identification of high-level operations such as specific PyTorch layer invocations, e.g., Embedding, ReLU, and Linear. They provide parent-child relationships, thereby forming a call hierarchy.
+(2)
+user_annotation: These represent markers that signify specific points or phases during the training trace. xMem harnesses annotations that mark key training loop events, such as profiler.step() for capturing the timeframe of each iteration and optimizer.zero_grad() for pinpointing gradient clearing actions. These events provide essential information for the Memory Orchestrator.
+(3)
+cpu_op: These trace the execution of computational kernels (PyTorch, 2024a) dispatched to the CPU back-end, e.g., aten::empty, aten:: embedding. They include precise start and end timestamps and often contain sequence numbers that link forward operators to their corresponding backward gradient computations.
+(4)
+cpu_instant_event: These capture memory-related activities, primarily recording allocation and deallocation events with associated memory addresses, sizes, and timestamps. A key challenge addressed by the Analyzer is that raw cpu_instant_event traces lack explicit linkage back to the specific python_function and cpu_op calls that triggered them.
+To connect raw cpu_instant_event events to their originating operation or component, the Analyzer first reconstructs memory lifecycles. It processes the event stream sequentially, systematically pairing allocation and deallocation events based on address tracking and timing to determine the size, CPU allocation time, and CPU deallocation time for each distinct memory block while correctly handling address reuse. Blocks lacking a deallocation event are considered persistent for the trace duration. Throughout the rest of the paper, the term "memory block" refers specifically to these reconstructed lifecycle entities, unless otherwise specified.
+Subsequently, the Analyzer performs hierarchical, time-based attribution using execution windows derived from python_function and cpu_op events. A memory block is attributed to a specific operator context if either of the following conditions is satisfied:
+(i) the memory block’s entire reconstructed lifespan (from allocation to deallocation) falls strictly within that operator’s execution time window; or
+(ii) the memory block is allocated during the operator’s execution window but persists beyond the end of the linked high-level component (e.g., model layer).
+This operator-centric attribution strategy aims to filter out temporary memory usage allocated during the higher-level script, but not in the operator. These memory blocks are presumed to be more relevant for estimating the requirements of the target GPU.
+The Analyzer outputs a structured, temporally ordered sequence of the memory blocks identified through the above process and is verified via the comparison result from Snapshot (PyTorch, 2024e). Each memory block record contains its size, initial CPU-based allocation and deallocation timestamps, and association with the originating operator or high-level component, as shown in Figure 5. This temporally ordered sequence of memory blocks provides the foundational input for the next stage, the Memory Orchestrator.
+Figure 5. A visualization of the time-based hierarchical attribution in xMem, correlating Python function calls, CPU operator execution time frames, and associated memory blocks.This figure illustrates the hierarchical linking of Python functions, CPU operators, and memory blocks based on execution timing, as used in the \projectnameAnalyzer.
+3.3. Memory Orchestrator
+The purpose of the Orchestrator is to refine the temporal characteristics of input memory events 2, tuning the timestamps of key events to more accurately reflect the original memory blocks’ lifecycle on the target GPU. This stage is crucial because raw CPU timings may not accurately reflect how long memory blocks are actually required or retained in a GPU. We used a standard training loop code (PyTorch, 2023) to guide the following adjustments.
+(1)
+Model Parameters: Memory blocks associated with an initial model loading (corresponding to model.to(device)) are marked with a persistent lifecycle, reflecting their presence throughout the analyzed iterations.
+(2)
+Batch Data: Memory blocks linked to loading batch data have lifecycles limited within one training iteration; their deallocation is based on either direct deallocation events (e.g., specific user_annotation event like dataloader.__next__) or iteration boundary markers in the trace.
+(3)
+Activations: For memory blocks corresponding to intermediate activations generated during forward and backward propagation, the Orchestrator largely retains the lifecycle timings determined by the Analyzer. This is because the CPU-derived lifecycles for these intermediate tensors often serve as approximations of their expected lifecycles on GPUs.
+(4)
+Gradients: They are generated during the backward pass, require specific timing adjustments. In a common GPU training loop (PyTorch, 2023), these gradient tensors persist in memory until the optimizer explicitly clears them via the optimizer.zero_grad() call. Therefore, the Orchestrator identifies gradient-related memory blocks and adjusts their deallocation timestamps to precisely align with the execution time of the corresponding optimizer.zero_grad() operation, located using user_annotation markers in the trace.
+(5)
+Optimizer: Potential optimizer memory blocks are identified during the optimizer.step() phase by filtering for blocks whose sizes match model parameters. Since stateful optimizers such as Adam (Kingma and Ba, 2014) allocate persistent states mainly in the first iteration (unlike SGD (Ruder, 2016) with minimal overhead), analyzing at least two iterations is crucial. This is because the peak memory usage in the second iteration is further analyzed based on the persistent memory blocks allocated in the first iteration.
+The Memory Orchestrator produces a refined memory sequence33
+3
+Although the orchestrated sequence has been refined to match the expected sequence in the target GPU, its effectiveness is limited by substantial underlying behavioral divergences. A key challenge for CPU-based estimation accuracy is that fundamental differences in operator implementation and optimization strategies across backends significantly degrade the prediction accuracy. 3 to reflect the anticipated sequence in the GPU, then feeds it as input for the Memory Simulator.
+3.4. Simulator
+The final pipeline stage, the Memory Simulator, replays the orchestrated memory sequence 3. It employs a two-level simulation of both the target GPU’s memory allocator and the DL framework’s internal allocator. Precisely simulating the allocator’s behavior is crucial because simply summing tensor sizes overlooks complex mechanisms like caching and fragmentation (as discussed in Section 2.2), enabling xMem to accurately track the dynamic memory footprint and estimate peak GPU memory consumption 4.
+To capture these dynamics, the xMem Simulator implements key techniques of such a caching allocator:
+(i) Round up: All memory request sizes are rounded up to the nearest hardware-required multiple (e.g., 512 bytes for CUDA operations (PyTorch, 2024b)), reflecting how allocators often handle physical memory constraints.
+(ii) Segment: The Simulator involves the concept of Segments, larger memory blocks that the framework’s allocator requests from the GPU. The strategy44
+4
+The segment’s allocation strategy follows the PyTorch Official implementation (PyTorch, 2024c) for determining segment sizes is incorporated to mimic how allocators balance allocation speed with potential fragmentation.
+(iii) Algorithm: To accurately reproduce the behavior of both the DL framework allocator (e.g., PyTorch’s CUDACachingAllocator (PyTorch, 2024c; PyTorch, 2024b)) and the GPU allocator (Calderón et al., 2020), the Simulator primarily employs the Best Fit with Coalescing (BFC) algorithm (Hasan and Chang, 2005). This BFC implementation involves searching for available free blocks within segments, splitting blocks when an exact match is unavailable, and merging adjacent free blocks upon deallocation to closely mimic real-world fragmentation and coalescence patterns.
+(iv) Caching Behavior: Upon a deallocation in the event sequence, the Simulator caches the block within its segment for reuse. New segments are requested from the GPU only if this cache is insufficient for an allocation. Cached blocks persist until the framework allocator needs more memory, but the device indicates an OOM error.
+(v) OOM: This two-level simulation, modeling both the framework and device-level allocator, captures the complete memory management chain. An OOM condition is signaled only when memory requests fail at both simulated allocator levels, even after attempting the reclamation of cached segments.
+Regarding the above techniques, the Simulator processes the orchestrated memory event sequence chronologically. For each allocation event, it attempts to secure memory via the simulated two-level allocator. Correspondingly, for each deallocation event, it marks the block as free within the simulated allocator’s pools, which may trigger coalescing. By tracking the total size of the segments allocated from the GPU at each point in the event sequence, xMem determines the time series of memory usage for Tensors and Segments. The Estimated Peak Memory is then identified as the maximum value in this time series, and the full series can optionally be output as a memory usage curve for detailed analysis. To verify the accuracy of this simulation approach, we used actual PyTorch allocator behavior obtained using PyTorch’s snapshot profiler (PyTorch, 2024e) compared to the Simulator result. These comparative results are shown in Figure 6.
+Figure 6. Comparison of actual GPU memory segment usage (from PyTorch Snapshot Profiler (PyTorch, 2024e)) with xMem’s simulated segment usage for three DL models, validating the Simulator’s accuracy.This figure displays three plots comparing actual GPU memory segment usage (green area) with \projectnamesimulated segment usage (red line) over time for the ConvNeXtBase, distillgpt2, and Cerebras-GPT-111M models, showing a close match between the two.
+4. Evaluation
+Table 1. Notations used in the evaluation experiments.
+Notation
+|
+Definition |
+jj
+|
+One test configuration, including model, optimizer, etc.
+|
+ii
+|
+Verification Round: 1st or 2nd
+|
+dd
+|
+The index of the target GPU device, d∈{0,1}d\in\{0,1\}
+|
+ee
+|
+The estimator
+|
+NN
+|
+The number of performed runs
+|
+MdinitM^{\text{init}}_{d}
+|
+The amount of memory used on device dd for the duration of the experiment
+|
+MfmM^{\text{fm}}
+|
+The amount of memory used by a DL Framework. It is generally a constant amount of memory during all experiments
+|
+MdmaxM_{d}^{\text{max}}
+|
+The memory capacity of device dd
+|
+Mj​i​dpeakM^{\text{peak}}_{jid}
+|
+The peak memory usage as recorded by NVML during training with configuration jj on device dd at the iith validation
+|
+M^j​d​epeak\hat{M}^{\text{peak}}_{jde}
+|
+The peak memory usage as predicted by estimator ee using configuration jj and memory capacity of device dd
+|
+Mj​d​esaveM^{\text{save}}_{jde}
+|
+The memory conserved by estimator ee with configuration jj on device dd
+|
+avgMesave\text{avgM}^{\text{save}}_{e}
+|
+The average memory conserved by running the estimator ee
+|
+OOM^j​d​e\hat{\text{OOM}}_{jde}
+|
+Boolean prediction of OOM occurrence by estimator ee using configuration jj on device dd
+|
+OOMj​d​1\text{OOM}_{jd1}
+|
+Boolean indicating actual OOM occurrence during training with configuration jj on device dd at 1st validation
+|
+OOMj​d​e​2\text{OOM}_{jde2}
+|
+Boolean indicating actual OOM occurrence during training with configuration jj under maximum runnable GPU memory estimated by estimator ee on device dd at 2nd validation
+|
+Cj​i​d​eC_{jide}
+|
+Boolean indicating whether the prediction OOM^j​d​e\hat{\text{OOM}}_{jde} matches the actual OOMj​d​i\text{OOM}_{jdi} at the 11st validation. In the 22nd validation, Cj​d​e​1C_{jde1} is utilized to further assess its estimation status
+|
+errorj​i​d​e\text{error}_{jide}
+|
+The error of Mj​i​dpeakM^{\text{peak}}_{jid} relative to M^j​d​epeak\hat{M}^{\text{peak}}_{jde}
+|
+error~j​i​d​e\tilde{\text{error}}_{jide}
+|
+The median of a set of errorj​i​d​e\text{error}_{jide}
+|
+Pj​i​eP_{jie}
+|
+Probability of estimation failure by estimator ee with configuration jj at the iith validation
+|
+This section presents a comprehensive empirical evaluation of xMem to validate its effectiveness in accurately estimating peak GPU memory consumption for DL training jobs. We conducted experiments across various GPU types, including A100, GeForce RTX 4060, and GeForce RTX 3060, and compared xMem with SOTA solutions representing diverse approaches to memory estimation.
+The evaluation aims to answer the following key research questions:
+(1)
+RQ1 (Accuracy): How accurate are the peak memory estimations provided by xMem? (Section 4.2)
+(2)
+RQ2 (Reliability): How reliably does xMem prevent OOM errors? (Section 4.3)
+(3)
+RQ3 (Memory Conservation): How much GPU memory can potentially be conserved by using xMem’s estimates? (Section 4.4)
+(4)
+RQ4 (Overhead): What is the run-time overhead of xMem? (Section 4.5)
+(5)
+RQ5 (Scalability): How accurately does xMem estimate peak memory for larger Transformer models in high-end GPUs, such as the A100? (Section 4.6)
+4.1. Evaluation Methodology
+The notations used in this study are summarized in Table 1.
+4.1.1. Baselines
+We compare xMem against three state-of-the-art GPU memory estimators that employ distinct methodologies:
+(1)
+DNNMem (Gao et al., 2020): Represents static analysis approaches, which combine computational graph analysis with the simulation of a basic BFC allocator. As the source code is not publicly available, we reproduced DNNMem based on the descriptions and algorithms presented in the original paper.
+(2)
+SchedTune (Albahar et al., 2022): Represents machine learning-based approaches, utilizing pre-trained models based on model features and hardware characteristics to estimate memory needs.
+(3)
+LLMem (Kim et al., 2024): Represents approaches relying on direct GPU interaction, specifically designed for estimating memory for Large Language Model fine-tuning through targeted GPU execution measurements.
+For consistency, all evaluation plots use the following color scheme: blue for xMem, red for DNNMem, green for SchedTune, and purple for LLMem. To establish the ground truth peak memory values used in calculating MRE, we sampled the total allocated GPU memory at 1 ms intervals during actual training runs using the NVIDIA Management Library (NVML) (NVIDIA Corporation, 2024). We designated the maximum value recorded across all samples during each run as the ground truth peak.
+4.1.2. Workload
+Table 2. DL models (CNN and Transformer) and optimizers used in the evaluation. ‘∗*’ denotes models used for RQ5 only.Table listing the Convolutional models (VGG, ResNet, MobileNetV2/V3, MnasNet, RegNetX/Y, ConvNeXt) and Transformer models (DistilGPT2, GPT2, T5, GPT-Neo, OPT, Cerebras-GPT) with release years, alongside the five optimizers (AdamW, Adam, SGD, RMSprop, Adagrad) used in the evaluation experiments.
+Convolutional Model |
+Year |
+Optimizers |
+VGG (16 & 19) (Simonyan and Zisserman, 2014) |
+2014 |
+|
+ResNet (101 & 152) (He et al., 2016) |
+2016 |
+AdamW |
+MobileNetV2 (Sandler et al., 2018) |
+2018 |
+Adam |
+MobileNetV3 (Small & Large) (Howard et al., 2019) |
+2019 |
+SGD |
+MnasNet (Tan et al., 2019) |
+" |
+RMSprop |
+RegNetX (400MF) (Radosavovic et al., 2020) |
+2020 |
+Adagrad |
+RegNetY (400MF) (Radosavovic et al., 2020) |
+" |
+|
+ConvNeXt (Tiny & Base) (Liu et al., 2022b) |
+2022 |
+|
+Transformer Model |
+|
+|
+DistilGPT2 (Sanh et al., 2019) |
+2019 |
+|
+GPT2 (Radford et al., 2019) |
+" |
+|
+T5 (small & base) (Raffel et al., 2020) |
+2020 |
+|
+GPT-Neo (125M) (Liu et al., 2022b) |
+2022 |
+AdamW |
+OPT (125m & 350m) (Zhang et al., 2022) |
+" |
+Adam |
+Cerebras-GPT (111M) (Dey et al., 2023) |
+2023 |
+SGD |
+Pythia (1b) (Biderman et al., 2023) |
+" |
+Adafactor |
+∗* Llama-3.2 (3B-Instruct) (Grattafiori et al., 2024) |
+2024 |
+|
+Qwen3 (0.6b) (Yang et al., 2025) |
+2025 |
+|
+∗* DeepSeek-R1 (Distill-Qwen-1.5B) (DeepSeek-AI et al., 2025) |
+" |
+|
+∗* Qwen3 (4B) (Yang et al., 2025) |
+" |
+|
+To ensure a comprehensive assessment, our evaluation employs a diverse set of workloads. For RQ1-RQ4, we utilize 22 different DL models (without ∗* symbol), detailed in Table 2, encompassing widely-used architectures such as CNNs (Krizhevsky et al., 2017) and Transformers (Vaswani et al., 2017). Optimizer selection and batch size ranges are tailored to each model architecture: for CNN models, we employ SGD, Adam, AdamW, RMSprop, and Adagrad, with the batch sizes ranging from 200 to 700 with a step of 100; for Transformer models, we use SGD, Adafactor, Adam, and AdamW (excluding RMSprop and Adagrad due to their less common usage in this context), varying the batch size from 5 to 55 with a step of 5. In addition, we used a smaller batch size, e.g., 1 to 8 with a step of 1, for Qwen3 and Pythia models due to their higher parameter counts. Applying the same range of batch sizes across all models would be self-defeating, as some of the models only experience OOM errors during all experiments. Furthermore, to assess the impact of code variations on memory usage, we additionally involved different placements of the optimizer.zero_grad() call in Monte Carlo simulations, reflecting real coding patterns that influence memory behavior (see Figure 1).
+For RQ5, a distinct set of 3 Transformer models was used, as highlighted in Table 2 with a ∗* symbol. These models were chosen to test the scalability of xMem on larger Transformer models. Additionally, given that this experiment focuses on accuracy, we ensured all tests were conducted within GPU memory limits to guarantee that each run could provide a valid MRE. To achieve this, we solely employed the SGD and Adafactor optimizers because all models could be trained without encountering an OOM error. Each trial was repeated five times, and the batch size was set to 1.
+4.1.3. Environment Setup
+Experiments for RQ1-RQ4 were conducted on a server equipped with a 24-core Intel i9 CPU and 128GB of RAM. For GPU-related ground truth measurements and baseline executions requiring a GPU, we utilized two NVIDIA GPUs: a GeForce RTX 3060 with 12GB of memory and a GeForce RTX 4060 with 8GB of memory. To ensure consistency and reproducibility, the software environment was managed using Docker containers built on official PyTorch images (PyTorch, 2025), including the necessary Python dependencies. As many conflict issues exist among dependencies required by baselines and xMem, xMem and DNNMem were evaluated using 2.6.0-cuda12.4-cudnn9-devel tag; SchedTune utilized 2.3.1-cuda12.1-cudnn8-devel tag, whereas LLMem required 2.0.1-cuda11.7-cudnn8-devel tag. During experiments, each GPU was dedicated exclusively to a single run to prevent interference.
+For RQ5, experiments were conducted using Google CoLab Pro instances, providing access to NVIDIA A100 GPUs with 40GB of GPU memory. This distinct environment was chosen to assess the scalability and performance of xMem on high-end accelerator hardware with larger model sizes. Since package conflict issues were encountered with SchedTune and LLMem in this CoLab environment, xMem only compares with DNNmem. The ground truth peak memory on the A100 was also obtained using the same NVML-based sampling methodology.
+4.1.4. Experimental Design
+To strictly assess each estimator ee for a given test configuration j (model, optimizer, batch size, zero_grad placement) on a device dd, we employ a two-round validation process. First (Initial Validation, i=1i=1), we compare an estimated O​O​M^j​d​e\hat{OOM}_{jde}, expressed as Eq. 1, against the actual O​O​Mj​d​1OOM_{jd1} of running the job with full device memory, while recording Mj​d​1peakM^{\text{peak}}_{jd1} and Mf​mM^{fm}. Second (Subsequent Validation, i=2i=2), we execute the job with the same configuration again when only Cj​d​e​1=1∧O​O​Mj​d​1=0C_{jde1}=1\land OOM_{jd1}=0, this time using Mdinit+Mf​m+M^j​d​epeakM^{\text{init}}_{d}+M^{fm}+\hat{M}^{\text{peak}}_{jde} as the maximum runable memory, while recording O​O​Mj​d​e​2OOM_{jde2} and Mj​d​2peakM^{\text{peak}}_{jd2}.
+(1) |
+|
+OOM^j​d​e=[M^j​d​epeak>Mdmax]\hat{\text{OOM}}_{jde}=[\hat{M}^{\text{peak}}_{jde}>M_{d}^{\text{max}}] |
+|
+The success or failure in this second round is crucial in determining the MRE, PEF, and MCP metrics, reflecting the practical reliability and the implications of resource savings of the estimate. This validation is applied in two main experimental settings:
+(1)
+ANOVA: For comprehensive runs, we systematically selected specific configurations by pairing all models with their applicable optimizers and batch sizes as defined in Section 4.1.2. We repeated each configuration run five times on the GeForce RTX 3060 GPU, using results from a total of 3903 runs to analyze error distributions and reliability under controlled conditions, mainly to address RQ1, RQ2, and RQ5.
+(2)
+Monte Carlo Simulations (Rubinstein and Kroese, 2017): We conducted 1306 runs where each training configuration (all pairs are mentioned in Section 4.1.2 and two target GPUs) was randomly selected. We utilize the nature of the Monte Carlo, simulating the randomness and uncertainty of reality, to assess the overall performance (RQ1-RQ4) of the estimators, especially the memory conservation potential (RQ3).
+(a) CNN Models (ANOVA)A box plot chart displaying the Median Relative Error (MRE) percentages for peak memory estimations across multiple Convolutional Neural Network (CNN) models from ANOVA experiments. The chart compares the performance of three estimators: \projectname(typically shown in blue), DNNMem (typically red), and SchedTune (typically green). Each model on the x-axis has a set of box plots representing the MRE distribution for these estimators.
+(b) Transformer Models (ANOVA)A box plot chart displaying the Median Relative Error (MRE) percentages for peak memory estimations across multiple Transformer models from ANOVA experiments. The chart compares the performance of four estimators: \projectname(typically shown in blue), DNNMem (typically red), SchedTune (typically green), and LLMem (typically purple). Each model on the x-axis has a set of box plots representing the MRE distribution for these estimators.
+(c) CNN Models (Monte Carlo)A box plot chart displaying the Median Relative Error (MRE) percentages for peak memory estimations across multiple Convolutional Neural Network (CNN) models from Monte Carlo experiments. The chart compares the performance of three estimators: \projectname(typically shown in blue), DNNMem (typically red), and SchedTune (typically green). Each model on the x-axis has a set of box plots representing the MRE distribution for these estimators.
+(d) Transformer Models (Monte Carlo)A box plot chart displaying the Median Relative Error (MRE) percentages for peak memory estimations across multiple Transformer models from Monte Carlo experiments. The chart compares the performance of four estimators: \projectname(typically shown in blue), DNNMem (typically red), SchedTune (typically green), and LLMem (typically purple). Each model on the x-axis has a set of box plots representing the MRE distribution for these estimators.
+Figure 7. Comparison of the MRE in peak memory estimation across different model architectures. Lower MRE indicates higher accuracy (An absent box plot in a specific model means that the estimator does not support that model.). The symbol ▲\blacktriangle denotes outliers with an MRE exceeding 150%.A box plot chart displaying the Median Relative Error (MRE) percentages for peak memory estimation across architectures.
+4.1.5. Metrics
+We evaluate the estimators using the following:
+(1)
+MRE: This represents a typical (median) percentage by which an estimated peak memory differs from the ground truth value, as expressed in Eq. 3. Since ground truth cannot be measured when a real OOM (O​O​Mj​d​1=1OOM_{jd1}=1), happens, only jobs matched a condition, O​O​Mj​d​1=0OOM_{jd1}=0, are selected for this statistic. Additionally, errorj​d​e​2\text{error}_{jde2} is used when O​O​Mj​d​e​2=0OOM_{jde2}=0; otherwise, errorj​d​e​1\text{error}_{jde1} is utilized.
+(2)
+PEF: This represents a probability, across multiple runs, that an estimated memory did not pass our two-round validation check (Section 4.1.4), expressed as Eq. 6. To rigorously assess performance in our evaluations, we utilize Pj​e​2P_{je2} as a key metric. A lower probability indicates greater reliability.
+(3)
+MCP: The average GPU memory is saved per time by using the estimator. It is expressed as Eq. 8, which averages the per-run savings determined by Eq. 7. This metric penalizes unreliable estimations to reflect the practical cost of estimation failure: if an M^j​d​epeak\hat{M}^{\text{peak}}_{jde} leads to an OOM failure (determined by Cj​d​e​2C_{jde2}), the M^j​d​epeak\hat{M}^{\text{peak}}_{jde} (which would have been allocated and thus wasted) is deducted from the overall memory saved.
+(4)
+Runtime: This measures the time required for each method to estimate a single peak memory for a given configuration.
+(2) |
+|
+errorj​i​d​e=‖M^j​d​epeak−Mj​i​dpeak‖Mj​i​dpeak,O​O​Mj​d​1=0\text{error}_{jide}=\frac{\|\hat{M}^{\text{peak}}_{jde}-M^{\text{peak}}_{jid}\|}{M^{\text{peak}}_{jid}},OOM_{jd1}=0 |
+|
+(3) |
+|
+error~j​i​d​e​(M​R​E)=Median​({e​r​r​o​rj​d​e​2if ​O​O​Mj​d​e​2=0e​r​r​o​rj​d​e​1if ​O​O​Mj​d​e​2≠0)\tilde{\text{error}}_{jide}(MRE)=\text{Median}\left(\begin{cases}error_{jde2}&\text{if }OOM_{jde2}=0\\
+error_{jde1}&\text{if }OOM_{jde2}\neq 0\end{cases}\right) |
+|
+(4) |
+|
+Cj​d​e​1=[OOM^j​d​e=OOMj​d​1]C_{jde1}=[\hat{\text{OOM}}_{jde}=\text{OOM}_{jd1}] |
+|
+(5) |
+|
+Cj​d​e​2=[Cj​d​e​1=1∧(OOMj​d​e​2=0∨OOMj​d​1=1)]C_{jde2}=[C_{jde1}=1\land(\text{OOM}_{jde2}=0\lor\text{OOM}_{jd1}=1)] |
+|
+(6) |
+|
+Pj​i​e​(P​E​F)=N−∑n=1NCj​i​d​eNP_{jie}(PEF)=\frac{N-\sum_{n=1}^{N}C_{jide}}{N} |
+|
+(7) |
+|
+Mj​d​esave={Mdmax−M^j​d​epeak,Cj​d​e​1=1∧OOMj​d​e​2=0Mdmax,Cj​d​e​1=1∧OOMj​d​1=1−Mdmax,o​t​h​e​r​w​i​s​eM^{\text{save}}_{jde}=\begin{cases}M^{\text{max}}_{d}-\hat{M}^{\text{peak}}_{jde},&C_{jde1}=1\land\text{OOM}_{jde2}=0\\
+M^{\text{max}}_{d},&C_{jde1}=1\land\text{OOM}_{jd1}=1\\
+-M^{\text{max}}_{d},&otherwise\\
+\end{cases} |
+|
+(8) |
+|
+avgMesave​(M​C​P)=∑n=1NMj​d​esaveN\text{avgM}^{\text{save}}_{e}(MCP)=\frac{\sum_{n=1}^{N}M^{\text{save}}_{jde}}{N} |
+|
+4.2. RQ1: How accurate are the peak memory estimations?
+To answer RQ1, we primarily analyze the MRE, namely error~j​i​d​e\tilde{\text{error}}_{jide}, of peak memory estimations. A lower MRE indicates higher accuracy. We present results from the comprehensive runs, which were conducted on the GeForce RTX 3060 GPU.
+Figure 7(a) illustrates the MRE distributionsin ANOVA for CNN models, each box representing around 150 samples. Across the 12 CNN models, xMem consistently demonstrates superior accuracy, with MRE approximately 3%. For instance, xMem achieves a MRE of approximately 1.8% for ConvNeXtTiny and around 0.2% for MobileNetV2. In most cases, xMem’s MRE is below 5%, with only four models (VGG16, VGG19, RegNetX400MF, and RegNetY400MF) showing a MRE slightly above this, but still generally below 10%. In contrast, DNNMem exhibits higher MREs, generally ranging from 10% to 30% for 7 of 12 models, with wider interquartile ranges (IQRs) indicating greater variability. SchedTune consistently shows the highest MREs and the largest variance, with MRE often exceeding 20% for over half of CNN models. LLMem was not evaluated for CNN models as it is specifically designed for Transformer architectures. The consistently tight error distribution of xMem around 5% highlights its robustness in accuracy for CNN workloads.
+For Transformer models in ANOVA, the MRE distributions are presented in Figure 7(b), each box representing around 160 samples for Pythia and Qwen, and 220 samples for the rest of the models. xMem again shows outstanding performance across the 10 models, with a MRE approximately 4%. Its MREs are generally low, for example, approximately 2.3% for Cerebras-GPT-111M, 7.8% for Qwen3, and 4.8% for Pythia-1b. DNNMem struggles with Transformer models, displaying MREs often between 10% and 30% (e.g., for t5-small and distilgpt2), indicating its static analysis is less effective. SchedTune continues to exhibit high MREs, but less variance compared to the ANOVA experiment with CNN models. LLMem, specifically designed for CausalLM, exhibits the highest error, with an outlier exceeding 150%.
+The results from the Monte Carlo simulations are shown in Figures 7(c) and 7(d) (no guaranteed samples per box due to the nature of the Monte Carlo simulation). The simulation covers random configurations across two GPU types, further corroborating these findings. When aggregating MREs from these simulations, xMem consistently maintains the lowest overall MRE (around 4% for both CNN and Transformer) and the most concentrated error distribution, demonstrating its robustness across a wide variety of models, optimizers, batch sizes, and code structure variations.
+This scatter plot shows a four-quadrant analysis of Median Relative Error (MRE) versus Failed Estimation Probability (PEF) from detailed comparative runs (ANOVA-style)
+(a) ANOVA ResultsThis scatter plot shows a four-quadrant analysis of Median Relative Error (MRE) versus Failed Estimation Probability (PEF) from detailed comparative runs (ANOVA-style)
+This scatter plot presents a four-quadrant analysis of Median Relative Error (MRE) versus Failed Estimation Probability (PEF) from large-scale Monte Carlo simulations
+(b) Monte Carlo ResultsThis scatter plot presents a four-quadrant analysis of Median Relative Error (MRE) versus Failed Estimation Probability (PEF) from large-scale Monte Carlo simulations
+Figure 8. Four-quadrant analysis of estimator performance, plotting the MRE against the PEF. Quadrants: Bottom left is optimal; bottom right underestimation; top left overestimation; and top right worst.This scatter plot presents a four-quadrant analysis of Median Relative Error (MRE) versus Failed Estimation Probability (PEF) for both evaluation approaches: ANOVA and Monte Carlo
+4.3. RQ2: How reliable are the estimates of peak memory?
+Beyond accuracy, a crucial metric of a memory estimator is its reliability in practice; specifically, its ability to provide estimated memory that can be directly used as the maximum runnable memory without OOM, while not excessively overestimating. To answer RQ2, we analyze PEF, namely Pj​e​2P_{je2}, primarily drawing from the aggregated results from both experiments.
+A lower PEF indicates higher reliability.
+Figure 8(a) presents a four-quadrant analysis plotting the PEF against the MRE for each estimator. The plot is divided by 20% thresholds for both PEF (x-axis) and MRE (y-axis), creating four performance categories: Optimal (low PEF, low MRE), Overestimation (low PEF, high MRE), Underestimation (high PEF, low MRE), and Worst (high PEF, high MRE). As observed, xMem’s models (15 out of 22) dominantly cluster within the Optimal quadrant. Crucially, MRE for all models remains below 10%, corroborating the results from RQ1. It is also remarkable that 12 of the 22 models satisfy criteria with both PEF and MRE values under 10%. For the rest of the models presenting higher PEF, the persistently low MRE (<10%) implies a high fidelity of memory estimation relative to ground truth values. This demonstrates a significant trade-off between accuracy and reliability. In contrast, DNNMem shows a considerable number of points scattered across the Underestimation and Worst quadrants, indicating a higher risk of OOM despite sometimes achieving acceptable MRE. SchedTune exhibits significant polarization; while two of its results are concentrated in the Optimal quadrant (although with MREs generally between 10% and 20%), a notable portion is clustered in the Worst quadrant, characterized by both high PEF and high MRE. LLMem shows a scattered distribution, with some points in less desirable quadrants.
+Further validation through Monte Carlo simulations (detailed in Figure 8(b)) underscores the robustness of the proposed methods, showing enhanced relative performance beyond that observed in the four-quadrant ANOVA results. Specifically, the number of models in the Optimal quadrant increased from 15 to 18, with only MRE values below 10%. Additionally, 13 models (up from 12) met the criteria with both PEF and MRE values under 10%. In contrast, the baseline methods, by comparison, once more displayed significant instability or inherent performance shortcomings.
+Therefore, in response to RQ2, xMem demonstrates superior reliability in preventing OOM errors. Its ability to consistently provide estimates that are not only accurate but also reliable (low PEF) makes it a tool for practical GPU resource estimation compared to the evaluated baselines.
+4.4. RQ3: How much GPU memory can be conserved?
+Table 3. Average MCP in Gigabytes (GB). Positive values indicate memory saved. ‘N/A’ indicates non-applicability.This table shows the average memory saved in Gigabytes (GB) by different estimators (\projectname, DNNMem, SchedTune, LLMem) for Convolutional Neural Network (CNN) and Transformer model workloads, with `N/A' indicating non-applicability for an estimator-model combination.
+Model Arch |
+DNNMem |
+SchedTune |
+LLMem |
+xMem |
+CNN |
+3.08 |
+5.81 |
+N/A |
+8.67 |
+Transformer |
+1.29 |
+-4.42 |
+1.68 |
+7.07 |
+Overall |
+2.11 |
+0.38 |
+1.69 |
+7.82 |
+Accurate and reliable memory estimation not only prevents OOM errors from wasting allocated GPU memory but also enables more efficient GPU memory utilization by avoiding unnecessary over-provisioning. To quantify this, we measure MCP as the average GPU memory saved per time, expressed as avgMesave\text{avgM}^{\text{save}}_{e}. This metric incorporates a penalty for unreliable estimations that lead to OOM failures, as expressed by Eq. 7. To ensure that MCP reflects real-world conditions across diverse and unpredictable scenarios, this section relies solely on the Monte Carlo simulation data for analysis.
+Table 3 summarizes average MCP for xMem and the baseline estimators, categorized by CNN and Transformer model types. xMem demonstrates substantial memory conservation across both categories. For CNN models, xMem achieves an average MCP of 8.67 GB, significantly outperforming DNNMem (3.08 GB) and SchedTune (5.81 GB). LLMem was not applicable to CNNs as it only supports Transformer models. For Transformer models, xMem conserves an average of 7.07 GB. This is considerably higher than DNNMem (1.29 GB) and LLMem (1.68 GB). Notably, SchedTune exhibits a negative mean MCP of -4.42 GB for Transformer models. This negative value signifies an average net loss of usable memory, attributable to OOM penalties resulting from its unreliability in this model category. Meanwhile, it implies a potential cold start problem of data-driven approaches, mentioned in Sections 1 and 5.2.
+The superior MCP achieved by xMem is attributed to its high accuracy (low MRE) and outstanding reliability (low PEF), as established in answers to RQ1 and RQ2. By providing accurate estimates, xMem allows tasks to be provisioned with memory resources much closer to their actual needs, thus freeing up substantial GPU memory that would otherwise be idly reserved or wasted due to inaccurate estimations. This translates directly to improved GPU utilization and the potential for higher task throughput in resource-constrained cluster environments.
+4.5. RQ4: What is the run-time overhead?
+Table 4. The average runtime in seconds (s) for each estimator, including any input preprocessing.This table presents the average runtime for four methods: DNNMem (34.33 s), SchedTune (7.8 s), LLMem (18.24 s), and the proposed \projectname(24.73 s). SchedTune demonstrates the lowest runtime, indicating the highest operational efficiency.
+|
+DNNMem |
+SchedTune |
+LLMem |
+xMem |
+Runtime |
+33 |
+2 |
+17 |
+26 |
+The run-time overhead for each memory estimation method was evaluated using Monte Carlo simulations. For data-analytical approaches such as xMem and DNNMem, which rely on CPU-based analysis, this overhead was quantified as the CPU time taken to generate an estimate. In the case of SchedTune, the total overhead comprised the inference time of its pre-trained model plus the necessary input data preparation time. Finally, LLMem’s overhead consisted of the time required for its targeted GPU execution measurements.
+As detailed in Table 4, xMem demonstrates an average estimation runtime of 26 seconds. While this performance is superior to that of DNNMem (33 seconds), a comparable data-analytical method, xMem’s runtime is longer than those of SchedTune (2 seconds), which leverages efficient pre-trained model inference, and LLMem (17 seconds), which performs direct GPU measurements. It should be noted that xMem is currently in its prototype phase, and strategies for its optimization will be detailed in Section 6.1. Despite the current speed, this runtime is deemed practical for pre-submission estimation, especially considering xMem’s substantial benefits in terms of accuracy, reliability, and memory conservation.
+4.6. RQ5: How accurately does the estimator estimate memory for large models?
+Figure 9. MRE comparison between xMem and DNNMem for larger models on NVIDIA A100 GPU (Google CoLab).This box plot chart shows the MRE percentage for \projectname's peak memory estimation on three large-scale models: DeepSeek-R1-Distill-Qwen-1.5B, Llama-3.2-3B-Instruct, and Qwen3-4B, when tested on an NVIDIA A100 GPU. \projectname(blue) shows low MRE for DeepSeek and Qwen3-4B, and a slightly higher MRE for Llama-3.2-3B-Instruct. DNNMem (red) is shown only for DeepSeek-R1-Distill-Qwen-1.5B, exhibiting a very high MRE.
+To assess xMem’s scalability and its accuracy with larger models, scenarios not feasible on our local GPUs due to memory limitations, we conducted evaluations using Google CoLab Pro instances equipped with NVIDIA A100 GPUs. Due to package conflicts preventing the reliable execution of SchedTune and LLMem in the CoLab environment, this analysis solely focuses on xMem’s performance compared to DNNmem. Additionally, due to the limited number of test configurations (explained in Section 4.1.2) available for use in the CoLab experiments, it is not meaningful to present the PEF results. Therefore, we only show the MRE here.
+Figure 9 illustrates the MRE of xMem and DNNMem for these larger models on NVIDIA A100. xMem demonstrates consistently strong accuracy and a significant advantage over DNNMem. For the Llama-3.2 (3B-Instruct) model, xMem’s MRE was 9.0%, while a comparative figure for DNNMem was 52.3%. On the DeepSeek-R1 (Distill-Qwen-1.5B) model, xMem achieved an MRE of just 1.0%, which is substantially lower than DNNMem’s MRE of 37%. Similarly, for the Qwen3 (4B) model, xMem recorded an MRE of 4.3%, again demonstrating superior performance compared to DNNMem’s MRE of 44.6%. These results underscore that xMem’s CPU-based dynamic analysis approach not only scales effectively to larger models but also performs accurately on advanced GPU architectures like the A100, consistently offering a clear advantage over DNNMem in terms of MRE.
+5. Related Work
+The challenge of accurately estimating the peak GPU memory for DL jobs, particularly to prevent OOM errors and optimize resource utilization, has been introduced from several perspectives in the literature.
+5.1. Static Analysis Methods
+Static analysis methods derive memory estimates from the DL model’s computational graph, offering a priori estimation without utilizing GPUs. DNNMem (Gao et al., 2020), a key baseline, implemented a detailed static approach by attempting to model the training process and simulating a framework-level memory allocator. Although this requires manual modeling for each operator’s memory behavior, this is more comprehensive than simpler static methods like Horus (Yeung et al., 2022), which primarily sums tensor sizes. However, the reliance of DNNMem on a static computation graph introduces several limitations. Such graphs inherently lack information regarding memory usage during the optimization phase, making estimations relatively more accurate for the lowest-overhead optimizers like SGD but less so for others. More critically, static graphs cannot capture dynamic memory variations resulting from code structure changes (e.g., optimizer.zero_grad() placement, Figure 1) or the precise runtime memory behavior of operators, leading to estimation inaccuracies as observed in our evaluation (Section 4.2). Furthermore, while DNNMem simulates the framework’s allocator, it does not model the device-level allocator or the crucial step of reclaiming cached segments that typically precedes an actual OOM event; true OOM occurs only when both allocator levels fail after reclamation attempts. xMem, by contrast, employs dynamic analysis of CPU execution traces to obtain and model these runtime behaviors and allocator interactions directly.
+5.2. Data-Driven Estimation
+Another category of solutions uses ML models trained on historical data or model features. SchedTune (Albahar et al., 2022), another baseline, and TBEM (Liu et al., 2022a) use pre-trained models to predict memory needs based on model and hardware characteristics. Although these methods can be fast at inference time, they typically require substantial and representative training datasets. More critically, they often face generalization challenges with new or significantly modified models (the cold start problem (Talha et al., 2023)) and may not precisely capture instantaneous peak memory demands or the effects of specific code-level configurations, thereby affecting their reliability (Sections 4.3 and 4.4). xMem addresses this by directly analyzing the execution trace of the specific task at hand, rather than relying on generalized pre-trained models.
+5.3. Direct GPU Estimators
+Techniques performing estimation via direct GPU interaction, such as LLMem (Kim et al., 2024) or Gandiva’s (Xiao et al., 2018) online profiling, may achieve high accuracy by measuring actual GPU usage. However, they face critical practical limitations: (i) GPUs’ limited memory capacity restricts estimation for very large models that might not fit, a less severe issue for CPU-based methods as sufficient RAM can be provided in one server; (ii) direct GPU execution for estimation can itself trigger OOM errors; and (iii) the scarcity and high cost of GPU resources mean that using them for estimation incurs significant overhead, including resource contention and wait times. These drawbacks conflict with xMem’s goal of zero-GPU-overhead estimation, rendering such approaches less suitable for pre-submission checks for further scheduling decisions in GPU-constrained clusters.
+5.4. OOM Mitigation Techniques
+In contrast to a priori estimation, some approaches, such as AntMan (Xiao et al., 2020) focus on runtime OOM mitigation by dynamically offloading tensors to the host RAM when the GPU memory is scarce. It is useful for GPU sharing and handling tasks exceeding the GPU capacity. However, these reactive methods can cause sustained performance degradation if a task’s memory requirement exceeds the maximum of the GPU’s capacity, forcing persistent offloading and frequent data transfers. xMem’s prior estimation is complementary, aiming to prevent OOM and such performance-degrading scenarios by enabling informed resource allocation.
+6. Discussion
+Our evaluation demonstrates that xMem offers a significant advancement in prior GPU memory estimation, achieving high accuracy and reliability without target GPU overhead. In this section, we acknowledge several limitations and areas for future work.
+6.1. Overhead
+Regarding runtime overhead in Section 4.5, xMem’s current CPU-based analysis (Table 4) involves processing massive profiling data, potentially containing millions of rows, and performing numerous time-range-based searches to link and attribute memory events. As a prototype, the current implementation processes this data sequentially and has not yet incorporated advanced big data processing techniques, such as a specific big-data processing library (e.g., Pandas, NumPy), concurrent data processing pipelines, or time-series databases for faster querying. These unoptimized search and indexing operations significantly contribute to the current runtime. While the memory simulation phase is comparatively less time-consuming, it also has potential for optimization. Future work will focus on these areas to reduce CPU overhead. Nevertheless, the crucial advantage of zero target-GPU usage during estimation remains, making its current runtime acceptable for pre-submission checks, especially given its superior accuracy and reliability.
+6.2. Distributed Training
+Although the current scope of xMem is limited to single-GPU training, it forms the foundation for distributed systems. Practical distributed training relies on partitioning models and data, which requires precise memory data at either layer or operator level. While a large model cannot be fitted on a single GPU, we can leverage a CPU with abundant RAM to execute it and capture this essential per-layer/operator memory profile, a core concept of our method. This granular data forms the necessary foundation for any distributed estimation; without it, planning for model or pipeline parallelism would be based on guesswork. Moreover, the current architectural design (§3.1) is deliberately distribution-prepared (§6.4). A key future research direction is to investigate these distributed memory patterns and explore methodologies to extend xMem, ideally by analyzing profile data obtained from a single node and then simulating distributed interactions.
+6.3. Mixed-precision Training
+Regarding mixed-precision training, since xMem depends on profiling data, it is currently capable of estimating memory for FP16 precision when profiling data is available. Once an environment lacks supporting CPU instructions (e.g., AVX2 VNNI 2 and AVX512 CORE FP16) (Intel, 2024), the profiling job itself can be time-consuming, especially for larger models. However, it is crucial to note that once the profiling data is collected, xMem’s subsequent analysis and estimation process remains the same. A future direction utilizes profiling data, providing key properties such as input and output tensor dimensions. During FP32 or FP16 training, the tensor dimensions remain constant; only the data type changes. Hence, the analyzer can deduce memory usage by identifying and filtering memory blocks affected by input tensors. This approach could quickly adopt a new type of data, such as FP8.
+6.4. Generalization and Scalability
+Given PyTorch’s prevalence in both industry (Ryan, 2023; Ana, 2025) and research (Ryan, 2023; Daniel, 2025), xMem’s current version can serve the majority of cluster workloads. However, to ensure future extension, the framework was architecturally designed with extensibility for multiple DL frameworks and hardware devices, as reflected in its distinct Analyzer, Orchestrator, and Simulator components. This design makes it a versatile solution.
+(i) Distribution-Prepared: The Memory Orchestrator can leverage per-layer data from the Analyzer to model pipeline schedules or inject simulated allreduce buffers, thereby preparing for future distributed training scenarios.
+(ii) General BFC Algorithm: Our core simulation is based on the BFC algorithm, which is not exclusive to PyTorch and is also used by frameworks like TensorFlow (TensorFlow, 2025; NVIDIA Corporation, 2025) for CUDA memory management.
+(iii) Pluggable Architecture: The Analyzer, Orchestrator, and Simulator components are designed to be framework- and hardware-agnostic, allowing for new modules to be implemented for different profiling outputs, device behaviors, and memory allocation algorithms. Notably, accurately modeling each allocator is crucial for accurate memory estimation, as generic models often overlook nuanced behaviors. For example, a caching allocator might request a 20MB block for a 10MB tensor (§2.2), with an Out-of-Memory (OOM) error occurring only after failing to reclaim cached memory.
+7. Conclusion
+This paper addresses the challenge of resource mismatch in shared GPU clusters, which frequently results in OOM errors and resource underutilization, thereby wasting costly GPU resources. To mitigate this, we leverage a key characteristic of modern DL frameworks like PyTorch: their architectural decoupling of front-end and back-end components. Specifically, the high-level logic defined in a Python training script determines a consistent number of core tensors and a fixed execution sequence, irrespective of the underlying hardware device (e.g., CPU or GPU). Upon this, we propose xMem, a novel estimation framework. It focuses on orchestrating the differences in memory behavior between CPU and GPU operators by analyzing and adjusting memory event timings in CPUs. This enables an accurate and reliable estimation of GPU memory requirements based solely on CPU profiling data.
+Extensive experimentation demonstrates xMem’s outstanding performance over SOTA solutions, significantly improving MRE by 91% and reducing the PEF by 75%. This accurate and reliable estimation enables cluster schedulers incorporating xMem to realize substantial memory savings for the GPU cluster, evidenced by a 368% increase in MCP compared to existing solutions. By allowing for more precise resource scheduling, these savings directly contribute to mitigating the persistent issue of GPU scarcity in cloud providers, research institutions, and enterprises.
+References
+Abadi et al. (2016)
+Martín Abadi, Paul
+Barham, Jianmin Chen, Zhifeng Chen,
+Andy Davis, et al.
+2016.
+TensorFlow: A System for Large-Scale Machine
+Learning. In Proceedings of the USENIX
+conference on Operating Systems Design and Implementation.
+USENIX Association, 265–283.
+https://dl.acm.org/doi/10.5555/3026877.3026899
+Albahar et al. (2022)
+Hadeel Albahar, Shruti
+Dongare, Yanlin Du, Nannan Zhao,
+Arnab K. Paul, et al.
+2022.
+SchedTune: A Heterogeneity-Aware GPU Scheduler
+for Deep Learning. In Proceedings of the IEEE
+International Symposium on Cluster, Cloud and Internet Computing
+(CCGrid). IEEE, 695–705.
+doi:10.1109/CCGrid54584.2022.00079
+Ana (2025)
+Crudu Ana.
+2025.
+PyTorch vs TensorFlow - Which Framework
+is Best for Data Analysis in 2025.
+https://moldstud.com/articles/p-pytorch-vs-tensorflow-which-framework-is-best-for-data-analysis-in-2025
+Anthropic (2025)
+Anthropic.
+2025.
+Comment on the framework for artificial
+intelligence diffusion.
+Technical Report.
+https://www-cdn.anthropic.com/7449887b6715e3a35f362b1301e5b5d8a6b116e5.pdf
+Biderman et al. (2023)
+Stella Biderman, Hailey
+Schoelkopf, Quentin Anthony, Herbie
+Bradley, Kyle O’Brien, et al.
+2023.
+Pythia: A Suite for Analyzing Large Language Models
+Across Training and Scaling. In Proceedings of the
+International Conference on Machine Learning. JMLR,
+2397–2430.
+Calderón et al. (2020)
+Alejandro J. Calderón,
+Leonidas Kosmidis, Carlos F. Nicolás,
+Francisco J. Cazorla, and Peio
+Onaindia. 2020.
+GMAI: Understanding and Exploiting the Internals
+of GPU Resource Allocation in Critical Systems.
+ACM Transactions on Embedded Computing
+Systems 19, 5
+(September 2020), 1–23.
+https://dl.acm.org/doi/10.1145/3391896
+Cheng et al. (2023)
+Runxiang Cheng, Chris
+Cai, Selman Yilmaz, Rahul Mitra,
+Malay Bag, et al.
+2023.
+Towards GPU Memory Efficiency for Distributed
+Training at Scale. In Proceedings of the ACM
+Symposium on Cloud Computing. ACM,
+281–297.
+doi:10.1145/3620678.3624661
+Clark (2025)
+Duncan Clark.
+2025.
+The Great GPU Shortage of 2025: Why
+Graphics Cards Are So Hard to Find.
+https://thinglabs.io/the-great-gpu-shortage-of-2025-why-graphics-cards-are-so-hard-to-find
+Daniel (2025)
+Hayes Daniel.
+2025.
+TensorFlow vs PyTorch: A Comparative
+Analysis for 2025.
+https://leapcell.io/blog/tensorflow-vs-pytorch-a-comparative-analysis-for-2025
+DeepSeek-AI et al. (2025)
+DeepSeek-AI, Daya
+Guo, Dejian Yang, Haowei Zhang,
+Junxiao Song, et al.
+2025.
+DeepSeek-R1: Incentivizing Reasoning Capability in
+LLMs via Reinforcement Learning.
+arXiv:2501.12948 [cs.CL]
+https://arxiv.org/abs/2501.12948
+Dey et al. (2023)
+Nolan Dey, Gurpreet
+Gosal, Zhiming, Chen,
+Hemant Khachane, et al.
+2023.
+Cerebras-GPT: Open Compute-Optimal Language Models
+Trained on the Cerebras Wafer-Scale Cluster.
+arXiv:2304.03208 [cs.LG]
+https://arxiv.org/abs/2304.03208
+Gao et al. (2020)
+Yanjie Gao, Yu Liu,
+Hongyu Zhang, Zhengxian Li,
+Yonghao Zhu, et al.
+2020.
+Estimating GPU memory consumption of deep
+learning models. In Proceedings of the ACM Joint
+Meeting on European Software Engineering Conference and Symposium on the
+Foundations of Software Engineering. ACM,
+1342–1352.
+doi:10.1145/3368089.3417050
+Grattafiori et al. (2024)
+Aaron Grattafiori,
+Abhimanyu Dubey, Abhinav Jauhri,
+Abhinav Pandey, Abhishek Kadian,
+et al. 2024.
+The Llama 3 Herd of Models.
+arXiv:2407.21783 [cs.AI]
+https://arxiv.org/abs/2407.21783
+Grigorescu et al. (2020)
+Sorin Grigorescu, Bogdan
+Trasnea, Tiberiu Cocias, and Gigel
+Macesanu. 2020.
+A survey of deep learning techniques for autonomous
+driving.
+Journal of Field Robotics
+37, 3 (April
+2020), 362–386.
+https://onlinelibrary.wiley.com/doi/10.1002/rob.21918
+Gu et al. (2022)
+Rong Gu, Yuquan Chen,
+Shuai Liu, Haipeng Dai,
+Guihai Chen, et al.
+2022.
+Liquid: Intelligent Resource Estimation and
+Network-Efficient Scheduling for Deep Learning Jobs on Distributed GPU
+Clusters.
+IEEE Transactions on Parallel and
+Distributed Systems 33, 11
+(November 2022), 2808–2820.
+https://ieeexplore.ieee.org/document/9664375/
+Guerriero et al. (2023)
+Antonio Guerriero, Roberto
+Pietrantuono, and Stefano Russo.
+2023.
+Iterative Assessment and Improvement of DNN
+Operational Accuracy. In Proceedings of the
+IEEE/ACM International Conference on Software Engineering: New Ideas and
+Emerging Results (ICSE-NIER). IEEE,
+43–48.
+doi:10.1109/ICSE-NIER58687.2023.00014
+Hasan and Chang (2005)
+Yusuf Hasan and Morris
+Chang. 2005.
+A study of best-fit memory allocators.
+Computer Languages, Systems & Structures
+31, 1 (April
+2005), 35–48.
+https://linkinghub.elsevier.com/retrieve/pii/S1477842404000211
+He et al. (2016)
+Kaiming He, Xiangyu
+Zhang, Shaoqing Ren, and Jian Sun.
+2016.
+Deep Residual Learning for Image Recognition. In
+Proceedings of the IEEE Conference on Computer
+Vision and Pattern Recognition (CVPR). IEEE,
+770–778.
+doi:10.1109/CVPR.2016.90
+Howard et al. (2019)
+Andrew Howard, Mark
+Sandler, Bo Chen, Weijun Wang,
+Liang-Chieh Chen, et al.
+2019.
+Searching for MobileNetV3. In
+Proceedings of the IEEE/CVF International
+Conference on Computer Vision (ICCV). IEEE,
+1314–1324.
+doi:10.1109/ICCV.2019.00140
+Intel (2024)
+Intel. 2024.
+CPU Dispatcher Control.
+https://www.intel.com/content/www/us/en/docs/onednn/developer-guide-reference/2025-0/cpu-dispatcher-control.html
+Islam et al. (2019)
+Md Johirul Islam, Giang
+Nguyen, Rangeet Pan, and Hridesh
+Rajan. 2019.
+A comprehensive study on deep learning bug
+characteristics. In Proceedings of the ACM Joint
+Meeting on European Software Engineering Conference and Symposium on the
+Foundations of Software Engineering. ACM,
+510–520.
+doi:10.1145/3338906.3338955
+Kim et al. (2024)
+Taeho Kim, Yanming Wang,
+Vatshank Chaturvedi, Lokesh Gupta,
+Seyeon Kim, et al.
+2024.
+LLMem: Estimating GPU Memory Usage for
+Fine-Tuning Pre-Trained LLMs. In Proceedings of
+the International Joint Conference on Artificial Intelligence.
+International Joint Conferences on Artificial
+Intelligence Organization, 6324–6332.
+doi:10.24963/ijcai.2024/699
+Kingma and Ba (2014)
+Diederik P. Kingma and
+Jimmy Ba. 2014.
+Adam: A Method for Stochastic Optimization. In
+Proceedings of the International Conference on
+Learning Representations. ICLR inc.,
+1–15.
+doi:10.48550/ARXIV.1412.6980
+Kokolis et al. (2025)
+Apostolos Kokolis, Michael
+Kuchnik, John Hoffman, Adithya Kumar,
+Parth Malani, et al.
+2025.
+Revisiting Reliability in Large-Scale Machine
+Learning Research Clusters. In Proceedings of the
+IEEE International Symposium on High Performance Computer Architecture
+(HPCA). IEEE, 1259–1274.
+doi:10.1109/HPCA61900.2025.00096
+Krizhevsky et al. (2017)
+Alex Krizhevsky, Ilya
+Sutskever, and Geoffrey E. Hinton.
+2017.
+ImageNet classification with deep convolutional
+neural networks.
+Commun. ACM 60,
+6 (May 2017),
+84–90.
+https://dl.acm.org/doi/10.1145/3065386
+Li et al. (2022)
+Baolin Li, Tirthak Patel,
+Siddharth Samsi, Vijay Gadepally, and
+Devesh Tiwari. 2022.
+MISO: Exploiting multi-instance GPU capability
+on multi-tenant GPU clusters. In Proceedings of
+the Symposium on Cloud Computing. ACM,
+173–189.
+doi:10.1145/3542929.3563510
+Li et al. (2023)
+Jiamin Li, Hong Xu,
+Yibo Zhu, Zherui Liu,
+Chuanxiong Guo, et al.
+2023.
+Lyra: Elastic Scheduling for Deep Learning
+Clusters. In Proceedings of the European
+Conference on Computer Systems (EuroSys). ACM,
+835–850.
+doi:10.1145/3552326.3587445
+Liu et al. (2022a)
+Haiyi Liu, Shaoying Liu,
+Chenglong Wen, and W. Eric Wong.
+2022a.
+TBEM: Testing-Based GPU-Memory Consumption
+Estimation for Deep Learning.
+IEEE Access 10
+(2022), 39674–39680.
+https://ieeexplore.ieee.org/document/9755116/
+Liu et al. (2022b)
+Zhuang Liu, Hanzi Mao,
+Chao-Yuan Wu, Christoph Feichtenhofer,
+Trevor Darrell, et al.
+2022b.
+A ConvNet for the 2020s. In
+Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition (CVPR).
+IEEE, 11976–11986.
+doi:10.48550/ARXIV.2201.03545
+NVIDIA Corporation (2024)
+NVIDIA Corporation.
+2024.
+NVML-NVIDIA Management Library.
+https://developer.nvidia.com/management-library-nvml
+NVIDIA Corporation (2025)
+NVIDIA Corporation.
+2025.
+TensorFlow User Guide.
+https://docs.nvidia.com/deeplearning/frameworks/tensorflow-user-guide/index.html
+Paszke et al. (2019)
+Adam Paszke, Sam Gross,
+Francisco Massa, Adam Lerer,
+James Bradbury, et al.
+2019.
+PyTorch: An Imperative Style, High-Performance
+Deep Learning Library. In Proceedings of the
+International Conference on Neural Information Processing Systems (NIPS).
+ACM, 8026–8037.
+https://dl.acm.org/doi/10.5555/3454287.3455008
+Pavlidakis et al. (2024)
+Manos Pavlidakis, Giorgos
+Vasiliadis, Stelios Mavridis, Anargyros
+Argyros, Antony Chazapis, et al.
+2024.
+Guardian: Safe GPU Sharing in Multi-Tenant
+Environments. In Proceedings of the International
+Middleware Conference. ACM,
+313–326.
+doi:10.1145/3652892.3700768
+PyTorch (2023)
+PyTorch. 2023.
+Training with PyTorch.
+http://docs.pytorch.org/tutorials/beginner/introyt/trainingyt.html
+PyTorch (2024a)
+PyTorch.
+2024a.
+CPP API.
+https://pytorch.org/cppdocs
+PyTorch (2024b)
+PyTorch.
+2024b.
+CUDA semantics.
+https://pytorch.org/docs/2.6/notes/cuda.html
+PyTorch (2024c)
+PyTorch.
+2024c.
+GitHub-PyTorch Caching Allocator CPP
+Source Code.
+https://github.com/pytorch/pytorch/blob/release/2.6/c10/cuda/CUDACachingAllocator.cpp
+PyTorch (2024d)
+PyTorch.
+2024d.
+PyTorch Profiler.
+https://pytorch.org/tutorials/recipes/recipes/profiler_recipe.html
+PyTorch (2024e)
+PyTorch.
+2024e.
+Understanding CUDA Memory Usage.
+https://pytorch.org/docs/stable/torch_cuda_memory.html
+PyTorch (2025)
+PyTorch.
+2025.
+Docker Hub-pytorch/pytorch.
+https://hub.docker.com/r/pytorch/pytorch
+Radford et al. (2019)
+Alec Radford, Jeffrey Wu,
+Rewon Child, David Luan,
+Dario Amodei, et al.
+2019.
+Language models are unsupervised multitask
+learners.
+https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
+Radosavovic et al. (2020)
+Ilija Radosavovic,
+Raj Prateek Kosaraju, Ross Girshick,
+Kaiming He, and Piotr Dollar.
+2020.
+Designing Network Design Spaces. In
+Proceedings of the IEEE/CVF Conference on
+Computer Vision and Pattern Recognition (CVPR).
+IEEE, 10425–10433.
+doi:10.1109/CVPR42600.2020.01044
+Raffel et al. (2020)
+Colin Raffel, Noam
+Shazeer, Adam Roberts, Katherine Lee,
+Sharan Narang, et al.
+2020.
+Exploring the limits of transfer learning with a
+unified text-to-text transformer.
+Journal of Machine Learning Research
+21, 140 (2020),
+1–67.
+http://jmlr.org/papers/v21/20-074.html
+Raza (2023)
+Habib Raza.
+2023.
+OpenAI’s plans according to Sam
+Altman.
+https://website-754fwhahs-humanloopml.vercel.app/blog/open_ai_talk
+Rubinstein and Kroese (2017)
+Reuven Y. Rubinstein and
+Dirk P. Kroese. 2017.
+Simulation and the Monte Carlo method
+(third ed.).
+Wiley, Hoboken, New Jersey.
+Ruder (2016)
+Sebastian Ruder.
+2016.
+An overview of gradient descent optimization
+algorithms.
+arXiv:1609.04747 [cs.LG]
+https://arxiv.org/abs/1609.04747
+Ryan (2023)
+O’Connor Ryan.
+2023.
+PyTorch vs TensorFlow in 2023.
+https://www.assemblyai.com/blog/pytorch-vs-tensorflow-in-2023
+Sandler et al. (2018)
+Mark Sandler, Andrew
+Howard, Menglong Zhu, Andrey Zhmoginov,
+and Liang-Chieh Chen. 2018.
+MobileNetV2: Inverted Residuals and Linear
+Bottlenecks. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition.
+IEEE, 4510–4520.
+doi:10.1109/CVPR.2018.00474
+Sanh et al. (2019)
+Victor Sanh, Lysandre
+Debut, Julien Chaumond, and Thomas
+Wolf. 2019.
+DistilBERT, a distilled version of BERT: smaller,
+faster, cheaper and lighter.
+arXiv:1910.01108 [cs.CL]
+https://arxiv.org/abs/1910.01108
+Scheffe (1999)
+Henry Scheffe.
+1999.
+The Analysis of Variance.
+Wiley-Interscience, New York.
+Simonyan and Zisserman (2014)
+Karen Simonyan and
+Andrew Zisserman. 2014.
+Very Deep Convolutional Networks for Large-Scale
+Image Recognition. In Proceedings of the
+International Conference on Learning Representations (ICLR).
+doi:10.48550/ARXIV.1409.1556
+Talha et al. (2023)
+Mian Muhammad Talha,
+Hikmat Ullah Khan, Saqib Iqbal,
+Mohammed Alghobiri, Tassawar Iqbal,
+et al. 2023.
+Deep learning in news recommender systems: A
+comprehensive survey, challenges and future trends.
+Neurocomputing 562
+(December 2023), 126881.
+https://linkinghub.elsevier.com/retrieve/pii/S0925231223010044
+Tan et al. (2019)
+Mingxing Tan, Bo Chen,
+Ruoming Pang, Vijay Vasudevan,
+Mark Sandler, et al.
+2019.
+MnasNet: Platform-Aware Neural Architecture
+Search for Mobile. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition
+(CVPR). IEEE, 2815–2823.
+doi:10.1109/CVPR.2019.00293
+TensorFlow (2025)
+TensorFlow.
+2025.
+TensorFlow GPU-BFC Allocator Source
+Code.
+https://github.com/tensorflow/tensorflow/blob/176771f3116b09076ff0e15c1687050f6c9e799c/tensorflow/core/common_runtime/gpu/gpu_bfc_allocator.h
+Vaswani et al. (2017)
+Ashish Vaswani, Noam
+Shazeer, Niki Parmar, Jakob Uszkoreit,
+Llion Jones, et al.
+2017.
+Attention Is All You Need. In
+Proceedings of the International Conference on
+Neural Information Processing Systems. Curran
+Associates, Inc., 6000–6010.
+doi:10.5555/3295222.3295349
+Wang et al. (2020)
+Sheng-Yu Wang, Oliver
+Wang, Richard Zhang, Andrew Owens, and
+Alexei A. Efros. 2020.
+CNN-Generated Images Are Surprisingly Easy to
+Spot… for Now. In Proceedings of the IEEE/CVF
+Conference on Computer Vision and Pattern Recognition (CVPR).
+8695–8704.
+Weng et al. (2022)
+Qizhen Weng, Wencong
+Xiao, Yinghao Yu, Wei Wang,
+Cheng Wang, et al.
+2022.
+MLaaS in the wild: Workload analysis and
+scheduling in Large-Scale heterogeneous GPU clusters. In
+Proceedings of the USENIX symposium on networked
+systems design and implementation (NSDI 22). USENIX
+Association, 945–960.
+https://www.usenix.org/conference/nsdi22/presentation/weng
+Weng et al. (2023)
+Qizhen Weng, Lingyun
+Yang, Yinghao Yu, Wei Wang,
+Xiaochuan Tang, et al.
+2023.
+Beware of fragmentation: Scheduling GPU-Sharing
+workloads with fragmentation gradient descent. In
+Proceedings of the USENIX annual technical
+conference (ATC 23). USENIX Association,
+995–1008.
+https://www.usenix.org/conference/atc23/presentation/weng
+Xiao et al. (2018)
+Wencong Xiao, Romil
+Bhardwaj, Ramachandran Ramjee, Muthian
+Sivathanu, Nipun Kwatra, et al.
+2018.
+Gandiva: Introspective cluster scheduling for deep
+learning. In Proceedings of the USENIX symposium
+on operating systems design and implementation (OSDI 18).
+USENIX Association, 595–610.
+https://www.usenix.org/conference/osdi18/presentation/xiao
+Xiao et al. (2020)
+Wencong Xiao, Shiru Ren,
+Yong Li, Yang Zhang,
+Pengyang Hou, et al.
+2020.
+AntMan: Dynamic scaling on GPU clusters for
+deep learning. In Proceedings of the USENIX
+symposium on operating systems design and implementation (OSDI).
+USENIX Association, 533–548.
+doi:10.5555/3488766.3488796
+Xiong et al. (2018)
+W. Xiong, L. Wu,
+F. Alleva, J. Droppo, X.
+Huang, et al. 2018.
+The Microsoft 2017 Conversational Speech
+Recognition System. In Proceedings of the IEEE
+International Conference on Acoustics, Speech and Signal Processing
+(ICASSP). IEEE, 5934–5938.
+doi:10.1109/ICASSP.2018.8461870
+Yang et al. (2025)
+An Yang, Anfeng Li,
+Baosong Yang, Beichen Zhang,
+Binyuan Hui, et al.
+2025.
+Qwen3 Technical Report.
+arXiv:2505.09388 [cs.CL]
+https://arxiv.org/abs/2505.09388
+Yeung et al. (2022)
+Gingfung Yeung, Damian
+Borowiec, Renyu Yang, Adrian Friday,
+Richard Harper, et al.
+2022.
+Horus: Interference-Aware and Prediction-Based
+Scheduling in Deep Learning Systems.
+IEEE Transactions on Parallel and
+Distributed Systems 33, 1
+(January 2022), 88–100.
+https://ieeexplore.ieee.org/document/9428512/
+Yu and Chowdhury (2020)
+Peifeng Yu and Mosharaf
+Chowdhury. 2020.
+Fine-grained GPU Sharing Primitives for Deep
+Learning Applications. In Proceedings of the
+Machine Learning and Systems. ACM,
+98–111.
+https://proceedings.mlsys.org/paper_files/paper/2020/file/d9cd83bc91b8c36a0c7c0fcca59228f2-Paper.pdf
+Zhang et al. (2018)
+Kai Zhang, Bingsheng He,
+Jiayu Hu, Zeke Wang, Bei
+Hua, et al. 2018.
+G-NET: Effective GPU sharing in NFV systems.
+In Proceedings of the USENIX symposium on
+networked systems design and implementation (NSDI 18).
+USENIX Association, 187–200.
+https://www.usenix.org/conference/nsdi18/presentation/zhang-kai
+Zhang et al. (2020)
+Ru Zhang, Wencong Xiao,
+Hongyu Zhang, Yu Liu,
+Haoxiang Lin, et al.
+2020.
+An empirical study on program failures of deep
+learning jobs. In Proceedings of the ACM/IEEE
+International Conference on Software Engineering.
+ACM, 1159–1170.
+doi:10.1145/3377811.3380362
+Zhang et al. (2022)
+Susan Zhang, Stephen
+Roller, Naman Goyal, Mikel Artetxe,
+Moya Chen, et al.
+2022.
+OPT: Open Pre-trained Transformer Language Models.
+arXiv:2205.01068 [cs.CL]
+https://arxiv.org/abs/2205.01068
+Zhang et al. (2024)
+Xinyi Zhang, Hanyu Zhao,
+Wencong Xiao, Xianyan Jia,
+Fei Xu, et al. 2024.
+Rubick: Exploiting Job Reconfigurability for Deep
+Learning Cluster Scheduling.
+arXiv:2408.08586 [cs.DC]
+https://arxiv.org/abs/2408.08586
+Zhang et al. (2023)
+Ziyu Zhang, Yehia
+Elkhatib, and Abdessalam Elhabbash.
+2023.
+NLP-based Generation of Ontological System
+Descriptions for Composition of Smart Home Devices. In
+International Conference on Web Services (ICWS).
+IEEE.
+doi:10.1109/ICWS60048.2023.00055
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

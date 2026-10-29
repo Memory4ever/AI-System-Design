@@ -1,0 +1,768 @@
+CORE EXACTV1
+  3  LASAGNA: A Compositional Framework for RAG
+  lasagna  is an open-source framework for
+evaluating new RAG components inside a complete modern pipeline.
+A researcher proposing a new reranker, chunker, or agentic loop today
+must either compare against a stripped-down baseline that does not
+reflect a modern pipeline, or reimplement the surrounding stack. The
+first biases the conclusion by mixing implementation differences
+with algorithmic ones; the second is prohibitively expensive and
+rarely attempted.  lasagna  provides a configurable
+end-to-end pipeline ( Fig. 1a ) with a fixed
+interface per stage that the framework enforces, so a new component
+drops into one stage and is measured against the same surrounding
+stack used by every reported configuration (full code patterns in
+  Sections   H.2.2  ,   H.2.3   and   H.2.4  ).
+The workflow spans nine processing stages: document processing,
+chunking, index-time enrichment, embedding and indexing, query
+augmentation, retrieval, reranking, context compression, and answer
+generation with optional agentic verification.
+Every pipeline component is a subclass of a typed abstract base class:
+eight component types are supported ( embedder ,  chunker ,
+ reranker ,  retriever ,  document_processor ,
+ query_enhancer ,  agentic_pipeline , and  generator ), each
+stage’s inputs and outputs are typed  dataclass  contracts, and
+behavioral tests check that swapping one implementation does not mutate
+a neighboring stage’s state. A single
+ @registry.register("<stage>", "<name>")  decorator suffices
+to make a new component discoverable at YAML-config time.
+The framework ships with 53 built-in components, the 30 methods across the eight factorial
+dimensions (  Table   10  ; full catalog in   Appendix   K  ),
+six vector backends (Milvus, Pinecone, Qdrant, Weaviate, pgvector,
+OpenSearch), and adapters for the eight benchmarks used here (five
+BEIR retrieval sets and three long-form QA sets;
+  Section   B.2  ). Five automated isolation tests
+(  Section   H.1  ) check that toggling one component does not
+silently change another, including that two sessions with opposite
+settings each keep their own configuration; this supports attributing
+the interaction estimates in   Section   5   to the components we
+vary rather than to cross-stage leakage. A new component becomes a publishable comparison
+in three steps (  Fig.   2  ): register with a decorator,
+declare a factorial sweep in YAML, and run end-to-end to receive a
+paired statistical test against the same surrounding stack that
+produced every reported number. The complete study, factorial plus
+138 non-factorial ablations plus the 5K–200K scaling sweep, cost
+approximately $5,200 in cloud compute and 310 wall-clock hours
+(  Section   A.7  ).
+             1        
+  Register component
+   ⬇ 
+  @registry  .  register  ( 
+        "reranker"  ,     "my_rr"  ) 
+  class     MyReranker  (  BaseReranker  ): 
+      def     rerank  (  self  ,     q  ,     docs  , 
+                 top_k  =5): 
+        return     rank  (  q  ,  docs  )[:  top_k  ] 
+     →  \bm{\rightarrow}     
+             2        
+  Declare factorial sweep
+   ⬇  
+  pipeline  : 
+      base_profile  :     standard 
+      rerankers  :     [  my_rr  ,     colbert  ] 
+  benchmarks  : 
+      [  beir  /  nfcorpus  ,     beir  /  fiqa  ] 
+  n_runs  :     3 
+      →  \bm{\rightarrow}     
+             3        
+  Run end-to-end
+   ⬇  
+  $     lasagna     benchmark     \ 
+        experiment     my_rr  .  yaml 
+  [  INFO  ]     ingesting     cached     corpus 
+  [  INFO  ]     93     queries     x     3     seeds 
+  [  INFO  ]     paired     sign  -  flip  ... 
+  Result      ∙  \bullet     NDCG@10 :  my_rr = 0.487   vs.  colbert = 0.461
+    ∙  \bullet    paired sign-flip,     n  =  93   n{=}93   ,      𝒑  =  0.031   \bm{p=0.031}     
+  Figure 2:   lasagna  research workflow: register a component,
+declare a factorial sweep in YAML, and run end-to-end for a paired
+statistical test. 
+  4  Experimental Design
+ Notation.
+ A  dimension  is one of the eight experimental factors
+(  Table   10  );  default_standard  is the
+framework’s stock RAG pipeline (a simple, lowest-cost setting on
+each dimension) that serves as the starting baseline for our
+experiments; a  profile  is one of the four operational RAG
+compositions we distill from our factorial and ablation sweeps as
+the best-observed configurations targeting distinct points on the
+retrieval-faithfulness-latency envelope ( speed ,
+ standard ,  balanced ,  max-reliable ; full
+specifications in   Section   I.1  ); a  track 
+is one of the two evaluation surfaces (retrieval or end-to-end). We evaluate on both tracks
+because retrieval quality (whether the right documents are
+retrieved) and answer faithfulness (whether the generated answer
+is grounded in the retrieved context) measure distinct properties
+of a RAG pipeline, and different applications weight them
+differently. We report the joint quality-latency envelope as a
+hypervolume      HV  ⁡   (   L  ref   )    =    NDCG  ​  @  ​  10   ×  Faith  ×   max  ⁡   (  0  ,   1  −   latency  /   L  ref     )      \mathrm{HV}(L_{\mathrm{ref}})=\mathrm{NDCG@10}\times\mathrm{Faith}\times\max(0,1-\mathrm{latency}/L_{\mathrm{ref}})   
+  ( Zitzler et al., 2003 )  at      L  ref   =  30   L_{\mathrm{ref}}{=}30    s (a
+fixed response-time reference;   Table   2  ); HV values under
+other fixed references are in   Table   39  . We
+report marginal effect sizes as     η  2   \eta^{2}   ; larger values indicate
+stronger associations with variation in the metric (full statistics
+in   Sections   D.2   and   D.11  ).
+ Factorial design.
+ The configuration space spans eight
+experimental dimensions, with 2–5 levels each (  Fig.   1  b,
+  Table   10  ). The full factorial of
+     4  ×  4  ×  4  ×  3  ×  5  ×  4  ×  2  ×  4   =  30,720   4{\times}4{\times}4{\times}3{\times}5{\times}4{\times}2{\times}4=30{,}720   
+configurations would exceed    ∼  \sim   40,000 GPU-hours and
+   ∼  \sim   $600,000 in LLM API costs (extrapolating from the executed
+167-configuration budget of 247 GPU-hours and $5,200;
+  Section   A.7  ), roughly two orders of magnitude beyond our
+resources, so we draw a 242-run D-optimal subset via Fedorov
+coordinate exchange  ( Fedorov et al., 1972 ) , sized to keep all
+main effects and all 28 dimension-pair interactions estimable
+under our budget. Of the 242 planned runs, 167 were executed: 63
+GraphRAG-enriched runs were dropped after an isolated ablation
+showed no measurable NDCG@10 change despite the     ∼  2  ×   {\sim}2\times   
+latency the enrichment added
+(  Table   11  ), and 12 failed on timeout limits.
+Design-matrix construction, aliasing diagnostics, and the
+identifiability audit for the pre-declared joint 28-two-way test
+appear in   Sections   A.4  ,   A.5   and   D.3  .
+Each dimension uses a simple, lowest-cost baseline; pre-registration
+deviations appear in   Table   12  .
+ A unified multi-domain corpus, two evaluation tracks.
+ Production RAG deployments operate against heterogeneous knowledge
+bases where a single retriever must disambiguate biomedical,
+financial, scientific, argumentative, and multi-hop queries from one
+shared vector store. Per-benchmark evaluation (the
+BEIR default;   Thakur et al., 2021  ) under-tests this cross-domain
+distractor pressure. We therefore  unify  our eight evaluation
+benchmarks into one corpus: five BEIR sets cover retrieval (NFCorpus,
+  Boteva et al., 2016  ; FiQA,   Maia et al., 2018  ; SciFact,
+  Wadden et al., 2020  ; ArguAna,   Wachsmuth et al., 2018  ;
+HotpotQA,   Yang et al., 2018  ) and three QA sets cover generation
+(SQuAD v2,   Rajpurkar et al., 2018  ; MuSiQue,
+  Trivedi et al., 2022  ), yielding 149 stratified queries
+per configuration (  Sections   B.2  ,   B.1  ,   17  ,   16   and   15  ). Each
+configuration is evaluated on two tracks:  retrieval  (BEIR
+qrels over 5,132 documents, 93 queries) and  end-to-end
+generation  (the same corpus augmented with gold passages, 5,566
+documents, 56 queries). Beyond the 167-run factorial, we
+additionally ran 138 non-factorial ablation configurations across 24
+targeted experiments spanning rerankers, embeddings, chunkers, query
+augmentation, and the number of agentic verification iterations
+(  Appendix   F  ).
+Together with the corpus-scaling sweep (   5  5   K–   200  200   K), the study
+records approximately 358,215 individual query evaluations,
+including repeated RAGAS evaluation tasks for the same queries
+(  Section   A.1  ).
+ Metrics.
+ End-to-end generation runs report faithfulness and answer relevance
+(RAGAS v0.4  ( Es et al., 2024 )  judged by GPT-5.1);
+NDCG@10, exact match, token-level F1, and p50/p95 latency and
+$/query; GPT-5.1 also generates answers for all configurations.
+NDCG@10 follows the BEIR convention  ( Thakur et al., 2021 ) : retrieved
+chunks are de-duplicated by parent document ID before scoring, so the
+metric matches the document-level qrel grain.
+A two-annotator human evaluation validates RAGAS faithfulness
+(  Sections   C.4  ,   C.5   and   29  ), and a two-judge
+sensitivity analysis (GPT-5.1 vs. Claude Sonnet 4.5) shows that
+judge choice shifts absolute faithfulness but preserves profile
+ranking, so we treat single-judge point estimates as approximate
+and rely on ordinal comparisons for all headline claims
+(  Section   F.7  ). A third-judge robustness check
+asks Claude Opus 4.7 to score 220 question-answer-context examples
+using the same scoring instructions (  Section   F.8  ).
+Its moderate agreement with the primary judge (Pearson     r  =  0.44   r{=}0.44   ,
+Cohen’s     κ  =  0.35   \kappa{=}0.35   ) supports the same conclusion: relative trends
+persist, although exact faithfulness scores depend on the judge.
+Metric definitions and judge-bias mitigations in
+  Section   C.1  .
+ Pre-declared hypotheses.
+ Most published RAG ablations tune one component at a time on a
+single benchmark at       ≤  50   \leq 50   K corpus, and report the resulting gain
+as a recommended configuration. We pre-declared  ( van Miltenburg et al., 2021 ;  Forde & Paganini, 2019 )  three hypotheses
+that together test whether this methodology is sound, by asking
+whether RAG pipelines can be designed compositionally:
+ H1  tests  additivity  (the assumption behind isolated
+single-component ablations),  H2  tests  profile
+generality  (the assumption that a single balanced recipe deploys
+across targets), and  H3  tests  scale invariance  (the
+assumption that rankings measured on small corpora persist at larger
+corpus scales). The full pre-registration (operational definitions,
+statistical thresholds, exclusion criteria, post-hoc corrections) is
+reproduced in   Section   A.2  .
+   H1   
+  Components do not  necessarily  combine additively. 
+H1 tests whether two-way interactions among the eight experimental
+dimensions explain at least     20  %   20\%    of faithfulness variance. If they
+do, gains measured in isolation cannot be assumed to persist when
+components are combined.
+   H2   
+  A single RAG composition can span multiple deployment targets. 
+RAG designs face a Pareto tradeoff: retrieval quality,
+faithfulness, and response time cannot be maximized jointly,
+so practitioners typically re-run configuration search per
+deployment. H2 asks whether an intermediate RAG composition
+sweeps a wider quality / latency / cost hypervolume than
+adding more advanced components does, on a majority of
+datasets, covering enough of the Pareto surface that one
+published recipe serves multiple targets. Rejecting H2 means
+each deployment must hand-tune its own operating point
+(formalism and correction:   Section   A.2  ).
+   H3   
+  Composition rankings shift with corpus scale. 
+Most RAG ablations in the literature run at 5K to 50K
+documents, but production deployments often serve corpora
+an order of magnitude larger. H3 asks whether the ranking of
+RAG compositions at 5K matches their ranking at 200K on the
+same corpus; if it does not, small-corpus rankings do not
+transfer across scale, and design decisions measured at one
+scale must be revalidated at the target scale. Confirming
+H3 means small-corpus benchmarks are methodologically suspect
+as scale-invariant selectors of RAG designs; rejecting it
+validates them as predictive across the scales tested
+(per-composition log-linear fits, slope-range threshold,
+bootstrap CIs, and Kendall’s    τ  \tau    rank-flip test in
+  Section   A.2  ).
+  5  Results
+ H1: the benefit of a RAG technique depends on the complete RAG pipeline and the target metric.
+ Across the factorial and targeted tests, some techniques reinforce
+one another, some add roughly as expected, and others overlap or
+interfere (  Fig.   3  ). Thus, improvements measured by changing
+one pipeline stage at a time do not reliably add up in a complete RAG
+pipeline. We quantify this by comparing the gain predicted from
+separately measured improvements with the gain the combined pipeline
+actually delivers. This needs only the configurations the study already
+runs, whereas estimating all    28  28    pairwise interactions directly requires
+   232  232    parameters, more than a design of this size can support
+(  Section   D.3  ). The three largest separately measured retrieval gains, from
+cross-encoder reranking, disabling MMR, and document-awareness
+prefixes, predict a     +   46.6  %    +46.6\%    lift over the
+ default_standard  baseline
+(NDCG@10       =  0.412   =0.412   ;
+  Table   32  ). On this same split a BM25-only
+retriever scores    0.403  0.403    and a recommended off-the-shelf dense encoder
+   0.436  0.436    (  Table   60  ), so this is a realistic starting
+point, not a weak one. The  balanced  pipeline,
+which combines these techniques, realizes only     +   17.2  %    +17.2\%   , a     63  %   63\%   
+shortfall relative to the three-technique prediction. Including all
+five separately positive retrieval techniques raises the shortfall to
+    72  %   72\%    (  Fig.   9  ); across 17 tested combinations, it
+ranges from     7  %   7\%    to     72  %   72\%   , with a median of     41  %   41\%   
+(  Sections   D.14   and   D.12  ). The ablations suggest partial
+functional overlap: reranking already provides some of the filtering
+benefit obtained by disabling MMR, leaving less room for the two
+techniques to help when combined. The target metric matters as well:
+embedding, enrichment, and reranking dominate the retrieval-quality
+metric, whereas query augmentation and agentic gating dominate the
+answer-faithfulness metric, which measures whether generated claims
+are supported by the retrieved context. Across matched pipeline
+configurations, the two metrics are essentially unrelated
+(  Fig.   7  ; pooled Pearson     r  =   −  0.01    r=-0.01   ,     p  =  0.91   p=0.91   ):
+    5  %   5\%    of configurations combine high faithfulness with low retrieval
+quality, and     6  %   6\%    show high retrieval quality with low faithfulness.
+The same near-zero relationship appears when each benchmark is
+examined separately, removing the concern that the near-zero
+correlation is caused by pooling benchmarks (  Section   D.2  ).
+This indicates that RAG pipeline selection must evaluate both metrics:
+selecting a pipeline based only on the retrieval metric can yield strong
+retrieval but weakly grounded answers, while selecting one based only on
+the faithfulness metric can hide poor retrieval.
+ H1: retrieval quality is most strongly associated with embedding and enrichment.
+ On the retrieval track (  Fig.   3  , upper triangle;     n  =  167   n{=}167   
+configurations), the largest marginal associations are embedding
+(     η  2   =  0.164   \eta^{2}=0.164   ), enrichment (     η  2   =  0.144   \eta^{2}=0.144   ), and reranking
+(     η  2   =  0.090   \eta^{2}=0.090   ). These unadjusted values are used for exploratory
+screening and are not additive because the D-optimal design is
+unbalanced and the effects share variance. Compression and agentic gate
+contribute negligibly (     η  2   <  0.01   \eta^{2}<0.01    each). Two two-way interactions
+survive both Bonferroni and Benjamini–Hochberg FDR correction:
+Embedding    ×  \times    Enrichment (     η  2   =  0.102   \eta^{2}=0.102   ) and
+Embedding    ×  \times    Reranking (     η  2   =  0.110   \eta^{2}=0.110   ). Both survivors
+involve the embedding model. We attribute Embedding    ×  \times    Enrichment
+to representation capacity: stronger embedders can encode added
+context without diluting the original passage. We attribute
+Embedding    ×  \times    Reranking to candidate-set quality: rerankers
+have less room to help when the initial embedding already retrieves
+strong candidates (  Sections   J.3.1   and   J.3.2  ). MMR reduces NDCG@10 by     3.6  %   3.6\%    relative
+on average, opposite its usual benefit on broad, heterogeneous corpora
+(  Table   44  ). We hypothesize that on focused-domain corpora
+passages with high lexical and semantic overlap are often the same
+supporting evidence, so MMR’s diversity penalty demotes them in favor
+of topically distant ones (see   Sections   D.12   and   D.13  ).
+ H1: answer faithfulness depends most on query augmentation and agentic gating.
+ On the faithfulness track (  Fig.   3  , lower triangle), query
+augmentation (     η  2   =  0.224   \eta^{2}=0.224   ) and agentic gating
+(     η  2   =  0.217   \eta^{2}=0.217   ) have the largest marginal associations; embedding
+and enrichment, the strongest retrieval drivers, are negligible on
+faithfulness (     η  2   <  0.02   \eta^{2}<0.02    each). We attribute this contrast to
+pipeline stage: query augmentation changes retrieved evidence, whereas
+agentic gating filters or verifies it before generation. We test how
+these stages compose across all     5  ×  4   5{\times}4    combinations of query
+augmentation and agentic gating (  Section   D.10  ). The
+interaction effect is partial      η  2   =  0.033   \eta^{2}=0.033   ; 10 of 20 combinations
+depart from additivity by at least two percentage points. Under
+Speculative-RAG, decomposition is    4.7  4.7    points above the additive
+prediction, while query expansion is    4.1  4.1    below it.
+ We hypothesize that decomposition  supplies distinct subproblems for
+draft-and-verify, whereas broader expansion can introduce overlapping
+or competing evidence. Thus, isolated gains do not reliably predict
+composition; these stages should be evaluated jointly
+(  Table   42  ).
+  Figure 3:  Main effects and pairwise interactions across eight RAG
+pipeline factors. The upper triangle shows retrieval
+(   167  167    configurations, NDCG@10), the lower triangle faithfulness
+(   122  122    configurations, RAGAS). Darker cells mean stronger effects;
+an interaction cell shows how much one factor’s effect depends on
+another factor’s setting. Color encodes marginal (unadjusted)
+    η  2   \eta^{2}   , the share of variance a factor or interaction explains,
+so the two metrics can be compared descriptively. Embedding and
+enrichment matter most for retrieval, whereas query augmentation
+and agentic gating matter most for faithfulness. Because the
+D-optimal design is unbalanced, values can overlap and should not
+be summed into a total explained variance. 
+ Faithfulness shows a different additivity pattern. A
+one-factor-at-a-time estimate based on BGE-large embeddings,
+hierarchical chunking, hybrid-BM25 retrieval, and Speculative-RAG
+gating predicts a     +   28  %    +28\%    gain over a reference configuration, while
+the best full RAG pipeline improves by     +   32  %    +32\%    over the same reference.
+This suggests that some faithfulness gains may combine approximately
+as measured. We hypothesize that this occurs when techniques act at
+complementary pipeline stages and duplicate less of one another’s function
+(  Table   47  ). Full pairwise results are
+in   Table   33  .
+  H1 (additivity): gains measured one component at a time do not carry over when components are combined, and how much is lost depends on the metric.  
+  Combining components loses most of the predicted retrieval gain and almost
+none of the predicted faithfulness gain. The three strongest
+single-component retrieval improvements predict     +   47  %    +47\%    NDCG@10 and the
+pipeline containing all three realizes     +   17  %    +17\%   ; the same exercise on
+faithfulness predicts     +   28  %    +28\%    and realizes     +   32  %    +32\%   
+(  Section   D.14  ).  
+  Our pre-declared test of H1 was not met, and that outcome fits the same
+split. It asked whether pairwise interactions explain at least     20  %   20\%    of
+the variance in faithfulness, the metric on which components combine
+nearly additively, and they do not (  Section   D.3  ). A
+focused follow-up, pre-specified before it ran, confirms that the
+interaction the broad analysis flagged is real (    p  =  0.007   p=0.007   ) but far below
+that bar (  Sections   D.9   and   D.10  ). New
+components should therefore be evaluated inside representative complete
+pipelines, on both metrics.  
+ H3: composition rankings shift between 5K and 200K documents.
+ We extend the 5,132-document base corpus with scaling increments
+(15K/25K/50K/100K/200K) under the same proportional sampling
+protocol, with no distractor overlapping any evaluation query’s
+relevant set. For 25K–200K, repeated seeded executions resample
+retrieval and generation stochasticity but not corpus composition;
+distractors are sampled from the same five BEIR source domains
+as the base corpus (full protocol in
+  Section   B.3  ). NDCG@10 across six corpus sizes
+separates into two regimes (  Fig.   4(a)  ):
+ speed  and  standard  degrade log-linearly, while
+ balanced  and  max-reliable  are approximately flat.
+The regimes cross between 15K and 25K.  standard  leads at
+the small sizes (5K, 15K);  balanced  leads from 25K onward.
+At 200K,  balanced  exceeds  standard  by     13.7  %   13.7\%   
+relative (    p  =  0.003   p=0.003   ; full per-size table in
+  Section   E.1  ).
+ We attribute the flatter retrieval-NDCG degradation at scale of
+ balanced  to several retrieval-stage additions relative to
+ standard : broader chunk retention, hierarchical document
+partitioning, and post-retrieval merging (full list in
+  Section   I.1  ). Together, these sustain a denser,
+higher-signal top-   k  k    as distractors dilute the pool. The extractive compression and
+document-awareness prefixes that  balanced  additionally enables
+act post-retrieval and pre-generation respectively; they primarily
+support faithfulness rather than the NDCG@10 gap
+(  Section   D.12  ; examples in
+ document awareness  and the
+ 50K crossover ).  speed  degrades
+fastest, which we hypothesize reflects MiniLM-L6’s limited
+discriminative capacity (384-dim) operating without the lexical
+anchoring that BM25 would provide under hybrid retrieval, see
+ example  and
+  Table   23   for results.
+  (a)  Retrieval NDCG@10:  speed  and  standard 
+follow a log-linear decay;  balanced  and
+ max-reliable  are statistically flat. 
+  (b)  Generation faithfulness: all three quality-focused
+profiles peak at 50K, dip at 100K, and recover from 100K to
+200K. 
+  Figure 4:  Scaling behavior vs. corpus size (log scale), four SOTA
+profiles, 3 seeds per size. Dashed: log-linear fit over 5K–200K;
+dotted beyond 200K:  projections, not measurements . In
+ (a) ,  balanced  overtakes  standard 
+between 15K–25K, significant at 200K. 
+ H3: faithfulness and retrieval scale differently.
+ Despite NDCG@10 falling as gold passages dilute among distractors,
+faithfulness does not decline with corpus scale. All three
+quality-focused profiles peak around 50K, dip at 100K, and recover
+from 100K to 200K
+(  Figs.   4(b)   and   22  ).
+We hypothesize that a larger corpus expands information coverage,
+so that even when the gold document falls below the top-   k  k   , other
+documents contain overlapping or paraphrased content sufficient to
+ground a faithful answer; the 100K   →  \to   200K recovery across all
+three profiles is consistent with this mechanism. Full per-profile
+slopes and 1M projections in
+  Tables   23  ,   22  ,   11   and   49  ;
+latency scaling at each corpus size in   Fig.   10  .
+  H3: composition rankings shift between 5K and 200K.  
+  Supported.   standard  leads at 5K and 15K;
+ balanced  leads from 25K through 200K, where it exceeds
+ standard  by     13.7  %   13.7\%    relative (    p  =  0.003   p=0.003   , three seeds).
+The 25K and 100K gaps are directionally consistent but underpowered.
+Small-corpus rankings should therefore be revalidated at the target
+scale (  Tables   48   and   D.5  ).   
+ H2: complete RAG profiles expose a Pareto tradeoff.
+ We evaluate four profiles on a held-out SQuAD v2, MuSiQue, and
+HotpotQA mixture across three seeds (  Table   2  ). No profile
+leads all metrics:  speed  is fastest;  standard ’s
+direct route leads NDCG@10; the agentic  balanced  and
+ max-reliable  profiles use three verification iterations and
+lead faithfulness.
+  Table 2:  End-to-end profile comparison on a SQuAD v2 / MuSiQue /
+HotpotQA mixture over three seeds (GPT-5.1 judge; faithfulness uses
+each profile’s deployment-native answer prompt; per-profile regime
+and joint-HV sensitivity to that choice in
+  Tables   26   and   C.2  ). Mean    ±  \pm    std;
+ bold : column best;  green :
+highest joint retrieval–faithfulness–latency volume.
+     HV  ⁡   (   L  ref   )    =    NDCG  ​  @  ​  10   ×  Faith  ×   max  ⁡   (  0  ,   1  −   latency  /   L  ref     )      \mathrm{HV}(L_{\mathrm{ref}})=\mathrm{NDCG@10}\times\mathrm{Faith}\times\max(0,1-\mathrm{latency}/L_{\mathrm{ref}})     ( Zitzler et al., 2003 ) ,
+with      L  ref   =  30   L_{\mathrm{ref}}=30    s; reference-latency sensitivity is in
+  Table   39  . 
+ Profile 
+ NDCG@10 
+ Faithfulness 
+ Lat. mean (s) 
+ HV (   30  30    s ref) 
+  standard  
+  0.860    ±  \pm    0.003  
+  0.739    ±  \pm    0.016  
+  5.30    ±  \pm    0.05  
+  0.523  
+  balanced  
+ 0.840    ±  \pm    0.003 
+ 0.911    ±  \pm    0.014 
+ 12.25    ±  \pm    3.55 
+ 0.453 
+  max-reliable  
+ 0.804    ±  \pm    0.004 
+  0.916    ±  \pm    0.022  
+ 14.16    ±  \pm    6.44 
+ 0.389 
+  speed  
+ 0.541    ±  \pm    0.000 
+ 0.524    ±  \pm    0.031 
+  0.70    ±  \pm    0.02  
+ 0.277 
+ At the fixed    30  30    s response-time reference,
+ standard  has the highest joint hypervolume (   0.523  0.523   ). Within
+the agentic pair,  balanced  improves NDCG@10 by     4.5  %   4.5\%    and
+response time by     13  %   13\%   , with only a    0.005  0.005    faithfulness difference.
+We attribute part of this tradeoff to the execution route: direct
+generation favors response time, while iterative verification favors
+faithfulness. Thus, additional components can improve one metric
+without improving the complete RAG pipeline, so all three metrics
+should be evaluated jointly.
+  H2 (single-composition generality): no complete RAG profile is best on every metric.  
+  At the fixed    30  30    s reference,  standard  achieves the
+highest joint hypervolume (   0.523  0.523   ;   Table   2  ). The agentic
+profiles trade more response time for faithfulness; among them,
+ balanced  nearly matches  max-reliable ’s
+faithfulness while improving retrieval quality and response time.
+Thus, the best configuration depends on the target metrics, and
+adding components does not guarantee a better pipeline.  
+ Supporting evidence: what helps and what does not.
+ A sweep of 138 configurations across 24 targeted experiments yields
+several practical findings (  Appendix   F  ). Across
+20 configurations, chunker choice spans    0.126  0.126    NDCG@10, a     36  %   36\%   
+relative difference larger than most factorial main effects
+(  Table   55  ). Thus, preprocessing choices
+should also be tested within the complete pipeline. The 2019 MS-MARCO
+MiniLM-L6 cross-encoder  ( Nogueira & Cho, 2019 )  ranks above all
+four recent rerankers tested (  Table   51  ); we
+speculate that its training aligns especially well with our focused
+domains. Matryoshka truncation of BGE-M3 to 768
+dimensions  ( Kusupati et al., 2022 )  reduces vector storage
+and search cost by     25  %   25\%    while improving NDCG@10 by     2.3  %   2.3\%   
+(  Table   52  ). We attribute the gain to the
+Matryoshka training objective, which concentrates useful signal in
+leading dimensions; encoder cost is unchanged because the full vector
+is computed first. On generation, faithfulness
+is highest with hallucination and answer-quality gates disabled:
+gate-triggered refinement can remove supporting evidence, including 14
+of 15 chunks in one multi-hop example
+(  Table   54  ). HyDE raises NDCG@10 by
+    3.1  %   3.1\%    but doubles first-hop latency, reducing the latency-adjusted
+gain to     0.9  %   0.9\%   , so its value depends on the latency budget
+(  Section   I.2  ).
+  6  Conclusion
+ We study how modern RAG techniques compose across pipeline stages,
+metrics, and corpus scales using  lasagna , a stage-isolated
+framework, and    450  450    configurations across eight benchmarks from 5K
+to 200K documents. Gains measured one component at a time do not
+necessarily persist in complete pipelines; retrieval quality and
+answer faithfulness favor different choices; and the best composition
+changes with corpus scale. New techniques should be tested in
+representative complete pipelines, on both metrics, and at the
+intended scale. We release  lasagna  to make such studies
+practical and reproducible, and to establish compositional
+evaluation as the reporting standard for new RAG techniques rather
+than the isolated single-component ablations common today.
+ AI use statement
+ In this work, we used generative AI tools for designing or providing feedback on
+research methodology and experiments, implementing methods, and interpreting
+results. We have not used generative AI tools for generating synthetic data sets,
+developing theoretical models or conceptual frameworks, proposing or refining
+hypotheses, cleaning or reformatting datasets, or translation, and formulating
+mathematical claims or proofs and qualitative or thematic data analysis are not
+applicable to this work. Additionally, we used generative AI tools for creating
+and editing software code and figures, editing the paper to improve readability,
+and formatting references. We have reviewed all AI-assisted
+work: AI-assisted code was reviewed and tested by the authors, analysis results
+were re-derived from the raw result files, and edited text, numbers, and
+citations were checked against the source tables and references. We take
+responsibility for the final content of this work, including text, claims or
+artifacts produced with the aid of generative AI.
+Separately, LLMs are components of the system we study: they generate answers
+and act as RAGAS judges (GPT-5.1, Claude Sonnet 4.5), as documented in the
+Methods and Appendices.
+ Ethics statement
+ LASAGNA is an evaluation framework operating over publicly released
+retrieval benchmarks; no human subjects, personal data, or private
+corpora were used. LLM API calls totalled approximately $5,200 and
+310 wall-clock hours (  Section   A.7  ); we report per-configuration
+cost and latency to enable reproducibility on constrained budgets.
+Because the framework lowers the cost of composing RAG pipelines,
+users deploying it in domain applications requiring corpus-specific
+validation should re-validate our profile candidates on their own
+corpus before deployment. Our headline profile comparisons rest on
+one constructed English multi-domain test bed with       ≤  93   \leq 93   
+retrieval and       ≤  200   \leq 200    generation queries per experiment, so the
+profiles are best interpreted as candidates for further validation,
+not prescriptions.
+ Reproducibility statement
+ The  lasagna  framework code is released at  https://github.com/dolev31/lasagna . The paper-specific artifacts cited by path in the appendices (the D-optimal design matrix, per-configuration profiles, per-query raw scores, and analysis scripts) are not part of that release and are available from the authors on request.
+  Appendices   A  ,   B   and   C   document experimental design
+and pre-registration; the per-experiment provenance manifest (  Table   58  ),
+conformance test verifying stage isolation (  Section   H.1  ), and full compute
+accounting (  Section   A.7  ) support end-to-end reproducibility. The design
+matrix, hypotheses, and decision rules were pre-declared internally and hashed
+(SHA-256) prior to execution; we did not file a third-party timestamped
+pre-registration (OSF/AsPredicted), so the main text says “pre-declared”
+rather than “pre-registered”.
+
+NECESSARY COUNTEREVIDENCE D10
+  D.10  E1 Executed Results
+ We executed the pre-registered     5  ×  4   5{\times}4    focused-confirmatory
+experiment described in   Section   D.9  . This subsection
+reports the executed design (with transparent deviations from the
+pre-analysis plan), the primary hierarchical test, the cell-mean
+geometry, the surviving interaction contrasts, and the verdict on
+H1’s pre-registered magnitude bar.
+ Executed design and deviations from the pre-analysis plan.
+ All 20 cells (Query Augmentation    ∈  \in    {none, HyDE, query-expansion,
+query-decomposition, RAG-Fusion} crossed with Agentic Gate    ∈  \in   
+{none, CRAG, Self-RAG quality gates + refinement,
+Speculative-RAG}) were executed. Faithfulness was scored by a
+single LLM judge (GPT-5.1) under the concise-regen prompt regime
+(see   Tables   26   and   C.2  ). The executed sample is      n  runs   =  3   n_{\text{runs}}=3   
+(three-seed confirmatory read, matching the pre-analysis plan in
+  Section   D.9  ), yielding approximately    2,550  2{,}550    per-sample
+faithfulness observations over    43  43    unique query  sample_id s
+   ×  \times       3  3    seeds (vs. the pre-registered     N  =  12,000   N{=}12{,}000    across
+   200  200    queries    ×  \times       3  3    seeds). We report the query-count
+shortfall as an explicit deviation from plan: seed replication meets
+the pre-registration, but per-configuration query count is reduced
+(rate-limit budget cut,   Appendix   A  ), so the
+magnitude estimate (partial     η  2   \eta^{2}   ) and per-contrast    p  p   -values
+should be read under this reduced query sampling. The pre-registered LRT
+specification, the analysis code, and the executed cell-mean grid
+are recorded under
+ paper/e1_focused_experiment/results/  with SHA-256 manifests
+matching  paper/e1_focused_experiment/preregistration/ , and are available from the authors on request.
+ Primary test (hierarchical LRT).
+ Following the
+pre-analysis plan, we compare the full mixed-effects model
+    𝚏𝚊𝚒𝚝𝚑𝚏𝚞𝚕𝚗𝚎𝚜𝚜  ∼    𝙲  ⁡   (  𝙳𝟻  )    +   𝙲  ⁡   (  𝙳𝟾  )    +   𝙲  ⁡   (  𝙳𝟻  )     :    𝙲  ⁡   (  𝙳𝟾  )    +   (  𝟷  ∣   𝚚𝚞𝚎𝚛𝚢  ​  _  ​  𝚒𝚍   )     \mathtt{faithfulness\sim C(D5)+C(D8)+C(D5)\!:\!C(D8)+(1\mid query\_id)}   
+against the reduced no-interaction model
+    𝚏𝚊𝚒𝚝𝚑𝚏𝚞𝚕𝚗𝚎𝚜𝚜  ∼    𝙲  ⁡   (  𝙳𝟻  )    +   𝙲  ⁡   (  𝙳𝟾  )    +   (  𝟷  ∣   𝚚𝚞𝚎𝚛𝚢  ​  _  ​  𝚒𝚍   )     \mathtt{faithfulness\sim C(D5)+C(D8)+(1\mid query\_id)}   
+(ML fits for the likelihood-ratio test) at     α  =  0.05   \alpha=0.05   . The
+interaction is retained:
+         χ  2   ​   (  12  )    =  27.28   ,   p  =  0.00704   ,    partial   ​   η  2    =  0.033    .   \chi^{2}(12)=27.28,\quad p=0.00704,\quad\text{partial }\eta^{2}=0.033.    
+ The pre-registered decision rule is met on significance
+(    p  <  0.05   p<0.05   ) but  not  on magnitude (partial
+     η  2   =  0.033   \eta^{2}=0.033   , well below the pre-registered      η  2   ≥  0.20   \eta^{2}\geq 0.20   
+Cohen-large bar).
+ Cell-mean geometry.
+   Table   40  
+highlights the extreme cells of the     5  ×  4   5{\times}4    grid; the full grid ( paper/e1_focused_experiment/results/cell_means.csv ) is available from the authors on request. Mean
+faithfulness spans    0.539  0.539    (RAG-Fusion    ×  \times    CRAG, minimum) to
+   0.911  0.911    (none    ×  \times    Self-RAG quality gates, maximum), a range
+of    0.372  0.372   . The minimum sits in the expansion-heavy
+   ×  \times    active-verifier corner and the maximum sits in the
+quiet-query    ×  \times    moderate-verifier corner. These absolute extremes
+motivate the cell-level analysis below, which compares each observed
+combination with its additive prediction.
+  Table 40:  E1 executed cell means: mean faithfulness (GPT-5.1 judge,
+three-seed read,      n  runs   =  3   n_{\text{runs}}=3   ) for the extreme cells of the     5  ×  4   5{\times}4   
+Query Augmentation    ×  \times    Agentic Gate grid. Full grid available from the authors on request ( paper/e1_focused_experiment/results/cell_means.csv ). 
+ Query Augmentation (D5) 
+ Agentic Gate (D8) 
+ Mean faithfulness 
+ none 
+ Self-RAG (quality gates) 
+    0.911  0.911    (grid max) 
+ RAG-Fusion 
+ CRAG 
+    0.539  0.539    (grid min) 
+ Grid range 
+    0.372  0.372    
+ Surviving interaction contrasts.
+   Table   41   reports the interaction
+coefficients from the full mixed-effects fit that survive
+    p  <  0.05   p<0.05    (uncorrected). Coefficients are departures from the
+additive main-effects prediction; positive values indicate that
+the cell exceeds the additive expectation. Three contrasts survive:
+all three involve either D5=none or D8=none, i.e. the surviving
+signal is concentrated in cells where one of the two axes is
+disabled.
+  Table 41:  E1 surviving interaction contrasts (    p  <  0.05   p<0.05   , uncorrected)
+from the full mixed-effects fit. Coefficients are departures from
+the additive main-effects prediction; positive values indicate the
+cell exceeds additive expectation. 
+ D5 level 
+ D8 level 
+ Coefficient 
+    p  p   -value 
+ RAG-Fusion 
+ none 
+     +  0.273   +0.273    
+    0.008  0.008    
+ none 
+ none 
+     +  0.243   +0.243    
+    0.017  0.017    
+ none 
+ Self-RAG (quality gates) 
+     +  0.236   +0.236    
+    0.019  0.019    
+ Verdict on H1’s pre-registered decision rule.
+ The pre-registered decision rule (  Section   D.9  ) treats
+significance and magnitude as separable criteria. On the executed
+E1 read, the null of additivity is rejected at
+    p  =  0.007   p=0.007   , but the observed partial      η  2   =  0.033   \eta^{2}=0.033    is well
+below the pre-registered      η  2   ≥  0.20   \eta^{2}\geq 0.20    Cohen-large bar.
+We therefore report E1 as  confirmed as directional 
+(the interaction between Query Augmentation and the Agentic Gate
+is statistically robust under hierarchical inference) and
+ not confirmed at the pre-registered magnitude  (the
+per-pair interaction on this axis is small, not the Cohen-large
+effect implied by the exploratory      η  2   =  0.201   \eta^{2}=0.201    estimate on the
+same sub-space). Substantively, this refines H1 rather than
+overturning it: composed RAG pipelines do exhibit real interactions
+between stages, but on the specific
+Query Augmentation    ×  \times    Agentic Gate axis those interactions
+are small on top of the additive main effects, and the exploratory
+     η  2   =  0.201   \eta^{2}=0.201    estimate on this sub-space is superseded by the
+confirmatory      η  2   =  0.033   \eta^{2}=0.033   .
+ Caveats specific to this confirmatory read.
+ Two caveats apply, and are echoed in the main paper’s Limitations
+section: (i) query-count shortfall relative to plan
+(   43  43    unique queries    ×  \times       3  3    seeds       ≈  2,550   {\approx}2{,}550   
+per-sample observations, versus the pre-registered    200  200    queries
+   ×  \times       3  3    seeds       =  12,000   {=}12{,}000   ), a deviation driven by GPT-5.1
+rate-limit budget (  Appendix   A  ); seed replication
+itself matches plan; (ii) the E1 grid holds all other six pipeline
+dimensions at Standard-profile defaults, so generalization to other
+stage settings is a scoped rather than universal claim.
+ Cell-level interaction structure (exploratory).
+ While the aggregate D5   ×  \times   D8 interaction is small on the E1 grid,
+cell-level departures from the additive main-effects prediction reveal
+specific compositional patterns that isolated single-component
+ablations cannot see.   Table   42   lists the top
+five antagonistic and top five synergistic cells ranked by
+   |  |   residual   |  |   ; ten of twenty cells deviate from the additive
+prediction by       ≥  0.02   {\geq}0.02    faithfulness, evenly split (five
+antagonistic, five synergistic), with residuals spanning     [    −  0.050   ,   +  0.047    ]   [-0.050,+0.047]   . Two structural patterns are visible: (i) Query
+Decomposition synergizes with the active agentic gates: its two
+largest positive residuals are with CRAG (    +  0.039   +0.039   ) and
+Speculative-RAG (    +  0.047   +0.047   ), but it antagonizes the no-gate condition
+(    −  0.050   -0.050   ), i.e. multi-part queries need an active verifier
+downstream to pay off; (ii) Speculative-RAG antagonizes passive or
+lightly-augmented queries (residuals of     −  0.041   -0.041    with both raw
+queries and Query Expansion) yet synergizes with structured
+decomposition (    +  0.047   +0.047   ), i.e. its parallel draft-and-verify
+mechanism is worth the latency only when the upstream query already
+carries structure. Both patterns are invisible to single-factor
+ablations: a practitioner who tunes D5 and D8 independently would
+predict the additive main-effects surface and miss up to
+    ±  5   \pm 5   -point cell-level swings against that prediction. This is the
+compositional evidence that motivates factorial testbeds like
+ lasagna  even when the aggregate interaction term is small.
+The seven cells whose D8 level lies in {CRAG, Self-RAG,
+Speculative-RAG} were re-scored by the pairwise-BTL follow-up in
+  Section   C.5  , which on a subsample deliberately biased
+toward small RAGAS deltas returned     79  %   79\%    ties and Spearman     ρ  =   −  0.36    \rho=-0.36    between BTL and RAGAS configuration ranks; those seven
+cell-level directions should therefore be read as protocol-dependent
+descriptive patterns rather than judge-invariant orderings. The
+five D8   =  =    none  cells of the     5  ×  4   5{\times}4    grid, including
+the Query-Decomposition    ×  \times    none residual of     −  0.050   -0.050    named
+above, sit outside the BTL sample and are not certified by BTL
+either way. The within-agentic three-level D8 ordering
+(Speculative-RAG    >  >    Self-RAG    >  >    CRAG) that BTL directly probes via
+item (ii) of   Section   C.5   is protocol-robust; the
+four-level D8 marginal that includes  none 
+(  Section   D.2  ) is not independently corroborated by BTL
+because the BTL sample contains no D8   =  =    none  configurations.
+  Table 42:  E1 cell-level interaction residuals for the     5  ×  4   5{\times}4   
+Query Augmentation    ×  \times    Agentic Gate grid, computed on the
+three-seed E1 replication (     n  runs   =  3   n_{\text{runs}}=3   ): departure of the
+observed cell mean from the additive main-effects prediction
+(observed    −  -    predicted). Positive    =  =    synergy (cell exceeds
+additive expectation); negative    =  =    antagonism. Top 5 of each
+direction shown; ten of twenty cells deviate by       ≥  0.02   {\geq}0.02   
+faithfulness. Residual range     [    −  0.050   ,   +  0.047    ]   [-0.050,+0.047]   ; observed cell-mean
+range    0.200  0.200    vs. additive-predicted cell-mean range    0.187  0.187   
+(interactions add       ∼   7  %    {\sim}7\%    extra cell-level spread on top of the
+additive main-effects surface). 
+ D5 (Query Augmentation) 
+ D8 (Agentic Gate) 
+ Residual 
+ Direction 
+ Query Decomposition 
+ none 
+     −  0.050   -0.050    
+ antagonism 
+ none 
+ Speculative-RAG 
+     −  0.041   -0.041    
+ antagonism 
+ Query Expansion 
+ Speculative-RAG 
+     −  0.041   -0.041    
+ antagonism 
+ Query Decomposition 
+ Self-RAG (quality gates) 
+     −  0.036   -0.036    
+ antagonism 
+ HyDE 
+ CRAG 
+     −  0.027   -0.027    
+ antagonism 
+ Query Decomposition 
+ Speculative-RAG 
+     +  0.047   +0.047    
+ synergy 
+ Query Decomposition 
+ CRAG 
+     +  0.039   +0.039    
+ synergy 
+ Query Expansion 
+ none 
+     +  0.034   +0.034    
+ synergy 
+ HyDE 
+ Speculative-RAG 
+     +  0.025   +0.025    
+ synergy 
+ none 
+ Self-RAG (quality gates) 
+     +  0.022   +0.022    
+ synergy 
+

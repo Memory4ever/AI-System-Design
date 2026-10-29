@@ -1,0 +1,1180 @@
+Parallel Sampling from Masked Diffusion Models via Conditional Independence Testing
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+Our Contribution.
+2 Background on Masked Diffusion Models
+3 Method
+3.1 Contextual Independence
+3.2 Efficient Subset Discovery
+3.3 Confidence Alignment and Implementation Details
+3.4 Algorithmic Properties and Independence Stability
+4 Experiments
+4.1 Alignment Benchmarks
+4.2 Short-answer Benchmarks
+4.3 PUNT Sampler Error Analysis
+5 Related work
+6 Conclusion and Future Work
+Acknowledgments
+References
+A Organisation of Appendix
+B Independence Stability
+Attention-Based Independence.
+Stability of Unmasked Tokens.
+Why Independence Stability Holds.
+Empirical Validation
+C Implementation and Experiments
+C.1 Experimental Setup
+Negative Entropy
+Top Probability
+Top Probability Margin
+Positional Schedule
+C.2 Implementation Details
+C.3 Results and Analysis
+C.4 Masked Diffusion Models for Proteins
+C.4.1 Experimental Setup
+C.4.2 Evaluation Metrics
+Computational Efficiency:
+Structural Validity:
+C.4.3 Results and Analysis
+D Denoising Process
+License: CC BY 4.0
+arXiv:2510.21961v1 [cs.LG] 24 Oct 2025
+Parallel Sampling from Masked Diffusion Models via Conditional Independence Testing
+Iskander Azangulov
+††thanks: This research was performed while the author was an intern at Microsoft Research Cambridge.
+Affiliation: Department of Statistics
+Affiliation: University of Oxford
+Email: iskander.azangulov@spc.ox.ac.uk
+Teodora Pandeva
+Affiliation: Microsoft Research, Cambridge
+Email: t-tepandeva@microsoft.com
+Niranjani Prasad
+Affiliation: Microsoft Research, Cambridge
+Email: Niranjani.Prasad@microsoft.com
+Javier Zazo
+Affiliation: Microsoft Research, Cambridge
+Email: javierzazo@microsoft.com@microsoft.com
+Sushrut Karmalkar
+Affiliation: Microsoft Research, Cambridge
+Email: skarmalkar@microsoft.com
+Abstract
+Masked diffusion models (MDMs) offer a compelling alternative
+to autoregressive models (ARMs) for discrete text generation
+because they enable parallel token sampling, rather than sequential,
+left-to-right generation.
+This means potentially much faster inference.
+However, effective parallel sampling faces two competing requirements:
+(i) simultaneously updated tokens must be conditionally independent, and
+(ii) updates should prioritise high-confidence predictions.
+These goals conflict because high-confidence predictions often cluster
+and depend on each other, opportunities for parallel updates.
+We present PUNT, a model-agnostic sampler that reconciles this trade-off.
+Our method identifies token dependencies and removes
+lower-confidence tokens from conflicting groups.
+This produces sets of indices for unmasking that satisfy both independence and
+confidence criteria. Our approach ensures improved parallel unmasking
+through approximate conditional independence testing.
+Our experiments show that PUNT delivers
+a superior trade-off between accuracy and compute when compared to other strong training-free baselines,
+especially for generation of longer sequences. On the IFEval benchmark, it achieves up to 16% higher accuracy over baseline methods,
+including sequential generation (one-by-one).
+These gains hold across different values of hyperparameters, mitigating the need for brittle hyperparameter tuning.
+Moreover, we observe that PUNT induces an emergent hierarchical generation strategy,
+where the model first establishes high-level paragraph structure before local refinement, suggesting a planning-like generation process that contributes to strong alignment performance.
+1 Introduction
+The widespread deployment of Large Language Models (LLMs) has created massive computational workloads,
+consuming significant datacenter resources and electricity, thereby incurring substantial operational costs.
+A primary driver of this inefficiency is inference speed, which is bottlenecked by the sequential,
+left-to-right generation process inherent in standard autoregressive models.
+To overcome this, alternative methods have been developed to enable multiple tokens to be generated simultaneously.
+Among approaches with the potential for parallel decoding,
+Masked Diffusion Models (MDMs)
+have emerged as a particularly promising framework
+(Austin et al.,, 2023; Lou et al.,, 2024; Nie et al., 2025b, ).
+Unlike autoregressive models,
+MDMs iteratively refine masked sequences by predicting
+subsets of positions simultaneously, enabling parallel decoding.
+However, determining which tokens to unmask in parallel
+without degradation in quality remains challenging.
+Various inference strategies have been proposed to accelerate MDMs,
+including
+confidence-based token selection
+(Sahoo et al.,, 2024; Patel et al.,, 2025),
+structured unmasking patterns
+(Luxembourg et al.,, 2025; Arriola et al.,, 2025),
+remasking
+(Wang et al.,, 2025),
+and distillation (Zhu et al., 2025b, ).
+However, these approaches share a critical limitation:
+they do not explicitly test for inter-token interference during parallel decoding.
+Structured patterns impose rigid, data-agnostic schedules that
+ignore sequence-specific dependencies, while
+remasking and distillation either add computational overhead or require expensive retraining.
+Our Contribution.
+We propose a different approach to parallel decoding based on contextual independence
+—testing whether tokens can be decoded in parallel by checking
+for independence at the sampled point,
+rather than for all possible outcomes.
+Unlike standard conditional independence,
+which requires integrating over all possible outcomes
+(which is computationally prohibitive for large token spaces),
+contextual independence provides
+the part that matters at the current decoding step.
+To find the contextually independent subsets,
+we propose PUNT (Parallel Unmasking with Non-influence Tests),
+a training-free procedure that employs a divide-and-conquer strategy.
+Our algorithm selects “anchor” subsets and tests entire “candidate”
+groups for dependence in batch.
+By carefully designing splits,
+PUNT certifies a large block of tokens for parallel generation using
+only O⁡(log⁡m)O(\log m) model calls per step (compared with mm for fully sequential unmasking) where mm is the number of masked tokens.
+PUNT enjoys the following advantages:
+first,
+PUNT is training-free and requires no model fine-tuning or distillation.
+Second,
+unlike rigid structured patterns or confidence-based approaches,
+PUNT dynamically adapts to sequence-specific dependencies.
+For instance, we see that it exhibits an emergent hierarchical generation strategy, where
+the model first establishes high-level paragraph structure before refining the details.
+Third,
+for long-form text generation on alignment benchmarks as well as de novo protein generation tasks,
+PUNT outperforms other standard baselines and quickly reaches
+its maximum quality with very few forward passes when compared to
+other algorithms, resulting in a stable Pareto frontier over the number of forward evaluations of the MDM.
+Organization.
+Section 2 introduces masked diffusion models and formalizes the parallel decoding problem.
+Section 3 presents our main algorithmic contribution,
+Section 4 presents empirical evaluation, and
+Section 5 discusses related work.
+Finally, Section 6 discusses implications and future directions.
+2 Background on Masked Diffusion Models
+In this section, we review the fundamentals of masked diffusion models and establish the notation used throughout this paper.
+Notation.
+We denote vectors with bold lowercase (e.g., 𝐱\mathbf{x})
+and scalars with regular lowercase (e.g., yy);
+random variables use uppercase (e.g., X,𝐘X,\mathbf{Y})
+with corresponding lowercase for their realizations (e.g., x,𝐲x,\mathbf{y}).
+We will also use uppercase letters to denote sets and tensors, when it is clear from context.
+Let L=[ℓ]:={1,…,ℓ}L=[\ell]:=\left\{1,\ldots,\ell\right\} denote integers up to ℓ\ell.
+For I⊆LI\subseteq L, −I:=L∖I-I:=L\setminus I is its complement,
+and 𝐱I={xi∣i∈I}\mathbf{x}^{I}=\{x^{i}\mid i\in I\} represents the indexed subset of sequence
+𝐱=(x1,…,xℓ)\mathbf{x}=(x^{1},\ldots,x^{\ell}).
+With vocabulary VV, we consider discrete state space VLV^{L}.
+For random sequence 𝐗=(X1,…,Xℓ)\mathbf{X}=(X^{1},\dots,X^{\ell}), we write
+p⁡(𝐱):=𝑷⁡(𝐗=𝐱)p(\mathbf{x}):={\bm{P}}(\mathbf{X}=\mathbf{x}) for outcome
+𝐱∈VL\mathbf{x}\in V^{L}, and pj​(⋅)p^{j}(\cdot) for the marginal at position jj.
+Extending to VMASK=V∪{MASK}V_{\mathrm{MASK}}=V\cup\{\mathrm{MASK}\},
+a token xix^{i} is masked if xi=MASKx^{i}=\mathrm{MASK}.
+For any sequence, M=M⁡(𝐱):={i∣xi=MASK}M=M(\mathbf{x}):=\{i\mid x^{i}=\mathrm{MASK}\} denotes masked indices,
+with unmasked indices denoted −M-M.
+Conditional distribution at position jj given observed tokens 𝐱I\mathbf{x}^{I}
+is written as pj(⋅∣𝐱I)p^{j}(\cdot\mid\mathbf{x}^{I}),
+shorthand for 𝑷(Xj=⋅∣𝐗I=𝐱I){\bm{P}}(X^{j}=\cdot\mid\mathbf{X}^{I}=\mathbf{x}^{I}).
+For a sequence with masked indices MM, 𝐱−M\mathbf{x}^{-M} denotes unmasked tokens.
+In the iterative generation process, 𝐱t\mathbf{x}_{t} represents the sequence at step tt.
+and Mt:=M⁡(𝐱t)M_{t}:=M(\mathbf{x}_{t}) denotes masked indices at step tt.
+Masked Language Modeling.
+Masked language modeling trains neural networks to predict missing tokens from context.
+Given a sequence 𝐱∈VMASKℓ\mathbf{x}\in V_{\mathrm{MASK}}^{\ell} with masked positions MM,
+the model parameterized by θ\theta learns conditional distributions:
+pθi(⋅∣𝐱−M)≈pi(⋅∣𝐱−M),∀i∈M.p_{\theta}^{i}(\cdot\mid\mathbf{x}^{-M})\approx p^{i}(\cdot\mid\mathbf{x}^{-M}),\quad\forall i\in M.
+During training,
+a clean sample (i.e. without any masked coordinates)
+𝐱clean∼p⁡(⋅)\mathbf{x}_{\text{clean}}\sim p(\cdot) is drawn from the true data distribution.
+A random subset of its tokens M⊆LM\subseteq L is then selected to be masked,
+creating the corrupted sequence 𝐱\mathbf{x}
+where 𝐱−M=𝐱clean−M\mathbf{x}^{-M}=\mathbf{x}_{\text{clean}}^{-M}
+and 𝐱M\mathbf{x}^{M} consists of MASK\mathrm{MASK} tokens.
+The model parameters θ\theta are optimized to maximize the conditional
+log-likelihood of the original tokens at masked positions:
+ℒ⁡(θ)=𝔼𝐱clean,M​[∑i∈Mlog⁡pθi​(xcleani∣𝐱−M)].\mathcal{L}(\theta)=\mathbb{E}_{\mathbf{x}_{\text{clean}},M}\left[\sum_{i\in M}\log p_{\theta}^{i}(x^{i}_{\text{clean}}\mid\mathbf{x}^{-M})\right].
+Generation proceeds iteratively using the trained model.
+Starting from a fully masked sequence
+𝐱0=(MASK,…,MASK)\mathbf{x}_{0}=(\mathrm{MASK},\dots,\mathrm{MASK}), each iteration performs two operations at timestep tt:
+(1) sample candidate tokens
+yti∼pθi(⋅∣𝐱t−Mt)y_{t}^{i}\sim p_{\theta}^{i}(\cdot\mid\mathbf{x}^{-M_{t}}_{t})
+for all masked positions i∈Mti\in M_{t}, and
+(2) update a subset R⊆MtR\subseteq M_{t} of these positions with their sampled values,
+so that xt+1i←ytix_{t+1}^{i}\leftarrow y_{t}^{i} for i∈Ri\in R and xt+1i←xtix_{t+1}^{i}\leftarrow x_{t}^{i} for i∉Ri\notin R.
+This process repeats until all positions are unmasked,
+producing the final sequence 𝐱T\mathbf{x}_{T}.
+The iterative sampling process introduces
+two key sources of error at each step that can compromise sample quality.
+For clarity, we analyze the error within a single step and drop the time index tt
+in the following discussion.
+Approximation Error.
+The learned model pθi(⋅∣𝐱−M)p_{\theta}^{i}(\cdot\mid\mathbf{x}^{-M}) only
+approximates the true conditional distribution
+pi(⋅∣𝐱−M)p^{i}(\cdot\mid\mathbf{x}^{-M}). This potentially leads to suboptimal token predictions.
+To mitigate this, we employ a confidence score
+ϕi\phi_{i} per position ii, to guide mask selection at each step,
+updating only those positions where the model exhibits high confidence.
+This strategy improves generation quality by prioritizing high-confidence predictions. Common confidence scores ϕi\phi_{i} for position ii include:
+negative entropy ∑x∈Vpθi​(x∣𝐱−M)​log⁡pθi​(x∣𝐱−M)\sum_{x\in V}p_{\theta}^{i}(x\mid\mathbf{x}^{-M})\log p_{\theta}^{i}(x\mid\mathbf{x}^{-M}),
+confidence
+pθi​(yi∣𝐱−M)p_{\theta}^{i}(y^{i}\mid\mathbf{x}^{-M}) of the sampled token, and
+top margin between the two most likely tokens.
+Joint Dependencies.
+A more fundamental limitation arises from the sampling strategy itself.
+When sampling masked tokens yiy^{i} independently from their conditional distributions pθi(⋅∣𝐱−M)p_{\theta}^{i}(\cdot\mid\mathbf{x}^{-M}),
+we implicitly assume conditional independence among all masked tokens given the unmasked context.
+Natural sequences, however, exhibit complex dependencies that violate this assumption.
+True conditional independence for candidate tokens R⊆MR\subseteq M requires the joint probability to factorize as:
+pR(⋅∣𝐱−M)=∏i∈Rpi(⋅∣𝐱−M)p^{R}(\cdot\mid\mathbf{x}^{-M})=\prod_{i\in R}p^{i}(\cdot\mid\mathbf{x}^{-M})
+(1)
+In general, the joint distribution does not factorize in this way. Finding a subset of tokens where this factorization holds presents significant computational challenges, as verifying this condition requires checking that equation 1 holds for all outcomes
+𝐲R∈VR\mathbf{y}^{R}\in V^{R}—a space that grows exponentially with |R||R|.
+The following section presents an efficient method to identify token subsets that approximately satisfy this independence condition,
+thereby mitigating this source of error.
+3 Method
+In this section, we introduce our method for one step of parallel unmasking.
+We first establish contextual independence
+as the criterion for safe parallel unmasking (§3.1),
+then present our efficient subset discovery algorithm that identifies independent
+token sets using only O⁡(log⁡|M|)O(\log|M|) model evaluations (§3.2).
+3.1 Contextual Independence
+To address joint dependencies, we adopt the notion of contextual independence
+as our criterion for parallel unmasking.
+This property precisely characterizes when parallel sampling yields the
+same distribution as sequential sampling.
+Unlike full statistical independence (overly restrictive)
+or confidence-based heuristics (which ignore dependencies),
+contextual independence identifies tokens that can be unmasked simultaneously
+given the current context.
+Definition 3.1 (Contextually Independent Random Variables).
+A random variable XX is contextually independent
+of a random variable YY at a point yy if the conditional distribution of XX given Y=yY=y
+is identical to the marginal distribution of XX, i.e., pX|Y(⋅∣Y=y)=pX(⋅)p_{X\mid Y}(\cdot\mid Y=y)=p_{X}(\cdot).
+Definition 3.2 (Contextually Independent Sequences).
+A sequence of random variables (X1,…,Xℓ)(X^{1},\dots,X^{\ell}) is
+contextually independent at an outcome (x1,…,xℓ)(x^{1},\dots,x^{\ell}),
+if for each i∈Li\in L, the conditional distribution of XiX^{i}
+given the preceding outcomes 𝐱<i=(x1,…,xi−1)\mathbf{x}_{<i}=(x^{1},\dots,x^{i-1})
+is identical to its marginal distribution. Formally, for all i∈Li\in L:
+pXi|𝐗<i(⋅∣𝐱<i)=pXi(⋅)p_{X^{i}\mid\mathbf{X}_{<i}}(\cdot\mid\mathbf{x}_{<i})=p_{X^{i}}(\cdot),
+where 𝐗<i=(X1,…,Xi−1)\mathbf{X}_{<i}=(X^{1},\dots,X^{i-1}).
+In other words, under the contextual independence assumption,
+sampling the vector (x1,…,xℓ)(x^{1},\dots,x^{\ell})
+sequentially is equivalent to sampling its components in parallel.
+Our goal is, given a candidate vector 𝐲M\mathbf{y}^{M},
+to find an ordered
+11
+1
+Eventually we will be ordering these via confidence metrics ϕi\phi_{i},
+see Section 3.3.
+set of masked indices
+R={r1,…,r|R|}⊆MR=\{r_{1},\dots,r_{|R|}\}\subseteq M that
+are contextually independent
+relative to the unmasked context 𝐱−M\mathbf{x}^{-M}.
+Formally, for any i∈{1,…,|R|}i\in\{1,\dots,|R|\},
+the distribution at position rir_{i} must be independent
+of the outcomes at preceding positions R<i:={rj∣j<i}R_{<i}:=\{r_{j}\mid j<i\},
+given the unmasked context:
+pri(⋅∣𝐱−M,𝐲R<i)=pri(⋅∣𝐱−M).p^{r_{i}}(\cdot\mid\mathbf{x}^{-M},\mathbf{y}^{R_{<i}})=p^{r_{i}}(\cdot\mid\mathbf{x}^{-M}).
+(2)
+A naive, greedy approach to construct such a set would be to iterate through
+all masked indices m∈Mm\in M and sequentially add an index to RR
+if it satisfies Equation 2 given the previously added indices.
+However, this requires O⁡(|M|)O(|M|) sequential model evaluations,
+which defeats the purpose of parallel sampling.
+We propose an efficient recursive algorithm based on a recursive divide-and-conquer strategy,
+which we will later provide an an efficient iterative implementation for.
+The validity of this approach relies on the following stability assumption regarding
+the conditional independence structure of the model.
+Assumption 3.3.
+(Independence Stability)
+Let i∈Mi\in M be a masked index, and let
+U⊆M∖{i}U\subseteq M\setminus\{i\} be a subset of masked indices.
+If for some sequence of tokens 𝐲U\mathbf{y}^{U} we have
+pi(⋅∣𝐲U,𝐱−M)=pi(⋅∣𝐱−M),p^{i}(\cdot\mid\mathbf{y}^{U},\mathbf{x}^{-M})=p^{i}(\cdot\mid\mathbf{x}^{-M}),
+then for any W⊂UW\subset U it holds that
+pi(⋅∣𝐲W,𝐱−M)=pi(⋅∣𝐱−M).p^{i}(\cdot\mid\mathbf{y}^{W},\mathbf{x}^{-M})=p^{i}(\cdot\mid\mathbf{x}^{-M}).
+This assumption represents a balanced compromise
+between complete independence and simple contextual independence.
+It states that if a set of positions UU does not influence the prediction at position ii,
+then any subset W⊂UW\subset U will also not influence that prediction.
+This property ensures that independence tests conducted at any stage
+of our recursive algorithm remain valid throughout all subsequent stages.
+Section B provides a justification for why this assumption
+is reasonable for transformer-based architectures
+and empirical evidence that it approximately holds in practice.
+Figure 1:
+Illustration of one iteration of PUNT on 4 masked tokens,
+which consists of log2⁡4=2\log_{2}4=2 tests.
+Left: A binary tree representing the recursive partitioning.
+Each level corresponds to a single parallel test in the iterative algorithm.
+Right: In each round,
+confidence-ordered tokens (circled numbers)
+are partitioned into “anchor” (green) and “test” sets.
+Test tokens that are dependent on the anchor set are rejected (red),
+while independent ones (blue) are kept.
+3.2 Efficient Subset Discovery
+Under Assumption 3.3,
+we can construct the set RR in O⁡(log⁡|M|)O(\log|M|) parallel steps.
+If there is at least one masked position (i.e. |M|≥1|M|\geq 1),
+the recursive algorithm starts with S=MS=M and proceeds as follows
+(see Figure 1 for an illustration of one iteration):
+At each recursive call,
+its input is a (confidence)
+22
+2
+See Section 3.3 for details
+ordered subset of masked candidates S=(s1,s2,…,s|S|)⊆MS=(s_{1},s_{2},\ldots,s_{|S|})\subseteq M.
+The base case for the recursion is when |S|≤1|S|\leq 1,
+in which case the procedure returns SS.
+For larger sets, the algorithm proceeds as follows:
+1.
+Divide:
+The ordered input set SS is split into two balanced halves: the “anchor" set
+S0=(s1,…,sp)S_{0}=(s_{1},\ldots,s_{p})
+and the “test" set
+S1=(sp+1,…,s|S|)S_{1}=(s_{p+1},\ldots,s_{|S|}),
+where pp is a split point of the designer’s choice.
+2.
+Prune (Filter):
+The “test" set S1S_{1} is pruned based on its dependency on the candidates 𝐲S0\mathbf{y}^{S_{0}}.
+For each index i∈S1i\in S_{1}, we compute its new conditional distribution
+and measure the change from the baseline using the KL divergence:
+εi:=DKL(pi(⋅∣𝐱−M,𝐲S0)∥pi(⋅∣𝐱−M))\varepsilon_{i}:=D_{\mathrm{KL}}{\left(p^{i}(\cdot\mid\mathbf{x}^{-M},\mathbf{y}^{S_{0}})\,\big\|\,p^{i}(\cdot\mid\mathbf{x}^{-M})\right)}
+A filtered set S1′S^{\prime}_{1} is then formed
+by retaining only those indices for which the change is below a threshold ε>0\varepsilon>0: S1′={i∈S1∣εi<ε}.S^{\prime}_{1}=\{i\in S_{1}\mid\varepsilon_{i}<\varepsilon\}.
+3.
+Recurse:
+The algorithm then makes two independent (parallel) recursive calls:
+one on the “anchor" set S0S_{0} and
+another on the filtered “test" set S1′S^{\prime}_{1} and obtains R0R_{0} and R1R_{1} respectively.
+4.
+Combine:
+The final result RR for the input set SS is the union (ordered sum)
+of the outputs R:=R0⊔R1R:=R_{0}\sqcup R_{1} from the two recursive calls above.
+Note that by construction any token in R1R_{1} is contextually independent of S0S_{0}
+and by Assumption 3.3,
+it is contextually independent of subset R0⊂S0R_{0}\subset S_{0}.
+Choosing p=⌊|S|/2⌋p=\lfloor|S|/2\rfloor for each recursive iteration,
+we ensure that the recursion depth is O⁡(log⁡|M|)O(\log|M|).
+In the next section,
+we discuss how to execute all calls at the same recursion level
+using a single network evaluation,
+thereby achieving O⁡(log⁡|M|)O(\log|M|) cost per round.
+3.3 Confidence Alignment and Implementation Details
+This section addresses two key implementation aspects:
+(i) incorporating confidence-based prioritization into our recursive algorithm
+to maintain generation quality, and
+(ii) transforming the recursive procedure into an efficient iterative implementation.
+Confidence-Ordered Splits.
+At each recursive step,
+the candidate set SS is split into S0S_{0} and S1S_{1},
+and positions in S1S_{1} are pruned if they exhibit strong dependence on S0S_{0}.
+By sorting the initial candidate set SS in descending order of confidence
+(see Section 2 for options),
+ϕs1>ϕs2>⋯>ϕs|S|\phi_{s_{1}}>\phi_{s_{2}}>\dots>\phi_{s_{|S|}},
+we ensure that S0S_{0} always contains tokens with at least median-level confidence.
+Consequently,
+tokens pruned from S1S_{1} necessarily have lower confidence than those retained in S0S_{0}.
+In fact, this also ensures that during each unmasking step,
+the highest-confidence token in MM is always included in the final set RR,
+since it will never be pruned.
+Binary Encoding of Recursive Calls.
+To enable parallel computation,
+we transform our recursive algorithm into an efficient iterative procedure.
+At each level of the recursion tree,
+we combine all independence tests into a single, parallel model evaluation.
+To see how this might be done,
+suppose at some recursion level we test pairs (S01,S11),(S02,S12),…​(S0k,S1k)(S_{0}^{1},S_{1}^{1}),(S_{0}^{2},S_{1}^{2}),\ldots(S_{0}^{k},S_{1}^{k}),
+by construction, these sets form a partition of a subset of MM.
+We propose, instead of performing these tests independently,
+to test all “test" tokens against the union of all “anchor" sets ⨆ℓS0ℓ\bigsqcup_{\ell}S^{\ell}_{0}.
+Then, Assumption 3.3 ensures that passing this combined test implies passing the
+individual tests. Formally, for any ℓ\ell and any i∈S1ℓi\in S^{\ell}_{1} if
+pθi(⋅∣𝐲⨆S0ℓ,𝐱−M)=pθi(⋅∣𝐱−M),p^{i}_{\theta}(\cdot\mid\mathbf{y}^{\bigsqcup S^{\ell}_{0}},\mathbf{x}^{-M})=p^{i}_{\theta}(\cdot\mid\mathbf{x}^{-M}),
+then it also satisfies
+pθi(⋅∣𝐲S0ℓ,𝐱−M)=pθi(⋅∣𝐱−M).p^{i}_{\theta}(\cdot\mid\mathbf{y}^{S^{\ell}_{0}},\mathbf{x}^{-M})=p^{i}_{\theta}(\cdot\mid\mathbf{x}^{-M}).
+Binary Representation of Recursive Splits.
+We now describe how this idea can be employed
+to convert our recursive algorithm to an iterative one.
+The recursive splits are determined by each token’s position in the confidence-ordered list MM.
+This allows us to pre-determine all splits by assigning a binary code to each position.
+More precisely, we assign each position i∈{1,…,|M|}i\in\{1,\ldots,|M|\} a binary representation
+bin​(i)\text{bin}(i) with ⌈log2⁡|M|⌉\lceil\log_{2}|M|\rceil bits, padded with zeros if necessary.
+Tracking this binary encoding allows us to identify the path of each node in the recursion tree.
+At recursion level bb, we have 2b2^{b} nodes, with each node indexed by a unique binary prefix
+𝐮∈{0,1}b\mathbf{u}\in\{0,1\}^{b} corresponding to the subset
+S𝐮={i≤|M|:prefixb⁡[bin​(i)]=𝐮}S_{\mathbf{u}}=\left\{i\leq|M|:\operatorname{prefix}_{b}[\textrm{bin}(i)]=\mathbf{u}\right\},
+which is then partitioned into “anchor" (S𝐮​0S_{\mathbf{u}0}) and “test" (S𝐮​1S_{\mathbf{u}1}) subsets
+(see Figure 1 (Left) for an example).
+We would like to combine all 2b2^{b} tests at recursion level bb into a single test.
+To do so, we define a global partition for level bb based on the bb-th bit of the binary encoding.
+Bb={i∈[|M|]:the ​b​-th bit of bin​(i)=0}.B_{b}=\{i\in[|M|]:\text{the }b\text{-th bit of }\text{bin}(i)=0\}.
+Starting with R=MR=M,
+each round bb can now partition the current set using the predefined binary split BbB_{b}:
+the “anchor" tokens (S0=R∩BbS_{0}=R\cap B_{b}) and “test" tokens (S1=R∖BbS_{1}=R\setminus B_{b}).
+All tokens in S1S_{1} are tested for dependence on 𝐲S0\mathbf{y}^{S_{0}}
+in a single forward pass, dependent tokens are removed from RR.
+After all log⁡|M|\log|M| rounds complete,
+the remaining set RR contains only contextually independent tokens.
+The resulting procedure, summarized below
+(and in Algorithm 1),
+requires only O⁡(log⁡|M|)O(\log|M|) forward evaluations of the model per denoising step and guarantees
+that the returned set RR consists of contextually independent,
+high-confidence tokens that can be unmasked in parallel.
+Iterative Algorithm.
+Given confidence-ordered masked tokens M={m1,m2,…,m|M|}M=\{m_{1},m_{2},\ldots,m_{|M|}\}
+where ϕm1≥ϕm2≥⋯≥ϕm|M|\phi_{m_{1}}\geq\phi_{m_{2}}\geq\cdots\geq\phi_{m_{|M|}},
+we initialize R←MR\leftarrow M and execute ⌈log2⁡|M|⌉\lceil\log_{2}|M|\rceil iterations.
+For each iteration b∈{1,…,⌈log2⁡|M|⌉}b\in\{1,\ldots,\lceil\log_{2}|M|\rceil\}:
+1.
+Test:
+Partition RR into anchor tokens S0=R∩BbS_{0}=R\cap B_{b} and test tokens S1=R∖BbS_{1}=R\setminus B_{b}.
+2.
+Prune: For each j∈S1j\in S_{1},
+compute the KL divergence
+dj=DKL(pj(⋅∣𝐱−M)∥pj(⋅∣𝐱−M,𝐲S0))d_{j}=D_{\text{KL}}(p^{j}(\cdot\mid\mathbf{x}^{-M})\,\|\,p^{j}(\cdot\mid\mathbf{x}^{-M},\mathbf{y}^{S_{0}}))
+in a single forward pass.
+3.
+Update:
+Remove dependent tokens from
+RR: R←R∖{j∈S1:dj>ε}R\leftarrow R\setminus\{j\in S_{1}:d_{j}>\varepsilon\}.
+The final set RR contains tokens that can be unmasked in parallel without interfering with each other.
+Step 9
+Step 18
+Figure 2:
+Left: Unmasking efficiency for various prompt types vs number of unmasked tokens.
+Right: Visualization of the denoising process at steps 9 and 18 for a sample prompt
+(“What should I do at the end of the internship.").
+Tokens are color-coded: green tokens are accepted by PUNT for parallel unmasking in the current step,
+red tokens are rejected, and uncolored tokens were unmasked in previous steps.
+See Appendix D for more examples of intermediate denoising steps.
+3.4 Algorithmic Properties and Independence Stability
+This section discusses PUNT’s properties for text generation and justifies Assumption 3.3.
+Adaptive Unmasking.
+Our sampler exhibits emergent hierarchical generation,
+first establishing high-level structure (e.g., paragraphs, headings) before filling in details,
+as shown in Fig. 2 (right).
+As can be seen, at step 9, the model has already generated
+the main headings and subheadings of the article, while the rest of the text remains masked.
+By step 18, the model has begun filling in the details under each heading.
+We hypothesize this behavior stems from the conditional independence
+between high-level structural tokens and fine-grained details.
+Because the latter exert minimal influence on the former,
+the structural tokens pass the independence tests in PUNT’s filtration stage and are unmasked early.
+A formal investigation of this phenomenon is left for future work.
+This hierarchical generation has a cascading effect.
+Once revealed, high-level tokens act as contextual anchors,
+partitioning the text into conditionally independent sections.
+This allows the sampler to unmask tokens in different sections in parallel,
+adapting its denoising speed to the task’s inherent structure.
+As shown in Fig. 2 (left),
+this results in different performance profiles for various prompts.
+Independence Stability of Transformers.
+Assumption 3.3 (Independence Stability) is a direct consequence
+of the Transformer architecture’s attention mechanism.
+In Transformers, the influence of one token on another is governed by attention weights;
+if the attention from position ii to position jj is zero,
+then position jj has no direct influence on the representation at position ii.
+This relationship between attention and influence allows us to connect conditional independence
+to attention scores. Specifically, we argue that a token yiy_{i} is conditionally independent
+of a set of tokens 𝐲V\mathbf{y}^{V} given the remaining tokens 𝐱−M\mathbf{x}^{-M}
+if and only if the total attention from position ii to all positions in RR is negligible
+across all layers and heads, i.e.,
+The conditional distribution pθi(⋅∣𝐲R,𝐱−M)p_{\theta}^{i}(\cdot\mid\mathbf{y}^{R},\mathbf{x}^{-M})
+equals pθi(⋅∣𝐱−M)p_{\theta}^{i}(\cdot\mid\mathbf{x}^{-M})
+if and only if33
+3
+Except for padding end-of-sequence(EOS) tokens, see details in Appendix B
+the cumulative attention weight from position ii to all positions in RR is negligible.
+This property directly implies Independence Stability.
+Since attention weights are non-negative,
+if the attention from position ii to a set RR is negligible,
+the attention to any subset U⊂RU\subset R must also be negligible.
+A detailed justification is provided in Appendix B.
+4 Experiments
+Figure 3: Parallel sampling error (equation 3). Left: Average error for different samplers compared to number of forward evaluations (NFEs). Right: Median together with confidence intervals (Q5,Q95)(Q_{5},Q_{95}) of the error for PUNT samplers with different ε\varepsilon as a function of the number of previously revealed tokens. Note that Q5Q_{5} remains below 10−310^{-3} across all positions.
+We evaluate our proposed sampler, PUNT, on a number of natural language tasks.
+Our empirical results validate the effectiveness of our approach
+and support the attention hypothesis introduced in Appendix B.
+We evaluate:
+(i) PUNT’s performance on long-form text generation tasks such as MTBench;
+(ii) PUNT’s effectiveness on short-answer benchmarks for mathematics and code generation;
+(iii) The error introduced by parallel token sampling and its relationship to the exploration rate ε\varepsilon;
+(iv) Deviation in empirical attention patterns (supporting theoretical independence assumptions).
+Experimental Setup.
+We evaluate PUNT on two powerful, open-source large language models:
+Dream 7B (Ye et al., 2025b, ) and LLaDA 1.5 (Zhu et al., 2025a, ).
+Baselines.
+We compare PUNT against three strong,
+training-free baseline samplers. These baselines include:
+(i) standard top\mathrm{top}-kk sampling;
+(ii) the EB-sampler (Patel et al.,, 2025); and
+(iii) the Dilated-sampler (Luxembourg et al.,, 2025).
+Note that all the samplers are implemented for a given context length |M||M|,
+in a non-semi-autoregressive manner and the exact parameter configurations are
+provided in Section C.3.
+We also evaluate the performance of PUNT on generation in a structured biological domain. Specifically, we look at unconditional generation of de novo membrane proteins using MemDLM (Goel et al.,, 2024), a state-of-the-art protein language model. Full details are provided in Section C.4.
+4.1 Alignment Benchmarks
+We evaluate PUNT on the instruction-following benchmarks
+MTBench (Bai et al.,, 2024) and IFEval (Zhou et al.,, 2023).
+MTBench comprises 80 tasks across diverse domains—including
+creative writing, logical reasoning, and code generation—providing a robust evaluation framework for model performance.
+Each task consists of two turns, with the second turn depending on the output of the first.
+IFEval complements this by specifically measuring instruction-following accuracy through
+a collection of carefully designed test cases that evaluate precise adherence to complex instructions.
+Full benchmark details are provided in Section C.1.
+As shown in Figure 4,
+PUNT consistently outperforms all baseline samplers on both benchmarks,
+achieving higher scores across both metrics (inst_level_loose_acc
+and mean score; higher is better).
+Importantly, it delivers these gains while requiring substantially fewer forward evaluations (NFEs).
+4.2 Short-answer Benchmarks
+Figure 4: IFEval and MTBench performance of PUNT compared to baselines on Dream 7B. Benchmark specific scores (higher is better) vs mean number of forward passes.
+Figure 5: MBPP performance of PUNT compared to baselines on Llada. MBPP pass@1 (higher is better) vs mean number of forward passes.
+We evaluate PUNT across diverse benchmarks spanning mathematical reasoning
+(GSM8K (Cobbe et al.,, 2021),
+and code generation
+(HumanEval (Chen et al.,, 2021),
+MBPP (Austin et al.,, 2021)).
+As expected, PUNT underperforms on short-answer tasks with limited context since
+it requires multiple forward passes for complete generation.
+For instance, in the MBPP benchmark on LLaDA with temperature 0.7 (see Fig. 5),
+PUNT’s performance aligns closely with EB when evaluated by the number of forward evaluations (NFE).
+However, when measured by the number of denoising steps—that is, the number of algorithmic steps,
+where each step may involve multiple forward passes in parallel—PUNT outperforms other samplers.
+A simple fix could be to use PUNT only for the latter part of the generation,
+but we leave this for future work.
+Similar trends are observed across other benchmarks in this group.
+Results comparing all samplers, models, and hyperparameters appear in Section C.3.
+4.3 PUNT Sampler Error Analysis
+We empirically quantify the parallel sampling error on the LLaDA model.
+For this, we generate 1024-token responses for MTBench (Bai et al.,, 2024)
+with exploration rates ε∈{0.01,…,0.32}\varepsilon\in\{0.01,\dots,0.32\}.
+Within each parallel generation step, tokens are ordered by confidence before sampling.
+For the ii-th token at position rir_{i} unmasked in parallel,
+we compute the error between the true conditional distribution and our independence approximation:
+δKLri=DKL(pθri(⋅∣𝐱−M,𝐲R<i)∥pθri(⋅∣𝐱−M)).\delta^{r_{i}}_{\operatorname{KL}}=D_{\mathrm{KL}}{\left(p_{\theta}^{r_{i}}(\cdot\mid\mathbf{x}^{-M},\mathbf{y}^{R_{<i}})\,\big\|\,p_{\theta}^{r_{i}}(\cdot\mid\mathbf{x}^{-M})\right)}.
+(3)
+This KL divergence quantifies the information lost by assuming token rir_{i} is conditionally independent
+of other tokens unmasked in the same step, 𝐲R<i\mathbf{y}^{R_{<i}}.
+As shown in Fig. 3,
+PUNT achieves a low parallel sampling error while maintaining a small NFE compared to other samplers.
+Furthermore, the parallel decoding error, δKL\delta_{\operatorname{KL}},
+remains robustly below the ε\varepsilon threshold,
+irrespective of the number of tokens previously revealed in the step.
+5 Related work
+Our work builds on recent advances in discrete diffusion models and
+inference-time planners.
+Masked Diffusion Models (MDMs).
+Discrete diffusion models (Austin et al.,, 2023)
+offer a non-autoregressive alternative for text generation.
+Training objectives based on score matching (Lou et al.,, 2024)
+and masked language modeling (Sahoo et al.,, 2024)
+have enabled large-scale models like LLaDA (Nie et al., 2025b, ) and others (Nie et al., 2025a, ).
+Commercial implementations include
+Gemini Diffusion (Google DeepMind,, 2025) and Mercury (Inception Labs,, 2025).
+MDMs face two key limitations:
+compounding errors from parallel unmasking and inefficient KV caching.
+We address the former by identifying token sets for safe parallel unmasking,
+which minimizes interference and improves both efficiency and quality.
+Inference-Time Planners for Acceleration.
+Efficient inference scheduling remains MDMs’ central challenge.
+Various training-free planners aim to minimize function evaluations (NFEs)
+while maintaining generation quality.
+Confidence and Entropy Gating.
+Confidence-based scheduling iteratively unmasks tokens with highest model confidence (or lowest entropy)
+(Sahoo et al.,, 2024).
+The EB-Sampler extends this by dynamically unmasking
+variable-sized token sets whose aggregate entropy stays below threshold
+γ\gamma (Patel et al.,, 2025).
+While adaptive, these methods remain conservative,
+ignore token independence, and typically unmask only small subsets.
+Remasking and Refinement.
+Several methods correct parallel decoding errors through remasking.
+ReMDM (Wang et al.,, 2025) iteratively remasks and updates generated tokens.
+Path-Planning (P2) (Peng et al.,, 2025) and DDPD (Liu et al.,, 2025) separate inference into planning (selecting tokens to update/remask) and denoising stages.
+While improving quality, these approaches increase NFE through corrective passes.
+Spacing Schedulers.
+These fixed-geometry (non-adaptive) methods enforce spatial separation between parallel unmaskings.
+Dilated scheduling unmasks non-adjacent token groups for improved stability
+(Luxembourg et al.,, 2025).
+Halton-based schedulers use low-discrepancy sequences for uniform spacing
+(Besnier et al.,, 2025).
+Block Diffusion balances AR and parallel generation by processing contiguous spans
+(Arriola et al.,, 2025).
+Analysis of Ordering and Scheduling.
+Recent theoretical and empirical work
+has deepened the community’s understanding of these schedulers. Kim et al., (2025)
+study the impact of token ordering, showing that adaptive inference can sidestep
+computationally hard subproblems. Park et al., (2024) focus on optimizing the temporal
+schedule (the number and placement of diffusion steps) to reduce NFEs. Others have
+explored MDLMs for complex reasoning, where planning is critical (Ye et al., 2025a, ),
+and for specialized domains like code generation (Gong et al.,, 2025).
+Comparison to Autoregressive Accelerators.
+While autoregressive models like LLaMA-3 (Grattafiori et al.,, 2024)
+are accelerated by speculative decoding (Leviathan et al.,, 2023; Xia et al.,, 2022),
+this approach remains fundamentally sequential.
+In contrast, our method reduces NFEs by leveraging the non-sequential,
+any-order generation capabilities of MDMs.
+Orthogonal optimizations like KV caching are applicable to both paradigms
+(Ma et al.,, 2025; Hu et al.,, 2025).
+6 Conclusion and Future Work
+We introduced PUNT,
+a training-free sampler that looks to resolve the conflict between speed and quality in MDMs by efficiently identifying sets of approximately
+conditionally independent tokens for parallel unmasking.
+This enables a significant reduction in the number of model evaluations needed for generation while preserving output quality.
+We provided a conceptual justification for its applicability to transformer architectures and validated its effectiveness on mathematics, code, and long-form text benchmarks.
+We also observe that PUNT induces an emergent hierarchical generation strategy: coarse paragraph structure is established early, followed by localized refinement.
+Future work can extend this approach in several directions: (i) developing adaptive or curriculum-style schedules for the independence threshold ϵ\epsilon to balance early exploration with late precision; (ii) distilling PUNT into a student model that predicts contextually independent reveal sets in a single forward pass; and (iii) combining PUNT with orthogonal efficiency techniques such as KV-caching, to further shift the accuracy–compute Pareto frontier.
+Acknowledgments
+We gratefully acknowledge Grigory Bartosh for valuable discussions and Ted Meeds and Finale Doshi-Velez for helpful comments on the manuscript.
+References
+Arriola et al., (2025)
+Arriola, M., Gokaslan, A., Chiu, J. T., Yang, Z., Qi, Z., Han, J., Sahoo, S. S., and Kuleshov, V. (2025).
+Block diffusion: Interpolating between autoregressive and diffusion language models.
+arXiv preprint arXiv:2503.09573.
+Austin et al., (2023)
+Austin, J., Johnson, D. D., Ho, J., Tarlow, D., and van den Berg, R. (2023).
+Structured denoising diffusion models in discrete state-spaces.
+arXiv preprint arXiv:2107.03006.
+Austin et al., (2021)
+Austin, J., Odena, A., Nye, M., Bosma, M., Michalewski, H., Dohan, D., Jiang, E., Cai, C., Terry, J., Le, Q. V., et al. (2021).
+Program synthesis with large language models.
+arXiv preprint arXiv:2108.07732.
+Bai et al., (2024)
+Bai, G., Liu, J., Bu, X., He, Y., Liu, J., Zhou, Z., Lin, Z., Su, W., Ge, T., Zheng, B., et al. (2024).
+Mt-bench-101: A fine-grained benchmark for evaluating large language models in multi-turn dialogues.
+arXiv preprint arXiv:2402.14762.
+Besnier et al., (2025)
+Besnier, V., Chen, M., Hurych, D., Valle, E., and Cord, M. (2025).
+Halton scheduler for masked generative image transformer.
+Chen et al., (2021)
+Chen, M., Tworek, J., Jun, H., Yuan, Q., Zaremba, W., et al. (2021).
+Evaluating large language models trained on code.
+arXiv preprint arXiv:2107.03374.
+Cobbe et al., (2021)
+Cobbe, K., Kosaraju, V., Bavarian, M., Chen, M., Jun, H., Kaiser, L., Plappert, M., Tworek, J., Hilton, J., Nakano, R., et al. (2021).
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168.
+Goel et al., (2024)
+Goel, S., Thoutam, V., Marroquin, E. M., Gokaslan, A., Firouzbakht, A., Vincoff, S., Kuleshov, V., Kratochvil, H. T., and Chatterjee, P. (2024).
+Memdlm: De novo membrane protein design with masked discrete diffusion protein language models.
+arXiv preprint arXiv:2410.16735.
+Gong et al., (2025)
+Gong, S., Zhang, R., Zheng, L., Gu, J., Jaitly, N., Kong, L., and Zhang, Y. (2025).
+Diffucoder: Understanding and improving masked diffusion models for code generation.
+arXiv preprint arXiv:2506.20639.
+Google DeepMind, (2025)
+Google DeepMind (2025).
+Gemini diffusion.
+https://deepmind.google/models/gemini-diffusion/.
+Grattafiori et al., (2024)
+Grattafiori, A., Dubey, A., Jauhri, A., Pandey, A., Kadian, A., Al-Dahle, A., Letman, A., Mathur, A., Schelten, A., Vaughan, A., et al. (2024).
+The llama 3 herd of models.
+arXiv preprint arXiv:2407.21783.
+Hendrycks et al., (2021)
+Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J. (2021).
+Measuring mathematical problem solving with the math dataset.
+arXiv preprint arXiv:2103.03874.
+Hu et al., (2025)
+Hu, Z., Meng, J., Akhauri, Y., Abdelfattah, M. S., Seo, J.-s., Zhang, Z., and Gupta, U. (2025).
+Accelerating diffusion language model inference via efficient kv caching and guided diffusion.
+arXiv preprint arXiv:2505.21467.
+Inception Labs, (2025)
+Inception Labs (2025).
+Mercury.
+https://www.inceptionlabs.ai/introducing-mercury.
+Kim et al., (2025)
+Kim, J., Shah, K., Kontonis, V., Kakade, S., and Chen, S. (2025).
+Train for the worst, plan for the best: Understanding token ordering in masked diffusions.
+arXiv preprint arXiv:2502.06768.
+Leviathan et al., (2023)
+Leviathan, Y., Kalman, M., and Matias, Y. (2023).
+Fast inference from transformers via speculative decoding.
+In International Conference on Machine Learning, pages 19274–19286. PMLR.
+Lin et al., (2023)
+Lin, Z., Akin, H., Rao, R., Hie, B., Zhu, Z., Lu, W., Smetanin, N., Verkuil, R., Kabeli, O., Shmueli, Y., et al. (2023).
+Evolutionary-scale prediction of atomic-level protein structure with a language model.
+Science, 379(6637):1123–1130.
+Liu et al., (2025)
+Liu, S., Nam, J., Campbell, A., St"ark, H., Xu, Y., Jaakkola, T., and Gómez-Bombarelli, R. (2025).
+Think while you generate: Discrete diffusion with planned denoising.
+arXiv preprint arXiv:2410.06264.
+Lou et al., (2024)
+Lou, A., Meng, C., and Ermon, S. (2024).
+Discrete diffusion modeling by estimating the ratios of the data distribution.
+arXiv preprint arXiv:2310.16834.
+Luxembourg et al., (2025)
+Luxembourg, O., Permuter, H., and Nachmani, E. (2025).
+Plan for speed: Dilated scheduling for masked diffusion language models.
+Ma et al., (2025)
+Ma, X., Yu, R., Fang, G., and Wang, X. (2025).
+dkv-cache: The cache for diffusion language models.
+arXiv preprint arXiv:2505.15781.
+(22)
+Nie, S., Zhu, F., Du, C., Pang, T., Liu, Q., Zeng, G., Lin, M., and Li, C. (2025a).
+Scaling up masked diffusion models on text.
+arXiv preprint arXiv:2410.18514.
+(23)
+Nie, S., Zhu, F., You, Z., Zhang, X., Ou, J., Hu, J., Zhou, J., Lin, Y., Wen, J.-R., and Li, C. (2025b).
+Large language diffusion models.
+arXiv preprint arXiv:2502.09992.
+Park et al., (2024)
+Park, Y.-H., Lai, C.-H., Hayakawa, S., Takida, Y., and Mitsufuji, Y. (2024).
+Jump your steps: Optimizing sampling schedule of discrete diffusion models.
+arXiv preprint arXiv:2410.07761.
+Patel et al., (2025)
+Patel, S., Bezemek, Z., Peng, F. Z., Rector-Brooks, J., Yao, S., Bose, A. J., Tong, A., and Chatterjee, P. (2025).
+Accelerated sampling from masked diffusion models via entropy bounded unmasking.
+arXiv preprint arXiv:2505.24857.
+Peng et al., (2025)
+Peng, F. Z., Bezemek, Z., Patel, S., Rector-Brooks, J., Yao, S., Tong, A., and Chatterjee, P. (2025).
+Path planning for masked diffusion model sampling.
+arXiv preprint arXiv:2502.03540.
+Sahoo et al., (2024)
+Sahoo, S. S., Arriola, M., Schiff, Y., Gokaslan, A., Marroquin, E., Chiu, J. T., Rush, A., and Kuleshov, V. (2024).
+Simple and effective masked diffusion language models.
+Vaswani et al., (2023)
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, L., and Polosukhin, I. (2023).
+Attention is all you need.
+Wang et al., (2025)
+Wang, G., Schiff, Y., Sahoo, S. S., and Kuleshov, V. (2025).
+Remasking discrete diffusion models with inference-time scaling.
+Wenran et al., (2025)
+Wenran, L., Cadet, X., Damour, C., Yu, L., de BREVERN, A., Miranville, A., and Cadet, F. (2025).
+Benchmark of diffusion and flow matching models for unconditional protein structure design.
+In ICML 2025 Generative AI and Biology (GenBio) Workshop.
+Xia et al., (2022)
+Xia, H., Ge, T., Wang, P., Chen, S.-Q., Wei, F., and Sui, Z. (2022).
+Speculative decoding: Exploiting speculative execution for accelerating seq2seq generation.
+arXiv preprint arXiv:2203.16487.
+(32)
+Ye, J., Gao, J., Gong, S., Zheng, L., Jiang, X., Li, Z., and Kong, L. (2025a).
+Beyond autoregression: Discrete diffusion for complex reasoning and planning.
+arXiv preprint arXiv:2410.14157.
+(33)
+Ye, J., Xie, Z., Zheng, L., Gao, J., Wu, Z., Jiang, X., Li, Z., and Kong, L. (2025b).
+Dream 7b: Diffusion large language models.
+arXiv preprint arXiv:2508.15487.
+Zheng et al., (2023)
+Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z., Li, Z., Li, D., Xing, E., et al. (2023).
+Judging llm-as-a-judge with mt-bench and chatbot arena.
+Advances in neural information processing systems, 36:46595–46623.
+Zhou et al., (2023)
+Zhou, J., Lu, T., Mishra, S., Brahma, S., Basu, S., Luan, Y., Zhou, D., and Hou, L. (2023).
+Instruction-following evaluation for large language models.
+(36)
+Zhu, F., Wang, R., Nie, S., Zhang, X., Wu, C., Hu, J., Zhou, J., Chen, J., Lin, Y., Wen, J.-R., et al. (2025a).
+Llada 1.5: Variance-reduced preference optimization for large language diffusion models.
+arXiv preprint arXiv:2505.19223.
+(37)
+Zhu, Y., Wang, X., Lathuilière, S., and Kalogeiton, V. (2025b).
+Di[m]o: Distilling masked diffusion models into one-step generator.
+arXiv preprint arXiv:2503.15457.
+Appendix
+Appendix A Organisation of Appendix
+The rest of the appendix is organized as follows.
+In Appendix B,
+we justify Assumption 3.3 by demonstrating that it holds
+for Transformer-based masked language models,
+which is a direct consequence of the Transformer’s attention mechanism.
+In Appendix C, we provide additional experimental details and results.
+In Section C.4, we provide some preliminary experiments on a protein masked diffusion model.
+In Appendix D, we provide two examples of text that is generated by PUNT.
+Remark on Notation:
+In addition to standard notation as defined in the paper,
+in the appendix, we will also use upper-case bold letters (such as A) to denote tensors.
+We will use lowercase and unbolded letters to denote scalars (such as Ai​jA_{ij}).
+In addition, we may have uppercase letters (such as Q,K,VQ,K,V) annotations to help annotate different matrices.
+This is to accommodate standard notation used in the literature.
+Appendix B Independence Stability
+In this section, we demonstrate that Assumption 3.3
+holds for Transformer-based masked language models,
+which is a direct consequence of the Transformer’s attention mechanism.
+Let us start with recalling the assumption.
+See 3.3
+Next, we recall the design of attention mechanism and discuss prior works
+Attention-Based Independence.
+In transformers Vaswani et al., (2023),
+the attention weights control information flow between positions.
+For an input sequence 𝐗=(𝐗1,…,𝐗L)∈ℝL×di​n\mathbf{X}=(\mathbf{X}^{1},\ldots,\mathbf{X}^{L})\in\mathbb{R}^{L\times d_{in}},
+each attention head computes query, key, and value vectors for every position:
+𝐐i=𝐖Q​𝐗i,𝐊i=𝐖K​𝐗i,𝐕i=𝐖V​𝐗i,\mathbf{Q}^{i}=\mathbf{W}^{Q}\mathbf{X}^{i},\quad\mathbf{K}^{i}=\mathbf{W}^{K}\mathbf{X}^{i},\quad\mathbf{V}^{i}=\mathbf{W}^{V}\mathbf{X}^{i},
+where 𝐖Q,𝐖K∈ℝdk×di​n\mathbf{W}^{Q},\mathbf{W}^{K}\in\mathbb{R}^{d_{k}\times d_{in}}
+and 𝐖V∈ℝdv×di​n\mathbf{W}^{V}\in\mathbb{R}^{d_{v}\times d_{in}} are learned weight matrices.
+The attention mechanism then computes pairwise attention scores between
+all positions through scaled dot products:
+𝐀=softmax⁡(𝐐𝐊⊤dk)∈ℝL×L,\mathbf{A}=\mathrm{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^{\top}}{\sqrt{d_{k}}}\right)\in\mathbb{R}^{L\times L},
+where 𝐐,𝐊∈ℝL×dk\mathbf{Q},\mathbf{K}\in\mathbb{R}^{L\times d_{k}} stack the query and key vectors across all positions.
+The attention weights Ai​jA^{ij} quantify how much position jj influences position ii,
+computed via normalized dot-product similarity.
+The output of one head combines value vectors weighted by these attention scores:
+𝐡𝐞𝐚𝐝h=𝐀𝐕∈ℝL×dv.\mathbf{head}_{h}=\mathbf{A}\mathbf{V}\in\mathbb{R}^{L\times d_{v}}.
+Finally, outputs of different heads are stacked to get,
+𝐙𝐢=concat​(𝐡𝐞𝐚𝐝1i,…,𝐡𝐞𝐚𝐝Hi).\mathbf{Z_{i}}=\textrm{concat}{\left(\mathbf{head}^{i}_{1},\ldots,\mathbf{head}^{i}_{H}\right)}.
+The output of the layer 𝐘=(𝐘1,…,𝐘L)∈ℝL×do​u​t\mathbf{Y}=(\mathbf{Y}^{1},\ldots,\mathbf{Y}^{L})\in\mathbb{R}^{L\times d_{out}}
+is calculated as 𝐘i=F⁡(𝐙i)\mathbf{Y}^{i}=F(\mathbf{Z}^{i})
+by application to each of the coordinates of MLP together
+with normalization layers and skip connections.
+Crucially, the attention weights Ai​jA_{ij} directly control information flow:
+when Ai​j=0A_{ij}=0, position jj’s value vector
+𝐕j\mathbf{V}^{j} contributes nothing to position ii’s output.
+The model’s final predictions are obtained by applying softmax to the last layer’s output:
+pθi(⋅∣𝐱−M):=softmax(𝐘i)p_{\theta}^{i}(\cdot\mid\mathbf{x}^{-M}):=\mathrm{softmax}(\mathbf{Y}^{i}).
+Therefore, pθi(⋅∣𝐱−M)=pθi(⋅∣𝐲R,𝐱−M)p_{\theta}^{i}(\cdot\mid\mathbf{x}^{-M})=p_{\theta}^{i}(\cdot\mid\mathbf{y}^{R},\mathbf{x}^{-M})
+holds if and only if 𝐘i\mathbf{Y}^{i} remains unchanged when tokens at positions RR are revealed.
+Stability of Unmasked Tokens.
+Recent works Hu et al., (2025); Ma et al., (2025)
+have demonstrated that during iterative inference,
+the query, key, and value vectors (𝐐−M\mathbf{Q}^{-M}, 𝐊−M\mathbf{K}^{-M}, 𝐕−M\mathbf{V}^{-M})
+for already unmasked tokens, remain stable and can be cached for computational efficiency.
+Figure 6: Joint distribution of δKL\delta_{\operatorname{KL}} – the sampling error and δA\delta_{A} – the total attention to the previous tokens revealed in parallel.
+Why Independence Stability Holds.
+Figure 7: Difference between attention statistics for
+pri(⋅∣𝐱−M,𝐲R<i)p^{r_{i}}(\cdot\mid\mathbf{x}^{-M},\mathbf{y}^{R_{<i}})
+relative to the same statistics computed while evaluating pri(⋅∣𝐱−M)p^{r_{i}}(\cdot\mid\mathbf{x}^{-M}).
+Let us return to Assumption 3.3. First, we discuss padding end-of-sequence (EOS) tokens, which are used to fill the unused suffix reserved for an answer. By design, if there is an EOS token in x−Mx^{-M} to the left of position ii then pi​(EOS|x−M)=1p^{i}(\text{EOS}|x^{-M})=1 and the assumption automatically holds.
+For regular tokens, we note that the stability property implies that in both cases, when we condition on (𝐲U,𝐱−M)(\mathbf{y}^{U},\mathbf{x}^{-M}) or (𝐱−M)(\mathbf{x}^{-M}), the representations (𝐐−M\mathbf{Q}^{-M}, 𝐊−M\mathbf{K}^{-M}, 𝐕−M\mathbf{V}^{-M}) stay the same, while the main change happens for tokens in UU.
+The stability property allows us to concentrate on the information flow between position ii and tentatively unmasked subset 𝐲U\mathbf{y}^{U}, which we recall governed by attention weights vector 𝐀i​U:=(Ai,u1,…,Ai,u|U|)\mathbf{A}_{iU}:={\left(A_{i,u_{1}},\ldots,A_{i,u_{|U|}}\right)}. Specifically, we argue that a token yiy_{i} is conditionally independent
+of a set of tokens 𝐲U\mathbf{y}^{U} given the remaining tokens 𝐱−M\mathbf{x}^{-M}
+if and only if the total attention from position ii to all positions in UU is negligible
+across all layers and heads, or more formally, if ‖𝐀i​U‖1=∑u∈UAi​u<δ\left\lVert\mathbf{A}_{iU}\right\rVert_{1}=\sum_{u\in U}A_{iu}<\delta for some small δ>0\delta>0.
+Now consider any subset W⊂UW\subset U.
+The non-negativity of attention weights (a direct consequence of the softmax operation)
+yields the inequality:
+‖𝐀i​W‖1=∑w∈WAi​w≤∑u∈UAi​u=‖𝐀i​U‖1<δ\left\lVert\mathbf{A}_{iW}\right\rVert_{1}=\sum_{w\in W}A_{iw}\leq\sum_{u\in U}A_{iu}=\left\lVert\mathbf{A}_{iU}\right\rVert_{1}<\delta
+This demonstrates that if position ii pays negligible attention to the entire set UU,
+it necessarily pays negligible attention to any subset W⊂UW\subset U.
+Consequently, the conditional distribution at position ii remains approximately invariant when
+conditioning on tokens at positions in WW:
+pθi(⋅∣𝐲W,𝐱−M)≈pθi(⋅∣𝐱−M)p_{\theta}^{i}(\cdot\mid\mathbf{y}^{W},\mathbf{x}^{-M})\approx p_{\theta}^{i}(\cdot\mid\mathbf{x}^{-M}).
+This relationship directly corresponds to Assumption 3.3 (Independence Stability).
+Empirical Validation
+We use the same setup as was used in Section 4.3, as a source of prompts, we use the first round requests from MTBench, and sample the responses using the PUNT algorithm with different thresholds ε={0.01,0.04,0.16,0.64}\varepsilon=\left\{0.01,0.04,0.16,0.64\right\}.
+For a step of the PUNT sampler with threshold ε\varepsilon, let RR denote the set of tokens unmasked at this step, sorted according to the confidence, 𝐲R\mathbf{y}^{R} denotes the set of sampled candidates, and x−Mx^{-M} denotes the set of already revealed tokens.
+As we demonstrated at Fig. 3 sampled tokens satisfy
+δKL=DKL(pri(⋅∣𝐱−M,𝐲R<i)∥pri(⋅∣𝐱−M))<ε.\delta_{\operatorname{KL}}=D_{\mathrm{KL}}{\left(p^{r_{i}}(\cdot\mid\mathbf{x}^{-M},\mathbf{y}^{R_{<i}})\,\big\|\,p^{r_{i}}(\cdot\mid\mathbf{x}^{-M})\right)}<\varepsilon.
+For each token rir_{i}, we compute the total attention from token rir_{i} to previously revealed tokens R<iR_{<i} for all heads of the last layer, i.e.
+δA=‖𝐀ri​R<i‖1=∑j<iAri​rj\delta_{A}=\left\lVert\mathbf{A}_{r_{i}R_{<i}}\right\rVert_{1}=\sum_{j<i}A_{r_{i}r_{j}}
+and plot (Fig. 6) the distribution of pairs (δKL,δA\delta_{\operatorname{KL}},\delta_{A}) for different thresholds.
+We also compute the change of the layer output 𝐘ri\mathbf{Y}^{r_{i}} and how it changes when we condition on 𝐲R<i\mathbf{y}^{R_{<i}}. We use the normalized difference metric to compute the change, which is defined as
+normalized​_​difference⁡(a,b):=‖a−b‖2/‖a‖2,\operatorname{normalized\_difference}(a,b):=\left\lVert a-b\right\rVert_{2}/\left\lVert a\right\rVert_{2}, and plot (Fig. 7) the distribution of the change.
+Finally, similar to unmasked tokens, we observed that representations 𝐐ri\mathbf{Q}^{r_{i}}, 𝐊ri\mathbf{K}^{r_{i}}, 𝐕ri\mathbf{V}^{r_{i}} of masked token rir_{i} in the attention layer also stays stable when we additionally condition on previously revealed tokens 𝐲R<i\mathbf{y}^{R_{<i}}.
+Algorithm 1 PUNT (Parallel Unmasking with Non-influence Tests)
+1:
+Input:
+masked sequence 𝐱\mathbf{x},
+vector of candidates 𝐲\mathbf{y},
+threshold ε\varepsilon
+2:
+Output:
+certified set R⊆MR\subseteq M to unmask in parallel
+3:
+Sort masked indices w.r.t. confidence heuristic ϕ\phi in decreasing order
+4:
+Construct MM, the set of all masked indices.
+5:
+R←MR\leftarrow M
+6:
+Let Bb:={i∈[|M|]:the ​b​-th bit of bin​(i)=0}.B_{b}:=\{i\in[|M|]:\text{the }b\text{-th bit of }\text{bin}(i)=0\}.
+7:
+for bb in [log⁡|M|][\log|M|] do
+8:
+S0←R∩BbS_{0}\leftarrow R\cap B_{b}; (positions to tentatively unmask)
+9:
+S1←R∖BbS_{1}\leftarrow R\setminus B_{b}; (positions to check for dependence)
+10:
+for each j∈S1j\in S_{1} do
+11:
+dj←DKL(pj(⋅∣𝐱−M)∥pj(⋅∣𝐱−M,𝐲S1))d_{j}\leftarrow\mathrm{D}_{\mathrm{KL}}\big(p^{j}(\cdot\mid\mathbf{x}^{-M})\,\big\|\,p^{j}(\cdot\mid\mathbf{x}^{-M},\mathbf{y}^{S_{1}})\big)
+12:
+if dj>εd_{j}>\varepsilon then
+13:
+R←R∖{j}R\leftarrow R\setminus\{j\}
+14:
+end if
+15:
+end for
+16:
+end for
+17:
+return RR
+Appendix C Implementation and Experiments
+This section evaluates the proposed planner PUNT (Algorithm 1)
+across diverse sequence generation tasks.
+All experiments are conducted on A100 GPUs with 40GB memory.
+PUNT offers a clear win in step efficiency without compromising on quality.
+However, this is not indicative of the underlying compute used, which is better captured by the number of forward passes (NFE).
+In terms of NFE, it performs competitively, and particularly on long-sequence tasks,
+it often surpasses the baselines.
+We leave further per-step optimisation for future work.
+C.1 Experimental Setup
+We evaluate two state-of-the-art discrete diffusion models for natural language:
+LLaDA-1.5 (Zhu et al., 2025a, ) and Dream-v0-Instruct-7B (Ye et al., 2025b, )
+(referred to as Llada and Dream, respectively). In this section, we detail the experimental setup,
+including tasks, datasets, evaluation metrics, and baseline methods.
+Tasks and Datasets
+We assess PUNT’s performance on a variety of sequence generation tasks.
+The evaluation relies on the following standard public datasets and their corresponding protocols:
+•
+Math word problems and formal math: GSM8K (Cobbe et al.,, 2021), MATH (Hendrycks et al.,, 2021)
+•
+Code generation: HumanEval (Chen et al.,, 2021) and MBPP (Austin et al.,, 2021).
+•
+Instruction-following evaluation: IFEval (Zhou et al.,, 2023)
+•
+Open-ended question benchmarks: MT-Bench (Zheng et al.,, 2023).
+Evaluation Metrics and Configuration
+We use task-specific evaluation metrics and measure efficiency
+in terms of the number of forward evaluations and the number of iterations PUNT takes.
+Quality Metrics:
+•
+Math problems: Match accuracy (GSM8K)
+•
+Code generation: Pass@1 success rate (HumanEval, MBPP)
+•
+Instruction following: Strict/Loose prompt/instruction adherence (IFEval)
+•
+Open-ended generation: GPT-4o scoring 1-10 (MT-Bench)
+Efficiency Metrics:
+•
+Number of network function evaluations (NFE) per sequence
+•
+Number of generation steps (PUNT-specific)
+Experiment
+NumFewshot
+max length
+GSM8K
+4
+512
+HumanEval
+0
+512
+MBPP
+3
+512
+IFEval
+0
+1024
+MT-BENCH
+-
+1024
+Table 1: Experimental configuration for each benchmark task.
+Baseline Methods
+We compare against representative training-free schedulers with the following parameters:
+•
+Top-k Sampler with k=1,2,3,4,5,6;k=1,2,3,4,5,6;
+•
+EB-Sampler (entropy-bounded unmasking) with ϵ=0.01,0.05,0.1,0.5,1.0,2.0,4.0{\epsilon=0.01,0.05,0.1,0.5,1.0,2.0,4.0} (Patel et al.,, 2025);
+•
+Geometry-aware spacing: dilated with log window size in {3,4,5,6,7}\{3,4,5,6,7\} (Luxembourg et al.,, 2025),
+Each of these baselines utilizes a confidence score to rank positions by certainty.
+Different options for the confidence score are described below.
+Confidence Scoring Strategies
+All confidence scoring strategies operate on the model’s output probability distribution.
+For each position tt in a sequence, the model produces logits lb,t,vl_{b,t,v} for every token vv in the vocabulary.
+These are converted into a probability distribution using the softmax function:
+pb,t,v=elb,t,v∑v′=1Velb,t,v′.p_{b,t,v}=\frac{e^{l_{b,t,v}}}{\sum_{v^{\prime}=1}^{V}e^{l_{b,t,v^{\prime}}}}.
+From this distribution, we compute a scalar confidence score sb,ts_{b,t} that quantifies
+the model’s certainty at that position.
+A higher score indicates greater confidence, prioritizing that position for earlier unmasking.
+To define the scoring strategies, we use the following notation:
+•
+pb,t,(k)p_{b,t,(k)}: The kk-th largest probability at position tt,
+such that pb,t,(1)≥pb,t,(2)≥⋯≥pb,t,(V)p_{b,t,(1)}\geq p_{b,t,(2)}\geq\dots\geq p_{b,t,(V)}.
+•
+yb,ty_{b,t}: The token actually sampled at position tt.
+Negative Entropy
+sb,t=∑v=1Vpb,t,vlogpb,t,v=−H(pb,t),H(pb,t)=−∑v=1Vpb,t,vlogpb,t,v.s_{b,t}=\sum_{v=1}^{V}p_{b,t,v}\,\log p_{b,t,v}=-H\!\left(p_{b,t}\right),\qquad H\!\left(p_{b,t}\right)=-\sum_{v=1}^{V}p_{b,t,v}\,\log p_{b,t,v}.
+This is the negative Shannon entropy.
+Values lie in [−log⁡V, 0]\big[-\log V,\,0\big].
+Scores closer to 00 correspond to more peaked (certain) distributions.
+Top Probability
+sb,t=maxv⁡pb,t,v=pb,t,(1).s_{b,t}=\max_{v}p_{b,t,v}=p_{b,t,(1)}.
+A simple peak-confidence heuristic.
+Ignores how close competitors are.
+Top Probability Margin
+sb,t=pb,t,(1)−pb,t,(2).s_{b,t}=p_{b,t,(1)}-p_{b,t,(2)}.
+Measures local ambiguity between the two most likely tokens.
+Larger margin ⇒\Rightarrow clearer preference.
+Positional Schedule
+sb,t=t.s_{b,t}=t.
+A deterministic curriculum ignoring model uncertainty (e.g. left-to-right).
+Negate or reverse indices if the opposite order is desired.
+C.2 Implementation Details
+Our implementation of PUNT follows the procedure outlined in Algorithm 1.
+To ensure a fair comparison, both PUNT and the baseline methods use the same confidence scoring strategy
+for each model. Specifically, we use the top probability margin for LLaDA and negative entropy for Dream.
+Sampling and Temperature Settings
+All methods employ nucleus sampling with nucleus mass set to 0.90.9.
+We present results for two temperature settings: 0.10.1 (low temperature, focused sampling)
+and 0.70.7 (higher temperature, more diverse sampling)
+to evaluate robustness across different generation regimes.
+End-of-Sequence Handling
+To prevent premature termination, we down-weight positions corresponding to end-of-sequence tokens
+when early termination is undesirable:
+If yb,ty_{b,t} equals a special end-of-sequence token EOS and early termination is undesirable, enforce
+sb,t←Cneg,Cneg≪0,s_{b,t}\leftarrow C_{\text{neg}},\qquad C_{\text{neg}}\ll 0,
+to deprioritize revealing that position.
+C.3 Results and Analysis
+We present our results grouped by sequence length, as this factor significantly impacts
+the relative performance of the scheduling methods.
+Short-Sequence Benchmarks
+We evaluate PUNT on GSM8K, HumanEval, and MBPP
+—all tasks with sequences shorter than 1024 tokens (see Table 1).
+These benchmarks test mathematical reasoning and code generation capabilities
+under constrained generation lengths.
+Results:
+When measured by the number of generation steps,
+PUNT consistently outperforms all baseline methods across both temperature settings (0.1 and 0.7).
+However, when evaluated by NFEs per sequence, PUNT shows competitive but not dominant performance.
+PUNT’s strength lies in reducing the number of sequential generation steps through aggressive parallelization,
+but each step may require more network evaluations due to its comprehensive independence testing.
+(a)
+(b)
+Figure 8: GSM8K performance comparison across different temperature settings showing NFE/steps vs
+match accuracy (flexible-extract filter)
+(a)
+(b)
+Figure 9: HumanEval performance comparison across different temperature settings showing NFE/steps vs Pass@1 success rate for both LLaDA and Dream models
+(a)
+(b)
+Figure 10: MBPP performance comparison across different temperature settings showing NFE/steps vs Pass@1 success rate for both LLaDA and Dream models
+Long-Sequence Benchmarks
+For longer sequences (≥1024\geq 1024 tokens), we evaluate on MT-Bench and IFEval.
+These tasks require sustained coherence and complex instruction following over extended generation windows.
+MT-Bench Results:
+MT-Bench consists of open-ended questions spanning creative writing, reasoning, and coding.
+Each question includes two rounds, where the second builds upon the first response.
+Answers are evaluated by GPT-4o using a 1-10 scale.
+All experiments are carried out with temperature 0.7.
+Figure 11
+show that PUNT excels particularly when NFE budgets are severely constrained.
+In low-NFE regimes, PUNT significantly outperforms all baseline methods.
+As the NFE budget increases, dilated sampling begins to show competitive performance,
+but PUNT maintains its characteristic stability advantage.
+(a)
+(b)
+Figure 11: Performance comparison across different models showing NFE vs mean performance
+IFEval Results:
+Figure 12: IFEval results showing NFE/steps vs accuracy, temperature 0.1.
+Figure 13: IFEval results showing NFE/steps vs accuracy, temperature 0.7.
+The instruction-following evaluation tests adherence to specific formatting and content constraints.
+PUNT demonstrates consistent accuracy across both NFE and step-based metrics,
+again showing its reliability advantage.
+PUNT’s results on IFEval demonstrate its stability across different computational budgets.
+As shown in Figures 12 and 13,
+it consistently leads in generation steps at both temperatures, without compromising accuracy.
+Additionally, PUNT is more NFE-efficient at lower budgets and remains competitive as the budget increases,
+pulling ahead at a temperature of 0.7.
+C.4 Masked Diffusion Models for Proteins
+Masked diffusion models (MDMs) have demonstrated effectiveness beyond natural language processing,
+particularly in generating biological sequences such as proteins and DNA.
+To evaluate PUNT’s performance in a structured biological domain,
+we conduct experiments on de novo membrane protein design using MemDLM (Goel et al.,, 2024),
+a masked diffusion model that finetunes the state-of-the-art ESM-2 150M
+protein language model (Lin et al.,, 2023)
+with an MDM objective to generate realistic membrane proteins.
+C.4.1 Experimental Setup
+We evaluate PUNT on unconditional protein generation with sequences of up to 1024 amino acids,
+comparing against three established training-free schedulers:
+Top-kk sampling, Entropy-Bound (EB) unmasking, and geometry-aware (Dilated) spacing.
+All methods employ a temperature of 0.8, to encourage sequence novelty, and
+suppress end-of-sequence tokens to promote longer, more realistic protein sequences.
+For each sampling strategy, we generate 50 amino acid sequences using the following hyperparameters:
+•
+PUNT: ε={0.001,0.004,0.01,0.02,0.04,0.08,0.16}\varepsilon=\{0.001,0.004,0.01,0.02,0.04,0.08,0.16\}
+•
+Top-kk: k={1,2,3,4,6,8,12}k=\{1,2,3,4,6,8,12\}
+•
+EB Sampler: ε={0.1,0.5,1,5,10}\varepsilon=\{0.1,0.5,1,5,10\}
+•
+Geometry-aware spacing: log⁡w={3,4,5,6,7,10}\log w=\{3,4,5,6,7,10\}
+C.4.2 Evaluation Metrics
+We assess PUNT’s performance across two key dimensions critical for practical
+protein design applications (Wenran et al.,, 2025):
+Computational Efficiency:
+As with the natural language benchmarks,
+we measure the number of forward evaluations (NFE) and denoising steps required for generation.
+NFE represents the total number of model forward passes needed to complete sequence generation,
+providing a direct measure of computational cost. Denoising steps (PUNT-specific)
+track the number of iterative refinement steps in the masked diffusion process.
+Structural Validity:
+Generated protein sequences are evaluated for their likelihood to fold into stable,
+well-defined three-dimensional structures.
+We feed each generated amino acid sequence to ESMFold (Lin et al.,, 2023)
+to predict the corresponding 3D protein structure.
+We then calculate the mean pLDDT
+(a per-residue measure of local confidence in the structural predictions)
+across all residues in each predicted structure.
+C.4.3 Results and Analysis
+Figure 14: Protein generation with MeMDLM: mean pLDDT vs (a) NFE, and (b) denoising steps.
+Figure 14 plots the mean pLDDT against NFE and number of denoising steps. We find that while the pLDDT of generated structures is low across denoising methods—which may be attributed in part to our use of a non-semi-autoregressive generation strategy, or because of the very long sequence length and absence of multiple sequence alignment in ESMfold making this a challenging domain for 3D structure prediction—PUNT consistently generates proteins with comparable or marginally higher pLDDT than the baseline samplers given the same computational budget, with stable performance across a broad range of NFE.
+These results suggest that PUNT is able to improve efficiency without sacrificing structural plausibility, making it well-suited for rapid proposal of candidate proteins for downstream analysis.
+Appendix D Denoising Process
+In this section,
+we show examples of our denoising process starting from a completely masked response for three
+prompts from different domains.
+Text Prompt
+The first prompt is a story generation prompt:
+“Compose an engaging story about a recent trip to Hawaii, highlighting
+cultural experiences and must-see attractions."
+Math Prompt
+The second prompt is a math word problem:
+“Natalia sold clips to 48 of her friends in April, and then she sold half
+as many clips in May. How many clips did Natalia sell in altogether in April and May?"
+Programming Prompt
+The third prompt is a programming prompt:
+“Write a function to find the minimum cost path to reach (m,n)(m,n) from (0,0)(0,0) for the given cost matrix cost[]​[][][] and a position (m,n)(m,n) in cost[]​[][][]."
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

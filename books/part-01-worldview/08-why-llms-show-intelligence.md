@@ -102,13 +102,31 @@ p_theta(output | instruction, examples, query)
 
 从系统角度看，context 因此成为运行时状态与质量输入。prompt version、示例选择、retrieval、截断和上下文污染都会影响能力，必须像模型版本一样被评估和观测。
 
+上下文规定的结构还要与参数中学到的结构分开验收：在同一母图中采出许多子图训练后，模型可能记住某条边，但这条边并不在当前问题给出的子图里。因而应分别检查输出是否只使用当前输入允许的边、是否仅在已学母图中存在，以及不给子图时能否靠记忆找到路径；后三者不能合成一张“图推理正确”证书。[受限小型 decoder 对照](https://arxiv.org/html/2509.20336v1)中，母图边存在的成功率可高于当前子图合法率，短路径监督后生成更长可行路径也不等遵守最短路径目标；共享母图上的任务留出不代表未见图泛化。Attribution graph 中的 token 汇合只提出当前信息与已学结构如何参与的诊断假说，受 transcoder、阈值和所选节点分母限制，不是运行时删 token，也未证明唯一完整因果算法。图与子图制备、模型及各层 transcoder 训练、全部 trace 和独立路径检查均付费；输入图身份、合法边或解释保真不足时，保留显式图、可执行路径/最短性检查与更窄干预，不让熟悉结构或漂亮 trace 越过当前上下文的约束。
+
+<!-- source-family:SF-2025-ARXIV-2509-20336 -->
+
+所谓未见任务还要区分“训练分布中零密度”与“移出训练结构所张成的空间”。[一个单层linear-attention构造](https://arxiv.org/html/2606.06814v1)以低秩Gaussian混合描述回归任务及其支持子空间；在正交子空间、最优权重、协方差各向同性扰动趋零及训练/测试prompt长度依次趋大的条件下，训练子空间span内未见方向可以达到噪声底，转向span外则留下随角度增长的误差。它说明多样性应检查支持方向而非只数任务标签，也说明局部“分布外”得分不自动等于任意结构外推；GF加速分析中的ansatz和GPT-2合成验证不升级为所有LLM的定理。任务生成、训练与更长示例context均有成本，结构假设或实际留出不成立时，继续保留显式示例、独立OOD评测和较窄任务范围。<!-- source-family:SF-2026-ARXIV-2606-06814 -->
+
 Context 内的“学习”可以是一次 forward 中执行估计程序，不必是参数更新。一条受限构造先按 query 的局部几何拟合 tangent，再在稳定的局部坐标中聚合样本、求回归；ambient cutoff防止投影把远处样本伪装成邻居。这里局部sample mass、维度、smoothness、separation与扰动共同决定可估计尺度，算法还需要结构信息与数值guard，不能把它解释为任意预训练模型已经自动发现同一程序。
+
+识别context内的算法，还可以从受限权重的可执行简化出发，而不只读出一份统计量。一个[线性attention的矩阵补全对照](https://arxiv.org/html/2509.19702v1)先固定可见block与资源图，再将训练权重稀疏/聚类、核对逐层activation，提出一边改善可见矩阵的条件数、一边累积缺失block预测的迭代；低rank投影改变单轮计算，按machine限制可见性则把共享更新变成消息接口。这不是请求期间更新模型参数，也不由权重图或有限均方误差证明全域同一算法。抽取保真、显式迭代的收敛条件与实际网络的任务质量要分别验收：所学batch谱尺度不同于证明所用逐步精确谱，后者的估计费不能从二阶率里省掉；局部子空间正交也不使平均投影的最小特征值自动为1。原文步长、符号与部分非方阵口径未统一，不照录通用solver配方，模拟的消息数量也不是实机网络加速。任务生成、网络训练、权重抽取、每步矩阵乘/谱估计和全部消息同步、数值回归都计费；支持域、谱界、噪声或净预算不合时，保留原网络、成熟数值solver与独立结果检查，不把合成补全上的可解释迭代授为任意LLM已发现普适学习算法。
+
+<!-- source-family:SF-2025-ARXIV-2509-19702 -->
 
 要检验 context 内执行了什么估计，可以先选择解析统计量已知的任务，再分开比较输出、内部可解码性与因果控制。一项受限构造在每个 episode 改变 Gaussian 的均值偏移或 variance，用带标签的有限 context 预测新 query；线性任务与二次 energy 任务呈现不同的可读出深度。它比 few-shot 分数提供更多诊断对象，但只对 raw dot-product kernel 作弱相关对照，不能排除 learned/centered kernel；LogitLens 与 OV 对齐仍是相关证据，不是 heads 实际投票或某层唯一必要算法的证明。[原始受限机制](https://arxiv.org/html/2603.10573v1)。<!-- source-family:SF-2026-ARXIV-2603-10573 -->
 
 已知生成任务参数的 oracle 与模型只见有限 context，不拥有同一信息。有限 context 通常留下参数 posterior，正确 predictive ratio 需要对它积分，不能直接把隐藏真参数的 likelihood ratio 当作 context 已完全识别的 Bayes 规则。该实验 variance 任务接近更有信息的 oracle，mean-shift 任务仍有 gap，较大域外 shift 和所测 label-noise 条件下结果退步，增加 context 的所测均值也未改善；没有认证任意 LLM 的通用统计算法。构造 oracle、生成任务、训练与 probe 均付费；进一步确认因果机制还需额外的定点干预预算。部署仍用当前 context/held-out 行为验收，不把高 rank correlation 或低 loss 当作因果机制和普遍最优证书。
 
 构造出可实现的 comparator，与有限pretraining真正选到它，是两个问题。新任务prompt内的样本数限制该函数能被估计多准，独立训练任务数则约束选择程序的泛化；实现误差和near-ERM优化gap仍须另外计入。固定head的存在构造也可能随context增长workspace、width与数值范围；有限实验增加任务数时同时增加更新预算，且模型与理论构造不同。条件失配或无匹配机制证据时，继续以held-out任务和当前context协议验收，不从minimax或存在性定理推出任意LLM可靠学习。[构造与条件](https://arxiv.org/html/2609.31458v1) <!-- source-family:SF-2026-ARXIV-2609-31458 -->
+
+任务数之外，还要保留这些任务怎样被采样。理想posterior在给定likelihood与task prior下选到适合当前context的任务，和有限独立任务训练出的预测器能否泛化，是两项不同问题；更重的先验尾部可能覆盖某些较远shift，却同时增加有限样本估计与相关context的压力。[受限的数值ICL对照](https://arxiv.org/html/2510.01163v1#S4)在小shift、任务数较少或不同过程条件下并非重尾全胜，重加权也可能近无益；不能从一个上界或更宽覆盖推出真实误差必降、实际LM已经Bayes最优或任意结构外推。须联合记录独立task人口、每task长度/依赖、prior与重加权规则、训练和留出shift，并分别检查context末位/均值而非只选最优位置。任务构造、训练、重加权/搜索与独立回归都付费；尾部、数据量或预算不适配时保留原混合、可信显式示例和较窄任务范围，不把更多长尾样本当成无条件ICL增强。<!-- source-family:SF-2025-ARXIV-2510-01163 -->
+
+任务先验还可以约束可复用计算的组合，而不只给一整份任务参数分布：先从多任务输入—输出 episode 中共同学习模块各自的动态和模块之间依赖历史的组合语法，再冻结这些参数，在新 episode 中用真实输出反馈推断模块路径。此时适应发生在结构化假设与递归状态里，而不是权重里；学习得到的语法缩小稀疏反馈下要追踪的候选，但并没有创造未训练过的新模块。
+
+[受限组合式元学习构造](https://arxiv.org/html/2510.01858v1#S2)在规则与平移序列上支持这条分工，未证明 LLM 使用同一内部算法。“一个例子”是一段带反馈的 episode，整段反馈后的最佳路径也不能当作当时已知的在线选择。每个粒子须保模块选择、模块状态、门控状态及祖先关系；同模块名而历史不同，不可直接合并。模块数、任务语法或反馈不可辨识时，再多粒子也不能保证找到真实组合，有限粒子还会丢失假设；模块/语法训练、全部粒子计算与状态存储都付费。新任务超出已有组件、反馈不足或质量预算失配时，保留不确定候选、更多可信示例或独立参数适配，不由无 test-time 权重更新批准通用 one-shot、无遗忘或物理执行能力。
+
+<!-- source-family:SF-2025-ARXIV-2510-01858 -->
 
 Context 中显式给出结构，与模型自己构造出同样结构，也必须分开验证。将同一关系图写成文本或正确 ASCII 布局，可以测试外部组织是否帮助读出；要求模型先画再答，则同时加入了结构构造错误和额外输出。训练“从文本构造图”与训练“读取给定图”改变的任务接口也不同，推理时是否真的展示该图须另列，不能把两种训练和两种输入合并成更深推理的单一证据。<!-- source-family:SF-2026-ARXIV-2604-14641 -->
 
@@ -142,6 +160,11 @@ replication across scales
 ```
 
 因此本书把 emergence 当作待解释的经验现象集合，而不是统一因果理论。第 7 章的 scaling curve 描述 aggregate loss，第 8 章的能力曲线描述具体任务，两者不能互相替代。
+
+内部机制也可能在明确限制下产生不同类型的跃迁，而非只由评分阈值制造突变。一个单层单头复制模型把attention后验中的先验代价与数据拟合压力分开，再比较uniform pooling和shift-by-one copy两种模式：在线性activation的受限极限中，前者先连续出现，随后平滑转向复制；softmax的行归一与非线性映射改变有效竞争关系，使两个局部最优可随数据量交叉，形成MAP序参量跳变。这里改变的是受控模型的解释，不是给真实LLM套上统一相变规律。
+
+[复制子电路的有限理论与训练对照](https://arxiv.org/html/2606.12058v1)依赖iid离散输入、周期边界、无因果mask、宽度/正则极限及低维约化；有限Adam的可达路径与后验最优仍不同，曲线还过滤未收敛高loss解，采样混合亦须核。理论、采样和多seed训练都计费，不能从一个一阶跃迁推出所有预警信号不存在或部署风险不可预测。条件不符时保留连续行为指标、逐checkpoint机制检查与独立预测gate，不让复制头、较低loss或漂亮相图签发完整ICL与可靠性。
+<!-- source-family:SF-2026-ARXIV-2606-12058 -->
 
 ## Tool use 为什么会放大模型能力
 
@@ -344,6 +367,16 @@ depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学�
 
 ## Review notes
 
+- `SF-2025-ARXIV-2510-01163`：Daily2025-10-03补Oct02；[Pretraining distribution exact-v1](https://arxiv.org/html/2510.01163v1#S4)，2+1+3=6/具体prior消费者gap深入。只task尾部覆盖与有限task/依赖估计压力分账；保Bayes理想非训练可达/唯一task识别、density坐标与上界非真实单调、E.89/E.91及delta口径未闭、局部小shift/有限N/重加权无益反侧。数值toy非tokenLLM、全部构造/训练/搜索费，未核全证明/像素/代码或复现。R8原分/日门复用；root R45必要/actualowner/整体PRE与本次窄授通过，已真实SAVE/fullselfread；root R49本项唯一实际POST通过，指定窄位释放。仅行政同步既成，不预DAY。
+
+- `SF-2026-ARXIV-2606-12058` — Daily2026-06-12补Jun11，supp_jun12；[exact-v1](https://arxiv.org/html/2606.12058v1)，2+1+3=6，具体长期差额深入。采用B3限定必要/直接反侧与原两段，不授普遍机制、生产可靠性或安全；保全部数据/选择/训练与回归成本，未核代码/复现。唯一非writer jun12_review_finish §65必要/actualowner/原稿PRE通过并窄授；作者真实SAVE并完整自读新增/直接两侧及本人注，唯一非writer jun12_review_finish §71已实际完整新增/两侧/本人注POST通过，精确窄位释放；仅行政同步既成结果，非DAY授权。
+
+- `SF-2026-ARXIV-2606-06814` — Daily2026-06-09补Jun08；[exact-v1](https://arxiv.org/html/2606.06814v1) §2–5最小模型/Th1–3与直接边界，2+1+3=6/具体span内外gap深入。保单层linear attention、Gaussian/正交、optimal权重与epsilon/训练测试prompt极限、GF ansatz与合成验证；不授自然语言任意OOD禁令。root必要源/actual owner/完整两侧已核并授本单段+注；作者已真实保存并完整自读新增、直接完整两侧及自身H2注；root SUP_REVIEW §6唯一非writer实际POST已通过，指定窄位已释放，不预DAY。未核代码/复现，不授DAY。
+
+- `SF-2025-ARXIV-2509-20336` — Aristotle，Daily2025-09-26补Sep25；78 root日期原域实际采用/79→Einstein71首次2+1+2=5。[Circuit Tracing exact-v1](https://arxiv.org/html/2509.20336v1)S1–2/4/A–D文字/T1–3有限必要，root第四批首备→作者88唯一另一角色回原域actual采用，reader仅角色复用。只当前子图合法/母图存在/无context记忆三个consumer与trace资格；保五层小GPT2/RoPE、共享母图非graphheldout、S_E所选分母/非召回、threshold/hidden/transcoder身份、无充分faithfulness或干预证明、长路径非最短及全制备/训练/trace/验证费。不授大LLM统一算法、全机制因果或runtime token压缩，未核图像素/代码/复现。作者90当前owner/原完整三项经Einstein81整体纯PRE通过，root本轮actualfresh独立新窄授；已按原稿真实SAVE并完整自读新增、完整直接两侧/binding及本人注与首保护组；限定检查通过，Einstein85本项唯一actualPOST已通过，指定正文/本人注窄位即时生效释放；本尾仅同步已成事实，不第三Source/PRE/POST或授DAY。
+
+- `SF-2025-ARXIV-2509-19702` — Aristotle，Daily2025-09-26补Sep25；30日门实际采用/31→Einstein26原2+1+2=5，root第二批必要→作者37逐原域actual采用→Einstein32角色复用。[Linear Transformers exact-v1](https://arxiv.org/html/2509.19702v1)§3–6/T1/A.1–5/B.1–4/D.1–3/E.1–2与直接caption必要。仅资源可见图下权重简化/逐层保真、连续条件化与预测累积另验；保所学/证明谱尺度步长分责、alpha平均投影反例、符号/shape未闭、模拟float消息非实机bits、数值反退与全部生成/训练/提取/乘法/谱估计/同步/回归费。不授完整recipe、网络全域二阶/无限泛化/硬件加速；未核C额外参数估计/Alg1像素、实现或复现。Einstein34当前owner/完整原三项purePRE通过，root本轮actualfresh独立新窄授；作者44已按原稿真实SAVE/完整新增、两侧/binding及本注自读，Einstein37本项唯一actualPOST已通过，指定正文/本人注窄位即时生效释放。本注仅同步已成事实，不改技术/他态，不授DAY。
+
 - `SF-2026-ARXIV-2601-11517` — Daily `2026-01-20`增量；[explanation transfer exact-v1](https://arxiv.org/html/2601.11517v1) §2/3、Table4与必要AppA2。2+1+2=5，跨模型一致性/正确性/faithfulness接口差额深入；保留一致错、答案去除混杂、GRPO transfer accuracy不升、多候选费用和人评性质，不授忠实解释或高风险可靠性。root实际必要原证/owner PRE通过并授窄锁；作者实际正文/完整邻接/本注已顺读，root实际顺读150–187/本注，POST通过，窄锁释放。未核artifact/复现，非日级验收。
 
 - `SF-2025-ARXIV-2509-04664` — Daily `2025-09-06`；精确 v1 §3.1–3.2、Appendix A 与 §4.1/Appendix E。正文采用有效性分类到生成错误的条件联系，不采用无条件必然幻觉、部署错误率或 truth-calibration 保证；评分激励的完整机制归属 Ch66。必要原文和现有论证已核对，Mendel非写入者实际核正文及完整邻接并通过；未复现实验。
@@ -390,3 +423,5 @@ depth / breadth scaling 获益，但“轨迹收敛”只说明内部动力学�
 - SF-2026-ARXIV-2604-15306 — Daily2026-04-18补Apr17；[ShortestPath exact-v1](https://arxiv.org/html/2604.15306v1) §2–7/T1–2/A/D1–2，3+1+3=7。空间迁移与组合长度双轴/conditionalcomposition；预训已见test地图、MLPprobe非causal、RL/TTC有限预算、长监督反退和record非compute匹配近文。独立reader必要Source/root接纳与date有效，作者actual owner比较，A30逐字PRE与root实际正文/完整邻接/本人注POST通过，指定窄lease释放；作者仅行政同步，不授DAY；未核代码/复现。
 
 - SF-2026-ARXIV-2604-14641 — Daily2026-04-18补Apr17；[Text/ASCII exact-v1](https://arxiv.org/html/2604.14641v1) §3–6/T1–3/限制必要层，2+1+2=5。gold外显结构≠自构、construct/read训练和推理展示分责；83.7/75.0/66.6及迁移负侧、consistency非truth/全费用近文。必要Source/root独核及date有效，作者actual owner，root逐字PRE通过；限定保存，root实际正文/完整邻接/本人注POST通过，窄lease已释放；未复现。
+
+- `SF-2025-ARXIV-2510-01858` — Hilbert，Daily2025-10-04补Oct03BJT；[exact-v1](https://arxiv.org/html/2510.01858v1)§2–3/A1/式1–14必要，2+1+2=5。仅learned module/组合grammar与反馈条件下latent路径及完整递归state；保oneepisode非单query、filtering/smoothing分责、可辨识性/固定N与先验支持、软训硬推/SMC和印式未闭、全部训练/粒子费用。不授任意LLM内算法、唯一module、无遗忘/真实control或净速，未核像素/code/权重或复现；整体PRE/真实SAVE/selfread/唯一POST只按本日canonical实际层，不由本注预签。

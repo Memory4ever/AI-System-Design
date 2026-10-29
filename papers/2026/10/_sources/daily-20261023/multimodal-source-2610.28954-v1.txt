@@ -1,0 +1,603 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.28954v1
+Original retrieval 2026-10-23 BJT. Download is not evidence of having reviewed all content. Necessary reviewed sections and conclusions are in SOURCE_MULTIMODAL.md.
+Abstract
+Coarse-to-real (C2R) video generation converts coarse animation, simulation, or
+game-rendered videos into photorealistic videos while preserving scene layout,
+camera motion, and dynamics. Training such models requires aligned (coarse,
+realistic) video pairs, which are expensive to create and confine prior
+systems to narrow synthetic domains. We exploit a simple asymmetry: paired
+videos are hard to obtain, but paired real-to-coarse images are easy to construct
+with existing editing and 3D reconstruction tools. Using these image pairs, we
+train the DINO-R2C model to transfer realistic images to coarse images in DINO
+feature space, and apply it frame-wise to ordinary real videos to
+synthesize pseudo-coarse videos. The C2R# model then learns to generate each
+real video from its pseudo-coarse counterpart, free from needing (coarse,
+realistic) video pairs. At inference, the DINO-R2C model is discarded and actual
+coarse videos drive the C2R# model directly. Thus, our pair-free training scales with any
+real-video corpora rather than with paired synthetic videos.
+We will release the model and project webpage at https://gonzalognogales.github.io/coarse2real-sharp/ .
+ 2 2 footnotetext: Work done while at Roblox. 
+ 1 Introduction
+ Figure 1: The C2R# model transforms game renders (top), geometry blockouts (middle),
+and stylized animations (bottom) into photorealistic videos.
+Coarse-to-real (C2R) video generation uses coarse videos, such as
+game renders, geometry blockouts, or stylized animations, as the structural
+control for photorealistic video generation. The coarse input specifies scene
+layout, camera motion, and dynamics, while a modern video model produces the
+final visual appearance.
+A major limitation of existing coarse-to-real systems is that they need paired
+training data. The original C2R paper  ( Gomez-Nogales et al., 2026 ) 
+introduces a model that learns controllability from paired synthetic (coarse, realistic)
+videos. Such aligned video pairs are expensive to create, and the cost
+multiplies with every additional coarse modality, so paired-video supervision is
+difficult to scale.
+Our key observation is that this bottleneck is asymmetric. Paired coarse-to-real
+videos are expensive, but paired real-to-coarse images are cheap. Modern image editing
+models and 3D fitting methods can turn diverse realistic images into aligned
+coarse counterparts. Image-level supervision is therefore highly accessible.
+However, using an image generator such as GPT-Image 2  ( OpenAI, 2026 ) 
+to edit every frame of a large video corpus into its coarse counterpart would
+incur substantial generation costs.
+We exploit this asymmetry with an image-level real-to-coarse bridge, the DINO-R2C model.
+Trained on (coarse, realistic) image pairs, it predicts the DINO
+features  ( Siméoni et al., 2025 ) of the coarse counterpart of a realistic
+image. Applied to every frame of an ordinary real video, it synthesizes a
+pseudo-coarse video that is paired with its source. We train the
+ C2R# model to generate the real video from this pseudo-coarse control video. At
+inference, the DINO-R2C model is discarded and an actual coarse video drives the
+ C2R# model directly.
+Using the image-level bridge poses two challenges. First, the DINO-R2C model is an image model, so its per-frame
+outputs are not temporally smooth. As a result, we apply camera augmentation during its training
+to reduce this jitter, and the C2R# model learns to tolerate the rest because its
+target is always the temporally coherent real video. Second, the predicted
+features can leak cues of the realistic input that no actual coarse video
+contains. Therefore, we block the leak by decoding the prediction to pixels with a
+frozen RAE decoder  ( Zheng et al., 2026 ) and re-encoding those pixels
+before they serve as control.
+This formulation moves the expensive part of supervision from videos to
+images. Once the DINO-R2C model is trained for a coarse modality, any real-video
+collection becomes coarse-to-real training data, while supporting a new modality
+requires only new image pairs rather than a new paired-video dataset.
+ 2 Related Work
+Generative rendering from coarse structure.
+Turning cheap renders into realistic imagery predates diffusion models:
+ Richter et al. (2022) enhance game frames with a G-buffer-conditioned
+network trained adversarially against unpaired photographs, and
+vid2vid  ( Wang et al., 2018 ) learns paired label-to-video synthesis. Recent
+work conditions image or video diffusion models on G-buffers
+ ( Beisswenger et al., 2025 ; Zeng et al., 2026 ) , animated
+meshes  ( Cai et al., 2024 ) , physics-engine
+states  ( Lin et al., 2026 ) , or multimodal spatial
+maps  ( Abu Alhaija et al., 2025 ) , and RealMaster  ( Cohen-Bar et al., 2026 ) 
+lifts rendered videos to photorealism by propagating enhanced keyframes to build
+its own paired videos. NVIDIA’s DLSS 5  ( NVIDIA, 2026 ) conditions a
+real-time generative renderer on rendered frames and engine motion vectors
+to enhance photorealistic appearance. All of these obtain supervision from inside a rendering
+pipeline, from per-scene synthesis, or from authored video pairs. We assume only
+a coarse RGB video at test time and no paired videos at all.
+The original C2R paper.
+Our direct predecessor  ( Gomez-Nogales et al., 2026 ) conditions a Wan2.1
+backbone on DINOv3 features of the control video through a lightweight adapter.
+Its control pathway is trained mostly on unpaired real videos reconstructed
+from their own DINO features, with a small set of paired synthetic (coarse,
+realistic) videos anchoring controllability. Controllability therefore rests
+on scarce, domain-limited video pairs, and the adapter sees mostly features of
+real videos in training but features of coarse videos at test time. Our
+pair-free C2R framework keeps the objective and control interface but removes
+paired videos from training.
+Controllable video diffusion.
+Video diffusion and flow-matching models can be guided by depth, edges,
+segmentation, or sparse keyframes through ControlNet-style
+branches  ( Zhang et al., 2023 ; Esser et al., 2023 ; Guo et al., 2024 ; Lin et al., 2025 ) ,
+by unified context blocks  ( Jiang et al., 2025 ; Wan, 2025 ) , or by warped
+noise that carries motion  ( Burgert et al., 2025 ) . For image generation,
+LooseControl  ( Bhat et al., 2024 ) generalizes ControlNet’s depth
+conditioning to loosely specified scene boundaries and 3D object boxes.
+Instruction-based
+video editors such as Editto  ( Bai et al., 2025 ) are trained on large
+synthetic edit datasets and can perform sim-to-real edits, which is why we
+compare against them. Explicit structural controls preserve geometry strongly
+but can over-constrain generation or leak the appearance of the control
+input; as in the original C2R paper, the C2R# model conditions on implicit DINO
+features, which carry layout and semantics while leaving appearance to the
+video model.
+Self-supervised features as a cross-domain bridge.
+DINO features  ( Oquab et al., 2024 ; Siméoni et al., 2025 ) are dense and robust
+to appearance change, and several works exploit this for domain transfer.
+Concurrently, Control-DINO  ( Dominici et al., 2026 ) conditions an
+image-to-video model on DINOv3 features for stylization and video-from-3D,
+and Liu et al. (2026) use self-supervised features as an appearance-invariant
+bridge for unpaired image translation. Earlier unpaired video translation
+relied on cycle consistency  ( Zhu et al., 2017 ) with pseudo-supervision
+from synthetic motion  ( Wang et al., 2022 ) , while
+InstructPix2Pix  ( Brooks et al., 2023 ) and Ditto  ( Bai et al., 2025 ) 
+showed that strong image models can synthesize the paired data an editor
+needs. We combine both ideas: image models provide cheap (coarse, realistic)
+image pairs, an real-to-coarse model learned in DINO space and decoded through an RAE
+decoder  ( Zheng et al., 2026 ) lifts them to videos, and the resulting
+pseudo-paired videos supervise the coarse-to-real generator.
+ 3 Method
+ Figure 2: Overview of the DINO-R2C and C2R# models. 
+ Top: The DINO-R2C model is trained from paired realistic and coarse images using
+feature reconstruction and pixel-space reconstruction losses. Once trained, it
+is applied to real videos frame-wise to synthesize pseudo-coarse videos.
+ Bottom left: The C2R# model is trained on these pseudo-paired videos.
+The pseudo-coarse video is encoded by the frozen DINO encoder E and injected into the frozen
+Wan2.2 backbone through trainable control and fusion adapters, while the original
+real video provides the training target.
+ Bottom right: at inference, an actual coarse video is encoded directly
+by E and used to condition the same C2R# model; the DINO-R2C model is no longer
+required. Orange modules are trainable, blue modules are frozen, gray boxes are
+tensors, and red boxes denote training losses.
+ 3.1 Problem Setup
+At inference time, the user provides an actual coarse video v^{\mathrm{c}} 
+from categories such as game renders, geometry blockouts, or stylized animations, together
+with a text prompt. We seek a generator that produces a realistic video while
+preserving the scene layout, camera motion, and dynamics of v^{\mathrm{c}} .
+For training, we assume access to ordinary real videos v^{\mathrm{r}} and to
+aligned (coarse, realistic) image pairs, but to no paired
+ (v^{\mathrm{c}},v^{\mathrm{r}}) videos. Throughout, superscripts
+ \mathrm{r} and \mathrm{c} denote realistic and coarse data.
+Our pair-free C2R framework has two models (Figure  2 ).
+The DINO-R2C model (Section  3.2 ) learns real-to-coarse image transfer from
+the image pairs and is then applied to every frame of the real videos,
+producing pseudo-paired videos (Section  3.3 ). The C2R# model
+(Section  3.4 ) is trained on these pseudo-paired videos to generate
+the real video from its pseudo-coarse counterpart; at inference it is driven
+directly by actual coarse videos.
+ 3.2 Image-Level Real-to-Coarse Bridge: the DINO-R2C 
+ Figure 3: Example (coarse, realistic) image pairs. A realistic image (left) is paired with coarse
+images in four modalities (right):
+Coarser geometry, Coarse geometry,
+Coarser Anime, and Coarse Anime.
+Image pairs.
+We define a coarse modality as one visual form of coarse input that the
+ C2R# model should support, and use the four modalities shown in
+Figure  3 . Each coarse image preserves the subjects, layout,
+pose, and camera of its realistic counterpart. We generate realistic source
+images with GPT-Image 2  ( OpenAI, 2026 ) and create their coarse
+counterparts through instruction-guided editing with the same model or 3D
+reconstruction and simplification. All images are produced
+at 1280\times 720 , with 14,000 aligned (coarse, realistic) image pairs per
+modality (Appendix  A.1 ). These image pairs are the only paired
+supervision in our framework.
+Model and objective.
+Let E be a frozen DINO encoder (DINOv3-L/16  ( Siméoni et al., 2025 ) ) that
+maps an image to a dense feature grid. For each coarse modality m , the
+ DINO-R2C model learns a mapping S_{m} from a realistic image to the DINO features of
+its coarse counterpart,
+ S_{m}(I^{\mathrm{r}})\approx E(I^{\mathrm{c}}_{m}),\qquad S_{m}=H_{m}\circ B, 
+ (1) 
+where B is a trainable DINOv3-L backbone shared across all four modalities
+and H_{m} is one of four modality-specific residual MLP heads. We learn the
+mapping in DINO feature space rather than in
+RGB because the self-supervised representation captures scene structure and
+layout while being relatively insensitive to the large appearance gap between
+realistic and coarse images; empirically, training also converges more easily
+in DINO space. To supervise the prediction in pixel space as well, a frozen RAE
+decoder D   ( Zheng et al., 2026 ) decodes it to a coarse image
+ \hat{I}^{\mathrm{c}}_{m}=D(S_{m}(I^{\mathrm{r}})) . The training objective is
+ \mathcal{L}_{\mathrm{R2C}}=\lambda_{\mathrm{feat}}\big\|S_{m}(I^{\mathrm{r}})-E(I^{\mathrm{c}}_{m})\big\|_{2}^{2}+\lambda_{\mathrm{rgb}}\big\|\hat{I}^{\mathrm{c}}_{m}-I^{\mathrm{c}}_{m}\big\|_{1}+\lambda_{\mathrm{LPIPS}}\,\mathrm{LPIPS}\big(\hat{I}^{\mathrm{c}}_{m},I^{\mathrm{c}}_{m}\big), 
+ (2) 
+a DINO feature reconstruction loss, an RGB reconstruction loss, and the LPIPS
+perceptual loss  ( Zhang et al., 2018 ) , with
+ \lambda_{\mathrm{feat}}=1.0 , \lambda_{\mathrm{rgb}}=1.1 , and
+ \lambda_{\mathrm{LPIPS}}=0.82 .
+Camera augmentation.
+The DINO-R2C model is trained on image pairs but applied to every frame of a video,
+where consecutive frames differ by small viewpoint changes. To close this
+image-to-video gap, we apply the same random camera homography (crop,
+translation, rotation, shear, and perspective) to a realistic image and its
+coarse counterpart during training, so that the learned mapping is stable under
+the viewpoint changes seen between frames. Section  4.2 ablates
+the augmentation strength, and Appendix  A.3 gives the exact
+bounds.
+ 3.3 Constructing Pseudo-Paired Videos
+Applying the DINO-R2C model to every frame of a real video v^{\mathrm{r}} yields a
+pseudo-coarse video that remains paired with v^{\mathrm{r}} . Because each
+frame is synthesized independently, the pseudo-coarse video carries some
+temporal jitter. We use it only as the control video and always use the
+temporally coherent real video as the target, which teaches the C2R# model to
+tolerate minor jitter in the control video while generating temporally
+consistent output.
+Decoding to RGB and re-encoding.
+The features S_{m}(v^{\mathrm{r}}) predicted by the DINO-R2C model already live in
+DINO space and could condition the C2R# model directly. However, they retain
+hidden cues of the realistic input that are absent when an actual coarse video
+is encoded at inference, a leakage that creates a train/test mismatch
+(Section  4.3 ). We therefore decode the prediction to coarse
+pixels with the frozen RAE decoder, which discards information that cannot be
+expressed as a coarse image, and re-encode those pixels with the same frozen
+encoder E used at inference. The training control features are thus
+ C_{\mathrm{train}}=E\big(D(S_{m}(v^{\mathrm{r}}))\big), 
+ (3) 
+computed per frame and on the fly during C2R# training.
+ 3.4 Coarse-to-Real Video Generation: the C2R# 
+Architecture.
+The C2R# model builds on a frozen pretrained text-to-video diffusion backbone,
+Wan2.2 T2V-A14B  ( Wan, 2025 ) , whose VAE, text encoder, and denoiser all
+remain frozen. The denoiser is a mixture of two experts routed by diffusion
+timestep, so we train one control adapter per expert, active only when its
+expert is. Each control adapter takes the per-frame DINO control features C ,
+projects them to an intermediate width, applies residual space-time convolution
+blocks with timestep conditioning, compresses time to the VAE latent frame
+rate, and maps the result to the denoiser width through a zero-initialized
+output head. At our operating resolution the DINO feature grid aligns
+one-to-one with the backbone’s spatial token grid, so no learned spatial
+upsampling is needed. A zero-initialized fusion adapter then adds the control
+features after the frozen patch embedding, so at initialization the model is
+identical to the pretrained backbone. Architectural and training details are
+given in Appendix  A.5 .
+Training objective.
+For a target real video v^{\mathrm{r}} with latent
+ z_{0}=\mathrm{VAE}(v^{\mathrm{r}}) , we sample a flow timestep \sigma and
+Gaussian noise \epsilon , form z_{\sigma}=(1-\sigma)z_{0}+\sigma\epsilon ,
+and minimize the rectified-flow velocity loss  ( Liu et al., 2023 ) 
+ \mathcal{L}_{\mathrm{FM}}=\big\|G\big(z_{\sigma},\sigma,e_{\mathrm{text}};\,A(C_{\mathrm{train}},\sigma)\big)-(\epsilon-z_{0})\big\|_{2}^{2}, 
+ (4) 
+where G is the frozen denoiser, e_{\mathrm{text}} is the text embedding,
+and A denotes the trainable adapters, the only parameters that are updated.
+We use no control dropout: with a frozen backbone, steps without control
+provide no gradient to the adapters.
+Inference.
+The user provides an actual coarse video v^{\mathrm{c}} and a text prompt.
+The frozen encoder produces C_{\mathrm{test}}=E(v^{\mathrm{c}}) , which
+conditions the same adapters and backbone used in training; generation starts
+from Gaussian noise, and the frozen VAE decodes the result. Neither the
+ DINO-R2C model nor the RAE decoder is used at inference.
+ 4 Experiments
+We evaluate the DINO-R2C model (Section  4.2 ) and the C2R# model
+(Sections  4.3 and  4.4 ). Because real-world coarse
+videos have no photorealistic ground truth, the C2R# model is evaluated with
+reference-free quality, control-alignment, and VLM-judged realism metrics on
+three evaluation sets of 100 actual coarse videos each: game renders,
+geometry blockouts, and stylized animations. We report aggregate results
+across all 300 videos. Dataset construction and metric definitions are given
+in Appendices  B.1 and  B.3 .
+ 4.1 Training data.
+We train a shared four-modality DINO-R2C model on 14,000 image pairs per modality:
+coarser geometry, coarse geometry, coarser anime, and coarse anime.
+GPT-Image 2  ( OpenAI, 2026 ) generates the realistic images and edits
+them into coarse geometry and both anime modalities; coarser geometry targets
+are rendered from reconstructed and simplified 3D scenes.
+Images are generated at 1280\times 720 using the procedure in
+Appendix  A.1 ; larger training sets yielded only marginal improvements.
+For C2R# training, the DINO-R2C model synthesizes pseudo-coarse controls on
+the fly for 389,854 real videos from DL3DV  ( Ling et al., 2024 ) ,
+ SEKAI_HQ , and SEKAI_DRONE   ( Li et al., 2026b ) .
+The adapted VACE 2.2  ( Jiang et al., 2025 ) and Editto
+Sim2Real  ( Bai et al., 2025 ) baselines use exactly the same real videos and
+pseudo-coarse controls (Appendices  A.4 and  B.2 ).
+ 4.2 DINO-R2C 
+Protocol.
+We evaluate each DINO-R2C model on 1,000 held-out images and 1,000 real
+videos. Because each coarse modality has a different target distribution,
+values are not comparable across modalities. All directly comparable ablations
+target the Coarse geometry modality and vary the camera-augmentation strength
+(none, 0.5\times , 1\times , 2\times ) and the inclusion of LPIPS
+(Table  1 ; image ablations are in
+Appendix  B.5 , Table  3 ).
+Image metrics compare predictions with the paired coarse target. Video
+metrics assess the stability of the pseudo-coarse video produced by applying the
+model to each frame of a real video.
+Video stability metrics.
+We estimate motion with RAFT-Small  ( Teed and Deng, 2020 ) .
+Perceptual flicker measures motion-aligned appearance changes using
+LPIPS  ( Zhang et al., 2018 ) ;
+smoothed-frame flicker measures broad color and shape changes using L1 on
+blurred frames. Both are divided by the corresponding source-video error,
+summarized by the median within each video, and averaged across videos.
+Motion error measures disagreement between estimated source and output motion
+vectors, while motion magnitude ratio indicates whether the output moves too
+little or too much. Boundary stability measures the overlap of motion-aligned
+outlines, and content consistency measures similarity between consecutive
+DINOv3 frame features  ( Siméoni et al., 2025 ) .
+Appendix  B.3 explains all six
+metrics and their interpretation.
+ Table 1: DINO-R2C design ablations, video stability. 
+Evaluated on 1,000 real videos in the Coarse geometry modality at
+ 256\times 256 . Columns report means across videos; both flicker measures are
+per-video medians relative to source-video error. Bold/underlined values are
+best/second-best. Metrics are explained in Section  4.2 and
+Appendix  B.3 .
+ DINO-R2C Recipe 
+ Perceptual 
+ flicker 
+ (relative) \downarrow 
+ Smoothed-frame 
+ flicker 
+ (relative) \downarrow 
+ Motion 
+ error 
+ (EPE) \downarrow 
+ Motion 
+ magnitude ratio 
+ \approx 1 
+ Boundary 
+ stability 
+ (Dice) \uparrow 
+ Content 
+ consistency 
+ (DINO) \uparrow 
+ None, no LPIPS 
+ 2.2028 
+ 4.1565 
+ 2.2685 
+ 2.1909 
+ 0.7195 
+ 0.9816 
+ None + LPIPS 
+ 2.1793 
+ 3.9131 
+ 1.8678 
+ 1.8304 
+ 0.7271 
+ 0.9877 
+ 0.5\times + LPIPS 
+ 0.9314 
+ 1.7901 
+ 0.8819 
+ 1.0844 
+ 0.8345 
+ 0.9946 
+ 1\times , no LPIPS 
+ 0.7965 
+ 1.6825 
+ 0.9066 
+ 1.1504 
+ 0.8327 
+ 0.9914 
+ 1\times + LPIPS 
+ 0.9023 
+ 1.7108 
+ 0.8695 
+ 1.0875 
+ 0.8354 
+ 0.9946 
+ 2\times + LPIPS (ours) 
+ 0.8649 
+ 1.6294 
+ 0.8429 
+ 1.0797 
+ 0.8376 
+ 0.9948 
+Results.
+In Table  1 , the selected recipe achieves the
+lowest smoothed-frame flicker and motion error, highest boundary
+stability and content consistency, and motion magnitude ratio closest to one.
+It ranks second in perceptual flicker.
+Its motion magnitude ratio of 1.0797 indicates approximately
+ 8\% higher estimated motion magnitude than the source;
+combined with the lowest motion error, this supports stronger
+source-motion agreement among the evaluated variants.
+With LPIPS enabled, increasing augmentation from
+ 1\times to 2\times improves all six reported video
+metrics. At fixed 1\times augmentation, adding LPIPS
+improves image perceptual reconstruction, video motion
+agreement, motion-magnitude preservation, boundary stability,
+and content consistency, but increases both relative flicker errors.
+These results support selecting 2\times augmentation
+with LPIPS as a balance between paired reconstruction
+fidelity and temporal behavior during per-frame video
+inference, rather than as the optimum for every
+individual metric. Image reconstruction results and their tradeoffs are
+reported in Appendix  B.5 .
+Qualitative results.
+Image examples appear in Appendix  B.5 
+(Figure  8 ); pseudo-coarse videos and additional image-pair
+results are provided on the project page: https://gonzalognogales.github.io/coarse2real-sharp/ .
+ 4.3 C2R# Ablations and Efficiency
+Effect of the RGB bottleneck.
+Without RAE decoding, C2R# model is trained directly on DINO-R2C model features
+predicted from real videos. These features may carry hidden realistic
+information that is unavailable when actual coarse videos are encoded at
+inference, creating a training–inference distribution shift. Decoding through
+the RAE acts as an information bottleneck that removes such hidden cues before
+the coarse pixels are re-encoded by DINO. Figure  4 
+shows the failure without this bottleneck.
+This illustrative variant is excluded from quantitative comparisons.
+ Figure 4: Effect of the RGB bottleneck during training. 
+Matched frames show the control input (left), C2R# (center), and a
+variant conditioned directly on predicted DINO-R2C features, bypassing
+decoding and re-encoding (right). The latter produces visible artifacts.
+Efficiency.
+With Wan2.2 frozen, the C2R# model trains only 180.54M control and fusion
+adapter parameters (0.63% of the counted model parameters).
+Appendix  B.6 reports parameter comparisons
+(Table  4 ) and DINO-R2C training/inference costs
+(Table  5 ).
+ 4.4 Comparisons
+Protocol.
+We compare the C2R# model against the model from the original C2R paper, Editto Global, the released Editto
+Sim2Real, VACE 2.2, and versions of Editto Sim2Real and VACE 2.2 fine-tuned
+on exactly the same pseudo-paired training data as the C2R# model.
+All methods use the same 300 actual coarse videos and scene-specific text
+prompts. Table  2 
+reports DOVER technical and aesthetic quality  ( Wu et al., 2023 ) , the three
+VEFX editing scores  ( Gao et al., 2026 ) (rendering quality, instruction
+following, edit exclusivity), VBench background consistency  ( Huang et al., 2024 ) ,
+three control-alignment measures (DINOv3 feature displacement  ( Siméoni et al., 2025 ) ,
+UFM-based optical-flow agreement  ( Zhang et al., 2025 ) , and ViPE-based camera-pose error  ( Huang et al., 2025 ) ),
+and a realism score judged by Qwen3.8-27B-FP8  ( Qwen Team, 2026 ) 
+on a 0–100 scale.
+ Figure 5: 
+ Qualitative comparison with baseline methods. 
+Three groups of two rows show game renders (top), geometry blockouts
+(middle), and stylized animations (bottom).
+“Rep.” denotes our Editto Sim2Real and VACE 2.2 reproductions,
+fine-tuned on the same pseudo-paired videos as C2R# (ours).
+ Table 2: Comparison on 300 control videos: 100 game renders,
+100 geometry blockouts, and 100 stylized animations.
+Every score averages 300 valid videos per method.
+“Rep.” denotes Editto Sim2Real and VACE 2.2 fine-tuned on the same
+pseudo-paired training videos as C2R# (ours).
+Bold/underlined values rank first/second; arrows indicate preferred directions.
+Metric abbreviations and scales appear in Appendix  B.3 .
+ DOVER 
+ VEFX 
+ VBench 
+ Control alignment 
+ VLM 
+ Method 
+ Tech. 
+ \uparrow 
+ Aesth. 
+ \uparrow 
+ RQ 
+ \uparrow 
+ IF 
+ \uparrow 
+ EE 
+ \uparrow 
+ BG 
+ \uparrow 
+ DINO 
+ \downarrow 
+ Flow 
+ \uparrow 
+ Cam. 
+ \downarrow 
+ Realism 
+ \uparrow 
+ C2R orig. 
+ 0.2647 
+ 0.8033 
+ 3.5082 
+ 2.8467 
+ 2.3468 
+ 0.9259 
+ 0.0226 
+ 0.6041 
+ 0.1733 
+ 75.50 
+ Editto Global 
+ 0.2648 
+ 0.7700 
+ 3.4876 
+ 2.9035 
+ 2.3637 
+ 0.9338 
+ 0.0189 
+ 0.6897 
+ 0.1634 
+ 66.77 
+ Editto Sim2Real 
+ 0.2288 
+ 0.7124 
+ 2.6722 
+ 1.4108 
+ 1.6995 
+ 0.9254 
+ 0.0196 
+ 0.5986 
+ 0.1788 
+ 52.62 
+ Editto Sim2Real (rep.) 
+ 0.2504 
+ 0.7589 
+ 3.1011 
+ 1.7402 
+ 2.2450 
+ 0.9283 
+ 0.0111 
+ 0.7314 
+ 0.1574 
+ 58.52 
+ VACE 2.2 
+ 0.2599 
+ 0.7768 
+ 3.4110 
+ 2.5446 
+ 2.3182 
+ 0.9354 
+ 0.0135 
+ 0.7466 
+ 0.1491 
+ 61.88 
+ VACE 2.2 (rep.) 
+ 0.2487 
+ 0.7117 
+ 2.9695 
+ 2.4918 
+ 2.5334 
+ 0.9272 
+ 0.0114 
+ 0.7347 
+ 0.1549 
+ 51.96 
+ C2R#  (ours) 
+ 0.2841 
+ 0.8169 
+ 3.5679 
+ 3.1823 
+ 2.5923 
+ 0.9343 
+ 0.0147 
+ 0.6588 
+ 0.1600 
+ 74.17 
+Results.
+ C2R# leads DOVER technical and aesthetic quality and all three VEFX
+dimensions, ranking second in background consistency and VLM-judged realism. Relative to
+the model from the original C2R paper, the C2R# model improves nine of the ten
+reported metrics, including spatial correspondence, local-flow
+agreement, and camera-pose error. The model from the original C2R paper retains
+the higher realism mean (75.50 versus 74.17).
+The C2R# model exceeds every external baseline on this realism score,
+with Editto Global the closest at 66.77.
+The results also show a quality–control tradeoff. The adapted
+Editto model achieves the lowest DINO displacement, while default
+VACE 2.2 leads local-flow agreement and camera-pose accuracy.
+Thus, the quality gains of the C2R# model do not imply the strongest
+preservation under every control metric. Additional plausible detail and secondary
+motion may contribute to source–output disagreement.
+Appendix  B.8 additionally compares first-attempt
+results with the commercial model Seedance 2.5  ( ByteDance Seed, 2026 ) 
+using the same control videos and text prompts.
+Transfer of pseudo-paired training data.
+Adapting Editto Sim2Real with our generated pairs improves all
+ten reported aggregate metrics, including realism from 52.62
+to 58.52. The effect on VACE 2.2 is mixed: adaptation improves
+DINO spatial correspondence and VEFX edit exclusivity, while
+reducing the remaining reported scores. These results support
+the utility of pseudo-paired supervision beyond the C2R# model,
+while showing that its benefit depends on the recipient model
+and adaptation configuration.
+Domain transfer.
+Figure  6 visualizes both models in the CSD-L
+style-feature space  ( Somepalli et al., 2024 ) : the DINO-R2C model moves real videos into four distinct coarse
+style clusters, and the C2R# model moves each evaluation set of actual coarse
+videos toward the distribution of real reference videos.
+ Figure 6: 
+ Domain transfer in CSD-L style-feature space. 
+ Left: DINO-R2C maps 1,000 real videos to four distinct
+pseudo-coarse style clusters. Right: C2R# maps actual
+coarse videos toward the real-reference distribution.
+Points denote videos; arrows connect input/output centroids.
+PCA is fitted per panel (Appendix  B.4 ).
+Reference-image conditioning.
+A separately trained extension uses a reference image to guide appearance
+while the coarse video controls layout and motion (details and examples in
+Appendix  B.7 ).
+ 5 Limitations and Discussion
+Our method relies on pseudo-coarse videos generated by DINO-R2C model to approximate
+the coarse inputs encountered at inference. Performance may therefore degrade
+when the gap between pseudo-coarse and actual coarse videos becomes large.
+Evaluation on actual coarse videos is also challenging because paired realistic
+ground truth is unavailable, requiring reference-free metrics and human
+judgment.
+Our current implementation is constrained by the quality of the
+non-commercial backbone model and training data available. The frozen video prior also introduces a trade-off between realism and exact
+control alignment. When the input contains abrupt pose or motion changes,
+ C2R# model may adjust the motion pace or synthesize intermediate states rather
+than following the discontinuity exactly. This can produce a more natural and
+temporally coherent video, but with reduced alignment to the input control
+(Figure  7 ). Future
+work includes closing the gap between pseudo-coarse and actual coarse
+features, strengthening reference-image control, and broadening evaluation on
+actual coarse videos.
+ Figure 7: 
+ Limitations under abrupt control changes. 
+Input (left) and C2R# output (right): abrupt control changes
+can lead to unwanted content and reduced alignment.
+

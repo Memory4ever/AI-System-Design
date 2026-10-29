@@ -1,0 +1,523 @@
+https://arxiv.org/html/2605.28388v1
+
+arXiv:2605.28388v1 [cs.AI] 27 May 2026 
+ 
+ 
+ Mechanistically Interpreting the Role of 
+ Sample Difficulty in RLVR for LLMs 
+
+ 
+ 
+ 
+ Yue Cheng
+ † † thanks:  Equal contribution. 
+ Affiliation:  Beijing Jiaotong University
+ 
+ Affiliation:  AntGroup
+ 
+ Email:  yuecheng@bjtu.edu.cn 
+ 
+    
+ Jiajun Zhang
+ 
+ Email:  jiajunzhang@bjtu.edu.cn 
+ 
+    
+ Xiaohui Gao
+ 
+ Affiliation:  Northwestern Polytechnical University
+ 
+ Email:  gaitxh@foxmail.com 
+ 
+    
+ Weiwei Xing
+ 
+ Email:  wwxing@bjtu.edu.cn 
+ 
+    
+ Zheng Wang
+ 
+ Affiliation:  University of Leeds
+ 
+ Email:  z.wang5@leeds.ac.uk 
+ 
+    
+ Zhanxing Zhu
+ † † thanks:  Corresponding authors. 
+ Affiliation:  University of Southampton
+ 
+ Email:  z.zhu@soton.ac.uk 
+ 
+
+ Abstract 
+    
+ Reinforcement Learning with Verifiable Reward (RLVR) is empirically shown to notably enhance the reasoning performance of large language models (LLMs), particularly in mathematics and programming. However, the mechanistic role of  Sample Difficulty  in RLVR remains poorly understood. In this paper, we investigate RLVR through the lens of difficulty-wise and one-sample analysis. We find that sample difficulty has a non-monotonic effect on RLVR: easy and medium-difficulty problems yield the strongest and most stable reasoning improvements, whereas overly hard problems often provide weak learning signals, induce degenerate behaviors such as answer repetition or skipping necessary computation, and can ultimately degrade the model’s pre-existing capabilities. Beyond the obverse of response, we further analyze the model’s internal feature dynamics using Temporal Sparse Autoencoders (T-SAE). Easy problems mainly reinforce direct-answer and basic-computation features while suppressing deliberative-reasoning features; hard problems activate reasoning-related features but become useful only when successful trajectories are sampled; medium-difficulty problems provide a more balanced signal, strengthening both computation and multi-step reasoning features. Motivated by these findings, we propose difficulty-adaptive strategies for hard-sample utilization, using backward-reasoning reformulation and T-SAE-guided training signals to improve reward density and credit assignment during RLVR. Overall, our results identify sample difficulty as a key factor governing both the optimization dynamics and representation evolution of RLVR. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Large language models (LLMs) have made significant achievements across a variety of tasks, ranging from mathematics  [ 21 ,  7 ] , programming  [ 28 ] , and scientific reasoning  [ 5 ] . Much of this progress has been further amplified by post-training, which adapts pretrained models to elicit stronger reasoning and problem-solving behaviors. Among post-training techniques, Reinforcement Learning with Verifiable Reward (RLVR)  [ 36 ,  15 ]  has emerged as the dominant post-training paradigm, spawning algorithmic innovations such as GRPO  [ 36 ] , DAPO  [ 46 ] , and VAPO  [ 48 ] , as well as extensions to diverse application areas  [ 41 ,  24 ,  31 ]  and surprising empirical findings  [ 39 ,  51 ] . However, most RLVR methods share a fundamental design choice:  they treat samples uniformly regardless of difficulty.  Under group-relative advantage normalization  [ 36 ] , only samples that induce mixed rollout outcomes provide meaningful relative-advantage signals. Extremely hard and easy samples therefore contribute little direct learning signal. Although growing empirical evidence suggests that sample difficulty plays an important role in RLVR  [ 16 ,  38 ,  47 ,  44 ] , the mechanisms by which different difficulty regimes shape optimization dynamics and latent representations remain poorly understood. 
+
+ 
+ 
+ 
+ Recent work has begun to study this issue from an empirical perspective. Curriculum-based approaches  [ 27 ]  schedule training from easier to harder tasks, online difficulty filters  [ 2 ]  prioritize intermediate-difficulty samples, and entropy-guided advantage shaping  [ 16 ]  seeks to recover useful learning signals from prompts with degenerate reward variance. While these methods lead to practical gains, they primarily operate on outcome-level statistics, such as pass rates, advantage magnitudes, entropy, or reward variance, to select, filter, or reweight samples. As a result, they provide limited insight into how samples of different difficulty levels alter the model’s internal computation. This leaves a fundamental question unanswered:  how does sample difficulty shape the model’s internal reasoning mechanisms during RL training, and can such a mechanistic understanding inform better training strategies? 
+
+ 
+ 
+ 
+ This paper studies how sample difficulty shapes RLVR through one-sample dynamics. Specifically, we begin with controlled subset training and one-sample amplification experiments to characterize how samples of different difficulty levels affect reward dynamics, optimization behavior, and downstream reasoning performance. Our results reveal a non-monotonic effect of difficulty: medium-difficulty samples produce the strongest and most stable gains, whereas very easy and overly hard samples provide weak relative-advantage signals. Hard samples can be especially damaging, as accidentally rewarded trajectories caused by shortcuts or incomplete reasoning may be amplified by group-relative normalization, leading to biased updates that reinforce flawed reasoning behaviors. 
+
+ 
+ 
+ 
+ Furthermore, this asymmetry is also reflected in the model’s internal feature dynamics.
+To probe these dynamics, we introduce a Temporal Sparse Autoencoder (T-SAE) to extract sparse reasoning features from activations along reasoning trajectories. We track the activation frequencies and magnitudes of these features across RLVR training steps, revealing how different difficulty regimes reshape internal reasoning mechanisms. Easy samples primarily reinforce direct-answer and basic-computation features while suppressing deliberative reasoning; hard samples emphasize complex logical reasoning but weaken computation-related features; medium-difficulty samples strengthen both computation and multi-step reasoning features. These results suggest that medium-difficulty samples are effective not only because they provide informative reward variance, but also because they induce more balanced reasoning-feature updates. 
+
+ 
+ 
+ 
+ As a side product of this analysis, we propose two difficulty-aware interventions for improving sample utilization and credit assignment in RLVR. First, we improve the utilization of overly hard samples by reformulating forward problem-solving tasks into backward-reasoning variants, which increases the chance of sampling informative trajectories and usable relative-advantage signals. Second, we introduce Reasoning Feature-Guided Optimization (RFGO), which uses T-SAE reasoning-feature dynamics for mechanistic credit assignment. RFGO reweights token-level updates by future sentence-level feature movement and assigns feature-based proxy rewards only to zero-variance rollout groups. Those interventions support our analysis of hard samples by testing whether the reasoning features they recruit can serve as useful training signals for credit assignment and sample utilization. 
+
+ 
+ 
+ 
+ Related Works.  We discuss related works in Appendix  A  due to space limitations. 
+
+ 
+ 
+ 
+ 
+ 2  How Sample Difficulty Shapes Optimization Dynamics? 
+
+ 
+
+ 
+ We investigate the role of  sample difficulty  in shaping the optimization dynamics of RLVR. Specifically, we use the empirical success rate of the current policy over  k k  sampled rollouts as a practical proxy for difficulty, and accordingly group samples into easy, medium-difficulty, and hard regimes. To focus on samples that can contribute meaningful policy-gradient updates, we exclude degenerate zero-variance cases in which  all the  rollouts either succeed or fail, as these samples provide no informative relative-advantage signal under group-relative advantage normalization. Section  2.2  studies how different difficulty regimes affect RLVR training at the aggregate level, revealing broad trends in reward evolution, optimization stability, and downstream performance. Section  2.3  then turns to a per-sample analysis, showing that individual samples within the same difficulty regime can still induce highly heterogeneous learning dynamics and failure modes. 
+
+ 
+ 
+ 
+ 2.1  Preliminaries 
+
+ 
+
+ 
+ Notation.  We denote an LLM policy parameterized by weights  θ \theta  as  π θ \pi_{\theta} . We sometimes also directly use  π base \pi_{\mathrm{base}}  to denote a pre-trained model (e.g., Qwen2.5-math-1.5B, Qwen2.5-math-7B) to contrast its RL counterpart  π θ \pi_{\theta} . We use  𝒟 \mathcal{D}  to denote the query distribution and  𝒱 \mathcal{V}  to denote the vocabulary. Given an input query  𝒙 \bm{x} , the model’s output is modeled by  π θ ( ⋅ | 𝒙 ) \pi_{\theta}(\cdot|\bm{x}) . We use  𝒚 ∼ π θ ( ⋅ | 𝒙 ) \bm{y}\sim\pi_{\theta}(\cdot|\bm{x})  to denote the sampling of answer  𝒚 \bm{y} . During RL training,  π θ i \pi_{\theta^{i}}  denotes the model after the  i i -th policy update. 
+
+ 
+ 
+ 
+ Reinforcement Learning with Verifiable Reward. 
+We formalize the problem of fine-tuning an LLM for complex reasoning tasks under the Reinforcement Learning with Verifiable Reward (RLVR)   [ 15 ]  paradigm. At each step  t t , the state  s t = ( 𝒙 , 𝒚 1 , … , 𝒚 t − 1 ) s_{t}=(\bm{x},\bm{y}_{1},\ldots,\bm{y}_{t-1})  is the concatenation of the prompt  𝒙 \bm{x}  and previously generated tokens, and the action  a t a_{t}  is selecting the next token  𝒚 t ∈ 𝒱 \bm{y}_{t}\in\mathcal{V} . The LLM with parameters  θ \theta  serves as the policy  π θ \pi_{\theta} , producing  a t ∼ π θ ( ⋅ ∣ s t ) a_{t}\sim\pi_{\theta}(\cdot\mid s_{t}) , so that the probability of a trajectory  𝒚 = ( 𝒚 1 , … , 𝒚 T ) \bm{y}=(\bm{y}_{1},\ldots,\bm{y}_{T})  is 
+
+ 
+ 
+
+ 
+ 
+ π θ ​ ( 𝒚 ∣ 𝒙 ) = ∏ t = 1 T π θ ​ ( 𝒚 t ∣ 𝒙 , 𝒚 < t ) , \pi_{\theta}(\bm{y}\mid\bm{x})=\prod^{T}_{t=1}\pi_{\theta}(\bm{y}_{t}\mid\bm{x},\bm{y}_{<t}), 
+ 
+ (1) 
+ 
+
+ 
+ A verifier assigns a sparse, terminal reward  R ⁡ ( 𝒚 ) R(\bm{y}) , which equals  1 1  if the final answer extracted from  𝒚 \bm{y}  is correct and  0 0  otherwise. Then, the training objective is therefore optimized with policy gradient methods, 
+
+ 
+ 
+
+ 
+ 
+ 𝒥 ( θ ) = 𝔼 𝒙 ∼ 𝒟 , 𝒚 ∼ π θ ( ⋅ ∣ 𝒙 ) [ R ( 𝒚 ) ] . \mathcal{J}(\theta)=\mathbb{E}_{\bm{x}\sim\mathcal{D},\bm{y}\sim\pi_{\theta}(\cdot\mid\bm{x})}\big[R(\bm{y})\big]. 
+ 
+ (2) 
+ 
+
+ 
+ The gradient of the objective with respect to the policy parameters  θ \theta  can be expressed as 
+
+ 
+ 
+
+ 
+ 
+ ∇ θ 𝒥 ( θ ) = 𝔼 ( 𝒙 , 𝒚 ) ∼ 𝒟 𝔼 τ ∼ π θ ( ⋅ | 𝒙 ) [ R ( τ ) ∇ θ log π θ ( τ | 𝒙 ) ] . \nabla_{\theta}\mathcal{J}(\theta)=\mathbb{E}_{(\bm{x},\bm{y})\sim\mathcal{D}}\;\mathbb{E}_{\tau\sim\pi_{\theta}(\cdot|\bm{x})}\Big[R(\tau)\nabla_{\theta}\log\pi_{\theta}(\tau|\bm{x})\Big]. 
+ 
+ (3) 
+ 
+
+ 
+ where gradient coefficient  𝒜 \mathcal{A}  depends on the verifier and reward feedback. Detailed policy gradient methods forms, such as GRPO  [ 36 ] , are provided in the Appendix  B . 
+
+ 
+ 
+ 
+ Sparse Autoencoders.  Sparse autoencoders (SAEs)  [ 30 ,  13 ]  are a class of unsupervised interpretability models that effectively learn sparse feature decompositions of dense LLM activations. Taking in input  𝒉 t ∈ ℝ d \bm{h}_{t}\in\mathbb{R}^{d} , they map  𝒉 t \bm{h}_{t}  into an overcomplete sparse feature vector
+ 𝒛 t ∈ ℝ m \bm{z}_{t}\in\mathbb{R}^{m} , typically with  m ≫ d m\gg d , and reconstructs the original activation from this sparse representation: 
+
+ 
+ 
+
+ 
+ 
+ 𝒛 t = f θ ​ ( 𝒉 t ) = σ ⁡ ( 𝑾 enc ​ 𝒉 t + 𝒃 enc ) , 𝒉 ^ t = 𝑾 dec ​ 𝒛 t + 𝒃 dec \bm{z}_{t}=f_{\theta}(\bm{h}_{t})=\sigma(\bm{W}^{\text{enc}}\bm{h}_{t}+\bm{b}^{\text{enc}}),\qquad\hat{\bm{h}}_{t}=\bm{W}^{\text{dec}}\bm{z}_{t}+\bm{b}^{\text{dec}} 
+ 
+ (4) 
+ 
+
+ 
+ where  𝑾 enc ∈ ℝ m × d \bm{W}^{\text{enc}}\in\mathbb{R}^{m\times d}  is the encoder matrix, and  𝑾 dec ∈ ℝ d × m \bm{W}^{\text{dec}}\in\mathbb{R}^{d\times m}  is the decoder matrix. The encoder and decoder bias are  𝒃 enc ∈ ℝ m \bm{b}^{\text{enc}}\in\mathbb{R}^{m}  and  𝒃 dec ∈ ℝ d \bm{b}^{\text{dec}}\in\mathbb{R}^{d} , respectively. Temporal Sparse Autoencoders (T-SAEs)  [ 4 ]  extend standard SAEs by explicitly leveraging the sequential structure of language. With the assumption that the first  l l  indices are relatively stable high-level features  𝒛 0 : h t \bm{z}^{0:h}_{t}  and the last  m − l m-l  indices are rapid change low-level features  𝒛 h : m t \bm{z}^{h:m}_{t} , the reconstruction component of the T-SAEs objective can therefore be written as 
+
+ 
+ 
+
+ 
+ 
+ ℒ = ∥ h t − 𝑾 dec 0 : h 𝒛 0 : h t − 𝒃 dec ∥ 2 2 + ∥ h t − 𝑾 dec z t − 𝒃 dec ∥ . \mathcal{L}=\|h_{t}-\bm{W}^{\text{dec}}_{0:h}\bm{z}^{0:h}_{t}-\bm{b}^{\text{dec}}\|_{2}^{2}+\|h_{t}-\bm{W}^{\text{dec}}z_{t}-\bm{b}^{\text{dec}}\|. 
+ 
+ (5) 
+ 
+
+ 
+ See more details about T-SAEs in the Appendix  B . 
+
+ 
+ 
+ 
+ 
+ 2.2  How Difficulty Regimes Shape Optimization Dynamics 
+
+ 
+
+ 
+ For each training sample  𝒙 \bm{x} , we sample  k k  responses (rollouts)  { 𝒚 i } i = 1 k \{\bm{y}_{i}\}_{i=1}^{k}  from the current policy and assign each rollout a binary verification reward  R i ∈ { 0 , 1 } R_{i}\in\{0,1\} . We use the per-sample empirical success rate  success ​ @ ​ k = 1 k ​ ∑ i = 1 k R i \texttt{success}@k=\frac{1}{k}\sum_{i=1}^{k}R_{i}  as a practical proxy for sample difficulty. Samples with high success rates  success ​ @ ​ k = 1 \texttt{success}@k=1  are categorized as  easy ​ @ ​ k \texttt{easy}@k  regimes, those with intermediate success rates  0 ≤ success ​ @ ​ k ≤ 1 0\leq\texttt{success}@k\leq 1  as  medium ​ @ ​ k \texttt{medium}@k , and those with low success rates  success ​ @ ​ k = 0 \texttt{success}@k=0  as  hard ​ @ ​ k \texttt{hard}@k . See Appendix  B.3  for more details about the definition of sample difficulty. 
+
+ 
+ 
+ 
+ In the context of GRPO  [ 36 ] , rollout advantages are normalized within each group  A ^ t i = R i − mean ⁡ ( { R i } i = 1 k ) / std ⁡ ( { R i } i = 1 k ) \hat{A}^{i}_{t}=\nicefrac{{R^{i}-\mathrm{mean}(\{R^{i}\}_{i=1}^{k})}}{{\mathrm{std}(\{R^{i}\}_{i=1}^{k})}} . When all rollouts receive the same reward, the within-group reward variance becomes zero, and the sample provides no informative relative-advantage signal. Following  [ 16 ] , we refer to these cases as  zero-variance samples .
+We exclude strictly zero-variance samples from the following case studies, since they do not induce non-trivial reward-driven updates. We empirically validate this choice in Appendix  E.1 . Exploiting 512 rollouts from Qwen2.5-Math-1.5B, we extract a zero-variance subset from MATH. We point out that their advantage signals vanish, leaving the policy update dominated by KL regularization rather than reward-driven reinforcement. Having removed these degenerate cases, we now turn to the central question of this section:  how do non-zero-variance samples of different difficulty levels affect RLVR training?  
+
+ 
+ 
+ 
+ Figure 1 :  Overall performance of GRPO across multiple benchmarks using Qwen2.5-Math-1.5B as the base model. We partition training samples into  Easy ,  Medium , and  Hard  regimes, where Easy is defined as  easy @8, Hard as  hard @8, and Medium contains the remaining samples. 
+ 
+ 
+ Empirical Observations on Sample Difficulty.  As a first step, we use  success @8 as a coarse proxy for sample difficulty, matching the group size used in GRPO. We split the training data into  easy @8,  medium @8, and  hard @8 regimes, and train Qwen2.5-Math-1.5B and Qwen2.5-Math-7B on each subset to isolate the effect of difficulty, as shown in Figure  1 . Across both base models, we find a clear non-monotonic trend: Medium samples yield the largest gains, Easy samples provide smaller but stable improvements, and Hard samples are the least effective. The strongest evidence comes from mixed-difficulty training: " Easy+Medium " consistently achieves the best performance and even outperforms the full dataset. This indicates that overly hard samples can dilute the useful learning signal in RLVR, motivating a more fine-grained analysis of sample difficulty beyond the coarse partition. More comprehensive comparisons are provided in Appendix  E.3 . 
+
+ 
+ 
+ 
+ Figure 2 :  Difficulty curriculum for practical RLVR. We compare training on curriculum subsets defined by different rollout-based difficulty thresholds across three base models. Samples that are solvable within a limited rollout budget consistently yield stronger improvements than persistently unsolved samples, highlighting the importance of difficulty-aware data selection in RLVR. 
+ 
+ 
+ Difficulty Curriculum for Practical RL. 
+The coarse split suggests that overly difficult samples can dilute RLVR training, but it does not reveal how the training signal changes across finer difficulty regimes. We therefore construct a finer difficulty curriculum by varying the rollout budget used to determine whether a sample is solvable by the base policy. For each sample  𝒙 \bm{x} , we sample  k = 8 k=8  rollouts from  π base \pi_{\mathrm{base}}  and obtain binary rewards  R i ​ ( 𝒙 ) ∈ { 0 , 1 } R_{i}(\bm{x})\in\{0,1\} .
+For  k ∈ { 2 , 4 , 8 } k\in\{2,4,8\} , we define 
+
+ 
+ 
+
+ 
+ 
+ medium ​ @ ​ k = { 𝒙 ∈ 𝒟 : ∑ i = 1 k R i ​ ( 𝒙 ) ≥ 1 } , hard ​ @ ​ k = { 𝒙 ∈ 𝒟 : ∑ i = 1 k R i ​ ( 𝒙 ) = 0 } \texttt{medium}@k=\{\bm{x}\in\mathcal{D}:\sum_{i=1}^{k}R_{i}(\bm{x})\geq 1\},\qquad\texttt{hard}@k=\{\bm{x}\in\mathcal{D}:\sum_{i=1}^{k}R_{i}(\bm{x})=0\} 
+ 
+ (6) 
+ 
+
+ 
+ Here,  medium ​ @ ​ k \texttt{medium}@k  contains samples solved at least once within  k k  attempts, while  hard ​ @ ​ k \texttt{hard}@k  contains samples that remain unsolved within the same budget. As  k k  increases,  medium ​ @ ​ k \texttt{medium}@k  progressively includes harder but still solvable samples,  medium ​ @ ​ 2 ⊆ medium ​ @ ​ 4 ⊆ medium ​ @ ​ 8 \texttt{medium}@2\subseteq\texttt{medium}@4\subseteq\texttt{medium}@8 . Conversely,  hard ​ @ ​ k \texttt{hard}@k  progressively removes relatively easier failures and retains more persistently unsolved samples,
+ hard ​ @ ​ 8 ⊆ hard ​ @ ​ 4 ⊆ hard ​ @ ​ 2 \texttt{hard}@8\subseteq\texttt{hard}@4\subseteq\texttt{hard}@2 . Since rollout sampling is stochastic,  hard ​ @ ​ 8 \texttt{hard}@8  only indicates a low probability of receiving a positive verifier reward under the reference policy and rollout budget. 
+
+ 
+ 
+ 
+ We train each base model on the resulting subsets and report results in Figure  2 .
+On the solvable side, increasing  k k  enlarges  medium ​ @ ​ k \texttt{medium}@k  by adding harder but still occasionally solvable samples, and performance almost always improves monotonically. This indicates that RLVR benefits from medium-difficulty samples as long as the base model can still solve them occasionally. The hard side shows a different pattern. Although increasing  k k  makes  hard ​ @ ​ k \texttt{hard}@k  smaller and more persistently unsolved, performance does not degrade monotonically. Instead, results are unstable across models and benchmarks, suggesting that hard samples are heterogeneous: they may either trigger useful policy updates or contribute noisy, uninformative gradients. Detailed per-benchmark numbers are provided in Table  3 . These findings show that aggregate difficulty is insufficient to explain the effect of hard data, motivating a sample-level analysis of  how individual samples steer reasoning behavior during RLVR. 
+
+ 
+ 
+ 
+ Figure 3 :  One-sample RL performance on MATH-500 test subsets. For each training regime ( easy @8,  medium @8, and  hard @8), we sample 10 individual problems, train on each problem separately, and evaluate on the MATH-500  easy @8 and  medium @8 test subsets. The  hard @8 test subset is omitted because all runs achieve  0 0  accuracy. 
+ 
+ 
+ 
+ 2.3  How Individual Samples Shape Optimization Dynamics 
+
+ 
+
+ 
+ The curriculum-level analysis shows that hard data behaves irregularly in aggregate. We next ask whether this irregularity already appears at the level of a single training sample. Even within the same difficulty regime, different samples may reward different trajectories and induce very different policy updates. We therefore move from curriculum-level comparisons to one-sample RL dynamics. 
+
+ 
+ 
+ 
+ One-Sample Amplification.  To isolate the effect of an individual sample, we train the policy on one sample at a time while keeping the standard GRPO group-rollout structure. For a selected sample  𝒙 \bm{x} , each update samples  G G  rollouts from  π θ t \pi_{\theta^{t}}  and computes group-relative advantages from verifier rewards. This removes aggregation across samples while preserving within-sample credit assignment. At step  t t , we track the sample reward  R ¯ t ​ ( 𝒙 ) = 1 G ​ ∑ i = 1 G R ⁡ ( 𝒚 i t ) \bar{R}_{t}(\bm{x})=\frac{1}{G}\sum_{i=1}^{G}R(\bm{y}_{i}^{t}) , where  𝒚 i t ∼ π θ t ( ⋅ ∣ 𝒙 ) \qquad\bm{y}_{i}^{t}\sim\pi_{\theta^{t}}(\cdot\mid\bm{x}) , the KL divergence from the reference policy  𝒟 KL t ( 𝒙 ) = 𝔼 𝒚 ∼ π θ t ( ⋅ ∣ 𝒙 ) [ log π θ t ​ ( 𝒚 ∣ 𝒙 ) π ref ​ ( 𝒚 ∣ 𝒙 ) ] \mathcal{D}_{\mathrm{KL}}^{t}(\bm{x})=\mathbb{E}_{\bm{y}\sim\pi_{\theta^{t}}(\cdot\mid\bm{x})}\left[\log\frac{\pi_{\theta^{t}}(\bm{y}\mid\bm{x})}{\pi_{\mathrm{ref}}(\bm{y}\mid\bm{x})}\right]  and downstream  pass @1 accuracy. Together, these metrics measure whether the sample becomes solvable, how strongly it moves the policy, and whether the induced update transfers beyond the training sample. 
+
+ 
+ 
+ 
+ Figure 4 :  Representative reward and KL dynamics for one-sample RL on three examples selected from  Easy @8,  Medium @8, and  Hard @8. 
+ 
+ 
+ Difficulty-Dependent Optimization Dynamics.  Figure  3  shows that easy and medium samples induce relatively stable updates. Training on  Easy @8 or  Medium @8 usually preserves or improves downstream accuracy, suggesting that RL reinforces useful behavior when the base model can already solve the sample with non-negligible probability. Hard samples are much less predictable. Although some  Hard @8 samples improve downstream performance, many sharply degrade it, sometimes below the base model. Their effect therefore depends not only on difficulty, but on which rare rewarded trajectories are amplified by GRPO. Figure  4  illustrates this mechanism: the hard sample reaches high training reward only with much larger KL growth, whereas easy and medium samples improve with more controlled policy movement. Thus, high reward on a hard sample need not indicate useful learning; it may instead reflect accidental correctness or shortcut reasoning. 
+
+ 
+ 
+ 
+ Overall,  Hard @8 obtains a lower average score of  32.61 32.61  and much larger variance, spanning both strong improvement and severe degradation. Appendix  E.2  further tracks downstream test dynamics and shows that harmful hard samples often cause collapse only after their effects accumulate over training. This asymmetry explains why hard data is unstable: reward improvement on easy and medium samples tends to transfer, while reward improvement on hard samples can amplify brittle behaviors and damage existing capabilities. 
+
+ 
+ 
+ 
+ Failure Modes of Harmful Hard Samples.  We further inspect harmful hard samples and find that their rewards often come from spurious solution patterns rather than valid reasoning. Example  2.1  illustrates an answer-only shortcut: the model directly outputs “ \boxed{40} ” for a geometry problem that should require using  l | k l\|k , the labeled  130 ∘ 130^{\circ}  angle, and the right-angle constraint. Outcome-only verification still rewards this rollout because the final answer is correct, despite the absence of supporting reasoning. Appendix  C  shows that this issue is broader: harmful hard samples can involve goal misunderstanding, question–answer mismatch, missing aggregation, calculation or execution errors, inconsistent output formats, and logical constraint errors. Thus, RL on such samples may amplify brittle shortcuts or artifacts rather than transferable reasoning. 
+
+ 
+ 
+ 
+ ⬇ 
+ (* @ \ textnormal {\ bfseries   Question :} @ *)   In   the   diagram ,   $l \| k$ .   What   is   the   number   of   degrees   in   $ \ angle   SRQ$ ?   [ asy ]   draw ((-.4,-.4)–(2,2)–(2,-.4));   draw ((-.5,0)–(3,0), Arrows );   draw ((-.5,1)–(3,1), Arrows );   draw ((1.9,0)–(1.9,.1)–(2,.1));   label (" $S$ ",(1,1), NNW );   label (" $R$ ",(2,2), N );   label (" $Q$ ",(2,1), NE );   label (" $l$ ",(3,1), E );   label (" $k$ ",(3,0), E );   label (" $130 ^{\ circ } $ ",(1,1), SSE );   [/ asy ]
+ 
+ (* @ \ textnormal {\ bfseries \ color { figonered }   Answer :} @ *)   (* @ \ textcolor { figonered }{ $40 ^\ circ$ } @ *)
+ 
+ (* @ \ textnormal {\ bfseries \ color { figoneblue }   Response :} @ *)    (* @ \ textcolor { figoneblue }{ The   number   of   degrees   in   \ texttt {\ textbackslash   angle   SRQ }   is   \ texttt {\ textbackslash   boxed \{40\}}.} @ *)
+ 
+ 
+ 
+ 
+ This explains why reward-flipped hard samples can be especially risky. All-zero hard samples induce little reward-driven learning, whereas reward-flipped hard samples can produce large updates based on accidental correctness, shortcut reasoning, or verifier artifacts. Therefore, one-sample RL reveals the fine-grained source of hard-data instability: hard samples are heterogeneous, and many of them disrupt rather than improve the model’s existing reasoning ability. This motivates our next feature-level analysis, where we use T-SAE to examine how different samples reinforce or suppress internal reasoning features during RLVR. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  How Sample Difficulty Reshapes Reasoning Features 
+
+ 
+
+ 
+ Sample difficulty induces distinct optimization dynamics during RLVR. However, these optimization signatures do not directly explain how difficulty reshapes the model’s internal reasoning mechanisms. To bridge this gap, we introduce a feature-dynamics framework based on a Temporal Sparse Autoencoder (T-SAE) probe in Section  3.1 . Concretely, we apply the same T-SAE model  across different training steps  to obtain a shared sparse feature basis, and we then track how reasoning-relevant features change over time. This setup enables us to quantify whether different difficulty regimes reinforce, suppress, or reorganize internal reasoning features during training. We provide the concrete experimental design and the corresponding comparison results in Section  3.2 . 
+
+ 
+ 
+ 
+ 3.1  Tracking Reasoning Features with a T-SAE Probe 
+
+ 
+
+ 
+ In this section, we track how sparse features evolve along the RLVR training trajectory. Since standard SAEs treat token activations independently, they can miss the sequential structure of reasoning traces. T-SAE addresses this limitation by incorporating temporal consistency and sparse top- k k  coding, yielding features better aligned with temporally extended reasoning behavior. We therefore use a frozen T-SAE as a shared probe for analyzing reasoning-feature dynamics across training steps. Concretely, for a policy  π θ τ \pi_{\theta^{\tau}}  at training step  τ \tau , let  𝒉 t , τ ℓ ∈ ℝ d \bm{h}_{t,\tau}^{\ell}\in\mathbb{R}^{d}  denote the hidden activation at token position  t t  from layer  ℓ \ell . The T-SAE maps this activation to a sparse latent code: 
+
+ 
+ 
+
+ 
+ 
+ 𝒛 t , τ = ζ ( 𝒉 t , τ ) , 𝒉 ^ t , τ = ξ ( 𝒛 t , τ 0 : h ) \bm{z}_{t,\tau}=\zeta(\bm{h}_{t,\tau}),\qquad\hat{\bm{h}}_{t,\tau}=\xi(\bm{z}^{0:h}_{t,\tau}) 
+ 
+ (7) 
+ 
+
+ 
+ where  ζ ⁡ ( ⋅ ) \zeta(\cdot)  and  ξ ⁡ ( ⋅ ) \xi(\cdot)  denote the encoder and decoder, respectively. Each coordinate of  𝒛 t , τ ∈ ℝ m \bm{z}_{t,\tau}\in\mathbb{R}^{m}  corresponds to a sparse latent feature, and its value indicates the activation strength of that feature at token position  t t . This representation allows us to compare reasoning-related activation patterns in a common sparse basis rather than in the original dense hidden space. 
+
+ 
+ 
+ 
+ Given a sequence of policies  { π θ τ } \{\pi_{\theta^{\tau}}\}  produced during RLVR, our goal is to characterize how the corresponding sparse features evolve as  τ \tau  changes. We then adopt  ReasonScore   [ 8 ]  to quantify whether a feature is associated with reasoning behavior. 
+
+ 
+ 
+ 
+ Let  𝒱 reason = { v r } r = 1 R \mathcal{V}_{\mathrm{reason}}=\{v_{r}\}_{r=1}^{R}  denote a predefined collection of reasoning-token groups. For feature  i i , regime  d d , and training step  τ \tau , let  μ i d , + ​ ( τ ) \mu^{d,+}_{i}(\tau)  be the mean activation of feature  i i  on reasoning tokens, let  μ i d , − ​ ( τ ) \mu^{d,-}_{i}(\tau)  be the mean activation on non-reasoning tokens, and let  H i d ​ ( τ ) ∈ [ 0 , 1 ] H^{d}_{i}(\tau)\in[0,1]  be the normalized entropy of feature  i i  across the  R R  reasoning-token groups. We then define 
+
+ 
+ 
+
+ 
+ 
+ ReasonScore i d ​ ( τ ) = μ i d , + ​ ( τ ) ∑ j μ j d , + ​ ( τ ) ⋅ ( H i d ​ ( τ ) ) α − μ i d , − ​ ( τ ) ∑ j μ j d , − ​ ( τ ) , \textsc{ReasonScore}^{d}_{i}(\tau)=\frac{\mu^{d,+}_{i}(\tau)}{\sum_{j}\mu^{d,+}_{j}(\tau)}\cdot\big(H^{d}_{i}(\tau)\big)^{\alpha}-\frac{\mu^{d,-}_{i}(\tau)}{\sum_{j}\mu^{d,-}_{j}(\tau)}, 
+ 
+ (8) 
+ 
+
+ 
+ where  α \alpha  controls the strength of the entropy normalization. Intuitively, a feature receives a high score when it activates strongly and broadly across reasoning tokens while remaining selective against non-reasoning contexts. For each feature  i i  and regime  d d , we then track the trajectory  { ReasonScore i d ​ ( τ ) } τ ∈ 𝒯 d \{\textsc{ReasonScore}^{d}_{i}(\tau)\}_{\tau\in\mathcal{T}_{d}}  over the available checkpoints  𝒯 d \mathcal{T}_{d} . Comparing these trajectories across regimes reveals which reasoning-relevant features are reinforced, weakened, or remain stable. 
+
+ 
+ 
+ 
+ 
+ 3.2  Experimental Design for Difficulty-Wise Feature Dynamics 
+
+ 
+
+ 
+ Figure 5 :  Per-split emergence of new reasoning features. Each panel plots the relative-to-early-mean ReasonScore trajectories of the emerging T-SAE features in one regime. 
+ 
+ 
+ In our experiments, following  [ 8 ] , we study feature dynamics in the model’s intermediate residual stream. We train a T-SAE probe on the layer-16 residual stream of the full-data RL model at the final training step  τ = 58 \tau=58 , and then keep the probe frozen for all analyses. This gives a shared feature basis for comparing different RL-trained models. We apply the same frozen T-SAE to models trained on  easy @8,  medium @8, and  hard @8 subsets, and compare their feature suppression and reinforcement patterns with the full-data model. Appendix  E.4  provides a controlled SAE and T-SAE comparison at the same training step, supporting our use of T-SAE as the feature probe. 
+
+ 
+ 
+ 
+ Difficulty-Wise Feature Dynamics.  We first examine emerging reasoning features across full-data and difficulty-controlled training. A feature is considered  X X -unique emerging  if its  ReasonScore  increases strongly under split  X X  while remaining flat or decreasing under the other difficulty splits. Concretely, we require Spearman  r > 0.55 r>0.55  over training steps and a top- 0.5 % 0.5\%  late-vs.-early gain on split  X X , together with  r < 0.30 r<0.30  and at least  2 × 2\times  smaller gain on the other two splits. This criterion allows us to separate features that emerge as part of general RLVR training from those specifically recruited by easy, medium, or hard samples. 
+
+ 
+ 
+ 
+ Figure 6 :  Token-level T-SAE feature dynamics along representative reasoning trajectories after RL on samples of different difficulty. The top row visualizes features suppressed by  Hard @8 training, and the bottom row visualizes features reinforced by  Hard @8 training. Hard samples tend to weaken existing reasoning features while amplifying more local or surface-level patterns. 
+ 
+ 
+ As shown in Figure  5 , the resulting feature counts reveal a strong imbalance. While  easy @8 induces only  5 5  unique emerging features and  medium @8 induces  4 4 ,  hard @8 induces  35 35  unique emerging features, substantially more than the other regimes. Moreover, the hard-unique cohort shows larger and more synchronized positive shifts in  ReasonScore , suggesting that hard samples recruit features that easier samples do not activate. Thus, hard samples are mechanistically rich: they do not merely strengthen existing reasoning circuitry, but can induce qualitatively new reasoning-associated features. We provide a semantic inspection of representative emerging features in Appendix  E.4.2 . 
+
+ 
+ 
+ 
+ The token-level trajectories in Figure  6  clarify this difference.
+ medium @8 consistently strengthens interpretable reasoning markers such as conclusion connectives, proof verification tokens, first-person derivation markers, and explicit conclusion tokens. In contrast,  easy @8 more strongly activates features associated with direct calculation and concise answer production, leading to shorter responses. See Figure  11  for more details in Appendix  E.5 .  hard @8 often weakens reasoning-related features while reinforcing more local or surface-form patterns, such as discourse glue, copula fillers, geometry point letters, and  L a T e X  subscript tokens. Thus, easy samples tend to compress reasoning into direct solution patterns, medium samples reinforce transferable reasoning routines, and hard samples may amplify narrow heuristics instead of robust reasoning. 
+
+ 
+ 
+ 
+ These results explain why hard samples have inconsistent effects: they can reinforce some internal features, but this reinforcement is often accompanied by broad suppression of existing reasoning features. Appendix  E.5  further confirms this pattern at the one-sample level: beneficial hard samples tend to reinforce reasoning-related features, whereas harmful hard samples suppress existing reasoning features or amplify surface-level patterns.
+Consequently, hard samples may occasionally improve performance but more often destabilize or degrade the model’s original capabilities. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Leveraging Mechanistic Insights for Better Training 
+
+ 
+
+ 
+ Under the T-SAE feature-dynamics framework, hard samples are not inherently uninformative; their forward-solving form often hides learnable signals from the current policy. We therefore introduce two lightweight difficulty-adaptive interventions, backward-reasoning rewrites (Section  4.1 ) and T-SAE-guided training signals (Section  4.2 ), to validate the functional role of the reasoning features identified above. Our goal is not to provide a complete algorithmic search for state-of-the-art RLVR performance, but to test whether the discovered feature mechanisms can be used to improve reward exposure and credit assignment for hard samples. 
+
+ 
+ 
+ 
+ 4.1  Rewriting Hard Samples via Backward Reasoning 
+
+ 
+
+ 
+ As a simple data-side intervention, we convert  hard @8 samples into backward-reasoning variants. Given a hard sample with question  q q  and answer  a a , we enumerate the numerical quantities in  q q . For each quantity, inspired by  [ 45 ] , we replace its value with an unknown variable  z z  and create two inverse templates: one inserts the original answer as a condition and asks the model to recover  z z ; the other keeps the masked question in its original form, appends “ If we know the answer to the above question is  ⋅ \cdot ,” and asks for  z z . A sample with  m m  numerical quantities therefore yields up to  2 ​ m 2m  rewritten questions. These rewrites preserve the mathematical relation in the original prompt while converting an unreachable forward problem into more tractable inverse reasoning tasks. Example  4.1  in Appendix  F  shows one instance. 
+
+ 
+ 
+ 
+ Results.  We construct  AugHard @8 by applying both templates to every numerical quantity in the  hard @8 subset. Table  1  shows that  AugHard @8 consistently improves over direct  hard @8 training and surpasses the full-data baseline on AMC, AIME-2024, and MinervaMath. This result supports the view that hard samples can be useful once their reward-sparse forward form is converted into a form closer to the policy’s current solvability frontier. 
+
+ 
+ 
+ 
+ Table 1:  Performance comparison between training on the Full dataset, the original  hard @8 subset, and the rewritten  AugHard @8 subset. 
+ 
+ 
+ 
+ Method 
+ AMC 
+ MATH-500 
+ AIME-2024 
+ Minervamath 
+ Olympiadbench 
+ 
+ Full data 
+ 40.96 
+ 72.20 
+ 10.00 
+ 25.37 
+ 34.82 
+ 
+ hard @8 
+ 39.76 
+ 65.00 
+ 3.33 
+ 15.81 
+ 30.65 
+ 
+ AugHard @8 
+ 43.37 
+ 68.40 
+ 13.33 
+ 26.47 
+ 32.74 
+ 
+ RFGO 
+ 44.56 
+ 72.00 
+ 16.67 
+ 25.00 
+ 33.78 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 4.2  Reasoning Feature-Guided Optimization 
+
+ 
+
+ 
+ Different difficulty regimes induce distinct trajectories in the T-SAE reasoning-feature space.
+We use this signal to guide RLVR through  Reasoning Feature-Guided Optimization  (RFGO), which has two components: token-level weighting for normal verifier-supervised updates and proxy rewards for zero-variance rollout groups. 
+
+ 
+ 
+ 
+ RFGO Token Weighting. 
+RFGO weights each token by the future movement it induces in the reasoning-feature space.
+Given a response split into sentence spans  { 𝒚 k } k = 1 K \{\bm{y}_{k}\}_{k=1}^{K} , we first compute the span-level feature divergence as  D k = ‖ 𝒛 ¯ S k , ℱ reason θ − 𝒛 ¯ 𝒚 k , ℱ reason ref ‖ 1 D_{k}=\|\bar{\bm{z}}^{\theta}_{S_{k},\mathcal{F}_{\mathrm{reason}}}-\bar{\bm{z}}^{\mathrm{ref}}_{\bm{y}_{k},\mathcal{F}_{\mathrm{reason}}}\|_{1} , where  𝒛 ¯ 𝒚 k \bar{\bm{z}}_{\bm{y}_{k}}  denotes the average T-SAE activation over tokens in span  𝒚 k \bm{y}_{k} , and  ℱ reason \mathcal{F}_{\mathrm{reason}}  is the set of reasoning-associated features.
+After mean-centering  D k D_{k}  within the rollout as  D ~ k \widetilde{D}_{k} , the RFGO signal for token  t ∈ 𝒚 k t\in\bm{y}_{k}  is  RFGO t = ∑ r = k K γ r − k ​ D ~ r \mathrm{RFGO}_{t}=\sum_{r=k}^{K}\gamma^{r-k}\widetilde{D}_{r} .
+We convert it into a clipped influence weight  w t = clip ​ ( exp ⁡ ( β ​ RFGO t ) , 1 − ϵ w , 1 + ϵ w ) w_{t}=\texttt{clip}(\exp(\beta\,\mathrm{RFGO}_{t}),1-\epsilon_{w},1+\epsilon_{w}) .
+The verifier advantage still determines the update direction, while  w t w_{t}  adjusts the token-level update magnitude according to future reasoning-feature movement. 
+
+ 
+ 
+ 
+ RFGO Proxy Reward. 
+For some samples, all rollouts in a GRPO group receive the same verifier reward, i.e.,  { R i } i = 1 G \{R_{i}\}_{i=1}^{G}  is all-zero or all-one.
+Such zero-variance groups produce no informative group-relative advantage.
+RFGO therefore uses a feature-based proxy reward only in this case.
+For each rollout  𝒚 i \bm{y}_{i} , we compute  R i RFGO = ∑ t M i , t ​ ∑ j ∈ ℱ reason ω j ​ z i , t , j θ ∑ t M i , t R_{i}^{\mathrm{RFGO}}=\frac{\sum_{t}M_{i,t}\sum_{j\in\mathcal{F}_{\mathrm{reason}}}\omega_{j}z^{\theta}_{i,t,j}}{\sum_{t}M_{i,t}} , where  M i , t M_{i,t}  masks valid response tokens and  ω j \omega_{j}  is the feature weight derived from  ReasonScore .
+We then set  R ~ i = R i RFGO \widetilde{R}_{i}=R_{i}^{\mathrm{RFGO}}  if  R 1 = ⋯ = R G R_{1}=\cdots=R_{G} , and otherwise keep the original verifier reward,  R ~ i = R i \widetilde{R}_{i}=R_{i} .
+Thus, RFGO preserves binary verifier rewards when they are informative, but introduces a reasoning-feature-based ranking when verifier rewards have zero variance. 
+
+ 
+ 
+ 
+ Results.  RFGO achieves the best overall performance without rewriting the training data.
+It obtains the highest score on AMC and AIME-2024, nearly matches Full data on MATH-500, and improves the average score from  30.91 30.91  for  Hard @8 and  36.67 36.67  for Full data to  38.40 38.40 .
+These results indicate that reasoning-feature guidance can better exploit difficult samples by preserving useful verifier feedback while reducing the instability caused by uninformative or misleading hard-sample rewards. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Conclusion 
+
+ 
+
+ 
+ In this work, we presented a mechanistic study of how samples across the full difficulty spectrum shape RLVR training for LLMs. Through controlled experiments and one-sample amplification, we demonstrated that hard samples produce sparse, low-quality learning signals that destabilize optimization and degrade performance, while medium-difficulty samples yield the strongest data efficiency. Critically, we showed that sample informativeness is not a static property but depends on the dynamic interaction between task difficulty and the model’s evolving capability. Moving beyond reward-level analysis, we employed Temporal Sparse Autoencoders (T-SAEs) to track the evolution of sparse feature activations throughout RL training, revealing that samples of different difficulty levels selectively reinforce or suppress distinct reasoning feature dynamics that are invisible from advantage signals alone. Guided by these mechanistic insights, we proposed two complementary interventions: a backward reasoning reformulation that converts hard samples into learnable inverse problems, and a T-SAE feature-based training signal that supports both token-level weighting and direct hard-sample rewards. Experiments on multiple mathematical reasoning benchmarks confirmed that these strategies significantly outperform direct training on hard subsets, with the rewritten samples surpassing full-data baselines on several benchmarks. 
+
+ 
+ 
+ 
+ 
+ 
+ 

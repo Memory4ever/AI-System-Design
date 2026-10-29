@@ -1,0 +1,2144 @@
+https://arxiv.org/html/2610.30014v1
+Agent Behavior Maps: Locating Agents by What They Would Do,Without Running Them
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Agent Behavior Maps
+2.1 Problem: comparing agents by what they do when run
+2.2 Scoring agents on shared reference trajectories
+2.3 Step and trajectory embeddings
+Distances estimate the trajectory KL.
+2.4 Total error: approximation plus sampling
+Scope of the guarantees.
+3 What does the map capture about an agent?
+3.1 Does distance track the on-policy divergence?
+Both correlate with the KL, the step version more strongly.
+3.2 Performance: predicting without running
+Setup.
+Question.
+Results.
+3.3 Behavior: do neighbors act alike?
+Setup.
+Models that behave alike can be found without running them.
+Beyond closeness in performance.
+4 Composing Harness Effects in Agent Behavior Maps
+4.1 Harness interventions and setup
+Harnesses.
+Harness vectors.
+Setup.
+4.2 Predicting coordinates of unscored compositions
+5 Related Work
+Maps of language models and policies.
+Harness effects and agent behavior.
+6 Conclusion
+Locality.
+Dependence on the reference trajectories.
+Estimation of the KL.
+Access to log-likelihoods.
+Sample size of behavior.
+Scope of the harness experiment.
+References
+A Theory: proofs and scoring details
+A.1 Grammar-constrained action probabilities
+A.2 Proof of Theorem
+Proof of Theorem .
+Step version.
+Trajectory version.
+Symmetric KL.
+A.3 Proof of Corollary
+The estimators as sample means.
+Simultaneous bound on the four sample means.
+Step version.
+Trajectory version.
+Conclusion.
+A.4 Cross terms in the trajectory distance
+A.5 Uncentered variants
+B Mapping and predicting: details and robustness
+B.1 Setup of the two experiments
+Models.
+Effect of the grammar mask.
+Definition of the trajectory KL.
+Compute and reproducibility.
+B.2 Trajectory KL: centering, step vs. trajectory, and sample size
+Effect of centering.
+Step version vs. trajectory version.
+Distances on the 100-model map.
+Dependence on the number of reference trajectories.
+B.3 Performance prediction: protocol and full results
+Tasks and average success rates.
+Predictors and intervals.
+Results of all predictors.
+B.4 Behavior: data, metrics, and additional results
+B.4.1 Definitions
+Action sequences.
+Behavioral distances.
+Choosing neighbors and testing.
+B.4.2 Robustness of the neighbor effect
+Does it hold for other behavioral distances?
+Does it survive regressing out performance?
+Does it depend on how the coordinates are built or on families?
+B.4.3 Reliability of the behavioral distances
+Are the distances reproducible across tasks?
+C Composing harnesses: details
+C.1 Harness implementations, models, and references
+Input construction.
+Components.
+Generation and scoring.
+LLMs.
+Reference trajectories and coordinates.
+Change in the mean log-likelihood.
+C.2 Additivity: full tables
+Identity between norm ratio and cosine.
+License: CC BY 4.0
+arXiv:2610.30014v1 [cs.LG] 21 Oct 2026
+Agent Behavior Maps: Locating Agents by What They Would Do,
+Without Running Them
+Shota Fujikawa
+† † thanks: Equal contribution. † † thanks: Work done during an internship at NEC Corporation.
+Affiliation: The University of Tokyo
+Email: fjkwsht@is.s.u-tokyo.ac.jp
+Takuya Tamura *
+Affiliation: NEC Corporation
+Email: tamura-takuya@nec.com
+Kosuke Akimoto
+Affiliation: NEC Corporation
+Email: kosuke_a@nec.com
+Daichi Haraguchi
+Affiliation: NEC Corporation
+Email: daichi-haraguchi@nec.com
+Masafumi Oyamada
+Affiliation: NEC Corporation
+Email: oyamada@nec.com
+Abstract
+LLM agents with similar success rates can follow different action sequences. An Agent Behavior Map represents LLM–harness combinations using centered action log-likelihoods on shared reference trajectories, without requiring new environment rollouts from the target agent. We derive error bounds relating squared coordinate distances to trajectory KL under explicit assumptions, and across eight cross-scored models the distances track the directly measured trajectory KL in rank order. Across 100 LLMs and four environments, ALFWorld-based coordinates support performance prediction and identify behavioral similarities. In ALFWorld, these similarities persist after controlling for success rates and model size, including across model families. As an extension, harness-component displacements approximately compose, with accuracy varying across components and environments.
+1 Introduction
+Figure 1: Agents close on the map act alike when run. (a) 100 LLMs with the BASE harness, scored on 500 ALFWorld reference trajectories (t-SNE layout; neighbors computed in the original space). ⋆ \star : gemma4-31b; green: its five nearest models on the map; orange rings: the five closest in parameter count. (b) Action sequences of these 11 models on one ALFWorld task. All succeed, but four of the five map neighbors share the anchor’s short route, whereas three of the five size-matched models take longer ones. (c) Effect size of the behavioral distance to the k k -th nearest model on the map (solid) or in parameter count (dashed), averaged over four aspects and 100 models (§ 3.3 ); positive means more similar than the average pair.
+Comparing LLM agents is a matter not only of how often they succeed but also of how they act. Agents with similar success rates can differ in the tools they choose, the order of their actions, and how often they repeat an operation. Such behavior depends on the combination of the underlying LLM and the harness that manages history, planning, and reasoning ( Zhang et al., 2026 ; Yao et al., 2026 ; Vats and Golev, 2026 ; Fan et al., 2026 ) . Running every combination in the environment reveals both performance and behavior, but each new agent to compare requires collecting new trajectories. This paper asks whether a representation that captures similarity of run-time behavior can be built without new environment runs of the target agent.
+When agents are compared by their log-likelihoods on shared reference trajectories, the difficulty is that the distribution of the histories on which the likelihoods are conditioned itself depends on the agent’s policy. The histories contained in the reference trajectories need not coincide with those that an agent reaches through its own actions. Whether similarity of action probabilities measured on shared histories corresponds to similarity of trajectory distributions and behavior at run time is therefore not obvious. How much of these on-policy properties can be captured by off-policy observations on fixed reference trajectories is the central question of this work.
+Language model maps, which vectorize log-likelihoods on shared texts, represent the relations between models in a common coordinate space ( Oyama et al., 2025 ) . Their extension to prompt–response distributions has examined performance prediction from conditional log-likelihoods and the approximate additivity of the coordinate displacements caused by prompt changes ( Oyama et al., 2026 ) . This paper applies the framework to agents that interact sequentially with an environment and answers the question above with theory and experiments.
+An Agent Behavior Map treats each agent as a pair of an LLM and a harness. Each agent rebuilds its input with its own harness from the shared external history in the reference trajectories, namely the task, the observations, and the past actions. The recorded actions are teacher-forced under this input, and the resulting log-likelihood vector is centered to give the agent’s coordinates. Because the reference trajectories are reused, the coordinates of a new agent can be computed without collecting any additional environment trajectories from it. Figure 1 shows an example in which agents that are close in these coordinates take similar action sequences when run. We validate the representation from two angles.
+•
+Theoretical and empirical relation to the trajectory distribution (§ 2 , § 3.1 ). Under assumptions on the locality of the two policies and on the mismatch with the reference distribution, we derive error bounds that relate squared coordinate distances to the KL divergence between trajectory distributions. The error decomposes into local approximation, reference mismatch, centering, and finite samples, and the decomposition shows how the step-level and trajectory-level representations differ in their dependence on trajectory length. In a cross-scoring experiment with eight models, we compare the coordinate distances with the directly measured trajectory KL, the target itself, and find a high rank correlation.
+•
+Validation on performance and behavior (§ 3.2 , § 3.3 ). We apply a common harness to 100 LLMs and evaluate coordinates built from ALFWorld reference trajectories alone on ALFWorld, TextWorld, BFCL, and MiniWoB++. Besides predicting the success rates of unevaluated models from the evaluation results of the others, we ask whether neighbors on the map generate similar action sequences. In ALFWorld in particular, the similarity of action sequences remains when compared with neighbors chosen by success rate or by size, and when the candidates are restricted to models of other families. These results support the view that the coordinates carry behavioral information that neither performance level nor model family explains. The accuracy of performance prediction and the strength of behavioral similarity among neighbors, however, depend on the environment and the measure.
+Finally, we represent the addition of a harness component as a displacement on the map and ask whether such displacements add up within an LLM (§ 4 ). Comparison with measured coordinates shows approximate additivity, with an accuracy that depends on the component and the environment.
+2 Agent Behavior Maps
+2.1 Problem: comparing agents by what they do when run
+On task x x , an agent interacts with the environment and produces a trajectory τ = ( x , o 0 , a 0 , o 1 , … , a T − 1 , o T ) \tau=(x,o_{0},a_{0},o_{1},\dots,a_{T-1},o_{T}) of observations o t o_{t} and actions a t a_{t} . Its length T = T ⁡ ( τ ) T=T(\tau) varies and is capped by a known limit T max T_{\max} . The external history before the action at time t t is h t = ( x , o 0 , a 0 , … , o t ) h_{t}=(x,o_{0},a_{0},\dots,o_{t}) ; it excludes the generator’s internal state, such as its system prompt, reasoning, plans, and summaries. An agent i = ( LLM , harness ) i=(\text{LLM},\text{harness}) rebuilds its input from h t h_{t} by its own rule C i C_{i} (history window, retrieval, summarization) and generates text under the action grammar; π i ​ ( a ∣ h ) \pi_{i}(a\mid h) denotes the resulting probability of action a a (Appendix A.1 covers the grammar and tokenization). Given a task distribution w w , an initial observation p 0 p_{0} , and environment dynamics E t = E ⁡ ( o t + 1 ∣ h t , a t ) E_{t}=E(o_{t+1}\mid h_{t},a_{t}) shared by all agents, agent i i induces the trajectory distribution
+P i ​ ( τ ) = w ⁡ ( x ) ​ p 0 ​ ( o 0 ∣ x ) ​ ∏ t < T π i ​ ( a t ∣ h t ) ​ E t . P_{i}(\tau)=w(x)\,p_{0}(o_{0}\mid x)\prod_{t<T}\pi_{i}(a_{t}\mid h_{t})\,E_{t}.
+(1)
+The environment terms cancel in the log-likelihood ratio of two agents. We compare agents by the trajectory KL K i ​ j := KL ( P i ∥ P j ) K_{ij}:=\mathrm{KL}(P_{i}\|P_{j}) and its symmetrization K sym := ( K i ​ j + K j ​ i ) / 2 K_{\mathrm{sym}}:=(K_{ij}+K_{ji})/2 . P i P_{i} is the distribution of trajectories when agent i i is actually run, so the properties we care about, such as success rates and action frequencies, are functionals of P i P_{i} : on-policy quantities.
+Writing 𝔼 i = 𝔼 P i \mathbb{E}_{i}=\mathbb{E}_{P_{i}} , the chain rule of KL ( Cover and Thomas, 2006 ; Ke et al., 2020 ) gives
+K i ​ j = 𝔼 i ∑ t < T KL ( π i ( ⋅ ∣ h t ) ∥ π j ( ⋅ ∣ h t ) ) , K_{ij}=\mathbb{E}_{i}\textstyle\sum_{t<T}\mathrm{KL}\bigl(\pi_{i}(\cdot\mid h_{t})\|\pi_{j}(\cdot\mid h_{t})\bigr),
+(2)
+an expectation over the histories that agent i i visits when it runs , so measuring it directly takes n n rollouts and O ⁡ ( n 2 ) O(n^{2}) cross-scorings for n n agents. We ask how much of this quantity can be read, without running the agents , from distances between coordinates obtained by forward passes alone.
+2.2 Scoring agents on shared reference trajectories
+We prepare N N reference trajectories τ 1 , … , τ N \tau_{1},\dots,\tau_{N} once, from an unknown reference distribution Q Q . The distances use neither Q ⁡ ( τ ) Q(\tau) nor the generators or their mixing weights, so the trajectories can come from anywhere. We use four sources: logs of the agents under study (ALFWorld, Appendix C ), traces published by others ( τ \tau -bench ( Yao et al., 2025 ) and SWE-Bench ( Jimenez et al., 2024 ) from HAL ( Kapoor et al., 2026 ) ), rollouts of two models (the 100-model experiment, § 3 ), and an equal-weight pool of eight scored models (§ 3.1 ). Let T r = T ⁡ ( τ r ) T_{r}=T(\tau_{r}) be the lengths and M = ∑ r T r M=\sum_{r}T_{r} the total number of steps. For each agent i i , teacher forcing ( Williams and Zipser, 1989 ) reads ℓ i , r ​ t := log ⁡ π i ​ ( a r ​ t ∣ h r ​ t ) \ell_{i,rt}:=\log\pi_{i}(a_{rt}\mid h_{rt}) and A i , r := ∑ t < T r ℓ i , r ​ t A_{i,r}:=\sum_{t<T_{r}}\ell_{i,rt} without running the environment. Sharing the trajectories has two costs, the mismatch between Q Q and each agent’s on-policy distribution and the finite number of trajectories, which § 2.3 and § 2.4 address.
+2.3 Step and trajectory embeddings
+Let ℓ ¯ i \bar{\ell}_{i} and A ¯ i \bar{A}_{i} be the means of ℓ i , r ​ t \ell_{i,rt} over all M M steps and of A i , r A_{i,r} over all N N trajectories. Subtracting each agent’s own mean , we define two centered embeddings
+z i S := M − 1 2 ​ ( ℓ i , r ​ t − ℓ ¯ i ) r , t , z i τ := N − 1 2 ​ ( A i , r − A ¯ i ) r . z^{S}_{i}:=M^{-\frac{1}{2}}(\ell_{i,rt}-\bar{\ell}_{i})_{r,t},\,z^{\tau}_{i}:=N^{-\frac{1}{2}}(A_{i,r}-\bar{A}_{i})_{r}.
+A step coordinate asks whether an action is natural in its situation; a trajectory coordinate asks whether a trajectory is natural from its initial state. Only existing steps t < T r t<T_{r} are included. The distances are D ^ S = ∥ z i S − z j S ∥ \hat{D}_{S}=\lVert z^{S}_{i}-z^{S}_{j}\rVert and D ^ τ = ∥ z i τ − z j τ ∥ \hat{D}_{\tau}=\lVert z^{\tau}_{i}-z^{\tau}_{j}\rVert . For a pair ( i , j ) (i,j) , let d t = log ⁡ π i ​ ( a t ∣ h t ) π j ​ ( a t ∣ h t ) d_{t}=\log\frac{\pi_{i}(a_{t}\mid h_{t})}{\pi_{j}(a_{t}\mid h_{t})} be the step log-ratio, X = ∑ t < T d t = log ⁡ P i ​ ( τ ) P j ​ ( τ ) X=\sum_{t<T}d_{t}=\log\frac{P_{i}(\tau)}{P_{j}(\tau)} its sum, μ = 𝔼 Q ​ X \mu=\mathbb{E}_{Q}X its mean under the reference, and T ¯ = 𝔼 Q ​ [ T ] \bar{T}=\mathbb{E}_{Q}[T] the mean length. The population distances are then D S 2 = 1 T ¯ ​ 𝔼 Q ​ ∑ t < T ( d t − μ / T ¯ ) 2 D^{2}_{S}=\frac{1}{\bar{T}}\mathbb{E}_{Q}\sum_{t<T}(d_{t}-\mu/\bar{T})^{2} and D τ 2 = Var Q ​ ( X ) D^{2}_{\tau}=\mathrm{Var}_{Q}(X) . Centering removes each agent’s overall confidence, its mean log-likelihood, from the coordinates (Appendices A.5 and B.2 treat the uncentered variants).
+Distances estimate the trajectory KL.
+Fix a pair ( i , j ) (i,j) . Assumption 1 (locality): for every history h h that occurs under P i P_{i} , P j P_{j} , or Q Q , π i ( ⋅ ∣ h ) \pi_{i}(\cdot\mid h) and π j ( ⋅ ∣ h ) \pi_{j}(\cdot\mid h) have the same support and | log ⁡ π i ​ ( a ∣ h ) / π j ​ ( a ∣ h ) | ≤ ε \lvert\log\pi_{i}(a\mid h)/\pi_{j}(a\mid h)\rvert\leq\varepsilon on it. Assumption 2 (reference mismatch): TV ⁡ ( P i , Q ) ≤ λ \mathrm{TV}(P_{i},Q)\leq\lambda and TV ⁡ ( P j , Q ) ≤ λ \mathrm{TV}(P_{j},Q)\leq\lambda . Lengths satisfy 1 ≤ T ≤ T max 1\leq T\leq T_{\max} ; we assume neither independence across steps nor independence between T T and the actions.
+Theorem 1 (Approximation error) .
+Under Assumptions 1 and 2, | K i ​ j − T ¯ 2 ​ D S 2 | ≤ R S \lvert K_{ij}-\tfrac{\bar{T}}{2}D^{2}_{S}\rvert\leq R_{S} and | K i ​ j − 1 2 ​ D τ 2 | ≤ R τ \lvert K_{ij}-\tfrac{1}{2}D^{2}_{\tau}\rvert\leq R_{\tau} , where, up to absolute constants,
+R S \displaystyle R_{S}
+= O ⁡ ( ε 3 ​ 𝔼 i ​ [ T ] + λ ​ T max ​ ε 2 + μ 2 / T ¯ ) , \displaystyle=O\bigl(\varepsilon^{3}\mathbb{E}_{i}[T]+\lambda T_{\max}\varepsilon^{2}+\mu^{2}/\bar{T}\bigr),
+(3)
+R τ \displaystyle R_{\tau}
+= O ⁡ ( ε 3 ​ 𝔼 i ​ [ T 2 ] + λ ​ T max 2 ​ ε 2 + μ 2 ) . \displaystyle=O\bigl(\varepsilon^{3}\mathbb{E}_{i}[T^{2}]+\lambda T_{\max}^{2}\varepsilon^{2}+\mu^{2}\bigr).
+(4)
+Analogous bounds hold for K sym K_{\mathrm{sym}} (Appendix A.2 ).
+The factor T max T_{\max} on the λ \lambda term, i.e., state-distribution mismatch accumulating over steps, is an error source that LM maps do not have (constants in Table 1 , proofs in Appendix A.2 ).
+Table 1: Error bounds by source, with constants: approximation error (Theorem 1 , top three rows) and sampling error (Corollary 1 , bottom row, which defines u N u_{N} ). The trajectory bound is about T T times the step bound for every source.
+Source
+Step
+Trajectory
+Ratio
+Local expansion
+1 6 ​ ε 3 ​ 𝔼 i ​ [ T ] \tfrac{1}{6}\varepsilon^{3}\mathbb{E}_{i}[T]
+1 4 ​ ε 3 ​ 𝔼 i ​ [ T 2 ] \tfrac{1}{4}\varepsilon^{3}\mathbb{E}_{i}[T^{2}]
+3 ​ 𝔼 i ​ [ T 2 ] 2 ​ 𝔼 i ​ [ T ] \tfrac{3\mathbb{E}_{i}[T^{2}]}{2\mathbb{E}_{i}[T]}
+Ref. mismatch
+1 2 ​ λ ​ T max ​ ε 2 \tfrac{1}{2}\lambda T_{\max}\varepsilon^{2}
+1 2 ​ λ ​ T max 2 ​ ε 2 \tfrac{1}{2}\lambda T_{\max}^{2}\varepsilon^{2}
+T max T_{\max}
+Centering
+μ 2 / ( 2 ​ T ¯ ) \mu^{2}/(2\bar{T})
+μ 2 / 2 \mu^{2}/2
+T ¯ \bar{T}
+Sampling
+6 ​ T max − 1 2 ​ ε 2 ​ u N \tfrac{6T_{\max}-1}{2}\varepsilon^{2}u_{N}
+5 2 ​ T max 2 ​ ε 2 ​ u N \tfrac{5}{2}T_{\max}^{2}\varepsilon^{2}u_{N}
+≈ 5 6 ​ T max \approx\tfrac{5}{6}T_{\max}
+2.4 Total error: approximation plus sampling
+Theorem 1 concerns the population distances. In practice, D ^ S \hat{D}_{S} and D ^ τ \hat{D}_{\tau} are computed from N N reference trajectories, so the total error adds sampling error to the approximation error. Bounding 𝔼 i ​ [ T ] ≤ T max \mathbb{E}_{i}[T]\leq T_{\max} and 𝔼 i ​ [ T 2 ] ≤ T max 2 \mathbb{E}_{i}[T^{2}]\leq T_{\max}^{2} in Table 1 gives the following.
+Corollary 1 (Total error) .
+Let τ 1 , … , τ N ∼ Q \tau_{1},\dots,\tau_{N}\sim Q be i.i.d., and let T ¯ ^ := M / N \hat{\bar{T}}:=M/N , K ^ S := T ¯ ^ 2 ​ D ^ S 2 \hat{K}_{S}:=\tfrac{\hat{\bar{T}}}{2}\hat{D}_{S}^{2} , K ^ τ := 1 2 ​ D ^ τ 2 \hat{K}_{\tau}:=\tfrac{1}{2}\hat{D}_{\tau}^{2} , and u N := log ⁡ ( 8 / δ ) / ( 2 ​ N ) u_{N}:=\sqrt{\log(8/\delta)/(2N)} . Under Assumptions 1 and 2, with probability at least 1 − δ 1-\delta , simultaneously
+| K i ​ j − K ^ S | \displaystyle\lvert K_{ij}-\hat{K}_{S}\rvert
+≤ T max ​ ε 2 ​ ( ε 4 + λ 2 + 3 ​ u N ) + μ 2 2 ​ T ¯ , \displaystyle\leq T_{\max}\,\varepsilon^{2}\bigl(\tfrac{\varepsilon}{4}+\tfrac{\lambda}{2}+3u_{N}\bigr)+\tfrac{\mu^{2}}{2\bar{T}},
+| K i ​ j − K ^ τ | \displaystyle\lvert K_{ij}-\hat{K}_{\tau}\rvert
+≤ T max 2 ​ ε 2 ​ ( ε 4 + λ 2 + 3 ​ u N ) + μ 2 2 . \displaystyle\leq T_{\max}^{2}\varepsilon^{2}\bigl(\tfrac{\varepsilon}{4}+\tfrac{\lambda}{2}+3u_{N}\bigr)+\tfrac{\mu^{2}}{2}.
+The trajectory bound carries an extra factor of T T on every term. Since K i ​ j ≤ ε 2 ​ 𝔼 i ​ [ T ] / 2 K_{ij}\leq\varepsilon^{2}\mathbb{E}_{i}[T]/2 by Lemma 1 (iii) and the chain rule, the step bound grows with T T like the KL it estimates, whereas the trajectory bound grows as T 2 T^{2} : summing log-ratios before squaring picks up cross terms between steps (Appendix A.4 ). Sampling error shares the parentheses, so it keeps this factor; it decays as N − 1 / 2 N^{-1/2} , while the other terms do not. The proof applies Hoeffding’s inequality ( Hoeffding, 1963 ) to four sample means (Appendix A.3 ).
+Scope of the guarantees.
+The guarantees cover only close pairs , with small ε \varepsilon and λ \lambda . We therefore test empirically whether distances preserve the order of the KL outside this regime (§ 3.1 ) and whether close pairs behave alike when run (§ 3.3 ).
+3 What does the map capture about an agent?
+This section fixes the harness to a standard configuration (BASE: a history window of the last four steps, no planning, direct action; § 4.1 ) and places each LLM as one point. The question is what the coordinates capture about an agent. LM maps showed a correlation between coordinates and downstream performance ( Oyama et al., 2025 ) . We answer with three quantities: the target itself, the KL between the trajectory distributions of the agents when run (§ 3.1 ); one projection of it, the success rate (§ 3.2 ); and the behavior itself when run (§ 3.3 ).
+3.1 Does distance track the on-policy divergence?
+Theorem 1 applies only in the local regime of small ε \varepsilon , that is, to nearly identical policies, whereas actual pairs of models may be far apart. We therefore check empirically whether the distances track the trajectory KL outside that regime, and which version, step or trajectory, tracks it better. In the bounds, the step version is favored by a factor of order T T (Table 1 ); we ask whether this advantage shows in the data. Measuring the trajectory KL directly requires rollouts of every model and O ⁡ ( n 2 ) O(n^{2}) cross-scoring, so we use eight models: each solves a common set of ALFWorld ( Shridhar et al., 2021 ) train tasks, every model scores every trajectory, and the cross-scoring gives K sym K_{\mathrm{sym}} for the ( 8 2 ) = 28 \binom{8}{2}=28 pairs. The distances use the pooled trajectories of the eight models as the common reference (Appendix B.1 ).
+Figure 2: Map estimates, step version T ¯ 2 ​ D ^ S 2 \tfrac{\bar{T}}{2}\hat{D}_{S}^{2} and trajectory version 1 2 ​ D ^ τ 2 \tfrac{1}{2}\hat{D}_{\tau}^{2} , against the directly measured symmetric trajectory KL K sym K_{\mathrm{sym}} : 8 models, 28 pairs, centered coordinates, log–log axes; error bars are standard errors over the 988 shared ALFWorld train tasks. Both track K sym K_{\mathrm{sym}} , the step version more closely.
+Both correlate with the KL, the step version more strongly.
+Figure 2 shows the result (numbers in Table 6 , Appendix B.2 ). The centered step estimate T ¯ 2 ​ D ^ S 2 \tfrac{\bar{T}}{2}\hat{D}_{S}^{2} correlates with K sym K_{\mathrm{sym}} at Pearson r = 0.90 r=0.90 and Spearman ρ = 0.95 \rho=0.95 , and the trajectory estimate 1 2 ​ D ^ τ 2 \tfrac{1}{2}\hat{D}_{\tau}^{2} at 0.86 0.86 / 0.94 0.94 : distances measured without running the agents preserve the order of the trajectory KL measured by running them. Two trends are consistent with the bounds (Appendix B.2 ): the RMSE of the trajectory version is an order of magnitude larger than that of the step version, as the orders T T versus T 2 T^{2} predict, and adding reference trajectories shrinks only the sampling error while the approximation error remains. Centering, although it adds a term to the bound, raises the correlation and lowers the RMSE for both versions. Reading the distances between the eight models from the 100-model map of § 3.2 instead, with different reference trajectories and no grammar constraint, gives r = 0.86 r=0.86 and ρ = 0.88 \rho=0.88 (Appendix B.2 ). Both versions overestimate the measured KL in level, by a median factor of 7.5 for the step version and 74 for the trajectory version (Appendix B.2 ), so in what follows we use the distances only as a proxy for the order of the KL, and we use the step version.
+3.2 Performance: predicting without running
+Setup.
+From here on we use 100 open-weight LLMs. The reference trajectories are 500 trajectories with 10,388 steps, generated by two models (Qwen3.8-27B ( Qwen Team, 2026b ) and Gemma4-E4B ( Gemma Team, 2026 ) ) on 250 ALFWorld train tasks; every model scores them, and its centered step coordinates are computed from these scores. Only the two generators ran the reference trajectories; the other models only score them. Success rates and action sequences are obtained by running each model itself on different tasks, so the material for the coordinates and the material for the evaluation do not overlap. Scoring uses raw log-likelihoods without the grammar constraint; rescoring with the constraint barely moves the coordinates (Appendix B.1 ).
+Question.
+Can the downstream success rate of a model that has only computed likelihoods on the reference trajectories, and has never been run in the environment, be predicted from its coordinates? We hold out one model at a time and predict it from the remaining 99. The downstream tasks are 50 ALFWorld valid_unseen tasks, the environment of the coordinates, and 50 tasks each from different environments , TextWorld ( Côté et al., 2018 ) , BFCL ( Patil et al., 2025 ) , and MiniWoB++ ( Shi et al., 2017 ; Liu et al., 2018 ) , plus the averages over the four benchmarks and over the three other environments (Appendix B.3 ). The baselines use only information available without running : a regression on the log parameter count (size), the mean success rate of the same family (family), and a regression on the mean log-likelihood ℓ ¯ \bar{\ell} (the component removed by centering). On the coordinate side we use kNN, Ridge ( Hoerl and Kennard, 1970 ) , and Ridge with size as a covariate, with hyperparameters chosen by inner leave-one-out (Appendix B.3 ).
+Table 2: Predicting success rates without running the agents: Pearson r r under leave-one-model-out over 100 models. Baselines use size ( log \log parameter count), the family mean, or ℓ ¯ \bar{\ell} (mean log-likelihood); coordinate methods are kNN, Ridge, and Ridge with size as a covariate (+size). Bold: higher than size, with a bootstrap 95% interval of the difference excluding zero. RMSE and all predictors in Table 7 .
+Baselines
+Coordinates
+Downstream task
+Size
+Family
+ℓ ¯ \bar{\ell}
+kNN
+Ridge
++size
+ALFWorld
+.63
+.46
+.20
+.88
+.81
+.82
+TextWorld
+.71
+.44
+.33
+.76
+.77
+.78
+BFCL
+.48
+.34
+.32
+.69
+.69
+.65
+MiniWoB++
+.64
+.24
+.22
+.28
+.56
+.63
+4-bench avg.
+.74
+.42
+.34
+.74
+.78
+.83
+3 other envs.
+.72
+.40
+.34
+.72
+.75
+.81
+Results.
+Table 2 reports Pearson r r . In ALFWorld, the environment of the coordinates, kNN reaches r = 0.88 r=0.88 against 0.63 0.63 for size (the bootstrap interval of the difference excludes zero): the success rate of a model that has only run forward passes on the 500 reference trajectories is predicted from the results of the other 99 models with an RMSE of 9 points on the 50 valid_unseen tasks. In the other environments, all three coordinate methods beat size on BFCL ( 0.65 0.65 – 0.69 0.69 versus 0.48 0.48 ) and TextWorld ( 0.76 0.76 – 0.78 0.78 versus 0.71 0.71 ); on MiniWoB++ size is stronger ( 0.64 0.64 versus 0.56 0.56 for Ridge), although a quantity built from likelihoods alone still captures this much. Combining size and coordinates matches size on MiniWoB++ ( 0.63 0.63 ) and improves the four-benchmark average to 0.83 0.83 (size 0.74 0.74 ) and the three-environment average to 0.81 0.81 ( 0.72 0.72 ). Since ℓ ¯ \bar{\ell} is weak and the coordinates are strong, what matters is not the overall level of the likelihood but its shape : which actions a model finds natural in which states. A success rate, however, is only one projection of behavior when run; we ask next whether that is all the coordinates capture.
+3.3 Behavior: do neighbors act alike?
+In § 3.2 , models that are close in coordinates had similar success rates. Do neighbors also share their behavior when run? Behavior can only be measured as a distance between a pair of models, so the question becomes whether the behavioral distance from a model to its coordinate neighbors is smaller than its distance to the remaining models. We look at neighbors rather than at the correlation over all pairs because the guarantee covers only close pairs (§ 2.4 ). Coordinate neighbors are compared with two kinds of neighbors. The first are neighbors chosen by size, family, or ℓ ¯ \bar{\ell} , which, as in Table 2 , use only information available without running. The second are neighbors chosen by the measured success rate on that benchmark, a reference that is available only after running. Agents with the same success rate do not necessarily solve tasks in the same way, so the gap to the second kind shows what the coordinates capture beyond closeness in performance.
+Setup.
+We use the action sequences that each model itself produced with the BASE harness: ALFWorld valid_unseen (50 tasks), the environment of the coordinates, and the other environments TextWorld (50), BFCL multi_turn (25), and MiniWoB++ (50), all for the 100 models. The behavioral distance between two models is the distance between their trajectories on the same task, averaged over tasks. Since similar behavior is not a single number, we measure it in four aspects from coarse to fine (definitions in Appendix B.4 ):
+•
+Composition (which actions are used how often, ignoring order): Jensen–Shannon distance between the distributions of action types ( Endres and Schindelin, 2003 ) (type JS)
+•
+Global (agreement of the whole action sequence): normalized Levenshtein distance ( Levenshtein, 1966 ; Rabanser et al., 2026 ) (edit distance)
+•
+Local (what follows a given action): Jaccard distance between the sets of action 2-grams (2-gram)
+•
+Early (whether the same first move is made from the same state): disagreement rate of the first action from the same initial state ( Bouchard and Chauhan, 2026 ; Gonuguntla, 2026 ) (first action)
+The difference in success rate is measured in the same form, which puts the results of § 3.2 on the same scale. The effect size for a model’s five coordinate neighbors is the mean behavioral distance to the remaining models minus the mean distance to the neighbors, divided by the standard deviation over all pairs (positive: neighbors more similar). Figure 1 (c) applies the same definition to the k k -th nearest model alone, in coordinates and in size, averaged over the 100 models and the four aspects.
+Table 3: Effect sizes of the behavioral similarity of each model’s five neighbors (§ 3.3 ; positive: neighbors more similar than the remaining models), for the difference in success rate and the four aspects of § 3.3 . Bold: largest of the four columns other than the reference. ∗ : p < 0.01 p<0.01 , + : p < 0.05 p<0.05 ; † : significantly closer than success-rate neighbors ( p < 0.05 p<0.05 ). The success-rate row is omitted for success-rate neighbors. All measures in Table 8 .
+Available without running
+Map
+Reference
+Benchmark / measure
+Size
+Family
+ℓ ¯ \bar{\ell}
+Coord.
+Success
+ALFWorld
+Success rate
+.41 ∗
+.49 ∗
+.20 ∗
+.60 ∗
+—
+Composition
+.23 ∗
+.28 ∗
+.05
+.52 ∗†
+.30 ∗
+Global
+.40 ∗
+.62 ∗
+.18 +
+.88 ∗†
+.65 ∗
+Local
+.41 ∗
+.68 ∗
+.20 ∗
+.96 ∗†
+.74 ∗
+Early
+.30 ∗
+.49 ∗
+.11 ∗
+.61 ∗†
+.41 ∗
+TextWorld
+Success rate
+.58 ∗
+.56 ∗
+.27 ∗
+.61 ∗
+—
+Composition
+.10
+.27 ∗
+.06
+.33 ∗†
+.22 ∗
+Global
+.25 ∗
+.42 ∗
+.14
+.52 ∗
+.50 ∗
+Local
+.27 +
+.44 ∗
+.14
+.54 ∗
+.52 ∗
+Early
+.14 ∗
+.25 ∗
+.04
+.21 ∗
+.16 ∗
+BFCL (multi_turn)
+Success rate
+.27 ∗
+.30 ∗
+.15 ∗
+.47 ∗
+—
+Composition
+.10 +
+.21 ∗
+.03
+.18 ∗
+.23 ∗
+Global
+.13 ∗
+.26 ∗
+.06
+.26 ∗
+.30 ∗
+Local
+.21 ∗
+.32 ∗
+.09 +
+.38 ∗
+.39 ∗
+Early
+.19 ∗
+.25 ∗
+.09 ∗
+.32 ∗
+.21 ∗
+MiniWoB++
+Success rate
+.42 ∗
+.37 ∗
+.20 ∗
+.39 ∗
+—
+Composition
+.12 ∗
+.22 ∗
+.08 ∗
+.24 ∗†
+.13 ∗
+Global
+.20 ∗
+.32 ∗
+.10 +
+.38 ∗
+.37 ∗
+Local
+.27 ∗
+.47 ∗
+.16 +
+.50 ∗
+.42 ∗
+Early
+.35 ∗
+.35 ∗
+.09 +
+.50 ∗†
+.28 ∗
+Models that behave alike can be found without running them.
+The five coordinate neighbors not only have similar success rates ( 0.39 0.39 – 0.61 0.61 ) but also behave alike on all four benchmarks (Table 3 ). The effect is roughly twice that of size neighbors (edit distance on ALFWorld 0.88 0.88 versus 0.40 0.40 ; 2-gram on MiniWoB++ 0.50 0.50 versus 0.27 0.27 ), and ℓ ¯ \bar{\ell} neighbors are weak ( 0.03 0.03 – 0.20 0.20 ). Family is a stronger competitor than size: coordinates exceed it on ALFWorld, TextWorld, and MiniWoB++ (except for the first action on TextWorld) and tie with it on BFCL. The effect remains when the coordinate neighbors are restricted to other families (edit distance on ALFWorld 0.60 0.60 ), so it is not produced by same-family dependence. Similarity decreases with rank: the first coordinate neighbor is the most similar and the effect returns to the overall mean around rank 30, whereas size neighbors are nearly flat beyond the first (Figure 1 (c)). The divergence position and the profile of idiosyncrasies show the same pattern, while for the success pattern, neighbors chosen by family or size are about as close as or closer than coordinate neighbors (Appendix B.4 ).
+Beyond closeness in performance.
+In ALFWorld, the environment of the coordinates, coordinate neighbors behave more alike than neighbors chosen by the measured success rate in all four aspects ( † \dagger in Table 3 ); in the other environments the two are roughly on a par, with coordinates significantly closer only for composition on TextWorld and MiniWoB++ and for the first action on MiniWoB++. We also regress out performance and size (Appendix B.4 ): because strong models may converge on the shortest procedures, we regress each pair’s behavioral distance on the difference in success rate, the pair’s mean success rate and its square, and the difference in log parameter count, and measure the neighbor effect on the residuals. In ALFWorld the effect remains (edit distance 0.61 0.61 , 2-gram 0.68 0.68 ) and stays positive when the candidates are restricted to other families ( 0.31 0.31 , 0.31 0.31 ); in the other environments it is weak, remains mainly in the local and early measures, and for some measures vanishes or changes sign. This linear control shows only that an association remains that the observed success rates and sizes do not explain. That the coordinates are built from the likelihood of the next action in a fixed state is consistent with the effect remaining in the local and early measures.
+4 Composing Harness Effects in Agent Behavior Maps
+Figure 3: Harness displacements add up within an LLM. The 144 τ \tau -bench agents (12 LLMs × \times 12 harnesses) in their first two principal components (PC1 separates LLMs; axes scaled independently). Squares: BASE; solid arrows: single-component displacements; dashed: their sum, ending at the predicted position of retrieve + think (open circles); filled circles: its measured position. Cosine and norm ratio: medians over the 12 LLMs in the full space.
+Section 3 fixed the harness; this section fixes the LLM, varies the harness, and asks what structure the map has with respect to harnesses . A harness combines components for context management, planning, and acting. If adding a component appears as a displacement within an LLM and these displacements add up, the map reads as the position of the LLM plus a sum of component vectors, and the coordinates of an unscored combination follow from the scores of single components. We test whether the approximate additivity observed for prompt changes in LM maps ( Oyama et al., 2026 ) also holds for agent harnesses (§ 4.2 ).
+4.1 Harness interventions and setup
+Harnesses.
+A harness splits the rule C i C_{i} that builds the LLM’s input from the external history h t h_{t} (§ 2.1 ) into three slots.
+•
+Context management (which part of the history is shown): windowed passes the initial observation and the last four steps verbatim; retrieve adds past steps retrieved for their relevance; summarize replaces old history with a structured summary.
+•
+Planning (whether a plan is rewritten before acting): none / replan.
+•
+Acting (whether free-form reasoning is written before the action): direct / think.
+System instructions, tool definitions, and the initial observation are shared by all harnesses; plans and reasoning enter only the current step’s input, so the external history consists of actions and observations only and every harness builds its input from the same h t h_{t} , both when running and when scoring. The 3 × 2 × 2 = 12 3\times 2\times 2=12 combinations include BASE (windowed/none/direct), four single-component harnesses that add one component to BASE, and seven composed harnesses that add two or more (specifications in Appendix C.1 ).
+Harness vectors.
+For the same LLM m m , the difference between the coordinates of BASE and of the harness that adds component A A , Δ A ( m ) := z ⁡ ( m , A ) − z ⁡ ( m , base ) \Delta^{(m)}_{A}:=z(m,A)-z(m,\mathrm{base}) , is the harness vector , and the sum of harness vectors predicts the coordinates of a composition, z ^ ​ ( m , A + B ) := z ⁡ ( m , base ) + Δ A ( m ) + Δ B ( m ) \hat{z}(m,A{+}B):=z(m,\mathrm{base})+\Delta^{(m)}_{A}+\Delta^{(m)}_{B} .
+Since the coordinates are centered log-likelihoods on the common reference trajectories, Δ A \Delta_{A} represents how component A A changes the relative likelihood of the reference actions; the change in the mean log-likelihood is reported separately as a scalar (Appendix C.1 ).
+Setup.
+All 12 configurations are scored, but only the coordinates of the five configurations BASE and single components enter the composition; the coordinates of the remaining seven are constructed as their sums. With 12 LLMs (listed in Appendix C.1 ), the coordinates of 60 agents thus yield composed coordinates for 84. The measured coordinates of the composed harnesses are used only for validation. The coordinates are obtained by teacher forcing on 359 HAL ( Kapoor et al., 2026 ) traces of τ \tau -bench ( Yao et al., 2025 ) ; ALFWorld and SWE-Bench (6 LLMs) are in Appendix C .
+4.2 Predicting coordinates of unscored compositions
+Does the sum of the single-component displacements approach the measured displacement z ⁡ ( m , A + B ) − z ⁡ ( m , base ) z(m,A{+}B)-z(m,\mathrm{base}) of the composition? Figure 3 shows one composition, retrieve + think, as an example; all seven are in Figure 5 (Appendix C.2 ). For all compositions, Table 12 in the appendix reports, within each LLM, the cosine between the measured displacement and the predicted displacement Δ A + Δ B \Delta_{A}+\Delta_{B} , the norm ratio (measured / predicted), and the relative reconstruction error ∥ measured − predicted ∥ / ∥ measured ∥ \lVert\text{measured}-\text{predicted}\rVert/\lVert\text{measured}\rVert , as medians over LLMs. We compare displacements from BASE because absolute coordinates share a large component common to the LLM, which alone would make them look close. The arrows of the same component also look parallel across LLMs in Figure 3 ; this cross-LLM agreement of directions is not analyzed in this paper.
+For two-component compositions, the median cosine over the 60 cases (12 LLMs × \times 5 compositions) is 0.90 0.90 and the median norm ratio 0.98 0.98 , so the sum roughly matches in direction and length. The agreement varies by composition: retrieve with planning or reasoning agrees best (cosine 0.97 0.97 / 0.94 0.94 , relative error 0.25 0.25 / 0.34 0.34 ), compositions with summarize keep the direction but deviate more (cosine 0.91 0.91 / 0.87 0.87 ), and replan + think is weakest (cosine 0.81 0.81 , norm ratio 0.74 0.74 : the measured displacement is shorter than predicted). Three-component compositions reach cosine 0.82 0.82 and norm ratio 0.87 0.87 (median over 2 × 12 2\times 12 cases). On ALFWorld and SWE-Bench (6 LLMs) the agreement weakens to median two-component cosines of 0.63 0.63 and 0.81 0.81 (Table 12 ). Additivity thus depends on the components and the environment, but for context management combined with planning or reasoning, the direction and magnitude of the composed displacement can be approximated from single-component displacements.
+5 Related Work
+Maps of language models and policies.
+LM maps ( Oyama et al., 2025 ) place models in a common coordinate system by their log-likelihoods on fixed texts and have been extended to prompt–response distributions ( Oyama et al., 2026 ) ; other works embed models by their outputs or correctness ( Wu et al., 2026 ; Yax et al., 2025 ; Zhuang et al., 2025 ) . All of them address static LMs. In reinforcement learning, policies are compared by their actions on a fixed set of states ( Parker-Holder et al., 2020 ; Pacchiano et al., 2020 ; Konyushkova et al., 2021 ) . We extend LM maps to closed-loop agents and quantify the cost of measuring on fixed trajectories as the term λ \lambda , which accumulates over steps like the compounding error of imitation learning ( Ross and Bagnell, 2010 ; Ross et al., 2011 ) . Predicting performance from scores on cheaper benchmarks ( Ruan et al., 2024 ; Song et al., 2026 ) shares our goal but needs the target model’s scores, whereas our coordinates need neither scores nor environment runs.
+Harness effects and agent behavior.
+Harness effects have been measured as changes in success rate by running every LLM–harness combination ( Zhang et al., 2026 ; Yao et al., 2026 ; Fan et al., 2026 ; Cho, 2026 ; Chen et al., 2026 ) or decomposed into LLM and scaffold abilities with IRT ( Ge et al., 2026 ) ; we represent a component as a displacement on the map, obtained without running the composed agent, and ask whether displacements add (§ 4 ). Evaluations increasingly report consistency across trials, cost, and behaviors found in logs alongside success rates ( Yao et al., 2025 ; Kapoor et al., 2025 ; Kapoor et al., 2026 ) ; harnesses with similar success rates can differ greatly in token use and failure patterns ( Vats and Golev, 2026 ) , and agent behavior carries fingerprints of the underlying LLM ( Sun et al., 2025 ; Wang et al., 2026 ; Oderinwale, 2026 ; Lugoloobi et al., 2026 ) . All of these works run the agents and compare the resulting behavior through aggregate statistics or classifiers. We measure behavioral differences by distances obtained without running the agents, relate them to the trajectory KL with explicit error bounds (§ 2 ), and show that pairs at small distance behave alike when run (§ 3.3 ).
+6 Conclusion
+Agent Behavior Maps, obtained by teacher forcing on common reference trajectories, locate agents without running them. Their coordinates predict the success rates of models that were never run, on the benchmark the map was built from and, combined with size, in other environments. Neighbors on the map take similar action sequences when run. The theory decomposes the gap between the distances and the trajectory KL into four error sources and limits the guarantee to close pairs. Harness components appear as displacements within an LLM whose sums approximate the coordinates of unscored combinations, with an accuracy that depends on the component and the environment. The map represents not only a ranking by performance but also how close agents are in what they do.
+Limitations
+Locality.
+Both the theoretical guarantee and the empirical correspondence are limited to close pairs. The KL can be read off the distance only for pairs in the local regime of small ε \varepsilon and λ \lambda , and pairs of different LLMs are not guaranteed to fall in it: the estimates exceed the measured KL by a median factor of 7.5, although their order agrees (§ 3.1 ). The correspondence with behavioral distance holds for neighbors and fades beyond about the 30th neighbor (Figure 1 (c)); we have not shown that the magnitude of the distance between far-apart pairs measures how different their behavior is. The map answers who is similar to whom, not by how much.
+Dependence on the reference trajectories.
+Differences between policies in regions that Q Q never visits cannot be measured, and the reference mismatch λ \lambda remains a sensitivity parameter that the likelihood matrix alone does not determine. A general theory of the reference policy is left for future work.
+Estimation of the KL.
+The trajectory log-likelihood ratios in § 3.1 are based on the probability of the canonical token sequence and differ from action probabilities that marginalize over all tokenizations. In environments where the candidate set can be enumerated, this can be resolved by renormalization, but in general it is a limitation.
+Access to log-likelihoods.
+The coordinates require the target model’s log-likelihood of a given action sequence. Models that are available only through an API that does not return the log-probabilities of given text cannot be placed on the map, so this study is limited to open-weight models.
+Sample size of behavior.
+The behavioral comparisons are based on one rollout per task, and the behavior of the same model varies from run to run ( Bjarnason et al., 2026 ; Gonuguntla, 2026 ) . We have not compared the size of this variation with the behavioral distance to neighbors.
+Scope of the harness experiment.
+The harnesses in § 4 are limited to the 12 configurations of our own three-slot design (context management, planning, acting) and to 12 LLMs; the main additivity results are on τ \tau -bench, and ALFWorld and SWE-Bench cover 6 LLMs. Whether the same additivity holds for other scaffolds with differently designed components has not been tested.
+References
+Barres et al. (2026)
+Victor Barres, Honghua Dong, Soham Ray, Xujie Si, and Karthik Narasimhan. 2026.
+τ 2 \tau^{2} -bench: Evaluating
+conversational agents in a dual-control environment .
+In International Conference on Machine Learning (ICML) .
+Bjarnason et al. (2026)
+Bjarni Haukur Bjarnason, André Silva, and Martin Monperrus. 2026.
+On randomness in agentic evals.
+arXiv preprint arXiv:2602.07150 .
+Bouchard and Chauhan (2026)
+Dylan Bouchard and Mohit Singh Chauhan. 2026.
+Beyond single-turn confidence: Trajectory-adapted uncertainty
+quantification for LLM agents.
+arXiv preprint arXiv:2608.11552 .
+Chen et al. (2026)
+Jixuan Chen, Jianzhi Shen, Haoqiang Kang, Zhi Hong, Qingyi Jiang, Soham Bose,
+Yiming Zhang, Leon Leng, Amit Vyas, Lingjun Mao, Siru Ouyang, Kun Zhou, and
+Lianhui Qin. 2026.
+AgentSpec: Understanding
+embodied agent scaffolds through controlled composition .
+Preprint , arXiv:2606.14674.
+Cho (2026)
+Yong-eun Cho. 2026.
+It’s not the capability:
+Harness sensitivity is non-monotone across LLM agent tiers .
+Preprint , arXiv:2605.26731.
+Côté et al. (2018)
+Marc-Alexandre Côté, Ákos Kádár, Xingdi Yuan, Ben Kybartas,
+Tavian Barnes, Emery Fine, James Moore, Ruo Yu Tao, Matthew Hausknecht, Layla
+El Asri, Mahmoud Adada, Wendy Tay, and Adam Trischler. 2018.
+TextWorld: A learning
+environment for text-based games .
+In Computer Games Workshop at IJCAI 2018 .
+Cover and Thomas (2006)
+Thomas M. Cover and Joy A. Thomas. 2006.
+Elements of Information Theory , 2nd edition.
+Wiley-Interscience.
+Endres and Schindelin (2003)
+Dominik M. Endres and Johannes E. Schindelin. 2003.
+A new metric for
+probability distributions .
+IEEE Transactions on Information Theory , 49(7):1858–1860.
+Fan et al. (2026)
+Run-Ze Fan, Zihao Zhang, Simin Ma, Yebowen Hu, Shouju Wang, Kaiqiang Song, Fei
+Liu, Hamed Zamani, and Xiaoyang Wang. 2026.
+An empirical study of
+harness design for coding agents .
+Preprint , arXiv:2609.20804.
+Ge et al. (2026)
+Chris Ge, Daria Kryvosheieva, Daniel Fried, Uzay Girit, and Kaivalya Hariharan.
+2026.
+Agent psychometrics:
+Task-level performance prediction in agentic coding benchmarks .
+In Conference on Language Modeling (COLM) .
+Gemma Team (2026)
+Gemma Team. 2026.
+Gemma 4 technical report .
+Preprint , arXiv:2607.02770.
+Gioacchini et al. (2024)
+Luca Gioacchini, Giuseppe Siracusano, Davide Sanvito, Kiril Gashteovski, David
+Friede, Roberto Bifulco, and Carolin Lawrence. 2024.
+AgentQuest:
+A modular benchmark framework to measure progress and improve LLM agents .
+In Proceedings of the 2024 Conference of the North American
+Chapter of the Association for Computational Linguistics: Human Language
+Technologies (Volume 3: System Demonstrations) , pages 185–193, Mexico City,
+Mexico. Association for Computational Linguistics.
+Gonuguntla (2026)
+Ashritha Gonuguntla. 2026.
+The replay gap: Static evaluation of model switching in LLM agents
+scores the wrong world.
+In Efficient Reasoning Workshop at the Conference on Language
+Modeling (COLM) .
+ArXiv:2608.08239.
+Hoeffding (1963)
+Wassily Hoeffding. 1963.
+Probability
+inequalities for sums of bounded random variables .
+Journal of the American Statistical Association ,
+58(301):13–30.
+Hoerl and Kennard (1970)
+Arthur E. Hoerl and Robert W. Kennard. 1970.
+Ridge
+regression: Biased estimation for nonorthogonal problems .
+Technometrics , 12(1):55–67.
+Jimenez et al. (2024)
+Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir
+Press, and Karthik Narasimhan. 2024.
+SWE-bench: Can language
+models resolve real-world GitHub issues?
+In International Conference on Learning Representations
+(ICLR) .
+Kapoor et al. (2026)
+Sayash Kapoor, Benedikt Stroebl, Peter Kirgis, Nitya Nadgir, Zachary S. Siegel,
+Boyi Wei, Tianci Xue, Ziru Chen, Felix Chen, Saiteja Utpala, Franck Ndzomga,
+Dheeraj Oruganty, Sophie Luskin, Kangheng Liu, Botao Yu, Amit Arora, Dongyoon
+Hahm, Harsh Trivedi, Huan Sun, and 12 others. 2026.
+Holistic agent leaderboard:
+The missing infrastructure for AI agent evaluation .
+In International Conference on Learning Representations
+(ICLR) .
+Kapoor et al. (2025)
+Sayash Kapoor, Benedikt Stroebl, Zachary S. Siegel, Nitya Nadgir, and Arvind
+Narayanan. 2025.
+AI agents that matter .
+Transactions on Machine Learning Research .
+Ke et al. (2020)
+Liyiming Ke, Sanjiban Choudhury, Matt Barnes, Wen Sun, Gilwoo Lee, and
+Siddhartha Srinivasa. 2020.
+Imitation learning as
+f f -divergence minimization .
+In International Workshop on the Algorithmic Foundations of
+Robotics (WAFR) .
+Konyushkova et al. (2021)
+Ksenia Konyushkova, Yutian Chen, Tom Le Paine, Caglar Gulcehre, Cosmin
+Paduraru, Daniel J. Mankowitz, Misha Denil, and Nando de Freitas. 2021.
+Active offline policy
+selection .
+In Advances in Neural Information Processing Systems
+(NeurIPS) , volume 34.
+Levenshtein (1966)
+Vladimir I. Levenshtein. 1966.
+Binary codes capable of correcting deletions, insertions, and
+reversals.
+Soviet Physics Doklady , 10(8):707–710.
+Liu et al. (2018)
+Evan Zheran Liu, Kelvin Guu, Panupong Pasupat, Tianlin Shi, and Percy Liang.
+2018.
+Reinforcement learning on
+web interfaces using workflow-guided exploration .
+In International Conference on Learning Representations
+(ICLR) .
+Lugoloobi et al. (2026)
+William Lugoloobi, Samuelle Marro, Jabez Magomere, Joss Wright, and Chris
+Russell. 2026.
+Known by their actions:
+Fingerprinting LLM browser agents via UI traces .
+Preprint , arXiv:2605.14786.
+Ma et al. (2024)
+Chang Ma, Junlei Zhang, Zhihao Zhu, Cheng Yang, Yujiu Yang, Yaohui Jin,
+Zhenzhong Lan, Lingpeng Kong, and Junxian He. 2024.
+AgentBoard: An analytical evaluation board of multi-turn LLM
+agents.
+In Advances in Neural Information Processing Systems (Datasets
+and Benchmarks) .
+ArXiv:2401.13178.
+Oderinwale (2026)
+Hamidah Oderinwale. 2026.
+Agent trajectories as
+programs: Fingerprinting and programming coding-agent behavior .
+Preprint , arXiv:2606.16988.
+OpenAI (2025)
+OpenAI. 2025.
+gpt-oss-120b & gpt-oss-20b
+model card .
+Preprint , arXiv:2508.10925.
+Oyama et al. (2026)
+Momose Oyama, Yusuke Takase, and Hidetoshi Shimodaira. 2026.
+Language model maps for
+prompt-response distributions via log-likelihood vectors .
+Preprint , arXiv:2603.18593.
+To appear in Proceedings of EMNLP 2026.
+Oyama et al. (2025)
+Momose Oyama, Hiroaki Yamagiwa, Yusuke Takase, and Hidetoshi Shimodaira. 2025.
+Mapping
+1,000+ language models via the log-likelihood vector .
+In Proceedings of the 63rd Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers) , pages 32983–33038,
+Vienna, Austria. Association for Computational Linguistics.
+Pacchiano et al. (2020)
+Aldo Pacchiano, Jack Parker-Holder, Yunhao Tang, Anna Choromanska, Krzysztof
+Choromanski, and Michael I. Jordan. 2020.
+Learning to score behaviors for guided policy optimization .
+In Proceedings of the 37th International Conference on Machine
+Learning , volume 119 of Proceedings of Machine Learning Research ,
+pages 7445–7454.
+Parker-Holder et al. (2020)
+Jack Parker-Holder, Aldo Pacchiano, Krzysztof Choromanski, and Stephen Roberts.
+2020.
+Effective diversity in
+population based reinforcement learning .
+In Advances in Neural Information Processing Systems
+(NeurIPS) , volume 33.
+Patil et al. (2025)
+Shishir G. Patil, Huanzhi Mao, Fanjia Yan, Charlie Cheng-Jie Ji, Vishnu Suresh,
+Ion Stoica, and Joseph E. Gonzalez. 2025.
+The
+Berkeley function calling leaderboard (BFCL): From tool use to agentic
+evaluation of large language models .
+In Proceedings of the 42nd International Conference on Machine
+Learning , volume 267 of Proceedings of Machine Learning Research ,
+pages 48371–48392.
+Qwen Team (2026a)
+Qwen Team. 2026a.
+Qwen3.5: Towards native multimodal agents.
+https://qwen.ai/blog?id=qwen3.5 .
+Qwen Team (2026b)
+Qwen Team. 2026b.
+Qwen3.8.
+https://github.com/QwenLM/Qwen3.8 .
+Rabanser et al. (2026)
+Stephan Rabanser, Sayash Kapoor, Peter Kirgis, Kangheng Liu, Saiteja Utpala,
+and Arvind Narayanan. 2026.
+Towards a science of AI
+agent reliability .
+In International Conference on Machine Learning (ICML) .
+Rastogi et al. (2025)
+Abhinav Rastogi et al. 2025.
+Devstral: Fine-tuning
+language models for coding agent applications .
+Preprint , arXiv:2509.25193.
+Robertson and Zaragoza (2009)
+Stephen Robertson and Hugo Zaragoza. 2009.
+The probabilistic
+relevance framework: BM25 and beyond .
+Foundations and Trends in Information Retrieval ,
+3(4):333–389.
+Ross and Bagnell (2010)
+Stéphane Ross and Drew Bagnell. 2010.
+Efficient
+reductions for imitation learning .
+In Proceedings of the Thirteenth International Conference on
+Artificial Intelligence and Statistics , volume 9 of Proceedings of
+Machine Learning Research , pages 661–668.
+Ross et al. (2011)
+Stéphane Ross, Geoffrey Gordon, and Drew Bagnell. 2011.
+A reduction
+of imitation learning and structured prediction to no-regret online
+learning .
+In Proceedings of the Fourteenth International Conference on
+Artificial Intelligence and Statistics , volume 15 of Proceedings of
+Machine Learning Research , pages 627–635.
+Ruan et al. (2024)
+Yangjun Ruan, Chris J. Maddison, and Tatsunori Hashimoto. 2024.
+Observational scaling laws
+and the predictability of language model performance .
+In Advances in Neural Information Processing Systems
+(NeurIPS) , volume 37.
+Shi et al. (2017)
+Tianlin Shi, Andrej Karpathy, Linxi Fan, Jonathan Hernandez, and Percy Liang.
+2017.
+World of bits:
+An open-domain platform for web-based agents .
+In Proceedings of the 34th International Conference on Machine
+Learning , volume 70 of Proceedings of Machine Learning Research ,
+pages 3135–3144.
+Shridhar et al. (2021)
+Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam
+Trischler, and Matthew Hausknecht. 2021.
+ALFWorld: Aligning text
+and embodied environments for interactive learning .
+In International Conference on Learning Representations
+(ICLR) .
+Song et al. (2026)
+Yueqi Song, Lintang Sutawika, Jiarui Liu, Lindia Tjuatja, Jiayi Geng, Yunze
+Xiao, Daniel Lee, Aditya Bharat Soni, Vincent Lo, Xiang Yue, and Graham
+Neubig. 2026.
+PACE: A proxy for agentic
+capability evaluation .
+Preprint , arXiv:2607.02032.
+Strona et al. (2014)
+Giovanni Strona, Domenico Nappo, Francesco Boccacci, Simone Fattorini, and
+Jesus San-Miguel-Ayanz. 2014.
+A fast and unbiased
+procedure to randomize ecological binary matrices with fixed row and column
+totals .
+Nature Communications , 5:4114.
+Sun et al. (2025)
+Mingjie Sun, Yida Yin, Zhiqiu Xu, J. Zico Kolter, and Zhuang Liu. 2025.
+Idiosyncrasies in large
+language models .
+In Proceedings of the 42nd International Conference on Machine
+Learning (ICML) .
+van der Maaten and Hinton (2008)
+Laurens van der Maaten and Geoffrey Hinton. 2008.
+Visualizing
+data using t-SNE .
+Journal of Machine Learning Research , 9(86):2579–2605.
+Vats and Golev (2026)
+Naman Vats and Oleg Golev. 2026.
+The scaffold effect in
+coding agents: Harness choice as a hidden variable in coding-agent
+evaluation .
+Preprint , arXiv:2607.22585.
+Wang et al. (2026)
+Chuyi Wang, Xiaohui Xie, Tongze Wang, Fangchen Luo, and Yong Cui. 2026.
+Who is behind the harness?
+fingerprinting LLMs through agentic behavior .
+Preprint , arXiv:2609.28559.
+Wilcoxon (1945)
+Frank Wilcoxon. 1945.
+Individual comparisons by
+ranking methods .
+Biometrics Bulletin , 1(6):80–83.
+Williams and Zipser (1989)
+Ronald J. Williams and David Zipser. 1989.
+A learning
+algorithm for continually running fully recurrent neural networks .
+Neural Computation , 1(2):270–280.
+Wu et al. (2026)
+Zhaomin Wu, Haodong Zhao, Ziyang Wang, Jizhou Guo, Qian Wang, and Bingsheng He.
+2026.
+LLM DNA: Tracing model
+evolution via functional representations .
+In International Conference on Learning Representations
+(ICLR) .
+Yang et al. (2025)
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen
+Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. 2025.
+Qwen3 technical report .
+Preprint , arXiv:2505.09388.
+Yang et al. (2024)
+John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao,
+Karthik Narasimhan, and Ofir Press. 2024.
+SWE-agent: Agent-computer
+interfaces enable automated software engineering .
+In Advances in Neural Information Processing Systems
+(NeurIPS) , volume 37.
+Yao et al. (2025)
+Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. 2025.
+τ \tau -bench: A benchmark
+for tool-agent-user interaction in real-world domains .
+In International Conference on Learning Representations
+(ICLR) .
+Yao et al. (2026)
+Yilun Yao, Xinyu Tan, Chao-Hsuan Liu, Yaoming Li, Zhengyang Wang, Wenhan Yu,
+Zhewen Tan, Yuxuan Tian, Guangxiang Zhao, Lin Sun, Xiangzheng Zhang, and Tong
+Yang. 2026.
+Harness-Bench: Measuring
+harness effects across models in realistic agent workflows .
+Preprint , arXiv:2605.27922.
+Yax et al. (2025)
+Nicolas Yax, Pierre-Yves Oudeyer, and Stefano Palminteri. 2025.
+PhyloLM: Inferring the
+phylogeny of large language models and predicting their performances in
+benchmarks .
+In International Conference on Learning Representations
+(ICLR) .
+Z.ai (2026)
+Z.ai. 2026.
+GLM-4.7-Flash.
+https://huggingface.co/zai-org/GLM-4.7-Flash .
+Zhang et al. (2026)
+Yunbei Zhang, Janet Wang, Yingqiang Ge, Weijie Xu, Jihun Hamm, and Chandan K.
+Reddy. 2026.
+Stop comparing LLM agents
+without disclosing the harness .
+Preprint , arXiv:2605.23950.
+Zhuang et al. (2025)
+Richard Zhuang, Tianhao Wu, Zhaojin Wen, Andrew Li, Jiantao Jiao, and Kannan
+Ramchandran. 2025.
+EmbedLLM: Learning
+compact representations of large language models .
+In International Conference on Learning Representations
+(ICLR) .
+Appendix A Theory: proofs and scoring details
+This appendix supplements § 2 . Appendix A.1 defines the policy and the scoring convention; Appendices A.2 – A.5 prove Theorem 1 , Corollary 1 , and the cross-term identity ( 30 ). Notation follows § 2.3 .
+A.1 Grammar-constrained action probabilities
+We define action probabilities under grammar-constrained decoding. A deployed agent can execute only outputs that match the environment’s action format, so its outputs are typically constrained to an action grammar, e.g., by constrained decoding. Our grammar constraint reflects this setting: the constrained policy is the distribution of actions the agent actually sends to the environment.
+Logged actions are serialized by a common normalization map 𝒩 \mathcal{N} that preserves their effect on the environment. Let 𝒜 ⁡ ( h ) \mathcal{A}(h) be the set of action strings that satisfy the grammar under history h h . Agent i i reconstructs its input C i ​ ( h ) C_{i}(h) from h h with its rule C i C_{i} (§ 2 ). Let q i ​ ( v ∣ C i ​ ( h ) , v < k ) q_{i}(v\mid C_{i}(h),v_{<k}) be the model’s next-token probability given this input and a prefix v < k v_{<k} , and let 𝒱 ⁡ ( h , v < k ) \mathcal{V}(h,v_{<k}) be the set of tokens allowed by the grammar after v < k v_{<k} . Grammar-constrained decoding sets the probabilities of disallowed tokens to zero and renormalizes the rest: for v k ∈ 𝒱 ⁡ ( h , v < k ) v_{k}\in\mathcal{V}(h,v_{<k}) ,
+q i 𝒢 ​ ( v k ∣ h , v < k ) = q i ​ ( v k ∣ C i ​ ( h ) , v < k ) ∑ v ∈ 𝒱 ⁡ ( h , v < k ) q i ​ ( v ∣ C i ​ ( h ) , v < k ) . q_{i}^{\mathcal{G}}(v_{k}\mid h,v_{<k})=\frac{q_{i}(v_{k}\mid C_{i}(h),v_{<k})}{\sum\limits_{v\in\mathcal{V}(h,v_{<k})}q_{i}(v\mid C_{i}(h),v_{<k})}.
+(5)
+The probability of an action a a is the sum over all token sequences v v that normalize to a a ,
+π i ( a ∣ h ) = ∑ v : 𝒩 ⁡ ( decode ⁡ ( v ) ) = a ∏ k q i 𝒢 ( v k ∣ h , v < k ) , \pi_{i}(a\mid h)=\sum_{v:\,\mathcal{N}(\mathrm{decode}(v))=a}\ \prod_{k}q_{i}^{\mathcal{G}}(v_{k}\mid h,v_{<k}),
+(6)
+which satisfies ∑ a ∈ 𝒜 ⁡ ( h ) π i ​ ( a ∣ h ) = 1 \sum_{a\in\mathcal{A}(h)}\pi_{i}(a\mid h)=1 .
+The trajectory-KL comparison in § 3.1 uses grammar-constrained scoring; the experiments from § 3.2 onward score without the grammar mask.
+A.2 Proof of Theorem 1
+Fix a pair ( i , j ) (i,j) . By the chain rule ( 2 ), K i ​ j K_{ij} is the expected sum of per-step local KLs. Its gap to T ¯ 2 ​ D S 2 \tfrac{\bar{T}}{2}D^{2}_{S} and 1 2 ​ D τ 2 \tfrac{1}{2}D^{2}_{\tau} has three sources:
+(a)
+the remainder of the quadratic approximation of the local KL (Lemma 1 );
+(b)
+taking the quadratic term under the reference Q Q instead of the on-policy P i P_{i} (Lemma 2 );
+(c)
+centering.
+We prove the two lemmas and then the theorem with explicit constants.
+Lemma 1 (Quadratic approximation of the local KL) .
+Let p , q p,q be distributions with a common support, let Y = log ⁡ ( p / q ) Y=\log(p/q) with | Y | ≤ ε \lvert Y\rvert\leq\varepsilon , and write Y ± = max ⁡ ( ± Y , 0 ) Y_{\pm}=\max(\pm Y,0) . Then the following hold.
+(i) Two-sided bound:
+− 1 6 𝔼 p [ Y 3 ] ≤ KL ( p ∥ q ) − 1 2 𝔼 p [ Y 2 ] ≤ − 1 6 𝔼 q [ Y 3 ] . -\tfrac{1}{6}\mathbb{E}_{p}[Y^{3}]\leq\mathrm{KL}(p\|q)-\tfrac{1}{2}\mathbb{E}_{p}[Y^{2}]\leq-\tfrac{1}{6}\mathbb{E}_{q}[Y^{3}].
+(7)
+(ii) Size of the remainder:
+| KL ( p ∥ q ) − 1 2 𝔼 p [ Y 2 ] | \displaystyle\bigl|\mathrm{KL}(p\|q)-\tfrac{1}{2}\mathbb{E}_{p}[Y^{2}]\bigr|
+≤ 1 6 ​ max ⁡ { 𝔼 p ​ [ Y + 3 ] , 𝔼 q ​ [ Y − 3 ] } \displaystyle\leq\tfrac{1}{6}\max\{\mathbb{E}_{p}[Y_{+}^{3}],\mathbb{E}_{q}[Y_{-}^{3}]\}
+≤ ε 3 6 . \displaystyle\leq\tfrac{\varepsilon^{3}}{6}.
+(8)
+(iii) Size of the local KL: 0 ≤ KL ( p ∥ q ) ≤ ε 2 / 2 0\leq\mathrm{KL}(p\|q)\leq\varepsilon^{2}/2 .
+Proof.
+Let g ⁡ ( y ) = e − y − 1 + y − y 2 / 2 g(y)=e^{-y}-1+y-y^{2}/2 . Since 𝔼 p ​ [ e − Y ] = ∑ q = 1 \mathbb{E}_{p}[e^{-Y}]=\sum q=1 ,
+KL ( p ∥ q ) − 1 2 𝔼 p [ Y 2 ] = 𝔼 p [ g ( Y ) ] , \mathrm{KL}(p\|q)-\tfrac{1}{2}\mathbb{E}_{p}[Y^{2}]=\mathbb{E}_{p}[g(Y)],
+(9)
+so it suffices to bound the right-hand side. By Taylor’s theorem, g ⁡ ( y ) = − y 3 6 ​ e − ξ g(y)=-\frac{y^{3}}{6}e^{-\xi} for some ξ \xi between 0 0 and y y . If y ≥ 0 y\geq 0 then e − ξ ∈ [ e − y , 1 ] e^{-\xi}\in[e^{-y},1] , and if y < 0 y<0 then e − ξ ∈ [ 1 , e − y ] e^{-\xi}\in[1,e^{-y}] ; in either case
+− y 3 6 ≤ g ⁡ ( y ) ≤ − y 3 6 ​ e − y . -\tfrac{y^{3}}{6}\leq g(y)\leq-\tfrac{y^{3}}{6}e^{-y}.
+(10)
+Averaging over p p and applying the change of measure 𝔼 p ​ [ e − Y ​ f ​ ( Y ) ] = 𝔼 q ​ [ f ⁡ ( Y ) ] \mathbb{E}_{p}[e^{-Y}f(Y)]=\mathbb{E}_{q}[f(Y)] to the right-hand side, ( 9 ) gives ( 7 ).
+Next, split ( 10 ) by the sign of Y Y . For Y ≥ 0 Y\geq 0 , − 1 6 ​ Y + 3 ≤ g ⁡ ( Y ) ≤ 0 -\frac{1}{6}Y_{+}^{3}\leq g(Y)\leq 0 ; for Y < 0 Y<0 , 0 ≤ g ⁡ ( Y ) ≤ 1 6 ​ e − Y ​ Y − 3 0\leq g(Y)\leq\frac{1}{6}e^{-Y}Y_{-}^{3} . Hence, with A = 𝔼 p [ g ( Y ) 𝟏 { Y < 0 } ] A=\mathbb{E}_{p}[g(Y)\mathbf{1}\{Y<0\}] and B = − 𝔼 p [ g ( Y ) 𝟏 { Y ≥ 0 } ] B=-\mathbb{E}_{p}[g(Y)\mathbf{1}\{Y\geq 0\}] , we have 𝔼 p ​ [ g ⁡ ( Y ) ] = A − B \mathbb{E}_{p}[g(Y)]=A-B and
+0 \displaystyle 0
+≤ A ≤ 1 6 ​ 𝔼 p ​ [ e − Y ​ Y − 3 ] = 1 6 ​ 𝔼 q ​ [ Y − 3 ] , \displaystyle\leq A\leq\tfrac{1}{6}\mathbb{E}_{p}[e^{-Y}Y_{-}^{3}]=\tfrac{1}{6}\mathbb{E}_{q}[Y_{-}^{3}],
+0 \displaystyle 0
+≤ B ≤ 1 6 ​ 𝔼 p ​ [ Y + 3 ] . \displaystyle\leq B\leq\tfrac{1}{6}\mathbb{E}_{p}[Y_{+}^{3}].
+(11)
+As a difference of two nonnegative terms, | A − B | ≤ max ⁡ { A , B } \lvert A-B\rvert\leq\max\{A,B\} , which is the first inequality in ( 8 ); the second follows from | Y | ≤ ε \lvert Y\rvert\leq\varepsilon . Splitting by sign, rather than bounding e − ξ e^{-\xi} uniformly by e ε e^{\varepsilon} , avoids a factor e ε e^{\varepsilon} .
+Finally, we bound the local KL. Let F ⁡ ( s ) = log ⁡ 𝔼 p ​ [ e − s ​ Y ] F(s)=\log\mathbb{E}_{p}[e^{-sY}] . Then F ⁡ ( 0 ) = 0 F(0)=0 , F ⁡ ( 1 ) = log ⁡ 𝔼 p ​ [ e − Y ] = 0 F(1)=\log\mathbb{E}_{p}[e^{-Y}]=0 , and F ′ ( 0 ) = − 𝔼 p [ Y ] = − KL ( p ∥ q ) F^{\prime}(0)=-\mathbb{E}_{p}[Y]=-\mathrm{KL}(p\|q) . Moreover, F ′′ ​ ( s ) F^{\prime\prime}(s) is the variance of Y Y under the distribution proportional to p ​ e − s ​ Y pe^{-sY} , so 0 ≤ F ′′ ​ ( s ) ≤ ε 2 0\leq F^{\prime\prime}(s)\leq\varepsilon^{2} . By Taylor’s theorem, for some s 0 ∈ ( 0 , 1 ) s_{0}\in(0,1) ,
+0 = F ( 1 ) = − KL ( p ∥ q ) + 1 2 F ′′ ( s 0 ) , 0=F(1)=-\mathrm{KL}(p\|q)+\tfrac{1}{2}F^{\prime\prime}(s_{0}),
+(12)
+which gives 0 ≤ KL ( p ∥ q ) ≤ ε 2 / 2 0\leq\mathrm{KL}(p\|q)\leq\varepsilon^{2}/2 .
+∎
+Lemma 2 (Difference of expectations of a bounded function) .
+If L ≤ f ≤ U L\leq f\leq U , then | 𝔼 P ​ [ f ] − 𝔼 Q ​ [ f ] | ≤ ( U − L ) ​ TV ​ ( P , Q ) \lvert\mathbb{E}_{P}[f]-\mathbb{E}_{Q}[f]\rvert\leq(U-L)\,\mathrm{TV}(P,Q) .
+Proof.
+Trajectories take values in a countable set, so TV ⁡ ( P , Q ) = 1 2 ​ ∑ τ | P ⁡ ( τ ) − Q ⁡ ( τ ) | \mathrm{TV}(P,Q)=\frac{1}{2}\sum_{\tau}\lvert P(\tau)-Q(\tau)\rvert . Let c = ( L + U ) / 2 c=(L+U)/2 ; then | f − c | ≤ ( U − L ) / 2 \lvert f-c\rvert\leq(U-L)/2 , and since ∑ τ { P ⁡ ( τ ) − Q ⁡ ( τ ) } = 0 \sum_{\tau}\{P(\tau)-Q(\tau)\}=0 ,
+| 𝔼 P ​ [ f ] − 𝔼 Q ​ [ f ] | \displaystyle\lvert\mathbb{E}_{P}[f]-\mathbb{E}_{Q}[f]\rvert
+= | ∑ τ ( f − c ) ​ ( P − Q ) ​ ( τ ) | \displaystyle=\Bigl|\textstyle\sum_{\tau}(f-c)(P-Q)(\tau)\Bigr|
+≤ U − L 2 ​ ∑ τ | P ⁡ ( τ ) − Q ⁡ ( τ ) | \displaystyle\leq\tfrac{U-L}{2}\textstyle\sum_{\tau}\lvert P(\tau)-Q(\tau)\rvert
+= ( U − L ) ​ TV ​ ( P , Q ) . \displaystyle=(U-L)\,\mathrm{TV}(P,Q).
+(13)
+∎
+Proof of Theorem 1 .
+We show, with explicit constants, that | K i ​ j − T ¯ 2 ​ D S 2 | ≤ R S \lvert K_{ij}-\tfrac{\bar{T}}{2}D^{2}_{S}\rvert\leq R_{S} and | K i ​ j − 1 2 ​ D τ 2 | ≤ R τ \lvert K_{ij}-\tfrac{1}{2}D^{2}_{\tau}\rvert\leq R_{\tau} , where
+R S \displaystyle R_{S}
+= ε 3 6 ​ 𝔼 i ​ [ T ] + λ ​ T max ​ ε 2 2 + μ 2 2 ​ T ¯ , \displaystyle=\tfrac{\varepsilon^{3}}{6}\mathbb{E}_{i}[T]+\tfrac{\lambda T_{\max}\varepsilon^{2}}{2}+\tfrac{\mu^{2}}{2\bar{T}},
+(14)
+R τ \displaystyle R_{\tau}
+= ε 3 6 ​ 𝔼 i ​ [ T ] + ε 3 4 ​ 𝔼 i ​ [ T ⁡ ( T − 1 ) ] \displaystyle=\tfrac{\varepsilon^{3}}{6}\mathbb{E}_{i}[T]+\tfrac{\varepsilon^{3}}{4}\mathbb{E}_{i}[T(T-1)]
++ λ ​ T max 2 ​ ε 2 2 + μ 2 2 . \displaystyle\quad+\tfrac{\lambda T_{\max}^{2}\varepsilon^{2}}{2}+\tfrac{\mu^{2}}{2}.
+(15)
+The sum of the first two terms of ( 15 ) is ε 3 4 ​ 𝔼 i ​ [ T 2 ] − ε 3 12 ​ 𝔼 i ​ [ T ] ≤ ε 3 4 ​ 𝔼 i ​ [ T 2 ] \frac{\varepsilon^{3}}{4}\mathbb{E}_{i}[T^{2}]-\frac{\varepsilon^{3}}{12}\mathbb{E}_{i}[T]\leq\frac{\varepsilon^{3}}{4}\mathbb{E}_{i}[T^{2}] , which gives the form in ( 4 ) and Table 1 .
+For K i ​ j K_{ij} only the parts of Assumptions 1 and 2 concerning P i P_{i} and Q Q are used; the parts concerning P j P_{j} enter through the symmetric KL below. We set d t = 0 d_{t}=0 after termination, and write Z = ∑ t < T d t 2 Z=\sum_{t<T}d_{t}^{2} and ℱ t = σ ⁡ ( h t ) \mathcal{F}_{t}=\sigma(h_{t}) . Whether the episode is still running at time t t is determined by h t h_{t} , so { t < T } \{t<T\} is ℱ t \mathcal{F}_{t} -measurable.
+Step version.
+At each step t < T t<T , set p = π i ( ⋅ ∣ h t ) p=\pi_{i}(\cdot\mid h_{t}) and q = π j ( ⋅ ∣ h t ) q=\pi_{j}(\cdot\mid h_{t}) ; then Y = d t Y=d_{t} and 𝔼 p ​ [ Y 2 ] = 𝔼 i ​ [ d t 2 ∣ ℱ t ] \mathbb{E}_{p}[Y^{2}]=\mathbb{E}_{i}[d_{t}^{2}\mid\mathcal{F}_{t}] . By Lemma 1 (ii), KL ( π i ( ⋅ ∣ h t ) ∥ π j ( ⋅ ∣ h t ) ) = 1 2 𝔼 i [ d t 2 ∣ ℱ t ] + r t \mathrm{KL}(\pi_{i}(\cdot\mid h_{t})\|\pi_{j}(\cdot\mid h_{t}))=\frac{1}{2}\mathbb{E}_{i}[d_{t}^{2}\mid\mathcal{F}_{t}]+r_{t} with | r t | ≤ ε 3 / 6 \lvert r_{t}\rvert\leq\varepsilon^{3}/6 . Substituting this into the chain rule ( 2 ) and using the tower property gives
+K i ​ j = 1 2 ​ 𝔼 i ​ Z + r ∗ , | r ∗ | ≤ ε 3 6 ​ 𝔼 i ​ [ T ] . K_{ij}=\tfrac{1}{2}\mathbb{E}_{i}Z+r_{*},\qquad\lvert r_{*}\rvert\leq\tfrac{\varepsilon^{3}}{6}\mathbb{E}_{i}[T].
+(16)
+On the other hand, T ¯ ​ D S 2 = 𝔼 Q ​ ∑ t < T ( d t − μ / T ¯ ) 2 = 𝔼 Q ​ Z − 2 ​ μ T ¯ ​ 𝔼 Q ​ X + μ 2 T ¯ 2 ​ 𝔼 Q ​ [ T ] = 𝔼 Q ​ Z − μ 2 / T ¯ \bar{T}D^{2}_{S}=\mathbb{E}_{Q}\sum_{t<T}(d_{t}-\mu/\bar{T})^{2}=\mathbb{E}_{Q}Z-2\frac{\mu}{\bar{T}}\mathbb{E}_{Q}X+\frac{\mu^{2}}{\bar{T}^{2}}\mathbb{E}_{Q}[T]=\mathbb{E}_{Q}Z-\mu^{2}/\bar{T} , so
+K i ​ j − T ¯ 2 ​ D S 2 = r ∗ + 1 2 ​ ( 𝔼 i ​ Z − 𝔼 Q ​ Z ) + μ 2 2 ​ T ¯ . K_{ij}-\tfrac{\bar{T}}{2}D^{2}_{S}=r_{*}+\tfrac{1}{2}(\mathbb{E}_{i}Z-\mathbb{E}_{Q}Z)+\tfrac{\mu^{2}}{2\bar{T}}.
+(17)
+Lemma 2 with 0 ≤ Z ≤ T max ​ ε 2 0\leq Z\leq T_{\max}\varepsilon^{2} bounds the second term by 1 2 ​ λ ​ T max ​ ε 2 \frac{1}{2}\lambda T_{\max}\varepsilon^{2} , and the triangle inequality gives ( 14 ).
+Trajectory version.
+Let k t = 𝔼 i ​ [ d t ∣ ℱ t ] k_{t}=\mathbb{E}_{i}[d_{t}\mid\mathcal{F}_{t}] . For t < T t<T , k t = KL ( π i ( ⋅ ∣ h t ) ∥ π j ( ⋅ ∣ h t ) ) k_{t}=\mathrm{KL}(\pi_{i}(\cdot\mid h_{t})\|\pi_{j}(\cdot\mid h_{t})) , and for t ≥ T t\geq T , k t = 0 k_{t}=0 ; by Lemma 1 (iii), 0 ≤ k t ≤ 𝟏 { t < T } ε 2 / 2 0\leq k_{t}\leq\mathbf{1}\{t<T\}\,\varepsilon^{2}/2 . For s < t s<t , d s d_{s} is ℱ t \mathcal{F}_{t} -measurable, so 𝔼 i ​ [ d s ​ d t ] = 𝔼 i ​ [ d s ​ k t ] \mathbb{E}_{i}[d_{s}d_{t}]=\mathbb{E}_{i}[d_{s}k_{t}] ; together with | d s | ≤ ε \lvert d_{s}\rvert\leq\varepsilon ,
+| ∑ s < t 𝔼 i ​ [ d s ​ d t ] | ≤ ε 3 2 ​ 𝔼 i ​ [ ( T 2 ) ] = ε 3 4 ​ 𝔼 i ​ [ T ⁡ ( T − 1 ) ] . \Bigl|\textstyle\sum_{s<t}\mathbb{E}_{i}[d_{s}d_{t}]\Bigr|\leq\tfrac{\varepsilon^{3}}{2}\mathbb{E}_{i}\bigl[\tbinom{T}{2}\bigr]=\tfrac{\varepsilon^{3}}{4}\mathbb{E}_{i}[T(T-1)].
+(18)
+Since X 2 = Z + 2 ​ ∑ s < t d s ​ d t X^{2}=Z+2\sum_{s<t}d_{s}d_{t} , we have 1 2 ​ 𝔼 i ​ Z = 1 2 ​ 𝔼 i ​ X 2 − ∑ s < t 𝔼 i ​ [ d s ​ d t ] \frac{1}{2}\mathbb{E}_{i}Z=\frac{1}{2}\mathbb{E}_{i}X^{2}-\sum_{s<t}\mathbb{E}_{i}[d_{s}d_{t}] ; combining this with ( 16 ) and D τ 2 = 𝔼 Q ​ X 2 − μ 2 D^{2}_{\tau}=\mathbb{E}_{Q}X^{2}-\mu^{2} gives
+K i ​ j − 1 2 ​ D τ 2 = r ∗ − ∑ s < t 𝔼 i ​ [ d s ​ d t ] + 1 2 ​ ( 𝔼 i ​ X 2 − 𝔼 Q ​ X 2 ) + μ 2 2 . K_{ij}-\tfrac{1}{2}D^{2}_{\tau}=r_{*}-\textstyle\sum_{s<t}\mathbb{E}_{i}[d_{s}d_{t}]\\
++\tfrac{1}{2}(\mathbb{E}_{i}X^{2}-\mathbb{E}_{Q}X^{2})+\tfrac{\mu^{2}}{2}.
+(19)
+Since 0 ≤ X 2 ≤ T max 2 ​ ε 2 0\leq X^{2}\leq T_{\max}^{2}\varepsilon^{2} , Lemma 2 bounds the third term by 1 2 ​ λ ​ T max 2 ​ ε 2 \frac{1}{2}\lambda T_{\max}^{2}\varepsilon^{2} , giving ( 15 ). The proof assumes neither independence across steps nor independence between the episode length and the actions.
+Symmetric KL.
+Swapping ( i , j ) (i,j) maps d t ↦ − d t d_{t}\mapsto-d_{t} , X ↦ − X X\mapsto-X , and μ ↦ − μ \mu\mapsto-\mu , and leaves Z Z , X 2 X^{2} , T ¯ \bar{T} , and hence D S 2 D^{2}_{S} and D τ 2 D^{2}_{\tau} unchanged (the same Q Q is used in both directions). The proof holds with λ = TV ⁡ ( P i , Q ) \lambda=\mathrm{TV}(P_{i},Q) , and the bound for ( j , i ) (j,i) replaces 𝔼 i ​ [ T ] \mathbb{E}_{i}[T] and TV ⁡ ( P i , Q ) \mathrm{TV}(P_{i},Q) by 𝔼 j ​ [ T ] \mathbb{E}_{j}[T] and TV ⁡ ( P j , Q ) \mathrm{TV}(P_{j},Q) . Averaging the two bounds gives, with λ sym := { TV ⁡ ( P i , Q ) + TV ⁡ ( P j , Q ) } / 2 ≤ λ \lambda_{\mathrm{sym}}:=\{\mathrm{TV}(P_{i},Q)+\mathrm{TV}(P_{j},Q)\}/2\leq\lambda ,
+| K sym − T ¯ 2 ​ D S 2 | \displaystyle\bigl|K_{\mathrm{sym}}-\tfrac{\bar{T}}{2}D^{2}_{S}\bigr|
+≤ ε 3 12 ​ ( 𝔼 i ​ [ T ] + 𝔼 j ​ [ T ] ) \displaystyle\leq\tfrac{\varepsilon^{3}}{12}(\mathbb{E}_{i}[T]+\mathbb{E}_{j}[T])
++ λ sym ​ T max ​ ε 2 2 + μ 2 2 ​ T ¯ , \displaystyle\quad+\tfrac{\lambda_{\mathrm{sym}}T_{\max}\varepsilon^{2}}{2}+\tfrac{\mu^{2}}{2\bar{T}},
+(20)
+and the trajectory version is analogous. ∎
+A.3 Proof of Corollary 1
+Both K ^ S \hat{K}_{S} and K ^ τ \hat{K}_{\tau} are functions of four sample means over the reference trajectories. We bound these means simultaneously by Hoeffding’s inequality, propagate the errors to the two distances, and add the approximation error of Theorem 1 . As in Appendix A.2 , Assumption 1 is assumed on the supports of both P i P_{i} and Q Q .
+The estimators as sample means.
+For each reference trajectory τ r \tau_{r} , let X r = ∑ t < T r d r ​ t X_{r}=\sum_{t<T_{r}}d_{rt} and Z r = ∑ t < T r d r ​ t 2 Z_{r}=\sum_{t<T_{r}}d_{rt}^{2} , let an overline denote the sample mean over r r , and let T ¯ ^ = N − 1 ​ ∑ r T r \hat{\bar{T}}=N^{-1}\sum_{r}T_{r} . The difference of the two agents’ centering means is c ^ = X ¯ / T ¯ ^ \hat{c}=\overline{X}/\hat{\bar{T}} , so the distances in § 2.3 are
+T ¯ ^ ​ D ^ S 2 = Z ¯ − X ¯ 2 / T ¯ ^ , D ^ τ 2 = X 2 ¯ − X ¯ 2 . \hat{\bar{T}}\hat{D}_{S}^{2}=\overline{Z}-\overline{X}^{2}/\hat{\bar{T}},\qquad\hat{D}_{\tau}^{2}=\overline{X^{2}}-\overline{X}^{2}.
+(21)
+Likewise, in the population,
+T ¯ ​ D S 2 = 𝔼 Q ​ Z − μ 2 / T ¯ , D τ 2 = 𝔼 Q ​ X 2 − μ 2 \bar{T}D^{2}_{S}=\mathbb{E}_{Q}Z-\mu^{2}/\bar{T},\qquad D^{2}_{\tau}=\mathbb{E}_{Q}X^{2}-\mu^{2}
+(22)
+(Appendix A.2 ). It thus suffices to bound the sample means of F ∈ { Z , X , X 2 , T } F\in\{Z,X,X^{2},T\} simultaneously.
+Simultaneous bound on the four sample means.
+Since | d t | ≤ ε \lvert d_{t}\rvert\leq\varepsilon and 1 ≤ T ≤ T max 1\leq T\leq T_{\max} , the statistics have range widths
+w Z \displaystyle w_{Z}
+= T max ​ ε 2 , \displaystyle=T_{\max}\varepsilon^{2},
+w X \displaystyle w_{X}
+= 2 ​ T max ​ ε , \displaystyle=2T_{\max}\varepsilon,
+w X 2 \displaystyle w_{X^{2}}
+= T max 2 ​ ε 2 , \displaystyle=T_{\max}^{2}\varepsilon^{2},
+w T \displaystyle w_{T}
+= T max − 1 . \displaystyle=T_{\max}-1.
+(23)
+The independent unit is a whole reference trajectory; steps within a trajectory are not treated as independent samples. As the reference trajectories are i.i.d., Hoeffding’s inequality gives, for each F F with probability at least 1 − δ / 4 1-\delta/4 ,
+| F ¯ − 𝔼 Q ​ F | ≤ b F := w F ​ u N , \lvert\overline{F}-\mathbb{E}_{Q}F\rvert\leq b_{F}:=w_{F}u_{N},
+(24)
+with u N = log ⁡ ( 8 / δ ) / ( 2 ​ N ) u_{N}=\sqrt{\log(8/\delta)/(2N)} as in Corollary 1 . By the union bound, all four hold with probability at least 1 − δ 1-\delta , without independence among the statistics. We work on this event.
+Step version.
+By ( 21 ) and ( 22 ),
+T ¯ ^ ​ D ^ S 2 − T ¯ ​ D S 2 = ( Z ¯ − 𝔼 Q ​ Z ) − ( X ¯ 2 T ¯ ^ − μ 2 T ¯ ) . \hat{\bar{T}}\hat{D}_{S}^{2}-\bar{T}D^{2}_{S}=(\overline{Z}-\mathbb{E}_{Q}Z)-\Bigl(\frac{\overline{X}^{2}}{\hat{\bar{T}}}-\frac{\mu^{2}}{\bar{T}}\Bigr).
+(25)
+The second term decomposes by the identity
+X ¯ 2 T ¯ ^ − μ 2 T ¯ \displaystyle\frac{\overline{X}^{2}}{\hat{\bar{T}}}-\frac{\mu^{2}}{\bar{T}}
+= ( X ¯ T ¯ ^ + μ T ¯ ) ​ ( X ¯ − μ ) \displaystyle=\Bigl(\frac{\overline{X}}{\hat{\bar{T}}}+\frac{\mu}{\bar{T}}\Bigr)(\overline{X}-\mu)
+− X ¯ ​ μ T ¯ ^ ​ T ¯ ​ ( T ¯ ^ − T ¯ ) . \displaystyle\quad-\frac{\overline{X}\mu}{\hat{\bar{T}}\bar{T}}(\hat{\bar{T}}-\bar{T}).
+(26)
+Since | X ¯ | ≤ ε ​ T ¯ ^ \lvert\overline{X}\rvert\leq\varepsilon\hat{\bar{T}} and | μ | ≤ ε ​ T ¯ \lvert\mu\rvert\leq\varepsilon\bar{T} , the two coefficients are at most 2 ​ ε 2\varepsilon and ε 2 \varepsilon^{2} , so ( 24 ) gives
+| T ¯ ^ ​ D ^ S 2 − T ¯ ​ D S 2 | ≤ b Z + 2 ​ ε ​ b X + ε 2 ​ b T . \lvert\hat{\bar{T}}\hat{D}_{S}^{2}-\bar{T}D^{2}_{S}\rvert\leq b_{Z}+2\varepsilon b_{X}+\varepsilon^{2}b_{T}.
+(27)
+Trajectory version.
+Similarly, D ^ τ 2 − D τ 2 = ( X 2 ¯ − 𝔼 Q ​ X 2 ) − ( X ¯ 2 − μ 2 ) \hat{D}_{\tau}^{2}-D^{2}_{\tau}=(\overline{X^{2}}-\mathbb{E}_{Q}X^{2})-(\overline{X}^{2}-\mu^{2}) , and | X ¯ 2 − μ 2 | = | X ¯ + μ | ​ | X ¯ − μ | ≤ 2 ​ T max ​ ε ​ b X \lvert\overline{X}^{2}-\mu^{2}\rvert=\lvert\overline{X}+\mu\rvert\,\lvert\overline{X}-\mu\rvert\leq 2T_{\max}\varepsilon b_{X} , so
+| D ^ τ 2 − D τ 2 | ≤ b X 2 + 2 ​ T max ​ ε ​ b X . \lvert\hat{D}_{\tau}^{2}-D^{2}_{\tau}\rvert\leq b_{X^{2}}+2T_{\max}\varepsilon b_{X}.
+(28)
+Conclusion.
+Since K ^ S = 1 2 ​ T ¯ ^ ​ D ^ S 2 \hat{K}_{S}=\frac{1}{2}\hat{\bar{T}}\hat{D}_{S}^{2} and K ^ τ = 1 2 ​ D ^ τ 2 \hat{K}_{\tau}=\frac{1}{2}\hat{D}_{\tau}^{2} , the triangle inequality, Theorem 1 , ( 27 ), and ( 28 ) give | K i ​ j − K ^ S | ≤ R S + B S ​ u N \lvert K_{ij}-\hat{K}_{S}\rvert\leq R_{S}+B_{S}u_{N} and | K i ​ j − K ^ τ | ≤ R τ + B τ ​ u N \lvert K_{ij}-\hat{K}_{\tau}\rvert\leq R_{\tau}+B_{\tau}u_{N} . Substituting ( 23 ),
+B S \displaystyle B_{S}
+= 1 2 ​ w Z + ε ​ w X + 1 2 ​ ε 2 ​ w T = 6 ​ T max − 1 2 ​ ε 2 , \displaystyle=\tfrac{1}{2}w_{Z}+\varepsilon w_{X}+\tfrac{1}{2}\varepsilon^{2}w_{T}=\tfrac{6T_{\max}-1}{2}\varepsilon^{2},
+B τ \displaystyle B_{\tau}
+= 1 2 ​ w X 2 + T max ​ ε ​ w X = 5 2 ​ T max 2 ​ ε 2 . \displaystyle=\tfrac{1}{2}w_{X^{2}}+T_{\max}\varepsilon w_{X}=\tfrac{5}{2}T_{\max}^{2}\varepsilon^{2}.
+(29)
+Finally, 𝔼 i ​ [ T ] ≤ T max \mathbb{E}_{i}[T]\leq T_{\max} , 𝔼 i ​ [ T 2 ] ≤ T max 2 \mathbb{E}_{i}[T^{2}]\leq T_{\max}^{2} , ε 6 ≤ ε 4 \frac{\varepsilon}{6}\leq\frac{\varepsilon}{4} , 6 ​ T max − 1 2 ≤ 3 ​ T max \frac{6T_{\max}-1}{2}\leq 3T_{\max} , and 5 2 ≤ 3 \frac{5}{2}\leq 3 give
+R S + B S ​ u N \displaystyle R_{S}+B_{S}u_{N}
+≤ T max ​ ε 2 ​ ( ε 4 + λ 2 + 3 ​ u N ) + μ 2 2 ​ T ¯ , \displaystyle\leq T_{\max}\varepsilon^{2}\bigl(\tfrac{\varepsilon}{4}+\tfrac{\lambda}{2}+3u_{N}\bigr)+\tfrac{\mu^{2}}{2\bar{T}},
+R τ + B τ ​ u N \displaystyle R_{\tau}+B_{\tau}u_{N}
+≤ T max 2 ​ ε 2 ​ ( ε 4 + λ 2 + 3 ​ u N ) + μ 2 2 , \displaystyle\leq T_{\max}^{2}\varepsilon^{2}\bigl(\tfrac{\varepsilon}{4}+\tfrac{\lambda}{2}+3u_{N}\bigr)+\tfrac{\mu^{2}}{2},
+which is Corollary 1 . Swapping ( i , j ) (i,j) leaves Z Z , X 2 X^{2} , T T , and | X ¯ − μ | \lvert\overline{X}-\mu\rvert unchanged, so the same bound holds for K sym K_{\mathrm{sym}} . ∎
+A.4 Cross terms in the trajectory distance
+The step distance squares the step log-ratios before summing them; the trajectory distance sums them first. The following identity shows exactly what this adds. Let c = μ / T ¯ c=\mu/\bar{T} , d ~ t = d t − c \tilde{d}_{t}=d_{t}-c for t < T t<T , and S = ∑ t < T d ~ t S=\sum_{t<T}\tilde{d}_{t} . Then
+D τ 2 = T ¯ ​ D S 2 + 2 ​ 𝔼 Q ​ ∑ s < t < T d ~ s ​ d ~ t + 2 ​ c ​ Cov Q ​ ( S , T ) + c 2 ​ Var Q ​ ( T ) . D^{2}_{\tau}=\bar{T}D^{2}_{S}+2\mathbb{E}_{Q}\textstyle\sum_{s<t<T}\tilde{d}_{s}\tilde{d}_{t}\\
++2c\,\mathrm{Cov}_{Q}(S,T)+c^{2}\mathrm{Var}_{Q}(T).
+(30)
+The right-hand side consists of the step distance, the cross term between time steps, and two terms due to variable trajectory length. The cross term has up to ( T 2 ) \binom{T}{2} summands per trajectory and accounts for the extra factor of T T in Corollary 1 .
+Proof.
+From X = ∑ t < T d t = S + c ​ T X=\sum_{t<T}d_{t}=S+cT and μ = c ​ T ¯ \mu=c\bar{T} ,
+X − μ = S + c ⁡ ( T − T ¯ ) . X-\mu=S+c(T-\bar{T}).
+(31)
+Since D τ 2 = Var Q ​ ( X ) = 𝔼 Q ​ ( X − μ ) 2 D^{2}_{\tau}=\mathrm{Var}_{Q}(X)=\mathbb{E}_{Q}(X-\mu)^{2} , squaring ( 31 ) and averaging over Q Q gives
+D τ 2 = 𝔼 Q ​ S 2 + 2 ​ c ​ 𝔼 Q ​ [ S ⁡ ( T − T ¯ ) ] + c 2 ​ 𝔼 Q ​ ( T − T ¯ ) 2 . \begin{split}D^{2}_{\tau}=\mathbb{E}_{Q}S^{2}&+2c\,\mathbb{E}_{Q}[S(T-\bar{T})]\\
+&+c^{2}\mathbb{E}_{Q}(T-\bar{T})^{2}.\end{split}
+(32)
+Here 𝔼 Q ​ S = 𝔼 Q ​ X − c ​ 𝔼 Q ​ [ T ] = μ − μ = 0 \mathbb{E}_{Q}S=\mathbb{E}_{Q}X-c\,\mathbb{E}_{Q}[T]=\mu-\mu=0 , so 𝔼 Q ​ [ S ⁡ ( T − T ¯ ) ] = Cov Q ​ ( S , T ) \mathbb{E}_{Q}[S(T-\bar{T})]=\mathrm{Cov}_{Q}(S,T) and 𝔼 Q ​ ( T − T ¯ ) 2 = Var Q ​ ( T ) \mathbb{E}_{Q}(T-\bar{T})^{2}=\mathrm{Var}_{Q}(T) . The first term expands as
+𝔼 Q ​ S 2 = 𝔼 Q ​ ∑ t < T d ~ t 2 + 2 ​ 𝔼 Q ​ ∑ s < t < T d ~ s ​ d ~ t , \mathbb{E}_{Q}S^{2}=\mathbb{E}_{Q}\textstyle\sum_{t<T}\tilde{d}_{t}^{2}+2\mathbb{E}_{Q}\sum_{s<t<T}\tilde{d}_{s}\tilde{d}_{t},
+(33)
+and by the definition of D S 2 D^{2}_{S} the first term on the right equals T ¯ ​ D S 2 \bar{T}D^{2}_{S} . Substituting these into ( 32 ) gives ( 30 ).
+∎
+For example, suppose each reference trajectory has a constant step log-ratio d t = b d_{t}=b , where b b varies across trajectories with 𝔼 Q ​ b = 0 \mathbb{E}_{Q}b=0 and is independent of T T . Then μ = c = 0 \mu=c=0 , D S 2 = 𝔼 Q ​ [ T ​ b 2 ] / T ¯ = Var Q ​ ( b ) D^{2}_{S}=\mathbb{E}_{Q}[Tb^{2}]/\bar{T}=\mathrm{Var}_{Q}(b) , and D τ 2 = 𝔼 Q ​ [ T 2 ] ​ Var Q ​ ( b ) D^{2}_{\tau}=\mathbb{E}_{Q}[T^{2}]\,\mathrm{Var}_{Q}(b) : with strongly correlated steps, the trajectory estimate 1 2 ​ D τ 2 \frac{1}{2}D^{2}_{\tau} is 𝔼 Q ​ [ T 2 ] / T ¯ \mathbb{E}_{Q}[T^{2}]/\bar{T} times the step estimate T ¯ 2 ​ D S 2 \frac{\bar{T}}{2}D^{2}_{S} . Since the cross term can also be negative, the trajectory version does not always overestimate.
+A.5 Uncentered variants
+The uncentered embeddings are z i , u S = M − 1 / 2 ( ℓ i , r ​ t ) r , t z^{S}_{i,u}=M^{-1/2}(\ell_{i,rt})_{r,t} and z i , u τ = N − 1 / 2 ( A i , r ) r z^{\tau}_{i,u}=N^{-1/2}(A_{i,r})_{r} , with distances D ^ S , u \hat{D}_{S,u} and D ^ τ , u \hat{D}_{\tau,u} . In the notation of Appendix A.3 ,
+T ¯ ^ ​ D ^ S , u 2 = Z ¯ , D ^ τ , u 2 = X 2 ¯ , \hat{\bar{T}}\hat{D}_{S,u}^{2}=\overline{Z},\qquad\hat{D}_{\tau,u}^{2}=\overline{X^{2}},
+(34)
+and the population distances are T ¯ ​ D S , u 2 = 𝔼 Q ​ Z \bar{T}D_{S,u}^{2}=\mathbb{E}_{Q}Z and D τ , u 2 = 𝔼 Q ​ X 2 D_{\tau,u}^{2}=\mathbb{E}_{Q}X^{2} . The estimators are K ^ S , u = 1 2 ​ T ¯ ^ ​ D ^ S , u 2 = 1 2 ​ Z ¯ \hat{K}_{S,u}=\frac{1}{2}\hat{\bar{T}}\hat{D}_{S,u}^{2}=\frac{1}{2}\overline{Z} and K ^ τ , u = 1 2 ​ D ^ τ , u 2 = 1 2 ​ X 2 ¯ \hat{K}_{\tau,u}=\frac{1}{2}\hat{D}_{\tau,u}^{2}=\frac{1}{2}\overline{X^{2}} . They differ from the centered versions only by the μ 2 \mu^{2} terms in ( 22 ).
+Proposition 1 (Error of the uncentered variants) .
+Under the assumptions of Theorem 1 , | K i ​ j − T ¯ 2 ​ D S , u 2 | ≤ R S , u \lvert K_{ij}-\frac{\bar{T}}{2}D_{S,u}^{2}\rvert\leq R_{S,u} and | K i ​ j − 1 2 ​ D τ , u 2 | ≤ R τ , u \lvert K_{ij}-\frac{1}{2}D_{\tau,u}^{2}\rvert\leq R_{\tau,u} , where
+R S , u \displaystyle R_{S,u}
+= ε 3 6 ​ 𝔼 i ​ [ T ] + λ ​ T max ​ ε 2 2 , \displaystyle=\tfrac{\varepsilon^{3}}{6}\mathbb{E}_{i}[T]+\tfrac{\lambda T_{\max}\varepsilon^{2}}{2},
+(35)
+R τ , u \displaystyle R_{\tau,u}
+= ε 3 6 ​ 𝔼 i ​ [ T ] + ε 3 4 ​ 𝔼 i ​ [ T ⁡ ( T − 1 ) ] \displaystyle=\tfrac{\varepsilon^{3}}{6}\mathbb{E}_{i}[T]+\tfrac{\varepsilon^{3}}{4}\mathbb{E}_{i}[T(T-1)]
++ λ ​ T max 2 ​ ε 2 2 . \displaystyle\quad+\tfrac{\lambda T_{\max}^{2}\varepsilon^{2}}{2}.
+(36)
+Furthermore, under the assumptions of Corollary 1 , with v N = log ⁡ ( 4 / δ ) / ( 2 ​ N ) v_{N}=\sqrt{\log(4/\delta)/(2N)} , with probability at least 1 − δ 1-\delta simultaneously,
+| K i ​ j − K ^ S , u | \displaystyle\lvert K_{ij}-\hat{K}_{S,u}\rvert
+≤ R S , u + 1 2 ​ T max ​ ε 2 ​ v N , \displaystyle\leq R_{S,u}+\tfrac{1}{2}T_{\max}\varepsilon^{2}v_{N},
+| K i ​ j − K ^ τ , u | \displaystyle\lvert K_{ij}-\hat{K}_{\tau,u}\rvert
+≤ R τ , u + 1 2 ​ T max 2 ​ ε 2 ​ v N . \displaystyle\leq R_{\tau,u}+\tfrac{1}{2}T_{\max}^{2}\varepsilon^{2}v_{N}.
+(37)
+Proof.
+The approximation error follows Appendix A.2 . For the step version, ( 16 ) gives
+K i ​ j − T ¯ 2 ​ D S , u 2 \displaystyle K_{ij}-\tfrac{\bar{T}}{2}D_{S,u}^{2}
+= K i ​ j − 1 2 ​ 𝔼 Q ​ Z \displaystyle=K_{ij}-\tfrac{1}{2}\mathbb{E}_{Q}Z
+= r ∗ + 1 2 ​ ( 𝔼 i ​ Z − 𝔼 Q ​ Z ) \displaystyle=r_{*}+\tfrac{1}{2}(\mathbb{E}_{i}Z-\mathbb{E}_{Q}Z)
+(38)
+with | r ∗ | ≤ ε 3 6 ​ 𝔼 i ​ [ T ] \lvert r_{*}\rvert\leq\frac{\varepsilon^{3}}{6}\mathbb{E}_{i}[T] , and Lemma 2 bounds the second term by 1 2 ​ λ ​ T max ​ ε 2 \frac{1}{2}\lambda T_{\max}\varepsilon^{2} , giving ( 35 ). For the trajectory version, 1 2 ​ 𝔼 i ​ Z = 1 2 ​ 𝔼 i ​ X 2 − ∑ s < t 𝔼 i ​ [ d s ​ d t ] \frac{1}{2}\mathbb{E}_{i}Z=\frac{1}{2}\mathbb{E}_{i}X^{2}-\sum_{s<t}\mathbb{E}_{i}[d_{s}d_{t}] gives
+K i ​ j − 1 2 ​ D τ , u 2 = r ∗ − ∑ s < t 𝔼 i ​ [ d s ​ d t ] + 1 2 ​ ( 𝔼 i ​ X 2 − 𝔼 Q ​ X 2 ) . K_{ij}-\tfrac{1}{2}D_{\tau,u}^{2}=r_{*}-\textstyle\sum_{s<t}\mathbb{E}_{i}[d_{s}d_{t}]\\
++\tfrac{1}{2}(\mathbb{E}_{i}X^{2}-\mathbb{E}_{Q}X^{2}).
+(39)
+The cross term is at most ε 3 4 ​ 𝔼 i ​ [ T ⁡ ( T − 1 ) ] \frac{\varepsilon^{3}}{4}\mathbb{E}_{i}[T(T-1)] by Lemma 1 (iii), and the third term at most 1 2 ​ λ ​ T max 2 ​ ε 2 \frac{1}{2}\lambda T_{\max}^{2}\varepsilon^{2} by Lemma 2 , giving ( 36 ). Both bounds are the centered ones without the centering terms μ 2 / ( 2 ​ T ¯ ) \mu^{2}/(2\bar{T}) and μ 2 / 2 \mu^{2}/2 .
+For the sampling error, T ¯ ^ \hat{\bar{T}} cancels in ( 34 ), so each version depends on a single sample mean, Z ¯ \overline{Z} or X 2 ¯ \overline{X^{2}} . By Hoeffding’s inequality, | Z ¯ − 𝔼 Q ​ Z | ≤ w Z ​ v N \lvert\overline{Z}-\mathbb{E}_{Q}Z\rvert\leq w_{Z}v_{N} and | X 2 ¯ − 𝔼 Q ​ X 2 | ≤ w X 2 ​ v N \lvert\overline{X^{2}}-\mathbb{E}_{Q}X^{2}\rvert\leq w_{X^{2}}v_{N} each hold with probability at least 1 − δ / 2 1-\delta/2 , and both together with probability at least 1 − δ 1-\delta . The triangle inequality then gives ( 37 ). Since swapping ( i , j ) (i,j) leaves Z Z and X 2 X^{2} unchanged, the bounds also hold for the symmetric KL.
+∎
+Appendix B Mapping and predicting: details and robustness
+This appendix supplements § 3 . Appendix B.1 describes the setup of the two experiments, and Appendices B.2 , B.3 , and B.4 give details of the trajectory-KL comparison (§ 3.1 ), performance prediction (§ 3.2 ), and behavior (§ 3.3 ).
+B.1 Setup of the two experiments
+Table 4: The two experiments of § 3 . Both fix the BASE harness. The multi-harness experiment of § 4 is in Table 11 .
+Trajectory KL (§ 3.1 )
+100 LLMs (§ 3.2 , 3.3 )
+LLMs
+8
+100
+Reference trajectories
+Each model’s own rollouts on the 988 of 1,000 ALFWorld train tasks completed by all 8 models (7,904 trajectories, 187,961 steps)
+Rollouts of Qwen3.8-27B and Gemma4-E4B on 250 ALFWorld train tasks (500 trajectories, 10,388 steps)
+Reference distribution Q Q
+Equal-weight pool of the 8 models
+Equal-weight mixture of the 2 generators
+Scoring
+Grammar-constrained, canonical tokens; every model scores every trajectory ( 8 × 8 8\times 8 )
+No grammar mask; each model’s chat template
+What is compared
+Directly measured K sym K_{\mathrm{sym}} (28 pairs)
+Success rates and action sequences on ALFWorld valid_unseen, TextWorld, BFCL, MiniWoB++ (50 tasks each; behavior on BFCL uses multi_turn 25); one run per task at temperature 0.7
+Table 4 summarizes the two experiments of § 3 ; the multi-harness experiment of § 4 is summarized in Table 11 .
+Models.
+We use 100 open-weight LLMs, all with the BASE harness on ALFWorld; the full list with parameter counts | θ i | |\theta_{i}| is in Table 5 ; parameter counts are total counts, including for MoE models, and the size baselines use their logarithm. Model families, used only as a baseline in § 3.2 – 3.3 , are assigned from the model name: 19 families, the largest being Qwen with 20 models.
+Effect of the grammar mask.
+The 100-model experiment scores without the grammar mask of Appendix A.1 . To check that this choice does not change the map, we use the scoring runs of ten LLMs (Qwen3-8B, Qwen3.8-27B, Qwen3.5-2B/9B, Gemma4-E4B/12B, GPT-OSS-20B, GLM-4.7-Flash, Devstral-Small-2-24B, Granite-3.3-2B) that recorded both the masked and the raw log-likelihood of each reference action. Six of them (Qwen3-8B, Qwen3.8-27B, Qwen3.5-9B, Gemma4-E4B, GPT-OSS-20B, GLM-4.7-Flash) share 3,412 reference steps with both scores. On these steps, the mask changes the mean log-likelihood per action by − 0.01 -0.01 to + 0.03 +0.03 nats, the per-step values correlate at r ≥ 0.99 r\geq 0.99 , and the pairwise squared distances between the six models correlate at 1.000 1.000 with the same ordering of all pairs, with and without centering. For each of the ten LLMs separately, we then replace its raw scores in the 100-model map by the masked scores on the steps where both exist (591–10,304 of the 10,388 steps, depending on the LLM). This moves its centered coordinate by 0.05 0.05 – 0.21 0.21 times the distance to its nearest neighbor (median 0.07 0.07 over the ten LLMs); the nearest neighbor is unchanged for all ten, the five nearest neighbors for nine (four of five for Granite-3.3-2B), and the rank correlation of the distances to the other 99 models is at least 0.997 0.997 .
+Definition of the trajectory KL.
+The eight models are Qwen3-8B, Gemma4-E4B, GPT-OSS-20B, Qwen3.8-27B, GPT-OSS-120B, GLM-4.7-Flash, Qwen3.5-9B, and Gemma4-12B. K i ​ j K_{ij} is the sample mean of log ⁡ P i / P j \log P_{i}/P_{j} over the trajectories generated by i i , and K sym K_{\mathrm{sym}} averages the two directions. Negative log-ratios would be kept, but none occur in this set. Since the reference is the equal-weight pool of the eight models, d ​ P i / d ​ Q ≤ 8 dP_{i}/dQ\leq 8 by construction.
+Compute and reproducibility.
+All likelihood computations and rollouts were run on ten NVIDIA RTX PRO 6000 Blackwell GPUs (96 GB each) served through vLLM. The complete set of experiments, including the scoring of 10,388 reference steps by 100 LLMs, the downstream rollouts of 100 LLMs on four benchmarks, and the 12 × 12 12\times 12 harness experiment, took approximately two weeks of wall-clock time on this cluster; we did not record per-experiment GPU hours. Each downstream task was run once per agent (Table 4 ), and the hyperparameters of the predictors are listed in Appendix B.3 and those of the harnesses in Appendix C.1 . Figure 1 (a) is a t-SNE layout ( van der Maaten and Hinton, 2008 ) of the centered coordinates with perplexity 15; all neighbors in the paper are computed in the original coordinate space. The τ \tau -bench and SWE-Bench reference trajectories are the publicly released HAL traces ( Kapoor et al., 2026 ) .
+Table 5: The 100 open-weight LLMs of § 3.2 – 3.3 , identified by their Hugging Face repository, with parameter counts in billions (total parameters for MoE models) and the family labels used as a baseline. ⋄ \diamond : the eight models of the trajectory-KL comparison (§ 3.1 ); ⋆ \star : the twelve LLMs of the harness experiment (§ 4 ).
+Model
+B
+Family
+Model
+B
+Family
+CohereForAI/c4ai-command-r7b-12-2024
+8.0
+Cohere
+allenai/Llama-3.1-Tulu-3-8B-SFT
+8.0
+Llama
+deepseek-ai/deepseek-coder-1.3b-instruct
+1.3
+DeepSeek
+codellama/CodeLlama-13b-Instruct-hf
+13.0
+Llama
+deepseek-ai/deepseek-coder-6.7b-instruct
+6.7
+DeepSeek
+codellama/CodeLlama-34b-Instruct-hf
+33.7
+Llama
+deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
+15.7
+DeepSeek
+mistralai/Ministral-3-3B-Instruct-2512
+3.8
+Mistral
+deepseek-ai/DeepSeek-V2-Lite-Chat
+15.7
+DeepSeek
+mistralai/Mistral-7B-Instruct-v0.2
+7.2
+Mistral
+deepseek-ai/deepseek-coder-33b-instruct
+33.3
+DeepSeek
+mistralai/Mistral-7B-Instruct-v0.3
+7.2
+Mistral
+LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct
+2.4
+EXAONE
+mistralai/Ministral-3-8B-Instruct-2512
+8.9
+Mistral
+LGAI-EXAONE/EXAONE-3.5-7.8B-Instruct
+7.8
+EXAONE
+mistralai/Mistral-Nemo-Instruct-2407
+12.2
+Mistral
+LGAI-EXAONE/EXAONE-3.5-32B-Instruct
+32.0
+EXAONE
+mistralai/Ministral-3-14B-Instruct-2512
+13.9
+Mistral
+tiiuae/Falcon-H1-1.5B-Instruct
+1.6
+Falcon
+mistralai/Mistral-Small-24B-Instruct-2501
+23.6
+Mistral
+tiiuae/Falcon3-3B-Instruct
+3.2
+Falcon
+mistralai/Devstral-Small-2505
+23.6
+Mistral
+tiiuae/Falcon3-7B-Instruct
+7.5
+Falcon
+mistralai/Mistral-Small-3.1-24B-Instruct-2503
+24.0
+Mistral
+tiiuae/Falcon-H1-7B-Instruct
+7.6
+Falcon
+mistralai/Devstral-Small-2-24B-Instruct-2512 ⋆
+24.0
+Mistral
+tiiuae/Falcon3-10B-Instruct
+10.3
+Falcon
+nvidia/NVIDIA-Nemotron-Nano-9B-v2
+8.9
+Nemotron
+google/gemma-3-1b-it
+1.0
+Gemma
+nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+31.6
+Nemotron
+google/gemma-3-4b-it
+4.3
+Gemma
+allenai/Olmo-3-7B-Instruct
+7.3
+OLMo
+google/gemma-4-E2B-it
+5.1
+Gemma
+allenai/Olmo-3-7B-Instruct-SFT
+7.3
+OLMo
+google/gemma-3n-E4B-it
+7.8
+Gemma
+allenai/Olmo-3-7B-Instruct-DPO
+7.3
+OLMo
+google/gemma-4-E4B-it ⋄⋆
+8.0
+Gemma
+allenai/Olmo-3.1-32B-Instruct
+32.2
+OLMo
+google/gemma-4-12b-it ⋄⋆
+12.0
+Gemma
+microsoft/Phi-3-mini-128k-instruct
+3.8
+Phi
+google/gemma-3-12b-it
+12.2
+Gemma
+microsoft/Phi-3.5-mini-instruct
+3.8
+Phi
+google/gemma-4-26B-A4B-it
+25.8
+Gemma
+microsoft/Phi-4-mini-instruct
+3.8
+Phi
+google/gemma-3-27b-it
+27.4
+Gemma
+microsoft/Phi-4-mini-reasoning
+3.8
+Phi
+google/gemma-4-31b-it ⋆
+31.3
+Gemma
+microsoft/Phi-3-small-128k-instruct
+7.4
+Phi
+THUDM/glm-4-9b-chat
+9.4
+GLM
+microsoft/Phi-3-medium-128k-instruct
+14.0
+Phi
+zai-org/GLM-4.7-Flash ⋄⋆
+31.2
+GLM
+microsoft/phi-4
+14.7
+Phi
+openai/gpt-oss-20b ⋄⋆
+20.9
+gpt-oss
+Qwen/Qwen2.5-0.5B-Instruct
+0.5
+Qwen
+openai/gpt-oss-120b ⋄⋆
+116.8
+gpt-oss
+Qwen/Qwen3-0.6B
+0.8
+Qwen
+ibm-granite/granite-3.1-1b-a400m-instruct
+1.3
+Granite
+Qwen/Qwen2.5-1.5B-Instruct
+1.5
+Qwen
+ibm-granite/granite-3.1-2b-instruct
+2.5
+Granite
+Qwen/Qwen3-1.7B
+2.0
+Qwen
+ibm-granite/granite-3.3-2b-instruct
+2.5
+Granite
+Qwen/Qwen3.5-2B ⋆
+2.3
+Qwen
+ibm-granite/granite-3.1-3b-a800m-instruct
+3.3
+Granite
+Qwen/Qwen2.5-3B-Instruct
+3.1
+Qwen
+ibm-granite/granite-4.0-h-tiny
+6.9
+Granite
+Qwen/Qwen3-4B
+4.0
+Qwen
+ibm-granite/granite-3.1-8b-instruct
+8.2
+Granite
+Qwen/Qwen3.5-4B
+4.7
+Qwen
+ibm-granite/granite-3.3-8b-instruct
+8.2
+Granite
+Qwen/Qwen2.5-7B-Instruct
+7.6
+Qwen
+tencent/Hunyuan-0.5B-Instruct
+0.5
+Hunyuan
+Qwen/Qwen3-8B ⋄⋆
+8.2
+Qwen
+tencent/Hunyuan-1.8B-Instruct
+1.8
+Hunyuan
+Qwen/Qwen3.5-9B ⋄⋆
+9.7
+Qwen
+tencent/Hunyuan-7B-Instruct
+7.5
+Hunyuan
+Qwen/Qwen3-14B
+14.8
+Qwen
+internlm/internlm2_5-1_8b-chat
+1.9
+InternLM
+Qwen/Qwen2.5-14B-Instruct
+14.8
+Qwen
+internlm/internlm2_5-7b-chat
+7.7
+InternLM
+Qwen/Qwen2.5-Coder-14B-Instruct
+14.8
+Qwen
+internlm/internlm3-8b-instruct
+8.8
+InternLM
+Qwen/Qwen3.8-27B ⋄⋆
+27.8
+Qwen
+LiquidAI/LFM2.5-8B-A1B
+8.5
+LFM
+Qwen/Qwen3.5-27B ⋆
+27.8
+Qwen
+meta-llama/Llama-3.2-1B-Instruct
+1.2
+Llama
+Qwen/Qwen3-30B-A3B
+30.5
+Qwen
+meta-llama/Llama-3.2-3B-Instruct
+3.2
+Llama
+Qwen/Qwen3-32B
+32.8
+Qwen
+codellama/CodeLlama-7b-Instruct-hf
+6.7
+Llama
+Qwen/Qwen2.5-32B-Instruct
+32.8
+Qwen
+meta-llama/Llama-3.1-8B-Instruct
+8.0
+Llama
+Qwen/Qwen3.6-35B-A3B
+36.0
+Qwen
+NousResearch/Hermes-3-Llama-3.1-8B
+8.0
+Llama
+HuggingFaceTB/SmolLM3-3B
+3.1
+SmolLM
+nvidia/Llama-3.1-Nemotron-Nano-8B-v1
+8.0
+Llama
+01-ai/Yi-Coder-1.5B-Chat
+1.5
+Yi
+allenai/Llama-3.1-Tulu-3-8B
+8.0
+Llama
+01-ai/Yi-1.5-9B-Chat-16K
+8.8
+Yi
+allenai/Llama-3.1-Tulu-3-8B-DPO
+8.0
+Llama
+01-ai/Yi-1.5-34B-Chat-16K
+34.4
+Yi
+B.2 Trajectory KL: centering, step vs. trajectory, and sample size
+Using the eight-model KL data of § 3.1 , we examine the representation choices fixed in § 2.3 and the dependence on the number of reference trajectories.
+Effect of centering.
+Table 6: Agreement between the estimates read from the map and the directly measured symmetric trajectory KL K sym K_{\mathrm{sym}} : 8 models, 28 pairs, 988 shared ALFWorld train tasks. The estimates are T ¯ 2 ​ D ^ S 2 \tfrac{\bar{T}}{2}\hat{D}_{S}^{2} for the step version and 1 2 ​ D ^ τ 2 \tfrac{1}{2}\hat{D}_{\tau}^{2} for the trajectory version. RMSE is in nats.
+r r
+ρ \rho
+RMSE
+Step version
+Centered
+0.90
+0.95
+2,056
+Uncentered
+0.83
+0.92
+3,773
+Trajectory version
+Centered
+0.86
+0.94
+29,792
+Uncentered
+0.77
+0.92
+72,014
+Table 6 compares agreement with the KL with and without centering. On these eight models, centering gives a slightly higher correlation and a smaller RMSE. In performance prediction (Table 7 ), uncentered Ridge is about as good as or slightly better than centered Ridge, while for behavioral neighbors (Table 9 ) centering tends to give larger effects. Since neither choice wins on every measure, the main text reports centered coordinates throughout and the appendix also reports uncentered results.
+Step version vs. trajectory version.
+The step version agrees better with the KL in both correlation and RMSE (Table 6 ). Both overestimate the measured K sym K_{\mathrm{sym}} , by a median factor of 7.5 for the step version and 74 for the trajectory version; the ratio of the two factors, about 10, is of the order of the mean reference trajectory length of 23.8 steps (Table 4 ).
+Distances on the 100-model map.
+The eight models are among the 100 LLMs of § 3.2 , so their 28 pairwise distances can also be read from the 100-model map, whose reference trajectories come from two of the eight models and are scored without the grammar mask. Against the same K sym K_{\mathrm{sym}} , the centered step estimate T ¯ 2 ​ D ^ S 2 \tfrac{\bar{T}}{2}\hat{D}_{S}^{2} from that map gives r = 0.86 r=0.86 and ρ = 0.88 \rho=0.88 (uncentered 0.80 0.80 / 0.92 0.92 ; centered trajectory version 0.75 0.75 / 0.89 0.89 ), and the 28 estimates from the two embeddings have rank correlation 0.97 0.97 . The lower correlation reflects both the different reference distribution Q Q and the scoring convention.
+Dependence on the number of reference trajectories.
+We resample N N reference trajectories from the pool of 7,904 without replacement, 50 times for each N N from 100 to 3,200, and recompute the estimates. The resampling standard deviation of the step estimate shrinks roughly as N − 1 / 2 N^{-1/2} (median coefficient of variation over the 28 pairs 0.074 0.074 at N = 100 N=100 and 0.010 0.010 at N = 3,200 N=3{,}200 ; log–log slope − 0.48 -0.48 after the finite-population correction, − 0.52 -0.52 for the trajectory version), consistent with Corollary 1 . The median ratio of the estimate to the measured K sym K_{\mathrm{sym}} , by contrast, stays between 7.5 7.5 and 7.6 7.6 for the step version and between 72 72 and 74 74 for the trajectory version at every N N : most of the gap to the measured KL is approximation error and does not shrink with N N .
+B.3 Performance prediction: protocol and full results
+This section gives the details of § 3.2 and the results of all predictors. Models, reference trajectories, and scoring are described in Appendix B.1 .
+Tasks and average success rates.
+A success rate is the fraction of tasks solved; run conditions are listed in Table 4 . No values are missing across the 4 benchmarks, 50 tasks each, and 100 models. The tasks are 50 from ALFWorld valid_unseen, 25 each from TextWorld treasure hunter easy and medium, 25 each from BFCL simple_python and multi_turn, and 25 each from MiniWoB++ navigate-tree and form-sequence. The four-benchmark average is the success rate over all 200 tasks, and the average over the three other environments is the success rate over the 150 tasks of TextWorld, BFCL, and MiniWoB++.
+Predictors and intervals.
+We hold out one model at a time and predict it from the remaining 99. kNN uses Euclidean distance in centered coordinates, and the number of neighbors k k is chosen from { 1 , 3 , 5 , 10 } \{1,3,5,10\} by inner leave-one-out on the 99 training models. Ridge uses a linear kernel, with the penalty α \alpha chosen from five values, { 10 − 3 , 10 − 2 , 10 − 1 , 1 , 10 } \{10^{-3},10^{-2},10^{-1},1,10\} times the trace scale of the centered kernel. Size plus coordinates is a Ridge regression with log 10 ⁡ | θ i | \log_{10}|\theta_{i}| as an unpenalized covariate. All hyperparameters are chosen by inner leave-one-out on the 99 training models, and predictions are clipped to [ 0 , 1 ] [0,1] . For differences from the size baseline, 95% intervals are the 2.5th and 97.5th percentiles of 2,000 bootstrap resamples of models. We compute them for both the difference in Pearson r r , shown in bold in the main-text table, and the difference in RMSE, shown by arrows in the appendix table.
+Figure 4: Predicting success rates without running the agents, with leave-one-model-out over 100 models. The horizontal axis is the prediction and the vertical axis the measured success rate. Open gray circles show the size baseline, a regression on log ⁡ | θ i | \log|\theta_{i}| ; blue points show coordinates alone, a Ridge regression on centered coordinates (the Ridge column of Table 2 ). Panels from left: ALFWorld, TextWorld, BFCL, MiniWoB++, and the four-benchmark average.
+Table 7: All predictors for performance prediction, with leave-one-model-out over 100 models. Each cell gives RMSE in points / Pearson r r . ↓ \downarrow and ↑ \uparrow mark a 95% bootstrap interval of the RMSE difference from the size baseline that lies below or above zero. The training mean is a constant prediction, so no r r is shown.
+Predictor
+ALFWorld
+TextWorld
+BFCL
+MiniWoB++
+4-bench avg.
+3 other envs.
+Information available without running
+Training mean
+16.4 / — ↑
+29.0 / — ↑
+16.1 / — ↑
+27.5 / — ↑
+19.2 / — ↑
+21.4 / — ↑
+Size log ⁡ | θ i | \log|\theta_{i}|
+12.6 / 0.63
+20.2 / 0.71
+13.9 / 0.48
+20.9 / 0.64
+12.9 / 0.74
+14.6 / 0.72
+Family mean
+14.7 / 0.46
+26.8 / 0.44 ↑
+15.5 / 0.34
+27.6 / 0.24 ↑
+17.7 / 0.42 ↑
+19.9 / 0.40 ↑
+Mean log-likelihood ℓ ¯ \bar{\ell}
+16.0 / 0.20 ↑
+27.2 / 0.33 ↑
+15.1 / 0.32
+26.6 / 0.22 ↑
+18.0 / 0.34 ↑
+19.9 / 0.34 ↑
+Size + ℓ ¯ \bar{\ell}
+12.4 / 0.65
+19.2 / 0.74
+13.4 / 0.54
+20.7 / 0.65
+12.2 / 0.77
+13.8 / 0.76
+Centered coordinates
+kNN
+9.0 / 0.88 ↓
+20.3 / 0.76
+11.8 / 0.69 ↓
+28.2 / 0.28 ↑
+13.5 / 0.74
+15.3 / 0.72
+Ridge
+9.6 / 0.81 ↓
+18.3 / 0.77
+11.7 / 0.69 ↓
+22.9 / 0.56
+12.1 / 0.78
+14.0 / 0.75
+Size + Ridge
+9.4 / 0.82 ↓
+18.0 / 0.78 ↓
+12.1 / 0.65 ↓
+21.1 / 0.63
+10.9 / 0.83 ↓
+12.5 / 0.81 ↓
+Size + ℓ ¯ \bar{\ell} + Ridge
+9.2 / 0.83 ↓
+17.1 / 0.80 ↓
+11.0 / 0.72 ↓
+20.3 / 0.67
+10.3 / 0.84 ↓
+12.3 / 0.81 ↓
+Uncentered coordinates
+kNN
+9.2 / 0.83 ↓
+19.5 / 0.73
+12.5 / 0.62
+23.2 / 0.52
+12.8 / 0.77
+14.8 / 0.72
+Ridge
+9.0 / 0.83 ↓
+19.4 / 0.74
+11.0 / 0.72 ↓
+22.8 / 0.55
+12.1 / 0.78
+14.2 / 0.75
+Size + Ridge
+8.9 / 0.84 ↓
+16.5 / 0.82 ↓
+10.9 / 0.73 ↓
+20.2 / 0.67
+10.3 / 0.85 ↓
+11.6 / 0.84 ↓
+Results of all predictors.
+Table 7 and Figure 4 cover the training mean, size, family, ℓ ¯ \bar{\ell} , their combinations, and predictors on centered and uncentered coordinates. Two trends stand out. Adding ℓ ¯ \bar{\ell} to size barely changes the predictions. Predictions from uncentered coordinates are about as good as those from centered coordinates. Using Spearman rank correlation instead of Pearson correlation does not change the ordering of the methods.
+B.4 Behavior: data, metrics, and additional results
+This section defines the action sequences, distances, neighbors, and tests of § 3.3 , and reports measures, controls, and robustness checks not shown in the main-text table.
+B.4.1 Definitions
+Action sequences.
+We use one trajectory per model and task; run conditions are listed in Table 4 . For the 50 ALFWorld valid_unseen tasks, the trajectories come from the same runs as the performance labels. An action sequence is the sequence of commands for the 50 TextWorld treasure-hunter tasks, the sequence of function names extracted from model outputs for the 25 BFCL multi_turn tasks, and the sequence of action strings for the 50 MiniWoB++ tasks. The action type is the leading verb, function name, or tool name. An action is judged invalid by the environment’s set of admissible actions in ALFWorld, by the environment’s feedback that it could not parse the command in TextWorld, by a turn without a function call in BFCL, and by a tool error in MiniWoB++.
+Behavioral distances.
+The four aspects in the main text are the base-2 Jensen–Shannon distance between action-type frequency distributions ( Endres and Schindelin, 2003 ) , the Levenshtein distance divided by the longer length ( Levenshtein, 1966 ; Rabanser et al., 2026 ) , the Jaccard distance between sets of action 2-grams, and the disagreement rate of the first action from the same initial state ( Bouchard and Chauhan, 2026 ; Gonuguntla, 2026 ) . The first three are computed per task and averaged over the tasks, at least 10, recorded for both models. The appendix tables add four more measures. The divergence position is 1 − k / min ⁡ ( T i , T j ) 1-k/\min(T_{i},T_{j}) , where k k is the number of steps before the first differing action. The conditional disagreement counts disagreement at step t t only for pairs whose action sequences agree up to step t − 1 t-1 , summed over t = 2 , … , 5 t=2,\dots,5 ; only pairs with at least 10 such cases are used. For the first action, conditional disagreement, and divergence position, two invalid actions are not counted as agreeing. The profile distance is the Euclidean distance between per-model vectors standardized within each benchmark; each vector contains task averages of the repetition rate T − | distinct actions | T − 1 \frac{T-|\text{distinct actions}|}{T-1} ( Gioacchini et al., 2024 ) , the consecutive repetition rate, exploration breadth measured as distinct actions / T /T , the invalid-action rate, which is the complement of grounding accuracy ( Ma et al., 2024 ) , the share of information-gathering actions, the format-error rate, steps / / limit, the rate of hitting the step limit, and the early-termination rate. For BFCL we also include the rate of empty turns. The success pattern is the fraction of tasks on which the two models’ outcomes differ, 1 | 𝒯 | ​ ∑ t | s i ​ t − s j ​ t | \frac{1}{|\mathcal{T}|}\sum_{t}\lvert s_{it}-s_{jt}\rvert .
+Choosing neighbors and testing.
+Each model’s five neighbors are the closest models in centered coordinates by Euclidean distance, in size by the difference in log ⁡ | θ | \log|\theta| , in ℓ ¯ \bar{\ell} by the difference in mean log-likelihood on the reference trajectories, in family by taking models of the same family in order of size, and in success rate by the difference in measured success rate on that benchmark. For families with fewer than five other members, the remaining neighbors are taken from other families in order of size. The effect size is the mean behavioral distance to the remaining models minus the mean distance to the five neighbors, averaged over models and divided by the standard deviation of the behavioral distance over all pairs. Figure 1 (c) applies the same definition to the k k -th nearest model alone; ranks k ≤ 5 k\leq 5 are shown individually and larger ranks as bin averages. Significance is assessed by a two-sided Wilcoxon signed-rank test ( Wilcoxon, 1945 ) paired by model. The comparison between coordinate neighbors and success-rate neighbors, marked † \dagger in the main-text table, uses the same paired test: it asks whether the distance to success-rate neighbors minus the distance to coordinate neighbors, divided by the all-pairs standard deviation, is positive. These are paired tests with models as the unit; pairs share models and no correction for multiple comparisons is applied, so the significance markers are descriptive guides rather than exact error rates. The main conclusions rest on effects that are large (at least 0.5 0.5 for coordinate neighbors in ALFWorld) and consistent across measures rather than on individual markers; small differences marked as significant, such as those between coordinate and success-rate neighbors in the other environments, should be read as suggestive.
+B.4.2 Robustness of the neighbor effect
+The main conclusion is that coordinate neighbors behave alike when run. We check that this does not depend on the choice of behavioral distance, on how performance is controlled, or on how the coordinates are built.
+Does it hold for other behavioral distances?
+Part A of Table 8 adds the divergence position, conditional disagreement, profile, and success pattern to the four distances of the main text. The divergence position and conditional disagreement, which measure divergence early in the episode, follow the same pattern as the first action. For the profile, which aggregates repetition and invalid-action rates, and for the success pattern, neighbors chosen by success rate are closer than coordinate neighbors. These measures reflect how often an agent fails and are therefore tied closely to its success rate.
+Does it survive regressing out performance?
+Instead of comparing with neighbors chosen by success rate, part B of Table 8 removes the effect of performance by regression. We regress each behavioral distance on the difference in success rate, the pair’s mean success rate and its square, and the difference in log ⁡ | θ | \log|\theta| , and compute the effect of coordinate neighbors on the residuals. We control for the mean success rate as well because strong models converge on the shortest solutions and therefore act alike. For the success pattern, we instead subtract its expectation under a null distribution generated by the curveball algorithm ( Strona et al., 2014 ) , which shuffles outcomes while keeping each model’s success rate and each task’s difficulty fixed. After this control, the effect of coordinate neighbors remains on every aspect in ALFWorld, the environment of the coordinates, and mainly on the local and early-step measures in the other environments.
+Table 8: Neighbor effect sizes for all behavioral distances, including those not in the main text; definitions as in Table 3 , 100 models. A: raw behavioral distances, comparing how neighbors are chosen; bold marks the largest value among the four neighbor types available without running. B: effect of coordinate neighbors on residuals after regressing out success rate and size. Unmarked values have p < 0.01 p<0.01 , + marks p < 0.05 p<0.05 , and gray values are not significant.
+Composition
+Global
+Local
+Early steps
+Outcome
+Type JS
+Profile
+Edit
+2-gram
+First
+Cond.
+Diverg.
+Success
+Pattern
+A Choice of neighbors
+ALFWorld
+Coordinates
+0.52
+0.63
+0.88
+0.96
+0.61
+0.51
+0.70
+0.60
+0.32
+Size
+0.23
+0.40
+0.40
+0.41
+0.30
+0.26
+0.34
+0.41
+0.27
+Family
+0.28
+0.48
+0.62
+0.68
+0.49
+0.43
+0.62
+0.49
+0.35
+ℓ ¯ \bar{\ell}
+0.05
+0.23
+0.18 +
+0.20
+0.11
+0.15
+0.16 +
+0.20
+0.17
+Reference: success rate
+0.30
+0.78
+0.65
+0.74
+0.41
+0.31
+0.52
+—
+0.61
+TextWorld
+Coordinates
+0.33
+0.52
+0.52
+0.54
+0.21
+0.51
+0.43
+0.61
+0.65
+Size
+0.10
+0.35
+0.25
+0.27 +
+0.14
+0.32
+0.17
+0.58
+0.56
+Family
+0.27
+0.47
+0.42
+0.44
+0.25
+0.46
+0.34
+0.56
+0.61
+ℓ ¯ \bar{\ell}
+0.06
+0.20
+0.14
+0.14
+0.04
+0.16
+0.10
+0.27
+0.29
+Reference: success rate
+0.22
+0.80
+0.50
+0.52
+0.16
+0.47
+0.31 +
+—
+1.06
+BFCL
+Coordinates
+0.18
+0.36
+0.26
+0.38
+0.32
+0.22
+0.46
+0.47
+0.28
+Size
+0.10 +
+0.20
+0.13
+0.21
+0.19
+0.21
+0.30
+0.27
+0.25
+Family
+0.21
+0.29
+0.26
+0.32
+0.25
+0.28
+0.40
+0.30
+0.29
+ℓ ¯ \bar{\ell}
+0.03
+0.08
+0.06
+0.09 +
+0.09
+0.04
+0.11 +
+0.15
+0.17
+Reference: success rate
+0.23
+0.49
+0.30
+0.39
+0.21
+0.26
+0.50
+—
+0.66
+MiniWoB++
+Coordinates
+0.24
+0.34
+0.38
+0.50
+0.50
+0.11 +
+0.48
+0.39
+0.40
+Size
+0.12
+0.16
+0.20
+0.27
+0.35
+− - 0.02
+0.30
+0.42
+0.44
+Family
+0.22
+0.23
+0.32
+0.47
+0.35
+0.08
+0.36
+0.37
+0.37
+ℓ ¯ \bar{\ell}
+0.08
+0.10
+0.10 +
+0.16 +
+0.09 +
+0.10 +
+0.11 +
+0.20
+0.21
+Reference: success rate
+0.13
+0.63
+0.37
+0.42
+0.28
+0.19 +
+0.29
+—
+0.98
+B Coordinate neighbors, residuals after removing success rate and size
+ALFWorld
+0.22
+0.09 +
+0.61
+0.68
+0.31
+0.20
+0.34
+—
+0.24
+TextWorld
+0.04 +
+0.03 +
+0.18
+0.23
+− - 0.13
+0.15
+0.14
+—
+0.22
+BFCL
+0.04
+0.09
+0.09
+0.20
+0.13
+0.10 +
+0.24
+—
+− - 0.15 +
+MiniWoB++
+0.03
+0.11
+0.09
+0.31
+0.31
+0.01
+0.28
+—
+0.20
+Does it depend on how the coordinates are built or on families?
+The top half of Table 9 chooses neighbors in uncentered coordinates. The effect is weaker than with centered coordinates, presumably because the overall likelihood level then influences which models count as neighbors. The bottom half excludes models of the same family from the coordinate neighbors. The effect remains on all four benchmarks, so coordinate neighbors do not behave alike merely because they belong to the same family.
+Table 9: Variants of coordinate neighbors, with definitions as in Table 8 . Top: neighbors in uncentered coordinates. Bottom: coordinate neighbors restricted to models from other families. Neighbors in centered coordinates are in Table 8 . Unmarked values have p < 0.01 p<0.01 , + marks p < 0.05 p<0.05 , and gray values are not significant.
+Composition
+Global
+Local
+Early steps
+Outcome
+Type JS
+Profile
+Edit
+2-gram
+First
+Cond.
+Diverg.
+Success
+Pattern
+Neighbors in uncentered coordinates
+Raw behavioral distance
+ALFWorld
+0.32
+0.51
+0.65
+0.73
+0.45
+0.38
+0.52
+0.64
+0.45
+TextWorld
+0.19
+0.49
+0.37
+0.40
+0.12 +
+0.39
+0.27 +
+0.66
+0.68
+BFCL
+0.12
+0.31
+0.21
+0.31
+0.22
+0.22
+0.45
+0.47
+0.35
+MiniWoB++
+0.14
+0.28
+0.25
+0.40
+0.38
+0.12 +
+0.34
+0.38
+0.38
+Residuals after removing success rate and size
+ALFWorld
+0.10
+− - 0.03
+0.47
+0.54
+0.21
+0.14
+0.28
+—
+0.29
+TextWorld
+0.06 +
+0.11
+0.15
+0.19
+− - 0.06 +
+0.14
+0.14
+—
+0.20
+BFCL
+0.05
+0.07
+0.10
+0.20
+0.07 +
+0.16
+0.28
+—
+0.04
+MiniWoB++
+0.03
+0.16
+0.11 +
+0.31
+0.28
+0.07
+0.26
+—
+0.16
+Coordinate neighbors restricted to other families
+Raw behavioral distance
+ALFWorld
+0.47
+0.56
+0.60
+0.61
+0.45
+0.36
+0.41
+0.54
+0.26
+TextWorld
+0.31
+0.44
+0.45
+0.44
+0.13
+0.43
+0.34
+0.52
+0.54
+BFCL
+0.08
+0.24
+0.15 +
+0.24
+0.23
+0.06
+0.26
+0.40
+0.19
+MiniWoB++
+0.21
+0.31
+0.26
+0.28
+0.42
+0.02
+0.36
+0.35
+0.30
+Residuals after removing success rate and size
+ALFWorld
+0.21
+0.08 +
+0.31
+0.31
+0.16
+0.13
+0.09
+—
+0.04
+TextWorld
+0.07
+0.01
+0.17
+0.17
+− - 0.18
+0.12
+0.06
+—
+0.18
+BFCL
+− - 0.01
+0.02
+0.04
+0.12
+0.08
+− - 0.01
+0.10
+—
+− - 0.28
+MiniWoB++
+0.02
+0.08 +
+− - 0.06
+0.08
+0.24
+− - 0.05
+0.17
+—
+0.05
+B.4.3 Reliability of the behavioral distances
+Are the distances reproducible across tasks?
+Table 10 shows the correlation between distance matrices computed on two random halves of the tasks. The composition, global, and local measures reach 0.85 0.85 or higher, so different task sets give nearly the same distances. The early-step measures, such as the first action, and the success pattern are somewhat lower, especially on BFCL, which has only 25 tasks.
+Table 10: Reliability of the behavioral distances: correlation between distance matrices computed on two random halves of the tasks, averaged over 30 splits; all standard deviations are at most 0.08. The profile and conditional disagreement cannot be split by task and are omitted.
+ALFWorld
+TextWorld
+BFCL
+MiniWoB++
+Reliability correlation across task halves
+Type JS
+0.97
+0.89
+0.89
+0.95
+Edit distance
+0.91
+0.92
+0.89
+0.92
+2-gram
+0.88
+0.90
+0.87
+0.85
+First action
+0.78
+0.82
+0.70
+0.91
+Divergence
+0.76
+0.90
+0.62
+0.91
+Success pattern
+0.77
+0.80
+0.68
+0.84
+Appendix C Composing harnesses: details
+This appendix supplements § 4 . Appendix C.1 gives the setup and Appendix C.2 the full additivity table and figure.
+C.1 Harness implementations, models, and references
+Table 11: Setup of the multi-harness experiment: 12 LLMs × \times 12 harnesses, scored on the benchmarks that have reference trajectories (ALFWorld and SWE-Bench use 6 of the 12 LLMs). N N is the number of reference trajectories and “steps” the number of reference steps scored by all agents.
+Reference trajectories (source)
+N N / steps
+LLMs scored
+τ \tau -bench
+HAL airline
+359 / 4,213
+12
+ALFWorld
+own, 3 LLMs × \times 12 harnesses
+210 / 2,299
+6
+SWE-Bench
+HAL SWE-agent
+100 / 3,916
+6
+Input construction.
+The input is assembled in the order fixed part, history selected by context management, plan and reasoning for the current step, and action instruction. The fixed part consists of the system instructions, tool definitions, and initial observation (including the task instruction) and is shared by all harnesses. One block of the external history is an executed action and the resulting observation; past plans and reasoning are not included. The budget for the history part is 8,192 tokens, and the whole input is at most 16,384 tokens including the reserve for the output; when the budget is exceeded, the oldest blocks are dropped first and, if necessary, the latest observation is truncated to its head and tail.
+Components.
+•
+Context management : windowed passes the initial observation and the last four blocks verbatim. retrieve additionally selects, from the older history, blocks relevant to the current observation by BM25 ( Robertson and Zaragoza, 2009 ) (weight 0.7) and recency (0.3) and inserts up to 1,536 tokens of them. summarize splits the older history, summarizes the parts, and merges them hierarchically into a JSON memory of at most 1,024 tokens that replaces the history. If the history has at most four blocks and uses at most 75% of the budget, neither retrieval nor summarization is applied and the history is passed raw.
+•
+Planning : replan rewrites from scratch, at every step and in at most 256 tokens, the confirmed progress, the next subgoal, and the observation that would confirm its achievement, and adds them to the input of the current step.
+•
+Acting : think generates, for the next single action, step-by-step reasoning of at most 512 tokens that organizes the goal, constraints, assumptions, and expected effect of the action, and adds it to the input of the current step (the plan, if any, is also included in the input).
+Plans and reasoning are not carried over to the next step.
+Generation and scoring.
+Generation (rollouts) and scoring (teacher forcing) use the same construction; for scoring, each harness builds its input from the same reference history h t h_{t} , and the raw log-likelihood of the fixed reference action is computed. The action being scored, future observations, and rewards are not used in the input.
+LLMs.
+The 12 LLMs are Qwen3-8B ( Yang et al., 2025 ) , Qwen3.8-27B ( Qwen Team, 2026b ) , Qwen3.5-27B/9B/2B ( Qwen Team, 2026a ) , Gemma4-E4B/12B/31B ( Gemma Team, 2026 ) , GPT-OSS-20B/120B ( OpenAI, 2025 ) , GLM-4.7-Flash ( Z.ai, 2026 ) , and Devstral-Small-2-24B ( Rastogi et al., 2025 ) , all among the 100 models of § 3.2 . SWE-Bench was scored with 6 of them (Qwen3-8B, Qwen3.8-27B, Gemma4-E4B, GPT-OSS-20B/120B, GLM-4.7-Flash).
+Reference trajectories and coordinates.
+τ \tau -bench: 359 HAL ( Kapoor et al., 2026 ) airline traces mapped to the 30 tasks of the train split of τ 2 \tau^{2} -bench ( Barres et al., 2026 ) ; of their 4,236 steps, the 4,213 scored by all 144 agents are used for the coordinates. SWE-Bench: 100 HAL traces of SWE-agent ( Yang et al., 2024 ) , 3,916 steps. ALFWorld: 210 train rollouts of our own 3 LLMs × \times 12 harnesses, of which the 2,299 steps scored by all 72 agents (6 LLMs × \times 12 harnesses) are used. All coordinates are the centered step version of § 2.3 .
+Change in the mean log-likelihood.
+The component removed from the coordinates by centering, ℓ ¯ ​ ( m , A ) − ℓ ¯ ​ ( m , base ) \bar{\ell}(m,A)-\bar{\ell}(m,\mathrm{base}) , is + 9.6 +9.6 for retrieve, + 3.5 +3.5 for summarize, − 4.2 -4.2 for replan, and − 6.2 -6.2 for think on τ \tau -bench, in nats per step (medians over LLMs), and its sign is shared by at least 11 of the 12 LLMs. Context management makes the reference actions more natural, whereas planning and reasoning move the agent away from them.
+Table 12: Full additivity table (medians over LLMs: cosine, norm ratio, relative reconstruction error). τ \tau -bench uses 12 LLMs; ALFWorld and SWE-Bench use 6 of the 12 LLMs (ALFWorld uses only the 2,299 reference steps scored by all 72 agents). The pooled rows take the median over all LLM–harness cases: the five two-component harnesses (60 cases on τ \tau -bench, 30 on ALFWorld and SWE-Bench) and the two three-component harnesses (24 / 12 / 12 cases).
+τ \tau -bench
+ALFWorld
+SWE-Bench
+cos
+Norm ratio
+Rel. error
+cos
+Norm ratio
+Rel. error
+cos
+Norm ratio
+Rel. error
+retrieve + replan
+0.97
+0.99
+0.25
+0.62
+0.95
+0.94
+0.97
+0.97
+0.25
+retrieve + think
+0.94
+1.00
+0.34
+0.61
+0.95
+0.95
+0.96
+0.96
+0.28
+summarize + replan
+0.91
+0.96
+0.45
+0.60
+0.89
+1.00
+0.78
+0.89
+0.72
+summarize + think
+0.87
+0.98
+0.51
+0.63
+0.91
+0.93
+0.77
+0.86
+0.76
+replan + think
+0.81
+0.74
+0.77
+0.70
+0.73
+1.03
+0.74
+0.73
+0.95
+Two components, pooled
+0.90
+0.98
+0.46
+0.63
+0.89
+0.97
+0.81
+0.90
+0.65
+Three components, pooled
+0.82
+0.87
+0.68
+0.52
+0.72
+1.25
+0.77
+0.76
+0.84
+Figure 5: Additivity for all seven compositions on τ \tau -bench (12 LLMs), in the PC1–PC2 projection of Figure 3 ; axes are scaled independently. The last panel identifies the LLMs by their BASE positions (gray: the other harnesses). Two-component compositions are drawn as parallelograms, three-component ones as chains BASE + Δ A + Δ B + Δ C \mathrm{BASE}+\Delta_{A}+\Delta_{B}+\Delta_{C} . Titles give the cosine and norm ratio in the full coordinate space (medians over LLMs).
+C.2 Additivity: full tables
+Table 12 and Figure 5 give the full results. On ALFWorld and SWE-Bench (6 LLMs) the direction of the composed displacement also agrees with the prediction, but more weakly than on τ \tau -bench (median cosines over all LLMs × \times 5 two-component compositions of 0.63 0.63 and 0.81 0.81 ), and on ALFWorld the relative reconstruction error reaches about 1. Each column is a median of per-LLM values, so the columns do not satisfy the identity below exactly. The ALFWorld reference trajectories are rollouts of the agents under study themselves, and only 2,299 of their steps are scored by all 72 agents.
+Identity between norm ratio and cosine.
+With v = z ⁡ ( A + B ) − z ⁡ ( base ) v=z(A{+}B)-z(\mathrm{base}) , v ^ = Δ A + Δ B \hat{v}=\Delta_{A}+\Delta_{B} , e = v ^ − v e=\hat{v}-v , norm ratio r = ∥ v ∥ / ∥ v ^ ∥ r=\lVert v\rVert/\lVert\hat{v}\rVert , and c = cos ⁡ ( v ^ , v ) c=\cos(\hat{v},v) , the relative reconstruction error is ∥ e ∥ 2 / ∥ v ∥ 2 = 1 + r − 2 − 2 ​ c / r \lVert e\rVert^{2}/\lVert v\rVert^{2}=1+r^{-2}-2c/r . Even when the norms agree, an error remains whenever c < 1 c<1 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

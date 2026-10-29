@@ -1,0 +1,210 @@
+When Models Know When They Do Not Know Calibration, Cascading, and Cleaning (https://arxiv.org/html/2601.07965v1)
+citeturn30695view0 [wordlim: 200] Crawled: 4 days ago; Content type: text/html; Source: open({"ref_id":"turn30693view2","lineno":90}); Total lines: 517
+L73: Since even calibrated single models may still err, we introduce a mixture-of-experts approach for data cleaning, where calibrated confidence provides a tunable trade-off between precision and detection rate. This method is simple yet effective. We apply it to ImageNet-1K and MMLU test sets, and through large-scale manual verification on ImageNet, we show that it outperforms prior methods in both accuracy and detection power.
+L74: In summary, we propose a unified and streamlined framework for calibration, cascading, and cleaning that applies across domains and tasks.
+L75: Our contributions are threefold: (1) we formalize a unified view of model calibration and empirically validate the reliability and comparability of existing methods; (2) we introduce a confidence-based cascading method, balancing accuracy and efficiency for small–large pairs and achieving superior performance with large–large pairs; and (3) we present a calibration-driven mixture-of-experts data cleaning approach that is simple, effective, and validated through human annotation.
+L76: Together, these components provide a practical recipe for leveraging when models know when they do not know.
+L77: ## 2 Method
+L78: This section introduces our formalization of model calibration, key empirical observations, and two downstream applications. We begin with a unified formulation applicable to both vision and language models, followed by two calibration methods used in our experiments: temperature scaling and Platt scaling.
+L79: We then present key observations —— higher confidence corresponds to higher accuracy, and calibration learned on validation generalizes to held-out test sets —— which establish that calibrated confidence is both reliable and comparable across models.
+L80: Building on these findings, we develop two applications: confidence-based model cascading to balance efficiency and accuracy or to combine strong models for improved performance, and agreement-driven data cleaning where confidence naturally balances precision and recall.
+L81: ### 2.1 On calibration of vision model and language model
+L82: #### Formulation.
+L83: 
+L84: Previous work has proposed calibration formulations tailored to specific cases, such as image classification models. Here we provide a unified formulation of model calibration that applies to both vision and language models, accommodates diverse downstream tasks, and supports different calibration methods.
+L85: One sentence summary: calibration is making the model’s confidence $c_{M}$ align with the expected score $\mathbb{E}[v]$ from a verifier $v$, where the expectation is estimated as an average within bins.
+L86: 
+L87: A calibration setup consists of the following components:
+L88: 
+L89:   * •
+L90: Model $M$ takes input $X\in\mathcal{X}$ and generates internal states $z=z_{M}(X,Y)$, used to sample a prediction $\hat{Y}\in\mathcal{Y}$ and to calculate confidence. For image classification model, $X$ is input image, $Y$ is a class, $z$ is logits over the label set $\mathcal{Y}$; for language model, $X$ is prompt, $Y$ is a possible answer sequence and $z$ is logits over sequence and token space.
+L91: 
+L92:   * •
+L93: Verifier $v$ assesses the correctness of an input–answer pair: Specifically, a verifier $v$ takes a pair $(X,Y)$ as input and outputs a verification score $v(X,Y)\in[0,1]$. For cases where correctness can be clearly determined, we consider a binary verifier, i.e., $v(X,Y)\in\{0,1\}$ with $v(X,Y)=0$ (invalid) and $v(X,Y)=1$ (valid).
+L94: For example, in classification tasks (e.g., image classification and multiple-choice benchmarks such as MMLU) where each input $X$ has a corresponding ground-truth label $Y^{*}$, the verifier is defined as $v(X,Y)=\mathbbm{1}^{Y=Y^{*}}$. For code-generation benchmarks, the verifier checks whether the generated code executes correctly and produces the expected output. A verifier must extract task-relevant information from model outputs, typically in a simplified manner.
+L95: For example, in MMLU, one may only check whether the first generated token matches the correct label. For code tasks, the verifier needs to extract executable code segments from the output and run them. On average, the binary verification score reduces to accuracy.
+L96:   * •
+L97: Confidence function $c(z)\in[0,1]$ calculates the confidence of an input–output pair based on the model’s internal states $z=z_{M}(X,Y)$. For classification models, a common choice is $c=\mathrm{softmax}(z/T)$, a temperature-scaled softmax applied to logits, which yields likelihoods over all class labels.
+L98: For language models, given an output sequence $Y_{1}Y_{2}\dots Y_{n}$, the conditional joint likelihood $\ell(Y\mid X)=\prod_{i=1}^{n}\ell(Y_{i}\mid X,Y_{1},\dots,Y_{i-1})$ computed via the softmax function can be used as confidence. Alternatively, one may let the language model self-report its confidence, which amounts to an additional sampling step from the model. As noted above, verifier usually evaluates specific subsequences or restricted sub-token spaces.
+L99: In such cases, the confidence function should also be constrained accordingly. For example, in MMLU only the first token (subsequence) and the four options $\{A,B,C,D\}$ (sub-token space) are relevant. Thus the confidence function should be restricted to this subset and renormalized to preserve its probabilistic interpretation. In what follows, we will also absorb $z_{M}$ into $c$ and use the shorthand $c_{M}(X,Y)$.
+L100:   * •
+L101: Binning $\{B_{i}\}_{i=1}^{N}$ is a coarse-graining of the data, over which expectations can be estimated. Binning is essential with binary verifiers, since individual correctness is non-statistical. Accuracy must be considered as an average over equivalence classes (bins). Common binning methods include: Confidence-based binning: Partition the interval $[0,1]$ into $N$ equal intervals and assign each sample to a bin according to its confidence value.
+L102: Sample-based binning (i.e., histogram equalization): Sort samples in ascending order of confidence and split them evenly into $N$ bins $\{B_{i}\}_{i=1}^{N}$. This partitioning prevents samples from concentrating in a few confidence bins, thereby improving robustness. In this work, we adopt sample-based binning.
+L103: In general, confidence functions include learnable parameters. The process of optimizing these parameters on a validation set so that the confidence better reflects verifier scores is called model calibration. An ideal calibration means confidence perfectly reflects accuracy expectation, i.e.,
+L104: 
+L105:  | $$c_{M}(X,Y)=\mathbb{E}[v(X^{\prime},Y^{\prime})\mid(X^{\prime},Y^{\prime})\in B_{i},\text{ where }(X,Y)\in B_{i}].$$  |
+L106: In practice, we approximate the expectation by the empirical average, and similarly apply binning average to the confidence, the form of ideal calibration then becomes:
+L107: 
+L108:  | $$\frac{1}{\lvert B_{i}\rvert}\sum_{(X^{\prime},Y^{\prime})\in B_{i}}c_{M}(X^{\prime},Y^{\prime})=\frac{1}{\lvert B_{i}\rvert}\sum_{(X^{\prime},Y^{\prime})\in B_{i}}v(X^{\prime},Y^{\prime}).$$  |
+L109: The left-hand side is the average confidence $\bar{c}_{i}$ of the bin $B_{i}$, and the right-hand side is the corresponding average accuracy $\bar{v}_{i}$. For uncalibrated or non-ideal calibration, we measure the effectiveness of model confidence by the deviation between these two quantities: The Expected Calibration Error (ECE) is defined as:
+L110: 
+L111:  | $$\text{ECE}=\sum_{i=1}^{N}\frac{|B_{i}|}{n}\,\lvert\bar{c}_{i}-\bar{v}_{i}\rvert,$$  |
+L112: where $n$ denotes the total number of samples, and $|B_{i}|$ the number of samples in the $i$-th bin.
+L113: 
+L114: If the model adopts deterministic sampling such as greedy decoding (so that $\hat{Y}$ is uniquely determined by $X$) and we only care about the confidence of the final prediction, then the above dependence of confidence and accuracy on $(X,Y)$ pairs can be simplified to depend solely on $X$. In what follows, we will also use the shorthand notation $c_{M}(X)$, which implicitly denotes $c_{M}(X,\hat{Y})$.
+L115: We employ two model calibration methods: temperature scaling (for vision tasks) and Platt scaling (for language tasks). Both methods involve a few calibration parameters trained on a validation set that is held out from the training and test sets, and both are optimized using the negative log-likelihood (NLL) loss. A notable result is that, despite not directly optimizing ECE, this optimization objective tends to reduce the ECE of the calibrated model, as shown in Fig.cite59†1 and Tab.cite60†1 .
+L116: #### Temperature Scaling.
+L117: 
+L118: Temperature scaling introduces a single learned scalar parameter $T>0$ applied to the logit vector $z$ over classes to calculate confidence: $c=\text{softmax}(z/T)$. The temperature $T$ is trained using the same objective as in model training, namely the NLL loss over the class labels. Temperature scaling can be used for calibrating multiclass classifiers.
+L119: #### Platt Scaling.
+L120: 
+L121: Platt scaling (cite61†Platt, 1999 ) is a simple parametric calibration method tailored for binary classification. For a model output sequence $Y_{1}\dots Y_{n}$, we obtain $n$ logit vectors $z_{1}\dots z_{n}$. Taking their values at the sampled tokens, $\hat{z}_{i}=z_{i}^{(Y_{i})}$, we use their arithmetic mean $\bar{z}=\tfrac{1}{n}\sum_{i}\hat{z}_{i}$ as a logit estimate for the sequence. Platt scaling then applies a sigmoid function to compute confidence:
+--------------------------------------------------------------------------------
+Explaining Generalization of AI-Generated Text Detectors Through Linguistic Analysis (https://arxiv.org/html/2601.07974v1)
+citeturn30695view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"turn30693view1","lineno":80}); Total lines: 589
+L70: Prior studies have begun to examine generalization in the context of unseen prompts, models, or datasets cite54†Xu et al. (2024) ; cite55†Liu et al. (2024) . However, these efforts largely focus on reporting performance drops without probing the underlying causes. Meanwhile, recent benchmark datasets introduce diversity in generation settings cite53†Wang et al. (2024a) ; cite56†Macko et al. (2023) ; cite57†Li et al. (2024) , but offer limited interpretability regarding the features detectors rely on.
+L71: A more systematic and interpretable approach is needed to explain why generalization succeeds or fails.
+L72: In this paper, we propose to understand generalization through the lens of linguistic analysis. We hypothesize that changes in surface-level linguistic features, such as verb tense, syntactic complexity, or pronoun usage, can partially account for generalization behavior.
+L73: To test this hypothesis, we construct a comprehensive benchmark combining 7 LLMs (e.g., Deepseek cite58†DeepSeek-AI (2025) , Mistral cite59†Mistral AI (2024) ), 4 domains (abstracts, news, reviews, QA), and 6 prompting strategies (e.g., few-shot, chain-of-thought (CoT)), enabling evaluation across prompt, model, and dataset generalization. We train the AI-text detectors by fine-tuning on two state-of-the-art models (XLM-RoBERTa cite60†Conneau et al. (2020) and DeBERTa-V3 cite61†He et al.
+L74: (2021a) ) for binary classification tasks. Each detector is trained with the texts generated by every possible condition (combination of prompt, model and dataset). The fine-tuned detectors are evaluated for cross-prompt, cross-model and cross-dataset generalization performance. Our results reveal substantial performance degradation under out-of-domain conditions, despite near-perfect in-domain accuracy.
+L75: To explain these generalization gaps, we perform a large-scale correlation analysis between detector generalization performance and score changes in 80 linguistic feature metrics across training and testing settings. We find that linguistic features have significant (p<0.05) correlations with generalization across different test settings.
+L76: While some linguistic features (e.g., passive voice, short sentence ratio) are strongly correlated (Pearson correlation > 0.7) with generalization behavior in specific configurations, there is no universal linguistic signal that explains all cases. Our findings suggest that linguistic features offer a useful, though partial, explanation of generalization, and that detectors may rely on different features depending on their training setup and the test conditions.
+L77: In summary, our main contributions are: (1) A new benchmark for evaluating AI-text detector generalization across 6 prompts, 4 domains, and 7 LLMs; (2) A comprehensive analysis linking linguistic feature shifts to detector generalization performance; (3) Insights into which linguistic features are most predictive of generalization behavior, helping to guide the development of more robust and interpretable detectors.
+L78: Ultimately, our work aims to move beyond raw performance scores toward a deeper understanding of generalization behavior in AI-text detection. While linguistic features alone do not capture the full complexity of generalization, they provide a valuable starting point for interpreting detector behavior in the wild.
+L79: ## 2 Related Work
+L80: ##### Datasets for AI Text Detection.
+L81: Recent benchmarks have advanced AI-generated text detection by covering multiple languages cite53†Wang et al. (2024a) ; cite62†Macko et al. (2024) , domains cite57†Li et al. (2024) ; cite63†Verma et al. (2024) ; cite64†Dugan et al. (2024) , and generator models cite51†Hu et al. (2023) ; cite65†Abassy et al. (2024) ; cite66†Tao et al. (2024) . Several works also consider mixed-authorship settings cite67†Yu et al. (2024) ; cite68†Zhang et al. (2024) .
+L82: However, few datasets jointly evaluate the impact of LLM type, domain, and prompt style in a systematic and controlled manner. Prompt engineering remains particularly underexplored, despite its known influence on generation behavior. To address these gaps, we introduce a new dataset that enables controlled experiments across 7 LLMs, 4 domains, and 6 prompting strategies.
+L83: ##### AI Text Detection Models.
+L84: Detection methods mainly fall into two broad categories: statistical detectors (e.g., GLTR cite69†Gehrmann et al. (2019) , DetectGPT cite70†Mitchell et al. (2023) , Binoculars cite71†Hans et al. (2024) ) and fine-tuned classifiers using pretrained LMs (e.g., RoBERTa cite72†Liu et al. (2019) , DeBERTa cite73†He et al. (2021b) , XLM-R cite60†Conneau et al. (2020) ).
+L85: While statistical detectors offer interpretability, classifier-based approaches consistently achieve stronger performance on benchmark datasets such as M4GT cite53†Wang et al. (2024a) , MULTITuDE cite56†Macko et al. (2023) , and MultiSocial cite62†Macko et al. (2024) . Our study builds on this foundation by fine-tuning two top-performing detectors, XLM-RoBERTa and DeBERTa-V3, across varied training settings to assess their generalization.
+L86: ##### Generalization in Detection.
+L87: Generalization is a core challenge in AI-text detection. Prior work has shown that detectors trained on one task or domain often fail when evaluated on others cite54†Xu et al. (2024) ; cite57†Li et al. (2024) ; cite74†Bhattacharjee et al. (2024) . However, most studies focus on reporting performance gaps without offering deeper explanations. Moreover, while some papers examine prompt-based variation, they typically limit prompting strategies or focus on handcrafted or adversarial prompts cite68†Zhang et al. (2024) .
+L88: In contrast, our work evaluates generalization comprehensively across prompt styles, model architectures, and content domains, using naturalistic generation strategies (e.g., few-shot, CoT, zero-shot) common in practice.
+L89: ##### Explaining Generalization Behavior.
+L90: Several works have proposed high-level explanations for generalization variance. For example, cite54†Xu et al. (2024) attribute success to prompt similarity and human–LLM alignment, while cite57†Li et al. (2024) explore distributional differences using linguistic metrics like POS tags and named entity counts. However, these studies stop short of identifying which specific linguistic features correlate with generalization.
+L91: Our work advances this line of inquiry through a detailed correlation analysis of 80 linguistic features, covering syntactic, stylistic, and discourse-level signals. We quantify feature shifts between training and testing data and link them to generalization performance, revealing interpretable signals, e.g., shifts in pronoun frequency or passive voice usage that influence detector robustness.
+L92: ## 3 Dataset Creation
+L93: 
+L94: To provide a comprehensive study of generalization of AI-text detectors against prompt, LLM and dataset changes, we create our human-written and AI-generated text dataset by incorporating 6 prompting strategies, 7 LLMs with different parameter sizes from different model families, and 4 datasets from different domains.
+L95: ### 3.1 Human-written text
+L96: 
+L97: We first randomly sample the human-written text of different domains from 4 datasets: (1) Scientific paper abstracts from the arXiv dataset (cite75†See et al., 2017 ); (2) Product reviews from the AmazonReviews2023 dataset (cite76†Hou et al., 2024 ); (3) News articles from the CNN/Daily Mail dataset (cite77†Clement et al., 2019 ); (4) Question and answers (QA) from the ASQA dataset (cite78†Stelmakh et al., 2023 ).
+L98: For abstracts and news articles, we use only texts that are at least 1,000 characters long. We set the minimum text length for reviews to 350 characters because the original text is short. For the QA dataset, we sample the longest texts considering the limited size of the data. For each of the datasets, we sample 3,000 examples and split them into training, validation and testing set with a split ratio of 50:17:33.
+L99: ##### Data cleaning for human-written text.
+L100: 
+L101: To remove obvious features for AI-text detectors, we use the following data cleaning steps for all the human-written texts: (1) Removing duplicates; (2) Normalizing punctuation; (3) Removing duplicated whitespace; (4) Removing URLs, e-mail addresses, and emojis; (5) Artifacts such as dates of article; (6) Filtering non-English text; (7) Filter too short text, as text length can impact the difficulty of the task cite79†Wang et al. (2024b) .
+L102: ### 3.2 AI Text Generated with LLMs
+L103: The AI-text part of the dataset consists of texts generated by 7 LLMs using 6 diverse prompting strategies for each dataset. For each human-written text, we apply every LLM and prompting strategy to generate an AI-text counterpart under the same topic. Consequently, for each source dataset, the final data include 3,000 human-written texts and, for every model–prompt combination, 3,000 corresponding AI-generated texts. In total, the dataset comprises 516,000 texts: 12,000 human-written and 504,000 AI-text.
+L104: Each AI text is matched with its human-written text counterpart for performing a binary classification.
+L105: ##### LLMs.
+L106: 
+L107: We employ LLMs with different parameter sizes and from 5 model families: (1) Mistral 123B cite59†Mistral AI (2024) : Mistral-Large-Instruct-2411; (2) Deepseek 70B cite58†DeepSeek-AI (2025) : DeepSeek-R1-Distill-Llama-70B; (3) Llama 70B cite80†Meta AI (2024) : Llama-3.3-70B-Instruct; (4) Qwen 72B, Qwen 32B, Qwen 14B cite81†Yang et al. (2024) : Qwen2.5-72B/-32B/-14B-Instruct; (5) Solar 22B cite82†Upstage (2024) : solar-pro-preview-instruct.
+L108: ##### Prompts.
+L109: We use 6 different prompting strategies based on existing research on prompt engineering. The prompts include: (1) 0-shot prompts that only provide the metadata (e.g., title, text length) of each data sample; (2) 3-shot prompts cite83†Brown et al. (2020) that contains 3 human-written texts from the same dataset for in-context learning; (3) Style prompts cite68†Zhang et al. (2024) which require LLMs to write in a style like the given human-written text example; (4) 0-shot CoT prompts 【84†Kojima et al.
+--------------------------------------------------------------------------------
+Cross-Cultural Expert-Level Art Critique Evaluation with Vision-Language Models (https://arxiv.org/html/2601.07984v1)
+citeturn30695view2 [wordlim: 200] Crawled: last week; Content type: text/html; Source: open({"ref_id":"turn30693view0","lineno":527}); Total lines: 698
+L492: ### B.7 Adversarial Sample Analysis
+L493: 
+L494: Figure cite134†6 visualizes the template-risk detection mechanism, and Table cite135†13 details adversarial sample categories.
+L495: 
+L496: Figure 6: Template risk detection. Samples in the upper-left quadrant (high Tier I, low Tier II) are flagged as “fluent-but-shallow” templates requiring $S_{\text{robust}}$ penalty. The 0.2 gap threshold (dashed line) achieves optimal F1=0.78.
+L497: Category  | N  | %  | TI  | TII  | Fusion
+L498: --- | --- | --- | --- | --- | ---
+L499: Fluent-but-Wrong  | 182  | 4.1%  | 3.91  | 3.60  | 3.73
+L500:    (Quality $>$ 4.0, Accuracy $<$ 3.0)  |  |  |  |  |
+L501: Template-like  | 948  | 21.5%  | 4.02  | 3.62  | 3.78
+L502:    (TI–TII gap $>$ 0.2)  |  |  |  |  |
+L503: Normal samples  | 3,276  | 74.4%  | 3.78  | 3.82  | 3.80
+L504: 
+L505: Table 13: Adversarial sample analysis. Fusion mitigates surface-level gaming by reducing Tier I–Tier II discrepancy and dampening inflated Tier I effects.
+L506: #### Threshold Sensitivity Analysis.
+L507: We validate the 0.2 threshold for template-risk detection (TI–TII gap) across the range $\{0.1,0.15,0.2,0.25,0.3\}$. Using 50 manually-verified template-like samples as ground truth: threshold 0.1 achieves high recall (94%) but low precision (61%), whereas threshold 0.3 achieves high precision (89%) but low recall (52%); the 0.2 threshold provides the best F1 balance (F1=0.78, precision=82%, recall=74%).
+L508: Importantly, ranking stability is robust to threshold choice: Spearman $\rho\geq 0.96$ for all thresholds in $[0.15,0.25]$, confirming the robustness-oriented mechanism is not sensitive to precise threshold tuning.
+L509: ### B.8 Baseline Comparison
+L510: 
+L511: Table cite136†14 compares evaluation methods against human judgement.
+L512: Method  | $\rho$  | $\tau$  | MAE  | Diag.  | No Gold VLM  | Robust
+L513: Proposed (no reference VLM output required, diagnostic, robust)
+L514: ---
+L515: Tier II-only  | 0.756  | 0.583  | 0.43  | ✓  | ✓  | ✓
+L516: Fusion (0.4:0.6)  | 0.670  | 0.491  | 0.58  | ✓  | ✓  | ✓
+L517: Tier I-only  | 0.383  | 0.289  | 0.83  | ✓  | ✓  | $\times$
+L518: Text overlap (computable with expert anchors, unsuitable as unified baseline)
+L519: ---
+L520: BERTScore  | 0.81  | –  | –  | $\times$  | $\times$  | $\times$
+L521: ROUGE-L  | 0.13  | –  | –  | $\times$  | $\times$  | $\times$
+L522: Table 14: Human alignment vs applicability. We report $\rho$ for completeness; however, text overlap metrics are reference-dependent and therefore unsuitable as unified baselines (require expert anchors unavailable in reference-free deployment). Additional limitations include being non-diagnostic (no 5-dim scores) and gameable by templates (Table cite135†13 ).
+L523: Tier II provides diagnostic evaluation without requiring expert-written reference model outputs; it only relies on expert anchors in reference-guided mode.
+L524: ### B.9 Weight Sensitivity Analysis
+L525: 
+L526: Table cite137†15 shows ranking stability under different Tier I weights.
+L527: 
+L528: TI Weight  | Spearman $\rho$  | Top-5 Overlap  | Rank Changes
+L529: --- | --- | --- | ---
+L530: 0.30  | 0.989  | 100%  | 2
+L531: 0.35  | 0.996  | 100%  | 1
+L532: 0.40 (chosen)  | 1.000  | 100%  | 0
+L533: 0.45  | 0.993  | 100%  | 1
+L534: 0.50  | 0.971  | 100%  | 3
+L535: 
+L536: Table 15: Weight sensitivity analysis. Rankings remain stable ($\rho\geq 0.97$) across weight range 0.3–0.5.
+L537: ### B.10 Macro vs Micro Aggregation Stability
+L538: 
+L539: Table cite138†16 confirms that core conclusions are robust to aggregation method choice (macro vs micro averaging).
+L540: 
+L541: Aggregation  | Top-5  | $\rho$  | Gap Dir.
+L542: --- | --- | --- | ---
+L543: Micro vs Macro  | 100%  | 0.99  | Consistent
+L544: Table 16: Macro vs Micro stability. Core conclusions robust to aggregation.
+L545: ### B.11 Ranking Stability Analysis
+L546: 
+L547: Figure cite113†7 visualizes VLM ranking stability via bootstrap resampling (10,000 iterations).
+L548: 
+L549: Figure 7: VLM ranking stability (Bootstrap 10,000 resamples). Most models show perfect stability ($\pm 0.0$); only Qwen3-VL-Flash and Llama4-Scout exhibit minor fluctuation ($\pm 0.5$), confirming evaluation robustness.
+L550: ### B.12 Mixed-Effects Model Forest Plot
+L551: 
+L552: Figure cite116†8 presents the full mixed-effects model estimates for cultural bias with 95% confidence intervals.
+L553: 
+L554: Figure 8: Cultural bias: Mixed-effects model estimates. All non-Western cultures score significantly lower than Western (negative effect sizes). Islamic art shows strongest bias ($-0.381$); Chinese shows smallest gap ($-0.186$). All CIs exclude zero, confirming systematic Western advantage.
+L555: ### B.13 Error Taxonomy Analysis
+L556: 
+L557: Figure cite120†9 presents failure mode distribution across cultures and dimensions.
+L558: 
+L559: Figure 9: Error taxonomy. Top: Low-score distribution by culture (n=321 cases with $2.0<\text{score}<3.2$). Korean (34%) and Islamic (21%) show highest failure rates; Western shows lowest (3%). Bottom: Dimension-wise failure rates. Alignment and Accuracy fail in 90% of low-score cases, indicating L3–L5 cultural understanding as the primary bottleneck.
+L560: ### B.14 Balanced Subset Validation
+L561: 
+L562: To address culture imbalance concerns (Western: 4,270 vs Indian: 98), we validate conclusions on 5 randomly sampled balanced subsets (98 per culture, 686 total each). Table cite139†17 shows all main conclusions hold consistently.
+L563: Conclusion  | Holds  | Rate  | Status
+L564: Western-Chinese gap  | 5/5  | 100%  | ROBUST
+L565: Level difficulty trend  | 5/5  | 100%  | ROBUST
+L566: Tier I-II gap  | 5/5  | 100%  | ROBUST
+L567: Dataset hash: b8a34e5f (6,804 records)
+L568: ---
+L569: Table 17: Balanced subset validation. All three main conclusions hold in 5/5 randomly sampled balanced subsets, confirming results are not driven by culture imbalance.
+L570: ## Appendix C 5-Level Framework Dimensions
+L571: 
+L572: Table cite140†18 summarizes the 165 culture-specific dimensions across six traditions. Each culture has L1–L5 levels; dimensions marked with $\star$ are mandatory for quality validation ($\geq$70% coverage threshold).
+L573: Culture  | L1  | L2  | L3  | L4  | L5  | Total
+L574: --- | --- | --- | --- | --- | --- | ---
+L575: Chinese (CN)  | 6  | 6  | 6  | 6  | 6  | 30
+L576: Western (WE)  | 6  | 6  | 5  | 4  | 4  | 25
+L577: Japanese (JP)  | 6  | 6  | 5  | 5  | 5  | 27
+L578: Korean (KR)  | 5  | 5  | 5  | 5  | 5  | 25
+L579: Islamic (IS)  | 5  | 5  | 6  | 6  | 6  | 28
+L580: Indian (IN)  | 6  | 6  | 6  | 6  | 6  | 30
+L581: Total  | 34  | 34  | 33  | 32  | 32  | 165
+L582: Table 18: Culture-specific dimension counts by level.
+L583: #### Chinese (CN, 30 dims).
+L584: 
+L585: L1 (Visual): colour usage, composition, brushstroke texture, spatial levels, line expression, negative space (
+L586: 
+L587: 留白). L2 (Technical): cun texture strokes (
+L588: 皴法), brush techniques, ink gradation, colouring, brush dynamics, inscriptions/seals. L3 (Symbolic): imagery interpretation, symbolic meaning, cultural motifs, poetry-painting unity, literati aesthetics, aesthetic ideals. L4 (Historical): dynastic style, artist background, lineage, school characteristics, innovation, legacy. L5 (Philosophical): yijing^{⋆} (
+L589: 
+L590: 意境, artistic conception), qiyun shengdong^{⋆} (
+L591: 气韵生动, spirit resonance), heaven-human unity, aesthetic taste, form-spirit relation, void-solid interplay.
+L592: #### Western (WE, 25 dims).
+L593: 
+L594: L1: colour palette, line quality, composition, perspective, texture, chiaroscuro. L2: brushwork, colouring technique, medium/materials, subject/genre, style/school, technical mastery. L3: iconography, symbolism, signature/inscription, patronage/function, literary references. L4: period evolution, artist biography, influence/legacy, provenance. L5: aesthetic ideals, sublime/emotion, cross-cultural influence, artistic value.
+L595: #### Japanese (JP, 27 dims).
+L596: L1: colour, line, composition, spatial treatment, texture, light/shadow. L2: brushwork, colouring, subject matter, school/style, period style, innovation. L3: iconographic symbols, aesthetic concepts (wabi-sabi^{⋆}, mono no aware^{⋆}), inscriptions/seals, mounting format, aesthetic ideals. L4: period characteristics, school evolution, artistic lineage, social context, artistic exchange.
+L597: L5: wabi-sabi^{⋆} (imperfect beauty), mono no aware^{⋆} (pathos of things), yūgen (profound grace), narrative aesthetics, artistic philosophy.
+L598: #### Korean (KR, 25 dims).
+L599: 
+L600: L1: colour usage, line expression, composition, spatial treatment, spirit resonance (
+L601: 기운). L2: brush techniques, ink methods, texture strokes, material properties, mounting format. L3: landscape imagery, Four Gentlemen, Confucian-Daoist spirit, minhwa folk painting, court painting. L4: dynastic periods (Goryeo/Joseon), school lineage, artists, Sino-Korean exchange, provenance. L5: literati aesthetics, jingyeong^{⋆} (true-view landscape), genre aesthetics, Korean identity, artistic value.
+L602: #### Islamic (IS, 28 dims).
+L603: L1: colour (lapis lazuli blue, vermilion), line quality, composition, spatial treatment, decorative patterns (arabesques). L2: negārgāri technique, pigment preparation, calligraphy (nasta‘līq), paper craft, preservation. L3: epic narrative (Shāhnāmeh), court life, religious themes, garden imagery (Chār Bāgh), architecture, natural symbols. L4: Persian schools (Herat, Tabriz, Shiraz), Mughal fusion, Ottoman tradition, Central Asian, dynastic patronage, manuscript tradition (kitābkhāneh).
+

@@ -1,0 +1,902 @@
+LLM-Rosetta: A Hub-and-Spoke Intermediate Representationfor Cross-Provider LLM API Translation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+The O⁡(N2)O(N^{2}) problem.
+Hub-and-spoke as O⁡(N)O(N) solution.
+Contributions.
+Paper organization.
+2 Related Work
+2.1 LLM API Ecosystem
+2.2 SDK Wrappers and Abstraction Layers
+2.3 Compiler Intermediate Representations
+2.4 Positioning of LLM-Rosetta
+3 Design
+3.1 Design Goals
+3.2 Intermediate Representation
+3.2.1 Content Parts
+3.2.2 Messages
+3.2.3 Tool Definitions
+3.2.4 Generation Configuration
+3.2.5 Request and Response
+3.3 Ops-Composition Architecture
+4 Implementation
+4.1 Type System
+4.2 Converter Pipeline
+4.3 Streaming
+4.4 Provider Auto-Detection
+4.5 Gateway Proxy
+5 Evaluation
+5.1 Evaluation Methodology
+5.2 Round-Trip Fidelity (RQ1)
+5.2.1 Test Design
+5.2.2 Results
+5.2.3 Open Responses Compliance
+5.3 Streaming Correctness (RQ2)
+5.3.1 Test Design
+5.3.2 Results
+5.4 Cross-Provider Translation (RQ3)
+5.4.1 Test Design
+5.4.2 Results
+5.5 Performance Overhead (RQ4)
+5.5.1 Test Design
+5.5.2 Results
+5.5.3 Comparison with LiteLLM
+5.6 Threats to Validity
+Construct validity.
+Internal validity.
+External validity.
+6 Discussion
+6.1 Semantic vs. Syntactic Translation
+6.2 Metadata Preservation and Round-Trip Fidelity
+6.3 Limitations
+Coverage.
+API evolution.
+Semantic gaps.
+Performance at scale.
+6.4 Deployment Experience
+6.5 Future Directions
+Provider coverage.
+Conformance testing.
+Schema evolution.
+7 Conclusion
+References
+License: CC BY 4.0
+arXiv:2604.09360v1 [cs.SE] 10 Apr 2026
+LLM-Rosetta: A Hub-and-Spoke Intermediate Representation
+for Cross-Provider LLM API Translation
+Peng Ding
+Affiliation: University of Chicago
+Email: dingpeng@uchicago.edu
+Abstract
+The rapid proliferation of Large Language Model (LLM) providers—each exposing proprietary API formats—has created a fragmented ecosystem where applications become tightly coupled to individual vendors. Switching or bridging providers requires O⁡(N2)O(N^{2}) bilateral adapters, impeding portability and multi-provider architectures. We observe that despite substantial syntactic divergence, the major LLM APIs share a common semantic core: the practical challenge is the combinatorial surface of syntactic variations, not deep semantic incompatibility. Based on this finding, we present LLM-Rosetta, an open-source translation framework built on a hub-and-spoke Intermediate Representation (IR) that captures the shared semantic core—messages, content parts, tool calls, reasoning traces, and generation controls—in a 9-type content model and 10-type stream event schema. A modular Ops-composition converter architecture enables each API standard to be added independently. LLM-Rosetta supports bidirectional conversion (provider↔\leftrightarrowIR ↔\leftrightarrowprovider) for both request and response payloads, including chunk-level streaming with stateful context management. We implement converters for four API standards (OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Google GenAI), covering the vast majority of commercial providers. Empirical evaluation demonstrates lossless round-trip fidelity, correct streaming behavior, and sub-100 µs conversion overhead—competitive with LiteLLM’s single-pass approach while providing bidirectionality and provider neutrality. LLM-Rosetta passes the Open Responses compliance suite and is deployed in production at Argonne National Laboratory. Code is available at https://github.com/Oaklight/llm-rosetta.
+A Preprint
+Keywords LLM ⋅\cdot
+API Translation ⋅\cdot
+Intermediate Representation ⋅\cdot
+Interoperability ⋅\cdot
+Streaming ⋅\cdot
+Multi-Provider
+1 Introduction
+Large Language Models (LLMs) (Achiam et al., 2023; Gemini Team et al., 2023) are increasingly accessed through cloud-hosted APIs, yet the ecosystem lacks a universal wire format.
+OpenAI’s Chat Completions (OpenAI, 2024), Anthropic’s Messages (Anthropic, 2024a), Google’s Generative AI (Google, 2024), and the newer OpenAI Responses API (OpenAI, 2025) each define their own schemas for messages, tool calls, streaming, and generation controls.
+This divergence forces application developers to write provider-specific glue code, and organizations evaluating multiple models face a combinatorial integration burden.
+The O⁡(N2)O(N^{2}) problem.
+Given NN providers, naïve pairwise translation requires (N2)\binom{N}{2} bilateral adapters.
+Each adapter must handle request construction, response parsing, streaming event mapping, and tool-call serialization—all of which drift as providers evolve their APIs.
+In practice, most projects either lock into a single vendor or adopt heavyweight SDK wrappers that hide—but do not solve—the underlying format mismatch.
+Hub-and-spoke as O⁡(N)O(N) solution.
+The hub-and-spoke pattern—routing all conversions through a single Intermediate Representation (IR)—is well established in compiler infrastructure (Lattner and Adve, 2004) and data interchange (Apache Software Foundation, 2016), where it reduces M×NM\times N adapters to M+NM+N.
+LLM API translation is a structurally simpler domain (dict-to-dict mapping rather than semantic-preserving program transformation), but the same combinatorial argument applies: with NN providers and multiple feature dimensions, pairwise adapters grow quadratically.
+We apply the hub-and-spoke principle to this domain.
+Contributions.
+We present LLM-Rosetta, an open-source framework that introduces:
+1.
+An empirical characterization of API divergence: despite substantial syntactic differences, the four major LLM providers share a common semantic core that can be captured by a 9-type content model and 10-type stream event schema. The practical difficulty lies not in deep semantic gaps but in the combinatorial surface of syntactic variations across providers and feature dimensions (section 3.2).
+2.
+A typed Intermediate Representation (IR) and Ops-composition converter architecture that exploit this observation: since divergence is predominantly syntactic, a provider-neutral IR can faithfully represent all four formats, and each provider adapter can be assembled from four orthogonal operations modules (content, message, tool, config) with effort independent of existing providers (section 3).
+3.
+Bidirectional conversion with streaming support: request and response payloads are translated in both directions (provider↔\leftrightarrowIR ↔\leftrightarrowprovider), and chunk-level streaming is handled through ten typed event kinds with stateful context management (section 4).
+4.
+An empirical evaluation demonstrating lossless round-trip fidelity, correct streaming behavior, and sub-millisecond conversion overhead, validated by 1,364 tests and the Open Responses compliance suite, and deployed in production at Argonne National Laboratory (section 5).
+LLM-Rosetta currently supports four API standards—OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Google Generative AI—which collectively cover the vast majority of commercial LLM providers, as most adopt one of these wire formats.
+The code is released under the MIT license at https://github.com/Oaklight/llm-rosetta.
+Paper organization.
+Section 2 surveys related work.
+Section 3 presents the IR design and converter architecture.
+Section 4 describes the implementation, including streaming and the gateway proxy.
+Section 5 evaluates round-trip fidelity, streaming correctness, and performance overhead.
+Section 6 discusses limitations and future directions.
+Section 7 concludes.
+2 Related Work
+2.1 LLM API Ecosystem
+The landscape of LLM APIs has evolved rapidly since the release of GPT-3 (Brown et al., 2020).
+OpenAI’s Chat Completions API (OpenAI, 2024) established an early de facto standard based on role-tagged messages (system, user, assistant), but subsequent providers diverged.
+Anthropic’s Messages API (Anthropic, 2024a) introduced a separate system parameter and block-typed content arrays.
+Google’s Generative AI API (Google, 2024) adopted a contents/parts schema with user/model roles.
+OpenAI itself introduced the Responses API (OpenAI, 2025), replacing the chat message paradigm with an items-based model where tool calls, reasoning, and text output are sibling items rather than nested content parts.
+This fragmentation extends to tool calling (Schick et al., 2023; Patil et al., 2023; Qin et al., 2023) (function definitions and invocation formats), streaming (SSE event schemas), multi-modal content (Liu et al., 2024) (image, audio, file encoding), and generation controls (temperature, top-p, reasoning budgets (Wei et al., 2022)).
+Table 1 summarizes key differences across providers.
+Table 1: API format divergence across major LLM providers.
+Aspect
+OpenAI Chat
+Anthropic
+Google GenAI
+OpenAI Responses
+Message unit
+messages[]
+messages[]
+contents[]
+input[] items
+System prompt
+role in array
+top-level param
+role in array
+instructions
+Content model
+string or parts
+block array
+parts[]
+items with type
+Tool calls
+tool_calls[]
+content block
+functionCall
+item with type
+Streaming
+delta chunks
+event types
+candidate deltas
+response events
+Reasoning
+—
+thinking
+thought
+reasoning item
+2.2 SDK Wrappers and Abstraction Layers
+Several projects attempt to unify LLM access at different levels of abstraction.
+Multi-provider frameworks.
+LangChain (LangChain, Inc., 2024) and Microsoft’s Semantic Kernel (Microsoft, 2024) are the two most widely adopted multi-provider LLM frameworks.
+Both provide high-level abstractions (chains, agents, planners) that internally dispatch to provider-specific SDK clients.
+Their multi-provider support operates at the application level: each provider integration is a separate adapter class that maps framework-level abstractions to native API calls.
+This design prioritizes developer ergonomics for building LLM applications but does not expose a reusable, format-level translation layer—cross-provider conversion of raw API payloads is not a supported use case.
+SDK-level proxies.
+LiteLLM (BerriAI, 2024) provides an OpenAI-compatible proxy that translates requests at the SDK level, mapping all providers into the OpenAI Chat Completions format.
+While widely adopted, this approach uses a single provider’s schema as the lingua franca, which loses provider-specific features (e.g., Anthropic’s cache control, Google’s grounding metadata) and cannot represent constructs that the target format lacks.
+AI Gateway (Portkey, 2024) and similar commercial proxies route requests to multiple providers but typically rely on the OpenAI Chat format as the canonical schema, inheriting the same representational limitations.
+Specification and protocol efforts.
+The OpenRouter (OpenRouter, 2024) service aggregates providers behind a unified API, and the Open Responses (OpenRouter, 2025) initiative proposes the OpenAI Responses API format as an open standard adopted by multiple inference providers.
+At a different layer, the Model Context Protocol (MCP) (Anthropic, 2024b) standardizes how LLM applications discover and invoke tools, but does not address the request/response format translation between providers that LLM-Rosetta targets.
+2.3 Compiler Intermediate Representations
+The hub-and-spoke pattern is well established in compiler design.
+LLVM’s IR (Lattner and Adve, 2004) decouples source languages from target architectures, reducing adapter complexity from O⁡(M×N)O(M\times N) to O⁡(M+N)O(M+N).
+Apache Arrow (Apache Software Foundation, 2016) applies the same principle to columnar data interchange between analytics systems.
+Protocol Buffers (Google, 2008) and Apache Thrift (Slee et al., 2007) serve as language-neutral serialization IRs.
+LLM-Rosetta adapts this hub-and-spoke strategy to the LLM API domain, which is structurally simpler than compiler IR (dict-to-dict mapping rather than semantic-preserving program transformation) but faces the same combinatorial cost: a typed IR captures the semantic union of provider formats, while per-provider converters serve as frontends and backends.
+2.4 Positioning of LLM-Rosetta
+Unlike application frameworks (LangChain, Semantic Kernel) that abstract over providers at the application level, LLM-Rosetta operates at the API format level, enabling raw payload translation without requiring adoption of a specific application framework.
+Unlike SDK wrappers (LiteLLM) that privilege one provider’s format, LLM-Rosetta defines a neutral IR designed from the ground up for cross-provider translation.
+Unlike gateway proxies that focus on routing, LLM-Rosetta provides bidirectional, field-level conversion with explicit metadata preservation for lossless round-trips.
+Unlike specification efforts (Open Responses), LLM-Rosetta is a runtime translation engine that can bridge existing, incompatible APIs without requiring providers to change their formats.
+These distinctions do not imply that LLM-Rosetta supersedes existing tools.
+LiteLLM’s single-provider lingua franca is pragmatically effective for the common case of forwarding requests to diverse backends, and its ecosystem—100+ providers, built-in rate limiting, caching, observability, and an active community of over 15,000 GitHub stars—makes it the more practical choice for applications that do not require bidirectional or cross-provider translation.
+LangChain and Semantic Kernel provide application-level abstractions (chains, agents, planners) that LLM-Rosetta does not attempt to replicate.
+LLM-Rosetta is complementary: it can serve as the format-translation engine within such frameworks or gateways, handling the low-level payload conversion that they currently implement ad hoc.
+Table 2 summarizes the positioning.
+Table 2: Comparison of LLM-Rosetta with related approaches. × = not supported; n/a = not applicable (specification, not implementation).
+Feature
+LangChain
+LiteLLM
+AI Gw.
+Open R.
+LLM-Rosetta
+Provider-neutral IR
+×
+×
+×
+n/a
+✓
+Bidir. format conv.
+×
+×
+×
+n/a
+✓
+Lossless round-trip
+×
+×
+×
+n/a
+✓
+Streaming support
+✓
+✓
+✓
+✓
+✓
+App framework
+✓
+×
+×
+×
+×
+Providers (≥\geq50)
+✓
+✓
+✓
+×
+×
+3 Design
+This section presents the design of LLM-Rosetta’s Intermediate Representation and converter architecture.
+We first state the design goals (section 3.1), then describe the IR schema (section 3.2), and finally introduce the Ops-composition pattern that structures each provider converter (section 3.3).
+3.1 Design Goals
+1.
+Semantic completeness. The IR must be expressive enough to represent any construct found in supported providers—messages, multi-modal content, tool definitions and invocations, reasoning traces, generation controls, and streaming events—without loss of application-relevant information.
+2.
+Provider neutrality. No single provider’s format should be privileged. The IR is designed from the union of all supported schemas, not as an extension of any one.
+3.
+Bidirectional fidelity. Conversion must work in both directions (provider→\toIR and IR →\toprovider) so that LLM-Rosetta can serve as both a request translator and a response translator.
+We define lossless round-trip as follows: let 𝑡𝑜A\mathit{to}_{A} and 𝑓𝑟𝑜𝑚A\mathit{from}_{A} denote the to-IR and from-IR converters for provider AA, and let ≡s\equiv_{s} denote structural equality (identical JSON trees modulo key ordering and insignificant whitespace). A round-trip is lossless in preserve mode when 𝑓𝑟𝑜𝑚A(𝑡𝑜A(x))≡sx\mathit{from}_{A}(\mathit{to}_{A}(x))\equiv_{s}x for every valid provider payload xx. In strip mode, provider-specific metadata fields (e.g., cache_control, thought_signature) are intentionally discarded, so the property weakens to semantic equivalence: all application-relevant fields (message roles, content, tool definitions, generation parameters) are preserved, while provider-internal annotations may be dropped.
+4.
+Incremental extensibility. Adding a new provider should require implementing only the provider-specific converter without modifying the IR schema or existing converters.
+5.
+Streaming compatibility. The design must support chunk-level streaming translation, not just batch request/response conversion.
+3.2 Intermediate Representation
+The IR is defined as a set of typed data structures organized into eight modules: content parts, messages, tools, generation configuration, requests, responses, stream events, and extension types.
+Figure 1 provides an overview.
+Figure 1: Overview of the IR schema. Arrows indicate containment relationships.
+3.2.1 Content Parts
+Content parts are the atomic units of message content.
+The IR defines the following part types:
+•
+TextPart: Plain text content.
+•
+ImagePart: Image data (inline base64 or URL reference) with optional detail level.
+•
+AudioPart: Audio data with media type.
+•
+FilePart: Arbitrary file attachments.
+•
+ToolCallPart: A tool invocation with call ID, tool name, and JSON input.
+•
+ToolResultPart: The result of a tool invocation, linked by call ID.
+•
+ReasoningPart: Chain-of-thought or “thinking” content, with optional signature for caching.
+•
+RefusalPart: Model refusal with reason text.
+•
+CitationPart: URL or text citations attached to generated content.
+Each part carries a type discriminator and an optional provider_metadata field for round-trip preservation of provider-specific attributes.
+3.2.2 Messages
+Messages are role-tagged containers of content parts:
+•
+SystemMessage: System-level instructions (role = system).
+•
+UserMessage: User input, including text and images (role = user).
+•
+AssistantMessage: Model output, including text, tool calls, and reasoning (role = assistant).
+•
+ToolMessage: Tool execution results (role = tool).
+Each message carries a MessageMetadata record with optional fields for message ID, timestamp, streaming state, and a custom dictionary for converter-specific round-trip data.
+3.2.3 Tool Definitions
+A ToolDefinition specifies a callable tool with:
+•
+name: Unique identifier.
+•
+description: Natural-language description for the model.
+•
+parameters: JSON Schema object defining the input shape.
+•
+type: Tool category (function or mcp).
+ToolChoice controls tool selection behavior with modes none, auto, any, and tool (force a specific tool).
+ToolCallConfig provides additional controls such as disabling parallel tool calls.
+3.2.4 Generation Configuration
+GenerationConfig captures sampling and decoding parameters: temperature, top-p, top-k, max tokens, stop sequences, frequency/presence penalties, logit biases, seed, and logprobs settings.
+ReasoningConfig controls chain-of-thought behavior (enabled, effort level, budget tokens).
+StreamConfig and ResponseFormatConfig handle streaming and structured output settings.
+3.2.5 Request and Response
+IRRequest has two required fields—model and messages—and optional fields for system instruction, tools, tool choice, generation config, response format, streaming, reasoning, caching, and a provider_extensions bag for rare provider-specific parameters that do not warrant first-class IR fields.
+IRResponse contains an ID, timestamp, model identifier, a list of ChoiceInfo (each wrapping a message and finish reason), and optional usage statistics (UsageInfo with prompt, completion, reasoning, and cache token counts).
+3.3 Ops-Composition Architecture
+Rather than implementing each converter as a monolithic class, LLM-Rosetta factors conversion logic into four orthogonal Ops modules.
+A monolithic converter intermingles content-level concerns (e.g., base64 image encoding) with request-level concerns (e.g., parameter mapping), causing cross-cutting logic like JSON Schema sanitization to be duplicated across all providers.
+An alternative flat-parameter approach—mapping all provider fields through a single unified body—conflates semantic differences (what a field means) with mechanical differences (how it is serialized), making the converter brittle when providers share structure but differ in semantics.
+The domain-factored Ops pattern isolates genuinely orthogonal concerns:
+1.
+ContentOps: Converts individual content parts (text, images, tool calls, reasoning, citations) between provider format and IR.
+2.
+MessageOps: Converts message sequences, handling role mapping, system prompt extraction, and multi-turn conversation structure. Delegates to ContentOps for part-level conversion.
+3.
+ToolOps: Converts tool definitions and tool choice configurations.
+4.
+ConfigOps: Converts generation parameters, reasoning settings, response format, and caching configuration.
+A base class defines the abstract interface for each Ops module.
+A concrete converter is assembled by specifying four Ops implementations:
+Ops-composition pattern.
+⬇
+1
+class AnthropicConverter(BaseConverter):
+2
+content_ops_class = AnthropicContentOps
+3
+message_ops_class = AnthropicMessageOps
+4
+tool_ops_class = AnthropicToolOps
+5
+config_ops_class = AnthropicConfigOps
+This design provides three benefits:
+•
+Separation of concerns: Content-level quirks (e.g., Google’s parts nesting) are isolated from message-level concerns (e.g., Anthropic’s separate system parameter).
+•
+Reuse: Providers sharing a sub-format can reuse Ops modules. For example, OpenAI Responses reuses aspects of OpenAI Chat’s content ops.
+•
+Testability: Each Ops module can be unit-tested in isolation against known input/output pairs.
+Figure 2 illustrates the overall architecture, showing how the hub-and-spoke pattern connects four provider converters through the central IR.
+Figure 2: Hub-and-spoke architecture of LLM-Rosetta. Each provider converter translates bidirectionally between its native format and the IR. Cross-provider translation composes two converters through the IR hub.
+4 Implementation
+LLM-Rosetta is implemented in Python (approximately 23,000 lines of library code, excluding vendored dependencies) and released under the MIT license.
+This section describes the key implementation aspects: type system (section 4.1), converter pipeline (section 4.2), streaming (section 4.3), provider auto-detection (section 4.4), and the gateway proxy (section 4.5).
+4.1 Type System
+The IR is implemented using Python’s TypedDict with discriminated unions.
+Content parts use a type field as the discriminator:
+Discriminated union for content parts (simplified).
+⬇
+1
+class TextPart(TypedDict):
+2
+type: Literal["text"]
+3
+text: str
+4
+5
+class ToolCallPart(TypedDict):
+6
+type: Literal["tool_call"]
+7
+tool_call_id: str
+8
+tool_name: str
+9
+tool_input: dict[str, Any]
+Role-specific content types constrain which parts may appear in each message role (e.g., ToolCallPart only in assistant messages), providing static type safety.
+Runtime validation functions (validate_ir_request, validate_ir_response) enforce structural invariants.
+4.2 Converter Pipeline
+Each converter exposes six primary entry points:
+•
+request_to_provider(ir_request) →\to provider request dict
+•
+request_from_provider(provider_request) →\to IRRequest
+•
+response_to_provider(ir_response) →\to provider response dict
+•
+response_from_provider(provider_response) →\to IRResponse
+•
+stream_response_to_provider(ir_events) →\to provider SSE chunks
+•
+stream_response_from_provider(chunks) →\to IR stream events
+Two additional convenience methods (messages_to_provider, messages_from_provider) provide direct message-level conversion without full request wrapping.
+A ConversionContext object threads through the pipeline, accumulating warnings and carrying state between conversion stages.
+The context supports two metadata modes:
+•
+Strip mode (default): Provider-specific metadata is discarded during conversion, producing clean IR output suitable for cross-provider forwarding.
+•
+Preserve mode: Provider-specific metadata is retained in provider_metadata fields, enabling lossless round-trip conversion (A→\toIR →\toA).
+Internally, each entry point orchestrates the four Ops modules.
+For example, request_from_provider proceeds in stages: (1) ConfigOps extracts generation parameters, (2) ToolOps extracts tool definitions, (3) MessageOps (calling ContentOps per part) converts the conversation, and (4) provider-specific extensions are captured in provider_extensions.
+4.3 Streaming
+Streaming translation is a key design challenge because providers use fundamentally different Server-Sent Events (SSE) (W3C, 2015) schemas.
+OpenAI Chat emits delta chunks within a choices[] array; Anthropic emits typed events (content_block_start, content_block_delta, content_block_stop); Google emits candidates[] with accumulated parts; and OpenAI Responses emits item-level events.
+LLM-Rosetta normalizes these into ten IR stream event types:
+1.
+stream_start: Session metadata (response ID, model, timestamp).
+2.
+stream_end: End of stream.
+3.
+content_block_start: Begin a new content block (text, tool call, reasoning).
+4.
+content_block_end: Finish a content block.
+5.
+text_delta: Incremental text fragment.
+6.
+reasoning_delta: Incremental reasoning/thinking fragment.
+7.
+tool_call_start: Begin a tool call (ID, name).
+8.
+tool_call_delta: Incremental tool call arguments (JSON fragment).
+9.
+finish: Generation complete, with finish reason.
+10.
+usage: Token usage statistics.
+A StreamContext extends ConversionContext with streaming-specific state: the current block index, a tool-call ID-to-name mapping, accumulated tool-call argument buffers, and deferred payloads for usage and finish events that arrive before the logical end of a content block.
+This stateful design ensures correct ordering of events even when providers report information out of sequence (e.g., Google emitting finish reason before the final content delta).
+4.4 Provider Auto-Detection
+LLM-Rosetta includes a heuristic auto-detection module that infers the source provider format from a request body’s structure.
+The detection examines field presence and types in priority order:
+1.
+Google GenAI: Presence of contents with parts sub-structure.
+2.
+OpenAI Responses: Presence of input or output with typed items.
+3.
+Anthropic vs. OpenAI Chat: Both use messages; differentiated by Anthropic’s separate system parameter, anthropic_version field, or block-typed content arrays.
+Auto-detection enables the gateway proxy to accept requests in any supported format without explicit provider specification.
+4.5 Gateway Proxy
+The LLM-Rosetta gateway is an HTTP proxy built on Starlette (Encode, 2024) that performs live cross-provider translation.
+Given a request in format A destined for a provider expecting format B, the gateway:
+1.
+Auto-detects (or receives as configuration) the source format.
+2.
+Converts the request: A →\to IR →\to B.
+3.
+Forwards to the upstream provider.
+4.
+Converts the response: B →\to IR →\to A.
+5.
+Returns the translated response to the client.
+For streaming requests, the gateway performs chunk-level SSE translation: each upstream SSE event is converted to an IR stream event, then re-serialized into the source provider’s SSE format, and forwarded to the client in real time.
+This ensures that streaming latency overhead is bounded by per-chunk conversion time rather than total response time.
+The gateway supports configurable provider endpoints and API keys, making it suitable for local development, testing, and production deployment behind a reverse proxy.
+5 Evaluation
+We evaluate LLM-Rosetta along four dimensions: round-trip fidelity (section 5.2), streaming correctness (section 5.3), cross-provider translation (section 5.4), and conversion performance overhead (section 5.5).
+5.1 Evaluation Methodology
+We organize evaluation around the following research questions:
+•
+RQ1: Does round-trip conversion (A→\toIR →\toA) preserve all application-relevant fields?
+•
+RQ2: Does streaming translation maintain correct event ordering and content integrity?
+•
+RQ3: Does cross-provider translation (A→\toIR →\toB) preserve semantic content?
+•
+RQ4: What is the latency and throughput overhead of conversion?
+5.2 Round-Trip Fidelity (RQ1)
+5.2.1 Test Design
+We construct a corpus of representative request and response payloads covering:
+•
+Simple text conversations (single and multi-turn).
+•
+Multi-modal content (text + images, files).
+•
+Tool definitions, tool calls, and tool results.
+•
+Reasoning/thinking content with signatures.
+•
+Complex generation configurations (temperature, top-p, stop sequences, reasoning budgets).
+•
+Edge cases: empty content, refusals, citations, multiple choices.
+For each payload in provider format A, we perform the round-trip A →\to IR →\to A and compare the output against the original using structural equality (ignoring field ordering and whitespace).
+5.2.2 Results
+Table 3: Unit test counts per conversion category and provider. All tests pass in both strip and preserve metadata modes.
+Category
+OpenAI Chat
+Anthropic
+Google
+Responses
+Content parts
+22
+31
+33
+43
+Messages
+38
+23
+28
+27
+Tool defs/calls
+25
+28
+31
+46
+Config/params
+23
+26
+47
+44
+Full round-trip
+31
+41
+51
+40
+Streaming
+56
+70
+59
+70
+Total
+199
+229
+255
+304
+Table 3 summarizes the test coverage.
+The suite contains 987 converter-level unit tests across the four providers, plus 377 additional tests for IR types, base converter logic, auto-detection, and public API surface (1,364 total).
+In preserve mode, all round-trip tests achieve lossless field-level equality.
+In strip mode, provider-specific metadata (e.g., Anthropic’s cache_control, Google’s thought_signature) is intentionally discarded, but all semantically meaningful fields are preserved.
+5.2.3 Open Responses Compliance
+LLM-Rosetta passes all six tests in the official Open Responses compliance test suite (OpenRouter, 2025), covering non-streaming text generation, streaming, tool use, multi-turn conversation, image input, and structured output.
+5.3 Streaming Correctness (RQ2)
+5.3.1 Test Design
+We capture real streaming sessions from each provider (using recorded SSE traces) and verify that:
+•
+Every upstream event produces the correct sequence of IR events.
+•
+Event ordering is maintained (start before deltas, deltas before end).
+•
+Tool call arguments are correctly accumulated across delta events.
+•
+Usage and finish events are correctly positioned.
+•
+Re-serialization into the source format produces valid SSE.
+5.3.2 Results
+The streaming test suite contains 255 test cases (56 OpenAI Chat, 70 Anthropic, 59 Google, 70 Responses; see table 3).
+All four provider converters pass with 100% event-sequence accuracy.
+The StreamContext correctly handles provider-specific ordering differences:
+•
+Anthropic’s explicit block lifecycle events map directly to IR block events.
+•
+OpenAI Chat’s implicit block boundaries (inferred from delta field presence) are correctly detected.
+•
+Google’s accumulated-part model (where each chunk contains the full response so far) is correctly differenced to produce incremental deltas.
+•
+OpenAI Responses’ item-level events are correctly mapped to block-level IR events.
+5.4 Cross-Provider Translation (RQ3)
+Round-trip fidelity (A→\toIR →\toA) is the easier case because both legs of the conversion share the same provider logic.
+Cross-provider translation (A→\toIR →\toB) is the more demanding scenario: it exercises both converters in tandem and exposes semantic gaps between formats.
+5.4.1 Test Design
+We test cross-provider conversion across all six provider pairs (OpenAI Chat↔\leftrightarrowAnthropic, OpenAI Chat↔\leftrightarrowGoogle, OpenAI Chat↔\leftrightarrowResponses, Anthropic↔\leftrightarrowGoogle, Anthropic↔\leftrightarrowResponses, Google↔\leftrightarrowResponses) covering:
+•
+Simple text conversations (role mapping, content structure).
+•
+Multi-modal content (text + inline images).
+•
+Tool definitions and tool choice configuration.
+•
+Multi-turn conversations with mixed roles.
+•
+Bidirectional consistency: A→\toB→\toA should recover the semantic content of A.
+5.4.2 Results
+All 10 cross-provider conversion tests pass.
+Semantic content—message text, roles, tool names, tool parameters, and image data—is preserved across all provider pairs.
+The following provider-specific adaptations are correctly handled:
+•
+Role mapping: Google’s model role is correctly mapped to/from assistant in other providers.
+•
+System prompt location: Anthropic’s top-level system parameter is correctly extracted from or merged into the message array used by other providers.
+•
+Content structure: OpenAI Chat’s string-or-array content, Anthropic’s block arrays, Google’s parts nesting, and Responses’ typed items are all interconvertible.
+•
+Tool definitions: Function schema and tool choice configurations translate correctly despite differing nesting structures.
+The primary limitation of cross-provider translation is the expected loss of provider-specific features that have no equivalent in the target format.
+For example, Anthropic’s cache_control annotations are not representable in Google’s format, and Google’s grounding_metadata has no Anthropic counterpart.
+These features are silently dropped during cross-provider conversion (with warnings recorded in the ConversionContext), while all semantically shared fields are preserved.
+5.5 Performance Overhead (RQ4)
+5.5.1 Test Design
+We measure conversion latency using microbenchmarks on representative payloads of varying complexity (simple text, multi-turn with tools, multi-modal).
+Each benchmark performs 1,000 iterations of the full round-trip conversion (provider→\toIR →\toprovider) using Python’s time.perf_counter_ns() for nanosecond-resolution timing.
+Benchmarks were run on a single core of an Intel Core Ultra 7 155H (32 GB RAM) with CPython 3.10 on Linux 6.19.
+5.5.2 Results
+Table 4: Round-trip conversion overhead in microseconds (median over 1,000 iterations). “Req” denotes request round-trip (provider→\toIR →\toprovider); “Resp” denotes response round-trip.
+Payload
+OpenAI Chat
+Anthropic
+Google
+Responses
+Simple text (req)
+21
+24
+24
+22
+Multi-turn (req)
+71
+75
+77
+73
+Tool calls (req)
+44
+46
+46
+44
+Simple text (resp)
+30
+29
+31
+31
+Tool calls (resp)
+55
+47
+48
+57
+Table 4 reports round-trip (A→\toIR →\toA) conversion latency across five payload types.
+All conversions complete in under 80 µs at the median, with simple requests taking 21–24 µs and the most complex multi-turn payloads reaching 71–77 µs.
+At the 95th percentile (P95), latencies remain below 115 µs for all payload types, with P95 values typically 5–15% above the median.
+These overheads are negligible compared to network round-trip times (typically 50–500 ms) and model inference latency (100 ms–10 s+), representing less than 0.01% of end-to-end request latency in practice.
+Notably, conversion time scales with message count (multi-turn payloads are ∼3×{\sim}3\times slower than simple text) but is largely uniform across providers, confirming that the Ops-composition architecture does not introduce provider-specific bottlenecks.
+5.5.3 Comparison with LiteLLM
+To contextualize LLM-Rosetta’s overhead, we benchmark LiteLLM’s one-directional transform_request (OpenAI Chat→\toAnthropic, v1.83) against LLM-Rosetta’s two-hop cross-provider path (OpenAI Chat→\toIR →\toAnthropic) using the same payloads.
+Table 5: Cross-provider conversion latency: LiteLLM (one-directional, OpenAI Chat→\toAnthropic) vs. LLM-Rosetta (two-hop, OpenAI Chat→\toIR →\toAnthropic). Median over 1,000 iterations; LiteLLM v1.83.
+Payload
+LiteLLM (µs)
+LLM-Rosetta (µs)
+Ratio
+Simple text
+28
+24
+0.8×\times
+Multi-turn
+34
+76
+2.2×\times
+Tool calls
+29
+46
+1.6×\times
+As shown in table 5, LLM-Rosetta’s two-hop conversion is competitive with LiteLLM’s single-pass approach: for simple text payloads, LLM-Rosetta is actually faster (24 vs. 28 µs), while multi-turn and tool-call payloads incur a 1.6–2.2×\times overhead.
+This modest gap reflects the additional work of constructing typed IR objects at the intermediate hop.
+Crucially, both tools operate in the sub-100 µs range, so the absolute difference is negligible relative to network round-trip times and model inference latency.
+The two-hop cost buys bidirectionality, provider neutrality, and lossless round-trip capability—features that LiteLLM does not support.
+5.6 Threats to Validity
+Construct validity.
+Our fidelity evaluation relies on unit tests authored alongside the converters, which risks circular validation: tests may reflect the implementation’s assumptions rather than an independent specification of correct behavior.
+We mitigate this in two ways.
+First, test payloads are constructed from official provider documentation and real API responses, not generated from the converter code.
+Second, LLM-Rosetta passes all six tests in the independently maintained Open Responses compliance suite (OpenRouter, 2025), providing external validation of the core translation logic.
+Internal validity.
+The benchmark payloads (simple text, multi-turn, tool calls) are synthetic but representative.
+We additionally validated performance on anonymized production payloads from Argo-Proxy (64- and 218-message conversations with 41 tool definitions), confirming that the latency characteristics hold at production scale.
+All benchmarks use CPython 3.10 on a single hardware configuration; results may differ on other Python implementations or hardware.
+External validity.
+LLM-Rosetta currently supports four API standards.
+While these cover the dominant LLM API providers by market share, our results do not guarantee that the IR design or the Ops-composition pattern will generalize equally well to all future providers.
+The cross-provider evaluation covers all six bidirectional provider pairs but with a limited number of test cases per pair (10 total); more extensive cross-provider testing would strengthen confidence in translation correctness.
+6 Discussion
+6.1 Semantic vs. Syntactic Translation
+LLM-Rosetta performs semantic translation: it maps between provider formats based on the meaning of fields, not their surface syntax.
+For example, Anthropic’s thinking content blocks and Google’s thought parts both represent chain-of-thought reasoning and are mapped to the same IR ReasoningPart, despite having different JSON structures.
+This semantic approach enables cross-provider translation (A→\toIR →\toB) in addition to round-trip conversion.
+However, semantic translation inevitably involves judgment calls about equivalence.
+When provider formats diverge in expressiveness (e.g., one supports top_k and another does not), the IR takes the union of features, and converters for less expressive providers simply ignore unsupported fields with a warning.
+This design choice prioritizes completeness over strict compatibility.
+6.2 Metadata Preservation and Round-Trip Fidelity
+The dual-mode metadata system (strip vs. preserve) provides flexibility for different use cases.
+Preserve mode enables lossless A→\toIR →\toA round-trips by storing provider-specific attributes in provider_metadata fields.
+This is essential for testing and debugging converters, and for scenarios where a request must pass through the IR and return to its original format.
+Strip mode provides clean, provider-neutral IR output suitable for cross-provider forwarding.
+In this mode, provider-specific metadata is intentionally discarded, which means that A→\toIR →\toB→\toIR →\toA may not reproduce the original A exactly—but the semantic content is preserved.
+6.3 Limitations
+Coverage.
+LLM-Rosetta currently supports four API standards (OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Google Generative AI), which cover the majority of commercial LLM providers—most emerging providers (Cohere, Mistral, xAI, DeepSeek, etc.) adopt one of these wire formats.
+Non-chat modalities (embeddings, fine-tuning, batch processing) are not yet covered.
+API evolution.
+LLM APIs evolve rapidly.
+When a provider adds new fields or changes semantics, the corresponding converter must be updated.
+The modular Ops design localizes these changes (e.g., a new content type only affects ContentOps), but ongoing maintenance is unavoidable.
+Semantic gaps.
+Some provider features have no equivalent in other formats.
+For example, Anthropic’s prompt caching with explicit cache breakpoints has no counterpart in Google’s API.
+LLM-Rosetta can preserve such features in provider_metadata for round-trips, but cross-provider translation necessarily drops them.
+Performance at scale.
+The translation layer itself adds sub-100 µs overhead per conversion at the median (see section 5.5), which is negligible compared to network and inference latency.
+This makes the converter library suitable for direct integration into production applications—for example, embedded in an API gateway, an orchestration framework, or a multi-provider SDK.
+The reference gateway included in LLM-Rosetta is one such deployment example; it introduces an additional network hop and serialization cycle, which may matter in latency-sensitive settings.
+In such cases, applications can invoke the translation layer in-process to avoid the extra hop entirely.
+6.4 Deployment Experience
+LLM-Rosetta serves as the translation layer for Argo-Proxy (Ding, 2024), an LLM API gateway deployed at Argonne National Laboratory.
+Argo-Proxy provides researchers on the Argonne network with unified access to multiple LLM providers (OpenAI, Anthropic, Google) through a single OpenAI-compatible endpoint.
+Its previous architecture (v2.x) relied on hand-written format-mapping code that only covered the OpenAI Chat Completions format, and could not keep pace with the evolving demands of Anthropic’s Messages API and the newer OpenAI Responses API.
+The third-generation architecture (v3.0, currently in beta after 13 pre-release iterations) replaced this bespoke translation layer with LLM-Rosetta’s converter library, eliminating approximately 2,000 lines of ad hoc mapping code while gaining support for all four API standards and bidirectional streaming.
+The integration exercises LLM-Rosetta’s core capabilities in a production setting: request translation (OpenAI Chat →\to IR →\to target provider), response translation (provider →\to IR →\to OpenAI Chat), and streaming event normalization across all supported providers.
+The 13-iteration beta cycle (v3.0.0b1–b13) surfaced several edge cases—notably, inconsistent streaming event ordering across providers and corner cases in tool-call argument accumulation—that led to improvements in the converter library itself.
+This feedback loop between a production deployment and the library’s test suite provides a form of real-world validation beyond unit tests alone.
+6.5 Future Directions
+Provider coverage.
+Since most emerging LLM providers adopt one of the four supported API standards (most commonly OpenAI Chat Completions), they can already be served by the existing converters.
+For providers with minor deviations from a standard format, we plan to support configurable provider adaptors that map provider-specific endpoints, authentication, and field variations onto an existing converter, reducing per-provider effort to configuration rather than code.
+Conformance testing.
+LLM-Rosetta currently passes the Open Responses compliance suite (section 5.2), but no analogous third-party suite exists for the other three provider formats.
+Developing a comprehensive, independently maintained conformance test corpus—ideally derived from real API traffic—would strengthen validation and help track correctness as both LLM-Rosetta and provider APIs evolve.
+Schema evolution.
+As the LLM ecosystem matures, new content types (video, structured data), interaction patterns (multi-agent, agentic workflows), and capabilities (real-time voice, computer use) will require IR extensions.
+The provider_extensions mechanism provides an escape hatch, but frequently used extensions should be promoted to first-class IR fields.
+7 Conclusion
+The central finding of this work is that despite substantial surface-level divergence, the four major LLM API providers share a common semantic core—role-tagged messages, typed content parts, tool definitions with JSON Schema inputs, and incremental streaming events—that can be captured by a compact, provider-neutral IR (9 content-part types, 10 stream event types).
+The practical challenge is not deep semantic incompatibility but the combinatorial surface of syntactic variations: each provider makes different choices about field naming, nesting depth, content encoding, role vocabulary, and streaming granularity, and these differences multiply across feature dimensions (content, tools, config, streaming).
+A hub-and-spoke IR is effective precisely because the divergence is syntactic: a shared semantic core makes faithful translation feasible, while the combinatorial cost of pairwise adaptation makes an intermediate representation worthwhile.
+LLM-Rosetta demonstrates this through 1,364 passing tests—including the Open Responses compliance suite—lossless round-trip fidelity in preserve mode, and sub-millisecond conversion overhead.
+The Ops-composition architecture confines provider-specific complexity to well-bounded modules, and the library’s deployment in Argo-Proxy at Argonne National Laboratory validates its production readiness.
+The primary open challenge is coverage breadth: the four supported API standards cover most commercial providers, but non-chat modalities (embeddings, fine-tuning, batch processing) are not yet addressed.
+As the ecosystem continues to grow, we expect the IR’s union-based design to accommodate new providers with incremental effort, while the provider_extensions mechanism provides a pragmatic escape hatch for features that resist standardization.
+LLM-Rosetta is available at https://github.com/Oaklight/llm-rosetta.
+Acknowledgments
+Large language models were used to assist with proofreading and language editing. The author takes full responsibility for all content.
+References
+Achiam et al. [2023]
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya,
+Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman,
+Shyamal Anadkat, et al.
+GPT-4 technical report.
+arXiv preprint arXiv:2303.08774, 2023.
+Gemini Team et al. [2023]
+Gemini Team, Rohan Anil, Sebastian Borgeaud, Yonghui Wu, Jean-Baptiste
+Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth,
+et al.
+Gemini: A family of highly capable multimodal models.
+arXiv preprint arXiv:2312.11805, 2023.
+OpenAI [2024]
+OpenAI.
+OpenAI Chat Completions API, 2024.
+URL https://platform.openai.com/docs/api-reference/chat.
+Accessed: 2026-04-10.
+Anthropic [2024a]
+Anthropic.
+Anthropic Messages API, 2024a.
+URL https://docs.anthropic.com/en/api/messages.
+Accessed: 2026-04-10.
+Google [2024]
+Google.
+Google Gemini API, 2024.
+URL https://ai.google.dev/api.
+Accessed: 2026-04-10.
+OpenAI [2025]
+OpenAI.
+OpenAI Responses API, 2025.
+URL https://platform.openai.com/docs/api-reference/responses.
+Accessed: 2026-04-10.
+Lattner and Adve [2004]
+Chris Lattner and Vikram Adve.
+LLVM: A compilation framework for lifelong program analysis &
+transformation.
+In International Symposium on Code Generation and Optimization
+(CGO), pages 75–86. IEEE, 2004.
+Apache Software Foundation [2016]
+Apache Software Foundation.
+Apache Arrow: A cross-language development platform for in-memory
+analytics, 2016.
+URL https://arrow.apache.org.
+Accessed: 2026-04-10.
+Brown et al. [2020]
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla
+Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell,
+et al.
+Language models are few-shot learners.
+In Advances in Neural Information Processing Systems,
+volume 33, pages 1877–1901. Curran Associates, Inc., 2020.
+Schick et al. [2023]
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria
+Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom.
+Toolformer: Language models can teach themselves to use tools.
+Advances in Neural Information Processing Systems, 36, 2023.
+Patil et al. [2023]
+Shishir G Patil, Tianjun Zhang, Xin Wang, and Joseph E Gonzalez.
+Gorilla: Large language model connected with massive apis.
+arXiv preprint arXiv:2305.15334, 2023.
+Qin et al. [2023]
+Yujia Qin, Shihao Liang, Yining Ye, Kunlun Zhu, Lan Yan, Yaxi Lu, Yankai Lin,
+Xin Cong, Xiangru Tang, Bill Qian, et al.
+ToolLLM: Facilitating large language models to master 16000+
+real-world apis.
+arXiv preprint arXiv:2307.16789, 2023.
+Liu et al. [2024]
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+Visual instruction tuning.
+Advances in Neural Information Processing Systems, 36, 2024.
+Wei et al. [2022]
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia,
+Ed Chi, Quoc V Le, and Denny Zhou.
+Chain-of-thought prompting elicits reasoning in large language
+models.
+Advances in Neural Information Processing Systems,
+35:24824–24837, 2022.
+LangChain, Inc. [2024]
+LangChain, Inc.
+LangChain: Build context-aware reasoning applications, 2024.
+URL https://github.com/langchain-ai/langchain.
+Accessed: 2026-04-10.
+Microsoft [2024]
+Microsoft.
+Semantic Kernel: Integrate cutting-edge llm technology quickly and
+easily into your apps, 2024.
+URL https://github.com/microsoft/semantic-kernel.
+Accessed: 2026-04-10.
+BerriAI [2024]
+BerriAI.
+LiteLLM: Call all llm apis using the openai format, 2024.
+URL https://github.com/BerriAI/litellm.
+Accessed: 2026-04-10.
+Portkey [2024]
+Portkey.
+AI Gateway: A fast ai gateway with integrated guardrails, 2024.
+URL https://github.com/Portkey-AI/gateway.
+Accessed: 2026-04-10.
+OpenRouter [2024]
+OpenRouter.
+OpenRouter: A Unified Interface for LLMs, 2024.
+URL https://openrouter.ai.
+Accessed: 2026-04-10.
+OpenRouter [2025]
+OpenRouter.
+Open Responses: An Open Standard for LLM APIs, 2025.
+URL https://openresponses.com.
+Accessed: 2026-04-10.
+Anthropic [2024b]
+Anthropic.
+Model Context Protocol (MCP), 2024b.
+URL https://modelcontextprotocol.io.
+Accessed: 2026-04-10.
+Google [2008]
+Google.
+Protocol Buffers: Google’s data interchange format, 2008.
+URL https://protobuf.dev.
+Accessed: 2026-04-10.
+Slee et al. [2007]
+Mark Slee, Aditya Agarwal, and Marc Kwiatkowski.
+Thrift: Scalable cross-language services implementation.
+Facebook White Paper, 2007.
+W3C [2015]
+W3C.
+Server-Sent Events, 2015.
+URL
+https://html.spec.whatwg.org/multipage/server-sent-events.html.
+W3C Living Standard. Accessed: 2026-04-10.
+Encode [2024]
+Encode.
+Starlette: The little asgi framework that shines, 2024.
+URL https://www.starlette.io.
+Accessed: 2026-04-10.
+Ding [2024]
+Peng Ding.
+Argo-Proxy: An llm api gateway for argonne national laboratory,
+2024.
+URL https://github.com/Oaklight/argo-proxy.
+Accessed: 2026-04-10.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

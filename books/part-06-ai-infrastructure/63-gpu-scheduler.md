@@ -87,6 +87,9 @@ Fragmentation 也要区分两种 owner。Job 的 GPU 数与 node 形状天然不
 
 失败后的 restart 也不是固定常数。只按瞬时 goodput 排序会反复延后长等待 job，并忽略 checkpoint load 已经支付的成本；age key 与分解后的 restart factor 可以分别表示等待债务、productive time 和 reload overhead，再与 goodput 一起进入每轮效用。它改善的是 starvation/restart-aware frontier，不授予某套权重跨集群通用性。OAK 的 12-GPU 仿真与 4-V100 实验只支持披露 failure/load 模型；预测漂移、不可抢占 job 或硬优先级存在时，应回退显式 reservation、FIFO/DRF 或保守 restart policy。
 
+对可重排的离线独立任务，重新加载成本还可以由运行时状态复用改变，而不只调整抢占分数：把模型、代码和依赖按用户声明的计算context常驻在worker进程中，让快设备从共享队列领取更多小批任务；初始化不再随每批重付，batch便可缩小，以减少撤回资源时丢失的在途工作。[有限机会GPU对照](https://arxiv.org/html/2509.13201v1#S6)支持这一批粒度分支，但context不是Prompt/KV，也不是中间token checkpoint或外部副作用的exactly-once保证。常驻显存、环境制备/分发、cache失效、重入队与全部失败重算都计费；不同资源规模或同时改变batch的收益不能全归缓存。任务不可重排、状态无法可靠重建或质量/总费不合时，保留较大批、完整恢复与固定专用资源，不由高机会吞吐批准在线尾SLO。
+<!-- source-family:SF-2025-ARXIV-2509-13201 -->
+
 价格波动再把这个效用扩展到跨区域的 spot 寿命与 deadline：单区域、不迁移的策略在 checkpoint 昂贵或可选区域少时仍合理；有足够 slack 的固定 gang 才可能把整组迁移成本摊回便宜资源。[SkyNomad 的受限控制器](https://arxiv.org/html/2601.06520v1)用探测与存活时间估计剩余 spot 寿命，将 cold start、checkpoint 传输/egress 费用和剩余进度的 deadline 压力一起比较，并用迟滞避免反复切换；寿命预测不是容量预约，便宜区域也必须满足数据位置和完整 gang 的可行性。Checkpoint 的一致性与恢复语义仍由 Ch35 负责，调度器只决定何时承担迁移。其保守 on-demand 回退依赖事先已知工作量、启动时间界及 on-demand 始终可用等前提，不是无条件 deadline 保证；探测、预测漂移、大 checkpoint 或很小 slack 会吃掉节省，应保留单区域 reservation/on-demand 路径并报告其真实成本。有限云实验与 trace 模拟不能证明全局最优或任意工作负载的收益。<!-- source-family:SF-2026-ARXIV-2601-06520 -->
 
 <!-- source-family:arxiv:2609.18519v1 -->
@@ -139,6 +142,8 @@ Segment 减少跨低带宽边界的 collective traffic，却会因 nodes-down、
 内部碎片与 starvation。Slurm topology-aware scheduling 的大规模 simulator 只在作者 20,000-GPU、job trace、
 七天与 failure contract 下支持该 policy 分支，不证明真实生产效率或所有 topology 都应采用固定 segment。
 
+进入一个可用 segment 后，还要把训练通信组真正映射到设备，而不是只让整个作业尽量靠近。节点内 TP 固定后，跨节点 DP 与 PP 是交叉的组，两者未必能同时最小化跨交换域范围；可先按模型、GPU 和并行配置测量通信/计算以及 DP/PP 的相对代价，再以通信组为放置单位，权衡两类组的最大 spread，并让训练框架按该 placement 建立 rank/group。[Arnold 的受限分支](https://arxiv.org/html/2509.15940v1#S5)依赖同步、近同构长作业及事先 profile，不能把某个 H800 配置下偏重 PP 的结果写成普遍规则；另一硬件/精度配置可以偏重 DP，拓扑改进还会经 NCCL channel 和 SM 竞争使部分计算 kernel 变慢。Profile、求解、资源预留与执行映射都有成本，故按全 step 和排队/闲置一起验收，不由较小 spread 直接签发吞吐提升或故障恢复；短作业、配置变化太快或净收益不合时，保留原 segment、bin-pack/gang 与保守队列策略。<!-- source-family:SF-2025-ARXIV-2509-15940 -->
+
 ## Gang、Queue 与 Fairness
 
 `Gang scheduling` 解决“任务最小成员能否共同运行”。Queue 解决“谁先获得机会、可借多少、何时归还”。Fairness 解决“长期共享是否符合组织政策”。
@@ -146,6 +151,8 @@ Segment 减少跨低带宽边界的 collective traffic，却会因 nodes-down、
 常见公平模型包括 quota、weighted fair share 与 Dominant Resource Fairness。GPU 集群中不能只看 GPU 数量；CPU、memory、network、storage bandwidth 也可能成为 dominant resource。
 
 借用空闲 quota 能提升利用率，但需要 reclaim/preemption 规则。抢占一个训练任务的成本取决于最近 checkpoint；抢占一个 serving replica 的成本取决于剩余 capacity、KV state 和 SLO。Scheduler 必须看到 workload class，不能把 victim 只表示成“释放 8 GPU”。
+
+预测作业work量还可改变抢占节奏，而不只是SJF排序：从预测量对应的几何work层开始，只有累计work越过下一milestone才升级队列；异构机器分支先按虚拟公平速率组成epoch，再舍入为受限非抢占片段。[PMLF/SNAP的条件分析](https://arxiv.org/html/2605.23255v1#S2)把completion与抢占次数共同约束，主设定需全部job在t0可用、known rates及underprediction，overprediction另需数量上界/reset。这里checkpoint是累计work门槛，不是持久化训练checkpoint，次数少也不证明GPU迁移便宜；求解/rounding、预测与真实保存恢复仍计费。未知arrival、rates或预测失配时，保留FIFO/保守quota、已验reclaim和真实workload成本测量，不把synthetic job保证当LLM serving SLO。<!-- source-family:SF-2026-ARXIV-2605-23255 -->
 
 静态 quota 和借用规则容易解释，却难让租户私有的当期 SLO/迁移代价与运营方私有的供电、冷却、维护和拓扑压力持续协调。一条条件分支允许租户在运行中提出保留、放弃或重议现有 allocation 的 proposal，由运营方把物理压力折成价格或回收信号，并保留最终匹配、事务与紧急硬约束仲裁权。价格传递的是受限资源压力，不赋予租户设备所有权，也不证明报价等于真实效用或分配全局公平。<!-- source-family:SF-2026-ARXIV-2604-22509 -->
 
@@ -196,6 +203,8 @@ MPS 之类的进程级共享在 workload 彼此可信、错误可通过重启整
 
 因此 production sharing 需要显式 fault-domain contract：硬件/驱动拥有地址隔离，node runtime 负责检测 fatal fault、冻结受影响 allocation、重建 MPS client 与 context，scheduler 再依据恢复结果决定 rebind 或迁移。它以 recovery controller、重建延迟和更复杂的健康状态换取更细故障域；若驱动无法证明 client-level containment，或 workload 无 checkpoint / replay，MIG、独占 GPU 或整节点失败回退仍更可靠。单一软件栈的 fault-injection 结果不能外推为所有 GPU、driver 与 kernel 组合的隔离保证。
 
+故障已被硬件截停，也不意味着整个 client 的所有 streams 都停止。该 MPS 家族当前 v2（10月2日提交）的安全修订要求先禁用共享 TSG 的 channels，并确认 preemption request 已 pending，再重定向故障地址、servicing/replay；追加 fault 仍在冻结状态下处理，直到硬件报告 preemption complete 才把它当作进程级执行 barrier。随后由 MPS daemon 安全终止目标，只重新启用 surviving clients，不能把 replay completion、发送 SIGKILL 或只停 faulting stream 当作完成隔离。这里的顺序不是 May v1 已证明的充分机制。SM fault 的恢复又是另一条链：outside-MPS standby 以独立 context 和 VMM 引用保住仍可用的 GPU pages，但应用还须定义可复用 state、metadata 与可恢复边界；共享物理页不修复已损坏状态，也不回滚外部 effect。Driver 修改、冻结/重复 servicing、预热 standby、metadata 发布及恢复都计费；整卡 reset、边界不明或无法安全停止时，保留 MIG/独占和完整重建，不从有限 witness、无错窗口或故障到恢复的某一个延迟签发通用隔离与 exactly-once。<!-- source-family:SF-2026-ARXIV-2605-26461-supp -->
+
 ## 从固定 Job Shape 到 Elastic Configuration Portfolio
 
 传统 scheduler 接收一个固定 GPU request，只决定放在哪里；但 training/inference job 可能存在多个合法配置，
@@ -216,6 +225,9 @@ runtime 实施 memory limit、sharing 和迁移。预测器不能把“可能共
 in-flight request 与 rollback。ElastiCo 的 64×A100、single-GPU configuration scope 证明的是 joint choice 的受限可行性，
 没有覆盖 multi-GPU collective、predictor drift、migration failure 或 online tail SLO。固定 shape 在 distributed
 collective 强耦合、迁移昂贵或 performance isolation 优先时仍成立。
+
+配置组合会随负载与stack漂移，校准还可同时保存中介与最终结果：先声明配置→KV/通信等telemetry→latency/throughput的有限关系及适用scope，再将部署后的两类residual分别回写；预测对但结果错，与两者一起错，不应沉成同一条“成功经验”。[受限Koi闭环](https://arxiv.org/html/2610.24355v1#S5)让模型只提候选，容量/配置约束与joint selector决定提交，慢环再调整探索、风险带和换配惩罚。Beta计数、残差带与重复部署不自行证明因果关系、联合SLO或最终收敛；候选接近最优和长期稳定在该文仍是前提，profile替代也会失准。Telemetry、试部署、校准、搜索及冷启动/并行/退出均计费，更多探索还会侵占正在服务的容量。Scope或净收益不稳时回固定portfolio、保守headroom和原deterministic调度，不让自然语言机制或较高composite score获得迁移/质量降级权限。
+<!-- source-family:SF-2026-ARXIV-2610-24355 -->
 
 Compound inference 还可能把模型质量纳入配置选择：不同 task 的 variant 并不语义等价，只有 workload owner 明确允许质量退让，资源 optimizer 才能沿 DAG 路径联合分配 latency、variant 与 MIG/MPS 配置。此时“选更多小 slice”必须与整条路径的输出质量一起验收，而不是把每个 task 的局部最优相加。[有限 GPU 对照](https://arxiv.org/html/2603.08797v1)用局部 p95 和 task-accuracy 乘积作预算代理；异质指标的乘积不是校准后的端到端正确率，局部尾延迟之和也不证明联合尾 SLO。离线 profiling、求解、共享干扰和停机重分割均有成本，逐时间点稳态试验不代表连续线上迁移，也不授自回归 LLM 或多 GPU collective 的性能。质量不可组合、需求预测失配或重配置不能 drain 时，应保留固定 variant/shape、独立端到端评价与更保守的资源预留；scheduler 只执行已批准的配置，不自行取得质量降级权限。<!-- source-family:SF-2026-ARXIV-2603-08797 -->
 
@@ -265,6 +277,10 @@ optimizer 只拥有分配 proposal，硬件 telemetry 反馈下一周期。该�
 其算法范围，不证明任意 GPU fleet 的功耗—性能关系或生产稳定性。
 <!-- source-family:SF-2026-ARXIV-2605-01837 -->
 
+当供电容量随站点变化时，固定 GPU power cap 或停机可以守住电力上限，却可能把服务能力和排队尾部一起压垮。另一条条件分支把功率预算先变成站点可用执行配置，再以实际延迟、KV占用和队列状态调节并发/实例资源，并把这份可用容量交给跨站点请求路由；本地硬功率限制与全局请求分配是两层控制，不能只用总GPU数或平均利用率代替。
+
+[XWind 的作者试验](https://arxiv.org/html/2605.23348v1#S4)在64张A10040GB上模拟三个风电站点，支持这种telemetry驱动的组合接口；反应式指workload控制，不代表无需功率信息或profiling。其15分钟功率轨迹为oracular并线性插值，站点间WAN延迟被忽略，本地阈值也依赖profile，因此不据此保证真实风电预测、WAN或生产P99。控制采样、实例配置、profile和跨站点协调增加成本并可能滞后/振荡；功率或服务状态不可靠时，保留保守cap、固定容量和可拒绝的admission，不以局部尾延迟收益授权超出设施边界。<!-- source-family:SF-2026-ARXIV-2605-23348 -->
+
 把 GPU 数量当唯一容量会遗漏供电链的四个不同 owner：设计 provisioning 决定理论上限，rack validation 证明安装边界，operational cap 留出可靠性余量，runtime scheduler 才能消费瞬时 swing。调度器应依据可用功率而非铭牌功率 admission，并保留测量延迟与降级策略；收益是提高基础设施利用率，代价是 telemetry、控制稳定性和故障域耦合。功率波动不可测或业务不能容忍 throttle 时，静态保守 cap 仍更合理。单个大规模集群的测量不能外推为所有硬件和冷却拓扑。
 
 <!-- source-family:SF-2026-ARXIV-2605-24461 -->
@@ -300,6 +316,8 @@ time-slicing、MPS 与 MIG 都假设 runtime 与隔离边界相对明确；当 C
 ### 从削峰响应到 Grid-responsive Compute
 
 只把功率当容量上限，在电价和供电条件平稳时足够；MW 级 AI/HPC 负载接入电网后，能源可用性会在秒级到小时级变化。Scheduler owner 需要把 job deadline、checkpoint/elasticity、设施安全边界和 grid signal 分成不同时间尺度，由三层 controller 决定降频、迁移或延后，而不是让电网直接控制 workload。收益是把 compute 变成可验证的柔性负载，代价是吞吐损失、控制复杂度与 SLA 风险；信号丢失或 safety island 触发时必须回退本地安全功率。exact-v1 只支持 GridPilot 披露的 cluster/grid interface 与实测环境，不证明任意数据中心或电网均有相同收益。<!-- source-family:SF-2026-ARXIV-2605-26384 -->
+
+柔性负载的验收位置还要与执行位置分开：GPU board cap 只改变 IT 侧功率，冷却、泵、风机与固定设施开销使同样的 IT 降幅未必成为同样的 facility-meter 降幅；使用负载/温度相关 PUE 的调度器只能提出设施侧履约估计，实际承诺仍需外部计量与独立验收。GridPilot 的有限原型把慢速 host/cluster 决策与独立于 Python supervisor 的实时 C dispatch 路径分开，但 100Hz 观测与条件性的实时线程 liveness 不认证 200Hz 控制的硬 deadline；90次合成触发中的最大101.1ms也不是严格sub-100ms保证。bursty跟踪误差超出其5%带不能因改称diagnostic而当作通过；MW级PUE/碳强度回放亦不是实测冷却或真实电网资格。遥测、隔离core、cap生效/settling、冷却校准与未来资源重配全都计费；外部meter、信号或延迟条件不可靠时，保留本地保守cap、静态容量与可拒绝admission，不以board响应、模型减碳或少量成功触发批准设施履约。<!-- source-family:SF-2026-ARXIV-2605-26384-supp -->
 
 ### 共享 Power Cap 会把独立训练 Job 耦合成相位系统
 
@@ -350,6 +368,18 @@ GPU scheduler 的任务不是简单填满设备，而是在设备/拓扑硬约�
 
 ## Review notes
 
+- `SF-2025-ARXIV-2509-15940` — Singer，Daily2025-09-23补Sep22；exact-v1§2–7/A/B/E/I必要域，2+2+2=6。仅DP/PP交叉组spread、profile依赖affinity与真实rank映射，保H800/L20反侧、局部通信变好而compute变慢/solver和reserve费用，不采1.67x为吞吐、通用10.6%或已实现failover。必要Source已Sartre R8通过，具体owner/原三项纯PRE已R17通过；root本轮fresh窄授后原段及本人注已实际保存，Sartre R21唯一实际非writer POST通过，指定窄位生效释放，不授DAY。未核代码、全部像素或复现。
+
+- `SF-2025-ARXIV-2509-13201` — author18，Daily2025-09-18补Sep17；[exact-v1](https://arxiv.org/html/2509.13201v1)§4–6/8、T1/2与Figs4–7正文图注必要，2+2+2=6，常驻状态/小批失效预算差额深入。保受控20GPU/SmolLM2/FEVER条件、pv5 batch与淘汰顺序混杂、异资源98.1%非cache因果；precision/长度/质量parity/SLO未披露，不采token续接、exactly-once、生产保证。未核图全部点/实现或复现。
+
+- `SF-2026-ARXIV-2610-24355` — Daily2026-10-21、Oct20窗；[exact-v1](https://arxiv.org/html/2610.24355v1) §4–7必要，2+2+2=6。仅scope的中介/结果残差与proposal/selector分权；保同源非因果、近优/收敛Assumptions、真实/模拟分账及全费。root R-A16/独立R113必要Source、actualowner、完整PRE通过，已原样真实保存并自读完整直接两侧/本人注，非writer实际写后复核R117已通过并生效释放，仅行政同步；未核代码或复现，不预日级。
+
+- `SF-2026-ARXIV-2605-26384-supp` — Daily2026-05-28补May27；作者与独立reader实际[GridPilot v1](https://arxiv.org/html/2605.26384v1)§3–7必要机制/评价及反侧，2+2+2=6 meter/control边界差额深入。仅GPUboard执行与facilitymeter验收、慢决策/独立dispatch分责；保3V100/90synthetictrigger、max101.1ms非strictsub100、100Hz观测/conditionalFIFO liveness非200Hzharddeadline、bursty11.08%/MWsyntheticPUEreplay/E5仅design及全费，不授设施履约/真实冷却减碳/TSO资格。未核artifact/复现，不扩法规；root授原family段后/共享PowerCap前本单段及本人note，实际POST见本日SUP/REVIEW，不预DAY。
+
+- `SF-2026-ARXIV-2605-26461-supp` — Daily2026-05-28补May27；作者与独立reader实际[v1](https://arxiv.org/html/2605.26461v1)§5–6与[current-v2（10月2日提交，非公开日）](https://arxiv.org/html/2605.26461v2)§4–8/T2–7必要安全修订，2+2+2=6。仅process-wide preemption barrier与surviving-GPU/application-state恢复资格；保旧SIGKILL充分性未证、RoF单独multi-stream继续、9MMU/5SM有限fault与device reset outscope、metadata/standby全费，不把Oct新增实现/试验倒灌May或授exactly-once/对抗隔离。355ms outage与H100 catchup不合并，未核代码/复现；root授原fault-domain两段后/portfolio前本单段及本人note，实际POST见本日SUP/REVIEW，不预DAY。
+
+- `SF-2026-ARXIV-2605-23255` — Daily2026-05-26补May25；[Parsimonious preemption exact-v1](https://arxiv.org/html/2605.23255v1) §1.1–3.3/5/6必要，2+1+2=5，completion/preemption联合条件界具体差额深入。保allavailablet0/knownrates/underpredict、overpredict g/reset、m10n100 synthetic/heuristic与workmilestone非durableckpt；不搬未采用malleable证明，不授GPU迁移费用/LLM SLO。reader必要Source/actualowner/逐字PRE通过，root授一段及本人注，指定reader已实际重读保存正文、完整直接两侧与本人注，唯一非writer POST通过，窄位生效释放；未核实现/复现，不授DAY。
+
 - `SF-2026-ARXIV-2610-23072` — Daily2026-10-20窗Oct19；[exact-v1](https://arxiv.org/html/2610.23072v1) IV-A～E/V校准/VI-A～E/VII必要原域由core非笔记作者实际独核，2+2+2=6，落实差额定点深入。仅增校准人口边际覆盖≠adaptive profile条件deadline及同步交还全费；时序条件未证明是评阅推断，不冒称论文定理。保宽MLP反侧、LLM无共置SLO、batched非全控制尾部、固定profile/独占回退。root已授本单段/本人note窄写；作者已实际顺读完整新增/直接两侧/本人note，root随后实际非writer POST通过；本人note已行政同步，本窄位释放，未核代码或复现，不授DAY。
 
 - `SF-2026-ARXIV-2610-23086` — Daily2026-10-20窗Oct19；exact-v1 II–IV/TableI–II必要原证实际独核，2+1+2=5。systems作者必要Source由oct20_author_resume非作者通过；实际当前SM sharing/Mosaic/Beaver两侧比较，仅加same-SM监督分母、双方operator连续输入及窗口进度条件。保util/MLP等效反侧、Llama不同人口/适应、批查询摊销与profile全费；非硬隔离/真实scheduler SLO或实现复现。root授Ch63新内容窄写，oct20_author_resume保存两段及自身注，已实际完整顺读新增/直接两侧/本人注，root已真实非writer POST通过，指定新增位释放，不授DAY。
@@ -397,3 +427,5 @@ Primary-source 与官方入口：
 - `SF-2026-ARXIV-2603-08797` — Daily `2026-03-12`补遗漏；[JigsawServe exact-v1](https://arxiv.org/html/2603.08797v1) §3–5/7、Eq1–14。2+2+2=6，质量非等价 variant 与 DAG/GPU配置差额深入；PAS与局部p95仅代理，逐点稳态不授线上迁移，自回归LLM/多GPU仍未覆盖，profiling/求解/停机费用近文。mar12_independent_continue 非作者必要 Source/date/actual owner/逐字 PRE 通过，root 窄写单段与本人末注；非写入者实际顺读完整局部及末注、回对原证与逐字 PRE 的 POST 通过，窄锁释放。未核全图、代码或复现，不授 DAY。
 
 - `SF-2025-GOOGLE-LAVA-OCT17` — Daily `2025-10-18`补Oct17；[Google原机构披露](https://research.google/blog/solving-virtual-machine-puzzles-how-ai-is-optimizing-cloud-computing/)必要L111–151/原Oct17日期及身份，旧有效Blog采用域复用，不冒全部paper/实现或复现。2+2+2=6因控制面部署依赖/cache具体gap深入；只采用能低成本在调度进程运行的predictor随binary发布与VM增删/预期寿命到期刷新。原普通VM接口证据非GPU placement最优，model/feature/resource版本回归与保守Filter/Score退路为工程推断，非原作者任意故障保证；不采9µs/780x、NILAS生产与LAVA/LARS模拟混合或全球首发。root本日独核§2必要Source/唯一owner/最终逐字PRE通过；作者本次仅一段与本人note，root非writer实际完整正文/邻接/末注POST§4通过并释放窄锁，实际整合1非DAY/FINAL；作者只行政同步既成结果，未改机制正文或他注。
+
+- `SF-2026-ARXIV-2605-23348` — Daily2026-05-26补May25；[XWind exact-v1](https://arxiv.org/html/2605.23348v1) §4/Alg1–2、§5.1–5.4/T1、§7，2+2+2=6，site-local容量控制接口具体差额深入。64A10040GB/TP2/Llama3.1-8B/3emulatedsites，保oracular 15min power/线性插值、忽略WAN与profile依赖；不授真实预测/生产P99或全路径控制保证。指定reader必要Source/actualowner/逐字PRE通过，root授本两段及本人注，指定reader已实际重读保存正文、完整直接两侧与本人注，唯一非writer POST通过，窄位生效释放；未核实现/复现，不预授DAY。

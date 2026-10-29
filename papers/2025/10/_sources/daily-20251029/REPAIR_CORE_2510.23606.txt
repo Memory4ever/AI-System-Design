@@ -1,0 +1,647 @@
+Variational Masked Diffusion Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries
+3 Variational Masked Diffusion (VMD)
+3.1 Basic Variational Formulation
+3.2 Block Diffusion Formulation
+3.3 Remasking
+4 Experiments
+4.1 Controlled Synthetic Data with 2 Tokens
+4.2 Controlled Synthetic Data with 4 Tokens
+4.3 Sudoku Data
+4.4 Text Data
+5 Related Work
+6 Conclusion
+References
+A VMD Loss Derivation
+B Block VMD Loss Derivation
+C Implementation Details
+C.1 Synthetic Data
+C.2 Sudoku
+C.3 Text
+D Additional Experimental Results
+D.1 Controlled Synthetic Data with 2 Tokens
+D.2 Sudoku Data
+E LLM Usage
+License: CC BY 4.0
+arXiv:2510.23606v1 [cs.LG] 27 Oct 2025
+Variational Masked Diffusion Models
+Yichi Zhang
+Affiliation: University of Illinois Urbana-Champaign
+Alex Schwing
+Affiliation: University of Illinois Urbana-Champaign
+Zhizhen Zhao
+Affiliation: University of Illinois Urbana-Champaign
+Abstract
+Masked diffusion models have recently emerged as a flexible framework for discrete generative modeling. However, a key limitation of standard masked diffusion is its inability to effectively capture dependencies among tokens that are predicted concurrently, leading to degraded generation quality when dependencies among tokens are important. To explicitly model dependencies among tokens, we propose Variational Masked Diffusion (VMD), a framework that introduces latent variables into the masked diffusion process. Through controlled experiments on synthetic datasets, we demonstrate that VMD successfully learns dependencies that conventional masked diffusion fails to capture. We further validate the effectiveness of our approach on Sudoku puzzles and text datasets, where learning of dependencies among tokens improves global consistency. Across these domains, VMD enhances both generation quality and dependency awareness, highlighting the value of integrating variational inference into masked diffusion. Our code is available at: https://riccizz.github.io/VMD.
+1 Introduction
+Diffusion-based large language models (DLLMs) represent a significant architectural innovation, emerging as a compelling extension of autoregressive models (ARMs). This paradigm shift is driven by the inherent limitations of traditional ARMs, which generate tokens sequentially and in a pre-defined order. In contrast, DLLMs offer distinct advantages, including concurrent token generation, superior output diversity, enhanced global coherence, advanced controllability over the generated text, and presumably easier integration of heterogeneous data, where a fixed pre-defined sequential token order is harder to justify.
+Recent breakthroughs, exemplified by models like LLaDA (Nie et al., 2025), Mercury (Inception Labs, 2025), and Gemini Diffusion (Google DeepMind, 2025), underscore the increasing viability and promising future of DLLMs.
+However, their adoption is currently challenged by performance issues in reasoning tasks where tokens are statistically dependent (Li et al., 2024; Xu et al., 2025; Feng et al., 2025; Wu et al., 2025; Liu et al., 2025; Song & Zhou, 2025; Kim et al., 2025).
+To see this, consider the example discussed by Song & Zhou (2025) and re-iterated by Wu et al. (2025): we want to predict the next two words/tokens given the context “A poker hand that consists of two English words is: a a”. Suitable predictions are “high card,” “two pair,” “full house,” or “straight flush.” Importantly, a strong dependence exists between these two words. However, concurrent prediction in DLLMs does not consider this dependence. This is because prediction in recent DLLMs (Nie et al., 2025; Yang et al., 2025; You et al., 2025) based on masked diffusion modeling (MDM) (Sahoo et al., 2024; Shi et al., 2024; Zheng et al., 2025; Ou et al., 2025) uses a deep net to compute probability distributions over the vocabulary for each of the masked tokens, and samples from these distributions independently when predicting concurrently. In the poker example, each of the first words “high,” “two,” “full,” and “straight” will have roughly a 1/4 probability of occurring. Similarly, the second words “card,” “pair,” “house,” and “flush” also have roughly a 1/4 probability of occurring. Due to independent sampling, we are more likely to predict undesirable results than a desirable outcome.
+To address this challenge we propose to model a joint token distribution during concurrent prediction by introducing latent variables. A latent variable model enables us to capture any arbitrary joint distribution across tokens, as opposed to one that factorizes.
+Intuitively, following classic graphical model literature, conditioned on the latent variable we can sample tokens independently, yet, when marginalizing over the latent variable, i.e., when sampling many times, we obtain samples from the proper joint distribution if the model is trained well.
+This approach follows the classic variational inference paradigm underlying expectation maximization or variational autoencoders. Hence, we refer to this framework as “Variational Masked Diffusion” (VMD).
+We validate the effectiveness of VMD through controlled experiments on synthetic datasets, as well as on Sudoku puzzles and text datasets, where learning of dependencies among tokens improves global consistency. Across these domains, VMD enhances both generation quality and dependency awareness, highlighting the value of integrating variational inference into masked diffusion.
+2 Preliminaries
+(a) Training
+(b) Sampling
+Figure 1: Conceptual overview of VMD. (a) Training. The encoder and mask predictor are trained on text with random masks applied independently to all tokens at the same ratio t∼U⁡[0,1]t\sim U[0,1]. x0ix_{0}^{i} and x0jx_{0}^{j} are conditionally independent given the latent variable zz (b) Sampling. Our VMD uses the latent sample zz to achieve concurrent mask prediction and recover all tokens at t=0t=0 from the fully masked sequence at t=1t=1 with a flexible remasking strategy.
+Diffusion models for discrete data were explored recently (Hoogeboom et al., 2021; Austin et al., 2023; Campbell et al., 2022a), and various noise processes were studied. Masked Diffusion Models (MDM) (Sahoo et al., 2024; Shi et al., 2024; Zheng et al., 2025; Ou et al., 2025), also referred to as absorbing state discrete diffusion models, have gained considerable attention. MDMs use a forward noising process where the original data sequence x0=(x01,…,x0n)x_{0}=(x_{0}^{1},\dots,x_{0}^{n}) consists of nn data tokens at diffusion time t=0t=0 which are progressively replaced by a special [MASK] token as diffusion time tt increases to t=1t=1. Using ‘Cat’ to refer to a categorical distribution, this process is defined by the following transition probability:
+qt|0​(xt|x0)=∏i=1nqt|0​(xti|x0i)=∏i=1nCat​(xti,(1−t)​δxti+t​δ[MASK]).q_{t|0}(x_{t}|x_{0})=\prod_{i=1}^{n}q_{t|0}(x_{t}^{i}|x_{0}^{i})=\prod_{i=1}^{n}\text{Cat}(x_{t}^{i};(1-t)\delta_{x_{t}^{i}}+t\delta_{\text{{[MASK]}}}).
+(1)
+Training of an MDM, as has been shown recently (Sahoo et al., 2024; Shi et al., 2024; Zheng et al., 2025; Ou et al., 2025), makes use of an objective that can be directly derived from the data likelihood. This leads to the following principled evidence lower bound (ELBO) on the data log likelihood log⁡pθ​(x0)\log p_{\theta}(x_{0}):
+−logpθ(x0)≤∫011t𝔼qt|0​(xt|x0)[∑i:xti=[MASK]−logpθ(x0i|xt)]dt.-\log p_{\theta}(x_{0})\leq\int_{0}^{1}\frac{1}{t}\mathbb{E}_{q_{t|0}(x_{t}|x_{0})}\left[\sum_{i:x_{t}^{i}=\text{{[MASK]}}}-\log p_{\theta}\left(x_{0}^{i}|x_{t}\right)\right]dt.
+(2)
+This loss or similar variants are typically used for training a model pθ​(x0i|xt)p_{\theta}(x_{0}^{i}|x_{t}), which predicts a categorical distribution over the vocabulary for token x0ix_{0}^{i} conditioned on partially masked input xtx_{t}.
+Inference, i.e., the reverse process of the masking defined in Equation 1, is computationally inefficient as it involves modifying only one token per step (Campbell et al., 2022a; Lou et al., 2024). It is common to apply τ\tau-leaping (Gillespie, 2001). This enables us to concurrently unveil multiple masked tokens in a single step from noise level tt to noise level s<ts<t.
+However, as illustrated in Section 1 using the poker example, τ\tau-leaping (Gillespie, 2001) in diffusion-based large language models faces a trade-off: consider dependence among tokens by decoding one token at a time which is slow, or ignore dependence. This trade-off is suboptimal.
+3 Variational Masked Diffusion (VMD)
+To improve this trade-off, we first discuss in Section 3.1 a basic formulation to introduce a latent variable. We then expand this basic variational formulation to block diffusion in Section 3.2. We illustrate the benefits of the basic formulation and block diffusion in controlled experiments on synthetic data in Sections 4.1 and 4.2. We study more complex data in Sections 4.3 and 4.4.
+Algorithm 1 VMD Training
+Input : Dataset 𝒟\mathcal{D}, encoder μϕ\mu_{\phi} and σϕ\sigma_{\phi}, decoder pθp_{\theta}.
+1
+while stopping conditions not satisfied do
+2
+Sample t∼𝒰⁡[0,1]t\sim{\mathcal{U}[0,1]};
+3
+Sample x0∼𝒟x_{0}\sim{\mathcal{D}};
+4
+Sample xt∼qt|0​(xt|x0)x_{t}\sim{q_{t|0}(x_{t}|x_{0})};
+5
+z=μϕ​(xt,x0)+ϵ​σϕ​(xt,x0)z={\mu_{\phi}(x_{t},x_{0})+\epsilon\sigma_{\phi}(x_{t},x_{0})} with ϵ∼𝒩⁡(0,I)\epsilon\sim\mathcal{N}(0,I);
+6
+Compute ℒVMD\mathcal{L}_{\text{VMD}} in Equation 5;
+7
+Perform gradient update on θ\theta and ϕ\phi;
+8
+end while
+Output : θ\theta and ϕ\phi
+Algorithm 2 VMD Sampling
+Input : Decoder pθp_{\theta}, fully or partially masked input sequence xx.
+1
+z∼𝒩⁡(0,I)z\sim\mathcal{N}(0,I), x1=xx_{1}=x;
+2
+for n=Nn=N to 11 do
+3
+tn=nN,tn−1=n−1Nt_{n}\!=\frac{n}{N},t_{n-1}\!=\frac{n-1}{N}, and xtn−1=xtnx_{t_{n-1}}\!=x_{t_{n}};
+4
+x^0i=arg⁡maxv​pθ​(x0i=v|xtn,z),∀i:xtni=[MASK]\hat{x}_{0}^{i}=\arg\!\max_{v}p_{\theta}(x_{0}^{i}=v|x_{t_{n}},z),\,\forall i\!:\!x_{t_{n}}^{i}\!=\!\text{{[MASK]}};
+5
+xtn−1i=x^0i,∀i:xtni=[MASK]x_{t_{n-1}}^{i}=\hat{x}_{0}^{i},\forall i\!:\!x_{t_{n}}^{i}\!=\!\text{{[MASK]}} and is not remasked;
+6
+end for
+Output : x0x_{0}
+3.1 Basic Variational Formulation
+Our basic formulation is contrasted to classic MDM in Figure 1.
+Specifically, we introduce a global latent variable. This latent variable permits us to properly characterize arbitrary multi-modal joint probability distributions. For this, we use the categorical mixture model
+pθ​(x0i|xt)=∫pθ​(x0i|xt,z)​p​(z)​𝑑z.p_{\theta}(x_{0}^{i}|x_{t})=\int p_{\theta}(x_{0}^{i}|x_{t},z)p(z)dz.
+(3)
+Note that the latent variable zz is global, i.e., it does not depend on the token position ii. This is important because it enables us to model a joint distribution across tokens. Said differently and following classic graphical model literature: conditioned on the latent variable we can sample tokens ii and jj independently, yet, when marginalizing over the latent variable we obtain samples from the proper joint distribution if the model is trained well. This is formalized as follows:
+pθ​(xsi,xsj|xt)=∫pθ​(xsi|xt,z)⋅pθ​(xsj|xt,z)​p​(z)​𝑑z.p_{\theta}(x_{s}^{i},x_{s}^{j}|x_{t})=\int p_{\theta}(x_{s}^{i}|x_{t},z)\cdot p_{\theta}(x_{s}^{j}|x_{t},z)p(z)dz.
+(4)
+Incorporating the model proposed in Equation 3 into the training objective of MDM, given in Equation 2 yields
+−log⁡pθ​(x0)≤ℒVMD\displaystyle-\log p_{\theta}(x_{0})\leq\mathcal{L}_{\text{VMD}}
+≜∫011t𝔼qt|0​(xt|x0)[𝔼qϕ[∑i:xti=[MASK]−logpθ(x0i|xt,z)]+DKL(qϕ(⋅|x0,xt)||p(⋅))]dt.\displaystyle\triangleq\int_{0}^{1}\frac{1}{t}\mathbb{E}_{q_{t|0}(x_{t}|x_{0})}\left[\mathbb{E}_{q_{\phi}}\left[\sum_{i:x_{t}^{i}=\text{{[MASK]}}}-\log p_{\theta}(x_{0}^{i}|x_{t},z)\right]+D_{\text{KL}}\left(q_{\phi}(\cdot|x_{0},x_{t})||p(\cdot)\right)\right]dt.
+(5)
+Here, p⁡(⋅)p(\cdot) is a prior distribution over the latent space, e.g., a standard Gaussian. Moreover, qϕ(⋅|x0,xt)q_{\phi}(\cdot|x_{0},x_{t}) is an approximate posterior parameterized by trainable parameters ϕ\phi. In a variational autoencoder setting it is often referred to as the encoder while pθp_{\theta} is called the decoder. As the approximate posterior is dataset dependent we provide architecture details in Section 4 and Appendix D.
+The derivation of the negative evidence lower bound (NELBO) is deferred to Appendix A. Note that Equation 5 maintains the evidence lower bound property.
+For inference, we draw the latent variable zz from a standard Gaussian. The trained decoder pθp_{\theta} is used to predict all masked tokens at diffusion time tt with x^0i=arg⁡maxv​pθ​(x0i=v|xt,z)\hat{x}_{0}^{i}=\arg\!\max_{v}p_{\theta}(x_{0}^{i}=v|x_{t},z) for all i:xti=[MASK]i\!:\!x_{t}^{i}\!=\!\text{{[MASK]}}. Here, vv is a value in the vocabulary. Based on the remasking rules detailed in Section 3.3, we remask a portion of the tokens and iterate until all tokens are predicted.
+We summarize the procedure for training and inference in Algorithm 1 and Algorithm 2, respectively. Training differs from classic masked diffusion model training in minimizing both a cross entropy term and a KL divergence between the approximate posterior and the prior. Inference differs from classic masked diffusion model inference in sampling of a single latent variable zz for the whole input sequence.
+Algorithm 3 Block VMD Training
+Input : Dataset 𝒟\mathcal{D}, encoder μϕ\mu_{\phi} and σϕ\sigma_{\phi}, decoder pθp_{\theta}, number of blocks BB.
+1
+while stopping conditions not satisfied do
+2
+Sample {tb}b=1B∼𝒰⁡[0,1]\{t^{b}\}_{b=1}^{B}\sim{\mathcal{U}[0,1]};
+3
+Sample {x0b}b=1B∼𝒟\{x_{0}^{b}\}_{b=1}^{B}\sim{\mathcal{D}};
+4
+Sample {xtb}b=1B∼qtb​(xtb|x0b)\{x_{t}^{b}\}_{b=1}^{B}\sim{q_{t^{b}}(x_{t}^{b}|x_{0}^{b})};
+5
+zb=μϕ​(xtb,x0≤b)+σϕ​(xtb,x0≤b)​ϵz^{b}\!=\!\mu_{\phi}\left(x_{t}^{b},x_{0}^{\leq b}\right)+\sigma_{\phi}\left(x_{t}^{b},x_{0}^{\leq b}\right)\epsilon with ϵ∼𝒩⁡(0,I),∀b\epsilon\sim\mathcal{N}(0,I),\,\forall b ;
+6
+Compute ℒBVMD\mathcal{L}_{\text{BVMD}} in 7;
+7
+Perform gradient update on θ\theta and ϕ\phi;
+8
+end while
+Output : θ\theta and ϕ\phi
+Algorithm 4 Block VMD Sampling
+Input : Decoder pθp_{\theta}, number of blocks BB, fully or partially masked input sequence xx.
+1
+for b=1b=1 to BB do
+2
+zb∼𝒩⁡(0,I)z^{b}\sim\mathcal{N}(0,I), x1b=xbx_{1}^{b}=x^{b};
+3
+for n=Nn=N to 11 do
+4
+tn=nN,tn−1=n−1Nt_{n}\!=\frac{n}{N},t_{n-1}\!=\frac{n-1}{N}, and xtn−1b=xtnbx^{b}_{t_{n-1}}\!=x^{b}_{t_{n}};
+5
+x^0b,i=arg⁡maxv​pθ​(x0i=v|xtnb,x0<b,z≤b)∀i:xtb,i=[MASK]\hat{x}_{0}^{b,i}\!=\!\arg\!\max_{v}p_{\theta}(x_{0}^{i}\!=\!v|x_{t_{n}}^{b},x_{0}^{<b},z^{\leq b})\quad\forall i\!:\!x_{t}^{b,i}\!=\!\text{{[MASK]}};
+6
+xtn−1b,i=x^0b,i,∀i:xtnb,i=[MASK]x_{t_{n-1}}^{b,i}=\hat{x}_{0}^{b,i},\forall i\!:\!x_{t_{n}}^{b,i}\!=\!\text{{[MASK]}} and is not remasked;
+7
+end for
+8
+x0←x01:b−1⊕x0bx_{0}\leftarrow x_{0}^{1:b-1}\oplus x_{0}^{b};
+9
+end for
+Output : x0x_{0}
+3.2 Block Diffusion Formulation
+While a latent variable enables to model dependencies among tokens more accurately, it is challenging to scale this across a large number of tokens. To address this, we follow recent research and combine the strengths of both diffusion and autoregressive models.
+A prime example is the Block Diffusion Language Model (BD3-LM) (Arriola et al., 2025). This model defines an autoregressive probability distribution over blocks of discrete random variables, with the conditional probability of a block given previous blocks specified by a discrete denoising diffusion model. This hybrid approach effectively overcomes the limitations of both pure diffusion and autoregressive models by supporting flexible-length generation, a historical challenge for DLLMs, and significantly improves inference efficiency by incorporating KV caching and parallel token sampling.
+However, within each block, BD3-LM pursues classic unmasking, i.e., it does not consider the dependencies among tokens that are predicted concurrently.
+To address this, we use a hybrid approach that models blocks of tokens autoregressively and applies the variational diffusion formulation discussed in Section 3.1 within each block.
+Formally, the tokens xx are grouped in BB consecutive blocks, each of length rr, with total sequence length L=B​rL=Br. For readability, we use xbx^{b} to refer to the block
+containing tokens at positions (b−1)​r+1(b-1)r+1 to b​rbr with b∈{1,…,B}b\in\{1,\dots,B\}. We use a latent variable zbz^{b} for each block. Using this notation, the data log-likelihood can be factorized as follows:
+logpθ(x0|xt)=∑b=1Blogpθ(x0b|xtb,x0<b)=∑b=1Blog∫pθ(x0b|xtb,x0<b,z≤b)p(z≤b)dz≤b,\log p_{\theta}(x_{0}|x_{t})=\sum_{b=1}^{B}\log p_{\theta}(x^{b}_{0}|x^{b}_{t},x_{0}^{<b})=\sum_{b=1}^{B}\log\int p_{\theta}(x_{0}^{b}|x_{t}^{b},x_{0}^{<b},z^{\leq b})p(z^{\leq b})dz^{\leq b},
+(6)
+where p⁡(z≤b)p(z^{\leq b}) denotes the prior distribution of the latents z≤bz^{\leq b}.
+The Negative Evidence Lower Bound (NELBO) for the data log-likelihood in Equation 5 is changed to
+−log⁡pθ​(x0)≤ℒBVMD\displaystyle-\log p_{\theta}(x_{0})\leq\mathcal{L}_{\text{BVMD}}
+≜∑b=1B∫011t𝔼qt|0​(xt|x0)[𝔼qϕ[∑i:xtb,i=[MASK]−logpθ(x0b,i|xtb,x0<b,z≤b)]\displaystyle\triangleq\sum_{b=1}^{B}\int_{0}^{1}\frac{1}{t}\mathbb{E}_{q_{t|0}(x_{t}|x_{0})}\Biggr[\mathbb{E}_{q_{\phi}}\left[\sum_{i:x_{t}^{b,i}=\text{{[MASK]}}}-\log p_{\theta}\left(x_{0}^{b,i}|x_{t}^{b},x_{0}^{<b},z^{\leq b}\right)\right]
++DKL(qϕ(⋅|xtb,x0≤b)∥p(⋅))]dt,\displaystyle\quad\quad\quad\quad\quad\quad\quad\quad\quad\quad+D_{\mathrm{KL}}\left(q_{\phi}\left(\cdot|x_{t}^{b},x_{0}^{\leq b}\right)\|p\left(\cdot\right)\right)\Biggr]dt,
+(7)
+where qϕ(⋅|xtb,x0≤b)q_{\phi}\left(\cdot|x_{t}^{b},x_{0}^{\leq b}\right) is the approximate posterior for the latent parameterized by a neural network with trainable parameters ϕ\phi. We use a simple prior p⁡(z≤b)=𝒩⁡(z≤b,0,I)p\left(z^{\leq b}\right)=\mathcal{N}(z^{\leq b};0,I). The derivation of the bound in 7 is deferred to Appendix B.
+Note, when the number of blocks B=1B=1 (r=Lr=L),
+the model discussed here (Equation 6) is identical to the model detailed Equation 3. Moreover, when B=LB=L (r=1r=1), we obtain an autoregressive variational model. Therefore, varying BB (or equivalently rr) allows us to interpolate between an autoregressive variational model and the variational masked diffusion model.
+We summarize training and inference for the variational block diffusion formulation in Algorithm 3 and Algorithm 4 respectively. During training, we adopt a fully vectorized approach where noisy inputs xtx_{t} and clean data x0x_{0} are concatenated and processed jointly by the model. An attention mask enforces the dependency structure so that the encoder, when computing the latent zbz^{b}, only depends on (xtb,x0≤b)(x_{t}^{b},x_{0}^{\leq b}). In contrast, the decoder pθp_{\theta} depends on (xtb,x0<b,z≤b)(x_{t}^{b},x_{0}^{<b},z^{\leq b}).
+During inference, we follow block diffusion (Arriola et al., 2025) and apply KV caching for efficient sampling. Each generated block x0bx_{0}^{b} is stored in the cache, which means that the prefix context x0<bx_{0}^{<b} used during training corresponds to the accumulated keys and values (K1:b−1,V1:b−1)(K^{1:b-1},V^{1:b-1}). The decoder prediction for block bb, therefore, depends only on the current noisy input xtbx_{t}^{b}, the latents z≤bz^{\leq b}, and the cached context from earlier generated blocks. In short, training uses ground-truth prefixes while inference reuses cached context, which ensures both correctness and efficiency.
+3.3 Remasking
+Early DLLMs (Nie et al., 2025) remask the predictions with the
+lowest confidence, i.e., those with the lowest pθp_{\theta} values. The remasking strategies considered here include: random remasking and confidence-based remasking/unmasking (Nie et al., 2025; Zheng et al., 2023; Kim et al., 2025). The confidence scores used in prior work do not consider the dependence between tokens: they are token-local metrics. Differently, our variational models provide confidence scores with more global context through the latent variables. Specifically, we consider the following two strategies:
+The first strategy is to check the probability of the selected value at each position (Nie et al., 2025; Zheng et al., 2023). Concretely, if v1v_{1} is the most probable value in the vocabulary according to pθ​(x0i|xt,z)p_{\theta}(x^{i}_{0}|x_{t},z), then the confidence for token ii is defined as cprob.i=pθ​(x0i=v1|xt,z)c^{i}_{\text{prob.}}=p_{\theta}(x_{0}^{i}=v_{1}|x_{t},z).
+The second strategy uses the top-KK probability margin (Kim et al., 2025). The uncertainty of a token is estimated using the absolute difference between the two most probable values at position ii. If v1v_{1} and v2v_{2} are the two most probable values in vocabulary according to pθ​(x0i|xt,z)p_{\theta}(x^{i}_{0}|x_{t},z), the confidence of token ii is given by
+cmarg.i=|pθ​(x0i=v1|xt,z)−pθ​(x0i=v2|xt,z)|c^{i}_{\text{marg.}}\!=\!|p_{\theta}(x_{0}^{i}\!=\!v_{1}|x_{t},z)\!-\!p_{\theta}(x_{0}^{i}\!=\!v_{2}|x_{t},z)|.
+To extend both strategies to block VMD, we replace pθ​(x0i|xt,z)p_{\theta}(x_{0}^{i}|x_{t},z) with pθ​(x0b,i|xtb,x0<b,z≤b)p_{\theta}(x_{0}^{b,i}|x_{t}^{b},x_{0}^{<b},z^{\leq b}).
+4 Experiments
+We first study efficacy of the proposed Variational Masked Diffusion (VMD) on controlled synthetic data in Sections 4.1 and 4.2. This enables us to carefully assess and visualize the asserted properties of the different formulations. We then present results on Sudoku data in Section 4.3, which has stronger dependencies between tokens than classic text data. Finally, we also present results on text data in Section 4.4, demonstrating that the proposed VMD formulation is on par with prior work.
+4.1 Controlled Synthetic Data with 2 Tokens
+To examine whether models can capture dependency among tokens, we first evaluate on controlled synthetic datasets where the ground truth distribution is fully specified and easy to visualize. All sequences contain only two tokens, which makes it straightforward to measure whether a model has learned the correct dependency structure. The baseline is a block diffusion model with a small number of DiT blocks. For VMD, the decoder backbone is similar to the baseline to ensure equal inference cost, with an additional lightweight pathway to incorporate latent variables. The encoder uses the same architecture with one quarter of the DiT blocks. A 32-dimensional latent variable is injected into the decoder. See Appendix C.1 for more implementation details. We report two metrics: (i) accuracy, the proportion of valid sequences among generated samples, and (ii) KL divergence, the distance between the generated distribution and the ground truth distribution.
+Table 1: Results for controlled synthetic data with 2 tokens. We report KL divergence (↓\downarrow) and accuracy (↑\uparrow). While baseline models fail in one-step inference and degenerate to random guessing, VMD successfully captures token dependencies, yielding substantially higher accuracy and lower KL divergence. Best result highlighted in bold font.
+Experiment
+Inference
+MDM (KL ↓\downarrow)
+MDM (Acc. ↑\uparrow)
+VMD (KL ↓\downarrow)
+VMD (Acc. ↑\uparrow)
+Deterministic
+One-step
+2.3
+10.18%
+0.082
+93.2%
+Token-by-token
+0.001
+99.97%
+0.012
+100%
+Non-Uniform
+One-step
+2.2
+11.63%
+0.081
+93.04%
+Token-by-token
+0.023
+99.96%
+0.009
+99.98%
+Deterministic dependency. In the first setting, we consider the following 10 two-token sequences: {(k,k+1mod10)}k=09\{(k,k+1\mod 10)\}_{k=0}^{9} and the data distribution is uniform on the support. Here, the second token is fully determined by the first. From Table 1, we see that standard masked diffusion fails to capture this dependency when decoding concurrently (one-step inference): when generating both tokens simultaneously, it degenerates to random guessing yielding around 10% accuracy. In contrast, VMD is able to capture and generate correct pairs reliably. This shows that a latent variable enables the model to represent dependencies among tokens.
+(a) Ground Truth
+(b) Baseline
+(c) VMD
+Figure 2: Results on controlled synthetic data with 2 tokens under the non-uniform setting. (a) Ground truth distribution, (b) baseline masked diffusion with one-step generation, and (c) our VMD with one-step generation. While the baseline degenerates into nearly uniform random guessing and fails to capture the underlying dependency, VMD accurately recovers the true distribution, demonstrating its ability to learn token-to-token correlations beyond conditional independence.
+Non-uniform distribution. Next, we consider a non-uniform distribution over the support, with P⁡((,,,))=k+155P((k,k+1\mod 10))=\frac{k+1}{55} for k∈{0,…,9}k\!\in\!\{0,...,9\}.
+While both models achieve near-perfect accuracy with token-by-token generation, KL divergence and heatmap results in Table 1 and Figure 2 reveal that VMD samples more faithfully from the target distribution. This indicates that VMD not only captures dependencies among tokens but also accurately models the underlying data distribution.
+Table 2: KL divergence of experiments on data with varying dependence strength for one-step generation. Higher pp values indicate stronger dependence among tokens. Best results shown in bold font.
+pp
+MDM (KL ↓\downarrow)
+VMD (KL ↓\downarrow)
+0.3
+0.155
+0.054
+0.5
+0.516
+0.062
+0.7
+1.03
+0.064
+1.0
+2.31
+0.079
+Varying dependence strength. Finally, we interpolate between dependent and random pairs. Given a token x1x_{1}, the second token is set to (x1+1)modV(x_{1}+1)\mod V with probability pp, and to a random alternative with equal probability 1−pV−1\frac{1-p}{V-1} otherwise, where VV is the vocabulary size. As pp decreases from 1 to 0, the token dependency transitions from fully dependent to independent. In this experiment, we cannot use accuracy since every pair of tokens is valid. Therefore, we only report the KL divergence and show heatmaps (Appendix D.1). Results in Table 2 show that VMD maintains accurate distributional modeling even if the dependence is weak.
+Taken together, the three controlled experiments demonstrate:
+(i) for strongly dependent tokens, VMD yields substantial one-step generation improvements; (ii) in probabilistic settings, VMD more faithfully models the underlying distribution;
+and (iii) across the full spectrum from strong to weak dependence, VMD consistently models the true data distribution accurately. These results show that VMD successfully learns the token dependency, validating its design. Further experimental results can be found in Appendix D.1.
+4.2 Controlled Synthetic Data with 4 Tokens
+To further evaluate whether VMD can scale from simple pairwise dependencies to longer sequences, we construct synthetic data with four tokens per sequence. This setting allows us to introduce block structure explicitly and test whether latent variables can simultaneously capture intra-block correlations and preserve cross-block dependencies. We adopt the same model architecture and evaluation metrics as in the two-token experiments, and set the block size to 2, so that each sequence of length 4 is divided into two blocks. Each block is assigned a 32-dimensional latent variable.
+The first dataset (D1) contains 10 unique sequences: {(k,k+1,k+2,k+3mod10)}k=09\{(k,k+1,k+2,k+3\mod 10)\}_{k=0}^{9}, which have strong token dependence. The second dataset (D2) is {(k,k+1,l,l+1mod10)}k,l=09\{(k,k+1,l,l+1\mod 10)\}_{k,l=0}^{9}. For D2, the first block of length 2 is independent of the second block of length 2, and the total number of unique sequences is 100. Note that if we independently draw a number for each location, then the total number of unique sequences is 10410^{4}. Therefore, if we concurrently unmask the digits independently (in one step), the success rate for D1 is 0.1%0.1\% and the success rate for D2 is 1.0%1.0\% in theory. We provide the results in Table 3 and observe: when decoding one token at a time, both classic block diffusion as well as our variational formulation achieve almost 100% prediction accuracy. However, when decoding all four tokens in parallel (B=1B=1, NFE =1=1), block diffusion behaves like classic MDM and can’t do better than random guessing (0.1% for D1, and 1.1% for D2), while our approach achieves a much better accuracy of 81.5% for D1 and 64.4% for D2. When setting B=2B\!=\!2 and NFE =2=2, we see that the accuracy of block diffusion increases from 0.1%0.1\% to 10%10\% for D1. The accuracy doesn’t change much for D2, since the two consecutive blocks are independent. Our method’s accuracy further increases to 91.3% for D1 and 72.8% for D2. Also note, for low NFEs, i.e., when generating concurrently, we observe VMD to achieve a lower KL divergence than the baseline. For NFE=4~=4, our generated sequences have larger KL divergence than the baseline, while maintaining a 100% accuracy. This happens when the generated sequences are valid, but are not as uniformly distributed as the ground truth.
+Table 3: Accuracy (↑\uparrow) (first two rows) and KL divergence (↓\downarrow) (last two rows) for the generated sequences when starting from fully masked tokens. Sequence length L=4L=4. Column ‘B=2B\!=\!2, NFE =4=4’: unmasking one token at a time within each block and autoregressive decoding from block 1 to block 2; Column ‘B=2B\!=\!2, NFE =2=2’: parallel decoding within a block and autoregressive among blocks; Column ‘B=1B\!=\!1, NFE =4=4’: recovering the sequence token-by-token; Column ‘B=1B\!=\!1, NFE =1=1’: simultaneous recovery of all tokens. Bold for the best.
+D1
+D2
+Method
+B=2B\!=\!2
+B=2B\!=\!2
+B=1B\!=\!1
+B=1B\!=\!1
+B=2B\!=\!2
+B=2B\!=\!2
+B=1B\!=\!1
+B=1B\!=\!1
+NFE=4=\!4
+NFE=2=\!2
+NFE=4=\!4
+NFE=1=\!1
+NFE=4=\!4
+NFE=2=2
+NFE=4=\!4
+NFE=1=\!1
+Acc. (↑\uparrow)
+Block MDM
+99.4%
+10.1%
+99.3%
+0.1 %
+99.3%
+1.1%
+99.1
+1.1%
+VMD (ours)
+100%
+94.2%
+100%
+87.3%
+100%
+88.6 %
+100.0%
+80.0 %
+KL (↓\downarrow)
+Block MDM
+0.007
+2.298
+0.010
+9.422
+0.018
+7.656
+0.015
+7.493
+VMD (ours)
+0.012
+0.068
+0.033
+0.165
+0.018
+0.148
+0.475
+0.268
+These results show: VMD extends naturally to block-structured settings. With one latent per block, VMD captures token correlations within blocks, preserves cross-block dependencies when they exist, and avoids inventing dependencies when they do not. Hence, the variational formulation not only addresses the limitations of standard masked diffusion but also integrates seamlessly with block diffusion to provide a principled and flexible framework for modeling dependencies across scales.
+4.3 Sudoku Data
+Sudoku is a classical logic-based puzzle played on a 9×99\times 9 grid. The objective is to fill empty cells such that every row, column, and each of the nine 3×33\times 3 subgrids contains all digits from 1 to 9 exactly once. This formulation naturally imposes global and local dependencies among numbers. The validity of each digit depends not only on its immediate neighbors but also on distant constraints within the same row, column, or subgrid. This makes Sudoku a good benchmark for assessing whether generative models can capture token dependencies.
+Setup.
+We follow the experimental pipeline established by Kim et al. (2025). Specifically, their work adopts the model and training procedure introduced by Ye et al. (2025), but trains on the dataset of Shah et al. (2024). The data consists of 1.8M training puzzles and 0.1M test puzzles. Compared with the smaller 1M-puzzle dataset used by Ye et al. (2025), the benchmark of Shah et al. (2024) is substantially more challenging and provides a more rigorous test of model generalization. We adopt the same setting and their model as a baseline to ensure comparability and robustness of the evaluation. Following prior work, we represent Sudoku puzzles by flattening each 9×99\times 9 grid into a sequence of 81 digits. Entries to be filled are denoted by the digit 0. During training, we concatenate the puzzle and its solution, separated by special tokens, yielding an input sequence of length 164. Unlike our other experiments, here we do not employ any block structure.
+Table 4: Sudoku results for different sampling methods and NFE values. VMD consistently improves over the baseline across both sampling schemes. Best results shown in bold font.
+Model
+Top prob (Accuracy ↑\uparrow)
+Top prob margin (Accuracy ↑\uparrow)
+NFE=5
+NFE=10
+NFE=20
+NFE=5
+NFE=10
+NFE=20
+Baseline
+10.6%
+14.7%
+20.4%
+36.2%
+78.4%
+91.1%
+VMD
+67.7%
+76.4%
+80.9%
+96.9%
+99.0%
+99.7%
+Implementation Details for VMD. The baseline model contains 5.5M parameters. To guarantee comparable inference speed, we keep our decoder backbone approximately the same size as the baseline, while adding a lightweight module to incorporate latent variables. The resulting model has a total of 5.2M parameters. For the encoder, we use the same architecture as the decoder but reduce the number of Transformer layers from 6 to 4. The input sequence is associated with a 128-dimensional latent variable, which is embedded and injected into every DiT block in the decoder via a shared adaptive layernorm module following the design of Chen et al. (2025), providing a compact yet expressive representation of dependencies across tokens.
+Evaluation and Results. We evaluate the performance using the percentage of puzzles that are completely solved (i.e., every cell is correct). This metric directly reflects the ability of a generative model to learn the dependence among tokens, inherent in Sudoku. As shown in Table 4, we successfully reproduce the baseline accuracy reported by Kim et al. (2025). Our VMD model consistently outperforms the baseline using confidence-based remasking with cprop.c_{\text{prop.}} and cmarg.c_{\text{marg.}}. The gains are particularly pronounced at lower NFE, highlighting that VMD can generate valid solutions more efficiently. These results provide strong evidence that VMD learns dependence among tokens that standard masked diffusion fails to capture, directly supporting our claim.
+4.4 Text Data
+Table 5: Test perplexity (PPL; ↓\downarrow) on text8 dataset. Bold for the best.
+PPL (↓\downarrow)
+Autoregressive
+2.603
+SEDD
+≤\leq 3.529
+MDLM
+≤\leq 3.498
+BD3-LM Block size 4
+≤\leq 2.873
+BD3-LM Block size 8
+≤\leq 3.126
+VMD Block size 4
+≤\leq 2.858
+VMD Block size 8
+≤\leq 3.125
+Text data is the most widely used and extensively studied data modality in generative modeling.
+We use the text8 dataset (Hutter, 2006), which consists of the first 100M characters from Wikipedia. The dataset is preprocessed into a character-level corpus containing 26 English letters and the space symbol, yielding a vocabulary size of 27. Its simplicity and popularity make it a standard benchmark for discrete sequence modeling.
+Implementation Details for VMD. We segment text sequences into fixed-length chunks of 256 tokens and experiment with two block sizes, 4 and 8, respectively, for block diffusion (Arriola et al., 2025) and our block VMD. For both encoder and decoder, we adapt the architecture of BD3-LM to include latent information. To ensure a fair comparison, the decoder backbone is kept identical to the baseline. For the encoder, similar to the strategy in our Sudoku experiments, we adjust the number of layers so that its architecture mirrors the decoder while maintaining half of its parameter count. A 128-dimensional latent vector is assigned to each block, providing a compact representation of intra-block dependency, while blocks are processed autoregressively using Transformer layers.
+Results. We compare our method to two state-of-the-art families: (i) strong autoregressive models trained under comparable conditions, and (ii) recent diffusion-based language models, including SEDD (Lou et al., 2024), MDLM (Sahoo et al., 2024), and BD3-LM (Arriola et al., 2025). Test perplexities are reported in Table 5 as the evaluation metric. Our VMD achieves lower perplexity than standard diffusion baselines (SEDD, MDLM) and provides slight but consistent improvements over BD3-LM at both block sizes. Notably, with block size 4, VMD reaches 2.858 perplexity, which is the best among diffusion-based models.
+These results highlight that text data, with weaker and longer-range dependencies than Sudoku, is a more challenging setting. VMD still achieves consistent gains, indicating that its latent variables are effective at capturing intra-block token dependencies even in large-scale natural language data. VMD provides a principled extension of masked diffusion methods toward competitive text generation, narrowing the gap to autoregressive approaches.
+5 Related Work
+Discrete diffusion models. (Continuous) diffusion models are based on continuous-space Markov chains with
+Gaussian transition kernels (Ho et al., 2020). In a similar spirit, discrete diffusion models have emerged
+from discrete-space Markov chains (Hoogeboom et al., 2021). Austin et al. (2021) introduced D3PM, which generalizes the multinomial diffusion model (Hoogeboom et al., 2021) by going beyond corruption processes with uniform transition probabilities. D3PM formulates a large design space for discrete diffusion models, generalizing and enabling the exploration of new types of corruption processes, including those with absorbing states. The D3PM framework also drew insightful connections between diffusion with absorbing states and masked language models, serving as a critical bridge for the masked diffusion paradigm that would follow. Campbell et al. (2022b) provided the complete continuous time framework for denoising diffusion
+models of discrete data and incorporated the τ\tau-leaping approach for efficient reverse time sampling. Later, Lou et al. (2024) introduced SEDD, which incorporates a theoretically and practically robust score-entropy objective. Alternatively, several works proposed to perform diffusion over continuous embeddings of discrete tokens (Li et al., 2022; Dieleman et al., 2022; Chen et al., 2023). This allows use of continuous diffusion algorithms (Ho et al., 2020; Song et al., 2021). However, it is challenging to find a good encoding and decoding between discrete tokens and the continuous latent space (Li et al., 2022).
+Masked diffusion models.
+Masked diffusion models are a powerful and popular sub-field of discrete diffusion models.
+Building upon the absorbing transition kernel,
+Shi et al. (2024); Sahoo et al. (2024) introduce Masked Diffusion Models (MDM), which have a simple and principled training recipe, with time dependent mask ratio.
+LLaDA (Nie et al., 2025) and LLaDA-V (You et al., 2025) scaled up the original MDMs and demonstrated their strengths in language modeling. However, all the existing masked diffusion models cannot capture the dependence among concurrently sampled tokens well. Our model addresses this by introducing a latent variable.
+Arriola et al. (2025) introduce block discrete
+denoising diffusion language models (BD3-LMs), which interpolate between discrete diffusion
+and autoregressive models. It combines the strengths of autoregressive and diffusion models and enables variable-length, high-quality generation while enhancing inference efficiency through KV caching and parallel sampling. Our method further improves efficiency and accuracy of parallel sampling while using the block autoregressive structure.
+Other non-autoregressive models.
+Efforts to model natural language in a non-autoregressive manner began with BERT (Devlin et al., 2019). Such non-causal methods utilize rich text representations. Extending these intuitions further, Hoogeboom et al. (2022) and Shih et al. (2022) introduced any-order modeling, enabling generation in arbitrary orders. Latent variables have been used in continuous diffusion models, e.g., by Zhang et al. (2025a); Zhang et al. (2025b); Guo & Schwing (2025).
+6 Conclusion
+We address a key limitation of classic masked diffusion modeling: how to consider the dependence among tokens when decoding concurrently. For this, we propose variational masked diffusion (VMD). It introduces a latent variable into masked diffusion modeling. On data where dependencies among tokens are crucial, VMD significantly improves results upon classic masked diffusion. On data where tokens are largely independent, the proposed formulation yields on par results. All code will be released to ensure reproducibility of the reported results.
+Acknowledgments. This work is supported in part by NSF grants 2008387, 2045586, 2106825, NIFA award 2020-67021-32799, and OAC 2320345.
+References
+Arriola et al. (2025)
+Marianne Arriola, Aaron Gokaslan, Justin T Chiu, Zhihan Yang, Zhixuan Qi, Jiaqi Han, Subham Sekhar Sahoo, and Volodymyr Kuleshov.
+Block diffusion: Interpolating between autoregressive and diffusion language models.
+In Proc. ICLR, 2025.
+Austin et al. (2021)
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, and Charles Sutton.
+Program synthesis with large language models.
+arXiv preprint arXiv:2108.07732, 2021.
+Austin et al. (2023)
+Jacob Austin, Daniel D. Johnson, Jonathan Ho, Daniel Tarlow, and Rianne van den Berg.
+Structured denoising diffusion models in discrete state-spaces.
+In Proc. NeurIPS, 2023.
+Campbell et al. (2022a)
+Andrew Campbell, Joe Benton, Valentin De Bortoli, Tom Rainforth, George Deligiannidis, and Arnaud Doucet.
+A continuous time framework for discrete denoising models.
+In Proc. NeurIPS, 2022a.
+Campbell et al. (2022b)
+Andrew Campbell, Joe Benton, Valentin De Bortoli, Thomas Rainforth, George Deligiannidis, and Arnaud Doucet.
+A continuous time framework for discrete denoising models.
+In Proc. NeurIPS, volume 35, pp. 28266–28279, 2022b.
+Chen et al. (2025)
+Chen Chen, Rui Qian, Wenze Hu, Tsu-Jui Fu, Jialing Tong, Xinze Wang, Lezhi Li, Bowen Zhang, Alex Schwing, Wei Liu, and Yinfei Yang.
+Dit-air: Revisiting the efficiency of diffusion model architecture design in text to image generation.
+arXiv preprint arXiv:2503.10618, 2025.
+Chen et al. (2023)
+Ting Chen, Ruixiang ZHANG, and Geoffrey Hinton.
+Analog bits: Generating discrete data using diffusion models with self-conditioning.
+In Proc. ICLR, 2023.
+Devlin et al. (2019)
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova.
+BERT: Pre-training of deep bidirectional transformers for language understanding.
+In Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers), pp. 4171–4186, 2019.
+Dieleman et al. (2022)
+Sander Dieleman, Laurent Sartran, Arman Roshannai, Nikolay Savinov, Yaroslav Ganin, Pierre H Richemond, Arnaud Doucet, Robin Strudel, Chris Dyer, Conor Durkan, Curtis Hawthorne, Rémi Leblond, Will Grathwohl, and Jonas Adler.
+Continuous diffusion for categorical data.
+arXiv preprint arXiv:2211.15089, 2022.
+Feng et al. (2025)
+Guhao Feng, Yihan Geng, Jian Guan, Wei Wu, Liwei Wang, and Di He.
+Theoretical benefit and limitation of diffusion language model.
+arXiv preprint arXiv:2502.09622, 2025.
+Gillespie (2001)
+Daniel T Gillespie.
+Approximate accelerated stochastic simulation of chemically reacting systems.
+The Journal of chemical physics, 2001.
+Google DeepMind (2025)
+Google DeepMind.
+Gemini diffusion, 2025.
+https://deepmind.google/models/gemini-diffusion.
+Guo & Schwing (2025)
+Pengsheng Guo and Alexander G. Schwing.
+Variational rectified flow matching.
+In Proc. ICML, 2025.
+Ho et al. (2020)
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+Denoising diffusion probabilistic models.
+In Proc. NeurIPS, 2020.
+Hoogeboom et al. (2021)
+Emiel Hoogeboom, Didrik Nielsen, Priyank Jaini, Patrick Forré, and Max Welling.
+Argmax flows and multinomial diffusion: Learning categorical distributions.
+In Proc. NeurIPS, 2021.
+Hoogeboom et al. (2022)
+Emiel Hoogeboom, Alexey A. Gritsenko, Jasmijn Bastings, Ben Poole, Rianne van den Berg, and Tim Salimans.
+Autoregressive diffusion models.
+In Proc. ICLR, 2022.
+Hutter (2006)
+Marcus Hutter.
+text8 dataset.
+Derived from the first 100,000,000 bytes of Wikipedia dump, 2006.
+Commonly used as a benchmark for language modeling and data compression, particularly in relation to the Hutter Prize.
+Inception Labs (2025)
+Inception Labs.
+Introducing mercury: The first commercial diffusion-based language model, 2025.
+https://www.inceptionlabs.ai/introducing-mercury.
+Kim et al. (2025)
+Jaeyeon Kim, Kulin Shah, Vasilis Kontonis, Sham M. Kakade, and Sitan Chen.
+Train for the worst, plan for the best: Understanding token ordering in masked diffusions.
+In Proc. ICML, 2025.
+Li et al. (2022)
+Xiang Li, John Thickstun, Ishaan Gulrajani, Percy S Liang, and Tatsunori B Hashimoto.
+Diffusion-LM improves controllable text generation.
+In Proc. NeurIPS, volume 35, pp. 4328–4343, 2022.
+Li et al. (2024)
+Yuchen Li, Alexandre Kirchmeyer, Aashay Mehta, Yilong Qin, Boris Dadachev, Kishore Papineni, Sanjiv Kumar, and Andrej Risteski.
+Promises and pitfalls of generative masked language modeling: Theoretical framework and practical guidelines.
+In Proc. ICML, 2024.
+Liu et al. (2025)
+Xuejie Liu, Anji Liu, Guy Van den Broeck, and Yitao Liang.
+Plug-and-play context feature reuse for efficient masked generation.
+arXiv preprint arXiv:2505.19089, 2025.
+Lou et al. (2024)
+Aaron Lou, Chenlin Meng, and Stefano Ermon.
+Discrete diffusion modeling by estimating the ratios of the data distribution.
+In Proc. ICML, 2024.
+Nie et al. (2025)
+Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li.
+Large language diffusion models.
+arXiv preprint arXiv:2502.09992, 2025.
+Ou et al. (2025)
+Jingyang Ou, Shen Nie, Kaiwen Xue, Fengqi Zhu, Jiacheng Sun, Zhenguo Li, and Chongxuan Li.
+Your absorbing discrete diffusion secretly models the conditional distributions of clean data.
+In Proc. ICLR, 2025.
+Sahoo et al. (2024)
+Subham Sekhar Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin T Chiu, Alexander Rush, and Volodymyr Kuleshov.
+Simple and effective masked diffusion language models.
+In Proc. NeurIPS, 2024.
+Shah et al. (2024)
+Kulin Shah, Nishanth Dikkala, Xin Wang, and Rina Panigrahy.
+Causal language modeling can elicit search and reasoning capabilities on logic puzzles.
+In Proc. NeurIPS, 2024.
+Shi et al. (2024)
+Jiaxin Shi, Kehang Han, Zhe Wang, Arnaud Doucet, and Michalis K. Titsias.
+Simplified and generalized masked diffusion for discrete data.
+In Proc. NeurIPS, 2024.
+Shih et al. (2022)
+Andy Shih, Dorsa Sadigh, and Stefano Ermon.
+Training and inference on any-order autoregressive models the right way.
+In Proc. NeurIPS, 2022.
+Song & Zhou (2025)
+Jiaming Song and Linqi Zhou.
+Ideas in Inference-time Scaling can Benefit Generative Pre-training Algorithms.
+arXiv preprint arXiv:2503.07154, 2025.
+Song et al. (2021)
+Jiaming Song, Chenlin Meng, and Stefano Ermon.
+Denoising diffusion implicit models.
+In ICLR, 2021.
+Wu et al. (2025)
+Chengyue Wu, Hao Zhang, Shuchen Xue, Zhijian Liu, Shizhe Diao, Ligeng Zhu, Ping Luo, Song Han, and Enze Xie.
+Fast-dLLM: Training-free Acceleration of Diffusion LLM by Enabling KV Cache and Parallel Decoding.
+arXiv preprint arXiv:2505.22618, 2025.
+Xu et al. (2025)
+Minkai Xu, Tomas Geffner, Karsten Kreis, Weili Nie, Yilun Xu, Jure Leskovec, Stefano Ermon, and Arash Vahdat.
+Energy-based diffusion language models for text generation.
+In Proc. ICLR, 2025.
+Yang et al. (2025)
+Ling Yang, Ye Tian, Bowen Li, Xinchen Zhang, Ke Shen, Yunhai Tong, and Mengdi Wang.
+MMaDA: Multimodal Large Diffusion Language Models.
+arXiv preprint arXiv:2505.15809, 2025.
+Ye et al. (2025)
+Jiacheng Ye, Jiahui Gao, Shansan Gong, Lin Zheng, Xin Jiang, Zhenguo Li, and Lingpeng Kong.
+Beyond autoregression: Discrete diffusion for complex reasoning and planning.
+In Proc. ICLR, 2025.
+You et al. (2025)
+Zebin You, Shen Nie, Xiaolu Zhang, Jun Hu, Jun Zhou, Zhiwu Lu, Ji-Rong Wen, and Chongxuan Li.
+LLaDA-V: large language diffusion models with visual instruction tuning.
+arXiv preprint arXiv:2505.16933, 2025.
+Zhang et al. (2025a)
+Yichi Zhang, Yici Yan, Alex Schwing, and Zhizhen Zhao.
+Towards hierarchical rectified flow.
+In Proc. ICLR, 2025a.
+Zhang et al. (2025b)
+Yichi Zhang, Yici Yan, Alex Schwing, and Zhizhen Zhao.
+Hierarchical rectified flow matching with mini-batch couplings.
+arXiv preprint arXiv:2507.13350, 2025b.
+Zheng et al. (2025)
+Kaiwen Zheng, Yongxin Chen, Hanzi Mao, Ming-Yu Liu, Jun Zhu, and Qinsheng Zhang.
+Masked diffusion models are secretly time-agnostic masked models and exploit inaccurate categorical sampling.
+In Proc. ICLR, 2025.
+Zheng et al. (2023)
+Lin Zheng, Jianbo Yuan, Lei Yu, and Lingpeng Kong.
+A reparameterized discrete diffusion model for text generation.
+arXiv preprint arXiv:2302.05737, 2023.
+Appendix: Variational Masked Diffusion Models
+This appendix is structured as follows: in Appendix A we derive the variational masked diffusion (VMD) loss stated in Equation 5; in Appendix B we derive the block diffusion loss stated in 7; in Appendix C we discuss implementation details; and in Appendix D we provide additional experimental results.
+Appendix A VMD Loss Derivation
+Here we provide the derivation of the VMD loss stated in Equation 5. For this we use the negative evidence lower bound (NELBO) for masked diffusion (Sahoo et al., 2024, Eq. (10)), i.e.,
+−log⁡pθ​(x0)≤ℒNELBO∞\displaystyle-\log p_{\theta}(x_{0})\leq\mathcal{L}^{\infty}_{\text{NELBO}}
+≜∫01𝔼qt|0​(xt|x0)​αt′1−αt​[log⁡pθ​(x0|xt)]​𝑑t\displaystyle\triangleq\int_{0}^{1}\mathbb{E}_{q_{t|0}(x_{t}|x_{0})}\frac{\alpha^{\prime}_{t}}{1-\alpha_{t}}\left[\log p_{\theta}(x_{0}|x_{t})\right]dt
+=∫011t​𝔼qt|0​(xt|x0)​[−log⁡pθ​(x0|xt)]​𝑑t,withαt=1−t.\displaystyle=\int_{0}^{1}\frac{1}{t}\mathbb{E}_{q_{t|0}(x_{t}|x_{0})}\left[-\log p_{\theta}(x_{0}|x_{t})\right]dt,\quad\text{with}\quad\alpha_{t}=1-t.
+(8)
+Next we derive the NELBO for −log⁡pθ​(x0|xt)-\log p_{\theta}(x_{0}|x_{t}) as follows:
+−log⁡pθ​(x0|xt)\displaystyle-\log p_{\theta}(x_{0}|x_{t})
+=−log∫pθ(x0|xt,z)p(z)dz\displaystyle=-\log\int p_{\theta}(x_{0}|x_{t},z)p(z)dz
+=−log∫qϕ(z|x0,xt)pθ​(x0|xt,z)​p​(z)qϕ​(z|x0,xt)dz\displaystyle=-\log\int q_{\phi}(z|x_{0},x_{t})\frac{p_{\theta}(x_{0}|x_{t},z)p(z)}{q_{\phi}(z|x_{0},x_{t})}dz
+≤𝔼qϕ​(z|x0,xt)​[−log⁡pθ​(x0i|xt,z)​p​(z)qϕ​(z|x0,xt)]\displaystyle\leq\mathbb{E}_{q_{\phi}(z|x_{0},x_{t})}\left[-\log\frac{p_{\theta}(x_{0}^{i}|x_{t},z)p(z)}{q_{\phi}(z|x_{0},x_{t})}\right]
+=𝔼qϕ​(z|x0,xt)​[−log⁡pθ​(x0|xt,z)]−𝔼qϕ​(z|x0,xt)​[log⁡p⁡(z)qϕ​(z|x0,xt)]\displaystyle=\mathbb{E}_{q_{\phi}(z|x_{0},x_{t})}\left[-\log p_{\theta}(x_{0}|x_{t},z)\right]-\mathbb{E}_{q_{\phi}(z|x_{0},x_{t})}\left[\log\frac{p(z)}{q_{\phi}(z|x_{0},x_{t})}\right]
+=𝔼qϕ​(z|x0,xt)[−logpθ(x0|xt,z)]+DKL(qϕ(⋅|x0,xt)||p(⋅)).\displaystyle=\mathbb{E}_{q_{\phi}(z|x_{0},x_{t})}\left[-\log p_{\theta}(x_{0}|x_{t},z)\right]+D_{\text{KL}}\left(q_{\phi}(\cdot|x_{0},x_{t})||p(\cdot)\right).
+(9)
+We assume pθ​(x0|xt,z)=∏i=1Lpθ​(x0i|xt,z)p_{\theta}(x_{0}|x_{t},z)=\prod_{i=1}^{L}p_{\theta}(x_{0}^{i}|x_{t},z). Plugging Equation 9 into Equation 8, we obtain
+−log⁡pθ​(x0)≤ℒNELBO∞\displaystyle-\log p_{\theta}(x_{0})\leq\mathcal{L}^{\infty}_{\text{NELBO}}
+≤∫011t𝔼qt|0​(xt|x0)[𝔼qϕ[∑i:xti=[MASK]−logpθ(x0i|xt,z)]+DKL(qϕ(⋅|x0,xt)||p(⋅))]dt.\displaystyle\leq\int_{0}^{1}\frac{1}{t}\mathbb{E}_{q_{t|0}(x_{t}|x_{0})}\left[\mathbb{E}_{q_{\phi}}\left[\sum_{i:x_{t}^{i}=\text{{[MASK]}}}-\log p_{\theta}(x_{0}^{i}|x_{t},z)\right]+D_{\text{KL}}\left(q_{\phi}(\cdot|x_{0},x_{t})||p(\cdot)\right)\right]dt.
+(10)
+Here, p⁡(⋅)p(\cdot) is a prior distribution over the latent space, often chosen to be a standard Gaussian, e.g., in a variational autoencoder setting. Moreover, qϕ(⋅|x0,xt)q_{\phi}(\cdot|x_{0},x_{t}) is an approximate posterior parameterized by trainable parameters ϕ\phi.
+Appendix B Block VMD Loss Derivation
+According to Equation 6, we have
+−log⁡pθ​(x0|xt)\displaystyle-\log p_{\theta}(x_{0}|x_{t})
+=−∑b=1Blog∫pθ(x0b|xtb,x0<b,z≤b)p(z≤b)dz≤b,\displaystyle=-\sum_{b=1}^{B}\log\int p_{\theta}(x_{0}^{b}|x_{t}^{b},x_{0}^{<b},z^{\leq b})p(z^{\leq b})dz^{\leq b},
+=−∑b=1Blog∫qϕ(z≤b|xtb,x0≤b)pθ​(x0b|xtb,x0<b,z≤b)​p​(z≤b)qϕ​(z≤b|xtb,x0≤b)dz≤b\displaystyle=-\sum_{b=1}^{B}\log\int q_{\phi}(z^{\leq b}|x_{t}^{b},x_{0}^{\leq b})\frac{p_{\theta}(x_{0}^{b}|x_{t}^{b},x_{0}^{<b},z^{\leq b})p(z^{\leq b})}{q_{\phi}(z^{\leq b}|x_{t}^{b},x_{0}^{\leq b})}dz^{\leq b}
+≤−∑b=1B𝔼qϕ​(z≤b|xtb,x0≤b)logpθ​(x0b|xtb,x0<b,z≤b)​p​(z≤b)qϕ​(z≤b|xtb,x0≤b)dz≤b\displaystyle\leq-\sum_{b=1}^{B}\mathbb{E}_{q_{\phi}(z^{\leq b}|x_{t}^{b},x_{0}^{\leq b})}\log\frac{p_{\theta}(x_{0}^{b}|x_{t}^{b},x_{0}^{<b},z^{\leq b})p(z^{\leq b})}{q_{\phi}(z^{\leq b}|x_{t}^{b},x_{0}^{\leq b})}dz^{\leq b}
+=∑b=1B𝔼qϕ​(z≤b|xtb,x0≤b)​[−log⁡pθ​(x0b|xtb,x0<b,z≤b)−log⁡p⁡(z≤b)qϕ​(z≤b|xtb,x0≤b)]\displaystyle=\sum_{b=1}^{B}\mathbb{E}_{q_{\phi}(z^{\leq b}|x_{t}^{b},x_{0}^{\leq b})}\left[-\log p_{\theta}(x_{0}^{b}|x_{t}^{b},x_{0}^{<b},z^{\leq b})-\log\frac{p(z^{\leq b})}{q_{\phi}(z^{\leq b}|x_{t}^{b},x_{0}^{\leq b})}\right]
+=∑b=1B𝔼qϕ​(z≤b|xtb,x0≤b)[−logpθ(x0b|xtb,x0<b,z≤b)]+DKL(qϕ(⋅|xtb,x0≤b)∥p(⋅)).\displaystyle=\sum_{b=1}^{B}\mathbb{E}_{q_{\phi}(z^{\leq b}|x_{t}^{b},x_{0}^{\leq b})}\left[-\log p_{\theta}(x_{0}^{b}|x_{t}^{b},x_{0}^{<b},z^{\leq b})\right]+D_{\text{KL}}(q_{\phi}(\cdot|x^{b}_{t},x_{0}^{\leq b})\|p(\cdot)).
+Here, p⁡(⋅)p(\cdot) is a prior distribution over the latent space, often chosen to be a standard Gaussian. Moreover, qϕ(⋅|xtb,x0≤b)q_{\phi}(\cdot|x^{b}_{t},x_{0}^{\leq b}) is an approximate posterior parameterized by trainable parameters ϕ\phi. Plugging , into the masked diffusion NELBO given in Equation 8 yields the bound stated in 7.
+Appendix C Implementation Details
+C.1 Synthetic Data
+For the synthetic data experiments with both 2-token and 4-token sequences, we use a common model architecture adopted from BD3-LM (Arriola et al., 2025). The baseline is a block diffusion model with 8 DiT blocks and a hidden size of 64. For the proposed VMD, the decoder backbone remains identical to the baseline with an additional lightweight module to incorporate latent variables to ensure equal inference complexity, while the encoder uses only 2 DiT blocks with all other hyperparameters unchanged. Each block bb in the data sequence is associated with a 32-dimensional latent variable zbz^{b}. The latent is injected into the decoder by fusing it with the positional embedding through a learnable scaling, followed by adaptive layernorm module across all DiT blocks.
+Because the sequence lengths and block sizes are very small, we train with a large batch size of 10,000 for 2,000 steps. We use the Adam optimizer with a fixed learning rate of 1e-3. For the uniform data experiments, we set the KL weight to 4.0 to encourage the latent prior to match a uniform distribution. In all other experiments, when the KL weight is around 1.0, the performance is stable. Parameters are initialized with default PyTorch settings, and no additional regularization is applied beyond the KL term.
+During inference, we adopt the top probability remasking strategy. The number of function evaluations (NFE) depends on the specific experiment and is reported in detail in Section 4.1 and Section 4.2. All experiments converge within a few minutes on a single NVIDIA L40S GPU.
+C.2 Sudoku
+For the Sudoku experiment, we follow Kim et al. (2025) to ensure a fair comparison by adopting the same dataset, model backbone, and training procedure. Specifically, the baseline uses the HuggingFace AutoModelForCausalLM with GPT-2 configuration (nlayer=3n_{\text{layer}}=3, nhead=12n_{\text{head}}=12, embedding size 384). Our model backbone follows the DiT architecture employed by Arriola et al. (2025). For both the encoder and decoder, we adopt the tiny model configuration provided in their official GitHub repository. We set the encoder and decoder to have 4 and 6 Transformer layers respectively in order to match the model size of the baseline. We further introduce a 128-dimensional latent variable, which is embedded, scaled, and then injected into each of the DiT blocks in the decoder through a shared adaptive layernorm module following the DiT-Air design of Chen et al. (2025).
+Data is represented by flattening each Sudoku puzzle into a sequence of 81 tokens. During training, the puzzle and its solution are concatenated into a 164-token sequence (81 puzzle + [SEP] token + 81 solution + [EOS] token), and the model is trained to predict the answer portion conditioned on the puzzle portion. This design implies that the latent variable cannot be obtained by taking a simple mean over the entire sequence dimension. Instead, we compute a learned weighted average over hidden states. First, a gating network produces a score for each position, and positions corresponding to the puzzle are masked out. The remaining scores are normalized with a softmax to produce attention weights, and finally, the latent is obtained as a weighted sum of hidden states according to these weights.
+Training is performed with batch size 1,024, learning rate 1e-3, cosine learning rate scheduler, and 300 epochs. The dataset consists of 1.8M Sudoku puzzles for training and 0.1M for evaluation. During inference, only the puzzle tokens are provided, and the model generates the answer tokens with the remasking strategy described in the main text.
+C.3 Text
+For the text experiments, we adopt a block structure and use the BD3-LM (Arriola et al., 2025) architecture as our baseline. The model processes sequences of length 256 with 8 DiT blocks and 8 attention heads. Our VMD decoder backbone is kept identical to this baseline to ensure equal inference cost, while the encoder mirrors the same architecture but uses only 4 DiT blocks, with all other parameters unchanged. Each block bb in the sequence is assigned a 128-dimensional latent variable zbz^{b}, which is embedded, scaled, and then added to the data embedding in the same manner as in the synthetic and Sudoku experiments.
+Training is performed with batch size 512 using the AdamW optimizer and a learning rate of 3e-4. We employ a constant learning rate schedule with 2,500 warm-up steps.
+Appendix D Additional Experimental Results
+D.1 Controlled Synthetic Data with 2 Tokens
+(a) Ground Truth
+(b) MDM
+(c) VMD (ours)
+Figure 3: Results on controlled synthetic data with 2 tokens under the deterministic setting. (a) Ground truth distribution, (b) MDM: baseline masked diffusion with one-step generation, and (c) our VMD with one-step generation. MDM one-step generation is identical to random guessing of each token independently, failing to reflect the true correlations, while VMD closely recovers the ground-truth structure.
+(a) Ground Truth
+(b) MDM
+(c) VMD (ours)
+Figure 4: Results on controlled synthetic data with 2 tokens under the varying correlation setting. (a) Ground truth distribution, (b) MDM: baseline masked diffusion with one-step generation, and (c) our VMD with one-step generation. The first row is for data generated with p=0.3p=0.3, and the second row is for data generated with p=0.8p=0.8. The baseline fails to model the data distribution in one-step generation in both cases, producing nearly uniform predictions, while VMD successfully recovers the underlying distributions.
+We present additional experimental results here. Figure 3 and Figure 4 present results on controlled synthetic data with 2 tokens under deterministic and varying token dependency settings. In the deterministic setting, the baseline degenerates into nearly uniform predictions and fails to recover the strong token dependence. In contrast, VMD closely matches the ground-truth distribution. In the varying token dependence setting, where a parameter pp controls the dependency strength, the baseline again produces noise-like outputs that are insensitive to the true dependency structure. In contrast, VMD adapts to both weak and strong dependence and successfully reproduces the ground-truth distributions. Together, these experiments demonstrate that VMD consistently learns token dependence that standard masked diffusion struggles to capture.
+D.2 Sudoku Data
+In addition to the final performance reported in the main text, we plot the full training accuracy curves in Figure 5. The figure shows that VMD consistently outperforms the baseline (MDM) throughout training, not only at convergence but also during earlier stages. This confirms that the gains of VMD are stable across the entire training process rather than arising from a specific checkpoint. We also observe that both models converge at a similar rate, indicating that the improvements of VMD come at no additional optimization cost.
+Figure 5: Accuracy (↑\uparrow) during training on the Sudoku puzzle experiment with NFE=20 under the top probability remasking strategy. VMD consistently outperforms the baseline (MDM) across training iterations. The final accuracy reaches 18.97% for the Baseline and 82.03% for VMD.
+Appendix E LLM Usage
+While preparing this work, we used a large language model (LLM) to assist with language editing. The LLM’s contributions were limited to
+improving the clarity of the text. The core research, experimental design, and all scientific claims remain our original work.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

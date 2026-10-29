@@ -1,0 +1,1433 @@
+Toward Hardware-Agnostic Quadrupedal World Models via Morphology Conditioning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Related Work
+III Background
+III-A Recurrent State-Space Models
+III-B Learning Policy in Imagination
+III-C The Challenge of Cross-Morphology Generalization
+IV Quadrupedal World Model
+IV-A Explicit Morphology Encoding
+IV-B Morphology-Conditioned World Model
+IV-C Heterogeneous Reward Normalization
+V Experiments
+V-A Heterogeneous Simulation Infrastructure
+V-B Multi-Morphology Mastery
+V-C Long-Horizon Dynamics Prediction
+V-D Zero-Shot Generalization to Unseen Morphologies
+V-E Real-World Deployment
+VI Conclusion and Future Work
+VII Acknowledgement
+References
+A Environment Details & Reward Structure
+A-A Reward Functions
+A-B Reward Weights
+A-C Domain Randomization
+A-C1 Physics & Observation Randomization
+A-C2 Morphology Randomization
+A-C3 Reset Randomization & Task Commands
+B Network Architecture Details
+B-A Morphology-Conditioned Encoder
+B-B Recurrent State-Space Model (RSSM)
+B-C Policy and Critic Heads
+B-D Reward Head
+B-E Continuation Head
+C Morphological Diversity Analysis
+D Ablation Study
+E Real-World Deployment: Quantitative Evaluation
+Protocol.
+Discussion.
+F Latent State Disentanglement Visualization
+F-A Data Collection and Protocol
+F-B PCA of the Full Latent State
+F-C t-SNE of the Full Latent State
+F-D Probing Analysis: hth_{t} vs. ztz_{t}
+hth_{t} — deterministic recurrent state.
+ztz_{t} — stochastic observation state.
+F-E Quantitative Disentanglement Metrics
+F-F Summary
+License: CC BY 4.0
+arXiv:2604.08780v1 [cs.RO] 09 Apr 2026
+Toward Hardware-Agnostic Quadrupedal World Models via Morphology Conditioning
+Mohamad H. Danesh12,
+Chenhao Li3,
+Amin Abyaneh12,
+Anas Houssaini12,
+Kirsty Ellis24,
+Glen Berseth24,
+Marco Hutter3,
+Hsiu-Chin Lin12
+Affiliation: 1McGill University, Canada
+Affiliation: 2Mila - Quebec AI Institute, Canada
+Affiliation: 3ETH Zurich, Switzerland
+Affiliation: 4Universite de Montreal, Canada
+Abstract
+World models promise a paradigm shift in robotics, where an agent learns the underlying physics of its environment once to enable efficient planning and behavior learning. However, current world models are often hardware-locked specialists: a model trained on a Boston Dynamics Spot robot fails catastrophically on a Unitree Go1 due to the mismatch in kinematic and dynamic properties, as the model overfits to specific embodiment constraints rather than capturing the universal locomotion dynamics. Consequently, a slight change in actuator dynamics or limb length necessitates training a new model from scratch. In this work, we take a step towards a framework for training a generalizable Quadrupedal World Model (QWM) that disentangles environmental dynamics from robot morphology. We address the limitations of implicit system identification, where treating static physical properties (like mass or limb length) as latent variables to be inferred from motion history creates an adaptation lag that can compromise zero-shot safety and efficiency. Instead, we explicitly condition the generative dynamics on the robot’s engineering specifications. By integrating a physical morphology encoder and a reward normalizer, we enable the model to serve as a neural simulator capable of generalizing across morphologies. This capability unlocks zero-shot control across a range of embodiments. Since the policy is conditioned on generalizable latent dynamics provided by the world model, we can deploy the agent on entirely unseen quadrupeds without fine-tuning, adaptation, or warm-up periods. We introduce, for the first time, a world model that enables zero-shot generalization to new morphologies for locomotion. While we carefully study the limitations of our method—QWM operates as a distribution-bounded interpolator within the quadrupedal morphology family rather than a universal physics engine—this work represents a significant step toward morphology-conditioned world models for legged locomotion.
+I Introduction
+The paradigm of reinforcement learning (RL) has fundamentally changed how we approach autonomous control by enabling agents to learn through interactions with their environment [35]. However, this success comes with a significant caveat: the “Hardware Lottery.” Standard policies and World Models (WMs) are deeply overfit to the specific kinematic and dynamic properties of the robot they were trained on. Although massive parallel simulators like Isaac Sim [52, 48] or Genesis [3] mitigate the wall-clock time bottleneck, it remains computationally expensive to train individual experts for every robot variation. Worse, upgrading a robot’s motors, changing a limb length, or deploying across a heterogeneous fleet currently requires collecting millions of new samples and training a new model from scratch [77, 36]. Moreover, domain randomization introduces safety risks from unexpected policy behaviors under distribution shift [13].
+Model-Based RL (MBRL) offers a compelling solution to this data bottleneck: by learning a predictive model of the underlying dynamics—i.e., a world model—an agent can simulate future outcomes and learn behaviors entirely within imagination [61, 70].
+Despite their immense success in video games [29, 60] and specific control tasks [27, 28], WMs in robotics have largely remained specialists [70, 19, 50, 41]. A WM trained to control a heavy, industrial quadruped cannot control a lightweight, agile robot as the internal dynamics model overfits to the specific kinematic and dynamic properties of the training robot. This lack of transferability stands in stark contrast to other fields of AI, such as Natural Language Processing or Computer Vision, where generalizable models can adapt to a wide array of tasks and contexts without retraining [6, 18].
+We argue that for WMs to become a foundational tool in robotics, they must transition from hardware-specific specialists to physics-grounded generalists. Aligning with the recent roadmap for Type III: Robotic Agents [23], a generalizable WM should serve as a Physical WM capable of capturing the fundamental physics of locomotion—gravity, contact forces, and momentum—independent of the specific robot being controlled. It should understand not just how one robot moves, but how any robot with a given morphology moves.
+Fig. 1: Overview of the QWM framework.
+Left (WM Learning): We train a single generalizable WM across diverse morphologies.
+The Physical Morphology Encoder (PME) derives a static embedding μ\mu from the robots’ USD, which explicitly conditions both the encoder and the recurrent state hth_{t} via dashed lines.
+The model utilizes previous actions ata_{t} and discrete stochastic states ztz_{t} to predict future states, rewards r^t\hat{r}_{t}, and continuation probabilities c^t\hat{c}_{t}.
+To handle heterogeneous reward scales, we employ an Adaptive Reward Normalizer (ARN) with standard DreamerV3 backbone components.
+∥\| denotes the concatenation of features.
+Middle (Behavior Learning): Policies are learned entirely in imagination. By freezing the components in the generalized WM and injecting the μ\mu of any robot, we can train an actor and critic specifically for a new morphology without any physical interaction.
+Right (Unified Deployment): By freezing the generalized WM and policy and injecting the μ\mu of any target robot (e.g., ANYmal-B), the WM creates a morphology-aligned latent space that allows the policy to adapt its control strategy immediately without further training.
+In this work, we take the first step towards a framework for training a generalizable Quadrupedal World Model (QWM) (demonstrated in Fig. 1) tailored for MBRL. Our key insight is that while the laws of physics are universal, the embodiment (morphology) varies. Current multi-task approaches often rely on implicit system identification, forcing the agent to infer physical properties like limb length or mass distribution solely from interaction history [37]. We posit that blindly inferring morphology from history is not only inefficient but unsafe for zero-shot transfer. Implicit methods create an “adaptation lag”: a robot must move (potentially dangerously) to generate enough history to identify itself before it can learn effective control policies. In contrast, robot morphology is not a latent variable to be discovered, but a known engineering specification available in the robot model, which is normally transcriped into Unified Robot Description Format (URDF) or Universal Scene Description (USD). By extracting explicit physical features directly from USD files and normalizing them, we provide the model with a grounded structural context, allowing it to focus its latent capacity on dynamics rather than static identification.
+To effectively integrate this morphological context, we introduce architectural innovations atop the DreamerV3 backbone [29]. First, we integrate the static morphological features into the high-frequency proprioceptive data for the encoder and the WM’s dynamic model, using a specific fusion architecture that prevents static context from being washed out by dynamic observations. Second, to handle the heterogeneity of diverse embodiments, we utilize a reward normalizer that dynamically balances learning signals across robots with varying physical scales, reward functions, and weights.
+These contributions enable a transformative capability: zero-shot cross-embodiment transfer in simulation, and real robot. Notably, our policy operates solely on the latent states generated by the WM, never processing raw observations directly. Therefore, at deployment, the frozen WM functions as a real-time “physics adapter”: it uses the explicit morphology parameters to translate the unseen robot’s specific dynamics into the standardized latent space that the policy understands. Consequently, we can control a diverse set of robot configurations (via their USDs) that differ in limb lengths or mass distributions using a single frozen WM and policy, achieving successful locomotion immediately across the fleet.
+To the best of our knowledge, in MBRL and WM literature, this is the first method to demonstrate such generalizable capabilities, eliminating the need for dangerous real robot warm-up periods. More precisely, QWM is framed as a latent parameter-conditioned dynamics model: we provide explicit context that steers the recurrent imagination into the correct morphology-specific dynamics manifold, enabling zero-shot transfer within the quadrupedal family without requiring online system identification.
+II Related Work
+World Models and Model-Based Reinforcement Learning.
+MBRL improves sample efficiency by learning predictive environment models [61, 49]. While early methods like PILCO [17] utilized Gaussian processes for data efficiency, modern approaches plan in latent spaces [26, 27, 28, 29]. The Dreamer family [27, 28] demonstrated that policies can be learned entirely in imagination, with DreamerV3 [29] adding robustness via symlog predictions and KL balancing. Theoretical work confirms general agents inherently require WMs [55].
+While the Recurrent State-Space Model (RSSM) [27] remains standard for speed, recent architectures utilize Transformers [11, 16], discrete autoencoders for sample efficiency [45, 46], stochastic transformers [82], or contrastive coding [8]. Others leverage linear attention or SSMs for efficiency [66, 67].
+Generative models now blend video generation and control: Genie [7] simulates interactive environments from unlabeled video, Diamond [2] replaces discrete latents with diffusion processes, UVA [42] proposes unified video and action generation, and Pandora [73] enables language-controlled video simulation. However, these often suffer from high computational costs. We retain the RSSM to prioritize real-time inference and compact dynamics.
+In robotics, DayDreamer [70] enabled online learning, while subsequent works tackle long-horizon prediction via dual-autoregressive training [41] and epistemic uncertainty estimation for offline-to-online adaptation [40], plus visual reconstruction [38, 79]. Specific applications include distilling privileged WMs for sim-to-real transfer [76], humanoid terrain traversal via Transformer-XL [84], and manipulation [22, 4]. WMs also enable safety [31], exploration [57, 54], and novelty detection [85].
+Multi-Task and Transfer Learning.
+Scaling often relies on implicit identification: TD-MPC2 [30] learns latent task embeddings across 80 tasks, while PWM [24] enables fast policy extraction via first-order gradient optimization through differentiable WMs. Other approaches leverage offline adaptation [83, 81, 21]. In locomotion, methods like ManyQuadrupeds [59] and GenLoco [20] use analytical priors like Inverse Kinematics (IK). Unlike these reactive policies which require heuristic tuning, QWM operates in joint space by mapping explicit physical descriptions (USD) to dynamics, enabling planning without analytical IK. Similarly, VOCALoco [71] employs a modular skill-selection framework that dynamically adapts locomotion strategies based on terrain perception, demonstrating complementary approaches to adaptive quadrupedal control.
+Video WMs explore generalization [34, 44, 51, 63, 10], but face optimization hurdles. Unlike complex loss balancing [43, 39], we employ a lightweight Per-Robot Reward EMA to normalize heterogeneous scales across morphologies.
+Morphology Representation.
+To generalize across diverse robot embodiments, prior work has largely focused on architectural biases. Graph Neural Networks (GNNs) explicitly model the kinematic tree [65, 69, 32], often incorporating symmetry constraints [74, 68] or heterogeneous node types [9]. Similarly, Transformer-based methods tokenize the kinematic chain [25, 5, 72, 62, 58], enabling scaling to thousands of procedural embodiments [1]. Alternatively, implicit methods infer morphology from interaction history [37, 78, 53] or learn aligned latent action spaces [64, 34, 41, 80].
+While robust, implicit methods require adaptation time (warm-up) and fail to utilize static kinematic information available prior to deployment. Comprehensive surveys on embodied AI [23] identify embodiment generalization as a critical capability for general-purpose robotic agents, yet note that preparing a robot for every scenario at deployment time is infeasible. Our approach addresses this by leveraging explicit parametric encoding [12, 47, 75]. Unlike prior works that rely on raw USD values or model-free RL, we compute normalized, scale-invariant kinematic ratios and integrate them directly into the WM’s encoder, enabling zero-shot adaptation without the computational overhead of GNNs.
+III Background
+We formulate the problem of generalizable quadrupedal locomotion as a Partially Observable Markov Decision Process (POMDP) conditioned on a morphology parameter μ∈ℳ\mu\in\mathcal{M}. The set ℳ\mathcal{M} encompasses the design space of quadrupedal embodiments, where each element μ\mu is a fixed vector of normalized engineering constraints (such as geometry and mass properties) that distinguishes one robot hardware profile from another. The environment is defined by the tuple (𝒮,𝒪,𝒜,𝒫μ,ℛ,γ)(\mathcal{S},\mathcal{O},\mathcal{A},\mathcal{P}_{\mu},\mathcal{R},\gamma), where 𝒮\mathcal{S} represents the underlying physics state of the simulator (e.g., generalized coordinates, velocities, and contact forces), which is not fully observable to the agent. Instead, at time tt, the agent receives partial observations ot∈𝒪o_{t}\in\mathcal{O} consisting of proprioceptive data: joint positions qtq_{t}, joint velocities q˙t\dot{q}_{t}, base linear velocity vtv_{t}, angular velocity ωt\omega_{t}, projected gravity gtg_{t}, velocity commands ctc_{t}, and previous actions at−1∈𝒜a_{t-1}\in\mathcal{A}. The action space 𝒜∈ℝ12\mathcal{A}\in\mathbb{R}^{12} comprises continuous joint position targets. Inherently, the transition dynamics 𝒫μ​(st+1∣st,at)\mathcal{P}_{\mu}(s_{t+1}\mid s_{t},a_{t}) depend on the robot morphology μ\mu, which encodes physical properties such as kinematic constraints, mass distributions, and actuator limits.
+III-A Recurrent State-Space Models
+Our WM backbone is based on the RSSM introduced in the Dreamer family of algorithms [27, 28, 29]. RSSMs enable learning in partially observable environments by decomposing the latent state into two components: a deterministic recurrent state hth_{t} that aggregates history (short-term memory), and a stochastic state ztz_{t} that represents information about the current observation (spatial representation).
+The RSSM factorizes the latent state into a deterministic recurrent component hth_{t} and a stochastic component ztz_{t}, evolving according to:
+Recurrent Model:
+ht=fϕ​(ht−1,zt−1,at−1)\displaystyle\quad h_{t}=f_{\phi}(h_{t-1},z_{t-1},a_{t-1})
+(1)
+Representation Model:
+zt∼qϕ​(zt∣ht,ot)\displaystyle\quad z_{t}\sim q_{\phi}(z_{t}\mid h_{t},o_{t})
+(2)
+Transition Predictor:
+z^t∼pϕ​(z^t∣ht)\displaystyle\quad\hat{z}_{t}\sim p_{\phi}(\hat{z}_{t}\mid h_{t})
+(3)
+Decoder:
+o^t∼pϕ​(o^t∣ht,zt)\displaystyle\quad\hat{o}_{t}\sim p_{\phi}(\hat{o}_{t}\mid h_{t},z_{t})
+(4)
+Reward & Continuation:
+r^t,c^t∼pϕ(r^t,c^t∣ht,zt)\displaystyle\quad\hat{r}_{t},\hat{c}_{t}\sim p_{\phi}(\hat{r}_{t},\hat{c}_{t}\mid h_{t},z_{t})
+(5)
+The dynamics evolve through the Recurrent Model (Eq. 1), which updates the memory hth_{t} based on the previous action. During training, the Representation Model (Eq. 2) infers the posterior state ztz_{t} using the real observation oto_{t}, whereas during planning, the Transition Predictor (Eq. 3) predicts the prior z^t\hat{z}_{t} solely from history. To ground these latents, the model reconstructs observations via the Decoder (Eq. 4) and predicts training signals via the Reward & Continuation heads (Eq. 5).
+The model parameters ϕ\phi are optimized by minimizing a variational bound that includes reconstruction of observations, reward prediction, and a KL-divergence regularizer that forces the prior (imagination) to align with the posterior (reality):
+ℒWM=𝔼q[\displaystyle\mathcal{L}_{\text{WM}}=\mathbb{E}_{q}\Big[
+−ln⁡pϕ​(ot∣ht,zt)−ln⁡pϕ​(rt∣ht,zt)⏟Reconstruction & Reward\displaystyle\underbrace{-\ln p_{\phi}(o_{t}\mid h_{t},z_{t})-\ln p_{\phi}(r_{t}\mid h_{t},z_{t})}_{\text{Reconstruction \& Reward}}
++βKL[qϕ(zt∣ht,ot)∥pϕ(z^t∣ht)]⏟Dynamics Consistency]\displaystyle+\beta\,\underbrace{\text{KL}\!\left[q_{\phi}(z_{t}\mid h_{t},o_{t})\,\|\,p_{\phi}(\hat{z}_{t}\mid h_{t})\right]}_{\text{Dynamics Consistency}}\Big]
+We adopt the DreamerV3 [29] architecture, which utilizes symlog predictions to compress the magnitude of rewards and observations, and KL balancing to prevent posterior collapse, ensuring robust training across diverse scales.
+III-B Learning Policy in Imagination
+A key advantage of WMs is the decoupling of policy learning from physical interaction. The policy πθ​(at|ht,zt)\pi_{\theta}(a_{t}|h_{t},z_{t}) and critic vψ​(vt|ht,zt)v_{\psi}(v_{t}|h_{t},z_{t})—which models the distribution of returns to handle varying scales [29]—are trained entirely on imagined trajectories rolled out by the transition predictor. Starting from an initial state, the model interacts with itself:
+at∼πθ(⋅∣ht,z^t),ht+1=fϕ(ht,z^t,at),z^t+1∼pϕ(⋅∣ht+1)a_{t}\sim\pi_{\theta}(\cdot\mid h_{t},\hat{z}_{t}),\;h_{t+1}=f_{\phi}(h_{t},\hat{z}_{t},a_{t}),\;\hat{z}_{t+1}\sim p_{\phi}(\cdot\mid h_{t+1})
+Because the policy interacts only with the model’s latent dynamics, if the WM captures the underlying physics of a new robot correctly, the policy can adapt zero-shot without the risk of hardware damage inherent to methods that require online system identification or real-world fine-tuning.
+III-C The Challenge of Cross-Morphology Generalization
+The core challenge in this work is learning a single set of parameters ϕ\phi that approximates the dynamics 𝒫μ\mathcal{P}_{\mu} for a distribution of diverse morphologies μ∈ℳ\mu\in\mathcal{M}.
+Implicit System Identification.
+Most multi-task RL methods [37, 30] treat morphology as a hidden variable. They rely on the recurrent state hth_{t} to implicitly infer physical properties (e.g., limb length, friction, mass) from the history of interactions (ht−1h_{t-1}):
+ht=fϕ​(ht−1,zt−1,at−1)h_{t}=f_{\phi}(h_{t-1},z_{t-1},a_{t-1})
+In this paradigm, the RNN must essentially perform system identification online. This has two major drawbacks: (1) Adaptation Lag: The agent behaves sub-optimally at the start of an episode (t=0t=0) until sufficient history is accumulated to infer the morphology. (2) Entanglement: The latent state hth_{t} must simultaneously encode the dynamic state of the robot (velocity, orientation) and its static physical properties, potentially leading to interference and capacity issues.
+These fundamental limitations motivate the need for an alternative approach. While implicit system identification has proven effective for single-robot adaptation and short-horizon tasks, it becomes a bottleneck when scaling to diverse morphologies and zero-shot transfer. The question then becomes: Can we design a WM that leverages available structural information about the robot to disentangle morphology-specific dynamics from universal physics, enabling true generalization across embodiments?
+IV Quadrupedal World Model
+We build upon the DreamerV3 [29], modifying the encoder and transition dynamics to explicitly condition on physical structure. Our framework, QWM, illustrated in Fig. 1, consists of three core additional components: (1) an explicit Physical Morphology Encoder (PME) that derives scale-invariant features from USD files; (2) a Morphology-Conditioned WM that fuses static structural data with dynamic proprioception; and (3) an Adaptive Reward Normalization (ARN) scheme to stabilize learning across heterogeneous hardware.
+IV-A Explicit Morphology Encoding
+To generalize across diverse embodiments, the WM must disentangle the agent’s static physical properties from its dynamic state. Rather than treating morphology as a latent variable to be inferred from interaction history [37], we formalize it as a deterministic mapping Φ:𝒰→ℝd\Phi:\mathcal{U}\rightarrow\mathbb{R}^{d} from the robot’s USD representation 𝒰\mathcal{U} to a normalized feature vector μ\mu. We extract a set of physical parameters directly from the USD stage that explicitly parameterize the rigid-body dynamics, decomposing the robot specification into kinematic, geometric, and dynamic properties.
+Following prior work [12, 47, 75], we select features that parameterize the equations of motion. These capture critical variations in leverage, stability margins, and rotational inertia—enabling the model to distinguish, for example, the high-center-of-mass Boston Dynamics Spot from the compact Unitree Go1 (see App. C).
+Kinematics & Topology. Variations in limb length and joint orientation fundamentally alter the leverage and workspace of locomotion. Following established approaches in morphology-aware control [65, 32], we extract the fundamental link dimensions from the front-left leg chain by traversing the rigid body hierarchy. Let lhipl_{\text{hip}}, lthighl_{\text{thigh}}, and lshankl_{\text{shank}} denote the hip offset and segment lengths, and kcfg∈{0,1}k_{\text{cfg}}\in\{0,1\} denote the knee configuration style:
+μkin=[lhip,lthigh,lshank,kcfg]\mu_{\text{kin}}=\left[l_{\text{hip}},\quad l_{\text{thigh}},\quad l_{\text{shank}},\quad k_{\text{cfg}}\right]
+(6)
+kcfgk_{\text{cfg}} explicitly distinguishes topological families (e.g., ANYmal’s inward-bending “X-config” vs. Unitree’s “dog-like” knees shown in Fig. 2), preventing the need to infer joint axis orientation from history.
+Geometry. The stance footprint dictates the robot’s stability polygon and base of support. We compute the nominal hip positions by extracting the child body positions of each leg’s Hip Abduction/Adduction (HAA) joint. From these four contact points, we define:
+μgeo=[lstance,wstance,lstancewstance]\mu_{\text{geo}}=\left[l_{\text{stance}},\quad w_{\text{stance}},\quad\frac{l_{\text{stance}}}{w_{\text{stance}}}\right]
+where lstancel_{\text{stance}} and wstancew_{\text{stance}} are the longitudinal and lateral extents of the support polygon. The aspect ratio lstance/wstancel_{\text{stance}}/w_{\text{stance}} provides a scale-invariant characterization of the support geometry: higher ratios (e.g., Spot at 5.42) indicate narrow-bodied designs, while lower ratios (e.g., ANYmal-B at 2.39) represent more square-stance configurations.
+Dynamics. The distribution of mass dictates the system’s rotational inertia and response to external forces. To handle the orders-of-magnitude difference between lightweight robots (e.g., Unitree A1 ≈12\approx 12 kg) and heavier ones (e.g., Unitree B2 ≈80\approx 80 kg), we utilize a logarithmic scaling for total mass. We further characterize the mass distribution via the trunk mass ratio, computed as the ratio of the heaviest rigid body (base link) to total mass:
+μdyn=[log(1+Mtotal),mtrunkMtotal]\mu_{\text{dyn}}=\left[\log(1+M_{\text{total}}),\quad\frac{m_{\text{trunk}}}{M_{\text{total}}}\right]
+where Mtotal=∑miM_{\text{total}}=\sum m_{i} aggregates all link masses with mi>0.005m_{i}>0.005 kg to filter sensor dummy bodies.
+Actuation. Actuator capabilities vary significantly across robot platforms, and policies must account for these differences to enable cross-embodiment transfer [33, 37]. We therefore extract the torque density τspec\tau_{\text{spec}} from effort limits, representing the robot’s specific force capacity:
+μact=1Mtotal⋅g0⋅1Nj∑i=1Njτmax(i)\mu_{\text{act}}=\frac{1}{M_{\text{total}}\cdot g_{0}}\cdot\frac{1}{N_{j}}\sum_{i=1}^{N_{j}}\tau_{\text{max}}^{(i)}
+where NjN_{j} denotes the total number of actuated joints, τmax(i)\tau_{\text{max}}^{(i)} is the maximum effort of the it​hi^{th} joint, and g0=9.81g_{0}=9.81 m/s2 is the standard gravitational acceleration.
+Finally, the resulting raw feature vector μraw=[μkin,μgeo,μdyn,μact]\mu_{\text{raw}}=[\mu_{\text{kin}},\mu_{\text{geo}},\mu_{\text{dyn}},\mu_{\text{act}}] contains values with heterogeneous physical units and magnitudes. To ensure well-conditioned gradients within the neural network encoder, we apply min-max normalization Ψ\Psi based on the training cohort statistics, bounding features to [−1,1][-1,1] and providing QWM with a numerically stable embedding that effectively characterizes diverse morphologies. Note that these different morphologies exhibit vastly different converged mean rewards due to their physical scales and reward function definitions: Boston Dynamics Spot achieves approximately 350, ANYmal variants (B, C, D) converge around 25, Unitree quadrupeds (A1, Go1, Go2) around 40, and Unitree B2 around 15. More details available in App. A and App. C.
+Importantly, μ\mu encodes idealized rigid-body specifications extracted from the USD file. Unmodeled real-world residuals—such as actuator backlash and friction variability—are handled implicitly by the dynamic latents (zt,ht)(z_{t},h_{t}) trained under domain randomization (App. A), which provides a continuous channel to absorb discrepancies between the spec sheet and physical hardware. This is precisely why QWM transfers to real robots without fine-tuning despite the sim-to-real gap, and why the model exhibits robustness to minor inaccuracies in the provided μ\mu.
+IV-B Morphology-Conditioned World Model
+To effectively utilize the extracted morphology vector μ\mu, we modify the standard RSSM architecture. A naive concatenation of static features μ\mu with high-frequency observations oto_{t} often leads to the static signal being “washed out” by the high-variance dynamic data. To mitigate this, we employ a dual-tower encoder architecture in which the observation encoder is split into two pathways. The dynamic tower processes the proprioceptive stream oto_{t} via an MLP. Simultaneously, the static tower processes the morphology vector μ\mu via a separate MLP to project it into the same latent dimension. These embeddings are then concatenated and fused:
+et=Linear​(concat​(MLPd​y​n​(ot),MLPs​t​a​t​(μ)))e_{t}=\text{Linear}(\text{concat}(\text{MLP}_{dyn}(o_{t}),\text{MLP}_{stat}(\mu)))
+This ensures that the encoder allocates dedicated capacity to representing the robot’s physical structure before fusing it with the state.
+Notably, the morphology μ\mu is not just used for encoding. It is also injected directly into the recurrent dynamics. We augment Eq. 1 transition function to explicitly depend on the robot type:
+ht=fϕ​(ht−1,zt−1,at−1,μ)h_{t}=f_{\phi}(h_{t-1},z_{t-1},a_{t-1},\mu)
+By providing μ\mu to the recurrent model at every time step, we relieve the RNN of the burden of memorizing static physical properties in its short-term memory hth_{t}. This disentanglement allows the recurrent state to focus purely on the dynamic state of the system (e.g., velocity, contact timing) while the explicit conditioning handles the static physics (e.g., limb length, mass), facilitating robust control across distinct morphologies.
+IV-C Heterogeneous Reward Normalization
+Training a single generalizable agent across a set of heterogeneous robots introduces a significant optimization challenge: reward scaling. While all robots in our cohort share the high-level objective of velocity-tracking locomotion, their specific reward formulations and penalty weights differ significantly to accommodate their distinct hardware (detailed in App. A). For instance, a torque penalty of 100 Nm is standard for a heavy ANYmal-D robot but would indicate catastrophic failure for a lightweight Unitree A1.
+Crucially, the WM learns to predict rewards alongside dynamics. If trained on raw, unnormalized rewards, the WM’s loss function would be dominated by robots with larger reward scales (e.g., Spot), causing it to over-prioritize their dynamics while under-fitting to robots with sparser signals (e.g., Unitree B2). While DreamerV3’s SymLog [29] compresses global magnitudes, it does not equalize the relative learning signal density across tasks. To address this, we implement an Adaptive Reward Normalization (ARN) using quantile-based scaling. Rather than using a fixed scalar, we track the 5​th5\textsuperscript{th} and 95​th95\textsuperscript{th} percentiles of the returns independently for each robot type using an Exponential Moving Average (EMA) with momentum α\alpha. The reward scale σR\sigma_{R} is derived from the difference between these quantiles. In our setting, this mechanism acts as an adaptive equalizer: if a robot consistently generates large torque penalties, its specific σR\sigma_{R} expands, dynamically scaling the signal down.
+This ensures that QWM receives a normalized learning signal consistent across morphologies, preventing any single embodiment from dominating the latent representation and enabling stable, simultaneous multi-robot training. ARN serves as a practical training stabilizer rather than a guarantee of reward equivalence across morphologies. It reliably prevents gradient domination by high-reward embodiments (e.g., Spot) without imposing identical effective reward scales:
+σR←α​σR+(1−α)​(P95−P05),rnorm=rmax⁡(1.0,σR)\sigma_{R}\!\leftarrow\!\alpha\sigma_{R}+(1-\alpha)(P_{95}-P_{05}),\;r_{\text{norm}}\!=\!\frac{r}{\max(1.0,\sigma_{R})}
+V Experiments
+Fig. 2: The heterogeneous morphology cohort used in our experiments, illustrating the variance in physical scale and configuration. To demonstrate true generalization, we train QWM on seven robots while holding out one robot for zero-shot evaluation.
+Our experiments aim to validate three central hypotheses: (1) Universal Mastery: QWM can master locomotion across a heterogeneous fleet of quadrupeds with a single set of weights. Unlike standard RL approaches that often require distinct hyperparameter tuning for different embodiments, QWM uses a unified configuration to match the performance of specialist experts. (2) Zero-Shot Generalization: By explicitly conditioning on physical morphology, QWM can synthesize successful control policies for the unseen robot without any simulation interaction. (3) Physical Transfer: The learned dynamics and policies transfer to real-world hardware across vastly different mass and size scales.
+Unless otherwise noted, in our experiments, we train QWM on the complete heterogeneous robot cohort. We provide ablation studies on the contribution of each component introduced in this work (PME, ARN, and Explicit Recurrent Conditioning), available in App. D.
+V-A Heterogeneous Simulation Infrastructure
+We utilize NVIDIA Isaac Lab [48], built upon Isaac Sim [52], as our simulation backbone. While Isaac Lab offers massive parallelism via GPU-accelerated PhysX, its default vectorization paradigm is designed for homogeneous setups, spawning thousands of identical clones of a single robot asset. This standard setup is insufficient for training a generalizable agent across multiple robots simultaneously, as it typically restricts the training loop to a single morphology per run.
+To overcome this limitation, we developed a heterogeneous environment on top of Isaac Lab, Hetero-Isaac [15, 14].
+Unlike standard vectorization, Hetero-Isaac manages a heterogeneous batch where the robot type is indexed per environment ID, allowing the replay buffer to collect a mixed distribution of morphologies in a single forward pass. By managing unique USD paths and physics tensors, we construct a diverse morphology cohort including the ANYmal (B, C, D), Unitree (Go1, Go2, A1, B2), and Boston Dynamics Spot (Fig. 2). Importantly, this cohort is not merely a collection of scaled variants, but it captures fundamental kinematic shifts. The robots span distinct joint topologies, ranging from the “X-configuration” of the ANYmals (where knees bend inwards towards the chassis) to the standard mammalian “dog-like” configuration of the Spot and Unitree series. Furthermore, the hip-to-foot offsets and link length ratios vary non-linearly across the fleet. This structural diversity prevents the agent from relying on a single gait geometry, forcing the WM to capture the distinct underlying dynamics of each kinematic chain.
+Fig. 3: Learning curves comparing QWM against baselines trained simultaneously on the full heterogeneous cohort of robots. Left: Mean reward performance. QWM rapidly disentangles static morphology from dynamics, helping it to stabilize compared to the WM baselines. Right: Mean episode length. QWM achieves stable locomotion (reaching the max horizon of 1000 steps), whereas WM baselines exhibit instability or failing to perform. Shaded regions represent the standard deviation across 5 different seeds.
+Essential to our setup, Hetero-Isaac ensures full physical fidelity by maintaining distinct collision geometries, kinematic trees, and actuator gains for each agent in parallel. Furthermore, it manages the complexity of heterogeneous reward definitions. Different robots require distinct objective functions and weightings; for instance, Spot accumulates rewards on a vastly different scale (≈350\approx 350 per episode) compared to the ANYmal-D (≈25\approx 25) (see Subsec. IV-A). Hetero-Isaac exposes these diverse, unnormalized signals directly, necessitating the adaptive per-robot reward normalizer described in Subsec. IV-C.
+Fig. 4: Long-Horizon Dynamics Prediction. Left: Open-loop imagination rollouts vs. ground truth physics. QWM maintains tight synchronization with the simulator across diverse scales. Right: Quantitative Normalized Mean Squared Error (NMSE) over a 45-step horizon (N=32N=32 trajectories). The error is normalized by the natural variance of each robot’s motion. Shaded regions denote standard deviation. QWM exhibits natural error accumulation over the prediction horizon, but not divergence.
+V-B Multi-Morphology Mastery
+First, we evaluate whether QWM can effectively handle the interference arising from simultaneous training. We compare against several baselines: Vanilla PPO [56], a single PPO agent trained on the full heterogeneous batch representing a model-free baseline, and PME-PPO, which directly utilizes our PME module to condition the model-free policy on μ\mu via input concatenation. We also compare against Body Transformer (BoT) [58], a state-of-the-art architecture that represents the robot body as a graph using masked attention to capture structural dependencies. Additionally, we compare against state-of-the-art WM methods including DreamerV3 [29], PWM [24], and TWISTER [8]. These WM baselines are also trained on the heterogeneous batch where they must implicitly infer morphology from proprioceptive history without our PME or ARN.
+We assess the agent’s mastery of the heterogeneous training set by tracking mean reward (detailed in App. A-B) and episode length (up to 1000 steps) across 4,096 parallel environments. As illustrated in Fig. 3, QWM demonstrates significantly higher stability and faster convergence compared to the WM baselines which struggle with convergence. Without explicit conditioning, these models must treat morphology as a latent variable inferred solely from history. This results in a “mean-dynamics” collapse, where the model approximates the average physics of the fleet rather than the specific dynamics of the current robot, leading to high prediction error and policy divergence.
+Moreover, compared to model-free RL methods, PME-PPO achieves performance parity with QWM and outperforms the Vanilla PPO baseline, though it requires about twice the environment steps to start the convergence. Conversely, BoT-PPO exhibits a significant lag in learning, with rewards and episode lengths only beginning to trend upward late in the training process. We attribute this to the fact that while the BoT provides strong structural inductive biases, its high-capacity attention mechanisms introduce significant optimization complexity and sample inefficiency compared to our MLP-based PME. These results yield two critical insights. First, they explicitly validate the efficacy of our PME. The failure of Vanilla PPO, which manages to survive but fails to track velocity commands, confirms that implicit system identification is insufficient to handle the diversity of this heterogeneous cohort. The success of the PME-conditioned agents proves that our explicit features μ\mu provide a sufficient statistic for control across diverse kinematic chains, independent of the learning paradigm. Second, while PME-PPO effectively maximizes the walking reward, it remains a reactive policy restricted to a single task. In contrast, QWM achieves competitive performance while simultaneously acquiring a generalizable neural simulator (discussed in Subsec. V-C), all in roughly half the environment steps required for PME-PPO. This predictive capability enables downstream applications that model-free baselines cannot support, such as Model Predictive Control, safety-aware planning, or zero-shot imagination of new tasks.
+V-C Long-Horizon Dynamics Prediction
+To validate that our framework functions as a reliable neural network simulator, we evaluate the open-loop prediction fidelity of QWM. For the WM to serve as a generalist planner, it must accurately predict future states over long horizons without the dynamics diverging from physical reality.
+We first qualitatively visualize this capability in Fig. 4-left. We perform open-loop rollouts on three distinct morphologies: ANYmal-D, Unitree Go1, and Spot. We initialize the model with a short context window (T=5T=5) and predict 45 steps into the future, feeding the model only the sequence of actions coming from the QWM’s policy. As shown, the imagined trajectories maintain tight synchronization with the ground truth simulation. QWM correctly captures the distinct physical signatures of each platform demonstrating that the PME successfully parameterizes rigid-body dynamics for diverse robots simultaneously.
+To quantify this fidelity, we compute the Normalized Mean Squared Error (NMSE) of the predicted proprioceptive observations over the 45-step prediction horizon, averaged across 32 evaluation episodes per robot (Fig. 4-right). We normalize the error by the natural variance of each robot’s motion to facilitate cross-morphology comparison. The results highlight the superior prediction accuracy of QWM, which consistently maintains the lowest error profile across different embodiments. Unlike the baselines, QWM shows minimal error accumulation, indicating it has learned a stable attractor for the underlying physics that prevents drift. In contrast, baselines relying on implicit system identification exhibit distinct failure modes. PWM suffers from high systematic error, most notably on the ANYmal-D, suggesting a failure to infer the correct physical parameters, resulting in a model that is fundamentally misaligned from the start. Meanwhile, DreamerV3 exhibits stability issues on the Boston Dynamics Spot. Its error diverges rapidly after about 20 steps, reflecting loss of dynamic consistency. These results confirm that without explicit morphology conditioning, standard WMs struggle to disentangle the conflicting dynamics of heterogeneous fleets, leading to either poor initial fits or rapid divergence. Further discussion on latent state disentanglement is available at App. F.
+V-D Zero-Shot Generalization to Unseen Morphologies
+To validate that QWM learns a physics-grounded latent dynamics model rather than overfitting to specific hardware, we evaluate the agent’s performance on robot morphologies that were entirely excluded from the training set. Based on App. C, we structure this evaluation into two distinct regimes of difficulty: (1) Morphological Interpolation: We hold out robots that share high structural similarity (z-score Euclidean distance d<1.15d<1.15) with the training cohort, specifically the Unitree Go1 (similar to A1/Go2) and ANYmal-D (similar to ANYmal-C). (2) Morphological Extrapolation: We hold out the Unitree B2, which serves as a geometric outlier in our dataset due to its significantly higher mass and distinct stance geometry. In all cases, the policy and WM weights are frozen, and the agent is conditioned solely on the target robot’s morphology embedding μ\mu derived from its USD. We additionally evaluate PME-PPO zero-shot to isolate whether generalization stems from the μ\mu conditioning alone or from the world model’s learned latent dynamics. Note that other WM baselines are excluded from this analysis since they failed to converge on the training set (see Subsec. V-B).
+TABLE I: Zero-shot generalization performance on unseen robots. QWM demonstrates successful transfer to morphologies within the training distribution’s support (ANYmal-D, Go1) but degrades on extreme outliers (B2). PME-PPO is included to isolate the contribution of the world model’s latent dynamics from μ\mu conditioning alone. Specialist PPO represents the upper bound. Values report mean ±\pm standard deviation over 5 random seeds (128 parallel envs/seed).
+Method
+Metric
+ANYmal-D
+Unitree Go1
+Unitree B2
+PME-PPO
+Rwd.
+10.1±1.910.1\pm 1.9
+23.1±2.323.1\pm 2.3
+−0.2±3.2-0.2\pm 3.2
+(Zero-Shot)
+Len.
+530±8.2530\pm 8.2
+602±14.9602\pm 14.9
+337±23.1337\pm 23.1
+QWM
+Rwd.
+15.2±2.315.2\pm 2.3
+30.5±3.430.5\pm 3.4
+2.2±5.22.2\pm 5.2
+(Zero-Shot)
+Len.
+948.6±12.1948.6\pm 12.1
+974.4±6.2974.4\pm 6.2
+405.2±10.2405.2\pm 10.2
+Specialist
+Rwd.
+21.8±1.221.8\pm 1.2
+39.7±2.139.7\pm 2.1
+13.6±4.213.6\pm 4.2
+PPO
+Len.
+981.3±4.2981.3\pm 4.2
+996.1±1.1996.1\pm 1.1
+961.1±8.9961.1\pm 8.9
+Interpolation Success.
+From Table I, QWM demonstrates zero-shot transfer capabilities for robots that share structural similarities with the training distribution. On the held-out Unitree Go1 and ANYmal-D, the agent achieves locomotion performance competitive with a specialist PPO baseline trained exclusively on that single robot, providing an empirical upper bound. Crucially, PME-PPO, which conditions a model-free policy on the same μ\mu vector without a learned dynamics model, achieves substantially lower performance on both platforms (e.g., episode length 602 vs. 974 on Go1), confirming that the generalization benefit is attributable to the world model’s learned latent dynamics and not merely to providing μ\mu as policy input. This success is further explained by our morphological analysis in App. C: the PME places these robots in high-density clusters alongside their brand-siblings (Go1 is within d=0.88d=0.88 of A1/Go2, ANYmal-D within d=0.72d=0.72 of ANYmal-C). Consequently, the WM effectively interpolates the latent dynamics between known configurations to synthesize a stable controller for the unseen morphology.
+Extrapolation Limits.
+In contrast, the limits of generalization are revealed in the Unitree B2 experiment. Unlike the Go1, the B2 represents a significant extrapolation from the training distribution. As detailed in App. C, the B2 is nearly 4×4\times heavier than the Go1 and possesses a substantially larger stance footprint. In this case, zero-shot performance degrades significantly for both QWM and PME-PPO, with neither agent producing stable gaits comparable to the specialist baseline. We believe this failure mode is not a limitation of the approach, but rather empirical validation of a fundamental principle: the model relies on the support of the training distribution. The B2 is the most distant robot in the entire cohort, with pairwise distances exceeding d>7.4d>7.4 from the smaller Unitree robots and d≈5.3d\approx 5.3 from Spot, the nearest training exemplar. Without similar representative heavy-duty exemplars in the training cohort, the WM is forced to extrapolate dynamics into an unexplored region of the latent space, where the learned physics priors no longer hold. Future work will focus on expanding the diversity of the training cohort, enabling robust extrapolation to such extreme form factors.
+V-E Real-World Deployment
+While the simulation results confirm that QWM can successfully interpolate between morphologies in a perfect physics engine, the physical world introduces unmodeled dynamics, such as actuator backlash, that do not exist in simulation. To validate that our learned interpolation capabilities are robust to this sim-to-real gap, we deploy the frozen zero-shot agents directly onto physical hardware. We selected the two successful configurations identified in Subsec. V-D: the held-out ANYmal-D and the held-out Unitree Go1. During deployment, we utilize the exact same policy weights used in simulation. Our inference pipeline runs at 50Hz on both platforms’ onboard computers in real-time.
+Remarkably, the interpolation success observed in simulation transferred directly to the real world (Fig. 5).
+On the Unitree Go1, the agent generated a high-frequency trot appropriate for the lightweight chassis, effectively managing the robot’s agile dynamics.
+On the ANYmal-D, the agent automatically adapted to the increased mass and rotational inertia, producing a slower, more grounded gait to maintain stability.
+Despite the vast difference in scale and the lack of any real-world fine-tuning, QWM achieved stable locomotion on both platforms. This confirms that the explicit morphology conditioning does not just capture simulation artifacts, but successfully encodes the fundamental physical properties required to control unseen robots in reality. Quantitative evaluation is provided in App. E.
+Fig. 5: Real-world deployment on Unitree Go1 and ANYmal-D. Both robots were held out during training. By simply injecting the correct morphology embedding μ\mu, the frozen policy achieves stable zero-shot locomotion on both the Go1 and ANYmal-D, demonstrating robust sim-to-real transfer of the learned latent dynamics.
+VI Conclusion and Future Work
+We presented QWM, a framework that transitions WMs from hardware-locked specialists to physics-grounded generalists. By explicitly conditioning latent dynamics on scale-invariant physical features derived from USDs, we disentangled static morphology from dynamic state. Our results demonstrate that a single model can master locomotion across a heterogeneous fleet, enabling successful zero-shot transfer to unseen robots (Unitree Go1, ANYmal-D) in the real world.
+Crucially, our experiments delineate the boundaries of this generalization. While QWM robustly interpolates control strategies for morphologies that lie within the span of the training distribution, it struggles to extrapolate to outliers (Unitree B2). This confirms that achieving true universality requires not just disentangled architectures, but a training cohort that sufficiently spans the “physics basis” of mass and geometry.
+Future work will extend QWM beyond “blind” walking on quadrupeds. We aim to integrate visual observations for geometry-aware planning and disentangle task representations to support diverse skills (e.g., bounding vs. trotting).
+Furthermore, we plan to replace the fixed-vector encoder with GNNs or Transformers to handle variable kinematic trees, paving the way for a Universal WM capable of controlling any articulated rigid body, from bipeds to manipulators. We also plan to investigate grey-box alternatives that couple a differentiable analytical rigid-body model with the recurrent imagination loop. While well-motivated, this direction currently faces challenges from the computational cost of differentiating through rigid-body solvers and the difficulty of classical engines with non-smooth contact dynamics.
+VII Acknowledgement
+This work was supported by the FRQNT Doctoral Training Scholarship, the NSERC Discovery Grant, and the Canada Foundation for Innovation. C. Li is supported by a doctoral fellowship from ETH AI Center.
+References
+[1]
+B. Ai, L. Dai, N. Bohlinger, D. Li, T. Mu, Z. Wu, K. Fay, H. I. Christensen, J. Peters, and H. Su (2025)
+Towards embodiment scaling laws in robot locomotion.
+In Proceedings of The 9th Conference on Robot Learning, J. Lim, S. Song, and H. Park (Eds.),
+Proceedings of Machine Learning Research, Vol. 305, pp. 3483–3515.
+External Links: Link
+Cited by: §II.
+[2]
+E. Alonso, A. Jelley, V. Micheli, A. Kanervisto, A. J. Storkey, T. Pearce, and F. Fleuret (2024)
+Diffusion for world modeling: visual details matter in atari.
+Advances in Neural Information Processing Systems 37, pp. 58757–58791.
+Cited by: §II.
+[3]
+G. Authors (2024)
+Genesis: a generative and universal physics engine for robotics and beyond.
+External Links: Link
+Cited by: §I.
+[4]
+T. Bi and R. D’Andrea (2024)
+Sample-efficient learning to solve a real-world labyrinth game using data-augmented model-based reinforcement learning.
+In 2024 IEEE International Conference on Robotics and Automation (ICRA),
+pp. 7455–7460.
+Cited by: §II.
+[5]
+N. Bohlinger, G. Czechmanowski, M. P. Krupka, P. Kicki, K. Walas, J. Peters, and D. Tateo (2025)
+One policy to run them all: an end-to-end learning approach to multi-embodiment locomotion.
+In Proceedings of The 8th Conference on Robot Learning, P. Agrawal, O. Kroemer, and W. Burgard (Eds.),
+Proceedings of Machine Learning Research, Vol. 270, pp. 3356–3378.
+External Links: Link
+Cited by: §II.
+[6]
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and D. Amodei (2020)
+Language models are few-shot learners.
+In Advances in Neural Information Processing Systems, H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin (Eds.),
+Vol. 33, pp. 1877–1901.
+External Links: Link
+Cited by: §I.
+[7]
+J. Bruce, M. D. Dennis, A. Edwards, J. Parker-Holder, Y. Shi, E. Hughes, M. Lai, A. Mavalankar, R. Steigerwald, C. Apps, Y. Aytar, S. M. E. Bechtle, F. Behbahani, S. C.Y. Chan, N. Heess, L. Gonzalez, S. Osindero, S. Ozair, S. Reed, J. Zhang, K. Zolna, J. Clune, N. de Freitas, S. Singh, and T. Rocktäschel (2024)
+Genie: generative interactive environments.
+In Forty-first International Conference on Machine Learning,
+External Links: Link
+Cited by: §II.
+[8]
+M. Burchi and R. Timofte (2025)
+Learning transformer-based world models with contrastive predictive coding.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §II,
+§V-B.
+[9]
+D. Butterfield, S. S. Garimella, N. Cheng, and L. Gan (2025)
+MI-hgnn: morphology-informed heterogeneous graph neural network for legged robot contact perception.
+In 2025 IEEE International Conference on Robotics and Automation (ICRA),
+pp. 10110–10116.
+Cited by: §II.
+[10]
+A. L. Chandra, I. Nematollahi, C. Huang, T. Welschehold, W. Burgard, and A. Valada (2025)
+DiWA: diffusion policy adaptation with world models.
+Conference on Robot Learning (CoRL).
+Cited by: §II.
+[11]
+C. Chen, Y. Wu, J. Yoon, and S. Ahn (2022)
+Transdreamer: reinforcement learning with transformer world models.
+arXiv preprint arXiv:2202.09481.
+Cited by: §II.
+[12]
+T. Chen, A. Murali, and A. Gupta (2018)
+Hardware conditioned policies for multi-robot transfer learning.
+Advances in Neural Information Processing Systems 31.
+Cited by: §II,
+§IV-A.
+[13]
+M. H. Danesh, M. Wabartha, S. Wu, J. Pineau, and H. Lin (2025)
+Safe domain randomization via uncertainty-aware out-of-distribution detection and policy adaptation.
+arXiv preprint arXiv:2507.06111.
+Cited by: §I.
+[14]
+Hetero-isaac: heterogeneous quadrupedal simulation built atop isaac lab
+External Links: Link,
+Document
+Cited by: §V-A.
+[15]
+M. H. Danesh (2026)
+Heterogeneous environments in isaac lab.
+Note: Technical Blog Post
+External Links: Link,
+Document
+Cited by: §V-A.
+[16]
+A. Dedieu, J. Ortiz, X. Lou, C. Wendelken, J. S. Guntupalli, W. Lehrach, M. Lazaro-Gredilla, and K. P. Murphy (2025)
+Improving transformer world models for data-efficient RL.
+In Forty-second International Conference on Machine Learning,
+External Links: Link
+Cited by: §II.
+[17]
+M. P. Deisenroth and C. E. Rasmussen (2011)
+PILCO: a model-based and data-efficient approach to policy search.
+In Proceedings of the 28th International Conference on International Conference on Machine Learning,
+ICML’11, Madison, WI, USA, pp. 465–472.
+External Links: ISBN 9781450306195
+Cited by: §II.
+[18]
+J. Devlin, M. Chang, K. Lee, and K. Toutanova (2019)
+Bert: pre-training of deep bidirectional transformers for language understanding.
+In Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers),
+pp. 4171–4186.
+Cited by: §I.
+[19]
+F. Ebert, C. Finn, S. Dasari, A. Xie, A. Lee, and S. Levine (2018)
+Visual foresight: model-based deep reinforcement learning for vision-based robotic control.
+arXiv preprint arXiv:1812.00568.
+Cited by: §I.
+[20]
+G. Feng, H. Zhang, Z. Li, X. B. Peng, B. Basireddy, L. Yue, Z. Song, L. Yang, Y. Liu, K. Sreenath, et al. (2023)
+Genloco: generalized locomotion controllers for quadrupedal robots.
+In Conference on Robot Learning,
+pp. 1893–1903.
+Cited by: §II.
+[21]
+Y. Feng, N. Hansen, Z. Xiong, C. Rajagopalan, and X. Wang (2023)
+Finetuning offline world models in the real world.
+In Proceedings of the 7th Conference on Robot Learning (CoRL),
+Cited by: §II.
+[22]
+S. Ferraro, P. Mazzaglia, T. Verbelen, and B. Dhoedt (2025)
+FOCUS: object-centric world models for robotic manipulation.
+Frontiers in Neurorobotics 19, pp. 1585386.
+Cited by: §II.
+[23]
+P. Fung, Y. Bachrach, A. Celikyilmaz, K. Chaudhuri, D. Chen, W. Chung, E. Dupoux, H. Gong, H. Jégou, A. Lazaric, et al. (2025)
+Embodied ai agents: modeling the world.
+arXiv preprint arXiv:2506.22355.
+Cited by: §I,
+§II.
+[24]
+I. Georgiev, V. Giridhar, N. Hansen, and A. Garg (2025)
+PWM: policy learning with multi-task world models.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §II,
+§V-B.
+[25]
+A. Gupta, L. Fan, S. Ganguli, and L. Fei-Fei (2022)
+MetaMorph: learning universal controllers with transformers.
+In International Conference on Learning Representations,
+External Links: Link
+Cited by: §II.
+[26]
+D. Ha and J. Schmidhuber (2018)
+Recurrent world models facilitate policy evolution.
+In Advances in Neural Information Processing Systems, S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett (Eds.),
+Vol. 31, pp. .
+External Links: Link
+Cited by: §II.
+[27]
+D. Hafner, T. Lillicrap, I. Fischer, R. Villegas, D. Ha, H. Lee, and J. Davidson (2019)
+Learning latent dynamics for planning from pixels.
+In International conference on machine learning,
+pp. 2555–2565.
+Cited by: §I,
+§II,
+§II,
+§III-A.
+[28]
+D. Hafner, T. P. Lillicrap, M. Norouzi, and J. Ba (2021)
+Mastering atari with discrete world models.
+In International Conference on Learning Representations,
+External Links: Link
+Cited by: §I,
+§II,
+§III-A.
+[29]
+D. Hafner, J. Pasukonis, J. Ba, and T. Lillicrap (2025)
+Mastering diverse control tasks through world models.
+Nature, pp. 1–7.
+Cited by: Appendix B,
+item 8,
+§I,
+§I,
+§II,
+§III-A,
+§III-A,
+§III-B,
+§IV-C,
+§IV,
+§V-B.
+[30]
+N. Hansen, H. Su, and X. Wang (2024)
+TD-mpc2: scalable, robust world models for continuous control.
+In International Conference on Learning Representations,
+Cited by: §II,
+§III-C.
+[31]
+W. Huang, J. Ji, B. Zhang, C. Xia, and Y. Yang (2024)
+SafeDreamer: safe reinforcement learning with world models.
+In The Twelfth International Conference on Learning Representations,
+External Links: Link
+Cited by: §II.
+[32]
+W. Huang, I. Mordatch, and D. Pathak (2020)
+One policy to control them all: shared modular policies for agent-agnostic control.
+In International Conference on Machine Learning,
+pp. 4455–4464.
+Cited by: §II,
+§IV-A.
+[33]
+J. Hwangbo, J. Lee, A. Dosovitskiy, D. Bellicoso, V. Tsounis, V. Koltun, and M. Hutter (2019)
+Learning agile and dynamic motor skills for legged robots.
+Science Robotics 4 (26), pp. eaau5872.
+Cited by: §IV-A.
+[34]
+J. Jang, S. Ye, Z. Lin, J. Xiang, J. Bjorck, Y. Fang, F. Hu, S. Huang, K. Kundalia, Y. Lin, et al. (2025)
+DreamGen: unlocking generalization in robot learning through neural trajectories.
+arXiv e-prints, pp. arXiv–2505.
+Cited by: §II,
+§II.
+[35]
+J. Kober, J. A. Bagnell, and J. Peters (2013)
+Reinforcement learning in robotics: a survey.
+The International Journal of Robotics Research 32 (11), pp. 1238–1274.
+Cited by: §I.
+[36]
+I. Kostrikov, L. M. Smith, and S. Levine (2023)
+Demonstrating A Walk in the Park: Learning to Walk in 20 Minutes With Model-Free Reinforcement Learning.
+In Proceedings of Robotics: Science and Systems,
+Daegu, Republic of Korea.
+External Links: Document
+Cited by: §I.
+[37]
+A. Kumar, Z. Fu, D. Pathak, and J. Malik (2021)
+Rma: rapid motor adaptation for legged robots.
+In Proceedings of Robotics: Science and Systems,
+Cited by: §I,
+§II,
+§III-C,
+§IV-A,
+§IV-A.
+[38]
+H. Lai, J. Cao, J. Xu, H. Wu, Y. Lin, T. Kong, Y. Yu, and W. Zhang (2025)
+World model-based perception for visual legged locomotion.
+In 2025 IEEE International Conference on Robotics and Automation (ICRA),
+pp. 11531–11537.
+Cited by: §II.
+[39]
+S. Lee, D. Cho, J. Park, and H. J. Kim (2023)
+Cqm: curriculum reinforcement learning with a quantized world model.
+Advances in Neural Information Processing Systems 36, pp. 78824–78845.
+Cited by: §II.
+[40]
+C. Li, A. Krause, and M. Hutter (2025)
+Offline robotic world model: learning robotic policies without a physics simulator.
+arXiv preprint arXiv:2504.16680.
+Cited by: §II.
+[41]
+C. Li, A. Krause, and M. Hutter (2025)
+Robotic world model: a neural network simulator for robust policy optimization in robotics.
+arXiv preprint arXiv:2501.10100.
+Cited by: §I,
+§II,
+§II.
+[42]
+S. Li, Y. Gao, D. Sadigh, and S. Song (2025)
+Unified video action model.
+In Proceedings of Robotics: Science and Systems,
+Cited by: §II.
+[43]
+H. Ma, J. Wu, N. Feng, C. Xiao, D. Li, J. Hao, J. Wang, and M. Long (2024)
+HarmonyDream: task harmonization inside world models.
+In International Conference on Machine Learning,
+Cited by: §II.
+[44]
+P. Mazzaglia, T. Verbelen, B. Dhoedt, A. Courville, and S. Rajeswar (2024)
+GenRL: multimodal-foundation world models for generalization in embodied agents.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §II.
+[45]
+V. Micheli, E. Alonso, and F. Fleuret (2023)
+Transformers are sample-efficient world models.
+In The Eleventh International Conference on Learning Representations,
+External Links: Link
+Cited by: §II.
+[46]
+V. Micheli, E. Alonso, and F. Fleuret (2024)
+Efficient world models with context-aware tokenization.
+In Forty-first International Conference on Machine Learning,
+External Links: Link
+Cited by: §II.
+[47]
+P. Mishra, A. H. Raj, X. Xiao, and D. Manocha (2025)
+McARL: morphology-control-aware reinforcement learning for generalizable quadrupedal locomotion.
+arXiv preprint arXiv:2505.18418.
+Cited by: §II,
+§IV-A.
+[48]
+M. Mittal, P. Roth, J. Tigue, A. Richard, O. Zhang, P. Du, A. Serrano-Muñoz, X. Yao, R. Zurbrügg, N. Rudin, L. Wawrzyniak, M. Rakhsha, A. Denzler, E. Heiden, A. Borovicka, O. Ahmed, I. Akinola, A. Anwar, M. T. Carlson, J. Y. Feng, A. Garg, R. Gasoto, L. Gulich, Y. Guo, M. Gussert, A. Hansen, M. Kulkarni, C. Li, W. Liu, V. Makoviychuk, G. Malczyk, H. Mazhar, M. Moghani, A. Murali, M. Noseworthy, A. Poddubny, N. Ratliff, W. Rehberg, C. Schwarke, R. Singh, J. L. Smith, B. Tang, R. Thaker, M. Trepte, K. V. Wyk, F. Yu, A. Millane, V. Ramasamy, R. Steiner, S. Subramanian, C. Volk, C. Chen, N. Jawale, A. V. Kuruttukulam, M. A. Lin, A. Mandlekar, K. Patzwaldt, J. Welsh, H. Zhao, F. Anes, J. Lafleche, N. Moënne-Loccoz, S. Park, R. Stepinski, D. V. Gelder, C. Amevor, J. Carius, J. Chang, A. H. Chen, P. de Heras Ciechomski, G. Daviet, M. Mohajerani, J. von Muralt, V. Reutskyy, M. Sauter, S. Schirm, E. L. Shi, P. Terdiman, K. Vilella, T. Widmer, G. Yeoman, T. Chen, S. Grizan, C. Li, L. Li, C. Smith, R. Wiltz, K. Alexis, Y. Chang, D. Chu, L. ”. Fan, F. Farshidian, A. Handa, S. Huang, M. Hutter, Y. Narang, S. Pouya, S. Sheng, Y. Zhu, M. Macklin, A. Moravanszky, P. Reist, Y. Guo, D. Hoeller, and G. State (2025)
+Isaac lab: a gpu-accelerated simulation framework for multi-modal robot learning.
+arXiv preprint arXiv:2511.04831.
+External Links: Link
+Cited by: §A-A,
+Appendix A,
+§I,
+§V-A.
+[49]
+T. M. Moerland, J. Broekens, A. Plaat, C. M. Jonker, et al. (2023)
+Model-based reinforcement learning: a survey.
+Foundations and Trends® in Machine Learning 16 (1), pp. 1–118.
+Cited by: §II.
+[50]
+A. Nagabandi, K. Konoglie, S. Levine, and V. Kumar (2019)
+Deep Dynamics Models for Learning Dexterous Manipulation.
+In Conference on Robot Learning (CoRL),
+Cited by: §I.
+[51]
+I. Nematollahi, B. DeMoss, A. L. Chandra, N. Hawes, W. Burgard, and I. Posner (2025)
+LUMOS: language-conditioned imitation learning with world models.
+In 2025 IEEE International Conference on Robotics and Automation (ICRA),
+Vol. , pp. 8219–8225.
+External Links: Document
+Cited by: §II.
+[52]
+NVIDIA (2025)
+Isaac sim.
+Note: https://github.com/isaac-sim/IsaacSimVersion 5.1.0, Apache-2.0 License
+Cited by: §I,
+§V-A.
+[53]
+D. Pathak, C. Lu, T. Darrell, P. Isola, and A. A. Efros (2019)
+Learning to control self-assembling morphologies: a study of generalization via modularity.
+Advances in Neural Information Processing Systems 32.
+Cited by: §II.
+[54]
+T. Qiao, H. Williams, D. Valencia, and B. MacDonald (2024)
+Bounded exploration with world model uncertainty in soft actor-critic reinforcement learning algorithm.
+arXiv preprint arXiv:2412.06139.
+Cited by: §II.
+[55]
+J. Richens, T. Everitt, and D. Abel (2025)
+General agents need world models.
+In Forty-second International Conference on Machine Learning,
+Cited by: §II.
+[56]
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov (2017)
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347.
+Cited by: §V-B.
+[57]
+R. Sekar, O. Rybkin, K. Daniilidis, P. Abbeel, D. Hafner, and D. Pathak (2020)
+Planning to explore via self-supervised world models.
+In International conference on machine learning,
+pp. 8583–8592.
+Cited by: §II.
+[58]
+C. Sferrazza, D. Huang, F. Liu, J. Lee, and P. Abbeel (2024)
+Body transformer: leveraging robot embodiment for policy learning.
+In 8th Annual Conference on Robot Learning,
+External Links: Link
+Cited by: §II,
+§V-B.
+[59]
+M. Shafiee, G. Bellegarda, and A. Ijspeert (2023)
+ManyQuadrupeds: learning a single locomotion policy for diverse quadruped robots.
+arXiv preprint arXiv:2310.10486.
+Cited by: §II.
+[60]
+D. Silver, J. Schrittwieser, K. Simonyan, I. Antonoglou, A. Huang, A. Guez, T. Hubert, L. Baker, M. Lai, A. Bolton, et al. (2017)
+Mastering the game of go without human knowledge.
+nature 550 (7676), pp. 354–359.
+Cited by: §I.
+[61]
+R. S. Sutton (1991)
+Dyna, an integrated architecture for learning, planning, and reacting.
+SIGART Bull. 2 (4), pp. 160–163.
+External Links: ISSN 0163-5719,
+Link,
+Document
+Cited by: §I,
+§II.
+[62]
+B. Trabucco, M. Phielipp, and G. Berseth (2022)
+Anymorph: learning transferable polices by inferring agent morphology.
+In International Conference on Machine Learning,
+pp. 21677–21691.
+Cited by: §II.
+[63]
+Q. Wang, J. Yang, Y. Wang, X. Jin, W. Zeng, and X. Yang (2024)
+Making offline RL online: collaborative world models for offline visual reinforcement learning.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §II.
+[64]
+T. Wang, D. Bhatt, X. Wang, and N. Atanasov (2024)
+Cross-embodiment robot manipulation skill transfer using latent space alignment.
+CoRR abs/2406.01968.
+External Links: Link
+Cited by: §II.
+[65]
+T. Wang, R. Liao, J. Ba, and S. Fidler (2018)
+NerveNet: learning structured policy with graph neural networks.
+In International Conference on Learning Representations,
+External Links: Link
+Cited by: §II,
+§IV-A.
+[66]
+W. Wang, I. Dusparic, Y. Shi, K. Zhang, and V. Cahill (2025)
+Drama: mamba-enabled model-based reinforcement learning is sample and parameter efficient.
+In The Thirteenth International Conference on Learning Representations,
+External Links: Link
+Cited by: §II.
+[67]
+Z. Wang, Y. Deng, J. Long, and Y. Zhang (2024)
+Parallelizing Model-based Reinforcement Learning Over the Sequence Length.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems,
+Cited by: §II.
+[68]
+S. Wei, X. Chen, F. Xie, G. E. Katz, Z. Gan, and L. Gan (2025)
+MS-ppo: morphological-symmetry-equivariant policy for legged robot locomotion.
+arXiv preprint arXiv:2512.00727.
+Cited by: §II.
+[69]
+J. Whitman, M. Travers, and H. Choset (2023)
+Learning modular robot control policies.
+IEEE Transactions on Robotics 39 (5), pp. 4095–4113.
+Cited by: §II.
+[70]
+P. Wu, A. Escontrela, D. Hafner, P. Abbeel, and K. Goldberg (2023)
+DayDreamer: world models for physical robot learning.
+In Proceedings of The 6th Conference on Robot Learning, K. Liu, D. Kulic, and J. Ichnowski (Eds.),
+Proceedings of Machine Learning Research, Vol. 205, pp. 2226–2240.
+External Links: Link
+Cited by: §I,
+§I,
+§II.
+[71]
+S. Wu, M. H. Danesh, S. Li, H. Yurchyk, A. Abyaneh, A. El Houssaini, D. Meger, and H. Lin (2025)
+VOCALoco: viability-optimized cost-aware adaptive locomotion.
+IEEE Robotics and Automation Letters 11 (2), pp. 1146–1153.
+Cited by: §II.
+[72]
+W. Xi, Z. Cao, C. Ming, J. Zheng, and G. Zhou (2025)
+UniLegs: universal multi-legged robot control through morphology-agnostic policy distillation.
+IEEE/RSJ International Conference on Intelligent Robots and Systems.
+Cited by: §II.
+[73]
+J. Xiang, G. Liu, Y. Gu, Q. Gao, Y. Ning, Y. Zha, Z. Feng, T. Tao, S. Hao, Y. Shi, Z. Liu, E. P. Xing, and Z. Hu (2024)
+Pandora: towards general world model with natural language actions and video states.
+arXiv preprint arXiv:2406.09455.
+Cited by: §II.
+[74]
+F. Xie, S. Wei, Y. Song, Y. Yue, and L. Gan (2025)
+Morphological-symmetry-equivariant heterogeneous graph neural network for robotic dynamics learning.
+In Proceedings of the 7th Annual Learning for Dynamics & Control Conference, N. Ozay, L. Balzano, D. Panagou, and A. Abate (Eds.),
+Proceedings of Machine Learning Research, Vol. 283, pp. 1392–1405.
+External Links: Link
+Cited by: §II.
+[75]
+Z. Xiong, J. Beck, and S. Whiteson (2023)
+Universal Morphology Control via Contextual Modulation.
+In Proceedings of the 40th International Conference on Machine Learning,
+pp. 38286–38300.
+External Links: ISSN 2640-3498
+Cited by: §II,
+§IV-A.
+[76]
+J. Yamada, M. Rigter, J. Collins, and I. Posner (2023)
+TWIST: Teacher-Student World Model Distillation for Efficient Sim-to-Real Transfer.
+arXiv.
+External Links: 2311.03622,
+Document
+Cited by: §II.
+[77]
+D. Yarats, A. Zhang, I. Kostrikov, B. Amos, J. Pineau, and R. Fergus (2021)
+Improving sample efficiency in model-free reinforcement learning from images.
+Proceedings of the AAAI Conference on Artificial Intelligence 35 (12), pp. 10674–10681.
+External Links: Link,
+Document
+Cited by: §I.
+[78]
+W. Yu, J. Tan, C. K. Liu, and G. Turk (2017)
+Preparing for the unknown: learning a universal policy with online system identification.
+In Proceedings of Robotics: Science and Systems,
+Cited by: §II.
+[79]
+B. Zhang, R. Wang, W. Xiao, W. Zhang, J. Sun, G. Huang, J. Chen, and G. Wang (2025)
+DyMoDreamer: world modeling with dynamic modulation.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+External Links: Link
+Cited by: §II.
+[80]
+H. Zhang, K. Y. Ma, M. Z. Shou, W. Lin, and Y. Wu (2025)
+Cross-embodiment dexterous hand articulation generation via morphology-aware learning.
+arXiv preprint arXiv:2510.06068.
+Cited by: §II.
+[81]
+L. Zhang, M. Kan, S. Shan, and X. Chen (2025)
+PreLAR: World Model Pre-training with Learnable Action Representation.
+In Computer Vision – ECCV 2024, A. Leonardis, E. Ricci, S. Roth, O. Russakovsky, T. Sattler, and G. Varol (Eds.),
+Vol. 15081, pp. 185–201.
+External Links: Document,
+ISBN 978-3-031-73336-9 978-3-031-73337-6
+Cited by: §II.
+[82]
+W. Zhang, G. Wang, J. Sun, Y. Yuan, and G. Huang (2023)
+Storm: efficient stochastic transformer based world models for reinforcement learning.
+Advances in Neural Information Processing Systems 36, pp. 27147–27166.
+Cited by: §II.
+[83]
+Y. Zhao, A. Scannell, W. Zhao, Y. Hou, T. Cui, L. Chen, D. Büchler, A. Solin, J. Kannala, and J. Pajarinen (2025)
+Efficient reinforcement learning by guiding generalist world models with non-curated data.
+arXiv preprint arXiv:2502.19544.
+Cited by: §II.
+[84]
+H. Zheng, Y. Cheng, H. Liu, L. Ye, and H. Liu (2025)
+HuWo: building physical interaction world models for humanoid robot locomotion.
+In ICLR 2025 Workshop on World Models: Understanding, Modelling and Scaling,
+External Links: Link
+Cited by: §II.
+[85]
+G. Zollicoffer, K. Eaton, J. C. Balloch, J. Kim, W. Zhou, R. Wright, and M. Riedl (2025)
+Novelty detection in reinforcement learning with world models.
+In Forty-second International Conference on Machine Learning,
+External Links: Link
+Cited by: §II.
+Appendix A Environment Details & Reward Structure
+In this section, we provide the detailed specification of the environment, reward structures, and randomization parameters used to train QWM.
+To demonstrate the robustness of our architecture and ensure fair comparison against baselines, we purposefully avoided extensive hyperparameter tuning. Instead, we adopted the default reward terms, weights, and randomization ranges provided by the official NVIDIA Isaac Lab repository [48] for each respective robot asset. By relying on these standard, community-vetted configurations, we show that QWM can generalize across morphologies without requiring the reward landscape to be engineered specifically for our latent representation.
+A-A Reward Functions
+The reward definitions vary between the standard quadruped families (ANYmal and Unitree series) and the Boston Dynamics Spot, reflecting the different control strategies often employed for industrial versus agile platforms. We denote the robot state available for reward computation as: linear velocity 𝐯∈ℝ3\mathbf{v}\in\mathbb{R}^{3}, angular velocity 𝝎∈ℝ3\bm{\omega}\in\mathbb{R}^{3}, joint positions 𝐪∈ℝ12\mathbf{q}\in\mathbb{R}^{12}, joint velocities 𝐪˙∈ℝ12\dot{\mathbf{q}}\in\mathbb{R}^{12}, joint torques 𝝉∈ℝ12\bm{\tau}\in\mathbb{R}^{12}, and projected gravity vector 𝐠p​r​o​j∈ℝ3\mathbf{g}_{proj}\in\mathbb{R}^{3}. The agent’s action (target joint positions) is denoted as 𝐚t∈ℝ12\mathbf{a}_{t}\in\mathbb{R}^{12}. The commanded velocities are 𝐯x​yc​m​d∈ℝ2\mathbf{v}^{cmd}_{xy}\in\mathbb{R}^{2} and ωzc​m​d∈ℝ\omega^{cmd}_{z}\in\mathbb{R} (or heading commands where applicable).
+The policy observation space (ℝ48\mathbb{R}^{48}) consists of: 𝐯\mathbf{v}, 𝝎\bm{\omega}, 𝐠p​r​o​j\mathbf{g}_{proj}, 𝐯c​m​d\mathbf{v}^{cmd}, 𝐪−𝐪d​e​f​a​u​l​t\mathbf{q}-\mathbf{q}_{default}, 𝐪˙\dot{\mathbf{q}}, and the previous actions 𝐚t−1\mathbf{a}_{t-1}.
+For the ANYmal (B, C, D) and Unitree (A1, Go1, Go2, B2) families, we utilize the standard “Flat Terrain” reward structure common in robotic learning [48]. As shown in Table II, the objective is primarily velocity tracking with auxiliary penalties to encourage energy efficiency and smoothness. We employ the squared exponential kernel e−∥x∥2/σ2e^{-\|x\|^{2}/\sigma^{2}} for tracking terms.
+TABLE II: Standard Reward Functions (ANYmal & Unitree Families)
+Tracking Term
+Equation
+Penalty Term
+Equation
+Lin. Vel. Track (XY)
+e−∥𝐯x​y−𝐯c​m​dx​y∥2/σv2e^{-\|\mathbf{v}_{xy}-\mathbf{v}^{cmd}_{xy}\|^{2}/\sigma_{v}^{2}}
+Lin. Vel. Z
+−vz2-v_{z}^{2}
+Ang. Vel. Track (Z)
+e−(ωz−ωc​m​dz)2/σω2e^{-(\omega_{z}-\omega^{cmd}_{z})^{2}/\sigma_{\omega}^{2}}
+Ang. Vel. XY
+−‖𝝎x​y‖2-\|\bm{\omega}_{xy}\|^{2}
+Feet Air Time
+∑(ta​i​r−0.5)⋅𝕀l​a​n​d​e​d\sum(t_{air}-0.5)\cdot\mathbb{I}_{landed}
+Flat Orientation
+−‖𝐠p​r​o​j,x​y‖2-\|\mathbf{g}_{proj,xy}\|^{2}
+Torque
+−‖𝝉‖2-\|\bm{\tau}\|^{2}
+Joint Acc.
+−‖𝐪¨‖2-\|\ddot{\mathbf{q}}\|^{2}
+Action Rate
+−‖𝐚t−𝐚t−1‖2-\|\mathbf{a}_{t}-\mathbf{a}_{t-1}\|^{2}
+Contacts*
+−𝕀⁡(‖𝐅c‖>1.0)-\mathbb{I}(\|\mathbf{F}_{c}\|>1.0)
+*Enabled for ANYmal series; disabled for Unitree series.
+The Boston Dynamics Spot utilizes a distinct reward setup derived from its specific configuration in Isaac Lab. Unlike the standard group, this configuration includes explicit “gait enforcement” terms (Table III) to produce a specific trotting style, along with stricter kinematic constraints (e.g., foot clearance).
+TABLE III: Spot-Specific Reward Functions
+Functional Term
+Equation
+Penalty Term
+Equation
+Base Lin. Vel (Ramp)
+m⋅e−∥𝐯x​y−𝐯c​m​dx​y∥/σvm\cdot e^{-\|\mathbf{v}_{xy}-\mathbf{v}^{cmd}_{xy}\|/\sigma_{v}}
+Foot Slip
+−∑∥𝐯f,x​y∥⋅𝕀c​o​n​t​a​c​t-\sum\|\mathbf{v}_{f,xy}\|\cdot\mathbb{I}_{contact}
+where m=m=
+1+0.5​(‖𝐯x​yc​m​d‖−1)+1+0.5(\|\mathbf{v}^{cmd}_{xy}\|-1)_{+}
+Base Motion
+−(0.8​vz2+0.2​‖𝝎x​y‖1)-(0.8v_{z}^{2}+0.2\|\bm{\omega}_{xy}\|_{1})
+Base Ang. Vel (Abs)
+e−|ωz−ωc​m​dz|/σωe^{-|\omega_{z}-\omega^{cmd}_{z}|/\sigma_{\omega}}
+Base Orientation
+−‖𝐠p​r​o​j,x​y‖-\|\mathbf{g}_{proj,xy}\|
+Foot Clearance
+e−∑(hf−0.1)2tanh(2vf)e^{-\sum(h_{f}-0.1)^{2}\tanh(2v_{f})}
+Act. Smoothness
+−‖𝐚t−𝐚t−1‖-\|\mathbf{a}_{t}-\mathbf{a}_{t-1}\|
+Gait Enforcement
+rs​y​n​c⋅ra​s​y​n​cr_{sync}\cdot r_{async}
+Air Time Var.
+−(Var​(ta​i​r)+Var​(tc​o​n​t))-(\text{Var}(t_{air})+\text{Var}(t_{cont}))
+where ri=r_{i}=
+e−(Δta​i​r2+Δtc​o​n​t2)/σe^{-(\Delta t_{air}^{2}+\Delta t_{cont}^{2})/\sigma}
+Joint Pos/Vel
+−‖𝐪−𝐪0‖,−‖𝐪˙‖-\|\mathbf{q}-\mathbf{q}_{0}\|,-\|\dot{\mathbf{q}}\|
+Contacts
+−𝕀⁡(‖𝐅c‖>1.0)-\mathbb{I}(\|\mathbf{F}_{c}\|>1.0)
+A-B Reward Weights
+Table IV and Table V detail the coefficients used for scalarization. We preserve the heterogeneous weights from the optimized “Specialist” configurations rather than normalizing them manually.
+TABLE IV: Reward Weights for ANYmal and Unitree Robots
+Reward Term
+ANYmal-D
+ANYmal-C
+ANYmal-B
+Unitree A1
+Unitree Go1
+Unitree Go2
+Unitree B2
+Lin. Vel. Tracking (XY)
+1.0
+1.0
+1.0
+1.5
+1.5
+1.5
+1.0
+Ang. Vel. Tracking (Z)
+0.5
+0.5
+0.5
+0.75
+0.75
+0.75
+0.75
+Feet Air Time
+0.5
+0.5
+0.5
+0.25
+0.25
+0.25
+0.5
+Lin. Vel. Z (L2L^{2})
+-2.0
+-2.0
+-2.0
+-2.0
+-2.0
+-2.0
+-2.0
+Ang. Vel. XY (L2L^{2})
+-0.05
+-0.05
+-0.05
+-0.05
+-0.05
+-0.05
+-0.05
+Flat Orientation (L2L^{2})
+-5.0
+-5.0
+-5.0
+-2.5
+-2.5
+-2.5
+-5.0
+Joint Torques (L2L^{2})
+-2.5e-5
+-2.5e-5
+-2.5e-5
+-2.0e-4
+-2.0e-4
+-2.0e-4
+-2.0e-5
+Joint Acc. (L2L^{2})
+-2.5e-7
+-2.5e-7
+-2.5e-7
+-2.5e-7
+-2.5e-7
+-2.5e-7
+-2.5e-7
+Action Rate (L2L^{2})
+-0.01
+-0.01
+-0.01
+-0.01
+-0.01
+-0.01
+-0.01
+Undesired Contacts
+-1.0
+-1.0
+-1.0
+-
+-
+-
+-
+TABLE V: Reward Weights for Boston Dynamics Spot
+Reward Term
+Weight
+Reward Term
+Weight
+Gait Reward
+10.0
+Base Motion Penalty (vz,𝝎x​yv_{z},\bm{\omega}_{xy})
+-2.0
+Base Linear Vel (Ramp)
+5.0
+Base Orientation Penalty
+-3.0
+Base Angular Vel
+5.0
+Action Smoothness
+-1.0
+Air Time Reward
+5.0
+Air Time Variance
+-1.0
+Foot Clearance
+0.5
+Foot Slip
+-0.5
+Joint Position Penalty
+-0.7
+Joint Acceleration
+-1.0e-4
+Joint Velocity Penalty
+-0.01
+Joint Torques
+-5.0e-4
+Undesired Contacts
+-1.0
+A-C Domain Randomization
+To ensure sim-to-real transfer, we apply extensive domain randomization.
+A-C1 Physics & Observation Randomization
+We apply standard randomization to surface friction and observation noise (Table VI).
+TABLE VI: Physics and Observation Randomization Parameters
+Parameter
+Value / Distribution
+Static Friction
+𝒰⁡(0.8,0.8)\mathcal{U}(0.8,0.8) (Default)
+Dynamic Friction
+𝒰⁡(0.6,0.6)\mathcal{U}(0.6,0.6) (Default)
+External Disturbance
+vp​u​s​h∼𝒰⁡(−0.5,0.5)v_{push}\sim\mathcal{U}(-0.5,0.5) m/s (Every 10-15s)
+Control Latency
+20ms (Simulation d​t=0.005dt=0.005s, Decimation=4)
+Observation Noise
+Additive Uniform Distribution
+Linear Velocity
+𝒰⁡(−0.1,0.1)\mathcal{U}(-0.1,0.1) m/s
+Angular Velocity
+𝒰⁡(−0.2,0.2)\mathcal{U}(-0.2,0.2) rad/s
+Projected Gravity
+𝒰⁡(−0.05,0.05)\mathcal{U}(-0.05,0.05)
+Joint Positions
+𝒰⁡(−0.01,0.01)\mathcal{U}(-0.01,0.01) rad
+Joint Velocities
+𝒰⁡(−1.5,1.5)\mathcal{U}(-1.5,1.5) rad/s
+A-C2 Morphology Randomization
+We randomize physical properties during training. We define two randomization groups—Large (ANYmal, B2, Spot) and Small (A1, Go1, Go2)—to ensure that mass perturbations are relative to the robot’s size.
+TABLE VII: Morphology Randomization Parameters
+Parameter
+Distribution / Range
+Mass (Large Robots)
+Base ±5.0\pm 5.0 kg
+Mass (Small Robots)
+Base +[−1.0,3.0]+[-1.0,3.0] kg
+Center of Mass (Base)
+±5\pm 5cm (X, Y), ±1\pm 1cm (Z)
+A-C3 Reset Randomization & Task Commands
+We utilize different initialization strategies based on robot sensitivity (Table VIII). While larger robots utilize joint scaling, smaller Unitree platforms are initialized at nominal joint positions to ensure stability. The velocity command ranges (Table IX) are uniform across all robots in the heterogeneous setup.
+TABLE VIII: Reset Randomization
+State
+Initialization
+Base Position
+Offset ±0.5\pm 0.5m (X,Y)
+Base Yaw
+𝒰⁡(−π,π)\mathcal{U}(-\pi,\pi)
+Base Velocity (Lin/Ang)
+𝒰⁡(−0.5,0.5)\mathcal{U}(-0.5,0.5) (Zero for Small Unitrees)
+Joint Pos (ANYmal, B2)
+Nominal ×𝒰⁡(0.8,1.2)\times\mathcal{U}(0.8,1.2)
+Joint Pos (Small Unitree)
+Nominal (Fixed)
+Joint Pos (Spot)
+Nominal +𝒰⁡(−0.05,0.05)+\mathcal{U}(-0.05,0.05) rad
+TABLE IX: Velocity Command Ranges
+Robot Group
+𝐯x\mathbf{v}_{x} (m/s)
+𝐯y\mathbf{v}_{y} (m/s)
+𝝎z\bm{\omega}_{z} (rad/s)
+All Robots
+[−1.0,1.0][-1.0,1.0]
+[−1.0,1.0][-1.0,1.0]
+[−1.0,1.0][-1.0,1.0]
+Appendix B Network Architecture Details
+We build upon the DreamerV3 [29] backbone, introducing specific architectural modifications to handle heterogeneous morphologies. Unless otherwise specified, all dense layers are followed by LayerNorm and the SiLU activation function.
+B-A Morphology-Conditioned Encoder
+To effectively fuse the high-frequency proprioceptive data (oto_{t}) with the static, low-frequency morphology features (μ\mu), we employ a dual-pathway architecture, detailed in Sec. IV.
+As seen in Subsec. B-A, we process the modalities in separate pathways before concatenation. The proprioception tower is deep (5 layers) and wide (1024 units) to extract features from the complex joint state history. Conversely, the USD tower is shallower (2 layers) and narrower (512 units) because the input features μ\mu (ratios, normalized masses) are already semantically dense. This design prevents the static signal from being overwhelmed by the variance of the dynamic signal before they are projected into the shared latent space.
+Dual-Pathway Encoder
+]
+Inputs:
+•
+Proprioception ot∈ℝ48o_{t}\in\mathbb{R}^{48} (Joint pos, vel, base vel, gravity, commands, actions)
+•
+Morphology μ∈ℝ11\mu\in\mathbb{R}^{11} (Normalized USD features)
+1. Proprioception Tower:
+# Wide and deep to capture high-freq dynamics
+x_dyn = Linear(48, 1024) -> LayerNorm -> SiLU
+x_dyn = Linear(1024, 1024) -> LayerNorm -> SiLU
+x_dyn = Linear(1024, 1024) -> LayerNorm -> SiLU
+x_dyn = Linear(1024, 1024) -> LayerNorm -> SiLU
+x_dyn = Linear(1024, 1024) -> LayerNorm -> SiLU
+2. Morphology (USD) Tower:
+# Shallower tower; features are already dense
+# Units = 0.5 * Proprio_Units
+x_stat = Linear(10, 512) -> LayerNorm -> SiLU
+x_stat = Linear(512, 512) -> LayerNorm -> SiLU
+3. Fusion Layer:
+concat = Concatenate([x_dyn, x_stat]) # dim: 1536
+embed = Linear(1536, 1024) -> LayerNorm -> SiLU
+B-B Recurrent State-Space Model (RSSM)
+The core of the WM is the RSSM, which learns the transition dynamics p⁡(st+1|st,at,μ)p(s_{t+1}|s_{t},a_{t},\mu). We utilize a discrete latent space (Categorical VAE) which has been shown to be more robust to world modeling errors than Gaussian equivalents.
+Crucially, as shown in Subsec. B-B, the morphology vector μ\mu is injected again at the input of the Recurrent Cell. This explicit recurrent conditioning ensures that the GRU state hth_{t} does not need to memorize the robot’s physical parameters (like limb length) in its short-term memory, freeing up capacity for tracking dynamic state (like velocity and contact timing).
+RSSM Dynamics
+State Definitions:
+•
+Deterministic State ht∈ℝ512h_{t}\in\mathbb{R}^{512} (GRU State)
+•
+Stochastic State ztz_{t}: 32 categorical variables, 32 classes each (32×3232\times 32 flattened to 1024)
+1. Recurrent Step (Finding hth_{t}):
+# Inputs: Previous stochastic state, Action, Morphology
+# Note: z_{t-1} is flattened from (32, 32) -> 1024
+input_rnn = Concatenate([Flatten(z_{t-1}), a_{t-1}, mu])
+# Pre-processing MLP
+x_rnn = Linear(input_rnn, 512) -> LayerNorm -> SiLU
+# GRU Update
+h_t = GRUCell(input=x_rnn, hidden_state=h_{t-1})
+2. Posterior Estimation (Representation Model):
+# Fuses history (h_t) with current observation embedding
+input_post = Concatenate([h_t, embed])
+x_post = Linear(input_post, 512) -> LayerNorm -> SiLU
+logits = Linear(512, 32 * 32)
+z_t_post ~ OneHotCategorical(logits) # Used for training
+3. Prior Estimation (Transition Predictor):
+# Predicts state purely from history (for imagination)
+x_prior = Linear(h_t, 512) -> LayerNorm -> SiLU
+logits = Linear(512, 32 * 32)
+z_t_prior ~ OneHotCategorical(logits) # Used for planning
+B-C Policy and Critic Heads
+The Actor and Critic networks operate on the concatenated state feature f​e​a​tt=[ht,flatten​(zt)]feat_{t}=[h_{t},\text{flatten}(z_{t})].
+The Critic utilizes Symlog distribution learning. Instead of regressing a single scalar value (which is unstable when rewards vary by orders of magnitude, as seen in Subsec. IV-C), the network predicts a categorical distribution over 255 bins. This allows the critic to model the multi-modal return distributions common in multi-task learning.
+The Actor outputs a Gaussian distribution. To prevent premature convergence, the standard deviation is learned but bounded between [0.1,2.0][0.1,2.0].
+Actor & Critic
+Input: f​e​a​tt=Concatenate​([ht,Flatten​(zt)])feat_{t}=\text{Concatenate}([h_{t},\text{Flatten}(z_{t})]) (dim: 512+1024=1536512+1024=1536)
+1. Actor (Policy):
+x = Linear(1536, 512) -> LayerNorm -> SiLU
+x = Linear(512, 512) -> LayerNorm -> SiLU
+x = Linear(512, 512) -> LayerNorm -> SiLU
+# Mean head
+mean = Linear(512, 12)
+# Std head (Learned, constrained)
+raw_std = Linear(512, 12)
+std = Softplus(raw_std) + 0.1
+std = clamp(std, min=0.1, max=2.0)
+action ~ Normal(mean, std)
+2. Critic (Value Function):
+x = Linear(1536, 512) -> LayerNorm -> SiLU
+x = Linear(512, 512) -> LayerNorm -> SiLU
+x = Linear(512, 512) -> LayerNorm -> SiLU
+# Symlog Discrete Output (TwoHot Encoding)
+logits = Linear(512, 255)
+value_dist = Softmax(logits)
+# Expected value is calculated via weighted sum of bin centers
+B-D Reward Head
+The reward predictor is structurally identical to the Critic, utilizing the same Symlog two-hot discretization. However, it is deeper (4 layers) than the policy heads. This increased depth is necessary because the reward function in locomotion is often a highly non-linear combination of the state (e.g., precise velocity tracking combined with sharp boolean penalties for collisions).
+Reward Predictor
+Input: f​e​a​ttfeat_{t} (dim: 1536)x = Linear(1536, 512) -> LayerNorm -> SiLU
+x = Linear(512, 512) -> LayerNorm -> SiLU
+x = Linear(512, 512) -> LayerNorm -> SiLU
+x = Linear(512, 512) -> LayerNorm -> SiLU # Extra depth
+logits = Linear(512, 255)
+reward_dist = Softmax(logits)
+B-E Continuation Head
+The Continuation Head predicts the probability c^t∈[0,1]\hat{c}_{t}\in[0,1] of the episode continuing at the next step (equivalent to 1−probability of termination1-\text{probability of termination}). This allows the agent to “hallucinate” termination events, such as the robot falling over or exceeding joint limits, during latent imagination.
+Unlike the Reward Head, the Continuation Head is relatively shallow (2 layers). We found that the termination boundary (alive vs. dead) is generally sharper and easier to learn than the complex reward landscape, requiring less network depth.
+Continuation Predictor
+Input: f​e​a​tt=[ht,zt]feat_{t}=[h_{t},z_{t}] (dim: 1536)# Layer 1
+x = Linear(1536, 512) -> LayerNorm -> SiLU
+# Layer 2
+x = Linear(512, 512) -> LayerNorm -> SiLU
+# Binary Output (Bernoulli Distribution)
+logit = Linear(512, 1)
+p_alive = Sigmoid(logit)
+Appendix C Morphological Diversity Analysis
+Table X presents the raw extracted values for our robot cohort, and Fig. 6 visualizes the pairwise Euclidean distance between their z-score standardized feature vectors (μ\mu). This analysis highlights the structural distribution shift that QWM must bridge.
+The efficacy of our Physical Morphology Extractor is immediately visible in the distance heatmap (Fig. 6), where the system autonomously recovers the functional taxonomy of the hardware without semantic labels. The analysis reveals three distinct structural regimes within the training set. First, the lightweight Unitree robots (A1, Go1, Go2) form a highly dense cluster with near-zero pairwise distances (d<1.15d<1.15), reflecting their shared design lineage and physical attributes available in Table X. Second, the ANYmal series occupies a separate region, yet reveals fine-grained intra-family nuances. The PME correctly identifies the older ANYmal-B as a distinct variant (d≈3.1d\approx 3.1 from successors) compared to the modern ANYmal-C and -D platforms, which show near-zero distance (d<0.72d<0.72), demonstrating the encoder’s sensitivity to generational hardware updates while maintaining their grouping as heavy-duty platforms. Third, the Boston Dynamics Spot stands as a geometric outlier. While it is moderately distant from all robots, it is closest to the Unitree Go2 (d≈4.43d\approx 4.43), reflecting comparable physical attributes and the mammalian “dog-like” configuration of both robots. This distinct signature is driven by Spot’s extreme stance aspect ratio (5.425.42), which mathematically isolates it from the standard configurations despite shared or similar properties.
+Crucially, this quantitative analysis corroborates the difficulty of the zero-shot transfer task to the held-out Unitree B2. Despite sharing a manufacturer with the A1/Go1 cluster, the B2 exhibits structural divergence from its brand-siblings, showing the largest pairwise distances in the entire matrix (d>7.4d>7.4). It occupies a distinct region of the physical design space, characterized by high inertia (log mass 4.404.40) and large stance dimensions (0.660.66m), significantly deviating from the compact geometry of the training set. This confirms that QWM is not memorizing manufacturer-specific quirks, but is instead grounding its control strategy in the fundamental physical parameters captured by the extractor.
+Fig. 6: Morphological Feature Distance Matrix. We compute the Euclidean distance between the z-score standardized extracted features (μ\mu) of the robots. The extractor correctly identifies physical families: the small Unitree robots form a tight cluster (bottom right), the ANYmals group together (top left), and Spot acts as a geometric outlier. The held-out Unitree B2 (highlighted) shows the largest distances from its smaller brand-siblings, indicating it requires a fundamentally different dynamics model.
+TABLE X: Raw Extracted Morphology Features (μraw\mu_{\text{raw}}) for the robot cohort. Extracted directly from USD assets. Note the inclusion of Topology Style, which explicitly conditions the model on joint configuration. The held-out Unitree B2 exhibits physical properties significantly outside the training distribution.
+Feature
+ANYmal-B
+ANYmal-C
+ANYmal-D
+Spot
+Unitree A1
+Unitree Go1
+Unitree Go2
+Unitree B2
+Dynamics
+Log Total Mass (log kg)
+3.45
+3.97
+3.96
+3.48
+2.70
+2.65
+2.77
+4.40
+Trunk Mass Ratio (0-1)
+0.55
+0.51
+0.51
+0.53
+0.43
+0.42
+0.46
+0.44
+Torque Density (Nm/N)
+0.27
+0.16
+0.16
+0.22
+0.25
+0.22
+0.21
+0.31
+Kinematics & Topology
+Hip Offset (m)
+0.30
+0.32
+0.32
+0.30
+0.19
+0.19
+0.20
+0.34
+Thigh Length (m)
+0.30
+0.34
+0.36
+0.33
+0.20
+0.22
+0.22
+0.36
+Shank Length (m)
+0.30
+0.34
+0.36
+0.33
+0.20
+0.22
+0.22
+0.36
+Config. Style (0=Dog, 1=X)
+1
+1
+1
+0
+0
+0
+0
+0
+Geometry
+Stance Length (m)
+0.55
+0.60
+0.61
+0.60
+0.36
+0.38
+0.39
+0.66
+Stance Width (m)
+0.23
+0.21
+0.22
+0.11
+0.09
+0.09
+0.09
+0.14
+Aspect Ratio (L/W)
+2.39
+2.88
+2.79
+5.42
+3.84
+4.02
+4.16
+4.56
+Appendix D Ablation Study
+In this section, we rigorously evaluate the individual contributions of the proposed components in the QWM framework. To validate our architectural design choices, specifically the Physical Morphology Encoder (PME), the Adaptive Reward Normalization (ARN), and the specific injection points of the morphology embedding, we trained distinct variations of our model on the full heterogeneous robot cohort.
+We compare the full QWM framework against the following configurations to isolate the impact of (1) explicit morphology information, (2) reward balancing, and (3) the location of conditioning within the WM.
+1.
+QWM (Full Method): The proposed framework as described in Sec. IV. The model utilizes the PME to generate μ\mu, applies ARN to normalize learning signals, and conditions both the dual-pathway encoder and the RSSM dynamics on μ\mu.
+2.
+w/o PME (Implicit Identification): We remove the explicit morphology conditioning entirely. The model receives no static physical parameters (μ\mu is removed). The agent must implicitly infer the robot’s morphology solely from the history of proprioceptive observations (oto_{t}) stored in the recurrent state hth_{t}. This effectively tests the limitations of implicit system identification. Note that the model still has the ARN module, making it different from the DreamerV3 backbone.
+3.
+w/o ARN (Raw Rewards): We remove the Adaptive Reward Normalization. The WM and policy are trained on the raw, unnormalized reward signals provided by the heterogeneous environments. This variant tests the hypothesis that varying reward scales across robots cause optimization instability or mode collapse.
+4.
+w/o RSSM Conditioning: We retain the PME and inject μ\mu into the encoder, but we remove the explicit injection of μ\mu into the recurrent model (Eq. 1). The transition dynamics become ht=fϕ​(ht−1,zt−1,at−1)h_{t}=f_{\phi}(h_{t-1},z_{t-1},a_{t-1}). This tests whether the recurrent state hth_{t} can successfully maintain static morphological information over time without explicit re-injection at every step.
+5.
+w/o Encoder Conditioning: We retain the PME and inject μ\mu into the recurrent model, but remove the static tower from the encoder. The posterior ztz_{t} is inferred solely from dynamic observations oto_{t}. This tests the necessity of grounding the latent representation ztz_{t} with static physical context.
+6.
+w/o ARN & RSSM Conditioning: A compound ablation removing both reward normalization and the explicit dynamics conditioning. This tests if reward scaling issues can be mitigated purely by the encoder’s awareness of the morphology.
+7.
+w/o ARN & Encoder Conditioning: A compound ablation removing both reward normalization and the encoder’s access to morphology. This tests if the recurrent dynamics alone can handle both the unnormalized signal and the morphology retention.
+8.
+w/o PME & ARN (DreamerV3 Baseline): We remove all proposed contributions. The model is a standard DreamerV3 [29] trained on the heterogeneous batch. It relies on raw rewards and implicit system identification. This serves as the lower-bound baseline to demonstrate the total value added by the QWM framework.
+Fig. 7: Ablation Study on Heterogeneous Cohort. We compare QWM against architectural ablations regarding morphology encoding (PME), reward normalization (ARN), and conditioning locations. Shaded regions denote standard deviation across 5 seeds. Key findings: (1) QWM achieves the fastest convergence and highest stable asymptotic performance; (2) Removing encoder conditioning allows initial learning but leads to a catastrophic late-stage collapse; (3) Removing explicit morphology (PME) successfully maximizes episode length but plateaus at a suboptimal reward, showing implicit system ID is insufficient; (4) Removing ARN completely prevents learning, resulting in a flatline near zero reward.
+Fig. 7demonstrates a thorough comparison of learning performance across all ablated configurations. The results provide empirical evidence for the necessity of each component in the QWM framework:
+First, the most striking observation is the absolute necessity of Adaptive Reward Normalization (ARN) when training across a heterogeneous fleet. All configurations lacking ARN, specifically w/o ARN, w/o ARN & RSSM conditioning, and w/o ARN & encoder conditioning, fail entirely to learn. These variants remain flat near zero reward and minimal episode lengths throughout the 36 million environment steps. This confirms the hypothesis that unnormalized, disparate reward scales across different physical embodiments cause severe optimization instability, effectively preventing the world model from establishing a useful foundation.
+Second, isolating the injection points for morphological conditioning reveals distinct failure modes when either pathway is omitted. Removing explicit morphology from the static tower of the encoder (w/o encoder conditioning) allows the model to learn initially, reaching competitive performance by 14 million steps. However, it subsequently suffers a catastrophic collapse, losing significant reward and episode length. This indicates that without grounding the latent posterior in static physical context, the representations become fundamentally unstable over extended training horizons. Conversely, removing explicit conditioning from the recurrent dynamics (w/o RSSM conditioning) heavily degrades sample efficiency and introduces substantial variance. While the model eventually achieves maximum episode lengths, its asymptotic reward remains sub-optimal, demonstrating that the recurrent state struggles to maintain the necessary morphological context over time without step-wise re-injection.
+Third, we evaluate the limitations of purely implicit system identification. The w/o PME variant, which attempts to infer morphology solely from proprioceptive history without explicit physical parameters, successfully learns to maximize episode length but plateaus at a noticeably lower asymptotic reward compared to the full method. This performance gap highlights that while implicit system identification can achieve basic locomotion, explicit physical morphology is required to discover and stabilize highly refined, optimal gaits across diverse robots and improving sample-efficiency.
+Finally, the standard baseline (w/o PME & ARN, structurally equivalent to DreamerV3) performs poorly on the joint heterogeneous distribution. It peaks at a reward of roughly 10 and fails to achieve stable, full-length episodes before performance begins to degrade. In stark contrast, the full QWM framework consistently demonstrates the fastest sample efficiency, lowest variance, and highest asymptotic performance, validating that the integrated combination of explicit morphology encoding, dual-pathway conditioning, and reward normalization is critical for successful heterogeneous control.
+Appendix E Real-World Deployment: Quantitative Evaluation
+We provide a quantitative assessment of the real-world deployment described in Subsec. V-E. Our goal is to measure how closely the zero-shot QWM policy tracks velocity commands on physical hardware compared to a specialist PPO controller trained exclusively on each target platform, which serves as the empirical upper bound.
+Protocol.
+We conduct 10 trials per platform, each lasting 60 seconds, with random velocity commands sampled uniformly from the training command ranges (Table IX). Trials are conducted on flat indoor ground. The specialist PPO baseline is evaluated under identical conditions. No falls or manual resets occurred in any trial for either method. We report mean absolute tracking error for linear velocity (ex​ye_{xy}, m/s) and angular velocity (ey​a​we_{yaw}, rad/s), averaged across all timesteps and trials.
+TABLE XI: Quantitative real-world deployment results (10 trials ×\times 60s per platform, random velocity commands). QWM achieves tracking error within ∼\sim10% of the specialist baseline on both platforms with zero falls, despite never interacting with either robot during training.
+Platform
+Method
+ex​ye_{xy} (m/s) ↓\downarrow
+ey​a​we_{yaw} (rad/s) ↓\downarrow
+Falls ↓\downarrow
+ANYmal-D
+QWM (Zero-Shot)
+0.300.30
+0.290.29
+0/100/10
+Specialist PPO
+0.280.28
+0.260.26
+0/100/10
+Unitree Go1
+QWM (Zero-Shot)
+0.340.34
+0.340.34
+0/100/10
+Specialist PPO
+0.310.31
+0.300.30
+0/100/10
+Discussion.
+QWM achieves tracking errors within ∼\sim10% of the specialist baseline on both platforms. The gap is consistent across both metrics and both robots, suggesting a systematic but bounded performance cost from zero-shot transfer rather than catastrophic failure. The complete absence of falls across all 20 trials confirms that the explicit morphology conditioning encodes sufficient physical grounding to maintain stability on unseen hardware in the presence of real-world unmodeled dynamics such as actuator backlash and ground friction variability. The slightly larger gap on the Unitree Go1 (ex​ye_{xy}: 0.340.34 vs. 0.310.31) compared to ANYmal-D (ex​ye_{xy}: 0.300.30 vs. 0.280.28) is consistent with the Go1’s higher-frequency dynamics, which place greater demands on precise timing of contact events that the zero-shot policy has not been tuned for.
+Appendix F Latent State Disentanglement Visualization
+A central architectural claim of QWM is that explicitly conditioning the recurrent state hth_{t} on the morphology embedding μ\mu disentangles static physical identity from instantaneous dynamic state.
+In the standard RSSM, the recurrent model must simultaneously memorize the robot’s physical properties and track its current dynamic state within a single latent stream.
+By injecting μ\mu at every recurrent step, QWM relieves hth_{t} of the morphology-identification burden, allowing the stochastic state ztz_{t} to focus exclusively on the current observation.
+This section presents direct empirical evidence for this disentanglement through dimensionality reduction visualizations and a quantitative probing analysis.
+F-A Data Collection and Protocol
+To collect a representative sample of the learned latent space, we roll out the trained QWM policy on all eight robots in our cohort under a uniform random velocity-command distribution.
+For each robot we collect 128128 independent trajectories of 3232 steps each, yielding 40964096 latent state pairs (ht,zt)(h_{t},z_{t}) per robot and 3276832768 points in total.
+At each step we record the full concatenated latent vector [ht,zt]∈ℝ3072[h_{t},z_{t}]\in\mathbb{R}^{3072} alongside scalar annotations: robot identity (morphology label), forward speed vxv_{x}, linear speed ‖v‖\|v\|, angular speed ‖ω‖\|\omega\|, and mean joint activity mean​|q|\text{mean}|q| as a proxy for gait phase.
+These annotations are used purely for post-hoc coloring; they play no role in the model.
+F-B PCA of the Full Latent State
+Fig. 8:
+PCA of QWM latent states [ht,zt][h_{t},z_{t}] — morphology (a) vs. dynamic state gradients (b–e).
+Each point is one latent observation; 3276832768 points are shown across all eight robots.
+(a) Coloring by robot identity reveals that the latent space organizes itself into morphology-specific clusters, even though robot identity is never provided as a supervised signal.
+(b–e) The same projection colored by four continuous dynamic variables shows smooth, consistent gradients within each morphology cluster, demonstrating that dynamic execution context is encoded orthogonally to morphological identity.
+PCA explained variance for the first two components is 7.9%7.9\%, reflecting the high-dimensional nature of the full latent space.
+Fig. 8presents PCA of the full [ht,zt][h_{t},z_{t}] latent vector projected onto its first two principal components.
+Panel (a) colors each point by robot identity.
+The three ANYmal variants (B, C, D) form an overlapping super-cluster, reflecting their high pairwise μ\mu similarity in the morphology feature space.
+Similarly, the Unitree series (A1, Go1, Go2) and Spot occupy a contiguous band, while Unitree B2 occupies a well-isolated region in the upper right of the PCA plane.
+These groupings emerge unsupervised, providing strong evidence that the latent dynamics model has internalized the physical kinematic families present in the training cohort.
+Panels (b)–(e) overlay continuous dynamic annotations on the same projection.
+Within each morphology cluster, there are smooth, spatially coherent gradients along all four dynamic variables.
+High forward speed vxv_{x} (yellow) consistently occupies specific sub-regions of each cluster, transitioning smoothly to low-speed states (purple) within the same cluster boundary.
+The same pattern holds for linear speed ‖v‖\|v\|, angular speed ‖ω‖\|\omega\|, and gait activity mean​|q|\text{mean}|q|.
+This indicates that the learned latent geometry encodes dynamic state as a continuous manifold within each morphology’s cluster, rather than conflating the two sources of variation into an entangled representation.
+The relatively low explained variance of the first two PCA components (7.9%7.9\%) is expected: the latent space is 30723072-dimensional and captures rich, high-frequency dynamics.
+The visible structure in PCA-2 is therefore a conservative lower bound on the actual degree of organization present.
+F-C t-SNE of the Full Latent State
+Fig. 9:
+t-SNE of QWM latent states [ht,zt][h_{t},z_{t}] — morphology (a) vs. dynamic state gradients (b–e).
+t-SNE (perplexity =40=40, 10001000 iterations, KL divergence =1.73=1.73) is applied to the same 3276832768-point dataset as Fig. 8.
+(a) Each robot occupies a spatially distinct, often multi-lobed cluster; the multi-lobe structure within a single robot reflects different locomotion regimes (e.g., slow walk vs. fast trot).
+(b–e) Dynamic variables exhibit strong intra-cluster gradients, confirming that within each morphology’s region the model encodes a continuous dynamic state manifold.
+Fig. 9presents a t-SNE embedding (perplexity =40=40, 10001000 iterations, final KL divergence =1.73=1.73) of the same dataset.
+t-SNE preserves local neighborhood structure and thus reveals finer-grained organization than PCA.
+Panel (a) shows that every robot occupies one or more spatially isolated regions with near-zero overlap between morphology classes.
+Several robots exhibit a characteristic multi-lobe structure: for instance, the ANYmal variants each show a main cluster flanked by smaller satellite regions.
+We attribute these sub-clusters to distinct locomotion regimes captured by the policy (e.g., stationary standing, slow-speed trotting, high-speed locomotion), consistent with the dynamic gradients visible in panels (b)–(e).
+The Unitree A1, Go1, and Go2 clusters, while distinct in panel (a), are spatially adjacent in the t-SNE plane, mirroring their high z-score similarity in the morphology feature space.
+Analogously, the ANYmal-B, C, and D clusters are neighboring, consistent with z-score similarities.
+This spatial proximity in the learned latent space directly explains QWM’s success at zero-shot interpolation (Subsec. V-D): the target robot’s morphology embedding places it in a high-density region of the training distribution, allowing the WM to synthesize a plausible dynamic model by interpolating between its nearest neighbors in latent space.
+Panels (b)–(e) confirm the same pattern observed in PCA: velocity gradients are smooth and spatially coherent within each morphological cluster.
+Importantly, no systematic leakage of dynamic information across morphology boundaries is observed: regions of high vxv_{x} for one robot type do not merge with high-vxv_{x} regions of a different robot type, indicating that dynamic and morphological degrees of freedom are not collapsed into the same latent directions.
+F-D Probing Analysis: hth_{t} vs. ztz_{t}
+Fig. 10:
+Probing comparison of hth_{t} (deterministic memory) vs. ztz_{t} (stochastic current observation).
+Each row shows PCA of one latent component colored by morphology (left) and forward speed vxv_{x} (right).
+Top row (hth_{t}): Clear morphology-specific clustering coexists with smooth intra-cluster velocity gradients: hth_{t} encodes both the robot’s static physical identity (via μ\mu conditioning) and its dynamic trajectory context.
+Bottom row (ztz_{t}): Morphology clusters dissolve entirely; all robots are mixed uniformly, yet velocity gradients remain visible across the cloud: ztz_{t} is effectively morphology-agnostic and instead captures instantaneous observation context.
+This contrast directly validates the architectural design: explicit μ\mu conditioning of hth_{t} prevents morphology from being redundantly encoded in ztz_{t}.
+The full-latent visualizations in App. F-B and App. F-C demonstrate that morphology and dynamics are separable in the combined representation [ht,zt][h_{t},z_{t}].
+To isolate which component carries which information, we perform a probing analysis on hth_{t} and ztz_{t} independently.
+Fig. 10 presents PCA of each component separately, colored by morphology (left column) and by forward speed vxv_{x} (right column).
+hth_{t} — deterministic recurrent state.
+The top row of Fig. 10 shows that hth_{t} retains strong morphological cluster structure: each robot occupies a compact, well-separated region of the PCA plane, and velocity gradients are visible within those clusters.
+This is the intended behavior of the architecture.
+The recurrent state ht=fϕ​(ht−1,zt−1,at−1,μ)h_{t}=f_{\phi}(h_{t-1},z_{t-1},a_{t-1},\mu) is conditioned on μ\mu at every step, so its hidden state is continuously steered toward a morphology-aligned regime.
+The result is that hth_{t} serves as a physics-contextualized memory: it knows which robot it is controlling, and it tracks that robot’s evolving dynamic trajectory within its morphology-specific region of the latent space.
+ztz_{t} — stochastic observation state.
+The bottom row of Fig. 10 presents the critical evidence for disentanglement.
+When PCA is applied to ztz_{t} alone, all morphology structure collapses: the eight robots are uniformly intermixed in a single diffuse cloud with no visible cluster boundaries.
+At the same time, velocity gradients remain present as a spatially coherent pattern across the cloud, confirming that ztz_{t} continues to capture the current dynamic state of the robot.
+The disappearance of morphological structure in ztz_{t} is precisely what the architecture predicts: because μ\mu is explicitly provided to hth_{t}, the stochastic encoder zt∼qϕ​(zt∣ht,ot)z_{t}\sim q_{\phi}(z_{t}\mid h_{t},o_{t}) does not need to re-infer physical identity from the observation oto_{t}, that context is already present in hth_{t}.
+Consequently, ztz_{t} is free to encode only the residual, morphology-independent information in the current observation.
+F-E Quantitative Disentanglement Metrics
+To complement the visual evidence, we compute three quantitative metrics on the ztz_{t} embeddings, the latent component that, according to our hypothesis, should be free of morphological structure.
+TABLE XII: Quantitative disentanglement metrics computed on the stochastic state ztz_{t} across all 32,76832{,}768 collected points. Low silhouette score and high within-class variance fraction confirm that ztz_{t} encodes negligible morphological information.
+Metric
+Value
+Interpretation
+Silhouette score (morphology)
+0.0330.033
+≈0\approx 0 ⇒\Rightarrow no cluster separation
+Between-class variance fraction
+0.0980.098
+9.8%9.8\% of variance is inter-morphology
+Within-class variance fraction
+0.9010.901
+90.1%90.1\% of variance is intra-morphology
+Table XIIreports these metrics for ztz_{t}.
+The silhouette score of 0.0330.033 (range [−1,1][-1,1], where 11 indicates perfect separation and 00 indicates random overlap) is near zero, indicating that morphology labels are essentially meaningless for partitioning the ztz_{t} space.
+The variance decomposition reinforces this: only 9.8%9.8\% of total variance in ztz_{t} falls between morphology classes, while 90.1%90.1\% is within-class dynamic variance.
+Taken together, these numbers confirm that the stochastic state ztz_{t} carries overwhelmingly more information about the robot’s instantaneous dynamic state than about its physical identity.
+We note that computing the same silhouette score on hth_{t} yields a substantially higher value, consistent with the visible cluster separation in the top row of Fig. 10.
+The asymmetry between hth_{t} and ztz_{t} on this morphology-based metric is the quantitative signature of the disentanglement the architecture is designed to achieve.
+F-F Summary
+The visualizations and metrics in this section provide converging evidence for the disentanglement claim:
+1.
+Global structure (Fig. 8 and Fig. 9): The full latent space organizes into morphology-specific regions, within which dynamic state is encoded as a smooth, continuous manifold. The spatial proximity of kinematically similar robots (e.g., ANYmal variants, Unitree series) in the t-SNE plane directly corresponds to their low z-score Euclidean distance in morphology feature space, explaining QWM’s interpolation capability.
+2.
+Functional decomposition (Fig. 10): Morphological identity is encoded almost exclusively in hth_{t}, the component explicitly conditioned on μ\mu. The stochastic state ztz_{t} is nearly morphology-agnostic (silhouette =0.033=0.033), instead capturing instantaneous observation context.
+3.
+Architectural validation: This emergent decomposition is not imposed by any auxiliary loss or explicit regularization, it arises naturally from the μ\mu-conditioning of hth_{t}. The result confirms the key design hypothesis: providing μ\mu explicitly to the recurrent model prevents the latent space from conflating static physical properties with dynamic execution state.
+These findings directly address the concern that the disentanglement claim lacked empirical support. The contrast between the structured hth_{t} and the morphology-free ztz_{t} is a concrete, measurable consequence of QWM’s explicit morphology conditioning, and it underpins the model’s ability to achieve zero-shot transfer by simply swapping the morphology embedding μ\mu at deployment time.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

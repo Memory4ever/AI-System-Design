@@ -1,0 +1,1088 @@
+PAGE 1
+Steering Black-Box Large Language Model Agents with
+Pitfall Anticipation World Model
+Jiongxiao Wang1* Han Ding2 Youzhi Luo2 Yawei Wang2
+Yun Zhou2 Linbo Liu2 Panpan Xu2
+1University of Wisconsin–Madison; 2AWS AI
+jwang2929@wisc.edu; {handing, yzluo, yawenwan, yunzzhou, linbol, xupanpan}@amazon.com
+Abstract
+Frontier black-box Large Language Model
+(LLM) agents are proficient at long-horizon rea-
+soning and precise action generation. However,
+when it comes to a specific agentic task, they
+have no internalized knowledge of how that
+particular environment unfolds. A world model
+offers a natural remedy, providing the agent
+with environment specific knowledge by fore-
+seeing how the environment will respond to the
+action it is about to take. Prior world models for
+LLM agents mainly predict next observations
+at each step, which is costly and often uninfor-
+mative because individual observations provide
+limited task-relevant guidance and not every
+step requires call for foresight. This raises a
+key question:what a world model should
+predict and when should it be invoked for
+agentic tasks?Our pilot study suggests that
+world model guidance is most useful when it
+anticipates pitfalls within a bounded multi-step
+future. Motivated by this, we introducePitfall
+Anticipation World Model (PA WM), which
+selectively intervenes when a potential pitfall
+arises and predicts the impending failure to
+steer the agent away from it. PAWM is trained
+in two stages: Supervised Fine-Tuning (SFT)
+on synthetic data labeled with agent pitfalls,
+followed by GRPO co-training with a black-
+box LLM to further optimize it in the target
+environment. PAWM improves Claude Sonnet
+4.5 performance by24.3%on ScienceWorld
+and7.7%on WebArena-Lite, outperforming a
+range of baselines. These results demonstrate
+that PAWM provides an effective form of world
+model guidance for black-box LLM agents.
+1 Introduction
+Frontier LLMs such as GPT-5 and Claude are in-
+creasingly deployed in customized agentic applica-
+tions (Yao et al., 2023), from enterprise workflow
+automation (Yao et al., 2024; Barres et al., 2025) to
+specialized domain assistants (Trivedi et al., 2024;
+*Work was done during an internship at AWS AI.
+Jimenez et al., 2024). Owing to large-scale train-
+ing, these models already excel at the core com-
+petencies such as instruction following, general
+reasoning, task planning, long contexts processing,
+and producing precise, well-formatted actions via
+function calling or code. What they still lack is
+not general capability but task-specific reliability
+for agents. Since these models are black-box, such
+reliability cannot be instilled by fine-tuning their
+weights. This has inspired growing interest in steer-
+ing black-box LLM agents (Li et al., 2024; Asawa
+et al., 2025; Lingam et al., 2026; Liu et al., 2026a),
+where an external module injects guidance that
+shapes the frozen model’s behavior at inference
+time. However, prior steering methods mainly fo-
+cus on assisting agent planning, such as decompos-
+ing the goal into subgoals or laying out high-level
+action sequences. Advising black-box LLM agents
+on it reinforces capabilities they already possess,
+rather than providing the environment knowledge
+they lack about how a specific agentic environment
+responds to their actions. We therefore propose to
+steer black-box LLM agents with world models (Ha
+and Schmidhuber, 2018; Li et al., 2026), which can
+supply this missing environment knowledge.
+Rather than encoding what to do, a world model
+captures how the environment behaves, how states
+transit in response to actions, and how a task tra-
+jectory is likely to unfold. A black-box LLM, al-
+though capable in general, has never internalized
+such environment-specific dynamics for the agent
+task at hand. This makes the world model a natural
+approach for supplying black-box LLM agents with
+the grounding they lack. A growing body of work
+has begun to explore LLM-based world models for
+agentic tasks, using them to foresee future states
+and thereby guide action selection. Most of these
+works, however, employ the world model as a sim-
+ulator of the environment that rolls out actions to
+the next observations to support candidates ranking
+or tree-based search (Zhao et al., 2023; Gu et al.,
+1
+arXiv:2610.29139v1  [cs.AI]  21 Oct 2026
+PAGE 2
+Figure 1: Illustration for Pitfall Anticipation World Model in steering black-box LLM agents.
+2024; Chae et al., 2025; Zheng et al., 2026; Guan
+et al., 2026). Whether using a world model as a
+direct source of additional environment knowledge
+in the agent loop helpful or not remains unclear.
+For instance, Qian et al. (2026) found that a gen-
+erative world model provides no consistent benefit
+for agents, whether invoked adaptively or at every
+step, with performance sometimes even worse than
+when acting without a world model.
+Therefore, how to effectively deliver a world
+model’s guidance remains an open problem. Two
+design decisions are central here, and prior work
+has left both implicit.First, what should the
+world model output?Environment knowledge
+can be surfaced at very different granularities, from
+the immediate consequence of the current step to
+a summary of the entire remaining trajectory, and
+it is not obvious which is most useful to a frozen
+agent.Second, when should the world model
+intervene?Guiding at every step supplies the most
+information but risks overwhelming or misdirect-
+ing an already-capable agent, whereas intervening
+too rarely risks staying silent at the steps that matter.
+Neither question has a settled answer, and together
+they define the design space for this work.
+To answer these questions, we first conduct a
+systematic pilot study on the ScienceWorld (Wang
+et al., 2022) and WebArena-Lite (Zhou et al., 2024)
+benchmarks, in each case training a world model
+via SFT on collected agent trajectories to steer a
+Claude Sonnet 4.5 agent model. Along the world
+model output axis, we compare guidance of in-
+creasing horizon: the next observation alone, the
+segment up to the next subgoal, and the entire
+remaining trajectory. Our experiment results re-
+veal that guidance bounded at the next subgoal
+works best, indicating that a world model should
+look several steps ahead yet stop at a meaningful
+boundary. Along the intervention axis, we start
+from the observation that most guidance leaves
+the agent’s action unchanged, and ask what distin-
+guishes the guidance that does change it. Both a
+lexical and an LLM-based semantic analysis show
+that pitfall-related generations dominate the guid-
+ance that changes the agent’s action. To verify that
+anticipated pitfalls indeed make a good timing for
+intervention, we run a gating ablation that routes
+only pitfall-anticipating guidance to the agent, and
+find that it nearly matches guiding at every step in
+performance with far less cost. These studies point
+to two design principles: guidance is most useful
+when it forecastsa multi-step future bounded at
+a meaningful milestone, and its value concentrates
+atpotential pitfalls.
+Inspired by our pilot study, we proposePitfall
+Anticipatory World Model (PA WM), a world
+model that steers a black-box LLM agent by antic-
+ipating pitfalls only when they are likely to arise.
+Unlike prior world models that simulate candidate
+actions or provide guidance at every step, PAWM
+stays silent while the agent is on a promising tra-
+jectory and intervenes only when it foresees an
+impending failure, at which point it predicts the pit-
+fall ahead and issues a multi-step forward-looking
+guidance that steers the agent away from the action
+it is about to take. By stepping in only at these key
+moments, PAWM avoids unnecessary guidance and
+acts exactly where the agent would otherwise fail,
+2
+PAGE 3
+making it both more efficient and effective.
+We obtain PAWM in two stages. First, we per-
+form SFT on a synthetic pitfall dataset in which
+a separate LLM annotates repeatedly sampled tra-
+jectories, contrasting a successful and a failed run
+of the same task to locate the key pitfall steps and
+describing the corresponding failure risks. This
+teaches PAWM both to foresee potential pitfalls
+and to articulate the guidance needed to avoid them.
+Furthermore, to optimize the anticipation ability
+for the agent’s downstream task success, we apply
+GRPO (Shao et al., 2024) to co-train PAWM with
+the frozen black-box model, adapting its steering
+to the specific agent and environment. Integrating
+PAWM with a Claude Sonnet 4.5 agent yields suc-
+cess rates of78.9%on ScienceWorld and80.4%
+on WebArena-Lite, significantly outperforming the
+black-box Sonnet agent, which reaches only 54.6%
+and 72.7% respectively. In addition, compared
+with a range of baselines, including steering black-
+box LLM agents with pre-task guidance and world
+models under various settings, PAWM consistently
+performs best, demonstrating its effectiveness of
+steering agents with environment-specific pitfall
+knowledge.
+2 Related Work
+Steering Black-box LLMs.Frontier LLMs are
+often accessible only through APIs, making task-
+specific parameter updates infeasible. Prior work
+therefore adapts these models externally, either
+through prompt optimization (Shin et al., 2020;
+Fernando et al., 2024) or by training auxiliary mod-
+els that provide input-dependent guidance while
+keeping the underlying LLM fixed (Li et al., 2023).
+Recent work extends this paradigm to complex
+agentic tasks, where lightweight advisors provide
+high-level guidance to steer the behavior of black-
+box LLM agents (Li et al., 2024; Asawa et al., 2025;
+Liu et al., 2026a).
+World Models.World models learn environ-
+ment dynamics to support planning and decision-
+making (Ha and Schmidhuber, 2018; Hafner et al.,
+2019b,a). For LLM agents, they are commonly
+used to generate synthetic experience (Gao et al.,
+2025; Chen et al., 2025; Ding et al., 2026), internal-
+ize environment dynamics into agents (Zhang et al.,
+2025; Yu et al., 2025, 2026b), or assist action se-
+lection through simulation and search (Zhao et al.,
+2023; Gu et al., 2024; Chae et al., 2025; Zheng
+et al., 2026; Guan et al., 2026). Our setting instead
+considers a world model that continuously assists a
+black-box LLM in the agent loop. Although recent
+work explores similar interaction patterns (Qian
+et al., 2026; Zhang et al., 2026), they offer no sys-
+tematic study of how a world model should help
+the agent. Additional discussion of related works
+is provided in Appendix A.
+3 Pilot Study
+Before developing our method, we conduct a pilot
+study to systematically explore the design space
+introduced above:what a world model should
+output and when it should intervene. All experi-
+ments use Claude Sonnet 4.5 as a fixed black-box
+agent, guided by a separately trained world model
+with the base Qwen3.5-27B, ensuring that any per-
+formance differences arise from the world model’s
+guidance rather than changes to the agent itself.
+3.1 Problem Definition and Experiment Setup
+We formalize the agent task as aPartially Ob-
+servable Markov Decision Process (POMDP)
+M= (S,A,O,T,R) , where S denotes the en-
+vironment state space, A the action space, O the
+observation space, T the transition dynamics, and
+R the reward function. Given a task q∼ Q , the
+agent does not directly observe the underlying en-
+vironment state and instead acts based on its inter-
+action history ht = (q, o 1, a1, . . . , at−1, ot) at step
+t, where ot and at denote the observation received
+and the action taken at step t, respectively. The
+agent here is a frozen black-box policy π that can
+only be queried but not be updated. Our goal is to
+learn a world model ωθ that improves the agent’s
+performance without modifyingπ.
+Concretely, at each step, the agent first pro-
+poses a tentative action ˜at ∼π(·|h t). Rather
+than executing it immediately, the world model
+rolls the action forward and produces guidance
+gt ∼ω θ(·|ht,˜at) that anticipates its consequences.
+The resulting guidance is then appended to the
+agent’s context, allowing the agent to repropose
+the action as at ∼π(·|h t,˜at, gt), either retaining
+the tentative action or revising it in light of the
+predicted outcome. Finally, only at is executed,
+yielding the next observation ot+1, after which the
+process repeats. In this way, the world model steers
+the agent through π’s own context rather than se-
+lecting actions or searching on its behalf.
+Note that both the agent and the world model
+operateturn-wise: at each step, they are queried
+3
+PAGE 4
+with the interaction history ht reconstructed from
+scratch rather than accumulated through the agent’s
+message list. We adopt this design for two reasons.
+First, raw observations can be lengthy, such as a
+full HTML page in WebArena-Lite. Reconstruct-
+ing ht allows us to compress past observations,
+keeping the context manageable over long hori-
+zons. Second, when rebuilding the context, we
+omit previous world model guidance to prevent its
+influence from carrying over to subsequent deci-
+sions. Prompts used to implement this turn-wise
+agent are provided in Appendix B.
+We evaluate our approach on two benchmarks:
+ScienceWorld(Wang et al., 2022), a text-based en-
+vironment that demands long-horizon interactions
+andWebArena-Lite(Zhou et al., 2024), an online
+web-navigation environment with rich, dynamic ob-
+servations. In both, Claude Sonnet 4.5 serves as the
+black-box LLM agent π and we obtain the world
+model ωθ by collecting agent trajectories, extract-
+ing the environment dynamics and then perform
+SFT on them with the base model Qwen3.5-27B.
+3.2 What Should the World Model Output?
+We first vary thecontentof the world model’s out-
+put while keeping its intervention at every step,
+comparing guidance over increasingly longer hori-
+zons. Specifically, we consider the following out-
+put types.(1) Next observation (Next-Obv):the
+world model predicts only the immediate obser-
+vation resulting from the tentative action ˜at.(2)
+Future trajectory:the world model instead sum-
+marizes the upcoming trajectory at two different
+horizons: the segment leading to the next subgoal
+(SubGoal-Traj), and the entire remaining trajec-
+tory to task completion(Full-Traj). These output
+types differ only in how their training targets are
+constructed. Starting from the same set of collected
+agent trajectories, we prompt an LLM to generate
+the corresponding target for each output type, yield-
+ing one dataset variant per setting. All variants are
+then trained under the same SFT setup, with details
+provided in Appendix C.1. We report Task Success
+Accuracy(Acc)averaged over three runs, together
+with the average Action Change Rate(ACR), de-
+fined as the fraction of guided steps at which the
+agent revises its tentative action˜at, to quantify how
+strongly the world model’s output affects the agent.
+N/Adenotes the baseline without a world model.
+Table 1 summarizes the results and reveals sev-
+eral clear trends. First, predicting only the next
+observation is a weak steering signal, yielding
+WM Output ScienceWorld WebArena-Lite
+Acc ACR Acc ACR
+N/A 54.6 – 72.7 –
+Next-Obv 58.520.173.1 15.9
+Full-Traj 65.6 19.4 71.124.6
+SubGoal-Traj66.718.274.117.7
+Table 1:Acc(%)andACR(%)of a frozen agent guided
+by world models with various outputs.
+marginal gains over the baseline without world
+models. This may be because a single step rarely
+reveals enough information to advise the agent. Be-
+sides, extending the forecast to the entire remain-
+ing trajectory does not solve this and even falls
+below the baseline on WebArena-Lite, where a
+long-horizon prediction may accumulate error and
+disrupt an agent that was already on track. The
+SubGoal-Traj variant performs best on both bench-
+marks, indicating that the value of a world model
+lies in a multi-step forward-looking bounded at a
+meaningful milestone. Furthermore, Next-Obv on
+ScienceWorld and Full-Traj on WebArena-Lite at-
+tain the highest ACR yet the lowest Acc, showing
+that frequently revising the agent’s tentative action
+does not ensure improved task accuracy.
+3.3 When Should the World Model Intervene?
+As shown in Table 1, most world model interven-
+tions do not alter the agent’s tentative actions. This
+motivates us to avoid intervening at every step,
+which is both costly and potentially disrupts an
+already capable agent. To understandwhenworld
+model guidance actually matters, we contrast the
+world model generations thatdochange the tenta-
+tive action (CHANGED) against those leave it un-
+changed (UNCHANGED).
+Lexical Analysis.We first perform a lexical anal-
+ysis of which words distinguish the two groups.
+Since raw frequency is dominated by generic
+words, we rank words by the weighted log-odds
+ratio with uninformative Dirichlet prior (Monroe
+et al., 2008), which contrasts a word’s frequency
+in the CHANGEDand UNCHANGEDgroups, then
+standardizes it into a z-score so that rare terms are
+down-weighted. To surface environment-invariant
+terms, we compute this z-score separately per
+benchmark and rank words by the minimum of
+the two, zw
+min, which requires a word to be distinc-
+tive in both environments. A higher zw
+min there-
+fore means that the word is over-represented in
+CHANGEDgroup on both benchmarks. Formula-
+tions to compute zw
+min are given in Appendix C.2.
+4
+PAGE 5
+As shown in Table 2, the most distinctive words are
+associated with anticipated failure or stagnation, in-
+cluding explicit negative outcomes such as fails
+and without, predictions of an unchanged state
+such as remains, and contrastive markers such
+as however that signal a mismatch between the
+intended and predicted outcomes. This suggests
+that the agent change its action mainly when the
+world model anticipates that the tentative action
+would lead to failures or no progress. Refer to Ap-
+pendix C.2 for additional top-k words and word
+cloud visualizations.
+Wordz min zWeb zSci
+without34.6 34.6 38.8
+remains21.1 42.1 42.1
+description15.8 29.5 15.8
+however15.7 15.7 19.9
+fails14.7 14.7 48.9
+Table 2: Top-5 words most distinctive of the CHANGED
+group, ranked byz w
+min.
+Semantic Analysis.Lexical statistics capture
+word-level patterns but not their semantic mean-
+ing, so we complement this analysis by prompting
+an LLM (Claude Sonnet 4.5) to make a binary
+judgment for each world model guidance: whether
+it anticipates a pitfall, i.e., warns that the tentative
+action will fail, stall, or not achieve the goal. We ap-
+ply this classifier to 400 guidance generations ran-
+domly sampled from each group and pooled across
+both benchmarks. The detailed classifier prompt is
+provided in Appendix C.3. Results show that pitfall
+anticipations account for 76.8% of the CHANGED
+group but only 29.0% of the UNCHANGEDgroup,
+a statistically significant difference ( χ2 = 181.1 ,
+df = 1 , p <0.001 ). This semantic analysis rein-
+forces the lexical evidence, showing that the agent
+is substantially more likely to revise its tentative
+action when the world model anticipates pitfalls.
+Gating Ablation.The analysis above shows that
+pitfall anticipation is associated with behavior
+change, but it remains unclear whether it can serve
+as a criterion for deciding when world model guid-
+ance should intervene. To investigate this, we use
+an LLM classifier as a gate on the SubGoal-Traj
+world model: the world model generates guidance
+at each step, but the gate determines whether that
+guidance is passed to the agent based on whether
+it anticipates a pitfall. We compare three condi-
+tions:All, which passes every guidance;Pitfall-
+only, which passes guidance only when it antici-
+pates a pitfall; andNon-pitfall-only, which only
+passes the non-pitfall guidance. We additionally
+reportIntervention Rate (IR), the fraction of steps
+at which guidance is actually passed to the agent,
+and#Calls, the average number of black-box agent
+queries per task. The gating prompt is provided in
+Appendix C.4. As shown in Table 3,Pitfall-only
+nearly matchesAllin agent performance while re-
+quiring substantially fewer black-box API calls,
+whereasNon-pitfall-onlyperforms clearly worse
+despite intervening more often. The remaining gap
+betweenPitfall-onlyandAllis expected: the gate
+relies on a post-hoc classifier, which may not filter
+out useful guidance, and the world model is also
+not explicitly optimized to produce pitfall anticipa-
+tions that are most helpful for steering the agent.
+Nevertheless, these results suggest that pitfall an-
+ticipation provides a promising criterion for when
+to intervene, retaining most benefit of the world
+model guidance at a much lower cost.
+Gate ScienceWorld WebArena-Lite
+Acc ACR IR Calls Acc ACR IR Calls
+All 66.7 18.2 100 36.5 74.1 17.7 100 20.0
+Pitfall-only 65.2 37.1 44.4 26.7 72.9 45.9 27.5 12.8
+Non-pitfall-only 58.4 4.0 52.7 28.8 70.5 7.0 75.0 16.8
+Table 3:Acc(%),ACR(%),IR(%), and#Callsunder
+different guidance gate settings.
+In summary, our pilot study presents two de-
+sign principles: guidance is most useful when it
+forecastsa multi-step future bounded at a mean-
+ingful milestoneand its value concentrates atpo-
+tential pitfalls.
+4 Pitfall Anticipation World Models
+Inspired by the findings of our pilot study, we pro-
+posePitfall Anticipation World Model (PA WM).
+PAWM is a trainable world model that monitors
+a frozen black-box LLM agent and, whenever it
+foresees an impending failure, describes the pitfall
+ahead and issues forward-looking guidance that
+steers the agent away from the action it was about
+to take. We first specify our PAWM and then de-
+scribe the two stages that produce it: SFT on syn-
+thetic pitfall dataset and GRPO co-training with
+the black-box LLM agent.
+4.1 PA WM Definition
+PAWM extends the world model of Section 3.1
+with one key mechanism, where the output isgated.
+It emits a special <pass> format output when the
+proposed action has no anticipated pitfall, in which
+case no guidance is injected and the agent simply
+5
+PAGE 6
+commits to ˜at. Otherwise, it outputs the guidance
+gt, which is a description of the impending failure
+and how to avoid it. Then, the agent reproposes the
+action asa t ∼π(·|h t,˜at, gt). Formally,
+gt ∼ω θ(·|ht,˜at)∈ {<pass>} ∪ G,
+at =
+(
+˜at, g t =<pass>,
+at ∼π(·|h t,˜at, gt),otherwise.
+where G is the space of natural language guid-
+ance. The gate operationalizes the “when” prin-
+ciple, where intervention happens only at decisive
+steps. While the content of gt operationalizes the
+“what”, which is a multi-step, forward-looking guid-
+ance concentrated at pitfalls.
+4.2 Stage 1: SFT on Synthetic Pitfall Dataset
+The goal of the first stage is to teach PAWMwhere
+pitfalls may occur andhowto warn against them.
+Trajectory collection.We first gather a pool of
+agent trajectories by repeatedly running the black-
+box LLM agent on the training set three times with
+1.0 sampling temperature, retaining both success-
+ful and failed ones: failures localize where agents
+actually go wrong, while successes provide the
+contrastive “correct” continuation.
+Pitfall labeling.For each trajectory, we use a sep-
+arate LLM (Claude Sonnet 4.5) as an annotator
+to identify the key pitfall steps at which the task
+begins to fail. When both successful and failed
+trajectories are available for the same task, the an-
+notator contrasts them to locate where the failed
+run diverges from the successful one. For each
+identified pitfall step, the LLM annotator then de-
+scribes the potential pitfalls and provides corrective
+guidance to avoid it, which we denote as gt. All
+other steps are labeled <pass>. To improve sample
+utilization, we also handle tasks without a mixture
+of successful and failed trajectories. For tasks with
+only successful trajectories, the annotator identifies
+residual pitfalls, such as suboptimal but non-fatal
+detours, so that successful runs do not degener-
+ate into all-pass labels. For tasks with only failed
+trajectories, we rerun the agent with ground-truth
+guidance injected to obtain successful trajectories,
+and then contrast these guided successes against
+the original failures. In this way, tasks whose sam-
+pled trajectories are entirely successful or failed
+can still provide useful pitfall supervision rather
+than being discarded.
+Because the annotator labels trajectories in hind-
+sight, it may leak future knowledge that PAWM
+has no way of accessing when deployed. To avoid
+this, we constrain the LLM annotator to describe
+each pitfall in general, abstracted terms grounded
+in what the agent has observed up to that step. This
+yields a dataset D={(h t,˜at, gt)}, pairing each
+history and tentative action with the target guid-
+ance. Refer to Appendix D for prompt details.
+Training objective.We fine-tune ωθ by minimiz-
+ing the negative log-likelihood loss onD:
+LSFT(θ) =−E (ht,˜at,gt)∼D
+
+logω θ(gt|ht,˜at)
+
+Since the majority of steps are labeled <pass>, and
+training on this natural distribution biases ωθ to-
+ward always passing and rarely issuing a guidance.
+To counter this, we down-sample <pass> steps to
+an empirically selected <pass>-to-anticipation ra-
+tio detailed in Section 5.2.
+4.3 Stage 2: GRPO Co-Training with the
+Black-box LLM Agent
+SFT teaches PAWMwhento raise a pitfall anticipa-
+tion andwhatguidance to produce, but it optimizes
+agreement with the annotator rather than whether
+the guidance actually helps the agent succeed. We
+therefore further refine PAWM with GRPO, co-
+training it in the loop with the black-box LLM
+agent so that its anticipations are rewarded by their
+outcome-based reward.
+For a task q, we sample a group of K trajecto-
+ries {τ1, . . . , τK} by running PAWM in the loop
+with the agent, where τi ={g i,1, ..., gi,|τi|} is the
+sequence of generated pitfall anticipation guidance
+in the i-th trajectory. We then optimize the PAWM
+ωθ by maximizing the following objective:
+JGRPO(θ) =E[q∼Q,{τ i}K
+i=1 ∼ω θold (g|h,˜a)]
+1
+K
+KX
+i=1
+1
+|τi|
+|τi|X
+j=1
+1
+|gi,j|
+|gi,j |X
+t=1
+ℓi,j,t(θ),
+ℓi,j,t(θ) = min
+h
+ρi,j,t ˆAi,clip(ρ i,j,t,1−ϵ,1 +ϵ) ˆAi
+i
+−βD KL
+ 
+ωθ∥ωref
+
+,
+where ρi,j,t = ωθ(gi,j,t|hi,j ,˜ai,j ,gi,j,<t)
+ωθold (gi,j,t|hi,j ,˜ai,j ,gi,j,<t) is the im-
+portance sampling term, ϵ the clip ratio and β the
+ratio of KL penalty between policy model ωθ and
+reference model ωref . Following GRPO, we com-
+pute the group-relative advantage from the outcome
+rewardsr={r 1, . . . , rK}as ˆAi,t = ri−mean(r)
+std(r) .
+5 Experiment
+In this section, we detail the experiments conducted
+to evaluate PAWM. Specifically, we outline the
+experimental setup, discuss the main results with
+additional ablation study.
+6
+PAGE 7
+5.1 Experimental Setup
+Datasets.We conduct experiments on two agentic
+datasetWebArenaandScienceWorld.WebArena
+comprises 812 tasks. Following Qi et al. (2025), we
+use 165 verified tasks for evaluation (also named
+WebArena-Lite) and the remaining 647 tasks as
+the training set. Since RL rollouts with WebArena
+issue write actions that mutate website state and
+can contaminate other tasks, we use WebServ (Lu
+et al., 2025), which leverages Incus containers to
+create an isolated container per task. Detailed RL
+environment settings of WebArena are shown in
+Appendix E. ForScienceWorld, it spans 30 task
+types, each with variations that ScienceWorld par-
+titions into disjoint train/dev/test splits. We collect
+training data on the train split with up to 30 varia-
+tions per task (708 tasks) and evaluate on the test
+split with up to 10 variations per task (271 tasks).
+Models.Unless otherwise noted, the black-box
+LLM for the agent isClaude Sonnet4.5, accessed
+through the Amazon Bedrock API only, and all
+world models are built on aQwen3.5-27B(Qwen
+Team, 2026) backbone.
+Training Details.To obtain PAWM, we first run
+SFT on the synthetic pitfall dataset and GRPO co-
+training is then initialized from this checkpoint.
+Training details are presented in Appendix F.
+Evaluation Details.To reduce evaluation variance,
+we set the temperature of both the agent model
+and the world model to 0 during evaluation. Even
+so, non-determinism environment and minor vari-
+ability in the LLM serving stack prevent fully re-
+producible generations. We therefore run every
+evaluation three times and report averaged results.
+For both datasets, we report the average Task Suc-
+cess Accuracy (Acc) with its standard deviation, as
+well as thePass@3, where a task is deemed solved
+if at least one of these three runs succeeds.
+Baseline Methods.We compare the PAWM-
+steered black-box LLM agent against various base-
+lines.(1) N/A:the black-box LLM agent acts on
+its own without any external guidance.(2) RAG:
+an embedding model retrieves the most similar pre-
+viously solved task, and its successful trajectory is
+inserted into the agent’s context as guidance.(3)
+Pre-Task Guidance:Qwen3.5-27B is trained to
+generate task-specific guidance conditioned on the
+task query, providing advice to the agent before
+it starts.(4) Next-Obv/Full-Traj/SubGoal-Traj
+WM:We also compare world model steering meth-
+ods with different output contents. Implementation
+details for baselines are included in Appendix G.
+5.2 Results
+We present our main results in Table 4, comparing
+PAWM against various baseline steering methods
+applied to the same black-box LLM agent Claude
+Sonnet 4.5. From the table, we can clearly observe
+thatPA WM (+GRPO)performs best across both
+benchmarks and metrics, reaching 78.9% Acc on
+ScienceWorld and 80.4% on WebArena-Lite, im-
+proving over the unassisted agent (N/A) by 24.3%
+and 7.7%. We also observe that GRPO improves
+Acc far more than Pass@3. This suggests that the
+two stages play complementary roles, where SFT
+provides the environment knowledge that sets the
+ceiling reflected in Pass@3, and GRPO makes the
+agent realize it more reliably.
+For a fair comparison, we also apply GRPO to
+the baseline steering methods on ScienceWorld, ini-
+tialized from their SFT checkpoints, including Pre-
+Task Guidance and world model variants with dif-
+ferent outputs. On WebArena-Lite, we run GRPO
+only on PAWM due to the substantially higher cost
+Steering Method ScienceWorld WebArena-Lite
+Acc Pass@3 Acc Pass@3
+N/A54.6 ±1.9 66.8 72.7 ±0.6 80.0
+RAG70.2 ±1.4 78.6 73.3 ±2.1 81.8
+Pre-Task Guidance69.2 ±1.9 79.3 74.3 ±1.3 81.8
+Next-Obv WM58.5 ±1.7 71.6 73.1 ±0.9 81.2
+Full-Traj WM65.6 ±1.1 80.1 71.1 ±2.1 80.6
+SubGoal-Traj WM67.6 ±1.6 79.0 74.3 ±2.1 81.8
+PA WM (Ours)71.4 ±1.7 84.5 75.0±1.8 85.5
++ GRPO78.9 ±0.9 87.5 80.4 ±1.3 86.1
+Table 4:Acc(%)andPass 3(%)of the same Claude Sonnet 4.5 agent under different steering methods, on WebArena-
+Lite and ScienceWorld. The best and second-best results are highlighted inboldand underline , respectively.
+7
+PAGE 8
+Figure 2: GRPO improves over SFT across various steering methods on ScienceWorld.
+Figure 3: Comparison of PAWM with its steered agent under various backbone models.
+and slower online interaction of the environment.
+As shown in Figure 2, PAWM consistently achieves
+the best Acc and Pass@3 among all baselines after
+GRPO. We further provide qualitative examples
+in Appendix H, illustrating how PAWM steers the
+agent away from an impending pitfall.
+<pass>-to-anticipation Ratio.Performing SFT
+directly on the raw synthetic pitfall dataset, where
+<pass> steps far outnumber anticipations, risks
+driving PAWM to stay silent everywhere. We there-
+fore train on datasets balanced to different <pass>-
+to-anticipation ratios and report Acc, Pass@3, and
+Intervention Rate (IR) for the resulting SFT mod-
+els.origdenotes the original ratio without balance.
+Table 5 shows that a larger <pass> ratio in training
+consistently leads to a lower IR at evaluation, as the
+model inherits the label prior of its training distribu-
+tion. The best accuracy is reached at a ratio of 1.0
+on ScienceWorld and 0.75 on WebArena-Lite, and
+we adopt these checkpoints as our final SFT models
+and as the initialization for GRPO co-training.
+Ratios ScienceWorld WebArena-Lite
+Acc Pass@3 IR Acc Pass@3 IR
+0.569.9 81.6 47.0 72.3 84.2 39.2
+0.7570.0 82.7 32.875.0 85.531.0
+1.072.3 84.926.4 72.5 83.0 24.1
+1.572.1 81.6 19.8 72.5 81.2 26.7
+2.069.8 83.8 19.0 71.9 82.4 20.1
+orig67.2 78.6 3.2 69.9 81.8 14.6
+Table 5: PAWM steered agent performance under differ-
+ent<pass>-to-anticipation Ratios.
+PA WM Transferability.It is still unclear whether
+the environment and task specific knowledge
+PAWM learns with Claude Sonnet 4.5 transfers
+to other agent backbones. We therefore conduct ad-
+ditional experiments by directly integrating PAWM
+(+GRPO) with a range of black-box LLMs, in-
+cluding other size Claude models, Haiku 4.5 and
+Opus 4.5, as well as open-source models such as
+GLM 5 (Zeng et al., 2026) and Kimi K2.5 (Team
+et al., 2026). As shown in Figure 3, PAWM con-
+sistently improves accuracy across all tested back-
+bones, demonstrating that the pitfall knowledge it
+learns is not tied to the agent it was co-trained with.
+6 Conclusion
+This paper studies how to steer black-box LLM
+agents by providing the environment knowledge
+they lack with world models. Guided by a pilot
+study on what a world model should output and
+when it should intervene, we proposePitfall Antic-
+ipation World Model (PA WM), which anticipates
+pitfalls for the agents only when they are likely
+to arise. PAWM is first trained by SFT on a syn-
+thetic pitfall dataset, then co-trained with the frozen
+agent via GRPO to adapt to the specific environ-
+ment. Our experiments show that Claude Sonnet
+4.5 steered by PAWM outperforms various base-
+lines, and its learned pitfall knowledge transfers
+across agent backbones, demonstrating that antici-
+pating pitfalls is an effective way for a world model
+to assist black-box LLM agents.
+8
+PAGE 9
+Limitations
+Due to the accessibility and cost of repeatedly
+querying proprietary models, our experiments are
+primarily scoped to Claude Sonnet 4.5 as the black-
+box LLM agent used for trajectory collection and
+GRPO co-training. Although the resulting PAWM
+transfers to several other agent backbones dur-
+ing evaluation, we do not independently co-train
+with each of them, so agent specific differences in
+optimal pitfall anticipation remain underexplored.
+Our study is also limited to ScienceWorld and
+WebArena-Lite, and the high cost of online inter-
+action, particularly in WebArena-Lite, limits the
+scale of reinforcement learning experiments.
+In addition, the world models studied here are
+task-specific: they are trained on trajectories col-
+lected from a particular agentic environment rather
+than as large-scale, general-purpose world mod-
+els. Accordingly, our conclusions should be inter-
+preted within this task-specific setting, and may
+not directly extend to broader world models trained
+across many environments or domains.
+Finally, PAWM relies on synthetic pitfall super-
+vision generated by LLM hindsight annotations.
+Although we constrain the annotations to informa-
+tion available up to the current step, they may still
+contain noise or teacher-model bias, and our def-
+inition of a pitfall may not capture all forms of
+suboptimal behavior.
+Ethical Considerations
+This work aims to improve the reliability of black-
+box LLM agents through world model guidance.
+However, inaccurate guidance may lead to unde-
+sirable agent behavior, and the proposed method
+could potentially be misused to enhance agent capa-
+bilities in unintended applications. Our evaluation
+is limited to benchmark environments, and cau-
+tion is warranted when deploying the method in
+real-world settings.
+References
+Parth Asawa, Alan Zhu, Abigail O’Neill, Matei Za-
+haria, Alexandros G Dimakis, and Joseph E Gon-
+zalez. 2025. How to train your advisor: Steering
+black-box llms with advisor models.arXiv preprint
+arXiv:2510.02453.
+Victor Barres, Honghua Dong, Soham Ray, Xujie Si,
+and Karthik Narasimhan. 2025. τ 2-bench: Evaluat-
+ing conversational agents in a dual-control environ-
+ment.arXiv preprint arXiv:2506.07982.
+Hyungjoo Chae, Namyoung Kim, Kai Ong, Minju
+Gwak, Gwanwoo Song, Jihoon Kim, Sunghwan Kim,
+Dongha Lee, and Jinyoung Yeo. 2025. Web agents
+with world models: Learning and leveraging environ-
+ment dynamics in web navigation. InInternational
+Conference on Learning Representations, volume
+2025, pages 63707–63738.
+Zhaorun Chen, Zhuokai Zhao, Kai Zhang, Bo Liu,
+Qi Qi, Yifan Wu, Tarun Kalluri, Sara Cao, Yuan-
+hao Xiong, Haibo Tong, et al. 2025. Scaling agent
+learning via experience synthesis.arXiv preprint
+arXiv:2511.03773.
+Zeyun Deng, Jasorsi Ghosh, Fiona Xie, Yuzhe Lu, Katia
+Sycara, and Joseph Campbell. 2025. Energy-based
+transfer for reinforcement learning.arXiv preprint
+arXiv:2506.16590.
+Hang Ding, Peidong Liu, Junqiao Wang, Ziwei Ji, Meng
+Cao, Rongzhao Zhang, Lynn Ai, Eric Yang, Tianyu
+Shi, and Lei Yu. 2026. Dynaweb: Model-based re-
+inforcement learning of web agents.arXiv preprint
+arXiv:2601.22149.
+Anestis Fachantidis, Matthew E Taylor, and Ioannis
+Vlahavas. 2017. Learning to teach reinforcement
+learning agents.Machine Learning and Knowledge
+Extraction, 1(1):21–42.
+Chrisantha Fernando, Dylan Sunil Banarse, Henryk
+Michalewski, Simon Osindero, and Tim Rock-
+täschel. 2024. Promptbreeder: Self-referential self-
+improvement via prompt evolution. InForty-first
+International Conference on Machine Learning.
+Yifei Gao, Junhong Ye, Jiaqi Wang, and Jitao Sang.
+2025. Websynthesis: World-model-guided mcts for
+efficient webui-trajectory synthesis.arXiv preprint
+arXiv:2507.04370.
+Yu Gu, Kai Zhang, Yuting Ning, Boyuan Zheng, Boyu
+Gou, Tianci Xue, Cheng Chang, Sanjari Srivastava,
+Yanan Xie, Peng Qi, et al. 2024. Is your llm secretly
+a world model of the internet? model-based planning
+for web agents.arXiv preprint arXiv:2411.06559.
+Yiming Guan, Rui Yu, John Zhang, Lu Wang, Chaoyun
+Zhang, Liqun Li, Bo Qiao, Si Qin, He Huang,
+Fangkai Yang, et al. 2026. Computer-using world
+model.arXiv preprint arXiv:2602.17365.
+David Ha and Jürgen Schmidhuber. 2018. World mod-
+els.
+Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mo-
+hammad Norouzi. 2019a. Dream to control: Learn-
+ing behaviors by latent imagination.arXiv preprint
+arXiv:1912.01603.
+Danijar Hafner, Timothy Lillicrap, Ian Fischer, Ruben
+Villegas, David Ha, Honglak Lee, and James David-
+son. 2019b. Learning latent dynamics for planning
+from pixels. InInternational conference on machine
+learning, pages 2555–2565. PMLR.
+9
+PAGE 31
+pitfall do you externalize a forecast (of that
+pitfall alone).
+−A pitfall need not be immediate: an action
+can look harmless this step yet steer the
+actor onto a dead−end path, a wrong branch, or
+a state that only reveals its problem several
+steps later (e.g. filling a field that a later
+step will silently reset, or entering a flow
+that cannot reach the goal). Flag these
+downstream traps as well as immediate errors.
+−Treat it as a pitfall when the action is
+likely to: error out or be rejected; have no
+real effect / target the wrong or a mislabeled
+element; enter data in a wrong format or order
+so the result silently stays empty or wrong;
+navigate away from needed context or undo
+progress; repeat a move that already failed or
+made no progress; or terminate/report an
+answer that has not actually been verified on
+the page.
+−It is NOT a pitfall when the action is a
+sound, expected step that plausibly advances
+the objective−even if it is not the only
+reasonable choice. Do NOT flag an action just
+because you would have picked a different one;
+only flag genuine likely mistakes. When in
+doubt and the action is reasonable, let it
+pass.
+−When you do surface a pitfall, PREVIEW it
+objectively: describe concretely what could go
+wrong if the action plays out−the state or
+failure it would likely lead to−rather than
+issuing an instruction. Do NOT phrase it as a
+command ("set X first", "click Y instead");
+phrase it as a forecast of the consequence
+("this would likely leave the report empty
+because ..."). The actor decides what, if
+anything, to do about it.
+IMPORTANT:
+−Do NOT output literal browser actions, tool
+calls, semantic IDs, or code. Give a plain
+natural−language preview of the possible
+pitfall.
+−Keep it brief−a few short sentences,
+focused on the concrete pitfall this action
+could cause, including the downstream
+consequence if the risk only surfaces a few
+steps later.
+−Stay neutral and non−directive: you are
+anticipating a possible outcome for the
+actor's consideration, not overriding its
+judgment. It is fine for the actor to proceed
+anyway if it judges the concern unwarranted.
+OUTPUT FORMAT:
+−If the proposed action looks sound (no real
+pitfall worth previewing), stay silent: output
+a single <pass> tag and nothing else−no
+rollout, no explanation, no reassurance. The
+actor sees nothing in this case.
+−If the proposed action could lead to a
+pitfall, do NOT output <pass>; instead output
+ONLY your objective pitfall preview (not the
+full rollout that led you there) wrapped in
+<anticipation> and </anticipation> tags, e.g.
+<anticipation>If "Show Report" is clicked
+now, the report table would likely come back
+empty: the Period is still "Day" while the
+date range spans a month, so the two are
+mismatched and the query tends to return no
+records.</anticipation>
+User Prompt for PA WM on WebArena
+TASK OBJECTIVE:
+{task instruction}
+AGENT HISTORY (prior thinking and actions, web
+pages omitted for brevity):
+{agent history}
+CURRENT BROWSER STATE:
+{current webpage}
+PROPOSED NEXT ACTION (the actor is about to
+execute this):
+{proposed next action}
+Consider whether executing the PROPOSED NEXT
+ACTION would lead the actor into a pitfall,
+now or downstream. If it looks sound, output a
+single <pass> tag and nothing else. If it
+could lead to a pitfall, do NOT output <pass>;
+output ONLY a brief, objective anticipation of
+that specific pitfall (what would go wrong and
+any downstream consequence) as a neutral
+forecast−not an instruction−wrapped inside
+<anticipation> and </anticipation> tags.
+E RL Environment for WebArena
+Though WebArena (Zhou et al., 2024) provides its
+official environment for benchmark evaluation, we
+need to consider more when using the the environ-
+ment for large scale interactions, such as during
+RL rollouts. The most significant problem for large
+scale interactions on the official WebArena envi-
+ronment is that the deployed WebArena docker for
+one website are shared for all tasks, where writ-
+ing actions on the webpages (e.g., submitting a
+PR in GitLab) would change the whole environ-
+ment state and make them visible to all later tasks.
+Especially considering GRPO, running multiple
+examples within one group concurrently under the
+same docker will cause cross contamination.
+To solve this issue, the official WebArena sug-
+gests resetting the environment after each running
+of the whole benchmark, which requires removing
+all docker containers and then restarting them. This
+process normally takes minutes to complete, mak-
+ing it inefficient for huge throughput requirements.
+One recent work WebServ (Lu et al., 2025) pro-
+poses to uses Incus containers to create isolated
+containers for all written required tasks. Based
+on the paper, this will reduce launch latency by
+∼5× and persistent storage by ∼240×, enabling
+200+ concurrent isolated environments on a single
+host. Following this work, we therefore create In-
+cus containers for all websites that require write
+actions, including Shopping, CMS, GitLab, and
+Reddit, leaving only the Map environment as the
+official one. Even after replicating WebServ’s setup
+for WebArena, however, we still find its stability
+fragile. Timeout errors occur frequently when re-
+questing the websites at scale and a considerable
+fraction of time is spent on environment retries
+when launching containers. As a result, RL train-
+ing on WebArena costs roughly twice as much as
+on ScienceWorld, which is why we did not run ad-
+ditional GRPO co-training for the baseline methods
+31
+PAGE 32
+on WebArena.
+Following WebServ, we implement an improved
+parser over raw HTML pages, which addition-
+ally constructs accessibility-tree-style observations
+with retained semantic IDs, reducing observation
+tokens by about half on average. We further
+find that WebArena’s strictly rule-based evaluators,
+such as exact matching or substring-based match-
+ing, produce many false negatives, so we replace
+them with an LLM judge that issues the final binary
+reward. In addition, we apply a hard truncation that
+limits each step’s observation to 20k characters,
+which count roughly 5000 tokens.
+F Training Details for PA WM
+Here we present the training details of obtaining
+PAWM with both SFT and GRPO process.
+SFT.As in the pilot study experiments that train the
+world models, we again use LlamaFactory (Zheng
+et al., 2024) for SFT. We fine-tune Qwen3.5-27B on
+the synthetic pitfall dataset for 5 epochs, keeping
+the same hyperparameters as before: a global batch
+size of 128 and a learning rate of 2e-6 under a
+cosine schedule with a warmup ratio of 0.1. We
+cap the sequence length at 20480 tokens, and all
+training is performed on 16 NVIDIA B200 GPUs.
+GRPO Co-Training.Since the base black-box
+agent Claude Sonnet 4.5 is already capable with
+with high initial task accuracy, and we observe that
+many GRPO groups receive an identical reward of
+1.0 across all rollouts, yielding zero advantage and
+thus no learning signal. This is even more promi-
+nent on WebArena-Lite, where the reward is binary.
+To improve RL effectiveness, we follow DAPO (Yu
+et al., 2026a) and adopt its dynamic sampling filter,
+which discards relative groups whose rollouts re-
+ceive identical rewards. On WebArena-Lite, where
+accuracy already reaches 70% before training, dis-
+carding so many groups also slows DAPO training
+considerably. We therefore prefilter the training
+tasks before GRPO co-training by sampling each
+training task three times with the SFT PAWM and
+keeping only those that are not already solved in all
+three attempts. This finally results in 375 tasks as
+the training set for WebArena. We use Slime (Zhu
+et al., 2025) for GRPO co-training. Training for
+both benchmarks is initialized from the correspond-
+ing SFT PAWM and shares the same hyperparam-
+eters, which are listed in Table 7. All training is
+performed on 16 NVIDIA B200 GPUs.
+Hyperparameter Value
+total epochs 5
+rollout temperature 1.0
+rollout batch size 64
+global batch size 512
+num of agents in group 8
+over sampling groups 96
+learning rate 2e-6
+KL loss coefficient 0
+clip ratio low 0.2
+clip ratio high 0.28
+Table 7: Hyperparameters for GRPO Co-Training.
+G Details of Baseline Methods
+Here we present the implementation details of the
+baseline methods compared in our main results.
+N/A.This is the vanilla setting, where the black-
+box LLM agent performs the task on its own with-
+out any steering.
+RAG.RAG is a simple yet effective prompt-
+based steering method that requires no additional
+model to be trained. Specifically, we use Qwen3-
+Embedding-0.6B to embed the task instructions
+and compute their cosine similarity. For each test
+instruction, we retrieve the most similar training
+instruction among those associated with success-
+ful trajectories. The retrieved trajectory is then
+inserted directly into the user prompt as context
+before the agent starts.
+Pre-Task Guidance.To construct the pre-task
+guidance dataset for SFT, we prompt Claude Son-
+net 4.5 to read a successful trajectory from the
+sampled dataset collected in our pilot study and
+write guidance for the specific task, mainly focus-
+ing on high-level planning. Each task instruction is
+then paired with the guidance summarized from its
+own successful trajectory, so that the trained model
+learns to produce pre-task guidance based on the
+query alone. The SFT process follows the pilot
+study: we fine-tune Qwen3.5-27B with LlamaFac-
+tory for 5 epochs under the same hyperparameters.
+The prompt used to generate the guidance is shown
+below.
+System Prompt for Pre-Task Guidance on Science-
+World
+You are an expert ScienceWorld advisor writing
+a reusable HIGH−LEVEL GUIDANCE for one task. A
+separate "actor" agent will later be given
+ONLY this guidance plus the task description,
+32

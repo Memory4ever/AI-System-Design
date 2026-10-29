@@ -1,0 +1,2420 @@
+https://arxiv.org/html/2610.29378v1
+Right On Q: Recovering Reasoning underQuantization via Self-Generated Trajectories
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+Low-bit reasoning recovery.
+On-policy distillation.
+3 Method
+3.1 Quantization and Initialization
+3.2 On-Policy Distillation with Dynamic KL
+Student-generated prefixes.
+Dynamic KL objective.
+On-policy optimization.
+Response-length schedule.
+4 Experimental Setup
+Training.
+Baselines.
+Evaluation.
+5 Main Results
+6 Analysis
+6.1 How Does OnQ Change Low-Bit Generation?
+6.2 Which Design Choices Drive the Gains of OnQ?
+Contribution of each stage.
+On-policy versus fixed-response distillation.
+Dynamic KL versus other on-policy objectives.
+7 Conclusion
+References
+A Experimental Details
+A.1 Data
+A.2 Training Details
+A.3 Dynamic KL Implementation
+A.4 Motivation Diagnostics
+A.5 Baseline Configurations
+A.6 Evaluation
+A.7 Ablation Settings
+B Response Classification
+C Truncation Rates of the Main Results
+D Truncation Rates across Recovery Stages
+E Variation across Evaluation Seeds
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.29378v1 [cs.CL] 21 Oct 2026
+Right On Q: Recovering Reasoning under
+Quantization via Self-Generated Trajectories
+Boyuan Zheng
+Affiliation: University of Michigan, Ann Arbor
+Jing Xiong
+Affiliation: University of California, Santa Barbara
+Chenwei Wu
+Affiliation: University of Michigan, Ann Arbor
+Hui Shen
+Affiliation: University of Michigan, Ann Arbor
+Zesen Zhao
+Affiliation: University of Michigan, Ann Arbor
+Hei Ting Una Chan
+Affiliation: University of Michigan, Ann Arbor
+Xueshen Liu
+Affiliation: University of Michigan, Ann Arbor
+Zhen Zhang
+Affiliation: University of California, Santa Barbara
+Liyue Shen
+Affiliation: University of Michigan, Ann Arbor
+Zechun Liu
+Affiliation: Meta AI
+Z. Morley Mao
+Affiliation: University of Michigan, Ann Arbor
+Abstract
+Quantization-aware training (QAT) aims to recover reasoning capabilities in low-bit large language models (LLMs). Existing recipes typically supervise the quantized student with the original full-precision model on fixed response sequences. However, the resulting low-bit quantized models still struggle on long-horizon reasoning tasks and often fail to terminate within a token budget that suffices for the full-precision model. We identify two challenges in closing this gap. First, fixed-response supervision leaves a mismatch between training prefixes and those encountered during student generation, and this trajectory divergence grows as responses lengthen. Second, on its own prefixes, the student underpredicts some next-token candidates and overpredicts others, and this distributional misalignment becomes more frequent at high-entropy prefixes. We present OnQ , a low-bit recovery pipeline that combines on-policy distillation and candidate-wise Dynamic KL. Starting from block-wise calibration, the quantized student generates responses and receives full-precision teacher supervision on its own prefixes. Dynamic KL weights forward and reverse KL by each candidate’s teacher–student probability ratio to balance correction of under- and overprediction. Across Qwen3-1.7B, 4B, and 8B at 2- and 3-bit precision, OnQ achieves the highest nine-benchmark average, with the largest gains on long-horizon reasoning benchmarks. At 2 bits, it outperforms every baseline on every benchmark at every model size, improving the Qwen3-8B average by 10.26 points over the strongest baseline. It also produces shorter responses with fewer truncations and repetitive errors.
+2 2 footnotetext: Corresponding authors. 3 3 footnotetext: Equal advising.
+1 Introduction
+Low-bit quantization reduces the memory footprint of large language models (LLMs), making their deployment more practical ( Frantar et al., 2022 ; Chen et al., 2025 ) . Preserving reasoning capabilities at low precision remains challenging: prior work reports substantial accuracy loss ( Liu et al., 2025 ) and inefficient generation ( Lotfi et al., 2026 ) in quantized reasoning models. Quantization-aware training (QAT) addresses this loss by adapting model parameters through quantized forward passes, often with supervision from the original full-precision model ( Hinton et al., 2015 ; Liu et al., 2024 ; Du et al., 2024 ; Okoshi et al., 2026 ) . These distillation recipes typically train on fixed response sequences. Their effectiveness therefore depends on how well the training prefixes cover those encountered by the quantized student during inference ( Agarwal et al., 2024 ) .
+To examine the remaining challenges in low-bit reasoning, we analyze Qwen3-1.7B at 2-bit precision ( Figure 1 ). On MATH-500, QAT baselines recover little of the full-precision model’s accuracy on questions eliciting long full-precision responses ( Figure 1 .a ). They also frequently reach the token limit on these questions, while the full-precision model terminates within the same budget ( Figure 1 .b ). Fixed-response distillation supervises only reference prefixes, but quantization changes how the student generates: the longer the response, the more the student conditions on its own outputs and the further its context drifts from those prefixes. This trajectory divergence motivates teacher supervision on the student’s own trajectories.
+Training on the student’s own prefixes raises a second challenge: distributional misalignment. On these prefixes, the calibrated student exhibits two-sided probability errors: it substantially underpredicts some candidates and overpredicts others at the same prefix. These two-sided errors become more frequent at high-entropy prefixes ( Figure 1 .c ). Prior work also finds that quantized models oversample overthinking markers at high-entropy positions ( Lotfi et al., 2026 ) . Neither Kullback–Leibler (KL) direction alone corrects both sides equally well: forward KL divergence more reliably moves severely underpredicted candidates toward the teacher, while reverse KL does so for severely overpredicted candidates ( Section 3.2 ). This calls for an objective that balances correction across both sides of the distribution.
+Motivated by these findings, we introduce OnQ, a low-bit recovery pipeline that combines on-policy distillation (OPD) and candidate-wise Dynamic KL ( Jung et al., 2025 ) . Starting from a block-wise calibrated checkpoint, the quantized student generates responses and receives supervision from a frozen full-precision teacher on those same prefixes ( Agarwal et al., 2024 ) . Dynamic KL weights forward and reverse KL according to each candidate’s teacher–student probability ratio, balancing the correction of under- and overpredicted probabilities along these evolving trajectories. On MATH-500, OnQ recovers more accuracy than every QAT baseline at every response length and rarely reaches the token limit ( Figure 1 .a–b ).
+The key contributions of this study are as follows: 1 We identify two challenges, trajectory divergence and distributional misalignment, that limit low-bit reasoning recovery. 2 We present OnQ, a low-bit recovery pipeline combining on-policy distillation and candidate-wise Dynamic KL. 3 We show that OnQ achieves the highest nine-benchmark average in all six settings spanning Qwen3-1.7B, 4B, and 8B at 2- and 3-bit precision, improving the Qwen3-8B average at 2 bits by 10.26 points over the strongest baseline. It also improves generation behavior, producing shorter responses with fewer repetitive errors, and outperforms fixed-response distillation.
+< 2 <2 K 2–4K 4–8K 8–16K ≥ 16 \geq 16 K 0 0 25 25 50 50 75 75 100 100 Full-precision response length (tokens) Accuracy (%) (a) Long-response recovery Full precision EfficientQAT BitDistiller ReasoningQAT OnQ < 2 <2 K 2–4K 4–8K 8–16K ≥ 16 \geq 16 K 0 0 25 25 50 50 75 75 100 100 Full-precision response length (tokens) Truncated responses (%) (b) Failure to terminate 0 0.5 1.0 1.5 2.0 0 0 25 25 50 50 75 75 100 100 Student entropy (nats) Prefixes (%) (c) Prediction errors Under Over Both
+Figure 1: Low-bit fixed-response QAT fails on long-horizon reasoning; OnQ outperforms all QAT baselines (Qwen3-1.7B W2). (a) MATH-500 accuracy and (b) share of responses that reach the token limit, grouped by full-precision response length. (c) Share of prefixes with underpredicted candidates, overpredicted candidates, or both, by student entropy.
+2 Related Work
+Low-bit reasoning recovery.
+Aggressive post-training quantization (PTQ) ( Frantar et al., 2022 ; Cheng et al., 2024 ) can impair reasoning capabilities ( Liu et al., 2025 ; Lotfi et al., 2026 ) . QAT recovers low-bit accuracy by adapting model parameters through quantized forward passes, often with supervision from a full-precision teacher ( Liu et al., 2024 ; Du et al., 2024 ; Liu et al., 2026 ; Lv et al., 2026 ) . EfficientQAT uses block-wise optimization followed by end-to-end refinement of quantization step sizes ( Chen et al., 2025 ) , while ReasoningQAT ( Okoshi et al., 2026 ) combines mixed-domain calibration with teacher-guided fine-tuning to preserve reasoning capabilities acquired after pre-training. LLM-QAT ( Liu et al., 2024 ) , BitDistiller ( Du et al., 2024 ) , and ReasoningQAT compute teacher supervision on fixed training sequences rather than on the student’s own generations.
+On-policy distillation.
+Training on fixed prefixes while generating from the model’s own predictions at inference causes exposure bias, which imitation learning and sequence modeling mitigate by training on the learner’s own outputs ( Ross et al., 2011 ; Bengio et al., 2015 ; Ranzato et al., 2016 ) . OPD makes the student’s current behavior part of the training distribution: the teacher supervises prefixes generated by the student itself ( Lin et al., 2020 ; Agarwal et al., 2024 ; Lu & Thinking Machines Lab, 2025 ) . Alongside the source of training prefixes, the distillation objective determines how teacher–student discrepancies are weighted: BitDistiller mixes forward and reverse KL with a precomputed teacher-confidence coefficient ( Du et al., 2024 ) , while adaptive objectives adjust this balance using distribution discrepancies, teacher entropy, or candidate-wise probability ratios ( Wu et al., 2025 ; Jin et al., 2026 ; Jung et al., 2025 ) . Related recipes combine distillation with reinforcement learning ( Xu et al., 2025 ) or run reinforcement learning on quantized models ( Huang et al., 2026 ; Gu et al., 2026 ; Lv et al., 2026 ) . OnQ applies candidate-wise Dynamic KL on quantized student rollouts, adapting distillation feedback to teacher–student probability discrepancies.
+3 Method
+OnQ targets low-bit capability recovery through teacher supervision along the quantized student’s own reasoning trajectories ( Figure 2 ). Block-wise calibration provides the initialization for on-policy training. The student then samples responses through its quantized forward pass, and its full-precision teacher supplies next-token distributions conditioned on the same prefixes; this on-policy supervision addresses trajectory divergence. To address distributional misalignment, we align the student with these distributions using candidate-wise Dynamic KL, which weights forward and reverse KL (FKL and RKL) according to the teacher–student probability ratio for each candidate token.
+Figure 2: Overview of OnQ. Left: On-policy distillation trains the calibrated student on its own generated prefixes. Right: Dynamic KL weights forward and reverse KL by each candidate’s teacher–student probability ratio.
+3.1 Quantization and Initialization
+We use uniform asymmetric weight quantization ( Chen et al., 2025 ; Okoshi et al., 2026 ) . A full-precision latent weight w w is mapped to an N N -bit code w int w_{\mathrm{int}} and a dequantized weight w ^ \hat{w} :
+w int \displaystyle w_{\mathrm{int}}
+= clamp ⁡ ( ⌊ w / s ⌉ + z , 0 , 2 N − 1 ) , \displaystyle=\operatorname{clamp}(\lfloor w/s\rceil+z,0,2^{N}-1),
+(1)
+w ^ \displaystyle\hat{w}
+= s ⁡ ( w int − z ) . \displaystyle=s(w_{\mathrm{int}}-z).
+Here s > 0 s>0 is the scale, z z is the integer zero point used in the forward pass, and N N is the target bit width; ⌊ ⋅ ⌉ \lfloor\cdot\rceil rounds to the nearest integer, and clamp ⁡ ( x , a , b ) \operatorname{clamp}(x,a,b) clips x x to [ a , b ] [a,b] . The scale and zero point are shared within each group of weights. The quantized forward pass uses w ^ \hat{w} , while training updates the latent weight w w .
+We initialize the student with block-wise calibration, following Block-AP in EfficientQAT ( Chen et al., 2025 ) . Starting from round-to-nearest (RTN) quantization with clipped per-group ranges, we train each transformer block f l f_{l} in sequence on the calibration set 𝒞 \mathcal{C} , updating its weights W l W_{l} , scales s l s_{l} , and zero points z l z_{l} with a block-wise reconstruction loss:
+min W l , s l , z l ⁡ 𝔼 𝒞 ​ [ MSE ⁡ ( f l ​ ( X ^ l − 1 , W ^ l ) , X l FP ) ] . \min_{W_{l},s_{l},z_{l}}\;\mathbb{E}_{\mathcal{C}}\!\left[\operatorname{MSE}\!\left(f_{l}(\hat{X}_{l-1};\hat{W}_{l}),X_{l}^{\mathrm{FP}}\right)\right].
+(2)
+Here W ^ l \hat{W}_{l} follows Equation 1 , X ^ l − 1 \hat{X}_{l-1} is the input from preceding calibrated blocks, and X l FP X_{l}^{\mathrm{FP}} is the output of the full-precision block on full-precision inputs. This calibrated checkpoint provides the starting policy for on-policy distillation ( Appendix A.2 ).
+3.2 On-Policy Distillation with Dynamic KL
+Student-generated prefixes.
+Let Q θ Q_{\theta} be the quantized student with trainable θ = ( W , s ) \theta=(W,s) and fixed zero points z z , and P P the frozen full-precision teacher. For a prompt x x , the student samples a response y y through its quantized forward pass. The teacher supplies next-token distributions at each generated prefix h t = ( x , y < t ) h_{t}=(x,y_{<t}) , including prefixes containing earlier student errors ( Agarwal et al., 2024 ) ( Figure 2 , left).
+a two others some four another other the 0 0.25 0.5 probability (a) Distributions teacher p p student q q 2–4 4–8 8–20 ≥ \geq 20 2–4 4–8 8–20 ≥ \geq 20 60 60 70 70 80 80 90 90 100 100 Under, p / q p/q Over, q / p q/p Moved toward teacher (%) (b) Correction direction FKL RKL DKL 0 4K 8K 12K 16K 0 0 5 5 10 10 15 15 20 20 1–50 51–100 101+ 6.7 15.6 21.1 Position in response (tokens) Repeated tokens (%) (c) Repetition during training Initialization Step 50 Step 100 Step 200
+Figure 3: Qwen3-1.7B W2. (a) Teacher and student probabilities at one prefix of the calibrated student. (b) Share of under- and overpredicted candidates at high-entropy prefixes that each objective moves toward the teacher. (c) Share of repeated tokens by response position during training; dashed lines mark the rollout caps, labeled with the training steps that use each cap.
+Dynamic KL objective.
+At a student-generated prefix h h , let p v = P ⁡ ( v ∣ h ) p_{v}=P(v\mid h) and q v = Q θ ​ ( v ∣ h ) q_{v}=Q_{\theta}(v\mid h) denote the teacher and student probabilities of candidate v v . The calibrated student exhibits two-sided probability errors: it underpredicts some candidates and overpredicts others at the same prefix ( Figure 3 .a ). These errors become more frequent as student entropy rises ( Figure 1 .c ).
+Under local logit updates, FKL moves a larger fraction of severely underpredicted candidates ( p v / q v ≥ 20 p_{v}/q_{v}\geq 20 ) toward the teacher, whereas RKL moves a larger fraction of severely overpredicted candidates ( q v / p v ≥ 20 q_{v}/p_{v}\geq 20 ) ( Figure 3 .b ; Appendix A.4 ). Motivated by these complementary correction patterns, we adopt candidate-wise Dynamic KL (DKL) ( Jung et al., 2025 ) , which weights the two directions according to each candidate’s teacher–student probability ratio:
+D dyn ​ ( h ) = ∑ v [ α v ​ p v ​ log ⁡ p v q v ⏟ Forward KL + ( 1 − α v ) ​ q v ​ log ⁡ q v p v ⏟ Reverse KL ] . D_{\mathrm{dyn}}(h)=\sum_{v}\Big[\underbrace{\alpha_{v}p_{v}\log\frac{p_{v}}{q_{v}}}_{\text{Forward KL}}+\underbrace{(1-\alpha_{v})\,q_{v}\log\frac{q_{v}}{p_{v}}}_{\text{Reverse KL}}\Big].
+(3)
+The sum runs over vocabulary candidates v ∈ 𝒱 v\in\mathcal{V} , and α v = sg ⁡ [ p v / ( p v + q v ) ] \alpha_{v}=\operatorname{sg}[p_{v}/(p_{v}+q_{v})] is the candidate-specific mixing weight computed at prefix h h , where sg \operatorname{sg} denotes stop-gradient. The weighting has two cases ( Figure 2 , right):
+•
+Underprediction ( p v > q v p_{v}>q_{v} ): α v > 1 / 2 \alpha_{v}>1/2 gives greater weight to FKL.
+•
+Overprediction ( q v > p v q_{v}>p_{v} ): α v < 1 / 2 \alpha_{v}<1/2 gives greater weight to RKL.
+For severely underpredicted candidates, Dynamic KL moves nearly as large a fraction toward the teacher as FKL. For severely overpredicted candidates, it approaches RKL ( Figure 3 .b ). We evaluate the objective using a top- K K approximation D ~ dyn , θ ​ ( h ) \widetilde{D}_{\mathrm{dyn},\theta}(h) , with implementation details in Appendix A.3 .
+On-policy optimization.
+Each step samples B B prompts x i x_{i} from the prompt pool 𝒳 \mathcal{X} and one response y i y_{i} per prompt from the student. We minimize candidate-wise Dynamic KL averaged over all response tokens in the batch, at prefixes h i , t = ( x i , y i , < t ) h_{i,t}=(x_{i},y_{i,<t}) :
+ℒ OPD ( θ ; θ k ) = 𝔼 { x i } i = 1 B ∼ 𝒳 , y i ∼ Q θ k ( ⋅ ∣ x i ) [ 1 ∑ i = 1 B | y i | ∑ i = 1 B ∑ t = 1 | y i | D ~ dyn , θ ( h i , t ) ] . \mathcal{L}_{\mathrm{OPD}}(\theta;\theta_{k})=\mathbb{E}_{\{x_{i}\}_{i=1}^{B}\sim\mathcal{X},\;y_{i}\sim Q_{\theta_{k}}(\cdot\mid x_{i})}\!\left[\frac{1}{\sum_{i=1}^{B}|y_{i}|}\sum_{i=1}^{B}\sum_{t=1}^{|y_{i}|}\widetilde{D}_{\mathrm{dyn},\theta}(h_{i,t})\right].
+(4)
+At step k k , we sample responses from Q θ k Q_{\theta_{k}} and hold the rollout policy, sampled responses, and teacher targets fixed while updating θ \theta ( Agarwal et al., 2024 ) ; θ \theta enters D ~ dyn , θ \widetilde{D}_{\mathrm{dyn},\theta} only through the student probabilities. We jointly update latent weights W W and scales s s ( Esser et al., 2020 ; Liu et al., 2026 ) to minimize ℒ OPD \mathcal{L}_{\mathrm{OPD}} . The updated student then generates fresh responses, keeping teacher supervision aligned with the prefixes visited by its evolving quantized policy.
+Table 1: Quantization results (%) on Qwen3, averaged over three evaluation seeds (AutoRound: seed 42). QAT and OnQ SDs: Table 9 . Bold: best quantized score per model/bit group. W/A: weight/activation bits.
+Method
+W/A
+GSM8K
+MATH-
+500
+AIME
+24–26
+Human
+Eval+
+MBPP+
+LiveCode
+Bench
+MMLU-
+Redux
+GPQA-
+Diamond
+IFEval
+Avg.
+Qwen3-1.7B
+Full precision
+16/16
+90.55
+90.13
+41.85
+79.07
+68.96
+53.46
+74.36
+38.72
+71.10
+67.58
+GPTQ
+3/16
+53.70
+20.13
+0.37
+4.47
+15.43
+0.25
+10.39
+8.75
+31.73
+16.14
+AutoRound
+3/16
+83.78
+75.20
+14.44
+57.93
+55.03
+26.92
+64.49
+29.29
+60.63
+51.97
+EfficientQAT
+3/16
+74.00
+69.60
+9.63
+57.52
+43.03
+24.99
+60.74
+16.50
+46.89
+44.77
+BitDistiller
+3/16
+80.39
+66.33
+8.52
+56.71
+49.47
+20.00
+61.51
+24.75
+58.78
+47.38
+ReasoningQAT
+3/16
+86.96
+82.80
+23.33
+66.67
+58.29
+36.02
+68.24
+30.81
+63.34
+57.38
+OnQ
+3/16
+87.64
+84.73
+32.59
+71.14
+62.35
+41.77
+69.84
+30.98
+65.87
+60.77
+GPTQ
+2/16
+1.92
+2.53
+0.00
+0.00
+0.00
+0.00
+3.32
+3.03
+11.65
+2.49
+AutoRound
+2/16
+11.30
+4.80
+0.00
+6.71
+10.85
+0.76
+31.89
+15.66
+24.03
+11.78
+EfficientQAT
+2/16
+46.70
+36.20
+0.37
+20.73
+21.78
+6.67
+43.57
+14.65
+33.15
+24.87
+BitDistiller
+2/16
+46.63
+30.33
+0.00
+17.48
+28.75
+5.43
+32.39
+11.62
+38.20
+23.42
+ReasoningQAT
+2/16
+71.44
+60.60
+4.81
+44.92
+39.15
+15.86
+52.41
+24.92
+53.23
+40.82
+OnQ
+2/16
+79.05
+69.33
+10.37
+47.76
+42.59
+19.72
+55.49
+27.10
+55.70
+45.24
+Qwen3-4B
+Full precision
+16/16
+94.59
+94.93
+70.37
+89.02
+77.34
+71.66
+83.95
+54.04
+83.43
+79.93
+GPTQ
+3/16
+93.53
+93.73
+51.85
+85.98
+73.02
+56.97
+78.65
+43.94
+76.52
+72.69
+AutoRound
+3/16
+92.57
+88.60
+38.89
+81.10
+70.90
+50.81
+79.16
+44.95
+79.30
+69.59
+EfficientQAT
+3/16
+92.62
+90.47
+40.37
+81.10
+64.99
+51.75
+74.73
+29.46
+69.13
+66.07
+BitDistiller
+3/16
+92.67
+88.93
+36.67
+83.74
+71.34
+51.22
+79.42
+39.90
+76.65
+68.95
+ReasoningQAT
+3/16
+93.61
+92.67
+52.22
+84.15
+73.81
+60.92
+80.89
+50.51
+79.17
+74.22
+OnQ
+3/16
+93.91
+93.80
+62.59
+84.55
+75.22
+64.55
+81.40
+49.16
+81.45
+76.29
+GPTQ
+2/16
+1.74
+2.13
+0.37
+0.00
+0.00
+0.00
+5.17
+5.89
+9.37
+2.74
+AutoRound
+2/16
+32.83
+15.40
+0.00
+14.02
+20.63
+2.75
+45.18
+18.69
+27.36
+19.65
+EfficientQAT
+2/16
+85.90
+74.93
+11.85
+50.41
+45.24
+25.72
+63.42
+24.41
+52.62
+48.28
+BitDistiller
+2/16
+82.76
+70.60
+10.37
+57.32
+54.59
+23.29
+60.86
+23.23
+62.42
+49.49
+ReasoningQAT
+2/16
+86.25
+77.60
+18.89
+61.99
+56.70
+28.34
+59.12
+30.64
+60.26
+53.31
+OnQ
+2/16
+91.15
+87.07
+34.81
+77.85
+65.17
+46.64
+72.23
+37.04
+72.58
+64.95
+Qwen3-8B
+Full precision
+16/16
+95.73
+95.53
+71.85
+88.21
+79.28
+73.59
+87.42
+59.93
+84.84
+81.82
+GPTQ
+3/16
+94.92
+95.20
+57.41
+86.99
+75.57
+63.44
+83.98
+50.34
+80.04
+76.43
+AutoRound
+3/16
+94.84
+91.00
+52.22
+85.37
+75.13
+57.63
+83.81
+47.47
+81.52
+74.33
+EfficientQAT
+3/16
+88.35
+92.20
+44.81
+63.62
+67.81
+55.92
+78.61
+28.96
+69.38
+65.52
+BitDistiller
+3/16
+95.00
+93.67
+61.85
+85.57
+75.75
+65.31
+84.60
+53.03
+82.07
+77.43
+ReasoningQAT
+3/16
+95.27
+94.47
+59.26
+88.01
+76.37
+65.91
+85.07
+54.88
+81.33
+77.84
+OnQ
+3/16
+95.22
+94.80
+67.04
+87.20
+76.10
+69.23
+85.57
+55.39
+82.13
+79.19
+GPTQ
+2/16
+1.26
+1.53
+0.00
+0.00
+0.00
+0.00
+6.44
+6.23
+10.47
+2.88
+AutoRound
+2/16
+60.88
+34.00
+0.00
+32.32
+43.92
+7.39
+57.40
+19.19
+50.09
+33.91
+EfficientQAT
+2/16
+81.00
+75.00
+11.48
+67.68
+54.67
+33.97
+66.21
+18.35
+59.15
+51.95
+BitDistiller
+2/16
+90.60
+79.00
+22.59
+72.56
+65.87
+35.45
+71.76
+33.84
+72.09
+60.42
+ReasoningQAT
+2/16
+90.52
+85.27
+28.15
+72.36
+63.40
+40.06
+69.47
+30.81
+62.11
+60.24
+OnQ
+2/16
+93.48
+90.60
+44.07
+82.93
+70.72
+55.04
+78.75
+43.43
+77.08
+70.68
+Response-length schedule.
+Right after calibration, the student repeats itself, mostly late in long responses, and the repetition fades within the first 100 training steps ( Figure 3 .c ; Appendix A.4 ). For Qwen3-1.7B at 2 bits, the share of repeated tokens at initialization rises from 6.7% in the first 4K response tokens to 21.1% beyond 8K; by step 100 it is about 1% at every position. Since ℒ OPD \mathcal{L}_{\mathrm{OPD}} weights all response tokens equally, long early rollouts would spend supervision on this repeated text. We therefore cap responses at 4,096 tokens for steps 1–50, 8,192 for steps 51–100, and 16,384 afterwards for all model sizes and bit widths.
+4 Experimental Setup
+Training.
+We conduct experiments on Qwen3-1.7B, 4B, and 8B ( Yang et al., 2025 ) at 2- and 3-bit weight precision (W2 and W3). OnQ uses uniform asymmetric weight quantization with group size 128 and BF16 activations ( Chen et al., 2025 ) . Block-wise calibration uses 4,096 windows of 2,048 tokens, with two epochs per block. OPD starts from the calibrated checkpoint and uses a multi-domain pool of 25,600 prompts spanning mathematics, code, science, and general instruction following. Each student is supervised by its original BF16 counterpart. OPD uses AdamW ( Loshchilov & Hutter, 2019 ) at a constant learning rate of 10 − 6 10^{-6} . OPD runs for 400 steps on Qwen3-1.7B and 300 steps on Qwen3-4B and 8B.
+Baselines.
+We compare OnQ with two groups of baselines ( Table 1 ): GPTQ ( Frantar et al., 2022 ) and AutoRound ( Cheng et al., 2024 ) for PTQ, and EfficientQAT ( Chen et al., 2025 ) , BitDistiller ( Du et al., 2024 ) , and ReasoningQAT ( Okoshi et al., 2026 ) for QAT. Their training data and configurations are detailed in Appendix A.1 and Appendix A.5 .
+Evaluation.
+We evaluate in thinking mode with EvalScope ( ModelScope Team, 2024 ) on nine benchmarks: GSM8K ( Cobbe et al., 2021 ) , MATH-500 ( Hendrycks et al., 2021 ; Lightman et al., 2024 ) , and AIME 24–26 ( Zhang & Math-AI, 2024 ; Zhang & Math-AI, 2025 ; Zhang & Math-AI, 2026 ) for mathematics; HumanEval+, MBPP+ ( Chen et al., 2021 ; Austin et al., 2021 ; Liu et al., 2023 ) , and LiveCodeBench ( Jain et al., 2025 ) for code; MMLU-Redux ( Gema et al., 2025 ) and GPQA-Diamond ( Rein et al., 2024 ) for knowledge and science; and IFEval ( Zhou et al., 2023 ) for instruction following. We report pass@1 for code and accuracy for the other tasks. We use a response cap of 32,768 tokens, with 8,192-token exceptions for selected PTQ settings. We count responses terminated by the output-token limit as truncated. Scores are percentages; Avg. is the unweighted mean across the nine benchmarks. Full-precision, GPTQ, and QAT results average evaluation seeds 42, 43, and 44; AutoRound uses seed 42. Decoding settings and benchmark versions are given in Appendix A.6 .
+5 Main Results
+Figure 4: Accuracy versus mean generated tokens for Qwen3 models at 2 bits (top, a–c) and 3 bits (bottom, d–f), averaged over three evaluation seeds. Dashed lines connect model sizes within each method.
+OnQ outperforms both PTQ and QAT baselines on every backbone and bit width. It achieves the highest nine-benchmark average in all six model/bit settings and the highest score on 48 of the 54 benchmark–setting pairs ( Table 1 ).
+The advantage of OnQ grows as precision falls. At every model size, the margin over the strongest baseline is larger at 2 bits than at 3 bits, and at 2 bits it exceeds 10 points on Qwen3-4B and 8B. At 2 bits, the PTQ baselines perform poorly, while OnQ, trained on the trajectories that the 2-bit student actually generates, achieves the highest score on every benchmark at every model size. On Qwen3-4B at 2 bits, it achieves a higher nine-benchmark average than every 2-bit baseline on Qwen3-8B, a model twice its size. At 3 bits, OnQ comes within four points of the full-precision average on Qwen3-4B and 8B.
+The largest gains occur on benchmarks that require long-horizon reasoning. In five of the six settings, the largest margin of OnQ over the strongest baseline falls on AIME or LiveCodeBench, and among the code benchmarks it falls on LiveCodeBench in every setting. HumanEval+ and MBPP+ ask for single functions from short specifications, whereas LiveCodeBench poses competitive-programming problems that require long-horizon reasoning before the final program; even at full precision, LiveCodeBench responses are about three times as long. Among the mathematics benchmarks, the largest margin likewise falls on AIME in every setting but one. For every QAT method and model size, AIME and LiveCodeBench elicit much longer responses than MATH-500 ( Figure 4 ), so the student conditions on its own outputs over thousands of tokens, where small errors compound into wrong or unfinished solutions. Fixed-response QAT supervises only reference prefixes and never trains on these long student trajectories, whereas OnQ supervises them directly.
+6 Analysis
+6.1 How Does OnQ Change Low-Bit Generation?
+OnQ is more accurate with fewer generated tokens. Figure 4 plots accuracy against mean response length. At 2 bits, across MATH-500, AIME, and LiveCodeBench, OnQ achieves the highest accuracy at all three model sizes and shorter mean responses than the most accurate baseline in eight of the nine cases. On Qwen3-4B LiveCodeBench, accuracy rises from 28.34% for ReasoningQAT to 46.64% while the mean response shortens by more than a fifth: OnQ produces fewer and shorter incorrect responses. At 3 bits, OnQ again achieves the highest accuracy among QAT methods on all three benchmarks at every model size, with shorter mean responses than the most accurate baseline in six of the nine cases ( Figure 4 .d–f ). On Qwen3-1.7B AIME, accuracy rises from 23.33% for ReasoningQAT to 32.59% while the mean response shortens by 6%. Beyond these three benchmarks, OnQ has the lowest average truncation rate among QAT methods in all six settings ( Appendix C ).
+0 0 25 25 50 50 75 75 100 100 Full precision EfficientQAT BitDistiller ReasoningQAT OnQ Questions (%) (a) MATH-500, Qwen3-1.7B W2 Correct Repetitive errors Other errors 0 0 25 25 50 50 75 75 100 100 Questions (%) (b) AIME 24–26, Qwen3-4B W3
+Figure 5: Generation outcomes on MATH-500 (Qwen3-1.7B W2, a) and AIME (Qwen3-4B W3, b). OnQ reduces repetitive errors on both benchmarks.
+OnQ substantially reduces repetitive generation in low-bit models.
+Figure 5 separates incorrect responses into repetitive errors, in which responses emit the same sentence, block, or computation again and again, and all other errors ( Appendix B ), for Qwen3-1.7B at 2 bits on MATH-500 and Qwen3-4B at 3 bits on AIME. The full-precision models produce no repetitive errors on MATH-500 and one on AIME, whereas these errors become much more frequent after quantization. The fixed-response QAT baselines produce repetitive errors on 11.4–54.0% of the MATH-500 questions and on 6.7–11.1% of the AIME questions. Trained on its own generations, OnQ produces repetitive errors on only 2.4% of the MATH-500 questions, and this reduction accounts for most of its accuracy gain over ReasoningQAT. On AIME, OnQ produces no repetitive errors. Repetition likewise appears in the calibrated student’s early rollouts and fades within the first 100 steps of on-policy training ( Section 3.2 ).
+Table 2: Scores (%) across recovery stages. OnQ denotes calibration followed by on-policy distillation. OnQ results average evaluation seeds 42, 43, and 44; RTN and calibration results use seed 42. Bold marks the best score within each model/bit group.
+Method
+W/A
+GSM8K
+MATH-
+500
+AIME
+24–26
+Human
+Eval+
+MBPP+
+LiveCode
+Bench
+MMLU-
+Redux
+GPQA-
+Diamond
+IFEval
+Avg.
+Qwen3-1.7B
+RTN
+3/16
+0.68
+1.20
+1.11
+0.00
+0.00
+0.00
+8.72
+9.60
+12.01
+3.70
++ + Calibration
+3/16
+87.11
+80.00
+17.78
+58.54
+58.20
+30.71
+67.16
+29.80
+61.92
+54.58
+OnQ
+3/16
+87.64
+84.73
+32.59
+71.14
+62.35
+41.77
+69.84
+30.98
+65.87
+60.77
+RTN
+2/16
+1.67
+2.40
+0.00
+0.00
+0.00
+0.00
+8.60
+11.62
+10.91
+3.91
++ + Calibration
+2/16
+42.84
+25.60
+0.00
+15.85
+19.84
+2.84
+45.07
+21.72
+36.41
+23.35
+OnQ
+2/16
+79.05
+69.33
+10.37
+47.76
+42.59
+19.72
+55.49
+27.10
+55.70
+45.24
+Qwen3-4B
+RTN
+3/16
+81.58
+65.00
+5.56
+46.95
+45.77
+14.22
+65.26
+25.25
+56.56
+45.13
++ + Calibration
+3/16
+92.72
+92.00
+50.00
+82.93
+72.22
+56.87
+80.49
+48.99
+78.19
+72.71
+OnQ
+3/16
+93.91
+93.80
+62.59
+84.55
+75.22
+64.55
+81.40
+49.16
+81.45
+76.29
+RTN
+2/16
+1.52
+2.00
+0.00
+0.00
+0.00
+0.00
+1.74
+2.02
+12.75
+2.23
++ + Calibration
+2/16
+78.54
+59.40
+1.11
+42.68
+48.68
+16.30
+63.09
+26.26
+50.83
+42.99
+OnQ
+2/16
+91.15
+87.07
+34.81
+77.85
+65.17
+46.64
+72.23
+37.04
+72.58
+64.95
+Qwen3-8B
+RTN
+3/16
+33.59
+17.00
+0.00
+11.59
+26.46
+0.28
+25.84
+13.13
+37.71
+18.40
++ + Calibration
+3/16
+94.54
+93.00
+53.33
+85.37
+74.60
+61.33
+84.77
+53.03
+80.04
+75.56
+OnQ
+3/16
+95.22
+94.80
+67.04
+87.20
+76.10
+69.23
+85.57
+55.39
+82.13
+79.19
+RTN
+2/16
+1.82
+1.40
+0.00
+0.00
+0.00
+0.00
+4.18
+3.03
+8.32
+2.08
++ + Calibration
+2/16
+84.91
+65.00
+15.56
+56.71
+58.47
+18.77
+69.70
+27.78
+53.97
+50.10
+OnQ
+2/16
+93.48
+90.60
+44.07
+82.93
+70.72
+55.04
+78.75
+43.43
+77.08
+70.68
+6.2 Which Design Choices Drive the Gains of OnQ?
+Table 3: Fixed-response versus on-policy distillation on Qwen3-1.7B W2 from shared calibration. Scores in %; best scores in bold.
+Method
+MATH-
+500
+Human
+Eval+
+MMLU-
+Redux
+Fixed-response FKL
+59.00
+39.63
+52.28
+Fixed-response DKL
+61.00
+42.07
+52.68
+On-policy DKL (OnQ)
+69.40
+48.78
+55.75
+Contribution of each stage.
+To separate the two stages of OnQ, Table 2 reports each model after RTN, after calibration, and after on-policy distillation. Direct RTN severely degrades 2-bit accuracy, motivating restoration of a working policy before training on the student’s own rollouts. Calibration provides one but still struggles on long-horizon reasoning at 2 bits, as its LiveCodeBench scores show. On-policy distillation then closes about half or more of the remaining gap to full precision in every setting, with substantial gains on MATH-500 and LiveCodeBench, and lowers truncation in all six settings ( Appendix D ).
+On-policy versus fixed-response distillation.
+We compare OnQ with fixed-response distillation using either forward KL (FKL) or Dynamic KL (DKL) on Qwen3-1.7B W2 ( Table 3 ). All three runs start from the same calibrated checkpoint and use the same number of response tokens; fixed-response training uses the QAT baselines’ question–response pairs and on-policy training uses our prompt pool ( Appendices A.1 and A.7 ). On-policy Dynamic KL exceeds fixed-response Dynamic KL on all three benchmarks, by up to 8.40 points, and replacing FKL with Dynamic KL in fixed-response distillation adds up to 2.44.
+Table 4: On-policy objectives on Qwen3-1.7B W2 (400 steps from a shared cold start). Scores in %; best scores in bold.
+Method
+Objective
+MATH-
+500
+Human
+Eval+
+MMLU-
+Redux
+Cold start
+–
+41.40
+3.66
+45.12
+Vanilla OPD
+RKL
+63.00
+10.98
+48.18
+OPD + GRPO
+RKL + RLVR
+66.00
+4.27
+48.84
+GKD
+FKL
+66.20
+11.59
+48.82
+GRPO
+RLVR
+31.40
+0.61
+34.05
+OnQ
+Dynamic KL
+67.20
+10.98
+49.58
+Dynamic KL versus other on-policy objectives.
+We compare on-policy objectives using a shared initialization, training set, and step budget. Table 4 reports results for OnQ, Vanilla OPD ( Lu & Thinking Machines Lab, 2025 ) , GKD ( Agarwal et al., 2024 ) , GRPO ( Shao et al., 2024 ) , and OPD + GRPO on Qwen3-1.7B W2. Vanilla OPD uses RKL, and we use the FKL variant of GKD as the other single-direction on-policy baseline. GRPO uses reinforcement learning with verifiable rewards (RLVR) alone, and OPD + GRPO adds this RLVR objective to sampled-RKL OPD. All runs start from a shared cold-start checkpoint and train on DeepScaleR mathematics problems ( Luo et al., 2025 ) ( Appendix A.7 ).
+Dynamic KL achieves the highest average over the three benchmarks and the highest MATH-500 and MMLU-Redux scores. Relative to FKL (GKD) and RKL (Vanilla OPD), it improves MATH-500 by 1.0 and 4.2 points, respectively. Relying solely on teacher supervision and trained only on mathematics prompts, OnQ outperforms OPD + GRPO and GRPO on all three benchmarks, showing stronger transfer to code generation and knowledge.
+7 Conclusion
+We present OnQ, a low-bit recovery pipeline that addresses trajectory divergence with on-policy distillation and distributional misalignment with candidate-wise Dynamic KL. On Qwen3-1.7B, 4B, and 8B at 2 and 3 bits, OnQ achieves the highest nine-benchmark average in all six settings, with the largest gains at 2 bits and on long-horizon reasoning benchmarks. The recovered models also produce shorter responses with fewer repetitive errors. On-policy training outperforms fixed-response distillation, and Dynamic KL achieves the best average among the on-policy objectives we compare. These results establish training on self-generated trajectories as an effective route to recovering reasoning under aggressive quantization.
+References
+Agarwal et al. (2024)
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos
+Garea, Matthieu Geist, and Olivier Bachem.
+On-policy distillation of language models: Learning from
+self-generated mistakes.
+In The Twelfth International Conference on Learning
+Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 .
+OpenReview.net, 2024.
+URL https://openreview.net/forum?id=3zKtaqxLhW .
+Ahmad et al. (2025)
+Wasi Uddin Ahmad, Somshubra Majumdar, Aleksander Ficek, Sean Narenthiran,
+Mehrzad Samadi, Jocelyn Huang, Siddhartha Jain, Vahid Noroozi, and Boris
+Ginsburg.
+OpenCodeReasoning-II: A simple test time scaling approach via
+self-critique.
+CoRR , abs/2507.09075, 2025.
+doi: 10.48550/ARXIV.2507.09075 .
+URL https://doi.org/10.48550/arXiv.2507.09075 .
+Anthropic (2026)
+Anthropic.
+Introducing Claude Sonnet 5.5.
+Official model announcement, September 2026.
+URL https://www.anthropic.com/claude-sonnet-5-5 .
+Austin et al. (2021)
+Jacob Austin, Augustus Odena, Maxwell I. Nye, Maarten Bosma, Henryk
+Michalewski, David Dohan, Ellen Jiang, Carrie J. Cai, Michael Terry, Quoc V.
+Le, and Charles Sutton.
+Program synthesis with large language models.
+CoRR , abs/2108.07732, 2021.
+doi: 10.48550/ARXIV.2108.07732 .
+URL https://doi.org/10.48550/arXiv.2108.07732 .
+Bengio et al. (2015)
+Samy Bengio, Oriol Vinyals, Navdeep Jaitly, and Noam Shazeer.
+Scheduled sampling for sequence prediction with recurrent neural
+networks.
+In Corinna Cortes, Neil D. Lawrence, Daniel D. Lee, Masashi Sugiyama,
+and Roman Garnett (eds.), Advances in Neural Information Processing
+Systems 28: Annual Conference on Neural Information Processing Systems 2015,
+December 7-12, 2015, Montreal, Quebec, Canada , pp. 1171–1179, 2015.
+URL
+https://proceedings.neurips.cc/paper/2015/hash/e995f98d56967d946471af29d7bf99f1-Abstract.html .
+Bengio et al. (2013)
+Yoshua Bengio, Nicholas Léonard, and Aaron C. Courville.
+Estimating or propagating gradients through stochastic neurons for
+conditional computation.
+CoRR , abs/1308.3432, 2013.
+doi: 10.48550/ARXIV.1308.3432 .
+URL https://doi.org/10.48550/arXiv.1308.3432 .
+Chen et al. (2021)
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Pondé
+de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph,
+Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy
+Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder,
+Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens
+Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings, Matthias
+Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss,
+William Hebgen Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor
+Babuschkin, Suchir Balaji, Shantanu Jain, William Saunders, Christopher
+Hesse, Andrew N. Carr, Jan Leike, Joshua Achiam, Vedant Misra, Evan Morikawa,
+Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter
+Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and
+Wojciech Zaremba.
+Evaluating large language models trained on code.
+CoRR , abs/2107.03374, 2021.
+doi: 10.48550/ARXIV.2107.03374 .
+URL https://doi.org/10.48550/arXiv.2107.03374 .
+Chen et al. (2025)
+Mengzhao Chen, Wenqi Shao, Peng Xu, Jiahao Wang, Peng Gao, Kaipeng Zhang, and
+Ping Luo.
+EfficientQAT: Efficient quantization-aware training for large
+language models.
+In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher
+Pilehvar (eds.), Proceedings of the 63rd Annual Meeting of the
+Association for Computational Linguistics (Volume 1: Long Papers), ACL
+2025, Vienna, Austria, July 27 - August 1, 2025 , pp. 10081–10100.
+Association for Computational Linguistics, 2025.
+doi: 10.18653/V1/2025.ACL-LONG.498 .
+URL https://doi.org/10.18653/v1/2025.acl-long.498 .
+Cheng et al. (2024)
+Wenhua Cheng, Weiwei Zhang, Haihao Shen, Yiyang Cai, Xin He, Kaokao Lv, and
+Yi Liu.
+Optimize weight rounding via signed gradient descent for the
+quantization of LLMs.
+In Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen (eds.),
+Findings of the Association for Computational Linguistics: EMNLP
+2024, Miami, Florida, USA, November 12-16, 2024 , volume EMNLP 2024 of
+Findings of ACL , pp. 11332–11350. Association for Computational
+Linguistics, 2024.
+doi: 10.18653/V1/2024.FINDINGS-EMNLP.662 .
+URL https://doi.org/10.18653/v1/2024.findings-emnlp.662 .
+Cobbe et al. (2021)
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz
+Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano,
+Christopher Hesse, and John Schulman.
+Training verifiers to solve math word problems.
+CoRR , abs/2110.14168, 2021.
+doi: 10.48550/ARXIV.2110.14168 .
+URL https://doi.org/10.48550/arXiv.2110.14168 .
+Du et al. (2024)
+Dayou Du, Yijia Zhang, Shijie Cao, Jiaqi Guo, Ting Cao, Xiaowen Chu, and Ningyi
+Xu.
+BitDistiller: Unleashing the potential of sub-4-bit LLMs via
+self-distillation.
+In Lun-Wei Ku, Andre Martins, and Vivek Srikumar (eds.),
+Proceedings of the 62nd Annual Meeting of the Association for
+Computational Linguistics (Volume 1: Long Papers), ACL 2024, Bangkok,
+Thailand, August 11-16, 2024 , pp. 102–116. Association for Computational
+Linguistics, 2024.
+doi: 10.18653/V1/2024.ACL-LONG.7 .
+URL https://doi.org/10.18653/v1/2024.acl-long.7 .
+Esser et al. (2020)
+Steven K. Esser, Jeffrey L. McKinstry, Deepika Bablani, Rathinakumar Appuswamy,
+and Dharmendra S. Modha.
+Learned step size quantization.
+In 8th International Conference on Learning Representations,
+ICLR 2020, Addis Ababa, Ethiopia, April 26-30, 2020 . OpenReview.net, 2020.
+URL https://openreview.net/forum?id=rkgO66VKDS .
+Frantar et al. (2022)
+Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh.
+Gptq: Accurate post-training quantization for generative pre-trained
+transformers.
+arXiv preprint arXiv:2210.17323 , 2022.
+Gema et al. (2025)
+Aryo Pradipta Gema, Joshua Ong Jun Leang, Giwon Hong, Alessio Devoto, Alberto
+Carlo Maria Mancino, Rohit Saxena, Xuanli He, Yu Zhao, Xiaotang Du, Mohammad
+Reza Ghasemi Madani, Claire Barale, Robert McHardy, Joshua Harris, Jean
+Kaddour, Emile van Krieken, and Pasquale Minervini.
+Are we done with MMLU?
+In Luis Chiruzzo, Alan Ritter, and Lu Wang (eds.), Proceedings
+of the 2025 Conference of the Nations of the Americas Chapter of the
+Association for Computational Linguistics: Human Language Technologies,
+NAACL 2025 - Volume 1: Long Papers, Albuquerque, New Mexico, USA, April 29
+- May 4, 2025 , pp. 5069–5096. Association for Computational Linguistics,
+2025.
+doi: 10.18653/V1/2025.NAACL-LONG.262 .
+URL https://doi.org/10.18653/v1/2025.naacl-long.262 .
+Gu et al. (2026)
+Hao Gu, Hao Wang, Jiacheng Liu, Lujun Li, Qiyuan Zhu, Bei Liu, Binxing Xu, Lei
+Wang, Xintong Yang, Sida Lin, Sirui Han, and Yike Guo.
+QaRL: Rollout-aligned quantization-aware RL for fast and stable
+training under training-inference mismatch.
+In Maria Liakata, Viviane P. Moreira, Jiajun Zhang, and David Jurgens
+(eds.), Findings of the Association for Computational Linguistics,
+ACL 2026, San Diego, California, United States, July 2-7, 2026 , pp. 17051–17064. Association for Computational Linguistics, 2026.
+doi: 10.18653/V1/2026.FINDINGS-ACL.841 .
+URL https://doi.org/10.18653/v1/2026.findings-acl.841 .
+Hendrycks et al. (2021)
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric
+Tang, Dawn Song, and Jacob Steinhardt.
+Measuring mathematical problem solving with the MATH dataset.
+In Joaquin Vanschoren and Sai-Kit Yeung (eds.), Proceedings
+of the Neural Information Processing Systems Track on Datasets and Benchmarks
+1, NeurIPS Datasets and Benchmarks 2021, December 2021, virtual , 2021.
+URL
+https://datasets-benchmarks-proceedings.neurips.cc/paper/2021/hash/be83ab3ecd0db773eb2dc1b0a17836a1-Abstract-round2.html .
+Hinton et al. (2015)
+Geoffrey E. Hinton, Oriol Vinyals, and Jeffrey Dean.
+Distilling the knowledge in a neural network.
+CoRR , abs/1503.02531, 2015.
+doi: 10.48550/ARXIV.1503.02531 .
+URL https://doi.org/10.48550/arXiv.1503.02531 .
+Huang et al. (2026)
+Wei Huang, Yi Ge, Shuai Yang, Yicheng Xiao, Huizi Mao, Yujun Lin, Hanrong Ye,
+Sifei Liu, Ka Chun Cheung, Hongxu Yin, Yao Lu, Xiaojuan Qi, Song Han, and
+Yukang Chen.
+QeRL: Beyond efficiency - quantization-enhanced reinforcement
+learning for LLMs.
+In Carl Vondrick, Bharath Hariharan, Colin Raffel, Lerrel Pinto, Diyi
+Yang, and Aleksandra Faust (eds.), The Fourteenth International
+Conference on Learning Representations, ICLR 2026, Rio de Janeiro, Brazil,
+April 23-27, 2026 . proceedings.iclr.cc, 2026.
+URL
+https://proceedings.iclr.cc/paper_files/paper/2026/hash/a15a2ece7f0663d1ba7db91103ac61c9-Abstract-Conference.html .
+Jain et al. (2025)
+Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia Yan, Tianjun Zhang, Sida
+Wang, Armando Solar-Lezama, Koushik Sen, and Ion Stoica.
+LiveCodeBench: Holistic and contamination free evaluation of large
+language models for code.
+In The Thirteenth International Conference on Learning
+Representations, ICLR 2025, Singapore, April 24-28, 2025 . OpenReview.net,
+2025.
+URL https://openreview.net/forum?id=chfJJYC3iL .
+Jin et al. (2026)
+Woogyeol Jin, Taywon Min, Yongjin Yang, Dennis Wei, Yi Zhou, Swanand Ravindra
+Kadhe, Nathalie Baracaldo, and Kimin Lee.
+Entropy-aware on-policy distillation of language models.
+In Tong Zhang, Miroslav Dudik, Martin Jaggi, Alekh Agarwal, Sharon
+Li, Dale Schuurmans, Jerry Zhu, Felix Berkenkamp, Hanze Dong, and Alberto
+Bietti (eds.), Proceedings of the 43rd International Conference on
+Machine Learning , volume 306 of Proceedings of Machine Learning
+Research , pp. 53926–53943. PMLR, 06–11 Jul 2026.
+URL https://proceedings.mlr.press/v306/jin26e.html .
+Jung et al. (2025)
+Seongryong Jung, Suwan Yoon, DongGeon Kim, and Hwanhee Lee.
+ToDi: Token-wise distillation via fine-grained divergence control.
+In Christos Christodoulopoulos, Tanmoy Chakraborty, Carolyn Rose, and
+Violet Peng (eds.), Proceedings of the 2025 Conference on Empirical
+Methods in Natural Language Processing, EMNLP 2025, Suzhou, China, November
+4-9, 2025 , pp. 8078–8091. Association for Computational Linguistics,
+2025.
+doi: 10.18653/V1/2025.EMNLP-MAIN.409 .
+URL https://doi.org/10.18653/v1/2025.emnlp-main.409 .
+Kwon et al. (2023)
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu,
+Joseph Gonzalez, Hao Zhang, and Ion Stoica.
+Efficient memory management for large language model serving with
+PagedAttention.
+In Jason Flinn, Margo I. Seltzer, Peter Druschel, Antoine Kaufmann,
+and Jonathan Mace (eds.), Proceedings of the 29th Symposium on
+Operating Systems Principles, SOSP 2023, Koblenz, Germany, October 23-26,
+2023 , pp. 611–626. ACM, 2023.
+doi: 10.1145/3600006.3613165 .
+URL https://doi.org/10.1145/3600006.3613165 .
+Lambert et al. (2025)
+Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish
+Ivison, Faeze Brahman, Lester James Validad Miranda, Alisa Liu, Nouha Dziri,
+Xinxi Lyu, Yuling Gu, Saumya Malik, Victoria Graf, Jena D. Hwang, Jiangjiang
+Yang, Ronan Le Bras, Oyvind Tafjord, Christopher Wilhelm, Luca Soldaini,
+Noah A. Smith, Yizhong Wang, Pradeep Dasigi, and Hannaneh Hajishirzi.
+Tulu 3: Pushing frontiers in open language model post-training.
+In Second Conference on Language Modeling , 2025.
+URL https://openreview.net/forum?id=i1uGbfHHpH .
+Lightman et al. (2024)
+Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker,
+Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe.
+Let’s verify step by step.
+In The Twelfth International Conference on Learning
+Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 .
+OpenReview.net, 2024.
+URL https://openreview.net/forum?id=v8L0pN6EOi .
+Lin et al. (2020)
+Alexander Lin, Jeremy Wohlwend, Howard Chen, and Tao Lei.
+Autoregressive knowledge distillation through imitation learning.
+In Bonnie Webber, Trevor Cohn, Yulan He, and Yang Liu (eds.),
+Proceedings of the 2020 Conference on Empirical Methods in Natural
+Language Processing, EMNLP 2020, Online, November 16-20, 2020 , pp. 6121–6133. Association for Computational Linguistics, 2020.
+doi: 10.18653/V1/2020.EMNLP-MAIN.494 .
+URL https://doi.org/10.18653/v1/2020.emnlp-main.494 .
+Liu et al. (2023)
+Jiawei Liu, Chunqiu Steven Xia, Yuyao Wang, and Lingming Zhang.
+Is your code generated by ChatGPT really correct? rigorous
+evaluation of large language models for code generation.
+In Alice Oh, Tristan Naumann, Amir Globerson, Kate Saenko, Moritz
+Hardt, and Sergey Levine (eds.), Advances in Neural Information
+Processing Systems 36: Annual Conference on Neural Information Processing
+Systems 2023, NeurIPS 2023, New Orleans, LA, USA, December 10 - 16, 2023 ,
+2023.
+URL
+http://papers.nips.cc/paper_files/paper/2023/hash/43e9d647ccd3e4b7b5baab53f0368686-Abstract-Conference.html .
+Liu et al. (2025)
+Ruikang Liu, Yuxuan Sun, Manyi Zhang, Haoli Bai, Xianzhi Yu, Tiezheng YU, Chun
+Yuan, and Lu Hou.
+Quantization hurts reasoning? an empirical study on quantized
+reasoning models.
+In Second Conference on Language Modeling , 2025.
+URL https://openreview.net/forum?id=BM192Ps5Nv .
+Liu et al. (2024)
+Zechun Liu, Barlas Oguz, Changsheng Zhao, Ernie Chang, Pierre Stock, Yashar
+Mehdad, Yangyang Shi, Raghuraman Krishnamoorthi, and Vikas Chandra.
+LLM-QAT: data-free quantization aware training for large language
+models.
+In Lun-Wei Ku, Andre Martins, and Vivek Srikumar (eds.),
+Findings of the Association for Computational Linguistics, ACL 2024,
+Bangkok, Thailand and virtual meeting, August 11-16, 2024 , volume ACL 2024
+of Findings of ACL , pp. 467–484. Association for Computational
+Linguistics, 2024.
+doi: 10.18653/V1/2024.FINDINGS-ACL.26 .
+URL https://doi.org/10.18653/v1/2024.findings-acl.26 .
+Liu et al. (2026)
+Zechun Liu, Changsheng Zhao, Hanxian Huang, Sijia Chen, Jing Zhang, Jiawei
+Zhao, Scott Roy, Lisa Jin, Yunyang Xiong, Yangyang Shi, et al.
+Paretoq: Improving scaling laws in extremely low-bit llm
+quantization.
+Advances in Neural Information Processing Systems ,
+38:91311–91336, 2026.
+Loshchilov & Hutter (2019)
+Ilya Loshchilov and Frank Hutter.
+Decoupled weight decay regularization.
+In 7th International Conference on Learning Representations,
+ICLR 2019, New Orleans, LA, USA, May 6-9, 2019 . OpenReview.net, 2019.
+URL https://openreview.net/forum?id=Bkg6RiCqY7 .
+Lotfi et al. (2026)
+Sanae Lotfi, Polina Kirichenko, Steven Li, and Zechun Liu.
+Quantized reasoning models think they need to think longer, but they
+do not.
+CoRR , abs/2606.00206, 2026.
+doi: 10.48550/ARXIV.2606.00206 .
+URL https://doi.org/10.48550/arXiv.2606.00206 .
+Lu & Thinking Machines Lab (2025)
+Kevin Lu and Thinking Machines Lab.
+On-policy distillation.
+Thinking Machines Lab: Connectionism , 2025.
+doi: 10.64434/tml.20251026 .
+URL https://thinkingmachines.ai/blog/on-policy-distillation .
+Luo et al. (2025)
+Michael Luo, Sijun Tan, Justin Wong, Xiaoxiang Shi, William Y. Tang, Manan
+Roongta, Colin Cai, Jeffrey Luo, Li Erran Li, Raluca Ada Popa, and Ion
+Stoica.
+DeepScaleR: Surpassing O1-Preview with a 1.5B model by scaling
+RL, 2025.
+URL
+https://pretty-radio-b75.notion.site/DeepScaleR-Surpassing-O1-Preview-with-a-1-5B-Model-by-Scaling-RL-19681902c1468005bed8ca303013a4e2 .
+Notion Blog.
+Lv et al. (2026)
+Keyu Lv, Manyi Zhang, Xiaobo Xia, Jingchen Ni, Shannan Yan, Xianzhi Yu, Lu Hou,
+Chun Yuan, and Haoli Bai.
+What makes low-bit quantization-aware training work for reasoning
+LLMs? A systematic study.
+CoRR , abs/2601.14888, 2026.
+doi: 10.48550/ARXIV.2601.14888 .
+URL https://doi.org/10.48550/arXiv.2601.14888 .
+ModelScope Team (2024)
+ModelScope Team.
+EvalScope: Evaluation framework for large models, 2024.
+URL https://github.com/modelscope/evalscope .
+Moshkov et al. (2025)
+Ivan Moshkov, Darragh Hanley, Ivan Sorokin, Shubham Toshniwal, Christof Henkel,
+Benedikt Schifferer, Wei Du, and Igor Gitman.
+AIMO-2 winning solution: Building state-of-the-art mathematical
+reasoning models with openmathreasoning dataset.
+CoRR , abs/2504.16891, 2025.
+doi: 10.48550/ARXIV.2504.16891 .
+URL https://doi.org/10.48550/arXiv.2504.16891 .
+NVIDIA (2025a)
+NVIDIA.
+Nemotron-Instruction-Following-Chat-v1.
+Hugging Face dataset, 2025a.
+URL
+https://huggingface.co/datasets/nvidia/Nemotron-Instruction-Following-Chat-v1 .
+NVIDIA (2025b)
+NVIDIA.
+OpenScienceReasoning-2.
+Hugging Face dataset, 2025b.
+URL
+https://huggingface.co/datasets/nvidia/OpenScienceReasoning-2 .
+Okoshi et al. (2026)
+Yasuyuki Okoshi, Hikari Otsuka, Daichi Fujiki, and Masato Motomura.
+Towards quantization-aware training for ultra-low-bit reasoning
+LLMs.
+In Carl Vondrick, Bharath Hariharan, Colin Raffel, Lerrel Pinto, Diyi
+Yang, and Aleksandra Faust (eds.), The Fourteenth International
+Conference on Learning Representations, ICLR 2026, Rio de Janeiro, Brazil,
+April 23-27, 2026 . proceedings.iclr.cc, 2026.
+URL
+https://proceedings.iclr.cc/paper_files/paper/2026/hash/209423f076b6479ab3a4f45886e30306-Abstract-Conference.html .
+Pyatkin et al. (2025)
+Valentina Pyatkin, Saumya Malik, Victoria Graf, Hamish Ivison, Shengyi Huang,
+Pradeep Dasigi, Nathan Lambert, and Hanna Hajishirzi.
+Generalizing verifiable instruction following.
+In Danielle Belgrave, Cheng Zhang, Laura N. Montoya, Hsuan-Tien
+Lin, Razvan Pascanu, Piotr Koniusz, Marzyeh Ghassemi, Nancy Chen, Iván
+Vladimir Meza Ruíz, and Arturo Loaiza-Bonilla (eds.), Advances
+in Neural Information Processing Systems 38: Annual Conference on Neural
+Information Processing Systems 2025, NeurIPS 2025, San Diego, CA, USA,
+December 2-7, 2025 / Mexico City, Mexico, November 30 - December 5, 2025 ,
+2025.
+URL
+http://papers.nips.cc/paper_files/paper/2025/hash/46499a0622ecf568b72d17b61e45dbd5-Abstract-Datasets_and_Benchmarks_Track.html .
+Ranzato et al. (2016)
+Marc’Aurelio Ranzato, Sumit Chopra, Michael Auli, and Wojciech Zaremba.
+Sequence level training with recurrent neural networks.
+In Yoshua Bengio and Yann LeCun (eds.), 4th International
+Conference on Learning Representations, ICLR 2016, San Juan, Puerto Rico,
+May 2-4, 2016, Conference Track Proceedings , 2016.
+doi: 10.48550/ARXIV.1511.06732 .
+URL https://doi.org/10.48550/arXiv.1511.06732 .
+Rein et al. (2024)
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe
+Pang, Julien Dirani, Julian Michael, and Samuel R. Bowman.
+GPQA: A graduate-level google-proof q&a benchmark.
+In First Conference on Language Modeling , 2024.
+URL https://openreview.net/forum?id=Ti67584b98 .
+Ross et al. (2011)
+Stéphane Ross, Geoffrey J. Gordon, and Drew Bagnell.
+A reduction of imitation learning and structured prediction to
+no-regret online learning.
+In Geoffrey J. Gordon, David B. Dunson, and Miroslav Dudík
+(eds.), Proceedings of the Fourteenth International Conference on
+Artificial Intelligence and Statistics, AISTATS 2011, Fort Lauderdale, USA,
+April 11-13, 2011 , volume 15 of JMLR Proceedings , pp. 627–635.
+JMLR.org, 2011.
+URL http://proceedings.mlr.press/v15/ross11a/ross11a.pdf .
+Shao et al. (2024)
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei
+Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al.
+Deepseekmath: Pushing the limits of mathematical reasoning in open
+language models.
+arXiv preprint arXiv:2402.03300 , 2024.
+URL https://arxiv.org/abs/2402.03300 .
+Sheng et al. (2025)
+Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang,
+Yanghua Peng, Haibin Lin, and Chuan Wu.
+HybridFlow: A flexible and efficient RLHF framework.
+In Proceedings of the Twentieth European Conference on Computer
+Systems, EuroSys 2025, Rotterdam, The Netherlands, 30 March 2025 - 3 April
+2025 , pp. 1279–1297. ACM, 2025.
+doi: 10.1145/3689031.3696075 .
+URL https://doi.org/10.1145/3689031.3696075 .
+Team Olmo et al. (2025)
+Team Olmo, Allyson Ettinger, Amanda Bertsch, Bailey Kuehl, David Graham,
+David Heineman, Dirk Groeneveld, Faeze Brahman, Finbarr Timbers, Hamish
+Ivison, et al.
+Olmo 3.
+arXiv preprint arXiv:2512.13961 , 2025.
+URL https://arxiv.org/abs/2512.13961 .
+Wu et al. (2025)
+Taiqiang Wu, Chaofan Tao, Jiahao Wang, Runming Yang, Zhe Zhao, and Ngai Wong.
+Rethinking Kullback-Leibler divergence in knowledge distillation
+for large language models.
+In Owen Rambow, Leo Wanner, Marianna Apidianaki, Hend Al-Khalifa,
+Barbara Di Eugenio, and Steven Schockaert (eds.), Proceedings of the
+31st International Conference on Computational Linguistics, COLING 2025,
+Abu Dhabi, UAE, January 19-24, 2025 , pp. 5737–5755. Association for
+Computational Linguistics, 2025.
+URL https://aclanthology.org/2025.coling-main.383/ .
+Xu et al. (2025)
+Hongling Xu, Qi Zhu, Heyuan Deng, Jinpeng Li, Lu Hou, Yasheng Wang, Lifeng
+Shang, Ruifeng Xu, and Fei Mi.
+KDRL: post-training reasoning LLMs via unified knowledge
+distillation and reinforcement learning.
+CoRR , abs/2506.02208, 2025.
+doi: 10.48550/ARXIV.2506.02208 .
+URL https://doi.org/10.48550/arXiv.2506.02208 .
+Yang et al. (2025)
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen
+Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388 , 2025.
+URL https://arxiv.org/abs/2505.09388 .
+Zhang & Math-AI (2024)
+Yifan Zhang and Team Math-AI.
+American invitational mathematics examination (AIME) 2024.
+Hugging Face dataset, 2024.
+URL https://huggingface.co/datasets/math-ai/aime24 .
+Zhang & Math-AI (2025)
+Yifan Zhang and Team Math-AI.
+American invitational mathematics examination (AIME) 2025.
+Hugging Face dataset, 2025.
+URL https://huggingface.co/datasets/math-ai/aime25 .
+Zhang & Math-AI (2026)
+Yifan Zhang and Team Math-AI.
+American invitational mathematics examination (AIME) 2026.
+Hugging Face dataset, 2026.
+URL https://huggingface.co/datasets/math-ai/aime26 .
+Zhou et al. (2023)
+Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha Brahma, Sujoy Basu,
+Yi Luan, Denny Zhou, and Le Hou.
+Instruction-following evaluation for large language models.
+CoRR , abs/2311.07911, 2023.
+doi: 10.48550/ARXIV.2311.07911 .
+URL https://doi.org/10.48550/arXiv.2311.07911 .
+Appendix A Experimental Details
+A.1 Data
+Table 5 lists the calibration, OPD, and QAT baseline data, drawn from OpenMathReasoning ( Moshkov et al., 2025 ) , OpenCodeReasoning-2 ( Ahmad et al., 2025 ) , OpenScienceReasoning-2 ( NVIDIA, 2025b ) , Dolci-Think ( Team Olmo et al., 2025 ) , Tülu 3 ( Lambert et al., 2025 ) , IF-multi-constraints ( Pyatkin et al., 2025 ) , and Nemotron-Instruction-Following-Chat ( NVIDIA, 2025a ) .
+Table 5: Training data: calibration windows (2,048 tokens), OPD prompts, and question–response pairs shared by the three QAT baselines.
+Source
+Calib.
+OPD
+Baselines
+OpenMathReasoning
+1,229
+7,680
+9,831
+OpenCodeReasoning-2
+1,229
+7,680
+9,831
+OpenScienceReasoning-2
+614
+3,840
+4,915
+Dolci-Think
+1,024
+–
+6,553
+Tülu 3
+–
+5,120
+–
+IF-multi-constraints
+–
+1,280
+–
+Nemotron-IF-Chat
+–
+–
+1,638
+Total
+4,096
+25,600
+32,768
+A.2 Training Details
+We quantize all linear layers in the transformer blocks, with a straight-through estimator for rounding ( Bengio et al., 2013 ) . Calibration uses batch size 2 and initializes quantization ranges at 0.7 times each group’s minimum and maximum weights. Learning rates start at 2 × 10 − 5 2\times 10^{-5} (2-bit) or 10 − 5 10^{-5} (3-bit) for latent weights and 10 − 4 10^{-4} for scales and zero points, with cosine decay to 5% of their initial values.
+OPD uses verl ( Sheng et al., 2025 ) on NVIDIA H100 and H200 GPUs, with the full-precision teacher served by vLLM ( Kwon et al., 2023 ) . Each step samples one response for each of 128 prompts at temperature 1.0, without top- p p or top- k k truncation, and applies a single update. AdamW uses no warmup, weight decay 0.01, and gradient-norm clipping at 1.0.
+A.3 Dynamic KL Implementation
+At a prefix h h , let 𝒰 ⁡ ( h ) \mathcal{U}(h) be the union of the teacher’s and the student’s top-20 tokens, and 𝒮 ⁡ ( h ) = 𝒰 ⁡ ( h ) ∪ { ⊥ } \mathcal{S}(h)=\mathcal{U}(h)\cup\{\bot\} , where the residual category ⊥ \bot carries the remaining mass p ⊥ = 1 − ∑ v ∈ 𝒰 ⁡ ( h ) p v p_{\bot}=1-\sum_{v\in\mathcal{U}(h)}p_{v} and q ⊥ = 1 − ∑ v ∈ 𝒰 ⁡ ( h ) q v q_{\bot}=1-\sum_{v\in\mathcal{U}(h)}q_{v} . The teacher returns its probability for every token in 𝒰 ⁡ ( h ) \mathcal{U}(h) . We smooth the teacher categories as p ¯ c = ( p c + ϵ ) / ( 1 + | 𝒮 ⁡ ( h ) | ​ ϵ ) \bar{p}_{c}=(p_{c}+\epsilon)/(1+|\mathcal{S}(h)|\epsilon) with ϵ = 10 − 8 \epsilon=10^{-8} , leave the student categories unsmoothed, and evaluate Equation 3 and its mixing weights over 𝒮 ⁡ ( h ) \mathcal{S}(h) , which gives D ~ dyn , θ ​ ( h ) \widetilde{D}_{\mathrm{dyn},\theta}(h) . All student categories, including q ⊥ q_{\bot} , keep their gradients.
+A.4 Motivation Diagnostics
+•
+Figure 1 .a–b . Seed-42 MATH-500 responses of Qwen3-1.7B W2 (32,768-token cap), grouped by the length of the full-precision response.
+•
+Figure 1 .c and Figure 3 .a–b . We compare teacher and student probabilities at 16,384 evenly spaced prefixes of 128 calibrated-student responses (temperature 1, 2,048-token cap).
+•
+Under- and overpredicted. A candidate is underpredicted when q v < p v q_{v}<p_{v} and overpredicted when q v > p v q_{v}>p_{v} . We count it only if the two probabilities differ by at least 0.05 and by a factor of at least 2; the residual category is excluded.
+•
+Figure 1 .c . For each student-entropy bin, the share of prefixes with an underpredicted candidate, an overpredicted candidate, or both. Bands are 95% bootstrap intervals over prompts.
+•
+Figure 3 .a . The eight candidates most probable under the teacher or the student at one prefix.
+•
+Figure 3 .b . For each objective, we check whether one small gradient step on the student logits raises the probability of an underpredicted candidate or lowers that of an overpredicted one. We use prefixes with entropy of at least 0.5 nats. Among the 1,913 underpredicted candidates off by a factor of at least 20, FKL does so for 99.7%, RKL for 70.9%, and Dynamic KL for 95.1%. Among the 1,828 overpredicted ones, FKL does so for 75.1%, RKL for 86.3%, and Dynamic KL for 84.7%.
+•
+Figure 3 .c . Responses to 128 training prompts (16,384-token cap) from the checkpoints at initialization and steps 50, 100, and 200. A token is repeated if it lies in the third or later non-overlapping occurrence of an identical 32-token span.
+A.5 Baseline Configurations
+Table 6 summarizes the optimization settings.
+•
+Training. The three QAT baselines use the 32,768 single-turn question–response pairs in Table 5 , with sequences cut at 8,192 tokens.
+•
+EfficientQAT. Starts from the same calibrated checkpoint as OnQ and follows its end-to-end stage settings.
+•
+ReasoningQAT. Starts from the same calibrated checkpoint and follows its released implementation.
+•
+BitDistiller. Follows its original settings, with its own clipping initialization and CAKLD objective.
+Table 6: Baseline configurations for Table 1 . Batch size counts sequences per optimizer step. All methods use group size 128 and 2- or 3-bit weights.
+Method
+Setting
+Steps
+Batch
+Learning rate
+EfficientQAT
+W2 / W3
+1,024
+32
+× 10 − 5 2\!\times\!10^{-5} / 10 − 5 10^{-5}
+BitDistiller
+W2 / W3
+768 / 256
+128
+× 10 − 6 8\!\times\!10^{-6}
+ReasoningQAT
+1.7B W2
+1,536
+64
+× 10 − 6 5\!\times\!10^{-6}
+4B/8B W2
+512
+64
+10 − 4 10^{-4}
+All W3
+512
+64
+10 − 6 10^{-6}
+PTQ calibration: 4,096 sequences of 2,048 tokens, seed 42.
+GPTQ
+Asymmetric; block size 128; damping 0.01; activation ordering disabled.
+AutoRound
+Symmetric; 200 iterations per block; batch size 8; rounding and min/max learning rates 0.005.
+A.6 Evaluation
+Decoding uses temperature 0.6, top- p p 1.0, and top- k k 20, with one response per question. We use EvalScope 1.5.1, with EvalPlus 0.3.1 for the full HumanEval+ and MBPP+ tests, and report prompt-level strict accuracy for IFEval. AIME 24–26 comprises the 90 AIME I and II problems from 2024 to 2026, and LiveCodeBench uses the release-v6 set of 1,055 problems ( Jain et al., 2025 ) .
+A.7 Ablation Settings
+•
+On-policy versus fixed-response ( Table 3 ). All runs use the same number of response tokens in the loss; fixed-response sequences are cut at 8,192 tokens as for the QAT baselines.
+•
+On-policy objectives ( Table 4 ). All runs train on DeepScaleR mathematics problems because RLVR requires verifiable answers. They start from a shared cold-start checkpoint and train for 400 steps.
+Appendix B Response Classification
+Figure 5 uses seed-42 responses, with correctness determined by the benchmark scorers. Claude Sonnet 5.5 ( Anthropic, 2026 ) with high reasoning effort labels each incorrect response in two independent passes, with model identities withheld; Figure 6 gives the definition of a repetitive error. The passes agree on 93.6% of the MATH-500 responses (Cohen’s κ = 0.87 \kappa=0.87 ) and on 95.9% of the AIME responses ( κ = 0.88 \kappa=0.88 ). Disagreements and doubtful cases go to author review: the authors read them in full and set the final labels.
+Definition
+A response is looping if it contains a stretch where the text itself is stuck: one unit (a sentence, a line, a paragraph, a formula step, or a single token or digit) is emitted again and again, verbatim or with only trivial changes (a counter, a number, one or two words). To count, the stuck stretch must have at least about 8 consecutive repetitions of the unit, or run for at least about 1,000 characters. It may sit anywhere in the response; most often the response is still stuck when it ends.
+Not looping:
+- The same derivation or conclusion redone several times in different words (re-checking, second-guessing, restarting). Rewording is not a stuck text, however unproductive.
+- A finite, purposeful enumeration: a table or case list that covers distinct cases and then stops (for example values for i = 2..20 followed by an answer). A list that just counts upward without end, or keeps testing values long after the answer is settled, is looping.
+- Ordinary structural repetition: recurring formula scaffolding, headings, a final answer section that restates the solution once.
+- A conclusion restated a handful of times ("the answer is 15") inside otherwise moving text.
+Figure 6: Labeling instructions for identifying repetitive errors (excerpt). “Looping” in the instructions denotes the repetitive-error category of this paper.
+Appendix C Truncation Rates of the Main Results
+Table 7 reports the percentage of responses terminated by the output-token limit for the QAT methods in Table 1 ; lower is better, and Avg. is the unweighted mean across the nine benchmarks. OnQ has the lowest average truncation rate in all six model/bit settings.
+Table 7: Truncation rates (%) for Table 1 . QAT baselines and OnQ, averaged over evaluation seeds 42, 43, and 44. Bold marks the lowest rate per model/bit group.
+Method
+W/A
+GSM8K
+MATH-
+500
+AIME
+24–26
+Human
+Eval+
+MBPP+
+LiveCode
+Bench
+MMLU-
+Redux
+GPQA-
+Diamond
+IFEval
+Avg.
+Qwen3-1.7B
+EfficientQAT
+3/16
+8.82
+11.80
+57.78
+6.10
+9.26
+19.12
+5.02
+54.21
+30.44
+22.50
+BitDistiller
+3/16
+0.25
+7.07
+21.48
+1.42
+3.35
+15.45
+0.51
+6.40
+8.81
+7.19
+ReasoningQAT
+3/16
+0.03
+2.00
+13.33
+0.61
+1.59
+3.38
+0.12
+0.67
+5.73
+3.05
+OnQ
+3/16
+0.00
+0.87
+5.56
+0.41
+1.41
+1.23
+0.05
+0.34
+5.85
+1.75
+EfficientQAT
+2/16
+16.40
+32.53
+81.85
+25.41
+23.90
+60.47
+8.13
+54.88
+48.49
+39.12
+BitDistiller
+2/16
+13.42
+39.87
+73.70
+51.02
+43.39
+75.10
+26.04
+64.81
+29.21
+46.28
+ReasoningQAT
+2/16
+0.30
+8.33
+28.52
+4.67
+4.41
+24.83
+0.38
+4.55
+9.24
+9.47
+OnQ
+2/16
+0.03
+2.20
+14.81
+1.42
+1.85
+4.52
+0.12
+2.02
+7.76
+3.86
+Qwen3-4B
+EfficientQAT
+3/16
+0.10
+1.53
+13.33
+2.44
+3.53
+9.57
+4.65
+50.17
+14.36
+11.08
+BitDistiller
+3/16
+0.15
+3.33
+22.22
+1.42
+2.20
+10.43
+0.21
+1.35
+4.25
+5.06
+ReasoningQAT
+3/16
+0.00
+0.87
+12.96
+1.02
+1.59
+4.52
+0.12
+0.34
+2.46
+2.65
+OnQ
+3/16
+0.00
+0.33
+8.52
+1.02
+0.79
+2.31
+0.06
+0.34
+1.91
+1.70
+EfficientQAT
+2/16
+0.28
+3.13
+17.41
+15.04
+12.43
+35.04
+1.92
+27.27
+25.26
+15.31
+BitDistiller
+2/16
+1.90
+18.67
+70.37
+12.80
+20.02
+59.97
+3.05
+22.56
+15.65
+25.00
+ReasoningQAT
+2/16
+0.35
+8.93
+43.70
+8.54
+13.58
+39.81
+0.81
+7.58
+6.35
+14.41
+OnQ
+2/16
+0.00
+2.93
+27.04
+1.22
+2.03
+8.82
+0.11
+1.01
+6.41
+5.51
+Qwen3-8B
+EfficientQAT
+3/16
+8.47
+1.47
+11.85
+23.58
+2.91
+14.09
+6.67
+61.28
+12.75
+15.90
+BitDistiller
+3/16
+0.00
+1.53
+20.00
+1.42
+1.76
+5.21
+0.06
+0.51
+3.76
+3.81
+ReasoningQAT
+3/16
+0.00
+1.00
+11.85
+0.81
+0.71
+3.76
+0.06
+0.34
+3.76
+2.48
+OnQ
+3/16
+0.03
+0.67
+12.59
+1.02
+0.62
+2.59
+0.03
+0.34
+3.02
+2.32
+EfficientQAT
+2/16
+9.45
+13.00
+75.56
+5.69
+7.67
+32.35
+9.19
+65.32
+20.89
+26.57
+BitDistiller
+2/16
+0.61
+13.00
+63.70
+4.88
+6.53
+37.50
+1.95
+10.61
+9.80
+16.51
+ReasoningQAT
+2/16
+0.20
+7.07
+43.33
+4.67
+8.11
+27.20
+0.77
+5.89
+6.78
+11.56
+OnQ
+2/16
+0.00
+2.33
+23.33
+0.81
+1.23
+5.97
+0.03
+0.34
+5.42
+4.39
+Appendix D Truncation Rates across Recovery Stages
+Table 8 tracks truncation rates across the recovery stages in Table 2 . Calibration lowers average truncation at every model size and bit width, and on-policy distillation further reduces it in all six settings.
+Table 8: Truncation rates (%) for Table 2 ; bold marks the lowest rate per model/bit group.
+Method
+W/A
+GSM8K
+MATH-
+500
+AIME
+24–26
+Human
+Eval+
+MBPP+
+LiveCode
+Bench
+MMLU-
+Redux
+GPQA-
+Diamond
+IFEval
+Avg.
+Qwen3-1.7B
+RTN
+3/16
+94.16
+94.00
+97.78
+98.78
+97.09
+93.55
+99.46
+100.00
+86.88
+95.74
++ + Calibration
+3/16
+0.08
+2.60
+16.67
+0.61
+1.06
+8.34
+0.12
+0.51
+7.21
+4.13
+OnQ
+3/16
+0.00
+0.87
+5.56
+0.41
+1.41
+1.23
+0.05
+0.34
+5.85
+1.75
+RTN
+2/16
+99.85
+100.00
+100.00
+100.00
+100.00
+99.91
+100.00
+100.00
+100.00
+99.97
++ + Calibration
+2/16
+0.68
+20.80
+52.22
+17.68
+25.66
+58.96
+3.67
+22.73
+36.04
+26.49
+OnQ
+2/16
+0.03
+2.20
+14.81
+1.42
+1.85
+4.52
+0.12
+2.02
+7.76
+3.86
+Qwen3-4B
+RTN
+3/16
+1.21
+21.60
+61.11
+39.63
+32.80
+69.00
+6.54
+21.21
+11.09
+29.36
++ + Calibration
+3/16
+0.08
+1.20
+21.11
+1.22
+1.59
+6.92
+0.19
+0.51
+3.14
+3.99
+OnQ
+3/16
+0.00
+0.33
+8.52
+1.02
+0.79
+2.31
+0.06
+0.34
+1.91
+1.70
+RTN
+2/16
+99.77
+99.80
+100.00
+100.00
+100.00
+100.00
+99.96
+100.00
+100.00
+99.95
++ + Calibration
+2/16
+0.61
+22.20
+77.78
+12.80
+12.43
+53.84
+1.72
+16.16
+11.09
+23.18
+OnQ
+2/16
+0.00
+2.93
+27.04
+1.22
+2.03
+8.82
+0.11
+1.01
+6.41
+5.51
+Qwen3-8B
+RTN
+3/16
+55.12
+80.80
+94.44
+64.02
+41.27
+78.29
+50.56
+82.83
+65.43
+68.09
++ + Calibration
+3/16
+0.08
+1.80
+18.89
+1.22
+1.85
+8.34
+0.05
+0.00
+4.07
+4.03
+OnQ
+3/16
+0.03
+0.67
+12.59
+1.02
+0.62
+2.59
+0.03
+0.34
+3.02
+2.32
+RTN
+2/16
+98.18
+98.80
+98.89
+98.17
+99.21
+99.72
+97.93
+98.48
+99.45
+98.76
++ + Calibration
+2/16
+1.06
+24.40
+70.00
+9.15
+11.64
+54.79
+4.67
+18.69
+20.33
+23.86
+OnQ
+2/16
+0.00
+2.33
+23.33
+0.81
+1.23
+5.97
+0.03
+0.34
+5.42
+4.39
+Appendix E Variation across Evaluation Seeds
+Table 9 reports sample standard deviations across the three evaluation seeds for each QAT and OnQ result in Table 1 , using the divisor n − 1 n-1 with n = 3 n=3 . For Avg., we first average the nine benchmark scores within each seed, then compute the SD across seeds.
+Table 9: Sample standard deviations (percentage points) of QAT and OnQ scores in Table 1 over evaluation seeds 42, 43, and 44.
+Method
+W/A
+GSM8K
+MATH-
+500
+AIME
+24–26
+Human
+Eval+
+MBPP+
+LiveCode
+Bench
+MMLU-
+Redux
+GPQA-
+Diamond
+IFEval
+Avg.
+Qwen3-1.7B
+EfficientQAT
+3/16
+0.35
+1.00
+1.70
+2.82
+1.76
+0.61
+0.10
+4.08
+4.44
+0.97
+BitDistiller
+3/16
+0.34
+1.01
+2.31
+1.61
+0.95
+0.43
+0.59
+2.02
+1.61
+0.42
+ReasoningQAT
+3/16
+0.30
+0.20
+2.22
+1.86
+2.65
+0.25
+0.08
+2.67
+0.93
+0.19
+OnQ
+3/16
+0.65
+1.42
+2.31
+1.53
+0.55
+0.63
+0.26
+0.77
+0.21
+0.49
+EfficientQAT
+2/16
+1.59
+2.75
+0.64
+1.83
+0.85
+0.81
+0.49
+1.82
+3.49
+0.80
+BitDistiller
+2/16
+0.50
+3.48
+0.00
+2.54
+1.19
+0.36
+0.96
+2.31
+1.11
+0.56
+ReasoningQAT
+2/16
+0.43
+1.39
+0.64
+2.54
+1.85
+0.43
+0.20
+2.28
+0.49
+0.48
+OnQ
+2/16
+0.90
+0.31
+2.57
+3.47
+1.37
+0.43
+0.23
+1.54
+0.38
+0.47
+Qwen3-4B
+EfficientQAT
+3/16
+0.32
+1.17
+3.90
+3.05
+1.46
+0.72
+2.12
+4.91
+1.64
+0.86
+BitDistiller
+3/16
+0.49
+0.42
+2.22
+3.36
+1.50
+1.09
+0.36
+2.02
+0.95
+0.78
+ReasoningQAT
+3/16
+0.37
+1.14
+2.94
+2.79
+0.70
+0.20
+0.12
+1.82
+1.26
+0.43
+OnQ
+3/16
+0.27
+0.53
+1.70
+2.14
+0.55
+0.28
+0.49
+4.80
+1.05
+1.10
+EfficientQAT
+2/16
+0.77
+0.95
+2.31
+2.14
+1.21
+1.22
+0.25
+5.92
+3.27
+1.39
+BitDistiller
+2/16
+0.81
+0.53
+2.80
+1.22
+1.22
+1.19
+0.67
+2.53
+1.19
+0.88
+ReasoningQAT
+2/16
+0.16
+1.22
+2.94
+2.75
+1.36
+0.25
+0.27
+0.77
+0.49
+0.62
+OnQ
+2/16
+0.54
+0.31
+2.31
+2.31
+1.50
+0.28
+0.09
+0.77
+0.83
+0.43
+Qwen3-8B
+EfficientQAT
+3/16
+2.47
+1.04
+1.70
+9.37
+1.25
+0.49
+1.38
+2.49
+3.55
+2.17
+BitDistiller
+3/16
+0.08
+0.81
+1.70
+0.35
+0.40
+0.72
+0.16
+0.00
+0.49
+0.30
+ReasoningQAT
+3/16
+0.12
+0.31
+3.90
+1.27
+1.59
+1.88
+0.12
+2.54
+0.74
+0.67
+OnQ
+3/16
+0.27
+0.20
+2.80
+0.00
+1.00
+0.47
+0.22
+3.58
+0.95
+0.70
+EfficientQAT
+2/16
+1.61
+0.92
+5.59
+2.20
+1.99
+1.16
+1.61
+2.87
+3.37
+1.13
+BitDistiller
+2/16
+0.20
+1.40
+1.28
+1.06
+0.26
+0.47
+0.25
+1.82
+1.61
+0.42
+ReasoningQAT
+2/16
+0.45
+1.15
+2.57
+1.96
+3.23
+0.77
+0.66
+0.87
+1.12
+1.09
+OnQ
+2/16
+0.15
+0.00
+4.49
+1.06
+1.10
+0.38
+0.22
+2.31
+0.55
+0.42
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

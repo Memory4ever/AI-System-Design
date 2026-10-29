@@ -1,0 +1,666 @@
+Penalizing Length: Uncovering Systematic Bias in Quality Estimation Metrics
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries
+Definition of Length Bias.
+3 Experiments
+Task Definition.
+3.1 Experiment Setup
+Dataset.
+Quality Estimation Metrics.
+Hypotheses.
+3.2 Bias in Source Text Length
+Experiment Setup.
+Results.
+3.3 Bias in Error Type and Severity
+3.4 Bias in Translation Length
+Experiment Setup.
+Results.
+4 Analysis
+4.1 Distribution of MQM Scores in WMT Data
+4.2 Mitigation: Normalization at Training
+4.3 Mitigation: Reference-Based Metrics
+5 Related Work
+5.1 Length Effects in MT Evaluation Metrics
+5.2 Biases in Quality Estimation Models
+6 Conclusion
+7 Statements
+7.1 Ethics statement
+7.2 Reproducibility statement
+7.3 LLM Usage Disclosure
+References
+A Appendix
+A.1 Proportion of Scores with Decreasing Trends in Data Filtering
+A.2 Numerical Results for the RLHF and Reranking Experiments
+A.3 Error Type / Severity Perturbation Prompt
+A.4 LLM-as-a-Judge Prompt
+License: CC BY 4.0
+arXiv:2510.22028v1 [cs.CL] 24 Oct 2025
+Penalizing Length: Uncovering Systematic Bias in Quality Estimation Metrics
+Yilin Zhang
+††thanks: Work done during Google internship. Correspondence to jasonzh3@andrew.cmu.edu.
+Affiliation: Carnegie Mellon University
+Affiliation: Google
+Wenda Xu
+Affiliation: Google
+Zhongtao Liu
+Affiliation: Google
+Tetsuji Nakagawa
+Affiliation: Google
+Markus Freitag
+Affiliation: Google
+Abstract
+Quality Estimation (QE) metrics are vital in machine translation for reference-free evaluation and as a reward signal in tasks like reinforcement learning. However, the prevalence and impact of length bias in QE have been underexplored. Through a systematic study of top-performing regression-based and LLM-as-a-Judge QE metrics across 10 diverse language pairs, we reveal two critical length biases: First, QE metrics consistently over-predict errors with increasing translation length, even for high-quality, error-free texts. Second, they exhibit a preference for shorter translations when multiple candidates are available for the same source text. These inherent length biases risk unfairly penalizing longer, correct translations and can lead to sub-optimal decision-making in applications such as QE reranking and QE guided reinforcement learning. To mitigate this, we propose two strategies: (a) applying length normalization during model training, and (b) incorporating reference texts during evaluation. Both approaches were found to effectively reduce the identified length bias.
+Figure 1: QE metrics exhibit a length-related penalty when evaluating long-form translations, as metric scores decrease when translations become longer despite being error-free. As shown, concatenating consecutive gold-standard segments from the same document leads to progressively lower predicted scores, in contrast to human evaluations.
+1 Introduction
+Quality Estimation (QE) metric is a statistical score that predicts the quality of machine-translated text without relying on a reference translation, making it particularly useful when human-produced references are unavailable. Broadly, existing QE methods fall into two categories: regression-based models, such as MetricX (Juraska et al., 2024) and COMET (Rei et al., 2020), which learn to assess the hypothesis directly from annotated data, and LLM-as-a-Judge approaches, such as InstructScore (Xu et al., 2023) and AutoMQM (Fernandes et al., 2023), which leverage large language models to generate error ratings that approximate human judgments.
+Length bias refers to the systematic tendency of evaluation models to prefer or penalize outputs depending on their length rather than their true quality. Prior research has documented such effects in related evaluation settings, including LLM-as-a-Judge frameworks (Domhan & Zhu, 2025) and reward models used in reinforcement learning (Zhao et al., 2025). However, the extent to which QE metrics suffer from length bias remains largely underexplored. This gap is consequential, as length bias can distort system comparisons, over- or under-value longer translations, and ultimately misguide both model development and data curation.
+In this study, we design two complementary experiments to systematically investigate the presence of length bias in QE metrics. The first experiment evaluates length invariance by concatenating high-quality, error-free segments into progressively longer translations, allowing us to assess whether metrics remain stable as input length increases. The second experiment directly compares alternative hypotheses generated from the same source, enabling us to measure whether metrics exhibit a consistent preference toward shorter or longer outputs. Our analyses reveal two concerning patterns: QE metrics tend to assign spurious errors as translations grow longer, even when no actual errors are present, and they disproportionately favor shorter hypotheses when multiple candidates exist. These findings highlight a fundamental vulnerability—QE metrics risk unfairly penalizing correct but longer translations, which can in turn misguide downstream applications such as system reranking and reinforcement learning pipelines that depend on reliable QE signals.
+To address the shortcomings, we propose and evaluate two mitigation strategies aimed at reducing length bias in QE metrics. The first approach introduces length normalization during model training, encouraging regression-based QE models to disentangle translation quality from sequence length and thereby improving their robustness. The second approach supplements QE evaluation with reference-based metrics to provide an external standard that counteracts length bias toward shorter outputs. Our experiments show that both strategies are effective in reducing length sensitivity and yield more reliable and equitable evaluations across translations of varying lengths.
+2 Preliminaries
+Definition of Length Bias.
+Length bias describes a systematic preference for certain output lengths irrespective of true quality. Formally, we evaluate the length bias of QE models using the statistical bias definition. This bias is characterized by the disparity between a predicted quality score and a true quality score, as follows:
+Bias​(θ^)=𝔼​[θ^]−θ\textrm{Bias}(\hat{\theta})=\mathbb{E}[\hat{\theta}]-\theta
+(1)
+where 𝔼⁡[θ^]\mathbb{E}[\hat{\theta}] is an expected quality prediction produced by a QE model and θ\theta denotes the true translation quality. Ideally, θ\theta should be derived from human assessments following annotation guidelines such as Multidimensional Quality Metrics (MQM) (Freitag et al., 2021), and the QE model’s quality prediction is expected to precisely follow the same framework to ensure consistency between 𝔼⁡[θ^]\mathbb{E}[\hat{\theta}] and θ\theta. In our study, all instances within a comparison group are constructed to have the same true quality value θ\theta. A length-biased QE model, however, would yield consistently different predictions 𝔼⁡[θ^]\mathbb{E}[\hat{\theta}] across lengths, which manifests as a measurable Bias​(θ^)\textrm{Bias}(\hat{\theta}).
+3 Experiments
+Task Definition.
+A QE model, MQEM_{\text{QE}}, assesses the quality of a system’s hypothesis hh given a source text xx without relying on human references, assigning a score based on predefined criteria. In our experimental setup, we investigate the phenomenon of length bias by comparing the scores of groups of source–hypothesis pairs (x,h)(x,h) with the same human-rated translation quality, and the instances in each group are formed by either varying the sequence length of error-free translations or selecting alternative hypotheses of differing lengths for the same source.
+3.1 Experiment Setup
+Dataset.
+We use the WMT24++ data (Deutsch et al., 2025) for our experiments. WMT24++ contains the human translation and post-edit data for 55 en→\rightarrowxx language pairs. We focus on a subset of 10 most common languages, including German, Chinese, Spanish, French, Japanese, Korean, Hindi, Arabic, Russian and Portuguese. One important assumption we make is that the post-edit translations from the WMT24++ dataset are error-free, as the translations are verified by human experts and are of high quality. This ensures that any observed trend in changes of metric scores is not attributable to potential errors in the original data.
+Quality Estimation Metrics.
+We consider four popular QE metrics spanning two major evaluation frameworks: (i) two regression-based metrics, MetricX-24 QE (Juraska et al., 2024) and CometKiwi (Rei et al., 2022), and (ii) two LLM-as-a-Judge variants, AutoMQM fine-tuned on Gemini-2.0 (Fernandes et al., 2023; Finkelstein et al., 2024) and directly prompted Gemini-2.5-pro model (Gemini Team, 2025), both of which are used to perform MQM-style evaluation.
+Hypotheses.
+We investigate two forms of length bias in this study: (i) bias with respect to source text length and (ii) bias with respect to translation length. For (i), we construct multiple source–translation pairs of equivalent quality to test whether the metrics show systematic preferences related to source text length. For (ii), we compare pairs of translations of equal quality generated from the same source, categorize them by relative length, and analyze whether the metrics display a consistent preference for a particular category.
+3.2 Bias in Source Text Length
+Experiment Setup.
+To examine bias in source text length, we construct a dataset from the WMT24++ data as follows: for each language pair, we collect the first 5 segments from each document in the data, denoted as s1s_{1}, s2s_{2}, s3s_{3}, s4s_{4} and s5s_{5}, where each segment is approximately 1-2 sentences long. Then, starting from s1s_{1}, we gradually append the next segment sis_{i} to the previous segments to form passages of different lengths. Formally, for each document dd, we construct a group of 5 passages, denoted as p1p_{1}, p2p_{2}, p3p_{3}, p4p_{4} and p5p_{5}, where pi=s1+⋯+sip_{i}=s_{1}+\dots+s_{i}.
+We construct the dataset with two considerations. First, selecting segments from the same document keeps the constructed passages within a single domain and minimizes confounds from topic variation. Second, to test our hypothesis, the dataset must include source–translation pairs spanning a wide range of lengths; thus, we concatenate consecutive segments to better preserve inter-segment fluency and reduce boundary-induced disfluency that could potentially depress performance.
+Since the metrics inherit different context-window limits from their base models (e.g., 512 tokens for MetricX-24 QE), we standardize the context window to the smallest across metrics, and thus discard documents whose first 5 segments exceed 500 tokens using MetricX-24’s tokenizer 11
+1
+google/mt5-xl. We then evaluate each group of 5 passages using distinct metrics and analyze the relationship between source text length and translation score. To control for score variations between language pairs, we normalize scores within each group by subtracting the score of p1p_{1} from p​2p2, p​3p3, p​4p4, and p​5p5, and report the score differences instead of raw scores. Figure 2 presents the trend of performance change with line charts over passage index across language pairs from all metrics.
+Figure 2: Trends of metric scores with increasing source text length across different metrics. Each data point denotes the score change relative to the first passage.
+Results.
+As shown in Figure 2, we observe a consistent trend across all language pairs: translation quality deteriorates as source text length increases. Specifically, extending the source text from 1 to 5 segments results in score drops of 1.0–2.0 points for MetricX-24 QE, 1.5–5.6 points for CometKiwi, 1.7–5.3 points for Gemini AutoMQM, and 1.8–8.5 points for Gemini LLM-as-a-Judge.
+Recall that, under our definition of length bias, an unbiased model should yield a consistent, near-zero Bias​(θ^)\textrm{Bias}(\hat{\theta}) as the true quality score θ=0\theta=0. Hence, this result indicates the presence of bias with respect to source text length. Moreover, Appendix A.1 reports statistics on the proportion of decreasing trends, showing a consistent presence of length bias in the majority of cases.
+To better quantify and understand this behavior, we note that the metrics are trained on MQM-annotated data using the error scheme of Freitag et al. (2021), which assigns penalties of –1 for minor errors and –5 for major errors. Consequently, when source text length increases to five segments, the metrics incorrectly predict an additional minor or major error in these error-free passages, revealing an undesired sensitivity.
+3.3 Bias in Error Type and Severity
+The preceding experiments show that length bias exists relative to source text length. What remains unclear, however, is whether this bias persists when translations contain explicit errors. To address this question, we further investigate whether the bias interacts with specific combinations of error severity and error type. Accordingly, we design a follow-up experiment introducing four controlled categories of errors. Building on the setup described in Section 3.2, we modify the first segment of each passage by inserting one of the following: (a) a major accuracy error, (b) a major fluency error, (c) a minor accuracy error, or (d) a minor fluency error. The formal definitions of these error types, along with the few-shot examples used for prompting, are provided in Appendix A.3. We then evaluate the resulting passages using MetricX-24 QE and Gemini-based AutoMQM. For simplicity, we report results for English–German and English–Chinese in Figures 3 and 4.
+Figure 3: Trends of MetricX-24 QE score with different severity/error types, evaluated on WMT24++ En-De and En-Zh.
+Figure 4: Trends of Gemini AutoMQM score with different severity/error types, evaluated on WMT24++ En-De and En-Zh.
+For the regression-based metric, we find that inserting a major error in the first segment tends to reduce score fluctuations as additional error-free segments are appended. In contrast, inserting a minor error has little influence on the existing length bias. This difference likely arises because major errors provide a strong signal that outweighs the effect of length bias by delineating a clearer boundary between erroneous and correct sentences, whereas minor errors contribute substantially weaker cues. Conversely, for the AutoMQM-based metric, the results suggest no consistent bias with respect to error severity. Finally, across both metrics, fluency errors appear to have a smaller impact on score changes than accuracy errors. A plausible explanation is that metrics are generally more sensitive to accuracy errors, while fluency errors are more subjective and tend to exhibit higher inter-rater disagreement in the training data.
+3.4 Bias in Translation Length
+Experiment Setup.
+In this section, we examine whether metrics exhibit biased preferences among translations of different lengths derived from the same source text. Specifically, we sample multiple hypothesis translations from each source as follows: we first pre-process the source and reference translations from the WMT24++ dataset into chunks that fit within a minimum context window of 500 tokens, discarding those that are too short (fewer than 200 tokens) to ensure meaningful variation while maintaining translation quality. For each source–reference pair, we prompt Gemini-2.5-Pro to generate five rephrased translations that preserve comparable accuracy and fluency, using temperature t=1t=1 and top-p=0.95p=0.95. Among these, we retain the two candidates with the minimum and maximum token lengths, thereby maximizing length difference while keeping translation quality comparable. All selected candidates are manually verified to ensure valid translations.
+Each source chunk is thus paired with two translations—one shorter and one longer. We compare their lengths and categorize them into the shorter and longer bins. We then evaluate both bins using the target metric and compute the proportion of cases in which the shorter translation receives a higher score. To analyze the effect of length differences, we evaluate translation pairs whose lengths differ by increments of 2.5%, ranging from 2.5% to 15%, filtering out pairs that do not meet the required difference. Figure 5 presents results averaged across all 10 language pairs in both EN→\rightarrowXX and XX→\rightarrowEN directions using MetricX-24 QE and CometKiwi. Complete tables for individual language pairs are provided in Appendix A.2.
+Figure 5: Average preference for shorter translations by length difference.
+Results.
+First, we note that in this experiment, the true quality value is set to θ=50%\theta=50\%, indicating that an unbiased model should not distinguish between two translation variants of the same quality. However, across all evaluated settings, we observe a notable and consistent preference for shorter translations, with average scores ranging from 55% to 64%. This consistent deviation from the unbiased baseline suggests that length bias also exists with respect to translation length.
+Additionally, this preference becomes more pronounced as the length disparity between the shorter and longer hypotheses increases. For the EN→\rightarrowXX direction, both MetricX-24 QE and CometKiwi increasingly favor shorter hypotheses, with the effect particularly evident for translations into Spanish, Japanese, and Russian. Conversely, for the XX→\rightarrowEN direction, the two metrics diverge. MetricX-24 QE exhibits a similar upward trend, most prominently for Spanish, French, Korean, and Russian, whereas CometKiwi displays more heterogeneous behavior. Although it shows an overall downward trend—favoring longer hypotheses—this effect is largely driven by languages such as Korean, Hindi, and Portuguese, while others, including German, Chinese, and Japanese, exhibit the opposite pattern. Complete results for individual language pairs are provided in Appendix A.2.
+4 Analysis
+4.1 Distribution of MQM Scores in WMT Data
+To understand length bias of models for long-form inputs, we construct Blob-level MQM test sets using WMT data, each consisting of segments up to 500, 1k, or 2k tokens. Figure 6 presents the distribution of gold standard scores and MetricX-24 QE’s output scores on these test sets. We notice that (i) the distribution of output scores was skewed, and (ii) as the number of input tokens increases, the number of perfect translations (i.e., gold score = 0) in the source data diminishes, and the output distribution reflects this pattern, with the frequency of zero-score predictions dropping accordingly.
+Figure 6: Distribution of MetricX QE outputs and gold standard scores.
+4.2 Mitigation: Normalization at Training
+To address the above length biases, we introduce length normalization, which corrects the skew in the relative frequencies of output scores. With normalization, the model is trained to predict the error density of a hypothesis translation, defined as
+D⁡(x,h)=R⁡(x,h)|h|\displaystyle D(x,h)=\frac{R(x,h)}{|h|}
+where R⁡(x,h)R(x,h) is the error rating of hypothesis hh for source xx and |h||h| denotes its segment length. At inference time, we rescale the prediction back to an error rating via
+R^​(x,h)=D⁡(x,h)⋅|h|\displaystyle\hat{R}(x,h)=D(x,h)\cdot|h|
+to enable comparison with the unnormalized baseline. Figure 6 shows the gold score distributions with normalization, demonstrating greater consistency across test sets of varying lengths.
+To further examine the effectiveness of normalization, we trained a MetricX QE model with the above training-time normalization. Figure 6 shows the distribution of output scores using this trained model. We then replicate the experimental setup in Section 3.2 and report results in Figure 7. To highlight the effect of normalization, we compare the absolute average score difference across segment lengths (i.e., the slope of score changes). Results indicate that applying normalization reduces length bias beyond three segments, consistent with our earlier analysis of output score distributions.
+Figure 7: Performance of MetricX-24 QE with and without length normalization. We report the slope of score changes to show that length normalization mitigates the magnitude of length bias.
+4.3 Mitigation: Reference-Based Metrics
+When references are available, an alternative solution to mitigate evaluation-time length bias is to incorporate reference-based metrics. Figure 8 compares three classes of MT metrics: reference-based, source-based (QE), and hybrid, under the experiment setup described in Section 3.2. We observe that metrics with access to references exhibit attenuated length bias, plausibly because the reference translation provides an implicit prior on the expected length of a well-formed hypothesis. Nonetheless, these metrics continue to exhibit residual length bias, indicating that reference access alone does not fully eliminate the effect.
+Figure 8: Performance of three classes of MetricX-24: reference-based, source-based (QE), and hybrid. We report the slope of score changes to illustrate that metrics with access to references exhibit reduced length bias, though the effect nonetheless persists.
+5 Related Work
+5.1 Length Effects in MT Evaluation Metrics
+Early reference-based MT metrics have long been sensitive to translation length. For instance, BLEU introduces a brevity penalty (BP) to discourage overly short hypotheses that could artificially inflate n-gram precision (Papineni et al., 2002). Likewise, chrF uses an F-score over character-n-gram precision and recall, penalizing outputs that are too short (low recall) or too long (lower precision via extra content or mismatches) relative to the reference (Popović, 2015). Nonetheless, length remains a difficult dimension to handle. Papineni et al. (2002) note that neither the brevity penalty nor modified precision alone fully enforces appropriate length matching. Moreover, recent work at the document level shows that BLEU can mask quality improvements when output length increases: for example, Sun et al. (2025) find that translating entire documents produced better human-judged quality, yet BLEU scores often did not reflect this improvement, and sometimes ranked shorter, less coherent translations higher.
+Beyond reference-based metrics, learned neural metrics and LLM-based evaluators also display length sensitivity. For example, Karpinska et al. (2022) reveal that even state-of-the-art metrics such as COMET can struggle with subtle perturbations, including omissions or repetitions, which may occur more frequently in unusually short or long translations. For document-level translations, Domhan & Zhu (2025) show that when using LLM-as-a-Judge translation evaluators, longer input texts tend to result in fewer detected error spans and lower system-ranking accuracy, indicating a bias related to text length rather than translation quality itself.
+These findings underscore that handling translation length properly remains an important and under-addressed challenge in MT evaluation. In our work, we therefore situate ourselves within this context by investigating whether current quality-estimation (QE) methods penalize translations simply for being longer (or shorter) rather than being inherently worse.
+5.2 Biases in Quality Estimation Models
+Modern QE models have evolved from feature-based frameworks such as QuEst (Specia et al., 2013) to neural architectures that achieve strong results on recent benchmarks (Rei et al., 2022; Rei et al., 2023), with representative examples including OpenKiwi, TransQuest, and CometKiwi (Kepler et al., 2019; Ranasinghe et al., 2020; Rei et al., 2022).
+Despite these advances, numerous studies have noted that learned QE models often pick up spurious correlations or biases from their training data. For instance, Behnke et al. (2022) identify a partial-input bias: when trained on standard data, QE models may over-rely on features of the target translation (e.g., fluency, grammaticality) rather than verifying adequacy or fidelity to the source, leading them to assign high quality scores to fluent outputs that fail to preserve meaning.
+Such biases often stem from limitations in the training data. QE models are typically supervised on human ratings of MT outputs, such as WMT Direct Assessments or MQM annotations. When these datasets are skewed or unrepresentative, the resulting QE models tend to mirror those biases. For instance, recent work finds that automatic metrics frequently assign lower scores to human-generated translations than expected, relative to MT outputs, implying a bias against human style (Deutsch et al., 2025). This bias arises because the metrics are predominantly trained on machine-generated outputs and thus fail to capture the nuances of human translations, which often display greater lexical and structural diversity. Similarly, domain and language biases have been reported: metrics can overfit to the score distributions of particular domains or language pairs (Zouhar et al., 2024), limiting their generalization to new settings without adaptation. Complementary to these findings, we examine whether the observed length bias in QE correlates with the under-representation of long-form, error-free examples in the training data.
+6 Conclusion
+In this work, we show that contemporary QE models lack length invariance when assessing long-form translations: they inflate error predictions as translations grow longer and exhibit a systematic bias toward shorter candidates from the same source. We trace this bias to training distributions that under-represent long, clean examples, causing models to overfit to shorter, noisier samples that dominate existing datasets. To address this issue, we propose two complementary remedies: (i) a training-time length-normalization objective that discourages sensitivity to sequence length, and (ii) an evaluation-time combination with reference-based metrics when references are available. Together, these interventions reduce length bias and move QE toward a more robust, length-agnostic assessment of translation quality. More broadly, our findings underscore the importance of accounting for input-length sensitivity in automatic evaluation systems, particularly for long-context generation tasks such as summarization and dialogue.
+7 Statements
+7.1 Ethics statement
+We do not foresee any ethical concerns or potential risks arising from this work. All evaluation metrics and datasets are either open-sourced or accessible through public APIs, as described in Section 3.1. The large language models (LLMs) used in our experiments are also publicly available. Within our research context, the outputs generated (i.e., numerical scores from metrics and error ratings from LLMs) do not contain or propagate harmful, unsafe, or sensitive information. Accordingly, we believe that this study fully adheres to the Code of Ethics.
+7.2 Reproducibility statement
+We have taken several steps to ensure the reproducibility of our work. All evaluation metrics and datasets used in our experiments are open-sourced or publicly accessible. The procedures for constructing the experimental data are described in detail in Sections 3.2 and 3.4, with additional clarifications provided in the appendix. Upon acceptance, we will release the scripts necessary to replicate all experiments, including data processing, model evaluation, and result reporting. Together, these resources are intended to enable independent verification and extension of our findings.
+7.3 LLM Usage Disclosure
+The authors acknowledge the use of the Large Language Model Gemini 2.5 Pro for the purpose of language editing and polishing. The model was used to refine grammar, syntax, and phrasing to enhance the readability of the manuscript. The research, experimental design, and conclusions presented herein are the original work of the authors.
+References
+Behnke et al. (2022)
+Hanna Behnke, Marina Fomicheva, and Lucia Specia.
+Bias mitigation in machine translation quality estimation.
+In Smaranda Muresan, Preslav Nakov, and Aline Villavicencio (eds.), Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 1475–1487, Dublin, Ireland, May 2022. Association for Computational Linguistics.
+doi: 10.18653/v1/2022.acl-long.104.
+URL https://aclanthology.org/2022.acl-long.104/.
+Deutsch et al. (2025)
+Daniel Deutsch, Eleftheria Briakou, Isaac Caswell, Mara Finkelstein, Rebecca Galor, Juraj Juraska, Geza Kovacs, Alison Lui, Ricardo Rei, Jason Riesa, Shruti Rijhwani, Parker Riley, Elizabeth Salesky, Firas Trabelsi, Stephanie Winkler, Biao Zhang, and Markus Freitag.
+Wmt24++: Expanding the language coverage of wmt24 to 55 languages & dialects, 2025.
+URL https://arxiv.org/abs/2502.12404.
+Domhan & Zhu (2025)
+Tobias Domhan and Dawei Zhu.
+Same evaluation, more tokens: On the effect of input length for machine translation evaluation using large language models, 2025.
+URL https://arxiv.org/abs/2505.01761.
+Fernandes et al. (2023)
+Patrick Fernandes, Daniel Deutsch, Mara Finkelstein, Parker Riley, André F. T. Martins, Graham Neubig, Ankush Garg, Jonathan H. Clark, Markus Freitag, and Orhan Firat.
+The devil is in the errors: Leveraging large language models for fine-grained machine translation evaluation, 2023.
+URL https://arxiv.org/abs/2308.07286.
+Finkelstein et al. (2024)
+Mara Finkelstein, Dan Deutsch, Parker Riley, Juraj Juraska, Geza Kovacs, and Markus Freitag.
+From jack of all trades to master of one: Specializing llm-based autoraters to a test set, 2024.
+URL https://arxiv.org/abs/2411.15387.
+Freitag et al. (2021)
+Markus Freitag, George Foster, David Grangier, Viresh Ratnakar, Qijun Tan, and Wolfgang Macherey.
+Experts, errors, and context: A large-scale study of human evaluation for machine translation.
+Transactions of the Association for Computational Linguistics, 9:1460–1474, 2021.
+doi: 10.1162/tacl_a_00437.
+URL https://aclanthology.org/2021.tacl-1.87/.
+Gemini Team (2025)
+Google Gemini Team.
+Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities, 2025.
+URL https://arxiv.org/abs/2507.06261.
+Juraska et al. (2024)
+Juraj Juraska, Daniel Deutsch, Mara Finkelstein, and Markus Freitag.
+Metricx-24: The google submission to the wmt 2024 metrics shared task, 2024.
+URL https://arxiv.org/abs/2410.03983.
+Karpinska et al. (2022)
+Marzena Karpinska, Nishant Raj, Katherine Thai, Yixiao Song, Ankita Gupta, and Mohit Iyyer.
+DEMETR: Diagnosing evaluation metrics for translation.
+In Yoav Goldberg, Zornitsa Kozareva, and Yue Zhang (eds.), Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing, pp. 9540–9561, Abu Dhabi, United Arab Emirates, December 2022. Association for Computational Linguistics.
+doi: 10.18653/v1/2022.emnlp-main.649.
+URL https://aclanthology.org/2022.emnlp-main.649/.
+Kepler et al. (2019)
+Fabio Kepler, Jonay Trénous, Marcos Treviso, Miguel Vera, and André F. T. Martins.
+OpenKiwi: An open source framework for quality estimation.
+In Marta R. Costa-jussà and Enrique Alfonseca (eds.), Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics: System Demonstrations, pp. 117–122, Florence, Italy, July 2019. Association for Computational Linguistics.
+doi: 10.18653/v1/P19-3020.
+URL https://aclanthology.org/P19-3020/.
+Papineni et al. (2002)
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu.
+Bleu: a method for automatic evaluation of machine translation.
+In Pierre Isabelle, Eugene Charniak, and Dekang Lin (eds.), Proceedings of the 40th Annual Meeting of the Association for Computational Linguistics, pp. 311–318, Philadelphia, Pennsylvania, USA, July 2002. Association for Computational Linguistics.
+doi: 10.3115/1073083.1073135.
+URL https://aclanthology.org/P02-1040/.
+Popović (2015)
+Maja Popović.
+chrF: character n-gram F-score for automatic MT evaluation.
+In Ondřej Bojar, Rajan Chatterjee, Christian Federmann, Barry Haddow, Chris Hokamp, Matthias Huck, Varvara Logacheva, and Pavel Pecina (eds.), Proceedings of the Tenth Workshop on Statistical Machine Translation, pp. 392–395, Lisbon, Portugal, September 2015. Association for Computational Linguistics.
+doi: 10.18653/v1/W15-3049.
+URL https://aclanthology.org/W15-3049/.
+Ranasinghe et al. (2020)
+Tharindu Ranasinghe, Constantin Orasan, and Ruslan Mitkov.
+TransQuest: Translation quality estimation with cross-lingual transformers.
+In Donia Scott, Nuria Bel, and Chengqing Zong (eds.), Proceedings of the 28th International Conference on Computational Linguistics, pp. 5070–5081, Barcelona, Spain (Online), December 2020. International Committee on Computational Linguistics.
+doi: 10.18653/v1/2020.coling-main.445.
+URL https://aclanthology.org/2020.coling-main.445/.
+Rei et al. (2020)
+Ricardo Rei, Craig Stewart, Ana C Farinha, and Alon Lavie.
+COMET: A neural framework for MT evaluation.
+In Bonnie Webber, Trevor Cohn, Yulan He, and Yang Liu (eds.), Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pp. 2685–2702, Online, November 2020. Association for Computational Linguistics.
+doi: 10.18653/v1/2020.emnlp-main.213.
+URL https://aclanthology.org/2020.emnlp-main.213/.
+Rei et al. (2022)
+Ricardo Rei, Marcos Treviso, Nuno M. Guerreiro, Chrysoula Zerva, Ana C Farinha, Christine Maroti, José G. C. de Souza, Taisiya Glushkova, Duarte Alves, Luisa Coheur, Alon Lavie, and André F. T. Martins.
+CometKiwi: IST-unbabel 2022 submission for the quality estimation shared task.
+In Proceedings of the Seventh Conference on Machine Translation (WMT), pp. 634–645, Abu Dhabi, United Arab Emirates (Hybrid), December 2022. Association for Computational Linguistics.
+URL https://aclanthology.org/2022.wmt-1.60/.
+Rei et al. (2023)
+Ricardo Rei, Nuno M. Guerreiro, JosÃ© Pombal, Daan van Stigt, Marcos Treviso, Luisa Coheur, José G. C. de Souza, and André Martins.
+Scaling up CometKiwi: Unbabel-IST 2023 submission for the quality estimation shared task.
+In Philipp Koehn, Barry Haddow, Tom Kocmi, and Christof Monz (eds.), Proceedings of the Eighth Conference on Machine Translation, pp. 841–848, Singapore, December 2023. Association for Computational Linguistics.
+doi: 10.18653/v1/2023.wmt-1.73.
+URL https://aclanthology.org/2023.wmt-1.73/.
+Specia et al. (2013)
+Lucia Specia, Kashif Shah, Jose G.C. de Souza, and Trevor Cohn.
+QuEst - a translation quality estimation framework.
+In Miriam Butt and Sarmad Hussain (eds.), Proceedings of the 51st Annual Meeting of the Association for Computational Linguistics: System Demonstrations, pp. 79–84, Sofia, Bulgaria, August 2013. Association for Computational Linguistics.
+URL https://aclanthology.org/P13-4014/.
+Sun et al. (2025)
+Yirong Sun, Dawei Zhu, Yanjun Chen, Erjia Xiao, Xinghao Chen, and Xiaoyu Shen.
+Fine-grained and multi-dimensional metrics for document-level machine translation, 2025.
+URL https://arxiv.org/abs/2410.20941.
+Xu et al. (2023)
+Wenda Xu, Danqing Wang, Liangming Pan, Zhenqiao Song, Markus Freitag, William Wang, and Lei Li.
+INSTRUCTSCORE: Towards explainable text generation evaluation with automatic feedback.
+In Houda Bouamor, Juan Pino, and Kalika Bali (eds.), Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pp. 5967–5994, Singapore, December 2023. Association for Computational Linguistics.
+doi: 10.18653/v1/2023.emnlp-main.365.
+URL https://aclanthology.org/2023.emnlp-main.365/.
+Zhao et al. (2025)
+Kangwen Zhao, Jianfeng Cai, Jinhua Zhu, Ruopei Sun, Dongyun Xue, Wengang Zhou, Li Li, and Houqiang Li.
+Bias fitting to mitigate length bias of reward model in rlhf, 2025.
+URL https://arxiv.org/abs/2505.12843.
+Zouhar et al. (2024)
+Vilém Zouhar, Pinzhen Chen, Tsz Kin Lam, Nikita Moghe, and Barry Haddow.
+Pitfalls and outlooks in using COMET.
+In Barry Haddow, Tom Kocmi, Philipp Koehn, and Christof Monz (eds.), Proceedings of the Ninth Conference on Machine Translation, pp. 1272–1288, Miami, Florida, USA, November 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.wmt-1.121.
+URL https://aclanthology.org/2024.wmt-1.121/.
+Appendix A Appendix
+A.1 Proportion of Scores with Decreasing Trends in Data Filtering
+Additionally, we analyze the proportion of documents exhibiting a decreasing trend in translation scores. For each language pair, we compare the score of passage 1 (containing segment 1) with passage 5 (containing segments 1–5), and report (i) the total number of documents and (ii) the proportion that display a decreasing trend. The results for MetricX-24 QE are summarized in Table 1. Overall, about 80% of the documents across 10 languages show a decreasing trend, indicating that length bias is pervasive in most cases.
+Language
+# of Documents
+Proportion of scores with decreasing trends (%)
+Aggregate
+472
+80.1
+German (de_DE)
+48
+85.4
+Chinese (zh_CN)
+53
+79.2
+Spanish (es_MX)
+47
+74.5
+French (fr_FR)
+45
+82.2
+Japanese (ja_JP)
+54
+90.7
+Korean (ko_KR)
+46
+82.6
+Hindi (hi_IN)
+37
+75.7
+Arabic (ar_EG)
+48
+68.8
+Russian (ru_RU)
+48
+79.2
+Portuguese (pt_BR)
+46
+80.4
+Table 1: Proportion of scores with decreasing trends with MetricX-24 QE
+A.2 Numerical Results for the RLHF and Reranking Experiments
+Tables 2, 3, 4, 5 present the numerical results for the RLHF and Reranking experiments in Section 3.4 in the tables below. Numbers in brackets indicate the total number of instances.
+Target Language
+Preference for Shorter Translations (%) by Length Difference
+2.5%
+5%
+7.5%
+10%
+12.5%
+15%
+German (de_DE)
+55.4 (101)
+53.8 (93)
+55.4 (74)
+58.3 (48)
+48.6 (35)
+45.8 (24)
+Chinese (zh_CN)
+52.3 (86)
+54.4 (79)
+53.1 (64)
+53.1 (49)
+58.3 (36)
+56.0 (25)
+Spanish (es_MX)
+49.0 (104)
+51.2 (80)
+59.1 (44)
+60.9 (23)
+66.7 (15)
+63.6 (11)
+French (fr_FR)
+68.9 (106)
+68.0 (97)
+68.4 (76)
+70.6 (51)
+68.8 (32)
+70.0 (20)
+Japanese (ja_JP)
+63.0 (81)
+63.2 (76)
+66.7 (54)
+67.5 (40)
+72.4 (29)
+75.0 (20)
+Korean (ko_KR)
+54.3 (105)
+55.1 (98)
+56.8 (74)
+48.0 (50)
+45.5 (33)
+50.0 (24)
+Hindi (hi_IN)
+44.8 (116)
+45.5 (112)
+47.5 (101)
+48.3 (87)
+48.7 (78)
+44.8 (67)
+Arabic (ar_EG)
+70.9 (103)
+72.0 (100)
+71.1 (97)
+70.8 (89)
+69.1 (68)
+67.9 (53)
+Russian (ru_RU)
+61.8 (102)
+61.1 (95)
+61.1 (72)
+67.3 (55)
+66.7 (36)
+64.3 (28)
+Portuguese (pt_PT)
+46.2 (104)
+47.4 (95)
+49.3 (69)
+50.0 (42)
+61.9 (21)
+61.1 (18)
+Table 2: Results on MetricX-24 QE’s translation length preferences for EN →\rightarrow XX language pairs
+Source Language
+Preference for Shorter Translations (%) by Length Difference
+2.5%
+5%
+7.5%
+10%
+12.5%
+15%
+German (de_DE)
+45.5 (101)
+45.2 (93)
+42.9 (63)
+43.8 (48)
+36.4 (33)
+40.0 (25)
+Chinese (zh_CN)
+36.1 (83)
+35.4 (82)
+34.2 (73)
+32.8 (61)
+30.8 (52)
+31.7 (41)
+Spanish (es_MX)
+63.1 (103)
+62.6 (91)
+62.9 (70)
+68.4 (57)
+62.2 (45)
+65.8 (38)
+French (fr_FR)
+42.1 (107)
+43.4 (99)
+46.2 (78)
+52.6 (57)
+52.9 (34)
+52.0 (25)
+Japanese (ja_JP)
+54.2 (83)
+52.5 (80)
+51.5 (68)
+51.9 (52)
+54.3 (35)
+52.0 (25)
+Korean (ko_KR)
+57.1 (105)
+60.2 (98)
+60.2 (83)
+59.7 (67)
+61.8 (55)
+65.2 (46)
+Hindi (hi_IN)
+75.9 (116)
+75.7 (115)
+77.5 (111)
+78.5 (107)
+77.9 (104)
+78.4 (102)
+Arabic (ar_EG)
+59.2 (103)
+61.2 (98)
+61.7 (94)
+65.5 (87)
+68.8 (80)
+70.1 (67)
+Russian (ru_RU)
+56.9 (102)
+58.6 (99)
+60.5 (86)
+60.9 (69)
+67.9 (56)
+69.6 (46)
+Portuguese (pt_PT)
+59.0 (105)
+58.8 (97)
+53.2 (77)
+51.6 (62)
+53.1 (49)
+58.5 (41)
+Table 3: Results on MetricX-24 QE’s translation length preferences for XX →\rightarrow EN language pairs
+Target Language
+Preference for Shorter Translations (%) by Length Difference
+2.5%
+5%
+7.5%
+10%
+12.5%
+15%
+German (de_DE)
+61.4 (101)
+62.4 (93)
+63.5 (74)
+64.6 (48)
+68.6 (35)
+75.0 (24)
+Chinese (zh_CN)
+60.5 (86)
+59.5 (79)
+59.4 (64)
+57.1 (49)
+52.8 (36)
+52.0 (25)
+Spanish (es_MX)
+53.8 (104)
+58.8 (80)
+68.2 (44)
+65.2 (23)
+66.7 (15)
+63.6 (11)
+French (fr_FR)
+53.8 (106)
+54.6 (97)
+61.8 (76)
+64.7 (51)
+68.8 (32)
+70.0 (20)
+Japanese (ja_JP)
+64.2 (81)
+64.5 (76)
+72.2 (54)
+67.5 (40)
+65.5 (29)
+65.0 (20)
+Korean (ko_KR)
+57.1 (105)
+57.1 (98)
+54.1 (74)
+62.0 (50)
+69.7 (33)
+66.7 (24)
+Hindi (hi_IN)
+60.3 (116)
+61.6 (112)
+60.4 (101)
+58.6 (87)
+61.5 (78)
+59.7 (67)
+Arabic (ar_EG)
+49.5 (103)
+49.0 (100)
+50.5 (97)
+50.6 (89)
+48.5 (68)
+49.1 (53)
+Russian (ru_RU)
+61.8 (102)
+62.1 (95)
+62.5 (72)
+63.6 (55)
+63.9 (36)
+60.7 (28)
+Portuguese (pt_PT)
+59.6 (104)
+60.0 (95)
+58.0 (69)
+57.1 (42)
+47.6 (21)
+55.6 (18)
+Table 4: Results on CometKiwi’s translation length preferences for EN →\rightarrow XX language pairs
+Source Language
+Preference for Shorter Translations (%) by Length Difference
+2.5%
+5%
+7.5%
+10%
+12.5%
+15%
+German (de_DE)
+68.3 (101)
+69.9 (93)
+77.8 (63)
+75.0 (48)
+69.7 (33)
+64.0 (25)
+Chinese (zh_CN)
+74.7 (83)
+74.4 (82)
+72.6 (73)
+75.4 (61)
+75.0 (52)
+75.6 (41)
+Spanish (es_MX)
+58.3 (103)
+61.5 (91)
+61.4 (70)
+56.1 (57)
+55.6 (45)
+50.0 (38)
+French (fr_FR)
+73.8 (107)
+72.7 (99)
+70.5 (78)
+75.4 (57)
+70.6 (34)
+60.0 (25)
+Japanese (ja_JP)
+77.1 (83)
+77.5 (80)
+77.9 (68)
+76.9 (52)
+77.1 (35)
+80.0 (25)
+Korean (ko_KR)
+61.9 (105)
+59.2 (98)
+57.8 (83)
+52.2 (67)
+43.6 (55)
+39.1 (46)
+Hindi (hi_IN)
+42.2 (116)
+41.7 (115)
+39.6 (111)
+37.4 (107)
+35.6 (104)
+35.3 (102)
+Arabic (ar_EG)
+57.3 (103)
+56.1 (98)
+55.3 (94)
+55.2 (87)
+55.0 (80)
+52.2 (67)
+Russian (ru_RU)
+67.6 (102)
+66.7 (99)
+65.1 (86)
+71.0 (69)
+67.9 (56)
+67.4 (46)
+Portuguese (pt_PT)
+59.0 (105)
+59.8 (97)
+53.2 (77)
+53.2 (62)
+46.9 (49)
+41.5 (41)
+Table 5: Results on CometKiwi’s translation length preferences for XX →\rightarrow EN language pairs
+A.3 Error Type / Severity Perturbation Prompt
+Figures 9, 10, 11, 12, 13 present the prompts used for error perturbation with different types and severity using Gemini-2.5-pro.
+Figure 9: Error perturbation prompt
+Figure 10: Major accuracy prompt
+Figure 11: Major fluency prompt
+Figure 12: Minor accuracy prompt
+Figure 13: Minor fluency prompt
+A.4 LLM-as-a-Judge Prompt
+Figure 14 presents the prompts used by LLM-as-a-Judge with Gemini-2.5-pro.
+Figure 14: LLM-as-a-Judge Prompt
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

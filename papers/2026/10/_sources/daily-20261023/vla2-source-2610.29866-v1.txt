@@ -1,0 +1,578 @@
+# Primary exact-v1 main-text extraction, https://arxiv.org/html/2610.29866v1
+# Math alttext retained; storage does not imply every appendix independently reviewed.
+Abstract
+Geometric structure provides a direct description of the 3D world and is essential for robotic manipulation and world understanding. Most VLA models primarily rely on 2D representations of the current observation, while geometry-aware approaches often require additional 3D geometric information.
+However, such geometric information, typically inferred independently from individual observations, is often discarded rather than accumulated into a persistent task representation. Our key insight is that action generation needs a compact, task-relevant geometric abstraction that can be continuously updated over time, rather than a complete, renderable 3D reconstruction at every step.
+Based on this insight, we introduce GeoMem-VLA , a VLA framework that internalizes explicit 3D supervision into dedicated geometric tokens, without directly aligning the VLM’s native visual embeddings to the teacher feature space, and maintains them as temporal memory for action generation. During training, a frozen geometry foundation model supervises learnable GeoPlan tokens through a geometric flow-matching objective over the current scene point map and future end-effector tracks. These tokens are subsequently integrated with the memory of observation representations, where historical information is retrieved, adaptively fused with current observations, and consolidated to keep event frames as the task progresses. At inference, the policy retrieves historical representations and fuses them with the current working representation to predict actions, without invoking the 3D teacher or explicitly reconstructing the scene. After benchmark-specific downstream adaptation, GeoMem-VLA achieves 98.9\% average success on LIBERO and 91.10\% / 91.24\% on the clean/randomized settings of the RoboTwin benchmark. In 5 real-world tasks, GeoMem-VLA achieves the 78.0\% average success.
+These results indicate that internalizing and remembering 3D scene understanding is a promising approach to optimizing robot control strategies.
+ 1 Introduction
+Robotic manipulation requires combining semantic understanding with precise
+3D control. Building on advances in large language models, vision-language-action
+(VLA) models have attracted attention for language-conditioned manipulation
+ ( Brohan et al., 2023 ; Kim et al., 2024 ; Black et al., 2024 ; Shi et al., 2026b ) . Most use pretrained vision-language models (VLMs)
+for visual and semantic understanding and generate actions through tokenized
+prediction or dedicated action experts. However, their reliance on current
+2D observations offers limited support
+for precise 3D spatial reasoning and decision-making that depend on
+interaction history.
+ Figure 1:
+ Overview of GeoMem-VLA .
+ Top: In the illustrative cover and pick up the apple task, the current observation alone may not reveal the apple’s location once it is occluded by the towel, motivating the retention of spatial context over time. Middle: GeoMem-VLA learns geometry-supervised GeoPlan representations and retains them in causal episode memory for action generation. Bottom: Performance comparisons across manipulation benchmarks and real-world tasks.
+Recent work on 3D-aware VLAs has explored how to leverage the rich geometric priors of the physical environment ( Li et al., 2026a ; Qian et al., 2026 ) .
+Such supervision allows explicit geometric targets to shape policy representations
+that require explicit reconstruction during action inference.
+Memory-augmented
+policies, meanwhile, retain perceptual and task context from earlier
+observations ( Shi et al., 2026a ) . Connecting these directions raises a central
+question:
+ How can geometric supervision shape spatial memory that guides action?
+This places the spatial content of memory at the center of
+policy representation learning.
+We propose GeoMem-VLA , a VLA framework that couples geometry-supervised
+GeoPlan representations with causal episode-level memory. During training,
+learnable GeoPlan tokens summarize the multimodal context and condition an
+auxiliary flow-matching head that predicts current-scene point maps and
+future Cartesian end-effector tracks. A frozen VGGT teacher ( Wang et al., 2025 )
+provides scene-geometry targets, while demonstration trajectories provide
+future motion supervision. These complementary targets train the tokens to
+encode scene structure and task-related motion. At deployment, the teacher
+and reconstruction head are removed from the action-generation path;
+the learned tokens provide compact geometric context for the policy.
+To preserve this context, we maintain geometric memory alongside
+perceptual and task-related memory. Current representations retrieve
+relevant preceding features, and adaptive fusion integrates historical
+context before action generation. Similarity-based consolidation compresses redundant entries while retaining feature-distinct temporal states. We further use event-aware
+training that samples temporally separated observations from the same
+episode while preserving their chronological order and causal access.
+This exposes retrieval to a broader span of interaction history than
+contexts formed only from neighboring frames. Together, geometric
+supervision and temporal retrieval connect what the policy learns about
+the scene with what it can retain for later decisions.
+Our evaluation examines spatial understanding, long-horizon decision-making,
+and applicability across manipulation tasks. On LIBERO and RoboTwin 2.0,
+ GeoMem-VLA achieves 98.9\% average success across the four LIBERO suites
+and 91.10\% / 91.24\% on RoboTwin Clean / Randomized. Complementary
+real-world protocols target geometric alignment and long-horizon
+interaction, connecting the evaluation to the spatial and temporal
+requirements of the architecture.
+Our contributions are summarized as follows:
+ •
+ Geometry-Supervised Spatial Representations.
+We learn compact GeoPlan tokens from current-scene point maps and future
+end-effector tracks, providing geometric conditioning without explicit
+reconstruction during action inference.
+ •
+ Geometry-Aware Event Memory.
+We couple geometric representations with causally temporal retrieval and
+train event-aware memory to retain key information alongside
+perceptual and task context.
+ •
+ Evaluation Across Manipulation Settings.
+Experiments of geometry-supervised memory across diverse tasks through LIBERO, RoboTwin and real-world manipulation tasks examine geometric precision and the use of historical context in long-horizon manipulation.
+ 2 Related Work
+Vision-Language-Action Models.
+Advances in VLMs ( Liu et al., 2024 ; Karamcheti et al., 2024 )
+have enabled VLAs through robot-data scaling, vision-language pretraining,
+and expressive action decoders. RT-1 ( Brohan et al., 2022 ) scales multitask learning
+on demonstrations; RT-2 ( Brohan et al., 2023 ) and OpenVLA ( Kim et al., 2024 ) transfer
+pretrained knowledge to discrete action prediction. \pi_{0} ( Black et al., 2024 ) ,
+CogACT ( Li et al., 2024a ) , and GR00T ( Bjorck et al., 2025 ) use continuous action
+experts, while \pi_{0.5} ( Intelligence et al., 2025 ) adds heterogeneous data and
+semantic subtask prediction for open-world generalization. FAST
+ ( Pertsch et al., 2025 ) compresses action sequences via frequency-domain
+tokenization; OpenVLA-OFT ( Kim et al., 2025 ) uses parallel decoding and
+action chunking for efficient execution. StarVLA ( Community, 2026 )
+provides a modular backbone–expert framework. These advances leave
+open how task-relevant 3D structure should be encoded and retained
+across decisions.
+3D Representations and Geometric Supervision.
+Spatially informed VLAs use depth ( Li et al., 2026b ; Fan et al., 2026 ) ,
+feature-level geometric supervision ( Abouzeid et al., 2025 ) ,
+and predictive representations. Spatial Forcing ( Li et al., 2026a )
+aligns intermediate visual features with frozen VGGT features;
+3DThinkVLA ( Shi et al., 2026c ) combines feature alignment with spatial
+reasoning distillation. Other methods model motion and scene evolution
+ ( Bhat et al., 2025 ; Li et al., 2025b ) : GeoPredict ( Qian et al., 2026 ) couples
+future robot-keypoint trajectories with predictive Gaussian geometry,
+while GaussianDream ( Zhang et al., 2026e ) learns a latent prefix through
+current and future Gaussian scene prediction. These approaches enrich
+spatial representations, but geometric supervision alone does not
+specify how the resulting information should be maintained and accessed
+throughout an episode.
+Temporal and Spatial Memory.
+History-aware policies use recurrent states, visual prompts, and
+retrievable memory. RoboFlamingo ( Li et al., 2024b ) aggregates
+sequential features with a recurrent policy head; TraceVLA
+ ( Zheng et al., 2025 ) encodes tracked motion as visual traces. HAMLET
+ ( Koo et al., 2026 ) aggregates distinctive moment tokens in a lightweight
+memory module. MemoryVLA ( Shi et al., 2026a ) retrieves, adaptively fuses,
+and consolidates perceptual and cognitive history; EventVLA
+ ( Yang et al., 2026a ) predicts keyframes to preserve sparse visual evidence.
+BridgeVLA++ ( Li et al., 2026c ) combines temporal observation history
+with explicit point-cloud spatial memory. These designs trade retained
+detail against temporal coverage and cost, but how scene and motion
+targets shape latent history for later decisions remains open. We focus
+on jointly learning and using spatial representations across time to
+guide manipulation.
+ 3 Method
+ 3.1 Preliminaries
+ Figure 2: Architecture of GeoMem-VLA .
+Images, language, and learnable 3D marker tokens are encoded by the VLM. The geometry branch is trained with scene-geometry targets and demonstration-derived future end-effector tracks, whereas the action expert is trained to predict robot actions. Geometric and observational features are retained in episodic memory and fused to form the context for action generation. The geometry teacher and reconstruction head are used only during training.
+Vision-Language-Action Models.
+We formulate language-conditioned manipulation as sequential decision making.
+At control step t , the policy receives multi-view RGB observations
+ \mathbf{o}_{t}=\{I_{t}^{(v)}\}_{v=1}^{V} , proprioceptive state
+ \mathbf{s}_{t}\in\mathbb{R}^{d_{s}} , and a language instruction \ell , and
+predicts a continuous action chunk
+ \widehat{\mathbf{A}}_{t}=\pi_{\theta}(\mathbf{o}_{t},\mathbf{s}_{t},\ell)=(\widehat{\mathbf{a}}_{t},\ldots,\widehat{\mathbf{a}}_{t+H-1})\in\mathbb{R}^{H\times d_{a}}.
+ (1)
+Here H is the prediction horizon, while d_{a} and the semantics of each
+action are determined by the robot embodiment and control interface.
+GR00T-Style Action Expert.
+We instantiate a GR00T-style flow-matching action expert ( Bjorck et al., 2025 )
+in StarVLA ( Community, 2026 ) , using Qwen3-VL-4B ( Bai et al., 2025 ) as the
+backbone and a conditional Diffusion Transformer as the expert. Let
+ \mathbf{A}_{t}=(\mathbf{a}_{t},\ldots,\mathbf{a}_{t+H-1})\in\mathbb{R}^{H\times d_{a}} be a normalized demonstration chunk and
+ \mathbf{C}_{t} the vision-language context. For
+ \bm{\epsilon}^{a}\sim\mathcal{N}(\mathbf{0},\mathbf{I}) and
+ \rho\sim p_{\mathrm{act}} from the configured Beta-derived schedule,
+define \mathbf{A}_{t,\rho}=(1-\rho)\bm{\epsilon}^{a}+\rho\mathbf{A}_{t} .
+The expert minimizes the noise-to-data velocity error:
+ \mathcal{L}_{\mathrm{action}}=\mathbb{E}_{\mathbf{A}_{t},\rho,\bm{\epsilon}^{a}}\left[\frac{1}{Hd_{a}}\left\|v_{\psi}^{\mathrm{act}}(\mathbf{A}_{t,\rho},\rho;\mathbf{C}_{t},\mathbf{s}_{t})-(\mathbf{A}_{t}-\bm{\epsilon}^{a})\right\|_{F}^{2}\right].
+ (2)
+At inference, Euler integration transforms Gaussian noise into an
+action chunk.
+VGGT Geometry Teacher.
+Visual Geometry Grounded Transformer (VGGT) is a feed-forward geometry model that predicts camera parameters and
+dense 3D attributes, including depth maps, point maps, and point tracks, from
+one or more RGB images ( Wang et al., 2025 ) . Its transformer alternates frame-wise and
+global self-attention before applying task-specific prediction heads.
+ 3.2 Geometry-Supervised Latent Representations
+We omit the batch dimension throughout and use D_{v} for the VLM hidden
+dimension and D_{g} for the geometric working dimension.
+We append K GeoPlan markers to the vision-language sequence. Let
+ \mathbf{q}_{1:K}=[\mathbf{q}_{1};\ldots;\mathbf{q}_{K}] denote their input
+embeddings, with \mathbf{q}_{i}\in\mathbb{R}^{D_{v}} . Their final-layer hidden
+states are extracted and projected to the geometric working space:
+ \mathbf{z}_{t}=\mathrm{VLM}([\mathbf{o}_{t};\ell;\mathbf{q}_{1:K}])_{\mathrm{GeoPlan}},\qquad\mathbf{c}_{t}=\mathrm{Proj}(\mathbf{z}_{t})\in\mathbb{R}^{K\times D_{g}}.
+ (3)
+Here \mathrm{VLM} denotes the pretrained vision-language backbone.
+The subscript \mathrm{GeoPlan} selects the K marker
+positions, giving \mathbf{z}_{t}\in\mathbb{R}^{K\times D_{v}} .
+ \mathrm{Proj} applies layer normalization and a learned linear map from
+ D_{v} to D_{g} to each output token.
+The projected tokens \mathbf{c}_{t} both
+condition the auxiliary geometry head and form the geometric memory entries.
+Supervision Targets.
+The frozen teacher’s current-view point map is pooled to a P\times P grid
+and used as a scene pseudo-target; its confidences weight the scene loss.
+A future EEF track is the ordered sequence of demonstration-derived
+Cartesian end-effector waypoints over the action horizon. We transform future EEF positions into the current
+VGGT point-map frame and normalize them jointly with the point map. This
+locates the intended motion relative to the observed scene. We concatenate the
+point-map segment \mathbf{P}_{t}\in\mathbb{R}^{P^{2}\times 3} and EEF-track segment
+ \mathbf{W}_{t}\in\mathbb{R}^{n_{e}\times 3} :
+ \mathbf{Y}_{t}=[\mathbf{P}_{t};\mathbf{W}_{t}]\in\mathbb{R}^{(P^{2}+n_{e})\times 3}.
+ (4)
+Here n_{e} denotes
+the total number of future waypoints.
+Auxiliary Flow Matching.
+Let \epsilon be a noise tensor with the same shape as \mathbf{Y}_{t} and
+independent standard Gaussian entries, and let \tau\sim\mathcal{U}[0,1]
+be the flow time, distinct from control step t . Define
+ \mathbf{Y}_{t,\tau}=(1-\tau)\epsilon+\tau\mathbf{Y}_{t} .
+A modality-aware transformer v_{\phi} , with learned parameters \phi ,
+predicts the velocity from this noisy target, flow time, and geometric
+condition \mathbf{c}_{t} . Its output has the same shape as \mathbf{Y}_{t} :
+ \mathcal{L}_{\mathrm{geo}}=\sum_{m\in\{\mathrm{scene,eef}\}}\lambda_{m}\mathbb{E}_{\tau,\epsilon}\left[\left\|v_{\phi}(\mathbf{Y}_{t,\tau},\tau,\mathbf{c}_{t})_{m}-(\mathbf{Y}_{t}-\epsilon)_{m}\right\|_{w_{m}}^{2}\right].
+ (5)
+Here m indexes the Scene or EEF segment, and the subscript m selects that segment from the
+predicted and target velocities.
+The action objective remains the action expert’s flow-matching loss:
+ \mathcal{L}=\mathcal{L}_{\mathrm{action}}+\alpha\mathcal{L}_{\mathrm{geo}}.
+ (6)
+Here \mathcal{L}_{\mathrm{action}} is the action flow-matching objective in
+ Equation   2 , and \alpha controls geometric supervision relative to
+action learning.
+Checkpoint-specific settings must be verified as described in Appendix   A .
+ 3.3 Geometry Event-Aware Memory
+At each control step, the policy retrieves history within each representation
+stream, updates its bounded episode memory, and then injects retrieved geometry
+into the retrieved observation representation. We maintain two observation
+streams and one geometric stream, indexed by
+ j\in\{\mathrm{obs},\mathrm{geo}\} .
+ \mathbf{x}^{\mathrm{obs}}_{t}\in\mathbb{R}^{N_{o}\times D_{v}} contains
+resized visual tokens and the final
+non-padding VLM state token that includes the backbone’s general task understanding, and
+ \mathbf{x}^{\mathrm{geo}}_{t}=\mathbf{c}_{t}\in\mathbb{R}^{K\times D_{g}} contains
+geometry-supervised tokens. The first two streams jointly form observation
+memory; the third forms geometric memory.
+Causal Temporal Retrieval.
+Let \mathcal{M}^{j}_{<t} contain only earlier entries from the same episode.
+Each stream retrieves from its own bank:
+ \widetilde{\mathbf{x}}^{j}_{t}=R_{j}(\mathbf{x}^{j}_{t},\mathcal{M}^{j}_{<t};t).
+ (7)
+ R_{j} uses current tokens as queries and stored tokens as keys and values,
+adds learned timestamp encodings to the keys, and fuses the retrieved
+context with the current representation. Point-map- and future-motion-
+supervised GeoPlan states are written to a dedicated bank, where similar
+adjacent entries are consolidated. Denoting the retrieved geometric
+tokens by \widetilde{\mathbf{c}}_{t}=\widetilde{\mathbf{x}}^{\mathrm{geo}}_{t} , a gate combines them with
+retrieved visual tokens; the result and the other observation stream
+condition the action expert. More detials are shown in Appendix   B
+Event-Aware Training.
+Retrieval precedes writing, preventing the current entry from retrieving
+itself. We then append (t,\operatorname{sg}(\mathbf{x}^{j}_{t})) to bank j ,
+where \operatorname{sg} stops gradients through stored history. If the
+ordered bank \{(s_{r},\mathbf{m}^{j}_{r})\}_{r=1}^{L} exceeds its capacity, it
+selects the most similar temporally adjacent pair:
+ r_{j}^{\star}=\arg\max_{1\leq r<L}\operatorname{cos}\!\left(\operatorname{vec}(\mathbf{m}^{j}_{r}),\operatorname{vec}(\mathbf{m}^{j}_{r+1})\right).
+ (8)
+The pair is replaced by its elementwise mean and labeled with the later
+timestamp. Repeated updates therefore preferentially compress redundant
+states within stable manipulation phases, while feature-distinct transitions
+are more likely to remain in separate slots. We call the resulting latent
+summaries event-level key memories : they summarize temporally distinct
+states induced by representation change. Banks are reset at episode boundaries, and deployment memory never
+receives future observations or demonstration actions.
+The replay diagnostics in Appendix   D
+also examine overflow-based consolidation.
+Deployment.
+The VGGT teacher and geometry decoder are omitted from action inference. The
+backbone still computes the latent geometric tokens, and memory retrieval and similarity-based consolidation remain active. No explicit point-map or EEF-track decoding is required
+for action generation; latent-token and memory operations remain part of
+the deployed policy.
+ 4 Experiments
+ 4.1 Experimental Setup
+Simulation Benchmarks and Evaluation.
+We evaluate on LIBERO ( Liu et al., 2023 ) , comprising four 10-task suites
+(Spatial, Object, Goal, and Long) with 7-dimensional end-effector delta
+actions and prediction horizon H=8 , and RoboTwin 2.0 ( Chen et al., 2025 ) ,
+comprising 50 bimanual tasks with 14-dimensional joint targets and H=50
+in Clean and Randomized settings. We run 50 trials per LIBERO task and 100 per RoboTwin task and setting.
+In inference, the task-adaptive execution horizon E_{t}\leq H determines
+how many predicted actions are executed. Further
+settings appear in Appendix   A . Published results in
+ Tables   1 and  2 cite first-party sources and retain
+their source protocols.
+ Table 1: LIBERO Success Rates (%). References beside method names
+identify the first-party source for each published result. Averages cover
+the four displayed suites.
+Bold and underline mark the
+highest and second-highest distinct values in each column, including ties.
+ Method
+ Spatial
+ Object
+ Goal
+ Long
+ Average
+ OpenVLA (FT) ( Kim et al., 2024 )
+ 84.7
+ 88.4
+ 79.2
+ 53.7
+ 76.5
+ TraceVLA ( Zheng et al., 2025 )
+ 84.6
+ 85.2
+ 75.1
+ 54.1
+ 74.8
+ SpatialVLA ( Qu et al., 2025 )
+ 88.2
+ 89.9
+ 78.6
+ 55.5
+ 78.1
+ 4D-VLA ( Zhang et al., 2026b )
+ 88.9
+ 95.2
+ 90.9
+ 79.1
+ 88.6
+ DreamVLA ( Zhang et al., 2026d )
+ 97.5
+ 94.0
+ 89.5
+ 89.5
+ 92.6
+ \pi_{0} ( Driess et al., 2026 )
+ 96.8
+ 98.8
+ 95.8
+ 85.2
+ 94.2
+ \pi_{0.5} ( Intelligence et al., 2025 )
+ 98.8
+ 98.2
+ 98.0
+ 92.4
+ 96.9
+ GeoPredict ( Qian et al., 2026 )
+ 98.0
+ 98.2
+ 95.7
+ 94.0
+ 96.5
+ MemoryVLA ( Shi et al., 2026a )
+ 98.4
+ 98.4
+ 96.4
+ 93.4
+ 96.7
+ CronusVLA ( Li et al., 2025a )
+ 97.3
+ 99.6
+ 96.9
+ 94.0
+ 97.0
+ OpenVLA-OFT ( Kim et al., 2025 )
+ 97.6
+ 98.4
+ 97.9
+ 94.5
+ 97.1
+ GeoVLA ( Sun et al., 2025 )
+ 98.4
+ 99.0
+ 96.6
+ 96.6
+ 97.7
+ AVA-VLA ( Xiao et al., 2026 )
+ 99.2
+ 99.6
+ 97.9
+ 96.2
+ 98.2
+ Spatial Forcing ( Li et al., 2026a )
+ 99.4
+ 99.6
+ 98.8
+ 96.0
+ 98.5
+ 3DThinkVLA ( Shi et al., 2026c )
+ 100.0
+ 100.0
+ 98.8
+ 95.8
+ 98.7
+ GeoMem-VLA (ours)
+ 99.6
+ 99.8
+ 99.6
+ 96.6
+ 98.9
+ Table 2: RoboTwin 2.0 success rates (%). Clean and Randomized
+refer to the 50-task evaluation (called Easy/Hard in some reports).
+Each
+Boldface and underlining indicate the highest and second-highest distinct values in each column, including ties.
+ Method
+ Clean
+ Randomized
+ Average
+ X-VLA ( Zheng et al., 2026 )
+ 70.00
+ 39.00
+ 54.50
+ Track4Action ( Wang et al., 2026a )
+ 80.44
+ 81.48
+ 80.96
+ ABot-M0 ( Yang et al., 2026b )
+ 86.06
+ 85.08
+ 85.57
+ Qwen-VLA-Instruct ( Wang et al., 2026b )
+ 86.10
+ 87.20
+ 86.65
+ LingBot-VLA ( Wu et al., 2026a )
+ 88.56
+ 86.68
+ 87.62
+ StarVLA-OFT ( Community, 2026 )
+ 88.18
+ 88.32
+ 88.25
+ StarVLA-GR00T ( Community, 2026 )
+ 88.00
+ 88.50
+ 88.25
+ JoyAI-RA 0.1 ( Zhang et al., 2026c )
+ 90.48
+ 89.28
+ 89.88
+ HyVLA-0.5 ( Zhang et al., 2026a )
+ 90.90
+ 90.10
+ 90.50
+ GeoMem-VLA (ours)
+ 91.10
+ 91.24
+ 91.17
+ 4.2 Main Results
+ Table   1 shows that GeoMem-VLA achieves the highest displayed
+LIBERO average ( 98.9\% ), 0.4 points above Spatial Forcing. Spatial,
+Object, and Goal are near ceiling ( 99.6\% – 99.8\% ); Long is more
+discriminative, where our 96.6\% ties the highest displayed score and
+exceeds MemoryVLA by 3.2 points. The advantage is therefore not confined
+to the three near-saturated suites.
+On RoboTwin, GeoMem-VLA reaches 91.10\% on Clean and 91.24\% on
+Randomized, averaging 91.17\% ( Table   2 ). It exceeds
+HyVLA-0.5 by 0.20 and 1.14 points in the two settings, respectively,
+and the closest published StarVLA-GR00T reference by 2.92 points on
+average. The results show strong performance across both end-effector and
+joint-action benchmarks, including randomized evaluation. Since published
+methods may differ in training data, inputs, and protocols, these comparisons
+provide context rather than a controlled ranking; the matched ablations
+below assess the contributions of geometry and memory.
+ Table 3: Component Ablations on LIBERO. Success rate (%) over
+50 trials per task. Geo. and Mem. indicate our GeoPlan branch and causal
+episode memory, respectively.
+ Configuration
+ Geo.
+ Mem.
+ Spatial
+ Object
+ Goal
+ Long
+ Average
+ GeoMem-VLA (full)
+ ✓
+ ✓
+ 99.6
+ 99.8
+ 99.6
+ 96.6
+ 98.9
+ w/o geometry branch
+ ✗
+ ✓
+ 98.0
+ 99.6
+ 98.8
+ 95.2
+ 97.9
+ w/o temporal memory
+ ✓
+ ✗
+ 99.4
+ 99.6
+ 99.4
+ 94.2
+ 98.2
+ StarVLA-GR00T
+ ✗
+ ✗
+ 97.8
+ 98.8
+ 97.4
+ 92.0
+ 96.5
+ Note. ✓/✗ denote presence/absence of the indicated module.
+ Table 4: Component Ablations on RoboTwin 2.0. Success rate (%)
+over 50 tasks with 100 episodes per task and setting. Geo. and Mem. indicate
+our GeoPlan branch and causal episode memory.
+ Configuration
+ Geo.
+ Mem.
+ Clean
+ Randomized
+ Average
+ GeoMem-VLA (full)
+ ✓
+ ✓
+ 91.10
+ 91.24
+ 91.17
+ w/o geometry branch
+ ✗
+ ✓
+ 89.68
+ 89.74
+ 89.71
+ w/o temporal memory
+ ✓
+ ✗
+ 89.84
+ 90.52
+ 90.18
+ StarVLA-GR00T
+ ✗
+ ✗
+ 88.00
+ 88.50
+ 88.25
+ StarVLA-OFT
+ ✗
+ ✗
+ 88.18
+ 88.32
+ 88.25
+ Note. ✓/✗ denote presence/absence of the indicated module. Average is the mean of
+Clean and Randomized.
+ 4.3 Ablation Study
+Geometry and Memory.
+ Tables   3 and  4 compare the full model
+with two matched interventions. The full model stores GeoPlan tokens in a
+geometric bank, consolidates similar adjacent entries, and gates retrieved
+geometry into the observation context. Removing GeoPlan eliminates its auxiliary
+supervision, geometric tokens, geometric memory bank, and gated fusion,
+while retaining the observation banks. Removing temporal
+memory retains current geometric tokens and supervision but disables
+historical retrieval from all banks.
+On LIBERO, the observation-memory variant lowers average success from
+ 98.9\% to 97.9\% , with drops of 1.6 points on Spatial and 1.4
+on Long. Without temporal memory, the average falls to 98.2\% ; Long
+falls from 96.6\% to 94.2\% , compared with 0.2 -point drops on each
+other suite. On RoboTwin, removing GeoPlan lowers the Clean/Randomized
+mean from 91.17\% to 89.71\% , while removing memory yields 90.18\% ;
+both interventions reduce success in Clean and Randomized. The full model
+exceeds these variants on 35 and 27 of 50 RoboTwin tasks, respectively,
+after averaging each task across settings ( Table   6 ).
+These results show both geometric reconstruction and temporal memory positively impact the model’s task ability. Furthermore, geometric capabilities are particularly effective in spatial tasks. The full model outperforms the observation-memory variant, suggesting benefits from incorporating the GeoPlan branch.
+ 4.4 Representation and Memory Diagnostics
+To examine how geometry-supervised GeoPlan representations connect current spatial understanding to temporal memory, we replay an episode of
+ open_microwave and stack_blocks_three in the Clean and
+Randomized RoboTwin settings with the 200k step checkpoint. For each episode, we decode point maps and
+future EEF tracks at four frames and process 16 uniformly sampled frames
+causally through memory. This is an offline demonstration diagnostic. Additional details are provided in Appendix   D
+ Figure 3: Geometry, future motion, and retained memory in RoboTwin. (a,b) Randomized examples show RGB observations, VGGT point-map targets, predicted point maps, and future EEF tracks (solid: prediction; dashed: demonstration). (c) Final memory retention in Randomized stacking: the observational row shows the intersection of both observation banks, while the geometric row shows geometric memory (dots: retained; crosses: not retained; vertical shaded bands: shared timestamps), with corresponding frames enlarged below.
+ Figure   3 (a,b) and Table   7 examine the spatial and motion content of current GeoPlan states: the auxiliary head reconstructs VGGT point-map targets and demonstration-derived EEF tracks, with mean point-map RMSE of 0.064–0.094 in normalized units and mean EEF RMSE of 3.07–3.74 mm across the four cases. The same GeoPlan states are written as entries in geometric memory. Figure   3 (c) shows entries retained across the initial layout and later stacking stages; the retrieval visualization in Appendix Figure   6 (d) shows access to earlier entries. These diagnostics follow the latent interface from current prediction to temporal storage and retrieval, while Tables   3 and  4 evaluate the assembled pathways through closed-loop task success.
+ 4.5 Real-World Experiments
+ Figure 4:
+ Real-world Manipulation Evaluation of GeoMem-VLA.
+The figure shows the real-world experiments task settings and success rates across five tasks.
+Each bar reports the success rate over 10 independent closed-loop rollouts.
+Experimental setup.
+We conduct real-world experiments to evaluate GeoMem-VLA in manipulation scenarios involving geometric reasoning and temporal context.
+Specifically, we design five tasks with distinct spatial and sequential requirements as shown in Figure   4 : pick and stand sticks , transfer cup across the rack , separate file pockets on the Astribot S1 platform and pick n times cube , cover and find the apple under towel on the AgileX platform.
+We collect 60 demonstrations per task and GeoMem-VLA is compared to representative VLA baselines, including LingBot-VLA 2.0 ( Wu et al., 2026b ) , \pi_{0.5} ( Intelligence et al., 2025 ) , and OpenVLA-OFT ( Kim et al., 2025 ) , under the same evaluation protocol.
+During evaluation, we conduct 10 independent rollouts for each task under randomized object configurations and report the success rate.
+Result analysis.
+ Figure   4 shows that GeoMem-VLA achieves robust performance across five real-world manipulation tasks.
+Specifically, for comprehensive long-horizon manipulation tasks, including pick and stand sticks , transfer a cup across the rack , and cover and find the apple , GeoMem-VLA achieves 90%, 70%, and 80% success rates.
+These tasks require both precise spatial interaction and maintaining task-relevant context throughout multi-stage execution, such as in pick and stand sticks task, the robot needs to repeatedly identify individual sticks, grasp them from a shared workspace, and place them into a precise upright configuration.
+The results show that the geometry-supervised representations provide spatially grounded features for reliable grasping and placement, while the historical geometric context effectively maintains task progress.
+Moreover, for the spatially precise separate file pockets task, GeoMem-VLA achieves 100% success rate by accurately distinguishing and manipulating the target file pocket among cluttered stacked configurations.
+For pick n times cube , the challenge is maintaining progress over repeated interactions. The policy needs to remember how many successful grasp-and-place cycles have been completed while adapting to the current scene. The temporal memory mechanism preserves task progress across repeated operations, allowing GeoMem-VLA to complete the required number of interactions.
+ 5 Conclusion
+Inspired by the thought patterns of human action, we propose GeoMem-VLA to illustrate how humans conceptualize and store spatial information of the current scene in their minds as memory to guide action generation during decision-making.
+This method allows spatial information learned through reconstruction to remain available as latent context throughout task execution.
+LIBERO and RoboTwin results support its applicability across manipulation tasks.
+Experiments on two physical robot platforms further cover precise spatial interaction, changing visibility, and multi-stage manipulation. These results support geometry-supervised latent memory as a practical connection between 3D representation learning and action generation over time, effectively improving VLA model’s decision-making ability.
+AI use statement
+Generative AI tools were used for literature discovery, manuscript wording, formatting assistance and code debugging. All AI-assisted outputs were reviewed and verified by the authors. The authors take full responsibility for the accuracy of all references, experimental results, scientific claims, and other contents of this paper.
+Ethics statement
+This work evaluates object manipulation in simulation and on physical robots,
+without testing human–robot interaction. Physical deployment may cause
+unintended motion or collisions; success on the reported tasks does not
+establish safety around people or in unconstrained settings. Real-world use
+requires supervision and appropriate safety controls. Any release of
+demonstration videos or logs should respect data permissions and exclude
+identifying information. We disclose evaluation protocols and limitations to
+avoid overstating generalization or safety.
+Reproducibility statement
+The main paper specifies the model architectures, training setups, and experimental protocols, and
+the appendix provides additional details on hyperparameters, training procedures, evaluation methods and scoring rules, robustness and generalization
+analyses, task specifications, and qualitative results. The code will be publicly released upon publication.

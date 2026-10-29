@@ -1,0 +1,1054 @@
+https://arxiv.org/html/2605.28532v1
+
+arXiv:2605.28532v1 [cs.AI] 27 May 2026 
+ 
+ 
+ Do Agents Know What They Can’t Do?
+ Evaluating Feasibility Awareness in Tool-Using Agents 
+
+ 
+ 
+ 
+ Liang Cheng*
+ 
+ Affiliation:  University of Edinburgh
+ 
+ Email:  L.cheng@ed.ac.uk 
+ 
+    
+ Mingsheng Cai*
+ 
+ Affiliation:  University of Edinburgh
+ 
+    
+ Jiuming Jiang
+ 
+ Affiliation:  University of Edinburgh
+ 
+    
+ Luo Mai
+ 
+ Affiliation:  University of Edinburgh
+ 
+
+ Abstract 
+    
+ Tool-using agents often incur substantial computational cost due to long reasoning chains and iterative tool usage. In practical scenarios, many tasks become  infeasible  under constrained tool environments, where the capabilities required for successful task completion are unavailable. Detecting infeasible tasks and stopping execution early can significantly reduce unnecessary execution cost.
+In this work, we propose  FeasiGen , an automatic pipeline for constructing infeasible agent tasks by identifying the critical tools required for successful task completion. Our approach extracts tool-calling traces from successful executions across multiple agent systems, identifies critical tools consistently shared across diverse execution strategies, and masks these tools to automatically transform solvable tasks into infeasible ones. Human verification confirms that the infeasibility annotations for our constructed tasks achieve over 94% accuracy.
+We further introduce feasibility-aware evaluation metrics for measuring whether agents can recognize infeasible tasks and stop execution appropriately. Extensive evaluations across nine models reveal substantially weak infeasibility detection ability, with false continue rate reaching up to 73.9%. We further observe that multi-agent architectures significantly reduce erroneous execution under infeasible conditions 1 1 
+           1 
+          
+          
+          
+        https://github.com/LeonChengg/FeasiGen . 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Tool-using agents have emerged as a central paradigm in modern AI systems, enabling large language models (LLMs) to solve complex tasks through external APIs, environment interaction, and multi-step planning   Patil et al. (2024) ;  Schick et al. (2023) ;  Yao et al. (2022) . Agent execution often incurs substantial computational and interaction costs due to long reasoning chains, iterative tool usage, and complex multi-step workflows  Liu et al. (2024) ;  Zhou et al. (2024) ;  Jimenez et al. (2024) . However, in practical deployments scenarios, many tasks become  infeasible , i.e., the required capabilities for successful task completion are unavailable under the current tool and environment constraints  Zhang et al. (2024) ;  Qin et al. (2024) ;  Guo et al. (2024) . Detecting such infeasible tasks and terminating execution early can substantially reduce unnecessary computational overhead  Liu et al. (2024) ;  Jimenez et al. (2024) ;  Kapoor et al. (2024) . As illustrated in Figure  1 , when the required  Payment_API  is unavailable (i.e., task is infeasible), early infeasibility detection and termination reduce execution cost by more than  10 × 10\times  compared with failed execution after continued reasoning and tool interaction. 
+
+ 
+ 
+ 
+ Figure 1:  An example of early infeasibility detection vs. false continuation. 
+ 
+ 
+ However, existing agent benchmarks largely assume that tasks remain solvable under the provided environments and primarily evaluate task success rates under such settings  Patil et al. (2025) ;  Liu et al. (2024) ;  Zhou et al. (2024) ;  Jimenez et al. (2024) ;  Yao et al. (2024) ;  Xie et al. (2024) ;  Deng et al. (2023) . Current evaluation paradigms also primarily reward persistent execution and successful task completion, while providing limited assessment of whether agents can recognize violated execution requirements and terminate appropriately under constrained environments  Zhang et al. (2024) ;  Bonagiri et al. (2025) . 
+
+ 
+ 
+ 
+ Constructing genuinely infeasible agent tasks also remains challenging. Existing approaches still mainly rely on human verification. Manual-annotation methods such as ToolBeHonest  Zhang et al. (2024)  require domain experts to explicitly inspect task requirements and annotate violated execution conditions, making the construction process labor-intensive and difficult to scale.  Yang et al. (2024)  propose perturbation-based methods for constructing incomplete tool-use scenarios by modifying or replacing tools with semantically similar alternatives. However, these perturbations are not targeted at removing the critical capabilities required for successful task completion, making it difficult to guarantee that the resulting tasks are genuinely infeasible. Moreover, their pipeline still requires substantial human annotation to filter valid infeasible instances. 
+
+ 
+ 
+ 
+ In this work, we introduce  FeasiGen , an automatic pipeline for constructing infeasible agent tasks by identifying critical execution dependencies required for successful task completion.
+Our framework operates on agent tasks with predefined candidate tool pools, where execution is constrained to a fixed set of available tools. We perform multi-model execution trace analysis by collecting successful tool-calling traces from multiple agent systems and identifying dependencies consistently shared across diverse execution strategies. By masking these critical dependencies, our framework automatically transforms previously solvable tasks into infeasible ones under constrained tool environments. Human verification on a statistically grounded subset (95% confidence, 5% margin of error) confirms that  94%  of the constructed instances are truly infeasible under the corresponding constrained environments. 
+
+ 
+ 
+ 
+ Furthermore, we introduce a feasibility-aware evaluation protocol that explicitly measures whether agents can recognize infeasible tasks and stop execution appropriately. Beyond conventional task-success evaluation, our metrics assess false continue rate on infeasible tasks as well as the efficiency trade-off between early stopping and failed execution, enabling systematic evaluation of both feasibility awareness and execution efficiency. To our knowledge, this is the first work that automatically constructs infeasible agent tasks through removing critical required capability and explicitly incorporates infeasibility detection into agent evaluation. 
+
+ 
+ 
+ 
+ Using our pipeline, we construct a feasibility-aware benchmark containing infeasible agent tasks drawn from four agent datasets that span diverse domains, and evaluate nine modern models under both single-agent and multi-agent architectures. Experimental results reveal that current agent systems generally exhibit weak infeasibility detection ability, with false continue rate ranging from 23.5% to 73.9%. We further observe that multi-agent architectures substantially improve infeasibility detection, reducing the average false continue rate from 54.6% to 17.5%. In addition, enabling reasoning mode consistently improves infeasibility detection and reduces unnecessary token consumption through earlier stopping behavior. Finally, we identify signs of datasets overfitting in several models, which are able to generate correct answers even when the critical capabilities required for task completion are unavailable. 
+
+ 
+ 
+ 
+ Our work makes the following contributions: 
+
+ 
+ 
+ •  
+ 
+ We propose FeasiGen, an automatic pipeline for constructing infeasible agent tasks by identifying critical execution dependencies required for successful task completion and masking the corresponding capabilities under constrained environments. 
+
+ 
+ 
+ •  
+ 
+ We introduce feasibility-aware evaluation metrics for systematically measuring infeasibility detection, false continuation behavior, and execution efficiency beyond conventional task success rate evaluation. 
+
+ 
+ 
+ •  
+ 
+ We construct a benchmark drawn from four agent datasets spanning diverse domains, and conduct evaluations across nine LLMs under both single-agent and multi-agent architectures, revealing limitations in current agents’ infeasibility detection capabilities. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 2  Background 
+
+ 
+
+ 
+ Figure 2:  Overview of the FeasiGen pipeline.  Step 1:  Collect tasks operating over a closed tool set from existing datasets.  Step 2:  Each task is run by various agents, and we identify the critical tools as the intersection of tools shared across successful traces.  Step 3:  Mask these tools to render the task infeasible for evaluation. 
+ 
+ 
+ Tool-Using Agent Benchmarks. 
+
+ 
+
+ 
+ LLMs have increasingly been extended as tool-using agents that interact with external environments through API calls and multi-step decision making  Yao et al. (2022) ;  Schick et al. (2023) ;  Patil et al. (2024) . Building on this paradigm, recent benchmarks evaluate function calling, tool usage, and agent execution across diverse environments, including BFCL  Patil et al. (2025) , API-Bank  Li et al. (2023) , StableToolBench  Guo et al. (2024) , and  τ \tau -bench  Yao et al. (2024) . These benchmarks primarily focus on execution correctness, task completion, and efficiency under solvable environments, while largely assuming that tasks remain achievable given the provided tools and environmental constraints. As a result, they rarely consider scenarios where tasks may become inherently infeasible due to missing critical capabilities. 
+
+ 
+ 
+ 
+ 
+ Infeasible Tasks and Feasibility-Aware Evaluation. 
+
+ 
+
+ 
+ In realistic deployments, many agent tasks become  infeasible  when the critical capabilities required for successful task completion are unavailable under the current environment. For example, a payment-processing task becomes infeasible once the required payment API is unavailable, even if other related tools remain accessible. Existing evaluation paradigms mainly reward persistent execution and final task success, potentially overlooking brittle behaviors where agents continue reasoning and invoking tools even after successful task completion has become impossible, resulting in severe token waste. 
+
+ 
+ 
+ 
+ Recent work  Yang et al. (2024)  introduces perturbation strategies by adding or replacing APIs with semantically similar alternatives, or by removing information from user instructions. However, these methods do not identify the indispensable capabilities truly required for task completion. As a result, although such perturbations may increase task difficulty, they cannot guarantee that the constructed tasks are genuinely infeasible, since agents may still solve them through alternative tools or different execution strategies. Consequently, additional human annotation is still required to determine whether the constructed tasks are infeasible. 
+
+ 
+ 
+ 
+ 
+ Critical Dependency Identification. 
+
+ 
+
+ 
+ Related ideas of identifying indispensable components through intersections across execution traces have been widely explored in program analysis, workflow mining, and fault localization  Weiser (1984) ;  Jones et al. (2002) ;  Agrawal et al. (1998) ;  van der Aalst et al. (2004) . In these settings, components consistently shared across successful execution traces are often treated as critical dependencies required for successful execution. Similar intuitions also appear in invariant dependency discovery and causal analysis  Arjovsky et al. (2019) ;  Peters et al. (2016) , where factors repeatedly shared across diverse successful outcomes are more likely to correspond to essential dependencies rather than strategy-specific behaviors. These observations suggest that execution patterns consistently shared across diverse successful trajectories can provide useful signals for identifying the critical capabilities required for task completion. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Infeasible Agent Task Construction 
+
+ 
+
+ 
+ As shown in Figure  2 , our FeasiGen pipeline contains three stages. First, we collect tasks from existing agent datasets and retain only those operating over a closed tool set (§ 3.1 ). Second, we run various agent systems on each task, keep only the successful execution traces, and identify  critical tools  as the intersection of tools shared across all successful traces (§ 3.2 ). Third, we mask these critical tools from the candidate tool pool to make each task infeasible. (§ 3.3 ). 
+
+ 
+ 
+ 
+ 3.1  Data Collection 
+
+ 
+
+ 
+ We collect candidate tasks from multiple tool-use agent datasets spanning diverse domains, and retain only tasks operating over a closed tool set, where each task is associated with a fixed and fully predefined set of available tools. Formally, each instance is represented as  ( q i , 𝒯 i ) (q_{i},\mathcal{T}_{i}) , where  q i q_{i}  denotes the user query and  𝒯 i \mathcal{T}_{i}  denotes the corresponding candidate tool pool available to the agent. The resulting tasks and their associated tool sets provide a controlled foundation for identifying and masking critical tools in later stages. 
+
+ 
+ 
+ 
+ 
+ 3.2  Critical Tool Identification 
+
+ 
+
+ 
+ In this step, we collect tool-calling traces from successful executions, and identify critical tools by analyzing the overlaps across the collected traces. 
+
+ 
+ 
+ 
+ Selecting tool-calling traces. 
+
+ 
+
+ 
+ To identify the execution dependencies required for successful task completion, we execute multiple agent systems on the original solvable tasks and record their successful tool-calling traces.
+Specifically, for each task  q i q_{i} , we evaluate a collection of agent systems
+ ℳ = { m 1 , m 2 , … , m k } \mathcal{M}=\{m_{1},m_{2},\dots,m_{k}\} .
+Each agent interacts with the environment using only the provided candidate tool pool  𝒯 i \mathcal{T}_{i} .
+For every successful execution, we collect the corresponding tool-calling trace: 
+
+ 
+ 
+
+ 
+ 
+ Γ i ( j ) = [ t 1 , t 2 , … , t n ] , \Gamma_{i}^{(j)}=[t_{1},t_{2},\dots,t_{n}], 
+ 
+ 
+
+ 
+ where  Γ i ( j ) \Gamma_{i}^{(j)}  denotes the ordered sequence of tool calls generated by model  m j m_{j}  for task  q i q_{i} . 
+
+ 
+ 
+ 
+ 
+ Select critical tools. 
+
+ 
+
+ 
+ After collecting successful execution traces from multiple agent systems, we identify critical execution dependencies that are consistently required for successful task completion. For each task  q i q_{i} , we first extract the set of tools appearing in each successful execution trace: 
+
+ 
+ 
+
+ 
+ 
+ S i ( j ) = { t ∣ t ∈ Γ i ( j ) } . S_{i}^{(j)}=\{t\mid t\in\Gamma_{i}^{(j)}\}. 
+ 
+ 
+
+ 
+ We then compute the shared tools dependencies across different successful executions: 
+
+ 
+ 
+
+ 
+ 
+ C i = ⋂ j = 1 k S i ( j ) , C_{i}=\bigcap_{j=1}^{k}S_{i}^{(j)}, 
+ 
+ 
+
+ 
+ where  C i C_{i}  represents the set of tools consistently shared across successful execution strategies from different agent systems. 
+
+ 
+ 
+ 
+ Tools consistently shared across diverse successful execution strategies are regarded as critical tools required for successful task completion. 
+
+ 
+ 
+ 
+ 
+ 
+ 3.3  Infeasible Tasks Generation 
+
+ 
+
+ 
+ After identifying the critical tools  C i C_{i} , we mask them from the candidate tool pool to produce a constrained tool environment: 
+
+ 
+ 
+
+ 
+ 
+ 𝒯 i ′ = 𝒯 i ∖ C i . \mathcal{T}_{i}^{\prime}=\mathcal{T}_{i}\setminus C_{i}. 
+ 
+ 
+
+ 
+ Removing these critical tools eliminates the capabilities required for successful task completion, thereby transforming the original solvable task into an infeasible one. Each constructed Task infeasible  is used to evaluate whether agents can recognize missing critical tools and terminate with a  Stop  decision under constrained environments. 
+
+ 
+ 
+ 
+ We perform human verification on a statistically grounded subset of the constructed tasks. Following  Jang et al. (2025) , we determine the verification subset size using Cochran’s formula  Cochran (1977)  (95% confidence, 5% margin of error,  p = 0.5 p=0.5 ), yielding 283 samples. Among them, over 94% are confirmed to be truly infeasible under the corresponding constrained environments (Appendix  A ), while additional analysis further verifies that the identified masked tools correspond to genuinely critical execution dependencies rather than arbitrary task-breaking perturbations (Appendix  B ). 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Experimental Setup 
+
+ 
+
+ 
+ 4.1  Datasets 
+
+ 
+
+ 
+ Following the pipeline in §  3 , we construct infeasible tasks (Task infeasible ) from four closed-tool agent datasets spanning diverse domains and tool environments. BFCL  Patil et al. (2025)  covers function-calling tasks ranging from single API invocations to complex multi-step tool chains. StableToolBench  Guo et al. (2024)  provides reproducible multi-tool scenarios built on a large real-world API corpus. API-Bank  Li et al. (2023)  focuses on tool-augmented reasoning across diverse API categories.  τ \tau -bench  Yao et al. (2024)  features stateful multi-turn agent interactions in retail and airline domains. Table  1  reports the size of each original dataset (Task original ) together with the number of constructed Task infeasible 2 2 
+               2 
+              
+              
+              
+            We retain only tasks that are successfully executed by all LLMs sharing the same critical tools, making Task infeasible  smaller than Task original . . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Dataset 
+ Task original 
+ Task infeasible 
+ 
+ BFCL 
+ 1,453 
+ 445 
+ 
+ StableToolBench 
+ 500 
+ 300 
+ 
+ API-Bank 
+ 209 
+ 184 
+ 
+ τ \tau -bench 
+ 165 
+ 107 
+ 
+ Total 
+ 2,327 
+ 1,036 
+ 
+
+ 
+ 
+ Table 1:  Statistics of generated infeasible tasks. For each source dataset, we pair original tasks (Task original ) with constructed infeasible tasks (Task infeasible ). 
+ 
+ 
+ 
+ 4.2  Models 
+
+ 
+
+ 
+ To construct infeasible tasks, we use GPT-5.5, DeepSeek-V4-Pro, and Claude Opus 4.7  Anthropic (2026)  to generate successful tool-calling traces on the original datasets. Shared critical tools across these execution traces are then identified and masked to construct Task infeasible . 
+
+ 
+ 
+ 
+ We evaluate nine SOTA models spanning both proprietary API-based systems and open-source models from the GPT, DeepSeek, Qwen and LLaMA families under both single-agent and multi-agent architectures (planner–executor). The evaluation includes GPT-5.5, GPT-OSS-120B  OpenAI (2026) ;  OpenAI (2025) , DeepSeek-V4-Flash, DeepSeek-V4-Pro  DeepSeek (2026) , and multiple Qwen3.5  Qwen (2025)  and Llama3.1  Meta (2024)  variants, the latter two families being independent of the task construction process, covering both standard and reasoning mode inference settings. 
+
+ 
+ 
+ 
+ During evaluation, every model is required to judge whether the task is feasible before execution, following the instructions detailed in Appendix  F . When required tools are unavailable, the model should respond with an explicit  STOP  signal, regarded as the model’s infeasibility detection. 
+
+ 
+ 
+ 
+ 
+ 4.3  Metrics 
+
+ 
+
+ 
+ For each task  i i , let  y i ∈ { infeasible , feasible } y_{i}\in\{\text{{infeasible}},\text{{feasible}}\}  denote the ground-truth feasibility label and  y ^ i ∈ { infeasible , feasible } \hat{y}_{i}\in\{\text{{infeasible}},\text{{feasible}}\}  for the agent’s decision.  s i ∈ { 0 , 1 } s_{i}\in\{0,1\}  indicates whether task  i i  was completed successfully. 
+
+ 
+ 
+ 
+ False Continue Rate (FCR) 
+
+ 
+
+ 
+ measures how often the agent continues executing on a Task infeasible  instead of stopping: 
+
+ 
+ 
+
+ 
+ 
+ F ​ C ​ R = P ⁡ ( y ^ = feasible ∣ y = infeasible ) . FCR=P(\hat{y}=\text{feasible}\mid y=\text{infeasible}). 
+ 
+ 
+
+ 
+ A high FCR indicates that the model fails to recognize missing capabilities and wastes resources on impossible tasks. 
+
+ 
+ 
+ 
+ 
+ Success Rate (SR) 
+
+ 
+
+ 
+ measures the proportion of Task original  that are successfully completed, and serves as the execution-capability baseline independent of feasibility decisions: 
+
+ 
+ 
+
+ 
+ 
+ S R = | { i : y i = feasible , s i = 1 } | | { i : y i = feasible } | . SR=\frac{|\{i:y_{i}=\text{feasible},\;s_{i}=1\}|}{|\{i:y_{i}=\text{feasible}\}|}. 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Token Cost to Early Stop ( T ​ C early-stop TC_{\text{early-stop}} )  & \&  Token Cost to Task Failure ( T ​ C task-failure TC_{\text{task-failure}} ). 
+
+ 
+
+ 
+ Both metrics are defined exclusively over  infeasible  tasks and measure how many tokens are consumed under each outcome.
+ T ​ C early-stop TC_{\text{early-stop}}  is the average token cost on Task infeasible  where the agent correctly detects infeasibility and stops early: 
+
+ 
+ 
+
+ 
+ 
+ T ​ C early-stop = 1 | 𝒮 stop | ​ ∑ i ∈ 𝒮 stop tok ​ ( i ) , TC_{\text{early-stop}}=\frac{1}{|\mathcal{S}_{\text{stop}}|}\sum_{i\in\mathcal{S}_{\text{stop}}}\text{tok}(i), 
+ 
+ 
+
+ 
+ where  𝒮 stop \mathcal{S}_{\text{stop}}  denotes the set of Task infeasible  on which the agent correctly detects infeasibility and terminates, and  tok ​ ( i ) \text{tok}(i)  counts all tokens (input and output) consumed up to and including the termination decision.
+ T ​ C task-failure TC_{\text{task-failure}}  is the average token cost on Task infeasible  where the agent fails to detect infeasibility and continues executing until the task ultimately fails: 
+
+ 
+ 
+
+ 
+ 
+ T ​ C task-failure = 1 | 𝒮 fail | ​ ∑ i ∈ 𝒮 fail tok ​ ( i ) , TC_{\text{task-failure}}=\frac{1}{|\mathcal{S}_{\text{fail}}|}\sum_{i\in\mathcal{S}_{\text{fail}}}\text{tok}(i), 
+ 
+ 
+
+ 
+ where  𝒮 fail \mathcal{S}_{\text{fail}}  denotes the set of Task infeasible  on which the agent fails to detect infeasibility and continues executing until task failure, and  𝒮 stop ∪ 𝒮 fail = 𝒮 \mathcal{S}_{\text{stop}}\cup\mathcal{S}_{\text{fail}}=\mathcal{S} .
+A large  T ​ C task-failure / T ​ C early-stop TC_{\text{task-failure}}/TC_{\text{early-stop}}  ratio indicates that failing to detect infeasibility wastes substantially more tokens than stopping early. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 5  Results 
+
+ 
+
+ 
+ Detecting Infeasible Tasks Remains Challenging for LLM Agents. 
+
+ 
+
+ 
+ Table  2(a)  reports task Success Rate ( S ​ R SR ) on Task original . Among all evaluated models, DeepSeek-V4-Pro achieves the strongest overall task successful execution performance, demonstrating consistently high task completion rates across all benchmarks. In contrast,  τ \tau -bench is substantially more challenging for all models, resulting in noticeably lower success rates compared with the other datasets. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Model 
+ BFCL 
+ STB 
+   
+ 
+ 
+ API- 
+ 
+ Bank 
+ 
+   
+ 
+ 
+ τ \tau - 
+ 
+ bench 
+ 
+ Avg. 
+ 
+ GPT-OSS-120B 
+ 79.8 
+ 57.8 
+ 50.7 
+ 12.1 
+ 50.1 
+ 
+ GPT-5.5 
+ 83.3 
+ 55.9 
+ 45.9 
+ 19.4 
+ 51.1 
+ 
+ DeepSeek-V4-Flash 
+ 86.5 
+ 72.0 
+ 50.7 
+ 17.0 
+ 56.5 
+ 
+ DeepSeek-V4-Pro 
+ 86.2 
+ 75.9 
+ 59.8 
+ 16.4 
+ 59.6 
+ 
+ Qwen3.5-9B 
+ 85.5 
+ 69.3 
+ 57.4 
+ 19.4 
+ 57.9 
+ 
+ Qwen3.5-27B 
+ 86.0 
+ 66.5 
+ 61.2 
+ 23.0 
+ 59.2 
+ 
+ Qwen3.5-35B-A3B 
+ 85.6 
+ 67.6 
+ 57.4 
+ 23.0 
+ 58.4 
+ 
+ Qwen3.5-122B-A10B 
+ 85.3 
+ 66.1 
+ 59.8 
+ 20.6 
+ 58.0 
+ 
+ Qwen3.5-397B-A17B 
+ 86.2 
+ 65.8 
+ 58.4 
+ 25.5 
+ 59.0 
+ 
+
+ 
+ 
+ (a)  Task Success Rate (%) on Task original .  
+ 
+ 
+ 
+ 
+ 
+ Model 
+ BFCL 
+ STB 
+   
+ 
+ 
+ API- 
+ 
+ Bank 
+ 
+   
+ 
+ 
+ τ \tau - 
+ 
+ bench 
+ 
+ Avg. 
+ 
+ GPT-OSS-120B 
+ 25.8 
+ 31.0 
+ 15.2 
+ 25.2 
+ 24.3 
+ 
+ GPT-5.5 
+ 23.8 
+ 13.0 
+ 21.7 
+ 35.5 
+ 23.5 
+ 
+ DeepSeek-V4-Flash 
+ 29.4 
+ 44.3 
+ 48.9 
+ 99.1 
+ 55.4 
+ 
+ DeepSeek-V4-Pro 
+ 28.8 
+ 40.7 
+ 55.4 
+ 93.5 
+ 54.6 
+ 
+ Qwen3.5-9B 
+ 49.7 
+ 68.7 
+ 79.9 
+ 97.2 
+ 73.9 
+ 
+ Qwen3.5-27B 
+ 27.0 
+ 45.0 
+ 45.1 
+ 78.5 
+ 48.9 
+ 
+ Qwen3.5-35B-A3B 
+ 37.8 
+ 61.7 
+ 53.3 
+ 91.6 
+ 61.1 
+ 
+ Qwen3.5-122B-A10B 
+ 38.4 
+ 47.7 
+ 59.2 
+ 86.0 
+ 57.8 
+ 
+ Qwen3.5-397B-A17B 
+ 25.8 
+ 42.0 
+ 43.5 
+ 67.3 
+ 44.7 
+ 
+
+ 
+ 
+ (b)  False Continue Rate (%, lower is better) on Task infeasible . 
+ 
+ Table 2:  Performance across model families under two task settings. 
+ 
+ 
+ Table  2(b)  reports the False Continue Rate ( F ​ C ​ R FCR ) when models are evaluated on Task infeasible .
+The results reveal that detecting infeasible tasks and terminating execution appropriately remains a major challenge for current agent systems. All evaluated models exhibit relatively high  F ​ C ​ R FCR s, with even the best-performing model, GPT-5.5, still reaching an average  F ​ C ​ R FCR  of 23.5%. This indicates that current agents frequently continue execution despite missing critical capabilities required for task completion.
+Although GPT-5.5 does not obtain the highest  S ​ R SR , its lower  F ​ C ​ R FCR  suggests that it is more capable of distinguishing solvable tasks from infeasible ones, rather than blindly attempting execution.
+We further observe a clear gap between API and open-source models. GPT-5.5 and GPT-OSS-120B both maintain average  F ​ C ​ R FCR  below 25%, while all Qwen3.5 variants exceed 44%. This suggests that open-source Qwen models are substantially more likely to persist in attempting infeasible tasks, potentially leading to unsafe or unreliable execution behaviors under constrained environments.
+Finally,  τ \tau -bench exhibits consistently high  F ​ C ​ R FCR  across all models, ranging from 25.2% (GPT-OSS-120B) to 99.1% (DeepSeek-V4-Flash). One possible explanation is that  τ \tau -bench involves longer tool dependency chains and stateful multi-turn interactions, which increase the difficulty of recognizing whether a task remains executable under missing capabilities. 
+
+ 
+ 
+ 
+ Figure 3:  S ​ R × F ​ C ​ R SR\times FCR  pareto frontier (averaged over four benchmarks, y-axis reversed). Dashed line = pareto frontier; shaded = dominated region. 
+ 
+ 
+ Figure  3  jointly plots  S ​ R SR  and  F ​ C ​ R FCR , revealing the trade-off between task execution capability and infeasibility detection that is difficult to observe when the two metrics are analyzed separately. To analyze this trade-off, we adopt Pareto frontier analysis  Miettinen (1999) , where a model is considered optimal if no other model simultaneously achieves both higher  S ​ R SR  and lower  F ​ C ​ R FCR . GPT-5.5, Qwen3.5-397B-A17B, and DeepSeek-V4-Pro, lie on the Pareto frontier, while all remaining models are strictly dominated.  Notably , no model achieves optimal performance on both metrics simultaneously, indicating that strong task execution capability does not necessarily imply robust infeasibility detection ability. We also report a unified feasibility-aware metric that jointly evaluates performance on both feasible and infeasible tasks in Appendix  D . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Model 
+ T ​ C early-stop TC_{\text{early-stop}}  (K) 
+ T ​ C task-failure TC_{\text{task-failure}}  (K) 
+ Ratio 
+ 
+ GPT-OSS-120B 
+ 1.7 
+ 3.9 
+ 2.27 × \times 
+ 
+ GPT-5.5 
+ 1.3 
+ 6.0 
+ 4.51 × \times 
+ 
+ DeepSeek-V4-Flash 
+ 3.8 
+ 10.3 
+ 2.73 × \times 
+ 
+ DeepSeek-V4-Pro 
+ 3.0 
+ 8.8 
+ 2.90 × \times 
+ 
+ Qwen3.5-9B 
+ 1.8 
+ 8.9 
+ 4.99 × \times 
+ 
+ Qwen3.5-27B 
+ 3.6 
+ 9.8 
+ 2.75 × \times 
+ 
+ Qwen3.5-35B-A3B 
+ 2.5 
+ 8.6 
+ 3.44 × \times 
+ 
+ Qwen3.5-122B-A10B 
+ 2.4 
+ 8.7 
+ 3.64 × \times 
+ 
+ Qwen3.5-397B-A17B 
+ 2.7 
+ 7.2 
+ 2.70 × \times 
+ 
+
+ 
+ 
+ Table 3:  T ​ C early-stop TC_{\text{early-stop}}  and  T ​ C task-failure TC_{\text{task-failure}}  on infeasible tasks, averaged across all four datasets (K = thousands). Ratio =  T ​ C task-failure TC_{\text{task-failure}}  /  T ​ C early-stop TC_{\text{early-stop}} . 
+ 
+ 
+ 
+ Detect Infeasibility Early Saves Significantly More Tokens than Failed Execution. 
+
+ 
+
+ 
+ Table  3  reports the Token Cost to Early Stop ( T ​ C early-stop TC_{\text{early-stop}} ) and Token Cost to Task Failure ( T ​ C task-failure TC_{\text{task-failure}} ) measured exclusively on Task infeasible {}_{\text{infeasible}} . Across all models,  T ​ C task-failure TC_{\text{task-failure}}  substantially exceeds  T ​ C early-stop TC_{\text{early-stop}} , with ratios ranging from 2.3 × \times  (GPT-OSS-120B) to 5.0 × \times  (Qwen3.5-9B). This gap directly reflects the practical cost of false continuation: when a model fails to detect task infeasibility, it not only produces incorrect outcomes but also consumes 2–5 × \times  more tokens than stopping early. These results suggest that early infeasibility detection improves not only correctness but also execution efficiency. In practical agentic systems, where many tasks may be unsolvable under the currently available tools and environmental constraints, the token budget saved by timely termination can accumulate substantially at scale. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ F ​ C ​ R FCR  (%) 
+ T ​ C early-stop TC_{\text{early-stop}}  (K) 
+ 
+ Model 
+ w/ R. 
+ w/o R. 
+ w/ R. 
+ w/o R. 
+ 
+ Qwen3.5-35B-A3B 
+ 61.1 
+ 75.7 
+ 2.51 
+ 7.08 
+ 
+ Qwen3.5-122B-A10B 
+ 57.8 
+ 72.4 
+ 2.38 
+ 3.13 
+ 
+ Qwen3.5-397B-A17B 
+ 44.7 
+ 40.0 
+ 2.66 
+ 3.12 
+ 
+
+ 
+ 
+ Table 4:  Effect of reasoning mode on the Qwen3.5 family, averaged over four benchmarks. Better value are  bolded  per metric per model. w/ R. = with reasoning; w/o R. = without reasoning. 
+ 
+ 
+ 
+ 
+ Pair (Planner  → \to  Executor) 
+ BFCL 
+ STB 
+ API-Bank 
+ τ \tau -bench 
+ Avg. 
+ 
+ GPT-5.5  → \to  GPT-OSS-120B 
+ 7.6 
+ 3.3 
+ 20.7 
+ 18.7 
+ 12.6 
+ 
+ GPT-5.5  → \to  DeepSeek-V4-Pro 
+ 9.4 
+ 4.3 
+ 36.4 
+ 19.6 
+ 17.5 
+ 
+ GPT-5.5  → \to  Qwen3.5-122B-A10B 
+ 9.2 
+ 5.3 
+ 25.5 
+ 23.4 
+ 15.9 
+ 
+ GPT-OSS-120B  → \to  GPT-5.5 
+ 15.7 
+ 6.0 
+ 33.2 
+ 23.4 
+ 19.6 
+ 
+ GPT-OSS-120B  → \to  Qwen3.5-122B-A10B 
+ 12.1 
+ 5.0 
+ 29.3 
+ 16.8 
+ 15.8 
+ 
+ Qwen3.5-122B-A10B  → \to  GPT-5.5 
+ 2.0 
+ 3.3 
+ 10.9 
+ 0.0 
+ 4.1 
+ 
+ Qwen3.5-122B-A10B  → \to  GPT-OSS-120B 
+ 3.1 
+ 1.0 
+ 5.4 
+ 0.9 
+ 2.6 
+ 
+ DeepSeek-V4-Pro  → \to  GPT-5.5 
+ 2.7 
+ 0.7 
+ 17.4 
+ 8.4 
+ 7.3 
+ 
+
+ 
+ Table 5:  F ​ C ​ R FCR  (%, lower is better) for multi-agent planner–executor pairs on Task infeasible . Best per column in  bold . STB = StableToolBench. 
+ 
+ 
+ 
+ Reasoning Mode Enables Earlier Stopping and Reduces Token Cost. 
+
+ 
+
+ 
+ Table  4  compares the reasoning and non-reasoning variants of the Qwen3.5 family on  F ​ C ​ R FCR  and  T ​ C early-stop TC_{\text{early-stop}} . For the mid-scale models, reasoning mode reduces  F ​ C ​ R FCR  by 14.6 percentage points on both Qwen3.5-35B-A3B (75.7%  → \to  61.1%) and Qwen3.5-122B-A10B (72.4%  → \to  57.8%), indicating that extended reasoning substantially improves infeasibility detection at small and medium scale. The trend reverses on Qwen3.5-397B-A17B, where the non-reasoning variant achieves a lower  F ​ C ​ R FCR  (40.0% vs. 44.7%), driven almost entirely by StableToolBench (42.0%  → \to  25.0%). Inspecting divergent traces, reasoning mode tends to produce over-helpful elaborations (e.g., “here are some external APIs you could try”) instead of recognizing when it should stop, while non-reasoning emits terser refusals (e.g., “I don’t have a tool to generate UUIDv4”). At the same time, reasoning mode consistently reduces  T ​ C early-stop TC_{\text{early-stop}}  across all three models, with the largest reduction observed on Qwen3.5-35B-A3B (7.08K  → \to  2.51K). This suggests that reasoning mode enables models to recognize infeasible tasks more effectively and stop earlier, thereby reducing unnecessary token consumption. 
+
+ 
+ 
+ 
+ Figure 4:  Feasibility awareness scaling across Qwen3.5 and Llama3.1 model families: Task Success Rate (left), False Continue Rate (middle), and Token Cost to Early Stop (right), averaged over four benchmarks. 
+ 
+ 
+ 
+ Multi-Agent Architectures Improve Infeasibility Detection. 
+
+ 
+
+ 
+ Table  5  reports the  F ​ C ​ R FCR  under multi-agent (planner–executor) architectures.
+Compared with single-agent systems, multi-agent architectures substantially reduce  F ​ C ​ R FCR  across all datasets. The best-performing pair, Qwen-122B  → \to  GPT-OSS, achieves only 2.6% average  F ​ C ​ R FCR , nearly a 10 × \times  reduction compared with the best single-agent model, GPT-5.5 (23.5%). 
+
+ 
+ 
+ 
+ This improvement may comes from the explicit planning stage. Before issuing any tool call, the planner must first decompose the task and identify the required capabilities, allowing missing tool dependencies to be exposed earlier. In contrast, single-agent systems often discover such capability gaps only during execution. As a result, the planner role becomes the dominant factor affecting  F ​ C ​ R FCR . 
+
+ 
+ 
+ 
+ We further observe that, when the planner model is fixed, changing the executor only leads to relatively small  F ​ C ​ R FCR  variations (approximately 2–4%). However, replacing the planner model causes substantially larger changes.
+For example, using GPT-5.5 as the planner consistently produces  F ​ C ​ R FCR  values that are 10–15 percentage points higher than using Qwen-122B as the planner. These results suggest that infeasibility detection ability is primarily determined during the planning stage rather than the execution stage. We also report the  T ​ C early-stop TC_{\text{early-stop}}  of multi-agent in Appendix   E . 
+
+ 
+ 
+ 
+ 
+ Feasibility Awareness Does Not Scale with Model Size. 
+
+ 
+
+ 
+ To probe how feasibility awareness scales, we compare models in Qwen3.5 and Llama3.1 families, which are both open-source models with multiple parameter sizes. While  S ​ R SR  saturates with model size,  F ​ C ​ R FCR  scales in opposite directions across the two families. Qwen3.5 improves monotonically with size whereas Llama3.1 degrades, with  F ​ C ​ R FCR  increasing by 29.3% from 70B to 405B. It suggests that infeasibility detection does not scale uniformly with parameter count. 
+
+ 
+ 
+ 
+ We further delve into the agent execution traces of the two model families. For Llama3.1, the 405B variant is more inclined to keep trying alternative approaches than to commit to STOP decision. Among traces that invoked no tools, only 63–76% of the 405B traces ended in an explicit refusal, compared with 80–88% for the 70B variant. Even when no tool is invoked, the larger variant tends to explore partial answers, conditional suggestions, or alternative phrasings rather than emitting an explicit STOP signal. This is consistent with its alignment objectives that reward models for sustained engagement over refusal. In contrast, Qwen3.5 follows the opposite trajectory and the  F ​ C ​ R FCR  drops as the model size scales up, which shows its stronger ability to recognize and decline infeasible tasks at larger scale. 
+
+ 
+ 
+ 
+ Since the two families move in opposite directions, feasibility awareness appears to be governed by family-level training choices rather than parameter count alone. 
+
+ 
+ 
+ 
+ 
+ Overestimated Performance on Existing Agent Benchmarks. 
+
+ 
+
+ 
+ Table  6  reports the number of false positives for each model, where agents successfully complete Task infeasible {}_{\text{infeasible}} . In these cases, agents frequently continue execution and even generate correct outputs despite missing critical tools. Among all models, Qwen3.5-9B produces the largest number of such false positives. 
+
+ 
+ 
+ 
+ We manually checked 100 false-positive cases and observed that 91% were generated by directly producing final answers without invoking any required tools. One possible explanation is benchmark contamination reported in recent studies  Oren et al. (2024) ;  Deng et al. (2024) ;  Yang et al. (2023) ;  Chen et al. (2025) , models may have memorized task outputs or the corresponding expected outputs from pretraining corpora.
+Since Task infeasible  is constructed from public datasets, both the task solutions and their associated execution artifacts may already appear in model training corpora. As a result, models may rely on memorized task outputs or execution patterns instead of genuinely reasoning about the currently available tool environment. 
+
+ 
+ 
+ 
+ These findings further suggest that conventional task-success metrics on existing agent benchmarks may partially overestimate true agent capability. A portion of benchmark success may stem from memorized execution behaviors rather than robust capability-aware reasoning under constrained environments. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Model 
+ BFCL 
+ STB 
+   
+ 
+ 
+ API- 
+ 
+ Bank 
+ 
+   
+ 
+ 
+ τ \tau - 
+ 
+ bench 
+ 
+ Total 
+ 
+ GPT-OSS-120B 
+ 115 
+ 93 
+ 28 
+ 27 
+ 263 
+ 
+ GPT-5.5 
+ 106 
+ 39 
+ 40 
+ 38 
+ 223 
+ 
+ DeepSeek-V4-Flash 
+ 131 
+ 133 
+ 90 
+ 106 
+ 460 
+ 
+ DeepSeek-V4-Pro 
+ 128 
+ 122 
+ 102 
+ 100 
+ 452 
+ 
+ Qwen3.5-9B 
+ 221 
+ 206 
+ 147 
+ 104 
+ 678 
+ 
+ Qwen3.5-27B 
+ 120 
+ 135 
+ 83 
+ 84 
+ 422 
+ 
+ Qwen3.5-35B-A3B 
+ 168 
+ 185 
+ 98 
+ 98 
+ 549 
+ 
+ Qwen3.5-122B-A10B 
+ 171 
+ 143 
+ 109 
+ 92 
+ 515 
+ 
+ Qwen3.5-397B-A17B 
+ 115 
+ 126 
+ 80 
+ 72 
+ 393 
+ 
+
+ 
+ 
+ Table 6:  False positive counts: number of Task infeasible  instances correctly completed by each model, despite the tasks being infeasible due to missing critical tools. 
+ 
+ 
+ 
+ 
+ 6  Conclusion 
+
+ 
+
+ 
+ Current agent benchmarks mainly evaluate whether agents can complete tasks, while largely overlooking whether agents can recognize when tasks become infeasible under constrained environments. In this work, we introduce FeasiGen, an automatic framework for constructing infeasible agent tasks by identifying and masking critical execution dependencies, together with a feasibility-aware evaluation protocol for measuring infeasibility detection and early stopping behavior. Experiments across nine models reveal that infeasibility detection remains challenging for current agent systems. Even the best-performing model still falsely continues on 23.5% of infeasible tasks, often consuming 2–5 × \times  more tokens than early stopping. Multi-agent decomposition substantially improves infeasibility detection, reducing FCR to as low as 2.6%. We further observe signs that existing benchmarks may overestimate true agent capability, highlighting that task success alone is insufficient for evaluating robust agent behavior in practical scenarios. 
+
+ 
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ FeasiGen currently operates on benchmarks with fixed and fully predefined candidate tool pools. This design choice is necessary to ensure that, after masking critical execution dependencies, the resulting tasks remain genuinely infeasible under the constrained environment. In open-ended agent settings where models can dynamically retrieve, discover, or invoke arbitrary external tools, agents may still bypass the masked dependencies by leveraging alternative capabilities outside the predefined tool space. In such cases, removing a critical tool no longer guarantees that the task becomes truly infeasible, since additional external tools may still provide valid solution paths. As a result, our current construction pipeline is primarily applicable to closed-tool environments where the available execution capabilities are explicitly bounded and controllable. Extending feasibility-aware benchmark construction to fully open-world agent settings remains an important direction for future work. 
+
+ 
+ 
+ 
+ 
+ 

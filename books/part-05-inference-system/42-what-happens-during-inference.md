@@ -301,6 +301,8 @@ playback、P95/P99 与错误恢复。2025 年 Google 的 S2ST 部署是该演进
 这条路径用静态内存、图绑定和 backend 特化换更低恢复延迟，也新增 stale buffer、设备状态不完整和版本错配风险。恢复前必须验证 model/graph/kernel/device identity，失败时冷启动并重建状态；capsule 通过也不证明任务语义或物理动作安全。`arXiv:2606.20537v1` 只支持作者在其 on-device runtime、small-batch workload 与 graph contract 下的机制和实验，不能外推为任意 backend 的通用 checkpoint 格式。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-20537:end -->
 
+[Request内部的checkpoint](https://arxiv.org/html/2610.29183v1)还要按phase选择可恢复边界，而不只捕获一个通用execution capsule。Causal Prefill可按token chunk与layer group分块，累积以后仍需的KV，只保存继续执行所需的frontier hidden；更细块少重放却多写入，整层保存全序列hidden或整chunk完成才存各有合理区间。Bidirectional vision不能照搬patch chunk，decode则可批量保存新KV、已生成token和位置。Record payload写出不等提交：长度、checkpoint索引和checksum等元数据必须与durable commit边界匹配，恢复只能消费完整记录。先读能解锁计算的状态再重叠余下I/O，可以减少每个短执行窗的空等，但多写、SSD流量和normal-path能耗仍付费；有限Jetson/作者onboard部署不证明所有backend、随机续写或storage故障都精确恢复。身份、记录完整性或依赖不足时回最后完整checkpoint并重放，必要时冷启动，不把能续跑签成任务正确或通用durability。<!-- source-family:SF-2026-ARXIV-2610-29183 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-25838:start -->
 后端路由器可以依据请求级 confidence 在快速和高质量路径之间选择，但 confidence 只拥有 route proposal 权。阈值需按 workload 校准，并记录 fallback 与 outcome；漂移、低置信或高风险请求回退 canonical backend，不能把 router 自评分当成正确性。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-25838:end -->
@@ -382,6 +384,8 @@ LLM Serving 的基本对象不是一次函数调用，而是携带 token progres
 下一章从全局状态机进入第一段 GPU 主路径：Prefill 如何把 prompt 转换成初始 logits 和可供后续 Decode 使用的 KV state。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2610-29183` — Daily2026-10-23；[exact-v1](https://arxiv.org/html/2610.29183v1) §3–4/5.1/7/8必要，2+2+2=6。phasefrontier及durablefooter/依赖恢复，metadata为checkpoint索引非版本，有限edge/onboard不授任意RNG/storagefault精确恢复；未核实现或复现。独立reader必要Source/actualowner/精确PRE通过；root已保存单段，独立reader实际POST已通过。
 
 本轮将第42章重构为 Part V 的唯一全局入口，冻结请求状态、指标边界和三层章节地图。自检答案回填增加传统后端与 LLM Serving 的负载契约对照，并修正七 Part 改版后的章节编号。具体 paging、speculation、framework feature 与 cluster policy 均留给后续章节。
 

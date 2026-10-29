@@ -1,0 +1,618 @@
+Frustratingly Easy Task-aware Pruning forLarge Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II The Approach
+II-A LLM Pruning
+II-B Task-Specific Pruning
+III Experiment Settings
+III-A Datasets
+III-B Fundamental Pruning Algorithms
+III-C Implementation Details
+IV Results and Analysis
+IV-A Overall Results
+IV-B The Performance on Structured Pruning
+IV-C Effect of the Threshold for Pruning
+IV-D Visualization of Parameter Type Distribution during Pruning
+V Related Work
+VI Conclusion
+References
+License: CC BY 4.0
+arXiv:2510.22489v1 [cs.CL] 26 Oct 2025
+Frustratingly Easy Task-aware Pruning for
+Large Language Models
+Yuanhe Tian
+Junjie Liu
+Affiliation: University of Science and Technology of China
+Affiliation: {ljj19937347730, yxc15759879600}@mail.ustc.edu.cn
+Affiliation: clksong@gmail.com
+Xican Yang
+Affiliation: University of Science and Technology of China
+Affiliation: {ljj19937347730, yxc15759879600}@mail.ustc.edu.cn
+Affiliation: clksong@gmail.com
+Haishan Ye
+Affiliation: Xi’an Jiaotong University
+Affiliation: yehaishan@xjtu.edu.cn
+Yan Song
+Zhongguancun Institute of Artificial Intelligence
+tianyuanhe@zgci.ac.cn
+Abstract
+Pruning provides a practical solution to reduce the resources required to run large language models (LLMs) to benefit from their effective
+capabilities as well as control their cost for training and inference.
+Research on LLM pruning often ranks the importance of LLM parameters using their magnitudes and calibration-data activations and removes (or masks) the less important ones, accordingly reducing LLMs’ size.
+However, these approaches primarily focus on preserving the LLM’s ability to generate fluent sentences, while neglecting performance on specific domains and tasks.
+In this paper, we propose a simple yet effective pruning approach for LLMs that preserves task-specific capabilities while shrinking their parameter space.
+We first analyze how conventional pruning minimizes loss perturbation under general-domain calibration and extend this formulation by incorporating task-specific feature distributions into the importance computation of existing pruning algorithms.
+Thus, our framework computes separate importance scores using both general and task-specific calibration data, partitions parameters into shared and exclusive groups based on activation-norm differences, and then fuses their scores to guide the pruning process.
+This design enables our method to integrate seamlessly with various foundation pruning techniques and preserve the LLM’s specialized abilities under compression.
+Experiments on widely used benchmarks demonstrate that our approach is effective and consistently outperforms the baselines with identical pruning ratios and different settings.
+Index Terms: Large language models, pruning, task-aware
+11footnotetext: Corresponding Author.
+I Introduction
+Large language models (LLMs) present outstanding performance across a diverse set of artificial intelligence (AI) tasks [1, 2, 3, 4, 5, 6, 7, 8, 4, 9].
+However, their substantial size and intensive computational requirements pose significant challenges for deployment in resource-constrained environments [10, 11, 12, 13, 14].
+Pruning these models, i.e., selectively removing redundant or low-impact parameters, has emerged as a key strategy to lower inference latency and memory usage while preserving model capabilities [15, 16, 17, 18, 19, 20, 21].
+It not only alleviates computational overhead but also facilitates the adaptation of LLMs to downstream applications with limited labeled data.
+Many studies on LLM pruning mainly focus on preserving the generation capability of LLMs [22, 15, kwon2022fast，sun2023simple, 20, 23, 24, 25].
+Early approaches prune the weights or entire substructures in a model that contribute least to its overall performance [26, 27, 28, 29],
+where they often require architectural modifications or extensive fine-tuning on large datasets to recover any lost performance.
+Subsequent studies, such as SparseGPT [20] and Wanda [19], prune models by measuring the importance of different parts of the model with criteria based on the magnitude of the weights and the computed activation values of the running examples from a calibration dataset.
+The calibration data in these studies typically come from general-domain plain text and are used to identify the parameters that allow the model to produce fluent sentences.
+These approaches perform well on conventional LLMs such as GPT-3 [1] and LLaMA [30] that have not undergone instruction-following fine-tuning [31].
+However, by noticing that recent LLMs possess capabilities such as knowledge storage, instruction following, and question answering, and the parameters associated with these functions may not be highlighted by the calibration data,
+it is thus of high risk that crucial parameters are potentially wrongly removed and leading to performance degradation across tasks.
+[32, 33]
+Particularly, for scenarios such as summarization or domain-specific question answering, model pruning aims not only to shrink the model size but also to retain essential task-specific characteristics.
+However, existing pruning approaches that aim at preserving the main ability of text generation for LLMs are not able to guarantee a desirable performance on tasks that require instruction following, since the models may expect various outputs under different instruction contexts with identical input and generic calibration data fails to highlight the weights critical for such conditional behaviors.
+Therefore, there is an urgent need for a pruning approach that precisely identifies and preserves task-relevant parameters while effectively compressing the model.
+Fig. 1:
+The overall process of our framework for LLM pruning.
+The bottom part presents the LLM.
+The top presents the pruning process for a particular parameter matrix in the LLM, where the general and task-specific calibration data (marked by the blue and purple colors, respectively) are used to compute the pruning scores of each parameter.
+In this paper, we propose a general LLM pruning framework designed to bridge the gap between generic model compression and task-specific model adaptation.
+Our approach uses two calibration sources (i.e., general and task-specific scores) to compute activation-weighted magnitude scores with a standard pruning backend.
+We then partition channels by activation-norm differences into shared, general-only, and task-only groups, aggregate the corresponding groupwise scores into a mixed importance, and prune the lowest-scoring weights.
+Extensive experiments on WikiText-2 and other widely used benchmarks show that our approach effectively removes model parameters while maintaining comparable accuracy and perplexity.
+II The Approach
+Our approach is a simple yet effective task-aware LLM pruning framework that is operated upon any fundamental pruning algorithms.
+Specifically, our approach leverages a dual‐source pruning paradigm with calibration datasets from both general‐domain inputs 𝒟G\mathcal{D}_{G} and task‐specific examples 𝒟T\mathcal{D}_{T}, which together inform parameter importance through direct model activations.
+With such data utilization through the LLM, our approach precisely identifies weights whose contributions are not significant across diverse contexts, enabling targeted pruning without compromising the LLM’s core capabilities.
+Therefore, it is a high‐fidelity pruning strategy that combines general robustness with task‐level precision, ensuring streamlined efficiency at scale.
+II-A LLM Pruning
+In general, pruning
+controls less relevant parameters in an LLM by
+minimizing their impact on downstream task performance, where the distribution of the features for the task data is represented by 𝒟\mathcal{D}.
+Assuming we have a calibration dataset D∼𝒟D\sim\mathcal{D} with MM instances following the feature distribution 𝒟\mathcal{D}, where D={(x,y∗)}D=\{(x,y^{*})\} with xx and y∗y^{*} denoting the input and the human-annotated output, respectively,
+a straightforward solution to measure a model’s performance on a downstream task is to compute the loss on the calibration data DD.
+Specifically, for a parameter matrix 𝐖\mathbf{W}, the loss function L⁡(𝐖)L(\mathbf{W}) is defined as the expectation over the feature distribution 𝒟\mathcal{D}
+L⁡(𝐖)=𝔼(x,y∗)∼𝒟​[ℓ⁡(f𝐖​(x),y∗)]L(\mathbf{W})=\mathbb{E}_{(x,y^{*})\sim\mathcal{D}}\bigl[\ell(f_{\mathbf{W}}(x),y^{*})\bigr]
+(1)
+with ℓ⁡(f𝐖​(x),y∗)\ell(f_{\mathbf{W}}(x),y^{*}) denoting the loss for a single sample between the model’s prediction f𝐖​(x)f_{\mathbf{W}}(x) and the ground-truth label y∗y^{*}.
+The gradient of the parameter, namely, ∇L​(𝐖)\nabla L(\mathbf{W}), describes the linear response of the loss to small changes in the parameters.
+A pruning operation is viewed as applying a perturbation Δ​𝐖\Delta\mathbf{W} in parameter space.
+We define Δ​Wi​j=Wi​jnew−Wi​jold\Delta W_{ij}={W}_{ij}^{\mathrm{new}}-{W}_{ij}^{\mathrm{old}} to describe such parameter change for (i,j)(i,j) in the fully connected layer (Wi​jnew{W}_{ij}^{\mathrm{new}} and Wi​jold{W}_{ij}^{\mathrm{old}} denote the pruned and original weight at position (i,j)(i,j) in the weight matrix, respectively, and Δ​Wi​j\Delta W_{ij} is the difference of them in the corresponding position of Δ​𝐖\Delta\mathbf{W}).
+When a weight is pruned, it is equivalent to setting its value to zero, which leads to
+Δ​Wi​j=−Wi​j\Delta W_{ij}=-W_{ij}, and all other elements satisfy Δ​Wk​l=0\Delta W_{kl}=0 for (k,l)≠(i,j)(k,l)\neq(i,j).
+By performing a multivariate Taylor expansion of the loss at 𝐖\mathbf{W} and ignoring higher-order terms, one should obtain:
+L⁡(𝐖+Δ​𝐖)=\displaystyle L(\mathbf{W}+\Delta\mathbf{W})=
+L⁡(𝐖)+⟨∇L​(𝐖),Δ​𝐖⟩\displaystyle L(\mathbf{W})+\langle\nabla L(\mathbf{W}),\,\Delta\mathbf{W}\rangle
+(2)
++\displaystyle+
+12​Δ​𝐖⊤​H​(𝐖)​Δ​𝐖+O⁡(‖Δ​𝐖‖3)\displaystyle\tfrac{1}{2}\,\Delta\mathbf{W}^{\top}H(\mathbf{W})\,\Delta\mathbf{W}+O(\|\Delta\mathbf{W}\|^{3})
+Therefore, when the original model parameters have been sufficiently trained and are near convergence, ∇L​(𝐖)≈0\nabla L(\mathbf{W})\approx 0, the first-order perturbation is equivalent to be neglected.
+The loss difference caused by pruning, Δ​L​(𝐖)=L⁡(𝐖+Δ​𝐖)−L⁡(𝐖)\Delta L(\mathbf{W})=L(\mathbf{W}+\Delta\mathbf{W})-L(\mathbf{W}), approximates to
+Δ​L​(𝐖)≈12​Δ​𝐖⊤​H​(𝐖)​Δ​𝐖\Delta L(\mathbf{W})\approx\tfrac{1}{2}\,\Delta\mathbf{W}^{\top}H(\mathbf{W})\,\Delta\mathbf{W}
+(3)
+where the diagonal elements Hi​j,i​jH_{ij,ij} in the Hessian matrix H​(𝐖)=∇2L​(𝐖)H(\mathbf{W})=\nabla^{2}L(\mathbf{W}) measure the second-order curvature with respect to the parameter 𝐖i​j\mathbf{W}_{ij}.
+Substituting Δ​Wi​j=−Wi​j\Delta W_{ij}=-W_{ij} transforms the second-order term into 12​Hi​j,i​j​𝐖i​j2\tfrac{1}{2}\,H_{ij,ij}\,\mathbf{W}_{ij}^{2},
+which quantifies the
+effect on the loss from pruning weight Wi​jW_{ij} in terms of second-order sensitivity.
+Therefore, given a pruning rate rr, the goal of pruning algorithms subjects to find a pruning matrix Δ​𝐖^\Delta\widehat{\mathbf{W}} satisfying the rate rr and minimizing the Δ​L​(𝐖)\Delta L(\mathbf{W}), which is written as
+Δ​𝐖^=arg⁡minΔ​𝐖​12​Δ​𝐖⊤​H​(𝐖)​Δ​𝐖\Delta\widehat{\mathbf{W}}=\arg\min_{\Delta\mathbf{W}}\tfrac{1}{2}\Delta\mathbf{W}^{\top}H(\mathbf{W})\Delta\mathbf{W}\quad
+(4)
+subject to
+‖Δ​𝐖‖0=r​‖𝐖‖0\|\Delta\mathbf{W}\|_{0}=r\|\mathbf{W}\|_{0}
+(5)
+where ∥⋅∥0\|\cdot\|_{0} counts the number of nonzero entries in a matrix and ‖Δ​𝐖‖0=r​‖𝐖‖0\|\Delta\mathbf{W}\|_{0}=r\|\mathbf{W}\|_{0} means that exactly an rr fraction of the weights are pruned.
+To facilitate the optimization of Eq. (4), we introduce binary pruning indicators αi​j∈{0,1}\alpha_{ij}\in\{0,1\} subject to ∑i,jαi​j=r​‖𝐖‖0\sum_{i,j}\alpha_{ij}=r\,\|\mathbf{W}\|_{0} for a particular weight Wi​jW_{ij}, so that
+Δ​Wi​j=−αi​j​Wi​j\Delta W_{ij}=-\alpha_{ij}\,W_{ij}.
+Therefore, 12​Δ​𝐖⊤​H​(𝐖)​Δ​𝐖\tfrac{1}{2}\,\Delta\mathbf{W}^{\top}H(\mathbf{W})\,\Delta\mathbf{W} is computed by
+12​Δ​𝐖⊤​H​(𝐖)​Δ​𝐖\displaystyle\tfrac{1}{2}\,\Delta\mathbf{W}^{\top}H(\mathbf{W})\,\Delta\mathbf{W}
+≈12​∑i,jHi​j,i​j​(Δ​Wi​j)2\displaystyle\approx\tfrac{1}{2}\sum_{i,j}H_{ij,ij}\,(\Delta W_{ij})^{2}
+(6)
+=12​∑i,jHi​j,i​j​(αi​j​Wi​j)2\displaystyle=\tfrac{1}{2}\sum_{i,j}H_{ij,ij}\,(\alpha_{ij}W_{ij})^{2}
+=12​∑i,jHi​j,i​j​Wi​j2​αi​j\displaystyle=\tfrac{1}{2}\sum_{i,j}H_{ij,ij}\,W_{ij}^{2}\,\alpha_{ij}
+where off-diagonal Hessian entries are ignored.
+Thus, the objective Eq. (4) is rewritten as finding a set of optimal {αi​j∗}\{\alpha_{ij}^{*}\} that satisfies the pruning rate, which is formulated as
+{αi​j∗}=arg⁡min⁡∑i,j{αi​j}⁡Hi​j,i​j​Wi​j2​αi​j\{\alpha_{ij}^{*}\}=\arg\min_{\{\alpha_{ij}\}}\sum_{i,j}H_{ij,ij}\,W_{ij}^{2}\,\alpha_{ij}
+(7)
+subject to
+∑i,jαi​j=r​‖𝐖‖0\sum_{i,j}\alpha_{ij}=r\,\|\mathbf{W}\|_{0}
+(8)
+As a result, the value of Hi​j,i​j​Wi​j2H_{ij,ij}\,W_{ij}^{2} determines whether the weight Wi​jW_{ij} should be pruned or not.
+We use the term Si​jS_{ij} to represent Hi​j,i​j​Wi​j2H_{ij,ij}\,W_{ij}^{2} by
+Si​j:=Hi​j,i​j​Wi​j2S_{ij}\;:=\;H_{ij,ij}\,W_{ij}^{2}
+(9)
+and name Si​jS_{ij} as the important score to measure the effect of the parameter Wi​jW_{ij} on the model’s performance, where a higher score means that the parameter has a more powerful effect on the loss.
+Therefore, the optimal strategy is to prune the weights whose importance scores are smallest, until exactly an rr fraction of the parameters is selected.
+Equivalently, one is able to set
+αi​j∗={1,Si​j≤τ0,Si​j>τ#⁡{(i,j)∣si​j≤τ}=r​|𝐖|0\alpha_{ij}^{*}=\begin{cases}1,&S_{ij}\leq\tau\\
+0,&S_{ij}>\tau\end{cases}\quad\#\{(i,j)\mid s_{ij}\leq\tau\}=r\,\lvert\mathbf{W}\rvert_{0}
+(10)
+where #​{⋅}\#\{\cdot\} denotes the number of elements in a set, so that Δ​𝐖^\Delta\widehat{\mathbf{W}} is fully determined by thresholding the scores si​js_{ij}.
+To illustrate the pruning process, we utilize a representative algorithm named Wanda [19] as an example.
+Specifically, for a standard fully connected layer, Wanda computes Hi​j,i​jH_{ij,ij} by
+Hi​j,i​j≈1M​∑m=1M(xj(m))2H_{ij,ij}\approx\tfrac{1}{M}\sum_{m=1}^{M}\bigl(x_{j}^{(m)}\bigr)^{2}
+(11)
+where the activation vector for channel jj over the input of the calibration set {x(m)}m=1M\{x^{(m)}\}_{m=1}^{M} is denoted by 𝐗j=[xj(1),…,xj(M)]\mathbf{X}_{j}=[x_{j}^{(1)},\dots,x_{j}^{(M)}].
+Therefore, the important score Si​jS_{ij} is computed by
+Si​j=1M​∑m=1M(xj(m))2⋅Wi,j2S_{ij}=\tfrac{1}{M}\sum_{m=1}^{M}\bigl(x_{j}^{(m)}\bigr)^{2}\cdot W_{i,j}^{2}
+(12)
+where ∑m=1M(xj(m))2\sum_{m=1}^{M}\bigl(x_{j}^{(m)}\bigr)^{2} is the square of the activation L2 norm ‖𝐗j‖2=∑m=1M(xj(m))2\|\mathbf{X}_{j}\|_{2}=\sqrt{\sum_{m=1}^{M}(x_{j}^{(m)})^{2}}, reflecting the average activation strength of channel jj and
+Wi​j2{W}_{ij}^{2} is the square of the weight of the connection (i,j)(i,j), representing its magnitude.
+This score Si​jS_{ij} combines weight magnitude with activation strength, with a higher value indicating a more important role the weight plays in the LLM.
+In other words, given a pruning rate rr, the parameters whose score Si​jS_{ij} is ranked on the bottom-rr are pruned.
+II-B Task-Specific Pruning
+For task-specific LLM utilization, the most obvious characteristic is that
+feature distribution differs from that of general-purpose scenarios.
+The pruning thus must account for task-related features to ensure that calibration-driven pruning aligns with such distribution and task requirements.
+Therefore, given feature distribution from the general domain 𝒟G\mathcal{D}_{G} and the task-specific domain 𝒟T\mathcal{D}_{T}, the goal is to utilize two calibration datasets with one (denoted as DGD_{G}) from the general domain (i.e., DG∼𝒟GD_{G}\sim\mathcal{D}_{G}) and the other (denoted as DTD_{T}) from the target task domain (i.e., DT∼𝒟TD_{T}\sim\mathcal{D}_{T}) for pruning.
+Therefore, the loss function of Eq. (1) is written as
+L⁡(𝐖)=𝔼(x,y∗)∼𝒟G∪𝒟T​[ℓ⁡(f𝐖​(x),y∗)]L(\mathbf{W})=\mathbb{E}_{(x,y^{*})\sim\mathcal{D}_{G}\cup\mathcal{D}_{T}}\bigl[\ell(f_{\mathbf{W}}(x),y^{*})\bigr]
+(13)
+Since 𝒟G\mathcal{D}_{G} and 𝒟T\mathcal{D}_{T} may not be independent with each other,
+we define three disjoint subsets of the calibration data, namely, 𝒟G​T\mathcal{D}_{GT}, 𝒟G−\mathcal{D}_{G-}, and 𝒟T−\mathcal{D}_{T-} by
+𝒟G​T=𝒟G∩𝒟T\displaystyle\mathcal{D}_{GT}=\mathcal{D}_{G}\cap\mathcal{D}_{T}
+(14)
+𝒟G−=𝒟G∖𝒟G​T\displaystyle\mathcal{D}_{G-}=\mathcal{D}_{G}\setminus\mathcal{D}_{GT}
+𝒟T−=𝒟T∖𝒟G​T\displaystyle\mathcal{D}_{T-}=\mathcal{D}_{T}\setminus\mathcal{D}_{GT}
+where 𝒟G​T\mathcal{D}_{GT} is the subset of samples shared by both the general domain and the task-specific domain, 𝒟G−\mathcal{D}_{G-} is the subset of samples unique to the general domain, and 𝒟T−\mathcal{D}_{T-} is the subset of samples unique to the task-specific domain.
+Therfore, 𝒟G​T\mathcal{D}_{GT}, 𝒟G−\mathcal{D}_{G-}, and 𝒟T−\mathcal{D}_{T-} are mutually disjoint and we decompose Eq. (13) to
+L⁡(𝐖)=LG​T​(𝐖)+LG−​(𝐖)+LT−​(𝐖)L(\mathbf{W})\;=\;L_{GT}(\mathbf{W})\;+\;L_{G-}(\mathbf{W})\;+\;L_{T-}(\mathbf{W})
+(15)
+where LG​T​(𝐖)L_{GT}(\mathbf{W}), LG−​(𝐖)L_{G-}(\mathbf{W}), and LT−​(𝐖)L_{T-}(\mathbf{W}) are the losses for the shared, general-only and the task-specific-only domains and are computed by
+LG​T​(𝐖)\displaystyle L_{GT}(\mathbf{W})
+=𝔼(x,y∗)∼𝒟G​T​[ℓ⁡(f𝐖​(x),y∗)]\displaystyle=\mathbb{E}_{(x,y^{*})\sim\mathcal{D}_{GT}}\bigl[\ell(f_{\mathbf{W}}(x),y^{*})\bigr]
+(16)
+LG−​(𝐖)\displaystyle L_{G-}(\mathbf{W})
+=𝔼(x,y∗)∼𝒟G−​[ℓ⁡(f𝐖​(x),y∗)]\displaystyle=\mathbb{E}_{(x,y^{*})\sim\mathcal{D}_{G-}}\bigl[\ell(f_{\mathbf{W}}(x),y^{*})\bigr]
+LT−​(𝐖)\displaystyle L_{T-}(\mathbf{W})
+=𝔼(x,y∗)∼𝒟T−​[ℓ⁡(f𝐖​(x),y∗)]\displaystyle=\mathbb{E}_{(x,y^{*})\sim\mathcal{D}_{T-}}\bigl[\ell(f_{\mathbf{W}}(x),y^{*})\bigr]
+Following Eq. (2), we expand the mixed loss at 𝐖\mathbf{W} by a second-order Taylor series and neglect the first-order term, and obtain
+Δ​L​(𝐖)≈\displaystyle\Delta L(\mathbf{W})\approx
+Δ​𝐖⊤​HG​T​Δ​𝐖+Δ​𝐖⊤​HG−​Δ​𝐖\displaystyle\Delta\mathbf{W}^{\top}H_{GT}\Delta\mathbf{W}+\Delta\mathbf{W}^{\top}H_{G-}\Delta\mathbf{W}
+(17)
++\displaystyle+
+Δ​𝐖⊤​HT−​Δ​𝐖\displaystyle\Delta\mathbf{W}^{\top}H_{T-}\Delta\mathbf{W}
+where
+HG​T=∇2LG​T​(𝐖)\displaystyle H_{GT}=\nabla^{2}L_{GT}(\mathbf{W})
+(18)
+HG−=∇2LG−​(𝐖)\displaystyle H_{G-}=\nabla^{2}L_{G-}(\mathbf{W})
+HT−=∇2LT−​(𝐖)\displaystyle H_{T-}=\nabla^{2}L_{T-}(\mathbf{W})
+are the Hessian matrices for the shared, general-only, and the task-specific-only domains, respectively.
+Following the process of Eq. (9)-(10), task-specific pruning computes the important score Si​jS_{ij} by the sum of the important scores from the shared, general-only, and the task-specific-only domains (which are denoted as Si​jG​TS_{ij}^{GT}, Si​jG−S_{ij}^{G-} and Si​jT−S_{ij}^{T-}, respectively) by
+Si​j\displaystyle S_{ij}
+=Si​jG​T+Si​jG−+Si​jT−\displaystyle=S_{ij}^{GT}+S_{ij}^{G-}+S_{ij}^{T-}
+(19)
+To compute the pruning scores for different groups, we need to divide the data features from the general domain and the task-specific domains into the three groups, i.e., the features shared by both the general and task-specific domains, the ones unique to the general domain, and the ones unique to the task-specific domain.
+To this end, we design an approach based on the difference in activation magnitudes.
+Specifically, for channel jj in a given layer (assume the total number of channels is dd), we compute its activation norms over the general domain calibration set, |xj(G)|2|x_{j}^{(G)}|_{2}, and over the task-specific domain calibration set, |xj(T)|2|x_{j}^{(T)}|_{2}, and then form the difference score Δj\Delta_{j} by
+Δj=|xj(G)|2−|​xj(T)|2\Delta_{j}=|x_{j}^{(G)}|_{2}-|x_{j}^{(T)}|_{2}
+(20)
+We then sort all channels by Δj\Delta_{j} in descending order and divide them according to a positive hyperparameter α\alpha: channels with Δj>α\Delta_{j}>\alpha are classified as general-only, those with −α<Δj<α-\alpha<\Delta_{j}<\alpha are task-only, and those with Δj\Delta_{j} between −α-\alpha and α\alpha are treated as shared.
+Intuitively, this means that if a channel’s activation in the general domain exceeds that in the task-specific domain by more than α\alpha, it is general-only; if it is lower by more than α\alpha, it is task-only; and if the difference is within the range [−α,α][-\alpha,\alpha], it is classified as shared.
+For each group, we use the following approach to compute the pruning scores for the parameters.
+First, for the general-domain-only channels (index set 𝒥G−\mathcal{J}_{G-}), we compute the pruning score using the examples from the general domain.
+Similarly, for the task-specific domain channels (index set 𝒥T−\mathcal{J}_{T-}), we compute the pruning score using the examples from the task-specific domain.
+For shared channels (index set 𝒥G​T\mathcal{J}_{GT}), we compute the pruning score using the sum of pruning scores from both the general and the task-specific domain.
+Therefore, Si​jG​TS_{ij}^{GT}, Si​jG−S_{ij}^{G-}, and Si​jT−S_{ij}^{T-} are computed by
+Si​jG​T\displaystyle S_{ij}^{GT}
+=si​jG+si​jT,j∈𝒥G​T\displaystyle=s_{ij}^{G}+s_{ij}^{T},\quad j\in\mathcal{J}_{GT}
+(21)
+Si​jG−\displaystyle S_{ij}^{G-}
+=si​jG,j∈𝒥G−\displaystyle=s_{ij}^{G},\quad j\in\mathcal{J}_{G-}
+Si​jT−\displaystyle S_{ij}^{T-}
+=si​jT,j∈𝒥T−\displaystyle=s_{ij}^{T},\quad j\in\mathcal{J}_{T-}
+where si​jGs_{ij}^{G} and si​jTs_{ij}^{T} are the pruning scores obtained through the standard pruning process using the general domain and the task-specific domain data, respectively.
+Because Si,jG​T=Si,jG+Si,jTS_{i,j}^{GT}=S_{i,j}^{G}+S_{i,j}^{T} holds for shared channels, this naturally makes the shared score twice that of any exclusive score, reflecting its higher importance and matching the intuition that the parameters for the shared part of the domains should be more important than the parameters for only one domain.
+Finally, we sort all mixed importance scores Si,jS_{i,j} in the entire model from smallest to largest and prune away the lowest rr fraction of parameters according to the target sparsity rate rr.
+Using the Wanda pruning algorithm as an example.
+For each parameter Wi​jW_{ij}, Wanda computes a pruning score Si​jS_{ij} following Eq. (12).
+This score corresponds to the effect of pruning the weight Wi​jW_{ij} on the loss under the task-specific settings, balancing the parameter sensitivities of the general and task-specific domains.
+We sort all parameters based on their mixed pruning score Si​jS_{ij}.
+We iteratively prune the weights with the lowest scores until the predetermined pruning ratio rr is met.
+TABLE I:
+Overall results on WikiText-2 (WT-2) (PPL), MMLU, MedQA, and ARC for Qwen-3 (32B) at various compression ratios (CR), where the performance of the original LLM without pruning is also reported for reference.
+Lower perplexity on WT-2 and higher accuracy on other datasets indicate better performance, which are marked by ↓\downarrow and ↑\uparrow, respectively.
+“Avg.” refers to the average performance on MMLU, MedQA, and ARC.
+Model
+CR
+Approach
+WT-2 ↓\downarrow
+MMLU ↑\uparrow
+MedQA ↑\uparrow
+ARC ↑\uparrow
+Avg. ↑\uparrow
+Qwen-3
+(32B)
+-
+-
+6.45
+80.77
+74.55
+62.07
+72.46
+50%
+Wanda
+8.38
+76.93
+69.05
+56.06
+67.34
+Ours
+8.45
+76.58
+70.15
+58.36
+68.36
+75%
+Wanda
+23.72
+41.56
+31.34
+29.10
+34.00
+Ours
+28.47
+43.13
+33.46
+29.52
+35.37
+90%
+Wanda
+1856
+24.78
+25.92
+23.71
+24.80
+Ours
+1281
+25.34
+27.33
+23.98
+25.55
+III Experiment Settings
+III-A Datasets
+To comprehensively evaluate our pruning approach, we conduct experiments on several widely used benchmark datasets that target different aspects of model performance.
+For assessing model fluency and general language generation capabilities, we use the WikiText-2 dataset [34]11
+1
+https://huggingface.co/datasets/mindchain/wikitext2,
+which is a widely used corpus that contains high-quality articles from Wikipedia, making it suitable for evaluating the naturalness and coherence of LLM outputs.
+We also employ a set of zero/few-shot evaluation datasets to measure the LLMs’ generalization ability across various tasks.
+These datasets22
+2
+Specifically, we obtain MMLU, MedQA, and ARC from https://huggingface.co/datasets/cais/mmlu, https://huggingface.co/datasets/GBaker/MedQA-USMLE-4-options,
+and https://huggingface.co/datasets/allenai/ai2_arc,
+respectively. include:
+•
+MMLU [35]: A multiple-choice benchmark covering 57 subjects (e.g., humanities, STEM, professional topics), testing both factual knowledge and reasoning ability.
+•
+MedQA [36]: A medical question-answering (QA) dataset derived from United States Medical Licensing Examination (USMLE) questions in four-choice format, covering clinical diagnosis and treatment scenarios in the medical domain.
+•
+ARC [37]: The AI2 Reasoning Challenge dataset with grade-school science questions in multiple-choice format, requiring qualitative reasoning across physics, biology, and chemistry.
+We utilize the standard split of these datasets for evaluating the performance of different LLMs.
+For the calibration datasets, we utilize the English C4 [38] as the general domain data33
+3
+https://huggingface.co/datasets/c4 (i.e., DGD_{G}),
+which is a cleaned, deduplicated version of the Common Crawl web corpus.
+We also utilize the training splits of the MMLU, MedQA, and ARC for task-aware calibration dataset (i.e., DTD_{T}), which ensures that the learned importance scores are reflective of the task-specific feature distribution.
+For C4, we randomly sample 128 examples; for the task-aware calibration dataset, we also randomly sample 128 examples from the union of them to maintain a balanced evaluation setup.
+III-B Fundamental Pruning Algorithms
+The fundamental pruning algorithm used in our experiment is Wanda [19].
+Wanda employs a pruning metric by multiplying weight magnitude with input activation norms to directly assess connection importance without requiring any fine-tuning.
+The algorithm supports structured and unstructured pruning.
+Our approach is validated on the algorithm to demonstrate the generality and effectiveness of task-aware pruning across different paradigms.
+III-C Implementation Details
+We run experiments with state-of-the-art LLMs, i.e., the Qwen-3 [39] series44
+4
+The LLM is obtained from the official website on HuggingFace https://huggingface.co/..
+In our experiments, we adopt the Qwen-3 (32B) version of Qwen-3.
+Specifically, the Qwen-3 (32B) version has 64 layers of Transformer with a 5120-dimensional hidden size.
+We run experiments with both unstructured and structured pruning to validate the robustness of our task-aware approach.
+For unstructured pruning, we explore three compression ratios, r=50%,75%, and ​90%r=50\%,75\%,\text{ and }90\%, where rr denotes the fraction of parameters pruned (e.g., r=0.75r=0.75 prunes 75% of the weights).
+For structured pruning, we employ 2:4 and 4:8 N:M sparsity patterns, which enforce that within each contiguous block of 4 (resp. 8) parameters, exactly 2 (resp. 4) parameters are retained, thereby achieving 50% sparsity in a hardware-friendly layout.
+For the weight α\alpha to determine whether a channel’s activation belongs to the shared or a particular domain, we try different values (i.e., 0.01, 0.05, 0.1, 0.2, 0.5, 1.0, and 2.0) in the analysis.
+For evaluation, we utilize perplexity (PPL) [40] to measure language fluency on the WikiText-2 dataset, and evaluate by accuracy55
+5
+https://github.com/EleutherAI/lm-evaluation-harness. under the zero-shot setting on MMLU, MedQA, and ARC.
+IV Results and Analysis
+IV-A Overall Results
+We summarize the overall performance of our task-aware pruning approach and the baseline Wanda across multiple compression ratios in Table I.
+Several key observations are drawn from these results.
+First, on average, our approach consistently achieves better performance than Wanda under all pruning ratios.
+At moderate sparsity levels such as 50% and 75%, our approach shows clear improvements on most downstream tasks (including MMLU, MedQA, and ARC), while maintaining comparable perplexity on WikiText-2, indicating that the integration of task-specific information effectively enhances model capability without harming general fluency.
+Second, as the pruning ratio reaches 90%, the performance of all models naturally declines, yet our approach consistently yields higher average accuracy than Wanda across most settings, demonstrating its robustness under aggressive compression.
+Overall, these results confirm that our task-aware pruning strategy achieves a better balance between task performance than the baseline model, making it a reliable solution for compressing LLMs without severely degrading their downstream capability.
+TABLE II:
+The results of the Qwen 3 (32B) pruned by the original Wanda and our approach with Wanda under different pruning configurations.
+“50%” means the unstructured pruning where 50% parameters are pruned.
+“2:4” and “4:8” are structured pruning settings which also lead to 50% pruned parameters.
+PS
+Approach
+WT-2 ↓\downarrow
+MMLU ↑\uparrow
+MedQA ↑\uparrow
+ARC ↑\uparrow
+Avg. ↑\uparrow
+50%
+Wanda
+8.38
+76.93
+69.05
+56.06
+67.34
+Ours
+8.45
+76.58
+70.15
+58.36
+68.36
+2:4
+Wanda
+8.26
+68.78
+58.94
+52.21
+59.97
+Ours
+8.53
+69.13
+59.23
+52.56
+60.30
+4:8
+Wanda
+7.67
+73.27
+65.36
+54.23
+64.28
+Ours
+7.82
+73.62
+65.67
+54.69
+64.66
+IV-B The Performance on Structured Pruning
+To further examine the robustness of our task-aware pruning approach, we conduct additional experiments on structured pruning configurations.
+Specifically, we test two hardware-friendly sparsity patterns—2:4 and 4:8 N:M pruning—each achieving approximately 50% sparsity.
+For comparison, we also include the 50% unstructured pruning results in Table II.
+This allows a fair evaluation of our approach under both flexible and constrained pruning regimes.
+Several observations can be made from these results.
+First, our approach consistently outperforms the original Wanda across all pruning configurations, including both structured and unstructured settings.
+This confirms that introducing task-aware calibration effectively improves model retention of important parameters regardless of the pruning form.
+Second, the performance gain is steady across datasets such as MMLU, MedQA, and ARC, indicating that the proposed method generalizes well across different evaluation domains and compression types.
+Third, while structured pruning generally leads to slightly lower absolute performance than unstructured pruning (owing to its inherent constraints on parameter selection) our approach still delivers consistent advantages over Wanda.
+This demonstrates that our method remains effective even when pruning flexibility is limited by hardware-aware sparsity patterns.
+Overall, these results validate that our task-aware pruning framework extends naturally to structured pruning scenarios and continues to enhance performance beyond existing baseline techniques.
+Fig. 2:
+Performance of the pruned Qwen-3 (32B) on MedQA at 50% sparsity under different α\alpha values (blue curve).
+The dashed red line denotes the Wanda baseline.
+The parameter α\alpha controls how strictly the model separates shared and task-specific channels during pruning.
+IV-C Effect of the Threshold for Pruning
+We investigate how the threshold α\alpha influences model performance, using MedQA as a representative downstream task and 128 calibration examples for pruning.
+The parameter α\alpha determines how feature channels are partitioned, where smaller α\alpha values make the boundary between shared and task-specific channels tighter, while larger α\alpha values broaden the shared region and reduce the distinctiveness of task-specific components.
+Figure 3 reports the accuracy of our approach on MedQA under different α\alpha values for a 50% pruning rate (the blue curve), with the Wanda baseline shown as a dashed line.
+When α\alpha is very small (α≤0.05\alpha\!\leq\!0.05), the model barely distinguishes shared from task-specific parameters, causing the pruning to behave similarly to the generic Wanda baseline, and the improvement is marginal.
+As α\alpha increases, the separation becomes clearer, allowing the model to better balance shared linguistic knowledge and task-specific representations.
+This leads to a noticeable performance gain that peaks around α=0.2\alpha\!=\!0.2.
+However, when α\alpha continues to grow (α≥0.5\alpha\!\geq\!0.5), more parameters tend to be classified as shared, which weakens the model’s ability to capture task-relevant specialization and causes performance degradation.
+An intermediate value around α=0.2\alpha\!=\!0.2 provides the most effective balance, enabling our approach to maintain broad knowledge coverage while preserving task-specific discriminability during pruning.
+Fig. 3:
+Distribution of parameter groups across Transformer layers in Qwen-3 (32B).
+The x-axis represents the layer index, and the y-axis shows the proportion of parameters categorized as shared (blue), general-only (orange), and task-only (red).
+IV-D Visualization of Parameter Type Distribution during Pruning
+To better understand how task-aware pruning differentiates parameter roles across the model depth, we visualize the proportion of parameters classified as shared, general-only, and task-only in each Transformer layer of Qwen-3 (32B), as shown in Figure 3.
+The x-axis denotes the layer index, and the y-axis represents the fraction of parameters assigned to each group.
+Several trends are observed.
+First, in the lower layers, the majority of parameters fall into the shared category, while the proportions of general-only and task-only parameters remain small.
+This suggests that the lower layers mainly capture fundamental linguistic and syntactic patterns that are common to both domains, with limited domain differentiation.
+Second, as the layer depth increases, the share of general-only and task-only parameters rises sharply, and their divergence begins to dominate the model’s representation space.
+The general-only parameters (orange curve) maintain a strong presence across middle layers, indicating that general linguistic knowledge continues to play a central role in intermediate representations.
+Meanwhile, task-only parameters (red curve) gradually increase in deeper layers, showing that high-level domain-specific reasoning and adaptation are formed near the top of the model.
+Finally, the shared proportion (blue curve) decreases toward upper layers and becomes negligible after a certain depth, reflecting that high-level modules specialize either toward task-specific behavior or general-domain understanding.
+Overall, this layer-wise pattern supports our intuition that the proposed task-aware grouping mechanism is able to identify the hierarchical specialization structure of the LLM: lower layers encode shared generality, middle layers balance both domains, and upper layers focus on task-specific adaptation.
+V Related Work
+Pruning aims to reduce the size of a model while preserving its capabilities to perform various tasks.
+The pruning task has attracted attention from existing studies for decades [26, 27, 28, 29, 41, 15, 42, 43, 44].
+In the era of LLM, where high-quality text representations are crucial for downstream performance [45, 46, 47, 48, 1, 49, 4, 30, 39] and model scales have expanded dramatically, pruning becomes increasingly important for mitigating the computational and memory costs of training and inference.
+Conventional studies in neural network pruning utilize straightforward magnitude-based approaches, which rank weights by absolute value and prune the smallest ones, demonstrating that a significant fraction of parameters can be discarded with minimal loss in accuracy [29, 50, 51, 52, 53].
+There are studies that utilize a dynamic sparsity schedule mechanism that allows weights to be masked and unmasked during fine-tuning, improving over static magnitude thresholds [54, 55, 56, 57, 58].
+These pruning approaches mainly focus on the magnitude of the weights, where less attention is paid to the running data that the models are expected to be applied to.
+Therefore, there are studies (e.g., SparseGPT [20] and Wanda [19]) that leverage weight magnitude and activation values from running data from a calibration set to measure the weight importance so as to improve pruning.
+To further advance these approaches, subsequent research introduces enhancements in activation-aware magnitude metrics, regional gradient-based importance scoring, and iterative second-order recovery [20, 59, 21, 44, 60].
+These approaches primarily focus on preserving fluent natural language generation while placing comparatively less emphasis on performance in specific tasks.
+Compared to previous studies, our approach focuses on task-aware LLM pruning, which utilizes both general-domain and task-specific data to better identify the unimportant parameters to be pruned.
+VI Conclusion
+In this paper, we propose a frustratingly easy task-aware pruning approach for LLMs.
+Specifically, we use two calibration datasets from the general and task-specific domains and apply them within existing pruning algorithms (e.g., Wanda) to compute activation-weighted magnitude scores for each parameter.
+We then partition channels by activation-norm differences into shared, general-only, and task-only groups through a simple threshold, and combine their respective importance scores into a mixed score that guides pruning.
+We evaluate our approach using the widely adopted Wanda algorithm.
+Experimental results confirm that our task-aware pruning effectively preserves domain- and task-specific capabilities, consistently outperforming standard pruning baselines across multiple benchmarks.
+References
+[1]
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell et al., “Language Models are Few-shot Learners,” Advances in neural information processing systems, vol. 33, pp. 1877–1901, 2020.
+[2]
+A. M. Chekroud, J. Bondar, J. Delgadillo, G. Doherty, A. Wasil, M. Fokkema, Z. Cohen, D. Belgrave, R. DeRubeis, R. Iniesta et al., “The promise of machine learning in predicting treatment outcomes in psychiatry,” World Psychiatry, vol. 20, no. 2, pp. 154–170, 2021.
+[3]
+J. Wei, Y. Tay, R. Bommasani, C. Raffel, B. Zoph, S. Borgeaud, D. Yogatama, M. Bosma, D. Zhou, D. Metzler et al., “Emergent abilities of large language models,” arXiv preprint arXiv:2206.07682, 2022.
+[4]
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat et al., “GPT-4 technical report,” arXiv preprint arXiv:2303.08774, 2023.
+[5]
+R. Taori, I. Gulrajani, T. Zhang, Y. Dubois, X. Li, C. Guestrin, P. Liang, and T. B. Hashimoto, “Stanford Alpaca: An Instruction-following LLaMA model,” GitHub repository, 2023.
+[6]
+S. Bubeck, V. Chandrasekaran, R. Eldan, J. Gehrke, E. Horvitz, E. Kamar, P. Lee, Y. T. Lee, Y. Li, S. Lundberg et al., “Sparks of artificial general intelligence: Early experiments with gpt-4,” arXiv preprint arXiv:2303.12712, 2023.
+[7]
+H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale et al., “LLaMA 2: Open Foundation and Fine-tuned Chat Models,” arXiv preprint arXiv:2307.09288, 2023.
+[8]
+M. U. Hadi, R. Qureshi, A. Shah, M. Irfan, A. Zafar, M. B. Shaikh, N. Akhtar, J. Wu, S. Mirjalili et al., “Large language models: a comprehensive survey of its applications, challenges, limitations, and future prospects,” Authorea preprints, vol. 1, no. 3, pp. 1–26, 2023.
+[9]
+Y. Tian, R. Gan, Y. Song, J. Zhang, and Y. Zhang, “ChiMed-GPT: A Chinese medical large language model with full training regime and better alignment to human preferences,” in Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), Bangkok, Thailand, Aug. 2024, pp. 7156–7173.
+[10]
+J. Wu, C. Leng, Y. Wang, Q. Hu, and J. Cheng, “Quantized convolutional neural networks for mobile devices,” in Proceedings of the IEEE conference on computer vision and pattern recognition, 2016, pp. 4820–4828.
+[11]
+Z. Zhou, X. Chen, E. Li, L. Zeng, K. Luo, and J. Zhang, “Edge intelligence: Paving the last mile of artificial intelligence with edge computing,” Proceedings of the IEEE, vol. 107, no. 8, pp. 1738–1762, 2019.
+[12]
+E. Strubell, A. Ganesh, and A. McCallum, “Energy and policy considerations for modern deep learning research,” in Proceedings of the AAAI conference on artificial intelligence, vol. 34, no. 09, 2020, pp. 13 693–13 696.
+[13]
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. d. L. Casas, L. A. Hendricks, J. Welbl, A. Clark et al., “Training compute-optimal large language models,” arXiv preprint arXiv:2203.15556, 2022.
+[14]
+J. Ainslie, J. Lee-Thorp, M. De Jong, Y. Zemlyanskiy, F. Lebrón, and S. Sanghai, “Gqa: Training generalized multi-query transformer models from multi-head checkpoints,” arXiv preprint arXiv:2305.13245, 2023.
+[15]
+Z. Wang, J. Wohlwend, and T. Lei, “Structured pruning of large language models,” arXiv preprint arXiv:1910.04732, 2019.
+[16]
+Y. He, P. Liu, Z. Wang, Z. Hu, and Y. Yang, “Filter pruning via geometric median for deep convolutional neural networks acceleration,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2019, pp. 4340–4349.
+[17]
+P. Molchanov, A. Mallya, S. Tyree, I. Frosio, and J. Kautz, “Importance estimation for neural network pruning,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2019, pp. 11 264–11 272.
+[18]
+H. Tanaka, D. Kunin, D. L. Yamins, and S. Ganguli, “Pruning neural networks without any data by iteratively conserving synaptic flow,” Advances in neural information processing systems, vol. 33, pp. 6377–6389, 2020.
+[19]
+M. Sun, Z. Liu, A. Bair, and J. Z. Kolter, “A simple and effective pruning approach for large language models,” arXiv preprint arXiv:2306.11695, 2023.
+[20]
+E. Frantar and D. Alistarh, “Sparsegpt: Massive language models can be accurately pruned in one-shot,” in International Conference on Machine Learning. PMLR, 2023, pp. 10 323–10 337.
+[21]
+Y. Yang, K. Zhen, B. Ganesh, A. Galstyan, G. Huybrechts, M. Müller, J. M. Kübler, R. V. Swaminathan, A. Mouchtaris, S. B. Bodapati et al., “Wanda++: Pruning large language models via regional gradients,” arXiv preprint arXiv:2503.04992, 2025.
+[22]
+N. Lee, T. Ajanthan, and P. H. Torr, “Snip: Single-shot network pruning based on connection sensitivity,” arXiv preprint arXiv:1810.02340, 2018.
+[23]
+G. Fang, X. Ma, M. Song, M. B. Mi, and X. Wang, “Depgraph: Towards any structural pruning,” in Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, 2023, pp. 16 091–16 101.
+[24]
+S. Ashkboos, M. L. Croci, M. G. d. Nascimento, T. Hoefler, and J. Hensman, “Slicegpt: Compress large language models by deleting rows and columns,” arXiv preprint arXiv:2401.15024, 2024.
+[25]
+V. A. Dasu, V. Gupta, S. Tizpaz-Niari, G. Tan et al., “Attention pruning: Automated fairness repair of language models via surrogate simulated annealing,” arXiv preprint arXiv:2503.15815, 2025.
+[26]
+M. C. Mozer and P. Smolensky, “Skeletonization: A technique for trimming the fat from a network via relevance assessment,” Advances in neural information processing systems, vol. 1, 1988.
+[27]
+Y. LeCun, J. Denker, and S. Solla, “Optimal brain damage,” Advances in neural information processing systems, vol. 2, 1989.
+[28]
+B. Hassibi and D. Stork, “Second order derivatives for network pruning: Optimal brain surgeon,” Advances in neural information processing systems, vol. 5, 1992.
+[29]
+S. Han, J. Pool, J. Tran, and W. Dally, “Learning both weights and connections for efficient neural network,” Advances in neural information processing systems, vol. 28, 2015.
+[30]
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M.-A. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar et al., “Llama: Open and efficient foundation language models,” arXiv preprint arXiv:2302.13971, 2023.
+[31]
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray et al., “Training Language Models to Follow Instructions with Human Feedback,” Advances in Neural Information Processing Systems, vol. 35, pp. 27 730–27 744, 2022.
+[32]
+J. Frankle and M. Carbin, “The lottery ticket hypothesis: Finding sparse, trainable neural networks,” arXiv preprint arXiv:1803.03635, 2018.
+[33]
+S. Hooker, A. Courville, G. Clark, Y. Dauphin, and A. Frome, “What do compressed deep neural networks forget?” arXiv preprint arXiv:1911.05248, 2019.
+[34]
+S. Merity, C. Xiong, J. Bradbury, and R. Socher, “Pointer sentinel mixture models,” arXiv preprint arXiv:1609.07843, 2016.
+[35]
+D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt, “Measuring massive multitask language understanding,” arXiv preprint arXiv:2009.03300, 2020.
+[36]
+D. Jin, E. Pan, N. Oufattole, W.-H. Weng, H. Fang, and P. Szolovits, “What disease does this patient have? a large-scale open domain question answering dataset from medical exams,” Applied Sciences, vol. 11, no. 14, p. 6421, 2021.
+[37]
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord, “Think you have solved question answering? try arc, the ai2 reasoning challenge,” arXiv preprint arXiv:1803.05457, 2018.
+[38]
+C. Raffel, N. Shazeer, A. Roberts, K. Lee, S. Narang, M. Matena, Y. Zhou, W. Li, and P. J. Liu, “Exploring the limits of transfer learning with a unified text-to-text transformer,” Journal of machine learning research, vol. 21, no. 140, pp. 1–67, 2020.
+[39]
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang et al., “Qwen technical report,” arXiv preprint arXiv:2309.16609, 2023.
+[40]
+F. Jelinek, R. L. Mercer, L. R. Bahl, and J. K. Baker, “Perplexity—a measure of the difficulty of speech recognition tasks,” The Journal of the Acoustical Society of America, vol. 62, no. S1, pp. S63–S63, 1977.
+[41]
+C. Louizos, M. Welling, and D. P. Kingma, “Learning sparse neural networks through l​_​0l\_0 regularization,” arXiv preprint arXiv:1712.01312, 2017.
+[42]
+X. Ma, G. Fang, and X. Wang, “Llm-pruner: On the structural pruning of large language models,” Advances in neural information processing systems, vol. 36, pp. 21 702–21 720, 2023.
+[43]
+A. Nova, H. Dai, and D. Schuurmans, “Gradient-free structured pruning with unlabeled data,” in International Conference on Machine Learning. PMLR, 2023, pp. 26 326–26 341.
+[44]
+D. Wu, I.-V. Modoranu, M. Safaryan, D. Kuznedelev, and D. Alistarh, “The iterative optimal brain surgeon: Faster sparse recovery by leveraging second-order information,” Advances in Neural Information Processing Systems, vol. 37, pp. 139 621–139 649, 2024.
+[45]
+T. Mikolov, K. Chen, G. Corrado, and J. Dean, “Efficient estimation of word representations in vector space,” arXiv preprint arXiv:1301.3781, 2013.
+[46]
+Y. Song and S. Shi, “Complementary Learning of Word Embeddings,” in Proceedings of the Twenty-Seventh International Joint Conference on Artificial Intelligence, IJCAI-18, 7 2018, pp. 4368–4374.
+[47]
+M. E. Peters, M. Neumann, M. Iyyer, M. Gardner, C. Clark, K. Lee, and L. Zettlemoyer, “Deep contextualized word representations,” in Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long Papers), New Orleans, Louisiana, Jun. 2018, pp. 2227–2237.
+[48]
+J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova, “Bert: Pre-training of deep bidirectional transformers for language understanding,” in Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers), 2019, pp. 4171–4186.
+[49]
+Y. Song, T. Zhang, Y. Wang, and K.-F. Lee, “ZEN 2.0: Continue Training and Adaption for N-gram Enhanced Text Encoders,” arXiv preprint arXiv:2105.01279, 2021.
+[50]
+S. Han, H. Mao, and W. J. Dally, “Deep compression: Compressing deep neural networks with pruning, trained quantization and huffman coding,” arXiv preprint arXiv:1510.00149, 2015.
+[51]
+H. Hu, R. Peng, Y.-W. Tai, and C.-K. Tang, “Network trimming: A data-driven neuron pruning approach towards efficient deep architectures,” arXiv preprint arXiv:1607.03250, 2016.
+[52]
+A. Kuzmin, M. Nagel, M. Van Baalen, A. Behboodi, and T. Blankevoort, “Pruning vs quantization: Which is better?” Advances in neural information processing systems, vol. 36, pp. 62 414–62 427, 2023.
+[53]
+Y. An, X. Zhao, T. Yu, M. Tang, and J. Wang, “Fluctuation-based adaptive structured pruning for large language models,” in Proceedings of the AAAI Conference on Artificial Intelligence, vol. 38, no. 10, 2024, pp. 10 865–10 873.
+[54]
+T. Gale, E. Elsen, and S. Hooker, “The state of sparsity in deep neural networks,” arXiv preprint arXiv:1902.09574, 2019.
+[55]
+U. Evci, T. Gale, J. Menick, P. S. Castro, and E. Elsen, “Rigging the lottery: Making all tickets winners,” in International conference on machine learning. PMLR, 2020, pp. 2943–2952.
+[56]
+V. Sanh, T. Wolf, and A. Rush, “Movement pruning: Adaptive sparsity by fine-tuning,” Advances in neural information processing systems, vol. 33, pp. 20 378–20 389, 2020.
+[57]
+G. Sokar, E. Mocanu, D. C. Mocanu, M. Pechenizkiy, and P. Stone, “Dynamic sparse training for deep reinforcement learning,” arXiv preprint arXiv:2106.04217, 2021.
+[58]
+T. Hoefler, D. Alistarh, T. Ben-Nun, N. Dryden, and A. Peste, “Sparsity in deep learning: Pruning and growth for efficient inference and training in neural networks,” Journal of Machine Learning Research, vol. 22, no. 241, pp. 1–124, 2021.
+[59]
+M. Zimmer, M. Andoni, C. Spiegel, and S. Pokutta, “Perp: Rethinking the prune-retrain paradigm in the era of llms,” arXiv preprint arXiv:2312.15230, 2023.
+[60]
+G. Bai, Y. Li, C. Ling, K. Kim, and L. Zhao, “Sparsellm: Towards global pruning of pre-trained language models,” Advances in Neural Information Processing Systems, vol. 37, pp. 46 203–46 225, 2024.
+langley00
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

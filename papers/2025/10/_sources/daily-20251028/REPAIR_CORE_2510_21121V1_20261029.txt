@@ -1,0 +1,870 @@
+Generalizable Hierarchical Skill Learning via Object-Centric Representation
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+I Introduction
+II Related Work
+III Problem Definition
+IV Method
+IV-A Object-Centric Skill Discovery and Learning
+High-level skill discovery
+Low-level training using mask-as-frame
+IV-B Skill Composition at Inference
+IV-C Design Choices
+Skill Boundary
+Canonicalization
+Interface Between High-Level and Low-Level Modules
+Generalization Analysis
+V Experiments
+V-A Simulation Experiment
+Experimental Setup
+Baselines
+Results
+V-B Ablation Study
+V-C Real World Experiments
+Results
+VI Conclusion and Limitation
+References
+License: CC BY 4.0
+arXiv:2510.21121v1 [cs.RO] 24 Oct 2025
+Generalizable Hierarchical Skill Learning via Object-Centric Representation
+Haibo Zhao
+Affiliation: Northeastern University
+Yu Qi
+Affiliation: Northeastern University
+Boce Hu
+Affiliation: Northeastern University
+Yizhe Zhu
+Affiliation: Northeastern University
+Ziyan Chen
+Affiliation: Northeastern University
+Heng Tian
+Affiliation: Northeastern University
+Xupeng Zhu
+Affiliation: Northeastern University
+Owen Howell
+Affiliation: Northeastern University
+Haojie Huang
+Affiliation: Northeastern University
+Robin Walters
+Affiliation: Northeastern University
+Dian Wang
+Robert Platt
+Affiliation: Stanford University
+Affiliation: Equal Advisinghttps://codemasterzhao.github.io/GSL/
+Abstract
+We present Generalizable Hierarchical Skill Learning (GSL), a novel framework for hierarchical policy learning that significantly improves policy generalization and sample efficiency in robot manipulation. One core idea of GSL is to use object-centric skills as an interface that bridges the high-level vision-language model and the low-level visual-motor policy.
+Specifically, GSL decomposes demonstrations into transferable and object-canonicalized skill primitives using foundation models, ensuring efficient low-level skill learning in the object frame.
+At test time, the skill–object pairs predicted by the high-level agent are fed to the low-level module, where the inferred canonical actions are mapped back to the world frame for execution.
+This structured yet flexible design leads to substantial improvements in sample efficiency and generalization of our method across unseen spatial arrangements, object appearances, and task compositions. In simulation, GSL trained with only 3 demonstrations per task outperforms baselines trained with 30 times more data by 15.5% on unseen tasks. In real-world experiments, GSL also surpasses the baseline trained with 10 times more data.
+I Introduction
+Recent advances in Vision-Language Models (VLMs) have enabled intelligent agents to interpret rich semantic instructions and perform diverse visual and language tasks [1]. Building upon these models, a growing body of work seeks to enhance the generalization ability of robotic manipulation policies by leveraging the semantic grounding and compositional reasoning inherent to VLMs. Among these efforts, a prevalent line of research has focused on developing Vision-Language-Action (VLA) models [2, 3, 4], which couple perception, language, and control into a unified framework trained on large-scale robot datasets. By mapping visual-language inputs directly to low-level actions, these approaches demonstrate promising semantic and visual understanding ability.
+However, despite their scalability, the performance of VLA models remains limited by the sparsity of robotic data, as well as the difficulty of learning robust and generalizable visuomotor mappings end-to-end from high-dimensional inputs.
+Fig. 1: Overview of GSL. In GSL, the high-level agent decomposes demonstrations into object-centric skills for the low-level module to learn. At test time, the high-level agent selects a sequence of skills and object pairs to execute novel tasks.
+Alternative strategies introduce a hierarchical structure into policy learning [5, 6, 7, 8]. Instead of directly predicting low-level actions, hierarchical approaches decompose the control process into high-level task planning and low-level execution. The high-level planner, often realized by a VLM, predicts abstract subgoals or symbolic commands, while the low-level controller executes precise visuomotor behaviors conditioned on those subgoals. Compared with monolithic VLA models, this hierarchical formulation embeds a stronger inductive bias: it allocates semantic reasoning to the VLM, which excels at task abstraction, and constrains the visuomotor policy to focus on local control, thereby reducing learning complexity and improving robustness. Nevertheless, existing hierarchical policies typically employ simple and coarse interfaces between the high-level and low-level modules, such as object masks, keyframes, or end-effector poses. While such representations facilitate modularity, they provide limited structural information for the low-level controller, making it challenging to learn fine-grained skills and to generalize across task and object configurations.
+To bridge this gap, we propose a novel hierarchical framework that introduces object-centric skills as the interface between high-level reasoning and low-level control. During training, demonstrations are decomposed into object-centric skills expressed in the object frame, forming an object-centric dataset that enables the low-level policy to learn transferable visuomotor primitives grounded in consistent spatial references. At inference time, the high-level agent decomposes a long-horizon task into a sequence of object-centric skills by predicting the skill types and the corresponding objects, while the low-level policy generates the corresponding skill trajectory within the object frame. This formulation establishes a structured yet flexible communication channel, allowing the high level to convey semantic and spatial intent, and the low-level module to perform localized control without reasoning over the entire scene. In addition, our method achieves substantially higher sample efficiency and stronger generalization to novel objects and tasks compared to flat or weakly structured baselines across tasks involving spatial variation, novel object appearance, distractor objects, and unseen task combinations, regarded as key aspects of generalization in [8, 9].
+Our contributions are summarized as follows:
+•
+We propose Generalizable Hierarchical Skill Learning (GSL), a novel framework for generalizable hierarchical policy learning.
+•
+We introduce object-centric skill as an interface between high-level and low-level, as a structured yet flexible communication channel.
+•
+We empirically show that GSL significantly improves generalization over strong baselines, with GSL trained on only 3 demonstrations outperforming baselines trained on 100 demonstrations by 15.5% on unseen tasks.
+II Related Work
+Hierarchical Policy Learning. Hierarchical policy strategy decomposes a policy into high-level and low-level agents for both long-horizon reasoning and precise fine-grained control [5, 10, 11, 7, 12, 6, 13]. Recent works leverage vision-language models at a high level for improving generalization abilities in imitation learning [14, 15, 16, 4, 3, 17, 2]. We highlight two series of works among them, the first passes object grounding to low-level policy for fine-grained actions, like BridgeVLA [18] uses VLM as the backbone of high-level agents to predict heatmaps on 2D images of 3D projections. The second decomposes tasks into skills and recombines them into novel tasks, like 3D-Lotus [8].
+However, these approaches typically lack explicit object-centric interfaces,
+making their skill recomposition less robust to environmental and geometric variations.
+Different from the above methods, we leverage an object mask as a reference frame and use object-centric skills composition for generalizable policy learning.
+Object-centric Policy Learning. Object-centric formulations improve the generalization ability of imitation learning by grounding perception and action in task-relevant objects. Many manipulation skills depend on object geometry and affordances while remaining invariant to scene changes. Object-centric pipelines ground goals to objects via detection [19, 20], part parsing [21, 22, 23] or keypoint estimation [24, 25, 26, 27, 28, 29, 18], sometimes using slot encoders [30] or scene graphs [31] to represent entities and relations. In our work, we define object-centric skills, as a tuple of a skill name, a canonical object point cloud expressed in the object frame, and a canonical trajectory, enabling generalization in long-horizon policy learning.
+Equivariant Policy Learning. Recent research has leveraged geometric symmetries in 3D Euclidean space to enhance manipulation policies [32, 33, 34, 35, 36, 37, 38]. A broad range of studies explore this principle across settings such as bi-equivariant pick-and-place control [39, 40, 41], equivariant grasp learning [12, 42], and trajectory learning [43, 44] for fine-grained manipulation. However, previous works have primarily focused on scene-level symmetry, where symmetry is preserved only under transformations applied to the entire scene. In contrast, our approach emphasizes object-level symmetry by leveraging the object mask as an interface and an equivariant network for equivariant skill learning. This enables robust performance across variations in object geometry and placement, even when the background does not transform accordingly.
+III Problem Definition
+In this work, we study hierarchical visuomotor policy learning for robotic manipulation.
+Formally, we aim to learn a policy π:O→A\pi:O\to A that maps from an observation space OO to an action space AA.
+The observation space OO consists of a predefined skill set 𝒦\mathcal{K}, a task description dd, and multi-view RGBD images I={Iv∈ℝ4×H×W∣v=1,…,V}I=\{I_{v}\in\mathbb{R}^{4\times H\times W}\mid v=1,\dots,V\}, where each IvI_{v} is a four-channel image (RGB + depth).
+The robot action is represented as s=(x,y,z,q,c)∈S=ℝ3×S​O​(3)×ℝs=(x,y,z,q,c)\in S=\mathbb{R}^{3}\times SO(3)\times\mathbb{R}, where (x,y,z)(x,y,z) denotes the gripper position, qq the orientation, and cc the gripper aperture. The action space AA is defined as a trajectory τ={s1,s2,…,sm}∈Sm=A\tau=\{s_{1},s_{2},\dots,s_{m}\}\in S^{m}=A, representing mm control steps of the gripper state.
+IV Method
+Fig. 2: Illustration of the GSL Workflow. In the training process (left), given a demonstration consisting of a task description, multi-view RGBD frames, and ground-truth trajectories, the high-level agent decomposes the demo into object-centric skills, each defined by an object mask, a skill label, and a trajectory segment. The mask is lifted into an object point cloud, and both the point cloud and trajectory are canonicalized into the object frame. The low-level policy is then trained to map from the canonicalized object point cloud and skill label to the canonicalized trajectory.
+During testing (right), given a task description and multi-view RGBD frames, the high-level agent generates a sequence of skills with associated object descriptions. For each step, it outputs an object mask and a skill label; the mask is lifted into a canonicalized object point cloud via the mask-as-frame interface, and together with the skill label, is provided to the low-level policy, which predicts the corresponding trajectory in the object frame for execution.
+Our approach is a two-level policy that learns object-centric skills and composes them to solve novel tasks. The high-level agent uses a VLM together with vision foundation models (VFM) to propose a step-wise sequence of (skill, object) pairs, and then the low-level controller predicts a trajectory in the object frame and maps it to the world frame for execution.
+The overview of our framework is shown in Figure 2. Concretely, we first decompose task demonstrations into object-centric skills using the high-level agent, then train a diffusion policy controller to produce object-frame trajectories from an object point cloud and a skill token (Section IV-A). At test time, our skill inference lifts the predicted mask (from the high level) to a point cloud, applies the same canonicalization, queries the low-level module for the object-frame trajectory, and un-canonicalizes it for execution (Section IV-B). This design allows high-level generalization to propagate to the low-level module, improving robustness to object geometry and spatial variations while keeping the interface simple and inspectable.
+IV-A Object-Centric Skill Discovery and Learning
+Our goal at training time is to convert raw demonstrations into a library of reusable object-centric skills and to train a low-level controller that predicts skill trajectories in the object frame. Concretely, a skill is defined as (k,m,τs)(k,m,\tau_{s}), where k∈𝒦k\in\mathcal{K} is a skill label from the predefined skill library,
+m={mv∈{0,1}H×W∣v=1,…,V}m=\{m_{v}\in\{0,1\}^{H\times W}\mid v=1,\dots,V\} is the multi-view binary mask across VV camera views to locate the target object,
+and τs={s1,…,sn}∈Sn\tau_{s}=\{s_{1},\dots,s_{n}\}\in S^{n} is the interaction-relevant segment of the gripper trajectory (from near-approach through contact), excluding free-space approach to maximize transferability across scenes.
+High-level skill discovery
+Given a task description dd, a predefined skill label set 𝒦\mathcal{K}, and multi-view RGB-D frames of a demonstration data, we first downsample the demonstration into keyframes (following [45]) and further segment it into consecutive intervals using VLM, labeled as either free-space approach or a skill label k∈𝒦k\in\mathcal{K} associated with an object’s linguistic description (e.g., “red button on the table”). We then obtain the object mask mm by querying detection and segmentation models (DINOv2 [46] followed by SAM2 [47]). Each segment becomes a skill triplet (k,m,τs)(k,m,\tau_{s}). The high level automatically flags low-confidence segments for optional human verification to ensure a clean training set.
+Low-level training using mask-as-frame
+For each skill (k,m,τ)(k,m,\tau), we lift mm into a 3D object point cloud P={pj∈ℝ3}j=1nP=\{p_{j}\in\mathbb{R}^{3}\}_{j=1}^{n} using depth and calibrated extrinsics. We then canonicalize both the point cloud and the action (in the world frame) into the object frame. Specifically, a randomly11
+1
+This random sample of anchor point serves as a form of data augmentation. sampled on-object anchor tt in the world frame defines the local frame center. We recenter PP and τ\tau to obtain the canonicalized pair (Pc,τc)(P_{c},\tau_{c}), where Pc=P−t;τc=τ−tP_{c}=P-t;\tau_{c}=\tau-t are now in the object frame. We call this strategy of using an object mask to identify an object-centric coordinate frame mask-as-frame CmC_{m}, and Cm−1C_{m}^{-1} its inverse, where Cm​(P)=Pc;Cm−1​(τc)=τC_{m}(P)=P_{c};C_{m}^{-1}(\tau_{c})=\tau.
+We thus obtain an object-centric skill as the triplet (k,Pc,τc)(k,P_{c},\tau_{c}) (with (k,Pc)(k,P_{c}) used during testing when τc\tau_{c} is to be inferred). The skill label kk is encoded with a pretrained language model into fk∈ℝdf_{k}\in\mathbb{R}^{d}. We instantiate the low-level policy with an equivariant diffusion controller (EquiDiff [43]) equipped with an observation encoder that consumes (Pc,fk)(P_{c},f_{k}) and predicts object-centric trajectory τc\tau_{c} with a standard noise-prediction objective. Through the above formulations, the controller learns a library of canonical skill primitives that are agnostic to global object placement yet precise in the object’s local geometry during training. To make the train and test contract explicit, we train
+τc←πlow​(Cm​(P),fk),\tau_{c}\;\leftarrow\;\pi_{\text{low}}\!\big(C_{m}(P),\,f_{k}\big),
+so that skills are learned in the object frame and can later be rebound to new objects via the same operator.
+IV-B Skill Composition at Inference
+At test time, we compose the learned object-centric skills by repeatedly binding a skill label to a target object and executing the resulting object-frame trajectory. Specifically, given the current observation, the high-level agent πhigh\pi_{\text{high}} proposes the next skill kk (and its embedding fkf_{k}) and object mask mm. Similar to training, we lift the object mask to a 3D object point cloud canonicalized into the object frame, Pc=Cm​(P)P_{c}=C_{m}(P), using the same object-frame transform CmC_{m} as in training.
+The pair (Pc,fk)(P_{c},f_{k}) is fed to πlow\pi_{\text{low}} to predict the canonical trajectory τc\tau_{c}. We then map back to the world frame with the inverse transform,
+|
+τ^=Cm−1​(πlow​(Cm​(P),fk)),\hat{\tau}\;=\;C_{m}^{-1}\!\Big(\pi_{\text{low}}\!\big(C_{m}(P),\,f_{k}\big)\Big), |
+|
+and execute τ^\hat{\tau} on the robot. A motion planner connects the end of the current skill and the start of the next skill, decoupling the free-space approach from object-related execution.
+IV-C Design Choices
+In this section, we illustrate how our skill boundary, canonicalized skill representation, and using object-centric skills as the interface between the high- and low-level agents improve system-level generalization.
+Skill Boundary
+We define a skill as the portion of the trajectory spanning from close-range object interaction, similar to demonstration generation pipelines [48, 49], though our definition is intended for skill learning and composition. This boundary isolates core manipulation behavior from broader navigation, which in our framework is delegated to a motion planner, thereby significantly reducing learning complexity. It also enhances robustness by minimizing sensitivity to the robot’s initial configuration. For example, when skills are executed in a different sequence, the robot’s starting state is often out-of-distribution (OOD), which can lead to execution failures. Moreover, such segments can be automatically extracted using existing vision-language models (VLMs), enabling scalable and efficient skill representation.
+In contrast, prior work such as [8] defines a skill as the full trajectory from the gripper’s initial pose to task completion, which entangles global navigation with local manipulation and increases policy complexity.
+Canonicalization
+After defining skills from the close-range object interaction to post-contact, we further apply canonicalization by aligning the object and its corresponding trajectory to the object frame. This frame transfer unifies the distribution of skill demonstrations, reduces data variance, and simplifies the learning problem for the low-level controller. More importantly, this formulation introduces object-level symmetry, allowing learned skills to generalize across different object poses, instances, and configurations with minimal retraining.
+Interface Between High-Level and Low-Level Modules
+We use object-centric skills (represented as a skill label and the canonicalized object mask) as the interface. The object mask serves as a spatial reference frame, providing strong but flexible locality and enabling the low-level policy to operate in a consistent, object-aligned coordinate system. This relieves the low-level module from reasoning over the entire scene and improves robustness and modularity during skill execution.
+Previous methods have explored alternatives such as image-space heatmaps [18], semantic masks [8], or direct action outputs [50], each facing trade-offs in precision, interpretability, or stability.
+Generalization Analysis
+An important advantage of the above design choices is that they support generalization across three key dimensions. First, spatial generalization is achieved by enforcing object-level symmetry: the low-level controller receives only the point cloud of the manipulated object in its local frame, ensuring equivariance at the object level and allowing skill execution to remain consistent under spatial transformations of the target object. Second, instance and appearance generalization arises from the fact that the low-level policy operates on object-centric observations derived from the mask and lifted into a point cloud. This encourages the controller to focus on local geometry rather than global appearance, enabling transfer to novel object instances within the same category and robustness to variations in color, texture, or background. Finally, skill compositional generalization is supported by representing each skill relative to the object frame, allowing the high-level agent to reliably compose and reuse learned skills in novel long-horizon tasks.
+V Experiments
+TABLE I: Performance comparison across training tasks. Reported numbers are task success rates (%). The Mean column averages all task scores for each method. Bold indicates the best score per column. Training Demo indicates the number of demonstrations used.
+Method |
+Training Demo |
+Mean |
+Close
+Jar+15
+|
+Close
+Jar+16
+|
+LightBulb
+In+17
+|
+LightBulb
+In+19
+|
+Pick
+Lift+0
+|
+Pick
+Lift+2
+|
+Pick
+Lift+7
+|
+Push
+Btn+0
+|
+Push
+Btn+3
+|
+Open
+Drawer+0
+|
+Hiveformer |
+100 |
+69.1 |
+64 |
+92 |
+12 |
+13 |
+86 |
+92 |
+93 |
+84 |
+68 |
+15 |
+PolarNet |
+100 |
+90.4 |
+99 |
+99 |
+72 |
+71 |
+92 |
+84 |
+88 |
+100 |
+100 |
+61 |
+3D Diffuser Actor |
+100 |
+96.2 |
+100 |
+100 |
+85 |
+88 |
+99 |
+99 |
+99 |
+98 |
+96 |
+82 |
+RVT-2 |
+100 |
+97.6 |
+97 |
+98 |
+93 |
+91 |
+99 |
+98 |
+100 |
+100 |
+100 |
+93 |
+3D-LOTUS |
+100 |
+96.5 |
+100 |
+100 |
+84 |
+85 |
+99 |
+100 |
+99 |
+99 |
+99 |
+83 |
+3D-LOTUS++ |
+100 |
+88.3 |
+100 |
+99 |
+55 |
+45 |
+97 |
+94 |
+93 |
+100 |
+100 |
+68 |
+BridgeVLA |
+100 |
+96.8 |
+98 |
+100 |
+90 |
+87 |
+99 |
+100 |
+98 |
+100 |
+98 |
+86 |
+Ours |
+3 |
+98.0 |
+100 |
+100 |
+90 |
+95 |
+100 |
+100 |
+100 |
+95 |
+100 |
+90 |
+TABLE II: Zero-shot transfer performance on testing tasks. Reported values are success rates (%). Training Demo indicates the number of demonstrations used in the training task. Boldface denotes the best score in each column.
+Method |
+Training Demo |
+Mean |
+Push
+Btn+13
+|
+Push
+Btn+15
+|
+Push
+Btn+17
+|
+Pick
+Lift+14
+|
+Pick
+Lift+16
+|
+Pick
+Lift+18
+|
+Pick
+Lift
+Star+0
+|
+Pick
+Lift
+Moon+0
+|
+Pick
+Lift
+Toy+0
+|
+Close
+Jar+3
+|
+Hiveformer |
+100 |
+37.5 |
+97 |
+85 |
+88 |
+21 |
+9 |
+8 |
+73 |
+88 |
+87 |
+0 |
+PolarNet |
+100 |
+46.5 |
+100 |
+100 |
+85 |
+3 |
+1 |
+0 |
+88 |
+93 |
+90 |
+20 |
+3D Diffuser Actor |
+100 |
+32.4 |
+87 |
+81 |
+60 |
+9 |
+18 |
+0 |
+43 |
+91 |
+30 |
+23 |
+RVT-2 |
+100 |
+46.5 |
+100 |
+100 |
+100 |
+47 |
+29 |
+8 |
+98 |
+94 |
+78 |
+7 |
+3D-LOTUS |
+100 |
+46.7 |
+99 |
+100 |
+100 |
+3 |
+18 |
+33 |
+69 |
+80 |
+96 |
+71 |
+3D-LOTUS++ |
+100 |
+66.8 |
+99 |
+100 |
+99 |
+94 |
+96 |
+95 |
+94 |
+29 |
+71 |
+98 |
+BridgeVLA |
+100 |
+58.9 |
+100 |
+100 |
+100 |
+74 |
+89 |
+0 |
+99 |
+95 |
+93 |
+66 |
+Ours |
+3 |
+82.3 |
+100 |
+100 |
+100 |
+100 |
+100 |
+95 |
+100 |
+100 |
+95 |
+90 |
+Method |
+Close
+Jar+4
+|
+LightBulb
+In+1
+|
+LightBulb
+In+2
+|
+Lamp
+On+0
+|
+Push
+Btns4+1
+|
+Push
+Btns4+2
+|
+Push
+Btns4+3
+|
+Open
+drawer2+0
+|
+Open
+drawer3+0
+|
+Open
+drawer+1
+|
+Open
+drawer
+long+0
+|
+Open
+drawer
+long+1
+|
+Hiveformer |
+0 |
+4 |
+0 |
+7 |
+0 |
+0 |
+0 |
+59 |
+39 |
+0 |
+78 |
+82 |
+PolarNet |
+82 |
+22 |
+17 |
+14 |
+1 |
+0 |
+0 |
+91 |
+39 |
+4 |
+84 |
+88 |
+3D Diffuser Actor |
+82 |
+51 |
+60 |
+7 |
+0 |
+0 |
+0 |
+19 |
+1 |
+0 |
+15 |
+35 |
+RVT-2 |
+77 |
+68 |
+6 |
+0 |
+0 |
+0 |
+0 |
+81 |
+0 |
+6 |
+84 |
+39 |
+3D-LOTUS |
+90 |
+24 |
+41 |
+0 |
+3 |
+0 |
+0 |
+90 |
+22 |
+0 |
+56 |
+33 |
+3D-LOTUS++ |
+96 |
+56 |
+43 |
+2 |
+76 |
+49 |
+37 |
+70 |
+41 |
+0 |
+72 |
+52 |
+BridgeVLA |
+88 |
+66 |
+74 |
+7 |
+0 |
+0 |
+0 |
+65 |
+87 |
+0 |
+59 |
+34 |
+Ours |
+100 |
+90 |
+85 |
+50 |
+95 |
+90 |
+85 |
+90 |
+85 |
+0 |
+60 |
+0 |
+To evaluate our framework, we conduct experiments in both simulation and real-world environments.
+V-A Simulation Experiment
+Experimental Setup
+Fig. 3: Subset of the full 10 training tasks and 22 zero-shot transfer testing tasks. Zero-shot transfer testing tasks include unseen appearances (novel instances and colors) as well as unseen task types. In each task, the initial scene configuration is randomized, introducing spatial variations across both demonstrations and testing settings.
+We evaluate our policy in simulated environments using the GemBench benchmark [8], implemented with CoppeliaSim [51] and PyRep [52].
+The simulation setup consists of a 7-DoF Franka Panda robot with a parallel gripper, observed by two RGB-D cameras. We train GSL on 10 GemBench training tasks involving press, pick, screw, and lift skills.
+For evaluation, we test on both the 10 training tasks but with spatial variation and 22 testing tasks with spatial, object appearance, and compositional variation to probe generalization.
+A subset of these training and testing tasks is visualized in Figure 3.
+For example, the testing task Lamp On+0 requires transferring the pressing skill learned from Push
+Btn+0 and +3 during training. To further challenge generalization, we train GSL using only 3 demonstrations per training task, compared to the standard 100 demonstrations used by baselines.
+Each task is evaluated over 20 rollouts, and the average success rate is reported.
+Baselines
+We compare GSL against seven state-of-the-art methods on GemBench:
+two 2D image-based policies (HiveFormer [53] and RVT-2 [54]),
+three 3D-based models (PolarNet [55], 3D Diffuser Actor [15], and 3D-Lotus [8]),
+and two hierarchical methods that incorporate VLM/LLMs and/or pretrained vision foundation models (BridgeVLA [18] and 3D-Lotus++ [8]). We’ll use the result in original paper if possible.
+Results
+As shown in Table I and Table II, GSL achieves a 1.2% improvement on training tasks and a substantial 23.4% gain on testing tasks, despite using only 3 demonstrations compared to 100 in the baseline. Specifically, GSL outperforms baselines by 1.2% on tasks requiring only spatial generalization, by 12.2% on tasks requiring both instance and appearance generalization and spatial generalization, and by 36.0% on tasks requiring full spectrum of instance/appearance, spatial, and skill compositional generalization.
+The main failure case occurs in drawer-related tasks, where the high-level agent segments the entire drawer cabinet as a single object, rather than identifying individual drawers. This forces the low-level policy to infer which drawer to interact with, violating our design principle of keeping semantic reasoning within the high-level agent. We attribute this limitation to the high-level visual foundation model (VFM), particularly SAM2, which lacks part-level segmentation capability. Incorporating part-aware segmentation or fine-tuning the high-level agent could help mitigate this issue.
+TABLE III: Performance comparison across real-world tasks.
+Method
+|
+Demo
+|
+Toy in cup
+|
+Toy in box
+|
+Hammer from Drawer
+|
+Teabag in cup
+|
+Teabag in red cup
+|
+Prepare Tea
+|
+3D-LOUTS++
+|
+30
+|
+7/10
+|
+4/10
+|
+5/10
+|
+6/10
+|
+4/10
+|
+3/10
+|
+Ours
+|
+3
+|
+9/10
+|
+9/10
+|
+6/10
+|
+9/10
+|
+9/10
+|
+6/10
+|
+V-B Ablation Study
+TABLE IV: Performance of Different Ablations on Various Tasks.
+Method
+|
+Mean
+|
+Push Btn+0
+|
+LightBulb
+In+17
+|
+Push Btns4+3
+|
+Lamp On+0
+|
+LightBulb
+In+1
+|
+Regular Skill
+|
+0.37
+|
+0.65
+|
+0.5
+|
+0.2
+|
+0.1
+|
+0.4
+|
+No Canonic.
+|
+0.12
+|
+0.3
+|
+0.1
+|
+0
+|
+0.1
+|
+0.1
+|
+Action as Interf.
+|
+0.1
+|
+0.25
+|
+0.1
+|
+0
+|
+0.05
+|
+0.1
+|
+Heatmap as Interf.
+|
+0.17
+|
+0.5
+|
+0.05
+|
+0.1
+|
+0.2
+|
+0
+|
+Complete Model
+|
+0.83
+|
+1
+|
+0.9
+|
+0.85
+|
+0.50
+|
+0.9
+|
+To evaluate the contributions of each design component, we conduct an ablation study across two training tasks and three testing tasks. The test set covers: (1) tasks requiring only spatial generalization (Push Btn+0 and LightBulb In+17), (2) tasks requiring both instance and appearance generalization and spatial generalization (Lamp On+0 and LightBulb In+1), and (3) tasks requiring skill compositional generalization, along with appearance and spatial generalization (Push Btns4+3). We compare the following configurations: Regular Skill, which includes the gripper approach phase as part of the skill and uses the full robot state as input to the low-level controller; No Canonic., which disables canonicalization; Action as Interf., which uses robot keyposes as the interface between high- and low-level modules; and Heatmap as Interf., which uses heatmaps appended to visual inputs to indicate the target object. As shown in Table IV, removing or altering any key design choice leads to a consistent performance drop. Our object-centric skill definition (excluding the approach phase) improves performance across all tasks, most significantly under skill compositional generalization (Push Btns4+3), where it provides a 65% boost. Similarly, removing canonicalization or replacing the interface degrades performance, highlighting the importance of both components for robust generalization.
+V-C Real World Experiments
+Fig. 4: Six real-world tasks, including three source tasks and three unseen tasks.
+We further evaluate the performance and generalization of GSL on a physical system consisting of a UR5 robot with a parallel gripper and three Intel RealSense [56] D455 RGBD cameras.
+All policies are trained on three source tasks: Shape from Drawer, where the robot pull out a drawer, retrieves a U-shaped block, places it on the table, and push back the drawer; Toy in Box, where the robot opens a box, places a toy duck inside, and closes the lid; and Toy in Cup, where the robot first places a pink cup onto an orange plate and then places a toy strawberry into the cup.
+To evaluate generalization, the trained policies are applied directly, without any additional finetuning, to a suite of six testing tasks that extend the training distribution along several dimensions, including spatial variation, object appearance changes, environmental distractors, and novel long-horizon compositions. The evaluation begins with three spatially modified versions of the source tasks, testing robustness to positional changes. It then introduces Teabag in Cup, in which the robot places a white teabag into a red cup situated on a yellow plate, requiring transfer of the pick skill to a novel object instance and the place skill to a plate with an unseen color. Teabag in Cup with Distractor increases complexity by introducing multiple distractor cups and toys, including a pink cup and a toy strawberry identical to the training instances used for the place and pick skills, thereby evaluating robustness against distractor interference. Finally, Prepare Tea involves executing a long sequence of previously learned skills, pick, place, push back, pull out, open, and close, in a coordinated manner to simulate the process of preparing tea. This task integrates interactions with the drawer, box, cups, and teabag into a coherent routine.
+All tasks are illustrated in Figure 4. As a stretch goal for data efficiency, our policy is trained on only three demonstrations per source task, whereas the 3D-Lotus++ baseline uses 30 demonstrations.
+Results
+As shown in Table III, GSL trained with just 3 demonstrations outperforms baseline methods trained with 30. It achieves a 26.7% improvement on tasks requiring spatial generalization, a 40.0% gain on tasks involving both instance/appearance and spatial generalization, and a 30.0% improvement on tasks demanding the full spectrum of instance/appearance, spatial, and skill compositional generalization. Most failure cases are attributed to inconsistent high-level segmentation, which was not fine-tuned. For example, when executing the ”pull-out” skill on a drawer, the high-level agent often failed to identify the handle as part of the drawer, likely due to missing fine-grained part annotations in the VFM (SAM) pretraining data. When ground-truth masks were manually provided, success rates increased by 20% on Prepare tea and 30% on Hammer from Drawer, highlighting high-level segmentation as a promising direction for future improvement.
+VI Conclusion and Limitation
+In this paper, we propose GSL, a novel hierarchical policy learning framework. By utilizing object-centric skills as an interface, our policy achieves significantly higher generalizability and sample-efficiency compared with the baselines in both simulation and the real world. One major limitation of our work is that
+our formulation focuses on object-centric skills involving only a single manipulated object. Although this scope covers a wide range of manipulation primitives (e.g., opening a drawer), it does not explicitly handle multi-object interactions, such as pushing a block to a designated base area, where reasoning about multiple objects is required. Future work can extend GSL to more general multi-object interactions by incorporating multiple masks into the mask-as-frame interface. Another limitation is that our approach assumes the high-level can reliably provide accurate object masks. While this assumption is reasonable given the robustness of vision-language models trained on large-scale data, imperfect grounding or segmentation may reduce performance. Addressing robustness to noisy or incorrect masks is left for future study.
+References
+[1]
+Y. Qi, H. Zhao, Z. Guo, S. Ma, Z. Chen, Y. Han, R. Zhang, Z. Lin, S. Xin, Y. Huang et al., “Bear: Benchmarking and enhancing multimodal language models for atomic embodied capabilities,” arXiv preprint arXiv:2510.08759, 2025.
+[2]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. Foster, G. Lam, P. Sanketi et al., “Openvla: An open-source vision-language-action model,” arXiv, 2024.
+[3]
+P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai et al., “π\pi0.5: A vision-language-action model with open-world generalization,” arXiv, 2025.
+[4]
+Z. Zhou, Y. Zhu, J. Wen, C. Shen, and Y. Xu, “Vision-language-action model with open-world embodied reasoning from pretrained knowledge,” arXiv, 2025.
+[5]
+A. Levy, R. Platt, and K. Saenko, “Hierarchical reinforcement learning with hindsight,” arXiv, 2018.
+[6]
+X. Ma, S. Patidar, I. Haughton, and S. James, “Hierarchical diffusion policy for kinematics-aware multi-task robotic manipulation,” in CVPR, 2024.
+[7]
+H. Zhao, D. Wang, Y. Zhu, X. Zhu, O. L. Howell, L. Zhao, Y. Qian, R. Walters, and R. Platt, “Hierarchical equivariant policy via frame transfer,” in ICML, 2025.
+[8]
+R. Garcia, S. Chen, and C. Schmid, “Towards generalizable vision-language robotic manipulation: A benchmark and llm-guided 3D policy,” in ICRA, 2025.
+[9]
+Y. Jiang, A. Gupta, Z. Zhang, G. Wang, Y. Dou, Y. Chen, L. Fei-Fei, A. Anandkumar, Y. Zhu, and L. Fan, “Vima: Robot manipulation with multimodal prompts,” arXiv, 2023.
+[10]
+M. Gualtieri and R. Platt, “Learning manipulation skills via hierarchical spatial attention,” IEEE Transactions on Robotics, vol. 36, no. 4, pp. 1067–1078, 2020.
+[11]
+S. Sharma, A. Suresh, R. Ramesh, and B. Ravindran, “Learning to factor policies and action-value functions: Factored action space representations for deep reinforcement learning,” arXiv, 2017.
+[12]
+X. Zhu, D. Wang, O. Biza, G. Su, R. Walters, and R. Platt, “Sample efficient grasp learning using equivariant models,” arXiv, 2022.
+[13]
+B. Hu, H. Tian, D. Wang, H. Huang, X. Zhu, R. Walters, and R. Platt, “Push-grasp policy learning using equivariant models and grasp score optimization,” arXiv, 2025.
+[14]
+H. Fang, M. Grotz, W. Pumacay, Y. R. Wang, D. Fox, R. Krishna, and J. Duan, “Sam2act: Integrating visual foundation model with a memory architecture for robotic manipulation,” arXiv, 2025.
+[15]
+T.-W. Ke, N. Gkanatsios, and K. Fragkiadaki, “3D diffuser actor: Policy diffusion with 3D scene representations,” arXiv, 2024.
+[16]
+T. Gervet, Z. Xian, N. Gkanatsios, and K. Fragkiadaki, “Act3d: 3D feature field transformers for multi-task robotic manipulation,” arXiv, 2023.
+[17]
+M. Shridhar, L. Manuelli, and D. Fox, “Cliport: What and where pathways for robotic manipulation,” in CoRL, 2022.
+[18]
+P. Li, Y. Chen, H. Wu, X. Ma, X. Wu, Y. Huang, L. Wang, T. Kong, and T. Tan, “Bridgevla: Input-output alignment for efficient 3D manipulation learning with vision-language models,” arXiv, 2025.
+[19]
+A. Chapin, B. Machado, E. Dellandrea, and L. Chen, “Object-centric representations improve policy generalization in robot manipulation,” arXiv, 2025.
+[20]
+H. Li, Q. Feng, Z. Zheng, J. Feng, Z. Chen, and A. Knoll, “Language-guided object-centric diffusion policy for generalizable and collision-aware manipulation,” in ICRA, 2025.
+[21]
+Y. Qi, Y. Ju, T. Wei, C. Chu, L. L. S. Wong, and H. Xu, “Two by two: Learning multi-task pairwise objects assembly for generalizable robot manipulation,” in CVPR, 2025.
+[22]
+H. Geng, Z. Li, Y. Geng, J. Chen, H. Dong, and H. Wang, “Partmanip: Learning cross-category generalizable part manipulation policy from point cloud observations,” in CVPR, 2023.
+[23]
+Y. Li, X. Zhang, R. Wu, Z. Zhang, Y. Geng, H. Dong, and Z. He, “Unidoormanip: Learning universal door manipulation policy over large-scale and diverse door manipulation environments,” arXiv, 2024.
+[24]
+P. Sundaresan, S. Belkhale, D. Sadigh, and J. Bohg, “Kite: Keypoint-conditioned policies for semantic manipulation,” arXiv, 2023.
+[25]
+C. Tang, A. Xiao, Y. Deng, T. Hu, W. Dong, H. Zhang, D. Hsu, and H. Zhang, “Functo: Function-centric one-shot imitation learning for tool manipulation,” arXiv, 2025.
+[26]
+W. Huang, C. Wang, Y. Li, R. Zhang, and L. Fei-Fei, “Rekep: Spatio-temporal reasoning of relational keypoint constraints for robotic manipulation,” arXiv, 2024.
+[27]
+A. Goyal, J. Xu, Y. Guo, V. Blukis, Y.-W. Chao, and D. Fox, “Rvt: Robotic view transformer for 3D object manipulation,” in CoRL, 2023.
+[28]
+X. Fang, B.-R. Huang, J. Mao, J. Shone, J. B. Tenenbaum, T. Lozano-Pérez, and L. P. Kaelbling, “Keypoint abstraction using large models for object-relative imitation learning,” arXiv, 2024.
+[29]
+J. Qian, Y. Li, B. Bucher, and D. Jayaraman, “Task-oriented hierarchical object decomposition for visuomotor control,” arXiv, 2024.
+[30]
+Y. Zhu, Z. Jiang, P. Stone, and Y. Zhu, “Learning generalizable manipulation policies with object-centric 3D representations,” arXiv, 2023.
+[31]
+H. Jiang, B. Huang, R. Wu, Z. Li, S. Garg, H. Nayyeri, S. Wang, and Y. Li, “Roboexp: Action-conditioned scene graph via interactive exploration for robotic manipulation,” arXiv, 2024.
+[32]
+S. Kim, B. Lim, Y. Lee, and F. C. Park, “Se(2)-equivariant pushing dynamics models for tabletop object manipulations,” in CoRL, 2023.
+[33]
+J. Yang, Z.-a. Cao, C. Deng, R. Antonova, S. Song, and J. Bohg, “Equibot: Sim(3)-equivariant diffusion policy for generalizable and data-efficient learning,” arXiv, 2024.
+[34]
+X. Zhu, Y. Qi, Y. Zhu, R. Walters, and R. Platt, “Equact: An se(3)-equivariant multi-task transformer for open-loop robotic manipulation,” arXiv, 2025.
+[35]
+B. Hu, X. Zhu, D. Wang, Z. Dong, H. Huang, C. Wang, R. Walters, and R. Platt, “Orbitgrasp: SE(3)-equivariant grasp learning,” arXiv, 2024.
+[36]
+B. Hu, D. Wang, D. Klee, H. Tian, X. Zhu, H. Huang, R. Platt, and R. Walters, “3D equivariant visuomotor policy learning via spherical projection,” arXiv, 2025.
+[37]
+D. Wang, M. Jia, X. Zhu, R. Walters, and R. Platt, “On-robot learning with equivariant models,” arXiv, 2022.
+[38]
+D. Wang, C. Kohler, and R. Platt, “Policy learning in se(3) action spaces,” arXiv, 2020.
+[39]
+A. Simeonov, Y. Du, A. Tagliasacchi, J. B. Tenenbaum, A. Rodriguez, P. Agrawal, and V. Sitzmann, “Neural descriptor fields: Se(3)-equivariant object representations for manipulation,” in ICRA, 2022.
+[40]
+H. Huang, O. Howell, D. Wang, X. Zhu, R. Walters, and R. Platt, “Fourier transporter: Bi-equivariant robotic manipulation in 3D,” arXiv, 2024.
+[41]
+H. Huang, K. Schmeckpeper, D. Wang, O. Biza, Y. Qian, H. Liu, M. Jia, R. Platt, and R. Walters, “Imagination policy: Using generative point cloud models for learning manipulation policies,” arXiv, 2024.
+[42]
+H. Huang, D. Wang, X. Zhu, R. Walters, and R. Platt, “Edge grasp network: A graph-based se(3)-invariant approach to grasp detection,” arXiv, 2022.
+[43]
+D. Wang, S. Hart, D. Surovik, T. Kelestemur, H. Huang, H. Zhao, M. Yeatman, J. Wang, R. Walters, and R. Platt, “Equivariant diffusion policy,” arXiv, 2024.
+[44]
+X. Zhu, F. Wang, R. Walters, and J. Shi, “Se(3)-equivariant diffusion policy in spherical fourier space,” arXiv, 2025.
+[45]
+M. Shridhar, L. Manuelli, and D. Fox, “Perceiver-actor: A multi-task transformer for robotic manipulation,” in CoRL, 2023.
+[46]
+M. Oquab, T. Darcet, T. Moutakanni, H. Vo, M. Szafraniec, V. Khalidov, P. Fernandez, D. Haziza, F. Massa, A. El-Nouby et al., “Dinov2: Learning robust visual features without supervision,” arXiv, 2023.
+[47]
+N. Ravi, V. Gabeur, Y.-T. Hu, R. Hu, C. Ryali, T. Ma, H. Khedr, R. Rädle, C. Rolland, L. Gustafson et al., “Sam 2: Segment anything in images and videos,” arXiv, 2024.
+[48]
+A. Mandlekar, S. Nasiriany, B. Wen, I. Akinola, Y. Narang, L. Fan, Y. Zhu, and D. Fox, “Mimicgen: A data generation system for scalable robot learning using human demonstrations,” arXiv, 2023.
+[49]
+Z. Xue, S. Deng, Z. Chen, Y. Wang, Z. Yuan, and H. Xu, “Demogen: Synthetic demonstration generation for data-efficient visuomotor policy learning,” arXiv, 2025.
+[50]
+Z. Xian, N. Gkanatsios, T. Gervet, T.-W. Ke, and K. Fragkiadaki, “Chaineddiffuser: Unifying trajectory diffusion and keypose prediction for robotic manipulation,” in CoRL, 2023.
+[51]
+E. Rohmer, S. P. N. Singh, and M. Freese, “Coppeliasim (formerly v-rep): a versatile and scalable robot simulation framework,” in IROS, 2013.
+[52]
+S. James, M. Freese, and A. J. Davison, “Pyrep: Bringing v-rep to deep robot learning,” arXiv, 2019.
+[53]
+P.-L. Guhur, S. Chen, R. G. Pinel, M. Tapaswi, I. Laptev, and C. Schmid, “Instruction-driven history-aware policies for robotic manipulations,” in CoRL, 2023.
+[54]
+A. Goyal, V. Blukis, J. Xu, Y. Guo, Y.-W. Chao, and D. Fox, “Rvt-2: Learning precise manipulation from few demonstrations,” arXiv, 2024.
+[55]
+S. Chen, R. Garcia, C. Schmid, and I. Laptev, “Polarnet: 3D point clouds for language-guided robotic manipulation,” arXiv, 2023.
+[56]
+L. Keselman, J. Iselin Woodfill, A. Grunnet-Jepsen, and A. Bhowmik, “Intel realsense stereoscopic depth cameras,” in CVPR Workshops, 2017.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

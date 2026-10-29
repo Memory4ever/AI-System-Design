@@ -1,0 +1,831 @@
+Source: https://arxiv.org/html/2605.27932v1
+Main text extraction; fulltext_chars=66940
+
+arXiv:2605.27932v1 [cs.CV] 27 May 2026 
+ 
+ 
+ When Think-with-Image Meets Safety: What Determines Multimodal Jailbreak Robustness? 
+
+ 
+ 
+ 
+ Yuan Tian
+ † † thanks:  Equal contribution. † † thanks:  Corresponding authors:  yuan.tian.research@gmail.com ,  binghuresearch@gmail.com . 
+ Affiliation:  Independent Researcher
+ 
+    
+ Bing Hu 1 1 footnotemark:  
+           1 
+          
+          
+          
+         2 2 footnotemark:  
+           2 
+          
+          
+          
+         
+ 
+ Affiliation:  Independent Researcher
+ 
+    
+ Fang Wu
+ 
+ Affiliation:  Stanford University
+ 
+    
+ Xiaomin Li
+ 
+ Affiliation:  Harvard University
+ 
+    
+ Binghang Lu
+ 
+ Affiliation:  Purdue University
+ 
+    
+ Neil Zhenqiang Gong
+ 
+ Affiliation:  Duke University
+ 
+
+ Abstract 
+    
+ Think-with-image reasoning is emerging as a new inference paradigm for large vision-language models, but its safety implications remain poorly understood. Existing systems already span multiple process designs, including direct response generation, text-only prior turn, visual-state manipulation, and explicit external image-tool invocation. In this paper, we ask which of these evaluated paradigms improves multimodal jailbreak robustness, and why. Across multiple vision-language models, explicit image-tool interaction yields the lowest attack success rates in our experiments, reducing jailbreak success by around 30% relative on average across the evaluated models. This finding is initially surprising: ASR remains low even when the returned image-tool output is manually overridden or itself unsafe-looking, but returns near direct-answering levels under text-only prior turn controls. These results indicate that the lower ASR is not explained by benign returned-image semantics or by the textual image-tool trace alone. To explain the pattern, we introduce an  image-tool safety vector  framework that models image-tool invocation as a residual shift in hidden representations toward a safety-relevant direction. Representation-level analyses and activation interventions support this account. Overall, our results suggest that explicit image-tool interaction is a promising design pattern for improving jailbreak robustness, while also motivating pipeline-specific safety evaluation. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Large vision-language models (LVLMs) are rapidly moving from single-pass image-text inference toward  think-with-image  (TwI) reasoning, where natural-language reasoning is interleaved with intermediate visual operations  ( Wu et al., 2023 ;  Surís et al., 2023 ;  Yang et al., 2023b ;  Wu and Xie, 2024 ;  Su et al., 2025 ) . Existing systems span paradigms ranging from direct image generation or editing to grounding intermediate steps to regions, sketches, or coordinates  ( Yang et al., 2023a ;  Peng et al., 2023 ;  Gupta and Kembhavi, 2023 ) , and frameworks such as Visual Sketchpad  ( Hu et al., 2024 )  and Chain of Multi-modal Thought  ( Cheng et al., 2025b )  further augment LVLMs with external tools, including object detectors, segmenters, and geometric solvers, whose outputs are fed back into later reasoning  ( Yao et al., 2023 ;  Schick et al., 2023 ;  Lu et al., 2023 ;  Chen et al., 2026 ) . This shift has expanded multimodal capability on tasks requiring spatial grounding, compositional perception, and multi-step decision making. 
+
+ 
+ 
+ 
+ However, think-with-image reasoning is not only a capability shift; it is also a structural change to the inference process. Different paradigms introduce different intermediate states, control flows, and external interactions. Compared with direct query-response generation, image-tool-augmented interleaving inserts additional decision points: the model decides whether to call an image tool, produces a structured image-tool request, consumes a returned visual artifact, and conditions later reasoning on that artifact. These interaction steps introduce token patterns and visual states that are absent from standard end-to-end inference. As a result, the safety behavior of a TwI system cannot be inferred directly from the safety properties of the base model alone, and different paradigms may have materially different safety profiles. 
+
+ 
+ 
+ 
+ This question is increasingly important as multimodal systems are deployed in settings where visual reasoning and tool use are closely intertwined  ( Zheng et al., 2024 ;  Xie et al., 2024 ;  Koh et al., 2024 ) . Prior work shows that LVLMs remain vulnerable to harmful image-text inputs  ( Liu et al., 2024 ;  Luo et al., 2024 ) , while tool-use safety studies have mainly examined text-only agents or risks introduced by external tools  ( Greshake et al., 2023 ;  Ruan et al., 2024 ;  Zhan et al., 2024 ;  Debenedetti et al., 2024 ) . Yet it remains unclear how different TwI paradigms affect safety behavior: explicit image-tool interaction may amplify multimodal jailbreak risk, shift failure modes, or even improve robustness. 
+
+ 
+ 
+ 
+ We study this question across multiple TwI paradigms and vision-language models, with a particular focus on explicit image-tool invocation. Our main empirical finding is counterintuitive:  explicit image-tool interaction yields the lowest attack success rates among the evaluated settings.  Across our evaluations, this paradigm reduces jailbreak success by around 30% relative on average across the evaluated models. The effect is robust to the visual content returned by the image tool: even when the returned image is manually overridden or itself unsafe, models remain harder to jailbreak as long as the reasoning process includes explicit image-tool interaction. This result suggests that the lower ASR is not explained solely by the semantics of the returned image. Instead, the image-tool-calling trajectory appears to act as a safety-relevant cue during TwI. 
+
+ 
+ 
+ 
+ To account for this phenomenon, we introduce an  image-tool safety vector  framework. At a representation level, the framework models image-tool invocation as a residual shift in hidden states and asks whether the resulting image-tool state makes safety behavior more linearly readable and more steerable. Representation-level analyses across returned-image settings support this view and provide a mechanistic account for why explicit image-tool interaction can improve safety even when the image-tool output itself is not benign. 
+
+ 
+ 
+ 
+ Our contributions are threefold: 
+
+ 
+ 
+ •  
+ 
+ We frame multimodal jailbreak robustness as a comparison across think-with-image process paradigms, including direct response, text-only prior turn, simulated image generation/editing, visual-state variants, and explicit image-tool interaction. 
+
+ 
+ 
+ •  
+ 
+ We find that explicit image-tool interaction yields the lowest attack success rates among the evaluated settings and show that the ASR reduction remains under substantial changes to returned visual content but disappears under text-only prior turn controls. 
+
+ 
+ 
+ •  
+ 
+ We introduce the image-tool safety vector framework and support it with representation-level and activation-intervention evidence, linking image-tool invocation to an internal state that is more safety-separable and behaviorally steerable. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 2  Related Work 
+
+ 
+
+ 
+ Our study connects think-with-image reasoning, tool-using multimodal agents, multimodal jailbreak evaluation, and representation-level safety analysis. 
+
+ 
+ 
+ 
+ Think-with-image reasoning. 
+
+ 
+
+ 
+ Recent LVLMs increasingly perform  think-with-image  reasoning, where intermediate visual states become part of inference. Prior work externalizes visual thoughts  ( Cheng et al., 2025a )  through sketches, whiteboards, generated visualizations, regions, or coordinates  ( Hu et al., 2024 ;  Menon et al., 2024 ;  Li et al., 2025 ;  Yang et al., 2023a ;  Wu and Xie, 2024 ) , and also studies reasoning boundaries, multi-step multimodal reasoning benchmarks, or training procedures  ( Chen et al., 2024a ;  Cheng et al., 2025b ;  Chen et al., 2024b ;  Su and others, 2025 ) . These works establish think-with-image as a broad capability paradigm, but largely leave its adversarial safety implications unexplored. 
+
+ 
+ 
+ 
+ 
+ Tool-augmented multimodal agents. 
+
+ 
+
+ 
+ Tool-using models interleave reasoning with external actions or modules  ( Yao et al., 2023 ;  Schick et al., 2023 ) . Multimodal agents extend this paradigm by integrating vision tools, executable programs, and grounded actions for visual reasoning and agentic tasks  ( Wu et al., 2023 ;  Gupta and Kembhavi, 2023 ;  Surís et al., 2023 ;  Lu et al., 2023 ;  Zheng et al., 2024 ;  Xie et al., 2024 ) . Existing safety studies mainly focus on external failures, including indirect prompt injection, unsafe actions, and environment-level risks  ( Greshake et al., 2023 ;  Ruan et al., 2024 ;  Zhan et al., 2024 ;  Debenedetti et al., 2024 ) , leaving underexplored how tool invocation reshapes a model’s internal safety behavior. 
+
+ 
+ 
+ 
+ 
+ Multimodal jailbreak evaluation. 
+
+ 
+
+ 
+ Multimodal safety benchmarks show that harmful image-text inputs remain effective against LVLMs  ( Liu et al., 2024 ;  Luo et al., 2024 ) , while broader benchmarks standardize jailbreak and refusal evaluation  ( Mazeika et al., 2024 ;  Chao and others, 2024 ;  Weng et al., 2025 ) . This line provides threat models and metrics, but typically evaluates a fixed inference pathway rather than treating the reasoning paradigm as an experimental variable. 
+
+ 
+ 
+ 
+ 
+ Representation-level safety analysis. 
+
+ 
+
+ 
+ Representation-level work shows that refusal and safety behavior can often be detected or influenced through low-dimensional activation patterns  ( Zou and others, 2023 ;  Arditi et al., 2024 ;  Lee and others, 2025 ;  Wollschläger et al., 2025 ;  Xu and others, 2024 ;  Qian et al., 2025 ;  Wang et al., 2025 ) ; concurrent work extends this to large vision-language models, both for activation steering  ( Yang et al., 2026 )  and for steering safety judgments via semantic cues  ( Hinojosa et al., 2026 ) . This motivates our analysis of whether explicit image-tool interaction induces a consistent safety-relevant shift in LVLM hidden states. 
+
+ 
+ 
+ 
+ Prior work leaves open whether think-with-image paradigms themselves change jailbreak robustness. We study this directly by comparing direct, simulated image generation/editing, visual-state, and explicit image-tool interaction settings under the same safety protocol. This reveals a surprising pattern: explicit image-tool interaction produces the lowest attack success rates in our experiments, and the reduction points beyond returned-image semantics to the image-tool-calling process within multimodal reasoning. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Preliminary 
+
+ 
+
+ 
+ 3.1  We Compare Paradigms by Holding the Safety Query Fixed 
+
+ 
+
+ 
+ Let  q i = ( x i , t i ) q_{i}=(x_{i},t_{i})  denote the  i i -th safety query, where  x i x_{i}  is the adversarial image and  t i t_{i}  is the harmful text prompt. For each paradigm  k k , the prefix  π k \pi_{k}  represents the process that happens before the safety query, while  q i q_{i}  itself stays fixed. Given an LVLM  f θ f_{\theta} , an unsafe-response judge  J J , and  N N  evaluation items, we compute the attack success rate (ASR) under paradigm  k k : 
+
+ 
+ 
+
+ 
+ 
+ y i , k = f θ ​ ( π k ⊕ q i ) , ASR ^ k = 1 N ​ ∑ i = 1 N J ⁡ ( y i , k ) , y_{i,k}=f_{\theta}(\pi_{k}\oplus q_{i}),\qquad\widehat{\mathrm{ASR}}_{k}=\frac{1}{N}\sum_{i=1}^{N}J(y_{i,k}), 
+ 
+ (1) 
+ 
+
+ 
+ Here,  ⊕ \oplus  denotes concatenating the prefix with the later safety query,  y i , k y_{i,k}  is the model’s final answer under paradigm  k k , and  J ⁡ ( y i , k ) = 1 J(y_{i,k})=1  means that this answer is judged unsafe. 
+
+ 
+ 
+ 
+ 
+ 3.2  Paradigms Differ in the Process Before the Safety Query 
+
+ 
+
+ 
+ We define a paradigm by the prefix placed before the same MM-SafetyBench query. Each paradigm corresponds to a different think-with-image process, with different intermediate states and interactions. The main paradigm comparison is summarized in Table  1 , and the text-only prior turn control is reported separately in Table  2 .  Direct baseline  asks the model to answer the safety query immediately, so  π direct = ∅ \pi_{\mathrm{direct}}=\emptyset .  Text-only prior turn  checks whether a completed prior textual image-tool-like turn is enough to change safety behavior;  π text \pi_{\mathrm{text}}  keeps a completed text-only prefix but removes the returned image and any subsequent visual feedback.  Simulated image generation/editing  tests whether a generated or edited visual state before the safety query matters without image-tool-based analysis;  π gen \pi_{\mathrm{gen}}  contains a generated prefill image.  Visual-state variants  test the role of returned-image content;  π state = ( b , a , r ′ ) \pi_{\mathrm{state}}=(b,a,r^{\prime})  keeps a benign prefix task  b b  and the model’s image-tool request  a a  but replaces the returned artifact with a controlled image  r ′ r^{\prime} .  Explicit image-tool interaction  tests the full image-tool-mediated process;  π tool = ( b , a , T ⁡ ( a ) ) \pi_{\mathrm{tool}}=(b,a,T(a))  contains the benign task, the model’s image-tool request, and the actual VSP output  T ⁡ ( a ) T(a)  returned by the image tool.
+In all non-direct settings, the adversarial image  x i x_{i}  is absent from  π k \pi_{k}  and appears only inside  q i q_{i} ; the judge scores only the final answer  y i , k y_{i,k} . 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Experimental Setting 
+
+ 
+
+ 
+ We test whether the  process  preceding a harmful multimodal query affects jailbreak robustness. Each instance pairs a fixed safety query with, when applicable, a benign think-with-image prefix that induces intermediate visual computation.
+For safety evaluation, we use MM-SafetyBench  ( Liu et al., 2024 ) , whose adversarial image-text pairs are generated via typographic attacks or Stable Diffusion  ( Rombach et al., 2022 )  across 13 safety-sensitive categories. Due to the cost of think-with-image pipelines, we randomly sample 202 questions using a fixed sampling seed; the per-category composition of this subset is given in Appendix  A . The primary metric is attack success rate (ASR), defined as the fraction of final safety-query responses judged unsafe by an LLM-as-judge evaluator  ( Zheng et al., 2023 ) . In multi-turn settings, the judge is given only the model’s final answer to the MM-SafetyBench query, not the benign prefix or image-tool transcript, so the prefix affects ASR only through the answer produced by the evaluated model. 
+
+ 
+ 
+ 
+ For the benign prefix, we use CoMT tasks  ( Cheng et al., 2025b )  that reliably elicit intermediate visual computation, with image-tool calls executed through Visual Sketchpad (VSP)  ( Hu et al., 2024 ) . This implements the  explicit image-tool interaction  paradigm: the model solves a benign visual reasoning task, issues a structured image-tool request, receives the image-tool output, and then receives the MM-SafetyBench query. The benign stage is not scored; it only defines the process prefix before safety evaluation.
+Behavioral experiments cover Qwen3-VL  ( Bai et al., 2025 ) , Gemma-3  ( Gemma Team, 2025 ) , Llama-4  ( Meta AI, 2025 ) , and Pixtral  ( Agrawal et al., 2024 )  families under consistent provider settings within each family. Mechanistic experiments use self-deployed Qwen3-VL-8B  ( Bai et al., 2025 ) , since hidden-state extraction and activation interventions require model internals. For explicit image-tool runs, we also record whether the intermediate computation appears as a direct VSP call or generated code. Self-deployed image-tool runs exhibit small run-to-run ASR variation from GPU-level numerical nondeterminism in the multi-turn pipeline; intervention experiments therefore report changes against within-batch zero-injection baselines. Behavioral experiments are issued through the OpenRouter API gateway; self-deployed mechanistic experiments on Qwen3-VL-8B run on a single NVIDIA A800 80GB GPU. 
+
+ 
+ 
+ 
+ 
+ 5  Which Paradigm Is Safer? 
+
+ 
+
+ 
+ We compare think-with-image paradigms under the same harmful-query distribution and safety judge, varying only the prefix before the final MM-SafetyBench question. The clearest pattern is simple: models are jailbroken less often when the prefix includes explicit image-tool interaction. We then test two plain alternatives: whether the drop comes only from a text-only prior turn, or only from the image returned by the tool. 
+
+ 
+ 
+ 
+
+ Table 1 :  Representative paradigm and control comparison on Qwen3-VL-235B on MM-SafetyBench. 
+ 
+ 
+ 
+ 
+ Paradigm 
+ Representative setting 
+ ASR (%) 
+ 
+ 
+ 
+ Direct response 
+ – 
+ 36.1 
+ 
+ Image generation/editing ⋆ 
+ Neutral image prefill 
+ 38.1 
+ 
+ Image generation/editing ⋆ 
+ Harmful image prefill 
+ 35.6 
+ 
+ Visual-state variant 
+ Edited image attention 
+ 32.6 
+ 
+ Explicit image-tool interaction 
+ Benign returned image 
+ 24.8 
+ 
+ Explicit image-tool interaction 
+ Unsafe-looking returned image 
+ 26.2 
+ 
+ Explicit image-tool interaction 
+ Standard image-tool setting 
+ 23.8 
+ 
+ 
+
+ 
+ ⋆  Qwen3-VL-235B does not natively support image generation. Because direct EMU  ( Wang et al., 2026 ) -style generation produced low-quality reasoning prefixes in our setup, we use Stable-Diffusion-generated prefill images to simulate image generation/editing prefixes rather than as a faithful EMU reproduction. EMU-3 results are given in Table  6 . 
+
+ 
+ 
+ 
+ Figure 1 :  Overall ASR on MM-SafetyBench for direct answering and explicit image-tool interaction. Across model families and scales, explicit image-tool interaction yields lower attack success rates. 
+ 
+ 
+ Explicit image-tool interaction is the most robust evaluated setting. 
+
+ 
+
+ 
+ Table  1  shows the main comparison. Direct response is jailbroken in  36.1 % 36.1\%  of cases, while the Stable-Diffusion-based simulated image generation/editing setting stays about the same. The visual-state variant lowers ASR only moderately to  32.6 % 32.6\% , suggesting that simply adding an edited visual state is not enough. Explicit image-tool interaction is different: ASR falls to  23.8 % 23.8\%  in the standard setting and stays below  26.2 % 26.2\%  even when the returned image looks unsafe. Figure  1  shows the same direction across model families and scales, so the lower ASR is not limited to one model size or provider. 
+
+ 
+ 
+ 
+ Table 2 :  Text-only prior turn controls.  Direct  is the single-turn baseline;  Image-tool interaction  is the explicit image-tool interaction setting;  text-only prior turn  preserves a completed text-only prefix but removes returned visual feedback. ASR (%) is measured on MM-SafetyBench. Additional setup details are given in Appendix  B . 
+ 
+ 
+ 
+ 
+ Model 
+ Direct 
+ Image-tool interaction 
+ Prior turn ( Normal ) 
+ Prior turn ( Harmful ) 
+ 
+ 
+ 
+ Qwen3-VL-8B 
+ 34.2 
+ 22.3 
+ 33.2 
+ 36.1 
+ 
+ Qwen3-VL-32B 
+ 42.6 
+ 28.2 
+ 38.1 
+ 39.6 
+ 
+ Qwen3-VL-235B 
+ 36.1 
+ 23.8 
+ 38.1 
+ 35.6 
+ 
+ Gemma-3-12B 
+ 45.0 
+ 21.8 
+ 44.1 
+ 47.5 
+ 
+ Gemma-3-27B 
+ 42.1 
+ 23.3 
+ 43.1 
+ 48.5 
+ 
+ Llama-4-Scout 
+ 41.6 
+ 34.7 
+ 44.1 
+ 44.6 
+ 
+ Pixtral-Large 
+ 54.0 
+ 39.1 
+ 51.0 
+ 46.5 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ Text-only prior turns do not explain the ASR drop. 
+
+ 
+
+ 
+ One simple explanation is that any completed prior turn changes the dialogue state and makes the model more cautious. To test this, we keep a text-only prior turn but remove the returned visual state from the image tool, while leaving the later harmful query unchanged. Table  2  shows that this is not enough. On Qwen3-VL-235B, direct answering gives  36.1 % 36.1\%  ASR, normal and harmful prior turns give  38.1 % 38.1\%  and  35.6 % 35.6\% , while explicit image-tool interaction falls to  23.8 % 23.8\% . Across models, text-only prior turn ASR remains close to direct answering and far above image-tool interaction, so the lower ASR is not reproduced by a prior text-only turn or by refusal-oriented warm-up alone. Appendix  B  gives setup details and notes failed provider runs. 
+
+ 
+ 
+ 
+ 
+ Returned-image semantics are not necessary for most of the ASR drop. 
+
+ 
+
+ 
+ The next alternative is that the returned image itself makes the model safer, for example by supplying benign visual evidence before the harmful query. We test this by keeping the image-tool transcript fixed and overriding only the returned visual content with unsafe-looking, benign, or low-information images. If returned-image semantics were the main driver, ASR should vary strongly across these replacements, especially when useful visual content is removed. 
+
+ 
+ 
+ 
+ Table 3 :  Returned-image variants used to separate visual content from the image-tool-calling process. ASR is measured on Qwen3-VL-235B. 
+ 
+ 
+ 
+ Condition 
+ Returned visual content 
+ ASR (%) 
+ 
+ 
+ 
+ Direct 
+ – 
+ 36.1 
+ 
+ Image-tool interaction + unsafe image 
+ Stable Diffusion unsafe-looking image 
+ 26.2 
+ 
+ Image-tool interaction + benign image 
+ Stable Diffusion benign image 
+ 24.8 
+ 
+ Image-tool interaction + visual mask 
+ White/noise replacement image 
+ 25.7 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ The ASR drop remains when useful visual content is removed. 
+
+ 
+
+ 
+ Table  3  shows that ASR remains low under all returned-image overrides:  26.2 % 26.2\%  with an unsafe-looking image,  24.8 % 24.8\%  with a benign image, and  25.7 % 25.7\%  with a white/noise replacement. The white/noise condition is the strictest test because it removes most object- and scene-level evidence while preserving the interaction structure. Thus the returned image does not need to contain useful visual evidence for the model to be jailbroken less often; small differences among returned-image variants are within the run-to-run baseline drift documented in Appendix  E  and should be read qualitatively. 
+
+ 
+ 
+ 
+ 
+ Lower ASR follows the interaction trace, not the returned visual artifact. 
+
+ 
+
+ 
+ Overall, the attribution sequence points toward the image-tool interaction process rather than the returned artifact alone. The model must issue an image-tool request, receive a structured image-tool result, and condition on that interaction before the harmful query arrives. The returned pixels can change substantially while ASR remains low, whereas removing returned visual feedback and keeping only the text-only prior turn brings ASR back near direct answering. 
+
+ 
+ 
+ 
+ 
+ 
+ 6  Why Is Explicit Image-Tool Interaction Better? 
+
+ 
+
+ 
+ 6.1  Safety-Aligned Residual Shift 
+
+ 
+
+ 
+ Mechanistic hypothesis. 
+
+ 
+
+ 
+ The behavioral results suggest that the robustness gain is tied to the full image-tool interaction, not to the text-only image-tool trace or to benign returned-image content alone. We model this effect as a residual shift in hidden-state space before the model answers the harmful query. Let  z ∼ 𝒟 adv z\sim\mathcal{D}_{\text{adv}}  be an adversarial query, let  h ⁡ ( z ) ∈ ℝ d h(z)\in\mathbb{R}^{d}  be its direct-mode hidden state at a selected layer, and let  u ∈ ℝ d u\in\mathbb{R}^{d}  be a safety readout direction where larger projection means safer behavior  ( Zou and others, 2023 ;  Arditi et al., 2024 ) . We define the corresponding safety score 
+
+ 
+ 
+
+ 
+ 
+ S ⁡ ( z ) = u ⊤ ​ h ​ ( z ) , S(z)=u^{\top}h(z), 
+ 
+ (2) 
+ 
+
+ 
+ so that larger  S ⁡ ( z ) S(z)  corresponds to safer behavior.
+If explicit image-tool interaction induces a residual shift  v t ​ o ​ o ​ l v_{tool}  with strength  α ≥ 0 \alpha\geq 0 , then 
+
+ 
+ 
+
+ 
+ 
+ h tool ​ ( z ) = h ⁡ ( z ) + α ​ v t ​ o ​ o ​ l , S tool ​ ( z ) = S ⁡ ( z ) + α ⁡ ( u ⊤ ​ v t ​ o ​ o ​ l ) . h_{\text{tool}}(z)=h(z)+\alpha v_{tool},\qquad S_{\text{tool}}(z)=S(z)+\alpha(u^{\top}v_{tool}). 
+ 
+ (3) 
+ 
+
+ 
+ Here,  h tool ​ ( z ) h_{\text{tool}}(z)  and  S tool ​ ( z ) S_{\text{tool}}(z)  are the hidden state and safety score after the image-tool prefix. The condition  u ⊤ ​ v t ​ o ​ o ​ l > 0 u^{\top}v_{tool}>0  means that the image-tool state shifts the representation toward the safer side of the readout. 
+
+ 
+ 
+ 
+ Definition 1   (Image-Tool Safety Vector) . 
+ 
+ At layer  ℓ \ell , let  h direct ℓ ​ ( z ) h_{\text{direct}}^{\,\ell}(z)  and  h tool ℓ ​ ( z ) h_{\text{tool}}^{\,\ell}(z)  denote the hidden representations for the same query under direct answering and explicit image-tool interaction. The layer- ℓ \ell  image-tool safety vector is the population mean residual shift: 
+
+ 
+ 
+
+ 
+ 
+ v t ​ o ​ o ​ l ℓ = 𝔼 z ∼ 𝒟 eval ​ [ h tool ℓ ​ ( z ) − h direct ℓ ​ ( z ) ] . v_{tool}^{\,\ell}=\mathbb{E}_{z\sim\mathcal{D}_{\mathrm{eval}}}\!\left[h_{\text{tool}}^{\,\ell}(z)-h_{\text{direct}}^{\,\ell}(z)\right]. 
+ 
+ (4) 
+ 
+
+ 
+ Its empirical estimate on  n n  paired examples is 
+
+ 
+ 
+
+ 
+ 
+ v ^ t ​ o ​ o ​ l ℓ = 1 n ​ ∑ i = 1 n ( h tool ℓ ​ ( z i ) − h direct ℓ ​ ( z i ) ) . \hat{v}_{tool}^{\,\ell}=\frac{1}{n}\sum_{i=1}^{n}\left(h_{\text{tool}}^{\,\ell}(z_{i})-h_{\text{direct}}^{\,\ell}(z_{i})\right). 
+ 
+ (5) 
+ 
+
+ 
+ 
+ 
+ 
+ We use  v t ​ o ​ o ​ l v_{tool}  for the population shift in the theorem and  v ^ t ​ o ​ o ​ l ℓ \hat{v}_{tool}^{\,\ell}  for its empirical layer-wise estimate. 
+
+ 
+ 
+ 
+ Theorem 1   (Positive safety projection reduces thresholded jailbreak risk) . 
+ 
+ Let  S ⁡ ( z ) = u ⊤ ​ h ​ ( z ) S(z)=u^{\top}h(z)  be a safety score where larger values are safer, and let  τ \tau  be an unsafe-behavior threshold. If explicit image-tool interaction shifts the representation by  α ​ v t ​ o ​ o ​ l \alpha v_{tool}  with  α ≥ 0 \alpha\geq 0  and  u ⊤ ​ v t ​ o ​ o ​ l > 0 u^{\top}v_{tool}>0 , then the thresholded jailbreak risk 
+
+ 
+ 
+
+ 
+ 
+ ℛ ( α ) = Pr z ∼ 𝒟 adv [ S ( z ) + α u ⊤ v t ​ o ​ o ​ l < τ ] \mathcal{R}(\alpha)=\Pr_{z\sim\mathcal{D}_{\mathrm{adv}}}\left[S(z)+\alpha u^{\top}v_{tool}<\tau\right] 
+ 
+ 
+
+ 
+ is non-increasing in  α \alpha . Moreover, for any  α 2 > α 1 ≥ 0 \alpha_{2}>\alpha_{1}\geq 0 , the decrease is strict whenever 
+
+ 
+ 
+
+ 
+ 
+ Pr [ τ − α 2 u ⊤ v t ​ o ​ o ​ l ≤ S ( z ) < τ − α 1 u ⊤ v t ​ o ​ o ​ l ] > 0 . \Pr\!\left[\tau-\alpha_{2}u^{\top}v_{tool}\leq S(z)<\tau-\alpha_{1}u^{\top}v_{tool}\right]>0. 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Theorem  1  is only a sufficient-condition statement: if the shift points toward a learned safety readout, examples near the refusal boundary become less likely to produce unsafe completions. We do not claim to inject the population shift  v t ​ o ​ o ​ l v_{tool}  directly; instead, the experiments test whether the image-tool state aligns with learned safety directions that are readable from, and active in, the residual stream. The two observable consequences are that the image-tool state should make safety more linearly readable, and safety-direction interventions should change ASR in the expected direction. The full proof is given in Appendix  F . 
+
+ 
+ 
+ 
+ 
+ 
+ 6.2  Image-Tool Interaction Creates a Stronger and More Stable Safety Readout 
+
+ 
+
+ 
+ Explicit image-tool interaction makes safety more linearly readable. 
+
+ 
+
+ 
+ The first prediction is that the image-tool-mediated state should make safe and unsafe completions easier to separate. Figure  2  shows that the image-tool state yields a stronger layer-wise safety readout than direct answering. Thus explicit image-tool interaction does not only reduce ASR externally; it places the model in a state where the subsequent safety decision is more linearly accessible from hidden representations. Additional fitting details and layer-wise numbers are given in Appendix  C . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ (a)   Direct mode. 
+ 
+ 
+ (b)   Image-tool mode. 
+ 
+ Figure 2 :  Layer-wise safety readout quality on Qwen3-VL-8B-Instruct. (Top) AUC for direct answering and image-tool interaction; (Bottom) The corresponding direction norms. The image-tool state produces a stronger readout, peaking at AUC 0.942 vs. 0.850 for direct answering. 
+ 
+ 
+ Figure 3 :  Cosine similarity between safety directions learned from six returned-image variants. High off-diagonal similarity indicates that the safety direction is stable across returned-image content. 
+ 
+ 
+ 
+ The image-tool safety direction is stable across returned-image variants. 
+
+ 
+
+ 
+ The second prediction is that the direction should be tied to the image-tool-calling process rather than to the particular pixels returned by the image tool. Figure  3  shows that safety directions extracted from six returned-image variants are nearly collinear. If the direction mainly encoded returned-image semantics, benign, unsafe-looking, white, or noisy outputs should rotate it substantially. Instead, the common factor appears to be the structured image-tool-calling process. Transfer AUCs and override details are given in Appendix  C . 
+
+ 
+ 
+ 
+ 
+ Representation evidence supports a process-level mechanism. 
+
+ 
+
+ 
+ The representation results mirror the behavioral attribution. Text-only prior turns do not reproduce the ASR gain, returned-image overrides do not remove it, and the corresponding hidden-state directions remain stable across those overrides. Figure  4  further shows that the image-tool safety readout is compact and transfers across returned-image variants, supporting a process-level mechanism rather than an explanation tied to particular returned pixels. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ (a)   PCA variance. 
+ 
+ 
+ (b)   Cross-override ROC. 
+ 
+ Figure 4 :  Readout diagnostics for the layer-27 image-tool safety direction on Qwen3-VL-8B-Instruct.  (a)  PC1 explains  40.3 % 40.3\%  of variance and is nearly aligned with the safety direction (projection  0.993 0.993 ), indicating a compact safety axis.  (b)  Direction fit on the normal returned-image run transfers to five override runs (AUC  = 0.914 =0.914 ), showing the readout is not tied to returned-image content. 
+ 
+ 
+ 
+ Compact image-tool shifts mainly affect marginal cases. 
+
+ 
+
+ 
+ Figure  4  matters because it connects the behavioral attribution to the thresholded-risk model in Theorem  1 . The readout is compact and transfers across returned-image variants, so the relevant shift is unlikely to be a scattered encoding of a particular returned image. At the same time, the theorem predicts that such a positive safety shift changes ASR only when examples occupy a non-saturated region near the refusal boundary. The boundary diagnostics show nontrivial near-threshold mass, suggesting that explicit image-tool interaction reduces ASR by moving marginal harmful cases across the safety boundary, rather than by uniformly solving all attack categories. Additional PCA, transfer, and boundary details are given in Appendix  C . 
+
+ 
+ 
+ 
+ 
+ 
+ 6.3  Activation Interventions Show That Safety Directions Are Behaviorally Active 
+
+ 
+
+ 
+ Table 4 :  Activation-intervention summary on Qwen3-VL-8B. Image-tool interaction changes are computed against within-batch zero-injection baselines. 
+ 
+ 
+ 
+ Sweep 
+ Mode / intervention 
+ Baseline 
+ ASR ( ↓ \downarrow ) 
+ Δ \Delta 
+ Shape 
+ 
+ 
+ 
+ Sufficiency 
+ Direct,  + u direct +u_{\text{direct}} 
+ 36.6 
+ 23.8 
+ − 12.9 \mathbf{-12.9} 
+ monotone  ↓ \downarrow 
+ 
+ Necessity 
+ Image-tool interaction,  − u direct -u_{\text{direct}} 
+ 24.8 
+ 31.7 
+ + 6.9 \mathbf{+6.9} 
+ monotone  ↑ \uparrow 
+ 
+ Sufficiency 
+ Image-tool interaction,  + u direct +u_{\text{direct}} 
+ 19.8 
+ 11.9 
+ − 7.9 \mathbf{-7.9} 
+ U-shaped 
+ 
+ Specificity 
+ Direct,  + u tool +u_{\text{tool}} 
+ 36.6 
+ 34.5 
+ − 2.1 -2.1 
+ flat 
+ 
+ Specificity 
+ Image-tool interaction,  − u tool -u_{\text{tool}} 
+ 21.0 
+ 26.4 
+ + 5.4 +5.4 
+ monotone  ↑ \uparrow 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ (a)   Direct sufficiency. 
+ 
+ 
+ (b)   Image-tool necessity. 
+ 
+ 
+ (c)   Image-tool sufficiency. 
+ 
+ Figure 5 :  Activation-intervention dose-response curves on Qwen3-VL-8B-Instruct. Panels test direct-mode sufficiency, image-tool necessity, and image-tool sufficiency. Adding safety-direction components lowers ASR, while subtracting them from the image-tool setting raises ASR. 
+ 
+ 
+ Activation interventions test whether learned safety directions are behaviorally active. 
+
+ 
+
+ 
+ To move beyond correlational readouts, we intervene on the residual stream of Qwen3-VL-8B during inference. The intervention layer, direction, and coefficients are selected on an internal validation split, and all ASR results are reported on the held-out test set. At layer  ℓ \ell , a forward hook adds 
+
+ 
+ 
+
+ 
+ 
+ Δ ​ h = λ ​ u ^ direct ℓ + μ ​ u ^ tool ℓ , \Delta h=\lambda\hat{u}_{\textit{direct}}^{\,\ell}+\mu\hat{u}_{\textit{tool}}^{\,\ell}, 
+ 
+ (6) 
+ 
+
+ 
+ to every token hidden state  ( Zou and others, 2023 ;  Arditi et al., 2024 ;  Lee and others, 2025 ) , where  λ , μ \lambda,\mu  are scalar coefficients and  u ^ direct ℓ \hat{u}_{\textit{direct}}^{\,\ell} ,  u ^ tool ℓ \hat{u}_{\textit{tool}}^{\,\ell}  are normalized safety directions for direct and image-tool modes. We evaluate sufficiency in direct mode, necessity in image-tool interaction, and additional sufficiency in image-tool interaction. Additional sweep settings and baseline conventions are given in Appendix  D . 
+
+ 
+ 
+ 
+ 
+ Adding a safety direction partially reproduces the image-tool robustness gain. 
+
+ 
+
+ 
+ As shown in Table  4 , adding the direct-mode safety direction in direct mode lowers ASR from  36.6 % 36.6\%  to  23.8 % 23.8\% , close to the behavioral gain of explicit image-tool interaction in the matched evaluation. This goes beyond representation separability: the direction is not only predictive of safe versus unsafe outputs, but also behaviorally active when injected into the residual stream. 
+
+ 
+ 
+ 
+ 
+ Removing safety directions partially erodes the image-tool robustness gain. 
+
+ 
+
+ 
+ The necessity sweep provides complementary evidence. In the image-tool interaction setting, subtracting the direct-mode safety direction raises ASR from  24.8 % 24.8\%  to  31.7 % 31.7\% , while adding it lowers ASR from  19.8 % 19.8\%  to  11.9 % 11.9\% . The comparable magnitudes of these effects ( 7.9 / 6.9 = 1.14 7.9/6.9=1.14 ) suggest that this safety-relevant axis accounts for part of the robustness gain. Specificity sweeps further show that the image-tool-mode direction is less effective when added to direct mode but harmful when removed from image-tool interaction, indicating mode-specific activation geometry rather than a single universal steering vector. 
+
+ 
+ 
+ 
+ 
+ The intervention effect is partly symmetric within the image-tool state but mode-specific across states. 
+
+ 
+
+ 
+ Figure  5  separates two effects. Within image-tool interaction, adding and subtracting safety-direction components have comparable magnitudes in the non-degenerate dose range, consistent with a behaviorally active safety axis. Across inference modes, however, the directions are not equally portable: adding the image-tool-mode direction to direct inference weakly affects ASR, whereas removing it within image-tool interaction substantially increases ASR. This argues against a universal-vector account and suggests that image-tool interaction changes the local activation geometry in which safety directions operate. 
+
+ 
+ 
+ 
+ 
+ Mechanistic interpretation. 
+
+ 
+
+ 
+ Together, the behavioral, representation, and intervention results support a coherent account: explicit image-tool interaction induces a recurring internal state where safety-relevant information is more linearly accessible, stable across returned-image content, and behaviorally linked to ASR. We therefore interpret the image-tool-calling trajectory as a process-level safety cue, with intervention evidence limited to the non-degenerate dose range and read as partial mechanistic support rather than a complete causal mediation proof. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 7  Discussion 
+
+ 
+
+ 
+ Implications for deployment. 
+
+ 
+
+ 
+ Our results suggest that LVLM safety depends not only on training or post-hoc filtering, but also on inference structure. If the image-tool interaction effect generalizes, tool-augmented think-with-image pipelines may offer a safety-relevant design pattern for multimodal systems. Deployment-time safety evaluation should therefore assess the full reasoning pipeline, not only the direct response. 
+
+ 
+ 
+ 
+ 
+ Limitations and risks. 
+
+ 
+
+ 
+ Our results should not be read as a blanket endorsement of tool use. Tool-augmented systems can introduce new attack surfaces, including malicious tool outputs, indirect prompt injection, unsafe actions, and adaptive attacks on tool-calling trajectories  ( Noheria and Yao, 2026 ;  Zhao et al., 2026 ) . Our empirical scope is also limited: we study a 202-example MM-SafetyBench sample, rely on one primary LLM-as-judge protocol, and run mechanistic analyses on self-deployed Qwen3-VL-8B where hidden states are available. The main conclusion is therefore narrower: safety evaluation should account for the full think-with-image pipeline, rather than treating tool use as inherently safe or unsafe. 
+
+ 
+ 
+ 
+ 
+ Research outlook. 
+
+ 
+
+ 
+ This work reframes think-with-image reasoning as a safety-relevant inference paradigm, not merely a capability mechanism. It motivates evaluations that vary the reasoning process and a mechanistic agenda studying when intermediate visual states and image-tool-calling trajectories induce safety-relevant hidden-state shifts. 
+
+ 
+ 
+ 
+ 
+ 
+ 8  Conclusion 
+
+ 
+
+ 
+ We asked which think-with-image process design improves multimodal jailbreak robustness and found that explicit image-tool interaction gives the strongest benefit among the evaluated paradigms, lowering ASR by around  30 % 30\%  relative to direct answering across model families and scales. The key finding is not merely that image tools return helpful images: replacing the returned image preserves most of the gain, while removing returned visual feedback and keeping only a text-only prefill does not reproduce it. We then linked this process-level effect to a stable image-tool safety state and showed through activation interventions that learned safety directions are behaviorally active. These results suggest that explicit image-tool interaction is a promising safety-positive design pattern for future think-with-image LVLMs, provided it is evaluated as a full pipeline rather than treated as inherently safe. 
+
+ 
+ 
+ 
+ 
+ 

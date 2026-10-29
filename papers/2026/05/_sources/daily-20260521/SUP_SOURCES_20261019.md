@@ -235,6 +235,19 @@ root实际核后指出：当前Ch24局部场反例是验收条件，不覆盖离
 - SRC-MINIMAX：官方Research主目录真实Mar18M2.7→May26sparseforgetting/May27Mavis，夹住May20无新研究项。初次站内搜索误落space.minimax用户站，不当官方证据，已由原站目录替代。
 - SRC-ARXIV：A2有限主题/P1–6完整字段，126只是导航不是待逐个关闭队列。新11+后来4条件P分层处理中，19748withdrawn关闭；旧表/有效legacy精确dup复用。系统分类cs.DC/cs.AR官方May月列表有界首50恢复web均cachemiss，另curl有限正常fallback待执行；不能把当前category缺口与已获得metadata/精确v1证据混为同层受阻。不宣称全学科召回或所有126均formalclosed。
 
+### 2026-10-20本节收口定位（覆盖上面过程时态，不另开来源队列）
+
+本轮14每日源均已走到其实际有限停止位置，不扫Weekly、不重发未知全历史请求；当前普通差额只剩已具名材料Books/POST与报告日核，不再有待执行的发现扫描。以下定位让reader回原件核来源与停止范围；web结果原件多为JSON编码的工具文本而非结构化机构API，不能按扩展名声称全站API或完整查询日志。原结果未保留逐字查询字符串的，只复用已记的May20/5月20日定向范围、实际返回URL与材料，不补造检索参数，不授全站/全学科召回。
+
+- OpenAI/Anthropic/Google/Meta：WEB_INST1/2保存May20机构定向结果；实际URL分别有Education/Ramp/geometry/Academy、TrustCenter ACR、Running Guide/Beam/I-O/合作、EgoBabyVLM。INST_META_GOOGLE_CORE保存后两具名必要正文，Meta L44–46日期，Google L214–268标题/May20/双路径/角色；19130 R10–14与Running R25已实际核。Geometry属暂缓科学范围；部署/合规/演示新闻不把机构名当新系统机制。WEB_INST3仅非官方聚合导航，不作官方覆盖依据，不因此再扩GitHub/HF。
+- Qwen/DeepSeek/Moonshot：ORG_QWEN_DEEPSEEK保存旧跳转页/DeepSeek可见研究slice，RECOVERY保存qwen.ai正文0行与DeepSeek/news的实际39行slice；QWEN_DEEPSEEK_GOOGLE_BOUND只存Empty search results，不能拿它证明无发布。INST_REMAIN_0的Kimi Blog实际109行止2025，MOONSHOT_RECOVERY保存May20用户quota帖子及MoonshotAI主页，不将用户帖当研究。Qwen/Kimi历史目录仍缺，DeepSeek只到已读可见边界；README将前两源记受阻/精确历史缺口，不再写成检索搜索可替必查源。
+- Hunyuan/ZAI：HUNYUAN_LIST只是最初404的失败原件，不授成功；成功唯一原API是HUNYUAN_API_FIELDS，code0/data.totalNum11/list11，id100041/displayPublishTime1779346800/publishedAt1779340747/publicAt1779357326/renderType1均原字段。A18“renderType0全部”是请求参数语义，不是每条结果renderType均0。转换三时刻同May21，不在May20；ZAI_DIRECTORY实际Research可见Apr29→May20 ZCube→Jun16，ORG_CORE_1含原HTML身份，不把失败webtimeout替成功提取。HyMT2未知identity请求已解除，ZCube精确dup原177，不新评分。
+- Seed/ERNIE：INST_INDEX_0首查papers163行，May26两项是第一页下界；SEED_PAGE2是被忽略?page=2的过程原件，不算分页成功。真实SEED_BOUNDARY_API由get_article_list_v2 article_type1/count20/page_token20/order_desc、localeUS取得，sub_article_list20首Charon/ArticleMeta.ID1655/PublishDate1778860800000，与页面May26夹May20；保next_page_token/has_more/total作停止界，不因has_more而遍历窗外旧库。UpdateTime只修订字段。ERNIE在INST_INDEX_0后部原page May9/Apr30/Apr15，按所见止，不扩其他产品站。
+- MiMo/MiniMax：INST_INDEX_1 MiMo338行，Paper Mar13/Jun29夹窗，Blog可见15标题缺date/link仍受阻；MiniMax官方blog的Research目录Mar18→May26sparseforgetting/May27Mavis夹窗。INST_REMAIN_1为误入space.minimax用户站的失效导航，不支持原发/空命中；以官方目录为实际依据。MiMo补检无具名结果不消除Blog历史缺口。
+- arXiv：P1–6完整原DOI/title/abstract/dates/client/state/registered字段保存；126是六页有界导航，末页1、无next，不是逐项题摘/全文已审库存。CATEGORY_CORRECT0/1首50、BOUND导航、TARGET0 DCskip150/TARGET1 ARskip50为真实2026-05月表，早先CATEGORY0/1的2605无效URL/cachemiss不授覆盖。六标题的完整题摘/日门最终见A22–23：四May19窗外、19385具体准入、19399 R28具体贡献EX；19748 R23 withdrawn关闭。其余精确dup/候选有效层在A3–17与R3–29，不重复源读。19378/18768由R28核两跨日必要证据后按精确保留项隔离；不同于当前普通Source未读。不宣称所有126正式关闭，也不把旧OAI/created标签用于新增日门。
+
+本节受阻资格最终以README§2/5为准：Qwen/Moonshot/MiMo必查历史目录记受阻，不写检索受限；这是V3接口校验揭示的标签修正，不是增加外部证据、零命中或扩大失败范围。原A18过程中的“普通待办/待fallback”均由A19修正及本段实际原件覆盖；未发生的全部历史翻页不声明完成。
+
 ## A19 — 用户额度暂停停点（2026-10-19T17:20:49+08:00）
 
 按用户暂停要求，停止新网络、新Source阅读、新日期和Books写入；只保存本checkpoint。README维持“进行中”，未发生全日DAY，不标完成、不stage/commit/push。暂停前实际完成与尚未完成分开如下；恢复时按当时当前合同重读本日上下文，不从宽库存另开队列。
@@ -248,3 +261,67 @@ R23四条有限条件准入：19839 RealAlign、20098 ITA、19378 visualDiT-MoE�
 A18 arxiv分类恢复的实际更正：旧/list/cs.DC/2605与cs.AR返回InvalidYear/404，不是外部权限隔离；改用官方/list/cs.DC/2026-05与cs.AR后成功。CORRECT为首50、BOUND为导航、TARGET_0为DC skip150、TARGET_1为AR skip50，都是有界标题浏览，不是整个May或逐项Source队列。暂停前看见具体18683 EPIC、18697 PopPy、18710 Mosaic、18750 readiness-driven pipeline、19385 LatentBox、19399 HSCO-Bench标题，精确查两日README这6ID无命中；**尚未读完整题摘、未判贡献/日期/正式候选**，不能以标题或ID顺序授准入/May20，也不能说都已关闭。原May20已见18755/19373/19945等精确duplicate只导航，不挪旧记录。暂停后不展开这些线索。
 
 报告仍只呈现3条成熟新增行及对应新§4（19130/19149/19726）；其余已成熟判断尚待六部分完整归并，不能由Books四I冒称报告完成。最近一次V3接口检查通过、原177行各唯一/旧小时窗/完整连续旧§4冻结检查通过，但那不是最终全日验收；最终候选统计、覆盖表、Markdown/链接、两层diff与root DAY尚未完成。共享Books无新写锁待占；root负责LEARNING_STATE暂停记录。
+
+## A20 — 2026-10-20恢复与RealAlign19839必要Source/具体差额提案
+
+用户明确恢复覆盖A19暂停。已完整重读AGENTS、统一Prompt、RESEARCH_CONTRACT/REPORT_CONTRACTS、来源使用说明/每日/arXiv主题和ROADMAP；LEARNING_STATE仅读283–296当前入口及May21停点。原177整行/小时窗/连续旧§4继续冻结；R1–24未变有效层直接复用，四I和两旧归因窄修不重Source或POST。当前有限范围是19839/20098必要核心、19378有限日门、STAR具体owner、RunningGuide独核和六标题查漏线索；126库存不是审阅队列。本轮写作遵循现有中文指南；个人写作检索工具当前未提供，不声称取得个人风格样本。
+
+19839精确v1已实际读保存main.html的§3.1–3.3、§4.1–4.4/Table1–4、§5及A.1–A.5。新增的是监督来源：专业摄影原图为positive，U2-Net显著区经SD1.5-inpaint形成negative；用PickScore选top512且gap>0.02删除差别弱的pair。不是所有real图天然优选，也不是没有任何偏好代理。先Diffusion-DRO把real与policy-generated对比分布warmup，再标准Diffusion-DPO处理real/degraded pair，两阶段各自有收益，当前证据不将总收益唯一归因real或某一种inpainting。Table2的Civitai生成reference多项比HPDv3 real更高，Pick-a-Pic生成reference亦可用且DeQA退步，直接限制“真实图必优/所有质量普胜”；Table4更强inpainting亦非全部更好。选样与评价共用PickScore，五图均值不是训练重复seed；没有证明代表所有偏好/风格/视频支持。
+
+配置A.1–A.3：SD1.5/SD3.5Medium、LoRA4/32、四RTX3090、effectivebatch256、512²；warmup1600/3200steps，pairwise1000/500steps，评价每prompt五图，SD1.5 CFG7.5/50steps、SD3.5M CFG4.5/40steps；18人60prompt四类、随机左右/按prompt多数。851k-pair baseline与512 curated pair不等完整预算匹配，原图筛选、caption/saliency/inpaint、policy采样、warmup、DPO和独立人评全费不能省。未披露完整walltime/precision/repeated-training uncertainty记Not Disclosed；未核代码或复现。
+
+P1同精确DOI/arxiv.content/findable，唯一v1Submitted=2026-05-19T13:35:11Z，按已核适用官方EDT日程最早May20 00Z、registered=May20 02:32:04Z，完整联合界同May20BJT；currentv2只导航，不回填其结果。2+2+2=6，具体监督来源/分布支持必要域深入已足，待root独核。
+
+Actual owner比较：Ch27 collection protocol→annotation裁决→SAM3D支持域完整局部已读，Ch34开头/DPO支持关系与pairconstruction/reference冻结完整段及前后已读；Ch26/28开篇交接已按本日局部定位。Ch27现有“整组皆差时直接构造标签”是专家补几何，且已有可信real回退，但没有“reference原图+受控退化负例、先warmup再pairwise”的数据接口，不能只主题相似NC。拟唯一owner TRAIN-DATA，在SAM3D完整段后、Agent训练语料段前补一段；不改Ch34目标推导、不改Ch24生成主线。逐字窄PRE（未授不写）：
+
+当整组生成候选都不够好时，除了请专家直接构造标签，还可以从已有高质量参考出发制造对照：保留原图作为候选正例，对局部显著区域做受控重生成，得到与它共享大部分内容的负例，再记录筛选器为何认为差异足以形成偏好。这把监督支持从当前generator的候选池移到外部reference，并不让“真实图”天然成为gold；摄影风格、色彩与偏好代理的选择都会改变训练人口。[RealAlign的受限分支](https://arxiv.org/html/2605.19839v1)还先用real对自产样本做分布warmup，再接pairwise优化，以缓解reference与原policy的支持失配；生成reference亦可有效，不能把局部收益唯一归因真实来源。参考/文字条件、退化器与mask、筛选阈值和训练阶段须共同版本化，原图获取、负例生成、筛选、warmup及偏好训练全计费，并用未参与筛选的质量/人评另验；差异无效、风格覆盖或独立质量回归时，保留可信人工pair、原生成监督或更窄支持域，而不以较少pair批准同总预算与通用偏好保持。
+
+## A21 — ITA20098必要Source与具体差额提案
+
+已实际读exact-v1保存main.html的§3–9、D全部DF-QuAD定义；主件220000bytes于AppendixF中途截断，不能当全HTML。已用Range220000–440000恢复实际suffix69832字符并经apply_patch保存SUP_CORE_2605.20098v1_20261020.suffix.html，实际读G.1/G.2和I/J/K必要配置/限制，不遍历全部prompt。QBAF是一层support/attack，claimprior固定0.5；DF-QuAD先聚合各边strength再算claimstrength，固定1/3与2/3给False/Uncertain/True。BSM先teacher-base-score预热head，再由下游claimlabel的semanticMSE经可微semantics训练head/LoRA，另可加paraphrasevariance/ranking；argumentgenerator另用semanticsreward做GRPO。它使verdict可由graph/scores/semantics重算，不是自由posthoc trace，但不约束生成论据真实或完整。
+
+§8使用Qwen3-8B，评分模型比较固定同一未训argumentgraph，generator训练则另变分布。750均衡TFU/1746非均衡AVeriTeC分别accuracy/balancedaccuracy；1000训练claims，validation150合成claims，GPT5生成部分argument/rank/paraphrase，均不作外部事实gold。最强BSM-G的TFU .677比directSFT .659小差、CI重叠，AVeriTeC .460低于directGRPO .485；combined不加和、semantic-only会损ranking、辅助rank/con可损下游TFU。不能称普遍强于direct/所有模块必要。G的10000BCabootstrap是题目重采样，不等重复独立训练；G.1.4“claimbase由BSM估计”与主§4固定0.5有口径冲突，不补造统一recipe。
+
+G：BSM与generator三A10080GB、LoRA、generatorBF16，BSM1+1epoch，generator2epoch/group2/2048maxcompletion；450steps作者约11h learnedBSM/19h promptedBSM只在该配置，BSM10/20min不含完整合成/标注/评价与所有artifact费用。DirectGRPO3epoch/group4/max512，与argumentGRPO预算不同，不能按同backbone当同总费。claim-only无retrieval，固定阈值未校准、depthone、有限资源和合成artifact保留；J明确researchtool而非truthauthority。未核代码或复现。
+
+P1同DOI/arxiv.content/findable，唯一v1SubmittedMay19 16:49:29Z→最早May20 00Z→registeredMay20 02:38:13Z，完整同May20BJT；currentv2只导航。2+2+2=6，具体可微语义读出与关键反侧必要域深入足，待root独核。ActualCh80 feedback表→完整deterministicverifier段/SAFE两段已读，Ch79 formal solver/ASP/predicatefirst完整局部及Ch81开篇交接已读。已有solver输入/翻译分责，没有“学习base-score经semantics→确定verdict”接口；拟唯一owner AGENT-REFLECTION，在deterministicverifier完整段后、SAFE之前补一段，而不是将学到分数升级truth。窄PRE（未授不写）：
+
+评价器也可以只学习论据的局部强度，而让最终判词由显式规则计算：模型提出支持/反对论据，为各论据给base score，再由固定argumentation semantics汇总为claim strength及三值结论。离线训练可把claim标签的误差经可微汇总器传回score模型，也可用最终语义分数训练论据生成器；运行时必须绑定论据图、scorer、semantics及threshold，才能重算判词，而不另写一份与判词脱节的解释。[ITA的受限一层图对照](https://arxiv.org/html/2605.20098v1)支持这个训练到读出的接口，但程序上的faithfulness不认证论据真实、图完整或概率校准，claim-only模型尚无外部检索依据。更新generator还会改变scorer的输入分布，分开优化的收益不能直接相加，局部排名更一致也不保证最终判定更准。论据/合成标签、参数训练、全部打分与独立事实验收均付费；来源、图或校准不足时，保留Unknown、可信外部证据及原直接判定/人工复核，不把确定汇总当作事实proof。
+
+## A22 — 六标题有限恢复、两跨日日门和两成熟NC
+
+A19六标题只读一次完整题摘，先做精确日门，不按标题/相邻ID猜日期。18683EPIC、18697PopPy、18710Mosaic/Apollo、18750RRFP完整题摘与精确DOI原件保存SUP_DC_2605.<id>_20261020.json；均为arxiv.content/findable，唯一v1Submitted分别May18 17:23:05/17:33:50/17:44:29/17:59:18Z，最早May19 00Z到registered04:35:38/04:36:04/04:36:23/04:37:21Z完整同May19BJT。本轮窗外，不新增候选/评分/读Source。后续精确邻日legacy去重已确认：PopPy18697、Mosaic18710、RRFP18750实际已收为正式候选，保原日/分/有效层，不再请求恢复；仅EPIC18683未收录，已移交当前May20作者/reader定点处理，不扩May21或本月。currentv2仅导航，不能将其结果回填v1。
+
+19385LatentBox完整AB（新SUP_DC）提出压缩latent为durable object、读时GPU重建、pixel/latent双cache按访问分布调节，改变生成asset持久化与读取成本分工；19399HSCO-Bench完整AB（原P4）通过kernel选择/SoC异构accelerator集成/软件映射联合任务及真实FPGA部署，暴露独立硬/软件评价不测整系统闭环的盲区，非仅增加榜单条目。两项拟条件准入，已向root请求一次校准；未把发现自动变确定贡献。唯一v1分别May19 05:31:49/05:51:28Z，最早May20 00Z到registered02:20:51/02:21:11Z完整同May20BJT；前者currentv2只导航、须v1。必要主HTML仅保存定位，不以下载声明Source已读。没有新增其他发现扫描。
+
+19378与18768日门有限恢复：前者arxivSubmittedMay12到May20registered跨May13–20BJT，后者Apr13到May20registered跨Apr14–May20BJT。19378官方exact-v1 abs仍只写SubmittedMay12，18768 exact-v1 abs仍只SubmittedApr13，ClinQueryAgent当前无撤回标记、只注ACL Systems Demonstrations投稿；OAI精确GetRecord两项均只有v1提交字段与currentdatestampMay20（原件SUP_OAI_2605.<id>_20261020.xml、Clin abs已保存），这不是直接announcement且不能压缩既有联合界。cs.CV月表返回ID升序且无单日公告分组；/list/cs.CV/2026-05-20?show=25返回Invalid time period，不能误写权限封锁。官方advanced/search具名announced_date_first路线返回HTTP429；不冒空命中，也不继续撞限。现有日期原件已足以判“尚不能归May20”，不足签当窗准入或Book；请求可定位该精确ID的官方日公告/历史首次公告元数据或更早原发正文，获得后只开这两项日门。已读Clin隔离机制沿A4保留，但不把普通core未读转受阻：19378是日期必要证据缺口，不启动机制全文队列；Clin机制已读仍不认证首公开资格。
+
+R25已发生：STAR19338沿R24必要源，2+2+2=6，root实际Ch81联合checkpoint/失败advisorymemory+runtime恢复控制及coldprior/runlesson比较后NC通过，不声称现书已有全部STAR recipe；RunningGuide沿A15官方May20核心，2+1+2=5，root实际Ch26快慢分层/freshness/按需慢路径比较后NC通过，不采zero-latency或安全保证。两项无新Books写入；原R15 HOLD理论争议不因此解除。
+
+## A23 — LatentBox19385必要域/具体差额；HSCO19399只补决定准入核心
+
+LatentBox完整题摘/日门由root已实际核，条件准入通过。作者实际读保存exact-v1 main§3–6.4及新tail§6.5–6.6/8；不把currentv2摘要当原v1结论。2+2+2=6；持久compressed latent换反复像素保留，把生成后的存储成本交给读取时decode、双格式cache和hashowner/spillover分责。pcodec bitexact仅针对latent，不承诺跨decoder环境像素一致；6.6 H100/L4的2000latents仅47%pixelchannels bitexact，其余大多±1–3不是普遍无损证书，平均PSNR/SSIM也不能替代语义或归档bitidentity。固定inputshape/FP16 TensorRT+CUDAgraph、CPUdecompress/encode、network与decoder驻留都付费。论文未完整实现decoder长期资产可用性/跨版本回放保证，不将engineering需要补成作者已验能力。
+
+性能绑定：§6.1三H10080GB PCIe、25Gbps、2GB/node双cache/S3us-east-1，150k SD3.5图映35month CompanyX抽样对象；48h66581requests/12328objects按10x重放、720h预热。35month原trace有2.07B请求/92.3M图/710k models，但固定SD3.5映射不测真实decoder族迁移/换入成本。§6.2 78.7%为500k SD3.5/FLUX、512²/1024²数据的434.1→92.6GB，非全部生产库实测。§6.3 mean41.2vs49.4/P99227.3vs276.9ms仅该配置，P5015.8弱于14.1；latency排除client-to-clusterhop。无cache DecodeAll137.3ms、全latent77.0ms与全image58.0ms反侧说明小latent不必更快。§6.5 adaptive比beststatic50.7vs51.6ms只是模拟，1Mwindow有短暂反退；6node@1000x、theta4的spillover是另一配置，不能混成统一SLO。Eq2的tail-hit局部代理与级联cache条件分布不等全局MRC最优证明，§6.5.4把Tfetch写fullmiss而前§4作cloudfetch亦有口径变化，不照抄统一recipe。
+
+§6.4到2050是假设未来访问率/缓存/价格走势不变的costprojection，非实测TCO；省略commonoperations、decoder版本保留和集群故障恢复未独测，不把consumerGPU租价推算当已部署结果。未核artifact/复现，未采用通用压缩率、任意模型无损/低延迟或长期经济保证。
+
+具体owner比较：实际读Ch70资源时间/训练/推理costpoint、完整AgentFootprint/重建成本两段及前面早停能源反证；Ch69/71开篇交接已读。Ch59拥有modelversion而非全部生成媒体asset，Ch23拥有codec与信息身份而不owns缓存/存储费用优化。现Ch70只通用要求derivedartifact可重建、存储与重算共核，没有model-native latent持久化和读时双格式的实际选择，拟唯一PLATFORM-COST。在“代码早停实验”完整段后、AgentFootprint标题前两段，无改原Agentmemory语义。窄PRE（未授不写）：
+
+生成结果还可以把一部分持久存储费移到未来读取时支付：若系统保留了生成后的model-native latent，就不必对每份冷结果长期保留完整像素，也无需每次从噪声重新去噪，只在读取时消费原decoder恢复图像。这里把latent设为持久对象、把像素设为可重建缓存，前提是latent、decoder权重/配置与解码环境的对应关系仍可取得；这份长期资产绑定是工程要求，不是仅保存tensor便已验证可恢复。Lossless压缩latent不等于跨GPU/compiler的像素逐bit不变，归档或下游要求原像素身份时，仍须保留原图或已验的精确解码路径。
+
+读取成本又决定缓存不宜只选一种表示：热门图以像素命中可跳过GPU，较冷对象以更小latent扩大覆盖，却把decode/排队放回读路径；在线可用两层hit/miss与实测fetch/decode费用提出容量分配，不能由压缩率直接决定最优比例。[LatentBox的受限对照](https://arxiv.org/html/2605.19385v1)支持这种生成后存储—读取分支；hash固定cacheowner、过载时只转移decode并回填owner，可在局部负载下兼顾复用与排队，但不是故障恢复或全局最优证明。模拟的自适应收益、固定模型的trace重放与长期价格投影须分账，latent读取也可能慢于像素命中；保存decoder族、压缩/解压、网络、GPU与像素编码、cache统计和迁移均计费。解码支持失效、原像素要求不符或读放大不合SLO时，保留像素对象、固定分层或传统冷热存储，不由更小对象批准长期TCO与尾延迟保证。
+
+HSCO19399只定点核决定贡献事实：§3.1十任务含BERT-Tiny/MiniLM/TinyCLIP/ViT与普通ISP，LLM-assisted C移植后人工验、缩小到裸机FPGA一小时；§3.2是给定模板/driver/README下联合生成SystemC、软件调用与SoC配置，按原软件gold/tolerance、CPUcycles和FPGA资源评价。§4.2–4.3只为决定是否有可迁移新增判断而核：多accelerator野心伴接口/综合失败、单GEMM保守伴利用不足，但没有对应受控策略干预，模型差异不能证明缩小计划/强制模板改善可靠性。拟具体贡献排除：测到硬/软件co-design任务能力与描述性failureprofile，但“接口须一致、组件成功不等整系统成功”仍是已有通用原则，当前证据不足修正本项目模型系统机制/Agent设计判断；不以小模型/硬件领域或缺新版排名拒绝。该局部提案交root校准，不先全部Source/评分/Book；保精确v1core位置，决定准入后即停止，不扩看所有appendix/实验。
+
+## A24 — 作者收敛交日核（2026-10-20T20:39:36+08:00）
+
+R26/27已真实通过19839 Ch27及20098 Ch80实际单段/完整两侧/本人注POST；R29/30已真实通过19385 Ch70两段/完整两侧/本人注POST，所有指定窄位已释放。三项本人注只同步发生事实并已实际读回；TokenDrift本人旧注也仅同步暂停前R21真实POST，不重Source/正文/POST。新增确定家族最终15=7I（19130/19804/19410/19470/19839/20098/19385）+3NC（19149/19338/RunningGuide）+4Only（19726/19330/19270/20177）+1中心争议（19170），不是按配额筛选。七I实际正文marker各唯一且在Reviewnotes前；两旧纠正19893/19269不另计I，旧19775/19811保持原归属/评分。
+
+R28已实际核六标题有限关闭：19399决定贡献核心EX通过，不评分/Book；四May19窗外项不展开本日，精确legacy去重后PopPy/Mosaic/RRFP保原正式候选有效层，只有EPIC未收并已移交May20作者/reader；19378/18768必要日期两保留按A22明确隔离，未说“无Source/零命中”。19748撤回R23有效，原始排除而非候选。14源收口与全部新增原件/必要字段定位已在原A18节内更新，不另建收据、不再新发现扫描。
+
+最终DAY前仅作行政修正：LatentBox候选行与对应§4标题改回exact-v1实际题名“LatentBox: An Efficient Latent-First Storage System for AI-Generated Images”，不再沿current-v2 metadata的“Storing AI-Generated Images at Scale via a Latent-First Design”；原177行不动，不重新评分或重审必要源。
+
+R31本轮非作者实际六节DAY已发生并通过，作者仅同步README完成状态、§1已验收、§5无普通待办/终态保留的非正面采用与定点重开边界、§6当前root独立结论及R31引用；前文“待日核”只为过程历史时态，以本段为当前结果。无新研究/Books/State或跨日写入，保存态有限FINAL由root另核。
+
+README六节已实际归并15新家族，保177原整行/日期评分/原小时窗；旧§4按baseline完整121850字符连续保留。原表ZCube至EgoBaby之间空行已去，192数据行连续，不更任何旧行内容。V3接口校验通过，215本地文件引用存在；限定working diff --check通过，本文未stage/commit/push。原冻结基线与当前全工作树的其他并发2025/Books/State变化保留，不将它们归因本轮或修改停点。当前状态仍进行中，只剩root最终六节/真实来源范围DAY，未借单篇结果或机器校验预授日级完成。

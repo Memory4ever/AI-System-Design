@@ -93,6 +93,10 @@ new_KV_blocks <= free_or_reclaimable_blocks
 
 Scheduler 先从 running/waiting requests 中选择本轮 work，再由 model runner 将这些 tokens 打包执行。Token budget 太小，GPU 可能吃不饱；太大，单轮时间和 TPOT 抖动会增加。
 
+当MoE的小token chunk分散激活许多expert、却难以摊薄各自权重读取时，prefill还可以沿连续layer groups跨轮推进：每轮只有一组混合prefill与decode，其余组只服务已有decode，新请求走完全部组后才取得完整prefill身份。[一项受限分组分支](https://arxiv.org/html/2510.08055v1#S3)改变的是计算前沿，不是普通chunked prefill会重算全部prompt，也不是decode跳过剩余层。须把group边界hidden、逐层KV、请求cursor、admission/preemption与graph shape共同保存；每轮都有decode工作，不保证长prefill组、attention或TP通信不造成TBT违约。层组可与较大token chunk组合，TTFT与TBT却仍可能背向变化，有限MoE负载上的容量不授dense模型、突发到达或所有并发SLO。分组/graph构建驻留、跨轮状态、全部排队/失败、真实权重和通信以及质量/SLO回归均费；expert计数器不等HBM或跨GPU流量，混合能耗分母也不认证每输出token净节能。状态、负载或尾时限失配时，保固定token chunks、保守admission与原调度，不由stall-free名称批准零干扰。
+
+<!-- source-family:SF-2025-ARXIV-2510-08055 -->
+
 ## 生成语义决定调度粒度：从 Token Iteration 到 Block Denoising
 
 Autoregressive Decode 的已提交状态每步只追加一个 token，因此 token iteration 是自然的 scheduling quantum。Diffusion LM 的状态不同：一个 block 会经历多轮 denoising，同一轮中的请求可能处于不同 refinement step，也可能在不同时间完成当前 block。若仍把整个 batch 当成同步 token step，较早收敛的 block 会等待 straggler，已完成的 capacity 也不能及时回收。
@@ -329,3 +333,5 @@ Orca 论文中的 iteration-level scheduling / selective batching 是机制来�
 
   **已吸收的语义增量：** 新增证据边界：Change the continuous-batching quantum from an autoregressive token iteration to a diffusion block-denoise cycle. Reclaim completed block slots immediately, align requests at heterogeneous denoising states in one dense layout, and admit work under a token/memory bounding box. 该 delta 已进入 `books/part-05-inference-system/46-continuous-batching.md#L88`，正文保留旧方案成立条件、约束变化、代价与下一重压力。
 <!-- daily-books-trace:SF-2026-ARXIV-2607-08930:end -->
+
+- `SF-2025-ARXIV-2510-08055` — Aquinas，Daily2025-10-11补Oct10；Godel R83 exact-v1 §3–5/完整T1–8及4.4首次必要完整消费，171511B原件。2+2+2=6，仅layer-group prefill frontier与每轮全层decode的调度差额深入；保普通chunk非全prompt重算、hidden/KV/graph身份、负载/TBT反侧、计数器非物理流量与能耗分母冲突及全费，不采零干扰/统一净能耗或普遍SLO。未核全像素/外部runtime代码/运行复现；整体PRE/真实SAVE/完整自读/solePOST只本日canonical后到真实层。

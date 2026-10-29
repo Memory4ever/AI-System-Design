@@ -2,11 +2,17 @@
 
 **规范：** V3
 **窗口：** 2026-06-07T09:00:00+08:00 ～ 2026-06-08T09:00:00+08:00
+**窗口说明：** 用户授权只补遗漏，保留旧候选日期、评分、小时窗及有效证据；旧材料只作去重，不搬移归属。
+**补充窗口：** 2026-06-07 ～ 2026-06-07
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-01T09:01:29+08:00
+**检查时间：** 2026-10-25T18:14:40+08:00
 
 ## 1. 结论
+
+2026-10-25 遗漏补查限定 Jun07 BJT 完整自然日：14个每日来源按本日实际入口处理，新增已核准候选0、需新增证据审阅0、新增Books0。Qwen有效EN/ZH各40条、混元中文All11、MiMo官方路由元数据与MiniMax Agent当前dated目录均已恢复，不继承旧空壳/旧配置的零项结论；Google Publications与Meta历史日级切片仍隔离，不能据此断言无遗漏。来源与排除依据见[本次记录](../_sources/daily-20260608/SUPPLEMENT_20261025.md)。本次已由root非作者复核达到安全终态，不继承下述旧日Gate或将保留项计作正面证据。
+
+以下旧结论保留其2026-10-01小时窗恢复语义，不是本次补查验收，也不把旧51保留项当Jun07新增候选：
 
 本轮没有经原始公开上界核准的当窗候选，不把旧48/45E/3Only或旧Complete沿用为当前验收。旧498宽列表不是逐项全文队列；48旧身份、两条从旧negative恢复的具体机制线索（Terastal/VECODI）和MiMo UltraSpeed合计 **51个具名DateHold**，均不列确定候选、不评分、不作本轮Evidence/Books正面通过。原有效必要证据、正文与相邻机制保留，本日无新增Books写入。
 
@@ -16,33 +22,39 @@ MiMo的Experts-only FP4QAT/SWA-DFlash/TileRT persistent execution，以及Terast
 
 ## 2. 来源覆盖
 
-只沿大模型机制、训练/后训练、推理资源、平台评价/安全、Agent状态执行与多模态主题；下表结果限具体原始入口与停止，不将目录字段、宽池或搜索无结果当覆盖无漏项。
+本次补Jun07 BJT的实际范围如下；日期邻项只用于窗口核查，不是全量题摘/全文审阅队列。API参数、有效返回字段、有限搜索与具体停止保存在[补查记录](../_sources/daily-20260608/SUPPLEMENT_20261025.md)。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 本日fresh官方[RSS](https://openai.com/news/rss.xml)1240按窗过滤1条EconomicExchange pubDate=Mon08Jun00:00GMT，官方core29–36实际读 | 已检查 | 该条前分母关闭经root独立核；August05cohort更新另事，不扩RFP/经济报告 |
-| SRC-ANTHROPIC | [Research](https://www.anthropic.com/research)首屏/原HTML173 publishedOn字段，nearestbefore chemistJun05 20:57Z、after n-daysJun08 13Z，本窗0记录 | 已检查 | 结果限原目录字段；窗外内容未当本日候选或已审正文 |
-| SRC-GOOGLE-AI | [DeepMind](https://deepmind.google/research/) curated latest309行September/August→May，仅月粒度；GoogleResearch GenerativeAI首12至June03→May28、NLP首12至June05→May19，MachineIntelligence首12至August21；观察分页103click错误，两个June07/08官方域query | 受阻 | 历史目标主题/DeepMind批次缺口；搜索返回CVPR活动日程非first-public，不扩55页/会议全部论文 |
-| SRC-META-AI | [publication page1](https://ai.meta.com/results/?content_types%5B0%5D=publication&page=1)本日成功，2026前缀June29→June05 SIRA→May27→May26后混旧库存，停止前缀 | 已检查 | 可见目标切片无June07/08，不声称全站無遗漏，不读旧2018全文 |
-| SRC-QWEN | 本日public page_config Research60最新2025Dec23、news17最新2025Apr28，无目标date；限定官方域query无可用原事件 | 受阻 | 2026本窗原目录缺口；旧77条配置不证明本窗零材料，不扩旧正文 |
-| SRC-DEEPSEEK | [研究与动态](https://www.deepseek.com/news/)39行本日researchJune24→Feb25、动态Sept10→April24，停止目标前 | 已检查 | 可见目录本窗无条目；动态查看更多局限，不作全仓commit审计 |
-| SRC-MOONSHOT | [PlatformBlog](https://platform.kimi.com/blog)27可见项最新2025Nov07；KimiCode release API per_page100实际81，原published_at本窗0、最近前Jun05 10:26:45Z/后Jun09 03:56:11Z | 已检查 | 不代表全部org/model/commit历史事件；Blog旧保留列表局限不转零遗漏 |
-| SRC-TENCENT-HUNYUAN | 本日fresh POST publicList page1/100/renderType0 code0,totalNum9,list9全部publicAt/display/published字段，actualpublicAtJuly06→April30夹目标 | 已检查 | 没有本窗publicAt仅限9条目录；display非publicAt，目录不能确认linked paper first-public |
-| SRC-ZAI | 官方Research前14日期目录June16→May20后停止 | 已检查 | 可见本窗日历无条目，不造论文公开时刻、不读旧全文 |
-| SRC-BYTEDANCE-SEED | [public_papers](https://seed.bytedance.com/en/public_papers)page1/13首20/242，June11→June04→June03→May29停止 | 已检查 | June04electron是science且目标前；目录不自动证明论文公开，不扩242或领域应用 |
-| SRC-BAIDU-ERNIE | [中文Blog](https://ernie.baidu.com/blog/zh/)page1/2最新May09→April30→旧年，已到目标前不翻旧page2 | 已检查 | 结果限可见官方Blog；不声明全部仓库release覆盖 |
-| SRC-XIAOMI-MIMO | Paper8 June29→March13、Blog15首页无clock；UltraSpeed实际原route101行/HTML42884bytes dateTime仅2026-06-08，所链TileRT也calendar，必要core已读 | 受阻 | 一条具名潜在co-design贡献DateHold，缺原clock/timezone；不采用1000TPS/quality，不扩HF/model附件 |
-| SRC-MINIMAX | 本日EN/中文BlogJune09→June01→May停止，AgentTechBlog15行Navigation壳 | 受阻 | 主可见目录无本窗条目；Agent历史dated目录缺口，不据壳称无事件 |
-| SRC-ARXIV | 旧ownerreceipt44实际38scheduleyes/6no但created口径失效，source-review0bytes；本日正确2026-06月2718无dayheaders、advanced公告仅年月、exact06521v1仅Jun02提交；shortday260608404、两精确目标公告query无结果；三旧negative原页定点核 | 受阻 | 48旧+2恢复机制身份first-public上界未证；404非空批次，不逐48重复时间接口、不扩498/整月2718/全部原文 |
+| SRC-OPENAI | 官方RSS1318 item完整按pubDate转BJT，Jun07无条目；邻后EconomicExchange为Jun08 08BJT | 已检查 | 不作互联网无遗漏保证；旧原时钟证据保留 |
+| SRC-ANTHROPIC | 官方Research JSON page2/24 posts，Jun08→Jun05→Jun03夹住补窗 | 已检查 | 可见目录无Jun07，不处理窗外正文 |
+| SRC-GOOGLE-AI | DeepMind Publications首30/265，Jun12→Jun04；Google Publications原页15/11637只有年份，尝试主题参数实际未生效；Google June Blog12条与两主题首页到目标前 | 受阻 | Blog无Jun07不替Publications日级覆盖；需历史dated论文目录/具名原件 |
+| SRC-META-AI | publication page1原HTML294181字符，Oct20→Oct14后混2019库存；有限历史参数未生效，目标官方域查询无原事件 | 受阻 | 未恢复Jun07日级切片，不据当前混库存页称零发布 |
+| SRC-QWEN | 正确retrieval参数EN/ZH各40，全部extra.date及HTML日期核无Jun07，extra邻前Jun01、后Jun16 | 已检查 | 恢复2026目录；不以有差异的extra/HTML字段改写旧归属 |
+| SRC-DEEPSEEK | 研究与动态39行，研究Jun24→Feb25、动态Sep10→Apr24停止 | 已检查 | 限可见原目录，不称全部commit/release穷尽 |
+| SRC-MOONSHOT | PlatformBlog26个h3文章最新2025Nov07；kimi-code release API85条首Oct25末May26，Jun05→Jun09夹窗 | 已检查 | 2026 Blog保留范围局限；未扫整个org/commit |
+| SRC-TENCENT-HUNYUAN | 实际中文All POST total11/list11，逐核publicAt/display/publishedAt，Jun07无条目 | 已检查 | 英语9不替中文All；展示日期不冒充linked paper first-public |
+| SRC-ZAI | Research首14日期项，Jun16→May20后到2025Dec09停止 | 已检查 | 结果限可见目录，无Jun07条目 |
+| SRC-BYTEDANCE-SEED | Publications page1/13，1–20/246，Jun11→Jun04→Jun03→May29停止 | 已检查 | 不扩246或科学领域；未把会议/收录日作为first-public |
+| SRC-BAIDU-ERNIE | 中文Blog page1/2最新May09→Apr30→旧年，到补窗前停止 | 已检查 | 未翻旧page2，限可见Blog范围 |
+| SRC-XIAOMI-MIMO | Paper8、Blog15、ModelRelease Sep22→Jun02；官方route metadata inferenceMay30/UltraSpeedJun08/long-horizonJun10/repetitionSep27 | 已检查 | 无具名Jun07信号；旧UltraSpeed小时窗clock hold不在本补查中冒充已解决 |
+| SRC-MINIMAX | EN/ZH Blog Jun09→Jun01→May25；Agent Research现有五标题/四日期组Oct20→Sep19全部可见 | 已检查 | 不再沿用Navigation壳；当前保留目录不证明更早历史零发布 |
+| SRC-ARXIV | 官方Fri/Sat ET无常规公告，Jun07 BJT无正常批次；DataCite有效client正控后registered本窗0；5条有限官方域日期/主题查询无具名正文，day-list Cache miss | 已检查 | 只限定正常公告与本次发现；不是全球首次公开零项，Cache miss不是空列表；未扩旧498/月2718 |
+
+2026-10-01旧小时窗的14来源入口、真实停止点与缺口仍完整保存在[原packet来源段](../_sources/daily-20260608/V3_RECOVERY_BLOCKERS.md#实际14源stop与限制)。旧结果不冒充本次补查，无需在当前覆盖表重复登记。
 
 ## 3. 候选与判断
 
-无已核准的当窗候选。以下空表不表示本窗没有研究，而是现有原始公开证据不足以将潜在贡献列为确定落窗家族；51保留项只在§5/唯一packet，不评分或计I/E。
+Jun07自然日补查没有新增已核准候选。未把目录日期邻项或CVPR活动日程变成贡献排除队列；没有新增评分，亦没有需深审但因费时/访问受阻而删除的候选。旧表与48家族原日期/评分保存在原packet，保持原口径。
+
+本次来源检查未确认新增落窗事件；空表不表示全球当天没有研究。旧小时窗的51保留项只在§5/唯一packet，不作为Jun07补窗的新增分母、不评分或计I/E。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 
 ## 4. 证据与知识整合
+
+本次补查没有新增采用命题，无需修改Books。实际恢复的是来源入口：Qwen2026 API、中文混元11条、MiMo官方日期元数据、MiniMax Agent dated目录；不把目录恢复等同于论文机制已证。root独立打开Google CVPR与Heat Resilience原页，前者日期为活动日程，后者核心是屋顶albedo/城市应用，未呈现本项目模型系统新机制，不以Evaluation/Data映射重引入暂缓范围；排除样本与查询界限在[本次记录](../_sources/daily-20260608/SUPPLEMENT_20261025.md#非候选判定与独立校准范围)。旧必要证据与采用边界如下原样保留，不授本次正面Gate。
 
 本日无正面采用链、无新增Books写入。旧报告§3/§4及15恢复笔记完整保在[唯一packet legacy区](../_sources/daily-20260608/V3_RECOVERY_BLOCKERS.md)，明确非此次日期、Evidence或45E/3Only验收；源identity/版本/命题未变的具体必要位置可在日期恢复后复用，但短模板与主题匹配不替代实际owner。原旧10 trace日期记录不据此继续改书或宣称Books Gate通过。
 
@@ -51,6 +63,10 @@ MiMo的Experts-only FP4QAT/SWA-DFlash/TileRT persistent execution，以及Terast
 MiMo与其所链TileRT官方核心有MoE-Experts-only FP4QAT、SWA-only DFlash/GPU-local mask sampling/block8、persistent execution线索；原HTML/伙伴页都只June08calendar，root独立核主源日期语义与核心认可隔离。这里不把未经必要性能对照、全部图表或实现核实的作者数字转为生产/quality保证，也不以潜在机制把成熟量化/speculation原则重复评分。51个日期未核项没有当前source/owner正面验收。
 
 ## 5. 缺口与下一步
+
+本次补Jun07扫描、筛选、日期恢复、整理与非作者独立复核普通待办0。当前两项终态保留为Google Publications和Meta Jun07历史日级目录：原页、有效性检查和有限目标查询已执行，仍未取得dated切片；两项不用于正面证据、Books或无遗漏断言，不授该部分Coverage通过，取得原始有日期feed/list、可读历史快照或具体具名正文后仅重开该来源/材料。Moonshot旧Blog与MiniMax Agent当前目录仍保可见范围局限，不承诺全机构历史穷尽。
+
+下述为旧小时窗遗留项；不将旧缺口请求重复计为本次新增候选，也不把合法联合日证规则误写为永远禁止registered组合：
 
 扫描、筛选、日期恢复、报告整理与独立复核普通待办为0；以下外部限制已穷尽当前有界原始入口，均为本窗终态保留项，不支持正面证据、Books或无遗漏断言。明确恢复条件后只重开受影响身份/来源，不制造公开上界。
 
@@ -61,6 +77,17 @@ MiMo与其所链TileRT官方核心有MoE-Experts-only FP4QAT、SWA-only DFlash/G
 窗外线索不属本窗、不阻塞本日：Anthropic n-days原publishedOn=2026-06-08T13:00Z（21BJT），chemist=June05 20:57Z；这里只核目录时钟，不重新处理窗外正文或沿邻日候选/处置。
 
 ## 6. 复核
+
+### 2026-10-25 Jun07自然日补查
+
+复核者：root（非报告作者；报告作者为supp_jun08）。
+结论：通过
+
+root实际读取本轮六节及补查原记录，核14源的入口、目标邻段、分页/停止、参数有效性与两个目录保留；对照已读同接口原始日期字段，未让空参数、英语目录或旧配置取得当前覆盖。root另以有效`client-id=arxiv.content`直接GET本窗registered区间，实际返回0条/0页/page1/无next；官方日程仅支持正常公告边界，不认证全部作者早稿。独立打开CVPR及Heat Resilience原页核活动日期/应用范围，两样本关闭通过，不扩大为全会议论文或所有排除全量验证。没有新增候选或实际采用命题，因此没有遗漏的评分、证据深审或Books写入；旧51身份/评分/小时窗与有效证据保持，不重签旧48材料或把它们变成新全文队列。
+
+此前新旧来源表重复、Moonshot文章数与Qwen日期口径已按实际记录修正。完成限本次安全终态，不表示两目录或旧51材料获得正面Gate。当前V3、本地7个目标引用、六节/围栏/行尾与限定diff检查按实际结果核验；机器不替代语义判断，未stage、commit或push。
+
+### 2026-10-01旧小时窗历史复核（不替代本次验收）
 
 复核者：root（非作者）。
 结论：通过

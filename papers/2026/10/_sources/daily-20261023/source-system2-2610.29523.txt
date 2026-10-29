@@ -1,0 +1,682 @@
+https://arxiv.org/html/2610.29523v1
+pplx-embed-v2-late Technical Report
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Training
+2.1 Contrastive Teacher Training
+Pair Training.
+Triplet Training.
+2.2 Representation Distillation
+Distillation to 9B.
+Distillation to 0.6B.
+3 Evaluation
+3.1 Text retrieval
+Domain-Specific Benchmark.
+Q2D-Web.
+ViDoRe-V3.
+3.2 Text-to-image retrieval
+ViDoRe-V3.
+MIRACL-Vision.
+PPLX-Q2I.
+3.3 Cross-model retrieval
+3.4 Agentic retrieval
+4 Conclusion
+References
+License: CC BY-NC-ND 4.0
+arXiv:2610.29523v1 [cs.IR] 21 Oct 2026
+\uselogo
+pplx-embed-v2-late Technical Report
+Markus Krimmel
+Affiliation: Perplexity AI
+Affiliation: Equal contributions
+Louis Milliken
+Affiliation: Perplexity AI
+Affiliation: Equal contributions
+Ekaterina Glazkova
+Affiliation: Perplexity AI
+Maximilian Schall
+Affiliation: Perplexity AI
+Antoine Chaffin
+Affiliation: Perplexity AI
+Sedigheh Eslami
+Affiliation: Perplexity AI
+Jonas Golde
+Affiliation: Perplexity AI
+Denis Bykov
+Affiliation: Perplexity AI
+Claire Beamer
+Affiliation: Perplexity AI
+Jeremy Yang
+Affiliation: Perplexity AI
+Bo Wang
+Affiliation: Perplexity AI
+Abstract
+In this report, we introduce pplx-embed-v2-late , a pair of 0.6B and 9B multilingual and multimodal late-interaction models.
+Both models achieve state-of-the-art results within their respective size classes across a range of text, image, and visual document retrieval benchmarks. On visual document retrieval tasks, pplx-embed-v2-late-0.6b is competitive with models several times larger than itself. The models are trained via representation distillation from an 18B teacher. Consequently, they share an embedding space that supports asymmetric deployment: documents can be indexed with the 9B model and queried with the low-latency 0.6B model.
+Both models are available at https://huggingface.co/collections/perplexity-ai/pplx-embed-v2 .
+1 Introduction
+Retrieval systems face a trade-off between efficiency and the depth of interaction between queries and documents. Dense embeddings interact via cheap inner products, which allow for efficient approximate nearest neighbor search. At the other extreme, cross-encoders process the query and document together, enabling richer interaction but requiring a separate forward pass for every ranked candidate. Late-interaction models ( Khattab and Zaharia, 2020 ) occupy the space between the two. Documents are indexed offline and represented as bags of embedding vectors. These document vectors interact with query vectors via the MaxSim rule, allowing richer interaction than dense embeddings ( Jayaram, 2026 ) .
+Late-interaction models have shown especially strong performance in out-of-domain settings ( Santhanam et al., 2022 ; Clavié, 2024 ) , long-context retrieval ( Warner et al., 2025 ; Chaffin, 2025a ; Takehi et al., 2025 ) , agentic search ( Chaffin, 2026 ; Mixedbread Team, 2026 ) , and visual document retrieval (VDR) ( Faysse et al., 2025 ; Günther et al., 2025 ) .
+In this report, we introduce pplx-embed-v2-late , a pair of 0.6B and 9B multimodal and multilingual late-interaction models. Both models are distilled at the representation level from a contrastively trained 18B teacher. We find that representation distillation outperforms contrastive training alone, especially at smaller model scales.
+Since the 0.6B and 9B models are trained to match the same teacher, the two encoders are interchangeable: a query embedded by the 0.6B model can be scored directly against an index built by the 9B model, and vice versa. This allows for hybrid deployment options where the latency-critical query path can be served by the fast 0.6B model while documents are indexed offline via the stronger 9B model, with the cost of indexing amortized over the lifetime of the index.
+Both models individually achieve state-of-the-art performance on a range of text, image, and VDR benchmarks, including ViDoRe-V3 ( Loison et al., 2026 ) .
+In concurrent work, Liu et al. (2026) study representation-level distillation in late-interaction models to produce small query encoders. Our work distills query and document token representations into compact multimodal late-interaction models that can serve as both query and document encoders.
+2 Training
+In the following, we describe the training procedure for the 18B teacher model and the 9B and 0.6B students.
+The teacher model is trained contrastively via an InfoNCE ( van den Oord et al., 2018 ) objective in two stages: first on query-document pairs, then on triplets of queries, relevant documents, and hard negatives.
+The students are trained via a pointwise distillation objective similar to that of LEAF ( Vujanic and Rückstieß, 2026 ) to match the embeddings of the teacher. We reuse the pair data from the contrastive training stage for distillation. All of our late-interaction models have 128-dimensional embeddings.
+2.1 Contrastive Teacher Training
+We use Qwen3.5 ( Qwen Team, 2026 ) as the backbone for our late-interaction models. Qwen3.5 uses a hybrid architecture consisting of gated full attention layers with a causal mask and recurrent Gated DeltaNet ( Yang et al., 2025 ) (GDN) layers. We disable the causal mask in the full attention layers, yielding a hybrid bidirectional-causal architecture. We initialize the 18B late-interaction model by pruning the last 20 layers from Qwen3.5-27B. This reduces the cost of distillation while maintaining a strong training signal.
+Pair Training.
+Our pair data is composed of 28 datasets which we further partition by language and domain to increase the difficulty of in-batch negatives. This yields 981 sub-datasets with 186M rows of query-document pairs in total, 88.3% of which are text-text pairs, 8.3% are text-image pairs and 3.4% are text-visual document pairs. Of the text-text pairs, 14M are synthesized by generating queries for specific passages in PDF documents from the FinePDFs ( Kydlíček et al., 2025 ) dataset.
+During training, we adjust the sampling weights of each dataset to reach a data mixture of 56.5% text-text pairs 30.9% text-image pairs, and 12.6% text-visual document pairs. Following previous work ( Günther et al., 2023 ) , we sample full batches from the sub-datasets. Since many sub-datasets are domain or language slices of the same source dataset, we introduce a novel quasi-random sampling strategy to ensure that sub-datasets are sampled both (i) in proportions close to the intended mixture and (ii) at regular intervals across training steps, avoiding both long gaps and temporal clustering. The sampling should satisfy these properties not only at the level of sub-datasets but also at the source-dataset level. We achieve this by constructing a cumulative sampling distribution in which all sub-datasets from the same source occupy contiguous intervals and mapping a randomly shifted golden-ratio Kronecker sequence through its inverse CDF.
+The sequence’s low-discrepancy coverage ( Kuipers and Niederreiter, 1974 , Chapter 2, Theorem 3.4) and structured return times ( Slater, 1950 ) apply at both levels, guaranteeing proportional, well-spaced sampling of individual slices and their parent sources. We illustrate this in Figure 1 .
+Figure 1: Comparison of our sampling method with independent random sampling according to the dataset weights.
+We train the model with LoRA ( Hu et al., 2022 ) on all attention and feed-forward projections to stabilize training and mitigate catastrophic forgetting. The adapters have rank 128.
+Our training objective is the InfoNCE loss with a contrastive batch size of 16,384 query-document pairs. Following ( Zhang et al., 2025 ) , we mask in-batch negatives based on a margin of 0.2 to the query-positive MaxSim score. During training, we truncate queries to 256 tokens and documents to 1,000 tokens, and resize images to at most 917,504 pixels while preserving their original aspect ratios.
+To enable the large contrastive batch size, we use gradient caching ( Gao et al., 2021 ) and implement the MaxSim operation as a custom Triton ( Tillet et al., 2019 ) kernel to avoid materializing token-level similarity matrices. This work was concurrent with the efficient MaxSim implementations by Pony et al. (2026) ; Sharma (2026) ; Lac and Wu (2026) .
+Triplet Training.
+After pair training, we merge the LoRA weights into the backbone and add a new adapter with rank 32. We freeze the vision tower and train only on text triplets. We use at most four hard negatives per query and contrast each positive against its corresponding hard negatives and all other in-batch documents. Our triplet data is composed of public triplet datasets, mined hard negatives, and synthetic triplets created by modifying key information in highly templated documents.
+2.2 Representation Distillation
+To distill our 18B teacher model down to 0.6B and 9B student models, we train the students to reproduce the teacher’s token-level representations by minimizing the Euclidean distance between corresponding ℓ 2 \ell_{2} -normalized embeddings. We average these distances over unmasked query and document positions separately, then combine the two averages with equal weight. The teacher remains frozen, so gradients update only the student. We let 𝒬 \mathcal{Q} and 𝒟 \mathcal{D} denote the unmasked query-token and document-token positions across the batch and indicate student and teacher embeddings by superscripts S S and T T . With 𝐪 i ​ t \mathbf{q}_{it} and 𝐝 i ​ t \mathbf{d}_{it} denoting query and document embeddings at token position t t of example i i within the batch, we formulate the loss as:
+ℒ = 1 | 𝒬 | ​ ∑ ( i , t ) ∈ 𝒬 ‖ 𝐪 i ​ t S − 𝐪 i ​ t T ‖ 2 + 1 | 𝒟 | ​ ∑ ( i , t ) ∈ 𝒟 ‖ 𝐝 i ​ t S − 𝐝 i ​ t T ‖ 2 . \mathcal{L}=\frac{1}{|\mathcal{Q}|}\sum_{(i,t)\in\mathcal{Q}}\left\|\mathbf{q}_{it}^{\mathrm{S}}-\mathbf{q}_{it}^{\mathrm{T}}\right\|_{2}+\frac{1}{|\mathcal{D}|}\sum_{(i,t)\in\mathcal{D}}\left\|\mathbf{d}_{it}^{\mathrm{S}}-\mathbf{d}_{it}^{\mathrm{T}}\right\|_{2}.
+Since this loss is not contrastive, we can mix sub-datasets when sampling a batch to reduce gradient noise without weakening our training signal.
+Distillation to 9B.
+We use Qwen3.5-9B with bidirectional full attention as the backbone for our 9B late-interaction model. Unlike during contrastive training of the 18B model, LoRA does not appear to provide sufficient capacity to achieve satisfactory downstream performance with representation distillation. We hypothesize that this is caused by the constraints imposed on the embedding space by the distillation objective.
+To increase capacity while limiting catastrophic forgetting, we fully fine-tune the last eight layers of the text tower while applying LoRA to the remaining projections.
+Distillation to 0.6B.
+The 0.6B late-interaction model is initialized from a pruned version of Qwen3.5-0.8B with bidirectional full attention layers.
+Within each block of Qwen3.5-0.8B, we prune two of the three GDN layers, producing an architecture that alternates between gated full attention and GDN layers.
+The resulting model has 594M parameters in total, of which 100M are used for image encoding and 254M are in the token-embedding table. Hence, only about 240M parameters are active for text encoding and 340M for image encoding. This small size allows deployment on edge devices.
+We find that, especially on VDR tasks, full fine-tuning of the 0.6B backbone outperforms parameter-efficient approaches. Hence, in contrast to the 18B and 9B models, we fine-tune all parameters.
+3 Evaluation
+We evaluate on various text-only and text-to-image benchmarks. We present results on single-hop and agentic retrieval tasks.
+We excluded any training data that overlaps with evaluated tasks.
+3.1 Text retrieval
+For text retrieval, we evaluate a collection of 72 public tasks across six domains: finance (18 tasks), legal (20), health (8), conversation (5), tech (4), and multilingual (17), which we bundle into an internal domain-specific benchmark . Additionally, we evaluate the text version of ViDoRe-V3 ( Loison et al., 2026 ) and the Q2D-Web ( Schall et al., 2026 ) benchmark.
+Text baselines include Nemotron 3 Embed 8B ( NVIDIA, 2026 ) , Qwen3 Embedding ( Zhang et al., 2025 ) , Gemini Embedding 2 ( Shanbhogue et al., 2026 ) , and Voyage 4 ( Voyage AI, 2026 ) .
+Domain-Specific Benchmark.
+The domain-specific collection is built from public datasets such as FinQA ( Chen et al., 2021 ) , AILACasedocs ( Bhattacharya et al., 2020 ) and XLSum ( Hasan et al., 2021 ) . We do not disclose the full task list to reduce the risk of future models being tuned to it; as a result, these scores cannot be independently reproduced.
+pplx-embed-v2-late-9b averages 81.3% nDCG@10, 1.6 pp above the next best model, and scores highest on every domain except health, where nemotron-3-embed-8b and voyage-4-large score higher. pplx-embed-v2-late-0.6b averages 78.0% and scores highest among models with fewer than 1B parameters on every domain (Table 1 ).
+Table 1: Domain-specific text retrieval performance (nDCG@10, %). The average weights the six domains equally; parentheses show the number of tasks in each domain. Dim. is the embedding dimension (per token for multi-vector models). Best score per column in bold.
+Model
+Dim.
+Vectors
+Avg.
+Finance (18)
+Legal (20)
+Health (8)
+Conv. (5)
+Tech (4)
+Multiling. (17)
+>1B / size unreported
+pplx-embed-v2-late-9b
+128
+multi
+81.3
+82.5
+81.6
+82.5
+81.5
+70.4
+89.5
+nemotron-3-embed-8b
+4096
+single
+79.7
+80.8
+81.1
+83.9
+77.4
+67.5
+87.9
+gemini-embedding-2
+3072
+single
+78.3
+77.0
+78.5
+82.4
+76.2
+67.7
+88.1
+voyage-4-large
+1024
+single
+79.0
+81.5
+80.0
+83.0
+76.7
+65.1
+87.9
+qwen3-embedding-8b
+4096
+single
+74.8
+72.3
+76.8
+80.2
+72.0
+62.7
+84.7
+<1B
+pplx-embed-v2-late-0.6b
+128
+multi
+78.0
+79.9
+78.2
+78.0
+79.7
+66.6
+85.8
+voyage-4-nano
+2048
+single
+74.6
+77.3
+75.8
+76.0
+74.7
+59.4
+84.3
+qwen3-embedding-0.6b
+1024
+single
+68.4
+67.9
+70.0
+72.4
+68.4
+53.9
+77.8
+Q2D-Web.
+The Q2D-Web benchmark contains about 70,000 agent-reformulated queries from production search traffic over a corpus of 190M web documents. Because it targets first-stage retrieval, we report Recall@1000. Relevance is judged in three ways: documents cited by the agent (Citation), documents ranked highly by our production retrieval system (Web), and the union of both extended with LLM judgments (Combined). We focus on Combined, which reduces bias towards models that rank similarly to the production system. On Combined, the 9B and 0.6B models score 74.8% and 73.6%, compared with 69.3% for the strongest baseline (Table 2 ).
+Table 2: Text retrieval on the public subset of ViDoRe-V3 after converting page images to Markdown with OCR (average nDCG@10, %) and on Q2D-Web (Recall@1000, %) under three relevance judgment sets. Dim. is the embedding dimension (per token for multi-vector models). topk-embed-v1 ViDoRe-V3 scores are taken from the model cards ( TopK, 2026a ; TopK, 2026b ) at 128 dimensions; on Q2D-Web, these models were evaluated with an output dimension of 128. – denotes not evaluated. Best score per column in bold.
+ViDoRe-V3 (text)
+Q2D-Web
+Model
+Dim.
+Vectors
+Avg.
+Citation
+Web
+Combined
+>1B / size unreported
+pplx-embed-v2-late-9b
+128
+multi
+64.7
+88.2
+68.8
+74.8
+nemotron-3-embed-8b
+4096
+single
+60.6
+83.1
+61.7
+69.3
+topk-embed-v1-2b
+128
+multi
+59.2
+79.2
+57.7
+65.3
+gemini-embedding-2
+3072
+single
+58.9
+–
+–
+–
+voyage-4-large
+1024
+single
+58.9
+–
+–
+–
+qwen3-embedding-8b
+4096
+single
+51.5
+79.3
+58.3
+65.3
+<1B
+pplx-embed-v2-late-0.6b
+128
+multi
+61.2
+86.7
+67.3
+73.6
+topk-embed-v1-0.8b
+128
+multi
+56.9
+77.4
+56.2
+63.6
+voyage-4-nano
+2048
+single
+53.3
+69.5
+50.1
+57.4
+qwen3-embedding-0.6b
+1024
+single
+44.2
+71.2
+51.8
+58.7
+ViDoRe-V3.
+On the Markdown version of ViDoRe-V3 (Table 2 ), both pplx-embed-v2-late models outperform all evaluated baselines, with the 9B model more than 4 pp above the best competitor.
+3.2 Text-to-image retrieval
+ViDoRe-V3.
+Our primary VDR benchmark is the image version of ViDoRe-V3. We compare against dense (qwen3-vl-embed-8b ( Li et al., 2026 ) , gemini-embedding-2) and late-interaction (topk-embed-v1 0.8B and 2B) vision-language models, and against two vision-only late-interaction model families trained specifically for image retrieval (EVIE ( Wang et al., 2026 ) and Nemotron ColEmbed V2 ( de Souza P. Moreira et al., 2026 ) ).
+Among vision-language models, pplx-embed-v2-late-9b and pplx-embed-v2-late-0.6b have the two highest averages. pplx-embed-v2-late-9b scores 65.2%, below EVIE-8B (66.4%) and EVIE-4.5B (65.9%), which have output dimensions of 4,096 and 2,048 per token, respectively, compared to pplx-embed-v2-late ’s output dimension of 128. pplx-embed-v2-late-0.6b scores 62.3%, 0.9 pp below topk-embed-v1-2b at its full width of 2,048 dimensions per token and 0.4 pp above it at 128 dimensions, 3.3 pp higher than topk-embed-v1-0.8b at 128 dimensions.
+Table 3: Text-to-image retrieval (nDCG@10, %) on the public subset of ViDoRe-V3 (average), MIRACL-Vision and PPLX-Q2I. Vision-only models are trained specifically for image retrieval and are listed separately from vision-language models. Dim. is the embedding dimension (per token for multi-vector models). Nemotron ColEmbed and EVIE models were not evaluated on PPLX-Q2I because their high output dimensionality makes indexing impractical; – denotes not evaluated. Best score per column in bold.
+Model
+Dim.
+Vectors
+ViDoRe-V3 (image)
+MIRACL-Vision
+PPLX-Q2I
+Vision + language, >1B / size unreported
+pplx-embed-v2-late-9b
+128
+multi
+65.2
+75.7
+65.0
+topk-embed-v1-2b
+128
+multi
+61.9
+60.2
+51.5
+qwen3-vl-embedding-8b
+4096
+single
+58.3
+68.5
+50.6
+gemini-embedding-2
+3072
+single
+46.0
+77.5
+67.0
+Vision + language, <1B
+pplx-embed-v2-late-0.6b
+128
+multi
+62.3
+67.5
+60.4
+topk-embed-v1-0.8b
+128
+multi
+59.0
+56.5
+42.3
+Vision-only
+nemotron-colembed-v2-8b
+4096
+multi
+63.5
+68.6
+–
+nemotron-colembed-v2-4b
+2560
+multi
+61.4
+62.7
+–
+evie-8b
+4096
+multi
+66.4
+–
+–
+evie-4.5b
+2048
+multi
+65.9
+–
+–
+MIRACL-Vision.
+The MIRACL-Vision benchmark ( Osmulski et al., 2025 ) consists of a corpus of Wikipedia article screenshots. On this task, the vision-only Nemotron ColEmbed V2 4B and 8B models score 62.7% and 68.6%, respectively; pplx-embed-v2-late-0.6b scores 67.5% and pplx-embed-v2-late-9b scores 75.7%, 1.8 percentage points below the highest-scoring model, gemini-embedding-2 (Table 3 ).
+PPLX-Q2I.
+PPLX-Q2I is built from production image-search logs, with 10,000 queries and 100,000 images (both visual documents and natural images); a query’s relevant images are those served for it in production. The 0.6B and 9B pplx-embed-v2-late models score 60.4% and 65.0%, compared with 67.0% for gemini-embedding-2 and 50.6% for qwen3-vl-embedding-8b (Table 3 ).
+Figure 2: Cross-model retrieval nDCG@10 for three query/document model pairings. Results across six text domains.
+3.3 Cross-model retrieval
+Because the two models share an embedding space, a corpus can be indexed with the 9B model and queried with the 0.6B model, keeping query encoding cost the same as in the 0.6B → \rightarrow 0.6B setting. We illustrate this in Figure 2 on the domain-specific benchmarks. The 0.6B → \rightarrow 9B setting scores higher than 0.6B → \rightarrow 0.6B on every domain, by 1.6 pp on the domain average. The 9B → \rightarrow 9B setting scores highest at 81.3%. The hybrid setting thus improves retrieval performance without increasing query encoding cost.
+3.4 Agentic retrieval
+In BrowseComp+ ( Chen et al., 2026 ) , an LLM agent (GPT-OSS-120B ( OpenAI, 2025 ) , high effort) answers complex queries by searching a corpus with the embedding model under test, and a second LLM judges the answers. Both pplx-embed-v2-late models achieve higher accuracy with fewer searches than all evaluated baselines (Figure 3 ). The 9B model reaches 64.0% accuracy, 4.9 pp above Reason-ModernColBERT ( Chaffin, 2025b ) , the only other late-interaction model evaluated, and 8.7 pp above the best dense model, voyage-4-large.
+Figure 3: BrowseComp+ accuracy and recall versus the average number of searches (GPT-OSS-120B agent, high effort).
+4 Conclusion
+We presented pplx-embed-v2-late , a pair of 0.6B and 9B multimodal, multilingual late-interaction models distilled at the representation level from a contrastively trained 18B teacher.
+On our domain-specific text benchmarks, Q2D-Web and the Markdown version of ViDoRe-V3, both models outperform all evaluated baselines compared, to other models of their size. On ViDoRe-V3 image retrieval, they have the highest averages among vision-language models, while vision-only EVIE models score higher.
+Because both students are trained to match the same teacher, they share an embedding space: indexing with the 9B model and querying with the 0.6B model improves over using the 0.6B model alone, at the same query encoding cost.
+In agentic retrieval, both models reach higher BrowseComp+ accuracy with fewer searches than all evaluated baselines.
+References
+Bhattacharya et al. (2020)
+P. Bhattacharya, K. Ghosh, S. Ghosh, A. Pal, P. Mehta, A. Bhattacharya, and P. Majumder
+AILA 2019 precedent & statute retrieval task .
+Note: Zenodo dataset
+External Links: Document
+Cited by: §3.1 .
+Chaffin (2025a)
+A. Chaffin
+GTE-ModernColBERT .
+External Links: Link
+Cited by: §1 .
+Chaffin (2025b)
+A. Chaffin
+Reason-ModernColBERT .
+External Links: Link
+Cited by: §3.4 .
+Chaffin (2026)
+A. Chaffin
+Agent-ModernColBERT .
+External Links: Link
+Cited by: §1 .
+Chen et al. (2021)
+Z. Chen, W. Chen, C. Smiley, S. Shah, I. Borova, D. Langdon, R. Moussa, M. Beane, T. Huang, B. Routledge, and W. Y. Wang
+FinQA: a dataset of numerical reasoning over financial data .
+In Proceedings of the 2021 Conference on Empirical Methods in Natural Language
+Processing ,
+pp. 3697–3711 .
+External Links: Document
+Cited by: §3.1 .
+Chen et al. (2026)
+Z. Chen, X. Ma, S. Zhuang, P. Nie, K. Zou, S. Sharifymoghaddam, A. Liu, J. Green, K. Patel, R. Meng, M. Su, Y. Li, H. Hong, X. Shi, X. Liu, H. Oyarhoseini, N. Thakur, C. Zhang, L. Gao, W. Chen, and J. Lin
+BrowseComp-Plus: a fair and disentangled evaluation benchmark for deep search agents .
+In Proceedings of the 64th Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers) ,
+pp. 22349–22370 .
+External Links: Document
+Cited by: §3.4 .
+Clavié (2024)
+B. Clavié
+JaColBERTv2.5: optimising multi-vector retrievers to create state-of-the-art japanese retrievers with constrained resources .
+arXiv preprint arXiv:2407.20750 .
+Cited by: §1 .
+de Souza P. Moreira et al. (2026)
+G. de Souza P. Moreira, R. Ak, M. Xu, O. Holworthy, B. Schifferer, Z. Yu, Y. Babakhin, R. Osmulski, J. Cai, R. Chesler, B. Liu, and E. Oldridge
+Nemotron ColEmbed V2: top-performing late interaction embedding models for visual document retrieval .
+In Proceedings of the 1st Late Interaction Workshop (LIR) @ ECIR 2026 ,
+Cited by: §3.2 .
+Faysse et al. (2025)
+M. Faysse, H. Sibille, T. Wu, B. Omrani, G. Viaud, C. Hudelot, and P. Colombo
+ColPali: efficient document retrieval with vision language models .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §1 .
+Gao et al. (2021)
+L. Gao, Y. Zhang, J. Han, and J. Callan
+Scaling deep contrastive learning batch size under memory limited setup .
+In Proceedings of the 6th Workshop on Representation Learning for NLP ,
+pp. 316–321 .
+External Links: Document
+Cited by: §2.1 .
+Günther et al. (2023)
+M. Günther, L. Milliken, J. Geuter, G. Mastrapas, B. Wang, and H. Xiao
+Jina embeddings: a novel set of high-performance sentence embedding models .
+In Proceedings of the 3rd Workshop for Natural Language Processing Open Source
+Software (NLP-OSS 2023) ,
+pp. 8–18 .
+External Links: Document
+Cited by: §2.1 .
+Günther et al. (2025)
+M. Günther, S. Sturua, M. K. Akram, I. Mohr, A. Ungureanu, B. Wang, S. Eslami, S. Martens, M. Werk, N. Wang, and H. Xiao
+Jina-embeddings-v4: universal embeddings for multimodal multilingual retrieval .
+External Links: 2506.18902 ,
+Link
+Cited by: §1 .
+Hasan et al. (2021)
+T. Hasan, A. Bhattacharjee, Md. S. Islam, K. Mubasshir, Y. Li, Y. Kang, M. S. Rahman, and R. Shahriyar
+XL-Sum: large-scale multilingual abstractive summarization for 44 languages .
+In Findings of the Association for Computational Linguistics: ACL-IJCNLP
+2021 ,
+pp. 4693–4703 .
+External Links: Document
+Cited by: §3.1 .
+Hu et al. (2022)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen
+LoRA: low-rank adaptation of large language models .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §2.1 .
+Jayaram (2026)
+R. Jayaram
+Multi-vector embeddings are provably more expressive than single vector embeddings .
+arXiv preprint arXiv:2606.23475 .
+Cited by: §1 .
+Khattab and Zaharia (2020)
+O. Khattab and M. Zaharia
+ColBERT: efficient and effective passage search via contextualized late interaction over BERT .
+In Proceedings of the 43rd International ACM SIGIR Conference on Research and
+Development in Information Retrieval ,
+SIGIR ’20 , pp. 39–48 .
+External Links: Document
+Cited by: §1 .
+Kuipers and Niederreiter (1974)
+L. Kuipers and H. Niederreiter
+Uniform distribution of sequences .
+John Wiley & Sons .
+Cited by: §2.1 .
+Kydlíček et al. (2025)
+H. Kydlíček, G. Penedo, and L. von Werra
+FinePDFs: liberating 3t of the finest tokens from PDFs .
+Hugging Face .
+Note: https://huggingface.co/spaces/HuggingFaceFW/FinePDFsBlog Blog post
+Cited by: §2.1 .
+Lac and Wu (2026)
+A. Lac and T. Wu
+late-interaction-kernels: fused Triton kernels for late-interaction scoring .
+Note: Software
+External Links: Link
+Cited by: §2.1 .
+Li et al. (2026)
+M. Li, Y. Zhang, D. Long, K. Chen, S. Song, S. Bai, Z. Yang, P. Xie, A. Yang, D. Liu, J. Zhou, and J. Lin
+Qwen3-VL-Embedding and Qwen3-VL-Reranker: a unified framework for state-of-the-art multimodal retrieval and ranking .
+arXiv preprint arXiv:2601.04720 .
+Cited by: §3.2 .
+Liu et al. (2026)
+Z. Liu, Z. Wang, Y. Zhang, and Y. Xiao
+ColNanoVDR: document-free query distillation for multi-vector visual document retrieval via optimal transport .
+arXiv preprint arXiv:2609.34899 .
+Cited by: §1 .
+Loison et al. (2026)
+A. Loison, Q. Macé, A. Edy, V. Xing, T. Balough, G. d. S. P. Moreira, B. Liu, M. Faysse, C. Hudelot, and G. Viaud
+ViDoRe V3: a comprehensive evaluation of retrieval augmented generation in complex real-world scenarios .
+In Proceedings of the 64th Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers) ,
+pp. 16570–16600 .
+External Links: Document
+Cited by: §1 ,
+§3.1 .
+Mixedbread Team (2026)
+Mixedbread Team
+Beyond the limit: introduce Mixedbread Wholembed v3 .
+Note: Mixedbread Blog
+External Links: Link
+Cited by: §1 .
+NVIDIA (2026)
+NVIDIA
+Nemotron-3-Embed-8B-BF16 .
+Note: Model card
+External Links: Link
+Cited by: §3.1 .
+OpenAI (2025)
+OpenAI
+gpt-oss-120b & gpt-oss-20b model card .
+arXiv preprint arXiv:2508.10925 .
+Cited by: §3.4 .
+Osmulski et al. (2025)
+R. Osmulski, G. de Souza P. Moreira, R. Ak, M. Xu, B. Schifferer, and E. Oldridge
+MIRACL-VISION: a large, multilingual, visual document retrieval benchmark .
+arXiv preprint arXiv:2505.11651 .
+Cited by: §3.2 .
+Pony et al. (2026)
+R. Pony, D. Ezer, A. Raz Goldfarb, I. Friedman, O. Naparstek, and U. Barzelay
+Flash-MaxSim: IO-aware fused kernels for late-interaction retrieval .
+In Proceedings of the 2026 Conference on Empirical Methods in Natural Language
+Processing: Industry Track ,
+Note: To appear
+Cited by: §2.1 .
+Qwen Team (2026)
+Qwen Team
+Qwen3.5: towards native multimodal agents .
+External Links: Link
+Cited by: §2.1 .
+Santhanam et al. (2022)
+K. Santhanam, O. Khattab, J. Saad-Falcon, C. Potts, and M. Zaharia
+ColBERTv2: effective and efficient retrieval via lightweight late interaction .
+In Proceedings of the Conference of the North American Chapter of the Association for Computational Linguistics (NAACL) ,
+pp. 3715–3734 .
+External Links: Document
+Cited by: §1 .
+Schall et al. (2026)
+M. Schall, S. Eslami, M. Krimmel, A. Chaffin, L. Milliken, B. Wang, and D. Bykov
+Q2D-Web: a large-scale benchmark for retrieval in agentic RAG systems .
+arXiv preprint arXiv:2609.08887 .
+Cited by: §3.1 .
+Shanbhogue et al. (2026)
+M. Shanbhogue, Z. Li, S. Zhang, G. H. Ábrego, S. Huang, A. Jain, D. Salz, S. Goenka, C. Hegde, J. Ma, F. Chen, J. Wu, T. Dabral, B. Samari, K. Poulet, D. Cer, K. Chen, P. Suganathan, H. Hui, J. Andonov, P. Schlattner, J. Han, I. Naim, W. Lowe, V. Pchelin, A. Yang, Y. Chen, Z. Ding, G. Zhang, G. Heigold, Y. Chen, A. Reveillon, B. Mccloskey, W. Zhou, D. Kim, R. Meng, E. Wang, J. Zheng, H. Fede, Z. Yang, K. Mosley, B. Potetz, S. Dua, H. S. Vera, S. Gao, H. Zhang, A. Hess, H. Ying, A. Montes, K. Gill, M. Choi, S. Russo, A. Hauth, J. Lee, M. Boratko, M. Barnes, V. Rao, C. Musat, C. Allauzen, E. Variani, S. Kumar, T. Bagby, J. Jiao, Y. Gu, T. Li, A. Agrawal, R. Santana, D. Nath, S. Karukas, S. Han, L. Loher, A. Twu, N. Vyas, S. Bhai, F. P. Gomez, W. Zhang, C. Liu, J. Yang, S. Qiu, S. Zhang, S. Kulkarni, S. Rothe, S. Nakamoto, R. Hoffmann, Z. Gleicher, Y. Sung, Q. Yin, T. Duerig, and M. Seyedhosseini
+Gemini Embedding 2: a native multimodal embedding model from Gemini .
+arXiv preprint arXiv:2605.27295 .
+Cited by: §3.1 .
+Sharma (2026)
+A. Sharma
+TileMaxSim: IO-aware GPU MaxSim scoring with dimension tiling and fused product quantization .
+arXiv preprint arXiv:2606.26439 .
+Cited by: §2.1 .
+Slater (1950)
+N. B. Slater
+The distribution of the integers N N for which { θ ​ N } < ϕ \{\theta N\}<\phi .
+Mathematical Proceedings of the Cambridge Philosophical Society 46 ( 4 ), pp. 525–534 .
+External Links: Document
+Cited by: §2.1 .
+Takehi et al. (2025)
+R. Takehi, B. Clavié, S. Lee, and A. Shakir
+Fantastic (small) retrievers and how to train them: mxbai-edge-colbert-v0 tech report .
+arXiv preprint arXiv:2510.14880 .
+Cited by: §1 .
+Tillet et al. (2019)
+P. Tillet, H. T. Kung, and D. Cox
+Triton: an intermediate language and compiler for tiled neural network computations .
+In Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and
+Programming Languages ,
+pp. 10–19 .
+External Links: Document
+Cited by: §2.1 .
+TopK (2026a)
+TopK
+topk-embed-v1-small .
+Note: Model card
+External Links: Link
+Cited by: Table 2 .
+TopK (2026b)
+TopK
+topk-embed-v1-xsmall .
+Note: Model card
+External Links: Link
+Cited by: Table 2 .
+van den Oord et al. (2018)
+A. van den Oord, Y. Li, and O. Vinyals
+Representation learning with contrastive predictive coding .
+arXiv preprint arXiv:1807.03748 .
+Cited by: §2 .
+Voyage AI (2026)
+Voyage AI
+The Voyage 4 model family: shared embedding space with MoE architecture .
+Note: Voyage AI Blog
+External Links: Link
+Cited by: §3.1 .
+Vujanic and Rückstieß (2026)
+R. Vujanic and T. Rückstieß
+LEAF: knowledge distillation of text embedding models with teacher-aligned representations .
+In Proceedings of the 64th Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers) ,
+pp. 43362–43383 .
+External Links: Document
+Cited by: §2 .
+Wang et al. (2026)
+Z. Wang, W. Wen, Q. Ji, Q. Zhang, R. Qiao, and X. Sun
+EVIE: evidence-vector-informed embeddings for visual document retrieval .
+arXiv preprint arXiv:2610.11553 .
+Cited by: §3.2 .
+Warner et al. (2025)
+B. Warner, A. Chaffin, B. Clavié, O. Weller, O. Hallström, S. Taghadouini, A. Gallagher, R. Biswas, F. Ladhak, T. Aarsen, N. Cooper, G. T. Adams, J. Howard, and I. Poli
+Smarter, better, faster, longer: a modern bidirectional encoder for fast, memory efficient, and long context finetuning and inference .
+In Proceedings of the 63rd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers) ,
+pp. 2526–2547 .
+External Links: Document
+Cited by: §1 .
+Yang et al. (2025)
+S. Yang, J. Kautz, and A. Hatamizadeh
+Gated delta networks: improving Mamba2 with delta rule .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §2.1 .
+Zhang et al. (2025)
+Y. Zhang, M. Li, D. Long, X. Zhang, H. Lin, B. Yang, P. Xie, A. Yang, D. Liu, J. Lin, et al.
+Qwen3 Embedding: advancing text embedding and reranking through foundation models .
+arXiv preprint arXiv:2506.05176 .
+Cited by: §2.1 ,
+§3.1 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

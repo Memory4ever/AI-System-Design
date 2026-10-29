@@ -1,0 +1,512 @@
+https://arxiv.org/html/2610.28988v1
+Attention-based Classification for Indirect Prompt Injection
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Works
+2.1 Prompt Injection Attacks
+2.2 Defenses Against Prompt Injection
+3 Preliminary: Attention Tracker
+3.1 Training: Head Selection
+3.2 Inference: Aggregate Focus Score
+4 Improving Attention Tracker for Agentic Use Cases
+4.1 Training: Fisher’s Linear Discriminant
+4.2 Inference: Classifier Score
+4.3 Comparing AttnDA and Attention Tracker
+5 Experimental Settings
+6 Results and Findings
+6.1 RQ1: Examining Focus Score in the Agentic Setting
+6.2 RQ2: Generalization from Synthetic Data
+6.3 RQ3: In-Domain Performance
+6.4 RQ4: Cross-Domain Performance
+6.5 Comparison to a Feature-level Classifier
+6.6 Covariance Structure Ablation of AttnDA
+6.7 Per-Head Weight Similarity
+6.8 Quantifying Variability and Uncertainty
+7 Discussion
+7.1 Dataset Agnosticism Revisited
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.28988v1 [cs.LG] 20 Oct 2026
+Attention-based Classification for Indirect Prompt Injection
+Amelia Kawasaki
+Email: akawasaki@hiddenlayer.com
+Stefan Lee
+Email: leestef@oregonstate.edu
+Affiliation: Corvallis, Oregon, USA
+Abstract
+Indirect prompt injection (IPI) attacks, in which adversarial instructions are embedded in external data processed by a language model, pose a significant threat to the integrity of deployed LLM agents. Attention Tracker ( hung2024attention ) is a recently proposed white-box detection method that identifies prompt injection attacks by monitoring how a model’s attention is distributed between user task tokens and data tokens, claiming dataset-agnostic detection via a scalar focus score threshold. In this paper, we provide the first evaluation of Attention Tracker in a realistic agentic IPI setting using the AgentDojo benchmark, finding that the dataset agnosticism claim does not hold. We find that in agentic environments, long structured tool outputs subvert the fundamental assumptions Attention Tracker makes about attention that the method depends on and produces near-chance detection on AgentDojo across most model families. We propose AttnDA, an extension replacing the scalar threshold with a Fisher Linear Discriminant Analysis classifier over the per-head focus score vector, and evaluate both methods in a cross-dataset setting spanning four benchmarks. AttnDA improves detection performance across agentic and tool-integrated benchmarks, though transfer to AgentDojo remains challenging regardless of classifier choice. A covariance ablation further shows that removing inter-head correlation structure substantially contributes to performance, with complex covariance assumptions causing significant degradation on cross-domain data. These results indicate that the attentional distraction signal underlying focus-score-based detection does not transfer reliably to agentic environments, and that learned linear classifiers over head-level attention features offer improved detection performance, provided training data from the target deployment domain is available.
+† † volume: 349 † † year: 2026 † † workshop: Conference on Applied Machine Learning for Information Security † † editor: Edward Raff and Ethan M. Rudd
+keywords
+indirect prompt injection, attention analysis, LLM agents, white-box detection
+AttnDA: Attention-based Classification for Indirect Prompt Injection
+1 Introduction
+Large Language Models (LLMs) have rapidly become capable and widely deployed systems, enabling a broad range of applications from automated writing assistants to complex question answering pipelines. As these models grow in capability, they are increasingly deployed not as static responders but as autonomous agents: systems that iteratively plan, call external tools, retrieve data from the environment, and take actions on behalf of users. This shift toward agentic deployment fundamentally changes the security landscape for LLMs.
+In agentic settings, a model does not only process instructions from a trusted user. It also ingests content from the external environment, such as emails, documents, web pages, and database records, as part of completing its task. An adversary who controls any piece of content the agent reads can embed malicious instructions within it, delivering an indirect prompt injection (IPI) attack that may be entirely invisible to the user ( greshake2023not ) . Unlike direct prompt injection, where a malicious user submits adversarial instructions themselves, IPI attacks are delivered through the environment, making them particularly difficult to defend against in deployed systems.
+The threat is not merely theoretical. debenedetti2024agentdojo demonstrate through the AgentDojo benchmark that current LLM agents are highly susceptible to IPI attacks embedded in realistic environment data across a range of task domains including banking, email, and travel. Defending against these attacks in a way that is both effective and practical for deployment remains an open problem. Existing defenses either require multiple forward passes per agent step ( zhu2025melon ; robey2023smoothllm ) or rely on text-level classifiers that are brittle to semantically subtle attacks ( chen2025can ) .
+A promising alternative is to detect IPIs by inspecting the model’s internal state at inference time. Recent work has shown that the distinction between benign and adversarial inputs is consistently recoverable from model internals, and that lightweight classifiers over internal representations can be highly effective ( kawasaki2024defending ; abdelnabi2024get ; zou2025pishield ) . Among these, hung2024attention propose Attention Tracker, a single-pass detection method that monitors how the model’s attention is distributed between system instruction tokens and data tokens. Their key observation is that when a prompt injection attack is present, the model’s attention shifts away from the legitimate instruction and toward the injected content. By identifying a small set of attention heads that are sensitive to this shift and computing a scalar focus score at inference time, Attention Tracker achieves strong detection performance on non-IPI benchmark datasets. The authors further claim that the method is dataset-agnostic: the important heads are identified once on synthetic data and transfer across domains without any retraining.
+In this paper, we evaluate and extend Attention Tracker in the realistic agentic setting for which defenses are most urgently needed. We make the following contributions:
+–
+We provide the first evaluation of Attention Tracker on AgentDojo, a benchmark that embeds prompt injection attacks inside structured multi-step agent environments ( debenedetti2024agentdojo ) . We find the dataset agnosticism claim does not fully hold in this setting.
+–
+We introduce AttnDA, an alternative to Attention Tracker’s scalar threshold detection mechanism, replacing it with Fisher’s Linear Discriminant Analysis. AttnDA accounts for the varying head importance and finds more discriminative decision boundaries.
+–
+We conduct a covariance structure ablation of AttnDA. We find that ignoring head-to-head correlations increases detection performance: complex covariance assumptions, including full and block-layer variants, cause significant degradation even on in-domain data, with transfer performance collapsing to chance for these variants.
+–
+We evaluate on a broader set of benchmarks including AgentDojo and InjecAgent, and construct a matched benign dataset for LLMail-Inject attacks to enable evaluation for binary classification ( debenedetti2024agentdojo ; zhan2024injecagent ; abdelnabi2025llmailinject ) .
+2 Related Works
+2.1 Prompt Injection Attacks
+Prompt injection attacks manipulate LLM behavior by supplying adversarial instructions that cause the model to deviate from its intended behavior. branch2022evaluating provided early documentation of these vulnerabilities, and greshake2023not formalized the IPI threat model. This indirect attack surface is especially dangerous in agentic settings, where models autonomously retrieve and act on environmental content without user oversight.
+2.2 Defenses Against Prompt Injection
+Defenses against prompt injection fall broadly into two categories: structural defenses that operate at the system or input level, and internal state-based detection methods that inspect model internals at inference time. High-performing structural defenses tend to require significant inference overhead or rely on surface-level text features. The latter are brittle to semantically subtle attacks that are indistinguishable from benign content, motivating the internal state-based direction we pursue.
+Among structural defenses, hines2024spotlighting introduces Spotlighting, a prompt engineering technique that marks untrusted data with a continuous signal of its provenance, improving the model’s ability to distinguish instruction sources. Spotlighting is complementary to detection-based approaches: it operates as a prevention measure at prompt construction time and requires developer-side pipeline changes, rather than providing a detection signal that generalizes to arbitrary deployment settings. zhu2025melon propose MELON, which detects injections by re-executing each agent step with the user prompt masked. If the model produces the same tool call with and without the user instruction, the action is flagged as injection-driven. MELON provides provable guarantees under well-defined conditions but requires two forward passes per agent step, doubling inference cost at deployment. chen2025can investigate detection and removal of IPI attacks via text classification over tool outputs, evaluating both segmentation and extraction pipelines for localizing and stripping injected instructions. However, classifiers trained on known attack patterns are inherently brittle to novel or semantically subtle attacks that are indistinguishable from benign content at the surface level. robey2023smoothllm propose SmoothLLM for jailbreak defense, applying randomized character-level perturbations to inputs and using majority vote across multiple runs to smooth out adversarial effects. Though the underlying principle extends to injection attacks, the method requires 10-50 forward passes per query and semantically embedded injections may be more robust to character-level perturbation than syntactically constructed adversarial suffixes.
+Internal state-based detection methods avoid these limitations by inspecting model internals directly, producing a detection signal that does not depend on surface-level attack patterns and requires no additional inference. kawasaki2024defending introduce RSAA, which extracts residual stream activations between transformer layers and trains a LightGBM classifier to distinguish benign from adversarial prompts, demonstrating high accuracy across multiple attack types including prompt injections and jailbreaks. abdelnabi2024get detect task drift by computing activation deltas between turns (the difference in hidden state representations before and after processing external data) and training logistic regression feature classifiers at multiple layers. zou2025pishield propose PIShield, which leverages residual stream representations of the final token at specific layers and trains a linear feature classifier on them. PIShield demonstrates that instruction-tuned LLMs intrinsically encode linearly separable signals indicating whether a prompt contains an injected instruction. cunningham2025cheapmonitors extend this line of work in the context of jailbreak detection, training logistic regression models as lightweight feature classifiers on intermediate activations of a frozen policy model. Taken together, these methods establish that the benign/adversarial distinction is consistently recoverable from model internals and generalizes to unseen attacks. Our work builds on this direction, extending it to the attention head level and evaluating for the first time in a realistic agentic setting where injections are embedded inside structured environment data retrieved through tool calls.
+3 Preliminary: Attention Tracker
+hung2024attention propose Attention Tracker, a white-box prompt injection detection method based on the observation that when a prompt injection attack is present, the model’s attention drifts away from the user task and toward the injected data. The core claim is that this shift in attention is measurable from the model’s internal attention weights, yielding a lightweight single-pass detector that requires no domain-specific training. A central claimed property is dataset agnosticism: important attention heads are identified once on synthetic data and are reported to transfer across domains without retraining, with the original evaluation achieving strong AUROC scores on single-turn benchmark datasets across multiple model families.
+We build directly on Attention Tracker, evaluating it for the first time in a realistic agentic setting and empirically testing its dataset agnosticism and threshold portability claims. We further propose an extension replacing the scalar threshold with an LDA classifier, described in full in Section 4 .
+3.1 Training: Head Selection
+Given a labeled training set 𝒟 = { ( I j , D j ) , y j } j = 1 N \mathcal{D}=\{(I_{j},D_{j}),y_{j}\}_{j=1}^{N} of benign ( y = 0 y=0 ) and malicious ( y = 1 y=1 ) user instructions I I and task data D D pairs, Attention Tracker identifies a set of important attention heads ℋ i \mathcal{H}_{i} based on differences in attention patterns. For a transformer-based LLM architecture with L L layers of H H -headed attention blocks, let A l , h A^{l,h} denote the attention distribution for the h h ’th head in layer l l from the final token to the prefix sequence I , D I,D . Writing the sum of attention values over the instruction and data portions as A l , h ​ ( I ) A^{l,h}(I) and A l , h ​ ( D ) A^{l,h}(D) respectively, Attention Tracker defines a per-datapoint focus score ( FS l , h \mbox{FS}^{l,h} ),
+FS l , h ​ ( I , D ) = A l , h ​ ( I ) A l , h ​ ( I ) + A l , h ​ ( D ) , \mbox{FS}^{l,h}(I,D)=\frac{A^{l,h}(I)}{A^{l,h}(I)+A^{l,h}(D)},
+(1)
+as the ratio of attention mass to the instruction and the entire prefix. Note that this definition differs from what is described in hung2024attention , but is consistent with the authors’ public implementation.
+To select the set of important heads ℋ i \mathcal{H}_{i} , per-class focus score means ( μ benign l , h \mu^{l,h}_{\mbox{\scriptsize benign}} , μ malicious l , h \mu^{l,h}_{\mbox{\scriptsize malicious}} ) and variances ( σ benign l , h \sigma^{l,h}_{\mbox{\scriptsize benign}} ,
+σ malicious l , h \sigma^{l,h}_{\mbox{\scriptsize malicious}} ) are computed over the samples in 𝒟 \mathcal{D} for each head. For a fixed hyperparameter k k (default k = 4 k=4 ), head l , h l,h is included in ℋ i \mathcal{H}_{i} if
+( μ benign l , h − k ⋅ σ benign l , h ) − ( μ malicious l , h + k ⋅ σ malicious l , h ) > 0 . \left(\mu^{l,h}_{\mbox{\scriptsize benign}}-k\cdot\sqrt{\sigma^{l,h}_{\mbox{\scriptsize benign}}}\right)-\left(\mu^{l,h}_{\mbox{\scriptsize malicious}}+k\cdot\sqrt{\sigma^{l,h}_{\mbox{\scriptsize malicious}}}\right)>0~~.
+(2)
+This condition presumes useful heads are those for which the proportion of attention paid to the instruction I I substantially decreases under malicious data D D on average – i.e., means separated by at least k ⁡ ( σ benign l , h + σ malicious l , h ) k\left(\sqrt{\sigma^{l,h}_{\mbox{\scriptsize benign}}}+\sqrt{\sigma^{l,h}_{\mbox{\scriptsize malicious}}}\right) . This formulation assumes attack identification should rely on only shifts of attention away from task instruction.
+Note that while hung2024attention refer to Attention Tracker as a “training-free” method, it does rely on a training set to estimate parameters used to select these important heads. In our later experiments, we examine how mismatches between this training set and the downstream task can result in poor performance – especially for multi-turn agentic settings.
+3.2 Inference: Aggregate Focus Score
+At inference time, the aggregate focus score FS for an example I , D I,D is computed by averaging across all important heads as
+FS ​ ( I , D ) = 1 | ℋ i | ​ ∑ ( l , h ) ∈ ℋ i FS l , h ​ ( I , D ) , \mbox{FS}(I,D)=\frac{1}{|\mathcal{H}_{i}|}\sum_{(l,h)\in\mathcal{H}_{i}}\mbox{FS}^{l,h}(I,D)~~,
+(3)
+with higher FS taken to imply a sample is more likely to be benign. Notably, this aggregation treats all heads in ℋ i \mathcal{H}_{i} independently and equally regardless of observed mean scale or degree of separation in the training set.
+To deploy this system in practice, a detection threshold τ \tau can be calibrated on a labeled calibration set with an input then flagged as an
+injection if F ​ S < τ FS<\tau , indicating that the model’s attention has shifted away from the instruction tokens and toward the data tokens.
+4 Improving Attention Tracker for Agentic Use Cases
+Attention Tracker reduces the important head focus scores to a single scalar via an unweighted average. This method ignores consistent shifts of attention towards the user instruction I I and treats all important heads as equally weighted. We propose replacing this mechanism with a Fisher’s Linear Discriminant Analysis classifier trained over the head focus score vector directly. Importantly, we will assume a diagonal covariance such that both our method and Attention Tracker rely on the same training statistics – per head mean and variances for benign and malicious samples. We denote our proposed method as AttnDA.
+4.1 Training: Fisher’s Linear Discriminant
+As in Section 3.1 , we assume access to a labeled training set 𝒟 = { ( I j , D j ) , y j } j = 1 N \mathcal{D}=\{(I_{j},D_{j}),y_{j}\}_{j=1}^{N} of benign ( y = 0 y=0 ) and malicious ( y = 1 y=1 ) user instructions I I and task data D D pairs. As before, we compute the focus score (Eq. 1 ) for each head over all datapoints – now denoting the vector of L ​ H LH focus score values for a single example j j as 𝐟 j \mathbf{f}_{j} .
+To fit a Fisher’s Linear Discriminant model ( fisher1936use ) , which makes no class homoscedasticity assumptions, we compute the per-class mean vectors 𝐮 benign \mathbf{u}_{\mbox{\scriptsize benign}} and 𝐮 malicious \mathbf{u}_{\mbox{\scriptsize malicious}} as well as per-class diagonal covariance matrices
+Σ benign = diag ​ ( σ benign 1 , 1 , … , σ benign L , H ) Σ malicious = diag ​ ( σ malicious 1 , 1 , … , σ malicious L , H ) \Sigma_{\mbox{\scriptsize benign}}=\mbox{diag}\left(\sigma^{1,1}_{\mbox{\scriptsize benign}},\dots,\sigma^{L,H}_{\mbox{\scriptsize benign}}\right)\quad\quad\Sigma_{\mbox{\scriptsize malicious}}=\mbox{diag}\left(\sigma^{1,1}_{\mbox{\scriptsize malicious}},\dots,\sigma^{L,H}_{\mbox{\scriptsize malicious}}\right)
+(4)
+Note that assumption of diagonal covariances is a design decision to decrease the number of parameters and reduce overfitting – further ablations are presented in Section 6.6 .
+To fit the classifier weights 𝐰 \mathbf{w} , we form the within-class scatter matrix as
+S F = Σ benign + Σ malicious S_{F}=\Sigma_{\mbox{\scriptsize benign}}+\Sigma_{\mbox{\scriptsize malicious}}
+(5)
+and compute the discriminant direction 𝐰 \mathbf{w} as
+𝐰 = ( ( 1 − ε ) ​ S F + ε ​ I ) − 1 ​ ( 𝐮 malicious − 𝐮 benign ) \mathbf{w}=\left((1-\varepsilon)S_{F}+\varepsilon I\right)^{-1}(\mathbf{u}_{\mbox{\scriptsize malicious}}-\mathbf{u}_{\mbox{\scriptsize benign}})
+(6)
+where ε \varepsilon is a regularization term for our shrunk covariance estimate.
+4.2 Inference: Classifier Score
+For a new example I , D I,D represented by its vector of focus scores 𝐟 \mathbf{f} , the Fisher discriminant score g ⁡ ( 𝐟 ) = 𝐰 T ​ 𝐟 g(\mathbf{f})=\mathbf{w}^{T}\mathbf{f} provides a measure of class evidence where large values imply higher likelihood of the example being malicious. To deploy this system in practice, a decision threshold τ \tau must be calibrated on training data such that any input where g ⁡ ( 𝐟 ) > τ g(\mathbf{f})>\tau implies an attack detection.
+4.3 Comparing AttnDA and Attention Tracker
+As the scatter matrix S F S_{F} is diagonal, we can decompose g g as a sum over weight-attention head focus score products to draw a better analog to Attention Tracker,
+g ⁡ ( 𝐟 ) = ∑ l L ∑ h H w l , h ​ FS l , h ​ ( I , D ) = ∑ l L ∑ h H ( μ malicious l , h − μ benign l , h ( 1 − ε ) ​ ( σ benign l , h + σ malicious l , h ) + ϵ ) ​ FS l , h ​ ( I , D ) . g(\mathbf{f})=\sum_{l}^{L}\sum_{h}^{H}{\color[rgb]{0,0.5,1}w_{l,h}}\mbox{FS}^{l,h}(I,D)=\sum_{l}^{L}\sum_{h}^{H}{\color[rgb]{0,0.5,1}\left(\frac{\mu^{l,h}_{\mbox{\scriptsize malicious}}-\mu^{l,h}_{\mbox{\scriptsize benign}}}{(1-\varepsilon)\left(\sigma^{l,h}_{\mbox{\scriptsize benign}}+\sigma^{l,h}_{\mbox{\scriptsize malicious}}\right)+\epsilon}\right)}\mbox{FS}^{l,h}(I,D).
+(7)
+This formulation examines all focus scores and weights them based on the cross-class spread, whereas Attention Tracker essentially uses binary weights with 1 for important heads and 0 otherwise. To make this clear, we can rearrange the condition for head importance in Equation 2 to arrive at a similar expression for Attention Tracker’s aggregate score (Eq. 3 ),
+A T ( I , D ) = 1 | ℋ i | ∑ l L ∑ h H 𝟙 [ μ benign l , h − μ malicious l , h σ benign l , h + σ malicious l , h > k ] FS l , h ( I , D ) . AT(I,D)=\frac{1}{|\mathcal{H}_{i}|}\sum_{l}^{L}\sum_{h}^{H}{\color[rgb]{0,0.5,1}\mathbbm{1}\left[\frac{\mu^{l,h}_{\mbox{\scriptsize benign}}-\mu^{l,h}_{\mbox{\scriptsize malicious}}}{\sqrt{\sigma^{l,h}_{\mbox{\scriptsize benign}}}+\sqrt{\sigma^{l,h}_{\mbox{\scriptsize malicious}}}}>k\right]}\mbox{FS}^{l,h}(I,D).
+(8)
+where 𝟙 ​ [ ⋅ ] \mathbbm{1}[\cdot] is the indicator function. This decomposition exposes that Attention Tracker only considers positive evidence for benign with sufficiently high weight ( > k >k ), but otherwise ignores the relative strength of this evidence and any negative (malicious-indicating) heads.
+5 Experimental Settings
+Datasets.
+For evaluation, we consider two categoires of attack datasets – standard single-turn prompt injections (deepset) and multi-step or tool-use agentic attacks (AgentDojo, InjecAgent, LLMail-Inject) which we describe below. We divide each into a training and evaluation set to test generalization to new instances.
+–
+deepset/prompt-injections ( deepset2023promptinjections ) : A single-turn flat injection dataset consisting of 546 training and 116 test samples. We use this dataset to replicate the original Attention Tracker results and confirm our implementation before proceeding to agentic evaluation. We denote this as deepset .
+–
+AgentDojo (banking and slack suites) ( debenedetti2024agentdojo ) : A multi-step agentic benchmark embedding injections inside realistic structured environment data. We use the banking and slack suites, yielding 25 and 26 samples respectively. We denote this subset as AgentDojo † .
+–
+InjecAgent ( zhan2024injecagent ) : A tool-integrated agent benchmark spanning 17 user-facing tools. We use 16 of the 17 user task types, deciding to remove the “WebBrowerNavigateTo” task type since it returns no environmental data. This yields 16 benign and 992 attack samples (1,008 total). We denote this as InjecAgent .
+–
+LLMail-Inject ( abdelnabi2025llmailinject ) : A competition-derived benchmark of adaptive adversarial attacks against a simulated email assistant. Because the benchmark provides only attack samples, we construct a matched benign dataset by prompting an LLM to rewrite each attack email with the injection removed, preserving the surrounding email content. This produces paired samples that differ only in the presence of an injected instruction. Refer to appendix for more information on how we generated the benign samples. Our dataset consists of 272 attack samples and 272 corresponding benign samples. We denote this as LLMail-Inject .
+In addition to generalization to new instances within each dataset, we will also consider cross-dataset generalization.
+Agentic Evaluation Procedure.
+The original Attention Tracker evaluation is conducted on single-turn datasets where the injection is presented as a flat text string. In agentic tasks like those in AgentDojo † , injections are embedded inside structured environment data that the agent retrieves through tool calls during multi-step task execution. This requires adapting the evaluation procedure to account for how inputs are constructed at each step.
+For each AgentDojo † task instance, we evaluate detection at the step where the agent processes the tool result containing the injected content. The prompt at this step consists of the user task and the tool result containing the environment data. We treat the user task as the instruction token span I I and the tool result as the data token span D D for the purposes of focus score computation. No system prompt is used in accordance with the original Attention Tracker procedure.
+Models. To compare with hung2024attention , we test our methods using the same models: Llama-3-8B-Instruct, Qwen2 1.5B, Gemma 2 9B, Phi-3 mini, and Mistral 7B ( dubey2024llama3 ; yang2024qwen2 ; gemmateam2024gemma2 ; abdin2024phi3 ; jiang2023mistral ) . Note that our implementation corrects a tokenization bug present in the original Attention Tracker codebase that, for some models, caused attention span boundaries to be misaligned; see Appendix for details.
+Metrics.
+For all experiments, we report the Area Under the Receiver Operating Characteristic (AUROC) on held-out data using the predicted per-instance scores from each method. For AUROC, higher is better and its value indicates the likelihood of scoring a random attack input higher than a random benign input.
+6 Results and Findings
+Figure 1: Prompt length (characters) vs Focus score F ​ S FS from Equation 3 for Llama3-8B-Instruct for the deepset and AgentDojo datasets.
+We organize our findings around four research questions: (RQ1) Does the attention-based distraction signal that Attention Tracker relies on transfer to the agentic setting? (RQ2) How well do methods generalize from single-round synthetic attack data to agentic domains? (RQ3) How do AT and AttnDA compare when trained in-domain for agentic settings? (RQ4) How do AT and AttnDA compare in cross-domain evaluations? Finally, we conclude with comparisons to feature-based classifiers, ablation studies on the covariance structure of AttnDA, an analysis of learned per-head weights, and estimates of variability and uncertainty in our results.
+6.1 RQ1: Examining Focus Score in the Agentic Setting
+Figure 1 plots focus score FS from Equation 3 against input length for Llama-3-8B-Instruct across deepset and AgentDojo † samples. Two observations are immediately apparent. First, AgentDojo † inputs are substantially longer than deepset inputs, reflecting the structured environment data embedded in tool results. Second, and more critically, the focus scores of AgentDojo † benign and attack samples are largely overlapping, in contrast to deepset where benign samples exhibit clearly higher focus scores than attack samples. This undermines the core assumption that Attention Tracker’s detection mechanism depends on. The method assumes that attack inputs produce lower focus scores than benign inputs, as the model’s attention is drawn away from the user task toward the injected content. This suggests that the attention-based distraction signal identified by hung2024attention on shorter inputs does not generalize to the agentic setting.
+6.2 RQ2: Generalization from Synthetic Data
+Synthetic
+Model
+Dataset
+Method
+Llama
+Qwen
+Gemma
+Phi
+Mistral
+Avg.
+deepset
+AT
+0.92
+0.98
+0.99
+0.97
+0.99
+0.97
+AttnDA
+0.91
+0.97
+0.97
+0.92
+0.96
+0.95
+AgentDojo †
+AT
+0.53
+0.39
+0.83
+0.50
+0.59
+0.57
+AttnDA
+0.57
+0.42
+0.69
+0.77
+0.66
+0.62
+InjecAgent
+AT
+0.73
+0.63
+0.71
+0.76
+0.76
+0.72
+AttnDA
+0.86
+0.81
+0.86
+0.84
+0.80
+0.83
+LLMail-Inject
+AT
+0.88
+0.93
+0.82
+0.91
+0.87
+0.89
+Agentic
+AttnDA
+0.80
+0.93
+0.80
+0.86
+0.83
+0.84
+In hung2024attention , the Attention Tracker (AT) method was trained on synthetic GPT-4 generated data and demonstrated strong performance on the single-turn deepset and Open-Prompt-Injection datasets ( liu2024promptinjection ) . However, the assertion that important heads selected on this synthetic data will transfer to new tasks or domains is not well studied.
+Using the same synthetic data as the training set for head selection in AT and parameter estimation in AttnDA, we present generalization performance in Table . We report per-model as well as overall average AUROC. Like hung2024attention , we also find strong performance for deepset (0.97 average AUROC); however, attack detection capabilities for agentic datasets can drop significantly – e.g., reaching near chance at 0.57 average AUROC on AgentDojo † . These results suggest applying AT may require more care in training set selection than was previously shown.
+We also present results for AttnDA in Table . We likewise see a drop in performance when extending to the agentic datasets from synthetic training. However, AttnDA improves over AT in the more challenging AgentDojo † (+0.05 avg AUROC) and InjecAgent (+0.11 avg AUROC) datasets at the expense of reductions in the more single-turn deepset (-0.02 avg AUROC) and LLMail-Inject (-0.05 avg AUROC).
+In-Domain
+Model
+Dataset
+Llama
+Qwen
+Gemma
+Phi
+Mistral
+Avg.
+deepset
+AT
+0.98
+0.99
+0.99
+0.97
+0.99
+0.98
+AttnDA
+0.88
+0.93
+0.95
+0.89
+0.94
+0.92
+AgentDojo †
+AT
+0.62
+0.44
+0.53
+0.78
+0.71
+0.62
+AttnDA
+0.97
+0.88
+0.95
+0.95
+0.95
+0.94
+InjecAgent
+AT
+0.99
+0.98
+0.98
+0.90
+0.90
+0.95
+AttnDA
+0.98
+0.98
+0.97
+0.87
+0.89
+0.94
+LLMail-Inject
+AT
+0.97
+0.98
+0.77
+0.96
+0.97
+0.93
+Agentic
+AttnDA
+0.92
+0.96
+0.80
+0.89
+0.89
+0.89
+6.3 RQ3: In-Domain Performance
+Given our previous findings, a natural approach to deploying either AT or AttnDA would be to train on as close a distribution of attacks as possible to those anticipated at run time. In this experiment, we consider performance on held-out test splits of each dataset after training on their corresponding train set. This represents in-domain generalization to new instances of the same distribution. We show results in Table . Note that each row is then a separately trained model instance in this setting.
+As might be expected, we find that performance generally improves under this in-domain training setting; however, we find AT still struggles with the AgentDojo † task where average AUROC only increases to 0.62 compared to 0.57 when transferring from synthetic data). In contrast, AttnDA jumps to an average AUROC of 0.94. Performance for both models reach approximately equal performance of 0.95 average AUROC on InjecAgent . For single-turn tasks like deepset and LLMail-Inject , we find AT outperforms AttnDA. In aggregate, AttnDA achieves a cross-dataset average AUROC of 0.92 compared to AT’s 0.87. In later ablation experiments (Section 6.6 ), we find AttnDA with a full covariance pushes AUROC towards 1.0 for in-domain settings at the cost of poor cross-domain generalization.
+6.4 RQ4: Cross-Domain Performance
+Cross-Domain
+Eval.
+Train
+deepset
+AgentDojo †
+InjecAgent
+LLMail-Inject
+deepset
+AT
+0.98
+0.55
+0.82
+0.87
+FC
+0.99
+0.56
+0.77
+0.70
+AttnDA
+0.92
+0.65
+0.86
+0.83
+AgentDojo †
+AT
+0.85
+0.62
+0.73
+0.82
+FC
+0.56
+0.91
+0.55
+0.54
+AttnDA
+0.86
+0.94
+0.82
+0.81
+InjecAgent
+AT
+0.86
+0.62
+0.95
+0.73
+FC
+0.61
+0.54
+0.87
+0.44
+AttnDA
+0.89
+0.65
+0.94
+0.79
+LLMail-Inject
+AT
+0.90
+0.53
+0.73
+0.93
+FC
+0.54
+0.59
+0.55
+0.99
+AttnDA
+0.90
+0.62
+0.82
+0.89
+In many settings, a priori knowledge of likely attack styles may not be feasible and we’ve already shown that generalization from synthetic data may be poor. An alternative then is to examine cross-domain generalization between our datasets – training on one and evaluated on the others. We report average AUROC over all models for each train-test dataset pairing in Table . For context, we include the diagonal entries which correspond to in-domain results already presented in the previous section. These are colored light gray as they are not cross-domain. For full model-specific results, see Figure .
+Across all 12 cross-domain pairing presented in Table , AttnDA outperforms AT in 9 and ties in 1, but under performs on LLMail-Inject for deepset and AgentDojo † training. As in the synthetic training setting, generalization to the long agentic traces in AgentDojo † is the major challenge. In aggregate across all cross-domain pairs, AttnDA achieves an average AUROC of 0.79 compared to 0.75 for AT. These results suggest that AttnDA may be a better candidate for real-world attack detection scenarios where new attacks are likely to differ from internal training data in unknown ways.
+6.5 Comparison to a Feature-level Classifier
+Both AT and AttnDA leverage attention distribution statistics to detect attacks. In contrast, a common technique is to directly learn to discriminate benign and malicious samples from internal features representations ( abdelnabi2024get ; cunningham2025cheapmonitors ) . To compare attention-based methods with feature-based classification, we train logistic regression models on the hidden-state activations of the last transformer layer, extracted at the final input token position via a forward pass through the model (C = 0.1, L2 regularization).
+We include in-domain (diagonal) and cross-domain (off-diagonal) AUROC results for these feature classifiers (FC) in Table alongside our prior results. We consistently find that FC generalizes poorly across datasets (overall average AUROC of 0.58) – significantly underperforming the attention-based methods. We speculate this poor generalization stems from two factors. First, that feature dimensions are often larger than attention (e.g. 3584 dimensional features in Qwen vs. 336 attention heads) and thus require more parameters be estimated. Second, that attention distributions reveal less instance-specific information like keyword identities that may increase overfitting in feature-based methods. For in-domain settings, FC is competitive with AttnDA across datasets except for InjecAgent .
+6.6 Covariance Structure Ablation of AttnDA
+In AttnDA we make the simplifying assumption of a diagonal covariance matrix (Section 4 ); however, our approach can be applied with other covariance structures. To assess this, we ablate the covariance assumption while holding all other experimental conditions fixed. All variants use Fisher’s scatter matrix from Equation 5 and share the same feature extraction, training split, and head selection. The variants differ only in the structural constraint imposed on S F S_{F} before solving for the discriminant direction:
+•
+Full : Models relationships between all heads across layers – ( L ​ H ) 2 (LH)^{2} parameters.
+•
+Block-layer : S F S_{F} is block-diagonalized by transformer layer, capturing within-layer feature correlations while ignoring cross-layer ones – L ​ H 2 LH^{2} parameters.
+•
+Diagonal : No cross-head relationships are modeled, only per-head variance – L ​ H LH parameters. This is our primary method reported as AttnDA elsewhere.
+•
+Identity : No scaling at all; the discriminant 𝐰 \mathbf{w} reduces to just the raw class-mean difference – 0 0 parameters.
+This ablation isolates the contribution of inter-feature correlation structure.
+Evaluation Dataset
+Covariance Structure
+AgentDojo †
+deepset
+LLMail-Inject
+InjecAgent
+Avg.
+Full
+0.9170
+0.9400
+0.5130
+0.4110
+0.6952
+Block-layer
+0.9830
+0.5740
+0.3100
+0.2620
+0.5323
+Diagonal (AttnDA)
+0.8830
+0.8110
+0.8580
+0.8360
+0.8470
+Identity
+0.8330
+0.7560
+0.3100
+0.7380
+0.6593
+Table reports the results for Qwen trained on AgentDojo † .
+Both full covariance and block-layer covariance show the sharpest overfitting pattern of the variants, achieving high in-domain AgentDojo † AUROC while producing poor cross-domain results. Diagonal covariance (AttnDA), which discards all cross-head correlations and retains only per-head scaling, emerges as the best cross-domain generalizer across all three transfer targets ( deepset : 0.81, LLMail-Inject : 0.86, InjecAgent : 0.84). By ignoring head-to-head correlations that are specific to the training distribution and retaining only per-head discriminability, the diagonal variant transfers more robustly than the full covariance, at the cost of lower in-domain performance.
+The identity variant, which applies no learned scaling, generalizes reasonably across domains except for LLMail-Inject and even outperforms the full covariance variant on InjecAgent . These results indicate that the choice of covariance structure involves a fundamental tradeoff between in-domain performance and cross-domain transfer.
+In situations where the distribution of likely attacks are known, in-domain performance is the key metric. To provide further evidence of the full covariance model’s capabilities in this setting, we report all model-dataset pairs in the heatmaps in Figure . Across models, the AttnDA (Full) produces the strongest in-domain performance.
+6.7 Per-Head Weight Similarity
+deepset
+AgentDojo †
+InjecAgent
+LLMail-Inject
+Synthetic
+deepset
+0.98
+0.17
+0.53
+0.65
+0.53
+AgentDojo †
+0.80
+0.09
+0.15
+0.06
+InjecAgent
+0.77
+0.31
+0.26
+LLMail-Inject
+0.99
+0.58
+Synthetic
+0.96
+Figure 2: AttnDA weight vector 𝐰 \mathbf{w} for Qwen2-1.5B fit on each dataset’s training split. The weight of a head has the sign of μ malicious − μ benign \mu_{\text{malicious}}-\mu_{\text{benign}} for its focus score: blue (negative) marks heads whose focus on the instruction decreases under the presences of an attack, as Attention Tracker assumes, and red (positive) marks heads whose focus score increases. Each panel is scaled by its own largest | w | |w| . AgentDojo † mixes positive and negative weights, while deepset and LLMail are almost entirely negative.
+To examine why transfer varies across datasets, we compared the AttnDA weight vectors 𝐰 \mathbf{w} learned on each training set for Qwen2-1.5B (Table , Figure 2 ). To separate real differences from sampling noise, we refit 𝐰 \mathbf{w} on B = 200 B{=}200 bootstrap resamples of each training set; Table reports mean cosine similarities, and the 5th–95th percentile intervals are in Table (Appendix ). Weight vectors fit on resamples of the same dataset are highly similar (cosine 0.96–0.99 for deepset , LLMail-Inject , and synthetic data), and less so for the smaller AgentDojo † (0.80; interval [0.54, 0.94]) and the imbalanced InjecAgent (0.77), so these values bound the similarity attainable between datasets. Weights learned on AgentDojo † are nearly orthogonal to those learned on every other dataset (cosine 0.06–0.17), far below its own self-similarity. This suggests that agentic traces rely on different heads rather than a noisier version of the same ones, consistent with the poor transfer to and from AgentDojo † in Table . The remaining datasets are moderately similar to one another (0.26–0.65), and only deepset and InjecAgent (0.53) are within resampling noise, since 0.53 lies inside InjecAgent ’s own self-similarity interval [0.50, 0.94]. Because the AgentDojo † training split is small, its cross-dataset intervals are wide and include zero, so we treat these results as descriptive; even so, their upper ends (0.27–0.46) remain below AgentDojo † ’s own self-similarity lower bound (0.54).
+Figure 2 shows the weight of every head. Recall that a head’s focus score is the fraction of its attention that falls on the user instruction. A head’s weight has the sign of μ malicious l , h − μ benign l , h \mu^{l,h}_{\text{malicious}}-\mu^{l,h}_{\text{benign}} , so a negative weight (blue) means that focus on the instruction drops under attack, as Attention Tracker assumes, and a positive weight (red) means that it rises. The datasets differ sharply in sign. On deepset and LLMail-Inject nearly all heads are negative: positive heads hold only 1.3% and 0.0% of the total squared weight ‖ 𝐰 ‖ 2 \|\mathbf{w}\|^{2} . On AgentDojo † , 41.7% of heads are positive and hold 27.1% of ‖ 𝐰 ‖ 2 \|\mathbf{w}\|^{2} , while the other datasets stay at or below 3.6%. Attention Tracker’s selection rule (Eq. 2 ) keeps only heads whose focus drops under attack, so it discards all of them, whereas AttnDA can use
+them. This is consistent with Attention Tracker’s near-chance in-domain AUROC on AgentDojo † for Qwen2-1.5B (0.44, versus 0.88 for AttnDA; Table ). Because the AgentDojo † training split is small, 25.6% of its heads are not sign-stable (the same sign in at most 75% of resamples), so we do not interpret individual heads.
+6.8 Quantifying Variability and Uncertainty
+Bootstrap of Test Set for Agent-Dojo Trained Models
+Eval
+AUROC Mean
+AUROC Std
+95% CI
+Deepset
+0.8600 0.8600
+0.0431 0.0431
+[0.7933, 0.9164]
+AgentDojo
+0.9395 0.9395
+0.0317 0.0317
+[0.8385, 1.0000]
+InjecAgent
+0.8284 0.8284
+0.0492 0.0492
+[0.7189, 0.9119]
+LLMail
+0.8011 0.8011
+0.0177 0.0177
+[0.7649, 0.8342]
+Table reports bootstrap confidence estimates of the average AUROC for all AttnDA models trained with AgentDojo † . We chose to bootstrap AgentDojo † -trained models in order to characterize the uncertainty of evaluation due to the small sample size of the dataset. The average bootstrapped AUROC across all test datasets is relatively high (ranging from 0.80 to 0.94]) but the confidence intervals (CIs) range as low as 0.72. The CIs overlap with the average AUROC for AT (as seen in Table ) for all of the cross-domain datasets. The in-domain results for AgentDojo † do not fall in the CI for AttnDA (0.62 vs [0.83, 1.00]), suggesting that AttnDA improves performance in this setting.
+7 Discussion
+7.1 Dataset Agnosticism Revisited
+The dataset agnosticism claim from hung2024attention asserts that a single set of synthetic-data heads captures a universal injection signal. Our results suggest this holds within the single-turn regime but breaks down in agentic settings, for their scalar threshold and, to a lesser extent, AttnDA. The critical factor appears be the structural difference in input length and composition between single-turn and agentic environments. A detector that works well on flat text injections does not automatically transfer to injections embedded in long structured tool outputs, regardless of how the classifier is trained. This has a practical consequence that the original paper does not address: since attention-based detectors trained on synthetic data are not able to generalize to agentic input, any deployment of these detectors in agentic environments should ensure that agentic samples are provided as part of the training set.
+AT
+AttnDA
+AttnDA (Full)
+Llama
+DS AD IA LM LM IA AD DS Syn 0.86 0.36 0.64 0.97 0.90 0.50 0.99 0.75 0.83 0.62 0.68 0.91 0.98 0.57 0.86 0.85 0.92 0.53 0.73 0.88 Eval Train
+DS AD IA LM LM IA AD DS Syn 0.82 0.50 0.83 0.92 0.87 0.54 0.98 0.80 0.86 0.97 0.83 0.76 0.88 0.54 0.88 0.83 0.91 0.57 0.86 0.85 Eval
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+
+

@@ -118,6 +118,13 @@ warm-up forwards
 
 1F1B 没有消除 pipeline dependency 或所有 bubble。Schedule 还必须保证同一 optimizer step 内参数版本一致；同步训练通常在全部 micro-batches 完成后更新。允许跨 batch 异步更新的 pipeline 方法需要 weight stashing 或处理 stale parameters，属于不同算法假设。
 
+序列长度差异还可在不切断样本身份的前提下进入1F1B：将超长因果序列切成有前后依赖的token块，把短序列按容量打包，再按stage选择保留哪些块内激活、哪些在反向重算。[InfiniPipe的受限v1](https://arxiv.org/html/2509.21275v1)用这一分工联合选择切片与重算，但长序列的后块仍依赖前块K/V，反向对前块的dKV也有自己的回收边界，checkpoint并未取消这些跨块状态；packing还必须保持各原样本的mask、位置与target归属。相似块数分组可减少局部等待，却增加多次填充/排空和规划开销，不能由受限cost model的最优解批准所有硬件或在线形状。样本/有效token的loss与梯度权重、RNG及最终optimizer提交应另作一致性验收，短程吞吐对照不证明同SGD或相同收敛。CPU规划、profile、打包、所有K/V与dKV驻留和传输、重算与独立质量回归均计费；依赖、容量或净收益不合时，保留完整样本的GPipe/1F1B、固定packing与较简单checkpoint，而不以更多切片默认获得免费并行。
+
+<!-- source-family:SF-2025-ARXIV-2509-21275 -->
+
+当网络混合dense、MoE与MTP模块时，stage balance也不能只数Transformer层：MTP中的transformer计算与vocabulary loss可能有不同成本，可拆成独立调度单位，让不同VPP stage分配不同数量甚至零个普通层，并只重算较合算的MTP部分。这样改的是同步1F1B内部的partition和activation lifetime，不是去掉参数版本边界。[Ling 2.0的受限报告](https://arxiv.org/html/2510.22115v1#S5.SS2)支持这一异构分区，但单MoE stage对routing imbalance更敏感，增加VPP也未必有净收益。应从真实forward/backward、loss与通信profile共同选择分区，并校验同一步loss/梯度、低精度scale和重算状态；FP8减的是具体张量/缓存成本，不能把active参数少直接当吞吐快。Profile、调度粒度、驻留、通信与收敛回归均付费；不均衡、显存或净吞吐失配时，保留较粗且已验的1F1B分区与完整重算，不把局部40%提升外推成任意模型/硬件的保证。
+<!-- source-family:SF-2025-ARXIV-2510-22115 -->
+
 ### Split-Backward 与低精度状态：Schedule 之外还有执行合同
 
 普通 1F1B 将一个 micro-batch 的 backward 视为相对完整、按栈回收的动作；在 eager 执行下，这让 activation lifetime 与依赖次序较容易追踪。若为了填补空隙，把反向拆成尽早传播的输入梯度 `dI` 和可延后的权重梯度 `dW`，再以捕获图复用固定地址，逻辑 micro-batch 与物理 buffer 就不再天然一一对应。低精度训练还持有 `amax` 历史、scale、量化权重缓存等不在显式 tensor 边上的可变状态；单一顺序 token 无法证明所保留任务的身份与版本，可能错绑或过早释放 tape、错序或重复更新 scaling state，或在 optimizer 提交后消费旧缓存。
@@ -241,6 +248,10 @@ Boundary bytes 取决于 dtype、sequence、micro-batch 和 partition location�
 
 单一机房内，固定 stage mapping 加局部带宽估计通常足够；跨地域链路的带宽、价格与故障域不同，schedule ordering 不能再与 transport path 分开。Pipeline control owner 需要联合持有 micro-batch priority、可用链路、路径成本与 completion state，并在带宽变化时重新分配。这样可减少远距离 bubble 与账单失控，代价是在线 pathfinding、控制开销和更大的 failure surface；预测失准或控制器故障时，应回退到静态安全路径或单区域执行。exact-v1 只支持 BACE-Pipe 的模拟器与 trace 条件，不证明任意云际网络或真实故障下的收益。<!-- source-family:SF-2026-ARXIV-2605-25375 -->
 
+跨域延迟还可用额外在途micro-batch隐藏，而不只改网络路径：在同步1F1B中增加warmup forward，并调整依赖和非阻塞通信，使后续计算覆盖较长传输。[受限跨机房流水分支](https://arxiv.org/pdf/2510.12064v1)用更多activation驻留换重叠，增加量受HBM、micro-batch和原step提交边界共同约束，不能让通信未完成的状态提前消费。有限三机房910B/OTN/PFC条件下未见重传，不授任意WAN同可靠或光网必需；bubble下降也不等相同比例iteration加速。搜索sequence length即使固定total tokens仍会改变训练样本/上下文语义，模型尺寸口径与未披精度不能由系统倍率补齐。全部warmup/激活、profile/配置搜索、通信和独立训练质量均计费；容量、可靠传输或净step收益不合时保普通1F1B、较少在途与单区域执行，不由更多重叠批准同训练语义、零额外内存或跨域SLO。
+
+<!-- source-family:SF-2025-ARXIV-2510-12064 -->
+
 ### 跨层 KV 共享会改变 Pipeline 的真实 Stage Cost
 
 按层数或静态 FLOPs 切 stage，在每层计算同构时合理；若模型引入 tail-first cross-layer KV sharing，后层复用前层状态会改变 per-layer Attention FLOPs、activation/KV boundary 与 memory pressure。Partitioner 必须对新 checkpoint 的依赖图重新 profile，再决定 stage placement；它不能把共享当作免费的 runtime cache。该分支以模型结构改动和跨层耦合换取更均衡 pipeline，既有 checkpoint 不可改或通信超过节省时，普通 layer-local KV 仍成立。`arXiv:2608.15943v1` 的 KV-Pipe 证据限作者模型与训练/推理设置，不证明通用 PP 加速。
@@ -269,11 +280,21 @@ boundary bytes
 
 平均切 `L/p` 层只是初始估算。实际 partition 需要 profile per-layer cost，并为 embedding/loss 等特殊模块留出预算。
 
+把层切细会扩大可平衡的stage组合，也会让逐候选测量与搜索成本迅速增加，因此profile粒度和执行粒度不必始终相同。可以先保留重复module与非重复部分的结构，再对候选连续stage和同构device mesh去除重复测量，复用等价stage–mesh的计算、边界通信与memory画像，让细粒度partition不必为每处重复结构重新付一次准备费。等价仍取决于算子/shape、精度、重算和设备/链路条件；结构同名不授权跨环境复用，最终计划也须同时检查额外在途micro-batches的activation峰值和慢链路暴露时间。[受限v1设计](https://arxiv.org/html/2509.24859v1#S5)支持这条准备成本分工，但其warmup与DP公式内部不齐，不能据此签发完整最优调度；所报异构环境还包含以A100降频限存模拟V100，局部step计时不证明原生混合卡或长程收敛。Profile、剪枝/搜索、编译、重算与状态驻留都计费；结构、画像或净收益失效时，重新测量或保留较粗切层及成熟1F1B，而不是把复用称为零成本。
+
+<!-- source-family:SF-2025-ARXIV-2509-24859 -->
+
+即使GPU型号相同，静态profile也不等于持续运行时的stage成本：进排风位置、功率和温度导致的降频，可让原本等量的stage成为慢侧。可以先按实测热态分组，再把较重模块或少量层移给较冷的stage，但切层是离散的，降低温差不等于缩短完整step。[有限训练对照](https://arxiv.org/html/2509.10371v1#S6)在TP4、每节点两个stage且关闭DP时，80层/4stage的19/21分配改善效率，96层/8stage的11/13分配却在缩小温差时降低效率；这不是同SKU一律应非均匀切层的结论。应把完整step、暴露通信、memory峰值与稳定热态共同复测，计入telemetry、重排和状态迁移成本；原实验不证明在线重配置、硬件寿命或Serving SLO。热态变化、粗粒度切层或净收益不合时，保留固定已验分区与较简单placement，把设备健康/机箱散热交给平台处理，不以更均匀的温度替代训练吞吐和正确性验收。
+
+<!-- source-family:SF-2025-ARXIV-2509-10371 -->
+
 样本分配也可能制造等待，即使每个 micro-batch 的 packed total length 相同。EoD 阻断跨 document attention 后，可见 token 对的数量随内部 document 长度组成变化；若 backend 真正消费这种 block/sparse 可见性，长文档较多的样本会比相同 shape 的短文档组合更贵，dense mask 本身却不保证计算量减少。可按 subsequence 长度估计成本，重新分配完整样本以平衡各 rank，而不改全局训练人口、EoD 语义或 optimizer accumulation 提交。[有限训练说明](https://arxiv.org/html/2512.24157v1)只支持这个 attention-aware 调度入口，没有隔离该项的定量收益；统计、重排和 backend 校准仍付费。profile 未显示差异或重排成本更高时，保留固定 token 分配；layer partition、router balance 和运行时 readiness 仍各自负责原有压力。<!-- source-family:SF-2026-ARXIV-2512-24157 -->
 
 同构 profile 选出的 expert 并行度，也不一定能直接带入异构 pipeline。可在各设备和链路上先测 dense/expert 计算、dispatch/combine、router 负载及 activation/optimizer 容量，再让 stage 层数、设备分配、expert tensor/parallel 度与 recompute 共同决定候选 step 计划。较快 stage 不必与较慢 stage 分同样层数，较大 expert group 也可能让跨类型通信抵消计算节省；成本模型应区分已重叠与暴露通信，不能重复加总。最终 layer/device/process mesh 与重计算策略必须一起 materialize，planner 只提供候选，不改变训练 batch、routing 语义或完整 step 提交。
 
 这是校准窗口内的离线分支，不是在线适应保证。HAPMoE 的受限异构 MoE 对照支持联合计划与非均匀分区，却用 warmup、memory/router instrumentation 和搜索换较少 steady-state 等待；pruning 也可能错过模型外候选。路由持续改变、网络争用或设备失效会使原 profile 过期，短 search time 不能消去重新校准成本，作者没有验证动态重配置。收益不足或状态无法一致 materialize 时，保留同构子组、固定 EP 与成熟 1F1B，在实际 step time、峰值 memory 和任务/收敛合同上重新验收，而不是用低预测误差证明生产最优。[必要机制与反证](https://arxiv.org/html/2609.39350v1)。<!-- source-family:SF-2026-ARXIV-2609-39350 -->
+
+还不必先假定所有可用GPU都参与：跨地域异构环境中，把active subset、连续层划分和stage顺序一起搜索，可能比在固定全员集合内平衡更合理；额外慢卡或弱链路会增加等待，较低active功率也未必降低整轮能耗。[受限联合规划](https://arxiv.org/html/2610.26178v1#S4)以profiled compute/双向链路、memory近似和idle/active功率提出time–energy候选，最优只相对于所选模型与搜索域。真实短程对照的基线强制全卡，不能把差额全归搜索器；未选设备、host、网络和机房成本也不能由active-pipeline能量自动消失。Profiling、subset搜索、部署/恢复和独立step/质量验收都付费；模型过期、状态容量或净费用不合时，保留同构子组、固定stage与成熟1F1B，不由少用卡或低预测代价认证长期收敛与全系统节能。<!-- source-family:SF-2026-ARXIV-2610-26178 -->
 
 层数的离散粒度仍可能无法平衡多条完整 pipeline 副本，此时可让副本使用不同 local batch，再联合调整 stage；micro-batch 数成为比切层更细的负载旋钮。不同 TP/DP 切分的梯度必须按真实参数坐标分块、重组与融合，不能按物理 buffer 形状直接 AllReduce；不同样本数的权重、总 batch 和 accumulation 提交是另须验证的统计合同。[受限异构训练研究](https://arxiv.org/html/2610.22035v1)使用三阶段 heuristic 而非全局最优，核心描述未闭合所有不等 batch 的归一与 overshoot，短程 training loss 接近也不证明 exact SGD 或 heldout 等价。Profiling、搜索、重组通信和重算都付费；收益或统计身份未验收时，同构子组、统一 batch 与既有 1F1B 仍更稳妥。<!-- source-family:SF-2026-ARXIV-2610-22035 -->
 
@@ -330,6 +351,10 @@ PP 也不会自动提高模型质量。它只改变同一 forward/backward graph
 每个 stage 只持有部分 layers。Checkpoint manifest 必须记录 layer/chunk 到 rank 的 global mapping，并在 PP degree 改变时支持 reshard。
 
 任一 stage failure 都会让整个 pipeline 停止。部分 stage 的最新 tensors 不能与其他 stage 的旧 step 混合。异步 checkpoint 还要保证 snapshot 对所有 stages 和 optimizer state 属于同一 logical step。
+
+固定stage映射的全线停止，也可在每个stage仍有可信参数副本时缩小为局部流恢复：为microbatch保留源/目标、实际经过的路径与所用activation和gradient，前向失联时另选下一stage的存活节点，反向缺段时从仍存活的前驱重做所缺forward，再接已保存的下游gradient。[受限flow分支](https://arxiv.org/html/2509.21221v1#S5)据此避免总是重做整条pipeline，但超时只形成故障怀疑，新节点必须取得同一stage/迭代的参数，聚合与下一轮接纳仍需共同更新边界；这些约束不等于已经证明任意消息重复或丢失下的exactly-once与同SGD轨迹。它用冗余stage容量、路径/中间态驻留、探测协调与部分重算换较小停顿，局部路由cost也只是代理，不提供全局最优或真实WAN预算保证。任一stage已无可信副本、参数/批次身份不合或恢复支持不足时，仍应停止并回committed checkpoint；不把fail-stop恢复延伸为恶意worker安全或任意故障可继续。
+
+<!-- source-family:SF-2025-ARXIV-2509-21221 -->
 
 Stage 仍在线也不等于计算正确：不可信 worker 可以返回形状合法却被扰动的 activation 或 gradient。一个受限分支在 forward/backward 的 stage 边界设置可信 verifier，以诚实 warm-up 建立统计基线，再用 EMA 与幅度、范数、符号或分布变化形成异常 sensor。被标记的样本不更新基线；上游异常可能污染后续 stage，因而 cascade 处理应暂停受污染统计的更新，不能把每个下游报警都归因为该 worker 作恶。它补充的是边界观测与隔离反馈，不改变 pipeline 的依赖语义。
 
@@ -428,6 +453,16 @@ GPipe、1F1B 与 interleaving 是不同静态 schedule 选择；readiness-driven
 
 ## Review notes
 
+- `SF-2025-ARXIV-2510-12064` — Herschel，Daily2025-10-16补Oct15；消费Cicero R18 official exact-v1 PDF II-B/III/IV首次必要，2+2+2=6，仅extra warmup/改1F1B/非阻塞通信与activation容量差额。保64×910B/TP8PP8/三DC/OTN-PFC、有限无重传非任意WAN、固定tokens改seq非同语义、72B/70B冲突/precision未披及全费，不授bubble等比例step或通用可靠。未第二Methods/代码/复现；PRE/SAVE/selfread/solePOST只canonical实际层。
+
+- `SF-2025-ARXIV-2509-24859` — Singer，Daily2025-10-01补Sep30；[HAPT exact-v1](https://arxiv.org/html/2509.24859v1)§3–6/式1–22与直接配置/脚注。R3原2+2+2=6日期/准入、R8有限必要有效；只重复module/stage–mesh画像复用→细粒度partition准备成本差额，不授式2/10–11不齐的warmup、DP可执行recipe或精确全最优。保A100模拟V100、kernel/NIC不同、peakFLOPs归一与memory差、3Gbps反侧及profile1248s/search133s和全费；未核曲线像素/代码/复现。原三项R10整体PRE通过，root本轮独立fresh新窄授后A17已逐字真实保存并完整自读全部新增/完整两侧/binding及本人注；Sartre R15本项唯一actualPOST通过，本段整合I2生效、指定正文/本人注窄位释放，仅同步既成行政态，不第三Source/PRE/POST或授DAY。
+
+- `SF-2025-ARXIV-2509-21275` — Socrates，Daily2025-09-27补Sep26；[InfiniPipe/EPP exact-v1](https://arxiv.org/html/2509.21275v1) S3–6直接机制/对照及必要限制，2+2+2=6。root首备→作者38唯一另一角色实际采用；仅token切片/packing与stage-chunk重算、K/V和dKV寿命及统计提交分责，不继承后来Concertina/DPP。保受限costmodel/稳态bubble假设、baseline配置/质量未测与全费，不授exactSGD/全局最优/生产SLO。未核实现、全部图像素或复现。作者52原三项经Helmholtz R47整体纯PRE，root本轮fresh独立新窄授；原技术稿真实保存并完整自读新增/完整两侧binding及本人注，Helmholtz R51本项唯一actualPOST通过，I11生效且指定窄位释放；本尾仅行政同步既成，不第三Source/PRE/POST或授DAY。
+
+- `SF-2025-ARXIV-2509-21221` — Socrates，Daily2025-09-27补Sep26；[GWTF exact-v1](https://arxiv.org/html/2509.21221v1) III–VII有限必要，2+2+2=6。仅可信stage副本/路径中间态下局部flow补算与同迭代参数资格；保timeout非truth、每stage至少一活、exactly-once/Byzantine未证、E1 costproxy与1024/18配置冲突、5GPU模拟地理人口/反退及全控制/恢复费。作者14→R15必要一次实际采用通过；作者22原三项/完整侧组经R21整体纯PRE通过，root本轮fresh独立新窄授后原技术稿真实保存，writer已完整顺读新增/直接两侧binding及本人注/两侧，Helmholtz R25本项唯一actualPOST已通过，I4生效且指定窄位即时释放；本尾仅行政同步既成，不授日级完成。未核图像素/代码/真实WAN或复现。
+
+- `SF-2026-ARXIV-2610-26178` — Daily2026-10-21，exact-v1必要域与完整反侧见本日AUTHOR Resume R-A7；R86必要Source/actual owner/完整PRE通过，无代码核验/复现，实际POST见本日REVIEW。
+
 - `SF-2026-ARXIV-2610-21815` — Daily2026-10-17窗10-16；[v1](https://arxiv.org/html/2610.21815v1) §2–5/7.1–2/9–10，2+1+2=5。仅采固定服务纯forward fill/steady分离；不采一般overlap插值、生产日志验证PP或训练通用保证。必要Source/PRE：ORG_B S39，经root独核后保存；实际非作者写后复核通过（ORG_B S47）。未复现。
 - `SF-2026-ARXIV-2610-22035` — 同窗；[v1](https://arxiv.org/html/2610.22035v1) §3–4/6–8及必要反侧，2+2+2=6。仅采不等localbatch/真实gradient坐标分责；保heuristic、GBS/样本权重未闭与全费。必要Source/PRE：ORG_B S38，经root独核后保存；实际非作者写后复核通过（ORG_B S47），未核实现/复现。
 
@@ -457,3 +492,7 @@ Primary-source 校验入口：
 - `SF-2025-ARXIV-2507-00394` — Daily2025-07-03补Jul2；[exact-v1](https://arxiv.org/html/2507.00394v1) §2–5必要机制/T1–3与§6具体对照限制，2+2+2=6；无参数attention与QKV参数/残差分责、FILO活跃人口与重算/通信反退gap深入。仅采用受限partition/schedule分支，不授全程收敛、任意规模或通用加速；未核图像全点、代码或复现。Boyle实际Source/当前owner及保存后完整两侧/本人注已读；root§12必要Source/PRE通过并授本位，§13已实际完整新增、GPipe/1F1B两侧、本人注及目标diff非writer POST通过，本项整合生效、窄位释放；仅同步既成事实，不授整日完成。
 
 - `SF-2025-ARXIV-2507-00217` — Boyle，Daily2025-07-03补Jul2；[exact-v1](https://arxiv.org/html/2507.00217v1)§2–8、AppB/D.1/F必要，2+2+2=6/具体owner差额深入。只采用链路资源/到达依赖与实际收发编排分层；保同质GH200注入、64次取min、profile/控制握手假设、batch/activation/recompute和完整成本，不授真实WAN/SLO、所有表最优或端到端收敛。USENIX同题四作者只出版角色，未核全部图像/实现/复现；root§38已实际必要Source/6分/具体gap/逐字PRE通过并授本窄位；Boyle已按批准稿实际保存并完整self-read，root§40已实际完整新增/完整直接两侧/本人注及限定diff-check非writer POST通过，本指定窄位生效释放；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2509-10371` — Carson，Daily2025-09-16补Sep15BJT；root首次必要准备，本人REPAIR31实际一次非准备者采用exact-v1 §3–8与A.2/A.5/A.6及直接图注，2+1+2=5。只采用同SKU热态×PP切层粒度及温差/效率相反结果，保TP4/每node两stage/DP关闭、联合改变/统计未披与完整费用；8K/800G仅projection、寿命与inference SLO未证。只核Zenodo元数据角色，未核/执行归档code/trace或复现；Zeno45原三项PRE通过，root本轮fresh授本精确位，作者已真实保存；Zeno55唯一完整nonwriter actualPOST通过，I6生效/位释放，未DAY。
+
+- `SF-2025-ARXIV-2510-22115`：Daily2025-10-29补窗；精确v1必要支持/直接反侧已读，未核代码或复现。新差额为MTP Transformer/loss独立partition与选择性recompute，区别普通异构fill模型和split dI/dW状态；保routing不均衡反侧，不复制整体Ling配方。

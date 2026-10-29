@@ -1,0 +1,1014 @@
+ArtiLatent: Realistic Articulated 3D Object Generation via Structured Latents
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract.
+1 Introduction
+2 Related Work
+2.1 3D/4D Object Generation
+2.2 Structured Data Generation
+2.3 Articulated Object Modeling and Generation
+3 Preliminaries
+4 Method
+4.1 Articulation-aware voxel structure generation
+4.1.1 Articulated voxel representation
+4.1.2 Articulation-aware latent compression
+Training Loss.
+4.1.3 Articulation-aware latent generation
+4.2 Articulation-aware Gaussian decoder
+4.2.1 Multiple-state data curation
+4.2.2 Articulation-aware fine-tuning
+4.3 Inference
+5 Experiments
+5.1 Implementation
+5.2 Dataset
+5.3 Baselines and evaluation metrics
+5.4 Results
+Visual Comparisons
+Quantitative Comparisons
+Quantitative evaluation of the predictions of part semantics and articulation parameters
+Generalization to unseen dataset
+Effectiveness of articulation-aware fine-tuning
+Inference efficiency.
+Failure cases and limitations
+6 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.21432v1 [cs.CV] 24 Oct 2025
+ArtiLatent: Realistic Articulated 3D Object Generation via Structured Latents
+1790Journal: TOGConference: SIGGRAPH Asia 2025 Conference Papers; December 15–18, 2025; Hong Kong, Hong KongSIGGRAPH Asia 2025 Conference Papers (SA Conference Papers ’25), December 15–18, 2025, Hong Kong, Hong KongDOI: 10.1145/3757377.3763922ISBN: 979-8-4007-2137-3/2025/12CCS: Computing methodologies Shape modeling
+Honghua Chen
+Affiliation: S-Lab, Nanyang Technological University, Singapore
+email: chenhonghuacn@gmail.com
+,
+Yushi Lan
+Affiliation: S-Lab, Nanyang Technological University, Singapore
+email: yushi001@e.ntu.edu.sg
+,
+Yongwei Chen
+Affiliation: S-Lab, Nanyang Technological University, Singapore
+email: yongwei001@e.ntu.edu.sg
+and
+Xingang Pan
+Affiliation: S-Lab, Nanyang Technological University, Singapore
+email: xingang.pan@ntu.edu.sg
+© acmlicensed
+Figure 1.
+Real image conditioned generation of articulated 3D objects.
+Given a real-world image (a, d, g) as input condition, our framework generates articulated 3D objects with realistic geometry, articulation, and appearance. For each example, we first generate an articulation-aware voxel structure (b, e, h), and then decode it into 3D Gaussian splats that support physically plausible part-level motion (c, f, i). The resulting models exhibit high visual fidelity and motion consistency across various object types. Note that we crop out the target object from each scene to serve as the condition image.
+Abstract.
+We propose ArtiLatent, a generative framework that synthesizes human-made 3D objects with fine-grained geometry, accurate articulation, and realistic appearance. Our approach jointly models part geometry and articulation dynamics by embedding sparse voxel representations and associated articulation properties—including joint type, axis, origin, range, and part category—into a unified latent space via a variational autoencoder. A latent diffusion model is then trained over this space to enable diverse yet physically plausible sampling.
+To reconstruct photorealistic 3D shapes, we introduce an articulation-aware Gaussian decoder that accounts for articulation-dependent visibility changes (e.g., revealing the interior of a drawer when opened). By conditioning appearance decoding on articulation state, our method assigns plausible texture features to regions that are typically occluded in static poses, significantly improving visual realism across articulation configurations.
+Extensive experiments on furniture-like objects from PartNet-Mobility and ACD datasets demonstrate that ArtiLatent outperforms existing approaches in geometric consistency and appearance fidelity. Our framework provides a scalable solution for articulated 3D object synthesis and manipulation.
+Project page: https://chenhonghua.github.io/MyProjects/ArtiLatent/
+Keywords: Articulated 3D Modeling, Latent 3D Diffusion Model, 3D Gaussian Splatting, Human-made Articulation
+1. Introduction
+Human-made articulated 3D objects comprise multiple semantically meaningful parts connected by joints with constrained motion. They serve as interactive, functional, and physically plausible assets in virtual and physical environments, ranging from everyday items like chairs and drawers to complex industrial tools.
+Modeling and generating such objects requires simultaneously capturing three tightly coupled aspects: fine-grained geometry, part-level articulation behavior, and realistic appearance.
+This capability is essential to a variety of applications such as high-fidelity simulation, immersive virtual environments, and embodied AI.
+Recent progress in 3D generative modeling has yielded impressive results in static object generation, as shown by models such as
+CLAY (Zhang et al., 2024),
+GaussianAnything (Lan et al., 2024b), 3DTopiaXL (Chen et al., 2024), and TRELLIS (Xiang et al., 2024).
+However, these methods primarily focus on modeling global geometry and appearance distributions of rigid, non-articulated shapes, but cannot produce physically plausible, part-aware articulation.
+To address this, emerging approaches such as NAP (Lei
+et al., 2023) and CAGE (Liu
+et al., 2024c) attempt to jointly model object structure and articulation properties. These methods represent geometry with coarse bounding boxes and generate final shapes using implicit fields or retrieval-based part assembly. However, such approaches often lead to inconsistent geometry and suboptimal inter-part alignment. SINGAPO (Liu et al., 2024a) introduces image conditioning into this framework but retains the limitations of retrieval-based pipelines. MeshArt (Gao
+et al., 2024a) takes a step toward higher-fidelity modeling using triangle meshes, yet it focuses solely on geometry and lacks texture modeling, limiting its applicability in photorealistic or interactive scenarios.
+Meanwhile, other methods such as PARIS (Liu
+et al., 2023) and ArticulatedGS (Guo
+et al., 2025; Liu
+et al., 2025) focus on reconstructing articulated objects from multi-state inputs. While effective at recovering geometry and motion from paired observations, they rely on pre-captured start and end states. More recent approaches, including Articulate AnyMesh (Qiu et al., 2025) and ATOP (Vora
+et al., 2025), attempt to infer articulation given a static mesh. However, all of these methods are reconstructive in nature and do not support generative modeling or conditional synthesis.
+In this work, our goal is to develop a generative framework capable of synthesizing articulated 3D objects with fine-grained geometry, appearance, and part-level articulation properties. Moreover, we aim to support conditional generation from real-world images to broaden applicability across practical scenarios.
+To achieve this, we make three key designs:
+First, previous methods (Lei
+et al., 2023; Liu
+et al., 2024c; Liu et al., 2024a) model each part independently, typically assuming a fixed upper bound on part count and relying on retrieval-based assembly. This leads to limited scalability and inaccurate or inconsistent part arrangement. In contrast, we adopt a structured global representation based on sparse voxels. This design is motivated by recent advances in static 3D object generation, where methods such as TRELLIS (Xiang et al., 2024) and GaussianAnything (Lan et al., 2024b) demonstrate that adopting structured 3D as the latent space (e.g., sparse voxels or point clouds), when paired with 3D Gaussian decoders, can effectively capture high-quality, globally coherent geometry with natural inter-part continuity. To fully leverage learned priors of generating photorealistic rigid 3D objects, we use sparse voxels as our coarse geometric representation.
+Second, for modeling articulation, we observe that object geometry, part semantics, and articulation properties are intrinsically intertwined—part shape and function often imply specific joint types and constraints (e.g., drawers tend to translate, while doors typically rotate). To capture these correlations, we jointly embed sparse voxels, part category labels, and associated articulation attributes (e.g., joint type, axis, origin, and range) into a unified latent space via a variational autoencoder (VAE). By attaching local joint parameters and semantic tags to each voxel,
+the latent encodes shape, semantics, and articulation in a consistent and integrated manner, facilitating the learning of their joint distribution via a diffusion model.
+With this design, the diffusion model can operate in the latent space and generate physically plausible articulated structures.
+This design allows the model to effectively capture the underlying correlations and generate physically plausible articulated structures.
+Third, for appearance generation, we leverage the structured latent diffusion model of TRELLIS by sampling latent codes for all voxels and decoding them into textured 3D Gaussians.
+However, TRELLIS’s pretrained model is unaware of visibility changes caused by articulation, for instance, newly exposed surfaces (e.g., inside a drawer) often exhibit unrealistic textures when articulation alters visibility. This is primarily because occluded regions receive little or no supervision during 3D VAE pretraining, leading to uninformative latent features. To alleviate this issue, we propose an articulation-aware fine-tuning strategy that supervises the 3D VAE autoencoding using rendered images of “transformed” 3D Gaussians across different articulation states. This enables the latent codes to adapt to articulation-aware appearance variations, resulting in more realistic and consistent texture synthesis.
+In summary, we present ArtiLatent, a diffusion-based framework that jointly models shape, articulation, and appearance to generate high-fidelity, human-made articulated 3D objects. Extensive evaluations on two articulated object benchmarks show that ArtiLatent consistently outperforms existing methods in motion controllability, geometric coherence, and appearance fidelity. Our approach also enables generating a complete articulated 3D object from a single real-world image, as illustrated in Fig. 1, while faithfully preserving the appearance in the input. With its enhanced visual fidelity and articulation modeling, our method represents a significant step toward realistic and interactive 3D environments, laying the foundation for downstream applications such as embodied AI and digital twin construction.
+2. Related Work
+2.1. 3D/4D Object Generation
+3D generative models, especially 3D latent diffusion models, have recently shown
+remarkable capabilities in synthesizing high-quality, efficient, and scalable 3D objects.
+(Zhang
+et al., 2023; Zhang et al., 2024; Xiang et al., 2024; Lan et al., 2024b; Chen et al., 2024; Zhao et al., 2025; Li et al., 2025; Lan et al., 2024a; Chen et al., 2025).
+However, they primarily focus on modeling geometry and textures of static, non-articulated 3D objects and fail to capture part-level structure and motion.
+Beyond static generation, 4D object modeling focuses on capturing temporal dynamics such as object motion and deformation over time (Ren
+et al., 2023; Gao et al., 2024b; Zeng et al., 2024). These approaches typically model continuous motion via deformation fields (Park et al., 2021; Lan et al., 2022) or time-varying geometry.
+However, they do not explicitly model discrete, joint-based articulation or encode semantic part structure.
+Moreover, they are not designed for human-made objects composed of rigid parts connected via articulated joints, where motion follows structural and kinematic constraints.
+In contrast, our work targets the generation of articulated 3D objects with detailed geometry and explicitly controllable joint-level motion.
+2.2. Structured Data Generation
+Our task is also related to structured 3D data generation (Chaudhuri et al., 2020), which focuses on synthesizing shapes composed of semantically meaningful and geometrically coherent parts. Earlier works tackled this problem using voxel grids with semantic labels (Wang et al., 2018; Li et al., 2020; Wu
+et al., 2020), latent space reasoning with structural priors such as symmetry and support (Wu et al., 2019), or explicit part hierarchies modeled through tree-based architectures (Li et al., 2017; Mo et al., 2019; Gao
+et al., 2019).
+Another line of research investigates 3D assembly, where complex shapes are composed by arranging primitives (Gadelha et al., 2020; Paschalidou et al., 2021; Jones et al., 2020; Xu et al., 2024), joints (Willis
+et al., 2022; Li
+et al., 2024) or semantic parts (Zhan et al., 2020; Li et al., 2020; Narayan
+et al., 2022; Xu et al., 2023; Koo
+et al., 2023). Structured generation has also been extended to scene composition (Wang
+et al., 2021; Wei et al., 2023; Tang et al., 2024) and architectural layout synthesis (Nauata et al., 2020; Nauata et al., 2021; Shabani
+et al., 2023; Tang et al., 2023), where spatial and relational constraints are explicitly encoded.
+Articulated objects represent a special class of structured data, in which part geometry and motion are inherently coupled. Generating such objects requires not only part coherence but also consistency in joint behavior and motion feasibility (Liu
+et al., 2024b).
+Our method leverages structured global sparse voxels and explicit motion attributes, enabling controllable and geometry-consistent articulation generation without retrieval-based post-assembly.
+2.3. Articulated Object Modeling and Generation
+Articulated object modeling has been extensively studied in the contexts of reconstruction and motion analysis. Early methods such as Shape2Motion (Wang
+et al., 2019), ScrewNet (Jain
+et al., 2021), PARIS (Liu
+et al., 2023), and ArticulatedGS (Liu
+et al., 2025; Guo
+et al., 2025) focus on part segmentation and joint parameter estimation from multi-view or multi-state observations.
+Later, when only static observations are available, DRAWER (Xia et al., 2025) converts a single-view video of a static scene into an interactive and actionable virtual environment.
+Building on incomplete geometric inputs, PhysPart (Luo et al., 2024) imposes physical constraints through stability and mobility losses to guide the generation of animatable parts.
+More recently, ATOP (Vora
+et al., 2025) introduced a video-conditioned pipeline that animates existing 3D assets through motion transfer. However, it does not support object-level generation from scratch, and its category-specific design limits its ability to generalize to unseen object categories.
+To address these limitations, DreamArt (Lu et al., 2025) learns a more generalizable motion prior by leveraging a more intuitive and readily available control signal, namely the movable part mask.
+Generative approaches such as NAP (Lei
+et al., 2023), CAGE (Liu
+et al., 2024c), MeshArt (Gao
+et al., 2024a), and ArtFormer (Su
+et al., 2025) focus on synthesizing articulated objects with controllable structures. CAGE leverages part-graph constraints for joint control, while MeshArt and ArtFormer improve geometry realism through transformer-based mesh generation or SDF-based geometry decoder.
+However, these methods either ignore appearance modeling or rely on part retrieval and assembly, limiting flexibility and expressiveness. Infinite Mobility (Lian et al., 2025) adopts a procedural pipeline for generating large-scale articulated objects, but still requires mesh retrieval and post-refinement to obtain usable outputs.
+In contrast, our approach unifies geometry and motion modeling within a shared latent space and introduces an articulation-aware appearance decoder. This design enables direct generation of photorealistic, structurally consistent articulated 3D objects, supporting fine-grained motion control and diverse conditional generation.
+Figure 2. Method overview. Given voxel-level articulation-aware inputs (occupancy, semantics, joint types, bounding boxes, joint parameters, and motion ranges), we encode them into a latent representation using an articulation-aware VAE. A conditional diffusion model samples articulation-aware latent codes under user-specified conditions (e.g., image), which are then decoded into an animatable voxel structure. The final appearance is generated using an articulation-aware Gaussian decoder, producing high-fidelity 3D Gaussian splats with consistent geometry and appearance across motion states.
+3. Preliminaries
+Our method builds upon TRELLIS (Xiang et al., 2024), a recent framework for high-quality 3D generation. TRELLIS establishes a scalable encoding scheme. Each 3D asset is first converted into voxelized features, where active voxels aggregate local geometry and appearance information from multi-view renderings processed by a pretrained DINOv2 encoder. This feature grid, aligned with the latent resolution (e.g., 64364^{3}), captures both coarse structural priors and fine visual details.
+A transformer-based sparse VAE then encodes these voxelized features into structured latent codes and decodes them back into various 3D formats using modality-specific decoders, such as the Gaussian splat decoder 𝒟GSTre\mathcal{D}_{\mathrm{GS}}^{\mathrm{Tre}} (Kerbl et al., 2023).
+Its generation pipeline involves two stages: (1) a rectified flow model (Esser
+et al., 2024) predicts a dense occupancy grid, which is converted into a sparse voxel structure; (2) a sparse rectified flow transformer then generates the structured latent conditioned on this geometry.
+In our approach, we leverage TRELLIS’s latent diffusion model 𝒢Tre\mathcal{G}^{\mathrm{Tre}} to sample voxel-wise latents, which are then decoded into high-fidelity 3D Gaussians by 𝒟GSTre\mathcal{D}_{\mathrm{GS}}^{\mathrm{Tre}} to generate photorealistic 3D objects. Importantly, we leverage TRELLIS’s pretrained weights, which contribute to improved training stability and generalization.
+4. Method
+In this section, we introduce ArtiLatent, a generative framework that synthesizes articulated 3D objects with fine-grained geometry, physically plausible part-level motion, and realistic appearance. Our method consists of two key stages (see Fig. 2): (1) generating an articulation-aware sparse voxel representation that encodes both geometry and motion; and (2) reconstructing photorealistic articulated objects via an articulation-aware Gaussian decoder.
+4.1. Articulation-aware voxel structure generation
+4.1.1. Articulated voxel representation
+We represent an articulated object as a sparse 3D voxel field, where each voxel viv_{i} corresponds to a localized volumetric region and is associated with rich semantic, geometric, and motion-related attributes. Specifically, for each active voxel, we attach the following information:
+•
+Occupancy: Following Xiang et al. (2024), we convert the sparse voxel set into a dense binary occupancy grid 𝐎∈{0,1}N×N×N\mathbf{O}\in\{0,1\}^{N\times N\times N}, where 𝐎⁡(x,y,z)=1\mathbf{O}(x,y,z)=1 if the corresponding voxel intersects the object, and 00 otherwise. We set N=64N=64.
+•
+Part semantics: A categorical label li∈l_{i}\in {base, drawer, door, handle, knob, tray, shelf, wheel}, represented via one-hot encoding.
+•
+Part bounding box: A bounding box bi∈ℝ6b_{i}\in\mathbb{R}^{6} describing the 3D center and size of the part associated with voxel viv_{i}.
+•
+Joint type: A discrete label ji∈j_{i}\in {fixed, revolute, prismatic, continuous, screw}, also one-hot encoded.
+•
+Joint parameters: A joint axis ai∈ℝ3a_{i}\in\mathbb{R}^{3} and origin oi∈ℝ3o_{i}\in\mathbb{R}^{3}, specifying the direction and position of the joint’s motion.
+•
+Motion range: A joint limit ri∈ℝ2r_{i}\in\mathbb{R}^{2}, encoding the allowed angular or translational motion range.
+All voxel-level attributes are normalized in a canonical coordinate space, where each object is centered and consistently oriented, following Liu
+et al. (2024c); Liu et al. (2024a). Notably, all voxels belonging to the same part instance share identical semantic and articulation attributes.
+4.1.2. Articulation-aware latent compression
+We employ a VAE {ℰArti,𝒟Arti\{\mathcal{E}^{\mathrm{Arti}},\mathcal{D}^{\mathrm{Arti}}} with 3D convolutional blocks to encode the articulation-aware voxel representation into a compact latent space. The encoder ℰArti\mathcal{E}^{\mathrm{Arti}} takes as input a dense volumetric tensor of shape [Cin,64,64,64][C_{\text{in}},64,64,64], where Cin=35C_{\text{in}}=35. This includes one channel for the binary occupancy grid 𝐎\mathbf{O} and 34 channels encoding voxel-level articulation attributes, such as one-hot part labels, one-hot joint types, joint axes and origins, motion ranges, and bounding box parameters.
+The encoder outputs a latent volume of shape [2​Cz,16,16,16][2C_{z},16,16,16] with Cz=8C_{z}=8, representing the mean and log-variance used to sample the latent variable z∈ℝCz×16×16×16z\in\mathbb{R}^{C_{z}\times 16\times 16\times 16} via the reparameterization trick. The decoder 𝒟Arti\mathcal{D}^{\mathrm{Arti}} mirrors the encoder architecture with upsampling blocks, and reconstructs a volumetric output of shape [Cout,64,64,64][C_{\text{out}},64,64,64], predicting per-voxel occupancy, semantics, and articulation attributes.
+Training Loss.
+We train the VAE using a combination of reconstruction and regularization objectives. A KL-regularized loss is applied to enforce a continuous and generative latent space. For voxel-wise reconstruction, we design attribute-specific loss terms:
+•
+Occupancy classification: We adopt the Dice loss (Milletari
+et al., 2016) to mitigate the severe class imbalance between occupied and unoccupied regions.
+For ground-truth occupancy labels yi∈{0,1}y_{i}\in\{0,1\} and predictions y^i∈[0,1]\hat{y}_{i}\in[0,1],
+(1) |
+|
+ℒocc=1−2​∑j=1Myj​y^j∑j=1Myj+∑j=1My^j+ϵ,\mathcal{L}_{\mathrm{occ}}=1-\frac{2\sum_{j=1}^{M}y_{j}\hat{y}_{j}}{\sum_{j=1}^{M}y_{j}+\sum_{j=1}^{M}\hat{y}_{j}+\epsilon}, |
+|
+where M=N3M=N^{3} denotes the total number of voxels and ϵ\epsilon is a small constant for numerical stability.
+•
+Part semantic type classification: We apply cross-entropy loss to supervise the predictions of part semantic labels and joint types.
+With one-hot labels li,csem∈{0,1}l_{i,c}^{\mathrm{sem}}\in\{0,1\} and predicted probabilities p^i,csem\hat{p}_{i,c}^{\mathrm{sem}},
+(2) |
+|
+ℒsem=−1M′∑i=1M′∑c=1Csemli,csemlogp^i,csem,\mathcal{L}_{\mathrm{sem}}=-\frac{1}{M^{\prime}}\sum_{i=1}^{M^{\prime}}\sum_{c=1}^{C_{\mathrm{sem}}}l_{i,c}^{\mathrm{sem}}\log\hat{p}_{i,c}^{\mathrm{sem}}, |
+|
+where M′M^{\prime} is the total number of active voxels and CsemC_{\mathrm{sem}} is the number of semantic part categories,
+•
+Joint type classification:
+With one-hot labels ji,cjoint∈{0,1}j_{i,c}^{\mathrm{joint}}\in\{0,1\} and predicted probabilities p^i,cjoint\hat{p}_{i,c}^{\mathrm{joint}},
+(3) |
+|
+ℒjoint=−1M′∑i=1M′∑c=1Cjointji,cjointlogp^i,cjoint,\mathcal{L}_{\mathrm{joint}}=-\frac{1}{M^{\prime}}\sum_{i=1}^{M^{\prime}}\sum_{c=1}^{C_{\mathrm{joint}}}j_{i,c}^{\mathrm{joint}}\log\hat{p}_{i,c}^{\mathrm{joint}}, |
+|
+where CjointC_{\mathrm{joint}} is the number of joint type categories.
+•
+Articulation parameter regression:
+For continuous attributes (joint axis vectors a^i\hat{a}_{i}, origins o^i\hat{o}_{i}, motion ranges r^i\hat{r}_{i}, and bounding box parameters b^i\hat{b}_{i}) with ground truth values (ai,oi,ri,bi)(a_{i},o_{i},r_{i},b_{i}),
+(4) |
+|
+ℒbbox=1M′∑i=1M′(∥ai−a^i∥22+∥oi−o^i∥22+∥ri−r^i∥22+∥bi−b^i∥22).\mathcal{L}_{\mathrm{bbox}}=\frac{1}{M^{\prime}}\sum_{i=1}M^{{}^{\prime}}\Big(\|a_{i}-\hat{a}_{i}\|_{2}^{2}+\|o_{i}-\hat{o}_{i}\|_{2}^{2}+\|r_{i}-\hat{r}_{i}\|_{2}^{2}+\|b_{i}-\hat{b}_{i}\|_{2}^{2}\Big). |
+|
+The total loss is a weighted sum of all components:
+(5) |
+|
+ℒtotal=αkl​ℒKL+ℒocc+ℒsem+ℒjoint+ℒbbox.{\mathcal{L}_{\mathrm{total}}=\alpha_{\mathrm{kl}}\mathcal{L}_{\mathrm{KL}}+\mathcal{L}_{\mathrm{occ}}+\mathcal{L}_{\mathrm{sem}}+\mathcal{L}_{\mathrm{joint}}+\mathcal{L}_{\mathrm{bbox}}.} |
+|
+This training objective ensures accurate reconstruction of voxel-level semantics and motion attributes, while maintaining a smooth and generative latent representation.
+4.1.3. Articulation-aware latent generation
+After training the VAE model, we obtain a latent dataset consisting of DD samples, where each sample is a pair of a latent code and a corresponding condition vector: {(zi,ci)}i=1D\{(z_{i},c_{i})\}_{i=1}^{D}. Here, cic_{i} encodes external conditioning information (e.g., image embedding or text prompt).
+To enable conditional generative modeling, we train a flow matching network (Lipman
+et al., 2023), 𝒢Arti\mathcal{G}^{\mathrm{Arti}}, to learn a diffusion prior to the latent space. Following TRELLIS, we adopt a transformer-based denoising backbone that processes serialized latent grids with 3D positional encodings. For details of the architecture, we refer readers to Xiang et al. (2024).
+We also incorporate classifier-free guidance to flexibly inject various types of conditioning, including category labels or visual embeddings from DINOv2 (Oquab et al., 2023). This enables the model to generate diverse and physically plausible latent codes under different user-specified prompts, which are subsequently decoded by the VAE decoder into high-fidelity articulated 3D voxelized objects.
+Figure 3.
+Effect of articulation-aware fine-tuning on appearance quality.
+We compare the results with (a, c) and without (b, d) articulation-aware fine-tuning on two different object types. Without fine-tuning, the generated textures exhibit noticeable artifacts, such as distortion, color bleeding, and loss of structure in articulated regions (see blue arrows). In contrast, our fine-tuned model produces sharper, more consistent, and plausible textures, especially around seams and occluded parts revealed by motion.
+4.2. Articulation-aware Gaussian decoder
+With the ability to freely sample articulated voxel structures, our goal is to reconstruct high-fidelity 3D Gaussian splats. To this end, we leverage the structured latent diffusion model 𝒢Tre\mathcal{G}^{\mathrm{Tre}} and the Gaussian decoder 𝒟GS\mathcal{D}_{\mathrm{GS}} from TRELLIS (Xiang et al., 2024). Specifically, for each voxel, we sample a latent feature zTrez^{\mathrm{Tre}} using 𝒢Tre\mathcal{G}^{\mathrm{Tre}} and decode it into a 3D Gaussian representation via 𝒟GS\mathcal{D}_{\mathrm{GS}}.
+However, directly applying 𝒟GS\mathcal{D}_{\mathrm{GS}} to articulated objects often results in suboptimal appearance, particularly in regions that are occluded in the closed state but become visible after articulation. As illustrated in Fig. 3, inner surfaces of a drawer may exhibit noisy or unrealistic textures once opened. This issue arises because the original sparse VAE {ℰ,𝒟GS}\{\mathcal{E},\mathcal{D}_{\mathrm{GS}}\} was trained on static objects and lacks exposure to diverse articulation states during training.
+To overcome this limitation, we introduce an articulation-aware fine-tuning strategy, as shown in Fig. 4. We render the same object under multiple articulated poses and use the corresponding 2D views as supervision signals. This allows us to adapt {ℰ,𝒟GS,𝒢Tre}\{\mathcal{E},\mathcal{D}_{\mathrm{GS}},\mathcal{G}^{\mathrm{Tre}}\} to become aware of articulation-dependent visibility changes. As a result, the latent zTrez^{\mathrm{Tre}} becomes more informative with respect to articulation-aware geometry exposure, enabling more realistic and consistent texture synthesis across different articulation states.
+Figure 4. Articulation-aware Gaussian decoder. We render the generated 3D Gaussians under multiple articulated states and use the corresponding images to supervise the encoder-decoder pair (ℰ,𝒟GS\mathcal{E},\mathcal{D}_{\mathrm{GS}}). For each voxel, we extract DINOv2 features across states and views, and use them as the initial feature. Decoded Gaussians are transformed according to articulation parameters, enabling the model to learn articulation-aware appearance variations via reconstruction loss.
+4.2.1. Multiple-state data curation
+We curate a multi-state dataset by sampling articulated objects across their full articulation ranges. For each object, we uniformly sample kk articulation states and render nn views per state, ensuring comprehensive visibility coverage.
+For each state, we articulate the voxelized object and extract per-view visual features using DINOv2. For every active voxel, we aggregate its features across all views and articulation states by averaging them. The resulting averaged feature is then assigned to the corresponding voxel in the rest (closed) state, which we use for sampling zTrez^{\mathrm{Tre}}. This choice is due to the fact that the conditional image provided during generation typically depicts the object in its rest configuration.
+4.2.2. Articulation-aware fine-tuning
+Once the multi-state training data is prepared, we fine-tune {ℰ,𝒟GS,𝒢Tre}\{\mathcal{E},\mathcal{D}_{\mathrm{GS}},\mathcal{G}^{\mathrm{Tre}}\}. When training {ℰ,𝒟GS}\{\mathcal{E},\mathcal{D}_{\mathrm{GS}}\}, we articulate the decoded Gaussians {gi}\{g_{i}\} and supervise the rendered images with the corresponding ground-truth views.
+To perform articulation on {gi}\{g_{i}\}, we first establish a mapping between voxels and their corresponding Gaussian points. In TRELLIS, each active voxel is decoded into 3232 Gaussians within its local neighborhood, and the outputs are sequentially ordered. This allows us to retrieve the set of Gaussians associated with a given voxel based on its index.
+Using the articulation parameters attached to each voxel, we apply spatial transformations—such as translations or rotations—to the corresponding Gaussians to simulate their articulated state. The transformed Gaussians are then rendered from specific camera views and supervised using reconstruction losses against the corresponding ground-truth images Ig​tsI_{gt}^{s}:
+(6) |
+|
+ℒGS=ℒrecon+λ​ℒreg,ℒrecon=M⁡(Ig​ts,frender​({Tis​(gi)})),\mathcal{L}_{\mathrm{GS}}=\mathcal{L}_{\mathrm{recon}}+\lambda\mathcal{L}_{\mathrm{reg}},\quad\mathcal{L}_{\mathrm{recon}}=M\left(I_{gt}^{s},f_{\mathrm{render}}\left(\{T_{i}^{s}(g_{i})\}\right)\right), |
+|
+where M⁡(⋅)M(\cdot) is any image reconstruction metric (e.g., ℓ1\ell_{1}, ℓ2\ell_{2}, or perceptual loss) computed between the rendered image and the ground-truth image, Tis​(⋅)T_{i}^{s}(\cdot) denotes the transformation applied at articulation state ss for Gaussian point gig_{i}, and ℒreg\mathcal{L}_{\mathrm{reg}} is a regularization term applied to the predicted Gaussians.
+This supervision fine-tunes {ℰ,𝒟GS}\{\mathcal{E},\mathcal{D}_{\mathrm{GS}}\} to capture articulation-aware appearance variations. Once adapted, we re-encode the data to obtain updated latent representations and further tine-tune 𝒢Tre\mathcal{G}^{\mathrm{Tre}} to enable articulation-aware latent sampling.
+4.3. Inference
+During inference, given a specific user-defined condition (e.g., image), we first sample a latent code zz from 𝒢Arti\mathcal{G}^{\mathrm{Arti}} and decode it into an articulated voxel structure.
+Since voxels belonging to the same semantic part are expected to share consistent articulation behavior, we segment object parts based on the predicted semantic labels and bounding box information. Specifically, we first perform a coarse segmentation using the predicted part semantics. However, voxels with identical semantic labels may belong to adjacent but distinct parts. To address this, we further apply a DBSCAN clustering step using bounding box attributes (e.g., centers and sizes), which allows us to separate different parts that share the same semantic category but exhibit different spatial properties. For each segmented part, we then aggregate per-voxel articulation parameters by averaging them within the segment, and assign the aggregated values back to all voxels in that part. This ensures coherent articulation behavior and physically plausible motion at the part level.
+Conditioned on the input and the generated voxel structure, we then use 𝒢Tre\mathcal{G}^{\mathrm{Tre}} to assign latent features to each voxel. These structured features are decoded by 𝒟GS\mathcal{D}_{\mathrm{GS}} into 3D Gaussian splats, producing photorealistic reconstructions that capture both exterior and interior surfaces. Importantly, the resulting Gaussians support smooth and realistic articulation by construction.
+Note that at both training and inference time, our model takes a single RGB image, depicting the object in rest state from a near-frontal view. The rest-state voxel is used for the 3D Gaussian generation to ensure appearance-geometry alignment. The output is a 3D Gaussian with articulation parameters, enabling articulated motion by joint-driven transformations without re-running inference.
+5. Experiments
+5.1. Implementation
+For articulation-aware VAE training, we train ℰArti,𝒟Arti{\mathcal{E}^{\mathrm{Arti}},\mathcal{D}^{\mathrm{Arti}}} from scratch using 4×A6000 GPUs for 1 day until convergence. The KL divergence loss term is weighted by αkl=0.001\alpha_{\mathrm{kl}}=0.001, and the reconstruction objectives are each assigned a weight of 1.
+The articulation diffusion model 𝒢Arti\mathcal{G}^{\mathrm{Arti}} is trained under the same hardware setup for 1 day, initialized from the structure diffusion model pretrained in TRELLIS. For fine-tuning ℰ,𝒟GS,𝒢Tre{\mathcal{E},\mathcal{D}_{\mathrm{GS}},\mathcal{G}^{\mathrm{Tre}}}, we again use 4×A6000 GPUs over 2 days. Note that during articulation and supervision, we uniformly sample k=8k=8 articulation states, each rendered from n=48n=48 camera views.
+All models are optimized with the Adam optimizer, using a learning rate of 1×10−41\times 10^{-4} and a batch size of 4 per GPU. During inference, we set the classifier-free guidance (CFG) strength to 3 and the number of sampling steps to 50.
+5.2. Dataset
+We conduct our experiments on a subset of the PartNet-Mobility dataset (Xiang et al., 2020), focusing on seven common categories: Storage, Table, Refrigerator, Dishwasher, Oven, Washer, and Microwave. The dataset is preprocessed following (Liu et al., 2024a), resulting in 3,063 articulated objects for training. For evaluation, we use 77 held-out instances, each paired with two randomly rendered views to simulate conditional inputs.
+To assess generalization beyond the training distribution, we also evaluate our model in a zero-shot setting using 135 unseen objects from the ACD dataset (Iliash
+et al., 2024). Additional preprocessing and dataset construction details are consistent with prior work (Liu et al., 2024a).
+5.3. Baselines and evaluation metrics
+Since our method supports the conditional generation of articulated 3D objects, we compare against representative baselines under the image-conditioned setting. Specifically, we include SINGAPO (Liu et al., 2024a), a state-of-the-art controllable generation model that takes a single image as input. As we use the same training and test datasets, we directly report the official results from their paper.
+For broader comparison, we also include NAP-ICA, the image-conditioned variant of NAP, as introduced in (Liu et al., 2024a).
+Evaluation Metrics.
+We adopt several metrics to evaluate geometric accuracy and visual realism of articulated 3D object generation.
+•
+dCD↓d_{\text{CD}}\downarrow: Chamfer Distance (CD) between sampled surface points across articulated states, measuring geometric alignment. More specifically, RS-dCDd_{\text{CD}} refers to the CD value computed in the rest state, while AS-dCDd_{\text{CD}} denotes the distance measured after articulation.
+•
+FID ↓\downarrow: Fréchet Inception Distance computed between rendered images of the generated shapes (Gaussian splats or retrieved meshes) and those of the ground-truth meshes, assessing perceptual fidelity.
+Note that during evaluation, we render two views of each object in its rest state and randomly select one as the input. Our method performs a single forward pass to generate a 3D Gaussian representation in this rest configuration. To evaluate articulation behavior, we then apply joint-based transformations to the generated 3D Gaussian to simulate five target articulation states. All metrics are computed over these five transformed outputs.
+5.4. Results
+Visual Comparisons
+Fig. 5 and Fig. 7 present qualitative comparisons across various categories from the PartNet-Mobility and ACD datasets. Compared to SINGAPO, our method generates more accurate part geometry and more realistic textures. Notably, it better captures motion-aware articulation behaviors—such as drawer translations and washer door rotations—and preserves fine-grained appearance details in both exterior surfaces and newly exposed interior regions.
+In contrast, SINGAPO, which relies on part retrieval and mesh assembly, is prone to retrieval mismatches. For example, in the last row of Fig. 5, it fails to retrieve a correct door geometry for the washing machine, resulting in a shape that does not match the underlying articulation structure. This highlights the advantage of our generative approach in maintaining part-motion consistency and global structural coherence.
+Quantitative Comparisons
+Table 1 presents the quantitative results on the evaluated datasets under the image-conditioned setting. We assess both geometric accuracy and perceptual quality using RS-dCDd_{\text{CD}}, AS-dCDd_{\text{CD}}, and FID.
+We first compare our method with TRELLIS in the rest state on the PartNet-Mobility test set. TRELLIS achieves a CD of 0.0051 and an FID of 153.45, while our method obtains a CD of 0.0063 and an FID of 137.18, indicating comparable performance in static settings. However, as TRELLIS does not support articulated modeling, it cannot be evaluated under articulation-aware metrics.
+For methods that involve articulation modeling, our method consistently outperforms all baselines across both datasets. Specifically, we achieve the lowest CD values in both the rest and articulated states, demonstrating superior geometric reconstruction and articulation consistency. Furthermore, our method yields the lowest FID scores, indicating more realistic visual quality compared to retrieval-based approaches.
+Table 1.
+Quantitative comparison of reconstruction and perceptual quality on the PartNet-Mobility and ACD test sets under the single-image input setting. All methods generate one articulated object per input. RS-dCDd_{\text{CD}} refers to the Chamfer Distance computed in the rest state, while AS-dCDd_{\text{CD}} denotes the distance measured after articulation. Lower is better for all metrics.
+Method |
+PartNet-Mobility |
+ACD Test Set |
+RS-dCDd_{\text{CD}} ↓\downarrow |
+AS-dCDd_{\text{CD}} ↓\downarrow |
+FID ↓\downarrow |
+RS-dCDd_{\text{CD}} ↓\downarrow |
+AS-dCDd_{\text{CD}} ↓\downarrow |
+FID ↓\downarrow |
+TRELLIS |
+0.0051 |
+– |
+153.45 |
+– |
+– |
+– |
+URDFormer |
+0.5502 |
+0.8374 |
+– |
+0.7198 |
+0.8995 |
+– |
+NAP-ICA |
+0.0173 |
+0.0914 |
+– |
+0.1110 |
+0.1887 |
+– |
+SINGAPO |
+0.0168 |
+0.0905 |
+175.85 |
+0.1011 |
+0.1679 |
+201.60 |
+Ours |
+0.0063 |
+0.0043 |
+137.18 |
+0.0690 |
+0.0751 |
+128.34 |
+Table 2.
+Ablation study. Incorporating the articulation-aware fine-tuning strategy enables our model to generate more realistic objects.
+Method |
+PartNet-Mobility |
+RS-dCDd_{\text{CD}} ↓\downarrow |
+AS-dCDd_{\text{CD}} ↓\downarrow |
+FID ↓\downarrow |
+w/o Articulation-aware fine-tuning |
+0.0076 |
+0.0051 |
+156.02 |
+Ours |
+0.0063 |
+0.0043 |
+137.18 |
+Quantitative evaluation of the predictions of part semantics and articulation parameters
+We evaluated occupancy classification and joint parameter accuracy on the PartNet-Mobility test set, comparing with SINGAPO, as shown in Table 3. Our method achieves competitive results.
+Additionally, we computed the standard deviation (s​t​dstd) of predicted articulation parameters across voxels within each part and observed that the intra-part variance is generally low (see Table 4, computed on the PartNet-Mobility test set and averaged over all parts). This supports the spatial consistency of voxel-wise predictions and justifies our averaging strategy.
+Table 3. Comparison of predictions of part semantics and articulation parameters between SINGAPO and our method.
+Metric |
+SINGAPO |
+Ours |
+Occupancy_recall ↑\uparrow |
+/ |
+98.94% |
+Bbox center ↓\downarrow |
+0.0440 |
+0.0357 |
+Bbox size ↓\downarrow |
+0.0651 |
+0.0832 |
+Part type ↑\uparrow |
+97.89% |
+96.27% |
+Joint type ↑\uparrow |
+97.37% |
+99.17% |
+Joint axis ↓\downarrow |
+1.29∘ |
+1.14∘ |
+Joint origin ↓\downarrow |
+0.39 |
+0.10 |
+Joint range (angle) ↓\downarrow |
+6.73∘ |
+7.37∘ |
+Joint range (translation) ↓\downarrow |
+0.0265 |
+0.0159 |
+Table 4. Standard deviation (s​t​dstd) of predicted articulation parameters across voxels within each part.
+Metric |
+s​t​dstd |
+Bbox center ↓\downarrow |
+[0.0211, 0.0159, 0.0277] |
+Bbox size ↓\downarrow |
+[0.0377, 0.0260, 0.0391] |
+Joint axis ↓\downarrow |
+[0.1012, 0.0972, 0.0875] |
+Joint origin ↓\downarrow |
+[0.0392, 0.0233, 0.0384] |
+Joint range (angle) ↓\downarrow |
+[6.96∘, 7.56∘] |
+Joint range (translation) ↓\downarrow |
+[0.007, 0.0123] |
+Generalization to unseen dataset
+To evaluate the generalization capability of our method, we test on the ACD dataset, which contains articulated objects with part configurations and motion patterns not seen during training. As shown in Table 1 and the last two rows in Fig. 5, our method significantly outperforms all baselines in both quantitative and qualitative comparisons.
+Besides, to evaluate our method’s applicability in real-world scenarios, we conduct qualitative experiments using real-captured images of articulated household objects. As shown in Fig. 1, our method successfully synthesizes plausible voxel structures and decodes them into textured 3D Gaussians that exhibit coherent geometry and physically realistic articulation.
+Despite being trained on synthetic datasets, our model generalizes well to real images, capturing fine-grained part semantics and motion behaviors.
+Effectiveness of articulation-aware fine-tuning
+To assess the impact of our articulation-aware fine-tuning strategy, we conduct an ablation study by comparing models trained with and without this component, as shown in Table 2 and Fig. 3. Removing fine-tuning results in noticeable performance degradation, particularly in AS-dCDd_{\text{CD}} and FID, where texture artifacts and inconsistencies in articulated regions become prominent. In contrast, applying articulation-aware supervision leads to lower geometric error and improved perceptual realism. These findings highlight the importance of adapting the appearance decoder to articulation-dependent visibility changes.
+Inference efficiency.
+We evaluate the runtime performance of our method on an NVIDIA A6000 GPU. The total inference time for generating an articulated 3D object consists of three stages: sampling the articulation-aware voxel structure (16.25 seconds), sampling voxel-level appearance features (9.54 seconds), and decoding the final 3D Gaussian splats (0.06 seconds), resulting in an overall runtime of approximately 25.85 seconds per object.
+In comparison, the baseline method SINGAPO requires around 2.9 seconds per object under the same hardware setting.
+Failure cases and limitations
+Despite the promising results, our method still has several limitations. First, we evaluate our framework on articulated objects with relatively simple kinematic structures, such as the furniture categories from the PartNet-Mobility dataset and ACD datasets.
+While some real-scene results in Fig. 1 and quantitative results on ACD dataset demonstrate a certain degree of generalization to unseen, yet similar object categories within the training domains. We acknowledge that our model’s generalization could be further improved with a larger dataset.
+Second, although our framework models the object holistically and preserves global part coherence, it relies on accurate part-level bounding boxes and voxel-level semantic labels to segment individual parts. In cases where these annotations are imprecise or inconsistently sampled, part segmentation quality degrades, which may result in distorted part geometry or incorrect motion behavior (see Fig. 6).
+6. Conclusion
+We presented ArtiLatent, a unified generative framework for synthesizing human-made articulated 3D objects with fine-grained geometry, motion semantics, and realistic appearance. By embedding articulation-aware voxel structures into a compact latent space and leveraging structured diffusion priors, our method supports controllable generation conditioned on a single image. To address articulation-aware visibility changes, we introduced a fine-tuning strategy that significantly improves appearance fidelity in both external and internal regions.
+Extensive experiments on standard benchmarks demonstrate that ArtiLatent achieves state-of-the-art performance in geometric accuracy, motion plausibility, and visual realism. Our approach opens new possibilities for scalable articulated 3D content creation, interactive editing, and robotic simulation. Future work includes building larger and more diverse datasets, exploring generalization to more natural dynamics, scaling to large object libraries, and integrating physical constraints for simulation-ready assets.
+References
+Chaudhuri et al. (2020)
+Siddhartha Chaudhuri,
+Daniel Ritchie, Jiajun Wu,
+Kai Xu, and Hao Zhang.
+2020.
+Learning generative models of 3D structures. In
+Computer graphics forum,
+Vol. 39. 643–666.
+Chen et al. (2024)
+Zhaoxi Chen, Jiaxiang
+Tang, Yuhao Dong, Ziang Cao,
+Fangzhou Hong, Yushi Lan,
+Tengfei Wang, Haozhe Xie,
+Tong Wu, Shunsuke Saito, et al.
+2024.
+3dtopia-xl: Scaling high-quality 3d asset
+generation via primitive diffusion.
+arXiv preprint arXiv:2409.12957
+(2024).
+Chen et al. (2025)
+Zhaoxi Chen, Jiaxiang
+Tang, Yuhao Dong, Ziang Cao,
+Fangzhou Hong, Yushi Lan,
+Tengfei Wang, Haozhe Xie,
+Tong Wu, Shunsuke Saito,
+Liang Pan, Dahua Lin, and
+Ziwei Liu. 2025.
+3DTopia-XL: High-Quality 3D PBR Asset Generation
+via Primitive Diffusion. In CVPR.
+Esser
+et al. (2024)
+Patrick Esser, Sumith
+Kulal, Andreas Blattmann, Rahim
+Entezari, Jonas Müller, Harry Saini,
+Yam Levi, Dominik Lorenz,
+Axel Sauer, Frederic Boesel,
+et al. 2024.
+Scaling rectified flow transformers for
+high-resolution image synthesis. In Forty-first
+international conference on machine learning.
+Gadelha et al. (2020)
+Matheus Gadelha, Giorgio
+Gori, Duygu Ceylan, Radomir Mech,
+Nathan Carr, Tamy Boubekeur,
+Rui Wang, and Subhransu Maji.
+2020.
+Learning generative models of shape handles.
+402–411.
+Gao
+et al. (2024a)
+Daoyi Gao, Yawar
+Siddiqui, Lei Li, and Angela Dai.
+2024a.
+MeshArt: Generating Articulated Meshes with
+Structure-guided Transformers.
+arXiv preprint arXiv:2412.11596
+(2024).
+Gao
+et al. (2019)
+Lin Gao, Jie Yang,
+Tong Wu, Yu-Jie Yuan,
+Hongbo Fu, Yu-Kun Lai, and
+Hao Zhang. 2019.
+SDM-NET: Deep generative network for structured
+deformable mesh.
+38, 6 (2019),
+1–15.
+Gao et al. (2024b)
+Quankai Gao, Qiangeng Xu,
+Zhe Cao, Ben Mildenhall,
+Wenchao Ma, Le Chen,
+Danhang Tang, and Ulrich Neumann.
+2024b.
+Gaussianflow: Splatting gaussian dynamics for 4d
+content creation.
+arXiv preprint arXiv:2403.12365
+(2024).
+Guo
+et al. (2025)
+Junfu Guo, Yu Xin,
+Gaoyi Liu, Kai Xu,
+Ligang Liu, and Ruizhen Hu.
+2025.
+Articulatedgs: Self-supervised digital twin
+modeling of articulated objects using 3d gaussian splatting.
+arXiv preprint arXiv:2503.08135
+(2025).
+Iliash
+et al. (2024)
+Denys Iliash, Hanxiao
+Jiang, Yiming Zhang, Manolis Savva,
+and Angel X. Chang. 2024.
+S2O: Static to Openable Enhancement for
+Articulated 3D Objects.
+arXiv preprint arXiv:2409.18896
+(2024).
+arXiv:2409.18896
+Jain
+et al. (2021)
+Ajinkya Jain, Rudolf
+Lioutikov, Caleb Chuck, and Scott
+Niekum. 2021.
+Screwnet: Category-independent articulation model
+estimation from depth images using screw theory. In
+2021 IEEE International Conference on Robotics and
+Automation (ICRA). IEEE, 13670–13677.
+Jones et al. (2020)
+R Kenny Jones, Theresa
+Barton, Xianghao Xu, Kai Wang,
+Ellen Jiang, Paul Guerrero,
+Niloy J Mitra, and Daniel Ritchie.
+2020.
+ShapeAssembly: Learning to generate programs for
+3D shape structure synthesis.
+39, 6 (2020),
+1–20.
+Kerbl et al. (2023)
+Bernhard Kerbl, Georgios
+Kopanas, Thomas Leimkühler, and
+George Drettakis. 2023.
+3d gaussian splatting for real-time radiance field
+rendering.
+ACM Trans. Graph. 42,
+4 (2023), 139–1.
+Koo
+et al. (2023)
+Juil Koo, Seungwoo Yoo,
+Minh Hieu Nguyen, and Minhyuk Sung.
+2023.
+Salad: Part-level latent diffusion for 3d shape
+generation and manipulation. 14441–14451.
+Lan et al. (2024a)
+Yushi Lan, Fangzhou Hong,
+Shuai Yang, Shangchen Zhou,
+Xuyi Meng, Bo Dai,
+Xingang Pan, and Chen Change Loy.
+2024a.
+LN3Diff: Scalable Latent Neural Fields Diffusion
+for Speedy 3D Generation. In ECCV.
+Lan et al. (2022)
+Yushi Lan, Chen Change
+Loy, and Bo Dai. 2022.
+DDF: Correspondence Distillation from NeRF-based
+GAN.
+IJCV (2022).
+Lan et al. (2024b)
+Yushi Lan, Shangchen
+Zhou, Zhaoyang Lyu, Fangzhou Hong,
+Shuai Yang, Bo Dai,
+Xingang Pan, and Chen Change Loy.
+2024b.
+GaussianAnything: Interactive Point Cloud Flow
+Matching for 3D Generation. In The Thirteenth
+International Conference on Learning Representations.
+Lei
+et al. (2023)
+Jiahui Lei, Congyue Deng,
+William B Shen, Leonidas J Guibas, and
+Kostas Daniilidis. 2023.
+Nap: Neural 3d articulated object prior.
+Advances in Neural Information Processing
+Systems 36 (2023),
+31878–31894.
+Li et al. (2020)
+Jun Li, Chengjie Niu,
+and Kai Xu. 2020.
+Learning part generation and assembly for
+structure-aware shape synthesis. In Proceedings of
+the AAAI conference on artificial intelligence, Vol. 34.
+11362–11369.
+Li et al. (2017)
+Jun Li, Kai Xu,
+Siddhartha Chaudhuri, Ersin Yumer,
+Hao Zhang, and Leonidas Guibas.
+2017.
+GRASS: Generative recursive autoencoders for
+shape structures.
+36, 4 (2017),
+1–14.
+Li
+et al. (2024)
+Yichen Li, Kaichun Mo,
+Yueqi Duan, He Wang,
+Jiequan Zhang, and Lin Shao.
+2024.
+Category-level multi-part multi-joint 3D shape
+assembly. 3281–3291.
+Li et al. (2025)
+Yangguang Li, Zi-Xin Zou,
+Zexiang Liu, Dehu Wang,
+Yuan Liang, Zhipeng Yu,
+Xingchao Liu, Yuan-Chen Guo,
+Ding Liang, Wanli Ouyang,
+et al. 2025.
+TripoSG: High-Fidelity 3D Shape Synthesis using
+Large-Scale Rectified Flow Models.
+arXiv preprint arXiv:2502.06608
+(2025).
+Lian et al. (2025)
+Xinyu Lian, Zichao Yu,
+Ruiming Liang, Yitong Wang,
+Li Ray Luo, Kaixu Chen,
+Yuanzhen Zhou, Qihong Tang,
+Xudong Xu, Zhaoyang Lyu, et al.
+2025.
+Infinite Mobility: Scalable High-Fidelity Synthesis
+of Articulated Objects via Procedural Generation.
+arXiv preprint arXiv:2503.13424
+(2025).
+Lipman
+et al. (2023)
+Yaron Lipman, Ricky TQ
+Chen, Heli Ben-Hamu, Maximilian Nickel,
+and Matthew Le. 2023.
+Flow Matching for Generative Modeling. In
+The Eleventh International Conference on Learning
+Representations.
+Liu et al. (2024a)
+Jiayi Liu, Denys Iliash,
+Angel X Chang, Manolis Savva, and
+Ali Mahdavi-Amiri. 2024a.
+SINGAPO: Single Image Controlled Generation of
+Articulated Parts in Objects.
+arXiv preprint arXiv:2410.16499
+(2024).
+Liu
+et al. (2023)
+Jiayi Liu, Ali
+Mahdavi-Amiri, and Manolis Savva.
+2023.
+Paris: Part-level reconstruction and motion
+analysis for articulated objects. In Proceedings
+of the IEEE/CVF International Conference on Computer Vision.
+352–363.
+Liu
+et al. (2024b)
+Jiayi Liu, Manolis Savva,
+and Ali Mahdavi-Amiri. 2024b.
+Survey on Modeling of Articulated Objects.
+arXiv preprint arXiv:2403.14937
+(2024).
+Liu
+et al. (2024c)
+Jiayi Liu, Hou In Ivan
+Tam, Ali Mahdavi-Amiri, and Manolis
+Savva. 2024c.
+CAGE: controllable articulation generation. In
+Proceedings of the IEEE/CVF Conference on Computer
+Vision and Pattern Recognition. 17880–17889.
+Liu
+et al. (2025)
+Yu Liu, Baoxiong Jia,
+Ruijie Lu, Junfeng Ni,
+Song-Chun Zhu, and Siyuan Huang.
+2025.
+ArtGS: Building Interactable Replicas of Complex
+Articulated Objects via Gaussian Splatting.
+arXiv preprint arXiv:2502.19459
+(2025).
+Lu et al. (2025)
+Ruijie Lu, Yu Liu,
+Jiaxiang Tang, Junfeng Ni,
+Yuxiang Wang, Diwen Wan,
+Gang Zeng, Yixin Chen, and
+Siyuan Huang. 2025.
+Dreamart: Generating interactable articulated
+objects from a single image.
+arXiv preprint arXiv:2507.05763
+(2025).
+Luo et al. (2024)
+Rundong Luo, Haoran Geng,
+Congyue Deng, Puhao Li,
+Zan Wang, Baoxiong Jia,
+Leonidas Guibas, and Siyuan Huang.
+2024.
+Physpart: Physically plausible part completion for
+interactable objects.
+arXiv preprint arXiv:2408.13724
+(2024).
+Milletari
+et al. (2016)
+Fausto Milletari, Nassir
+Navab, and Seyed-Ahmad Ahmadi.
+2016.
+V-net: Fully convolutional neural networks for
+volumetric medical image segmentation. In 2016
+fourth international conference on 3D vision (3DV). IEEE,
+565–571.
+Mo et al. (2019)
+Kaichun Mo, Paul
+Guerrero, Li Yi, Hao Su,
+Peter Wonka, Niloy Mitra, and
+Leonidas J Guibas. 2019.
+StructureNet: Hierarchical graph networks for
+3D shape generation.
+arXiv preprint arXiv:1908.00575
+(2019).
+Narayan
+et al. (2022)
+Abhinav Narayan, Rajendra
+Nagar, and Shanmuganathan Raman.
+2022.
+RGL-NET: A recurrent graph learning framework for
+progressive part assembly. In Proceedings of the
+IEEE/CVF Winter Conference on Applications of Computer Vision.
+78–87.
+Nauata et al. (2020)
+Nelson Nauata, Kai-Hung
+Chang, Chin-Yi Cheng, Greg Mori, and
+Yasutaka Furukawa. 2020.
+House-GAN: Relational generative adversarial
+networks for graph-constrained house layout generation.
+162–177.
+Nauata et al. (2021)
+Nelson Nauata,
+Sepidehsadat Hosseini, Kai-Hung Chang,
+Hang Chu, Chin-Yi Cheng, and
+Yasutaka Furukawa. 2021.
+House-GAN++: Generative adversarial layout
+refinement network towards intelligent computational agent for professional
+architects. 13632–13641.
+Oquab et al. (2023)
+Maxime Oquab, Timothée
+Darcet, Theo Moutakanni, Huy V. Vo,
+Marc Szafraniec, Vasil Khalidov,
+Pierre Fernandez, Daniel Haziza,
+Francisco Massa, Alaaeldin El-Nouby,
+Russell Howes, Po-Yao Huang,
+Hu Xu, Vasu Sharma,
+Shang-Wen Li, Wojciech Galuba,
+Mike Rabbat, Mido Assran,
+Nicolas Ballas, Gabriel Synnaeve,
+Ishan Misra, Herve Jegou,
+Julien Mairal, Patrick Labatut,
+Armand Joulin, and Piotr Bojanowski.
+2023.
+DINOv2: Learning Robust Visual Features without
+Supervision.
+Park et al. (2021)
+Keunhong Park, Utkarsh
+Sinha, Jonathan T. Barron, Sofien
+Bouaziz, Dan B Goldman, Steven M. Seitz,
+and Ricardo Martin-Brualla.
+2021.
+Nerfies: Deformable Neural Radiance Fields.
+ICCV (2021).
+Paschalidou et al. (2021)
+Despoina Paschalidou,
+Amlan Kar, Maria Shugrina,
+Karsten Kreis, Andreas Geiger, and
+Sanja Fidler. 2021.
+ATISS: Autoregressive transformers for indoor
+scene synthesis.
+34 (2021),
+12013–12026.
+Qiu et al. (2025)
+Xiaowen Qiu, Jincheng
+Yang, Yian Wang, Zhehuan Chen,
+Yufei Wang, Tsun-Hsuan Wang,
+Zhou Xian, and Chuang Gan.
+2025.
+Articulate AnyMesh: Open-Vocabulary 3D Articulated
+Objects Modeling.
+arXiv preprint arXiv:2502.02590
+(2025).
+Ren
+et al. (2023)
+Jiawei Ren, Liang Pan,
+Jiaxiang Tang, Chi Zhang,
+Ang Cao, Gang Zeng, and
+Ziwei Liu. 2023.
+Dreamgaussian4d: Generative 4d gaussian splatting.
+arXiv preprint arXiv:2312.17142
+(2023).
+Shabani
+et al. (2023)
+Mohammad Amin Shabani,
+Sepidehsadat Hosseini, and Yasutaka
+Furukawa. 2023.
+HouseDiffusion: Vector floorplan generation via a
+diffusion model with discrete and continuous denoising.
+5466–5475.
+Su
+et al. (2025)
+Jiayi Su, Youhe Feng,
+Zheng Li, Jinhua Song,
+Yangfan He, Botao Ren, and
+Botian Xu. 2025.
+Artformer: Controllable generation of diverse 3d
+articulated objects. In Proceedings of the
+Computer Vision and Pattern Recognition Conference.
+1894–1904.
+Tang et al. (2023)
+Hao Tang, Zhenyu Zhang,
+Humphrey Shi, Bo Li,
+Ling Shao, Nicu Sebe,
+Radu Timofte, and Luc Van Gool.
+2023.
+Graph transformer gans for graph-constrained house
+generation. 2173–2182.
+Tang et al. (2024)
+Jiapeng Tang, Yinyu Nie,
+Lev Markhasin, Angela Dai,
+Justus Thies, and Matthias
+Nießner. 2024.
+DiffuScene: Denoising diffusion models for
+generative indoor scene synthesis. 20507–20518.
+Vora
+et al. (2025)
+Aditya Vora, Sauradip
+Nag, and Hao Zhang. 2025.
+Articulate That Object Part (ATOP): 3D Part
+Articulation from Text and Motion Personalization.
+arXiv preprint arXiv:2502.07278
+(2025).
+Wang et al. (2018)
+Hao Wang, Nadav Schor,
+Ruizhen Hu, Haibin Huang,
+Daniel Cohen-Or, and Hui Huang.
+2018.
+Global-to-local generative model for 3D shapes.
+37, 6 (2018),
+1–10.
+Wang
+et al. (2021)
+Xinpeng Wang, Chandan
+Yeshwanth, and Matthias Nießner.
+2021.
+SceneFormer: Indoor scene generation with
+transformers. In 2021 International Conference on
+3D Vision (3DV). IEEE, 106–115.
+Wang
+et al. (2019)
+Xiaogang Wang, Bin Zhou,
+Yahao Shi, Xiaowu Chen,
+Qinping Zhao, and Kai Xu.
+2019.
+Shape2motion: Joint analysis of motion parts and
+attributes from 3d shapes. In Proceedings of the
+IEEE/CVF Conference on Computer Vision and Pattern Recognition.
+8876–8884.
+Wei et al. (2023)
+Qiuhong Anna Wei, Sijie
+Ding, Jeong Joon Park, Rahul Sajnani,
+Adrien Poulenard, Srinath Sridhar, and
+Leonidas Guibas. 2023.
+LEGO-Net: Learning regular rearrangements of
+objects in rooms. 19037–19047.
+Willis
+et al. (2022)
+Karl DD Willis,
+Pradeep Kumar Jayaraman, Hang Chu,
+Yunsheng Tian, Yifei Li,
+Daniele Grandi, Aditya Sanghi,
+Linh Tran, Joseph G Lambourne,
+Armando Solar-Lezama, et al.
+2022.
+Joinable: Learning bottom-up assembly of parametric
+CAD joints. 15849–15860.
+Wu
+et al. (2020)
+Rundi Wu, Yixin Zhuang,
+Kai Xu, Hao Zhang, and
+Baoquan Chen. 2020.
+PQ-NET: A generative part seq2seq network for
+3D shapes. 829–838.
+Wu et al. (2019)
+Zhijie Wu, Xiang Wang,
+Di Lin, Dani Lischinski,
+Daniel Cohen-Or, and Hui Huang.
+2019.
+SAGNet: Structure-aware generative network for
+3D-shape modeling.
+38, 4 (2019),
+1–14.
+Xia et al. (2025)
+Hongchi Xia, Entong Su,
+Marius Memmel, Arhan Jain,
+Raymond Yu, Numfor Mbiziwo-Tiapo,
+Ali Farhadi, Abhishek Gupta,
+Shenlong Wang, and Wei-Chiu Ma.
+2025.
+Drawer: Digital reconstruction and articulation
+with environment realism.
+arXiv preprint arXiv:2504.15278
+(2025).
+Xiang et al. (2020)
+Fanbo Xiang, Yuzhe Qin,
+Kaichun Mo, Yikuan Xia,
+Hao Zhu, Fangchen Liu,
+Minghua Liu, Hanxiao Jiang,
+Yifu Yuan, He Wang, et al.
+2020.
+SAPIEN: A SimulAted Part-based Interactive
+ENvironment. 11097–11107.
+Xiang et al. (2024)
+Jianfeng Xiang, Zelong
+Lv, Sicheng Xu, Yu Deng,
+Ruicheng Wang, Bowen Zhang,
+Dong Chen, Xin Tong, and
+Jiaolong Yang. 2024.
+Structured 3d latents for scalable and versatile 3d
+generation.
+arXiv preprint arXiv:2412.01506
+(2024).
+Xu et al. (2023)
+Xianghao Xu, Paul
+Guerrero, Matthew Fisher, Siddhartha
+Chaudhuri, and Daniel Ritchie.
+2023.
+Unsupervised 3D shape reconstruction by part
+retrieval and assembly. 8559–8567.
+Xu et al. (2024)
+Xiang Xu, Joseph
+Lambourne, Pradeep Jayaraman, Zhengqing
+Wang, Karl Willis, and Yasutaka
+Furukawa. 2024.
+BrepGen: A b-rep generative diffusion model with
+structured latent geometry.
+43, 4 (2024),
+1–14.
+Zeng et al. (2024)
+Yifei Zeng, Yanqin Jiang,
+Siyu Zhu, Yuanxun Lu,
+Youtian Lin, Hao Zhu,
+Weiming Hu, Xun Cao, and
+Yao Yao. 2024.
+Stag4d: Spatial-temporal anchored generative 4d
+gaussians. In European Conference on Computer
+Vision. Springer, 163–179.
+Zhan et al. (2020)
+Guanqi Zhan, Qingnan Fan,
+Kaichun Mo, Lin Shao,
+Baoquan Chen, Leonidas J Guibas,
+Hao Dong, et al. 2020.
+Generative 3D part assembly via dynamic graph
+learning.
+33 (2020),
+6315–6326.
+Zhang
+et al. (2023)
+Biao Zhang, Jiapeng Tang,
+Matthias Niessner, and Peter Wonka.
+2023.
+3dshape2vecset: A 3d shape representation for
+neural fields and generative diffusion models.
+ACM Transactions On Graphics (TOG)
+42, 4 (2023),
+1–16.
+Zhang et al. (2024)
+Longwen Zhang, Ziyu Wang,
+Qixuan Zhang, Qiwei Qiu,
+Anqi Pang, Haoran Jiang,
+Wei Yang, Lan Xu, and
+Jingyi Yu. 2024.
+CLAY: A Controllable Large-scale Generative Model
+for Creating High-quality 3D Assets.
+ACM Transactions on Graphics (TOG)
+43, 4 (2024),
+1–20.
+Zhao et al. (2025)
+Zibo Zhao, Zeqiang Lai,
+Qingxiang Lin, Yunfei Zhao,
+Haolin Liu, Shuhui Yang,
+Yifei Feng, Mingxin Yang,
+Sheng Zhang, Xianghui Yang,
+et al. 2025.
+Hunyuan3d 2.0: Scaling diffusion models for high
+resolution textured 3d assets generation.
+arXiv preprint arXiv:2501.12202
+(2025).
+Figure 5. Qualitative comparison across different categories from the PartNet-Mobility and ACD datasets. The first column shows the input image, and the second column visualizes the ground-truth abstract articulation as a reference. Each object is displayed in both its resting and articulated states.
+Figure 6.
+Failure cases due to incorrect part segmentation.
+We show two examples where inaccurate voxel-part segmentation leads to unrealistic articulation. In both cases, the generated objects in the rest state (a, c) appear structurally correct, but in the articulated state (b, d), incorrect part grouping results in implausible deformations and motion artifacts (highlighted with blue arrows).
+Figure 7.
+Additional visual results on articulated 3D object generation.
+For each example, we show the input condition (1-st column), the ground-truth articulation reference (2-nd column), the sampled articulation-aware voxel representation (3-th column), and the decoded 3D Gaussian splats in different articulation states (4-th and 5-th columns). Our method consistently produces coherent geometry, realistic part appearance, and physically plausible articulation across diverse object types.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

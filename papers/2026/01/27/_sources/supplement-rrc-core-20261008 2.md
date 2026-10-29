@@ -1,0 +1,3 @@
+# RRC必要准入核心
+
+https://arxiv.org/pdf/2601.16555v1 exact-v1 PDF（9页）；HTML两次404后改此原件，未追无关附件。已实际读§2及§3.1–3.4，PDF页2–6：entity/LUKE→BM25→claim-conditioned paraphrase→same-LLM selfconfidence低于θ再评价。Tables1–3同backbone/retrieval对照显示完整组合在3/4hop有提高、2hop不一定胜；Table2分别去entity/refinement/calibrator，没有只开关decomposition的匹配因子；Fig1为具体错误实例。故不能把整体比较断言为decomposition单因果。§3.4超参进一步显示FEVEROUS-S中过多entity/doc会退步。Table4 HOVER原/精炼各行数字相同却average不同，数值内冲突不采用。原拟关闭因要求独立toggle证明而过强，撤销：有限完整框架与多跳切片仍可支持替代检索/拆分设计选择。拟2+1+2=5标准，仅采用entity-first bounded retrieval与claim-conditioned refinement/低conf重评的受限框架，不采用拆分唯一失效因果或Table4冲突数字；Books仅报告，待root具体准入/源独核。不因成熟组件/HTML不可达关闭，也不为消除子命题冲突追后来版本。

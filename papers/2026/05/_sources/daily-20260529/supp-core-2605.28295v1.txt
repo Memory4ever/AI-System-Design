@@ -1,0 +1,1236 @@
+Source: https://arxiv.org/html/2605.28295v1
+Main text extraction; fulltext_chars=79682
+
+arXiv:2605.28295v1 [cs.AI] 27 May 2026 
+ 
+ 
+ Where Rollouts Begin: Low-Load, High-Leverage First-Token Diversification for RLVR 
+
+ 
+ 
+ 
+ Soeun Kim
+ 
+    
+ Albert No
+ † † thanks:  Corresponds to: Albert No˜ <albertno@yonsei.ac.kr> 
+ Affiliation:  Department of Artificial Intelligence, Yonsei University
+ 
+
+ Abstract 
+    
+ Reinforcement Learning with Verifiable Rewards (RLVR) trains reasoning models without labeled trajectories, relying on grouped rollouts to expose the policy to alternative reasoning paths and a verifier to score them. Rollout diversity has accordingly emerged as a central bottleneck in RLVR, with most existing methods broadening exploration through temperature, prefix, or rollout-selection adjustments. We identify a structurally distinguished but overlooked position for broadening this diversity: the  first token  after the reasoning marker. The policy’s first-token distribution exhibits a sharply peaked yet correctness-decoupled phenomenon, and this first token position can broaden the regions a rollout group covers without altering the correctness signal. We introduce  REFT  (Rollout Exploration with First-Token Diversification), a light addition to the RLVR pipeline that samples first tokens uniformly from the policy’s own top- N N  candidates and allocates rollouts evenly, leaving every other component unchanged. Trained on the resulting diversified rollouts,  REFT  improves aggregate Pass@1, Pass@8, and Pass@64 over DAPO and GRPO baselines across four base models (0.5B-7B) and three difficulty regimes. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Reinforcement learning with verifiable rewards (RLVR) has become a central recipe for improving the reasoning ability of language models without labeled reasoning trajectories  ( Guo et al., 2025 ;  Hu et al., 2025 ) .
+Instead of imitating annotated solutions, the policy samples candidate reasoning traces, an automatic verifier scores their final answers, and the model is updated from the resulting rewards.
+In grouped methods such as GRPO  ( Shao et al., 2024 )  and DAPO  ( Yu et al., 2025 ) , this update is constructed from a finite set of rollouts for the same prompt.
+The rollout group is therefore the learner’s window onto the space of possible reasoning paths.
+If all rollouts receive the same reward, the group provides little contrastive signal.
+If the rollouts are semantically redundant, the verifier can only compare a narrow set of alternatives. 
+
+ 
+ 
+ 
+ This makes rollout diversity a central bottleneck in RLVR.
+Most existing approaches seek diversity where it appears most natural, such as high-entropy reasoning pivots  ( Wang et al., 2025 ;  Yu et al., 2026 ;  Wei et al., 2026 ) , trajectory-level branches  ( Xing et al., 2026 ;  Hou et al., 2025 ;  Zhao et al., 2026 ;  Hu et al., 2026 ;  Wan et al., 2026 ) , or final-answer alternatives  ( Song et al., 2025 ;  Wu et al., 2025 ;  Zhu et al., 2025 ) .
+Other methods broaden exploration through temperature-controlled sampling  ( Zhuang et al., 2025 ;  Yang et al., 2025 ;  Liu et al., 2025b ) , while efficiency-oriented methods reduce rollout cost through reuse and selective sampling  ( Huang and Wan, 2026 ;  Liu et al., 2025a ;  Chang et al., 2026 ;  Chen et al., 2026 ) .
+These methods differ in mechanism, but they share a practical assumption that early low-entropy prefix tokens are not where valuable exploration lives. 
+
+ 
+ 
+ 
+ We challenge this assumption by focusing on the first generated token after the reasoning marker  <think> .
+This token is usually a discourse opener rather than a substantive reasoning step, so it appears too minor to matter.
+We show the opposite: the first token is  low-load  in semantic content but  high-leverage  in distributional effect.
+Because it is the first autoregressive choice in the reasoning trace, changing it changes the conditional model used for every subsequent token. 
+
+ 
+ 
+ 
+ In our diagnostic, the first-token distribution is sharply concentrated, yet rollout correctness remains nearly flat across the top-20 alternatives.
+Even low-probability tokens within this set can lead to correct rollouts when the remaining continuation is sampled normally.
+Thus, these first tokens are not necessarily poor reasoning choices; they are under-sampled routes into viable continuation regions.
+This routing effect is not confined to the opener itself.
+After stripping the first token, continuations generated from different first tokens occupy different semantic regions, and uniform top-20 first-token sampling produces substantially higher continuation diversity than standard sampling. 
+
+ 
+ 
+ 
+ This suggests a different way to spend a fixed rollout budget.
+Instead of injecting noise where the model is uncertain and correctness is fragile, we can diversify where the model is artificially certain and correctness remains comparatively stable.
+We introduce  REFT : Rollout Exploration with First-Token Diversification.
+For each prompt,  REFT  takes the policy’s own top- N N  valid first-token candidates, samples  K K  of them uniformly, and allocates the rollout budget evenly across the selected first tokens.
+All continuations are then generated with the unchanged decoder.
+The verifier, reward, advantage estimator, RL objective, and total number of rollouts are unchanged.
+Thus,  REFT  is not a new RL algorithm; it is a targeted replacement for the first decision made by the rollout sampler. 
+
+ 
+ 
+ 
+ This targeted intervention also avoids the main weakness of high-temperature exploration.
+Raising temperature flattens every token distribution, including later reasoning steps where low-probability choices are often harmful, while still giving little control over whether rare but viable first tokens appear in a small rollout group.
+ REFT  instead guarantees first-token coverage under the same rollout budget and keeps the rest of the trajectory sampled exactly as in the baseline. 
+
+ 
+ 
+ 
+ Empirically, under matched rollout budgets,  REFT  improves RLVR performance across four base models, two grouped-RL objectives, and three training datasets.
+Across Pass@ k k  metrics with  k ∈ { 1 , 8 , 64 } k\in\{1,8,64\} ,  REFT  consistently outperforms GRPO/DAPO baselines on the various math benchmarks.
+Further analysis shows that these gains come from broader training-time continuation and answer coverage, fewer all-wrong groups, and reduced first-token over-crediting.
+Together, these results suggest a simple inversion of the usual exploration intuition.
+In RLVR, useful diversity can be recovered not only from high-entropy reasoning forks, but also from low-load prefix choices whose probability is sharply biased and weakly tied to correctness. 
+
+ 
+ 
+ 
+ 
+ 2  Preliminaries 
+
+ 
+
+ 
+ RLVR and grouped rollouts. 
+
+ 
+
+ 
+ Reinforcement learning with verifiable rewards (RLVR) trains a language-model policy from sampled attempts rather than labeled reasoning trajectories. Given a prompt  x x , the policy samples a  rollout   y y , including both the reasoning trace and the final answer, and an automatic verifier returns a scalar reward  R ⁡ ( x , y ) R(x,y) .
+Group-based RLVR methods sample  G G  rollouts for the same prompt and update the policy from their relative rewards. In GRPO  ( Shao et al., 2024 ) , the reward for rollout  y i y_{i}  is converted to a group-normalized advantage 
+
+ 
+ 
+
+ 
+ 
+ A i = R i − mean ⁡ ( { R j } j = 1 G ) std ⁡ ( { R j } j = 1 G ) + ϵ , A_{i}=\frac{R_{i}-\operatorname{mean}(\{R_{j}\}_{j=1}^{G})}{\operatorname{std}(\{R_{j}\}_{j=1}^{G})+\epsilon}, 
+ 
+ (1) 
+ 
+
+ 
+ where  R i = R ⁡ ( x , y i ) R_{i}=R(x,y_{i}) .
+A PPO-style clipped objective then applies this trajectory-level advantage to the tokens of  y i y_{i} .
+The finite rollout group is the unit from which the learning signal is constructed.
+Recent RLVR systems and variants build on this grouped-rollout template:
+DeepSeek-R1  ( Guo et al., 2025 )  scales verifier-based reasoning RL, and
+DAPO  ( Yu et al., 2025 )  improves GRPO with dynamic sampling, Clip-Higher, token-level loss, and overlong-response handling.
+Recent methods further improve grouped-rollout data construction or usage.
+GRESO  ( Zheng et al., 2025 )  filters prompts, AR3PO  ( Zhang et al., 2025 )  reuses rollouts, RL-ZVP  ( Le et al., 2026 )  learns from zero-variance prompts, and PODS  ( Xu et al., 2025 )  selects informative rollout subsets for update. 
+
+ 
+ 
+ 
+ 
+ Why rollout diversity matters. 
+
+ 
+
+ 
+ Equation ( 1 ) makes diversity a first-order concern.
+If all rollouts in a group receive the same reward, the group has no reward contrast and contributes little or no policy-gradient signal.
+Even when rewards are non-identical, a group of near-duplicate reasoning traces provides a narrow signal because the verifier can only compare alternatives that were actually sampled.
+Diverse rollouts therefore serve two roles.
+They increase the probability that a finite group contains useful reward variation, and they broaden the set of reasoning regions over which the verifier can assign credit.
+This is particularly important for reasoning models evaluated by pass@ k k , where retaining multiple plausible solution modes can matter as much as increasing the probability of the modal response.
+Recent analyses of outcome-level diversity collapse  ( Song et al., 2025 ) , support narrowing under RLVR  ( Wu et al., 2025 ) , and sample-reinforcement dynamics  ( Zhu et al., 2025 )  point to a common concern that improving Pass@1 can narrow the accessible rollout distribution and hurt exploration or inference-time scaling. 
+
+ 
+ 
+ 
+ 
+ Existing routes to rollout diversity. 
+
+ 
+
+ 
+ Most prior diversity methods allocate rollout budget to positions that appear semantically or statistically important.
+Entropy-based methods focus on high-uncertainty pivots or token-level entropy regulation  ( Wang et al., 2025 ;  Yu et al., 2026 ) , and Entropy-Tree branches the decoding process at high-entropy positions  ( Wei et al., 2026 ) .
+Trajectory- and tree-level methods explicitly structure rollout exploration. LATR branches at high-uncertainty steps and prunes non-divergent continuations  ( Xing et al., 2026 ) , TreeRL incorporates on-policy tree search  ( Hou et al., 2025 ) , and ROSE branches by semantic entropy  ( Zhao et al., 2026 ) .
+Other trajectory-level methods add global or multi-scale diversity incentives to encourage different derivations  ( Hu et al., 2026 ;  Wan et al., 2026 ) .
+Outcome-level methods and analyses study final-answer diversity or sample-reinforcement dynamics  ( Song et al., 2025 ;  Zhu et al., 2025 ) .
+Temperature-based methods control exploration through temperature schedules or annealed decoding  ( Zhuang et al., 2025 ;  Yang et al., 2025 ) , while residual-prompt ERPO increases exploration on all-correct prompts to recover training signal  ( Liu et al., 2025b ) .
+A separate line improves rollout efficiency through prefix sharing  ( Huang and Wan, 2026 ) , speculative continuations  ( Liu et al., 2025a ) , tree-structured caches  ( Chang et al., 2026 ) , or budgeted rejection  ( Chen et al., 2026 ) .
+Although these approaches differ, they share a practical bias that early prefix choices are treated as fixed scaffolding, shared for efficiency, or bypassed in favor of later reasoning decisions.
+We focus on the first generated token after the reasoning marker  <think> , a discourse opener that prior diversity methods treat as fixed scaffolding to be shared or bypassed. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Diagnosis: Low-Load, High-Leverage First Tokens 
+
+ 
+
+ 
+ We define the  first token  as the first valid semantic token generated after the reasoning marker  <think> , ignoring whitespace-only tokens and line breaks.
+At first glance, this position looks like a poor place to spend rollout budget.
+In math reasoning traces, the first token is usually a discourse opener such as “First”, “Let”, or “To” (Appendix  E ); it rarely performs algebra, chooses a case, assigns a variable, or commits to an answer.
+This section shows that this intuition is incomplete.
+The first token has low task-specific load, but it has unusually high distributional leverage.
+The diagnostics in this section are conducted with Qwen2.5-3B-Instruct  ( Yang et al., 2024 )  on GSM8K  ( Cobbe et al., 2021 ) . 
+
+ 
+ 
+ 
+ The policy is confident, but the verifier is not. 
+
+ 
+
+ 
+ Figure 1 :  
+ Sharp probability, flat correctness. 
+The model assigns high probability to the top first token, but rollout correctness remains nearly flat across the top-20 ranks. 
+ 
+ 
+ For each prompt  x x , let  f r ​ ( x ) f_{r}(x)  be the rank- r r  token under the policy distribution at the first token position, 
+
+ 
+ 
+
+ 
+ 
+ π θ ( ⋅ ∣ x , <think> ) . \pi_{\theta}(\cdot\mid x,\texttt{<think>}{}). 
+ 
+ 
+
+ 
+ The model’s prior over this position is extremely sharp.
+Figure  1  shows that the top-ranked first token receives mean probability  0.57 0.57  at temperature  T = 1.0 T=1.0 .
+Even at  T = 2.0 T=2.0 , the top-ranked token still receives probability  0.38 0.38  on average.
+Thus, before any substantive reasoning step has been generated,
+standard sampling has biased the rollout group toward a small set of openers. 
+
+ 
+ 
+ 
+ The surprising part is that this probability ranking is only weakly aligned with correctness. We force the first token to be  f r ​ ( x ) f_{r}(x)  and then sample the remaining continuation with the unchanged decoder.
+As shown by the red curve in Figure  1 , rollout correctness is nearly flat across the top-20 ranks.
+The rank-20 first token has probability only  2.68 × 10 − 5 2.68\times 10^{-5} , yet achieves  70.40 % 70.40\%  correctness, compared with  75.29 % 75.29\%  for the rank-1 token. 
+
+ 
+ 
+ 
+ This is the central empirical asymmetry: at the first-token position, model probability and verifier correctness decouple. A low-probability first token is not necessarily a bad reasoning choice. Often, it is merely an under-sampled way of beginning a still-viable solution. 
+
+ 
+ 
+ 
+ The first token matters not because of what it says locally, but because of where it routes the rollout.
+If a response is decomposed into the first token  F F  and the continuation  z z , then 
+
+ 
+ 
+
+ 
+ 
+ π θ ( F , z ∣ x , <think> ) = π θ ( F ∣ x , <think> ) π θ ( z ∣ x , <think> , F ) . \pi_{\theta}(F,z\mid x,\texttt{<think>}{})=\pi_{\theta}(F\mid x,\texttt{<think>}{})\pi_{\theta}(z\mid x,\texttt{<think>}{},F). 
+ 
+ (2) 
+ 
+
+ 
+ Varying  F F  therefore induces distinct continuation distributions over the rest of the rollout.
+A token with tiny marginal probability can therefore induce a competent but rarely visited continuation distribution. 
+
+ 
+ 
+ 
+ 
+ A rare first token changes the continuation model. 
+
+ 
+
+ 
+ Figure 2 :  
+ First tokens route continuations. 
+Semantic diversity is measured after stripping the first token itself, so the effect comes from the rest of the rollout.
+ 
+ 
+ 
+ To test whether this routing effect is real, we compare four rollout strategies with the same group size: standard sampling, forcing  f 1 ​ ( x ) f_{1}(x) , forcing  f 20 ​ ( x ) f_{20}(x) , and sampling uniformly from the top-20 first tokens.
+We then remove the first token from every rollout and measure semantic diversity among the remaining continuations (details in Appendix  D ). 
+
+ 
+ 
+ 
+ Figure  2  shows that first-token choice changes the continuation distribution: forcing a rare first token already increases diversity over standard sampling, and uniform top-20 sampling yields the largest effect.
+The result is important for three reasons.
+First, the diversity is measured after removing the opener, so it is not just surface variation in the first word.
+Second, even a fixed rank-20 opener produces more diverse continuations than standard sampling.
+Third, sampling uniformly across the top-20 first tokens yields the highest diversity of all four strategies, suggesting that the contributions from different first tokens are complementary rather than redundant.
+The first token is therefore a routing variable: it can expose continuation regions that standard rollouts almost never visit, while preserving comparable correctness. 
+
+ 
+ 
+ 
+ 
+ GRPO sharpens the wrong preference. 
+
+ 
+
+ 
+ Figure 3 :  
+ RLVR sharpens the first-token prior. 
+The top-1 first-token probability increases during training, although the first token is only weakly tied to correctness.
+ 
+ 
+ 
+ The bias is not only present before RLVR training; GRPO-style updates can amplify it. A trajectory-level advantage is applied to every token in the rollout. For a rollout whose first token is  F i F_{i} , the update contains the term 
+
+ 
+ 
+
+ 
+ 
+ A i ​ ∇ θ ​ log ⁡ π θ ​ ( F i ∣ x , <think> ) , A_{i}\nabla_{\theta}\log\pi_{\theta}(F_{i}\mid x,\texttt{<think>}{}), 
+ 
+ 
+
+ 
+ where  A i A_{i}  is the group-normalized advantage from Equation ( 1 ).
+This assigns the same scalar credit to the generic opener as to the later tokens that actually solve the problem. 
+
+ 
+ 
+ 
+ Because the top-ranked first token is sampled much more often, it also receives many more chances to co-occur with positive-advantage trajectories.
+Rare first tokens, even when they would lead to correct or diverse continuations, may not appear in the group at all.
+As Figure  3  shows, the top-1 first-token probability grows during training.
+In this sense, standard GRPO can over-credit a discourse preference that the verifier does not strongly support. 
+
+ 
+ 
+ 
+ 
+ Why temperature is not the answer. 
+
+ 
+
+ 
+ A natural treatment is to increase sampling temperature.
+However, temperature is too blunt for this problem.
+It perturbs every token distribution in the rollout, including later reasoning steps where low-probability choices are much more likely to be harmful.
+It also still fails to cover rare first tokens under a small rollout budget.
+As shown in Figure  1 , the first-token prior remains sharp even at  T = 2.0 T=2.0 :
+the rank-20 first token has probability only  1.96 × 10 − 3 1.96\times 10^{-3} .
+With group size  G = 8 G=8 , the probability of sampling it at least once is  ∼ 1.6 % \sim 1.6\% .
+Thus, temperature injects noise throughout the continuation while offering little control over first-token coverage. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  REFT : Rollout Exploration with First-Token Diversification 
+
+ 
+
+ 
+ The diagnosis in Section  3  suggests a simple opportunity.
+The first token after  <think>  is  low-load : changing it usually does not directly change the mathematical content of the solution.
+It is  correctness-stable : low-probability top-ranked openers can still lead to correct rollouts.
+And it is  high-leverage : once chosen, it conditions the entire continuation.
+Thus, the first token is an unexpectedly cheap exploration site.
+Instead of spending rollout budget where the model is uncertain and correctness is fragile, we diversify where the model is artificially certain and correctness remains stable. 
+
+ 
+ 
+ 
+ REFT  (Rollout Exploration with First-Token Diversification) turns this observation into a minimal rollout intervention.
+It changes only the first-token sampling step.
+The verifier, advantage estimator, training objective, model architecture, continuation decoder, and total rollout budget are unchanged. 
+
+ 
+ 
+ 
+ Candidate set. 
+
+ 
+
+ 
+ For each prompt  x x , we compute the policy distribution at the first-token position and keep the top- N N  valid candidates: 
+
+ 
+ 
+
+ 
+ 
+ ℱ N ​ ( x ) = { f 1 ​ ( x ) , … , f N ​ ( x ) } , π θ old ​ ( f 1 ∣ x , <think> ) ≥ ⋯ ≥ π θ old ​ ( f N ∣ x , <think> ) . \mathcal{F}_{N}(x)=\{f_{1}(x),\ldots,f_{N}(x)\},\qquad\pi_{\theta_{\mathrm{old}}}(f_{1}\mid x,\texttt{<think>}{})\geq\cdots\geq\pi_{\theta_{\mathrm{old}}}(f_{N}\mid x,\texttt{<think>}{}). 
+ 
+ 
+
+ 
+ Here  f 1 , … , f N f_{1},\ldots,f_{N}  are the highest-probability valid first tokens under the behavior policy.
+We exclude whitespace-only and special tokens.
+Because the candidates come from the policy’s own top- N N  list,  REFT  does not introduce external prompts or hand-written prefixes; it reallocates budget among first tokens the model already considers plausible. 
+
+ 
+ 
+ 
+ 
+ First-token diversification. 
+
+ 
+
+ 
+ Standard rollout sampling draws all  G G  rollouts from the original first-token distribution, which is often dominated by a single opener.
+ REFT  instead stratifies the rollout group by first token.
+Given the top- N N  candidate set  ℱ N ​ ( x ) \mathcal{F}_{N}(x) , we sample  K K  distinct first tokens uniformly without replacement: 
+
+ 
+ 
+
+ 
+ 
+ 𝒮 K ​ ( x ) ∼ Unif ⁡ ( { 𝒮 ⊆ ℱ N ​ ( x ) : | 𝒮 | = K } ) . \mathcal{S}_{K}(x)\sim\mathrm{Unif}\left(\left\{\mathcal{S}\subseteq\mathcal{F}_{N}(x):|\mathcal{S}|=K\right\}\right). 
+ 
+ 
+
+ 
+ We then allocate  G / K G/K  rollouts to each selected token.
+For every  f ∈ 𝒮 K ​ ( x ) f\in\mathcal{S}_{K}(x) ,  REFT  forces  f f  as the first token and samples the remaining continuation with the unchanged baseline decoder: 
+
+ 
+ 
+
+ 
+ 
+ z f , j ∼ π θ old ( ⋅ ∣ x , <think> , f ) , j = 1 , … , G / K . z_{f,j}\sim\pi_{\theta_{\mathrm{old}}}\left(\cdot\mid x,\texttt{<think>}{},f\right),\qquad j=1,\ldots,G/K. 
+ 
+ 
+
+ 
+ The resulting rollout group is 
+
+ 
+ 
+
+ 
+ 
+ 𝒴 G REFT ( x ) = { ( f , z f , j ) : f ∈ 𝒮 K ( x ) , j = 1 , … , G / K } . \mathcal{Y}^{\mathrm{REFT}}_{G}(x)=\left\{(f,z_{f,j}):f\in\mathcal{S}_{K}(x),\;j=1,\ldots,G/K\right\}. 
+ 
+ 
+
+ 
+ Thus,  REFT  replaces a sharply peaked first-token draw with explicit coverage of  K K  plausible openers, while leaving all subsequent generation unchanged. 
+
+ 
+ 
+ 
+ Algorithm 1     REFT  rollout sampler 
+ 
+ 
+               0: 
+              
+              
+             Prompt  x x , behavior policy  π θ old \pi_{\theta_{\mathrm{old}}} , group size  G G , candidate width  N N , selected-token count  K K 
+
+ 
+ 
+               0: 
+              
+              
+             Rollout group  𝒴 G REFT ​ ( x ) \mathcal{Y}^{\mathrm{REFT}}_{G}(x) 
+
+ 
+ 
+               1: 
+              
+              
+              ℱ N ​ ( x ) ← { f 1 ​ ( x ) , … , f N ​ ( x ) } \mathcal{F}_{N}(x)\leftarrow\{f_{1}(x),\ldots,f_{N}(x)\} 
+ {Top- N N  valid tokens under  π θ old ( ⋅ ∣ x , <think> ) \pi_{\theta_{\mathrm{old}}}(\cdot\mid x,\texttt{<think>}{}) }
+ 
+ 
+ 
+               2: 
+              
+              
+              𝒮 K ​ ( x ) ∼ Unif ⁡ ( { 𝒮 ⊆ ℱ N ​ ( x ) : | 𝒮 | = K } ) \mathcal{S}_{K}(x)\sim\mathrm{Unif}\!\left(\left\{\mathcal{S}\subseteq\mathcal{F}_{N}(x):|\mathcal{S}|=K\right\}\right) 
+
+ 
+ 
+               3: 
+              
+              
+             For each  f ∈ 𝒮 K ​ ( x ) f\in\mathcal{S}_{K}(x) , sample
+ z f , 1 , … , z f , G / K ∼ π θ old ( ⋅ ∣ x , <think> , f ) z_{f,1},\ldots,z_{f,G/K}\sim\pi_{\theta_{\mathrm{old}}}\left(\cdot\mid x,\texttt{<think>}{},f\right) 
+
+ 
+ 
+               4: 
+              
+              
+              𝒴 G REFT ( x ) ← { ( f , z f , j ) : f ∈ 𝒮 K ( x ) , j = 1 , … , G / K } \mathcal{Y}^{\mathrm{REFT}}_{G}(x)\leftarrow\left\{(f,z_{f,j}):f\in\mathcal{S}_{K}(x),\;j=1,\ldots,G/K\right\} 
+
+ 
+ 
+               5: 
+              
+              
+              return    𝒴 G REFT ​ ( x ) \mathcal{Y}^{\mathrm{REFT}}_{G}(x) 
+
+ 
+ 
+ 
+ 
+ 
+ What remains unchanged. 
+
+ 
+
+ 
+ After constructing  𝒴 G REFT ​ ( x ) \mathcal{Y}^{\mathrm{REFT}}_{G}(x) , training proceeds exactly as in the underlying RLVR algorithm.
+The verifier scores each rollout, group-normalized advantages are computed as usual, and the same GRPO/DAPO-style objective is applied to the sampled trajectories.
+ REFT  is therefore not a new RL objective.
+It is a drop-in replacement for the rollout sampler’s first decision, and it can be layered under existing refinements such as dynamic sampling, asymmetric clipping, token-level loss, or overlong-response handling. 
+
+ 
+ 
+ 
+ 
+ Relation to temperature. 
+
+ 
+
+ 
+ REFT  targets the failure mode identified in Section  3 .
+Increasing temperature flattens every token distribution in the rollout, including later reasoning steps where low-probability choices are more likely to be harmful.
+It also gives little control over which first-token alternatives actually appear in a small rollout group.
+ REFT  instead controls coverage at the first-token position while leaving the continuation decoder unchanged.
+It broadens the rollout group where correctness is comparatively stable, without injecting global noise into the reasoning trace. 
+
+ 
+ 
+ 
+ 
+ Rollout construction with a fixed RL objective. 
+
+ 
+
+ 
+ REFT  changes the data-collection distribution only at the first-token position.
+We train the completed rollouts with the same GRPO/DAPO objective used by the baselines, without an additional importance correction for the first-token sampler.
+This keeps the downstream RL objective fixed while isolating the effect of rollout construction.
+We do not claim that this gives an unbiased estimator of the standard on-policy rollout objective.
+Rather,  REFT  replaces a faithful draw from the sharply peaked first-token prior with a controlled allocation of the same finite rollout budget across several plausible first tokens.
+Details are in Appendix  B . 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Experiments 
+
+ 
+
+ 
+ Setup. 
+
+ 
+
+ 
+ We compare DAPO  ( Yu et al., 2025 )  and GRPO  ( Shao et al., 2024 )  with their  REFT -augmented variants, where  REFT  only modifies rollout sampling.
+Experiments use four instruction-tuned base models across three scales: Qwen2.5-0.5B/3B/7B-Instruct  ( Yang et al., 2024 )  and Llama3.2-3B-Instruct  ( Grattafiori et al., 2024 ) .
+We train on GSM8K  ( Cobbe et al., 2021 ) , BigMath-Easy, and BigMath  ( Albalak et al., 2025 ) , spanning elementary to more challenging math-reasoning regimes.
+GSM8K uses rollout group size  G = 8 G=8 , while BigMath-Easy and BigMath use  G = 16 G=16 .
+Unless otherwise stated,  REFT  uses candidate width  N = 20 N=20  and selected-token count  K = 4 K=4 , allocating rollout slots evenly across selected first tokens.
+All methods use matched rollout budgets and the same rollout decoding configuration.
+Appendix  A.2  reports no measurable net runtime overhead. 
+
+ 
+ 
+ 
+ GSM8K-trained models are evaluated on GSM8K  ( Cobbe et al., 2021 ) , while BigMath- and BigMath-Easy-trained models are evaluated on MATH-500  ( Lightman et al., 2024 ) , AIME 2024  ( Zhang and Math-AI, 2024 ) , AIME 2025  ( Zhang and Math-AI, 2025 ) , and AMC 2023  ( Li et al., 2024 ) .
+We report Math Avg. as the unweighted average over MATH-500, AIME 2024, AIME 2025, and AMC 2023, excluding GSM8K.
+Inference uses vLLM  ( Kwon et al., 2023 )  with temperature  0.6 0.6  and top- p = 0.95 p=0.95 , and we report Pass@1, Pass@8, and Pass@64. Additional training, reward, inference, hardware, and dataset details are provided in Appendix  A.1 . 
+
+ 
+ 
+ 
+ Table 1 :  
+Reasoning performance across models and RLVR methods.
+Pass@1 denotes average single-sample correctness, and Pass@8 denotes whether at least one of 8 sampled completions is correct.
+ 
+ 
+ 
+ 
+ 
+     
+ GSM8K     
+ MATH-500 
+ AIME24 
+ AIME25 
+ AMC23     
+ Math Avg. 
+ 
+ Method     
+ Pass@1 
+ Pass@8     
+ Pass@1 
+ Pass@8 
+ Pass@1 
+ Pass@8 
+ Pass@1 
+ Pass@8 
+ Pass@1 
+ Pass@8     
+ Pass@1 
+ Pass@8 
+ 
+ Qwen2.5-3B-Instruct      
+ 80.14 
+ 94.16     
+ 51.40 
+ 78.00 
+ 6.67 
+ 16.67 
+ 0.00 
+ 13.33 
+ 35.00 
+ 75.00     
+ 23.27 
+ 45.75 
+ 
+ GRPO     
+ 84.53 
+ 95.38     
+ 59.80 
+ 79.40 
+ 10.00 
+ 20.00 
+ 3.33 
+ 16.67 
+ 42.50 
+ 77.50     
+ 28.91 
+ 48.39 
+ 
+ GRPO + REFT     
+ 86.28 
+ 96.13      
+ 61.00 
+ 81.20 
+ 13.33 
+ 23.33 
+ 6.67 
+ 20.00 
+ 47.50 
+ 85.00      
+ 32.13 
+ 52.38 
+ 
+ DAPO     
+ 86.05 
+ 95.15     
+ 60.00 
+ 78.60 
+ 10.00 
+ 20.00 
+ 6.67 
+ 16.67 
+ 45.00 
+ 80.00     
+ 30.42 
+ 48.82 
+ 
+ DAPO + REFT     
+ 86.20 
+ 96.06      
+ 61.20 
+ 80.00 
+ 13.33 
+ 26.67 
+ 13.33 
+ 20.00 
+ 52.50 
+ 85.00      
+ 35.09 
+ 52.92 
+ 
+ Llama3.2-3B-Instruct      
+ 73.24 
+ 91.96     
+ 29.80 
+ 64.00 
+ 3.33 
+ 13.33 
+ 0.00 
+ 3.33 
+ 20.00 
+ 50.00     
+ 13.28 
+ 32.66 
+ 
+ GRPO     
+ 75.66 
+ 92.12     
+ 35.60 
+ 64.80 
+ 6.67 
+ 16.67 
+ 3.33 
+ 3.33 
+ 22.50 
+ 60.00     
+ 17.02 
+ 36.20 
+ 
+ GRPO + REFT     
+ 77.63 
+ 94.09      
+ 36.80 
+ 65.40 
+ 6.67 
+ 20.00 
+ 3.33 
+ 6.67 
+ 25.00 
+ 62.50      
+ 17.95 
+ 38.64 
+ 
+ DAPO     
+ 73.84 
+ 93.10     
+ 37.20 
+ 65.60 
+ 10.00 
+ 23.33 
+ 3.33 
+ 6.67 
+ 22.50 
+ 60.00     
+ 18.26 
+ 38.90 
+ 
+ DAPO + REFT     
+ 78.47 
+ 94.01      
+ 41.00 
+ 67.00 
+ 13.33 
+ 23.33 
+ 6.67 
+ 10.00 
+ 25.00 
+ 65.00      
+ 21.50 
+ 41.33 
+ 
+ Qwen2.5-7B-Instruct      
+ 88.48 
+ 96.74     
+ 53.40 
+ 80.00 
+ 10.00 
+ 20.00 
+ 0.00 
+ 23.33 
+ 37.50 
+ 75.00     
+ 25.23 
+ 49.58 
+ 
+ GRPO     
+ 91.05 
+ 97.12     
+ 72.00 
+ 86.40 
+ 13.33 
+ 23.33 
+ 10.00 
+ 26.67 
+ 55.00 
+ 85.00     
+ 37.58 
+ 55.35 
+ 
+ GRPO + REFT     
+ 91.89 
+ 97.42      
+ 73.60 
+ 87.20 
+ 20.00 
+ 30.00 
+ 16.67 
+ 36.67 
+ 65.00 
+ 85.00     
+ 43.82 
+ 59.72 
+ 
+ DAPO     
+ 91.36 
+ 96.74     
+ 72.40 
+ 86.40 
+ 16.67 
+ 26.67 
+ 10.00 
+ 30.00 
+ 57.50 
+ 80.00     
+ 39.14 
+ 55.77 
+ 
+ DAPO + REFT     
+ 92.27 
+ 97.27      
+ 73.00 
+ 86.80 
+ 20.00 
+ 30.00 
+ 13.33 
+ 33.33 
+ 62.50 
+ 85.00      
+ 42.21 
+ 58.78 
+ 
+ 
+
+ 
+ 
+ 
+ Table 2 :  
+GSM8K performance of Qwen2.5-0.5B-Instruct.
+ 
+ 
+ 
+ 
+      
+ GSM8K 
+ 
+ Method      
+ Pass@1 
+ Pass@8 
+ Pass@64 
+ 
+ Qwen2.5-0.5B-Instruct       
+ 43.37 
+ 77.94 
+ 90.67 
+ 
+ GRPO      
+ 51.71 
+ 78.17 
+ 91.05 
+ 
+ GRPO + REFT      
+ 54.21 
+ 79.68 
+ 93.71 
+ 
+ DAPO      
+ 52.14 
+ 78.92 
+ 92.80 
+ 
+ DAPO + REFT      
+ 53.62 
+ 79.45 
+ 94.39 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ Consistent gains across models and sampling budgets. 
+
+ 
+
+ 
+ Table  1  reports Pass@1 and Pass@8 across three base models, two RLVR algorithms, and five benchmarks.
+On GSM8K, where the models start from strong baselines,  REFT  consistently improves performance, and the gains become larger on Math Avg., showing that  REFT  is especially effective when additional rollout exploration matters more.
+The distinction between Pass@1 and Pass@8 is important for our method.
+Pass@1 measures individual sample quality, whereas Pass@8 captures finite-budget coverage: whether at least one correct reasoning path appears within the rollout group.
+The simultaneous gains show that the additional first-token coverage does not come at the expense of sample-level correctness.
+Rather than only spreading samples across more openings,  REFT  improves both the average correctness of individual completions and the probability that a rollout group contains at least one correct trajectory. 
+
+ 
+ 
+ 
+ Table 3 :  
+Pass@64 performance on GSM8K and Math Avg.
+Pass@64 denotes whether at least one of 64 sampled completions is correct.
+Math Avg. excludes GSM8K.
+ 
+ 
+ 
+ 
+      
+ GSM8K      
+ Math Avg. 
+ 
+ Method      
+ Pass@64      
+ Pass@64 
+ 
+ Qwen2.5-3B-Instruct       
+ 98.18      
+ 61.95 
+ 
+ GRPO      
+ 98.64      
+ 64.34 
+ 
+ GRPO + REFT      
+ 99.39       
+ 67.82 
+ 
+ DAPO      
+ 97.65      
+ 65.13 
+ 
+ DAPO + REFT      
+ 98.18       
+ 69.18 
+ 
+ Llama3.2-3B-Instruct       
+ 97.42      
+ 51.61 
+ 
+ GRPO      
+ 97.95      
+ 55.03 
+ 
+ GRPO + REFT      
+ 98.56       
+ 58.99 
+ 
+ DAPO      
+ 97.35      
+ 56.28 
+ 
+ DAPO + REFT      
+ 98.48       
+ 59.34 
+ 
+ Qwen2.5-7B-Instruct       
+ 97.95      
+ 66.26 
+ 
+ GRPO      
+ 98.33      
+ 68.95 
+ 
+ GRPO + REFT      
+ 98.94       
+ 71.54 
+ 
+ DAPO      
+ 98.48       
+ 69.74 
+ 
+ DAPO + REFT      
+ 98.41      
+ 71.39 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ Gains hold at the smallest scale. 
+
+ 
+
+ 
+ Table  2  further shows that the effect of REFT is not limited to larger models.
+Even at 0.5B, where reasoning capacity is limited,  REFT  improves both GRPO and DAPO across Pass@1, Pass@8, and Pass@64 on GSM8K.
+The benefit of first token diversification is therefore not contingent on large model capacity, and the same low-load, high-leverage position remains effective across scales from  0.5 0.5 B to  7 7 B parameters. 
+
+ 
+ 
+ 
+ 
+ Pass@64 shows that the gains persist under a larger budget. 
+
+ 
+
+ 
+ RLVR can improve Pass@1 by concentrating probability on a narrower set of trajectories, which lowers larger-budget discovery  ( Yue et al., 2025 ) .
+Table  3  reports the compact Pass@64 summary, with full per-benchmark results in Appendix  C .
+On GSM8K, Pass@64 is already close to ceiling, so the differences are necessarily small.
+Averaged across the six main model-objective pairs,  REFT  changes GSM8K Pass@64 by  + 0.59 +0.59  points.
+The effect is clearer on Math Avg., where the same average reaches  + 3.13 +3.13  points.
+ REFT ’s Pass@1 gains do not come at the cost of larger-budget recoverability.
+The trained policy is better both at single-sample correctness and at finding at least one correct trajectory when more samples are available. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Table 4 :  
+Ablation on Top- N N  with  K = 4 K=4 .
+ 
+ 
+ 
+ 
+      
+ GSM8K 
+ 
+ N N       
+ Pass@1 
+ Pass@8 
+ 
+ 10      
+ 86.20 
+ 95.83 
+ 
+ 20      
+ 86.28 
+ 96.13 
+ 
+ 50      
+ 85.82 
+ 95.30 
+ 
+ 100      
+ 85.14 
+ 94.92 
+ 
+
+ 
+ 
+ 
+ 
+ Table 5 :  
+Ablation on  K K  with Top- N = 20 N=20 .
+ 
+ 
+ 
+ 
+      
+ GSM8K 
+ 
+ K K       
+ Pass@1 
+ Pass@8 
+ 
+ 1      
+ 84.23 
+ 95.15 
+ 
+ 2      
+ 85.51 
+ 95.68 
+ 
+ 4      
+ 86.28 
+ 96.13 
+ 
+ 8      
+ 85.82 
+ 95.38 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Candidate width and within-token replication. 
+
+ 
+
+ 
+ We further verify that  REFT  is robust to variations of the candidate width Top- N N  and the number of selected first tokens  K K .
+Tables  5  and  5  report ablations on GSM8K with Qwen2.5-3B-Instruct, where the GRPO baseline achieves  84.53 84.53  Pass@1 and  95.38 95.38  Pass@8.
+Most  REFT  variants improve over the baseline, confirming robustness to these hyperparameter choices.
+Expanding the pool to Top- 50 50  or Top- 100 100  remains competitive in Pass@1 but gradually reduces Pass@8, suggesting that an overly wide candidate pool can dilute the finite rollout budget across too many openings.
+Fixing Top- N = 20 N=20 , increasing  K K  from  1 1  to  4 4  raises Pass@1 / Pass@8, showing the benefit of covering multiple first token regions within the same group.
+Increasing  K K  further to  8 8  reduces the gain.
+With  G = 8 G=8 , this allocates only one continuation per selected first token, so a viable opening can be judged from a single unlucky trace.
+Our default  K = 4 K=4  assigns two continuations per first token, balancing broader first-token coverage with enough replication to stabilize the rollout signal. 
+
+ 
+ 
+ 
+ 
+ 
+ 6  Analysis: When Diversity Becomes Useful 
+
+ 
+
+ 
+ We now examine whether the diversity induced by  REFT  translates into useful RLVR training signal.
+We first study three group-level diagnostics: semantic diversity, outcome diversity within rollout groups, and zero-variance decomposition, then examine whether  REFT  also mitigates first-token over-crediting during training. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ (a)   Training-time rollout diversity 
+ 
+ 
+ (b)   Inference-time semantic diversity 
+ 
+ Figure 4 :  
+ Sharper outputs without sacrificing coverage. 
+(a) During training,  REFT  produces the most semantically diverse rollouts among the four sampling strategies.
+(b) After training, the inference-time ordering inverts:  REFT -trained checkpoints produce the most concentrated, while Tables  1  and  3  show that this concentration coexists with stronger Pass@1 and Pass@64.
+ 
+ 
+ 
+ Training diversity need not remain high at inference. 
+
+ 
+
+ 
+ Figure  4(a)  shows that  REFT  produces the most semantically diverse rollout groups during training, compared with standard sampling, forced  f 1 ​ ( x ) f_{1}(x) , and forced  f 20 ​ ( x ) f_{20}(x) .
+This matches the intended effect of first-token diversification, which exposes each rollout group to multiple early continuation regions instead of repeatedly following the most likely token.
+At inference time, however, Figure  4(b)  shows that samples from the  REFT -trained checkpoint are more concentrated.
+This is not contradictory.
+RLVR ultimately optimizes correctness, not semantic diversity itself.
+Read together with Tables  1  and  3 , the lower inference-time diversity suggests that broader training-time exploration can lead to a policy that concentrates more strongly on successful continuation patterns, while still improving both sample-level accuracy and larger-budget coverage.
+Thus, the role of first-token diversity is to improve what the policy sees during training, not necessarily to make the final policy more diverse under standard inference sampling. 
+
+ 
+ 
+ 
+ Figure 5 :  
+ Within-group answer diversity. 
+Number of unique final answers per rollout group during training on Qwen2.5-0.5B-Instruct, GSM8K, DAPO.
+ 
+ 
+ 
+ 
+ Outcome diversity beyond trajectory diversity. 
+
+ 
+
+ 
+ The near-flat first-token-conditioned accuracy in Section  3  shows viability, not equivalence.
+Plausible alternative first tokens are not destructive to correctness on average, but they can still route generation into different continuation regions.
+We therefore complement trajectory-level semantic diversity with final-answer diversity, a tractable proxy for outcome-space coverage used in prior work on reasoning diversity  ( Song et al., 2025 ;  Dang et al., 2025 ) .
+Figure  5  shows that  REFT  produces more distinct answers than standard sampling during training, suggesting that first token diversification changes not only the reasoning text but also the set of solution attempts under the same rollout budget. 
+
+ 
+ 
+ 
+ More distinct answers, however, do not by themselves imply useful exploration.
+A rollout group can contain many different wrong answers and still receive identical zero rewards, providing no contrast for learning.
+We therefore treat final-answer diversity as a coverage diagnostic and examine whether this broader coverage changes the correct-count distribution within each rollout group. 
+
+ 
+ 
+ 
+ 
+ Zero-variance decomposition. 
+
+ 
+
+ 
+ With binary rewards, a zero-variance group can arise in two opposite ways.
+In an all-wrong group, every completion is incorrect, so the rollout budget fails to find any correct trajectory.
+In an all-correct group, every completion solves the prompt, so it is already saturated under the sampled policy.
+Aggregating these into a single zero-variance fraction collapses two opposite training conditions into one number, so the composition of the zero-variance set carries more information than its overall size. 
+
+ 
+ 
+ 
+ Figures  6(a)  and  6(b)  show that  REFT  improves this composition.
+In Figure  6(a) ,  REFT  initially exposes more incorrect trajectories as part of exploration, but the all-wrong area shrinks as training proceeds.
+This suggests that broader outcome coverage increasingly includes successful traces.
+In Figure  6(b) ,  REFT  and standard sampling have
+relatively similar total zero-variance fractions, but  REFT  has a smaller all-wrong component.
+Thus, even when the overall zero-variance rate is comparable, fewer rollout groups fail to find any correct trajectory.
+Together with the increase in distinct final answers, this suggests that  REFT  is not merely scattering attempts across different wrong answers.
+Instead, REFT broadens the set of attempted solutions in a way that more often places at least one correct completion in the group, which is aligned with finite-budget Pass@k metrics such as Pass@8. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ (a)   Qwen2.5-0.5B-Instruct, GSM8K, DAPO 
+ 
+ 
+ (b)   Qwen2.5-3B-Instruct, BigMath-Easy, GRPO 
+ 
+ Figure 6 :  REFT  reduces all-wrong groups, the informative form of zero-variance reduction. 
+Each panel shows the fraction of zero-variance groups (black) and the all-correct subset (green) under standard sampling (left) and  REFT  (right). The shaded gap is the all-wrong subset.
+ 
+ 
+ 
+ 
+ 
+ 
+ (a)   Standard GRPO 
+ 
+ 
+ (b)   GRPO + REFT 
+ 
+ Figure 7 :  
+ REFT does not sharpen what the verifier ignores. 
+Top- r r  first-token probability over training on Qwen2.5-3B + GSM8K. Standard GRPO escalates the prior on the most-frequent first token;  REFT  keeps the prior comparatively flat.
+ 
+ 
+ 
+ 
+ REFT  mitigates first-token over-crediting. 
+
+ 
+
+ 
+ Section  3  showed that standard GRPO assigns a biased preference and it is monotonically escalated during training.
+Under standard sampling, the top-1 first-token probability keeps increasing throughout training (Figure  7(a) ), while under  REFT  it remains comparatively flat (Figure  7(b) ).
+This occurs because  REFT  reduces repeated visits to the same top-1 opener within a rollout group, reallocating the finite rollout budget across  K K  plausible candidates from the policy’s own top- N N  list. 
+
+ 
+ 
+ 
+ 
+ Taken together. 
+
+ 
+
+ 
+ These analyses support a consistent picture.
+ REFT  uses first-token diversification to expose broader continuation regions and a wider set of attempted answers during training.
+The zero-variance decomposition shows that this coverage is useful rather than merely noisy, since fewer rollout groups remain all-wrong.
+Figure  7  further shows that  REFT  mitigates the over-sharpening of the original top-1 first token.
+Overall,  REFT  reallocates the same rollout budget away from repeated visits to a weakly supported discourse preference and toward plausible first-token routes that more often yield useful reward contrast, consistent with the gains in Pass@1, Pass@8, and Pass@64. 
+
+ 
+ 
+ 
+ 
+ 
+ 7  Conclusion 
+
+ 
+
+ 
+ We studied where a finite rollout budget should be diversified in RLVR.
+We focus on the first semantic token after the reasoning marker: a low-load choice upstream of the full continuation. Our diagnosis shows that the policy places a sharply concentrated prior on this position, although first-token rank is only weakly tied to downstream correctness.
+We introduced  REFT , a minimal rollout-construction method that reallocates the first-token budget across plausible candidates from the policy’s own top- N N  list while leaving the rest of the RLVR pipeline unchanged.
+Across model scales, datasets, and GRPO/DAPO objectives,  REFT  improves Pass@1, Pass@8, and Pass@64. Analysis shows that these gains reflect useful diversity.  REFT  broadens continuation and answer coverage, reduces all-wrong zero-variance groups, and mitigates over-sharpening of the original top-1 first token. These results suggest that sharply biased, correctness-stable prefix choices can serve as effective intervention points for RLVR exploration. 
+
+ 
+ 
+ 
+ 
+ 
+ 

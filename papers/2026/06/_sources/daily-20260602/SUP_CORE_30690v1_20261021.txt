@@ -1,0 +1,731 @@
+SOURCE 30690 S2->S5
+2 Preliminaries
+2.1 Memory-Augmented Language Models
+We consider a memory-augmented language model that answers a query qq
+with access to an external memory corpus
+ℳ={mi}i=1N\mathcal{M}=\{m_{i}\}_{i=1}^{N}. Each memory item mim_{i} is a chunk of
+long-term context, such as a dialogue segment, a document passage, or a
+procedural skill card. A standard retrieval-augmented system first
+embeds the query and memory chunks, retrieves the top-ranked chunks, and
+then prepends the retrieved content to the model input:
+ℛ⁡(q)=TopKmi∈ℳ⁡sim⁡(eq,ei),\mathcal{R}(q)=\operatorname{TopK}_{m_{i}\in\mathcal{M}}\operatorname{sim}(e_{q},e_{i}),
+(1)
+where eqe_{q} and eie_{i} denote the query and memory embeddings,
+respectively.
+This retrieval-and-concatenation paradigm provides a simple mechanism
+for long-term memory access, but it imposes a rigid interface between
+memory and generation. The system typically retrieves a fixed number of
+chunks, injects them as plain text, and allocates context-window capacity
+in proportion to their original token lengths rather than their
+query-specific utility. Consequently, irrelevant or redundant chunks may
+consume substantial context, while compact but crucial evidence may
+receive insufficient representational capacity.
+2.2 Latent Memory Interfaces
+An alternative is to represent memory using continuous latent vectors
+rather than natural-language text. Let E⁡(⋅)E(\cdot) denote the token
+embedding layer of an LLM with hidden dimension dd. A latent or soft
+memory token z∈ℝdz\in\mathbb{R}^{d} can be inserted directly into the
+input embedding sequence:
+X=[E⁡(x1),…,E⁡(xT),z1,…,zB].X=\bigl[E(x_{1}),\ldots,E(x_{T}),z_{1},\ldots,z_{B}\bigr].
+(2)
+Such latent interfaces avoid re-rendering retrieved memories as text and
+can reduce prompt overhead. However, existing latent-memory methods
+often still expose a fixed-capacity interface: each retrieved chunk is
+assigned the same number of latent tokens regardless of its relevance,
+redundancy, or information density. This motivates a more flexible memory interface. Ideally, a model should
+adapt memory use at two levels: it should select the memory chunks that
+are useful for the current query, and it should allocate more latent
+capacity to chunks that are more informative for solving the task.
+3 ElasticMem: Memory Use as a Learnable Resource
+3.1 Overview
+Figure 1: Overview of ElasticMem.
+ElasticMem learns to use long-term memory as an elastic latent resource.
+(1) Latent memory bank construction.
+Memory chunks from dialogues, passages, and skill cards are encoded once by a frozen offline LLM encoder.
+Each chunk is stored as a retrieval key and a latent content cache, forming a read-only memory bank ℬ\mathcal{B} that is not updated during training.
+(2) Query-conditioned elastic memory retrieval and allocation.
+For each query, the LoRA-adapted reasoner generates a retrieval-control token and derives a query state for retrieving top-ranked memory chunks.
+A budget policy then assigns each retrieved chunk a variable latent budget bj∈{0,…,Bmax}b_{j}\in\{0,\ldots,B_{\max}\}, allowing useful chunks to receive more capacity while weak or redundant chunks are compressed or suppressed.
+(3) Latent memory injection.
+The selected cached states are projected into soft memory tokens and inserted into the final model input before generation.
+(4) Reward-based optimization.
+Task rewards optimize the LoRA-adapted reasoner, budget policy, and latent projector through GRPO, while the latent memory bank remains frozen.
+We propose ElasticMem, a memory-augmented LLM framework that treats memory use as a learnable resource allocation problem.
+Given a query qq and a memory corpus ℳ\mathcal{M}, ElasticMem decides not only which memories to retrieve, but also how much latent capacity each retrieved memory should receive.
+This design is motivated by the observation that memory usefulness is highly query-dependent.
+Some retrieved chunks contain direct evidence or transferable plans and require more latent capacity, while others are only superficially similar, redundant, or irrelevant and should receive little or no capacity.
+As shown in Figure 1, ElasticMem consists of four stages.
+First, it builds an offline latent memory bank by encoding each memory chunk into a retrieval key and a content cache.
+Second, it performs query-conditioned retrieval using the reasoner’s own hidden state rather than a standalone retrieval encoder.
+Third, it uses a lightweight Transformer budget policy to assign a variable number of latent tokens to each retrieved chunk.
+Fourth, it injects the selected latent states as soft memory tokens and jointly optimizes retrieval control, budget allocation, latent projection, and generation with downstream task rewards.
+The full training procedure is summarized in Appendix C.
+3.2 Latent Memory Bank Construction
+We partition the memory corpus into NN chunks
+ℳ={mi}i=1N\mathcal{M}=\{m_{i}\}_{i=1}^{N}.
+Each chunk is encoded once offline by a frozen base LLM encoder fθ0f_{\theta_{0}}:
+Hi=fθ0​(mi)∈ℝLi×d,H_{i}=f_{\theta_{0}}(m_{i})\in\mathbb{R}^{L_{i}\times d},
+(3)
+where LiL_{i} is the length of chunk mim_{i} and dd is the hidden dimension.
+From the hidden states HiH_{i}, we extract two representations:
+ki\displaystyle k_{i}
+=Hi​[−1]∈ℝd,\displaystyle=H_{i}[-1]\in\mathbb{R}^{d},
+(4)
+Ci\displaystyle C_{i}
+=Hi[−Nc:]∈ℝNc×d.\displaystyle=H_{i}[-N_{c}:]\in\mathbb{R}^{N_{c}\times d}.
+(5)
+The final hidden state kik_{i} serves as a compact retrieval key, while CiC_{i} stores the last NcN_{c} hidden states as a latent content cache.
+The resulting memory bank is
+ℬ={(mi,ki,Ci)}i=1N.\mathcal{B}=\{(m_{i},k_{i},C_{i})\}_{i=1}^{N}.
+(6)
+Since ℬ\mathcal{B} is constructed offline and kept fixed, query-time memory access does not require re-encoding the full memory corpus.
+3.3 Query-Conditioned Retrieval
+Standard retrieval systems usually encode the query with a separate retriever.
+This decouples memory access from the reasoner’s internal state.
+In contrast, ElasticMem derives the retrieval query from the reasoner itself, so retrieval is conditioned on how the model interprets the current input.
+Given a query qq, the reasoner first samples a retrieval-control token:
+a∼pθ(⋅∣q),a\sim p_{\theta}(\cdot\mid q),
+(7)
+where θ\theta denotes the trainable LoRA-adapted reasoner parameters.
+The query and retrieval-control token are then passed through the reasoner, and the last hidden state is used as the query representation:
+hq=fθ​(q,a)​[−1]∈ℝd.h_{q}=f_{\theta}(q,a)[-1]\in\mathbb{R}^{d}.
+(8)
+We score each memory chunk by cosine similarity between hqh_{q} and the cached retrieval key:
+si=cos⁡(hq,ki)=hq⊤​ki‖hq‖2​‖ki‖2.s_{i}=\cos(h_{q},k_{i})=\frac{h_{q}^{\top}k_{i}}{\|h_{q}\|_{2}\|k_{i}\|_{2}}.
+(9)
+The top-ZZ chunks are selected as
+I=TopZi∈[N]⁡si,I=\operatorname{TopZ}_{i\in[N]}s_{i},
+(10)
+where I=(I1,…,IZ)I=(I_{1},\ldots,I_{Z}) denotes the retrieved chunk indices in descending retrieval-score order.
+3.4 Elastic Latent Budget Allocation
+After retrieval, ElasticMem allocates a variable latent budget to each retrieved chunk.
+Let bjb_{j} denote the number of soft memory tokens assigned to the jj-th retrieved chunk mIjm_{I_{j}}.
+We impose a per-chunk maximum budget:
+bj∈{0,1,…,Bmax}.b_{j}\in\{0,1,\ldots,B_{\max}\}.
+(11)
+The option bj=0b_{j}=0 allows the model to suppress retrieved chunks that are similar to the query but not useful for the downstream task.
+Thus, the budget policy is not merely a compression module; it decides which retrieved memories deserve more representational capacity and which should contribute little or no latent signal.
+Budget policy network.
+We instantiate the budget allocator as a lightweight Transformer policy πϕ\pi_{\phi} over the retrieved set.
+For each retrieved chunk mIjm_{I_{j}}, we construct a chunk-level feature vector
+rj=Wr​[hq;kIj;hq⊙kIj;sIj;ej]∈ℝdb,r_{j}=W_{r}\left[h_{q};k_{I_{j}};h_{q}\odot k_{I_{j}};s_{I_{j}};e_{j}\right]\in\mathbb{R}^{d_{b}},
+(12)
+where hqh_{q} is the query-conditioned retrieval state, kIjk_{I_{j}} is the retrieved memory key, sIjs_{I_{j}} is its retrieval score, eje_{j} is a learned rank embedding, ⊙\odot denotes element-wise multiplication, and WrW_{r} projects the concatenated features into the policy hidden dimension dbd_{b}.
+The sequence of retrieved-memory features is then processed by a small Transformer encoder:
+o1,…,oZ=Transformerϕ⁡(r1,…,rZ),oj∈ℝdb.o_{1},\ldots,o_{Z}=\operatorname{Transformer}_{\phi}(r_{1},\ldots,r_{Z}),\qquad o_{j}\in\mathbb{R}^{d_{b}}.
+(13)
+This self-attention structure allows the policy to compare retrieved memories against one another before assigning capacity.
+For each retrieved chunk, the policy produces logits over discrete budget actions:
+ℓj=Wb​oj∈ℝBmax+1.\ell_{j}=W_{b}o_{j}\in\mathbb{R}^{B_{\max}+1}.
+(14)
+The budget for chunk mIjm_{I_{j}} is then sampled from the categorical distribution:
+bj∼πϕ(⋅∣hq,I)=Cat(softmax(ℓj)).b_{j}\sim\pi_{\phi}(\cdot\mid h_{q},I)=\operatorname{Cat}\left(\operatorname{softmax}(\ell_{j})\right).
+(15)
+Unlike similarity-based reweighting, πϕ\pi_{\phi} is not trained to imitate cosine scores.
+It is optimized only through downstream rewards, allowing it to assign larger budgets to memories that improve the final answer or action even when they are not the most similar retrieved chunks.
+3.5 Latent Memory Injection
+Given the allocated budget bjb_{j} for retrieved chunk mIjm_{I_{j}}, ElasticMem selects the last bjb_{j} hidden states from its content cache:
+C~j=CIj[−bj:]∈ℝbj×d.\widetilde{C}_{j}=C_{I_{j}}[-b_{j}:]\in\mathbb{R}^{b_{j}\times d}.
+(16)
+If bj=0b_{j}=0, the chunk contributes no latent memory tokens.
+Otherwise, the selected states are mapped into the reasoner’s input embedding space through a learned projector PψP_{\psi}:
+Zj=Pψ​(C~j)∈ℝbj×d.Z_{j}=P_{\psi}(\widetilde{C}_{j})\in\mathbb{R}^{b_{j}\times d}.
+(17)
+The final input sequence is
+X=[E⁡(q);E⁡(a);Z1;⋯;ZZ;E⁡(u)],X=\bigl[E(q);E(a);Z_{1};\cdots;Z_{Z};E(u)\bigr],
+(18)
+where uu denotes the task instruction and optional answer choices.
+The reasoner generates
+y∼pθ(⋅∣X).y\sim p_{\theta}(\cdot\mid X).
+(19)
+Soft memory tokens are excluded from the language modeling loss.
+They influence generation through the reasoner’s hidden states and are learned through downstream reward signals.
+3.6 Reward-Based Optimization
+The usefulness of retrieval and budget decisions is revealed only after the model produces an answer or completes an action.
+We therefore optimize the full memory-use process with group-relative policy optimization.
+For each query-target pair (q,y⋆)(q,y^{\star}), ElasticMem samples GG trajectories:
+τg=(ag,Ig,𝐛g,yg),g=1,…,G,\tau_{g}=(a_{g},I_{g},\mathbf{b}_{g},y_{g}),\qquad g=1,\ldots,G,
+(20)
+where aga_{g} is the retrieval-control token, Ig=(Ig,1,…,Ig,Z)I_{g}=(I_{g,1},\ldots,I_{g,Z}) is the retrieved memory index sequence, 𝐛g=(bg,1,…,bg,Z)\mathbf{b}_{g}=(b_{g,1},\ldots,b_{g,Z}) is the sampled budget allocation, and ygy_{g} is the generated output.
+Each trajectory receives a task reward:
+rg=R⁡(yg,y⋆),r_{g}=R(y_{g},y^{\star}),
+(21)
+where RR is task-specific, such as accuracy, token-level F1, LLM-judge score, or environment success.
+We compute a group-relative advantage by normalizing rewards within the sampled group:
+Ag=rg−mean⁡({rg′}g′=1G)max⁡(std⁡({rg′}g′=1G),σmin),A_{g}=\frac{r_{g}-\operatorname{mean}\left(\{r_{g^{\prime}}\}_{g^{\prime}=1}^{G}\right)}{\max\left(\operatorname{std}\left(\{r_{g^{\prime}}\}_{g^{\prime}=1}^{G}\right),\sigma_{\min}\right)},
+(22)
+where σmin\sigma_{\min} is a small constant for numerical stability.
+We minimize the clipped GRPO objective:
+ℒGRPO=−1G∑g=1G[min(ρgAg,clip(ρg, 1−ϵ, 1+ϵ)Ag)],\mathcal{L}_{\mathrm{GRPO}}=-\frac{1}{G}\sum_{g=1}^{G}\left[\min\left(\rho_{g}A_{g},\;\operatorname{clip}\left(\rho_{g},\,1-\epsilon,\,1+\epsilon\right)A_{g}\right)\right],
+(23)
+where the probability ratio is
+ρg=pθ,ϕ,ψ​(τg)pθold,ϕold,ψold​(τg).\rho_{g}=\frac{p_{\theta,\phi,\psi}(\tau_{g})}{p_{\theta_{\mathrm{old}},\phi_{\mathrm{old}},\psi_{\mathrm{old}}}(\tau_{g})}.
+(24)
+The trajectory likelihood factorizes as
+pθ,ϕ,ψ​(τg)=pθ​(ag∣q)​[∏j=1Zπϕ​(bg,j∣hq,g,Ig)]​pθ​(yg∣Xg​(ψ)),p_{\theta,\phi,\psi}(\tau_{g})=p_{\theta}(a_{g}\mid q)\left[\prod_{j=1}^{Z}\pi_{\phi}\!\left(b_{g,j}\mid h_{q,g},\,I_{g}\right)\right]p_{\theta}\!\left(y_{g}\mid X_{g}(\psi)\right),
+(25)
+where hq,g=fθ​(q,ag)​[−1]h_{q,g}=f_{\theta}(q,a_{g})[-1] and
+Xg​(ψ)=[E⁡(q);E⁡(ag);Pψ​(Ceg,1);⋯;Pψ​(Ceg,Z);E⁡(u)]X_{g}(\psi)=\bigl[E(q);\,E(a_{g});\,P_{\psi}(C_{e_{g,1}});\cdots;\,P_{\psi}(C_{e_{g,Z}});\,E(u)\bigr]
+is the final input sequence whose soft memory tokens are produced by the latent
+projector PψP_{\psi}.
+Thus, the reward signal supervises not only final generation, but also the
+retrieval-control token and the memory-budget decisions.
+The trainable components are the LoRA-adapted reasoner θ\theta, the budget
+policy πϕ\pi_{\phi}, and the latent projector PψP_{\psi}.
+The offline memory bank ℬ\mathcal{B} remains fixed during training. The detailed training procedure is provided in Appendix C.
+4 Experiments
+To evaluate the effectiveness of ElasticMem in memory-augmented language modeling, we conduct experiments on MemorySuite, which contains two complementary settings: memory-intensive question answering and embodied agentic decision-making
+(see Appendix D).
+Tasks and Metrics.
+MemorySuite-QA includes PersonaMem-32K (Jiang et al., 2025a), PersonaMem-128K (Jiang et al., 2025a), LoCoMo (Maharana et al., 2024), and LongMemEval (Wu et al., 2024).
+We report accuracy as the primary metric.
+MemorySuite-Agentic uses ALFWorld (Shridhar et al., 2020) and evaluates both seen and unseen splits, using success rate (SR) as the primary metric.
+For all tasks, we also report the number of consumed tokens (#Tok.) to measure memory efficiency.
+Baselines and Settings.
+We compare ElasticMem with representative memory-based baselines from two paradigms.
+Text-space memory baselines include MemoryBank (Zhong et al., 2024), A-MEM (Xu et al., 2025a), LightMem (Fang et al., 2025a), Mem0 (Chhikara et al., 2025), MemoryOS (Kang et al., 2025), MemP (Fang et al., 2025b), and LangMem (LangChain, 2024).
+Latent-space memory baselines include MemGen (Zhang et al., 2025a), AutoCompressor (Chevalier et al., 2023), and M+ (Wang et al., 2025).
+All methods are evaluated with Qwen2.5-3B-Instruct11
+1
+https://huggingface.co/Qwen/Qwen2.5-3B-Instruct and Qwen2.5-7B-Instruct22
+2
+https://huggingface.co/Qwen/Qwen2.5-7B-Instruct backbones under a no-few-shot-example setting.
+Table 2: Main comparison results on PersonaMem-32K, PersonaMem-128K, LoCoMo, LongMemEval, and ALFWorld.
+For Acc. and SR, higher is better; for #Tok., lower is better.
+Bold and underline denote the best and second-best results.
+The Avg. columns are computed as weighted averages using the number of test examples or games in each benchmark.
+Model
+Methods
+Memory QA Tasks
+Agentic Embodied Interactive Tasks
+PersonaMem-32K
+PersonaMem-128K
+LoCoMo
+LongMemEval
+Avg.
+ALF-Seen
+ALF-Unseen
+Avg.
+Acc.
+#Tok.
+Acc.
+#Tok.
+Acc.
+#Tok.
+Acc.
+#Tok.
+Acc.
+#Tok.
+SR
+#Tok.
+SR
+#Tok.
+SR
+#Tok.
+Qwen2.5-3B
+-Instruct
+Memory-based Methods in Text-Space
+MemoryBank
+0.50
+2,473
+0.33
+4,618
+0.41
+2,202
+0.29
+9,591
+0.37
+4,089
+0.06
+76,016
+0.09
+71,173
+0.08
+73,648
+A-MEM
+0.48
+4,899
+0.38
+3,530
+0.39
+3,348
+0.45
+15,625
+0.40
+5,282
+0.04
+17,239
+0.05
+14,248
+0.04
+15,776
+LightMem
+0.46
+851
+0.35
+1,306
+0.40
+3,468
+0.44
+1,248
+0.39
+2,239
+0.14
+13,252
+0.17
+12,617
+0.15
+12,941
+Mem0
+0.42
+778
+0.39
+662
+0.33
+836
+0.33
+2,843
+0.36
+1,062
+0.14
+43,055
+0.12
+43,677
+0.13
+43,359
+MemoryOS
+0.48
+4,419
+0.32
+9,440
+0.33
+4,420
+0.40
+13,854
+0.35
+7,452
+0.11
+68,131
+0.13
+65,845
+0.12
+67,013
+MemP
+0.42
+12,002
+0.38
+29,567
+0.26
+5,140
+0.41
+26,571
+0.33
+16,873
+0.11
+101,580
+0.10
+110,019
+0.11
+105,707
+LangMem
+0.40
+675
+0.30
+1,626
+0.40
+936
+0.28
+687
+0.35
+1,112
+0.20
+12,276
+0.11
+12,449
+0.15
+12,361
+Memory-based Methods in Latent-Space
+MemGen
+0.62
+502
+0.58
+393
+0.60
+198
+0.55
+242
+0.59
+291
+0.29
+14,708
+0.25
+14,416
+0.27
+14,565
+AutoCompressor
+0.48
+717
+0.45
+1,127
+0.47
+234
+0.44
+998
+0.46
+677
+0.16
+21,145
+0.13
+21,571
+0.14
+21,353
+M+
+0.56
+447
+0.52
+350
+0.54
+154
+0.50
+198
+0.53
+247
+0.20
+14,246
+0.16
+14,233
+0.18
+14,240
+ElasticMem
+0.74
+528
+0.77
+539
+0.74
+334
+0.68
+378
+0.74
+423
+0.49
+11,028
+0.41
+12,846
+0.45
+11,917
+Qwen2.5-7B
+-Instruct
+Memory-based Methods in Text-Space
+MemoryBank
+0.53
+2,639
+0.35
+4,724
+0.40
+2,301
+0.39
+10,822
+0.39
+4,358
+0.11
+36,602
+0.19
+39,385
+0.15
+37,963
+A-MEM
+0.52
+9,731
+0.37
+11,098
+0.42
+3,289
+0.50
+31,489
+0.42
+10,408
+0.06
+29,543
+0.09
+29,531
+0.07
+29,537
+LightMem
+0.52
+864
+0.33
+1,228
+0.41
+3,702
+0.53
+939
+0.41
+2,275
+0.33
+11,150
+0.37
+10,617
+0.35
+10,889
+Mem0
+0.54
+794
+0.39
+676
+0.38
+921
+0.48
+3,202
+0.41
+1,157
+0.43
+26,165
+0.40
+27,327
+0.42
+26,733
+MemoryOS
+0.52
+4,695
+0.38
+9,748
+0.42
+4,998
+0.53
+14,489
+0.43
+7,926
+0.38
+60,129
+0.40
+50,238
+0.39
+55,292
+MemP
+0.52
+11,964
+0.40
+29,581
+0.22
+5,382
+0.48
+26,580
+0.34
+16,985
+0.24
+143,768
+0.22
+115,492
+0.23
+129,940
+LangMem
+0.68
+1,359
+0.42
+3,097
+0.35
+1,478
+0.42
+781
+0.41
+1,911
+0.40
+9,735
+0.28
+10,140
+0.34
+9,933
+Memory-based Methods in Latent-Space
+MemGen
+0.70
+502
+0.66
+393
+0.68
+198
+0.63
+242
+0.67
+291
+0.39
+12,933
+0.34
+13,551
+0.36
+13,235
+AutoCompressor
+0.56
+717
+0.52
+1,127
+0.55
+234
+0.51
+998
+0.54
+677
+0.24
+19,875
+0.20
+19,317
+0.22
+19,602
+M+
+0.64
+447
+0.59
+350
+0.62
+154
+0.57
+198
+0.60
+247
+0.32
+12,520
+0.28
+13,382
+0.30
+12,942
+ElasticMem
+0.90
+528
+0.84
+539
+0.84
+334
+0.76
+378
+0.83
+423
+0.56
+9,035
+0.49
+9,031
+0.53
+9,033
+4.1 ElasticMem Outperforms Memory-based Methods in Text-Space and Latent-Space
+We evaluate ElasticMem on MemorySuite, covering memory-intensive QA and embodied agentic decision-making, comparing against representative text-space and latent-space memory baselines with Qwen2.5-3B/7B-Instruct (Table 2). Two observations follow.
+ElasticMem Consistently Achieves the Best Task Performance.
+ElasticMem obtains the best results across all evaluated settings. On MemorySuite-QA, ElasticMem achieves the highest accuracy over all datasets, improving the weighted average accuracy from 0.588 to 0.742 with Qwen2.5-3B-Instruct and from 0.668 to 0.832 with Qwen2.5-7B-Instruct compared with the strongest baseline. On ALFWorld, ElasticMem also achieves the highest average success rate, improving from 0.270 to 0.449 with Qwen2.5-3B-Instruct and from 0.416 to 0.529 with Qwen2.5-7B-Instruct. These results show that ElasticMem consistently improves both memory recall and sequential decision-making across different model scales and task types.
+ElasticMem Provides a Strong Accuracy-Efficiency Trade-off.
+Beyond task performance, ElasticMem is also more efficient than both text-space and fixed-capacity latent-space memory methods.
+Text-space baselines inject retrieved memories as natural-language context, often incurring large token overhead on ALFWorld while still underperforming ElasticMem.
+Latent-space baselines reduce prompt-token usage, but their fixed or non-elastic memory interfaces limit their ability to separate useful memories from redundant or weakly relevant ones.
+In contrast, ElasticMem operates in latent space and learns to allocate memory capacity elastically.
+Compared with the strongest latent baseline, ElasticMem improves average QA accuracy by 26.2% on Qwen2.5-3B-Instruct and 24.6% on Qwen2.5-7B-Instruct, showing that its gains come not merely from using latent memory, but from learning how much capacity each memory should receive.
+On ALFWorld, ElasticMem further achieves the highest success rate while using the fewest tokens per game, improving average SR by 66.3% and 27.2% on the two backbones, respectively.
+This indicates that ElasticMem does not improve by longer exploration, but by using memory more selectively and completing tasks more efficiently.
+Overall, Table 2 shows that ElasticMem offers a stronger accuracy-efficiency trade-off than both text-space and fixed-capacity latent-space memory methods.
+(a)
+(b)
+(c)
+Figure 2: Ablation studies on Qwen2.5-7B-Instruct.
+(a) Effect of budget policy: ElasticMem outperforms Random Budget, Uniform Budget, and MLP Budget Policy, showing that the Transformer budget policy better learns how to allocate latent capacity across retrieved memories.
+(b) Effect of retrieval design: ElasticMem outperforms Semantic Retrieval, Frozen-State Retrieval, and Query-State Retrieval, demonstrating the benefit of using a trainable reasoner-state retrieval mechanism with a sampled retrieval-control token.
+(c) Effect of per-chunk maximum budget: ElasticMem achieves the best overall performance at Bmax=20B_{\max}=20, suggesting that a moderate per-memory capacity limit is more effective than overly small or overly large per-chunk budgets.
+4.2 Ablation Studies Validate ElasticMem’s Key Components
+ElasticMem Benefits from Utility-Aware Budget Allocation.
+We first study how the latent budget policy affects performance.
+As shown in Figure 2(a), ElasticMem consistently outperforms Random Budget, Uniform Budget, and MLP Budget Policy across the five evaluation settings.
+Random Budget performs worst because it assigns latent capacity without considering query relevance or memory utility.
+Uniform Budget is more stable but treats all retrieved chunks equally, ignoring the fact that different memories contribute unequally to the final prediction.
+MLP Budget Policy improves over these two variants by learning query-dependent allocation, but it still underperforms ElasticMem because it scores each retrieved memory without explicit cross-memory interaction.
+These results show that the Transformer budget policy in ElasticMem better compares retrieved memories and allocates latent capacity according to downstream usefulness.
+ElasticMem Improves Retrieval with a Trainable Reasoner State.
+Figure 2(b) ablates the retrieval mechanism and ElasticMem achieves the best performance.
+Semantic Retrieval performs the worst, indicating that rigid similarity matching is insufficient for identifying useful memories.
+Frozen-State Retrieval improves by using the reasoner’s hidden state as the retrieval signal but lacks task-adaptive updates.
+Query-State Retrieval further improves with a trainable reasoner state, yet still falls behind ElasticMem.
+This gap highlights the importance of the retrieval-control token for forming a flexible, query-specific retrieval state.
+Overall, retrieval is more effective when it is coupled with the trainable reasoner’s internal state rather than relying on fixed semantic similarity.
+ElasticMem Performs Best with a Moderate Per-Chunk Budget.
+Finally, we vary the per-chunk maximum latent budget Bmax∈{10,20,30,40}B_{\max}\in\{10,20,30,40\}.
+As shown in Figure 2(c), ElasticMem performs best when Bmax=20B_{\max}=20.
+A smaller budget such as Bmax=10B_{\max}=10 can be too restrictive to preserve complex evidence or transferable plans.
+Larger budgets such as Bmax=30B_{\max}=30 or Bmax=40B_{\max}=40 do not further improve performance and can slightly degrade results, likely because they allow excessive capacity to be assigned to less useful retrieved chunks.
+These results suggest that elastic memory allocation benefits from a moderate per-memory capacity limit.
+4.3 ElasticMem Learns Evidence Utility Beyond Retrieval Similarity
+We provide qualitative case studies showing that ElasticMem learns to distinguish useful evidence from superficially similar memories.
+This is important because cosine retrieval mainly captures semantic overlap, while memory utility depends on relevance to the current task.
+ElasticMem Suppresses Similar Memories That Do Not Provide Useful Evidence.
+In PersonaMem-32K, the query asks about a summer mentoring program involving study techniques, meditation, and stress relief.
+The correct answer requires recalling that meditation helped the user improve focus and reduce anxiety during study.
+However, several top-ranked retrieved chunks are only topically similar, such as memories about a group project, a peer study group, or a near-verbatim restatement of the query.
+Although these chunks receive high cosine similarity, ElasticMem assigns them low latent budgets.
+Instead, it allocates larger budgets to lower-ranked chunks that provide useful evidence, including memories connecting yoga and meditation with stress reduction and mental balance, and memories linking anxiety, sleep deprivation, and cognitive function.
+This allows the reasoner to recover the evidence chain meditation →\rightarrow focus →\rightarrow anxiety →\rightarrow study performance, while a uniform-budget baseline fails.
+This case shows that ElasticMem does not simply follow retrieval similarity, but learns to prioritize evidence that is useful for answering the query.
+ElasticMem Aligns Memory Budgets with Transferable Plan Structure Rather Than Task Labels.
+In ALFWorld, for the task “heat some apple and put it on the countertop”, similarity-based retrieval tends to favor memories with the same heat task type.
+In contrast, ElasticMem assigns high budget to a skill card from a different cool task because its plan places an object on a shelf, which is structurally similar to a countertop as an open horizontal surface.
+Meanwhile, ElasticMem assigns low budgets to superficially related cards whose destinations are appliances such as a coffeemachine or stoveburner, since their placement plans are less compatible with the current goal.
+Even for two cards with the same objective string, “heat some mug and put it in coffeemachine”, ElasticMem assigns different budgets depending on whether the action plan searches open surfaces or irrelevant cabinets and appliances.
+This shows that the budget policy captures transferable procedural structure rather than relying only on task labels or objective text.
+SOURCE 30690 A1->A3
+Appendix A Limitations, Future Work, and Broader Impact
+Limitations. While ElasticMem demonstrates strong performance across memory-intensive QA and embodied agentic tasks, our evaluation focuses on the MemorySuite benchmarks with Qwen2.5-3B and 7B backbones. Although the consistent improvements across both scales suggest generalizability, validating ElasticMem on additional model families and more diverse interactive environments would further strengthen the conclusions.
+Future Work. Beyond addressing the above scope boundaries, several directions merit investigation. Extending the evaluation to larger-scale memory corpora and more open-ended interactive environments [49, 16, 43] would test the scalability of elastic latent memory. Developing richer visualization and interpretability tools for the learned budget allocation would make the memory-use process more transparent. Additionally, exploring dynamic memory bank updates, where the memory bank itself evolves as the agent accumulates new experience, is a promising direction for agents continuous evolving [51, 18, 2].
+Broader Impact. By reducing the token overhead of memory-augmented LLM agents through elastic latent allocation, ElasticMem has the potential to make memory-intensive LLM applications more computationally accessible. We do not foresee specific negative societal consequences beyond those generally associated with improving LLM agent capabilities. As with all advances in LLM-based agents, downstream deployments should incorporate appropriate safeguards for safety and reliability.
+Appendix B Implementation Details
+We implement ElasticMem with Qwen2.5-3B-Instruct33
+3
+https://huggingface.co/Qwen/Qwen2.5-3B-Instruct and Qwen2.5-7B-Instruct44
+4
+https://huggingface.co/Qwen/Qwen2.5-7B-Instruct as backbone reasoners.
+For each dataset, we train a task-specific ElasticMem model while keeping the same architecture and optimization protocol.
+LoRA-adapted reasoner θ\theta.
+We adapt the backbone reasoner with LoRA [14].
+Specifically, we apply LoRA to the query, key, value, and output projection matrices of all attention layers, i.e., q_proj, k_proj, v_proj, and o_proj.
+We use LoRA rank r=16r{=}16, scaling factor α=32\alpha{=}32, and dropout 0.10.1.
+The total number of trainable LoRA parameters is approximately 14.7M for the 3B backbone and 20.2M for the 7B backbone.
+Latent memory bank ℬ\mathcal{B}.
+Each memory chunk mim_{i} is encoded once offline by the frozen base encoder fθ0f_{\theta_{0}}.
+Following Eqs. 4–5, we store the last hidden state as the retrieval key
+ki=Hi​[−1]∈ℝdk_{i}=H_{i}[-1]\in\mathbb{R}^{d} and the last Nc=20N_{c}{=}20 hidden states as the content cache
+Ci=Hi[−Nc:]∈ℝNc×dC_{i}=H_{i}[-N_{c}:]\in\mathbb{R}^{N_{c}\times d}.
+All retrieval keys are L2L_{2}-normalized and retrieved with cosine similarity as in Eq. 9.
+The number of retrieved chunks ZZ is dataset-specific: Z=9Z{=}9 for PersonaMem-32K, Z=21Z{=}21 for PersonaMem-128K, Z=20Z{=}20 for LoCoMo and LongMemEval, and Z=10Z{=}10 for ALFWorld.
+The memory bank is fixed during training and inference.
+Latent projector PψP_{\psi}.
+The latent projector maps selected cached hidden states into the reasoner’s input embedding space.
+We implement PψP_{\psi} as a two-layer MLP with GELU activation and layer normalization:
+Pψ​(C~j)=LayerNorm⁡(W2​GELU⁡(W1​C~j)),P_{\psi}(\widetilde{C}_{j})=\operatorname{LayerNorm}\left(W_{2}\,\operatorname{GELU}(W_{1}\widetilde{C}_{j})\right),
+(26)
+where W1W_{1} maps ℝd\mathbb{R}^{d} to an intermediate dimension d′=2048d^{\prime}{=}2048, and W2W_{2} maps ℝd′\mathbb{R}^{d^{\prime}} back to ℝd\mathbb{R}^{d}.
+The projector is applied independently to each selected latent state.
+It contains approximately 10.5M trainable parameters for the 3B backbone and 18.4M trainable parameters for the 7B backbone.
+Budget policy πϕ\pi_{\phi}.
+The budget allocator is a lightweight Transformer encoder operating over the retrieved memory set.
+Following Eq. 13, we use hidden dimension db=256d_{b}{=}256, 44 attention heads, 22 Transformer layers, and dropout 0.10.1.
+The per-chunk maximum budget is Bmax=20B_{\max}{=}20.
+Thus, each retrieved chunk receives a discrete latent budget
+bj∈{0,…,20}b_{j}\in\{0,\ldots,20\} as defined in Eq. 11.
+The action bj=0b_{j}{=}0 allows the model to suppress a retrieved memory completely.
+The budget policy contains approximately 2.6M–3.4M trainable parameters depending on the backbone size.
+GRPO training.
+We jointly optimize the LoRA-adapted reasoner θ\theta, latent projector PψP_{\psi}, and budget policy πϕ\pi_{\phi} with group-relative policy optimization [35].
+We use group size G=4G{=}4, clipping range ϵ=0.05\epsilon{=}0.05, and sampling temperature τ=1.0\tau{=}1.0 for trajectory generation.
+The reward function R⁡(y,y⋆)R(y,y^{\star}) is task-specific: exact-match accuracy for MemorySuite-QA tasks and binary task success for ALFWorld.
+We use AdamW [27] with learning rate 2×10−52\times 10^{-5}, weight decay 0.010.01, and a cosine annealing schedule.
+All tasks are trained for 1010 epochs with BF16 mixed precision.
+The maximum generation length is set to 55 tokens for QA tasks and 1616 tokens for ALFWorld.
+During evaluation, we use greedy decoding.
+The retrieval-control token is selected by argmax, budget allocation uses the most likely budget action under πϕ\pi_{\phi}, and answer generation is decoded greedily.
+Task-specific prompts.
+For PersonaMem-32K and PersonaMem-128K, the task instruction uu constrains the model to output exactly one of four options: “(a)”, “(b)”, “(c)”, or “(d)”.
+For LoCoMo and LongMemEval, the instruction enforces selection from ten options “(a)” through “(j)” and explicitly prohibits refusal responses.
+For ALFWorld, the instruction directs the agent to output a single admissible command string verbatim.
+The final model input follows Eq. 18:
+X=[E⁡(q);E⁡(a);Z1;…;ZZ;E⁡(u)],X=[E(q);E(a);Z_{1};\ldots;Z_{Z};E(u)],
+(27)
+where qq is the query, aa is the retrieval-control token, ZjZ_{j} are the projected soft memory tokens, and uu contains the task instruction and answer options, or the interaction history and admissible actions for ALFWorld.
+Token counting.
+For QA tasks, #Tok. denotes the number of tokens consumed by the task input, retrieved memory interface, and generated answer.
+For ALFWorld, #Tok. is computed per game and includes all tokens consumed across interaction turns.
+For text-space baselines, retrieved memories are counted as natural-language prompt tokens.
+For ElasticMem and other latent-space methods, soft memory tokens are counted as latent memory tokens, which reflects the effective memory capacity used by the model.
+Compute.
+All experiments are conducted on NVIDIA RTX A6000 GPUs with 48GB memory.
+Training a single task-specific model takes approximately 6–18 hours on one GPU, depending on dataset size and backbone scale.
+Offline memory bank construction takes approximately 10–60 minutes per dataset, since each memory chunk is encoded once and reused throughout training and inference.

@@ -1,0 +1,711 @@
+FAME: Fairness-aware Attention-modulated Video Editing
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Video Editing Models and Fairness
+Video Editing Models
+Fairness in Video Editing
+3 Methodology
+Prompt Responsiveness Test for Fairness Verification in Video Editing
+The Training-free FAME Model
+Soft Debiasing Prompt Encoding for Fairness Preservation.
+Enhancing Intra-region Coherence in Temporal Self-Attention.
+Prompt-to-Region Alignment Across Frames
+4 Experiments
+FairVE: Datasets for Fairness in Frame-Level Video Editing
+Experimental Results
+Ablation Study
+Attention Modulation for Fairness Control
+Sensitivity Analysis on Text Encoding
+5 Conclusion
+References
+6 Appendix
+Existing literature on Fairness in T2I methods
+Implementation Details
+Additional Results
+License: CC BY 4.0
+arXiv:2510.22960v1 [cs.CV] 27 Oct 2025
+FAME: Fairness-aware Attention-modulated Video Editing
+Zhangkai Wu
+Xuhui Fan
+Zhongyuan Xie
+Kaize Shi
+Zhidong Li
+Longbing Cao
+Abstract
+Training-free video editing (VE) models tend to fall back on gender stereotypes when rendering profession-related prompts. We propose FAME for Fairness-aware Attention-modulated Video Editing that mitigates profession-related gender biases while preserving prompt alignment and temporal consistency for coherent VE. We derive fairness embeddings from existing minority representations by softly injecting debiasing tokens into the text encoder. Simultaneously, FAME integrates fairness modulation into both temporal self attention and prompt-to-region cross attention to mitigate the motion corruption and temporal inconsistency caused by directly introducing fairness cues. For temporal self attention, FAME introduces a region constrained attention mask combined with time decay weighting, which enhances intra-region coherence while suppressing irrelevant inter-region interactions. For cross attention, it reweights tokens to region matching scores by incorporating fairness sensitive similarity masks derived from debiasing prompt embeddings. Together, these modulations keep fairness-sensitive semantics tied to the right visual regions and prevent temporal drift across frames. Extensive experiments on new VE fairness-oriented benchmark FairVE demonstrate that FAME achieves stronger fairness alignment and semantic fidelity, surpassing existing VE baselines.
+1 Macquarie University, Australia
+2 University of Southern Queensland, Australia
+3 University of Technology Sydney, Australia
+1 Introduction
+Video editing with text prompts has witnessed rapid development thanks to the rise of text-to-image (T2I) Diffusion Models (DM) such as Stable Diffusion (SD) (Rombach et al. 2022) and DALLE-E (Ramesh et al. 2021). Building upon these pre-trained T2I models, recent training-free VE methods (Qi et al. 2023; Geyer et al. 2024; Liu et al. 2024b; Yang et al. 2025) enable flexible control over object appearance, motion, and semantics, by manipulating temporal self-attention and cross-frame attention maps.
+On the other hand, generating fair content from pre-trained vision-language models has become an increasingly critical problem. (Cho, Zala, and Bansal 2023) first revealed that T2I models often reproduce gender and racial stereotypes, even for given neutral prompts (Cho, Zala, and Bansal 2023; Shen et al. 2024; Gandikota et al. 2024). This social bias largely stems from imbalanced image–text pairs, where data associated with perpetuate majority groups is more frequently collected, and from inherent biases in large-scale language models used in text encoders such as CLIP (Ross, Katz, and Barbu 2021; Birhane, Prabhu, and Kahembwe 2021). However, existing fairness-aware T2I methods (Li et al. 2024a; Kim et al. 2025) focus on static images only, which often rely on prompt-image alignment assumptions that may not be generalized to temporally coherent video generation.
+Figure 1: Training-free VE methods (e.g., TokenFlow (Geyer et al. 2024)) fail to correct gender stereotypes in profession related prompts, as shown in the 1st row, even with debiasing prompt, causing motion corruption, with missing actions, ghosting, and temporal discontinuity. Videograin (Yang et al. 2025) partly reduces bias but still retains stereotypical features such as outfit, illustrated in the 2nd row. In contrast, FAME combines soft prompt encoding and attention modulation to remove both profession bias and motion corruption, generating coherent videos with accurate debiased profession details.
+Bridging these two lines of research reveals a significant gap: fairness-aware VE in a training-free setting has not been formally explored. Existing T2I models exhibit gender bias toward profession related prompts, defaulting to stereotypical gender content. When debiasing prompts are applied, these models often suffer from motion corruption, manifesting as semantic mismatch, visual inconsistency, and degraded controllability. More details are revealed in Figure 1 and our Prompt Responsiveness Test in Appendix Figure 5.These observations highlight the need for a dedicated framework that can achieve fairness control without compromising motion consistency.
+To bring fairness into VE while still preserving prompt meaning and motion quality, FAME (Fairness-aware Attention-modulated VE) as a training-free approach tackles both bias and motion corruption together. To reduce gender bias in profession related prompts while preserving their original meaning, we introduce soft debiasing prompt encoding, which gently adjusts prompt embeddings toward fairness-aware semantics without altering the intended content. Yet debiasing at the prompt level alone cannot stop fairness cues from fading over time, so we add temporal self-attention modulation to maintain fairness consistency across frames and avoid temporal attention dilution. Finally, since fairness tokens can still drift from their correct visual regions during denoising, we apply cross-attention reweighting to better align fairness related prompts with the corresponding spatial regions.
+On open source benchmarks, FAME consistently outperforms state-of-the-art training-free VE models in fairness preservation, semantic accuracy, and visual consistency, as measured by both CLIP based metrics and human evaluations. Our main contributions are summarized as follows:
+•
+FairVE, as the first benchmark that exploits existing open source datasets and protocols to evaluate fairness in T2I based VE models.
+•
+FAME, as a training-free framework to jointly mitigate bias and motion corruption through prompt encoding, temporal attention modulation, and cross attention reweighting at the inference time.
+•
+The state-of-the-art performance in fairness preservation, semantic alignment, and temporal coherence by FAME.
+Figure 2: Framework of FAME. In the denoising process, the soft debiasing prompt encoding module will encode the debiasing prompt 𝐏tar{\boldsymbol{\mathbf{P}}}_{\texttt{tar}} explicitly and fuse the self-attention map 𝐐𝐊T{\boldsymbol{\mathbf{Q}}}{\boldsymbol{\mathbf{K}}}^{T} with time decay 𝐒{\boldsymbol{\mathbf{S}}} and element weight 𝐌{\boldsymbol{\mathbf{M}}} with cross-attention map reweighting.
+2 Video Editing Models and Fairness
+Video Editing Models
+Latent diffusion models are commonly used, which first encode the input image sequence 𝒳\mathcal{X} into a latent representation 𝐳0{\boldsymbol{\mathbf{z}}}_{0} and then gradually corrupt 𝐳0{\boldsymbol{\mathbf{z}}}_{0} through a forward diffusion process, resulting in intermediate latent variables {𝐳t}t\{{\boldsymbol{\mathbf{z}}}_{t}\}_{t} and their associated attention maps.
+q⁡(𝐳t∣𝐳t−1)=\displaystyle q\left({\boldsymbol{\mathbf{z}}}_{t}\mid{\boldsymbol{\mathbf{z}}}_{t-1}\right)=
+𝒩⁡(𝐳t,1−βt​𝐳t−1,βt​𝐈),\displaystyle\mathcal{N}\left({\boldsymbol{\mathbf{z}}}_{t};\sqrt{1-\beta_{t}}{\boldsymbol{\mathbf{z}}}_{t-1},\beta_{t}{\boldsymbol{\mathbf{I}}}\right),
+where t=1,…,Tt=1,\dots,T, with TT denoting the total number of steps in the forward diffusion process. The parameter βt\beta_{t} controls the noise strength injected at timestep tt. After defining the forward process, a backward inversion process is used to denoise the noise data into original data, with each step defined as:
+p𝜽​(𝐳t−1∣𝐳t)=𝒩⁡(𝐳t−1,𝝁𝜽​(𝐳t,t),σt2​𝐈),\displaystyle p_{\boldsymbol{\mathbf{\theta}}}\left({\boldsymbol{\mathbf{z}}}_{t-1}\mid{\boldsymbol{\mathbf{z}}}_{t}\right)=\mathcal{N}\left({\boldsymbol{\mathbf{z}}}_{t-1};{\boldsymbol{\mathbf{\mu}}}_{\boldsymbol{\mathbf{\theta}}}({\boldsymbol{\mathbf{z}}}_{t},t),\sigma_{t}^{2}{\boldsymbol{\mathbf{I}}}\right),
+where 𝝁𝜽​(𝐳t,t){\boldsymbol{\mathbf{\mu}}}_{\boldsymbol{\mathbf{\theta}}}({\boldsymbol{\mathbf{z}}}_{t},t) denotes the prediction of 𝐱0{\boldsymbol{\mathbf{x}}}_{0} at step tt, and σt2\sigma_{t}^{2} is the variance in the inverse step. In practice, the notable U-Net architecture is usually involved in designing the neural architecture of 𝝁𝜽​(𝐳t,t){\boldsymbol{\mathbf{\mu}}}_{\boldsymbol{\mathbf{\theta}}}({\boldsymbol{\mathbf{z}}}_{t},t). Further, linear transformed denoising model ϵ𝜽​(𝐳t,t){\boldsymbol{\mathbf{\epsilon}}}_{{\boldsymbol{\mathbf{\theta}}}}({\boldsymbol{\mathbf{z}}}_{t},t) is usually used to predict the residual noise, replacing 𝝁𝜽​(𝐳t,t){\boldsymbol{\mathbf{\mu}}}_{\boldsymbol{\mathbf{\theta}}}({\boldsymbol{\mathbf{z}}}_{t},t) for computational convenience as:
+𝐳t−1=αt−1αt​𝐳t+(1−αt−1αt−1−1−αtαt)​ϵ𝜽​(𝐳t,t),\displaystyle{\boldsymbol{\mathbf{z}}}_{t-1}=\sqrt{\frac{\alpha_{t-1}}{\alpha_{t}}}{\boldsymbol{\mathbf{z}}}_{t}+\left(\sqrt{\frac{1-\alpha_{t-1}}{\alpha_{t-1}}}-\sqrt{\frac{1-\alpha_{t}}{\alpha_{t}}}\right){\boldsymbol{\mathbf{\epsilon}}}_{{\boldsymbol{\mathbf{\theta}}}}({\boldsymbol{\mathbf{z}}}_{t},t),
+where αt=1−βt\alpha_{t}=1-\beta_{t} defines the retention ratio of signal. Classifier-free methods (Ho and Salimans 2022) have become a mainstream approach for T2I generation, with the residual noise model ϵ𝜽​(𝐳t,t){\boldsymbol{\mathbf{\epsilon}}}_{{\boldsymbol{\mathbf{\theta}}}}({\boldsymbol{\mathbf{z}}}_{t},t) modified as:
+ϵ~𝜽​(𝐳t,t,ϕ⁡(𝐩ref),∅)=w⋅ϵ𝜽​(𝐳t,t,ϕ⁡(𝐩ref))+(1−w)⋅ϵ𝜽(𝐳t,t,∅),\tilde{\epsilon}_{{\boldsymbol{\mathbf{\theta}}}}\left({\boldsymbol{\mathbf{z}}}_{t},t,{\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{ref}}),\emptyset\right)=w\cdot\epsilon_{{\boldsymbol{\mathbf{\theta}}}}\left({\boldsymbol{\mathbf{z}}}_{t},t,{\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{ref}})\right)\\
+\quad\quad\quad\quad\quad\quad\quad\quad+(1-w)\cdot\epsilon_{{\boldsymbol{\mathbf{\theta}}}}\left({\boldsymbol{\mathbf{z}}}_{t},t,\emptyset\right),
+(1)
+where ϕ⁡(⋅){\boldsymbol{\mathbf{\phi}}}(\cdot) is the text encoder. The combined noise prediction ϵ~𝜽\tilde{\epsilon}_{{\boldsymbol{\mathbf{\theta}}}} is obtained by linearly interpolating between the conditional prediction (conditioned on the prompt) and the unconditional prediction, with a weighting factor w∈[0,1]w\in[0,1] by null-text optimization trick (Ho and Salimans 2022; Mokady et al. 2023).
+In training-free VE models, attention maps in the residual noise model ϵ𝜽​(𝐳t,t,ϕ⁡(𝐩ref),∅){\boldsymbol{\mathbf{\epsilon}}}_{{\boldsymbol{\mathbf{\theta}}}}({\boldsymbol{\mathbf{z}}}_{t},t,{\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{ref}}),\emptyset) are extracted during the inversion stage to preserve the spatio-temporal consistency across frames. In detail, these models replace the reference prompt 𝐩ref{\boldsymbol{\mathbf{p}}}_{\texttt{ref}} with target prompt 𝐩tar{\boldsymbol{\mathbf{p}}}_{\texttt{tar}} to predict the noise component ϵ𝜽​(𝐳t,t,ϕ⁡(𝐩tar))\epsilon_{{\boldsymbol{\mathbf{\theta}}}}({\boldsymbol{\mathbf{z}}}_{t},t,{\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{tar}})) via the following reverse process:
+ϵ~𝜽​(𝐳t,t,ϕ⁡(𝐩tar),∅)=w⋅ϵ𝜽​(𝐳t,t,ϕ⁡(𝐩tar))+(1−w)⋅ϵ𝜽(𝐳t,t,∅).\tilde{\epsilon}_{{\boldsymbol{\mathbf{\theta}}}}\left({\boldsymbol{\mathbf{z}}}_{t},t,{\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{tar}}),\emptyset\right)=w\cdot\epsilon_{{\boldsymbol{\mathbf{\theta}}}}\left({\boldsymbol{\mathbf{z}}}_{t},t,{\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{tar}})\right)\\
++(1-w)\cdot\epsilon_{{\boldsymbol{\mathbf{\theta}}}}\left({\boldsymbol{\mathbf{z}}}_{t},t,\emptyset\right).
+(2)
+This guidance mechanism enables controllable generation aligned with textual editing intents while maintaining temporal coherence in video frames.
+Fairness in Video Editing
+T2I-Based VE Models
+Due to the high inference cost of text-to-video (T2V) models (Ho et al. 2022; Singer et al. 2022; Wu et al. 2023a) and the scarcity of high-quality video–text pairs, many recent methods adopt open-source T2I frameworks (Rombach et al. 2022) to enable VE guided by user-provided text or visual cues.
+Tune-A-Video (TAV) (Wu et al. 2023b) fine-tunes a LoRA module that embeds temporal features to support multi-frame inputs, enabling high-quality and controllable VE. Leveraging the scalability of pre-trained LoRA modules, TAV-based approaches advance the integration of visual components into the base model. For example, CCEdit (Feng et al. 2024) introduces two distinct injection networks to control appearance and structure separately. CAMEL (Zhang et al. 2024) employs CLIP-based prompt embeddings to enhance motion consistency across frames, thereby improving alignment with user intent. DeCo (Zhong et al. 2025) incorporates a NeRF-based module to improve the 3D perception of human subjects.
+Training-free T2I-Based VE Models
+While TAV-based methods incorporate additional trainable components, training-free approaches offer advantages such as faster inference and lower resource consumption. FateZero (Qi et al. 2023) introduces cross-frame attention modules to extract spatio-temporal attention maps, guiding multi-frame generation based on prompt variations. Focusing on the training-free pipeline itself, methods such as STEM (Li et al. 2024b), WAVE (Feng et al. 2025), SliceEdit (Cohen et al. 2024), and COVE (Wang et al. 2024) refine the video inversion stage by selecting key frames to ensure temporal consistency. TokenFlow (Geyer et al. 2024) and Vid2Me (Li et al. 2024c) focus on designing spatio-temporal attention maps to enhance prompt consistency during generation. Another line of work integrates external T2I plugins for fine-grained image to VE frames control. For instance, Ground-A-Video (Jeong and Ye 2024), RAVE (Kara et al. 2024), and VideoShop (Fan, Bhattad, and Krishna 2024) adopt ControlNet variants, while OCD (Kahatapitiya et al. 2025) and VideoGrain (Yang et al. 2025) leverage the Segment Anything Model to enable object-aware VE. Despite substantial progress in editing quality and task diversity, fairness issues in VE remain largely unaddressed.
+Fair T2I Generation Models. To suppress social bias in T2I model generated content, semantic debiasing methods introduce predefined corrective semantic concepts, which are learned either by optimizing the diffusion model in applying classifier-guidance techniques (Brack et al. 2023; Dewan et al. 2024; Shen et al. 2024; Jung et al. 2025), or gradient based modules (Huang et al. 2025; Azam and Akhtar 2025; Li et al. 2025c; Lee, Lim, and Chun 2025) to adjust the noise predictor or directly modifying the text prompt embedding space (Kim et al. 2025). However, fine-tuning the entire SD model is computationally expensive, as it requires retraining a large number of parameters. Cross-attention map debiasing approaches (Gandikota et al. 2024; Teo et al. 2024; Zhou et al. 2024; Jung, Jang, and Wang 2024; Park et al. 2025) aim to mitigate stereotypical prototypes encoded within the key–query alignment space. In parallel, feature-level debiasing methods (Li et al. 2024a; Shi et al. 2025) seek to learn fairness-aware embeddings by modulating the intermediate representations within the U-Net bottleneck. Despite notable advances in image generation, fairness concerns in T2I-based VE models remain largely underexplored.
+3 Methodology
+Prompt Responsiveness Test for Fairness Verification in Video Editing
+Although various T2I-based debiasing methods (Shen et al. 2024; Gandikota et al. 2024; Kim et al. 2025) have demonstrated that debiasing regions in the latent space of SD variants can be effectively explored, either through classifier-free guidance to embed fair content or by incorporating priors into pre-trained model components, it still remains unclear whether such fairness-guided mechanisms remain effective when extended to VE models. For instance, in recent training-free VE models, cross frame attention mechanisms are introduced to ensure temporal consistency, which fundamentally alters the original prompt semantic coherence, i.e., the alignment between prompt semantics and visual features that underlies T2I models.
+As a result, directly transferring fairness control strategies from T2I to VE remains a challenging and open research problem. To assess whether training-free VE models still preserve debiasing regions, we propose the Prompt Responsiveness Test designed to evaluate the model’s ability to respond to explicitly debising textual conditions.
+Prompt Responsiveness Test To assess whether VE models can preserve fairness-related cues in textual prompts, the prompt responsiveness test can be implemented by incorporating a gender-specific hint with the original professions (e.g., 𝐏tar={\boldsymbol{\mathbf{P}}}_{\texttt{tar}}= ‘‘a male teacher is playing tennis") directly into the target editing promt. These gender-profession prompt templates are adapted from prior work (Kim et al. 2025). We then examine whether the generated videos visually reflect the intended gender identity, and whether the direct use of debiasing prompts affects the editing performance.
+We apply this test in several training-free VE models. The resulted video (line 2-4 in Appendix Figure 5) fails to align with the prompt, when gender is explicitly specified in the prompt. This misalignment may be traced back to the introduction of cross-frame attention and latent feature fusion. That is, directly transferring T2I’s prompt-based fairness control to VE might not work. An alignment-aware debiasing strategy is required for the fairness VE. More details and visulized results can be referred to the Appendix Figure 5.
+The Training-free FAME Model
+We observe three key challenges when extending fairness-aware image editing methods to VE: (1) directly injecting debiasing prompts may disrupt the semantic structure of generated content; (2) fairness-aware local features tend to be diluted by global feature fusion, especially over temporal sequences; and (3) prompt-to-region attention may become inconsistently distributed across frames.
+Addressing these challenges, we introduce FAME, a training-free VE framework that incorporates fairness into generation through three key components: (1) the soft debiasing prompt encoding module, which injects fairness intent into prompts with minimal semantic disruption; (2) the temporal self-attention modulation module, which preserves intra-region coherence across frames; and (3) the cross-attention reweighting module, which improves alignment between fairness-sensitive tokens and visual regions. All modules are operated at the inference time and no model retraining is required.
+Overall Framework.
+Given an input video 𝒳={𝐗1,𝐗2,…,𝐗N}\mathcal{X}=\{{\boldsymbol{\mathbf{X}}}^{1},{\boldsymbol{\mathbf{X}}}^{2},\dots,{\boldsymbol{\mathbf{X}}}^{N}\}, where each frame 𝐗n∈ℝH×W×C{\boldsymbol{\mathbf{X}}}^{n}\in\mathbb{R}^{H\times W\times C} and the NN, HH, WW, and CC denote the frame number, height, width, and channel dimensions, respectively, we consider a fairness-aware VE task guided by a composite textual prompt. This prompt comprises a reference prompt 𝐩ref{\boldsymbol{\mathbf{p}}}_{\texttt{ref}} (e.g., ‘‘A man is playing tennis."), a target prompt 𝐩tar{\boldsymbol{\mathbf{p}}}_{\texttt{tar}} (e.g., ‘‘A teacher is playing tennis."), and a debiasing attribute indicator 𝐩fair{\boldsymbol{\mathbf{p}}}_{\texttt{fair}} (e.g., ‘‘Male"), which specifies the direction of bias to be corrected. The objective is to generate an edited video 𝒥={J1,…,JN}\mathcal{J}=\{J^{1},\dots,J^{N}\}, where each frame Jn∈ℝH×W×CJ^{n}\in\mathbb{R}^{H\times W\times C} reflects the intent of the edited prompt, while maintaining temporal consistency across frames and alignment with fairness constraints. The whole pipeline is illustrated in Figure 2.
+The proposed FAME is a fairness-aware VE framework that integrates prompt debiasing and attention modulation. First, we define a fair attribute embedding function g⁡(𝐩tar,𝐩fair)g({\boldsymbol{\mathbf{p}}}_{\texttt{tar}},{\boldsymbol{\mathbf{p}}}_{\texttt{fair}}) that encodes a selected subset of fairness-sensitive prompt tokens into embeddings for debiasing target text. Each 𝐩fair{\boldsymbol{\mathbf{p}}}_{\texttt{fair}} is encoded using an SD text encoder. Second, leveraging the fairness-aware text embedding’s attention maps during the inversion stage, we introduce two functions: self-attention manipulation function f⁡(⋅)f(\cdot) and cross-attention reweighting function h⁡(⋅)h(\cdot), to produce a region-wise attention maps {𝐚k}k∈[0,1]H×W\{{\boldsymbol{\mathbf{a}}}_{k}\}_{k}\in[0,1]^{H\times W}. Each entry ak,h​wa_{k,hw} denotes the spatial attention mask value of the kk-th region relevant to the ww-th fairness attribute.
+As a result, the process of VE can be described by a model ℳ⁡(g,f,h,𝐩ref,𝐩tar,𝐩fair)\mathcal{M}(g,f,h;{\boldsymbol{\mathbf{p}}}_{\texttt{ref}},{\boldsymbol{\mathbf{p}}}_{\texttt{tar}},{\boldsymbol{\mathbf{p}}}_{\texttt{fair}}), wherein f⁡(⋅)f(\cdot) and h⁡(⋅)h(\cdot) jointly modulate spatio-temporal attention during inference to produce the final edited video 𝒥\mathcal{J} in alignment with the intended fairness objective.
+Soft Debiasing Prompt Encoding for Fairness Preservation.
+Given a fairness attribute prompt 𝐩fair{\boldsymbol{\mathbf{p}}}_{\texttt{fair}} (e.g., ‘‘female" or ‘‘male"), the CLIP-based text encoder ϕ⁡(⋅){\boldsymbol{\mathbf{\phi}}}(\cdot) produces the token embeddings 𝐞fair=ϕ⁡(𝐩fair)∈ℝl1×d{\boldsymbol{\mathbf{e}}}_{\texttt{fair}}={\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{fair}})\in\mathbb{R}^{l_{1}\times d} from 𝐩fair{\boldsymbol{\mathbf{p}}}_{\texttt{fair}}, where l1l_{1} is the number of tokens and dd is the embedding dimension. Similarly, the target prompt 𝐩tar{\boldsymbol{\mathbf{p}}}_{\texttt{tar}}’s token embedding is obtained as 𝐞tar=ϕ⁡(𝐩tar)∈ℝl2×d{\boldsymbol{\mathbf{e}}}_{\texttt{tar}}={\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{tar}})\in\mathbb{R}^{l_{2}\times d}. The soft debiasing prompt encoding may be proceeded in two steps without requiring additional training or architectural modifications.
+In the first step, we identify a set of token positions 𝒫⊆{1,…,l2}\mathcal{P}\subseteq\{1,\dots,l_{2}\} in 𝐩tar{\boldsymbol{\mathbf{p}}}_{\texttt{tar}} that are semantically relevant to fairness and softly fuse their embeddings with the corresponding fairness tokens:
+𝐞~k=λk⋅𝐞tar,k+(1−λk)⋅𝐞fair,k,for ​k∈𝒫,\tilde{\mathbf{e}}_{k}=\lambda_{k}\cdot{\boldsymbol{\mathbf{e}}}_{\texttt{tar},k}+(1-\lambda_{k})\cdot{\boldsymbol{\mathbf{e}}}_{\texttt{fair},k},\quad\text{for }k\in\mathcal{P},
+(3)
+where λk∈[0,1]\lambda_{k}\in[0,1] is a mixing coefficient, either fixed (e.g., 0.5) or derived from attention-based importance scores. Tokens outside 𝒫\mathcal{P} remain unchanged, resulting in an intermediate embedding matrix 𝐞~tar∈ℝl2×d\tilde{{\boldsymbol{\mathbf{e}}}}_{\texttt{tar}}\in\mathbb{R}^{l_{2}\times d}.
+In the second step, we further refine the debiasing effect by replacing the End of Sequence (EOS) token embedding in 𝐞~tar\tilde{{\boldsymbol{\mathbf{e}}}}_{\texttt{tar}} with the corresponding token from 𝐞fair{\boldsymbol{\mathbf{e}}}_{\texttt{fair}}. This is implemented via a binary injection mask 𝐌∈{0,1}l2×d\mathbf{M}\in\{0,1\}^{l_{2}\times d} that activates only at the EOS position by fair attribute embedding function g⁡(⋅)g(\cdot):
+g⁡(𝐩tar,𝐩fair)=𝐞~tar+𝐌⊗(𝐞fair−𝐞~tar),g({\boldsymbol{\mathbf{p}}}_{\texttt{tar}},{\boldsymbol{\mathbf{p}}}_{\texttt{fair}})=\tilde{{\boldsymbol{\mathbf{e}}}}_{\texttt{tar}}+\mathbf{M}\otimes({\boldsymbol{\mathbf{e}}}_{\texttt{fair}}-\tilde{{\boldsymbol{\mathbf{e}}}}_{\texttt{tar}}),
+(4)
+where the subtraction and injection are applied only at the EOS token location, since the EOS token in diffusion text encoders aggregates global prompt semantics, allowing fairness information to be injected without disrupting local word-level alignments.
+This two-step fusion strategy allows fairness cues to be softly injected into semantically meaningful regions while explicitly guiding the global prompt embedding via EOS-level replacement. Compared to static prompt editing, our method enables more interpretable and localized debiasing, preserving the semantics of original prompt and reducing latent space drift.
+Enhancing Intra-region Coherence in Temporal Self-Attention.
+To enforce temporal coherence within fairness-sensitive regions, we enhance the temporal self-attention mechanism in the latent space by selectively amplifying intra-region attention while suppressing inter-region interference. Given an input latent tensor 𝐳t∈ℝh×w×ℓ×c{\boldsymbol{\mathbf{z}}}_{t}\in\mathbb{R}^{h\times w\times\ell\times c}, we reshape it with a temporal attention preparation function φ\varphi:
+φ:ℝh×w×ℓ×c→ℝ(h⋅w)×ℓ×c,\varphi:\mathbb{R}^{h\times w\times\ell\times c}\rightarrow\mathbb{R}^{(h\cdot w)\times\ell\times c},
+(5)
+which flattens the spatial dimensions and aligns features along the temporal axis. The resulting features are projected into query, key, and value matrices:
+𝐐=W𝐐⋅φ⁡(𝐳t),𝐊=W𝐊⋅φ⁡(𝐳t),𝐕=W𝐕⋅φ⁡(𝐳t),{\boldsymbol{\mathbf{Q}}}=W_{\boldsymbol{\mathbf{Q}}}\cdot\varphi({\boldsymbol{\mathbf{z}}}_{t}),\quad{\boldsymbol{\mathbf{K}}}=W_{\boldsymbol{\mathbf{K}}}\cdot\varphi({\boldsymbol{\mathbf{z}}}_{t}),\quad{\boldsymbol{\mathbf{V}}}=W_{\boldsymbol{\mathbf{V}}}\cdot\varphi({\boldsymbol{\mathbf{z}}}_{t}),
+(6)
+where W𝐐,W𝐊,W𝐕∈ℝc×dW_{\boldsymbol{\mathbf{Q}}},W_{\boldsymbol{\mathbf{K}}},W_{\boldsymbol{\mathbf{V}}}\in\mathbb{R}^{c\times d} are learnable matrices.
+Inspired by self-attention fusion methods (Chefer et al. 2024; Liu et al. 2024a; Karmann and Urfalioglu 2025), we define the fairness-aware self-attention operator with self-attention manipulation function f⁡(⋅)f(\cdot) as:
+FairAttention​(𝐐,𝐊,𝐕)=softmax​(f⁡(𝐐,𝐊))⋅𝐕,\texttt{FairAttention}({\boldsymbol{\mathbf{Q}}},{\boldsymbol{\mathbf{K}}},{\boldsymbol{\mathbf{V}}})=\text{softmax}\left(f({\boldsymbol{\mathbf{Q}}},{\boldsymbol{\mathbf{K}}})\right)\cdot{\boldsymbol{\mathbf{V}}},
+(7)
+which incorporates fairness-aware modulation and structural guidance:
+f⁡(𝐐,𝐊)=𝐐𝐊⊤+λ​𝐌fair+𝝁​𝐒d,f({\boldsymbol{\mathbf{Q}}},{\boldsymbol{\mathbf{K}}})=\frac{{\boldsymbol{\mathbf{Q}}}{\boldsymbol{\mathbf{K}}}^{\top}+\lambda{\boldsymbol{\mathbf{M}}}^{\text{fair}}+{\boldsymbol{\mathbf{\mu}}}{\boldsymbol{\mathbf{S}}}}{\sqrt{d}},
+(8)
+where λ\lambda and 𝝁{\boldsymbol{\mathbf{\mu}}} are modulation coefficients, and 𝐌fair{\boldsymbol{\mathbf{M}}}^{\text{fair}} is defined as
+𝐌fair=𝐑⊙𝐌pos−(1−𝐑)⊙𝐌neg,\displaystyle{\boldsymbol{\mathbf{M}}}^{\text{fair}}={\boldsymbol{\mathbf{R}}}\odot{\boldsymbol{\mathbf{M}}}^{\text{pos}}-(1-{\boldsymbol{\mathbf{R}}})\odot{\boldsymbol{\mathbf{M}}}^{\text{neg}},
+(9)
+with positive and negative maps computed as:
+𝐌pos\displaystyle{\boldsymbol{\mathbf{M}}}^{\text{pos}}
+=max⁡(𝐐𝐊⊤)−𝐐𝐊⊤,\displaystyle=\max({\boldsymbol{\mathbf{Q}}}{\boldsymbol{\mathbf{K}}}^{\top})\;-\;{\boldsymbol{\mathbf{Q}}}{\boldsymbol{\mathbf{K}}}^{\top},
+(10)
+𝐌neg\displaystyle{\boldsymbol{\mathbf{M}}}^{\text{neg}}
+=𝐐𝐊⊤−min⁡(𝐐𝐊⊤),\displaystyle={\boldsymbol{\mathbf{Q}}}{\boldsymbol{\mathbf{K}}}^{\top}\;-\;\min({\boldsymbol{\mathbf{Q}}}{\boldsymbol{\mathbf{K}}}^{\top}),
+respectively,
+and the binary region indicator 𝐑{\boldsymbol{\mathbf{R}}} is defined element-wise as:
+𝐑⁡[x,y]={1,if region_id​(x)=region_id​(y),0,otherwise.{\boldsymbol{\mathbf{R}}}[x,y]=\begin{cases}1,&\text{if }\texttt{region\_id}(x)=\texttt{region\_id}(y),\\
+0,&\text{otherwise}.\end{cases}
+(11)
+Here, 𝐌fair{\boldsymbol{\mathbf{M}}}^{\text{fair}} modulates attention logits by reinforcing similarities within the same fairness-sensitive region (via 𝐌pos{\boldsymbol{\mathbf{M}}}^{\text{pos}}) and weakening correlations across different regions (via 𝐌neg{\boldsymbol{\mathbf{M}}}^{\text{neg}}). The binary mask 𝐑{\boldsymbol{\mathbf{R}}} simply acts as a selector: it is 1 when two tokens belong to the same region and 0 otherwise, enabling region-specific adjustment.
+To further provide region-aware flexibility, we define a soft similarity mask 𝐒∈ℝ(h⋅w)×(h⋅w){\boldsymbol{\mathbf{S}}}\in\mathbb{R}^{(h\cdot w)\times(h\cdot w)} based on temporal feature statistics:
+𝐒⁡[q1,q2]=exp⁡(−‖𝐟q1−𝐟q2‖2τ2),{\boldsymbol{\mathbf{S}}}[\texttt{q}_{1},\texttt{q}_{2}]=\exp\left(-\frac{\|\mathbf{f}_{\texttt{q}_{1}}-\mathbf{f}_{\texttt{q}_{2}}\|^{2}}{\tau^{2}}\right),
+(12)
+where each 𝐟q\mathbf{f}_{\texttt{q}} is the mean feature vector at spatial position q across ℓ\ell frames 𝐟q=1ℓ​∑t=1ℓ𝐳t​[q]\mathbf{f}_{\texttt{q}}=\frac{1}{\ell}\sum_{t=1}^{\ell}{\boldsymbol{\mathbf{z}}}_{t}[\texttt{q}], and τ\tau controls the sharpness of the similarity response. The soft mask 𝐒{\boldsymbol{\mathbf{S}}} enables continuous region-aware attention modulation, providing a fairness-aligned bias signal complementary to the discrete mask 𝐑{\boldsymbol{\mathbf{R}}}.
+Prompt-to-Region Alignment Across Frames
+To enhance alignment between fairness-related textual concepts and visual regions across frames, we propose a fairness-aware cross-attention modulation strategy that adjusts attention scores during the denoising process in the latent space.
+Specifically, we define a fairness-aware cross-attention operator with cross-attention reweighting function h⁡(⋅)h(\cdot):
+FairCrosAttn​(𝐐t,𝐊t,𝐕t)=softmax⁡(h⁡(𝐐t,𝐊t))⋅𝐕t,\texttt{FairCrosAttn}({\boldsymbol{\mathbf{Q}}}_{t},{\boldsymbol{\mathbf{K}}}_{t},{\boldsymbol{\mathbf{V}}}_{t})=\mathrm{softmax}\left(h({\boldsymbol{\mathbf{Q}}}_{t},{\boldsymbol{\mathbf{K}}}_{t})\right)\cdot{\boldsymbol{\mathbf{V}}}_{t},
+(13)
+where the attention weight reweighting function h⁡(𝐐t,𝐊t)h({\boldsymbol{\mathbf{Q}}}_{t},{\boldsymbol{\mathbf{K}}}_{t}) incorporates fairness-guided modulation:
+h⁡(𝐐t,𝐊t)=𝐐t​𝐊t⊤+λ​𝐌tfaird.h({\boldsymbol{\mathbf{Q}}}_{t},{\boldsymbol{\mathbf{K}}}_{t})=\frac{{\boldsymbol{\mathbf{Q}}}_{t}{\boldsymbol{\mathbf{K}}}_{t}^{\top}+\lambda{\boldsymbol{\mathbf{M}}}_{t}^{\text{fair}}}{\sqrt{d}}.
+(14)
+The fairness-aware modulation term 𝐌tfair∈ℝ(H⋅W)×L{\boldsymbol{\mathbf{M}}}_{t}^{\text{fair}}\in\mathbb{R}^{(H\cdot W)\times L} is constructed as:
+𝐌tfair=𝐑t⊙𝐌tpos−(1−𝐑t)⊙𝐌tneg,{\boldsymbol{\mathbf{M}}}_{t}^{\text{fair}}={\boldsymbol{\mathbf{R}}}_{t}\odot{\boldsymbol{\mathbf{M}}}_{t}^{\text{pos}}-(1-{\boldsymbol{\mathbf{R}}}_{t})\odot{\boldsymbol{\mathbf{M}}}_{t}^{\text{neg}},
+(15)
+with
+𝐌tpos\displaystyle{\boldsymbol{\mathbf{M}}}_{t}^{\text{pos}}
+=max⁡(𝐐t​𝐊t⊤)−𝐐t​𝐊t⊤,\displaystyle=\max({\boldsymbol{\mathbf{Q}}}_{t}{\boldsymbol{\mathbf{K}}}_{t}^{\top})-{\boldsymbol{\mathbf{Q}}}_{t}{\boldsymbol{\mathbf{K}}}_{t}^{\top},
+(16)
+𝐌tneg\displaystyle{\boldsymbol{\mathbf{M}}}_{t}^{\text{neg}}
+=𝐐t​𝐊t⊤−min⁡(𝐐t​𝐊t⊤).\displaystyle={\boldsymbol{\mathbf{Q}}}_{t}{\boldsymbol{\mathbf{K}}}_{t}^{\top}-\min({\boldsymbol{\mathbf{Q}}}_{t}{\boldsymbol{\mathbf{K}}}_{t}^{\top}).
+and the soft similarity mask 𝐑t​[q,k]{\boldsymbol{\mathbf{R}}}_{t}[\texttt{q},\texttt{k}] is defined by
+𝐑t​[q,k]={cos⁡(𝐐t​[q],𝐞k),if k∈τk,0,otherwise.{\boldsymbol{\mathbf{R}}}_{t}[\texttt{q},\texttt{k}]=\begin{cases}\cos\!\big({\boldsymbol{\mathbf{Q}}}_{t}[\texttt{q}],{\boldsymbol{\mathbf{e}}}_{k}\big),&\text{if }\texttt{k}\in\tau_{k},\\
+0,&\text{otherwise}.\end{cases}
+(17)
+Here, q∈{1,…,H⋅W}\texttt{q}\in\{1,\dots,H\cdot W\} indexes the spatial query positions, and k∈{1,…,L}\texttt{k}\in\{1,\dots,L\} indexes the prompt token positions. 𝐞k∈ℝd{\boldsymbol{\mathbf{e}}}_{k}\in\mathbb{R}^{d} denotes the embedding of the kk-th fairness token, and τk\tau_{k} is the set of key indices corresponding to 𝐞k{\boldsymbol{\mathbf{e}}}_{k}. The cosine similarity softly aligns each query to its semantically relevant fairness concept, allowing fine-grained attention modulation. This soft similarity mask 𝐑t{\boldsymbol{\mathbf{R}}}_{t} biases the attention logits toward fairness-relevant tokens, ensuring that spatial queries focus more on semantically aligned fairness concepts while suppressing unrelated prompts. Unlike a hard mask, the cosine similarity provides a continuous modulation, preserving the natural attention distribution while improving fine-grained prompt-to-region alignment.
+This approach dynamically guides attention toward debiasing-relevant tokens while mitigating interference from irrelevant prompts, thereby enhancing fairness-aware consistency across frames in video generation.
+4 Experiments
+FairVE: Datasets for Fairness in Frame-Level Video Editing
+Data Collection and Fairness Configurations. Following previous studies (Zhang et al. 2024; Jeong et al. 2024), we construct the FairVE dataset consisting of video–text pairs sourced from the DAVIS benchmark and supplemented with high-quality, user-generated videos collected from the web. Rather than relying on artificially designed samples, FairVE reflects naturally occurring social bias in real-world data, ensuring realistic evaluation of fairness-aware VE methods. To better capture and evaluate social bias, we restrict the dataset to scenes containing a single human subject, filtering out clips with animals, vehicles, multiple individuals, or complex backgrounds. The corresponding text prompts are automatically generated using GPT-4 (Feng et al. 2025) to ensure consistency across samples. Each video sequence contains 30 to 60 frames with 512×512512\times 512 or 640×320640\times 320 pixels.
+In the fairness evaluation protocol, we focus on gender-profession stereotypes observed in SD 1.5 (Kim et al. 2025), as subclass of (Orgad, Kawar, and Belinkov 2023; Chuang et al. 2023). Eight representative professions are selected: CEO, doctor, technician, pilot, teacher, nurse, fashion designer and librarian. Specifically, we combine each profession with gender-specific terms (“male” or “female”) to create 640 prompts (8 professions ×\times 2 genders ×\times 40 videos).
+Fairness Evaluation We assess the bias correction capability followed by (Kim et al. 2025) and complement it with human evaluations. For each profession specific prompt, FAME is repeated 5 times under different random seeds.
+For automatic metrics, We record two metrics: (1) Correction Count, the total number of trials in which the edited result shows reduced gender bias compared with the unedited baseline; and (2) Correction Ratio, the relative frequency of such bias-reducing outcomes. Higher values indicate more consistent mitigation.
+To provide a qualitative perspective, we conduct human evaluation (Friedrich et al. 2023; Li et al. 2025a; Li et al. 2025b) along three dimensions: Perceived Bias Correction, whether the generated portrayal of the profession appears unbiased; Visual Stability, the consistency of appearance and motion across frames; and Semantic Relevance, the alignment between generated content and the intended meaning of the prompt. Twenty participants rated 640 video-text pairs on a scale from 20 to 100 for each aspect. Averaged scores serve as complementary evidence to the statistical results.
+Baselines We compare our model’s fidelity, consistency, and fairness with several SOTA training-free VE methods, including FateZero (Qi et al. 2023), TokenFlow (Geyer et al. 2024), DMT (Yatim et al. 2024), Slicedit (Cohen et al. 2024) and VideoGrain (Yang et al. 2025). Since these baselines do not incorporate fairness mechanisms by design, we adopt a prompt-based mitigation strategy by explicitly injecting bias debiasing terms into their input prompts. We then evaluate both their VE quality and fairness performance using the same metrics, allowing a direct comparison with FAME.
+Minor Group
+Professions
+Automatic
+User Study
+Count
+Ratio
+Bias Correction↑\uparrow
+Visual Stability↑\uparrow
+Semantic Relevance↑\uparrow
+Overall↑\uparrow
+Female
+CEO
+9
+0.45
+70.2
+40.2
+86.7
+65.70
+Doctor
+6
+0.30
+83.7
+44.8
+89.2
+72.57
+Technician
+4
+0.20
+80.8
+55.4
+88.5
+74.90
+Pilot
+10
+0.50
+84.6
+48.3
+90.1
+74.33
+Male
+Teacher
+10
+0.50
+69.0
+59.0
+79.6
+69.20
+Nurse
+2
+0.10
+88.2
+60.8
+91.1
+80.03
+Fashion designer
+9
+0.45
+71.8
+53.1
+86.9
+70.60
+Librarian
+9
+0.45
+72.9
+59.2
+87.4
+49.83
+Table 1: Fairness evaluation across professions and minority groups.
+CLIP-based
+Other
+Method
+CLIP-F ↑\uparrow
+CLIP-T ↑\uparrow
+TIFA ↑\uparrow
+Warp-Err ↓\downarrow
+FateZero
+95.75
+33.78
+48.65
+3.08
+TokenFlow
+96.48
+34.59
+49.62
+2.82
+Ground-A-Video
+95.17
+35.09
+/
+4.43
+DMT
+96.34
+34.09
+/
+2.05
+VideoGrain
+97.18
+35.22
+60.17
+2.21
+FAME (Ours)
+98.31
+35.9
+62.2
+1.66
+Table 2: Quantitative comparison of automatic metrics with FateZero (Qi et al. 2023), TokenFlow (Geyer et al. 2024), Ground-A-Video (Jeong and Ye 2024), DMT (Yatim et al. 2024) ,VideoGrain (Yang et al. 2025).
+Experimental Results
+Fairness Comparison Fairness results are shown in Table 1. From the automatic metrics, professions with strong stereotypes such as Doctor and Nurse show clear improvements, with high correction ratios and strong bias correction scores. Human evaluation further confirms this: Bias Correction ratings exceed 80/100, indicating effective mitigation, while Semantic Relevance remains high, reflecting faithful prompt alignment. Visual Stability scores are relatively lower, suggesting temporal consistency still needs improvement. Overall, these results show that our method reduces bias effectively while maintaining semantic fidelity, though motion continuity can be further enhanced.
+Video Editing Comparison As shown in Table 2, FAME outperforms all baselines across key CLIP-based metrics, including CLIP-F, CLIP-T (Cong et al. 2024), and TIFA (Hu et al. 2023), demonstrating visual-text alignment, temporal coherence, and image-text fidelity, respectively. Comparing with the results in (Yang et al. 2025; Fan, Bhattad, and Krishna 2024), we re-run the metrics for VideoGrain as a baseline (results are taken directly from (Yang et al. 2025) where our experimental dataset inherits and the comparison is fair). FAME also achieves the lowest warp error, demonstrating better temporal consistency and spatial coherence in the edited sequences. Unlike previous methods, which rely on latent inversion or token warping, FAME incorporates attention modulation, leading to more visually stable and semantically accurate results, especially under attribute-altering prompts. For more visualization results, please refer to our GitHub Pages. The anonymous repository link is available in Appendix .
+Figure 3:
+Cross-Attention Modulation Effect. Visualization of attention maps corresponding to the token CEO under different ablation settings. The baseline model struggles to separate foreground(human) and background(tree), often overlooking regions related to fairness. Cross-attention reweighting helps adjust areas like outfit to better preserve identity features.
+Ablation Study
+Cross-Attention Disentanglement
+To evaluate whether our attention modulation enhances fairness-relevant region separation, we design a simplified version of FAME. Each frame is segmented into a foreground (e.g., man) and a background (e.g., trees) region. We use the prompt “A CEO is spining ball” to examine cross-attention responses. Without our modulation, the attention weights for the word “CEO” tend to spread into the background, causing semantic interference. As a result, the edited region retains biased visual features, preserving the male outfit. In contrast, with cross-attention reweighting, attention weights become more localized, emphasizing the foreground region while suppressing irrelevant background responses. In that case, the foreground region will be modified more to debiasing content(the outfit of female). This separation is essential for fairness-aware editing, ensuring that debiasing prompt related to protected concepts remain spatially and semantically disentangled from unrelated content. As shown in Figure 3, our module produces a clearer attention focus aligned with the intended semantic region.
+Attention Modulation for Fairness Control
+We conduct an ablation study to verify the effectiveness of our fairness-guided attention modulation. Specifically, we compare three variants:
+(1) Baseline, which applies text to VE with prompt-guided module;
+(2) + Self-Attn Modulation, where we introduce fairness alignment using our modulation map RtR_{t}; and
+(3) + Self-Attn + Cross-Attn Modulation, the full version of our framework.
+Quantitative results in Table 3 show that adding self-attention and cross-attention modulation progressively improves CLIP-based metrics, with CLIP-F increasing slightly to 98.3098.30, CLIP-T to 35.8035.80, and TIFA to 61.2261.22, compared to the baseline. Meanwhile, the fairness ratio of male teacher maintain in 0.500.50, indicating the fairness can be achieved combined with three modules.
+Sensitivity Analysis on Text Encoding
+To investigate the influence of our fairness-guided prompt encoding strategy, we conduct two controlled sensitivity
+analyses focusing on the modulation strength of the debiasing embedding.
+Modulation Strength Sensitivity.
+We further study the impact of varying the injection strength by introducing a scaling factor α\alpha:
+g⁡(𝐩fair,𝐩tar)=𝐞~tar+α​𝐌⊗(𝐞fair−𝐞~tar),g({\boldsymbol{\mathbf{p}}}_{\texttt{fair}},{\boldsymbol{\mathbf{p}}}_{\texttt{tar}})=\tilde{{\boldsymbol{\mathbf{e}}}}_{\texttt{tar}}+\alpha\mathbf{M}\otimes({\boldsymbol{\mathbf{e}}}_{\texttt{fair}}-\tilde{{\boldsymbol{\mathbf{e}}}}_{\texttt{tar}}),
+(18)
+where α∈{0.0,0.25,0.5,1.0}\alpha\in\{0.0,0.25,0.5,1.0\}.
+As illustrated in Appendix Figure 4, smaller values of α\alpha result in underwhelming fairness control (e.g., no visible change in target appearance), while excessively large α\alpha may distort original semantics. Our method achieves the best trade-off when α=0.5\alpha=0.5, offering both fairness alignment and semantic stability.
+Ablation Settings
+VE Quality
+Fairness
+CLIP-F ↑\uparrow
+CLIP-T ↑\uparrow
+TIFA ↑\uparrow
+Ratio
++P
+95.70
+33.99
+49.6
+/
++P +S
+98.10
+35.10
+60.37
+0.50
++P +S +C
+98.30
+35.80
+61.22
+0.50
+Table 3:
+Ablation study of key modules.
+P: Prompt-guided module;
+S: Self-attention module;
+C: Cross-attention module.
+Modules are added cumulatively from top to bottom.
+5 Conclusion
+In this paper, we present a training-free framework FAME for fairness-aware VE that addresses the limitations of existing diffusion-based models in handling fairness-sensitive prompts. By introducing soft debiasing prompt encoding and fairness-guided modulation in both self-attention and cross-attention layers, FAME ensures improved alignment between textual attributes and visual regions while preserving temporal coherence. To support systematic evaluation, we construct FairVE, the first benchmark dataset tailored for assessing fairness in VE tasks, encompassing diverse gender–profession combinations. Extensive experiments, including automatic metrics and structured human evaluations, show that FAME outperforms state-of-the-art zero-shot baselines in semantic fidelity, visual consistency, and bias mitigation. Because FAME works entirely at the inference time, it avoids expensive retraining yet still improves fairness and stability. We will extend this strategy for broader fairness-aware VE research.
+References
+Azam and Akhtar (2025)
+Azam, B.; and Akhtar, N. 2025.
+Plug-and-Play Interpretable Responsible Text-to-Image Generation via Dual-Space Multi-facet Concept Control.
+In CVPR.
+Birhane, Prabhu, and Kahembwe (2021)
+Birhane, A.; Prabhu, V. U.; and Kahembwe, E. 2021.
+Multimodal Datasets: Misogyny, Pornography, and Malignant Stereotypes.
+arXiv.
+Brack et al. (2023)
+Brack, M.; Friedrich, F.; Hintersdorf, D.; Struppek, L.; Schramowski, P.; and Kersting, K. 2023.
+SEGA: Instructing Text-to-Image Models using Semantic Guidance.
+NeurIPS.
+Chefer et al. (2024)
+Chefer, H.; Alaluf, Y.; Vinker, Y.; Wolf, L.; and Cohen-Or, D. 2024.
+Attend-and-Excite: Attention-based Semantic Guidance for Text-to-Image Diffusion Models.
+TOG.
+Cheng et al. (2023)
+Cheng, Y.; Li, L.; Xu, Y.; Li, X.; Yang, Z.; Wang, W.; and Yang, Y. 2023.
+Segment and Track Anything.
+arXiv.
+Cho, Zala, and Bansal (2023)
+Cho, J.; Zala, A.; and Bansal, M. 2023.
+DALL-EVAL: Probing the Reasoning Skills and Social Biases of Text-to-Image Generation Models.
+In ICCV.
+Chuang et al. (2023)
+Chuang, C.-Y.; Jampani, V.; Li, Y.; Torralba, A.; and Jegelka, S. 2023.
+Debiasing Vision-Language Models via Biased Prompts.
+arXiv.
+Cohen et al. (2024)
+Cohen, N.; Kulikov, V.; Kleiner, M.; Huberman-Spiegelglas, I.; and Michaeli, T. 2024.
+Slicedit: Zero-Shot Video Editing with Text-to-Image Diffusion Models using Spatio-Temporal Slices.
+ICML.
+Cong et al. (2024)
+Cong, Y.; Xu, M.; Simon, C.; Chen, S.; Ren, J.; Xie, Y.; Perez-Rua, J.-M.; Rosenhahn, B.; Xiang, T.; and He, S. 2024.
+Flatten: Optical Flow-guided Attention for Consistent Text-to-Video Editing.
+ICLR.
+Dewan et al. (2024)
+Dewan, S.; Zawar, R.; Saxena, P.; Chang, Y.; Luo, A.; and Bisk, Y. 2024.
+Diffusion PID: Interpreting Diffusion via Partial Information Decomposition.
+NeurIPS.
+Fan, Bhattad, and Krishna (2024)
+Fan, X.; Bhattad, A.; and Krishna, R. 2024.
+Videoshop: Localized Semantic Video Editing with Noise-Extrapolated Diffusion Inversion.
+ECCV.
+Feng et al. (2024)
+Feng, R.; Weng, W.; Wang, Y.; Yuan, Y.; Bao, J.; Luo, C.; Chen, Z.; and Guo, B. 2024.
+Ccedit: Creative and Controllable Video Editing via Diffusion Models.
+CVPR.
+Feng et al. (2025)
+Feng, Y.; Gao, S.; Bao, Y.; Wang, X.; Han, S.; Zhang, J.; Zhang, B.; and Yao, A. 2025.
+WAVE: Warping Ddim Inversion Features for Zero-Shot Text-to-Video Editing.
+ECCV.
+Friedrich et al. (2023)
+Friedrich, F.; Brack, M.; Struppek, L.; Hintersdorf, D.; Schramowski, P.; Luccioni, S.; and Kersting, K. 2023.
+Fair Diffusion: Instructing Text-to-Image Generation Models on Fairness.
+arXiv.
+Gandikota et al. (2024)
+Gandikota, R.; Orgad, H.; Belinkov, Y.; Materzyńska, J.; and Bau, D. 2024.
+Unified Concept Editing in Diffusion Models.
+Winter Conference on Applications of Computer Vision.
+Geyer et al. (2024)
+Geyer, M.; Bar-Tal, O.; Bagon, S.; and Dekel, T. 2024.
+Tokenflow: Consistent Diffusion Features for Consistent Video Editing.
+ICLR.
+Hertz et al. (2023)
+Hertz, A.; Mokady, R.; Tenenbaum, J.; Aberman, K.; Pritch, Y.; and Cohen-Or, D. 2023.
+Prompt-to-Prompt Image Editing with Cross Attention Control.
+ICLR.
+Ho and Salimans (2022)
+Ho, J.; and Salimans, T. 2022.
+Classifier-free Diffusion Guidance.
+NeurIPS.
+Ho et al. (2022)
+Ho, J.; Salimans, T.; Gritsenko, A.; Chan, W.; Norouzi, M.; and Fleet, D. J. 2022.
+Video Diffusion Models.
+NeurIPS.
+Hu et al. (2023)
+Hu, Y.; Liu, B.; Kasai, J.; Wang, Y.; Ostendorf, M.; Krishna, R.; and Smith, N. A. 2023.
+TIFA: Accurate and Interpretable Text-to-Image Faithfulness Evaluation with Question Answering.
+In CVPR.
+Huang et al. (2025)
+Huang, H.; Jin, X.; Miao, J.; and Wu, Y. 2025.
+Implicit Bias Injection Attacks against Text-to-Image Diffusion Models.
+In CVPR.
+Jeong et al. (2024)
+Jeong, H.; Chang, J.; Park, G. Y.; and Ye, J. C. 2024.
+Dreammotion: Space-Time Self-Similar Score Distillation for Zero-Shot Video Editing.
+ECCV.
+Jeong and Ye (2024)
+Jeong, H.; and Ye, J. C. 2024.
+Ground-a-video: Zero-Shot Grounded Video Editing using Text-to-Image Diffusion Models.
+ICLR.
+Jung, Jang, and Wang (2024)
+Jung, H.; Jang, T.; and Wang, X. 2024.
+A Unified Debiasing Approach for Vision-Language Models Across Modalities and Tasks.
+NeurIPS.
+Jung et al. (2025)
+Jung, S.; Oesterling, A.; Verdun, C. M.; Vithana, S.; Moon, T.; and Calmon, F. P. 2025.
+Multi-Group Proportional Representations for Text-to-Image Models.
+In CVPR.
+Kahatapitiya et al. (2025)
+Kahatapitiya, K.; Karjauv, A.; Abati, D.; Porikli, F.; Asano, Y. M.; and Habibian, A. 2025.
+Object-Centric Diffusion for Efficient Video Editing.
+ECCV.
+Kara et al. (2024)
+Kara, O.; Kurtkaya, B.; Yesiltepe, H.; Rehg, J. M.; and Yanardag, P. 2024.
+Rave: Randomized Noise Shuffling for Fast and Consistent Video Editing with Diffusion Models.
+CVPR.
+Karmann and Urfalioglu (2025)
+Karmann, M.; and Urfalioglu, O. 2025.
+Repurposing Stable Diffusion Attention for Training-free Unsupervised Interactive Segmentation.
+In CVPR.
+Kim et al. (2025)
+Kim, E.; Kim, S.; Park, M.; Entezari, R.; and Yoon, S. 2025.
+Rethinking Training for De-biasing Text-to-Image Generation: Unlocking the Potential of Stable Diffusion.
+CVPR.
+Lee, Lim, and Chun (2025)
+Lee, B. H.; Lim, S.; and Chun, S. Y. 2025.
+Localized Concept Erasure for Text-to-Image Diffusion Models using Training-Free Gated Low-Rank Adaptation.
+In CVPR.
+Li et al. (2024a)
+Li, H.; Shen, C.; Torr, P.; Tresp, V.; and Gu, J. 2024a.
+Self-Discovering Interpretable Diffusion Latent Directions for Responsible Text-to-Image Generation.
+In CVPR.
+Li et al. (2025a)
+Li, J.; Hu, L.; Zhang, J.; Zheng, T.; Zhang, H.; and Wang, D. 2025a.
+Fair Text-to-Image Diffusion via Fair Mapping.
+In Association for the Advancement of Artificial Intelligence.
+Li et al. (2025b)
+Li, L.; Shi, Z.; Hu, X.; Dong, B.; Qin, Y.; Liu, X.; Sheng, L.; and Shao, J. 2025b.
+T2ISafety: Benchmark for Assessing Fairness, Toxicity, and Privacy in Image Generation.
+arXiv.
+Li et al. (2024b)
+Li, M.; Li, Y.; Yang, T.; Liu, Y.; Yue, D.; Lin, Z.; and Xu, D. 2024b.
+A Video is Worth 256 Bases: Spatial-Temporal Expectation-Maximization Inversion for Zero-Shot Video Editing.
+CVPR.
+Li et al. (2024c)
+Li, X.; Ma, C.; Yang, X.; and Yang, M.-H. 2024c.
+VidTome: Video Token Merging for Zero-Shot Video Editing.
+CVPR.
+Li et al. (2025c)
+Li, Z.; Chen, D.; Fan, M.; Chen, C.; Li, Y.; Wang, Y.; and Zhou, W. 2025c.
+Responsible Diffusion Mdels via Constraining Text Embeddings Within Safe Regions.
+In WWW.
+Liu et al. (2024a)
+Liu, B.; Wang, C.; Cao, T.; Jia, K.; and Huang, J. 2024a.
+Towards Understanding Cross and Self-attention in Stable Diffusion for Text-guided Image Editing.
+In CVPR.
+Liu et al. (2024b)
+Liu, S.; Zhang, Y.; Li, W.; Lin, Z.; and Jia, J. 2024b.
+Video-p2p: Video Editing with Cross-Attention Control.
+In CVPR.
+Mokady et al. (2023)
+Mokady, R.; Hertz, A.; Aberman, K.; Pritch, Y.; and Cohen-Or, D. 2023.
+Null-text Inversion for Editing Real Images using Guided Diffusion Models.
+In CVPR.
+Orgad, Kawar, and Belinkov (2023)
+Orgad, H.; Kawar, B.; and Belinkov, Y. 2023.
+Editing Implicit Assumptions in Text-to-Image Diffusion Models.
+In ICCV.
+Park et al. (2025)
+Park, J.; Lee, J.; Chung, C.; Lee, J.; Choo, J.; and Gu, J. 2025.
+Fair Generation without Unfair Distortions: Debiasing Text-to-Image Generation with Entanglement-Free Attention.
+arXiv.
+Qi et al. (2023)
+Qi, C.; Cun, X.; Zhang, Y.; Lei, C.; Wang, X.; Shan, Y.; and Chen, Q. 2023.
+Fatezero: Fusing Attentions for Zero-shot Text-based Video Editing.
+ICCV.
+Radford et al. (2021)
+Radford, A.; Kim, J. W.; Hallacy, C.; Ramesh, A.; Goh, G.; Agarwal, S.; Sastry, G.; Askell, A.; Mishkin, P.; Clark, J.; et al. 2021.
+Learning Transferable Visual Models from Natural Language Supervision.
+In ICML.
+Ramesh et al. (2021)
+Ramesh, A.; Pavlov, M.; Goh, G.; Gray, S.; Voss, C.; Radford, A.; Chen, M.; and Sutskever, I. 2021.
+Zero-shot Text-to-Image Generation.
+In ICML.
+Rombach et al. (2022)
+Rombach, R.; Blattmann, A.; Lorenz, D.; Esser, P.; and Ommer, B. 2022.
+High-resolution Image Synthesis with Latent Diffusion Models.
+In CVPR.
+Ross, Katz, and Barbu (2021)
+Ross, C.; Katz, B.; and Barbu, A. 2021.
+Measuring Social Biases in Grounded Vision and Language Embeddings.
+NAACL.
+Shen et al. (2024)
+Shen, X.; Du, C.; Pang, T.; Lin, M.; Wong, Y.; and Kankanhalli, M. 2024.
+Finetuning Text-to-Image Diffusion Models for Fairness.
+ICLR.
+Shi et al. (2025)
+Shi, Y.; Li, C.; Wang, Y.; Zhao, Y.; Pang, A.; Yang, S.; Yu, J.; and Ren, K. 2025.
+Dissecting and Mitigating Diffusion Bias via Mechanistic Interpretability.
+In CVPR.
+Singer et al. (2022)
+Singer, U.; Polyak, A.; Hayes, T.; Yin, X.; An, J.; Zhang, S.; Hu, Q.; Yang, H.; Ashual, O.; Gafni, O.; et al. 2022.
+Make-a-Video: Text-to-Video Generation without Text-to-Video Data.
+arXiv.
+Song, Meng, and Ermon (2021)
+Song, J.; Meng, C.; and Ermon, S. 2021.
+Denoising Diffusion Implicit Models.
+ICLR.
+Teed and Deng (2020)
+Teed, Z.; and Deng, J. 2020.
+Raft: Recurrent All-Pairs Field Transforms for Optical Flow.
+In ECCV.
+Teo et al. (2024)
+Teo, C. T.; Abdollahzadeh, M.; Ma, X.; and Cheung, N.-m. 2024.
+Fairqueue: Rethinking Prompt Learning for Fair Text-to-Image Generation.
+NeurIPS.
+Wang et al. (2024)
+Wang, J.; Ma, Y.; Guo, J.; Xiao, Y.; Huang, G.; and Li, X. 2024.
+Cove: Unleashing the Diffusion Feature Correspondence for Consistent Video Editing.
+NeurIPS.
+Wu et al. (2023a)
+Wu, J. Z.; Ge, Y.; Wang, X.; Lei, S. W.; Gu, Y.; Shi, Y.; Hsu, W.; Shan, Y.; Qie, X.; and Shou, M. Z. 2023a.
+Tune-a-Video: One-Shot Tuning of Image Diffusion Models for Text-to-Video Generation.
+In CVPR.
+Wu et al. (2023b)
+Wu, J. Z.; Ge, Y.; Wang, X.; Lei, W.; Gu, Y.; Shi, Y.; Hsu, W.; Shan, Y.; Qie, X.; and Shou, M. Z. 2023b.
+Tune-a-Video: One-Shot Tuning of Image Diffusion Models for Text-to-Video Generation.
+ICCV.
+Yang et al. (2025)
+Yang, X.; Zhu, L.; Fan, H.; and Yang, Y. 2025.
+Videograin: Modulating Space-Time Attention for Multi-Grained Video Editing.
+ICLR.
+Yatim et al. (2024)
+Yatim, D.; Fridman, R.; Bar-Tal, O.; Kasten, Y.; and Dekel, T. 2024.
+Space-time Diffusion Features for Zero-Shot Text-driven Motion Transfer.
+In CVPR.
+Zhang et al. (2024)
+Zhang, G.; Zhang, T.; Niu, G.; Tan, Z.; Bai, Y.; and Yang, Q. 2024.
+CAMEL: Causal Motion Enhancement Tailored for Lifting Text-Driven Video Editing.
+CVPR.
+Zhang, Rao, and Agrawala (2023)
+Zhang, L.; Rao, A.; and Agrawala, M. 2023.
+Adding Conditional Control to Text-to-Image Diffusion Models.
+In ICCV.
+Zhong et al. (2025)
+Zhong, X.; Huang, X.; Yang, X.; Lin, G.; and Wu, Q. 2025.
+Deco: Decoupled Human-Centered Diffusion Video Editing with Motion Consistency.
+ECCV.
+Zhou et al. (2024)
+Zhou, J.; Gao, J.; Zhao, X.; Yao, X.; and Wei, X. 2024.
+Association of Objects May Engender Stereotypes: Mitigating Association-Engendered Stereotypes in Text-to-Image Generation.
+NeurIPS.
+6 Appendix
+Existing literature on Fairness in T2I methods
+Prior work on fair T2I mostly falls into three camps: adding semantic guidance during diffusion optimization (Dewan et al. 2024; Shen et al. 2024; Jung et al. 2025), injecting debiasing embeddings into the latent space (Huang et al. 2025; Azam and Akhtar 2025; Li et al. 2025c),, or applying classifier-guided noise control(Brack et al. 2023; Kim et al. 2025). Lightweight alternatives modify attention maps (Gandikota et al. 2024; Teo et al. 2024; Zhou et al. 2024; Park et al. 2025) or adjust the bottleneck representations in the U-Net (Li et al. 2024a; Shi et al. 2025), avoiding full model retraining.
+Implementation Details
+VE Evaluation Metrics To demonstrate that our model effectively preserves VE capabilities, we adopt a suite of established CLIP similarity metrics (Radford et al. 2021) that capture both edit fidelity and temporal consistency. We primarily focus on CLIP-based metrics to measure semantic alignment and structural coherence. Specifically, we employ CLIP-T, which calculates the average cosine similarity between the input text prompt and all generated video frames using CLIP embeddings, thereby reflecting how well the output video aligns with the intended prompt semantics. CLIP-F measures the average cosine similarity between consecutive video frames, serving as an indicator of temporal coherence within the generated sequence. TIFA score evaluates semantic alignment between the target image and the edited video frames. Additionally, Warp-Err quantifies the pixel-level deviation by warping each edited frame based on the optical flow of the source video using RAFT-Large (Teed and Deng 2020), thereby evaluating motion consistency.
+Experimental Settings We build our framework upon SD 1.511
+1
+https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5, utilizing its released pre-trained weights along with the DDIM scheduler (Song, Meng, and Ermon 2021) with 50 steps for inverse to acquarie attention maps. Each video–text pair is represented as the tuple (source video, instruction, SAM masks, ControlNet annotators). We employ SAM-tracking (Cheng et al. 2023) based masks to perform object-level clustering, enabling fine-grained edge segmentation. To support controllable image-level editing, we integrate several ControlNet annotators (Zhang, Rao, and Agrawala 2023), including DW-Pose, Depth-Zoe, Depth-MiDaS, and OpenPose (totaling approximately 4 GB). We retain the default guidance_scale parameter to control the influence of the prompt on the editing outcome. Additionally, we enable Prompt-to-Prompt (PnP) (Hertz et al. 2023) editing to modulate spatial or semantic regions across frames. All experiments are conducted on a single NVIDIA Tesla H100 GPU.
+Additional Results
+Figure 4 verify the necessity of the importance of balanced modulation strength for fairness-aware prompt design in T2I based training-free VE models.
+Figure 5 shows the full test pipeline and results for the Prompt Responsiveness Test mentioned in Section 3.
+Figure 4: Comparison of different prompt injection methods. Direct addition leads to semantic confusion, while our masked fusion retains structure and enhances fairness controllability.
+Figure 5:
+Prompt Responsiveness Test. We evaluate three training-free VE models, including FateZero, TokenFlow, and VideoGrain, on a single example 𝐏ref="A man is playing tennis"{\boldsymbol{\mathbf{P}}}_{\texttt{ref}}=\texttt{"A man is playing tennis"} to assess their responsiveness to debiasing prompt. The top row shows the input reference frames. Rows 2–4 display results using different prompts on several baselines, including FateZero (Qi et al. 2023), TokenFlow (Geyer et al. 2024), and VideoGrain (Yang et al. 2025), while the 5th row shows the results with the original editing prompt 𝐏tar="A teacher is playing tennis"{\boldsymbol{\mathbf{P}}}_{\texttt{tar}}=\texttt{"A teacher is playing tennis"} by our FAME. In rows 2–4, the left column shows the editing performance with the original prompt, and the right column shows the editing performance guided by the directly injected prompt 𝐏tar="A male teacher is playing tennis"{\boldsymbol{\mathbf{P}}}_{\texttt{tar}}=\texttt{"A male teacher is playing tennis"} as the debiasing prompt. In the last row, our FAME can generate the female version (left column) and the debiased male content (right column). In the 2nd and 3rd rows, FateZero and TokenFlow exhibit a mismatch between the debiasing prompt and the visual semantics, indicating degraded video fidelity. In the 4th row, VideoGrain shows that directly injecting debiasing prompts often leads to semantic degradation in generated frames. This suggests that fairness-sensitive prompts may disrupt the alignment between the prompt and visual output. In the last row, our FAME can generate different gender-profession content even with the original prompt.
+Pseudo Algorithm Code.
+Our full inference procedure is composed of three core modules, shown in Algorithm 1,Algorithm 2 and Algorithm 3. Algorithm 1 describes the fairness-aware text embedding procedure, which softly fuses debiasing attribute tokens into the original prompt embedding to retain semantic structure while introducing fairness control. Algorithm 2 defines the fairness-aware self-attention modulation that enhances intra-region coherence by amplifying attention within fairness-relevant areas and suppressing unrelated interactions. Algorithm 3 introduces the fairness-aware cross-attention mechanism, where alignment between prompt tokens and visual regions is refined using a similarity-based attention mask.
+Algorithm 1 Soft Debiasing Prompt Encoding via Position-Aware Fusion
+0:
+Target prompt 𝐩tar{\boldsymbol{\mathbf{p}}}_{\texttt{tar}}, fairness prompt 𝐩fair{\boldsymbol{\mathbf{p}}}_{\texttt{fair}}, pre-trained text encoder ϕ{\boldsymbol{\mathbf{\phi}}}
+0:
+Debiased embedding matrix 𝐞~∈ℝL×d\tilde{{\boldsymbol{\mathbf{e}}}}\in\mathbb{R}^{L\times d}
+1:
+𝐞tar←ϕ⁡(𝐩tar){\boldsymbol{\mathbf{e}}}_{\texttt{tar}}\leftarrow{\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{tar}}) // Token embeddings of target prompt
+2:
+𝐞fair←ϕ⁡(𝐩fair){\boldsymbol{\mathbf{e}}}_{\texttt{fair}}\leftarrow{\boldsymbol{\mathbf{\phi}}}({\boldsymbol{\mathbf{p}}}_{\texttt{fair}}) // Token embeddings of fairness prompt
+3:
+𝐌←GenerateSoftMask​(𝐞tar,𝐞fair)\mathbf{M}\leftarrow\textsc{GenerateSoftMask}({\boldsymbol{\mathbf{e}}}_{\texttt{tar}},{\boldsymbol{\mathbf{e}}}_{\texttt{fair}}) // Soft mask: 𝐌∈[0,1]L×d\mathbf{M}\in[0,1]^{L\times d}
+4:
+𝐞~←𝐞tar+𝐌⊗(𝐞fair−𝐞tar)\tilde{{\boldsymbol{\mathbf{e}}}}\leftarrow{\boldsymbol{\mathbf{e}}}_{\texttt{tar}}+\mathbf{M}\otimes({\boldsymbol{\mathbf{e}}}_{\texttt{fair}}-{\boldsymbol{\mathbf{e}}}_{\texttt{tar}}) // Soft injection
+5:
+return 𝐞~\tilde{{\boldsymbol{\mathbf{e}}}}
+Algorithm 2 Self-attention Manipulation
+0:
+Latent tensor 𝐳t∈ℝh×w×ℓ×c{\boldsymbol{\mathbf{z}}}_{t}\in\mathbb{R}^{h\times w\times\ell\times c}, projections W𝐐,W𝐊,W𝐕W_{\boldsymbol{\mathbf{Q}}},W_{\boldsymbol{\mathbf{K}}},W_{\boldsymbol{\mathbf{V}}}, coefficients λ\lambda, 𝝁{\boldsymbol{\mathbf{\mu}}}, temperature τ\tau
+0:
+Attention output 𝐀∈ℝ(h⋅w)×ℓ×d{\boldsymbol{\mathbf{A}}}\in\mathbb{R}^{(h\cdot w)\times\ell\times d}
+1:
+𝐳′←φ⁡(𝐳t){\boldsymbol{\mathbf{z}}}^{\prime}\leftarrow\varphi({\boldsymbol{\mathbf{z}}}_{t}) // Flatten spatial dims to (h⋅w)×ℓ×c(h\cdot w)\times\ell\times c
+2:
+𝐐,𝐊,𝐕←W𝐐​𝐳′,W𝐊​𝐳′,W𝐕​𝐳′{\boldsymbol{\mathbf{Q}}},{\boldsymbol{\mathbf{K}}},{\boldsymbol{\mathbf{V}}}\leftarrow W_{\boldsymbol{\mathbf{Q}}}{\boldsymbol{\mathbf{z}}}^{\prime},\ W_{\boldsymbol{\mathbf{K}}}{\boldsymbol{\mathbf{z}}}^{\prime},\ W_{\boldsymbol{\mathbf{V}}}{\boldsymbol{\mathbf{z}}}^{\prime} // Project to attention space
+3:
+𝐀raw←𝐐𝐊⊤\mathbf{A}_{\text{raw}}\leftarrow{\boldsymbol{\mathbf{Q}}}{\boldsymbol{\mathbf{K}}}^{\top} // Raw attention scores
+4:
+Compute 𝐌pos,𝐌neg{\boldsymbol{\mathbf{M}}}^{\text{pos}},{\boldsymbol{\mathbf{M}}}^{\text{neg}} from 𝐀raw\mathbf{A}_{\text{raw}}
+5:
+Compute region mask 𝐑{\boldsymbol{\mathbf{R}}} // 1 if same region, else 0
+6:
+𝐌fair←𝐑⊙𝐌pos−(1−𝐑)⊙𝐌neg{\boldsymbol{\mathbf{M}}}^{\text{fair}}\leftarrow{\boldsymbol{\mathbf{R}}}\odot{\boldsymbol{\mathbf{M}}}^{\text{pos}}-(1-{\boldsymbol{\mathbf{R}}})\odot{\boldsymbol{\mathbf{M}}}^{\text{neg}}
+7:
+Compute per-position feature mean: 𝐟q=1ℓ​∑t=1ℓ𝐳t​[q]\mathbf{f}_{\texttt{q}}=\frac{1}{\ell}\sum_{t=1}^{\ell}{\boldsymbol{\mathbf{z}}}_{t}[\texttt{q}]
+8:
+Compute similarity mask: 𝐒[q1,q2]=exp(−∥𝐟q1−𝐟q2∥2/τ2){\boldsymbol{\mathbf{S}}}[\texttt{q}_{1},\texttt{q}_{2}]=\exp(-\|\mathbf{f}_{\texttt{q}_{1}}-\mathbf{f}_{\texttt{q}_{2}}\|^{2}/\tau^{2})
+9:
+g⁡(𝐐,𝐊)←(𝐀raw+λ​𝐌fair+𝝁​𝐒)/dg({\boldsymbol{\mathbf{Q}}},{\boldsymbol{\mathbf{K}}})\leftarrow(\mathbf{A}_{\text{raw}}+\lambda{\boldsymbol{\mathbf{M}}}^{\text{fair}}+{\boldsymbol{\mathbf{\mu}}}{\boldsymbol{\mathbf{S}}})/\sqrt{d}
+10:
+𝐀←softmax​(g​(𝐐,𝐊))⋅𝐕{\boldsymbol{\mathbf{A}}}\leftarrow\text{softmax}(g({\boldsymbol{\mathbf{Q}}},{\boldsymbol{\mathbf{K}}}))\cdot{\boldsymbol{\mathbf{V}}} // Final output
+11:
+return 𝐀{\boldsymbol{\mathbf{A}}}
+Algorithm 3 Cross-attention Reweighting
+0:
+𝐐t,𝐊t,𝐕t{\boldsymbol{\mathbf{Q}}}_{t},{\boldsymbol{\mathbf{K}}}_{t},{\boldsymbol{\mathbf{V}}}_{t}, fairness token set {𝐞k}\{{\boldsymbol{\mathbf{e}}}_{k}\}, token groups {τk}\{\tau_{k}\}, coefficient λ\lambda
+0:
+Cross-attention output 𝐀t{\boldsymbol{\mathbf{A}}}_{t}
+1:
+𝐀raw←𝐐t​𝐊t⊤\mathbf{A}_{\text{raw}}\leftarrow{\boldsymbol{\mathbf{Q}}}_{t}{\boldsymbol{\mathbf{K}}}_{t}^{\top} // Raw attention matrix
+2:
+Compute 𝐌tpos,𝐌tneg{\boldsymbol{\mathbf{M}}}_{t}^{\text{pos}},{\boldsymbol{\mathbf{M}}}_{t}^{\text{neg}} from 𝐀raw\mathbf{A}_{\text{raw}}
+3:
+for each spatial query index q do
+4:
+for each prompt token index k do
+5:
+if k∈τk\texttt{k}\in\tau_{k} then
+6:
+𝐑t​[q,k]←cos⁡(𝐐t​[q],𝐞k){\boldsymbol{\mathbf{R}}}_{t}[\texttt{q},\texttt{k}]\leftarrow\cos({\boldsymbol{\mathbf{Q}}}_{t}[\texttt{q}],{\boldsymbol{\mathbf{e}}}_{k}) // Fairness match
+7:
+else
+8:
+𝐑t​[q,k]←0{\boldsymbol{\mathbf{R}}}_{t}[\texttt{q},\texttt{k}]\leftarrow 0
+9:
+end if
+10:
+end for
+11:
+end for
+12:
+𝐌tfair←𝐑t⊙𝐌tpos−(1−𝐑t)⊙𝐌tneg{\boldsymbol{\mathbf{M}}}_{t}^{\text{fair}}\leftarrow{\boldsymbol{\mathbf{R}}}_{t}\odot{\boldsymbol{\mathbf{M}}}_{t}^{\text{pos}}-(1-{\boldsymbol{\mathbf{R}}}_{t})\odot{\boldsymbol{\mathbf{M}}}_{t}^{\text{neg}}
+13:
+h⁡(𝐐t,𝐊t)←(𝐀raw+λ​𝐌tfair)/dh({\boldsymbol{\mathbf{Q}}}_{t},{\boldsymbol{\mathbf{K}}}_{t})\leftarrow(\mathbf{A}_{\text{raw}}+\lambda{\boldsymbol{\mathbf{M}}}_{t}^{\text{fair}})/\sqrt{d}
+14:
+𝐀t←softmax​(h⁡(𝐐t,𝐊t))⋅𝐕t{\boldsymbol{\mathbf{A}}}_{t}\leftarrow\text{softmax}(h({\boldsymbol{\mathbf{Q}}}_{t},{\boldsymbol{\mathbf{K}}}_{t}))\cdot{\boldsymbol{\mathbf{V}}}_{t} // Cross-attention output
+15:
+return 𝐀t{\boldsymbol{\mathbf{A}}}_{t}
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

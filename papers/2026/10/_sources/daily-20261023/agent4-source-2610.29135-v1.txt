@@ -1,0 +1,383 @@
+# Exact primary https://arxiv.org/html/2610.29135v1
+# Main text with math alttext; necessary B3/B4/F5/K3 read separately from same saved HTML.
+Abstract
+A content-safe response can still promote priorities that conflict with its task: an assistant may demand compliance when asked to preserve autonomy. We study contextual value drift as a task-relative decoding problem with an explicit allowance for change. LaVGuard separates an authorized ten-dimensional profile from a frozen estimate of the values expressed in the visible prefix. A profile-relative density gate selects when to evaluate candidate continuations; their signed progress determines a logit tilt constrained by both changed-position and cumulative-KL budgets. We establish local surrogate improvement, pathwise budget feasibility, and a bound on response-distribution change. Profile conditioning raises boundary TPR at 5% FPR from .58 to .72 . At the same .12 mean intervention ratio, the selection study reports risk-safety scores of .88 for LaVGuard and .72 for position-matched edits. The resulting interface makes task priorities actionable while keeping the extent of intervention explicit and bounded.
+ 1 Introduction
+An assistant helping a team organize a project is asked to preserve each member’s autonomy. “Assign everyone a role and require compliance” contains no prohibited content, yet privileges conformity over the requested freedom of choice. “Offer clear roles and let members choose” respects both coordination and autonomy. What matters is not just which values an answer expresses, but whether their emphasis fits the authorized task. Figure 1 illustrates this distinction.
+ Figure 1 : Task-relative selective decoding. The authorized profile and the frozen probe’s visible-prefix state meet in the residual; the two-dimensional region illustrates the fitted geometry. Boundary exceedance and remaining position and KL allowances enable candidate evaluation. The paired continuations express contrasting priorities under a shared content guard. Along the decoding ribbon, cinnabar marks a changed sampling kernel, counted by I_{t} ; K_{t} is that step’s conditional KL cost. Unchanged kernels consume neither allowance. The task, trajectory, responses, and ribbon are constructed illustrations; profile and state cells indicate dimensions.
+We call a departure from the task’s authorized priorities contextual value drift . Values such as security, achievement, and self-direction can each be appropriate; their intended emphasis depends on the task. Value taxonomies provide a vocabulary for these co-occurring priorities ( Schwartz, 1992 ; Yao et al., 2024 ; Ren et al., 2024 ) . A task-relative controller therefore needs to distinguish the priorities expressed by a prefix from the priorities the application requests. It must also decide how much of the ongoing generation to change: acting at every position can spend intervention on language that already fits the task.
+Existing methods make several parts of this problem tractable. ConVA selectively activates value directions ( Jin et al., 2025 ) ; Values as Style learns a semantic–value editing interface for low-damage steering ( Dai et al., 2026 ) ; AIMES adapts value-specific activation strengths from online observations ( Bhattacharjee and Tandon, 2026 ) . Controlled Decoding and Anchored Decoding connect generation to KL-regularized objectives and sequence-level divergence budgets, respectively ( Mudgal et al., 2024 ; He et al., 2026 ) . We address the joint decision these tools motivate: when does the current language depart from this task’s priorities, and how should a finite change allowance shape its continuation?
+LaVGuard couples a task-relative trigger with two explicit resources: the number of positions changed and the cumulative divergence from the base decoder. An authorized profile is supplied before generation. A frozen, prefix-causal probe estimates ten value intensities from visible language, without reading the numeric profile. Subtracting the profile translates a learned residual geometry into the task’s activation region. At an active position, the model evaluates likely one-token continuations, favors progress toward a mixture-derived reference, and chooses a feasible tilt by scalar KL search. The content guard is shared with the base decoder.
+Changing the authorized profile while holding the language state fixed can change whether intervention is warranted, without retraining the probe. Appendix J follows this decision through candidate scoring, sampling, and budget exhaustion.
+Our evaluation tests profile conditioning, position selection, and budget control. Profile conditioning raises boundary TPR at 5% FPR from .58 to .72 (Table 1 ). At a shared mean intervention ratio of .12 , LaVGuard reaches a risk-safety score of .88 versus .72 for position-matched selection (Table 3 ). Removing the position budget increases the edit ratio to .34 , with risk safety of .89 and benign safety of .73 , compared with .88 and .81 for the full controller. These comparisons motivate selecting where to spend the allowance, as well as limiting its total size.
+Our contributions are:
+ •
+ A task-relative control interface. We separate authorized priorities from observed prefix values, making the same language state evaluable under different task profiles.
+ •
+ Selective decoding with two resources. A profile-residual gate, candidate scoring, and a feasible scalar update jointly control changed positions and accumulated conditional KL.
+ •
+ An analysis of what this control establishes. We connect the local candidate surrogate to the tilt, prove budget and response-distribution bounds, and evaluate the roles of profile conditioning, position selection, and the two allowances.
+ 2 Related Work
+Values and task context.
+Schwartz’s values describe co-occurring motivational priorities ( Schwartz, 1992 ) . FULCRA and ValueBench evaluate these priorities in language models ( Yao et al., 2024 ; Ren et al., 2024 ) ; Social Chemistry and Moral Stories ground normative judgments in context ( Forbes et al., 2020 ; Emelin et al., 2021 ) . Value Alignment Tax studies cross-value effects ( Chen and Shen, 2026 ) . More recently, Liscio et al. (2026) track competing value orientations across conversations, showing that early steering effects can fade or reverse. LaVGuard makes the task reference explicit: an authorized profile and the observed prefix state remain separate inputs to a residual-based decision.
+Attribute and reward guidance.
+PPLM, GeDi, DExperts, and FUDGE guide generation using attribute models or auxiliary distributions ( Dathathri et al., 2020 ; Krause et al., 2021 ; Liu et al., 2021 ; Yang and Klein, 2021 ) . FUDGE predicts an eventual attribute from a prefix; our probe estimates values expressed in the visible text. DeAL uses reward-guided lookahead, IVG combines token- and chunk-level value functions, and Controlled Decoding trains prefix scorers for KL-regularized reward optimization ( Huang et al., 2025 ; Liu et al., 2024 ; Mudgal et al., 2024 ) . LaVGuard uses candidate reweighting with a task-relative trigger and a local prototype-progress score.
+Value editing and semantic preservation.
+Representation Engineering, ITI, and CAA expose behavioral directions in hidden states ( Zou et al., 2023a ; Li et al., 2023 ; Rimsky et al., 2024 ) . Values as Style learns a semantic–value interface with one-way semantic grounding; editing the value code while holding the semantic code fixed produces a residual-stream update ( Dai et al., 2026 ) . Selective Steering uses norm-preserving rotations at discriminatively selected layers ( Dang and Ngo, 2026 ) . These designs improve the intervention interface. LaVGuard controls the sampling kernel and accounts for its cumulative change relative to the base decoder.
+Selective and adaptive intervention.
+ConVA gates value-vector activation with query and token classifiers ( Jin et al., 2025 ) . MAT-Steer learns token gates and multiple attribute directions with sparsity and orthogonality objectives ( Nguyen et al., 2025 ) . AIMES uses intermediate-layer vocabulary readouts to adapt each requested value’s steering strength during generation ( Bhattacharjee and Tandon, 2026 ) . These controllers adapt activation edits to the current input or state. LaVGuard combines a profile-translated residual boundary with explicit allowances for changed positions and conditional KL. Appendix L compares the observation, actuation, and accounting interfaces.
+Safety and divergence budgets.
+SIREN detects harmfulness from internal features, while SafeDecoding, SafeInfer, and SaP target content safety ( Jiao et al., 2026 ; Xu et al., 2024 ; Banerjee et al., 2025 ; Chen et al., 2025 ) . Anchored Decoding budgets trajectory-wide divergence from a separate safe model for copyright-risk control ( He et al., 2026 ) . At the agent level, VoS learns intervention value from counterfactual continuations and calibrates a harm-budgeted trigger ( Li et al., 2026 ) . LaVGuard instead accounts for changed token positions and conditional KL against its base decoder along each response, while sharing the content guard with uncontrolled generation.
+ 3 Task-Relative Value Control
+ Figure 2 : One guarded decoding step. Four layer taps and a frozen probe yield the visible-prefix state. The external profile enters the residual; the mixture provides a gate and a posterior residual mean (star), translated and clipped into the scoring prototype. Boundary exceedance and remaining allowances enable evaluation of the top 32 candidate prefixes. Signed progress is scaled and clipped before a KL search selects the feasible tilt. Edited and unchanged kernels share one sampling path. The ledger records the kernel-change indicator I_{t} and conditional cost K_{t}=D_{KL}(\tilde{p}_{t}^{H}\|p_{t}^{H}) before the sampled-prefix guard; a sample that triggers the guard retains its cost. Pre-step balances feed eligibility and KL search. Objects, bars, and geometry are schematic.
+ 3.1 Profile, language state, and drift
+Given prompt x and context c , a frozen autoregressive model generates y_{1},\ldots,y_{T} with next-token distribution
+ p_{t}=p_{M}(\cdot\mid x,c,y_{<t})=\operatorname{softmax}(\mathbf{z}_{t}).
+ (1)
+Here p_{t} is the actual sampling kernel. Context describes the task, affected parties, and stated constraints. Before generation, an authorized user or policy owner supplies a profile \boldsymbol{\pi}(c)\in[0,1]^{10} . Each coordinate specifies a value intensity; the coordinates need not sum to one.
+Let \mathbf{q}(y,c) be an independently annotated value vector and \mathcal{A}(c) the set of value expressions admissible for the task. Contextual drift is the event \mathbf{q}(y,c)\notin\mathcal{A}(c) . Online control uses a learned prefix estimate \bar{\mathbf{v}}_{<t} and a fitted admissible set \widehat{\mathcal{A}}(c) . Evaluation uses independent compatibility judgments, keeping the intended behavior distinct from the controller’s estimate.
+Common content-safety policy.
+A shared guard H checks the empty prefix and each sampled prefix. If it activates, a common safe-completion rule replaces the response and terminates generation. Base and controlled decoders use this same rule. Write their conditional kernels as p_{t}^{H} and \tilde{p}_{t}^{H} ; they coincide on guard-stop transitions and otherwise equal p_{t} and \tilde{p}_{t} . This separates explicit content safety from control of priorities among permissible continuations.
+ 3.2 An explicit allowance for decoder change
+For each generated response, track changed positions and accumulated conditional KL:
+ \displaystyle I_{t}
+ \displaystyle=\mathbb{I}[\tilde{p}_{t}^{H}\neq p_{t}^{H}],\quad C_{t}^{tok}=\sum_{j\leq t}I_{j},
+ (2)
+ \displaystyle C_{t}^{KL}
+ \displaystyle=\sum_{j\leq t}D_{KL}(\tilde{p}_{j}^{H}\|p_{j}^{H}).
+The controller obeys
+ \begin{gathered}C_{T}^{tok}\leq B_{tok},\qquad C_{T}^{KL}\leq B_{KL},\\
+D_{KL}(\tilde{p}_{t}^{H}\|p_{t}^{H})\leq\epsilon_{KL}.\end{gathered}
+ (3)
+ B_{tok} is an integer budget; C_{T}^{tok}/T is the realized intervention ratio. Common guard-stop transitions cost zero. A sampled token that triggers the guard retains its incurred cost, including when the output is subsequently replaced. These quantities account for LaVGuard’s changes to the generation process.
+ 4 The LaVGuard Controller
+ 4.1 Read the visible value trajectory
+The probe pools the last W visible positions of [x;c;y_{<t}] at four depth-quartile layer taps \mathcal{L} . Affine projections P_{\ell} produce a shared-width representation:
+ \displaystyle\boldsymbol{\phi}_{<t}
+ \displaystyle=\operatorname*{concat}_{\ell\in\mathcal{L}}P_{\ell}\left(\frac{1}{|J_{t}|}\sum_{j\in J_{t}}\mathbf{h}_{t,j}^{(\ell)}\right),
+ (4)
+ \displaystyle\bar{\mathbf{v}}_{<t}
+ \displaystyle=\sigma(W_{v}\boldsymbol{\phi}_{<t}+\mathbf{b}_{v}).
+ J_{t} contains the last \min(W,n_{t}) input positions. All features precede the sampling of y_{t} . Numeric profile coordinates and annotation labels are excluded from the probe input; the probe reads the visible language, while the profile enters through the controller.
+Training uses visible-prefix annotations at 25%, 50%, 75%, and 100% of each response. Annotators assign intensities in \{0,1,2,3,4\} ; their mean divided by four supplies a soft target, with an adjudicated vector taking precedence when present. Soft-label binary cross-entropy fits the probe while the backbone remains frozen. Validation MAE selects the probe, which is then frozen for boundary fitting and decoding (Appendix B ).
+ 4.2 Locate the state relative to the profile
+Let \mathbf{r}_{<t}=\bar{\mathbf{v}}_{<t}-\boldsymbol{\pi}(c) . A K -component diagonal Gaussian mixture fitted to admissible training residuals defines
+ \displaystyle p_{adm}(\mathbf{r})
+ \displaystyle=\sum_{k=1}^{K}\omega_{k}\mathcal{N}(\mathbf{r};\boldsymbol{\mu}_{k},\widetilde{\Sigma}_{k}),
+ (5)
+ \displaystyle D(\mathbf{r})
+ \displaystyle=-\log p_{adm}(\mathbf{r}),\quad b_{<t}=D(\mathbf{r}_{<t})-\tau.
+Diagonal variances are shrunk toward the global training variance. A threshold on family-max validation scores is selected under a benign-family FPR constraint, yielding
+ \widehat{\mathcal{A}}(c)=\{\mathbf{v}\in[0,1]^{10}:D(\mathbf{v}-\boldsymbol{\pi}(c))\leq\tau\}.
+ (6)
+The profile translates a shared residual geometry. Thus the same estimated state can lie inside the boundary for one task and outside it for another. Context enters this decision through the declared profile; the probe continues to measure the visible language. Appendix J gives a complete paired calculation of this contrast.
+For candidate scoring, the mixture also defines a prototype reference:
+ \mathbf{v}^{*}_{<t}=\operatorname{clip}_{[0,1]}\left(\boldsymbol{\pi}(c)+\sum_{k}a_{k}(\mathbf{r}_{<t})\boldsymbol{\mu}_{k}\right),
+ (7)
+where a_{k} are posterior responsibilities. The density level set determines when to act; distance to this prototype determines which candidates to favor. These distinct geometric roles are developed in Appendix C .
+ 4.3 Evaluate likely next-token continuations
+When b_{<t}>0 and both budgets remain, take the top M tokens \mathcal{C}_{t} under p_{t} . Append each candidate w_{i} to the same prefix, evaluate the extended prefixes in batches, and score
+ \displaystyle\mathbf{v}_{t,i}^{cand}
+ \displaystyle=f_{\theta}(x,c,y_{<t}\oplus w_{i}),
+ (8)
+ \displaystyle\Delta_{t,i}
+ \displaystyle=\|\bar{\mathbf{v}}_{<t}-\mathbf{v}^{*}_{<t}\|_{2}^{2}-\|\mathbf{v}_{t,i}^{cand}-\mathbf{v}^{*}_{<t}\|_{2}^{2},
+ \displaystyle s_{t,i}
+ \displaystyle=\begin{cases}\Delta_{t,i},&i\in\mathcal{C}_{t},\\
+0,&i\notin\mathcal{C}_{t}.\end{cases}
+This score measures one-step progress toward the prototype. Its zero extension defines the surrogate on unscored tokens. With a fixed positive scale \sigma_{b} and clipping level c_{z} , the proposed logit direction is
+ d_{t,i}=\operatorname{clip}\!\left(\frac{[b_{<t}]_{+}}{\sigma_{b}}s_{t,i},-c_{z},c_{z}\right).
+ (9)
+Boundary exceedance scales the proposal, while candidate progress supplies its direction.
+ 4.4 Allocate the remaining change budget
+The two budgets regulate distinct decisions. The integer allowance determines whether another position can change; the KL allowance limits how far its sampling distribution can move. For the fixed candidate direction, consider the normalized exponential tilt
+ q_{\alpha}(i)=\frac{p_{t}(i)e^{\alpha d_{t,i}}}{Z_{t}(\alpha)},\quad Z_{t}(\alpha)=\sum_{j}p_{t}(j)e^{\alpha d_{t,j}}.
+For a nonconstant direction with budget available, choose
+ \displaystyle\eta_{t}
+ \displaystyle=\min\{\epsilon_{KL},B_{KL}-C_{t-1}^{KL}\},
+ (10)
+ \displaystyle\alpha_{t}
+ \displaystyle=\max\{\alpha\in[0,1]:D_{KL}(q_{\alpha}\|p_{t})\leq\eta_{t}\}.
+Otherwise return p_{t} . The scale searches a one-dimensional family with a fixed direction, rather than recomputing candidate preferences as the budget changes. Sample from \tilde{p}_{t}=q_{\alpha_{t}} and update the counters. Constant directions preserve the distribution and consume no position budget. The implementation uses log-sum-exp normalization and the feasible lower endpoint of a bisection bracket; J iterations bound its width by 2^{-J} .
+KL is computed between the actual sampling kernels. The reference configuration uses full-support softmax with unit temperature. Any alternative temperature or support convention must be included in the kernels before budget selection. Tokens outside \mathcal{C}_{t} retain their relative probabilities and share the tilt’s normalization factor.
+ 4.5 What the control rule guarantees
+A variational local update.
+The tilt q_{\alpha} uniquely maximizes \alpha\mathbb{E}_{q}[d_{t}]-D_{KL}(q\|p_{t}) on the base support. If the KL cap binds at a positive exact scale, it also maximizes \mathbb{E}_{q}[d_{t}] over that KL ball (Proposition D.1 ). At an active step without clipping, d_{t} is a positive multiple of the zero-extended candidate score, so the constrained optimum applies to that score as well. The unit-scale cap and finite bisection define the implemented approximation.
+Feasible expenditure.
+For K_{t}(\alpha)=D_{KL}(q_{\alpha}\|p_{t}) ,
+ K_{t}^{\prime}(\alpha)=\alpha\operatorname{Var}_{q_{\alpha}}(d_{t})\geq 0.
+ (11)
+Since K_{t}(0)=0 , a feasible step always exists. Checking the integer counter and taking a feasible bisection endpoint enforces Equation ( 3 ) on every realized trajectory.
+Directed local progress.
+Because clipping is monotone, d_{t,i} is nondecreasing in s_{t,i} , giving
+ \frac{d}{d\alpha}\mathbb{E}_{q_{\alpha}}[s_{t}]=\operatorname{Cov}_{q_{\alpha}}(s_{t},d_{t})\geq 0.
+ (12)
+The largest feasible scale therefore achieves the greatest expected surrogate score along this tilt path, both over the vocabulary and conditional on \mathcal{C}_{t} . This is a local preference guarantee for a fixed prefix and prototype. Appendix D proves it and quantifies how unscored-tail mass affects complete-vocabulary progress.
+ Method
+ AUPRC \uparrow
+ AUROC \uparrow
+ Macro-F1
+ \uparrow
+ Risk recall
+ \uparrow
+ Benign FPR
+ \downarrow
+ TPR@5%
+ \uparrow
+ FPR@95%
+ \downarrow
+ Content/output guard
+ .86  \pm  .025
+ .82  \pm  .025
+ .62  \pm  .03
+ .68  \pm  .03
+ .04  \pm  .01
+ .45  \pm  .04
+ .38  \pm  .04
+ Global boundary
+ .90  \pm  .02
+ .87  \pm  .02
+ .68  \pm  .025
+ .74  \pm  .025
+ .05  \pm  .01
+ .58  \pm  .035
+ .28  \pm  .035
+ Context-conditioned
+ .95  \pm  .015
+ .92  \pm  .015
+ .76  \pm  .025
+ .83  \pm  .02
+ .04  \pm  .01
+ .72  \pm  .03
+ .18  \pm  .03
+ LaVGuard
+ .96  \pm  .015
+ .93  \pm  .015
+ .79  \pm  .02
+ .86  \pm  .02
+ .04  \pm  .01
+ .76  \pm  .03
+ .15  \pm  .025
+ Table 1 : Profile-relative boundary detection. TPR@5% and FPR@95% are ROC operating points; risk recall and benign FPR use the study’s deployed threshold. Entries are mean \pm s.d.
+ Method
+ Single F1
+ \uparrow
+ Risk F1
+ \uparrow
+ Risk safety
+ \uparrow
+ Risk pass
+ \uparrow
+ Benign safety
+ \uparrow
+ Over-refusal
+ \downarrow
+ Token ratio
+ \downarrow
+ Latency (ms)
+ \downarrow
+ Base
+ .76  \pm  .03
+ .55  \pm  .025
+ .55  \pm  .03
+ .62  \pm  .035
+ .84  \pm  .015
+ .03  \pm  .008
+ .00  \pm  .00
+ 720  \pm  20
+ SafeInfer
+ .82  \pm  .025
+ .58  \pm  .025
+ .76  \pm  .025
+ .82  \pm  .025
+ .79  \pm  .02
+ .18  \pm  .015
+ .00  \pm  .00 †
+ 760  \pm  30
+ LaVGuard
+ .87  \pm  .02
+ .84  \pm  .02
+ .88  \pm  .02
+ .91  \pm  .02
+ .81  \pm  .018
+ .08  \pm  .01
+ .12  \pm  .012
+ 830  \pm  40
+ Table 2 : Response outcomes and cost within the matched-decoding study (mean \pm s.d.). \dagger Token ratios retain the source reporting convention; SafeInfer’s zero does not establish an unchanged sampling kernel under Equation ( 2 ).
+Bounded response-distribution change.
+Let P^{H},Q^{H} be the base and controlled trace laws under the common guard and termination rule. The pathwise budget and KL chain rule imply
+ \displaystyle D_{KL}(Q^{H}\|P^{H})
+ \displaystyle=\mathbb{E}_{Q^{H}}\!\left[\sum_{t}D_{KL}(\tilde{p}_{t}^{H}\|p_{t}^{H})\right]
+ (13)
+ \displaystyle\leq B_{KL}.
+The common output rule maps a trace to its response or safe completion. Data processing and Pinsker’s inequality then bound the probability difference for any returned-response event by \sqrt{B_{KL}/2} .
+Computation.
+If G steps activate candidate evaluation, at most GM extended prefixes are evaluated. The backend recomputes these prefixes in batches. Active steps can exceed changed positions, since a proposed direction can yield no feasible edit. Latency therefore includes probe execution, candidate batches, guard decisions, and scalar search (Appendix B.2 ).
+ 5 Evaluation
+ Method
+ Token prec.
+ \uparrow
+ Token rec.
+ \uparrow
+ Gain/token
+ \uparrow
+ Risk safety
+ \uparrow
+ Benign utility
+ \uparrow
+ Token ratio
+ \downarrow
+ Mean KL
+ \downarrow
+ Random token
+ .18  \pm  .04
+ .20  \pm  .04
+ .015  \pm  .005
+ .70  \pm  .03
+ .79  \pm  .02
+ .12  \pm  .015
+ .04  \pm  .006
+ Position-matched
+ .22  \pm  .04
+ .24  \pm  .04
+ .020  \pm  .006
+ .72  \pm  .03
+ .79  \pm  .02
+ .12  \pm  .015
+ .04  \pm  .006
+ All-token
+ 1.00  \pm  .00
+ 1.00  \pm  .00
+ .035  \pm  .007
+ .89  \pm  .02
+ .68  \pm  .025
+ 1.00  \pm  .00
+ .18  \pm  .015
+ Boundary only
+ .00  \pm  .00
+ .00  \pm  .00
+ .000  \pm  .000
+ .76  \pm  .025
+ .82  \pm  .02
+ .00  \pm  .00
+ .00  \pm  .00
+ Current key token
+ .45  \pm  .05
+ .52  \pm  .05
+ .060  \pm  .010
+ .82  \pm  .025
+ .80  \pm  .02
+ .15  \pm  .015
+ .05  \pm  .008
+ LaVGuard
+ .62  \pm  .04
+ .70  \pm  .04
+ .105  \pm  .012
+ .88  \pm  .02
+ .81  \pm  .018
+ .12  \pm  .012
+ .04  \pm  .006
+ Table 3 : Complete token-selection comparison (mean \pm s.d.). Random, position-matched, and LaVGuard share a reported mean token ratio of .12 . Benign utility and mean KL expose the cost of all-token intervention alongside risk safety and localization quality.
+ Method
+ Risk F1 \uparrow
+ Risk safety
+ \uparrow
+ Benign safety
+ \uparrow
+ Benign FPR
+ \downarrow
+ Token ratio
+ \downarrow
+ Mean KL
+ \downarrow
+ No boundary
+ .58  \pm  .03
+ .72  \pm  .03
+ .79  \pm  .02
+ .12  \pm  .015
+ .16  \pm  .015
+ .06  \pm  .008
+ Global boundary
+ .70  \pm  .025
+ .78  \pm  .025
+ .80  \pm  .02
+ .08  \pm  .012
+ .14  \pm  .015
+ .05  \pm  .008
+ No uncertainty
+ .76  \pm  .025
+ .81  \pm  .025
+ .78  \pm  .02
+ .07  \pm  .010
+ .15  \pm  .015
+ .06  \pm  .008
+ No token budget
+ .83  \pm  .02
+ .89  \pm  .02
+ .73  \pm  .025
+ .06  \pm  .010
+ .34  \pm  .030
+ .10  \pm  .012
+ No KL budget
+ .83  \pm  .02
+ .88  \pm  .02
+ .74  \pm  .025
+ .06  \pm  .010
+ .18  \pm  .020
+ .13  \pm  .015
+ Fixed target
+ .77  \pm  .025
+ .80  \pm  .025
+ .78  \pm  .02
+ .08  \pm  .012
+ .14  \pm  .015
+ .06  \pm  .008
+ Fast scorer
+ .82  \pm  .022
+ .85  \pm  .022
+ .81  \pm  .018
+ .05  \pm  .010
+ .12  \pm  .012
+ .04  \pm  .006
+ Full LaVGuard
+ .84  \pm  .02
+ .88  \pm  .02
+ .81  \pm  .018
+ .04  \pm  .010
+ .12  \pm  .012
+ .04  \pm  .006
+ Table 4 : Complete component ablations (mean \pm s.d.). Token ratio and mean KL are study-level readouts. No-uncertainty and fast-scoring rows retain the source evaluation configurations; the reference specification uses a single frozen probe.
+ 5.1 Setup and measurement roles
+The evaluation follows three controller decisions: use the task profile to detect a departure, select positions for intervention, and allocate the two change allowances. Tables 1 – 4 report the complete boundary, response, selection, and component comparisons; Appendix G gives prefix calibration, transfer, dialogue, and efficiency results.
+Benchmark and configuration.
+The benchmark protocol contains 200 variants in 100 prompt families: 80 value-migration, 60 content-safe value-risk, 30 hard-safety, and 30 benign-control variants. A family-grouped 140/30/30 split assigns 70/15/15 families to training, validation, and testing. The annotation protocol uses three annotators and adjudication of disputed labels. The reference configuration uses frozen Qwen2.5-7B-Instruct, a four-tap probe with W=16 , K=2 mixture components, and M=32 candidates. Its budgets are \epsilon_{KL}=.02 , B_{KL}=.10 , and B_{tok}=51 over a 256-token horizon; the search uses 20 bisection steps. Appendix B gives fitting and execution details, including the reference sampling kernel. The reference configuration specifies the executable controller; the tables retain the source studies’ reported readouts.
+Metrics.
+Entries report mean \pm standard deviation. Risk F1, risk safety, benign safety or utility, refusal, and gain per token have distinct measurement roles (Appendix F ). Equal mean token ratios match average reported expenditure, not each response’s edit count. Mean KL is a study readout; Equation ( 2 ) defines the reference controller’s per-position and cumulative accounting. The local analysis in Section 4.5 concerns the update objective, while these outcome comparisons evaluate the reported operating points.
+ 5.2 The profile improves boundary detection
+In Table 1 , task conditioning increases TPR at 5% FPR from .58 for the global boundary to .72 ; the complete controller reaches .76 . At 95% TPR, FPR falls from .28 to .18 and .15 , respectively. The profile-relative residual makes the task reference explicit: the same intensity can fit one task and depart from another. The curve-derived operating points characterize discrimination; the decoder uses a threshold selected on validation families.
+ 5.3 Response outcomes under selective control
+Table 2 presents the response readouts and cost together. Relative to SafeInfer, LaVGuard raises risk F1 from .58 to .84 and risk safety from .76 to .88 , while reducing over-refusal from .18 to .08 . Benign safety is .81 , compared with .79 for SafeInfer and .84 for the base model. Mean latency is 830 ms versus 760 ms within this comparison. These results place contextual-risk control alongside the quality and cost of the resulting answers.
+ 5.4 Selection concentrates useful changes
+ Figure 3 : Selection and budget comparisons. (a) Safety–utility outcomes for six selection rules. (b) Precision versus gain for Random, Position-matched, and LaVGuard, matched on reported mean token ratio .12 and mean KL .04 . (c) Full control versus removal of either budget; lines compare configuration means, not trajectories. Whiskers show each coordinate’s reported standard deviation. Short method names follow Tables 3 and 4 .
+ Figure 4 : Transfer, dialogue, and runtime in their respective studies. (a) Transfer risk F1 and worst-group score. (b) Earlier detection and lower cumulative risk lie toward the lower left; points are five method aggregates, not a trajectory. (c) Mean and P95 latency from the independent efficiency study, in seconds on a logarithmic axis. Lines join the two latency statistics; error bars throughout show reported standard deviations. “Full”/“Fast” denote LaVGuard/LaVGuard-fast; “Key token”/“Lookahead” abbreviate the methods in Tables 14 – 15 .
+Table 3 retains all six selection rules and seven readouts. At the same reported mean token ratio of .12 , LaVGuard reaches .88 risk safety, compared with .72 for position-matched and .70 for random selection. Gain per token is .105 , versus .020 and .015 ; mean KL is .04 in all three conditions. The reported advantage therefore accompanies a different selection rule at the same mean token ratio and mean KL.
+Figure 3 (a,b) relates safety to utility and localization precision to intervention gain. All-token control reaches .89 risk safety at a 1.00 token ratio, with benign utility of .68 and mean KL of .18 ; LaVGuard reaches .88 risk safety with .81 benign utility and mean KL .04 . Current-key-token selection attains .82 risk safety at a .15 ratio. On fixed decision contexts, the advantage of a selective gate over an independent gate at the same activation rate is its covariance with edit benefit (Appendix E ); the matched-mean comparison tests this design, with the corresponding estimands distinguished in Appendix K.3 .
+ 5.5 The two budgets constrain different changes
+Table 4 places all eight component configurations side by side. Removing the boundary gives risk F1 .58 ; using a global boundary gives .70 , compared with .84 for the full controller. A fixed target gives risk safety .80 , compared with .88 for the profile-relative design.
+In Figure 3 (c), removing the position budget raises the token ratio from .12 to .34 and mean KL from .04 to .10 , with benign safety changing from .81 to .73 . Removing the KL budget gives a .18 token ratio and .13 mean KL, with benign safety .74 . The full controller combines risk safety .88 and benign safety .81 at a .12 ratio. These comparisons support separate controls on how often the sampling kernel changes and how much its probabilities change.
+Transfer, dialogue, and runtime.
+Figure 4 brings the three separate studies together. Transfer risk F1 and worst-group score are .78 and .74 for LaVGuard, versus .55 and .62 for SafeInfer (Table 13 ). In dialogue, first detection occurs at 2.0 versus 3.1 turns, with cumulative risk .18 versus .30 (Table 14 ). The independent efficiency series reports mean/P95 latency of 920/1200 ms for the full controller and 820/1050 ms for the fast configuration (Table 15 ); these are distinct from the matched-decoding latency in Table 2 . An active step evaluates candidate prefixes even when no nonzero edit is accepted, so intervention ratio alone does not determine computation. Appendix H.2 reports equation-level checks separately from language-model outcomes.
+ 6 Conclusion
+LaVGuard turns an authorized task profile into a selective decoding rule. The profile determines how to interpret an observed value state; candidate progress supplies a local preference; position and KL allowances constrain its effect on generation. The analysis establishes what the local update optimizes and how its expenditure composes into a response-distribution bound. The profile, selection, and budget comparisons support treating where to intervene and how much to change as connected design choices. This yields an explicit interface for task-relative value control while keeping the base decoder and common content guard fixed.
+Limitations
+Scope of the value representation.
+The ten-dimensional profile is an operational representation of task priorities. It does not exhaust the social meaning of an utterance or resolve disagreement about which priorities a task should authorize. Its interpretation depends on the annotation rubric and the context supplied to the model. Applications across languages, communities, or domains require appropriate profile design and evaluation.
+Estimation and control objectives.
+The probe and residual density are learned from annotated prefixes, so their calibration depends on the language distribution encountered during generation. The current boundary translates a shared residual geometry by the task profile; additional contextual distinctions must be represented through that profile. The local improvement result concerns the candidate-score surrogate. Human judgments of task compatibility remain a separate evaluation target, and a mixture prototype need not belong to the density level set that defines activation.
+Access and computation.
+The method requires access to intermediate model states and next-token distributions. Candidate evaluation adds backbone computation at active steps; the current backend evaluates extended prefixes in batches without KV-cache reuse. A small intervention ratio therefore does not by itself imply a proportional reduction in latency. Scaling to longer responses or other backbones requires corresponding probe calibration and computation measurements.
+Ethical Considerations
+Task profiles should be supplied by authorized users or accountable policy owners and disclosed when they influence generated outputs. They should not be inferred covertly from sensitive personal attributes. Explicit profiles make the intended priorities inspectable, but also create a channel through which an operator could impose preferences or manipulate a user. Deployment should provide a way to inspect, revise, and contest the profile, with the shared content-safety policy retaining precedence. Evaluation should distinguish task compatibility, task completion, and refusal, including their distribution across affected groups.
+AI assistance.
+Generative AI tools assisted manuscript organization and drafting, literature search, mathematical exposition, figure-source development, and implementation revision and checks. This assistance included suggestions about research framing and technical analysis. The authors retain responsibility for the methods, claims, citations, code, and reported results.
+

@@ -1,0 +1,360 @@
+Official exact-v1 D-E, necessary latency / action-recoverability counterevidence.
+Appendix D World model architecture and training
+The world model follows MIRA  ( Hu et al., 2026 ) , and Figure  9 is redrawn
+from theirs. Table  3 lists its hyperparameters.
+ latent z_{1} noise z_{0} Diffusion forcing one t_{i} per latent frame z_{t}=t_{i}z_{1}+(1{-}t_{i})z_{0} noisy z_{t} World model causal DiT, 16 blocks flow time t_{i} actions a_{1:\tau} velocity v_{\theta} flow matching self-distillation Objective z_{t} Space attention bidirectional Time attention causal, 5 of 16 blocks MLP SwiGLU v_{\theta} Time MLP Action MLP t_{i} a_{1:\tau} scale, shift Transformer block \times 16 
+ Figure 9: The world model. Diffusion forcing gives each latent frame its own flow time; actions and flow time
+condition every block through AdaLN.
+ Blocks. Each block runs bidirectional space attention within a latent frame, then a SwiGLU MLP; blocks 0, 4,
+8, 12 and 15 add causal time attention in between. Attention uses 16 query and 4 key/value heads, QK-normalization, a
+gate and rotary embeddings (2D in space, 1D in time). Blocks are pre-norm, without LayerScale or registers.
+ Conditioning. Each latent frame is conditioned on its flow time and on the \tau actions that produced it,
+action a_{j} producing frame j+1 . Actions are normalized per environment; their per-frame embeddings are
+concatenated, projected and passed through an MLP. The flow time gets a sinusoidal embedding and an MLP, and the sum
+of both embeddings drives AdaLN  ( Peebles & Xie, 2023 ) before space attention, time attention and the MLP of every block. In human
+manipulation, each hand contributes the frame-to-frame change in wrist position (3), wrist orientation (3) and 15
+finger-joint rotations (45).
+ Objective and recipe. Under diffusion forcing  ( Chen et al., 2024a ) , each latent
+frame draws its own flow time t_{i} , and the model regresses the velocity z_{1}-z_{0} from
+ z_{t_{i}}=t_{i}z_{1}+(1-t_{i})z_{0} (Figure  9 ). PSD-U, the progressive self-distillation of Boffi et al. (2025) with a uniformly sampled intermediate time, is added on a
+fixed quarter of every batch. The recipe (Table  3 ) is the same for every autoencoder; only the action
+encoder follows the environment. The world model does not patch the latent further, except in
+Section  5.1 .
+ Table 3: Training hyperparameters of the autoencoders and world models.
+ CADRE autoencoder 
+ World model 
+ Architecture 
+ frozen DINOv3 ViT-B/16, conv bottleneck, 
+ causal DiT, 16 blocks, width 2048, 
+ ViT decoder 24 blocks, width 1024, 16 heads 
+ 16 heads (4 key/value), 1.2B parameters 
+ Latent 
+ 64 channels 
+ autoencoder latent, no further patching 
+ Objective 
+ flow matching, MAE, LPIPS, DINO, 3D Haar, PSD 
+ flow matching, diffusion forcing, PSD-U 
+ Optimizer 
+ AdamW, \beta=(0.9,0.95) , no weight decay 
+ AdamW, \beta=(0.9,0.99) , weight decay 0.1 
+ Learning rate 
+ 2{\times}10^{-4} , 2k warm-up, then constant 
+ 10^{-4} , 1k warm-up, then constant 
+ Gradient clipping 
+ none 
+ 1.0 
+ Steps, batch 
+ 150k, 96 clips (2 H100 nodes, 16 GPUs) 
+ 100k, 64 clips (2 H100 nodes, 16 GPUs) 
+ Clips 
+ 16 frames, 288{\times}512 , 20 fps 
+ 80 frames (40 context), 288{\times}512 , 20 fps 
+ Precision, EMA 
+ bf16, 0.9999 
+ bf16, 0.9999 
+ Inference 
+ 1 or 2 decoding steps 
+ 10 denoising steps, context noise 0.2 
+ Inference. The context is encoded once. At each chunk boundary, the world model reads the
+previous latent frame and the \tau actions entered during the chunk and predicts the next latent frame in 10
+denoising steps. The frame is decoded for display, re-noised to level 0.2 and cached (Figure  11 ).
+Since a_{t} produces frame t+1 , an action first shows \tau frames after it is entered. This timing comes from
+supervision: the architecture only keeps an action from changing frames already shown, and within a latent frame each
+decoded frame can depend on all \tau actions, so frame 5 reflects a_{4} and earlier actions such as a_{3} .
+ Latency. Figures  4 b and  14 plot the action latency of
+Equation ( 1 ) for the first action of a chunk, the worst case, at f=20 frames per second. We time
+ t_{\text{gen}} , one world model call with its 10 denoising steps and cache pass, and t_{\text{dec}} , the decode of
+one new latent frame, on one H100 at batch 1 in bf16 with torch.compile , averaged over 32 latent frames after
+warm-up on the robot-manipulation world models (Table  4 ). Each decoder runs its most efficient
+streaming decode: causal decoders decode only the new latent and reuse the context (exactly for Wan 2.2; for CADRE,
+MIRA and Cosmos we time the decode of the new latent, the cost of a decoder cache), DC-AE decodes each frame alone,
+and the non-causal LTX-2 re-decodes an 8-latent window. The rollouts of Table  7 are decoded over each
+decoder’s trained window. The resulting maximum frame rate, \tau/(t_{\text{gen}}+t_{\text{dec}}) , differs from the displayed rate, which is always
+20 frames per second; it only tells whether the world model runs fluidly. Every CADRE autoencoder with \tau\geq 4 
+does, as does CADRE- 2{\times}32{\times}32 with one step; those with \tau=1 reach only 7 to 13 frames per second. Raising \tau raises both the action latency and the maximum frame
+rate (Figure  1 ). With fewer denoising steps, every
+CADRE autoencoder with \tau\geq 2 runs fluidly, while at \tau=1 this needs one decoding step and
+at most four denoising steps (Figure  10 ).
+ Table 4: Timing on one H100 , each decoder at its fastest streaming decode. CADRE cells: one / two decoding
+steps. Max. fps is the sustainable rate; the display runs at 20; bold : fluid. † Non-causal, windowed.
+ Autoencoder 
+ \tau 
+ t_{\text{gen}} (ms) 
+ t_{\text{dec}} (ms) 
+ Latency (ms) 
+ Max. fps 
+ CADRE- 1{\times}48{\times}48 
+ 1 
+ 56 
+ 22 / 44 
+ 128 / 150 
+ 12.8 / 10.0 
+ CADRE- 2{\times}32{\times}32 
+ 2 
+ 61 
+ 25 / 50 
+ 185 / 211 
+ 23.4 / 18.1 
+ CADRE- 4{\times}24{\times}24 
+ 4 
+ 65 
+ 26 / 51 
+ 291 / 317 
+ 44.0 / 34.3 
+ CADRE- 8{\times}16{\times}16 
+ 8 
+ 83 
+ 28 / 56 
+ 510 / 538 
+ 72.5 / 57.8 
+ CADRE- 1{\times}16{\times}16 
+ 1 
+ 106 
+ 22 / 45 
+ 178 / 200 
+ 7.8 / 6.7 
+ CADRE- 2{\times}16{\times}16 
+ 2 
+ 91 
+ 25 / 49 
+ 216 / 240 
+ 17.3 / 14.3 
+ CADRE- 4{\times}16{\times}16 
+ 4 
+ 86 
+ 26 / 51 
+ 311 / 337 
+ 36.0 / 29.2 
+ MIRA recipe 
+ 2 
+ 61 
+ 14 
+ 175 
+ 26.6 
+ Wan 2.2 
+ 4 
+ 85 
+ 32 
+ 317 
+ 34.2 
+ Cosmos 
+ 8 
+ 198 
+ 7 
+ 605 
+ 39.0 
+ LTX-2 † 
+ 8 
+ 62 
+ 29 
+ 492 
+ 87.4 
+ DC-AE 
+ 1 
+ 64 
+ 5 
+ 118 
+ 14.6 
+ Figure 10: Can the world model run fluidly at 20 frames per second? Maximum frame rate against denoising
+steps (Table  4 ); above the line, it can.
+ INPUT VIDEO LATENT WORLD MODEL ACTIONS Encode \downarrow\tau{\times}s{\times}s a_{3} a_{4} a_{5} a_{6} prompt chunk, encoded once ( \tau=4 frames) z_{0} wait for all \tau actions: \tau/f World model Decode \uparrow\tau{\times}s{\times}s a_{7} a_{8} a_{9} a_{10} predicted, decoded for display \hat{z}_{1} wait for all \tau actions: \tau/f World model Decode \uparrow\tau{\times}s{\times}s a_{11} a_{12} a_{13} a_{14} predicted, decoded for display \hat{z}_{2} wait for all \tau actions: \tau/f World model \hat{z}_{3} a_{4} , entered at frame 1, first visible at frame 5 time: video and actions at f=20 frames per second 
+ Figure 11: The streaming inference loop at \tau=4 . Each call reads the previous latent frame and the
+ \tau actions of the chunk that just closed. Action a_{4} , entered at frame 1, first shows at frame 5 (red).
+ Appendix E Inverse dynamics probes for action recoverability
+A frozen probe, one per environment, reads the actions back from decoded frames, so it scores every autoencoder in
+the same space.
+ Architecture. The probe maps a window of 8 frames to one action per frame. A frozen DINOv3
+ViT-B/16  ( Siméoni et al., 2026 ) gives patch features from layers 2, 5, 8 and 11, combined by a learned softmax.
+Six factorized space-time blocks with bidirectional attention follow, then a per-frame attention pool and a
+two-layer head (27M trained parameters).
+ Training. The probe trains on real clips from the world models’ training split with a smooth L_{1} loss on
+standardized actions and photometric augmentation only. It uses AdamW (learning rate 3{\times}10^{-4} , batch 384)
+with cosine decay over 60k steps; we keep the 55k-step checkpoint (60k for human manipulation).
+ Score. For each action dimension d , R^{2}_{d} compares the recovered actions with the commanded ones over the
+last 16 generated frames of all clips, and ARR averages it normalized by the probe’s R^{2} on the real continuation,
+ \mathrm{ARR}=\frac{1}{|\mathcal{D}|}\sum_{d\in\mathcal{D}}\frac{\max\big(R^{2}_{d},\,-1\big)}{R^{2}_{d}(\mathrm{real})}. 
+ (7) 
+On real video, the probe reaches R^{2} of 0.91 in robot manipulation, 0.93 in driving and 0.83 in indoor navigation.
+Human manipulation has 102 action dimensions, and the probe barely reads the 90 finger-joint dimensions at 288{\times}512 , so
+ \mathcal{D} holds only the 12 wrist dimensions there (real-video R^{2} 0.82).
+ Control. We also score the recovered actions against the clip’s own commands shifted by 48 frames, which the
+rollout never received. A world model that ignores its actions scores alike on both, so the gap between the two
+raw R^{2} values measures action following (Table  5 ). Every CADRE autoencoder keeps a clear gap in
+every environment. In driving, the gap of Wan 2.2, Cosmos and LTX-2 is small (0.04 to 0.14),
+and so is that of Cosmos and LTX-2 in human manipulation (0.24 and 0.12): their rollouts reproduce motion common to
+the environment, such as forward travel in driving.
+ Table 5: Action recoverability and its control at frame 96. Gap is the raw R^{2} against the commanded
+actions minus the control, against commands shifted by 48 frames. Compare gaps within an environment. CADRE rows use the two-step decode; the CADRE- 1{\times}16{\times}16 world model is trained on robot manipulation only.
+ Manipulation (robot) 
+ Manipulation (human) 
+ Navigation (driving) 
+ Navigation (indoor) 
+ Autoencoder 
+ ARR 
+ control 
+ gap 
+ ARR 
+ control 
+ gap 
+ ARR 
+ control 
+ gap 
+ ARR 
+ control 
+ gap 
+ 1{\times}48{\times}48 
+ 0.48 
+ -0.99 
+ 1.46 
+ 0.64 
+ -0.54 
+ 1.07 
+ 0.90 
+ 0.48 
+ 0.35 
+ 0.87 
+ 0.10 
+ 0.65 
+ 2{\times}32{\times}32 
+ 0.45 
+ -0.97 
+ 1.40 
+ 0.75 
+ -0.58 
+ 1.19 
+ 0.89 
+ 0.47 
+ 0.37 
+ 0.91 
+ 0.08 
+ 0.70 
+ 4{\times}24{\times}24 
+ 0.49 
+ -0.84 
+ 1.31 
+ 0.65 
+ -0.49 
+ 1.03 
+ 0.67 
+ 0.40 
+ 0.24 
+ 0.45 
+ 0.01 
+ 0.38 
+ 8{\times}16{\times}16 
+ 0.72 
+ -0.73 
+ 1.40 
+ 0.63 
+ -0.50 
+ 1.03 
+ 0.86 
+ 0.51 
+ 0.29 
+ 0.79 
+ -0.01 
+ 0.69 
+ 1{\times}16{\times}16 
+ 0.74 
+ -0.89 
+ 1.58 
+ N/A 
+ N/A 
+ N/A 
+ N/A 
+ N/A 
+ N/A 
+ N/A 
+ N/A 
+ N/A 
+ 2{\times}16{\times}16 
+ 0.73 
+ -0.82 
+ 1.49 
+ 0.73 
+ -0.53 
+ 1.13 
+ 0.97 
+ 0.49 
+ 0.41 
+ 0.90 
+ 0.05 
+ 0.73 
+ 4{\times}16{\times}16 
+ 0.79 
+ -0.77 
+ 1.50 
+ 0.78 
+ -0.53 
+ 1.18 
+ 0.88 
+ 0.44 
+ 0.38 
+ 0.93 
+ 0.08 
+ 0.72 
+ MIRA recipe 
+ 0.39 
+ -1.00 
+ 1.37 
+ 0.75 
+ -0.58 
+ 1.19 
+ 0.86 
+ 0.43 
+ 0.38 
+ 0.92 
+ 0.03 
+ 0.76 
+ Wan 2.2 
+ 0.85 
+ -0.86 
+ 1.64 
+ 0.72 
+ -0.53 
+ 1.12 
+ 0.66 
+ 0.49 
+ 0.13 
+ 0.34 
+ 0.03 
+ 0.26 
+ Cosmos 
+ 0.78 
+ -0.78 
+ 1.50 
+ -0.27 
+ -0.44 
+ 0.24 
+ 0.62 
+ 0.45 
+ 0.14 
+ 0.39 
+ 0.04 
+ 0.31 
+ LTX-2 
+ 0.25 
+ -0.80 
+ 1.05 
+ -0.63 
+ -0.62 
+ 0.12 
+ 0.57 
+ 0.52 
+ 0.04 
+ 0.04 
+ -0.09 
+ 0.15 
+ DC-AE 
+ 0.65 
+ -0.94 
+ 1.55 
+ 0.39 
+ -0.53 
+ 0.85 
+ 0.81 
+ 0.33 
+ 0.43 
+ 0.86 
+ 0.12 
+ 0.62

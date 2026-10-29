@@ -1,0 +1,1188 @@
+Adaptive MLP Pruning for Large Vision Transformers
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+2.1 Model Pruning
+2.2 Token Reduction
+3 The Proposed Method
+3.1 Overview
+3.2 Preliminaries of Neuron Importance Evaluation
+3.3 Information Entropy for Neuron Importance Evaluation
+3.4 Adaptive MLP Pruning
+3.5 Knowledge Distillation
+4 Experiments
+4.1 Experimental Settings
+4.2 Zero-Shot Image Classification
+4.3 Zero-Shot Retrieval
+4.4 Comparison to Other Pruning Methods
+4.5 kNN Evaluation
+4.6 Ablation Study
+4.6.1 The Effect of Information Entropy Criterion
+4.6.2 The Effect of Binary Search
+4.6.3 The Effect of Entropy Threshold
+5 Conclusion and Future Work
+References
+A Appendix
+A.1 Implementation Details
+A.2 The Relation Between MLP Hidden Size and Information Entropy
+License: CC BY-NC-ND 4.0
+arXiv:2603.08100v1 [cs.CV] 09 Mar 2026
+Adaptive MLP Pruning for Large Vision Transformers
+Chengchao Shen
+Affiliation: Central South University
+Email: scc.cs@csu.edu.cn
+Abstract
+Large vision transformers present impressive scalability, as their performance can be well improved with increased model capacity.
+Nevertheless, their cumbersome parameters results in exorbitant computational and memory demands.
+By analyzing prevalent transformer structures, we find that multilayer perceptron (MLP) modules constitute the largest share of the model’s parameters.
+In this paper, we propose an Adaptive MLP Pruning (AMP) method to substantially reduce the parameters of large vision transformers without obvious performance degradation.
+First, we adopt Taylor based method to evaluate neuron importance of MLP.
+However, the importance computation using one-hot cross entropy loss ignores the potential predictions on other categories, thus degrading the quality of the evaluated importance scores.
+To address this issue, we introduce label-free information entropy criterion to fully model the predictions of the original model for more accurate importance evaluation.
+Second, we rank the hidden neurons of MLP by the above importance scores and apply binary search algorithm to adaptively prune the ranked neurons according to the redundancy of different MLP modules, thereby avoiding the predefined compression ratio.
+Experimental results on several state-of-the-art large vision transformers, including CLIP and DINOv2, demonstrate that our method achieves roughly 40% parameter and FLOPs reduction in a near lossless manner.
+Moreover, when the models are not finetuned after pruning, our method outperforms other pruning methods by significantly large margin.
+The source code and trained weights are available at https://github.com/visresearch/AMP.
+1 Introduction
+Large transformers have demonstrated excellent scaling property on both computer vision and natural language processing, where their performance can be well improved as the model’s capacity grows.
+However, their substantial computational and memory demands pose significant challenges for cost-effective deployment across a wide range of applications.
+To reduce the size of large vision transformers, we analyze the parameter number of modules in vision transformers and find that MLP modules take dominant parameters of model.
+For example, in EVA-CLIP-E (Sun et al., 2023), MLP modules contain 81.1% parameters of the whole model.
+Hence, the pruning of MLP modules can significantly compress large vision transformers models.
+Taylor based pruning methods present impressive performance on model compression.
+They evaluate the importance scores of weights according to the effect on model outputs after the elimination of the evaluated weights.
+Then, the least important weights of the model are pruned to compress the given model with minimal performance loss.
+Generally, these methods take one-hot cross entropy of outputs as the criterion for importance evaluation, where only the prediction corresponding to the given label contributes to importance evaluation.
+In other words, these methods inevitably ignore the other potential predictions during importance evaluation, thus hurting the fidelity of importance scores.
+In this paper, we focus on the reduction of MLP modules in large vision transformers and propose an Adaptive MLP Pruning (AMP) method.
+First, we introduce a lable-free information entropy of model predictions as the general criterion for Taylor based pruning methods to evaluate importance scores of MLP’s hidden neurons.
+Different from one-hot cross entropy, our proposed information entropy criterion can fully model the possibility distribution of predictions, thus obtaining more accurate importance scores.
+Moreover, our proposed criterion doesn’t rely on the loss function or extra modules adopted during the training of the original models, thereby enabling the compression of models, whose loss function or module weights are not fully published.
+For example, since the weights of DINO head module for the pretraining of DINOv2 (Oquab et al., 2023) aren’t publicly available, the previous Taylor pruning methods can’t be directly applied DINOv2.
+Second, we rank the hidden neurons of MLP according to the importance scores obtained in the first stage.
+Then, we leverage binary search algorithm to determine the optimal number of pruned neurons for adaptive compression of MLP modules.
+During the search of optimal pruning, we evaluate the information entropy of the pruned model.
+If information entropy variation of model prediction after pruning exceeds the given threshold, we reduce the number of pruned neurons in the previous step.
+Otherwise, we further prune more hidden neurons, until the maximum number of search step is reached.
+In this manner, our method avoids the predefined pruning ratio as previous methods, thus achieving efficient and adaptive pruning of MLP modules for large vision transformers.
+Finally, we perform knowledge distillation to recover the performance of the pruned model, where the original model serves as the teacher of the pruned one.
+Thanks to the structure affinity between the original model and the pruned one, the knowledge of the original model can be efficiently transferred to the pruned one for performance recover.
+Our main contributions of our method can be summarized as below.
+(1) We introduce an information entropy criterion, not only providing more accurate importance scores for pruning, but also enabling label-free compression of large vision transformers without fully open codes or weights.
+(2) We propose an Adaptive MLP pruning method, which can effectively prune the redundant neurons of large vision transformers in an adaptive manner, thus avoid predefined pruning ratio as previous methods.
+(3) Only distilled on ImageNet-1K, our method achieves a near lossless acceleration of large vision transformers with roughly 40% parameter and FLOPs reduction.
+Moreover, when the pruned models are not finetuned for performance recover, our method significantly outperforms other pruning methods by a large margin.
+2 Related Work
+2.1 Model Pruning
+To reduce the cost of vision transformer, model pruning methods are proposed to compress multi-head self-attention modules or multilayer perceptron modules.
+The core idea of these methods is to evaluate the importance of model weights and prune the least important weights, thus compressing models with less performance loss.
+Magnitude-based methods (Han et al., 2015; Li et al., 2017; Liu et al., 2017) measure the importance score of weights by their magnitudes and the weights with large magnitude are regarded as the more important ones for final predictions.
+ViT-Slim (Chavan et al., 2022) introduces a learnable ℓ1\ell_{1} sparsity constraint as the global importance score in the continuous searching space to search an optimal ViT sub-structure for efficient inference.
+DIMAP (He & Zhou, 2024) evaluate the contribution of local weights by their information distortion to prune models without dependence on the input data.
+Attention-based methods mine important weights by the attention scores obtained from multi-head self-attention modules.
+SNP (Shim et al., 2024) prunes graphically connected query and key layers with the least informative attention scores, while keeping the overall attention scores.
+Taylor pruning methods (Molchanov et al., 2017; Molchanov et al., 2019) evaluate the weight or neuron importance by approximating the change of loss function after pruning using Taylor expansion.
+VTC-LFC (Wang et al., 2022) adopts low-frequency sensitivity metric for Taylor expansion to evaluate importance scores for pruning.
+SAViT (Zheng et al., 2022) introduces joint importance evaluation across all component for Taylor pruning to achieve a more balanced parameter reduction.
+NViT (Yang et al., 2023) proposes a Hessian-based pruning criterion for global model pruning.
+2.2 Token Reduction
+To accelerate the inference of vision transformer, another alternative solution is to reduce the number of tokens fed into the model.
+There exist two research lines for token reduction, including token pruning and token merging.
+Token pruning methods eliminate unimportant tokens of input sequence to reduce the cost of model inference.
+DynamicViT (Rao et al., 2021) proposes an attention masking strategy to prune the redundant token by blocking its interactions with other tokens.
+AdaViT (Meng et al., 2022) dynamically applies the patch tokens, heads and transformer layer according to the input images, thus improving the inference efficiency.
+A-ViT (Yin et al., 2022) exploits adaptive halting mechanism to prune the non-discriminative tokens at different layers of transformer model.
+LRP (Luo et al., 2024) prunes unimportant tokens according to semantic density score of each patch, which is measured by the variation between reconstructions with and without this patch.
+Token merging methods fuse several redundant tokens into one, thereby reducing the number of tokens for efficient inference.
+ToMe (Bolya et al., 2023) exploits bipartite soft matching algorithm to efficiently merge the most similar tokens for token reduction.
+TPS (Wei et al., 2023) leverages unidirectional nearest-neighbor matching and similarity-based fusing steps to squeeze the number of tokens.
+BAT (Long et al., 2023) merges similar inattentive tokens and match attentive tokens to maximize the diversity of tokens after token reduction.
+STViT (Chang et al., 2023) constructs several cluster centers to represent the whole token sequence for inference acceleration.
+Our method focuses on parameter reduction of large vision transformers and is fully compatible with the above token reduction methods.
+The combination of our method and token reduction methods can further improve the inference efficiency of large vision transformers.
+3 The Proposed Method
+3.1 Overview
+Figure 1: The overview of the proposed method.
+First, the importance scores of hidden neurons are evaluated by Taylor based method.
+Then, we rank the hidden neurons by the obtained importance scores.
+Afterwards, we conduct binary search to adaptively prune the hidden neurons for MLP modules in transformer.
+Finally, the pruned model is guided by the original model using knowledge distillation to recover performance.
+To effectively compress large vision transformers, we focus on the reduction of parameter-intensive MLP modules in the transformer architecture.
+The overview of our proposed method is depicted in Figure 1.
+First, we evaluate importance scores of hidden neurons in MLP module according to the sensitivity of model predictions to the elimination of each neuron.
+Then, we rank the hidden neurons by the obtained importance scores to determine the order of neuron pruning, thus minimizing the performance drop after compression.
+Afterward, we conduct binary search algorithm on the sorted neurons to adaptively prune redundant hidden neurons in MLP module, until the tolerance error between the pruned model and original one is reached.
+Finally, we implement knowledge distillation between the original model and the pruned one to guide the performance recover of the compressed model.
+Since only hidden layers of MLP modules are pruned, the output dimension of the pruned model is identical to the original one.
+Hence, knowledge distillation between the original model and the pruned one can be directly applied without any additional alignment modules.
+3.2 Preliminaries of Neuron Importance Evaluation
+The goal of model compression is to minimize the variance on model prediction after pruning, thus reducing the performance drop.
+Let 𝒞⁡(𝒟,𝒲)\mathcal{C}(\mathcal{D},\mathcal{W}) denotes the prediction criterion of the model, where 𝒟\mathcal{D} and 𝒲\mathcal{W} represent the dataset and the parameters of the model, respectively.
+Since we focus on neuron pruning (or structural pruning) in this paper, we express 𝒞⁡(𝒟,𝒲)\mathcal{C}(\mathcal{D},\mathcal{W}) as 𝒞⁡(ℋ)\mathcal{C}(\mathcal{H}) for convenience, where ℋ={hk}k\mathcal{H}=\{h_{k}\}_{k} refers to hidden feature set obtained by feeding dataset 𝒟\mathcal{D} into the model with parameters 𝒲\mathcal{W}.
+The importance of kk-th hidden neuron can be measured by the variance of 𝒞⁡(ℋ)\mathcal{C}(\mathcal{H}) as
+Δ​𝒞k=𝒞⁡(ℋhk=h^k)−𝒞⁡(ℋhk=0),\Delta\mathcal{C}_{k}=\mathcal{C}(\mathcal{H}_{h_{k}=\hat{h}_{k}})-\mathcal{C}(\mathcal{H}_{h_{k}=0}),
+(1)
+where h^k\hat{h}_{k} denotes the feature value of neuron hkh_{k} before pruning; hk=0h_{k}=0 refers to the pruning of kk-th neuron; ℋhk=h^k\mathcal{H}_{h_{k}=\hat{h}_{k}} means that only the value of variance hkh_{k} in ℋ\mathcal{H} is set to h^k\hat{h}_{k}.
+To efficiently evaluate importance criterion in Eq. 1, we expand 𝒞⁡(ℋ)\mathcal{C}(\mathcal{H}) at point hk=h^kh_{k}=\hat{h}_{k} using Taylor expansion (Molchanov et al., 2017) as
+𝒞⁡(ℋ)=𝒞⁡(ℋhk=h^k)+∇h^k𝒞⋅(hk−h^k)+R⁡(hk),\mathcal{C}(\mathcal{H})=\mathcal{C}(\mathcal{H}_{h_{k}=\hat{h}_{k}})+{\nabla_{\hat{h}_{k}}\mathcal{C}\cdot(h_{k}-\hat{h}_{k})}+R(h_{k}),
+(2)
+where ∇h^k𝒞\nabla_{\hat{h}_{k}}\mathcal{C} denotes the gradient of 𝒞⁡(ℋ)\mathcal{C}(\mathcal{H}) w.r.t hkh_{k} at point hk=h^kh_{k}=\hat{h}_{k} and R⁡(hk)R(h_{k}) refers to the first order remainder.
+Combining Eq. 1 and Eq. 2, we can obtain the importance score of the kk-th neuron as
+Δ​𝒞k=𝒞⁡(ℋhk=h^k)−𝒞⁡(ℋhk=0)=h^k⋅∇h^k𝒞−R⁡(hk)≈h^k⋅∇h^k𝒞,\Delta\mathcal{C}_{k}=\mathcal{C}(\mathcal{H}_{h_{k}=\hat{h}_{k}})-\mathcal{C}(\mathcal{H}_{h_{k}=0})=\hat{h}_{k}\cdot\nabla_{\hat{h}_{k}}\mathcal{C}-R(h_{k})\approx\hat{h}_{k}\cdot\nabla_{\hat{h}_{k}}\mathcal{C},
+(3)
+where R⁡(hk)R(h_{k}) is omitted for approximation.
+For the sequence with NN tokens in large vision transformers, we evaluate the importance score of kk-th hidden neuron in MLP module by
+ℐk=|∑n=1NΔ​𝒞k(n)|=|∑n=1Nh^k(n)⋅∇h^k(n)𝒞|,\mathcal{I}_{k}=\left|\sum_{n=1}^{N}\Delta\mathcal{C}_{k}^{(n)}\right|=\left|\sum_{n=1}^{N}\hat{h}_{k}^{(n)}\cdot\nabla_{\hat{h}_{k}^{(n)}}\mathcal{C}\right|,
+(4)
+where all kk-th hidden neurons are summed over token sequence for multi-variate function 𝒞⁡(ℋ)\mathcal{C}(\mathcal{H}) and Δ​𝒞k(n)\Delta\mathcal{C}_{k}^{(n)} denotes the importance of kk-th neuron from nn-th token in sequence.
+3.3 Information Entropy for Neuron Importance Evaluation
+Figure 2: One-hot cross entropy vs information entropy for neuron importance evaluation.
+Our proposed information entropy exploits all predictions of the model for more accurate importance evaluation.
+Generally, the previous Taylor based methods (Molchanov et al., 2017) take one-hot cross entropy loss as the criterion 𝒞⁡(ℋ)\mathcal{C}(\mathcal{H}) for the computation of importance score ℐk\mathcal{I}_{k} to measure the sensitivity of model performance after pruning.
+Nevertheless, as Fig. 2 (a), one-hot cross entropy criterion only takes the prediction probability corresponding to label into account, while other prediction probabilities are fully ignored, thereby missing key information during importance evaluation.
+In this section, we introduce information entropy as the criterion for importance evaluation as Fig. 2 (b), where all prediction possibilities are exploited for more accurate importance scores.
+However, the original prediction possibilities of large vision transformers are not always available.
+For example, DINOv2 series models (Oquab et al., 2023) only provides the weights of backbone, while the module weights for prediction possibilities are not published.
+To this end, we introduce a general solution based on inter-instance similarity to compute the prediction possibilities without dependency on extra module or the original loss function.
+Specifically, we obtain inter-instance similarity matrix s∈ℝB×Bs\in\mathbb{R}^{B\times B} between BB image representations in mini-batch.
+The similarity between the ii-th image and the jj-th one can be computed by
+si​j=zicls⋅zjcls‖zicls‖⋅‖zjcls‖,s_{ij}=\frac{z_{i}^{\rm cls}\cdot z_{j}^{\rm cls}}{\|z_{i}^{\rm cls}\|\cdot\|z_{j}^{\rm cls}\|},
+(5)
+where ziclsz_{i}^{\rm cls} stands for the representation of the ii-th image output by the last block of transformer model.
+Then, we apply softmax operation on similarity matrix ss to obtain prediction possibility matrix p∈ℝB×Bp\in\mathbb{R}^{B\times B} by
+pi​j=exp⁡(si​j/τ)∑j′=1Bexp⁡(si​j′/τ),p_{ij}=\frac{\exp{(s_{ij}/\tau)}}{\sum_{j^{\prime}=1}^{B}{\exp{(s_{ij^{\prime}}/\tau)}}},
+(6)
+where τ\tau is a temperature coefficient to scale the range of si​js_{ij} from [−1,1][-1,1] to [−1/τ,1/τ][-1/\tau,1/\tau].
+Finally, we obtain the information entropy criterion as below
+ℰ=−1B∑i=1B∑j=1Bpi​j⋅logpi​j.\mathcal{E}=-\frac{1}{B}\sum_{i=1}^{B}\sum_{j=1}^{B}{p_{ij}\cdot\log{p_{ij}}}.
+(7)
+Compared to cross entropy criterion, our proposed information criterion has the following advantages.
+First, our criterion doesn’t rely on the loss function for the training of the original model, thus unifying the importance evaluation of different models.
+Second, our criterion doesn’t require labeled dataset for importance evaluation.
+Third, our criterion enables the importance evaluation without additional modules, e.g. DINO head module for DINOv2 and text encoder for CLIP, thus improving the evaluation efficiency.
+3.4 Adaptive MLP Pruning
+Figure 3: Adaptive MLP Pruning.
+In each pruning step, we conduct binary search algorithm to adaptively reduce the search range of optimal hidden size into half according to information entropy ℰ\mathcal{E}, until the maximum pruning step number reaches.
+If the increment of information entropy within the range of Δ​ℰ\Delta\mathcal{E}, we further prune the hidden neurons of MLP.
+Otherwise, we reduce the number of pruned neurons in the previous step.
+As shown in Fig. 3, the value of our proposed information entropy criterion decreases with the increment of hidden size in MLP.
+11
+1
+We visualize this relation on OpenCLIP-g model in the appendix.
+In other words, the prediction uncertainty of model is reduced when the capacity of model is improved.
+We set an increment entropy threshold Δ​ℰ\Delta\mathcal{E} after pruning to keep performance degradation within acceptable range.
+Let M0M_{0} denotes the hidden size of MLP in the original model, where all hidden sizes of MLP modules in one transformer model are identical.
+Algorithm 1  Adaptive MLP Pruning
+1:
+The hidden size of the original model M0M_{0};
+iteration number tmaxt_{\rm max};
+2:
+The hidden sizes of MLPs after pruning {Mres(l)}l=1L\{M_{\rm res}^{(l)}\}_{l=1}^{L}
+3:
+Evaluate the entropy of the model ℰ0(L)\mathcal{E}_{0}^{(L)} on dataset 𝒟prune\mathcal{D}_{\rm prune};
+4:
+for  block ll = LL to 1  do
+5:
+Initialize Mmin=0M_{\rm min}=0 and Mmax=M0M_{\rm max}=M_{0};
+6:
+Initialize Mres(l)=M0M_{\rm res}^{(l)}=M_{0} and ℰres(l)=ℰ0(l)\mathcal{E}_{\rm res}^{(l)}=\mathcal{E}_{0}^{(l)};
+7:
+for tt = 1 to tmaxt_{\rm max} do
+8:
+Obtain hidden size after pruning Mt(l)=Mmin+Mmax2M_{t}^{(l)}=\frac{M_{\rm min}+M_{\rm max}}{2};
+9:
+Evaluate the entropy of these pruned model ℰt(l)\mathcal{E}_{t}^{(l)} on dataset 𝒟prune\mathcal{D}_{\rm prune};
+10:
+if ℰt(l)−ℰ0(l)<Δ​ℰ\mathcal{E}_{t}^{(l)}-\mathcal{E}_{0}^{(l)}<\Delta\mathcal{E} then
+11:
+Mmax=Mt(l)M_{\rm max}=M_{t}^{(l)}
+12:
+Mres(l)=Mt(l)M_{\rm res}^{(l)}=M_{t}^{(l)}
+13:
+ℰres(l)=ℰt(l)\mathcal{E}_{\rm res}^{(l)}=\mathcal{E}_{t}^{(l)}
+14:
+else
+15:
+Mmin=MtM_{\rm min}=M_{t}
+16:
+end if
+17:
+end for
+18:
+ℰ0(l−1)=ℰres(l)\mathcal{E}_{0}^{(l-1)}=\mathcal{E}_{\rm res}^{(l)}
+19:
+end for
+Our MLP pruning task can be formalized as a problem to search an optimal hidden size in the range of [0,M0][0,M_{0}].
+We set the search range to [Mmin,Mmax][M_{\rm min},M_{\rm max}], where MminM_{\rm min} and MmaxM_{\rm max} are initialized to 0 and M0M_{0}, respectively.
+To efficiently search the optimal hidden size, we follow the idea of binary search algorithm to evaluate information entropy ℰt(l)\mathcal{E}_{t}^{(l)} on small dataset 𝒟prune\mathcal{D}_{\rm prune} when the hidden size of block ll is reduced to Mt(l)=Mmin+Mmax2M_{t}^{(l)}=\frac{M_{\rm min}+M_{\rm max}}{2} at the search step tt.
+If ℰt(l)−ℰ0(l)<Δ​ℰ\mathcal{E}_{t}^{(l)}-\mathcal{E}_{0}^{(l)}<\Delta\mathcal{E}, we update the search range from [Mmin,Mmax][M_{\rm min},M_{\rm max}] to [Mmin,Mt(l)][M_{\rm min},M_{t}^{(l)}] for further pruning, where ℰ0(l)\mathcal{E}_{0}^{(l)} denotes entropy before the pruning of block ll and Δ​ℰ\Delta\mathcal{E} indicates the threshold of entropy variance.
+Otherwise, the search range is updated from [Mmin,Mmax][M_{\rm min},M_{\rm max}] to [Mt(l),Mmax][M_{t}^{(l)},M_{\rm max}] to reduce the number of pruned neurons in the previous step.
+After each search step, the size of search range is reduced to half of the original one, until the maximum search step tmaxt_{\rm max} is reached or the size of search range is reduced to 1.
+The overall algorithm is described in Algorithm 1.
+3.5 Knowledge Distillation
+In this section, we take the original model as the teacher to guide the performance recover of the model with reduced MLP module.
+The outputs of teacher’s last transformer block can be represented as zclsz^{\rm cls} and zpatchz^{\rm patch}, where zcls∈ℝCz^{\rm cls}\in\mathbb{R}^{C} and zpatch∈ℝN×Cz^{\rm patch}\in\mathbb{R}^{N\times C} are the embeddings of class token and patch tokens, respectively.
+Similarly, the outputs of student’s last block are z^cls\hat{z}^{\rm cls} and z^patch\hat{z}^{\rm patch}, whose dimension sizes are identical to the ones of zclsz^{\rm cls} and zpatchz^{\rm patch}.
+To recover the performance of the pruned model, we conduct knowledge distillation using mean squared error loss on class token and patch tokens as
+ℒdistill=1C​‖zcls−z^cls‖2+1N⋅C​‖zpatch−z^patch‖2.\mathcal{L}_{\rm distill}=\frac{1}{C}\|z^{\rm cls}-\hat{z}^{\rm cls}\|^{2}+\frac{1}{N\cdot C}\|z^{\rm patch}-\hat{z}^{\rm patch}\|^{2}.
+(8)
+Due to the consistent dimension and the weight affinity between the original model and the pruned one, the model pruned by our method can efficiently transfer knowledge from the original model.
+4 Experiments
+4.1 Experimental Settings
+We conduct knowledge distillation on training set of ImageNet-1K (Russakovsky et al., 2015) without labels, which contains only 0.06% data of LAION-2B (Schuhmann et al., 2022).
+We randomly sample 50,00050,000 images from training set of ImageNet-1K as the dataset for binary search based pruning, namely 𝒟prune\mathcal{D}_{\rm prune}.
+All images for distillation and evaluation are resized into 224×224224\times 224.
+We evaluate our method on several popular benchmarks.
+For CLIP-style models, we evaluate the models on zero-shot image classification of various ImageNet variants (including ImageNet-1K, ImageNet-V2 (Recht et al., 2019), ImageNet-Adv (Hendrycks et al., 2021b), ImageNet-R (Hendrycks et al., 2021a) and ImageNet-Sketch (Wang et al., 2019)) and ObjectNet (Barbu et al., 2019) using CLIP benchmark (LAION-AI, 2023).
+To further validate the effectiveness of our method, we also estimate our method on zero-shot image and text retrieval tasks of Flickr30K (Young et al., 2014) and COCO (Lin et al., 2014).
+Additionally, all text encoder of CLIP-style models are fixed without pruning or finetuning.
+For DINOv2-g, we evaluate its performance model on ImageNet-1K using kNN evaluation protocol.
+Moreover, we also evaluate CLIP-style models using kNN evaluation protocol.
+All models are trained on GPU servers with 8×8\times A6000 GPUs for 10 epochs, including the first 1 epoch for warming-up.
+We adopt AdamW (Loshchilov, 2017) optimizer with bfloat16 precision for model training.
+The learning rate follows a cosine schedule from lr to zero, where lr = base_lr ×\times batch_size / 256.
+The base learning rates and batch sizes for different models are listed in the appendix.
+We set the number of step for binary pruning tmaxt_{\rm max} to 6.
+Other pruning hyper-parameters, including Δ​ℰ\Delta\mathcal{E} and temperature coefficient τ\tau, are set according to the backbones of pruned models and can be found in the appendix.
+Table 1: The performance comparison on zero-shot image classification tasks of various ImageNet variants and ObjectNet.
+“#Params” denotes the number of vision encoder’s parameters, excluding the parameters of text encoder.
+Throughout is averaged over 10 runs on single A6000 GPU with batch size of 1000.
+“prune” and “distill” indicate the pruned model without finetuning and the distilled one, respectively.
+Method
+#Params
+FLOPs
+Throughout
+IN-1K
+IN-Adv
+IN-R
+IN-V2
+IN-Ske
+ObjectNet
+Avg. Acc.
+OpenCLIP-g (Cherti et al., 2023)
+1.01B
+0.52T
+150.8 imgs/s
+78.5%
+60.8%
+90.2%
+71.7%
+67.5%
+69.2%
+73.0%
+OpenCLIP-g (ours, prune)
+0.62B
+0.32T
+222.3 imgs/s
+65.0%
+34.0%
+74.4%
+57.7%
+43.9%
+47.9%
+53.8%
+OpenCLIP-g (ours, distill)
+0.62B
+0.32T
+222.3 imgs/s
+78.4%
+60.8%
+90.5%
+71.5%
+67.9%
+69.4%
+73.1%
+OpenCLIP-G (Wortsman, 2023)
+1.84B
+0.95T
+90.6 imgs/s
+80.1%
+69.3%
+92.1%
+73.6%
+68.9%
+73.0%
+76.2%
+OpenCLIP-G (ours, prune)
+1.17B
+0.60T
+135.8 imgs/s
+70.2%
+37.1%
+78.3%
+62.7%
+50.9%
+51.1%
+58.4%
+OpenCLIP-G (ours, distill)
+1.17B
+0.60T
+135.8 imgs/s
+80.1%
+68.4%
+91.9%
+73.4%
+68.9%
+72.8%
+75.9%
+EVA-CLIP-E (Sun et al., 2023)
+4.35B
+2.23T
+43.1 imgs/s
+82.0%
+82.1%
+94.5%
+75.7%
+71.6%
+79.6%
+80.9%
+EVA-CLIP-E (ours, prune)
+2.50B
+1.28T
+69.5 imgs/s
+59.2%
+18.6%
+59.8%
+51.3%
+34.9%
+40.6%
+44.1%
+EVA-CLIP-E (ours, distill)
+2.50B
+1.28T
+69.5 imgs/s
+82.0%
+82.3%
+94.6%
+75.1%
+71.7%
+79.6%
+81.0%
+EVA-CLIP-8B (Sun et al., 2024)
+7.53B
+3.86T
+20.8 imgs/s
+83.5%
+85.2%
+95.3%
+77.7%
+74.3%
+81.2%
+82.9%
+EVA-CLIP-8B (ours, prune)
+4.59B
+2.35T
+30.1 imgs/s
+61.7%
+49.9%
+66.5%
+53.1%
+34.9%
+47.9%
+52.3%
+EVA-CLIP-8B (ours, distill)
+4.59B
+2.35T
+30.1 imgs/s
+83.7%
+85.6%
+95.3%
+77.7%
+74.0%
+81.3%
+82.9%
+4.2 Zero-Shot Image Classification
+To validate the effectiveness of our method, we prune the state-of-the-art CLIP models and then finetune the pruned models by knowledge distillation.
+Both pruned and distilled models are evaluated on zero-shot classification tasks of various ImageNet-1K variants and ObjectNet datasets.
+The results reported in Table 1 indicate that our method achieves about 40% parameter and FLOPs reduction for all models.
+We also report image throughout of the pruned models to evaluate their performance in reality.
+All models pruned by our method accomplishes roughly 1.5×1.5\times inference acceleration.
+In spite of large parameter reduction without finetuning, the models pruned by our method maintain a very promising performance on zero-shot classification tasks.
+When finetuned using knowledge distillation, our pruned models can well recover the performance as their original versions, respectively.
+In some cases, the distilled models, including OpenCLIP-g (ours, distill) and EVA-CLIP-E (ours, distill), even slightly outperform the original models.
+Table 2: The performance comparison on zero-shot retrieval task of Flickr30K and COCO datasets.
+“R@K” is short for Recall@K.
+“MR” is short for mean recall, which is average value of all recall metrics.
+Zero-Shot Text Retrieval (text →\rightarrow image)
+Zero-Shot Image Retrieval (image →\rightarrow text)
+Method
+#Params
+Flickr30K
+COCO
+Flickr30K
+COCO
+MR
+R@1
+R@5
+R@10
+R@1
+R@5
+R@10
+R@1
+R@5
+R@10
+R@1
+R@5
+R@10
+OpenCLIP-g (Cherti et al., 2023)
+1.01B
+91.5
+98.9
+99.5
+66.4
+86.0
+91.8
+77.5
+94.1
+96.7
+48.7
+73.2
+81.4
+83.8
+OpenCLIP-g (ours, prune)
+0.62B
+83.4
+95.7
+97.7
+56.6
+79.3
+86.3
+69.5
+88.8
+93.2
+41.6
+66.6
+76.3
+77.9
+OpenCLIP-g (ours, distill)
+0.62B
+91.6
+99.1
+99.6
+66.2
+86.5
+91.9
+77.5
+94.1
+96.7
+49.3
+73.9
+82.0
+84.0
+OpenCLIP-G (Wortsman, 2023)
+1.84B
+92.6
+99.4
+99.8
+66.9
+87.2
+92.8
+79.8
+95.1
+97.0
+51.3
+74.8
+82.9
+85.0
+OpenCLIP-G (ours, prune)
+1.17B
+87.8
+97.9
+99.2
+60.7
+83.0
+89.9
+72.9
+91.2
+94.8
+44.2
+69.2
+78.2
+80.8
+OpenCLIP-G (ours, distill)
+1.17B
+92.0
+99.6
+99.8
+67.1
+87.0
+92.7
+79.9
+95.2
+97.1
+51.5
+75.3
+83.2
+85.0
+EVA-CLIP-E (Sun et al., 2023)
+4.35B
+94.9
+99.3
+99.7
+68.8
+87.8
+93.0
+78.9
+94.4
+97.1
+51.0
+74.8
+82.7
+85.2
+EVA-CLIP-E (ours, prune)
+2.50B
+68.8
+89.3
+93.8
+41.7
+66.2
+76.6
+62.0
+84.5
+90.0
+35.4
+60.3
+70.8
+70.0
+EVA-CLIP-E (ours, distill)
+2.50B
+94.4
+99.3
+99.8
+68.6
+87.9
+93.2
+79.6
+94.5
+96.7
+51.3
+74.9
+82.8
+85.3
+EVA-CLIP-8B (Sun et al., 2024)
+7.53B
+94.4
+99.4
+99.7
+69.6
+88.6
+93.2
+80.9
+95.3
+97.4
+51.7
+75.0
+82.7
+85.7
+EVA-CLIP-8B (ours, prune)
+4.59B
+73.5
+93.9
+96.9
+40.5
+63.3
+73.4
+67.9
+88.6
+93.0
+38.0
+63.3
+73.4
+72.2
+EVA-CLIP-8B (ours, distill)
+4.59B
+94.3
+99.6
+99.8
+70.2
+88.8
+93.4
+81.5
+95.4
+97.6
+52.8
+75.8
+83.5
+86.1
+4.3 Zero-Shot Retrieval
+We further evaluate our pruned models on zero-shot retrieval tasks of Flickr30K and COCO datasets, including zero-shot text retrieval and zero-shot image retrieval tasks.
+The experimental results in Table 2 demonstrate that our distilled models consistently achieve comparable performance as the corresponding original models.
+For global metric, mean recall (MR), our distilled models, including OpenCLIP-g (ours, distill), EVA-CLIP-E (ours, distill) and EVA-CLIP-8B (ours, distill), even surpass the original models with significantly fewer parameters.
+Especially, our distilled EVA-CLIP-8B achieves 0.4% MR gain over the original model.
+These results indeed support that our method can effectively reduce redundant parameters of MLP modules in large vision transformers in a lossless manner.
+Table 3:
+Performance comparison of different pruning strategies on average zero-shot classification accuracy of ImageNet variants and ObjectNet.
+“original” denotes the original model without compression.
+OpenCLIP-g
+EVA-CLIP-E
+Method
+prune
+distill
+prune
+distill
+original
+-
+73.0%
+-
+80.9%
+random pruning
+0.4%
+67.4%
+0.4%
+75.8%
+ℓ2\ell_{2} norm pruning
+1.6%
+69.3%
+0.7%
+78.3%
+Taylor pruning (Molchanov et al., 2017)
+9.6%
+70.6%
+1.5%
+79.1%
+SAViT (Zheng et al., 2022)
+10.3%
+70.9%
+2.1%
+79.3%
+NViT (Yang et al., 2023)
+11.1%
+71.0%
+2.2%
+79.6%
+AMR (ours)
+53.8%
+73.1%
+44.1%
+81.0%
+4.4 Comparison to Other Pruning Methods
+To evaluate the superiority of our method, we also compare our method with other state-of-the-art pruning methods.
+For random, ℓ2\ell_{2} and SAViT pruning, the hidden sizes of MLP module are pruned to 2645 for OpenCLIP-g and 7358 for EVA-CLIP-E, thus containing the equal parameter number as our pruned models for fair comparison.
+For Taylor pruning and NViT, we adopt adaptive pruning with consistent model parameters after pruning as our pruned model.
+As shown in Table 3, our pruned models outperform other pruning methods by a large margin, such as 42.7% performance gain on OpenCLIP-g,when the pruned models are not finetuned.
+When all pruned models are finetuned using knowledge distillation, our method consistently outperforms other methods.
+For example, our distilled EVA-CLIP-E outperforms the second best method NViT by 2.1% average zero-shot classification accuracy.
+The experimental results indeed support the superiority of our proposed method.
+Table 4: The performance comparison on ImageNet-1K using kNN evaluation protocol.
+The outputs of the last transformer block are used to evaluate the kNN performance.
+Method
+#Params
+FLOPs
+kNN (%)
+OpenCLIP-g (Cherti et al., 2023)
+1.01B
+0.52T
+81.7
+OpenCLIP-g (ours, prune)
+0.62B
+0.32T
+72.8
+OpenCLIP-g (ours, distill)
+0.62B
+0.32T
+81.7
+OpenCLIP-G (Wortsman, 2023)
+1.84B
+0.95T
+82.9
+OpenCLIP-G (ours, prune)
+1.17B
+0.60T
+74.7
+OpenCLIP-G (ours, distill)
+1.17B
+0.60T
+82.8
+EVA-CLIP-E (Sun et al., 2023)
+4.35B
+2.23T
+85.8
+EVA-CLIP-E (ours, prune)
+2.50B
+1.28T
+72.2
+EVA-CLIP-E (ours, distill)
+2.50B
+1.28T
+85.9
+EVA-CLIP-8B (Sun et al., 2024)
+7.53B
+3.86T
+86.0
+EVA-CLIP-8B (ours, prune)
+4.59B
+2.35T
+74.4
+EVA-CLIP-8B (ours, distill)
+4.59B
+2.35T
+86.1
+DINOv2-g (Oquab et al., 2023)
+1.14B
+0.30T
+83.5
+DINOv2-g (ours, prune)
+0.62B
+0.16T
+76.4
+DINOv2-g (ours, distill)
+0.62B
+0.16T
+83.5
+4.5 kNN Evaluation
+For more comprehensive comparison, we further evaluate our method on ImageNet-1K using kNN evaluation protocol, which is also applicable to pure vision transformer, such as DINOv2-g.
+As the results in Table 4, our distilled models achieve comparable performance as the original models with significantly fewer parameters, even slightly superior to the original ones in some cases.
+For example, EVA-CLIP-E (ours, distill) improves kNN accuracy from 85.8% to 85.9%, while only leveraging 57.5% parameters of the original one.
+For pure vision transformer, the performance of compressed DINOv2-g model also reaches the one before pruning with only 54.4% parameters of the original one.
+The above results exhibit the effectiveness of our method on pure vision transformer.
+4.6 Ablation Study
+4.6.1 The Effect of Information Entropy Criterion
+To validate the effectiveness of our proposed criterion for neuron importance evaluation, we replace our proposed criterion with the popular criterion for Taylor pruning, cross entropy.
+For fair comparison, the parameters of model are reduced into roughly equal size.
+The results in Table 5 show that our proposed information entropy criterion is significantly superior to cross entropy on all zero-shot classification tasks.
+It indeed supports that our proposed criterion can provide more accurate importance scores for pruning, thus achieving higher performance after pruning.
+Table 5: The effect of different criteria on zero-shot classification tasks.
+Criterion
+#Params
+IN-1K
+IN-Adv
+IN-R
+IN-V2
+IN-Ske
+ObjectNet
+Avg. Acc.
+Cross Entropy
+0.65B
+60.2%
+30.8%
+69.6%
+53.9%
+40.3%
+44.5%
+50.0%
+Information Entropy (ours)
+0.62B
+65.0%
+34.0%
+74.4%
+57.7%
+43.9%
+47.9%
+53.8%
+4.6.2 The Effect of Binary Search
+We compare our method with plain Taylor pruning with uniform pruning to analyze the effect of our proposed binary search strategy.
+For fairness, the hidden sizes of MLPs in the model pruned by plain Taylor pruning are reduced from 6144 to 2645, thus containing roughly equal parameter number as our pruned model.
+The results in Table 6 show that our method outperforms the plain Taylor pruning method by a significantly large margin, 64.5% average zero-shot classification accuracy on 6 benchmarks.
+It reveals that our method can adaptively reduce MLP modules in large vision transformer according to different redundancies.
+Table 6: The effect of binary search on zero-shot classification tasks.
+Criterion
+IN-1K
+IN-Adv
+IN-R
+IN-V2
+IN-Ske
+ObjectNet
+Avg. Acc.
+Taylor Pruning
+8.2%
+2.9%
+14.5%
+5.8%
+2.7%
+9.6%
+7.3%
+Binary Search (ours)
+65.0%
+34.0%
+74.4%
+57.7%
+43.9%
+47.9%
+53.8%
+4.6.3 The Effect of Entropy Threshold
+Furthermore, we analyze the effect of entropy threshold Δ​ℰ\Delta\mathcal{E} for the termination of pruning.
+As shown in Table 7, we report the average classification accuracy of 6 zero-shot classification benchmarks, where the range of entropy threshold Δ​ℰ\Delta\mathcal{E} is from 1×10−41\times 10^{-4} to 1×10−11\times 10^{-1}.
+As expected, the parameter number of the pruned model is reduced with the increment of entropy threshold Δ​ℰ\Delta\mathcal{E} from 0.73B to 0.43B and their corresponding average zero-shot accuracy is ranged from 62.5% to 31.3%.
+It demonstrates that a smaller increment in information entropy enables more discriminative capability of the pruned model, but also smaller parameter reduction.
+Table 7: The effect of entropy threshold on zero-shot classification tasks.
+Threshold Δ​ℰ\Delta\mathcal{E}
+1×10−41\times 10^{-4}
+1×10−31\times 10^{-3}
+5×10−35\times 10^{-3}
+1×10−21\times 10^{-2}
+2×10−22\times 10^{-2}
+4×10−24\times 10^{-2}
+1×10−11\times 10^{-1}
+#Params
+0.73B
+0.72B
+0.69B
+0.66B
+0.61B
+0.54B
+0.43B
+Avg. Acc.
+62.5%
+61.5%
+57.6%
+53.8%
+48.5%
+41.7%
+31.3%
+5 Conclusion and Future Work
+In this paper, we study the compression of large vision transformers by the reduction of parameter-intensive MLP modules.
+To this end, we propose an Adaptive MLP Pruning method to significantly compress state-of-the-art large vision transformers in a near lossless manner.
+For more accurate neuron importance scores, we introduce a label-free information entropy criterion to fully model the prediction distribution during importance evaluation.
+Based on the obtained importance scores, we perform binary search algorithm to eliminate redundant hidden neurons of MLP modules in an adaptive fashion.
+Finally, we take the original model as the teacher to guide the pruned model for performance recover.
+Experimental results indicate that our method can substantially compress large vision transformers with only slight performance degradation.
+To further compress large vision transformer, we plan to explore the adaptive reduction of multi-head self-attention modules in future work.
+Moreover, we also expect to extend our method to the acceleration of large language model.
+References
+Barbu et al. (2019)
+Andrei Barbu, David Mayo, Julian Alverio, William Luo, Christopher Wang, Dan
+Gutfreund, Josh Tenenbaum, and Boris Katz.
+Objectnet: A large-scale bias-controlled dataset for pushing the
+limits of object recognition models.
+Advances in Neural Information Processing Systems (NeurIPS),
+32, 2019.
+Bolya et al. (2023)
+Daniel Bolya, Cheng-Yang Fu, Xiaoliang Dai, Peizhao Zhang, Christoph
+Feichtenhofer, and Judy Hoffman.
+Token merging: Your vit but faster.
+In International Conference on Learning Representations
+(ICLR), 2023.
+Chang et al. (2023)
+Shuning Chang, Pichao Wang, Ming Lin, Fan Wang, David Junhao Zhang, Rong Jin,
+and Mike Zheng Shou.
+Making vision transformers efficient from a token sparsification
+view.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  6195–6205, 2023.
+Chavan et al. (2022)
+Arnav Chavan, Zhiqiang Shen, Zhuang Liu, Zechun Liu, Kwang-Ting Cheng, and
+Eric P Xing.
+Vision transformer slimming: Multi-dimension searching in continuous
+optimization space.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  4931–4941, 2022.
+Cherti et al. (2023)
+Mehdi Cherti, Romain Beaumont, Ross Wightman, Mitchell Wortsman, Gabriel
+Ilharco, Cade Gordon, Christoph Schuhmann, Ludwig Schmidt, and Jenia Jitsev.
+Reproducible scaling laws for contrastive language-image learning.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  2818–2829, 2023.
+Han et al. (2015)
+Song Han, Jeff Pool, John Tran, and William Dally.
+Learning both weights and connections for efficient neural network.
+Advances in Neural Information Processing Systems (NeurIPS),
+28, 2015.
+He & Zhou (2024)
+Yang He and Joey Tianyi Zhou.
+Data-independent module-aware pruning for hierarchical vision
+transformers.
+In International Conference on Learning Representations
+(ICLR), 2024.
+Hendrycks et al. (2021a)
+Dan Hendrycks, Steven Basart, Norman Mu, Saurav Kadavath, Frank Wang, Evan
+Dorundo, Rahul Desai, Tyler Zhu, Samyak Parajuli, Mike Guo, et al.
+The many faces of robustness: A critical analysis of
+out-of-distribution generalization.
+In Proceedings of the IEEE International Conference on Computer
+Vision (ICCV), pp.  8340–8349, 2021a.
+Hendrycks et al. (2021b)
+Dan Hendrycks, Kevin Zhao, Steven Basart, Jacob Steinhardt, and Dawn Song.
+Natural adversarial examples.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  15262–15271, 2021b.
+LAION-AI (2023)
+LAION-AI.
+Clip benchmark: Clip-like model evaluation.
+https://github.com/LAION-AI/CLIP_benchmark, 2023.
+Li et al. (2017)
+Hao Li, Asim Kadav, Igor Durdanovic, Hanan Samet, and Hans Peter Graf.
+Pruning filters for efficient convnets.
+In International Conference on Learning Representations
+(ICLR), 2017.
+Lin et al. (2014)
+Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva
+Ramanan, Piotr Dollár, and C Lawrence Zitnick.
+Microsoft coco: Common objects in context.
+In European Conference on Computer Vision (ECCV), pp. 740–755. Springer, 2014.
+Liu et al. (2017)
+Zhuang Liu, Jianguo Li, Zhiqiang Shen, Gao Huang, Shoumeng Yan, and Changshui
+Zhang.
+Learning efficient convolutional networks through network slimming.
+In Proceedings of the IEEE International Conference on Computer
+Vision (ICCV), pp.  2736–2744, 2017.
+Long et al. (2023)
+Sifan Long, Zhen Zhao, Jimin Pi, Shengsheng Wang, and Jingdong Wang.
+Beyond attentive tokens: Incorporating token importance and diversity
+for efficient vision transformers.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  10334–10343, 2023.
+Loshchilov (2017)
+I Loshchilov.
+Decoupled weight decay regularization.
+arXiv preprint arXiv:1711.05101, 2017.
+Luo et al. (2024)
+Yang Luo, Zhineng Chen, Peng Zhou, Zuxuan Wu, Xieping Gao, and Yu-Gang Jiang.
+Learning to rank patches for unbiased image redundancy reduction.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  22831–22840, 2024.
+Meng et al. (2022)
+Lingchen Meng, Hengduo Li, Bor-Chun Chen, Shiyi Lan, Zuxuan Wu, Yu-Gang Jiang,
+and Ser-Nam Lim.
+Adavit: Adaptive vision transformers for efficient image recognition.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  12309–12318, 2022.
+Molchanov et al. (2017)
+Pavlo Molchanov, Stephen Tyree, Tero Karras, Timo Aila, and Jan Kautz.
+Pruning convolutional neural networks for resource efficient
+inference.
+In International Conference on Learning Representations
+(ICLR), 2017.
+Molchanov et al. (2019)
+Pavlo Molchanov, Arun Mallya, Stephen Tyree, Iuri Frosio, and Jan Kautz.
+Importance estimation for neural network pruning.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  11264–11272, 2019.
+Oquab et al. (2023)
+Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy Vo, Marc
+Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa,
+Alaaeldin El-Nouby, et al.
+Dinov2: Learning robust visual features without supervision.
+arXiv preprint arXiv:2304.07193, 2023.
+Rao et al. (2021)
+Yongming Rao, Wenliang Zhao, Benlin Liu, Jiwen Lu, Jie Zhou, and Cho-Jui Hsieh.
+Dynamicvit: Efficient vision transformers with dynamic token
+sparsification.
+Advances in Neural Information Processing Systems (NeurIPS),
+34:13937–13949, 2021.
+Recht et al. (2019)
+Benjamin Recht, Rebecca Roelofs, Ludwig Schmidt, and Vaishaal Shankar.
+Do imagenet classifiers generalize to imagenet?
+In International Conference on Machine Learning (ICML), pp. 5389–5400. PMLR, 2019.
+Russakovsky et al. (2015)
+Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma,
+Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein,
+Alexander C. Berg, and Li Fei-Fei.
+Imagenet large scale visual recognition challenge.
+International Journal of Computer Vision (IJCV), 115(3):211–252, 2015.
+Schuhmann et al. (2022)
+Christoph Schuhmann, Romain Beaumont, Richard Vencu, Cade Gordon, Ross
+Wightman, Mehdi Cherti, Theo Coombes, Aarush Katta, Clayton Mullis, Mitchell
+Wortsman, et al.
+Laion-5b: An open large-scale dataset for training next generation
+image-text models.
+Advances in Neural Information Processing Systems (NeurIPS),
+35:25278–25294, 2022.
+Shen et al. (2025)
+Chengchao Shen, Hourun Zhu, Gongfan Fang, Jianxin Wang, and Xinchao Wang.
+Diversity-guided mlp reduction for efficient large vision
+transformers.
+arXiv preprint arXiv:2506.07138, 2025.
+Shim et al. (2024)
+Kyunghwan Shim, Jaewoong Yun, and Shinkook Choi.
+Snp: Structured neuron-level pruning to preserve attention scores.
+In European Conference on Computer Vision (ECCV), 2024.
+Sun et al. (2023)
+Quan Sun, Yuxin Fang, Ledell Wu, Xinlong Wang, and Yue Cao.
+Eva-clip: Improved training techniques for clip at scale.
+arXiv preprint arXiv:2303.15389, 2023.
+Sun et al. (2024)
+Quan Sun, Jinsheng Wang, Qiying Yu, Yufeng Cui, Fan Zhang, Xiaosong Zhang, and
+Xinlong Wang.
+Eva-clip-18b: Scaling clip to 18 billion parameters.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), 2024.
+Tang & Shen (2025)
+Hao Tang and Chengchao Shen.
+Learning compact vision tokens for efficient large multimodal models.
+arXiv preprint arXiv:2506.07138, 2025.
+Wang et al. (2019)
+Haohan Wang, Songwei Ge, Zachary Lipton, and Eric P Xing.
+Learning robust global representations by penalizing local predictive
+power.
+Advances in Neural Information Processing Systems (NeurIPS),
+32, 2019.
+Wang et al. (2022)
+Zhenyu Wang, Hao Luo, Pichao Wang, Feng Ding, Fan Wang, and Hao Li.
+Vtc-lfc: Vision transformer compression with low-frequency
+components.
+Advances in Neural Information Processing Systems (NeurIPS),
+35:13974–13988, 2022.
+Wei et al. (2023)
+Siyuan Wei, Tianzhu Ye, Shen Zhang, Yao Tang, and Jiajun Liang.
+Joint token pruning and squeezing towards more aggressive compression
+of vision transformers.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  2092–2101, 2023.
+Wortsman (2023)
+Mitchell Wortsman.
+Reaching 80% zero-shot accuracy with openclip: Vit-g/14 trained on
+laion-2b, 2023.
+Yang et al. (2023)
+Huanrui Yang, Hongxu Yin, Maying Shen, Pavlo Molchanov, Hai Li, and Jan Kautz.
+Global vision transformer pruning with hessian-aware saliency.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), pp.  18547–18557, 2023.
+Yin et al. (2022)
+Hongxu Yin, Arash Vahdat, Jose Alvarez, Arun Mallya, Jan Kautz, and Pavlo
+Molchanov.
+Adavit: Adaptive tokens for efficient vision transformer.
+In Proceedings of the IEEE Conference on Computer Vision and
+Pattern Recognition (CVPR), 2022.
+Young et al. (2014)
+Peter Young, Alice Lai, Micah Hodosh, and Julia Hockenmaier.
+From image descriptions to visual denotations: New similarity metrics
+for semantic inference over event descriptions.
+Transactions of the Association for Computational Linguistics,
+2:67–78, 2014.
+Zheng et al. (2022)
+Chuanyang Zheng, Kai Zhang, Zhi Yang, Wenming Tan, Jun Xiao, Ye Ren, Shiliang
+Pu, et al.
+Savit: Structure-aware vision transformer pruning via collaborative
+optimization.
+Advances in Neural Information Processing Systems (NeurIPS),
+pp.  9010–9023, 2022.
+Appendix A Appendix
+A.1 Implementation Details
+For information entropy based Taylor pruning, we set temperature coefficient τ\tau and entropy threshold Δ​ℰ\Delta\mathcal{E} as Table 8.
+For the knowledge distillation of our method, we adopt AdamW optimizer with bfloat16 precision.
+The learning rates of all models follows a cosine schedule for lr to min_lr, where lr = base_lr ×\times batch_size / 256.
+We summarize batch_size, base_lr and min_lr in Table 8, where the setting of batch_size is based on the memory size of RTX A6000 GPUs (8 ×\times 48G GPUs).
+Table 8:
+The hyperparameters of our method.
+“DDP” and “FSDP” denote distributed data parallel strategy and fully sharded data parallel strategy, respectively.
+Model
+dist. strategy
+temperature τ\tau
+Δ​ℰ\Delta\mathcal{E}
+batch_size
+base_lr
+min_lr
+weight decay
+beta1
+beta2
+OpenCLIP-g
+DDP
+115\frac{1}{15}
+0.01
+512
+5×10−55\times 10^{-5}
+1×10−71\times 10^{-7}
+0
+0.90
+0.95
+OpenCLIP-G
+DDP
+115\frac{1}{15}
+2×10−42\times 10^{-4}
+512
+2×10−52\times 10^{-5}
+1×10−61\times 10^{-6}
+0
+0.90
+0.95
+EVA-CLIP-E
+FSDP
+120\frac{1}{20}
+2×10−32\times 10^{-3}
+512
+1×10−51\times 10^{-5}
+1×10−61\times 10^{-6}
+0
+0.90
+0.95
+EVA-CLIP-8B
+FSDP
+120\frac{1}{20}
+0.02
+160
+1×10−51\times 10^{-5}
+1×10−61\times 10^{-6}
+0
+0.90
+0.95
+DINOv2-g
+DDP
+120\frac{1}{20}
+0.01
+512
+7×10−67\times 10^{-6}
+1×10−71\times 10^{-7}
+0
+0.90
+0.95
+A.2 The Relation Between MLP Hidden Size and Information Entropy
+In this section, we reveal the relation between MLP hidden size and our proposed information entropy criterion on OpenCLIP-g model (the last 9 blocks, the original MLP hidden size is 6144).
+In this case, all hidden neurons of MLPs are ranked by importance scores in descending order.
+As shown in Figure 4, with the increment of MLP hidden size, the value of our proposed information entropy criterion monotonically decreases.
+In other words, the prediction uncertainty of model is reduced, when the MLP hidden size of model increases.
+block 32
+block 33
+block 34
+block 35
+block 36
+block 37
+block 38
+block 39
+block 40
+Figure 4: The relation between MLP hidden size and information entropy.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

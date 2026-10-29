@@ -35,6 +35,10 @@ agent identity monitor 以固定 probe 的 next-token distribution、sqrt-JSD ge
 
 内部可观测时，还可把 circuit 相对参考输入的边排序或权重变化作为质量漂移 proxy，而不是把 activation 看成真实能力。跨模型的浅/深层 divergence 与固定模型相对 ID circuit 的 structural similarity 是两个不同 sensor，不能共享一个适用性声明。[ViT 的受限测量](https://arxiv.org/html/2604.08192v1)中，固定模型 CSS 的 threshold 由39个有 gold 结果的 corruption surrogate 校准；目标切片不再读 label，并不意味着整条方法无标签或无需目标分布假设。Circuit discovery、近似 edge attribution、参考数据与校准本身都有费用，CSS 与准确率相关也不解释内部因果或内在 truth；revision、输入域或阈值失配时，应退回带标签 canary 和独立 evaluation，监控只报变化及校准边界，不直接认证 release 质量。<!-- source-family:SF-2026-ARXIV-2604-08192 -->
 
+白盒 monitor 随 model 换代时，还可能先更换输入坐标，而不是每次用 target 标签重训 probe：固定一组带 identity/order 的 anchor prompts，让每个 model 各自编码它们，把待测 activation 写成到这些 anchors 的 angular-distance profile，再交冻结的 source reader。一个[有限 global-anchoring 分支](https://arxiv.org/html/2610.28366v1#S3)先拼接全部 block 的 residual，再算固定维度的 anchor 坐标，避开 native 宽度、basis 和对应层选择；这仍需要 target 的 anchor setup 与完整白盒 activation，source 标签、选择和 normalization 也没有消失。换模型的接口兼容是经验可检验条件，不是任意 layer 缩放或 prompt 变化下的不变量。
+
+应分别验原 model 可读性、跨 model 判别与实际告警阈值：有限平均 AUROC 保留会掩盖个别 target 近 chance，而 target 专门训练的 probe 仍很强，故迁移失败不能解释成该性质不存在；Guard 标签蒸馏也不成为真实安全 gold。AUROC 与用 target ROC 评价的 10% FPR recall，不证明部署可无标签沿用同一 threshold；更新实验还只覆盖小规模 refusal-SFT/量化，重编码 anchors 并非总能改善。Anchor/position 与 model 版本、source reader/scaler 和适用数据范围须一同验收，采集全部层/生成 tokens、cache/I-O 与所有判分均付费；迁移、误报或完整预算不支持时，保留原 model-specific probe、带真实标签 canary 和独立行为 evaluation，不由可移植读数签发 release 质量、低 FPR 或执行安全。<!-- source-family:SF-2026-ARXIV-2610-28366 -->
+
 容易采集的指标不一定重要。应从用户与平台契约反推：
 
 ```text
@@ -57,6 +61,8 @@ GPU busy 适合回答设备是否在执行，却无法区分有用训练、recom
 
 <!-- source-family:SF-2026-ARXIV-2605-20799 -->
 
+MoE路由热图还须先回答“记录了哪次实际选择、哪些rank和哪个phase”。只在router输出处挂hook，在top-k实际位于下游MoE block时可能根本没采到选择；应从执行真正消费的indices记录，而不是在监控器另算一遍路由。归并时先按runtime mesh识别distinct-token slices：一个实现把DP+SP计数求和，却排除持有相同gate输入的EP副本，否则重复计数会伪装成更大的工作量；不能把这一group名称直接照搬到其它布局。Rollout、update与重算是否计入也必须声明，pause/resume接口本身不证明调用方已经接好phase隔离。采样、collective、host transfer和绘图都付费；全rank参与、冷层、重复挂hook与未识别router还须单独验收，空图不等负载均衡。无法确认采样覆盖或population一致时，保留missing状态、定点已知输入检查及原step/token指标，不由归一热图签发训练质量或自动负载调整。<!-- source-family:SF-2026-GITHUB-VEOMNI-PR787 -->
+
 | 层次 | 示例 | 回答的问题 |
 | --- | --- | --- |
 | Model/quality | evaluation score、fallback、safety violation | 能力是否仍符合用途 |
@@ -65,6 +71,9 @@ GPU busy 适合回答设备是否在执行，却无法区分有用训练、recom
 | Platform/business | lead time、goodput、cost、SLO attainment | 系统是否产生有效结果 |
 
 只观察最底层会产生错觉：GPU busy 可能在 recompute、部分 gang 等待或无效请求上消耗。
+
+在端侧闭源GPU栈中，先不必修改kernel本体：可在native runtime标记embedding、prefill、逐token decode等语义阶段，再为每个kernel保留queue身份和queued、submit、start、end事件，把排队/提交、设备等待与真正执行分开。[受限移动端测量](https://arxiv.org/html/2510.06126v1#S3)采用这两层观测，避免把应用外壳总耗时直接归给模型计算；host单调时钟与device事件仍需分别验证，不能只凭同名timestamp相减就得到跨时钟因果链。总耗时吻合也不批准短sampling等每段同精度；用重复kernel扩大测量窗口得到的是受改写执行人口的差分平均，cache、频率与launch状态未必等于原单次。事件收集、phase标签、存储/回传与独立校准均付费，必须比较profiler on/off及不同governor的完整请求表现；低开销不等零扰动，latency hook也不表示能量测量或自适应控制已实现。时钟、phase边界或开销资格不足时，保留明确unknown、较长region与离线定点校准，不由一个设备的细粒度trace签发全平台SLO。
+<!-- source-family:SF-2025-ARXIV-2510-06126 -->
 
 当瓶颈已进入融合 GPU kernel 内部，计数器或端到端耗时又不足以定位 pipeline wait 时，可以升级到细粒度 trace。但 **trace 不能改变自己声称在观测的对象**：若在源码或 IR 插入探针后重新编译，寄存器分配和指令调度可能变化，低采样开销也不能证明被测二进制仍与生产执行相同。一个更保真的条件分支在已编译的指令流中插入探针，借寄存器活跃性寻找死区，并显式解决数据/结构 hazard；这样保留更多原指令，却仍会引入探针执行开销、架构专用 hazard 表和部署维护成本。
 
@@ -80,6 +89,9 @@ throttling 与 application goodput 必须联合解释。
 可按 policy 聚合判断，attestation 只证明指定 software/boundary 的身份与完整性；任何一层都不能自动证明设备
 会故障、模型结果正确或 workload 应迁移。NVIDIA Fleet Intelligence 作为版本化实现案例支持这类分层，不支持
 把厂商 predictive-failure 效果外推为通用因果结论。
+
+设备故障的相关性也不能只用一种拓扑坐标表示：机柜在机房相邻，未必在网络fabric上相邻，两种邻接混成一张距离表会使相关长度失去明确含义。一条[受限删失寿命模型分支](https://arxiv.org/html/2509.05444v1#S2)把log lifetime写成固定效应与两个独立Gaussian空间随机项之和，分别按机房row/column和fabric重标后的环距离建相关矩阵，再由各自location mapping映回同一设备观测；机柜内cage/slot/node作为固定covariates，failure与censoring记录随设备身份保存。两套support及其Z映射不能不经重排直接相加，重复location使映射后的空间项可仅为半正定，完整观测covariance的严格正定还依赖非退化noise等条件；torus可分离kernel的支持/指数限制也不能推广成任意fabric图的保证。这里物理距离是索引而非温度或米数，logical是旧Titan机柜级folded-torus抽象；两个场独立、条件样本和删失机制均是模型前提，不由“散热/调度”名称识别真实原因。原v1的column环长及raw-time/log-time似然口径未闭，不能静默修公式后发布原posterior参数、Bayes factor或设备故障概率；模型内偏好也不等独立预测、提前检出或迁移效用。OTB单故障类型/竞争DBE右删失的历史数据与同kernel模拟只支持该结构接口，不授现代LLM集群泛化或自动驱逐。原logs/拓扑inventory、两映射与kernel、prior/全部拟合诊断和敏感性、独立真实预测核验均付费；设备、拓扑、删失支持或模型验证失配时，保留原始telemetry与明确unknown，回到独立故障调查及已验health策略，不让相关模型代health owner提交迁移或设备安全结论。
+<!-- source-family:SF-2025-ARXIV-2509-05444 -->
 
 ### 缓存探针必须绑定可比较的前缀
 
@@ -145,6 +157,9 @@ taxonomy 与 lexical proxy 都构成 selection/measurement boundary；日志去�
 - model/adapter/revision identity。
 
 指标必须带单位、类型和 workload conditions。`tokens/s` 未说明 input/output mix、模型、硬件与 SLO 时没有可比性。
+
+把指标交给学习模型时，标准化feature也不能覆盖原量纲与时钟：同形的局部波动在不同绝对scale、业务活动和采集条件下，可能分别是正常burst与故障提案；原值、单位、变换参数及时间对齐应保为可回读证据。[TelecomTS的受限数据接口](https://arxiv.org/html/2510.06063v1#S3)另区分真实受控注入与按KPI规则合成的异常，后者的类型标签和生成ticket不等生产根因或执行过的修复。异常已知人口的分段高分也不替全流量下的检测precision，平稳段主导的forecast均值可能漏掉峰时失败。不同backbone的scale-aware收益不是绝对scale唯一因果证明，单位/原始支持仍须独立回归。全部采集/同步、量纲和synthetic/专家标签、模型训练/推理及独立incident核验均付费；时钟、标注或支持不合时，保原序列/单位、可信注入记录与传统阈值/人工调查，不由模型告警或synthetic rootcause批准生产诊断、自动修复或系统健康保证。
+<!-- source-family:SF-2025-ARXIV-2510-06063 -->
 
 这里的 `Errors` 必须声明语义。`transport_error_rate` 可以由状态码、timeout、OOM 和 dependency failure 直接聚合；`contract_failure_rate` 可以来自 schema validator 或 tool protocol；但 hallucination、instruction failure 与 business outcome 通常需要第 66 章定义的 scorer、抽样和延迟标签。一个请求可以同时是 `runtime_success = true` 和 `quality_success = false`。
 
@@ -259,6 +274,8 @@ GPU utilization、瞬时 board power 或进程运行时间都容易取得，因�
 
 外部功率计可以补充设备未暴露的接口，却把采样频率、时钟对齐、共享部件拆分和运维成本引入证据链；它适合校准或实验审计，不必成为每个在线请求的常驻路径。现有 exact-v1 审计只覆盖一台 GX10 的标准接口，支持“该栈当时无法直接提供进程级能量归因”这一边界，不证明所有 NVIDIA 设备或后续固件都如此。若硬件计数器不可用，平台应保留 coarse node/job accounting 与 uncertainty，而不是伪造细粒度精度。
 
+组件执行短于计数器可分辨窗口时，还可先保存真实forward的输入，再隔离重复同一组件，用累计能量差除重复数得到该重放人口的平均值。[受限组件重放测量](https://arxiv.org/html/2510.02810v1)扩大的是观察窗口，不是恢复某次原始kernel的瞬时能耗或因果贡献；重复也改变cache、热状态、launch与idle基线，较小跨trial标准差不证明传感器准确。输入/模块版本、设备与precision、重复数、warmup、同步、计数窗口和无效读数须共同保存，分别比较真实链与重放总量，不能让异常返回零或相加超过总量变成物理归因证书。捕获/驻留、全部重复、独立校准与端到端复测都付费，单token或单GPU结果不授长decode、整机与碳排。窗口、同步或误差预算不足时，保留较长region和粗粒度device/job计量，把组件读数标为局部估计，不用高capture比例直接批准优化或成本分摊。<!-- source-family:SF-2025-ARXIV-2510-02810 -->
+
 SLO 应说明事件、有效请求、目标和窗口。例如：
 
 ```text
@@ -289,6 +306,8 @@ key 或不部署。多 key 实验只支持该观察面存在，不给出任意�
 model revision 和阈值校准，也可能在 domain shift 下误报。EMA 或 probe 只触发 defer、review 或 stop proposal，最终
 authority 仍属于独立 policy；无法取得内部状态时回退 output/trajectory monitor。
 <!-- semantic-body-binding:SF-AERIC-ANTICIPATORY-HIDDEN-STATE-MONITORING-FOR-IMPLICIT-HARMFUL-DIALOGUE:end -->
+
+当一个hazard分数不足以说明“读出了哪些约束”时，还可把生成位置的activation window投影成soft prefix，再由共享base weights的LoRA interpreter解码多条instruction报告。[PRISM的受限分支](https://arxiv.org/html/2606.09563v1#S4)不向reporter传原prompt或自然语言probe，但仍要额外前向和自回归生成，并非上面的same-pass scalar监测。报告须分别测reference覆盖、unsupported bullets和安全相关子集，不能用低幻增或总体覆盖替代关键约束找回；prompt/response支持的合理解释也不证明该指令实际因果驱动了动作。其单checkpoint、固定layer/window和oracle/judge标签只支持受控set-retrieval，未验证任意长trajectory或真实intent。Activation capture、projection/adapter训练、报告生成及独立校准均付费；模型/窗口、标签或费用失配时，保原hazard/output sensor与人工调查，reporter只提可复查候选，不能直接触发权限变更。<!-- source-family:SF-2026-ARXIV-2606-09563 -->
 
 高频 scrape、过细 histogram、昂贵 GPU exporter 和大量 labels 都有成本。控制环消费 metrics 时还要考虑：
 
@@ -395,11 +414,11 @@ Activation monitor 依赖模型内部表征，模型更新即使保持外部 ben
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-15980:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-19386:start -->
-#### 采样 Cadence 不足时只能报告 Transition Window
+#### Wall-clock Decay 的校准必须绑定 Action Cadence
 
-Agent action 与环境 effect 的节奏可能慢于 monitor sampling。此时 wall-clock “瞬时变点”并非总是可识别：同一真实 transition 会因采样相位落在两个稳定解释上，形成结构性双稳态。Monitor 应声明可观测 transition window、采样 cadence 与迟到事件策略，输出区间或双假设而非伪造唯一 moment；调度/安全控制只在两种解释都允许时自动行动，否则等待新证据或升级。
+固定半衰期的累积告警在采样节奏稳定时容易校准；Agent 的工具执行、长推理或人工批准改变动作间隔后，同一事件序列中的衰减相对于事件注入量也会改变。wall-clock leaky accumulator 配合 level threshold，可能在快节奏下持续报警、慢节奏下几乎静默；这不等于真实风险已经改变，更不是同一 transition 的两个相位解释。Monitoring 应保存事件、elapsed time 与 calibration identity，并先选择统计量究竟按每次观测还是按经过时间更新。
 
-区间化结论牺牲反应速度，换取不把时间分辨率不足伪装成状态真值。作者构造只证明其 wall-clock 模型下的不可识别边界，不能代替真实系统校准；事件时间戳、因果 receipt 或更高频传感器可用时仍应使用更精确路径，证据不足则保留 Unknown。
+改用 rising-edge trigger 与 hysteresis 可以压低重复 level 告警，但不因此恢复人类应干预的时刻或风险真值；sample-time CUSUM 在保持事件顺序而改变动作间隔时不变，也不表示两种时间语义可互换。该对照限论文给定20条轨迹、事件映射和参数，不能升级为任意监控器的普遍定理。部署节奏或事件映射变化时应重新校准，并保留外部风险证据与人工升级路径。[证据：精确v1 §§4、6、7、9、11](https://arxiv.org/html/2606.19386v1)；当前v2纠正live cadence来源为scriptable loop，不据旧hook描述或跨instrument相关性宣称因果验证。
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-19386:end -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2606-24119:start -->
@@ -527,6 +546,8 @@ Agent 说“我正在偏离”并不是可靠 monitor；外部 trace 可以用 s
 当训练进程自身可能挂起、污染缓存或重写日志时，进程内 telemetry 无法证明故障前后的真实状态。监测平面应从独立副本或旁路读取信号，先验证副本等价性，再用原位 replay 定位差异；这增加了资源与同步成本，却避免 observer 与故障共享同一失效域。副本不等价时只能报告异常线索，不能归因。
 <!-- source-family: arxiv:2608.11034v1; semantic-body-binding: independent-observation-path-and-in-situ-replay -->
 
+独立进程还不够，监控的触发权也不能留给被观察的 Agent：若只在它交还用户控制权时启动审阅，持续行动便可能不断推迟监控；遗漏 compaction 边界又会让合资格轨迹没有送达。因此应分别统计 eligible、triggered、delivered 与 reviewed，以独立 inference 记录和 monitor 记录对账，而不是把“允许送审”当“已经审过”。[一次高访问红队试点](https://metr.org/blog/2026-10-22-red-teaming-openai-agent-monitoring/)在历史内部系统中发现了这两种缺口，但日志不足使漏覆盖比例不确定，也未确认 Agent 曾实际利用延迟触发。周期性触发、跨边界关联与对账会增加调用、日志及审计成本；记录不齐时只能报告覆盖未知，不能从 monitor 无告警推出风险不存在。该证据针对7月21日及之前系统，后续修补是厂商声明、未经该外部团队复验，不认证当前部署。<!-- source-family:SF-2026-METR-20261022-OPENAI-MONITORING -->
+
 ## 长轨迹 Monitor 需要可回到原始证据的有界状态
 
 ### Risk-aware Latent 只能压缩 Evidence，不能压缩 Authority
@@ -611,6 +632,18 @@ degeneracy 或 base-rate inversion 会产生看似有保证的错误工作点。
 语义聚合改善跨 run diagnosis，却会因 taxonomy 漂移、嵌套操作和错误归类隐藏细节。作者评测只支持披露 agents、任务和 profiler；coverage 低、分类不确定或高风险 incident 时，应回到原始 spans/logs 和工具 side effects，不以聚合标签替代因果调查。
 
 ## Review notes
+
+- `SF-2025-ARXIV-2510-06063` — Cicero，Daily2025-10-09补Oct08BJT；[TelecomTS exact-v1](https://arxiv.org/html/2510.06063v1)A126首次必要§3–5决定域/T1–6/AppB1–2采集/C变换与curation/D ticket及异常prompt/F配置，2+2+2=6，仅量纲/时钟/real-syntheticgold与consumer身份深入。保histshift不可一般识lag、RCA类型非真实因果/未执行修复、scale混杂/PPV与anomalyonly人口、forecast峰与全费，不采全部scale因果或自动运维。未核全KPI/故障目录/所有QA模板/图像素/数据包或外部实现/复现，PRE/SAVE/selfread/solePOST仅本日canonical，不以本注预签。
+
+- `SF-2025-ARXIV-2510-06126` — Cicero，Daily2025-10-09补Oct08BJT；[exact-v1](https://arxiv.org/html/2510.06126v1)§3/4.1/4.3/4.4/5.2/5.3与T4必要反侧，2+2+2=6。仅native phase/API kernel事件两层观测及重复校准人口分责；保短phase误差、Eq2单位未闭、clock/runtime/Pixel与governor限制和全费，不采全部backend、能量/控制已实现、零开销或SLO。未核全表/§5.1全量化、源码或复现；实际PRE/SAVE/selfread/solePOST见本日canonical，不以本注预签。
+
+- `SF-2025-ARXIV-2510-02810` — Meitner，Daily2025-10-07补Oct06；[CLEAR exact-v1](https://arxiv.org/html/2510.02810v1)R47互斥首必要§3–8/T1与B/C/D/E、具名当前测量脚本/函数实际采用，2+2+2=6，component replay与观测窗口差额深入。保std非accuracy、idle/热状态/小组件高误差、单token/Ada与T1/T4张力、原PoC/当前function/context同步差异及全费；不采精确单次归因、全机碳排/长decode普胜或代码复现。PRE/SAVE/POST仅按本日canonical真实状态。
+
+- `SF-2026-ARXIV-2606-09563` — Daily2026-06-10补Jun09；[exact-v1](https://arxiv.org/html/2606.09563v1)§3–5/Limit/G必要，2+2+2=6。只生成window→softprefix/LoRA setreporter与分项coverage/Hall/安全子集；保单checkpoint/Qwen3.5layer16/final128、构造APHO选择、oracle/重复gold校准与合理response推断非causalactive、额外capture/训练/报告费用，不授无prompt即trueintent或生产gate。jun10_review必要/actualowner/唯一原稿核通过，root授AERIC完整end后/高频scrape前本单段+trueH2注；已保存待唯一非作者实际POST，不授DAY，未核实现/复现。
+
+- `SF-2026-METR-20261022-OPENAI-MONITORING` — [METR Oct22公开报告](https://metr.org/blog/2026-10-22-red-teaming-openai-agent-monitoring/)，Findings/design ideals及访问限制；仅触发权与eligible/送达/审阅分母，保历史系统、日志不确定性及修补未复验边界；未取得内部完整报告，未运行或复现。
+
+- `SF-2026-ARXIV-2610-28366` — Daily2026-10-22，[Portable White-Box Monitoring exact-v1](https://arxiv.org/html/2610.28366v1)必要 anchor/transfer/threshold 与 staleness 反侧，2+2+2=6。只采用 indexed anchors 定义跨 model 监控输入的有限接口；保可 decode 不等可迁移、稀有风险 proxy/target ROC 限制及全部采集费用，不授部署告警或安全。作者 E25/reader R92 Source/实际 owner/PRE 通过；实际写后核验见当日 REVIEW，未核实现或复现。
 
 - `SF-2026-ARXIV-2604-26984` — 原路由为Daily2026-05-02补May01（保留历史字段，非已核公开日）；reader R79/R80发现早提交至registered跨日且有限原始日组未恢复，实际May1归属未确认，隔离于本窗候选/覆盖/整合计数；技术审阅与有效正文保留，取得该ID官方首公告日或同日有效组合后仅恢复日期层；v1 §3–5/结论，2+1+2=5，edited-complex/footprint传感范围差额深入。保STS-B encoder非7Bdecoder、BERT相关方向反侧、lag/超参选择、实际snapshot/更新费用；不授全量等价、最坏时延、必然预警或干预因果。reader必要Source及actual owner/逐字PRE R18通过，root授指定窄lease；作者已保存并顺读完整邻接，非writer reader actual POST R21通过，root接纳并释放该窄lease；仅行政同步本注，未核实现/复现，不授DAY。
 
@@ -728,3 +761,7 @@ Primary-source 与官方入口：
 - `SF-2026-ARXIV-2604-08192` — [exact-v1](https://arxiv.org/html/2604.08192v1) §3.2–3.4/4.1–4.3及Limit；只采用cross-model divergence与fixed-model CSS分责、39个有gold surrogate校准及target slice身份，保threshold敏感/近似edge与费用，不授内在truth、因果或全链label-free，未核实现/复现。
 
 - `SF-2025-ARXIV-2504-20271` — Daily2025-05-01补Apr30自然日；[activation-monitor exact-v1](https://arxiv.org/html/2504.20271v1)必要§3–5/Table1，2+2+2=6，任务重排额外forward与policy原激活的观测人口/调用身份差额深入。保suffix共享/prefix按任务重跑、标签/SAE上游训练/捕获/特征/推理全费、单snapshot/筛选人口及OOD反退，不授内部意图真值、全compute最优或安全放行。Newton§10实际Source/owner/逐字拟段通过，root修首句并授唯一单段及本人注窄位，作者已保存并self-read；Newton§13实际非writer新段/完整两侧/本人注POST通过，root实际读回接纳并释放窄位。未核代码/SAE训练或复现，不授DAY。
+
+- `SF-2026-GITHUB-VEOMNI-PR787` — [PR#787](https://github.com/ByteDance-Seed/VeOmni/pull/787) head `3e7d35a37fa9f51b1022840aba3c0d6e4feefeb5`/merge `4153c64023e55c1bd57886e04fcfc56e007ec6ea`，2+2+2=6；完整body/必要monitor、callback、actual-topk插点及测试代码实读。只采观测population/接口分责，不授重复attach/非对称空rank collective安全、verl已接入或全模型支持，作者smoke非本项目复现。独立reader R4/R5 Source/PRE通过、root已授指定单段+本人注；R6一次真实POST通过，生效释放。
+
+- `SF-2025-ARXIV-2509-05444` — Daily `2025-09-10`；Darwin继任Godel，作者105必要稿/Bacon147一次独立核，exact-v1 §2–6/式1–10/T1–4，原2+2+2=6。只采用物理/fabric双support各自映同一censored log-lifetime观测接口；两场独立、kernel正定/重复映射、竞争删失与非因果边界近正文。印式n_c/n_r及raw-time/log-time未闭，不补recipe或采用原posterior/BF为真实风险；完整费用与原telemetry/unknown退路保留。未核图像/原logs/Stan或实际采样复现，不预POST/DAY。

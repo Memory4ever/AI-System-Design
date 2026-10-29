@@ -1,0 +1,1314 @@
+Source: https://arxiv.org/html/2605.28775v1
+Main text extraction; fulltext_chars=103242
+
+arXiv:2605.28775v1 [cs.LG] 27 May 2026 
+ 
+ 
+ 
+Learn from Weaknesses: Automated Domain Specialization for Small Computer-Use Agents
+ 
+
+ 
+ 
+ 
+ Suji Kim
+ † † thanks:  Equal Contribution   Project page:   https://learnweak.github.io/ 
+ Affiliation:  KAIST
+ 
+ Affiliation:  Samsung Electronics
+ 
+ Email:  suji.kim@kaist.ac.kr 
+ 
+    
+ Kangsan Kim 1 1 footnotemark:  
+           1 
+          
+          
+          
+          
+          
+          
+          
+         
+ 
+ Affiliation:  KAIST
+ 
+ Email:  kangsan.kim@kaist.ac.kr 
+ 
+    
+ Sung Ju Hwang
+ 
+ Affiliation:  KAIST
+ 
+ Affiliation:  DeepAuto.ai
+ 
+ Email:  sungju.hwang@kaist.ac.kr 
+ 
+
+ Abstract 
+    
+ Computer-use agents (CUAs) have recently made substantial progress, but deploying a separate large expert for each software domain remains expensive.
+Small open CUAs are more practical specialization targets, but they remain substantially weaker and exhibit uneven domain-specific failures.
+A straightforward remedy is to synthesize large-scale training data for the target domain, yet we find that this naive approach yields only marginal improvements.
+Building on this observation, we introduce  LearnWeak , an annotation-free specialization framework for small CUAs that uses a stronger reference agent to identify the student’s weaknesses in the target domain, synthesize targeted tasks, and construct supervision automatically.
+ LearnWeak  further introduces an error-aware specialization objective that disentangles planning and execution errors, enabling more behaviorally precise updates than broad uniform supervision.
+On OSWorld,  LearnWeak  achieves average gains of 11.6 and 11.1 percentage points over EvoCUA-8B and OpenCUA-7B, respectively, across eight domains.
+We also validate that our student-aware dataset generation and training approaches outperform existing autonomous trajectory generation and training baselines.
+Our work highlights the importance of student-awareness in both data synthesis and agent training, pointing toward a more principled and efficient path for specializing small CUAs in diverse domains. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Computer-use agents (CUAs) have advanced rapidly across desktop and web environments, with two dominant paradigms emerging: large proprietary models such as Claude Sonnet 4.6  [ 2 ]  and GPT-5.4  [ 24 ] , and small models fine-tuned specifically for computer-use tasks, such as EvoCUA  [ 42 ]  and OpenCUA  [ 36 ] .
+The latter paradigm  [ 37 ,  45 ,  25 ]  is particularly compelling for real-world deployment, as fine-tuned small models enable faster and more cost-efficient inference while remaining viable for edge devices  [ 40 ,  18 ]  and privacy-sensitive enterprises where proprietary APIs are prohibited  [ 7 ,  47 ] .
+However, a substantial performance gap persists between closed models and small CUAs, particularly in domain-specific software environments with unique conventions or unfamiliar workflows  [ 16 ,  44 ,  39 ] .
+Addressing this gap is therefore critical for advancing the practical deployment of small CUAs. 
+
+ 
+ 
+ 
+ Figure 1 :  
+Conceptual illustration of  LearnWeak  and performance gains after domain specialization, showing consistent improvements of the small student across target software domains.
+ 
+ 
+ 
+ Domain specialization, which fine-tunes agents on a single target domain, is a promising approach for improving the performance of small CUAs.
+Small models often lack the capacity to simultaneously learn the workflows of diverse software environments, and training across heterogeneous computer-use tasks can lead to catastrophic forgetting and degraded performance within individual domains  [ 13 ,  12 ,  20 ] .
+Although scaling up data or designing more sophisticated training objectives can help, both require significant annotation effort or computational cost  [ 36 ,  17 ,  35 ] .
+By contrast, domain-specialized training can improve sample efficiency by focusing on domain-specific interaction patterns rather than broad generalization.
+Recent studies  [ 32 ,  19 ,  31 ,  5 ]  provide empirical evidence supporting the effectiveness of this approach for small CUAs. 
+
+ 
+ 
+ 
+ Domain specialization for CUAs consists of two stages: dataset generation and agent training.
+In the dataset generation stage, collecting human trajectories is costly due to the long-horizon nature of computer-use tasks, which makes autonomous trajectory generation essential  [ 43 ,  38 ] .
+Existing fixed data generation strategies do not consider student deficiencies on the target domain, resulting in inefficient training  [ 9 ,  30 ,  10 ] .
+However, data quality matters as much as data quantity: to specialize efficiently, generated queries should target model weaknesses and missing domain knowledge rather than reinforcing already well-learned skills. 
+
+ 
+ 
+ 
+ In the training stage, domain specialization must preserve pretrained agentic capabilities while selectively repairing weaknesses.
+Small CUAs develop their own reasoning patterns and recovery mechanisms, and naive fine-tuning can distort these by imposing human or large-model reasoning distributions that diverge from the agent’s own  [ 15 ,  21 ] .
+Moreover, failure modes are heterogeneous even within a single model: some failures stem from incorrect planning, whereas others arise from execution errors such as inaccurate coordinates  [ 8 ,  39 ,  1 ] .
+These challenges call for a framework that identifies the student’s weaknesses in the target domain and applies tailored training objectives. 
+
+ 
+ 
+ 
+ To address these challenges, we introduce  LearnWeak , a fully automated domain specialization framework for small CUAs that targets student weaknesses across both dataset generation and agent training.
+For the dataset generation stage, we propose an annotation-free pipeline that expands the training set through repeated cycles of teacher-student comparison, weakness analysis, and query synthesis.
+It requires only a small set of seed queries, yet produces a compact and targeted dataset that addresses the student’s deficiencies.
+For agent training, we introduce an error-aware preference optimization which adaptively targets task-specific weaknesses. It dynamically adjusts the training objective according to the failure type, distinguishing between planning and execution failures.
+Together, our student-aware data generation and training enable small CUAs to close capability gaps on the target domain without human annotation. 
+
+ 
+ 
+ 
+ We evaluate  LearnWeak  across 8 OSWorld domains  [ 39 ]  using EvoCUA-8B  [ 42 ]  and OpenCUA-7B  [ 36 ]  as base students.
+Our domain specialization improves average performance by 11.6 and 11.1 percentage points on EvoCUA-8B and OpenCUA-7B, respectively. Notably, the specialized small agents surpass the teacher on several domains, and our data-generation pipeline achieves the strongest gains among autonomous generation baselines under matched budgets. We further show that error-aware preference optimization outperforms alternative offline training strategies, including SFT and standard DPO variants.
+We hope this work serves as a foundation for more efficient and targeted domain specialization of small CUAs and encourages future research toward closing the performance gap between small open models and large proprietary agents. 
+
+ 
+ 
+ 
+ 
+ 2  Preliminaries 
+
+ 
+
+ 
+ 2.1  Computer-Use Agent 
+
+ 
+
+ 
+ A computer-use agent (CUA) is a policy that operates within an interactive software environment by perceiving the screen and issuing actions to complete a given task. Since the current screen alone does not reveal the full environment state, CUA settings are better modeled as a partially observable decision process (POMDP)  [ 14 ] . Following common practice  [ 48 ,  42 ,  6 ] , we handle this partial observability by conditioning the policy on the full interaction history. 
+
+ 
+ 
+ 
+ At each step  t t , the agent receives the current screen as a partial observation of the environment state together with the interaction history
+ h t = ( o 1 , a 1 , o 2 , a 2 , … , o t − 1 , a t − 1 ) h_{t}=(o_{1},a_{1},o_{2},a_{2},\dots,o_{t-1},a_{t-1}) ,
+which records all previously observed screens  o < t o_{<t}  and executed actions  a < t a_{<t} . Conditioned on the current context  c t = ( q , o t , h t ) c_{t}=(q,o_{t},h_{t}) 
+where  q q  is the task instruction, the agent policy  π \pi  produces a structured output, 
+
+ 
+ 
+
+ 
+ 
+ a t = π ⁡ ( c t ) = ( r t , s t , e t ) . a_{t}=\pi(c_{t})=(r_{t},\,s_{t},\,e_{t}). 
+ 
+ (1) 
+ 
+
+ 
+ It consists of three components: (i)  internal reasoning   r t r_{t} , which reflects the agent’s analysis of the current state; (ii) an  action description   s t s_{t} , a natural language description of the intended action; and (iii)  tool execution   e t = ( f t , p t ) e_{t}=(f_{t},p_{t}) , the executable action that directly manipulates the environment, consisting of a function type  f t f_{t}  and its parameters  p t p_{t}  such as  left_click(x,y)  or  type(text) . The agent repeats this process until the task is complete, producing the full trajectory 
+
+ 
+ 
+
+ 
+ 
+ τ = ( o 1 , a 1 , o 2 , a 2 , … , o H , a H ) . \tau=(o_{1},a_{1},o_{2},a_{2},\dots,o_{H},a_{H}). 
+ 
+ (2) 
+ 
+
+ 
+ 
+ 
+ 
+ 2.2  Problem Formulation 
+
+ 
+
+ 
+ We address  domain specialization , namely domain-specific finetuning of a broadly capable student policy to a target domain. In the CUA setting, each target domain has its own task distribution, interface conventions, and software-specific interaction patterns.
+Let  ℰ \mathcal{E}  be a set of target domains, where each domain  d ∈ ℰ d\in\mathcal{E}  corresponds to a distinct software application or operating environment. We are given a student policy  π S \pi^{S}  pretrained on a broad collection of GUI tasks, a stronger teacher policy  π T \pi^{T} , a small set of  K K  human-provided seed queries  𝒬 0 d = { q 1 , … , q K } \mathcal{Q}^{d}_{0}=\{q_{1},\dots,q_{K}\} , and an executable environment equipped with an automatic verifier  V ⁡ ( q , τ ) ∈ { 0 , 1 } V(q,\tau)\in\{0,1\} . No further human annotation is assumed. 
+
+ 
+ 
+ 
+ Our problem consists of two coupled stages. In the first stage, we autonomously generate a domain-specific training dataset  𝒟 d \mathcal{D}^{d}  by expanding the seed queries and collecting trajectories from the teacher policy: 
+
+ 
+ 
+
+ 
+ 
+ 𝒟 d = DataGen ​ ( π S , π T , 𝒬 0 d , V ) , \mathcal{D}^{d}=\texttt{DataGen}(\pi^{S},\pi^{T},\mathcal{Q}^{d}_{0},V), 
+ 
+ (3) 
+ 
+
+ 
+ where  DataGen  denotes the dataset generation process that produces training samples without human annotation. In the second stage, we use the generated dataset to train a domain-specialized student: 
+
+ 
+ 
+
+ 
+ 
+ π ^ S , d = arg ⁡ min π θ ⁡ ℒ ⁡ ( π θ , 𝒟 d ) . \hat{\pi}^{S,d}=\arg\min_{\pi_{\theta}}\,\mathcal{L}\big(\pi_{\theta};\,\mathcal{D}^{d}\big). 
+ 
+ (4) 
+ 
+
+ 
+ The overall objective is to maximize expected task success on the target domain: 
+
+ 
+ 
+
+ 
+ 
+ max π θ ⁡ 𝔼 q ∼ 𝒬 eval d ​ [ V ⁡ ( q , τ ⁡ ( π θ , q ) ) ] , \max_{\pi_{\theta}}\,\mathbb{E}_{q\sim\mathcal{Q}^{d}_{\text{eval}}}\left[V(q,\,\tau({\pi_{\theta}},q))\right], 
+ 
+ (5) 
+ 
+
+ 
+ where  τ ⁡ ( π θ , q ) \tau(\pi_{\theta},q)  denotes the trajectory induced by the policy  π θ \pi_{\theta}  on task query  q q , and  𝒬 eval d \mathcal{Q}_{\mathrm{eval}}^{d}  denotes the target-domain evaluation task distribution. 
+
+ 
+ 
+ 
+ Figure 2 :  Overview of  LearnWeak  framework.
+ LearnWeak -GEN iteratively constructs domain data by comparing teacher and student responses, summarizing student weaknesses, and generating new tasks conditioned on weakness reports and representative screenshots.  LearnWeak -DPO then converts specializes the student with step-wise preference supervision and error-aware optimization.
+ 
+ 
+ 
+ 
+ 
+ 3  Method 
+
+ 
+
+ 
+ LearnWeak  decomposes domain specialization into two stages: an annotation-free data generation loop that exposes the current student’s domain-specific weaknesses, and the student agent training to correct their behaviors through teacher guidance.
+We first construct the training dataset through iterative teacher-student comparison, verification, and synthetic query generation ( Section   3.1 ).
+We then convert the resulting failures into step-wise training signals and specialize the student with domain-specific updates using a selective training objective based on DPO ( Section   3.2 ). 
+
+ 
+ 
+ 
+ 3.1  Weakness-Aware Data Generation ( LearnWeak -GEN) 
+
+ 
+
+ 
+ We present our annotation-free dataset generation pipeline, which begins with seed query setup, proceeds through iterative cycles of weakness discovery and query synthesis, and concludes with final filtering.
+A formal algorithmic description of our pipeline is provided in  Section   A.1 . 
+
+ 
+ 
+ 
+ Seed query setup. 
+
+ 
+
+ 
+ For each target domain  d d , we initialize a small set of executable environment configurations and seed tasks  𝒬 0 d \mathcal{Q}_{0}^{d} .
+These initial states are constructed separately from the evaluation benchmark so that data generation does not rely on benchmark-specific assets or leaked task states.
+The number of seed queries is small enough that a human can complete the setup within an hour. 
+
+ 
+ 
+ 
+ 
+ Weakness discovery. 
+
+ 
+
+ 
+ Weakness discovery is driven by paired teacher-student execution.
+For each task  q ∈ 𝒬 i d q\in\mathcal{Q}_{i}^{d}  at iteration  i i , beginning from the seed queries  𝒬 0 d \mathcal{Q}_{0}^{d}  at  i = 0 i=0 , we run a teacher trajectory  τ q T \tau_{q}^{T}  and a student trajectory  τ q S \tau_{q}^{S}  in the same environment, where  τ q S \tau_{q}^{S}  is produced by the fixed pre-adaptation snapshot of student  π S \pi^{S} .
+A verifier  V V  is then applied to both trajectories, yielding binary success outcomes  v q T , v q S ∈ { 0 , 1 } v_{q}^{T},v_{q}^{S}\in\{0,1\}  and structured rationales  r q T , r q S r_{q}^{T},r_{q}^{S} .
+For student-failure driven generation, we collect the tasks  ℱ i d \mathcal{F}_{i}^{d}  where the teacher is verified to succeed while the student fails: 
+
+ 
+ 
+ 
+ 
+ 
+ ( v q T , r q T ) \displaystyle(v_{q}^{T},r_{q}^{T}) 
+ = V ( q , τ q T ) , ( v q S , r q S ) = V ( q , τ q S ) , \displaystyle=V(q,\tau_{q}^{T}),\qquad(v_{q}^{S},r_{q}^{S})=V(q,\tau_{q}^{S}), 
+ 
+ (6) 
+ 
+ 
+ ℱ i d \displaystyle\mathcal{F}_{i}^{d} 
+ = { q ∈ 𝒬 i d ∣ v q T = 1 , v q S = 0 } . \displaystyle=\{q\in\mathcal{Q}_{i}^{d}\mid v_{q}^{T}=1,\;v_{q}^{S}=0\}. 
+ 
+ 
+
+ 
+ Since the teacher succeeds on these tasks, task infeasibility or invalid environment states are unlikely to be the cause of failure, and student errors can be reliably attributed to the student’s own deficiencies.
+Finally, the verifier diagnostics from the failure set are summarized into a weakness report  R i d R_{i}^{d}  that captures recurring failure modes in domain  d d , such as incorrect operation selection, inaccurate element localization, or invalid action arguments: 
+
+ 
+ 
+
+ 
+ 
+ R i d = Summarize ​ ( { r q S ∣ q ∈ ℱ i d } ) . R_{i}^{d}=\texttt{Summarize}\bigl(\{r_{q}^{S}\mid q\in\mathcal{F}_{i}^{d}\}\bigr). 
+ 
+ (7) 
+ 
+
+ 
+ 
+ 
+ 
+ Screenshot-guided query generation. 
+
+ 
+
+ 
+ To generate new queries, we first construct a representative screenshot set  S i d S_{i}^{d}  from both teacher and student trajectories of the current iteration via representation-level clustering and VLM-based reranking, selecting screenshots that are both diverse and semantically informative.
+These screenshots ground the generated queries in realistic environment states, encouraging coverage of diverse software functionalities while reducing the generation of infeasible tasks.
+We then employ a task-query generator  G G  to synthesize queries for the next iteration, conditioned on previously generated tasks  𝒬 i d \mathcal{Q}_{i}^{d} , the current weakness report  R i d R_{i}^{d} , the selected screenshots  S i d S_{i}^{d} , and domain-level environment metadata  M d M^{d}  such as available assets.
+Query synthesis proceeds via two complementary strategies: weakness-focused synthesis, which generates tasks conditioned on the weakness report to target identified deficiencies, and exploration-focused synthesis, which omits the report and instead relies on screenshots to generate tasks covering unexplored functionalities or UI elements.
+Using both strategies together maintains a balance between student-aware targeting and open-ended domain exploration: 
+
+ 
+ 
+
+ 
+ 
+ 𝒬 i + 1 weak = G ( 𝒬 i d , R i d , S i d , M d ) , 𝒬 i + 1 explore = G ( 𝒬 i d , ∅ , S i d , M d ) , 𝒬 i + 1 d = 𝒬 i + 1 weak ∪ 𝒬 i + 1 explore . \begin{gathered}\mathcal{Q}_{i+1}^{\text{weak}}=G(\mathcal{Q}_{i}^{d},R_{i}^{d},S_{i}^{d},M^{d}),\qquad\mathcal{Q}_{i+1}^{\text{explore}}=G(\mathcal{Q}_{i}^{d},\varnothing,S_{i}^{d},M^{d}),\\
+\mathcal{Q}_{i+1}^{d}=\mathcal{Q}_{i+1}^{\text{weak}}\cup\mathcal{Q}_{i+1}^{\text{explore}}.\end{gathered} 
+ 
+ (8) 
+ 
+
+ 
+ 
+ 
+ 
+ Iterative generation. 
+
+ 
+
+ 
+ Let  N N  denote the total number of generation iterations. We repeat the two stages above, weakness discovery and screenshot-guided query generation, for  N − 1 N-1  iterations.
+Each iteration gradually shifts the generated task distribution toward regions that continue to expose unresolved weaknesses, while exploration-focused synthesis maintains diversity in query objectives throughout.
+After all iterations are complete, we aggregate the failed task sets into a final task set: 
+
+ 
+ 
+
+ 
+ 
+ ℱ d ​ ( π S ) = ⋃ i = 0 N − 1 ℱ i d , \mathcal{F}^{d}(\pi^{S})=\bigcup_{i=0}^{N-1}\mathcal{F}_{i}^{d}, 
+ 
+ (9) 
+ 
+
+ 
+ and construct the corresponding teacher-student trajectory collection for the collected tasks: 
+
+ 
+ 
+
+ 
+ 
+ 𝒟 d ​ ( π S ) = { ( q , τ q T , τ q S ) ∣ q ∈ ℱ d ​ ( π S ) } , \mathcal{D}^{d}(\pi^{S})=\{(q,\tau_{q}^{T},\tau_{q}^{S})\mid q\in\mathcal{F}^{d}(\pi^{S})\}, 
+ 
+ (10) 
+ 
+
+ 
+ where  π S \pi^{S}  denotes the fixed student snapshot used for data construction. For brevity, we write  ℱ d \mathcal{F}^{d}  and  𝒟 d \mathcal{D}^{d}  omitting the  π S \pi^{S}  dependence in the remainder of this section. 
+
+ 
+ 
+ 
+ 
+ 
+ 3.2  Agent Training for Domain Specialization ( LearnWeak -DPO) 
+
+ 
+
+ 
+ We now introduce our CUA training method which adaptively selects the training objective for different failure types while preserving pretrained reasoning capability of the student agent.
+We train the student with DPO  [ 26 ]  on the failure-focused dataset  𝒟 pref d \mathcal{D}_{\mathrm{pref}}^{d} . 
+
+ 
+ 
+ 
+ Teacher-replay preference construction. 
+
+ 
+
+ 
+ Trajectory-wise training of CUAs is resource-intensive due to multiple screenshots and long-context reasoning traces, so we intend to apply step-level supervision.
+Even within a failed student trajectory, some steps are already correct. For efficient training, we therefore focus only on steps that require correction, filtering out those where the teacher and student produce the same tool execution.
+In detail, for each task  q ∈ ℱ d q\in\mathcal{F}^{d} , we replay the teacher trajectory step by step.
+At each step  t t , we query the student policy  π S \pi^{S}  using a teacher context  c t T = ( q , o t T , h t T ) c_{t}^{T}=(q,o_{t}^{T},h_{t}^{T})  and obtain a replayed student response  a ^ t S ∼ π S ( ⋅ ∣ c t T ) . \hat{a}_{t}^{S}\sim\pi^{S}(\cdot\mid c_{t}^{T}). 
+
+ 
+ 
+ 
+ If the action executions of the teacher and the replayed student differ, we build a preference tuple: 
+
+ 
+ 
+
+ 
+ 
+ ( c t T , a t + , a t − ) = ( c t T , a t T , a ^ t S ) , (c_{t}^{T},a_{t}^{+},a_{t}^{-})=(c_{t}^{T},a_{t}^{T},\hat{a}_{t}^{S}), 
+ 
+ (11) 
+ 
+
+ 
+ and aggregate these into a domain-specific preference dataset: 
+
+ 
+ 
+
+ 
+ 
+ 𝒟 pref d = { ( c t T , a t T , a ^ t S ) ∣ q ∈ ℱ d , t ∈ 𝒯 q d } , \mathcal{D}_{\mathrm{pref}}^{d}=\{(c_{t}^{T},a^{T}_{t},\hat{a}_{t}^{S})\mid q\in\mathcal{F}^{d},\ t\in\mathcal{T}_{q}^{d}\}, 
+ 
+ (12) 
+ 
+
+ 
+ where  𝒯 q d = { t ∣ e t T ≠ e ^ t S } \mathcal{T}_{q}^{d}=\{t\mid e_{t}^{T}\neq\hat{e}_{t}^{S}\}  denotes the set of steps at which the teacher and replayed student produce differing tool executions.
+This procedure yields step-level supervision without human annotation, where the teacher trajectory provides a verified successful context and the replayed student response identifies the behavior to be corrected. 
+
+ 
+ 
+ 
+ 
+ Error-aware preference optimization. 
+
+ 
+
+ 
+ Recall that tool execution  e t e_{t}  is decomposed into a function type  f t f_{t}  and parameters  p t p_{t} , we define a failure type  ϵ t \epsilon_{t}  in two categories:  planning-level error  ( ϵ PLAN \epsilon_{\text{PLAN}} ) when  f t T ≠ f ^ t S f_{t}^{T}\neq\hat{f}_{t}^{S}  and  execution-level error  ( ϵ EXEC \epsilon_{\text{EXEC}} ) when  f t T = f ^ t S f_{t}^{T}=\hat{f}_{t}^{S}  but  p t T ≠ p ^ t S p_{t}^{T}\neq\hat{p}_{t}^{S} .
+Let  π θ \pi_{\theta}  denote the trainable student policy and  π ref \pi_{\mathrm{ref}}  the frozen reference policy initialized from the base student.
+Each preference example is associated with a binary mask  m m  over the token position  j j  of  a t = ( r t , s t , e t ) a_{t}=(r_{t},s_{t},e_{t}) , denoted as: 
+
+ 
+ 
+
+ 
+ 
+ m ( j ) = { 0 if  ​ a t ( j ) ∈ r t , g ⁡ ( t ) if  ​ a t ( j ) ∈ s t , 1 if  ​ a t ( j ) ∈ e t , g ⁡ ( t ) = { 1 if  ​ ϵ t = ϵ PLAN , 0 otherwise . m^{(j)}=\begin{cases}0&\text{if }a_{t}^{(j)}\in r_{t},\\
+g(t)&\text{if }a_{t}^{(j)}\in s_{t},\\
+1&\text{if }a_{t}^{(j)}\in e_{t},\end{cases}\qquad g(t)=\begin{cases}1&\text{if }\epsilon_{t}=\epsilon_{\text{PLAN}},\\
+0&\text{otherwise}.\end{cases} 
+ 
+ (13) 
+ 
+
+ 
+ Since the chosen and rejected responses may have different token lengths,  m m  denotes the response-wise mask instantiated for each score term using the same rule. We define the masked action score as 
+
+ 
+ 
+
+ 
+ 
+ s θ ​ ( c , a t , m ) = ∑ j = 1 | a t | m ( j ) ​ log ⁡ π θ ​ ( a t ( j ) ∣ c , a t ( < j ) ) , s_{\theta}(c,a_{t};m)=\sum_{j=1}^{|a_{t}|}m^{(j)}\log\pi_{\theta}(a_{t}^{(j)}\mid c,a_{t}^{(<j)}), 
+ 
+ (14) 
+ 
+
+ 
+ and define  s ref ​ ( c , a , m ) s_{\mathrm{ref}}(c,a;m)  analogously using  π ref \pi_{\mathrm{ref}} .
+We then optimize 
+
+ 
+ 
+ 
+ 
+ 
+ ℒ DPO = − 𝔼 ( c t , a t + , a t − ) ∼ 𝒟 pref d [ log σ ( β ( s θ ( c t , a t + ; m ) − s θ ( c t , a t − ; m ) \displaystyle\mathcal{L}_{\mathrm{DPO}}=-\mathbb{E}_{(c_{t},\,a_{t}^{+},\,a_{t}^{-})\sim\mathcal{D}_{\mathrm{pref}}^{d}}\Big[\log\sigma\Big(\beta\big(s_{\theta}(c_{t},a_{t}^{+};m)-s_{\theta}(c_{t},a_{t}^{-};m) 
+ 
+ (15) 
+ 
+ 
+ − s ref ( c t , a t + ; m ) + s ref ( c t , a t − ; m ) ) ) ] , \displaystyle\qquad\qquad-\,s_{\mathrm{ref}}(c_{t},a_{t}^{+};m)+s_{\mathrm{ref}}(c_{t},a_{t}^{-};m)\big)\Big)\Big], 
+ 
+ 
+
+ 
+ where  σ ⁡ ( ⋅ ) \sigma(\cdot)  denotes the logistic sigmoid function and  β \beta  is a temperature hyperparameter controlling the strength of the preference signal.
+This objective increases the relative likelihood of teacher actions over replayed student actions while restricting updates to the behaviorally relevant span. As a result, the training signal targets the student’s actual weakness rather than uniformly relearning the entire action sequence. 
+
+ 
+ 
+ 
+ 
+ Domain scalability. 
+
+ 
+
+ 
+ Finally, we instantiate each domain specialist through a modular domain-specific update on top of the shared student.
+We adopt a modular specialization setting in which domain-specific knowledge is attached to the shared student through domain-dependent updates.
+Specifically, we freeze the student and only update LoRA  [ 11 ]  adapters  { Δ d } d ∈ ℰ \{\Delta^{d}\}_{d\in\mathcal{E}} . The policy specialized to domain  d d  is written as: 
+
+ 
+ 
+
+ 
+ 
+ π ^ S , d = π S ⊕ Δ d , \hat{\pi}^{S,d}=\pi^{S}\oplus\Delta^{d}, 
+ 
+ (16) 
+ 
+
+ 
+ where  ⊕ \oplus  denotes attaching the LoRA adapter to the base policy.
+At deployment time, the base policy  π S \pi^{S}  is shared across domains, while the adapter corresponding to the current domain is activated to obtain the specialist. This design localizes domain knowledge to domain-specific modules and provides a scalable mechanism for handling multiple domains. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 4  Experiments 
+
+ 
+
+ 
+ Table 1 :  Domain specialization results on OSWorld. Each entry reports mean success rate (%). Yellow and blue denote the teacher policy and specialized student with  LearnWeak , respectively. 
+ 
+ 
+ 
+ 
+ Gimp 
+ Calc 
+ Impress 
+ Writer 
+ OS 
+ Thunderbird 
+ VLC 
+ VSCode 
+ Avg. 
+ 
+ Generalized Models 
+ 
+ 
+    Kimi K2.6  [ 33 ] 
+ 73.08 
+ 80.85 
+ 82.19 
+ 73.91 
+ 79.17 
+ 80.00 
+ 75.71 
+ 91.30 
+ 79.53 
+ 
+    Claude Sonnet 4.6  [ 2 ] 
+ 69.23 
+ 74.47 
+ 70.21 
+ 86.83 
+ 91.67 
+ 66.67 
+ 81.41 
+ 72.73 
+ 76.65 
+ 
+    Qwen3.5-27B  [ 34 ] 
+ 39.74 
+ 22.70 
+ 43.97 
+ 52.17 
+ 41.67 
+ 66.67 
+ 44.12 
+ 47.83 
+ 44.86 
+ 
+ Domain Specialized CUA Models 
+ 
+ 
+    SEAgent  [ 32 ] 
+ 42.30 
+ - 
+ 22.70 
+ 31.80 
+ - 
+ - 
+ 35.30 
+ 40.50 
+ - 
+ 
+    OSExpert  [ 19 ] 
+ 30.80 
+ 44.70 
+ 42.60 
+ 34.70 
+ - 
+ - 
+ - 
+ - 
+ - 
+ 
+ CUA Models 
+ 
+ 
+    EvoCUA-32B  [ 42 ] 
+ 76.29 
+ 51.06 
+ 52.98 
+ 65.22 
+ 75.00 
+ 60.00 
+ 64.65 
+ 65.22 
+ 63.80 
+ 
+    OpenCUA-32B  [ 36 ] 
+ 74.36 
+ 35.46 
+ 48.21 
+ 56.52 
+ 61.11 
+ 57.78 
+ 37.25 
+ 72.73 
+ 55.43 
+ 
+    EvoCUA-8B  [ 42 ] 
+ 66.15 
+ 28.07 
+ 37.66 
+ 50.43 
+ 60.83 
+ 65.33 
+ 45.71 
+ 51.30 
+ 50.69 
+ 
+    EvoCUA-8B  + Ours 
+ 82.05 
+ 41.13 
+ 50.35 
+ 55.07 
+ 66.67 
+ 73.33 
+ 56.86 
+ 72.46 
+ 62.24 
+ 
+     Δ \Delta 
+ +15.9 
+ +13.1 
+ +12.7 
+ +4.6 
+ +5.8 
+ +8.0 
+ +11.2 
+ +21.2 
+ +11.6 
+ 
+    OpenCUA-7B  [ 36 ] 
+ 48.46 
+ 11.91 
+ 31.49 
+ 30.43 
+ 40.00 
+ 54.67 
+ 32.94 
+ 51.30 
+ 37.65 
+ 
+    OpenCUA-7B  + Ours 
+ 57.69 
+ 19.15 
+ 36.88 
+ 40.58 
+ 59.42 
+ 66.67 
+ 47.06 
+ 62.32 
+ 48.72 
+ 
+     Δ \Delta 
+ +9.2 
+ +7.2 
+ +5.4 
+ +10.2 
+ +19.4 
+ +12.0 
+ +14.1 
+ +11.0 
+ +11.1 
+ 
+
+ 
+ 
+ 
+ 
+ 4.1  Experimental Setup 
+
+ 
+
+ 
+ Benchmarks. 
+
+ 
+
+ 
+ We employ OSWorld  [ 39 ] , a computer-use benchmark covering diverse desktop applications and operating-system utilities. We evaluate our framework on 8 domains:  Gimp ,  Libreoffice Calc ,  Libreoffice Impress ,  Libreoffice Writer ,  OS ,  Thunderbird ,  VLC , and  VSCode . The entire process, including data generation and training, is performed independently for each domain. During inference, we set the maximum number of steps to 50 for all models and report the average success rate over three trials. 
+
+ 
+ 
+ 
+ 
+ CUA Baselines. 
+
+ 
+
+ 
+ To validate the effectiveness of our specialization method, we compare  LearnWeak  against three categories of systems. First, we include general-purpose frontier and open models, including Claude Sonnet 4.6  [ 2 ] , Kimi K2.6  [ 33 ] , and Qwen3.5-27B  [ 34 ] . Second, we compare with domain-specialized CUA models such as SEAgent  [ 32 ]  and OSExpert  [ 19 ] . Lastly, we compare against the open CUA families including EvoCUA  [ 42 ]  and OpenCUA  [ 36 ] . 
+
+ 
+ 
+ 
+ 
+ Data-generation Baselines. 
+
+ 
+
+ 
+ To validate that weakness-focused generated data is useful for training the student model, we compare  LearnWeak  against an existing dataset and other data-construction baselines for CUAs.
+First, we compare against a supervision setting based on the AgentNet  [ 36 ]  dataset, which contains a large number of human-validated trajectories. We consider two variants: one that uses all trajectories in AgentNet, and another that samples  N N  trajectories to match the training budget of the other baselines.
+Second, we compare with a minimally annotated synthesis pipeline, Trajectory Boosting  [ 9 ] , which expands a small set of human trajectories by generating possible action spaces.
+Lastly, we compare with zero-human annotation generators such as AgentSynth  [ 38 ] , OS-Genesis  [ 30 ] , and ZeroGUI  [ 43 ] .
+Additionally, we apply WebSTAR  [ 10 ] , a step-level filtering method that selects useful training steps from existing trajectories, to our generated data and report the results. All methods are evaluated under the same setting including student backbone and specialization budget such as dataset amount or training time. 
+
+ 
+ 
+ 
+ 
+ Implementation Details. 
+
+ 
+
+ 
+ We experiment on EvoCUA-8B and OpenCUA-7B as the student models to be specialized, and EvoCUA-32B as the teacher policy for data construction.
+Unless otherwise specified, all subsequent analyses use EvoCUA-8B as the student model.
+We provide additional details, including hyperparameters and training budget, in  Appendix   B , and the prompt templates used for our dataset-generation mechanism in  Appendix   D . 
+
+ 
+ 
+ 
+ 
+ 
+ 4.2  Domain Specialization Results 
+
+ 
+
+ 
+ Table   1  shows that  LearnWeak  yields consistent improvements for both small CUA backbones across all eight OSWorld domains. Averaged over domains, our specialization improves EvoCUA-8B from 50.69 to 62.24 and OpenCUA-7B from 37.65 to 48.72, corresponding to gains of 11.6 and 11.1 percentage points, respectively. The improvements are not confined to a single application type, but are observed across office software, system utilities, visual editing, and coding-oriented workflows. 
+
+ 
+ 
+ 
+ Weakness-focused specialization enables small student to surpass the teacher in several domains.  Our specialized EvoCUA-8B model outperforms the 32B teacher on  Gimp ,  Thunderbird , and  VSCode . This suggests that weakness-focused corrective supervision can be more than simple imitation: even when the training data is conditioned by the teacher, the student can use corrections to address its own domain-specific failures and surpass the teacher in selected domains. 
+
+ 
+ 
+ 
+ Specialization gains arise from different domains depending on the student model.  For EvoCUA-8B, the largest improvements appear in  VSCode ,  Gimp ,  Calc , and  Impress , whereas for OpenCUA-7B the strongest gains appear in  OS ,  VLC ,  Thunderbird , and  VSCode . This variability suggests that specialization depends less on domain difficulty alone and more on how well each student model adapts to the interaction patterns of a given software domain. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Table 2 :  Comparison with data-construction baselines on the four OSWorld domains.
+We report mean success rate (%) under a matched training budget. 
+ 
+ 
+ 
+ 
+ Calc 
+ Impress 
+ VLC 
+ VSCode 
+ Avg. 
+ 
+ Zero-shot 
+ 28.07 
+ 37.66 
+ 45.71 
+ 51.3 
+ 40.69 
+ 
+ Existing Data 
+ 
+ 
+    AgentNet  [ 36 ] 
+ 34.04 
+ 39.01 
+ 49.01 
+ 69.57 
+ 47.91 
+ 
+    AgentNet  (N-sampled) 
+ 32.62 
+ 40.43 
+ 49.02 
+ 63.77 
+ 46.46 
+ 
+ Minimal Human Annotation 
+ 
+ 
+    Trajectory Boosting  [ 9 ] 
+ 30.50 
+ 19.88 
+ 45.10 
+ 49.28 
+ 36.19 
+ 
+ Zero Human Annotation 
+ 
+ 
+    AgentSynth  [ 38 ] 
+ 31.21 
+ 39.01 
+ 39.22 
+ 71.01 
+ 45.11 
+ 
+    OS-Genesis  [ 30 ] 
+ 31.91 
+ 37.59 
+ 45.10 
+ 68.12 
+ 45.68 
+ 
+    ZeroGUI  [ 43 ] 
+ 36.17 
+ 40.43 
+ 48.86 
+ 62.30 
+ 46.94 
+ 
+    WebSTAR  [ 10 ] 
+ 31.21 
+ 40.43 
+ 52.94 
+ 73.91 
+ 49.62 
+ 
+     LearnWeak 
+ 41.13 
+ 50.35 
+ 56.86 
+ 72.46 
+ 55.20 
+ 
+
+ 
+ 
+ 
+ 
+ Table 3 :  Effect of the weakness-report source model in  LearnWeak -GEN. We specialize the base model  π θ \pi_{\theta}  using datasets constructed from weakness reports derived from different source students  π S \pi^{S} . 
+ 
+ 
+ 
+   
+ 
+ 
+ π θ \pi_{\theta}  /  π S \pi^{S} 
+ 
+ Calc 
+ Impress 
+ VLC 
+ VSCode 
+ 
+ OpenCUA-7B 
+ 
+    Zero-shot 
+ 11.91 
+ 31.49 
+ 32.94 
+ 51.30 
+ 
+    EvoCUA-8B 
+ 9.93 
+ 27.54 
+ 45.10 
+ 50.72 
+ 
+    UI-TARS-1.5-7B 
+ 7.80 
+ 33.35 
+ - 
+ 49.28 
+ 
+     OpenCUA-7B 
+ 19.15 
+ 36.88 
+ 47.06 
+ 62.32 
+ 
+ EvoCUA-8B 
+ 
+    Zero-shot 
+ 28.07 
+ 37.66 
+ 45.71 
+ 51.30 
+ 
+    UI-TARS-1.5-7B 
+ 22.70 
+ 31.21 
+ - 
+ 71.01 
+ 
+    OpenCUA-7B 
+ 39.01 
+ 43.26 
+ 47.06 
+ 73.91 
+ 
+     EvoCUA-8B 
+ 41.13 
+ 50.35 
+ 56.86 
+ 72.46 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 4.3  Comparison with Dataset Construction Baselines 
+
+ 
+
+ 
+ In  Table   3 , we compare  LearnWeak -GEN against alternative data construction pipelines under a matched training budget: existing human-validated data, minimal human annotation, and zero human annotation.
+First, fine-tuning on existing AgentNet trajectories yields only limited gains, even when using the full set of human-validated trajectories, suggesting that simply reusing existing supervision is insufficient for effective domain specialization.
+Second, the minimal human annotation baseline, Trajectory Boosting, further degrades performance, indicating that expanding the action space around fixed states does not provide useful supervision without sufficient exploration of domain-relevant states.
+Lastly, zero human annotation setting such as AgentSynth, OS-Genesis, and ZeroGUI perform comparably to AgentNet retraining. Although these methods explore the computer-use environments and use LLMs or VLMs to generate tasks, their generation process is weakness-agnostic, as it does not account for the target model’s observed failure modes. 
+
+ 
+ 
+ 
+ LearnWeak  achieves the best average performance, outperforming WebSTAR by 5.58 percentage points.
+Since WebSTAR contributes a data-filtering strategy rather than a generation pipeline, we apply its filtering criterion to the same weakness-aware dataset produced by our generation procedure, therefore WebSTAR and  LearnWeak  differ only in the filtering stage. However, it remains weakness-agnostic, scoring each step by generic quality rather than by the target model’s observed failures, whereas  LearnWeak  retains trajectories aligned with the student’s identified weaknesses.
+We also find that improvements are not uniform across domains. In the  VSCode  domain, all methods reach comparable performance, leaving little room for weakness-aware specialization to provide additional gains. The advantage of  LearnWeak  is instead most evident in the remaining domains, where it outperforms every baseline that explores without targeting the model’s weaknesses. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Analysis 
+
+ 
+
+ 
+ 5.1  Data Generation Pipeline Analysis 
+
+ 
+
+ 
+ Weakness-awareness. 
+
+ 
+
+ 
+ To verify that our dataset generation captures model-specific weaknesses, we train each target model ( π θ \pi_{\theta} ) on datasets constructed from weakness reports derived from different source students ( π S \pi^{S} ) , as shown in  Table   3 . Because failure cases and weakness types differ across student models, a student-aware generator produce the most useful data when the weakness report is derived from the target model itself.
+Both OpenCUA-7B and EvoCUA-8B achieve the highest performance when trained on datasets generated from their own failure cases, while cross-student datasets yield consistently lower gains.
+This confirms that our weakness-focused generation can focus the most useful data distribution, validating the key nature of  LearnWeak -GEN. 
+
+ 
+ 
+ 
+ 
+ Pipeline Components. 
+
+ 
+
+ 
+ We conduct an ablation study on the key modules of  LearnWeak -GEN: (i) iterative generation, by comparing against a one-shot generation variant that produces the same number of trajectories in a single pass without either iteration or weakness-report conditioning; and (ii) weakness-report conditioning itself.
+ Table   6  shows that domain specialization without iterative generation (one-shot generation) can already be useful relative to the zero-shot student, improving the average score from 40.69 to 48.82.
+However, adding iterative generation without weakness-report conditioning does not improve upon the one-shot generation, demonstrating that exploration-only generation fails to collect effectively targeted training samples.
+By contrast, the full pipeline, which combines iterative generation with weakness-report conditioning, achieves the best average result and the strongest performance on three of the four domains.
+These results suggest that the benefit of iterative expansion depends on student-aware guidance: repeated generation becomes most effective when it is steered by the student’s observed failure patterns rather than by domain exploration alone. 
+
+ 
+ 
+ 
+ 
+ Teacher Choice. 
+
+ 
+
+ 
+ 
+ 
+ 
+ Table 4 :  Ablation on teacher policy ( π T \pi_{T} ) choice for data generation. We report the performance of the teachers and the corresponding teacher-guided specialized students.
+ 
+ 
+ 
+ 
+   
+ 
+ 
+ Teacher Policy 
+ 
+ Teacher 
+ Specialized Student 
+ 
+ Calc 
+ VSCode 
+ Calc 
+ VSCode 
+ 
+ Zero-shot 
+ – 
+ – 
+ 28.07 
+ 51.30 
+ 
+ Claude Haiku 4.6 
+ 36.17 
+ 69.60 
+ 30.50 
+ 71.01 
+ 
+ EvoCUA-32B 
+ 51.06 
+ 65.22 
+ 41.13 
+ 72.46 
+ 
+ Kimi K2.5 
+ 63.83 
+ 86.96 
+ 41.13 
+ 73.91 
+ 
+
+ 
+ 
+ 
+ 
+ Table 5 :  Comparison on training objectives. For  LearnWeak -SFT , we adapt ours into SFT objective. 
+ 
+ 
+ 
+ 
+ Calc 
+ Impress 
+ VLC 
+ VSCode 
+ Avg. 
+ 
+ Zero-shot 
+ 28.07 
+ 37.66 
+ 45.71 
+ 51.30 
+ 40.69 
+ 
+ SFT 
+ 
+ 
+ 
+ 
+ 
+ No masking (standard) 
+ 29.08 
+ 39.72 
+ 45.10 
+ 68.12 
+ 45.51 
+ 
+ LearnWeak -SFT 
+ 34.04 
+ 46.81 
+ 45.10 
+ 69.57 
+ 48.88 
+ 
+ DPO 
+ 
+ 
+ 
+ 
+ 
+ No masking (standard) 
+ 27.66 
+ 40.43 
+ 49.02 
+ 65.22 
+ 45.58 
+ 
+ m j = 1 m_{j}=1  if  a t ( j ) ∈ { r t } a_{t}^{(j)}\in\{r_{t}\} 
+ 18.44 
+ 17.02 
+ 41.18 
+ 63.77 
+ 35.10 
+ 
+ m j = 1 m_{j}=1  if  a t ( j ) ∈ { r t , s t } a_{t}^{(j)}\in\{r_{t},s_{t}\} 
+ 24.82 
+ 39.72 
+ 45.10 
+ 71.01 
+ 45.16 
+ 
+ LearnWeak -DPO 
+ 41.13 
+ 50.35 
+ 56.86 
+ 72.46 
+ 55.20 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ Table   5  evaluates how teacher choice ( π T \pi^{T} ) affects specialization. In this ablation, we compare Claude Haiku 4.6, EvoCUA-32B, and Kimi K2.5. The main pattern is that teacher strength matters up to a point: the weaker teacher, Claude Haiku 4.6, yields smaller gains than others on both domains. At the same time, the stronger two teachers EvoCUA-32B and Kimi K2.5 produce very similar specialized student performances, despite a large gap in their own standalone success rates. This suggests that teacher capability matters mainly because it helps generate reliable successful trajectories to detect student’s weaknesses. Once the teacher is strong enough, further gains depend less on how often the teacher succeeds and more on whether its supervision targets weaknesses that are actionable for the student. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Table 6 :  Ablation of the data-generation pipeline design in  LearnWeak -GEN. 
+ 
+ 
+ 
+   
+ 
+ 
+ Domain 
+ 
+ Special. 
+ 
+   
+ 
+ 
+ Iter. 
+ 
+ Gen. 
+ 
+   
+ 
+ 
+ Weak. 
+ 
+ Report 
+ 
+ Calc 
+ Impress 
+ VLC 
+ VSCode 
+ Avg. 
+ 
+ ✗ 
+ ✗ 
+ ✗ 
+ 28.07 
+ 37.66 
+ 45.71 
+ 51.30 
+ 40.69 
+ 
+ ✓ 
+ ✗ 
+ ✗ 
+ 34.57 
+ 39.72 
+ 47.06 
+ 73.91 
+ 48.82 
+ 
+ ✓ 
+ ✓ 
+ ✗ 
+ 24.82 
+ 42.55 
+ 43.14 
+ 72.46 
+ 45.74 
+ 
+ ✓ 
+ ✓ 
+ ✓ 
+ 41.13 
+ 50.35 
+ 56.86 
+ 72.46 
+ 55.20 
+ 
+
+ 
+ 
+ 
+ 
+ Figure 3 :  The number of generation iters. 
+ 
+ 
+ 
+ 
+ The number of Generation Iteration. 
+
+ 
+
+ 
+ Table   6  indicates that the effect of increasing the number of generation rounds ( N N ) is non-monotonic. In both  Calc  and  VSCode , performance improves over the early iterations, reaches a maximum at an intermediate stage, and then decreases as additional rounds are added.
+This pattern suggests that the effectiveness of iterative generation is not determined by data volume alone. Instead, the marginal value of additional rounds appears to depend on whether the newly generated tasks remain well aligned with the student’s unresolved weaknesses. 
+
+ 
+ 
+ 
+ 
+ 
+ 5.2  Training Objective Analysis 
+
+ 
+
+ 
+ In  Table   5 , we compare  LearnWeak -DPO with standard SFT, DPO and the variants that follow the defined error types through different supervision scopes using the same generated dataset  𝒟 d \mathcal{D}^{d}  from  LearnWeak -GEN.
+As discussed in  Section   3.2 , we adaptively train using the error types from the student model’s response when it differs from the teacher’s. The result shows that full-response optimization is not sufficient for specialization: standard SFT and DPO improve only modestly over the zero-shot student. Error-aware masking consistently improves SFT, and the best results are obtained by  LearnWeak -DPO, which outperforms standard DPO by 9.62 points on average. Masking only planning-level or only execution-level tokens is not enough, indicating that effective specialization requires both preference learning and selective updates over both error types. 
+
+ 
+ 
+ 
+ 
+ 
+ 6  Related Work 
+
+ 
+
+ 
+ Computer-Use Agents (CUAs). 
+
+ 
+
+ 
+ CUAs complete user-specified tasks by interacting with GUIs through low-level actions such as clicking, typing, and scrolling. Recent advances in VLMs have enabled screenshot-conditioned agents that operate directly in computer environments, with proprietary systems such as Claude Sonnet  [ 2 ]  and Kimi  [ 33 ]  demonstrating strong agentic capabilities, and open models such as UI-TARS  [ 25 ] , OpenCUA  [ 36 ] , and EvoCUA  [ 42 ]  advancing end-to-end vision-language-action modeling. However, execution-based benchmarks  [ 39 ,  4 ,  44 ]  reveal persistent domain-dependent performance gaps, particularly in productivity software where application-specific interaction knowledge is required beyond generic UI grounding  [ 46 ,  22 ] . These gaps motivate domain-specialized small CUAs, which reduce serving cost and latency while focusing capacity on narrower interaction distributions, making them especially attractive for long-horizon tasks in target software domains. Related efforts such as SEAgent  [ 32 ]  and Fara-7B  [ 3 ]  demonstrate the promise of software-specific adaptation, and our work follows this direction with a focus on sample-efficient specialization without human annotation. 
+
+ 
+ 
+ 
+ 
+ Automated Trajectory Generation. 
+
+ 
+
+ 
+ Since human-annotated GUI trajectories are expensive to collect, automated trajectory generation is increasingly important.
+PC-Agent-E  [ 9 ]  reduces annotation cost by expanding a small set of human trajectories using stronger models, while recent work explores fully zero-annotation pipelines.
+AgentSynth  [ 38 ]  composes successful subtasks into longer-horizon tasks, OS-Genesis  [ 30 ]  retrospectively synthesizes task descriptions from environment exploration, ZeroGUI  [ 43 ]  combines VLM-based task generation with annotation-free reward estimation, AgentTrek  [ 41 ]  converts web tutorials into executable GUI tasks verified by a VLM evaluator, and Watch-and-Learn  [ 28 ]  generates trajectories by grounding instructional videos into executable GUI actions.
+These methods scale up trajectory synthesis without human annotation, but primarily target dataset volume or diversity rather than what to generate based on the current model’s failures.
+In contrast,  LearnWeak  performs student-aware generation by identifying capability gaps from failed executions and synthesizing tasks conditioned on those weaknesses, making each sample more informative for domain specialization. 
+
+ 
+ 
+ 
+ 
+ Agent Training. 
+
+ 
+
+ 
+ CUA training is closely related to imitation learning and preference optimization for long-horizon interactive agents. Supervised imitation is a natural baseline for learning GUI action sequences, but it suffers from covariate shift when the policy deviates from expert trajectories and accumulates errors over time. DAgger  [ 27 ]  addresses this by collecting expert labels on learner-induced states, and recent On-Policy Expert Corrections  [ 15 ]  apply a similar idea to multi-turn LM agents. Recent work also uses failures as preference signals. ETO  [ 29 ]  constructs contrastive pairs from successful and failed trajectories, while DPO  [ 26 ]  enables direct optimization over such pairwise preferences. Our work focuses on constructing targeted preference data: given a successful teacher trajectory, we sample student rollouts under the same context and form DPO pairs between teacher and student action spans. We further apply error-aware span selection to train only on the segment where the student diverges, making supervision more focused than imitating full trajectories. 
+
+ 
+ 
+ 
+ 
+ 
+ 7  Conclusion 
+
+ 
+
+ 
+ We study domain specialization for small computer-use agents in a fully automated setting. The central idea of  LearnWeak  is that, for specialization, the most useful supervision is not broad domain coverage but the subset of tasks that exposes the current student’s actual weaknesses. Based on this view, we propose a two-stage framework consisting of  LearnWeak -GEN, which iteratively constructs a weakness-aware domain dataset through teacher-student comparison and screenshot-grounded query synthesis, and  LearnWeak -DPO, which converts the resulting cases, where the teacher succeeds but the student fails, into step-level preference supervision with error-aware masking.
+Results show that this targeted specialization strategy substantially improves small CUAs across diverse software domains and outperforms alternative data-construction methods. The gains support our claim that efficient specialization depends on identifying and repairing student-specific weaknesses rather than simply scaling synthetic data. Our results further suggest that automated domain specialization can narrow the gap between small open CUAs and much larger agents without requiring human trajectory annotation, making small specialized agents a more practical deployment path for real-world software environments. Beyond per-domain specialization, our modular LoRA-based design naturally extends to a multi-application deployment scenario in which a library of per-domain adapters is maintained and the adapter matching the target application is activated at inference time. A systematic empirical study of such multi-adapter routing across many domains is a promising direction for future work. 
+
+ 
+ 
+ 
+ 
+ Limitation 
+
+ 
+
+ 
+ Our study has several limitations. First, we assume the availability of a teacher model that provides reasonably reliable guidance within the target domain. If the teacher is highly unstable or systematically biased for a given domain, the resulting supervision may inherit such errors. However, this limitation is not specific to our specialization framework; it reflects a general dependency of teacher-guided offline learning methods on the quality of the supervision source.
+Second, our specialization framework focuses on domain knowledge and therefore assumes a student base model that already possesses general computer-use skills at least, including visual grounding, action generation, and error recovery. Therefore, it does not guarantee effective improvement for general-purpose models that have not been trained for computer-use tasks, or for students whose failures primarily arise from missing foundational GUI capabilities rather than domain-specific weaknesses. 
+
+ 
+ 
+ 
+ 
+ 

@@ -88,6 +88,13 @@ inference.request
 Collective的kernel同时变慢时，还须观察运行中的数据进度，而不只等所有rank留下结束时间：可按operation、group、rank、channel/QP绑定GPU备好、交给传输和传输完成的累计状态，再沿跨rank及跨group的数据/控制依赖回溯，区分最早停止推进的分支与被它阻塞的下游。[Mycroft的受限训练诊断](https://arxiv.org/html/2509.03018v1)将completion记录与周期进度配对，支持缩小可疑flow或设备范围，不使单一计数差成为本地/远端硬件根因或自动替换许可。少量rank触发依赖异常传播和拓扑覆盖，正常计算重叠、异构流量或日志缺失仍需框架执行语义及补充trace，不能把缺endlog或所有rank同慢直接判成网络故障。采集补丁、共享buffer、上传/保留、全局查询和人工核验都有费用，检测与归因也使用不同起点的时钟；有限注入及未完整标因的生产统计不授任意拓扑的固定误报率或实时保证。支持、日志身份或因果边不足时，保留multiple candidates与原kernel/框架stack、网络和硬件检查，以独立确认决定修复，不由启发式归因提交生产变更。
 <!-- source-family:SF-2025-ARXIV-2509-03018 -->
 
+若完整trace的持续采集过重，可先对同一logical step收集各rank按共同顺序记录的、非重叠且能加回step总时长的CPU阶段向量。对每个阶段取“各rank截至此处累计时长”的最大值，再相邻相减，所得frontier增量恰好加回最大rank-local总时长，避免把上游停顿与下游同步等待重复收费；它不需要同步host时钟，却仍需要step、schema与阶段语义对齐。[StageFrontier的受限分解](https://arxiv.org/html/2606.06751v1)把这份精确会计用于选择重profiler的窗口、阶段与rank，而不是把最大增量直接认成起因。
+
+同一粗计时矩阵仍可能对应不同因果路径：两rank分别记录(10,0)与(0,10)，既可能是后者等待前者，也可能是两条独立co-critical路径；公式只能证明所记时间怎样分账。异步GPU工作在后阶段才被host观察、混合并行角色、run-ahead或prefetch未对齐时，应保留候选集合或降级证据，再用device事件、依赖trace与物理rank映射确认。窗口维护、gather、可选采样和后续核验都有费用，有限DDP注入的top-2命中或将profiler降成相同阶段后的排名一致不认证普遍根因或生产误报率；无法满足测量合同、开销不合适时，原聚合指标与按需完整trace仍是合理路径。<!-- source-family:SF-2026-ARXIV-2606-06751 -->
+
+GPU直接发起RDMA时，host API span可能根本没有对应提交点；观测可下移到GPU必须写入的NIC doorbell。把device可见UAR页替换成CPU可监视的pinned proxy页，先记录producer index再转发，并异步取回相应WQE，能将QP、方向与bytes接回时间线。[受限SigmaTrace机制](https://arxiv.org/html/2610.24328v1#S5)恢复的是硬件队列提交，不是传输完成或上层因果责任：合并doorbell可由index恢复工作量，不补回已消失的独立时刻。批量解析须满足queue wrap及可见性前提，threshold处仍会等待，CPU polling、D2H、关联与日志均有扰动。支持域限已接入的driver/NIC/动态符号，host-NCCL的MoE观察也不自动验证GPU发起路径。无法完整映射或扰动过大时保原host/API、aggregate counters与Unknown，正式吞吐/尾延迟回无插桩对照，不以队列不平衡独自批准根因和生产变更。
+<!-- source-family:SF-2026-ARXIV-2610-24328 -->
+
 ## Context Propagation 与异步边界
 
 HTTP headers 可传播 trace context；queue、batch、PD handoff 和 tool workflow 需要显式复制 context。Continuous batching 中多个 requests 共享一次 GPU iteration，无法简单用一个 parent-child tree 表达。
@@ -148,7 +155,21 @@ Span attributes 同样不能默认包含 prompt/context/output。Trace backend �
 
 Instrumentation overhead 应被度量：serialization、context propagation、collector queue、export failures 与 storage cost。Trace 系统故障不应阻塞普通请求，但高风险 action 的 audit 要另有可靠路径。
 
+可靠传输仍默认producer值得信任；当Agent与operator本身可能改写telemetry时，可让被调用service成为另一证据producer：先验证授权token中签名绑定的owner加密公钥，再把action及输入输出摘要加密给owner，由service独立key签名并提交witnessed Merkle log，owner按token reference发现并逐份验证。这样把“Agent自报做了什么”与“接收方声明看到了什么”分开，却不使签名等于真实副作用；服务串谋、key compromise或网外调用仍越出保证，摘要也不能恢复未另保存的原内容。
+
+单份收据可验还不等于集合完整：log或indexer少返回匹配项时，每份已返回收据仍能通过inclusion和签名检查。Notarized Agents v0.1的discovery adapter不提供穷尽性证明，空集也不能区分没行动与绕过参与服务；完整查询承诺、全log核对或多log补证仍须另验。合法service仍可重签旧事件，秒级tuple去重不提供强freshness保证。公开header还会泄露服务/token关联，owner key丢失会失去旧内容访问；加密签名、身份维护、提交保留与检索全部付费。本机mock-log的crypto成本不是线上SLO，异步返回也不是审计已提交。需要完整追责而证据不齐时，保留原trace、独立durable audit与Unknown，不以receipt数量或合法签名批准effect。<!-- source-family:SF-2026-ARXIV-2606-04193 -->
+
 当所需证据只是每个 kernel 访问过哪些 memory objects，而不是每个访问地址的因果序列时，collector 还可把分析位置移到 device：在 GPU 上按对象计数，kernel 结束只回传聚合 map，避免 raw trace buffer 满后反复传 CPU、停顿和逐事件分析。这个 summary 能回答特定 working-set 问题，却已丢掉原事件次序，不能冒充完整 trace、并发 live-memory peak 或根因证明。[受限 device-summary 对照](https://arxiv.org/html/2602.22103v1)在 A100/RTX3060 与若干 DNN/语言模型上比较完整 profiling 过程，但 CPU 对照常单线程，NVBit 还包含 SASS 解析；倍数不能只归因 placement 或当作原任务吞吐。额外 helper、计数、驻留和 instrumentation 仍会扰动执行，开销随事件类型/数量改变，4MB 示例也不是通用上界。应绑定 capture scope、object identity、丢弃字段，并按相同事件/evaluator计收集、传输、分析及原 workload 的费用；需要完整时序、范围未覆盖或扰动不可接受时保留 raw trace/CPU分析、较粗采样与明确 unknown，不因 passive 未改程序数据就宣称零干扰。<!-- source-family:SF-2026-ARXIV-2602-22103 -->
+
+调查对象变成整个人口时，还应把“在哪些trace里发现模式”和“用哪些trace检验模式”分开：先由样本提出可反驳假设，再通过结构化提取与cohort比较返回支持、反驳或未决，并让每项结论能映回原trace身份。Schema统计与短ID降低上下文和引用负担，却不使缺失值、提取结果或成功/失败标签变成无偏真值；同一corpus里的再次检验也不是独立外部验证。[有限群体诊断系统](https://arxiv.org/html/2605.21347v1)采用这种发现与调查分工，而不是用读过更多轨迹或生成更长报告证明根因。
+
+诊断报告还须接受两种不同验收：证据与覆盖评价检查它是否说对，独立下游任务检查它是否帮助人或patcher改善系统。把各分析器输出汇成union参考能比较相对覆盖，却不能恢复所有未发现模式；LLMjudge偏好、人类评分与实际修复收益也可能不一致。有限专家干预的收益仍受小人口、任务域与固定时间预算限制，自动patcher的终点接近也不证明某种角色分解全面更好。抽样、提取、全部模型调用、验证、存储与修复回归均计费；证据不足、population漂移或净效用不合时保留人工抽检、固定cohort与原scaffold，不由分析器自行标记confirmed批准生产修改。<!-- source-family:SF-2026-ARXIV-2605-21347 -->
+
+把trace交给人验收时，还可以先抽取直接支撑最终回答的page与片段，再在界面中恢复筛选、排序等可检查条件，而不是只展示长日志或一组来源链接。该视图由最终回答和轨迹共同派生，不能代替原observation/action记录：抽掉废弃分支可能同时漏掉反证，当前网页重放也不是历史页面的不可变快照。让用户直接检查或修订filter，是新的交互与执行，不会倒改原run做过什么；涉及副作用的重放仍须独立权限与隔离。
+
+[HANSEL的受限人评](https://arxiv.org/html/2606.18671v1#S6)支持交互证据降低核查负担的可能，但准确率差异未显著，时间收益只在提交正确的子人口统计，错误回答仍会被部分用户信任。高亮及模型摘要只是定位线索，不是最小充分证据证书，也不让更高主观信心成为正确验收。原trace存储、证据抽取、页面重建/网络、人工修订与独立答案核验均付费；页面漂移、关键分支漏选或权限不合时，保原快照/full trace、人工外部核查与Unknown，不由更易浏览的证据批准原回答或自动重执行。
+
+<!-- source-family:SF-2026-ARXIV-2606-18671 -->
 
 ## 从 Linear Trace 到 Root-cause Graph
 
@@ -161,6 +182,8 @@ Instrumentation overhead 应被度量：serialization、context propagation、co
 该结构为后续 root-cause graph 提供可追溯 observation，而不是直接宣称因果。作者 519 样本只属于 heuristic、intent analyzer 与多维评分组合的 attack/honest 实验；separation-of-duties 的结果来自另一次小样本运行，两个阈值仅有 20 和 7 个样本，不能合并成同一规模的分权安全证据。这些结果不证明开放生产环境的安全率，也不能证明模型调用彼此不存在共同盲点。
 
 <!-- source-family:SF-2026-ARXIV-2604-03968 -->
+
+过程进展还应与输出可用性和grounding分层：重复action、低信息增益、工具错误或成功空输出可发出早期warning，evidence存在却不保证答案受支持。[受限GAIA轨迹诊断](https://arxiv.org/html/2606.01365v1)将cheap online信号与离线语义/少量judge审计分开；warned run仍可恢复，相关性和相似度proxy不证明因果、正确性或应立即停止。额外记录、编码、judge与存储均计费，token/call也不等美元或能耗。信号失配时保留原trace、独立任务验收与受控预算，由Workflow决定干预；不能把诊断层直接升级为已验证的节费策略。<!-- source-family:SF-2026-ARXIV-2606-01365 -->
 
 ### 验证状态必须是带授权者的单调 Promotion
 
@@ -230,6 +253,8 @@ Root-cause graph 缩小调查范围后，还不能把诊断直接提升为修改
 通过这种受控重放，outcome 从错到对只说明该 intervention 足以恢复结果，不证明它是唯一、最小的原因或最早因果起点。它增加重执行、判断器和环境恢复成本；oracle answer 不可得时，proxy verifier 的证据更弱。不可逆副作用、环境缺失或多处共同错误，应保留多个假设、人工审计或停止，而非强行产出单一归因。`arXiv:2606.09071v1` 的 §3–4、Appendix R 支持这一受限机制，不提供生产因果保证。
 
 <!-- source-family:SF-2026-ARXIV-2606-09071 -->
+
+同一个action内部也可能有互相补偿的错误，不能把失败简单分摊给所有字段。若修复能拆成target集合与数值update，可从同一状态执行原配对、各单项换reference及双换四组，固定loss观察交互；[受限component-replacement对照](https://arxiv.org/html/2610.26650v1#S3)中，误选了正常记录时，较温和的错误update反可少伤旁支，单独换成reference update会更坏。这个reference来自已知故障，不是唯一因果或在线可得答案。重组候选还需独立selection/evaluation观察，增加实际试执行；同fault的多次生成和换panel不等独立故障。恢复、四组执行、候选选择及未受影响记录回归均计费；reference缺失、动作不可分或效果不可逆时保多个假设、有限sandbox与人工检查，不凭单字段更正确或一次preview改善批准生产修复。<!-- source-family:SF-2026-ARXIV-2610-26650 -->
 
 随机 policy 还留下另一层归因问题：即使不修复任何内容，只重新采样一个 action，也会重滚全部下游决策。因而单次“重跑成功”没有稳定比较基线。可以固定 factual prefix，以同一 policy 的重采样作为 null intervention，再分别改变 action、observation、context 或 policy，执行有界的多次 continuation，比较 outcome 分布及其不确定性；provider 在 temperature=0 时仍可能变化，应记录 replay action-match，而非声明精确重放。诊断层拥有比较与假设，不取得外部 effect 的重执行权限。
 
@@ -360,6 +385,18 @@ Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2606-06751` — Daily2026-06-09补Jun08；[exact-v1](https://arxiv.org/html/2606.06751v1) §2–6关键会计/直接反例与有限评价，2+2+3=7。只max-prefix分账与heavy-profiler路由，保aligned/residual-closed阶段、rank-local而非跨host span、(10,0)/(0,10)不可识别、forward/device下游暴露与role/prefetch边界；不授因果根因、自动修复或生产误报保证。root已实际必要源/当前Mycroft与SigmaTrace完整两侧核并授本两段+自身末注；作者已真实保存并完整自读新增、直接完整两侧及自身H2注；root SUP_REVIEW §5唯一非writer实际POST已通过，指定窄位已释放，不预DAY。未核artifact/复现，不授DAY。
+
+- `SF-2026-ARXIV-2606-04193` — Daily2026-06-05补Jun04，[Notarized Agents exact-v1](https://arxiv.org/html/2606.04193v1) §3–8必要域，2+2+2=6；安全与owner缺口深入。只采用receiver evidence producer、token绑定owner加密及单份验真/检索集合完整性分责；保informal信任假设、discovery-only、service replay/秒级去重无强freshness、metadata/key与mock非SLO/异步非提交限制。reader R21必要Source/actual-owner/PRE通过，root明确新窄授原两段加唯一replay句；作者已实际保存并完整自读，reader R23唯一非writer actualPOST通过，整合生效且窄位释放；本次仅同步既成事实，不重写正文/第三POST、不授DAY。未运行代码、核密码实现或复现实验。
+
+- `SF-2026-ARXIV-2606-01365`：2+1+2=5；exact-v1 III–VIII/TI–II必要；progress/output/grounding分层，保warn后恢复、相似度proxy和10/30选样audit，不采在线节费干预。 未核实现或复现。独立Source/owner/逐字PRE通过，root实际保存；非writer `jun03_next_reader` 已真实读取完整新增、完整直接两侧与本人注，唯一actualPOST通过（本日SUP_NEXT_REVIEW_20261024，末项R20）；本句只同步既成结果，不授完整DAY。
+
+- `SF-2026-ARXIV-2610-26650` — Daily2026-10-21，exact-v1 §3–7/Limitations必要域，2+1+2=5。仅reference-relative component交互与配对修复，保已知故障reference/双panel、故障cluster与4次对2次执行费用及不可逆退路；未核代码或复现。root R-A22、独立R146必要Source/实际owner/完整PRE通过，root已原样保存并完整自读直接两侧/本人注，待一次非writer实际POST，不预日级验收。
+
+- `SF-2026-ARXIV-2610-24328` — Daily2026-10-21、Oct20窗；[exact-v1](https://arxiv.org/html/2610.24328v1) III/IV-B–D/V/VI-A/E/VIII必要，2+2+2=6。仅GPUdoorbell proxy/deferredWQE观测责任；保producerdelta非原timestamp、queue/fence、host/GPU证据与有限硬件支持、全部采集扰动。root R-A17/独立R115必要Source/actualowner/完整PRE通过，已原样真实保存并完整自读新增/直接两侧/本人注，非writer实际写后复核R117已通过并生效释放，仅行政同步；未核代码/复现，不预日级。
+
+- `SF-2026-ARXIV-2605-21347`：Daily2026-05-22补查，Insights Generator exact-v1 §3.1–3.6/Alg1、§4.1–4.4/T1–2、§5，2+2+3=7。只采用样本提假设与corpus调查、报告grounding与独立修复效用分层；union-gold不独立、LLMjudge和专家评分不一、小n/SSB专域及额外分析费用近正文，不授confirmed因果真值或生产修改权。root已实际必要Source/date/Ch69具体差额与A14逐字PRE通过，本两段保存待一次真实非writer POST；未核artifact或复现。 保存态完整新增、完整直接两侧与本人注已由root真实非writer POST通过（本日SUP_REVIEW R17），指定窄位释放；前述待POST仅历史过程时态。本次仅同步既成事实，不重开Source/正文或预授DAY。
+
 - `SF-2026-ARXIV-2605-07509` — Daily2026-05-12补May11，MASPrism exact-v1必要§3/4/T1–5/5，2+2+2=6。只采双prefill选择性恢复与diagnostic routing，保failed-only误报校准缺口、prefix遗漏、AG反退、OOM混杂和local5090/hosted API不同协议，全部模型访问/驻留/人工费用；未核代码/复现。reader必要Source/actual owner/逐字PRE通过，root单段窄授后保存，actual非writer POST待执行。 截至本轮后续有效结论：本项独立reader已实际完整新增/直接两侧/本人注非writer POST通过，root已接纳并释放指定窄位；此前“待”仅过程时态，本次纯行政同步、不重Source/正文、不预授DAY。
 
 - Work“AI Engineering”首次对话审计（2026-10-13）：采用 GPU 时间线/counter/reference-run 分层、采集入口与采集窗口分离、multi-LoRA/TP 对照身份。Primary evidence：[Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html) 的 Focused Profiling、CUDA Trace、CLI lifecycle 与 Launch Processes in Stopped State；[Nsight Compute Profiling Guide](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html) 的 Sections/Replay；[vLLM v0.11.0 Profiling](https://docs.vllm.ai/en/v0.11.0/contributing/profiling.html) 的 worker/launch、离线与 server 示例。正文对照设计属于工程推导，不是官方 benchmark 或故障定位结果；未在 GPU 上采集、运行命令或验证生产 PID attach，不授特定硬件/TP 性能、通用热附着或生产 SLO 保证。功能目录与版本化 CLI 不逐项搬入长期正文。
@@ -452,3 +489,5 @@ Taxonomy 会压平边界行为，自动分类器也可能错标；现有大规�
 - `SF-2026-ARXIV-2603-17445` — [IET v1](https://arxiv.org/html/2603.17445v1)必要方法/评价/直接限制；[current v5](https://arxiv.org/html/2603.17445v5)仅受影响registry/观察token/segment与诱导转移、关键评价和非对抗反侧。采用合作式文本来源恢复接口，不采完整execution/通信拓扑、因果责任、抗伪造、无损或生产SLO；保人口/quality回归与全费，未核代码/复现。
 
 - `SF-2025-ARXIV-2509-03018` — Boyle，Daily2025-09-05补Sep4；[exact-v1](https://arxiv.org/html/2509.03018v1)S3–S9/Alg1–2/T1–5/必要caption，2+2+2=6。只运行中CCL多阶段进度与阻塞传播的trace证据；保有限rank触发/不对称语义、可疑非根因、时钟分母/生产FPR未知及collector全费。未核NCCL补丁/日志/像素/复现，不授自动修复或生产SLO；root57必要Source/具体owner/79.1原逐字PRE及本精确位通过，本一段/独立marker/本人注已真实保存并自读完整两侧，root61一次实际完整新增/完整两侧/本人注非writer POST已通过，精确位即时生效释放；本注仅同步既成事实，不预DAY。
+
+- `SF-2026-ARXIV-2606-18671` — exact-v1 §4–9/T2/studyprotocol必要域，2+2+2=6深入；仅trace→interactive evidence派生view与live-replay/历史事实分责，保选成功人口/准确率不显著/88correct时间/错误仍信与全费，未核软件实现或复现。 sole必要/完整PRE及实际SAVE/fullselfread/独立POST均已通过（本日SUP_REVIEW R42–R64实际层）；仅同步既成状态，不另授DAY。

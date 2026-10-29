@@ -1,0 +1,710 @@
+Official exact-v1: https://arxiv.org/html/2610.29246v1
+Necessary main text preserved; actual reviewed scope in SOURCE_VLA1.md.
+Abstract
+Predictive representations for robot manipulation should connect scene geometry with the state changes induced by actions. Our intuition is that understanding what an action will change starts with understanding where things are: complementary RGB and depth observations ground a common scene representation from which to infer those changes. Guided by this intuition, we introduce DepState-JEPA , a dual-stream RGB–Depth joint-embedding predictive architecture that connects spatial understanding with action-conditioned prediction through a shared latent state, DepState .
+Built on V-JEPA 2.1, the framework uses depth both as a complementary observation stream and to ground both modalities in metric 3D space, aggregating shared information into DepState while retaining modality-private features for decoding.
+Ray-conditioned readouts predict local features without target depth; after an action-conditioned transition, the same decoders predict future RGB and depth features using the predicted state and fixed initial private features.
+Robot-state readouts provide recursive proprioceptive inputs; object-trajectory supervision and calibrated forward kinematics shape state learning through motion targets and joint–TCP consistency.
+Comparisons show stronger RGB-encoder transfer after RGB-D adaptation, feature completion, conditioned visual forecasting, and manipulation success. Within-model ablations identify contributions from depth content, metric coordinates, and future-state matching, with additional control gains from FK regularization.
+ 1 Introduction
+Learning visual world models enables anticipation of action outcomes ( Ha & Schmidhuber, 2018 ; Maes et al., 2026 ) .
+For manipulation in real-world space, this requires relating the current spatial arrangement to
+the changes an action may cause. Consider a robot reaching for a cup:
+RGB reveals its appearance and context, while depth locates the cup and
+gripper relative to the table in three-dimensional space. Anticipating the reach then requires
+reasoning about how this arrangement will change, not merely recognizing
+the cup. This raises a broader question: how can the geometry revealed by depth inform a robot’s predictions of how its actions will change the scene? 
+ Figure 1: From Where Things Are to What Actions Change. 
+DepState-JEPA grounds complementary RGB–depth observations in a shared latent state, DepState, while retaining modality-private features for decoding.
+This depth-grounded state connects spatial queries with action-conditioned prediction of future visual features, robot state, and object motion.
+ RGB JEPAs predict representations rather than pixels ( Assran et al., 2023 ; Bardes et al., 2024 ) :
+V-JEPA 2 supports action-conditioned planning ( Assran et al., 2025 ) ,
+while V-JEPA 2.1 strengthens dense visual features ( Mur-Labadia et al., 2026 ) .
+ Depth-related JEPAs offer complementary designs. LeMuMo-JEPA combines RGB
+and aligned depth features within a common Transformer for multimodal
+perception
+ ( Cornelissen et al., 2026 ) .
+Locate 3D’s 3D-JEPA predicts masked point-cloud features enriched by lifted
+2D features, rather than maintaining separate RGB–depth streams
+ ( Arnaud et al., 2025 ) ; JEPADepth predicts depth from RGB with auxiliary
+latent supervision, rather than encoding measured depth ( Grigore & Popa, 2026 ) .
+These designs target multimodal perception or geometric estimation, but do not establish a common state interface between spatial understanding and action-driven evolution. This motivates our work:
+ Can complementary observations ground a spatially queryable, temporally predictive shared state representation while retaining modality-private features in separate decoding paths? 
+To answer this question, we introduce DepState-JEPA (Fig.  1 ),
+a joint-embedding predictive architecture centered on DepState ,
+a depth-grounded shared latent state connecting RGB–depth observations,
+spatial readout, and action-conditioned transition. Built on V-JEPA 2.1, an independent
+Depth-Video branch provides complementary observations and metric
+grounding for both streams. DepState aggregates shared information,
+while private paths preserve modality-specific detail for decoding
+rather than forming separate evolving states. This common interface
+supports reading missing spatial content and forecasting representations
+after robot actions.
+Representation learning uses images and video; robot prediction
+initializes DepState from a single RGB-D frame and evolves it under
+actions and proprioception, without accessing future RGB-D images.
+Specifically, visible metric depth and camera intrinsics place both streams in metric 3D
+coordinates; shared–private projections and learned aggregation form
+a compact, geometrically grounded DepState. Ray-conditioned readouts
+query local shared features without target depth; private features
+supply modality-specific decoding detail. After action-conditioned transitions,
+the same decoders predict future RGB and depth features with fixed
+initial private memory. Robot-state readouts supply recursive proprioception;
+object-motion supervision shapes the state. Calibrated forward kinematics
+couples independent joint and end-effector predictions, propagating
+consistency gradients into the transition alongside direct physical supervision.
+Training proceeds in two stages: 1) RGB-D adaptation learns
+DepState from images and video clips via masked shared-feature completion
+and dense modality-feature prediction, exploiting spatial and temporal
+context. 2) Robot post-training learns
+action-conditioned transitions and physical readouts using future-state
+and feature targets, physical supervision, and kinematic regularization,
+while RGB-D replay retains the adaptation objectives. Evaluation
+(Sec.  4 ) spans
+spatial understanding, multi-step forecasting, and manipulation, with
+controlled ablations testing the roles of geometry, feature sharing,
+and kinematic consistency.
+Our contributions are threefold:
+ • 
+ Dual-stream RGB–Depth Video JEPA framework. 
+We introduce DepState-JEPA , which connects spatial understanding and action-conditioned prediction through a shared latent state, DepState . Independent RGB and depth encoders capture complementary observations, while metric depth grounds both streams in a common 3D coordinate frame.
+ • 
+ Unified DepState construction and prediction pipeline. 
+We aggregate shared RGB–depth features into DepState, retaining private features for modality-specific decoding. Ray-conditioned readouts predict missing features without target depth and are reused after action-conditioned transitions to predict future features, with initial private memory fixed throughout rollout. Robot-state readouts supply recursive proprioception; object-trajectory supervision and joint–TCP consistency provide complementary training signals for state evolution.
+ • 
+ Empirical gains and controlled component analysis. 
+RGB-D adaptation improves RGB-encoder transfer; the full pipeline supports feature prediction and manipulation. Within-model ablations identify contributions from depth and metric coordinates, private decoding for visual accuracy, and future-state matching for control performance.
+ 2 Related Work
+ 2.1 Joint-Embedding Predictive Architectures
+Joint-embedding predictive learning uses target representations, rather than
+pixels, as the objects of prediction. I-JEPA learns image representations by
+predicting masked regions from visible context ( Assran et al., 2023 ) , while
+V-JEPA extends this approach to spatiotemporal video features
+ ( Bardes et al., 2024 ) . V-JEPA 2 scales video pretraining and connects learned
+features to robot prediction and planning ( Assran et al., 2025 ) .
+V-JEPA 2.1 further develops dense and multi-level supervision, strengthening
+the spatial detail retained by video representations
+ ( Mur-Labadia et al., 2026 ) . A complementary direction changes the unit of
+prediction: Causal-JEPA masks object-level latents and infers them from
+surrounding context to encourage interaction-dependent prediction
+ ( Nam et al., 2026 ) . These approaches illustrate how prediction targets
+and representation structure shape what a model learns. DepState-JEPA
+extends the RGB-centric video JEPA framework along the modality axis,
+introducing an independent Depth-Video stream. We retain V-JEPA 2.1’s dense
+feature-learning design while making measured geometry an explicit input
+to shared-state construction, complementing spatial cues learned from RGB.
+ 2.2 Depth and 3D Representation Learning for JEPAs
+Depth-related JEPAs differ in whether depth is predicted, used for
+supervision, or encoded as geometric input.
+JEPADepth combines masked latent prediction with photometric supervision
+for monocular depth estimation ( Grigore & Popa, 2026 ) .
+Depth-Regularized JEPA aligns RGB features with depth features during
+training while retaining RGB-only inference ( Khan, 2026 ) .
+Le MuMo JEPA fuses RGB and camera-aligned LiDAR depth through learnable
+fusion tokens within a shared Transformer ( Cornelissen et al., 2026 ) .
+3D-JEPA in Locate 3D learns masked point-cloud representations from
+RGB-D-derived geometry enriched with lifted 2D foundation-model features
+ ( Arnaud et al., 2025 ) .
+SR-JEPA predicts missing-entity features in native 3D scenes at supplied
+target locations ( Zhou et al., 2026 ) .
+DepState-JEPA jointly encodes RGB and measured depth in independent video
+streams, using visible metric depth to ground both streams in camera
+coordinates. Shared–private factorization retains modality-specific
+features alongside the shared state, whereas ray-conditioned readout
+predicts missing content without target depth or a supplied 3D location.
+The same state evolves under actions to predict future RGB-D features,
+connecting geometric representation learning with spatial completion and
+temporal prediction through a common interface.
+ 2.3 Action-Conditioned World Models for Robotics
+Latent world models support robot control by predicting how representations
+change under actions. DINO-WM learns transitions over frozen DINOv2 patch
+features and optimizes action sequences toward visual goals
+ ( Zhou et al., 2024 ) ; PLDM studies JEPA-based planning from reward-free
+offline trajectories ( Sobal et al., 2025 ) . V-JEPA 2 adapts pretrained video
+features through action-conditioned robot post-training
+ ( Assran et al., 2025 ) , whereas LeWorldModel jointly learns its encoder
+and dynamics from pixels with a distributional regularizer
+ ( Maes et al., 2026 ) . A related question is how physical information
+should shape the representation. MCR uses proprioceptive state–action
+alignment for robot representation learning ( Jiang et al., 2024 ) ;
+PSG-JEPA grounds individual states and state pairs in physical quantities
+ ( Yan et al., 2026 ) , and physically grounded JEPA combines inverse dynamics
+with state alignment ( Liu et al., 2026b ) .
+DepState-JEPA studies consistency among predicted physical quantities in
+addition to their direct supervision. Calibrated forward kinematics
+couples independent joint and end-effector readouts of the predicted state;
+object motion is supervised through increment-based pose trajectories.
+The kinematic constraint regularizes the depth-grounded state transition without
+imposing hard guarantees of physically correct dynamics.
+ Concurrent work. Closely related recent preprints advance geometric
+supervision and spatial prediction ( Khan, 2026 ; Zhou et al., 2026 ) ,
+including geometry-conditioned video modeling
+ ( Kim et al., 2026 ; DreamX Team et al., 2026 ) ; physical state grounding and
+physics-conditioned latent dynamics
+ ( Yan et al., 2026 ; Liu et al., 2026a ; Liu et al., 2026b ) ;
+and joint world modeling and action generation ( Lin et al., 2026 ) .
+These directions complement our use of an explicit depth stream,
+depth-lifted positions, and selectively shared RGB-D features for spatial,
+temporal, and robot prediction.
+ 3 Method
+ 3.1 Problem Setup and JEPA Objective
+ Problem Setup. Given registered RGB I , metric depth D , and
+intrinsics K , we construct DepState S , a shared latent state that
+supports local feature readout and action-conditioned evolution
+(Figure  2 ). Robot-state and object-motion
+heads connect predicted states to physical supervision.
+RGB-D adaptation uses images or video clips; robot prediction constructs
+ S_{t} from the current frame only. Future RGB-D observations supply training
+targets, never rollout inputs. S summarizes visible scene information
+for the specified readout and transition tasks.
+ JEPA Objective. JEPAs learn by predicting target representations
+ ( Assran et al., 2023 ) . We adopt V-JEPA 2.1’s dense, multi-level objective
+ ( Mur-Labadia et al., 2026 ) for both RGB and depth, denoted throughout by
+ \mathcal{L}_{\mathrm{JEPA}} :
+ \mathcal{L}_{\mathrm{JEPA}}=\underset{m,\ell}{\operatorname{mean}}\!\left[\frac{\sum_{i\in\mathcal{M}_{m}}e_{i}^{m,\ell}}{|\mathcal{M}_{m}|}+\frac{\sum_{i\in\mathcal{V}_{m}}w_{i}e_{i}^{m,\ell}}{|\mathcal{V}_{m}|}\right]. 
+ (1) 
+Here m and \ell index modalities and encoder levels;
+ \mathcal{M}_{m},\mathcal{V}_{m} contain valid masked and visible targets.
+The error e_{i}^{m,\ell} is channel-averaged L1 between layer-normalized
+predictions and stop-gradient teacher features; w_{i} weights visible
+targets by distance to masked positions (Appendix  C.1 ).
+The teacher follows \bar{\theta}\leftarrow\tau\bar{\theta}+(1-\tau)\theta ,
+where \theta are online representation parameters and \tau is EMA retention.
+This inherited objective supervises visual feature prediction; our state
+construction and readout define the interface through which it is learned.
+ Figure 2: Architectural Overview of DepState-JEPA. 
+RGB–Depth features are grounded, factorized, and aggregated into DepState.
+Spatial queries read local content; action-conditioned transitions advance
+the state and reuse the visual decoders with initial private features.
+Physical readouts predict robot state and object motion, with FK
+regularizing independent joint/TCP outputs.
+ 3.2 Depth-Grounded Shared-State Construction
+ Depth-Lifted Spatial Encoding. 
+V-JEPA 2.1 RGB and depth encoders with separate weights produce
+multi-level features, fused per modality into z_{i}^{m} ,
+ m\in\{\mathrm{rgb},\mathrm{dep}\} . For a visible patch center
+ \mathbf{p}_{i}=(u_{i},v_{i},1)^{\top} with valid metric depth d_{i} ,
+ \mathbf{x}_{i}=d_{i}K^{-1}\mathbf{p}_{i},\qquad\widetilde{z}_{i}^{m}=z_{i}^{m}+\operatorname{PE}_{3D}(\mathbf{x}_{i}). 
+ (2) 
+Here \mathbf{x}_{i} is the patch’s metric position in the camera frame,
+and \operatorname{PE}_{3D} is a learned projection of Fourier-encoded
+coordinates ( Mildenhall et al., 2020 ) . Adding it to both streams places
+corresponding RGB and depth features in the same metric frame, separately
+from inherited spatiotemporal RoPE ( Su et al., 2021 ) .
+Masked tokens are removed before encoder attention, and only
+visible depth supplies online coordinates. Invalid depths receive an
+unknown-geometry embedding
+(App.  B.1 ).
+ Shared–Private Feature Projection. 
+To aggregate common information without forcing all modality detail into
+ S , independent MLPs project the grounded tokens \widetilde{Z}^{m} into
+shared features and private decoder inputs:
+ H^{m}=F_{s}^{m}(\widetilde{Z}^{m}),\qquad P^{m}=F_{p}^{m}(\widetilde{Z}^{m}),\qquad P^{\mathrm{rgb}}=A,\quad P^{\mathrm{dep}}=R. 
+ (3) 
+Here F_{s}^{m} and F_{p}^{m} are modality-specific shared and private
+projections, with output widths d_{s} and d_{p} , respectively.
+Only H^{m} enters the recurrent state and control interface; A and R 
+bypass it to supply RGB- and depth-specific content to the visual decoders.
+The state and private paths thus have distinct computational roles.
+ Depth-Grounded Shared-State Aggregation. 
+Learned queries compress the shared observation features into a
+fixed-size state:
+ S=G_{\psi}\!\left(Q_{s},[H^{\mathrm{rgb}};H^{\mathrm{dep}}]\right). 
+ (4) 
+The attention aggregator G_{\psi} uses 64 learned queries Q_{s} of width
+384 to read shared keys/values with modality/time embeddings
+ ( Jaegle et al., 2021 ) ; [\cdot;\cdot] denotes concatenation.
+The resulting state varies with the observation. Query indices are generic
+slots, not predefined robot joints or object identities.
+ Selective-Sharing Regularization. 
+Alignment encourages cross-modal agreement, decorrelation discourages
+shared–private redundancy, and a variance floor opposes collapse:
+ \mathcal{L}_{\mathrm{fac}}=\underset{i\in\mathcal{V}_{\mathrm{valid}}}{\operatorname{mean}}d_{c}(H_{i}^{\mathrm{rgb}},H_{i}^{\mathrm{dep}})+\lambda_{\mathrm{decorr}}\sum_{m}\frac{\|C(H^{m},P^{m})\|_{F}^{2}}{d_{s}d_{p}}+\lambda_{\mathrm{var}}\mathcal{L}_{\mathrm{var}}. 
+ (5) 
+Here d_{c}(a,b)=1-a^{\top}b/(\|a\|_{2}\|b\|_{2}) is cosine distance, and
+ \mathcal{V}_{\mathrm{valid}} contains geometrically valid visible
+correspondences. C is cross-covariance after channel standardization
+over valid batch–position pairs; \|\cdot\|_{F} is the Frobenius norm,
+and d_{s}d_{p} normalizes the number of shared–private channel pairs.
+Both online branches receive gradients. The variance-floor term
+ \mathcal{L}_{\mathrm{var}} ( Bardes et al., 2022 ) regularizes features
+and across-sample state variation; its definition and the fixed weights
+are given in Appendix  C.1 .
+Cross-modal alignment acts on shared features, while the private paths
+retain separate modality-specific decoding objectives.
+ 3.3 Ray-Conditioned Spatial Prediction
+ Ray-Conditioned State Readout. 
+Whereas aggregation writes observations into S , the spatial decoder
+ h_{\eta} reads local shared content from S alone. A target pixel supplies
+a ray direction r_{i} , not its distance, and relative clip time \nu_{i} 
+(zero for images):
+ \begin{gathered}r_{i}=K^{-1}\mathbf{p}_{i}/\|K^{-1}\mathbf{p}_{i}\|_{2},\quad\hat{h}_{i}=h_{\eta}(S,\operatorname{PE}_{\mathrm{ray}}(r_{i},\nu_{i})),\\
+\mathcal{L}_{\mathrm{comp}}=\underset{i\in\mathcal{M}_{\mathrm{valid}}}{\operatorname{mean}}\,d_{c}\!\left(\hat{h}_{i},\operatorname{sg}(h_{i}^{\star})\right).\end{gathered} 
+ (6) 
+Here \operatorname{PE}_{\mathrm{ray}} embeds direction and relative time;
+ \mathcal{M}_{\mathrm{valid}} selects valid masked targets for the loss,
+without supplying target depth to the online query.
+The target
+ h_{i}^{\star}=\operatorname{norm}(\operatorname{norm}(\bar{H}_{i}^{\mathrm{rgb}})+\operatorname{norm}(\bar{H}_{i}^{\mathrm{dep}})) uses full-observation
+momentum features and L2 normalization; \operatorname{sg} stops gradients.
+ Private-Conditioned Feature Prediction. 
+Modality decoders g_{m}^{\ell} combine \hat{h}_{i} with visible A or R to predict
+encoder-level RGB/depth features at both masked and visible positions,
+supervised by the inherited dense JEPA objective
+in Eq. ( 1 ).
+Together these define the spatial prediction objective
+ \mathcal{L}_{\mathrm{spatial}}=\mathcal{L}_{\mathrm{JEPA}}+\mathcal{L}_{\mathrm{comp}} :
+completion supervises local shared features, and dense prediction anchors
+modality-specific encoder features. Both operate in representation space.
+ 3.4 Action-Conditioned State Prediction
+ Action-Conditioned State Transition. 
+A temporal Transformer advances S_{t} using a joint command u_{t} ,
+configuration q_{t} , instantaneous velocity \dot{q}_{t} , and
+physical time interval \Delta t_{t} , distinct from clip time \nu_{i} .
+The existing visual readouts decode the predicted state:
+ \begin{gathered}\hat{S}_{t+1}=\mathcal{T}_{\phi}(S_{t},u_{t},q_{t},\dot{q}_{t};\Delta t_{t}),\quad\hat{Z}_{t+1}^{m,\ell}=g_{m}^{\ell}\!\left(h_{\eta}(\hat{S}_{t+1},Q_{\mathrm{ray}}),P_{t}^{m}\right).\end{gathered} 
+ (7) 
+Here Q_{\mathrm{ray}} contains the known image-grid ray embeddings,
+with \nu_{i}=0 for each predicted frame. P_{t}^{m} is extracted from the
+initial observation and held fixed across the rollout, serving visual
+decoding only. Spatial and future prediction share h_{\eta},g_{m}^{\ell} ,
+not the temporal Transformer.
+Future-feature matching supervises the content read from the predicted
+state; state matching anchors the representation reused at the next step:
+ \begin{gathered}\mathcal{L}_{\mathrm{temporal}}=\underset{m,\ell,i}{\operatorname{mean}}\,\frac{1}{c}\left\|\operatorname{LN}(\hat{Z}_{t+1,i}^{m,\ell})-\operatorname{sg}(\operatorname{LN}(\bar{Z}_{t+1,i}^{m,\ell}))\right\|_{1}+\underset{k}{\operatorname{mean}}\,d_{c}(\hat{S}_{t+1,k},\operatorname{sg}(\bar{S}_{t+1,k})).\end{gathered} 
+ (8) 
+Here \bar{Z} and \bar{S} are momentum encoder features and aggregated
+states; i indexes valid target positions and k corresponding state
+slots. LN is non-affine layer normalization and c the feature width.
+Both components are averaged over samples and supervised rollout steps
+(Appendix  C.1 ).
+A fixed calibrated external camera supplies future rays without future
+depth. Control and ablation rollouts use predicted states and endpoint
+proprioception; A,R stay fixed at the initial observation.
+ Robot-State and Object-Motion Readouts. 
+Three independent endpoint heads read mean-pooled \hat{S}_{t+1} to predict
+joint configuration \hat{q}_{t+1} , instantaneous velocity
+ \widehat{\dot{q}}_{t+1} , and tool-center-point (TCP) pose \hat{T}_{t+1}^{\mathrm{tcp}} .
+The predicted configuration and velocity condition the next rollout step.
+One object-motion head reads the pooled state pair (S_{t},\hat{S}_{t+1}) 
+and its difference to predict a finite body-frame pose increment
+ \widehat{\Delta\xi}_{t}^{o} , not a velocity, for each annotated object or part o :
+ \hat{T}_{t+1}^{o}=\tilde{T}_{t}^{o}\operatorname{Exp}([\widehat{\Delta\xi}_{t}^{o}]^{\wedge}). 
+ (9) 
+Here \operatorname{Exp} maps the Lie-algebra matrix
+ [\widehat{\Delta\xi}_{t}^{o}]^{\wedge} to an SE(3) transform acting on the right.
+The trajectory starts from a supplied object pose and thereafter uses
+predicted poses; this accumulator does not condition the visual state,
+transition, or readout heads. The endpoint readouts and integrated object
+poses receive valid-label supervision, grouped as \mathcal{L}_{\mathrm{sup}} 
+(Appendix  C.1 ).
+ Joint–TCP Kinematic Consistency. 
+Independent joint and TCP predictions should describe the same robot
+configuration. Direct labels anchor each output to measurements;
+fixed differentiable forward kinematics (FK) constrains their agreement:
+ \mathcal{L}_{\mathrm{FK}}=d_{\mathrm{pose}}(\mathrm{FK}_{\mathrm{tcp}}(\hat{q}_{t+1}),\hat{T}_{t+1}^{\mathrm{tcp}}). 
+ (10) 
+Here d_{\mathrm{pose}} combines unit-normalized translation and SO(3)
+geodesic errors. \mathrm{FK}_{\mathrm{tcp}} includes the calibrated chain,
+base transform, and tool offset; gradients through both heads
+reach the latent transition. This consistency term complements direct
+joint/TCP supervision by coupling the two output heads through the same
+predicted state and known robot geometry.
+ 3.5 Training and Rollout Protocol
+RGB-D adaptation trains state construction and readout on images and
+video clips using spatial and temporal context, not causal next-frame
+rollouts. Robot post-training adds action-conditioned transitions and
+physical heads; image/video replay continues the adaptation objective:
+ \begin{gathered}\mathcal{L}_{\mathrm{adapt}}=\mathcal{L}_{\mathrm{spatial}}+\mathcal{L}_{\mathrm{fac}},\\
+\mathcal{L}_{\mathrm{robot}}=\mathcal{L}_{\mathrm{temporal}}+\mathcal{L}_{\mathrm{fac}}+\mathcal{L}_{\mathrm{sup}}+\lambda_{\mathrm{FK}}\gamma(n)\mathcal{L}_{\mathrm{FK}}.\end{gathered} 
+ (11) 
+The schedule \gamma(n) gradually enables FK over robot updates n ;
+supervision uses valid labels. The stopped EMA teacher tracks the
+representation stack, including factorization and aggregation, but not
+predictors or physical heads. Control and ablation rollouts recursively
+use predicted states and proprioception with fixed initial private features;
+Table  2 uses recorded proprioception instead.
+Appendix  C.1 gives weights and schedules,
+Appendix  B.2 details the modules, and
+Algorithms  1 – 2 
+specify training and rollout.
+ 4 Experiments
+We evaluate four questions:
+ Q1: Does RGB-D adaptation improve encoder transfer and feature completion? (Sec.  4.2 )
+ Q2: How accurate are visual forecasts under recorded physical conditioning? (Sec.  4.3 )
+ Q3: Do learned predictions support planning and control? (Sec.  4.4 )
+ Q4: Which components drive predictive performance? (Sec.  4.5 )
+ 4.1 Experimental Setup
+App.  E specifies task protocols and adaptations.
+We compare RGB-origin JEPAs : LeJEPA ( Balestriero & LeCun, 2025 ) ,
+V-JEPA 2 ( Assran et al., 2025 ) , and V-JEPA 2.1 ( Mur-Labadia et al., 2026 ) ;
+and depth-related JEPAs : Locate 3D’s 3D-JEPA ( Arnaud et al., 2025 ) ,
+LeMuMo-JEPA ( Cornelissen et al., 2026 ) , and JEPADepth ( Grigore & Popa, 2026 ) .
+These comparisons assess complete systems with their stated pretraining,
+capacity, and adaptation. Within-model ablations test the designated
+components. Concurrent work is discussed in Sec. 2.
+ Figure 3: Qualitative Evaluation of Frozen Spatial Representations. 
+Task-specific probes trained on frozen encoders produce
+(a) monocular depth estimates on NYUv2 and (b) semantic segmentation maps
+on VOC12. RGB inputs and ground-truth annotations provide references.
+Depth maps share a common metric color scale, and segmentation maps use
+a consistent class palette.
+ Table 1: Frozen Spatial Transfer and RGB-D Feature Completion. 
+MDE and SS use frozen-encoder probes on NYUv2 and VOC12.
+SC measures masked-region L1 and Cos against shared
+references on LingBot-Depth, with equal RGB/depth weighting. \dagger : method-specific adaptation.
+ MDE on NYUv2 
+ SS on VOC12 
+ SC on LB-Depth 
+ Method 
+ AbsRel \downarrow 
+ RMSE \downarrow 
+ \log_{10}\downarrow 
+ \delta_{1}\uparrow 
+ mIoU \uparrow 
+ mAcc \uparrow 
+ L1 \downarrow 
+ Cos. \uparrow 
+ LeJEPA  ( Balestriero & LeCun, 2025 ) 
+ 0.137 
+ 0.490 
+ 0.059 
+ 85.7 
+ 76.0 
+ 85.0 
+ 0.352 
+ 0.891 
+ V-JEPA 2  ( Assran et al., 2025 ) 
+ 0.188 
+ 0.642 
+ 0.079 
+ 77.5 
+ 63.9 
+ 76.8 
+ 0.428 
+ 0.843 
+ V-JEPA 2.1  ( Mur-Labadia et al., 2026 ) 
+ 0.098 
+ 0.350 
+ 0.042 
+ 92.5 
+ 84.7 
+ 91.8 
+ 0.298 
+ 0.931 
+ 3D-JEPA †   ( Arnaud et al., 2025 ) 
+ Not evaluated: point-cloud input 
+ 0.283 
+ 0.938 
+ LeMuMo-JEPA †   ( Cornelissen et al., 2026 ) 
+ 0.097 
+ 0.345 
+ 0.042 
+ 92.7 
+ 84.2 
+ 91.6 
+ 0.291 
+ 0.936 
+ JEPADepth  ( Grigore & Popa, 2026 ) 
+ 0.090 
+ 0.323 
+ 0.039 
+ 93.8 
+ 84.5 
+ 91.7 
+ 0.312 
+ 0.923 
+ DepState-JEPA (Ours) 
+ 0.088 
+ 0.316 
+ 0.038 
+ 94.2 
+ 86.0 
+ 92.8 
+ 0.247 
+ 0.951 
+ 4.2 Spatial Representation Transfer and Prediction
+ Spatial Transfer with Frozen Encoders. 
+Following V-JEPA 2.1’s frozen dense-probing protocol
+ ( Mur-Labadia et al., 2026 ) , we evaluate monocular depth estimation (MDE)
+on NYUv2 ( Silberman et al., 2012 ) and semantic segmentation (SS) on
+VOC12 ( Everingham et al., 2015 ) . Linear probes read normalized final-layer
+features. Ours uses the Stage-A RGB encoder, measuring transfer after
+RGB-D adaptation with the depth branch and DepState bypassed at inference.
+Readouts, preprocessing, and probe optimization are shared within each task;
+V-JEPA and ours use ViT-g. App.  E.3 lists representation
+training and probing conditions. Tab.  1 and
+Fig.  3 give scores and predictions.
+ Masked RGB-D Spatial Feature Completion. 
+We extend V-JEPA 2.1’s masked feature prediction to RGB-D spatial completion (SC) on
+held-out LingBot-Depth scenes ( Tan et al., 2026 ) . All methods share
+identical RGB/depth masks, visible context, and calibration; masked depth
+is excluded from geometric lifting and query construction.
+Tab.  1 reports masked-region L1 and cosine
+similarity against shared frozen RGB/depth references, each averaged equally
+over modalities. Fig.  4 (a) shows PCA visualizations
+of completed features in masked regions. App.  E.4 
+specifies synchronized masks, frozen reference targets, and masked-token scoring.
+ Figure 4: Spatial Completion and Temporal Prediction in Feature Space. 
+PCA of (a) completion from jointly masked RGB-D observations
+and (b) multi-step visual forecasts on robot trajectories.
+ 4.3 Temporal Visual Prediction
+ Table 2: Single-Step and Multi-Step Prediction in a Common Feature Space. 
+Frozen readouts map predictions to a shared RGB reference space for L1 
+and Cos . evaluation. \dagger : The AC adaptation.
+ 1 step 
+ 8 steps 
+ 16 steps 
+ 24 steps 
+ 32 steps 
+ Method 
+ L1 \downarrow 
+ Cos. \uparrow 
+ L1 \downarrow 
+ Cos. \uparrow 
+ L1 \downarrow 
+ Cos. \uparrow 
+ L1 \downarrow 
+ Cos. \uparrow 
+ L1 \downarrow 
+ Cos. \uparrow 
+ V-JEPA 2-AC  ( Assran et al., 2025 ) 
+ 0.242 
+ 0.916 
+ 0.421 
+ 0.792 
+ 0.523 
+ 0.701 
+ 0.580 
+ 0.646 
+ 0.658 
+ 0.598 
+ V-JEPA 2.1-AC  ( Mur-Labadia et al., 2026 ) 
+ 0.171 
+ 0.967 
+ 0.342 
+ 0.874 
+ 0.476 
+ 0.781 
+ 0.554 
+ 0.702 
+ 0.614 
+ 0.636 
+ 3D-JEPA-AC †   ( Arnaud et al., 2025 ) 
+ 0.169 
+ 0.968 
+ 0.336 
+ 0.879 
+ 0.467 
+ 0.789 
+ 0.546 
+ 0.711 
+ 0.602 
+ 0.647 
+ LeMuMo-JEPA-AC †   ( Cornelissen et al., 2026 ) 
+ 0.167 
+ 0.969 
+ 0.331 
+ 0.882 
+ 0.479 
+ 0.778 
+ 0.563 
+ 0.694 
+ 0.624 
+ 0.627 
+ DepState-JEPA-AC (Ours) 
+ 0.145 
+ 0.976 
+ 0.307 
+ 0.903 
+ 0.394 
+ 0.851 
+ 0.451 
+ 0.811 
+ 0.491 
+ 0.779 
+ Next-Step Visual Prediction. 
+We evaluate next-frame features on held-out robot trajectories.
+Frozen linear readouts map predictions to a shared V-JEPA 2.1 RGB
+reference space. Fitted on observed training frames, readouts stay frozen
+across horizons. L1 and token-wise cosine similarity score the complete
+prediction–readout path. App.  E.5 specifies
+calibration, interfaces, and action-conditioned adaptation.
+ Multi-Step Visual Forecasting. 
+We evaluate recursive visual predictions at 8,16,24,32 steps from matched
+starting frames. Table  2 supplies recorded actions
+and proprioception at each step, with no future images. DepState-JEPA
+keeps its initial private memory fixed. Control and internal ablation
+rollouts instead use predicted proprioception (App.  E.7 ).
+Fig.  4 (b) shows feature forecasts across horizons.
+ 4.4 Embodied Prediction and Manipulation
+ Online Policy Learning through Trajectories. 
+Following DreamerV3 ( Hafner et al., 2025 ) , we train an actor–critic
+on imagined trajectories and adapt JEPA dynamics from online replay.
+Evaluation directly executes the actor. We use 20 DMControl (DMC) and
+50 Meta-World (MW) tasks with matched interaction budgets. Tab.  3 reports task-averaged episode
+return (the sum of rewards) for DMC and averaged success for MW.
+App.  E.6.1 specifies replay, imagination, and policy learning.
+ Latent Space Receding-Horizon Planning. 
+Following TD-MPC2 ( Hansen et al., 2024 ) , we use model predictive control
+(MPC): optimize action sequences through the learned latent transition
+using predicted rewards and terminal values, execute the first action,
+and replan at every step. Task sets, interaction budgets, and search budgets
+are matched across JEPA models. Tab.  3 reports
+both metrics; App.  E.6.2 specifies value learning
+and trajectory optimization.
+ Sim2real Manipulation Transfer. 
+We construct matched simulation and real environments (Fig.  5 )
+and augment simulated depth with PRISM ( Liang et al., 2026 ) .
+Simulation-trained models remain frozen for drawer and cup visual-goal MPC.
+Tab.  3 reports full-task success across three seeds,
+with 30 trials each. The 60-second robot-execution budget excludes inference
+and search. App.  E.6.3 specifies subgoals,
+independent resets, and success aggregation.
+ Figure 5: Sim-to-Real Setup and Multi-View RGB-D Rollouts. 
+ Left : simulation and real-world setups. Right : RGB-D observations from
+two viewpoints during real-robot manipulation tasks.
+ Table 3: JEPA-Based Policy Learning, Planning, and Sim-to-Real Control. 
+DMC reports task-averaged episode return ; MW and Sim2Real report success rate (%).
+Entries are mean \pm std .
+ Online PL 
+ Latent MPC 
+ Sim2Real MPC 
+ Method 
+ DMC \uparrow 
+ MW \uparrow 
+ DMC \uparrow 
+ MW \uparrow 
+ Task 1 \uparrow 
+ Task 2 \uparrow 
+ V-JEPA 2-AC  ( Assran et al., 2025 ) 
+ 682.4 
+ \pm 
+  14.7 
+ 52.8 
+ \pm 
+  2.8 
+ 736.5 
+ \pm 
+  15.3 
+ 66.4 
+ \pm 
+  2.4 
+ 45.6 
+ \pm 
+  5.1 
+ 41.1 
+ \pm 
+  5.1 
+ V-JEPA 2.1-AC  ( Mur-Labadia et al., 2026 ) 
+ 763.8 
+ \pm 
+  15.4 
+ 68.6 
+ \pm 
+  2.3 
+ 807.2 
+ \pm 
+  15.0 
+ 81.2 
+ \pm 
+  2.6 
+ 66.7 
+ \pm 
+  6.7 
+ 64.4 
+ \pm 
+  5.1 
+ 3D-JEPA-AC †   ( Arnaud et al., 2025 ) 
+ 784.4 
+ \pm 
+  12.6 
+ 72.3 
+ \pm 
+  2.6 
+ 826.4 
+ \pm 
+  18.2 
+ 85.6 
+ \pm 
+  3.2 
+ 73.3 
+ \pm 
+  5.8 
+ 71.1 
+ \pm 
+  5.1 
+ LeMuMo-JEPA-AC †   ( Cornelissen et al., 2026 ) 
+ 790.4 
+ \pm 
+  16.1 
+ 73.2 
+ \pm 
+  2.5 
+ 837.5 
+ \pm 
+  13.6 
+ 87.8 
+ \pm 
+  2.2 
+ 75.6 
+ \pm 
+  6.9 
+ 74.4 
+ \pm 
+  8.4 
+ DepState-JEPA-AC (Ours) 
+ 813.2  
+ \pm 
+  14.3 
+ 77.1  
+ \pm 
+  2.8 
+ 857.8  
+ \pm 
+  17.8 
+ 90.1  
+ \pm 
+  2.8 
+ 81.1  
+ \pm 
+  5.1 
+ 78.9  
+ \pm 
+  3.8 
+ (a) Geometry-Grounded State 
+ (b) Sharing and Spatial Readout 
+ (c) Temporal Prediction and Grounding 
+ Figure 6: Ablation Results. 
+ L1/Cos : 3 tasks; SR : 50 MW + 2 real (%). Details in App.  E.7 .
+ 4.5 Ablation Study
+Ex.1–Ex.15 vary components against the full Ex.16 configuration.
+App.  E.7 defines interventions and disaggregates completion,
+Drawer/Cup prediction, and controller-specific success.
+ Effect of Depth Content and Metric Coordinates. 
+Ex.1–Ex.3 and Ex.16 isolate depth content and metric coordinates under fixed
+backbones and supervision. Combining both reduces L1 from 0.408 to 0.340 and
+raises SR from 76.8% to 83.4% (Fig.  6 (a)). Each factor
+improves prediction and control, although their joint gains are subadditive at the reported means.
+ Effect of Selective Sharing and Spatial Readout. 
+Ex.4–Ex.8 vary private decoding, alignment, aggregation, queries, and completion
+(Fig.  6 (b)). Removing private decoding raises L1 from 0.340 to 0.390,
+with SR at 83.2% versus 83.4%. Mean aggregation gives L1 0.440 and SR 77.0%.
+Pixel/ray queries tie in feature scores; private decoding primarily benefits visual readout.
+ Effect of Temporal Modeling and Physical Supervision. 
+Ex.9–Ex.15 vary temporal targets, physical supervision, memory, and decoders
+(Fig.  6 (c)). Removing future-state matching lowers SR
+from 83.4% to 79.5%; removing FK gives 82.5% with direct labels retained.
+Separate decoders reach L1 0.333 and SR 83.4% with added capacity.
+App.  E.7 relates these outcomes to each intervention.
+ 5 Conclusion
+DepState-JEPA connects RGB–depth geometry, shared-state evolution, and private decoding
+for feature completion, conditioned forecasting, and manipulation. RGB-D adaptation improves
+encoder transfer; ablations identify contributions from geometry, local state content, and
+future-state supervision. App.  F discusses the remaining scope.
+Statement on the Use of AI Tools
+In this work, we used generative AI tools (Codex) solely to assist with drafting parts of the manuscript, editing the text for readability, and adjusting L a T e X formatting and layout.
+We did not use generative AI tools to generate synthetic datasets, develop theoretical models or conceptual frameworks, formulate mathematical claims, provide critical ingredients for proofs or assist in writing proofs, propose or refine hypotheses, design or provide feedback on research methodology or experiments, implement the DepState-JEPA method, or interpret experimental results.
+All AI-assisted manuscript preparation was conducted under human direction and supervision.
+The authors reviewed and revised the AI-assisted text and inspected the compiled manuscript.
+We take full responsibility for the final content of this work, including all text, claims, and artifacts produced with the aid of generative AI tools.

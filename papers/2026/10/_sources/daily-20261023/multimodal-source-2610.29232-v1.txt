@@ -1,0 +1,432 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.29232v1
+Original retrieval 2026-10-23 BJT. Download is not evidence of having reviewed all content. Necessary reviewed sections and conclusions are in SOURCE_MULTIMODAL.md.
+Abstract
+Vision-Language Models (VLMs) excel at 2D recognition but often fail to maintain consistent 3D relations across sparse viewpoints, leading to spatial hallucinations under occlusion and perspective changes. Existing methods commonly fuse all frames with dense geometry, incurring substantial computation and context overhead while encouraging blind reliance on imperfect estimators. We present Think-Capture , a query-conditioned framework that first identifies task-critical objects and then acquires their geometry on demand. A 3D toolkit lifts zero-shot masks into a common coordinate frame, and a Symbolic 3D State Abstraction compresses object and camera states into structured text. Hierarchical Group Relative Policy Optimization (GRPO) trains the VLM on cases in which geometry either helps or misleads, teaching it when to use tool evidence and when to fall back on visual cues. Think-Capture-4B reaches 54.4% on MindCube-Tiny (+21.5 points over its backbone), 39.1% on the MMSI-Bench positional subset (+7.9), and 42.8% on ViewSpatial (+5.2). It also remains robust under coordinate and mask perturbations. The full stack fits one 24 GB GPU and serves as an asynchronous high-level reasoner on an Agibot G1. Our code is available at github.com/819346675/Think-Capture .
+ 1 Introduction
+Multi-view spatial reasoning is essential for embodied systems that must navigate and manipulate objects  [ 13 , 51 , 64 , 31 , 2 , 32 , 46 ] . Although recent VLMs are strong at image understanding  [ 63 , 1 , 18 ] , they struggle with cross-view consistency, occlusion, and relative 3D position  [ 7 , 44 , 21 , 50 , 40 , 56 , 53 , 20 , 55 ] . Under depth or viewpoint ambiguity, they often substitute image-plane heuristics for a persistent spatial model  [ 40 ] .
+ Figure 1 : Spatial reasoning paradigms. (a) Passive methods fuse 2D and 3D features for every query. (b) Think-Capture first selects task-critical targets, acquires their geometry, and reasons jointly over visual tokens and explicit 3D state. 
+Most existing approaches follow an implicit perception-and-fusion paradigm (Fig.  1 a): they encode dense scene geometry and fuse it with image features before seeing the query. Processing task-irrelevant geometry increases computation and context length and can introduce distracting evidence  [ 40 , 8 , 23 ] . Agentic alternatives let VLMs invoke external 3D tools  [ 60 ] . These interfaces make geometric evidence explicit, but errors in the tool output or its interpretation can still propagate to the answer.
+Think-Capture instead performs query-conditioned acquisition (Fig.  1 b). The VLM names only the objects needed to answer the question; a 3D Capturing Toolkit then estimates their masks, coordinates, and cross-view relations. A Symbolic 3D State Abstraction converts these measurements into compact object and camera descriptions, filtering irrelevant geometry while preserving the relations required by the query  [ 3 , 42 ] .
+We train a 4B backbone with GRPO  [ 12 , 30 , 35 ] . The training set distinguishes queries for which 3D evidence corrects the vision-only model from those for which imperfect geometry is misleading. Hierarchical rewards encourage correct use of helpful geometry and incorporate negative examples to retain correct answers when tool augmentation is misleading. The resulting policy learns to combine explicit 3D state with the original frames instead of trusting either source unconditionally.
+We evaluate on MindCube  [ 40 ] , MMSI-Bench  [ 53 ] , and ViewSpatial-Bench  [ 20 ] , covering mental rotation, cross-view relations, and perspective taking. We further test backbone scaling, zero-shot transfer, controlled tool corruption, and a matched 2D-box baseline. Finally, we deploy Think-Capture as an asynchronous high-level spatial reasoner on a real Agibot G1.
+In summary, our main contributions are:
+ • 
+We introduce query-conditioned 3D acquisition and a compact symbolic interface that exposes task-relevant object and camera geometry to a VLM.
+ • 
+We propose hierarchical 2D–3D GRPO rewards that promote useful geometry integration and improve robustness to noisy tool evidence.
+ • 
+We demonstrate consistent gains across backbones and benchmarks, robustness to controlled tool corruption, and real-robot integration on consumer hardware.
+ 2 Related Work
+ 2.1 Implicit Spatial Learning in VLMs
+Object-centric grounding  [ 57 , 22 ] and 3D-informed learning  [ 24 , 44 , 21 , 45 , 52 , 5 ] enrich spatial representations. Visual-tool use and video reasoning provide complementary strategies  [ 37 , 38 , 9 ] . Geometry estimators such as VGGT and MapAnything recover scene structure from images  [ 39 , 17 ] . These advances motivate combining learned visual priors with explicit, query-relevant geometric evidence.
+ 2.2 Spatial Reasoning From Multi-views
+Multi-view benchmarks test cross-view understanding  [ 54 ] , mental rotation  [ 40 ] , relations between entities that never co-occur  [ 53 ] , and perspective transformations  [ 20 ] . Mental models provide a cognitive account of internal spatial representations  [ 14 , 15 ] ; recent evaluations reveal gaps in VLM spatial understanding  [ 6 , 34 ] . Perspective-aware reasoning and spatial-reasoning surveys motivate structured geometry as a complement to visual cues  [ 19 , 58 ] .
+ 2.3 Explicit Spatial Reasoning
+MindCube  [ 40 ] trains VLMs to generate cognitive maps, whereas GPT4Scene-style systems  [ 33 , 62 ] provide externally constructed metric or bird’s-eye-view maps. Both reconstruct-then-reason approaches represent the whole scene. Tool-using methods such as Think3D  [ 60 ] instead let an agent manipulate point clouds or estimate camera anchors  [ 42 ] . Think-Capture differs in three coupled design choices: query-conditioned target selection, a common symbolic interface for object and camera state, and hierarchical GRPO that trains the VLM to accept or reject imperfect tool evidence. The controlled corruption and matched 2D-box experiments in Sec.  4 evaluate robustness and the value of the symbolic 3D representation.
+ 3 Method
+ 3.1 Overview: The Think-Capture Paradigm
+Think-Capture implements a two-stage Reason-then-Act loop: it first plans which geometry is needed, then reasons over the images and the captured symbolic state.
+ Figure 2 : Think-Capture overview. Stage 1 selects query-relevant targets. SAM3 and \pi^{3} produce the object and camera state used with the images in Stage 2. In the training panel, the accuracy-branch labels denote r_{\mathrm{acc}} , with +1/+2 for correct positive/negative examples (Sec.  3.4 ). The example annotations illustrate the interface. 
+ Problem formulation. Let \mathcal{V}=\{v_{k}\}_{k=0}^{K-1} be K views of a scene and \mathcal{Q} a spatial query. A VLM policy \pi_{\theta} generates a reasoning trajectory y=(y^{1},\ldots,y^{L}) and final answer \mathcal{A} conditioned on (\mathcal{V},\mathcal{Q}) .
+Given (\mathcal{V},\mathcal{Q}) , Stage 1 emits semantic targets inside an <objects_to_segment> block. The toolkit acquires only the requested object geometry and returns a symbolic text state. Stage 2 then combines that state with the original images to produce \mathcal{A} (Fig.  2 ).
+ 3.2 3D Perception via Tool-Calling
+For each target t , SAM3  [ 3 ] produces a zero-shot mask M^{(k)}\in\{0,1\}^{H\times W} in each relevant frame.
+In parallel, the feed-forward estimator \pi^{3} (Pi3X, with approximate metric scale) predicts a local point map P_{\mathrm{local}}^{(k)}\in\mathbb{R}^{H\times W\times 3} and camera-to-world pose T_{\mathrm{cam}}^{(k)}=[R^{(k)}\mid t^{(k)}]\in SE(3) .
+We use the first frame as the world origin, so T_{\mathrm{cam}}^{(0)}=I_{4\times 4} . A local point p_{\mathrm{local}} is transformed as
+ \begin{bmatrix}p_{\mathrm{world}}\\
+1\end{bmatrix}=\begin{bmatrix}R^{(k)}&t^{(k)}\\
+\mathbf{0}^{T}&1\end{bmatrix}\begin{bmatrix}p_{\mathrm{local}}\\
+1\end{bmatrix}. 
+ (1) 
+The mask selects the corresponding world-space points:
+ P_{\mathrm{world}}^{(k)}=\left\{R^{(k)}P_{\mathrm{local}}^{(k)}[i,j]+t^{(k)}\;\middle|\;M^{(k)}[i,j]=1\right\}. 
+ (2) 
+Only masked target points are aggregated into object state; the system neither serializes nor sends the dense scene to the VLM. Supplementary Sec. B gives the complete pipeline and four-frame budget.
+ Role and computational benefit of target selection. Stage 1 selects semantic object targets conditioned on the question, rather than requesting every object in the scene. For K retained frames and m targets, the target-dependent work comprises text-prompted segmentation, masked-point aggregation, and up to O(m^{2}) object-pair relations. Restricting m therefore avoids processing and describing irrelevant objects. The four-frame cap bounds dense \pi^{3} estimation, while target selection controls segmentation and symbolic processing within those frames. Our matched 2D-box control compares Stage 2 representations using the same selected targets and masks.
+ 3.3 3D Templated Information Generation
+Passing dense point clouds to a VLM creates a modality gap and consumes substantial context. We instead distill the acquired geometry into two structured text streams (Fig.  2 ):
+ • 
+ Object stream ( \mathcal{O} ). Each target i is represented by world position p_{i} , bounding-box scale s_{i} , and pairwise relations \mathcal{R}_{i,j} . We compute
+ d_{i,j}=\|p_{i}-p_{j}\|_{2},\quad\vec{v}_{i,j}=\frac{p_{i}-p_{j}}{\|p_{i}-p_{j}\|_{2}}. 
+ (3) 
+and map them to templates such as “front-left, distance d_{i,j} .”
+ • 
+ Camera stream ( \mathcal{C} ). Each frame stores (T_{\mathrm{cam}}^{(k)},\Delta T^{(k,k-1)},\vec{d}_{k}) , where
+ \Delta T^{(k,k-1)}=\left(T_{cam}^{(k-1)}\right)^{-1}T_{cam}^{(k)}. 
+ (4) 
+is decomposed into translation and Euler angles, yielding descriptions such as “turned left \sim 76^{\circ} .”
+This bottleneck filters task-irrelevant geometry and uses 100 tokens per query on average, versus 205 for the unstructured tool output (a 51% reduction). Back-projection and formatting details appear in supplementary Sec. B.
+ Table 1 : Comprehensive performance comparison on MindCube-Tiny, MMSI-Bench (Positional Relationship Subset), and ViewSpatial-Bench. Metrics are reported as accuracy (%). We grey out the proprietary models. The best performance among open-source models is highlighted in bold . The improvement of Think-Capture over the baseline ( Qwen3-VL-4B ) is shown in blue below the score. 
+ Model 
+ MindCube-Tiny 
+ MMSI-Bench-Positional Relationship Subset 
+ ViewSpatial 
+ Among 
+ Around 
+ Rotation 
+ Overall 
+ Cam-Cam 
+ Cam-Obj 
+ Obj-Reg 
+ Cam-Reg 
+ Reg-Reg 
+ Obj-Obj 
+ Overall 
+ Overall 
+ Proprietary Models 
+ GPT-4o 
+ 44.6 
+ 58.4 
+ 39.0 
+ 46.8 
+ 34.4 
+ 19.8 
+ 37.6 
+ 27.7 
+ 23.5 
+ 24.5 
+ 28.0 
+ 35.0 
+ Gemini-2.5 Pro 
+ 40.2 
+ 56.7 
+ 84.3 
+ 52.5 
+ 39.7 
+ 45.3 
+ 35.2 
+ 43.3 
+ 39.5 
+ 31.9 
+ 39.0 
+ 43.6 
+ Doubao-1.5 
+ 46.0 
+ 38.4 
+ 75.1 
+ 49.7 
+ 25.8 
+ 33.7 
+ 49.4 
+ 39.8 
+ 33.3 
+ 33.0 
+ 35.6 
+ - 
+ GLM-4.5V 
+ 44.1 
+ 23.5 
+ 46.9 
+ 39.7 
+ 38.7 
+ 30.2 
+ 40.0 
+ 39.8 
+ 29.6 
+ 35.1 
+ 35.6 
+ - 
+ Open-Source Models 
+ InternVL3-8B 
+ 39.2 
+ 62.1 
+ 34.0 
+ 43.7 
+ 25.8 
+ 25.6 
+ 35.3 
+ 28.9 
+ 37.0 
+ 31.9 
+ 30.6 
+ 38.6 
+ InternVL3-38B 
+ 48.5 
+ 56.0 
+ 32.5 
+ 47.2 
+ 18.3 
+ 22.1 
+ 38.8 
+ 34.9 
+ 35.8 
+ 22.3 
+ 28.3 
+ 41.2 
+ Qwen2.5-VL-7B 
+ 32.1 
+ 37.2 
+ 38.8 
+ 34.6 
+ 24.7 
+ 25.6 
+ 29.4 
+ 26.5 
+ 24.7 
+ 24.5 
+ 25.9 
+ 36.8 
+ Qwen3-VL-4B (Base) 
+ 26.5 
+ 44.6 
+ 37.5 
+ 32.9 
+ 28.0 
+ 41.9 
+ 28.2 
+ 31.3 
+ 29.6 
+ 28.7 
+ 31.2 
+ 37.6 
+ Spatial-LLMs 
+ Spatial-MLLM-3B 
+ 27.6 
+ 35.2 
+ 33.0 
+ 30.4 
+ 23.6 
+ 34.9 
+ 32.9 
+ 24.1 
+ 37.0 
+ 26.6 
+ 29.7 
+ 36.9 
+ SpatialLadder-3B 
+ 47.1 
+ 40.2 
+ 31.5 
+ 42.5 
+ 26.3 
+ 36.4 
+ 31.2 
+ 26.0 
+ 36.2 
+ 29.9 
+ 30.9 
+ 39.8 
+ Tool-Augmented Method 
+ Think3D-4B 
+ 39.2 
+ 35.0 
+ 39.2 
+ 38.2 
+ - 
+ - 
+ - 
+ - 
+ - 
+ - 
+ - 
+ - 
+ Think-Capture-4B 
+ 57.6 
+ 54.1 
+ 45.0 
+ 54.4 
+ 34.5 
+ 50.1 
+ 33.2 
+ 50.3 
+ 29.9 
+ 36.9 
+ 39.1 
+ 42.8 
+ (+31.1) 
+ (+9.5) 
+ (+7.5) 
+ (+21.5) 
+ (+6.5) 
+ (+8.2) 
+ (+5.0) 
+ (+19.0) 
+ (+0.3) 
+ (+8.2) 
+ (+7.9) 
+ (+5.2) 
+ 3.4 2D-3D Joint Reasoning
+We fine-tune Qwen3-VL-4B with GRPO  [ 12 ] so that it can combine the target geometry with visual evidence without blindly trusting the tool.
+GRPO avoids a separate critic by estimating the baseline from G sampled trajectories. For brevity, writing the clipped objective at the trajectory level gives
+ \displaystyle\mathcal{J}_{\mathrm{GRPO}}(\theta) 
+ \displaystyle=\mathbb{E}_{\mathcal{Q},\mathcal{V}\sim\mathcal{D}}\left[\frac{1}{G}\sum_{i=1}^{G}\left(\mathcal{L}_{i}-\beta\mathbb{D}_{\mathrm{KL}}(\pi_{\theta}\|\pi_{\mathrm{ref}})\right)\right], 
+ (5) 
+ \displaystyle\mathcal{L}_{i} 
+ \displaystyle=\min\!\left(\rho_{i}(\theta)A_{i},\bar{\rho}_{i}(\theta)A_{i}\right), 
+ \displaystyle\bar{\rho}_{i}(\theta) 
+ \displaystyle=\operatorname{clip}\!\left(\rho_{i}(\theta),1-\epsilon,1+\epsilon\right). 
+where \rho_{i}(\theta)=\pi_{\theta}(y_{i}\mid\mathcal{Q},\mathcal{V})/\pi_{\theta_{\mathrm{old}}}(y_{i}\mid\mathcal{Q},\mathcal{V}) , \bar{\rho}_{i} is clipped to [1-\epsilon,1+\epsilon] , and \beta weights the KL penalty to \pi_{\mathrm{ref}} . For groups with nonzero reward variance, the normalized advantage is
+ A_{i}=\frac{R(y_{i})-\mu_{R}}{\sigma_{R}}, 
+ (6) 
+where \mu_{R} and \sigma_{R} are the group reward mean and standard deviation. A constant-reward group contains no within-group preference signal.
+The reward combines answer accuracy and format compliance:
+ R(y_{i})=r_{acc}(y_{i})+r_{format}(y_{i}). 
+ (7) 
+We set r_{\mathrm{format}}=0.5 when the output follows the required <think>...</think><answer>...</answer> structure.
+We run the base model on 10,000 MindCube training samples in vision-only ( \mathcal{M}_{\mathrm{base}} ) and fixed-prompt tool-augmented ( \mathcal{M}_{\mathrm{tool}} ) modes. Their disagreement yields 3,032 training examples in two subsets:
+ • 
+ Positive samples: \mathcal{M}_{\mathrm{base}} fails and \mathcal{M}_{\mathrm{tool}} succeeds, so useful geometry should be exploited. Correct answers receive r_{\mathrm{acc}}=1 .
+ • 
+ Negative samples: \mathcal{M}_{\mathrm{base}} succeeds and \mathcal{M}_{\mathrm{tool}} fails, indicating misleading geometry or failed integration. Correct answers despite this interference receive r_{\mathrm{acc}}=2 .
+ Meaning of the hierarchical reward. The hierarchy is sample-conditioned: the positive subset contains 1,927 examples and the negative subset contains 1,105 examples, determined by the two screening runs above. Cases in which the screening models agree are not retained. These labels describe screening-time disagreement; question difficulty can vary within either subset. The negative subset captures observed regressions under tool augmentation, which can arise from erroneous geometry or incorrect integration of otherwise useful evidence. Its purpose is to train against such regressions while the positive subset promotes useful tool integration. The +1/+2 values specify sample-conditioned raw outcome rewards, and the optimization signal is determined by the total rewards after within-group normalization. Supplementary Sec. C.1 compares this reward design with a variant using no distinction between positive and negative outcome rewards.
+ 4 Experiment
+ 4.1 Datasets
+We evaluate Think-Capture on three challenging benchmarks designed to probe 3D spatial reasoning capabilities:
+ • 
+ MindCube-Tiny   [ 40 ] contains 1,050 questions: 600 Among, 250 Around, and 200 Rotation questions. Accuracy is computed over the valid evaluated examples in each run after excluding rare invalid evaluation cases; the category counts are nominal split sizes, not necessarily the per-run denominators.
+ • 
+ MMSI-Bench   [ 53 ] requires relating entities across disjoint frames. The main comparison uses its positional-relation subset; the supplement also reports the full benchmark.
+ • 
+ ViewSpatial-Bench   [ 20 ] evaluates perspective taking across egocentric and allocentric reference frames.
+ 4.2 Implementation Details
+We train Qwen3-VL-4B-Instruct on the 3,032 disagreement-mined MindCube training examples, with learning rate 5\times 10^{-7} and G=8 trajectories per prompt. The vision encoder is frozen, and the effective batch size is 16 with gradient accumulation. Training uses four A100 (80 GB) GPUs for approximately 38 hours, stopping at 1,600 training steps (approximately 152 GPU-hours for this training run). Correct positive and negative samples receive +1 and +2 , respectively, and format compliance receives +0.5 . Supplementary Sec. B provides the optimizer, clipping and KL settings, prompts, and resource details.
+ Additional training configuration. We use AdamW with a cosine learning-rate schedule and 50 warmup steps. The GRPO clipping parameter is 0.2, and the KL coefficient is 0.04. Training uses BF16 and DeepSpeed ZeRO-2 with the vision encoder frozen, reaching a peak GPU memory usage of 75.6 GB. The reported 152 GPU-hours refer to the 1,600-step GRPO training run. At inference, the toolkit retains at most four frames, while query-conditioned target selection restricts segmentation and symbolic aggregation.
+ 4.3 Main Results
+Table  1 compares Think-Capture with proprietary VLMs, open-source VLMs, spatially specialized models, and the tool-augmented Think3D-4B  [ 60 , 10 , 29 , 11 ] .
+ MindCube-Tiny. Think-Capture obtains 54.4%, an absolute gain of 21.5 points over Qwen3-VL-4B and a result comparable to much larger proprietary models. The largest gain is on “Among” (+31.1), where explicit target geometry helps localize objects in spatial clusters.
+ Unseen benchmarks and backbones. Without training on either benchmark, Think-Capture improves the MMSI positional subset from 31.2 to 39.1% (+7.9) and ViewSpatial from 37.6 to 42.8% (+5.2). On full MMSI, it improves 2B/4B/8B backbones by 8.9/10.0/8.8 points; the corresponding MindCube gains are 19.9/21.5/20.8.
+ Table 2 : Robustness to controlled tool perturbations on MindCube-Tiny (accuracy, %). Coordinate noise is zero-mean Gaussian perturbation of \pi^{3} outputs; mask noise randomly drops SAM3 foreground pixels. Hierarchical GRPO improves both clean accuracy and tolerance to corrupted evidence. 
+ Model setup 
+ Clean 
+ \pi^{3} coordinate noise 
+ SAM3 mask dropout 
+ 0.2 m 
+ 0.4 m 
+ 15% 
+ 30% 
+ Zero-shot tool use 
+ 39.9 
+ 32.8 
+ 26.7 
+ 37.2 
+ 36.2 
+ w/o hierarchical GRPO 
+ 51.2 
+ 44.3 
+ 40.3 
+ 49.2 
+ 49.0 
+ Think-Capture (full) 
+ 54.4 
+ 50.7 
+ 46.2 
+ 53.8 
+ 52.1 
+ Table 3 : Backbone scaling on MindCube-Tiny and full MMSI-Bench (accuracy, %). Parentheses give absolute gains over each matched backbone. 
+ Size 
+ MindCube 
+ MMSI full 
+ Base 
+ Ours 
+ Base 
+ Ours 
+ Qwen3-VL-2B 
+ 29.3 
+ 49.2 (+19.9) 
+ 25.8 
+ 34.7 (+8.9) 
+ Qwen3-VL-4B 
+ 32.9 
+ 54.4 (+21.5) 
+ 28.9 
+ 38.9 (+10.0) 
+ Qwen3-VL-8B 
+ 33.4 
+ 54.2 (+20.8) 
+ 29.6 
+ 38.4 (+8.8) 
+ Robustness and representation controls. With 0.4 m coordinate noise, the full model retains 46.2% accuracy versus 26.7% for zero-shot tool use; with 30% mask-pixel dropout, the scores are 52.1 and 36.2%. A matched Stage-2 input with 2D boxes reaches only 36.9/31.8/37.9% on MindCube/full MMSI/ViewSpatial, versus 54.4/38.9/42.8% for symbolic 3D state. These controls support the value of learned 3D tool use relative to the tested visual-highlighting input; supplementary Sec. C gives full perturbation and fallback results.
+Table  2 evaluates answer robustness as the quality of geometric evidence degrades. Under the strongest coordinate corruption, hierarchical rewards improve 40.3 \rightarrow 46.2%, while the gap over zero-shot tool use is 19.5 points. Under 30% mask dropout, the corresponding scores are 52.1, 49.0, and 36.2%. The different degradation patterns are also informative: coordinate error changes metric relations, whereas pixel dropout often leaves enough target support for robust aggregation. In fewer than 1.6% of MindCube-Tiny queries, the toolkit returns no valid target. In these cases, a deterministic fallback omits the empty symbolic state and completes the query using the original images.
+ 4.4 Generalization and Matched Controls
+Table  3 applies the same acquisition, abstraction, and training recipe to 2B, 4B, and 8B Qwen3-VL backbones. MindCube gains remain within 19.9–21.5 points and full-MMSI gains within 8.8–10.0 points. The similar gains across model sizes suggest that explicit task-conditioned geometry complements backbone capacity. This pattern extends the benefit observed in the principal 4B comparison to both smaller and larger models.
+ Table 4 : Matched visual-prompting control (accuracy, %). Both variants use the same Stage 1 target proposals and SAM3 masks. 
+ Stage-2 input 
+ MindCube 
+ MMSI full 
+ ViewSpatial 
+ 2D boxes 
+ 36.9 
+ 31.8 
+ 37.9 
+ Symbolic 3D state 
+ 54.4 
+ 38.9 
+ 42.8 
+ Figure 3 : Resolving egocentric spatial ambiguity on MindCube-Tiny. The baseline equates the background visible beyond the blue table with the observer’s rear and answers “sofa.” Think-Capture identifies the blue table as the facing anchor, relates the surrounding furniture in the common 3D frame, and correctly recovers the unseen seating bench behind the observer. 
+The matched control in Table  4 tests whether target localization or colored visual prompting alone explains the improvement. Replacing the symbolic state with 2D boxes derived from the same masks removes depth, metric scale, and camera pose while preserving which entities Stage 1 selected. It trails symbolic 3D state by 17.5 points on MindCube, 7.1 on full MMSI, and 4.9 on ViewSpatial. Under these tested input configurations, symbolic 3D state is more effective than 2D highlighting alone.
+ Table 5 : Ablation study on MindCube-Tiny. TC denotes Think-Capture; Tokens is the mean length of the 3D representation. 
+ Base Model 
+ TC 
+ GRPO 
+ Format 
+ Tokens 
+ Among 
+ Around 
+ Rotation 
+ Overall 
+ Qwen3-VL-4B 
+ - 
+ - 
+ 26.5 
+ 44.6 
+ 37.5 
+ 32.9 
+ Qwen3-VL-4B 
+ ✓ 
+ - 
+ - 
+ 28.9 
+ 41.2 
+ 36.4 
+ 33.3 
+ Qwen3-VL-4B 
+ ✓ 
+ - 
+ 205 
+ 42.0 
+ 40.0 
+ 33.5 
+ 39.9 
+ Qwen3-VL-4B 
+ ✓ 
+ ✓ 
+ Unified 
+ 202 
+ 50.5 
+ 57.6 
+ 38.0 
+ 49.8 
+ Qwen3-VL-4B 
+ ✓ 
+ ✓ 
+ Template 
+ 100 
+ 57.6 
+ 54.1 
+ 45.0 
+ 54.4 
+ 4.5 Ablation Study
+Table  5 separates geometry acquisition, GRPO, and state formatting. GRPO alone gives only 32.9 \rightarrow 33.3%, and zero-shot tool use reaches 39.9%; combining the tools with GRPO reaches 54.4%, showing that useful geometry and learned integration are complementary. Replacing the template with an unstructured coordinate dump reduces accuracy from 54.4 to 49.8%. The template also uses 100 tokens per query, versus 202 for the unified format and 205 for raw tool output. Training curves in the supplement further show positive-sample accuracy stabilizing near 85% while negative-sample accuracy rises from about 30% to above 60%, consistent with learning to use helpful geometry and reject misleading evidence.
+ 4.6 Qualitative Analysis
+Figure  3 asks what is behind an observer standing at the pose of image 2. This is not answered by locating what appears farthest away in that image: “behind” is the half-space opposite the camera’s facing direction. The baseline follows the image-plane background and selects the sofa. Think-Capture first requests the blue table, walls, sofa, and seating bench. It uses the blue table as the visible facing anchor and the symbolic cross-view relations to place the seating bench on the opposite side of the observer. It therefore infers an object in the blind spot rather than copying a visible background object. The point cloud and arrows visualize the reconstructed spatial relations; Stage 2 takes the compact symbolic text and original frames as its inputs.
+ Figure 4 : Cross-view perspective taking on MMSI-Bench. The baseline describes the mirror relative to the scene or to the wrong view and predicts “back left.” Think-Capture’s response uses the photographer-relative description and gives the correct front-left answer. 
+The second complete case (Fig.  4 ) isolates a different failure: the queried object and the reference camera are observed in different views. The baseline recognizes the mirror but narrates it relative to the house layout, not to the photographer in image 2, and consequently reverses front/back. Think-Capture explicitly captures the image 2 camera pose and the mirror geometry. The camera stream fixes the photographer’s forward direction toward the front door; the object stream places the kitchen and mirror to the photographer’s left. Transforming the mirror from the shared world frame into this egocentric frame yields front-left . Together, the two cases show that the method addresses both unseen-space inference and cross-view reference-frame conversion.
+ 4.7 Joint Reasoning Dynamics
+The positive subset contains samples on which tool augmentation repairs a vision-only error, whereas the negative subset contains samples on which it overturns a correct visual answer. During GRPO training, positive-sample accuracy rises and stabilizes near 85%, while negative-sample accuracy increases from about 30% to above 60%. Accuracy and mean reward eventually oscillate around a high plateau. Improvement on both screening subsets, together with the corruption results in Table  2 , supports more robust integration of symbolic geometry and visual evidence. Together, the training curves and corruption tests characterize answer-level robustness across screening subsets and tool conditions.
+ 4.8 Real-World Deployment
+We deploy Think-Capture-4B as an asynchronous high-level spatial reasoner on an Agibot G1 with the StarVLA platform  [ 36 ] (Fig.  5 ). At initialization, it captures task-relevant medicines and reference objects, resolves the target from symbolic 3D state, and supplies a low-frequency global waypoint; a separate StarVLA policy performs high-frequency arm control. The complete VLM+SAM3+ \pi^{3} stack peaks at 21.5 GB on one RTX 4090. In the A100 benchmark, geometry takes 3.1 s of the 21.8 s pipeline (14%); direct-answer decoding cuts total latency by over 40% while retaining 53.2% MindCube-Tiny accuracy. This architecture couples low-frequency spatial reasoning with high-frequency arm control; supplementary Sec. D.2 describes the integration.
+ Figure 5 : Real-world deployment on Agibot G1. Four snapshots show the initial observation, target approach, and medicine grasp. Think-Capture uses task-relevant symbolic geometry to supply a global waypoint to the high-frequency StarVLA motor policy. 
+The timing breakdown is 6.8 s for target planning, 3.1 s for geometric capture, and 11.9 s for Stage 2 reasoning. Think-Capture runs asynchronously: after receiving a waypoint, StarVLA continuously closes the visual-action loop while the high-level module is idle or processes the next request.
+ Efficiency. Stage 2 decoding is the largest latency term. Direct-answer decoding reduces end-to-end time by more than 40% while retaining 53.2% MindCube-Tiny accuracy, 1.2 points below full chain-of-thought decoding. The 21.5 GB peak covers the VLM, SAM3, and \pi^{3} resident together on one RTX 4090. Supplementary Sec. D.1 details the measurement setup and runtime distribution.
+ 4.9 Geometry and Learned Integration
+Think-Capture combines pretrained perception backbones with target selection, symbolic state, and GRPO. Zero-shot tool augmentation reaches 39.9%, while the complete configuration reaches 54.4% (Table  5 ). The matched 2D-box comparison keeps target proposals and masks fixed and varies the Stage 2 representation (Table  4 ). These results highlight the complementary roles of geometric acquisition, compact representation, and learned integration.
+Table  2 evaluates end-to-end answer accuracy under coordinate noise and mask dropout. The full configuration achieves higher accuracy across the tested corruption levels. Qualitative cases illustrate egocentric and cross-view reasoning, while gains across backbone sizes and on unseen MMSI and ViewSpatial benchmarks support transfer beyond the MindCube training set.
+ Query-dependent computation. Query-conditioned selection concentrates the symbolic state on the entities named by the question. Its computational benefit arises in segmentation, masked-point aggregation, and relation construction, where fewer targets yield fewer masks and object pairs. Camera poses remain available for viewpoint conversion. For a fixed set of retained frames, this separates the dense-estimation cost from the target-dependent cost of building the reasoning context, linking efficient acquisition to a compact, task-specific representation.
+ 4.10 Limitations and Scope
+Think-Capture depends on the observability and calibration available to its perception tools. A severely occluded target, systematic depth bias, or accumulated pose drift can make a symbolic relation wrong rather than merely uncertain. Hierarchical GRPO and the empty-target fallback reduce the effect of such failures but cannot recover geometry that is absent from every view. The current templates discretize continuous direction into linguistic bins suited to benchmark relations and waypoint selection. Fine manipulation additionally requires local shape and contact information at a higher spatial resolution.
+In the robot deployment, Think-Capture selects task-relevant entities and generates a global waypoint, while the independently trained StarVLA policy handles fast visual feedback, collision-sensitive motion, and grasp execution. The 21.8 s reasoning cycle operates asynchronously from StarVLA’s high-frequency motor-control loop. Training uses disagreement-mined MindCube examples, with zero-shot evaluation on MMSI and ViewSpatial. Broader training scenes, uncertainty-aware symbolic states, and temporally persistent coordinates are promising directions for extending the framework to dynamic environments.
+ 5 Conclusion
+Think-Capture replaces passive dense fusion with query-conditioned geometry acquisition and a compact symbolic interface. GRPO trains the VLM to combine visual and 3D evidence, with improved robustness to noisy tool outputs in the tested settings. Consistent benchmark, perturbation, scaling, and real-robot results support active acquisition as a practical route to spatially grounded VLMs. The representation controls favor symbolic 3D state over the tested 2D-box input. The robot study demonstrates practical high-level integration. Future work will extend the interface to uncertainty-calibrated, temporally persistent geometry, enabling query-conditioned state refresh within the same hierarchical perception-and-control architecture.
+Acknowledgments
+This work was supported in part by the Guangdong S&T Programme (Grant No. 2024B0101030002 ), the Basic Research Project of Hetao Shenzhen-HK ST Cooperation Zone (No. HZQBKCZYZ-2021067 ), the Shenzhen Outstanding Talents Training Fund (No. 202002 ), and the NSFC (Grant Nos. 62293482 , 62573371 , 61931024 , and 12326610 ). This work was also supported by the Guangdong Province Radio Science Data Center (Grant No. 2025B1212070001 ), the Shenzhen General Program (No. JCYJ20220530143600001 ), the Guangdong Research Projects (Nos. 2017ZT07X152 and 2019CX01X104 ), the Guangdong Provincial Key Laboratory of Future Networks of Intelligence (Grant No. 2022B1212010001 ), the Shenzhen Key Laboratory of Big Data and Artificial Intelligence (Grant No. SYSPG20241211173853027 ), the National Key Research and Development Program of China (Nos. 2025YFF0515300 and 2025YFF0515304 ), the Open Project Program of Key Laboratory of Tibetan Information Processing, Ministry of Education (Grant No. QHSFCS2606 ), the Shenzhen-Hong Kong Joint Funding (No. SGDX20211123112401002 ), and the Tencent & Huawei Open Fund (Nos. 2024E0009 and 202301030019 ).
+

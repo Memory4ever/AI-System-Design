@@ -1,0 +1,725 @@
+Source: https://arxiv.org/html/2605.28042v1
+Main text extraction; fulltext_chars=84882
+
+arXiv:2605.28042v1 [cs.CL] 27 May 2026 
+ 
+ 
+ Extracting Small Translation Specialists from LLMs 
+ by Aggressively Pruning Experts 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Liu O. Martin 
+ Lucas Bandarkar 
+ Nanyun Peng 
+ 
+ 
+ 
+ University of California, Los Angeles 
+ 
+ 
+ 
+
+ Abstract 
+    
+ Modern large language models (LLMs) achieve state-of-the-art machine translation performance, but they do so as broad generalists largely trained for many tasks and capabilities unrelated to translation. Thus, they are heavily overparameterized for this task, resulting in excessive memory and compute requirements.
+In this paper, we present a method for aggressively pruning experts from modern mixture-of-experts LLMs while incurring negligible degradation in translation quality. Our approach exploits expert specialization and the separability of multilingual capabilities in LLMs to identify experts irrelevant to translation.
+And because of the modular nature of MoEs, these can be easily pruned without any training.
+Without retraining, we are able to prune half of all experts with negligible degradation and 70% with only minor losses.
+With a very short SFT, we prune 75% of experts while recovering baseline performance, and in some settings remove nearly 90% while maintaining reasonable translation quality.
+Overall, our results show that translation requires only a fraction of the LLM, enabling substantial compression of the MoE blocks that contain over 90% of parameters. 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 0 0 footnotetext:  Correspondence to  lucasbandarkar@cs.ucla.edu 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Figure 1:  We isolate a narrow backbone of experts useful for machine translation and prune the rest without performance degradation. Above, we display an example of pruning 69% of experts of 24-layer GPT-OSS-20B, with the top panel displaying the original expert indices. 
+ 
+ 
+ The emergence of large language models (LLMs) in the last few years has transformed the field of machine translation.
+Their strong multilingual performance, broad robustness and reasoning, and instruction-following capabilities allow them to naturally perform translation very well. Currently, LLMs outperform smaller, dedicated machine translation models  ( Kocmi et al., 2025 ) .
+However, deploying LLMs for translation at scale is prohibitively inefficient because of their compute and memory requirements  ( Pang et al., 2025 ) .
+Large memory is especially limiting in resource-constrained settings such as mobile and embedded devices  ( Gaido et al., 2025 ) .
+This inefficiency stems from the general-purpose nature of LLMs: their capacity supports many capabilities not directly relevant to translation, including factual knowledge, tool use, and mathematical reasoning.
+Machine translation, meanwhile, is primarily a linguistic task grounded in the understanding of the immediate input text and generation fluency in the target languages.
+This suggests that only a subset of model parameters may be necessary for translation. 
+
+ 
+ 
+ 
+ In recent years, there’s been a significant shift from  dense  LLMs to sparse mixture-of-experts  ( Shazeer et al., 2017 ;  Lepikhin et al., 2021 ) . Here, the traditional feed-forward network (FFN) of each transformer decoder layer is replaced with many FFNs, and a gating mechanism, or router, chooses which to activate for each token. These MoE architectures lend themselves nicely to pruning given that they are composed of modular components,  experts , that are often specialized and redundant. 
+
+ 
+ 
+ 
+ In this work, we present an expert-pruning method that reduces the memory overhead of MoE LLMs for machine translation. Using simple routing statistics, we identify the subset of experts most relevant to translation and prune the rest. Since expert blocks dominate the memory footprint of MoE LLMs, this yields substantial compression. Notably, we demonstrate that pruning middle layers more aggressively enables larger reductions with minimal loss. In both multilingual and language direction-specific prunings,
+our results show we can reduce the memory of an LLM by 50% with negligible performance degradation and much more with just minor loss  without any retraining . Furthermore with a short supervised fine-tuning of the pruned model, we show we can achieve 75% compression and recover a pruned model equivalent to the original. Accordingly, we outline two principal contributions of this work: 
+
+ 
+ 
+ 1.  
+ 
+ A simple expert pruning method for machine translation in MoE LLMs. 
+
+ 
+ 
+ 2.  
+ 
+ An interpretability analysis of how machine translation is parameterized in MoE LLMs. 
+
+ 
+ 
+ 
+ 
+ 
+ We establish the intuition behind our method in Section  2 . Then, we detail our simple expert selection and layer-wise allocation strategies in Section  4  and present experiment results in Section  5 . Finally, we discuss in Section  6  the takeaways on what this means about how translation is achieved in LLMs. 
+
+ 
+ 
+ 
+ 
+ 2  Related Work and Hypothesis 
+
+ 
+
+ 
+ 2.1  Machine Translation 
+
+ 
+
+ 
+ A conventional method for decreasing the size-to-performance ratio of models has been to adapt pretrained LLMs to machine translation using multilingual and translation-oriented post-training, as was done for TranslateGemma  ( Finkelstein et al., 2026 ) , the Tower series  ( Alves et al., 2024 ) , and ALMA  ( Xu et al., 2024 ) .
+Other work trains LLM-sized translation models such as Hunyuan-MT, pretrained on 1.3T tokens dedicated to translation  ( Zheng et al., 2025 ) , or massively multilingual models  ( Team et al., 2022 ;  Kudugunta et al., 2023 ;  Team et al., 2026 ) .
+Orthogonal work prunes MT models themselves to make them smaller  ( Behnke et al., 2021 ;  Behnke and Heafield, 2021 ) . Closest to our work,  Koishekenov et al. (2023)  prunes experts from the MoE translation model NLLB  ( Team et al., 2022 ) . More recent works start from dense LLMs and compress them via layer pruning  ( Moslem et al., 2025 )  and merging  ( Ponce et al., 2025 ) . Both retrain the pruned model to recover lost performance. 
+
+ 
+ 
+ 
+ 
+ 2.2  Expert Specialization & Pruning in MoEs 
+
+ 
+
+ 
+ Reducing memory requirements of models has long been a major research topic, with many works focusing on pruning  ( Frankle et al., 2021 ) , quantization  ( Dettmers et al., 2022 ) , and distillation  ( Hinton et al., 2015 ) . Generally, many of the methods developed apply cleanly to sparse MoEs. In fact, the modular experts enable very natural pruning.
+Interpretability research has found that experts specialize by function or domain  ( Muennighoff et al., 2025 ;  Lo et al., 2025 ;  Olson et al., 2025 ;  Bandarkar et al., 2026a ;  Fayyaz et al., 2026 ) . The rate of expert specialization and redundancy depends on the load-balancing at training  ( Qiu et al., 2025 ) , but overall MoEs allow for significant pruning  ( Lu et al., 2024 ) , and can also be trained explicitly to do so  ( Shi et al., 2026 ;  Wang et al., 2026b ) .
+Rather than simple activation counts, expert importance for pruning can be determined by its aggregation weight  ( He et al., 2025 )  or Shapley-value based metrics  ( Huang et al., 2025 ) . To determine where to prune, layer-level methods have proposed measuring cross-layer redundancy  ( Zhang et al., 2026 )  or reconstruction error  ( Yang et al., 2026 ) . 
+
+ 
+ 
+ 
+ 
+ 2.3  Hypothesis of Translation Extractability 
+
+ 
+
+ 
+ Concretely, our central hypothesis is that  many experts can be successfully pruned from MoE LLMs for the target task of translation . Our formation of this hypothesis relies on numerous intuitions. First off, research has found that for translation, the attention parameters are more important than the FFN blocks  ( Bogoychev, 2021 ) , including in LLMs  ( Liu et al., 2026a ) . In addition, interpretability research has found that in LLMs, there exists a parametric separation of functions between multilingual and language-agnostic (abstract) processing  ( Choenni et al., 2024 ;  Wu et al., 2025 ;  Chen et al., 2025 ;  Bandarkar and Peng, 2025 ) , which is demonstrated most visibly in MoEs  ( Bandarkar et al., 2026b ) . Naturally, the relatively low-level task of translation is inextricably linked with broader multilingual capabilities  ( Issaka et al., 2026 ) . In line with this,  Liu et al. (2026b)  suggests that translation and basic linguistic capabilities emerge early in pretraining, similar to when expert routing is determined  ( Xue et al., 2024 ;  Wang et al., 2026a ) . 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Experimental Setup 
+
+ 
+
+ 
+ Models 
+
+ 
+
+ 
+ We perform experiments with GPT-OSS-20B  ( OpenAI et al., 2025 )  and secondarily Qwen3-30B-A3B  ( Yang et al., 2025 ) . In each MoE layer, GPT-OSS has  E E =32 experts and activates  K K =4 per token. Qwen3-30B-A3B is sparser, with  E E =128 and  K K =8.
+We contextualize results with two translation models, TranslateGemma-4B  ( Finkelstein et al., 2026 )  and NLLB-200-3.3B  ( Team et al., 2022 ) . 
+
+ 
+ 
+ 
+ 
+ Languages 
+
+ 
+
+ 
+ Our target languages are German, Japanese, Bengali, and Egyptian Arabic. We additionally evaluate on 3 languages  unseen  during the pruning process, Russian, Spanish, and Mandarin. 
+
+ 
+ 
+ 
+ 
+ Evaluation 
+
+ 
+
+ 
+ For experimental sweeps over pruning and training conditions, we use a fixed set of 128 examples from the  FLoRes  devtest split. Evaluations are always done with 5 random seeds and averaged. Then, select pruned models and checkpoints are more thoroughly evaluated on (1) all 1012 examples from the  FLoRes  devtest split and (2) the WMT-24++ dataset  ( Deutsch et al., 2025 ) . To evaluate the domain generalizability, we evaluate our four main target languages on (3) domain-specific datasets available: JRC-Acquis  ( Steinberger et al., 2006 ) , KFTT  ( Neubig, 2011 ) , ArzEn-MultiGenre  ( Al-Sabbagh, 2024 ) , and BanglaSTEM  ( Hasan et al., 2025 ) . 
+
+ 
+ 
+ 
+ 
+ Metrics, Decoding, and Error Handling 
+
+ 
+
+ 
+ We report generation and decoding details in Appendix  C .
+Scoring of generated translations is done using xCOMET-XL  ( Guerreiro et al., 2024 ) , which gives a score from 0.0 to 1.0. However, overly-pruned models sometimes degenerate during thinking or token formatting. We consider such an error as a 0-score, but additionally report this rate of error. BLEU and chrF++ are only used in the appendix. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Pruning Methodology 
+
+ 
+
+ 
+ Figure 2:  
+Curves displaying the performance degradation of GPT-OSS as more experts are pruned for our method compared to ablating how we rank experts (Random, REAP, or Routing-mass) or allocate experts to layers (Dynamic or Uniform).
+Scores are averaged across the 4 target languages. Shaded regions indicate variation across seeds.
+ 
+ 
+ 
+ Figure 3:  
+ FLoRes  and out-of-domain pruning curves for GPT-OSS and Qwen3-30B-A3B.
+Each panel compares English → ​ X \mathord{\to}X  translation on  FLoRes  alongside a domain-specific
+dataset. The curves on the out-of-domain datasets broadly mirror the  FLoRes  trends, demonstrating the pruned model’s generalization to other translation domains.
+ 
+ 
+ 
+ Figure 4:  
+Multilingual generalization of the pruned models to languages unseen during calibration. The blue curves are the averages of the seen languages (German, Japanese, Egyptian Arabic, and Bengali), while the specific colors are the results on the individual unseen languages. We see clearly that, at least for these high-resource languages, in-language data is not required for selecting experts to prune.
+ 
+ 
+ 
+ Starting with a pretrained MoE model, we seek to extract a compact subnetwork capable of machine translation. To this end, we (1) identify and (2) prune experts that are unnecessary for the task. Optionally, we (3) fine-tune the pruned model to recover lost capabilities ( recovery tuning ). 
+
+ 
+ 
+ 
+ 4.1  Quantifying Expert Importance 
+
+ 
+
+ 
+ To determine which experts to prune, we start by measuring how much each expert is utilized when the model processes translation data. 
+
+ 
+ 
+ 
+ Collecting Routing Statistics 
+
+ 
+
+ 
+ In an MoE language model, at each layer  ℓ ∈ { 1 , … , L } \ell\in\{1,...,L\}  the router converts input hidden states  𝒉 i ℓ \bm{h}^{\ell}_{i}  into logits  𝒛 i ℓ \bm{z}^{\ell}_{i}  over all  E E  experts. The top- K K  experts are then activated and aggregated using normalized weights. Accordingly, the weight of the output of each expert  ε \varepsilon  at token  i i  can be defined as: 
+
+ 
+ 
+
+ 
+ 
+ 𝒘 i , ε ℓ = { f ​ ( 𝒉 i ℓ ) ε if  ​ ε ∈ top- ​ K     0 otherwise \bm{w}^{\ell}_{i,\varepsilon}=\begin{cases}f(\bm{h}^{\ell}_{i})_{\varepsilon}&\text{if }\varepsilon\in\text{top-}K\\
+\ \ \ \ 0&\text{otherwise}\end{cases} 
+ 
+ (1) 
+ 
+
+ 
+ 
+ 
+ where all  𝒘 i , ε ℓ \bm{w}^{\ell}_{i,\varepsilon}  sum to 1. To determine the importance over a whole sequence, we simply mean-aggregate  𝒘 i , ε ℓ \bm{w}^{\ell}_{i,\varepsilon}  across all tokens. We term this score  routing mass . In addition, we also evaluate a more complex alternative, REAP  ( Lasby et al., 2026 ) , which considers the L2 norm of the expert outputs alongside their router weights. We implement collecting the necessary router weights in vLLM  ( Kwon et al., 2023 )  using PyTorch hooks. 
+
+ 
+ 
+ 
+ 
+ “Calibration” Data 
+
+ 
+
+ 
+ We define a  calibration  dataset  𝒞 s \mathcal{C}_{s}  as the set of passages over which we calculate expert importance for language  s s . For each passage  p ∈ 𝒞 s p\in\mathcal{C}_{s}  and a target language
+ t t , we prompt the LLM to translate  p p  from  s s  to  t t .
+We then collect routing weights over the entire sequence, which includes the instruction and passage, and the generated translation. 
+
+ 
+ 
+ 
+ We use the dev set of  FLoRes -200  ( Team et al., 2022 )  since it is  n n -way parallel, meaning we can easily construct the same  C s C_{s}  across languages  s s . For a given language X, we can use  𝒞 Eng \mathcal{C}_{\mathrm{Eng}}  or  𝒞 X \mathcal{C}_{X}  to measure routing-mass for the translation directions English → ​ X \mathord{\to}X  and  X ​ → X\mathord{\to} English, respectively. Alternatively, we can use  𝒞 Eng ∪ 𝒞 X \mathcal{C}_{\mathrm{Eng}}\cup\mathcal{C}_{X}  to quantify for both directions together. In addition, we can calibrate over many languages at once to calculate multilingual configurations. 
+
+ 
+ 
+ 
+ 
+ 
+ 4.2  Determining Experts to Prune 
+
+ 
+
+ 
+ Layerwise Expert Allocation 
+
+ 
+
+ 
+ Let  k k  be the number of experts we want to prune  per layer . Naively, we can prune a uniform quantity  k k  from each layer. But this implicitly assumes that all layers contribute equally to machine translation capabilities. 
+
+ 
+ 
+ 
+ However,  Bandarkar et al. (2026b)  finds that language-specific processing is concentrated mostly in the first and last few model layers. Based on the modular framing of these layers being responsible for linguistic processing, we hypothesize the most important experts for translation are here. We therefore experiment with a  dynamic  capacity allocation that retains more experts in layers that appear more language-specialized.
+To determine this, we use a routing divergence metric that calculates JS-divergence between the routing mass distribution of a target language and English  ( Bandarkar et al., 2026b ) . Again, we use the  FLoRes  dev set to calculate this divergence metric, which gives us a score,  d ℓ s ∈ [ 0 , 1 ] d_{\ell}^{s}\in[0,1]  for each language  s s  at layer  ℓ \ell . See Appendix  A  for exact implementation. 
+
+ 
+ 
+ 
+ Then, we use  d ℓ s d_{\ell}^{s}  to allocate the retained capacity across MoE layers while keeping  k k  as the average number of experts pruned per layer. Since each unpruned layer has  E E  experts, the total retained-capacity budget is  L ⁡ ( E − k ) L(E-k) . We initialize each layer with the minimum valid retained capacity  K K , because the model activates  K K  experts per token, and allocate the remaining budget  B = L ⁡ ( E − k ) − L ​ K B=L(E-k)-LK  proportional to  d ℓ s d_{\ell}^{s} . The details of how we round the values are explicated in Appendix  B . Under this dynamic capacity allocation, we obtain retained capacities  c ℓ c_{\ell}  satisfying  ∑ ℓ c ℓ = L ⁡ ( E − k ) \sum_{\ell}c_{\ell}=L(E-k) . 
+
+ 
+ 
+ 
+ 
+ Pruning Method 
+
+ 
+
+ 
+ After calculating expert rankings and allocated capacities  c ℓ c_{\ell}  for each layer, we simply prune the  r ℓ = E − c ℓ r_{\ell}=E-c_{\ell}  least important (i.e. lowest routing mass) per layer.
+In Section  5.1 , we compare our routing mass metric against REAP for ranking experts and our dynamic layer allocation against the simpler uniform allocation.
+Our implementation for actually removing experts from the model config and adjusting the router parameters is described in Appendix  D . 
+
+ 
+ 
+ 
+ 
+ 
+ 4.3  Recovery Tuning 
+
+ 
+
+ 
+ After pruning many experts, we optionally fine-tune the model to recover translation performance, as was done in previous works pruning LLM layers for machine translation  ( Moslem et al., 2025 ;  Ponce et al., 2025 ) . This is motivated by the hope that we can more aggressively prune if some of the errors that arise can be remedied during fine-tuning.
+We study two recovery settings: (a) SFT on translation data and (b) sequence-level distillation from the original model.
+For (a), we use the  FLoRes  dev set once again, focusing on the English → ​ X \mathord{\to}X  direction. This is done either with one language or multiple.
+For (b),
+we construct a single multilingual
+synthetic training set by partitioning a collection of English passages across 5 high-resource languages, German, Japanese, Russian, Spanish, and Mandarin. For each partition, the unpruned base model generates
+English → ​ X \mathord{\to}X  translation labels in the assigned target language  X X , and then we fine-tune the pruned models on the generated dataset.
+Notably, we find empirically that just data in the English → ​ X \mathord{\to}X  directions proves sufficient, in line with  Zhu et al. (2024) .
+For both types of datasets, we do full finetuning as parameter-efficient methods are insufficient to recover entire pruned parameter blocks. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Results 
+
+ 
+
+ 
+ 5.1  Method Ablations 
+
+ 
+
+ 
+ We first ablate our pruning design to determine which setup works best.
+Figure  2  compares our method, ( Routing-mass ,  Dynamic ), against three baselines with uniform layer allocation and ablating the expert ranking methods: ( Routing-mass ,  Uniform ), ( REAP ,  Uniform ), and ( Random ,  Uniform ). Across both English → ​ X \mathord{\to}X  and  X ​ → X\mathord{\to} English directions, our method demonstrates that significantly more can be pruned before a performance drop-off. Performance is effectively preserved through significant pruning, past 50%. After the elbow point, errors arise rapidly and xCOMET scores collapse. 
+
+ 
+ 
+ 
+ These ablations isolate two components.
+Using routing-mass to select experts proves significantly more effective than REAP, which itself handily beats naive random expert selection.
+In addition, our dynamic layer allocation preserves performance deeper into compression compared to pruning the same amount per layer. This is close, but is most clear for the  X ​ → X\mathord{\to} English directions. Notably, in German uniform allocation leads to degeneration errors significantly earlier than our dynamic allocation (See Appendix  E.3 ). Overall, our method’s average performance (on the eight core directions) at 62.5% compression exceeds that of ( REAP ,  Uniform ) at 50% compression (Appendix  E.2 ). Importantly, these trends replicate for Qwen3-30B-A3B, though we find that for very high-compression, REAP ends up better than our routing-mass metric, although this still represents a substantial drop (See Appendix  F.2 ). 
+
+ 
+ 
+ 
+ 
+ 5.2  Out-of-Domain Generalization 
+
+ 
+
+ 
+ Because we use only  FLoRes  data for calibration and validation, we next evaluate whether the pruned model generalizes to translation over completely different domains.
+For each target language, Figure  3  compares English → ​ X \mathord{\to}X  compression curves on  FLoRes  against a domain-specific dataset. Despite differences in absolute performance, we find that performance compression curves on out-of-domain datasets follow the same general trend as  FLoRes . This surprisingly demonstrates that the pruning generalizes well across domains. 
+
+ 
+ 
+ 
+ 
+ 5.3  Multilingual Generalization 
+
+ 
+
+ 
+ We identify that there is significant overlap in the experts pruned when calibrating on different languages individually. As a result, we evaluate the effectiveness of a multilingual prune.
+We calibrate over all four target languages together in the English → ​ X \mathord{\to}X  and  X ​ → X\mathord{\to} English directions separately and evaluate on those plus three unseen languages: Russian, Mandarin, and Spanish. 
+
+ 
+ 
+ 
+ Figure  4  demonstrates that for the target languages and the unseen languages, performance remains stable through significant pruning. On the target languages, the multilingual pruned model closely tracks the corresponding language-specific pruned models. Interestingly, the unseen languages track the seen languages in the compression curves.
+This indicates that the language-specific prunings are not merely identifying language experts on the calibration set.
+Furthermore, we find that the model pruned using English → ​ X \mathord{\to}X  calibration data still maintains strong  X ​ → X\mathord{\to} English performance. Further details are provided in the Appendix  G.3 . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ FLoRes  devtest 
+ WMT24++ 
+ 
+ Model 
+ k k 
+ Expert drop 
+ Params 
+ En → \to X 
+ X → \to En 
+ Avg 
+ En → \to X 
+ X → \to En 
+ Avg 
+ 
+ GPT-OSS-20B 
+ – 
+ 0% 
+ 20.9B 
+ .926 
+ .958 
+ .942 (0.000) 
+ .799 
+ .862 
+ .830 (0.000) 
+ 
+ TranslateGemma-4B 
+ – 
+ – 
+ 4.3B 
+ .933 
+ .958 
+ .945 (+.003) 
+ .833 
+ .870 
+ .852 (+.022) 
+ 
+ NLLB-200 3.3B 
+ – 
+ – 
+ 3.3B 
+ .882 
+ .954 
+ .918 (-.024) 
+ .734 
+ .833 
+ .784 (-.047) 
+ 
+ Multiling. En → \to X, no retrain 
+ 16 
+ 50.00% 
+ 11.3B 
+ .909 
+ .951 
+ .930 (-.012) 
+ .778 
+ .847 
+ .812 (-.018) 
+ 
+ Multiling. En → \to X, no retrain 
+ 20 
+ 62.50% 
+ 9.0B 
+ .863 
+ .929 
+ .896 (-.046) 
+ .720 
+ .822 
+ .771 (-.059) 
+ 
+ Multiling. En → \to X, no retrain 
+ 22 
+ 68.75% 
+ 7.8B 
+ .819 
+ .899 
+ .859  (-.082) 
+ .682 
+ .785 
+ .734  (-.096) 
+ 
+ Multiling. En → \to X, 10k distil. 
+ 22 
+ 68.75% 
+ 7.8B 
+ .874 
+ .934 
+ .904 (-.038) 
+ .739 
+ .832 
+ .786 (-.044) 
+ 
+ Multiling. En → \to X, 10k distil. 
+ 24 
+ 75.00% 
+ 6.6B 
+ .869 
+ .936 
+ .902 (-.039) 
+ .733 
+ .844 
+ .789 (-.041) 
+ 
+ Multiling. En → \to X, 10k distil. 
+ 26 
+ 81.25% 
+ 5.4B 
+ .847 
+ .932 
+ .890 (-.052) 
+ .706 
+ .839 
+ .772 (-.058) 
+ 
+ Multiling. En → \to X, 10k distil. 
+ 28 
+ 87.50% 
+ 4.2B 
+ .812 
+ .930 
+ .871 (-.071) 
+ .663 
+ .831 
+ .747  (-.083) 
+ 
+ 
+
+ 
+ Table 1:  
+Comparison of pruning with and without recovery fine-tuning. The above are xCOMET results after pruning GPT-OSS-20B with calibration on the English → ​ X \mathord{\to}X  direction and data from four diverse languages: German, Japanese, Egyptian Arabic, and Bengali. Each English → ​ X \mathord{\to}X  and  X ​ → X\mathord{\to} English value is the average evaluation result over 5 languages: German, Japanese, Russian, Spanish, and Mandarin. The final 4 rows display results following recovery fine-tuning via distillation specifically.  Italics  denote performance drops of more than 8%.
+ 
+ 
+ 
+ 
+ 5.4  Recovery Tuning 
+
+ 
+
+ 
+ Pruning alone yields compressed models that preserve translation, but highly-compressed models eventually fail through degeneration such as malformed outputs or infinite reasoning loops.
+We therefore further experiment with the aforementioned recovery fine-tuning. Table  1  compares the ability to prune with and without it. 
+
+ 
+ 
+ 
+ The untrained rows show the extent of pruning alone. As displayed for GPT-OSS in Table  1 , the English → ​ X \mathord{\to}X -calibrated pruned model removes 50% of experts  k k =16 while losing only on average .012 xCOMET on  FLoRes  and .018 on WMT24++, a near-negligible loss relative to the parent model. However, the curve drops sharply at higher compression: by  k k =22, losses grow to .082 on  FLoRes  and .096 on WMT24++. We therefore apply recovery tuning for the most aggressive pruning. 
+
+ 
+ 
+ 
+ Recovery via Supervised  FLoRes  Pairs 
+
+ 
+
+ 
+ As a first recovery setting, we fine-tune separate pruned models on  FLoRes  English → ​ X \mathord{\to}X  pairs. This substantially improves high-compression models and restores usable translation for most directions, including strong  X ​ → X\mathord{\to} English performance. We find that finetuning on English → ​ X \mathord{\to}X  transfers easily to the  X ​ → X\mathord{\to} English direction, but not the other way around, as displayed in Table  1 . Overall we find that recovery tuning via distillation is more effective, especially for the more challenging directions. 
+
+ 
+ 
+ 
+ 
+ Recovery via Distillation 
+
+ 
+
+ 
+ We primarily train a single multilingual model on synthetic English → ​ X \mathord{\to}X  data for German, Japanese, Russian, Spanish, and Mandarin. Recovery substantially restores high-compression subnetworks: at  k k =22, average xCOMET performance improves from .859 to .904 on  FLoRes  and from .734 to .786 on WMT24++, closing over half of the drop from pruning in just 10k training samples. Perhaps the best tradeoff occurs at  k k =24, where the recovered model removes 75% of experts while remaining within .039 xCOMET, on average, of the original GPT-OSS model on  FLoRes  and .041 on WMT24++. 
+
+ 
+ 
+ 
+ At the extreme,  k k =28 (87.5%), recovery tuning results in a very reasonable translator, despite all model sparsity having been removed. The model performs meaningfully lower, especially in English → ​ X \mathord{\to}X , but still averages .871 on  FLoRes  and .747 on WMT24++. This is a dramatic improvement given the raw pruned model produces generation errors on 100% of inputs. Interestingly, degradation is very asymmetric.  X ​ → X\mathord{\to} English remains close to the parent even at  k k =28, while English → ​ X \mathord{\to}X  accounts for most of the loss. 
+
+ 
+ 
+ 
+ 
+ 
+ 5.5  External comparison 
+
+ 
+
+ 
+ The pruned models are competitive with both NLLB-200 and TranslateGemma-4B on  FLoRes  and WMT24++. The  k k =22 and 24 models slightly exceed NLLB-200 on average on WMT24++, while remaining slightly below NLLB on  FLoRes  and below TranslateGemma-4B on both benchmarks. This is remarkable given that these models have been significantly optimized on translation data. 
+
+ 
+ 
+ 
+ 
+ 
+ 6  Discussion 
+
+ 
+
+ 
+ Shared Subnetwork for Translation 
+
+ 
+
+ 
+ We interpret the generalization of pruned models to unseen languages as evidence of an isolated task-level subnetwork for translation. Empirically, we see that pruning using calibration on only four target languages in the English → ​ X \mathord{\to}X  directions generalizes: performance is maintained for 14 directions. This includes three completely unseen languages, two of which use distinct scripts (Cyrillic and Chinese characters). We also observe that pruning calibrated on a single English → ​ X \mathord{\to}X  direction generalizes to other languages (Appendix  G.1 ). Naturally, the principal reason for this is the high overlap of experts selected for each language. At a pruning rate of  k k =24, the IoU is consistently around 0.6 between languages (See Appendix  I ). 
+
+ 
+ 
+ 
+ Even with such overlap of language-specialized experts, these results suggest that we are not merely preserving narrow language-pair mappings. Instead, the extracted subnetwork appears to preserve machinery useful for the translation task more broadly: instruction following, output formatting, generation stability, target-language generation, and access to language-universal representations already distributed throughout the model. In addition, we hypothesize that some language-specific parameterization may be redundant and robust to pruning, especially for high-resource languages. 
+
+ 
+ 
+ 
+ 
+ Direction Transfer as Shared-Task Generalization 
+
+ 
+
+ 
+ In our experiments, we find that pruning with English → ​ X \mathord{\to}X  calibration data
+retains strong  X ​ → X\mathord{\to} English performance, comparable to and even sometimes exceeding pruning directly with  X ​ → X\mathord{\to} English calibration data. This is linked to the fact that pruning tends to drop English → ​ X \mathord{\to}X  performance more significantly. Our intuition is that multilingual generation is more challenging than understanding, and therefore more brittle to pruning. This potentially explains why prioritizing English → ​ X \mathord{\to}X  data yields better recovery. 
+
+ 
+ 
+ 
+ 
+ Sufficiency and Necessity 
+
+ 
+
+ 
+ Given the observed performance of pruned models with no training, we conclude that at many points along the compression curve, the retained experts and non-MoE model parameters are sufficient for translation on the evaluated language directions. With the notion of a ”translation subnetwork”, however, it is important to also consider necessity. We investigate this in Appendix  E.4  by inverting the two ablated components of our method: dropping the  highest  routing-mass experts rather than the  lowest , and using  inverse-dynamic  capacity allocation, where retained capacity at a layer is inversely related to its routing-divergence score. 
+
+ 
+ 
+ 
+ These controls serve two purposes. First, they test whether our expert ordering and capacity allocation contain meaningful information. Inverting either component worsens performance: dropping high-scoring experts is worse than random dropping, and inverse-dynamic capacity is worse than uniform capacity. Second, this inverted setting is the closest control to the full complement of our pruning.
+The early collapse of this inverted setting suggests that the extracted subnetwork is not merely  sufficient . We do not ablate each expert to test whether they are individually  necessary , but the severe degradation under the inverted control indicates that many experts retained by our method are functionally important. 
+
+ 
+ 
+ 
+ 
+ Recovery Tuning Restores Task Stability 
+
+ 
+
+ 
+ The behavior of high-compression models suggests that pruning often disrupts task execution rather than hurting translation ability wholesale. Before recovery tuning, high- k k  models frequently fail through malformed outputs, looping, or missing final answers. At the same time, raw xCOMET on the subset of successful outputs can remain high. And while this is a biased subset,
+the gap between high-quality successful outputs and frequent failures suggests that recovery primarily restores stable instruction following and reasoning. This perspective also motivates recovery tuning on sequence-level distilled data: when the goal is to recover the original model’s behavior after pruning, generated translations provide a natural training target without introducing spurious style misalignment. 
+
+ 
+ 
+ 
+ 
+ Workhorse vs. Specialist Experts 
+
+ 
+
+ 
+ Our routing-mass scoring ranks experts by (1) how often an expert is used during translation, and (2) what weight the router assigns when it is used. Compared to REAP which prioritizes ‘specialist experts’ that make contributions with high magnitude in embedding space, this approach favors ‘workhorse’ experts: experts that the router frequently assigns computation to. This is motivated by two beliefs. First, experts responsible for small but frequent contributions may play a critical role in generation stability and formatting.
+Second, we hypothesize that layer normalization reduces the impact of an expert’s output magnitude and the router is rather trained to simply distribute mass to the experts irrespective of their output norm.
+We do not conclude that large-output, specialist experts are unimportant in general; but it seems that for MT preserving broadly used workhorse experts is most effective. 
+
+ 
+ 
+ 
+ 
+ 
+ 7  Conclusion 
+
+ 
+
+ 
+ In this work, we demonstrate how the sparsity and modularity of mixture-of-experts LLMs unlock using their massive pretraining for machine translation in a parameter-efficient manner.
+Our methodology for ranking experts is simple, aggregating outputs from the router over a small subset of data.
+Meanwhile, we employ a more involved process for layer-wise allocation in order to push our overall pruning farther.
+The resulting method shows tremendous potential for model compression for machine translation, substantially reducing model size while preserving the benefits of large-scale pretraining. Such memory reduction is especially valuable for the task of translation given the massive request volumes worldwide and the growing need for on-device translation. 
+
+ 
+ 
+ 
+ Alongside these compression gains, the surprising cross-lingual generalization of our pruning method suggests that many experts useful for one language overlap with those useful for others. This indicates that the pruned model preserves not only language-specific expertise, but also language-shared translation machinery. That overlap creates significant flexibility for this style of pruning, since a single compressed model can retain broad multilingual utility rather than being narrowly optimized for one language pair. 
+
+ 
+ 
+ 
+ Future work should explore reducing the number of experts active per token to additionally reduce inference FLOPs. Our preliminary attempts suggest that this direction likely requires additional training to help the router adapt to the new constraint. In addition, while we sweep through a few different pruning setups, we imagine that further research can likely find methods that enable even more aggressive pruning. Overall, our results indicate that mixture-of-experts models can be dramatically compressed without severe degradation. This can enable any model developer to couple LLM pruning with large-scale translation-oriented training to reach the state-of-the-art Pareto frontier across different parameter counts. 
+
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ Extensive Training 
+
+ 
+
+ 
+ We only experiment with lightweight fine-tuning to recover the performance of pruned models. Resource constraints limit us from producing models closer to the performance–size Pareto frontier in machine translation. Existing systems on or near this frontier typically improve performance at a fixed model size through large-scale translation pretraining (e.g., TranslateGemma  ( Finkelstein et al., 2026 ) , TowerPlus  ( Alves et al., 2024 ) , and ALMA  ( Xu et al., 2024 ) ). Meanwhile, our method is orthogonal as it reduces model size while preserving performance. 
+
+ 
+ 
+ 
+ 
+ More Extensive Calibration Sets for Robustness 
+
+ 
+
+ 
+ We only determine expert importance for machine translation using dev splits from  FLoRes , which leads to expert selection that is effective and generalizes across domains. However, we anticipate that more extensive and diverse calibration sets would lead to more robust pruned models. 
+
+ 
+ 
+ 
+ 
+ Automatic Translation Evaluation 
+
+ 
+
+ 
+ We use xCOMET as our primary translation evaluation metric because it provides a scalable way to compare many pruning levels, language directions, and recovery settings. We do evaluate BLEU and chrF++ as well, but use xCOMET as it is more granular and representative of model quality. Of course, automatic metrics are imperfect substitutes for human evaluation. And while we perform checks of sampled model outputs to ensure pruned models do not have malformed responses or major meaning shifts, performing scaled human evaluation is prohibitively expensive. 
+
+ 
+ 
+ 
+ 
+ 
+ 

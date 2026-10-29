@@ -1,0 +1,569 @@
+Source: https://arxiv.org/html/2605.28664v1
+Main text extraction; fulltext_chars=109014
+
+arXiv:2605.28664v1 [cs.LG] 27 May 2026 
+ 
+ 
+ Activation Steering for Synthetic Data Generation: The Role of Diversity in Downstream Safety Detection 
+
+ 
+ 
+ 
+ Vijeta Deshpande
+ † † thanks:  Work done during an internship at Amazon. Correspondence at:  vijeta_deshpande@student.uml.edu 
+ Affiliation:  UMass Lowell 
+ 
+    
+ Tootiya Giyahchi
+ 
+ Affiliation:  Amazon 
+ 
+    
+ Veena Padmanabhan
+ 
+ Affiliation:  Amazon 
+ 
+    
+ Leman Akoglu
+ 
+ Affiliation:  Amazon, CMU 
+ 
+    
+ Anna Rumshisky
+ 
+ Affiliation:  Amazon, UMass Lowell 
+ 
+
+ Abstract 
+    
+ Safety detection models require examples of HHH (Helpful, Harmless, Honest)-violating outputs for robust generalization, however such examples are scarce. Activation Steering (AS) has emerged as a data-efficient method for generating target-concept-aligned responses.
+We investigate whether AS can generate high-quality training datasets for downstream classifiers, a question that remains untested.
+We present a two-fold study with  intrinsic  and  extrinsic  evaluation across  4 4  concepts  ×  2 \times\,2  models  ×  4 \times\,4  steering methods.
+ Intrinsically , beyond the field-standard rubric of steering success (concept alignment) and coherence, we introduce sample- and set-level diversity as a quality axis previously absent from the literature, and find that increasing steering strength reduces response diversity.
+ Extrinsically , we  replace  HHH-violating examples in the available training data with steered generations and fine-tune detection classifiers.
+AS-generated data results in a better classifier than the prompting-generated data on  3 3  of  4 4  concepts.
+However, only  41 41  of  136 136  AS configurations outperform prompting, indicating that downstream utility lies in a narrow regime that jointly satisfies success, coherence, and diversity. The harmonic mean of these three axes correlates with downstream AUROC more consistently across concepts than success and coherence alone, providing a practical heuristic target for practitioners tuning AS hyperparameters.
+Together, our results highlight the potential of AS in synthetic data generation for improving safety detection and identify diversity as a critical, previously overlooked axis for tuning AS. 
+
+ 
+  
+ 
+ 
+ Figure 1:  Jointly Satisfying Success, Coherence, Diversity is Important.  Results for OLMo-2-7B steered toward  unfaithfulness  (RAGTruth), averaged across four steering methods. Increasing the steering scale ( λ \lambda ) improves success but degrades coherence and diversity. Downstream AUROC peaks at a moderate  λ \lambda  that balances all three axes. 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ As large language models (LLMs) continue to gain widespread adoption, ensuring their alignment with the principles of Helpfulness, Harmlessness, and Honesty (HHH) has become paramount  ( Askell et al., 2021 ) . A central component of this safety infrastructure is the development of robust detection models that flag deviations from these principles, such as toxic outputs, hallucinations, or sycophancy  ( Chen et al., 2024 ;  Hu et al., 2024 ;  Inan et al., 2023 ;  Manakul et al., 2023 ;  Markov et al., 2023 ;  Meguellati et al., 2025 ;  Rebedea et al., 2023 ;  Shen et al., 2024 ) . However, the success of safety training creates a paradox: as models become safer through Supervised Fine-Tuning (SFT) and Reinforcement Learning from Human Feedback (RLHF), naturally occurring instances of HHH-violating behavior become statistically sparse  ( Ji et al., 2023 ) . This class imbalance is a significant bottleneck for training the next generation of safety classifiers, which require diverse, high-quality rare-class examples (i.e., HHH-violating responses) to generalize effectively. 
+
+ 
+ 
+ 
+ One avenue for synthesising such rare-class examples is jailbreaking or red-teaming. However, these methods operate in the discrete token space, relying on manual or automated adversarial prompting to elicit policy-violating responses  ( Anil et al., 2024 ;  Liu et al., 2023 ;  Liu et al., 2024 ;  Zou et al., 2023b ;  Zhu et al., 2023 ;  Perez et al., 2022 ) , and therefore do not directly exploit the rich knowledge encoded in the model’s high-dimensional hidden states  ( Chen et al., 2024 ) . Activation steering (AS) offers a complementary alternative that operates within this internal representation space  ( Park et al., 2023 ;  Turner et al., 2023 ;  Im and Li, 2025 ;  Bas and Novak, 2025 ) : a small  steering vector 
+added to the model’s activations nudges generation toward a target concept, i.e., alignment. Crucially, prior work shows that only a handful of contrastive examples suffice to estimate an effective steering vector  ( Scalena et al., 2024 ;  Cao et al., 2025 ;  Rahn et al., 2024 ) , making the method appealing for the data-scarce regime characteristic of HHH-violating outputs. This raises a natural question:  How effective is AS in generating valuable training data for safety detection models? 
+
+ 
+ 
+ 
+ Answering this requires evaluating steering more rigorously than current practices. Prior work assesses steered generation in two regimes: short generations (MC-QA) via accuracy  ( Tan et al., 2024 ;  Wu et al., 2025 ) , and long generations via LLM-as-a-Judge along two axes: steering success and coherence  ( Turner et al., 2023 ;  Rimsky et al., 2024 ;  Beaglehole et al., 2025 ;  Wu et al., 2025 ) . We target the more demanding long-form regime and argue that this two-axis evaluation is insufficient when the downstream goal is producing classifier training data. We therefore strengthen evaluation along three dimensions.  (i) Horizon:  most prior studies cap generation at  < 128 {<}128  tokens
+ ( Turner et al., 2023 ;  Rimsky et al., 2024 ;  Beaglehole et al., 2025 ;  Wu et al., 2025 ;  Da Silva et al., 2025 ;  Lee et al., 2024 ) ; we evaluate at  256 256  tokens, exposing failure modes that only emerge over longer spans.  (ii) Diversity:  motivated by diversity collapse under alignment  ( Kirk et al., 2023 ;  West and Potts, 2025 ;  Deshpande et al., 2025 )  and the role of diversity in continual training  ( Seddik et al., 2024 ;  Shumailov et al., 2023 ;  Guo et al., 2024 ) , we measure both sample- and set-level diversity, alongside surface statistics such as response length, since detectors trained on distributionally distorted data may fail to generalise.  (iii) Downstream utility:  we report post-fine-tuning detector AUROC, a direct extrinsic test of whether steered data is genuinely useful. To our knowledge, our work is the first to evaluate activation steering with set-level metrics and downstream classifier performance. 
+
+ 
+ 
+ 
+ With this strengthened setup, we run controlled experiments on the role of diversity and two key design choices:  model scale  and  all- vs. one-layer  steering.
+We focus on model scale because existing evidence on model scale is contradictory across prior work  ( Beaglehole et al., 2025 ;  Tan et al., 2024 ;  Da Silva et al., 2025 ) .
+For steering strategy, early methods proposed and used a one-layer setup  ( Turner et al., 2023 ) . However, recent work shows all-layer steering yields better concept alignment with substantially less hyperparameter tuning burden 1 1 
+             1 
+            
+            
+            
+          All-layer steering setup does not require the practitioner to find the best layer to steer at. Given that contemporary LLMs with moderate size have more than  30 30  layers, it significantly reduces the space and cost of hyperparameter tuning.   Beaglehole et al. (2025) . 
+
+ 
+ 
+ 
+ To understand the role of diversity and the key design choices, we set up our experiments across four HHH-violating concepts that capture principal failure modes of modern LLMs: unfaithfulness (RAGTruth)  ( Niu et al., 2024 ) , toxicity  ( Gehman et al., 2020 ) , hallucination  ( Rimsky et al., 2024 ) , and sycophancy  ( Rimsky et al., 2024 ) . We extract steering vectors with four methods: Contrastive Activation Addition (CAA)  ( Rimsky et al., 2024 ) , a normalised CAA variant, Recursive Feature Machines (RFM)  ( Beaglehole et al., 2025 ) , and Logistic Regression. Vectors are applied via scaled addition,  𝐡 ← 𝐡 + λ ​ 𝐯 \mathbf{h}\leftarrow\mathbf{h}+\lambda\mathbf{v} , where  𝐡 \mathbf{h}  denotes hidden states and  𝐯 \mathbf{v}  the steering vector. To study model scale, we pair small and large checkpoints: OLMo-2-7B/32B  ( OLMo et al., 2024 ) . 
+
+ 
+ 
+ 
+ Overall, our key contributions and findings are as follows. 
+
+ 
+ 
+ •  
+ 
+ Rigorous Evaluation.  We close two evaluation gaps in the AS literature: response diversity (overlooked) and downstream utility (untested), giving a complete picture of AS dynamics under long-horizon generation. 
+
+ 
+ 
+ •  
+ 
+ Intrinsic Findings.  More steering consistently reduces LLM’s response diversity. Surprisingly, Olmo-7B consistently provides better steering outcomes than the larger variant (32B). 
+
+ 
+ 
+ •  
+ 
+ Extrinsic Findings.  AS generated data produces better classifiers than prompting-based data in  3 3  of  4 4  concepts. However, high downstream performance is not frequent ( ≈ 30 % \approx 30\%  of runs) and requires careful balancing of steering success, coherence, and diversity. 
+
+ 
+ 
+ •  
+ 
+ Heuristic for Practitioners.  The harmonic mean of success, coherence, and diversity correlates positively with downstream performance across datasets and AS methods. Now, practitioners can leverage this harmonic mean as a heuristic target, replacing expensive AS hyperparameter sweeps with cheap validation-time tuning. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 2  Related Works 
+
+ 
+
+ 
+ Steering Methods.  Activation steering methods differ along three axes.  (i) Contrastive pair construction:  pairs are curated either from natural data  ( Rimsky et al., 2024 )  or generated by an LLM  Beaglehole et al. (2025) ; while many studies argue a handful of pairs suffice  Scalena et al. (2024) ;  Cao et al. (2025) ;  Rahn et al. (2024) , others use thousands  ( Cao et al., 2024 ;  Lee et al., 2024 ) .  (ii) Vector extraction:  the dominant approach is the mean-difference of paired activations  ( Rimsky et al., 2024 ;  Turner et al., 2023 ) ; alternatives include PCA over difference vectors  Zou et al. (2023a) , sparse autoencoder features  ( Chalnev et al., 2024 ;  Gurnee et al., 2023 ;  Wu et al., 2025 ) , supervised linear probes  Li et al. (2023) ;  Beaglehole et al. (2025) , Recursive Feature Machines  Beaglehole et al. (2025) , and preference-optimization-based extraction  ( Cao et al., 2024 ) .  (iii) Test-time intervention:  LLM hidden states can be modified along four axes— where in LLM? ,  which examples? ,  which tokens? , and  which hidden dimensions? . For  ‘where in LLM?’ , most studies intervene on the residual stream  Rimsky et al. (2024) ;  Cao et al. (2024) ;  Zou et al. (2023a) ;  Beaglehole et al. (2025) ;  Turner et al. (2023) , with others targeting self-attention  Li et al. (2023) ;  Cheng et al. (2025)  or post-LM-head representations  Da Silva et al. (2025) . In addition, two distinct steering strategies, all-layers  ( Beaglehole et al., 2025 ;  Cao et al., 2024 )  and one-layer  ( Rimsky et al., 2024 ;  Turner et al., 2023 ) , have been explored in the literature.
+Adaptive methods select  ‘which examples?’  to steer or adjust steering strength per example  ( Lee et al., 2024 ;  Wang et al., 2024b ;  Sun et al., 2025 ;  Stolfo et al., 2024 ) . For  ‘which tokens?’  decision, last- k k   ( Zou et al., 2023a )  and all-token  ( Rimsky et al., 2024 )  steering dominate, while a few works favor steering on targeted tokens  Nguyen et al. (2025b) . Steering all hidden dimensions is standard for  which hidden dimensions? , with selective-dimension variants as exceptions  ( Li et al., 2023 ;  Bayat et al., 2025 ;  Wang et al., 2025 ) . The dominant steering operator is scaled addition,
+sometimes combined with
+normalization for better control of activation distribution  Nguyen et al. (2025a) ;  Stolfo et al. (2024) . 
+
+ 
+ 
+ 
+ Evaluation of Steered Responses.  Steered responses are evaluated predominantly along two dimensions: steering success and text coherence (also referred to as fluency or quality). For open-ended generation, both are scored by an LLM-Judge  ( Rimsky et al., 2024 ;  Beaglehole et al., 2025 ;  Turner et al., 2023 ;  Wu et al., 2025 ) ; for multiple-choice setups, steering success reduces to text- or logit-based accuracy on the target option  ( Tan et al., 2024 ;  Wu et al., 2025 ) . Task-specific variations of steering success also appear in applications such as refusal  ( Lee et al., 2024 )  and instruction-following  ( Stolfo et al., 2024 ) . Across methods, a consistent trade-off emerges between steering success and general capabilities  ( Bas and Novak, 2025 ;  Wang et al., 2025 ;  Rimsky et al., 2024 ) . A more rigorous evaluation reveals that many concepts are not steerable, and even within steerable concepts, a substantial fraction of examples can exhibit anti-steering properties  ( Tan et al., 2024 ) . With the reported high variance in steering effectiveness across concepts, examples, models, and methods  ( Tan et al., 2024 ;  Da Silva et al., 2025 ) , a priori prediction of the value of steered generations is challenging. We address this gap by introducing a validation heuristic that correlates with downstream benefits. 
+
+ 
+ 
+ 
+ 
+ 3  Preliminaries 
+
+ 
+
+ 
+ Activation steering rests on the linear representation hypothesis: high-level concepts such as honesty or toxicity correspond to approximately linear directions in the latent activation space of large language models (LLMs)  ( Park et al., 2023 ) . The framework comprises two stages. First, a  steering vector   𝐯 ∈ ℝ d \mathbf{v}\in\mathbb{R}^{d} , i.e., target concept direction, is estimated using a paired dataset  𝒟 \mathcal{D}  of contrastive examples and an extraction method  f : 𝒟 → 𝐯 f:\mathcal{D}\rightarrow\mathbf{v} . Second, at inference time, the LLM’s hidden states ( 𝐡 \mathbf{h} ) are modified through an intervention  𝐡 ← g ⁡ ( 𝐡 , 𝐯 ) \mathbf{h}\leftarrow g(\mathbf{h},\mathbf{v})  to align LLM generations with the target concept. 
+
+ 
+ 
+ 
+ Activation steering methods therefore differ along three axes: the construction of  𝒟 \mathcal{D} , the extraction map  f ⁡ ( ⋅ ) f(\cdot) , and the intervention  g ⁡ ( ⋅ ) g(\cdot) . To isolate the effect of the extraction function, we fix  𝒟 \mathcal{D}  across models and methods, and fix the intervention to scaled addition,  g ⁡ ( 𝐡 , 𝐯 , λ ) = 𝐡 + λ ​ 𝐯 g(\mathbf{h},\mathbf{v};\lambda)=\mathbf{h}+\lambda\mathbf{v} , where the scalar  λ \lambda  controls steering strength and is a hyperparameter. A positive  λ \lambda  steers the model toward the target concept, while a negative  λ \lambda  steers it away. The addition of the  λ ​ 𝐯 \lambda\mathbf{v}  is performed on the last token and repeated for each forward pass until the generation ends. 
+
+ 
+ 
+ 
+ Steering Vector Extraction. 
+
+ 
+
+ 
+ Let  ℳ \mathcal{M}  be a transformer-based LLM with  L L  layers, indexed by  l ∈ { 1 , … , L } l\in\{1,\dots,L\} , and let  𝒟 = { ( x i + , x i − ) } i = 1 N \mathcal{D}=\{(x_{i}^{+},x_{i}^{-})\}_{i=1}^{N}  be a dataset of  N N  contrastive pairs, where  x i + x_{i}^{+}  exhibits the target concept (e.g., hallucination) and  x i − x_{i}^{-}  the opposing behaviour (e.g., factual adherence). For each input  x x  and layer  l l , we extract the hidden state  𝐡 ( l ) ​ ( x ) = ℳ ​ ( x ) ( l ) ∈ ℝ d \mathbf{h}^{(l)}(x)=\mathcal{M}(x)^{(l)}\in\mathbb{R}^{d}  at the final input token, taken from the residual stream immediately after the  l l -th transformer block. Flattening pairs into individual labelled examples yields  { ( x j , y j ) } j = 1 2 ​ N \{(x_{j},y_{j})\}_{j=1}^{2N}  with  y j ∈ { + 1 , − 1 } y_{j}\in\{+1,-1\} , used by methods that operate on labelled instances rather than pairs. We study four extraction methods  f ⁡ ( ⋅ ) f(\cdot) : Contrastive Activation Addition (CAA)  ( Rimsky et al., 2024 ) , a normalised CAA variant, Recursive Feature Machines (RFM)  ( Beaglehole et al., 2025 ) , and Logistic Regression  ( Beaglehole et al., 2025 ;  Zou et al., 2023a ;  Marks and Tegmark, 2023 ) , defined as follows. 
+
+ 
+ 
+ 
+ 
+ •  
+ 
+ CAA.  The steering vector is the mean difference between positive and negative activations at layer  l l   ( Rimsky et al., 2024 ) : 
+
+ 
+ 
+
+ 
+ 
+ 𝐯 ( l ) = 1 N ​ ∑ i = 1 N ( 𝐡 ( l ) ​ ( x i + ) − 𝐡 ( l ) ​ ( x i − ) ) . \mathbf{v}^{(l)}=\frac{1}{N}\sum_{i=1}^{N}\left(\mathbf{h}^{(l)}(x_{i}^{+})-\mathbf{h}^{(l)}(x_{i}^{-})\right). 
+ 
+ 
+
+ 
+ 
+ •  
+ 
+ Normalised CAA.  Identical to CAA, but the vector is unit-normalised before use:  𝐯 ¯ ( l ) = 𝐯 ( l ) / ∥ 𝐯 ( l ) ∥ \bar{\mathbf{v}}^{(l)}=\mathbf{v}^{(l)}/\lVert\mathbf{v}^{(l)}\rVert . This decouples the direction from its magnitude, so  λ \lambda  alone controls steering strength. 
+
+ 
+ 
+ •  
+ 
+ RFM.  We adopt the Recursive Feature Machines for calculating steering vectors as proposed by  Beaglehole et al. (2025) . We adopt the implementation from the official repository and refer readers to  ( Beaglehole et al., 2025 )  for method details. (refer to Appendix  B  for hyperparameters) 
+
+ 
+ 
+ •  
+ 
+ Logistic Regression.  An  ℓ 2 \ell_{2} -regularised logistic classifier is fit on the hidden states, and its weight vector is taken as the steering direction:
+We use the default  scikit-learn  implementation (refer to Appendix  B  for hyperparameters). 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Hyperparameter scope. 
+
+ 
+
+ 
+ The activation-steering setup introduces a large design space. We catalogue  14 14  hyperparameters spanning contrastive-pair construction, vector estimation, and intervention; in the main text, we vary only  steering scale  ( λ \lambda ),  model ,  steering method , and  layer coverage  (steering strategy: one-layer and all-layer steering), and fix the remaining twelve to standard or controlled values. The full catalogue, including each fixed value and the rationale, is provided in Appendix  B . 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Experimental Setup 
+
+ 
+
+ 
+ We assess the utility of activation steering as a data-generation tool for safety-detection models. The pipeline has three stages: (i) curate contrastive pairs for each target concept, (ii) extract steering vectors per (concept, method, model, layer) combination, and (iii) use the steered generations in two downstream investigations. First, an  intrinsic  analysis (design-choice analysis) and second an  extrinsic  analysis (safety-classifier fine-tuning). The following subsections detail stages (i) and (ii); the downstream investigations are described in Sections  4.3  and  4.4 . 
+
+ 
+ 
+ 
+ 4.1  Contrastive Dataset Construction 
+
+ 
+
+ 
+ Concepts and pairing.  We study four HHH-relevant concepts, each drawn from a public dataset: unfaithfulness from RAGTruth  ( Niu et al., 2024 ) , toxicity from RealToxicityPrompts  ( Gehman et al., 2020 ) , and hallucination and sycophancy from CAAData  ( Rimsky et al., 2024 ) . For each dataset, we partition the official training set into an HHH-violating pool  𝒟 + \mathcal{D}^{+}  and a compliant pool  𝒟 − \mathcal{D}^{-}  (per-dataset criteria below), holding out  100 100  examples per pool as  𝒟 val + \mathcal{D}^{+}_{\text{val}}  and  𝒟 val − \mathcal{D}^{-}_{\text{val}} . Contrastive pairs are formed by random matching between the remainders, ensuring the steering signal is derived only from in-distribution training data.
+All steering vectors are estimated from  128 128  such pairs, giving a total budget of  128 × 2 + 100 × 2 = 456 128\times 2+100\times 2=456  examples for vector estimation and hyperparameter tuning. 
+
+ 
+ 
+ 
+ Fine-tuning and test data.  Once hyperparameters are tuned, we use the configured steering vector (or prompting baseline) to generate synthetic HHH-violating examples for the downstream classifier (Mistral- 7 7 B  ( Jiang et al., 2023 ) ). This step requires only prompts: we extract the set of unique prompts  𝒫 train \mathcal{P}_{\text{train}}  from the official training split and produce one response per prompt. To keep the steered set directly comparable to the original training data, we equalise their HHH-violating counts: for RAGTruth,  | 𝒫 train | < | 𝒟 + | |\mathcal{P}_{\text{train}}|<|\mathcal{D}^{+}| , so we downsample  𝒟 + \mathcal{D}^{+} ; for RealToxicityPrompts,  | 𝒫 train | > | 𝒟 + | |\mathcal{P}_{\text{train}}|>|\mathcal{D}^{+}| , so we subsample the steered generations. We focus on all-layer steering strategy for our main experiments and compare it to one-layer steering in ablation. As a baseline, we also generate responses to the unique prompts in training data with adversarial prompting, which attempts to invoke an HHH-violating response from the model (see Appendix  F  for the final prompts and Appendix  F.4  for the prompt-engineering procedure). The official test split of each dataset is used as-is to evaluate classifiers trained with either the original, prompting-based, or steered data. The labels for the test examples are formed based on the same rule used to create the contrastive pairs. We describe the per-dataset criteria in the following paragraph. 
+
+ 
+ 
+ 
+ Per-dataset criteria. 
+ RAGTruth  provides span-level annotations:  𝒟 + \mathcal{D}^{+}  contains responses with at least one unsupported or contradictory span (i.e., answer not faithful to the provided context);  𝒟 − \mathcal{D}^{-}  contains responses with none. This yields  1,243 1{,}243  positive (we downsample this for fine-tuning experiments because,  | 𝒫 train | < | 𝒟 + | |\mathcal{P}_{\text{train}}|<|\mathcal{D}^{+}| ) and  2,735 2{,}735  negative examples. Evaluation uses  200 200  balanced examples from the official validation split.
+ RealToxicityPrompts  contains  ∼ \sim 100K examples; for tractability we subsample  1,500 1{,}500  per pool, defining  𝒟 + \mathcal{D}^{+}  as toxicity score  ≥ \geq  the  60 60 th percentile and  𝒟 − \mathcal{D}^{-}  as  ≤ \leq  the  40 40 th percentile. Validation:  200 200  balanced examples.
+ CAAData  provides  1,000 1{,}000  contrastive pairs per concept; we decouple these into independent  𝒟 + \mathcal{D}^{+}  and  𝒟 − \mathcal{D}^{-}  pools, deduplicate prompts, and hold out  200 200  balanced validation examples, leaving  1,624 1{,}624  training examples for hallucination and  1,618 1{,}618  for sycophancy.
+Final dataset sizes are summarised in Table  1 . 
+
+ 
+ 
+ 
+ 
+ 
+ Target Concept 
+ Total 
+ Pos. 
+ Neg. 
+ 
+ Faithfulness 
+ 3,416 3{,}416 
+ 681 681 
+ 2,735 2{,}735 
+ 
+ Toxicity 
+ 3,000 3{,}000 
+ 1,500 1{,}500 
+ 1,500 1{,}500 
+ 
+ Hallucination 
+ 1,624 1{,}624 
+ 812 812 
+ 812 812 
+ 
+ Sycophancy 
+ 1,618 1{,}618 
+ 809 809 
+ 809 809 
+ 
+
+ 
+ Table 1:  Dataset Sizes.  SFT data composition per concept: unique prompts used to generate synthetic responses via activation steering. 
+ 
+ 
+ 
+ 4.2  Steering Vector Estimation 
+
+ 
+
+ 
+ We extract steering vectors using four methods: Contrastive Activation Addition (CAA)  ( Rimsky et al., 2024 ) , normalised CAA, Recursive Feature Machines (RFM)  ( Beaglehole et al., 2025 ) , and Logistic Regression  ( Marks and Tegmark, 2023 ;  Zou et al., 2023a ;  Beaglehole et al., 2025 ) ; see Section  3  for definitions. A separate vector is estimated for each (concept, method, model, layer) tuple, where models are OLMo-2-7B/32B. Vectors are cached and reused at inference time. Refer to Appendix  F  for prompts. 
+
+ 
+ 
+ 
+ 
+ 4.3  Analysis of Design Choices 
+
+ 
+
+ 
+ With contrastive datasets curated and steering vectors estimated, we now generate steered responses and assess them along multiple axes. The main design choices under study are model scale, steering scale ( λ \lambda ), and layer coverage (one vs. all); the remaining hyperparameters are fixed as in Table  3 . Refer to Appendix  F  for data generation prompts. 
+
+ 
+ 
+ 
+ Generation protocol.  A full sweep over  4 4  concepts  ×  4 \times\,4  steering methods  ×  2 \times\,2  models  ×  10 \times\,10  values of  λ \lambda  yields  320 320  generated datasets. To keep the compute budget tractable while preserving statistical power, we randomly sample  100 100  unique prompts from each concept’s validation split and generate steered responses at  256 256  tokens for every configuration (refer to Table  3  for generation configuration). Because all design-choice tuning is performed on this held-out validation split, downstream results in Section  4.4  remain free of selection bias from this stage. 
+
+ 
+ 
+ 
+ Evaluation metrics.  We evaluate generations along three axes: 
+
+ 
+ 
+ 
+ Steering success.  Following standard practice  ( Turner et al., 2023 ;  Rimsky et al., 2024 ;  Wu et al., 2025 ) , we use LLM-as-a-Judge (Haiku  4.5 4.5 2 2 
+               2 
+              
+              
+              
+            On a small scale experiment, we observed that Haiku and Opus scores are highly correlated with  Pearson r  between  0.72 − 0.88 0.72-0.88  with  p ​ ¡ ​ 0.001 p\text{<}0.001 . Hence, we used Haiku for all remaining experiments. ) to assess the extent to which a response exhibits the target concept with a Likert scale of  1 1 - 5 5 . 
+
+ 
+ 
+ 
+ Coherence.  We score each response with the reward model ArmoRM  ( Wang et al., 2024a ) , which exposes coherence as a dedicated head rather than collapsing it into a single quality scalar. This separation is essential for our setting: scalar reward models implicitly penalise HHH-violating content, so a response that is unfaithful-but-fluent would receive a low score for the wrong reason. ArmoRM also provides a substantially cheaper alternative to API-based judges, given the scale of the sweep. 
+
+ 
+ 
+ 
+ Diversity.  Following recent work on diversity measurement for generated text  ( Shaib et al., 2025 ;  Deshpande et al., 2025 ) , we report sample-level diversity with MTLD  ( McCarthy, 2005 )  (specifically, moving average of bidirectional MTLD, we denote it with MTLD-MB),
+and set-level diversity with compression ratio and  n n -gram diversity ( n = 4 n=4 )  ( Shaib et al., 2025 ) . Lower values of compression ratio indicate higher diversity hence, for plots, we use the inverse of the compression ratio. Additionally, compression ratio and  n n -gram diversity carry a length bias. We adopt text truncation 3 3 
+               3 
+              
+              
+              
+            Compression ratio operates on a set of strings. We calculate the 50th percentile of string length (number of words) within a dataset and truncate all elements in the set to this length.  strategy suggested by the original study to partially address the length bias  ( Shaib et al., 2025 ) . Lastly, we track response length to detect surface-level shifts that detection models could spuriously latch onto. Later in the experiments, we also compute the harmonic mean of min-max normalized values of combinations of success, coherence, and diversity measurements. 
+
+ 
+ 
+ 
+ Statistical analysis.  Two questions guide the analysis.  (i) Does steering scale monotonically affect each metric?  We compute Pearson correlations between  λ \lambda  and each metric (success, coherence, diversity, length), across concepts and models, to identify consistent directional effects.  (ii) Does model scale matter, and in which direction?  For each (concept, steering method) pair, we conduct paired  t t -tests comparing the small and large checkpoints
+on every metric, and complement this with Pearson correlations between model size and metric values within each dataset and steering method pair. Together, these tests separate effects that are consistent across configurations from those that are concept- or method-specific. 
+
+ 
+ 
+ 
+ Figure 2:  Correlation with Steering Scale.  Pearson correlation between steering scale ( λ \lambda ) and five evaluation metrics (left to right): steering success (LLM-Judge), coherence (reward model), sample-level diversity (MTLD-MB), set-level diversity ( 1 / 1/ compression ratio), and response length.
+ 
+ 
+ 
+ 
+ 4.4  Downstream Utility 
+
+ 
+
+ 
+ The central evaluation contribution of this study is to assess steered data  extrinsically —by the performance of detection models trained on it—rather than only through  intrinsic  measures of the generations themselves. 
+
+ 
+ 
+ 
+ Data and fine-tuning.  For each (concept, steering method) pair, we generate steered responses for every unique input prompt
+ 𝒟 train + \mathcal{D}^{+}_{\text{train}} , producing a parallel  synthetic  pool  𝒟 ~ train + \widetilde{\mathcal{D}}^{+}_{\text{train}}  where each prompt’s original HHH-violating response has been replaced by a steered generation (refer to Appendix  D  for our reasoning on using replacement setup). The fine-tuning dataset is then  𝒟 ~ train + ∪ 𝒟 train − \widetilde{\mathcal{D}}^{+}_{\text{train}}\cup\mathcal{D}^{-}_{\text{train}} : synthetic HHH-violating examples paired with the original compliant examples. As a baseline, we fine-tune an identical detector on the original  𝒟 train + ∪ 𝒟 train − \mathcal{D}^{+}_{\text{train}}\cup\mathcal{D}^{-}_{\text{train}} . Comparing the two isolates the marginal contribution of the steered data. Fine-tuning for all configurations is prohibitive, so we restrict this stage to a single base model, selected on the basis of the design-choice findings in Section  4.3 . The detector is Mistral-7B, fine-tuned with LoRA on a  4 4 -bit quantised base. LoRA adapters are applied to the query and value projections (rank  128 128 ,  α = 128 \alpha=128 ).
+We treat the probability assigned to the  yes  token as the model’s prediction score and optimise binary cross-entropy against the ground-truth label. We train for  3 3  epochs with a global batch size of  256 256 , using AdamW (weight decay  10 − 2 10^{-2} ) and a linear learning-rate schedule with peak rate  3 × 10 − 5 3\times 10^{-5}  and  10 % 10\%  warmup. We conducted all our experiments using NVIDIA A10G or A6000 GPUs based on availability. 
+
+ 
+ 
+ 
+ Evaluation.  At test time, we run the trained detector on the held-out test set, format each example as the same yes/no question, and use the  yes -token probability as the prediction score. We report AUROC in the main text
+defer F1 to Appendix  D . A higher AUROC indicates that the steered data carries information useful for detecting HHH violations on real, unsteered responses, providing the extrinsic signal that motivates the study. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Results 
+
+ 
+
+ 
+ 5.1  Steering degrades diversity 
+
+ 
+
+ 
+ We begin with the simplest question: how does each evaluation metric move with steering scale? Figure  2  reports the average Pearson correlation between steering scale ( λ \lambda ) and five metrics across all (model, dataset) combinations: steering success (LLM-Judge), coherence (reward model), sample-level diversity (MTLD-MB), set-level diversity ( 1 / 1/ compression ratio), and response length. All individual values are listed in Table  4 . 
+
+ 
+ 
+ 
+ Two findings replicate prior work  ( Wu et al., 2025 ;  Xu et al., 2026 ) : stronger steering correlates with better alignment and with worse coherence. We then extend the analysis to diversity. Sample-level diversity (MTLD-MB) decreases with increasing  λ \lambda  in every (model, dataset) cell except OLMo-32B on Toxicity, the concept that is also hardest to steer (lowest success correlation,  0.12 / 0.14 0.12/0.14 ). For Unfaithfulness and Toxicity, the MTLD-MB correlations sit near zero, indicating almost no sample-level degradation. Set-level diversity tells a sharper story: the compression-ratio metric is strongly negative in  7 / 8 7/8  cells (down to  − 0.93 -0.93 ), with the lone exception being Sycophancy on OLMo-7B ( + 0.73 +0.73 ). Set-level diversity therefore degrades more severely than sample-level diversity. This parallels a known pattern in the LLM alignment literature, where post-training collapses the collective diversity of model outputs  ( Kirk et al., 2023 ;  West and Potts, 2025 ;  Doshi and Hauser, 2024 )  while maintaining sample-level diversity  ( Bellemare-Pepin et al., 2024 ) . Because steering acts as a data-efficient alignment mechanism, similar distributional contraction may underlie both, though we leave this question to future work. 
+
+ 
+ 
+ 
+ Finally, response length correlates with  λ \lambda  in directions that depend on model size: mostly negative for OLMo-7B and consistently positive for OLMo-32B. A steered dataset can therefore drift away from the natural length distribution in either direction, depending on the model, and introduces an additional axis of variability to control when steering for downstream use. 
+
+ 
+ 
+ 
+ Figure 3:  Smaller Model Generates Better Steering Outcomes.  Across  4 4  datasets  ×  4 \times\,4  methods  ×  2 \times\,2  models (7B/32B)  ×  10 \times\,10  scales,  ∼ 1 {\sim}1 k responses each.  (a)  OLMo-7B beats 32B on success and on the harmonic mean of success, coherence, and diversity.  (b)  Per-(dataset, method) Pearson  r r  between model size and harmonic-mean utility is negative in  14 / 16 14/16  cells.  (c)  In paired  t t -tests ( α = 0.05 \alpha=0.05 ), 7B wins  8 / 16 8/16  and 32B only  2 / 16 2/16 . Scale does not improve multi-objective utility and often degrades it. 
+ 
+ 
+ 
+ 5.2  Smaller model offers better steering outcomes 
+
+ 
+
+ 
+ Having established the per-axis effects of steering scale, we now ask whether and how  model scale  affects them. Figure  3  probes this from three complementary angles. 
+
+ 
+ 
+ 
+ (a) Aggregate trade-off.  We aggregate across all (dataset, method) combinations and find that each of three increasingly strict utility measures decreases from OLMo-7B to OLMo-32B: min-max normalised success, the harmonic mean of success and coherence, and the harmonic mean of success, coherence, and sample-level diversity 4 4 
+               4 
+              
+              
+              
+            Including set-level diversity would only strengthen this, because of the rapid degradation for the larger model (Section  5.1 ). . The smaller model, therefore, yields higher utility on average regardless of which measure is used.  (b) Per-configuration consistency.  For each (dataset, method) configuration, we compute the Pearson correlation between model size and the strictest utility (HM of success, coherence, sample-level diversity). The correlation is negative in  14 / 16 14/16  configurations, indicating that the negative scale effect is not confined to a subset of methods or concepts.  (c) Statistical significance.  For each (dataset, method) configuration, we conduct a paired  t t -test on the strictest utility comparing OLMo-7B and OLMo-32B. The smaller model achieves significantly higher utility in  8 / 16 8/16  configurations, the larger model in only  2 / 16 2/16 , with the remaining  6 6  inconclusive. 
+
+ 
+ 
+ 
+ Figure 4:  Downstream Performance.  Detection AUROC of classifiers fine-tuned on steered generations from OLMo- 7 7 B. The best steering configuration are marked with solid, larger markers.
+ 
+ 
+ 
+ 
+ 5.3  Steered data improves downstream detection 
+
+ 
+
+ 
+ We now examine the downstream utility of steered data: when steered generations replace the HHH-violating examples in the training set, how closely can a fine-tuned safety detector match training on the original data? Guided by Section  5.2 , we restrict the sweep to OLMo- 7 7 B and to  λ ∈ { 0.4 , 0.5 , … , 1.0 } \lambda\in\{0.4,0.5,\ldots,1.0\} , dropping smaller steering scales since they yield generations close to the unsteered model. Crossing  4 4  concepts,  4 4  methods, and  7 7  scales gives  112 112  steered fine-tuning runs, compared against  8 8  baselines (one original-data and one prompting-only run per concept). The replace-rather-than-augment design isolates the contribution of the synthetic positives, since both compared datasets share the same HHH-compliant pool. We therefore do not expect to exceed the original-data ceiling; we measure how closely each synthetic source approaches it. 
+
+ 
+ 
+ 
+ Figure  4  reports detection AUC per configuration. Per-concept behaviour varies. Hallucination saturates near the original-data ceiling already at low  λ \lambda , leaving little room for steering to help or hurt. Toxicity is the opposite case: no method matches its prompting baseline, indicating that all-layer steering on OLMo- 7 7 B is largely ineffective for this concept. On Sycophancy and Unfaithfulness, the best steering configuration clearly exceeds the prompting baseline. Overall, the best steering configuration beats prompting on  3 / 4 3/4  concepts. Across the full  112 112 -run sweep, however, the steered dataset outperforms the prompting baseline in only  29 29  runs ( 26 % 26\% ). These successes concentrate in Unfaithfulness ( 19 19 ), followed by Sycophancy ( 8 8 ) and Hallucination ( 2 2 ); Toxicity yields none. The low incidence indicates that downstream utility
+warrants a careful balance of success, coherence, and diversity. Section  5.4  examines which validation-time signals predict this regime. 
+
+ 
+ 
+ 
+ 
+ 
+ Signal 
+ Syc 
+ Unf 
+ 
+ Success 
+ − .41 -.41 ∗ 
+ − .57 -.57 ∗∗ 
+ 
+ Coherence 
+ − .69 -.69 ∗∗∗ 
+ + .60 ∗ ∗ ∗ +.60^{***} 
+ 
+ HM(S,C) 
+ + .38 ∗ +.38^{*} 
+ − .05 -.05 
+ 
+ + +  MTLD-MB 
+ + .35 +.35 
+ + .10 +.10 
+ 
+ + +   1 / 1/ Comp. ratio 
+ + .38 ∗ +.38^{*} 
+ + .11 +.11 
+ 
+ + +   n n -gram div. 
+ + .43 ∗ +.43^{*} 
+ + .27 +.27 
+ 
+
+ 
+ Table 2:  Pearson  r r  ( n = 28 n{=}28 ) between validation signals and downstream AUROC.
+ ∗ p < .05 {}^{*}p{<}.05 ,  p ∗ ⁣ ∗ < .01 {}^{**}p{<}.01 ,  ∗ ∗ ∗ p < .001 {}^{***}p{<}.001 . 
+ 
+ 
+ 
+ 5.4  Diversity helps predict downstream performance 
+
+ 
+
+ 
+ Figure  4  shows that downstream AUROC is non-monotonic in steering scale, so success alone is an unreliable selector. We correlate six validation-time signals with downstream performance across the  112 112  OLMo- 7 7 B configurations (refer to Tables  2  and  6 ). Raw success is  anti-correlated  with AUROC. The literature’s standard rubric, the harmonic mean of success and coherence, is inconsistent across datasets. For Unfaithfulness, the most successfully steered concept, this rubric correlates  negatively  with downstream performance. 
+
+ 
+ 
+ 
+ Augmenting the rubric with a single diversity term (MTLD-MB,  1 / 1/ compression ratio, or  n n -gram diversity) yields modest but consistent improvements. Correlations are positive in every (dataset, target) cell and reach statistical significance on Sycophancy and Toxicity. Effect sizes remain moderate ( r ≤ 0.49 r\leq 0.49 ), so diversity acts as a stabilising signal across concepts. This consistency holds across other downstream metrics (Table  6 ).
+We therefore recommend using the harmonic mean of success, coherence, and diversity as the heuristic target for tuning the steering setup. 
+
+ 
+ 
+ 
+ Figure 5:  Validation of Heuristic.  Harmonic mean of success, coherence, and diversity strongly correlates with downstream AUROC for one-layer steering. 
+ 
+ 
+ 
+ 5.5  Ablation Experiment 
+
+ 
+
+ 
+ Effect of one-layer steering. 
+
+ 
+
+ 
+ While we focus on all-layer steering based on recent empirical success ( Beaglehole et al., 2025 ;  Cao et al., 2024 ) , one-layer steering remains more commonly used  ( Turner et al., 2023 ;  Rimsky et al., 2024 ;  Wu et al., 2025 ;  Tan et al., 2024 ) . We ask two questions: does one-layer steering yield comparable downstream performance to all-layer steering, and does our heuristic still predict downstream performance? We focus on CAA (normalised) on Unfaithfulness, sweeping  4 4  layers (selected by maximum validation dot-product between the steering vector and  200 200  validation examples) and  6 6  scales per layer over  λ ∈ [ 7.0 , 19.0 ] \lambda\in[7.0,19.0] , giving  24 24  configurations. 
+
+ 
+ 
+ 
+ One-layer steering outperforms the prompting baseline in  12 / 24 12/24  runs, slightly above the  12 / 28 12/28  rate for all-layer steering on the same (concept, method). Maximum AUROC is also comparable:  0.692 0.692  (layer  6 6 ,  λ = 9.0 \lambda=9.0 ) vs.  0.697 0.697  for all-layer ( λ = 0.7 \lambda=0.7 ). The harmonic mean of success, coherence, and diversity correlates with AUROC at  r = + 0.62 r=+0.62 ,  + 0.65 +0.65 , and  + 0.64 +0.64  for MTLD-MB,  1 / 1/ compression ratio, and  n n -gram diversity (Figure  5 ).
+These are substantially stronger than the all-layer counterparts ( + 0.10 +0.10 ,  + 0.11 +0.11 ,  + 0.27 +0.27 ), confirming that the heuristic generalises across steering setups. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 6  Conclusion 
+
+ 
+
+ 
+ We evaluated activation steering as a generator of rare HHH-violating data for safety detection, focusing on two areas not investigated in the literature:  diversity  and  downstream utility . Intrinsically, steering success rises with steering strength while coherence and
+diversity degrade. Extrinsically, detectors fine-tuned on the best steered configurations beat a prompting baseline on  3 3  of  4 4  concepts, but downstream utility lives in a narrow regime where success, coherence, and diversity are jointly satisfied. The harmonic mean of these three axes correlates with downstream AUROC consistently enough to serve as a practical tuning target. Practitioners can navigate the vast hyperparameter space of AS more effectively. Overall, our results provide a grounded heuristic for AS hyperparameter tuning and highlight the potential of AS as a synthetic data generator for specific target concepts. 
+
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ Our study has several scope limitations.  (i) Hyperparameter scope:  AS admits many hyperparameters (Appendix A), and we fixed most of the hyperparameters to practically justifiable values. Given the sensitivity of hyperparameters in AS ( Zou et al., 2023a ;  Li et al., 2023 ;  Cheng et al., 2025 ;  Da Silva et al., 2025 ;  Sun et al., 2025 ;  Nguyen et al., 2025b ;  Wang et al., 2025 ) , changes to fixed values may affect our findings, and the extent of impact is not measured in our experiments.
+ (ii) Small sample size:   112 112  fine-tuning runs reduce to only  28 28  extrinsic measurements per dataset. Hence, the correlation between  intrinsic  and  extrinsic  metrics has limited generalizability. However, the consistency of the positive correlation between our heuristic and AUROC across concepts and ablations is therefore a stronger argument than any single coefficient.  (iii) Length bias:  compression ratio and  n n -gram diversity are length-sensitive; truncation reduces but does not eliminate this bias.
+ (iv) Effect of model scale:  We primarily focused on only one model family (Olmo) with two checkpoints ( 7 7  and  32 32 B). Hence, the better steering outcomes for smaller model can only be interpreted for Olmo- 7 7 B. 
+
+ 
+ 
+ 
+ 
+ Broader Impacts 
+
+ 
+
+ 
+ The overarching goal of our study is to explore and investigate existing methods to improve safety detection models. However, we acknowledge the potential risks of misuse of our work. To mitigate the negative impact of the misuse, we propose to release code but not the steered generations, leaving a compute barrier and audit trail for reproduction. We provide a more detailed discussion in Appendix  A . 
+
+ 
+ 
+ 
+ 
+ 

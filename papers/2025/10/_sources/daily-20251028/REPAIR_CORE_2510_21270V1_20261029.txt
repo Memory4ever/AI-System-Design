@@ -1,0 +1,861 @@
+Sparser Block-Sparse Attention via Token Permutation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries
+Scaled Dot-Product Attention
+FlashAttention
+Block-Sparse Attention
+3 Permuted Block-Sparse Attention
+3.1 Permutation Properties of Attention
+3.2 Segmented Permutation for Causal Attention
+3.3 Query-aware Key Permutation
+3.4 Permuted Block-Sparse Attention
+4 Experiments
+4.1 Settings
+Models & Datasets
+Baselines
+Implementation Details
+4.2 Main Results
+LongBench
+LongBenchv2
+Efficiency Results
+4.3 Ablation Studies and Analysis
+Effect of Permutation
+Permutation Target Analysis
+Effect of Segment Size
+5 Related Work
+Long-context LLMs
+Sparse Attention
+Attention with Token Permutation
+6 Conclusion
+7 Ethics Statement
+8 Reproducibility Statement
+Code
+Models
+Datasets
+Experimental Setup
+References
+A Proofs of Permutation Properties
+A.1 Proof of Lemma
+A.2 Proof of Lemma
+A.3 Proof of Theorem
+B Block Selection
+B.1 Block Selection in PBS-Attn
+B.2 PBS-Attn with Existing Block Selection Algorithms
+C Analysis on the Permutation Overhead
+D Visualization of Permutation
+E Use of Large Language Models
+License: CC BY 4.0
+arXiv:2510.21270v1 [cs.CL] 24 Oct 2025
+Sparser Block-Sparse Attention via Token Permutation
+Xinghao Wang
+Pengyu Wang
+Dong Zhang
+Chenkun Tan
+Shaojun Zhou
+Zhaoxiang Liu
+Shiguo Lian
+Fangxu Liu
+Kai Song
+Xipeng Qiu
+Affiliation: Fudan University, China Unicom, ByteDance, Shanghai Innovation Institute
+Abstract
+Scaling the context length of large language models (LLMs) offers significant benefits but is computationally expensive.
+This expense stems primarily from the self-attention mechanism, whose O⁡(N2)O(N^{2}) complexity with respect to sequence length presents a major bottleneck for both memory and latency.
+Fortunately, the attention matrix is often sparse, particularly for long sequences, suggesting an opportunity for optimization.
+Block-sparse attention has emerged as a promising solution that partitions sequences into blocks and skips computation for a subset of these blocks.
+However, the effectiveness of this method is highly dependent on the underlying attention patterns, which can lead to sub-optimal block-level sparsity.
+For instance, important key tokens for queries within a single block may be scattered across numerous other blocks, leading to computational redundancy.
+In this work, we propose Permuted Block-Sparse Attention (PBS-Attn), a plug-and-play method that leverages the permutation properties of attention to increase block-level sparsity and enhance the computational efficiency of LLM prefilling.
+We conduct comprehensive experiments on challenging real-world long-context datasets, demonstrating that PBS-Attn consistently outperforms existing block-sparse attention methods in model accuracy and closely matches the full attention baseline.
+Powered by our custom permuted-FlashAttention kernels, PBS-Attn achieves an end-to-end speedup of up to 2.75×2.75\times in long-context prefilling, confirming its practical viability.
+Code available at https://github.com/xinghaow99/pbs-attn.
+|
+1 Introduction
+Modern Large Language Models (LLMs) have demonstrated remarkable proficiency in handling long-context tasks (OpenAI, 2025; Gemini Team, Google, 2025; Anthropic, 2025), a capability fueled by advancements in infrastructure (Liu et al., 2023; Jin et al., 2024), training methodologies (Yang et al., 2025a), and novel positional embedding schemes (Su et al., 2023; Press et al., 2022; Peng et al., 2023).
+This progress enables models to process context windows spanning thousands or even millions of tokens, unlocking novel applications such as analyzing entire codebases, summarizing lengthy legal documents, and interpreting long-form video content.
+However, this extended capability is constrained by prohibitive memory and computational overheads.
+This bottleneck primarily stems from the self-attention mechanism within the Transformer architecture (Vaswani et al., 2023).
+The necessity for each token to attend to all other tokens results in a computational complexity that scales quadratically with the input sequence length, posing a fundamental challenge to scalable and accessible long-context processing.
+To address this challenge, researchers have proposed solutions from multiple perspectives.
+Architecturally, some approaches replace the standard quadratic attention with sub-quadratic alternatives, such as linear transformers (Katharopoulos et al., 2020; Yang et al., 2025d).
+Others substitute the attention mechanism entirely with alternatives like State Space Models (SSMs), which operate recurrently to process extremely long sequences with high efficiency (Gu & Dao, 2024; Dao & Gu, 2024; Yang et al., 2025c).
+Concurrently, hardware-aware optimizations, exemplified by FlashAttention (Dao et al., 2022), reduce memory overhead by tiling the sequence into blocks and performing an online softmax computation.
+This method avoids the materialization of the full attention matrix, thereby alleviating the memory overhead and efficiency constraints imposed by I/O limitations.
+Building directly upon this tiled approach, block-sparse attention further reduces computation by skipping the computation for certain blocks using a pre-computed sparse block mask (Dao et al., 2022; Jiang et al., 2024; Lai et al., 2025; Xu et al., 2025; Zhang et al., 2025; Gao et al., 2025).
+This technique leverages the inherent sparsity of attention matrices, wherein most of the attention mass for a given query is concentrated on a small subset of key tokens. This property, particularly prominent in long sequences, allows for a drastic reduction in computation without significantly compromising performance.
+While this block-level approach maximizes parallel efficiency, its rigidity can lead to a sub-optimal sparsity pattern.
+This issue arises when the key tokens relevant to queries within a single block are widely scattered, collectively spanning an unnecessarily large number of key blocks and thereby forcing redundant computation.
+Fortunately, the same token-wise computation that leads to quadratic complexity also presents an opportunity to mitigate it. The attention mechanism is permutation-invariant, meaning we can reorder the query and key sequences to achieve a more favorable block-sparse structure and further improve block sparsity.
+Leveraging this insight, we propose Permuted Block-Sparse Attention (PBS-Attn), a plug-and-play strategy that reorganizes query and key sequences to accelerate LLM prefilling.
+To accommodate causal attention for LLMs, we introduce a novel segmented permutation strategy that preserves inter-segment causality while applying intra-segment permutation.
+Extensive experiments demonstrate that PBS-Attn increases block-level sparsity, yielding significant efficiency gains with minimal degradation in model performance.
+Specifically, powered by our custom permuted-FlashAttention kernels, PBS-Attn achieves an end-to-end speedup of up to 2.75×2.75\times in LLM prefilling, while maintaining performance close to the full attention baseline on real-world datasets like LongBench (Bai et al., 2024) and LongBenchv2 (Bai et al., 2025).
+2 Preliminaries
+Scaled Dot-Product Attention
+As the cornerstone of modern large language models, the attention mechanism facilitates a dynamic synthesis of information by calculating a weighted aggregation of value (𝑽\bm{V}) vectors.
+These weights, or attention scores, are determined by the dot-product similarity between a given token’s query (𝑸\bm{Q}) vector and the key (𝑲\bm{K}) vectors of all other tokens in the sequence.
+This process allows the model to directly assess the relevance of every token relative to every other, enabling the effective capture of long-range dependencies, but at a cost of quadratic complexity over the sequence length. Formally, the attention mechanism is given by:
+|
+𝑨=softmax​(𝑸​𝑲Td)\displaystyle\bm{A}=\text{softmax}\left(\frac{\bm{Q}\bm{K}^{T}}{\sqrt{d}}\right) |
+|
+(1) |
+|
+Attention​(𝑸,𝑲,𝑽)=𝑨​𝑽\displaystyle\text{Attention}(\bm{Q},\bm{K},\bm{V})=\bm{A}\bm{V} |
+|
+(2) |
+where dd is the head dimension for multi-head attention and 𝑨\bm{A} is the attention matrix.
+FlashAttention
+FlashAttention (Dao et al., 2022) employs a tiled approach that partitions the input sequence into blocks and performs an online softmax computation.
+This strategy circumvents the materialization of the full attention matrix 𝑨\bm{A}, which significantly reduces memory overhead and improves efficiency for I/O-bound operations on GPUs.
+Formally, let the input query, key and value matrices be 𝑸∈ℝN×d\bm{Q}\in\mathbb{R}^{N\times d}, 𝑲∈ℝM×d\bm{K}\in\mathbb{R}^{M\times d}, and 𝑽∈ℝM×d\bm{V}\in\mathbb{R}^{M\times d} and divide them into Tr=⌈NB⌉T_{r}=\lceil\frac{N}{B}\rceil and Tc=⌈MB⌉T_{c}=\lceil\frac{M}{B}\rceil blocks with block size BB(we use the same block size for 𝑸\bm{Q} and 𝑲\bm{K}/𝑽\bm{V} for simple terminology),
+𝑸=[𝑸1,…,𝑸Tr]\bm{Q}=[\bm{Q}_{1},\dots,\bm{Q}_{T_{r}}], 𝑲=[𝑲1,…,𝑲Tc]\bm{K}=[\bm{K}_{1},\dots,\bm{K}_{T_{c}}], and 𝑽=[𝑽1,…,𝑽Tc]\bm{V}=[\bm{V}_{1},\dots,\bm{V}_{T_{c}}]. For query block 𝑸i\bm{Q}_{i}, the computation for the corresponding output block 𝑶i\bm{O}_{i} is defined by a system of recursive equations over the key/value blocks j=1,…,Tcj=1,\dots,T_{c}. The state at step jj is the triplet (𝑶i(j),𝒎i(j),𝒍i(j))(\bm{O}_{i}^{(j)},\bm{m}_{i}^{(j)},\bm{l}_{i}^{(j)}).
+The state is initialized at j=0j=0 with 𝑶i(0)=𝟎\bm{O}_{i}^{(0)}=\mathbf{0}, 𝒎i(0)=−∞\bm{m}_{i}^{(0)}=-\infty, and 𝒍i(0)=𝟎\bm{l}_{i}^{(0)}=\mathbf{0}.
+For each step j=1,…,Tcj=1,\dots,T_{c}, given the intermediate scores 𝑺i​j=𝑸i​𝑲jTd\bm{S}_{ij}=\frac{\bm{Q}_{i}\bm{K}_{j}^{T}}{\sqrt{d}} and local maximum 𝒎i​j′=row_max​(𝑺i​j)\bm{m}^{\prime}_{ij}=\text{row\_max}(\bm{S}_{ij}), the state is updated from j−1j-1 to jj:
+|
+𝒎i(j)=max⁡(𝒎i(j−1),𝒎i​j′)\displaystyle\bm{m}_{i}^{(j)}=\max(\bm{m}_{i}^{(j-1)},\bm{m}^{\prime}_{ij}) |
+|
+(3) |
+|
+𝒍i(j)=𝒍i(j−1)​e𝒎i(j−1)−𝒎i(j)+row_sum​(exp⁡(𝑺i​j−𝒎i(j)))\displaystyle\bm{l}_{i}^{(j)}=\bm{l}_{i}^{(j-1)}e^{\bm{m}_{i}^{(j-1)}-\bm{m}_{i}^{(j)}}+\text{row\_sum}(\exp(\bm{S}_{ij}-\bm{m}_{i}^{(j)})) |
+|
+(4) |
+|
+𝑶i(j)=𝑶i(j−1)​e𝒎i(j−1)−𝒎i(j)+exp⁡(𝑺i​j−𝒎i(j))​𝑽j\displaystyle\bm{O}_{i}^{(j)}=\bm{O}_{i}^{(j-1)}e^{\bm{m}_{i}^{(j-1)}-\bm{m}_{i}^{(j)}}+\exp(\bm{S}_{ij}-\bm{m}_{i}^{(j)})\bm{V}_{j} |
+|
+(5) |
+After the final step, the output is normalized as 𝑶i=diag​((𝒍i(Tc))−1)​𝑶i(Tc)\bm{O}_{i}=\text{diag}\left((\bm{l}_{i}^{(T_{c})})^{-1}\right)\bm{O}_{i}^{(T_{c})}.
+Block-Sparse Attention
+Building upon the tiled computation of FlashAttention, block-sparse attention introduces a further layer of optimization by selectively pruning block-wise interactions. This is achieved using a predefined sparse block mask, 𝑴∈{0,1}Tr×Tc\bm{M}\in\{0,1\}^{T_{r}\times T_{c}}. For any given query block 𝑸i\bm{Q}_{i}, the attention computation is only performed against key-value blocks 𝑲j\bm{K}_{j} and 𝑽j\bm{V}_{j} where the corresponding mask entry 𝑴i​j=1\bm{M}_{ij}=1.
+If 𝑴i​j=0\bm{M}_{ij}=0, the calculation of the score matrix 𝑺i​j\bm{S}_{ij} and the subsequent state update steps are entirely bypassed. Consequently, the state remains unchanged from the previous iteration; that is, (𝑶i(j),𝒎i(j),𝒍i(j))=(𝑶i(j−1),𝒎i(j−1),𝒍i(j−1))(\bm{O}_{i}^{(j)},\bm{m}_{i}^{(j)},\bm{l}_{i}^{(j)})=(\bm{O}_{i}^{(j-1)},\bm{m}_{i}^{(j-1)},\bm{l}_{i}^{(j-1)}).
+3 Permuted Block-Sparse Attention
+Figure 1: Illustration of causal attention without (Left) and with (Right) segmented permutation with B=1,S=4B=1,S=4. Segmented permutation enhances block-level sparsity via intra-segment permutation while preserving inter-segment causality. By restricting computation of blocks within on-diagonal segments (green blocks), we can safely skip inter-segment blocks (yellow blocks) for block-sparse attention.
+3.1 Permutation Properties of Attention
+The attention mechanism exhibits specific symmetries with respect to permutations of its inputs, which we formalize in the following lemmas.
+Lemma 3.1 (Key-Value Pair Permutation Invariance).
+The attention mechanism is invariant to the order of the source sequence, provided that the key-value pairings are maintained.
+Formally, let 𝐏π∈{0,1}M×M\bm{P}_{\pi}\in\{0,1\}^{M\times M} be a permutation matrix that reorders the rows of a matrix according to a permutation π\pi on the index set {1,…,M}\{1,\dots,M\}. The following identity holds:
+|
+Attention​(𝑸,𝑷π​𝑲,𝑷π​𝑽)=Attention​(𝑸,𝑲,𝑽)\text{Attention}(\bm{Q},\bm{P}_{\pi}\bm{K},\bm{P}_{\pi}\bm{V})=\text{Attention}(\bm{Q},\bm{K},\bm{V}) |
+|
+(6) |
+Lemma 3.2 (Query Permutation Equivariance).
+The attention mechanism is equivariant with respect to permutations of the query sequence.
+Formally, let 𝐏σ∈{0,1}N×N\bm{P}_{\sigma}\in\{0,1\}^{N\times N} be a permutation matrix that reorders the rows of a matrix according to a permutation σ\sigma on the index set {1,…,N}\{1,\dots,N\}. The following relationship holds:
+|
+Attention​(𝑷σ​𝑸,𝑲,𝑽)=𝑷σ​Attention​(𝑸,𝑲,𝑽)\text{Attention}(\bm{P}_{\sigma}\bm{Q},\bm{K},\bm{V})=\bm{P}_{\sigma}\text{Attention}(\bm{Q},\bm{K},\bm{V}) |
+|
+(7) |
+The proofs of Lemma 3.1 and 3.2 are provided in Appendix A.1 and A.2, respectively.
+Combining these properties, we arrive at a general theorem for attention under simultaneous input permutations. A detailed proof is provided in Appendix A.3.
+Theorem 3.3 (Attention Permutation Invariance under Inverse Transformation).
+If the queries are permuted by 𝐏σ\bm{P}_{\sigma} and the key-value pairs are permuted by 𝐏π\bm{P}_{\pi}, the resulting output is a permuted version of the original output. Applying the inverse of the query permutation recovers the original, unpermuted output. Formally:
+|
+𝑷σT​Attention​(𝑷σ​𝑸,𝑷π​𝑲,𝑷π​𝑽)=Attention​(𝑸,𝑲,𝑽)\bm{P}_{\sigma}^{T}\ \text{Attention}(\bm{P}_{\sigma}\bm{Q},\bm{P}_{\pi}\bm{K},\bm{P}_{\pi}\bm{V})=\text{Attention}(\bm{Q},\bm{K},\bm{V}) |
+|
+(8) |
+Theorem 3.3 establishes that the query matrix 𝑸\bm{Q} and key matrix 𝑲\bm{K} can be permuted by 𝑷σ\bm{P}_{\sigma} and 𝑷π\bm{P}_{\pi} respectively, provided that 𝑷π\bm{P}_{\pi} is also applied to the value matrix 𝑽\bm{V} and 𝑷σT\bm{P}_{\sigma}^{T} to the output 𝑶′\bm{O}^{\prime}. This property enables the rearrangement of the attention matrix 𝑨\bm{A}, without affecting the attention output.
+(a)
+(b)
+Figure 2: Comparison of attention maps for Llama-3.1-8B (layer 0, head 30) on an 8K LongBench example, showing the pattern without (2(a)) and with (2(b)) segmented permutation. The red overlay indicates blocks selected for block-sparse attention, and the attention coverage is calculated as the total attention scores covered by the selected blocks. More visualizations are provided in Appendix D.
+3.2 Segmented Permutation for Causal Attention
+Motivated by Theorem 3.3, we explore whether its permutation properties can be leveraged to restructure the attention matrix.
+This rearrangement promises higher block sparsity and computational savings, particularly during the compute-bound prefill stage of inference.
+The primary objective is to co-locate the salient key tokens corresponding to queries from the same computational block, thereby enhancing block-level sparsity.
+However, a critical challenge remains: maintaining causality post-permutation.
+Specifically, LLMs are trained with causal attention, which restricts queries to attending only to keys in preceding positions, resulting in a lower-triangular attention matrix, 𝑨\bm{A}.
+During prefilling, blocks above the main diagonal are computationally redundant and can be skipped; consequently, the original block density for causal attention is Tc+12​Tc\frac{T_{c}+1}{2T_{c}}.
+A naive application of a global permutation to the query and key sequences would dismantle this vital causal structure.
+Such a permutation could scatter dependencies across the entire matrix, potentially transforming the sparse, lower-triangular structure into a fully dense one (i.e., a block density of 11).
+To address this challenge, we propose a segmented permutation strategy that preserves inter-segment causality while applying intra-segment permutation, illustrated in Figure 1.
+Formally, we partition the initial ⌊N/S⌋⋅S\lfloor N/S\rfloor\cdot S tokens of the input sequences 𝑸,𝑲,𝑽\bm{Q},\bm{K},\bm{V} into G=⌊N/S⌋G=\lfloor N/S\rfloor non-overlapping, contiguous segments of size SS.
+The remaining N(modS)N\pmod{S} tokens are left unpermuted.
+Let 𝑸i,𝑲i,𝑽i∈ℝS×d\bm{Q}_{i},\bm{K}_{i},\bm{V}_{i}\in\mathbb{R}^{S\times d} denote the ii-th segment for i∈{1,…,G}i\in\{1,\dots,G\}.
+For each segment ii, we introduce local permutations, σi\sigma_{i} for queries and πi\pi_{i} for keys, that reorder tokens within that segment.
+The global permutation operators, 𝑷σ\bm{P}_{\sigma} and 𝑷π\bm{P}_{\pi}, are then constructed as block-diagonal matrices from these respective local permutations. For the key permutation matrix 𝑷π\bm{P}_{\pi}:
+|
+𝑷π=diag​(𝑷π1,…,𝑷πG,𝑰N(modS))=(𝑷π1𝟎⋯𝟎𝟎𝟎𝑷π2⋯𝟎𝟎⋱𝟎𝟎⋯𝑷πG𝟎𝟎𝟎⋯𝟎𝑰N(modS))\bm{P}_{\pi}=\text{diag}(\bm{P}_{\pi_{1}},\dots,\bm{P}_{\pi_{G}},\bm{I}_{N\pmod{S}})=\begin{pmatrix}\bm{P}_{\pi_{1}}&\bm{0}&\cdots&\bm{0}&\bm{0}\\
+\bm{0}&\bm{P}_{\pi_{2}}&\cdots&\bm{0}&\bm{0}\\
+\vdots&\vdots&\ddots&\vdots&\vdots\\
+\bm{0}&\bm{0}&\cdots&\bm{P}_{\pi_{G}}&\bm{0}\\
+\bm{0}&\bm{0}&\cdots&\bm{0}&\bm{I}_{N\pmod{S}}\end{pmatrix} |
+|
+(9) |
+Here, each 𝑷πi∈{0,1}S×S\bm{P}_{\pi_{i}}\in\{0,1\}^{S\times S} is the permutation matrix for the local key permutation πi\pi_{i}, and 𝑰N(modS)\bm{I}_{N\pmod{S}} is the identity matrix corresponding to the last incomplete segment.
+The query permutation matrix 𝑷σ\bm{P}_{\sigma} is constructed analogously from its own set of local permutations, {σi}i=1G\{\sigma_{i}\}_{i=1}^{G}.
+3.3 Query-aware Key Permutation
+The inherent sparsity of the attention mechanism implies that for any given query, a small subset of key tokens accounts for most of the attention mass.
+A prominent pattern within this distribution is that certain keys are consistently important across all queries, a phenomenon widely recognized in the literature as ”Vertical Lines” (Jiang et al., 2024; Lai et al., 2025; Xu et al., 2025).
+To maintain model accuracy, block-sparse attention must encompass all ”Vertical Lines.” This constraint, however, can severely diminish block sparsity when these critical tokens are scattered throughout the sequence, spanning a large number of blocks, as shown in Figure 2(a).
+To leverage this sparse pattern, we introduce a query-aware key permutation strategy.
+This method implements the permutation as an efficient, segment-wise sorting process.
+Within each segment, keys are sorted based on their estimated average attention scores using the last block of queries.
+Concretely, we first compute a global importance score vector 𝒔∈ℝN\bm{s}\in\mathbb{R}^{N} for all keys in the sequence using the last block of queries, 𝑸last_block\bm{Q}_{\text{last\_block}}:
+|
+𝒔=meanrows​(softmax​(𝑸last_block​𝑲Td))\bm{s}=\text{mean}_{\text{rows}}\left(\text{softmax}\left(\frac{\bm{Q}_{\text{last\_block}}\bm{K}^{T}}{\sqrt{d}}\right)\right) |
+|
+(10) |
+The local permutation πi\pi_{i} for each segment ii is then obtained by sorting the keys within that segment based on 𝒔\bm{s} in descending order:
+|
+πi=argsort(−𝒔[(i−1)S+1:iS])\pi_{i}=\text{argsort}(-\bm{s}_{[(i-1)S+1:iS]}) |
+|
+(11) |
+As shown in Figure 2(b), this permutation strategy can effectively cluster the ”Vertical Lines” thereby significantly improving block-level sparsity while maintaining attention coverage.
+Algorithm 1 Permuted Block-Sparse Attention
+𝑸,𝑲,𝑽∈ℝN×d\bm{Q},\bm{K},\bm{V}\in\mathbb{R}^{N\times d}, permutation matrices 𝑷σ,𝑷π∈{0,1}N×N\bm{P}_{\sigma},\bm{P}_{\pi}\in\{0,1\}^{N\times N}, segment size SS, block size BB
+Permuted attention output 𝑶∈ℝN×d\bm{O}\in\mathbb{R}^{N\times d}
+𝑸′←𝑷σ​𝑸,𝑲′←𝑷π​𝑲,𝑽′←𝑷π​𝑽\bm{Q}^{\prime}\leftarrow\bm{P}_{\sigma}\bm{Q},\bm{K}^{\prime}\leftarrow\bm{P}_{\pi}\bm{K},\bm{V}^{\prime}\leftarrow\bm{P}_{\pi}\bm{V} ⊳\triangleright Apply permutation
+Divide 𝑸′\bm{Q}^{\prime} into Tr=⌈NB⌉T_{r}=\lceil\frac{N}{B}\rceil blocks 𝑸1′,…,𝑸Tr′\bm{Q}^{\prime}_{1},\dots,\bm{Q}^{\prime}_{T_{r}}; divide 𝑲′,𝑽′\bm{K}^{\prime},\bm{V}^{\prime} into Tc=⌈NB⌉T_{c}=\lceil\frac{N}{B}\rceil blocks 𝑲1′,…,𝑲Tc′\bm{K}^{\prime}_{1},\dots,\bm{K}^{\prime}_{T_{c}} and 𝑽1′,…,𝑽Tc′\bm{V}^{\prime}_{1},\dots,\bm{V}^{\prime}_{T_{c}};
+𝑴←BLOCK_SELECTION​(𝑸′,𝑲′,B,S)\bm{M}\leftarrow\text{BLOCK\_SELECTION}(\bm{Q}^{\prime},\bm{K}^{\prime},B,S) ⊳\triangleright Select blocks, see Appendix B
+Initialize 𝑶′←𝟎\bm{O}^{\prime}\leftarrow\mathbf{0};
+for i=1i=1 to TrT_{r} do
+Load 𝑸i′\bm{Q}^{\prime}_{i} to SRAM; Initialize 𝑶i(0)←𝟎\bm{O}_{i}^{(0)}\leftarrow\mathbf{0}, 𝒎i(0)←−∞\bm{m}_{i}^{(0)}\leftarrow-\infty, 𝒍i(0)←𝟎\bm{l}_{i}^{(0)}\leftarrow\mathbf{0};
+for j=1j=1 to TcT_{c} do
+if 𝑴i,j=1\bm{M}_{i,j}=1 then ⊳\triangleright Compute attention only for selected blocks
+Load 𝑲j′,𝑽j′\bm{K}^{\prime}_{j},\bm{V}^{\prime}_{j} to SRAM;
+Compute 𝑺i​j′=𝑸i′​𝑲jT′/d\bm{S}^{\prime}_{ij}=\bm{Q}^{\prime}_{i}\bm{K}_{j}^{{}^{\prime}T}/\sqrt{d}, 𝒎i(j)=max⁡(𝒎i(j−1),row_max​(𝑺i​j′))\bm{m}_{i}^{(j)}=\max(\bm{m}_{i}^{(j-1)},\text{row\_max}(\bm{S}^{\prime}_{ij}));
+Compute 𝒍i(j)=𝒍i(j−1)​e𝒎i(j−1)−𝒎i(j)+row_sum​(exp⁡(𝑺i​j′−𝒎i(j)))\bm{l}_{i}^{(j)}=\bm{l}_{i}^{(j-1)}e^{\bm{m}_{i}^{(j-1)}-\bm{m}_{i}^{(j)}}+\text{row\_sum}(\exp(\bm{S}^{\prime}_{ij}-\bm{m}_{i}^{(j)}));
+Compute 𝑶i(j)=𝑶i(j−1)​e𝒎i(j−1)−𝒎i(j)+exp⁡(𝑺i​j′−𝒎i(j))​𝑽j′\bm{O}_{i}^{(j)}=\bm{O}_{i}^{(j-1)}e^{\bm{m}_{i}^{(j-1)}-\bm{m}_{i}^{(j)}}+\exp(\bm{S}^{\prime}_{ij}-\bm{m}_{i}^{(j)})\,\bm{V}^{\prime}_{j};
+else
+𝑶i(j)←𝑶i(j−1)\bm{O}_{i}^{(j)}\leftarrow\bm{O}_{i}^{(j-1)}, 𝒎i(j)←𝒎i(j−1)\bm{m}_{i}^{(j)}\leftarrow\bm{m}_{i}^{(j-1)}, 𝒍i(j)←𝒍i(j−1)\bm{l}_{i}^{(j)}\leftarrow\bm{l}_{i}^{(j-1)}; ⊳\triangleright Skip computation
+end if
+end for
+𝑶i′←diag​((𝒍i(Tc))−1)​𝑶i(Tc)\bm{O}^{\prime}_{i}\leftarrow\text{diag}((\bm{l}_{i}^{(T_{c})})^{-1})\,\bm{O}_{i}^{(T_{c})}; Write 𝑶i′\bm{O}^{\prime}_{i} back to its rows in 𝑶′\bm{O}^{\prime};
+end for
+𝑶←𝑷σT​𝑶′\bm{O}\leftarrow\bm{P}_{\sigma}^{T}\bm{O}^{\prime} ⊳\triangleright Reverse permutation
+return 𝑶\bm{O}
+3.4 Permuted Block-Sparse Attention
+The proposed permuted block-sparse attention (PBS-Attn) mechanism is detailed in Algorithm 1.
+The process commences by permuting the query, key, and value matrices.
+Subsequently, a block-sparse mask, denoted as 𝑴\bm{M}, is derived based on the permuted queries and keys.
+This mask, 𝑴\bm{M}, governs the tiled attention computation by dictating which block-wise operations can be pruned.
+Finally, an inverse permutation is applied to restore the original ordering of the output, established by Theorem 3.3.
+For the block selection algorithm, we use a simple strategy that utilizes mean pooling and block-wise attention to estimate the importance of each key block for each query block for the main method, where we detail in Appendix B.1.
+Crucially, we demonstrate that the sparsity improvements conferred by permutation are agnostic to the specific block selection algorithm, where we can combine the permutation with existing block selection algorithms to further improve block sparsity, as detailed in Appendix B.2.
+4 Experiments
+4.1 Settings
+Models & Datasets
+We employ two state-of-the-art long-context LLMs, claiming support for available context lengths above 128K tokens:
+Llama-3.1-8B(128K) (Grattafiori et al., 2024) and Qwen-2.5-7B-1M(1M) (Yang et al., 2025a).
+We evaluate the sparse attention methods on two challenging real-world long-context datasets to validate their effectiveness in real-world scenarios:
+LongBench(Bai et al., 2024) and LongBenchv2(Bai et al., 2025).
+LongBench is a collection of 21 long-context understanding tasks in 6 categories with mostly real-world data, with the average length of most tasks ranging from 5K to 15K.
+LongBenchv2 further scales the context length, ranging from 8K to 2M, covering various realistic scenarios.
+Baselines
+We evaluate PBS-Attn alongside a set of strong baselines to validate its effectiveness.
+(1) Full Attention: The standard attention mechanism that computes the full attention matrix as the oracle method. Specifically, we use the FlashAttention (Dao et al., 2022) implementation.
+(2) Minference (Jiang et al., 2024): A sparse attention method that performs offline attention pattern search, we utilize the official configuration for attention pattern setting.
+(3) FlexPrefill (Lai et al., 2025): A block selection method for block-sparse attention that performs block selection based on the input and selects the attention pattern on the fly. We use γ=0.95,τ=0.1\gamma=0.95,\tau=0.1 as reported in the original paper.
+(4) XAttention (Xu et al., 2025): A block selection method for block-sparse attention that selects blocks based on an antidiagonal scoring of blocks. We use threshold=0.9,stride=8\text{threshold}=0.9,\text{stride}=8 as reported in the original paper.
+(5) MeanPooling: This method uses a mean pooling strategy on the unpermuted queries and keys to select blocks, which is the same selection method for PBS-Attn(detailed in B.1). Our experiments shows that MeanPooling can serve as a strong baseline when the first and the most recent key blocks are forcibly selected for each query block, due to the attention sink phenomenon (Xiao et al., 2024). We use a selection threshold of 0.90.9 for MeanPooling.
+Implementation Details
+For PBS-Attn, we use a block size of B=128B=128 and a segment size of S=256S=256. The block selection threshold is set to 0.90.9 through all experiments.
+We implement a custom permuted-FlashAttention kernel in Triton (Tillet et al., 2019) for efficient inference of PBS-Attn.
+For model inference, we replace the prefilling process with PBS-Attn or baseline methods, while keeping the decoding process as in the original attention implementation.
+The experiments are conducted in a computing environment with NVIDIA H100 80GB GPUs.
+Table 1: Performance comparison of various sparse attention methods on LongBench. Bold and underlined scores indicate the best and second-best performing methods in each category, respectively, with the exception of the full attention baseline.
+Method |
+Single-Doc QA |
+Multi-Doc QA |
+Summarization |
+Few-shot Learning |
+Code |
+Synthetic |
+Avg. |
+Llama-3.1-8B |
+Full |
+48.80 |
+41.80 |
+17.79 |
+29.73 |
+24.77 |
+66.82 |
+38.28 |
+MInference |
+47.21 |
+40.93 |
+17.72 |
+29.36 |
+24.77 |
+62.36 |
+37.06 |
+FlexPrefill |
+47.03 |
+38.57 |
+17.78 |
+30.38 |
+24.88 |
+24.71 |
+30.56 |
+XAttention |
+48.26 |
+40.23 |
+17.86 |
+31.35 |
+26.19 |
+54.64 |
+36.42 |
+MeanPooling |
+46.61 |
+40.66 |
+17.85 |
+30.64 |
+26.10 |
+58.14 |
+36.67 |
+PBS-Attn |
+48.00 |
+42.09 |
+17.72 |
+28.36 |
+24.25 |
+63.80 |
+37.37 |
+Qwen-2.5-7B-1M |
+Full |
+44.21 |
+42.97 |
+16.01 |
+47.48 |
+3.91 |
+67.50 |
+37.01 |
+MInference |
+42.82 |
+41.76 |
+16.01 |
+46.41 |
+3.80 |
+66.50 |
+36.21 |
+FlexPrefill |
+38.44 |
+37.51 |
+15.87 |
+46.12 |
+6.46 |
+26.67 |
+28.51 |
+XAttention |
+43.82 |
+42.21 |
+16.07 |
+48.30 |
+3.83 |
+63.33 |
+36.26 |
+MeanPooling |
+39.39 |
+40.96 |
+15.95 |
+49.07 |
+4.80 |
+40.83 |
+31.83 |
+PBS-Attn |
+43.01 |
+41.40 |
+16.12 |
+47.36 |
+4.00 |
+66.33 |
+36.37 |
+4.2 Main Results
+LongBench
+Table 1 presents a performance comparison of various sparse attention methods on the LongBench benchmark, evaluated using the Llama-3.1-8B and Qwen-2.5-7B-1M models.
+As the results indicate, the unpermuted MeanPooling method already establishes a strong baseline. Crucially, by incorporating our proposed permutation strategy, PBS-Attn significantly improves performance, surpassing other block-sparse attention methods and closely approaching the performance of the oracle full-attention baseline.
+PBS-Attn consistently achieves the best overall performance across both models, demonstrating its effectiveness and robustness.
+LongBenchv2
+To rigorously evaluate the effectiveness of PBS-Attn in extreme long-context scenarios, we conducted experiments on the more challenging LongBenchv2 benchmark.
+The results, presented in Table 2, reveal that PBS-Attn exhibits minimal performance degradation compared to the full attention baseline while consistently surpassing other block-sparse attention methods.
+Notably, PBS-Attn consistently outperforms the unpermuted MeanPooling baseline.
+This advantage is particularly pronounced for the Qwen-2.5-7B-1M model, where permutation brings a remarkable relative improvement of 31%31\% in overall performance.
+Table 2: Performance comparison of various sparse attention methods on LongBenchv2. Bold and underlined scores indicate the best and second-best performing methods for each model, respectively, with the exception of the full attention baseline.
+Method |
+Llama-3.1-8B
+|
+Qwen2.5-7B-1M
+|
+Full |
+28.83
+|
+35.19
+|
+Minference |
+29.03
+|
+34.19
+|
+FlexPrefill |
+27.24
+|
+27.83
+|
+XAttention |
+29.62
+|
+34.19
+|
+MeanPooling |
+29.42
+|
+26.24
+|
+PBS-Attn |
+29.82
+|
+34.39
+|
+Efficiency Results
+To best evaluate the real-world practicality of the sparse attention methods, we measure the end-to-end time to first token (TTFT) on sequence lengths ranging from 8K to 512K. As shown in Figure 3, PBS-Attn achieves the highest speedup across all context lengths, whereas most competing methods only excel within a limited range.
+For instance, Minference does not show a speedup over FlashAttention until 128k, and the efficiency gains of XAttention stagnate after 128K.
+Although FlexPrefill matches the speedup of PBS-Attn in most cases, it suffers from a significant quality drop as shown in Table 1 and 2.
+In contrast, PBS-Attn consistently delivers the best performance, reaching a 2.75×2.75\times end-to-end speedup at 256K, demonstrating its superior practicality and robustness.
+To analyze the permutation overhead in PBS-Attn, we further conduct a detailed benchmarking study in Appendix C.
+Figure 3: Speedup of various methods relative to FlashAttention, measured by time to first token (TTFT) on LongBenchv2 across various sequence lengths. To accommodate longer sequences under memory constraints, we employ tensor parallelism with tp_size of 2 and 8 for the 256K and 512K contexts, respectively.
+4.3 Ablation Studies and Analysis
+Effect of Permutation
+As illustrated in Figure 4, query-aware key permutation consistently increases block-level sparsity by a noticeable margin. For instance, it achieves a 7%7\% absolute sparsity improvement at a context length of 8K, and this gain continues to increase as the context length scales, highlighting the permutation’s effectiveness.
+Permutation Target Analysis
+To analyze the effect of permutation on queries, we propose a key-aware query permutation approach.
+However, the attention distribution of queries over keys is often less structured than that of keys over queries.
+We therefore employ a straightforward strategy that clusters queries which attend to similar keys within a given segment.
+Specifically, we first compute a set of centroids by calculating block-averaged keys, denoted as 𝑲¯\bm{\bar{K}}. Each centroid is defined as 𝑲¯i=MeanPool(𝑲[(i−1)B+1:iB])\bm{\bar{K}}_{i}=\text{MeanPool}(\bm{K}_{[(i-1)B+1:iB]}) for i=1,…,Tci=1,\dots,T_{c}. We then determine cluster assignments by computing the cosine similarity between each query and these centroids.
+Within each segment, queries are assigned greedily based on their similarity to the centroids.
+We evaluate the effect of the permutation target and order in Figure 5(a).
+The results indicate that permuting both queries and keys brings no noticeable improvements, regardless of the order.
+Permuting queries offers a marginal improvement over permuting keys in the performance-density trade-off, but it can be less efficient considering the overhead in models with Grouped-Query Attention (GQA) (Ainslie et al., 2023), which have multiple times more query heads than key heads.
+Accordingly, we exclusively adopt query-aware key permutation in our main method.
+Figure 4: Block-level density on various context lengths with and without permutation. A relative sparsity improvement Δ\Delta is calculated.
+Effect of Segment Size
+Segment size SS plays a crucial role in segmented permutation, where tokens are permuted within the corresponding segments to maintain inter-segment causality.
+Intuitively, a larger segment size SS takes into account more tokens during sorting, thereby enhancing block-level sparsity; however, it would also include more blocks in the on-diagonal segments, which can not be skipped during computation to avoid breaking causality.
+Figure 5(b) illustrates how the segment size, SS, affects the performance-density trade-off. A larger SS flattens the trade-off curve, indicating that segmented permutation effectively clusters key tokens, allowing the model to maintain high performance even at high levels of block-level sparsity.
+However, this benefit diminishes at lower sparsity levels, as the wide on-diagonal segments contain a large number of blocks that must be computed, limiting block-level sparsity.
+(a) Permutation Target
+(b) Segment Size
+Figure 5: LongBench score vs. average block-level density at a context length of 32K.
+5 Related Work
+Long-context LLMs
+As the capabilities of modern Large Language Models (LLMs) continue to advance, the expansion of their context length has become an inevitable and critical trend.
+A longer context window enables models to process a greater volume of information, which in turn facilitates more sophisticated context engineering (Mei et al., 2025) and agentic use (Wang et al., 2024).
+Extensive research has focused on extending the context length of LLMs through methods spanning data curation to post-training strategies (Liu et al., 2025).
+These advancements have culminated in models with context lengths up to millions of tokens (Yang et al., 2025a).
+Sparse Attention
+The quadratic growth in memory and computational requirements of the attention mechanism has been a bottleneck for scaling LLM context lengths.
+Sparse attention has emerged as a promising solution, leveraging the inherent sparsity in attention patterns to drastically reduce this overhead. These methods can accelerate different stages of inference, such as prefilling, decoding, or both.
+StreamingLLM (Xiao et al., 2024) first identifies the attention sink phenomenon in LLMs, proposing to capture a majority of the attention mass with initial and recent tokens.
+NSA (Yuan et al., 2025) and MoBA (Lu et al., 2025) further incorporate sparse attention into the training stage, accelerating both prefilling and decoding.
+Methods like H2O (Zhang et al., 2023), can accelerate the decoding speed by exploiting the attention pattern after prefilling.
+Closely related to this work, various methods are proposed to accelerate the compute-bounded prefilling process.
+For example, Minference (Jiang et al., 2024) recognizes attention patterns in a pre-computed manner.
+More recent works tend to perform attention pattern recognition on-the-fly.
+For instance, FlexPrefill (Lai et al., 2025) utilizes divergence to classify the attention pattern, XAttention (Xu et al., 2025) adopts an antidiagonal scoring metric to weight each block, and SpargeAttention (Zhang et al., 2025) accounts the intra-block similarity into the selection criterion.
+However, these methods primarily focus on developing better block selection algorithms, while our work is orthogonal: we focus on rearranging the attention matrix to create a structure that inherently increases block-level sparsity.
+Attention with Token Permutation
+Concurrent with our work, methods like SVG2 (Yang et al., 2025b) and PAROAttention (Zhao et al., 2025) show promise in accelerating visual generation models like Diffusion Transformers (Peebles & Xie, 2023), but their reliance on bidirectional attention makes them incompatible with the causal constraints of auto-regressive LLMs.
+PBS-Attn accelerates this by introducing a segmented permutation strategy, explicitly preserving inter-segment causality.
+6 Conclusion
+In this work, we formalize the permutation properties of the attention mechanism and leverage them to improve block-level sparsity.
+We introduce Permuted Block-Sparse Attention (PBS-Attn), a plug-and-play method that employs a novel segmented permutation strategy to preserve inter-segment causality while reordering tokens within each segment.
+Our method achieves an end-to-end prefilling speedup of up to 2.75×2.75\times with minimal performance degradation, demonstrating a promising path toward more efficient long-context LLMs.
+7 Ethics Statement
+Our work focuses on improving the computational efficiency of large language models. We believe this research carries positive ethical implications. By reducing the computational resources required for processing long sequences, our method contributes to lowering the energy consumption and carbon footprint associated with training and deploying large-scale AI models. This can also enhance the accessibility of advanced AI technologies, enabling researchers and developers with limited resources to contribute to the field and innovate responsibly.
+8 Reproducibility Statement
+To ensure the reproducibility of our work, we commit to making our research as transparent and accessible as possible.
+Code
+All code used for our experiments, including the implementation of Permuted Block-Sparse Attention (PBS-Attn) and the custom permuted-FlashAttention kernel, will be made publicly available after the reviewing period. The repository will include scripts to run the evaluations and detailed instructions for setup.
+Models
+The experiments were conducted using publicly available state-of-the-art large language models: Llama-3.1-8B (128K) and Qwen-2.5-7B-1M (1M), available for downloading from platforms like HuggingFace.
+Datasets
+We used two publicly available and widely recognized benchmarks for long-context language understanding: LongBench and LongBenchv2, available for downloading from platforms like HuggingFace.
+Experimental Setup
+All experiments were performed on NVIDIA H100 80GB GPUs. Key implementation details are stated in Section 4.1.
+References
+Ainslie et al. (2023)
+Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury Zemlyanskiy, Federico Lebrón, and Sumit Sanghai.
+Gqa: Training generalized multi-query transformer models from multi-head checkpoints, 2023.
+URL https://arxiv.org/abs/2305.13245.
+Anthropic (2025)
+Anthropic.
+System Card: Claude Opus 4 & Claude Sonnet 4, May 2025.
+URL https://www-cdn.anthropic.com/4263b940cabb546aa0e3283f35b686f4f3b2ff47.pdf.
+Bai et al. (2024)
+Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li.
+Longbench: A bilingual, multitask benchmark for long context understanding, 2024.
+URL https://arxiv.org/abs/2308.14508.
+Bai et al. (2025)
+Yushi Bai, Shangqing Tu, Jiajie Zhang, Hao Peng, Xiaozhi Wang, Xin Lv, Shulin Cao, Jiazheng Xu, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li.
+Longbench v2: Towards deeper understanding and reasoning on realistic long-context multitasks, 2025.
+URL https://arxiv.org/abs/2412.15204.
+Dao & Gu (2024)
+Tri Dao and Albert Gu.
+Transformers are ssms: Generalized models and efficient algorithms through structured state space duality, 2024.
+URL https://arxiv.org/abs/2405.21060.
+Dao et al. (2022)
+Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré.
+Flashattention: Fast and memory-efficient exact attention with io-awareness.
+Advances in neural information processing systems, 35:16344–16359, 2022.
+Gao et al. (2025)
+Yizhao Gao, Zhichen Zeng, Dayou Du, Shijie Cao, Peiyuan Zhou, Jiaxing Qi, Junjie Lai, Hayden Kwok-Hay So, Ting Cao, Fan Yang, and Mao Yang.
+Seerattention: Learning intrinsic sparse attention in your llms, 2025.
+URL https://arxiv.org/abs/2410.13276.
+Gemini Team, Google (2025)
+Gemini Team, Google.
+Gemini 2.5: Pushing the Frontier with Advanced Reasoning, Multimodality, Long Context, and Next Generation Agentic Capabilities, 2025.
+URL https://storage.googleapis.com/deepmind-media/gemini/gemini_v2_5_report.pdf.
+Grattafiori et al. (2024)
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, Amy Yang, Angela Fan, Anirudh Goyal, Anthony Hartshorn, Aobo Yang, Archi Mitra, Archie Sravankumar, Artem Korenev, Arthur Hinsvark, Arun Rao, Aston Zhang, Aurelien Rodriguez, Austen Gregerson, Ava Spataru, Baptiste Roziere, Bethany Biron, Binh Tang, Bobbie Chern, Charlotte Caucheteux, Chaya Nayak, Chloe Bi, Chris Marra, Chris McConnell, Christian Keller, Christophe Touret, Chunyang Wu, Corinne Wong, Cristian Canton Ferrer, Cyrus Nikolaidis, Damien Allonsius, Daniel Song, Danielle Pintz, Danny Livshits, Danny Wyatt, David Esiobu, Dhruv Choudhary, Dhruv Mahajan, Diego Garcia-Olano, Diego Perino, Dieuwke Hupkes, Egor Lakomkin, Ehab AlBadawy, Elina Lobanova, Emily Dinan, Eric Michael Smith, Filip Radenovic, Francisco Guzmán, Frank Zhang, Gabriel Synnaeve, Gabrielle Lee, Georgia Lewis Anderson, Govind Thattai, Graeme Nail, Gregoire Mialon, Guan Pang, Guillem Cucurell, Hailey Nguyen, Hannah Korevaar, Hu Xu, Hugo Touvron, Iliyan Zarov, Imanol Arrieta Ibarra, Isabel Kloumann, Ishan Misra, Ivan Evtimov, Jack Zhang, Jade Copet, Jaewon Lee, Jan Geffert, Jana Vranes, Jason Park, Jay Mahadeokar, Jeet Shah, Jelmer van der Linde, Jennifer Billock, Jenny Hong, Jenya Lee, Jeremy Fu, Jianfeng Chi, Jianyu Huang, Jiawen Liu, Jie Wang, Jiecao Yu, Joanna Bitton, Joe Spisak, Jongsoo Park, Joseph Rocca, Joshua Johnstun, Joshua Saxe, Junteng Jia, Kalyan Vasuden Alwala, Karthik Prasad, Kartikeya Upasani, Kate Plawiak, Ke Li, Kenneth Heafield, Kevin Stone, Khalid El-Arini, Krithika Iyer, Kshitiz Malik, Kuenley Chiu, Kunal Bhalla, Kushal Lakhotia, Lauren Rantala-Yeary, Laurens van der Maaten, Lawrence Chen, Liang Tan, Liz Jenkins, Louis Martin, Lovish Madaan, Lubo Malo, Lukas Blecher, Lukas Landzaat, Luke de Oliveira, Madeline Muzzi, Mahesh Pasupuleti, Mannat Singh, Manohar Paluri, Marcin Kardas, Maria Tsimpoukelli, Mathew Oldham, Mathieu Rita, Maya Pavlova, Melanie Kambadur, Mike Lewis, Min Si, Mitesh Kumar Singh, Mona Hassan, Naman Goyal, Narjes Torabi, Nikolay Bashlykov, Nikolay Bogoychev, Niladri Chatterji, Ning Zhang, Olivier Duchenne, Onur Çelebi, Patrick Alrassy, Pengchuan Zhang, Pengwei Li, Petar Vasic, Peter Weng, Prajjwal Bhargava, Pratik Dubal, Praveen Krishnan, Punit Singh Koura, Puxin Xu, Qing He, Qingxiao Dong, Ragavan Srinivasan, Raj Ganapathy, Ramon Calderer, Ricardo Silveira Cabral, Robert Stojnic, Roberta Raileanu, Rohan Maheswari, Rohit Girdhar, Rohit Patel, Romain Sauvestre, Ronnie Polidoro, Roshan Sumbaly, Ross Taylor, Ruan Silva, Rui Hou, Rui Wang, Saghar Hosseini, Sahana Chennabasappa, Sanjay Singh, Sean Bell, Seohyun Sonia Kim, Sergey Edunov, Shaoliang Nie, Sharan Narang, Sharath Raparthy, Sheng Shen, Shengye Wan, Shruti Bhosale, Shun Zhang, Simon Vandenhende, Soumya Batra, Spencer Whitman, Sten Sootla, Stephane Collot, Suchin Gururangan, Sydney Borodinsky, Tamar Herman, Tara Fowler, Tarek Sheasha, Thomas Georgiou, Thomas Scialom, Tobias Speckbacher, Todor Mihaylov, Tong Xiao, Ujjwal Karn, Vedanuj Goswami, Vibhor Gupta, Vignesh Ramanathan, Viktor Kerkez, Vincent Gonguet, Virginie Do, Vish Vogeti, Vítor Albiero, Vladan Petrovic, Weiwei Chu, Wenhan Xiong, Wenyin Fu, Whitney Meers, Xavier Martinet, Xiaodong Wang, Xiaofang Wang, Xiaoqing Ellen Tan, Xide Xia, Xinfeng Xie, Xuchao Jia, Xuewei Wang, Yaelle Goldschlag, Yashesh Gaur, Yasmine Babaei, Yi Wen, Yiwen Song, Yuchen Zhang, Yue Li, Yuning Mao, Zacharie Delpierre Coudert, Zheng Yan, Zhengxing Chen, Zoe Papakipos, Aaditya Singh, Aayushi Srivastava, Abha Jain, Adam Kelsey, Adam Shajnfeld, Adithya Gangidi, Adolfo Victoria, Ahuva Goldstand, Ajay Menon, Ajay Sharma, Alex Boesenberg, Alexei Baevski, Allie Feinstein, Amanda Kallet, Amit Sangani, Amos Teo, Anam Yunus, Andrei Lupu, Andres Alvarado, Andrew Caples, Andrew Gu, Andrew Ho, Andrew Poulton, Andrew Ryan, Ankit Ramchandani, Annie Dong, Annie Franco, Anuj Goyal, Aparajita Saraf, Arkabandhu Chowdhury, Ashley Gabriel, Ashwin Bharambe, Assaf Eisenman, Azadeh Yazdan, Beau James, Ben Maurer, Benjamin Leonhardi, Bernie Huang, Beth Loyd, Beto De Paola, Bhargavi Paranjape, Bing Liu, Bo Wu, Boyu Ni, Braden Hancock, Bram Wasti, Brandon Spence, Brani Stojkovic, Brian Gamido, Britt Montalvo, Carl Parker, Carly Burton, Catalina Mejia, Ce Liu, Changhan Wang, Changkyu Kim, Chao Zhou, Chester Hu, Ching-Hsiang Chu, Chris Cai, Chris Tindal, Christoph Feichtenhofer, Cynthia Gao, Damon Civin, Dana Beaty, Daniel Kreymer, Daniel Li, David Adkins, David Xu, Davide Testuggine, Delia David, Devi Parikh, Diana Liskovich, Didem Foss, Dingkang Wang, Duc Le, Dustin Holland, Edward Dowling, Eissa Jamil, Elaine Montgomery, Eleonora Presani, Emily Hahn, Emily Wood, Eric-Tuan Le, Erik Brinkman, Esteban Arcaute, Evan Dunbar, Evan Smothers, Fei Sun, Felix Kreuk, Feng Tian, Filippos Kokkinos, Firat Ozgenel, Francesco Caggioni, Frank Kanayet, Frank Seide, Gabriela Medina Florez, Gabriella Schwarz, Gada Badeer, Georgia Swee, Gil Halpern, Grant Herman, Grigory Sizov, Guangyi, Zhang, Guna Lakshminarayanan, Hakan Inan, Hamid Shojanazeri, Han Zou, Hannah Wang, Hanwen Zha, Haroun Habeeb, Harrison Rudolph, Helen Suk, Henry Aspegren, Hunter Goldman, Hongyuan Zhan, Ibrahim Damlaj, Igor Molybog, Igor Tufanov, Ilias Leontiadis, Irina-Elena Veliche, Itai Gat, Jake Weissman, James Geboski, James Kohli, Janice Lam, Japhet Asher, Jean-Baptiste Gaya, Jeff Marcus, Jeff Tang, Jennifer Chan, Jenny Zhen, Jeremy Reizenstein, Jeremy Teboul, Jessica Zhong, Jian Jin, Jingyi Yang, Joe Cummings, Jon Carvill, Jon Shepard, Jonathan McPhie, Jonathan Torres, Josh Ginsburg, Junjie Wang, Kai Wu, Kam Hou U, Karan Saxena, Kartikay Khandelwal, Katayoun Zand, Kathy Matosich, Kaushik Veeraraghavan, Kelly Michelena, Keqian Li, Kiran Jagadeesh, Kun Huang, Kunal Chawla, Kyle Huang, Lailin Chen, Lakshya Garg, Lavender A, Leandro Silva, Lee Bell, Lei Zhang, Liangpeng Guo, Licheng Yu, Liron Moshkovich, Luca Wehrstedt, Madian Khabsa, Manav Avalani, Manish Bhatt, Martynas Mankus, Matan Hasson, Matthew Lennie, Matthias Reso, Maxim Groshev, Maxim Naumov, Maya Lathi, Meghan Keneally, Miao Liu, Michael L. Seltzer, Michal Valko, Michelle Restrepo, Mihir Patel, Mik Vyatskov, Mikayel Samvelyan, Mike Clark, Mike Macey, Mike Wang, Miquel Jubert Hermoso, Mo Metanat, Mohammad Rastegari, Munish Bansal, Nandhini Santhanam, Natascha Parks, Natasha White, Navyata Bawa, Nayan Singhal, Nick Egebo, Nicolas Usunier, Nikhil Mehta, Nikolay Pavlovich Laptev, Ning Dong, Norman Cheng, Oleg Chernoguz, Olivia Hart, Omkar Salpekar, Ozlem Kalinli, Parkin Kent, Parth Parekh, Paul Saab, Pavan Balaji, Pedro Rittner, Philip Bontrager, Pierre Roux, Piotr Dollar, Polina Zvyagina, Prashant Ratanchandani, Pritish Yuvraj, Qian Liang, Rachad Alao, Rachel Rodriguez, Rafi Ayub, Raghotham Murthy, Raghu Nayani, Rahul Mitra, Rangaprabhu Parthasarathy, Raymond Li, Rebekkah Hogan, Robin Battey, Rocky Wang, Russ Howes, Ruty Rinott, Sachin Mehta, Sachin Siby, Sai Jayesh Bondu, Samyak Datta, Sara Chugh, Sara Hunt, Sargun Dhillon, Sasha Sidorov, Satadru Pan, Saurabh Mahajan, Saurabh Verma, Seiji Yamamoto, Sharadh Ramaswamy, Shaun Lindsay, Shaun Lindsay, Sheng Feng, Shenghao Lin, Shengxin Cindy Zha, Shishir Patil, Shiva Shankar, Shuqiang Zhang, Shuqiang Zhang, Sinong Wang, Sneha Agarwal, Soji Sajuyigbe, Soumith Chintala, Stephanie Max, Stephen Chen, Steve Kehoe, Steve Satterfield, Sudarshan Govindaprasad, Sumit Gupta, Summer Deng, Sungmin Cho, Sunny Virk, Suraj Subramanian, Sy Choudhury, Sydney Goldman, Tal Remez, Tamar Glaser, Tamara Best, Thilo Koehler, Thomas Robinson, Tianhe Li, Tianjun Zhang, Tim Matthews, Timothy Chou, Tzook Shaked, Varun Vontimitta, Victoria Ajayi, Victoria Montanez, Vijai Mohan, Vinay Satish Kumar, Vishal Mangla, Vlad Ionescu, Vlad Poenaru, Vlad Tiberiu Mihailescu, Vladimir Ivanov, Wei Li, Wenchen Wang, Wenwen Jiang, Wes Bouaziz, Will Constable, Xiaocheng Tang, Xiaojian Wu, Xiaolan Wang, Xilun Wu, Xinbo Gao, Yaniv Kleinman, Yanjun Chen, Ye Hu, Ye Jia, Ye Qi, Yenda Li, Yilin Zhang, Ying Zhang, Yossi Adi, Youngjin Nam, Yu, Wang, Yu Zhao, Yuchen Hao, Yundi Qian, Yunlu Li, Yuzi He, Zach Rait, Zachary DeVito, Zef Rosnbrick, Zhaoduo Wen, Zhenyu Yang, Zhiwei Zhao, and Zhiyu Ma.
+The llama 3 herd of models, 2024.
+URL https://arxiv.org/abs/2407.21783.
+Gu & Dao (2024)
+Albert Gu and Tri Dao.
+Mamba: Linear-time sequence modeling with selective state spaces, 2024.
+URL https://arxiv.org/abs/2312.00752.
+Jiang et al. (2024)
+Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H. Abdi, Dongsheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu.
+Minference 1.0: Accelerating pre-filling for long-context llms via dynamic sparse attention, 2024.
+URL https://arxiv.org/abs/2407.02490.
+Jin et al. (2024)
+Yibo Jin, Tao Wang, Huimin Lin, Mingyang Song, Peiyang Li, Yipeng Ma, Yicheng Shan, Zhengfan Yuan, Cailong Li, Yajing Sun, Tiandeng Wu, Xing Chu, Ruizhi Huan, Li Ma, Xiao You, Wenting Zhou, Yunpeng Ye, Wen Liu, Xiangkun Xu, Yongsheng Zhang, Tiantian Dong, Jiawei Zhu, Zhe Wang, Xijian Ju, Jianxun Song, Haoliang Cheng, Xiaojing Li, Jiandong Ding, Hefei Guo, and Zhengyong Zhang.
+P/d-serve: Serving disaggregated large language model at scale, 2024.
+URL https://arxiv.org/abs/2408.08147.
+Katharopoulos et al. (2020)
+Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret.
+Transformers are rnns: Fast autoregressive transformers with linear attention, 2020.
+URL https://arxiv.org/abs/2006.16236.
+Lai et al. (2025)
+Xunhao Lai, Jianqiao Lu, Yao Luo, Yiyuan Ma, and Xun Zhou.
+Flexprefill: A context-aware sparse attention mechanism for efficient long-sequence inference, 2025.
+URL https://arxiv.org/abs/2502.20766.
+Liu et al. (2023)
+Hao Liu, Matei Zaharia, and Pieter Abbeel.
+Ring attention with blockwise transformers for near-infinite context, 2023.
+URL https://arxiv.org/abs/2310.01889.
+Liu et al. (2025)
+Jiaheng Liu, Dawei Zhu, Zhiqi Bai, Yancheng He, Huanxuan Liao, Haoran Que, Zekun Wang, Chenchen Zhang, Ge Zhang, Jiebin Zhang, Yuanxing Zhang, Zhuo Chen, Hangyu Guo, Shilong Li, Ziqiang Liu, Yong Shan, Yifan Song, Jiayi Tian, Wenhao Wu, Zhejian Zhou, Ruijie Zhu, Junlan Feng, Yang Gao, Shizhu He, Zhoujun Li, Tianyu Liu, Fanyu Meng, Wenbo Su, Yingshui Tan, Zili Wang, Jian Yang, Wei Ye, Bo Zheng, Wangchunshu Zhou, Wenhao Huang, Sujian Li, and Zhaoxiang Zhang.
+A comprehensive survey on long context language modeling, 2025.
+URL https://arxiv.org/abs/2503.17407.
+Lu et al. (2025)
+Enzhe Lu, Zhejun Jiang, Jingyuan Liu, Yulun Du, Tao Jiang, Chao Hong, Shaowei Liu, Weiran He, Enming Yuan, Yuzhi Wang, Zhiqi Huang, Huan Yuan, Suting Xu, Xinran Xu, Guokun Lai, Yanru Chen, Huabin Zheng, Junjie Yan, Jianlin Su, Yuxin Wu, Neo Y. Zhang, Zhilin Yang, Xinyu Zhou, Mingxing Zhang, and Jiezhong Qiu.
+Moba: Mixture of block attention for long-context llms, 2025.
+URL https://arxiv.org/abs/2502.13189.
+Mei et al. (2025)
+Lingrui Mei, Jiayu Yao, Yuyao Ge, Yiwei Wang, Baolong Bi, Yujun Cai, Jiazhi Liu, Mingyu Li, Zhong-Zhi Li, Duzhen Zhang, Chenlin Zhou, Jiayi Mao, Tianze Xia, Jiafeng Guo, and Shenghua Liu.
+A survey of context engineering for large language models, 2025.
+URL https://arxiv.org/abs/2507.13334.
+OpenAI (2025)
+OpenAI.
+GPT-5 System Card, August 2025.
+URL https://cdn.openai.com/gpt-5-system-card.pdf.
+Peebles & Xie (2023)
+William Peebles and Saining Xie.
+Scalable diffusion models with transformers, 2023.
+URL https://arxiv.org/abs/2212.09748.
+Peng et al. (2023)
+Bowen Peng, Jeffrey Quesnelle, Honglu Fan, and Enrico Shippole.
+Yarn: Efficient context window extension of large language models, 2023.
+URL https://arxiv.org/abs/2309.00071.
+Press et al. (2022)
+Ofir Press, Noah A. Smith, and Mike Lewis.
+Train short, test long: Attention with linear biases enables input length extrapolation, 2022.
+URL https://arxiv.org/abs/2108.12409.
+Su et al. (2023)
+Jianlin Su, Yu Lu, Shengfeng Pan, Ahmed Murtadha, Bo Wen, and Yunfeng Liu.
+Roformer: Enhanced transformer with rotary position embedding, 2023.
+URL https://arxiv.org/abs/2104.09864.
+Tillet et al. (2019)
+Philippe Tillet, Hsiang-Tsung Kung, and David D. Cox.
+Triton: an intermediate language and compiler for tiled neural network computations.
+Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages, 2019.
+URL https://api.semanticscholar.org/CorpusID:184488182.
+Vaswani et al. (2023)
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin.
+Attention is all you need, 2023.
+URL https://arxiv.org/abs/1706.03762.
+Wang et al. (2024)
+Lei Wang, Chen Ma, Xueyang Feng, Zeyu Zhang, Hao Yang, Jingsen Zhang, Zhiyuan Chen, Jiakai Tang, Xu Chen, Yankai Lin, Wayne Xin Zhao, Zhewei Wei, and Jirong Wen.
+A survey on large language model based autonomous agents.
+Frontiers of Computer Science, 18(6), March 2024.
+ISSN 2095-2236.
+doi: 10.1007/s11704-024-40231-1.
+URL http://dx.doi.org/10.1007/s11704-024-40231-1.
+Xiao et al. (2024)
+Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis.
+Efficient streaming language models with attention sinks, 2024.
+URL https://arxiv.org/abs/2309.17453.
+Xu et al. (2025)
+Ruyi Xu, Guangxuan Xiao, Haofeng Huang, Junxian Guo, and Song Han.
+Xattention: Block sparse attention with antidiagonal scoring, 2025.
+URL https://arxiv.org/abs/2503.16428.
+Yang et al. (2025a)
+An Yang, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoyan Huang, Jiandong Jiang, Jianhong Tu, Jianwei Zhang, Jingren Zhou, Junyang Lin, Kai Dang, Kexin Yang, Le Yu, Mei Li, Minmin Sun, Qin Zhu, Rui Men, Tao He, Weijia Xu, Wenbiao Yin, Wenyuan Yu, Xiafei Qiu, Xingzhang Ren, Xinlong Yang, Yong Li, Zhiying Xu, and Zipeng Zhang.
+Qwen2.5-1m technical report, 2025a.
+URL https://arxiv.org/abs/2501.15383.
+Yang et al. (2025b)
+Shuo Yang, Haocheng Xi, Yilong Zhao, Muyang Li, Jintao Zhang, Han Cai, Yujun Lin, Xiuyu Li, Chenfeng Xu, Kelly Peng, Jianfei Chen, Song Han, Kurt Keutzer, and Ion Stoica.
+Sparse videogen2: Accelerate video generation with sparse attention via semantic-aware permutation, 2025b.
+URL https://arxiv.org/abs/2505.18875.
+Yang et al. (2025c)
+Songlin Yang, Jan Kautz, and Ali Hatamizadeh.
+Gated delta networks: Improving mamba2 with delta rule, 2025c.
+URL https://arxiv.org/abs/2412.06464.
+Yang et al. (2025d)
+Songlin Yang, Bailin Wang, Yu Zhang, Yikang Shen, and Yoon Kim.
+Parallelizing linear transformers with the delta rule over sequence length, 2025d.
+URL https://arxiv.org/abs/2406.06484.
+Yuan et al. (2025)
+Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Y. X. Wei, Lean Wang, Zhiping Xiao, Yuqing Wang, Chong Ruan, Ming Zhang, Wenfeng Liang, and Wangding Zeng.
+Native sparse attention: Hardware-aligned and natively trainable sparse attention, 2025.
+URL https://arxiv.org/abs/2502.11089.
+Zhang et al. (2025)
+Jintao Zhang, Chendong Xiang, Haofeng Huang, Jia Wei, Haocheng Xi, Jun Zhu, and Jianfei Chen.
+Spargeattention: Accurate and training-free sparse attention accelerating any model inference, 2025.
+URL https://arxiv.org/abs/2502.18137.
+Zhang et al. (2023)
+Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, Zhangyang Wang, and Beidi Chen.
+H2o: Heavy-hitter oracle for efficient generative inference of large language models, 2023.
+URL https://arxiv.org/abs/2306.14048.
+Zhao et al. (2025)
+Tianchen Zhao, Ke Hong, Xinhao Yang, Xuefeng Xiao, Huixia Li, Feng Ling, Ruiqi Xie, Siqi Chen, Hongyu Zhu, Yichong Zhang, and Yu Wang.
+Paroattention: Pattern-aware reordering for efficient sparse and quantized attention in visual generation models, 2025.
+URL https://arxiv.org/abs/2506.16054.
+Appendix A Proofs of Permutation Properties
+A.1 Proof of Lemma 3.1
+Lemma A.1 (Key-Value Pair Permutation Invariance).
+The attention mechanism is invariant to the order of the source sequence, provided that the key-value pairings are maintained.
+Formally, let 𝐏π∈{0,1}M×M\bm{P}_{\pi}\in\{0,1\}^{M\times M} be a permutation matrix that reorders the rows of a matrix according to a permutation π\pi on the index set {1,…,M}\{1,\dots,M\}. The following identity holds:
+|
+Attention​(𝑸,𝑷π​𝑲,𝑷π​𝑽)=Attention​(𝑸,𝑲,𝑽)\text{Attention}(\bm{Q},\bm{P}_{\pi}\bm{K},\bm{P}_{\pi}\bm{V})=\text{Attention}(\bm{Q},\bm{K},\bm{V}) |
+|
+(12) |
+Proof.
+Let 𝑶=Attention​(𝑸,𝑲,𝑽)\bm{O}=\text{Attention}(\bm{Q},\bm{K},\bm{V}) and 𝑶′=Attention​(𝑸,𝑷π​𝑲,𝑷π​𝑽)\bm{O}^{\prime}=\text{Attention}(\bm{Q},\bm{P}_{\pi}\bm{K},\bm{P}_{\pi}\bm{V}).
+Our goal is to show that 𝑶=𝑶′\bm{O}=\bm{O}^{\prime}.
+We will prove this by showing that their corresponding row vectors, 𝒐i\bm{o}_{i} and 𝒐i′\bm{o}^{\prime}_{i}, are equal for any arbitrary row index i∈{1,…,N}i\in\{1,\dots,N\}.
+Let 𝑨=𝑸​𝑲Td\bm{A}=\frac{\bm{Q}\bm{K}^{T}}{\sqrt{d}} and 𝑾=softmax​(𝑨)\bm{W}=\text{softmax}(\bm{A})(we use W instead of P as in Eq.1 to avoid confusion)
+The ii-th row of the original output is given by:
+|
+𝒐i=∑j=1M𝑾i​j​𝒗j\bm{o}_{i}=\sum_{j=1}^{M}\bm{W}_{ij}\bm{v}_{j} |
+|
+Now, let 𝑲′=𝑷π​𝑲\bm{K}^{\prime}=\bm{P}_{\pi}\bm{K} and 𝑽′=𝑷π​𝑽\bm{V}^{\prime}=\bm{P}_{\pi}\bm{V}. The score matrix for 𝑶′\bm{O}^{\prime} is 𝑨′=𝑸​(𝑲′)Td=𝑸​𝑲T​𝑷πTd=𝑨​𝑷πT\bm{A}^{\prime}=\frac{\bm{Q}(\bm{K}^{\prime})^{T}}{\sqrt{d}}=\frac{\bm{Q}\bm{K}^{T}\bm{P}_{\pi}^{T}}{\sqrt{d}}=\bm{A}\bm{P}_{\pi}^{T}. Let 𝑾′=softmax​(𝑨′)\bm{W}^{\prime}=\text{softmax}(\bm{A}^{\prime}).
+The (i,j)(i,j)-th element of 𝑨′\bm{A}^{\prime} is 𝑨i​j′=∑l=1M𝑨i​l​(𝑷πT)l​j=𝑨i,π−1​(j)\bm{A}^{\prime}_{ij}=\sum_{l=1}^{M}\bm{A}_{il}(\bm{P}_{\pi}^{T})_{lj}=\bm{A}_{i,\pi^{-1}(j)}.
+The denominator for the softmax computation on the ii-th row of 𝑨′\bm{A}^{\prime} is:
+|
+∑l=1Mexp⁡(𝑨i​l′)=∑l=1Mexp⁡(𝑨i,π−1​(l))\sum_{l=1}^{M}\exp(\bm{A}^{\prime}_{il})=\sum_{l=1}^{M}\exp(\bm{A}_{i,\pi^{-1}(l)}) |
+|
+Since π−1\pi^{-1} is a bijection on {1,…,M}\{1,\dots,M\}, this summation is a reordering of the terms ∑k=1Mexp⁡(Ai​k)\sum_{k=1}^{M}\exp(A_{ik}), which is the denominator for the ii-th row of the original weights WW.
+Thus, the (i,j)(i,j)-th element of the new weight matrix W′W^{\prime} is:
+|
+𝑾i​j′=exp⁡(𝑨i​j′)∑l=1Mexp⁡(𝑨i​l′)=exp⁡(𝑨i,π−1​(j))∑k=1Mexp⁡(𝑨i​k)=𝑾i,π−1​(j)\bm{W}^{\prime}_{ij}=\frac{\exp(\bm{A}^{\prime}_{ij})}{\sum_{l=1}^{M}\exp(\bm{A}^{\prime}_{il})}=\frac{\exp(\bm{A}_{i,\pi^{-1}(j)})}{\sum_{k=1}^{M}\exp(\bm{A}_{ik})}=\bm{W}_{i,\pi^{-1}(j)} |
+|
+The ii-th row of the new output O′O^{\prime} is a weighted sum of the rows of V′=Pπ​VV^{\prime}=P_{\pi}V. The jj-th row of V′V^{\prime} is vj′=vπ−1​(j)v^{\prime}_{j}=v_{\pi^{-1}(j)}. Therefore:
+|
+𝒐i′=∑j=1M𝑾i​j′​𝒗j′=∑j=1M𝑾i,π−1​(j)​𝒗π−1​(j)\bm{o}^{\prime}_{i}=\sum_{j=1}^{M}\bm{W}^{\prime}_{ij}\bm{v}^{\prime}_{j}=\sum_{j=1}^{M}\bm{W}_{i,\pi^{-1}(j)}\bm{v}_{\pi^{-1}(j)} |
+|
+Let k=π−1​(j)k=\pi^{-1}(j). Since π−1\pi^{-1} is a bijection, summing over all j∈{1,…,M}j\in\{1,\dots,M\} is equivalent to summing over all k∈{1,…,M}k\in\{1,\dots,M\}.
+By this change of variables, we have:
+|
+𝒐i′=∑k=1M𝑾i​k​𝒗k=𝒐i\bm{o}^{\prime}_{i}=\sum_{k=1}^{M}\bm{W}_{ik}\bm{v}_{k}=\bm{o}_{i} |
+|
+Since 𝒐i′=𝒐i\bm{o}^{\prime}_{i}=\bm{o}_{i} for an arbitrary ii, the matrices 𝑶′\bm{O}^{\prime} and 𝑶\bm{O} are identical.
+∎
+A.2 Proof of Lemma 3.2
+Lemma A.2 (Query Permutation Equivariance).
+The attention mechanism is equivariant with respect to permutations of the query sequence.
+Formally, let 𝐏σ∈{0,1}N×N\bm{P}_{\sigma}\in\{0,1\}^{N\times N} be a permutation matrix that reorders the rows of a matrix according to a permutation σ\sigma on the index set {1,…,N}\{1,\dots,N\}. The following relationship holds:
+|
+Attention​(𝑷σ​𝑸,𝑲,𝑽)=𝑷σ​Attention​(𝑸,𝑲,𝑽)\text{Attention}(\bm{P}_{\sigma}\bm{Q},\bm{K},\bm{V})=\bm{P}_{\sigma}\text{Attention}(\bm{Q},\bm{K},\bm{V}) |
+|
+(13) |
+Proof.
+Let 𝑶=Attention​(𝑸,𝑲,𝑽)\bm{O}=\text{Attention}(\bm{Q},\bm{K},\bm{V}) and 𝑶′=Attention​(𝑷σ​𝑸,𝑲,𝑽)\bm{O}^{\prime}=\text{Attention}(\bm{P}_{\sigma}\bm{Q},\bm{K},\bm{V}). We want to show that 𝑶′=𝑷σ​𝑶\bm{O}^{\prime}=\bm{P}_{\sigma}\bm{O}.
+Let 𝑨=𝑸​𝑲Td\bm{A}=\frac{\bm{Q}\bm{K}^{T}}{\sqrt{d}} and 𝑾=softmax​(𝑨)\bm{W}=\text{softmax}(\bm{A}), such that 𝑶=𝑾​𝑽\bm{O}=\bm{W}\bm{V}.
+The score matrix for 𝑶′\bm{O}^{\prime} is 𝑨′=(𝑷σ​𝑸)​𝑲Td=𝑷σ​(𝑸​𝑲Td)=𝑷σ​𝑨\bm{A}^{\prime}=\frac{(\bm{P}_{\sigma}\bm{Q})\bm{K}^{T}}{\sqrt{d}}=\bm{P}_{\sigma}\left(\frac{\bm{Q}\bm{K}^{T}}{\sqrt{d}}\right)=\bm{P}_{\sigma}\bm{A}. Let 𝑾′=softmax​(𝑨′)\bm{W}^{\prime}=\text{softmax}(\bm{A}^{\prime}).
+The softmax function operates independently on each row. Let (𝑿)i(\bm{X})_{i} denote the ii-th row of a matrix 𝑿\bm{X}. Left-multiplication by 𝑷σ\bm{P}_{\sigma} permutes the rows of 𝑨\bm{A}, such that the ii-th row of 𝑨′\bm{A}^{\prime} is the σ−1​(i)\sigma^{-1}(i)-th row of 𝑨\bm{A}: (𝑨′)i=(𝑨)σ−1​(i)(\bm{A}^{\prime})_{i}=(\bm{A})_{\sigma^{-1}(i)}.
+Applying the softmax function, the ii-th row of 𝑾′\bm{W}^{\prime} is:
+|
+(𝑾′)i=softmax​((𝑨′)i)=softmax​((𝑨)σ−1​(i))(\bm{W}^{\prime})_{i}=\text{softmax}((\bm{A}^{\prime})_{i})=\text{softmax}((\bm{A})_{\sigma^{-1}(i)}) |
+|
+This resulting vector is identical to the σ−1​(i)\sigma^{-1}(i)-th row of the original weight matrix 𝑾\bm{W}. Thus, (𝑾′)i=(𝑾)σ−1​(i)(\bm{W}^{\prime})_{i}=(\bm{W})_{\sigma^{-1}(i)}. This equality for all rows ii implies that the entire matrix 𝑾′\bm{W}^{\prime} is a row-permuted version of 𝑾\bm{W}, i.e., 𝑾′=𝑷σ​𝑾\bm{W}^{\prime}=\bm{P}_{\sigma}\bm{W}.
+Now we can write the output 𝑶′\bm{O}^{\prime} as:
+|
+𝑶′=𝑾′​𝑽=(𝑷σ​𝑾)​𝑽\bm{O}^{\prime}=\bm{W}^{\prime}\bm{V}=(\bm{P}_{\sigma}\bm{W})\bm{V} |
+|
+By the associativity of matrix multiplication, we have:
+|
+𝑶′=𝑷σ​(𝑾​𝑽)=𝑷σ​𝑶\bm{O}^{\prime}=\bm{P}_{\sigma}(\bm{W}\bm{V})=\bm{P}_{\sigma}\bm{O} |
+|
+This completes the proof.
+∎
+A.3 Proof of Theorem 3.3
+Theorem A.3 (Attention Permutation Invariance under Inverse Transformation).
+If the queries are permuted by 𝐏σ\bm{P}_{\sigma} and the key-value pairs are permuted by 𝐏π\bm{P}_{\pi}, the resulting output is a permuted version of the original output. Applying the inverse of the query permutation recovers the original, unpermuted output. Formally:
+|
+𝑷σT​Attention​(𝑷σ​𝑸,𝑷π​𝑲,𝑷π​𝑽)=Attention​(𝑸,𝑲,𝑽)\bm{P}_{\sigma}^{T}\ \text{Attention}(\bm{P}_{\sigma}\bm{Q},\bm{P}_{\pi}\bm{K},\bm{P}_{\pi}\bm{V})=\text{Attention}(\bm{Q},\bm{K},\bm{V}) |
+|
+(14) |
+Proof.
+We prove the theorem by showing that the left-hand side (LHS) of the equation simplifies to the right-hand side (RHS) through sequential application of the preceding lemmas.
+|
+LHS |
+=𝑷σT​Attention​(Pσ​Q,Pπ​K,Pπ​V)\displaystyle=\bm{P}_{\sigma}^{T}\ \text{Attention}(P_{\sigma}Q,P_{\pi}K,P_{\pi}V) |
+|
+|
+|
+=𝑷σT​Attention​(𝑷σ​Q,K,V)\displaystyle=\bm{P}_{\sigma}^{T}\ \text{Attention}(\bm{P}_{\sigma}Q,K,V) |
+|
+by Lemma 3.1 |
+|
+|
+|
+=𝑷σT​(𝑷σ​Attention​(Q,K,V))\displaystyle=\bm{P}_{\sigma}^{T}\ (\bm{P}_{\sigma}\ \text{Attention}(Q,K,V)) |
+|
+by Lemma 3.2 |
+|
+|
+|
+=(𝑷σT​𝑷σ)​Attention​(Q,K,V)\displaystyle=(\bm{P}_{\sigma}^{T}\bm{P}_{\sigma})\ \text{Attention}(Q,K,V) |
+|
+by associativity |
+|
+|
+|
+=I⋅Attention​(Q,K,V)\displaystyle=I\cdot\text{Attention}(Q,K,V) |
+|
+since ​Pσ​ is orthogonal\displaystyle\text{since }P_{\sigma}\text{ is orthogonal} |
+|
+|
+|
+=Attention​(Q,K,V)\displaystyle=\text{Attention}(Q,K,V) |
+|
+|
+|
+=RHS\displaystyle=\text{RHS} |
+|
+The final expression is identical to the right-hand side, which concludes the proof.
+∎
+Appendix B Block Selection
+B.1 Block Selection in PBS-Attn
+We use a mean pooling strategy and block-wise attention to estimate the importance of each key block.
+This method is also used for unpermuted sequences, serving as a strong baseline denoted as MeanPooling in the main paper.
+Here we detail the implementation of MeanPooling selection in Algorithm 2.
+Note that for the baseline MeanPooling, 𝑸′\bm{Q}^{\prime} and 𝑲′\bm{K}^{\prime} remain unpermuted as 𝑸′=𝑸\bm{Q}^{\prime}=\bm{Q} and 𝑲′=𝑲\bm{K}^{\prime}=\bm{K}.
+The causal mask 𝑪\bm{C} is a upper triangular matrix with entries set to −∞-\infty. If segmented permutation is applied, this mask also includes the on-diagonal segments (as in Figure 1), to ensure valid intra-segment attention post-permutation.
+Algorithm 2 MeanPooling Block Selection
+1:
+Query matrix 𝑸′∈ℝN×d\bm{Q}^{\prime}\in\mathbb{R}^{N\times d}, Key matrix 𝑲′∈ℝN×d\bm{K}^{\prime}\in\mathbb{R}^{N\times d}, block size BB, attention score threshold τ\tau, causal mask 𝑪∈{0,−∞}⌈N/B⌉×⌈N/B⌉\bm{C}\in\{0,-\infty\}^{\lceil N/B\rceil\times\lceil N/B\rceil}.
+2:
+Block selection mask 𝑴∈{0,1}⌈N/B⌉×⌈N/B⌉\bm{M}\in\{0,1\}^{\lceil N/B\rceil\times\lceil N/B\rceil}.
+3:
+Divide 𝑸′,𝑲′\bm{Q}^{\prime},\bm{K}^{\prime} into blocks of size BB: {𝑸i′}i=1Tr,{𝑲j′}j=1Tc\{\bm{Q}^{\prime}_{i}\}_{i=1}^{T_{r}},\{\bm{K}^{\prime}_{j}\}_{j=1}^{T_{c}}, where Tr=Tc=⌈N/B⌉T_{r}=T_{c}=\lceil N/B\rceil.
+4:
+Compute pooled queries: 𝑸¯i=MeanPool​(𝑸i′)\bm{\bar{Q}}_{i}=\text{MeanPool}(\bm{Q}^{\prime}_{i}) for i=1,…,Tri=1,\dots,T_{r}.
+5:
+Compute pooled keys: 𝑲¯j=MeanPool​(𝑲j′)\bm{\bar{K}}_{j}=\text{MeanPool}(\bm{K}^{\prime}_{j}) for j=1,…,Tcj=1,\dots,T_{c}.
+6:
+Form pooled matrices 𝑸¯∈ℝTr×d\bm{\bar{Q}}\in\mathbb{R}^{T_{r}\times d} and 𝑲¯∈ℝTc×d\bm{\bar{K}}\in\mathbb{R}^{T_{c}\times d}.
+7:
+Compute block scores: 𝑺block=softmax​(𝑸¯​𝑲¯T/d+𝑪)\bm{S}_{\text{block}}=\text{softmax}(\bm{\bar{Q}}\bm{\bar{K}}^{T}/\sqrt{d}+\bm{C}).
+8:
+Initialize 𝑴=𝟎\bm{M}=\bm{0}.
+9:
+for i=1i=1 to TrT_{r} do
+10:
+Get scores for query block ii: 𝒂i=𝑺block[i,1:i]\bm{a}_{i}=\bm{S}_{\text{block}}[i,1:i].
+11:
+Sort scores and get original indices: 𝒐i=argsort​(−𝒂i)\bm{o}_{i}=\text{argsort}(-\bm{a}_{i}).
+12:
+Compute cumulative sum on sorted scores: 𝒄i=cumsum​(𝒂i​[𝒐i])\bm{c}_{i}=\text{cumsum}(\bm{a}_{i}[\bm{o}_{i}]).
+13:
+Find number of blocks to select: k=min⁡({j∣𝒄i​[j]≥τ}∪{i})k=\min(\{j\mid\bm{c}_{i}[j]\geq\tau\}\cup\{i\}).
+14:
+Get indices of blocks to select: 𝒥=𝒐i[1:k]\mathcal{J}=\bm{o}_{i}[1:k].
+15:
+Set 𝑴⁡[i,j]=1\bm{M}[i,j]=1 for all j∈𝒥j\in\mathcal{J}.
+16:
+end for
+17:
+return 𝑴\bm{M}.
+B.2 PBS-Attn with Existing Block Selection Algorithms
+In the main paper, we use a simple mean pooling strategy for block selection in block-sparse attention, as detailed in Section B.1, and show that permutation can increase block-level sparsity under this naive mean pooling strategy (Section 4.3).
+In this section, we further demonstrate that advanced block selection algorithms (e.g. XAttention) can also benefit from permutation.
+Figure 6: Longbench score vs. average block-level density at a context length of 32k of XAttention selection with and without permutation.
+As shown in Figure 6, XAttention selection can also benefit from the sparsity improvements of permutation, achieving a better trade-off between performance and sparsity.
+Appendix C Analysis on the Permutation Overhead
+As shown in Figures 7(a) and 7(b), the permutation overhead in PBS-Attn is negligible compared to the main attention computation time, especially at longer context lengths. For instance, at a context length of 128K, permutation introduces an overhead of only 4%4\% relative to the block attention computation time and just 1.3%1.3\% compared to FlashAttention.
+While permuting queries introduces a slightly higher overhead than permuting keys, this difference diminishes as the context length increases. However, query permutation can also result in lower block-level sparsity than key permutation under the same settings, leading to higher attention computation time.
+(a) Query-aware Key Permutation.
+(b) Key-aware Query Permutation.
+Figure 7: Detailed benchmarking results of PBS-Attn vs. FlashAttention.
+Appendix D Visualization of Permutation
+In this section, we provide more visualizations of the permutation effect on both Llama-3.1-8B (Figure 8) and Qwen-2.5-7B-1M (Figure 9).
+(a) Layer 1, Head 13
+(b) Layer 10, Head 26
+(c) Layer 16, Head 9
+(d) Layer 28, Head 28
+Figure 8: Permutation visualizations of Llama-3.1-8B.
+(a) Layer 0, Head 0
+(b) Layer 7, Head 22
+(c) Layer 22, Head 5
+(d) Layer 26, Head 20
+Figure 9: Permutation visualizations of Qwen-2.5-7B-1M.
+Appendix E Use of Large Language Models
+During the preparation of this work, we utilized large language models (LLMs) to assist with code development and manuscript writing.
+Specifically, their applications included improving the grammar and clarity of the text, as well as assisting in code completion.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

@@ -1,0 +1,1002 @@
+EVLF: Early Vision-Language Fusion for Generative Dataset Distillation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Works
+3 Preliminaries
+3.1 Dataset Distillation
+3.2 Diffusion Models
+4 Method
+4.1 Early Fusion Cross-Attention Module
+4.2 Training the Cross-Attention Module
+4.3 Fine-tuning of the Denoiser
+5 Experiments
+5.1 Datasets
+5.2 Implementation Details
+5.3 Comparison with SOTA Methods
+ImageWoof.
+ImageNette and ImageIDC.
+CIFAR-10 and CIFAR-100.
+Tiny-ImageNet and ImageNet-1K.
+Transfer Learning.
+5.4 Ablation Studies
+Impact of Denoiser Fine-Tuning and CrossAttention.
+t-SNE Visualization.
+Parameter Analysis.
+5.5 Visualization
+6 Conclusion
+Limitations and Future Works
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07476v1 [cs.CV] 08 Mar 2026
+EVLF: Early Vision-Language Fusion for Generative Dataset Distillation
+Wenqi Cai
+Affiliation: University of Toyama
+Yawen Zou
+Affiliation: University of Toyama
+Guang Li
+Affiliation: Hokkaido University
+Chunzhi Gu
+Affiliation: University of Fukui
+Chao Zhang
+Affiliation: University of Toyama
+Abstract
+Dataset distillation (DD) aims to synthesize compact training sets that enable models to achieve high accuracy with significantly fewer samples. Recent diffusion-based DD methods commonly introduce semantic guidance through late-stage cross-attention, where textual prompts tend to dominate the generative process. Although this strategy enforces label relevance, it diminishes the contribution of visual latents, resulting in over-corrected samples that mirror prompt patterns rather than reflecting intrinsic visual features. To solve this problem, we introduce an Early Vision-Language Fusion (EVLF) method that aligns textual and visual embeddings at the transition between the encoder and the generative backbone. By incorporating a lightweight cross-attention module at this transition, the early representations simultaneously encode local textures and global semantic directions across the denoising process. Importantly, EVLF is plug-and-play and can be easily integrated into any diffusion-based dataset distillation pipeline with an encoder. It works across different denoiser architectures and sampling schedules without any task-specific modifications. Extensive experiments demonstrate that EVLF generates semantically faithful and visually coherent synthetic data, yielding consistent improvements in downstream classification accuracy across varied settings. Source code is available at https://github.com/wenqi-cai297/earlyfusion-for-dd/.
+1 Introduction
+The rapid expansion of dataset scale and model capacity has driven significant progress in machine learning, but has also intensified concerns regarding computational and storage efficiency [10, 16]. To alleviate these issues, model compression techniques such as pruning [21, 13, 11, 31] and quantization [38, 8, 6, 39] have been widely explored to reduce redundancy and deployment costs. More recently, dataset distillation (DD) has emerged as a complementary paradigm that focuses on data instead of model size, condensing large training sets into compact synthetic subsets that retain critical learning signals and allow models to achieve competitive accuracy with orders of magnitude fewer samples [20].
+Figure 1: Comparison between traditional late-fusion approaches and the proposed EVLF.
+(a) Late-fusion methods inject textual prompts during the denoising process, causing semantic signals to dominate visual latent representations.
+(b) EVLF introduces vision-language alignment before diffusion, allowing semantic cues and visual features to co-evolve throughout generation.
+(c) Synthetic samples on ImageNette (256 ×\times 256).
+(d) Synthetic samples on CIFAR-10 (32 ×\times 32).
+Rows display real images, late-fusion results, and EVLF results. EVLF produces samples with stronger label fidelity and more coherent visual details.
+Early DD methods were primarily based on meta-learning or data-matching objectives, but often exhibit substantial computational overhead or limited scalability when applied to high-resolution or large-scale datasets [36, 25, 18, 46, 35]. Subsequent non-generative approaches have evolved in multiple directions, including meta-gradient optimization, gradient and trajectory matching, as well as distribution-level statistics alignment, to enhance both practicality and training stability [47, 42, 40, 30, 14]. Despite these advancements, achieving both high semantic fidelity and scalability remains challenging, motivating the emergence of generative diffusion-based DD as a promising new direction.
+Recently, generative model-based DD has gained increasing attention due to its ability to produce diverse and high-resolution synthetic samples. Diffusion-based models have become the dominant backbone, with Latent Diffusion Models (LDMs) [28] and Diffusion Transformers (DiTs) [26] serving as representative architectures. Several approaches have extended diffusion synthesis for distillation.
+MinimaxDiffusion [12] formulates the distillation process as a minimax game within a DiT framework, enhancing both discriminability and representativeness.
+In parallel, D4M [32] augments LDMs through prototype-driven sampling by clustering latent embeddings and coupling them with label semantics.
+More recently, MGD3 [5] introduces a multimodal guidance mechanism that integrates seamlessly into the denoiser for both LDMs and DiTs, improving diversity and reducing redundancy in a plug-and-play manner.
+Despite their success, diffusion-based DD methods inherit a core structural constraint from standard diffusion pipelines. In both LDMs [28] and DiTs [26], semantic conditioning is injected after latent encoding and noise addition, and is applied during the denoising phase via cross-attention mechanisms inside the denoiser. This late-stage semantic injection amplifies prompt signals while weakening the influence of encoder-derived visual latents. As illustrated in Fig. 1 (c)-(d), such late fusion methods often align strongly with label semantics but tend to compromise visual fidelity, resulting in unnatural shapes, text-like textures, and overly simplified object silhouettes. This behavior reveals a fundamental limitation of prompt-driven late fusion: because early latent representations contain mainly visual cues, semantics injected only during denoising act correctively rather than co-evolutionarily, pushing generation dynamics to overfit textual prompts and drift away from the encoder’s visual manifold. As a result, the model tends to produce samples that are label-relevant but visually distorted and lacking coherent structural detail.
+In this work, we propose Early Vision-Language Fusion (EVLF) for dataset distillation. As illustrated in Fig. 1 (a)-(b), instead of injecting semantics during denoising, EVLF performs vision-language alignment at the encoder-backbone interface, before the diffusion process begins. This produces latent representations that preserve encoder-derived visual structure while simultaneously encoding class-level semantic cues. The fusion module is trained to remain close to the original image latent and to align with the same-class text embeddings, ensuring that the resulting latent space reflects both visual fidelity and semantic relevance. Embedding semantics before denoising reshapes the generative trajectory: the denoiser now starts from an initialization that already integrates semantic and visual context, requires less prompt forcing, and operates closer to the underlying visual manifold. This mitigates the over-correction commonly observed in late fusion, where textual prompts dominate the denoising dynamics and distort structural details.
+Because EVLF is inserted only at the encoder-backbone handoff and does not depend on specific training schedules, it is a plug-and-play solution. It can be seamlessly integrated into any encoder-equipped diffusion-based DD pipeline. For pipelines that do not adapt the denoiser to the target dataset, an optional lightweight fine-tuning step can be applied to align noise prediction with fused representations. Compared to prior diffusion-based DD methods that introduce semantics exclusively during denoising and thus frequently experience fidelity degradation, EVLF consistently improves visual coherence and label alignment. Extensive experiments across diverse architectures, datasets, image-per-class (IPC) settings, and image resolutions demonstrate that EVLF provides robust and generalizable performance gains, surpassing state-of-the-art approaches while maintaining broad compatibility.
+In summary, our contributions are as follows:
+•
+We identify a structural issue in diffusion-based dataset distillation: when semantics are injected only during denoising, prompt signals tend to dominate generation, causing over-correction and weakening the contribution of encoder-derived visual latents.
+•
+We propose EVLF, which performs vision-language fusion before denoising at the encoder-backbone interface. This produces latents that jointly encode visual structure and class semantics, guiding generation to remain close to the visual manifold.
+•
+EVLF is plug-and-play and does not require modifying training schedules, loss functions, or denoiser architectures, making it directly compatible with a wide range of encoder-equipped diffusion-based DD pipelines.
+•
+Extensive experiments across multiple datasets and IPC settings demonstrate that EVLF consistently improves semantic fidelity, visual coherence, diversity, and downstream classification accuracy over SOTA methods.
+2 Related Works
+Dataset distillation (DD) aims to synthesize compact yet informative datasets that preserve model performance while mitigating privacy risks associated with large real datasets [46, 43, 44, 45, 19, 33]. Early DD efforts focused on core-set selection [37, 9, 27, 2], which retains representative samples but limits flexibility in shaping data distributions. Optimization-based methods address this limitation and can be categorized into meta-learning and data-matching approaches. Meta-learning methods such as DD [36], KIP [25], RFAD [22], and MDC [14] formulate DD as a bi-level optimization problem, but incur high computational cost due to backpropagating through training trajectories. Data matching methods instead align model behavior under real and synthetic data,
+with examples including gradient matching (DC [46], DSA [43], IDM [47])
+and trajectory alignment (MTT [3], APM [7]). Distribution-based approaches such as DM [45], CAFE [35], and M3D [42] match feature statistics to improve generality. However, these approaches often struggle to scale to high resolutions due to costly iterative optimization.
+To improve scalability, recent work has explored decoupled distillation pipelines. Methods such as SRe2L [40], G-VBSM [29], RDED [34], and EDC [30] compress dataset statistics or leverage soft-label supervision to synthesize data more efficiently at high resolutions. While effective, these approaches rely on discriminative models and direct pixel- or feature-level optimization, which can limit semantic alignment and lead to less coherent textures or shapes. These drawbacks motivate the shift toward generative-model-based distillation, where synthesis is guided by generative priors rather than solely discriminative supervision.
+Generative model-based DD has gained traction for producing diverse, high-resolution synthetic data [41, 12, 32, 5, 4, 48, 23]. Most methods adopt LDMs [28] or DiTs [26] for controllable synthesis. Specifically, MinimaxDiffusion [12] optimizes a minimax objective to encourage discriminability and representativeness, D4M [32] performs prototype-driven sampling to align clusters and semantics, MGD3 [5] introduces multimodal guidance to enhance diversity, and Zou et al. [49] introduce a vision-language distillation framework that leverages category-level textual prototypes alongside image prototypes to guide diffusion-based data generation. However, these approaches apply semantic conditioning during denoising, where the original latent contains only visual information.
+Consequently, textual prompts tend to dominate and over-correct the generation trajectory, producing samples that match labels but sacrifice structural fidelity and variation.
+This limitation motivates early vision-language fusion, where semantics are introduced before noise injection, enabling balanced semantic and visual cues to co-exist throughout the diffusion process and improving both fidelity and diversity.
+Figure 2: Overview of EVLF. Visual latents from a VAE and text embeddings from a text encoder are fused via cross-attention at the encoder-backbone interface. The fused embeddings are trained with ℒMSE\mathcal{L}_{\mathrm{MSE}} for visual preservation and ℒInfoNCE\mathcal{L}_{\mathrm{InfoNCE}} for semantic alignment. Fused embeddings are clustered and decoded to produce the distilled synthetic dataset.
+3 Preliminaries
+3.1 Dataset Distillation
+Dataset distillation aims to compress a large labeled dataset
+T={(xi,yi)}i=1NTT=\{(x_{i},y_{i})\}_{i=1}^{N_{T}} into a much smaller synthetic dataset
+S={(x~i,y~i)}i=1NSS=\{(\tilde{x}_{i},\tilde{y}_{i})\}_{i=1}^{N_{S}} with NS≪NTN_{S}\ll N_{T}, while maintaining comparable downstream performance.
+Let Alg​(D,θ0)\text{Alg}(D,\theta_{0}) denote a learning algorithm that optimizes model parameters θ\theta
+from initialization θ0\theta_{0} on dataset DD as:
+Alg​(D,θ0)=arg⁡minθ​𝔼(x,y)∼D​[ℓ⁡(x,y,θ)],\text{Alg}(D,\theta_{0})=\arg\min_{\theta}\ \mathbb{E}_{(x,y)\sim D}\left[\ell(x,y;\theta)\right],
+(1)
+where ℓ⁡(⋅)\ell(\cdot) denotes the task-specific loss function.
+The synthetic dataset SS is optimized such that a model trained only on SS generalizes well to real data from TT:
+minS⁡𝔼(x,y)∼T​[ℓ⁡(x,y,θS∗)],where ​θS∗=Alg​(S,θ0).\min_{S}\ \mathbb{E}_{(x,y)\sim T}\left[\ell(x,y;\theta_{S}^{*})\right],\quad\text{where }\theta_{S}^{*}=\text{Alg}(S,\theta_{0}).
+(2)
+The compression ratio is commonly controlled via an images per class (IPC) setting, which specifies the number of synthetic samples allocated to each class.
+3.2 Diffusion Models
+Diffusion models synthesize data by learning to reverse a fixed forward noising process.
+Given a clean input z0∼q⁡(z0)z_{0}\sim q(z_{0}), the forward process gradually adds Gaussian noise to produce
+{zt}t=1T\{z_{t}\}_{t=1}^{T}:
+zt=αt​z0+1−αt​ϵ,ϵ∼𝒩⁡(0,𝐈),z_{t}=\sqrt{\alpha_{t}}z_{0}+\sqrt{1-\alpha_{t}}\,\epsilon,\quad\epsilon\sim\mathcal{N}(0,\mathbf{I}),
+(3)
+where {αt}\{\alpha_{t}\} is a predefined noise schedule. The reverse process trains a denoising network
+ϵθ​(zt,t,c)\epsilon_{\theta}(z_{t},t,c) to predict the added noise, optionally conditioned on auxiliary information cc:
+ℒDM=𝔼z0,ϵ,t​[‖ϵθ​(zt,t,c)−ϵ‖22].\mathcal{L}_{\text{DM}}=\mathbb{E}_{z_{0},\epsilon,t}\left[\|\epsilon_{\theta}(z_{t},t,c)-\epsilon\|_{2}^{2}\right].
+(4)
+Sampling begins from Gaussian noise zTz_{T} and iteratively applies the learned denoiser to reconstruct z0z_{0}.
+Two representative diffusion backbones are Latent Diffusion Models (LDMs) [28] and Diffusion Transformers (DiTs) [26].
+LDMs operate in a compressed latent space using a VAE encoder-decoder and a U-Net with cross-attention conditioning,
+while DiTs replace the U-Net with a transformer-based denoiser to achieve better scalability.
+These architectures serve as the basis for our work. We investigate how semantic guidance can be injected earlier in the generative pipeline to better leverage encoder-derived visual latents before the denoising process begins.
+4 Method
+Our goal is to distill a large dataset into a compact synthetic set that preserves both semantic richness and visual fidelity. An overview of the proposed Early Vision-Language Fusion (EVLF) framework is shown in Fig. 2. In standard diffusion-based distillation pipelines, textual semantics are injected during the denoising stage via cross-attention within the denoiser. This late-stage conditioning often causes textual prompts to dominate the generative trajectory, diminishing the contribution of encoder-derived visual information. In contrast, EVLF performs vision-language fusion immediately after encoding, before the diffusion process begins. Given an input image xx with label yy, a VAE encoder produces a visual latent zimg=ℰ⁡(x)z_{\text{img}}=\mathcal{E}(x), while a text encoder yields a class embedding etext=𝒯⁡(y)e_{\text{text}}=\mathcal{T}(y). We introduce a lightweight cross-attention module CA to fuse the two: zfused=CA (zimg,etext)z_{\text{fused}}=\text{CA
+}(z_{\text{img}},e_{\text{text}}), and use zfusedz_{\text{fused}} as the initial condition for the subsequent generative (diffusion) process. By anchoring semantics directly in the encoder latent space, EVLF ensures that textual cues guide but do not overwrite visual structure, thereby mitigating prompt dominance and preserving fine-grained visual characteristics throughout synthesis.
+4.1 Early Fusion Cross-Attention Module
+To ground semantic cues in the encoder-derived latent space, we integrate visual and textual information before any generative steps. Let the VAE encoder produce a spatial latent zimg∈ℝH×W×Cz_{\text{img}}\in\mathbb{R}^{H\times W\times C} and the text encoder output a sequence of embeddings etext∈ℝL×Cte_{\text{text}}\in\mathbb{R}^{L\times C_{t}}. Both representations are projected into a shared feature dimension dd:
+z~=ϕimg​(zimg)∈ℝN×d,e~=ϕtext​(etext)∈ℝL×d,\tilde{z}=\phi_{\text{img}}(z_{\text{img}})\in\mathbb{R}^{N\times d},\quad\tilde{e}=\phi_{\text{text}}(e_{\text{text}})\in\mathbb{R}^{L\times d},
+(5)
+where N=H×WN=H\times W. Here, ϕimg\phi_{\text{img}} flattens the spatial latent into NN visual tokens and applies a linear projection, while ϕtext\phi_{\text{text}} linearly projects the text embeddings into the same feature space.
+Cross-attention is performed using image tokens as queries and text tokens as keys and values:
+Q=z~​WQ,K=e~​WK,V=e~​WV,Q=\tilde{z}W_{Q},\qquad K=\tilde{e}W_{K},\qquad V=\tilde{e}W_{V},
+(6)
+Attn​(z~,e~)=softmax​(Q​K⊤d)​V.\text{Attn}(\tilde{z},\tilde{e})=\text{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d}}\right)V.
+(7)
+The attended features are merged with the visual tokens via a residual pathway, followed by layer normalization and a position-wise feed-forward transformation:
+u=LN​(z~+Attn​(z~,e~)),zfused=ψ⁡(u)∈ℝH×W×C,u=\text{LN}\!\big(\tilde{z}+\text{Attn}(\tilde{z},\tilde{e})\big),\quad z_{\text{fused}}=\psi(u)\in\mathbb{R}^{H\times W\times C},
+(8)
+where ψ\psi restores the spatial arrangement and channel dimension.
+The fused latent zfusedz_{\text{fused}} is then forwarded to the subsequent generative process. By using image tokens as queries, semantics are grounded directly in the visual latent space, ensuring that textual cues guide rather than overwrite visual structure, thereby mitigating prompt-driven over-correction and preserving class-consistent appearance during synthesis.
+Algorithm 1 Training Process of EVLF
+1: Input: Dataset (X,Y)(X,Y): real images and prompts, ℰ\mathcal{E}: VAE encoder,
+𝒯\mathcal{T}: text encoder,
+CA: cross-attention module, PP: projector, λ1,λ2\lambda_{1},\lambda_{2}: loss weights
+2: Output: Trained cross-attention module CA
+3: /* Cross-Attention Training */
+4: for each batch (xi,yi)(x^{i},y^{i}) in (X,Y)(X,Y) do
+5:  zimgi=ℰ⁡(xi)z_{\text{img}}^{i}=\mathcal{E}(x^{i})
+6:  etexti=𝒯⁡(yi)e_{\text{text}}^{i}=\mathcal{T}(y^{i})
+7:  zfusedi=CA​(zimgi,etexti)z_{\text{fused}}^{i}=\text{CA}(z_{\text{img}}^{i},e_{\text{text}}^{i})
+8:  zproji=P⁡(zfusedi)z_{\text{proj}}^{i}=P(z_{\text{fused}}^{i})
+9:  Compute ℒMSE\mathcal{L}_{\text{MSE}} via Eq. 9
+10:  Compute ℒInfoNCE\mathcal{L}_{\text{InfoNCE}} via Eq. 11
+11:  Update CA and PP via optimizing ℒCA\mathcal{L}_{\text{CA}}
+in Eq. 12
+12: end for
+4.2 Training the Cross-Attention Module
+The cross-attention module is trained with a dual-loss objective to preserve visual fidelity while enforcing semantic alignment. The first term encourages the fused latent zfusedz_{\text{fused}} to remain close to the original image latent zimgz_{\text{img}},
+ensuring that text conditioning does not distort the underlying visual structure during early fusion.
+ℒMSE=‖zfused−zimg‖22.\mathcal{L}_{\text{MSE}}=\|z_{\text{fused}}-z_{\text{img}}\|_{2}^{2}.
+(9)
+To incorporate semantics, we apply an InfoNCE loss that aligns zfusedz_{\text{fused}} with class-level text embeddings. A learnable projector PP maps zfusedz_{\text{fused}} into the same space as the text embeddings, giving zproj=P⁡(zfused)z_{\text{proj}}=P(z_{\text{fused}}). For a batch of size BB, let Mi​jM^{ij} denote whether samples ii and jj share the same class label:
+Mi​j={1,if ​yi=yj,0,otherwise.M^{ij}=\begin{cases}1,&\text{if }y^{i}=y^{j},\\
+0,&\text{otherwise.}\end{cases}
+(10)
+With cosine similarity logits si​js^{ij} computed between zprojiz_{\text{proj}}^{i} and etextje_{\text{text}}^{j}, the InfoNCE term is:
+ℒInfoNCE=1B​∑i=1B(−log⁡∑jMi​j​exp⁡(si​j)∑jexp⁡(si​j)).\mathcal{L}_{\text{InfoNCE}}=\frac{1}{B}\sum_{i=1}^{B}\left(-\log\frac{\sum_{j}M^{ij}\exp(s^{ij})}{\sum_{j}\exp(s^{ij})}\right).
+(11)
+The final training objective is:
+ℒCA=λ1​ℒInfoNCE+λ2​ℒMSE,\mathcal{L}_{\text{CA}}=\lambda_{1}\mathcal{L}_{\text{InfoNCE}}+\lambda_{2}\mathcal{L}_{\text{MSE}},
+(12)
+where λ1\lambda_{1} and λ2\lambda_{2} balance semantic consistency and visual preservation. Hyperparameter settings are described in Section 5.2.
+4.3 Fine-tuning of the Denoiser
+Some distillation pipelines directly reuse a pretrained denoiser without adapting it to the target dataset. In such settings, the fused latent distribution introduced by EVLF may differ from the pretrained denoising prior. To address this, we optionally fine-tune the denoiser so that its noise prediction becomes consistent with both the target domain and the fused latent space. For example, when integrating EVLF into D4M [32], we fine-tune the denoiser on fused representations, whereas for pipelines that already adapt or do not require adaptation, we keep it frozen.
+The ablation results for this design choice are provided in Section 5.4.
+Given a fused latent zfusedz_{\text{fused}} and its corresponding text embedding etexte_{\text{text}}, the denoiser is trained using the standard diffusion objective:
+ℒDM=𝔼zfused,ϵ,t​[‖ϵθ​(zt,t,etext)−ϵ‖22],\mathcal{L}_{\text{DM}}=\mathbb{E}_{z_{\text{fused}},\epsilon,t}\Big[\big\|\epsilon_{\theta}(z_{t},t,e_{\text{text}})-\epsilon\big\|_{2}^{2}\Big],
+(13)
+where ztz_{t} is the noised version of zfusedz_{\text{fused}} at time step tt, and ϵ∼𝒩⁡(0,𝐈)\epsilon\sim\mathcal{N}(0,\mathbf{I}).
+This step adds no extra modules and reuses the original diffusion objective. While optional, fine-tuning improves stability when the fused latent distribution differs from the pretrained backbone. Hyperparameter settings are provided in Section 5.2.
+Table 1: Dataset distillation results on ImageWoof across different IPC settings and test models. The best results in each row are in 𝐛𝐨𝐥𝐝\mathbf{bold}, and the second-best are underlined.
+IPC (Ratio)
+Test Model
+Random
+Herding
+DiT
+DM
+IDC-1
+Minimax
+D4M
+D4M+EVLF
+MGD3
+MGD3+EVLF
+Full
+10 (0.8%)
+ConvNet-6
+±1.124.3\!\pm\!{\scriptstyle 1.1}
+±0.726.7\!\pm\!{\scriptstyle 0.7}
+±1.134.2\!\pm\!{\scriptstyle 1.1}
+±1.226.9\!\pm\!{\scriptstyle 1.2}
+±1.333.3\!\pm\!{\scriptstyle 1.3}
+±1.733.3\!\pm\!{\scriptstyle 1.7}
+±0.929.4\!\pm\!{\scriptstyle 0.9}
+±2.4¯\underline{34.3\!\pm\!{\scriptstyle 2.4}}
+±1.933.5\!\pm\!{\scriptstyle 1.9}
+±1.0\mathbf{34.9\!\pm\!{\scriptstyle 1.0}}
+±0.286.4\!\pm\!{\scriptstyle 0.2}
+ResNetAP-10
+±0.829.4\!\pm\!{\scriptstyle 0.8}
+±0.332.0\!\pm\!{\scriptstyle 0.3}
+±0.534.7\!\pm\!{\scriptstyle 0.5}
+±1.230.3\!\pm\!{\scriptstyle 1.2}
+±0.5¯\underline{39.1\!\pm\!{\scriptstyle 0.5}}
+±3.236.2\!\pm\!{\scriptstyle 3.2}
+±2.133.2\!\pm\!{\scriptstyle 2.1}
+±0.737.3\!\pm\!{\scriptstyle 0.7}
+±0.936.6\!\pm\!{\scriptstyle 0.9}
+±0.3\mathbf{39.3\!\pm\!{\scriptstyle 0.3}}
+±0.587.5\!\pm\!{\scriptstyle 0.5}
+ResNet-18
+±0.927.7\!\pm\!{\scriptstyle 0.9}
+±1.230.2\!\pm\!{\scriptstyle 1.2}
+±0.434.7\!\pm\!{\scriptstyle 0.4}
+±0.733.4\!\pm\!{\scriptstyle 0.7}
+±0.2¯\underline{37.3\!\pm\!{\scriptstyle 0.2}}
+±1.635.7\!\pm\!{\scriptstyle 1.6}
+±1.232.3\!\pm\!{\scriptstyle 1.2}
+±2.135.9\!\pm\!{\scriptstyle 2.1}
+±1.835.1\!\pm\!{\scriptstyle 1.8}
+±0.3\mathbf{38.5\!\pm\!{\scriptstyle 0.3}}
+±1.289.3\!\pm\!{\scriptstyle 1.2}
+20 (1.6%)
+ConvNet-6
+±0.729.1\!\pm\!{\scriptstyle 0.7}
+±0.329.5\!\pm\!{\scriptstyle 0.3}
+±0.836.1\!\pm\!{\scriptstyle 0.8}
+±1.029.9\!\pm\!{\scriptstyle 1.0}
+±0.835.5\!\pm\!{\scriptstyle 0.8}
+±0.137.3\!\pm\!{\scriptstyle 0.1}
+±2.334.0\!\pm\!{\scriptstyle 2.3}
+±2.6¯\underline{40.1\!\pm\!{\scriptstyle 2.6}}
+±1.636.2\!\pm\!{\scriptstyle 1.6}
+±0.5\mathbf{40.2\!\pm\!{\scriptstyle 0.5}}
+±0.286.4\!\pm\!{\scriptstyle 0.2}
+ResNetAP-10
+±0.432.7\!\pm\!{\scriptstyle 0.4}
+±0.134.9\!\pm\!{\scriptstyle 0.1}
+±0.841.1\!\pm\!{\scriptstyle 0.8}
+±0.635.2\!\pm\!{\scriptstyle 0.6}
+±0.343.4\!\pm\!{\scriptstyle 0.3}
+±2.743.3\!\pm\!{\scriptstyle 2.7}
+±1.640.1\!\pm\!{\scriptstyle 1.6}
+±0.242.8\!\pm\!{\scriptstyle 0.2}
+±2.8¯\underline{44.5\!\pm\!{\scriptstyle 2.8}}
+±0.9\mathbf{45.1\!\pm\!{\scriptstyle 0.9}}
+±0.587.5\!\pm\!{\scriptstyle 0.5}
+ResNet-18
+±0.529.7\!\pm\!{\scriptstyle 0.5}
+±0.632.2\!\pm\!{\scriptstyle 0.6}
+±0.540.5\!\pm\!{\scriptstyle 0.5}
+±1.729.8\!\pm\!{\scriptstyle 1.7}
+±0.238.6\!\pm\!{\scriptstyle 0.2}
+±1.9¯\underline{41.8\!\pm\!{\scriptstyle 1.9}}
+±1.138.4\!\pm\!{\scriptstyle 1.1}
+±1.340.7\!\pm\!{\scriptstyle 1.3}
+±2.540.3\!\pm\!{\scriptstyle 2.5}
+±0.3\mathbf{42.1\!\pm\!{\scriptstyle 0.3}}
+±1.289.3\!\pm\!{\scriptstyle 1.2}
+50 (3.8%)
+ConvNet-6
+±0.641.3\!\pm\!{\scriptstyle 0.6}
+±0.740.3\!\pm\!{\scriptstyle 0.7}
+±0.846.5\!\pm\!{\scriptstyle 0.8}
+±1.044.4\!\pm\!{\scriptstyle 1.0}
+±1.243.9\!\pm\!{\scriptstyle 1.2}
+±0.850.9\!\pm\!{\scriptstyle 0.8}
+±0.947.4\!\pm\!{\scriptstyle 0.9}
+±0.9¯\underline{52.5\!\pm\!{\scriptstyle 0.9}}
+±0.451.9\!\pm\!{\scriptstyle 0.4}
+±0.4\mathbf{53.5\!\pm\!{\scriptstyle 0.4}}
+±0.286.4\!\pm\!{\scriptstyle 0.2}
+ResNetAP-10
+±1.347.2\!\pm\!{\scriptstyle 1.3}
+±1.049.1\!\pm\!{\scriptstyle 1.0}
+±0.249.3\!\pm\!{\scriptstyle 0.2}
+±1.147.1\!\pm\!{\scriptstyle 1.1}
+±0.548.3\!\pm\!{\scriptstyle 0.5}
+±0.753.9\!\pm\!{\scriptstyle 0.7}
+±3.251.7\!\pm\!{\scriptstyle 3.2}
+±0.2¯\underline{55.8\!\pm\!{\scriptstyle 0.2}}
+±1.055.6\!\pm\!{\scriptstyle 1.0}
+±1.1\mathbf{59.0\!\pm\!{\scriptstyle 1.1}}
+±0.587.5\!\pm\!{\scriptstyle 0.5}
+ResNet-18
+±1.847.9\!\pm\!{\scriptstyle 1.8}
+±1.248.3\!\pm\!{\scriptstyle 1.2}
+±0.550.1\!\pm\!{\scriptstyle 0.5}
+±0.646.2\!\pm\!{\scriptstyle 0.6}
+±0.848.3\!\pm\!{\scriptstyle 0.8}
+±0.653.7\!\pm\!{\scriptstyle 0.6}
+±2.253.7\!\pm\!{\scriptstyle 2.2}
+±0.9¯\underline{58.1\!\pm\!{\scriptstyle 0.9}}
+±0.556.3\!\pm\!{\scriptstyle 0.5}
+±1.5\mathbf{58.7\!\pm\!{\scriptstyle 1.5}}
+±1.289.3\!\pm\!{\scriptstyle 1.2}
+70 (5.4%)
+ConvNet-6
+±0.646.3\!\pm\!{\scriptstyle 0.6}
+±0.646.2\!\pm\!{\scriptstyle 0.6}
+±1.250.1\!\pm\!{\scriptstyle 1.2}
+±0.847.5\!\pm\!{\scriptstyle 0.8}
+±0.748.9\!\pm\!{\scriptstyle 0.7}
+±0.651.3\!\pm\!{\scriptstyle 0.6}
+±0.450.5\!\pm\!{\scriptstyle 0.4}
+±1.0¯\underline{56.1\!\pm\!{\scriptstyle 1.0}}
+±0.953.1\!\pm\!{\scriptstyle 0.9}
+±1.3\mathbf{56.7\!\pm\!{\scriptstyle 1.3}}
+±0.286.4\!\pm\!{\scriptstyle 0.2}
+ResNetAP-10
+±0.650.8\!\pm\!{\scriptstyle 0.6}
+±0.953.4\!\pm\!{\scriptstyle 0.9}
+±0.954.3\!\pm\!{\scriptstyle 0.9}
+±0.951.7\!\pm\!{\scriptstyle 0.9}
+±1.852.8\!\pm\!{\scriptstyle 1.8}
+±0.257.0\!\pm\!{\scriptstyle 0.2}
+±1.654.7\!\pm\!{\scriptstyle 1.6}
+±1.2¯\underline{59.6\!\pm\!{\scriptstyle 1.2}}
+±1.459.1\!\pm\!{\scriptstyle 1.4}
+±0.8\mathbf{60.1\!\pm\!{\scriptstyle 0.8}}
+±0.587.5\!\pm\!{\scriptstyle 0.5}
+ResNet-18
+±1.052.1\!\pm\!{\scriptstyle 1.0}
+±0.849.7\!\pm\!{\scriptstyle 0.8}
+±1.051.5\!\pm\!{\scriptstyle 1.0}
+±0.851.9\!\pm\!{\scriptstyle 0.8}
+±1.751.1\!\pm\!{\scriptstyle 1.7}
+±0.856.5\!\pm\!{\scriptstyle 0.8}
+±1.856.3\!\pm\!{\scriptstyle 1.8}
+±0.9¯\underline{59.7\!\pm\!{\scriptstyle 0.9}}
+±0.159.1\!\pm\!{\scriptstyle 0.1}
+±0.8\mathbf{60.5\!\pm\!{\scriptstyle 0.8}}
+±1.289.3\!\pm\!{\scriptstyle 1.2}
+100 (7.7%)
+ConvNet-6
+±0.452.2\!\pm\!{\scriptstyle 0.4}
+±1.154.4\!\pm\!{\scriptstyle 1.1}
+±0.353.4\!\pm\!{\scriptstyle 0.3}
+±1.355.0\!\pm\!{\scriptstyle 1.3}
+±0.953.2\!\pm\!{\scriptstyle 0.9}
+±0.957.8\!\pm\!{\scriptstyle 0.9}
+±1.557.9\!\pm\!{\scriptstyle 1.5}
+±0.2¯\underline{60.0\!\pm\!{\scriptstyle 0.2}}
+±0.358.9\!\pm\!{\scriptstyle 0.3}
+±2.5\mathbf{61.7\!\pm\!{\scriptstyle 2.5}}
+±0.286.4\!\pm\!{\scriptstyle 0.2}
+ResNetAP-10
+±1.059.4\!\pm\!{\scriptstyle 1.0}
+±0.961.7\!\pm\!{\scriptstyle 0.9}
+±0.858.3\!\pm\!{\scriptstyle 0.8}
+±0.856.4\!\pm\!{\scriptstyle 0.8}
+±0.956.0\!\pm\!{\scriptstyle 0.9}
+±1.462.7\!\pm\!{\scriptstyle 1.4}
+±1.859.5\!\pm\!{\scriptstyle 1.8}
+±0.7¯\underline{65.2\!\pm\!{\scriptstyle 0.7}}
+±1.564.3\!\pm\!{\scriptstyle 1.5}
+±0.9\mathbf{68.1\!\pm\!{\scriptstyle 0.9}}
+±0.587.5\!\pm\!{\scriptstyle 0.5}
+ResNet-18
+±1.361.5\!\pm\!{\scriptstyle 1.3}
+±0.759.3\!\pm\!{\scriptstyle 0.7}
+±1.358.9\!\pm\!{\scriptstyle 1.3}
+±1.060.2\!\pm\!{\scriptstyle 1.0}
+±1.258.3\!\pm\!{\scriptstyle 1.2}
+±0.462.7\!\pm\!{\scriptstyle 0.4}
+±1.363.8\!\pm\!{\scriptstyle 1.3}
+±1.9\mathbf{67.8\!\pm\!{\scriptstyle 1.9}}
+±1.065.7\!\pm\!{\scriptstyle 1.0}
+±0.3¯\underline{67.2\!\pm\!{\scriptstyle 0.3}}
+±1.289.3\!\pm\!{\scriptstyle 1.2}
+Table 2: Comparison of SOTA methods under various IPC settings on ImageNette and ImageIDC. All results are on ResNetAP-10. Best in bold, second best underlined.
+IPC
+Random
+DiT
+DM
+Minimax
+D4M
+D4M+EVLF
+MGD3
+MGD3+EVLF
+Nette
+10
+±1.654.2\!\pm\!{\scriptstyle 1.6}
+±0.759.1\!\pm\!{\scriptstyle 0.7}
+±0.660.8\!\pm\!{\scriptstyle 0.6}
+±1.257.7\!\pm\!{\scriptstyle 1.2}
+±1.760.9\!\pm\!{\scriptstyle 1.7}
+±1.2¯\underline{65.8\!\pm\!{\scriptstyle 1.2}}
+±1.064.3\!\pm\!{\scriptstyle 1.0}
+±1.6\mathbf{66.0\!\pm\!{\scriptstyle 1.6}}
+20
+±0.563.5\!\pm\!{\scriptstyle 0.5}
+±1.264.8\!\pm\!{\scriptstyle 1.2}
+±1.166.5\!\pm\!{\scriptstyle 1.1}
+±0.864.7\!\pm\!{\scriptstyle 0.8}
+±1.366.3\!\pm\!{\scriptstyle 1.3}
+±0.5¯\underline{71.7\!\pm\!{\scriptstyle 0.5}}
+±1.969.2\!\pm\!{\scriptstyle 1.9}
+±0.8\mathbf{72.5\!\pm\!{\scriptstyle 0.8}}
+50
+±1.176.1\!\pm\!{\scriptstyle 1.1}
+±0.973.3\!\pm\!{\scriptstyle 0.9}
+±0.476.2\!\pm\!{\scriptstyle 0.4}
+±0.373.9\!\pm\!{\scriptstyle 0.3}
+±1.177.7\!\pm\!{\scriptstyle 1.1}
+±0.5\mathbf{79.7\!\pm\!{\scriptstyle 0.5}}
+±1.979.2\!\pm\!{\scriptstyle 1.9}
+±0.4¯\underline{79.5\!\pm\!{\scriptstyle 0.4}}
+IDC
+10
+±0.848.1\!\pm\!{\scriptstyle 0.8}
+±0.454.1\!\pm\!{\scriptstyle 0.4}
+±0.552.8\!\pm\!{\scriptstyle 0.5}
+±1.451.9\!\pm\!{\scriptstyle 1.4}
+±0.547.7\!\pm\!{\scriptstyle 0.5}
+±1.5\mathbf{57.3\!\pm\!{\scriptstyle 1.5}}
+±2.355.0\!\pm\!{\scriptstyle 2.3}
+±1.5¯\underline{56.3\!\pm\!{\scriptstyle 1.5}}
+20
+±0.952.5\!\pm\!{\scriptstyle 0.9}
+±0.258.9\!\pm\!{\scriptstyle 0.2}
+±0.458.5\!\pm\!{\scriptstyle 0.4}
+±3.759.1\!\pm\!{\scriptstyle 3.7}
+±0.756.3\!\pm\!{\scriptstyle 0.7}
+±0.7¯\underline{62.0\!\pm\!{\scriptstyle 0.7}}
+±1.061.7\!\pm\!{\scriptstyle 1.0}
+±0.3\mathbf{64.1\!\pm\!{\scriptstyle 0.3}}
+50
+±0.768.1\!\pm\!{\scriptstyle 0.7}
+±0.664.3\!\pm\!{\scriptstyle 0.6}
+±0.869.1\!\pm\!{\scriptstyle 0.8}
+±1.469.4\!\pm\!{\scriptstyle 1.4}
+±1.067.8\!\pm\!{\scriptstyle 1.0}
+±0.3¯\underline{72.1\!\pm\!{\scriptstyle 0.3}}
+±0.971.0\!\pm\!{\scriptstyle 0.9}
+±1.1\mathbf{72.7\!\pm\!{\scriptstyle 1.1}}
+Table 3: Performance comparison on CIFAR-10 and CIFAR-100.
+Dataset
+IPC
+SRe2L
+RDED
+D4M
+D4M+EVLF
+CIFAR-10
+10
+±0.529.3\!\pm\!0.5
+±0.337.1\!\pm\!0.3
+±1.837.6\!\pm\!1.8
+±0.5\mathbf{45.7\!\pm\!0.5}
+50
+±0.745.0\!\pm\!0.7
+±0.162.1\!\pm\!0.1
+±1.271.7\!\pm\!1.2
+±0.7\mathbf{73.5\!\pm\!0.7}
+CIFAR-100
+10
+±0.427.0\!\pm\!0.4
+±0.242.6\!\pm\!0.2
+±0.753.2\!\pm\!0.7
+±0.4\mathbf{56.2\!\pm\!0.4}
+50
+±0.450.2\!\pm\!0.4
+±0.162.6\!\pm\!0.1
+±0.266.0\!\pm\!0.2
+±0.1\mathbf{66.8\!\pm\!0.1}
+Table 4: Performance comparison on Tiny-ImageNet.
+Dataset
+IPC
+SRe2L
+RDED
+D4M
+D4M+EVLF
+Tiny-ImageNet
+10
+±0.216.1\!\pm\!0.2
+±0.241.9\!\pm\!0.2
+±0.442.5\!\pm\!0.4
+±0.4\mathbf{49.2\!\pm\!0.4}
+50
+±0.441.1\!\pm\!0.4
+±0.158.2\!\pm\!0.1
+±0.155.8\!\pm\!0.1
+±0.1\mathbf{58.5\!\pm\!0.1}
+Table 5: Performance comparison on ImageNet-1K.
+Dataset
+IPC
+Accuracy (%)
+ImageNet-1K
+10
+SRe2L
+RDED
+DiT
+Minimax
+±0.621.3\!\pm\!0.6
+±0.142.0\!\pm\!0.1
+±0.439.6\!\pm\!0.4
+±0.544.3\!\pm\!0.5
+D4M
+D4M+EVLF
+MGD3
+MGD3+EVLF
+±0.647.7\!\pm\!0.6
+±0.348.3\!\pm\!0.3
+±0.650.8\!\pm\!0.6
+±0.3\mathbf{51.3\!\pm\!0.3}
+50
+SRe2L
+RDED
+DiT
+Minimax
+±0.246.8\!\pm\!0.2
+±0.156.5\!\pm\!0.1
+±0.652.9\!\pm\!0.6
+±0.358.6\!\pm\!0.3
+D4M
+D4M+EVLF
+MGD3
+MGD3+EVLF
+±0.160.1\!\pm\!0.1
+±0.060.6\!\pm\!0.0
+±0.460.3\!\pm\!0.4
+±0.1\mathbf{61.9\!\pm\!0.1}
+5 Experiments
+5.1 Datasets
+We evaluate our method on both small- and high-resolution benchmarks to assess its effectiveness across different data scales. For small-resolution settings, we use CIFAR-10 and CIFAR-100, each containing 60,000 natural images with 10 and 100 classes, respectively, which are standard testbeds for dataset distillation under low-resolution constraints. For high-resolution evaluation, we conduct experiments on ImageNet-1K and several of its commonly used subsets: ImageNette (10 easily separable classes), ImageWoof (fine-grained dog breeds), ImageIDC (domain-specific distribution shift), and Tiny-ImageNet (200 classes, 100K images) as a mid-scale benchmark. This selection enables a comprehensive comparison across varying resolutions, dataset scales, and task difficulties.
+5.2 Implementation Details
+The cross-attention module is trained for 4 epochs with a batch size of 16 using AdamW. We set the learning rate to 3×10−43\times 10^{-4} for the cross-attention parameters and 1×10−41\times 10^{-4} for the projector, with a weight decay of 1×10−21\times 10^{-2} applied to both. To balance visual preservation and semantic alignment, we fix λ1=0.1\lambda_{1}=0.1 for ℒInfoNCE\mathcal{L}_{\mathrm{InfoNCE}} and linearly increase λ2\lambda_{2} for ℒMSE\mathcal{L}_{\mathrm{MSE}} from 0.050.05 to 1.01.0 over the first 2 training epochs.
+After cross-attention training, the denoiser may be optionally fine-tuned on fused latents using the standard diffusion loss. In our experiments, D4M employs this fine-tuning step, while MGD3 retains the original denoiser.
+We generate at 32×3232\times 32 resolution for CIFAR-10/100, 256×256256\times 256 for ImageNet-1K subsets, and 224×224224\times 224 for full ImageNet-1K. For fair comparison, we follow the evaluation protocols of [12] and [34]. All experiments are performed on a single NVIDIA A5000 GPU.
+5.3 Comparison with SOTA Methods
+We compare EVLF against two categories of dataset distillation methods.
+The generative group includes MGD3 [5], MinimaxDiffusion [12], D4M [32], and DiT-based diffusion backbones [12, 26].
+The non-generative group includes SRe2L [40], RDED [34], DM [45], IDC-1 [15], and Herding [37].
+For fair comparison, we reproduced MGD3, MinimaxDiffusion, and D4M on ImageNette, ImageIDC, and ImageWoof using the authors’ official implementations. All reported results are averaged over three fixed seeds (0, 1, 2) and are presented as mean ± standard deviation.
+ImageWoof.
+We evaluate EVLF on ImageWoof under multiple IPC settings with ConvNet-6, ResNetAP-10, and ResNet-18 (Tab. 1). As a fine-grained dataset with high intra-class similarity, ImageWoof poses a challenging setting for distilled data synthesis. Across all architectures and IPC settings, EVLF consistently improves performance over the respective baselines, demonstrating its plug-and-play applicability and strong generalization.
+At low IPC (e.g., IPC = 10), EVLF achieves 39.3% accuracy on ResNetAP-10, outperforming the baseline by 2.7%. At higher IPC (e.g., IPC = 100), the improvement remains pronounced, surpassing MGD3 by 3.8%. These results verify that EVLF effectively preserves fine-grained semantic cues and scales reliably across architectures and data regimes.
+ImageNette and ImageIDC.
+We examine EVLF on ImageNette and ImageIDC using ResNetAP-10 under IPC settings of 10, 20, and 50 (Tab. 2). Across all configurations, EVLF consistently outperforms the baselines. On ImageNette, EVLF achieves substantial gains, improving upon D4M by an average of 4.9%.
+ImageIDC presents a more challenging scenario due to its fine-grained categories; however, EVLF still delivers notable improvements. Under IPC = 10, EVLF surpasses D4M by 9.6%, indicating strong robustness under limited sample budgets. These consistent gains confirm that early vision-language fusion effectively mitigates the over-correction issue in late-fusion pipelines, producing more semantically faithful and structurally coherent synthetic data that translates to stronger downstream performance.
+CIFAR-10 and CIFAR-100.
+We further evaluate EVLF on the low-resolution CIFAR-10 and CIFAR-100 datasets (32 ×\times 32). As shown in Tab. 3, EVLF consistently outperforms previous state-of-the-art methods across IPC settings. Notably, at IPC = 10, EVLF surpasses D4M by 8.1% on CIFAR-10. These results demonstrate that EVLF remains effective even under severe resolution and information constraints, indicating strong robustness and generalization across diverse visual conditions.
+Tiny-ImageNet and ImageNet-1K.
+We further validate EVLF on the mid-resolution Tiny-ImageNet dataset (64×6464\times 64) and the large-scale ImageNet-1K benchmark. As shown in Tab. 4, EVLF consistently outperforms all competing methods on Tiny-ImageNet, yielding notable gains when integrated with D4M. On ImageNet-1K (Tab. 5), EVLF continues to improve baseline performance and surpasses prior state-of-the-art approaches. These results demonstrate that the proposed early fusion strategy scales effectively from mid-resolution to full large-scale settings, providing stable improvements across dataset sizes and complexity levels.
+Table 6: Transfer learning results on target datasets using models pretrained on the distilled ImageNet-1K dataset.
+Method
+CIFAR-10
+CIFAR-100
+Dogs
+Flowers
+w/o pre
+±0.0988.66\!\pm\!0.09
+±0.3266.62\!\pm\!0.32
+±0.4624.59\!\pm\!0.46
+±0.2959.39\!\pm\!0.29
+Random
+±0.0988.46\!\pm\!0.09
+±0.0865.97\!\pm\!0.08
+±0.4023.08\!\pm\!0.40
+±0.4056.81\!\pm\!0.40
+FRePo
+±0.2087.88\!\pm\!0.20
+±0.4765.23\!\pm\!0.47
+±0.4522.05\!\pm\!0.45
+±0.5152.50\!\pm\!0.51
+KRR-ST
+±0.1989.33\!\pm\!0.19
+±0.2268.04\!\pm\!0.22
+±0.4535.51\!\pm\!0.45
+±0.3470.45\!\pm\!0.34
+MGD3+EVLF
+±0.15\mathbf{90.23\!\pm\!0.15}
+±0.07\mathbf{69.21\!\pm\!0.07}
+±0.37\mathbf{36.18\!\pm\!0.37}
+±0.53\mathbf{76.03\!\pm\!0.53}
+Transfer Learning.
+To further evaluate the generalization capability of the distilled datasets, we conduct transfer learning experiments following the protocol of KRR-ST [17]. Specifically, a ConvNet-4 model is first pre-trained on the distilled ImageNet-1K subset (0.8× of the original training size) and then fine-tuned on downstream target datasets. As shown in Tab. 6, datasets distilled by MGD3+EVLF yield consistently higher fine-tuning accuracy than those distilled by prior methods. This indicates that our synthesized data better preserves discriminative semantics and class-consistent visual structure, enabling more effective feature transfer across tasks.
+5.4 Ablation Studies
+Impact of Denoiser Fine-Tuning and CrossAttention.
+We compare four variants of the D4M pipeline:
+(1)
+Baseline: D4M with a pretrained denoiser.
+(2)
+D4M + Denoiser Fine-Tuning: The denoiser is fine-tuned on original visual embeddings from ImageIDC.
+(3)
+D4M + CrossAttention: CrossAttention module is applied while keeping the denoiser frozen.
+(4)
+D4M + CrossAttention + Denoiser Fine-Tuning: The denoiser is fine-tuned on fused embeddings.
+We evaluate all variants using ResNetAP-10 under IPC settings of 10, 20, and 50.
+As shown in Tab. 7, both CrossAttention and denoiser fine-tuning independently improve performance over the baseline, and their combination yields the best results across all IPC settings. This confirms that early fusion addresses semantic over-correction, while denoiser adaptation helps align the generative prior with the fused latent distribution.
+Table 7: Ablation on the contributions of denoiser fine-tuning (FT.) and the CrossAttention module (CA.) within the D4M pipeline. Results are reported on ImageIDC with ResNetAP-10 under varying IPC settings.
+Method
+Ablation Components
+IPC
+FT.
+CA.
+10
+20
+50
+D4M
+–
+–
+±0.547.7\!\pm\!0.5
+±0.756.3\!\pm\!0.7
+±1.067.8\!\pm\!1.0
+D4M+EVLF
+✓\checkmark
+–
+✓\checkmark
+–
+✓\checkmark
+✓\checkmark
+±0.754.1\!\pm\!0.7
+±2.551.1\!\pm\!2.5
+±1.5\mathbf{57.3\!\pm\!1.5}
+±0.161.1\!\pm\!0.1
+±0.357.5\!\pm\!0.3
+±0.7\mathbf{62.0\!\pm\!0.7}
+±0.970.3\!\pm\!0.9
+±2.369.1\!\pm\!2.3
+±0.3\mathbf{72.1\!\pm\!0.3}
+t-SNE Visualization.
+Prior work has shown that the diversity of distilled samples strongly correlates with downstream performance [1, 5]. To examine distributional coverage, we visualize the t-SNE embeddings of synthetic datasets generated by D4M, MGD3, and their respective variants augmented with EVLF. As shown in Fig. 3, D4M and MGD3 produce embeddings that occupy relatively narrow regions of the real-data manifold, indicating limited diversity. In contrast, incorporating EVLF yields embeddings that span a broader portion of the manifold, suggesting improved intra-class variation and richer class-wise representation coverage.
+Figure 3: t-SNE visualization of synthetic and real samples on four ImageNet-1K classes. D4M [32] and MGD3 [5] produce synthetic samples that occupy limited regions of the real-data manifold. With EVLF, the synthesized samples cover a broader and more varied region, indicating improved diversity and distributional alignment.
+Parameter Analysis.
+We analyze the effect of the text-injection weight λ1\lambda_{1} in ℒInfoNCE\mathcal{L}_{\mathrm{InfoNCE}} from two perspectives: validation accuracy and distributional coverage. Coverage is measured following [24].
+For each real sample, we compute the distance to its 20th nearest real neighbor to define a local radius.
+A generated sample is considered covered if it falls within the radius of any real point, and the coverage score is the proportion of generated samples that satisfy this condition.
+As shown in Fig. 4, enabling text injection (λ1>0\lambda_{1}>0) leads to notable gains in both accuracy and coverage, while λ1=0\lambda_{1}=0, i.e., no EVLF, results in over-corrected generations dominated by late-stage prompt conditioning, producing visually repetitive samples with reduced fidelity. Once EVLF is introduced, coverage increases substantially, indicating greater visual diversity and more faithful alignment with the real-data manifold. Further increasing λ1\lambda_{1} causes only minor fluctuations in both metrics, suggesting that EVLF is robust and not highly sensitive to this parameter. We adopt λ1=0.10\lambda_{1}=0.10 as the default setting, as it yields the most stable accuracy (lowest variance in the shaded confidence region).
+Figure 4: Parameter Analysis of λ1\lambda_{1} on ImageIDC.
+5.5 Visualization
+To further assess synthesis quality, we compare EVLF with prior methods at both low and high resolutions, as illustrated in Fig. 5.
+Fig. 5 (a) shows results for the Bird class on CIFAR-10. D4M primarily captures coarse bird-like silhouettes with limited structural detail, whereas EVLF produces more natural and coherent shapes with clearer textures and greater intra-class variation.
+Fig. 5 (b) presents results for the Beagle class on ImageWoof. D4M occasionally generates cartoonish or off-class artifacts, while EVLF yields richer texture patterns and visually consistent backgrounds.
+These visual comparisons demonstrate that EVLF effectively preserves label semantics while also maintaining visual fidelity and diversity, resulting in broader and more realistic coverage of the underlying data distribution.
+Figure 5: Visualization of synthesized images generated by D4M and our EVLF under low- and high-resolution settings. (a) Bird class from CIFAR-10, and (b) Beagle class from ImageNet-1K. EVLF produces samples with clearer structure, richer textures, and improved consistency with class semantics across different image scales.
+6 Conclusion
+We introduced Early Vision-Language Fusion (EVLF), a plug-and-play method that integrates textual semantics into the visual latent space before denoising through a lightweight cross-attention mechanism. By grounding semantic cues at the encoder stage, EVLF mitigates prompt-induced over-correction and enables the generation of synthetic datasets that are both semantically faithful and visually coherent. The approach is architecture-agnostic and can be seamlessly incorporated into existing diffusion-based distillation pipelines without modifying their training objectives or model structures.
+Limitations and Future Works
+Our current formulation focuses on class-level conditioning and does not address instance-level or multi-label scenarios. Future work will explore extending EVLF to instance-aware and compositional prompts to further enhance fine-grained control and sample diversity while preserving semantic consistency.
+References
+[1]
+D. Bo, S. Liu, and X. Wang (2025)
+Understanding dataset distillation via spectral filtering.
+arXiv preprint arXiv:2503.01212.
+Cited by: §5.4.
+[2]
+F. M. Castro, M. J. Marín-Jiménez, N. Guil, C. Schmid, and K. Alahari (2018)
+End-to-end incremental learning.
+In Proceedings of the European Conference on Computer Vision (ECCV),
+pp. 233–248.
+Cited by: §2.
+[3]
+G. Cazenavette, T. Wang, A. Torralba, A. A. Efros, and J. Zhu (2022)
+Dataset distillation by matching training trajectories.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 4750–4759.
+Cited by: §2.
+[4]
+G. Cazenavette, T. Wang, A. Torralba, A. A. Efros, and J. Zhu (2023)
+Generalizing dataset distillation via deep generative prior.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 3739–3748.
+Cited by: §2.
+[5]
+J. A. Chan-Santiago, P. Tirupattur, G. K. Nayak, G. Liu, and M. Shah (2025)
+MGD^3: mode-guided dataset distillation using diffusion models.
+arXiv preprint arXiv:2505.18963.
+Cited by: §1,
+§2,
+Figure 3,
+Figure 3,
+§5.3,
+§5.4.
+[6]
+A. Chauhan U. Tiwari et al. (2023)
+Post training mixed precision quantization of neural networks using first-order information.
+In Proceedings of the IEEE/CVF international conference on computer vision (ICCV),
+pp. 1343–1352.
+Cited by: §1.
+[7]
+M. Chen, B. Huang, J. Lu, B. Li, Y. Wang, M. Cheng, and W. Wang (2023)
+Dataset distillation via adversarial prediction matching.
+arXiv preprint arXiv:2312.08912.
+Cited by: §2.
+[8]
+W. Chen, P. Wang, and J. Cheng (2021)
+Towards mixed-precision quantization of neural networks via constrained optimization.
+In Proceedings of the IEEE/CVF international conference on computer vision (ICCV),
+pp. 5350–5359.
+Cited by: §1.
+[9]
+Y. Chen, M. Welling, and A. Smola (2012)
+Super-samples from kernel herding.
+arXiv preprint arXiv:1203.3472.
+Cited by: §2.
+[10]
+J. Deng, W. Dong, R. Socher, L. Li, K. Li, and L. Fei-Fei (2009)
+Imagenet: a large-scale hierarchical image database.
+In 2009 IEEE conference on computer vision and pattern recognition,
+pp. 248–255.
+Cited by: §1.
+[11]
+X. Ding, G. Ding, Y. Guo, and J. Han (2019)
+Centripetal sgd for pruning very deep convolutional networks with complicated structure.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 4943–4953.
+Cited by: §1.
+[12]
+J. Gu, S. Vahidian, V. Kungurtsev, H. Wang, W. Jiang, Y. You, and Y. Chen (2024)
+Efficient dataset distillation via minimax diffusion.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 15793–15803.
+Cited by: §1,
+§2,
+§5.2,
+§5.3.
+[13]
+Y. He, P. Liu, Z. Wang, Z. Hu, and Y. Yang (2019)
+Filter pruning via geometric median for deep convolutional neural networks acceleration.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 4340–4349.
+Cited by: §1.
+[14]
+Y. He, L. Xiao, J. T. Zhou, and I. Tsang (2024)
+Multisize dataset condensation.
+arXiv preprint arXiv:2403.06075.
+Cited by: §1,
+§2.
+[15]
+J. Kim, J. Kim, S. J. Oh, S. Yun, H. Song, J. Jeong, J. Ha, and H. O. Song (2022)
+Dataset condensation via efficient synthetic-data parameterization.
+In Proceedings of the International Conference on Machine Learning (ICML),
+pp. 11102–11118.
+Cited by: §5.3.
+[16]
+Y. LeCun, Y. Bengio, and G. Hinton (2015)
+Deep learning.
+nature 521 (7553), pp. 436–444.
+Cited by: §1.
+[17]
+D. B. Lee, S. Lee, J. Ko, K. Kawaguchi, J. Lee, and S. J. Hwang (2024)
+Self-supervised dataset distillation for transfer learning.
+In Proceedings of the International Conference on Learning Representations (ICLR),
+Cited by: §5.3.
+[18]
+S. Lei and D. Tao (2023)
+A comprehensive survey of dataset distillation.
+Proceedings of the IEEE Transactions on Pattern Analysis and Machine Intelligence (PAMI) 46 (1), pp. 17–32.
+Cited by: §1.
+[19]
+G. Li, B. Zhao, and T. Wang (2022)
+Awesome dataset distillation.
+Note: https://github.com/Guang000/Awesome-Dataset-Distillation
+Cited by: §2.
+[20]
+P. Liu and J. Du (2025)
+The evolution of dataset distillation: toward scalable and generalizable solutions.
+arXiv preprint arXiv:2502.05673.
+Cited by: §1.
+[21]
+Z. Liu, J. Li, Z. Shen, G. Huang, S. Yan, and C. Zhang (2017)
+Learning efficient convolutional networks through network slimming.
+In Proceedings of the IEEE international conference on computer vision,
+pp. 2736–2744.
+Cited by: §1.
+[22]
+N. Loo, R. Hasani, A. Amini, and D. Rus (2022)
+Efficient dataset distillation using random feature approximation.
+In Proceedings of the Advances in Neural Information Processing Systems (NeurIPS),
+Vol. 35, pp. 13877–13891.
+Cited by: §2.
+[23]
+B. B. Moser, F. Raue, S. Palacio, S. Frolov, and A. Dengel (2024)
+Latent dataset distillation with diffusion models.
+arXiv preprint arXiv:2403.03881.
+Cited by: §2.
+[24]
+M. F. Naeem, S. J. Oh, Y. Uh, Y. Choi, and J. Yoo (2020)
+Reliable fidelity and diversity metrics for generative models.
+In Proceedings of the International Conference on Machine Learning (ICML),
+pp. 7176–7185.
+Cited by: §5.4.
+[25]
+T. Nguyen, R. Novak, L. Xiao, and J. Lee (2021)
+Dataset distillation with infinitely wide convolutional networks.
+In Proceedings of the Advances in Neural Information Processing Systems (NeurIPS),
+Vol. 34, pp. 5186–5198.
+Cited by: §1,
+§2.
+[26]
+W. Peebles and S. Xie (2023)
+Scalable diffusion models with transformers.
+In Proceedings of the IEEE/CVF international conference on computer vision (ICCV),
+pp. 4195–4205.
+Cited by: §1,
+§1,
+§2,
+§3.2,
+§5.3.
+[27]
+S. Rebuffi, A. Kolesnikov, G. Sperl, and C. H. Lampert (2017)
+Icarl: incremental classifier and representation learning.
+In Proceedings of the IEEE conference on computer vision and pattern recognition (CVPR),
+pp. 2001–2010.
+Cited by: §2.
+[28]
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer (2022)
+High-resolution image synthesis with latent diffusion models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 10684–10695.
+Cited by: §1,
+§1,
+§2,
+§3.2.
+[29]
+S. Shao, Z. Yin, M. Zhou, X. Zhang, and Z. Shen (2024)
+Generalized large-scale data condensation via various backbone and statistical matching.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 16709–16718.
+Cited by: §2.
+[30]
+S. Shao, Z. Zhou, H. Chen, and Z. Shen (2024)
+Elucidating the design space of dataset condensation.
+arXiv preprint arXiv:2404.13733.
+Cited by: §1,
+§2.
+[31]
+A. Sharma and H. Foroosh (2022)
+RAPID: a single stage pruning framework.
+In Proceedings of the 2022 IEEE International Conference on Image Processing (ICIP),
+pp. 3611–3615.
+Cited by: §1.
+[32]
+D. Su, J. Hou, W. Gao, Y. Tian, and B. Tang (2024)
+D^ 4: dataset distillation via disentangled diffusion model.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 5809–5818.
+Cited by: §1,
+§2,
+§4.3,
+Figure 3,
+Figure 3,
+§5.3.
+[33]
+I. Sucholutsky and M. Schonlau (2021)
+Secdd: efficient and secure method for remotely training neural networks (student abstract).
+In Proceedings of the AAAI Conference on Artificial Intelligence (AAAI),
+Vol. 35, pp. 15897–15898.
+Cited by: §2.
+[34]
+P. Sun, B. Shi, D. Yu, and T. Lin (2024)
+On the diversity and realism of distilled dataset: an efficient dataset distillation paradigm.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 9390–9399.
+Cited by: §2,
+§5.2,
+§5.3.
+[35]
+K. Wang, B. Zhao, X. Peng, Z. Zhu, S. Yang, S. Wang, G. Huang, H. Bilen, X. Wang, and Y. You (2022)
+Cafe: learning to condense dataset by aligning features.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 12196–12205.
+Cited by: §1,
+§2.
+[36]
+T. Wang, J. Zhu, A. Torralba, and A. A. Efros (2018)
+Dataset distillation.
+arXiv preprint arXiv:1811.10959.
+Cited by: §1,
+§2.
+[37]
+M. Welling (2009)
+Herding dynamical weights to learn.
+In Proceedings of the 26th annual International Conference on Machine Learning (ICML),
+pp. 1121–1128.
+Cited by: §2,
+§5.3.
+[38]
+J. Wu, C. Leng, Y. Wang, Q. Hu, and J. Cheng (2016)
+Quantized convolutional neural networks for mobile devices.
+In Proceedings of the IEEE conference on computer vision and pattern recognition (CVPR),
+pp. 4820–4828.
+Cited by: §1.
+[39]
+K. Xu, L. Han, Y. Tian, S. Yang, and X. Zhang (2023)
+Eq-net: elastic quantization neural networks.
+In Proceedings of the IEEE/CVF international conference on computer vision (ICCV),
+pp. 1505–1514.
+Cited by: §1.
+[40]
+Z. Yin, E. Xing, and Z. Shen (2023)
+Squeeze, recover and relabel: dataset condensation at imagenet scale from a new perspective.
+In Proceedings of the Advances in Neural Information Processing Systems (NeurIPS),
+Vol. 36, pp. 73582–73603.
+Cited by: §1,
+§2,
+§5.3.
+[41]
+D. J. Zhang, H. Wang, C. Xue, R. Yan, W. Zhang, S. Bai, and M. Z. Shou (2023)
+Dataset condensation via generative model.
+arXiv preprint arXiv:2309.07698.
+Cited by: §2.
+[42]
+H. Zhang, S. Li, P. Wang, D. Zeng, and S. Ge (2024)
+M3d: dataset condensation by minimizing maximum mean discrepancy.
+In Proceedings of the AAAI Conference on Artificial Intelligence (AAAI),
+Vol. 38, pp. 9314–9322.
+Cited by: §1,
+§2.
+[43]
+B. Zhao and H. Bilen (2021)
+Dataset condensation with differentiable siamese augmentation.
+In Proceedings of the International Conference on Machine Learning (ICML),
+pp. 12674–12685.
+Cited by: §2.
+[44]
+B. Zhao and H. Bilen (2022)
+Synthesizing informative training samples with gan.
+arXiv preprint arXiv:2204.07513.
+Cited by: §2.
+[45]
+B. Zhao and H. Bilen (2023)
+Dataset condensation with distribution matching.
+In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV),
+pp. 6514–6523.
+Cited by: §2,
+§5.3.
+[46]
+B. Zhao, K. R. Mopuri, and H. Bilen (2020)
+Dataset condensation with gradient matching.
+arXiv preprint arXiv:2006.05929.
+Cited by: §1,
+§2.
+[47]
+G. Zhao, G. Li, Y. Qin, and Y. Yu (2023)
+Improved distribution matching for dataset condensation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 7856–7865.
+Cited by: §1,
+§2.
+[48]
+X. Zhong, H. Fang, B. Chen, X. Gu, M. Qiu, S. Qi, and S. Xia (2025)
+Hierarchical features matter: a deep exploration of progressive parameterization method for dataset distillation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+pp. 30462–30471.
+Cited by: §2.
+[49]
+Y. Zou, G. Li, D. Su, Z. Wang, J. Yu, and C. Zhang (2025)
+Dataset distillation via vision-language category prototype.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision,
+pp. 2941–2950.
+Cited by: §2.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

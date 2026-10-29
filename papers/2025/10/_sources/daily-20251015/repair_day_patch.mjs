@@ -1,0 +1,18 @@
+import fs from 'node:fs';
+const root='papers/2025/10/_sources/daily-20251015/';
+const file='papers/2025/10/15/README.md';
+const baseline=fs.readFileSync('/tmp/daily-20251015-baseline-20261028.md','utf8');
+const current=fs.readFileSync(file,'utf8');
+let draft=fs.readFileSync(root+'REPAIR_DAY_DRAFT.md','utf8');
+const oldRow=baseline.split('\n').find(l=>l.startsWith('| [Part II: ROLL Flash'));
+const section4=baseline.split('## 4. 证据与知识整合\n\n')[1].split('\n## 5. 缺口与下一步')[0].trimEnd();
+const table=baseline.split('## 2. 来源覆盖\n')[1].split('\n\n').find(p=>p.startsWith('| 来源 |'));
+const hunyuan='| SRC-TENCENT-HUNYUAN | 本日官方Research的JS绑定POST publicList，实际accept-language:zh、pageNum1/pageSize100/renderType0，HTTP200/code0/totalNum11/list11，全部中文11题名/两日期字段已读；Se0=All/1论文/2模型，实际页面消费含hy3重复卡过滤，止完整11，不重复拉默认1000 | 受阻 | 当前中文All11/11已核但全2026，不授2025零；旧default/en9或UI失败不代中文All，目标历史段仍缺 |';
+const arxiv='| SRC-ARXIV | 复用本日五有限Advanced首片Model50/124、Agent25/33、Multi25/93、GPU10/10、Runtime25/30共135出现/117身份及CL/AR共75月标题查漏；宽50/783已收窄，不追tail或全库存Methods。legacy一次timeout0B即停，非空Atom。仅对原82精确DOI逐身份核唯一v1/arxiv.content/findable/registered及2025规则，返回82/单页，28完整联合区间落BJT Oct14 | 受阻 | 有限主题发现/28日期层通过，不称全分类召回；50单日窗后、15994跨日但全区间窗后，另3跨界仍缺单日原证。Submitted/月号/created不独断，组合只授arXiv v1事件而非全球first/同bytes |';
+const sourceTable=table.split('\n').map(l=>l.startsWith('| SRC-TENCENT-HUNYUAN |')?hunyuan:l.startsWith('| SRC-ARXIV |')?arxiv:l).join('\n');
+if(!oldRow||!section4||!table)throw Error('Baseline fields missing');
+draft=draft.replace('{{OLD_ROW}}',oldRow).replace('{{OLD_SECTION4}}',section4).replace('{{SOURCE_TABLE}}',sourceTable);
+if(draft.includes('{{'))throw Error('Unresolved draft field');
+if(!draft.includes(section4)||!draft.includes(oldRow))throw Error('Freeze failed');
+const patch='*** Begin Patch\n*** Update File: '+file+'\n@@\n'+current.trimEnd().split('\n').map(l=>'-'+l).join('\n')+'\n'+draft.trimEnd().split('\n').map(l=>'+'+l).join('\n')+'\n*** End Patch';
+console.log(JSON.stringify({patch}));

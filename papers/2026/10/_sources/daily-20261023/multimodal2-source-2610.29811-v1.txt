@@ -1,0 +1,656 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.29811v1
+Original retrieval 2026-10-23 BJT. Preservation is not a review-completion claim. Reviewed necessary scope is SOURCE_MULTIMODAL2.md.
+Abstract
+Compositional zero-shot learning (CZSL) aims to recognize novel combinations of previously observed objects and attributes. Prior work showed that large-scale vision–language models encode decomposable semantic structures, that can be recomposed to enable generalization. The Geodesically Decomposable Embeddings (GDE) framework formalizes this by identifying directions in the tangent space at the Fréchet mean of the embedding distribution, which encode primitive visual concepts. Unseen attribute–object compositions can be synthesized through vector addition of these primitives.
+We revisit the assumption that compositional generalization requires explicit attribute-object pair re-composition. By means of new compositional scoring functions and extensive evaluations, we show that directly using the decomposed primitives suffices for recognizing unseen compositions. In that, we gain insights on how the geometry of the embedding manifold (Euclidean, spherical, or hyperbolic) and dataset structure affect compositional reasoning.
+Across models (CLIP, DINOv2, MERU, HyCoCLIP), we show that compositional structure consistently emerges as primitive representations, enabling inference on CZSL benchmarks (MIT-States, VAW-CZSL, UT-Zappos50K, Clothing16K) and group robustness on Waterbirds and CelebA. 1 1 
+ 1 
+ Code: github.com/nis-research/Compositionality-with-Primitives 
+ 1 Introduction
+Recognizing a sliced banana after seeing only sliced bread and
+ whole bananas requires disentangling the attributes sliced and whole from the
+objects bread and banana , and reasoning over them independently.
+This ability reflects the broader principle of compositionality, a fundamental cognitive skill of humans clearly arising in language  [ 14 ] , whereby complex concepts are constructed from simpler, reusable ones  [ 24 ] . At its core, it underpins the ability to generalize robustly to novel compositions without requiring direct supervision  [ 14 ] .
+In Machine Vision, this paradigm is formalized as compositional zero-shot learning (CZSL)  [ 20 , 21 ] : given training images depicting a closed set of attribute-object pairs, the aim is to enable a model to recognize novel compositions of known concepts without having seen them during training. Open-world CZSL  [ 18 ] extended this setting to the full Cartesian product of attributes and objects, significantly increasing task
+difficulty, and accounting for the long-tailed distribution of real-world generalization.
+Existing solutions typically attempt to learn compositional representations using conditional formulations of attribute-object representations   [ 36 , 9 , 35 ] , or learning compositional soft-prompt  [ 22 , 17 ] , visual proxies  [ 41 ] or invariant representations  [ 42 ] .
+Recent work on Geodesically Decomposable Embeddings
+(GDE)  [ 2 ] provides a different perspective: vision embeddings of pre-trained vision-language models already exhibit compositional semantic structures. These can be disentangled to perform compositional zero-shot classification. By projecting representations into the tangent space at the Fréchet mean of the embedding distribution of a dataset and performing a factorization step,
+attribute and object representations emerge as vector directions that embed basic visual concepts, called primitives. These can be recombined by vector arithmetics in the tangent space, thus synthesizing the representation of unseen object-attribute pairs and enabling their recognition.
+However, the focus in  [ 2 ] was limited to
+CLIP spherical embeddings  [ 28 ] . It remains unclear whether this view of compositionality extends to other space geometries, i.e. spaces with flat (Euclidean) or negative (hyperbolic) curvature, and whether explicit composition of primitives into pairs is necessary to achieve open-world compositional generalization. This question gains particular relevance for hyperbolic models  [ 5 , 23 ] , where embeddings lie on the Lorentz space and representations encode compositional hierarchy in a tree-like fashion.
+ (a) 
+ (b) 
+ (c) 
+ Figure 1 : Geodesics initiating from the origin across Euclidean, spherical, and hyperbolic manifolds. The plots illustrate the structural differences imposed by space curvature: (a) Euclidean space is flat; (b) spherical space has positive curvature with origin estimated on the Fréchet mean of the dataset embeddings; (c) Hyperbolic space has negative curvature with a well-defined origin, resulting in tree-like hierarchical representation space. Data clusters are differentiated by color and marker type ({ red , blue } \times { square , circle }). 
+In this work, we place primitives at the center of the analysis and revisit compositional reasoning in VLMs. By means of novel compositional scoring functions, we demonstrate that primitives can be used directly to perform compositional inference without the need of explicitly constructing (unseen) pair representations. We demonstrate improved open-world compositional generalization,
+across Euclidean, spherical, and hyperbolic representation
+spaces, which hold different geometric and data distribution properties (see Figure  1 ).
+To perform this extensive investigation, we build upon the GDE framework and leverage its formulation beyond the original spherical setting of CLIP  [ 28 ] ,
+to a broad family of models across geometries. We investigate Euclidean DINOv2  [ 1 , 19 ] and hyperbolic VLMs (MERU  [ 5 ] , HyCoCLIP  [ 23 ] ), by utilizing corresponding manifold mapping functions between these geometries and the tangent space.
+We also develop a formulation of primitives directly on the embedding manifold as the Fréchet means of samples sharing an attribute or object, and call them intrinsic primitives . We thus study manifold-native primitives as well as tangent-space GDE primitives, investigating how latent space geometry influences compositional abilities of models.
+Across experiments, we find that compositional structure is a general emergent property of pre-trained models, showing through both GDE and intrinsic primitive representations across several CZSL benchmarks (MIT-States, VAW-CZSL,
+Clothing16K, UT-Zappos50K), with stronger evidence for datasets that contain samples with higher semantic variance. We further show that primitive-based inference is beneficial for improving recognition under group bias in the data through experiments on benchmark datasets for group robustness (Waterbirds, CelebA) using solely the object primitives, decoupled from the attribute primitives.
+The observed substantial and consistent increase of worst group accuracy indicates that
+biases and spurious correlations induced by attributes can be removed with primitive-based reasoning.
+The contributions of this work are therefore summarized as:
+ (i) 
+ Primitives as the basis for open-world compositional learning and generalization. 
+We show that pretrained models consistently organize representation into primitives, either as tangent-space directions or intrinsic points on manifolds, which encode basic visual concepts of attributes and objects. We develop new compositional scoring functions and demonstrate with extensive experiments that primitives support direct CZSL inference and open-world generalization, making explicit attribute-object pair construction unnecessary.
+ (ii) 
+ Understanding of compositional power of pretrained models in relation to manifold geometry and dataset intrinsic variance. 
+We find that, while compositional structure is geometry-agnostic, its task-wise optimal representation depends on the underlying geometry: tangent-space primitives are sufficient in Euclidean and spherical spaces, whereas hyperbolic representations benefit from intrinsic primitives aligned with their space geometry. We further shed light on the role that CZSL datasets and their intrinsic variance have in factorizing compositional primitives in pretrained models.
+ 2 Related Work
+ Compositional zero-shot learning in VLMs. 
+Early compositional zero-shot learning (CZSL) methods modeled attribute-object relations through shared embedding
+spaces  [ 10 , 38 ] .
+More recent studies have shifted attention to the compositional properties of Vision-Language models and highlighted that contrastive VLMs inherently struggle with text-based composition during standard inference, often behaving as a “bag of words”  [ 34 , 39 ] .
+This vulnerability is further underscored by benchmarks like SugarCrepe  [ 8 ] , which demonstrate that VLMs frequently rely on statistical hacks rather than genuine compositionality.
+In order to improve the compositional reasoning abilities of VLMs, subsequent research has explored adaptation strategies based on soft-prompt tuning  [ 22 , 17 ] , or learning conditional attribute-object representations, where attribute frequency is coupled with the most likely co-occurring objects  [ 36 , 9 , 35 ] .
+In  [ 2 ] , it was hypothesised that the pre-trained vision encoder of VLMs natively encodes compositional structures, induced by language-based pre-training. Thus, Geodesically Decomposable Embeddings (GDE) was proposed to factorize primitive representation directions in the tangent space at the Fréchet mean of the
+embeddings distribution,
+enabling training-free compositional reasoning via constructing unseen combination of primitives. The focus was restricted to spherical (CLIP-like) embeddings and to explicit construction of object-attribute pair representations for CZSL.
+In this work, we fundamentally revisit the assumption that explicit pair re-composition is necessary for CZSL inference. We formulate new scoring functions for compositional classification that operate directly on independent object and attribute primitives. We show that leveraging these primitive representations is sufficient to
+recognize unseen compositions, bypassing pair recombination entirely. Furthermore, we expand the GDE framework to work across different geometries of the latent space (i.e. Euclidean, spherical and hyperbolic) and demonstrate the emergence of compositional structures in a broad family of visual encoders.
+Our work differs from fine-tuning  [ 22 , 17 ] and conditional attribute learning  [ 36 , 9 , 35 ] , as we do not add learnable components and study the embedding capabilities of pretrained VLMs.
+It also shares a philosophical connection with Concept Bottleneck Models (CBMs)  [ 13 ] , which enforce intermediate, primitive-based concept representations for downstream inference. However, while CBMs require explicit bottleneck layers or fine-tuning with concept supervision, we analyze the compositional structure that inherently emerges within the embedding space of pretrained models.
+ Compositionality in hyperbolic VLMs. 
+Most vision-language models operate on the unit hypersphere using cosine
+similarity.
+In contrast, hyperbolic models
+embed representations on the Lorentz model  [ 23 , 5 , 29 , 27 , 37 ] , where radius reflects semantic specificity, and geometry captures hierarchical structure: abstract concepts are placed closer to the origin, while more complex detailed concepts lie further away.
+HyCoCLIP  [ 23 ] further incorporates
+compositional entailment supervision to align scene-object
+compositions with the hierarchical organization of the embedding space.
+While prior work has primarily focused on retrieval, entailment, and hierarchy preservation, we instead investigate how hyperbolic geometry shapes compositional reasoning.
+We show that primitives naturally align with the manifold structure, and that for group robustness intrinsic primitives provide a more semantically-coherent representation than tangent-space approximations in hyperbolic settings.
+ Compositionality in vision-only DINO. 
+Compositional capabilities are not exclusive to cross-modal vision-language models. Self-supervised vision-only foundation models, such as DINOv2  [ 19 ] , capture exceptional fine-grained, localized spatial semantics without using any language-signal during training. Recent efforts have explored post-hoc mechanisms to
+interface language with these frozen visual encoders. For instance, Talk2DINO  [ 1 ] demonstrated that text embeddings can be aligned, via a learned projection, onto DINO patch-level features to guide open-vocabulary tasks.
+These findings suggest that a structured semantic organization emerges within the token embeddings of vision-only pre-trained encoders.
+Understanding the geometry underlying this intrinsic compositionality is therefore crucial, as such models provide powerful representations that are not influenced by language biases.
+In this work, we apply the GDE framework to DINOv2 and show that compositional structure naturally emerges in its (Euclidean) latent space, despite the absence of language supervision.
+ 3 Preliminaries
+In this section, we provide a brief overview of the mathematical background relevant to the notion of compositional embeddings and the GDE framework. Moreover, we provide the formalization of open-world CZSL and pair-based scoring functions used for recognition, and cover the foundational alignment of DINOv2 patch embeddings with text embeddings of CLIP done via the Talk2DINO framework.
+ Tangent Space Manifold GDE Pair Direction Intrinsic Blue Primitive 
+ μ 
+ a 
+ Intrinsic Square Primitive 
+ μ 
+ o 
+ v 
+ a 
+ GDE Blue Primitive 
+ v 
+ o 
+ GDE Square Primitive 
+ + 
+ v 
+ o 
+ v 
+ a 
+ GDE Pair Projected on Manifold Blue Circles Red Squares Green Squares Blue Triangles Unseen Blue Squares 
+ Figure 2 : 
+Illustration of decomposition and primitive-based methods.
+For unseen samples of Blue Squares , the goal is to obtain meaningful representations of the concepts Blue and Square from seen training samples.
+Then, the primitive directions in the tangent space ( \textbf{v}_{o} and \textbf{v}_{a} ) can independently be compared to the test samples projected to the same space.
+Alternatively, it is possible to calculate the intrinsic mean for each concept label directly on the manifold ( \mu_{a} and \mu_{o} and use it as a reference for the test sample via a manifold-specific inner product to estimate similarity.
+The pair-based alternatives proposed in previous work either rely on the projection on the manifold of the summed primitives in the tangent space ( \textbf{v}_{o}+\textbf{v}_{a} ), or leverage the textual object-attribute compositional description embedded in the manifold.
+ 3.1 Geodesically Decomposable Embeddings
+VLMs encode images x\in\mathcal{X} and their associated caption y\in\mathcal{Y} into shared embedding spaces via specific encoders \phi_{im}:\mathcal{X}\rightarrow\mathcal{R}^{d} , \phi_{tx}:\mathcal{Y}\rightarrow\mathcal{R}^{d} . Let \mathcal{M}\subset\mathcal{R}^{d} be the target d -dimensional representation manifold, with \mathbf{u}\in\mathcal{M} being a generic point on the manifold. The text prompts can be created by a general template function g:\mathrm{L}^{n}\to\mathcal{Y}\quad\forall n\in\mathbb{N} where \mathrm{L}^{n} are the n concepts to make a template for.
+In the Geodesically Decomposable Embeddings (GDE) framework  [ 2 ] , visual representations from pre-trained VLMs are decomposed into primitive directions corresponding to objects and attributes, which can then be recombined for CZSL.
+Given N samples belonging to a dataset, their intrinsic (Fréchet) mean is
+ {\bm{\mu}=\arg\min_{\mathbf{u}\in\mathcal{M}}\sum_{i=1,\ldots N}d_{\mathcal{M}}(\mathbf{u},\mathbf{u}_{i})^{2}} ,
+where d_{\mathcal{M}} denotes the geodesic distance on the manifold. Generally, a Riemannian gradient descent approach with a finite number of iterations is employed to compute the Fréchet mean on any manifold geometry (see Algorithm  1 in the supplementary material). Let T_{\bm{\mu}}\mathcal{M} be the tangent space to the embedding manifold at \bm{\mu} , and \mathbf{t}_{i}=\mathrm{Log}_{\bm{\mu}}(\mathbf{u}_{i})\in T_{\bm{\mu}}\mathcal{M} the projection of an embedding vector to the tangent space via the logarithmic map . The function is locally invertible, and its inverse is the exponential map \mathbf{u}_{i}=\mathrm{Exp}_{\bm{\mu}}(\mathbf{t}_{i})\in\mathcal{M} .
+The exact form of the map functions depends on the manifold geometry detailed in Section  4 .
+Given a set of attributes \mathcal{A}=\{a_{1},a_{2},\dots,a_{n}\} and objects
+ \mathcal{O}=\{o_{1},o_{2},\dots,o_{m}\} , GDE estimates an independent,
+isolated primitive semantic direction \mathbf{v}_{c} for any concept
+ c\in\mathcal{A}\cup\mathcal{O} via a weighted average of the projected
+tangent vectors containing that concept:
+ \displaystyle\mathbf{v}_{c}=\frac{\sum_{i\in S_{c}}w_{i}\mathbf{t}_{i}}{\sum_{i\in S_{c}}w_{i}},\qquad S_{c}=\{i:y_{i}=c\}, 
+ (1) 
+where y_{i} denotes the attribute or object label associated with sample i ,
+and each sample is labelled by a compositional pair
+ (a_{i},o_{i})\in\mathcal{A}\times\mathcal{O} .
+Following  [ 2 ] , each embedding is weighted according
+to its alignment with the corresponding attribute–object text representation
+ w\propto\exp\!\Big(\tau\,s_{\mathcal{M}}\big(\phi_{im}(x),\phi_{tx}(g(a,o))\big)\Big), 
+where \tau is a temperature parameter and
+ s_{\mathcal{M}}(\cdot,\cdot) is a similarity function defined as a
+geometry-specific inner product.
+ 3.2 Open-World CZSL and Pair-based Scoring
+In the open-world CZSL (OW-CZSL) setting  [ 18 ] ,
+models are evaluated over the full Cartesian product {\mathcal{A}\times\mathcal{O}} of possible compositions at test
+time, regardless of which attribute-object pairs were observed during training.
+This removes the disambiguation advantage of closed candidate sets and
+provides a stronger test for compositional generalization.
+For the zero-shot inference baseline, we prompt VLMs using a pre-defined text template in the form of  ‘ a photo of an {attribute} {object} ’, which is embedded via the text encoder and used to score the vision embeddings \phi_{im}(x) .
+The scores computed using the function s_{\mathcal{M}} are conventionally converted into probabilities through a softmax over the valid label space.
+The baseline Zero-Shot Pair paradigm is based on the scoring function (Eq.  2 ),
+which calculates
+the probability assigned to an attribute-object pair and the prediction is obtained by selecting the label with max-probability (Eq.  3 ).
+ \displaystyle s(a,o|x) 
+ \displaystyle=s_{\mathcal{M}}(\phi_{im}(x),\phi_{tx}(g(a,o))), 
+ (2) 
+ \displaystyle\begin{split}(\hat{a},\hat{o})&=\argmax_{(a,o)\in\mathcal{A}\times\mathcal{O}}p(a,o\mid x),\\
+p(a,o\mid x)&=\frac{\exp(s(a,o|x))}{\sum_{a^{\prime}\in\mathcal{A}}\sum_{o^{\prime}\in\mathcal{O}}\exp(s(a^{\prime},o^{\prime}|x))}.\end{split} 
+ (3) 
+Rather than using the text prompts, the GDE paper [ 2 ] proposed to combine all possible attribute-object primitive pairs and re-project them from the tangent space to the embedding manifold. For the GDE Pair paradigm, compositional recognition is achieved by using the scoring function:
+ s(a,o|x)=s_{\mathcal{M}}(\phi_{im}(x),\mathrm{Exp}_{\bm{\mu}}(\mathbf{v}_{a}+\mathbf{v}_{o})). 
+ (4) 
+Here we raise the question of whether exhaustive pair recombination of primitives is necessary for OW-CZSL or if scores derived from single concept primitive are sufficient and perhaps better instead. However, we must first define scoring with primitives and their computation.
+ 4 Primitive-based CZSL
+The core focus of this work is the representation of visual concept as primitives (i.e. isolated attributes and objects representations), that form fundamental building blocks of compositional generalization. Rather than evaluating compositionality via pre-defined textual or visual pairs, we investigate how individual primitives emerge within different manifold geometries.
+Specifically, we study two distinct approaches for extracting these representations: intrinsic primitives computed directly on the underlying manifold via Riemannian operations, and tangent primitives extracted as localized linear vector directions via the Geodesically Decomposable Embeddings (GDE) framework. Under both paradigms, inference is performed zero-shot by scoring test images directly against these standalone primitives in their native mathematical domains. This eliminates the need for explicit primitive re-composition, currently used as standard in GDE. Figure  2 illustrates the differences between intrisic primitives, GDE tangent primitives, and GDE-Pair compositions on the hyperbolic geometry as a representative case.
+ 4.1 Intrinsic Primitives via Fréchet Means
+We define an intrinsic primitive 
+as the manifold mean of samples sharing the same attribute or object label.
+Given a set of embeddings \{f(x_{i})\}_{i=1}^{N}\subset\mathcal{M} , and a concept c , it is computed as the Fréchet mean of the
+subset, S_{c} , associated with that concept:
+ \bm{\mu}_{c}=\arg\min_{\mathbf{u}\in\mathcal{M}}\sum_{i\in S_{c}}d_{\mathcal{M}}^{2}(\mathbf{u},\phi_{im}(x_{i})), 
+ (5) 
+where d_{\mathcal{M}} denotes the
+geodesic distance on the manifold.
+We compute separate intrinsic primitives for attributes and objects, using the Riemannian gradient descent for non-Euclidean spaces and the arithmetic mean for Euclidean ones, yielding respectively
+ \bm{\mu}_{a} for each attribute a\in\mathcal{A} and
+ \bm{\mu}_{o} for each object o\in\mathcal{O} .
+Given a test image x , denoting its embedding as \phi^{x}_{im} for brevity, its similarity to the primitives is computed directly
+on the underlying
+manifold using the geometry-specific similarity function
+ s_{\mathcal{M}} .
+In particular, for a reference pair of object ( o ) and attribute ( a ) and text template g_{c}:=g(c)\quad c\in\{a,o\} with its corresponding text embedding \phi^{c}_{tx} , the Zero Shot Primitive score is defined as:
+ \displaystyle s^{\mathrm{zsp}}(a,o\mid\cdot)=s_{\mathcal{M}}(\phi^{x}_{im},\phi^{a}_{tx})+s_{\mathcal{M}}(\phi^{x}_{im},\phi^{o}_{tx}). 
+ (6) 
+In contrast, our scoring function that uses intrinsic primitive individually does not rely on the text prompt embeddings:
+ \displaystyle s^{\mathrm{intrp}}(a,o\mid\cdot) 
+ \displaystyle=s_{\mathcal{M}}(\phi^{x}_{im},\bm{\mu}_{a})+s_{\mathcal{M}}(\phi^{x}_{im},\bm{\mu}_{o}). 
+ (7) 
+The similarity functions used for the underlying spherical, Euclidean and hyperbolic manifolds are respectively
+ \displaystyle s_{\mathbb{S}^{d-1}}(\mathbf{x},\mathbf{y})=\mathbf{x}^{\top}\mathbf{y},\;\;\;\; 
+ \displaystyle\;\;\;\;s_{\mathbb{R}^{d}}(\mathbf{x},\mathbf{y})=\frac{\mathbf{x}^{\top}\mathbf{y}}{\|\mathbf{x}\|\,\|\mathbf{y}\|}, 
+ \displaystyle s_{\mathbb{H}^{d+1}}(\mathbf{x},\mathbf{y}) 
+ \displaystyle=\sum_{k=1}^{d}x_{k}y_{k}-x_{0}y_{0}. 
+ 4.2 GDE Primitives on any Manifold
+We exploit the GDE framework on different manifold geometries by integrating the logarithmic map \mathrm{Log}_{\bm{\mu}}:\mathcal{M}\to T_{\bm{\mu}}\mathcal{M} and the exponential map \mathrm{Exp}_{\bm{\mu}}:T_{\bm{\mu}}\mathcal{M}\to\mathcal{M} specifically defined for spherical, Euclidean and Lorentz spaces.
+For Euclidean manifolds \mathbb{R}^{d} , the tangent space at every point is naturally identified with the manifold itself. In this case, the logarithmic and exponential maps reduce to ordinary subtraction and addition:
+ \displaystyle\mathrm{Log}_{\bm{\mu}}(\mathbf{u})=\mathbf{u}-\bm{\mu} 
+ \displaystyle\mathrm{Exp}_{\bm{\mu}}(\mathbf{t})=\bm{\mu}+\mathbf{t}. 
+ (8) 
+For spherical manifolds \mathbb{S}^{d-1} , the logarithmic and exponential maps are:
+ \displaystyle\begin{split}\mathrm{Log}_{\bm{\mu}}(\mathbf{u})&=\arccos(\bm{\mu}^{\top}\mathbf{u})\frac{\mathbf{u}-(\bm{\mu}^{\top}\mathbf{u})\bm{\mu}}{\|\mathbf{u}-(\bm{\mu}^{\top}\mathbf{u})\bm{\mu}\|},\\
+\mathrm{Exp}_{\bm{\mu}}(\mathbf{t})&=\cos(\|\mathbf{t}\|)\bm{\mu}+\sin(\|\mathbf{t}\|)\frac{\mathbf{t}}{\|\mathbf{t}\|}~.\end{split} 
+ (9) 
+For hyperbolic models , with embeddings lying on the Lorentz space, \mathbb{H}^{d+1} the logarithmic and exponential maps are:
+ \displaystyle\begin{split}\mathrm{Log}_{\bm{\mu}}(\mathbf{u})&=\frac{\mathrm{arccosh}\big(-\langle\bm{\mu},\mathbf{u}\rangle_{\mathcal{L}}\big)}{\sqrt{\langle\bm{\mu},\mathbf{u}\rangle_{\mathcal{L}}^{2}-1}}\Big(\mathbf{u}+\langle\bm{\mu},\mathbf{u}\rangle_{\mathcal{L}}\bm{\mu}\Big),\\
+\mathrm{Exp}_{\bm{\mu}}(\mathbf{t})&=\cosh(\|\mathbf{t}\|_{\mathcal{L}})\bm{\mu}+\sinh(\|\mathbf{t}\|_{\mathcal{L}})\frac{\mathbf{t}}{\|\mathbf{t}\|_{\mathcal{L}}},\\
+\text{where}\quad\|\mathbf{t}\|_{\mathcal{L}}&=\sqrt{\langle\mathbf{t},\mathbf{t}\rangle_{\mathcal{L}}}~.\end{split} 
+ (10) 
+The similarity functions for each geometry are the same defined at the end of Section  4.1 .
+The primitive directions (\mathbf{v}_{a},\mathbf{v}_{o}) , obtained via the GDE framework, and the projected test image representation
+ \mathbf{t}_{x}=\mathrm{Log}_{\bm{\mu}}(\phi_{im}(x)) 
+all lie in the same tangent space T_{\bm{\mu}}\mathcal{M} , where relationships are linear.
+We thus, in contrast to Eq.  4 , define scoring functions for CZSL using individual GDE primitives , in which attribute and object scores are computed via standard cosine similarity in the tangent space as:
+ \displaystyle s^{\mathrm{tan}}(a,o\mid x) 
+ \displaystyle=s_{\mathbb{R}^{d}}(\mathbf{t}_{x},\mathbf{v}_{a})+s_{\mathbb{R}^{d}}(\mathbf{t}_{x},\mathbf{v}_{o}), 
+ (11) 
+bypassing manifold projections entirely during inference.
+ 5 Experiments
+ 5.1 Setup
+ Datasets. 
+We evaluate compositional recognition on four datasets spanning varying levels of semantic diversity and attribute-object coupling.
+MIT-States  [ 10 ] contains 115 attributes paired with 245 objects, yielding 28,175 open-world compositions.
+VAW-CZSL  [ 31 , 26 ] is substantially larger, with 440 attributes and 541 objects (238,140 candidate compositions) sampled from images with larger scene context.
+UT-Zappos  [ 38 ] is focused on footwear with 16 material attributes and 12 shoe types, while Clothing16K provides a broader clothing-domain benchmark with greater intra-category variability.
+Together, these datasets allow us to study compositionality under both highly diverse semantic settings (MIT-States, VAW-CZSL) and more constrained cases where sample variance is small and attributes are tightly coupled to object identity (UT-Zappos, Clothing16K).
+ Models and baselines. 
+We investigate models operating in Euclidean, spherical, and hyperbolic embedding spaces.
+Spherical models include CLIP: ViT-B/16 (GRIT dataset) and ViT-L/14 (OpenAI).
+For Euclidean representations, we use DINOv2 with Talk2DINO  [ 1 ] bridge to the text embedding of CLIP. This preserve the native Euclidean embeddings of DINOv2 and enables to compute baseline results with CLIP-style text prompts (see Appendix  B ).
+We also experiment with MERU  [ 5 ] and
+HyCoCLIP  [ 23 ] hyperbolic models.
+CLIP-B, MERU-B, and HyCoCLIP-B share the same ViT backbone and are pretrained on the GRIT corpus  [ 25 ] , thus allowing to attribute performance differences primarily to the underlying manifold geometry.
+ Prompts and inference paradigms. 
+We test the compositional zero-shot learning performance of the considered vision-language models under different settings, namely:
+ (i) 
+ ZS-Pair : direct zero-shot classification using pair-based text prompts   A photo of an {attribute} {object} as defined in Eq.  2 ;
+ (ii) 
+ ZS-Prim : primitive-level zero-shot inference using text prompts with attribute-focus ( A photo of an {attribute} ) and object-focus ( A photo of an {object} ) using the scoring function defined in Eq.  6 ;
+ (iii) 
+ GDE-Pair : composing pair representations by adding visual primitives in the tangent space as \mathbf{v}_{a,o}=\mathbf{v}_{a}+\mathbf{v}_{o} , and scoring the composed vector as defined in  [ 2 ] ;
+ (iv) 
+ GDE-Prim : scoring the GDE object and attribute primitives independently using our function defined in Eq.  11 ;
+ (v) 
+ Int-Prim : scoring the intrinsic object and attribute primitives independently using our function defined in Eq.  7 .
+ Metrics. 
+We compute the unseen pair accuracy (UPA) that evaluates the generalization to novel attribute-object compositions, and the seen pair accuracy (SPA) that measures the recognition performance on compositions observed during training (we report SPA in Appendix  G ).
+Models often exhibit a bias toward seen compositions, especially in the open-world setting where all feasible compositions are considered candidate predictions. Evaluating only one regime can provide a misleading picture of overall performance. Hence, as standard practice in OW-CZSL  [ 18 ] , we report the best harmonic mean of seen and unseen compositions:
+ \mathrm{HM}=\frac{2\cdot\mathrm{SPA}\cdot\mathrm{UPA}}{\mathrm{SPA}+\mathrm{UPA}}, 
+that penalizes models that perform well on only one subset and therefore captures the ability to maintain strong recognition on both seen and unseen compositions simultaneously.
+ 5.2 Results: CZSL via Primitives
+ Primitives improve open-world generalization. 
+ Table 1 : Harmonic Mean (HM) and Unseen Pair Accuracy (UPA) results across models and datasets. Primitive-based inference consistently improves compositional generalization over GDE pair composition, particularly on unseen attribute–object pairs. 
+ Harmonic Mean (%, \uparrow ) 
+ Unseen Pair Accuracy (%, \uparrow ) 
+ Model 
+ ZS Pair 
+ ZS Prim. 
+ GDE Pair 
+ GDE Prim. 
+ Int. Prim. 
+ ZS Pair 
+ ZS Prim. 
+ GDE Pair 
+ GDE Prim. 
+ Int. Prim. 
+ MIT-States 
+ CLIP ViT-L/14 
+ 8.03 
+ 10.56 
+ 9.37 
+ 10.90 
+ 10.40 
+ 8.04 
+ 13.03 
+ 8.62 
+ 11.98 
+ 11.75 
+ DINOv2 ViT-L/14 
+ 3.00 
+ 3.69 
+ 6.56 
+ 8.22 
+ 8.04 
+ 2.88 
+ 4.78 
+ 6.26 
+ 9.33 
+ 9.42 
+ CLIP-B (GRIT) 
+ 4.61 
+ 4.70 
+ 4.75 
+ 6.64 
+ 6.38 
+ 4.24 
+ 5.36 
+ 4.80 
+ 7.18 
+ 7.12 
+ MERU-B 
+ 4.68 
+ 4.74 
+ 3.58 
+ 6.57 
+ 6.36 
+ 4.40 
+ 5.54 
+ 3.40 
+ 7.25 
+ 7.40 
+ HyCoCLIP-B 
+ 5.26 
+ 6.53 
+ 4.28 
+ 7.94 
+ 7.54 
+ 4.67 
+ 8.20 
+ 3.71 
+ 8.75 
+ 8.76 
+ VAW-CZSL 
+ CLIP ViT-L/14 
+ 0.74 
+ 1.51 
+ 1.18 
+ 1.77 
+ 1.77 
+ 0.79 
+ 1.59 
+ 1.32 
+ 2.07 
+ 2.22 
+ DINOv2 ViT-L/14 
+ 0.72 
+ 1.22 
+ 1.30 
+ 2.05 
+ 2.20 
+ 0.77 
+ 1.57 
+ 1.63 
+ 2.60 
+ 2.81 
+ CLIP-B (GRIT) 
+ 0.26 
+ 0.72 
+ 0.96 
+ 1.52 
+ 1.49 
+ 0.41 
+ 0.96 
+ 1.30 
+ 2.13 
+ 1.95 
+ MERU-B 
+ 0.36 
+ 0.77 
+ 0.86 
+ 1.49 
+ 1.34 
+ 0.49 
+ 0.96 
+ 1.00 
+ 1.97 
+ 1.83 
+ HyCoCLIP-B 
+ 0.29 
+ 1.14 
+ 0.85 
+ 1.47 
+ 1.40 
+ 0.33 
+ 1.20 
+ 1.08 
+ 2.09 
+ 1.87 
+ Clothing16k 
+ CLIP ViT-L/14 
+ 91.67 
+ 85.33 
+ 58.81 
+ 92.23 
+ 92.11 
+ 94.84 
+ 91.26 
+ 63.77 
+ 95.40 
+ 95.20 
+ DINOv2 ViT-L/14 
+ 21.89 
+ 27.09 
+ 13.95 
+ 33.71 
+ 33.37 
+ 22.34 
+ 34.98 
+ 15.95 
+ 43.51 
+ 44.94 
+ CLIP-B (GRIT) 
+ 87.64 
+ 79.19 
+ 64.60 
+ 89.27 
+ 88.92 
+ 89.94 
+ 83.36 
+ 72.17 
+ 93.22 
+ 92.59 
+ MERU-B 
+ 86.25 
+ 76.99 
+ 67.57 
+ 88.73 
+ 88.07 
+ 90.14 
+ 83.09 
+ 74.35 
+ 92.32 
+ 92.52 
+ HyCoCLIP-B 
+ 87.01 
+ 87.29 
+ 70.47 
+ 88.84 
+ 88.31 
+ 89.18 
+ 91.13 
+ 75.31 
+ 92.89 
+ 92.52 
+ Table 2 : CZSL metrics before and after whitening across models and inference methods for the low-intrinsic variance UT-Zappos dataset . Whitening consistently improves primitive-based inference and restores its advantage over pair composition. 
+ Harmonic Mean (%, \uparrow ) / After Whitening 
+ Model 
+ ZS Pair 
+ ZS Prim. 
+ GDE Pair 
+ GDE Prim. 
+ Int. Prim. 
+ CLIP ViT-L/14 
+ 11.76 / – 
+ 9.61 / – 
+ 16.41 / 16.69 
+ 8.04 / 13.75 
+ 9.33 / 22.80 
+ DINOv2 ViT-L/14 
+  2.81 / – 
+ 0.38 / – 
+ 12.06 / 13.64 
+ 3.20 / 12.40 
+ 2.49 / 16.17 
+ CLIP-B (GRIT) 
+  2.33 / – 
+ 1.61 / – 
+ 10.81 / 13.53 
+ 9.04 / 12.79 
+ 8.95 / 14.65 
+ MERU-B 
+  3.38 / – 
+ 3.80 / – 
+ 10.39 / 12.79 
+ 8.99 /  8.80 
+ 9.36 / 16.32 
+ HyCoCLIP-B 
+  4.34 / – 
+ 3.94 / – 
+  8.50 / 13.01 
+ 5.89 /  8.14 
+ 5.86 / 15.11 
+ Unseen Pair Accuracy (%, \uparrow ) / After Whitening 
+ Model 
+ ZS Pair 
+ ZS Prim. 
+ GDE Pair 
+ GDE Prim. 
+ Int. Prim. 
+ CLIP ViT-L/14 
+ 21.89 / – 
+ 29.19 / – 
+ 29.46 / 36.81 
+ 18.03 / 24.43 
+ 22.85 / 36.83 
+ DINOv2 ViT-L/14 
+  9.84 / – 
+ 11.85 / – 
+ 21.95 / 28.34 
+ 12.64 / 19.78 
+ 16.08 / 28.42 
+ CLIP-B (GRIT) 
+ 16.45 / – 
+ 11.63 / – 
+ 16.50 / 21.01 
+ 13.11 / 15.44 
+ 13.91 / 21.21 
+ MERU-B 
+  8.41 / – 
+  8.51 / – 
+ 16.45 / 25.17 
+ 11.26 / 15.55 
+ 14.60 / 25.12 
+ HyCoCLIP-B 
+ 11.95 / – 
+ 14.49 / – 
+ 14.65 / 23.69 
+ 12.16 / 16.08 
+ 14.01 / 24.80 
+In Table  1 we reports the Harmonic Mean (HM) and Unseen Pair Accuracy (UPA) results of the CZSL performance of the considered pretrained models. Across models and datasets, replacing GDE pair composition with primitive-based inference consistently improves both metrics, indicating that explicit pair re-composition is not necessary for compositional generalization.
+On MIT-States, GDE primitives improve HM over GDE pairs by +1.53 for CLIP ViT-L/14, +1.66 for DINOv2, +1.89 for CLIP-B, +2.99 for MERU-B, and +3.66 for HyCoCLIP-B.
+The gains are often larger for UPA, including +3.85 for MERU-B and +5.04 for HyCoCLIP-B, indicating that primitives specifically strengthen open-world generalization.
+Notably, DINOv2 also benefits from primitive decomposition despite weak zero-shot pair prediction performance, improving HM by +1.65 on MIT-States and +0.90 on VAW-CZSL.
+As DINOv2 is trained without image-text contrastive supervision, this suggests that compositional semantics intrinsically emerge also from large-scale vision-only self-supervision.
+Across geometries, intrinsic primitives provide the most stable formulation, particularly in hyperbolic space, consistently with representing visual concept directly on the embedding manifold rather than through tangent-space approximations.
+Overall, primitive representations provide a stronger tool for open-world compositional generalization than explicit pair composition.
+ Dataset structure affects compositional reasoning. 
+UT-Zappos is a consistent exception to the advantages observed for primitive-based CZSL inference on the broader CZSL datasets.
+The dataset covers a narrow semantic domain and its samples have strongly coupled attribute–object relationship, with many attributes appearing across a restricted set of shoe categories (see Figure  6 in the Appendix).
+We therefore test whether effectiveness of primitive-based compositional inference depends on the semantic spread of the embedding distribution: we investigate the intrinsic dataset variance and causally link its value to compositional generalization performance.
+For embeddings \{\mathbf{x}_{i}\}_{i=1}^{N} from dataset \mathcal{D} on manifold \mathcal{M} , we compute the intrinsic variance
+ V(\mathcal{D})=\frac{1}{N}\sum_{i=1}^{N}d_{\mathcal{M}}^{2}\left(\mathbf{x}_{i},\bm{\mu}_{\mathcal{D}}\right), 
+ (12) 
+where \bm{\mu}_{\mathcal{D}} is the Fréchet mean and d_{\mathcal{M}}(\cdot,\cdot) is the geodesic distance.
+Figure  3 reveals a similar pattern across Euclidean, spherical, and hyperbolic representations: MIT-States, VAW-CZSL, and Clothing16K have substantially greater intrinsic variance than UT-Zappos.
+This suggests that primitive decomposition benefits from representations spanning sufficiently diverse semantic contexts, whereas low-variance distributions allow pair representations to exploit stronger dataset-specific attribute-object co-occurrence patterns.
+ MIT-States VAW-CZSL Clothing-16k UT-Zappos UTZ-W 0 20 40 60 Geometric Variance DINOv2-L/14 MIT-States VAW-CZSL Clothing-16k UT-Zappos UTZ-W 0 0.05 0.1 0.15 0.2 CLIP ViT-L/14 MIT-States VAW-CZSL Clothing-16k UT-Zappos UTZ-W 0 0.2 0.4 0.6 HyCoCLIP-B 
+ Object Intrinsic Primitives Variance Attribute Intrinsic Primitives 
+ Figure 3 : Intrinsic dataset variance measured using squared geodesic distance to the dataset Fréchet mean across different geometries. From left to right: DINOv2 ViT-L/14 with Euclidean geometry, CLIP ViT-L/14 with spherical geometry, and HyCoCLIP-B with hyperbolic geometry. UT-Zappos exhibits substantially lower variance than the broader datasets, while geometry-specific whitening increases the variance of UTZ-W toward the same regime. 
+We study the role of intrinsic dataset variance as a causal factor to explain compositional reasoning limitations. We apply a geometry-specific whitening operation (detailed in Appendix  E ) to the embeddings of the considered models of the UTZappos dataset, and denote the resulting representations as UTZ-W.
+Whitening has the effect of increasing the intrinsic variance of UTZ-W (similarly to that of the broader datasets) compared to that of the original UT-Zappos.
+We report CZSL results before and after whitening in Table  2 : the HM and UPA values increase noticeably for both GDE- and intrinsic-primitive compositional inference, achieving comparable or largely superior performance in some cases than pair-based inference.
+After whitening, intrinsic primitives achieve the highest HM for every model and the highest UPA for four of five models, falling only 0.05 points below the best MERU-B UPA results using pair-based inference. These results provide causal evidence that low intrinsic variance of the dataset (and its embedding distribution) contributes to the original failure mode of compositional inference. UT-Zappos is thus not a failure of primitive inference: its low-variance representation suppresses decomposition effectiveness.
+ 5.3 Statistical Separation of GDE Primitives
+ Table 3 : Group-robustness results (%). Average Accuracy (Avg. Acc.), Worst-Group Accuracy (WG. Acc.), and their gap on Waterbirds and CelebA. GDE and intrinsic object primitives consistently improve over zero-shot object inference without retraining or group annotations, with especially large gains for the hyperbolic models MERU and HyCoCLIP. 
+ Zero Shot 
+ GDE-Primitive 
+ Intrinsic Primitive 
+ Model 
+ Avg. Acc. \uparrow 
+ WG. Acc. \uparrow 
+ Gap \downarrow 
+ Avg. Acc. \uparrow 
+ WG. Acc. \uparrow 
+ Gap \downarrow 
+ Avg. Acc. \uparrow 
+ WG. Acc. \uparrow 
+ Gap \downarrow 
+ Waterbirds 
+ CLIP ViT-L/14 
+ 80.9 
+ 48.8 
+ 32.1 
+ 90.8 
+ 85.7 
+ 5.13 
+ 90.8 
+ 85.7 
+ 5.17 
+ DINOv2 ViT-L/14 
+ 69.1 
+ 42.4 
+ 26.7 
+ 85.5 
+ 48.0 
+ 37.5 
+ 85.0 
+ 49.4 
+ 35.6 
+ CLIP-B (GRIT) 
+ 58.4 
+ 36.9 
+ 21.5 
+ 77.1 
+ 64.4 
+ 12.7 
+ 77.0 
+ 64.4 
+ 12.7 
+ MERU-B 
+ 58.3 
+ 31.7 
+ 26.6 
+ 63.0 
+ 39.0 
+ 24.0 
+ 77.1 
+ 62.6 
+ 14.6 
+ HyCoCLIP-B 
+ 53.9 
+ 20.3 
+ 33.7 
+ 62.6 
+ 38.3 
+ 24.3 
+ 77.1 
+ 62.6 
+ 14.5 
+ CelebA 
+ CLIP ViT-L/14 
+ 75.3 
+ 69.2 
+ 6.16 
+ 87.9 
+ 86.9 
+ 1.00 
+ 87.8 
+ 86.8 
+ 1.00 
+ DINOv2 ViT-L/14 
+ 13.7 
+ 0.07 
+ 13.6 
+ 77.7 
+ 73.1 
+ 4.54 
+ 77.4 
+ 73.8 
+ 3.57 
+ CLIP-B (GRIT) 
+ 56.6 
+ 29.8 
+ 26.9 
+ 81.9 
+ 74.8 
+ 7.08 
+ 81.7 
+ 74.7 
+ 6.97 
+ MERU-B 
+ 35.2 
+ 11.5 
+ 23.6 
+ 69.1 
+ 59.6 
+ 9.58 
+ 84.1 
+ 80.3 
+ 3.80 
+ HyCoCLIP-B 
+ 34.3 
+ 6.46 
+ 27.8 
+ 69.4 
+ 57.3 
+ 12.1 
+ 84.6 
+ 79.7 
+ 4.95 
+A key premise of primitive-based inference is that the decomposition isolates object and attribute information into distinct semantic components.
+We test this by measuring the statistical dependence between object, attribute, and pair representations using Pearson cross-correlation (CORR) and mutual information (MI). We perform this analysis on the GDE primitives.
+The results show that, across datasets and model families, the dependence and mutual information between object and attribute primitive representations is consistently substantially lower than those of either object and pair or attribute and pair representations.
+For example, on MIT-States object and attribute primitive CORR remains between 0.444 and 0.473 across models, compared to 0.825 – 0.895 for object primitive and pair representation, and the MI estimates are 13.0 versus 119.4 – 320.7 .
+We observe similar results across the considered CZSL datasets and model representations.
+We report full results in Appendix  D .
+The higher dependence that we consistently observe between the primitive representations and the full pair representation are expected and confirm the disentanglement quality of the factorization that we perform. Object and attribute primitives retain information from the composition from which they are derived, while exhibiting weak dependence on one another.
+These results provide evidence that primitive-based decomposition, as we study it, recovers a factorized semantic structure in which object and attribute information is meaningfully separated rather than simply reproducing the original pair representation, and thus providing a solid tool for compositional reasoning.
+ 5.4 Group Robustness via Primitives
+Pre-trained vision-language models achieve strong zero-shot performance under distribution shift, but remain sensitive to spurious correlations and subgroup imbalance  [ 40 ] . Existing approaches to group robustness typically rely on group annotations, additional optimization, group-specific prompts, adaptation, or class reweighting  [ 30 , 33 , 11 , 7 , 12 , 32 ] .
+We instead ask whether the compositional structure already encoded in and emerging from pretrained representations can itself be used for robust inference.
+The results of the statistical disentanglement indicate that decomposed primitives separate object and attribute semantics, allowing inference to retain information relevant to the object while suppressing attribute directions that may induce spurious correlations. We thus evaluate decomposed primitive for robustness to group bias on Waterbirds  [ 30 ] and CelebA  [ 16 ] . We do not use group annotations, additional data, or further optimization. Specifically, we classify images using only the object primitives, retaining only the object-score component of Eq.  6 , Eq.  7 and Eq.  11 for zero-shot, intrinsic, and GDE primitives, respectively.
+Table  3 shows that this simple inference-time decomposition consistently improves group robustness. Both GDE and intrinsic object primitives improve worst-group accuracy over zero-shot object inference while largely preserving, and in several cases improving, average accuracy. These gains arise without an explicit debiasing objective or fairness supervision: they come solely from isolating semantic structure already present in the pretrained representations. This suggests that compositional factorization is not only useful for interpreting representations, but also provides a practical mechanism for reducing reliance on spurious attributes at inference time.
+ Intrinsic primitives yield better group robustness in hyperbolic spaces. 
+The group robustness gains are especially pronounced for MERU and HyCoCLIP, where intrinsic object primitives yield large improvements in both average and worst-group accuracy. We conjecture that this advantage is related to the radial organization of semantic abstraction in the hyperbolic space. Intrinsic object primitives lie closer to the origin than compound object–attribute representations, consistent with their encoding broader, less attribute-specific concepts. GDE primitives, by contrast, are obtained through a local linear approximation around the Fréchet mean and can therefore remain more influenced by the local neighborhood structure induced by dominant attribute or background correlations. This provides a plausible geometric explanation for the stronger robustness of intrinsic primitives that lay directly on the manifold. The radial organization of these representations is further explored in Appendix  H .
+ 6 Conclusion
+This work establishes primitive decomposition as a unifying principle for compositional zero-shot learning (CZSL) across Euclidean, spherical, and hyperbolic vision–language models. By systematically analyzing models with diverse manifold geometries, we demonstrate that compositional structure consistently emerges in pretrained vision embeddings in the form of primitive visual concept representations, which can be directly exploited for compositional zero-shot inference. Crucially, we show that explicit attribute-object pair re-composition is not necessary for CZSL: independently reasoning over attribute and object primitives, with specifically-designed scoring functions, can effectively support compositional open-world generalization.
+We demonstrate primitives as a novel paradigm for CZSL inference with results being consistent for the tangent space GDE primitives and intrinsic primitives.
+Across experiments, GDE primitives provide robust and transferable primitive representations, consistently outperforming pair-based compositions for open-world CZSL while remaining simple and geometry-agnostic. Intrinsic primitives offer a complementary, geometry-aware refinement, particularly effective in hyperbolic spaces, where operating directly on the manifold improves stability by avoiding local linearization errors.
+We further demonstrate benefits of primitive-based inference in group robustness tasks, where object-primitive representations allow to perform unbiased inference without model re-training, avoiding spurious correlations induced by attribute characteristics.
+Finally, this work provides the first comprehensive and unified view of primitive-based CZSL, demonstrating it as an emerging property of existing pretrained models.
+Acknowledgments
+This publication is part of the project ROBUST: Trustworthy AI-based Systems for Sustainable Growth with project number KICH3.LTP.20.006, which is (partly) financed by the Dutch Research Council (NWO), Siemens Healthineers, and the Dutch Ministry of Economic Affairs and Climate Policy (EZK) under the program LTP KIC 2020–2023.
+This publication is part of the project ReVision with file number VI.Vidi.243.176 of the research programme Vidi ENW which is (partly) financed by the Dutch Research Council (NWO) under the grant https://doi.org/10.61686/ERNED50610 .
+T.T. acknowledges the EU project ELSA-European Lighthouse on Secure and Safe AI, under the EU’s Horizon Europe Research and Innovation Programme (grant agreement no. 101070617)
+This publication is part of the project HyperVision with file number VI.Vidi.243.085 of the research programme Vidi ENW which is (partly) financed by the Dutch Research Council (NWO) under the grant https://doi.org/10.61686/DCECG94893 .
+

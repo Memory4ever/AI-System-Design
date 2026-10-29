@@ -1,0 +1,615 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.29688v1
+Original retrieval 2026-10-23 BJT. Preservation is not a review-completion claim. Reviewed necessary scope is SOURCE_MULTIMODAL2.md.
+Abstract
+Large pretrained models such as CLIP are widely used as frozen feature extractors. However, their embeddings inherit spurious correlations from training data, introducing bias into the features. A growing body of research has sought to address this issue through post hoc debiasing, leaving the backbone untouched. We discover that despite differing mechanisms, these methods require the bias feature to be identified and expressed in text. This dependency is not innocuous. In this work, we experimentally demonstrate that this requirement incurs an unforeseen penalty in certain scenarios. For example, on the UrbanCars benchmark, having two co-occurring bias attributes, the recent methods underperform a vanilla classifier on biased frozen-backbone features, and even providing ground-truth bias identities does not close the gap. We show that the pattern that such methods seek is readily observable in the frozen geometry. Specifically, cross-class training pairs placed closest together by the frozen encoder almost always share a spurious attribute, regardless of the bias type, without requiring access to the bias labels. Based on this, we propose a novel approach to identify such pairs and learn a single linear map that transforms the features to perform post-hoc debiasing. The proposed approach achieves competitive performance across all datasets without access to bias attribute annotations or any LLMs.
+ 1 Introduction
+Large pretrained models such as CLIP  [ 12 ] are widely used as frozen feature extractors. While classifiers built on the embeddings of such models reach high average accuracy on multiple tasks, they often fail on a predictable subset of inputs. The root cause of these failures stems from the data distributions at both the pretraining and downstream stages. Since foundational models are trained on massive, uncurated web corpora, their learned feature spaces inherently capture and encode various naturally occurring ‘spurious correlations’ [ 9 , 16 , 17 , 20 , 18 , 15 ] . Consequently, when a spurious attribute strongly co-occurs with the class label, classifiers exploit this shortcut, making the model biased toward that attribute, e.g., with a majority of white dog and black cat images, the classifier exploits this color shortcut over complex class-defining features. Such classifiers will fail at test time, if this spurious correlation breaks.
+Post-hoc debiasing methods address this issue by adapting the learned representation while keeping the pretrained backbone frozen  [ 2 , 1 , 10 ] . Despite differing implementations, they all require the spurious attribute to be identified beforehand. Earlier methods relied on practitioners to specify the spurious attribute and construct descriptive text prompts  [ 2 ] , while recent works use LLMs to propose candidate bias attributes based solely on class names and generate controlled scene descriptions. These are used to suppress the corresponding text-aligned direction in the embedding space  [ 1 , 10 ] . While this shift is typically framed as a transition toward unsupervised debiasing, it is more appropriately just a change of oracle. This fundamental dependency on external attribute specification makes these methods incapable of detecting or correcting a misidentified bias.
+This reliance on text-based attribute identification introduces a critical failure mode when datasets contain complex or co-occurring shortcuts. While LLM-driven methods succeed when a single spurious attribute aligns cleanly with broad world knowledge, they struggle with multiple or non-intuitive attributes. On the UrbanCars benchmark  [ 7 ] , which features two simultaneous spurious attributes (background and co-occurring object), methods that obtain their attribute from a language model perform worse than an undebiased linear classifier trained on the frozen embeddings. PRISM  [ 10 ] reaches only 3.23\% worst-group accuracy with a trained linear head, compared to 38.71\% for the undebiased baseline.
+One might hypothesize that this failure stems merely from imprecise LLM-generated descriptions. To test this hypothesis, we perform an oracle experiment by supplying ground-truth description of the spurious attributes to these methods ( Sec.   4.2 ). The accuracy improves but remains below the undebiased baseline. This demonstrates that external bias identification is necessary for such methods but insufficient: suppressing multiple text-guided subspaces can remove essential class-discriminative semantics, damaging the representation more than the shortcuts it removes. Thus, prompt refinement cannot resolve this fundamental trade-off.
+To overcome these limitations, we propose an alternative paradigm that operates directly on an intrinsic geometric signature of bias rather than on bias attribute specifications. We define a sample as bias-aligned if its spurious attribute agrees with the dominant spurious-label correlation in the training data, and bias-conflicting if it violates it. Consequently, a cross-class pair sharing the same spurious attribute necessarily consists of one bias-aligned and one bias-conflicting sample, a configuration we term a bias-sharing pair . We observe that in a biased frozen feature space, cross-class pairs exhibiting high cosine similarity are bias-sharing. Spurious correlation thus manifests geometrically as a localized blur along identifiable cross-class sample pairs. Detecting these pairs requires no text prompts or attribute supervision, only class labels and pairwise similarity. By pulling apart these confusable cross-class pairs while maintaining the intra-class cohesion, we learn a single metric transformation \mathbf{W}\in\mathbb{R}^{d\times d} over the frozen embeddings. Because this geometric criterion relies strictly on feature similarity, it isolates and separates bias-sharing pairs agnostic to the number or nature of underlying shortcuts.
+Our proposed framework requires no bias attribute annotations, language models, auxiliary biased models, or backpropagation through the backbone. Across extensive evaluations, our approach achieves 81.18\% worst-joint accuracy on UrbanCars (compared to 61.29\% for the best competing method) while simultaneously improving overall accuracy. On BAR, our method delivers state-of-the-art worst-group accuracy across all bias-conflicting ratios. Finally, on BFFHQ, our performance scales dynamically with the availability of conflicting samples, outperforming static prompt-based baselines as conflicting data increases. The contributions of this work are as follows:
+ • 
+We empirically demonstrate that post-hoc debiasing methods that obtain the spurious attribute from a language model fail on multi-shortcut datasets, performing worse than an undebiased linear classifier, and that supplying ground-truth text prompts does not close the gap.
+ • 
+We identify an intrinsic geometric signature of spurious correlation in frozen embedding spaces where cross-class feature pairs with high similarity are overwhelmingly bias-sharing and show it can be detected purely from pairwise cosine similarity.
+ • 
+We introduce an annotation-free post-hoc debiasing approach that does not rely on external attribute descriptions or language models.
+ • 
+We evaluate the proposed approach across diverse multimodal and vision-only backbones (including CLIP [ 12 ] , SigLIP [ 19 ] , and DINOv3 [ 14 ] ), achieving state-of-the-art worst-group performance on the multi-shortcut benchmark and competitive performance across single-shortcut benchmarks.
+ 2 Related Work
+There is a growing body of work that involves debiasing deep learning models. In this section, we discuss existing works that perform bias mitigation under various settings.
+ Robust training without group labels. When group annotations are available, distributionally robust optimization  [ 13 ] and last-layer retraining on a group-balanced set  [ 6 ] optimize worst-group accuracy directly. A larger body of work removes that requirement by inferring which samples are atypical: from the errors of a deliberately biased model  [ 11 , 8 ] then reweighting against them. These methods are effective, but they assume that the encoder is trainable, and their inference of atypical samples rests on a representation that changes as training proceeds.
+ Debiasing frozen vision–language embeddings. 
+Various recent works debias pretrained vision-language models (VLMs) without updating their backbones, instead modifying the learned embedding space post-hoc. These methods are often described as annotation-free because they do not require per-sample annotations of the spurious attribute. However, this does not necessarily remove the need to identify the attribute itself. In practice, most existing methods need to be told which attribute is spurious, either by the practitioner or by a large language model.
+ Bias attribute named by the practitioner. 
+FairerCLIP  [ 2 ] learns functions over both encoders in a reproducing kernel Hilbert space, minimizing dependence between the representation and a specified attribute while preserving dependence on the target. Although it does not require attribute annotations per image, the bias attribute must be explicitly named, and prompts describing its values are used.
+ Bias attribute named by a language model. 
+RoboShot  [ 1 ] shifts the burden of specifying the bias attribute to an LLM, which proposes features that are helpful or harmful for a target class, which are then converted into embedding directions and used for projection. PRISM  [ 10 ] similarly uses an LLM to propose candidate attributes, then generates controlled scene descriptions in which the class and attribute vary independently and learns a projection that is invariant to the resulting attributes. Its variant, PRISM-mini, replaces the learned projection with an orthogonal projection. These methods avoid manually specifying the bias attribute, but rely on an external model to identify candidate attributes.
+ Bias attribute is not specified. 
+Rather than identifying a spurious attribute, \text{SEM}_{i}   [ 3 ] searches for representation components that are broadly responsive rather than selectively associated with a target class. It encodes frozen embeddings with a sparse encoder and compares neuron responses on two prompt sets: 328 neutral captions spanning diverse scenes, objects, and activities, which provide a reference distribution, and ten LLM-generated paraphrases of each class name. It suppresses neurons with low query relevance, which are treated as likely spurious.
+ Multiple shortcuts. 
+Li  et al .   [ 7 ] observe that mitigating one shortcut can amplify reliance on another, a failure they term whac-a-mole , and introduce UrbanCars to expose it: two shortcuts are inserted at once, one of which is an artifact of dataset construction rather than a regularity of the visual world. The frozen-backbone methods above are evaluated almost exclusively on benchmarks carrying a single shortcut. We experimentally demonstrate in Sec.   4 that whac-a-mole persists on frozen embeddings, and is not resolved just by ground truth bias attribute specifications.
+In this work, we present a post-hoc debiasing approach that performs post-hoc debiasing of the features of a frozen large pretrained model, without requiring any practitioner or language model or even the bias specifications. We also experimentally demonstrate that our proposed approach performs significantly better than existing post-hoc debiasing methods including on the UrbanCars benchmark.
+ Method 
+ Venue 
+ Bias Info 
+ Text-Agnostic 
+ Post-Hoc Debiasing (Frozen Backbone) 
+ FairerCLIP  [ 2 ] 
+ ICLR’24 
+ named 
+ ✗ 
+ RoboShot  [ 1 ] 
+ ICLR’24 
+ LLM 
+ ✗ 
+ PRISM  [ 10 ] 
+ ICCV’25 
+ LLM 
+ ✗ 
+ PRISM-mini  [ 10 ] 
+ ICCV’25 
+ LLM 
+ ✗ 
+ \text{SEM}_{i}   [ 3 ] 
+ CVPR’26 
+ none 
+ ✗ 
+ Ours 
+ – 
+ none 
+ ✓ 
+ Table 1: Requirements across debiasing methods. Bias Info denotes the spurious attribute supervision required (per-sample labels, attributes named by the practitioner, LLM proposals, or none ). Text-Agnostic indicates methods that do not depend on a text encoder or prompt generation.
+ 3 Problem Setting
+Let each example in the dataset be a tuple (x,y,a) , where x\in\mathcal{X} is an image, y\in\mathcal{Y} is its class label, and a\in\mathcal{A} is a latent bias attribute that is not causally related to y . Under a biased training distribution P_{\text{train}}(x,y,a) , a and y are spuriously correlated. A sample x is bias-aligned when the pair (y,a) follows that spurious correlation and bias-conflicting when it violates it. Let bias-ratio \rho refer to the proportion of bias-conflicting samples in the dataset. A low \rho denotes more biased dataset.
+A dataset may carry multiple bias attributes at once. We consider a setting where each class has at least one spurious attribute value that appears in the majority of its samples. The same attribute value may appear in other classes, but only in the minority of their samples. Multiple such attributes may exist for a single class. In this setting, two samples of different classes that take the same value of a are necessarily one aligned and one conflicting, since the majority value for one class can only be a minority value for the other. We call such a pair bias-sharing . Bias-sharing pairs are the ones a classifier is most likely to confuse. They agree on the bias attribute that the training correlation rewards and disagree on the class label.
+We seek a classifier that performs well under a target distribution P_{\text{test}} in which the spurious correlation is absent, and in particular perform well on the conflicting groups, where reliance on the bias attribute a is penalized rather than being rewarded. The performance is therefore measured by worst-group accuracy alongside the overall accuracy.
+In this work, we limit the problem setting to classifiers built on a frozen large pretrained vision encoder f_{I} producing normalized embeddings \mathbf{x}=f_{I}(x) . The encoder is not fine-tuned or trained on the biased dataset. The objective is to learn a map applied to those embeddings, together with a linear head. We operate in the bias-unaware setting, where the bias attribute a is neither observed during training nor identified in advance.
+ Figure 1 : On UrbanCars, most debiasing methods are worse than no debiasing. Worst-group accuracy of each method, measured against a linear classifier trained on the same frozen CLIP features with no debiasing. Bars to the left of the reference mark methods that reduce accuracy below it.
+The dashed bar denotes PRISM with the ground-truth attribute identities
+( Sec.   4.2 ). 
+ Method 
+ Bias info 
+ Ovr. 
+ W-BG 
+ W-Co 
+ W-Joint 
+ Cosine similarity to prompt embeddings 
+ CLIP-cosine 
+ none 
+ 50.00 
+ 4.03 
+ 13.71 
+ 0.00 
+ PRISM 
+ LLM 
+ 53.43 
+ 6.45 
+ 16.13 
+ 1.61 
+ + oracle 
+ oracle 
+ 59.48 
+ 33.06 
+ 47.58 
+ 30.65 
+ PRISM-mini 
+ LLM 
+ 53.63 
+ 24.19 
+ 27.42 
+ 6.45 
+ + oracle 
+ oracle 
+ 55.65 
+ 26.61 
+ 20.97 
+ 9.68 
+ Linear head on the corrected features 
+ CLIP-linear 
+ none 
+ 81.18 
+ 68.55 
+ 65.32 
+ 38.71 
+ PRISM 
+ LLM 
+ 61.49 
+ 32.30 
+ 33.10 
+ 3.23 
+ + oracle 
+ oracle 
+ 67.94 
+ 49.20 
+ 45.20 
+ 17.74 
+ PRISM-mini 
+ LLM 
+ 73.79 
+ 52.40 
+ 51.60 
+ 11.29 
+ + oracle 
+ oracle 
+ 76.61 
+ 56.45 
+ 57.26 
+ 20.97 
+ Table 2: Correct specification is necessary but not sufficient. Replacing LLM-generated attribute descriptions with ground-truth prompts improves PRISM and PRISM-mini, but both remain below the undebiased reference.
+ Cross-class pair shares… 
+ all pairs 
+ selected 
+ neither shortcut 
+ 81.9 
+ 5.2 
+ background only 
+ 8.6 
+ 35.2 
+ co-occurring object only 
+ 8.6 
+ 12.1 
+ both shortcuts 
+ 0.9 
+ 47.6 
+ at least one shortcut 
+ 18.1 
+ 94.8 
+ number of pairs 
+ 16.0M 
+ 986 
+ Table 3: What a similarity threshold selects. Composition of cross-class training pairs on UrbanCars (%) in the frozen embedding space, that share each shortcut. Selected denotes pairs whose cosine similarity exceeds the threshold used by our method ( Sec.   5 ). Attribute labels are used only for this analysis.
+ Figure 2 : Bias concentration scales with feature similarity. The percentage of cross-class training pairs sharing a spurious background or co-occurring object increases monotonically as a function of the cosine similarity threshold. 
+ 4 Motivation
+Post-hoc debiasing methods that rectify a frozen embedding space require the spurious attribute to be specified before they can act. Multiple such methods obtain this specification from a language model, which proposes candidates from class names alone. This section examines the impact of that requirement on a more realistic UrbanCars benchmark, where two spurious attributes are present at once.
+ 4.1 Debiasing Performs Below the Baseline
+One might expect rectifying a biased representation to always help. Yet, we observe something strange on the UrbanCars benchmark ( Fig.   1 ). A linear classifier trained on features from a frozen pretrained model, with no debiasing, reaches 81.18\% overall and 38.71\% worst group accuracy. However, when we debias the features using post-hoc debiasing methods that use LLMs for bias-attribute specifications and train a same-capacity linear classifier on the debiased features, these methods perform very poorly. PRISM  [ 10 ] reaches 3.23\% worst-group accuracy, RoboShot  [ 1 ] reaches 8.06\% , and PRISM-mini  [ 10 ] reaches 11.29\% . Even the best method falls 27 points below the naive classifier with no debiasing. Overall accuracy also declines, ruling out a robustness–accuracy trade-off.
+ Figure 3 : Method overview – Left: we select two sets of pairs in the frozen space using class labels and cosine similarity alone. \mathcal{P} takes cross-class pairs above \tau_{\mathrm{push}} , 94.8\% of which are bias-sharing, and \mathcal{Q} takes same-class pairs below \tau_{\mathrm{pull}} . Right: a selected pair contributes gradients until it reaches its margin and none after. Thresholds decide which pairs move, margins how far. We only train \mathbf{W} . 
+ 4.2 Expert Bias Specification Is Not Enough
+Two competing explanations could account for the above failure. Firstly, LLM generated bias-specifications may not match the actual shortcuts. Secondly, the bias removal mechanism may be at fault. UrbanCars provides a direct test because it contains two co-occurring bias-shortcuts. We test the first explanation by replacing the LLM proposals with expert-written prompts that name the two ground-truth attributes, background and co-occurring object. Keeping the rest of the method same, we report the new results (+oracle) in Tab.   2 . Using a cosine classifier, PRISM improves from 1.61\% to 30.65\% on worst joint accuracy with the oracle information. With a trained linear head, the improvement is smaller, from 3.23\% to 17.74\% . The performance never reaches the 38.71\% of the undebiased linear classifier. Since the ground truth specification helps in both cases, the specifications were indeed part of the problem. But the ground truth specification is insufficient to beat the baseline. A likely reason is that the two bias shortcuts do not occupy orthogonal subspaces in the frozen embedding space. If we represent each spurious attribute as the text derived direction of its prompt, excluding the class component they share by construction, the cosine similarity between these two directions is 0.58 . PRISM removes the direction associated with a specified attribute. When two directions overlap this much, removing one leaves part of the other behind, and the classifier shifts its reliance to that residual. Fixing one bias makes the other worse. This is the whac-a-mole failure described in [ 7 ] , and UrbanCars was built to expose this.
+UrbanCars also exposes why the bias specification failed. Since an LLM proposes bias attributes for the given classes based on real-world co-occurrence priors, natural associations such as a vehicle type appearing against a specific background, get easily identified. However, the second shortcut in UrbanCars was introduced via image composition, corresponding to no predominant natural world observation. LLMs have nothing to draw upon in this regard, leaving them blind to artifacts that are not well-explored.
+ 4.3 Intrinsic Trace of Bias in the Feature Space Geometry
+Prompt-based methods require bias specification because they treat the spurious attribute as an external semantic concept that must be described before it can be eliminated. However, the bias attribute also leaves an intrinsic geometric signature in the representation that can be precisely measured without requiring a semantic description
+Spurious features perturb the embedding space almost as much as class boundaries.
+In the frozen embedding space, two images in UrbanCars of the same class on the same background have a mean cosine similarity of 0.630 . We analyze the effect of changing one attribute at a time. Changing only the background reduces this similarity to 0.589 . Changing only the class while keeping the background same reduces it to 0.584 . Therefore, a change in spurious attribute reduces cosine similarity by almost the same amount as changing the class. Therefore, a cross-class bias-sharing pair of samples that have the same background, will be placed almost as close to each other as two same class samples, by the frozen encoder. We study this finding to discover a geometric signature of the bias.
+High-similarity cross-class pairs are overwhelmingly bias-sharing.
+The decision boundary depends on the pairs of samples the encoder places closest together, not on the average pair. We refer to the two spurious attributes in UrbanCars, background and co-occurring object, as shortcuts. A cross-class pair drawn at random shares neither shortcut in 81.9\% of cases, shares one in 17.2\% cases, and both in only 0.9\% cases. When we select only the pairs with high cosine similarity, this distribution reverses ( Tab.   3 ). Pairs sharing neither shortcut fall to 5.2\% , while pairs sharing both rise to 47.6\% , and pairs sharing atleast one shortcut rises to 94.8%, becoming the dominant configuration. Therefore, the pairs the encoder finds most confusable due to high similarity are almost always bias-sharing . The reversal strengthens as the similarity threshold increases ( Fig.   2 ). The proportion of selected pairs that share the background or the co-occurring object rises continuously with the cutoff. This is an intrinsic property of the decision boundary, not an artifact of a chosen threshold. Selection therefore requires no prior knowledge of which attribute makes a pair similar or of how many attributes are involved. It is a measurable property of the representation, and we can use this to learn a transformation that separates bias-sharing pairs to debias the features.
+ 5 Proposed Approach
+The analysis in Section   4.3 revealed an intrinsic geometric property: the cross-class pairs that a frozen encoder finds most confusable (high cosine similarity) are almost all bias-sharing . We turn this observation into an objective for post-hoc debiasing. The proposed approach learns a linear map \mathbf{W}\in\mathbb{R}^{d\times d} which transforms the features of the frozen pretrained encoder to debias them ( Fig.   3 ).
+ 5.1 Bias-sharing pair selection
+Let \mathbf{x}_{i} denote the frozen embedding of image i produced by the pretrained encoder, and let y_{i} denote its class label. We consider pairs of training images (i,j) and measure their cosine similarity as \langle\mathbf{x}_{i},\mathbf{x}_{j}\rangle . Motivated by our findings in Sec.   4.3 , we present the following condition for selecting bias-sharing pairs from the cross-class pairs.
+ \mathcal{P}=\big\{(i,j):y_{i}\neq y_{j},\;\langle\mathbf{x}_{i},\mathbf{x}_{j}\rangle>\tau_{\text{push}}\big\}. 
+ (1) 
+As characterized in Tab.   3 , applying this threshold on the UrbanCars dataset yields a set \mathcal{P} where 94.8\% of the members are bias-sharing, compared to just 18.1\% in the unconstrained cross-class distribution. Because every pair in \mathcal{P} spans two distinct classes, an objective built solely on this set would leave the geometry within each individual class unconstrained. To anchor the intra-class representation, we sample a secondary set of distant same-class pairs:
+ \mathcal{Q}\subseteq\big\{(i,j):y_{i}=y_{j},\;\langle\mathbf{x}_{i},\mathbf{x}_{j}\rangle<\tau_{\text{pull}}\big\}, 
+ (2) 
+taking one partner per image and retaining |\mathcal{P}|/N pairs per class (N refers to the number of classes), so that the two sets contribute comparable numbers of pairs for balanced regularization. Since bias-conflicting samples constitute a severe minority of the data, the overwhelming majority of any given class is bias-aligned.
+Consequently, the low-similarity regime of \mathcal{Q} predominantly captures natural intra-class variance among these abundant aligned samples. However, this set also captures the rare/minor instances where the spurious attribute itself differs (pairing an aligned sample with a conflicting one). Pulling these pairs together is highly beneficial, as it encourages invariance to the spurious attribute while preserving overall class cohesion. Therefore, while \mathcal{P} can be processed to actively separate the confusable cross-class pairs, \mathcal{Q} acts as a broad structural anchor that prevents the internal geometry of the classes from collapsing. We discuss the contribution of each set in ( Sec.   6.3 ). Both sets are computed once, from the frozen embeddings, before \mathbf{W} exists. Membership is fixed by the geometry measured in Sec.   4 rather than by the representation the method is producing.
+ 5.2 Managing bias-sharing pairs and low similarity same class pairs
+Let \mathbf{z}_{i}=\mathbf{W}\mathbf{x}_{i}/\lVert\mathbf{W}\mathbf{x}_{i}\rVert denote the projected embedding and s_{ij}=\langle\mathbf{z}_{i},\mathbf{z}_{j}\rangle the similarity it induces. The sets \mathcal{P} and \mathcal{Q} are used to optimize \mathbf{W} with a one-sided hinge against a margin:
+ \displaystyle\mathcal{L}_{\text{push}} 
+ \displaystyle=\frac{1}{|\mathcal{P}|}\sum_{(i,j)\in\mathcal{P}}\big[\,s_{ij}-m_{\text{push}}\,\big]_{+}, 
+ (3) 
+ \displaystyle\mathcal{L}_{\text{pull}} 
+ \displaystyle=\frac{1}{|\mathcal{Q}|}\sum_{(i,j)\in\mathcal{Q}}\big[\,m_{\text{pull}}-s_{ij}\,\big]_{+}, 
+ (4) 
+ \displaystyle\mathcal{L} 
+ \displaystyle=\mathcal{L}_{\text{push}}+\mathcal{L}_{\text{pull}}, 
+ (5) 
+with m_{\text{push}}<\tau_{\text{push}} and m_{\text{pull}}>\tau_{\text{pull}} .
+A pair contributes gradient to optimize \mathbf{W} until its similarity reaches the margin and none thereafter. The thresholds determine which pairs are moved and the margins determine how far they are moved. Replacing both hinges with unbounded terms costs 4.84 points of Worst Joint accuracy on UrbanCars (see Tab.   6 ).
+Note that Eqs.   1 to  5 do not use any information regarding the bias attribute, and no text embedding or auxiliary models are used for our proposed approach. The proposed objective only utilizes image-to-image similarity and class labels alone to learn a linear map to debias the features of a frozen large pretrained model.
+ 5.3 Overview and Inference
+In the proposed approach, we initialize the linear map \mathbf{W}\in\mathbb{R}^{d\times d} as an identity matrix, ensuring optimization begins from the encoder’s native geometry. It is the sole component that receives a gradient, introducing only d^{2}\approx 0.59 M learnable parameters compared to the backbone’s {\sim}300 M. After learning the projection, we fit a linear classifier on the training split while keeping \mathbf{W} fixed. Since the CLIP+linear-head baseline in Sec.   6.2 employs an identical head and training schedule on unprojected embeddings, the two setups differ exclusively by the presence of \mathbf{W} . The objective \mathcal{L} depends on \mathbf{W} only through cosine similarities between transformed embeddings, so \mathbf{W} ’s scale is irrelevant, and the optimization effectively learns a linear map that reshapes pairwise similarities in the frozen feature space. Performance gains come from the geometric objective guiding \mathbf{W} toward a more robust representation.
+ Method 
+ Venue 
+ Ovr. 
+ W-BG 
+ W-Co 
+ W-Joint 
+ Cosine similarity to prompt embeddings 
+ CLIP-cos 
+ – 
+ 50.00 
+ 4.03 
+ 13.71 
+ 0.00 
+ RoboShot 
+ ICLR’24 
+ 51.81 
+ 13.71 
+ 20.16 
+ 0.00 
+ FairerCLIP 
+ ICLR’24 
+ 81.25 
+ 64.52 
+ 69.36 
+ 58.06 
+ PRISM 
+ ICCV’25 
+ 53.43 
+ 6.45 
+ 16.13 
+ 1.61 
+ PRISM-m 
+ ICCV’25 
+ 53.63 
+ 24.19 
+ 27.42 
+ 6.45 
+ † \text{SEM}_{i} 
+ CVPR’26 
+ 78.63 
+ 69.35 
+ 71.77 
+ 61.29 
+ Ours 
+ – 
+ 89.78   \pm 0.41 
+ 85.48   \pm 1.74 
+ 84.95   \pm 1.66 
+ 81.18   \pm 2.28 
+ Linear head on the corrected features 
+ CLIP-L 
+ – 
+ 81.18 
+ 68.55 
+ 65.32 
+ 38.71 
+ RoboShot 
+ ICLR’24 
+ 72.40 
+ 48.39 
+ 51.61 
+ 8.06 
+ FairerCLIP 
+ ICLR’24 
+ 50.81 
+ 9.68 
+ 41.94 
+ 8.06 
+ PRISM 
+ ICCV’25 
+ 61.49 
+ 32.30 
+ 33.10 
+ 3.23 
+ PRISM-m 
+ ICCV’25 
+ 73.79 
+ 52.40 
+ 51.60 
+ 11.29 
+ Ours 
+ – 
+ 90.59   \pm 0.71 
+ 85.22   \pm 1.23 
+ 83.60   \pm 0.93 
+ 81.18   \pm 0.93 
+ Table 4: UrbanCars: two simultaneous shortcuts. 
+Methods are grouped by the rule used to classify, so that comparison is made between methods sharing a decision procedure. Shaded grey rows are the undebiased reference for each rule. Best method: bold , second: underlined . Results are averaged over 3 seeds. For our method, we report the mean and standard deviation. † \text{SEM}_{i} transforms only the text embeddings leaving image features unchanged, so a head fit on its features reproduces CLIP-linear exactly.
+ BAR 
+ BFFHQ 
+ Waterbirds ‡ 
+ 1\% 
+ 5\% 
+ 0.5\% 
+ 1\% 
+ 2\% 
+ 5\% 
+ 5\% 
+ Method 
+ Venue 
+ Bias info 
+ Ovr. 
+ Worst 
+ Ovr. 
+ Worst 
+ Ovr. 
+ Worst 
+ Ovr. 
+ Worst 
+ Ovr. 
+ Worst 
+ Ovr. 
+ Worst 
+ Ovr. 
+ Worst 
+ Cosine similarity to prompt embeddings 
+ CLIP-cosine 
+ – 
+ none 
+ 96.49 
+ 74.65 
+ 96.49 
+ 74.65 
+ 70.70 
+ 37.60 
+ 70.70 
+ 37.60 
+ 70.70 
+ 37.60 
+ 70.70 
+ 37.60 
+ 86.20 
+ 39.60 
+ RoboShot [ 1 ] 
+ ICLR’24 
+ LLM 
+ 24.08 
+ 0.00 
+ 24.08 
+ 0.00 
+ 47.90 
+ 2.80 
+ 47.90 
+ 2.80 
+ 47.90 
+ 2.80 
+ 47.90 
+ 2.80 
+ 72.10 
+ 41.90 
+ FairerCLIP [ 2 ] 
+ ICLR’24 
+ named 
+ 94.03 
+ 59.16 
+ 82.95 
+ 21.13 
+ 73.50 
+ 38.00 
+ 83.40 
+ 56.80 
+ 94.00 
+ 83.60 
+ 94.40 
+ 83.60 
+ 89.12 
+ 77.41 
+ PRISM [ 10 ] 
+ ICCV’25 
+ LLM 
+ 95.96 
+ 76.06 
+ 95.96 
+ 76.06 
+ 91.80 
+ 87.60 
+ 91.80 
+ 87.60 
+ 91.80 
+ 87.60 
+ 91.80 
+ 87.60 
+ 89.18 
+ 67.91 
+ PRISM-mini [ 10 ] 
+ ICCV’25 
+ LLM 
+ 96.49 
+ 74.65 
+ 96.49 
+ 74.65 
+ 73.60 
+ 39.20 
+ 73.60 
+ 39.20 
+ 73.60 
+ 39.20 
+ 73.60 
+ 39.20 
+ 87.23 
+ 53.43 
+ \text{SEM}_{i} [ 3 ] 
+ CVPR’26 
+ none 
+ 95.08 
+ 66.20 
+ 95.08 
+ 66.20 
+ 92.00 
+ 88.40 
+ 92.00 
+ 88.40 
+ 92.00 
+ 88.40 
+ 92.00 
+ 88.40 
+ 83.20 
+ 52.30 
+ Ours 
+ – 
+ none 
+ 97.31 
+ 87.79 
+ 97.83 
+ 87.79 
+ 95.03 
+ 88.00 
+ 95.50 
+ 90.80 
+ 96.60 
+ 92.67 
+ 97.70 
+ 95.47 
+ 89.29 
+ 81.95 
+ Linear head on the corrected features 
+ CLIP-linear 
+ – 
+ none 
+ 96.13 
+ 70.42 
+ 97.19 
+ 78.87 
+ 90.80 
+ 78.00 
+ 92.00 
+ 82.80 
+ 94.30 
+ 87.60 
+ 96.40 
+ 92.00 
+ 88.47 
+ 73.67 
+ RoboShot [ 1 ] 
+ ICLR’24 
+ LLM 
+ 92.10 
+ 54.90 
+ 93.70 
+ 63.40 
+ 79.10 
+ 56.00 
+ 84.50 
+ 67.60 
+ 91.60 
+ 78.80 
+ 95.70 
+ 88.40 
+ 83.50 
+ 63.60 
+ FairerCLIP [ 2 ] 
+ ICLR’24 
+ named 
+ 71.35 
+ 16.81 
+ 74.34 
+ 59.66 
+ 48.20 
+ 42.40 
+ 83.70 
+ 53.20 
+ 93.60 
+ 88.80 
+ 96.50 
+ 92.00 
+ 89.71 
+ 60.90 
+ PRISM [ 10 ] 
+ ICCV’25 
+ LLM 
+ 97.19 
+ 81.69 
+ 97.19 
+ 83.10 
+ 91.80 
+ 83.20 
+ 93.90 
+ 84.80 
+ 95.10 
+ 89.60 
+ 96.60 
+ 92.80 
+ 82.95 
+ 64.79 
+ PRISM-mini [ 10 ] 
+ ICCV’25 
+ LLM 
+ 94.02 
+ 57.75 
+ 95.08 
+ 61.97 
+ 80.70 
+ 57.20 
+ 86.50 
+ 72.80 
+ 92.00 
+ 79.60 
+ 96.00 
+ 88.80 
+ 85.42 
+ 70.64 
+ Ours 
+ – 
+ none 
+ 97.54 
+ 83.10 
+ 97.89 
+ 84.51 
+ 92.67 
+ 84.00 
+ 94.30 
+ 86.67 
+ 95.60 
+ 90.67 
+ 97.93 
+ 95.87 
+ 89.35 
+ 80.01 
+ Table 5: Results on the BAR, BFFHQ, and Waterbirds datasets. For our method, we report the mean and standard deviation. Note: ‡ For Waterbirds, we follow the evaluation protocol of [ 3 ] , including the ViT-L/14@336px backbone. Further details, including standard deviations, are provided in the supplementary materials.
+ 6 Experiments
+ 6.1 Setup
+Datasets.
+We evaluate on four benchmarks. UrbanCars   [ 7 ] is a binary vehicle classification task constructed with two simultaneous shortcuts, image background (BG), and a co-occurring object (CoObj). BAR   [ 11 ] is a six-class action recognition task in which each action co-occurs with a typical place, evaluated at bias ratios \rho= 1% and 5%. BFFHQ   [ 4 , 5 ] is an age classification task with a demographic shortcut, evaluated at \rho= 0.5%, 1%, 2%, and 5%. Waterbirds   [ 13 ] is a bird classification task with a background shortcut, evaluated at \rho= 5%.
+Metrics and Protocol.
+We report overall and worst-group accuracy. On UrbanCars we separate worst-group accuracy (WGA) by shift type: Worst BG (W-BG) and Worst CoObj (W-Co) are the lowest accuracy over groups in which the respective attribute is shifted, and Worst Joint (W-Joint) over groups in which both are shifted at once. Worst Joint is the quantity that multiple shortcuts affect directly. Hyperparameters are selected per dataset on a held-out validation split, and test results are reported for the selected configuration. We run each experiment with three random seeds and report the mean and standard deviation. Further implementation details are provided in the supplementary materials.
+Baselines.
+All methods use the same frozen CLIP ViT-L/14 backbone. We include two undebiased references: CLIP with cosine similarity to prompt embeddings ( CLIP-cosine ), and a linear classifier trained on the frozen embeddings ( CLIP-linear ). CLIP-linear is the matched-capacity reference for our method, using an identical head, optimizer, and scheduler, and differing only in the absence of \mathbf{W} . We report our method under both classification rules. The cosine variant applies \mathbf{W} to image embeddings and performs classification by cosine similarity with the same frozen prompt embeddings used by the vanilla-cosine classifier.
+We compare against \text{SEM}_{i}   [ 3 ] , PRISM and PRISM-mini  [ 10 ] , RoboShot  [ 1 ] and FairerCLIP  [ 2 ] . PRISM and RoboShot obtain their attributes from an LLM without human specification. For every competing method, we tune all of its hyperparameters and report the best configuration found. No method receives per-sample attribute annotations.
+ 6.2 Main results
+Multiple shortcuts.
+On the UrbanCars benchmark, every method that obtains its attribute from an LLM falls below the undebiased linear classifier on all four metrics ( Tab.   4 ). Our method achieves 81.18\% Worst Joint accuracy, outperforming the best competing method by 19.89 points and CLIP-linear by 42.47 points. The gap between overall and Worst Joint accuracy shrinks from 45.16 points for the baseline to 9.41 points for our method, while overall accuracy improves from 81.18\% to 90.59\% . Unlike text-based baselines, our method also applies to vision-only backbones such as DINOv3. We report these results in the supplementary materials.
+Single shortcuts.
+The advantage extends to single-shortcut benchmarks ( Tab.   5 ). On BAR, our method achieves the highest worst-group accuracy under both classification rules at both bias ratios. Under the linear head, we reach 83.10\% at 1\% and 84.51\% at 5\% , exceeding the best competitor by 1.41 points at each ratio. Under the cosine rule, the margin widens. We reach 87.79\% at 1\% , exceeding PRISM by 11.73 points. On BFFHQ, our WGA scales with the availability of conflicting samples, rising from 84.00\% at 0.5\% to 95.87\% at 5\% under the linear head. PRISM improves from 83.20\% to 92.80\% over the same range, but our method gains 11.87 points while PRISM gains 9.60 points. Our pair-selection strategy queries the dataset’s own geometry, so it naturally improves as more conflicting samples become available. On Waterbirds, our method reaches 80.01\% WGA under the linear head, surpassing PRISM by 15.22 points and FairerCLIP by 19.11 points. Under the cosine rule, we reach 81.95\% , exceeding FairerCLIP by 4.54 points and PRISM by 14.04 points.
+ Objective 
+ UrbanCars 
+ \mathcal{L}_{\text{push}} 
+ \mathcal{L}_{\text{pull}} 
+ margins 
+ Ovr. 
+ W-BG 
+ W-Co 
+ W-Joint 
+ ✓ 
+ – 
+ ✓ 
+ 85.48 
+ 73.39 
+ 70.97 
+ 48.39 
+ – 
+ ✓ 
+ ✓ 
+ 71.77 
+ 47.58 
+ 49.19 
+ 6.45 
+ ✓ 
+ – 
+ – 
+ 87.10 
+ 78.23 
+ 75.81 
+ 58.06 
+ – 
+ ✓ 
+ – 
+ 87.70 
+ 78.23 
+ 75.81 
+ 61.29 
+ ✓ 
+ ✓ 
+ – 
+ 90.73 
+ 86.29 
+ 84.68 
+ 79.03 
+ ✓ 
+ ✓ 
+ ✓ 
+ 90.93 
+ 86.29 
+ 85.48 
+ 83.87 
+ Table 6: Ablation on loss terms 
+ Figure 4 : Threshold stability on UrbanCars. Each cell reports the mean and spread across the four margin settings at that threshold pair. The red border box marks the selected configuration. 
+ 6.3 Ablations
+Our objective combines two forces. The first separates bias-sharing cross-class pairs ( \mathcal{L}_{\text{push}} ), and the second maintains same-class cohesion ( \mathcal{L}_{\text{pull}} ). Tab.   6 shows that both are necessary. Removing either term drops Worst Joint accuracy by at least 22.58 points. The margins prevent unbounded optimization and add a further 4.84 points on top of the full objective. Fig.   4 Sweeps the two thresholds on UrbanCars. We use four random margin values for each threshold pair and average the results, reporting the mean and standard deviation. Corresponding grids for BAR, BFFHQ, and Waterbirds are provided in the supplementary materials. Additional analyses on backbones, class imbalance, and the separation of same-class and cross-class pairs after projection are in the supplementary materials.
+ 7 Conclusion
+We have shown that debiasing a frozen encoder need not require explicit spurious-attribute identification. The bias signal is already encoded in the frozen feature geometry. Highly similar cross-class pairs are overwhelmingly bias-sharing, and this is detectable from pairwise similarity and class labels alone. Our method turns this observation into a training objective that separates bias-sharing pairs and maintains same-class cohesion. It consistently outperforms post-hoc debiasing approaches, including on the multi-bias benchmark, where methods dependent on LLM-generated specifications underperform an undebiased linear classifier.
+

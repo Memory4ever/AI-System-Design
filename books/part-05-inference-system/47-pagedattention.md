@@ -87,6 +87,14 @@ waste_r = N_blocks,r * S_b - T_r
 
 例如 `S_b=4`、`T_r=10` 时需要 3 个 blocks，最后 block 浪费 2 个 token slots。若 block size 改成 16，只需 1 个 block-table entry，却浪费 6 个 slots。Block size 因此是 metadata/kernel efficiency 与内部碎片之间的权衡。
 
+一个token位置在不同head中不再保留同样长度时，页的内部碎片还会沿head维度返回：只要所有head共用同一长度的分配，短head删掉KV也可能仍被最长head锁住物理容量。一条[受限非均匀缓存分支](https://arxiv.org/html/2606.06302v1#S4)先从离线profile固定每层各head的保留预算，再按相近预算分组，为每组维护独立页表，并复用按该shape准备的kernel分割计划。这里固定的是容量形状，不是每次选中的token；减小group能少留空洞，却增加页表、host维护和kernel接线费用，仍需保持原head身份与位置映射。
+
+静态预算也不能直接当作请求峰值显存证书：KV双份、组内最大值、页对齐和metadata之外，还须另计压缩前的Prefill瞬时空间、后续增长与reserve。少量pilot上的预算稳定不保证新domain同样成立，固定split也不批准完美balance、零在线成本或质量无损；本地vLLM/A100对照不替完整服务SLO。Profile、token选择、页表/分割产物和实际kernel应绑定同一模型/布局版本并计全部费用；预算、质量或真实峰值失配时，回退较保守保留、普通统一页与动态规划，而不由逻辑压缩率放行更多请求。<!-- source-family:SF-2026-ARXIV-2606-06302 -->
+
+模型共置时，固定token数的block不一定占相同字节；各engine独立预留KV pool虽简单，却不能把空闲容量直接借给另一种布局。一个物理分配分支先预分配共享tensor，以参与模型KV block字节数的公倍数作统一slab，一slab只容一种block-size class，manager记录FREE/PARTIAL/FULL与块占用，返回slab及局部block ID；各engine再按本类每slab块数形成自己的block编号与tensor view。[这种共享slab接口](https://arxiv.org/html/2509.06261v1)借的是物理空间，不是跨模型复用KV内容，也不由相同字节数认证model/TP/KVdtype/量化scale与layout兼容。仅全空slab才能回pool并重格式化给另一类，尚有live block时不能直接转借；视图/映射更新、GPU读取与回收同步仍须真实实现验收，不能把分配登记当完成。公倍数膨胀、未满slab、class偏斜、reserve/alignment/metadata及manager都付费，不采零碎片或零开销。原对照中的Prism重实现已使用slab，不能把主吞吐差全归allocator；另有排序、placement和局部队列共同变化，单模型FP16消融也不证混精度争用已解。低bit cohort没有对齐质量回归，平均profile与decode tokens/s不替峰值容量、全部到达/丢弃请求的TTFT/TPOT或端到端SLO。量化/装载/profile、共享表与views/同步、调度预测及全部质量和失败回归均计费；真实布局、同步、容量或质量未验时，保独立已测pool、普通分页/静态partition与保守余量和队列，不能以共享容量批准状态混用。
+
+<!-- source-family:SF-2025-ARXIV-2509-06261 -->
+
 ### 当 Token 已被淘汰，Block 仍可能无法回收
 
 PagedAttention 将连续大块预留改成固定 block allocation，但它的回收接口仍以 block 为单位。只要请求保留
@@ -144,6 +152,10 @@ physical      = block_table[logical_block]
 ```
 
 随后从对应 physical block 读取 K/V。间接寻址改变 memory access path，却不能改变 position 顺序、causal visibility 或 numerical contract。
+
+分页对象还可以进入多个可组合算子，而不只由一个attention kernel读取。一个[受限分页tensor分支](https://arxiv.org/html/2606.06453v1#S4)让每个对象携带sequence边界与page-index映射，逐请求应用算子后，再传播输出shape和新分配或复用的页；长短不同的中间结果可保持ragged布局，不必先拼成矩形再拆回。这个接口仍要求请求之间独立、非序列维相容，算子不能通过变换batch维偷偷跨请求混合；真实token位置与causal可见性也不能由逻辑连续view重写。
+
+Query-independent的块摘要与query-dependent的累计统计又有不同身份：共用KV的allocator或page机制，不使统计自动取得跨prefix/分支共享资格。Namedcache的声明、更新/重置时点与请求映射须另验；layout传播合法也不证明稀疏选择等同full attention，随机早停的近似TopK还需独立质量预算和exact回退。Metadata、auxiliary驻留、选择与转换都计费；布局、统计身份、支持的backend或质量不合时，回到原已验paged kernel、重建请求局部统计或full attention，而不因算子可组合批准无损与服务SLO。<!-- source-family:SF-2026-ARXIV-2606-06453 -->
 
 正确性测试应在相同模型与 deterministic decoding 下比较 contiguous/paged、shared/unshared 和 allocate/free/reuse 路径。Block table 错一项可能产生合法数值但错误的输出。
 
@@ -238,6 +250,10 @@ PagedAttention 把 request 的逻辑 token 序列与 physical KV placement 解�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2606-06453` — jun06_continue接替supp_20260606_author，Daily2026-06-06补Jun05；exact-v1 §3–5/6.3–6.4/Limitations/8–9/11.2–11.3/13必要，保原3+3+2=8/唯一Ch47。只paged对象sequence/page metadata跨算子与auxstat身份，compiler优化归Ch49不重复。保batch/shape支持、approxTopK有损/阈值反侧、质量预算、channel表文矛盾与全fee，不授prefixstat自动共享/无损或SLO。旧有效摘要复用/错genericNC不沿，旧归属不搬。未核图像素/代码/复现；R11首次必要/PRE通过，root本轮fresh窄授后已实际SAVE/完整自读，R12唯一actualPOST通过，实际I5生效、窄位释放；仅行政同步既成结果，不授DAY。
+
+- `SF-2026-ARXIV-2606-06302` — supp_20260606_author，Daily2026-06-06补Jun05；exact-v1 §2.2/3–5/7与Alg1必要，保原2+2+2=6/唯一实际Ch47。仅headgroup物理回收/shape与peak分责，保profile漂移、组表fee、原容量式/CTA分配不闭和受限runtime；不采zerooverhead、精确recipe/峰值/质量或SLO保证。旧Jun05日期/候选不搬，旧机制摘要复用而错NC不沿；未看图像素/代码/实验复现。R7首次必要/原两段PRE/root本轮fresh新窄授后已逐字真SAVE并完整新增/直接两侧/本人注自读，R8唯一actual完整新增/直接两完整侧/本人注POST通过，实际I3生效与窄位释放；只行政同步，不第三研究或授DAY。
+
 Primary-source 校验入口：
 
 - Efficient Memory Management for Large Language Model Serving with PagedAttention: https://arxiv.org/abs/2309.06180
@@ -255,3 +271,5 @@ Primary-source 校验入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2606-06453:end -->
 
 - `SF-2026-ARXIV-2604-17249` — Daily2026-04-22补Apr21，supp_apr22_author_fresh；[exact-v1](https://arxiv.org/html/2604.17249v1) §3/4、§5.2–5.4/T5、§6/7，2+2+2=6，安全受影响内容深入。只采共享物理块ready/seal/reuse-check生命周期与条件性失效重算；理想SFI非真实租户攻击、TCR非harm、同步窗口和统一内存/单batch成本限制近文。root必要Source/实际owner/A18逐字PRE通过，作者限定保存两段与本人注，root非writer实际完整COW/refcount→新两段→Kernel及本人注POST通过，窄lease释放；作者仅同步已发生行政状态。日期资格另核，不授零错误、实现/复现或日级。
+
+- `SF-2025-ARXIV-2509-06261` — Darwin继任Godel，Daily2025-09-10补Sep9；作者96/Bacon134实际[FineServe exact-v1](https://arxiv.org/html/2509.06261v1)§3–7/式1–3/Alg1–2/T1–4必要域，原2+2+2=6/日期/P复用，唯一Ch47跨model/precision物理slab/class/localID/view与全空回收差额通过；Ch45量化身份/Ch56调度仅既有交接。保物理共享非内容复用、公倍数与partial/reserve成本/真实同步资格、Prism*已slab/局部单FP16及多协议/drop分母、µ/平均F/贪心/算法分支未闭和量化质量/全费。未核像素/code/runtime/实机或质量复现，不补scheduler最优/零碎片或完整实现保证，不回填v2；逐字PRE/root新位/实际POST仅后到事实，不预DAY。

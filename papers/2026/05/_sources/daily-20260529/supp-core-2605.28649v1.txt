@@ -1,0 +1,1201 @@
+Source: https://arxiv.org/html/2605.28649v1
+Main text extraction; fulltext_chars=60429
+
+arXiv:2605.28649v1 [cs.LG] 27 May 2026 
+ 
+ 
+ Interpretability-Guided Layer Selection over Subspace Projection: SAEs as Stethoscopes, Not Scalpels, for Raw Task Vector Model Editing 
+
+ 
+ 
+ 
+ Li Lei
+ 
+ Affiliation:  Incept Labs
+ 
+ Affiliation:  Houston, TX
+ 
+    
+ Madalina Ciobanu
+ 
+ Affiliation:  Incept Labs
+ 
+ Affiliation:  Houston, TX
+ 
+    
+ Qingqing Mao * 
+ 
+ Affiliation:  Incept Labs, Houston, TX
+ 
+ Affiliation:  Titan Holdings, San Francisco, CA
+ 
+ Email:  qmao@inceptlabs.ai 
+ 
+    
+ Ritankar Das
+ 
+ Affiliation:  Incept Labs, Houston, TX
+ 
+ Affiliation:  Titan Holdings, San Francisco, CA
+ 
+
+ Abstract 
+    
+ Large language models (LLMs) increasingly require surgical model
+editing to enhance domain-specific capabilities without incurring
+the computational cost or catastrophic forgetting associated with
+full fine-tuning. Sparse Autoencoders (SAEs) have emerged as a
+promising tool in this setting, in principle allowing for
+feature-level identification of where to intervene. In this work, we rigorously evaluate an SAE-guided editing
+pipeline for mathematical reasoning on Gemma-3-4B-IT and uncover
+a fundamental failure mode:
+ the intuitively appealing approach of projecting task
+vectors onto SAE feature subspaces acts as an information
+bottleneck that discards approximately 97% of the modification
+energy,  yielding no statistically significant improvements across
+seven math subjects. We show that this failure stems from
+a  geometric misalignment  between activation-space SAE
+directions and weight-space task vectors. We then propose a shift in
+perspective:  SAE as a Stethoscope, Not a Scalpel , where
+SAEs are used for  layer-level diagnosis  rather than
+ intervention-level filtering . By injecting unfiltered raw
+task vectors only into layers identified by an SAE-derived
+specificity score, we improve Number Theory accuracy from 29.6%
+to 39.4% ( z = + 3.41 z=+3.41 ,  p = 0.0007 p=0.0007 ) on the Minerva Math benchmark,
+with 5 of 7 subjects significantly improved and none significantly degraded. Our method is fully deterministic, requires
+no additional inference cost, and provides a principled framework
+for interpretability-guided model editing. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Large language models (LLMs) increasingly require  surgical
+model editing : modifying only the components responsible for a
+target capability while leaving everything else intact. Standard
+adaptation methods such as LoRA  [ 1 ]  modify weights
+indiscriminately across all layers, leading to interference and
+catastrophic forgetting. Two largely separate research threads
+have pursued the surgical alternative.
+ Task arithmetic   [ 2 ]  treats the
+weight difference between a fine-tuned model and its base as an
+additive “task vector” that can be composed, negated, or
+selectively reapplied in weight space.
+ Mechanistic interpretability  (MI) instead works in
+activation space, decomposing hidden representations into
+interpretable features—most prominently via Sparse Autoencoders
+(SAEs)  [ 3 ,  4 ] —and
+intervening on those features to steer model behavior. 
+
+ 
+ 
+ 
+ The intersection of these threads suggests a compelling pipeline:
+use SAEs to identify domain-relevant features, then inject task
+vectors  only through those features . Pre-trained SAEs at
+scale, such as Gemma Scope  [ 5 ]  and Gemma
+Scope 2  [ 6 ] , make this practical to
+implement off the shelf. Figure  1  contrasts
+this projection-based recipe with the alternative we propose. 
+
+ 
+ 
+ 
+ Figure 1:  Two pipelines for SAE-guided task vector model editing.
+Both share Steps 1 (LoRA fine-tuning) and 2 (SAE layer
+selection); they differ only in Step 3.  Diagnose, then
+inject raw  (left) injects the unfiltered task vector  Δ ​ W \Delta W 
+into SAE-selected layers, preserving 100% of the modification
+energy.  Filter through SAE features  (right) projects
+ Δ ​ W \Delta W  onto the subspace spanned by domain-specific SAE
+decoder vectors, retaining only a few percent ( ≤ 3.5 % \leq 3.5\% ) of the energy. The
+former produces statistically significant gains on 5 of 7 math
+subjects; the latter produces none. 
+ 
+ 
+ A counterintuitive finding. 
+
+ 
+
+ 
+ We implement and rigorously evaluate this projection-based pipeline on
+Gemma-3-4B-IT  [ 7 ]  for mathematical reasoning
+and report a surprising negative result.  Projecting task
+vectors onto SAE decoder subspaces retains only a few percent ( ≤ 3.5 % \leq\mathbf{3.5}\% ) of the energy (discarding the remainder to  𝟏𝟎𝟎 % \mathbf{100}\% ) and yields no statistically significant gains
+on any of seven math subjects.  Increasing the SAE feature width
+from 16K to 262K does not close the gap, indicating the
+bottleneck is intrinsic to projection rather than feature
+granularity. The failure has a clean mechanistic explanation:
+SAE decoder vectors  d l , j d_{l,j}  live in  activation space  and
+capture statistical regularities of how the model represents
+information; task vectors  Δ ​ W \Delta W  live in  weight space 
+and encode how computations change. Projecting weight-space
+modifications through activation-space directions conflates two
+fundamentally different geometric structures, leading to
+near-total loss of functional signal  [ 8 ] . 
+
+ 
+ 
+ 
+ This pattern is consistent with recent work questioning whether
+SAE-based interventions are reliable beyond probing.
+ Sharkey et al. [8]  catalogue substantial limitations of
+sparse dictionary learning.  Kantamneni et al. [9]  show that
+SAE-based probes do not consistently outperform simple linear
+baselines.  Heap et al. [10]  find that SAEs trained on
+randomly initialized transformers produce features
+indistinguishable from those trained on real models. Concurrent
+work on protein language models reports that activation-space
+SAE editing and weight-space task arithmetic are
+ complementary  rather than substitutable, controlling
+different properties  [ 11 ] . Together these
+results suggest the activation/weight distinction is a
+load-bearing axis of the editing problem. 
+
+ 
+ 
+ 
+ 
+ SAE as stethoscope, not scalpel. 
+
+ 
+
+ 
+ Our central methodological claim is that SAEs are valuable as a  diagnostic  tool, not an  intervention  tool. We compute a per-layer specificity score ( S ​ P SP ) derived from SAE feature analysis to identify domain-specialized layers, then selectively inject the unfiltered task vector into this subset. Notably, we identify an  empirical conservation of the modification budget : as the number of selected layers decreases, the optimal scaling parameter  α \alpha  increases proportionally to maintain functional impact ( n l ​ a ​ y ​ e ​ r ​ s × α o ​ p ​ t ≈ 11.2 n_{layers}\times\alpha_{opt}\approx 11.2 ). This separation preserves 100% of the modification energy in target layers while confining edits to the model’s domain-relevant regions. 
+
+ 
+ 
+ 
+ 
+ Contributions. 
+
+ 
+
+ 
+ (i)  We propose  SAE-Guided Layer Selection with Raw
+Task Vector Injection  and show on Minerva
+Math  [ 12 ]  that it improves Number Theory
+accuracy from  29.6 % 29.6\%  to  39.4 % 39.4\%  ( z = + 3.41 z=+3.41 ,  p = 0.0007 p=0.0007 ),
+with 5 of 7 math subjects significantly improved and none significantly
+degraded.  (ii)  We document a substantive negative
+result: SAE projection of task vectors discards  ∼ \sim 97% of the
+modification energy and produces no significant gains, even with
+a  16 × 16\times  larger SAE—consistent with recent concerns about
+SAEs as intervention
+tools  [ 8 ,  9 ,  10 ] .
+This negative result is the central scientific contribution of
+this work; the positive method
+(Section  3 ) is a constructive corollary that
+demonstrates SAE diagnostic utility separately from the failed
+projection approach.
+ (iii)  We provide  30 + 30+  ablation configurations,
+including alpha response curves, layer-selection strategies,
+multiple task vector sources, and dual-domain injection;
+extended ablations and reproduction details are in the appendix.
+We discuss limitations in Section  7 . 
+
+ 
+ 
+ 
+ 
+ 
+ 2  Related Work 
+
+ 
+
+ 
+ Task arithmetic and weight-space model editing. 
+
+ 
+
+ 
+ Ilharco et al. [2]  introduced task vectors as the weight difference between models. Subsequent work addresses interference when combining multiple vectors, including TIES-Merging  [ 13 ] , DARE  [ 14 ] , Localize-and-Stitch  [ 15 ] , and Subspace Boosting  [ 16 ] . While ROME  [ 17 ]  and MEMIT  [ 18 ]  utilize  causal tracing  to locate factual associations, our method provides a  fully deterministic, training-free diagnostic  for identifying domain-level specialization. This aligns with the findings of  Ortiz-Jiménez et al. [19] , who established that  weight disentanglement  is the crucial factor for effective task arithmetic. Our SAE-guided selection provides a principled criterion for isolating these task-relevant updates. 
+
+ 
+ 
+ 
+ 
+ Sparse autoencoders and their limitations. 
+
+ 
+
+ 
+ SAEs decompose neural network activations into sparse,
+monosemantic features  [ 3 ,  4 ] ,
+with comprehensive open suites available for the Gemma
+family  [ 5 ,  6 ]  and Llama
+family  [ 20 ] . Recent work documents
+fundamental limitations: SAE reconstruction systematically loses
+information  [ 8 ] ; concepts may be convex
+regions rather than linear directions  [ 21 ] ;
+SAEs assume i.i.d. activations, ignoring sequential
+dependencies relevant to chain-of-thought
+reasoning  [ 22 ] ; SAE-based probes do not
+consistently outperform simple
+baselines  [ 9 ] ; and SAEs trained on
+randomly initialized transformers learn features qualitatively
+similar to those from trained models  [ 10 ] . 
+
+ 
+ 
+ 
+ 
+ Weight-space vs. activation-space interventions. 
+
+ 
+
+ 
+ JoLA  [ 23 ]  jointly learns intervention locations
+and parameters in activation space.
+ Katki et al. [11]  find that for protein language models,
+weight-space task arithmetic and activation-space SAE editing are
+complementary, each more effective for a different subset of
+biochemical properties. Our paper contributes a sharp empirical
+demonstration of when the two spaces are  not 
+interchangeable: a weight-space modification projected through an
+activation-space basis loses approximately 97% of its energy. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Method 
+
+ 
+
+ 
+ Notation. 
+
+ 
+
+ 
+ Let  W base , W ft ∈ ℝ d W_{\text{base}},W_{\text{ft}}\in\mathbb{R}^{d}  denote the
+parameters of the base and fine-tuned models. Following
+ Ilharco et al. [2] , the  task vector  is the
+element-wise weight difference
+ Δ ​ W = W ft − W base \Delta W=W_{\text{ft}}-W_{\text{base}} . We write  W ( l ) W^{(l)} 
+for the slice corresponding to layer
+ l ∈ { 1 , … , L } l\in\{1,\dots,L\} . A Sparse Autoencoder at layer  l l  provides
+an encoder–decoder pair  ( E l , D l ) (E_{l},D_{l})  with  D D  latent features;
+each column  d l , j d_{l,j}  of  D l D_{l}  is interpreted as a feature
+direction. We use Gemma Scope 2  [ 6 ]  with
+ D = 16,384 D=16{,}384  features per layer in our primary experiments and
+ D = 262,144 D=262{,}144  in our scale ablation. 
+
+ 
+ 
+ 
+ Our method (Figure  1 ) consists of three steps:
+(i) extract a task vector via domain-specific LoRA fine-tuning;
+(ii) use SAE feature analysis to identify domain-specialized
+layers; and (iii) inject the raw, unfiltered task vector only
+into those layers. 
+
+ 
+ 
+ 
+ 
+ Task vector extraction. 
+
+ 
+
+ 
+ We obtain  Δ ​ W \Delta W  via LoRA fine-tuning  [ 1 ]  on a
+domain-specific dataset. The selective injection pipeline is
+agnostic to the source of  Δ ​ W \Delta W  and would apply equally to
+task vectors from full fine-tuning. 
+
+ 
+ 
+ 
+ 
+ SAE-guided layer selection. 
+
+ 
+
+ 
+ For each layer  l l  and SAE feature  j j , we compare the feature’s
+mean activation on target-domain inputs to its mean activation
+on all other domains: 
+
+ 
+ 
+
+ 
+ 
+ spec ⁡ ( l , j ) = a ¯ l , j target a ¯ l , j other + ϵ , \mathrm{spec}(l,j)=\frac{\bar{a}^{\text{target}}_{l,j}}{\bar{a}^{\text{other}}_{l,j}+\epsilon}, 
+ 
+ (1) 
+ 
+
+ 
+ with  ϵ = 10 − 6 \epsilon=10^{-6} . A feature is  domain-specific  if
+ spec ⁡ ( l , j ) > τ f \mathrm{spec}(l,j)>\tau_{f}  (we use  τ f = 1.0 \tau_{f}=1.0 ). We aggregate feature-level specificity into a per-layer Specificity Score by taking the  maximum  rather than a count. Empirically the maximum is more discriminative than the count: it captures whether  any  highly-specialized feature exists in a layer, not merely how many low-specificity features happen to exceed a soft threshold. A layer with a single feature at spec=10 is more domain-relevant than a layer with twenty features at spec=1.5. The threshold  τ SP = 4.0 \tau_{\mathrm{SP}}=4.0  was chosen on a held-out validation split and is ablated in Section  5.3 . 
+
+ 
+ 
+
+ 
+ 
+ SP ⁡ ( l ) = max j ∈ { 1 , … , D } ⁡ spec ⁡ ( l , j ) , \mathrm{SP}(l)=\max_{j\in\{1,\dots,D\}}\mathrm{spec}(l,j), 
+ 
+ (2) 
+ 
+
+ 
+ the maximum specificity over all SAE features in layer  l l .
+We select layers with  SP ⁡ ( l ) ≥ τ SP \mathrm{SP}(l)\geq\tau_{\mathrm{SP}} ,
+using  τ SP = 4.0 \tau_{\mathrm{SP}}=4.0  in our main experiments,
+which yields 14 of 34 layers (Figure  2 ). 
+
+ 
+ 
+ 
+ Figure 2:  Per-layer Number Theory specificity (Gemma Scope 2, 16K features).
+ Top : Specificity Score  SP ⁡ ( l ) = max j ⁡ spec ⁡ ( l , j ) \mathrm{SP}(l)=\max_{j}\mathrm{spec}(l,j) 
+per layer; blue bars mark the 14 layers selected at
+ τ SP = 4.0 \tau_{\mathrm{SP}}=4.0 , the dashed red line indicates the threshold.
+ Bottom : Number of domain-specific features
+( spec ⁡ ( l , j ) > 1.0 \mathrm{spec}(l,j)>1.0 ) per layer. The distribution is bimodal:
+a mid-network cluster (layers 14–17) and a late-network cluster
+(layers 30–32) carry the strongest domain specialization. 
+ 
+ 
+ 
+ Selective raw task vector injection. 
+
+ 
+
+ 
+ Given selected layers  ℒ selected \mathcal{L}_{\text{selected}}  and a
+global scaling parameter  α \alpha : 
+
+ 
+ 
+
+ 
+ 
+ W new ( l ) = { W base ( l ) + α ⋅ Δ ​ W ( l ) if  ​ l ∈ ℒ selected W base ( l ) otherwise . W^{(l)}_{\text{new}}=\begin{cases}W^{(l)}_{\text{base}}+\alpha\cdot\Delta W^{(l)}&\text{if }l\in\mathcal{L}_{\text{selected}}\\
+W^{(l)}_{\text{base}}&\text{otherwise}.\end{cases} 
+ 
+ (3) 
+ 
+
+ 
+ Δ ​ W ( l ) \Delta W^{(l)}  is the  unfiltered  per-layer task vector:
+no projection, no truncation, no SAE-based masking. Once
+applied, the edited model has identical architecture, parameter
+count, and inference cost to the base model. The optimal
+ α \alpha  is determined via grid search. 
+
+ 
+ 
+ 
+ 
+ Why not project task vectors through SAE features? 
+
+ 
+
+ 
+ A natural alternative projects  Δ ​ W \Delta W  onto the subspace
+spanned by domain-specific SAE decoder vectors,
+ Δ ​ W proj ( l ) = ∑ j ∈ ℱ l ( d l , j ⊤ ​ Δ ​ W ( l ) ​ d l , j ) / ( d l , j ⊤ ​ d l , j ) \Delta W^{(l)}_{\text{proj}}=\sum_{j\in\mathcal{F}_{l}}(d_{l,j}^{\top}\Delta W^{(l)}d_{l,j})/(d_{l,j}^{\top}d_{l,j}) ,
+where  ℱ l = { j : spec ⁡ ( l , j ) > τ f } \mathcal{F}_{l}=\{j:\mathrm{spec}(l,j)>\tau_{f}\} . Recall that task vectors  Δ ​ W \Delta W  modify the weights directly, while SAE decoder features  d l , j d_{l,j}  describe directions in activation space, so any projection of  Δ ​ W \Delta W  through  d l , j d_{l,j}  necessarily mixes two distinct spaces. In practice this retains only a few percent (roughly  2 2 – 3.5 % 3.5\%  across our SAE configurations) of the modification
+energy ( ‖ Δ ​ W proj ( l ) ‖ F / ‖ Δ ​ W ( l ) ‖ F \|\Delta W^{(l)}_{\text{proj}}\|_{F}/\|\Delta W^{(l)}\|_{F} ) and systematically degrades performance
+(Section  5 ). The failure mode is geometric: SAE
+decoder vectors span the activation manifold at layer  l l ,
+which is a different geometric object than the column space of
+ Δ ​ W ( l ) \Delta W^{(l)} . Substituting one for the other introduces a
+representational mismatch  [ 8 ] . We note that the near-total energy loss reported in Section  5  is the primary empirical evidence for this geometric mismatch; the mechanistic claim and the experimental observation are mutually consistent rather than independently derived. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Experimental Setup 
+
+ 
+
+ 
+ Model and SAE. 
+
+ 
+
+ 
+ Gemma-3-4B-IT  [ 7 ] , a 4B-parameter
+instruction-tuned transformer with 34 layers. Gemma Scope
+2  [ 6 ]  provides pre-trained SAEs at every
+layer, with  16 16 K features in main experiments and  262 262 K in our
+scale ablation. 
+
+ 
+ 
+ 
+ 
+ Task vector. 
+
+ 
+
+ 
+ Our primary task vector (v2) is obtained by LoRA fine-tuning on
+ 3,865 3{,}865  Number Theory problems from the MATH training
+set  [ 12 ] , with rank  r = 16 r=16 , learning rate
+ 2 × 10 − 4 2\times 10^{-4} , and 5 epochs. Two alternatives (v25:
+ 6,155 6{,}155  samples; v3:  20,000 20{,}000  mixed-domain) test sensitivity
+to the source of  Δ ​ W \Delta W  (see appendix). For comparison
+against SAE projection in Section  5.4 ,
+we additionally define a smaller raw-injection control. The E3 baseline applies the raw task vector to a fixed seven-layer subset
+ { 19 , 20 , 22 , 23 , 25 , 30 , 31 } \{19,20,22,23,25,30,31\}  (configuration  E3_7L  in our codebase), chosen as the seven highest- SP  layers among NT-analyzed layers in our initial sweep, rather than an  SP  threshold applied independently of rank. E3 isolates the contribution of layer  count  from the contribution of raw versus projected injection. 
+
+ 
+ 
+ 
+ 
+ Evaluation. 
+
+ 
+
+ 
+ Minerva Math via lm-evaluation-harness  [ 24 ] : 540
+problems across 7 subjects (NT, CP, ALG, GEO, IA, PRE, PC). We
+use 4-shot prompting with greedy decoding and the
+ math_verify  metric. 
+
+ 
+ 
+ 
+ 
+ Baselines. 
+
+ 
+
+ 
+ Three baselines share the same v2 task vector:
+ (i) Base  (unmodified Gemma-3-4B-IT);
+ (ii) Full LoRA merge  (add  Δ ​ W \Delta W  to all 34 layers);
+ (iii) SAE Projection  (inject  Δ ​ W proj \Delta W_{\text{proj}} 
+into the same SP-selected layers). Each baseline’s  α \alpha  is
+independently grid-searched. 
+
+ 
+ 
+ 
+ 
+ Statistical testing. 
+
+ 
+
+ 
+ Per subject we compute a two-sample proportion  z z -test:
+ z = ( p ^ edit − p ^ base ) / SE edit 2 + SE base 2 z=(\hat{p}_{\mathrm{edit}}-\hat{p}_{\mathrm{base}})/\sqrt{\mathrm{SE}_{\mathrm{edit}}^{2}+\mathrm{SE}_{\mathrm{base}}^{2}} ,
+with two-sided  p p -values and significance at  | z | ≥ 1.96 |z|\geq 1.96 .
+Sample sizes are the full Minerva Math test sets:
+ n = 540 n=540  (NT),  474 474  (CP),  1,187 1{,}187  (ALG),  479 479  (GEO),
+ 903 903  (IA),  871 871  (PRE),  546 546  (PC).
+With these sample sizes the test is well-powered
+to detect effects of approximately 4 percentage points on every subject. 
+
+ 
+ 
+ 
+ 
+ Determinism and hardware. 
+
+ 
+
+ 
+ All evaluations use greedy decoding with deterministic weight
+modifications; repeated runs of the same configuration produce
+identical accuracies at float64 precision (verified;
+Section  6 ). Experiments ran on  3 × 3\times  H100
+80GB GPUs, totaling  ∼ 290 \sim 290  GPU-hours across reported
+configurations, plus an additional  ∼ 60 \sim 60  GPU-hours for the
+exploratory CMA-ES search reported in Appendix  D  (Figure  9 ). 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Results 
+
+ 
+
+ 
+ We organize results in four parts. Section  5.1 
+presents the main comparison against three baselines on Minerva
+Math (Table  1 , Figure  3 ).
+Sections  5.2 – 5.4 
+isolate three design choices: the scaling parameter  α \alpha ,
+layer selection strategy, and—most critically—raw versus
+SAE-projected task vectors. Three findings stand out:
+(i) selective injection into 14 SAE-identified layers improves 5
+of 7 math subjects with no degradation; (ii) performance is
+robust across a wide range of  α \alpha  but sensitive to layer
+selection above the threshold  τ SP = 4 \tau_{\text{SP}}=4 ; and
+(iii) projecting  Δ ​ W \Delta W  through SAE feature subspaces
+produces no statistically significant gains on any subject,
+despite retaining the same layer selection. 
+
+ 
+ 
+ 
+ 5.1  Main Results 
+
+ 
+
+ 
+ Table  1  compares our method against three baselines
+sharing the same task vector source (v2). Our method achieves
+statistically significant improvements on 5 of 7 subjects, with
+the primary target (Number Theory) showing the strongest effect
+( z = + 3.41 z=+3.41 ,  p = 0.0007 p=0.0007 ,  + 9.81 +9.81  pp absolute,  + 33 % +33\% 
+relative). Crucially,  no subject is degraded : Intermediate Algebra is positive but does not reach significance ( p = 0.099 p=0.099  two-sided); PreCalculus is unchanged. This demonstrates that selective injection avoids
+catastrophic forgetting without explicit regularization. 
+
+ 
+ 
+ 
+ Table 1:  Performance on Minerva Math ( 7 7  subjects). Accuracy
+(%) and  z z -scores vs. base.  Bold : statistically
+significant ( z ≥ 1.96 z\geq 1.96 ,  p < 0.05 p<0.05 ).  † : best
+SAE-projected configuration (rank-3,  α = 0.70 \alpha=0.70 , 16K SAE).
+Ours:  SP ≥ 4.0 \mathrm{SP}\geq 4.0  layer selection (14/34 layers),
+ α = 0.80 \alpha=0.80 . 
+ 
+ 
+ 
+ Method 
+ NT 
+ CP 
+ ALG 
+ GEO 
+ IA 
+ PRE 
+ PC 
+ #Sig 
+ 
+ Base model 
+ 29.6 
+ 33.3 
+ 61.3 
+ 30.5 
+ 16.6 
+ 62.9 
+ 20.5 
+ – 
+ 
+ Full LoRA merge (34L) 
+ 30.0 
+ 33.8 
+ 58.1 
+ 29.2 
+ 16.3 
+ 61.4 
+ 19.8 
+ 0/7 
+ 
+ SAE Projection † 
+ 33.9 
+ 34.6 
+ 62.1 
+ 31.0 
+ 16.8 
+ 63.5 
+ 20.3 
+ 0/7 
+ 
+ Ours (SP4,  α = 0.80 \alpha{=}0.80 ) 
+ 39.4 
+ 41.4 
+ 67.0 
+ 37.2 
+ 19.6 
+ 69.6 
+ 20.5 
+ 5/7 
+ 
+ z z -score 
+ + 3.41 +3.41 
+ + 2.56 +2.56 
+ + 2.87 +2.87 
+ + 2.19 +2.19 
+ + 1.65 +1.65 
+ + 2.94 +2.94 
+ + 0.00 +0.00 
+ 
+ 
+ p p -value 
+ 0.0007 0.0007 
+ 0.0105 0.0105 
+ 0.0041 0.0041 
+ 0.0286 0.0286 
+ 0.0989 0.0989 
+ 0.0032 0.0032 
+ 1.0000 1.0000 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ Figure 3:  Per-subject accuracy across the seven Minerva Math
+subjects ( n = 540 n=540  NT,  n ∈ [ 474 , 1 , 187 ] n\in[474,1{,}187]  others).
+Four conditions are shown left to right: Base model (leftmost/gray),
+Full LoRA merge 34L (middle left/orange), SAE Projection 16K (middle right/green), and Ours SP4 14L  α = 0.80 \alpha{=}0.80  (rightmost/blue). Our method achieves statistically significant gains on 5 of 7 subjects, with absolute improvements ranging from  + 5.6 +5.6  pp on Algebra to  + 9.8 +9.8  pp on Number Theory. Full LoRA merge degrades three subjects; SAE Projection (green bars) produces numerical shifts that do not reach significance on any subject, despite using the same layer-selection signal. 
+ 
+ 
+ Two baselines fail to produce significant improvement on any
+subject. Full LoRA merge across all 34 layers actually
+ degrades  performance on Algebra ( − 3.2 -3.2  pp), Geometry
+( − 1.3 -1.3  pp), and PreAlgebra ( − 1.5 -1.5  pp), consistent with prior
+findings that uniform task-vector application introduces
+interference  [ 13 ] . SAE Projection shows
+numerical improvements but none reach significance, despite
+using the  same layer-selection signal  as our
+method—confirming that the projection step itself, not layer
+selection, is the bottleneck (Figure  3 ). 
+
+ 
+ 
+ 
+ 
+ 5.2  Robustness to the Scaling Parameter 
+
+ 
+
+ 
+ We searched  α ∈ { 0.70 , 0.75 , … , 1.20 } \alpha\in\{0.70,0.75,\dots,1.20\}  for the SP4
+14L configuration. The response surface is broad and flat: NT
+ z z -scores remain above  + 2.84 +2.84  across the full range
+ α ∈ [ 0.70 , 1.10 ] \alpha\in[0.70,1.10]  (a  40 % 40\%  swing in scaling magnitude),
+with the peak at  α = 0.80 \alpha=0.80  ( z = + 3.41 z=+3.41 ) only marginally
+above the next-best values at  α = 0.85 \alpha=0.85  ( z = + 3.34 z=+3.34 ) and
+ α = 0.70 , 1.10 \alpha=0.70,1.10  ( z = + 3.16 z=+3.16 ). Performance drops at
+ α = 1.20 \alpha=1.20  ( z = + 2.08 z=+2.08 ), marking the onset of
+over-modification. The empirical relationship
+ n layers × α opt ≈ 11.2 n_{\text{layers}}\times\alpha_{\text{opt}}\approx 11.2 
+( 14 × 0.80 14\times 0.80 ) for our configurations is consistent with a conserved “modification budget” across layer-selection strategies:
+Figure  6  shows the full SP4 14L response
+surface with the robust plateau annotated, and
+Figure  7  shows that SP4 noDeep (11
+layers) reaches its peak at  α ∗ = 1.00 \alpha^{*}=1.00 , preserving the
+product  n l × α ∗ ≈ 11 n_{l}\times\alpha^{*}\approx 11 . Full sweep and both
+figures in Appendix  B . 
+
+ 
+ 
+ 
+ 
+ 5.3  Layer Selection Strategies 
+
+ 
+
+ 
+ We compare six layer-selection strategies, each at its respective
+optimal  α \alpha  (Table  2 ). Three
+findings: 
+
+ 
+ 
+ 
+ The SP threshold matters more than layer count. 
+
+ 
+
+ 
+ Three configurations select roughly the same number of layers
+(11–14) but produce wildly different outcomes. SP4 14L
+( z = + 3.41 z=+3.41 ) and SP4 noDeep ( z = + 3.22 z=+3.22 ) are both strong;
+SP4.5 11L collapses to  z = + 0.73 z=+0.73  despite a similar layer
+count. Inspecting the SP4.5 selection reveals that raising the
+threshold from  4.0 4.0  to  4.5 4.5  excludes layers  14 14 ,  15 15 , and
+ 24 24 , which carry essential domain computation. Lowering the
+threshold to SP  ≥ 3.5 \geq 3.5  (17 layers) dilutes the signal with
+weakly specialized layers ( z = + 2.33 z=+2.33 ). The SP threshold acts
+as a categorical separator between domain-specialized and
+non-specialized layers, not a smooth knob. 
+
+ 
+ 
+ 
+ 
+ Deep layers carry domain-specific but interference-prone modifications. 
+
+ 
+
+ 
+ Removing layers 30–32 trades NT performance ( z = + 3.22 z=+3.22  vs.  + 3.41 +3.41 ) for broader coverage (6/7 vs. 5/7 significant
+subjects), suggesting deep-layer task vectors encode NT-specific
+computations that mildly conflict with Intermediate Algebra. 
+
+ 
+ 
+ 
+ 
+ Mid-layer heuristics are insufficient. 
+
+ 
+
+ 
+ The MID 10L configuration (a hand-chosen middle slab, layers
+17–27) achieves only  z = + 2.59 z=+2.59  on NT and 3/7 significant
+subjects. SAE-derived specificity identifies layers outside this
+range (notably 14, 15, and 30–32) that are critical to the
+effect. Per-subject  z z -scores across all six configurations are
+shown in Figure  8  (Appendix  C ). 
+
+ 
+ 
+ 
+ Table 2:  Layer-selection strategy comparison. SPx denotes layers
+with Specificity Score  ≥ x \geq x . MID: layers  17 17 – 27 27 .
+SP4_noDeep: SP4 with deep layers  30 30 – 32 32  removed. Each
+configuration uses its optimal  α \alpha . Per-subject heatmap in
+Appendix  C . 
+ 
+ 
+ 
+ Configuration 
+ #Layers 
+ α ∗ \alpha^{*} 
+ NT  z z 
+ #Sig 
+ Note 
+ 
+ 
+ 
+ SP4 14L 
+ 14 
+ 0.80 
+ + 3.41 +3.41 
+ 5/7 
+ NT-best 
+ 
+ SP4 noDeep 
+ 11 
+ 1.00 
+ + 3.22 +3.22 
+ 6/7 
+ Multi-subject best 
+ 
+ SP3.5 17L 
+ 17 
+ 1.00 
+ + 2.33 +2.33 
+ 6/7 
+ Signal diluted 
+ 
+ SP4 UNION 
+ 16 
+ 1.00 
+ + 2.33 +2.33 
+ 6/7 
+ Low-SP noise 
+ 
+ MID 10L 
+ 11 
+ 0.90 
+ + 2.59 +2.59 
+ 3/7 
+ Missing deep layers 
+ 
+ SP4.5 11L 
+ 11 
+ 1.00 
+ + 0.73 +0.73 
+ 0/7 
+ Excludes critical layers 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 5.4  Raw Task Vectors versus SAE Projection 
+
+ 
+
+ 
+ This section presents the central empirical claim of the paper:
+SAE projection systematically underperforms raw injection of the
+ same  task vector through the  same  layers
+(Table  3 ; cf. Figure  1  for
+the conceptual contrast), and across all 30+ configurations we
+tested no SAE-projected variant achieved a statistically significant
+gain on Number Theory. 
+
+ 
+ 
+ 
+ Figure 4:  Method evolution: NT  z z -score across six approaches
+in order of development. PPL+CMA-ES with uniform  α \alpha 
+(orange) and both SAE Projection variants (green) remain below
+the  p < 0.05 p<0.05  threshold ( z = 1.96 z=1.96 , red dashed line) and
+ p < 0.01 p<0.01  threshold ( z = 2.58 z=2.58 , red dotted line). All three
+Raw Task Vector configurations (blue) cross into significance,
+with our final SP4 14L  α = 0.80 \alpha{=}0.80  reaching  z = + 3.41 z=+3.41 .
+The decisive transition is not feature width or layer count
+but whether the task vector is projected through SAE features
+before injection. 
+ 
+ 
+ Figure  4  traces the NT  z z -score
+across all six approaches in chronological order of development,
+from PPL+CMA-ES search through to our final Raw TV SP4
+configuration; the transition into significance coincides
+exactly with the switch from SAE-projected to raw injection. 
+
+ 
+ 
+ 
+ Table 3:  Raw task vector vs. SAE-projected injection. “Energy
+retained” denotes
+ ‖ Δ ​ W proj ‖ F / ‖ Δ ​ W ‖ F \|\Delta W_{\text{proj}}\|_{F}/\|\Delta W\|_{F} . All
+configurations use the same v2 task vector. The  16 × 16\times 
+increase in feature width does not close the gap. All  p p  (NT) values are two-sided, using the same normal
+approximation as Table  1 . 
+ 
+ 
+ 
+ Method 
+ Energy Retained 
+ NT  z z 
+ #Sig 
+ p p (NT) 
+ 
+ 
+ 
+ SAE Proj (16K, rank-3) 
+ ∼ 2.1 % \sim 2.1\% 
+ + 1.50 +1.50 
+ 0/7 
+ 0.1336 0.1336 
+ 
+ SAE Proj (262K, rank-3) 
+ ∼ 3.5 % \sim 3.5\% 
+ + 0.79 +0.79 
+ 0/7 
+ 0.4296 0.4296 
+ 
+ Raw TV (E3, 7 layers) 
+ 100 % 100\% 
+ + 2.02 +2.02 
+ 1/7 
+ 0.0434 0.0434 
+ 
+ Raw TV (SP4, 14 layers) 
+ 100 % 100\% 
+ + 3.41 +3.41 
+ 5/7 
+ 0.0007 \mathbf{0.0007} 
+ 
+ 
+
+ 
+ 
+ 
+ SAE projection at the standard 16K feature width retains only a few percent of the modification energy and produces no
+statistically significant improvement on any subject (NT
+ z = + 1.50 z=+1.50 ,  p = 0.133 p=0.133 ). Scaling to  262 262 K features retains
+ ∼ 3.5 % \sim 3.5\%  of the energy but NT performance  decreases 
+( z = + 0.79 z=+0.79 ,  p = 0.43 p=0.43 ). The bottleneck is the projection
+step itself, not feature granularity. This is consistent with
+the geometric argument in Section  3 : SAE decoder
+vectors span the activation manifold at layer  l l , a different
+geometric object than the column space of  Δ ​ W ( l ) \Delta W^{(l)} . 
+
+ 
+ 
+ 
+ Figure 5:  Energy retention vs. Number Theory significance
+( z z -score) across all injection strategies (log-scale  x x -axis).
+Orange points: SAE Projection variants (16K and 262K features,
+rank-1 and rank-3); teal points: SAE Projection 262K variants;
+blue points: Raw Task Vector injection (E3 7-layer and SP4
+14-layer). Bubble area is proportional to the number of
+SP-selected layers. Both raw-injection configurations
+exceed the  p < 0.05 p<0.05  significance threshold (dotted horizontal
+line) while retaining 100% of  ‖ Δ ​ W ‖ F \|\Delta W\|_{F} ; no
+SAE-projected configuration does so at any feature width.
+The two-order-of-magnitude gap in energy retention
+( ≤ 3.5 % \leq 3.5\%  vs.  100 % 100\% ) is the proximate cause of
+the performance gap. 
+ 
+ 
+ The raw task vector injected into a smaller layer set (7 layers)
+achieves  z = + 2.02 z=+2.02  ( p = 0.043 p=0.043 )—already outperforming both
+SAE-projection configurations despite using half as many layers.
+The decisive variable is therefore not how many layers receive
+the task vector, but whether the task vector is filtered through
+SAE features before injection. Figure  5  visualises this gap across all
+tested configurations: the  ∼ 100 × {\sim}100\times  difference in
+energy retention between SAE projection ( ≤ 3.5 % \leq 3.5\% ) and raw
+injection ( 100 % 100\% ) maps directly onto the difference between
+no significant result and  z = + 3.41 z=+3.41 . Across  30 + 30+  configurations, no SAE-projected variant we tested reached statistical significance
+on Number Theory; every raw-injection variant with  ≥ 7 \geq 7 
+SP-selected layers did. This is strong evidence that SAEs should
+be used to identify  where  to edit, but not to filter
+ what  to inject. 
+
+ 
+ 
+ 
+ 
+ 
+ 6  Analysis and Discussion 
+
+ 
+
+ 
+ 6.1  SAEs as Diagnostic, Not Interventional, Tools 
+
+ 
+
+ 
+ Recent work increasingly suggests that sparse autoencoders are more reliable as probes than as
+actuators, and our findings sharpen this pattern in the context of model editing.
+The central methodological claim of this work is that SAEs are
+useful for  identifying which layers to edit , but not for
+ filtering what to inject into them . Three lines of
+evidence support this: (i) replacing
+uniform task-vector application with SAE-derived layer selection moves NT  z z  from  + 0.13 +0.13  (Full
+LoRA merge) to  + 3.41 +3.41 , with 5/7 subjects significantly improved (Section  5.1 ); (ii)
+filtering  Δ ​ W \Delta W  through the SAE feature subspace, using the same layer selection, produces no
+statistically significant gain on any subject, even at  16 × 16\times  feature width (Section  5.4 );
+and (iii) SAE projection retains only a few percent of  ‖ Δ ​ W ‖ F \|\Delta W\|_{F}  (up to  ∼ 3.5 % \sim 3.5\%  even at  16 × 16\times  feature width), and the bottleneck is geometric mismatch rather than feature granularity. 
+
+ 
+ 
+ 
+ This pattern is consistent with a growing body of work on SAE
+limitations as intervention tools.
+ Sharkey et al. [8]  note that SAE reconstruction
+systematically loses information, and that SAEs decompose
+activations rather than the weights that compute them.
+ Kantamneni et al. [9]  show that SAE-based probes do not
+consistently outperform simple baselines.  Heap et al. [10] 
+find that SAEs trained on randomly initialized transformers
+produce features qualitatively similar to those from trained
+models.  Fel et al. [21]  argue that concepts in vision transformers may correspond to convex regions (the "Minkowski Representation Hypothesis") rather than linear directions; if this geometric structure is shared by language models (a hypothesis we cannot directly verify) then linear projection through SAE decoder vectors would be a lossy approximation. Our negative result is consistent with that prediction. Our finding fits this
+broader picture: SAEs encode genuine information about
+layer-level specialization, but a linear projection onto SAE
+features is not a faithful representation of the weight-space
+modifications that drive fine-tuned behavior. The practical
+implication is a clean separation of roles—SAE for
+ where , raw  Δ ​ W \Delta W  for  what —which we expect
+to generalize beyond mathematical reasoning. 
+
+ 
+ 
+ 
+ 
+ 6.2  Deterministic Evaluation 
+
+ 
+
+ 
+ We verified determinism by running the SP4 14L
+( α = 0.80 \alpha=0.80 ) configuration twice with identical
+specifications. All seven subject accuracies match at float64
+precision (zero difference). Three properties guarantee this:
+(i) the task-vector application in Equation ( 3 )
+involves only deterministic arithmetic; (ii)
+lm-evaluation-harness  [ 24 ]  uses greedy decoding
+with no sampling; and (iii) the  math_verify  metric is
+deterministic. The standard errors in our  z z -tests therefore
+arise entirely from finite-sample variation in the 540-problem
+benchmark, not from evaluation noise. The reported  p = 0.0007 p=0.0007 
+for Number Theory is a population-level statement, not a
+per-run estimate. 
+
+ 
+ 
+ 
+ 
+ 6.3  Additional Observations 
+
+ 
+
+ 
+ Three further observations are documented in detail in the
+appendix:
+(i) during exploratory CMA-ES  [ 25 ]  optimization
+using perplexity (PPL) as a fitness signal, the lowest-PPL
+configuration was not the highest-accuracy one, motivating our
+switch to accuracy-based fitness for the rest of the search
+(Appendix  D );
+(ii) combining NT and CP task vectors causes destructive
+interference even at modest scaling ( α CP = 1.0 \alpha_{\text{CP}}=1.0 :
+NT  z = − 0.74 z=-0.74 , ALG  z = − 5.61 z=-5.61 ), suggesting partially
+overlapping weight subspaces (Appendix  E );
+and (iii) task-vector quality depends on  domain focus  of
+the fine-tuning corpus, not size: a  5 × 5\times -larger
+mixed-domain corpus produced essentially no NT effect, while a
+focused  4,000 4{,}000 -example corpus produced our best result
+(Appendix  F ). This mirrors prior editing and merging work that also uses
+task accuracy, rather than perplexity, as the primary fitness
+signal  [ 26 ,  2 ] . 
+
+ 
+ 
+ 
+ 
+ 
+ 7  Limitations 
+
+ 
+
+ 
+ Single base model. 
+
+ 
+
+ 
+ All experiments use Gemma-3-4B-IT  [ 7 ] . Our
+mechanistic argument should generalize across architectures, but
+we have not verified this empirically. Cross-model validation is
+feasible with currently available SAE suites: Llama
+Scope  [ 20 ]  provides full-layer SAE coverage
+for Llama-3.1-8B with 32K and 128K feature widths. 
+
+ 
+ 
+ 
+ 
+ Single primary domain. 
+
+ 
+
+ 
+ The strongest claims concern Number Theory, with positive
+transfer to four other math subjects. Independent targeting of
+a more feature-dispersed domain (Counting & Probability,
+ ∼ 180 \sim 180  domain-specific features distributed across 18
+layers) showed only marginal effects, suggesting the method’s
+effectiveness depends on whether the target domain has a
+sufficiently concentrated SAE-feature signature. Validation on
+non-mathematical domains (legal reasoning, code, multilingual
+translation) remains untested. 
+
+ 
+ 
+ 
+ 
+ Absolute accuracy ceiling. 
+
+ 
+
+ 
+ Our edited model achieves  39.4 % 39.4\%  on Number Theory—a
+significant relative gain ( + 33 % +33\% ) but well below human expert
+performance. This reflects the capacity of the 4B base model
+rather than a limitation of the editing method. 
+
+ 
+ 
+ 
+ 
+ Task vector prerequisite and SAE availability. 
+
+ 
+
+ 
+ The method requires one LoRA fine-tuning run
+( ∼ 4 \sim 4  GPU-hours,  ∼ \sim $ 16 16  at current cloud rates) and
+pre-trained SAEs at every layer. Comprehensive public SAE
+suites at this scale exist primarily for the Gemma family
+(Gemma Scope  [ 5 ]  and Gemma Scope
+2  [ 6 ] ) and the Llama
+family  [ 20 ] . Training new SAEs is
+expensive (Gemma Scope used  ∼ 15 % \sim 15\%  of Gemma 2 9B’s training
+budget  [ 5 ] ), but this cost is amortized:
+the same SAEs support unlimited downstream layer-selection
+queries. As with any capability-enhancing technique, our method could in
+principle be applied to harmful domains; we do not explore such
+applications and restrict ourselves to mathematical reasoning. 
+
+ 
+ 
+ 
+ 
+ Statistical power. 
+
+ 
+
+ 
+ Subject-level  z z -tests are well-powered to detect  ∼ 4 \sim 4  pp
+effects on every subject given the full Minerva Math test set sizes
+( n = 540 n=540  NT;  n ∈ [ 474 , 1 , 187 ] n\in[474,1{,}187]  others). Intermediate
+Algebra ( z = + 1.65 z=+1.65 ,  p = 0.099 p=0.099 , two-sided) does not reach
+significance and should be interpreted accordingly. PreCalculus
+( z = 0.00 z=0.00 ) shows no effect under this task vector. 
+
+ 
+ 
+ 
+ 
+ 
+ 8  Conclusion 
+
+ 
+
+ 
+ We presented an interpretability-guided method for selective
+model editing that uses Sparse Autoencoder feature analysis to
+identify domain-specialized layers, then injects raw
+LoRA-derived task vectors into only those layers. On
+Gemma-3-4B-IT targeting Number Theory, the method achieves
+ z = + 3.41 z=+3.41  ( p = 0.0007 p=0.0007 ), improving 5 of 7 math subjects with
+no degradation, and is fully deterministic at float64 precision. 
+
+ 
+ 
+ 
+ The central scientific finding is methodological:  SAEs
+are useful as diagnostic tools for layer selection, not as
+intervention tools for filtering weight-space modifications. 
+Projecting task vectors through SAE feature subspaces—the
+intuitively obvious approach—retains only a few percent ( ≤ 3.5 % \leq 3.5\% ) of the
+modification energy and produces no statistically significant
+gain on any subject, even at  16 × 16\times  feature width. The
+geometric reason is that SAE decoder vectors span the
+activation manifold while task vectors live in weight space;
+the two geometries are not interchangeable. The near-total energy loss is consistent with this structural incompatibility/geometric mismatch. Further, this finding is
+consistent with a growing body of work documenting SAE
+limitations as intervention
+tools  [ 8 ,  9 ,  10 ] 
+and contributes a sharp empirical demonstration of where the
+activation-space/weight-space distinction matters. Our results suggest that the efficacy of this diagnostic selection is contingent on the "sharpness" of the task vector itself:
+a  5 × 5\times  larger mixed-domain corpus (v3) failed to produce a significant effect, reinforcing that surgical editing requires both precise layer selection and high-fidelity, domain-focused training data. 
+
+ 
+ 
+ 
+ Future work includes cross-model validation using Llama
+Scope  [ 20 ] , extension to non-mathematical
+domains, integration with interference-mitigation strategies for
+multi-domain editing  [ 13 ,  15 ] , and a
+more principled characterization of when activation-space SAE
+analysis transfers cleanly to weight-space interventions versus
+when it fails. The broader implication is that interpretability
+tools and editing tools may serve complementary rather than
+substitutable roles—a separation we expect to generalize
+beyond the specific setting studied here. 
+
+ 
+ 
+ 
+ 
+ 
+ 

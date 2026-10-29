@@ -77,6 +77,12 @@ C ~= k * N * D
 
 这与“训练尽可能大的模型”不同。最大的可加载模型可能只看过很少数据；更小但训练 token 更多的模型，可能在同等 compute 下获得更低 loss，也可能在推理阶段更便宜。
 
+当比较的架构采用不同sequence-mixer时，训练context长度也应进入预算约束，而不只作为模型部署后的窗口参数。固定总训练tokens并不会固定混合历史的代价：dense Attention在更长序列内支付更多成对计算，chunkwise recurrent路径则在固定chunk与状态维度下有另一份成本函数。因此可先固定架构与长度T，以C_arch(N,D,T)=H重新扫参数量和训练tokens，再比较各自的loss最优配置。[受限xLSTM/Transformer对照](https://arxiv.org/html/2510.02228v1#S3.SS5)中，同预算下长context使拟合最优Transformer规模明显下降、xLSTM仅轻降，说明长度改变的不只是推理内存，也改变训练预算的分配点；这不把固定状态提升为无限精确记忆，相关读写机制仍由第22章解释。
+
+这一配置差额只在同一分词、语料、训练recipe与长度条件内解释：不同context下的loss目标不可直接并成质量下降幅度，同参数的单卡推理也不等于同任务质量或现代最佳serving对照。局部二次IsoFLOP最优点、对Huber权重敏感的loss面和每模型重新拟合的有效吞吐，均不能签发全局最优、普适exponent或线上deadline；单query访问历史也不能照搬整块causal矩阵的省半系数。长context的任务收益、全部训练/选参、chunk/state或KV、真实prefill/decode和完整服务费用须分别验收，不能由较低FLOPs或拟合lower-bound批准部署必胜。长度、架构或执行实现变化而留出质量/预算失配时，保留原长度的局部scaling sweep、显式Attention/混合状态与独立任务实测，再重选配置，不把一条线性复杂度分支当作通用替代。
+
+<!-- source-family:SF-2025-ARXIV-2510-02228 -->
+
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-20196:start -->
 数据量也不只是公式中的一个标量。对具有可恢复离散状态的受控序列，可以把每个状态相对全局 next-token
 baseline 的 KL 偏离乘以该状态出现质量，得到 predictive-contribution spectrum；随着样本增多，有效截断秩
@@ -130,6 +136,10 @@ sparse IsoFLOP grid
 外推稳定性。事件时证据证明的是特定拟合方法在 synthetic 与公开 IsoFLOP 数据上的偏差，不直接证明任何新的
 通用 token/parameter 常数。<!-- source-family:SF-2026-ARXIV-2603-22339 -->
 
+解释斜率前，还应先核对同等训练算力下曲线处在什么绝对位置：若小模型端点尚未被合理优化，随后模型只是追上较强配方，也可能画出很陡的改善线，而不是获得更好的规模规律。一个[受限开放参考分支](https://arxiv.org/html/2509.09009v1)先用共同预算轴、匹配的任务/分词与数据口径比较参考点，再讨论随模型和 tokens 改变的趋势；参考线用于发现配方或小端点不足，不自动成为任意数据、架构或更大规模的最优前沿。绝对 loss、斜率、留出任务质量与搜索预算应分别保存，局部更低 loss 不识别语言混合或某个组件的唯一因果。参考制备、配方搜索、所有训练与外推回归都付费，近似 FLOPs 不等完整设备/数据成本。口径或参考支持不匹配时，保留当前配方的局部拟合与独立留出检验，不由较陡 exponent、更多同线点或一份公开 reference 直接配置大规模预算。
+
+<!-- source-family:SF-2025-ARXIV-2509-09009 -->
+
 联合拟合还要求实验能区分被解释的轴。固定 tokens-per-parameter、令 `D=kN` 沿一条射线扩大模型，适合比较这个配比下的局部趋势；但在 `L=E+A N^(-α)+B D^(-β)` 中，若 `α≈β`，两项在该射线上近乎成比例，数据主要约束组合系数，而非分别识别容量与数据的贡献。[受限理论与小模型对照](https://arxiv.org/html/2605.08541v1)因此把 TPP 跨度、Jacobian 条件与离开训练射线的留出点纳入实验设计；多次拟合或更多同射线点不能自动补回缺失的方向。其全矩阵渐近结论另需主导参数对、噪声与局部线性化假设，实验中的多射线配比也不等于单一 TPP；小模型、专门语料上的弱效和高 TPP 的宽区间不支持通用充分阈值或等算力收益。新增配比训练、拟合重启与外推验证都有成本；覆盖不足时保留组合系数或局部曲线，暂不依据不稳定的分项系数配置大规模预算。<!-- source-family:SF-2026-ARXIV-2605-08541 -->
 
 ## 为什么会出现相对平滑的规律
@@ -178,6 +188,13 @@ production quality, latency, and cost
 
 所以工程上应区分 raw token、unique token、effective token 与目标分布覆盖。把所有数据按数量相加，会让 compute-optimal 结论失真。
 
+复用预训练模型时，token预算还要按阶段拆开：首阶段曝光D1决定base的起点，第二阶段D2才是当前继续训练或扩容后消费的数据。固定base的局部D2曲线仍可拟合，但不同D1不一定只平移同一指数；[受限两阶段实验](https://arxiv.org/html/2510.06548v1#S4)用交互项使第二阶段有效指数随log(D1)改变，展示更好初始loss与更小追加收益可以同时出现。这是有限小模型/语料下的经验分支，不是过度训练的普遍饱和定律；width初始化保函数也不能替不保函数的depth stacking签字。应保存base checkpoint、两阶段语料/曝光、扩容规则与评价分布，分别比较固定既成资产的增量费用和另起base的全阶段费用，不能把sunk cost既隐藏又重复收取。拟合中的低loss留出选择、最终系数再用验证点及规模外推仍须独立核验，论文给出的巨大token阈值、compute最优关系与GPU小时估算不冒实测。全部base制备/扩容、再训练、拟合搜索与任务回归都计费；目标、初始化或外推失配时，保留当前base局部扫点、中间checkpoint与从零训练的同目标对照，不由一个较好base或统一token总量批准普适复用优势。<!-- source-family:SF-2025-ARXIV-2510-06548 -->
+
+数据量还可拆成“多少篇独立上下文”与“每篇内观察多长”，二者不必由总 token 数互换。一个受限 next-token 统计模型先为每篇抽取局部 context function，再用共享语言规律与该局部函数生成序列；在同分布、平滑性和指定 Transformer 类下，其风险界把跨文档学习共享规律与从当前文档估计局部 context 分开。因而比较数据预算时，可以同时记录独立文档人口、长度分布与上下文覆盖，而不只保存二者的乘积；这是模型提示的诊断轴，不是同 token 预算下长文或短文必然更好的结论。
+
+[这项受限风险分析](https://arxiv.org/html/2606.13280v1#S4)研究每篇仅末位置的经验风险最小化与期望 KL，并依赖有界 logits、平滑 latent functions、规则 context embeddings 及充分大架构；它不证明实践 SGD、全位置训练、真实长尾语料或能力指标具有同一 rate。词表增大同时改变估计与离散近似项，也不能推出越大越好。独立上下文制备、长度分组、训练与留出评价均增加费用；这些假设或留出曲线不合时，仍以固定 tokenizer/recipe 的局部 scaling sweep 和原数据配置为准，不用渐近上界替代 compute-optimal 实验。
+<!-- source-family:SF-2026-ARXIV-2606-13280 -->
+
 ## 架构、稀疏性与后训练改变边界
 
 参数量 `N` 也不是统一的能力或 compute 单位。Dense 模型每个 token 激活大部分参数；MoE 可以增加总参数容量而只激活部分专家；parameter sharing、低精度和不同 Attention 结构会改变每 token compute 与 memory。
@@ -202,6 +219,8 @@ production quality, latency, and cost
 这条检查会增加独立数据切片、梯度采样与统计噪声成本，且局部对齐可能随训练阶段、数据 mixture 和 optimizer 改变。样本不足或置信区间跨过无收益区域时，应保留原宽度或先扩大数据与复验，而不是把 function-preserving expansion 当作自动获益。原有 loss scaling curve 在架构固定、数据充足且对齐假设已验证的范围内仍是更便宜的规划基线。
 
 <!-- source-family:SF-2026-ARXIV-2607-24887 -->
+
+深度的边际价值也要绑定跨上下文的数据几何。若线性回归上下文共用固定、可逆的输入协方差，受限Attention模型可把其逆矩阵学成共享预条件；在无噪声和无限长支持集的极限，单次更新就可能足够。若各上下文的协方差方向随机旋转，同一白化方向不能复用，重复更新才有机会消除更多残差。[受限ICL scaling分析](https://arxiv.org/html/2510.01098v1#S3)据此给出检验深度价值的条件分支，而非“更长context总能替代深度”或所有模型都应加深。其signed mask、线性回归与对称gradient-flow条件不是普通causal LLM；冻结投影rank、预训练时间、重复深度和context长度也不是可任意互换的参数/token预算。单轴渐近及作者计算proxy不授权真实LLM的联合有限资源最优形状，原文局部loss常数亦未闭。协方差人口构造、完整预训练/形状搜索、状态与留出及迁移回归都付费；分布、质量或净预算失配时，保留原架构族的局部scaling sweep和独立任务评价，不用toy极限替代容量规划。<!-- source-family:SF-2025-ARXIV-2510-01098 -->
 
 ## 从论文曲线到工程容量规划
 
@@ -249,6 +268,18 @@ Scaling Law 最有价值的使用方式，是在明确范围内提供可证伪�
 
 只固定参数量、数据量或训练 compute 之一时，用单轴 power law 近似损失趋势是合理的；但训练步数、推理 compute 与关键超参数共同变化后，原曲线不再拥有唯一解释。更稳健的做法，是把这些轴连同拟合区间与外推目标一起交给 scaling experiment owner，联合拟合后再用留出的规模点验证。这样可以减少把某一轴的收益错记到另一轴，却付出更多实验单元、交互项和模型选择风险；若联合模型在留出尺度上失配，应退回局部单轴曲线或重新分区，而不是继续扩大外推。exact-v1 证据只覆盖论文披露的视觉、语言、数学与 RL 实验及其参数域，不能证明统一函数在新架构、数据分布或生产 SLO 下仍成立。<!-- source-family:SF-2026-ARXIV-2605-26248 -->
 
+当独特真实语料已固定，增加训练 compute 仍有多种不同去向：扩大单模型、联合重调 weight decay/learning rate/重复 epochs，或训练多个成员后平均 logits，再把成员生成的样本混入真实语料训练学生。它们不是同一条只增 token 的曲线：平均 logits 每次预测要调用全部成员，逐成员生成的合成池也不是从平均分布采样；独特 seed 数、重复训练 tokens、teacher 生成和 student 训练必须分别记账。受限小模型实验表明，重调正则可改变原先的过拟合趋势，但有限规模的 asymptote 拟合、局部超参数搜索及更高层外推都不构成无限 compute 或全局最优证书；混入真实数据的 token-matched 对照也不担保任意 self-training 都免于退化。全部成员训练/推理、搜索、生成池与学生训练均付费，有限 held-out loss 不替下游能力验收。外推、合成质量或总预算不稳时，保留单模型的局部 scaling sweep、真实数据混合与独立留出检验，不把固定数据写成固定总费用或免费扩容。
+
+<!-- source-family:SF-2025-ARXIV-2509-14786 -->
+
+有限语料还改变了曲线的优化对象：当唯一数据量`U`固定、compute不再是binding约束时，应考察在epochs、learning rate和regularization等已搜索范围内取得的损失包络`L*(N,U)`，而不是沿用固定`6ND`预算下的最优点。[受限数据约束实验](https://arxiv.org/html/2606.06888v1)发现，单纯相加的参数项与数据项不能拟合所测容量—数据交互，耦合的软瓶颈模型在留出数据规模上更合适；同文的masked-input辅助NTP也只是在保留AR目标下增加正则，需两次forward，不是省计算。有限模型尺度、超参数搜索和拟合渐近线仍不足以给frontier模型签发普适数据效率常数，新增重复训练、搜索与回归均须计费；留出点或新recipe失配时，回到局部曲线与原单模型基线，而不把“compute-rich”解释为无限免费计算。<!-- source-family:SF-2026-ARXIV-2606-06888 -->
+
+当扩增方式是改写同一seed语料时，还可把rewrite fraction R和唯一natural token数T显式加入拟合面：除参数/训练token项外，分别估计随R变化的分布失配项，以及natural token反复出现的惩罚，而不把每个rewrite等价成fresh data。在source与rewrite近等长、生成足够FLOP-bound且不跨run摊销的近似下，一次student预算可写为6ND+4NᵣDR，后项包含source prefill和rewrite decode；teacher预训练/指令适配、judge与拟合实验仍须另计。[受限改写scaling对照](https://arxiv.org/html/2610.31867v1#S2)支持从小预算拟合、在留出budget选择有限R，但并非任意语料的连续全局最优；按部分域的gold-answer BPB胜teacher也不等完整能力超越，外部teacher的知识和少量强teacher指令数据不能消失。R、重复、自然语料质量和teacher改变后，分布floor与最优点都要重验；没有可验证外推或生成成本主导时，保自然数据/较小改写比例与局部sweep，不把合成数量或一个拟合asymptote当无限扩容保证。
+<!-- source-family:SF-2026-ARXIV-2610-31867 -->
+
+多语训练还应把目标语言、具名迁移语言和其余语料的曝光分账，而不是把所有token压成同一种有效数据量。可分别记录各来源的unique tokens与重复epochs，对重复曝光施加饱和函数，再拟合各来源对目标loss的权重；权重属于当前词表、模型族和混合协议，不是语言的固定属性。[受限多语scaling对照](https://arxiv.org/html/2510.22037v1#S3)用留出的模型规模、tokens、compute和mixture分别检验，显示只拟目标token会漏掉迁移，但部分语言对的transfer由估计器补齐，script/family相关也不等因果。迁移方向不必互惠，较大模型减轻干扰不意味着无限语言免费加入。训练全部拟合点、选来源与微调搜索均付费；公共checkpoint的预训练成本须另列，微调胜从头训练的局部交点不授普遍预算阈值。新语言、重复强度或外推失配时，回到局部配比sweep和原单语/多语基线。
+<!-- source-family:SF-2025-ARXIV-2510-22037 -->
+
 ### Token 的价值不是固定常数：compute-optimal 与 data-optimal 之间还有有效性函数
 
 经典 compute-optimal 推导常把每个训练 token 视为同质新增证据；当数据开始重复、改写或合成扩增时，这个假设失效。可用 token effectiveness 表示 derived token 相对 fresh token 的边际训练价值，并让它随模型规模、tokens-per-parameter、扩增策略与扩增量变化。于是最优点不再只由参数和名义 token 数决定，而由 compute、可获得 fresh data 与边际有效性共同决定。
@@ -284,6 +315,16 @@ Scaling Law 把“更多资源通常更好”变成了可实验、可拟合、�
 
 ## Review notes
 
+- `SF-2025-ARXIV-2510-01098`：Daily2025-10-03补Oct02；[ICL Scaling exact-v1](https://arxiv.org/html/2510.01098v1#S3)，2+1+3=6/协方差人口与深度选择gap深入。仅固定共享预条件与逐context旋转下迭代价值的受限分支；保signed mask/线性与GF、无噪声长context、Eq8局部常数反侧、单轴非联合有限资源、projection-rank非模型参数及全部训练/搜索/回归费。不采全DMFT/真实LLM最优shape或净速度，未核全附件/图像素/代码或复现。R21日门复用；root R48必要/actualowner/整体PRE与本次窄授通过，已真实SAVE/fullselfread；root R52唯一实际POST通过，指定窄位释放。仅行政同步既成，不预DAY。
+
+- `SF-2025-ARXIV-2510-06548` — Daily2025-10-10补Oct09BJT；[exact-v1](https://arxiv.org/html/2510.06548v1)，2+1+3=6，作者A35唯一首次必要§2–6/B3–4/C1–5/D1–3。仅D1/D2 joint经验交互、初始loss与追加边际收益及资产费用资格差额；保0.1B grid/最大约1B、width FPI与stack不保函数、最低loss10%留出/最终fit含验证点，13T/300B阈值与Eq9未实证、3000GPUh理论估算及全费，不采普遍saturation/精确外推阈值或净速。未核全图像素/代码或训练复现；整体PRE/真实SAVE/完整自读/solePOST仅本日实际后到，不预签。
+
+- `SF-2026-ARXIV-2606-13280` — Daily2026-06-13补Jun12；2+1+3=6；[exact-v1](https://arxiv.org/html/2606.13280v1) §2.2/3/4及B必要实际读；仅n文档与T内context统计轴，保末位置ERM/expectedKL、bounded/smooth/embedding/architecture假设、fixedW旧方法与真实长尾反侧，不采全部定理正确性/SGD/实践exponent或同token预算排序，未核实现/复现。root§27必要/actualowner/原两段PRE通过，按窄授真实保存；root§29唯一实际POST通过，指定窄位释放；仅行政同步既成，不预日级。
+
+- `SF-2026-ARXIV-2606-06888` — Daily2026-06-09补Jun08；[exact-v1](https://arxiv.org/html/2606.06888v1) §2–4及Discussion必要域，2+2+3=7。仅调参后固定unique-data损失包络与容量—数据耦合，MIR作两forward额外正则例，不另复制Ch28；保72M–1.4B/有限留出、ELBO与NLL异义、拟合asymptote及全部搜索训练费。root必要源/actual owner/完整两侧已核并授本单段+注；作者已真实保存并完整自读新增、直接完整两侧及自身H2注；root SUP_REVIEW §6唯一非writer实际POST已通过，指定窄位已释放，不预DAY。未核代码/复现，不授DAY。
+
+- `SF-2025-ARXIV-2509-14786` — Aristotle，Daily2025-09-20补Sep19；[exact-v1](https://arxiv.org/html/2509.14786v1) §2–3/4.1/4.3/5.4/6/A/B1/E1–3/H1–2必要，2+2+2=6。仅固定独特seed下正则/epochs、全成员logit消费者及逐成员teacher生成/学生token分账；保有限拟合/局部搜索/二三层未验、real混合条件及全部成员/搜索/生成/student费，不采无限实测/全局最优/免费扩容或免collapse。未核代码/复现；Einstein§15必要Source已实际采用，§17原三项纯PRE通过；root本轮完整fresh窄授后原技术稿真实保存，Einstein§19唯一非writer实际完整新增/直接两侧/外侧binding及本人注POST通过，本指定窄位生效释放；仅同步既成事实，不预日级。
+
 - `SF-2026-ARXIV-2605-08541` — Daily2026-05-13补May12；exact-v1 partial raw中完整主文§3–5实际已读；3+2+3=8。只取固定ray近指数导致系数难辨及离ray验证，不授全矩阵无条件定理/通用必要充分TPP阈值；保CO12fan、不同预算、fitseed非trainingrepeat、专域弱效、高TPP跨50%CI与全费。未读全附录/核代码/复现，root R2必要Source、R6逐字PRE通过，指定正文/marker/本人注已按窄写权保存；root R7非作者完整正文/直接两侧/本人注actualPOST通过，窄位释放。 本次仅同步已成事实，不重写机制或认证实现/复现、全覆盖或整日Gate。
 
 - `SF-2026-ARXIV-2601-01332` — Daily `2026-01-07`；[exact-v1](https://arxiv.org/html/2601.01332v1) §2–4/Limitations及 Appendix A成本口径。2+2+2=6，具体成本知识缺口必要深入；采用 checkpoint/refresh horizon 与实际 TTC 选择预算联合规划，不采用主文/Appendix A 不同 Ninfer 分母、常数6、92%投影或由成本约束推出 accuracy。留出选择偏差、pass@k/oracle 与部署选择器不同；root必要原源/owner写前通过，root实际一段、前后衔接与末注非作者POST通过，未复现。
@@ -307,3 +348,11 @@ Scaling Law 把“更多资源通常更好”变成了可实验、可拟合、�
 - `SF-2026-ARXIV-2602-15327` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15327v1) §2–4/AppendixB/F。2+2+2=6，具体测量分配差额受影响深入；只采已测后训练人口q.98、signed compute-bin/rolling overlap校准及metadata局部Jacobian的成本近似测量分配，不授physical ceiling、compute外推、真正最优或全任务低预算。人口/recipe漂移、parameter-count成本proxy和旧受控loss路线近正文；root必要源/actualowner PRE及实际两段/完整邻接与末注非作者POST通过，窄锁释放，未核实现/复现。
 
 - `SF-2025-ARXIV-2507-00885` — Boyle，Daily2025-07-03补Jul2；[exact-v1](https://arxiv.org/html/2507.00885v1)§2–7/Limitations/AppB–E必要，2+1+2=5，Ch7验证分布坐标小gap深入。仅采固定corpus/checkpoint/harness/支持范围的外推分责，不采39%普遍率、单一内部因果或buggySIQA正面结果；未逐点核图、原checkpoint/code或复现。root79已实际必要Source/当前owner/逐字PRE通过并授本单段/独立marker/本人注窄位；作者已按批准稿真实保存并实际完整顺读新增、完整直接两侧及本人注，限定检查通过；root81已一次真实非writer完整新增、完整两侧及本人注POST通过，实际整合生效并释放本指定窄位；本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2509-09009` — Carson，Daily2025-09-13补Sep12；[exact-v1](https://arxiv.org/html/2509.09009v1)§2–4/A–C/T1–5/7必要域，R26首Source/Zeno72一次独核正式2+1+2=5，唯一Ch7。只同compute绝对参考位置校准→再解斜率，保小端点suboptimal/局部任务反退、v1 .01/8dataset、配方/全搜索费用，不采compute-optimal/混语言因果/全scale最优。不倒填current .02/9，未核全图/实现/训练复现；Zeno77逐字PRE与root当前精确新授已过，作者按R54原一段/独立marker/本人注实际保存；Zeno81唯一实际nonwriter完整新增/完整直接两侧/本人注/限定diff POST通过，第13实际整合生效并释放指定窄位；本注仅同步既成事实，不第三核或预DAY。
+
+- `SF-2025-ARXIV-2510-02228` — Hilbert，Daily2025-10-04补Oct03BJT；[xLSTM Scaling exact-v1](https://arxiv.org/html/2510.02228v1)A395唯一首次必要S2–4/E1–4/S6、A1.1–3/T1–3/C2/C3.1–4/E8–16/D1–3/E22–27决定域，原2+2+2=6，仅context/sequence-mixer成本进入预算与有限最优配置差额深入。保同T与跨Tloss资格、batch/recipe与拟合敏感、fixedstate非精确历史、singlequery系数/roofline非完整配方、matchedN非等质和全部训练/拟合/执行费，不采通用Pareto/最优shape/下游或生产SLO。未核全图像素/全部config表/源码/后v2或复现，关键独核/整体PRE/真实SAVE/fullselfread/solePOST仅本日canonical实际后到层，本注不预签。
+
+- `SF-2026-ARXIV-2610-31867` — Daily2026-10-27，exact-v1 §2/3.1–3.3/5必要，2+2+2=6；仅R-dependent分布/重复项与rewrite生成—student预算接口。保同长/FLOP-bound/无摊销近似与不含teacher预训、GLM少量指令/LMjudge、有限R留出/3B反例、BPB非accuracy/整能力及全费；未核全附录/实现/复现，不授连续全局optimum或通用teacher上限。
+
+- `SF-2025-ARXIV-2510-22037`：Daily 2025-10-29补窗；精确v1必要支持/直接反侧已读，未运行代码或复现。明确target/transfer/other及各自unique/repetition，非重复现有同质token有效性泛论；不录冲突常数或全局最优预算公式。

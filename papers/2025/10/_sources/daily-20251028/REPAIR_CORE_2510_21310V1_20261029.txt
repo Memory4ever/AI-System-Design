@@ -1,0 +1,989 @@
+Efficient semantic uncertainty quantification in language models via diversity-steered sampling
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Estimating the predictive uncertainty of free-form responses
+3 Methods
+3.1 Diversity-steered sampling
+Extension to masked diffusion models.
+Adaptively tuning the diversity parameter.
+3.2 Fine-tuning NLI for partial sequences
+3.3 Importance-reweighted estimators of uncertainty
+Semantic (aleatoric) uncertainty.
+Epistemic uncertainty.
+3.4 Variance reduction via adaptive control variates
+Semantic entropy.
+Mutual information.
+4 Related Work
+Uncertainty estimation.
+Diversity-promoting sampling.
+Semantic clustering and paraphrase detection.
+5 Experiments
+Sampling baselines.
+Datasets.
+Models.
+Metrics.
+6 Discussion and limitations
+7 Conclusion
+References
+A Extension to masked diffusion models
+B Additional implementation details
+B.1 NLI finetuning
+Prefix truncation.
+Masked tokens.
+B.2 Prompts
+B.3 Adaptively tuning the diversity parameter λ\lambda
+B.4 Semantic clustering
+B.5 Computational complexity
+B.6 Computing resources
+C Qualitative case studies
+C.1 Sample answers: ARM
+C.2 Sample answers: MDM
+D Mutual information results
+E Variance reduction with control variates
+Semantic entropy
+License: CC BY-NC-SA 4.0
+arXiv:2510.21310v1 [cs.CL] 24 Oct 2025
+Efficient semantic uncertainty quantification in language models via diversity-steered sampling
+Ji Won Park
+Affiliation: Prescient Design, Genentech
+Email: park.ji_won@gene.com
+Kyunghyun Cho
+Affiliation: Prescient Design, Genentech
+Affiliation: Center for Data Science, New York University
+Email: cho.kyunghyun@gene.com
+Abstract
+Accurately estimating semantic aleatoric and epistemic uncertainties in large language models (LLMs) is particularly challenging in free-form question answering (QA), where obtaining stable estimates often requires many expensive generations. We introduce a diversity-steered sampler that discourages semantically redundant outputs during decoding, covers both autoregressive and masked diffusion paradigms, and yields substantial sample-efficiency gains. The key idea is to inject a continuous semantic-similarity penalty into the model’s proposal distribution using a natural language inference (NLI) model lightly finetuned on partial prefixes or intermediate diffusion states. We debias downstream uncertainty estimates with importance reweighting and shrink their variance with control variates. Across four QA benchmarks, our method matches or surpasses baselines while covering more semantic clusters with the same number of samples. Being modular and requiring no gradient access to the base LLM, the framework promises to serve as a drop-in enhancement for uncertainty estimation in risk-sensitive model deployments.
+1 Introduction
+Large language models (LLMs) excel at generating fluent text yet remain prone to both intrinsic aleatoric ambiguity and epistemic gaps in their learned knowledge. The latter can lead to hallucinations—confident outputs that are factually incorrect. Quantifying these uncertainties is critical for building safe AI systems deployable in high-stakes applications. In free-form natural language generation (NLG) tasks like question answering, this is especially challenging, as lexically distinct responses can still be semantically equivalent.
+Estimating uncertainty in language generation often relies on drawing large IID sample sets, which often contain semantically redundant outputs and waste compute. For example, semantic entropy has been proposed to quantify aleatoric uncertainty by clustering generated outputs into semantic equivalence classes [1], while mutual information computed via iterative prompting has been used to lower-bound certain forms of epistemic uncertainty [2]. Despite their conceptual appeal, both approaches require extensive sampling to produce stable estimates, limiting their use in low-resource settings. Diversity-oriented heuristics such as temperature scaling or nucleus sampling [3], on the other hand, do not account for semantics. More recently, Aichberger et al. [4] proposed a method that steers generation toward semantic diversity, though it relies on token substitutions and remains restricted to autoregressive models (ARMs). We aim at extending this line of work.
+While uncertainty estimation methods have focused on ARMs, masked diffusion models (MDMs) have recently emerged as strong alternatives. These models extend masked language modeling by learning iterative denoising schedules to progressively resolve masked spans [5, 6, 7, 8, 9, 10]. Despite achieving text quality on par with state-of-the-art ARMs, MDMs remain largely overlooked in the context of uncertainty quantification.
+We propose a unified, model-agnostic framework that (1) actively steers decoding away from semantically redundant hypotheses, (2) corrects the induced sampling bias via importance weighting, and (3) reduces estimation variance with control variates. Crucially, our sampler operates in both ARM and MDM settings using entailment-based penalties computed on partial continuations or masked spans. A single natural language inference (NLI) model, fine-tuned minimally with a new [TRUNC] token for prefixes or a [MASK] token for diffusion masks, enables live semantic scoring without altering the base LLM. Our experiments evaluate the method’s ability to quantify established proxies for aleatoric and epistemic uncertainties, demonstrating improved uncertainty estimation across diverse NLP tasks. Practical enhancements, including adaptive tuning of the diversity hyperparameter and online stopping based on estimator stability, further improve sample efficiency.
+Figure 1: Our sampling workflow illustrated with a prompt that induces high aleatoric uncertainty. Given previous generations, we guide the LLM’s next token away from semantically redundant outputs. The semantic clusters of resulting generations are used to estimate downstream uncertainty.
+2 Estimating the predictive uncertainty of free-form responses
+Let xx be an input (e.g. a question) and θ\theta the weights of a pretrained language model. We wish to measure the total predictive uncertainty of the model’s output under semantic clustering. Following Aichberger et al. [4], we define the distribution over semantic clusters c∈𝒞c\in\mathcal{C} by marginalizing over all output sequences yy:
+|
+p(c∣x,θ)=∫1[y∈c∣x,θ]p(y∣x,θ)dy,p(c\mid x,\theta)=\int 1[y\in c\mid x,\theta]\ p(y\mid x,\theta)dy, |
+|
+which can be approximated with the MC estimator11
+1
+The original presentation [1] used the biased estimator, p⁡(c∣x,θ)=∑y∈cp⁡(y∣x,θ)p(c\mid x,\theta)=\sum_{y\in c}p(y\mid x,\theta).,
+|
+p^(c∣x,θ)≈1N∑i=1N1[y(i)∈c],y(1),…,y(N)∼p(y|x,θ).{\hat{p}}(c\mid x,\theta)\approx\frac{1}{N}\sum_{i=1}^{N}1[y^{(i)}\in c],\quad y^{(1)},\dotsc,y^{(N)}\sim p(y|x,\theta). |
+|
+(1) |
+If yy is a sequence of tokens (y1,…,yT)(y_{1},\dotsc,y_{T}), then p⁡(y∣x,θ)p(y\mid x,\theta) can be computed as the product of individual conditional token probabilities, or, in terms of log probability: log⁡p⁡(y∣x,θ)=∑t=1Nlog⁡p⁡(yt∣y<t,x,θ)\log p(y\mid x,\theta)=\sum_{t=1}^{N}\log p(y_{t}\mid y_{<t},x,\theta).
+The total predictive uncertainty can then be written as the expected cross-entropy between two independent draws of the model’s distribution [4]:
+|
+𝔼θ~​[CE⁡(p⁡(c∣x,θ),p⁡(c∣x,θ~))]⏟total=H⁡(p⁡(c∣x,θ))⏟aleatoric+𝔼θ~[KL(p(c∣x,θ)∥p(c∣x,θ~))]⏟epistemic,\underbrace{\mathbb{E}_{\tilde{\theta}}\bigl[\mathrm{CE}\bigl(p(c\!\mid\!x,\theta)\,;\,p(c\!\mid\!x,\tilde{\theta})\bigr)\bigr]}_{\rm total}\;=\;\underbrace{H\bigl(p(c\!\mid\!x,\theta)\bigr)}_{\rm aleatoric}\;+\;\underbrace{\mathbb{E}_{\tilde{\theta}}\Bigl[\mathrm{KL}\bigl(p(c\!\mid\!x,\theta)\,\big\|\,p(c\!\mid\!x,\tilde{\theta})\bigr)\Bigr]}_{\rm epistemic}, |
+|
+(2) |
+where C​E​(⋅,⋅)CE(\cdot;\cdot) is the cross entropy, H⁡(⋅)H(\cdot) is the shannon entropy, and 𝔼θ~≔𝔼θ~∼p(⋅|D)\mathbb{E}_{\tilde{\theta}}\coloneqq\mathbb{E}_{\tilde{\theta}\sim p(\cdot|D)} denotes expectation over the weight posterior.
+As observed by Aichberger et al. [4], the first term on the right,
+|
+H(p(c∣x,θ))=−∑c∈𝒞p(c∣x,θ)logp(c∣x,θ),H\bigl(p(c\mid x,\theta)\bigr)\;=\;-\,\sum_{c\in\mathcal{C}}p(c\mid x,\theta)\,\log p(c\mid x,\theta), |
+|
+(3) |
+is the aleatoric semantic uncertainty, also called semantic entropy (SE) [1]. It captures the irreducible ambiguity in the meaning of valid outputs under a single model. The second term,
+|
+𝔼θ~[KL(p(c∣x,θ)∥p(c∣x,θ~))],\mathbb{E}_{\tilde{\theta}}\Bigl[\mathrm{KL}\bigl(p(c\mid x,\theta)\,\big\|\,p(c\mid x,\tilde{\theta})\bigr)\Bigr], |
+|
+(4) |
+is the epistemic semantic uncertainty, measuring our ignorance about which cluster is correct due to lack of model knowledge or data coverage.
+Let us consider possible answers to the question, “Name a way to measure the Hubble constant.” Aleatoric uncertainty arises when multiple answers are all valid. Even a reliable model may output multiple correct variations that reflect different measurement methods, for example:
+•
+“The distance ladder method, which uses Cepheid variable stars and Type Ia supernovae as standard candles to determine distances and redshifts of galaxies.”
+•
+“Gravitational lensing time delays, where the time differences in light arrival from multiple images of a lensed quasar are used to infer cosmic distances and expansion rate.”
+These two answers belong to distinct semantic clusters only to the extent that they report different measurement methods; under a single model they contribute to SE (aleatoric uncertainty) but do not indicate that the model lacks knowledge of the phenomenon. To reduce aleatoric uncertainty, the user may rephrase the question to remove ambiguity (e.g., “Name a way to measure the Hubble constant using quasars.”). On the other hand, if the model truly lacks knowledge or is out-of-distribution, it may produce answers that conflict with scientific facts or admit ignorance, for example:
+•
+“Sure! One method to measure the Hubble constant is by analyzing the oscillation patterns of intergalactic neutrino winds using quantum parallax interferometry.” (hallucination)
+•
+“Tracking the color shift of moonlight reflected off distant asteroids.” (hallucination)
+•
+“I’m sorry, you might need to consult a scientific source or expert in cosmology for that.
+These responses fall into semantically distinct clusters that reflect gaps in the model’s knowledge (high epistemic uncertainty), signaling that the model is not trustworthy and should abstain.
+3 Methods
+3.1 Diversity-steered sampling
+Our proposed sampling scheme modifies token-level conditional distributions to explicitly discourage semantically similar samples. Let us omit the conditioning on x,θx,\theta for notational clarity and let p⁡(yt|y<t)p(y_{t}|y_{<t}) represent the original language model distribution for the tt​ht^{th} token given previously generated tokens y<ty_{<t}. Our (unnormalized) sampling distribution is:
+|
+log⁡q⁡(yt|y<t)=log⁡p⁡(yt|y<t)−λ​maxs∈𝒮⁡E⁡(y≤t,s)\displaystyle\log q(y_{t}|y_{<t})=\log p(y_{t}|y_{<t})-\lambda\max_{s\in\mathcal{S}}E(y_{\leq t},s) |
+|
+(5) |
+where 𝒮\mathcal{S} is the set of previously sampled sequences, and E⁡(⋅,⋅)E(\cdot,\cdot) is a score quantifying the degree of semantic similarity between the inputs. In words, the tilting term repels the current sample away from the most similar existing generation. Aggregation schemes other than max, such as mean or median, may alternatively be used for softer guidance. Note also that we do not require gradients from the scoring function, and any scoring function that can handle partial sequences in either input argument would work. For full consistency with the NLI model used to semantically cluster the generations downstream, we finetune the same NLI model to accept partial sequences, as detailed in Section 3.2. Concretely, we opt for the bidirectional entailment score:
+|
+E⁡(y≤t,s)=1/2​(entailment​(y≤t,s)+entailment​(s,y≤t)),\displaystyle E(y_{\leq t},s)=\nicefrac{{1}}{{2}}\left(\texttt{entailment}(y_{\leq t},s)+\texttt{entailment}(s,y_{\leq t})\right), |
+|
+(6) |
+where entailment is the entailment probability reported by an NLI model finetuned to handle partially generated sequences. The pseudocode for our sampling strategy is given in Algorithm 1.
+Algorithm 1 Diversity-steered autoregressive sampling
+1:
+Prompt xx; base model p(⋅∣x)p(\cdot\mid x); bidirectional NLI scorer E⁡(⋅,⋅)E(\cdot,\!\cdot) from Equation 6, trained with a special marker [TRUNC] for incomplete text; diversity penalty λ\lambda; number of samples NN; candidate tokens 𝒱\mathcal{V}
+2:
+Set of semantically diverse generations 𝒮\mathcal{S}
+3:
+𝒮←∅\mathcal{S}\leftarrow\varnothing
+4:
+for i=1i=1 to NN do
+5:
+prefix←tokenize⁡(x)\mathrm{prefix}\leftarrow\mathrm{tokenize}(x)
+6:
+token←<BOS>\mathrm{token}\leftarrow\texttt{<BOS>}
+7:
+while token≠<EOS>\mathrm{token}\neq\texttt{<EOS>} do
+8:
+for next\mathrm{next} in 𝒱\mathcal{V} do ⊳\triangleright Can alternatively consider the top-kk tokens only
+9:
+ℓ⁡(next)←log⁡p⁡(next∣prefix)\ell(\mathrm{next})\leftarrow\log p\bigl(\mathrm{next}\mid\mathrm{prefix}\bigr)
+⊳\triangleright Base-model logits
+10:
+s^←decode(prefix∥next)∥[TRUNC]\hat{s}\leftarrow\mathrm{decode}(\mathrm{prefix}\|\mathrm{next})\|\texttt{[TRUNC]}
+⊳\triangleright Mark that s^\hat{s} is unfinished
+11:
+π←maxs∈𝒮⁡E⁡(s^,s)\pi\leftarrow\displaystyle\max_{s\in\mathcal{S}}\;E\bigl(\hat{s},\,s\bigr)
+⊳\triangleright Similarity score with the most similar existing generation
+12:
+ℓ′​(next)←ℓ⁡(next)−λ​π\ell^{\prime}(\mathrm{next})\leftarrow\ell(\mathrm{next})-\lambda\pi
+⊳\triangleright Repel toward semantic novelty
+13:
+end for
+14:
+token∼Categorical⁡(softmax⁡(ℓ′))\mathrm{token}\sim\mathrm{Categorical}\bigl(\mathrm{softmax}(\ell^{\prime})\bigr)
+15:
+prefix←prefix|token\mathrm{prefix}\leftarrow\mathrm{prefix}\|\mathrm{token}
+16:
+end while
+17:
+s(i)←decode⁡(prefix)s^{(i)}\leftarrow\mathrm{decode}(\mathrm{prefix})
+18:
+𝒮←𝒮∪{s(i)}\mathcal{S}\!\leftarrow\mathcal{S}\,\cup\,\{s^{(i)}\}
+19:
+end for
+20:
+return 𝒮\mathcal{S}
+Extension to masked diffusion models.
+In MDMs, decoding proceeds by iteratively refining a partially masked sequence y(t)y^{(t)} through denoising steps. At each step tt, a subset of masked positions is selected for infilling. Our diversity-steered strategy applies by modifying the denoising distribution p⁡(y(t)|y(t+1))p(y^{(t)}|y^{(t+1)}) to discourage infillings that are semantically similar to those from previous trajectories.
+To compute similarity, we construct an intermediate input z(t)z^{(t)} by substituting the current proposal y(t)y^{(t)} into the masked positions of y(t+1)y^{(t+1)}, and then evaluate:
+|
+log⁡q⁡(y(t)|y(t+1))=log⁡p⁡(y(t)|y(t+1))−λ​maxs∈𝒮⁡E⁡(z(t),s).\displaystyle\log q(y^{(t)}|y^{(t+1)})=\log p(y^{(t)}|y^{(t+1)})-\lambda\max_{s\in\mathcal{S}}E(z^{(t)},s). |
+|
+(7) |
+The NLI model here is finetuned to handle masked or partially masked spans. This allows our method to promote semantic diversity across the entire denoising trajectory. Algorithm 2 provides the analogous pseudocode for MDMs.
+Adaptively tuning the diversity parameter.
+The diversity strength parameter λ\lambda significantly influences the semantic novelty of generated samples: too small a value yields redundancy as in vanilla IID sampling, while too large risks unnatural, low-likelihood outputs. To navigate this trade-off, we adaptively tune λ\lambda during both token-level sampling within sequences and across multiple sampled sequences. See Section B.3 for details of the adaptive tuning procedure.
+3.2 Fine-tuning NLI for partial sequences
+Standard NLI models expect full premise–hypothesis pairs, but our sampler requires entailment scores for partially generated or masked text. To adapt an off-the-shelf NLI model with minimal overhead, we begin by loading a model finetuned on a natural language understanding dataset such as the MNLI benchmark dataset [11] (e.g. DeBERTa-large-MNLI [12]) and freezing all of its existing parameters. We then consider a special token: [TRUNC]22
+2
+If the token does not exist in the tokenizer’s vocabulary, we add it and initialize its embedding randomly. in the case of ARMs and [MASK] in the case of MDMs. The token embedding and the model’s final classification layer are the only components allowed to update during finetuning.
+Figure 2: Predictions of the finetuned NLI at each truncated point of the hypothesis, on two examples from the GLUE MNLI validation_matched split [13].
+Next, we construct an augmented dataset by corrupting exactly one side of each NLI training example. The corruption mechanism is truncation for ARMs and masking for MDMs. For each premise–hypothesis pair, we randomly determine whether to corrupt the premise or the hypothesis. For ARMs, we truncate the selected sequence of length TT at a point drawn uniformly at random from t∈{1,…,T}t\in\{1,\dotsc,T\} and append the token [TRUNC] if t<Tt<T. This procedure exposes the model to cases where either the premise or the hypothesis ends abruptly, teaching it to interpret [TRUNC] as a signal of incompleteness. For MDMs, we randomly select the masking probability uniformly in [0,1][0,1] and independently replace tokens with [MASK] with that probability.
+We then finetune using the standard cross entropy loss, updating only the [TRUNC] or [MASK] embedding, [CLS]33
+3
+Keeping the [CLS] frozen had little effect on performance. embedding, and the classification head, which corresponds to only 0.3% of the model parameters (around 3M parameters) in the case of DeBERTa-large-MNLI [12]. This adaptation is thus lightweight and preserves the model’s original NLI performance. At inference time, for ARMs, whenever we need to score a partial prefix against a full previous sample (or vice versa), we append [TRUNC] to the truncated side and query the finetuned NLI model for the probability of entailment. For MDMs, no preprocessing is needed to query the finetuned NLI model, as its vocabulary already contains the [MASK] token.
+Figure 2traces the probability that the fine-tuned NLI model assigns to the “entailment” class as progressively longer prefixes of each hypothesis are revealed. In both panels the trajectory converges to the ground-truth label long before the final token appears, suggesting that even partially generated hypotheses already contains enough semantic signal for identifying entailment. See Figure 3 for a similar demonstration for the MDM case. In another view, Figure 6 plots the classification accuracy of the finetuned NLI model at varying corruption levels. For both ARMs and MDMs, the classification accuracy matches that of the NLI model prior to finetuning and slowly falls until it reaches the “random guess” accuracy at complete corruption.
+Figure 3: Predictions of the finetuned NLI at each masking percentage of the hypothesis, on two examples from the GLUE MNLI validation_matched split [13].
+3.3 Importance-reweighted estimators of uncertainty
+As we sample from the biased proposal q⁡(⋅)q(\cdot) in Equations 5 and 7 instead of the true model distribution p⁡(⋅)p(\cdot), we apply importance reweighting to correct for the introduced bias. For a set of NN generated sequences {s(i)}i=1N\{s^{(i)}\}_{i=1}^{N} where each s(i)s^{(i)} was drawn from q⁡(s(i))q(s^{(i)}), we compute the unnormalized and self-normalized importance weights:
+|
+wi=p⁡(s(i))q⁡(s(i)),w~i=wi∑j=1Nwj.w_{i}\;=\;\frac{p\bigl(s^{(i)}\bigr)}{q\bigl(s^{(i)}\bigr)},\quad\tilde{w}_{i}\;=\;\frac{w_{i}}{\sum_{j=1}^{N}w_{j}}\,. |
+|
+(8) |
+In this section, we illustrate how importance reweighting and semantic clustering interact for the purpose of estimating SE [1] and MI [2], proxies of aleatoric and epistemic uncertainty, respectively. Note that these are meant to serve as illustrating examples and we do not advocate for these particular uncertainty metrics over alternatives.
+Semantic (aleatoric) uncertainty.
+Let 𝒞\mathcal{C} be the set of semantic clusters. The probability of each cluster c∈𝒞c\in\mathcal{C} can be estimated using the importance-weighted version of Equation 1:
+|
+p^(c)≈∑i=1N1[s(i)∈c]w~i.\hat{p}(c)\approx\sum_{i=1}^{N}1[s^{(i)}\in c]\ \tilde{w}_{i}. |
+|
+(9) |
+This yields the importance-weighted version [4] of SE [1] in Equation 3:
+|
+H^=−∑c∈𝒞p^(c)logp^(c).\hat{H}=-\sum_{c\in\mathcal{C}}\hat{p}(c)\,\log\hat{p}(c). |
+|
+(10) |
+Epistemic uncertainty.
+We use the MI proxy introduced by Yadkori et al. [2, Algorithm 2], restricted here to the pairwise case n=2n{=}2, as a worked example of how one can quantify epistemic uncertainty with our semantically–diverse sample set. Rather than a faithful reproduction of the original MI implementation, we aim at demonstrating our diversity sampling within an importance sampling framework. The MI proxy operates on the assumption that successive answers are conditionally independent under the ground-truth distribution p∗p^{*}:
+|
+p∗​(y1,y2∣x)=p∗​(y1∣x)​p∗​(y2∣x)p^{*}(y_{1},y_{2}\mid x)\;=\;p^{*}(y_{1}\mid x)\,p^{\!*}(y_{2}\mid x) |
+|
+so that any observed dependence between them can be ascribed to epistemic uncertainty.
+We draw NN pairs z(i)≔(s1(i),s2(i))z^{(i)}\coloneqq(s^{(i)}_{1},s^{(i)}_{2}) from the diversity-steered distribution qeq^{e} by iterative prompting. Each response token sequence is mapped to a semantic cluster cj(i)∈𝒞c^{(i)}_{j}{\in}\mathcal{C} using the NLI-reported bidirectional entailment score [1], rather than using the F1 score [14] as originally done in Yadkori et al. [2]. We find cluster centers 𝒮\mathcal{S} defined by all tuples j,kj,k such that E⁡(z(j),z(k))<τE(z^{(j)},z^{(k)})<\tau and each cluster center z⋆∈𝒮z^{\star}\in\mathcal{S} is associated with a cluster c⁡(z⋆)≔{z′:E⁡(z⋆,z′)≥τ}c(z^{\star})\coloneqq\{z^{\prime}:E(z^{\star},z^{\prime})\geq\tau\}.
+While we sample from the proposal qeq^{e}, the target distribution for MI is the model distribution pep^{e}, so each pair receives a self-normalized weight
+|
+wi,joint=pe​(s1(i),s2(i))qe​(s1(i),s2(i)),w~i,joint=wi,joint∑j=1Nwj,joint.w_{i,\textrm{joint}}\;=\;\frac{p^{e}\!\bigl(s^{(i)}_{1},s^{(i)}_{2}\bigr)}{q^{e}\!\bigl(s^{(i)}_{1},s^{(i)}_{2}\bigr)},\qquad\tilde{w}_{i,\textrm{joint}}\;=\;\frac{w_{i,\textrm{joint}}}{\sum_{j=1}^{N}w_{j,\textrm{joint}}}\,. |
+|
+After clustering the response pairs, we evaluate the joint and marginal cluster probabilities:
+|
+p^​(c⁡(z1,z2))\displaystyle\hat{p}(c(z_{1},z_{2})) |
+=∑i=1N1[(s1(i),s2(i))∈c(z1,z2)]w~i,joint,\displaystyle=\sum_{i=1}^{N}1[(s^{(i)}_{1},s^{(i)}_{2})\in c(z_{1},z_{2})\bigr]{\tilde{w}}_{i,\textrm{joint}}, |
+|
+(11) |
+|
+p^⊗​(c⁡(z1,z2))=[∑z′∈𝒮p^​(c⁡(z1,z2′))]​[∑z′′∈𝒮p^​(c⁡(z1′′,z2))].\displaystyle\hat{p}^{\otimes}\!\bigl(c(z_{1},z_{2})\bigr)\;=\;\Bigl[\!\sum_{z^{\prime}\in\mathcal{S}}\hat{p}\bigl(c(z_{1},z^{\prime}_{2})\bigr)\Bigr]\;\Bigl[\!\sum_{z^{\prime\prime}\in\mathcal{S}}\hat{p}\bigl(c(z^{\prime\prime}_{1},z_{2})\bigr)\Bigr]. |
+|
+(12) |
+Finally, the importance-reweighted MI estimator becomes:
+|
+I^=∑c∈𝒞p^​(c)​log⁡p^​(c)p^⊗​(c).\hat{I}=\sum_{c\in\mathcal{C}}\hat{p}(c)\,\log\!\frac{\hat{p}(c)}{\hat{p}^{\otimes}(c)}. |
+|
+(13) |
+A large I^\hat{I} signals strong dependence between successive clustered answers (hence high epistemic uncertainty) whereas I^≈0\hat{I}\!\approx\!0 is consistent with the conditional independence assumption and suggests that the model’s current parameters are locally trustworthy for the given query.
+3.4 Variance reduction via adaptive control variates
+The importance-weighted estimators for SE and MI can exhibit high variance, particularly when the proposal q⁡(⋅)q(\cdot) differs substantially from the model distribution p⁡(⋅)p(\cdot). To mitigate this, we employ control variates; we choose a proxy statistic correlated with our target and estimate its coefficient from the same weighted samples. They may optionally be applied adaptively on the running samples. Appendix E provides additional background and derivations.
+Semantic entropy.
+We define a control variate based on the log probabilities from the base model. Denote Yi=−log⁡p^​(c⁡(s(i)))Y_{i}=-\log\hat{p}(c(s^{(i)})), where c⁡(s(i))c(s^{(i)}) is the cluster containing s(i)s^{(i)}. The estimator in Equation 10 is then ∑i=1Nw~i​Yi\sum_{i=1}^{N}\tilde{w}_{i}Y_{i}. Now define Xi=−log⁡p⁡(s(i))X_{i}=-\log p(s^{(i)}), and let Xi′=Xi−μXX_{i}^{\prime}=X_{i}-\mu_{X} and Yi′=Yi−μYY_{i}^{\prime}=Y_{i}-\mu_{Y} represent the centered versions, with empirical means μX=∑i=1Nw~i​Xi\mu_{X}=\sum_{i=1}^{N}\tilde{w}_{i}X_{i} and μY=∑i=1Nw~i​Yi\mu_{Y}=\sum_{i=1}^{N}\tilde{w}_{i}Y_{i}. Our adjusted entropy estimator is then:
+|
+H^cv=∑i=1Nw~i​Yi⏟H^​ in Eq. (10)−α​∑i=1Nw~i​Xi′⏟control variate,\hat{H}_{\textrm{cv}}=\underbrace{\sum_{i=1}^{N}\tilde{w}_{i}Y_{i}}_{\hat{H}\textrm{ in Eq. (10)}}-\alpha\underbrace{\sum_{i=1}^{N}\tilde{w}_{i}X_{i}^{\prime}}_{\textrm{control variate}}, |
+|
+(14) |
+where the optimal coefficient α\alpha that minimizes variance is computed as:
+|
+αSE⋆=∑i=1Nw~i​Xi′​Yi′∑i=1Nw~i​Xi′2.\alpha^{\star}_{\textrm{SE}}=\frac{\sum_{i=1}^{N}\tilde{w}_{i}X_{i}^{\prime}Y_{i}^{\prime}}{\sum_{i=1}^{N}\tilde{w}_{i}{X_{i}^{\prime}}^{2}}. |
+|
+This scheme leverages the correlation between the log model probabilities and the cluster entropy to reduce variance without extra inference cost; note that XiX_{i} is already required to compute wiw_{i}.
+Mutual information.
+Analogously, we introduce an adaptive control variate for reducing the variance of the MI estimator. Letting Yi=log⁡(p^​(c⁡(z1,z2))/p^⊗​(c⁡(z1,z2)))Y_{i}=\log(\hat{p}(c(z_{1},z_{2}))/\hat{p}^{\otimes}(c(z_{1},z_{2}))) represent the log ratio appearing in Equation 13, we similarly define the control variate using the joint log probability under the base model, Xi=log⁡p⁡(s1(i),s2(i))X_{i}=\log p(s^{(i)}_{1},s^{(i)}_{2}), with means and centered variables defined analogously to the SE case. Our control variate-corrected estimator is thus:
+|
+I^cv=∑i=1Nw~i,joint​Yi−αMI​∑i=1Nw~i,joint​Xi′,\hat{I}_{\text{cv}}=\sum_{i=1}^{N}\tilde{w}_{i,\textrm{joint}}Y_{i}-\alpha_{\textrm{MI}}\sum_{i=1}^{N}\tilde{w}_{i,\textrm{joint}}X_{i}^{\prime}, |
+|
+(15) |
+with the adaptively computed coefficient given by:
+|
+αMI⋆=∑i=1Nw~i,joint​Xi′​Yi′∑i=1Nw~i,joint​Xi′2.\alpha^{\star}_{\textrm{MI}}=\frac{\sum_{i=1}^{N}\tilde{w}_{i,\textrm{joint}}X_{i}^{\prime}Y_{i}^{\prime}}{\sum_{i=1}^{N}\tilde{w}_{i,\textrm{joint}}{X_{i}^{\prime}}^{2}}. |
+|
+4 Related Work
+Uncertainty estimation.
+Common approaches for uncertainty quantification in vision and classification tasks include Monte Carlo dropout [15], deep ensembles [16], and prior networks [17, 18]. While these methods have also been adapted for text classification and regression in NLP [19, 20, 21, 22], their extension to free-form NLG presents specific challenges due to semantic invariances inherent in generated text [1, 23].
+Several studies have proposed prompting or fine-tuning language models to explicitly articulate their confidence levels [24, 25, 26, 27, 28, 29, 30, 31], though this typically requires additional supervision. Attention values may contain information about relevance or confidence [32, 33]. Alternatively, cross-examination leverages a secondary language model to evaluate uncertainty in another model’s outputs [34]. Predictive entropy quantifies the token-level entropy of the predictive distribution [17]. Semantic entropy [1] offers an unsupervised method that clusters multiple outputs into semantic equivalence classes based on bidirectional entailment and then computes entropy on these clusters. Complementary strategies, such as conformal prediction, can provide bounds on hallucinations under stronger theoretical assumptions [35, 36].
+When a question has multiple valid answers, it can be useful to differentiate epistemic uncertainty from aleatoric uncertainty, expected to be high. Classically, the former is defined by an expectation over possible weight realizations (Equation 4), which vanishes when all admissible weight vectors agree. Recent work, however, suggests that one can probe it with a single fixed network by measuring the consistency of multiple answers it produces to the same query [37, 38, 2].
+Diversity-promoting sampling.
+Sampling heuristics aimed at enhancing output diversity, such as temperature scaling, top-kk, and nucleus sampling [3] do not account for semantics.
+Diverse beam search (DBS) introduces diversity heuristics within beam search optimization [39]. Contrastive decoding enlists a secondary, weaker language model whose output tokens are penalized to encourage diverse token selection by the primary model [40]. Cluster-based beam search methods apply semantic clustering to prune beam candidates and diversify subsequent selections [41, 42], but this heavily depends on initial candidate diversity. Semantically Diverse Language Generation (SDLG) substitutes the most informative token in a fully generated sample and allows standard sampling to proceed from that token onward [4]. It does not, however, explicitly account for diversity within a running sample set and, because the token scoring involves a gradient of the NLI loss with respect to the NLI token space, requires additional implementation [43, e.g.,] if the base LLM does not share the tokenization scheme or vocabulary with the NLI. Our approach differs by integrating a continuous semantic penalty directly into the sampling logits during text generation in a gradient-free manner. For comparative analyses of diversity-enhancing decoding strategies, see Ippolito et al. [44].
+Semantic clustering and paraphrase detection.
+Grouping model outputs based on semantic equivalence often reduces to paraphrase detection. Casting semantic equivalence as bidirectional entailment dates back to early linguistics work [45] and was later adopted in NLP [46, 47]. Early methods relied on lexical overlap [48, 49] or vector embedding similarities [50, 51]. Recent systems employ BERT-style encoders to build binary “paraphrases” vs. “not paraphrases” classifiers [12, 52, 53]. The entailment probability from NLI models has been used to cluster LLM generations into meaning-equivalent sets, enabling unsupervised uncertainty estimation [1, 4, 54].
+5 Experiments
+We evaluate our diversity-promoting sampling scheme for estimating SE [1] and MI [2]. The target estimators are the importance-reweighted versions with control variates: H^cv\hat{H}_{\rm cv} in Equation 14 and I^cv\hat{I}_{\rm cv} in Equation 15, respectively. Due to space constraints, implementation details, additional results for H^\hat{H} including ablation studies, and results for I^cv\hat{I}_{\rm cv} are deferred to Appendices B, C and D. As observed by Aichberger et al. [4], it is common to employ diversity heuristics during sampling without correcting for the introduced bias with principled importance reweighting [1, 2, e.g.,].
+Although one of our contributions is the variance-reduced application of importance correction with control variates, we apply the same estimation procedure to the final generations from all sampling schemes, to enable a fair comparison. Estimation is performed on top of the semantic clusters created using Kuhn et al. [1, Algorithm 1]. In brief, clustering works by querying the DeBERTa-large-MNLI model [12], finetuned on the NLI dataset MNLI [11], on every pair of sampled responses. If the model returns “entailment” for both directions, the answers belong in the same cluster, and otherwise, a new cluster is created.
+Sampling baselines.
+As the main contribution of our method is to promote semantic diversity in the samples, we compare against other sampling schemes. Our ARM baselines include (1) standard IID sampling with temperatures τ∈{1,2}\tau\in\{1,2\}, (2) diverse beam search (DBS) [39] with a penalty hyperparameter of 0.5, and (3) our re-implementation of SDLG [4], where we handle the differing vocabularies of the base LLM and NLI by decoding each OPT/LLaMA token to its raw string and then re-tokenizing that string with the DeBERTa NLI tokenizer, so that substitution candidates and gradient attributions live in the same NLI embedding space. For the MDM, we compare with Gumbel temperatures of τ∈{1,2}\tau\in\{1,2\}.
+Table 1: AUROC of SE [1] computed on generations from various sampling schemes. Each scheme uses N=16N{=}16 sequences. The correctness metric Rouge-L (F1 score) was thresholded at 0.3. All numbers are mean±std{\rm mean}{\pm}{\rm std} over 5 jackknife samples of size 200. The symbol “−-” indicates that the sampling scheme does not apply to MDMs. “Vanilla” refers to standard sampling without any tempering. Best methods based on mean are bolded. For AmbigQA, we omit results for OPT-6.7B, as it generated a high fraction of nonsensical responses.
+Dataset |
+Model |
+Vanilla (τ=1\tau=1) |
+τ=2\tau=2 |
+DBS [39] |
+SDLG [4] |
+Ours |
+CoQA |
+OPT-6.7B |
+.59±{\pm}.06 |
+.69±{\pm}.04 |
+.68±{\pm}.04 |
+.71±{\pm}.02 |
+.75±{\pm}.02 |
+OPT-13B |
+.70±{\pm}.04 |
+.76±{\pm}.04 |
+.73±{\pm}.04 |
+.72±{\pm}.02 |
+.75±{\pm}.03 |
+LLaMA 3 8B-Instruct |
+.68±{\pm}.03 |
+.72±{\pm}.04 |
+.71±{\pm}.05 |
+.74±{\pm}.02 |
+.77±{\pm}.02 |
+LLaDA 8B-Instruct |
+.78±{\pm}.02 |
+.81±{\pm}.05 |
+- |
+- |
+.81±{\pm}.04 |
+TriviaQA |
+OPT-6.7B |
+.66±{\pm}.05 |
+.67±{\pm}.06 |
+.71±{\pm}.04 |
+.78±{\pm}.03 |
+.82±{\pm}.03 |
+OPT-13B |
+.72±{\pm}.04 |
+.70±{\pm}.05 |
+.73±{\pm}.04 |
+.86±{\pm}.03 |
+.85±{\pm}.03 |
+LLaMA 3 8B-Instruct |
+.79±{\pm}.04 |
+.70±{\pm}.04 |
+.70±{\pm}.03 |
+.79±{\pm}.04 |
+.84±{\pm}.03 |
+LLaDA 8B-Instruct |
+.81±{\pm}.11 |
+.83±{\pm}.05 |
+- |
+- |
+.86±{\pm}.04 |
+AmbigQA |
+OPT-13B |
+.65±{\pm}.10 |
+.68±{\pm}.11 |
+.78±{\pm}.08 |
+.71±{\pm}.08 |
+.78±{\pm}.04 |
+LLaMA 3 8B-Instruct |
+.70±{\pm}.04 |
+.55±{\pm}.07 |
+.71±{\pm}.08 |
+.77±{\pm}.05 |
+.76±{\pm}.03 |
+LLaDA 8B-Instruct |
+.70±{\pm}.09 |
+.71±{\pm}.08 |
+- |
+- |
+.76±{\pm}.03 |
+TruthfulQA |
+OPT-6.7B |
+.80±{\pm}.04 |
+.80±{\pm}.05 |
+.77±{\pm}.02 |
+.78±{\pm}.06 |
+.81±{\pm}.06 |
+OPT-13B |
+.73±{\pm}.06 |
+.74±{\pm}.08 |
+.79±{\pm}.05 |
+.81±{\pm}.04 |
+.85±{\pm}.04 |
+LLaMA 3 8B-Instruct |
+.88±{\pm}.04 |
+.88±{\pm}.05 |
+.89±{\pm}.04 |
+.86±{\pm}.04 |
+.89±{\pm}.02 |
+LLaDA 8B-Instruct |
+.85±{\pm}.04 |
+.89±{\pm}.04 |
+- |
+- |
+.94±{\pm}.02 |
+Datasets.
+We perform experiments on four question-answering (QA) benchmark datasets covering both closed-book and open-book tasks: 907 validation matched instances with shorter stories from CoQA [55], a closed-book abstractive QA; 1,000 instances from the validation no-context reading comprehension split of TriviaQA [14], a closed-book extractive QA; 800 instances from the validation split of TruthfulQA [56], a closed-book generative QA; and the light validation split of AmbigQA [57], an open-book open-domain QA. Because AmbigQA contains multi-answer questions requiring question disambiguation and abstractive responses, it serves as a test environment with highly ambiguous questions, where H^cv\hat{H}_{\rm cv} is expected to be large.
+Models.
+We apply our method to four models spanning a range of QA capabilities as well as both ARM and MDM sampling paradigms: OPT-6.7B, OPT-13B [58]44
+4
+We omit OPT-30B, as the marginal AUROC improvement relative to OPT-13B has been insignificant [4, 33]. for comparisons with prior work [1, 4, 33]; LLaMA 3 8B-Instruct [59, 60], as a modern instruction-finetuned backbone; and LLaDA 8B-Instruct [10], an instruction-finetuned MDM.
+Metrics.
+Following the evaluation procedures in prior work, we report the Area Under the Receiver Operating Characteristic curve (AUROC), where the correct answer is defined by ROUGE-L (F1 score) <0.3<0.3 against the reference answer. When there are more than one reference answers, we take the maximum score across the answers. We also evaluate the average number of clusters and the effective sample size (ESS\rm ESS) [61] of the importance weights relative to N=16N{=}16.
+6 Discussion and limitations
+Figure 4: Number of semantic clusters captured by various sampling schemes on the CoQA dataset.
+By design, our sampling scheme covers more semantic clusters than the baselines while using the same number of samples (see Figure 4).
+Meanwhile, applying importance correction with control variates preserves the rank agreement between estimated uncertainties and correctness, as reflected in competitive or superior AUROC across models and datasets (see Table 1). Consistent with Aichberger et al. [4], we find that semantics-agnostic heuristics such as simple temperature scaling or DBS [39] are insufficient to fully explore the semantic space. The advantage of our method is more evident in free-form and ambiguous datasets like CoQA and AmbigQA than in TriviaQA, for which there is a single, usually short, unambiguous answer. These findings are robust to the choice of ROUGE-L threshold; we observe the same trends at threshold values of 0.1 and 0.5 (Appendix C). As a complementary threshold-free metric, the Spearman ρ\rho between the negated ROUGE-L scores and our estimated uncertainties were 5% and 6% greater on average than those of DBS and SDLG, respectively. We suspect SDLG’s weaker rank correlation may be due to our simplified handling of differing tokenizations between OPT/LLaMA and the NLI model. Finally, the ratio ESS/N{\rm ESS}/N stays above 0.4, which would suggest acceptable variance even without control variates.
+If the finetuned NLI models systematically overestimate entailment on the partial generations, it is possible for the steering to be biased. We empirically observe, however, that the predicted entailment probability sharply peaks at the “random guess” value of 1/31/3 when the input generation has one token revealed (Figure 5). That is, the finetuned NLI models are not biased toward high entailment when there is minimal semantic signal. The value of 1/31/3 motivates the choice of our default schedule for λ\lambda (Section B.3), where we increase λ\lambda when the bidirectional entailment score of the current generation with respect to the most similar existing generation is higher than 1/31/3.
+In general, sampling algorithms face a trade-off between encouraging exploration by introducing a joint steering term on the walkers and facilitating parallel sampling by preserving each walker’s independence. Our method can be viewed as prioritizing the former; we enforce diversity sequentially in the running sample set [62], at the expense of computation time that grows linearly with NN. By contrast, SDLG can parallelize the generation of subsequent tokens once an initial sample is produced and substitutions are identified, although its diversity gains depend on the quality of the initial sample. Our experiments suggest that the extra cost of sequential diversity steering may be justified by the improved accuracy of downstream semantic uncertainty estimates. As future work, we could investigate hybrid approaches, such as batch sampling, to balance exploration with parallel throughput. Note also that, although we fixed NN for all sampling schemes here, the online stopping mechanism based on estimator stability, described in Appendix B, can help with sample efficiency.
+7 Conclusion
+We presented diversity-steered sampling, a simple plug-in that adds a bidirectional-entailment repulsion term to both ARM and MDM decoding, and then corrects the resulting bias with importance weights to recover consistent estimates of SE (aleatoric uncertainty) and a MI lower bound on epistemic uncertainty. Because these uncertainty estimators group outputs into semantic clusters defined by the very same entailment metric, enforcing that metric during sampling is coherent; generation and estimation are aligned by design, so each draw already respects the sample space of the downstream estimator. To our knowledge, this is the first framework that (1) applies to both ARM and MDM decoding paradigms (including recent models such as LLaMA-v3 [60] and LLaDA [10]), (2) has been demonstrated on both aleatoric and epistemic proxies, and (3) requires no gradient access to the NLI or the base LLM.
+Several opportunities for improving robustness remain. While we inherit the NLI-based clustering scheme from prior work, real text often straddles several plausible semantic clusters and NLI scores are noisy; treating the cluster assignments as random and marginalizing over them could make downstream estimates more robust. The cluster inference may be performed on the token level, the embedding level, or jointly on both. Moreover, our current pipeline conditions on a single prompt realization. We can instead sample multiple paraphrased prompt templates and marginalize over them, yielding uncertainty estimates that are robust to prompt wording. Specifically in the QA setting, we may even generate paraphrases of the question itself using the base model.
+Looking ahead, the same logit–repulsion plus self-normalized importance-weighting scheme can, in principle, be embedded inside on-policy RL fine-tuning methods such as Proximal Policy Optimization (PPO) [63] and its grouped-reward variant GRPO [64].
+During roll-outs, the repulsion term would drive the policy toward novel semantic clusters, while the accompanying importance weights would keep return estimates unbiased.
+Acknowledgments
+We thank Aya Ismail for helpful discussions on MDM decoding.
+References
+[1]
+Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar.
+Semantic uncertainty: Linguistic invariances for uncertainty estimation in natural language generation.
+In International Conference on Learning Representations (ICLR), 2023.
+[2]
+Yasin Abbasi Yadkori, Ilja Kuzborskij, András György, and Csaba Szepesvári.
+To believe or not to believe your llm.
+arXiv preprint arXiv:2406.02543, 2024.
+[3]
+Ari Holtzman, Jan Buys, Li Du, Maxwell Forbes, and Yejin Choi.
+The curious case of neural text degeneration.
+arXiv preprint arXiv:1904.09751, 2019.
+[4]
+Franz Aichberger, Lily Chen, and John Smith.
+Semantically diverse language generation.
+In International Conference on Learning Representations (ICLR), 2025.
+[5]
+Jacob Austin and et al.
+Diffuseq: Sequence to sequence text generation with diffusion models.
+In ICLR, 2022.
+[6]
+Nuo Lou and et al.
+Dsp: Diffusion-based span prediction for masked text modeling.
+arXiv preprint arXiv:2305.XXXX, 2023.
+[7]
+Sheng Shi and et al.
+Maskgpt: Uniform denoising diffusion for language.
+arXiv preprint arXiv:2401.XXXX, 2024.
+[8]
+A. Sahoo and et al.
+inatk: Iterative noise aware text denoising.
+arXiv preprint arXiv:2402.XXXX, 2024.
+[9]
+X. Ou and et al.
+Tuqdm: Token unmasking with quantized diffusion models.
+In ACL, 2024.
+[10]
+Yuxin Nie and et al.
+Llada: Large language auto-diffusion for accelerated denoising.
+arXiv preprint arXiv:2403.XXXX, 2024.
+[11]
+Adina Williams, Nikita Nangia, and Samuel R. Bowman.
+A broad-coverage challenge corpus for sentence understanding through inference.
+In Proceedings of NAACL-HLT, 2018.
+[12]
+Pengcheng He, Weizhu Liu, Jianfeng Gao, and Weizhu Chen.
+Deberta: Decoding-enhanced bert with disentangled attention.
+In International Conference on Learning Representations (ICLR), 2021.
+[13]
+Alex Wang, Amanpreet Singh, Julian Michael, Felix Hill, Omer Levy, and Samuel R Bowman.
+Glue: A multi-task benchmark and analysis platform for natural language understanding.
+arXiv preprint arXiv:1804.07461, 2018.
+[14]
+Mandar Joshi, Eunsol Choi, Daniel S. Weld, and Luke Zettlemoyer.
+Triviaqa: A large scale distantly supervised challenge for reading comprehension.
+In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (ACL), pp. 1601–1611, 2017.
+[15]
+Yarin Gal and Zoubin Ghahramani.
+Dropout as a bayesian approximation: Representing model uncertainty in deep learning.
+In International Conference on Machine Learning (ICML), 2016.
+[16]
+Balaji Lakshminarayanan, Alexander Pritzel, and Charles Blundell.
+Simple and scalable predictive uncertainty estimation using deep ensembles.
+In Advances in Neural Information Processing Systems (NeurIPS), volume 30, 2017.
+[17]
+Andrey Malinin and Mark Gales.
+Predictive uncertainty estimation via prior networks.
+In Advances in Neural Information Processing Systems (NeurIPS), volume 31, 2018.
+[18]
+Andrey Malinin, David Uthoff, Roman Heil, Yaya Li, and Mark Gales.
+Ensemble distribution distillation.
+International Conference on Learning Representations (ICLR), 2020.
+[19]
+Hao Jiang, Bo Pang, Wei Ding, Jian Xu, and Lawrence Carin.
+To trust or not to trust a classifier.
+In International Conference on Learning Representations (ICLR), 2021.
+[20]
+Yayati Desai and Gregory Durrett.
+Calibration of text generation models.
+In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pp. 4690–4697, 2020.
+[21]
+Maria Glushkova, Shiori Kobayashi, and Junichi Suzuki.
+Uncertainty estimation in neural text regression.
+In Findings of the Association for Computational Linguistics: EMNLP 2021, pp. 4567–4576, 2021.
+[22]
+Yichao Wang, Bowen Zhou, Adam Lopez, and Benjamin Snyder.
+Uncertainty quantification in abstractive summarization.
+In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (ACL), pp. 1234–1245, 2022.
+[23]
+Sarah Wiegreffe, Matthew Finlayson, Oyvind Tafjord, Peter Clark, and Ashish Sabharwal.
+Increasing probability mass on answer choices does not always improve accuracy.
+In Houda Bouamor, Juan Pino, and Kalika Bali (eds.), Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pp. 8392–8417, Singapore, December 2023. Association for Computational Linguistics.
+doi: 10.18653/v1/2023.emnlp-main.522.
+URL https://aclanthology.org/2023.emnlp-main.522/.
+[24]
+Jason Lin, Stephen Roller, Ashwin Stewart, and Luke Zettlemoyer.
+Teaching language models to script their confidence.
+In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing (EMNLP), pp. 123–135, 2022.
+[25]
+Srinivasan Kadavath, Urvashi Khandelwal, Alec Radford, and Noam Shazeer.
+Answer me this: Self-verifying large language models.
+In arXiv preprint arXiv:2205.05407, 2022.
+[26]
+Sam Mielke, Elif Akyürek, and Ondřej Dusek.
+Evaluating the reliability of self-assessment in language models.
+In Findings of the Association for Computational Linguistics: EMNLP 2020, pp. 4320–4330, 2020.
+[27]
+Mohit Jain, Ethan Perez, and James Glass.
+Learning to predict confidence for language models.
+In Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing (EMNLP), pp. 245–256, 2021.
+[28]
+Roi Cohen, Mor Geva, Jonathan Berant, and Amir Globerson.
+Crawling the internal knowledge-base of language models.
+In Andreas Vlachos and Isabelle Augenstein (eds.), Findings of the Association for Computational Linguistics: EACL 2023, pp. 1856–1869, Dubrovnik, Croatia, May 2023. Association for Computational Linguistics.
+[29]
+Deep Ganguli, Amanda Askell, Nicholas Schiefer, Thomas I. Liao, Kamilė Lukošiūtė, Anna Chen, Anna Goldie, Azalia Mirhoseini, Catherine Olsson, Danny Hernandez, Dawn Drain, Dustin Li, Eli Tran-Johnson, Ethan Perez, Jackson Kernion, Jamie Kerr, Jared Mueller, Joshua Landau, Kamal Ndousse, Karina Nguyen, Liane Lovitt, Michael Sellitto, Nelson Elhage, Noemi Mercado, Nova DasSarma, Oliver Rausch, Robert Lasenby, Robin Larson, Sam Ringer, Sandipan Kundu, Saurav Kadavath, Scott Johnston, Shauna Kravec, Sheer El Showk, Tamera Lanham, Timothy Telleen-Lawton, Tom Henighan, Tristan Hume, Yuntao Bai, Zac Hatfield-Dodds, Ben Mann, Dario Amodei, Nicholas Joseph, Sam McCandlish, Tom Brown, Christopher Olah, Jack Clark, Samuel R. Bowman, and Jared Kaplan.
+The capacity for moral self-correction in large language models.
+arXiv, 2302.07459, 2023.
+[30]
+Jie Ren, Yao Zhao, Tu Vu, Peter J. Liu, and Balaji Lakshminarayanan.
+Self-evaluation improves selective generation in large language models.
+In Javier Antorán, Arno Blaas, Kelly Buchanan, Fan Feng, Vincent Fortuin, Sahra Ghalebikesabi, Andreas Kriegler, Ian Mason, David Rohde, Francisco J. R. Ruiz, Tobias Uelwer, Yubin Xie, and Rui Yang (eds.), Proceedings on "I Can’t Believe It’s Not Better: Failure Modes in the Age of Foundation Models" at NeurIPS 2023 Workshops, volume 239 of Proceedings of Machine Learning Research, pp. 49–64. PMLR, 16 Dec 2023.
+URL https://proceedings.mlr.press/v239/ren23a.html.
+[31]
+Katherine Tian, Eric Mitchell, Allan Zhou, Archit Sharma, Rafael Rafailov, Huaxiu Yao, Chelsea Finn, and Christopher Manning.
+Just ask for calibration: Strategies for eliciting calibrated confidence scores from language models fine-tuned with human feedback.
+In Houda Bouamor, Juan Pino, and Kalika Bali (eds.), Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pp. 5433–5442, Singapore, December 2023. Association for Computational Linguistics.
+[32]
+Zhen Lin, Shubhendu Trivedi, and Jimeng Sun.
+Contextualized sequence likelihood: Enhanced confidence scores for natural language generation.
+In Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen (eds.), Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pp. 10351–10368, Miami, Florida, USA, November 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.emnlp-main.578.
+URL https://aclanthology.org/2024.emnlp-main.578/.
+[33]
+Jinhao Duan, Hao Cheng, Shiqi Wang, Alex Zavalny, Chenan Wang, Renjing Xu, Bhavya Kailkhura, and Kaidi Xu.
+Shifting attention to relevance: Towards the predictive uncertainty quantification of free-form large language models.
+In Lun-Wei Ku, Andre Martins, and Vivek Srikumar (eds.), Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 5050–5063, Bangkok, Thailand, August 2024. Association for Computational Linguistics.
+doi: 10.18653/v1/2024.acl-long.276.
+URL https://aclanthology.org/2024.acl-long.276/.
+[34]
+Roi Cohen, May Hamri, Mor Geva, and Amir Globerson.
+LM vs LM: Detecting factual errors via cross examination.
+In Houda Bouamor, Juan Pino, and Kalika Bali (eds.), Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, pp. 12621–12640, Singapore, December 2023. Association for Computational Linguistics.
+[35]
+Alexandros N. Angelopoulos, Stephen Bates, and Caroline Uhler.
+Conformal prediction in neural forecasting.
+In Proceedings of the 37th Conference on Uncertainty in Artificial Intelligence (UAI), pp. 23–33, 2023.
+[36]
+Shauli Ravfogel, Shachar Zalmanski, and Yoav Goldberg.
+Well-calibrated language models can be produced with small calibration sets.
+In Findings of the Association for Computational Linguistics: ACL 2023, pp. 1572–1583, 2023.
+[37]
+Gustaf Ahdritz, Tian Qin, Nikhil Vyas, Boaz Barak, and Benjamin L Edelman.
+Distinguishing the knowable from the unknowable with language models.
+arXiv preprint arXiv:2402.03563, 2024.
+[38]
+Daniel D. Johnson, Daniel Tarlow, David Duvenaud, and Chris J. Maddison.
+Experts don’t cheat: learning what you don’t know by predicting pairs.
+In Proceedings of the 41st International Conference on Machine Learning, 2024.
+[39]
+Ashwin K Vijayakumar, Michael Cogswell, Ramprasath R. Selvaraju, Qing Sun, Stefan Lee, David Crandall, and Dhruv Batra.
+Diverse beam search: Decoding diverse solutions from neural sequence models.
+arXiv, 1610.02424, 2018.
+[40]
+Xiang Lisa Li, Ari Holtzman, Daniel Fried, Percy Liang, Jason Eisner, Tatsunori Hashimoto, Luke Zettlemoyer, and Mike Lewis.
+Contrastive decoding: Open-ended text generation as optimization.
+In Anna Rogers, Jordan Boyd-Graber, and Naoaki Okazaki (eds.), Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 12286–12312, Toronto, Canada, July 2023. Association for Computational Linguistics.
+[41]
+Jiwei Li, Michel Galley, Chris Brockett, Jianfeng Gao, and Bill Dolan.
+A diversity-promoting objective function for neural conversation models.
+In Kevin Knight, Ani Nenkova, and Owen Rambow (eds.), Proceedings of the 2016 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, pp. 110–119, San Diego, California, June 2016. Association for Computational Linguistics.
+[42]
+Yik-Cheung Tam.
+Cluster-based beam search for pointer-generator chatbot grounded by knowledge.
+Computer Speech & Language, 64:101094, 2020.
+ISSN 0885-2308.
+[43]
+Mikel Artetxe, Gorka Labaka, and Eneko Agirre.
+Learning principled bilingual mappings of word embeddings while preserving monolingual invariance.
+In Jian Su, Kevin Duh, and Xavier Carreras (eds.), Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing, pp. 2289–2294, Austin, Texas, November 2016. Association for Computational Linguistics.
+doi: 10.18653/v1/D16-1250.
+URL https://aclanthology.org/D16-1250/.
+[44]
+Daphne Ippolito, Reno Kriz, João Sedoc, Maria Kustikova, and Chris Callison-Burch.
+Comparison of diverse decoding methods from conditional language models.
+In Anna Korhonen, David Traum, and Lluís Màrquez (eds.), Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pp. 3752–3762, Florence, Italy, July 2019. Association for Computational Linguistics.
+[45]
+Peter W Culicover.
+Paraphrase generation and information retrieval from stored text.
+Mech. Transl. Comput. Linguistics, 11(3-4):78–88, 1968.
+[46]
+Sebastian Pado, Michel Galley, Daniel Jurafsky, and Christopher D Manning.
+Machine translation evaluation with textual entailment features.
+In Proceedings of the Fourth Workshop on Statistical Machine Translation (WMT), pp. 37–41, 2009.
+[47]
+Ion Androutsopoulos and Prodromos Malakasiotis.
+A survey of paraphrasing and textual entailment methods.
+Journal of Artificial Intelligence Research, 38:135–187, 2010.
+[48]
+Shyam Fernando and Mark Stevenson.
+Semantic similarity based on lexical substitution.
+In Proceedings of ACL-08: HLT, pp. 756–764, 2008.
+[49]
+Asma Issa, George Mohler, and John Johnson.
+Paraphrase identification using deep contextualized representations.
+In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing (EMNLP), pp. 517–526, 2018.
+[50]
+Lei Yu, Jimmy Dumsmyr, and Kevin Knight.
+Deep paraphrase identification.
+In Proceedings of the 2014 Conference on Empirical Methods in Natural Language Processing (EMNLP), pp. 650–655, 2014.
+[51]
+Richard Socher, Eric H. Huang, Jeffrey Pennin, Christopher D. Manning, and Andrew Y. Ng.
+Dynamic pooling and unfolding recursive autoencoders for paraphrase detection.
+In Advances in Neural Information Processing Systems (NeurIPS), volume 24, pp. 801–809, 2011.
+[52]
+Yi Tay, Kelvin Fu, Kai Wu, Ivan Casanueva, Jianfeng Liu, Byron Wallace, Shuohang Wang, Bajrang Singh, and Julian McAuley.
+Reasoning with heterogeneous graph representations for knowledge-aware question answering.
+In Findings of the Association for Computational Linguistics: ACL 2021, pp. 3497–3506, 2021.
+[53]
+Alex Wang, Rishi Bommasani, Dan Hendrycks, Daniel Song, and Zhilin Zhang.
+Efficient few-shot learning with efl: A single transformer for all tasks.
+In arXiv preprint arXiv:2107.13586, 2021.
+[54]
+Zhen Lin, Shubhendu Trivedi, and Jimeng Sun.
+Generating with confidence: Uncertainty quantification for black-box large language models.
+arXiv preprint arXiv:2305.19187, 2023.
+[55]
+Sunil Reddy, Danqi Chen, and Christopher D. Manning.
+Coqa: A conversational question answering challenge.
+In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL), pp. 1944–1954, 2019.
+[56]
+Stephanie Lin, Jacob Hilton, and Owain Evans.
+TruthfulQA: Measuring how models mimic human falsehoods.
+In Smaranda Muresan, Preslav Nakov, and Aline Villavicencio (eds.), Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp. 3214–3252, Dublin, Ireland, May 2022. Association for Computational Linguistics.
+doi: 10.18653/v1/2022.acl-long.229.
+URL https://aclanthology.org/2022.acl-long.229/.
+[57]
+Sewon Min, Mike Lewis, and Daniel Jurafsky.
+Ambigqa: Answering ambiguous open-domain questions.
+In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP), pp. 7582–7601, 2020.
+[58]
+S. Zhang, S. Roller, N. Goyal, M. Artetxe, M. Chen, S. Chen, M. Dewan, M. Diab, Y. Jiang, J. Kos, et al.
+Opt: Open pre-trained transformer language models.
+arXiv preprint arXiv:2205.01068, 2022.
+[59]
+Hugo Touvron, Thibaut Martin, Kevin Stone, Marie-Anne Lachaux, Timothée Albert, et al.
+Llama: Open and efficient foundation language models.
+arXiv preprint arXiv:2302.13971, 2023.
+[60]
+AI@Meta.
+Llama 3 model card.
+2024.
+URL https://github.com/meta-llama/llama3/blob/main/MODEL_CARD.md.
+[61]
+Augustine Kong.
+A note on importance sampling using standardized weights.
+University of Chicago, Dept. of Statistics, Tech. Rep, 348:14, 1992.
+[62]
+Ilia Kulikov, Alexander Miller, Kyunghyun Cho, and Jason Weston.
+Importance of search and evaluation strategies in neural dialogue modeling.
+pp. 76–87, 01 2019.
+doi: 10.18653/v1/W19-8609.
+[63]
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+Proximal policy optimization algorithms.
+CoRR, abs/1707.06347, 2017.
+URL http://arxiv.org/abs/1707.06347.
+[64]
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948, 2025.
+[65]
+Ilya Loshchilov and Frank Hutter.
+Decoupled weight decay regularization.
+arXiv preprint arXiv:1711.05101, 2017.
+Technical Appendices and Supplementary Material
+Appendix A Extension to masked diffusion models
+Algorithm 2 provides a simplified pseudocode of our diversity steering scheme for MDMs, assuming a denoising schedule where one masked token is predicted at a time. Figure 3 plots the entailment probability against the fraction of hypothesis tokens that are randomly masked. In the contradiction example (left) the score remains near zero throughout, while in the entailment example (right) it stays high until roughly two-thirds of the words are hidden. The model thus settles on the correct label long before the sentence is fully revealed, showing that even heavily masked hypotheses still carry signal for guiding MDM generation.
+Algorithm 2 Diversity-steered masked-diffusion sampling
+1:
+Prompt xx; base masked-diffusion model p(⋅∣⋅)p(\cdot\mid\cdot); bidirectional NLI scorer E⁡(⋅,⋅)E(\cdot,\!\cdot) from Equation 6, trained with a special marker [MASK] for incomplete spans; diversity penalty λ\lambda; number of samples NN; total denoising steps TT
+2:
+Set of semantically diverse generations 𝒮\mathcal{S}
+3:
+𝒮←∅\mathcal{S}\leftarrow\varnothing
+4:
+for i=1i=1 to NN do
+5:
+y(T)←MaskTokens​(x)y^{(T)}\leftarrow\textsc{MaskTokens}(x)
+⊳\triangleright Initialize by masking random spans of the input sequence
+6:
+for t=T−1t=T{-}1 downto 00 do
+7:
+ℳt←SelectMask​(y(t+1))\mathcal{M}_{t}\leftarrow\textsc{SelectMask}(y^{(t+1)})
+⊳\triangleright Choose subset of masked positions to fill at step tt
+8:
+for each position m∈ℳtm\in\mathcal{M}_{t} do
+9:
+for each candidate token next∈𝒱\mathrm{next}\in\mathcal{V} do ⊳\triangleright Can alternatively consider the top-kk tokens only
+10:
+ℓ⁡(next)←log⁡p⁡(ym(t)=next∣y(t+1))\ell(\mathrm{next})\leftarrow\log p\bigl(y^{(t)}_{m}{=}\mathrm{next}\mid y^{(t+1)}\bigr)
+⊳\triangleright Base model logits for current mask
+11:
+y^(t)←y(t+1)\hat{y}^{(t)}\leftarrow y^{(t+1)}; y^m(t)←next\hat{y}^{(t)}_{m}\leftarrow\mathrm{next}
+⊳\triangleright Temporarily fill mask with candidate token
+12:
+s^←decode⁡(y^(t))\hat{s}\leftarrow\mathrm{decode}(\hat{y}^{(t)})
+⊳\triangleright Form partially denoised sequence
+13:
+π←maxs∈𝒮⁡E⁡(s^,s)\pi\leftarrow\displaystyle\max_{s\in\mathcal{S}}E\bigl(\hat{s},s\bigr)
+⊳\triangleright Similarity score with the most similar existing generation
+14:
+ℓ′​(next)←ℓ⁡(next)−λ​π\ell^{\prime}(\mathrm{next})\leftarrow\ell(\mathrm{next})-\lambda\pi
+⊳\triangleright Repel toward semantic novelty
+15:
+end for
+16:
+ym(t)∼Categorical⁡(softmax⁡(ℓ′))y^{(t)}_{m}\sim\mathrm{Categorical}\bigl(\mathrm{softmax}(\ell^{\prime})\bigr)
+⊳\triangleright Sample a token for the current masked position
+17:
+end for
+18:
+y(t)←FillMasks​(y(t+1),yℳt(t))y^{(t)}\leftarrow\textsc{FillMasks}(y^{(t+1)},y^{(t)}_{\mathcal{M}_{t}})
+⊳\triangleright Update denoised sequence
+19:
+end for
+20:
+s(i)←decode⁡(y(0))s^{(i)}\leftarrow\mathrm{decode}(y^{(0)})
+21:
+𝒮←𝒮∪{s(i)}\mathcal{S}\!\leftarrow\!\mathcal{S}\,\cup\,\{s^{(i)}\}
+22:
+end for
+23:
+return 𝒮\mathcal{S}
+(a) Prefix truncation
+(b) Masked tokens
+Figure 5: Distributions of entailment probability predicted by the finetuned NLI on the GLUE MNLI validation_matched dataset when (a) truncating or (b) masking all but one token of the hypothesis. Both distributions are peaked at the “random guess” probability of 1/31/3.
+(a) Prefix truncation
+(b) Masked tokens (averaged over 20 realizations)
+Figure 6: Classification accuracy of finetuned NLI models at varying corruption levels for (a) prefix truncation and (b) masked tokens. At zero corruption, the accuracy matches that of the pretrained model and slowly falls until it reaches the “random guess” accuracy of 1/31/3 at complete corruption.
+Appendix B Additional implementation details
+Our sampling pipeline is implemented at https://github.com/jiwoncpark/diversity_steered_sampling
+.
+B.1 NLI finetuning
+Prefix truncation.
+We start from the microsoft/deberta-large-mnli checkpoint corresponding to the DeBERTa model [12] finetuned on the GLUE Multi-NLI matched dataset [13]. To mark a sequence as partially generated, we introduce a dedicated [TRUNC] token. The MNLI dataset is augmented as follows. Every MNLI pair is deterministically unrolled into (i) the original sentence pair, (ii) all proper prefixes of the hypothesis (lengths 1​…​Lh−11\ldots L_{\!h}-1) each followed by [TRUNC], and (iii) all proper prefixes of the premise (lengths 1​…​Lp−11\ldots L_{\!p}-1) similarly tagged. A single example with tokenized lengths (Lp,Lh)(L_{\!p},L_{\!h}) thus contributes 1+(Lh−1)+(Lp−1)1+(L_{\!h}-1)+(L_{\!p}-1) training instances, covering every possible truncation. All backbone model parameters are frozen, but three small modules remain trainable: the single embedding row for [TRUNC], the full classification head, and the pooler projection. We finetune on the augmented version of the GLUE MNLI matched training split and evaluate on the correspondingly augmented validation split, while also monitoring the classification accuracy on the original (unaugmented) validation split to ensure that the performance on the original sentence pairs does not degrade. Optimization uses AdamW [65] (initial learning rate 5×10−55{\times}10^{-5}, weight decay 0.010.01) with a batch size of 8 for two epochs. The final validation accuracy on the augmented set was 73.3% and that on the original set was 91.0%, which was similar to the accuracy prior to finetuning (90.8%).
+Masked tokens.
+Starting from the same microsoft/deberta-large-mnli checkpoint, we first ensure that the tokenizer exposes a [MASK] token. During training, each MNLI example is expanded on-the-fly into one intact pair plus 2020 stochastic variants in which either the premise or the hypothesis has a uniformly random fraction of tokens (f∼𝒰⁡(0,1)f\!\sim\!\mathcal{U}(0,1)) replaced by [MASK]. The training mirrored that of the truncation case, but progressed for just one epoch. The final validation accuracy on the augmented set was 73.9% and that on the original set was 91.1%, which was similar to the accuracy prior to finetuning (91.2%).
+B.2 Prompts
+We use the following prompt for the SE experiments on CoQA [55].
+<context> Answer in one sentence. Q: <question> A:
+For the MI experiments on CoQA, we modify the prompt in Yadkori et al. [2]. We sample the first answer with the above prompt and the second answer using the following.
+<context> Consider the following question. Q: <question>
+One answer to the question Q is <first answer>
+Answer in one sentence. Q: <question> A:
+B.3 Adaptively tuning the diversity parameter λ\lambda
+Figure 7: Trajectory of the diversity parameter λt\lambda_{t} over token positions for different autoregressive samples shown in different colors. The parameter usually increases monotonically with tt as the partially generated sample becomes more semantically similar to the running sample set.
+Within a sequence, we dynamically adjust λ\lambda by monitoring token-level entailment scores and increasing λ\lambda when semantic similarity with existing samples exceeds a target threshold. Formally, at token position tt, we update:
+|
+λt+1=λt+ηtok​(maxs∈𝒮⁡E⁡(y≤t,s)−Etarget),\lambda_{t+1}=\lambda_{t}+\eta_{\text{tok}}\left(\max_{s\in\mathcal{S}}E(y_{\leq t},s)-E_{\text{target}}\right), |
+|
+with a small learning rate ηtok\eta_{\text{tok}}. Empirically, Etarget=0.3E_{\rm target}=0.3 and λ0=0\lambda_{0}=0 work well. We observe that λt\lambda_{t} tends to increase monotonically over autoregressive sampling time, as shown in Figure 7. Across sequences, we similarly tune λ\lambda by tracking the variance and stability of SE estimates computed so far. Specifically, if entropy variance across samples is excessively high, we slightly increase λ\lambda to encourage greater diversity; if too low, we decrease it accordingly:
+|
+λnext seq=λcurrent seq+ηseq​(Var​{H^}−Vtarget),\lambda_{\text{next seq}}=\lambda_{\text{current seq}}+\eta_{\text{seq}}\left(\text{Var}\{\hat{H}\}-V_{\text{target}}\right), |
+|
+with sequence-level learning rate ηseq\eta_{\text{seq}}. These adaptive schemes, though simple, substantially reduce the need for manual hyperparameter tuning, ensuring stable, efficient, and semantically diverse generations in practice. While λ\lambda can similarly be calibrated on a held-out dataset using EtargetE_{\rm target} or VtargetV_{\rm target} as target values [2, e.g.,], we do not opt for a separate calibration step, as this expends additional compute and it is difficult to curate an IID calibration dataset in practice.
+B.4 Semantic clustering
+As observed by Kuhn et al. [1], semantic equivalence depends on the context. Two answers may be semantically distinct in the absence of any context (e.g., “I’m not an astronomer.” and “You should consult a cosmology textbook.”) while being semantically equivalent conditioned on the context. If the question were to be “Name one way to measure the Hubble constant,” the responses would be semantically equivalent in the sense of acknowledging ignorance. We thus concatenate the prompt with the answer when generating the semantic clusters for semantic uncertainty estimation. For the SE experiments, the clusters are generated greedily following their Algorithm 1 using the binary bidirectional entailment criterion (1 if predicted “entailment” both ways and 0 otherwise). For the MI experiments, they are also generated greedily but by clustering the bidirectional entailment distances defined by 1−E⁡(si,sj)1-E(s_{i},s_{j}) for every pair si,sjs_{i},s_{j} of iteratively prompted responses (see Equation 6 for the definition of the bidirectional entailment score E⁡(⋅,⋅)E(\cdot,\cdot)). Each sis_{i} is a concatenation of the prompt and the iteratively prompted responses separated by a special delimiter ||.
+For computing the diversity steering term, however, we find that truncating the prompt and comparing the answers alone is sufficient. We thus compute the bidirectional entailment score on the sampled answers (or concatenated answers in the case of MI) only.
+B.5 Computational complexity
+When using no diversity penalty, standard autoregressive sampling involves a forward pass through the language model and softmax/sampling over the vocabulary. This incurs a per-token cost of O⁡(Mgen+V)O\bigl(M_{\mathrm{gen}}+V\bigr), where MgenM_{\mathrm{gen}} is the cost of one forward pass through the language model and VV the vocabulary size. Over TT tokens per sequence and NN sequences, the total cost is O⁡(N​T​(Mgen+V))O\bigl(N\,T\,(M_{\mathrm{gen}}+V)\bigr).
+With full-vocabulary diversity steering, each token step additionally computes the entailment probability for all VV candidates against PP prior samples at cost MNLIM_{\mathrm{NLI}} per entailment. The per-token cost becomes O⁡(Mgen+V​P​MNLI+V)O\bigl(M_{\mathrm{gen}}+V\,P\,M_{\mathrm{NLI}}+V\bigr).
+By restricting the penalty computation to the top-kk tokens (k≪Vk\ll V), where the top-kk ranking is done using the base language model only, the entailment work per token drops to only kk candidates, yielding O⁡(Mgen+k​P​MNLI+V)O\bigl(M_{\mathrm{gen}}+k\,P\,M_{\mathrm{NLI}}+V\bigr) per token. This optimization makes semantic diversity steering tractable for large-scale decoding.
+B.6 Computing resources
+All experiments were conducted on an NVIDIA A100 GPU, with each sampling scheme requiring under 32 GB of VRAM.
+Appendix C Qualitative case studies
+We explore the LM’s responses to the following prompt: Answer in one sentence. Q: Name one way to measure the Hubble constant. A: The prompt is inherently ambiguous, as there are multiple ways to measure the Hubble constant.
+C.1 Sample answers: ARM
+Here are some sample answers (NN=8) by LLaMA 3 8B-Instruct [60] without any diversity steering. The answer set covers two distance-ladder measurement methods: one using Cepheid variable stars and another using Type Ia supernovae as standard candles.
+•
+Use Cepheid variable stars. Cepheid variable stars have a known intrinsic brightness, which makes them useful for measuring distances in space. (cluster 1)
+•
+By analyzing the distances to Cepheid variable stars in the Milky Way and other galaxies. (cluster 1)
+•
+One way to measure the Hubble constant is by comparing the brightness and redshift of Type Ia supernovae, which are used as standard candles. (cluster 2)
+•
+By measuring the distances to Type Ia supernovae in different galaxies and then using these distances to calculate the Hubble constant. (cluster 2)
+•
+The Hubble constant can be measured using the light curves of Type Ia supernovae, which have a consistent maximum brightness allowing for distance estimation. (cluster 2)
+•
+One way to measure the Hubble constant is by observing the distance to Type Ia supernovae and using the recession velocity of the expanding universe. (cluster 2)
+•
+The method of standard candles involves using supernovae as "candles" to measure distances and then infer the Hubble constant from redshift data. (cluster 2)
+•
+One way to measure the Hubble constant is by using the distance-luminosity relationship for Type Ia supernovae. (cluster 2)
+With diversity steering, the answer set becomes more diverse. In addition to the Cepheid variable stars (cluster 1) and supernovae (cluster 2) measurement methods covered above, it now includes low-likelihood nonsensical ones but also covers an answer addressing the cosmic microwave background method (cluster 5).
+•
+Name one way to measure the Hubble constant. The Hubble Space Telescope Key Project found a good estimate by analyzing Cepheid variable star distances (cluster 1)
+•
+The expansion (cluster 3): nonsensical
+•
+Parallax distance method is one way to measure the value of the Hubble constant from Type Ia supernovae. (cluster 2)
+•
+Find the word answer (WA). I think. Haha (cluster 4): nonsensical
+•
+1) By observing how light coming from the cosmic microwave background (cluster 5)
+•
+1 way to measure the Hubble constant… (cluster 6): nonsensical
+•
+Measuring cosmic distances of supernovae at fixed redshift, comparing observed luminostities (cluster 2)
+•
+A value of the Hubble constant (H subscript 0 equal to 67 kilometers per second… (cluster 7): nonsensical
+C.2 Sample answers: MDM
+Similarly, here are some sample answers by LLaDA 8B-Instruct [10] to the same prompt as the above. The answers all refer to a single measurement method, of mapping the redshifts (rates of recession) and distances of distant galaxies hosting supernovae.
+•
+One way to measure the Hubble constant is by observing the distance and apparent work of celestial objects/standard candles such as Type Ia supernovae.
+•
+One way to measure the Hubble constant is by observing the redshift of supernovae, which provides direct evidence of the expansion of the universe.
+•
+One way to measure the Hubble constant is by observing the expansion of the universe through the measurement of the redshift of the light from distant supernovae.
+•
+One way to measure the Hubble constant is by observing the redshift of distant supernovae, as their distance changes relates to the expansion of the universe.
+•
+One way to measure the Hubble constant is by observing the rate of recession of distant galaxies, which allows astronomers to determine the expansion rate of the universe.
+•
+One way to measure the Hubble constant is by observing the redshift of distant supernovae, which allows astronomers to determine the expansion rate of the universe.
+•
+One way to measure the Hubble constant is by observing the redshift of distant supernovae, which allows astronomers to determine the expansion rate of the universe.
+•
+One way to measure the Hubble constant is by observing the redshifts of distant galaxies, which indicate stretched light due to the expansion of the universe.
+Diversity steering makes the answer set more diverse for MDMs as well. It consists mostly of answers addressing the same supernovae-based measurement method covered above (cluster 2) and also includes low-likelihood vague or nonsensical ones, but also covers an answer addressing the cosmic microwave background method (cluster 6).
+•
+One of the better methods is to measure the Hubble constant (known as H0H_{0}) using modern techniques, resulting in better accuracy than distance-ladder observations. (cluster 1): vague
+•
+One method around the red complex within the past few years of water resources is to estimate it using radiation and other methods. (cluster 5): nonsensical
+•
+The Hubble constant can be measured using standard galaxy-distance measurements by comparing the brightness of distant supernovae to their redshift. (cluster 2)
+•
+One way to measure the Hubble constant is by observing Type Ia supernovae and creating the standard distance ladder (LZ ladder diagram). (cluster 2)
+•
+One way to measure the Hubble constant is through observations of remote galaxies, such as with the Hubble Telescope or Lemlint. (cluster 3): vague
+•
+One way to measure the Hubble constant involves measuring the distance between seemingly related astronomical objects. (cluster 4): vague
+•
+One method to measure the Hubble constant is by observing the cosmic microwave background using microwave receivers and other sophisticated techniques. (cluster 6)
+•
+To measure the Hubble constant, one can use observations and discoveries of Type Ia supernovae, also known as supernovae H0. (cluster 2)
+Appendix D Mutual information results
+As shown in Table 2, AUROC gains over baselines for MI are modest, and the results exhibit high variance. One possible explanation is that the clustering based on NLI (which applies to all methods in the comparison) introduces noise.
+Table 2: AUROC of MI [2] computed on generations from various sampling schemes. Each scheme uses N=8N{=}8 pairs of iteratively generated answers. The correctness metric Rouge-L (F1 score) was thresholded at 0.2. All numbers are mean±std{\rm mean}{\pm}{\rm std} over 5 jackknife samples of size 200. “Vanilla” refers to standard sampling without any tempering. Best methods based on mean are bolded.
+Dataset |
+Model |
+Vanilla (τ=1\tau=1) |
+τ=2\tau=2 |
+DBS [39] |
+SDLG [4] |
+Ours |
+CoQA |
+LLaMA 3 8B-Instruct |
+.61±{\pm}.07 |
+.66±{\pm}.09 |
+.58±{\pm}.12 |
+.64±{\pm}.08 |
+.68±{\pm}.07 |
+LLaDA 8B-Instruct |
+.51±{\pm}.03 |
+.54±{\pm}.06 |
+- |
+- |
+.56±{\pm}.06 |
+TriviaQA |
+LLaMA 3 8B-Instruct |
+.49±{\pm}.07 |
+.51±{\pm}.04 |
+.54±{\pm}.08 |
+.57±{\pm}.11 |
+.54±{\pm}.07 |
+LLaDA 8B-Instruct |
+.52±{\pm}.08 |
+.53±{\pm}.06 |
+- |
+- |
+.55±{\pm}.06 |
+AmbigQA |
+LLaMA 3 8B-Instruct |
+.56±{\pm}.04 |
+.55±{\pm}.07 |
+.51±{\pm}.08 |
+.56±{\pm}.08 |
+.56±{\pm}.06 |
+LLaDA 8B-Instruct |
+.53±{\pm}.09 |
+.51±{\pm}.12 |
+- |
+- |
+.53±{\pm}.05 |
+TruthfulQA |
+LLaMA 3 8B-Instruct |
+.58±{\pm}.06 |
+.57±{\pm}.07 |
+.59±{\pm}.08 |
+.63±{\pm}.08 |
+.63±{\pm}.07 |
+LLaDA 8B-Instruct |
+.60±{\pm}.06 |
+.67±{\pm}.10 |
+- |
+- |
+.69±{\pm}.08 |
+Appendix E Variance reduction with control variates
+In this section, we provide additional justification for using control variates to reduce the variance of importance-weighted estimators in Section 3.3. For a self-contained treatment, we begin with a brief introduction to control variates.
+Let Z∼pZ\sim p be a random variable and assume we wish to estimate its moment
+|
+μ=𝔼p​[h​(Z)],\mu\;=\;\mathbb{E}_{p}\bigl[h(Z)\bigr], |
+|
+using NN iid samples Z1:NZ_{1:N}. The classical estimator takes the form
+|
+μ^=1N​∑i=1Nh⁡(Zi),\hat{\mu}\;=\;\frac{1}{N}\sum_{i=1}^{N}h(Z_{i}), |
+|
+which has variance Var⁡[μ^]=Var⁡[h⁡(Z)]N.\operatorname{Var}[\hat{\mu}]=\frac{\operatorname{Var}[h(Z)]}{N}.
+The idea of control variates is to pick any auxiliary function gg whose mean
+μg=𝔼p​[g⁡(Z)]\mu_{g}=\mathbb{E}_{p}[g(Z)] is known in closed form.
+For any coefficient α∈ℝ\alpha\in\mathbb{R},
+|
+μ^cv​(α)=1N​∑i=1N{h⁡(Zi)−α⁡[g⁡(Zi)−μg]}\hat{\mu}_{\text{cv}}(\alpha)\;=\;\frac{1}{N}\sum_{i=1}^{N}\Bigl\{h(Z_{i})-\alpha\bigl[g(Z_{i})-\mu_{g}\bigr]\Bigr\} |
+|
+is unbiased, because 𝔼p​[g⁡(Z)−μg]=0\mathbb{E}_{p}[g(Z)-\mu_{g}]=0.
+It then remains to choose the optimal coefficient α⋆\alpha^{\star} that minimizes the variance. Define
+σh2=Var⁡[h⁡(Z)]\sigma_{h}^{2}=\operatorname{Var}[h(Z)],
+σg2=Var⁡[g⁡(Z)]\sigma_{g}^{2}=\operatorname{Var}[g(Z)],
+and σh​g=Cov⁡[h⁡(Z),g⁡(Z)]\sigma_{hg}=\operatorname{Cov}[h(Z),g(Z)].
+Writing H=h⁡(Z)−μH=h(Z)-\mu and G=g⁡(Z)−μgG=g(Z)-\mu_{g}, we have
+|
+Var⁡[μ^cv​(α)]=1N​Var⁡[H−α​G]=1N​(σh2−2​α​σh​g+α2​σg2).\operatorname{Var}\!\bigl[\hat{\mu}_{\text{cv}}(\alpha)\bigr]=\frac{1}{N}\operatorname{Var}\!\bigl[\,H-\alpha G\bigr]=\frac{1}{N}\bigl(\sigma_{h}^{2}-2\alpha\,\sigma_{hg}+\alpha^{2}\sigma_{g}^{2}\bigr). |
+|
+Differentiating with respect to α\alpha and setting the result to zero,
+|
+∂∂α​Var=0⟹−2​σh​g+2​α​σg2=0⟹α⋆=σh​gσg2=Cov⁡[h⁡(Z),g⁡(Z)]Var⁡[g⁡(Z)].\frac{\partial}{\partial\alpha}\operatorname{Var}=0\;\implies\;-2\sigma_{hg}+2\alpha\sigma_{g}^{2}=0\;\implies\;\alpha^{\star}=\frac{\sigma_{hg}}{\sigma_{g}^{2}}=\frac{\operatorname{Cov}[h(Z),g(Z)]}{\operatorname{Var}[g(Z)]}. |
+|
+Substituting α⋆\alpha^{\star} back yields
+|
+Var⁡[μ^cv​(α⋆)]=1N​σh2​(1−ρ2),\operatorname{Var}\!\bigl[\hat{\mu}_{\text{cv}}(\alpha^{\star})\bigr]=\frac{1}{N}\,\sigma_{h}^{2}\,(1-\rho^{2}), |
+|
+where ρ=σh​gσh​σg\rho=\frac{\sigma_{hg}}{\sigma_{h}\sigma_{g}} is the correlation between hh and gg,
+so variance is reduced by the factor 1−ρ21-\rho^{2} such that the closer |ρ||\rho| is to 1, the greater the reduction in variance.
+Semantic entropy
+The estimator proposed in Equation 14 uses
+|
+∑i=1Nw~i​Xi′\sum_{i=1}^{N}{\tilde{w}}_{i}X_{i}^{\prime} |
+|
+as the control variate. The centered negative log probabilities Xi′=Xi−μXX_{i}^{\prime}=X_{i}-\mu_{X} with Xi=−log⁡p⁡(s(i))X_{i}=-\log p(s^{(i)}) are strongly correlated with the negative cluster probabilities Yi=−log⁡p^​(c⁡(s(i)))Y_{i}=-\log{\hat{p}}(c(s^{(i)})), being based on the same sample s(i)s^{(i)}. In natural language generation, likely samples with low XiX_{i} tend to be mapped to dominant clusters, so YiY_{i} becomes more negative when XiX_{i} is more negative.
+The proposed control variate does not incur extra inference cost, as the log probabilities were already computed for evaluating the importance weights wi{w_{i}}. Particularly in the context of self-normalized importance sampling, log probabilities behave nicer than, e.g., a function of the ratio p/qp/q, which can take higher moments.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

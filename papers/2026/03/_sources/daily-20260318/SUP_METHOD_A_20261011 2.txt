@@ -1,0 +1,177 @@
+FlashHead: Efficient Drop-In Replacement for the Classification Head in Language Model Inference (https://arxiv.org/html/2603.14591v1)
+citeturn32950view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2603.14591v1","lineno":null}); Total lines: 518
+L0: ##### Report GitHub Issue
+L1: 
+L2: [Button: ×]
+L3: 
+L4: Title: [Input: Enter title]
+L5: 
+L6: Content selection saved. Describe the issue below:
+L7: 
+L8: Description:
+L9: 
+L10: [Button: Submit without GitHub] [Button: Submit in GitHub]
+L11: 
+L12: cite0†Back to arXiv L13: 
+L14: cite1†Why HTML?†info.arxiv.org cite2†Report Issue cite3†Back to Abstract cite4†Download PDF L15:   1. cite5†Abstract L16:   2. cite6†1 Introduction L17:   3. cite7†2 Related Work L18:     1. cite8†2.1 Trainable replacements L19:     2. cite9†2.2 Training-free replacements L20:   4. cite10†3 Methodology L21:     1. cite11†3.1 Clustering the Embedding Matrix L22:       1. cite12†Objective. L23:       2. cite13†Initialization and convergence. L24:       3. cite14†Centroid matrix. L25:     2. cite15†3.2 Token retrieval from Hidden Vector L26:       1. cite16†Deterministic / greedy decoding. L27:       2. cite17†Stochastic / sampling decoding. L28:       3. cite18†Complexity. L29:       4. cite19†Quantization note. L30:   5. cite20†4 Experiments L31:     1. cite21†Models, datasets, and harness. L32:     2. cite22†Baselines. L33:     3. cite23†4.1 Common Evaluation Benchmarks L34:     4. cite24†4.2 Top-K Containment L35:     5. cite25†4.3 On‑device Latency L36:     6. cite26†4.4 Generalization across models L37:     7. cite27†4.5 Ablations L38:       1. cite28†Quantization of the head. L39:       2. cite29†Equal-sized clustering. L40:       3. cite30†Number of clusters and probes. L41:   6. cite31†5 Discussion L42:   7. cite32†6 Conclusions L43:   8. cite33†7 Reproducibility statement L44:   9. cite34†References L45:   10. cite35†A Appendix: Expanded On-device Benchmarks L46:   11. cite36†B Appendix: Expanded Results Across Models L47:   12. cite37†C Robustness to independent Clustering runs L48:   13. cite38†D Estimating the Marginal Distribution L49:     1. cite39†D.1 Monte-Carlo Simulation L50:   14. cite40†E Models, hyper-parameters, datasets and evaluation settings L51:   15. cite41†F Qualitative Comparison to Other Methods L52:   16. cite42†G Examples of Clusters L53: cite43†License: CC BY 4.0†info.arxiv.org L54: 
+L55: arXiv:2603.14591v1 [cs.LG] 15 Mar 2026
+L56: # FlashHead: Efficient Drop-In Replacement for the Classification Head in Language Model Inference
+L57: 
+L58: Wilhelm Tranheden  Shahnawaz Ahmed  Devdatt Dubhashi Jonna Matthiesen  Hannes von Essen Embedl Gamla Almedalsvägen 21, 412 63 Gothenburg, Sweden cite44†https://www.embedl.com†www.embedl.com L59: ###### Abstract
+L60: Language models are increasingly adopting smaller architectures optimized for consumer devices. In this setting, inference efficiency is the primary constraint. Meanwhile, vocabulary sizes continue to grow rapidly, making the classification head a critical bottleneck that accounts for up to 60% of model parameters, and 50% of inference compute. We introduce FlashHead, the first efficient drop-in replacement for the dense classification head that is training-free and hardware-friendly.
+L61: FlashHead builds on principles from information retrieval, reframing that computation at the output head as a retrieval problem rather than a dense classification over the full vocabulary.
+L62: FlashHead introduces four key innovations: (1) a balanced clustering scheme that structures vocabulary partitions into compact hardware-efficient tensors, (2) extending multiprobe retrieval to language model heads, enabling thousands of clusters to be scored in parallel, (3) a novel inference-time sampling mechanism that extends retrieval beyond top tokens, enabling probabilistic sampling across the full vocabulary, and (4) selective quantization, enabling effective low-bit computation in the head.
+L63: Experiments on Llama-3.2, Gemma-3, and Qwen-3 show that FlashHead delivers model-level inference speedups of up to 1.75x which maintaining output accuracy compared to the original head. By overcoming the classification head bottleneck, FlashHead establishes a new benchmark for efficient inference and removes a key barrier to developing smaller, capable models for consumer hardware.
+L64: ## 1 Introduction
+L65: As small language models (SLMs) become central to wide adoption of machine learning systems across society, their deployment on consumer-grade hardware is becoming increasingly important cite45†Belcak et al. (2025) ; cite46†Shakhadri et al. (2024) ; cite47†Lu et al. (2025) ; cite48†Wang et al. (2025) . In state-of-the-art SLM architectures such as Llama-3.2 cite49†Research (2024) , Gemma 3 cite50†Team (2025) , and Qwen 3 cite51†Yang et al.
+L66: (2024) , the classification head alone accounts for between 20% and 60% of total model parameters and dominates inference cost. As the general trend is toward increasing vocabulary sizes cite52†Tao et al. (2024) , this problem is likely to be a central challenge for efficient inference in SLMs.
+L67: Prior to the recent emphasis on SLMs, research on efficient deployment of large language models concentrated almost entirely on the transformer body. Quantization techniques  cite53†Frantar et al. (2022) ; cite54†Lee et al. (2024) ; cite55†Lin et al. (2024) were developed to compress weights and activations while maintaining model accuracy, yet these methods explicitly avoid quantizing the classification head. This limitation is also reflected in inference frameworks like vLLM cite56†Kwon et al.
+L68: (2023) , which as of the latest release leave the output head in higher precision to avoid accuracy degradation.
+L69: Prior work targeting the model head largely predates the current emphasis on SLMs, and relatively few approaches have been designed with inference efficiency as the primary goal. Proposed methods span hierarchical softmax cite57†Morin & Bengio (2005) and vocabulary-trimming strategies cite58†Ushio et al. (2023) , to adaptive output layers cite59†Zhao et al. (2021) . However, these typically require additional fine-tuning cite60†Mnih & Hinton (2008) ; cite57†Morin & Bengio (2005) ; cite61†Grave et al.
+L70: (2017) ; cite62†Chen et al. (2016) ; cite63†Chen et al. (2025) ; cite59†Zhao et al. (2021) , task-specific calibration cite58†Ushio et al. (2023) , or fail to faithfully capture the full output probability distribution cite64†Shim et al. (2017) ; cite65†Zhang et al. (2018) .
+L71: At their core, these methods view the classification head as a two-stage retrieval mechanism. One family of approaches replaces the dense head with Approximate Nearest Neighbor (ANN) algorithms cite65†Zhang et al. (2018) ; cite63†Chen et al. (2025) ; cite59†Zhao et al. (2021) . Variants of the inverted file (IVF) index are commonly used, and several methods cite63†Chen et al. (2025) ; cite59†Zhao et al. (2021) ; cite66†Chen et al.
+L72: (2019) explicitly exploit spherical K-Means cite67†Dhillon & Modha (2001) to align with the natural semantic structure of language models cite68†Petukhova et al. (2025) . Despite their promise, these methods inherit the same drawbacks noted above.
+L73: Motivated by these limitations, we propose FlashHead: the first efficient drop-in replacement for the dense classification head that is both training-free and hardware-friendly. FlashHead introduces four key innovations:
+L74: 
+L75:   1. 1.
+L76: Equal-sized clustering: We employ a variant of spherical K-means that enforces strictly equal cluster sizes. This design allows centroids to be packed into compact tensors, enabling fast and predictable memory access. To our knowledge, FlashHead is the first LLM head that clusters token embeddings into strictly equal-sized spherical clusters.
+L77: 
+L78:   2. 2.
+L79: Efficient multi-probing: Whereas prior work typically restricts retrieval to the single most likely cluster, our compact clustering enables aggressive use of multi-probing cite69†Lv et al. (2007) . We depart significantly from existing applications of information retrieval in language models by scaling from hundreds of clusters to tens of thousands. We achieve this by employing hundreds to thousands of probes to simultaneously score several clusters.
+L80: This expanded probing strategy, designed specifically for inference in language models, is highly accurate while remaining efficient.
+L81:   3. 3.
+L82: 
+L83: Probabilistic probe sampling: Unlike hierarchical softmax, which factorizes and learns the probability distribution end-to-end, our method naturally bridges retrieval and probabilistic decoding. We introduce a multinomial sampling step at the probe-selection stage, allowing top-token retrieval and sampling to be seamlessly unified.
+L84: 
+L85:   4. 4.
+L86: Selective quantization: FlashHead admits coarse quantization in the first stage of its retrieval process. By distributing probability mass across such a large number of clusters and probes, it becomes naturally robust to quantization. This makes FlashHead the first method to enable safe and effective quantization of the output head. Flashhead in higher precision outperforms quantization of the dense head, and in combination with quantization delivers even greater performance.
+L87: The four components are not independent optimizations but synergistic mechanisms, whose combination is crucial for the overall improvements, as demonstrated in our experiments. Overall, FlashHead turns the output head from a dominant bottleneck into a negligible component of inference. Crucially, the gains are not just at the head level: across all benchmarked models we see consistent model-level speedups.
+L88: For instance, FlashHead accelerates Llama-3.2-1B by up to 1.75×, Gemma-3-270M by 1.35×, and Qwen-3-1.7B by 1.31×, all without retraining and marginal accuracy loss. Even at the 8B scale, FlashHead delivers a 1.13× speedup where baseline inference already saturates consumer GPUs. In effect, what previously consumed a large portion of compute is compressed into an insignificant fraction, enabling state-of-the-art SLMs to run faster and leaner on commodity hardware.
+L89: Our main contributions can be summarized as follows:
+L90: 
+L91:   1. 1.
+L92: 
+L93: We introduce FlashHead, the first training-free and hardware-friendly drop-in replacement for the dense classification head, which substantially improves inference efficiency while preserving accuracy.
+L94: 
+L95:   2. 2.
+L96: We provide a comprehensive evaluation of FlashHead against existing alternatives, covering reasoning, multilingual, and instruction-following benchmarks across multiple model families, as well as detailed on-device latency measurements.
+L97: 
+L98:   3. 3.
+L99: 
+L100: We release a public implementation of FlashHead integrated into several state-of-the-art models, including Llama 3.2, Gemma 3, and Qwen 3 (available at [Redacted url due to blind review]), to facilitate adoption and further research.
+L101: ## 2 Related Work
+L102: 
+L103: Research on efficient alternatives to the dense classification head falls into two categories: trainable replacements and training-free replacements.
+L104: ### 2.1 Trainable replacements
+L105: Several works replace the dense head with structures that must be retrained or fine-tuned alongside the model. Hierarchical softmax organizes the vocabulary into a tree to reduce complexity, but suffers from tree construction bias and limited flexibility  cite57†Morin & Bengio (2005) . Adaptive softmax groups tokens by frequency and learns cluster heads jointly with the model  cite61†Grave et al.
+L106: (2017) , while differentiated softmax allocates higher-rank embeddings to frequent tokens and lower-rank ones to rare tokens  cite62†Chen et al. (2016) .
+L107: Prior work has also considered spherical K-means clustering of context vectors as a retrieval mechanism for inference  cite66†Chen et al. (2019) . These methods partition queries rather than keys and thus depend on training-time statistics to define candidate sets. ANN-based training methods such as ANN-Softmax  cite63†Chen et al. (2025) or MIDX Sampler  cite59†Zhao et al. (2021) adopt inverted-file or product-quantization indexes also based on K-means to accelerate training.
+L108: While several of these approaches rely on K-means to partition the vocabulary, they cluster queries (context vectors) and depend on training-time statistics or retraining to define candidate sets. FlashHead clusters the keys (token embeddings) once, offline, and introduces several innovations that enable a novel multi-probe retrieval, preserving the full probability distribution without any retraining or data.
+L109: ### 2.2 Training-free replacements
+L110: Training-free replacements avoid retraining and therefore represent the most practical deployment alternatives. Vocabulary trimming  cite58†Ushio et al. (2023) discards infrequent tokens using a calibration set, offering speedups but fundamentally restricting the vocabulary and reducing robustness to rare or out-of-distribution prompts. SVD-Softmax  cite64†Shim et al. (2017) pioneered low-rank decompositions for accelerating large-vocabulary softmax layers.
+L111: However, because sampling occurs only after the coarse approximation step, probabilities are reliable primarily for high-likelihood tokens. Fast Graph Decoder  cite65†Zhang et al. (2018) introduced approximate nearest neighbor search as a training-free replacement for classification heads. Its formulation, however, outputs only a top-$k$ candidate set rather than modeling the full probability distribution, limiting its applicability.
+L112: With the exception of vocabulary trimming, these works were developed before the transformer era, when recurrent and embedding-based models dominated.
+L113: FlashHead belongs to the training-free category, while addressing existing limitations. In our experiments we therefore compare primarily to existing training-free replacements, which represent the most practical deployment alternatives.
+L114: ## 3 Methodology
+L115: In LLMs, the dense classification head transforms a $d$-dimensional hidden state vector $\mathbf{h}\in\mathbb{R}^{d}$ (where $d$ is the embedding size) to a vocabulary-sized logit vector. The hidden state vector encodes the contextual state produced by the model body after processing an input sequence.
+L116: Concretely, the classification head applies a single matrix multiplication: $\mathbf{z}=\textbf{E}\times\mathbf{h}$, where $\mathbf{E}\!\in\!\mathbb{R}^{v\times d}$ is the output‑embedding matrix (with $v$ being the total number of tokens in the vocabulary) to produce the logit vector. Each row $\mathbf{e}_{i}$ is the $d$‑dimensional embedding of token $i$.
+L117: For greedy retrieval the next token is selected as $t=argmax(\mathbf{z})$, i.e. the index of the largest logit in $z$.
+L118: 
+L119: For probabilistic token sampling, the logits are scaled by a temperature $\tau>0$ and converted to a distribution
+L120: 
+L121:  | $$\mathbf{y}\;=\;\operatorname{softmax}\!\Bigl(\tfrac{\mathbf{z}}{\tau}\Bigr),\quad t\;\sim\;\operatorname{Categorical}(\mathbf{y}).$$  |
+L122: ### 3.1 Clustering the Embedding Matrix
+L123: In FlashHead, a one-time offline clustering step is applied to partition the $v$ embedding vectors of $\mathbf{E}\!\in\!\mathbb{R}^{v\times d}$ into $c\!\ll\!v$ disjoint clusters $\{\mathcal{C}_{1},\dots,\mathcal{C}_{c}\}$. Specifically, spherical k-means cite67†Dhillon & Modha (2001) , a variant of k-means that measures similarity with the cosine metric, is applied.
+L124: Cosine distance is a natural choice because empirical studies show that the semantic information in token embeddings is largely encoded in their direction, with vector length playing only a minor role cite70†Mikolov et al. (2013) .
+L125: #### Objective.
+L126: 
+L127: Given a number of clusters $c$, spherical k-means minimizes the negative cosine similarity between points and their assigned centroids cite67†Dhillon & Modha (2001) :
+L128: 
+L129:  | $$\min_{\{\mathcal{C}_{k}\}}\;\sum_{k=1}^{c}\;\sum_{i\in\mathcal{C}_{k}}\;\bigl(1-\mathbf{e}_{i}^{\!\top}\mathbf{c}_{k}\bigr),\qquad\text{with}\quad\mathbf{c}_{k}=\frac{\sum_{i\in\mathcal{C}_{k}}\mathbf{e}_{i}}{\bigl\lVert\sum_{i\in\mathcal{C}_{k}}\mathbf{e}_{i}\bigr\rVert_{2}}.$$  |
+L130: Because every centroid is re‑normalised after each batch update, the algorithm alternates between (i) assigning each token to the closest centroid on the sphere, and (ii) recomputing centroid directions as the mean of the cluster members.
+L131: We implement a modified assignment step that enforces an equal cluster size of $v/c$ tokens per cluster (thus $c$ is always a divisor of $v$). If a cluster exceeds its capacity, its lowest-similarity members are reassigned greedily to clusters that still have available slots, prioritizing the most similar eligible centroid. This ensures that all clusters have identical capacity while preserving semantic grouping. Enforcing exactly equal sized clusters is critical for efficiency as discussed below.
+L132: #### Initialization and convergence.
+L133: 
+L134: Empirically we converge within a budget of 1000 iterations for all models evaluated. Clustering is a one-time cost and goes relatively fast. For example clustering the 128 256-token vocabulary of Llama‑3.2 into $c=8016$ clusters takes 4 hours on a single A40 GPU.
+L135: #### Centroid matrix.
+L136: 
+L137: After clustering we store the normalized centroid matrix $\mathbf{C}\!\in\!\mathbb{R}^{c\times d}$. In addition, we require the mapping between clusters and token indices stored in a matrix $\mathbf{C2T}\!\in\!\mathbb{R}^{c\times b}$, where $b$ is the size of the clusters. When clusters are not equalized (for ablation studies), see cite27†4.5 , it represents the largest cluster (rows corresponding to smaller clusters are padded).
+L138: ### 3.2 Token retrieval from Hidden Vector
+L139: 
+L140: At inference time, FlashHead transforms the hidden state $\mathbf{h}\!\in\!\mathbb{R}^{d}$ into the next token via a dynamic two-step retrieval process inspired by the inverted file (IVF) index (see Algorithm cite71†1 ). We support both decoding scenarios mentioned in Section cite10†3 ; their key differences in FlashHead are illustrated in Figure cite72†1 .
+L141: #### Deterministic / greedy decoding.
+L142: 
+L143: For tasks such as classification, after the matrix multiplication $\mathbf{C}\times\mathbf{h}$, the top $\mathit{p}$ centroids are selected given the produced centroid logits. FlashHead gathers tokens in these clusters into a reduced vocabulary embedding matrix $\tilde{\mathbf{E}}$. Given this embedding, token logits are computed over this smaller set, $\mathbf{z}=\tilde{\mathbf{E}}\times\mathbf{h}$, and the next token is chosen as $t=argmax(\mathbf{z})$.
+L144: #### Stochastic / sampling decoding.
+L145: For open‑ended generation, after the matrix multiplication $\mathbf{C}\times\mathbf{h}$, $p$ centroids are sampled without replacement, based on the softmax operation applied on the centroid logits. As for the deterministic/greedy decoding, FlashHead gathers tokens in these sampled clusters into a reduced vocabulary embedding matrix $\tilde{\mathbf{E}}$.
+L146: In the second step, after the matrix multiplication $\tilde{\mathbf{E}}\times\mathbf{h}$, a token is sampled based on the softmax operation applied on the token logits.
+L147: #### Complexity.
+L148: 
+L149: The dense head requires $O(vd)$ multiplications, where $v$ is the vocabulary size. FlashHead reduces this to
+L150: 
+L151:  | $$O(cd+pbd),$$  |
+L152: where $c$ is the number of clusters, $b=v/c$ the cluster size, and $p\ll c$ the number of probes used at inference. In practice, $p\cdot b\ll v$, yielding significant savings in both compute and memory access. Notably, as $c$ increases, $b$ decreases, and our design choices allows a practical implementation where we can exploit this to scale to very large $c$ and $p$ while remaining efficient. We demonstrate this scalability and its impact on accuracy–efficiency trade-offs in Section cite27†4.5 .
+L153: A critical source of efficiency comes from the cluster-to-token mapping $\mathbf{C2T}$. Although not reflected in the multiplication count above, $\mathbf{C2T}$ governs how token embeddings are retrieved after probe selection. Enforcing equal cluster sizes allows $\mathbf{C2T}$ to be stored as a dense $[c\times b]$ tensor, so token indices can be computed with simple modular arithmetic.
+L154: Without equal cluster sizes, $\mathbf{C2T}$ becomes ragged and requires per-cluster length tracking and masked gathers, which significantly increase memory access cost on accelerators. Section cite27†4.5 shows that equal-sized clustering is essential to eliminate this overhead while preserving accuracy.
+L155: #### Quantization note.
+L156: 
+L157: The first stage as described in Algorithm cite71†1 (computing centroid logits $\mathbf{C}\times\mathbf{h}$) is straightforward to quantize because (i)  it is a fully static matrix multiplication, and (ii)  the coarse centroid probabilities are refined in the second stage using higher-precision token logits. As shown in Section cite27†4.5 , this selective quantization yields significant speedups while maintaining accuracy.
+L158: 
+L159: cite73†Image: Refer to caption L160: 
+L161: cite74†Image: Refer to caption L162: Figure 1: Several clusters of tokens are selected conditioned on the hidden vector produced by the model body. The reduced subset of token embeddings are multiplied with the hidden vector to make the final token selection.. Illustration of the proposed FlashHead algorithm, highlighting the difference between greedy approach of selecting the most likely next token, and the sampling approach allowing for probabilistic sampling of new tokens. Algorithm 1 FlashHead.
+L163: 0:   Hidden vector generated by the model body $\mathbf{h}\in\mathbb{R}^{d}$, where $d$ is the embedding size, Embedding Matrix of all tokens $\mathbf{E}\in\mathbb{R}^{v\times d}$, where $v$ is the total number of tokens in the vocabulary.
+L164: 
+L165: 0:   Number of probes $\mathit{p}$, Number of clusters $\mathit{k}$
+L166: 
+L167: 0:   Next token $\mathbf{t}\in\mathbb{R}^{d}$
+L168: 
+L169: 0:   cluster centroids $\mathbf{C}\in\mathbb{R}^{k\times d}\leftarrow$ cluster $\mathbf{E}$ into $k$ clusters
+L170: 
+L171: 0:
+L172:  $\mathbf{c^{\prime}}\in\mathbb{R}^{k}\leftarrow\mathbf{C}\times\mathbf{h}$ (compute centroid logits)
+L173: 
+L174:  $\mathbf{C}_{\mathit{p}}\in\mathbb{R}^{k\times p}\leftarrow$ select $\mathit{p}$ centroids given centroid logits $\mathbf{c^{\prime}}$
+L175: 
+L176:  $\tilde{\mathbf{E}}\in\mathbb{R}^{x\times d}\leftarrow$ select tokens from $\mathbf{E}$ corresponding to selected centroids $\mathbf{C}_{\mathit{p}}$, according to $\mathbf{C2T}$.
+L177:  $\mathbf{z^{\prime}}\in\mathbb{R}^{x}\leftarrow\tilde{\mathbf{E}}\times\mathbf{h}$ (compute token logits)
+L178: 
+L179:  $t\in\mathbb{R}^{d}\leftarrow$ select next token based on token logits.
+L180: ## 4 Experiments
+L181: Evaluating language models (LMs) is nontrivial because open‑ended generation intertwines correctness, fluency, and factuality cite75†Biderman et al. (2024) ; even small divergences in early tokens can cascade into valid but different continuations.
+L182: We therefore report: (i) standard LM benchmark results on generation and reasoning tasks; (ii) Top‑$k$ Containment to isolate head‑level fidelity; and (iii) on‑device latency as time‑per‑output‑token, both for the head alone ($\mathrm{TPOT}^{\mathrm{H}}$) and the full model ($\mathrm{TPOT}$).
+L183: #### Models, datasets, and harness.
+L184: We conduct extensive evaluations across several popular families of models: Llama‑3.2, Llama‑3.1, Qwen‑3, Gemma‑3. Unless stated, the base model is Llama-3.2-1B-Instruct with the LM‑Evaluation‑Harness for: MMLU‑Pro cite76†Wang et al. (2024) , HellaSwag cite77†Zellers et al. (2019) , IFEval cite78†Zhou et al. (2023) , BoolQ cite79†Clark et al. (2019) , BBH cite80†Suzgun et al. (2022) , TruthfulQA‑gen cite81†Lin et al. (2022b) , and GSM8K (8‑shot CoT). We use a combination of alpaca_eval cite82†Taori et al.
+L185: (2023) ; cite83†Dubois et al. (2023) , MATH‑Hard cite84†Hendrycks et al. (2021) and XNLI cite85†Conneau et al. (2018) to get a detailed head-level fidelity on challenging multilingual/logic datasets. For probability‑based tasks (e.g., HellaSwag, BoolQ), FlashHead uses Monte Carlo sampling to estimate log‑likelihoods. To keep runtime tractable, we average over a 100‑example subset. We refer the reader to Appendix cite39†D.1 for more details on the Monte Carlo sampling.
+L186: #### Baselines.
+L187: We compare FlashHead to training‑free baselines: Vocabulary Trimming cite58†Ushio et al. (2023) , SVDSoftmax cite64†Shim et al. (2017) , and Fast Graph Decoder (FGD) cite65†Zhang et al. (2018) . FGD is CPU‑only and float32 (as in the original implementation), so it is omitted where GPU or probability‑based scoring is required. For comparability, we keep method hyperparameters fixed across tasks: FlashHead uses $c{=}8016$ clusters, $p{=}512$ probes (unless varied in ablations or used for other models).
+L188: Vocabulary Trimming keeps $64{,}000$ tokens (50% of the baseline vocabulary) while SVDSoftmax uses window size $256$ (1/8 of embedding) and $12{,}000$ top‑$n$, both in line with original implementations. In case of FGD, we use a top $K$ of the nearest neighbors $384$, $efSearch=300$, and $M=40$, which are significantly larger than the values used in the original paper cite65†Zhang et al. (2018) to match the larger vocabulary size for the baseline model.
+L189: ### 4.1 Common Evaluation Benchmarks
+L190: 
+L191: Table cite86†1 summarizes task‑level performance. FlashHead is the only method to consistently match the baseline on all aggregate metrics (within rounding). Notably, FlashHead accomplishes this feat while being significantly faster to execute on-device, see Section cite25†4.3 . In Appendix cite37†C we also provide the variance across these tasks between independent clustering runs.
+L192: Table 1: Evaluation on LM benchmarks. MMLU-Pro (exact_match, custom-extract), HellaSwag (acc_norm), IFEval (avg. of four metrics), BoolQ (acc_norm), BBH (exact_match), TruthfulQA-gen (bleu_acc), GSM8K (exact_match) for Llama 3.2 1B Instruct as the baseline.
+L193: Method  | MMLU Pro  | Hella Swag  | IFEval  | BoolQ  | BBH  | Truthful QA  | GSM8K
+L194: Baseline  | 0.18  | 0.59  | 0.45  | 0.69  | 0.38  | 0.36  | 0.46
+L195: Vocab. Trimming  | 0.18  | 0.53  | 0.35  | 0.65  | 0.37  | 0.36  | 0.46
+L196: SVDSoftmax  | 0.16  | 0.44  | 0.44  | 0.69  | 0.13  | 0.36  | 0.26
+L197: FGD  | —  | N/A  | 0.32  | N/A  | —  | 0.42  | —
+L198: FlashHead  | 0.18  | 0.59  | 0.45  | 0.69  | 0.38  | 0.36  | 0.46
+L199: ### 4.2 Top-K Containment
+L200: To isolate the classification head, we run both the baseline head and modified ones under identical hidden states and KV‑caches and compute Top‑$k$ Containment: the fraction of cases where the token produced by a method appears in the baseline head’s top‑$k$. The results for FlashHead and other methods is aggregated in Table cite87†2 . FlashHead alone attains a near-perfect match in top‑1 (within rounding) on all datasets except for the challenging multilingual dataset XNLI where it achieves $97\%$.
+L201: When looking at top-3, FlashHead alone achieves a near-perfect match even for XNLI.
+L202: Table 2: Top‑$k$ Containment ($c{=}8016$, $p{=}512$) vs. training‑free baselines on Llama‑3.2‑1B‑Instruct. For $k{=}1$, containment = accuracy.
+L203: Method  | Top‑1  | Top‑3
+L204: Alpaca  | MATH‑Hard  | XNLI  | Alpaca  | MATH‑Hard  | XNLI
+L205: Baseline  | 1.00  | 1.00  | 1.00  | 1.00  | 1.00  | 1.00
+L206: Vocab. Trimming  | 0.99  | 0.99  | 0.51  | 1.00  | 1.00  | 0.69
+L207: SVDSoftmax  | 0.94  | 0.96  | 0.96  | 0.99  | 0.99  | 0.99
+L208: FlashHead  | 1.00  | 1.00  | 0.97  | 1.00  | 1.00  | 1.00
+L209: ### 4.3 On‑device Latency
+L210: 
+L211: We report $\mathrm{TPOT}^{\mathrm{H}}$ (head‑only) and end‑to‑end (model-level) $\mathrm{TPOT}$ on an NVIDIA RTX 3500 Ada Generation GPU; additional CPU results and effective parameter reductions are deferred to Appendix cite35†A due to space. Unless noted otherwise, latencies are measured using vLLM cite56†Kwon et al. (2023) , averaged over 128 generated tokens, averaged over 100 prompts, with 10 warm-up prompts, in either bfloat16 or W4A16 (int4) precisions for model computations.
+--------------------------------------------------------------------------------
+When Scanners Lie: Evaluator Instability in LLM Red-Teaming (https://arxiv.org/html/2603.14633v1)
+citeturn32950view1 [wordlim: 200] Crawled: 2 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2603.14633v1","lineno":null}); Total lines: 286
+--------------------------------------------------------------------------------
+Untitled Document (https://arxiv.org/html/2603.15031v1)
+citeturn32950view2 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2603.15031v1","lineno":null}); Total lines: 36
+

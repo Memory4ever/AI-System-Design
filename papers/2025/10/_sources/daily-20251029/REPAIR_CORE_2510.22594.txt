@@ -1,0 +1,875 @@
+A Framework for Quantifying How Pre-Training and Context Benefit In-Context Learning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 The Proposed Framework of Modeling Data Generation and Prediction
+2.1 Modeling data generation with latent concepts
+2.2 Modeling ICL prediction with pre-trained LM
+2.3 Comparing proposed context construction with existing works
+3 A Statistical Model: Pre-trained Transformer Shifts the Output Distribution
+3.1 Data Generation and Encoding
+3.2 Training Objective and Inference
+3.3 Pre-trained One-layer Transformer
+4 Generalized Case: Quantify the effect of Context in ICL
+5 Experiment
+5.1 Experiment settings
+5.2 Results and Discussion
+References
+A Justification of modeling and assumptions
+B Proof of Theorem
+C Proof of Claim
+D Experiment Details for Synthetic Data
+D.1 Data Generation
+D.2 Training Hyper parameters
+D.3 Compare Uniform Attention and Non-Uniform Attention
+E Experiment Details for GPT-2 Models
+F Comparison of Predictions from Different Prompts
+G Limitation and Future Work
+License: CC BY 4.0
+arXiv:2510.22594v1 [cs.AI] 26 Oct 2025
+A Framework for Quantifying How Pre-Training and Context Benefit In-Context Learning
+Bingqing Song
+Affiliation: University of Minnesota
+Jiaxiang Li
+Affiliation: University of Minnesota
+Rong Wang
+Affiliation: University of Minnesota
+Songtao Lu
+Affiliation: The Chinese University of Hong Kong
+Mingyi Hong
+Affiliation: University of Minnesota
+Abstract
+Pre-trained large language models have demonstrated a strong ability to learn from context, known as in-context learning (ICL). Despite a surge of recent applications that leverage such capabilities, it is by no means clear, at least theoretically, how the ICL capabilities arise, and in particular, what is the precise role played by key factors such as pre-training procedure as well as context construction. In this work, we propose a new framework to analyze the ICL performance, for a class of realistic settings, which includes network architectures, data encoding, data generation, and prompt construction process. As a first step, we construct a simple example with a one-layer transformer, and show an interesting result, namely when the pre-train data distribution is different from the query task distribution, a properly constructed context can shift the output distribution towards the query task distribution, in a quantifiable manner, leading to accurate prediction on the query topic. We then extend the findings in the previous step to a more general case, and derive the precise relationship between ICL performance, context length and the KL divergence between pre-train and query task distribution. Finally, we provide experiments to validate our theoretical results.
+1 Introduction
+Large language models (Devlin et al., 2018; Radford et al., 2019; Brown et al., 2020) are pre-trained on various texts to predict the next masked token. It is known that the pre-trained language models (LM) possess strong in-context learning (ICL) capabilities. Specifically, in the inference stage, when the LM is provided with a sequential prompt, which consists of a few related examples and a query, the prediction accuracy can be significantly improved as compared to simply inputting a plain query. Such a kind of capability is intriguing, but so far it is by no means clear why it arises, and how to analyze it.
+Recently, there has been extensive research trying to understand and interpret the power of ICL through analyzing the structural property of LM, that is, how model structures such as attention mechanism in the Transformers can induce ICL capabilities
+(Zhang et al., 2023a; Huang et al., 2023; Von Oswald et al., 2023; Dai et al., 2022; Olsson et al., 2022; Han et al., 2023; Ahn et al., 2024; Akyürek et al., 2022; Yang et al., 2022; Mahankali et al., 2023; Li et al., 2023a; Xing et al., 2024). Some other works show that Transformers can benefit ICL with the idea of “chain-of-thought”, by decomposing contexts into intermediate steps (Li et al., 2024; Wei et al., 2022). Some recent works quantify the role of pre-train task diversity for ICL when the pre-train distribution is different from query task distribution (Raventós et al., 2024).
+Below let us discuss a few sets of representative theoretical works.
+The first line of works investigates the convergence and approximation power of Transformers in ICL (Zhang et al., 2023a; Huang et al., 2023; Chen et al., 2024; Kim and Suzuki, 2024). Transformer is utilized to approximate a linear regression model. However, instead of directly analyzing the ICL performance without changing any network parameters, some gradient-based algorithms are typically manually implemented to optimize the loss function related to a prompt modeled by the Transformer. Further, the prompt is constructed by stacking on the embedding dimension of each query and answer; see Section 2.3. for detailed discussions. Unfortunately, these settings do not represent practical use cases of ICL, where the prompt is constructed by stacking all the queries and answers in a sequence (see (2)), and for a given context prompt, ICL is conducted without any parameter update.
+The second line of works focuses on characterizing the implicit implementation of algorithms when the prompt is fed into a single-layer Transformer. In Von Oswald et al. (2023), it is shown that when the weight matrices in the Transformer have a certain structure and value, ICL with prompt implicitly performs one step of GD algorithm. In Ahn et al. (2024), it is proved that the optimal parameters of a Transformer (single or multi-layers) can implement a step of preconditioned GD for ICL. Edelman et al. (2022); Olsson et al. (2022) claim that the attention mechanism implicitly learns information from inputs. In Han et al. (2023), ICL with Transformer structure is interpreted as a kernel regression problem. Fu et al. (2023) proves that Transformers learn to implement higher-order optimization methods to perform ICL. Although these works do not include the in-context pre-training, the prompt construction is the same as the previous line of works, therefore still drifting away from the real case.
+Additionally, some other works explain ICL via Bayesian theory or Bayesian algorithm (Müller et al., 2021; Ahuja et al., 2023; Zhang et al., 2023b; Wu et al., 2023). For example, Xie et al. (2021) studies how ICL benefits the prediction when the context examples in the prompt share the same concept with the query data.
+Our Contribution:
+As we have emphasized, there is still a lack of thorough theoretical understanding about how and why ICL works. Existing works that attempt to answer these questions are mostly conducted under either over-simplified or convenient but unrealistic settings (as discussed above), making the results less relevant. In view of this, our work makes the following contributions to the ICL literature:
+(1) A new framework is proposed, under which we provide analysis of the ICL performance. The framework consists of specifications about network architectures, data encoding, generation, and prompt construction processes, which we believe is a set of more realistic settings comparing to what has been analyzed in existing works.
+(2) We build an example following our framework, theoretically and empirically demonstrating that context helps shift the pre-train distribution to query task distribution after passing through a trained Transformer, leading to higher accuracy in prediction.
+(3) We consider the general case under our framework, and quantify the precise connection between ICL performance, context length, and KL-divergence between pre-train and query task distributions. Overall, our work provides a new, and more direct understanding of how pre-trained data distribution, and the construction of context influence the ICL performance.
+2 The Proposed Framework of Modeling Data Generation and Prediction
+As discussed in Section 1, existing approaches to modeling ICL are often done under the settings that are a departure from the real ICL setting. In this section, we introduce a novel framework designed to approximate the realistic ICL process. Our proposed framework of ICL process modeling is summarized in Fig. 1. In the following section, we will introduce our ICL modeling framework in detail. This framework comprises two components: 1) Modeling the language data generation process; 2) Modeling the context construction prediction with pre-trained model. These two components are critical in modeling the ICL process, as they collectively allow us to analyze how changes in input—whether with or without context—affect the output distribution of the pre-trained model. Specifically: 1) It is essential to generate sequences that accurately represent the ground-truth data as context and query. This enables us to evaluate whether incorporating context samples during ICL leads to outputs that more closely resemble the ground truth; 2) The modeling of the prediction process is essential, as it determines how the pre-trained model utilizes context samples to generate responses. By analyzing the model’s behavior during inference, we can assess whether and how the inclusion of context influences the output distribution, ultimately leading to more accurate predictions that align with the ground-truth data.
+.
+Figure 1: Summarization of the steps of ICL with latent concept generation, where each word consists of two attributes, i.e, topic and class. It follows standard ICL procedure with 33 steps: pre-training, prompt construction, and in-context inference. Following the setting in Xie et al. (2021), we specialize the pre-training data and prompt generation process, so that they are conditioned on concepts. Intuitively, the concept defines a distribution of generated sequence, which is specified in Section 2.1.
+2.1 Modeling data generation with latent concepts
+According to the discussion above, to accurately model the effect of ICL, it is important to model the generation of ground-truth data. A natural idea follows the latent concept generation in Xie et al. (2021).
+Instead of assuming that data is generated by a linear regression model, as has been done in a number of existing works (Huang et al., 2023; Ahn et al., 2024), the latent concept generation is more realistic since it more accurately characterizes the correlation between tokens and provides a concrete way of expressing the distributions to be predicted. Such setting has been widely adopted in topic modeling and NLP analysis (Blei et al., 2003; Gruber et al., 2007).
+Latent concepts.
+Following the setting in Xie et al. (2021); Wang et al. (2023), we assume that each sequence (in pre-training or inference) is generated by a latent concept θ∈𝚯\theta\in{\mathbf{\Theta}}, where 𝚯\mathbf{\Theta} is a family of concepts. For example, the latent concept can be explicitly defined as ‘wiki-bio,’ indicating that the associated sequence represents biographical information extracted from Wikipedia. Each concept θ\theta has an associated sequence generation distribution p(⋅|θ)p(\cdot|\theta), which defines the probability distribution over generated sequences conditioned on θ\theta.
+Key token attributes.
+We assume the generated sample is a sequence of key words, and leave out the tokens that do not contain specific meaning. As an example, a generated sequence ‘Trump is a politician.’ is reduced to ‘Trump politician’. Further, we assume each token consists of two attributes: topic and class. The idea of involving two attributes originates from the tabular data formulation (Fang et al., 2024), where each token is accurately represented by its corresponding attributes in the table; see Fig. 2 for an illustration. The topic attribute is straightforward and intuitive. On the other hand, the class attribute assigns a numerical label to each token within a given topic. If two topics are related, we assume that their corresponding tokens share a one-to-one mapping, meaning that each token in one topic has a direct counterpart in the other. This correspondence is encoded through the same class number. For example, ‘Name’ and ‘Occupation’ are related topics. We know the occupation of Trump (Class 1) is politician, then the class number of ‘Politician’ has to be 1, which is the same as ‘Trump’ (see Fig. 2). This representation offers a straightforward means to quantify the distribution of samples across different attributes, enabling better analysis and understanding of the data structure. For simplicity, throughout the paper, we assume that each word belongs to exactly one topic and class, but this requirement can be relaxed.
+Figure 2: Each word has two attributes: topic and class. For simplicity, we assume each topic consists of KK different classes, each with only one word.
+Remark 1.
+We restrict the output to key tokens and assign structural attributes to each key token. This approach serves as an approximation of real-world sequence generation by capturing the core meaning of the content, much like how tabular data distills essential features for analysis. This method, which has been widely explored in machine learning (Hegselmann et al., 2023), enables efficient processing of critical information.
+Example: Sequence generation based on latent concepts and token attributes.
+With the latent concept model and token attributes in place, let us consider how language sequences are generated. When the sequence generation is about the biography of a person, the current concept is θ\theta=‘wiki-bio’, and
+the generation process of sequence ss can be summarized in two steps:
+Step 1 (First token): Given the concept ‘wiki-bio’, the first token is likely about a topic highly related to the concept, e.g, name. However, it is totally random which name it will generate. Suppose the first generated token is ‘Trump’. This indicates that the first token is likely to be with topic attribute related to θ\theta, while the class attribute is random.
+Step 2 (Subsequent tokens): Suppose the first token is ‘Trump’, the subsequent tokens are likely to remain within the ‘wiki-bio’ concept, covering relevant topics such as occupation, birth year, or notable achievements. However, within each topic, the specific tokens generated are highly influenced by their association with first token ‘Trump’. For instance, within the occupation topic, ‘politician’ is significantly more probable than ‘singer’, as it aligns with the factual attributes of the entity. The above procedure implies the following tokens are likely to be with topic attribute related to θ\theta, while the class attribute tends to be consistent with the first token.
+Modeling real-world generation. Inspired by the example above, we consider the generation process of a length NN sequence 𝒘:=w1:N\boldsymbol{w}:=w_{1:N}, where wi,i∈[N]w_{i},i\in[N] denotes the ii-th toke in 𝒘\boldsymbol{w}. The sequence generation distribution p(⋅|θ)p(\cdot|\theta), which involves both topic and class distribution, can be modeled as following:
+Step 1 (First token w1w_{1}): The topic attribute tt is sampled from a topic distribution conditioned on the given concept, expressed as t∼pt(⋅|θ)t\sim p_{t}(\cdot|\theta), where ptp_{t} denotes the topic distribution. The class attribute kk is generated on a random distribution without being conditioned on θ\theta, expressed as k∼pck\sim p_{c}, where pcp_{c} denotes the class distribution.
+Step 2 (Subsequent tokens w2:Nw_{2:N}): Similar to Step 1, the topic attribute tt follows the distribution conditioned on θ\theta, i.e, t∼pt(⋅|θ)t\sim p_{t}(\cdot|\theta). The class attribute generation is conditioned on the class of first token. Suppose the class of first token is k∗k^{*}, we assume the class kk of following tokens is generated by the following distribution:
+pc​(k∗∣w1)=Q,pc​(k∣w1)=1−QK−1,k≠k∗,\displaystyle p_{c}(k^{*}\mid w_{1})=Q,\;p_{c}(k\mid w_{1})=\frac{1-Q}{K-1},k\neq k^{*},
+(1)
+where KK is the total number of classes, and Q∈[0,1]Q\in[0,1] is close to 11, so that k∗k^{*} is more likely to occur than the rest of classes. ptp_{t} and pcp_{c} together induce p(⋅|θ)p(\cdot|\theta).
+We justify the above modeling method in Remark 9 in Appendix A.
+Sequence Generation. With the above modeling framework of data generation, we can formulate the generation of pre-train, context and query sequences. We assume there are HH different pre-train datasets Rh,h∈[H]R_{h},h\in[H], where each of the data is generated in the aforementioned way, i.e. each with n1n_{1} sequences generated by latent concept θh\theta_{h}, expressed as
+Rh,i∼p(⋅∣θh),i∈[n1].R_{h,i}\sim p\left(\cdot\mid\theta_{h}\right),\;i\in[n_{1}].
+Besides, in the ICL setting, we require context sequences to establish the context for the model. We assume there are nn context samples generated by the concept θ∗\theta^{*}, i.e, si∼p(⋅∣θ∗),i∈[n].s_{i}\sim p\left(\cdot\mid\theta^{*}\right),\;i\in[n].
+Similarly, the query sqs_{\text{q}} is also generated as a sequence of words by the distribution p(⋅∣θ∗)p(\cdot\mid\theta^{*}), while
+the last (few) tokens in sqs_{\text{q}} are manually masked out after the generation, which become placeholder to predict. Denote the masked sqs_{\text{q}} as X~q:=(Xq,[mask])\widetilde{X}_{\text{q}}:=\left(X_{\text{q}},\textrm{[mask]}\right), while the original query sequence can be written as sq=(Xq,yq)s_{\text{q}}=(X_{\text{q}},y_{\text{q}}). As an example, suppose we have the query sequence sq=‘Trump politician American’s_{\text{q}}=\text{`Trump politician American'}, and we mask out the last word ‘American’, which becomes a placeholder to predict. sqs_{\text{q}} can be rewritten as sq=(‘Trump politician’,‘American’)s_{\text{q}}=(\text{`Trump politician'},\text{`American'}), where Xq=‘Trump politician’X_{\text{q}}=\text{`Trump politician'} and yq=‘American’y_{\text{q}}=\text{`American'}. The masked sqs_{\text{q}} is denoted as X~q:=(‘Trump politician’,[mask])\widetilde{X}_{\text{q}}:=\left(\text{`Trump politician'},\textrm{[mask]}\right). Similarly, we can split any context sample sis_{i} into two parts XiX_{i} and yiy_{i} to align with the formula of sq=(Xq,yq)s_{\text{q}}=(X_{\text{q}},y_{\text{q}}). We assume the sequence lengths of the pre-trained data and context samples of Rh,i,si,sqR_{h,i},s_{i},s_{\text{q}} and X~q \widetilde{X}_{\text{q }} are all NN, which is generic since we can always achieve this by truncating and padding.
+2.2 Modeling ICL prediction with pre-trained LM
+With the above modeling of data generation, the next task is to model how pre-trained model generates the output. First, let us consider the case without ICL.
+Masked output prediction Given an LM MM pre-trained on HH different datasets Rh,h∈[H]R_{h},h\in[H] Given the masked query sequence X~q\widetilde{X}_{\text{q}},
+the task of LM (with or without in-context learning) is to predict the last few masked words in X~1\widetilde{X}_{\text{1}}, which is denoted as yq∈𝒴y_{\text{q}}\in\mathcal{Y}, and 𝒴\mathcal{Y} is the output domain. The prediction probability based on the model MM is naturally defined as
+PM​(y∣X~q)P_{M}(y\mid\widetilde{X}_{\text{q}}), which can be understood as predicting the masked output yy based on model MM and prompt XqueryX_{\text{query}}.
+Suppose a language model MM completely learns the pre-train tasks, we can further simplify the expression of prediction probability as
+P(y∣R1:H,X~q).P(y\mid R_{1:H},\widetilde{X}_{\text{q}}).
+Remark 2.
+LM can face several key challenges in generating accurate and contextually appropriate sequences: First, in the absence of context, the model may struggle to determine the appropriate topic for generated tokens. Second, without context samples, the model generates output solely on its pre-trained distribution rather than adapting to task-specific distribution. Thus, the context provided to LM is critical to prediction. In the following, we introduce the process of making predictions using LM with ICL and discuss how to properly construct context.
+Masked output prediction with ICL.
+Recall that when LM fully learns pre-train tasks R1:HR_{1:H}, the expression of prediction probability is P(y∣R1:H,X~q)P(y\mid R_{1:H},\widetilde{X}_{\text{q}}). Following this, suppose another nn context samples s1:ns_{1:n} are provided, the prediction is conditioned on both X~q\widetilde{X}_{\text{q}} and s1:ns_{1:n}, which is denoted as P(y∣R1:H,s1:n,X~q)P(y\mid R_{1:H},s_{1:n},\widetilde{X}_{\text{q}}). The prediction is denoted as y^q\widehat{y}_{\text{q}}, and the explicit expression of y^q\widehat{y}_{\text{q}} depends on the problem, e.g, regression or discrete token prediction.
+Context construction. Recall that each context sample sis_{i} can be decomposed as XiX_{i} and yiy_{i}, i.e., si=(Xi,yi)s_{i}=(X_{i},y_{i}). We define the stacked prompt, denoted as 𝐙\mathbf{Z}
+as:
+𝐙stacked\displaystyle\mathbf{Z}_{\rm stacked}
+:=(s1:n,X~q)=(X1,y1,⋯,Xn,yn,Xq,[mask]).\displaystyle:=(s_{1:n},\widetilde{X}_{\text{q}})=\left(X_{1},y_{1},\cdots,X_{n},y_{n},X_{\text{q}},\textrm{[mask]}\right).
+(2)
+The constructed prompt can be directly fed into an LM to make output prediction.
+Remark 3.
+In Section 2.1 and 2.2, we have introduced two modeling methods: First, we model the natural language generation by latent concept model with topic and class attributes; second, we model the token prediction using LM with ICL. The modeling framework can be summarized in Fig. 1. With this framework, we can explicitly characterize how context improves LM prediction by analyzing its impact on sequence generation. Specifically, our framework allows us to quantify the role of context in LM predictions through the following key aspects: 1) The sequence distribution p(⋅|θ)p(\cdot|\theta) can be defined in closed-form; 2) The constructed context is formally represented in a closed-form expression. This allows us to quantify the influence of context on LM predictions and understand which aspects of context are most crucial for enhancing prediction quality.
+2.3 Comparing proposed context construction with existing works
+We emphasize that our context construction method is different, and more realistic, as compared with existing approaches. We argue that the prompt construction in (2) is natural and consistent with how ICL context is constructed in practice; for example, we refer the readers to the implementation of the well-known MetaICL framework (Min et al., 2022)11
+1
+Code available at: https://github.com/facebookresearch/MetaICL, where the exact construction has been used. To illustrate this, in this section, we provide a simple example demonstrating how our structured context formulation method better align with practice.
+For simplicity, we assume the token embedding dimension as DD; XiX_{i} and yiy_{i} with length NN and 11, respectively. Then we have 𝐙stacked∈ℝD×((n+1)⋅N)\mathbf{Z}_{\rm stacked}\in\mathbb{R}^{D\times\left((n+1)\cdot N\right)}.
+Different from (2), which does not make any assumptions between the input XiX_{i}’s and output yiy_{i}’s, in the existing literature which analyzes the ICL performance (Huang et al., 2023; Ahn et al., 2024), the ground-truth model is assumed to be linear: yi=W​Xi,Xi∈ℝD×1,W∈ℝ1×Dy_{i}=WX_{i},X_{i}\in\mathbb{R}^{D\times 1},W\in\mathbb{R}^{1\times D}, where yiy_{i} is scalar.
+𝐙linear=(s1:n,Xq)=(X1⋯XnXqy1⋯yn𝟎)\displaystyle\mathbf{Z}_{\rm linear}=\left(s_{1:n},X_{\text{q}}\right)=\left(\begin{array}[]{ccccc}X_{1}&\cdots&X_{n}&X_{\text{q}}\\
+y_{1}&\cdots&y_{n}&\mathbf{0}\end{array}\right)
+In next few paragraphs, we will soon explain that the two prompt constructions (2) and (2.3) make huge difference in terms of how the context impacts the prediction.
+Transformer Structure: Let us consider a standard one-layer transformer without embedding layer for analysis. For simplicity, we do not consider skip connection and normalization. The simplified setting is standard in literature (Zhang et al., 2023a; Huang et al., 2023; Li et al., 2023b). Let us denote the input as 𝐙∈ℝL×G\mathbf{Z}\in\mathbb{R}^{L\times G} , where LL and GG are appropriate dimensions depending on how input is structured. Suppose the prediction is the output of the following Transformer:
+f𝐰​(𝒁)=(𝑾V​𝒁)​σ​((𝑾K​𝒁)⊤​(𝑾Q​𝒁)/L),\displaystyle f_{\bf w}(\boldsymbol{Z})=(\boldsymbol{W}^{V}\boldsymbol{Z})\sigma\left({(\boldsymbol{W}^{K}\boldsymbol{Z})^{\top}(\boldsymbol{W}^{Q}\boldsymbol{Z})}/{\sqrt{L}}\right),
+(5)
+where 𝐰:={𝑾Q,𝑾K,𝑾V∈ℝL×L}{\bf w}:=\{\boldsymbol{W}^{Q},\boldsymbol{W}^{K},\boldsymbol{W}^{V}\in\mathbb{R}^{L\times L}\} are query, key, value matrix, respectively. The activation function σ⁡(⋅):ℝG×G↦(0,1)G×G\sigma(\cdot):\mathbb{R}^{G\times G}\mapsto(0,1)^{G\times G} is a column-wise softmax activation. Define A⁡(𝐙)A(\mathbf{Z}) as the attention kernel, i.e, A⁡(𝐙):=σ⁡((𝑾K​𝒁)⊤​(𝑾Q​𝒁)/L∈ℝG×G)A(\mathbf{Z}):=\sigma\left((\boldsymbol{W}^{K}\boldsymbol{Z})^{\top}(\boldsymbol{W}^{Q}\boldsymbol{Z})/\sqrt{L}\in\mathbb{R}^{G\times G}\right).
+Comparison of masked output prediction with prompt (2) and (2.3):
+In the following example, we compare the explicit output prediction with prompts in (2) and (2.3) and the Transformer structure in (5). To make the comparison more clear and intuitive, consider the special case with following assumptions:
+Assumption 1.
+(i) The embedding for the masked token in (2) is 𝟎∈ℝL×1\mathbf{0}\in\mathbb{R}^{L\times 1}; (ii) The attention kernel is uniform, i.e, A​(𝐙)i​j=1GA(\mathbf{Z})_{ij}=\frac{1}{G}; (iii) Sequence length N=2N=2.
+With Assumption 1, we show the two predictions based on different prompt constructions as follows.
+(a) Prediction from (2): Set 𝐙=𝐙stacked\mathbf{Z}=\mathbf{Z}_{\text{stacked}} in (5). In this case, L=D,G=2​n+2L=D,G=2n+2. We have
+y^q=f𝐰(𝐙stacked)1:D,2​n+2=12​n+2∑i=1n𝑾V(Xi+yi)+12​n+2𝑾VXq.\displaystyle\widehat{y}_{\text{q}}=f_{\bf w}(\mathbf{Z}_{\text{stacked}})_{1:D,2n+2}=\frac{1}{2n+2}\sum\limits_{i=1}^{n}\boldsymbol{W}^{V}(X_{i}+y_{i})+\frac{1}{2n+2}\boldsymbol{W}^{V}{X}_{\text{q}}.
+(6)
+where f𝐰(⋅)a:b,c:df_{\bf w}(\cdot)_{a:b,c:d} denotes the submatrix of f𝐰​(⋅)f_{\bf w}(\cdot) with aa-th to bb-th row, and cc-th column to dd-th column.
+(b) Prediction from (2.3): Set 𝐙=𝐙linear\mathbf{Z}=\mathbf{Z}_{\text{linear}} in (5). In this case, L=2​D,G=n+1L=2D,G=n+1. We have
+y^q=f𝐰(𝐙linear)D+1:2​D,n+1=∑i=1n1n+1yi.\displaystyle\widehat{y}_{\text{q}}=f_{\bf w}(\mathbf{Z}_{\text{linear}})_{D+1:2D,n+1}=\sum\limits_{i=1}^{n}\frac{1}{n+1}y_{i}.
+(7)
+Remark 4.
+Notably, the above two predictions coming from two ways of prompting construction have completely different meanings. In (6), the prediction y^q\widehat{y}_{\text{q}} is a weighted sum of the 𝐖V​Xi\boldsymbol{W}^{V}X_{i},𝐖V​yi\boldsymbol{W}^{V}y_{i} and 𝐖V​Xq⊤\boldsymbol{W}^{V}X_{\text{q}}^{\top}, which include information from both in-context inputs and outputs. However, in (7), the output is a weighted sum of the in-context outputs yiy_{i} only, while the weights are determined by the correlation between XiX_{i} and XqX_{\text{q}}. Additionally, we justify Assumption 1 in Remark 10 in Appendix A.
+3 A Statistical Model: Pre-trained Transformer Shifts the Output Distribution
+So far we have proposed a framework to quantify the effect of context in ICL. In this section, we construct a concrete example (referred to as a “modified LDA (Latent Dirichlet Allocation)” setting), to show that a trained Transformer can learn context samples, shift the output distribution to the query task distribution, and achieve higher accuracy in prediction than the case without ICL. In the following, we will demonstrate the example under the setting in Section 2. To intuitively understand our example, we first show our synthetic result based on our example in Fig. 3, in which we display the distribution of topics in the prediction (with or without ICL) when the target topic is ‘2’. As indicated in the figure, ICL greatly improves the accuracy of the topic in prediction.
+Our detailed experiment setting is available in Appendix D.
+Figure 3: The distribution of topics in LDA example. Left: Prediction without ICL. Right: Prediction with ICL. Given 1010 different topics, denoted as ‘0’ to ‘9’. The topic of the query task is ‘2’. When the prediction is made by f𝐰​(X~q)f_{\bf w}(\widetilde{X}_{\text{q}}), the topic distribution does not lean toward ‘2’. However, when the prediction is made by f𝐰​(Zstacked)f_{\bf w}(\textbf{Z}_{\text{stacked}}), it is more likely that the query topic ‘2’ is predicted.
+3.1 Data Generation and Encoding
+We consider a specific data generation procedure following Section 2.1, which is a modified version of the Latent Dirichlet Allocation model (LDA) (Blei et al., 2003). The standard LDA setting is commonly used in topic modeling of NLP tasks (Jelodar et al., 2019; Li et al., 2023b). In our modified LDA setting, the ground-truth vocabulary consists of TT topics, each with KK different classes, and each class contains only one word. Each sample 𝒘:=w1:N\boldsymbol{w}:=w_{1:N} (training,context and query) is a sequence of NN tokens, which is generated by the following procedure: (a) Randomly choose τ\tau different topics t1,⋯,tτt_{1},\cdots,t_{\tau} from TT total topics. Generate concept θ∈𝚯\theta\in\mathbf{\Theta}; (b) Follows Step 1 in Section 2.1 Part Modeling real-world generation; (c) Follows Step 2 in Section 2.1 Part Modeling real-world generation.
+We use the above procedure to generate the training, query and context sequences, while we specify the distribution ptp_{t} and pcp_{c} in the following.
+Generated Data Distribution: For training, query and context sequences, the generated data distribution are different, to approximate the real-world case. Let t⁡(⋅)t(\cdot) and c⁡(⋅)c(\cdot) denote the topics and classes attributes of a sequence, respectively. The topic distribution of training sequence 𝒘\boldsymbol{w} given a θ\theta:
+pt​(t⁡(wj)=t)=1/τ,t∈{t1,⋯,tτ},∀j∈[N],\displaystyle p_{t}\left(t({w}_{j})=t\right)=1/\tau,\;t\in\{t_{1},\cdots,t_{\tau}\},\;\forall j\in[N],
+which implies the topic is uniformly distributed in corpus. For query and context sequences 𝒘\boldsymbol{w}, the topic distribution is
+{P⁡(t⁡(wj)=t)=1/τ,t∈{t1,⋯,tτ},j∈[L1]​,t(wj)=t∗,j=L1+1,⋯,N.\displaystyle\begin{cases}&P\left(t\left(w_{j}\right)=t\right)=1/\tau,\;t\in\left\{t_{1},\cdots,t_{\tau}\right\},j\in[L_{1}]\text{,}\\
+&t\left(w_{j}\right)=t^{*},j=L_{1}+1,\cdots,N.\end{cases}
+(8)
+For all types of sequences, the class distribution of first token is pc​(c⁡(w1)=t)=1/Kp_{c}\left(c(w_{1})=t\right)=1/K, while the class distribution of following tokens follows (1).
+Masking: For training sequences, the masking probability of each token is pmp_{m}. For an original training sequence, randomly choose masked indices π⁡(𝒘)⊂[N]\pi(\boldsymbol{w})\subset[N]. The training is done by masked token prediction . For query sequence, mask the L2L_{2} last tokens, while leaving the first L1L_{1} tokens unmasked (L1+L2=NL_{1}+L_{2}=N). The query task is to predict the last L2L_{2} masked tokens. Recall query sequence sq=(Xq,yq)s_{\text{q}}=(X_{\text{q}},y_{\text{q}}), XqX_{\text{q}} has length L1L_{1} and yqy_{\text{q}} has length L2L_{2}. The context samples are not masked.
+Remark 5.
+The data generation in (8) is an example of the query data generation in ICL framework defined in Section 2. In the inference phase, with the query word ‘Einstein’, p(⋅∣θq)p(\cdot\mid\theta_{\text{q}}) is supposed to attend to the key topic ‘Occupation’ in prediction. However, the predictor does not know the current prediction should attend to ‘Occupation’.
+‘Two-hot’ Encoding: For any generated sequence 𝒘\boldsymbol{w} with length NN, we define two associated matrices U,U~∈ℝ(T+K+2)×NU,\widetilde{U}\in\mathbb{R}^{(T+K+2)\times N} to denote the encoded binary matrix of sequence and masked sequence, respectively. The NN columns represent NN tokens in the sequence, and the rows are the indicators of mask, topics and classes, More specifically, each entry in UU (same for U~\widetilde{U}) can be written as following (See Fig. 5) in Appendix A:
+{Ul,j=1 if wj=[mask],l=0,Ul,j=1 if t(wj)=l, 1⩽l⩽T,Ul,j=1 if wj=[mask],l=T+1,Ul,j=1 if c(wj)=l−T−1,T+2⩽l⩽T+K+1,\displaystyle\begin{cases}&U_{l,j}=1\text{ if }w_{j}=\textrm{[mask]},\;l=0,\\
+&U_{l,j}=1\text{ if }t(w_{j})=l,\;1\leqslant l\leqslant T,\\
+&U_{l,j}=1\text{ if }w_{j}=\textrm{[mask]},\;l=T+1,\\
+&U_{l,j}=1\text{ if }c(w_{j})=l-T-1,\;T+2\leqslant l\leqslant T+K+1,\end{cases}
+while the other entries are 00s. For any generated training sequence strains_{\text{train}}, let Utrain,U~trainU_{\text{train}},\widetilde{U}_{\text{train}} denote the associated encoded binary matrices (unmasked and masked) with distribution 𝒟train\mathcal{D}_{\text{train}} and 𝒟~train\widetilde{\mathcal{D}}_{\text{train}}, respectively. Recall the notation from Section 2.1, for a query sequence sq=(Xq,yq)s_{\text{q}}=(X_{\text{q}},y_{\text{q}}) and its masked version X~q\widetilde{X}_{\text{q}}, we use UqU_{\text{q}} and U~q\widetilde{U}_{\text{q}} to denote the encoded binary matrices (unmasked and masked), with distribution 𝒟q\mathcal{D}_{\text{q}} and 𝒟~q\widetilde{\mathcal{D}}_{\text{q}}, respectively. And we denote the class of the first token in query sequence as kq∗k^{*}_{\text{q}}.
+3.2 Training Objective and Inference
+The generated and encoded data are used to train a Transformer model by masked token prediction. In the following we specify the training and inference steps. Let U:jU_{:j} denote the jj-th column of matrix UU. We consider the same regularized ℓ2\ell_{2} loss function as in Li et al. (2023b):
+L(𝐰)=𝔼U∼𝒟train𝔼π1|π|∑j∈π⁡(U)l(f𝐰(U~):j,U:j)+λ∥𝐰∥22,\displaystyle L({\bf w})=\mathbb{E}_{{U}\sim\mathcal{D}_{\text{train}}}\mathbb{E}_{\pi}\frac{1}{|\pi|}\sum_{j\in\pi(U)}l\left(f_{\bf w}(\widetilde{{U}})_{:j},{U}_{:j}\right)+\lambda\|{\bf w}\|_{2}^{2},
+(9)
+where f𝐰​(⋅)f_{\bf w}(\cdot) is defined in (5), l(f𝐰(U~):j,U:j)=∥f𝐰(U~):j−U:j∥2l(f_{\bf w}(\widetilde{U})_{:j},U_{:j})=\|f_{\bf w}(\widetilde{U})_{:j}-U_{:j}\|^{2}. The regularization term is applied due to the effectiveness of weight decay in training transformers, where λ\lambda is the regularization weight.
+Then we consider following two different types of prediction modeled by the Transformer structure in (5). Our goal is to predict the last L2=pm⋅NL_{2}=p_{m}\cdot N masked words in U~q\widetilde{U}_{\text{q}}. We provide the explicit formula of the prediction of masked token with model f𝐰​(⋅)f_{\bf w}(\cdot) in Appendix C.
+3.3 Pre-trained One-layer Transformer
+We consider the one-layer Transformer in (5) pre-trained on HH different tasks. We consider a special case where the attention score depends on position only. To be specific, we have the following assumption:
+Assumption 2.
+The Transformer in (5) has the following form of attentions:
+(1) For an encoded matrix U∈ℝ(T+K+1)×NU\in\mathbb{R}^{(T+K+1)\times N} (same for U~\widetilde{U})
+A​(U)j′,j=1/N,j′∈[N],L1+1⩽j⩽N.\displaystyle A({U})_{j^{\prime},j}=1/N,\;j^{\prime}\in[N],L_{1}+1\leqslant j\leqslant N.
+(2) For input 𝐙stacked=(s1:n,X~q)∈ℝD×N⁡(n+1){\bf Z}_{\text{stacked}}=(s_{1:n},\widetilde{X}_{\text{q}})\in\mathbb{R}^{D\times N(n+1)}, the associated encoded matrix Ustacked{U}_{\text{stacked}} has the following property:
+A​(Ustacked)(i−1)​N+r,j=ai/N,i∈[n+1],r∈[N],\displaystyle A\left({U}_{\text{stacked}}\right)_{(i-1)N+r,j}=a_{i}/N,\;i\in[n+1],r\in[N],
+where L1+1⩽j⩽N,a1<⋯<an+1,∑i=1nan=1L_{1}+1\leqslant j\leqslant N,a_{1}<\cdots<a_{n+1},\sum\limits_{i=1}^{n}a_{n}=1.
+In addition, we make the following generic assumptions on the document length and parameter 𝑾V\boldsymbol{W}^{V}.
+Assumption 3.
+Assume the document length NN is infinity.
+Assumption 4.
+Assume 𝐖V\boldsymbol{W}^{V} has block diagonal structure:
+𝐖V=(W1𝟎𝟎W2)\boldsymbol{W}^{V}=\left(\begin{array}[]{cc}W_{1}&\mathbf{0}\\
+\mathbf{0}&W_{2}\end{array}\right).
+Remark 6.
+We assume the 𝐖V\boldsymbol{W}^{V} to be block diagonal in order to keep the topic and class predictor independent. Similar block diagonal parameter assumption is also used in (Zhang et al., 2023a; Huang et al., 2023).
+Let topic​(⋅)\text{topic}(\cdot) and class​(⋅)\text{class}(\cdot) denote functions that select the most probable topic and class, respectively, from a column vector of probability distributions over topics and classes. Given a column vector btb_{t}
+representing the probability distribution over topics and a column vector bcb_{c} representing the probability distribution over classes, we define:
+topic⁡(bt)=arg⁡maxt​pt​(t),class⁡(bc)=arg⁡maxc​pc​(c)\displaystyle\operatorname{topic}\left(b_{t}\right)=\arg\max_{t}p_{t}(t),\;\operatorname{class}\left(b_{c}\right)=\arg\max_{c}p_{c}(c)
+Claim 1.
+Generate each encoded pre-train data Utrain∼𝒟train,U~train∼𝒟~trainU_{\text{train}}\sim\mathcal{D}_{\text{train}},\widetilde{U}_{\text{train}}\sim\widetilde{\mathcal{D}}_{\text{train}}. There exists a1<a2<⋯<an+1a_{1}<a_{2}<\cdots<a_{n+1}, such that if we train a one-layer Transformer (5): (1) With attention A⁡(⋅)A(\cdot) that satisfies Assumption 2; (2) By minimizing the ℓ2\ell_{2}-regularized objective function (9) with variable 𝐖V\boldsymbol{W}^{V}. Suppose 𝐖V∗∈limλ→0argmaxL(𝐖V)\boldsymbol{W}^{{V}*}\in\underset{\lambda\rightarrow 0}{\operatorname{lim}}\operatorname{argmax}L(\boldsymbol{W}^{V}), and we use f𝐖𝐕∗(⋅)f_{\boldsymbol{W}^{\boldsymbol{V}*}}(\cdot) as prediction model. Given an encoded masked query sequence U~q\widetilde{U}_{\text{q}}, predict the last L2L_{2} tokens (L1+1⩽j⩽NL_{1}+1\leqslant j\leqslant N) as y^q\widehat{y}_{q}. If the input is U~q\widetilde{U}_{\text{q}} without context,
+P⁡(topic⁡(y^q)j=t∗)=1/T,class⁡(y^q)j=T+kq∗+1;\displaystyle P({\operatorname{topic}(\widehat{y}_{\text{q}})}_{j}=t^{*})=1/T,\;\operatorname{class}(\widehat{y}_{\text{q}})_{j}=T+k^{*}_{\text{q}}+1;
+if the input is Ustacked{U}_{\text{stacked}},
+topic⁡(y^q)j=t∗,class⁡(y^q)j=T+kq∗+1.\displaystyle\operatorname{topic}(\widehat{y}_{\text{q}})_{j}=t^{*},\operatorname{class}(\widehat{y}_{\text{q}})_{j}=T+k^{*}_{\text{q}}+1.
+Remark 7.
+Claim 1 shows a case where the pre-train data distribution is different from the query data distribution, where topic is uniformly distributed in the pre-train stage. While in the inference stage, the aim is to focus on topic t∗t^{*}. Intuitively, if the prompt can provide context samples that focus on topic t∗t^{*}, then the pre-trained model will tend to predict the word from topic t∗t^{*}. This is because more recent sequences are assigned higher weights, making the class of the query sequence sqs_{\text{q}} more influential than that of the context samples. Additionally, we justify Assumption 2 in Appendix A and provide proof in Appendix C.
+4 Generalized Case: Quantify the effect of Context in ICL
+In the Claim 1, we used a specific data generation following our proposed framework in Section 2, and theoretically prove that ICL can improve the prediction accuracy when the pre-trained model on corpus fails to capture the query topic distribution. However, we still need to understand how trained Transformers and context improve prediction in a more general case. Here we ask the following question: In general, how to quantify the connection between the pre-training (including distribution, number of tasks, and number of samples) and the performance of ICL? In this section, under our setting in Section 2, we use a Bayesian framework following Xie et al. (2021) to quantify the relationship between the ICL prediction and prompt length, number of pre-train samples, and KL-divergence between pre-train and query task distribution. Let us consider a discrete output domain 𝒴\mathcal{Y} with the following several assumptions.
+Assumption 5.
+(Distinguishability of Output)
+For some constant ϵ\epsilon, the following relation holds ∀y∈𝒴\forall y\in\mathcal{Y}:
+p(yq∣s1:n,Xq,θ∗)>maxy≠yqp(y∣s1:n,Xq,θ∗)+ϵ/p(θ∗).\displaystyle p\left(y_{\text{q}}\mid s_{1:n},X_{\text{q}},\theta^{*}\right)>\max\limits_{y\neq y_{\text{q}}}p\left(y\mid s_{1:n},X_{\text{q}},\theta^{*}\right)\quad+\epsilon/p\left(\theta^{*}\right).
+Assumption 5 requires that the optimal yqy_{\text{q}} can be distinguished from the other answers in domain y∈𝒴y\in\mathcal{Y}.
+Assumption 6.
+The conditions on KL-divergence hold:
+c1:=\displaystyle c_{1}:=
+1H∑h=1HKL(p(⋅∣θh)∥p(⋅∣θ∗))−\displaystyle\frac{1}{H}\sum_{h=1}^{H}KL\left(p\left(\cdot\mid\theta_{h}\right)\|p\left(\cdot\mid\theta^{*}\right)\right)-
+KL(p(⋅∣θh)∥p(⋅∣θ))<0,∀θ∈𝚯.\displaystyle KL\left(p\left(\cdot\mid\theta_{h}\right)\|p(\cdot\mid\theta)\right)<0,\;\forall\theta\in\mathbf{\Theta}.
+(10)
+c2:=\displaystyle c_{2}:=
+−KL(p(⋅∣θ∗)∥p(⋅∣θ))<0,∀θ∈𝚯.\displaystyle-KL\left(p\left(\cdot\mid\theta^{*}\right)\|p(\cdot\mid\theta)\right)<0,\;\forall\theta\in\mathbf{\Theta}.
+(11)
+Equation (10) in Assumption 6 requires that the query task is closest to all pre-train tasks on average. Further, both (10) and (11) require the data distribution conditioned on the concept be distinguished. Intuitively, one way to increase the distinguishability is to increase the sequence length NN.
+Assumption 7.
+For each generated sequence ss in pre-train tasks Rh,h∈[H]R_{h},\;h\in[H] and prompt s1:ns_{1:n}, we can find a variance bound σ2\sigma^{2}, such that
+var⁡(log⁡p⁡(s∣θ)p⁡(s∣θ∗))⩽σ2,∀θ∈𝚯.\operatorname{var}\left(\log\frac{p\left(s\mid\theta\right)}{p\left(s\mid\theta^{*}\right)}\right)\leqslant\sigma^{2},\forall\theta\in\mathbf{\Theta}.
+Assumption 7 assumes the bounded variance log-likelihood ratio of a sequence conditioned on any other concept and query task concept θ∗\theta^{*}. Intuitively, when the sequence length NN is small, the variance σ\sigma is small. Thus, together with the distinguishability condition in Assumption 6, there exists a trade-off on the sequence length NN.
+Theorem 1.
+Suppose Assumption 5, 6, 7 hold, then with high probability, the following holds:
+arg⁡max𝑦p(y∣R1:H,s1:n,Xq)=arg⁡max𝑦p(y∣Xq,θ∗),\displaystyle\underset{y}{\arg\max}\ p\left(y\mid R_{1:H},s_{1:n},X_{\text{q}}\right)=\underset{y}{\arg\max}\ p\left(y\mid X_{\text{q}},\theta^{*}\right),
+suppose n1,H,nn_{1},H,n satisfies: n1​H>9​σ2c12,n>9​σ2c22,n_{1}H>\frac{9\sigma^{2}}{c_{1}^{2}},n>\frac{9\sigma^{2}}{c_{2}^{2}}, and
+−(n1​H​c1′+n​c2′)>log⁡1ϵ,-\left(n_{1}Hc_{1}^{\prime}+nc_{2}^{\prime}\right)>\log\frac{1}{\epsilon},
+where c1′=c1+3​σn1​Hc_{1}^{\prime}=c_{1}+\frac{3\sigma}{\sqrt{n_{1}H}}, c2′=c2+3​σnc_{2}^{\prime}=c_{2}+\frac{3\sigma}{\sqrt{n}}.
+Remark 8.
+Theorem 1 shows that, an in-context predictor with the pre-trained model can approximate the optimal Bayesian predictor. Specifically, it is required that the overall distribution of pre-train data is close to prompt distribution (Assumption 6), so that the pre-trained model can generalize well on query data. Further, if data is more distinguishable, i.e., c1c_{1} and c2c_{2} are small, then fewer number of pre-train and prompt samples are required to approximate the optimal predictor. These finding align with intuition.
+5 Experiment
+5.1 Experiment settings
+In this section, we validate Theorem 1 with empirical results on GPT-2 models (Solaiman et al., 2019) by showing that different pre-training tasks/datasets (that are more similar or dissimilar from the target task) can benefit the in-context inference, in terms of accuracy anf F1 score. Due to limited computation resources, we do not pre-train GPT-2 from scratch on various tasks to derive the pre-trained model MM in Section 2. Instead, we fine-tune the original GPT-2 with similar or dissimilar tasks to represent the final pre-trained model. We believe that this is already a strong showcase for Theorem 1 since we fine-tune from the same model but yield starkly different testing results after fine-tuning from the two different set of tasks.
+Specifically, our experiment consists of three steps.
+Step 1: Given KK available fine-tuning tasks/datasets, we first measure the similarity among them. We utilize Algorithm 1 in Wang et al. (2023), where each tasks is assigned with ‘concept tokens’ encoding the theme of the task. We then measure the distance between concept tokens to characterize the divergence between the tasks. The detail of how to obtain such ‘concept tokens’ for each task is provided in Appendix E. In our experiment, we choose K=7K=7 tasks: hate_speech_offensive, hatexplain, tweet_eval-hate, tweet_eval-offensive, ag_news, glue-sst2, and dream.
+Step 2: Once we obtain the concept tokens of each of the task, we simultaneously obtain a ‘representation vector’ of each task by simply passing the concept tokens into the embedding layer of the GPT-2 model. We then could calculate the cosine similarity between these representation vectors. The obtained similarity scores are recorded in Table 3. We also visualize the representation vectors of the concept tokens in Fig. 4. Intuitively, the following tasks hate_speech_offensive, hatexplain, tweet_eval-hate and tweet_eval-offensive are similar to each other, and they demonstrate similarity in Table 3. We thus pick these four tasks as the fine-tune tasks which are similar to the target task to validate our Theorem 1, whereas other datasets in the table would be consider as dissimilar tasks.
+Step 3: Now we are ready to validate that similar tasks could boost the performance of the in-context inference target task. We fix the target task as tweet_eval-hate, fine-tune the pre-trained GPT-2 by two set of other tasks, namely either with similar tasks (e.g. hatexplain) or dissimilar tasks (e.g. glue-sst2) from Step 2. Then we can evaluate the in-context inference accuracy and F1 score on these GPT-2 models fine-tuned on different tasks.
+Figure 4: Distribution of concept token visualized by t-SNE plot. Intuitively, the first four tasks are similar. The visualization of the learned concept token indeed shows the representation of these four tasks are close each other compared to other tasks.
+5.2 Results and Discussion
+Tasks
+1Diff
+1Sim
+2Diff
+1Sim1Diff
+2Diff1Sim
+1Diff2Sim
+2Diff2Sim
+1Diff3Sim
+Macro-F1
+56.4
+59.1
+57.1
+60.2
+59.0
+63.1
+59.9
+60.7
+Accuracy
+0.59
+0.62
+0.62
+0.63
+0.60
+0.64
+0.62
+0.63
+Table 1: Testing result of fine-tuning on different number of similar and dissimilar tasks. Here ‘aSimbDiff’ means we fine-tune GPT-2 with a similar tasks and b dissimilar tasks.
+Main results:
+In our experiments, we pick up different number of similar and dissimilar tasks to fine-tune the GPT-2 model. What we expect, in the view of Theorem 1 is that with more similar fine-tune tasks (defined by the similarity score in Table 3) we have better ICL testing performances. We report the performance over testing dataset of the target task of our fine-tuned models (fine-tune over different numbers of similar and dissimilar tasks) in Table 1.
+From Table 1 we can conclude: (1) When only one dataset is used for fine-tuning, the model fine-tuned with similar tasks has 3% higher accuracy than the model fine-tuned with dissimilar tasks; (2) In the case of using two datasets, the accuracy of the model using one similar and one dissimilar dataset for fine-tuning is 1% higher than that of the model using two dissimilar datasets for fine-tuning, and the Macro-F1 score is 3.1 higher; (3) For the case of using three or four datasets for training, the performance of the fine-tuned model using more similar task datasets is better than that of the model using more dissimilar task datasets. These results indicate that fine-tuning the model with similar task datasets has a significant positive impact on the model.
+In addition, we also conduct the same experiment using a different set of tasks (Table 4) and different model (GPT-XL), the resulting Table 2 consistently support our observation that using similar task datasets for fine-tuning has a significant positive impact on the model in terms of accuracy.
+Tasks
+2Sim
+2Diff
+4Diff
+4Diff1Sim
+4Diff2Sim
+yelp_polarity
+91.1
+87.8
+88.9
+90.7
+91.2
+imdb
+95.7
+84.7
+81.4
+92.5
+94.5
+Table 2: Testing on two target datasets yelp_polarity and imdb by fine-tuning GPT2-XL on different datasets, where the similarity is ranked according to the similarity score in Table 4. The reporting numbers are the accuracies on the testing datasets.
+References
+Ahn et al. (2024)
+K. Ahn, X. Cheng, H. Daneshmand, and S. Sra.
+Transformers learn to implement preconditioned gradient descent for in-context learning.
+Advances in Neural Information Processing Systems, 36, 2024.
+Ahuja et al. (2023)
+K. Ahuja, M. Panwar, and N. Goyal.
+In-context learning through the bayesian prism.
+arXiv preprint arXiv:2306.04891, 2023.
+Akyürek et al. (2022)
+E. Akyürek, D. Schuurmans, J. Andreas, T. Ma, and D. Zhou.
+What learning algorithm is in-context learning? investigations with linear models.
+arXiv preprint arXiv:2211.15661, 2022.
+Blei et al. (2003)
+D. M. Blei, A. Y. Ng, and M. I. Jordan.
+Latent dirichlet allocation.
+Journal of machine Learning research, 3(Jan):993–1022, 2003.
+Brown et al. (2020)
+T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, et al.
+Language models are few-shot learners.
+Advances in neural information processing systems, 33:1877–1901, 2020.
+Chen et al. (2024)
+S. Chen, H. Sheen, T. Wang, and Z. Yang.
+Training dynamics of multi-head softmax attention for in-context learning: Emergence, convergence, and optimality.
+arXiv preprint arXiv:2402.19442, 2024.
+Dai et al. (2022)
+D. Dai, Y. Sun, L. Dong, Y. Hao, S. Ma, Z. Sui, and F. Wei.
+Why can gpt learn in-context? language models implicitly perform gradient descent as meta-optimizers.
+arXiv preprint arXiv:2212.10559, 2022.
+Devlin et al. (2018)
+J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova.
+Bert: Pre-training of deep bidirectional transformers for language understanding.
+arXiv preprint arXiv:1810.04805, 2018.
+Edelman et al. (2022)
+B. L. Edelman, S. Goel, S. Kakade, and C. Zhang.
+Inductive biases and variable creation in self-attention mechanisms.
+In International Conference on Machine Learning, pages 5793–5831. PMLR, 2022.
+Fang et al. (2024)
+X. Fang, W. Xu, F. A. Tan, J. Zhang, Z. Hu, Y. J. Qi, S. Nickleach, D. Socolinsky, S. Sengamedu, C. Faloutsos, et al.
+Large language models (llms) on tabular data: Prediction, generation, and understanding-a survey.
+2024.
+Fu et al. (2023)
+D. Fu, T.-Q. Chen, R. Jia, and V. Sharan.
+Transformers learn higher-order optimization methods for in-context learning: A study with linear models.
+arXiv preprint arXiv:2310.17086, 2023.
+Gruber et al. (2007)
+A. Gruber, Y. Weiss, and M. Rosen-Zvi.
+Hidden topic markov models.
+In Artificial intelligence and statistics, pages 163–170. PMLR, 2007.
+Han et al. (2023)
+C. Han, Z. Wang, H. Zhao, and H. Ji.
+Explaining emergent in-context learning as kernel regression.
+2023.
+Hegselmann et al. (2023)
+S. Hegselmann, A. Buendia, H. Lang, M. Agrawal, X. Jiang, and D. Sontag.
+Tabllm: Few-shot classification of tabular data with large language models.
+In International Conference on Artificial Intelligence and Statistics, pages 5549–5581. PMLR, 2023.
+Huang et al. (2023)
+Y. Huang, Y. Cheng, and Y. Liang.
+In-context convergence of transformers.
+arXiv preprint arXiv:2310.05249, 2023.
+Jelodar et al. (2019)
+H. Jelodar, Y. Wang, C. Yuan, X. Feng, X. Jiang, Y. Li, and L. Zhao.
+Latent dirichlet allocation (lda) and topic modeling: models, applications, a survey.
+Multimedia tools and applications, 78:15169–15211, 2019.
+Kim and Suzuki (2024)
+J. Kim and T. Suzuki.
+Transformers learn nonlinear features in context: Nonconvex mean-field dynamics on the attention landscape.
+arXiv preprint arXiv:2402.01258, 2024.
+Li et al. (2023a)
+Y. Li, M. E. Ildiz, D. Papailiopoulos, and S. Oymak.
+Transformers as algorithms: Generalization and stability in in-context learning.
+In International Conference on Machine Learning, pages 19565–19594. PMLR, 2023a.
+Li et al. (2023b)
+Y. Li, Y. Li, and A. Risteski.
+How do transformers learn topic structure: Towards a mechanistic understanding.
+In International Conference on Machine Learning, pages 19689–19729. PMLR, 2023b.
+Li et al. (2024)
+Y. Li, K. Sreenivasan, A. Giannou, D. Papailiopoulos, and S. Oymak.
+Dissecting chain-of-thought: Compositionality through in-context filtering and learning.
+Advances in Neural Information Processing Systems, 36, 2024.
+Mahankali et al. (2023)
+A. Mahankali, T. B. Hashimoto, and T. Ma.
+One step of gradient descent is provably the optimal in-context learner with one layer of linear self-attention.
+arXiv preprint arXiv:2307.03576, 2023.
+Min et al. (2022)
+S. Min, M. Lewis, L. Zettlemoyer, and H. Hajishirzi.
+Metaicl: Learning to learn in context.
+In M. Carpuat, M.-C. de Marneffe, and I. V. Meza Ruiz, editors, Proceedings of the 2022 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, pages 2791–2809, Seattle, United States, Jul 2022. Association for Computational Linguistics.
+doi: 10.18653/v1/2022.naacl-main.201.
+URL https://aclanthology.org/2022.naacl-main.201.
+Müller et al. (2021)
+S. Müller, N. Hollmann, S. P. Arango, J. Grabocka, and F. Hutter.
+Transformers can do bayesian inference.
+arXiv preprint arXiv:2112.10510, 2021.
+Olsson et al. (2022)
+C. Olsson, N. Elhage, N. Nanda, N. Joseph, N. DasSarma, T. Henighan, B. Mann, A. Askell, Y. Bai, A. Chen, et al.
+In-context learning and induction heads.
+arXiv preprint arXiv:2209.11895, 2022.
+Radford et al. (2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, I. Sutskever, et al.
+Language models are unsupervised multitask learners.
+OpenAI blog, 1(8):9, 2019.
+Raventós et al. (2024)
+A. Raventós, M. Paul, F. Chen, and S. Ganguli.
+Pretraining task diversity and the emergence of non-bayesian in-context learning for regression.
+Advances in Neural Information Processing Systems, 36, 2024.
+Solaiman et al. (2019)
+I. Solaiman, M. Brundage, J. Clark, A. Askell, A. Herbert-Voss, J. Wu, A. Radford, G. Krueger, J. W. Kim, S. Kreps, et al.
+Release strategies and the social impacts of language models.
+arXiv preprint arXiv:1908.09203, 2019.
+Van der Maaten and Hinton (2008)
+L. Van der Maaten and G. Hinton.
+Visualizing data using t-sne.
+Journal of machine learning research, 9(11), 2008.
+Von Oswald et al. (2023)
+J. Von Oswald, E. Niklasson, E. Randazzo, J. Sacramento, A. Mordvintsev, A. Zhmoginov, and M. Vladymyrov.
+Transformers learn in-context by gradient descent.
+In International Conference on Machine Learning, pages 35151–35174. PMLR, 2023.
+Wang et al. (2023)
+X. Wang, W. Zhu, M. Saxon, M. Steyvers, and Y. W. Wang.
+Large language models are latent variable models: Explaining and finding good demonstrations for in-context learning.
+arXiv preprint arXiv:2301.11916, 2023.
+Wei et al. (2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language models.
+Advances in neural information processing systems, 35:24824–24837, 2022.
+Wu et al. (2023)
+J. Wu, D. Zou, Z. Chen, V. Braverman, Q. Gu, and P. L. Bartlett.
+How many pretraining tasks are needed for in-context learning of linear regression?
+arXiv preprint arXiv:2310.08391, 2023.
+Xie et al. (2021)
+S. M. Xie, A. Raghunathan, P. Liang, and T. Ma.
+An explanation of in-context learning as implicit bayesian inference.
+arXiv preprint arXiv:2111.02080, 2021.
+Xing et al. (2024)
+Y. Xing, X. Lin, N. Suh, Q. Song, and G. Cheng.
+Benefits of transformer: In-context learning in linear regression tasks with unstructured data.
+arXiv preprint arXiv:2402.00743, 2024.
+Yang et al. (2022)
+Y. Yang, D. P. Wipf, et al.
+Transformers from an optimization perspective.
+Advances in Neural Information Processing Systems, 35:36958–36971, 2022.
+Zhang et al. (2023a)
+R. Zhang, S. Frei, and P. L. Bartlett.
+Trained transformers learn linear models in-context.
+arXiv preprint arXiv:2306.09927, 2023a.
+Zhang et al. (2023b)
+Y. Zhang, F. Zhang, Z. Yang, and Z. Wang.
+What and how does in-context learning learn? bayesian model averaging, parameterization, and generalization.
+arXiv preprint arXiv:2305.19420, 2023b.
+Appendix A Justification of modeling and assumptions
+Remark 9.
+The above modeling of sequence generation effectively captures key characteristics of natural language generation, ensuring both coherence and factual alignment. 1) Topic Consistency: Usually pt(⋅|θ)p_{t}(\cdot|\theta) assigns higher probability to topics related to θ\theta; 2) The class attributes of key tokens align with real-world facts, as determined by the first token. In addition, it is important to highlight that unrelated topics—such as ‘Occupation’ and ‘Geography’—are unlikely to occur under a shared concept. Even if two words belong to the same class (e.g, ‘Trump’ and ‘Earthquake’), they are not likely to appear together in the same sequence.
+Remark 10.
+(Justifying Assumption 1)
+In Assumption 1, we make two relatively strong assumptions, i.e (i) and (ii). We clarify that (i) and (ii) are reasonable in our illustrated example to show the difference in the predictions with (2) and (2.3). (i) is commonly used in literature [Huang et al., 2023, Zhang et al., 2023a], where the masked output is denoted as 𝟎\mathbf{0} (which is showed in (2.3)). (ii) assumes uniform attention. However, notice that for general 𝐖Q\boldsymbol{W}^{Q} and 𝐖K\boldsymbol{W}^{K}, it only changes the coefficient of the embedded context samples and XqX_{\text{q}} in (6), and the coefficient of yiy_{i} in (7). More specifically, for the term 𝐖V​(Xi+yi)\boldsymbol{W}^{V}(X_{i}+y_{i}) in (6), the coefficient is some constant rather than 12​n+1\frac{1}{2n+1}; in (7), the coefficients of yiy_{i} is some constant instead of 1n+1\frac{1}{n+1}. This does not change the fundamental difference between (6) and (7).
+Remark 11.
+Assumption 2 characterizes the correlation (quantified by attention A⁡(⋅)A(\cdot)) between the masked words ((X~q):,j,L1+1⩽j⩽N)({(\widetilde{X}_{\text{q}})}_{:,j},\;L_{1}+1\leqslant j\leqslant N) and the previous words with the attention head. Intuitively, when a word is far from the masked word in a sequence, it contributes less to the masked word in prediction. We model this position factor by an ascending sequence of weights a1<a2<⋯<an+1a_{1}<a_{2}<\cdots<a_{n+1}. For a sequence with a length larger than NN, we assume the correlation between the word and the masked word will decay with the “distance” increasing (thus ai<ai′,∀i<i′a_{i}<a_{i}^{\prime},\forall i<i^{\prime}). To simplify our analysis, we assume the token correlation within length NN be a uniform matrix (with each entry in A⁡(⋅)A(\cdot) equal to 1N\frac{1}{N}). In Appendix D, we empirically verify that if we freeze uniform attention and only update 𝐖V\boldsymbol{W}^{V} in the training phase, the performance is very close to updating all the variables. A similar observation is found in [Li et al., 2023b], where most theoretical results are also based on uniform attention.
+Figure 5: Example of encoded sequence.
+Appendix B Proof of Theorem 1
+Proof.
+We can derive the prediction probability of label yy as:
+p⁡(y∣R1,R2,⋯,RH,Sn,Xq)\displaystyle\quad p\left(y\mid R_{1},R_{2},\cdots,R_{H},S_{n},X_{\text{q}}\right)
+=∫θp⁡(y∣R1,R2,⋯,RH,Sn,Xq,θ)​p​(θ∣R1,R2,⋯,RH,Sn,Xq)​𝑑θ\displaystyle=\int_{\theta}p\left(y\mid R_{1},R_{2},\cdots,R_{H},S_{n},X_{\text{q}},\theta\right)p\left(\theta\mid R_{1},R_{2},\cdots,R_{H},S_{n},X_{\text{q}}\right)d\theta
+∝∫θp⁡(y∣R1,R2,⋯,RH,Sn,Xq,θ)​p​(R1,R2,⋯,RH,Sn,Xq∣θ)​p​(θ)​𝑑θ\displaystyle\propto\int_{\theta}p\left(y\mid R_{1},R_{2},\cdots,R_{H},S_{n},X_{\text{q}},\theta\right)p\left(R_{1},R_{2},\cdots,R_{H},S_{n},X_{\text{q}}\mid\theta\right)p(\theta)d\theta
+∝∫θp⁡(y∣Sn,Xq,θ)⋅p⁡(R1,R2,⋯,RH,Sn,Xq∣θ)p⁡(R1,R2,⋯,RH,Sn,Xq∣θ∗)⋅p⁡(θ)​𝑑θ\displaystyle\propto\int_{\theta}p\left(y\mid S_{n},X_{\text{q}},\theta\right)\cdot\frac{p\left(R_{1},R_{2},\cdots,R_{H},S_{n},X_{\text{q}}\mid\theta\right)}{p\left(R_{1},R_{2},\cdots,R_{H},S_{n},X_{\text{q}}\mid\theta^{*}\right)}\cdot p\left(\theta\right)d\theta
+∝∫θp⁡(y∣Sn,Xq,θ)⋅p⁡(R1,R2,⋯,RH∣θ)p⁡(R1,R2,⋯,Rh∣θ∗)⋅p⁡(Sn,Xq∣θ)p⁡(Sn,Xq∣θ∗)⋅p⁡(θ)​𝑑θ\displaystyle\propto\int_{\theta}p\left(y\mid S_{n},X_{\text{q}},\theta\right)\cdot\frac{p\left(R_{1},R_{2},\cdots,R_{H}\mid\theta\right)}{p\left(R_{1},R_{2},\cdots,R_{h}\mid\theta^{*}\right)}\cdot\frac{p\left(S_{n},X_{\text{q}}\mid\theta\right)}{p\left(S_{n},X_{\text{q}}\mid\theta^{*}\right)}\cdot p\left(\theta\right)d\theta
+Next, we aim to show that
+p⁡(R1,R2,⋯,RH∣θ)p⁡(R1,R2,⋯,RH∣θ∗)⋅p⁡(Sn,Xq∣θ)p⁡(Sn,Xq∣θ∗)⟶n→∞0,∀θ≠θ∗.\displaystyle\frac{p\left(R_{1},R_{2},\cdots,R_{H}\mid\theta\right)}{p\left(R_{1},R_{2},\cdots,R_{H}\mid\theta^{*}\right)}\cdot\frac{p\left(S_{n},X_{\text{q}}\mid\theta\right)}{p\left(S_{n},X_{\text{q}}\mid\theta^{*}\right)}\stackrel{{\scriptstyle n\rightarrow\infty}}{{\longrightarrow}}0,\;\forall\theta\neq\theta^{*}.
+Define rn1​(θ):=1n1​H​∑h=1H∑i=1n1log⁡p⁡(Rh,i∣θ)p⁡(Rh,i∣θ∗)r_{n_{1}}(\theta):=\frac{1}{n_{1}H}\sum\limits_{h=1}^{H}\sum\limits_{i=1}^{n_{1}}\log\frac{p\left(R_{h,i}\mid\theta\right)}{p\left(R_{h,i}\mid\theta^{*}\right)}, qn​(θ):=1n​∑i=1nlog⁡p⁡(si∣θ)p⁡(si∣θ∗)q_{n}(\theta):=\frac{1}{n}\sum\limits_{i=1}^{n}\log\frac{p\left(s_{i}\mid\theta\right)}{p\left(s_{i}\mid\theta^{*}\right)}.
+Then we have
+p⁡(R1,R2,⋯,RH∣θ)p⁡(R1,R2,⋯,RH∣θ∗)⋅p⁡(Sn,Xq∣θ)p⁡(Sn,Xq∣θ∗)=exp⁡(n1​H⋅rn1​(θ)+n⋅qn​(θ))\displaystyle\frac{p\left(R_{1},R_{2},\cdots,R_{H}\mid\theta\right)}{p\left(R_{1},R_{2},\cdots,R_{H}\mid\theta^{*}\right)}\cdot\frac{p\left(S_{n},X_{\text{q}}\mid\theta\right)}{p\left(S_{n},X_{\text{q}}\mid\theta^{*}\right)}=\exp\left(n_{1}H\cdot r_{n_{1}}(\theta)+n\cdot q_{n}(\theta)\right)
+(1) With probability>0.999>0.999, rn1​(θ)<0r_{n_{1}}(\theta)<0.
+We know ∀i∈[n1]\forall i\in[n_{1}],
+𝔼[rn1(θ)]=𝔼Rh,i∼p(⋅∣θh)[1n1​T∑h=1H∑i=1n1logp⁡(Rh,i∣θ)p⁡(Rh,i∣θ∗)]\displaystyle\mathbb{E}[r_{n_{1}}(\theta)]=\mathbb{E}_{R_{h,i}\sim p(\cdot\mid\theta_{h})}\left[\frac{1}{n_{1}T}\sum_{h=1}^{H}\sum_{i=1}^{n_{1}}\log\frac{p\left(R_{h,i}\mid\theta\right)}{p\left(R_{h,i}\mid\theta^{*}\right)}\right]
+=1H∑h=1H𝔼Rh,i∼p(⋅∣θh)[logp⁡(Rh,i∣θ)p⁡(Rh,i∣θ∗)]\displaystyle=\frac{1}{H}\sum_{h=1}^{H}\mathbb{E}_{R_{h,i}\sim p(\cdot\mid\theta_{h})}\left[\log\frac{p\left(R_{h,i}\mid\theta\right)}{p\left(R_{h,i}\mid\theta^{*}\right)}\right]
+=1T∑h=1H𝔼Rh,i∼p(⋅∣θh)[logp⁡(Rh,i∣θ)p⁡(Rh,i∣θh)+logp⁡(Rh,i∣θh)p⁡(Rh,i∣θ∗)]\displaystyle=\frac{1}{T}\sum_{h=1}^{H}\mathbb{E}_{R_{h,i}\sim p(\cdot\mid\theta_{h})}\left[\log\frac{p\left(R_{h,i}\mid\theta\right)}{p\left(R_{h,i}\mid\theta_{h}\right)}+\log\frac{p\left(R_{h,i}\mid\theta_{h}\right)}{p\left(R_{h,i}\mid\theta^{*}\right)}\right]
+=1T∑t=1TKL(p(⋅∣θh)||p(⋅∣θ∗))−KL(p(⋅∣θh)||p(⋅∣θ))\displaystyle=\frac{1}{T}\sum\limits_{t=1}^{T}\text{KL}\left(p\left(\cdot\mid\theta_{h}\right)||p\left(\cdot\mid\theta^{*}\right)\right)-\text{KL}\left(p\left(\cdot\mid\theta_{h}\right)||p\left(\cdot\mid\theta\right)\right)
+By Assumption, we have
+1T∑h=1HKL(p(⋅∣θh∗)∥p(⋅∣θ∗))−KL(p(⋅∣θh)∥p(⋅∣θ)):=c1<0\displaystyle\frac{1}{T}\sum_{h=1}^{H}\mathrm{KL}\left(p\left(\cdot\mid\theta_{h}^{*}\right)\|p\left(\cdot\mid\theta^{*}\right)\right)-\operatorname{KL}\left(p\left(\cdot\mid\theta_{h}\right)\|p(\cdot\mid\theta)\right):=c_{1}<0
+In addition, By Assumption 7, the variance of rn1​(θ)r_{n_{1}}(\theta) can be bounded as following:
+var⁡(rn1​(θ))=var⁡(1n1​T​∑h=1H∑i=1n1log⁡p⁡(Rh,i∣θ)p⁡(Rh,i∣θ∗))⩽σ2n1​H\displaystyle\operatorname{var}\left(r_{n_{1}}(\theta)\right)=\operatorname{var}\left(\frac{1}{n_{1}T}\sum_{h=1}^{H}\sum_{i=1}^{n_{1}}\log\frac{p\left(R_{h,i}\mid\theta\right)}{p\left(R_{h,i}\mid\theta^{*}\right)}\right)\leqslant\frac{\sigma^{2}}{n_{1}H}
+Then by Central Limit Theorem (CLT), with probability >0.999>0.999,
+rn1​(θ)<c1+3​σn1​H:=c1′<0\displaystyle r_{n_{1}}(\theta)<c_{1}+\frac{3\sigma}{\sqrt{n_{1}H}}:=c_{1}^{\prime}<0
+(2) With probability >0.999>0.999, qn​(θ)>0q_{n}(\theta)>0. Similar to the derivation in (1), we have
+qn(θ)⩽−KL(p(⋅∣θ∗)||p(⋅∣θ))+3​σn:=c2′<0.\displaystyle q_{n}(\theta)\leqslant-KL\left(p\left(\cdot\mid\theta^{*}\right)||p\left(\cdot\mid\theta\right)\right)+\frac{3\sigma}{\sqrt{n}}:=c_{2}^{\prime}<0.
+p⁡(R1,R2,⋯,RH∣θ)p⁡(R1,R2,⋯,RH∣θ∗)⋅p⁡(Sn,Xq∣θ)p⁡(Sn,Xq∣θ∗)=exp⁡(n1​H⋅rn1​(θ)+n⋅qn​(θ))<ϵ\displaystyle\frac{p\left(R_{1},R_{2},\cdots,R_{H}\mid\theta\right)}{p\left(R_{1},R_{2},\cdots,R_{H}\mid\theta^{*}\right)}\cdot\frac{p\left(S_{n},X_{\text{q}}\mid\theta\right)}{p\left(S_{n},X_{\text{q}}\mid\theta^{*}\right)}=\exp\left(n_{1}H\cdot r_{n_{1}}(\theta)+n\cdot q_{n}(\theta)\right)<\epsilon
+Then we can derive
+−(n1​H​c1′+n​c2′)>log⁡1ϵ.\displaystyle-(n_{1}Hc_{1}^{\prime}+nc_{2}^{\prime})>\log\frac{1}{\epsilon}.
+Suppose holds, then we have the following equation:
+∫θp⁡(y∣Sn,Xq,θ)⋅p⁡(R1,R2,⋯,RH∣θ)p⁡(R1,R2,⋯,RH∣θ∗)⋅p⁡(Sn,Xq∣θ)p⁡(Sn,Xq∣θ∗)⋅p⁡(θ)​𝑑θ\displaystyle\int_{\theta}p\left(y\mid S_{n},X_{\text{q}},\theta\right)\cdot\frac{p\left(R_{1},R_{2},\cdots,R_{H}\mid\theta\right)}{p\left(R_{1},R_{2},\cdots,R_{H}\mid\theta^{*}\right)}\cdot\frac{p\left(S_{n},X_{\text{q}}\mid\theta\right)}{p\left(S_{n},X_{\text{q}}\mid\theta^{*}\right)}\cdot p(\theta)d\theta
+=p⁡(y∣Sn,Xq,θ∗)​p​(θ∗)+∫θ≠θ∗p⁡(y∣Sn,Xq,θ)⋅exp⁡(n1​H⋅rn1​(θ)+n⋅qn​(θ))⋅p⁡(θ)​𝑑θ\displaystyle=p\left(y\mid S_{n},X_{\text{q}},\theta^{*}\right)p\left(\theta^{*}\right)+\int_{\theta\neq\theta^{*}}p\left(y\mid S_{n},X_{\text{q}},\theta\right)\cdot\exp\left(n_{1}H\cdot r_{n_{1}}(\theta)+n\cdot q_{n}(\theta)\right)\cdot p(\theta)d\theta
+∝p⁡(y∣Sn,Xq,θ∗)+1p⁡(θ∗)​∫θ≠θ∗p⁡(y∣Sn,Xq,θ)⋅exp⁡(n1​H⋅rn1​(θ)+n⋅qn​(θ))⋅p⁡(θ)​𝑑θ\displaystyle\propto p\left(y\mid S_{n},X_{\text{q}},\theta^{*}\right)+\frac{1}{p(\theta^{*})}\int_{\theta\neq\theta^{*}}p\left(y\mid S_{n},X_{\text{q}},\theta\right)\cdot\exp\left(n_{1}H\cdot r_{n_{1}}(\theta)+n\cdot q_{n}(\theta)\right)\cdot p(\theta)d\theta
+=p⁡(y∣Sn,Xq,θ∗)+1p⁡(θ∗)​∫θ≠θ∗ϵθ​(y)⋅p⁡(θ)​𝑑θ\displaystyle=p\left(y\mid S_{n},X_{\text{q}},\theta^{*}\right)+\frac{1}{p(\theta^{*})}\int_{\theta\neq\theta^{*}}\epsilon_{\theta}(y)\cdot p(\theta)d\theta
+Thus, we can conclude that
+p⁡(y∣R1,R2,⋯,Rh,Sn,Xq)∝p⁡(y∣Sn,Xq,θ∗)+1p⁡(θ∗)​∫θ≠θ∗ϵθ​(y)⋅p⁡(θ)​𝑑θ,∀y.\displaystyle p\left(y\mid R_{1},R_{2},\cdots,R_{h},S_{n},X_{\text{q}}\right)\propto p\left(y\mid S_{n},X_{\text{q}},\theta^{*}\right)+\frac{1}{p\left(\theta^{*}\right)}\int_{\theta\neq\theta^{*}}\epsilon_{\theta}(y)\cdot p(\theta)d\theta,\;\forall y.
+Since we know
+c​∑y∈𝒴p⁡(y∣Sn,Xq,θ∗)+1p⁡(θ∗)​∫θ≠θ∗ϵθ​(y)⋅p⁡(θ)​𝑑θ=1\displaystyle c\sum\limits_{y\in\mathcal{Y}}p\left(y\mid S_{n},X_{\text{q}},\theta^{*}\right)+\frac{1}{p\left(\theta^{*}\right)}\int_{\theta\neq\theta^{*}}\epsilon_{\theta}(y)\cdot p(\theta)d\theta=1
+We have c=1/∑y∈𝒴p⁡(y∣Sn,Xq,θ∗)+1p⁡(θ∗)​∫θ≠𝜽∗ϵθ​(y)⋅p⁡(θ)​𝑑θc=1/\sum_{y\in\mathcal{Y}}p\left(y\mid S_{n},X_{\text{q}},\theta^{*}\right)+\frac{1}{p\left(\theta^{*}\right)}\int_{\theta\neq\boldsymbol{\theta}^{*}}\epsilon_{\theta}(y)\cdot p(\theta)d\theta. Let y∗=argmaxy∈𝒴⁡p⁡(y∣Sn,Xq,θ)y^{*}=\operatorname{argmax}_{y\in\mathcal{Y}}p\left(y\mid S_{n},X_{\text{q}},\theta\right)
+p⁡(y∗∣R1,R2,⋯,RH,Sn,Xq)=c⋅p⁡(y∗∣Sn,Xq,θ∗)+1p⁡(θ∗)​∫θ≠𝜽∗ϵθ​(y)⋅p⁡(θ)​𝑑θ\displaystyle p\left(y^{*}\mid R_{1},R_{2},\cdots,R_{H},S_{n},X_{\text{q}}\right)=c\cdot p\left(y^{*}\mid S_{n},X_{\text{q}},\theta^{*}\right)+\frac{1}{p\left(\theta^{*}\right)}\int_{\theta\neq\boldsymbol{\theta}^{*}}\epsilon_{\theta}(y)\cdot p(\theta)d\theta
+⩾c⋅p⁡(y∗∣Sn,Xq,θ∗)\displaystyle\geqslant c\cdot p\left(y^{*}\mid S_{n},X_{\text{q}},\theta^{*}\right)
+>c⋅(maxy≠y∗⁡p⁡(y∣Sn,Xq,θ∗)+ϵp⁡(θ∗))\displaystyle>c\cdot\left(\max\limits_{y\neq y^{*}}p\left(y\mid S_{n},X_{\text{q}},\theta^{*}\right)+\frac{\epsilon}{p(\theta^{*})}\right)
+Thus, we can conclude that argmaxy∈𝒴⁡p⁡(y∣R1,R2,⋯,RH,Sn,Xq)=y∗\operatorname{argmax}_{y\in\mathcal{Y}}p\left(y\mid R_{1},R_{2},\cdots,R_{H},S_{n},X_{\text{q}}\right)=y^{*}
+∎
+Appendix C Proof of Claim 1
+(1) Prediction without ICL: This is computed directly by
+y^q=f𝐰(U~q)1:D,L1+1:N\widehat{y}_{\text{q}}=f_{\bf w}(\widetilde{U}_{\text{q}})_{1:D,L_{1}+1:N}
+(2) Prediction with ICL: Given additional nn encoded context samples Sn=s1:nS_{n}=s_{1:n}, with encoded matrix Ui∈{0,1}(T+K+2)×N∼𝒟qU_{i}\in{\{0,1\}^{(T+K+2)\times N}}\sim\mathcal{D}_{\text{q}}. We construct the encoded prompt by (2), which can be written as: Ustacked=(U1:n,U~q)U_{\text{stacked}}=(U_{1:n},\widetilde{U}_{\text{q}}),
+where the last L2L_{2} columns in U~q\widetilde{U}_{\text{q}} represent masks. We predict the masks as y^q=f𝐰(𝐙)1:D,n​N+L1+1:N\widehat{y}_{\text{q}}=f_{\bf w}\left(\mathbf{Z}\right)_{1:D,nN+L_{1}+1:N}.
+Claim 2.
+(Formal Version) Generate each encoded pre-train data Utrain∼𝒟train,U~train∼𝒟~trainU_{\text{train}}\sim\mathcal{D}_{\text{train}},\widetilde{U}_{\text{train}}\sim\widetilde{\mathcal{D}}_{\text{train}}. There exists a1<a2<⋯<an+1a_{1}<a_{2}<\cdots<a_{n+1}, such that if we train a one-layer Transformer (5): (1) With attention A⁡(⋅)A(\cdot) that satisfies Assumption 2; (2) By minimizing the ℓ2\ell_{2}-regularized objective function (9) with variable 𝐖V\boldsymbol{W}^{V}. Suppose 𝐖V∗∈limλ→0argmaxL(𝐖V)\boldsymbol{W}^{{V}*}\in\underset{\lambda\rightarrow 0}{\operatorname{lim}}\operatorname{argmax}L(\boldsymbol{W}^{V}), and we use fW𝐕∗(⋅)f_{W^{\boldsymbol{V}*}}(\cdot) as prediction model. Given a masked query sequence X~q\widetilde{X}_{\text{q}} encoded as U~q\widetilde{U}_{\text{q}}, predict the last L2L_{2} tokens (L1+1⩽j⩽NL_{1}+1\leqslant j\leqslant N) as y^q\widehat{y}_{q}. We have following :
+(1)​{f𝐰(U~q)l,j=1/T,l=1,2,⋯,T,arg⁡maxT+1⩽l⩽T+K+1​f𝐰​(U~q)l,j=T+kq∗+1\displaystyle(1)\begin{cases}&f_{\bf w}(\widetilde{U}_{\text{q}})_{l,j}=1/T,\;l=1,2,\cdots,T,\\
+&\underset{T+1\leqslant l\leqslant T+K+1}{\arg\max}f_{\bf w}(\widetilde{U}_{\text{q}})_{l,j}=T+k^{*}_{\text{q}}+1\end{cases}
+(2)​{arg⁡max0⩽l⩽T​f𝐰​(Ustacked)l,j=t∗arg⁡maxT+1⩽l⩽T+K+1​f𝐰​(Ustacked)l,j=T+kq∗+1\displaystyle(2)\begin{cases}&\underset{0\leqslant l\leqslant T}{\arg\max}\ f_{\bf w}({U}_{\text{stacked}})_{l,j}=t^{*}\\
+&\underset{T+1\leqslant l\leqslant T+K+1}{\arg\max}f_{\bf w}({U}_{\text{stacked}})_{l,j}=T+k^{*}_{\text{q}}+1\end{cases}
+Proof.
+First, let us derive the closed form of 𝑾V∗{\boldsymbol{W}}^{V*}. The proof idea follows from [Li et al., 2023b]. For a document 𝒘\boldsymbol{w}, when the document length NN is large, for i=0,1,⋯,T+K+1,j⩾2i=0,1,\cdots,T+K+1,j\geqslant 2. Define 𝟏​(⋅)\mathbf{1}(\cdot) as the indicator function. We have the following equation:
+[X~​A​(U~)]l​j=1N​∑p=1NU~l​p=1N​∑p=1N𝟏U~l​p=1\displaystyle[\widetilde{{X}}A(\widetilde{U})]_{lj}=\frac{1}{N}\sum_{p=1}^{N}\widetilde{U}_{lp}=\frac{1}{N}\sum_{p=1}^{N}\mathbf{1}_{\widetilde{U}_{lp}=1}
+={pm if ​l=0P𝒘​(l)​(1−pm) if ​l∈[T]pm if ​l=T+1Q if ​l=T+k∗+11−QK−1 if ​T+2⩽l⩽T+K+1,l≠T+k∗+1\displaystyle=\begin{cases}p_{m}&\text{ if }l=0\\
+P_{\boldsymbol{w}}(l)\left(1-p_{m}\right)&\text{ if }l\in[T]\\
+p_{m}&\text{ if }l=T+1\\
+Q&\text{ if }l=T+k^{*}+1\\
+\frac{1-Q}{K-1}&\text{ if }T+2\leqslant l\leqslant T+K+1,l\neq T+k^{*}+1\end{cases}
+The prediction of the jj-th column can be written as following:
+(𝑾​U~​A​(U~))l​j\displaystyle\quad(\boldsymbol{W}\widetilde{{U}}A(\widetilde{{U}}))_{lj}
+={𝑾l​0​pm+∑r=1T𝑾l​r​P𝒘​(r)​(1−pm) if ​l∈[T]𝑾l​0​pm+∑l=1T𝑾l​r​P𝒘​(r∣X1)​(1−pm) if ​T+1⩽l⩽T+K+1\displaystyle=\begin{cases}\boldsymbol{W}_{l0}p_{m}+\sum\limits_{r=1}^{T}\boldsymbol{W}_{lr}P_{\boldsymbol{w}}(r)(1-p_{m})&\text{ if }l\in[T]\\
+\boldsymbol{W}_{l0}p_{m}+\sum\limits_{l=1}^{T}\boldsymbol{W}_{lr}P_{\boldsymbol{w}}(r\mid X_{1})(1-p_{m})&\text{ if }T+1\leqslant l\leqslant T+K+1\end{cases}
+Recall the loss function is
+L(𝑾)=𝔼U∼𝒟train1N∑j=1N‖(𝑾U~A(U~)):j−X:j‖22\displaystyle L(\boldsymbol{W})=\mathbb{E}_{U\sim\mathcal{D}_{\text{train}}}\frac{1}{N}\sum_{j=1}^{N}\left\|(\boldsymbol{W}\widetilde{U}A(\widetilde{U}))_{:j}-X_{:j}\right\|_{2}^{2}
+(12)
+It is easy to show that ∀U\forall U, L⁡(𝑾)L(\boldsymbol{W}) is minimized at
+(𝑾U~A(U~)):j=1N∑p=1NU:p,\displaystyle(\boldsymbol{W}\widetilde{U}A(\widetilde{U}))_{:j}=\frac{1}{N}\sum_{p=1}^{N}U_{:p},
+which is equivalent to
+{(𝑾​U~​A​(U~))0​j=0(𝑾​U~​A​(U~))l​j=P𝒘​(i),i∈[T](𝑾​U~​A​(U~))T+1,j=0.(𝑾​U~​A​(U~))l​j=P𝒘​(l∣U1),T+2⩽l⩽T+K+1\displaystyle\begin{cases}&(\boldsymbol{W}\widetilde{U}A(\widetilde{U}))_{0j}=0\\
+&(\boldsymbol{W}\widetilde{U}A(\widetilde{U}))_{lj}=P_{\boldsymbol{w}}(i),\quad i\in[T]\\
+&(\boldsymbol{W}\widetilde{U}A(\widetilde{U}))_{T+1,j}=0.\\
+&(\boldsymbol{W}\widetilde{U}A(\widetilde{U}))_{lj}=P_{\boldsymbol{w}}(l\mid U_{1}),\quad T+2\leqslant l\leqslant T+K+1\end{cases}
+(1) Consider the first T+1T+1 rows.
+{𝑾00​pm+∑r=1T𝑾0​l​P𝒘​(r)​(1−pm)=0𝑾l​0​pm+∑r=1T𝑾l​r​P𝒘​(r)​(1−pm)=P𝒘​(l)​ if ​l∈[T].\displaystyle\begin{cases}\boldsymbol{W}_{00}p_{m}+\sum\limits_{r=1}^{T}\boldsymbol{W}_{0l}P_{\boldsymbol{w}}(r)(1-p_{m})=0\\
+\boldsymbol{W}_{l0}p_{m}+\sum\limits_{r=1}^{T}\boldsymbol{W}_{lr}P_{\boldsymbol{w}}(r)(1-p_{m})=P_{\boldsymbol{w}}(l)\text{ if }l\in[T].\end{cases}
+(13)
+We claim that ∀l\forall l, there exists ulu_{l} such that ∀r≠l\forall r\neq l, 𝑾l​j=ul\boldsymbol{W}_{lj}=u_{l}.
+We prove the claim by contradiction. Suppose the above claim does not hold. We consider a special case where topic `​1′`1^{\prime} is selected topic in Step 1 in data generation Section 3.1. Then the following equations hold:
+{P𝒘​(1)=12=𝑾10​pm+𝑾12⋅12⋅(1−pm),if `​1′ and `​2′ are selected,P𝒘​(1)=12=𝑾10​pm+𝑾13⋅12⋅(1−pm),if `​1′ and `​3′ are selected.\displaystyle\begin{cases}&P_{\boldsymbol{w}}(1)=\frac{1}{2}=\boldsymbol{W}_{10}p_{m}+\boldsymbol{W}_{12}\cdot\frac{1}{2}\cdot(1-p_{m}),\quad\text{if $`1^{\prime}$ and $`2^{\prime}$ are selected},\\
+&P_{\boldsymbol{w}}(1)=\frac{1}{2}=\boldsymbol{W}_{10}p_{m}+\boldsymbol{W}_{13}\cdot\frac{1}{2}\cdot(1-p_{m}),\quad\text{if $`1^{\prime}$ and $`3^{\prime}$ are selected}.\end{cases}
+Suppose the above two equations need to hold, then there is 𝑾12=𝑾13=u1\boldsymbol{W}_{12}=\boldsymbol{W}_{13}=u_{1}. Similarly, ∀l\forall l, there exists ul=𝑾l​r,r≠lu_{l}=\boldsymbol{W}_{lr},\;r\neq l. Thus, (13) can be written as:
+{𝑾00=−u0​(1−pm)pm𝑾l​0​pm+ul​(1−pm)+P𝒘​(l)​(𝑾l​l​(1−pm)−ul​(1−pm)−1)=0\displaystyle\begin{cases}&\boldsymbol{W}_{00}=-\frac{u_{0}(1-p_{m})}{p_{m}}\\
+&\boldsymbol{W}_{l0}p_{m}+u_{l}(1-p_{m})+P_{\boldsymbol{w}}(l)\left(\boldsymbol{W}_{ll}(1-p_{m})-u_{l}(1-p_{m})-1\right)=0\end{cases}
+Then we have
+{𝑾00=−u0​(1−pm)pm𝑾l​l=ul+11−pm𝑾l​0=−ul​(1−pm)pm\displaystyle\begin{cases}&\boldsymbol{W}_{00}=-\frac{u_{0}(1-p_{m})}{p_{m}}\\
+&\boldsymbol{W}_{ll}=u_{l}+\frac{1}{1-p_{m}}\\
+&\boldsymbol{W}_{l0}=-\frac{u_{l}(1-p_{m})}{p_{m}}\end{cases}
+(2) Consider the last K+1K+1 rows.
+{𝑾T+1,0​pm+∑r=T+1T+K+1𝑾T+1,l​P𝒘​(r∣U1)​(1−pm)=0𝑾l​0​pm+∑r=T+2T+K+1𝑾l​r​P𝒘​(l∣U1)​(1−pm)=P𝒘​(l∣U1)\displaystyle\begin{cases}&\boldsymbol{W}_{T+1,0}p_{m}+\sum\limits_{r=T+1}^{T+K+1}\boldsymbol{W}_{T+1,l}P_{\boldsymbol{w}}(r\mid U_{1})\left(1-p_{m}\right)=0\\
+&\boldsymbol{W}_{l0}p_{m}+\sum\limits_{r=T+2}^{T+K+1}\boldsymbol{W}_{lr}P_{\boldsymbol{w}}(l\mid U_{1})(1-p_{m})=P_{\boldsymbol{w}}(l\mid U_{1})\end{cases}
+(14)
+Now we claim, ∀r≠l\forall r\neq l, there exists qlq_{l} such that 𝑾l​r=ql\boldsymbol{W}_{lr}=q_{l}. We prove the claim by contradiction. Suppose l≠k∗l\neq k^{*}, then ∀Q\forall Q, we have the following equation:
+{1−QK−1=𝑾l​0​pm+𝑾l​l1​Q​(1−pm)+∑r≠l1𝑾r​l1⋅1−QK−1​(1−pm),key class=l11−QK−1=𝑾l​0​pm+𝑾l​l2​Q​(1−pm)+∑r≠l2𝑾r​l2⋅1−QK−1​(1−pm),key class=l2.\displaystyle\begin{cases}&\frac{1-Q}{K-1}=\boldsymbol{W}_{l0}p_{m}+\boldsymbol{W}_{ll_{1}}Q(1-p_{m})+\sum\limits_{r\neq l_{1}}\boldsymbol{W}_{rl_{1}}\cdot\frac{1-Q}{K-1}(1-p_{m}),\quad\text{$\text{key class}=l_{1}$}\\
+&\frac{1-Q}{K-1}=\boldsymbol{W}_{l0}p_{m}+\boldsymbol{W}_{ll_{2}}Q(1-p_{m})+\sum\limits_{r\neq l_{2}}\boldsymbol{W}_{rl_{2}}\cdot\frac{1-Q}{K-1}(1-p_{m}),\quad\text{$\text{key class}=l_{2}$}.\end{cases}
+Thus, we must have 𝑾l​l1=𝑾l​l2=ql\boldsymbol{W}_{ll_{1}}=\boldsymbol{W}_{ll_{2}}=q_{l}. We can rewrite (14) as following:
+{𝑾T+1,0​pm+qT+1​(1−pm)=0𝑾l​0​pm+𝑾l​l​P𝒘​(l∣X1)​(1−pm)+ql​(1−P𝒘​(l∣U1))​(1−pm)=P𝒘​(l∣U1)\displaystyle\begin{cases}&\boldsymbol{W}_{T+1,0}p_{m}+q_{T+1}(1-p_{m})=0\\
+&\boldsymbol{W}_{l0}p_{m}+\boldsymbol{W}_{ll}P_{\boldsymbol{w}}(l\mid X_{1})(1-p_{m})+q_{l}\left(1-P_{\boldsymbol{w}}(l\mid U_{1})\right)(1-p_{m})=P_{\boldsymbol{w}}\left(l\mid U_{1}\right)\end{cases}
+Then we have
+{𝑾T+1,0=−qT+2​(1−pm)pm𝑾l​l=qi+11−pm𝑾l​0=−ql​(1−pm)pm\displaystyle\begin{cases}&\boldsymbol{W}_{T+1,0}=-\frac{q_{T+2}\left(1-p_{m}\right)}{p_{m}}\\
+&\boldsymbol{W}_{ll}=q_{i}+\frac{1}{1-p_{m}}\\
+&\boldsymbol{W}_{l0}=-\frac{q_{l}\left(1-p_{m}\right)}{p_{m}}\end{cases}
+By Lemma 1, it suffices to find ul,qlu_{l},q_{l} that minimizes ‖𝑾V‖F\|\boldsymbol{W}^{V}\|_{F}.
+Now consider the first T+1T+1 rows of 𝑾V\boldsymbol{W}^{V}.
+∥𝑾0:T,:V∥F2=u02​(1−pm)2pm2+Tu02+∑l=1Tul2​(1−pm)2pm2+(T−1)ul2+(11−pm+ul)2\displaystyle\|\boldsymbol{W}^{V}_{0:T,:}\|_{F}^{2}=\frac{u_{0}^{2}\left(1-p_{m}\right)^{2}}{p_{m}^{2}}+Tu_{0}^{2}+\sum\limits_{l=1}^{T}\frac{u_{l}^{2}\left(1-p_{m}\right)^{2}}{p_{m}^{2}}+(T-1)u_{l}^{2}+\left(\frac{1}{1-p_{m}}+u_{l}\right)^{2}
+It is easy to derive that u0∗=0u_{0}^{*}=0. For l=1,2,⋯,Tl=1,2,\cdots,T, we take the derivative
+∂∥𝑾l,:∥2F∂ul=2(ul​(1−pm)2pm2+(T−1)ul+ul+11−pm)\displaystyle\quad\frac{\partial\|\boldsymbol{W}_{l,:}\|^{2}_{F}}{\partial u_{l}}=2\left(\frac{u_{l}(1-p_{m})^{2}}{p_{m}^{2}}+(T-1)u_{l}+u_{l}+\frac{1}{1-p_{m}}\right)
+=2​((T+(1−pm)2pm2)​ul+11−pm)=0\displaystyle=2\left(\left(T+\frac{(1-p_{m})^{2}}{p_{m}^{2}}\right)u_{l}+\frac{1}{1-p_{m}}\right)=0
+So we derive
+{ul=−1(1−pm)⋅(T+(1−pm)2pm2)=u∗𝑾l​l=ui+11−pm=u∗+11−pm𝑾l​0=−ul​(1−pm)pm=−u∗​(1−pm)pm\displaystyle\begin{cases}&u_{l}=-\frac{1}{(1-p_{m})\cdot\left(T+\frac{(1-p_{m})^{2}}{p_{m}^{2}}\right)}=u^{*}\\
+&\boldsymbol{W}_{ll}=u_{i}+\frac{1}{1-p_{m}}=u^{*}+\frac{1}{1-p_{m}}\\
+&\boldsymbol{W}_{l0}=\frac{-u_{l}(1-p_{m})}{p_{m}}=\frac{-u^{*}(1-p_{m})}{p_{m}}\end{cases}
+(15)
+Similarly, for the last K+1K+1 rows, we have
+{ql=1(1−pm)⋅(K+(1−pm)2pm2)=q∗𝑾l​l=ql+11−pm=q∗+11−pm𝑾l​0=−ql​(1−pm)pm=−q∗​(1−pm)pm\displaystyle\begin{cases}&q_{l}=\frac{1}{\left(1-p_{m}\right)\cdot\left(K+\frac{\left(1-p_{m}\right)^{2}}{p_{m}^{2}}\right)}=q^{*}\\
+&\boldsymbol{W}_{ll}=q_{l}+\frac{1}{1-p_{m}}=q^{*}+\frac{1}{1-p_{m}}\\
+&\boldsymbol{W}_{l0}=\frac{-q_{l}\left(1-p_{m}\right)}{p_{m}}=\frac{-q^{*}\left(1-p_{m}\right)}{p_{m}}\end{cases}
+(16)
+Up to now we have characterized the optimal solution 𝑾V∗\boldsymbol{W}^{V*}. In the following part, we will compare the prediction with or without the prompt.
+Given input X~q\widetilde{X}_{\text{q}}, recall that our goal is to predict the last L2L_{2} masked columns in U~q\widetilde{U}_{\text{q}}. For ∀L1+1⩽j⩽N\forall L_{1}+1\leqslant j\leqslant N we have the following equation:
+f𝐰(U~q):,j=𝑾V∗⋅U~q⋅(A(U~q)):,j\displaystyle f_{\bf w}\left(\widetilde{U}_{\text{q}}\right)_{:,j}=\boldsymbol{W}^{V*}\cdot\widetilde{U}_{\text{q}}\cdot\left(A(\widetilde{U}_{\text{q}})\right)_{:,j}
+=𝑾V∗⋅U~q⋅(1N,⋯,1N)⊤\displaystyle=\boldsymbol{W}^{V*}\cdot\widetilde{U}_{\text{q}}\cdot\left(\frac{1}{N},\cdots,\frac{1}{N}\right)^{\top}
+=𝑾V∗⋅(1N∑p=1N𝟏(U~q)0​p=1,⋯,1N∑p=1N𝟏(U~q)T+K+1,p=1)⊤\displaystyle=\boldsymbol{W}^{V*}\cdot\left(\frac{1}{N}\sum\limits_{p=1}^{N}\boldsymbol{1}_{\left({\widetilde{U}}_{\text{q}}\right)_{0p}=1},\cdots,\frac{1}{N}\sum\limits_{p=1}^{N}\boldsymbol{1}_{\left({\widetilde{U}}_{\text{q}}\right)_{T+K+1,p}=1}\right)^{\top}
+(17)
+First, let us consider the first T+1T+1 rows in the above prediction (17), which is the the topic predictor. Since we consider the case where the sequence length NN goes infinity, we have
+f𝐰(U~q)0:T,j\displaystyle f_{\bf w}\left(\widetilde{U}_{\text{q}}\right)_{0:T,j}
+=𝑾V∗⋅(1N∑p=1N𝟏(U~q)0​p=1,⋯,1N∑p=1N𝟏(U~q)T+K+1,p=1)0:T⊤\displaystyle=\boldsymbol{W}^{V*}\cdot\left(\frac{1}{N}\sum\limits_{p=1}^{N}\boldsymbol{1}_{\left({\widetilde{U}}_{\text{q}}\right)_{0p}=1},\cdots,\frac{1}{N}\sum\limits_{p=1}^{N}\boldsymbol{1}_{\left({\widetilde{U}}_{\text{q}}\right)_{T+K+1,p}=1}\right)_{0:T}^{\top}
+=𝑾V∗⋅(pm,1−pmT,⋯,1−pmT)⊤∈ℝT+1\displaystyle=\boldsymbol{W}^{V*}\cdot\left(p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)^{\top}\in\mathbb{R}^{T+1}
+Recall the optimal 𝑾V∗\boldsymbol{W}^{V*}. For l∈[T]l\in[T],
+𝑾V∗⋅(pm,1−pmT,⋯,1−pmT)l⊤\displaystyle\boldsymbol{W}^{V*}\cdot\left(p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)_{l}^{\top}
+=−u∗​(1−pm)pm⋅pm+(u∗+11−pm)⋅1−pmT+(T−1)​u∗⋅1−pmT\displaystyle=\frac{-u^{*}(1-p_{m})}{p_{m}}\cdot p_{m}+\left(u^{*}+\frac{1}{1-p_{m}}\right)\cdot\frac{1-p_{m}}{T}+(T-1)u^{*}\cdot\frac{1-p_{m}}{T}
+=1T\displaystyle=\frac{1}{T}
+The result implies that the predicted topics have the same probability.
+Second, we consider the class predictor in (17), which is the last K+1K+1 rows in (17). For simplicity, we consider the case where the key word class kq∗=1k^{*}_{\text{q}}=1.
+f𝐰(U~q)T+1:T+K+1,j\displaystyle f_{\bf w}\left(\widetilde{U}_{\text{q}}\right)_{T+1:T+K+1,j}
+=𝑾V∗⋅(1N∑p=1N𝟏(U~q)0​p=1,⋯,1N∑p=1N𝟏(U~q)T+K+1,p=1)T+1:T+K+1⊤\displaystyle=\boldsymbol{W}^{V*}\cdot\left(\frac{1}{N}\sum\limits_{p=1}^{N}\boldsymbol{1}_{\left({\widetilde{U}}_{\text{q}}\right)_{0p}=1},\cdots,\frac{1}{N}\sum\limits_{p=1}^{N}\boldsymbol{1}_{\left({\widetilde{U}}_{\text{q}}\right)_{T+K+1,p}=1}\right)_{T+1:T+K+1}^{\top}
+=𝑾V∗⋅(pm,Q(1−pm),1−QK−1(1−pm),⋯1−QK−1(1−pm))⊤\displaystyle=\boldsymbol{W}^{V*}\cdot\left(p_{m},Q(1-p_{m}),\frac{1-Q}{K-1}(1-p_{m}),\cdots\frac{1-Q}{K-1}(1-p_{m})\right)^{\top}
+For l=T+kq∗+1=T+K+2l=T+k^{*}_{\text{q}}+1=T+K+2, we have
+f𝐰​(U~q )l,j\displaystyle f_{\bf w}\left(\widetilde{U}_{\text{q }}\right)_{l,j}
+=−v∗​(1−pm)pm⋅pm+(v∗+11−pm)⋅Q⁡(1−pm)+(K−1)⋅vi⋅1−QK−1​(1−pm)\displaystyle=\frac{-v^{*}\left(1-p_{m}\right)}{p_{m}}\cdot p_{m}+\left(v^{*}+\frac{1}{1-p_{m}}\right)\cdot Q(1-p_{m})+(K-1)\cdot v_{i}\cdot\frac{1-Q}{K-1}\left(1-p_{m}\right)
+=−v∗​(1−pm)+v∗⋅Q⁡(1−pm)+Q+v∗​(1−Q)​(1−pm)\displaystyle=-v^{*}\left(1-p_{m}\right)+v^{*}\cdot Q(1-p_{m})+Q+v^{*}(1-Q)(1-p_{m})
+=Q\displaystyle=Q
+Similarly, we can compute that for l≠T+K+2l\neq T+K+2, we have
+f𝐰​(U~q)l,j=1−QK−1.\displaystyle f_{\bf w}\left(\widetilde{U}_{\text{q}}\right)_{l,j}=\frac{1-Q}{K-1}.
+Next, we consider the case where we have the in-context samples s1,s2,⋯,sns_{1},s_{2},\cdots,s_{n}.
+f𝐰(Ustacked):,j\displaystyle f_{\bf w}\left(U_{\text{stacked}}\right)_{:,j}
+=𝑾V∗⋅Ustacked⋅(A(Ustacked)):,j\displaystyle=\boldsymbol{W}^{V*}\cdot U_{\text{stacked}}\cdot\left(A(U_{\text{stacked}})\right)_{:,j}
+=𝑾V∗⋅(U1,⋯,Un,U~q)⋅(a1/N,⋯,a1/N,a2/N,⋯,a2/N,⋯,an+1/N,⋯,an+1/N)⊤\displaystyle=\boldsymbol{W}^{V*}\cdot\left(U_{1},\cdots,U_{n},\widetilde{U}_{\text{q}}\right)\cdot\left(a_{1}/N,\cdots,a_{1}/N,a_{2}/N,\cdots,a_{2}/N,\cdots,a_{n+1}/N,\cdots,a_{n+1}/N\right)^{\top}
+(18)
+Similarly, we consider the first T+1T+1 entries in (18), which is the topic predictor. Recall the query distribution defined in Section 3.1,
+f𝐰(Ustacked)0:T,j=∑i=1nai𝑾V∗⋅(1N∑p=1N𝟏(Ui)0​p=1,⋯,1N∑p=1N𝟏(Ui)T​p=1)\displaystyle f_{\bf w}\left(U_{\text{stacked}}\right)_{0:T,j}=\sum\limits_{i=1}^{n}a_{i}\boldsymbol{W}^{V*}\cdot\left(\frac{1}{N}\sum_{p=1}^{N}\mathbf{1}_{\left(U_{i}\right)_{0p}=1},\cdots,\frac{1}{N}\sum_{p=1}^{N}\mathbf{1}_{\left(U_{i}\right)_{Tp}=1}\right)
++an+1𝑾V∗(1N∑p=1N𝟏(U~q)0​p=1,⋯,1N∑p=1N𝟏(U~q)T+K+1,p=1)⊤\displaystyle\quad+a_{n+1}\boldsymbol{W}^{V*}\left(\frac{1}{N}\sum\limits_{p=1}^{N}\boldsymbol{1}_{\left({\widetilde{U}}_{\text{q}}\right)_{0p}=1},\cdots,\frac{1}{N}\sum\limits_{p=1}^{N}\boldsymbol{1}_{\left({\widetilde{U}}_{\text{q}}\right)_{T+K+1,p}=1}\right)^{\top}
+=∑i=1nai⋅𝑾V∗⋅(0,1−pmT+pm,1−pmT,⋯,1−pmT)⊤+an+1⋅𝑾V∗⋅(pm,1−pmT,⋯,1−pmT)⊤\displaystyle=\sum\limits_{i=1}^{n}a_{i}\cdot\boldsymbol{W}^{V*}\cdot\left(0,\frac{1-p_{m}}{T}+p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)^{\top}+a_{n+1}\cdot\boldsymbol{W}^{V*}\cdot\left(p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)^{\top}
+=∑j=1naj⋅𝑾V∗⋅(0,1−pmT+pm,1−pmT,⋯,1−pmT)⊤+an+1⋅𝑾V∗⋅(pm,1−pmT,⋯,1−pmT)⊤\displaystyle=\sum\limits_{j=1}^{n}a_{j}\cdot\boldsymbol{W}^{V*}\cdot\left(0,\frac{1-p_{m}}{T}+p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)^{\top}+a_{n+1}\cdot\boldsymbol{W}^{V*}\cdot\left(p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)^{\top}
+(19)
+Now consider each entry in (19).
+For simplicity, we assume t∗=1t^{*}=1. Then with the optimal 𝑾V∗\boldsymbol{W}^{V*} in (15) and (16), we can derive:
+∑i=1nai⋅𝑾V∗⋅(0,1−pmT+pm,1−pmT,⋯,1−pmT)1⊤\displaystyle\quad\sum_{i=1}^{n}a_{i}\cdot\boldsymbol{W}^{V*}\cdot\left(0,\frac{1-p_{m}}{T}+p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)^{\top}_{1}
+=∑i=1nai⋅(−u∗​(1−pm)pm×0+(u∗+11−pm)×(1−pmT+pm)+(T−1)⋅u∗×1−pmT)\displaystyle=\sum_{i=1}^{n}a_{i}\cdot\left(\frac{-u^{*}\left(1-p_{m}\right)}{p_{m}}\times 0+(u^{*}+\frac{1}{1-p_{m}})\times\left(\frac{1-p_{m}}{T}+p_{m}\right)+(T-1)\cdot u^{*}\times\frac{1-p_{m}}{T}\right)
+=∑i=1nai⋅(u∗+pm1−pm+1T)\displaystyle=\sum_{i=1}^{n}a_{i}\cdot\left(u^{*}+\frac{p_{m}}{1-p_{m}}+\frac{1}{T}\right)
+(20)
+For 2⩽l⩽T2\leqslant l\leqslant T,
+∑i=1nai⋅𝑾V∗⋅(0,1−pmT+pm,1−pmT,⋯,1−pmT)l⊤\displaystyle\quad\sum_{i=1}^{n}a_{i}\cdot\boldsymbol{W}^{V*}\cdot\left(0,\frac{1-p_{m}}{T}+p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)^{\top}_{l}
+=∑i=1nai⋅(−u∗​(1−pm)pm×0+(u∗+11−pm)×1−pmT+u∗×(1−pmT+pm)+(T−2)⋅u∗×1−pmT)\displaystyle=\sum_{i=1}^{n}a_{i}\cdot\left(\frac{-u^{*}\left(1-p_{m}\right)}{p_{m}}\times 0+\left(u^{*}+\frac{1}{1-p_{m}}\right)\times\frac{1-p_{m}}{T}+u^{*}\times\left(\frac{1-p_{m}}{T}+p_{m}\right)+(T-2)\cdot u^{*}\times\frac{1-p_{m}}{T}\right)
+=∑i=1nai⋅(u∗×1−pmT+1T+u∗×1−pmT+u∗​pm+(T−2)⋅u∗×1−pmT)\displaystyle=\sum_{i=1}^{n}a_{i}\cdot\left(u^{*}\times\frac{1-p_{m}}{T}+\frac{1}{T}+u^{*}\times\frac{1-p_{m}}{T}+u^{*}p_{m}+(T-2)\cdot u^{*}\times\frac{1-p_{m}}{T}\right)
+=∑i=1nai⋅(1T+u∗)\displaystyle=\sum_{i=1}^{n}a_{i}\cdot\left(\frac{1}{T}+u^{*}\right)
+(21)
+Plug (20) and (21) to (19), we can derive:
+f𝐰(Ustacked)0:T,j\displaystyle\quad f_{\bf w}\left(U_{\text{stacked}}\right)_{0:T,j}
+=∑i=1nai⋅𝑾V∗⋅(0,1−pmT+pm,1−pmT,⋯,1−pmT)⊤+an+1⋅𝑾V∗⋅(pm,1−pmT,⋯,1−pmT)⊤\displaystyle=\sum_{i=1}^{n}a_{i}\cdot\boldsymbol{W}^{V_{*}}\cdot\left(0,\frac{1-p_{m}}{T}+p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)^{\top}+a_{n+1}\cdot\boldsymbol{W}^{V_{*}}\cdot\left(p_{m},\frac{1-p_{m}}{T},\cdots,\frac{1-p_{m}}{T}\right)^{\top}
+=∑i=1nai⋅(0,u∗+pm1−pm+1T,1T+u∗,⋯,1T+u∗)⊤+an+1​(0,1T,⋯,1T)⊤\displaystyle=\sum_{i=1}^{n}a_{i}\cdot\left(0,u^{*}+\frac{p_{m}}{1-p_{m}}+\frac{1}{T},\frac{1}{{T}}+u^{*},\cdots,\frac{1}{T}+u^{*}\right)^{\top}+a_{n+1}\left(0,\frac{1}{T},\cdots,\frac{1}{T}\right)^{\top}
+=(0,∑i=1nai⋅u∗+pm1−pm+1T,∑i=1nai⋅u∗+1T,⋯,∑i=1nai⋅u∗+1T)⊤\displaystyle=\left(0,\sum_{i=1}^{n}a_{i}\cdot u^{*}+\frac{p_{m}}{1-p_{m}}+\frac{1}{T},\sum_{i=1}^{n}a_{i}\cdot u^{*}+\frac{1}{T},\cdots,\sum_{i=1}^{n}a_{i}\cdot u^{*}+\frac{1}{T}\right)^{\top}
+(22)
+From the expression in (22), we know the largest entry in the vector f𝐰(Ustacked)0:T,jf_{\bf w}\left(U_{\text{stacked}}\right)_{0:T,j} corresponds to kq∗=1k^{*}_{\text{q}}=1.
+Now we consider the class labels.
+f𝐰(Ustacked)T+1:T+K+1,j=∑i=1nai𝑾V∗⋅(1N∑p=1N(Ui)T+1,p,⋯,1N∑p=1N(Ui)T+K+1,p)\displaystyle f_{\bf w}\left(U_{\text{stacked}}\right)_{T+1:T+K+1,j}=\sum\limits_{i=1}^{n}a_{i}\boldsymbol{W}^{V*}\cdot\left(\frac{1}{N}\sum_{p=1}^{N}(U_{i})_{T+1,p},\cdots,\frac{1}{N}\sum_{p=1}^{N}(U_{i})_{T+K+1,p}\right)
++an+1𝑾V∗(1N∑p=1N(U~q)T+1,p,⋯,1N∑p=1N(U~q)T+K+1,p)⊤\displaystyle\quad+a_{n+1}\boldsymbol{W}^{V*}\left(\frac{1}{N}\sum\limits_{p=1}^{N}{\left({\widetilde{U}}_{\text{q}}\right)_{T+1,p}},\cdots,\frac{1}{N}\sum\limits_{p=1}^{N}\left({\widetilde{U}}_{\text{q}}\right)_{T+K+1,p}\right)^{\top}
+=∑i=1nai𝑾V∗⋅(0,Q⋅𝟏k∗​(Ui)=1+1−QK−1⋅𝟏k∗​(Ui)≠1,1−QK−1,⋯,1−QK−1⋅𝟏k∗​(Ui)≠1,1−QK−1)\displaystyle=\sum\limits_{i=1}^{n}a_{i}\boldsymbol{W}^{V*}\cdot\left(0,Q\cdot\boldsymbol{1}_{k^{*}(U_{i})=1}+\frac{1-Q}{K-1}\cdot\boldsymbol{1}_{k^{*}(U_{i})\neq 1},\frac{1-Q}{K-1},\cdots,\frac{1-Q}{K-1}\cdot\boldsymbol{1}_{k^{*}(U_{i})\neq 1},\frac{1-Q}{K-1}\right)
++an+1⋅(pm,Q(1−pm),1−QK−1(1−pm),⋯,1−QK−1(1−pm))\displaystyle\quad+a_{n+1}\cdot\left(p_{m},Q(1-p_{m}),\frac{1-Q}{K-1}(1-p_{m}),\cdots,\frac{1-Q}{K-1}(1-p_{m})\right)
+So ∀l=T+2,⋯,T+K+1\forall l=T+2,\cdots,T+K+1, denote Λk:={i:k∗​(Ui)=1}\Lambda_{k}:=\left\{i:k^{*}\left(U_{i}\right)=1\right\}, where k∗​(⋅)k^{*}(\cdot) is the class of first token in a sequence.
+Q⋅∑i∈Λ1ai+1−QK−1∑i∉Λ1ai⋅+Q(1−pm)⋅an+1:=bT+2\displaystyle Q\cdot\sum\limits_{i\in\Lambda_{1}}a_{i}+\frac{1-Q}{K-1}\sum\limits_{i\notin\Lambda_{1}}a_{i}\cdot+Q(1-p_{m})\cdot a_{n+1}:=b_{T+2}
+Q⋅∑i∈Λlai+1−QK−1∑i∉Λlai⋅+1−QK−1(1−pm)⋅an+1:=bl\displaystyle Q\cdot\sum\limits_{i\in\Lambda_{l}}a_{i}+\frac{1-Q}{K-1}\sum\limits_{i\notin\Lambda_{l}}a_{i}\cdot+\frac{1-Q}{K-1}(1-p_{m})\cdot a_{n+1}:=b_{l}
+In this case, we have
+f𝐰(Ustacked)T+k+1,j=−q∗​(1−pm)pm⋅bT+1+(q∗+11−pm)⋅bk+q∗⋅∑r≠kbr.\displaystyle f_{\bf w}(U_{\text{stacked}})_{T+k+1,j}=-\frac{q^{*}(1-p_{m})}{p_{m}}\cdot b_{T+1}+\left(q^{*}+\frac{1}{1-p_{m}}\right)\cdot b_{k}+q^{*}\cdot\sum\limits_{r\neq k}b_{r}.
+Since q∗+11−pm>q∗q^{*}+\frac{1}{1-p_{m}}>q^{*}, suppose bT+2>bk,k≠T+2b_{T+2}>b_{k},k\neq T+2, then we have
+arg𝑘​max⁡f𝐰​(Ustacked)T+k+1,j=1\underset{k}{\arg}\max f_{\bf w}(U_{\text{stacked}})_{T+k+1,j}=1
+.
+In fact, there always exists aia_{i} such that bT+2>bkb_{T+2}>b_{k} holds, if we choose large enough an+1a_{n+1}.
+∎
+Lemma 1.
+Let SS denote the set of solution in (15) and (16) that L⁡(𝐖V)L(\boldsymbol{W}^{V}) We have the following conclusion:
+∀𝑾V∗∈limλ→0argminLℓ2(𝑾V),there is 𝑾V∗∈S\displaystyle\forall\boldsymbol{W}^{V*}\in\lim_{\lambda\rightarrow 0}\operatorname{argmin}L_{\ell_{2}}\left(\boldsymbol{W}^{V}\right),\text{there is }\boldsymbol{W}^{V*}\in S
+The above lemma directly comes from [Li et al., 2023b].
+Appendix D Experiment Details for Synthetic Data
+D.1 Data Generation
+The vocabulary consists of 100100 words, with T=10T=10 topics, denoted as topic ‘0’ to ‘9’. Each topic has K=10K=10 words, denoted as class ‘0’ to ‘9’. The number of training sequences and test sequences are 10,00010,000, respectively. We also generate another 10,00010,000 samples to be the context sample for each test sample. The sequence length is set to be a random number between 100100 and 150150. For each training sequence, we randomly draw a key topic tt, with probability 0.550.55, the word is drawn from topic tt. The class generation follows from our setting in Section 3.1 with the key class probability Q=0.91Q=0.91, and other 99 classes occur with probability 1−QK−1=0.01\frac{1-Q}{K-1}=0.01. Randomly mask out 15%15\% of the words in each training sequence. For the test sequences, we set L1=0.7∗NL_{1}=0.7*N and L2=0.3∗NL_{2}=0.3*N, the distribution follow Section 3.1 of D~q\widetilde{D}_{\text{q}}. The context samples follow Dq{D}_{\text{q}} with L1=0.7∗NL_{1}=0.7*N and L2=0.3∗NL_{2}=0.3*N. Eech test and context sample pair share the same key topic t∗t^{*} in Section 3.1. Build the prompt by stacking the test and context sequence pair.
+D.2 Training Hyper parameters
+Our experiment set up follows from [Li et al., 2023b]. We use a one hidden-layer Bert with one attention head and hidden dimension D=104D=104. Use Adam optimizer with learning rate 0.010.01. The batch size is set to be 4040.
+D.3 Compare Uniform Attention and Non-Uniform Attention
+Figure 6: The training loss and dev loss when the network is trained with uniform attention, i.e, 𝑾Q=𝑾K=0\boldsymbol{W}^{Q}=\boldsymbol{W}^{K}=0.
+Figure 7: The training loss and dev loss when the network is trained with 𝑾Q,𝑾K\boldsymbol{W}^{Q},\boldsymbol{W}^{K} updated.
+We conclude from Fig. 6 and 7 that, freezing the attention to be uniform in the synthetic experiment setting does not influence the training or test performance. Thus, we justify that it is acceptable when we freeze the attention head in our analysis.
+Appendix E Experiment Details for GPT-2 Models
+Details of concept token training: To train for the concept token for each fine-tuning task/dataset, we add N=5N=5 concept tokens into the input layer of the GPT-2 model, essentially extending the total number of tokens by N=5N=5. Then we fine-tune on each task/dataset, with only the embedding layer of the GPT-2 model trainable to minimize the prediction error. This will result in N=5N=5 new token embeddings that could represent the concept of the task/dataset. The detailed process is illustrated by the ICL framework in Min et al. [2022]. The trained GPT-2 model is discarded in the further experiment steps, while the concept token and its corresponding embedding vector (called representation vector in the main text) are kept for further experiment steps
+Hyperparameters: We use seven different concept datasets to fine-tune the modified GPT-2 large embedding layer. The model is saved after 10,000 training steps. All seven concept tokens are passed through the embedding layer, getting 7 * 5 * 1280 matrix, number of task * tokens for each task * embedding length, to represent seven concepts. We use the t-SNE [Van der Maaten and Hinton, 2008] method to reduce the dimension to 7 * 5 * 2 with perplexity p=5p=5, and calculate the distance of each concept. After selecting concepts that are similar or dissimilar to the target task based on distance, we use the datasets corresponding to these two sets of concepts to fine-tune the entire model. In test, we use k=16k=16 number of demonstrations for our experiment. We organize the target datasets into batches, with each batch comprising 8 samples grouped together, and run the test with seed 100.
+The code we use for in-context inference is based on [Min et al., 2022].
+Concept Token Visualization: After we use t-SNE to reduce the dimension to 5 * 2 for each concept, we use the first column as the x-coordinate and the second column as y-coordinate to print five points as in Figure 4. The five concepts corresponding to the same task are printed in the same color.
+hate_speech_offensive
+hatexplain
+tweet_eval-hate
+tweet_eval-offensive
+ag_news
+glue-sst2
+dream
+hate_speech_offensive
+0.000
+117.051
+129.666
+143.543
+218.394
+133.639
+284.768
+hatexplain
+117.051
+0.000
+97.176
+94.166
+148.673
+163.069
+208.924
+tweet_eval-hate
+129.666
+97.176
+0.000
+72.043
+193.365
+174.350
+249.684
+tweet_eval-offensive
+143.543
+94.166
+72.043
+0.000
+169.720
+160.353
+256.166
+ag_news
+218.394
+148.673
+193.365
+169.720
+0.000
+171.542
+138.502
+glue-sst2
+133.639
+163.069
+174.350
+160.353
+171.542
+0.000
+236.988
+dream
+284.768
+208.924
+249.684
+256.166
+138.502
+236.988
+0.000
+Table 3: Concept distance of the seven tasks. We calculate the distances between two tasks by computing the distance between the five tokens of the two group of concepts (note that each task has 5 concept token embeddings), and select the minimum value as our final calculated distance.
+ag_news
+yelp_polarity
+imdb
+quoref
+glue-cola
+rotten_tomatoes
+wiki_qa
+tweet_eval-offensive
+ag_news
+0.000
+4.095
+4.200
+3.927
+6.786
+4.272
+4.193
+2.050
+yelp_polarity
+4.095
+0.000
+2.096
+5.856
+5.302
+1.997
+5.470
+4.973
+imdb
+4.200
+2.096
+0.000
+4.818
+4.057
+1.848
+4.840
+5.239
+quoref
+3.927
+5.856
+4.818
+0.000
+4.469
+4.708
+2.027
+5.763
+glue-cola
+6.786
+5.302
+4.057
+4.469
+0.000
+3.742
+4.704
+8.447
+rotten_tomatoes
+4.272
+1.997
+1.848
+4.708
+3.742
+0.000
+4.591
+5.465
+wiki_qa
+4.193
+5.470
+4.840
+2.027
+4.704
+4.591
+0.000
+5.931
+tweet_eval-offensive
+2.050
+4.973
+5.239
+5.763
+8.447
+5.465
+5.931
+0
+Table 4: Concept distance of the eight other tasks using the same method as Table 3.
+Appendix F Comparison of Predictions from Different Prompts
+(a) Prediction from (2): Set 𝐙=𝐙stacked\mathbf{Z}=\mathbf{Z}_{\text{stacked}} in (5). In this case, L=D,G=2​n+2L=D,G=2n+2.
+y^q\displaystyle\widehat{y}_{\text{q}}
+=f𝐰(𝐙)1:D,2​n+2=(𝑾VX1,𝑾Vy1,𝑾VX2,𝑾Vy2,⋯,WVXq,𝟎)⋅σ(X1⊤⋅B⋅𝟎y1⊤⋅B⋅𝟎⋯Xq⊤⋅B⋅𝟎𝟎⊤⋅B⋅𝟎)\displaystyle=f_{\bf w}(\mathbf{Z})_{1:D,2n+2}=\left(\boldsymbol{W}^{V}X_{1},\boldsymbol{W}^{V}y_{1},\boldsymbol{W}^{V}X_{2},\boldsymbol{W}^{V}y_{2},\cdots,W^{V}X_{\text{q}},\mathbf{0}\right)\cdot\sigma\left(\begin{array}[]{c}X_{1}^{\top}\cdot B\cdot\mathbf{0}\\
+y_{1}^{\top}\cdot B\cdot\mathbf{0}\\
+\cdots\\
+X_{\text{q}}^{\top}\cdot B\cdot\mathbf{0}\\
+\mathbf{0}^{\top}\cdot B\cdot\mathbf{0}\end{array}\right)
+=12​n+2​∑i=1nWV​(Xi+yi)+12​n+2​WV​Xq⊤\displaystyle=\frac{1}{2n+2}\sum\limits_{i=1}^{n}W^{V}(X_{i}+y_{i})+\frac{1}{2n+2}W^{V}{X}_{\text{q}}^{\top}
+(28)
+(b) Prediction from (2.3): Set 𝐙=𝐙stacked\mathbf{Z}=\mathbf{Z}_{\text{stacked}} in (5). In this case, L=2​D,G=n+1L=2D,G=n+1.
+y^q=f𝐰(𝒁)D+1:2​D,n+1=(𝑾V′𝒁)⋅ℳ⋅σ((𝑾K′​𝒁)⊤​(𝑾Q′​𝒁)2​D),ℳ:=(In000)∈ℝ(n+1)×(n+1).\displaystyle\widehat{y}_{\text{q}}=f_{\bf w}(\boldsymbol{Z})_{D+1:2D,n+1}=\left(\boldsymbol{W}^{V^{\prime}}\boldsymbol{Z}\right)\cdot\mathcal{M}\cdot\sigma\left(\frac{\left(\boldsymbol{W}^{K^{\prime}}\boldsymbol{Z}\right)^{\top}\left(\boldsymbol{W}^{Q^{\prime}}\boldsymbol{Z}\right)}{\sqrt{2D}}\right),\;\mathcal{M}:=\left(\begin{array}[]{cc}I_{n}&0\\
+0&0\end{array}\right)\in\mathbb{R}^{(n+1)\times(n+1)}.
+More specifically, in [Zhang et al., 2023a], the weight has following structure:
+𝑾V′=[𝟎D×D𝟎D×D𝟎D×DID]∈ℝ2​D×2​D,𝑾K′⊤​𝑾Q′=[B′𝟎D×D𝟎D×D𝟎D×D] where ​B′∈ℝD×D​.\displaystyle\boldsymbol{W}^{V^{\prime}}=\left[\begin{array}[]{cc}\mathbf{0}_{D\times D}&\mathbf{0}_{D\times D}\\
+\mathbf{0}_{D\times D}&I_{D}\end{array}\right]\in\mathbb{R}^{2D\times 2D},\quad{\boldsymbol{W}^{K^{\prime}}}^{\top}{\boldsymbol{W}^{Q^{\prime}}}=\left[\begin{array}[]{cc}B^{\prime}&\mathbf{0}_{D\times D}\\
+\mathbf{0}_{D\times D}&\mathbf{0}_{D\times D}\end{array}\right]\quad\text{ where }B^{\prime}\in\mathbb{R}^{D\times D}\text{. }
+Thus, we can derive
+y^q=(y1,y2,⋯,yn,𝟎)⋅σ⁡(X1⊤⋅B′⋅XqX2⊤⋅B′⋅Xq⋯Xn⊤⋅B′⋅Xq)=∑i=1nσi​yi,\displaystyle\widehat{y}_{\text{q}}=\left(y_{1},y_{2},\cdots,y_{n},\mathbf{0}\right)\cdot\sigma\left(\begin{array}[]{ll}X_{1}^{\top}\cdot B^{\prime}\cdot X_{\text{q}}\\
+X_{2}^{\top}\cdot B^{\prime}\cdot X_{\text{q}}\\
+\quad\quad\cdots\\
+X_{n}^{\top}\cdot B^{\prime}\cdot X_{\text{q}}\end{array}\right)=\sum\limits_{i=1}^{n}\sigma_{i}y_{i},
+where ∑i=1nσi=1\sum\limits_{i=1}^{n}\sigma_{i}=1, and each σi=exp⁡(Xi⊤⋅B′⋅Xq)∑l=1nexp⁡(Xl⊤⋅B′⋅Xq)\sigma_{i}=\frac{\exp\left(X_{i}^{\top}\cdot B^{\prime}\cdot X_{\text{q}}\right)}{\sum\limits_{l=1}^{n}\exp\left(X_{l}^{\top}\cdot B^{\prime}\cdot X_{\text{q}}\right)} .
+Appendix G Limitation and Future Work
+In our work, we requires each class within a topic only includes one word. We make this assumption to simplify our analysis. However, in more realistic setting, one class can contain multiple words, which requires a more complicated modeling. Further, we assume uniform attention in our network, which can be extended to more realistic setting where WQ,WKW^{Q},W^{K} are updated. These extension will left to future work.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

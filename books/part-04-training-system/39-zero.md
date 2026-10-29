@@ -61,9 +61,17 @@ ZeRO-1减少副本数，低比特optimizer则减少每个副本的`b_o`；二者
 
 低秩状态可以直接来自梯度，而不必先改变 activation 的保存方式。设某层梯度为 `G∈R^(m×n)`，选择 `r≤min(m,n)` 列的正交基 `U_r∈R^(m×r)`，则投影 `U_rᵀG` 为 `r×n`；在这个空间保存 moments、得到同形状更新 `Δ_r` 后，以 `U_rΔ_r` 更新完整权重。这不同于冻结基座的 LoRA，也不等于完整 Adam 更新。[GaLore2 的有限研究](https://arxiv.org/html/2504.20437v1)用随机截断 SVD 近似梯度谱，并调整基的刷新频率；随机 SVD 不等于任意随机投影，刷新过勤还可能受基的随机性和符号变化影响。rank、基及其版本、moment 坐标和刷新规则必须共同记录，但这不表示原研究已验证完整 checkpoint 恢复。它用投影、SVD、基存储和近似更新换容量，不自动降低 activation 峰值或全部通信；按层与 FSDP 组合还须另核 shard 形状、accumulation、global clipping 和更新边界，不能从组合概述推出任意布局等价。原文非方阵投影记号存在不一致，上述 shape 是用于解释机制的自洽例子，不冒充已核执行配方；子操作更快和局部质量接近也不是端到端普遍收益。谱不集中、刷新成本过高或质量回归失败时，保留更高 rank 或完整状态分片。<!-- source-family:SF-2025-ARXIV-2504-20437 -->
 
+低秩状态也不必对所有模块作同一种近似：可让部分投影保留完整momentum，部分不累积momentum，其余用低秩因子递归跟踪，再以当前截断残差补偿累计误差。[AdaPM的受限分支](https://arxiv.org/html/2510.09103v1)把这一补偿与残差近似平稳、有限均值的假设绑定；渐近期望上接近同一gradient序列的完整EMA，不等有限步精确、当前梯度无偏或损失不退。Q/K/MLP、V及embedding/output的分区来自所测模型的消融，不能直接移植为所有架构的固定规则；rank占比也不等optimizer总bytes占比，完整second moment、临时dense梯度和残差仍须计入峰值。分区/rank/因子、补偿系数及刷新规则与checkpoint共同保存，因子求解、统计、调参与新旧质量回归都付费；残差漂移、质量或净费用不合时，保留更高rank、完整momentum与原分片，而不让“去偏”名称替更新等价签字。
+
+<!-- source-family:SF-2025-ARXIV-2510-09103 -->
+
 直接压缩梯度状态仍没有处理 activation 随 batch 和序列增长的压力。另一条可组合但并非 ZeRO 自身的分支，是在线学习输入 activation 的低秩基：forward 仍使用完整输入，只为 backward 保存投影；由投影得到低秩 weight gradient 和 optimizer state，再把更新映回完整权重。这不是冻结 base 只训练 adapter，也不保证 backward 与完整训练等价。
 
 基随训练变化后，旧 moment 不能直接沿用原坐标。一个实现用 Oja 更新并重正交化 basis，以新旧基的重叠运输一阶 moment；二阶 moment 只保存逐坐标统计，无法精确恢复全部 cross-coordinate covariance，因此需要近似运输。basis、rank、运输规则和 moment 共同构成训练状态，而不是可随意替换的压缩附件。它用投影、重正交化、统计运输和近似更新换取容量，rank 或 subspace learning rate 失配会损害质量；梯度不集中、漂移过快或质量回归失败时，保留完整 activation、recompute 及普通分片更可靠。[OASIS 的有限实验](https://arxiv.org/html/2604.09406v1)有低 rank 退步，不能把 exact forward 写成精确训练或大规模分布式收敛保证。<!-- source-family:SF-2026-ARXIV-2604-09406 -->
+
+若完整forward权重也成为设备容量压力，还可同时压缩权重与反传激活，而不沿用完整forward这一前提：权重用低秩因子执行，激活按各mode的子空间保存，并用上次基warm-start下一次近似。[WASI的有限适配](https://arxiv.org/html/2510.09160v1)先在held-out batch上以原/近似weight-gradient差校准离散rank候选，这里的“perplexity”不是语言模型困惑度，也不保证所有rank组合或完整训练质量最优。稳定rank不证明基不漂移，近似forward与backward也不再复现原训练轨迹。应共同保存被调层、权重/activation因子、rank、校准人口和更新规则，并分别结算初始化SVD、子空间迭代、临时workspace及optimizer状态；只统计被调层的weight/activation倍率，不是整模型峰值。所测视觉适配和只调少量尾层的TinyLlama不能授任意端侧LLM训练能力；子空间、质量或设备净时延不合时，保留完整权重、activation重算/单侧压缩与普通分片，分别验收训练和部署产物。
+
+<!-- source-family:SF-2025-ARXIV-2510-09160 -->
 
 ## Stage 2：进一步分片 Gradients
 
@@ -123,6 +131,10 @@ sharded parameters at rest
 ```
 
 Stage 3 的核心不是“一次把完整模型 gather 回来”，而是按 module execution order 管理短生命周期 full views。Prefetch distance、reuse 和 bucket size 决定 communication 能否被计算覆盖。
+
+状态分片也不必给参数、梯度和optimizer使用同一个group大小。可分别配置三类state的owner域，让参数AllGather、梯度ReduceScatter与累积后的replica同步各有明确参与者，以驻留副本、collective通信量和重叠机会换取不同内存—带宽取舍。[AsyncHZP的受限分支](https://arxiv.org/html/2510.20111v1#S4)再给参数/梯度通信使用独立dispatch线程与专用persistent pool，避免为复用一块buffer而把跨流依赖重新串行化；它没有删除Weights-Ready、梯度归约完成与optimizer消费之间的顺序。group坐标、shard到完整参数的映射、accumulation边界、buffer生命周期和checkpoint身份须共同保存，不能把分片度组合或异步提交当作更新已完成。专用pool、activation、临时workspace、重算与offload仍占内存和费用；论文中分片符号与字节公式映射不齐，不能据此照抄完整配置，定制加速卡上的局部异步收益也非通用净速。拓扑、容量或依赖无法配平时，保相同owner域的普通ZeRO、明确同步与较保守prefetch，以完整step和训练质量验收，而非只看被遮住的通信时间。
+
+<!-- source-family:SF-2025-ARXIV-2510-20111 -->
 
 固定均匀 shard 的另一个边界来自 optimizer 与 quantization 的结构语义。element-wise AdamW 可以在任意连续
 offset 切分；matrix optimizer、row-wise state 或 block quantization 却可能要求一个原子 block 由同一 owner
@@ -272,6 +284,10 @@ Offload 是否有效取决于：
 
 目标不是移出最多 bytes，而是在不让 GPU 等待的前提下，把 cold state 放到更大层级。
 
+状态放置还应把转换算子和更新尾部一起纳入关键路径，而不只比较传输bytes：CPU先转低精度虽可少搬数据，却可能被CPU转换及临时buffer拖慢；带宽与GPU余量足够时，保较宽dtype搬运、由GPU完成转换反而可能更快。[紧耦合CPU–GPU的受限训练分支](https://arxiv.org/html/2509.21271v1#S4)还把最后若干gradient bucket及其optimizer更新留在GPU，用一部分HBM换取尾部CPU更新与往返能被其余计算覆盖的机会；bucket数、shape、链路方向带宽和可用驻留容量须共同画像，不能把全部optimizer永远移CPU或最少bytes视为最短step。更新资格仍独立于放置：全局norm/NaN检查未完成时，已消费暂定weights的后续forward也只是暂定；验证失败不仅要修weight，还须核optimizer moments/step及依赖的activation或重算，局部loss相近不证明完整rollback等价。Profile、转换/临时存储、所有搬运、CPU/GPU更新与失败废弃/恢复和数值质量回归都计费；链路、容量、全局验证或状态恢复不足时，保留普通同步offload、较小工作集、HBM驻留或多GPU分片，不由更多overlap批准训练语义。
+
+<!-- source-family:SF-2025-ARXIV-2509-21271 -->
+
 Offload 还可以在训练框架外改变 page 的 placement，而不替换 optimizer 或 shard owner。支持 UVM 的平台上，user-space shim 可把被拦截的 device allocation 转为 managed memory：一条政策从 warm-up 的 kernel/migration 关联合并地址区间，再在对应 launch 前预取；另一条根据迭代 phase 估计建立 GPU 对 host pages 的访问映射，让部分 spilled state 直接经 CPU–GPU 链路访问，减少反复迁入/驱逐。它扩大容量与执行配置空间，却仍支付 host memory、PCIe access、profiling 和映射维护，并不删除通信、训练状态身份或正确性责任。<!-- source-family:SF-2026-ARXIV-2610-07593 -->
 
 这种较透明的路径也缺少框架的 tensor/reuse 语义：migration history 不是真实访问频率，kernel-count midpoint 只是 phase heuristic，prefetch 与 zero-copy 并非已验证的联合最优。[受测 scale-in](https://arxiv.org/html/2610.07593v1)减少通信参与者，却把更多状态压到 host；保留 per-GPU efficiency 不等于保留 job 总吞吐，比较粗粒度 offload 时还须区分 CPU 中实际 bytes。并行度、精度、batch、recompute 与网络改变后，应重验整步时间、内存峰值与训练结果；profile 失配、host/link 不足或 API 路径无法覆盖时，保留框架显式 offload、HBM 驻留或原 scale-out，不把地址透明性签成性能与语义保证。
@@ -391,6 +407,8 @@ ZeRO 逐步分片 optimizer states、gradients 和 parameters，消除标准 DP 
 
 ## Review notes
 
+- `SF-2025-ARXIV-2509-21271` — Socrates，Daily2025-09-27补Sep26；[SuperOffload exact-v1](https://arxiv.org/html/2509.21271v1) S3/4核心与5直接control/6及必要配置有限域，2+2+2=6。作者17→Helmholtz R18一次有限必要采用通过；仅casting执行位置/尾bucket状态放置与验证资格分责，保GH200 C2C非PCIe通用、STV缺完整失败依赖恢复不授exactness、batch/GA/checkpoint与质量预算混杂、局部算术反侧及全费。未核实现/全部像素或复现。作者45原三项经Helmholtz R40整体纯PRE，root本轮fresh独立窄授；原稿真实保存并完整自读新增/直接两侧binding及本人注，Helmholtz R45本项唯一actualPOST通过，I9生效且指定窄位释放；本尾仅行政同步既成，不第三Source/PRE/POST或授DAY。
+
 - Daily `2025-05-01` 补查：`SF-2025-ARXIV-2504-20437`，[GaLore2 v1](https://arxiv.org/html/2504.20437v1) §3～7、Appendix A/C、Tables1～7，2+2+2=6；采用直接梯度谱投影、刷新与完整权重更新的分支，和 activation-basis/ZeRO 分开。非方阵原记号、任意 FSDP shard/accumulation/clipping、恢复正确性及全生命周期收益未闭合；未核代码或复现。root 必要原证与当前章节/邻接比较后保存，Newton §31 已实际检查新正文、完整前后与本注并通过；root 已接纳，不据此授日报完成。
 
 - Daily `2026-10-08`：`SF-2026-ARXIV-2610-07593`，[TRANSIT v1](https://arxiv.org/html/2610.07593v1) §3.3–4.2/5；UVM shim的prefetch与zero-copy两政策分开，migration非reuse，midpoint为heuristic。H100/host2TB/PCIe4或5/有限链路、精度与offloaded bytes混杂保留；per-GPU效率非job总吞吐，cluster部分模拟，质量与任意API兼容未证。
@@ -428,3 +446,9 @@ Primary-source / official documentation 校验入口：
 - PyTorch FSDP documentation: https://docs.pytorch.org/docs/stable/fsdp.html
 - veScale-FSDP（structure-aware ragged shard placement；Status: Experimental）:
   https://arxiv.org/abs/2602.22437
+
+- `SF-2025-ARXIV-2510-09103` — Daily2025-10-14补Oct13；exact-v1§3.1/4/Alg1/5/T1–2/AppA2必要，2+1+2=5，分区momentum/平稳残差补偿具体gap深入。只渐近期望/同梯度EMA责任，不采有限步常数、全gradient无偏或总内存5%；保FP32状态/临时dense、LR/microbatch与全费。未核实现/图像全部像素或复现；必要关键支持/反侧及整体PRE、真实SAVE/fullselfread/POST只本日canonical真实层。
+
+- `SF-2025-ARXIV-2510-09160` — Daily2025-10-14补Oct13；exact-v1§3.2–3.4/4/AppA1–3/B1–2/C必要，2+1+2=5，联合weight/activation与完整forward分责gap深入。v1确有TinyLlama BoolQ最后1–5层，未用后版倒填；保A4500/Pi5、rank候选/gradient误差非LM-PPL、低epsilon退步、单Pets三seed与全部分解费，不采完整梯度/全局rank最优或整机倍率。未核实现或复现；实际PRE/SAVE/fullselfread/POST仅本日canonical真实层。
+
+- `SF-2025-ARXIV-2510-20111` — Copernicus，Daily2025-10-25补Oct24BJT；exact-v1 §4–6，2+2+3=7。只三类state独立owner域与专用异步buffer生命周期取舍；保印字节/分片符号矛盾、定制64GB BF16卡/RoCE、局部消融与全费，不采冲突配置recipe、无内存开销/数值等价或普遍净速。未核代码/复现；整体PRE/真实SAVE/完整自读/sole actualPOST仅本日canonical实际后到层，本注不预签。

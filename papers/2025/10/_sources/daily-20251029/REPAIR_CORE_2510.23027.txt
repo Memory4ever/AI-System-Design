@@ -1,0 +1,396 @@
+Towards Stable and Effective ReinforcementLearning for Mixture-of-Experts
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminaries
+Group Relative Policy Optimization (GRPO)
+Group Sequence Policy Optimization (GSPO).
+Geometric-Mean Policy Optimization (GMPO).
+3 Method
+3.1 Motivation
+3.2 Our Approach
+4 Experiments
+4.1 Experimental Details
+4.2 Main results
+4.3 Analysis
+Design choices for the router-shift ratio
+Additional Attempts on Router Stabilization
+Combine Router Shift with Other Algorithms
+Training Stability
+5 Related Work
+5.1 Reinforcement learning for LLM
+5.2 Stability in MoE Training
+6 Conclusion
+References
+License: CC BY 4.0
+arXiv:2510.23027v1 [cs.LG] 27 Oct 2025
+Towards Stable and Effective Reinforcement
+Learning for Mixture-of-Experts
+Di Zhang
+Xun Wu
+Affiliation: Microsoft Research
+Shaohan Huang
+Affiliation: Microsoft Research
+Yaru Hao
+Affiliation: Microsoft Research
+Li Dong
+Affiliation: Microsoft Research
+Zewen Chi
+Affiliation: Microsoft Research
+Zhifang Sui
+Affiliation: Peking Universityhttps://aka.ms/GeneralAI
+Furu Wei
+Affiliation: Microsoft Research
+Abstract
+Recent advances in reinforcement learning (RL) have substantially improved the training of large-scale language models, leading to significant gains in generation quality and reasoning ability. However, most existing research focuses on dense models, while RL training for Mixture-of-Experts (MoE) architectures remains underexplored. To address the instability commonly observed in MoE training, we propose a novel router-aware approach to optimize importance sampling (IS) weights in off-policy RL. Specifically, we design a rescaling strategy guided by router logits, which effectively reduces gradient variance and mitigates training divergence. Experimental results demonstrate that our method significantly improves both the convergence stability and the final performance of MoE models, highlighting the potential of RL algorithmic innovations tailored to MoE architectures and providing a promising direction for efficient training of large-scale expert models.
+1 Introduction
+Reinforcement Learning (RL) has demonstrated strong potential in enhancing LLM reasoning through inference-time scaling, as exemplified by the OpenAI-o1 model (Ope, 24). More recently, DeepSeek-R1 (GYZ+, 25) has shown that reinforcement learning with verifiable rewards (RLVR), which relies on simple, rule-based reward functions, can elicit emergent reasoning abilities and deliver substantial performance gains on challenging tasks such as mathematical problem solving and program synthesis (YLY+, 25; TBB+, 25; CLG+, 25). In parallel, Mixture-of-Experts (MoE) architectures have emerged as an efficient approach to scaling model capacity (FZS, 22). By activating only a small subset of experts per token, MoE models achieve higher parameter efficiency while keeping computation cost nearly constant, making them particularly attractive for large-scale RL training where compute efficiency is critical.
+Despite these advances, applying RLVR to MoE models remains highly challenging due to stability issues (ZLL+25b, ; CLG+, 25; YLY+, 25). A central difficulty is router fluctuation: the set of experts selected for the same input token may vary significantly across policy updates (DDM+, 22; ZLL+25b, ). Such routing drift not only increases the variance of importance sampling (IS) weights, but can also destabilize optimization and even cause reward collapse. Furthermore, most implementations adopt token-level IS ratios (SWD+, 17), which are poorly aligned with the sequence-level rewards typically used in RLVR, introducing additional variance and further compounding instability. Prior work such as GSPO proposes computing IS ratios at the sequence level to mitigate this issue, yet it does not fundamentally address the instability introduced by router fluctuations.
+We experimentally explored two natural stabilization strategies: freezing the router parameters and routing replay, where routing decisions are cached and reused across updates. However, both approaches proved unsatisfactory—freezing the router hampers model adaptability, while routing replay restricts exploration and degrades performance. These results suggest that rigid control over the router is suboptimal, and a more flexible mechanism is needed.
+To address these challenges, we propose Router-Shift Policy Optimization (RSPO), an RL algorithm specifically designed for MoE architectures to achieve stable and efficient training. Instead of fully constraining the router, RSPO introduces a router shift ratio, computed from router scores between the current and old policies. This ratio quantifies the degree of routing deviation for each token and is used to softly rescale IS weights. In doing so, RSPO reduces gradient variance and mitigates divergence caused by router instability, while preserving the router’s capacity to adapt.
+We validate the effectiveness of RSPO on the Qwen2.5 model for the countdown task and on Qwen3-30B-A3B across multiple mathematical reasoning benchmarks. Extensive experiments demonstrate that RSPO achieves more stable training and superior performance. Our main contributions are summarized as follows:
+•
+We propose RSPO, which combines a router-aware rescaling strategy with sequence-level aggregation of importance sampling ratios, effectively stabilizing off-policy RL training for MoE models.
+•
+Unlike router freezing or routing replay, RSPO adopts a soft adjustment mechanism: it leverages a router shift ratio to quantify routing deviation for each token and adaptively reweight updates, limiting overly large updates while retaining router flexibility.
+•
+We evaluate RSPO on both the countdown task and multiple mathematical reasoning benchmarks, demonstrating its stability and effectiveness, and highlighting the importance of incorporating router-aware strategies and sequence-level importance weighting in RL for MoE models.
+2 Preliminaries
+Group Relative Policy Optimization (GRPO)
+Traditional reinforcement learning (RL) algorithms, such as Proximal Policy Optimization (PPO) (SWD+, 17), have been widely applied to RL training of large language models (LLMs). However, PPO still suffers from high computational cost and challenges in tuning value model. To address these limitations, GRPO (SWZ+, 24) builds upon PPO by removing the value model and introducing a group-relative advantage estimation.
+Specifically, for a given query xx, GRPO samples GG candidate responses {yi}i=1G\{y_{i}\}_{i=1}^{G}, computes their relative advantages within the group, and optimizes the following objective:
+𝒥GRPO(θ)=𝔼x∼𝒟,{yi}i=1G∼πθold(⋅|x)[1G∑i=1G1|yi|∑t=1|yi|min(wi,t(θ)A^i,t,clip(wi,t(θ),1−ϵ,1+ϵ)A^i,t)],\displaystyle\mathcal{J}_{\text{GRPO}}(\theta)=\mathbb{E}_{x\sim\mathcal{D},\,\{y_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(\cdot|x)}\!\!\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|y_{i}|}\sum_{t=1}^{|y_{i}|}\min\!\Big(w_{i,t}(\theta)\,\hat{A}_{i,t},\,\text{clip}\!\big(w_{i,t}(\theta),1-\epsilon,1+\epsilon\big)\hat{A}_{i,t}\Big)\right],
+(1)
+where GG denotes the number of responses generated for each query xx. For each token yi,ty_{i,t}, the importance sampling ratio wi,t​(θ)w_{i,t}(\theta) and the group-normalized advantage A^i,t\hat{A}_{i,t} are given by:
+wi,t​(θ)=πθ​(yi,t∣x,yi,<t)πθold​(yi,t∣x,yi,<t),A^i=A^i,t=r⁡(x,yi)−mean​({r⁡(x,yi)}i=1G)std​({r⁡(x,yi)}i=1G).\displaystyle w_{i,t}(\theta)=\frac{\pi_{\theta}(y_{i,t}\mid x,y_{i,<t})}{\pi_{\theta_{\text{old}}}(y_{i,t}\mid x,y_{i,<t})},\qquad\hat{A}_{i}=\hat{A}_{i,t}=\frac{r(x,y_{i})-\text{mean}\!\big(\{r(x,y_{i})\}_{i=1}^{G}\big)}{\text{std}\!\big(\{r(x,y_{i})\}_{i=1}^{G}\big)}.
+(2)
+Group Sequence Policy Optimization (GSPO).
+Unlike GRPO, which performs importance sampling and clipping at the token level, Group Sequence Policy Optimization (GSPO) (ZLL+25b, ) defines the importance sampling ratio at the sequence level and applies clipping accordingly. This modification corrects the misalignment between sequence-level rewards and token-level importance sampling ratios present in GRPO under the RLVR objective. The GSPO optimization objective can be formulated as:
+𝒥GSPO(θ)=𝔼x∼𝒟,{yi}i=1G∼πθold(⋅|x)[1G∑i=1Gmin(si(θ)A^i,clip(si(θ),1−ε,1+ε)A^i)],\displaystyle\mathcal{J}_{\text{GSPO}}(\theta)=\mathbb{E}_{x\sim\mathcal{D},\,\{y_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(\cdot|x)}\left[\frac{1}{G}\sum_{i=1}^{G}\min\left(s_{i}(\theta)\widehat{A}_{i},\,\mathrm{clip}\left(s_{i}(\theta),1-{\varepsilon},1+{\varepsilon}\right)\widehat{A}_{i}\right)\right],
+where the sequence-level advantage A^i\hat{A}_{i} usually comes from a rule based reward and calculate in the same way as GRPO:
+A^i=r⁡(x,yi)−mean⁡({r⁡(x,yj)}j=1G)std⁡({r⁡(x,yj)}j=1G),\hat{A}_{i}=\frac{r(x,y_{i})-\mathrm{mean}\!\big(\{r(x,y_{j})\}_{j=1}^{G}\big)}{\mathrm{std}\!\big(\{r(x,y_{j})\}_{j=1}^{G}\big)},
+(3)
+The sequence-level importance ratio si​(θ)s_{i}(\theta) based on sequence likelihood is defined as:
+si​(θ)=(πθ​(yi∣x)πθold​(yi∣x))1|yi|=exp⁡(1|yi|​∑t=1|yi|log⁡πθ​(yi,t∣x,yi,<t)πθold​(yi,t∣x,yi,<t)).s_{i}(\theta)=\left(\frac{\pi_{\theta}(y_{i}\mid x)}{\pi_{\theta_{\mathrm{old}}}(y_{i}\mid x)}\right)^{\!\frac{1}{|y_{i}|}}=\exp\!\left(\frac{1}{|y_{i}|}\sum_{t=1}^{|y_{i}|}\log\frac{\pi_{\theta}(y_{i,t}\mid x,y_{i,<t})}{\pi_{\theta_{\mathrm{old}}}(y_{i,t}\mid x,y_{i,<t})}\right).
+(4)
+Essentially, this replaces the arithmetic mean of the importance sampling ratios across the sequence with their geometric mean.
+Geometric-Mean Policy Optimization (GMPO).
+While GSPO operates at the sequence level by defining a sequence-level importance sampling ratio and applying clipping over entire sequences, GMPO (ZLL+25a, ) retains the token-level decomposition but replaces the arithmetic mean aggregation of per-token importance ratios with their geometric mean. In GMPO, each token’s ratio (new/old) is treated multiplicatively, and the |y||y|-th root (or equivalently the sum of log ratios) is used to obtain a single sequence-level ratio, which is more robust against extreme individual token ratios. Unlike GSPO, where extreme token-level ratios may still dominate the overall sequence likelihood, GMPO reduces the influence of such outliers while preserving token-level granularity.
+3 Method
+3.1 Motivation
+Modern Mixture-of-Experts (MoE) models often have extremely large model sizes (GYZ+, 25; LFX+, 24; YLY+, 25; TBB+, 25), making off-policy reinforcement learning (RL) crucial for maintaining training efficiency on reasoning tasks. However, as highlighted by GSPO, two key issues arise when applying traditional GRPO to MoE models:
+(1) Routing fluctuations: As shown in Figure 1 after policy updates, the set of experts activated for the same token may change (approximately 10% of experts differ according to prior studies).And even when the selected experts remain unchanged, their routing probabilities may still shift. Such changes cause substantial fluctuations in the importance-sampling ratios, frequently triggering the clipping mechanism and introducing additional variance into the training process.This phenomenon was also reported previously in StableMoE(DDM+, 22);
+Figure 1: Router fluctuation in off-policy training.
+(2) Variance mismatch: Most implementations of GRPO align sequence-level advantages using token-level importance sampling ratios, creating a mismatch: token-level variance does not accurately reflect sequence-level variance. In MoE settings, this effect is amplified by multiple experts per token, often triggering clipping and destabilizing training. Combined with routing fluctuations, this variance mismatch can significantly hinder stable and efficient learning.
+A straightforward mitigation is routing replay (ZLL+25b, ), which reuses the expert assignments from the old policy when computing current log-probabilities, thus eliminating routing drift. However, this approach constrains router updates and incurs significant memory and communication overhead, harming scalability and performance. GSPO handles the variance mismatch by adopting sequence-level importance ratios and clipping, which better aligns the optimization objective with rule based rewards and is functionally similar to GMPO (using a geometric rather than arithmetic mean). Nonetheless, GSPO does not fundamentally resolve routing distribution drift, and its sequence-level clipping can over-prune tokens, potentially discarding useful gradient information.
+3.2 Our Approach
+To address these limitations, we propose Router-Shift Policy Optimization (RSPO), a routing-aware off-policy RL algorithm for MoE models. RSPO retains the use of sequence-level importance ratios but applies token-level clipping to reduce information loss. Furthermore, we introduce a router shift ratio that measures the deviation of router distributions between the current and old policies. This ratio is used both to reweight token-level importance ratios and to softly clip tokens exhibiting severe routing drift, thereby stabilizing training without freezing the router. The optimization objective of RSPO is formulated as:
+𝒥RSPO(πθ)=𝔼x∼𝒬,{oi}i=1G∼πθold(⋅|x)1G​∑i=1G{∏t=1|oi|(min⁡[(wi,t​(θ))sgn⁡(A^i),clip⁡((wi,t​(θ))sgn⁡(A^i),ϵ1,ϵ2)]⋅γi,t)sgn⁡(A^i)}1|oi|​A^i\mathcal{J}_{\mathrm{RSPO}}(\pi_{\theta})=\mathbb{E}_{x\sim\mathcal{Q},\,\{o_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\mathrm{old}}}(\cdot|x)}\\[6.0pt]
+\hskip 28.45274pt\frac{1}{G}\sum_{i=1}^{G}\Bigg\{\prod_{t=1}^{|o_{i}|}\Bigg(\min\Big[\big(w_{i,t}(\theta)\big)^{\mathrm{sgn}(\hat{A}_{i})},\,\mathrm{clip}\!\big((w_{i,t}(\theta))^{\mathrm{sgn}(\hat{A}_{i})},\epsilon_{1},\epsilon_{2}\big)\Big]\cdot\gamma_{i,t}\Bigg)^{\mathrm{sgn}(\hat{A}_{i})}\Bigg\}^{\!\frac{1}{|o_{i}|}}\hat{A}_{i}
+(5)
+The terms wi,t​(θ)w_{i,t}(\theta) and A^i\hat{A}_{i} are defined in the same way as in GRPO, sgn(A^i\hat{A}_{i}) represents the sign of the advantage, guaranteeing that the clipping mechanism functions as intended. The key innovation of our method is the introduction of router shift ratio, which quantifies the degree of routing drift and dynamically adjusts the magnitude of policy updates. Specifically, γi,t\gamma_{i,t} denotes the router shift ratio, and rϕ(ℓ)r^{(\ell)}_{\phi} represents the routing score of expert ei,t(ℓ)e^{(\ell)}_{i,t} at layer ℓ\ell. We compute the deviation between ϕold\phi_{\mathrm{old}} and ϕ\phi by averaging the scores of the top-KK experts that were activated under the old policy during the log-probability computation. Since routing deviations may accumulate across layers, we aggregate the per-layer router shifts multiplicatively. The resulting γi,t\gamma_{i,t} is applied as a reweighting factor after clipping at the token level, thus preserving the original clipping behavior while further down-weighting tokens that experience excessive routing drift. This design improves the stability of the training without interfering with the variance control mechanism provided by clipping.
+γi,t=exp(−1L∑ℓ=1L1K∑k=1K|logr(ℓ)ϕ(e(ℓ,k)i,t∣x,yi,<t)−logr(ℓ)ϕold(e(ℓ,k)i,t∣x,yi,<t)|),γi,t=max⁡(γi,t,γmin).\begin{gathered}\gamma_{i,t}=\exp\!\Bigg(-\frac{1}{L}\sum_{\ell=1}^{L}\frac{1}{K}\sum_{k=1}^{K}\left|\log r^{(\ell)}_{\phi}\!\big(e^{(\ell,k)}_{i,t}\mid x,y_{i,<t}\big)-\log r^{(\ell)}_{\phi_{\mathrm{old}}}\!\big(e^{(\ell,k)}_{i,t}\mid x,y_{i,<t}\big)\right|\Bigg),\\[8.0pt]
+\gamma_{i,t}=\max\!\big(\gamma_{i,t},\,\gamma_{\min}\big).\end{gathered}
+(6)
+This construction ensures that γi,t∈(0,1]\gamma_{i,t}\in(0,1] reflects the degree of router distribution drift, allowing tokens with larger routing shifts to be down-weighted or clipped during optimization, and we stop the gradient through γi,t\gamma_{i,t} (i.e., treat it as a constant, sg⁡[γi,t]\mathrm{sg}[\gamma_{i,t}]) so it only serves as a sample weight; see §4.3.
+Another important aspect of our method is the use of a geometric mean
+for aggregating importance sampling ratios at the sequence level.
+As discussed earlier, the variance of off-policy updates can be further amplified
+in MoE architectures due to routing drift.
+Our experiments show that applying a geometric mean to the importance ratios
+significantly improves training stability,
+whether clipping is performed at the token level (GMPO)
+or at the sequence level (GSPO).
+As shown in Figure 2, the model trained with GRPO experiences reward collapse on the small-scale setting, while GSPO and GMPO remain stable. On the large-scale Qwen3-30B-A3B model, GRPO achieves substantially lower reward compared to GSPO and GMPO, further confirming the advantage of using geometric mean aggregation.
+Our proposed Router-Shift Policy Optimization (RSPO) method can be seamlessly integrated into existing reinforcement learning training pipelines. Specifically, it adjusts the importance sampling ratios based on the token-level router shift, mitigating instability caused by routing fluctuations during training.
+Router-Shift Policy Optimization (PyTorch Implementation)
+⬇
+# ----------- Step 1: Compute router shift ratio -----------
+# Measure the routing probabilities change between steps
+old_log_probs = torch.log(torch.clamp(old_topk_probs, min=eps))
+current_log_probs = torch.log(torch.clamp(selected_current_probs, min=eps))
+delta_log_probs = torch.abs(current_log_probs - old_log_probs)
+router_shift_ratio = torch.exp(-delta_log_probs).mean(dim=-1).detach()
+# ----------- Step 2: Clip router shift ratio -----------
+# Avoid extreme values that may destabilize training
+router_clip_mask = (router_shift_ratio < clip_threshold) & (response_mask > 0)
+# ----------- Step 3: Apply router shift ratio -----------
+# Smooth the importance sampling ratio
+log_router_weights = torch.log(torch.clamp(router_shift_ratio, min=1e-8))
+negative_approx_kl_min = negative_approx_kl_min + log_router_weights
+ratio = torch.exp(negative_approx_kl_min)
+4 Experiments
+4.1 Experimental Details
+Training Setup. We first conduct exploratory experiments and ablation studies on a small-scale MoE model built on the Qwen2.5 (QY+, 25) architecture to validate the effectiveness of our proposed approach and better understand its behavior. We pretrain the model on the Countdown task, with a total parameter size of 385M and 85M activated parameters. Each layer contains 8 experts, with top-k=1k=1 expert routing. The pretraining is conducted with a learning rate of 1×10−41\times 10^{-4} on 8 H100 GPUs. The RL implementation is built upon the verl training library. For large-scale evaluation, we compare our method against GRPO (SWZ+, 24), GSPO (ZLL+25b, ), and GMPO (ZLL+25a, ) on the Qwen3-30B-A3B (QY+, 25) model. All experiments are conducted under an off-policy training setting with a response length of 8​k8\mathrm{k}, a global batch size of 128128, and a mini-batch size of 6464. For GRPO, we adopt the commonly used clipping range of 0.20.2, while for GSPO and GMPO we follow the recommended hyperparameter settings reported in their respective papers.
+Training Datasets. For training, we use the DeepScaleR (LTW+, 25) dataset, which contains approximately 40,000 unique mathematics problem–solution pairs. This dataset is compiled from multiple sources, including: AIME (American Invitational Mathematics Examination) problems from 1984–2023, AMC (American Mathematics Competition) problems prior to 2023, the Omni-MATH (GSY+, 24) dataset, and the Still dataset. During RL training, we employ a rule based reward function that evaluates the correctness of generated answers against the reference solutions.
+Evaluation Datasets. We assess the effectiveness of our approach on five mathematical reasoning datasets spanning a wide range of difficulty levels, following the experimental protocol of Dr.GRPO. The evaluation includes: AIME24, a set of 30 high-school level problems from the 2024 American Invitational Mathematics Examination; AMC23, with 83 moderately challenging multiple-choice questions; MATH500, a 500-problem subset of the MATH (HBK+, 21) dataset covering algebra, geometry, and number theory; Minerva (MIN) (LAD+, 22), consisting of 272 graduate-level problems requiring multi-step reasoning; and OlympiadBench (HWX+, 24), which contains 675 advanced olympiad-style questions. Together, these benchmarks comprehensively evaluate reasoning capabilities across problem domains and difficulty scales. We report results using the Pass@1 metric, which measures whether a single generated solution is correct. For AIME24, we report the mean accuracy over 32 runs. For all benchmarks, we use deterministic decoding by setting the temperature to 0.00.0 and produce one answer per problem.
+4.2 Main results
+Table 1: Performance comparison on five mathematical reasoning benchmarks.
+Method
+AIME24
+AMC23
+MATH500
+Minerva
+OlympiadBench
+Avg.
+Base
+80.4
+90.0
+90.7
+47.7
+62.0
+74.2
+GRPO (SWZ+, 24)
+77.0
+82.5
+91.8
+48.2
+58.1
+71.5
+GSPO (ZLL+25b, )
+80.4
+95.0
+93.6
+48.9
+64.0
+76.4
+GMPO (ZLL+25a, )
+80.1
+92.5
+94.2
+49.3
+65.9
+76.4
+RSPO
+80.1
+95.0
+94.2
+50.7
+65.8
+77.1
+Table 1 provides a comprehensive comparison of our proposed RSPO method against several established baselines, including GRPO, GSPO, and GMPO, across five widely used mathematical reasoning benchmarks: AIME24, AMC, MATH500, Minerva, and OlympiadBench. The evaluation was conducted using the Qwen3-30B-A3B model. Across a broad set of benchmarks, RSPO delivers strong and often leading performance, with particularly notable gains on Minerva and OlympiadBench. While GSPO and GMPO remain competitive—especially on MATH500 and OlympiadBench—RSPO attains an average score of 77.1, underscoring its effectiveness for complex mathematical reasoning and its solid generalization across tasks.
+Figure 2: Comparison of RSPO with Other Baselines
+Furthermore, Figure 2 illustrates the validation score trends during training for RSPO and the baseline methods. Notably, GRPO exhibits a pronounced performance collapse around 200–500 training steps, particularly evident in the sharp decline in validation score, indicating severe instability during early training. Although GRPO eventually recovers partially, its performance remains highly volatile and consistently lower than the other methods throughout training. GSPO and GMPO show more stable trajectories, but RSPO consistently achieves the highest and most stable validation scores across all training steps, demonstrating both rapid convergence and robustness. This behavior highlights RSPO’s ability to stabilize training dynamics in multi-expert settings, whereas GRPO not only lags behind other baselines in average performance but, as shown in Table 1, even underperforms the base model in terms of mean validation score.
+The reward and test score trajectories further support the conclusion that GRPO suffers from instability when applied to MoE models. In contrast, RSPO not only achieves consistently better results across benchmarks but also demonstrates significantly more stable training behavior. These findings highlight the critical role of incorporating the router shift ratio, which contributes both to improved performance and training robustness in MoE-based RL fine-tuning.
+4.3 Analysis
+Design choices for the router-shift ratio
+(i) Stop-grad on γ\gamma.
+On the small Qwen2.5-MoE, backpropagating through γ\gamma triggers early collapse (at ≈\approx40 steps) in both reward and validation curves, whereas the stop-grad setting yields smooth and stable optimization.
+Intuitively, since γ=exp⁡(−|Δ​log⁡r|)\gamma=\exp(-\lvert\Delta\log r\rvert) aggregates layer-wise routing drift, letting ∂log⁡γ/∂θ\partial\log\gamma/\partial\theta flow couples the router-shift penalty with the sequence-level geometric objective and clipping, thereby amplifying variance under non-smooth top-KK routing.
+(ii) Sensitivity to the floor γ𝐦𝐢𝐧\boldsymbol{\gamma_{\min}}.
+We sweep γmin∈{0.2, 0.5, 0.8}\gamma_{\min}\in\{0.2,\,0.5,\,0.8\} on Qwen3-30B-A3B under the same training/evaluation protocol as §4.1 and Table 1.
+As shown in Figure 3(a), the γmin=0.5\gamma_{\min}=0.5 and 0.80.8 settings deliver comparable performance across training, whereas setting the floor too low (e.g., γmin=0.2\gamma_{\min}=0.2) over-suppresses tokens with large routing drift (driving their weights toward near zero), weakening effective learning signals and hurting progress.
+Unless otherwise specified, we adopt a moderate floor in subsequent experiments; the protocol follows §4.1 and Table 1.
+Additional Attempts on Router Stabilization
+In addition to our main approach, we also investigated several alternative strategies aimed at improving the stability of MoE RL training.
+One straightforward idea is to freeze the router during training, with the expectation that eliminating router updates could mitigate the fluctuations observed in expert selection.
+While simple to implement, this approach assumes that the initial router configuration is already well aligned with the optimization objective, which may not necessarily hold in practice.
+Beyond freezing, we drew inspiration from the router replay technique proposed in GSPO, which provides a more fundamental direction for addressing router drift.
+To this end, we designed and tested two distinct variants of router replay.
+(a) Ablation of γmin\gamma_{\min}
+(b) Routing replay and freeze router
+Figure 3: Comparative ablations.
+(1) Copying logits from the old policy.
+In this variant, the router logits of the old policy are directly copied to replace those of the current policy.
+As a result, both expert selection and expert weighting become fully aligned with the old policy.
+However, since the router logits are no longer computed by the current model, the router in the current policy cannot propagate gradients.
+This restriction significantly limits the router’s ability to update and adapt to the evolving training dynamics.
+(2) Reusing expert indices.
+Alternatively, instead of transferring logits directly, we record the indices of the experts activated by the old policy and enforce the current policy to select experts according to these stored indices.
+This strategy preserves the discrete expert choices of the old policy while still allowing the current router to compute its own logits, albeit with constrained selection.
+As illustrated in Figure 3(b), we conducted experiments on Qwen2.5 to systematically evaluate these three methods: freezing the router, copying old router logits, and reusing expert indices.
+The empirical results indicate that none of these approaches led to satisfactory improvements in training stability.
+These findings suggest that while intuitive, such heuristic methods are insufficient to address the inherent instability of MoE routers, further highlighting the necessity of more principled solutions such as the proposed RSPO.
+Combine Router Shift with Other Algorithms
+An appealing property of our approach is its inherent compatibility with a wide range of reinforcement learning algorithms, making it a flexible component that can be readily integrated into different training paradigms.
+To empirically validate this property, we applied the proposed router shift ratio in combination with two representative baselines, GSPO and GRPO.
+Specifically, we incorporated router shift into the training and evaluation of the Countdown task using the Qwen2.5 MoE model, as illustrated in Figure 4.
+(a) Validation score of GRPO
+(b) Validation score of GSPO
+Figure 4: Combining Router Shift with Other Algorithms
+The results clearly show that introducing router shift consistently improves both training stability and final task performance when paired with either GSPO or GRPO.
+For GSPO, the integration of router shift further smooths the optimization trajectory, reducing fluctuations that commonly arise from the stochasticity of expert selection.
+For GRPO, which is more prone to instability in MoE settings, router shift effectively alleviates divergence issues and enables more reliable convergence.
+In both cases, the observed improvements highlight that router shift does not interfere with the core mechanisms of the underlying algorithms but instead acts as a stabilizing and performance-enhancing augmentation.
+Taken together, these findings underscore the versatility of our technique and demonstrate its potential to be seamlessly combined with existing RL methods.
+By enhancing stability while boosting performance, router shift offers a general solution for improving the robustness of reinforcement learning on MoE-based large language models, beyond the scope of a single algorithmic framework.
+(a) Entropy during training
+(b) Ratio of Non-shifted Routing
+Figure 5: Training stability signals of Qwen3-30B-A3B
+Training Stability
+To better understand the effect of RSPO on training dynamics, we monitor several key stability-related metrics throughout the training of Qwen3-30B-A3B, including token-level entropy and the ratio of non-shifted routing.
+As illustrated in Figure 5, RSPO consistently maintains higher token entropy compared to baseline methods, suggesting that it preserves a more diverse distribution over experts and mitigates premature collapse into suboptimal routing patterns.
+The ratio of non-shifted routing offers valuable insights into the model’s training dynamics. This metric reflects the proportion of tokens for which the current policy model’s routing decisions match those of the previous policy model, i.e., no routing shift occurs. The steadily increasing trend of this ratio during training shows that, as the model converges, the routing policy becomes increasingly consistent with its previous version, reducing the need for shift corrections. Early in training, a larger fraction of tokens requires routing shifts to maintain stability, but as optimization progresses, the policy naturally aligns with prior decisions, demonstrating that RSPO’s reweighting mechanism effectively promotes stable and consistent routing over time.
+5 Related Work
+5.1 Reinforcement learning for LLM
+Recently, the emergence of DeepSeek R1 (GYZ+, 25) has demonstrated the significant potential of combining reinforcement learning (RL) with reasoning for pushing the performance boundaries of large language models (LLMs). At the core of R1 lies the Group Relative Policy Optimization (GRPO) (SWZ+, 24) algorithm, which represents an improvement over the well-known Proximal Policy Optimization (PPO) (SWD+, 17) algorithm. GRPO estimates advantages within groups, thereby eliminating the need for an expensive value function model while maintaining performance comparable to PPO.The success of R1 has sparked widespread interest in GRPO and inspired the development of numerous variants. For instance, DAPO (YZZ+, 25) introduces techniques such as dynamic sampling and higher clipping thresholds, addressing challenges related to training efficiency and stability. Dr. GRPO (LCL+, 25) focuses on mitigating length bias by removing the length and standard deviation normalization terms in GRPO, thereby reducing optimization bias and improving token efficiency.More recently, several studies have highlighted issues with the token-level importance sampling ratio used in GRPO, which can lead to increased variance. To address this, GMPO (ZLL+25a, ) proposes maximizing token-level rewards using a geometric mean, resulting in more stable training dynamics. Similarly, GSPO (ZLL+25b, ) approaches the problem from the sequence-level importance ratio perspective, ultimately also converging on a geometric mean formulation for enhanced stability. Notably, GSPO reports that this geometric mean approach is particularly effective for reinforcement learning training in Mixture-of-Experts (MoE) models.
+5.2 Stability in MoE Training
+Mixture-of-Experts (MoE) models have emerged as a key technique for scaling neural networks to trillions of parameters while maintaining computational efficiency by sparsely activating only a small subset of experts per token.
+However, this sparse activation introduces unique challenges, including expert under-utilization, load imbalance, and routing instability.
+Severe load imbalance can lead to some experts being overloaded while others receive few or no tokens, resulting in inefficient use of model capacity and degraded convergence.
+Switch Transformer (FZS, 22) addresses these challenges by introducing an auxiliary load-balancing loss to encourage uniform expert utilization and a capacity factor to cap the number of tokens routed to each expert, thus preventing overload.
+While effective, large auxiliary losses can introduce non-negligible gradient interference with the main training objective.
+(WGZ+, 24) mitigate this by proposing the Loss-Free Balancing method, which dynamically adjusts expert-wise biases on routing scores before top-kk selection to balance expert loads without introducing additional loss terms, thereby avoiding gradient interference and improving the attainable model performance.
+StableMoE (DDM+, 22) further identifies routing fluctuation as a key source of instability, proposing to distill a stable teacher router and freeze it during training to reduce token assignment variance.
+Another line of work focuses on improving gradient flow through non-differentiable top-kk routing by using differentiable relaxations such as Gumbel-Softmax or straight-through estimators (WZC, 24; PRMH, 23; ZLL+, 22), thereby reducing gradient variance and enabling end-to-end optimization.
+More recently, researchers have observed that MoE models are particularly unstable under reinforcement learning (RL) training, where reward sparsity and high-variance policy gradients exacerbate routing fluctuations.
+To address this, several approaches aim to stabilize MoE routers during RL fine-tuning.
+For instance, GSPO (ZLL+25b, ) stabilizes off-policy updates by reusing expert assignments from previous policies and clipping sequence-level importance sampling ratios, effectively reducing update variance.
+Ring-lite (THC+, 25) introduces constrained token-level routing budgets to regularize expert selection and further reduce variance.
+Despite these advances, understanding the interplay between routing dynamics, gradient variance, and RL credit assignment remains an open research direction, motivating methods like RSPO that explicitly account for router shift when shaping policy updates.
+6 Conclusion
+In this work, we propose RSPO, a method that stabilizes policy training and improves final performance by employing sequence-level importance sampling for more accurate gradient estimation, and introducing a router shift ratio to down-weight tokens that exhibit excessive router shift during off-policy training. This approach also helps maintain token entropy at a relatively high level. Extensive experiments on mathematical reasoning benchmarks demonstrate that RSPO consistently outperforms current baselines in both stability and overall effectiveness.This work represents a step forward in developing more stable and effective RL training methods tailored for mixture-of-experts (MoE) models, facilitating their reliable deployment in large-scale reasoning tasks.
+References
+[1]
+Aili Chen, Aonian Li, Bangwei Gong, Binyang Jiang, Bo Fei, Bo Yang, Boji Shan, Changqing Yu, Chao Wang, Cheng Zhu, et al.
+Minimax-m1: Scaling test-time compute efficiently with lightning attention.
+arXiv preprint arXiv:2506.13585, 2025.
+[2]
+Damai Dai, Li Dong, Shuming Ma, Bo Zheng, Zhifang Sui, Baobao Chang, and Furu Wei.
+Stablemoe: Stable routing strategy for mixture of experts.
+arXiv preprint arXiv:2204.08396, 2022.
+[3]
+William Fedus, Barret Zoph, and Noam Shazeer.
+Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity.
+Journal of Machine Learning Research, 23(120):1–39, 2022.
+[4]
+Bofei Gao, Feifan Song, Zhe Yang, Zefan Cai, Yibo Miao, Qingxiu Dong, Lei Li, Chenghao Ma, Liang Chen, Runxin Xu, et al.
+Omni-math: A universal olympiad level mathematic benchmark for large language models.
+arXiv preprint arXiv:2410.07985, 2024.
+[5]
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948, 2025.
+[6]
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt.
+Measuring mathematical problem solving with the math dataset.
+arXiv preprint arXiv:2103.03874, 2021.
+[7]
+Zhen Huang, Zengzhi Wang, Shijie Xia, Xuefeng Li, Haoyang Zou, Ruijie Xu, Run-Ze Fan, Lyumanshan Ye, Ethan Chern, Yixin Ye, et al.
+Olympicarena: Benchmarking multi-discipline cognitive reasoning for superintelligent ai.
+Advances in Neural Information Processing Systems, 37:19209–19253, 2024.
+[8]
+Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay Ramasesh, Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, et al.
+Solving quantitative reasoning problems with language models.
+Advances in neural information processing systems, 35:3843–3857, 2022.
+[9]
+Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin.
+Understanding r1-zero-like training: A critical perspective.
+arXiv preprint arXiv:2503.20783, 2025.
+[10]
+Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al.
+Deepseek-v3 technical report.
+arXiv preprint arXiv:2412.19437, 2024.
+[11]
+Michael Luo, Sijun Tan, Justin Wong, Xiaoxiang Shi, William Y Tang, Manan Roongta, Colin Cai, Jeffrey Luo, Tianjun Zhang, Li Erran Li, et al.
+Deepscaler: Surpassing o1-preview with a 1.5 b model by scaling rl.
+Notion Blog, 2025.
+[12]
+OpenAI.
+Learning to reason with llms, 2024.
+[13]
+Joan Puigcerver, Carlos Riquelme, Basil Mustafa, and Neil Houlsby.
+From sparse to soft mixtures of experts.
+arXiv preprint arXiv:2308.00951, 2023.
+[14]
+Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu.
+Qwen2.5 technical report, 2025.
+[15]
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347, 2017.
+[16]
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al.
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300, 2024.
+[17]
+Kimi Team, Yifan Bai, Yiping Bao, Guanduo Chen, Jiahao Chen, Ningxin Chen, Ruijue Chen, Yanru Chen, Yuankun Chen, Yutian Chen, et al.
+Kimi k2: Open agentic intelligence.
+arXiv preprint arXiv:2507.20534, 2025.
+[18]
+Ling Team, Bin Hu, Cai Chen, Deng Zhao, Ding Liu, Dingnan Jin, Feng Zhu, Hao Dai, Hongzhi Luan, Jia Guo, et al.
+Ring-lite: Scalable reasoning via c3po-stabilized reinforcement learning for llms.
+arXiv preprint arXiv:2506.14731, 2025.
+[19]
+Lean Wang, Huazuo Gao, Chenggang Zhao, Xu Sun, and Damai Dai.
+Auxiliary-loss-free load balancing strategy for mixture-of-experts.
+arXiv preprint arXiv:2408.15664, 2024.
+[20]
+Ziteng Wang, Jun Zhu, and Jianfei Chen.
+Remoe: Fully differentiable mixture-of-experts with relu routing.
+arXiv preprint arXiv:2412.14711, 2024.
+[21]
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388, 2025.
+[22]
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, et al.
+Dapo: An open-source llm reinforcement learning system at scale.
+arXiv preprint arXiv:2503.14476, 2025.
+[23]
+Yanqi Zhou, Tao Lei, Hanxiao Liu, Nan Du, Yanping Huang, Vincent Zhao, Andrew M Dai, Quoc V Le, James Laudon, et al.
+Mixture-of-experts with expert choice routing.
+Advances in Neural Information Processing Systems, 35:7103–7114, 2022.
+[24]
+Yuzhong Zhao, Yue Liu, Junpeng Liu, Jingye Chen, Xun Wu, Yaru Hao, Tengchao Lv, Shaohan Huang, Lei Cui, Qixiang Ye, et al.
+Geometric-mean policy optimization.
+arXiv preprint arXiv:2507.20673, 2025.
+[25]
+Chujie Zheng, Shixuan Liu, Mingze Li, Xiong-Hui Chen, Bowen Yu, Chang Gao, Kai Dang, Yuqiong Liu, Rui Men, An Yang, et al.
+Group sequence policy optimization.
+arXiv preprint arXiv:2507.18071, 2025.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

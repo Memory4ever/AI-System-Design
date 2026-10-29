@@ -111,6 +111,20 @@ Agent workflow 可以声明哪个后继节点可能消费这条 state edge，却
 
 这里至少有两个提交点：Prefill complete 表示 KV 已在源端形成；Decode ready 表示目标端已获得与 kernel/layout 兼容的 KV。把第一点误当成第二点会产生 race，transfer completion 与 Decode scheduling 必须形成 happens-before。
 
+跨worker分工还可发生在同一个Decode内部，而不只把Prefill和Decode分成两池：让较强设备保留dense算子与Prefill，把完整KV-head及其query组的Decode attention分派给异构设备，本地完成各head的softmax后再汇回结果。[Hetis的受限系统](https://arxiv.org/html/2509.08309v1)按seq/position/head管理状态，新请求到来不全面重排旧请求，负载或容量失衡时才有限再分派并复用重叠head的KV。这样可以利用较弱卡的带宽/容量，却增加profiling、整数group分配、索引与跨卡搬运/同步；本布局中GQA不能拆散共享KV的query组，聚合空闲内存也不证明每卡都能接纳新布局。低优先stream只减少迁移竞争，不是零开销或原子ready保证，局部吞吐/参数扰动试验也不授无OOM和生产尾SLO。旧新head归属、布局与完成状态应一并验收；低负载、弱互联、profile失配或迁移收益不足时，保留同驻/静态并行和成熟PD路径，不让资源均衡proposal直接推进尚未ready的Decode。
+
+<!-- source-family:SF-2025-ARXIV-2509-08309 -->
+
+并行方式的切换也可先约束为共享状态布局，而不每次迁移已生成的KV。在固定设备组中，一条[受限执行分支](https://arxiv.org/html/2509.16495v1#S3)预备Ulysses式sequence parallel与tensor parallel两条路径，让它们按同一rank/head顺序保存KV，再按本轮实际token行数选择执行配置；这里的sequence parallel包含attention前后的all-to-all，不能借同名替换成任意序列切分。共享KV只省掉这份状态的重排，不会让两种路径的权重分片、communicator、CUDA Graph和临时buffer自动相同；受测实现保留两份不同分片的权重，低延迟因而要用额外驻留空间支付。混合分组或GQA的head不足时，还可能需要KV复制和interleave，切换前须核相同位置、head归属、更新frontier与数值配置，而非由shape相合签逐bit等价。阈值应绑定token形状、当前负载和目标设备，request数或一次profile不能替任意traffic；权重加载/预热、逐层collective、padding和质量回归均计费。状态映射不合、额外容量挤占KV、长历史attention或高负载净收益不足时，保留静态TP/SP、独立DP池和显式迁移/重算，不把共享KV批准为免费、任意并行切换或生产SLO。
+
+<!-- source-family:SF-2025-ARXIV-2509-16495 -->
+
+若同一设备组还要在多份低TP实例与一个高TP实例之间合并、拆分，并释放重复权重空间给长请求，切换就不只是换一条kernel路径：KV的head归属、权重分片和可复用地址必须一同转换。一个条件分支按块与head优先组织KV，使迁出的head范围更易回收；分阶段all-to-all确认完成后，才把已释放地址交给后续KV迁入。对预定TP集合，在MLP权重分片边界预留padding，还能减少运行时为对齐而复制大权重；但padding占用也必须先从可用容量扣除。逐层错开变换并让在途请求跨越明确的模块边界，可以缩小一次切换的停顿，却不替代旧新状态及collective完成关系的验收。[当前精确v1返回材料的有限对照](https://arxiv.org/html/2509.19729v1)只覆盖所测同机TP、模型和页映射配置，更多可用KV与更少搬运不等零额外内存或任意流量SLO。权重驻留/padding、迁移metadata、通信与SM竞争、profile及完整请求回归都付费；布局、容量、数值或净费用不合时，保留静态TP池、drain后重启或重算，不让未来可释放的地址提前取得ready资格。
+
+<!-- source-family:SF-2025-ARXIV-2509-19729 -->
+
+分派到哪个worker之后，还可按已验证可复用的远端KV块选择“搬cache、送query到holder后合并partial、或本地重算”。压缩query与稀疏块会改变两端字节比，但[受限跨实例测量](https://arxiv.org/html/2606.01502v1#S4)显示，选择还须共同结算probe、传输、holder计算、返回和online-softmax合并；host固定费用可吞掉小batch的wire优势，热门holder又会饱和。连续重定位的语义fetch须付位置适配/拼接，原位置上的稀疏选择则不能照搬这一操作；bytes-back微基准也不等已完成可消费KV。布局/位置、partial统计与数值一致性先验收，再按当前fabric和形状校准成本；profiling、索引、merge、网络与故障恢复全计费。校准失效、热点或共享资格不成立时，保留同驻、完整迁移或重算，不由较小query批准任意KV复用、总延迟或生产SLO。<!-- source-family:SF-2026-ARXIV-2606-01502 -->
+
 ### 从静态 Striping 到声明式 Slice Transfer
 
 链路稳定、故障显式且数据对象较大时，把一次 KV transfer 固定到单一路径或预先划分的 striping plan 最容易预测；上层只需等待完成事件。Disaggregated serving 同时面对拥塞、grey failure 和多路径带宽变化后，这种静态执行计划会把 transfer intent、切片方式、路径选择与重试绑死，局部慢路径还可能造成 head-of-line blocking。
@@ -366,6 +380,10 @@ revision 的冗余状态恢复 coverage；最后重建 collective、buffer 与 C
 
 [FastEEP 的受限实现](https://arxiv.org/html/2610.18451v1#S4)用保留结构换更快切换，但仍支付 host 备份、专家复制、KV迁移/重算与预初始化最大拓扑的成本；专家slots也限制最小active组。16张H20-3e、EP2–16的有限对照不证明任意拓扑与SLO，closed-loop示例的8→4→8切换仍有4.2/7.3秒零输出期，不能叫无中断。超出parent域、无法保地址/正确内容或停顿超预算时，保留整组重建、固定EP与显式请求终止/重试，而不是让结构复用替状态有效性签字。
 
+另一条有计划的重配置分支保留的不是整个 worker，而是内存分配的 owner：固定 TP 布局时，可让持久服务持有权重与 KV 的设备分配，短生命周期的 execution 实例通过 IPC 附着已有内存，改变 DP/EP 所需的新设备和专家页另行准备。协调器等目标内存与执行环境都 ready，再停止旧实例摄入新请求、等待旧在途请求完成后切换；原映射保留到切换后才释放。[受限 MoE 扩缩容机制](https://arxiv.org/html/2510.02613v1)据此减少重复分配和初始化，但没有证明任意在途请求可跨新布局无缝续算。
+
+原设备复用不等全局零拷贝：新设备/专家仍需传输与分配，CPU 预初始化、warmup、IPC 生命周期、临时驻留和切换排队都计费；内存 owner 存活也不许可两套 engine 无协调写同一状态。该实现的切换期间仍停止新摄入且吞吐下降，“零 downtime”不是零等待、满吞吐或生产 SLO 保证。fixedTP、布局身份或准备容量不成立时，保留固定配置、drain 后重建与显式请求回退；Ascend 实测和 barebones CUDA PoC 不能互相代签性能移植。<!-- source-family:SF-2025-ARXIV-2510-02613 -->
+
 ## 与第55章的边界
 
 本章回答 Dynamo 怎样组合 routing、state transfer、cache tiering 和 planner。第55章从第一性原理回答 PD separation 何时值得，以及 transfer/interference 的 break-even。Dynamo 是一种实现，不是 PD 有效性的证明。
@@ -430,6 +448,16 @@ Dynamo 将多个 inference engines 组织为分布式 runtime：request path 负
 下一章进入 Kubernetes 声明式控制面，观察 LLMInferenceService 怎样把 Gateway、intelligent routing、worker topology 和生命周期表达为可协调资源。
 
 ## Review notes
+
+- `SF-2025-ARXIV-2510-02613` — Meitner，Daily2025-10-07补Oct06；[ElasticMoE exact-v1](https://arxiv.org/html/2510.02613v1)§4–7/Table1/A.1Table2/B/C/D.4–5/E必要由Boole R13首备，作者只接actualowner；2+2+2=6，fixedTP persistent allocation/短命execution与drain切换差额深入。保切换降吞吐/停摄入、单active/无任意在途迁移、新设备P2P与全preinit/warmup费、0.11x/80.9%冲突和累积消融限制，不授零等待/零拷贝全局或CUDA完整移植。未核图像点值、源码或复现；PRE/SAVE/POST按本日canonical实际记录，不预签。
+
+- `SF-2025-ARXIV-2509-19729` — Aristotle，Daily2025-09-26补Sep25；root五日期首备→作者15实际采用→Einstein13角色复用，Einstein14首次2+2+2=6通过。[当前返回exact-v1](https://arxiv.org/html/2509.19729v1)为Gyges，DataCite保旧Amoeba，当前PDF首页亦Gyges；不认证2025历史逐字内容/只改名或倒填v2。必要§2–6/Alg1–2/T1–4及直接caption/实验说明首次读足，仅TP变化时head/page释放与KV/MLP变换消费者差额。保MLP为主/其余权重重复、有限FFN/映射支持、padding0–14%驻留、Alg helper/变量不闭、输入非最坏输出界、跨方案/计时/架构混杂及全费/静态退路，不授任意SLO、无OOM或数值无损；未核图像素/实现/实机或复现。必要Source/当前owner/完整原三项经Einstein15整体纯PRE通过，root本轮actual fresh完整正文与真H2侧组后明确本项新窄授；原段/独立marker/本人注现已真实保存，完整新增/直接两侧及本人注自读与限定检查记录见Daily本日作者20。Einstein16本项唯一actualPOST已实际通过，指定正文与本人注位生效释放；本尾只同步既成行政事实，不第三Source/PRE/POST或授DAY。
+
+- `SF-2025-ARXIV-2509-16495` — Socrates，Daily2025-09-24补Sep23；exact-v1 S2.SS2/SS4、S3.1–3.4/E1/Alg1–3、S4.1–4.6/T3–5与S6有限必要R98首备→作者91唯一actual采用→R99角色闭合，原2+2+2=6。只UlyssesSP/TP预备共同KV映射与双权重/collective执行分责；保混合SP组印式冲突不补rankrecipe、GQA复制、阈值n非单requestcount、双驻留/图与全部费用、DP峰值更高/长history反侧、SwiftKV与speculation混杂，不采任意切换或逐bit无损。未核图像素/插件源码或复现；作者130原三项/Helmholtz R150整体纯PRE通过，root本轮fresh明确新窄授后已真实保存，完整自读记录见本日日志；Helmholtz R186唯一actualPOST已实际通过，I25生效且指定正文/本人注窄位释放；本尾仅同步既成行政事实，不第三Source/PRE/POST或授DAY。
+
+- `SF-2026-ARXIV-2606-01502`：2+2+2=6；exact-v1 §2–5必要，query/fetch/local完整成本与host反侧，保canonical位置/可复用资格、legacy driver/微基准非全服务；不采通用倍率或SLO。 未核代码或复现。非writer必要Source/owner/逐字PRE通过，root实际保存；非writer `jun03_next_reader` 已真实读取完整新增、完整直接两侧与本人注，唯一actualPOST通过（本日SUP_NEXT_REVIEW_20261024，末项R20）；本句只同步既成结果，不授完整DAY。
+
+- `SF-2025-ARXIV-2509-08309` — Carson，Daily2025-09-12补Sep11，exact-v1§3–7必要，2+2+2=6。Zeno39首Source与Carson非请求者必要核实际完成，仅异构dense/完整head-group分工与受限redispatch，GQA不拆组只限本布局；保整数/逐卡容量/LP口径、低load/threshold反侧、全费及ready分验，不授全局最优/零迁移/无OOM/SLO。Ch52具体gap深入，Zeno49正式采用/原逐字PRE已过；root新授完整两个提交点段后/静态Striping标题前原一段/独立marker/本人注已存，仅按root允许与Zeno请求补“本布局中”四字。Zeno54实际完整新增/完整两侧/本人注/限定差额及唯一措辞POST已过，生效释放，无需root第三读/新收据，未DAY。未核实现/复现。
 
 - `SF-2026-ARXIV-2604-01621` — 04-04去重补查：原04-03同v1/7分/Ch52采用复用，不新增家族/评分/I；仅按[精确v1 PDF](https://arxiv.org/pdf/2604.01621v1)§5.3/Table5–6在原canonical论证补固定D/减少P资源效率与medianTTFT反侧。reader必要差额/逐字PRE通过，root窄锁，作者实际原段/完整局部邻接与本注已读；supp_apr04_reader实际完整局部邻接/原段与本注nonwriter POST通过，锁释放。无复现/代码/生产SLO保证。
 

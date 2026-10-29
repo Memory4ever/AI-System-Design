@@ -1,0 +1,1422 @@
+Encoder-Decoder Diffusion Language Models for Efficient Training and Inference
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Background
+2.1 Discrete Diffusion Models
+2.2 Block Diffusion Language Modeling
+3 Efficient Encoder-Decoder Diffusion
+3.1 Architecture
+3.2 Design Decisions
+3.3 Sampling Algorithm
+3.4 Training Algorithm
+3.5 E2D2 for Standard Masked Diffusion (MDLM)
+4 Experiments
+4.1 Experimental Design
+4.2 Results
+4.3 Ablations
+5 Related Work
+6 Conclusion
+References
+A Extended Background on Block Diffusion Language Models
+A.1 Forward Noise Process
+A.2 Reverse Denoising Process
+A.3 Negative Evidence Lower Bound (NELBO)
+B Training FLOPs derivation
+Autoregressive.
+Full-Sequence Diffusion.
+Block Diffusion.
+Encoder-Decoder Block Diffusion (Ours).
+C FLOPs comparison to MDLM
+D MDLM with Encoder-Decoder Architecture
+Notation
+Sampling
+Training
+E Additional Experimental Details
+E.1 Measuring Throughput
+E.2 Summarization
+Data
+Hyperparameters
+Evaluation
+E.3 Translation
+Data
+Hyperparameters
+Evaluation
+E.4 Mathematical Reasoning
+Data
+Hyperparameters
+Evaluation
+E.5 Language Modeling
+Data
+Hyperparameters
+Evaluation
+F Assets
+G Generated Samples
+G.1 E2D2
+G.2 BD3LM (N=21N=21)
+License: CC BY 4.0
+arXiv:2510.22852v1 [cs.LG] 26 Oct 2025
+\starttitlesymbolfootnotes
+Encoder-Decoder Diffusion Language Models for Efficient Training and Inference
+Marianne Arriola*
+Yair Schiff*
+Hao Phung
+Aaron Gokaslan
+Volodymyr Kuleshov
+Affiliation:
+Department of Computer Science, Cornell University
+Affiliation: {marriola,yairschiff,hao}@cs.cornell.edu, {akg87,kuleshov}@cornell.edu
+Affiliation: * Equal contribution; corresponding authors
+Abstract
+Discrete diffusion models enable parallel token sampling for faster inference than autoregressive approaches. However, prior diffusion models use a decoder-only architecture, which requires sampling algorithms that invoke the full network at every denoising step and incur high computational cost. Our key insight is that discrete diffusion models perform two types of computation: 1) representing clean tokens and 2) denoising corrupted tokens, which enables us to use separate modules for each task. We propose an encoder-decoder architecture to accelerate discrete diffusion inference, which relies on an encoder to represent clean tokens and a lightweight decoder to iteratively refine a noised sequence. We also show that this architecture enables faster training of block diffusion models, which partition sequences into blocks for better quality and are commonly used in diffusion language model inference. We introduce a framework for Efficient Encoder-Decoder Diffusion (E2D2), consisting of an architecture with specialized training and sampling algorithms, and we show that E2D2 achieves superior trade-offs between generation quality and inference throughput on summarization, translation, and mathematical reasoning tasks. We provide the code11
+1
+Code: https://github.com/kuleshov-group/e2d2, model weights, and blog post on the project page: https://m-arriola.com/e2d2.
+\stoptitlesymbolfootnotes
+1 Introduction
+Discrete diffusion models (4), originally proposed as an extension of Gaussian diffusion (28, 59), have steadily improved in quality on tasks, such as language modeling (24, 40, 55), music generation (62), and biological sequence design (56, 68).
+Recent successes include diffusion models at the 7-8B parameter scale, which outperform or match comparably sized autoregressive (AR) models [46, 78].
+To generate samples, diffusion models iteratively refine a sequence consisting of both clean and corrupted tokens.
+We observe that this process consists of: 1) producing useful representations of clean tokens and 2) using these representations as context for denoising corrupted tokens.
+However, prior diffusion language models jointly perform both tasks within the same decoder-only architecture.
+As a result, these models must invoke the full network at every denoising step, incurring high computational cost.
+In this work, we propose an encoder-decoder transformer architecture to separate the computation for representing clean tokens and denoising corrupted tokens. In particular, we use an encoder to represent clean tokens and a lightweight decoder to iteratively refine a noised sequence conditioned on the encoder’s representation.
+This enables faster inference, as we call the lightweight decoder multiple times to iteratively denoise tokens and invoke the encoder only periodically to update its representations.
+Our novel framework for Efficient Encoder-Decoder Diffusion (E2D2) consists of an encoder-decoder transformer architecture complemented with efficient training and sampling algorithms that enable both faster inference and KV caching support.
+In addition to faster inference, our proposed encoder-decoder architecture enables faster training of block diffusion models [1], which partition sequences into blocks to improve generation quality and support KV caching.
+Block diffusion is widely used for generating with large diffusion language models, even those trained with standard full-sequence diffusion, such as LLaDA [46], Seed Diffusion [61], MMaDA [77].
+However, decoder-only block diffusion incurs higher training costs, with forward passes that are 2×2\times more expensive than standard diffusion, as both the full clean and noised sequences must be processed in every transformer layer [1].
+We derive an efficient training algorithm for encoder-decoder block diffusion that uses the encoder to process the clean sequence and the decoder to process the noised sequence, which halves training costs compared to a decoder-only model of equal size.
+To demonstrate the efficacy of our encoder-decoder diffusion framework, we train domain-specific diffusion models for summarization, translation, and mathematical reasoning, and show that E2D2 outperforms decoder-only diffusion models in generation speed and quality.
+Contributions
+In summary, we make the following contributions:
+1) We propose an encoder-decoder architecture for discrete diffusion modeling: the encoder represents clean tokens and the decoder denoises corrupted tokens.
+2) We derive efficient diffusion sampling algorithms that accelerate inference by denoising tokens using a lightweight decoder.
+We also derive an efficient training algorithm for block diffusion modeling using our architecture, which halves training costs compared to a decoder-only architecture.
+3) We demonstrate E2D2’s effectiveness by training task-specific models on summarization, translation, and mathematical reasoning.
+We also map the Pareto frontier of the quality-throughput trade-off by varying the decoder size and demonstrate that E2D2 achieves state-of-the-art performance compared to decoder-only discrete diffusion models.
+Figure 1:
+Efficient Encoder-Decoder Diffusion (E2D2) enables faster generation than decoder-only architectures.
+We accelerate inference by using a lightweight decoder to iteratively denoise for a fixed number of sampling steps, without invoking the encoder.
+The encoder processes the newly generated tokens periodically to update its representations.
+2 Background
+2.1 Discrete Diffusion Models
+Diffusion generative models (28, 59, 60) train a denoising network pθp_{\theta} to remove noise from latent variables 𝐳t{\mathbf{z}}_{t}, for t∈[0,1]t\in[0,1], obtained from a pre-defined corruption process qq.
+This forward process transforms data 𝐱{\mathbf{x}} by adding noise increasing in tt, eventually reaching a limiting distribution 𝐳1{\mathbf{z}}_{1}.
+Discrete denoising diffusion probabilistic models (D3PM [4]) take inspiration from diffusion and define corruption processes over discrete one-hot vectors 𝐳t{\mathbf{z}}_{t}.
+A recent successful class of discrete diffusion models focuses on masking (absorbing state) diffusion (47, 55, 58), where the limiting distribution corresponds to 𝐳1=𝐦{\mathbf{z}}_{1}={\mathbf{m}}, a one-hot representation of a special [MASK] token.
+In this framework, the corruption process is defined via interpolation between clean data 𝐱{\mathbf{x}} and the prior 𝐦{\mathbf{m}}:
+q⁡(𝐳t|𝐱)=Cat​(𝐳t,αt​𝐱+(1−αt)​𝐦),q({\mathbf{z}}_{t}|{\mathbf{x}})=\text{Cat}({\mathbf{z}}_{t};\alpha_{t}{\mathbf{x}}+(1-\alpha_{t})\bm{{\mathbf{m}}}),
+where Cat​(⋅,⋅)\text{Cat}(\cdot;\cdot) represents a categorical distribution and αt=α⁡(t)∈[0,1]\alpha_{t}=\alpha(t)\in[0,1] is a noise schedule decreasing in t.t.
+For a given corruption process of this form, the true posterior q⁡(𝐳s∣𝐳t,𝐱)q({\mathbf{z}}_{s}\mid{\mathbf{z}}_{t},{\mathbf{x}}) is known, where 𝐳s{\mathbf{z}}_{s} represents less noisy latents for s<t.s<t.
+The optimal diffusion model pθp_{\theta} will exactly recover this posterior.
+However, during inference, we do not have access to 𝐱{\mathbf{x}}.
+A common parameterization defines pθp_{\theta} as
+pθ​(𝐳s|𝐳t)=q⁡(𝐳s|𝐳t,𝐱=𝐱θ​(𝐳t))p_{\theta}({\mathbf{z}}_{s}|{\mathbf{z}}_{t})=q({\mathbf{z}}_{s}|{\mathbf{z}}_{t},{\mathbf{x}}={\mathbf{x}}_{\theta}({\mathbf{z}}_{t}))
+where the denoising model 𝐱θ​(𝐳t){\mathbf{x}}_{\theta}({\mathbf{z}}_{t}) predicts clean tokens 𝐱{\mathbf{x}} given noisy latents 𝐳t{\mathbf{z}}_{t}.
+To model sequences of LL tokens 𝐱1:L{\mathbf{x}}^{1:L}, the corruption process qq is applied independently to each token in a sequence and the denoising network is assumed to factorize independently as well.
+This framework can easily be extended to accommodate conditional generation by conditioning on some prompt 𝐱1:P{\mathbf{x}}^{1:P} in both the forward q(𝐳t1:L∣𝐱1:L,𝐱1:P)q({\mathbf{z}}_{t}^{1:L}\mid{\mathbf{x}}^{1:L},{\mathbf{x}}^{1:P}) and reverse pθ(𝐳s1:L∣𝐳t1:L,𝐱1:P)p_{\theta}({\mathbf{z}}_{s}^{1:L}\mid{\mathbf{z}}_{t}^{1:L},{\mathbf{x}}^{1:P}) processes.
+2.2 Block Diffusion Language Modeling
+Block diffusion language models (BD3LM [1]) improve sample quality of standard discrete diffusion and enable efficient KV caching by introducing a parameterization that interpolates between AR and fully-parallel diffusion.
+In block diffusion, blocks of tokens are modeled autoregressively with diffusion applied within each block.
+Formally, tokens in 𝐱1:L{\mathbf{x}}^{1:L} are chunked into BB blocks each of length SS: B=L/SB=L/S.
+Adopting the shorthand from [1], for each block b∈[1,B],b\in[1,B], the tokens 𝐱1+(b−1)⋅S:b⋅S{\mathbf{x}}^{1+(b-1)\cdot S:b\cdot S} are denoted as 𝐱b{\mathbf{x}}^{b} and all preceding tokens 𝐱1:(b−1)⋅S{\mathbf{x}}^{1:(b-1)\cdot S} are denoted as 𝐱<b{\mathbf{x}}^{<b}.
+The likelihood of this model is defined as
+log⁡pθ​(𝐱)=∑b=1Blog⁡pθ​(𝐱b∣𝐱<b),\log p_{\theta}({\mathbf{x}})=\sum_{b=1}^{B}\log p_{\theta}({\mathbf{x}}^{b}\mid{\mathbf{x}}^{<b}),
+where each pθ​(𝐱b∣𝐱<b)p_{\theta}({\mathbf{x}}^{b}\mid{\mathbf{x}}^{<b}) is modeled using discrete diffusion. In the reverse process within each block pθ​(𝐳sb∣𝐳tb,𝐱<b)p_{\theta}({\mathbf{z}}_{s}^{b}\mid{\mathbf{z}}_{t}^{b},{\mathbf{x}}^{<b}), we account for already decoded blocks: 𝐱θ=𝐱θ​(𝐳tb,𝐱<b).{\mathbf{x}}_{\theta}={\mathbf{x}}_{\theta}({\mathbf{z}}_{t}^{b},{\mathbf{x}}^{<b}).
+As with other diffusion language models, BD3LM uses a decoder-only architecture to parameterize pθp_{\theta}.
+See Appendix A for an extended overview.
+Models that are trained with standard full-sequence diffusion can apply block decoding at inference by unmasking tokens in blocks left-to-right, such as LLaDA [46], Seed Diffusion [61], MMaDA [77], and others [26, 81, 82].
+However, since these models are trained with bidirectional context, they require bidirectional attention over the full sequence, which restricts KV caching and requires approximate caching methods [30, 72, 73].
+Training with the block diffusion parameterization described above can further improve sample quality [1, 2, 19].
+Naively training a block diffusion model requires a separate function evaluation to predict each block, since the clean context 𝐱<b{\mathbf{x}}^{<b} is different for each block.
+To enable parallel training along the sequence dimension, [1] concatenate the full clean sequence 𝐱1:B{\mathbf{x}}^{1:B} with a noisy sequence 𝐳t1:B{\mathbf{z}}_{t}^{1:B}.
+While enabling parallel training, this is difficult to scale since the entire model needs to process 2​L2L tokens at every layer, which doubles training cost relative to previous masked diffusion models.
+3 Efficient Encoder-Decoder Diffusion
+Decoder-only transformers (67) are inefficient when used to parameterize pθp_{\theta} in language modeling since each inference step requires a full forward pass, motivating architectures that avoid this bottleneck.
+Our key insight is that discrete diffusion models perform two types of computation: (1) representing clean tokens and (2) denoising masked tokens, which suggests that we can use separate modules for each task.
+We explore an encoder-decoder architecture, commonly used in sequence-to-sequence modeling (54, 63, 67), to separate computation used for representing clean tokens and for denoising.
+Specifically, our probabilistic model pθp_{\theta} is defined via the denoising network 𝐱θ{\mathbf{x}}_{\theta}.
+For this 𝐱θ{\mathbf{x}}_{\theta}, we define 1) an encoder that extracts features from clean tokens, and 2) a decoder that iteratively denoises a sequence of noisy tokens conditioned on these features.
+Crucially, the decoder can be evaluated multiple times to denoise a sequence of tokens, without needing to invoke the encoder.
+After a predetermined number of decoder function evaluations, we can then pass newly generated tokens to the encoder, which adds them to its running representation.
+Unlike existing decoder-only models, our approach allows parameters and compute to be reallocated between the encoder and decoder (e.g., by using a small decoder and a larger encoder),
+amortizing the encoder’s cost over multiple lightweight decoding steps.
+We call this approach Efficient Encoder-Decoder Diffusion (E2D2), consisting of our proposed encoder-decoder architecture complemented with efficient training and sampling algorithms.
+We note that E2D2 can be applied to any discrete diffusion parameterization, e.g., both the standard masked diffusion formulation presented in Section 2.1 and the block-wise factorization from Section 2.2.
+However, in the figures and experimental results, we focus on the block diffusion parameterization for the following reasons: 1) block diffusion attains superior language modeling performance compared to full-sequence masked diffusion (1), 2) block diffusion enables key-value (KV) caching which significantly accelerates inference (1), and 3) even recent state-of-the-art large diffusion language models which are trained with the full-sequence masked diffusion parameterization (e.g., LLaDA (46)) rely on block autoregressive decoding at inference due to its improved performance.
+3.1 Architecture
+Encoder
+We parameterize the encoder with a transformer model and denote the number of layers as NEnc.N_{\text{Enc}}.
+The input to the encoder is a sequence of clean tokens
+comprised of both prompt tokens and previously decoded tokens, which we denote as 𝐱t,Enc{\mathbf{x}}_{t,\text{Enc}}.
+The encoder outputs features 𝐡t=Encoder​(𝐱t,Enc){\mathbf{h}}_{t}=\textsc{Encoder}({\mathbf{x}}_{t,\text{Enc}}).
+We explore different choices of encoder feature representations in Section 3.2.
+Decoder
+As with the encoder, we use a transformer model for the decoder and denote the number of layers as NDec.N_{\text{Dec}}.
+The decoder’s input, 𝐳t,Dec{\mathbf{z}}_{t,\text{Dec}},
+corresponds to the portion of the entire sequence 𝐳t1:L{\mathbf{z}}_{t}^{1:L} that is “actively being denoised.”
+The decoder outputs logits that are conditioned on the encoder output via cross-attention 𝐱logit=Decoder​(𝐳t,Dec,𝐡t){\mathbf{x}}_{\text{logit}}=\textsc{Decoder}({\mathbf{z}}_{t,\text{Dec}},{\mathbf{h}}_{t}), where the positions of 𝐱logit{\mathbf{x}}_{\text{logit}} correspond to 𝐳t,Dec{\mathbf{z}}_{t,\text{Dec}}.
+3.2 Design Decisions
+Below, we detail an efficient implementation of the decoder’s attention module using kernel fusion.
+We also explore two ways of connecting the encoder outputs to the decoder: 1) a “last hidden state” version, where the last encoder hidden representation is used as input to the decoder (see left-hand side of Figure 5) and 2) a “shared KV cache” version, where the KV cache is shared between corresponding layers (see right-hand side of Figure 5).
+Fused Attention Kernel
+Previous encoder-decoder implementations, e.g., T5 (54), apply self- and cross-attention as separate decoder operations.
+In contrast, we perform a single fused attention call that jointly attends to both the encoder outputs and the decoder’s own hidden states.
+While this forces the decoder to distribute its attention between the encoder representation 𝐡t{\mathbf{h}}_{t} and its own input 𝐳t,Dec{\mathbf{z}}_{t,\text{Dec}}, it enables a fused attention kernel that reduces memory access and kernel launch overhead.
+Last Hidden State
+The “last hidden state” version follows T5-style encoder-decoder models (54) where we provide the final encoder layer’s output features as input to each layer of the decoder.
+Formally, let 𝐠i,𝐟i{\mathbf{g}}_{i},{\mathbf{f}}_{i} be the output of the ithi^{\text{th}} layer of the encoder and decoder, respectively, with 𝐟0=Embedding​(𝐳t,Dec){\mathbf{f}}_{0}=\textsc{Embedding}({\mathbf{z}}_{t,\text{Dec}}).
+Then we define the encoder output as 𝐡t=𝐠NEnc{\mathbf{h}}_{t}={\mathbf{g}}_{N_{\text{Enc}}}.
+Before each decoder layer, we concatenate this representation to the decoder’s input token embeddings.
+Thus, the input to each decoder layer is 𝐡t⊕𝐟i−1{\mathbf{h}}_{t}\oplus{\mathbf{f}}_{i-1}, where ⊕\oplus denotes concatenation along the sequence dimension.
+Shared KV Cache
+The “shared KV cache” variant conditions the decoder on the encoder’s intermediate representations by reusing the encoder’s KVs from each layer. Unlike the “last hidden state” design where every decoder layer attends to the same 𝐡t{\mathbf{h}}_{t}, the ithi^{\text{th}} decoder layer uses the KVs from some jthj^{\text{th}} encoder layer, where the pairing of ii and jj is user-specified.
+This design suits fine-tuning decoder-only models as encoder-decoders, as reusing the encoder’s cached KVs keeps the decoder’s cross-attention inputs aligned with those expected by the base model and thus improves fine-tuning stability.
+We define the encoder output as a list of KVs computed per layer 𝐡t=[𝐊𝐕Enc​[1],…,𝐊𝐕Enc​[NEnc]]{\mathbf{h}}_{t}=[\mathbf{KV}_{\text{Enc}}[1],\dots,\mathbf{KV}_{\text{Enc}}[N_{\text{Enc}}]] where 𝐊𝐕Enc​[j]\mathbf{KV}_{\text{Enc}}[j] is the KV cache of the jthj^{\text{th}} encoder layer. Let 𝐊𝐕Dec​[i]\mathbf{KV}_{\text{Dec}}[i] be the KVs computed at the ithi^{\text{th}} decoder layer using the output from the previous decoder layer.
+Then, the keys and values used for the fused cross- and self-attention in the decoder are formed via the concatenation 𝐡t​[j]⊕𝐊𝐕Dec​[i]{\mathbf{h}}_{t}[j]\oplus\mathbf{KV}_{\text{Dec}}[i].
+3.3 Sampling Algorithm
+E2D2 models admit faster inference by decoupling encoder and decoder calls.
+Whereas prior decoder-only language models require calling the full transformer in every generation step, E2D2 calls a lightweight decoder multiple times throughout denoising, followed by one call to a larger encoder. In Algorithm 1, we present the sampling procedure for E2D2 applied to the block diffusion parameterization, which generates block-by-block while enabling efficient KV caching.
+We begin by embedding the context or prompt of PP tokens through the encoder to produce encoder features 𝐡1:P{\mathbf{h}}^{1:P}, and we pre-fill the encoder KV cache.
+We generate a new block by iteratively denoising a block of masked tokens conditioned on 𝐡1:P{\mathbf{h}}^{1:P}, invoking only the decoder.
+We adjust the encoder’s signature to accept the KV cache: Encoder​(𝐱b,𝐊𝐕<b)\textsc{Encoder}({\mathbf{x}}^{b},\mathbf{KV}^{<b}), where 𝐊𝐕<b\mathbf{KV}^{<b} represents the KV cache for all blocks preceding bb.
+We also adjust the output of the encoder so that it returns the updated KV cache for the newest block 𝐊𝐕b\mathbf{KV}^{b}.
+For the "last hidden state" version of E2D2, which computes separate KVs for the encoder and decoder, we also accumulate a KV cache for the decoder (not currently depicted in Algorithm 1).
+1:
+Prompt 𝐱1:P{\mathbf{x}}^{1:P}, # of blocks BB, # of diffusion steps TT, Encoder, Decoder, algorithm Sample
+2:
+𝐱1:B,𝐊𝐕←∅,∅{\mathbf{x}}^{1:B},\mathbf{KV}\leftarrow\emptyset,\emptyset ⊳\triangleright Output, KV cache
+3:
+𝐡,𝐊𝐕←Encoder(𝐱1:P,∅){\mathbf{h}},\mathbf{KV}\leftarrow\textsc{Encoder}({\mathbf{x}}^{1:P},\emptyset) ⊳\triangleright Encode prompt, collect encoder KV cache
+4:
+for b=1b=1 to BB do
+5:
+𝐳tb∼𝐦b{\mathbf{z}}_{t}^{b}\sim{\mathbf{m}}^{b} ⊳\triangleright Initialize noised block
+6:
+for t=1,T−1T,…​1Tt=1,\frac{T-1}{T},\dots\frac{1}{T} do
+7:
+𝐳tb←Sample​(Decoder​(𝐳tb,𝐡)){\mathbf{z}}_{t}^{b}\leftarrow\textsc{Sample}(\textsc{Decoder}({\mathbf{z}}_{t}^{b},{\mathbf{h}})) ⊳\triangleright Denoise block: Apply small decoder only
+8:
+end for
+9:
+𝐱←𝐱<b⊕𝐳tb{\mathbf{x}}\leftarrow{\mathbf{x}}^{<b}\oplus{\mathbf{z}}^{b}_{t} ⊳\triangleright Accumulate output
+10:
+𝐡,𝐊𝐕b←Encoder​(𝐱b,𝐊𝐕<b){\mathbf{h}},\mathbf{KV}^{b}\leftarrow\textsc{Encoder}({\mathbf{x}}^{b},\mathbf{KV}^{<b}) ⊳\triangleright Encode new block, compute encoder KVs
+11:
+𝐊𝐕←𝐊𝐕<b⊕𝐊𝐕b\mathbf{KV}\leftarrow\mathbf{KV}^{<b}\oplus\mathbf{KV}^{b} ⊳\triangleright Accumulate KV cache
+12:
+end for
+13:
+return 𝐱1:B{\mathbf{x}}^{1:B}
+Algorithm 1 Encoder-Decoder Block Diffusion Sampling with KV Caching
+Attention FLOPs
+MLP FLOPs
+AR
+4​N​D​(L2+L2)4ND{\color[rgb]{0,0,1}(\frac{L^{2}+L}{2})}
+24​N​L​D224NLD^{2}
+MDLM
+4​N​D​L24ND{\color[rgb]{0,0,1}L^{2}}
+24​N​L​D224NLD^{2}
+BD3LM
+4​N​D​(L2+L​S)4ND{\color[rgb]{0,0,1}(L^{2}+LS)}
+48​N​L​D248NLD^{2}
+E2D2
+4​(NEnc+NDec)​D​(L2+L​S2)4(N_{\text{Enc}}+N_{\text{Dec}})D{\color[rgb]{0,0,1}(\frac{L^{2}+LS}{2})}
+24​(NEnc+NDec)​L​D224(N_{\text{Enc}}+N_{\text{Dec}})LD^{2}
+Table 1: Forward-pass training FLOPs comparison.
+NN denotes the number of layers, LL the sequence length, SS the block size, and DD the hidden dimension.
+The expression highlighted in blue denotes the number of attention operations.
+E2D2 refers to block diffusion parameterization.
+For E2D2, we separate NN into NEncN_{\text{Enc}} encoder and NDecN_{\text{Dec}} decoder layers.
+We provide the derivation in Appendix B.
+Inference FLOPs
+AR
+L⋅O⁡(θ)L\cdot O(\theta)
+MDLM
+T⋅O⁡(θ)T\cdot O(\theta)
+BD3LM
+B​T⋅O⁡(θ)BT\cdot O(\theta)
+E2D2
+B⋅O⁡(ϕ)⏟encoder+B​T⋅O⁡(θ)⏟decoder\underbrace{B\cdot O(\phi)}_{\text{encoder}}+\underbrace{BT\cdot O(\theta)}_{\text{decoder}}
+Table 2: Inference FLOPs comparison.
+O⁡(θ)O(\theta) is cost of a decoder call and O⁡(ϕ)O(\phi) is cost of an encoder call.
+For E2D2, O⁡(θ)≪O⁡(ϕ)O(\theta)\ll O(\phi).
+TT denotes diffusion steps and BB the number of blocks.
+E2D2 uses the block diffusion parameterization.
+3.4 Training Algorithm
+In this section, we review the algorithm and complexity of a forward pass through the E2D2 model to compute the loss of the block diffusion objective. The training procedure for E2D2 is presented in Algorithm 2.
+We model the posterior probabilities pθ​(𝐳sb|𝐳tb,𝐱C)p_{\theta}({\mathbf{z}}_{s}^{b}|{\mathbf{z}}_{t}^{b},{\mathbf{x}}^{C}) for all blocks b∈[1,…,B]b\in[1,\dots,B] and context tokens 𝐱C{\mathbf{x}}^{C}, where C⊂{1,…,L}C\subset\{1,\dots,L\} is a set of their position indices.
+For block diffusion, context tokens for block bb correspond to previous clean blocks 𝐱C=𝐱<b{\mathbf{x}}^{C}={\mathbf{x}}^{<b}.
+Naively, we would compute logits by invoking the encoder and decoder for each block in a loop, since the logits for each block are conditioned on block-specific inputs 𝐳tb,𝐱C{\mathbf{z}}_{t}^{b},{\mathbf{x}}^{C}. This entails calling the encoder 𝐡tC=Encoder​(𝐱C){\mathbf{h}}_{t}^{C}=\textsc{Encoder}({\mathbf{x}}^{C}) to encode the conditioning 𝐱C{\mathbf{x}}^{C} and the decoder to compute 𝐱logitb=Decoder​(𝐳tb,𝐡tC){\mathbf{x}}_{\text{logit}}^{b}=\textsc{Decoder}({\mathbf{z}}_{t}^{b},{\mathbf{h}}_{t}^{C}).
+Vectorized Implementation
+To efficiently model all posterior probabilities across BB blocks using a single encoder and decoder pass, we process all clean tokens 𝐱1:L{\mathbf{x}}^{1:L} through the encoder and noised tokens 𝐳t1:L{\mathbf{z}}_{t}^{1:L} through the decoder. We design custom attention masks (Figure 2) to ensure that noisy tokens attend within their noised block and to previous clean blocks, inspired by [1].
+Algorithm 2 Encoder-Decoder Training
+1:
+datapoint 𝐱1:L{\mathbf{x}}^{1:L}, noise process qtq_{t}, Encoder w/ params. ϕ\phi, Decoder w/ params. θ\theta, diffusion loss ℒ\mathcal{L}
+2:
+repeat
+3:
+Sample t∼𝒰⁡[0,1]t\sim\mathcal{U}[0,1]
+4:
+𝐳t1:L∼qt(⋅|𝐱1:L){\mathbf{z}}_{t}^{1:L}\sim q_{t}(\cdot|{\mathbf{x}}^{1:L})
+5:
+𝐡1:L←Encoder(𝐱1:L,ℳEnc){\mathbf{h}}^{1:L}\leftarrow\textsc{Encoder}({\mathbf{x}}^{1:L},\mathcal{M}_{\text{Enc}})
+6:
+𝐱logit1:L←Decoder(𝐳t1:L,𝐡1:L,ℳDec){\mathbf{x}}_{\text{logit}}^{1:L}\leftarrow\textsc{Decoder}({\mathbf{z}}_{t}^{1:L},{\mathbf{h}}^{1:L},\mathcal{M}_{\text{Dec}})
+7:
+Take gradient step on ∇θ,ϕℒ(𝐱logit1:L;θ,ϕ)\nabla_{\theta,\phi}\mathcal{L}({\mathbf{x}}_{\text{logit}}^{1:L};\theta,\phi)
+8:
+until converged
+In particular, the clean sequence 𝐱1:L\mathbf{x}^{1:L} is passed to the encoder with a block-causal mask ℳEnc∈{0,1}L×L\mathcal{M}_{\text{Enc}}\in\{0,1\}^{L\times L} to produce the representations 𝐡1:L{\mathbf{h}}^{1:L} so that each clean block is conditioned on itself 𝐱b{\mathbf{x}}^{b} and previous blocks 𝐱<b{\mathbf{x}}^{<b}(Figure 2, left).
+In the decoder, for a given noisy block 𝐳tb{\mathbf{z}}_{t}^{b}, each token attends to tokens within its block 𝐳tb{\mathbf{z}}_{t}^{b} and clean token representations from preceding blocks 𝐱<b{\mathbf{x}}^{<b}, which we denote as 𝐡<b{\mathbf{h}}^{<b}.
+The decoder attention mechanism operates over 2​L2L keys and values corresponding to the LL tokens in 𝐡1:L{\mathbf{h}}^{1:L} and the LL tokens in 𝐳t1:L.{\mathbf{z}}_{t}^{1:L}.
+The decoder attention pattern is enforced through an attention mask ℳDec∈{0,1}L×2​L\mathcal{M}_{\text{Dec}}\in\{0,1\}^{L\times 2L} (Figure 2, right).
+We thus perform an encoder pass over the entire clean sequence, followed by a decoder pass over the entire noisy sequence, as follows:
+𝐡1:L=Encoder(𝐱1:L,ℳEnc){\mathbf{h}}^{1:L}=\textsc{Encoder}({\mathbf{x}}^{1:L},\mathcal{M}_{\text{Enc}}) and 𝐱logit1:L=Decoder(𝐳t1:L,𝐡1:L,ℳDec).{\mathbf{x}}_{\text{logit}}^{1:L}=\textsc{Decoder}({\mathbf{z}}_{t}^{1:L},{\mathbf{h}}^{1:L},\mathcal{M}_{\text{Dec}}).
+Crucially, using a smaller decoder significantly improves training throughput relative to a decoder-only BD3LM model.
+In Table 1, we depict the FLOPs comparison between modeling paradigms and E2D2 applied to block diffusion, see Appendix B for a detailed derivation.
+Letting NN be the total number of layers in the model, which for E2D2 we have N=NEnc+NDecN=N_{\text{Enc}}+N_{\text{Dec}}, we see that for same number of layers, E2D2 uses 2×2\times fewer FLOPs compared to BD3LM.
+Moreover, for any block diffusion model of block size S<L,S<L, we achieve fewer training FLOPs relative to standard masked diffusion models (MDLM; see Appendix C) while maintaining the superior quality of the BD3LM block diffusion parameterization.
+Encoder Attn. Mask ℳenc\mathcal{M}_{\text{enc}}𝐱1:L{\mathbf{x}}^{1:L}𝐱1:L{\mathbf{x}}^{1:L}Decoder Attn. Mask ℳdec\mathcal{M}_{\text{dec}}𝐡1:L{\mathbf{h}}^{1:L}𝐳1:Lt{\mathbf{z}}^{1:L}_{t}𝐳1:Lt{\mathbf{z}}^{1:L}_{t}Self-attn w/in 𝐱1:L{\mathbf{x}}^{1:L}Cross-attn to 𝐡1:L{\mathbf{h}}^{1:L}Self-attn w/in 𝐳t1:L{\mathbf{z}}_{t}^{1:L}
+Figure 2:
+Example attention masks used in block diffusion training with an encoder-decoder architecture, for L=6L=6 tokens with blocks of size S=2S=2.
+Left: The encoder mask ℳEnc∈{0,1}L×L\mathcal{M}_{\text{Enc}}\in\{0,1\}^{L\times L} enables clean tokens to attend within their respective block and to previous blocks. Right: The decoder mask ℳDec∈{0,1}L×2​L\mathcal{M}_{\text{Dec}}\in\{0,1\}^{L\times 2L} uses self-attention within noised blocks and cross-attention to previous clean blocks using the encoder’s output representation 𝐡1:L{\mathbf{h}}^{1:L}.
+3.5 E2D2 for Standard Masked Diffusion (MDLM)
+Below, we present details for training and sampling from a standard full-sequence masked diffusion model (MDLM [55]), introduced in Section 2.1, using our encoder-decoder architecture.
+Recall that here our denoising network predicts a joint distribution over the entire sequence pθ(𝐳s1:L∣𝐳t1:L)p_{\theta}({\mathbf{z}}_{s}^{1:L}\mid{\mathbf{z}}_{t}^{1:L}), unlike block diffusion which requires predicting the posterior for each block of
+tokens.
+The encoder takes as input a sequence of clean context tokens consisting of prompt tokens and clean tokens in 𝐳t1:L{\mathbf{z}}_{t}^{1:L}. The decoder takes as input the full noised sequence 𝐳t1:L{\mathbf{z}}_{t}^{1:L}, which outputs logits for each token conditioned on the encoder’s output.
+This design facilitates faster inference, as the lightweight decoder may be invoked multiple times to generate a number of tokens before calling the larger encoder to produce a strong contextual representation.
+Sampling
+For full-sequence masked diffusion, the sampling procedure follows Algorithm 1, except that here the decoder generates groups of tokens that can be in any position of the full sequence rather than in contiguous blocks.
+For a more formal exposition see Appendix D and Algorithm 3.
+As above, we begin by encoding the PP prompt tokens 𝐱1:P{\mathbf{x}}^{1:P} to attain the encoder representation 𝐡1:P{\mathbf{h}}^{1:P}.
+The decoder’s input is initialized to a sequence of length LL consisting of only masked tokens.
+The decoder iteratively denoises this full sequence for a fixed number of steps with cross-attention to 𝐡1:P{\mathbf{h}}^{1:P}.
+At the end of this denoising interval, the decoder has generated some new tokens, which are potentially non-contiguous in the sequence dimension.
+These tokens are returned as a new ‘block’ to the encoder, which adds them to its running context and produces an updated clean token representation.
+This process is repeated until the sampling budget TT is exhausted.
+Training
+At every training step, we sample 𝐳t1:L∼q(𝐳t1:L∣𝐱1:L){\mathbf{z}}_{t}^{1:L}\sim q({\mathbf{z}}_{t}^{1:L}\mid{\mathbf{x}}^{1:L}).
+The input to the encoder consists of the clean tokens in this sequence.
+The decoder receives the entire sequence 𝐳t1:L{\mathbf{z}}_{t}^{1:L} and the encoder’s representation of the clean tokens.
+Since we model the full sequence with diffusion, both the encoder and decoder use bidirectional attention.
+See Appendix D for more detail.
+4 Experiments
+4.1 Experimental Design
+We study the capabilities of E2D2 on summarization, translation, mathematical reasoning, and zero-shot likelihood estimation on held-out data.
+In each setting, we train domain-specific E2D2 and baseline models.
+In addition to performance metrics for each task, we report inference throughput.
+By varying the decoder size, we can map the Pareto frontier of efficiency and performance, with increasing number of layers controlling both performance (larger decoder →\rightarrow higher performance) and throughput (larger decoder →\rightarrow lower throughput).
+As noted in Section 3, throughout the experiments, we use the block diffusion parameterization in conjunction with E2D2.
+Datasets
+We examine 1) text summarization (CNN/DailyMail; [27, 57]) for which we compute ROUGE scores [37], 2) machine translation (WMT 14 de-en; [6]) for which we compute the BLEU [50] score, and 3) mathematical reasoning (GSM8K; [10]) for which we compute zero-shot pass@1 accuracy.
+We also train E2D2 on the widely used pretraining OpenWebText dataset [21].
+We compute perplexity (PPL) on the validation set of this corpus and PPL for held-out datasets (zero-shot PPL).
+Baselines
+We compare E2D2 against decoder-only AR models and discrete diffusion models MDLM [55] and BD3LM [1].
+For likelihood estimation, we also compare against SEDD [40].
+Last Hidden State Design Decisions
+For the last hidden state version of E2D2, models are parameterized using a transformer architecture based on Qwen3 (76).
+Qwen3 features improvements over prior architectures, such as removing QKV biases and introducing QK normalization [14].
+We maintain untied weights for the encoder and decoder.
+For the CNN/DailyMail, WMT, and OWT datasets, we train from scratch using this last hidden state version of E2D2.
+Full model and training hyperparameters are detailed in Appendix E.
+Shared KV Cache Design Decisions
+For the shared KV cache variant of E2D2, we use pretrained Qwen3 weights to instantiate an E2D2 encoder, letting NEncN_{\text{Enc}} be the same as the underlying Qwen3 LLM.
+We then copy these weights for the decoder, but reduce the number of layers, to instantiate a lightweight decoder so that NDec<NEncN_{\text{Dec}}<N_{\text{Enc}}.
+In particular, we copy layers closer to the output.
+The KV cache from the encoder layer is provided to the decoder layer from which it was copied, i.e., at the ithi^{\text{th}} decoder layer we use 𝐊𝐕⁡[NEnc−NDec+i]\mathbf{KV}[N_{\text{Enc}}-N_{\text{Dec}}+i].
+We reduce the memory footprint of the model by weight-tying the encoder and decoder parameters.
+For GSM8K, we fine-tuned from a pretrained Qwen3 1.7B model using this shared KV cache architecture.
+Full details are in Appendix E.
+We find that for tasks where the downstream dataset is relatively small, e.g., GSM8K, initializing from the pretrained weights of the underlying Qwen model improves convergence and downstream performance. This is similar to previous findings that initializing diffusion training from a pretrained AR model improves convergence [22, 78].
+4.2 Results
+Summarization and Machine Translation
+For text summarization and machine translation, in Tables 3 and 4, we see that E2D2 is able to match or outperform our diffusion baselines while achieving higher throughput.
+On the summarization task, E2D2 even outperforms an AR baseline that has the same number of layers, while increasing throughput by ∼\sim75%.
+We find that AR overfits on this dataset, unlike diffusion, which is robust against overfitting by training over masking rates [43, 52].
+Compared to MDLM, which does not support KV caching, E2D2 offers better language modeling and downstream task performance with ∼\sim3×\times faster inference.
+In Table 4, E2D2 achieves higher throughput and better BLEU scores for translation relative to the 16-layer BD3LM. While a small 12-layer BD3LM approaches the throughput of E2D2, its BLEU score worsens further.
+ROUGE (↑(\uparrow)
+1
+2
+L
+Past baselines
+GPT-2 (53)
+29.3
+8.3
+26.6
+BERT-L (39)
+41.7
+19.4
+38.8
+T5-L (54)
+42.5
+20.7
+39.8
+AR-Diff. (k=50k=50) (74)
+39.6
+16.3
+37.1
+GENIE (k=50k=50) (38)
+29.3
+8.3
+21.9
+From scratch
+NN
+Tput (↑\uparrow)
+1
+2
+L
+AR
+28
+89.1±0.6{}_{\pm\text{0.6}}
+31.7
+11.7
+22.1
+MDLM
+28
+49.3±14.6{}_{\pm\text{14.6}}
+30.6
+12.5
+22.7
+BD3LM
+12
+135.1±3.3{}_{\pm\text{3.3}}
+35.8
+13.7
+23.7
+E2D2 (Ours)
+20/8
+155.8±2.6{}_{\pm\text{2.6}}
+36.0
+14.1
+23.9
+Table 3: CNN/DailyMail test set ROUGE scores.
+Best values for our trained models are bolded.
+NN refers to number of transformer layers (NEncN_{\text{Enc}}/NDecN_{\text{Dec}} for E2D2).
+Decoding throughput (Tput) is measured in tokens / sec on 1 H100 80GB machine.
+For all models, we use T=LT=L sampling steps, so the throughput can be higher for diffusion when T<LT<L.
+We report mean ±\pm standard deviation for 100 samples.
+BLEU (↑\uparrow)
+Past baselines
+NAT (23)
+20.62
+NAR autoencoders (34)
+25.43
+USMT (3)
+17.43
+CMLM Base (20)
+29.47
+From scratch
+NN
+Tput (↑\uparrow)
+BLEU (↑\uparrow)
+AR
+32
+77.6±0.4{}_{\pm\text{0.4}}
+25.2
+MDLM
+32
+60.4±0.8{}_{\pm\text{0.8}}
+18.4
+BD3LM
+12
+129.6±0.7{}_{\pm\text{0.7}}
+23.3
+BD3LM
+16
+102.4±0.5{}_{\pm\text{0.5}}
+24.0
+E2D2 (Ours)
+28/4
+162.0±1.4{}_{\pm\text{1.4}}
+24.8
+Table 4: WMT (de-en) test set BLEU score.
+Best values for our trained models are bolded.
+NN refers to number of transformer layers (NEncN_{\text{Enc}}/NDecN_{\text{Dec}} for E2D2).
+Decoding throughput (Tput) is measured in tokens / sec on 1 H100 80GB machine.
+For all models, we use T=LT=L sampling steps, so the throughput can be higher for diffusion when T<LT<L.
+We report mean ±\pm standard deviation for 100 samples.
+Mathematical Reasoning
+Table 5 contains results on the GSM8K benchmark.
+As above, E2D2 shows improved downstream performance and decoding throughput compared to diffusion baselines.
+Qualitatively, we also observe that E2D2 outperforms BD3LM models; see samples in Appendix G.
+N
+PPL
+(↓\downarrow)
+0-shot
+pass@1
+(↑\uparrow)
+Tput
+(↑\uparrow)
+Fine-tuned
+AR
+28
+1.49
+66.6
+94.1±0.5{}_{\pm\text{0.5}}
+MDLM
+28
+≤2.30
+14.0
+31.9±3.0{}_{\pm\text{3.0}}
+BD3LM
+21
+≤1.87
+33.2
+86.6±0.5{}_{\pm\text{0.5}}
+E2D2 (Ours)
+28/14
+≤1.80
+47.9
+102.8±0.6{}_{\pm\text{0.6}}
+Table 5: Evaluation on GSM8K test set. Best diffusion value is bolded.
+NN refers to number of transformer layers (NEncN_{\text{Enc}}/NDecN_{\text{Dec}} in the case of E2D2).
+Decoding throughput (Tput) is measured in tokens / sec on 1 H100 80GB machine. For all models, we use T=LT=L sampling steps, so the throughput can be higher for diffusion when T<LT<L.
+We report mean ±\pm standard deviation for 100 samples.
+Figure 3:
+Mapping the Pareto Frontier:
+Larger models increase accuracy on GSM8K at the cost of slower decoding.
+E2D2 improves this trade-off.
+Mapping the Pareto Frontier of Performance and Efficiency
+By varying the depth of E2D2’s decoder and that of baseline models, we can examine the trade-off between performance (which increases with larger models) and throughput (which decreases with larger models).
+We fine-tune models on the GSM8K dataset and compute 0-shot pass@1 accuracy and decoding throughput.
+We select the number of decoder layers to roughly match the throughput for E2D2 and BD3LM models at various sizes, with BD3LM decoder layers varying over N∈{10,14,17,21,28}N\in\{10,14,17,21,28\} and E2D2 (using NEnc=28N_{\text{Enc}}=28) decoder layers varying over NDec∈{6,10,14,21,26}N_{\text{Dec}}\in\{6,10,14,21,26\}.
+At each throughput level, E2D2 features higher quality, extending the Pareto frontier of quality and speed in Figure 3.
+Likelihood
+In addition to downstream task performance, we evaluate E2D2’s language modeling capabilities.
+We train E2D2 model on OpenWebText (OWT; [21]) and compute zero-shot PPL (↓\downarrow) on held-out benchmark datasets from [53].
+E2D2 with the block diffusion parameterization outperforms full-sequence diffusion baselines SEDD and MDLM on OWT perplexity.
+While attaining comparable perplexities to BD3LM, we find that E2D2 is 40% faster to train, as measured in training throughput (tokens / sec on 1 H100 80GB, with batch size 32 and context length L=1024L=1024, measured after 100k steps) with a throughput of 8.4×1048.4\times 10^{4} for E2D2 and 5.9×1045.9\times 10^{4} for BD3LM.
+Table 6: Validation perplexities (↓\downarrow) for models trained on OWT.
+Perplexities for diffusion models are upper bounds.
+All models are trained on 524B tokens.
+All models use 170M total parameters and N=12N=12 total layers; for E2D2, we use NEnc=10,NDec=2N_{\text{Enc}}=10,N_{\text{Dec}}=2.
+†\dagger indicates values taken from [1].
+Zero-shot
+OWT
+PTB
+Wikitext
+LM1B
+Lambada
+AG News
+Pubmed
+Arxiv
+AR†
+17.54
+81.07
+25.32
+51.14
+52.13
+52.11
+48.59
+41.22
+SEDD†
+24.10
+96.33
+35.98
+68.14
+48.93
+67.82
+45.39
+40.03
+MDLM†
+22.98
+90.96
+33.22
+64.94
+48.29
+62.78
+43.13
+37.89
+BD3LM†
+20.73
+96.81
+31.31
+60.88
+50.03
+61.67
+42.52
+39.20
+E2D2
+21.73
+101.50
+32.32
+64.01
+54.62
+63.75
+43.68
+41.52
+4.3 Ablations
+We assess the impact of block size, number of diffusion steps, and choice of encoder-decoder architecture on downstream performance.
+Table 7: Accuracy and decoding speed trade-off across varying block sizes for E2D2 on GSM8K.
+Decoding throughput (Tput) is measured in tokens / sec on 1 A100 80GB machine.
+We report mean ±\pm standard deviation for 100 samples.
+Block size SS
+0-shot pass@1 (↑\uparrow)
+Tput ( ↑\uparrow)
+32
+20.9
+62.2±2.3{}_{\pm\text{2.3}}
+16
+33.0
+58.3±1.1{}_{\pm\text{1.1}}
+8
+37.4
+52.7±0.4{}_{\pm\text{0.4}}
+4
+47.9
+45.7±0.2{}_{\pm\text{0.2}}
+2
+50.1
+34.8±0.4{}_{\pm\text{0.4}}
+Block size
+For E2D2, using a larger block size increases throughput, as the encoder is invoked fewer times during generation.
+However, larger block sizes lead to worse quality, as the likelihood bound is less tight for larger blocks [1].
+To explore this trade-off, we fine-tune E2D2 models with NEnc/NDec=28/14N_{\text{Enc}}/N_{\text{Dec}}=28/14 and varying block sizes S∈{2,4,8,16,32}S\in\{2,4,8,16,32\} on the GSM8K dataset.
+We report results in Table 7 where we observe the anticipated trade-off, with the best quality coming from the smallest block size S=2S=2 and the highest throughput coming from the largest block size S=32S=32.
+Number of Diffusion Steps
+In Table 8, we show the effect of diffusion steps per block TT on sample quality using E2D2 and decoder-only BD3LM.
+For both models, we use S=4S=4.
+E2D2 outperforms BD3LM in quality for each TT.
+As TT decreases, relative throughput gains from E2D2 diminish, since the decoder requires fewer invocations.
+For T=1T=1, E2D2 achieves comparable throughput to the 16-layer BD3LM because every sampling step invokes both the encoder and decoder, which together use comparable FLOPs relative to the 16-layer BD3LM.
+The 12-layer BD3LM achieves better throughput than E2D2 for T=1T=1, but sacrifices quality.
+Table 8: Performance and decoding speed trade-off across varying number of diffusion steps TT for BD3LM and E2D2 on WMT.
+Decoding throughput (Tput) is measured in tokens / sec on 1 A100 80GB machine. Note that for all models, we use LL total sampling steps, so the throughput for diffusion models can in practice increase when T<ST<S for block size SS.
+We report mean ±\pm standard deviation for 100 samples.
+Best BLEU and throughput numbers are bolded.
+BD3LM
+N=12N=12
+BD3LM
+N=16N=16
+E2D2
+NEnc/NDec=28/4N_{\text{Enc}}/N_{\text{Dec}}=28/4
+TT
+BLEU (↑\uparrow)
+Tput (↑\uparrow)
+BLEU (↑\uparrow)
+Tput ( ↑\uparrow)
+BLEU (↑\uparrow)
+Tput (↑\uparrow)
+1
+17.2
+149.2±2.4{}_{\pm\text{2.4}}
+17.9
+118.7±2.0{}_{\pm\text{2.0}}
+19.3
+116.6±3.2{}_{\pm\text{3.2}}
+2
+21.8
+100.7±2.2{}_{\pm\text{2.2}}
+22.4
+77.0±1.2{}_{\pm\text{1.2}}
+23.2
+103.7±1.7{}_{\pm\text{1.7}}
+4
+23.3
+62.5±0.5{}_{\pm\text{0.5}}
+24.0
+47.1±1.0{}_{\pm\text{1.0}}
+24.8
+79.0±1.5{}_{\pm\text{1.5}}
+Architecture Design
+We compare the performance of the “last hidden state” and “shared KV cache” architecture variants (Section 3.2) when used to pretrain models for summarization and fine-tune models for math reasoning.
+In Table 9, we report perplexities from training models for 20k steps.
+Table 9:
+Validation PPL upper bounds (↓\downarrow) for
+last hidden state and shared KV cache versions of E2D2 on CNN/DailyMail and GSM8K.
+†\dagger indicates model used in the main results.
+Best values are bolded.
+CNN/
+DailyMail
+GSM8K
+Last Hidden State
+14.94†
+1.98
+Shared KV Cache
+293.50
+1.80†
+For models trained from scratch, e.g., on the larger summarization dataset, the “last hidden state” design performs best.
+We hypothesize that conditioning on the encoder’s last hidden representation provides a richer signal than using intermediate representations.
+When fine-tuning from a strong Qwen3 model on the smaller GSM8K dataset, the “shared KV cache” variant achieves better perplexity.
+We speculate that by reusing the encoder’s cached KVs, this design keeps the decoder’s cross-attention inputs aligned with those expected by the base model, which facilitates more stable fine-tuning.
+5 Related Work
+Encoder-Decoder Models
+T5 [54] and follow-up works FLAN and FLAN-UL2 [9, 64] demonstrated the efficacy of encoder-decoder architectures on a wide range of natural language benchmarks.
+Recently, this architecture was applied to the more updated Gemma family of models (65) in T5Gemma (79).
+In contrast to our work, T5-style architectures use AR decoders and they separate out cross-attention between decoder and encoder representations into distinct modules, as opposed to performing attention over both decoder and encoder outputs in one forward pass, as in our work.
+Moreover, in these AR T5-style models, the encoder is only used once to provide an embedding of the input context.
+In E2D2, the encoder is applied to the context and each newly decoded block.
+Diffusion Language Models
+Early approaches modeled word embeddings via Gaussian diffusion (24, 36).
+Modern diffusion language models adopt a decoder-only architecture that is trained via denoising, similar to BERT (15).
+The LLaDA model (46) scales masked diffusion models [45, 55] to the 8B parameter regime and demonstrated comparable and superior performance to a similarly-sized AR Llama model [17].
+Another large discrete diffusion model Dream7B [78], which extends the DiffuLLaMA framework [22], uses pretrained AR models to initialize their models.
+Unlike E2D2, these models only train with a full-sequence diffusion parameterization instead of the performant block diffusion framework [1].
+When fine-tuning from AR checkpoints, this requires that models, such as Dream7B, carefully anneal the causal attention mask of the original pretrained AR LLM towards a fully bidirectional one.
+In contrast, for small block sizes S≪L,S\ll L, our work does not require this tuned annealing as tokens only attend to tokens up to SS positions in the future.
+ENAT
+Highly related to our work is the discrete image generation model ENAT [44], which leverages an encoder-decoder to decouple computational budget allocated to processing clean and masked tokens.
+The bidirectional nature of this non-AR model, however, precludes ENAT from leveraging efficient KV caching methods explored here.
+While our method supports variable-length sequence modeling, the ENAT architecture is only applicable to fixed-length outputs such as images.
+Efficient Inference
+An analogy can be drawn between E2D2 and speculative decoding methods [8, 35], which speed up generation for AR models by utilizing smaller proposal networks.
+Most related to our work is Medusa [7], which uses several small MLPs to decode blocks of tokens conditioned on the final hidden state of the LLM.
+In contrast to our work however, these methods use accept/reject algorithms to keep proposal network tokens, while we use diffusion sampling.
+6 Conclusion
+In this work, we propose E2D2, a novel encoder-decoder architecture with efficient diffusion training and sampling algorithms.
+Our results demonstrate that E2D2 better trades off throughput and sample quality relative to prior state-of-the-art masked diffusion models.
+While E2D2 represents a promising direction to narrow both the performance and throughput gaps relative to AR models, further innovation is required to increase training efficiency and sample quality.
+Finally, given we are working on language modeling, we carry the inherent risks and opportunities of this line of research.
+Acknowledgments
+This work was partially funded by the National Science Foundation under award CAREER 2145577, and by the National Institute of Health under award MIRA R35GM151243.
+Marianne Arriola is supported by a NSF Graduate Research Fellowship under award DGE-2139899 and a Hopper-Dean/Bowers CIS Deans Excellence Fellowship.
+We gratefully acknowledge use of the research computing resources of the Empire AI Consortium, Inc, with support from Empire State Development of the State of New York, the Simons Foundation, and the Secunda Family Foundation (5).
+This research was also supported in part through the use of computational resources provided by Lambda (lambda.ai) in partnership with Open Athena AI Foundation, Inc.
+We gratefully acknowledge their generous GPU infrastructure grants that helped make this work possible and thank Eric Czech of Open Athena for the useful discussions and feedback.
+References
+(1)
+Marianne Arriola, Subham Sekhar Sahoo, Aaron Gokaslan, Zhihan Yang, Zhixuan Qi, Jiaqi Han, Justin T Chiu, and Volodymyr Kuleshov.
+Block diffusion: Interpolating between autoregressive and diffusion language models.
+In The Thirteenth International Conference on Learning Representations, 2025.
+(2)
+Marianne Arriola, Naveen Venkat, Jonathan Granskog, and Anastasis Germanidis.
+Adapting autoregressive vision language models for parallel diffusion decoding.
+Runway AI Blog Post, 2025.
+(3)
+Mikel Artetxe, Gorka Labaka, and Eneko Agirre.
+Unsupervised statistical machine translation.
+arXiv preprint arXiv:1809.01272, 2018.
+(4)
+Jacob Austin, Daniel D Johnson, Jonathan Ho, Daniel Tarlow, and Rianne Van Den Berg.
+Structured denoising diffusion models in discrete state-spaces.
+Advances in Neural Information Processing Systems, 34:17981–17993, 2021.
+(5)
+Stacie Bloom, Joshua C. Brumberg, Ian Fisk, Robert J. Harrison, Robert Hull, Melur Ramasubramanian, Krystyn Van Vliet, and Jeannette Wing.
+Empire AI: A new model for provisioning AI and HPC for academic research in the public good.
+In Practice and Experience in Advanced Research Computing (PEARC ’25), page 4, Columbus, OH, USA, July 2025. ACM.
+(6)
+Ondrej Bojar, Christian Buck, Christian Federmann, Barry Haddow, Philipp Koehn, Johannes Leveling, Christof Monz, Pavel Pecina, Matt Post, Herve Saint-Amand, Radu Soricut, Lucia Specia, and Ale s Tamchyna.
+Findings of the 2014 workshop on statistical machine translation.
+In Proceedings of the Ninth Workshop on Statistical Machine Translation, pages 12–58, Baltimore, Maryland, USA, June 2014. Association for Computational Linguistics.
+(7)
+Tianle Cai, Yuhong Li, Zhengyang Geng, Hongwu Peng, Jason D Lee, Deming Chen, and Tri Dao.
+Medusa: Simple llm inference acceleration framework with multiple decoding heads.
+arXiv preprint arXiv:2401.10774, 2024.
+(8)
+Charlie Chen, Sebastian Borgeaud, Geoffrey Irving, Jean-Baptiste Lespiau, Laurent Sifre, and John Jumper.
+Accelerating large language model decoding with speculative sampling.
+arXiv preprint arXiv:2302.01318, 2023.
+(9)
+Hyung Won Chung, Le Hou, Shayne Longpre, Barret Zoph, Yi Tay, William Fedus, Yunxuan Li, Xuezhi Wang, Mostafa Dehghani, Siddhartha Brahma, et al.
+Scaling instruction-finetuned language models.
+Journal of Machine Learning Research, 25(70):1–53, 2024.
+(10)
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman.
+Training verifiers to solve math word problems.
+arXiv preprint arXiv:2110.14168, 2021.
+(11)
+Arman Cohan, Franck Dernoncourt, Doo Soon Kim, Trung Bui, Seokhwan Kim, Walter Chang, and Nazli Goharian.
+A discourse-aware attention model for abstractive summarization of long documents.
+Proceedings of the 2018 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 2 (Short Papers), 2018.
+(12)
+Tri Dao.
+Flashattention-2: Faster attention with better parallelism and work partitioning.
+In The Twelfth International Conference on Learning Representations, 2024.
+(13)
+Yann N Dauphin, Angela Fan, Michael Auli, and David Grangier.
+Language modeling with gated convolutional networks.
+In International conference on machine learning, pages 933–941. PMLR, 2017.
+(14)
+Mostafa Dehghani, Josip Djolonga, Basil Mustafa, Piotr Padlewski, Jonathan Heek, Justin Gilmer, Andreas Peter Steiner, Mathilde Caron, Robert Geirhos, Ibrahim Alabdulmohsin, et al.
+Scaling vision transformers to 22 billion parameters.
+In International Conference on Machine Learning, pages 7480–7512. PMLR, 2023.
+(15)
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova.
+Bert: Pre-training of deep bidirectional transformers for language understanding.
+arXiv preprint arXiv:1810.04805, 2018.
+(16)
+Prafulla Dhariwal and Alexander Nichol.
+Diffusion models beat gans on image synthesis.
+Advances in neural information processing systems, 34:8780–8794, 2021.
+(17)
+Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, et al.
+The llama 3 herd of models.
+arXiv e-prints, pages arXiv–2407, 2024.
+(18)
+Leo Gao, Jonathan Tow, Baber Abbasi, Stella Biderman, Sid Black, Anthony DiPofi, Charles Foster, Laurence Golding, Jeffrey Hsu, Alain Le Noac’h, Haonan Li, Kyle McDonell, Niklas Muennighoff, Chris Ociepa, Jason Phang, Laria Reynolds, Hailey Schoelkopf, Aviya Skowron, Lintang Sutawika, Eric Tang, Anish Thite, Ben Wang, Kevin Wang, and Andy Zou.
+A framework for few-shot language model evaluation, 12 2023.
+(19)
+Itai Gat, Heli Ben-Hamu, Marton Havasi, Daniel Haziza, Jeremy Reizenstein, Gabriel Synnaeve, David Lopez-Paz, Brian Karrer, and Yaron Lipman.
+Set block decoding is a language model inference accelerator.
+arXiv preprint arXiv:2509.04185, 2025.
+(20)
+Marjan Ghazvininejad, Omer Levy, Yinhan Liu, and Luke Zettlemoyer.
+Mask-predict: Parallel decoding of conditional masked language models.
+In Kentaro Inui, Jing Jiang, Vincent Ng, and Xiaojun Wan, editors, Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP), pages 6112–6121, Hong Kong, China, November 2019. Association for Computational Linguistics.
+(21)
+Aaron Gokaslan, Vanya Cohen, Ellie Pavlick, and Stefanie Tellex.
+Openwebtext corpus.
+http://Skylion007.github.io/OpenWebTextCorpus, 2019.
+(22)
+Shansan Gong, Shivam Agarwal, Yizhe Zhang, Jiacheng Ye, Lin Zheng, Mukai Li, Chenxin An, Peilin Zhao, Wei Bi, Jiawei Han, Hao Peng, and Lingpeng Kong.
+Scaling diffusion language models via adaptation from autoregressive models.
+In The Thirteenth International Conference on Learning Representations, 2025.
+(23)
+Jiatao Gu, James Bradbury, Caiming Xiong, Victor OK Li, and Richard Socher.
+Non-autoregressive neural machine translation.
+arXiv preprint arXiv:1711.02281, 2017.
+(24)
+Ishaan Gulrajani and Tatsunori B Hashimoto.
+Likelihood-based diffusion language models.
+Advances in Neural Information Processing Systems, 36, 2024.
+(25)
+Charles R. Harris, K. Jarrod Millman, Stéfan J. van der Walt, Ralf Gommers, Pauli Virtanen, David Cournapeau, Eric Wieser, Julian Taylor, Sebastian Berg, Nathaniel J. Smith, Robert Kern, Matti Picus, Stephan Hoyer, Marten H. van Kerkwijk, Matthew Brett, Allan Haldane, Jaime Fernández del Río, Mark Wiebe, Pearu Peterson, Pierre Gérard-Marchant, Kevin Sheppard, Tyler Reddy, Warren Weckesser, Hameer Abbasi, Christoph Gohlke, and Travis E. Oliphant.
+Array programming with NumPy.
+Nature, 585(7825):357–362, September 2020.
+(26)
+Guangxin He, Shen Nie, Fengqi Zhu, Yuankang Zhao, Tianyi Bai, Ran Yan, Jie Fu, Chongxuan Li, and Binhang Yuan.
+Ultrallada: Scaling the context length to 128k for diffusion large language models.
+arXiv preprint arXiv:2510.10481, 2025.
+(27)
+Karl Moritz Hermann, Tomás Kociský, Edward Grefenstette, Lasse Espeholt, Will Kay, Mustafa Suleyman, and Phil Blunsom.
+Teaching machines to read and comprehend.
+In NIPS, pages 1693–1701, 2015.
+(28)
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+Denoising diffusion probabilistic models.
+Advances in neural information processing systems, 33:6840–6851, 2020.
+(29)
+J. D. Hunter.
+Matplotlib: A 2d graphics environment.
+Computing in Science & Engineering, 9(3):90–95, 2007.
+(30)
+Yuchu Jiang, Yue Cai, Xiangzhong Luo, Jiale Fu, Jiarui Wang, Chonghan Liu, and Xu Yang.
+d2 cache: Accelerating diffusion-based llms via dual adaptive caching.
+arXiv preprint arXiv:2509.23094, 2025.
+(31)
+Diederik P Kingma and Jimmy Ba.
+Adam: A method for stochastic optimization.
+arXiv preprint arXiv:1412.6980, 2014.
+(32)
+Diederik P Kingma and Max Welling.
+Auto-encoding variational bayes.
+arXiv preprint arXiv:1312.6114, 2013.
+(33)
+Volodymyr Kuleshov.
+Fast algorithms for sparse principal component analysis based on rayleigh quotient iteration.
+In International Conference on Machine Learning, pages 1418–1425. PMLR, 2013.
+(34)
+Jason Lee, Elman Mansimov, and Kyunghyun Cho.
+Deterministic non-autoregressive neural sequence modeling by iterative refinement.
+arXiv preprint arXiv:1802.06901, 2018.
+(35)
+Yaniv Leviathan, Matan Kalman, and Yossi Matias.
+Fast inference from transformers via speculative decoding.
+In International Conference on Machine Learning, pages 19274–19286. PMLR, 2023.
+(36)
+Xiang Li, John Thickstun, Ishaan Gulrajani, Percy S Liang, and Tatsunori B Hashimoto.
+Diffusion-lm improves controllable text generation.
+Advances in Neural Information Processing Systems, 35:4328–4343, 2022.
+(37)
+Chin-Yew Lin.
+Rouge: A package for automatic evaluation of summaries.
+In Text summarization branches out, pages 74–81, 2004.
+(38)
+Zhenghao Lin, Yeyun Gong, Yelong Shen, Tong Wu, Zhihao Fan, Chen Lin, Nan Duan, and Weizhu Chen.
+Text generation with diffusion language models: A pre-training approach with continuous paragraph denoise.
+In International Conference on Machine Learning, pages 21051–21064. PMLR, 2023.
+(39)
+Yang Liu and Mirella Lapata.
+Text summarization with pretrained encoders.
+arXiv preprint arXiv:1908.08345, 2019.
+(40)
+Aaron Lou, Chenlin Meng, and Stefano Ermon.
+Discrete diffusion language modeling by estimating the ratios of the data distribution.
+arXiv preprint arXiv:2310.16834, 2023.
+(41)
+Mitch Marcus, Beatrice Santorini, and Mary Ann Marcinkiewicz.
+Building a large annotated corpus of english: The penn treebank.
+Computational linguistics, 19(2):313–330, 1993.
+(42)
+Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher.
+Pointer sentinel mixture models, 2016.
+(43)
+Jinjie Ni, Qian Liu, Longxu Dou, Chao Du, Zili Wang, Hang Yan, Tianyu Pang, and Michael Qizhe Shieh.
+Diffusion language models are super data learners, 2025.
+Notion Blog.
+(44)
+Zanlin Ni, Yulin Wang, Renping Zhou, Yizeng Han, Jiayi Guo, Zhiyuan Liu, Yuan Yao, and Gao Huang.
+ENAT: Rethinking spatial-temporal interactions in token-based image synthesis.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024.
+(45)
+Shen Nie, Fengqi Zhu, Chao Du, Tianyu Pang, Qian Liu, Guangtao Zeng, Min Lin, and Chongxuan Li.
+Scaling up masked diffusion models on text.
+arXiv preprint arXiv:2410.18514, 2024.
+(46)
+Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li.
+Large language diffusion models.
+arXiv preprint arXiv:2502.09992, 2025.
+(47)
+Jingyang Ou, Shen Nie, Kaiwen Xue, Fengqi Zhu, Jiacheng Sun, Zhenguo Li, and Chongxuan Li.
+Your absorbing discrete diffusion secretly models the conditional distributions of clean data.
+arXiv preprint arXiv:2406.03736, 2024.
+(48)
+The pandas development team.
+pandas-dev/pandas: Pandas, February 2020.
+(49)
+Denis Paperno, Germán Kruszewski, Angeliki Lazaridou, Ngoc Quan Pham, Raffaella Bernardi, Sandro Pezzelle, Marco Baroni, Gemma Boleda, and Raquel Fernandez.
+The LAMBADA dataset: Word prediction requiring a broad discourse context.
+In Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1525–1534, Berlin, Germany, August 2016. Association for Computational Linguistics.
+(50)
+Kishore Papineni, Salim Roukos, Todd Ward, and Wei-Jing Zhu.
+Bleu: a method for automatic evaluation of machine translation.
+In Proceedings of the 40th annual meeting of the Association for Computational Linguistics, pages 311–318, 2002.
+(51)
+Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas Kopf, Edward Yang, Zachary DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu Fang, Junjie Bai, and Soumith Chintala.
+PyTorch: An Imperative Style, High-Performance Deep Learning Library.
+In H. Wallach, H. Larochelle, A. Beygelzimer, F. d’Alché Buc, E. Fox, and R. Garnett, editors, Advances in Neural Information Processing Systems 32, pages 8024–8035. Curran Associates, Inc., 2019.
+(52)
+Mihir Prabhudesai, Mengning Wu, Amir Zadeh, Katerina Fragkiadaki, and Deepak Pathak.
+Diffusion beats autoregressive in data-constrained settings.
+arXiv preprint arXiv:2507.15857, 2025.
+(53)
+Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al.
+Language models are unsupervised multitask learners.
+OpenAI blog, 1(8):9, 2019.
+(54)
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J Liu.
+Exploring the limits of transfer learning with a unified text-to-text transformer.
+Journal of machine learning research, 21(140):1–67, 2020.
+(55)
+Subham Sekhar Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin T Chiu, Alexander Rush, and Volodymyr Kuleshov.
+Simple and effective masked diffusion language models.
+arXiv preprint arXiv:2406.07524, 2024.
+(56)
+Yair Schiff, Subham Sekhar Sahoo, Hao Phung, Guanghan Wang, Sam Boshar, Hugo Dalla-torre, Bernardo P de Almeida, Alexander Rush, Thomas Pierrot, and Volodymyr Kuleshov.
+Simple and controllable uniform discrete diffusion language models.
+In The Thirteenth International Conference on Learning Representations, 2025.
+(57)
+Abigail See, Peter J. Liu, and Christopher D. Manning.
+Get to the point: Summarization with pointer-generator networks.
+In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 1073–1083, Vancouver, Canada, July 2017. Association for Computational Linguistics.
+(58)
+Jiaxin Shi, Kehang Han, Zhe Wang, Arnaud Doucet, and Michalis Titsias.
+Simplified and generalized masked diffusion for discrete data.
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems, 2024.
+(59)
+Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli.
+Deep unsupervised learning using nonequilibrium thermodynamics.
+In International conference on machine learning, pages 2256–2265. PMLR, 2015.
+(60)
+Yang Song and Stefano Ermon.
+Generative modeling by estimating gradients of the data distribution.
+Advances in neural information processing systems, 32, 2019.
+(61)
+Yuxuan Song, Zheng Zhang, Cheng Luo, Pengyang Gao, Fan Xia, Hao Luo, Zheng Li, Yuehang Yang, Hongli Yu, Xingwei Qu, et al.
+Seed diffusion: A large-scale diffusion language model with high-speed inference.
+arXiv preprint arXiv:2508.02193, 2025.
+(62)
+Haoran Sun, Lijun Yu, Bo Dai, Dale Schuurmans, and Hanjun Dai.
+Score-based continuous-time discrete diffusion models.
+arXiv preprint arXiv:2211.16750, 2022.
+(63)
+Ilya Sutskever, Oriol Vinyals, and Quoc V Le.
+Sequence to sequence learning with neural networks.
+In Z. Ghahramani, M. Welling, C. Cortes, N. Lawrence, and K.Q. Weinberger, editors, Advances in Neural Information Processing Systems, volume 27. Curran Associates, Inc., 2014.
+(64)
+Yi Tay, Mostafa Dehghani, Vinh Q Tran, Xavier Garcia, Jason Wei, Xuezhi Wang, Hyung Won Chung, Siamak Shakeri, Dara Bahri, Tal Schuster, et al.
+Ul2: Unifying language learning paradigms.
+arXiv preprint arXiv:2205.05131, 2022.
+(65)
+Gemma Team, Thomas Mesnard, Cassidy Hardin, Robert Dadashi, Surya Bhupatiraju, Shreya Pathak, Laurent Sifre, Morgane Rivière, Mihir Sanjay Kale, Juliette Love, et al.
+Gemma: Open models based on gemini research and technology.
+arXiv preprint arXiv:2403.08295, 2024.
+(66)
+The Mosaic ML Team.
+composer.
+https://github.com/mosaicml/composer/, 2021.
+(67)
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin.
+Attention is all you need.
+Advances in neural information processing systems, 30, 2017.
+(68)
+Guanghan Wang, Yair Schiff, Subham Sekhar Sahoo, and Volodymyr Kuleshov.
+Remasking discrete diffusion models with inference-time scaling.
+arXiv preprint arXiv:2503.00307, 2025.
+(69)
+Yingheng Wang, Yair Schiff, Aaron Gokaslan, Weishen Pan, Fei Wang, Christopher De Sa, and Volodymyr Kuleshov.
+InfoDiffusion: Representation learning using information maximizing diffusion models.
+In Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara Engelhardt, Sivan Sabato, and Jonathan Scarlett, editors, Proceedings of the 40th International Conference on Machine Learning, volume 202 of Proceedings of Machine Learning Research, pages 36336–36354. PMLR, 23–29 Jul 2023.
+(70)
+Michael L. Waskom.
+seaborn: statistical data visualization.
+Journal of Open Source Software, 6(60):3021, 2021.
+(71)
+Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi, Pierric Cistac, Tim Rault, Rémi Louf, Morgan Funtowicz, et al.
+Huggingface’s transformers: State-of-the-art natural language processing.
+arXiv preprint arXiv:1910.03771, 2019.
+(72)
+Chengyue Wu, Hao Zhang, Shuchen Xue, Shizhe Diao, Yonggan Fu, Zhijian Liu, Pavlo Molchanov, Ping Luo, Song Han, and Enze Xie.
+Fast-dllm v2: Efficient block-diffusion llm.
+arXiv preprint arXiv:2509.26328, 2025.
+(73)
+Chengyue Wu, Hao Zhang, Shuchen Xue, Zhijian Liu, Shizhe Diao, Ligeng Zhu, Ping Luo, Song Han, and Enze Xie.
+Fast-dllm: Training-free acceleration of diffusion llm by enabling kv cache and parallel decoding.
+arXiv preprint arXiv:2505.22618, 2025.
+(74)
+Tong Wu, Zhihao Fan, Xiao Liu, Hai-Tao Zheng, Yeyun Gong, Jian Jiao, Juntao Li, Jian Guo, Nan Duan, Weizhu Chen, et al.
+Ar-diffusion: Auto-regressive diffusion model for text generation.
+Advances in Neural Information Processing Systems, 36:39957–39974, 2023.
+(75)
+Omry Yadan.
+Hydra - a framework for elegantly configuring complex applications.
+Github, 2019.
+(76)
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, Zihan Qiu, et al.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388, 2025.
+(77)
+Ling Yang, Ye Tian, Bowen Li, Xinchen Zhang, Ke Shen, Yunhai Tong, and Mengdi Wang.
+Mmada: Multimodal large diffusion language models.
+arXiv preprint arXiv:2505.15809, 2025.
+(78)
+Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong.
+Dream 7b, 2025.
+(79)
+Biao Zhang, Fedor Moiseev, Joshua Ainslie, Paul Suganthan, Min Ma, Surya Bhupatiraju, Fede Lebron, Orhan Firat, Armand Joulin, and Zhe Dong.
+Encoder-decoder gemma: Improving the quality-efficiency trade-off via adaptation.
+arXiv preprint arXiv:2504.06225, 2025.
+(80)
+Xiang Zhang, Junbo Jake Zhao, and Yann LeCun.
+Character-level convolutional networks for text classification.
+In NIPS, 2015.
+(81)
+Siyan Zhao, Devaansh Gupta, Qinqing Zheng, and Aditya Grover.
+d1: Scaling reasoning in diffusion large language models via reinforcement learning.
+arXiv preprint arXiv:2504.12216, 2025.
+(82)
+Fengqi Zhu, Zebin You, Yipeng Xing, Zenan Huang, Lin Liu, Yihong Zhuang, Guoshan Lu, Kangyu Wang, Xudong Wang, Lanning Wei, et al.
+Llada-moe: A sparse moe diffusion language model.
+arXiv preprint arXiv:2509.24389, 2025.
+Contents
+1 Introduction
+2 Background
+2.1 Discrete Diffusion Models
+2.2 Block Diffusion Language Modeling
+3 Efficient Encoder-Decoder Diffusion
+3.1 Architecture
+3.2 Design Decisions
+3.3 Sampling Algorithm
+3.4 Training Algorithm
+3.5 E2D2 for Standard Masked Diffusion (MDLM)
+4 Experiments
+4.1 Experimental Design
+4.2 Results
+4.3 Ablations
+5 Related Work
+6 Conclusion
+References
+A Extended Background on Block Diffusion Language Models
+A.1 Forward Noise Process
+A.2 Reverse Denoising Process
+A.3 Negative Evidence Lower Bound (NELBO)
+B Training FLOPs derivation
+C FLOPs comparison to MDLM
+D MDLM with Encoder-Decoder Architecture
+E Additional Experimental Details
+E.1 Measuring Throughput
+E.2 Summarization
+E.3 Translation
+E.4 Mathematical Reasoning
+E.5 Language Modeling
+F Assets
+G Generated Samples
+G.1 E2D2
+G.2 BD3LM (N=21N=21)
+Appendix A Extended Background on Block Diffusion Language Models
+Below, we provide an extended overview of block diffusion language models closely following [1].
+In particular, we define the masking process q(𝐳t1:B∣𝐳1:B)q({\mathbf{z}}^{1:B}_{t}\mid{\mathbf{z}}^{1:B}) and the derivation of the objective ℒ(𝐱1:B;θ)\mathcal{L}({\mathbf{x}}^{1:B};\theta) for parameters θ\theta.
+Recall that we factorize the sequence 𝐱1:L{\mathbf{x}}^{1:L} drawn from the data distribution q(𝐱1:L)q({\mathbf{x}}^{1:L}) over BB blocks of size SS.
+We simplify notation by denoting the tokens 𝐱(b−1)⋅S:b⋅S{\mathbf{x}}^{(b-1)\cdot S:b\cdot S} in a block bb as 𝐱b{\mathbf{x}}^{b}.
+We perform diffusion in each block over TT discretization steps.
+We define t,st,s to denote t⁡(i)=i/Tt(i)=i/T and s⁡(i)=(i−1)/Ts(i)=(i-1)/T, for all i∈[1,T]i\in[1,T].
+We denote the Kullback-Leibler divergence as DKL​[⋅]D_{\mathrm{KL}}[\cdot].
+Below we reproduce the negative evidence lower bound (NELBO) following [1]:
+−log⁡pθ​(𝐱)\displaystyle-\log{p_{\theta}}({\mathbf{x}})
+=−∑b=1Blogpθ(𝐱b|𝐱<b)\displaystyle=-\sum_{b=1}^{B}\log{p_{\theta}}({\mathbf{x}}^{b}|{\mathbf{x}}^{<b})
+=−∑b=1Blog𝔼qpθ(𝐳bt⁡(1):t⁡(T)|𝐱<b)q(𝐳bt⁡(1):t⁡(T)|𝐱b)\displaystyle=-\sum_{b=1}^{B}\log\mathbb{E}_{q}\frac{{p_{\theta}}({\mathbf{z}}^{b}_{t(1):t(T)}|{\mathbf{x}}^{<b})}{q({\mathbf{z}}^{b}_{t(1):t(T)}|{\mathbf{x}}^{b})}
+=−∑b=1Blog𝔼qpθ​(𝐳t⁡(T)b|𝐱<b)​∏i=1Tpθ​(𝐳s⁡(i)b|𝐳t⁡(i)b,𝐱<b)∏i=1Tq⁡(𝐳t⁡(i)b|𝐳s⁡(i)b)\displaystyle=-\sum_{b=1}^{B}\log\mathbb{E}_{q}\frac{{p_{\theta}}({\mathbf{z}}^{b}_{t(T)}|{\mathbf{x}}^{<b})\prod_{i=1}^{T}{p_{\theta}}({\mathbf{z}}^{b}_{s(i)}|{\mathbf{z}}^{b}_{t(i)},{\mathbf{x}}^{<b})}{\prod_{i=1}^{T}q({\mathbf{z}}^{b}_{t(i)}|{\mathbf{z}}^{b}_{s(i)})}
+≤∑b=1B[−𝔼q​log⁡pθ​(𝐱b|𝐳t=1Tb,𝐱<b)⏟ℒrecons\displaystyle\leq\sum_{b=1}^{B}\bigg[\underbrace{-\mathbb{E}_{q}\log{p_{\theta}}({\mathbf{x}}^{b}|{\mathbf{z}}_{t=\frac{1}{T}}^{b},{\mathbf{x}}^{<b})}_{\mathcal{L}_{\text{recons}}}
++𝔼t∈{2T,…,T−1T,1}𝔼qTDK​L(q(𝐳bs|𝐳bt,𝐱b)∥pθ(𝐳bs|𝐳bt,𝐱<b))⏟ℒdiffusion\displaystyle\hskip 40.00006pt+\underbrace{\mathbb{E}_{t\in\left\{\frac{2}{T},\dots,\frac{T-1}{T},1\right\}}\mathbb{E}_{q}T\text{D}_{KL}\left(q({\mathbf{z}}^{b}_{s}|{\mathbf{z}}^{b}_{t},{\mathbf{x}}^{b})\parallel{p_{\theta}}({\mathbf{z}}^{b}_{s}|{\mathbf{z}}^{b}_{t},{\mathbf{x}}^{<b})\right)}_{\mathcal{L}_{\text{diffusion}}}
++DK​L(q(𝐳bt=1|𝐱b)∥pθ(𝐳bt=1))⏟ℒprior]\displaystyle\hskip 40.00006pt+\underbrace{\text{D}_{KL}\left(q({\mathbf{z}}^{b}_{t=1}|{\mathbf{x}}^{b})\parallel{p_{\theta}}({\mathbf{z}}^{b}_{t=1})\right)}_{\mathcal{L}_{\text{prior}}}\bigg]
+(1)
+A.1 Forward Noise Process
+Within each block, [1] adopt the masked diffusion language modeling framework, which is the most performant [4].
+They use a simplified NELBO as proposed by [47, 55, 58].
+Following [4], we first define a diffusion matrix Qt∈ℝV×VQ_{t}\in\mathbb{R}^{V\times V} corresponding to noise level tt for states i∈{1,…,V}i\in\{1,\dots,V\} and vocabulary size VV.
+Recall that the prior distribution is the absorbing mask state 𝐦{\mathbf{m}}, a one-hot vector centered on the special [MASK] token index.
+We denote this mask index as the last token in the vocabulary, arg​maxi⁡𝐦i=V\argmax_{i}{\mathbf{m}}_{i}=V. Consider the noise schedule function αt∈[0,1]\alpha_{t}\in[0,1], which is monotonically decreasing in tt, with α0=1\alpha_{0}=1 and α1=0\alpha_{1}=0. Then, the diffusion matrix is:
+[Qt]i​j={1if ​i=j=Vαtif ​i=j≠V1−αtif ​j=V,i≠V\displaystyle[Q_{t}]_{ij}=\begin{cases}1&\text{if }i=j=V\\
+\alpha_{t}&\text{if }i=j\neq V\\
+1-\alpha_{t}&\text{if }j=V,i\neq V\end{cases}
+(2)
+For the forward marginal Qt|sQ_{t|s}, we use forward marginal probabilities according to αt|s=αt/αs\alpha_{t|s}=\alpha_{t}/\alpha_{s}. The forward noise process is applied independently for each token ℓ∈{1,…​L}\ell\in\{1,\dots L\}. We first define the transition matrix Q¯t⁡(i)=Qt⁡(1)​Qt⁡(2)​…​Qt⁡(i)\overline{Q}_{t(i)}=Q_{t(1)}Q_{t(2)}\dots Q_{t(i)} which is used in the forward process q⁡(𝐳tℓ|𝐱ℓ)=Cat​(𝐳tℓ,Q¯t​𝐱ℓ)q({\mathbf{z}}^{\ell}_{t}|{\mathbf{x}}^{\ell})=\text{Cat}\left({\mathbf{z}}^{\ell}_{t};\overline{Q}_{t}{\mathbf{x}}^{\ell}\right).
+A.2 Reverse Denoising Process
+We now may obtain the reverse posterior q⁡(𝐳sℓ∣𝐳tℓ,𝐱ℓ)q({\mathbf{z}}^{\ell}_{s}\mid{\mathbf{z}}^{\ell}_{t},{\mathbf{x}}^{\ell}) derived in D3PM [4] as follows, where ⊙\odot denotes the Hadamard product between two vectors:
+q⁡(𝐳sℓ|𝐳tℓ,𝐱ℓ)=q⁡(𝐳tℓ|𝐳sℓ,𝐱ℓ)​q​(𝐳sℓ|𝐱ℓ)q⁡(𝐳tℓ|𝐱ℓ)=Cat​(𝐳sℓ,Qt|s​𝐳tℓ⊙Qs⊤​𝐱ℓ(𝐳tℓ)⊤​Qt⊤​𝐱ℓ)\displaystyle q({\mathbf{z}}^{\ell}_{s}|{\mathbf{z}}^{\ell}_{t},{\mathbf{x}}^{\ell})=\frac{q({\mathbf{z}}^{\ell}_{t}|{\mathbf{z}}^{\ell}_{s},{\mathbf{x}}^{\ell})q({\mathbf{z}}^{\ell}_{s}|{\mathbf{x}}^{\ell})}{q({\mathbf{z}}^{\ell}_{t}|{\mathbf{x}}^{\ell})}=\text{Cat}\left({\mathbf{z}}^{\ell}_{s};\frac{Q_{t|s}{\mathbf{z}}^{\ell}_{t}\odot Q_{s}^{\top}{\mathbf{x}}^{\ell}}{{({\mathbf{z}}^{\ell}_{t})}^{\top}Q_{t}^{\top}{\mathbf{x}}^{\ell}}\right)
+(3)
+A.3 Negative Evidence Lower Bound (NELBO)
+As in block diffusion [1], we adopt the simplified objective for masked diffusion [47, 55, 58] to obtain a tighter NELBO. We provide the sketch for the derivation, with the full proof is provided in [47, 55, 58].
+We first focus on simplifying the diffusion loss term in (1).
+To simplify the denoising model, we enforce the following constraints on the design of the denoising network by taking advantage of the fact that there only exists two possible states in the diffusion process 𝐳tℓ∈{𝐱ℓ,𝐦}​∀ℓ∈{1,…,L}{\mathbf{z}}^{\ell}_{t}\in\{{\mathbf{x}}^{\ell},{\mathbf{m}}\}\;\forall\ell\in\{1,\dots,L\} [55].
+1.
+Zero Masking Probabilities. The clean sequence does not contain masks. So, we set pθ​(𝐱ℓ=𝐦∣𝐳tℓ)=0p_{\theta}({\mathbf{x}}^{\ell}={\mathbf{m}}\mid{\mathbf{z}}^{\ell}_{t})=0.
+2.
+Carry-Over Unmasking. If a token is unmasked in the reverse denoising process, it is never remasked by definition of the masked diffusion process.
+The true reverse posterior for the case where 𝐳tℓ≠𝐦{\mathbf{z}}^{\ell}_{t}\neq{\mathbf{m}} is q⁡(𝐳sℓ=𝐳tℓ|𝐳tℓ≠𝐦)=1q({\mathbf{z}}^{\ell}_{s}={\mathbf{z}}^{\ell}_{t}|{\mathbf{z}}^{\ell}_{t}\neq{\mathbf{m}})=1. Thus, we set pθ​(𝐳sℓ=𝐳tℓ|𝐳tℓ≠𝐦)=1p_{\theta}({\mathbf{z}}^{\ell}_{s}={\mathbf{z}}^{\ell}_{t}|{\mathbf{z}}^{\ell}_{t}\neq{\mathbf{m}})=1.
+With these two simplifications, we now use our denoising model to parameterize the posterior pθ​(𝐳sℓ=𝐱ℓ|𝐳tℓ=𝐦){p_{\theta}}({\mathbf{z}}^{\ell}_{s}={\mathbf{x}}^{\ell}|{\mathbf{z}}^{\ell}_{t}={\mathbf{m}}).
+Let 𝐱b,ℓ{\mathbf{x}}^{b,\ell} denote a token in the ℓ\ell-th position in block b∈{1,…,B}b\in\{1,\dots,B\}. The diffusion loss term is derived as follows:
+ℒdiffusion\displaystyle\mathcal{L}_{\text{diffusion}}
+=∑b=1B𝔼t𝔼qT[DKL[q(𝐳sb|𝐳tb,𝐱b)∥pθ(𝐳sb|𝐳tb,𝐱<b)]]\displaystyle=\sum_{b=1}^{B}\mathbb{E}_{t}\mathbb{E}_{q}T\left[\text{D}_{\text{KL}}\left[q({\mathbf{z}}^{b}_{s}|{\mathbf{z}}^{b}_{t},{\mathbf{x}}^{b})\|{p_{\theta}}({\mathbf{z}}^{b}_{s}|{\mathbf{z}}^{b}_{t},{\mathbf{x}}^{<b})\right]\right]
+=∑b=1B𝔼t𝔼qT[∑ℓ=1L′DKL[q(𝐳sb,ℓ|𝐳tb,ℓ,𝐱b,ℓ)∥pθ(𝐳sb,ℓ|𝐳tb,𝐱<b)]]\displaystyle=\sum_{b=1}^{B}\mathbb{E}_{t}\mathbb{E}_{q}T\left[\sum_{\ell=1}^{L^{\prime}}\text{D}_{\text{KL}}\left[q({\mathbf{z}}^{b,\ell}_{s}|{\mathbf{z}}^{b,\ell}_{t},{\mathbf{x}}^{b,\ell})\|{p_{\theta}}({\mathbf{z}}^{b,\ell}_{s}|{\mathbf{z}}^{b}_{t},{\mathbf{x}}^{<b})\right]\right]
+DKL\text{D}_{\text{KL}} is simply the discrete-time diffusion loss for the block bb; hence, from [55] (Suppl. B.1), we get:
+=∑b=1B𝔼t​𝔼q​T​[∑ℓ=1L′αt−αs1−αt​log⁡pθ​(𝐱b,ℓ∣𝐳tb,ℓ,𝐱<b)]\displaystyle=\sum_{b=1}^{B}\mathbb{E}_{t}\mathbb{E}_{q}T\left[\sum_{\ell=1}^{L^{\prime}}\frac{\alpha_{t}-\alpha_{s}}{1-\alpha_{t}}\log p_{\theta}({\mathbf{x}}^{b,\ell}\mid{\mathbf{z}}^{b,\ell}_{t},{\mathbf{x}}^{<b})\right]
+=∑b=1B𝔼t​𝔼q​T​[αt−αs1−αt​log⁡pθ​(𝐱b∣𝐳tb,𝐱<b)]\displaystyle=\sum_{b=1}^{B}\mathbb{E}_{t}\mathbb{E}_{q}T\left[\frac{\alpha_{t}-\alpha_{s}}{1-\alpha_{t}}\log p_{\theta}({\mathbf{x}}^{b}\mid{\mathbf{z}}_{t}^{b},{\mathbf{x}}^{<b})\right]
+(4)
+Lastly, we obtain a tighter approximation of the likelihood by taking the diffusion steps T→∞T\rightarrow\infty [55], for which T⁡(αt−αs)=αt′T(\alpha_{t}-\alpha_{s})=\alpha_{t}^{\prime}:
+ℒdiffusion\displaystyle\mathcal{L}_{\text{diffusion}}
+=∑b=1B𝔼t∼[0,1]​𝔼q​[αt′1−αt​log⁡pθ​(𝐱b∣𝐳tb,𝐱<b)]\displaystyle=\sum_{b=1}^{B}\mathbb{E}_{t\sim[0,1]}\mathbb{E}_{q}\left[\frac{\alpha_{t}^{\prime}}{1-\alpha_{t}}\log p_{\theta}({\mathbf{x}}^{b}\mid{\mathbf{z}}_{t}^{b},{\mathbf{x}}^{<b})\right]
+(5)
+When taking T→∞T\to\infty, [55] (Suppl. A.2.4) show the reconstruction loss becomes 0. In particular, we use the fact that 𝐳t⁡(1)b∼limT→∞Cat(.;𝐳t=1Tb)=Cat(.;𝐱b){\mathbf{z}}_{t(1)}^{b}\sim\lim_{T\rightarrow\infty}\text{Cat}\left(.;{\mathbf{z}}_{t=\frac{1}{T}}^{b}\right)=\text{Cat}(.;{\mathbf{x}}^{b}). Then, we obtain:
+ℒrecons\displaystyle\mathcal{L}_{\text{recons}}
+=−𝔼q​log⁡pθ​(𝐱b|𝐳t⁡(1)b,𝐱<b)\displaystyle=-\mathbb{E}_{q}\log{p_{\theta}}({\mathbf{x}}^{b}|{\mathbf{z}}_{t(1)}^{b},{\mathbf{x}}^{<b})
+=−log⁡pθ​(𝐱b|𝐳t⁡(1)b=𝐱b,𝐱<b)\displaystyle=-\log{p_{\theta}}({\mathbf{x}}^{b}|{\mathbf{z}}_{t(1)}^{b}={\mathbf{x}}^{b},{\mathbf{x}}^{<b})
+=0\displaystyle=0
+(6)
+Also, the prior loss ℒprior=DKL(q(𝐳t=1b|𝐱b)∥pθ(𝐳t=1b))\mathcal{L}_{\text{prior}}=\text{D}_{\text{KL}}\left(q({\mathbf{z}}^{b}_{t=1}|{\mathbf{x}}^{b})\parallel{p_{\theta}}({\mathbf{z}}^{b}_{t=1})\right) reduces to 0 since αt=1=0\alpha_{t=1}=0 so that q(𝐳t=1b|𝐱b)=Cat(.;𝐦)q({\mathbf{z}}_{t=1}^{b}|{\mathbf{x}}^{b})=\text{Cat}(.;{\mathbf{m}}) and pθ(𝐳t=1b)=Cat(.;𝐦){p_{\theta}}({\mathbf{z}}_{t=1}^{b})=\text{Cat}(.;{\mathbf{m}}); see [55] (Suppl. A.2.4).
+The final diffusion objective simply becomes a weighted average of cross-entropy terms:
+ℒBD​(𝐱,θ)\displaystyle\mathcal{L}_{\text{BD}}({\mathbf{x}};\theta)
+=∑b=1B𝔼t∼[0,1]​𝔼q​[αt′1−αt​log⁡pθ​(𝐱b∣𝐳tb,𝐱<b)]\displaystyle=\sum_{b=1}^{B}\mathbb{E}_{t\sim[0,1]}\mathbb{E}_{q}\left[\frac{\alpha_{t}^{\prime}}{1-\alpha_{t}}\log p_{\theta}({\mathbf{x}}^{b}\mid{\mathbf{z}}_{t}^{b},{\mathbf{x}}^{<b})\right]
+(7)
+Appendix B Training FLOPs derivation
+We derive the training FLOPs of a model forward pass in Table 1 as follows.
+Let LL be the sequence length, NN be the number of layers, and DD be the hidden dimension.
+We calculate the attention FLOPs of the forward pass following FlashAttention [12], which is 4​N​D​L24NDL^{2} for bidirectional attention, as each matrix multiplication (i.e., multiplying queries and keys and multiplying the attention output by values) requires 2​N​D​L22NDL^{2} FLOPs.
+Assuming a gated MLP with three dense layers [13] and intermediate hidden dimension of 4​D4D, the MLP FLOPs are given as 24​N​L​D2=2​N​L​(D)​(4​D)​ (up-projection) +2​N​L​(D)​(4​D)​ (gate projection) +2​N​L​(4​D)​(D)​ (down-projection)24NLD^{2}=2NL(D)(4D)\text{ (up-projection) }+2NL(D)(4D)\text{ (gate projection) }+2NL(4D)(D)\text{ (down-projection)}.
+Autoregressive.
+The number of attention operations in causal attention is: ∑i=1Li=L2+L2\sum_{i=1}^{L}i=\frac{L^{2}+L}{2}. Thus, AR training uses 4​N​D​(L2+L2)4ND(\frac{L^{2}+L}{2}) attention FLOPs. The MLP FLOPs are given as 24​N​L​D224NLD^{2}.
+Full-Sequence Diffusion.
+Sequence diffusion models such as Masked Diffusion LMs [47, 55, 58] training uses 4​N​D​L24NDL^{2} attention FLOPs from bidirectional attention, requiring L2L^{2} attention operations. The MLP FLOPs are also 24​N​L​D224NLD^{2}.
+Block Diffusion.
+For block diffusion models [1], the sequence is split into BB blocks of size SS, where L=B​SL=BS.
+The training algorithm proposed in BD3LM [1] is 2×2\times more computationally expensive relative to both AR and full-sequence diffusion.
+Below, we summarize the attention operations used to compute the attention FLOPs from [1].
+BD3LM uses attention mask ℳBD3LM∈{0,1}2​L×2​L\mathcal{M}_{\text{BD3LM}}\in\{0,1\}^{2L\times 2L} for both the noised tokens 𝐳1:Lt{\mathbf{z}}^{1:L}_{t} and clean tokens 𝐱1:L{\mathbf{x}}^{1:L}.
+This mask can visualized as a concatenation of the encoder and decoder masks from Figure 2.
+This mask is thus comprised of four L×LL\times L smaller attention masks:
+ℳBD3LM=[𝟎ℳBCℳOBCℳBD]\mathcal{M}_{\text{BD3LM}}=\begin{bmatrix}\mathbf{0}&\mathcal{M}_{\text{BC}}\\
+\mathcal{M}_{\text{OBC}}&\mathcal{M}_{\text{BD}}\\
+\end{bmatrix}
+where ℳBD\mathcal{M}_{\text{BD}} and ℳOBC\mathcal{M}_{\text{OBC}} are used to update the representation of 𝐳1:Lt{\mathbf{z}}^{1:L}_{t} and ℳBC\mathcal{M}_{\text{BC}} is used to update the representation of 𝐱1:L{\mathbf{x}}^{1:L}. We define these masks as follows:
+1.
+Block-causal self-attention mask to update clean 𝐱1:B{\mathbf{x}}^{1:B}. ℳBC∈{0,1}L×L\mathcal{M}_{\text{BC}}\in\{0,1\}^{L\times L}
+[ℳB​C]i​j={1if j belongs in the same block as i, or a block before i0otherwise\left[\mathcal{M}_{BC}\right]_{ij}=\begin{cases}1&\text{if $j$ belongs in the same block as $i$, or a block before $i$}\\
+0&\text{otherwise}\end{cases}
+Thus, ℳBC\mathcal{M}_{\text{BC}} is nonzero for ∑b=1Bb​S2=S2​B2+B​S22=L2+L​S2\sum_{b=1}^{B}bS^{2}=\frac{S^{2}B^{2}+BS^{2}}{2}=\frac{L^{2}+LS}{2} entries
+2.
+Block-diagonal self-attention mask to update noised 𝐳t1:B{\mathbf{z}}_{t}^{1:B}. ℳBD∈{0,1}L×L\mathcal{M}_{\text{BD}}\in\{0,1\}^{L\times L}
+[ℳB​D]i​j={1if i,j are in the same block0otherwise\left[\mathcal{M}_{BD}\right]_{ij}=\begin{cases}1&\text{if $i,j$ are in the same block}\\
+0&\text{otherwise}\end{cases}
+Thus, ℳBD\mathcal{M}_{\text{BD}} is nonzero for B​S2=L​SBS^{2}=LS entries.
+3.
+Offset block-causal cross-attention mask to update 𝐳t1:B{\mathbf{z}}_{t}^{1:B} via cross-attention to 𝐱1:B{\mathbf{x}}^{1:B}
+[ℳO​B​C]i​j={1if j belongs in a block before i0otherwise\left[\mathcal{M}_{OBC}\right]_{ij}=\begin{cases}1&\text{if $j$ belongs in a block before $i$}\\
+0&\text{otherwise}\end{cases}
+Thus, ℳOBC=ℳBC−ℳBD\mathcal{M}_{\text{OBC}}=\mathcal{M}_{\text{BC}}-\mathcal{M}_{\text{BD}} such that the number of nonzero entries is L2+L​S2−L​S=L2−L​S2\frac{L^{2}+LS}{2}-LS=\frac{L^{2}-LS}{2}.
+Thus, the total number of attention operations is L2+L​S2+L​S+L2−L​S2=L2+L​S\frac{L^{2}+LS}{2}+LS+\frac{L^{2}-LS}{2}=L^{2}+LS.
+The number of MLP FLOPs is 48​N​L​D248NLD^{2} as the input sequence to each layer is of length 2​L2L from both 𝐱1:L{\mathbf{x}}^{1:L} and 𝐳1:Lt{\mathbf{z}}^{1:L}_{t}.
+Encoder-Decoder Block Diffusion (Ours).
+E2D2 uses half the attention FLOPs compared to BD3LM by splitting the operation into encoder and decoder layers.
+This is because each encoder and decoder layer uses the same number of attention FLOPs.
+1.
+Encoder attention operations. The encoder uses mask ℳEnc∈{0,1}L×L=ℳBC\mathcal{M}_{\text{Enc}}\in\{0,1\}^{L\times L}=\mathcal{M}_{\text{BC}}. Thus, the encoder uses L2+L​S2\frac{L^{2}+LS}{2} attention operations
+2.
+Decoder attention operations. The decoder uses mask ℳDec∈{0,1}L×2​L\mathcal{M}_{\text{Dec}}\in\{0,1\}^{L\times 2L} = ℳOBC⊕ℳBD\mathcal{M}_{\text{OBC}}\oplus\mathcal{M}_{\text{BD}}. Thus, the decoder uses L2−L​S2+L​S=L2+L​S2\frac{L^{2}-LS}{2}+LS=\frac{L^{2}+LS}{2} attention operations.
+The FLOPs of an attention pass is 4​(NEnc+NDec)​D​L2+L​S24(N_{\text{Enc}}+N_{\text{Dec}})D\frac{L^{2}+LS}{2}. The MLP FLOPs is 24​N​L​D224NLD^{2} since the input sequence contains LL tokens at each layer.
+Appendix C FLOPs comparison to MDLM
+Below, we show that E2D2 attention FLOPs for the block diffusion parameterization are upper-bounded by decoder-only MDLM FLOPs under the same model size. Assume both models have the same number of total layers, where N=NEnc+NDecN=N_{\text{Enc}}+N_{\text{Dec}}. Then,
+FLOPsE2D2\displaystyle\text{FLOPs}_{\text{E2D2}}
+≤FLOPsMDLM\displaystyle\leq\text{FLOPs}_{\text{MDLM}}
+(8)
+4​N​D​(L2+L​S2)\displaystyle 4ND\left(\frac{L^{2}+LS}{2}\right)
+≤4​N​D​L2\displaystyle\leq 4NDL^{2}
+(L2+L​S2)\displaystyle\left(\frac{L^{2}+LS}{2}\right)
+≤L2\displaystyle\leq L^{2}
+(L+S2)\displaystyle\left(\frac{L+S}{2}\right)
+≤L\displaystyle\leq L
+S\displaystyle S
+≤L\displaystyle\leq L
+(9)
+So, as long as S<LS<L, E2D2 FLOPs are fewer than that of MDLM under equal model size.
+When S=LS=L, we exactly recover MDLM FLOPs.
+Appendix D MDLM with Encoder-Decoder Architecture
+Notation
+Recall that 𝐱1:P{\mathbf{x}}^{1:P} denotes PP prompt tokens.
+We denote the set of unmasked token indices in 𝐳t1:L{\mathbf{z}}_{t}^{1:L} as Ct={ℓ∣𝐳tℓ≠𝐦}C_{t}=\{\ell\mid{\mathbf{z}}_{t}^{\ell}\neq{\mathbf{m}}\}, and we define 𝐱Ct=⨁ℓ∈Ct𝐳tℓ{\mathbf{x}}^{C_{t}}=\bigoplus_{\ell\in C_{t}}{\mathbf{z}}_{t}^{\ell}.
+The encoder receives inputs 𝐱t,Enc=𝐱1:P⊕𝐱Ct{\mathbf{x}}_{t,\text{Enc}}={\mathbf{x}}^{1:P}\oplus{\mathbf{x}}^{C_{t}} and produces representations 𝐡t{\mathbf{h}}_{t}.
+Sampling
+In Algorithm 3, we present the sampling procedure for MDLM parameterized by an encoder-decoder architecture.
+We denote the denoising steps budget as TT, and the reverse diffusion process proceeds as t=1,T−1T​…,1Tt=1,\frac{T-1}{T}\ldots,\frac{1}{T}.
+We also denote the number of steps where only the decoder is called by nn.
+Thus, the encoder will be invoked at time steps t=1,T−nT,T−2​nT,…t=1,\frac{T-n}{T},\frac{T-2n}{T},\ldots.
+We begin by encoding the PP prompt tokens 𝐱1:P{\mathbf{x}}^{1:P} to attain the encoder representation 𝐡1:P{\mathbf{h}}^{1:P}.
+The decoder’s input is initialized to a sequence of length LL consisting of only masked tokens.
+The decoder iteratively denoises this full sequence for a fixed number of steps nn with cross-attention to 𝐡1=𝐡1:P{\mathbf{h}}_{1}={\mathbf{h}}^{1:P}.
+Later in the decoding process, in some interval [s,t][s,t] (with s=t−nTs=t-\frac{n}{T}), during which only the decoder is invoked over nn evaluations and the encoder is not invoked, we treat 𝐡τ{\mathbf{h}}_{\tau} as constant for all τ∈[s,t]\tau\in[s,t].
+At ss, the decoder returns any new tokens decoded from the interval [s,t][s,t], which are incorporated into the encoder’s input, and the encoder is evaluated to produce an updated 𝐡s{\mathbf{h}}_{s}.
+This process is repeated until the sampling budget TT is exhausted.
+1:
+Prompt 𝐱1:P{\mathbf{x}}^{1:P}, number of steps during which only the decoder is invoked nn, number diffusion steps TT, Encoder, Decoder, algorithm Sample
+2:
+𝐡←Encoder(𝐱1:P){\mathbf{h}}\leftarrow\textsc{Encoder}({\mathbf{x}}^{1:P}) ⊳\triangleright Encode prompt
+3:
+𝐳t1:L∼𝐦1:L{\mathbf{z}}_{t}^{1:L}\sim{\mathbf{m}}^{1:L} ⊳\triangleright Initialize fully noised sequence
+4:
+for i=T,T−n,T−2​n,…,ni=T,T-n,T-2n,\ldots,n do
+5:
+t←iTt\leftarrow\frac{i}{T}
+6:
+for nn steps do
+7:
+𝐳t1:L←Sample(Decoder(𝐳t1:L,𝐡)){\mathbf{z}}_{t}^{1:L}\leftarrow\textsc{Sample}(\textsc{Decoder}({\mathbf{z}}_{t}^{1:L},{\mathbf{h}})) ⊳\triangleright Denoise sequence: Apply small decoder only
+8:
+end for
+9:
+𝐱Ct←Unmasked tokens in 𝐳t1:L{\mathbf{x}}^{C_{t}}\leftarrow\text{Unmasked tokens in }{\mathbf{z}}_{t}^{1:L} ⊳\triangleright Accumulate output
+10:
+𝐱t,Enc←𝐱1:P⊕𝐱Ct{\mathbf{x}}_{t,\text{Enc}}\leftarrow{\mathbf{x}}^{1:P}\oplus{\mathbf{x}}^{C_{t}}
+11:
+𝐡←Encoder​(𝐱t,EncCLOSE{\mathbf{h}}\leftarrow\textsc{Encoder}({\mathbf{x}}_{t,\text{Enc}}) ⊳\triangleright Encode new ‘block’
+12:
+end for
+13:
+return 𝐳t1:L{\mathbf{z}}_{t}^{1:L}
+Algorithm 3 Encoder-Decoder MDLM Sampling
+Training
+Encoder Attn. Mask ℳenc\mathcal{M}_{\text{enc}}𝐱Ct{\mathbf{x}}^{C_{t}}𝐱Ct{\mathbf{x}}^{C_{t}}Decoder Attn. Mask ℳdec\mathcal{M}_{\text{dec}}𝐡Ct{\mathbf{h}}^{C_{t}}𝐳1:Lt{\mathbf{z}}^{1:L}_{t}𝐳1:Lt{\mathbf{z}}^{1:L}_{t}Self-attn w/in 𝐱Ct{\mathbf{x}}^{C_{t}}Cross-attn to 𝐡Ct{\mathbf{h}}^{C_{t}}Self-attn w/in 𝐳t1:L{\mathbf{z}}_{t}^{1:L}
+Figure 4: Example attention masks used in training full-sequence diffusion with an encoder-decoder architecture, for L=6L=6 tokens. We denote clean tokens in 𝐳t1:L{\mathbf{z}}_{t}^{1:L} as 𝐱Ct{\mathbf{x}}^{C_{t}}, where CtC_{t} corresponds to their token indices. In this example, |Ct|=3|C_{t}|=3.
+Left: The encoder mask ℳEnc∈{0,1}|Ct|×|Ct|\mathcal{M}_{\text{Enc}}\in\{0,1\}^{|C_{t}|\times|C_{t}|} enables clean tokens to attend to other clean tokens in the sequence. Right: The decoder mask ℳDec∈{0,1}L×(L+|Ct|)\mathcal{M}_{\text{Dec}}\in\{0,1\}^{L\times(L+|C_{t}|)} uses bidirectional attention across the noised sequence 𝐳t1:L{\mathbf{z}}_{t}^{1:L} and cross-attention to the encoder’s output representation 𝐡Ct{\mathbf{h}}^{C_{t}}.
+During training, we sample 𝐳t1:L∼q(𝐳t1:L∣𝐱1:L){\mathbf{z}}_{t}^{1:L}\sim q({\mathbf{z}}_{t}^{1:L}\mid{\mathbf{x}}^{1:L}).
+The input to the encoder is the sequence of unmasked tokens 𝐱Ct{\mathbf{x}}^{C_{t}} from the full latent sequence 𝐳t1:L{\mathbf{z}}_{t}^{1:L} (along with the prompt tokens 𝐱1:P{\mathbf{x}}^{1:P}, if available), and it produces a representation of these tokens 𝐡t{\mathbf{h}}_{t}.
+The input to the decoder is 𝐳t1:L{\mathbf{z}}_{t}^{1:L} along with 𝐡t{\mathbf{h}}_{t}, and it outputs logits for each token position in 𝐳t1:L{\mathbf{z}}_{t}^{1:L}.
+In Figure 4, we present a sample ℳEnc\mathcal{M}_{\text{Enc}} and ℳDec\mathcal{M}_{\text{Dec}} for training MDLM with E2D2.
+Both the encoder and the decoder use full bidirectional self- and cross-attention.
+For batched training, where the number of unmasked tokens can differ between sequences, we may pad the encoder input sequences: 𝐱Ct⊕(⨁ℓ∉Ct[PAD]){\mathbf{x}}^{C_{t}}\oplus(\bigoplus_{\ell\notin C_{t}}\textsc{[PAD]}) where [PAD] is a special padding token.
+We also adjust the attention masks ℳEnc\mathcal{M}_{\text{Enc}} and ℳDec\mathcal{M}_{\text{Dec}} accordingly, to disable attention to padding tokens.
+Appendix E Additional Experimental Details
+Figure 5: Encoder-decoder architecture for discrete diffusion.
+The encoder embeds the clean sequence.
+The lightweight decoder denoises blocks over TT decoding steps by cross-attending to the encoder output.
+Left: “Last hidden state” version of E2D2:
+each decoder block attends to the last hidden state output of the encoder.
+Right: “Shared KV cache” version of E2D2: Decoder layers attend to the keys and values of corresponding encoder layers. Encoder and decoder weights are tied.
+For all of our experiments, we used architectures based on the Qwen3 family of models [76].
+In all training and fine-tuning experiments, we used the ADAM optimizer [31] with weight decay 1​e−51\mathrm{e}^{-5} and (β1,β2)=(0.9,0.98).(\beta_{1},\beta_{2})=(0.9,0.98).
+We also apply gradient clipping to 1.01.0.
+We also utilize an exponential moving average (EMA) copy of each model with a decay rate of 0.9999.
+The EMA model was used during evaluation.
+E.1 Measuring Throughput
+For the main results, inference throughput was measured on a single H100 (80GB) GPU using a batch size of 1.
+For the ablation results, we used a single A100 (80GB) GPU.
+We first processed 100 ‘warm-up’ samples and then recorded decoding throughput for the subsequent 100 samples.
+Models generated 256 additional tokens, with no [EOS] or other early decoding stopping criteria applied.
+We report mean ±\pm the standard deviation of tokens per second for the 100 generated samples.
+E.2 Summarization
+Data
+For this task, we use the CNN/DailyMail dataset version 3.0 [27, 57] downloaded from https://huggingface.co/datasets/abisee/cnn_dailymail.
+Data was pre-processed to add a prefix to summarizations: “Summary: ”.
+Inputs and targets were truncated to a maximum length of 512 each, ensuring a maximum sequence length of 1024 for sequences seen during training.
+Hyperparameters
+We used the Qwen/Qwen3-0.6B-Base tokenizer.
+All models had hidden size of 256 and intermediate hidden size of 768.
+The AR and MDLM baselines consisted of 28 transformer layers, corresponding to 80M parameters.
+BD3LM had 12 layers and used a block size of S=8S=8, corresponding to 60M parameters.
+E2D2 also used S=8S=8 and consisted of 20 encoder and 8 decoder layers, corresponding to 80M parameters.
+We used the “last hidden state variant” of the E2D2 model.
+We trained with batch size 128. Learning rate was linearly warmed-up for 1000 steps until a maximum of 3e−4\text{e}^{-4}.
+Models were trained for a maximum of 500k steps and we use early stopping on the validation loss to select the best model.
+Evaluation
+Models generated 256 additional tokens.
+Metrics were computed using the evaluate library from HuggingFace.
+Inputs were pre-processed as above, with the exception that input texts were truncated to 2048 tokens, and generated samples were post-processed to truncate summaries after the end of sentence special tokens.
+For MDLM, BD3LM, and E2D2, we apply exponential length penalty starting at 80 tokens with a factor of 1.1 and repetition penalty with a factor of 1.5.
+For the AR model, we do not apply the length or repetition penalties as these led to a performance degradation.
+For the BD3LM model, we found improved performance when aligning the input sequence to block length.
+That is, for a context of length |C||C| the last CmodSC\mod S tokens were fixed to the first decoding block.
+For E2D2 and MDLM models, this alignment was not necessary.
+Finally, for MDLM we decoded semi-autoregressively using a block size of 32.
+E.3 Translation
+Data
+For this task, we use the WMT14 German to English (de-en) dataset [6] downloaded from https://huggingface.co/datasets/wmt/wmt14.
+For AR models, data was pre-processed to add a prefix to the translations: “Translation: ”.
+Inputs and targets were truncated to a maximum length of 128 each, ensuring a maximum sequence length of 256 for sequences seen during training.
+Hyperparameters
+We used the Qwen/Qwen3-0.6B-Base tokenizer.
+All models had hidden size of 512 and intermediate hidden size of 1536.
+The AR and MDLM baselines consisted of 32 transformer layers, corresponding to 250M parameters.
+We trained two BD3LM models, one with 12 layers and one with 16 and used a block size of S=4S=4. This corresponds to 140M and 160M parameters, respectively.
+E2D2 also used S=4S=4 and consisted of 28 encoder and 4 decoder layers, corresponding to 250M parameters.
+We used the “last hidden state variant” of the E2D2 model.
+We trained with batch size 128. Learning rate was linearly warmed-up for 1000 steps until a maximum of 3e−4\text{e}^{-4}.
+Models were trained for a maximum of 500k steps and we use early stopping on the validation loss to select the best model.
+Evaluation
+Models generated 256 additional tokens.
+Metrics were computed using the evaluate library from HuggingFace.
+Inputs were pre-processed as above and generated samples were post-processed to truncate translations after the first ‘.’ or the end of sentence special token.
+For the BD3LM model, we found improved performance when aligning the input sequence to block length.
+For E2D2 and MDLM models, this alignment was not necessary.
+Finally, for MDLM we decoded semi-autoregressively using a block size of 32.
+E.4 Mathematical Reasoning
+Data
+For this task, we use the GSM8K dataset [10] downloaded from https://huggingface.co/datasets/openai/gsm8k (main version).
+Data was pre-processed to add a prefix to inputs: “Please reason step by step, and put your final answer within $\boxed{}$.”, answers were prefaced with “Answer: ”, and solution was wrapped in “$\boxed{}$.”.
+Inputs and targets were truncated to a maximum length of 384 each, ensuring a maximum sequence length of 768 for sequences seen during training.
+Hyperparameters
+We used the Qwen/Qwen3-1.7B-Base tokenizer.
+For AR and MDLM models, we used all the layers of the pretrained 1.7B parameter Qwen3, which has a hidden size of 2048 and intermediate hidden size of 6144.
+For the BD3LM baselines, we used the NN layers closest to the input, as opposed to the NN layers closest to the output, since we found this to be the stronger of the two baselines. For our BD3LM baseline where N=21N=21, this corresponds to 1.4B parameters.
+For the E2D2 decoder, we used the NDecN_{\text{Dec}} layers closest to the output.
+We used the “shared KV cache variant” of the E2D2 model and the encoder and decoder layers were weight-tied. Thus, E2D2 uses 1.7B trainable parameters.
+BD3LM and E2D2 models were trained using block size of S=4S=4.
+We trained with batch size 1. Learning rate was linearly warmed-up for 100 steps until a maximum of 1e−5\text{e}^{-5} and decayed using a cosine schedule until half the maximum value.
+Models were trained for a maximum of 30k steps and we use early stopping on the validation loss to select the best model.
+Evaluation
+Models generated 512 additional tokens.
+Inference was done using the lm-eval harness library with the ‘flexible match’ criteria and similar pre-processing was applied to question texts.
+Post-processing was done to truncate text at end of sentence special characters and solutions were reverted to their original form of ### <Answer>.
+Inputs were pre-processed as above.
+For both the BD3LM and E2D2 models, we found improved performance when aligning the input sequence to block length.
+E.5 Language Modeling
+Data
+We train on the OpenWebText [21] dataset downloaded from https://huggingface.co/datasets/Skylion007/openwebtext. We use the GPT2 tokenizer. We do not pad or truncate sequences, but concatenate them and wrap them to a length of 1024. Since OWT does not have a validation split, we leave the last 100k documents for validation. Following [1], we do not inject [BOS] and [EOS] tokens at the beginning and end of each sequence in order to enable arbitrary-length generation.
+We evaluate zero-shot likelihoods on datasets Penn Tree Bank (PTB; [41]), Wikitext [42], LM1B, Lambada [49], AG News [80], and Scientific Papers (Pubmed and Arxiv subsets; [11]). When reporting zero-shot likelihoods on benchmark datasets from [53], we wrap all sequences to 1024 tokens and do not add [EOS] between sequences following [55].
+Hyperparameters
+We train with a batch size of 512 and context length of 1024 for 1M steps.
+We trained E2D2 using a block size of S=4S=4.
+All models use N=12N=12 total layers, and for E2D2 we set NEnc=10,NDec=2N_{\text{Enc}}=10,N_{\text{Dec}}=2. All models use 170M total parameters, including token embeddings.
+For E2D2, the learning rate was linearly warmed-up for 2000 steps until a constant peak of 3e−4\text{e}^{-4}.
+Evaluation
+We report validation likelihood for OWT, and we use the test splits for reporting zero-shot likelihoods using the datasets from [53]. We use the same context length of 1024 tokens at evaluation.
+Appendix F Assets
+In Table 10, we list the corresponding licenses for datasets used in this work.
+Table 10: Datasets and corresponding licenses.
+Dataset
+Licence
+CNN/DailyMail
+Apache-2.0 License
+WMT14
+—
+GSM8K
+MIT License
+OpenWebText [21]
+Creative Commons CC0 license (“no rights reserved”)
+In Table 11, we list the corresponding licenses for software packages used in this work.
+Table 11: Software and corresponding licenses.
+Library
+License
+HuggingFace [71]
+Apache 2.0
+Hydra [75]
+MIT
+Language Model Evaluation Harness [18]
+MIT
+Matplotlib [29]
+Matplotib license
+MosaicML Composer [66]
+Apache 2.0
+NumPy [25]
+NumPy license
+OmegaConf
+BSD 3-Clause
+Pandas [48]
+BSD 3-Clause “New" or “Revised"
+PyTorch [51]
+BSD-3 Clause
+Seaborn [70]
+BSD 3-Clause “New" or “Revised"
+TorchMetrics
+Apache 2.0
+Appendix G Generated Samples
+Below, we provide example generations from GSM8K from E2D2 NEnc/NDec=28/14N_{\text{Enc}}/N_{\text{Dec}}=28/14 and BD3LM N=21N=21.
+G.1 E2D2
+Question: Every day, Wendi feeds each of her chickens three cups of mixed chicken feed, containing seeds, mealworms and vegetables to help keep them healthy. She gives the chickens their feed in three separate meals. In the morning, she gives her flock of chickens 15 cups of feed. In the afternoon, she gives her chickens another 25 cups of feed. How many cups of feed does she need to give her chickens in the final meal of the day if the size of Wendi’s flock is 20 chickens?
+Answer: Wendi feeds her chickens 3 cups of feed per day for 20 chickens for a total of 3*20 = <<3*20=60>>60 cups of feed.
+In the morning, she gives her chickens 15 cups of feed and in the afternoon, she gives them another 25 cups of feed for a total of 15+25 = <<15+25=40>>40 cups of feed.
+She needs 60 cups of feed and has already given 40 cups so she needs to give her chickens 60-40 = <<60-40=20>>20 cups of feed in the final meal #### 20
+Question: Josh decides to try flipping a house. He buys a house for $80,000 and then puts in $50,000 in repairs. This increased the value of the house by 150%. How much profit did he make?
+Answer: The repairs cost 50,000*.5=$<<50000*.5=25000>>25,000. So the house was worth for 80,000+25,000=$<<80000+25000=105000>>105,000. So he made a profit of 105,000-80,000=$<<105000-80000=25000>>25,000 #### 25000
+G.2 BD3LM (N=21N=21)
+Question: Every day, Wendi feeds each of her chickens three cups of mixed chicken feed, containing seeds, mealworms and vegetables to help keep them healthy. She gives the chickens their feed in three separate meals. In the morning, she gives her flock of chickens 15 cups of feed. In the afternoon, she gives her chickens another 25 cups of feed. How many cups of feed does she need to give her chickens in the final meal of the day if the size of Wendi’s flock is 20 chickens?
+Answer: In the morning, Wendi gives her chickens 15 cups of feed. In the afternoon, she gives her chickens another 25 cups of feed. In the final, she gives her chickens 20 * 3 = <<20*3=60>>60 cups of feed. Thus, in the final meal of the day, Wendi gives her chickens 60 - 25 - 15 = <<60-25-15=10>>10 cups of feed. #### 10
+Question: Josh decides to try flipping a house. He buys a house for $80,000 and then puts in $50,000 in repairs. This increased the value of the house by 150%. How much profit did he make?
+Answer: The value of the house increased by 50000*.15=$<<50000*.15=7500>>7500 So the value of the house was 80000+7500=$<<80000+7500=87500>>87500 So he made 87500-80000=$<<87500-80000=7500>>7500 #### 7500
+59, 60, 16, 28, 32, 33, 69
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

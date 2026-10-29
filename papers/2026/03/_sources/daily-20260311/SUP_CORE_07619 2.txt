@@ -1,0 +1,949 @@
+verthinking Causes Hallucination:Tracing Confounder Propagation in Vision Language Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+3 Methodology
+3.1 Problem Analysis
+3.2 Hallucination Detection Pipeline
+3.2.1 Prefix Prompting
+3.2.2 Tracing Internal Reasoning Dynamics
+3.2.3 Feature Extraction
+3.2.4 Hallucination Detection Model
+4 Experimental Setup
+5 Results
+6 Ablation Study
+7 Conclusion
+References
+8 Hyperparameters Optimization
+9 Semantic Alignment Calculation
+Maximum Semantic Alignment
+Layer-wise Semantic Alignment
+10 Strong Scene-prior Examples Selection
+11 Attention-based Methods Failures
+12 S-OT Improves Other Baselines
+13 Features Importance
+Feature Ablation
+SHAP Analysis
+14 Computational Cost
+15 Confounder Propagation Examples
+16 Qualitative Results
+License: CC BY-NC-ND 4.0
+arXiv:2603.07619v1 [cs.CV] 08 Mar 2026
+verthinking Causes Hallucination:
+Tracing Confounder Propagation in Vision Language Models
+Abin Shoby
+Ta Duc Huy
+Tuan Dung Nguyen
+Affiliation:  Hanoi University of Science and Technology† Equal contribution
+Minh Khoi Ho
+Affiliation:  Hanoi University of Science and Technology† Equal contribution
+Qi Chen
+Affiliation:  Australian Institute for Machine Learning, University of Adelaide
+Anton van den Hengel
+Affiliation:  Australian Institute for Machine Learning, University of Adelaide
+Phi Le Nguyen
+Affiliation:  Hanoi University of Science and Technology† Equal contribution
+Johan W. Verjans
+Affiliation:  Australian Institute for Machine Learning, University of Adelaide
+Vu Minh Hieu Phan
+††thanks: Lead author.
+Affiliation:  Australian Institute for Machine Learning, University of Adelaide
+Abstract
+Vision Language models (VLMs) often hallucinate non-existent objects. Detecting hallucination is analogous to detecting deception: a single final statement is insufficient, one must examine the underlying reasoning process. Yet existing detectors rely mostly on final-layer signals. Attention-based methods assume hallucinated tokens exhibit low attention, while entropy-based ones use final-step uncertainty. Our analysis reveals the opposite: hallucinated objects can exhibit peaked attention due to contextual priors; and models often express high confidence because intermediate layers have already converged to an incorrect hypothesis.
+We show that the key to hallucination detection lies within the model’s thought process, not its final output. By probing decoder layers, we uncover a previously overlooked behavior, overthinking: models repeatedly revise object hypotheses across layers before committing to an incorrect answer. Once the model latches onto a confounded hypothesis, it can propagate through subsequent layers, ultimately causing hallucination. To capture this behavior, we introduce the Overthinking Score, a metric to measure how many competing hypotheses the model entertains and how unstable these hypotheses are across layers. This score significantly improves hallucination detection: 78.9% F1 on MSCOCO and 71.58% on AMBER.
+1 Introduction
+Figure 1: Overthinking leads to object hallucination in Vision-Language Models. Each column corresponds to the top predicted object token at a decoder layer, illustrating the model’s layer-wise reasoning progression. We propose Overthinking Score (S-OT) to measure how much the model shifts among objects across layers.
+Top: the model demonstrates stable reasoning, quickly converges on a consistent concept (cat) across decoder layers, yielding low S-OT.
+Bottom: the model shows overthinking, hesitating between semantically co-occurring objects or “confounders” (sink, soap) that bias it towards confidently producing a hallucinated answer (dish) captured by high S-OT.
+Hallucination is a persistent problem in Vision Language models (VLMs), where the model describes objects that are not present in the input image.
+Early hallucination detection approaches introduce external judge models [25, 5, 24, 12] to verify generated responses using auxiliary evaluators. While effective in some cases, these methods are limited by their dependence on additional large models, which makes them computationally expensive and often unreliable when the judge itself inherits similar biases from the base model.
+Attention-based methods [11, 8, 9, 7] have been proposed to detect hallucinated objects using visual attention magnitudes. These approaches rely on the assumption that real objects exhibit
+high attention on real objects.
+However, our correlation analysis challenges this premise: we find that hallucinated objects can
+exhibit high attention magnitude on spurious region (Fig. 7),
+showing that attention intensity does not reliably indicate hallucination.
+Figure 2:
+Left: Confounder Propagation examples. In each example, we illustrate the image and its prefix prompt on top. Under the image,
+we highlight confounders
+in the intermediate layers prior to the hallucinated final layer token. We also list the values of different hallucination indicators: SVAR [11], MetaToken [7], Final Layer Entropy, and our proposed Overthinking Score (S-OT). The attention map of the fifth layer is also presented following [11].
+Existing methods ignore intermediate-layer token dynamics, missing hallucinations. In contrast, our approach detects by tracing confounder propagation.
+Right: Histograms of SVAR, MetaToken, Final-Layer Entropy, and our Overthinking Score are shown, with the example positions highlighted. Existing indicators show high overlapping between Real and Hallucinated object distribution, while our Overthinking Score offers noticeably better separation.
+Recent approaches attempt to diagnose hallucination by measuring entropy or uncertainty at the final decoding layer [7, 19, 27], assuming hallucination corresponds to output ambiguity. Interestingly, we find that hallucination can arise in earlier stages. Intermediate layers can activate several object hypotheses, which may include a confounder.
+Here, the confounders are plausible concepts that bias the model to hallucinate the object in the final prediction.
+For example, as shown in Fig. 1, the confounding concepts “sink” and “soap” emerge in the intermediate layers, influencing the VLM to generate “dish” at the final layer, which is nonexistent but semantically aligned with sink and soap.
+Hence, VLMs can hallucinate confounded objects that are consistent with the scene context rather than the present objects in the image. We illustrate this effect in Fig. 2,
+where the model hallucinates at the final decoding layer after multiple confounders emerge in intermediate layers, a process we term “confounder propagation”. This phenomenon reflects a well-known issue in deep networks: confounders.
+Prior works have shown that VLMs are prone to encode confounding features such as background texture or co-occurrence objects [4, 16, 28].
+Mechanistically, the final decoder layer is conditioned on its preceding layers’ representation. Using LogitLens [1], we decode intermediate-layer token features into vocabulary and find that they exhibit strong semantic alignment with the final-layer token (Tab. 1).
+Hence, these intermediate-layer objects can semantically influence the formation of the final-layer object. Empirically, we observe that: when intermediate layers yield
+excessive distinct
+object tokens,
+the model is prone to hallucination. We hypothesize that when the model considers many alternative object hypotheses, it is more likely to include a confounder and increases the likelihood of predicting a nonexistent object.
+Our analysis shows a positive correlation between the number of objects and confounder propagation rate as illustrated in Fig. 4-Right.
+Tracking the proliferation of these latent object hypotheses throughout the layers reveals the confounder propagation phenomenon that final layer analysis alone fails to capture.
+We also find that hallucinations appearing in intermediate layers often persist to the final output. Intermediate layers with higher entropy tend to produce more hallucinations at the final layer as shown in Fig. 4-Left.
+In other words, when uncertainty accumulates throughout the layers, the model is more likely to hallucinate.
+This behavior reflects overthinking (Fig. 1), where the model forms multiple object hypotheses before reaching a final answer, increasing the chance of confounders that facilitate hallucination. This motivates us to propose the Overthinking Score to quantify: (1) the number of unique top-1 tokens; and (2) the uncertainty across layers. Intuitively, if the model considers too many objects and exhibits high uncertainty in the intermediate layers, it is more likely to hallucinate. Unlike prior methods that rely solely on the final layer, the Overthinking Score aggregates all layers to explicitly capture confounder propagation for robust hallucination detection.
+We summarize our contributions:
+1.
+We conduct a layer-wise investigation of VLMs and uncover the confounder propagation phenomenon that drives hallucination.
+2.
+We propose the Overthinking Score that effectively captures this phenomenon and achieves strong predictive performance.
+3.
+Extensive experiments across multiple benchmarks show that our overthinking-based detector consistently surpasses prior hallucination detection methods.
+2 Related Work
+Hallucination Analysis.
+Several works examine internal behaviors that give rise to hallucination in LVLMs. SVAR [11] studies layer-wise attention and introduces the Visual Attention Ratio (VAR), showing that real object tokens exhibit higher mid-layer attention to image patches. Yang et al. [26] analyze token-level attributions using integrated gradients and attention rollout, finding that hallucinated tokens attend less to relevant patches and more to language-prior positions. DAMRO [8] traces attention-head divergence patterns correlated with hallucinations. While these studies reveal useful attention signatures, they focus primarily on attention magnitude and do not track how intermediate token hypotheses semantically shape the final prediction. As a result, they overlook the layer-wise propagation of confounding object representations, which we show to be a major driver of hallucination.
+Hallucination Detection.
+Early hallucination detection methods relies on grounding via auxiliary models [25, 5, 24, 12].
+Uncertainty-based detectors adapted from LLMs (e.g., SelfCheckGPT [18], Semantic Entropy [6], ensembles [3]) estimate prediction ambiguity but operate exclusively at the final layer. Recent token-level approaches such as MetaToken [7], SVAR [11], and HalLoc [19] extract handcrafted features or attention statistics, or train multimodal classifiers with token-level labels. However, these methods largely rely on surface signals: final-layer entropy, attention magnitudes, or feature heuristics, and do not model how confounding activations accumulate and persist across layers. Our work fills this gap by formalizing confounder propagation and proposing the Overthinking Score, which captures both semantic branching and layer-wise uncertainty dynamics that current methods overlook.
+3 Methodology
+We first characterize confounder propagation through a layer-wise analysis of VLMs (Sec. 3.1), then leverage these insights to design the Overthinking Score for our hallucination detection pipeline (Sec. 3.2).
+3.1 Problem Analysis
+We focus on white-box approaches that inspect model internals rather than black-box judge systems dependent on external evaluators [25, 5, 24, 12]. Our goal is to identify internal indicators of hallucination.
+We find that hallucinations often occur in scenes with strong contextual priors.
+Current methods based on attention or final-layer uncertainty cannot capture confounder propagation, the internal accumulation of contextual bias that leads to hallucination at the final layer. We propose three hypotheses to formalize this layer-wise phenomenon.
+H1. Strong contextual priors cause hallucinated object tokens to exhibit visual attention magnitude that is comparable to real objects.
+Attention-based methods [11, 8, 9, 7] assume that real objects attract stronger visual attention than hallucinated ones. However, in scenes with strong contextual priors (e.g., kitchen-microwave), hallucinated objects often receive attention comparable to, or even higher than, real ones.
+To examine the impact of contextual priors, we employ [20] to compute the semantic correlation between the tokens referring to the scene versus each generated object to estimate prior strength, and select highly correlated samples as strong-prior cases. We then compare the distribution of visual-attention indicators used by SVAR [11] and MetaToken [7] between real and hallucinated objects. As shown in Fig. 2-Right
+, their distributions largely overlap, which supports the hypothesis, suggesting that visual attention magnitude cannot reliably distinguish hallucination under a strong contextual prior.
+H2. Confounders emerging in intermediate layers propagate to induce hallucination, a phenomenon that final-layer uncertainty cannot capture.
+We first examine whether intermediate layers contextually influence the formation of the final layer prediction. To test this, we evaluate the semantic alignment between the top-1 tokens decoded from each intermediate layer and the final layer token across multiple VLMs. We use LogitLens [1] to decode intermediate activations into the vocabulary space and [20] to compute the semantic alignment. The consistently high alignment observed (Tab. 1)
+implies a semantic influence of intermediate tokens on the final decoded object.
+LLaVA-1.5
+Gemma-3
+Qwen3-VL
+Hallu.
+40.6%
+47.9%
+58.6%
+Real
+41.6%
+42.4%
+55.1%
+All
+41.5%
+43.2%
+55.5%
+Table 1: Semantic alignment between intermediate-layer tokens and the final-layer decoded token for LLaVA-1.5, Gemma-3, and Qwen3-VL. We report the mean alignment for hallucinated tokens, real tokens, and all tokens.
+The high alignment implies a semantic influence from the intermediate layers to the final layer, indicating confounder propagation.
+Next, we define “confounder propagation” as the specific cases where objects emerging in intermediate layers influence the final layer to generate contextually correlated but nonexistent object (Fig. 2-Left).
+A sample is considered to exhibit confounder propagation when the final layer hallucinated token shows strong semantic correlation with tokens decoded from intermediate layers.
+Our analysis shows that confounder propagation is significant,
+accounting for 63.69% of hallucinations in LLaVA-1.5, 82.73% in Gemma-3, and 85.46% in Qwen3-VL on MS-COCO
+(see Supp.).
+Because these confounders bias the representation before decoding, the model often produces confident (low-entropy) predictions even when hallucinating. Empirically, we show that the entropy distributions of hallucinated and real objects overlap substantially (Fig. 3),
+indicating that hallucination is not necessarily accompanied by uncertainty. These results demonstrate that while final layer entropy analysis provides some diagnostic value of hallucination, it masks the underlying
+confounder propagation, which can only be captured through intermediate layer analysis.
+Figure 3: Distribution of final layer entropy in LLaVA-1.5, Gemma-3 and Qwen3-VL for hallucinated and real tokens.The strong overlap shows the weakness of entropy as a hallucination predictor.
+H3. More unique object hypotheses across layers increase the chance that a confounder emerges which facilitates hallucination.
+We observe that certain samples trigger a large number of unique object hypotheses across layers. This behavior increases the likelihood that a confounder will arise. Since intermediate layer representations can influence the final token as shown in H2, such confounder can propagate and bias the final prediction to hallucinate.
+Empirically, we find a positive correlation between the number of unique intermediate tokens and the measured confounder-propagation rate as shown in Fig. 4-Right.
+This indicates that when the model reasons over too many object alternatives, it becomes more susceptible to confounder propagation.
+Additionally, our analysis shows that intermediate layers with higher entropy tend to produce more hallucinations at the final layer (Fig. 4-Left)
+, indicating that uncertainty accumulation further interacts with confounder propagation to amplify hallucination.
+Figure 4: Left: Correlation between per-layer average entropy and hallucination rate. Most layers exhibit positive correlation, suggesting that increased uncertainty across depth contributes to hallucination. Right: Confounder propagation rate versus the number of unique tokens in the intermediate layers. A higher number of unique tokens is associated with an increased likelihood of confounder propagation. Both measured on LlaVA-1.5
+Discussion.
+Visual attention based methods often fail under strong contextual priors, where hallucinated and real objects receive comparable attention magnitudes.
+Furthermore, our analysis shows that when the model “overthinks”, which explores too many object hypotheses; and accumulates uncertainty across layers, it becomes more prone to hallucination.
+To capture both effects, we introduce the Overthinking Score in Sec. 3.2.3, which captures the internal layer dynamics and remains effective even in strong contextual prior scenes.
+3.2 Hallucination Detection Pipeline
+We illustrate our Hallucination detection pipeline in Fig. 5.
+Given a Vision Language Model, we provide it with an input image and a partial text prompt for the model to generate the next word in the sequence (Sec. 3.2.1).
+The objective is to determine whether the predicted token refers to a real object in the image or a hallucinated one.
+To this end, we analyze the internal token-level dynamics of the VLM during the generation of the token (Sec. 3.2.2) and compute an Overthinking Score, which quantifies how frequently the model revises its beliefs across layers before committing to a final prediction.
+Alongside this score, we extract complementary features including layer-wise entropy, image attention, and text attention with respect to the generated token.
+These features are aggregated into a single feature vector (Sec. 3.2.3).
+A labeled set of these feature vectors, corresponding to real and hallucinated objects, is used to train a lightweight Hallucination Detector (Sec. 3.2.4).
+Figure 5: Hallucination detection pipeline.
+1) We begin with Prefix Prompting, where the model is asked to predict the next token given an image and a partial prompt.
+2) We apply LogitLens to extract the top-pp tokens at each decoder layer, revealing how the model’s intermediate hypotheses evolve.
+3) In the Feature Extraction step, the top-pp tokens distributions are used to compute the Overthinking Score and layer-wise entropy, while image and text attention are measured with respect to the generated token. All features are concatenated into a single feature vector.
+4) A Hallucination Detector is trained on these features to identify hallucinated cases.
+3.2.1 Prefix Prompting
+Following [11], given a VLM with LL transformer layers and a token vocabulary vV{v}^{V}, we first prompt the model with a general instruction: “Describe this image.” The model then produces a detailed response containing multiple object mentions.
+We then extract each mentioned object from the response and label it as either real or hallucinated, producing a set of pairs (t,yt)(t,y_{t}), where tt denotes the token position of the object mention and yty_{t} is the hallucination label (yt=1y_{t}=1 for hallucinated, yt=0y_{t}=0 for real).
+For each detected object, we construct a targeted prefix prompt using the portion of the model’s original response preceding that object token. The resulting prefix x1:t−1x_{1:t-1}, together with the image II, is fed back into the model to predict the next token xtx_{t}. The task is to determine whether the generated token xtx_{t} is real or hallucinated.
+The prefix is designed such that the expected next token should correspond to an object present in the image.
+For example, for an image depicting a kitchen scene, the prefix prompt may take the form: “In this image, I can see a …” encouraging the model to complete the sentence with a relevant object such as “plate” or “sink”.
+By structuring the prompt in this way, we constrain the decoding process to object-referential tokens.
+3.2.2 Tracing Internal Reasoning Dynamics
+We trace the internal reasoning dynamics of the VLM by analyzing the top-pp tokens at each transformer layer ℓ\ell.
+To access intermediate layer predictions, we employ LogitLens [1], a diagnostic technique that projects hidden representations from any transformer layer into the model output vocabulary space using the final linear head.
+We denote pℓ​(v)p_{\ell}(v) as the token distribution at layer ℓ\ell, which is computed as:
+pℓ(v)=softmax(W⋅LayerNorm(hℓ)),ℓ=1,…,L,p_{\ell}(v)=\text{softmax}(W\cdot\text{LayerNorm}(h_{\ell})),\quad\ell=1,\dots,L,
+(1)
+where hℓ∈ℝdh_{\ell}\in\mathbb{R}^{d} denotes the hidden state vector at layer ℓ\ell for the current token,
+and W∈ℝV×dW\in\mathbb{R}^{V\times d} is the output projection matrix mapping from the hidden dimension dd to the vocabulary size VV.
+The resulting pℓ​(v)∈ℝVp_{\ell}(v)\in\mathbb{R}^{V} represents the probability distribution over the vocabulary at the layer ℓ\ell.
+By examining the top-pp tokens from pℓ​(v)p_{\ell}(v) across all layers, we can observe how the model’s dominant hypotheses evolve through the decoding process.
+These layer-wise token trajectories indicate whether the model maintains a consistent belief or frequently revises it, a behavior that reflects overthinking.
+Discussion. While PROJECTAWAY [10] also leverages a logit-lens strategy to inspect intermediate decoder behaviors, our approach differs in two key aspects. First, instead of projecting image patches into the text token space, we directly decode the last hidden state at each decoder layer. This choice allows us to capture the model’s internal decision flow, rather than its cross-modal alignment. Second, decoding the final hidden state per layer reflects the same mechanism used by the final decoder layer to generate the next token. Consequently, our method reveals the evolving token-level predictions (i.e., the thoughts) formed throughout the decoder layers, rather than merely tracing what the model has seen so far. This provides a more faithful characterization of how the model incrementally converges toward its final output.
+3.2.3 Feature Extraction
+To predict hallucination with a lightweight classifier, we construct a feature vector comprising several indicators of internal uncertainty.
+Overthinking Score.
+Among these, the Overthinking Score serves as a primary feature.
+We define the Overthinking Score as the number of unique top-1 tokens emitted across LL decoder layers, reflecting the diversity during reasoning:
+SOT=|{xℓ∣ℓ∈[1,L]}|L⋅∑ℓ=1LHℓL,S_{\text{OT}}=\frac{|\{x_{\ell}\mid\ell\in[1,L]\}|}{L}\cdot\frac{\sum_{\ell=1}^{L}H_{\ell}}{L},
+(2)
+where xℓx_{\ell} denotes the top-11 token, and HℓH_{\ell} denotes the entropy at layer ℓ\ell, quantifying the uncertainty of its token distribution:
+Hℓ=−∑v∈Vpℓ(v)logpℓ(v),ℓ=1,…,L.H_{\ell}=-\sum_{v\in V}p_{\ell}(v)\log p_{\ell}(v),\quad\ell=1,\dots,L.
+(3)
+The first term measures the variability of the top-11 predictions across layers, while the second term captures the average uncertainty of those layers.
+A high SOTS_{\text{OT}} therefore indicates that the model entertains too many competing beliefs, which characterizes “overthinking”.
+We show that SOTS_{\text{OT}} is a strong indicator of hallucination in Fig. 8, with more information in Supp.
+Attention Score.
+In addition, we include attention-based features to capture how strongly the next token attends to visual and textual evidence.
+Attention distributions reflect how information flows between modalities during token generation.
+Although we empirically show that attention is not a reliable indicator of hallucination for strong-prior scenes, it can still provide useful signal in general.
+We include a more detailed analysis in the Supp.
+Next-Token to Image Attention.
+Let ℐ\mathcal{I} denote the set of image token indices and Aℓ(h)A_{\ell}^{(h)} the attention matrix of head hh in layer ℓ\ell.
+For each layer, we compute the average image attention received by the next token xtx_{t} as:
+αℓimg=1|ℐ|​∑i∈ℐmaxh⁡Aℓ(h)​(t,i),\alpha_{\ell}^{\text{img}}=\frac{1}{|\mathcal{I}|}\sum_{i\in\mathcal{I}}\max_{h}A_{\ell}^{(h)}(t,i),
+(4)
+where Aℓ(h)​(t,i)A_{\ell}^{(h)}(t,i) denotes the attention weight from xtx_{t} to the ii-th image token.
+This metric quantifies how much the predicted token relies on visual grounding.
+Lower values indicate that the model underutilizes image features, which has been shown to be indicative of hallucination [11, 7].
+Next-Token to Text Attention.
+Similarly, we measure how strongly xtx_{t} attends to previous textual context tokens.
+Let 𝒯\mathcal{T} denote the set of text token indices before tt.
+The average text attention at layer ℓ\ell is defined as:
+αℓtext=1|𝒯|​∑i∈𝒯∖{t}maxh⁡Aℓ(h)​(t,i).\alpha_{\ell}^{\text{text}}=\frac{1}{|\mathcal{T}|}\sum_{i\in\mathcal{T}\setminus\{t\}}\max_{h}A_{\ell}^{(h)}(t,i).
+(5)
+High text attention indicates that the model is relying more on linguistic priors rather than visual evidence, which correlates with object hallucination.
+By incorporating both image and text attention into the feature vector, we can capture both visual grounding and linguistic bias for each token.
+Feature Vector.
+To predict hallucination for the generated token xtx_{t}, we aggregate all these indicators into a unified feature representation.
+Let 𝐇=(H1,…,HL)\mathbf{H}=(H_{1},\dots,H_{L}),
+𝜶img=(α1img,…,αLimg)\boldsymbol{\alpha}^{\text{img}}=(\alpha_{1}^{\text{img}},\dots,\alpha_{L}^{\text{img}}), and
+𝜶text=(α1text,…,αLtext)\boldsymbol{\alpha}^{\text{text}}=(\alpha_{1}^{\text{text}},\dots,\alpha_{L}^{\text{text}})
+denote the entropy, image attention, and text attention vectors across all LL layers, respectively.
+Together with the Overthinking Score SOTS_{\text{OT}}, these quantities encode both the uncertainty and multi-modal reasoning behavior.
+The final feature vector is constructed by concatenating all components:
+ϕ⁡(xt)=[SOT|⁣|𝐇|⁣|𝜶img|⁣|𝜶text],\phi(x_{t})=[\,S_{\text{OT}}\,\mathbin{||}\,\mathbf{H}\,\mathbin{||}\,\boldsymbol{\alpha}^{\text{img}}\,\mathbin{||}\,\boldsymbol{\alpha}^{\text{text}}\,],
+(6)
+where |⁣|\mathbin{||} denotes vector concatenation.
+3.2.4 Hallucination Detection Model
+Given the feature vector ϕ⁡(xt)\phi(x_{t}), the final step is to classify whether the generated token xtx_{t} corresponds to a real object or a hallucinated one.
+We train a lightweight binary classifier MM on token-level annotations, where each training sample consists of a feature vector and a ground-truth label indicating whether the object exists in the image.
+The classifier maps the feature representation to a hallucination probability:
+y^t=M⁡(ϕ⁡(xt)),\hat{y}_{t}=M(\phi(x_{t})),
+(7)
+where y^t\hat{y}_{t} represents hallucination prediction.
+Figure 6: Qualitative comparison of our method with MetaToken and SVAR.
+Each row presents an example, and each column shows the prediction made by each method. Correct hallucination detections are highlighted with green boxes, while missed detections are shown in red.
+4 Experimental Setup
+Models. We evaluate three popular VLMs including LLaVA-1.5-7B [15], Qwen3-VL-4B [22], and Gemma-3-4B [21] to understand the generalization of our method.
+Dataset. Following [9], we conduct experiments on 4000 random image-annotations from the MSCOCO 2014 validation dataset [14]. The selected set is further segregated into training and test subsets, with 10% allocated for testing and the remaining for training. Each VLM is separately prompted to describe the image (i.e., “Describe this image.”) with a maximum token limit of 1024 and labelled at the object token level using GPT-4o [2] to classify the object tokens as real or hallucinated. Additionally, we evaluate the out-of-distribution (OOD) performance of our trained detectors using AMBER dataset [23].
+Implementation Details.
+Our method uses three lightweight classifiers, including Logistic Regression (LR), Gradient Boosting Classifier (GB), and Multi-layer Perceptron (MLP). The Logistic Regression model is trained for 2000 iterations with the L-BFGS solver. The Gradient Boosting Classifier has 200 estimators with a maximum depth of 10 and is trained with a learning rate of 0.1. Finally, the MLP classifier consists of 128 hidden layer units followed by ReLU activation and is trained for 2000 epochs with a learning rate of 0.01. Hyperparameter optimization details can be found in Supp.
+Tasks. Our main task is token-level object hallucination detection via prefix prompting, following the setup in [11].
+Benchmarks and Metrics.
+Following [7, 11, 19], for Hallucination Detection, we report AUC, AP, and F1-score under dataset imbalance.
+Baselines.
+We employ three recent hallucination detection techniques as the detection baselines, including SVAR [11], HalLoc [19], and MetaToken [7]. SVAR uses attention values from the intermediate layers for features to train an MLP-based hallucination detector. HalLoc uses the last hidden state representation of the image from the CLIP encoder as a feature for the detection module, consisting of the VisualBERT encoder followed by linear classification heads. MetaToken utilizes final layer entropy, image attention, and several other probability distribution features to train two different detectors, including Logistic Regression and Gradient Boosting classifiers.
+5 Results
+Hallucination Detection
+Tab. 2 presents the result of hallucination detection against the selected baselines across 3 VLMs under MSCOCO dataset. On average, the MLP variant of our method yields the highest AUC (87.33%), followed by the GB variant (87.30%). In terms of AP, the GB variant achieves the highest (61.54%), followed by the MLP variant (58.12%). Additionally, Tab. 3 indicates that our method obtains the best generalization in the out-of-distribution (OOD) AMBER dataset with the GB variant having the superior performance.
+Fig. 7 demonstrates the case where existing methods such as
+SVAR,
+fails in detection by attending to spurious region and assigning high attention magnitude, when the VLM has high attention on the book object resembling a laptop. Our method overcomes this limitation by leveraging the internal thought process keyboard →\rightarrow laptop →\rightarrow laptop.
+Qualitative results are illustrated in Fig. 6. (More in Supp.)
+Figure 7: Illustration of an instance where an attention-based mechanism (SVAR) can highly attend to inconsistent objects and fails to detect the hallucinated token laptop. LLaVA highly attends to the book object and leads to confused thought keyboard →\rightarrow laptop →\rightarrow laptop. Our method successfully captures the hallucination by tracing this thought process.
+Table 2: Object hallucination detection performance (in %) on MSCOCO dataset measured using AUC, AP and F1 across three different VLMs.
+LLaVA-1.5
+Gemma-3
+Qwen3-VL
+Avg.
+Method
+AUC
+AP
+F1
+AUC
+AP
+F1
+AUC
+AP
+F1
+AUC
+AP
+F1
+SVAR [11]
+85.12
+50.68
+69.35
+74.11
+32.75
+47.84
+75.56
+35.69
+50.20
+78.26
+39.71
+55.80
+HalLoc [19]
+80.38
+53.61
+73.68
+79.27
+49.96
+67.11
+83.85
+59.50
+74.75
+81.17
+54.36
+71.85
+MetaToken (LR) [7]
+85.41
+52.59
+72.88
+73.91
+28.78
+48.27
+79.49
+27.60
+47.27
+79.60
+36.32
+56.14
+MetaToken (GB) [7]
+88.95
+61.03
+75.95
+77.23
+34.75
+67.15
+84.21
+38.06
+74.43
+83.46
+44.61
+72.51
+MetaToken (MLP) [7]
+86.81
+55.72
+73.89
+78.40
+33.63
+60.03
+86.29
+47.00
+68.03
+83.83
+45.45
+67.32
+Ours (LR)
+86.85
+59.16
+72.88
+76.68
+31.20
+67.53
+77.85
+37.31
+55.90
+80.46
+42.56
+65.44
+Ours (GB)
+89.66
+63.04
+78.95
+85.59
+59.89
+74.54
+86.65
+61.69
+74.43
+87.30
+61.54
+75.97
+Ours (MLP)
+89.73
+63.81
+75.37
+85.38
+56.84
+72.07
+86.89
+53.72
+71.15
+87.33
+58.12
+72.86
+Method
+AUC
+AP
+F1
+SVAR [11]
+79.51
+12.78
+56.87
+HalLoc [19]
+50.00
+2.27
+49.44
+MetaToken (LR) [7]
+79.50
+11.55
+54.76
+MetaToken (GB) [7]
+82.15
+23.48
+65.54
+MetaToken (MLP) [7]
+79.41
+14.04
+58.54
+Ours (LR)
+70.76
+7.97
+53.92
+Ours (GB)
+86.11
+36.65
+71.58
+Ours (MLP)
+83.28
+30.91
+59.76
+Table 3: OOD object hallucination detection performance (in %) on AMBER dataset and LLaVA-1.5 VLM measured using AUC, AP and F1.
+6 Ablation Study
+Feature Importance.
+We ablate different indicator in the feature vector. Among the indicators, Overthinking Score brings the most significant improvement in AUC (86.58%→89.73%86.58\%\rightarrow 89.73\%). We include more details in Supp.
+Overthinking Components.
+To understand the contribution of individual components in the overthinking score, we estimate their SHAP (SHapley Additive exPlanations) [17]. As shown in Fig. 8, both Mean Entropy and Unique Token Count positively contribute to hallucination prediction, showing that uncertainty and hypothesis diversity are informative cues. Yet, the Overthinking Score provides a clearer, more stable signal, confirming the benefit of combining both effects in a single metric. Furthermore, the higher density in the top right corner of the scatter plot shown in Fig. 9 indicates that the hallucination rate (in %) is proportional to the product of these two components.
+Layer-wise importance.
+We analyze the importance of including features from all layers for hallucination detection by training an MLP classifier using layer subsets. Since the SVAR method discusses the importance of middle layers (5-18) and MetaToken utilize the final layer entropy, we group them as [0-4], [5-18], [19-31], and finally use only the last layer. As shown in Tab. 4,
+later layers set [19-31] shows better performance than earlier layers.
+Utilizing all layers gives the best F1 and AUC scores, confirming that all layers are beneficial for hallucination detection.
+Layers
+0-4
+5-18
+19-31
+31
+0-31
+AUC
+85.14
+87.37
+88.93
+83.79
+89.73
+F1
+67.67
+71.61
+74.75
+68.76
+75.37
+Table 4: AUC and F1 scores using different layer subsets for hallucination detection.
+Figure 8: SHAP analysis indicating that both mean entropy and number of unique token are informative for detecting hallucination, while the compound Overthinking Score offers the strongest overall contribution.
+Figure 9: Hallucinations concentrate in regions of both
+high entropy and token diversity (i.e., with MSCOCO & LLaVA-1.5).
+7 Conclusion
+We introduce a novel perspective on the cause of hallucination in Vision Language Models. We show that hallucination originates from early-layer activations that propagate confounding factors through depth, a process we term “confounder propagation”. This internal drift is not visible to final-layer uncertainty methods. As object hypotheses diversify by layers, confounders accumulate and trigger overthinking that leads to hallucination. Capturing this with Overthinking Score, we effectively detect hallucinations across multiple VLMs. Future works include extension to broader reasoning failures and developing mitigation strategies guided by confounders dynamics.
+References
+[1]
+Interpreting gpt: the logit lens, 2023.
+[2]
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774, 2023.
+[3]
+Matias Arteaga, Vivek Narayan, Emily Thompson, and Alexander Rush.
+A lightweight ensemble approach to detecting hallucinations in llms.
+arXiv preprint arXiv:2403.16123, 2024.
+[4]
+Xuweiyi Chen, Ziqiao Ma, Xuejun Zhang, Sihan Xu, Shengyi Qian, Jianing Yang, David Fouhey, and Joyce Chai.
+Multi-object hallucination in vision language models.
+In 3rd Workshop on Advances in Language and Vision Research (ALVR), 2024a.
+[5]
+Xiang Chen, Chenxi Wang, Yida Xue, Ningyu Zhang, Xiaoyan Yang, Qiang Li, Yue Shen, Lei Liang, Jinjie Gu, and Huajun Chen.
+Unified hallucination detection for multimodal large language models.
+arXiv preprint arXiv:2402.03190, 2024b.
+[6]
+Sebastian Farquhar, Eric Wallace, Jacob McKinney, and Pushmeet Kohli.
+Semantic entropy explains and predicts hallucinations in large language models.
+Nature Machine Intelligence, 2024.
+[7]
+Laura Fieback, Jakob Spiegelberg, and Hanno Gottschalk.
+Metatoken: Detecting hallucination in image descriptions by meta classification.
+arXiv preprint arXiv:2405.19186, 2024.
+[8]
+Xuan Gong, Tianshi Ming, Xinpeng Wang, and Zhihua Wei.
+Damro: Dive into the attention mechanism of lvlm to reduce object hallucination.
+arXiv preprint arXiv:2410.04514, 2024.
+[9]
+Qidong Huang, Xiaoyi Dong, Pan Zhang, Bin Wang, Conghui He, Jiaqi Wang, Dahua Lin, Weiming Zhang, and Nenghai Yu.
+Opera: Alleviating hallucination in multi-modal large language models via over-trust penalty and retrospection-allocation.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 13418–13427, 2024.
+[10]
+Nick Jiang, Anish Kachinthaya, Suzie Petryk, and Yossi Gandelsman.
+Interpreting and editing vision-language representations to mitigate hallucinations.
+arXiv preprint arXiv:2410.02762, 2024.
+[11]
+Zhangqi Jiang, Junkai Chen, Beier Zhu, Tingjin Luo, Yankun Shen, and Xu Yang.
+Devils in middle layers of large vision-language models: Interpreting, detecting and mitigating object hallucinations via attention lens.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 25004–25014, 2025.
+[12]
+Liqiang Jing, Ruosen Li, Yunmo Chen, and Xinya Du.
+Faithscore: Fine-grained evaluations of hallucinations in large vision-language models.
+arXiv preprint arXiv:2311.01477, 2023.
+[13]
+Mike Lewis, Yinhan Liu, Naman Goyal, Marjan Ghazvininejad, Abdelrahman Mohamed, Omer Levy, Veselin Stoyanov, and Luke Zettlemoyer.
+BART: denoising sequence-to-sequence pre-training for natural language generation, translation, and comprehension.
+CoRR, abs/1910.13461, 2019.
+[14]
+Tsung-Yi Lin, Michael Maire, Serge Belongie, Lubomir Bourdev, Ross Girshick, James Hays, Pietro Perona, Deva Ramanan, C. Lawrence Zitnick, and Piotr Dollár.
+Microsoft coco: Common objects in context, 2015.
+[15]
+Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee.
+Improved baselines with visual instruction tuning, 2024.
+[16]
+Yifan Lu, Ziqi Zhang, Chunfeng Yuan, Jun Gao, Congxuan Zhang, Xiaojuan Qi, Bing Li, and Weiming Hu.
+Mitigating hallucinations in large vision-language models by self-injecting hallucinations.
+arXiv preprint arXiv:2509.11287, 2025.
+[17]
+Scott M Lundberg and Su-In Lee.
+A unified approach to interpreting model predictions.
+Advances in neural information processing systems, 30, 2017.
+[18]
+Potsawee Manakul, Adian Liusie, and Mark Gales.
+Selfcheckgpt: Zero-resource black-box hallucination detection for generative large language models.
+In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing (EMNLP), pages 9004–9017, 2023.
+[19]
+Eunkyu Park, Minyeong Kim, and Gunhee Kim.
+Halloc: Token-level localization of hallucinations for vision language models.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 29893–29903, 2025.
+[20]
+Nils Reimers and Iryna Gurevych.
+Sentence-bert: Sentence embeddings using siamese bert-networks.
+In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing. Association for Computational Linguistics, 2019.
+[21]
+Gemma Team.
+Gemma 3.
+2025a.
+[22]
+Qwen Team.
+Qwen3 technical report, 2025b.
+[23]
+Junyang Wang, Yuhang Wang, Guohai Xu, Jing Zhang, Yukai Gu, Haitao Jia, Ming Yan, Ji Zhang, and Jitao Sang.
+An llm-free multi-dimensional benchmark for mllms hallucination evaluation.
+arXiv preprint arXiv:2311.07397, 2023a.
+[24]
+Junyang Wang, Yiyang Zhou, Guohai Xu, Pengcheng Shi, Chenlin Zhao, Haiyang Xu, Qinghao Ye, Ming Yan, Ji Zhang, Jihua Zhu, et al.
+Evaluation and analysis of hallucination in large vision-language models.
+arXiv preprint arXiv:2308.15126, 2023b.
+[25]
+Shukang Yin, Chaoyou Fu, Sirui Zhao, Tong Xu, Hao Wang, Dianbo Sui, Yunhang Shen, Ke Li, Xing Sun, and Enhong Chen.
+Woodpecker: Hallucination correction for multimodal large language models.
+Science China Information Sciences, 67(12):220105, 2024.
+[26]
+Yongcheng Zeng, Guoqing Liu, Weiyu Ma, Ning Yang, Haifeng Zhang, and Jun Wang.
+Token-level direct preference optimization, 2024.
+[27]
+Ruiyang Zhang, Hu Zhang, and Zhedong Zheng.
+Vl-uncertainty: Detecting hallucination in large vision-language model via uncertainty estimation.
+arXiv preprint arXiv:2411.11919, 2024.
+[28]
+Yiyang Zhou, Chenhang Cui, Jaehong Yoon, Linjun Zhang, Zhun Deng, Chelsea Finn, Mohit Bansal, and Huaxiu Yao.
+Analyzing and mitigating object hallucination in large vision-language models.
+In ICLR, 2024.
+Supplementary Material
+8 Hyperparameters Optimization
+The hyperparameters of GB and MLP variants of the detector are finetuned using Grid Search on a selected set of parameters. The training dataset is split into a train and validation set with a 10% allocation for the validation set. The models are finetuned to improve the F1-score on the validation set.
+GB Optimization: The optimal value of the number of estimators, learning rate (LR) and maximum depth parameters are chosen from the set {100, 200, 300}, {0.1, 0.05, 0.01}, and {3, 5, 10} respectively. The performance of the model under different hyperparameter combinations is shown in Tab. 5.
+LR
+Maximum depth
+No. of estimators
+F1 (%)
+0.1
+3
+100
+71.39
+0.1
+3
+200
+72.43
+0.1
+3
+300
+72.72
+0.1
+5
+100
+73.59
+0.1
+5
+200
+74.25
+0.1
+5
+300
+73.06
+0.1
+10
+100
+73.42
+0.1
+10
+200
+74.38
+0.1
+10
+300
+74.19
+0.05
+3
+100
+71.02
+0.05
+3
+200
+71.59
+0.05
+3
+300
+72.16
+0.05
+5
+100
+72.40
+0.05
+5
+200
+72.83
+0.05
+5
+300
+72.81
+0.05
+10
+100
+73.43
+0.05
+10
+200
+72.87
+0.05
+10
+300
+74.19
+0.01
+3
+100
+54.53
+0.01
+3
+200
+66.30
+0.01
+3
+300
+68.97
+0.01
+5
+100
+58.18
+0.01
+5
+200
+68.28
+0.01
+5
+300
+71.48
+0.01
+10
+100
+61.18
+0.01
+10
+200
+68.06
+0.01
+10
+300
+70.18
+Table 5: Results of hyperparameter tuning with GB model.
+MLP Optimization: The optimal value of hidden units, learning rate (LR) and optimizers are chosen from the set {32, 64, 128}, {0.1, 0.01, 0.001}, and {Adam, SGD} respectively. The performance of the model on validation set under different hyperparameter combinations is shown in Tab. 6.
+Hidden units
+LR
+Optimizer
+F1 (%)
+32
+0.1
+Adam
+69.50
+32
+0.1
+SGD
+77.81
+32
+0.01
+Adam
+73.97
+32
+0.01
+SGD
+73.48
+32
+0.001
+Adam
+76.04
+32
+0.001
+SGD
+72.99
+64
+0.1
+Adam
+75.02
+64
+0.1
+SGD
+77.02
+64
+0.01
+Adam
+73.94
+64
+0.01
+SGD
+78.09
+64
+0.001
+Adam
+75.37
+64
+0.001
+SGD
+72.82
+128
+0.1
+Adam
+72.77
+128
+0.1
+SGD
+74.66
+128
+0.01
+Adam
+75.66
+128
+0.01
+SGD
+78.31
+128
+0.001
+Adam
+74.91
+128
+0.001
+SGD
+73.65
+Table 6: Results of hyperparameter tuning with MLP model.
+9 Semantic Alignment Calculation
+Maximum Semantic Alignment
+We employ the sentence-transformer all-MiniLM-L6-v2 [20] to embed tokens decoded from different VLM layers. For each generated token, we compute the cosine similarity between its final-layer embedding and the embeddings of tokens from all intermediate layers. The semantic alignment is defined as the maximum similarity across layers, as shown in Algorithm 1.
+Algorithm 1 Maximum Semantic Alignment Computation
+Input: Top-1 tokens at each layer x1,…,xLx_{1},\ldots,x_{L} and sentence transformer TT
+Output: Semantic alignment value SalignS_{\text{align}}
+Initialize: Salign←0S_{\text{align}}\leftarrow 0;
+Embed the final-layer token: xLemb←T⁡(xL)x_{L}^{\text{emb}}\leftarrow T(x_{L});
+foreach xi∈{x1,…,xL−1}x_{i}\in\{x_{1},\ldots,x_{L-1}\} do
+if xi≠xLx_{i}\neq x_{L} then
+Embed token: xiemb←T⁡(xi)x_{i}^{\text{emb}}\leftarrow T(x_{i});
+Compute cosine similarity:
+S←cosine_similarity​(xLemb,xiemb)S\leftarrow\text{cosine\_similarity}(x_{L}^{\text{emb}},x_{i}^{\text{emb}});
+if S>SalignS>S_{\text{align}} then
+Salign←SS_{\text{align}}\leftarrow S;
+return SalignS_{\text{align}};
+Layer-wise Semantic Alignment
+We analyze how intermediate layers influence the final prediction by computing the cosine similarity between the final-layer token (both hallucinated and real) and the tokens decoded at each layer. The layer-wise alignment curves for LLaVA-1.5, Gemma-3, and Qwen3-VL in Fig. 10 show that semantic similarity becomes high from the middle layers onward, indicating that these intermediate representations strongly shape final outputs.
+Figure 10: Semantic alignment of hallucinated (hallu) and real (real) token instances across the layers (relative index) for LLaVA-1.5, Gemma-3 and Qwen3-VL models.
+Table 7: Impact of overthinking score integration in existing hallucination detection methods.
+w/o. Overthinking Score
+w. Overthinking Score
+Method
+AUC
+F1
+AUC
+F1
+SVAR [11]
+85.12
+69.35
+86.67
+75.06
+HalLoc [19]
+80.38
+73.68
+88.53
+72.97
+MetaToken (LR) [7]
+85.41
+72.88
+87.67
+70.09
+MetaToken (GB) [7]
+88.95
+75.95
+89.15
+76.14
+MetaToken (MLP) [7]
+86.81
+73.89
+89.23
+72.35
+Figure 11: Semantic Alignment vs Confounding Proppagation Rate in LLaVA-1.5, Qwen3-VL and Gemma-3 models.
+10 Strong Scene-prior Examples Selection
+We use the facebook/bart-large-mnli model [13] solely as an embedding encoder. The generated image description is embedded and compared (via cosine similarity) against the embeddings of all predefined scene labels (SCENE_LABELS = [
+“beach”, “playground”, “forest”, “park”, “street”, “mountains”, “desert”,
+“kitchen”, “living room”, “bedroom”, “office”, “classroom”, “outdoors”, “indoors”,
+“city”, “festival”, “space”, “dining room”, “ocean”, “lake”,
+“river”
+].). The label with the highest similarity is treated as the inferred scene context, which allows us to estimate scene priors without requiring ground-truth scene annotations.
+A sample is marked as having a strong scene prior when the generated object token shows similarity above 0.6 with this inferred (maximum-similarity) scene label.
+The process is detailed in Algorithm 2.
+Algorithm 2 Extract Strong Scene Prior Cases
+Input: Dataset DD, scene extraction model SS, sentence transformer TT
+Output: Filtered dataset D′D^{\prime}
+Initialize: D′←{}D^{\prime}\leftarrow\{\};
+Set similarity threshold t←0.6t\leftarrow 0.6;
+foreach d∈Dd\in D do
+Extract scene label: dscene←S⁡(ddescription,SCENE_LABELS)d_{\text{scene}}\leftarrow S(d_{\text{description}},\text{SCENE\_LABELS});
+Let the next token of instance dd be dxtd_{x_{t}};
+Embed scene and token:
+dsceneemb←T⁡(dscene)d_{\text{scene}}^{\text{emb}}\leftarrow T(d_{\text{scene}});
+dxtemb←T⁡(dxt)d_{x_{t}}^{\text{emb}}\leftarrow T(d_{x_{t}});
+Compute cosine similarity:
+c←cosine_similarity​(dsceneemb,dxtemb)c\leftarrow\text{cosine\_similarity}(d_{\text{scene}}^{\text{emb}},d_{x_{t}}^{\text{emb}});
+if c>tc>t then
+Append dd to D′D^{\prime};
+return D′D^{\prime};
+11 Attention-based Methods Failures
+We observe that attention-based methods such as SVAR fail to detect hallucinated objects when strong scene priors are present. As illustrated in Fig. 12, several hallucinated tokens receive high intermediate-layer attention (layers 5–18), yet SVAR incorrectly classifies them as real because attention magnitude remains high.
+To quantify this effect, we isolate strong scene-prior cases using Algorithm 2 and evaluate both SVAR and our method. As shown in Tab. 8, our approach achieves substantially higher AUC (86.36%) and F1 (82.59%), demonstrating its robustness in context-biased scenarios where SVAR fails.
+Method
+AUC
+F1
+SVAR
+76.92
+48.86
+Ours (GB)
+86.36
+82.59
+Table 8: Performance comparison (%) of SVAR and overthinking-based approach on strong scene prior cases.
+12 S-OT Improves Other Baselines
+To highlight the benefit of the Overthinking Score, we add S-OT to the feature sets of existing detectors and compare performance. As shown in Tab. 7, every method improves substantially once S-OT is included, demonstrating that S-OT provides a meaningful performance boost.
+Remarkably, S-OT is only a single scalar, yet it delivers greater benefit than many multidimensional attention and entropy features, showing that it captures a uniquely informative signal missing in prior methods.
+13 Features Importance
+Feature Ablation
+To understand the importance of each feature in our detection model, we ablate one feature at a time and observe the feature causing the largest performance drop with the GB-variant for hallucination detection in the LLaVA-1.5 baseline. Since the overthinking score is a singleton feature compared to the other features, for a fair comparison, we consider the average of image attention, text attention and entropy features across the layers. As shown in Tab. 9, the largest performance drop (83.33% →\rightarrow 79.93%) is seen when the overthinking score is removed.
+SHAP Analysis
+We estimate the significance overthinking score over other features such as image attention, text attention and entropy using the average SHAP value of the compound features on MS-COCO. The results of SHAP values for the Entropy/Text Attention/Image Attention and Overthinking Scores are:
+0.002/0.004/0.004/0.007 respectively.
+Overthinking score has the highest importance (0.007 SHAP value) compared to other features.
+AUC
+Full features
+83.33
+w/o. entropy
+82.91
+w/o. image attention
+82.42
+w/o. text attention
+80.49
+w/o. Overthinking Score
+79.93
+Table 9: Comparison of performance (%) drop by ablating individual features.
+Method
+Inference time (s)
+Greedy Search
+4.21
+SVAR [11]
+8.07
+HalLoc [19]
+5.03
+MetaToken (LR) [7]
+5.35
+MetaToken (GB) [7]
+5.42
+MetaToken (MLP) [7]
+5.53
+Ours (LR)
+5.61
+Ours (GB)
+5.77
+Ours (MLP)
+5.74
+Table 10: Inference time of various hallucination detection methods.
+14 Computational Cost
+Tab. 10 shows that our method incurs only 36% additional computational cost in terms of inference time compared to the default greedy search method.
+Figure 12: The above examples illustrates that SVAR fails to detect hallucinated objects when the attention values are active in the intermediate layers.
+15 Confounder Propagation Examples
+The Fig. 13 shows some examples of confounding propagation in LLaVA-1.5.
+Figure 13: Some examples of confounding propagation in LLaVA-1.5.
+16 Qualitative Results
+We provide qualitative examples in Fig. 14, 15, 16, 17.
+Figure 14: Qualitative Results.
+Figure 15: More Qualitative Results.
+Figure 16: More Qualitative Results.
+Figure 17: More Qualitative Results.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

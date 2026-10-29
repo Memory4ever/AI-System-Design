@@ -16,7 +16,7 @@
 
 仓库 `main` 链接会演进；本例的可复现依据是本地 `pyproject.toml` 与 `uv.lock`，不是假定未来文档与当前代码永远一致。直接依赖只有 `openai-agents`；Pydantic/OpenAI 等传递版本以 lockfile 为准。
 
-## 本次实际验证
+## 原八课实际验证（2026-10-19 的记录）
 
 验证环境：macOS arm64、Python 3.11.17；`openai-agents 0.24.0`、`openai 3.35.1`、`pydantic 2.14.1`。在独立环境与本专题 `.venv` 安装运行，不改系统 Python。
 
@@ -39,6 +39,25 @@ uv run --locked python -m unittest discover -s tests -v
 | SQLite 临时文件测试 | 重开可读取历史、不同会话 ID 不混入同一查询 | 数据加密、多租户鉴权、任意规模性能 |
 
 真实 OpenAI API、计费、服务端 trace、DeepSeek/其他兼容服务：**本次没有执行验收**。没有用用户凭据试调用，没有产生真实模型调用费用。
+
+## Dapr 选修课（2026-10-21）
+
+按官方资料核对、测试驱动分段实现；没有修改原八课控制流或把可选 Dapr 依赖变成基础必装项。具体实现对照本环境安装的 `openai-agents 0.24.0`，Dapr extra 锁定为 `dapr 1.18.3`（完整依赖见 `uv.lock`）。
+
+- [官方 SDK DaprSession 源码](https://github.com/openai/openai-agents-python/blob/main/src/agents/extensions/memory/dapr_session.py)：构造、两个状态 key、聚合历史读改写、ETag 重试、TTL、读一致性限制及 client 生命周期。此链接会演进，以锁定安装版本为准。
+- [官方 SDK Session 文档](https://github.com/openai/openai-agents-python/blob/main/docs/sessions/index.md#dapr-sessions)：Session 后端接入，而非 Dapr Workflow 的自动启用。
+- [OpenAI SDK conversation strategies](https://developers.openai.com/api/docs/guides/agents/running-agents#choose-one-conversation-strategy)：SDK Session 与服务端 conversation 的区分。
+- [Dapr building blocks](https://docs.dapr.io/concepts/building-blocks-concept/)、[sidecar](https://docs.dapr.io/concepts/dapr-services/sidecar/)：应用、sidecar、组件与后端职责。
+- [Dapr state API](https://docs.dapr.io/reference/api/state_api/#concurrency)：ETag 条件写与无 ETag 的 last-write-wins；不将首次创建当成排他写保证。
+- [Dapr TTL](https://docs.dapr.io/developing-applications/building-blocks/state-management/state-store-ttl/)：组件能力、每次写入请求与后端默认策略。
+- [Redis Component](https://docs.dapr.io/reference/components-reference/supported-state-stores/setup-redis/)、[dapr run](https://docs.dapr.io/reference/cli/dapr-run/)：可选本机实操配置与启动参数。
+- 本地安装的 Dapr Python 包 `dapr/aio/clients/grpc/client.py`、`dapr/clients/health.py`、`dapr/conf/global_settings.py`：客户端构造中的 HTTP 健康检查及请求超时设置；不把协程超时误称为同步构造器的严格耗时上限。
+
+已执行三课默认离线模式，6 项新增测试通过，包括禁网状态操作、真实 Runner 的历史输入、确定性冲突后保留两个写者，以及 CLI 约束。测试先在缺少实现时失败，再逐段通过。只替换状态传输边界，未复制实现 Session/Runner。
+
+完整回归共 23 项：20 通过、3 未通过（2 error、1 failure）。三项均涉及第 2 课：**运行前已存在的** `lessons/tools.py` 删除了 `Agent(model=model)` 绑定，使其不再走离线模型；移除测试进程的 OpenAI 凭据后，触发缺凭据错误。保持该改动不动；原八课的历史通过记录不能当成本次工作区全绿证据。未安装 Dapr extra 时，新增选修课测试会明确 skip；须带 extra 才能完成这 6 项验收。
+
+未安装/运行 Dapr CLI、sidecar、Redis，未检验真实 TTL、真实后端一致性、多 worker 并发、跨进程恢复或性能。没有真实模型 API 调用，也未使用用户凭据；可选 `--sidecar` 路径仍使用脚本模型，待按 `DAPR.md` 的计数检查验收。
 
 ## 最小威胁边界
 

@@ -1,0 +1,1819 @@
+String Seed of Thought: Prompting LLMs for Distribution-Faithful and Diverse Generation
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+3 Methods
+4 Theoretical Analysis
+4.1 Probabilistic Instruction Following
+4.2 SSoT Performance Analysis on PIF
+5 Experiments
+5.1 Probabilistic Instruction Following
+5.1.1 Performance Across Multiple LLMs
+5.1.2 Varying Action Spaces
+5.1.3 Rock-Paper-Scissors in Adversarial Setting
+5.2 SSoT For Diversity-Aware Generation
+5.3 Analysis
+5.3.1 CoT Strategy Analysis
+5.3.2 CoT Scaling Analysis
+6 Conclusion
+References
+A SSoT System Prompts
+B Prompts Used in Experiments
+B.1 Probabilistic Instruction Following
+B.2 Rock-Paper-Scissors
+B.3 Diversity-Aware Generation
+B.4 Random Integer Generation
+B.5 Sequential Random String Generation
+C Additional Experimental Details
+C.1 KL and TV Divergence Results on Probabilistic Instruction Following
+C.2 Rock-Paper-Scissors Experiment Details
+D Full Theoretical Analysis of SSoT Performance on PIF
+D.1 Settings
+D.2 Main Theorems
+D.3 Proof of theorem
+D.4 Proof of Theorem
+D.5 Biased Target Distribution
+E LLM Outputs for SSoT prompting
+E.1 Probabilistic Instruction Following
+E.1.1 Sum-Mod Strategy in Unbiased PIF
+E.1.2 Rolling Hash in Biased PIF
+E.2 Diversity-Aware Generation in NoveltyBench
+F LLM SSoT Strategy Analysis Details
+F.1 SSoT Strategy Analysis of Probabilistic Instruction Following
+F.2 SSoT Strategy Analysis of NoveltyBench
+F.3 CoT Analysis Instruction Prompt for PIF
+F.4 CoT Analysis Instruction Prompt for NoveltyBench
+G The Use of Large Language Models
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.21150v1 [cs.AI] 24 Oct 2025
+\CJKencfamily
+UTF8mc
+String Seed of Thought: Prompting LLMs for Distribution-Faithful and Diverse Generation
+Kou Misaki
+Takuya Akiba
+Affiliation: Sakana AI
+Email: {kou.misaki,takiba}@sakana.ai
+Abstract
+We introduce String Seed of Thought (SSoT), a novel prompting method for LLMs that improves Probabilistic Instruction Following (PIF).
+We define PIF as a task requiring an LLM to select its answer from a predefined set of options, each associated with a specific probability, such that the empirical distribution of the generated answers aligns with the target distribution when prompted multiple times.
+While LLMs excel at tasks with single, deterministic answers, they often fail at PIF, exhibiting biases problematic for applications requiring non-deterministic behaviors, such as human-behavior simulation, content diversification, and multiplayer games.
+It also harms the diversity of generated responses, a crucial factor in test-time scaling, by causing the outputs to collapse into a limited set of answers.
+To address this, we propose SSoT, a simple prompting method that instructs an LLM to first output a random string to generate sufficient entropy. SSoT also instructs the LLM to extract randomness by manipulating this string to derive a final answer, thereby preserving diversity while adhering to specific constraints. We demonstrate that SSoT significantly improves the PIF performance of LLMs, approaching the ideal performance of a pseudo-random number generator.
+Furthermore, our experiments on NoveltyBench show SSoT’s benefits extend beyond closed-set tasks to open-ended tasks by enhancing response diversity.
+|
+1 Introduction
+While frontier LLMs excel on tasks with a single correct answer (Ouyang et al., 2022; Wei et al., 2022), some real-world applications require selecting from multiple acceptable options according to a specific distribution; Examples include human-behavior simulation (Park et al., 2023; Gao et al., 2024), content diversification (Padmakumar & He, 2024; Yu et al., 2025), and mixed strategy in games (Nash, 1951; Fan et al., 2024; Feng et al., 2025).
+For these applications, the primary evaluation criterion is not single-response accuracy but rather the alignment of the model’s empirical choice frequencies with the target distribution.
+However, as we will demonstrate experimentally, even frontier LLMs struggle to satisfy this criterion.
+We specifically focus on challenges arising in the following two situations:
+Task 1: Probabilistic Instruction Following.
+For instance, suppose prompting an LLM with the instruction, “Flip a fair coin and output Heads or Tails with equal probability”, repeated 100 times. Ideally, the distribution of Heads and Tails would be close to 50-50. However, even state-of-the-art LLMs tend to yield skewed outputs when given a naive prompt (see Figure 1, top right) (Meister et al., 2025; Gu et al., 2025).
+More generally, we refer to scenarios requiring an LLM to select options from a closed set according to a desired distribution as Probabilistic Instruction Following (PIF). In PIF, the options are explicitly provided, and the target distribution may be either explicitly described in the prompt or implicitly inferred by the LLM as the distribution most appropriate for the given context.
+Figure 1: The schematic figure illustrating our method for PIF and diversity-aware generation in NoveltyBench, where we query the LLM multiple times using the same prompt and collect the resulting outputs. We used deepseek-r1 (T=0.6)(T=0.6) to obtain the results in the right panels. See Section 5.1 for PIF and Section 5.2 for diversity-aware generation experimental details.
+The importance of this task is underscored by its applications in several domains.
+For example, when an LLM plays a multiplayer game whose Nash equilibrium is in mixed strategies, the optimal behavior is to select actions according to the equilibrium mixing probabilities, which falls under PIF.
+Representing collective opinion distributions (Santurkar et al., 2023; Durmus et al., 2024; Meister et al., 2025) is another PIF instance, as they necessitate simulating the underlying distribution of views. Furthermore, as noted by Meister et al. (2025), LLMs often struggle to accurately simulate a distribution even when they can describe it.
+Therefore, evaluating models on PIF with the target distribution being explicitly provided offers valuable insights into this fundamental limitation.
+Task 2: Diversity-Aware Generation.
+Diverse LLM generation is essential in several situations.
+In open-ended tasks (e.g., inventing names, writing stories, or brainstorming new ideas), enhancing the diversity of generated outputs without compromising quality is important (Zhang et al., 2025).
+Increased answer diversity also benefits some test-time scaling methods, which generate numerous candidate solutions and select the most promising among them (Li et al., 2022; Wang et al., 2023; Brown et al., 2024; Schaeffer et al., 2025).
+We refer to such open-ended scenarios, where the goal is to generate a diverse set of solutions while preserving quality, as Diversity-Aware Generation (DAG).
+To address LLM performance limitations in these critical scenarios, we introduce String Seed of Thought (SSoT), a novel yet simple prompting technique that is applicable to a wide range of LLMs.
+Applying SSoT merely requires adding an instruction to the prompt.
+For PIF, the instruction is “Generate a random string and manipulate it to sample from the target distribution” (Figure 1), while for DAG, it is “Generate a random string and manipulate it to generate one diverse response” (see Appendix A for full prompts).
+SSoT is highly versatile;
+Notably, a single, unified prompt framework resolves numerous challenges, requiring only minimal adjustments for each task category (i.e., PIF or DAG), without needing further modifications for individual tasks within a category.
+This versatility stems from the LLM’s ability to autonomously select an optimal strategy for each task, as we demonstrate in our analysis (Section 5.3.1).
+Furthermore, the method is effective even for recent reasoning LLMs where the temperature parameter cannot be modified (OpenAI, 2025a; OpenAI, 2025b).
+Our extensive experiments demonstrate the effectiveness of SSoT.
+For PIF, SSoT substantially improves performance across five frontier LLMs (Section 5.1.1) and consistently outperforms strong baselines like prompt ensembling and few-shot examples (Section 5.1.2).
+We further showcase its practical utility in an adversarial Rock-Paper-Scissors game, where SSoT enables an LLM to play a mixed-strategy against pattern-exploiting bots, suggesting its potential for unexploitable strategies in realistic scenarios (Section 5.1.3).
+For DAG, experiments on NoveltyBench show SSoT generates more diverse responses than other baselines such as prompt paraphrasing or increasing temperature, without compromising output quality (Section 5.2).
+Our theoretical and empirical analyses illuminate the mechanism behind this success. We theoretically prove that SSoT ensures faithful sampling from the target distribution under mild assumptions (Section 4), and empirically reveal that LLMs achieve this by autonomously developing sophisticated internal strategies to manipulate the random string (Section 5.3.1), and demonstrate that PIF performance scales with their CoT length (Section 5.3.2).
+Contributions.
+\raisebox{-0.9pt}{1}⃝ We introduce String Seed of Thought (SSoT), a simple prompting technique that steers an LLM’s probabilistic behavior by having it internally generate and process a random string.
+\raisebox{-0.9pt}{2}⃝ We demonstrate through extensive experiments that SSoT achieves sampling faithfulness in PIF tasks comparable to a PRNG, while boosting response diversity in DAG tasks.
+\raisebox{-0.9pt}{3}⃝ We theoretically prove that the total variation distance to a target distribution diminishes with the length of the generated string, even when it contains autoregressive correlations.
+\raisebox{-0.9pt}{4}⃝ We empirically show that LLMs autonomously select randomness extraction strategies, and that their performance scales with the length of the reasoning process.
+2 Related Work
+LLM Biases in Answer Selection from Specific Distributions.
+A growing body of work shows that LLMs often struggle to select answers from specific probability distributions even when they can accurately describe them.
+Meister et al. (2025) introduce a distributional-alignment benchmark based on opinion-survey targets and find that models frequently miss the target distributions and are sensitive to output formats.
+Gu et al. (2025) evaluate both known- and unknown-distribution settings, reporting that while models can recognize probabilities, sampling accuracy lags behind inference of the probability distribution.
+Hopkins et al. (2023) show that, when prompted to generate random numbers, open-source models induce distributions far from uniform and exhibit high variance across prompts.
+For coin flips, Gupta et al. (2025) find that in-context sequences of flips steer predictions and, with enough evidence, models update in a Bayesian manner despite biased priors. Similarly, Van Koevering & Kleinberg (2024) document systematic, non-random patterns in LLM coin-flip behavior. Beyond coin flips, Lee (2024) investigate how LLMs distribute their choices among several possible options, revealing further evidence of inherent biases.
+Using Rock–Paper–Scissors as a semantic-free testbed, Anonymous (2025) find persistent gaps between verbalized target distributions and sampled actions, alongside order effects from permuting label sequences.
+Response Diversity Enhancement.
+Recent work mitigates diversity collapse from post-training by explicitly optimizing for diversity while preserving quality. Approaches include: augmenting rewards with a learned diversity signal via RL (DARLING) (Li et al., 2025); using preference-based training to favor rare-but-good responses (DivPO) or to reweight preferences toward atypical high-quality continuations (Lanchantin et al., 2025; Chung et al., 2025); and decoupling the entropy bonus from the KL regularizer in preference learning to control lexical and semantic variety (Slocum et al., 2025).
+Relation to LLM Calibration.
+While related to LLM calibration (Guo et al., 2017; OpenAI, 2023; Lovering et al., 2025), our work differs fundamentally. Calibration uses token probabilities to align confidence with accuracy on single-answer tasks, whereas our method performs actual sampling from an explicit target distribution over multiple acceptable answers.
+3 Methods
+String Seed of Thought.
+For SSoT, the only thing you need to do is to add an instruction to your prompt; this should work whether it is added to the user prompt or the system prompt.
+The SSoT prompt is a simple two-stage instruction (see Figure 1 for schematic illustration and Appendix A for full prompt): it first directs an LLM to (1) generate a random string, and then (2) use that generated string to select an action probabilistically.
+The core of this instruction varies slightly by task. For PIF, the prompt includes the direction to “Generate a random string, and manipulate it to sample from the target distribution,” while for DAG, it is adapted to “Generate a random string, and manipulate it to generate one diverse response.” Although these instructions form the core of SSoT, the full prompts are more detailed (see Appendix A). Despite its simplicity, SSoT effectively leverages a generated random string for probabilistic action selection and can also be applied to enhance response diversity.
+Intuition. When an LLM selects an action probabilistically, biases can arise from sources like option position or label frequency in the training data. To mitigate these biases, SSoT first instructs the LLM to generate a random string. Since this step relies on a simple, task-agnostic instruction, “Generate a random string,” it is less susceptible to the biases that appear in the case of action selection directly from the instruction. This process is designed to generate sufficient entropy for the subsequent choice and to ensure diversity across different generations. The subsequent step of mapping this string to an action can be accomplished through simple operations that are well within the capabilities of an LLM, such as summation and mod operations, as we discuss in Section 4.
+Crucially, since each generation is independent, the SSoT framework is fully parallelizable. This offers a significant scalability advantage over sequential approaches that require access to the generation history.
+4 Theoretical Analysis
+In this section, we provide an upper bound on the total variation distance between the empirical distribution from SSoT and the target distribution for PIF.
+We show that this distance can be made small if the string is sufficiently long and the character generation distribution is not strongly biased (even with autoregressive correlations in the LLM-generated string).
+4.1 Probabilistic Instruction Following
+Preliminaries. Key parameters influencing probabilistic behavior in LLMs include: (1) input prompt tint_{\text{in}}, (2) temperature TT, and (3) random seed ϵ\epsilon for output generation. We denote the LLM’s output generation process as a function fT,ϵf_{T,\epsilon}, dependent on temperature TT and random seed ϵ\epsilon. Given an input prompt tint_{\text{in}}, the generated output is tout=fT,ϵ​(tin)t_{\text{out}}=f_{T,\epsilon}(t_{\text{in}}).
+PIF Task Definition.
+Suppose a task has a set of mm possible answers 𝐚=(a1,…,am)\mathbf{a}=(a_{1},\dots,a_{m}), and an associated target probability distribution, 𝐩=(p1,…,pm)\mathbf{p}=(p_{1},\dots,p_{m}), where pi>0p_{i}>0 and ∑i=1mpi=1\sum_{i=1}^{m}p_{i}=1. The distribution 𝐩\mathbf{p} may be explicitly provided in the prompt or implicitly inferred by the LLM, but it is assumed to be uniquely determined. We denote the instruction for such a task as tPIFt_{\text{PIF}}, which includes the specification of 𝐩\mathbf{p} when it is explicitly given.
+We refer to this general task of requiring an LLM to sample from a specific categorical distribution (𝐚,𝐩)(\mathbf{a},\mathbf{p}) as probabilistic instruction following (PIF).
+How to evaluate PIF performance. To perform evaluation, we invoke LLM fT,ϵf_{T,\epsilon} with prompt tPIFt_{\text{PIF}}, KK times, each with a distinct random seed {ϵk}k=1K\{\epsilon_{k}\}_{k=1}^{K}. This produces outputs toutk=fT,ϵk​(tPIF)t_{\text{out}}^{k}=f_{T,\epsilon_{k}}(t_{\text{PIF}}), for k=1,…,Kk=1,\dots,K. Then each output text is parsed into actions using a parsing function gg, yielding KK actions a^k=g⁡(toutk)\hat{a}_{k}=g(t_{\text{out}}^{k}).
+From these parsed actions, we construct an empirical distribution P^{a^k}k=1K​(i)=∑k=1KI⁡(a^k=ai)/K\hat{P}_{\{\hat{a}_{k}\}_{k=1}^{K}}(i)=\sum_{k=1}^{K}I(\hat{a}_{k}=a_{i})/K, where II is the indicator function. Performance assessment involves comparing the target distribution 𝐩\mathbf{p} with the empirical distribution P^{a^k}k=1K\hat{P}_{\{\hat{a}_{k}\}_{k=1}^{K}}. To quantify deviations, we employ known statistical measures, including total variation distance, KL divergence, and JS divergence.
+4.2 SSoT Performance Analysis on PIF
+Notations and Setup. Let the random string generated by the LLM be a sequence of nn characters xn={x1,…,xn}x^{n}=\{x_{1},\dots,x_{n}\}, where each character is drawn from an alphabet of size AA. Assume we sample KK times to compute the empirical distribution from (xn)k(x^{n})_{k}.
+We assume a uniform target distribution, but we can easily apply our analysis to a biased target distribution (see Appendix D.5).
+We denote the total variation distance between the probability distributions PP and QQ as dT​V​(P,Q)≔∑i|Pi−Qi|/2d_{TV}(P,Q)\coloneqq\sum_{i}|P_{i}-Q_{i}|/2, and xi∼Xix_{i}\sim X_{i} when the sampled value of the probabilistic variable XiX_{i} is xix_{i}. We define the functions ϕ⁡(x)≔11−2​x​ln⁡1−xx\phi(x)\coloneqq\frac{1}{1-2x}\ln\frac{1-x}{x} and πP≔maxS⊆ℤM⁡min⁡(P⁡(S),1−P⁡(S))\pi_{P}\coloneqq\max_{S\subseteq\mathbb{Z}_{M}}\min(P(S),1-P(S)).
+We consider two strategies for randomness extraction from a random string, chosen to broadly cover the methods used by LLMs.
+The following theorem uses 2-universal hash functions (Carter & Wegman, 1979) (see Appendix D.1 for the detailed definition) to extract entropy from the generated string:
+Theorem 4.1 (TV distance bound with random hash function (Informal)).
+Suppose the random strings generated by the LLM, (xn)k(x^{n})_{k}, satisfies the condition that for each character xi∼Xix_{i}\sim X_{i} and for some δ≤1/A\delta\leq 1/A, the conditional probability is bounded as
+δ≤P⁡(xi|{xj}0≤j<i)≤1−(A−1)​δ.\delta\leq P(x_{i}|\{x_{j}\}_{0\leq j<i})\leq 1-(A-1)\delta.
+Then, for a family of 2-universal hash functions ℋ={h:Xn→ℤM}\mathcal{H}=\{h:X^{n}\to\mathbb{Z}_{M}\} and any real value δ′,δ′′>0\delta^{\prime},\delta^{\prime\prime}>0, if we sample hh from ℋ\mathcal{H} uniformly at random, the total variation distance between the empirical distribution and the uniform distribution UℤMU_{\mathbb{Z}_{M}} satisfies the following with probability at least 1−δ′−δ′′1-\delta^{\prime}-\delta^{\prime\prime}:
+dTV​(P^{h⁡((xn)k)}k=1K,UℤM)≤M2​δ′′​2−n2​log2​1(1−(A−1)​δ)2+(A−1)​δ2+ln⁡((2M−2)/δ′)K​ϕ​(πPX).d_{\text{TV}}(\hat{P}_{\{h((x^{n})_{k})\}_{k=1}^{K}},U_{\mathbb{Z}_{M}})\leq\frac{\sqrt{M}}{2\delta^{\prime\prime}}2^{-\frac{n}{2}\log_{2}\frac{1}{(1-(A-1)\delta)^{2}+(A-1)\delta^{2}}}+\sqrt{\frac{\ln((2^{M}-2)/\delta^{\prime})}{K\phi(\pi_{P_{X}})}}.
+(1)
+Sketch of proof (full proof in Appendix D.3).
+The first term in Equation 1 follows from the Leftover Hash Lemma (Vadhan, 2012), since the random string satisfying the precondition is a kk-source. The second term follows from an upper bound on the total variation distance between the empirical and the generation distributions (Weissman et al., 2003), combined with the triangle inequality.
+∎
+Implications of Theorem 4.1. This shows that even with correlations between characters in the generated string, a deterministic hash function can generate a near-uniform distribution.
+The hash function does not need to be different for each response; a simple 2-universal affine hash family over a prime field (Carter & Wegman, 1979) can be used, as its selection and application are simple enough for an LLM to perform.
+The first term is the bound achieved by extracting randomness via the hash function, while the second term represents the finite-sample error that arises from constructing an empirical distribution from a limited number of samples. Notably, the first term in Equation (1) shows that the upper bound on the total variation distance decreases as the string length nn increases. The second term shows that increasing the number of samples KK reduces the finite-sample error, bringing the empirical distribution closer to the uniform distribution.
+The following theorem bounds a sum-mod strategy that we identified in the LLM’s CoT analysis (Section 5.3.1). For simplicity, we assume MM is prime and A≥MA\geq M; the general case is discussed in Theorem D.9.
+We analyze an independent-source model to isolate the algebraic effect of the sum-mod operator and obtain a closed‑form spectral bound. Extending the proof to weakly dependent sequences requires standard mixing assumptions, which introduce lengthy remainder terms.
+Theorem 4.2 (TV distance bound with sum-mod strategy (Informal)).
+Let the random string (x1,…,xn)(x_{1},\dots,x_{n}) be drawn independently from a distribution ηi\eta_{i} over ℤM\mathbb{Z}_{M}. When A>MA>M, we consider the distribution over ℤM\mathbb{Z}_{M} by taking the values modulo MM.
+Suppose we perform the sum-mod operation, i.e., taking the ASCII codes of the generated characters, summing them, and taking the result modulo MM:
+snk=∑j=1no​r​d​(xj)modM,s_{n}^{k}=\sum_{j=1}^{n}ord(x_{j})\mod M,
+to select an action by its index. Then the total variation distance between the empirical distribution and the uniform distribution UℤMU_{\mathbb{Z}_{M}} satisfies the following with probability at least 1−δ′1-\delta^{\prime} for any real number δ′>0\delta^{\prime}>0:
+dTV​(P^{snk}k=1K,UℤM)≤M−12​∏i=1n(2​dTV​(ηi,UℤM))+ln⁡((2M−2)/δ′)K​ϕ​(πPX).d_{\text{TV}}(\hat{P}_{\{s_{n}^{k}\}_{k=1}^{K}},U_{\mathbb{Z}_{M}})\leq\frac{\sqrt{M-1}}{2}\prod_{i=1}^{n}(2d_{\text{TV}}(\eta_{i},U_{\mathbb{Z}_{M}}))+\sqrt{\frac{\ln((2^{M}-2)/\delta^{\prime})}{K\phi(\pi_{P_{X}})}}.
+(2)
+Sketch of proof (full proof in Appendix D.4).
+The operation of summing the ASCII codes of the characters and taking the modulo MM of the result can be viewed as a random walk on ℤM\mathbb{Z}_{M} (as a group with sum operation).
+Therefore, our analysis follows a similar line of reasoning to that of Diaconis & Shahshahani (1981). First, the total variation distance between the distribution of sns_{n} and the uniform distribution is upper-bounded by the L2-distance via the Cauchy-Schwarz inequality.
+The squared L2-norm of the probability distribution can, in turn, be bounded by the squared L2-norm of its Fourier transform using Plancherel’s theorem.
+The norm of the Fourier transform can then be upper-bounded by the total variation distance between
+ηi\eta_{i} and the uniform distribution, leading to Equation 2.
+∎
+Implications of Theorem 4.2.
+The sum-mod strategy in this theorem is used by LLM in the PIF setting (see Section 5.3.1), so this theorem is directly relevant and gives insight into what is required to generate a faithful answer empirical distribution.
+The second term in Equation 2 is an unavoidable error from finite-size effect.
+The first term can be made small for a sufficiently long string if the generation distributions ηi\eta_{i} for most characters are not heavily biased, i.e., their total variation distance from the uniform distribution is less than 1/21/2.
+5 Experiments
+In this section, we first show SSoT improves PIF performance across various LLMs and target distributions. We then demonstrate its effectiveness in an adversarial Rock-Paper-Scissors game, where SSoT helps an LLM employ a mixed strategy.
+Next, we show that SSoT enhances diversity without compromising quality on the NoveltyBench benchmark for DAG.
+Finally, our CoT analysis reveals that LLMs adapt their strategies for our single, unified SSoT prompt, and we demonstrate that PIF performance scales with the length of the CoT.
+The full prompts used are listed in Appendix B.1.
+5.1 Probabilistic Instruction Following
+5.1.1 Performance Across Multiple LLMs
+Settings. We evaluated the performance of SSoT in five PIF settings, repeating each experiment 10 times with K=100K=100 trials to calculate mean and standard deviation of the metrics: (1, 2) 2-choice and Biased 2-choice: (𝐚=[heads,tails],𝐩=[1/2, 1/2]CLOSE(\mathbf{a}=[\text{heads},\ \text{tails}],\ \mathbf{p}=[1/2,\ 1/2] and OPEN[0.3, 0.7])[0.3,\ 0.7]),
+(3, 4) 3-choice and Biased 3-choice: (𝐚=[rock,paper,scissors],𝐩=[1/3, 1/3, 1/3]CLOSE(\mathbf{a}=[\text{rock},\ \text{paper},\ \text{scissors}],\ \mathbf{p}=[1/3,\ 1/3,\ 1/3] and OPEN[0.1, 0.2, 0.7])[0.1,\ 0.2,\ 0.7]),
+(5) Biased 9-choice (𝐚=[one,two,…,eight,nine],𝐩=[0.08, 0.08,…, 0.08, 0.36])(\mathbf{a}=[\text{one},\,\text{two},\dots,\,\text{eight},\,\text{nine}],\ \mathbf{p}=[0.08,\,0.08,\dots,\ 0.08,\ 0.36]).
+We tested five frontier LLMs: deepseek-v3-0324 (DeepSeek-AI, 2024) (T=1.0)(T=1.0), gpt-4o-2024-08-06 (Hurst et al., 2024) (T=1.0)(T=1.0), o4-mini-high (OpenAI, 2025b) (TT unavailable), QwQ-32B (Qwen Team, 2024) (T=0.6)(T=0.6) and deepseek-r1-0528 (DeepSeek-AI, 2025) (T=0.6)(T=0.6), using recommended temperatures.
+Table 1: The PIF performance comparison of SSoT against the baseline across various models, evaluated using the JS divergence (lower is better). All the JS divergences are presented in units of 10−310^{-3} (original values multiplied by 10001000).
+Model |
+Method |
+2-choice |
+biased 2-choice |
+3-choice |
+biased 3-choice |
+biased 9-choice |
+deepseek-v3 |
+Baseline |
+15.565.97 ±\pm 4.87 |
+111.45111.45 ±\pm 9.38 |
+136.03136.03 ±\pm 4.89 |
+117.28117.28 ±\pm 0.00 |
+297.33297.33 ±\pm 5.97 |
+SSoT |
+15.562.91 ±\pm 3.08 (↓\downarrow 51%) |
+111.453.54 ±\pm 4.87 (↓\downarrow 97%) |
+136.0315.33 ±\pm 16.13 (↓\downarrow 89%) |
+117.2815.65 ±\pm 10.31 (↓\downarrow 87%) |
+297.3344.90 ±\pm 11.88 (↓\downarrow 85%) |
+gpt-4o |
+Baseline |
+15.5615.56 ±\pm 11.36 |
+111.45117.28 ±\pm 0.00 |
+136.0360.55 ±\pm 14.09 |
+117.28113.06 ±\pm 13.35 |
+297.33290.25 ±\pm 9.55 |
+SSoT |
+15.564.41 ±\pm 3.39 (↓\downarrow 72%) |
+111.459.59 ±\pm 7.23 (↓\downarrow 92%) |
+136.037.09 ±\pm 5.36 (↓\downarrow 88%) |
+117.289.75 ±\pm 5.44 (↓\downarrow 91%) |
+297.3334.15 ±\pm 11.99 (↓\downarrow 88%) |
+o4-mini-high |
+Baseline |
+15.563.30 ±\pm 3.49 |
+111.4586.12 ±\pm 10.14 |
+136.0367.14 ±\pm 13.11 |
+117.28115.53 ±\pm 5.51 |
+297.3361.60 ±\pm 10.64 |
+SSoT |
+15.560.94 ±\pm 1.06 (↓\downarrow 71%) |
+111.4513.13 ±\pm 6.86 (↓\downarrow 85%) |
+136.0310.34 ±\pm 5.90 (↓\downarrow 85%) |
+117.2817.35 ±\pm 8.32 (↓\downarrow 85%) |
+297.3318.67 ±\pm 8.84 (↓\downarrow 70%) |
+QwQ-32B |
+Baseline |
+15.562.43 ±\pm 4.57 |
+111.45109.51 ±\pm 10.03 |
+136.03104.64 ±\pm 25.82 |
+117.28108.73 ±\pm 12.50 |
+297.33260.59 ±\pm 18.95 |
+SSoT |
+15.563.39 ±\pm 4.97 (↑\uparrow 40%) |
+111.452.47 ±\pm 3.99 (↓\downarrow 98%) |
+136.031.82 ±\pm 1.44 (↓\downarrow 98%) |
+117.281.30 ±\pm 1.25 (↓\downarrow 99%) |
+297.3311.48 ±\pm 5.27 (↓\downarrow 96%) |
+deepseek-r1 |
+Baseline |
+15.5636.09 ±\pm 13.60 |
+111.4569.58 ±\pm 13.42 |
+136.03106.30 ±\pm 19.45 |
+117.2849.53 ±\pm 11.24 |
+297.33138.21 ±\pm 26.64 |
+SSoT |
+15.563.03 ±\pm 3.43 (↓\downarrow 92%) |
+111.451.51 ±\pm 1.55 (↓\downarrow 98%) |
+136.034.98 ±\pm 3.84 (↓\downarrow 95%) |
+117.284.30 ±\pm 4.92 (↓\downarrow 91%) |
+297.3318.06 ±\pm 11.35 (↓\downarrow 87%) |
+PRNG |
+|
+15.561.85 ±\pm 2.58 |
+111.451.93 ±\pm 2.80 |
+136.033.36 ±\pm 2.48 |
+117.282.85 ±\pm 3.15 |
+297.3313.72 ±\pm 4.21 |
+Figure 2: The PIF empirical distribution with baseline and SSoT prompts for deepseek-r1.
+Results. Table 1 shows that SSoT substantially improves over baseline prompting across all models. Notably, deepseek-r1 and QwQ-32B, known for their very long reasoning trace (Sui et al., 2025), show significant improvements compared to the baseline, as shown in Figure 2. As we discuss in Section 5.3.2, we attribute this to the high complexity of the generated random strings, resulting from the extended reasoning process.
+To compare the results with the ideal case, we also generated actions using a pseudo-random number generator (PRNG) via numpy.random. We sampled 100100 actions from the ground-truth distribution and repeated this 1010 times with different seeds to calculate mean and standard deviation.
+Remarkably, the performance of deepseek-r1 and QwQ-32B with SSoT approached that of the PRNG, showcasing the outstanding performance of SSoT.
+5.1.2 Varying Action Spaces
+Figure 3: JS divergences for Unbiased and Biased PIF. Shaded areas represent the standard deviation.
+Settings.
+To compare SSoT against baselines on a wider range of tasks, we focused on deepseek-r1. We varied the number of actions (2n2^{n} for n=1,…,6n=1,\dots,6) under two conditions: (1) a uniform distribution, and (2) a biased distribution (for n=1n=1, (0.75,0.25)(0.75,0.25); for n>1n>1, one action had a probability of 0.50.5, with the rest distributed uniformly). We repeated each PIF experiment (K=100K=100) 10 times. Action words were randomly selected from a list of the 10,000 most common English words (excluding swear words) 11
+1
+https://github.com/first20hours/google-10000-english.
+We compared SSoT against: (1) High Temperature: increasing the temperature setting; (2) Few-shot: providing k∈{3,10,50}k\in\{3,10,50\} examples sampled using the target distribution in the prompt, either fixed or randomly sampled for each query; (3) Prompt Ensemble: using 50 paraphrased prompts, combined with randomized action orders for all the prompts; and (4) Sequential Sampling: generating 100 actions sequentially, including the selected action history in the prompt. As an ablation, we also tested providing an external random string to the LLM, either Fixed (same string each time) or Randomized (new string each time).
+Results. Figure 3 shows that SSoT consistently delivers the best performance across all settings, nearly matching the PRNG. The strongest baseline was Prompt Ensemble, which performed well in the unbiased setting, suggesting that varying the prompt reduces positional biases. However, its performance degraded on the biased PIF tasks, indicating that eliminating positional bias alone is insufficient. In contrast, SSoT demonstrated near-ideal performance in both settings, supporting its robustness to distributional skew. Our ablation study revealed that providing a randomized external seed also improves performance, confirming that LLMs can effectively perform random action selection given a source of randomness. SSoT still outperformed the external randomized seed in the biased setting, likely because the LLM can internally generate strings of a length and type that are easier for it to manipulate, leading to more consistent performance.
+5.1.3 Rock-Paper-Scissors in Adversarial Setting
+Figure 4: RPS results against black-belt bots.
+Motivation. One scenario where probabilistic action selection is powerful is in achieving a mixed-strategy Nash equilibrium in game theory. By selecting actions probabilistically, a player can ensure their expected payoff remains constant regardless of the opponent’s strategy, making it a robust defense in adversarial situations where an opponent actively tries to exploit patterns. We demonstrate that SSoT enables an LLM to defend itself in Rock-Paper-Scissors (RPS) against a strong opponent by making its actions faithfully probabilistic.
+Settings.
+We evaluated the LLM against 10 ‘‘Black Belt’’ bots from the RPS Dojo22
+2
+https://www.kaggle.com/code/chankhavu/rps-dojo/notebook, strong RPS agents available as a Kaggle Notebook. Each match consisted of 100 consecutive games, with a score of +1 for a win and -1 for a loss. We tested SSoT against a Baseline prompt (instructed to choose randomly without SSoT) and a Simple prompt (allowed to choose freely). To create an adversarial setup, the opponent bots had access to the full history of both players’ moves, while the LLM did not.
+Results.
+The final scores against the 10 bots are shown in Figure 4. As the left panel shows, SSoT maintained an average score near zero, effectively holding its own against bots designed to exploit patterns. The Baseline, while attempting to diversify its moves, still exhibited exploitable biases, resulting in lower scores. The Simple prompt lacked sufficient diversity and was consistently defeated. This demonstrates that SSoT can be used to achieve probabilistic behavior for improved game performance without relying on external tools.
+5.2 SSoT For Diversity-Aware Generation
+Table 2: NoveltyBench results on curated dataset. Cells show Distinct (Utility); higher is better.
+Method |
+Creativity |
+Naming |
+Facts |
+Product Recs |
+Random |
+Opinions |
+Overall |
+Baseline |
+4.604.60 (5.61) |
+6.006.00 (6.13) |
+4.144.14 (5.35) |
+4.144.14 (6.02) |
+6.076.07 (5.10) |
+4.354.35 (4.08) |
+4.704.70 (5.17) |
+Paraphrase |
+4.605.15 (5.67) |
+6.007.00 (6.77) |
+4.145.46 (5.71) |
+4.145.86 (7.33) |
+6.075.93 (5.48) |
+4.355.57 (4.47) |
+4.705.63 (5.57) |
+T=0.8T=0.8 |
+4.604.95 (6.19) |
+6.006.86 (7.06) |
+4.144.50 (5.51) |
+4.144.43 (5.86) |
+6.076.20 (5.47) |
+4.354.61 (4.42) |
+4.705.03 (5.52) |
+T=1.0T=1.0 |
+4.605.25 (6.20) |
+6.007.57 (7.75) |
+4.145.36 (6.40) |
+4.145.43 (7.31) |
+6.076.33 (5.46) |
+4.355.04 (4.92) |
+4.705.57 (6.03) |
+SSoT |
+4.605.90 (6.44) |
+6.007.57 (6.62) |
+4.146.04 (6.71) |
+4.145.86 (6.63) |
+6.076.87 (5.49) |
+4.355.87 (4.35) |
+4.706.19 (5.92) |
+Table 3: NoveltyBench results on WildChat dataset. Cells show Distinct (Utility); higher is better.
+Method |
+Overall |
+Baseline |
+3.393.39 (4.08) |
+SSoT |
+3.395.25 (4.86) |
+Settings.
+While an external PRNG is a plausible alternative for PIF, they are inadequate for DAG’s core challenge of creatively mapping randomness, a process SSoT integrates internally.
+We used NoveltyBench (Zhang et al., 2025) to measure diversity in open-ended tasks. For each question in the curated and WildChat datasets, we generated eight responses to calculate the Distinct and Utility scores. We used deepseek-r1 (T=0.6T=0.6) and compared SSoT against a baseline (prompted to generate a diverse output without SSoT), a paraphrase method using prompts from the dataset, and higher temperatures (T=0.8,1.0T=0.8,1.0).
+For the larger WildChat dataset, we evaluated SSoT and a baseline.
+Figure 5: Randomness extraction strategy of LLM in PIF.
+Results.
+The results are presented in Table 2 (curated) and Table 3 (WildChat). In both datasets, SSoT achieves a higher Distinct score than all comparison methods.
+Notably, SSoT outperforms others on both Distinct and Utility scores for the “Creativity” category in the curated dataset, indicating that SSoT is useful for enhancing creativity in open-ended tasks.
+5.3 Analysis
+5.3.1 CoT Strategy Analysis
+Here, we analyze CoTs to classify the LLM’s strategies.
+(Example CoTs in Appendices E.1 and E.2)
+Figure 6: Diversity enhancement strategy of LLM in NoveltyBench.
+Analysis of PIF in Section 5.1.2. We analyzed how the LLM converts a generated random string into a random action, see Figure 5. We used gemini-flash-2.5 to classify 600 responses each from the biased and unbiased PIF experiments. As shown in Figure 5, the LLM’s approach converges on two main strategies (see Appendix F.3 for detailed definitions): (1) Sum-Mod: Sums the character codes (e.g., ASCII) of the random string and takes the modulo of the result.
+(2) Rolling Hash: Uses a base BB to compute a polynomial hash of the string (∑iBi​ord​(ci)\sum_{i}B^{i}\text{ord}(c_{i}))) and takes the modulo of that value.
+Notably, the LLM adapts its strategy to the task: for unbiased distributions, it favors the simple Sum-Mod method, but for biased distributions, it often adopts the more sophisticated rolling hash, demonstrating that it adjusts its approach based on the problem’s complexity.
+Analysis of DAG in Section 5.2. To understand how SSoT enhances diversity in DAG tasks, we classified the CoT strategies from all 800 responses on the NoveltyBench curated dataset, see Figure 6. We analyzed two axes (for detailed definitions, see Appendix F.3): (1) Assembly: how the answer is constructed (from a fixed List or by filling a Template), and (2) Sampling Scope: whether randomness is used once for a Global choice or repeatedly for Local elements.
+As shown in Figure 6, the overall trend is to select from a List with a single Global sample. This trend reverses for the “Creativity” category: The LLM tends to create a Template and repeatedly samples from the random string to fill in different Local elements. This suggests that for open-ended tasks, SSoT enables diversity enhancement by decomposing the problem and diversifying each component.
+Figure 7: (a) Uniformness of LLM-generated integers (0–127) vs. think tokens, measured by KL/JS divergences and effect size ww (N=1000N=1000).
+(b) Value distribution of LLM-generated integers for short (512, left) and long (30000, right) think token lengths, compared to a PRNG reference (orange).
+(c) Normalized LZ complexity and zlib compression rate of a random string generated sequentially by an LLM at T=0T=0 vs. think tokens.
+We used 30003000-character prefix of 100100 generated strings.
+5.3.2 CoT Scaling Analysis
+Analysis of Randomness Quality. To further analyze the success of SSoT for LLMs with long CoT, such as deepseek-r1 and QwQ-32B, we examined the impact of CoT length on PIF performance using s1.1-32B (Muennighoff et al., 2025). We controlled the reasoning length via budget forcing and had the model generate random integers between 0 and 127.
+Figure 7(a) shows that as the reasoning length (thinking tokens) increases, the uniformity of the generated integers improves significantly, as measured by KL/JS divergence and effect size ww. This enhanced uniformity is visualized in Figure 7(b). These results highlight the direct link between CoT length and the performance of PIF.
+Analysis of Random String Complexity. To isolate the effect of reasoning on the generated string itself, we evaluated the complexity of strings generated sequentially at T=0T=0, which also removes randomness from the decoding process. We prompted the LLM to generate 100 strings in sequence, using budget forcing to control the thinking token length for each. We then measured the complexity of the concatenated string using normalized Lempel-Ziv complexity and zlib compression ratios.
+Figure 7(c) shows that string complexity grows with longer reasoning traces. This indicates that LLMs can produce intricate, high-entropy strings through their internal reasoning process alone, even without stochasticity at the decoding stage, and also for longer reasoning traces, the complexity of the generated string increases, thereby leading to better performance on PIF.
+6 Conclusion
+In this paper, we introduced String Seed of Thought (SSoT), a simple and broadly applicable prompting technique that significantly improves the ability of LLMs to follow probabilistic instructions (PIF) and generate diverse responses (DAG). We demonstrated that SSoT enables models to achieve near-ideal probabilistic faithfulness by leveraging their own reasoning process to create an internal random seed, which is then deterministically mapped to a final action. Our analysis confirmed that the quality of this internal randomness scales with the length of the model’s reasoning trace.
+SSoT offers a practical, tuning-free method for enhancing LLM reliability in applications requiring strategic randomness or creativity, such as human-behavior simulations, content diversification, and game-playing.
+While the approach is most effective on highly capable models, it opens promising avenues for future work.
+These include applying SSoT to more complex domains and optimizing the string seed generation and its randomness extraction strategies.
+References
+Anonymous (2025)
+Anonymous.
+The illusion of randomness: How LLMs fail to emulate stochastic
+decision-making in rock-paper-scissors games?
+ACL Rolling Review (May 2025), OpenReview, 2025.
+URL https://openreview.net/forum?id=MvOvMaHQKT.
+Brown et al. (2024)
+Bradley Brown, Jordan Juravsky, Ryan Ehrlich, Ronald Clark, Quoc V Le,
+Christopher Ré, and Azalia Mirhoseini.
+Large language monkeys: Scaling inference compute with repeated
+sampling.
+arXiv preprint arXiv:2407.21787, 2024.
+Carter & Wegman (1979)
+J.Lawrence Carter and Mark N. Wegman.
+Universal classes of hash functions.
+Journal of Computer and System Sciences, 18(2):143–154, 1979.
+ISSN 0022-0000.
+doi: https://doi.org/10.1016/0022-0000(79)90044-8.
+URL
+https://www.sciencedirect.com/science/article/pii/0022000079900448.
+Chung et al. (2025)
+John Joon Young Chung, Vishakh Padmakumar, Melissa Roemmele, Yuqian Sun, and
+Max Kreminski.
+Modifying large language model post-training for diverse creative
+writing.
+In Second Conference on Language Modeling, 2025.
+URL https://openreview.net/forum?id=1Pmuw08LoM.
+DeepSeek-AI (2024)
+DeepSeek-AI.
+Deepseek-v3 technical report.
+arXiv preprint arXiv:2412.19437, 2024.
+DeepSeek-AI (2025)
+DeepSeek-AI.
+Deepseek-r1: Incentivizing reasoning capability in llms via
+reinforcement learning.
+arXiv preprint arXiv:2501.12948, 2025.
+Diaconis & Shahshahani (1981)
+Persi Diaconis and Mehrdad Shahshahani.
+Generating a random permutation with random transpositions.
+Zeitschrift für Wahrscheinlichkeitstheorie und verwandte
+Gebiete, 57(2):159–179, 1981.
+Durmus et al. (2024)
+Esin Durmus, Karina Nguyen, Thomas Liao, Nicholas Schiefer, Amanda Askell,
+Anton Bakhtin, Carol Chen, Zac Hatfield-Dodds, Danny Hernandez, Nicholas
+Joseph, Liane Lovitt, Sam McCandlish, Orowa Sikder, Alex Tamkin, Janel
+Thamkul, Jared Kaplan, Jack Clark, and Deep Ganguli.
+Towards measuring the representation of subjective global opinions in
+language models.
+In First Conference on Language Modeling, 2024.
+URL https://openreview.net/forum?id=zl16jLb91v.
+Fan et al. (2024)
+Caoyun Fan, Jindou Chen, Yaohui Jin, and Hao He.
+Can large language models serve as rational players in game theory? a
+systematic analysis.
+Proceedings of the AAAI Conference on Artificial Intelligence,
+38(16):17960–17967, Mar. 2024.
+doi: 10.1609/aaai.v38i16.29751.
+URL https://ojs.aaai.org/index.php/AAAI/article/view/29751.
+Feng et al. (2025)
+Xiachong Feng, Longxu Dou, Minzhi Li, Qinghao Wang, Yu Guo, Haochuan Wang,
+Chang Ma, and Lingpeng Kong.
+A survey on large language model-based social agents in
+game-theoretic scenarios.
+Transactions on Machine Learning Research, 2025.
+ISSN 2835-8856.
+URL https://openreview.net/forum?id=CsoSWpR5xC.
+Survey Certification.
+Gao et al. (2024)
+Chen Gao, Xiaochong Lan, Nian Li, Yuan Yuan, Jingtao Ding, Zhilun Zhou, Fengli
+Xu, and Yong Li.
+Large language models empowered agent-based modeling and simulation:
+a survey and perspectives.
+Humanities and Social Sciences Communications, 11(1):1259, 2024.
+doi: 10.1057/s41599-024-03611-3.
+URL https://doi.org/10.1057/s41599-024-03611-3.
+Gu et al. (2025)
+Jia Gu, Liang Pang, Huawei Shen, and Xueqi Cheng.
+Do llms play dice? exploring probability distribution sampling in
+large language models for behavioral simulation.
+In Proceedings of the 31st International Conference on
+Computational Linguistics, pp. 5375–5390, Abu Dhabi, UAE, January 2025.
+Association for Computational Linguistics.
+URL https://aclanthology.org/2025.coling-main.360/.
+Guo et al. (2017)
+Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Weinberger.
+On calibration of modern neural networks.
+In Doina Precup and Yee Whye Teh (eds.), Proceedings of the
+34th International Conference on Machine Learning, volume 70 of
+Proceedings of Machine Learning Research, pp. 1321–1330. PMLR,
+06–11 Aug 2017.
+URL https://proceedings.mlr.press/v70/guo17a.html.
+Gupta et al. (2025)
+Ritwik Gupta, Rodolfo Corona, Jiaxin Ge, Eric Wang, Dan Klein, Trevor Darrell,
+and David M Chan.
+Enough coin flips can make llms act bayesian.
+arXiv preprint arXiv:2503.04722, 2025.
+Hopkins et al. (2023)
+Aspen K Hopkins, Alex Renda, and Michael Carbin.
+Can LLMs generate random numbers? evaluating LLM sampling in
+controlled domains.
+In ICML 2023 Workshop: Sampling and Optimization in Discrete
+Space, 2023.
+URL https://openreview.net/forum?id=Vhh1K9LjVI.
+Hurst et al. (2024)
+Aaron Hurst, Adam Lerer, Adam P Goucher, Adam Perelman, Aditya Ramesh, Aidan
+Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, et al.
+Gpt-4o system card.
+arXiv preprint arXiv:2410.21276, 2024.
+Impagliazzo et al. (1989)
+R. Impagliazzo, L. A. Levin, and M. Luby.
+Pseudo-random generation from one-way functions.
+In Proceedings of the Twenty-First Annual ACM Symposium on
+Theory of Computing, STOC ’89, pp. 12–24, New York, NY, USA, 1989.
+Association for Computing Machinery.
+ISBN 0897913078.
+doi: 10.1145/73007.73009.
+URL https://doi.org/10.1145/73007.73009.
+Lanchantin et al. (2025)
+Jack Lanchantin, Angelica Chen, Shehzaad Dhuliawala, Ping Yu, Jason Weston,
+Sainbayar Sukhbaatar, and Ilia Kulikov.
+Diverse preference optimization.
+arXiv preprint arXiv:2501.18101, 2025.
+Lee (2024)
+Hanchung Lee.
+Llm-as-a-judge: Rethinking model-based evaluations in text
+generation.
+08 2024.
+URL
+https://leehanchung.github.io/blogs/2024/08/11/llm-as-a-judge/.
+Li et al. (2025)
+Tianjian Li, Yiming Zhang, Ping Yu, Swarnadeep Saha, Daniel Khashabi, Jason
+Weston, Jack Lanchantin, and Tianlu Wang.
+Jointly reinforcing diversity and quality in language model
+generations.
+arXiv preprint arXiv:2509.02534, 2025.
+Li et al. (2022)
+Yujia Li, David Choi, Junyoung Chung, Nate Kushman, Julian Schrittwieser,
+Rémi Leblond, Tom Eccles, James Keeling, Felix Gimeno, Agustin Dal Lago,
+et al.
+Competition-level code generation with alphacode.
+Science, 378(6624):1092–1097, 2022.
+Lovering et al. (2025)
+Charles Lovering, Michael Krumdick, Viet Dac Lai, Seth Ebner, Nilesh Kumar,
+Varshini Reddy, Rik Koncel-Kedziorski, and Chris Tanner.
+Language model probabilities are n​o​tnot calibrated in numeric
+contexts.
+In Proceedings of the 63rd Annual Meeting of the Association
+for Computational Linguistics (Volume 1: Long Papers), pp. 29218–29257,
+Vienna, Austria, July 2025. Association for Computational Linguistics.
+ISBN 979-8-89176-251-0.
+doi: 10.18653/v1/2025.acl-long.1417.
+URL https://aclanthology.org/2025.acl-long.1417/.
+Meister et al. (2025)
+Nicole Meister, Carlos Guestrin, and Tatsunori Hashimoto.
+Benchmarking distributional alignment of large language models.
+In Proceedings of the 2025 Conference of the Nations of the
+Americas Chapter of the Association for Computational Linguistics: Human
+Language Technologies (Volume 1: Long Papers), pp. 24–49, Albuquerque,
+New Mexico, April 2025. Association for Computational Linguistics.
+doi: 10.18653/v1/2025.naacl-long.2.
+URL https://aclanthology.org/2025.naacl-long.2/.
+Muennighoff et al. (2025)
+Niklas Muennighoff, Zitong Yang, Weijia Shi, Xiang Lisa Li, Li Fei-Fei,
+Hannaneh Hajishirzi, Luke Zettlemoyer, Percy Liang, Emmanuel Candès, and
+Tatsunori Hashimoto.
+s1: Simple test-time scaling.
+arXiv preprint arXiv:2501.19393, 2025.
+Nash (1951)
+John Nash.
+Non-cooperative games.
+Annals of Mathematics, 54(2):286–295,
+1951.
+ISSN 0003486X, 19398980.
+URL http://www.jstor.org/stable/1969529.
+OpenAI (2023)
+OpenAI.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774, 2023.
+OpenAI (2025a)
+OpenAI.
+Gpt-5 system card, 2025a.
+URL https://openai.com/index/gpt-5-system-card/.
+Accessed: 2025-09-22.
+OpenAI (2025b)
+OpenAI.
+Introducing openai o3 and o4-mini, 2025b.
+URL https://openai.com/index/introducing-o3-and-o4-mini/.
+Accessed: 2025-05-22.
+Ouyang et al. (2022)
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela
+Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+Training language models to follow instructions with human feedback.
+In Advances in Neural Information Processing Systems,
+volume 35, pp. 27730–27744, 2022.
+Padmakumar & He (2024)
+Vishakh Padmakumar and He He.
+Does writing with language models reduce content diversity?
+In The Twelfth International Conference on Learning
+Representations, 2024.
+URL https://openreview.net/forum?id=Feiz5HtCD0.
+Park et al. (2023)
+Joon Sung Park, Joseph O’Brien, Carrie Jun Cai, Meredith Ringel Morris, Percy
+Liang, and Michael S. Bernstein.
+Generative agents: Interactive simulacra of human behavior.
+In Proceedings of the 36th Annual ACM Symposium on User
+Interface Software and Technology, UIST ’23, New York, NY, USA, 2023.
+Association for Computing Machinery.
+ISBN 9798400701320.
+doi: 10.1145/3586183.3606763.
+URL https://doi.org/10.1145/3586183.3606763.
+Qwen Team (2024)
+Qwen Team.
+QwQ: Reflect deeply on the boundaries of the unknown, 2024.
+URL https://qwenlm.github.io/blog/qwq-32b-preview/.
+Santha & Vazirani (1986)
+Miklos Santha and Umesh V. Vazirani.
+Generating quasi-random sequences from semi-random sources.
+J. Comput. Syst. Sci., 33(1):75–87, 1986.
+doi: 10.1016/0022-0000(86)90044-9.
+URL https://doi.org/10.1016/0022-0000(86)90044-9.
+Santurkar et al. (2023)
+Shibani Santurkar, Esin Durmus, Faisal Ladhak, Cinoo Lee, Percy Liang, and
+Tatsunori Hashimoto.
+Whose opinions do language models reflect?
+In Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara Engelhardt,
+Sivan Sabato, and Jonathan Scarlett (eds.), Proceedings of the 40th
+International Conference on Machine Learning, volume 202 of
+Proceedings of Machine Learning Research, pp. 29971–30004. PMLR,
+23–29 Jul 2023.
+URL https://proceedings.mlr.press/v202/santurkar23a.html.
+Schaeffer et al. (2025)
+Rylan Schaeffer, Joshua Kazdan, John Hughes, Jordan Juravsky, Sara Price,
+Aengus Lynch, Erik Jones, Robert Kirk, Azalia Mirhoseini, and Sanmi Koyejo.
+How do large language monkeys get their power (laws)?, 2025.
+Slocum et al. (2025)
+Stewart Slocum, Asher Parker-Sartori, and Dylan Hadfield-Menell.
+Diverse preference learning for capabilities and alignment.
+In The Thirteenth International Conference on Learning
+Representations, 2025.
+URL https://openreview.net/forum?id=pOq9vDIYev.
+Sui et al. (2025)
+Yang Sui, Yu-Neng Chuang, Guanchu Wang, Jiamu Zhang, Tianyi Zhang, Jiayi Yuan,
+Hongyi Liu, Andrew Wen, Shaochen Zhong, Hanjie Chen, and Xia Hu.
+Stop overthinking: A survey on efficient reasoning for large language
+models.
+arXiv preprint arXiv:2503.16419, 2025.
+Vadhan (2012)
+Salil P Vadhan.
+Pseudorandomness.
+Foundations and Trends® in Theoretical Computer
+Science, 7(1–3):1–336, 2012.
+Van Koevering & Kleinberg (2024)
+Katherine Van Koevering and Jon Kleinberg.
+How random is random? evaluating the randomness and humaness of llms’
+coin flips.
+arXiv preprint arXiv:2406.00092, 2024.
+Wang et al. (2023)
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V Le, Ed H. Chi, Sharan Narang,
+Aakanksha Chowdhery, and Denny Zhou.
+Self-consistency improves chain of thought reasoning in language
+models.
+In International Conference on Learning Representations, 2023.
+Wei et al. (2022)
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V
+Le, Denny Zhou, et al.
+Chain-of-thought prompting elicits reasoning in large language
+models.
+In Advances in Neural Information Processing Systems,
+volume 35, pp. 24824–24837, 2022.
+Weissman et al. (2003)
+Tsachy Weissman, Erik Ordentlich, Gadiel Seroussi, Sergio Verdu, and Marcelo J
+Weinberger.
+Inequalities for the l1 deviation of the empirical distribution.
+Hewlett-Packard Labs, Tech. Rep, pp. 125, 2003.
+Yu et al. (2025)
+Peiyang Yu, Zeqiu Xu, Jiani Wang, and Xiaochuan Xu.
+The application of large language models in recommendation systems.
+In Jun Liu, Ankush Ghosh, Chee Wei Tan, and Haiquan Zhao (eds.),
+International Conference on Artificial Intelligence and Machine
+Learning Research (CAIMLR 2024), volume 13635, pp. 136350E. International
+Society for Optics and Photonics, SPIE, 2025.
+doi: 10.1117/12.3062544.
+URL https://doi.org/10.1117/12.3062544.
+Zhang et al. (2025)
+Yiming Zhang, Harshita Diddee, Susan Holm, Hanchen Liu, Xinyue Liu, Vinay
+Samuel, Barry Wang, and Daphne Ippolito.
+Noveltybench: Evaluating language models for humanlike diversity.
+arXiv preprint arXiv:2504.05228, 2025.
+Appendix Contents
+1 Introduction
+2 Related Work
+3 Methods
+4 Theoretical Analysis
+4.1 Probabilistic Instruction Following
+4.2 SSoT Performance Analysis on PIF
+5 Experiments
+5.1 Probabilistic Instruction Following
+5.1.1 Performance Across Multiple LLMs
+5.1.2 Varying Action Spaces
+5.1.3 Rock-Paper-Scissors in Adversarial Setting
+5.2 SSoT For Diversity-Aware Generation
+5.3 Analysis
+5.3.1 CoT Strategy Analysis
+5.3.2 CoT Scaling Analysis
+6 Conclusion
+References
+A SSoT System Prompts
+B Prompts Used in Experiments
+B.1 Probabilistic Instruction Following
+B.2 Rock-Paper-Scissors
+B.3 Diversity-Aware Generation
+B.4 Random Integer Generation
+B.5 Sequential Random String Generation
+C Additional Experimental Details
+C.1 KL and TV Divergence Results on Probabilistic Instruction Following
+C.2 Rock-Paper-Scissors Experiment Details
+D Full Theoretical Analysis of SSoT Performance on PIF
+D.1 Settings
+D.2 Main Theorems
+D.3 Proof of theorem
+D.4 Proof of Theorem
+D.5 Biased Target Distribution
+E LLM Outputs for SSoT prompting
+E.1 Probabilistic Instruction Following
+E.1.1 Sum-Mod Strategy in Unbiased PIF
+E.1.2 Rolling Hash in Biased PIF
+E.2 Diversity-Aware Generation in NoveltyBench
+F LLM SSoT Strategy Analysis Details
+F.1 SSoT Strategy Analysis of Probabilistic Instruction Following
+F.2 SSoT Strategy Analysis of NoveltyBench
+F.3 CoT Analysis Instruction Prompt for PIF
+F.4 CoT Analysis Instruction Prompt for NoveltyBench
+G The Use of Large Language Models
+Appendix A SSoT System Prompts
+Here we list the full SSoT prompts used in our experiments. For SSoT, we simply used the following prompts as the system prompt in all the experiments 33
+3
+We replaced \CJK@punctchar\CJK@uniPunct0”80”94 with --- in the prompts due to formatting issues..
+⬇
+You are a helpful AI Assistant designed to provide well-reasoned and detailed responses. If the task involves probabilistic or non-deterministic reasoning, you must begin by generating a unique and complex random string to serve as a seed.
+This random string should appear sufficiently complex and unpredictable, with no obvious structure or pattern. Use your judgment to ensure it looks arbitrary and unguessable.
+If the user explicitly instructs you to sample from a probability distribution, use the generated seed (the exact contents inside the ‘<random_string>‘ tags) to guide any random sampling or stochastic decisions.
+Follow these two steps for every instruction:
+1. Output the random seed string enclosed within ‘<random_string>‘ and ‘</random_string>‘ tags.
+2. Think deeply and carefully about the user’s question, and enclose this reasoning within ‘<thinking>‘ and ‘</thinking>‘ tags. All probabilistic decisions must be made using the generated seed-the exact contents inside the ‘<random_string>‘ tags. Make sure to extract maximum randomness from the string by using all of its content.
+3. Provide your final answer, enclosed within ‘<answer>‘ and ‘</answer>‘ tags.
+Strictly follow this tag structure, and respond in the following format:
+<random_string>
+…
+</random_string>
+<thinking>
+…
+</thinking>
+<answer>
+…
+</answer>
+⬇
+You are a helpful AI Assistant designed to provide well-reasoned and detailed responses. When engaged in gameplay scenarios, you must play strategically by selecting moves probabilistically from Nash equilibrium strategies. Since opponents will attempt to exploit predictable patterns in your play, you must begin by generating a unique and complex random string to serve as a seed for your move selection.
+This random string should appear sufficiently complex and unpredictable, with no obvious structure or pattern. Use your judgment to ensure it looks arbitrary and unguessable.
+When playing any game, use the generated seed (the exact contents inside the ‘<random_string>‘ tags) to guide your probabilistic move selection from the Nash equilibrium mixed strategy.
+Follow these steps for every game situation:
+1. Output the random seed string enclosed within ‘<random_string>‘ and ‘</random_string>‘ tags.
+2. Think deeply and carefully about the game situation, and enclose this reasoning within ‘<thinking>‘ and ‘</thinking>‘ tags. You must select ONE move using the generated seed—the exact contents inside the ‘<random_string>‘ tags—to probabilistically choose from Nash equilibrium strategies. Make sure to extract maximum randomness from the string by using all of its content.
+3. Provide your final move/action, enclosed within ‘<answer>‘ and ‘</answer>‘ tags.
+Strictly follow this tag structure, and respond in the following format:
+<random_string>
+…
+</random_string>
+<thinking>
+…
+</thinking>
+<answer>
+…
+</answer>
+⬇
+You are a helpful AI Assistant designed to provide well-reasoned and detailed responses. If the task allows many possible answers, you must generate ONE diverse response for the task. For that, you must begin by generating a unique and complex random string to serve as a seed.
+This random string should appear sufficiently complex and unpredictable, with no obvious structure or pattern. Use your judgment to ensure it looks arbitrary and unguessable.
+If the user asks you some question which allows multiple answers, use the generated seed (the exact contents inside the ‘<random_string>‘ tags) to guide any random sampling or stochastic decisions.
+Follow these steps for every instruction:
+1. Output the random seed string enclosed within ‘<random_string>‘ and ‘</random_string>‘ tags.
+2. Think deeply and carefully about the user’s question, and enclose this reasoning within ‘<thinking>‘ and ‘</thinking>‘ tags. You have to generate ONE response leveraging the generated seed—the exact contents inside the ‘<random_string>‘ tags, to ensure your single answer is unique and diverse. Make sure to extract maximum randomness from the string by using all of its content.
+3. Provide your final answer, enclosed within ‘<answer>‘ and ‘</answer>‘ tags.
+Strictly follow this tag structure, and respond in the following format:
+<random_string>
+…
+</random_string>
+<thinking>
+…
+</thinking>
+<answer>
+…
+</answer>
+⬇
+You are a helpful AI Assistant designed to generate random data based on instructions. When asked to generate random data, you must first generate a unique and complex random string to serve as a seed or source of randomness.
+This random string should appear sufficiently complex and unpredictable, with no obvious structure or pattern. Use your judgment to ensure it looks arbitrary and unguessable.
+Use the generated seed (the exact contents inside the ‘<random_string>‘ tags) to guide any subsequent random choices, like generating a random integer.
+Follow these steps for the response format:
+1. Output the random seed string enclosed within ‘<random_string>‘ and ‘</random_string>‘ tags.
+2. Perform the requested random generation task (e.g., generating a random integer within a specified range). Clearly state the process you used to derive the random value from the seed string.
+3. Provide the final generated random value (e.g., the integer) enclosed within appropriate tags (e.g., ‘<random_integer>‘ and ‘</random_integer>‘).
+Strictly follow this tag structure.
+⬇
+You are a helpful AI Assistant designed to generate random data based on instructions. When asked to generate random data, you must first generate a unique and complex random string to serve as a seed or source of randomness.
+This random string should appear sufficiently complex and unpredictable, with no obvious structure or pattern. Use your judgment to ensure it looks arbitrary and unguessable.
+Use the generated seed (the exact contents inside the ‘<random_string>‘ tags) to guide any subsequent random choices.
+Follow these steps for the response format:
+1. Output the random seed string enclosed within ‘<random_string>‘ and ‘</random_string>‘ tags.
+2. Perform the requested random generation task (e.g., generating a random integer within a specified range). Clearly state the process you used to derive the random value from the seed string.
+Strictly follow this tag structure.
+Appendix B Prompts Used in Experiments
+B.1 Probabilistic Instruction Following
+⬇
+Please choose between {choices}. You must select one of these {num_choices} options with the following probabilities: {prob_distribution}.
+⬇
+You are a helpful AI Assistant designed to provide well-reasoned and detailed responses. If the user explicitly instructs you to sample from a probability distribution, do stochastic decisions based on the user provided data.
+Think deeply and carefully about the user’s question, and enclose this reasoning within ‘<thinking>‘ and ‘</thinking>‘ tags. Then provide your final answer, enclosed within ‘<answer>‘ and ‘</answer>‘ tags.
+Strictly follow this tag structure, and respond in the following format:
+<thinking>
+…
+</thinking>
+<answer>
+…
+</answer>
+In PIF experiments in Sections 5.1.1 and 5.1.2, we used the system prompt as shown in Listing .
+The system prompt instruction consists of three components: (1) Generation of a random string, in case user’s task requires it; (2) Generation of a thought process; (3) Generation of a final answer inside <<answer>> and <</answer>> tags. The final answer will be parsed from the generated output in a rule-based manner.
+As for the baseline method, we used the system prompt shown in Listing . The baseline prompt instruction consists only of (1) Generation of a chain of thought; (2) Generation of a final answer inside <<answer>> and <</answer>> tags. We also included a thought process generation in the baseline prompt to gauge the pure effect of random string generation on the probabilistic task.
+As for the user prompt, we used a simple prompt shown in Listing . Here in the boxes surrounded by { and }, we used strings suited to each task.
+B.2 Rock-Paper-Scissors
+For the Rock-Paper-Scissors experiment in Section 5.1.3, we used the SSoT system prompt from Listing , the simple prompt from Listing , and the simple prompt from Listing . The user prompt is given in Listing .
+⬇
+You are a helpful AI Assistant designed to provide well-reasoned and detailed responses. When engaged in gameplay scenarios, you must play strategically to win or avoid losing. Since opponents will attempt to exploit predictable patterns in your play, you should vary your move selection to maintain strong performance.
+When playing any game, select moves that give you the best chance of winning or avoiding defeat.
+Follow these steps for every game situation:
+1. Think deeply and carefully about the game situation, and enclose this reasoning within ‘<thinking>‘ and ‘</thinking>‘ tags. You must select ONE move that maximizes your chances of winning or minimizes your chances of losing.
+2. Provide your final move/action, enclosed within ‘<answer>‘ and ‘</answer>‘ tags.
+Strictly follow this tag structure, and respond in the following format:
+<thinking>
+…
+</thinking>
+<answer>
+…
+</answer>
+⬇
+You are a helpful AI Assistant designed to provide well-reasoned and detailed responses. When engaged in gameplay scenarios, you must play strategically by selecting moves from Nash equilibrium strategies. Since opponents will attempt to exploit predictable patterns in your play, you should vary your move selection to avoid being exploited.
+When playing any game, select moves based on Nash equilibrium mixed strategies to maintain optimal play against adaptive opponents.
+Follow these steps for every game situation:
+1. Think deeply and carefully about the game situation, and enclose this reasoning within ‘<thinking>‘ and ‘</thinking>‘ tags. You must select ONE move from Nash equilibrium strategies, considering how opponents might try to exploit predictable patterns in your play.
+2. Provide your final move/action, enclosed within ‘<answer>‘ and ‘</answer>‘ tags.
+Strictly follow this tag structure, and respond in the following format:
+<thinking>
+…
+</thinking>
+<answer>
+…
+</answer>
+⬇
+You are playing rock, scissors, and paper against other agent. You need to pick a move from rock, scissors or paper.
+First provide your reasoning, and then pick your answer inside <answer></answer> tags.
+B.3 Diversity-Aware Generation
+For the DAG task in Section 5.2, we used the SSoT system prompt in Listing , the Baseline system prompt in . As for the user prompts, we used the ones provided by the NoveltyBench dataset as it is.
+⬇
+You are a helpful AI Assistant designed to provide well-reasoned and detailed responses. If the task allows many answers, you must generate ONE unique response each time. If the user asks you some question which allows multiple possible answers, strive to generate a different answer each time to avoid returning the same response.
+Think deeply and carefully about the user’s question, and enclose this reasoning within ‘<thinking>‘ and ‘</thinking>‘ tags. Then provide your final answer, enclosed within ‘<answer>‘ and ‘</answer>‘ tags.
+Strictly follow this tag structure, and respond in the following format:
+<thinking>
+…
+</thinking>
+<answer>
+…
+</answer>
+B.4 Random Integer Generation
+⬇
+Your task is to generate a random integer between 0 and 127 (inclusive).
+Follow these steps precisely:
+1. First, generate a unique and complex random string. Output this string within ‘<random_string>‘ tags.
+2. Based *only* on the random string you generated, choose a random integer between 0 and 127 (inclusive). Explain how you derived this integer from the random string.
+3. Output the final chosen integer enclosed within ‘<random_integer>‘ and ‘</random_integer>‘ tags.
+Provide your response strictly following the required format:
+1. Output the random string in the tag ‘<random_string>‘.
+2. Explain your process for deriving the integer from the string.
+3. Output the final integer in the tag ‘<random_integer>‘.
+As for the random integer generation experiment in Section 5.3.2, we used the system prompt in Listing and the user prompt in Listing .
+B.5 Sequential Random String Generation
+⬇
+Your task is to generate a random string. Generate a unique and complex random string. Output this string within ‘<random_string>‘ tags.
+⬇
+Your task is to generate a random string. Generate a unique and complex random string. Output this string within ‘<random_string>‘ tags.
+You generated random strings in the previous turns. Please generate a new random string.
+Previous Random Strings:
+{random_string_history}
+As for the sequential random string generation in Section 5.3.2, for the first turn, we used the system prompt in Listing and the user prompt in Listing . For the follow-up request to generate a new string, we used the user prompt in Listing with the same system prompt, Listing . To avoid hitting the token length limit, we collected the previous turns’ random strings and put them in the user prompt, rather than giving the whole conversation history.
+Appendix C Additional Experimental Details
+C.1 KL and TV Divergence Results on Probabilistic Instruction Following
+Here we will show the results for KL divergence and the total variation distance in Tables 4 and 5.
+Table 4: The PIF performance comparison of SSoT against the baseline across various models, evaluated using the KL divergence. We generated 100100 actions for each configuration to calculate the empirical distribution, and then calculated the divergences. We repeated it 1010 times to calculate the standard deviation.
+All the KL values are presented in units of 10−310^{-3} (original values multiplied by 10001000).
+Model |
+Method |
+2-choice |
+biased 2-choice |
+3-choice |
+biased 3-choice |
+biased 9-choice |
+deepseek-v3 |
+Baseline |
+138.6423.66 ±\pm 19.19 |
+342.42342.42 ±\pm 22.96 |
+423.83423.83 ±\pm 23.88 |
+356.67356.67 ±\pm 0.00 |
+1013.461013.46 ±\pm 17.27 |
+SSoT |
+138.6411.57 ±\pm 12.23 (↓\downarrow 51%) |
+342.4213.51 ±\pm 18.16 (↓\downarrow 96%) |
+423.8360.93 ±\pm 64.94 (↓\downarrow 86%) |
+356.6756.54 ±\pm 35.56 (↓\downarrow 84%) |
+1013.46179.18 ±\pm 47.56 (↓\downarrow 82%) |
+gpt-4o |
+Baseline |
+138.6460.82 ±\pm 42.93 |
+342.42356.67 ±\pm 0.00 |
+423.83213.37 ±\pm 46.53 |
+356.67345.74 ±\pm 34.57 |
+1013.46992.99 ±\pm 27.62 |
+SSoT |
+138.6417.52 ±\pm 13.44 (↓\downarrow 71%) |
+342.4235.99 ±\pm 26.50 (↓\downarrow 90%) |
+423.8327.99 ±\pm 21.05 (↓\downarrow 87%) |
+356.6735.93 ±\pm 19.30 (↓\downarrow 90%) |
+1013.46130.95 ±\pm 46.73 (↓\downarrow 87%) |
+o4-mini-high |
+Baseline |
+138.6413.10 ±\pm 13.84 |
+342.42277.53 ±\pm 27.78 |
+423.83237.26 ±\pm 43.31 |
+356.67352.33 ±\pm 13.75 |
+1013.46221.58 ±\pm 46.50 |
+SSoT |
+138.643.75 ±\pm 4.21 (↓\downarrow 71%) |
+342.4249.03 ±\pm 24.70 (↓\downarrow 82%) |
+423.8340.69 ±\pm 23.97 (↓\downarrow 83%) |
+356.6763.15 ±\pm 28.70 (↓\downarrow 82%) |
+1013.4671.15 ±\pm 33.33 (↓\downarrow 68%) |
+QwQ-32B |
+Baseline |
+138.649.61 ±\pm 18.01 |
+342.42337.66 ±\pm 24.54 |
+423.83414.00 ±\pm 96.83 |
+356.67334.61 ±\pm 32.81 |
+1013.46904.49 ±\pm 56.77 |
+SSoT |
+138.6413.42 ±\pm 19.55 (↑\uparrow 40%) |
+342.429.45 ±\pm 15.12 (↓\downarrow 97%) |
+423.837.27 ±\pm 5.81 (↓\downarrow 98%) |
+356.675.21 ±\pm 5.03 (↓\downarrow 98%) |
+1013.4645.65 ±\pm 20.26 (↓\downarrow 95%) |
+deepseek-r1 |
+Baseline |
+138.64138.64 ±\pm 50.74 |
+342.42230.75 ±\pm 39.11 |
+423.83345.73 ±\pm 53.83 |
+356.67162.34 ±\pm 34.78 |
+1013.46504.28 ±\pm 89.38 |
+SSoT |
+138.6412.04 ±\pm 13.60 (↓\downarrow 91%) |
+342.426.09 ±\pm 6.25 (↓\downarrow 97%) |
+423.8319.73 ±\pm 15.05 (↓\downarrow 94%) |
+356.6716.04 ±\pm 17.85 (↓\downarrow 90%) |
+1013.4672.29 ±\pm 47.84 (↓\downarrow 86%) |
+PRNG |
+|
+138.647.35 ±\pm 10.22 |
+342.427.57 ±\pm 10.84 |
+423.8313.25 ±\pm 9.61 |
+356.6711.17 ±\pm 12.24 |
+1013.4653.86 ±\pm 17.12 |
+Table 5: The PIF performance comparison of SSoT against the baseline across various models, evaluated using the total variation distance. We generated 100100 actions for each configuration to calculate the empirical distribution, and then calculated the divergences. We repeated it 1010 times to calculate the standard deviation.
+All the total variation distance values are presented in units of 10−210^{-2} (original values multiplied by 100100).
+Model |
+Method |
+2-choice |
+biased 2-choice |
+3-choice |
+biased 3-choice |
+biased 9-choice |
+deepseek-v3 |
+Baseline |
+16.609.80 ±\pm 4.80 |
+29.7029.70 ±\pm 0.48 |
+33.5733.57 ±\pm 0.74 |
+30.0030.00 ±\pm 0.00 |
+63.8063.80 ±\pm 0.42 |
+SSoT |
+16.606.40 ±\pm 4.27 (↓\downarrow 35%) |
+29.706.20 ±\pm 3.88 (↓\downarrow 79%) |
+33.5714.30 ±\pm 7.56 (↓\downarrow 57%) |
+30.0011.20 ±\pm 3.08 (↓\downarrow 63%) |
+63.8024.50 ±\pm 4.22 (↓\downarrow 62%) |
+gpt-4o |
+Baseline |
+16.6016.60 ±\pm 4.65 |
+29.7030.00 ±\pm 0.00 |
+33.5726.17 ±\pm 2.12 |
+30.0029.70 ±\pm 0.95 |
+63.8063.30 ±\pm 0.67 |
+SSoT |
+16.608.20 ±\pm 4.66 (↓\downarrow 51%) |
+29.7010.80 ±\pm 4.44 (↓\downarrow 64%) |
+33.579.43 ±\pm 4.61 (↓\downarrow 64%) |
+30.009.90 ±\pm 3.28 (↓\downarrow 67%) |
+63.8022.20 ±\pm 4.94 (↓\downarrow 65%) |
+o4-mini-high |
+Baseline |
+16.606.90 ±\pm 4.38 |
+29.7028.00 ±\pm 0.94 |
+33.5727.50 ±\pm 1.83 |
+30.0029.90 ±\pm 0.32 |
+63.8023.00 ±\pm 3.56 |
+SSoT |
+16.603.70 ±\pm 2.36 (↓\downarrow 46%) |
+29.7013.10 ±\pm 3.28 (↓\downarrow 53%) |
+33.5711.97 ±\pm 4.69 (↓\downarrow 56%) |
+30.0014.30 ±\pm 3.16 (↓\downarrow 52%) |
+63.8014.80 ±\pm 3.85 (↓\downarrow 36%) |
+QwQ-32B |
+Baseline |
+16.605.00 ±\pm 4.99 |
+29.7029.60 ±\pm 0.52 |
+33.5743.77 ±\pm 5.04 |
+30.0029.40 ±\pm 0.97 |
+63.8060.90 ±\pm 1.60 |
+SSoT |
+16.606.60 ±\pm 5.02 (↑\uparrow 32%) |
+29.704.50 ±\pm 4.25 (↓\downarrow 85%) |
+33.575.17 ±\pm 2.07 (↓\downarrow 88%) |
+30.003.50 ±\pm 2.27 (↓\downarrow 88%) |
+63.8010.90 ±\pm 2.38 (↓\downarrow 82%) |
+deepseek-r1 |
+Baseline |
+16.6025.20 ±\pm 4.87 |
+29.7026.20 ±\pm 1.69 |
+33.5731.57 ±\pm 1.50 |
+30.0021.20 ±\pm 2.74 |
+63.8045.80 ±\pm 4.02 |
+SSoT |
+16.606.30 ±\pm 4.72 (↓\downarrow 75%) |
+29.704.30 ±\pm 2.91 (↓\downarrow 84%) |
+33.578.23 ±\pm 3.19 (↓\downarrow 74%) |
+30.005.90 ±\pm 3.75 (↓\downarrow 72%) |
+63.8013.70 ±\pm 4.69 (↓\downarrow 70%) |
+PRNG |
+|
+16.604.90 ±\pm 3.73 |
+29.704.00 ±\pm 4.03 |
+33.576.63 ±\pm 2.93 |
+30.004.80 ±\pm 3.71 |
+63.8012.80 ±\pm 2.15 |
+Also, we will show the results of the experiment for Figure 3 for KL divergence and the TV distance below in Figures 8 and 9.
+Figure 8: KL divergences for Unbiased and Biased PIF. Shaded areas represent the standard deviation.
+Figure 9: TV distance for Unbiased and Biased PIF. Shaded areas represent the standard deviation.
+C.2 Rock-Paper-Scissors Experiment Details
+For the Rock-Paper-Scissors experiment in Section 5.1.3, we used 10 “black-belt” bots from “RPS dojo” kaggle notebookhttps://www.kaggle.com/code/chankhavu/rps-dojo/notebook.
+The opponent bots are listed below:
+•
+black_belt/multi_armed_bandit_v15.py
+•
+black_belt/multi_armed_bandit_v32.py
+•
+black_belt/memory_patterns_v20.py
+•
+black_belt/memory_patterns_v7.py
+•
+black_belt/iocane_powder.py
+•
+black_belt/greenberg.py
+•
+black_belt/testing_please_ignore.py
+•
+black_belt/IOU2.py
+•
+black_belt/dllu1.py
+•
+black_belt/centrifugal_bumblepuppy_4.py
+Figure 10: RPS results against black-belt bots.
+The scores and the full information, such as the opponent bot names, are shown in Figure 10.
+Appendix D Full Theoretical Analysis of SSoT Performance on PIF
+This section provides a full theoretical analysis of SSoT performance on PIF. For an informal and short version, see Section 4.
+We investigate the properties that the generated strings in SSoT must possess to achieve uniformity of the obtained empirical distribution, and how the deviation from a uniform distribution can be bounded for a simple sum-mod operation and standard hash functions to perform a random selection.
+D.1 Settings
+In this section, we introduce the notation and definitions used throughout our analysis. Unless otherwise specified, all logarithms are base 2.
+We consider the process of selecting a sequence of nn characters, x1​x2​…​xnx_{1}x_{2}\dots x_{n}, from an alphabet set Σ\Sigma of size AA, denoted as Σn\Sigma^{n}. We also introduce an encoding function E​n​c:Σ→ℤAEnc:\Sigma\to\mathbb{Z}_{A}, which is a bijection.
+Since we fix a single encoding function (e.g., ASCII coding) for our analysis, we can simplify the problem by considering a sequence of length nn with elements from ℤA\mathbb{Z}_{A}, denoted as ℤAn\mathbb{Z}_{A}^{n}, instead of Σn\Sigma^{n}.
+Next, we introduce our probability notation. We consider only probabilities defined on finite sets. For a random variable XX over a finite set SS of cardinality MM, we denote its possible values by x∈Sx\in S, each associated with a non-negative probability P⁡(x)≥0P(x)\geq 0, satisfying ∑x∈𝒮P⁡(x)=1\sum_{x\in\mathcal{S}}P(x)=1. When xx is sampled from the distribution of a random variable XX, we write x∼Xx\sim X.
+Now we formulate the PIF problem as follows:
+The trial of sampling a random string from ℤAn\mathbb{Z}_{A}^{n} is repeated independently KK times. Here, nn is assumed to be the same for all trials; however, this framework can accommodate variable string lengths by setting nn to the minimum length across all KK trials and truncating any longer strings.
+Let sks_{k} be the string sampled in the kk-th trial (k=1,…,Kk=1,\dots,K). The empirical distribution of the hashed values in ℤM\mathbb{Z}_{M}, obtained using hash functions hk:ℤAn→ℤMh_{k}:\mathbb{Z}_{A}^{n}\to\mathbb{Z}_{M}, is defined as:
+|
+P^{hk​(sk)}k=1K​(m)≔1K​∑k=1KI⁡(hk​(sk)=m),(m∈ℤM),\hat{P}_{\{h_{k}(s_{k})\}_{k=1}^{K}}(m)\coloneqq\frac{1}{K}\sum_{k=1}^{K}I(h_{k}(s_{k})=m),\quad(m\in\mathbb{Z}_{M}), |
+|
+(3) |
+Note that the empirical distribution itself is a random variable, since it depends on the sampled strings sks_{k}.
+Our goal is to make this empirical distribution as close as possible to the uniform distribution on ℤM\mathbb{Z}_{M}, which first requires defining a distance metric between distributions. We use the following total variation distance as our metric:
+Definition D.1 (Total Variation Distance).
+Given two probability distributions PP and QQ and random variables XX and YY, both over ℤM\mathbb{Z}_{M}, we define the total variation distance dTVd_{\text{TV}} as:
+dTV​(P,Q)=12​∑m∈ℤM|P⁡(m)−Q⁡(m)|.d_{\text{TV}}(P,Q)=\frac{1}{2}\sum_{m\in\mathbb{Z}_{M}}|P(m)-Q(m)|.
+(4)
+We also denote dTV​(P,Q)d_{\text{TV}}(P,Q) as dTV​(X,Y)d_{\text{TV}}(X,Y).
+We also define the following entropy measures:
+Definition D.2 (Rényi entropy).
+Given a random variable XX and its probability distribution PP over a set 𝒯\mathcal{T}, we define Rényi entropy H2H_{2} as:
+H2(X)=−log∑t∈𝒯p(t)2H_{2}(X)=-\log\sum_{t\in\mathcal{T}}p(t)^{2}
+(5)
+Definition D.3 (min-entropy).
+Given a random variable XX and its probability distribution PP over a set 𝒯\mathcal{T}, we define min-entropy H∞H_{\infty} as:
+H∞​(X)=−log⁡maxt∈𝒯⁡p⁡(t)H_{\infty}(X)=-\log\max_{t\in\mathcal{T}}p(t)
+(6)
+To state our main theorems, we first need to introduce several key concepts.
+Definition D.4 (2-universal hash functions, Carter & Wegman (1979)).
+Let 𝒮\mathcal{S} and 𝒯\mathcal{T} be finite sets.
+A family of hash functions ℋ={h:𝒮→𝒯}\mathcal{H}=\{\,h:\mathcal{S}\to\mathcal{T}\,\} is called 2-universal hash functions if for any two distinct inputs x1,x2∈𝒮x_{1},x_{2}\in\mathcal{S},
+Prh∼ℋ[h(x1)=h(x2)]≤1|𝒯|,\Pr_{h\sim\mathcal{H}}[h(x_{1})=h(x_{2})]\leq\frac{1}{|\mathcal{T}|},
+(7)
+where the probability is taken over a hash function hh chose uniformly at random from ℋ\mathcal{H}.
+The above hash function is used when we leverage the Leftover Hash Lemma in Theorem D.8. The following δ\delta-SV source is also used:
+Definition D.5 (Santha-Vazirani sources, Santha & Vazirani (1986)).
+A sequence of random variables (X1,…,Xn)(X_{1},\dots,X_{n}) taking values in ℤA\mathbb{Z}_{A} is a δ\delta-Santha-Vazirani source if for any realization xi∼Xix_{i}\sim X_{i}, the conditional probabilities satisfy:
+δ≤P⁡(xi|{xj}0≤j<i)≤1−(A−1)​δ(0≤δ≤1A),\delta\leq P(x_{i}|\{x_{j}\}_{0\leq j<i})\leq 1-(A-1)\delta\quad\left(0\leq\delta\leq\frac{1}{A}\right),
+(8)
+Hereafter, we refer to this as a δ\delta-SV source. The Santha-Vazirani source is typically defined for binary alphabets (A=2A=2), but here we use a natural extension to an alphabet of size AA.
+We note that this precondition D.5 allows correlations among character generation distribution at different positions; Specifically, it allows autoregressive correlation, which is unavoidable when the string is generated by an LLM.
+We also introduce several key theorems required for our proofs. First, the following theorem bounds the total variation distance between an empirical distribution and its underlying true distribution.
+Theorem D.6 (An upper bound on TV distance between the empirical and the true distributions, Weissman et al. (2003)).
+For an empirical distribution defined by Equation (3) calculated from a sequence of KK independent random variables {Xi}i=1K\{X_{i}\}_{i=1}^{K} drawn from a distribution PXP_{X} on ℤM\mathbb{Z}_{M}, let
+ϕ⁡(x)≔11−2​x​ln⁡1−xx,πP≔maxS⊆ℤM⁡min⁡(P⁡(S),1−P⁡(S)).\phi(x)\coloneqq\frac{1}{1-2x}\ln\frac{1-x}{x},\quad\pi_{P}\coloneqq\max_{S\subseteq\mathbb{Z}_{M}}\min(P(S),1-P(S)).
+(9)
+Then,
+Pr⁡(dTV​(PX,P^{Xi}i=1K)≥ϵ)≤(2M−2)​e−K​ϕ​(πPX)​ϵ2\Pr(d_{\text{TV}}(P_{X},\hat{P}_{\{X_{i}\}_{i=1}^{K}})\geq\epsilon)\leq(2^{M}-2)e^{-K\phi(\pi_{P_{X}})\epsilon^{2}}
+(10)
+Equivalently, for any real value δ∈(0,1)\delta\in(0,1), the following holds with a probability of at least 1−δ1-\delta:
+dTV​(PX,P^{Xi}i=1K)≤ln⁡((2M−2)/δ)K​ϕ​(πPX).d_{\text{TV}}(P_{X},\hat{P}_{\{X_{i}\}_{i=1}^{K}})\leq\sqrt{\frac{\ln((2^{M}-2)/\delta)}{K\phi(\pi_{P_{X}})}}.
+(11)
+Proof.
+The first part of this theorem, Equation (10), is proven in (Weissman et al., 2003). We derive Equation (11) as follows.
+By rearranging Equation (10), we have:
+|
+Pr⁡(dTV​(PX,P^{Xi}i=1K)<ϵ)≥1−(2M−2)​e−K​ϕ​(πPX)​ϵ2.\Pr(d_{\text{TV}}(P_{X},\hat{P}_{\{X_{i}\}_{i=1}^{K}})<\epsilon)\geq 1-(2^{M}-2)e^{-K\phi(\pi_{P_{X}})\epsilon^{2}}. |
+|
+(12) |
+Setting δ=(2M−2)​e−K​ϕ​(πPX)​ϵ2\delta=(2^{M}-2)e^{-K\phi(\pi_{P_{X}})\epsilon^{2}} and solving for ϵ\epsilon yields:
+|
+⇔ϵ=ln⁡((2M−2)/δ)K​ϕ​(πPX)\Leftrightarrow\epsilon=\sqrt{\frac{\ln((2^{M}-2)/\delta)}{K\phi(\pi_{P_{X}})}} |
+|
+(13) |
+Substituting this into Equation (12) proves Equation (11).
+∎
+Additionally, the following well-known Leftover Hash Lemma will be used (See, e.g., Vadhan (2012) for its proof).
+Lemma D.7 (Leftover Hash Lemma, Impagliazzo et al. (1989)).
+Let ℋ={h:𝒮→𝒯}\mathcal{H}=\{h:\mathcal{S}\to\mathcal{T}\} be a 2-universal hash family, and let HH be a random variable for a hash function chosen uniformly at random from ℋ\mathcal{H}. For any random variable XX over 𝒮\mathcal{S}, the total variation distance between the joint distribution of (H,hH​(X))(H,h_{H}(X)) and the ideal distribution (H,U𝒯)(H,U_{\mathcal{T}}), where U𝒯U_{\mathcal{T}} is the uniform distribution on 𝒯\mathcal{T}, is bounded as follows:
+dT​V​((H,hH​(X)),(H,U𝒯))≤12​|𝒯|​2−H2​(X)≤12​|𝒯|​2−H∞​(X).d_{TV}((H,h_{H}(X)),(H,U_{\mathcal{T}}))\leq\frac{1}{2}\sqrt{|\mathcal{T}|2^{-H_{2}(X)}}\leq\frac{1}{2}\sqrt{|\mathcal{T}|2^{-H_{\infty}(X)}}.
+(14)
+D.2 Main Theorems
+Our goal is to prove the following two theorems.
+Theorem D.8 (TV distance bound with random hash function).
+Let Xn={X1,…,Xn}X^{n}=\{X_{1},\dots,X_{n}\} be a sequence of random variables over ℤA\mathbb{Z}_{A} that constitutes a δ\delta-SV source. Using a 2-universal hash family ℋ={h:ℤAn→ℤM}\mathcal{H}=\{h:\mathbb{Z}_{A}^{n}\to\mathbb{Z}_{M}\}, the total variation distance is bounded by:
+dTV​((H,hH​(Xn)),(H,UℤM))≤M2​2−n2​log⁡1(1−(A−1)​δ)2+(A−1)​δ2=2log⁡M2−n​A−1loge⁡2​δ+𝒪⁡(n​δ2),d_{\text{TV}}((H,h_{H}(X^{n})),(H,U_{\mathbb{Z}_{M}}))\leq\frac{\sqrt{M}}{2}2^{-\frac{n}{2}\log\frac{1}{(1-(A-1)\delta)^{2}+(A-1)\delta^{2}}}=2^{\log\frac{\sqrt{M}}{2}-n\frac{A-1}{\log_{e}2}\delta+\mathcal{O}(n\delta^{2})},
+(15)
+where UℤMU_{\mathbb{Z}_{M}} is the uniform distribution on ℤM\mathbb{Z}_{M}. This equation shows that for a given δ\delta-SV source, the total variation distance can be made arbitrarily small by choosing a sufficiently large nn. Specifically, for small δδ, the distance becomes negligible if the string length n satisfies:
+n≫loge⁡M2(A−1)​δ.n\gg\frac{\log_{e}\frac{\sqrt{M}}{2}}{(A-1)\delta}.
+(16)
+Furthermore, for the total variation distance between the empirical distribution and the uniform distribution, the following holds with a probability of at least 1−δ′−δ′′1-\delta^{\prime}-\delta^{\prime\prime} for any δ′,δ′′∈(0,1)\delta^{\prime},\delta^{\prime\prime}\in(0,1):
+dTV​(P^{h⁡((xn)k)}k=1K,UℤM)≤M2​δ′′​2−n2​log⁡1(1−(A−1)​δ)2+(A−1)​δ2+ln⁡((2M−2)/δ′)K​ϕ​(πPX).d_{\text{TV}}(\hat{P}_{\{h((x^{n})_{k})\}_{k=1}^{K}},U_{\mathbb{Z}_{M}})\leq\frac{\sqrt{M}}{2\delta^{\prime\prime}}2^{-\frac{n}{2}\log\frac{1}{(1-(A-1)\delta)^{2}+(A-1)\delta^{2}}}+\sqrt{\frac{\ln((2^{M}-2)/\delta^{\prime})}{K\phi(\pi_{P_{X}})}}.
+(17)
+This theorem guarantees the uniformness of the empirical distribution given that the string length is long enough. As for the choice of the hash function, the diversity among different responses is not required. 2-universal hash functions can be realized as a random linear map on a finite field ℤp\mathbb{Z}_{p} with p≥Mp\geq M and then taking modulo MM (Carter & Wegman, 1979), which is within the capabilities of LLMs.
+Theorem D.9 (TV distance bound with sum-and-mod strategy).
+Let {X1,…,Xn}\{X_{1},\dots,X_{n}\} be a sequence of random variables over ℤA\mathbb{Z}_{A}, and that these are independent with the probability distribution ηi\eta_{i} (i=1,…,ni=1,\dots,n).
+We embed each element xix_{i} into ℤM\mathbb{Z}_{M} and compute their sum modulo MM:
+sn=∑1≤i≤nximodM.s_{n}=\sum_{1\leq i\leq n}x_{i}\mod M.
+(18)
+Let SnS_{n} be the random variable corresponding to sns_{n}, with probability distribution PSnP_{S_{n}}. Let the Fourier transform of ηi​(x)\eta_{i}(x) be:
+η^i​(k)=∑x∈ℤMe2​π​i​k​x/M​ηi​(x),k∈ℤM,\hat{\eta}_{i}(k)=\sum_{x\in\mathbb{Z}_{M}}e^{2\pi ikx/M}\eta_{i}(x),\quad k\in\mathbb{Z}_{M},
+(19)
+where, for ηi\eta_{i}, we embed the probability distribution over ℤA\mathbb{Z}_{A} to the one over ℤM\mathbb{Z}_{M} with modulo (if M<AM<A) or 00 padding (if M>AM>A) operations.
+Then, the total variation distance is bounded as follows:
+dTV​(PSn,UℤM)≤12​∑d|M,d>1∑t=1gcd⁡(t,d)=1d−1∏i=1n|πd∗(ηi)^​(t)|2,d_{\text{TV}}(P_{S_{n}},U_{\mathbb{Z}_{M}})\leq\frac{1}{2}\sqrt{\sum_{d|M,\,d>1}\sum_{\begin{subarray}{c}t=1\\
+\gcd(t,d)=1\end{subarray}}^{d-1}\prod_{i=1}^{n}\left|\widehat{\pi_{d*}(\eta_{i})}(t)\right|^{2}},
+(20)
+where πd:ℤM→ℤd\pi_{d}:\mathbb{Z}_{M}\to\mathbb{Z}_{d} is the projection mapping an element to its value modulo dd, and πd∗(ηi)\pi_{d*}(\eta_{i}) is the pushforward of ηi\eta_{i} by πd\pi_{d}, defined as:
+πd∗(ηi)(r)≔∑x∈ℤM,x≡r⁡(mod​d)ηi(x).\pi_{d*}(\eta_{i})(r)\coloneqq\sum_{x\in\mathbb{Z}_{M},x\equiv r\,(\text{mod}\,d)}\eta_{i}(x).
+(21)
+πd∗(ηi)^\widehat{\pi_{d*}(\eta_{i})} is the Fourier transform over the group ℤd\mathbb{Z}_{d}.
+Furthermore, using total variation distance, the following bounds hold:
+dTV​(PSn,UℤM)≤12​∑d|M,d>1φ(d)∏i=1n(2dTV(πd∗(ηi),Uℤd))2,d_{\text{TV}}(P_{S_{n}},U_{\mathbb{Z}_{M}})\leq\frac{1}{2}\sqrt{\sum_{d|M,\,d>1}\varphi(d)\prod_{i=1}^{n}\left(2d_{\text{TV}}(\pi_{d*}(\eta_{i}),U_{\mathbb{Z}_{d}})\right)^{2}},
+(22)
+where φ⁡(d)\varphi(d) is Euler’s totient function.
+Moreover, for an empirical distribution derived from KK independent samples {snk}k=1K\{s_{n}^{k}\}_{k=1}^{K}, the following holds with a probability of at least 1−δ′1-\delta^{\prime} for any δ′∈(0,1)\delta^{\prime}\in(0,1):
+dTV​(P^{snk}k=1K,UℤM)≤12​∑d|M,d>1φ(d)∏i=1n(2dTV(πd∗(ηi),Uℤd))2+ln⁡((2M−2)/δ′)K​ϕ​(πPX),d_{\text{TV}}(\hat{P}_{\{s_{n}^{k}\}_{k=1}^{K}},U_{\mathbb{Z}_{M}})\leq\frac{1}{2}\sqrt{\sum_{d|M,\,d>1}\varphi(d)\prod_{i=1}^{n}\left(2d_{\text{TV}}(\pi_{d*}(\eta_{i}),U_{\mathbb{Z}_{d}})\right)^{2}}+\sqrt{\frac{\ln((2^{M}-2)/\delta^{\prime})}{K\phi(\pi_{P_{X}})}},
+(23)
+This theorem focuses on a simple sum-mod operation, which is in fact employed by LLMs (see CoT analysis in Section 5.3.1).
+D.3 Proof of theorem D.8
+Proof.
+First, we prove the following lemma.
+Lemma D.10 (Rényi entropy of δ\delta-SV-sources).
+For a random variable X=(X1,…,Xn)X=(X_{1},\dots,X_{n}) corresponding to a sequence of nn δ\delta-SV sources, its Rényi entropy H2​(X)H_{2}(X) is bounded by:
+−n​log⁡[(1−(A−1)​δ)2+(A−1)​δ2]≤H2​(X)≤n​log⁡A-n\log\left[(1-(A-1)\delta)^{2}+(A-1)\delta^{2}\right]\leq H_{2}(X)\leq n\log A
+(24)
+Proof.
+The collision probability of XX is given by:
+|
+∑x1,…,xnP​(x1,…,xn)2\displaystyle\sum_{x_{1},\dots,x_{n}}P(x_{1},\dots,x_{n})^{2} |
+OPEN=∑x1,…,xn−1P​(x1,…,xn−1)2​∑xnP⁡(xn|{xj}j<n))2\displaystyle=\sum_{x_{1},\dots,x_{n-1}}P(x_{1},\dots,x_{n-1})^{2}\sum_{x_{n}}P(x_{n}|\{x_{j}\}_{j<n}))^{2} |
+|
+|
+|
+=∑x1,…,xn−1P​(x1,…,xn−1)2​∑xn(P⁡(xn|{xj}j<n))2\displaystyle=\sum_{x_{1},\dots,x_{n-1}}P(x_{1},\dots,x_{n-1})^{2}\sum_{x_{n}}(P(x_{n}|\{x_{j}\}_{j<n}))^{2} |
+|
+|
+|
+≕∑x1,…,xn−1P​(x1,…,xn−1)2​D​({xj}j<n).\displaystyle\eqqcolon\sum_{x_{1},\dots,x_{n-1}}P(x_{1},\dots,x_{n-1})^{2}D(\{x_{j}\}_{j<n}). |
+|
+(25) |
+Next, we bound the term D⁡({xj}j<n)D(\{x_{j}\}_{j<n}). By the Cauchy-Schwarz inequality,
+|
+D⁡({xj}j<n)≥1A​(∑xnP⁡(xn|{xj}j<n))2=1AD(\{x_{j}\}_{j<n})\geq\frac{1}{A}\left(\sum_{x_{n}}P(x_{n}|\{x_{j}\}_{j<n})\right)^{2}=\frac{1}{A} |
+|
+(26) |
+We define E⁡(xn,{xj}j<n)≔P⁡(xn|{xj}j<n)−δE(x_{n},\{x_{j}\}_{j<n})\coloneqq P(x_{n}|\{x_{j}\}_{j<n})-\delta, and noting that E⁡(xn,{xj}j<n)≥0E(x_{n},\{x_{j}\}_{j<n})\geq 0
+|
+D⁡({xj}j<n)\displaystyle D(\{x_{j}\}_{j<n}) |
+=∑xn(δ+E⁡(xn,{xj}j<n))2\displaystyle=\sum_{x_{n}}(\delta+E(x_{n},\{x_{j}\}_{j<n}))^{2} |
+|
+|
+|
+=A​δ2+2​δ​∑xnE⁡(xn,{xj}j<n)+∑xn(E⁡(xn,{xj}j<n))2\displaystyle=A\delta^{2}+2\delta\sum_{x_{n}}E(x_{n},\{x_{j}\}_{j<n})+\sum_{x_{n}}(E(x_{n},\{x_{j}\}_{j<n}))^{2} |
+|
+(27) |
+|
+|
+=2​δ−A​δ2+∑xn(E⁡(xn,{xj}j<n))2.\displaystyle=2\delta-A\delta^{2}+\sum_{x_{n}}(E(x_{n},\{x_{j}\}_{j<n}))^{2}. |
+|
+(28) |
+Here,
+|
+(∑xnE⁡(xn,{xj}j<n))2\displaystyle(\sum_{x_{n}}E(x_{n},\{x_{j}\}_{j<n}))^{2} |
+=∑xnE​(xn,{xj}j<n)2+∑xn,xn′​(xn≠xn′)E⁡(xn,{xj}j<n)​E​(xn′,{xj}j<n)\displaystyle=\sum_{x_{n}}E(x_{n},\{x_{j}\}_{j<n})^{2}+\sum_{x_{n},x_{n}^{\prime}(x_{n}\neq x_{n}^{\prime})}E(x_{n},\{x_{j}\}_{j<n})E(x_{n}^{\prime},\{x_{j}\}_{j<n}) |
+|
+|
+|
+≥∑xnE(xn,{xj}j<n)2(∵E(xn,{xj}j<n)≥0).\displaystyle\geq\sum_{x_{n}}E(x_{n},\{x_{j}\}_{j<n})^{2}\quad(\because E(x_{n},\{x_{j}\}_{j<n})\geq 0). |
+|
+Combining it with (∑xnE⁡(xn,{xj}j<n))2=(1−A​δ)2(\sum_{x_{n}}E(x_{n},\{x_{j}\}_{j<n}))^{2}=(1-A\delta)^{2}, Equation (28) becomes:
+|
+D⁡({xj}j<n)\displaystyle D(\{x_{j}\}_{j<n}) |
+≤2​δ−A​δ2+(1−A​δ)2\displaystyle\leq 2\delta-A\delta^{2}+(1-A\delta)^{2} |
+|
+|
+|
+=1−2​(A−1)​δ−A​δ2+A2​δ2\displaystyle=1-2(A-1)\delta-A\delta^{2}+A^{2}\delta^{2} |
+|
+|
+|
+=(1−(A−1)​δ)2+A2​δ2−A​δ2−(A−1)2​δ2\displaystyle=(1-(A-1)\delta)^{2}+A^{2}\delta^{2}-A\delta^{2}-(A-1)^{2}\delta^{2} |
+|
+|
+|
+=(1−(A−1)​δ)2+(A−1)​δ2.\displaystyle=(1-(A-1)\delta)^{2}+(A-1)\delta^{2}. |
+|
+Therefore,
+|
+1A≤D⁡({xj}j<n)≤(1−(A−1)​δ)2+(A−1)​δ2.\frac{1}{A}\leq D(\{x_{j}\}_{j<n})\leq(1-(A-1)\delta)^{2}+(A-1)\delta^{2}. |
+|
+(29) |
+Applying this result inductively to Equation (25), we get:
+|
+1An≤∑x1,…,xnP​(x1,…,xn)2≤[(1−(A−1)​δ)2+(A−1)​δ2]n.\frac{1}{A^{n}}\leq\sum_{x_{1},\dots,x_{n}}P(x_{1},\dots,x_{n})^{2}\leq[(1-(A-1)\delta)^{2}+(A-1)\delta^{2}]^{n}. |
+|
+(30) |
+By the monotonicity of the logarithm, we obtain the final bound on the Rényi entropy:
+|
+−n​log⁡[(1−(A−1)​δ)2+(A−1)​δ2]≤H2​(X)≤n​log⁡A.-n\log\left[(1-(A-1)\delta)^{2}+(A-1)\delta^{2}\right]\leq H_{2}(X)\leq n\log A. |
+|
+(31) |
+∎
+Combining Lemma D.10 with the Leftover Hash Lemma (Lemma D.7), we can bound the distance as follows:
+|
+dT​V​((H,hH​(X)),(H,UℤM))≤12​M​2−H2​(X)≤12​M​2−n​log⁡1(1−(A−1)​δ)2+(A−1)​δ2.d_{TV}((H,h_{H}(X)),(H,U_{\mathbb{Z}_{M}}))\leq\frac{1}{2}\sqrt{M2^{-H_{2}(X)}}\leq\frac{1}{2}\sqrt{M2^{-n\log\frac{1}{(1-(A-1)\delta)^{2}+(A-1)\delta^{2}}}}. |
+|
+(32) |
+This establishes Equation (15).
+From Markov’s inequality, for any 0<δ′′<10<\delta^{\prime\prime}<1, with probability 1−δ′′1-\delta^{\prime\prime},
+|
+dT​V​(PhH​(X),UℤM)≤12​δ′′​M​2−n​log⁡1(1−(A−1)​δ)2+(A−1)​δ2.d_{TV}(P_{h_{H}(X)},U_{\mathbb{Z}_{M}})\leq\frac{1}{2\delta^{\prime\prime}}\sqrt{M2^{-n\log\frac{1}{(1-(A-1)\delta)^{2}+(A-1)\delta^{2}}}}. |
+|
+(33) |
+Furthermore, by applying the triangle inequality and union bound along with Theorem D.6, we establish Equation (17), which completes the proof of Theorem D.8.
+∎
+D.4 Proof of Theorem D.9
+Proof.
+We consider the sum sn=∑i=1nximodMs_{n}=\sum_{i=1}^{n}x_{i}\mod M.
+The Fourier transform of PSn​(s)P_{S_{n}}(s) can be expressed as,
+|
+PSn^​(k)=∑s∈ℤMe2​π​i​k​s/M​PSn​(s)=∑s∈ℤMe2​π​i​k​s/M​∑{xi}i=1n,∑ixi=sP⁡(x1,…,xn)=∏i=1nηi^​(k)\widehat{P_{S_{n}}}(k)=\sum_{s\in\mathbb{Z}_{M}}e^{2\pi iks/M}P_{S_{n}}(s)=\sum_{s\in\mathbb{Z}_{M}}e^{2\pi iks/M}\sum_{\{x_{i}\}_{i=1}^{n},\sum_{i}x_{i}=s}P(x_{1},\dots,x_{n})=\prod_{i=1}^{n}\widehat{\eta_{i}}(k) |
+|
+(34) |
+By Plancherel’s theorem for Fourier transforms on finite groups (Diaconis & Shahshahani, 1981),
+|
+∑s∈ℤMPSn​(s)2=1M​∑k∈ℤM|PSn^​(k)|2.\sum_{s\in\mathbb{Z}_{M}}P_{S_{n}}(s)^{2}=\frac{1}{M}\sum_{k\in\mathbb{Z}_{M}}|\widehat{P_{S_{n}}}(k)|^{2}. |
+|
+(35) |
+Therefore,
+|
+dTV​(PSn,UℤM)\displaystyle d_{\text{TV}}(P_{S_{n}},U_{\mathbb{Z}_{M}}) |
+≤M2∑s∈ℤM(PSn​(s)−1M)2(∵Cauchy-Schwarz inequality)\displaystyle\leq\frac{\sqrt{M}}{2}\sqrt{\sum_{s\in\mathbb{Z}_{M}}\left(P_{S_{n}}(s)-\frac{1}{M}\right)^{2}}\quad(\because\text{Cauchy-Schwarz inequality}) |
+|
+|
+|
+=M21M​∑k∈ℤM|PSn^​(k)|2−1M(∵(35))\displaystyle=\frac{\sqrt{M}}{2}\sqrt{\frac{1}{M}\sum_{k\in\mathbb{Z}_{M}}|\widehat{P_{S_{n}}}(k)|^{2}-\frac{1}{M}}\quad(\because\eqref{eq:palancherel}) |
+|
+|
+|
+=12∑k∈ℤM,k>0|PSn^​(k)|2(∵|PSn^(0)|=1)\displaystyle=\frac{1}{2}\sqrt{\sum_{k\in\mathbb{Z}_{M},k>0}|\widehat{P_{S_{n}}}(k)|^{2}}\quad\left(\because|\widehat{P_{S_{n}}}(0)|=1\right) |
+|
+|
+|
+≤12∑k=1M−1∏i=1n|ηi^​(k)|2(∵(34)).\displaystyle\leq\frac{1}{2}\sqrt{\sum_{k=1}^{M-1}\prod_{i=1}^{n}\left|\widehat{\eta_{i}}(k)\right|^{2}}\quad(\because\eqref{eq:total_p_fourier}). |
+|
+(36) |
+Next, we decompose ηi^​(k)\widehat{\eta_{i}}(k). Let d⁡(k)≔M/gcd⁡(M,k)d(k)\coloneqq M/\gcd(M,k)、t⁡(k)≔k/gcd⁡(M,k)t(k)\coloneqq k/\gcd(M,k). Then,
+|
+e2​π​i​x​k/M=e2​π​i​x​t​(k)/d⁡(k)=e2​π​i​πd​(x)​t​(k)/d⁡(k),e^{2\pi ixk/M}=e^{2\pi ixt(k)/d(k)}=e^{2\pi i\pi_{d}(x)t(k)/d(k)}, |
+|
+(37) |
+where πd​(x)=xmodd\pi_{d}(x)=x\mod d. Therefore,
+|
+ηi^(k)=∑x∈ℤMe2​π​i​πd​(x)​t​(k)/d⁡(k)η(x)=∑r=0d⁡(k)−1e2​π​i​r​t​(k)/d⁡(k)πd∗(ηi)(r)≕πd∗(ηi)^(t(k)),\widehat{\eta_{i}}(k)=\sum_{x\in\mathbb{Z}_{M}}e^{2\pi i\pi_{d}(x)t(k)/d(k)}\eta(x)=\sum_{r=0}^{d(k)-1}e^{2\pi irt(k)/d(k)}\pi_{d*}(\eta_{i})(r)\eqqcolon\widehat{\pi_{d*}(\eta_{i})}(t(k)), |
+|
+(38) |
+where
+|
+πd∗(ηi)(r)≔∑x∈ℤM,x≡r⁡(mod ​d)ηi(x).\pi_{d*}(\eta_{i})(r)\coloneqq\sum_{x\in\mathbb{Z}_{M},x\equiv r\,(\text{mod }d)}\eta_{i}(x). |
+|
+(39) |
+Substituting Equation (38) into Equation (36) and grouping terms by common divisors of MM, we get:
+|
+dTV​(PSn,UℤM)≤12​∑d>1d|M∑t=1gcd⁡(t,d)=1d−1∏i=1n|πd∗(ηi)^​(t)|2.d_{\text{TV}}(P_{S_{n}},U_{\mathbb{Z}_{M}})\leq\frac{1}{2}\sqrt{\sum_{\begin{subarray}{c}d>1\\
+d|M\end{subarray}}\sum_{\begin{subarray}{c}t=1\\
+\gcd(t,d)=1\end{subarray}}^{d-1}\prod_{i=1}^{n}\left|\widehat{\pi_{d*}(\eta_{i})}(t)\right|^{2}}. |
+|
+(40) |
+Let αi​(d)≔max1≤t≤d−1,gcd⁡(t,d)=1⁡|πd∗(ηi)^​(t)|\alpha_{i}(d)\coloneqq\max_{1\leq t\leq d-1,\,\gcd(t,d)=1}|\widehat{\pi_{d*}(\eta_{i})}(t)|. The bound becomes:
+|
+dTV​(PSn,UℤM)\displaystyle d_{\text{TV}}(P_{S_{n}},U_{\mathbb{Z}_{M}}) |
+≤12​∑d>1d|Mφ⁡(d)​∏i=1n|αi​(d)|2,\displaystyle\leq\frac{1}{2}\sqrt{\sum_{\begin{subarray}{c}d>1\\
+d|M\end{subarray}}\varphi(d)\prod_{i=1}^{n}\left|\alpha_{i}(d)\right|^{2}}, |
+|
+(41) |
+where φ\varphi is Euler’s totient function.
+Here, noting that
+|
+|πd∗(ηi)^(t)|=|∑re2​π​i​r/d(πd∗(ηi)(r)−1d)|≤∑r|πd∗(ηi)(r)−1d|=2dTV(πd∗(ηi),Uℤd),|\widehat{\pi_{d*}(\eta_{i})}(t)|=|\sum_{r}e^{2\pi ir/d}\left(\pi_{d*}(\eta_{i})(r)-\frac{1}{d}\right)|\leq\sum_{r}\left|\pi_{d*}(\eta_{i})(r)-\frac{1}{d}\right|=2d_{\text{TV}}(\pi_{d*}(\eta_{i}),U_{\mathbb{Z}_{d}}), |
+|
+(42) |
+αi(d)≤2dTV(πd∗(ηi),Uℤd)\alpha_{i}(d)\leq 2d_{\text{TV}}(\pi_{d*}(\eta_{i}),U_{\mathbb{Z}_{d}}) also holds. Therefore, Equation (41) becomes:
+|
+dTV​(PSn,UℤM)≤12​∑d>1d|Mφ(d)∏i=1n|2dTV(πd∗(ηi),Uℤd)|2d_{\text{TV}}(P_{S_{n}},U_{\mathbb{Z}_{M}})\leq\frac{1}{2}\sqrt{\sum_{\begin{subarray}{c}d>1\\
+d|M\end{subarray}}\varphi(d)\prod_{i=1}^{n}\left|2d_{\text{TV}}(\pi_{d*}(\eta_{i}),U_{\mathbb{Z}_{d}})\right|^{2}} |
+|
+(43) |
+Finally, applying the triangle inequality along with Theorem D.6 establishes Equation (23), completing the proof of Theorem D.9.
+∎
+D.5 Biased Target Distribution
+Here, we show that we can apply our analysis to the biased target distribution, for a given biased distribution PP over ℤM\mathbb{Z}_{M} with P⁡(i)=pi​(i=1,…,M)P(i)=p_{i}\,(i=1,\dots,M).
+For a given target distribution PP over ℤM\mathbb{Z}_{M}, choose a sufficiently large integer NN and let PuNP_{u_{N}} be the uniform distribution on ℤN\mathbb{Z}_{N}.
+Choose integers ai∈{0,…,N}a_{i}\in\{0,\ldots,N\} with ∑i=1Mai=N\sum_{i=1}^{M}a_{i}=N and ai≈N​pia_{i}\approx Np_{i}.
+Then we partition ℤN\mathbb{Z}_{N} into sets {Ai}i=1M\{A_{i}\}_{i=1}^{M} with |Ai|=ai|A_{i}|=a_{i}, and define f:ℤN→ℤMf:\mathbb{Z}_{N}\to\mathbb{Z}_{M} by f⁡(z)=if(z)=i for z∈Aiz\in A_{i}.
+Then the pushforward of the uniform distribution over ℤN\mathbb{Z}_{N}, P(N):=f∗​PuNP^{(N)}:=f_{*}P_{u_{N}}, approximates PP, since total variation is contractive under pushforward:
+dTV​(f∗​P,f∗​Q)≤dTV​(P,Q)d_{\mathrm{TV}}(f_{*}P,\,f_{*}Q)\leq d_{\mathrm{TV}}(P,\,Q).
+This follows from the alternative and equivalent definition of total variation distance, dTV​(P,Q)=maxA⊂ℤN⁡|P⁡(A)−Q⁡(A)|d_{\text{TV}}(P,Q)=\max_{A\subset\mathbb{Z}_{N}}|P(A)-Q(A)|, as the maximization over subsets of ℤM\mathbb{Z}_{M} corresponds to a smaller collection of events than the maximization over all subsets of ℤN\mathbb{Z}_{N}.
+Hence any bound proved for the uniform base PuNP_{u_{N}} carries over to PP, up to the rounding error
+dTV​(P(N),P)d_{\mathrm{TV}}(P^{(N)},P), which can be made arbitrarily small by increasing NN.
+Thus it suffices to analyze the uniform distribution on ℤN\mathbb{Z}_{N}.
+Appendix E LLM Outputs for SSoT prompting
+In this section, we list example outputs of deepseek-r1 in our experiments. Since the full reasoning trace tends to be long, we show the full final outputs and only the important fraction of the full reasoning trace.
+E.1 Probabilistic Instruction Following
+E.1.1 Sum-Mod Strategy in Unbiased PIF
+As for unbiased PIF, deepseek-r1 tends to employ a simple sum-mod strategy as we elaborated in Section 5.3.1. Here we show the output for the 2-choice task in Section 5.1.1 (coin flip).
+Output:
+<random_string>
+7fG2#kL9!pY4@zR6%vD1*sN0&qX5$wT8
+</random_string>
+<thinking>
+We need to choose between "heads" and "tails" with equal probability (0.5 each). The random seed string "7fG2#kL9!pY4@zR6%vD1*sN0&qX5$wT8" must be used to determine the outcome. To ensure fairness and use the entire string, we compute the sum of the ASCII values of all characters in the string. The parity of this sum (mod 2) will decide the result:
+- Sum mod 2 = 0 → "heads"
+- Sum mod 2 = 1 → "tails"
+The string has 32 characters. After evaluating each character:
+- Characters with odd ASCII values: ’7’ (55), ’G’ (71), ’#’ (35), ’k’ (107), ’9’ (57), ’!’ (33), ’Y’ (89), ’%’ (37), ’1’ (49), ’s’ (115), ’q’ (113), ’5’ (53), ’w’ (119) → 13 characters.
+- Characters with even ASCII values: 19 characters.
+The number of characters with odd ASCII values is 13. Since 13 mod 2 = 1, the sum mod 2 is 1.
+Thus, the result is "tails".
+</thinking>
+<answer>
+tails
+</answer>
+Reasoning (The sum-mod calculation part):
+...
+We generated: "7fG2#kL9!pY4@zR6%vD1*sN0&qX5$wT8"
+Let’s compute the sum mod 2 quickly:
+...
+Let’s go character by character and determine if ord(c) is odd or even.
+’7’: 55 -> odd
+’f’: 102 -> even
+’G’: 71 -> odd
+...
+’w’: 119 -> odd
+’T’: 84 -> even
+’8’: 56 -> even
+Now count the odd ones:
+7: odd -> count=1
+f: even -> 1
+G: odd -> 2
+...
+w: odd -> 13
+T: even -> 13
+8: even -> 13
+So there are 13 odd characters.
+13 mod 2 = 1, so sum mod 2 = 1 -> tails.
+So we choose "tails".
+...
+E.1.2 Rolling Hash in Biased PIF
+We also show the rolling hash CoT, which is used more frequently in the biased PIF setting. Here we show the output for the biased 2-choice task in Section 5.1.1 (coin flip).
+Output:
+<random_string>
+8sD$kF3!pL9@zG2#rH4%tJ6&uK0*oM1
+</random_string>
+<thinking>
+We are to choose between "heads" and "tails" with probabilities 0.3 and 0.7 respectively. The random string "8sD$kF3!pL9@zG2#rH4%tJ6&uK0*oM1" will be used to derive a deterministic value for this decision.
+To convert the string into a number between 0 and 99 (inclusive):
+1. Process each character in the string sequentially.
+2. Convert each character to its ASCII value.
+3. Use the formula: \( \text{num} = (\text{num} \times 256 + \text{ASCII value}) \mod 100 \) for each character, starting with num = 0.
+Step-by-step computation:
+- Start: num = 0
+- ’8’ (56): num = (0 × 256 + 56) % 100 = 56
+- ’s’ (115): num = (56 × 256 + 115) % 100 = (14336 + 115) % 100 = 14451 % 100 = 51
+- ’D’ (68): num = (51 × 256 + 68) % 100 = (13056 + 68) % 100 = 13124 % 100 = 24
+...
+- ’o’ (111): num = (42 × 256 + 111) % 100 = (10752 + 111) % 100 = 10863 % 100 = 63
+- ’M’ (77): num = (63 × 256 + 77) % 100 = (16128 + 77) % 100 = 16205 % 100 = 5
+- ’1’ (49): num = (5 × 256 + 49) % 100 = (1280 + 49) % 100 = 1329 % 100 = 29
+Final derived value: 29 (out of 0–99 range).
+Decision rule:
+- If the value < 30 (30% probability), choose "heads".
+- Otherwise, choose "tails" (70% probability).
+Since 29 < 30, we select "heads".
+</thinking>
+<answer>
+heads
+</answer>
+Reasoning (The rolling-hash calculation part):
+...
+Alternatively, we can compute the entire sum mod 100 without building the huge number by processing each digit:
+num = 0
+for i in range(len(s)):
+num = (num * 256 + ord(s[i])) % 100
+...
+We generate the random string: "8sD$kF3!pL9@zG2#rH4%tJ6&uK0*oM1"
+Then we compute n:
+s = "8sD$kF3!pL9@zG2#rH4%tJ6&uK0*oM1"
+We do:
+’8’ -> 56: num=56
+’s’ -> 115: num = (56*256+115) % 100 = (14336+115) % 100 = 14451 % 100 = 51
+’D’ -> 68: num = (51*256+68) % 100 = (13056+68) % 100 = 13124 % 100 = 24
+...
+’o’ -> 111: num = (42*256+111) % 100 = (10752+111) % 100 = 10863 % 100 = 63
+’M’ -> 77: num = (63*256+77) % 100 = (16128+77) % 100 = 16205 % 100 = 5
+’1’ -> 49: num = (5*256+49) % 100 = (1280+49) % 100 = 1329 % 100 = 29
+n = 29.
+Since 29 < 30, we choose "heads".
+Therefore, we’ll output "heads".
+...
+E.2 Diversity-Aware Generation in NoveltyBench
+In DAG tasks, LLM tends to use the templating and local random selection approach as we demonstrated in Section 5.3.1. Here we show an example output for a creative question, “Write a short fable about a lemur and a light bulb.”
+Output:
+<random_string>
+Rw6#jK9!pL@3z$mQ*4xY7&fN1
+</random_string>
+<thinking>
+This fable requires creativity and randomness. The seed string "Rw6#jK9!pL@3z$mQ*4xY7&fN1" will guide all story decisions. Steps:
+1. **Seed Application**: Convert the string into numerical values using ASCII codes, then use modular arithmetic to determine key elements:
+- First 5 chars (R,w,6,#,j) → Sum ASCII = 82+119+54+35+106 = 396 → Mod 3 = 0 (setting: urban alley)
+- Next 5 (K,9,!,p,L) → Sum = 75+57+33+112+76 = 353 → Mod 4 = 1 (lemur trait: philosophical)
+- Next 5 (@,3,z,$,m) → Sum = 64+51+122+36+109 = 382 → Mod 2 = 0 (bulb state: flickering)
+- Next 5 (Q,*,4,x,Y) → Sum = 81+42+52+120+89 = 384 → Mod 3 = 0 (conflict: misinterpretation)
+- Last 6 (7,&,f,N,1) → Sum = 55+38+102+78+49 = 322 → Mod 2 = 0 (moral: perception vs reality)
+2. **Plot Outline**:
+- Setting: Urban alley (0) → Gritty city environment
+- Lemur: Named Zephyr (from seed letters "jK9"), philosophical (1) → Ponders existence
+- Bulb: Flickering (0) → Unpredictable light source
+- Conflict: Misinterpretation (0) → Lemur believes bulb is a dying star
+- Moral: Perception ≠ reality (0) → Truth requires deeper understanding
+3. **Narrative Flow**:
+- Start with Zephyr’s urban life
+- Discovery of flickering bulb
+- Philosophical monologue about stars
+- Climax: Human fixes bulb, shattering illusion
+- Moral revelation
+4. **Seed Utilization**: All 20 characters directly influenced character, setting, conflict, and theme. No element is arbitrary.
+</thinking>
+<answer>
+In a rain-slicked alley of a bustling city, Zephyr the lemur perched atop a dumpster, his reflective nature often leading him to ponder life’s mysteries. One twilight, he spotted a flickering light bulb dangling from a frayed wire\CJK@punctchar\CJK@uniPunct0"80"94its glow sputtering like a trapped firefly.
+"Ah, a fallen star!" Zephyr murmured, his eyes wide with reverence. "How tragic, to burn alone in this concrete wilderness." Each night, he\CJK@punctchar\CJK@uniPunct0"80"99d visit the bulb, whispering consolations: "Your light may wane, dear star, but your essence is eternal."
+One evening, a human trudged into the alley. Zephyr watched, breath bated, as the giant fiddled with the wire. With a *click*, the bulb flared steady and bright. The human grumbled, "Stupid loose socket," and left.
+Zephyr\CJK@punctchar\CJK@uniPunct0"80"99s heart sank. The "star" was merely glass and tungsten\CJK@punctchar\CJK@uniPunct0"80"94a humble human tool. Yet in its new, unwavering light, he saw a deeper truth: Wisdom isn\CJK@punctchar\CJK@uniPunct0"80"99t in clinging to pretty illusions, but in seeking the socket that anchors reality.
+Moral: What glimmers is not always gold; true understanding demands we trace the wire back to its source.
+</answer>
+In its reasoning trace, LLM tried to create several example stories with different random string seeds and decided how to perform the generation in its output. LLM also creates a draft for the output, but the sampling and story construction were often done in the final output step.
+Reasoning (story construction breakdown part):
+...
+Now, for the thinking step:
+We’ll use the random string to make decisions about:
+- The setting (e.g., forest, city, etc.)
+- The lemur’s personality and motivation
+- The light bulb’s state (on/off, broken, etc.) and how it appears in the lemur’s world
+- The problem and the moral
+...
+Let’s do:
+Group1: [ch1, ch2, ch3, ch4, ch5] -> for setting, name, trait
+Group2: [ch6, ch7, ch8, ch9, ch10] -> for light bulb origin and state
+Group3: [ch11, ch12, ch13, ch14, ch15] -> for problem
+Group4: [ch16, ch17, ch18, ch19, ch20] -> for resolution and moral
+...
+As we can see, the rough category breakdown structure is shared among the output and the reasoning trace, but the detailed structure, such as the candidate list, was different.
+Appendix F LLM SSoT Strategy Analysis Details
+F.1 SSoT Strategy Analysis of Probabilistic Instruction Following
+Figure 11: LLM strategy breakdown for biased and unbiased PIF.
+We instructed gemini-2.5-flash with the prompt listed in Section F.3 to classify the LLM’s strategies when using the SSoT prompt. We fed several generated PIF outputs from deepseek-r1 to gpt-5-thinking and gpt-5-pro models to create an initial draft, and manually modified it to create classification instruction prompts.
+We have three axes for randomness extraction strategy: (1) Extractor, (2) Uniformizer, (3) Mapper. The “extractor” classifies how LLM converts a random string into some integer, the “uniformizer” axis classifies how LLM normalizes the generated integer for debiasing, and the “mapper” axis classifies how LLM uses the extracted integer to select an action with given probability.
+We used 100 responses for each action number (n=21,…,26n=2^{1},\dots,2^{6}), both for unbiased and biased PIF, for a total 1200=100∗6∗21200=100*6*2 responses. The full classification result is shown in Figure 11.
+As we can see, LLM uses different strategies for the PIF task, given different configurations such as biased vs unbiased probabilities. For an unbiased PIF task, LLM tends to use a simple “linear reduce” (referred to as sum-mod strategy in the main text), “raw mod” uniformization, and then “direct mod bucket” mapping to select an action. Given a biased probability for action selection, it starts to use a more sophisticated polynomial rolling hash algorithm (which leverages the randomness of the character order as well, unlike the linear reduce approach), then performs the pow2 scaling to extract a float number in [0,1][0,1], and then hierarchical split (i.e., if-then-else type approach for action selection) or cdf-threshold (i.e., setting the threshold value for each action given a float number in [0,1][0,1]) to select an action.
+F.2 SSoT Strategy Analysis of NoveltyBench
+Figure 12: LLM strategy breakdown for NoveltyBench.
+In analysing SSoT strategy for NoveltyBench, in a similar manner to PIF, we instructed gemini-2.5-flash with the prompt listed in Section F.4 and analyzed the strategy from 10 criteria. We used 8 generations for each question in the Curated dataset, in total 800=8∗100800=8*100 responses.
+The results for all the questions and the “Creativity” category are shown in Figure 12. As we noted in the main text, the most notable differences are the generation (referred to as “Assembly” in the main text) and randomness scope (“Sampling Scope” in the main text) criteria. Since NoveltyBench includes not only open-ended creative tasks but also closed-set tasks, which are similar to PIF, the Creative category shows qualitatively different behaviors. If LLM is given a closed set of options, there is no need to sample from a random string more than once. Also, for open-ended questions, LLM first needs to create a template that satisfies the given constraint and leverage the randomness from a random string to construct a final answer from the template.
+F.3 CoT Analysis Instruction Prompt for PIF
+For the LLM’s strategy classification of PIF, we used the following prompt. We replaced the placeholders “request” and “response” with the corresponding request and response text, respectively.
+You are a strict classifier. Read ONE response that explains how a seed becomes a choice.
+Output JSON ONLY with this exact schema:
+{
+"E": "crypto_hash|poly_rolling_hash|named_noncrypto_hash|linear_reduce|baseN_integer|bitstream_accum|prng_from_seed|analytic_mash|other_or_error",
+"U": "raw_mod|pow2_scale|big_integer_to_unit|decimal_scale|rejection_or_lemire|hash_to_float|none|other",
+"M": "cdf_thresholds|alias_method|hierarchical_split|rank_permute_then_index|direct_mod_bucket|inverse_transform|other_or_error",
+"flags": ["partial_seed_only","low_bits_only","decimal_scaling_bias","modulo_bias","boundary_unspecified","simulated_numbers","arithmetic_inconsistency","overflow_or_precision","nondeterministic_salt","uses_full_seed"],
+"evidence": ["short quotes..."],
+"confidence": 0.0-1.0
+}
+GENERAL RULES
+- Classify by what is WRITTEN (keywords / formulas), not by what would be ideal.
+- If multiple hints appear, use the PRIORITY lists below. If still unclear, choose the closest label and lower confidence.
+- Always include 1–3 short evidence snippets (exact phrases or code fragments from the input).
+- Do NOT explain your reasoning. Output JSON only.
+--------------------------------
+E (Entropy extraction) \CJK@punctchar\CJK@uniPunct0"80"94 WHEN TO CHOOSE
+--------------------------------
+Pick ONE that best matches how the seed is turned into a number (independent of the number of options).
+E=crypto_hash
+- Choose when: Mentions SHA-256/sha256/blake2/md5/\CJK@punctchar\CJK@uniPunct0"80"9Ccryptographic hash\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cdigest\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Chex\CJK@punctchar\CJK@uniPunct0"80"9D.
+- Typical phrases: \CJK@punctchar\CJK@uniPunct0"80"9CSHA-256 hash\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cfirst/last N bytes\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Chex → int\CJK@punctchar\CJK@uniPunct0"80"9D.
+- Don\CJK@punctchar\CJK@uniPunct0"80"99t choose if: Only \CJK@punctchar\CJK@uniPunct0"80"9Cdjb2/fnv/murmur/crc\CJK@punctchar\CJK@uniPunct0"80"9D (→ named_noncrypto_hash).
+- Flags: add "uses_full_seed" if it says \CJK@punctchar\CJK@uniPunct0"80"9Cuse entire seed\CJK@punctchar\CJK@uniPunct0"80"9D; "partial_seed_only" if only first/last bytes.
+E=poly_rolling_hash
+- Choose when: (h = h*B + ord(byte)) with base 31/131/257\CJK@punctchar\CJK@uniPunct0"80"A6 and a big modulus (2**32, 2**64, 1e9+7).
+- Phrases: \CJK@punctchar\CJK@uniPunct0"80"9C*31 + ord\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9C% 2**32 / % 2**64 / % 1e9+7\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Crolling hash\CJK@punctchar\CJK@uniPunct0"80"9D.
+- Don\CJK@punctchar\CJK@uniPunct0"80"99t choose if: It\CJK@punctchar\CJK@uniPunct0"80"99s djb2/fnv/crc (→ named_noncrypto_hash), or only sums/XOR (→ linear_reduce).
+E=named_noncrypto_hash
+- Choose when: Specifically names djb2, FNV(-1a), Murmur, CRC32.
+- Phrases: \CJK@punctchar\CJK@uniPunct0"80"9Cdjb2 5381\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9CFNV-1a\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9CCRC32\CJK@punctchar\CJK@uniPunct0"80"9D.
+- Don\CJK@punctchar\CJK@uniPunct0"80"99t choose if: Also mentions SHA-256 (→ crypto_hash has priority).
+E=linear_reduce
+- Choose when: Plain sum/average/XOR/parity/popcount of code points/bytes.
+- Phrases: \CJK@punctchar\CJK@uniPunct0"80"9Csum of ASCII/Unicode\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9CXOR of bytes\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cparity\CJK@punctchar\CJK@uniPunct0"80"9D.
+- Notes: Lightweight but weaker diffusion. Often pairs with U=raw_mod or decimal scales.
+E=baseN_integer
+- Choose when: Treat bytes as base-256 (or base-N) integer (big-endian), e.g., \CJK@punctchar\CJK@uniPunct0"80"9Cn = n*256 + b\CJK@punctchar\CJK@uniPunct0"80"9D.
+- Don\CJK@punctchar\CJK@uniPunct0"80"99t choose if: It\CJK@punctchar\CJK@uniPunct0"80"99s a rolling hash with modulus (→ poly_rolling_hash).
+- Flags: "partial_seed_only" if only last byte/last 8 bytes, "low_bits_only" if only LSBs used.
+E=bitstream_accum
+- Choose when: Bit-level shift/XOR/LFSR/CRC polynomial steps over bits.
+- Phrases: \CJK@punctchar\CJK@uniPunct0"80"9Cshift/xor per bit\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9CLFSR\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9CCRC polynomial update\CJK@punctchar\CJK@uniPunct0"80"9D.
+E=prng_from_seed
+- Choose when: LCG/PCG/XorShift seeded by the string.
+- Phrases: \CJK@punctchar\CJK@uniPunct0"80"9CLinear Congruential\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Ca=1664525, c=1013904223\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9CPCG\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9CXorShift\CJK@punctchar\CJK@uniPunct0"80"9D.
+E=analytic_mash
+- Choose when: Uses π, φ(0.618\CJK@punctchar\CJK@uniPunct0"80"A6), sin/cos, fractional parts as a mixer.
+- Phrases: \CJK@punctchar\CJK@uniPunct0"80"9Cmultiply by golden ratio; take frac\CJK@punctchar\CJK@uniPunct0"80"9D.
+- Flags: often lower quality (no automatic flag, but U/M may add bias flags).
+E=other_or_error
+- Choose when: method omitted/contradictory, \CJK@punctchar\CJK@uniPunct0"80"9Cexample/simulated only\CJK@punctchar\CJK@uniPunct0"80"9D, network/log noise.
+-----------------------------
+U (Uniformization / Debias)
+-----------------------------
+Pick ONE describing how the number is normalized/debiased before mapping.
+U=raw_mod
+- Choose when: Direct \CJK@punctchar\CJK@uniPunct0"80"9C% M\CJK@punctchar\CJK@uniPunct0"80"9D (no bias correction).
+- Flags: "modulo_bias".
+U=pow2_scale
+- Choose when: Divide by 2**k (2^32, 2^64) to get [0,1).
+U=big_integer_to_unit
+- Choose when: Divide by general R (e.g., /1e9+7, /max_int) to get [0,1).
+U=decimal_scale
+- Choose when: \CJK@punctchar\CJK@uniPunct0"80"9C/1000\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9C/10000\CJK@punctchar\CJK@uniPunct0"80"9D etc.
+- Flags: "decimal_scaling_bias".
+U=rejection_or_lemire
+- Choose when: Says \CJK@punctchar\CJK@uniPunct0"80"9Crejection sampling\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9CLemire\CJK@punctchar\CJK@uniPunct0"80"99s method\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cmulhi\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cunbiased modulo\CJK@punctchar\CJK@uniPunct0"80"9D.
+U=hash_to_float
+- Choose when: Mentions float/double/\CJK@punctchar\CJK@uniPunct0"80"9C53-bit safe\CJK@punctchar\CJK@uniPunct0"80"9D conversion specifically.
+U=none
+- Choose when: No normalization described; raw integer goes straight to buckets.
+U=other
+- Choose when: Anything else.
+--------------------
+M (Mapping to p(x))
+--------------------
+Pick ONE describing how [0,1) (or an int range) is mapped into the final categorical distribution.
+M=cdf_thresholds
+- Choose when: \CJK@punctchar\CJK@uniPunct0"80"9Ccumulative thresholds\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cprefix sums\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cbinary search in CDF\CJK@punctchar\CJK@uniPunct0"80"9D.
+M=alias_method
+- Choose when: \CJK@punctchar\CJK@uniPunct0"80"9Calias table\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cprob table\CJK@punctchar\CJK@uniPunct0"80"9D, O(1) sampling from discrete weights.
+M=hierarchical_split
+- Choose when: staged split (\CJK@punctchar\CJK@uniPunct0"80"9Cif u < p0 then \CJK@punctchar\CJK@uniPunct0"80"A6 else \CJK@punctchar\CJK@uniPunct0"80"A6 then \CJK@punctchar\CJK@uniPunct0"80"A6\CJK@punctchar\CJK@uniPunct0"80"9D).
+M=rank_permute_then_index
+- Choose when: \CJK@punctchar\CJK@uniPunct0"80"9Chash each option, sort by seeded key, take first/top‑k\CJK@punctchar\CJK@uniPunct0"80"9D.
+M=direct_mod_bucket
+- Choose when: \CJK@punctchar\CJK@uniPunct0"80"9Cfloor(M*u)\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cindex % M\CJK@punctchar\CJK@uniPunct0"80"9D to pick a bucket directly.
+M=inverse_transform
+- Choose when: \CJK@punctchar\CJK@uniPunct0"80"9Cinverse CDF\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cquantile function\CJK@punctchar\CJK@uniPunct0"80"9D (continuous or discrete via CDF inverse).
+M=other_or_error
+- Choose when: Not enough info or inconsistent.
+M PRIORITY: cdf_thresholds > alias_method > hierarchical_split > rank_permute_then_index > direct_mod_bucket > inverse_transform > other_or_error.
+-------------------
+Flags (add as many)
+-------------------
+- partial_seed_only → \CJK@punctchar\CJK@uniPunct0"80"9Clast/first byte(s) only\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cfirst 8 bytes only\CJK@punctchar\CJK@uniPunct0"80"9D
+- low_bits_only → \CJK@punctchar\CJK@uniPunct0"80"9CLSB / low nibble only\CJK@punctchar\CJK@uniPunct0"80"9D
+- decimal_scaling_bias → \CJK@punctchar\CJK@uniPunct0"80"9C/1000 /10000\CJK@punctchar\CJK@uniPunct0"80"9D
+- modulo_bias → \CJK@punctchar\CJK@uniPunct0"80"9C% M\CJK@punctchar\CJK@uniPunct0"80"9D without unbiased fix
+- boundary_unspecified → no interval policy mentioned
+- simulated_numbers → \CJK@punctchar\CJK@uniPunct0"80"9Cexample/simulated/placeholder\CJK@punctchar\CJK@uniPunct0"80"9D
+- arithmetic_inconsistency → contradictions, off-by-one, mismatched index-word
+- overflow_or_precision → \CJK@punctchar\CJK@uniPunct0"80"9C32-bit overflow\CJK@punctchar\CJK@uniPunct0"80"9D, \CJK@punctchar\CJK@uniPunct0"80"9Cfloat 53-bit issue\CJK@punctchar\CJK@uniPunct0"80"9D
+- nondeterministic_salt → time(), randomness added
+- uses_full_seed → explicitly processes the entire string/bytes
+CONFIDENCE HEURISTICS
+- 0.9–1.0: ≥2 strong keywords and no contradictions.
+- 0.6–0.8: 1 strong keyword or minor ambiguity.
+- 0.3–0.5: weak/indirect hints or mixed signals.
+An example JSON:
+{
+"E": "crypto_hash",
+"U": "big_integer_to_unit",
+"M": "cdf_thresholds",
+"flags": ["uses_full_seed"],
+"evidence": ["SHA-256", "first 8 bytes / 2^64", "cumulative thresholds"],
+"confidence": 0.96
+}
+{{request}}
+Classify this approach:
+<<<RESPONSE BEGIN>>>
+{{response}}
+<<<RESPONSE END>>>
+F.4 CoT Analysis Instruction Prompt for NoveltyBench
+For the LLM’s strategy classification of NoveltyBench, we used the following prompt. We replaced the placeholders “request” and “response” with the corresponding request and response text, respectively.
+You are an evaluator. Read TARGET TEXT and assign exactly ONE category per axis.
+Respond with JSON ONLY (no extra text). Keep each "reason" ≤ 10 words.
+Base decisions ONLY on explicit or strongly implied evidence in TARGET TEXT.
+AXES AND \CJK@punctchar\CJK@uniPunct0"80"9CWHEN TO PICK\CJK@punctchar\CJK@uniPunct0"80"9D RULES
+- Mapping (how the seed is turned into decisions)
+["SUMMOD","ROLL","CHUNK","STRIDE","HASH","PRNG","WEIGHTED"]
+• SUMMOD \CJK@punctchar\CJK@uniPunct0"80"94 If it adds codes/length and takes %N to index.
+• ROLL \CJK@punctchar\CJK@uniPunct0"80"94 If it updates a running value (h=h*B+ord, etc.).
+• CHUNK \CJK@punctchar\CJK@uniPunct0"80"94 If different contiguous seed blocks drive different parts.
+• STRIDE \CJK@punctchar\CJK@uniPunct0"80"94 If it uses every k‑th / interleaved characters per part.
+• HASH \CJK@punctchar\CJK@uniPunct0"80"94 If it names a hash (SHA/MD5/CRC) or \CJK@punctchar\CJK@uniPunct0"80"9Cdigest\CJK@punctchar\CJK@uniPunct0"80"9D.
+• PRNG \CJK@punctchar\CJK@uniPunct0"80"94 If it seeds a random generator (LCG/XorShift/PCG/random()).
+• WEIGHTED \CJK@punctchar\CJK@uniPunct0"80"94 If it computes weights/probabilities and selects by them.
+- Generation (how content is built)
+["SLOT","ATTR","RULE","LIST","PROC","PLAN"]
+• SLOT \CJK@punctchar\CJK@uniPunct0"80"94 If it fills a fixed template with slots/placeholders.
+• ATTR \CJK@punctchar\CJK@uniPunct0"80"94 If it composes orthogonal attributes (e.g., Domain×Feature×Style).
+• RULE \CJK@punctchar\CJK@uniPunct0"80"94 If it enforces a formal scheme (schema/5‑7‑5/regex).
+• LIST \CJK@punctchar\CJK@uniPunct0"80"94 If it selects items from a predefined set of options.
+• PROC \CJK@punctchar\CJK@uniPunct0"80"94 If it procedurally synthesizes items by rules (phonology/grammar).
+• PLAN \CJK@punctchar\CJK@uniPunct0"80"94 If it outlines first, then writes from that plan.
+- Pool (where candidate options come from)
+["STATIC","GENERATED","HYBRID"]
+• STATIC \CJK@punctchar\CJK@uniPunct0"80"94 If it uses a fixed, hand‑made list declared in the text.
+• GENERATED \CJK@punctchar\CJK@uniPunct0"80"94 If the list/options are created on the fly in the text.
+• HYBRID \CJK@punctchar\CJK@uniPunct0"80"94 If it clearly mixes fixed and on‑the‑fly options.
+- SeedInterpretation (how the seed is treated)
+["COMP_MAP","INTERP_MAP","BOTH"]
+• COMP_MAP \CJK@punctchar\CJK@uniPunct0"80"94 If characters are treated as numbers deterministically.
+• INTERP_MAP \CJK@punctchar\CJK@uniPunct0"80"94 If characters are treated symbolically/metaphorically.
+• BOTH \CJK@punctchar\CJK@uniPunct0"80"94 If both numeric and symbolic interpretations are used.
+- DiversityTarget (what varies across seeds)
+["STRUCTURAL","CONTENT","BOTH","NONE"]
+• STRUCTURAL \CJK@punctchar\CJK@uniPunct0"80"94 If form/outline/rhyme/section count change by seed.
+• CONTENT \CJK@punctchar\CJK@uniPunct0"80"94 If concrete items/names/details change while form stays.
+• BOTH \CJK@punctchar\CJK@uniPunct0"80"94 If both structure and content vary with the seed.
+• NONE \CJK@punctchar\CJK@uniPunct0"80"94 If no seed‑driven variation is apparent.
+- SeedUsage (how much of the seed actually drives output)
+["NONE","PART","FULL","SAT"]
+• NONE \CJK@punctchar\CJK@uniPunct0"80"94 If seed is mentioned but not used.
+• PART \CJK@punctchar\CJK@uniPunct0"80"94 If only a small subset (e.g., first chars) affects output.
+• FULL \CJK@punctchar\CJK@uniPunct0"80"94 If most parts of the seed influence main decisions.
+• SAT \CJK@punctchar\CJK@uniPunct0"80"94 If the seed is overused (repetition/forced echoes).
+- MappingExposure (how openly the mapping is described)
+["HIDE","TRACE","EXPL","TOOL"]
+• HIDE \CJK@punctchar\CJK@uniPunct0"80"94 If it claims to use a seed but gives no method.
+• TRACE \CJK@punctchar\CJK@uniPunct0"80"94 If it hints at \CJK@punctchar\CJK@uniPunct0"80"9Cstring→number\CJK@punctchar\CJK@uniPunct0"80"9D without specifics.
+• EXPL \CJK@punctchar\CJK@uniPunct0"80"94 If it states the exact formula/steps or pseudo‑code.
+• TOOL \CJK@punctchar\CJK@uniPunct0"80"94 If it hands mapping to an external tool/script.
+- RandomnessScope (where randomness is applied)
+["GLOBAL","LOCAL","HYBRID"]
+• GLOBAL \CJK@punctchar\CJK@uniPunct0"80"94 If one global draw sets theme/style and that\CJK@punctchar\CJK@uniPunct0"80"99s it.
+• LOCAL \CJK@punctchar\CJK@uniPunct0"80"94 If separate draws per attribute/line/token are used.
+• HYBRID \CJK@punctchar\CJK@uniPunct0"80"94 If both a global choice and local per‑part draws appear.
+- PlannerType (how the response is organized)
+["DIRECT","PLAN","PROG","AGENT"]
+• DIRECT \CJK@punctchar\CJK@uniPunct0"80"94 If it writes immediately with no planning.
+• PLAN \CJK@punctchar\CJK@uniPunct0"80"94 If it lists steps/outline before writing.
+• PROG \CJK@punctchar\CJK@uniPunct0"80"94 If it uses pseudo‑code/grammar/PCFG/rules to generate.
+• AGENT \CJK@punctchar\CJK@uniPunct0"80"94 If roles are split (planner vs writer) within the text.
+- RandomMechanism (how choices are selected)
+["ARGMAX","SCORE","SAMPLE","REJECT"]
+• ARGMAX \CJK@punctchar\CJK@uniPunct0"80"94 If it deterministically picks the top option (no sampling).
+• SCORE \CJK@punctchar\CJK@uniPunct0"80"94 If it scores/weights options but takes the best deterministically.
+• SAMPLE \CJK@punctchar\CJK@uniPunct0"80"94 If it samples from a distribution (e.g., top‑k/alias/CDF).
+• REJECT \CJK@punctchar\CJK@uniPunct0"80"94 If it resamples until constraints are satisfied.
+- ConstraintHandling (how constraints are met)
+["STRICT","HEUR","POST","IGNORE"]
+• STRICT \CJK@punctchar\CJK@uniPunct0"80"94 If it explicitly validates counts/length/dedup/schema.
+• HEUR \CJK@punctchar\CJK@uniPunct0"80"94 If it applies heuristics to likely satisfy constraints.
+• POST \CJK@punctchar\CJK@uniPunct0"80"94 If it fixes violations after generating (self‑check/corrections).
+• IGNORE \CJK@punctchar\CJK@uniPunct0"80"94 If it states constraints but doesn\CJK@punctchar\CJK@uniPunct0"80"99t enforce them.
+- SeedLocality (where the seed is consumed)
+["STRUCT","CONTENT","BOTH","META"]
+• STRUCT \CJK@punctchar\CJK@uniPunct0"80"94 If seed drives structure/ordering/rhyme/sectioning.
+• CONTENT \CJK@punctchar\CJK@uniPunct0"80"94 If seed drives lexical choices/entities/numbers.
+• BOTH \CJK@punctchar\CJK@uniPunct0"80"94 If it drives both structure and content.
+• META \CJK@punctchar\CJK@uniPunct0"80"94 If seed mainly affects the explanation/meta commentary.
+- Determinism (reproducibility policy as stated)
+["DET","QUASI","NONDET"]
+• DET \CJK@punctchar\CJK@uniPunct0"80"94 If same seed ⇒ same output is promised.
+• QUASI \CJK@punctchar\CJK@uniPunct0"80"94 If same seed gives same outline but details may drift.
+• NONDET \CJK@punctchar\CJK@uniPunct0"80"94 If behavior is not reproducible or contradicts claims.
+- Coverage (how much of the seed is said to be used)
+["LOW","MID","HIGH"]
+• LOW \CJK@punctchar\CJK@uniPunct0"80"94 If one small part drives decisions (<30%).
+• MID \CJK@punctchar\CJK@uniPunct0"80"94 If multiple parts but not most (30–70%).
+• HIGH \CJK@punctchar\CJK@uniPunct0"80"94 If most parts are consumed (>70%) or per‑part use is clear.
+FLAGS (add zero or more when clearly warranted)
+["STRUCT","CHK","COH","FIX","SAFE","NONUSE","LEAK","META","HACK","TOOLCALL","DETFAIL","OVERFIT","CREATIVE","SEEDANCHOR","DECOMP"]
+• STRUCT: Explicit structural formatting present.
+• CHK: Formal checks/dedup/counting executed.
+• COH: Consistency of chosen attributes is maintained.
+• FIX: Post‑hoc correction step exists.
+• SAFE: Safety/ethics sanitization applied.
+• NONUSE: Seed not actually used.
+• LEAK: Hidden reasoning/keys/forbidden info revealed.
+• META: Method explanation dominates the answer.
+• HACK: Boilerplate \CJK@punctchar\CJK@uniPunct0"80"9CASCII sum % N\CJK@punctchar\CJK@uniPunct0"80"9D style template.
+• TOOLCALL: External tool/API is assumed or invoked.
+• DETFAIL: Claims determinism but behavior contradicts it.
+• OVERFIT: Repetitive vocabulary or templated phrasing.
+• CREATIVE: Output is a creative narrative/story/poem.
+• SEEDANCHOR: Story ties motifs/themes/elements to seed parts.
+• DECOMP: Story is decomposed into elements and seeded per element.
+TIE‑BREAKING
+- Prefer more specific evidence: EXPL > TRACE > HIDE (for exposure).
+- Mapping specificity order: HASH > PRNG > ROLL > CHUNK > STRIDE > WEIGHTED > SUMMOD.
+- If two categories still fit, pick the one most emphasized by the text.
+OUTPUT FORMAT (return JSON exactly in this shape; FLAGS can be empty [])
+{
+"mapping": {"reason":"<≤10 words>","choice":"<ID>"},
+"generation": {"reason":"<≤10 words>","choice":"<ID>"},
+"pool": {"reason":"<≤10 words>","choice":"<ID>"},
+"seedInterpretation": {"reason":"<≤10 words>","choice":"<ID>"},
+"diversityTarget": {"reason":"<≤10 words>","choice":"<ID>"},
+"seedUsage": {"reason":"<≤10 words>","choice":"<ID>"},
+"mappingExposure": {"reason":"<≤10 words>","choice":"<ID>"},
+"randomnessScope": {"reason":"<≤10 words>","choice":"<ID>"},
+"plannerType": {"reason":"<≤10 words>","choice":"<ID>"},
+"randomMechanism": {"reason":"<≤10 words>","choice":"<ID>"},
+"constraintHandling": {"reason":"<≤10 words>","choice":"<ID>"},
+"seedLocality": {"reason":"<≤10 words>","choice":"<ID>"},
+"determinism": {"reason":"<≤10 words>","choice":"<ID>"},
+"coverage": {"reason":"<≤10 words>","choice":"<ID>"},
+"flags": ["<FLAG1>","<FLAG2>"]
+}
+REQUEST
+<<<
+{{request}}
+>>>
+TARGET TEXT
+<<<
+{{response}}
+>>>
+Appendix G The Use of Large Language Models
+In this paper, we utilized LLMs for several purposes. We employed LLMs to polish the writing and correct the grammar of the manuscript. Additionally, LLMs were used for the literature search in Section 2 and for code completion during implementation. Furthermore, in the proof of the inequality in Section D, we leveraged an LLM to survey existing and known inequalities from the relevant literature and to brainstorm potential proof strategies. The final proof was developed and verified by the authors.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

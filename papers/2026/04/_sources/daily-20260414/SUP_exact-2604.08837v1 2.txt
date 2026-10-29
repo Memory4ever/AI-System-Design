@@ -1,0 +1,773 @@
+Discrete Meanflow Training Curriculum
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Preliminary: The MeanFlow Identity
+3 Method: Training Curriculum
+4 Experiments
+4.1 Unconditional CIFAR-10
+4.2 ImageNet 256x256, SD-VAE latents
+5 Conclusion and Limitations
+References
+A Appendix
+A.1 Proofs
+A.2 Algorithm Overview
+A.3 Configurations
+A.4 Uncurated Samples CIFAR-10
+License: CC BY 4.0
+arXiv:2604.08837v1 [cs.LG] 10 Apr 2026
+Discrete Meanflow Training Curriculum
+Chia-Hong Hsu
+Affiliation: Department of Computer Science
+Affiliation: University of British Columbia
+Affiliation: Vancouver, BC, Canada
+Email: chsu35@student.ubc.ca
+Frank Wood
+Affiliation: Department of Computer Science
+Affiliation: University of British Columbia
+Affiliation: Vancouver, BC, Canada
+Email: fwood@cs.ubc.ca
+Abstract
+Flow-based image generative models exhibit stable training and produce high quality samples when using multi-step sampling procedures.
+One-step generative models can produce high quality image samples but can be difficult to optimize as they often exhibit unstable training dynamics.
+Meanflow models exhibit excellent few-step sampling performance and tantalizing one-step sampling performance.
+Notably, MeanFlow models that achieve this have required extremely large training budgets.
+We significantly decrease the amount of computation and data budget it takes to train Meanflow models by noting and exploiting a particular discretization of the Meanflow objective that yields a consistency property which we formulate into a “Discrete Meanflow” (DMF) Training Curriculum.
+Initialized with a pretrained Flow Model, DMF curriculum reaches one-step FID 3.36 on CIFAR-10 in only 2000 epochs.
+We anticipate that faster training curriculums of Meanflow models, specifically those fine-tuned from existing Flow Models, drives efficient training methods of future one-step examples.
+1 Introduction
+Diffusion models and flow-based generative frameworks have fundamentally redefined the landscape of generative AI, offering a level of training stability and mode coverage that Generative Adversarial Networks (GAN) Goodfellow et al. (2014); Karras et al. (2018) notably lacked Ho et al. (2020); Song et al. (2021); Lipman et al. (2023).
+By transforming noise priors into complex data distributions through a probability path, these models have demonstrated remarkable generalization across diverse modalities, including high-resolution images, video, and audio Ho et al. (2022); Zhu et al. (2026); Podell et al. (2023).
+However, unlike one-step GAN’s, the inherent requirement of multi-step iterative sampling over the Probability Flow ODE path remains a significant bottleneck for real-time applications.
+This limitation has sparked intense research interest in one/few-step variants, primarily through the lens of trajectory-aware distillation, reconciling high quality generation baselines with inference efficiency Salimans and Ho (2022); Luhman and Luhman (2021).
+The development of one/few-step generative models has increasingly shifted toward objectives derived from flow-matching trajectories.
+While initially shown to be an effective distillation technique to accelerate pre-trained teachers, researchers are increasingly interested in the potential of these objectives to function as self-contained, “from scratch” models.
+As a first, the self-supervised Consistency Training framework enabled Consistency Models to learn the solution of the underlying diffusion ODE Song et al. (2023).
+This line of work demonstrated that one-step generation can be achieved by exploiting a fundamental consistency property between sample pairs along diffusion and flow trajectories Kim et al. (2024); Zheng et al. (2024); Hu et al. (2025a).
+At the forefront of this shift is MeanFlow (MF) Geng et al. (2025a), a framework that reformulated training around the average velocity over time intervals.
+Thanks to its ability to generate samples in one/few-steps, this approach has attracted follow-up works into more stabilized training dynamics, improvements in architecture, and distillation efficiency Geng et al. (2025b); Lee et al. (2025).
+However, this theoretical elegance comes at a prohibitive cost: the continuous MF identity is notoriously expensive to train, often requiring heavy Jacobian-vector products (JVPs) that increases per-batch costs.
+Recent literature has sought to refine this; for instance, α\alpha-Flow Zhang et al. (2025) explores the unification of moment matching with MF, while CMT Hu et al. (2025b) and iMT Geng et al. (2025b) explore the potential of integrating self-distillation targets directly into the MeanFlow objective to improve convergence.
+Much of the field’s recent progress has been driven by increasing model scale and computational resources, while comparatively less attention has been devoted to developing methods that make training more efficient and affordable Geng et al. (2025b).
+In this work, we propose Discrete MeanFlow (DMF) training curriculum, a budget-friendly framework designed to bridge the gap between standard flow models and the MeanFlow identity for fast convergence.
+Our approach replaces expensive continuous identities with a staged curriculum that progressively introduces more challenging learning objectives.
+We demonstrate the efficacy of DMF on pixel-space CIFAR-10 Krizhevsky et al. (2009), achieving competitive FID Heusel et al. (2018) scores at a fraction of the GPU-hour budget.
+On latent-space ImageNet ×256256\!\times\!256 Russakovsky et al. (2015) we show that DMF scales effectively with increased training budget, exhibiting continuous performance improvements when initialized from a pretrained flow model.
+We further report findings on the stability ceiling observed in latent-space experiments, providing insights into how discretization granularity affects optimization robustness.
+2 Preliminary: The MeanFlow Identity
+MeanFlow (MF) proposes a framework for one-step generative modeling by shifting the perspective from instantaneous velocity fields, standard in flow matching, to average velocity formulation over time intervals. Consider a probability flow defined by the ordinary differential equation (ODE), d​𝐳t=𝐯t​(𝐳t)​d​t{\mathrm{d}\mathbf{z}_{t}}\!=\!\mathbf{v}_{t}(\mathbf{z}_{t})\ \mathrm{d}t, where 𝐳t∈ℝd\mathbf{z}_{t}\in\mathbb{R}^{d} represents the sample state at time t∈[0,1]t\in[0,1], 𝐳0∼pdata\mathbf{z}_{0}\sim p_{\text{data}} and 𝐳1∼𝒩⁡(𝟎,𝐈)\mathbf{z}_{1}\sim\mathcal{N}(\mathbf{0},\mathbf{I}). Under a diffusion/flow-matching setting, the average velocity 𝐮⁡(𝐳t,r,t)\mathbf{u}(\mathbf{z}_{t},r,t) can be defined as the integrated displacement from time rr to tt divided by the interval (t−r)(t-r), with 0≤r≤t≤10\leq r\leq t\leq 1, i.e., 𝐮⁡(𝐳t,r,t):=𝐳t−𝐳r/(t−r)\mathbf{u}(\mathbf{z}_{t},r,t):=\mathbf{z}_{t}-\mathbf{z}_{r}/(t-r). The MeanFlow Identity yields,
+𝐮⁡(𝐳t,r,t)\displaystyle\mathbf{u}(\mathbf{z}_{t},r,t)
+=𝐯t​(𝐳t)+(r−t)​dd​t​𝐮​(𝐳t,r,t)\displaystyle=\mathbf{v}_{t}(\mathbf{z}_{t})+(r-t)\frac{\mathrm{d}}{\mathrm{d}t}\mathbf{u}(\mathbf{z}_{t},r,t)
+(1)
+=𝐯t​(𝐳t)+(r−t)​(∂𝐮⁡(𝐳t,r,t)∂𝐳t​𝐯t​(𝐳t)+∂𝐮⁡(𝐳t,r,t)∂t)\displaystyle=\mathbf{v}_{t}(\mathbf{z}_{t})+(r-t)\left(\frac{\partial\mathbf{u}(\mathbf{z}_{t},r,t)}{\partial\mathbf{z}_{t}}\mathbf{v}_{t}(\mathbf{z}_{t})+\frac{\partial\mathbf{u}(\mathbf{z}_{t},r,t)}{\partial t}\right)
+For the complete derivation, we refer the reader to the original work Geng et al. (2025a). In practice, MF models are trained to predict 𝐮θ​(𝐳t,r,t)\mathbf{u}_{\theta}(\mathbf{z}_{t},r,t), where the training target is constructed by the conditional velocity field sampled at 𝐳t\mathbf{z}_{t}, and the Jacobian-vector product (JVP, torch.func.jvp in PyTorch) of the model with primals (𝐳t,r,t)(\mathbf{z}_{t},r,t) and tangents (𝐯t,0,1)(\mathbf{v}_{t},0,1).
+Alternatively, if we carry out the partial derivatives above by the definition of limits, we obtain their discrete forms,
+∂𝐳t𝐮⁡(𝐳t,r,t)\displaystyle\partial_{\mathbf{z}_{t}}\mathbf{u}(\mathbf{z}_{t},r,t)
+=(lim‖𝜹i‖→0𝐮​(𝐳t,r,t)j−𝐮​(𝐳t−𝜹i,r,t)j‖𝜹i‖)i,j:=𝒥𝐳t,\displaystyle=\left(\lim_{\|\bm{\delta}_{i}\|\to 0}\frac{\mathbf{u}(\mathbf{z}_{t},r,t)_{j}-\mathbf{u}(\mathbf{z}_{t}-\bm{\delta}_{i},r,t)_{j}}{\|\bm{\delta}_{i}\|}\right)_{i,j}:=\mathcal{J}_{\mathbf{z}_{t}},
+(2)
+∂t𝐮⁡(𝐳t,r,t)\displaystyle\partial_{t}\mathbf{u}(\mathbf{z}_{t},r,t)
+=lim‖Δ‖→0𝐮⁡(𝐳t,r,t)−𝐮⁡(𝐳t,r,t−Δ)‖Δ‖.\displaystyle=\lim_{\|\Delta\|\to 0}\frac{\mathbf{u}(\mathbf{z}_{t},r,t)-\mathbf{u}(\mathbf{z}_{t},r,t-\Delta)}{\|\Delta\|}.
+Plugging in the above limit definitions back into equation 1, we can derive the discretization,
+limΔ→0𝐮⁡(𝐳t,r,t)=limΔ→0{𝐯t​(𝐳t)⋅Δ+𝐮⁡(𝐳t−𝐯t​Δ,r,t−Δ)⋅(t−r)(Δ+t−r)},\lim_{\Delta\to 0}\mathbf{u}(\mathbf{z}_{t},r,t)=\lim_{\Delta\to 0}\Biggl\{\frac{\mathbf{v}_{t}(\mathbf{z}_{t})\cdot\Delta+\\
+\mathbf{u}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\Delta,r,t\!-\!\Delta)\cdot(t-r)}{(\Delta+t-r)}\Biggr\},
+(3)
+which we call Discrete MeanFlow (DMF). A detailed derivation is provided in Appendix A.1. DMFs have been studied previously in attempt to unify the framework of Flow Models (FM) to MeanFlows Zhang et al. (2025), as well as approximating the convergence of MFs without computing the JVP Hu et al. (2025b). If r is fixed, the form in equation 3 reveals a consistency property that aligns the average velocity from different samples along the trajectory that is corrected by the instant velocity change. In practice, DMF model predicts 𝐮θ​(𝐳t,r,t)\mathbf{u}_{\theta}(\mathbf{z}_{t},r,t), and the target is simply the interpolation between 𝐯t\mathbf{v}_{t} and sg​(𝐮θ​(𝐳t−𝐯t​Δ,r,t−Δ))\text{sg}(\mathbf{u}_{\theta}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\Delta,r,t\!-\!\Delta)), with sg(⋅\cdot) denoting the stop gradient. In our work, we study the benefits and stability of decreasing the Δ\Delta term as a step function. This approach is motivated by the success of training curriculums in Consistency Training Models Song and Dhariwal (2023); Geng et al. (2024); Dao et al. (2025). We provide our detailed methodology in the following section.
+3 Method: Training Curriculum
+Notice that 𝐯t\mathbf{v}_{t} in both DMF and MF attributes to the signal of convergence. Without it, the model would collapse to a simple solution that produces arbitrary constant. Drawing inspiration from training curriculums in Consistency Models, we propose Discrete MeanFlow (DMF) Training Curriculum that aims to improve convergence of the consistency property by adaptively turning down the knob, Δ\Delta, in equation 3. Following ECT Geng et al. (2024), our training curriculum equally divides the target training budget into different stages, each with different training targets denoted as 𝐮targeti,i∈{0,…,K−1}\mathbf{u}^{i}_{\text{target}},i\in\{0,...,K\!-\!1\}, where ii is the stage of training, and KK is the total number of stages.
+We start with a large Δ\Delta at the beginning of the curriculum. The step size Δ\Delta in DMF can be as large as (t−r)(t\!-\!r). In this case, the target for 𝐮θ​(𝐳t,r,t)\mathbf{u}_{\theta}({\mathbf{z}_{t},r,t}) becomes 12​(𝐯t​(𝐳t)+12​sg​(𝐮θ​(𝐳r,r,r))CLOSE\frac{1}{2}(\mathbf{v}_{t}(\mathbf{z}_{t})+\frac{1}{2}\text{sg}(\mathbf{u}_{\theta}(\mathbf{z}_{r},r,r)), where 𝐳r\mathbf{z}_{r} is the cleaner sample that lies on the linear trajectory induced by the conditional velocity field 𝐯t=ϵ−𝐳0,𝐳0∼pdata\mathbf{v}_{t}=\mathbf{\epsilon}-\mathbf{z}_{0},\ \mathbf{z}_{0}\!\sim\!p_{\text{data}} and ϵ∼𝒩⁡(𝟎,𝐈)\mathbf{\epsilon}\!\sim\!\mathcal{N}(\mathbf{0},\mathbf{I}). Observe that the ground truth for 𝐮θ​(𝐳r,r,r)\mathbf{u}_{\theta}(\mathbf{z}_{r},r,r) is the instantaneous velocity at rr Geng et al. (2025a), which coincidentally, is also trained using the conditional velocity. Therefore, our first stage of the curriculum collapses to the flow matching objective, where the target is simply 𝐮target0:=𝐯t\mathbf{u}_{\text{target}}^{0}:=\mathbf{v}_{t}.
+For the following ii-th intermediate stages, i∈{1,…,K−2}i\in\{1,...,K\!-\!2\}, we adaptively decrease the step size Δ\Delta by defining it as a function of stage, denoted as Δi\Delta_{i}. With a chosen shrinking factor qq, a straightforward design choice would suggest Δi=(t−r)/qi\Delta_{i}=(t-r)/q^{i}. However, we found out that this led to suboptimal FID performance from our CIFAR-10 experiments. We discovered that a training curriculum based on a noise schedule mapped to the Variance-Exploding (VE) diffusion framework Song et al. (2021) proved particularly effective. Specifically, let Φ⁡(t)=t/(1−t)\Phi(t)=t/(1-t) be the transformation that maps time tt to the VE scheme, then
+t′=Φ−1​(Φ⁡(t)−Φ⁡(t)−Φ⁡(r)qi),Δi†=t−t′.t^{\prime}=\Phi^{-1}\left(\Phi(t)-\frac{\Phi(t)-\Phi(r)}{q^{i}}\right),\quad\Delta^{\dagger}_{i}=t-t^{\prime}.
+(4)
+As a result, the target for these intermediate stages follows as substituting the Δ\Delta with Δi†\Delta^{\dagger}_{i} in the DMF equation 3. For the last stage (stage K−1K\!-\!1), we fallback to train the model with the MF objective, with the assumption this smoothly transitions to the hardest objective. In summary, our training curriculum defines a sequence of objectives for different stages as,
+𝐮targeti:={𝐯t,if ​i=0,𝐯t⋅Δi†+sg​(𝐮θ​(𝐳t−𝐯t⋅Δi†,r,t−Δi†))⋅(t−r)Δi†+t−r,if ​1≤i≤K−2,𝐯t+(r−t)⋅sg​(dd​t​𝐮θ​(𝐳t,r,t)),if ​i=K−1.\mathbf{u}_{\text{target}}^{i}:=\begin{cases}\mathbf{v}_{t},&\text{if }i=0,\\[10.00002pt]
+\dfrac{\mathbf{v}_{t}\cdot\Delta^{\dagger}_{i}+\text{sg}\left(\mathbf{u}_{\theta}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\!\cdot\!\Delta^{\dagger}_{i},r,t\!-\!\Delta^{\dagger}_{i})\right)\cdot(t-r)}{\Delta^{\dagger}_{i}+t-r},&\text{if }1\leq i\leq K\!-\!2,\\[10.00002pt]
+\mathbf{v}_{t}+(r-t)\cdot\text{sg}\left(\frac{\mathrm{d}}{\mathrm{d}t}\mathbf{u}_{\theta}(\mathbf{z}_{t},r,t)\right),&\text{if }i=K\!-\!1.\end{cases}
+(5)
+Note that we follow MF models to compute the JVP with PyTorch’s forward auto-differentiation operation in the last stage. A detailed full procedure of the DMF curriculum is provided in the Appendix A.2.
+Figure 1: Training convergence on unconditional CIFAR-10. DMF curriculums achieve better 1-step FID compared to the MF baseline with equal training data budget, despite starting from a pretrained flow model at 2000 epochs.
+4 Experiments
+DMF training curriculum shares the same target with flow-matching at the first stage of training. This suggests that initializing our model with a pretrained Flow Model (FM) is a better candidate than random initialization. Our baseline for the CIFAR-10 experiments implements the configurations from the official MF paper. We strictly follow Appendix A in Geng et al. (2025a), with the only difference being EMA ratio that is scaled down w.r.t. the limited training budget. To demonstrate the efficacy of our curriculum under a cold-start scenario, we impose a fixed budget of 4000 epochs for models trained from random initialization and report the best FID achieved. For fair comparison, experiments utilizing MF fine-tuning or the DMF curriculum initialized from an FM are restricted to a 2000-epoch budget, as the base FM itself has been pretrained for 2000 epochs. Our pretrained FM follows the standard configurations from the official flow matching repository11
+1
+github.com/facebookresearch/flow_matching., which achieves an FID of 3.09 with 50-steps sampling from our reimplementation.
+Following the latent diffusion paradigm, ImageNet 256×\times256 samples are compressed via the SD-VAE Rombach et al. (2022) into a 4×32×32 latent space prior to training. We initialize the model from the weights of a pretrained SiT-XL/2 Ma et al. (2024). Due to computational constraints, we evaluate the DMF curriculum on image generation without Classifier-Free Guidance (CFG) Ho and Salimans (2022). We omit CFG for two primary reasons: first, it significantly increases training overhead by requiring two additional model passes to compute the interpolated target (Tab. 3); second, determining the optimal guidance scale w is computationally expensive, requiring extensive hyperparameter sweeps. Consequently, we compare our results against the SiT-XL/2 baseline sampled without CFG to ensure a fair, though unorthodox, comparison within a fixed training budget.
+4.1 Unconditional CIFAR-10
+Training Configuration. The baselines include MeanFlow (MF) trained from scratch and MF fine-tuned from a pretrained Flow Model (FM). We set the number of stages for the DMF curriculum to K=10K=10, with a decay factor q=2q=2. We distinguish DMF and DMF† by their curriculum schedules {Δi}\{\Delta_{i}\} and {Δi†}\{\Delta_{i}^{\dagger}\}, respectively, as defined in Section 3. Besides, both DMF’s are trained with approximately 100% MF objective. Only regions where timestep difference is infinitesimally small, t−r<ϵtt\!-\!r\!<\!\epsilon_{t}, ϵt=10−6\epsilon_{t}\!=\!10^{-6}, the target is set to the velocity field 𝐯t\mathbf{v}_{t} for numerical stability. All MF and DMF models are trained using the Adam optimizer with a learning rate of 6×10−46\times 10^{-4}, batch size 1024, adaptive loss Geng et al. (2024), and are evaluated using the same EMA=0.999. A detailed configuration is included in Appendix A.3.
+CIFAR-10 Convergence Analysis. Consistent with observations from curriculum training in Consistency Models Geng et al. (2024), MF training and fine-tuning exhibit faster initial convergence, but their improvements diminish at later stages. As shown in Fig. 1, MF achieves a final FID of 3.85 when trained from scratch and 3.93 when fine-tuned from an FM initialization. In contrast, DMF curriculum training progresses more slowly and improves in a stage-wise manner. The discontinuity in FID improvement reflects convergence within each curriculum stage. Despite this slower early progress, DMF achieves superior final performance, with DMF† using the VE-transformed scheduler reaching a comparable FID of 3.36. Notably, DMF curriculum training attains competitive or better FID compared to prior methods trained with substantially larger computational budgets (Tab. 1).
+Table 1: CIFAR-10 comprehensive 1-step FID comparison. Methods are categorized by initialization strategy. Budgets represent total training epochs, for models initialized with pretrained models, the budget are formatted as “Cost of Pretraining” + “Cost of Tuning”. DMF curriculum training attains competitive or better FID compared to prior methods.
+Method
+Initialization
+Budget (Epochs)
+FID (↓\downarrow)
+From Scratch
+iCT
+Random
+8k
+2.83
+MF (ours imple.)
+Random
+4k
+3.85
+MF Geng et al. (2025a)
+Random
+16k
+2.90
+With DM / FM Initialization
+sCT Lu and Song (2025)
+Pretrained DM
+4k + 4k
+2.85
+ECT Geng et al. (2024)
+Pretrained DM
+4k + 1k
+3.60
+MF (ours imple.)
+Pretrained FM
+2k + 2k
+3.93
+DMF Curriculum
+Pretrained FM
+2k + 2k
+3.58
+DMF† Curriculum
+Pretrained FM
+2k + 2k
+3.36
+† Denotes DMF Curriculum using the VE-transformed scheduler.
+Table 2: Per-batch training cost. Batch size 1024, 4 H100’s. The DMF loss is approximately 1.2×\times∼\sim1.8×\times faster than MF as it does not require heavy JVP. The cost of MF is computed without doing classifier-free guidance, so the scale ratio has further been reduced from MF in practice, i.e., excluding 2 extra forward passes.
+Dataset
+Method
+Sec.//Batch
+CIFAR-10
+MF
+0.38
+DMF
+0.32
+ImageNet ×256256\!\times\!256
+MF
+3.08
+DMF
+1.71
+Table 3: CIFAR-10 end-to-end training cost for same data budget and final FID. DMF Curriculum consists of 2000 epochs of Flow Model training followed by 2000 epochs of DMF tuning, and is compared against MeanFlow trained from scratch for 4000 epochs. In terms of GPU hours measured in H100’s under the same data budget, DMF Curriculum 1.3×\times faster.
+Method
+GPU Hours
+FID
+MF
+85.33
+3.85
+DMF Curriculum
+66.6
+3.36
+4.2 ImageNet 256x256, SD-VAE latents
+Training Configuration. To evaluate the scalability of our approach, we apply the DMF curriculum to a SiT-XL/2 baseline pretrained for 1400 epochs on the SD-VAE latents, which achieves an FID of 11.52 with 50-step sampling without Classifier-Free Guidance (CFG). Latent spaces encoded via SD-VAE are known to be susceptible to extreme outliers at Consistency Training Dao et al. (2025); Hu et al. (2025b). To mitigate this, we employ a robust Cauchy loss with a high robust value of c=0.3c=0.3. Plus, instead of using the conditional velocity as 𝐯t\mathbf{v}_{t}, we compute the velocity field using softmax as a kernel Xu et al. (2023) by sampling an additional sub-batch of 127 data from the dataset for each sample, reducing the variance at training. A detail note on this will be provided in Appendix A.2. We utilize a 6-stage Δi†\Delta^{\dagger}_{i} curriculum (K=6K=6) with a factor decay of q=4q\!=\!4.
+Direct Fine-tuning from Pure MeanFlow. As shown in Tab. 4, DMF† yields rapid convergence in the low-epoch regime, reaching FID of 21.18 with a training budget of 6 epochs, and to 14.53 with increased training budget of 48 epochs. A significant departure from standard practice is our use of a “pure” MeanFlow objective. While existing methods typically rely on a hybrid training mixture of flow-matching and MF (MF) objectives in ratios ranging from 1:1 to 3:1 Geng et al. (2025b); Geng et al. (2025a); Zhang et al. (2025); Hu et al. (2025b), we perform direct fine-tuning using a nearly 100% MF objective (Tab. 5). Similar to the CIFAR-10 experiments, the only regions where we do flow-matching is where the timestep difference is infinitesimal, t−r<ϵtt\!-\!r\!<\epsilon_{t}.
+Stability Analysis and Optimization Limits. Despite the aforementioned robustness measures, we observed an empirical stability ceiling when scaling the DMF† training budget to 96 epochs. Specifically, optimization tends to diverge during the fifth curriculum stage, where the discretization ratio reaches approximately Δ4†≈0.0039⋅(t−r)\Delta^{\dagger}_{4}\approx 0.0039\cdot(t-r). We hypothesize that for latent-space datasets, excessively fine discretization introduces a critical trade-off between approximation accuracy and training stability. This suggests that intermediate stages with high discretizations may act as a source of variance that destabilizes the objective. Potential remedies for this instability include an early transition to the MF regime during intermediate stages, or a more granular analysis of model architecture and normalization layers to improve robustness under small step-size regimes.
+Table 4: ImageNet ×256256\!\times\!256 curriculum training budget w.r.t FID. We report the FID of our 1-step DMF curriculum relative to the 1400-epoch pretrained SiT-XL/2 baseline. The FID is computed on samples generated w/o CFG sampling or tuning.
+Method
+Training Epochs
+Rel. Budget
+Steps
+FID ↓\downarrow
+SiT-XL/2 (Baseline)
+1400 (Pretrain)
+100.0%
+50
+11.52
+DMF†
+1400 + 6
++0.42%
+1
+21.18
+DMF†
+1400 + 12
++0.85%
+1
+18.03
+DMF†
+1400 + 24
++1.71%
+1
+16.95
+DMF†
+1400 + 48
++3.42%
+1
+14.53
+DMF†
+1400 + 96
++3.42%
+1
+294.13
+Table 5: Comparison of Training Paradigms on ImageNet-256. Unlike majority MF that are trained on hybrid objectives or distillation teachers, our DMF curriculum enables “pure” MF fine-tuning.
+Strategy
+Objective Ratio (FM:MF)
+Training Type
+CFG
+Standard MF Geng et al. (2024)
+1:1 to 3:1
+Direct Training
+Yes
+RAE-MF Hu et al. (2025b)
+3:1
+Mid-training Teacher
+None
+α\alpha-Flow Zhang et al. (2025)
+1:1
+Direct Curriculum
+Yes
+DMF Curriculum
+0:1 (Pure MF)
+Direct Curriculum
+None
+5 Conclusion and Limitations
+In this paper, we show that Discrete MeanFlow (DMF) training curriculum enables high quality one step generation by replacing continuous MeanFlow identities with a staged curriculum of discrete approximations. Experiments on CIFAR-10 and ImageNet ×256256\!\times\!256 show that DMF achieves comparable FID with chosen baselines under fixed data budgets, while achieving accelerated convergence as up to 1.8×\times per batch speedup by avoiding the expensive JVP computations. We further analyze training stability and identify an empirical discretization ceiling in the latent space. When the curriculum becomes too fine, optimization can diverge, revealing a trade off between progressive discretization and training robustness. Future work should focus on enhancing the scalability and robustness of the training curriculum framework through targeted architectural and procedural improvements. Specifically, evaluating it on Representation-learning Autoencoder (RAE) latents Zheng et al. (2025) could determine curriculum’s effectiveness and stability on more structured manifolds. Furthermore, introducing a lightweight secondary guidance tuning stage that isolates classifier free guidance allows the primary training phase to remain budget friendly. Finally, investigating architecture-specific robustness, such as the role of normalization layers and weight initialization, remains critical for mitigating the optimization divergence observed in the final stages of latent-space training.
+Acknowledgments
+We thank Yingchen He for running the experiments, Matthew Niedoba for suggestions on stabilizing the velocity field, and Saeid Naderiparizi for helpful discussions and feedback on the paper.
+References
+Dao et al. (2025)
+Q. Dao, K. Doan, D. Liu, T. Le, and D. Metaxas
+Improved training technique for latent consistency models.
+External Links: 2502.01441,
+Link
+Cited by: §2,
+§4.2.
+Geng et al. (2025a)
+Z. Geng, M. Deng, X. Bai, J. Z. Kolter, and K. He
+Mean flows for one-step generative modeling.
+External Links: 2505.13447,
+Link
+Cited by: §1,
+§2,
+§3,
+§4.2,
+Table 1,
+§4,
+37.
+Geng et al. (2025b)
+Z. Geng, Y. Lu, Z. Wu, E. Shechtman, J. Z. Kolter, and K. He
+Improved mean flows: on the challenges of fastforward generative models.
+External Links: 2512.02012,
+Link
+Cited by: §1,
+§4.2.
+Geng et al. (2024)
+Z. Geng, A. Pokle, W. Luo, J. Lin, and J. Z. Kolter
+Consistency models made easy.
+External Links: 2406.14548,
+Link
+Cited by: §2,
+§3,
+§4.1,
+§4.1,
+Table 1,
+Table 5.
+Goodfellow et al. (2014)
+I. J. Goodfellow, J. Pouget-Abadie, M. Mirza, B. Xu, D. Warde-Farley, S. Ozair, A. Courville, and Y. Bengio
+Generative adversarial networks.
+External Links: 1406.2661,
+Link
+Cited by: §1.
+Heusel et al. (2018)
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter
+GANs trained by a two time-scale update rule converge to a local nash equilibrium.
+External Links: 1706.08500,
+Link
+Cited by: §1.
+Ho et al. (2020)
+J. Ho, A. Jain, and P. Abbeel
+Denoising diffusion probabilistic models.
+External Links: 2006.11239,
+Link
+Cited by: §1.
+Ho et al. (2022)
+J. Ho, T. Salimans, A. Gritsenko, W. Chan, M. Norouzi, and D. J. Fleet
+Video diffusion models.
+External Links: 2204.03458,
+Link
+Cited by: §1.
+Ho and Salimans (2022)
+J. Ho and T. Salimans
+Classifier-free diffusion guidance.
+External Links: 2207.12598,
+Link
+Cited by: §4.
+Hu et al. (2025a)
+Z. Hu, C. Lai, Y. Mitsufuji, and S. Ermon
+CMT: mid-training for efficient learning of consistency, mean flow, and flow map models.
+External Links: 2509.24526,
+Link
+Cited by: §1.
+Hu et al. (2025b)
+Z. Hu, C. Lai, G. Wu, Y. Mitsufuji, and S. Ermon
+MeanFlow transformers with representation autoencoders.
+External Links: 2511.13019,
+Link
+Cited by: §1,
+§2,
+§4.2,
+§4.2,
+Table 5.
+Karras et al. (2018)
+T. Karras, T. Aila, S. Laine, and J. Lehtinen
+Progressive growing of gans for improved quality, stability, and variation.
+External Links: 1710.10196,
+Link
+Cited by: §1.
+Kim et al. (2024)
+D. Kim, C. Lai, W. Liao, N. Murata, Y. Takida, T. Uesaka, Y. He, Y. Mitsufuji, and S. Ermon
+Consistency trajectory models: learning probability flow ode trajectory of diffusion.
+External Links: 2310.02279,
+Link
+Cited by: §1.
+Krizhevsky et al. (2009)
+A. Krizhevsky G. Hinton et al.
+Learning multiple layers of features from tiny images.
+Cited by: §1.
+Lee et al. (2025)
+K. Lee, S. Yu, and J. Shin
+Decoupled meanflow: turning flow models into flow maps for accelerated sampling.
+External Links: 2510.24474,
+Link
+Cited by: §1.
+Lipman et al. (2023)
+Y. Lipman, R. T. Q. Chen, H. Ben-Hamu, M. Nickel, and M. Le
+Flow matching for generative modeling.
+External Links: 2210.02747,
+Link
+Cited by: §1.
+Lu and Song (2025)
+C. Lu and Y. Song
+Simplifying, stabilizing and scaling continuous-time consistency models.
+External Links: 2410.11081,
+Link
+Cited by: Table 1.
+Luhman and Luhman (2021)
+E. Luhman and T. Luhman
+Knowledge distillation in iterative generative models for improved sampling speed.
+External Links: 2101.02388,
+Link
+Cited by: §1.
+Ma et al. (2024)
+N. Ma, M. Goldstein, M. S. Albergo, N. M. Boffi, E. Vanden-Eijnden, and S. Xie
+SiT: exploring flow and diffusion-based generative models with scalable interpolant transformers.
+External Links: 2401.08740,
+Link
+Cited by: §4.
+Podell et al. (2023)
+D. Podell, Z. English, K. Lacey, A. Blattmann, T. Dockhorn, J. Müller, J. Penna, and R. Rombach
+SDXL: improving latent diffusion models for high-resolution image synthesis.
+External Links: 2307.01952,
+Link
+Cited by: §1.
+Rombach et al. (2022)
+R. Rombach, A. Blattmann, D. Lorenz, P. Esser, and B. Ommer
+High-resolution image synthesis with latent diffusion models.
+External Links: 2112.10752,
+Link
+Cited by: §4.
+Russakovsky et al. (2015)
+O. Russakovsky, J. Deng, H. Su, J. Krause, S. Satheesh, S. Ma, Z. Huang, A. Karpathy, A. Khosla, M. Bernstein, A. C. Berg, and L. Fei-Fei
+ImageNet large scale visual recognition challenge.
+External Links: 1409.0575,
+Link
+Cited by: §1.
+Salimans and Ho (2022)
+T. Salimans and J. Ho
+Progressive distillation for fast sampling of diffusion models.
+External Links: 2202.00512,
+Link
+Cited by: §1.
+Song et al. (2023)
+Y. Song, P. Dhariwal, M. Chen, and I. Sutskever
+Consistency models.
+External Links: 2303.01469,
+Link
+Cited by: §1.
+Song and Dhariwal (2023)
+Y. Song and P. Dhariwal
+Improved techniques for training consistency models.
+External Links: 2310.14189,
+Link
+Cited by: §2.
+Song et al. (2021)
+Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole
+Score-based generative modeling through stochastic differential equations.
+External Links: 2011.13456,
+Link
+Cited by: §1,
+§3.
+Xu et al. (2023)
+Y. Xu, S. Tong, and T. Jaakkola
+Stable target field for reduced variance score estimation in diffusion models.
+External Links: 2302.00670,
+Link
+Cited by: §4.2,
+17.
+Zhang et al. (2025)
+H. Zhang, A. Siarohin, W. Menapace, M. Vasilkovsky, S. Tulyakov, Q. Qu, and I. Skorokhodov
+AlphaFlow: understanding and improving meanflow models.
+External Links: 2510.20771,
+Link
+Cited by: §1,
+§2,
+§4.2,
+Table 5.
+Zheng et al. (2025)
+B. Zheng, N. Ma, S. Tong, and S. Xie
+Diffusion transformers with representation autoencoders.
+External Links: 2510.11690,
+Link
+Cited by: §5.
+Zheng et al. (2024)
+J. Zheng, M. Hu, Z. Fan, C. Wang, C. Ding, D. Tao, and T. Cham
+Trajectory consistency distillation: improved latent consistency distillation by semi-linear consistency function with trajectory mapping.
+External Links: 2402.19159,
+Link
+Cited by: §1.
+Zhu et al. (2026)
+G. Zhu, Y. Wen, and Z. Duan
+Audio generation through score-based generative modeling: design principles and implementation.
+External Links: 2506.08457,
+Link
+Cited by: §1.
+Appendix A Appendix
+A.1 Proofs
+Proof.
+To keep the proof of equation 3 elegant, we simplify the notation by setting r=0r=0 starting from the MeanFlow Identity ( equation 1), and omit it during our derivations. We will add rr back to match the generalized discretized form. Starting from the MF Identity, we have:
+𝐮⁡(𝐳t,t)\displaystyle\mathbf{u}(\mathbf{z}_{t},t)
+=𝐯t​(𝐳t)−t​dd​t​𝐮​(𝐳t,t)\displaystyle=\mathbf{v}_{t}(\mathbf{z}_{t})-t\frac{\mathrm{d}}{\mathrm{d}t}\mathbf{u}(\mathbf{z}_{t},t)
+(6)
+=𝐯t​(𝐳t)−t⁡(∂𝐮⁡(𝐳t,t)∂𝐳t​𝐯t​(𝐳t)+∂𝐮⁡(𝐳t,t)∂t)\displaystyle=\mathbf{v}_{t}(\mathbf{z}_{t})-t\left(\frac{\partial\mathbf{u}(\mathbf{z}_{t},t)}{\partial\mathbf{z}_{t}}\mathbf{v}_{t}(\mathbf{z}_{t})+\frac{\partial\mathbf{u}(\mathbf{z}_{t},t)}{\partial t}\right)
+=𝐯t​(𝐳t)−t⁡(𝒥𝐳t​𝐯t​(𝐳t,t)+∂t𝐮⁡(𝐳t,t))\displaystyle=\mathbf{v}_{t}(\mathbf{z}_{t})-t\ \left(\ \mathcal{J}_{\mathbf{z}_{t}}\mathbf{v}_{t}(\mathbf{z}_{t},t)+\partial_{t}\mathbf{u}(\mathbf{z}_{t},t)\ \right)
+=𝐯t​(𝐳t)−t⁡(limΔ→0𝐮⁡(𝐳t,t)−𝐮⁡(𝐳t−𝐯t​Δ,t)Δ+limΔ→0𝐮⁡(𝐳t,t)−𝐮⁡(𝐳t,t−Δ)Δ)\displaystyle=\mathbf{v}_{t}(\mathbf{z}_{t})-t\left(\lim_{\Delta\to 0}\frac{\mathbf{u}(\mathbf{z}_{t},t)-\mathbf{u}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\Delta,t)}{\Delta}+\lim_{\Delta\to 0}\frac{\mathbf{u}(\mathbf{z}_{t},t)-\mathbf{u}(\mathbf{z}_{t},t\!-\!\Delta)}{\Delta}\right)
+(merge partial limits into the total derivative along the trajectory ​𝐳t​(t))\displaystyle(\text{merge partial limits into the total derivative along the trajectory }\mathbf{z}_{t}(t))
+=𝐯t​(𝐳t)−t⁡(limΔ→0𝐮⁡(𝐳t,t)−𝐮⁡(𝐳t−𝐯t​Δ,t−Δ)Δ)\displaystyle=\mathbf{v}_{t}(\mathbf{z}_{t})-t\left(\lim_{\Delta\to 0}\frac{\mathbf{u}(\mathbf{z}_{t},t)-\mathbf{u}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\Delta,t\!-\!\Delta)}{\Delta}\right)
+Multiply by Δ\Delta to clear the denominator, both sides.
+limΔ→0[𝐮⁡(𝐳t,t)⋅Δ]\displaystyle\lim_{\Delta\to 0}\left[\mathbf{u}(\mathbf{z}_{t},t)\cdot\Delta\right]
+=limΔ→0[𝐯t​(𝐳t)⋅Δ−t⋅(𝐮⁡(𝐳t,t)−𝐮⁡(𝐳t−𝐯t​Δ,t−Δ))]\displaystyle=\lim_{\Delta\to 0}\left[\mathbf{v}_{t}(\mathbf{z}_{t})\cdot\Delta-t\cdot\left(\mathbf{u}(\mathbf{z}_{t},t)-\mathbf{u}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\Delta,t\!-\!\Delta)\right)\right]
+Move 𝐮⁡(𝐳t,t)\mathbf{u}(\mathbf{z}_{t},t) to the L.H.S.
+limΔ→0[𝐮⁡(𝐳t,t)⋅(Δ+t)]=limΔ→0[𝐯t​(𝐳t)⋅Δ+t⋅𝐮⁡(𝐳t−𝐯t​Δ,t−Δ)]\displaystyle\lim_{\Delta\to 0}\left[\mathbf{u}(\mathbf{z}_{t},t)\cdot(\Delta+t)\right]=\lim_{\Delta\to 0}\left[\mathbf{v}_{t}(\mathbf{z}_{t})\cdot\Delta+t\cdot\mathbf{u}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\Delta,t\!-\!\Delta)\right]
+Divide both sides (Δ+t)(\Delta+t).
+𝐮⁡(𝐳t,t)\displaystyle\mathbf{u}(\mathbf{z}_{t},t)
+=limΔ→0𝐯t​(𝐳t)⋅Δ+t⋅𝐮⁡(𝐳t−𝐯t​Δ,t−Δ)Δ+t\displaystyle=\lim_{\Delta\to 0}\frac{\mathbf{v}_{t}(\mathbf{z}_{t})\cdot\Delta+t\cdot\mathbf{u}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\Delta,t\!-\!\Delta)}{\Delta+t}
+Bring back rr, we get the final discretized form.
+𝐮⁡(𝐳t,r,t)\displaystyle\mathbf{u}(\mathbf{z}_{t},r,t)
+=limΔ→0𝐯t​(𝐳t)⋅Δ+(t−r)⋅𝐮⁡(𝐳t−𝐯t​Δ,r,t−Δ)Δ+t−r\displaystyle=\lim_{\Delta\to 0}\frac{\mathbf{v}_{t}(\mathbf{z}_{t})\cdot\Delta+(t-r)\cdot\mathbf{u}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\Delta,r,t\!-\!\Delta)}{\Delta+t-r}
+∎
+A.2 Algorithm Overview
+Algorithm 1 Discrete MeanFlow (DMF) Curriculum Training
+1:
+Input: Pretrained flow model 𝐯ϕ\mathbf{v}_{\phi}, dataset 𝒟\mathcal{D}, total stages KK, decay factor qq, robust value cc, sub-batch size BsubB_{\text{sub}}, LogitNormal hyperparams PmeanP_{\text{mean}}, PstdP_{\text{std}}, training epochs per stage NepochsN_{\text{epochs}}.
+2:
+Initialize: Model 𝐮θ←𝐯ϕ\mathbf{u}_{\theta}\leftarrow\mathbf{v}_{\phi}.
+3:
+for i=0i=0 to K−1K-1 do
+4:
+for n=0n=0 to Nepochs−1N_{\text{epochs}}-1 do
+5:
+Sample 𝐳0∼𝒟,ϵ∼𝒩(𝟎,𝐈),t,r∼LogitNormal(Pmean,Pstd)\mathbf{z}_{0}\sim\mathcal{D},\mathbf{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I}),t,r\sim\texttt{LogitNormal}(P_{\text{mean}},P_{\text{std}}).
+6:
+Compute 𝐳t←(1−t)​𝐳0+t​ϵ\mathbf{z}_{t}\leftarrow(1-t)\mathbf{z}_{0}+t\mathbf{\epsilon}, 𝐳r←(1−r)​𝐳0+r​ϵ\mathbf{z}_{r}\leftarrow(1-r)\mathbf{z}_{0}+r\mathbf{\epsilon}.
+7:
+8:
+Compute velocity field.
+9:
+if 𝒟\mathcal{D} is ImageNet ×256256\!\times\!256 then
+10:
+Sample subset 𝒳s​u​b←{𝐱0(k)}k=1Bsub\mathcal{X}_{sub}\leftarrow\{\mathbf{x}_{0}^{(k)}\}_{k=1}^{B_{\text{sub}}} from the same class as 𝐱0\mathbf{x}_{0}.
+11:
+Include current sample in the reference set 𝒳s​u​b←𝒳s​u​b′∪{𝐱0}\mathcal{X}_{sub}\leftarrow\mathcal{X}_{sub}^{\prime}\cup\{\mathbf{x}_{0}\}.
+12:
+Compute normalized weights via softmax over Bsub+1B_{\text{sub}}\!+\!1 samples.
+13:
+for k=0k=0 to BsubB_{\text{sub}} do
+14:
+wk←exp(−∥𝐳t−(1−t)𝐱0(k)∥2/(2t2))∑j=0Bsubexp(−∥𝐳t−(1−t)𝐱0(j)∥2/(2t2))w_{k}\leftarrow\frac{\exp\left(-\|\mathbf{z}_{t}-(1-t)\mathbf{x}_{0}^{(k)}\|^{2}/(2t^{2})\right)}{\sum_{j=0}^{B_{\text{sub}}}\exp\left(-\|\mathbf{z}_{t}-(1-t)\mathbf{x}_{0}^{(j)}\|^{2}/(2t^{2})\right)}.
+15:
+end for
+16:
+Compute stable reference: 𝐱¯0←∑k=0Bsubwk​𝐱0(k)\bar{\mathbf{x}}_{0}\leftarrow\sum_{k=0}^{B_{\text{sub}}}w_{k}\mathbf{x}_{0}^{(k)}.
+17:
+𝐯t←𝐳t−𝐱¯0t\mathbf{v}_{t}\leftarrow\frac{\mathbf{z}_{t}-\bar{\mathbf{x}}_{0}}{t} {Stable target field Xu et al. (2023)}.
+18:
+else
+19:
+𝐯t←ϵ−𝐳0\mathbf{v}_{t}\leftarrow\mathbf{\epsilon}-\mathbf{z}_{0}.
+20:
+end if
+21:
+22:
+Compute 𝐮target\mathbf{u}_{\text{target}}.
+23:
+if i=0i=0 then
+24:
+𝐮target←𝐯t\mathbf{u}_{\text{target}}\leftarrow\mathbf{v}_{t}.
+25:
+else if i=K−1i=K-1 then
+26:
+Compute _,dudt←jvp​((𝐳t,r,t),(𝐯t,0,1))\_,\ \text{dudt}\leftarrow\texttt{jvp}((\mathbf{z}_{t},r,t),(\mathbf{v}_{t},0,1)).
+27:
+𝐮target←sg​{𝐯t−(t−r)⋅dudt}\mathbf{u}_{\text{target}}\leftarrow\text{sg}\left\{\mathbf{v}_{t}-(t-r)\cdot\text{dudt}\right\}.
+28:
+else
+29:
+Compute Φ⁡(t)←t/(1−t),Φ⁡(r)←r/(1−r)\Phi(t)\leftarrow t/(1-t),\Phi(r)\leftarrow r/(1-r).
+30:
+Compute Δi†←t−Φ−1​(Φ⁡(t)−1/qi⋅(Φ⁡(t)−Φ⁡(r)))\Delta^{\dagger}_{i}\leftarrow t-\Phi^{-1}(\Phi(t)-1/q^{i}\cdot(\Phi(t)-\Phi(r))).
+31:
+𝐮target←sg​{1(Δi†+t−r)⋅[𝐯t​Δi†+𝐮θ​(𝐳t−𝐯t​Δi†,t−Δi†)​(t−r)]}\mathbf{u}_{\text{target}}\leftarrow\text{sg}\left\{\frac{1}{(\Delta_{i}^{\dagger}+t-r)}\cdot\left[\mathbf{v}_{t}\Delta_{i}^{\dagger}+\mathbf{u}_{\theta}(\mathbf{z}_{t}\!-\!\mathbf{v}_{t}\Delta_{i}^{\dagger},t\!-\!\Delta_{i}^{\dagger})(t-r)\right]\right\}
+32:
+end if
+33:
+34:
+if 𝒟\mathcal{D} is ImageNet ×256256\!\times\!256 then
+35:
+Loss←Cauchy​(⋅,c)\text{Loss}\leftarrow\text{Cauchy}(\cdot,c).
+36:
+else
+37:
+Loss←Adaptive​(⋅,c)\text{Loss}\leftarrow\text{Adaptive}(\cdot,c) Geng et al. (2025a).
+38:
+end if
+39:
+40:
+ℒ⁡(θ)←Loss​(𝐮θ​(𝐳t,r,t),𝐮target)\mathcal{L}(\theta)\leftarrow\text{Loss}(\mathbf{u}_{\theta}(\mathbf{z}_{t},r,t),\mathbf{u}_{\text{target}})
+41:
+Update θ\theta via gradient descent
+42:
+end for
+43:
+end for
+44:
+Return: Optimized 1-step model 𝐮θ\mathbf{u}_{\theta}
+A.3 Configurations
+Table 6: CIFAR-10, hyperparameter configurations across different experimental setups.
+Hyperparameter
+FM Pretrain
+MF (Scratch)
+MF (Fine-tune)
+DMF† curriculum
+Batch Size
+256
+1024
+1024
+1024
+Training Epochs
+2000
+4000
+2000
+2000
+Optimizer
+Adam
+Adam
+Adam
+Adam
+Learning Rate
+2×10−42\times 10^{-4}
+6×10−46\times 10^{-4}
+6×10−46\times 10^{-4}
+6×10−46\times 10^{-4}
+EMA Rate
+0.999
+0.999
+0.999
+0.999
+Network Dropout
+0.2
+0.2
+0.2
+0.35
+Stages (KK)
+N/A
+N/A
+N/A
+10
+Decay Factor (qq)
+N/A
+N/A
+N/A
+2
+ϵt\epsilon_{t}
+N/A
+N/A
+N/A
+10−610^{-6}
+Loss Function
+Mean Squared Error
+Adaptive LpL_{p}
+Adaptive LpL_{p}
+Adaptive LpL_{p}
+Adaptive norm_p
+N/A
+0.75
+0.75
+0.75
+Adaptive c
+N/A
+0.001
+0.001
+0.001
+Logitnormal PmeanP_{\text{mean}}
+-1.2
+-2.0
+-2.0
+-2.0
+Logitnormal PstdP_{\text{std}}
+1.2
+2.0
+2.0
+2.0
+Probability tt equal rr
+N/A
+0.25
+0.25
+0
+Table 7: ImageNet ×256256\!\times\!256 hyperparameter configurations across different experimental setups.
+Hyperparameter
+DMF† 6ep
+DMF† 12ep
+DMF† 24ep
+DMF† 48ep
+DMF† 96ep
+Batch Size
+1024
+1024
+1024
+1024
+1024
+Training Epochs
+6
+12
+24
+48
+96
+Optimizer
+AdamW
+AdamW
+AdamW
+AdamW
+AdamW
+Learning Rate
+1×10−41\times 10^{-4}
+1×10−41\times 10^{-4}
+1×10−41\times 10^{-4}
+1×10−41\times 10^{-4}
+1×10−41\times 10^{-4}
+EMA Rate
+0.995
+0.999
+0.999
+0.9995
+0.9995
+Network Dropout
+0.0
+0.0
+0.0
+0.0
+0.0
+Stages (KK)
+6
+6
+6
+6
+6
+Decay Factor (qq)
+4
+4
+4
+4
+4
+ϵt\epsilon_{t}
+10−310^{-3}
+10−310^{-3}
+10−310^{-3}
+10−310^{-3}
+10−310^{-3}
+Loss Function
+Cauchy
+Cauchy
+Cauchy
+Cauchy
+Cauchy
+Robust cc
+0.3
+0.3
+0.3
+0.3
+0.3
+Logitnormal PmeanP_{\text{mean}}
+-0.4
+-0.4
+-0.4
+-0.4
+-0.4
+Logitnormal PstdP_{\text{std}}
+1.0
+1.0
+1.0
+1.0
+1.0
+Prob. t=rt=r
+0.0
+0.0
+0.0
+0.0
+0.0
+A.4 Uncurated Samples CIFAR-10
+Figure 2: DMF† on CIFAR-10, FID=3.36.
+Figure 3: DMF† on CIFAR-10, FID=3.36.
+Figure 4: DMF† on CIFAR-10, FID=3.36.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

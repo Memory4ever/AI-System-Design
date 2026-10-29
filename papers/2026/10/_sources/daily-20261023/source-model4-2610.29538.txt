@@ -1,0 +1,1931 @@
+https://arxiv.org/html/2610.29538v1
+Stochastic Pruning of the DPO Computation Graph:1.4× Faster Training and Lower Peak Memory
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+Token-level credit in preference optimization.
+Efficient preference training.
+Stochastic computation and optimization dynamics.
+3 Stochastic Graph Pruning
+3.1 Formulation
+3.2 Stochastic Position Pruning
+3.3 Stochastic Sequence Pruning
+3.4 Stochastic Branch Pruning
+3.5 Composition
+4 Experiments
+4.1 Experimental Setup
+Metrics.
+4.2 Resource Effects and Attribution
+Baselines and measurement.
+Output head versus supervision.
+Backward computation.
+Sequence execution.
+4.3 Parameter Sensitivity
+4.4 The Eight-Configuration Factorial
+4.5 Branch Pruning Across Seeds and Models
+Branch-gradient consistency.
+5 Conclusion
+References
+A Notation
+Preference pairs and loss.
+Three pruning axes.
+Sampling and execution.
+Analysis.
+B Proofs
+B.1 Proof of Proposition
+Remark (target-logit diagnostics).
+Remark (alternative denominator).
+B.2 Proof of Lemma
+B.3 Proof of Lemma
+B.4 Proof of Proposition
+Remark (branch-estimator variance).
+B.5 Proof of and the retention rule
+B.6 Proof of and the stationary displacement
+B.7 Curvature constants from the margin geometry
+B.8 Proof of
+B.9 Proof of and
+B.10 Proof of the composed bias and error budget
+C Shared-Parameter Analysis
+C.1 Shared-Parameter Updates and Signed Token Movement
+D Experimental Settings and Results
+D.1 The UltraFeedback Experiments
+D.2 The HelpSteer3 Corpus and Recipe
+Preference conversion and recipe.
+D.3 Retention-Sweep Geometry
+D.4 The Factorial and Parameter Sweeps
+Factorial.
+Parameter sweeps.
+Descriptive factorial contrasts.
+D.5 Full Task Tables
+D.6 Detailed HelpSteer3 Tables
+D.7 Supplemental Attribution and Full–Branch Validation
+Output implementation control.
+Matched training pairs.
+Per-task results.
+Open-ended scoring.
+E Additional Token-Selection Analysis
+E.1 Supervision Membership Is a Limited Lever
+F LLM Usage Disclosure
+License: CC BY 4.0
+arXiv:2610.29538v1 [cs.LG] 21 Oct 2026
+Stochastic Pruning of the DPO Computation Graph:
+1.4 × \times Faster Training and Lower Peak Memory
+Yubing Wu
+Affiliation: South China University of Technology
+Affiliation: Equal contribution. * Corresponding author: dlzeng@scut.edu.cn
+Wei Chen
+Affiliation: South China University of Technology
+Affiliation: Equal contribution. * Corresponding author: dlzeng@scut.edu.cn
+Junmei Yang
+Affiliation: South China University of Technology
+Delu Zeng
+Affiliation: South China University of Technology
+Tiewen Pan
+Affiliation: Shenzhen Technology University
+Abstract
+Direct preference optimization (DPO) incurs training costs in output scoring, sequence execution, and backpropagation, so reducing supervision alone does not necessarily save computation. We introduce a unified framework for stochastic pruning of the DPO computation graph that independently samples response positions for scoring, response prefixes for execution, and preference branches for backpropagation. By making these selections before the corresponding operations, the framework omits computation at each stage of a training step. Our analysis characterizes the objective changes induced by position and sequence pruning and uses inverse-probability weighting to obtain a conditionally unbiased single-branch gradient estimator for the sampled objective. Controlled measurements show that position and sequence pruning primarily reduce peak memory, with most output-memory savings attributable to an implementation that retains full response supervision. Branch pruning yields a 1.426 × 1.426\times step-time speedup over a concatenated DPO baseline and reduces training time by about 30% relative to stock DPO across two model families, with slightly lower mean accuracy and benchmark-dependent changes in open-ended scores. These findings relate the resource benefits of stochastic graph pruning to the computation omitted and the resulting changes in the training objective.
+1 Introduction
+Direct preference optimization (DPO) formulates alignment as a logistic comparison of policy–reference likelihood ratios, with gradient contributions from both chosen and rejected responses ( Rafailov et al., 2023 ) . In large-vocabulary language-model training, materialized logits can dominate memory consumption ( Wijmans et al., 2025 ) , and attention I/O and operator fusion also affect memory use and training throughput ( Dao et al., 2022 ; Hsu et al., 2025 ) . These costs motivate our question of which computations a preference-training step can omit.
+Figure 1: Stochastic interventions on the DPO computation graph. The two response branches share policy parameters. Rewards average policy–reference log-ratios over scored response positions. Fixed-reference computations use matching prefixes and positions and are omitted. Sampling outcomes and counts are schematic.
+Prior work changes token supervision through confidence-based token selection or weighting ( Yoon et al., 2025 ; Jiang et al., 2025 ) , reward-based selection ( Yang et al., 2025b ) , and weighting from contrastive model predictions ( Liu et al., 2025 ) , while memory-efficient kernels change output-score computation ( Wijmans et al., 2025 ; Hsu et al., 2025 ) . This distinction motivates our question: which parts of a DPO step can be omitted, and how do their resource savings relate to changes in the optimization objective?
+Preference-objective structure affects optimization ( Chen et al., 2026 ) , while shared-parameter updates can couple response likelihoods ( Yuan et al., 2025 ) and reduce preferred-response probability ( Razin et al., 2025 ) . Our token-level analysis examines this coupling (Appendix C.1 ), and Proposition 1 separates reward preservation in expectation from the nonlinear loss.
+We introduce a framework that samples the DPO computation graph to control training cost ( Fig. 1 ). Each training step jointly selects the executed response prefixes, the positions used to estimate rewards, and the branches that carry gradients. These selections precede sequence execution, vocabulary projection, and backpropagation, allowing computation to be omitted throughout the step. This view unifies position, sequence, and branch pruning through their effects on the sampled objective and its gradient. Our analysis characterizes the objective changes induced by reward sampling, while inverse-probability weighting makes the branch gradient conditionally unbiased for that objective.
+Our contributions are:
+•
+a unified framework for sampling DPO computation across response execution, token scoring, and backpropagation, with separately configurable sampling decisions.
+•
+a characterization of the position and prefix objective changes, tolerance conditions that relate their optimal gaps to the retention rate and the truncation level, and a conditionally unbiased branch estimator with a stated convergence rate.
+•
+controlled comparisons showing that full supervision retains most output-memory savings, that branch pruning reduces training time across model families, and that mean accuracy is slightly lower while open-ended score changes vary by benchmark ( Secs. 4.2 , 4.4 and 4.5 ).
+2 Related Work
+Token-level credit in preference optimization.
+A growing family of methods changes where DPO assigns credit through confidence-based token selection ( Yoon et al., 2025 ) , confidence-dependent weighting of varied tokens ( Jiang et al., 2025 ) , trained oracles for token rewards ( Yang et al., 2025b ) , and contrastive token weights ( Liu et al., 2025 ) . Other approaches use optimal-transport reweighting ( Li et al., 2025a ) , gradient-attribution priors ( Yang et al., 2026 ) , prefix-level ratio matching ( Nguyen et al., 2026 ) , implicit-reward credit ( Zhao et al., 2026 ) , attention-derived weights ( Huang et al., 2026 ) , minimal-edit emphasis in clinical dialogue ( Lai et al., 2026a ) , or token-level KL control ( Zeng et al., 2024 ) . Our framework places supervision selection within the computation of a complete DPO step. Matched selection controls motivate uniform membership ( Sec. E.1 ), and full-retention controls distinguish supervision deletion from implementation savings ( Tab. 1 ).
+Efficient preference training.
+Cut Cross-Entropy avoids materializing the token-by-vocabulary logit matrix ( Wijmans et al., 2025 ) , and Liger-Kernel uses fusion and chunked cross-entropy computation to reduce memory and improve training throughput ( Hsu et al., 2025 ) . FlashAttention relates attention efficiency to memory accesses rather than FLOP counts alone ( Dao et al., 2022 ) , while activation checkpointing trades recomputation for lower activation storage ( Chen et al., 2016 ) . Related efficiency work covers flow training ( Du et al., 2022 ) and diffusion inference ( Li et al., 2025b ) . SePO reports reduced GPU training hours through offline token selection ( Yang et al., 2025b ) . Our framework considers how sampling throughout a DPO step changes both executed computation and the training objective. Controlled profiles separate implementation savings from the effects of reduced supervision and execution ( Sec. 4.2 ).
+Stochastic computation and optimization dynamics.
+Dropout randomly removes units ( Srivastava et al., 2014 ) and stochastic depth bypasses sampled layers ( Huang et al., 2016 ) , while importance sampling can reduce stochastic-gradient variance using gradient-dependent probabilities ( Katharopoulos and Fleuret, 2018 ) . Preference-optimization analyses study gradient entanglement ( Yuan et al., 2025 ) , likelihood displacement ( Razin et al., 2025 ) , logit-space squeezing ( Luo et al., 2026 ) , and gated rejected contributions ( Mouiche, 2026 ) . Density-ratio estimation provides a distribution-comparison perspective ( Chen et al., 2025 ) for preference objectives such as DDRO ( Higuchi and Suzuki, 2025 ) , whose update structure is analyzed alongside margin-based losses ( Chen et al., 2026 ) . Our analysis separates objective changes from gradient-estimation noise under composed sampling ( Propositions 2 and 3.5 ). Shared-parameter response changes are analyzed in Appendix C.1 .
+3 Stochastic Graph Pruning
+3.1 Formulation
+Let 𝒟 = { ( 𝒙 , 𝒚 w , 𝒚 l ) } \mathcal{D}=\{({\bm{x}},{\bm{y}}_{w},{\bm{y}}_{l})\} contain prompts 𝒙 {\bm{x}} with chosen and rejected responses 𝒚 w , 𝒚 l {\bm{y}}_{w},{\bm{y}}_{l} . Write π 𝜽 \pi_{{\bm{\theta}}} for the policy with trainable parameters 𝜽 {\bm{\theta}} and π ref \pi_{\mathrm{ref}} for the fixed reference ( Rafailov et al., 2023 ) . For side b ∈ { w , l } b\in\{w,l\} , let T b ≥ 1 T_{b}\geq 1 count response tokens, excluding prompt and padding. At position t t , define the target-token log-ratio
+u b , t = log ⁡ π 𝜽 ​ ( y b , t ∣ 𝒙 , 𝒚 b , < t ) π ref ​ ( y b , t ∣ 𝒙 , 𝒚 b , < t ) . u_{b,t}=\log\frac{\pi_{{\bm{\theta}}}({y}_{b,t}\mid{\bm{x}},{\bm{y}}_{b,<t})}{\pi_{\mathrm{ref}}({y}_{b,t}\mid{\bm{x}},{\bm{y}}_{b,<t})}.
+(1)
+Here y b , t {y}_{b,t} is the target token and 𝒚 b , < t {\bm{y}}_{b,<t} its preceding response prefix. With mean rewards R b = T b − 1 ​ ∑ t = 1 T b u b , t R_{b}=T_{b}^{-1}\sum_{t=1}^{T_{b}}u_{b,t} , margin Δ = R w − R l \Delta=R_{w}-R_{l} , and scale β > 0 \beta>0 , DPO minimizes the loss ( Rafailov et al., 2023 ) :
+F ⁡ ( 𝜽 ) = 𝔼 𝒟 ​ [ ℒ DPO ] = 𝔼 𝒟 ​ [ log ⁡ ( 1 + e − β ​ Δ ) ] . F({\bm{\theta}})=\mathbb{E}_{\mathcal{D}}[\mathcal{L}_{\mathrm{DPO}}]=\mathbb{E}_{\mathcal{D}}[\log\bigl(1+e^{-\beta\Delta}\bigr)].
+(2)
+This length normalization parallels SimPO ( Meng et al., 2024 ) , but retains policy–reference log-ratios.
+Fig. 1 separates three costs: dense vocabulary projection materializes T b × V T_{b}\times V logits for vocabulary size V V ( Wijmans et al., 2025 ) , sequence execution computes attention and stores or recomputes activations ( Dao et al., 2022 ; Chen et al., 2016 ) , and backpropagation includes both responses ( Rafailov et al., 2023 ) .
+Write 𝕀 M = { 1 , … , M } {\mathbb{I}}_{M}=\{1,\ldots,M\} . On side b b , sequence pruning selects length M b ∈ 𝕀 T b M_{b}\in{\mathbb{I}}_{T_{b}} through cutoff fraction ρ b ∈ ( 0 , 1 ] \rho_{b}\in(0,1] , retaining 𝒚 ~ b = 𝒚 b , 1 : M b \tilde{\bm{y}}_{b}={\bm{y}}_{b,1:M_{b}} . Position pruning selects 𝕊 b ⊆ 𝕀 M b {\mathbb{S}}_{b}\subseteq{\mathbb{I}}_{M_{b}} with k b = | 𝕊 b | k_{b}=|{\mathbb{S}}_{b}| controlled by retention α ∈ ( 0 , 1 ] \alpha\in(0,1] . Branch pruning selects b ⋆ ∈ { w , l } b^{\star}\in\{w,l\} with probabilities q w , q l > 0 q_{w},q_{l}>0 , q w + q l = 1 q_{w}+q_{l}=1 . All sampling laws are parameter-independent, and rewards average over selected positions. We use σ \sigma for the sigmoid and sg \sg for stop-gradient, which preserves values and blocks derivatives. Appendix A summarizes the notation.
+3.2 Stochastic Position Pruning
+Position pruning retains a uniform subset of response positions for scoring while preserving the executed response as context. Draw 𝕊 b ∼ Select ⁡ ( M b , α ) {\mathbb{S}}_{b}\sim\positionsample(M_{b},\alpha) by
+k b \displaystyle k_{b}
+= max ⁡ ( 1 , ⌈ α ​ M b ⌉ ) , \displaystyle=\max(1,\lceil\alpha M_{b}\rceil),
+(3)
+Select ⁡ ( M b , α ) \displaystyle\positionsample(M_{b},\alpha)
+= Unif ⁡ { 𝕊 ⊆ 𝕀 M b : | 𝕊 | = k b } . \displaystyle=\operatorname{Unif}\{{\mathbb{S}}\subseteq{\mathbb{I}}_{M_{b}}:|{\mathbb{S}}|=k_{b}\}.
+Standalone position pruning uses M b = T b M_{b}=T_{b} . Define the selected-position reward
+R b ​ ( 𝕊 b ) = 1 k b ​ ∑ t ∈ 𝕊 b u b , t , R_{b}({\mathbb{S}}_{b})=\frac{1}{k_{b}}\sum_{t\in{\mathbb{S}}_{b}}u_{b,t},
+(4)
+with masked margin Δ = R w ​ ( 𝕊 w ) − R l ​ ( 𝕊 l ) \Delta=R_{w}({\mathbb{S}}_{w})-R_{l}({\mathbb{S}}_{l}) .
+The subset is drawn before the language-model head, without computing policy probabilities. Applying the head only at 𝕊 b {\mathbb{S}}_{b} evaluates Eq. 4 exactly, skipping M b − k b M_{b}-k_{b} vocabulary projections, their logits, and their backward traffic.
+Uniform sampling preserves the mean reward, but the nonlinear loss introduces a gap.
+Proposition 1 .
+For a fully executed response, let 𝕌 k {\mathbb{U}}_{k} be a uniform size- k k subset of 𝕀 T {\mathbb{I}}_{T} and ϕ t = ∇ 𝛉 ​ log ​ π 𝛉 ​ ( y t ∣ 𝐱 , 𝐲 < t ) {\bm{\phi}}_{t}=\nabla_{{\bm{\theta}}}\log\pi_{{\bm{\theta}}}({y}_{t}\mid{\bm{x}},{\bm{y}}_{<t}) . Let Δ U \Delta_{U} be the margin under independent side masks and Δ full \Delta_{\mathrm{full}} the full-response margin. At any fixed policy,
+𝔼 ⁡ [ R ⁡ ( 𝕌 k ) ] \displaystyle\mathbb{E}[R({\mathbb{U}}_{k})]
+= R ⁡ ( 𝕀 T ) , \displaystyle=R({\mathbb{I}}_{T}),
+𝔼 ⁡ [ 1 k ​ ∑ t ∈ 𝕌 k ϕ t ] \displaystyle\mathbb{E}\Bigl[\frac{1}{k}\sum_{t\in{\mathbb{U}}_{k}}{\bm{\phi}}_{t}\Bigr]
+= 1 T ​ ∑ t = 1 T ϕ t , \displaystyle=\frac{1}{T}\sum_{t=1}^{T}{\bm{\phi}}_{t},
+(5)
+and
+0 ≤ 𝔼 ⁡ [ ℓ ⁡ ( Δ U ) ] − ℓ ⁡ ( Δ full ) ≤ β 2 8 ​ Var ​ ( Δ U ) , 0\leq\mathbb{E}[\ell(\Delta_{U})]-\ell(\Delta_{\mathrm{full}})\leq\frac{\beta^{2}}{8}\mathrm{Var}(\Delta_{U}),
+(6)
+where Var \mathrm{Var} is over the sampled masks and Var ( Δ U ) = ∑ b : T b > 1 T b − k b k b ​ ( T b − 1 ) v b \mathrm{Var}(\Delta_{U})=\sum_{b:T_{b}>1}\frac{T_{b}-k_{b}}{k_{b}(T_{b}-1)}\,v_{b} . Here u ¯ b = T b − 1 ​ ∑ t u b , t \bar{u}_{b}=T_{b}^{-1}\sum_{t}u_{b,t} and v b = T b − 1 ​ ∑ t ( u b , t − u ¯ b ) 2 v_{b}=T_{b}^{-1}\sum_{t}(u_{b,t}-\bar{u}_{b})^{2} are the population mean and variance. Single-token sides contribute zero variance.
+At α = 1 \alpha=1 , selected-head execution preserves the full-response objective while avoiding projection outside valid response positions ( Tab. 1 ).
+To bound the sampled optimum, assume throughout this subsection and Secs. B.5 and B.6 that | u b , t | ≤ U |u_{b,t}|\leq U , ‖ ∇ 𝜽 u b , t ‖ ≤ G \|\nabla_{{\bm{\theta}}}u_{b,t}\|\leq G , v b ≤ v ¯ v_{b}\leq\bar{v} , and T b ≥ T 0 ≥ 2 T_{b}\geq T_{0}\geq 2 on the analyzed region. The objectives are twice differentiable there and attain their minima.
+Corollary 1 (Optimality gap of position pruning) .
+Let 𝛉 ∗ {\bm{\theta}}^{*} minimize the full-response objective F F and 𝛉 A ∗ {\bm{\theta}}_{A}^{*} minimize F A ​ ( 𝛉 ) = 𝔼 𝒟 ​ 𝔼 S ​ [ ℓ ⁡ ( Δ U ) ] F_{A}({\bm{\theta}})=\mathbb{E}_{\mathcal{D}}\mathbb{E}_{S}[\ell(\Delta_{U})] . Then
+0 ≤ F ⁡ ( 𝜽 A ∗ ) − F ⁡ ( 𝜽 ∗ ) ≤ β 2 8 ​ 𝔼 𝒟 ​ [ Var S ​ ( Δ U ) ] . 0\leq F({\bm{\theta}}_{A}^{*})-F({\bm{\theta}}^{*})\leq\frac{\beta^{2}}{8}\mathbb{E}_{\mathcal{D}}\bigl[\mathrm{Var}_{S}(\Delta_{U})\bigr].
+(7)
+The variance is evaluated at 𝜽 ∗ {\bm{\theta}}^{*} over masks, then averaged over data. Since k b ≥ α ​ T b k_{b}\geq\alpha T_{b} , Proposition 1 gives 𝔼 𝒟 ​ [ Var S ​ ( Δ U ) ] ≤ 2 ​ v ¯ ​ r A \mathbb{E}_{\mathcal{D}}[\mathrm{Var}_{S}(\Delta_{U})]\leq 2\bar{v}\,r_{A} , where
+r A := 1 − α α ⁡ ( T 0 − 1 ) . r_{A}:=\frac{1-\alpha}{\alpha(T_{0}-1)}.
+(8)
+Thus the bound decays as 1 / T 0 1/T_{0} at fixed retention and vanishes at α = 1 \alpha=1 . A sufficient condition for loss tolerance ε F > 0 \varepsilon_{F}>0 is
+α ≥ 1 1 + 4 ​ ε F ​ ( T 0 − 1 ) / ( β 2 ​ v ¯ ) , \alpha\geq\frac{1}{1+4\varepsilon_{F}(T_{0}-1)/(\beta^{2}\bar{v})},
+(9)
+A second-order expansion also gives ‖ ∇ F A − ∇ F ‖ = 𝒪 ⁡ ( r A ) \|\nabla F_{A}-\nabla F\|=\mathcal{O}(r_{A}) (Appendix B.6 ). If ∇ 2 F ⪰ μ ​ I \nabla^{2}F\succeq\mu I , μ > 0 \mu>0 , along the segment joining interior stationary points of F A F_{A} and F F within the analyzed region, their displacement is 𝒪 ⁡ ( r A ) \mathcal{O}(r_{A}) rather than 𝒪 ⁡ ( r A ) \mathcal{O}(\sqrt{r_{A}}) . The loss bound requires no curvature assumption. Sufficient curvature conditions appear in Appendix B.7 .
+3.3 Stochastic Sequence Pruning
+Sequence pruning truncates each response before policy and reference execution. For minimum retained fraction ρ min ∈ ( 0 , 1 ) \rho_{\min}\in(0,1) , draw ( 𝒚 ~ b , M b ) ∼ Prefix ⁡ ( 𝒚 b , ρ min ) (\tilde{\bm{y}}_{b},M_{b})\sim\prefixsample({\bm{y}}_{b},\rho_{\min}) by
+ρ b \displaystyle\rho_{b}
+∼ 𝒰 ⁡ ( ρ min , 1 ) , \displaystyle\sim\mathcal{U}(\rho_{\min},1),
+(10)
+M b \displaystyle M_{b}
+= max ⁡ ( 1 , ⌈ ρ b ​ T b ⌉ ) , \displaystyle=\max(1,\lceil\rho_{b}T_{b}\rceil),
+𝒚 ~ b \displaystyle\tilde{\bm{y}}_{b}
+= 𝒚 b , 1 : M b . \displaystyle={\bm{y}}_{b,1:M_{b}}.
+Both models repack the prompt with 𝒚 ~ b \tilde{\bm{y}}_{b} , removing suffix attention, activations, and recomputation. The reward is R b = M b − 1 ​ ∑ t = 1 M b u b , t R_{b}=M_{b}^{-1}\sum_{t=1}^{M_{b}}u_{b,t} , and ρ b ≡ 1 \rho_{b}\equiv 1 recovers the full-response objective. Sec. 4.3 evaluates ρ min \rho_{\min} .
+Prefix inclusion and length normalization favor earlier positions:
+Lemma 1 (Implicit temporal weighting) .
+For one response of length T T , let M ∈ { 1 , … , T } M\in\{1,\ldots,T\} be the sampled cutoff, with law q ⁡ ( m ) = Pr ⁡ ( M = m ) q(m)=\Pr(M=m) and prefix reward R M = M − 1 ​ ∑ t = 1 M u t R_{M}=M^{-1}\sum_{t=1}^{M}u_{t} . Define the temporal weights w t := ∑ m = t T q ⁡ ( m ) / m w_{t}:=\sum_{m=t}^{T}q(m)/m . Then
+𝔼 M ​ [ R M ] = ∑ t = 1 T w t ​ u t . \mathbb{E}_{M}[R_{M}]=\sum_{t=1}^{T}w_{t}u_{t}.
+(11)
+The weights satisfy w 1 ≥ ⋯ ≥ w T ≥ 0 w_{1}\geq\cdots\geq w_{T}\geq 0 and ∑ t = 1 T w t = 1 \sum_{t=1}^{T}w_{t}=1 . Uniform weights w t = 1 / T w_{t}=1/T occur exactly when M = T M=T almost surely.
+Appendix B.2 proves this identity and characterizes the cutoff laws. The nonlinear loss adds a Jensen gap:
+Lemma 2 (Prefix Jensen gap) .
+Let Δ M \Delta_{M} be the random-prefix margin, μ pref = 𝔼 ⁡ [ Δ M ] \mu_{\mathrm{pref}}=\mathbb{E}[\Delta_{M}] its mean, and ℒ pref = 𝔼 ⁡ [ ℓ ⁡ ( Δ M ) ] \mathcal{L}_{\mathrm{pref}}=\mathbb{E}[\ell(\Delta_{M})] the expected prefix loss with Jensen gap J pref J_{\mathrm{pref}} . Then
+ℒ pref \displaystyle\mathcal{L}_{\mathrm{pref}}
+= ℓ ⁡ ( μ pref ) + J pref , \displaystyle=\ell(\mu_{\mathrm{pref}})+J_{\mathrm{pref}},
+(12)
+0 ≤ J pref \displaystyle 0\leq J_{\mathrm{pref}}
+≤ β 2 8 ​ Var ​ ( Δ M ) . \displaystyle\leq\frac{\beta^{2}}{8}\mathrm{Var}(\Delta_{M}).
+Unlike position pruning, sequence pruning can shift the mean margin. The shift ℓ ⁡ ( μ pref ) − ℓ ⁡ ( Δ full ) \ell(\mu_{\mathrm{pref}})-\ell(\Delta_{\mathrm{full}}) has no fixed sign, whereas J pref ≥ 0 J_{\mathrm{pref}}\geq 0 vanishes for deterministic cutoffs or β = 0 \beta=0 (Appendix B.3 ). Parameter-independent cutoffs make ∇ 𝜽 ℓ ​ ( Δ M ) \nabla_{{\bm{\theta}}}\ell(\Delta_{M}) unbiased for ∇ 𝜽 ℒ pref \nabla_{{\bm{\theta}}}\mathcal{L}_{\mathrm{pref}} , generally different from the full-response gradient. Sec. 4.4 evaluates the resulting performance.
+Assume causal execution with the prompt retained, so prefix token scores and gradients match full execution. For truncation fraction h b = 1 − M b / T b h_{b}=1-M_{b}/T_{b} , Eq. 10 gives 𝔼 ⁡ [ h b ] ≤ ( 1 − ρ min ) / 2 \mathbb{E}[h_{b}]\leq(1-\rho_{\min})/2 . Prefix and full mean rewards differ by at most 2 ​ U ​ h b 2Uh_{b} , and their gradients by 2 ​ G ​ h b 2Gh_{b} . The β \beta -Lipschitz loss therefore yields
+| F P ​ ( 𝜽 ) − F ⁡ ( 𝜽 ) | ≤ 2 ​ β ​ U ​ ( 1 − ρ min ) , |F_{P}({\bm{\theta}})-F({\bm{\theta}})|\leq 2\beta U(1-\rho_{\min}),
+(13)
+where F P = 𝔼 ⁡ [ ℒ pref ] F_{P}=\mathbb{E}[\mathcal{L}_{\mathrm{pref}}] . Consequently, F ⁡ ( 𝜽 P ∗ ) − F ⁡ ( 𝜽 ∗ ) ≤ 4 ​ β ​ U ​ ( 1 − ρ min ) F({\bm{\theta}}_{P}^{*})-F({\bm{\theta}}^{*})\leq 4\beta U(1-\rho_{\min}) . Unlike Eq. 7 , this bound has no response-length decay. At the tested ρ min = 1 / 2 \rho_{\min}=1/2 , the optimality bound equals the full loss range over | Δ | ≤ 2 ​ U |\Delta|\leq 2U , making it vacuous. This comparison concerns theoretical bounds, not measured deviations. Appendix B.8 also derives gradient and displacement bounds.
+3.4 Stochastic Branch Pruning
+Branch pruning removes one backward graph while preserving the expected gradient conditional on the sampled positions and prefixes. With λ = β ​ σ ​ ( − β ​ Δ ) \lambda=\beta\sigma(-\beta\Delta) and σ ⁡ ( z ) = ( 1 + e − z ) − 1 \sigma(z)=(1+e^{-z})^{-1} , the DPO gradient decomposes as ( Rafailov et al., 2023 )
+∇ 𝜽 ℒ DPO = − λ ​ ∇ 𝜽 R w + λ ​ ∇ 𝜽 R l . \nabla_{{\bm{\theta}}}\mathcal{L}_{\mathrm{DPO}}=-\lambda\,\nabla_{{\bm{\theta}}}R_{w}+\lambda\,\nabla_{{\bm{\theta}}}R_{l}.
+(14)
+Independently of positions and prefixes, draw the active backward-branch set and its probability, ( 𝔹 , q ⋆ ) ∼ Branch ⁡ ( q w ) ({\mathbb{B}},q^{\star})\sim\branchsample(q_{w}) , with q l = 1 − q w q_{l}=1-q_{w} and
+Pr [ ( 𝔹 , q ⋆ ) = ( { b } , q b ) ] = q b , b ∈ { w , l } . \Pr\bigl[({\mathbb{B}},q^{\star})=(\{b\},q_{b})\bigr]=q_{b},\;b\in\{w,l\}.
+(15)
+Only b ⋆ ∈ 𝔹 b^{\star}\in{\mathbb{B}} retains a policy backward graph. The opposite side runs under no_grad , providing the other reward needed for λ \lambda . Disabling branch pruning sets 𝔹 = { w , l } {\mathbb{B}}=\{w,l\} and q ⋆ = 1 q^{\star}=1 . Inverse-probability weighting corrects each selected contribution. With ζ ⁡ ( z ) = log ⁡ ( 1 + e z ) \zeta(z)=\log(1+e^{z}) , use
+ℒ ^ w \displaystyle\widehat{\mathcal{L}}_{w}
+= 1 q w ​ ζ ​ ( − β ⁡ ( R w − sg ⁡ ( R l ) ) ) , \displaystyle=\frac{1}{q_{w}}\,\zeta\bigl(-\beta\bigl(R_{w}-\sg(R_{l})\bigr)\bigr),
+(16)
+ℒ ^ l \displaystyle\widehat{\mathcal{L}}_{l}
+= 1 q l ​ ζ ​ ( − β ⁡ ( sg ⁡ ( R w ) − R l ) ) . \displaystyle=\frac{1}{q_{l}}\,\zeta\bigl(-\beta\bigl(\sg(R_{w})-R_{l}\bigr)\bigr).
+The sampled loss ℒ ^ = ℒ ^ b ⋆ \widehat{\mathcal{L}}=\widehat{\mathcal{L}}_{b^{\star}} preserves the numerical margin and differentiates only the selected reward.
+Proposition 2 (Conditional unbiasedness) .
+Fix the sampled response positions and prefixes. Then
+𝔼 b ⋆ ​ [ ∇ 𝛉 ℒ ^ ] = ∇ 𝛉 ​ log ​ ( 1 + e − β ⁡ ( R w − R l ) ) \mathbb{E}_{b^{\star}}\bigl[\nabla_{{\bm{\theta}}}\widehat{\mathcal{L}}\bigr]=\nabla_{{\bm{\theta}}}\log\bigl(1+e^{-\beta(R_{w}-R_{l})}\bigr) .
+With position and sequence pruning disabled, this is the full-response per-pair gradient in Eq. 2 .
+We default to q w = q l = 0.5 q_{w}=q_{l}=0.5 and sweep q w ∈ { 0.3 , 0.5 , 0.7 } q_{w}\in\{0.3,0.5,0.7\} in Sec. 4.3 . Gradient norms govern importance-sampling variance ( Katharopoulos and Fleuret, 2018 ) , as specialized in Appendix B.4 .
+Proposition 3 (Branch estimator variance) .
+Fix positions and prefixes, and set 𝐜 w = − λ ​ ∇ 𝛉 R w {\bm{c}}_{w}=-\lambda\nabla_{{\bm{\theta}}}R_{w} , 𝐜 l = λ ​ ∇ 𝛉 R l {\bm{c}}_{l}=\lambda\nabla_{{\bm{\theta}}}R_{l} . The estimator 𝐠 ^ = 𝐜 b ⋆ / q b ⋆ \hat{\bm{g}}={\bm{c}}_{b^{\star}}/q_{b^{\star}} has mean 𝐜 w + 𝐜 l {\bm{c}}_{w}+{\bm{c}}_{l} and variance
+Var ⁡ ( 𝒈 ^ ) = ‖ 𝒄 w ‖ 2 q w + ‖ 𝒄 l ‖ 2 q l − ‖ 𝒄 w + 𝒄 l ‖ 2 . \mathrm{Var}(\hat{\bm{g}})=\frac{\|{\bm{c}}_{w}\|^{2}}{q_{w}}+\frac{\|{\bm{c}}_{l}\|^{2}}{q_{l}}-\|{\bm{c}}_{w}+{\bm{c}}_{l}\|^{2}.
+(17)
+At q w = q l = 1 / 2 q_{w}=q_{l}=1/2 , the variance is ‖ 𝒄 w − 𝒄 l ‖ 2 ≤ 4 ​ β 2 ​ G 2 \|{\bm{c}}_{w}-{\bm{c}}_{l}\|^{2}\leq 4\beta^{2}G^{2} under the bounds of Sec. 3.2 . Averaging m m estimators independent in preference pairs, positions, prefixes, and branches divides the variance by m m . Re-drawing only the branch reduces only its variance component.
+Branch pruning adds gradient noise without objective bias. For the optimized objective Φ \Phi , assume μ \mu -strong convexity and L L -smoothness on a closed convex region Θ \Theta with minimizer 𝜽 Φ ∗ {\bm{\theta}}_{\Phi}^{*} in its interior. Starting from 𝜽 0 ∈ Θ {\bm{\theta}}_{0}\in\Theta , projected SGD with m m independent estimators per step and the schedule in Appendix B.9 gives 𝔼 ​ ‖ 𝜽 N − 𝜽 Φ ∗ ‖ 2 = 𝒪 ⁡ ( 1 / N ) \mathbb{E}\|{\bm{\theta}}_{N}-{\bm{\theta}}_{\Phi}^{*}\|^{2}=\mathcal{O}(1/N) . That appendix supplies the constants and a high-probability bound. Gradient unbiasedness does not imply unbiased finite-step parameters.
+3.5 Composition
+Alg. 1 composes the interventions in execution order: truncate the response, select scoring positions, then select the backward branch and apply its probability correction. Each mode is optional. Full disables all three, using full responses, all response scores, and both backward branches. Tables abbreviate the modes as Position, Sequence, and Branch, with “+” denoting composition.
+Algorithm 1 Stochastic DPO step
+1:
+Pair ( 𝒙 , 𝒚 w , 𝒚 l ) ({\bm{x}},{\bm{y}}_{w},{\bm{y}}_{l}) , policy π 𝜽 \pi_{{\bm{\theta}}} , frozen π ref \pi_{\mathrm{ref}}
+2:
+Rates α , ρ min , q w \alpha,\rho_{\min},q_{w} , enabled pruning modes
+3:
+for b ∈ { w , l } b\in\{w,l\} do
+4:
+( 𝒚 ~ b , M b ) ← ( 𝒚 b , T b ) (\tilde{\bm{y}}_{b},M_{b})\leftarrow({\bm{y}}_{b},T_{b})
+5:
+if sequence pruning then
+6:
+( 𝒚 ~ b , M b ) ∼ Prefix ⁡ ( 𝒚 b , ρ min ) (\tilde{\bm{y}}_{b},M_{b})\sim\prefixsample({\bm{y}}_{b},\rho_{\min}) ⊳ \triangleright Eq. 10
+7:
+𝕊 b ← 𝕀 M b {\mathbb{S}}_{b}\leftarrow{\mathbb{I}}_{M_{b}}
+8:
+if position pruning then
+9:
+𝕊 b ∼ Select ⁡ ( M b , α ) {\mathbb{S}}_{b}\sim\positionsample(M_{b},\alpha) ⊳ \triangleright Eq. 3
+10:
+𝔹 ← { w , l } {\mathbb{B}}\leftarrow\{w,l\}
+11:
+q ⋆ ← 1 q^{\star}\leftarrow 1
+12:
+if branch pruning then
+13:
+( 𝔹 , q ⋆ ) ∼ Branch ⁡ ( q w ) ({\mathbb{B}},q^{\star})\sim\branchsample(q_{w}) ⊳ \triangleright Eq. 15
+14:
+for b ∈ { w , l } b\in\{w,l\} do
+15:
+𝒛 b ← LogProbs ⁡ ( π 𝜽 , 𝒙 , 𝒚 ~ b , 𝕊 b , b ∈ 𝔹 ) {\bm{z}}_{b}\leftarrow\logprobs(\pi_{{\bm{\theta}}},{\bm{x}},\tilde{\bm{y}}_{b},{\mathbb{S}}_{b},b\in{\mathbb{B}})
+16:
+𝒛 b ref ← LogProbs ⁡ ( π ref , 𝒙 , 𝒚 ~ b , 𝕊 b , false ) {\bm{z}}_{b}^{\mathrm{ref}}\leftarrow\logprobs(\pi_{\mathrm{ref}},{\bm{x}},\tilde{\bm{y}}_{b},{\mathbb{S}}_{b},\texttt{false})
+17:
+R b ← mean ⁡ ( 𝒛 b − 𝒛 b ref ) R_{b}\leftarrow\mean({\bm{z}}_{b}-{\bm{z}}_{b}^{\mathrm{ref}}) ⊳ \triangleright Eq. 4
+18:
+ℒ ← ℓ ⁡ ( R w − R l ) / q ⋆ \mathcal{L}\leftarrow\ell(R_{w}-R_{l})/q^{\star} ⊳ \triangleright Eq. 16
+19:
+ℒ . backward ⁡ ( ) \mathcal{L}.\operatorname{backward}()
+20:
+Update 𝜽 {\bm{\theta}}
+For a policy or reference model π \pi , the scored log-probability vector is
+LogProbs ⁡ ( π , 𝒙 , 𝒚 , 𝕊 , g ) \displaystyle\logprobs(\pi,{\bm{x}},{\bm{y}},{\mathbb{S}},g)
+= \displaystyle=
+(18)
+( log ⁡ π ⁡ ( y t ∣ 𝒙 , 𝒚 < t ) ) t ∈ 𝕊 . \displaystyle\bigl(\log\pi({y}_{t}\mid{\bm{x}},{\bm{y}}_{<t})\bigr)_{t\in{\mathbb{S}}}.
+Both models score the same prefixes and positions, with entries in response order. Position pruning applies the head only at 𝕊 {\mathbb{S}} ; otherwise, the full head is evaluated before gathering. The argument g g controls gradient recording through the backbone and head: only policy branches in 𝔹 {\mathbb{B}} retain a backward graph, while the reference always runs without gradients. Numerical values are unchanged. The outputs 𝒛 b , 𝒛 b ref {\bm{z}}_{b},{\bm{z}}_{b}^{\mathrm{ref}} give R b R_{b} by the mean difference in Eq. 4 . The step loss is ℒ = ℓ ⁡ ( R w − R l ) / q ⋆ \mathcal{L}=\ell(R_{w}-R_{l})/q^{\star} ( Eq. 16 ), recovering the per-pair loss in Eq. 2 on the selected prefixes and positions when q ⋆ = 1 q^{\star}=1 .
+The minimizer 𝜽 A ​ P ∗ {\bm{\theta}}_{AP}^{*} of the composed objective F A ​ P F_{AP} satisfies
+F ⁡ ( 𝜽 A ​ P ∗ ) − F ⁡ ( 𝜽 ∗ ) \displaystyle F({\bm{\theta}}_{AP}^{*})-F({\bm{\theta}}^{*})
+≤ β 2 ​ v ¯ ​ ( 1 − α ) 4 ​ α ​ ( M 0 − 1 ) \displaystyle\leq\frac{\beta^{2}\bar{v}(1-\alpha)}{4\alpha(M_{0}-1)}
+(19)
++ 4 ​ β ​ U ​ ( 1 − ρ min ) , \displaystyle+4\beta U(1-\rho_{\min}),
+where M 0 = max ⁡ ( 2 , ⌈ ρ min ​ T 0 ⌉ ) M_{0}\!\!=\!\!\max(2,\lceil\rho_{\min}T_{0}\rceil) .
+The position-pruning bias bound decays as 1 / T 0 1/T_{0} at fixed retention. The prefix bound scales with 1 − ρ min 1-\rho_{\min} without length decay, while branch pruning adds no objective bias and has the 𝒪 ⁡ ( 1 / N ) \mathcal{O}(1/N) mean-squared optimization error above. Appendix B.10 proves the composed loss bound and Eqs. 43 and 45 , which allocate a total tolerance across α \alpha , ρ min \rho_{\min} , and N N .
+4 Experiments
+4.1 Experimental Setup
+We use Qwen3-4B, Qwen3-8B ( Yang et al., 2025a ) , and Mistral-7B-Instruct-v0.3 ( Jiang et al., 2023 ) . The core resource profiles, eight-configuration factorial, and parameter sweeps use Qwen3-4B on HelpSteer3-Preference ( Wang et al., 2025 ) . LoRA ( Hu et al., 2021 ) has rank 64, scaling 128, and dropout 0.05 0.05 . Training uses FlashAttention-2 ( Dao, 2023 ) , gradient checkpointing ( Chen et al., 2016 ) , AdamW ( Loshchilov and Hutter, 2019 ) , DPO β = 1 \beta=1 . Global batch is 64 with per-device batch 2, accumulation 4, and eight Ascend 910B accelerators with 32 GiB each. Optimizer and corpus details are in Appendix D.2 ; matched token-selection controls are in Tabs. 11 and 12 .
+Defaults are α = 0.6 \alpha=0.6 , ρ b ∼ 𝒰 ⁡ ( 0.5 , 1 ) \rho_{b}\sim\mathcal{U}(0.5,1) , and q w = q l = 0.5 q_{w}=q_{l}=0.5 . The factorial and sweeps use training and selection seed 42. A second Qwen seed (43) and Mistral seed 42 test the Full–Branch comparison.
+Metrics.
+We group benchmarks by evaluation protocol. Accuracy-based benchmarks comprise ARC-Challenge ( Clark et al., 2018 ) , GSM8K ( Cobbe et al., 2021 ) , TruthfulQA ( Lin et al., 2022 ) , BBH ( Suzgun et al., 2023 ) , MATH-Hard ( Hendrycks et al., 2021 ) , MMLU-Pro ( Wang et al., 2024 ) , and MuSR ( Sprague et al., 2024 ) . For open-ended generation, MiniMax-M3 ( Lai et al., 2026b ) judges MT-Bench (MT, 0 0 – 10 10 ) ( Zheng et al., 2023 ) , Arena-Hard (AH, tie-adjusted win rate in %) ( Li et al., 2024 ) , and WildBench (WB, 1 1 – 10 10 ) ( Lin et al., 2024 ) . Mean Accuracy averages the seven accuracy-based benchmark percentages. Mean Generation Score equally averages 10 ​ MT 10\,\mathrm{MT} , AH \mathrm{AH} , and 10 ​ WB 10\,\mathrm{WB} on a 100-point scale. Task-level means are retained in Tabs. 9 , 10 and 13 .
+4.2 Resource Effects and Attribution
+Figure 2: Resource ratios at the default settings. Dashed lines mark each baseline. Panel (c) counts executed input tokens, including prompt and padding.
+Baselines and measurement.
+Full denotes the unpruned DPO baseline using the original padded stack. Full-concat batches chosen and rejected responses together to reduce padding; both retain all response supervision and both backward graphs. Position, Branch, and Position+Branch profiles use Full-concat; Sequence and end-to-end trainings use Full. The concatenated profiler measures Full-concat at 17.343 17.343 s and 23,627 23{,}627 MB, vs. Full at 18.204 18.204 s and 18,571 18{,}571 MB: 1.049 × 1.049\times faster with 27 % 27\% more memory. The separate prefix profiler measures Full at 18.826 18.826 s. Timings are compared within a profiler. The concatenated profile uses 16 paired measured rounds. Peak high-bandwidth memory (HBM) is reset per step and maximized over 8 ranks.
+Output head versus supervision.
+Position combines selected-head execution with random position pruning. In the separate attribution profile ( Tab. 1 ), retaining all supervision already saves 8,905 8{,}905 MB; sampling adds only 642 642 MB. Thus selected-head execution accounts for 93.3 % 93.3\% of the saving, vs. 6.7 % 6.7\% from supervision deletion. Full-retention rewards match Full-concat exactly, and selected-head and dense-reduced rewards match under identical masks (Appendix D.7 ). The implementation supplies most memory savings, while deletion introduces the loss gap of Proposition 1 .
+Configuration
+Retention
+Step (s)
+HBM (MB)
+Full-concat
+1.0
+17.081
+23,627
+Selected head
+1.0
+16.827
+14,722
+Selected head
+0.6
+16.791
+14,080
+Table 1: Qwen output-head attribution in a separate matched profile. Retention 1.0 1.0 preserves all response supervision. Shading highlights full-supervision selected-head execution. Details: Appendix D.7 .
+Backward computation.
+Against Full-concat, Branch reduces step time by 29.9 % 29.9\% ( 1.426 × 1.426\times speedup) and peak HBM by 26.7 % 26.7\% . Position+Branch reaches 1.443 × 1.443\times speedup and 48.6 % 48.6\% lower HBM ( Fig. 2 ). Its 11,471 11{,}471 MB saving is below the 15,855 15{,}855 MB sum of the separate savings; the cause of this sub-additivity remains unresolved.
+Sequence execution.
+Sequence pruning executes 0.85 0.85 – 0.94 0.94 of Full’s input tokens and saves 8 8 – 11 % 11\% peak HBM ( Tab. 2 ). Across random and fixed cutoffs, steps take 18.430 18.430 – 18.482 18.482 s, at most 2.1 % 2.1\% below Full. Differences between cutoffs are smaller than the 0.18 0.18 – 0.44 0.44 s spread across repeated measurements of one configuration. Token reduction therefore has a much smaller timing effect than branch pruning at this geometry; its physical cause remains unresolved.
+Sequence setting
+Tokens
+HBM (MB)
+Δ \Delta HBM
+Step (s)
+Full
+1.000 × \times
+18,571
+—
+18.826
+𝒰 ⁡ ( 0.25 , 1 ) \mathcal{U}(0.25,1)
+0.854 × \times
+16,718
+− 10.0 % -10.0\%
+18.480
+𝒰 ⁡ ( 0.5 , 1 ) \mathcal{U}(0.5,1)
+0.893 × \times
+16,827
+− 9.4 % -9.4\%
+18.430
+𝒰 ⁡ ( 0.75 , 1 ) \mathcal{U}(0.75,1)
+0.943 × \times
+17,072
+− 8.1 % -8.1\%
+18.482
+fixed 0.75 0.75
+0.894 × \times
+16,561
+− 10.8 % -10.8\%
+18.471
+Table 2: Sequence profile against Full. Tokens counts executed input, including prompt and padding, relative to Full. Shading marks the default 𝒰 ⁡ ( 0.5 , 1 ) \mathcal{U}(0.5,1) .
+4.3 Parameter Sensitivity
+Tab. 3 varies one axis at a time using the factorial recipe. Realized pruning fractions are reported in Appendix D.4 . Sequence input counts include prompt and padding, so fractions are not comparable across axes or directly to ρ b \rho_{b} .
+Axis
+Setting
+Resource
+Mean
+accuracy (%)
+Mean generation
+score
+Position
+α = 0.30 \alpha{=}0.30
+11,211 MB
+57.90
+47.73
+Position
+α = 0.60 \alpha{=}0.60
+11,320 MB
+58.06
+48.38
+Position
+α = 0.90 \alpha{=}0.90
+11,580 MB
+58.32
+48.63
+Sequence
+𝒰 ⁡ ( 0.25 , 1 ) \mathcal{U}(0.25,1)
+16,718 MB
+58.09
+47.91
+Sequence
+𝒰 ⁡ ( 0.50 , 1 ) \mathcal{U}(0.50,1)
+16,827 MB
+58.04
+47.33
+Sequence
+𝒰 ⁡ ( 0.75 , 1 ) \mathcal{U}(0.75,1)
+17,072 MB
+58.04
+49.53
+Sequence
+fixed 0.75 0.75
+16,561 MB
+58.08
+47.03
+Branch
+q w = 0.30 q_{w}{=}0.30
+127.7 min
+58.06
+48.80
+Branch
+q w = 0.50 q_{w}{=}0.50
+128.4 min
+58.08
+50.25
+Branch
+q w = 0.70 q_{w}{=}0.70
+128.4 min
+57.97
+48.74
+Table 3: Ablation on Qwen3-4B/HelpSteer3-Preference. Shading marks defaults. Means follow Sec. 4.1 . Full task scores: Tab. 10 .
+For Position, increasing α \alpha from 0.3 0.3 to 0.9 0.9 raises mean accuracy from 57.90 57.90 to 58.32 58.32 , while peak HBM changes little ( 11,211 11{,}211 – 11,580 11{,}580 MB) and AH is non-monotone ( Tab. 10 ). This weak memory dependence agrees with the implementation-dominated attribution above. Sequence cutoffs track input work and HBM but barely affect step time. Fixed ρ b = 0.75 \rho_{b}=0.75 and 𝒰 ⁡ ( 0.5 , 1 ) \mathcal{U}(0.5,1) execute similar token fractions yet differ in temporal weights and randomness, so their score difference cannot isolate the Jensen gap. Branch probabilities yield similar training times ( 127.7 127.7 – 128.4 128.4 min) and varying open-ended point estimates. We retain q w = 0.5 q_{w}=0.5 . HBM was not measured across q w q_{w} . Position step times are 3.29 3.29 – 3.41 3.41 s in its separate paired, interleaved retention profiler; resource comparisons remain within each axis.
+4.4 The Eight-Configuration Factorial
+In Tab. 4 , all four Branch configurations finish in 126 126 – 128 128 min vs. 185 185 – 188 188 min without Branch, preserving a 31 31 – 32 % 32\% time saving across matched contrasts. Position and Sequence retain that benefit when composed with Branch. All 12 single-axis contrasts lower mean accuracy (unrounded contrasts in Appendix D.4 ); Fig. 3 shows the resulting time–accuracy tradeoff.
+Method
+Wall
+(min)
+Mean
+accuracy (%)
+Mean generation
+score
+Full
+187.8
+58.33
+49.33
+Position
+185.9
+58.06
+48.38
+Sequence
+186.4
+58.04
+47.33
+Branch
+128.4
+58.08
+50.25
+Position+Sequence
+185.0
+57.97
+48.85
+Position+Branch
+127.8
+57.94
+48.17
+Sequence+Branch
+126.3
+57.86
+47.67
+Position+Sequence
++Branch
+127.0
+57.69
+48.35
+Table 4: Qwen3-4B factorial, one training and one selection seed. Bold/underline mark best/second-best values, including ties. Full scores: Tab. 9 .
+Open-ended scores move differently. Branch raises MT and WB point estimates with AH close to Full. Configurations containing Position or Sequence fall below Full on AH, while their MT changes depend on the base configuration. Generation means are descriptive single-seed summaries and do not establish score superiority.
+Figure 3: Training time versus seven-task mean accuracy for the eight factorial runs. The gray staircase is the observed frontier of single-seed point estimates.
+4.5 Branch Pruning Across Seeds and Models
+Config.
+Wall (min)
+Speedup
+Mean acc.
+(%)
+Mean gen.
+score
+Qwen3-4B, seed 42
+Full
+187.8
+1.000 × 1.000\times
+58.33
+49.33
+Branch
+128.4
+1.463 × \bm{1.463\times}
+58.08
+50.25
+Qwen3-4B, seed 43
+Full
+187.0
+1.000 × 1.000\times
+58.26
+47.64
+Branch
+131.0
+1.428 × \bm{1.428\times}
+57.81
+48.49
+Mistral-7B, seed 42
+Full
+211.0
+1.000 × 1.000\times
+44.86
+33.17
+Branch
+142.0
+1.486 × \bm{1.486\times}
+44.55
+33.93
+Table 5: Full–Branch validation. Speedup uses each pair’s Full training time. Bold marks the better value within each pair. Score means follow Sec. 4.1 ; task scores are in Tab. 13 .
+The matched Full–Branch trainings in Tab. 5 save 29.9 29.9 – 32.7 % 32.7\% wall-clock across two Qwen seeds and Mistral, with mean accuracy lower by 0.25 0.25 – 0.45 0.45 pp. In the Mistral profile in Tab. 6 , Branch gives 1.507 × 1.507\times speedup and saves 1,347 1{,}347 MB ( 6.4 % 6.4\% ) against Full. The time benefit transfers across families.
+Configuration
+Step (s)
+HBM (MB)
+Qwen3-4B
+Full
+18.204
+18,571
+Branch
+12.161
+17,319
+Mistral-7B
+Full
+22.438
+21,185
+Branch
+14.888
+19,838
+Table 6: Paired Full–Branch step-time and peak-memory profiles. Bold marks lower values within each model.
+MT and WB checkpoint means rise in all three comparisons, while Mistral AH falls. These checkpoint scores are descriptive and do not establish superiority or characterize training-seed variability. Full task scores and scoring coverage are in Appendix D.7 . Cross-family validation covers Branch only; Position, Sequence, and their compositions are evaluated on Qwen.
+Branch-gradient consistency.
+We check the conditional expectation in Proposition 2 by enumerating both backward branches. On a small Mistral model in Float64, the probability-weighted average of both branch gradients matches Full to relative L2 error at most 1.7 × 10 − 7 1.7\times 10^{-7} . On Mistral-7B in BFloat16, the gradient cosine is 0.9997 0.9997 and the relative L2 error is 0.0236 0.0236 , against 0.0071 0.0071 for repeated computation of the same configuration, which sets the numerical noise floor for this check. These checks disable LoRA dropout and retain gradient checkpointing using dropout 0.05 0.05 .
+5 Conclusion
+We separate output scoring, sequence execution, and backward computation to locate where stochastic DPO computation saves resources and how it changes optimization. Most output-memory savings come from the implementation rather than from supervision deletion, the branch-pruning time benefit reproduces across Qwen seeds and Mistral, and both accompany lower mean accuracy with mixed open-ended results, so configuration choice should follow the resource constraint and the acceptable objective change.
+Limitations
+Evaluation covers parameter-efficient text preference training with an online reference on one eight-accelerator setup. Savings may vary with hardware, batch geometry, and reference execution.
+References
+Biderman et al. (2023)
+S. Biderman, H. Schoelkopf, Q. Anthony, H. Bradley, K. O’Brien, E. Hallahan, M. A. Khan, S. Purohit, U. S. Prashanth, E. Raff, A. Skowron, L. Sutawika, and O. van der Wal
+Pythia: a suite for analyzing large language models across training and scaling .
+External Links: 2304.01373 ,
+Link
+Cited by: §E.1 .
+Chen et al. (2016)
+T. Chen, B. Xu, C. Zhang, and C. Guestrin
+Training deep nets with sublinear memory cost .
+External Links: 1604.06174 ,
+Link
+Cited by: §2 ,
+§3.1 ,
+§4.1 .
+Chen et al. (2025)
+W. Chen, S. Li, J. Li, J. Yang, J. Paisley, and D. Zeng
+Dequantified diffusion-schrödinger bridge for density ratio estimation .
+In Proceedings of the 42nd International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol. 267 , pp. 8427–8452 .
+External Links: Link
+Cited by: §2 .
+Chen et al. (2026)
+W. Chen, Y. Wu, J. Yang, D. Zeng, Q. Zhao, J. Paisley, M. Chen, and Z. Wang
+Towards disentangled preference optimization dynamics: suppress the loser, preserve the winner .
+In International Conference on Machine Learning ,
+Note: arXiv:2604.18239
+Cited by: §1 ,
+§2 .
+Clark et al. (2018)
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord
+Think you have solved question answering? try arc, the ai2 reasoning challenge .
+arXiv preprint arXiv:1803.05457 .
+Cited by: §D.1 ,
+§4.1 .
+Cobbe et al. (2021)
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, et al.
+Training verifiers to solve math word problems .
+arXiv preprint arXiv:2110.14168 .
+Cited by: §D.1 ,
+§4.1 .
+Cui et al. (2024)
+G. Cui, L. Yuan, N. Ding, G. Yao, B. He, W. Zhu, Y. Ni, G. Xie, R. Xie, Y. Lin, Z. Liu, and M. Sun
+UltraFeedback: boosting language models with scaled ai feedback .
+External Links: 2310.01377 ,
+Link
+Cited by: §E.1 .
+Dao et al. (2022)
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré
+FlashAttention: fast and memory-efficient exact attention with IO-awareness .
+In Advances in Neural Information Processing Systems ,
+Vol. 35 .
+External Links: Link
+Cited by: §1 ,
+§2 ,
+§3.1 .
+Dao (2023)
+T. Dao
+FlashAttention-2: faster attention with better parallelism and work partitioning .
+External Links: 2307.08691 ,
+Link
+Cited by: §4.1 .
+Du et al. (2022)
+S. Du, Y. Luo, W. Chen, J. Xu, and D. Zeng
+TO-FLOW: efficient continuous normalizing flows with temporal optimization adjoint with moving speed .
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,
+pp. 12570–12580 .
+External Links: Link
+Cited by: §2 .
+Hendrycks et al. (2021)
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt
+Measuring mathematical problem solving with the math dataset .
+External Links: Link ,
+2103.03874
+Cited by: §D.1 ,
+§4.1 .
+Higuchi and Suzuki (2025)
+R. Higuchi and T. Suzuki
+Direct density ratio optimization: a statistically consistent approach to aligning large language models .
+In Proceedings of the 42nd International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol. 267 , pp. 23219–23234 .
+External Links: Link
+Cited by: §2 .
+Hsu et al. (2025)
+P. Hsu, Y. Dai, V. Kothapalli, Q. Song, S. Tang, S. Zhu, S. Shimizu, S. Sahni, H. Ning, and Y. Chen
+Liger kernel: efficient triton kernels for llm training .
+External Links: 2410.10989 ,
+Link
+Cited by: §1 ,
+§1 ,
+§2 .
+Hu et al. (2021)
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen
+LoRA: low-rank adaptation of large language models .
+External Links: 2106.09685 ,
+Link
+Cited by: §4.1 .
+Huang et al. (2026)
+C. Huang, Z. Li, S. Chou, and C. Cardie
+Token-weighted direct preference optimization with attention .
+External Links: 2605.21883 ,
+Link
+Cited by: §2 .
+Huang et al. (2016)
+G. Huang, Y. Sun, Z. Liu, D. Sedra, and K. Q. Weinberger
+Deep networks with stochastic depth .
+In Computer Vision – ECCV 2016 ,
+Lecture Notes in Computer Science , Vol. 9908 , pp. 646–661 .
+Cited by: §2 .
+Jiang et al. (2023)
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, L. R. Lavaud, M. Lachaux, P. Stock, T. L. Scao, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed
+Mistral 7B .
+External Links: 2310.06825 ,
+Link
+Cited by: §4.1 .
+Jiang et al. (2025)
+Y. Jiang, B. Huang, Y. Wang, X. Zeng, L. Li, Y. Wang, X. Jiang, L. Shang, R. Tang, and W. Wang
+Bridging and modeling correlations in pairwise data for direct preference optimization .
+In International Conference on Learning Representations , Y. Yue, A. Garg, N. Peng, F. Sha, and R. Yu (Eds.) ,
+Vol. 2025 , pp. 85386–85405 .
+External Links: Link
+Cited by: §1 ,
+§2 .
+Katharopoulos and Fleuret (2018)
+A. Katharopoulos and F. Fleuret
+Not all samples are created equal: deep learning with importance sampling .
+In Proceedings of the 35th International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol. 80 , pp. 2525–2534 .
+External Links: Link
+Cited by: §B.4 ,
+§2 ,
+§3.4 .
+Lai et al. (2026a)
+S. Lai, J. Lai, C. Li, Q. Zhou, H. Li, G. Pan, L. Yao, and Y. Wang
+TD-dpo: difference-aware preference optimization for mitigating sycophancy in clinical autism intervention dialogue .
+External Links: 2607.18304 ,
+Link
+Cited by: §2 .
+Lai et al. (2026b)
+X. Lai, W. Xu, Y. Yang, Q. Chen, Y. Xu, L. Zeng, X. Li, H. Sun, H. Zhu, V. Zhang, J. Hu, J. Li, R. Gao, Z. Li, S. Zhu, J. Zhou, and P. Zhao
+MiniMax sparse attention .
+External Links: 2606.13392 ,
+Link
+Cited by: §4.1 .
+Li et al. (2025a)
+M. Li, G. Huzhang, H. Zhang, X. Wang, and A. Zeng
+Optimal transport-based token weighting scheme for enhanced preference optimization .
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+pp. 21311–21334 .
+External Links: Document ,
+Link
+Cited by: §2 .
+Li et al. (2025b)
+S. Li, W. Chen, and D. Zeng
+EVODiff: entropy-aware variance optimized diffusion inference .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+External Links: Link
+Cited by: §2 .
+Li et al. (2024)
+T. Li, W. Chiang, E. Frick, L. Dunlap, T. Wu, B. Zhu, J. E. Gonzalez, and I. Stoica
+From crowdsourced data to high-quality benchmarks: arena-hard and benchbuilder pipeline .
+External Links: 2406.11939 ,
+Link
+Cited by: §4.1 .
+Lin et al. (2024)
+B. Y. Lin, Y. Deng, K. Chandu, F. Brahman, A. Ravichander, V. Pyatkin, N. Dziri, R. L. Bras, and Y. Choi
+WildBench: benchmarking llms with challenging tasks from real users in the wild .
+External Links: 2406.04770 ,
+Link
+Cited by: §4.1 .
+Lin et al. (2022)
+S. C. Lin, J. Hilton, and O. Evans
+TruthfulQA: measuring how models mimic human falsehoods .
+In Annual Meeting of the Association for Computational Linguistics ,
+Cited by: §D.1 ,
+§4.1 .
+Liu et al. (2025)
+A. Liu, H. Bai, Z. Lu, Y. Sun, X. Kong, S. Wang, J. Shan, A. M. Jose, X. Liu, L. Wen, P. S. Yu, and M. Cao
+TIS-DPO: token-level importance sampling for direct preference optimization with estimated weights .
+In International Conference on Learning Representations ,
+External Links: Link
+Cited by: §1 ,
+§2 .
+Loshchilov and Hutter (2019)
+I. Loshchilov and F. Hutter
+Decoupled weight decay regularization .
+External Links: 1711.05101 ,
+Link
+Cited by: §4.1 .
+Luo et al. (2026)
+H. Luo, Z. Deng, T. Do, M. Harandi, D. Phung, and T. Le
+Sharpness-aware minimization in logit space efficiently enhances direct preference optimization .
+External Links: 2603.18258 ,
+Link
+Cited by: §2 .
+Meng et al. (2024)
+Y. Meng, M. Xia, and D. Chen
+SimPO: simple preference optimization with a reference-free reward .
+In Advances in neural information processing systems ,
+External Links: Link
+Cited by: §3.1 .
+Mouiche (2026)
+I. Mouiche
+Gradient-gated DPO: stabilizing preference optimization in language models .
+arXiv preprint arXiv:2605.02626 .
+Cited by: §2 .
+Nguyen et al. (2026)
+T. Nguyen, T. Nguyen, L. N. Van, D. M. H. Nguyen, K. D. Doan, and T. Le
+TokenRatio: principled token-level preference optimization via ratio matching .
+In Proceedings of the 43rd International Conference on Machine Learning , T. Zhang, M. Dudik, M. Jaggi, A. Agarwal, S. Li, D. Schuurmans, J. Zhu, F. Berkenkamp, H. Dong, and A. Bietti (Eds.) ,
+Proceedings of Machine Learning Research , Vol. 306 , pp. 92636–92658 .
+External Links: Link
+Cited by: §2 .
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model .
+In Advances in Neural Information Processing Systems ,
+External Links: Link
+Cited by: §1 ,
+§3.1 ,
+§3.1 ,
+§3.1 ,
+§3.4 .
+Razin et al. (2025)
+N. Razin, S. Malladi, A. Bhaskar, D. Chen, S. Arora, and B. Hanin
+Unintentional unalignment: likelihood displacement in direct preference optimization .
+In International Conference on Learning Representations ,
+Vol. 2025 , pp. 24791–24834 .
+Cited by: §C.1 ,
+§1 ,
+§2 .
+Sprague et al. (2024)
+Z. Sprague, X. Ye, K. Bostrom, S. Chaudhuri, and G. Durrett
+MuSR: testing the limits of chain-of-thought with multistep soft reasoning .
+External Links: Link ,
+2310.16049
+Cited by: §D.1 ,
+§4.1 .
+Srivastava et al. (2014)
+N. Srivastava, G. Hinton, A. Krizhevsky, I. Sutskever, and R. Salakhutdinov
+Dropout: a simple way to prevent neural networks from overfitting .
+Journal of Machine Learning Research 15 ( 56 ), pp. 1929–1958 .
+Cited by: §2 .
+Suzgun et al. (2023)
+M. Suzgun, N. Scales, N. Schärli, S. Gehrmann, Y. Tay, H. W. Chung, A. Chowdhery, Q. Le, E. H. Chi, D. Zhou, et al.
+Challenging big-bench tasks and whether chain-of-thought can solve them .
+In Findings of the Association for Computational Linguistics: ACL 2023 ,
+pp. 13003–13051 .
+Cited by: §D.1 ,
+§4.1 .
+Wang et al. (2024)
+Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang, T. Li, M. Ku, K. Wang, A. Zhuang, R. Fan, X. Yue, and W. Chen
+MMLU-pro: a more robust and challenging multi-task language understanding benchmark .
+External Links: Link ,
+2406.01574
+Cited by: §D.1 ,
+§4.1 .
+Wang et al. (2025)
+Z. Wang, J. Zeng, O. Delalleau, H. Shin, F. Soares, A. Bukharin, E. Evans, Y. Dong, and O. Kuchaiev
+HelpSteer3-preference: open human-annotated preference data across diverse tasks and languages .
+External Links: 2505.11475 ,
+Link
+Cited by: §4.1 .
+Wijmans et al. (2025)
+E. Wijmans, B. Huval, A. Hertzberg, V. Koltun, and P. Krähenbühl
+Cut your losses in large-vocabulary language models .
+In International Conference on Learning Representations , Y. Yue, A. Garg, N. Peng, F. Sha, and R. Yu (Eds.) ,
+Vol. 2025 , pp. 68174–68193 .
+External Links: Link
+Cited by: §1 ,
+§1 ,
+§2 ,
+§3.1 .
+Yang et al. (2025a)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng, D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li, M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang, W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan, Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu
+Qwen3 technical report .
+External Links: 2505.09388 ,
+Link
+Cited by: §4.1 .
+Yang et al. (2025b)
+K. Yang, Z. Liu, Q. Xie, J. Huang, E. Min, and S. Ananiadou
+Selective preference optimization via token-level reward function estimation .
+In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.) ,
+Suzhou, China , pp. 7032–7056 .
+External Links: Link ,
+Document ,
+ISBN 979-8-89176-332-6
+Cited by: §1 ,
+§2 ,
+§2 .
+Yang et al. (2026)
+N. Yang, H. Lin, Y. Liu, B. Tian, G. Liu, and H. Zhang
+Token-importance guided direct preference optimization .
+In International Conference on Learning Representations ,
+Cited by: §2 .
+Yoon et al. (2025)
+H. S. Yoon, E. Yoon, M. A. Hasegawa-Johnson, S. Kim, and C. D. Yoo
+ConfPO: exploiting policy model confidence for critical token selection in preference optimization .
+In Proceedings of the 42nd International Conference on Machine Learning , A. Singh, M. Fazel, D. Hsu, S. Lacoste-Julien, F. Berkenkamp, T. Maharaj, K. Wagstaff, and J. Zhu (Eds.) ,
+Proceedings of Machine Learning Research , Vol. 267 , pp. 72641–72655 .
+External Links: Link
+Cited by: §1 ,
+§2 .
+Yuan et al. (2025)
+H. Yuan, Y. Zeng, Y. Wu, H. Wang, M. Wang, and L. Leqi
+A common pitfall of margin-based language model alignment: gradient entanglement .
+In International Conference on Learning Representations ,
+Vol. 2025 , pp. 5278–5297 .
+Cited by: §C.1 ,
+§1 ,
+§2 .
+Zeng et al. (2024)
+Y. Zeng, G. Liu, W. Ma, N. Yang, H. Zhang, and J. Wang
+Token-level direct preference optimization .
+In International Conference on Machine Learning ,
+Cited by: §2 .
+Zhao et al. (2026)
+W. Zhao, S. Wang, and Y. N. Wu
+Se-dpo: self-evolving token credit for direct preference optimization .
+External Links: 2608.09568 ,
+Link
+Cited by: §2 .
+Zheng et al. (2023)
+L. Zheng, W. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. P. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica
+Judging llm-as-a-judge with mt-bench and chatbot arena .
+External Links: 2306.05685 ,
+Link
+Cited by: §4.1 .
+Zhou et al. (2023)
+J. Zhou, T. Lu, S. Mishra, S. Brahma, S. Basu, Y. Luan, D. Zhou, and L. Hou
+Instruction-following evaluation for large language models .
+arXiv preprint arXiv:2311.07911 .
+Cited by: §D.1 .
+Appendix A Notation
+We group the main notation below. Symbols specific to individual proofs are defined where introduced. In single-response results, the side index b b is suppressed, so T , k , R , u t T,k,R,u_{t} denote the corresponding side quantities.
+Preference pairs and loss.
+𝒟 \mathcal{D} is the preference dataset of prompts 𝒙 {\bm{x}} , chosen responses 𝒚 w {\bm{y}}_{w} , and rejected responses 𝒚 l {\bm{y}}_{l} . The policy π 𝜽 \pi_{{\bm{\theta}}} has trainable parameters 𝜽 {\bm{\theta}} , and π ref \pi_{\mathrm{ref}} is the fixed reference. For side b ∈ { w , l } b\in\{w,l\} , T b T_{b} is the response length, y b , t {y}_{b,t} the target token at position t t , and 𝒚 b , < t {\bm{y}}_{b,<t} its response prefix. The token log-ratio u b , t u_{b,t} gives the mean reward R b R_{b} and margin Δ = R w − R l \Delta=R_{w}-R_{l} . The scale β \beta defines ℓ ⁡ ( d ) = log ⁡ ( 1 + e − β ​ d ) \ell(d)=\log(1+e^{-\beta d}) , with per-pair loss ℒ DPO = ℓ ⁡ ( Δ ) \mathcal{L}_{\mathrm{DPO}}=\ell(\Delta) ( Sec. 3.1 ).
+Three pruning axes.
+Sequence pruning uses cutoff fraction ρ b \rho_{b} to retain prefix 𝒚 ~ b \tilde{\bm{y}}_{b} of length M b M_{b} , with minimum fraction ρ min \rho_{\min} . Position pruning selects 𝕊 b ⊆ 𝕀 M b = { 1 , … , M b } {\mathbb{S}}_{b}\subseteq{\mathbb{I}}_{M_{b}}=\{1,\ldots,M_{b}\} with count k b k_{b} controlled by retention α \alpha . Branch pruning samples backward branch b ⋆ b^{\star} with probability q b q_{b} ( Secs. 3.2 , 3.3 and 3.4 ).
+Sampling and execution.
+Prefix \prefixsample , Select \positionsample , and Branch \branchsample denote the prefix, position, and branch sampling laws. The active backward branches form 𝔹 {\mathbb{B}} , and q ⋆ q^{\star} supplies the probability correction. The operator LogProbs \logprobs returns scored log-probabilities, with Boolean flag g g controlling gradient recording. Its policy and reference outputs are 𝒛 b {\bm{z}}_{b} and 𝒛 b ref {\bm{z}}_{b}^{\mathrm{ref}} , and ℒ \mathcal{L} is the step loss. We write σ \sigma for sigmoid, sg \sg for stop-gradient, and V V for vocabulary size ( Secs. 3.1 , 3.4 and 3.5 ).
+Analysis.
+𝔼 \mathbb{E} and Var \mathrm{Var} refer to the indicated sampling. 𝕌 k {\mathbb{U}}_{k} is a uniform size- k k position subset, ϕ t {\bm{\phi}}_{t} a token log-probability gradient, and Δ U \Delta_{U} and Δ full \Delta_{\mathrm{full}} the sampled and full margins ( Proposition 1 ). The objectives F , F A , F P , F A ​ P F,F_{A},F_{P},F_{AP} correspond to full responses, position pruning, sequence pruning, and their composition, with minimizers 𝜽 ∗ , 𝜽 A ∗ , 𝜽 P ∗ , 𝜽 A ​ P ∗ {\bm{\theta}}^{*},{\bm{\theta}}_{A}^{*},{\bm{\theta}}_{P}^{*},{\bm{\theta}}_{AP}^{*} . The analysis uses token-score and gradient bounds U , G U,G , variance bound v ¯ \bar{v} , and length bounds T 0 , M 0 T_{0},M_{0} ( Secs. 3.2 and 3.5 ).
+Appendix B Proofs
+This appendix collects the proofs of every stated result: Proposition 1 ( Sec. B.1 ), Lemma 1 ( Sec. B.2 ), Lemma 2 ( Sec. B.3 ), Proposition 2 ( Sec. B.4 ).
+B.1 Proof of Proposition 1
+Proof of Proposition 1 .
+Writing 𝟙 ​ { E } \mathbb{1}\{E\} for the indicator of event E E , Eq. 5 follows from 𝔼 [ 𝟙 { t ∈ 𝕌 k } ] = k / T \mathbb{E}[\mathbb{1}\{t\in{\mathbb{U}}_{k}\}]=k/T and sampling without replacement. Jensen’s inequality gives the lower bound in Eq. 6 . Since 0 ≤ ℓ ′′ ​ ( d ) ≤ β 2 / 4 0\leq\ell^{\prime\prime}(d)\leq\beta^{2}/4 , a second-order upper bound around Δ full \Delta_{\mathrm{full}} gives the upper bound. The variance is the finite-population variance of a without-replacement sample, summed over independent sides.
+∎
+The finite-population identities behind the proposition are as follows. Let I t I_{t} indicate membership in a uniform size- k k subset of T T positions. Then 𝔼 ​ I t = k / T \mathbb{E}I_{t}=k/T , and for i ≠ j i\neq j , 𝔼 ⁡ [ I i ​ I j ] = k ⁡ ( k − 1 ) / [ T ⁡ ( T − 1 ) ] \mathbb{E}[I_{i}I_{j}]=k(k-1)/[T(T-1)] . These identities establish Eq. 5 and the variance in Proposition 1 . For vector gradients and T > 1 T>1 , let ϕ ¯ = T − 1 ​ ∑ t ϕ t \bar{\bm{\phi}}=T^{-1}\sum_{t}{\bm{\phi}}_{t} be their population mean and 𝚺 ϕ {\bm{\Sigma}}_{\phi} their population covariance. Cov \mathrm{Cov} denotes covariance. Then
+Cov ⁡ [ 1 k ​ ∑ t I t ​ ϕ t ] = T − k k ⁡ ( T − 1 ) ​ 𝚺 ϕ , \displaystyle\mathrm{Cov}\left[\frac{1}{k}\sum_{t}I_{t}{\bm{\phi}}_{t}\right]=\frac{T-k}{k(T-1)}{\bm{\Sigma}}_{\phi},
+(20)
+𝚺 ϕ = 1 T ​ ∑ t ( ϕ t − ϕ ¯ ) ​ ( ϕ t − ϕ ¯ ) ⊤ , \displaystyle{\bm{\Sigma}}_{\phi}=\frac{1}{T}\sum_{t}({\bm{\phi}}_{t}-\bar{\bm{\phi}})({\bm{\phi}}_{t}-\bar{\bm{\phi}})^{\top},
+For T = 1 T=1 , the covariance is zero. These identities concern the side-reward gradient. The sampled loss gradient is − β ​ σ ​ ( − β ​ Δ U ) ​ ∇ 𝜽 Δ U -\beta\sigma(-\beta\Delta_{U})\nabla_{{\bm{\theta}}}\Delta_{U} . Its mask-dependent multiplier means that reward-gradient unbiasedness alone does not imply full-loss-gradient unbiasedness. Equation 6 quantifies the expected loss difference.
+Remark (target-logit diagnostics).
+Let p t p_{t} be the current-policy target-token probability at position t t , and 𝕊 {\mathbb{S}} a selected set. The target-logit diagnostic ℰ z \mathcal{E}_{z} (subscript z z denotes the target logit) is ℰ z ​ ( 𝕊 ) = 1 | 𝕊 | 2 ​ ∑ t ∈ 𝕊 ( 1 − p t ) 2 \mathcal{E}_{z}({\mathbb{S}})=\frac{1}{|{\mathbb{S}}|^{2}}\sum_{t\in{\mathbb{S}}}(1-p_{t})^{2} on a fixed response. For the full position set 𝕀 T {\mathbb{I}}_{T} , linearity gives
+𝔼 ​ [ ℰ z ​ ( 𝕌 k ) ] \displaystyle\mathbb{E}[\mathcal{E}_{z}({\mathbb{U}}_{k})]
+= 1 k ​ T ​ ∑ t ( 1 − p t ) 2 , \displaystyle=\frac{1}{kT}\sum_{t}(1-p_{t})^{2},
+(21)
+ℰ z ​ ( 𝕀 T ) \displaystyle\mathcal{E}_{z}({\mathbb{I}}_{T})
+= 1 T 2 ​ ∑ t ( 1 − p t ) 2 . \displaystyle=\frac{1}{T^{2}}\sum_{t}(1-p_{t})^{2}.
+Their ratio is T / k T/k , not k / T k/T . If a diagnostic instead reports the retained numerator fraction f ⁡ ( 𝕊 ) = ∑ t ∈ 𝕊 ( 1 − p t ) 2 / ∑ t = 1 T ( 1 − p t ) 2 f({\mathbb{S}})=\sum_{t\in{\mathbb{S}}}(1-p_{t})^{2}/\sum_{t=1}^{T}(1-p_{t})^{2} , its normalized reward-derivative ratio is ( T / k ) 2 ​ f ​ ( 𝕊 ) (T/k)^{2}f({\mathbb{S}}) for that response. With varying response lengths and rounded counts, conversion must occur per response before aggregation. Neither quantity measures conditional KL or downstream quality.
+Remark (alternative denominator).
+Keeping the 1 / T b 1/T_{b} denominator would scale the selected mean by the realized fraction k b / T b k_{b}/T_{b} . At a common realized fraction γ = k b / T b \gamma=k_{b}/T_{b} on both sides, this equals selected-mean normalization at temperature γ ​ β \gamma\beta . We use the 1 / k b 1/k_{b} mean throughout.
+B.2 Proof of Lemma 1
+Proof of Lemma 1 .
+Exchange the order of summation:
+𝔼 M ​ [ R M ] \displaystyle\mathbb{E}_{M}[R_{M}]
+= ∑ m = 1 T q ⁡ ( m ) ​ 1 m ​ ∑ t = 1 m u t \displaystyle=\sum_{m=1}^{T}q(m)\,\frac{1}{m}\sum_{t=1}^{m}u_{t}
+= ∑ t = 1 T u t ​ ∑ m = t T q ⁡ ( m ) m = ∑ t = 1 T w t ​ u t . \displaystyle=\sum_{t=1}^{T}u_{t}\sum_{m=t}^{T}\frac{q(m)}{m}=\sum_{t=1}^{T}w_{t}u_{t}.
+(22)
+For 1 ≤ t < T 1\leq t<T , w t − w t + 1 = q ⁡ ( t ) / t ≥ 0 w_{t}-w_{t+1}=q(t)/t\geq 0 , and w T = q ⁡ ( T ) / T ≥ 0 w_{T}=q(T)/T\geq 0 . Also, ∑ t = 1 T w t = ∑ m = 1 T q ⁡ ( m ) ​ ∑ t = 1 m 1 / m = 1 \sum_{t=1}^{T}w_{t}=\sum_{m=1}^{T}q(m)\sum_{t=1}^{m}1/m=1 . Conversely, for a nonnegative, normalized, non-increasing vector 𝒘 = ( w 1 , … , w T ) {\bm{w}}=(w_{1},\ldots,w_{T}) , set w T + 1 := 0 w_{T+1}:=0 and q ⁡ ( t ) = t ⁡ ( w t − w t + 1 ) q(t)=t(w_{t}-w_{t+1}) . Then q ⁡ ( t ) ≥ 0 q(t)\geq 0 and ∑ t = 1 T q ⁡ ( t ) = ∑ t = 1 T t ⁡ ( w t − w t + 1 ) = ∑ t = 1 T w t = 1 \sum_{t=1}^{T}q(t)=\sum_{t=1}^{T}t(w_{t}-w_{t+1})=\sum_{t=1}^{T}w_{t}=1 . Substitution recovers w t = ∑ m = t T q ⁡ ( m ) / m w_{t}=\sum_{m=t}^{T}q(m)/m . Uniform weights w t = 1 / T w_{t}=1/T give q ⁡ ( t ) = 0 q(t)=0 for t < T t<T and q ⁡ ( T ) = 1 q(T)=1 , so M = T M=T almost surely, recovering the fixed-cutoff case ρ b ≡ 1 \rho_{b}\equiv 1 .
+∎
+B.3 Proof of Lemma 2
+Proof of Lemma 2 .
+ℓ ⁡ ( d ) = log ⁡ ( 1 + e − β ​ d ) \ell(d)=\log(1+e^{-\beta d}) satisfies ℓ ′ ​ ( d ) = − β ​ σ ​ ( − β ​ d ) \ell^{\prime}(d)=-\beta\sigma(-\beta d) and ℓ ′′ ​ ( d ) = β 2 ​ σ ​ ( β ​ d ) ​ σ ​ ( − β ​ d ) \ell^{\prime\prime}(d)=\beta^{2}\sigma(\beta d)\sigma(-\beta d) . For β > 0 \beta>0 , 0 < ℓ ′′ ≤ β 2 / 4 0<\ell^{\prime\prime}\leq\beta^{2}/4 and ℓ ′ < 0 \ell^{\prime}<0 , so ℓ \ell is strictly convex and strictly decreasing. For β = 0 \beta=0 , ℓ ≡ log ⁡ 2 \ell\equiv\log 2 with ℓ ′ = ℓ ′′ = 0 \ell^{\prime}=\ell^{\prime\prime}=0 . Assume β > 0 \beta>0 unless a degenerate case is named. Jensen’s inequality gives 𝔼 ⁡ [ ℓ ⁡ ( Δ M ) ] ≥ ℓ ⁡ ( μ pref ) \mathbb{E}[\ell(\Delta_{M})]\geq\ell(\mu_{\mathrm{pref}}) , hence J pref := ℒ pref − ℓ ⁡ ( μ pref ) ≥ 0 J_{\mathrm{pref}}:=\mathcal{L}_{\mathrm{pref}}-\ell(\mu_{\mathrm{pref}})\geq 0 . For the upper bound, expand ℓ \ell to second order around μ pref \mu_{\mathrm{pref}} : for each scalar margin x x , ℓ ⁡ ( x ) = ℓ ⁡ ( μ pref ) + ℓ ′ ​ ( μ pref ) ​ ( x − μ pref ) + 1 2 ​ ℓ ′′ ​ ( ξ ) ​ ( x − μ pref ) 2 \ell(x)=\ell(\mu_{\mathrm{pref}})+\ell^{\prime}(\mu_{\mathrm{pref}})(x-\mu_{\mathrm{pref}})+\tfrac{1}{2}\ell^{\prime\prime}(\xi)(x-\mu_{\mathrm{pref}})^{2} for some ξ \xi between x x and μ pref \mu_{\mathrm{pref}} . Taking the expectation removes the linear term, and ℓ ′′ ≤ β 2 / 4 \ell^{\prime\prime}\leq\beta^{2}/4 gives
+J pref = 1 2 ​ 𝔼 ​ [ ℓ ′′ ​ ( ξ ) ​ ( Δ M − μ pref ) 2 ] ≤ β 2 8 ​ Var ​ ( Δ M ) . J_{\mathrm{pref}}=\tfrac{1}{2}\,\mathbb{E}[\ell^{\prime\prime}(\xi)(\Delta_{M}-\mu_{\mathrm{pref}})^{2}]\leq\tfrac{\beta^{2}}{8}\mathrm{Var}(\Delta_{M}).
+(23)
+Subtracting the full-response loss from Eq. 12 gives
+ℒ pref − ℓ ⁡ ( Δ full ) \displaystyle\mathcal{L}_{\mathrm{pref}}-\ell(\Delta_{\mathrm{full}})
+= ℓ ⁡ ( μ pref ) − ℓ ⁡ ( Δ full ) \displaystyle=\ell(\mu_{\mathrm{pref}})-\ell(\Delta_{\mathrm{full}})
+(24)
++ J pref . \displaystyle+J_{\mathrm{pref}}.
+Because ℓ \ell is strictly decreasing, ℓ ⁡ ( μ pref ) − ℓ ⁡ ( Δ full ) \ell(\mu_{\mathrm{pref}})-\ell(\Delta_{\mathrm{full}}) is positive precisely when the temporally reweighted mean margin μ pref \mu_{\mathrm{pref}} is below the full-response margin, which is a data- and distribution-dependent event and therefore carries no fixed sign. Equation 11 gives μ pref = ∑ t w t ( w ) ​ u w , t − ∑ t w t ( l ) ​ u l , t \mu_{\mathrm{pref}}=\sum_{t}w_{t}^{(w)}u_{w,t}-\sum_{t}w_{t}^{(l)}u_{l,t} , with the side-specific weights w t ( b ) w_{t}^{(b)} . Two degeneracies: a deterministic cutoff makes Δ M \Delta_{M} constant, so Var ⁡ ( Δ M ) = 0 \mathrm{Var}(\Delta_{M})=0 and J pref = 0 J_{\mathrm{pref}}=0 . At β = 0 \beta=0 both terms of Eq. 24 vanish.
+Finally, the cutoff variables M w , M l M_{w},M_{l} are drawn independently of 𝜽 {\bm{\theta}} and have finite support, so the expectation in ℒ pref ​ ( 𝜽 ) = 𝔼 ⁡ [ ℓ ⁡ ( Δ M ​ ( 𝜽 ) ) ] \mathcal{L}_{\mathrm{pref}}({\bm{\theta}})=\mathbb{E}[\ell(\Delta_{M}({\bm{\theta}}))] is a finite sum and differentiation passes through it exactly:
+∇ 𝜽 ℒ pref = 𝔼 ⁡ [ ∇ 𝜽 ℓ ​ ( Δ M ) ] . \nabla_{{\bm{\theta}}}\mathcal{L}_{\mathrm{pref}}=\mathbb{E}\bigl[\nabla_{{\bm{\theta}}}\ell(\Delta_{M})\bigr].
+(25)
+Thus ∇ 𝜽 ℓ ​ ( Δ M ) \nabla_{{\bm{\theta}}}\ell(\Delta_{M}) is an unbiased stochastic gradient of ℒ pref \mathcal{L}_{\mathrm{pref}} and need not coincide in expectation with the full-response gradient. The temporal shift and Jensen gap in Eq. 24 can cancel at a fixed policy. Equality of loss values at one point does not establish equality of gradients.
+∎
+B.4 Proof of Proposition 2
+Proof of Proposition 2 .
+Write ℒ w sg = ζ ⁡ ( − β ⁡ ( R w − sg ⁡ ( R l ) ) ) \mathcal{L}_{w}^{\text{sg}}=\zeta(-\beta(R_{w}-\sg(R_{l}))) . Because the stop-gradient blocks the flow into R l R_{l} , and because λ = β ​ σ ​ ( − β ⁡ ( R w − R l ) ) \lambda=\beta\sigma(-\beta(R_{w}-R_{l})) is evaluated at the current parameters as a chain-rule coefficient (it is differentiated no further),
+∇ 𝜽 ℒ w sg \displaystyle\nabla_{{\bm{\theta}}}\mathcal{L}_{w}^{\text{sg}}
+= σ ⁡ ( − β ⁡ ( R w − R l ) ) ​ ( − β ) ​ ∇ 𝜽 R w \displaystyle=\sigma\bigl(-\beta(R_{w}-R_{l})\bigr)(-\beta)\nabla_{{\bm{\theta}}}R_{w}
+= − λ ​ ∇ 𝜽 R w , \displaystyle=-\lambda\nabla_{{\bm{\theta}}}R_{w},
+(26)
+and symmetrically ∇ 𝜽 ℒ l sg = + λ ​ ∇ 𝜽 R l \nabla_{{\bm{\theta}}}\mathcal{L}_{l}^{\text{sg}}=+\lambda\nabla_{{\bm{\theta}}}R_{l} . With the 1 / q b 1/q_{b} importance factors, 𝔼 b ⋆ [ ∇ ℒ ^ ] = q w ⋅ ( − λ / q w ) ∇ R w + q l ⋅ ( λ / q l ) ∇ R l = − λ ∇ R w + λ ∇ R l = ∇ 𝜽 log ( 1 + e − β ⁡ ( R w − R l ) ) \mathbb{E}_{b^{\star}}[\nabla\widehat{\mathcal{L}}]=q_{w}\cdot(-\lambda/q_{w})\nabla R_{w}+q_{l}\cdot(\lambda/q_{l})\nabla R_{l}=-\lambda\nabla R_{w}+\lambda\nabla R_{l}=\nabla_{{\bm{\theta}}}\log(1+e^{-\beta(R_{w}-R_{l})}) . All quantities are those of the sampled response positions and prefixes: with sequence pruning active, R b R_{b} is the prefix mean over M b M_{b} . With position pruning active, it is the masked mean over 𝕊 b {\mathbb{S}}_{b} , and the gradients flow only through the selected positions. When position and sequence pruning are disabled, the sampled computation is the full-response objective and the claim recovers the length-normalized loss in Eq. 2 .
+∎
+Remark (branch-estimator variance).
+With ∥ ⋅ ∥ \|\cdot\| denoting the Euclidean norm, for fixed sampled rewards the single-branch estimator’s second moment is λ 2 ​ ( ‖ ∇ R w ‖ 2 / q w + ‖ ∇ R l ‖ 2 / q l ) \lambda^{2}\bigl(\|\nabla R_{w}\|^{2}/q_{w}+\|\nabla R_{l}\|^{2}/q_{l}\bigr) . Its variance-optimal probability therefore balances the branch gradient norms, the usual importance-sampling criterion ( Katharopoulos and Fleuret, 2018 ) . We use q w = 0.5 q_{w}=0.5 as a symmetric default. The q w ∈ { 0.3 , 0.5 , 0.7 } q_{w}\in\{0.3,0.5,0.7\} sweep ( Tab. 3 ) has similar wall-clock times and differing quality point estimates.
+B.5 Proof of Corollary 1 and the retention rule
+Proof of Corollary 1 .
+Since ℓ \ell is convex, Jensen’s inequality gives 𝔼 S ​ [ ℓ ⁡ ( Δ U ) ] ≥ ℓ ⁡ ( 𝔼 S ​ [ Δ U ] ) = ℓ ⁡ ( Δ full ) \mathbb{E}_{S}[\ell(\Delta_{U})]\geq\ell(\mathbb{E}_{S}[\Delta_{U}])=\ell(\Delta_{\mathrm{full}}) at every 𝜽 {\bm{\theta}} , so F A ≥ F F_{A}\geq F pointwise. Hence
+F ⁡ ( 𝜽 A ∗ ) \displaystyle F({\bm{\theta}}_{A}^{*})
+≤ F A ​ ( 𝜽 A ∗ ) ≤ F A ​ ( 𝜽 ∗ ) \displaystyle\leq F_{A}({\bm{\theta}}_{A}^{*})\leq F_{A}({\bm{\theta}}^{*})
+(27)
+≤ F ⁡ ( 𝜽 ∗ ) + β 2 8 ​ 𝔼 𝒟 ​ [ Var S ​ ( Δ U ) ] , \displaystyle\leq F({\bm{\theta}}^{*})+\frac{\beta^{2}}{8}\mathbb{E}_{\mathcal{D}}\bigl[\mathrm{Var}_{S}(\Delta_{U})\bigr],
+where the first step uses F ≤ F A F\leq F_{A} , the second the optimality of 𝜽 A ∗ {\bm{\theta}}_{A}^{*} for F A F_{A} , and the third Eq. 6 evaluated at 𝜽 ∗ {\bm{\theta}}^{*} . Subtracting F ⁡ ( 𝜽 ∗ ) F({\bm{\theta}}^{*}) gives Eq. 7 .
+For Eq. 8 , k b ≥ α ​ T b k_{b}\geq\alpha T_{b} implies 1 / k b ≤ 1 / ( α ​ T b ) 1/k_{b}\leq 1/(\alpha T_{b}) and T b − k b ≤ ( 1 − α ) ​ T b T_{b}-k_{b}\leq(1-\alpha)T_{b} , while v b ≤ v ¯ v_{b}\leq\bar{v} and T b ≥ T 0 T_{b}\geq T_{0} give
+Var S ​ ( Δ U ) \displaystyle\mathrm{Var}_{S}(\Delta_{U})
+= ∑ b : T b > 1 T b − k b k b ​ ( T b − 1 ) v b \displaystyle=\sum_{b:T_{b}>1}\frac{T_{b}-k_{b}}{k_{b}(T_{b}-1)}v_{b}
+(28)
+≤ ∑ b ( 1 − α ) ​ T b α ​ T b ​ ( T 0 − 1 ) ​ v ¯ = 2 ​ v ¯ ​ r A . \displaystyle\leq\sum_{b}\frac{(1-\alpha)T_{b}}{\alpha T_{b}(T_{0}-1)}\bar{v}=2\bar{v}\,r_{A}.
+The display is per response, so averaging over the dataset gives 𝔼 𝒟 ​ [ Var S ​ ( Δ U ) ] ≤ 2 ​ v ¯ ​ r A \mathbb{E}_{\mathcal{D}}[\mathrm{Var}_{S}(\Delta_{U})]\leq 2\bar{v}\,r_{A} . Requiring β 2 8 ​ 𝔼 𝒟 ​ [ Var S ​ ( Δ U ) ] ≤ β 2 ​ v ¯ 4 ​ r A ≤ ε F \frac{\beta^{2}}{8}\mathbb{E}_{\mathcal{D}}[\mathrm{Var}_{S}(\Delta_{U})]\leq\frac{\beta^{2}\bar{v}}{4}r_{A}\leq\varepsilon_{F} and solving for α \alpha yields Eq. 9 .
+∎
+B.6 Proof of Eq. 31 and the stationary displacement
+Proof.
+Fix one preference pair and abbreviate d = Δ full d=\Delta_{\mathrm{full}} , g = ∇ 𝜽 Δ full g=\nabla_{{\bm{\theta}}}\Delta_{\mathrm{full}} , δ = Δ U − d \delta=\Delta_{U}-d , and e = ∇ 𝜽 Δ U − g e=\nabla_{{\bm{\theta}}}\Delta_{U}-g . Unbiasedness gives 𝔼 ​ δ = 0 \mathbb{E}\delta=0 and 𝔼 ​ e = 0 \mathbb{E}e=0 , so V u = 𝔼 ​ δ 2 V_{u}=\mathbb{E}\delta^{2} and V g = 𝔼 ​ ‖ e ‖ 2 V_{g}=\mathbb{E}\|e\|^{2} . Since ∇ 𝜽 ℓ ​ ( Δ U ) = ℓ ′ ​ ( d + δ ) ​ ( g + e ) \nabla_{{\bm{\theta}}}\ell(\Delta_{U})=\ell^{\prime}(d+\delta)(g+e) and ∇ 𝜽 ℓ ​ ( d ) = ℓ ′ ​ ( d ) ​ g \nabla_{{\bm{\theta}}}\ell(d)=\ell^{\prime}(d)g ,
+∇ 𝜽 ℓ ​ ( Δ U ) − ∇ 𝜽 ℓ ​ ( d ) = \displaystyle\nabla_{{\bm{\theta}}}\ell(\Delta_{U})-\nabla_{{\bm{\theta}}}\ell(d)={}
+[ ℓ ′ ​ ( d + δ ) − ℓ ′ ​ ( d ) ] ​ g \displaystyle\bigl[\ell^{\prime}(d+\delta)-\ell^{\prime}(d)\bigr]g
+(29)
++ ℓ ′ ​ ( d + δ ) ​ e . \displaystyle+\ell^{\prime}(d+\delta)e.
+The linear term in the first bracket has zero mean, so only 1 2 ​ ℓ ′′′ ​ ( ξ ) ​ δ 2 \frac{1}{2}\ell^{\prime\prime\prime}(\xi)\delta^{2} survives, and its norm is at most 1 2 ​ sup | ℓ ′′′ | ​ V u ​ ‖ g ‖ \frac{1}{2}\sup|\ell^{\prime\prime\prime}|\,V_{u}\|g\| . Because ℓ ′′′ = β 3 ​ s ​ ( 1 − s ) ​ ( 1 − 2 ​ s ) \ell^{\prime\prime\prime}=\beta^{3}s(1-s)(1-2s) with s = σ ⁡ ( β ​ d ) s=\sigma(\beta d) satisfies max s ⁡ | s ⁡ ( 1 − s ) ​ ( 1 − 2 ​ s ) | = 1 / ( 6 ​ 3 ) \max_{s}|s(1-s)(1-2s)|=1/(6\sqrt{3}) , we have sup | ℓ ′′′ | = β 3 / ( 6 ​ 3 ) \sup|\ell^{\prime\prime\prime}|=\beta^{3}/(6\sqrt{3}) . For the second term, centering with 𝔼 ​ e = 0 \mathbb{E}e=0 and applying Cauchy–Schwarz with sup | ℓ ′′ | = β 2 / 4 \sup|\ell^{\prime\prime}|=\beta^{2}/4 bounds it by β 2 4 ​ V u ​ V g \frac{\beta^{2}}{4}\sqrt{V_{u}V_{g}} . Therefore
+‖ 𝔼 ​ ∇ 𝜽 ℓ ​ ( Δ U ) − ∇ 𝜽 ℓ ​ ( d ) ‖ ≤ \displaystyle\|\mathbb{E}\nabla_{{\bm{\theta}}}\ell(\Delta_{U})-\nabla_{{\bm{\theta}}}\ell(d)\|\leq{}
+β 3 12 ​ 3 ​ V u ​ ‖ g ‖ \displaystyle\frac{\beta^{3}}{12\sqrt{3}}V_{u}\|g\|
+(30)
++ β 2 4 ​ V u ​ V g . \displaystyle+\frac{\beta^{2}}{4}\sqrt{V_{u}V_{g}}.
+Averaging over pairs replaces the single-pair quantities by their population counterparts. Substituting V u ≤ 2 ​ v ¯ ​ r A V_{u}\leq 2\bar{v}r_{A} , V g ≤ 2 ​ G 2 ​ r A V_{g}\leq 2G^{2}r_{A} , and ‖ g ‖ ≤ 2 ​ G \|g\|\leq 2G bounds the two terms by β 3 ​ G ​ v ¯ 3 ​ 3 ​ r A \frac{\beta^{3}G\bar{v}}{3\sqrt{3}}r_{A} and β 2 ​ G ​ v ¯ 2 ​ r A \frac{\beta^{2}G\sqrt{\bar{v}}}{2}r_{A} , so that
+‖ ∇ F A ​ ( 𝜽 ) − ∇ F ​ ( 𝜽 ) ‖ \displaystyle\|\nabla F_{A}({\bm{\theta}})-\nabla F({\bm{\theta}})\|
+≤ C A ​ r A , \displaystyle\leq C_{A}\,r_{A},
+(31)
+C A \displaystyle C_{A}
+: = β 3 ​ G ​ v ¯ 3 ​ 3 + β 2 ​ G ​ v ¯ 2 . \displaystyle:=\frac{\beta^{3}G\bar{v}}{3\sqrt{3}}+\frac{\beta^{2}G\sqrt{\bar{v}}}{2}.
+Now let 𝜽 A {\bm{\theta}}_{A} be an interior stationary point of F A F_{A} and 𝜽 ∗ {\bm{\theta}}^{*} an interior stationary point of F F , both in the analyzed region, and suppose ∇ 2 F ⪰ μ ​ I \nabla^{2}F\succeq\mu I with μ > 0 \mu>0 along the segment joining them. Then ‖ ∇ F ​ ( 𝜽 A ) ‖ = ‖ ∇ F ​ ( 𝜽 A ) − ∇ F A ​ ( 𝜽 A ) ‖ ≤ C A ​ r A \|\nabla F({\bm{\theta}}_{A})\|=\|\nabla F({\bm{\theta}}_{A})-\nabla F_{A}({\bm{\theta}}_{A})\|\leq C_{A}r_{A} . Integrating the Hessian along that segment gives ⟨ ∇ F ​ ( 𝜽 A ) , 𝜽 A − 𝜽 ∗ ⟩ ≥ μ ​ ‖ 𝜽 A − 𝜽 ∗ ‖ 2 \langle\nabla F({\bm{\theta}}_{A}),{\bm{\theta}}_{A}-{\bm{\theta}}^{*}\rangle\geq\mu\|{\bm{\theta}}_{A}-{\bm{\theta}}^{*}\|^{2} ; Cauchy–Schwarz together with the previous display yields ‖ 𝜽 A − 𝜽 ∗ ‖ ≤ C A ​ r A / μ \|{\bm{\theta}}_{A}-{\bm{\theta}}^{*}\|\leq C_{A}r_{A}/\mu .
+∎
+B.7 Curvature constants from the margin geometry
+Suppose | β ​ Δ 𝜽 | ≤ C |\beta\Delta_{{\bm{\theta}}}|\leq C on the analyzed convex region, 𝔼 𝒟 ​ [ ∇ 𝜽 Δ ​ ∇ 𝜽 Δ ⊤ ] ⪰ ν ​ I \mathbb{E}_{\mathcal{D}}[\nabla_{{\bm{\theta}}}\Delta\nabla_{{\bm{\theta}}}\Delta^{\!\top}]\succeq\nu I , and ‖ ∇ 𝜽 2 Δ ‖ op ≤ H \|\nabla^{2}_{{\bm{\theta}}}\Delta\|_{\mathrm{op}}\leq H . With m C = σ ⁡ ( C ) ​ σ ​ ( − C ) m_{C}=\sigma(C)\sigma(-C) , the chain rule gives
+∇ 2 F \displaystyle\nabla^{2}F
+= 𝔼 ⁡ [ ℓ ′′ ​ ( Δ ) ​ ∇ 𝜽 Δ ​ ∇ 𝜽 Δ ⊤ + ℓ ′ ​ ( Δ ) ​ ∇ 𝜽 2 Δ ] \displaystyle=\mathbb{E}\bigl[\ell^{\prime\prime}(\Delta)\nabla_{{\bm{\theta}}}\Delta\nabla_{{\bm{\theta}}}\Delta^{\!\top}+\ell^{\prime}(\Delta)\nabla^{2}_{{\bm{\theta}}}\Delta\bigr]
+(32)
+⪰ ( β 2 ​ m C ​ ν − β ​ H ) ​ I , \displaystyle\succeq\bigl(\beta^{2}m_{C}\nu-\beta H\bigr)I,
+because ℓ ′′ ≥ β 2 ​ m C \ell^{\prime\prime}\geq\beta^{2}m_{C} on the region and | ℓ ′ | ≤ β |\ell^{\prime}|\leq\beta . Hence β 2 ​ m C ​ ν > β ​ H \beta^{2}m_{C}\nu>\beta H is a sufficient stability condition and one may take μ = β 2 ​ m C ​ ν − β ​ H \mu=\beta^{2}m_{C}\nu-\beta H . In a linear-margin model H = 0 H=0 , so μ > 0 \mu>0 as soon as the comparison matrix has positive smallest eigenvalue ν \nu .
+B.8 Proof of Eq. 13
+Proof.
+Let h b = 1 − M b / T b h_{b}=1-M_{b}/T_{b} . Since M b = max ⁡ ( 1 , ⌈ ρ b ​ T b ⌉ ) M_{b}=\max(1,\lceil\rho_{b}T_{b}\rceil) and ρ b ∼ 𝒰 ⁡ ( ρ min , 1 ) \rho_{b}\sim\mathcal{U}(\rho_{\min},1) ,
+𝔼 ⁡ [ h b ] = 1 − 𝔼 ​ M b T b \displaystyle\mathbb{E}[h_{b}]=1-\frac{\mathbb{E}M_{b}}{T_{b}}
+≤ 1 − 𝔼 ​ ρ b ​ T b T b \displaystyle\leq 1-\frac{\mathbb{E}\rho_{b}T_{b}}{T_{b}}
+(33)
+= 1 − 1 + ρ min 2 = 1 − ρ min 2 . \displaystyle=1-\frac{1+\rho_{\min}}{2}=\frac{1-\rho_{\min}}{2}.
+For one realization, split the reward difference into its retained and removed parts:
+R b , M b − R b = \displaystyle R_{b,M_{b}}-R_{b}={}
+( 1 M b − 1 T b ) ​ ∑ t ≤ M b u b , t \displaystyle\Bigl(\frac{1}{M_{b}}-\frac{1}{T_{b}}\Bigr)\sum_{t\leq M_{b}}u_{b,t}
+(34)
+− 1 T b ∑ t > M b u b , t , \displaystyle-\frac{1}{T_{b}}\sum_{t>M_{b}}u_{b,t},
+so | R b , M b − R b | ≤ ( 1 − M b T b ) ​ U + ( 1 − M b T b ) ​ U = 2 ​ U ​ h b |R_{b,M_{b}}-R_{b}|\leq(1-\frac{M_{b}}{T_{b}})U+(1-\frac{M_{b}}{T_{b}})U=2Uh_{b} . The same argument with ‖ ∇ 𝜽 u b , t ‖ ≤ G \|\nabla_{{\bm{\theta}}}u_{b,t}\|\leq G gives ‖ ∇ 𝜽 R b , M b − ∇ 𝜽 R b ‖ ≤ 2 ​ G ​ h b \|\nabla_{{\bm{\theta}}}R_{b,M_{b}}-\nabla_{{\bm{\theta}}}R_{b}\|\leq 2Gh_{b} . The margin difference is the difference of the two sides, so | Δ M − Δ full | ≤ 2 ​ U ​ ( h w + h l ) |\Delta_{M}-\Delta_{\mathrm{full}}|\leq 2U(h_{w}+h_{l}) and ‖ ∇ 𝜽 Δ M − ∇ 𝜽 Δ full ‖ ≤ 2 ​ G ​ ( h w + h l ) \|\nabla_{{\bm{\theta}}}\Delta_{M}-\nabla_{{\bm{\theta}}}\Delta_{\mathrm{full}}\|\leq 2G(h_{w}+h_{l}) .
+The loss is β \beta -Lipschitz, so | ℓ ⁡ ( Δ M ) − ℓ ⁡ ( Δ full ) | ≤ 2 ​ β ​ U ​ ( h w + h l ) |\ell(\Delta_{M})-\ell(\Delta_{\mathrm{full}})|\leq 2\beta U(h_{w}+h_{l}) ; taking expectations gives the loss bound of Eq. 13 . For the gradient, decompose
+ℓ ′ ​ ( Δ M ) ​ ∇ 𝜽 Δ M − ℓ ′ ​ ( Δ full ) ​ ∇ 𝜽 Δ full \displaystyle\ell^{\prime}(\Delta_{M})\nabla_{{\bm{\theta}}}\Delta_{M}-\ell^{\prime}(\Delta_{\mathrm{full}})\nabla_{{\bm{\theta}}}\Delta_{\mathrm{full}}
+(35)
+= [ ℓ ′ ​ ( Δ M ) − ℓ ′ ​ ( Δ full ) ] ​ ∇ 𝜽 Δ M \displaystyle=\bigl[\ell^{\prime}(\Delta_{M})-\ell^{\prime}(\Delta_{\mathrm{full}})\bigr]\nabla_{{\bm{\theta}}}\Delta_{M}
++ ℓ ′ ​ ( Δ full ) ​ [ ∇ 𝜽 Δ M − ∇ 𝜽 Δ full ] . \displaystyle+\ell^{\prime}(\Delta_{\mathrm{full}})\bigl[\nabla_{{\bm{\theta}}}\Delta_{M}-\nabla_{{\bm{\theta}}}\Delta_{\mathrm{full}}\bigr].
+Each side’s mean-reward gradient is an average of token gradients of norm at most G G , so ‖ ∇ 𝜽 Δ M ‖ ≤ 2 ​ G \|\nabla_{{\bm{\theta}}}\Delta_{M}\|\leq 2G at every truncation, with no truncation-dependent factor. The first term is therefore at most β 2 4 ⋅ 2 ​ U ​ ( h w + h l ) ⋅ 2 ​ G = β 2 ​ U ​ G ​ ( h w + h l ) \frac{\beta^{2}}{4}\cdot 2U(h_{w}+h_{l})\cdot 2G=\beta^{2}UG(h_{w}+h_{l}) , using sup | ℓ ′′ | = β 2 / 4 \sup|\ell^{\prime\prime}|=\beta^{2}/4 , and the second at most β ⋅ 2 ​ G ​ ( h w + h l ) \beta\cdot 2G(h_{w}+h_{l}) . Taking expectations and using 𝔼 ⁡ [ h w + h l ] ≤ 1 − ρ min \mathbb{E}[h_{w}+h_{l}]\leq 1-\rho_{\min} from above gives an expected gradient bias of at most G ⁡ ( β 2 ​ U + 2 ​ β ) ​ ( 1 − ρ min ) G(\beta^{2}U+2\beta)(1-\rho_{\min}) , which is the constant C P C_{P} used in Sec. B.10 .
+For the optimality statement, F ≤ F P + Δ F\leq F_{P}+\Delta with Δ = 2 ​ β ​ U ​ ( 1 − ρ min ) \Delta=2\beta U(1-\rho_{\min}) , so F ⁡ ( 𝜽 P ∗ ) ≤ F P ​ ( 𝜽 P ∗ ) + Δ ≤ F P ​ ( 𝜽 ∗ ) + Δ ≤ F ⁡ ( 𝜽 ∗ ) + 2 ​ Δ F({\bm{\theta}}_{P}^{*})\leq F_{P}({\bm{\theta}}_{P}^{*})+\Delta\leq F_{P}({\bm{\theta}}^{*})+\Delta\leq F({\bm{\theta}}^{*})+2\Delta . The displacement bound follows from the segment argument of Sec. B.6 applied to the gradient bound above, and inherits the same requirements: an interior stationary point of each objective lying in the analyzed region, and ∇ 2 F ⪰ μ ​ I \nabla^{2}F\succeq\mu I with μ > 0 \mu>0 along the joining segment.
+The loss bound is a scaling statement, not a guarantee at the tested setting. Since | R b | ≤ U |R_{b}|\leq U we have | Δ | ≤ 2 ​ U |\Delta|\leq 2U , so the total range of the loss on the relevant interval is ℓ ⁡ ( − 2 ​ U ) − ℓ ⁡ ( 2 ​ U ) = 2 ​ β ​ U \ell(-2U)-\ell(2U)=2\beta U . At ρ min = 1 / 2 \rho_{\min}=1/2 the optimality-gap bound 4 ​ β ​ U ​ ( 1 − ρ min ) 4\beta U(1-\rho_{\min}) reaches 2 ​ β ​ U 2\beta U , exactly that range, so it is vacuous at the tested cutoff; the loss bound itself is 2 ​ β ​ U ​ ( 1 − ρ min ) = β ​ U 2\beta U(1-\rho_{\min})=\beta U , half that range. Both become restrictive only for cutoffs closer to one.
+∎
+B.9 Proof of Proposition 3 and Eq. 41
+Proof.
+With 𝒄 w , 𝒄 l {\bm{c}}_{w},{\bm{c}}_{l} as defined in Proposition 3 , 𝔼 ⁡ [ 𝒈 ^ ] = 𝒄 w + 𝒄 l \mathbb{E}[\hat{\bm{g}}]={\bm{c}}_{w}+{\bm{c}}_{l} follows from Proposition 2 , and
+𝔼 ​ ‖ 𝒈 ^ ‖ 2 = q w ​ ‖ 𝒄 w ‖ 2 q w 2 + q l ​ ‖ 𝒄 l ‖ 2 q l 2 = ‖ 𝒄 w ‖ 2 q w + ‖ 𝒄 l ‖ 2 q l , \mathbb{E}\|\hat{\bm{g}}\|^{2}=q_{w}\frac{\|{\bm{c}}_{w}\|^{2}}{q_{w}^{2}}+q_{l}\frac{\|{\bm{c}}_{l}\|^{2}}{q_{l}^{2}}=\frac{\|{\bm{c}}_{w}\|^{2}}{q_{w}}+\frac{\|{\bm{c}}_{l}\|^{2}}{q_{l}},
+(36)
+so Var ⁡ ( 𝒈 ^ ) = 𝔼 ​ ‖ 𝒈 ^ ‖ 2 − ‖ 𝒄 w + 𝒄 l ‖ 2 \mathrm{Var}(\hat{\bm{g}})=\mathbb{E}\|\hat{\bm{g}}\|^{2}-\|{\bm{c}}_{w}+{\bm{c}}_{l}\|^{2} is Eq. 17 . At q w = q l = 1 / 2 q_{w}=q_{l}=1/2 it equals 2 ​ ‖ 𝒄 w ‖ 2 + 2 ​ ‖ 𝒄 l ‖ 2 − ‖ 𝒄 w + 𝒄 l ‖ 2 = ‖ 𝒄 w − 𝒄 l ‖ 2 2\|{\bm{c}}_{w}\|^{2}+2\|{\bm{c}}_{l}\|^{2}-\|{\bm{c}}_{w}+{\bm{c}}_{l}\|^{2}=\|{\bm{c}}_{w}-{\bm{c}}_{l}\|^{2} . Because | λ | = β ​ σ ​ ( − β ​ Δ ) ≤ β |\lambda|=\beta\sigma(-\beta\Delta)\leq\beta and ‖ ∇ 𝜽 R b ‖ ≤ G \|\nabla_{{\bm{\theta}}}R_{b}\|\leq G , we have ‖ 𝒄 w ‖ , ‖ 𝒄 l ‖ ≤ β ​ G \|{\bm{c}}_{w}\|,\|{\bm{c}}_{l}\|\leq\beta G , hence Var ⁡ ( 𝒈 ^ ) ≤ 4 ​ β 2 ​ G 2 \mathrm{Var}(\hat{\bm{g}})\leq 4\beta^{2}G^{2} , and at the symmetric default also ‖ 𝒈 ^ ‖ = ‖ 𝒄 w ‖ / q w ≤ 2 ​ β ​ G \|\hat{\bm{g}}\|=\|{\bm{c}}_{w}\|/q_{w}\leq 2\beta G . Averaging m m estimators divides the variance by m m when the m m draws are independent in their preference pairs, response positions, prefixes and branches; if only the branch is re-drawn, only the branch component is reduced.
+For the rate, take the symmetric default q w = q l = 1 / 2 q_{w}=q_{l}=1/2 so that each step’s noise has second moment at most 4 ​ β 2 ​ G 2 / m 4\beta^{2}G^{2}/m . Let 𝜽 Φ ∗ {\bm{\theta}}_{\Phi}^{*} minimize Φ \Phi and D n = 𝔼 ​ ‖ 𝜽 n − 𝜽 Φ ∗ ‖ 2 D_{n}=\mathbb{E}\|{\bm{\theta}}_{n}-{\bm{\theta}}_{\Phi}^{*}\|^{2} . Projection is non-expansive and 𝜽 Φ ∗ ∈ Θ {\bm{\theta}}_{\Phi}^{*}\in\Theta , so
+D n + 1 ≤ \displaystyle D_{n+1}\leq{}
+D n − 2 ​ η n ​ 𝔼 ​ ⟨ ∇ Φ ​ ( 𝜽 n ) , 𝜽 n − 𝜽 Φ ∗ ⟩ \displaystyle D_{n}-2\eta_{n}\mathbb{E}\langle\nabla\Phi({\bm{\theta}}_{n}),{\bm{\theta}}_{n}-{\bm{\theta}}_{\Phi}^{*}\rangle
+(37)
++ η n 2 ​ ( 𝔼 ​ ‖ ∇ Φ ​ ( 𝜽 n ) ‖ 2 + 4 ​ β 2 ​ G 2 m ) . \displaystyle+\eta_{n}^{2}\Bigl(\mathbb{E}\|\nabla\Phi({\bm{\theta}}_{n})\|^{2}+\frac{4\beta^{2}G^{2}}{m}\Bigr).
+Let A A be the average Hessian along the segment from 𝜽 Φ ∗ {\bm{\theta}}_{\Phi}^{*} to 𝜽 n {\bm{\theta}}_{n} . Strong convexity gives A ⪰ μ ​ I A\succeq\mu I and smoothness gives A ⪯ L ​ I A\preceq LI , so A 2 ⪯ L ​ A A^{2}\preceq LA . Since ∇ Φ ​ ( 𝜽 n ) = A ⁡ ( 𝜽 n − 𝜽 Φ ∗ ) \nabla\Phi({\bm{\theta}}_{n})=A({\bm{\theta}}_{n}-{\bm{\theta}}_{\Phi}^{*}) ,
+‖ ∇ Φ ​ ( 𝜽 n ) ‖ 2 ≤ L ⁡ ⟨ ∇ Φ ​ ( 𝜽 n ) , 𝜽 n − 𝜽 Φ ∗ ⟩ . \|\nabla\Phi({\bm{\theta}}_{n})\|^{2}\leq L\langle\nabla\Phi({\bm{\theta}}_{n}),{\bm{\theta}}_{n}-{\bm{\theta}}_{\Phi}^{*}\rangle.
+(38)
+Substituting this and using ⟨ ∇ Φ , 𝜽 − 𝜽 Φ ∗ ⟩ ≥ μ ​ D n \langle\nabla\Phi,{\bm{\theta}}-{\bm{\theta}}_{\Phi}^{*}\rangle\geq\mu D_{n} together with η n ​ L ≤ 1 \eta_{n}L\leq 1 , which t 0 ≥ 2 ​ L / μ t_{0}\geq 2L/\mu ensures,
+D n + 1 ≤ ( 1 − μ ​ η n ) ​ D n + 4 ​ β 2 ​ G 2 m ​ η n 2 . D_{n+1}\leq(1-\mu\eta_{n})D_{n}+\frac{4\beta^{2}G^{2}}{m}\eta_{n}^{2}.
+(39)
+Insert η n = 2 / [ μ ⁡ ( n + t 0 ) ] \eta_{n}=2/[\mu(n+t_{0})] , write s = n + t 0 s=n+t_{0} , and suppose D n ≤ A B / s D_{n}\leq A_{B}/s . Then
+D n + 1 \displaystyle D_{n+1}
+≤ A B ​ ( s − 2 ) s 2 + 16 ​ β 2 ​ G 2 μ 2 ​ m ​ s 2 \displaystyle\leq\frac{A_{B}(s-2)}{s^{2}}+\frac{16\beta^{2}G^{2}}{\mu^{2}ms^{2}}
+(40)
+≤ A B ​ ( s − 1 ) s 2 ≤ A B s + 1 , \displaystyle\leq\frac{A_{B}(s-1)}{s^{2}}\leq\frac{A_{B}}{s+1},
+where the middle step uses A B ≥ 16 ​ β 2 ​ G 2 / ( μ 2 ​ m ) A_{B}\geq 16\beta^{2}G^{2}/(\mu^{2}m) and the last uses ( s − 1 ) ​ ( s + 1 ) ≤ s 2 (s-1)(s+1)\leq s^{2} . Since D 0 ≤ A B / t 0 D_{0}\leq A_{B}/t_{0} , induction gives
+𝔼 ​ ‖ 𝜽 N − 𝜽 Φ ∗ ‖ 2 \displaystyle\mathbb{E}\|{\bm{\theta}}_{N}-{\bm{\theta}}_{\Phi}^{*}\|^{2}
+≤ A B N + t 0 , \displaystyle\leq\frac{A_{B}}{N+t_{0}},
+(41)
+A B \displaystyle A_{B}
+: = max { t 0 ∥ 𝜽 0 − 𝜽 Φ ∗ ∥ 2 , \displaystyle:=\max\Bigl\{t_{0}\|{\bm{\theta}}_{0}-{\bm{\theta}}_{\Phi}^{*}\|^{2},
+16 ​ β 2 ​ G 2 μ 2 ​ m } \displaystyle\frac{16\beta^{2}G^{2}}{\mu^{2}m}\Bigr\}
+for η n = 2 / [ μ ⁡ ( n + t 0 ) ] \eta_{n}=2/[\mu(n+t_{0})] and t 0 ≥ max ⁡ { 2 , 2 ​ L / μ } t_{0}\geq\max\{2,2L/\mu\} . Markov’s inequality applied to ‖ 𝜽 N − 𝜽 Φ ∗ ‖ 2 \|{\bm{\theta}}_{N}-{\bm{\theta}}_{\Phi}^{*}\|^{2} gives Pr ⁡ ( ‖ 𝜽 N − 𝜽 Φ ∗ ‖ > ε θ ) ≤ A B / [ ( N + t 0 ) ​ ε θ 2 ] \Pr(\|{\bm{\theta}}_{N}-{\bm{\theta}}_{\Phi}^{*}\|>\varepsilon_{\theta})\leq A_{B}/[(N+t_{0})\varepsilon_{\theta}^{2}] .
+∎
+B.10 Proof of the composed bias and error budget
+Proof.
+Write r A | P = ( 1 − α ) / [ α ⁡ ( M 0 − 1 ) ] r_{A|P}=(1-\alpha)/[\alpha(M_{0}-1)] .
+Write ∇ F A ​ P − ∇ F = ( ∇ F A ​ P − ∇ F P ) + ( ∇ F P − ∇ F ) \nabla F_{AP}-\nabla F=(\nabla F_{AP}-\nabla F_{P})+(\nabla F_{P}-\nabla F) . Conditioned on the executed lengths ( M w , M l ) (M_{w},M_{l}) , the first difference is the position-pruning bias of Eq. 31 evaluated at those lengths. A fixed prefix can have a larger token-score variance than the whole response, so this difference must be averaged over the cutoff law rather than bounded prefix by prefix. Two facts supply that average. First, the within-prefix sum of squares cannot exceed the whole-response sum of squares: splitting the total sum of squares into the prefix, the suffix and the part between their means gives
+∑ t ≤ T ( u t − u ¯ T ) 2 = \displaystyle\sum_{t\leq T}(u_{t}-\bar{u}_{T})^{2}={}
+∑ t ≤ M ( u t − u ¯ M ) 2 \displaystyle\sum_{t\leq M}(u_{t}-\bar{u}_{M})^{2}
+(42)
++ ∑ t > M ( u t − u ¯ > M ) 2 \displaystyle+\sum_{t>M}(u_{t}-\bar{u}_{>M})^{2}
++ M ⁡ ( T − M ) T ​ ( u ¯ M − u ¯ > M ) 2 , \displaystyle+\frac{M(T-M)}{T}\bigl(\bar{u}_{M}-\bar{u}_{>M}\bigr)^{2},
+so M ​ v M ≤ T ​ v T Mv_{M}\leq Tv_{T} and hence v M ≤ ( T / M ) ​ v T v_{M}\leq(T/M)v_{T} , with the suffix terms read as zero when M = T M=T . Second, for M b = max ⁡ ( 1 , ⌈ ρ b ​ T b ⌉ ) M_{b}=\max(1,\lceil\rho_{b}T_{b}\rceil) with ρ b ∼ 𝒰 ⁡ ( ρ min , 1 ) \rho_{b}\sim\mathcal{U}(\rho_{\min},1) , prefixes of length one carry zero variance and the remaining lengths satisfy 𝔼 [ 𝟏 { M b > 1 } T b / ( M b ( M b − 1 ) ) ] ≤ 1 / ( M 0 − 1 ) \mathbb{E}[\mathbf{1}_{\{M_{b}>1\}}T_{b}/(M_{b}(M_{b}-1))]\leq 1/(M_{0}-1) with M 0 = max ⁡ ( 2 , ⌈ ρ min ​ T 0 ⌉ ) M_{0}=\max(2,\lceil\rho_{\min}T_{0}\rceil) . Combining the two bounds the prefix-averaged position-pruning bias by C A ​ r A | P C_{A}r_{A|P} , the factor two accounting for the two sides. The second difference is the prefix bias of Eq. 13 , contributing C P ​ ( 1 − ρ min ) C_{P}(1-\rho_{\min}) with C P = G ⁡ ( β 2 ​ U + 2 ​ β ) C_{P}=G(\beta^{2}U+2\beta) . Adding the two gives
+‖ ∇ F A ​ P − ∇ F ‖ \displaystyle\|\nabla F_{AP}-\nabla F\|
+≤ C A ​ r A | P + C P ​ ( 1 − ρ min ) , \displaystyle\leq C_{A}r_{A|P}+C_{P}(1-\rho_{\min}),
+(43)
+C P \displaystyle C_{P}
+: = G ⁡ ( β 2 ​ U + 2 ​ β ) . \displaystyle:=G(\beta^{2}U+2\beta).
+If the composed objective has interior minimizer 𝜽 A ​ P ∗ {\bm{\theta}}_{AP}^{*} and F F has curvature at least μ F \mu_{F} on the relevant segment, the segment argument of Sec. B.6 gives
+‖ 𝜽 A ​ P ∗ − 𝜽 ∗ ‖ ≤ C A ​ r A | P + C P ​ ( 1 − ρ min ) μ F . \|{\bm{\theta}}_{AP}^{*}-{\bm{\theta}}^{*}\|\leq\frac{C_{A}r_{A|P}+C_{P}(1-\rho_{\min})}{\mu_{F}}.
+(44)
+The L 2 L^{2} triangle inequality ‖ 𝜽 N − 𝜽 ∗ ‖ ≤ ‖ 𝜽 N − 𝜽 A ​ P ∗ ‖ + ‖ 𝜽 A ​ P ∗ − 𝜽 ∗ ‖ \|{\bm{\theta}}_{N}-{\bm{\theta}}^{*}\|\leq\|{\bm{\theta}}_{N}-{\bm{\theta}}_{AP}^{*}\|+\|{\bm{\theta}}_{AP}^{*}-{\bm{\theta}}^{*}\| , combined with Eq. 41 applied to the composed objective, yields
+𝔼 ​ ‖ 𝜽 N − 𝜽 ∗ ‖ 2 ≤ \displaystyle\sqrt{\mathbb{E}\|{\bm{\theta}}_{N}-{\bm{\theta}}^{*}\|^{2}}\;\leq
+C A ​ r A | P + C P ​ ( 1 − ρ min ) μ F \displaystyle\frac{C_{A}r_{A|P}+C_{P}(1-\rho_{\min})}{\mu_{F}}
+(45)
++ A B , A ​ P N + t 0 , A ​ P , \displaystyle+\sqrt{\frac{A_{B,AP}}{N+t_{0,AP}}},
+where μ F \mu_{F} bounds the curvature of F F on the relevant segment and A B , A ​ P , t 0 , A ​ P A_{B,AP},t_{0,AP} are the constants of Eq. 41 evaluated for the composed objective.
+For the composed optimal loss, F A ​ P ≥ F P F_{AP}\geq F_{P} by Jensen’s inequality in the position masks and F ≤ F P + 2 ​ β ​ U ​ ( 1 − ρ min ) F\leq F_{P}+2\beta U(1-\rho_{\min}) . Chaining these as in Sec. B.5 gives
+F ⁡ ( 𝜽 A ​ P ∗ ) − F ⁡ ( 𝜽 ∗ ) ≤ β 2 ​ v ¯ 4 ​ r A | P + 4 ​ β ​ U ​ ( 1 − ρ min ) . F({\bm{\theta}}_{AP}^{*})-F({\bm{\theta}}^{*})\leq\frac{\beta^{2}\bar{v}}{4}r_{A|P}+4\beta U(1-\rho_{\min}).
+(46)
+∎
+Appendix C Shared-Parameter Analysis
+This appendix expands the shared-parameter coupling discussed in the introduction.
+C.1 Shared-Parameter Updates and Signed Token Movement
+Let i i index token positions across a pair, p i p_{i} be the current-policy target-token probability, and ϕ i = ∇ 𝜽 ​ log ​ p i {\bm{\phi}}_{i}=\nabla_{{\bm{\theta}}}\log p_{i} its log-probability gradient. Set c i = 1 / k w c_{i}=1/k_{w} for a selected chosen token, c i = − 1 / k l c_{i}=-1/k_{l} for a selected rejected token, and c i = 0 c_{i}=0 otherwise. Within a region of fixed mask membership,
+𝒈 = ∇ 𝜽 Δ = ∑ i c i ​ ϕ i . {\bm{g}}=\nabla_{{\bm{\theta}}}\Delta=\sum_{i}c_{i}{\bm{\phi}}_{i}.
+(47)
+For a small gradient-descent step of size η > 0 \eta>0 on the pair loss, the parameter change is η ​ β ​ σ ​ ( − β ​ Δ ) ​ 𝒈 \eta\beta\sigma(-\beta\Delta){\bm{g}} . Writing δ \delta for the resulting change, to first order
+δ ​ log ⁡ p i \displaystyle\delta\log p_{i}
+= η ​ β ​ σ ​ ( − β ​ Δ ) ​ ϕ i ⊤ ​ 𝒈 + 𝒪 ⁡ ( η 2 ) , \displaystyle=\eta\beta\sigma(-\beta\Delta){\bm{\phi}}_{i}^{\top}{\bm{g}}+\mathcal{O}(\eta^{2}),
+(48)
+δ ​ Δ \displaystyle\delta\Delta
+= η ​ β ​ σ ​ ( − β ​ Δ ) ​ ‖ 𝒈 ‖ 2 + 𝒪 ⁡ ( η 2 ) . \displaystyle=\eta\beta\sigma(-\beta\Delta)\|{\bm{g}}\|^{2}+\mathcal{O}(\eta^{2}).
+The pair margin increases to first order, yet an individual chosen probability can decrease if ϕ i ⊤ ​ 𝒈 < 0 {\bm{\phi}}_{i}^{\top}{\bm{g}}<0 . Token confidence alone does not determine these inner products ( Yuan et al., 2025 ; Razin et al., 2025 ) . Minibatching and AdamW further change the actual update. The single-pair gradient calculation identifies the missing interaction rather than modeling that optimizer exactly.
+Appendix D Experimental Settings and Results
+This appendix documents the experimental settings and additional results: the UltraFeedback motivation experiments ( Sec. D.1 ), the HelpSteer3 corpus and recipe ( Sec. D.2 ), the retention-sweep geometry ( Sec. D.3 ), the factorial and parameter sweeps ( Sec. D.4 ), the full per-task tables ( Sec. D.5 ), the detailed HelpSteer3 tables ( Sec. D.6 ), and the supplemental attribution and Full–Branch validation ( Sec. D.7 ).
+D.1 The UltraFeedback Experiments
+The UltraFeedback collection uses sequence length 512, prompt length 256, one training epoch, AdamW, cosine decay, BFloat16 computation, 4-bit loading, gradient checkpointing, and LoRA on attention and MLP projections. The reference is the frozen policy initialization. Qwen thinking mode is disabled for evaluation. Experiments run on Ubuntu 22.04 with two NVIDIA RTX 5090 GPUs (32 GiB each), Python 3.12, PyTorch 2.8.0, and CUDA 12.8. Masks are selected independently on the two sides each step, with the chosen side ranked by current-policy confidence (Low) or uniformly (Random), and gradients bypass the discrete selection.
+All three models use LoRA dropout 0.05 0.05 . The principal comparison uses retention 0.8 0.8 and training seed 42 for each rule. Pythia-2.8B uses learning rate 5 × 10 − 7 5\times 10^{-7} , DPO β = 0.1 \beta=0.1 , LoRA rank 16 and scaling alpha 32, per-device batch size 2, 16 gradient accumulation steps, and warmup fraction 0.10 0.10 . Qwen3-4B uses learning rate 1.5 × 10 − 6 1.5\times 10^{-6} , β = 0.5 \beta=0.5 , LoRA rank 64 and scaling alpha 128, per-device batch size 2, 16 gradient accumulation steps, and warmup fraction 0.08 0.08 . Qwen3-8B uses learning rate 7.5 × 10 − 7 7.5\times 10^{-7} , β = 0.5 \beta=0.5 , LoRA rank 32 and scaling alpha 64, per-device batch size 1, 32 gradient accumulation steps, and warmup fraction 0.10 0.10 .
+The tasks include ARC Challenge ( Clark et al., 2018 ) , BBH ( Suzgun et al., 2023 ) , MMLU-Pro ( Wang et al., 2024 ) , MuSR ( Sprague et al., 2024 ) , TruthfulQA MC1 ( Lin et al., 2022 ) , IFEval prompt-level strict accuracy ( Zhou et al., 2023 ) , GSM8K ( Cobbe et al., 2021 ) , and MATH-Hard drawn from the MATH dataset ( Hendrycks et al., 2021 ) . ARC uses 25-shot normalized accuracy, and GSM8K uses 5-shot exact-answer evaluation. The per-task tables ( Tabs. 7 and 8 ) preserve evaluator-reported standard errors, which do not measure training-seed variability. Mean accuracy is a point summary. Pythia’s mean accuracy excludes GSM8K and MATH-Hard because all its variants score zero on both. The summary averages cited in Sec. E.1 are: Low − - All + 1.95 / + 0.51 / + 0.32 +1.95/+0.51/+0.32 , Random − - All + 1.58 / + 0.00 / + 0.06 +1.58/+0.00/+0.06 , and Low − - Random + 0.37 / + 0.51 / + 0.26 +0.37/+0.51/+0.26 points for Pythia-2.8B, Qwen3-4B, and Qwen3-8B, respectively. The High/High row and the cross-side rules (Low/High, High/Low) are shown for completeness only. They are not part of the matched Low–Random comparison and are not interpreted in the main text. The UltraFeedback and HelpSteer3 collections differ in recipe and evaluation protocol, so absolute scores are not comparable across them.
+Benchmark
+All/All
+Random/Random
+High/High
+Low/Low
+Qwen3-4B
+ARC
+62.80 ± 1.41 62.80{\scriptstyle\pm 1.41}
+62.97 ± 1.41 62.97{\scriptstyle\pm 1.41}
+62.46 ± 1.42 62.46{\scriptstyle\pm 1.42}
+62.97 ± 1.41 62.97{\scriptstyle\pm 1.41}
+BBH
+56.16 ± 3.01 56.16{\scriptstyle\pm 3.01}
+56.16 ± 3.01 56.16{\scriptstyle\pm 3.01}
+56.08 ± 3.01 56.08{\scriptstyle\pm 3.01}
+56.33 ± 3.01 56.33{\scriptstyle\pm 3.01}
+MMLU-Pro
+42.46 ± 0.45 42.46{\scriptstyle\pm 0.45}
+42.25 ± 0.45 42.25{\scriptstyle\pm 0.45}
+42.24 ± 0.45 42.24{\scriptstyle\pm 0.45}
+42.50 ± 0.45 42.50{\scriptstyle\pm 0.45}
+MuSR
+42.46 ± 1.73 42.46{\scriptstyle\pm 1.73}
+43.39 ± 1.74 43.39{\scriptstyle\pm 1.74}
+42.72 ± 1.74 42.72{\scriptstyle\pm 1.74}
+43.25 ± 1.74 43.25{\scriptstyle\pm 1.74}
+TruthfulQA
+37.94 ± 1.70 37.94{\scriptstyle\pm 1.70}
+38.07 ± 1.70 38.07{\scriptstyle\pm 1.70}
+36.11 ± 1.68 36.11{\scriptstyle\pm 1.68}
+38.56 ± 1.70 38.56{\scriptstyle\pm 1.70}
+IFEval
+43.99 ± 2.14 43.99{\scriptstyle\pm 2.14}
+40.67 ± 2.11 40.67{\scriptstyle\pm 2.11}
+44.36 ± 2.14 44.36{\scriptstyle\pm 2.14}
+43.56 ± 2.10 43.56{\scriptstyle\pm 2.10}
+GSM8K
+74.15 ± 1.21 74.15{\scriptstyle\pm 1.21}
+74.98 ± 1.19 74.98{\scriptstyle\pm 1.19}
+68.76 ± 1.28 68.76{\scriptstyle\pm 1.28}
+75.36 ± 1.19 75.36{\scriptstyle\pm 1.19}
+MATH-Hard
+37.94 ± 3.44 37.94{\scriptstyle\pm 3.44}
+39.39 ± 3.45 39.39{\scriptstyle\pm 3.45}
+37.25 ± 3.36 37.25{\scriptstyle\pm 3.36}
+39.50 ± 3.46 39.50{\scriptstyle\pm 3.46}
+Mean accuracy (%)
+49.74
+49.74
+48.75
+50.25
+Qwen3-8B
+ARC
+68.17 ± 1.36 68.17{\scriptstyle\pm 1.36}
+68.09 ± 1.36 68.09{\scriptstyle\pm 1.36}
+68.34 ± 1.36 68.34{\scriptstyle\pm 1.36}
+68.29 ± 1.36 68.29{\scriptstyle\pm 1.36}
+BBH
+60.84 ± 2.98 60.84{\scriptstyle\pm 2.98}
+60.80 ± 2.98 60.80{\scriptstyle\pm 2.98}
+60.55 ± 2.99 60.55{\scriptstyle\pm 2.99}
+61.34 ± 2.98 61.34{\scriptstyle\pm 2.98}
+MMLU-Pro
+47.63 ± 0.46 47.63{\scriptstyle\pm 0.46}
+47.70 ± 0.46 47.70{\scriptstyle\pm 0.46}
+47.61 ± 0.46 47.61{\scriptstyle\pm 0.46}
+47.68 ± 0.46 47.68{\scriptstyle\pm 0.46}
+MuSR
+43.39 ± 1.77 43.39{\scriptstyle\pm 1.77}
+43.78 ± 1.77 43.78{\scriptstyle\pm 1.77}
+42.86 ± 1.77 42.86{\scriptstyle\pm 1.77}
+43.39 ± 1.77 43.39{\scriptstyle\pm 1.77}
+TruthfulQA
+36.72 ± 1.69 36.72{\scriptstyle\pm 1.69}
+36.96 ± 1.69 36.96{\scriptstyle\pm 1.69}
+36.84 ± 1.69 36.84{\scriptstyle\pm 1.69}
+36.84 ± 1.69 36.84{\scriptstyle\pm 1.69}
+IFEval
+25.88 ± 1.88 25.88{\scriptstyle\pm 1.88}
+25.32 ± 1.87 25.32{\scriptstyle\pm 1.87}
+24.03 ± 1.84 24.03{\scriptstyle\pm 1.84}
+26.06 ± 1.89 26.06{\scriptstyle\pm 1.89}
+GSM8K
+78.09 ± 1.14 78.09{\scriptstyle\pm 1.14}
+77.63 ± 1.15 77.63{\scriptstyle\pm 1.15}
+77.86 ± 1.14 77.86{\scriptstyle\pm 1.14}
+78.62 ± 1.13 78.62{\scriptstyle\pm 1.13}
+MATH-Hard
+46.25 ± 3.45 46.25{\scriptstyle\pm 3.45}
+47.13 ± 3.44 47.13{\scriptstyle\pm 3.44}
+46.38 ± 3.49 46.38{\scriptstyle\pm 3.49}
+47.29 ± 3.46 47.29{\scriptstyle\pm 3.46}
+Mean accuracy (%)
+50.87
+50.93
+50.56
+51.19
+Table 7: UltraFeedback Qwen3 task scores (%) with evaluator-reported standard errors. Mean accuracy is the eight-benchmark point mean. Non-All rules use retention 0.8. These errors do not measure training variability.
+Method
+ARC
+BBH
+MMLU-Pro
+MuSR
+IFEval
+TruthfulQA
+Mean
+accuracy (%)
+All/All
+25.51 ± 1.27 25.51{\scriptstyle\pm 1.27}
+28.46 ± 2.64 28.46{\scriptstyle\pm 2.64}
+10.59 ± 0.28 10.59{\scriptstyle\pm 0.28}
+35.85 ± 1.71 35.85{\scriptstyle\pm 1.71}
+11.46 ± 1.37 11.46{\scriptstyle\pm 1.37}
+22.40 ± 1.46 22.40{\scriptstyle\pm 1.46}
+22.38
+Random/Random
+28.16 ± 1.31 28.16{\scriptstyle\pm 1.31}
+27.47 ± 2.55 27.47{\scriptstyle\pm 2.55}
+10.86 ± 0.28 10.86{\scriptstyle\pm 0.28}
+36.64 ± 1.72 36.64{\scriptstyle\pm 1.72}
+15.53 ± 1.56 15.53{\scriptstyle\pm 1.56}
+25.09 ± 1.52 25.09{\scriptstyle\pm 1.52}
+23.96
+Low/Low
+27.73 ± 1.31 27.73{\scriptstyle\pm 1.31}
+28.47 ± 2.69 28.47{\scriptstyle\pm 2.69}
+10.84 ± 0.28 10.84{\scriptstyle\pm 0.28}
+39.95 ± 1.73 39.95{\scriptstyle\pm 1.73}
+11.46 ± 1.37 11.46{\scriptstyle\pm 1.37}
+27.54 ± 1.56 27.54{\scriptstyle\pm 1.56}
+24.33
+Low/High
+24.91 ± 1.26 24.91{\scriptstyle\pm 1.26}
+28.92 ± 2.69 28.92{\scriptstyle\pm 2.69}
+11.66 ± 0.29 11.66{\scriptstyle\pm 0.29}
+35.58 ± 1.70 35.58{\scriptstyle\pm 1.70}
+18.30 ± 1.66 18.30{\scriptstyle\pm 1.66}
+22.64 ± 1.47 22.64{\scriptstyle\pm 1.47}
+23.67
+High/Low
+26.11 ± 1.28 26.11{\scriptstyle\pm 1.28}
+29.47 ± 2.72 29.47{\scriptstyle\pm 2.72}
+11.66 ± 0.29 11.66{\scriptstyle\pm 0.29}
+34.79 ± 1.69 34.79{\scriptstyle\pm 1.69}
+12.57 ± 1.43 12.57{\scriptstyle\pm 1.43}
+23.01 ± 1.47 23.01{\scriptstyle\pm 1.47}
+22.93
+High/High
+25.51 ± 1.27 25.51{\scriptstyle\pm 1.27}
+29.99 ± 2.76 29.99{\scriptstyle\pm 2.76}
+11.16 ± 0.29 11.16{\scriptstyle\pm 0.29}
+34.39 ± 1.68 34.39{\scriptstyle\pm 1.68}
+12.20 ± 1.41 12.20{\scriptstyle\pm 1.41}
+23.13 ± 1.48 23.13{\scriptstyle\pm 1.48}
+22.73
+Table 8: UltraFeedback Pythia-2.8B task scores (%) at retention 0.8. Per-task errors are evaluator-reported standard errors. Mean accuracy is the six-task point mean; GSM8K and MATH-Hard are excluded because all variants score zero on both.
+D.2 The HelpSteer3 Corpus and Recipe
+Preference conversion and recipe.
+The preference conversion retains 36,264 of 38,459 training pairs and 1,917 of 2,017 validation pairs, removing ties and empty responses. The main experiments use Qwen3-4B with DPO β = 1 \beta=1 , LoRA rank 64 and alpha 128, dropout 0.05 0.05 on attention and MLP projections, BFloat16 computation, FlashAttention-2, gradient checkpointing, AdamW at learning rate 10 − 6 10^{-6} , cosine decay, warmup fraction 0.05 0.05 , and maximum gradient norm 0.5 0.5 . Sequence and prompt limits are 2,048 and 1,024. Per-device batch is 2. The factorial and parameter sweeps use training and selection seed 42. The reference is computed online. The supplemental Full–Branch comparisons retain this recipe at Qwen3-4B seed 43 and Mistral-7B seed 42 ( Sec. D.7 ).
+D.3 Retention-Sweep Geometry
+The sweep in Tab. 12 compares Low/Low and Random/Random at retentions 0.1 0.1 – 0.9 0.9 , with masks recomputed every step. Gradient accumulation is 16 for retentions 0.1 0.1 – 0.4 0.4 and 4 for 0.5 0.5 – 0.9 0.9 , giving effective batches of 32 (1,133 updates) and 64 (566 updates) for one epoch. Each Low–Random pair within a block shares its geometry and data order. Comparisons are therefore interpreted within each retention level, and the two blocks do not form one controlled dose-response curve. Tab. 11 gives the full per-task scores.
+D.4 The Factorial and Parameter Sweeps
+Factorial.
+The factorial of Sec. 4.1 uses the same corpus and recipe with a fixed batch geometry: per-device batch 2, gradient accumulation 4, eight workers, global batch 64 pairs, 566 optimizer steps for one epoch. Position pruning uses α = 0.6 \alpha=0.6 (uniform response-position subsets, selected-token mean reward). Sequence pruning uses ρ b ∼ 𝒰 ⁡ ( 0.5 , 1.0 ) \rho_{b}\sim\mathcal{U}(0.5,1.0) (prefix truncation with repacking and a matching reference cutoff). Branch pruning uses q w = q l = 0.5 q_{w}=q_{l}=0.5 (one backward branch per pair, opposite branch forwarded without gradient, 1 / q b 1/q_{b} importance correction and stop-gradient surrogate). Composition follows Alg. 1 : truncation first, then response-position pruning inside the retained prefix, then branch pruning. Policy and reference see identical truncations and masks. All eight configurations in Tab. 4 were trained end-to-end under this recipe and evaluated on all ten benchmarks.
+Realized sparsity matches the nominal targets. With all three modes enabled, the selected fraction is 0.6013 0.6013 , the mean ρ b \rho_{b} is 0.7545 0.7545 , and the response retention is 0.7662 0.7662 .
+Efficiency
+Capability (accuracy, %)
+Open-ended
+Method
+Wall
+Speed
+ARC
+GSM8K
+TQA
+BBH
+MATH
+MMLU
+MuSR
+Mean
+accuracy
+(%)
+MT
+AH
+WB
+Mean
+generation
+score
+Full
+187.8
+1.000 × \times
+62.54
+87.41
+53.88
+55.64
+63.59
+42.28
+42.99
+58.33
+6.649
+50.12
+3.139
+49.33
+Position
+185.9
+1.010 × \times
+62.46
+86.43
+53.51
+55.58
+63.26
+42.18
+42.99
+58.06
+6.829
+44.85
+3.200
+48.38
+Sequence
+186.4
+1.008 × \times
+62.37
+86.28
+53.40
+55.92
+63.27
+42.20
+42.86
+58.04
+6.432
+45.80
+3.186
+47.33
+Branch
+128.4
+1.463 × \times
+62.03
+86.66
+53.06
+55.73
+63.65
+42.16
+43.25
+58.08
+6.800
+50.11
+3.263
+50.25
+Position+Sequence
+185.0
+1.015 × \times
+62.20
+85.97
+53.06
+55.74
+63.63
+42.07
+43.12
+57.97
+6.893
+45.54
+3.208
+48.85
+Position+Branch
+127.8
+1.469 × \times
+61.95
+86.50
+52.92
+55.64
+63.31
+42.12
+43.12
+57.94
+6.676
+45.80
+3.196
+48.17
+Sequence+Branch
+126.3
+1.487 × \times
+62.03
+86.20
+52.84
+55.69
+63.06
+42.05
+43.12
+57.86
+6.600
+45.05
+3.197
+47.67
+Position+Sequence
++Branch
+127.0
+1.479 × \times
+62.03
+85.97
+52.75
+55.65
+62.24
+42.05
+43.12
+57.69
+6.693
+45.86
+3.225
+48.35
+Table 9: Full factorial task scores underlying Tab. 4 . Metrics and score units follow Sec. 4.1 . Bold/underline mark the best/second-best displayed column values.
+Parameter sweeps.
+The within-axis sweeps of Tab. 3 are ten trainings that share the factorial’s recipe and differ from it only in the ablated knob. The sweep midpoints ( α = 0.6 \alpha{=}0.6 , 𝒰 ⁡ ( 0.5 , 1 ) \mathcal{U}(0.5,1) , q w = 0.5 q_{w}{=}0.5 ) coincide with the factorial’s Position, Sequence, and Branch rows. Tab. 2 gives the sequence-pruning resource profile in full. Realized sparsity matches nominal for position pruning (selected fraction 0.302 / 0.601 / 0.902 0.302/0.601/0.902 ) and branch pruning (global chosen fractions 0.298 / 0.498 / 0.699 0.298/0.498/0.699 for q w = 0.3 / 0.5 / 0.7 q_{w}=0.3/0.5/0.7 ). For sequence pruning, the sampled cutoff matches its distribution (mean ρ b \rho_{b} 0.632 / 0.755 / 0.877 0.632/0.755/0.877 against theory 0.625 / 0.750 / 0.875 0.625/0.750/0.875 , and ρ b = 0.750 \rho_{b}=0.750 exactly for the fixed-cutoff configuration), with corresponding response-token retention 0.65 / 0.77 / 0.88 0.65/0.77/0.88 . The Tokens column in Tab. 2 ( 0.854 / 0.893 / 0.943 / 0.894 0.854/0.893/0.943/0.894 ) is a third quantity: the executed-sequence fraction, the ratio of executed sequence tokens, prompt and padding included, to the stock baseline. It lies above the response-token retention and must not be compared with the nominal ρ b \rho_{b} . Peak HBM was not measured across q w q_{w} , so branch pruning is compared on training wall-clock only. The per-task scores of all ten runs are in Tab. 10 .
+Setting
+ARC
+GSM8K
+TQA
+BBH
+MATH
+MMLU
+MuSR
+Mean
+accuracy
+(%)
+MT
+AH
+WB
+Mean
+generation
+score
+Position α = 0.3 \alpha{=}0.3
+62.29
+86.20
+53.15
+55.61
+62.78
+42.15
+43.12
+57.90
+6.568
+45.56
+3.195
+47.73
+Position α = 0.6 \alpha{=}0.6
+62.46
+86.43
+53.51
+55.58
+63.26
+42.18
+42.99
+58.06
+6.829
+44.85
+3.200
+48.38
+Position α = 0.9 \alpha{=}0.9
+62.54
+87.34
+53.83
+55.64
+63.54
+42.26
+43.12
+58.32
+6.707
+48.00
+3.081
+48.63
+Sequence 𝒰 ⁡ ( 0.25 , 1 ) \mathcal{U}(0.25,1)
+62.37
+86.35
+53.30
+55.80
+63.53
+42.15
+43.12
+58.09
+6.552
+47.05
+3.117
+47.91
+Sequence 𝒰 ⁡ ( 0.5 , 1 ) \mathcal{U}(0.5,1)
+62.37
+86.28
+53.40
+55.92
+63.27
+42.20
+42.86
+58.04
+6.432
+45.80
+3.186
+47.33
+Sequence 𝒰 ⁡ ( 0.75 , 1 ) \mathcal{U}(0.75,1)
+62.46
+86.28
+53.44
+56.03
+63.16
+42.16
+42.72
+58.04
+6.874
+47.92
+3.193
+49.53
+Sequence fixed 0.75 0.75
+62.29
+86.73
+53.38
+55.95
+63.23
+42.13
+42.86
+58.08
+6.562
+43.33
+3.214
+47.03
+Branch q w = 0.3 q_{w}{=}0.3
+62.37
+87.34
+53.03
+55.44
+62.70
+42.16
+43.39
+58.06
+6.669
+47.82
+3.189
+48.80
+Branch q w = 0.5 q_{w}{=}0.5
+62.03
+86.66
+53.06
+55.73
+63.65
+42.16
+43.25
+58.08
+6.800
+50.11
+3.263
+50.25
+Branch q w = 0.7 q_{w}{=}0.7
+62.03
+86.58
+52.97
+55.75
+62.92
+42.15
+43.39
+57.97
+6.753
+46.64
+3.205
+48.74
+Table 10: Per-task single-axis sweeps, one training seed. Shading marks defaults; rows specify settings. Metric units follow Sec. 4.1 . Evaluator standard errors ( 0.45 0.45 – 3.02 3.02 pp) do not test aggregate differences or training variability.
+Mean generation score in every table uses the reported task means and the scaling in Sec. 4.1 .
+Descriptive factorial contrasts.
+Raw differences of aggregate columns across the factorial are descriptive contrasts on single-seed runs. Contrasts use unrounded aggregates and can differ from differences of the displayed columns by 0.01 0.01 . Adding position pruning changes mean accuracy by − 0.27 -0.27 , − 0.07 -0.07 , − 0.14 -0.14 , and − 0.17 -0.17 pp over Full, Sequence, Branch, and Sequence+Branch, respectively. Adding sequence pruning changes it by − 0.29 -0.29 , − 0.09 -0.09 , − 0.22 -0.22 , and − 0.25 -0.25 pp over Full, Position, Branch, and Position+Branch. Adding branch pruning changes it by − 0.26 -0.26 , − 0.12 -0.12 , − 0.19 -0.19 , and − 0.28 -0.28 pp over Full, Position, Sequence, and Position+Sequence.
+Contrasts in mean generation score use the scaling in Sec. 4.1 and have mixed signs. Position pruning gives − 0.95 -0.95 , + 1.52 +1.52 , − 2.07 -2.07 , and + 0.68 +0.68 in the four pairings above. Sequence pruning gives − 2.01 -2.01 , + 0.47 +0.47 , − 2.58 -2.58 , and + 0.17 +0.17 . Branch pruning gives + 0.92 +0.92 , − 0.21 -0.21 , + 0.35 +0.35 , and − 0.50 -0.50 . All twelve mean accuracy contrasts are negative. The branch-pruning effect on training wall-clock is consistent in sign: − 59.4 -59.4 , − 58.1 -58.1 , − 60.1 -60.1 , and − 58.0 -58.0 min in the four pairings.
+D.5 Full Task Tables
+Tab. 11 reports per-task scores for Low/Low and Random/Random at each retention level on HelpSteer3-Preference.
+Selection
+Retention
+ARC
+GSM8K
+TruthfulQA
+BBH
+MATH-Hard
+MMLU-Pro
+MuSR
+Mean
+accuracy (%)
+Low/Low
+0.1
+63.48
+85.82
+54.57
+55.54
+62.39
+42.26
+42.86
+58.13
+Random/Random
+0.1
+62.88
+86.73
+53.11
+55.41
+63.36
+42.00
+42.59
+58.01
+Low/Low
+0.2
+63.82
+86.58
+55.19
+55.32
+60.29
+42.33
+42.59
+58.02
+Random/Random
+0.2
+63.05
+86.35
+53.62
+55.06
+63.14
+42.02
+42.46
+57.96
+Low/Low
+0.3
+63.82
+87.26
+55.49
+55.47
+58.47
+42.35
+42.59
+57.92
+Random/Random
+0.3
+63.23
+86.50
+54.46
+55.51
+63.20
+42.04
+42.72
+58.24
+Low/Low
+0.4
+63.99
+88.02
+55.70
+55.43
+57.67
+42.32
+42.86
+58.00
+Random/Random
+0.4
+63.40
+86.88
+54.85
+55.64
+61.92
+42.10
+42.59
+58.20
+Low/Low
+0.5
+63.14
+87.19
+53.81
+55.63
+63.66
+42.25
+43.12
+58.40
+Random/Random
+0.5
+63.05
+86.50
+53.38
+55.63
+63.92
+42.22
+43.12
+58.26
+Low/Low
+0.6
+63.40
+87.26
+53.85
+55.60
+63.33
+42.22
+43.12
+58.40
+Random/Random
+0.6
+63.05
+86.81
+53.52
+55.71
+64.11
+42.20
+42.99
+58.34
+Low/Low
+0.7
+63.31
+87.26
+53.88
+55.53
+63.39
+42.25
+42.99
+58.37
+Random/Random
+0.7
+63.23
+86.81
+53.67
+55.77
+64.17
+42.20
+42.86
+58.39
+Low/Low
+0.8
+63.14
+87.34
+53.91
+55.60
+63.28
+42.27
+42.99
+58.36
+Random/Random
+0.8
+63.05
+87.49
+53.76
+55.78
+64.01
+42.24
+42.59
+58.42
+Low/Low
+0.9
+63.23
+87.26
+53.92
+55.57
+63.43
+42.30
+42.99
+57.55 ∗
+Random/Random
+0.9
+63.14
+87.11
+53.86
+55.61
+–
+42.26
+43.12
+57.52 ∗
+Qwen3-4B
+–
+62.80
+85.90
+52.27
+55.59
+62.80
+41.98
+43.39
+57.82
+Unmasked DPO
+–
+62.63
+87.57
+53.91
+55.61
+63.33
+42.30
+43.12
+58.35
+Table 11: HelpSteer3-Preference task scores (%). Low and Random are compared within a retention level. Retentions 0.1–0.4 and 0.5–0.9 use different training schedules. Mean accuracy is the seven-task mean. ∗ At 0.9 0.9 both means use six tasks, excluding MATH-Hard, which is missing for Random. The last two rows are baselines: the untrained Qwen3-4B starting checkpoint and unmasked DPO, which provides context but does not use a matched training schedule. A dash denotes a missing result.
+D.6 Detailed HelpSteer3 Tables
+The following tables retain the count-matched motivation results and the per-axis parameter settings summarized in the main text; the completed factorial is in Tab. 4 . All factorial and sweep configurations use seed 42.
+α \alpha
+Low/Low
+Random/Random
+Difference
+Batch 32
+0.1
+58.13
+58.01
++0.12
+0.2
+58.02
+57.96
++0.06
+0.3
+57.92
+58.24
+− 0.32 -0.32
+0.4
+58.00
+58.20
+− 0.20 -0.20
+Batch 64
+0.5
+58.40
+58.26
++0.14
+0.6
+58.40
+58.34
++0.06
+0.7
+58.37
+58.39
+− 0.02 -0.02
+0.8
+58.36
+58.42
+− 0.06 -0.06
+0.9
+57.55
+57.52
++0.03 ∗
+Table 12: Qwen3-4B on HelpSteer3-Preference: mean capability scores (%) for confidence-ranked (Low/Low) versus matched uniform (Random/Random) masks at retention α \alpha . Comparisons are within rows. ∗ At 0.9 0.9 both means use six tasks, excluding MATH-Hard, which is missing for Random. Differences use displayed means.
+D.7 Supplemental Attribution and Full–Branch Validation
+The attribution and Full–Branch validation add four complete trainings and two resource profiles on the same eight-accelerator hardware. Results are in Tabs. 1 , 5 and 6 ; this section gives reproduction and scoring details.
+Output implementation control.
+One Qwen profiler compares Full-concat, selected-head execution at retention 1.0 1.0 , and selected-head execution at 0.6 0.6 . The configurations share weights, inputs, reference computation, precision, and the 2 × 4 × 8 2\times 4\times 8 training geometry (per-device batch 2, gradient accumulation 4, eight workers). Four warm-up rounds precede 16 measured rounds. Configuration order rotates within rounds, memory counters reset before each measurement, and peak HBM is the maximum over ranks. Full-retention selected-head rewards match Full-concat exactly, as do dense-reduced and selected-head rewards under identical masks. Numerical checks also compare LoRA gradients with a row-order control. Mean step times and peak HBM are reported in Tab. 1 . Memory differences are computed within this profile: 8,905 8{,}905 MB for full-supervision selected-head execution and a further 642 642 MB for random deletion.
+Matched training pairs.
+Qwen Full and Branch at seed 43 use the same initialization, dataset version, data order, training budget, optimizer, schedule, precision, attention backend, checkpointing, and online reference. Mistral-7B-Instruct-v0.3 uses the same recipe and 566-step budget at seed 42. Both models fit the 2 × 4 × 8 2\times 4\times 8 geometry without a batch-size change. Branch pruning uses q w = q l = 0.5 q_{w}=q_{l}=0.5 , with position and sequence pruning disabled. The global chosen-branch fractions are 0.5088 0.5088 for Qwen seed 43 and 0.4956 0.4956 for Mistral, averaged over all optimizer steps.
+The Mistral setup is verified on chat template, prompt masking, EOS padding, the online reference, and the selected/no-gradient branches. The gradient checks in Sec. 4.5 disable LoRA dropout while retaining checkpointing; the trainings use dropout 0.05 0.05 .
+Per-task results.
+Tab. 13 retains every benchmark score for the repeated Qwen pair and the Mistral pair. Tab. 13 retains the native open-ended scores; Tab. 5 reports category means. The conventional Branch-minus-Full differences are − 0.25 -0.25 and − 0.45 -0.45 pp for the two Qwen seeds (a descriptive mean of − 0.35 -0.35 pp), and − 0.31 -0.31 pp for Mistral.
+Model / seed
+Config.
+ARC
+GSM8K
+TQA
+BBH
+MATH
+MMLU
+MuSR
+Mean
+accuracy
+(%)
+MT
+AH
+WB
+Mean
+generation
+score
+Qwen3-4B / 42
+Full
+62.54
+87.41
+53.88
+55.64
+63.59
+42.28
+42.99
+58.33
+6.649
+50.12
+3.139
+49.33
+Branch
+62.03
+86.66
+53.06
+55.73
+63.65
+42.16
+43.25
+58.08
+6.800
+50.11
+3.263
+50.25
+Qwen3-4B / 43
+Full
+62.54
+87.04
+53.88
+55.55
+63.45
+42.34
+42.99
+58.26
+6.623
+44.36
+3.233
+47.64
+Branch
+62.03
+86.20
+53.05
+55.55
+62.57
+42.14
+43.12
+57.81
+6.750
+45.03
+3.295
+48.49
+Mistral-7B / 42
+Full
+67.06
+52.46
+64.82
+46.37
+12.50
+30.47
+40.34
+44.86
+5.130
+24.60
+2.361
+33.17
+Branch
+65.27
+51.18
+62.87
+46.51
+12.96
+30.32
+42.72
+44.55
+5.373
+24.00
+2.405
+33.93
+Table 13: Complete Full–Branch scores in the units of Sec. 4.1 . Qwen seed-42 values repeat the factorial evaluations in Tab. 4 .
+Open-ended scoring.
+All supplemental generations are judged by MiniMax-M3. The evaluator reports valid-item means separately for each checkpoint. The supplemental WildBench suite has 260 prompts, four more than the main evaluation’s 256. The Qwen seed-43 Full Arena-Hard generation has 499 judged entries and 443 valid scores. Tab. 13 reports per-checkpoint scores. These summaries do not characterize training-seed variability.
+Appendix E Additional Token-Selection Analysis
+This section reports the matched token-selection comparisons referenced in the main text.
+E.1 Supervision Membership Is a Limited Lever
+We compare selecting positions with the lowest current-policy target-token probabilities (Low) against uniform random selection (Random). Low/Low and Random/Random use the same selection rule on both chosen and rejected responses. At equal retained ratios, Low/Low exceeds Random/Random by 0.37 0.37 , 0.51 0.51 , and 0.26 0.26 mean-accuracy points on UltraFeedback ( Cui et al., 2024 ) for Pythia-2.8B ( Biderman et al., 2023 ) , Qwen3-4B, and Qwen3-8B. On HelpSteer3-Preference, the difference changes sign across retention levels and stays within 0.32 0.32 points ( Tab. 12 ). Task differences are larger: at low retention, Low trails Random on MATH-Hard while leading TruthfulQA ( Tab. 11 ). These comparisons motivate uniform position pruning before vocabulary projection. We compare selection rules at a fixed number of scored positions. The factorial experiment separately assesses the model-quality cost of reduced supervision relative to the Full baseline.
+Appendix F LLM Usage Disclosure
+In answer to the submission questions on the use of large language models, a large language model was used to aid and polish the writing of this paper, for retrieval and discovery such as finding related work, and to draft and revise sections of the manuscript.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

@@ -1,0 +1,13 @@
+# EmbeddingGemma 2 — Source scope and exact PRE
+
+Launch Oct6 original: https://blog.google/innovation-and-ai/technology/developers-tools/embeddinggemma-2/ . Official card lastupdated Oct6: https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2 . Root independently read launch/card necessary domains, admission and Source passed, score2+2+2=6; numerical compatibility deep. Author personally read launch core/end, card overview+tables+bestpractices1–5+data/limits, edge blog deployment/core; latter need not expanded further. No execution, source implementation inspection, hardware testing or reproduction.
+
+Adopt: same backbone270M (130Mtransformer+140Membedder) with selectively loadable vision170M/audio300M, shared8192context, interleavedplaceholders, same768embedding; runtime libraries differ how omit encoder. MRL truncation re-normalized and query/corpusdimension aligned; table MMEB59.01→45.65 at128 vs768, MSEB69.54→56.71, not6x no-loss. BF16/FP32 prescribed; FP16NaN/silentdegradation statement creator constraint. Fullprecision quality tables ≠prequantRAM/pathquality. Launch191MB/567MB are activeweightRAMPixel11Pro only. Launch co-residentGemma4 tokenizer/audio share not zero cost or dynamichotswap guarantee. Edgeblog shows more runtime structure but 8xtrunc claim conflicts768→128 six; don't use8x. No claim privacy/security merelybylocal, no trained alignment/safety guarantee, no new inventionclaimforMRL/unifiedspace.
+
+Owner MULTIMODAL-REPRESENTATION, Ch23 exact §Training 与 Serving 的边界 read1460–1500; current modality-specificadmission covers token expansion/deadline/cache, followingedgesplit owns communicationlatent compression ratherthan independentlyloadableencoder+indexdimension+dtype separated. Ch22/24 handoffs personally read; sharedcache/lifecycle in Ch76 only reference ifneeded (no duplicatewriting). Insertion after existing Serving-sideadmission paragraph, before Edge split heading. No mutation yet.
+
+Exact body:
+
+端侧共享 embedding 还可以把模型常驻容量与索引容量分开选择：保持一个文本 backbone 和共同输出空间，只加载任务需要的视觉或音频 encoder；混合输入仍消费同一上下文预算，并由显式 media placeholders 保留输入顺序。与生成模型共享 tokenizer 或 audio encoder 是组件复用机会，不代表 encoder 已可无条件热换或整条 RAG 不再计费。一个公开的模块化接口把 text-only、text+vision、text+audio 与完整模型区分为四种装载配置；装载哪组 encoder 改变计算与常驻权重，截短输出向量则主要改变索引存储与检索质量，两者不能用同一个“更小模型”标签代替。<!-- source-family:SF-2026-GOOGLE-EMBEDDINGGEMMA2 -->
+
+[该表示接口的公开限制](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2)要求截短后重新 L2-normalize，query 与 corpus 采用相同维度；其 128 维多模态结果明显退于完整 768 维，不能把六倍向量压缩写成通用近乎无损。数值 dtype 又是独立正确性条件：作者明确排除因 activation 范围溢出而出现 NaN 或静默降质的 FP16 路径，规定 BF16/FP32；这不等于任意量化 bundle 已通过同一质量评价。应把模态集合、采样/token 预算、任务 prefix、维度/归一化与 dtype 同时绑定到 encoder/index 身份，分别回归检索质量和真实总费用；缺模态、索引或数值不相容时回完整维度、受支持精度与原专用 encoder，不能从 active-weight RAM 推出整 pipeline 内存、隐私或可靠性保证。

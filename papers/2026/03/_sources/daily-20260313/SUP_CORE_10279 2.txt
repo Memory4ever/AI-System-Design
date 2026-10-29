@@ -1,0 +1,5798 @@
+Robust Post-Training for Generative Recommenders: Why Exponential Reward-Weighted SFT Outperforms RLHF
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Literature
+3
+Background
+3.1
+Problem Setting
+3.2
+Exponential Reward-Weighted Policy Optimization
+4
+Theoretical Analysis
+5
+Extension to the MDP Setting
+6
+Experiments
+7
+Limitations
+References
+A
+Proofs
+A.1
+Proposition
+Proof
+A.2
+Theorem
+Proof
+A.3
+Theorem
+Proof
+B
+Experiments
+B.1
+Data Distribution
+License: CC BY-NC-ND 4.0
+arXiv:2603.10279v1 [cs.LG] 10 Mar 2026
+Robust Post-Training for Generative Recommenders: Why Exponential Reward-Weighted SFT Outperforms RLHF
+Keertana Chidambaram
+Affiliation:
+Department of Management Science & Engineering, Stanford University, CA, USA
+Correspondence to:
+vck@stanford.edu
+Sanath Kumar Krishnamurthy
+Affiliation:
+Meta, CA, USA
+Qiuling Xu
+Affiliation:
+Netflix Research, CA, USA
+Ko-Jen Hsiao
+Affiliation:
+Netflix Research, CA, USA
+Moumita Bhattacharya
+Affiliation:
+Netflix Research, CA, USA
+Abstract
+Aligning generative recommender systems to user preferences via post-training is critical for closing the gap between next-item prediction and actual recommendation quality. Existing post-training methods are ill-suited for production-scale systems: RLHF methods reward hack due to noisy user feedback and unreliable reward models, offline RL alternatives require propensity scores that are unavailable, and online interaction is infeasible. We identify exponential reward-weighted SFT with weights
+w
+=
+exp
+⁡
+(
+r
+/
+λ
+)
+w=\exp(r/\lambda)
+as uniquely suited to this setting, and provide the theoretical and empirical foundations that explain why. By optimizing directly on observed rewards without querying a learned reward model, the method is immune to reward hacking, requires no propensity scores, and is fully offline. We prove the first policy improvement guarantees for this setting under noisy rewards, showing that the gap scales only logarithmically with catalog size and remains informative even for large item catalogs. Crucially, we show that temperature
+λ
+\lambda
+explicitly and quantifiably controls the robustness-improvement tradeoff, providing practitioners with a single interpretable regularization hyperparameter with theoretical grounding. Experiments on three open-source and one proprietary dataset against four baselines confirm that exponential reward weighting is simple, scalable, and consistently outperforms RLHF-based alternatives.
+Keywords:
+Generative Recommenders, Post-training
+†
+†
+affiliationnotice:
+Equal contributionWork done while KC was an intern at Netflix Research.
+1
+Introduction
+The success of transformer architectures has led to the rise of generative recommenders. This paradigm treats recommendations as a sequential generation problem where recommendations are generated sequentially based on the user’s interaction history
+(
+Yang et al., 2025
+;
+Deldjoo et al., 2024
+;
+Wu et al., 2024
+)
+, analogous to how Large Language Models (LLMs) predict the next token given a sequence of text
+(
+Rajput et al., 2023
+;
+Zhai et al., 2024
+;
+Kang and McAuley, 2018
+;
+Deng et al., 2025
+)
+. Vanilla generative recommender architectures such as SASRec
+(
+Kang and McAuley, 2018
+)
+, HSTU
+(
+Zhai et al., 2024
+)
+, and OneRec
+(
+Deng et al., 2025
+)
+model user behavior through large-scale behavior cloning. However, purely imitating users through behavior cloning leads to indiscriminate mimicking, where the model learns high-value engagements (like items they enjoyed) and low-value engagements (like accidental clicks or click-bait interactions) with equal importance.
+Motivated by recent advances in Reinforcement Learning from Human Feedback (RLHF)
+(
+Ouyang et al., 2022
+;
+Stiennon et al., 2020
+)
+, this paper explores post-training alignment of generative recommenders with rich user feedback. The core insight from RLHF in language models is that post-training optimization with preference data can significantly improve model quality beyond what behavior cloning alone achieves. This paradigm is particularly promising for recommendation systems, where massive organic user feedback is naturally available at scale—including implicit signals such as watch time, completion rates, and re-engagement patterns, as well as explicit signals such as ratings and reviews. By leveraging this abundant feedback to move beyond pure behavior cloning, we can potentially train recommenders that distinguish high-value from low-value engagements and explore beyond the confines of observed user trajectories. However, adapting RLHF techniques from language models to generative recommenders introduces unique challenges due to the following factors.
+•
+Reward Model Unreliability.
+Item representations in generative recommenders are learned purely from behavioral data with no semantic grounding. Since users interact with only a small fraction of the catalog
+(
+Dulac-Arnold et al., 2015
+)
+, a reward model must extrapolate over the vast majority of items from sparse supervision, a generalization problem that grows severe at scale. During policy optimization, the policy exploits these extrapolation errors, systematically selecting items for which the reward model is overoptimistic rather than those that truly maximize user satisfaction.
+•
+Offline Learning Constraints.
+In industrial settings the learning dataset is pre-collected and static, making interactive feedback loops infeasible. RLHF
+(
+Ouyang et al., 2022
+;
+Stiennon et al., 2020
+)
+requires a reward model as a simulator. DPO
+(
+Rafailov et al., 2023
+)
+avoids this but requires binary preference pairs, whereas recommendation feedback is scalar. In practice, overlapping interactions covering the full catalog are too sparse to construct such pairs without again relying on a learned reward model.
+•
+Lack of Logging Policy.
+The offline dataset exhibits selection bias, as rewards are only observed for actions taken by the logging policy. While Inverse Propensity Scoring (IPS) could theoretically correct this, the logging policy is often too complex
+(
+Covington et al., 2016
+)
+and inaccessible to estimate
+(
+Liang and Vlassis, 2022
+)
+, and IPS weights suffer from extreme variance
+(
+Swaminathan and Joachims, 2015
+;
+Dudík et al., 2011
+)
+, particularly when the logging policy is nearly deterministic.
+To overcome these challenges, we propose Exponential Reward-Weighted SFT (Exp-RSFT), which weights training examples by
+exp
+⁡
+(
+r
+/
+λ
+)
+\exp(r/\lambda)
+using only observed rewards. By never querying a learned reward model, the method sidesteps reward model unreliability at its root. It cannot reward hack, requires no propensity scores, and is fully offline. While exponential reward weighting has appeared in prior work
+(
+Peters and Schaal, 2007
+;
+Wang et al., 2018
+;
+Liang and Vlassis, 2022
+)
+, its suitability for large-scale generative recommenders has not been theoretically justified nor empirically validated at production scale. We make the following contributions:
+•
+Reward models fail catastrophically in the generative recommender setting.
+Reward models must extrapolate over a vast item catalog from sparse observations, making them unreliable surrogates for true user preferences. We show empirically that the learned reward model fails to outperform naive item-mean prediction, yet PPO and DPO over-optimize for it, collapsing catastrophically on true recommendation metrics.
+•
+Temperature
+λ
+\lambda
+provably controls the robustness-improvement tradeoff under noisy rewards.
+Observed rewards are inherently noisy even without a learned reward model. We prove policy improvement guarantees under noisy rewards with only logarithmic dependence on catalog size, and a closed-form characterization of the robustness-improvement tradeoff controlled by
+λ
+\lambda
+. The
+λ
+\lambda
+sweep produces a consistent inverted-U performance curve across all datasets, empirically validating the theory.
+•
+Exp-RSFT consistently outperforms all baselines across four datasets.
+Exp-RSFT consistently outperforms all baselines across three public benchmarks and a large-scale proprietary dataset. Gains over PPO and DPO stem from avoiding the reward model entirely; gains over behavior cloning and linear reward-weighted SFT isolate
+λ
+\lambda
+as the key ingredient, which provides explicit control over re-ranking aggressiveness and robustness to noise in a single interpretable parameter.
+2
+Related Literature
+Figure 1
+:
+Comparison of policy learning methods along two axes: best achievable policy performance and dependency on a good reward model.
+Reinforcement Learning (RL) based post-training methods for generative models span a spectrum of reward model dependency and achievable performance (
+Figure
+1
+) that typically includes Online RL, Offline RL and Behavior Cloning. Our method sits the space between Offline RL and Behavior Cloning, where it leverages user preferences but in a limited manner. We review the related approaches and position our method within this landscape.
+Standard post-training methods for generative models include RLHF
+(
+Ouyang et al., 2022
+;
+Stiennon et al., 2020
+)
+, DPO
+(
+Rafailov et al., 2023
+)
+, and GRPO
+(
+Shao et al., 2024
+)
+. RLHF optimizes a policy via PPO against a learned reward model. GRPO follows the same paradigm but replaces the learned value function baseline with a group average reward. Both could in principle be applied to generative recommender post-training, but the learned reward model is the central bottleneck: in recommendation settings, reward models generalize poorly across the full item catalog. Any method that queries a learned reward model at training time inherits this generalization failure, regardless of the policy optimization strategy used on top. DPO sidesteps reward model optimization but requires binary preference pairs. Recommendation feedback such as ratings, watch time, and reviews are scalar in nature, and obtaining pairwise comparisons for unobserved items still requires a learned reward model, reintroducing the generalization problem. Offline RL methods like CQL
+(
+Kumar et al., 2020
+)
+offer principled alternatives by learning conservative Q-functions, but these must also generalize across the massive item space and face the same challenges. Doubly robust methods
+(
+Dudík et al., 2011
+)
+and counterfactual risk minimization
+(
+Swaminathan and Joachims, 2015
+)
+require inverse propensity scores, which are intractable to compute for complex production pipelines.
+Our method is closely related to weighted behavior cloning algorithms that use monotonic functions of rewards as weights
+(
+Peters and Schaal, 2007
+;
+Wang et al., 2018
+;
+Liang and Vlassis, 2022
+;
+Mukherjee et al.,
+;
+Kostrikov et al., 2021
+;
+Wang et al., 2020
+)
+. Like our approach, these methods operate on offline data and do not require propensity scores. Most notably,
+(
+Peters and Schaal, 2007
+)
+introduces the same softmax reward weighting scheme, though their analysis focuses on training stability. We focus on a different perspective: statistical guarantees under noisy rewards and the algorithm’s suitability for post-training generative recommenders. MARWIL
+(
+Wang et al., 2018
+)
+, IQL
+(
+Kostrikov et al., 2021
+)
+, CRR
+(
+Wang et al., 2020
+)
+, and LPI
+(
+Liang and Vlassis, 2022
+)
+weight log probabilities by
+exp
+⁡
+(
+A
+/
+λ
+)
+\exp(\text{A}/\lambda)
+where
+A
+A
+is the advantage function. In the bandit setting, weighting by
+exp
+⁡
+(
+r
+/
+λ
+)
+\exp(r/\lambda)
+optimizes the same objective, as the state-dependent value function in the advantage cancels within the softmax
+(
+Liang and Vlassis, 2022
+)
+. This equivalence makes explicit advantage estimation unnecessary in our case, a significant departure from methods like IQL that require learning separate
+Q
+Q
+and
+V
+V
+functions via expectile regression.
+Mukherjee et al. ()
+considers a simpler variant that weights linearly by rewards. This similarly avoids reward model dependence, but the resulting policy is proportional to the product of reward and logging frequency, conflating item quality with popularity. Additionally, linear reward weighting is not robust to noisy observed rewards. In contrast, weighting by
+exp
+⁡
+(
+r
+/
+λ
+)
+\exp(r/\lambda)
+introduces
+λ
+\lambda
+as an intrinsic regularizer that both controls sensitivity to reward noise and decouples item quality from logging frequency: as
+λ
+\lambda
+decreases, the policy concentrates on high-reward items regardless of their original popularity.
+Mukherjee et al. ()
+also relies on standardization to control variance; in our method, standardization is unnecessary as additive shifts cancel in the softmax and tuning
+λ
+\lambda
+achieves the same effect as scaling. Methods that weight linearly with rewards or advantages face an additional challenge: negative weights lead to negative log likelihoods. In recommendation settings this is particularly harmful, as decreasing probability on observed items reallocates mass to unobserved items, which typically have lower true preference due to selection bias
+(
+Steck, 2010
+;
+Schnabel et al., 2016
+)
+, thereby leading to worse performance.
+Reward-weighted methods have also gained traction for LLM post-training, notably RLOO
+(
+Ahmadian et al., 2024
+)
+and ALoL
+(
+Baheti et al., 2023
+)
+. However, ALoL requires propensity scores and a learned value function for computing advantages. RLOO generates multiple outputs and scores each with a reward model, weighting by the reward relative to the average across generations. Since we cannot generate new recommendations and observe their rewards, RLOO requires reward model predictions, reintroducing generalization issues. It also inherits the negative log-likelihood problem since rewards relative to the average can be negative.
+3
+Background
+3.1
+Problem Setting
+We model recommendation as a contextual bandit with environment
+ℳ
+=
+(
+𝒮
+,
+𝒜
+,
+r
+,
+d
+0
+)
+,
+\mathcal{M}=(\mathcal{S},\mathcal{A},r,d_{0}),
+where
+𝒮
+\mathcal{S}
+is the context space,
+𝒜
+\mathcal{A}
+the action space,
+r
+:
+𝒮
+×
+𝒜
+→
+ℝ
+r:\mathcal{S}\times\mathcal{A}\rightarrow\mathbb{R}
+the reward function, and
+d
+0
+d_{0}
+the context distribution. In the generative recommender setting,
+s
+∈
+𝒮
+s\in\mathcal{S}
+represents a user’s interaction history and
+a
+∈
+𝒜
+a\in\mathcal{A}
+the next item to recommend. We assume access to an offline dataset
+𝒟
+=
+{
+(
+s
+i
+,
+a
+i
+,
+r
+i
+)
+}
+i
+=
+1
+N
+\mathcal{D}=\{(s_{i},a_{i},r_{i})\}_{i=1}^{N}
+collected under an unknown logging policy or mixture of policies. Since our objective is to maximize immediate reward, we model each recommendation independently as a contextual bandit. For a stochastic policy
+π
+⁡
+(
+a
+∣
+s
+)
+\pi(a\mid s)
+, the value and advantage functions are
+V
+π
+(
+s
+)
+=
+𝔼
+a
+∼
+π
+(
+⋅
+∣
+s
+)
+[
+r
+(
+s
+,
+a
+)
+]
+V^{\pi}(s)=\mathbb{E}_{a\sim\pi(\cdot\mid s)}[r(s,a)]
+and
+A
+π
+​
+(
+s
+,
+a
+)
+=
+r
+⁡
+(
+s
+,
+a
+)
+−
+V
+π
+​
+(
+s
+)
+A^{\pi}(s,a)=r(s,a)-V^{\pi}(s)
+.
+3.2
+Exponential Reward-Weighted Policy Optimization
+Our policy optimization objective is the same as in
+Nair et al. (2020)
+. The original arguments in
+Nair et al. (2020)
+can be extended to obtain our algorithm, we re-state it here for completeness.
+At each iteration
+k
+k
+, we seek a new policy
+π
+k
++
+1
+\pi_{k+1}
+that maximizes expected advantage under the behavior policy’s state visitation distribution, while remaining close to the data-generating distribution
+π
+β
+\pi_{\beta}
+:
+π
+k
++
+1
+=
+arg
+max
+π
+𝔼
+s
+∼
+d
+π
+β
+,
+a
+∼
+π
+(
+⋅
+|
+s
+)
+[
+A
+π
+k
+(
+s
+,
+a
+)
+]
+\displaystyle\pi_{k+1}=\arg\max_{\pi}\mathbb{E}_{s\sim d^{\pi_{\beta}},a\sim\pi(\cdot|s)}\left[A^{\pi_{k}}(s,a)\right]\quad
+(1)
+s.t.
+𝔼
+s
+∼
+d
+π
+β
+[
+D
+KL
+(
+π
+(
+⋅
+|
+s
+)
+∥
+π
+β
+(
+⋅
+|
+s
+)
+)
+]
+≤
+ϵ
+,
+\displaystyle\text{s.t.}\quad\mathbb{E}_{s\sim d^{\pi_{\beta}}}\left[D_{\mathrm{KL}}\left(\pi(\cdot|s)\|\pi_{\beta}(\cdot|s)\right)\right]\leq\epsilon,
+(2)
+where
+π
+\pi
+must be a valid policy satisfying
+∑
+a
+π
+⁡
+(
+a
+|
+s
+)
+=
+1
+\sum_{a}\pi(a|s)=1
+and
+π
+⁡
+(
+a
+|
+s
+)
+≥
+0
+\pi(a|s)\geq 0
+for all
+s
+,
+a
+s,a
+.
+The Lagrangian of this constrained optimization problem is:
+ℒ
+⁡
+(
+π
+,
+λ
+)
+\displaystyle\mathcal{L}(\pi,\lambda)
+=
+𝔼
+s
+∼
+d
+π
+β
+[
+𝔼
+a
+∼
+π
+(
+⋅
+|
+s
+)
+[
+A
+π
+k
+(
+s
+,
+a
+)
+]
+\displaystyle=\mathbb{E}_{s\sim d^{\pi_{\beta}}}\left[\mathbb{E}_{a\sim\pi(\cdot|s)}\left[A^{\pi_{k}}(s,a)\right]\right.
+−
+λ
+D
+KL
+(
+π
+(
+⋅
+|
+s
+)
+∥
+π
+β
+(
+⋅
+|
+s
+)
+)
+]
++
+λ
+ϵ
+.
+\displaystyle\quad\left.-\lambda D_{\mathrm{KL}}\left(\pi(\cdot|s)\|\pi_{\beta}(\cdot|s)\right)\right]+\lambda\epsilon.
+(3)
+Taking the functional derivative with respect to
+π
+\pi
+and setting it to zero yields the closed-form solution:
+π
+∗
+​
+(
+a
+|
+s
+)
+=
+1
+Z
+⁡
+(
+s
+)
+​
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+1
+λ
+​
+A
+π
+k
+​
+(
+s
+,
+a
+)
+)
+,
+\pi^{*}(a|s)=\frac{1}{Z(s)}\pi_{\beta}(a|s)\exp\left(\frac{1}{\lambda}A^{\pi_{k}}(s,a)\right),
+(4)
+where
+Z
+⁡
+(
+s
+)
+=
+∑
+a
+′
+π
+β
+​
+(
+a
+′
+|
+s
+)
+​
+exp
+⁡
+(
+1
+λ
+​
+A
+π
+k
+​
+(
+s
+,
+a
+′
+)
+)
+Z(s)=\sum_{a^{\prime}}\pi_{\beta}(a^{\prime}|s)\exp\left(\frac{1}{\lambda}A^{\pi_{k}}(s,a^{\prime})\right)
+is the state-dependent partition function. This is the algoritm presented in the paper
+Nair et al. (2020)
+. But we can simplify this further for our setting.
+In a contextual bandit formulation, the advantage decomposes as
+A
+π
+​
+(
+s
+,
+a
+)
+=
+r
+⁡
+(
+s
+,
+a
+)
+−
+V
+π
+​
+(
+s
+)
+A^{\pi}(s,a)=r(s,a)-V^{\pi}(s)
+, where the baseline
+V
+π
+​
+(
+s
+)
+V^{\pi}(s)
+depends only on the state. Substituting into Equation (
+4
+):
+π
+∗
+​
+(
+a
+|
+s
+)
+\displaystyle\pi^{*}(a|s)
+=
+1
+Z
+⁡
+(
+s
+)
+​
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+​
+(
+s
+,
+a
+)
+−
+V
+π
+k
+​
+(
+s
+)
+λ
+)
+\displaystyle=\frac{1}{Z(s)}\pi_{\beta}(a|s)\exp\left(\frac{r(s,a)-V^{\pi_{k}}(s)}{\lambda}\right)
+(5)
+=
+1
+Z
+⁡
+(
+s
+)
+​
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+⁡
+(
+s
+,
+a
+)
+λ
+)
+​
+exp
+⁡
+(
+−
+V
+π
+k
+​
+(
+s
+)
+λ
+)
+.
+\displaystyle=\frac{1}{Z(s)}\pi_{\beta}(a|s)\exp\left(\frac{r(s,a)}{\lambda}\right)\exp\left(\frac{-V^{\pi_{k}}(s)}{\lambda}\right).
+(6)
+Since
+exp
+⁡
+(
+−
+V
+π
+k
+​
+(
+s
+)
+λ
+)
+\exp\left(\frac{-V^{\pi_{k}}(s)}{\lambda}\right)
+is constant with respect to actions, it cancels out along with the partition function
+Z
+⁡
+(
+s
+)
+Z(s)
+:
+π
+∗
+​
+(
+a
+|
+s
+)
+=
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+⁡
+(
+s
+,
+a
+)
+λ
+)
+∑
+a
+′
+π
+β
+​
+(
+a
+′
+|
+s
+)
+​
+exp
+⁡
+(
+r
+⁡
+(
+s
+,
+a
+′
+)
+λ
+)
+.
+\pi^{*}(a|s)=\frac{\pi_{\beta}(a|s)\exp\left(\frac{r(s,a)}{\lambda}\right)}{\sum_{a^{\prime}}\pi_{\beta}(a^{\prime}|s)\exp\left(\frac{r(s,a^{\prime})}{\lambda}\right)}.
+(7)
+Observation 3.1
+(Baseline and Scale Invariance)
+.
+In the contextual bandit setting, the optimal policy in Equation (
+7
+) exhibits two invariances:
+1.
+Baseline invariance:
+For any state-dependent function
+b
+⁡
+(
+s
+)
+b(s)
+, adding it to the rewards leaves the optimal policy unchanged:
+π
+∗
+​
+(
+a
+|
+s
+)
+\displaystyle\pi^{*}(a|s)
+∝
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+⁡
+(
+s
+,
+a
+)
++
+b
+⁡
+(
+s
+)
+λ
+)
+\displaystyle\propto\pi_{\beta}(a|s)\exp\left(\frac{r(s,a)+b(s)}{\lambda}\right)
+∝
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+⁡
+(
+s
+,
+a
+)
+λ
+)
+.
+\displaystyle\propto\pi_{\beta}(a|s)\exp\left(\frac{r(s,a)}{\lambda}\right).
+Since
+exp
+⁡
+(
+b
+⁡
+(
+s
+)
+/
+λ
+)
+\exp(b(s)/\lambda)
+is constant with respect to
+a
+a
+, it cancels in the normalization. Consequently, the policy depends only on rewards
+r
+⁡
+(
+s
+,
+a
+)
+r(s,a)
+, not advantages
+A
+π
+​
+(
+s
+,
+a
+)
+=
+r
+⁡
+(
+s
+,
+a
+)
+−
+V
+π
+​
+(
+s
+)
+A^{\pi}(s,a)=r(s,a)-V^{\pi}(s)
+. This eliminates the need to estimate a value function, removing a source of approximation error.
+2.
+Scale invariance:
+For any constant
+c
+>
+0
+c>0
+, scaling rewards by
+c
+c
+is equivalent to rescaling temperature:
+exp
+⁡
+(
+c
+⋅
+r
+/
+λ
+)
+=
+exp
+⁡
+(
+r
+/
+(
+λ
+/
+c
+)
+)
+\exp(c\cdot r/\lambda)=\exp(r/(\lambda/c))
+. Thus,
+λ
+\lambda
+subsumes reward scaling, and we may use unnormalized rewards without loss of generality.
+Together, these properties yield a simple algorithm with a single interpretable hyperparameter
+λ
+\lambda
+that controls regularization strength. As in
+Nair et al. (2020)
+, in order to obtain a parametric policy
+π
+θ
+\pi_{\theta}
+(where
+θ
+\theta
+denotes the policy parameters), we project the non-parametric solution onto the policy class by minimizing the KL divergence:
+θ
+k
++
+1
+=
+arg
+min
+θ
+𝔼
+s
+∼
+d
+π
+β
+[
+D
+KL
+(
+π
+∗
+(
+⋅
+|
+s
+)
+∥
+π
+θ
+(
+⋅
+|
+s
+)
+)
+]
+.
+\theta_{k+1}=\arg\min_{\theta}\mathbb{E}_{s\sim d^{\pi_{\beta}}}\left[D_{\mathrm{KL}}\left(\pi^{*}(\cdot|s)\|\pi_{\theta}(\cdot|s)\right)\right].
+(8)
+Expanding the KL divergence and dropping terms independent of
+θ
+\theta
+:
+θ
+k
++
+1
+\displaystyle\theta_{k+1}
+=
+arg
+max
+θ
+𝔼
+s
+∼
+d
+π
+β
+[
+𝔼
+a
+∼
+π
+∗
+(
+⋅
+|
+s
+)
+[
+log
+π
+θ
+(
+a
+|
+s
+)
+]
+]
+\displaystyle=\arg\max_{\theta}\mathbb{E}_{s\sim d^{\pi_{\beta}}}\left[\mathbb{E}_{a\sim\pi^{*}(\cdot|s)}\left[\log\pi_{\theta}(a|s)\right]\right]
+(9)
+=
+arg
+max
+θ
+𝔼
+s
+∼
+d
+π
+β
+,
+a
+∼
+π
+β
+(
+⋅
+|
+s
+)
+[
+π
+∗
+​
+(
+a
+|
+s
+)
+π
+β
+​
+(
+a
+|
+s
+)
+log
+π
+θ
+(
+a
+|
+s
+)
+]
+\displaystyle=\arg\max_{\theta}\mathbb{E}_{s\sim d^{\pi_{\beta}},a\sim\pi_{\beta}(\cdot|s)}\left[\frac{\pi^{*}(a|s)}{\pi_{\beta}(a|s)}\log\pi_{\theta}(a|s)\right]
+(10)
+=
+arg
+⁡
+max
+θ
+​
+𝔼
+(
+s
+,
+a
+)
+∼
+𝒟
+​
+[
+exp
+⁡
+(
+r
+⁡
+(
+s
+,
+a
+)
+λ
+)
+​
+log
+​
+π
+θ
+​
+(
+a
+|
+s
+)
+]
+,
+\displaystyle=\arg\max_{\theta}\mathbb{E}_{(s,a)\sim\mathcal{D}}\left[\exp\left(\frac{r(s,a)}{\lambda}\right)\log\pi_{\theta}(a|s)\right],
+(11)
+where we used importance sampling to convert the expectation over
+π
+∗
+\pi^{*}
+to an expectation over
+π
+β
+\pi_{\beta}
+, and dropped the partition function
+Z
+⁡
+(
+s
+)
+Z(s)
+.
+Equation (
+11
+) corresponds to a weighted maximum likelihood objective where actions from the offline dataset are weighted by exponentiated scaled rewards, yielding Algorithm
+1
+. The algorithm is simple to implement via standard SFT APIs and requires neither a reward model, importance sampling, nor knowledge of the logging policy
+π
+β
+\pi_{\beta}
+. The only hyperparameter is
+λ
+\lambda
+, which also implicitly controls regularization strength. In the next section, we analyze the robustness of this method to noise in
+r
+r
+, providing both a high-probability policy improvement guarantee and an instance-dependent top-
+k
+k
+recoverability guarantee under noisy rewards.
+Algorithm 1
+Exponential Reward Weighted SFT
+Input:
+Offline dataset
+𝒟
+=
+{
+(
+s
+i
+,
+a
+i
+,
+r
+i
+)
+}
+i
+=
+1
+N
+\mathcal{D}=\{(s_{i},a_{i},r_{i})\}_{i=1}^{N}
+, initial policy
+π
+θ
+\pi_{\theta}
+, temperature
+λ
+>
+0
+\lambda>0
+, number of epochs
+T
+T
+for
+t
+=
+1
+,
+…
+,
+T
+t=1,\ldots,T
+do
+for
+each mini-batch
+B
+⊂
+𝒟
+B\subset\mathcal{D}
+do
+Compute loss:
+ℒ
+(
+θ
+)
+←
+−
+1
+|
+B
+|
+∑
+(
+s
+,
+a
+,
+r
+)
+∈
+B
+exp
+(
+r
+λ
+)
+⋅
+log
+π
+θ
+(
+a
+∣
+s
+)
+\mathcal{L}(\theta)\leftarrow-\frac{1}{|B|}\displaystyle\sum_{(s,a,r)\in B}\exp\left(\frac{r}{\lambda}\right)\cdot\log\pi_{\theta}(a\mid s)
+Update:
+θ
+←
+θ
+−
+η
+​
+∇
+θ
+ℒ
+​
+(
+θ
+)
+\theta\leftarrow\theta-\eta\nabla_{\theta}\mathcal{L}(\theta)
+end
+for
+end
+for
+Output:
+Fine-tuned policy
+π
+θ
+\pi_{\theta}
+4
+Theoretical Analysis
+We begin our analysis of Algorithm
+1
+with a warm-up exercise that assumes that the offline dataset contains the true ground truth rewards
+r
+∗
+r^{*}
+. The monotonic policy improvement proof from
+(
+Wang et al., 2018
+)
+can be extended for this case to give the following policy improvement result (full proof in Appendix
+A.1
+):
+Proposition 4.1
+(Monotonic Policy Improvement)
+.
+Let
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+∝
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+∗
+​
+(
+s
+,
+a
+)
+λ
+)
+\pi^{*}_{\lambda}(a|s)\propto\pi_{\beta}(a|s)\exp\left(\frac{r^{*}(s,a)}{\lambda}\right)
+. Then in the contextual bandit setting:
+V
+π
+λ
+∗
+​
+(
+s
+)
+≥
+V
+π
+β
+​
+(
+s
+)
+for all
+​
+s
+∈
+𝒮
+.
+\displaystyle V^{\pi^{*}_{\lambda}}(s)\geq V^{\pi_{\beta}}(s)\quad\text{for all }s\in\mathcal{S}.
+This simple proof shows that by performing SFT with exponentially-weighted rewards scaled by a temperature, we obtain a policy that is monotonically better than the logging policy. However, in practice, user feedback signals are inherently stochastic: a user’s rating for the same item may vary across sessions due to mood, context, or attention; click behavior is noisy and influenced by position bias; and implicit signals like dwell time fluctuate based on external factors unrelated to true preference. Next, we aim to understand policy improvement from this noisy reward perspective. We being by making the following simplifying assumptions on the noise:
+Assumption 4.2
+(Sub-Gaussian Reward Noise)
+.
+Observed rewards satisfy
+r
+^
+​
+(
+s
+,
+a
+)
+=
+r
+∗
+​
+(
+s
+,
+a
+)
++
+ξ
+⁡
+(
+s
+,
+a
+)
+\hat{r}(s,a)=r^{*}(s,a)+\xi(s,a)
+, where
+r
+∗
+r^{*}
+denotes the true expected reward for state-action pair
+(
+s
+,
+a
+)
+(s,a)
+and
+{
+ξ
+⁡
+(
+s
+,
+a
+)
+}
+a
+∈
+𝒜
+\{\xi(s,a)\}_{a\in\mathcal{A}}
+are independent, zero-mean,
+σ
+\sigma
+-sub-Gaussian random variables.
+The sub-gaussian condition is standard and encompasses most reward distributions in recommender systems: bounded signals such as discrete ratings or binary clicks are sub-Gaussian by Hoeffding’s lemma, as are continuous rewards with Gaussian noise. The zero-mean and independence conditions are standard in stochastic bandit analysis
+(
+Auer et al., 2002
+)
+. Given this noise structure, we derive the following guarantee (see Appendix
+A.2
+for the full proof):
+Theorem 4.3
+(Policy Improvement Under Noisy Rewards)
+.
+Let
+π
+β
+\pi_{\beta}
+be the behavior policy and
+π
+λ
+\pi_{\lambda}
+be the policy obtained by exponential reward-weighted SFT with temperature
+λ
+>
+0
+\lambda>0
+using noisy rewards
+r
+^
+=
+r
+∗
++
+ξ
+\hat{r}=r^{*}+\xi
+, where
+ξ
+\xi
+is
+σ
+\sigma
+-sub-Gaussian (Assumption
+4.2
+). With probability at least
+1
+−
+δ
+1-\delta
+:
+V
+π
+λ
+​
+(
+s
+)
+≥
+V
+π
+β
+​
+(
+s
+)
+−
+2
+​
+σ
+​
+2
+​
+log
+⁡
+(
+2
+​
+|
+𝒜
+|
+/
+δ
+)
+,
+V^{\pi_{\lambda}}(s)\geq V^{\pi_{\beta}}(s)-2\sigma\sqrt{2\log(2|\mathcal{A}|/\delta)},
+(12)
+where
+|
+𝒜
+|
+|\mathcal{A}|
+is the number of actions.
+The gap scales as
+O
+⁡
+(
+σ
+​
+log
+⁡
+|
+𝒜
+|
+)
+O(\sigma\sqrt{\log|\mathcal{A}|})
+, so the logarithmic dependence on catalog size means the bound remains informative even for large item catalogs. In the noiseless limit (
+σ
+→
+0
+\sigma\to 0
+), the bound recovers the exact monotonic improvement guarantee of Proposition
+4.1
+. Note that the bound holds pointwise for each state
+s
+s
+; a uniform guarantee over all states would require an additional union bound over
+|
+𝒮
+|
+|\mathcal{S}|
+, yielding an
+O
+⁡
+(
+σ
+​
+log
+⁡
+(
+|
+𝒮
+|
+​
+|
+𝒜
+|
+)
+)
+O(\sigma\sqrt{\log(|\mathcal{S}||\mathcal{A}|)})
+dependence. Note that this bound is independent of the regularizer/temperature
+λ
+\lambda
+, if the observed rewards are bounded, we are able to work out a temperature-dependent bound as follows (full proof in
+A.3
+):
+Theorem 4.4
+(Temperature-Dependent Bound)
+.
+Under the conditions of Theorem
+4.3
+, if rewards are bounded
+r
+∗
+​
+(
+s
+,
+a
+)
+∈
+[
+0
+,
+R
+max
+]
+r^{*}(s,a)\in[0,R_{\max}]
+, then with probability at least
+1
+−
+δ
+1-\delta
+:
+V
+π
+λ
+​
+(
+s
+)
+≥
+V
+π
+β
+​
+(
+s
+)
+−
+R
+max
+​
+(
+e
+2
+​
+ϵ
+/
+λ
+−
+1
+)
+,
+V^{\pi_{\lambda}}(s)\geq V^{\pi_{\beta}}(s)-R_{\max}\left(e^{2\epsilon/\lambda}-1\right),
+(13)
+where
+ϵ
+=
+σ
+​
+2
+​
+log
+⁡
+(
+2
+​
+|
+𝒜
+|
+/
+δ
+)
+\epsilon=\sigma\sqrt{2\log(2|\mathcal{A}|/\delta)}
+. When
+λ
+≥
+2
+​
+ϵ
+\lambda\geq 2\epsilon
+, this simplifies to:
+V
+π
+λ
+​
+(
+s
+)
+≥
+V
+π
+β
+​
+(
+s
+)
+−
+4
+​
+R
+max
+​
+ϵ
+λ
+.
+V^{\pi_{\lambda}}(s)\geq V^{\pi_{\beta}}(s)-\frac{4R_{\max}\epsilon}{\lambda}.
+(14)
+Theorem
+4.4
+reveals an explicit robustness-improvement tradeoff controlled by
+λ
+\lambda
+. Large
+λ
+\lambda
+suppresses the noise cost (
+e
+2
+​
+ϵ
+/
+λ
+−
+1
+→
+0
+e^{2\epsilon/\lambda}-1\to 0
+) but drives
+π
+λ
+→
+π
+β
+\pi_{\lambda}\to\pi_{\beta}
+, yielding no improvement. Small
+λ
+\lambda
+enables aggressive re-ranking but amplifies sensitivity to reward noise. In the regime
+λ
+≥
+2
+​
+ϵ
+\lambda\geq 2\epsilon
+, the linearized bound
+4
+​
+R
+max
+​
+ϵ
+/
+λ
+4R_{\max}\epsilon/\lambda
+shows that the noise cost decays as
+O
+⁡
+(
+1
+/
+λ
+)
+O(1/\lambda)
+. Given noise level
+σ
+\sigma
+and desired degradation tolerance
+τ
+>
+0
+\tau>0
+, a sufficient condition for the value degradation to remain within
+τ
+\tau
+is:
+λ
+≥
+2
+​
+ϵ
+log
+⁡
+(
+1
++
+τ
+/
+R
+max
+)
+,
+\lambda\geq\frac{2\epsilon}{\log(1+\tau/R_{\max})},
+(15)
+which follows from requiring
+R
+max
+​
+(
+e
+2
+​
+ϵ
+/
+λ
+−
+1
+)
+≤
+τ
+R_{\max}(e^{2\epsilon/\lambda}-1)\leq\tau
+. While this lower bound is conservative due to worst-case analysis over the full action space, it reveals the qualitative structure of the tradeoff: the minimum safe temperature scales linearly with the noise level
+σ
+\sigma
+and inversely with the log-tolerance
+log
+⁡
+(
+1
++
+τ
+/
+R
+max
+)
+\log(1+\tau/R_{\max})
+. In practice, we recommend tuning
+λ
+\lambda
+via validation, as the theoretical lower bound can be significantly loose.
+5
+Extension to the MDP Setting
+The objective in Equation (
+1
+) extends directly to the MDP setting:
+𝔼
+s
+∼
+d
+π
+β
+,
+a
+∼
+π
+​
+[
+A
+π
+k
+​
+(
+s
+,
+a
+)
+]
+−
+λ
+​
+D
+KL
+\displaystyle\mathbb{E}_{s\sim d^{\pi_{\beta}},a\sim\pi}\!\left[A^{\pi_{k}}(s,a)\right]-\lambda D_{\mathrm{KL}}
+=
+𝔼
+s
+∼
+d
+π
+β
+,
+a
+∼
+π
+​
+[
+r
+⁡
+(
+s
+,
+a
+)
+]
+−
+𝔼
+s
+∼
+d
+π
+β
+​
+[
+V
+π
+k
+​
+(
+s
+)
+]
+⏟
+constant w.r.t.
+​
+π
+−
+λ
+​
+D
+KL
+.
+\displaystyle=\mathbb{E}_{s\sim d^{\pi_{\beta}},a\sim\pi}\!\left[r(s,a)\right]-\underbrace{\mathbb{E}_{s\sim d^{\pi_{\beta}}}\!\left[V^{\pi_{k}}(s)\right]}_{\text{constant w.r.t.}\ \pi}-\lambda D_{\mathrm{KL}}.
+(16)
+Since
+d
+π
+β
+d^{\pi_{\beta}}
+is fixed and
+V
+π
+k
+​
+(
+s
+)
+V^{\pi_{k}}(s)
+does not depend on
+a
+a
+, the value term is constant with respect to
+π
+\pi
+and drops out. Since
+d
+π
+β
+​
+(
+s
+)
+=
+1
+T
+​
+∑
+t
+=
+1
+T
+P
+⁡
+(
+s
+t
+=
+s
+∣
+π
+β
+)
+d^{\pi_{\beta}}(s)=\frac{1}{T}\sum_{t=1}^{T}P(s_{t}=s\mid\pi_{\beta})
+marginalizes over timesteps, the remaining objective satisfies:
+𝔼
+s
+∼
+d
+π
+β
+,
+a
+∼
+π
+​
+[
+r
+⁡
+(
+s
+,
+a
+)
+]
+=
+1
+T
+​
+𝔼
+τ
+​
+[
+R
+⁡
+(
+τ
+)
+]
+,
+\mathbb{E}_{s\sim d^{\pi_{\beta}},a\sim\pi}\!\left[r(s,a)\right]=\frac{1}{T}\mathbb{E}_{\tau}\!\left[R(\tau)\right],
+(17)
+where
+R
+⁡
+(
+τ
+)
+=
+∑
+t
+=
+1
+T
+r
+⁡
+(
+s
+t
+,
+a
+t
+)
+R(\tau)=\sum_{t=1}^{T}r(s_{t},a_{t})
+is the trajectory-level rewards. Since
+1
+T
+\frac{1}{T}
+is constant with respect to
+π
+\pi
+, the objective is equivalent to:
+max
+π
+⁡
+𝔼
+τ
+​
+[
+R
+⁡
+(
+τ
+)
+]
+−
+λ
+​
+D
+KL
+.
+\max_{\pi}\;\mathbb{E}_{\tau}\!\left[R(\tau)\right]-\lambda D_{\mathrm{KL}}.
+(18)
+The contextual bandit setting is recovered as the special case
+T
+=
+1
+T=1
+where
+R
+⁡
+(
+τ
+)
+=
+r
+⁡
+(
+s
+,
+a
+)
+R(\tau)=r(s,a)
+. Since the objectives are identical, the same Lagrangian derivation applies with
+R
+⁡
+(
+τ
+)
+R(\tau)
+in place of
+r
+⁡
+(
+s
+,
+a
+)
+r(s,a)
+, yielding the trajectory-level optimal policy:
+π
+∗
+​
+(
+τ
+)
+∝
+π
+β
+​
+(
+τ
+)
+​
+exp
+⁡
+(
+R
+⁡
+(
+τ
+)
+λ
+)
+,
+\pi^{*}(\tau)\propto\pi_{\beta}(\tau)\exp\!\left(\frac{R(\tau)}{\lambda}\right),
+(19)
+and the corresponding training objective:
+ℒ
+(
+θ
+)
+=
+−
+1
+|
+𝒟
+|
+∑
+τ
+∈
+𝒟
+exp
+(
+R
+⁡
+(
+τ
+)
+λ
+)
+∑
+t
+=
+1
+T
+log
+π
+θ
+(
+a
+t
+∣
+s
+t
+)
+.
+\mathcal{L}(\theta)=-\frac{1}{|\mathcal{D}|}\sum_{\tau\in\mathcal{D}}\exp\!\left(\frac{R(\tau)}{\lambda}\right)\sum_{t=1}^{T}\log\pi_{\theta}(a_{t}\mid s_{t}).
+(20)
+The theoretical guarantees of Theorems
+4.3
+and
+4.4
+hold without modification, requiring only that the observed return
+R
+^
+​
+(
+τ
+)
+=
+R
+∗
+​
+(
+τ
+)
++
+ξ
+⁡
+(
+τ
+)
+\hat{R}(\tau)=R^{*}(\tau)+\xi(\tau)
+satisfies Assumption
+4.2
+. This holds under either of the following conditions: (i) if per-step noise terms are independent, sub-Gaussianity of each implies sub-Gaussianity of their sum by standard closure properties; (ii) if per-step noise terms are dependent, as they naturally are along a Markov trajectory, we require only that the trajectory-level aggregate noise
+ξ
+⁡
+(
+τ
+)
+=
+∑
+t
+=
+1
+T
+ξ
+t
+\xi(\tau)=\sum_{t=1}^{T}\xi_{t}
+is itself sub-Gaussian, which we take as a direct assumption on the noise process. Condition (i) is a special case of (ii).
+One practical consideration is reward variance. Since
+R
+⁡
+(
+τ
+)
+R(\tau)
+is a sum of up to
+T
+T
+per-step rewards, its variance grows with trajectory length. The theoretically principled way to control the influence of high-variance returns is through
+λ
+\lambda
+itself. Theorem
+4.4
+explicitly characterizes this tradeoff, showing the cost of variance reduction in terms of policy improvement. In practice, standardizing
+R
+~
+​
+(
+τ
+)
+=
+(
+R
+⁡
+(
+τ
+)
+−
+μ
+)
+/
+σ
+\tilde{R}(\tau)=(R(\tau)-\mu)/\sigma
+before exponential weighting serves as a useful preprocessing step that stabilizes the numerical range of weights and makes
+λ
+\lambda
+more interpretable across datasets with different return scales, corresponding to a reparametrization
+λ
+→
+λ
+​
+σ
+\lambda\to\lambda\sigma
+by Observation
+3.1
+.
+6
+Experiments
+Table 1
+:
+Dataset Statistics
+Dataset
+Users
+Items
+Avg. Interactions/User
+Test Cases (
+r
+≥
+4.5
+r\geq 4.5
+)
+ML-1M
+6,040
+3,706
+165.60
+1,530
+ML-20M
+138,493
+26,744
+144.41
+40,667
+Amazon Books
+811,227
+695,762
+14.47
+424,271
+Netflix
+O(Millions)
+O(Thousands)
+O(Tens)
+O(Thousands)
+Dataset:
+We use three open-source recommendation datasets containing sequential user-item interactions: MovieLens 1M (ML-1M), MovieLens 20M (ML-20M)
+(
+Harper and Konstan, 2015
+)
+, and Amazon Reviews
+(
+McAuley et al., 2015
+)
+. In addition, we also present results on a large-scale proprietary dataset from Netflix. These datasets contains data for multiple users. For each user, it contains interaction data, i.e. what items did the user interact with and the corresponding rewards the user assigned to each interaction.
+Table
+1
+summarizes the count of users, items and average interactions per user for each of the three dataset. Because of the proprietary nature of the Netflix data, we only show the order of magnitude for the data instead of the actual count.
+The open source datasets vary significantly in scale and sparsity, with ML-1M being the smallest and densest, ML-20M providing a larger movie domain, and Amazon Books offering the most diverse item catalog with sparser user interactions, while the proprietary Netflix data is the largest of them all and helps showcase the performance of our data on realistic large-scale real-world data. Additional information about dataset rating distribution is shown in
+4
+in the Appendix.
+Model:
+We conduct experiments using the HSTU
+(
+Zhai et al., 2024
+)
+base model pretrained on each of the datasets. This will serve as the baseline for our method and represents the Behavior Cloning (BC) algorithm that blindly mimics each user. Next we co-train a reward model as a shallow reward head on top of the generative recommender. It predicts the reward for the most recently selected title based on a user’s interaction history.
+Algorithms:
+We benchmark our method against four algorithms spanning behavior cloning, weighted SFT and standard RLHF:
+•
+BC (Behavior Cloning)
+: The base HSTU architecture
+(
+Zhai et al., 2024
+)
+trained to predict a user’s next interaction given their history, without optimizing for any reward signal.
+•
+Reward-SFT (Reward-weighted Supervised Fine-Tuning
+: The model is post-trained using reward-weighted log probabilities as described in
+(
+Mukherjee et al.,
+)
+.
+•
+DPO (Direct Preference Optimization)
+: This is policy optimization method that directly learns from pairwise preference data by increasing the likelihood of preferred actions over dispreferred ones
+(
+Rafailov et al., 2023
+)
+. Since binary comparison data is unavailable in recommendation systems, we implement an online variant of DPO where binary preferences are obtained by generating two responses and comparing them via reward model scores, similar to the online DPO in
+(
+Deng et al., 2025
+)
+.
+•
+PPO (Proximal Policy Optimization)
+: A standard RLHF approach
+(
+Stiennon et al., 2020
+;
+Ouyang et al., 2022
+)
+that updates the policy using clipped probability ratios and estimated advantages computed from the learned reward model
+(
+Schulman et al., 2017
+)
+.
+•
+Exp-RSFT (Exponential Reward-weighted Supervised Fine-Tuning)
+: Our algorithm, described in
+1
+, post-trains the model by weighting log-probabilities with the exponential of the reward scaled by a temperature parameter.
+We run the algorithms for 30, 12, and 10 epochs for the ML-1M, ML-20M, and Amazon Books datasets.
+Evaluation:
+We evaluate on the standard test splits of ML-1M, ML-20M, and Amazon Books, but restrict our metrics to test cases where the held-out target item received a rating
+≥
+4.5
+\geq 4.5
+. This design choice aligns evaluation with our training objective: we aim to measure each method’s ability to surface items that users would rate highly, rather than simply predicting any future interaction regardless of user satisfaction. Table
+1
+reports the number of test cases meeting this criterion for each dataset.
+On this filtered test set, we report five standard recommendation metrics. Let
+r
+i
+r_{i}
+denote the rank assigned to the ground truth item for test case
+i
+i
+among
+N
+N
+total cases.
+Hit Rate
+(HR@
+K
+K
+) measures the proportion of cases where the ground truth item appears in the top-
+K
+K
+recommendations.
+Normalized Discounted Cumulative Gain
+(NDCG@
+K
+K
+) additionally accounts for ranking position, assigning higher scores to ground truth items ranked near the top.
+Mean Reciprocal Rank
+(MRR) averages the inverse rank across all test cases. Formally:
+HR@
+​
+K
+\displaystyle\text{HR@}K
+=
+1
+N
+​
+∑
+i
+=
+1
+N
+𝟙
+​
+(
+r
+i
+≤
+K
+)
+,
+\displaystyle=\frac{1}{N}\sum_{i=1}^{N}\mathbbm{1}(r_{i}\leq K),
+(21)
+NDCG@
+​
+K
+\displaystyle\text{NDCG@}K
+=
+1
+N
+​
+∑
+i
+=
+1
+N
+𝟙
+​
+(
+r
+i
+≤
+K
+)
+log
+2
+⁡
+(
+r
+i
++
+1
+)
+,
+\displaystyle=\frac{1}{N}\sum_{i=1}^{N}\frac{\mathbbm{1}(r_{i}\leq K)}{\log_{2}(r_{i}+1)},
+(22)
+MRR
+=
+1
+N
+​
+∑
+i
+=
+1
+N
+1
+r
+i
+.
+\displaystyle=\frac{1}{N}\sum_{i=1}^{N}\frac{1}{r_{i}}.
+(23)
+We report HR and NDCG at cutoffs
+K
+∈
+{
+10
+,
+50
+}
+K\in\{10,50\}
+.
+Figure 2
+:
+Figure showing the dramatic collapse of PPO and DPO due to reward-hacking.
+Figure 3
+:
+NDCG@10 for different values of
+λ
+\lambda
+for all three datasets.
+Results:
+The Tables
+3
+,
+4
+,
+5
+, and
+6
+summarize the results for the datasets ML-1M, ML-20M, Amazon Books, and Netflix respectively. We see that our algorithm (Exp-RSFT) consistently outperforms the other benchmark algorithms across the four datasets. We also observe this trend across the training epochs (see Appendix
+for evolution of metrics across training epochs for the open source datasets).
+Evidence for Reward Hacking:
+Tables
+3
+,
+4
+,
+5
+, and
+6
+show that both PPO and DPO experience catastrophic collapse across all datasets. We hypothesize that this is due to reward hacking and test this hypothesis using two approaches:
+Benchmarking reward model training metrics:
+To assess the quality of the learned reward model, we compare its Mean Squared Error (MSE) and Mean Absolute Error (MAE) against three simple baselines:
+•
+User Mean:
+Predicts future rewards as the historical average reward for each user.
+•
+Item Mean:
+Predicts the reward for an item as its historical average across all users.
+•
+Global Mean:
+Predicts all rewards as the global mean rating across all users and items.
+We report these metrics in Table
+2
+for all four datasets. We observe that, except for MAE on ML-20M and MSE on Netflix, the reward model does not achieve the lowest error. Even in the two cases where it does, its performance is comparable to the simple item-mean baseline. This suggests that the reward model offers limited improvement over naive predictors. This result is intuitive, since a user’s historical interactions typically cover only a small subset of the catalog, making it difficult to accurately predict their responses to unexplored items.
+Reward model-as-judge evaluation:
+Given the limited generalization capacity of reward models, we investigate whether each algorithm over-optimizes for this imperfect signal, a phenomenon known in the LLM literature as reward hacking
+(
+Pan et al., 2022
+;
+Skalse et al., 2022
+;
+Lambert and Calandra, 2023
+;
+Rafailov et al., 2024
+)
+. We compute the average reward model score across 10 generations from each of 10,000 evaluation contexts, reported as “Avg Reward” in Tables
+3
+,
+4
+,
+5
+, and
+6
+. We find that this metric does not correlate with true recommendation quality. Notably, PPO and DPO achieve the highest reward model scores across all four datasets, suggesting that these algorithms over-optimize for a reward signal that fails to capture genuine user preferences.
+Robustness–Improvement Tradeoff with
+λ
+\lambda
+:
+Theorem
+4.4
+predicts a fundamental tension in the choice of temperature
+λ
+\lambda
+: small
+λ
+\lambda
+aggressively re-weights toward high-reward actions but amplifies sensitivity to reward noise, while large
+λ
+\lambda
+suppresses the noise cost but drives the learned policy toward the behavior policy, yielding diminishing improvement. We validate this tradeoff empirically by sweeping a range of
+λ
+\lambda
+values across all three datasets. Figure
+3
+illustrates the trend for NDCG@10; other metrics exhibit similar behavior and are reported in Appendix
+. All five evaluation metrics display a clear inverted-U shape as a function of
+λ
+\lambda
+across all three datasets, with performance peaking near
+λ
+≈
+0.5
+\lambda\approx 0.5
+–
+1.0
+1.0
+and declining on either side. This pattern holds whether we select the best or final training epoch, ruling out early stopping as a confound. As expected, large data reduces policy improvement as it theoretically would recover the behavior policy. But more surprisingly, and as predicted by Theorem
+4.4
+, values of
+λ
+\lambda
+smaller than the optimum also lead to degraded performance. These results confirm that moderate reward weighting strikes the optimal balance between exploiting the reward signal and regularizing against its noise.
+Table 2
+:
+Reward model prediction performance compared to naive baselines. The trained reward model fails to outperform the simple Item Mean baseline on most metrics. Best results per row are
+bolded
+.
+Dataset
+Metric
+User Mean
+Item Mean
+Global Mean
+Trained RM
+ML-1M
+MSE
+1.0784
+0.9179
+1.2394
+1.2166
+MAE
+0.8232
+0.7619
+0.9268
+0.8680
+ML-20M
+MSE
+0.9550
+0.8898
+1.0939
+0.8963
+MAE
+0.7588
+0.7320
+0.8423
+0.7307
+Amazon Books
+MSE
+1.1578
+0.7290
+1.1868
+1.1067
+MAE
+0.7411
+0.5651
+0.8636
+0.8140
+Netflix
+MSE
+2.412
+2.568
+2.568
+2.486
+MAE
+2.112
+2.442
+2.451
+1.916
+Table 3
+:
+Recommendation performance on ML-1M (rating
+≥
+4.5
+\geq 4.5
+). Best results per metric are
+bolded
+. Percentages indicate relative change from BC baseline.
+Method
+NDCG@10
+NDCG@50
+HR@10
+HR@50
+MRR
+Avg Reward
+BC
+0.1304
+0.1866
+0.2405
+0.4967
+0.1116
+3.8672
+DPO
+0.0091 (-93.0%)
+0.0231 (-87.6%)
+0.0163 (-93.2%)
+0.0824 (-83.4%)
+0.0122 (-89.1%)
+3.3737 (-12.8%)
+PPO
+0.0303 (-76.8%)
+0.0617 (-66.9%)
+0.0673 (-72.0%)
+0.2124 (-57.2%)
+0.0285 (-74.5%)
+4.4775
+(+15.8%)
+RSFT
+0.1437 (+10.2%)
+0.2003 (+7.3%)
+0.2608 (+8.4%)
+0.5163 (+3.9%)
+0.1230 (+10.2%)
+3.6558 (-5.5%)
+Exp-RSFT
+0.1465
+(+12.3%)
+0.2029
+(+8.7%)
+0.2712
+(+12.8%)
+0.5261
+(+5.9%)
+0.1235
+(+10.7%)
+3.6933 (-4.5%)
+Table 4
+:
+Recommendation performance on ML-20M (rating
+≥
+4.5
+\geq 4.5
+). Best results per metric are
+bolded
+. Percentages indicate relative change from BC baseline.
+Method
+NDCG@10
+NDCG@50
+HR@10
+HR@50
+MRR
+Avg Reward
+BC
+0.1753
+0.2313
+0.3035
+0.5569
+0.1510
+3.7388
+DPO
+0.0196 (-88.8%)
+0.0342 (-85.2%)
+0.0372 (-87.7%)
+0.1052 (-81.1%)
+0.0195 (-87.1%)
+4.4008
+(+17.7%)
+PPO
+0.1164 (-33.6%)
+0.1688 (-27.0%)
+0.2141 (-29.5%)
+0.4536 (-18.6%)
+0.1008 (-33.2%)
+3.7547 (+0.4%)
+RSFT
+0.1847 (+5.4%)
+0.2403 (+3.9%)
+0.3161 (+4.2%)
+0.5677 (+1.9%)
+0.1593 (+5.5%)
+3.7904 (+1.4%)
+Exp-RSFT
+0.1912
+(+9.1%)
+0.2462
+(+6.4%)
+0.3238
+(+6.7%)
+0.5726
+(+2.8%)
+0.1651
+(+9.3%)
+3.8611 (+3.3%)
+Table 5
+:
+Recommendation performance on Amazon Books (rating
+≥
+4.5
+\geq 4.5
+). Best results per metric are
+bolded
+. Percentages indicate relative change from BC baseline.
+Method
+NDCG@10
+NDCG@50
+HR@10
+HR@50
+MRR
+Avg Reward
+BC
+0.0328
+0.0478
+0.0589
+0.1279
+0.0296
+4.2824
+DPO
+0.0008 (-97.6%)
+0.0020 (-95.8%)
+0.0019 (-96.8%)
+0.0075 (-94.1%)
+0.0013 (-95.6%)
+4.8615
+(+13.5%)
+PPO
+0.0094 (-71.3%)
+0.0156 (-67.4%)
+0.0184 (-68.8%)
+0.0469 (-63.3%)
+0.0088 (-70.3%)
+4.4549 (+4.0%)
+RSFT
+0.0349 (+6.4%)
+0.0514 (+7.5%)
+0.0630 (+7.0%)
+0.1388 (+8.5%)
+0.0314 (+6.1%)
+4.3350 (+1.2%)
+Exp-RSFT
+0.0356
+(+8.5%)
+0.0520
+(+8.8%)
+0.0641
+(+8.8%)
+0.1397
+(+9.2%)
+0.0319
+(+7.8%)
+4.3374 (+1.3%)
+Table 6
+:
+Recommendation performance on Netflix data (high reward trajectories). Best results per metric are
+bolded
+. Percentages indicate relative change from R-SFT baseline.
+Algorithm
+NDCG@10
+NDCG@50
+HR@10
+HR@50
+MRR
+Reward
+RSFT
+0.00%
+0.00%
+0.00%
+0.00%
+0.00%
+0.00%
+Exp-RSFT
+106.20%
+69.71%
+98.07%
+49.58%
+86.31%
+17.27%
+DPO
+-99.30%
+-96.77%
+-99.14%
+-95.52%
+-95.34%
+19.21%
+PPO
+-4.88%
+-24.01%
+-14.66%
+-35.71%
+-8.60%
+13.39%
+7
+Limitations
+We consider the specific setting where users interact with only a small fraction of a large catalog and provide scalar rewards for the items they engage with. This setting is commonly found in large-scale industrial recommendation systems. However, in different settings, for example one where reward models generalize well and can reasonably score most counterfactual actions, or one where feedback is in the form of binary comparisons covering most of the item catalog, we expect standard algorithms like PPO or DPO to perform better.
+Impact Statement
+This paper presents work whose goal is to advance the field of Machine Learning. There are many potential societal consequences of our work, none which we feel must be specifically highlighted here.
+References
+Ahmadian
+et al.
+(2024)
+A. Ahmadian, C. Cremer, M. Gallé, M. Fadaee, J. Kreutzer, O. Pietquin, A. Üstün, and S. Hooker
+Back to basics: revisiting reinforce style optimization for learning from human feedback in llms
+.
+arXiv preprint arXiv:2402.14740
+.
+Cited by:
+§2
+.
+Auer
+et al.
+(2002)
+P. Auer, N. Cesa-Bianchi, and P. Fischer
+Finite-time analysis of the multiarmed bandit problem
+.
+Machine learning
+47
+(
+2
+),
+pp. 235–256
+.
+Cited by:
+§4
+.
+Baheti
+et al.
+(2023)
+A. Baheti, X. Lu, F. Brahman, R. L. Bras, M. Sap, and M. Riedl
+Leftover lunch: advantage-based offline reinforcement learning for language models
+.
+arXiv preprint arXiv:2305.14718
+.
+Cited by:
+§2
+.
+Covington
+et al.
+(2016)
+P. Covington, J. Adams, and E. Sargin
+Deep neural networks for youtube recommendations
+.
+In
+Proceedings of the 10th ACM conference on recommender systems
+,
+pp. 191–198
+.
+Cited by:
+3rd item
+.
+Deldjoo
+et al.
+(2024)
+Y. Deldjoo, Z. He, J. McAuley, A. Korikov, S. Sanner, A. Ramisa, R. Vidal, M. Sathiamoorthy, A. Kasirzadeh, and S. Milano
+A review of modern recommender systems using generative models (gen-recsys)
+.
+In
+Proceedings of the 30th ACM SIGKDD conference on Knowledge Discovery and Data Mining
+,
+pp. 6448–6458
+.
+Cited by:
+§1
+.
+Deng
+et al.
+(2025)
+J. Deng, S. Wang, K. Cai, L. Ren, Q. Hu, W. Ding, Q. Luo, and G. Zhou
+Onerec: unifying retrieve and rank with generative recommender and iterative preference alignment
+.
+arXiv preprint arXiv:2502.18965
+.
+Cited by:
+§1
+,
+3rd item
+.
+Dudík
+et al.
+(2011)
+M. Dudík, J. Langford, and L. Li
+Doubly robust policy evaluation and learning
+.
+arXiv preprint arXiv:1103.4601
+.
+Cited by:
+3rd item
+,
+§2
+.
+Dulac-Arnold
+et al.
+(2015)
+G. Dulac-Arnold, R. Evans, H. van Hasselt, P. Sunehag, T. Lillicrap, J. Hunt, T. Mann, T. Weber, T. Degris, and B. Coppin
+Deep reinforcement learning in large discrete action spaces
+.
+arXiv preprint arXiv:1512.07679
+.
+Cited by:
+1st item
+.
+Harper and Konstan (2015)
+F. M. Harper and J. A. Konstan
+The movielens datasets: history and context
+.
+Acm transactions on interactive intelligent systems (tiis)
+5
+(
+4
+),
+pp. 1–19
+.
+Cited by:
+§6
+.
+Kang and McAuley (2018)
+W. Kang and J. McAuley
+Self-attentive sequential recommendation
+.
+In
+2018 IEEE international conference on data mining (ICDM)
+,
+pp. 197–206
+.
+Cited by:
+§1
+.
+Kostrikov
+et al.
+(2021)
+I. Kostrikov, A. Nair, and S. Levine
+Offline reinforcement learning with implicit q-learning
+.
+arXiv preprint arXiv:2110.06169
+.
+Cited by:
+§2
+.
+Kumar
+et al.
+(2020)
+A. Kumar, A. Zhou, G. Tucker, and S. Levine
+Conservative q-learning for offline reinforcement learning
+.
+Advances in neural information processing systems
+33
+,
+pp. 1179–1191
+.
+Cited by:
+§2
+.
+Lambert and Calandra (2023)
+N. Lambert and R. Calandra
+The alignment ceiling: objective mismatch in reinforcement learning from human feedback
+.
+arXiv preprint arXiv:2311.00168
+.
+Cited by:
+§6
+.
+Liang and Vlassis (2022)
+D. Liang and N. Vlassis
+Local policy improvement for recommender systems
+.
+arXiv preprint arXiv:2212.11431
+.
+Cited by:
+3rd item
+,
+§1
+,
+§2
+.
+McAuley
+et al.
+(2015)
+J. McAuley, C. Targett, Q. Shi, and A. Van Den Hengel
+Image-based recommendations on styles and substitutes
+.
+In
+Proceedings of the 38th international ACM SIGIR conference on research and development in information retrieval
+,
+pp. 43–52
+.
+Cited by:
+§6
+.
+[16]
+S. Mukherjee, V. D. Lai, R. Addanki, R. A. Rossi, S. Yoon, T. Bui, A. Rao, J. Subramanian, and B. Kveton
+Offline rl by reward-weighted fine-tuning for conversation optimization
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+Cited by:
+§2
+,
+§2
+,
+2nd item
+.
+Nair
+et al.
+(2020)
+A. Nair, A. Gupta, M. Dalal, and S. Levine
+Awac: accelerating online reinforcement learning with offline datasets
+.
+arXiv preprint arXiv:2006.09359
+.
+Cited by:
+§3.2
+,
+§3.2
+,
+§3.2
+.
+Ouyang
+et al.
+(2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray,
+et al.
+Training language models to follow instructions with human feedback
+.
+Advances in neural information processing systems
+35
+,
+pp. 27730–27744
+.
+Cited by:
+2nd item
+,
+§1
+,
+§2
+,
+4th item
+.
+Pan
+et al.
+(2022)
+A. Pan, K. Bhatia, and J. Steinhardt
+The effects of reward misspecification: mapping and mitigating misaligned models
+.
+arXiv preprint arXiv:2201.03544
+.
+Cited by:
+§6
+.
+Peters and Schaal (2007)
+J. Peters and S. Schaal
+Using reward-weighted regression for reinforcement learning of task space control
+.
+In
+2007 IEEE International Symposium on Approximate Dynamic Programming and Reinforcement Learning
+,
+pp. 262–267
+.
+Cited by:
+§1
+,
+§2
+.
+Rafailov
+et al.
+(2024)
+R. Rafailov, Y. Chittepu, R. Park, H. S. Sikchi, J. Hejna, B. Knox, C. Finn, and S. Niekum
+Scaling laws for reward model overoptimization in direct alignment algorithms
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 126207–126242
+.
+Cited by:
+§6
+.
+Rafailov
+et al.
+(2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model
+.
+Advances in neural information processing systems
+36
+,
+pp. 53728–53741
+.
+Cited by:
+2nd item
+,
+§2
+,
+3rd item
+.
+Rajput
+et al.
+(2023)
+S. Rajput, N. Mehta, A. Singh, R. Hulikal Keshavan, T. Vu, L. Heldt, L. Hong, Y. Tay, V. Tran, J. Samost,
+et al.
+Recommender systems with generative retrieval
+.
+Advances in Neural Information Processing Systems
+36
+,
+pp. 10299–10315
+.
+Cited by:
+§1
+.
+Schnabel
+et al.
+(2016)
+T. Schnabel, A. Swaminathan, A. Singh, N. Chandak, and T. Joachims
+Recommendations as treatments: debiasing learning and evaluation
+.
+In
+international conference on machine learning
+,
+pp. 1670–1679
+.
+Cited by:
+§2
+.
+Schulman
+et al.
+(2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms
+.
+arXiv preprint arXiv:1707.06347
+.
+Cited by:
+4th item
+.
+Shao
+et al.
+(2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu,
+et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models
+.
+arXiv preprint arXiv:2402.03300
+.
+Cited by:
+§2
+.
+Skalse
+et al.
+(2022)
+J. Skalse, N. Howe, D. Krasheninnikov, and D. Krueger
+Defining and characterizing reward gaming
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 9460–9471
+.
+Cited by:
+§6
+.
+Steck (2010)
+H. Steck
+Training and testing of recommender systems on data missing not at random
+.
+In
+Proceedings of the 16th ACM SIGKDD international conference on Knowledge discovery and data mining
+,
+pp. 713–722
+.
+Cited by:
+§2
+.
+Stiennon
+et al.
+(2020)
+N. Stiennon, L. Ouyang, J. Wu, D. Ziegler, R. Lowe, C. Voss, A. Radford, D. Amodei, and P. F. Christiano
+Learning to summarize with human feedback
+.
+Advances in neural information processing systems
+33
+,
+pp. 3008–3021
+.
+Cited by:
+2nd item
+,
+§1
+,
+§2
+,
+4th item
+.
+Swaminathan and Joachims (2015)
+A. Swaminathan and T. Joachims
+Batch learning from logged bandit feedback through counterfactual risk minimization
+.
+The Journal of Machine Learning Research
+16
+(
+1
+),
+pp. 1731–1755
+.
+Cited by:
+3rd item
+,
+§2
+.
+Wang
+et al.
+(2018)
+Q. Wang, J. Xiong, L. Han, H. Liu, T. Zhang,
+et al.
+Exponentially weighted imitation learning for batched historical data
+.
+Advances in Neural Information Processing Systems
+31
+.
+Cited by:
+§1
+,
+§2
+,
+§4
+.
+Wang
+et al.
+(2020)
+Z. Wang, A. Novikov, K. Zolna, J. S. Merel, J. T. Springenberg, S. E. Reed, B. Shahriari, N. Siegel, C. Gulcehre, N. Heess,
+et al.
+Critic regularized regression
+.
+Advances in Neural Information Processing Systems
+33
+,
+pp. 7768–7778
+.
+Cited by:
+§2
+.
+Wu
+et al.
+(2024)
+L. Wu, Z. Zheng, Z. Qiu, H. Wang, H. Gu, T. Shen, C. Qin, C. Zhu, H. Zhu, Q. Liu,
+et al.
+A survey on large language models for recommendation
+.
+World Wide Web
+27
+(
+5
+),
+pp. 60
+.
+Cited by:
+§1
+.
+Yang
+et al.
+(2025)
+Z. Yang, H. Lin, Z. Zhang,
+et al.
+Gr-llms: recent advances in generative recommendation based on large language models
+.
+arXiv preprint arXiv:2507.06507
+.
+Cited by:
+§1
+.
+Zhai
+et al.
+(2024)
+J. Zhai, L. Liao, X. Liu, Y. Wang, R. Li, X. Cao, L. Gao, Z. Gong, F. Gu, M. He,
+et al.
+Actions speak louder than words: trillion-parameter sequential transducers for generative recommendations
+.
+In
+International Conference on Machine Learning (ICML)
+,
+Cited by:
+§1
+,
+1st item
+,
+§6
+.
+Appendix A
+Proofs
+A.1
+Proposition
+4.1
+Proof
+Proof.
+Fix state
+s
+s
+. Define
+𝒜
++
+=
+{
+a
+:
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+≥
+π
+β
+​
+(
+a
+|
+s
+)
+}
+\mathcal{A}_{+}=\{a:\pi^{*}_{\lambda}(a|s)\geq\pi_{\beta}(a|s)\}
+and
+𝒜
+−
+=
+{
+a
+:
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+<
+π
+β
+​
+(
+a
+|
+s
+)
+}
+\mathcal{A}_{-}=\{a:\pi^{*}_{\lambda}(a|s)<\pi_{\beta}(a|s)\}
+. Since
+π
+λ
+∗
+\pi^{*}_{\lambda}
+upweights actions with higher rewards, there exists threshold
+q
+⁡
+(
+s
+)
+q(s)
+such that
+r
+∗
+​
+(
+s
+,
+a
+)
+≥
+q
+⁡
+(
+s
+)
+r^{*}(s,a)\geq q(s)
+for all
+a
+∈
+𝒜
++
+a\in\mathcal{A}_{+}
+and
+r
+∗
+​
+(
+s
+,
+a
+)
+≤
+q
+⁡
+(
+s
+)
+r^{*}(s,a)\leq q(s)
+for all
+a
+∈
+𝒜
+−
+a\in\mathcal{A}_{-}
+. Then:
+V
+π
+λ
+∗
+​
+(
+s
+)
+−
+V
+π
+β
+​
+(
+s
+)
+\displaystyle V^{\pi^{*}_{\lambda}}(s)-V^{\pi_{\beta}}(s)
+=
+∑
+a
+∈
+𝒜
++
+(
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+−
+π
+β
+​
+(
+a
+|
+s
+)
+)
+​
+r
+∗
+​
+(
+s
+,
+a
+)
++
+∑
+a
+∈
+𝒜
+−
+(
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+−
+π
+β
+​
+(
+a
+|
+s
+)
+)
+​
+r
+∗
+​
+(
+s
+,
+a
+)
+\displaystyle=\sum_{a\in\mathcal{A}_{+}}(\pi^{*}_{\lambda}(a|s)-\pi_{\beta}(a|s))r^{*}(s,a)+\sum_{a\in\mathcal{A}_{-}}(\pi^{*}_{\lambda}(a|s)-\pi_{\beta}(a|s))r^{*}(s,a)
+≥
+q
+⁡
+(
+s
+)
+​
+∑
+a
+∈
+𝒜
++
+(
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+−
+π
+β
+​
+(
+a
+|
+s
+)
+)
++
+q
+⁡
+(
+s
+)
+​
+∑
+a
+∈
+𝒜
+−
+(
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+−
+π
+β
+​
+(
+a
+|
+s
+)
+)
+\displaystyle\geq q(s)\sum_{a\in\mathcal{A}_{+}}(\pi^{*}_{\lambda}(a|s)-\pi_{\beta}(a|s))+q(s)\sum_{a\in\mathcal{A}_{-}}(\pi^{*}_{\lambda}(a|s)-\pi_{\beta}(a|s))
+=
+q
+⁡
+(
+s
+)
+​
+(
+∑
+a
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+−
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+)
+=
+0
+.
+\displaystyle=q(s)\left(\sum_{a}\pi^{*}_{\lambda}(a|s)-\sum_{a}\pi_{\beta}(a|s)\right)=0.
+∎
+A.2
+Theorem
+4.3
+Proof
+Proof.
+Step 1:
+First we derive a high probability bound for the error
+ξ
+\xi
+. Since each
+ξ
+⁡
+(
+s
+,
+a
+)
+\xi(s,a)
+is
+σ
+\sigma
+-sub-Gaussian, for any
+t
+>
+0
+t>0
+and any action
+a
+∈
+𝒜
+a\in\mathcal{A}
+and state
+s
+∈
+𝒮
+s\in\mathcal{S}
+:
+P
+⁡
+(
+|
+ξ
+⁡
+(
+s
+,
+a
+)
+|
+≥
+t
+)
+≤
+2
+​
+exp
+⁡
+(
+−
+t
+2
+2
+​
+σ
+2
+)
+.
+\mathrm{P}(|\xi(s,a)|\geq t)\leq 2\exp\left(-\frac{t^{2}}{2\sigma^{2}}\right).
+Applying a union bound over all
+|
+𝒜
+|
+|\mathcal{A}|
+actions:
+P
+(
+∃
+a
+∈
+𝒜
+:
+|
+ξ
+(
+s
+,
+a
+)
+|
+≥
+t
+)
+≤
+2
+|
+𝒜
+|
+exp
+(
+−
+t
+2
+2
+​
+σ
+2
+)
+.
+\mathrm{P}\left(\exists a\in\mathcal{A}:|\xi(s,a)|\geq t\right)\leq 2|\mathcal{A}|\exp\left(-\frac{t^{2}}{2\sigma^{2}}\right).
+Setting the right-hand side equal to
+δ
+\delta
+and solving for
+t
+t
+:
+2
+​
+|
+𝒜
+|
+​
+exp
+⁡
+(
+−
+t
+2
+2
+​
+σ
+2
+)
+=
+δ
+⟹
+t
+=
+σ
+​
+2
+​
+log
+⁡
+(
+2
+​
+|
+𝒜
+|
+/
+δ
+)
+.
+2|\mathcal{A}|\exp\left(-\frac{t^{2}}{2\sigma^{2}}\right)=\delta\implies t=\sigma\sqrt{2\log(2|\mathcal{A}|/\delta)}.
+Define
+ϵ
+:=
+σ
+​
+2
+​
+log
+⁡
+(
+2
+​
+|
+𝒜
+|
+/
+δ
+)
+\epsilon:=\sigma\sqrt{2\log(2|\mathcal{A}|/\delta)}
+. Then with probability at least
+1
+−
+δ
+1-\delta
+:
+|
+ξ
+⁡
+(
+s
+,
+a
+)
+|
+≤
+ϵ
+∀
+a
+∈
+𝒜
+.
+|\xi(s,a)|\leq\epsilon\quad\forall a\in\mathcal{A}.
+We condition on this event for the remainder of the proof. Additionally, we fix a state
+s
+∈
+𝒮
+s\in\mathcal{S}
+and assume
+π
+β
+​
+(
+a
+|
+s
+)
+>
+0
+\pi_{\beta}(a|s)>0
+for all
+a
+∈
+𝒜
+a\in\mathcal{A}
+.
+Step 2:
+Now we can proceed to compare
+V
+π
+λ
+​
+(
+s
+)
+V^{\pi_{\lambda}}(s)
+and
+V
+π
+β
+​
+(
+s
+)
+V^{\pi_{\beta}}(s)
+.
+π
+λ
+​
+(
+a
+|
+s
+)
+∝
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+^
+​
+(
+s
+,
+a
+)
+/
+λ
+)
+\pi_{\lambda}(a|s)\propto\pi_{\beta}(a|s)\exp(\hat{r}(s,a)/\lambda)
+is the exponential tilt using noisy rewards
+r
+^
+=
+r
+∗
++
+ξ
+\hat{r}=r^{*}+\xi
+. From Section
+3.2
+, we know that
+π
+λ
+(
+⋅
+|
+s
+)
+\pi_{\lambda}(\cdot|s)
+is the unique maximizer of
+F
+(
+π
+)
+=
+∑
+a
+π
+(
+a
+|
+s
+)
+r
+^
+(
+s
+,
+a
+)
+−
+λ
+D
+KL
+(
+π
+(
+⋅
+|
+s
+)
+∥
+π
+β
+(
+⋅
+|
+s
+)
+)
+F(\pi)=\sum_{a}\pi(a|s)\,\hat{r}(s,a)-\lambda\,D_{\mathrm{KL}}\left(\pi(\cdot|s)\|\pi_{\beta}(\cdot|s)\right)
+In particular,
+F
+⁡
+(
+π
+λ
+)
+≥
+F
+⁡
+(
+π
+β
+)
+F(\pi_{\lambda})\geq F(\pi_{\beta})
+. Since
+KL
+(
+π
+β
+∥
+π
+β
+)
+=
+0
+\mathrm{KL}(\pi_{\beta}\|\pi_{\beta})=0
+, this gives:
+∑
+a
+π
+λ
+(
+a
+|
+s
+)
+r
+^
+(
+s
+,
+a
+)
+−
+λ
+D
+KL
+(
+π
+λ
+∥
+π
+β
+)
+≥
+∑
+a
+π
+β
+(
+a
+|
+s
+)
+r
+^
+(
+s
+,
+a
+)
+.
+\sum_{a}\pi_{\lambda}(a|s)\,\hat{r}(s,a)-\lambda\,D_{\mathrm{KL}}(\pi_{\lambda}\|\pi_{\beta})\geq\sum_{a}\pi_{\beta}(a|s)\,\hat{r}(s,a).
+Since
+λ
+>
+0
+\lambda>0
+and
+KL
+(
+π
+λ
+∥
+π
+β
+)
+≥
+0
+\mathrm{KL}(\pi_{\lambda}\|\pi_{\beta})\geq 0
+, the left-hand side is at most
+∑
+a
+π
+λ
+​
+(
+a
+|
+s
+)
+​
+r
+^
+​
+(
+s
+,
+a
+)
+\sum_{a}\pi_{\lambda}(a|s)\,\hat{r}(s,a)
+, so:
+∑
+a
+π
+λ
+​
+(
+a
+|
+s
+)
+​
+r
+^
+​
+(
+s
+,
+a
+)
+≥
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+​
+r
+^
+​
+(
+s
+,
+a
+)
+.
+\sum_{a}\pi_{\lambda}(a|s)\,\hat{r}(s,a)\geq\sum_{a}\pi_{\beta}(a|s)\,\hat{r}(s,a).
+(24)
+It remains to convert this inequality on noisy rewards into an inequality on true rewards. Since
+|
+ξ
+⁡
+(
+s
+,
+a
+)
+|
+≤
+ϵ
+|\xi(s,a)|\leq\epsilon
+for all
+a
+a
+and
+π
+λ
+(
+⋅
+|
+s
+)
+\pi_{\lambda}(\cdot|s)
+is a probability distribution:
+V
+π
+λ
+​
+(
+s
+)
+=
+∑
+a
+π
+λ
+​
+(
+a
+|
+s
+)
+​
+r
+∗
+​
+(
+s
+,
+a
+)
+=
+∑
+a
+π
+λ
+​
+(
+a
+|
+s
+)
+​
+(
+r
+^
+​
+(
+s
+,
+a
+)
+−
+ξ
+⁡
+(
+s
+,
+a
+)
+)
+≥
+∑
+a
+π
+λ
+​
+(
+a
+|
+s
+)
+​
+r
+^
+​
+(
+s
+,
+a
+)
+−
+ϵ
+.
+V^{\pi_{\lambda}}(s)=\sum_{a}\pi_{\lambda}(a|s)\,r^{*}(s,a)=\sum_{a}\pi_{\lambda}(a|s)\,(\hat{r}(s,a)-\xi(s,a))\geq\sum_{a}\pi_{\lambda}(a|s)\,\hat{r}(s,a)-\epsilon.
+(25)
+Similarly, since
+r
+^
+​
+(
+s
+,
+a
+)
+=
+r
+∗
+​
+(
+s
+,
+a
+)
++
+ξ
+⁡
+(
+s
+,
+a
+)
+≥
+r
+∗
+​
+(
+s
+,
+a
+)
+−
+ϵ
+\hat{r}(s,a)=r^{*}(s,a)+\xi(s,a)\geq r^{*}(s,a)-\epsilon
+for all
+a
+a
+:
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+​
+r
+^
+​
+(
+s
+,
+a
+)
+≥
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+​
+(
+r
+∗
+​
+(
+s
+,
+a
+)
+−
+ϵ
+)
+=
+V
+π
+β
+​
+(
+s
+)
+−
+ϵ
+.
+\sum_{a}\pi_{\beta}(a|s)\,\hat{r}(s,a)\geq\sum_{a}\pi_{\beta}(a|s)\,(r^{*}(s,a)-\epsilon)=V^{\pi_{\beta}}(s)-\epsilon.
+(26)
+Chaining (
+25
+), (
+24
+), and (
+26
+):
+V
+π
+λ
+​
+(
+s
+)
+≥
+∑
+a
+π
+λ
+​
+(
+a
+|
+s
+)
+​
+r
+^
+​
+(
+s
+,
+a
+)
+−
+ϵ
+≥
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+​
+r
+^
+​
+(
+s
+,
+a
+)
+−
+ϵ
+≥
+V
+π
+β
+​
+(
+s
+)
+−
+2
+​
+ϵ
+.
+V^{\pi_{\lambda}}(s)\geq\sum_{a}\pi_{\lambda}(a|s)\,\hat{r}(s,a)-\epsilon\geq\sum_{a}\pi_{\beta}(a|s)\,\hat{r}(s,a)-\epsilon\geq V^{\pi_{\beta}}(s)-2\epsilon.
+Substituting
+ϵ
+=
+σ
+​
+2
+​
+log
+⁡
+(
+2
+​
+|
+𝒜
+|
+/
+δ
+)
+\epsilon=\sigma\sqrt{2\log(2|\mathcal{A}|/\delta)}
+completes the proof.
+∎
+A.3
+Theorem
+4.4
+Proof
+Under the conditions of Theorem
+4.3
+, if rewards are bounded
+r
+∗
+​
+(
+s
+,
+a
+)
+∈
+[
+0
+,
+R
+max
+]
+r^{*}(s,a)\in[0,R_{\max}]
+, then with probability at least
+1
+−
+δ
+1-\delta
+:
+V
+π
+λ
+​
+(
+s
+)
+≥
+V
+π
+β
+​
+(
+s
+)
+−
+R
+max
+​
+(
+e
+2
+​
+ϵ
+/
+λ
+−
+1
+)
+,
+V^{\pi_{\lambda}}(s)\geq V^{\pi_{\beta}}(s)-R_{\max}\left(e^{2\epsilon/\lambda}-1\right),
+(27)
+where
+ϵ
+=
+σ
+​
+2
+​
+log
+⁡
+(
+2
+​
+|
+𝒜
+|
+/
+δ
+)
+\epsilon=\sigma\sqrt{2\log(2|\mathcal{A}|/\delta)}
+. When
+λ
+≥
+2
+​
+ϵ
+\lambda\geq 2\epsilon
+, this simplifies to:
+V
+π
+λ
+​
+(
+s
+)
+≥
+V
+π
+β
+​
+(
+s
+)
+−
+4
+​
+R
+max
+​
+ϵ
+λ
+.
+V^{\pi_{\lambda}}(s)\geq V^{\pi_{\beta}}(s)-\frac{4R_{\max}\epsilon}{\lambda}.
+(28)
+Proof.
+As before, let
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+=
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+∗
+​
+(
+s
+,
+a
+)
+/
+λ
+)
+/
+Z
+∗
+\pi_{\lambda}^{*}(a|s)=\pi_{\beta}(a|s)\exp(r^{*}(s,a)/\lambda)/Z^{*}
+denote the exponential tilt under true rewards, and
+π
+λ
+​
+(
+a
+|
+s
+)
+=
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+^
+​
+(
+s
+,
+a
+)
+/
+λ
+)
+/
+Z
+\pi_{\lambda}(a|s)=\pi_{\beta}(a|s)\exp(\hat{r}(s,a)/\lambda)/Z
+the tilt under noisy rewards, where
+Z
+∗
+=
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+∗
+​
+(
+s
+,
+a
+)
+/
+λ
+)
+Z^{*}=\sum_{a}\pi_{\beta}(a|s)\exp(r^{*}(s,a)/\lambda)
+and
+Z
+=
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+^
+​
+(
+s
+,
+a
+)
+/
+λ
+)
+Z=\sum_{a}\pi_{\beta}(a|s)\exp(\hat{r}(s,a)/\lambda)
+are the normalizing factors. As in Theorem
+4.3
+, we condition on the event
+|
+ξ
+⁡
+(
+s
+,
+a
+)
+|
+≤
+ϵ
+|\xi(s,a)|\leq\epsilon
+for all
+a
+∈
+𝒜
+a\in\mathcal{A}
+, which holds with probability at least
+1
+−
+δ
+1-\delta
+and fix the state
+s
+∈
+𝒮
+s\in\mathcal{S}
+.
+First, the value function can be decomposed as follows:
+V
+π
+λ
+​
+(
+s
+)
+−
+V
+π
+β
+​
+(
+s
+)
+=
+(
+V
+π
+λ
+∗
+​
+(
+s
+)
+−
+V
+π
+β
+​
+(
+s
+)
+)
+⏟
+≥
+0
+​
+by Proposition
+4.1
+−
+(
+V
+π
+λ
+∗
+​
+(
+s
+)
+−
+V
+π
+λ
+​
+(
+s
+)
+)
+⏟
+noise difference
+.
+V^{\pi_{\lambda}}(s)-V^{\pi_{\beta}}(s)=\underbrace{\left(V^{\pi_{\lambda}^{*}}(s)-V^{\pi_{\beta}}(s)\right)}_{\geq\,0\text{ by Proposition~\ref{prop:monotonic}}}-\underbrace{\left(V^{\pi_{\lambda}^{*}}(s)-V^{\pi_{\lambda}}(s)\right)}_{\text{noise difference}}.
+(29)
+Now, we just need to bound the difference between the noisy and noise-free policy values. Since
+r
+∗
+​
+(
+s
+,
+a
+)
+∈
+[
+0
+,
+R
+max
+]
+r^{*}(s,a)\in[0,R_{\max}]
+:
+|
+V
+π
+λ
+∗
+​
+(
+s
+)
+−
+V
+π
+λ
+​
+(
+s
+)
+|
+\displaystyle\left|V^{\pi_{\lambda}^{*}}(s)-V^{\pi_{\lambda}}(s)\right|
+=
+|
+∑
+a
+(
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+−
+π
+λ
+​
+(
+a
+|
+s
+)
+)
+​
+r
+∗
+​
+(
+s
+,
+a
+)
+|
+\displaystyle=\left|\sum_{a}\left(\pi_{\lambda}^{*}(a|s)-\pi_{\lambda}(a|s)\right)r^{*}(s,a)\right|
+≤
+R
+max
+​
+∑
+a
+|
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+−
+π
+λ
+​
+(
+a
+|
+s
+)
+|
+\displaystyle\leq R_{\max}\sum_{a}\left|\pi_{\lambda}^{*}(a|s)-\pi_{\lambda}(a|s)\right|
+=
+2
+R
+max
+D
+TV
+(
+π
+λ
+∗
+(
+⋅
+|
+s
+)
+,
+π
+λ
+(
+⋅
+|
+s
+)
+)
+.
+\displaystyle=2R_{\max}\,D_{\mathrm{TV}}\!\left(\pi_{\lambda}^{*}(\cdot|s),\,\pi_{\lambda}(\cdot|s)\right).
+(30)
+Define the noise weight
+w
+⁡
+(
+a
+)
+=
+exp
+⁡
+(
+ξ
+⁡
+(
+s
+,
+a
+)
+/
+λ
+)
+w(a)=\exp(\xi(s,a)/\lambda)
+. Since
+|
+ξ
+⁡
+(
+s
+,
+a
+)
+|
+≤
+ϵ
+|\xi(s,a)|\leq\epsilon
+:
+e
+−
+ϵ
+/
+λ
+≤
+w
+(
+a
+)
+≤
+e
+ϵ
+/
+λ
+∀
+a
+∈
+𝒜
+.
+e^{-\epsilon/\lambda}\leq w(a)\leq e^{\epsilon/\lambda}\quad\forall\,a\in\mathcal{A}.
+(31)
+Now we relate the noisy and clean policies. Since
+r
+^
+​
+(
+s
+,
+a
+)
+=
+r
+∗
+​
+(
+s
+,
+a
+)
++
+ξ
+⁡
+(
+s
+,
+a
+)
+\hat{r}(s,a)=r^{*}(s,a)+\xi(s,a)
+, the noisy partition function factorizes as:
+Z
+\displaystyle Z
+=
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+^
+​
+(
+s
+,
+a
+)
+λ
+)
+=
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+∗
+​
+(
+s
+,
+a
+)
+λ
+)
+​
+exp
+⁡
+(
+ξ
+⁡
+(
+s
+,
+a
+)
+λ
+)
+\displaystyle=\sum_{a}\pi_{\beta}(a|s)\exp\!\left(\frac{\hat{r}(s,a)}{\lambda}\right)=\sum_{a}\pi_{\beta}(a|s)\exp\!\left(\frac{r^{*}(s,a)}{\lambda}\right)\exp\!\left(\frac{\xi(s,a)}{\lambda}\right)
+=
+∑
+a
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+∗
+​
+(
+s
+,
+a
+)
+λ
+)
+​
+w
+​
+(
+a
+)
+=
+Z
+∗
+​
+∑
+a
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+​
+w
+​
+(
+a
+)
+,
+\displaystyle=\sum_{a}\pi_{\beta}(a|s)\exp\!\left(\frac{r^{*}(s,a)}{\lambda}\right)w(a)=Z^{*}\sum_{a}\pi_{\lambda}^{*}(a|s)\,w(a),
+(32)
+where the last step uses
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+=
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+∗
+​
+(
+s
+,
+a
+)
+/
+λ
+)
+/
+Z
+∗
+\pi_{\lambda}^{*}(a|s)=\pi_{\beta}(a|s)\exp(r^{*}(s,a)/\lambda)/Z^{*}
+. Dividing both sides by
+Z
+∗
+Z^{*}
+:
+Z
+Z
+∗
+=
+∑
+a
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+​
+w
+​
+(
+a
+)
+,
+\frac{Z}{Z^{*}}=\sum_{a}\pi_{\lambda}^{*}(a|s)\,w(a),
+(33)
+Therefore, the partition function ratio is simply the expected noise weight under the clean policy. Combined with (
+31
+), this gives
+e
+−
+ϵ
+/
+λ
+≤
+Z
+/
+Z
+∗
+≤
+e
+ϵ
+/
+λ
+e^{-\epsilon/\lambda}\leq Z/Z^{*}\leq e^{\epsilon/\lambda}
+, and therefore:
+e
+−
+ϵ
+/
+λ
+≤
+ρ
+≤
+e
+ϵ
+/
+λ
+,
+where
+ρ
+:=
+Z
+∗
+/
+Z
+.
+e^{-\epsilon/\lambda}\leq\rho\leq e^{\epsilon/\lambda},\quad\text{where }\rho:=Z^{*}/Z.
+(34)
+For any action
+a
+a
+, the policy ratio between the noisy and clean policies then follows directly:
+π
+λ
+​
+(
+a
+|
+s
+)
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+=
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+^
+​
+(
+s
+,
+a
+)
+/
+λ
+)
+/
+Z
+π
+β
+​
+(
+a
+|
+s
+)
+​
+exp
+⁡
+(
+r
+∗
+​
+(
+s
+,
+a
+)
+/
+λ
+)
+/
+Z
+∗
+=
+w
+⁡
+(
+a
+)
+⋅
+Z
+∗
+Z
+.
+\frac{\pi_{\lambda}(a|s)}{\pi_{\lambda}^{*}(a|s)}=\frac{\pi_{\beta}(a|s)\exp(\hat{r}(s,a)/\lambda)/Z}{\pi_{\beta}(a|s)\exp(r^{*}(s,a)/\lambda)/Z^{*}}=w(a)\cdot\frac{Z^{*}}{Z}.
+(35)
+Substituting (
+35
+) into the total variation:
+2
+​
+D
+TV
+​
+(
+π
+λ
+∗
+,
+π
+λ
+)
+\displaystyle 2\,D_{\mathrm{TV}}\!\left(\pi_{\lambda}^{*},\,\pi_{\lambda}\right)
+=
+∑
+a
+π
+λ
+∗
+​
+(
+a
+|
+s
+)
+​
+|
+w
+⁡
+(
+a
+)
+​
+ρ
+−
+1
+|
+.
+\displaystyle=\sum_{a}\pi_{\lambda}^{*}(a|s)\left|w(a)\,\rho-1\right|.
+(36)
+From (
+31
+) and (
+34
+), the product
+w
+⁡
+(
+a
+)
+​
+ρ
+w(a)\,\rho
+lies in
+[
+e
+−
+2
+ϵ
+/
+λ
+,
+e
+2
+​
+ϵ
+/
+λ
+]
+[e^{-2\epsilon/\lambda},\,e^{2\epsilon/\lambda}]
+, so:
+|
+w
+(
+a
+)
+ρ
+−
+1
+|
+≤
+max
+(
+e
+2
+​
+ϵ
+/
+λ
+−
+1
+,
+1
+−
+e
+−
+2
+ϵ
+/
+λ
+)
+=
+e
+2
+​
+ϵ
+/
+λ
+−
+1
+,
+|w(a)\,\rho-1|\leq\max\!\left(e^{2\epsilon/\lambda}-1,\;1-e^{-2\epsilon/\lambda}\right)=e^{2\epsilon/\lambda}-1,
+(37)
+where the equality holds because
+e
+x
+−
+1
+≥
+1
+−
+e
+−
+x
+e^{x}-1\geq 1-e^{-x}
+for
+x
+≥
+0
+x\geq 0
+. Substituting back into (
+36
+):
+D
+TV
+(
+π
+λ
+∗
+(
+⋅
+|
+s
+)
+,
+π
+λ
+(
+⋅
+|
+s
+)
+)
+≤
+e
+2
+​
+ϵ
+/
+λ
+−
+1
+2
+.
+D_{\mathrm{TV}}\!\left(\pi_{\lambda}^{*}(\cdot|s),\,\pi_{\lambda}(\cdot|s)\right)\leq\frac{e^{2\epsilon/\lambda}-1}{2}.
+(38)
+Substituting (
+38
+) into (
+30
+) and then into (
+29
+):
+V
+π
+λ
+​
+(
+s
+)
+≥
+V
+π
+β
+​
+(
+s
+)
+−
+R
+max
+​
+(
+e
+2
+​
+ϵ
+/
+λ
+−
+1
+)
+.
+V^{\pi_{\lambda}}(s)\geq V^{\pi_{\beta}}(s)-R_{\max}\!\left(e^{2\epsilon/\lambda}-1\right).
+(39)
+When
+λ
+≥
+2
+​
+ϵ
+\lambda\geq 2\epsilon
+, we have
+2
+​
+ϵ
+/
+λ
+≤
+1
+2\epsilon/\lambda\leq 1
+, and
+e
+x
+−
+1
+≤
+2
+​
+x
+e^{x}-1\leq 2x
+for
+x
+∈
+[
+0
+,
+1
+]
+x\in[0,1]
+, giving:
+V
+π
+λ
+​
+(
+s
+)
+≥
+V
+π
+β
+​
+(
+s
+)
+−
+4
+​
+R
+max
+​
+ϵ
+λ
+.
+V^{\pi_{\lambda}}(s)\geq V^{\pi_{\beta}}(s)-\frac{4R_{\max}\,\epsilon}{\lambda}.
+(40)
+Substituting
+ϵ
+=
+σ
+​
+2
+​
+log
+⁡
+(
+2
+​
+|
+𝒜
+|
+/
+δ
+)
+\epsilon=\sigma\sqrt{2\log(2|\mathcal{A}|/\delta)}
+completes the proof.
+∎
+Appendix B
+Experiments
+B.1
+Data Distribution
+The following chart shows the rating distribution across the datasets:
+Figure 4
+:
+Distribution of ratings in all three test datasets.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

@@ -1,0 +1,2735 @@
+  
+ 
+ 
+ Libra: Efficient Resource Management for Agentic RL Post-Training 
+ 
+ 
+ 
+
+ 
+
+ 
+ 
+ 
+ 
+ 
+  
+
+ 
+ 
+ 
+   
+     
+       Report GitHub Issue 
+       × 
+     
+
+     
+       Title: 
+       
+
+       Content selection saved. Describe the issue below: 
+
+       Description: 
+        
+     
+
+     
+       Submit without GitHub 
+       Submit in GitHub 
+     
+   
+  
+     
+     arXiv is now an independent nonprofit! 
+     Learn more 
+     × 
+   
+
+ 
+   
+      
+       Back to arXiv 
+     
+   
+   
+   
+     Why HTML? 
+     
+      
+       Report Issue  
+     
+     
+      
+       Back to Abstract 
+     
+     
+     
+      
+       Download PDF  
+     
+     
+      
+     
+     
+     
+      
+     
+     
+     
+       
+        
+       
+       
+        
+       
+       
+        
+       
+     
+   
+  
+ 
+ 
+   Abstract.   
+    1  Introduction   
+    2  Background and Motivation  
+ 
+    2.1  Disaggregated and Asynchronous RL   
+    2.2  Characteristics of Agentic RL Post-Training   
+    2.3  Opportunities   
+  
+    3  Libra Overview   
+    4  Periodic Global Resource Planner with Elastic Execution  
+ 
+    4.1  Training Side: Decision Tree-Based Parallel Strategy Enumeration   
+    4.2  Inference Side: Dynamic Programming for Optimal Heterogeneous Partitioning   
+    4.3  Hierarchical Search with Rollout Memoization   
+    4.4  Elastic Hybrid Pool  
+ 
+   Three-pool organization.   
+   Decoupled communication domains.   
+   Non-blocking joining.   
+  
+    4.5  Underlying Cost Evaluator   
+  
+    5  C-MLFQ for Heterogeneous Rollout Clusters  
+ 
+   Causality-aware prefix tree.   
+   Three-stage C-MLFQ pipeline.   
+   Migration cost and system behavior.   
+  
+    6  System Implementation   
+    7  Evaluation  
+ 
+    7.1  End-to-End Experiments   
+    7.2  Effectiveness of Causality-Aware Routing   
+    7.3  Ablation Study   
+    7.4  Overhead Analysis   
+    7.5  Cost Evaluator Fidelity   
+  
+    8  Related Work   
+    9  Conclusion   
+   References   
+    A  Offline Profile and Prefix-Tree Lifecycle  
+ 
+    A.1  Offline Profile Phase  
+ 
+   CE calibration.   
+   Prefix-tree bootstrap.   
+  
+    A.2  Tree Update and Policy-Drift Adaptation   
+    A.3  Fallback Frequency and Tree Coverage   
+  
+    B  Correctness of Non-blocking joining  
+ 
+    B.1  Aggregation Rule and Gradient Equivalence  
+ 
+   State catch-up for joining workers.   
+  
+    B.2  Optimizer State Consistency  
+ 
+   SGD without momentum.   
+   Adam and momentum-based optimizers.   
+  
+    B.3  Empirical Validation   
+  
+    C  Rational of Rollout Cluster Parallelism Design  
+ 
+    C.1  Workload Characteristics of Agentic RL Rollout   
+    C.2  Problem Orthogonality: Why TP Suffices for Long-Tail Mitigation   
+    C.3  Extensibility: How Libra Can Support PP and EP  
+ 
+   Pipeline Parallelism in rollout.   
+   Expert Parallelism in rollout.   
+  
+  
+  
+ 
+ 
+ 
+   
+    License: arXiv.org perpetual non-exclusive license
+   
+   
+arXiv:2606.03077v1 [cs.LG] 02 Jun 2026 
+  
+ 
+ Libra: Efficient Resource Management for Agentic RL Post-Training 
+    CCS:  Computer systems organization   
+ 
+ 
+ Kaiwen Chen 1 ,
+Xin Tan 1 ,
+Jingzong Li 2 ,
+Hong Xu 1 
+
+  1 The Chinese University of Hong Kong
+  2 The Hang Seng University of Hong Kong
+   
+
+  Abstract. 
+    
+ Reinforcement learning (RL) has become a standard post-training paradigm for large language models (LLMs), extending beyond preference alignment to complex reasoning and multi-turn agentic behaviors.
+In agentic RL, the rollout stage generates trajectories while invoking tools, producing long-tailed and non-stationary workloads that challenge conventional resource-management assumptions.
+Three fundamental challenges arise. First, due to the long-tail distribution, a small fraction of trajectories dominates rollout makespan. Second, rollout and training exhibit strong asymmetry in compute patterns, memory demands, and sensitivity to sequence length.
+Third, as the RL policy evolves, the trajectory-length distribution drifts over time, rendering any static resource split progressively suboptimal. 
+    
+ We present Libra, which introduces two core mechanisms.
+The first is a periodic global resource planner that jointly optimizes GPU allocation across rollout and training clusters.
+It leverages an elastic hybrid pool to enable lightweight, non-blocking worker reallocation between stages.
+The second is a causality-driven multi-level feedback queue (C-MLFQ) scheduler, which routes requests to heterogeneous rollout buckets based on causal signals derived from tool-return outcomes,
+rather than relying on fragile length predictions.
+Evaluated on 48 A800 GPUs, Libra achieves up to 3.0   ×    higher throughput and converges up to 2.5   ×    faster in reward compared to the baselines. 
+  
+ 
+ 
+ Keywords:  Agentic RL, RL post-training, Resource management
+ 
+ 
+  1.  Introduction 
+
+  
+   Figure 1 .   The agentic RL post-training pipeline and the challenges it introduce.  
+ 
+ 
+ Reinforcement learning (RL) has evolved from aligning LLMs with human preferences  ( Bai et al., 2022 ;  Ouyang et al., 2022 ;  Christiano et al., 2017 )  into a general post-training paradigm
+that now underpins complex reasoning  ( Guo et al., 2025 ;  Team et al., 2025 ;  Kumar et al., 2025 )  and agentic behavior  ( Shinn et al., 2023 ;  Jiang et al., 2025 ;  Feng et al., 2025 ;  Gou et al., 2024 ;  Yao et al., 2023a ;  Comanici et al., 2025 ) .
+Algorithmically, a standard RL iteration comprises three steps: trajectory generation (rollout), trajectory evaluation, and policy update (Figure   1  ).
+The evaluation step assigns rewards using signals from a reward model  ( Bai et al., 2022 ;  Ouyang et al., 2022 ) , rule-based verifiers  ( Guo et al., 2025 ) , or the environment  ( Jimenez et al., 2024 ) , and may additionally involve reference-model scoring or critic computation in some algorithms  ( Schulman et al., 2017 ) .
+However, these components are not universal: recent methods often remove the critic entirely  ( Shao et al., 2024 ;  Yu et al., 2025 ) , and reward or reference evaluation can be implemented in different ways without changing the system-level structure.
+From a systems perspective, the dominant bottlenecks concentrate in two stages regardless of algorithmic variation:
+rollout, where the policy model autoregressively generates trajectories and interacts with tools;
+and training, where the actor model consumes these trajectories to compute advantages and update parameters.
+The efficiency of the overall pipeline therefore depends primarily on how fast trajectories are produced and how fast they are absorbed by training. 
+ 
+ 
+ In the emerging agentic setting, the model invokes external tools,
+observes environmental feedback, and conditions future generation on the accumulated interaction history.
+This introduces three distinctive properties.
+First, trajectories are generated online rather than drawn from a dataset, so their lengths are determined at runtime.
+Second, tool invocations cause lengths to fluctuate widely: trajectory length varies substantially with tool execution outcomes, such as payload size and return status.
+Third, the trajectory-length distribution shifts continuously as the policy improves, making the workload non-stationary. 
+ 
+ 
+ These distinctive properties, combined with the inherent asymmetry between rollout and training,
+render GPU resource management a coupled cross-stage optimization problem.
+Optimizing either stage in isolation is therefore suboptimal; what is needed is a joint cross-stage optimization framework. 
+ 
+ 
+ Two fundamental challenges underlie this problem.
+The first is the cross-stage imbalance challenge. Rollout and training differ fundamentally in compute patterns,
+memory demands, and sensitivity to sequence length:
+rollout is memory- and bandwidth-bound and scales linearly with sequence length,
+whereas training is compute-bound and amortizes length variation through batching.
+Compounding this asymmetry, the trajectory-length distribution drifts continuously as the policy evolves,
+rendering any static resource allocation progressively suboptimal.
+Existing systems adopt one of two static GPU allocation strategies.
+Colocated execution, where training and rollout share the same GPUs and run alternately through the hybrid engine, is the default mode in most open-source RL frameworks  ( Sheng et al., 2025b ;  Hu et al., 2025 ;  Zhu et al., 2025 ;  Yao et al., 2023b ) .
+Static-Uniform splits the cluster evenly into two halves, one for training and one for rollout, and is used in experiments of recent disaggregated systems  ( Sheng et al., 2025a ;  Tan et al., 2026 ) .
+Both strategies, as well as any manually tuned fixed proportion, allocate GPUs statically and therefore cannot adapt to workload drift.
+Existing resource-management frameworks  ( Zheng et al., 2022 ;  Miao et al., 2022 ;  Strati et al., 2025 )  target LLM pre-training, leaving the cross-stage coupling in RL post-training entirely unaddressed. 
+ 
+ 
+ The second is the long-tail distribution challenge.
+Although most trajectories conclude within a short reasoning process, a small fraction extends considerably longer,
+and these long-tail requests dominate the rollout makespan.
+Existing systems largely mitigate this problem through length prediction.
+Methods that exploit intra-group or cross-epoch response similarity  ( Qin et al., 2025 ;  He et al., 2025 )  assume that trajectory length is largely prompt-determined,
+an assumption that breaks down in agentic RL where tool-return outcomes heavily influence length.
+While others  ( Zhang et al., 2026 ;  Zhong et al., 2025a )  relies on a pre-trained language model as a predictor;
+as the actor model evolves through RL training, the predictor’s accuracy degrades without periodic retraining. 
+ 
+ 
+ We present Libra, a resource-management system for agentic RL post-training that addresses both challenges through two core mechanisms.
+The first is a periodic global resource planner with elastic execution.
+Under a fixed GPU budget, the planner jointly optimizes GPU allocation across the rollout and training clusters to minimize iteration makespan (     T  iter   =   max  ⁡   (   T  rollout   ,   T  train   )      ).
+It employs a predictive cost model to evaluate candidate configurations and is invoked periodically to track workload evolution, triggering reallocation only when the projected gain exceeds the reconfiguration cost.
+To realize these reallocations efficiently, Libra keeps the core training topology fixed and allows hybrid workers to switch between rollout and training modes through a non-blocking protocol that avoids pausing ongoing training. 
+ 
+ 
+ The second mechanism is C-MLFQ, a causality-driven multi-level feedback queue scheduler for heterogeneous rollout clusters.
+Unlike prior work that either relies on pre-trained length predictors  ( Zhang et al., 2026 ;  Zhong et al., 2025a )  or assumes prompt-determined length similarity  ( Qin et al., 2025 ;  He et al., 2025 ) ,
+we make a key observation: in agentic RL, tool-execution outcomes that occur mid-trajectory provide deterministic causal signals for routing.
+This insight fundamentally motivates our approach. Rather than predicting length upfront, C-MLFQ exploits these causal signals to dynamically migrate requests across heterogeneous rollout buckets. 
+ 
+ 
+ We evaluate Libra on a 48-GPU cluster of NVIDIA A800s across three representative agentic RL benchmarks:
+Search-R1  ( Jin et al., 2025 ) , R2E-Gym  ( Jain et al., 2025 ) , and DAPO-Math-17K  ( Yu et al., 2025 ) .
+Libra achieves up to 3.0   ×    higher throughput and converges up to 2.5   ×    faster in reward compared to the baselines.
+On Search-R1, Libra reaches approximately 2,700 token/s, a 63% improvement over AReaL-Static-Optimal, 80% over verl-Greedy-Heuristic, and 300% over verl-Colocated.
+For reward convergence, Libra requires only 17.9 hours on Search-R1, 26.7 hours on DAPO-Math-17K, and 63.2 hours on R2E-Gym, which are up to 1.6   ×    faster than AReaL-Static-Optimal and up to 2.5   ×    faster than the verl-based baselines.
+The C-MLFQ scheduler achieves 91.1% per-decision routing accuracy, nearly matching the Oracle (100%) and significantly outperforming prediction-based (65.2%) and reactive MLFQ (44.8%) approaches. 
+ 
+ 
+ We make the following contributions: 
+ 
+  •  
+ 
+ A cross-stage joint optimization framework that treats rollout and training resource allocation as a coupled problem and periodically re-plans the global configuration as the workload drifts. 
+  
+  •  
+ 
+ A causality-aware scheduling algorithm (C-MLFQ) that exploits tool-return outcomes as fine-grained causal signals for routing requests across heterogeneous rollout buckets, avoiding the need for fragile length prediction. 
+  
+  •  
+ 
+ A comprehensive evaluation on three agentic RL benchmarks demonstrating that Libra achieves up to     3.0  ×     throughput improvement and up to     2.5  ×     faster reward convergence. 
+  
+ 
+ 
+ 
+ 
+  2.  Background and Motivation 
+
+ 
+  2.1.  Disaggregated and Asynchronous RL 
+
+ 
+ Recent advances in RL frameworks execute rollout and training in a disaggregated and asynchronous manner  ( Fu et al., 2026 ;  Wang et al., 2025b ;  Wang et al., 2025a ;  Wu et al., 2025 ) .
+Rollout is dominated by autoregressive decoding, making it primarily memory- and bandwidth-sensitive, whereas training is more compute-intensive and relies on tightly coordinated collective communication.
+To match these distinct execution characteristics, current systems provision separate GPU clusters for rollout and training and decouple the two stages in time:
+rollout workers continue generating trajectories with slightly stale weights,
+while the training cluster periodically pushes updated parameters back to the rollout side.
+This design improves pipeline utilization, but it also turns resource management into a coupled cross-stage optimization problem. 
+ 
+ 
+ 
+ 
+ 
+  
+ 
+ 
+       
+ 
+ 
+ Case  
+     
+       
+ 
+ 
+ Step  
+ 
+ Num  
+     
+       
+ 
+ 
+ Tool  
+ 
+ Tokens  
+     
+       
+ 
+ 
+ Failure  
+ 
+ Num  
+     
+       
+ 
+ 
+ Total  
+ 
+ Tokens  
+     
+       
+ 
+ 
+ Label  
+      
+ 
+       
+ 
+ 
+ django  
+ 
+ 14787  
+     
+       
+ 
+ 
+ 8  
+     
+       
+ 
+ 
+ 1,029  
+     
+       
+ 
+ 
+ 0  
+     
+       
+ 
+ 
+ 7,363  
+     
+       
+ 
+ 
+ Small  
+ 
+ Payload  
+      
+ 
+       
+ 
+ 
+ scikit-learn  
+ 
+ 11310  
+     
+       
+ 
+ 
+ 9  
+     
+       
+ 
+ 
+ 12,461  
+     
+       
+ 
+ 
+ 0  
+     
+       
+ 
+ 
+ 21,220  
+     
+       
+ 
+ 
+ Large  
+ 
+ Payload  
+      
+ 
+       
+ 
+ 
+ django  
+ 
+ 10999  
+     
+       
+ 
+ 
+ 46  
+     
+       
+ 
+ 
+ 3,962  
+     
+       
+ 
+ 
+ 3  
+     
+       
+ 
+ 
+ 40,960  
+     
+       
+ 
+ 
+ Failure  
+ 
+ Cascade  
+      
+ 
+       
+ 
+ 
+ django  
+ 
+ 16560  
+     
+       
+ 
+ 
+ 50  
+     
+       
+ 
+ 
+ 7,809  
+     
+       
+ 
+ 
+ 8  
+     
+       
+ 
+ 
+ 40,960  
+     
+       
+ 
+ 
+ Failure  
+ 
+ Cascade  
+      
+ 
+  
+   Table 1 .   Trajectory divergence across tasks in R2E-Gym, generated by Qwen3-14B.  
+   
+   
+ 
+   Figure 2 .   Tool-call count versus trajectory length in R2E-Gym, generated by Qwen3-14B.  
+   
+ 
+ 
+ 
+  2.2.  Characteristics of Agentic RL Post-Training 
+
+ 
+  Long-tailed Cost of Rollout. 
+Prior work  ( Sheng et al., 2025a ;  Qin et al., 2025 ;  Zhong et al., 2025a ;  Zhang et al., 2026 ;  Zhong et al., 2025b ;  Gao et al., 2025a )  has identified long-tail requests as a major source of rollout inefficiency,
+causing resource idleness and blocking waits.
+Although most trajectories conclude within a short reasoning process, a small fraction extends considerably longer.
+These long trajectories dominate the rollout makespan and create pronounced stragglers. 
+ 
+ 
+  Causal Drivers of Trajectory Length. 
+In agentic RL, trajectory length is causally driven by external tool invocations at runtime.
+Tool-return payload size and success/failure status are the principal causal drivers of trajectory expansion, introducing substantial runtime variability beyond the initial prompt.
+Table   1   demonstrates the causal mechanisms at the micro level.
+A lightweight payload (django-14787, 1K tool tokens) yields under 8K tokens, whereas a heavy payload (scikit-learn-11310, 12.5K tool tokens) inflates the trajectory to 21K tokens.
+Tool failures further amplify this expansion, as seen in django-10999 and django-16560, where repeated retries push total length to the 41K cap.
+Figure   2   generalizes these observations: failed trajectories cluster in the high tool-call, high-length region, and payload size tightly correlates with trajectory expansion.
+These tool outcomes thus provide fine-grained, deterministic causal signals for runtime scheduling. 
+ 
+ 
+  Strong Asymmetry Between Rollout and Training. 
+Figure   3  (a) shows that when sequence length grows from 1K to 32K tokens, rollout latency increases by 95   ×    (from 30 s to 2,850 s), whereas training time increases by only 3.9   ×    (from 135 s to 527 s).
+Rollout latency grows tremendously with sequence length due to autoregressive decoding, while training amortizes length variation through batching. 
+ 
+ 
+  Non-stationary Nature of the Workload. 
+As RL post-training proceeds, the actor model’s weights are continuously updated, strengthening its reasoning capability and altering its response patterns for the target dataset.
+Figure   3  (b) illustrates one manifestation of this drift: on our agentic RL benchmark, the average sequence length grows from    ∼   2,500 to    ∼   11,500 tokens, causing rollout time to gradually overtake training time.
+We note that the direction and magnitude of length drift are not universal—they depend on the model architecture, the RL algorithm, and the task domain (e.g., some workloads may exhibit length contraction rather than expansion).
+What is guaranteed, however, is that the trajectory-length distribution shifts as the policy evolves, so any statically chosen resource split progressively diverges from the optimal allocation. 
+ 
+ 
+ 
+  2.3.  Opportunities 
+
+ 
+  Rollout Stage Optimizations. 
+Rollout-stage efficiency in agentic RL can be improved through two complementary insights: tailoring the parallelism configuration to trajectory length, and routing requests reactively based on runtime causal signals.
+First, the sharp divergence in trajectory length motivates heterogeneous rollout configurations by exploiting the fundamental Tensor Parallelism (TP) trade-off.
+Figure   4   shows that on Qwen3-14B with 8   ×   A800 GPUs, TP1 achieves 1,852 token/s for short sequences (0k–2k) but collapses to 430 token/s at 16k–32k due to KV-cache pressure; conversely, TP8 starts at only 591 token/s for short sequences but sustains 1,220 token/s at 16k–32k, outperforming TP1 by     2.8  ×    .
+Large TP partitions the KV cache and model weights across more GPUs, mitigates memory bottlenecks, and amortizes the all-reduce overhead over heavier computation for long sequence; small TP reduces communication overheads, matching the low memory-needs
+profile of short requests.
+We focus on TP because Pipeline Parallelism (PP) can exacerbate straggler effects through pipeline bubbles under variable-length trajectories,
+and Expert Parallelism (EP) addresses expert load balancing rather than sequence-length-induced stragglers.
+Further details are provided in Appendix   C  . 
+ 
+   
+   Figure 3 .   
+(a) Average latency over different sequence lengths.
+(b) Workload drift over the course of training.
+We use Qwen3-32B-Base on A800 80GB GPUs; the rollout stage runs on 32 GPUs with TP=8 and DP=4 (batch size 512), and the training stage runs on 16 GPUs with PP=2, TP=4, and DP=2 (global batch size 4096, mini-batch size 16) on AIME  ( MAA, 2025 ) .
+  
+ 
+ 
+ Second, heterogeneous configurations alone are insufficient without a mechanism to route requests to the appropriate TP bucket: a long trajectory landing on a small-TP instance faces memory pressure,
+while a short trajectory on a large-TP instance leads to a high communication-computation ratio.
+We therefore exploit causal signals for reactive scheduling—a trajectory encountering a heavy payload or a tool-execution failure can be promoted to a larger TP configuration,
+while one with lightweight tool returns may remain on its current setup. 
+ 
+ 
+  Cross-Stage Optimizations. 
+While the preceding opportunity improves rollout efficiency internally, a complementary and often overlooked opportunity lies at the boundary between stages.
+A common assumption in RL post-training is that rollout is the intrinsic bottleneck, leading systems to focus optimization on the rollout side alone while overlooking that resource allocation across stages can shift the bottleneck itself.
+The end-to-end iteration time follows      T  iter   =   max  ⁡   (   T  rollout   ,   T  train   )      , meaning the bottleneck is simply the slower of the two stages under the current GPU allocation—not a fixed property of rollout.
+This exposes a clear opportunity: by dynamically reallocating GPUs from the faster stage to the slower one, the system can mitigate the bottleneck and reduce the overall iteration time.
+Yet this optimal allocation is not static: because the workload is non-stationary, the balance point drifts over time.
+A system that continuously tracks this drift and uses lightweight elasticity to reassign GPUs without disrupting execution can sustain higher throughput than any static allocation. 
+ 
+   
+   Figure 4 .   Average throughput across TP sizes by sequence length. Qwen3-14B on 8   ×   A800 GPUs (batch size 512) with code-execution tools on R2E-Gym  
+ 
+ 
+ 
+ 
+  3.  Libra Overview 
+
+ 
+ Libra is a resource management system designed for the disaggregated, asynchronous pipeline of agentic reinforcement learning post-training. Resource provisioning critically shapes end-to-end throughput: an imbalanced GPU allocation between the rollout and training clusters creates a large efficiency gap, leaving the slower stage as the bottleneck.
+Compounding this challenge, as RL optimization proceeds and the workload distribution evolves, the resource split that best balances the pipeline also changes over time. 
+ 
+ 
+ Libra addresses these challenges by jointly optimizing resource allocation across the rollout and training clusters and configuration choices within each cluster.
+Figure   5   shows the overall workflow of Libra, which consists of two core optimizations: 
+ 
+ 
+  (1) Periodic global resource planner with elastic execution : The planner periodically determines the optimal cross-cluster resource allocation under the current workload distribution.
+It employs a two-level nested search: the outer level enumerates the discrete parallelization strategies of the training cluster, while the inner level optimizes the heterogeneous configurations of the rollout cluster.
+Using a predictive cost model, it computes the execution time of both stages and identifies the configuration that minimizes the iteration makespan (     T  iter   =   max  ⁡   (   T  rollout   ,   T  train   )      ).
+The planner is invoked at fixed intervals (e.g., every    K    training steps) to track workload evolution, and triggers reallocation only when the projected throughput gain exceeds the reconfiguration cost.
+To realize these reallocations without global reconfiguration, Libra keeps the core training topology fixed and allows hybrid workers to switch between rollout and training modes as external data-parallel replicas,
+using decoupled communication domains and a non-blocking joining protocol that avoids pausing ongoing training. The planner and elastic execution are depicted in Figure   6  . 
+ 
+ 
+  (2) Heterogeneous rollout pool with C-MLFQ scheduling :
+To mitigate long-tail latency and improve generation efficiency, Libra instantiates the rollout cluster as a set of heterogeneous buckets, whose number and per-bucket TP configurations are derived from the planner’s output     P  rollout    .
+At runtime, the C-MLFQ (Causality-Driven Multi-Level Feedback Queue) algorithm routes requests to the appropriate bucket based on their expected generation lengths. The heterogeneous rollout cluster and C-MLFQ scheduling are illustrated in Figure   7  . 
+ 
+   System overview of Libra, showing the rollout cluster, training cluster, and elastic hybrid workers, together with the planner and scheduler that coordinate resource allocation across the RL post-training pipeline.  
+   Figure 5 .   Overview of Libra, a resource management system for agentic RL post-training.  System overview of Libra, showing the rollout cluster, training cluster, and elastic hybrid workers, together with the planner and scheduler that coordinate resource allocation across the RL post-training pipeline.  
+ 
+ 
+ 
+  4.  Periodic Global Resource Planner with Elastic Execution 
+
+ 
+ In an asynchronous RL pipeline, the iteration time is bounded by the slower stage:      T  iter   =   max  ⁡   (   T  rollout   ,   T  train   )      .
+The resource configurations of the training and rollout clusters are inherently coupled.
+Allocating more GPUs to training reduces     T  train     but leaves fewer GPUs for rollout, increasing     T  rollout     and restricting the range of viable heterogeneous TP configurations;
+symmetrically, over-provisioning the rollout cluster starves training of resources, raising     T  train     and shifting the bottleneck to training.
+Consequently, local optimization leads to stage starvation.
+To maximize end-to-end throughput under a fixed GPU budget (    N   G  ​  P  ​  U     ), the system must jointly optimize both clusters from a global perspective. 
+ 
+ 
+ Libra addresses this coupled allocation problem with a hierarchical planner that decomposes the joint search space into training strategy selection and rollout partitioning to minimize the iteration makespan.
+The training side employs a topology-aware decision tree with pruning to enumerate feasible 3D parallel strategies, reducing the candidate set from exponential size to dozens.
+The rollout side replaces exhaustive integer partitioning with a dynamic programming formulation.
+This section details these two components in turn. 
+ 
+   
+   Figure 6 .   Libra’s hierarchical resource planner with elastic execution.  
+ 
+ 
+  4.1.  Training Side: Decision Tree-Based Parallel Strategy Enumeration 
+
+ 
+ The training strategy search space    𝒮    comprises all valid     (   T  ​  P   ,   P  ​  P   ,   D  ​  P   )     factorizations of     n  train     for dense models. For MoE models, the space expands to     (   T  ​  P   ,   E  ​  P   ,   P  ​  P   ,   D  ​  P   )    , where     E  ​  P     denotes Expert Parallelism.
+A naive enumeration of this space scales exponentially in the number of divisors of     n  train    .
+Libra instead constructs a hardware-topology-aware decision tree that enumerates candidates level by level, pruning infeasible and inefficient branches at each depth.
+The tree is extensible, using three levels for dense models and four levels for MoE models, with an additional     E  ​  P     level inserted after     T  ​  P    . 
+ 
+ 
+  Decision tree structure.  The tree is rooted at     n  train     and grows through parallel-strategy levels.
+At the first level,     T  ​  P     is restricted to     {   1  ,  2  ,  4  ,  8   }    , reflecting the single-node GPU count and the NVLink connectivity domain. Branches are pruned if the per-GPU memory footprint exceeds     M  limit     or if the projected communication-to-computation ratio exceeds a configurable threshold    α   .
+For MoE models, the     E  ​  P     level enumerates expert-parallel degrees that divide the total expert count and satisfy        T  ​  P   ×  E   ​  P   ≤   n  train     . Branches are pruned if their all-to-all communication volume exceeds a configurable threshold    β   , measured relative to the compute time of the corresponding MoE layers.
+Placing     E  ​  P     before     P  ​  P     maximizes the likelihood of keeping all-to-all communication within a single node, which is critical for MoE performance.
+At the next level,     P  ​  P     candidates are integers satisfying        T  ​  P   ×  P   ​  P   ≤   n  train      for dense models, or          T  ​  P   ×  E   ​  P   ×  P   ​  P   ≤   n  train      for MoE models. Branches are pruned if their pipeline bubble ratio       P  ​  P   −  1      P  ​  P   +  m   −  1     , where    m    denotes the number of micro-batches, exceeds a configurable threshold (e.g., 30%).
+At the final level,      D  ​  P   =    n  train   /   (     T  ​  P   ×  P   ​  P   )       for dense models, or      D  ​  P   =    n  train   /   (       T  ​  P   ×  E   ​  P   ×  P   ​  P   )       for MoE models. A path is valid only when this division yields an integer.
+Each root-to-leaf path defines a complete training strategy     s  train    . Libra evaluates      T  train   ​   (   s  train   )      for every surviving strategy. 
+ 
+ 
+ 
+  4.2.  Inference Side: Dynamic Programming for Optimal Heterogeneous Partitioning 
+
+ 
+ Given     n  rollout     GPUs and a total workload of    L    samples, the rollout subproblem partitions the GPUs into heterogeneous inference instances, each with a tensor-parallel degree      t  ​  p   ∈  𝒯     (where     𝒯  =   {   1  ,  2  ,  4  ,  8   }     ), and assigns a subset of the workload to each instance.
+The objective is to minimize the makespan, i.e., the maximum completion time across all instances.
+This problem exhibits optimal substructure and admits an efficient dynamic-programming solution, eliminating the need for brute-force enumeration over integer partitions. 
+ 
+ 
+  Cost interface.  The underlying cost evaluator provides a function     Cost  ​   (   t  ​  p   ,  a  ,  b  )      that returns the minimum time for a single inference instance with tensor parallelism     t  ​  p     to process the contiguous segment of requests indexed from    a    to    b    in the sorted list (with      Cost  ​   (   t  ​  p   ,  a  ,  b  )    =  0     when     a  >  b    ).
+This function internally accounts for maximum batch size limits, dynamic pipeline bubbles, and variable-length sequences, encapsulating all low-level execution complexity. 
+ 
+ 
+  DP formulation and solving procedure. 
+Prior to the DP, all    L    requests are sorted by their generation length in non-decreasing order and indexed     1  ,  2  ,  …  ,  L    .
+The DP constructs a heterogeneous partition by incrementally adding inference instances.
+Each instance is characterized by a configuration     (   t  ​  p   ,  x  )    , where      t  ​  p   ∈  𝒯     is its tensor-parallel degree and    x    is the number of samples it serves.
+Because different instances may take different     t  ​  p     values, the resulting GPU partition forms a  heterogeneous TP group .
+The DP enumerates all possible ways to append one such instance to an already-optimal sub-partition for the remaining GPUs and the remaining prefix of sorted samples,
+exploiting optimal substructure to solve the global makespan-minimization problem. 
+ 
+ 
+ Concretely, let     d  ​  p  ​   [  g  ]   ​   [  i  ]      denote the minimum achievable makespan when using exactly    g    GPUs to serve the first    i    requests in the sorted list.
+We initialize      d  ​  p  ​   [  0  ]   ​   [  0  ]    =  0     and set      d  ​  p  ​   [  g  ]   ​   [  i  ]    =   +  ∞      for all other states.
+The state transition is: 
+ 
+
+  
+  
+     d  ​  p  ​   [  g  ]   ​   [  i  ]      
+       =    min        t  ​  p   ∈  𝒯   ,    t  ​  p   ≤  g         0  ≤  x  ≤  i       ⁡   max  ⁡   (   d  ​  p  ​   [   g  −   t  ​  p    ]   ​   [   i  −  x   ]    ,   Cost  ​   (   t  ​  p   ,    i  −  x   +  1   ,  i  )    )        
+    
+ 
+ The transition considers the last added instance with configuration     (   t  ​  p   ,  x  )    : it consumes     t  ​  p     GPUs, processes the contiguous segment of requests indexed      i  −  x   +  1     through    i    in the sorted list, and contributes     Cost  ​   (   t  ​  p   ,    i  −  x   +  1   ,  i  )      to the overall makespan.
+The inner    max    captures the bottleneck instance time, while the outer    min    selects the best partition.
+The optimal rollout time is      T  rollout  ∗   =   d  ​  p  ​   [   n  rollout   ]   ​   [  L  ]      , and the optimal partition     P  rollout  ∗     is recovered by backtracking from this state. 
+ 
+ 
+  Sample ordering by generation length. 
+Generation length affects the optimal partition because large-    t  ​  p     instances better accommodate long sequences, whereas small-    t  ​  p     instances are more efficient for short sequences.
+Sorting the requests by generation length  before  the DP traversal is essential for correctness: the DP state tracks how many requests from the sorted prefix have already been assigned,
+so every instance must receive a contiguous segment of the sorted list.
+Consequently, the DP naturally dispatches shorter requests to smaller-    t  ​  p     instances and longer requests to larger-    t  ​  p     instances, making the length-to-TP matching both correct and effective. 
+ 
+ 
+  Length profiling. 
+The generation length of each prompt is drawn from historical rollout data.
+Prior to training, an initial profiling run establishes a baseline length for every prompt.
+Whenever a new rollout completes for a prompt, its stored length is updated with the latest observation, allowing the planner to adapt to distribution shifts over time. 
+ 
+ 
+  Complexity reduction.  The state space has size     O  ⁡   (    n  rollout   ⋅  L   )     .
+A naive transition enumeration over all     t  ​  p     and    x    would yield     O  ⁡   (    n  rollout   ⋅   L  2   ⋅   |  𝒯  |    )      complexity.
+This pseudo-polynomial complexity is still substantially smaller than exhaustive enumeration over all integer partitions of     n  rollout    , the partition function     p  ⁡   (   n  rollout   )      grows rapidly (e.g.,      p  ⁡   (  64  )    ≈   1.7  ×   10  6      ).
+In practice, the rollout subproblem remains tractable because     |  𝒯  |     is small and each rollout DP result is memoized for reuse by outer-loop states with the same rollout budget. 
+ 
+ 
+ 
+  4.3.  Hierarchical Search with Rollout Memoization 
+
+ 
+ Algorithm   1   integrates the two subproblem solvers into a global nested search.
+The outer loop iterates over feasible values of     n  train     (e.g.,    1    to     N   G  ​  P  ​  U     ) and invokes the decision tree to obtain the set of valid training strategies     𝒮  cand     for each budget, yielding the optimal training time       min   s  ∈   𝒮  cand     ⁡   T  train    ​   (  s  )     .
+The rollout DP is invoked once per distinct      n  rollout   =    N   G  ​  P  ​  U    −   n  train       and its result is memoized in  MemoRollout .
+Because different outer-loop states that share the same rollout budget reuse the memoized result, the planner avoids redundant DP executions and remains efficient even at large cluster scales.
+In Algorithm   1  ,  CE  denotes the cost evaluator, which provides the estimated training and rollout times used by the planner; its design is detailed in §  4.5  . 
+ 
+ 
+   Algorithm 1    Hierarchical Auto-Parallel Planner with DP 
+ 
+ 
+                1:  
+              
+              
+             def   resourcePlanner(     N   G  ​  P  ​  U      ,     L    ,      M   l  ​  i  ​  m  ​  i  ​  t      ,     𝒯    ,   CE  ):
+ 
+ 
+ 
+                2:  
+              
+              
+                    T  iter  ∗   =  ∞     
+ 
+ 
+ 
+                3:  
+              
+              
+                   MemoRollout  =  ∅     
+ 
+ 
+ 
+                4:  
+              
+              
+                for         n  train   =  1        to        N   G  ​  P  ​  U         do  
+ 
+ 
+ 
+                5:  
+              
+              
+                     𝒮  cand   =   DecisionTreeSearch  ​   (   n  train   ,   M   l  ​  i  ​  m  ​  i  ​  t    ,  CE  )       
+ 
+ 
+ 
+                6:  
+              
+              
+                 if         𝒮  cand   =  ∅        then continue  
+ 
+ 
+ 
+                7:  
+              
+              
+                      s  best   =     arg  ​  min    s  ∈   𝒮  cand     ⁡  CE    .   TrainTime  ​   (  s  )       
+ 
+ 
+ 
+                8:  
+              
+              
+                      T  train   =  CE   .   TrainTime  ​   (   s  best   )       
+ 
+ 
+ 
+                9:  
+              
+              
+                     n  rollout   =    N   G  ​  P  ​  U    −   n  train       
+ 
+ 
+ 
+                10:  
+              
+              
+                 if         n  rollout   ∉  MemoRollout        then  
+ 
+ 
+ 
+                11:  
+              
+              
+                      MemoRollout  ​   [   n  rollout   ]    =   RolloutDP  ​   (   n  rollout   ,  L  ,  𝒯  ,  CE  )       
+ 
+ 
+ 
+                12:  
+              
+              
+                     T  rollout   =   MemoRollout  ​   [   n  rollout   ]       
+ 
+ 
+ 
+                13:  
+              
+              
+                     T  max   =   max  ⁡   (   T  train   ,   T  rollout   )       
+ 
+ 
+ 
+                14:  
+              
+              
+                 if         T  max   <   T  iter  ∗         then  
+ 
+ 
+ 
+                15:  
+              
+              
+                      T  iter  ∗   =   T  max      , record      (   n  train   ,   s  best   )     
+ 
+ 
+ 
+                16:  
+              
+              
+                return   optimal config
+ 
+ 
+ 
+                17:  
+              
+              
+            
+ 
+ 
+                18:  
+              
+              
+             def   RolloutDP(     n  rollout     ,     L    ,     𝒯    ,   CE  ):
+ 
+ 
+ 
+                19:  
+              
+              
+              Sort requests by length; let indices be      1  ​  …  ​  L     
+ 
+ 
+ 
+                20:  
+              
+              
+              Init       d  ​  p  ​   [  g  ]   ​   [  i  ]    =   +  ∞       for       0  ≤  g  ≤   n  rollout    ,   0  ≤  i  ≤  L      
+ 
+ 
+ 
+                21:  
+              
+              
+                    d  ​  p  ​   [  0  ]   ​   [  0  ]    =  0     
+ 
+ 
+ 
+                22:  
+              
+              
+                for        g  =  1        to        n  rollout        do  
+ 
+ 
+ 
+                23:  
+              
+              
+                 for        i  =  0        to       L       do  
+ 
+ 
+ 
+                24:  
+              
+              
+                  for         t  ​  p   ∈  𝒯        with         t  ​  p   ≤  g        do  
+ 
+ 
+ 
+                25:  
+              
+              
+                   for        x  =  0        to       i       do  
+ 
+ 
+ 
+                26:  
+              
+              
+                         t  inst   =  CE   .   RolloutTime  ​   (   t  ​  p   ,    i  −  x   +  1   ,  i  )       
+ 
+ 
+ 
+                27:  
+              
+              
+                        t  cand   =   max  ⁡   (   d  ​  p  ​   [   g  −   t  ​  p    ]   ​   [   i  −  x   ]    ,   t  inst   )       
+ 
+ 
+ 
+                28:  
+              
+              
+                        d  ​  p  ​   [  g  ]   ​   [  i  ]    =   min  ⁡   (   d  ​  p  ​   [  g  ]   ​   [  i  ]    ,   t  cand   )       
+ 
+ 
+ 
+                29:  
+              
+              
+                return        d  ​  p  ​   [   n  rollout   ]   ​   [  L  ]      
+ 
+ 
+ 
+ 
+ 
+ The planner is invoked periodically (e.g., every    K    training iterations) rather than once at initialization.
+The workload    L    is continuously updated as prompts are revisited during rollout; at each invocation, the planner reads the latest statistics and computes the new optimal configuration.
+If the projected throughput gain exceeds the reconfiguration cost, Libra triggers a resource reallocation. 
+ 
+ 
+ Realizing these reallocations, however, requires bridging a gap between planning and execution: in conventional frameworks  ( , 2025 ;  Paszke et al., 2019 ) , adding or removing training workers forces a global communicator rebuild and state redistribution, making frequent reallocation impractical. 
+ 
+ 
+ 
+  4.4.  Elastic Hybrid Pool 
+
+ 
+ Libra’s insight is that resource elasticity need not be a global reconfiguration event.
+If the training topology is kept strictly immutable and workers enter or exit only as complete, unsharded data-parallel replicas, they can participate as  external  members rather than  internal  collective ranks. 
+ 
+ 
+ Three-pool organization. 
+
+ 
+ To materialize these principles, Libra partitions the cluster into a Core Training Pool, a Core Rollout Pool, and an Elastic Hybrid Pool.
+The two core pools provide stable capacity for the dominant workload modes.
+The Core Training Pool performs synchronized weight updates and maintains static data-, tensor-, and pipeline-parallel groups.
+The Core Rollout Pool handles trajectory generation with the heterogeneous TP configurations determined by the planner.
+The Elastic Hybrid Pool provides fast-response capacity for resource reallocation.
+When rollout becomes the bottleneck, Hybrid workers switch to rollout mode to expand generation throughput.
+Conversely, when training becomes the bottleneck, they rejoin training as additional DP replicas.
+Because each Hybrid worker holds a complete, unsharded copy of model weights and optimizer states, its addition or removal does not reshape the tensor- or pipeline-parallel topology of the core training cluster.
+Importantly, the Elastic Hybrid Pool need not be fully reserved in advance:
+because rollout instances are stateless, Libra can temporarily borrow workers from the Core Rollout Pool, convert them into Hybrid workers, and later return them with low transition cost.
+This mechanism covers transient training-side shortages without perturbing the core training topology.
+Rollout-side shortages are handled even more cheaply by switching existing Hybrid workers into rollout mode.
+If RL optimization induces a persistent demand shift, Libra can rebuild the core partition itself;
+such rebuilds are infrequent, because short-term imbalances are absorbed by the Elastic Hybrid Pool and large repartitioning can be deferred to slack periods—intervals in which training is already stalled waiting for fresh rollout data, which naturally serve as reconfiguration windows. 
+ 
+ 
+ 
+ Decoupled communication domains. 
+
+ 
+ Building on non-blocking fault-tolerant training  ( Salpekar et al., 2026 ) , Libra eliminates the coupling between Hybrid workers and the Core Training Pool by establishing physically separate communication domains: the Core Training Pool maintains a fixed collective group that is never rebuilt, while the Hybrid Pool forms independent, transient groups.
+Cross-pool gradient exchange is moved off the critical path of the training collective schedule.
+When a Hybrid worker computes gradients, it routes them to the corresponding core training rank through an asynchronous side channel that bypasses the training All-Reduce.
+The core training rank accumulates these external gradients into its local backward pass independently of its own collective operations.
+By ensuring that the Hybrid Pool’s membership changes are invisible to the Core Training Pool’s fixed communication schedule, Libra preserves topology immutability without sacrificing gradient consistency. 
+ 
+ 
+ 
+ Non-blocking joining. 
+
+ 
+ Transitioning a Hybrid worker from rollout back to training requires reloading model and optimizer states.
+If the active training cluster were to pause and wait for this restoration, it would suffer from severe synchronization overhead.
+Libra avoids this pause through a non-blocking joining protocol inspired by non-blocking fault-tolerant training  ( Salpekar et al., 2026 ) .
+At the end of each training step, active training workers asynchronously capture a snapshot of their current weights and optimizer states.
+When a Hybrid worker transitions back to training, it fetches this snapshot and rejoins as a DP replica.
+During the restoration window, the active training cluster advances to the next step without waiting. 
+ 
+ 
+ Crucially, the joining worker does not directly join the core training pool’s All-Reduce collective.
+Instead, it routes its gradient to the corresponding core training rank through the asynchronous side channel described above.
+During recovery, this gradient is a zero placeholder.
+Because the core rank accumulates the external gradient into its local backward pass, a zero placeholder leaves the core rank’s local gradient unchanged.
+Consequently, the intra-core All-Reduce produces exactly the same averaged gradient as training without the recovering worker, preserving mathematical equivalence (Appendix   B  ).
+Once the snapshot is loaded, the joining worker’s parameters and optimizer state are overwritten by the snapshot, attaining identical state to the rest of the cluster without requiring iteration replay or global synchronization. 
+ 
+ 
+ 
+ 
+  4.5.  Underlying Cost Evaluator 
+
+ 
+ The planner relies on an accurate cost evaluator (CE) to provide     CE  .   TrainTime  ​   (  s  )       and     CE  .   RolloutTime  ​   (   t  ​  p   ,  a  ,  b  )      .
+However, existing simulators are ill-suited for RL post-training because the highly variable length of generated sequences causes severe workload imbalance.
+Inference simulators (e.g., Vidur  ( Agrawal et al., 2024 ) ) emphasize general request serving and model operator execution via black-box estimation, which lacks the generalization capability needed for the extreme length variations in RL generation.
+Training simulators (e.g., Sailor  ( Strati et al., 2025 ) , Galvatron  ( Miao et al., 2022 ) ) rely on a steady-state assumption,
+calculating a static pipeline beat based on uniform micro-batch lengths.
+This simplification misses the dynamic pipeline bubbles where downstream stages are forced to idle while waiting for the completion of a micro-batch containing long-tail sequences. 
+ 
+ 
+ To accurately reflect the physical execution complexity in RL post-training scenarios, Libra’s cost evaluator inherits mechanisms from existing simulators and modifies them to support dynamic length distributions. 
+ 
+ 
+ For the rollout phase, Libra inherits profiling-guided, operator-triaged runtime prediction from Vidur  ( Agrawal et al., 2024 ) .
+However, it replaces Vidur’s random forest estimators with polynomial fitting—    O  ⁡   (  L  )      for Linear operators and     O  ⁡   (   L  2   )      for Attention operators.
+This replacement is necessary because polynomial functions provide stronger physical interpretability and robust generalization for the extreme sequence length variations in RL generation.
+Specifically, it formulates the execution time of each layer and stage as a direct function of the sequence length    L   ,
+such as       T  Attn   ​   (  L  )    =    γ  ⋅   L  2    +   η  ⋅  L   +  θ     , rather than relying on black-box predictions like random forests.
+The     CE  .   RolloutTime  ​   (   t  ​  p   ,  a  ,  b  )       interface used by the DP internally invokes these per-operator models, aggregates them across layers and pipeline stages, and accounts for batching effects and dynamic load imbalance across the assigned segment of samples. 
+ 
+ 
+ For the training phase, Libra inherits the execution graph simulation (e.g., 1F1B pipeline parallelism) and iteration time prediction framework from Sailor  ( Strati et al., 2025 ) .
+The primary modification is abandoning Sailor’s steady-state assumption in favor of micro-bubble capture.
+This shift is required because the heterogeneous length distribution creates misaligned computational loads across micro-batches,
+meaning a uniform steady-state beat simply does not exist.
+Instead of multiplying a bottleneck stage duration by the number of micro-batches, Libra explicitly calculates the start and finish times for each micro-batch at each pipeline stage, taking into account data arrival and hardware availability.
+This non-uniform simulation accurately captures the bottleneck drift and accumulated micro-bubbles caused by length mismatch. 
+ 
+ 
+ 
+ 
+  5.  C-MLFQ for Heterogeneous Rollout Clusters 
+
+ 
+ As motivated in Section   2.3  , Libra instantiates the rollout cluster as a set of heterogeneous buckets     ℬ  =   {    B  1   ,   B  2   ,  …  ,   B  m    }      ordered by increasing compute capacity,
+where each bucket contains inference instances with a distinct TP configuration determined by the planner’s rollout partition     P  rollout    .
+Given these planner-provisioned buckets, C-MLFQ serves as the runtime scheduling policy that maps individual requests to buckets based on the causal state revealed by tool execution, rather than relying on fragile predictions made at     T  =  0     (Section   2.3  ). 
+ 
+ 
+ Causality-aware prefix tree. 
+
+ 
+ To turn this causal intuition into a routing decision, Libra builds a lightweight prefix-tree (trie) structure from historical trajectories.
+Each node in the tree represents a unique prefix of the tool-call history, keyed by the ordered sequence of return states from all prior tool interactions.
+An edge corresponds to invoking a specific tool type and receiving its abstracted return state, which encodes the payload characteristics (e.g., size class) and the execution outcome (e.g., success or failure).
+Formally, a node at depth    k    records the sequence of    k    return states observed so far: 
+ 
+
+  
+  (1)  
+  
+       𝒯  ⁡   [  prompt_id  ]    ​   [    s  1   ,   s  2   ,  …  ,   s  k    ]    ,     
+    
+ 
+ where each     s  i     denotes the composite state of the    i   -th tool call,
+comprising the tool type invoked as well as its return attributes such as payload size ( SizeSmall ,  SizeLarge ) and execution status ( ToolSuccess ,  ToolFailure ), derived from the environment response.
+Every node stores offline statistics on the remaining trajectory length distribution from that point onward for confidence estimation.
+Libra builds the tree offline from trajectory logs (Appendix   A   details the offline profile phase).
+For each historical trace, it walks down the tree following the trace’s return-state sequence.
+At every visited node, it records the remaining length from that node to the end of the trajectory.
+Consequently, a runtime lookup returns the full residual length directly, rather than an incremental local prediction. 
+ 
+   
+   Figure 7 .   Libra’s Heterogeneous Rollout Cluster with C-MLFQ Scheduling.  
+ 
+ 
+ 
+ Three-stage C-MLFQ pipeline. 
+
+ 
+ C-MLFQ uses the prefix tree to route requests through three phases. 
+ 
+ 
+  Phase 1: Initial placement. 
+Before the first tool call, all trajectories are placed in the shortest bucket.
+Because the initial prompt and early reasoning contents typically occupy limited context,
+assigning every request to a high-TP instance would reduce cluster-wide utilization. 
+ 
+ 
+  Phase 2: Per-tool-return routing. 
+When the model emits a tool-call token, Libra pauses decoding, offloads the request from the GPU, and waits for the external environment to execute the tool asynchronously.
+After the tool returns, the scheduler extracts the return-state label and walks down the prefix tree from the current node.
+At the reached node, it reads the pre-computed mean and P90 of the remaining length.
+To ensure robustness, C-MLFQ migrates a request only when both statistics agree—i.e., the mean and the P90 fall into the same bucket.
+This conservative rule avoids premature migration driven by outlier histories.
+If the walk reaches an unseen node, the scheduler safely falls back to the parent node’s statistics;
+if the statistics still disagree, the request stays in its current bucket until the next tool return provides deeper causal evidence. 
+ 
+ 
+  Phase 3: Tree update. 
+
+Libra updates the tree offline by inserting each trace along its return-state sequence (Appendix   A.2  ).
+Starting from the root, it creates child nodes for unseen states as needed.
+For every visited node, it records how many tokens remain from that node to the end of the trajectory.
+Thus each node stores the total remaining length, not a local increment, and a runtime lookup yields the full future length directly. 
+ 
+ 
+ This design yields three advantages.
+First, zero online inference cost: the routing decision is far cheaper than model-based prediction.
+Second, natural adaption to policy drift: when RL optimization shifts the trajectory distribution,
+Libra only needs to rebuild the tree offline instead of retraining a prediction model;
+Third, earlier and decisive migration: whereas traditional MLFQ upgrades a request only after its length crosses a threshold,
+C-MLFQ makes a routing decision immediately upon each tool return, often migrating a request to its final bucket in a single step rather than through gradual promotion. 
+ 
+ 
+ 
+ Migration cost and system behavior. 
+
+ 
+ Libra migrates a request across buckets in three steps, each of which incurs at most negligible overhead. 
+ 
+ 
+  Step 1: KV-cache offload during tool execution. 
+When the model emits a tool-call token, the source GPUs offload the request’s KV cache to CPU pinned memory through PCIe.
+This offload is not migration-specific: it is standard practice in production inference systems to offload a paused request’s KV cache to CPU memory so that concurrent decoding requests can proceed efficiently.Libra performs the same offload whether the request will later migrate or resume in place, so the PCIe transfer time is entirely masked by the asynchronous tool I/O and never appears on the scheduling critical path. 
+ 
+ 
+  Step 2: CPU-side resharding. 
+While the KV cache resides in CPU memory, Libra reshards it along the attention-head dimension to match the target bucket’s TP configuration.
+If the target TP is larger (     TP  target   >   TP  source     ), each source partition is split into      TP  target    TP  source      shards;
+if the target TP is smaller, every      TP  source    TP  target      contiguous partitions are concatenated into one.
+Both operations are pure CPU memory rearrangements with no data movement across buses, so their latency is negligible. 
+ 
+ 
+  Step 3: GPU reload at tool return. 
+When the tool result returns and the target bucket is determined, each target GPU loads its own shard from CPU memory and resumes decoding.
+If the source and target buckets reside on the same node, the reload latency is essentially identical whether the request moves to another GPU or returns to the same one. 
+ 
+ 
+ For cross-node migration, the KV cache must traverse the inter-node network before decoding can resume.
+Libra therefore compares the end-to-end cost of transferring the KV cache against the cost of recomputing it from scratch on the target bucket.
+This comparison accounts for the full migration pipeline: PCIe staging, CPU-side resharding, network transfer, and target-GPU reload.
+Libra builds the decision on empirically measured latency profiles.
+Offline micro-benchmarks characterize the migration latency (including all staging overheads)
+and the recomputation prefill latency for each target TP configuration across
+the relevant range of prefix lengths.
+At runtime, Libra queries this profile to select the cheaper path for each request.
+As shown in   7.4  , the measured end-to-end migration latency stays below 733 ms even at 40K-token prefixes,
+and the crossover point where recomputation becomes cheaper falls around 4K tokens for typical configurations. 
+ 
+ 
+ 
+ 
+  6.  System Implementation 
+
+ 
+ Libra is implemented in approximately 13,000 lines of Python and C++/CUDA code.
+The system is built on top of VeRL  ( Sheng et al., 2025b )  for the core RL training loop, specifically vLLM  ( Kwon et al., 2023 )  for generation and Megatron-LM  ( , 2025 )  for training.
+We further describe the implementation of some of the unique aspects of Libra. 
+ 
+ 
+  Decoupled communication domains. 
+To enable elastic execution, Libra separates control plane and data plane in cross-replica gradient exchange.
+The CPU manages all complex control logic: adding/removing replicas,
+RDMA connection re-establishment, timeout handling, and congestion control via fixed-size chunk pipelining (16 MB chunks).
+The GPU only executes data copy and reduction kernels using a ring algorithm (ReduceScatter + AllGather).
+This hybrid design allows us to reconfigure communication groups without restarting core training cluster.
+The CPU thread coordinates with a consensus service to detect failures and determine the active replica set;
+then it updates RDMA send/receive buffers accordingly.
+Meanwhile, the GPU stream busy-polls a host-pinned flag—when data arrives,
+it performs in-GPU reduction.
+The kernel is optimized to use only 2 SMs (vs. NCCL’s 4) by exploiting instruction-level parallelism and register reduction, achieving comparable bandwidth while avoiding contention with computation. 
+ 
+ 
+  Non-blocking rejoin. 
+Elastic workers fetch the latest checkpoint directly from the core training cluster via a load-balanced P2P HTTP protocol,
+which runs over CPU memory and does not interfere with GPU high-speed network.
+While fetching, the core training cluster continues training.
+To rejoin without stalling, Libra leverages a zero-gradient trick:
+the recovering replica sends a zero gradient through its side channel to the corresponding core rank instead of its computed one.
+Because the core rank’s local gradient is unchanged by this zero placeholder, the subsequent intra-core All-Reduce remains mathematically equivalent to training without the recovering replica.
+Once the snapshot is loaded, all replicas resume from identical parameter and optimizer states. 
+ 
+ 
+ 
+  7.  Evaluation 
+
+   End-to-end training performance on three benchmarks.  
+   Figure 8 .   End-to-end training performance on three benchmarks. Each column shows throughput (left) and reward convergence (right) for one workload.  End-to-end training performance on three benchmarks.  
+ 
+ 
+  Setup. 
+We deploy Libra on a cluster of 48 NVIDIA A800-SXM4-80GB GPUs (six nodes, eight GPUs per node).
+Each node is connected via NVLink (with NVSwitch), delivering a bidirectional GPU-to-GPU bandwidth of 600 GB/s.
+Inter-node communication uses a 200 Gb/s RoCE (RDMA over Converged Ethernet) fabric with GPUDirect RDMA enabled.
+All end-to-end experiments use the GRPO algorithm, a maximum model length of 40960 tokens, and 16 samples per prompt.
+While our evaluation focuses on GRPO, Libra is algorithm-agnostic and can be extended to other RL algorithms such as PPO ( Schulman et al., 2017 ) . 
+ 
+ 
+  Models. 
+We conduct experiments on two widely adopted open-weight models: Qwen3-14B and Qwen3-30B-A3B (30B total parameters with 3B activated per token, a Mixture-of-Experts architecture)  ( Yang et al., 2025 ) . 
+ 
+ 
+  Baseline. 
+We compare Libra against four baselines.
+The three verl-based baselines are implemented on top of verl  ( Sheng et al., 2025b ) , the dominant open-source RL training framework for LLMs.
+They represent common methods of manually determining resource allocation schemes. 
+ 
+  •  
+ 
+  verl-Colocated  replicates the widely used execution mode adopted by almost all existing RL frameworks  ( Sheng et al., 2025b ;  Wang et al., 2025b ;  Zhu et al., 2025 ;  Hu et al., 2025 ;  Yao et al., 2023b ) .
+In this mode, training and rollout share the same set of GPUs and execute alternately through the hybrid engine without any explicit resource partitioning. 
+  
+  •  
+ 
+  verl-Static-Uniform  evenly splits the cluster into two halves: one for training and one for rollout.
+This configuration is adopted in a subset of experiments by recent disaggregated RL systems  ( Sheng et al., 2025a ;  Tan et al., 2026 ) . 
+  
+  •  
+ 
+  verl-Greedy-Heuristic  follows a two-rule heuristic: (1) minimize training resources while satisfying memory, global batch-size, and power-of-two parallelism constraints, thereby leaving as many GPUs as possible for rollout;
+(2) allocate the remaining GPUs to rollout instances by prioritizing high-TP configurations for long sequences to maximize per-instance throughput. 
+  
+  •  
+ 
+  AReaL-Static-Optimal  represents AReaL  ( Fu et al., 2026 ;  Mei et al., 2025 )  with the best static allocation identified by Libra’s cost evaluator (§  4.5  ).
+We enumerate all feasible GPU splits and parallelism configurations for AReaL and select the one that minimizes the estimated iteration makespan     max  ⁡   (   T  rollout   ,   T  train   )      under the initial workload distribution.
+The allocation is fixed for the entire training run, it cannot react to workload drift. 
+  
+ 
+  Workloads. 
+We evaluate Libra on three representative agentic RL benchmarks that span diverse domains and tool-use patterns. 
+ 
+  •  
+ 
+  Search-R1   ( Jin et al., 2025 )  is an information-retrieval benchmark in which the LLM learns to autonomously generate search queries during step-by-step reasoning and retrieve real-time external knowledge through a search-engine API.
+It features multi-turn search interactions and long reasoning trajectories with variable sequence lengths. 
+  
+  •  
+ 
+  R2E-Gym   ( Jain et al., 2025 )  is a large-scale executable environment for training software-engineering agents, comprising over 8.1K problems across real-world repositories.
+Agents interact with code-execution tools (e.g., Bash and Python interpreters) to navigate file systems, edit code, and verify patches. 
+  
+  •  
+ 
+  DAPO-Math-17K   ( Yu et al., 2025 )  is a mathematical reasoning dataset of 17K competition-level problems, each with a single integer answer. 
+  
+ 
+ 
+ 
+  7.1.  End-to-End Experiments 
+
+ 
+ Figure   8   compares Libra against four baselines across all benchmarks.
+Each column presents one workload; the left panel plots throughput (tokens/s) versus training step, and the right panel plots task reward versus wall-clock time. 
+ 
+ 
+  Throughput. 
+Libra consistently achieves the highest average throughput across all three workloads.
+On Search-R1, average throughput reaches    ∼   2,700 token/s, which is    ∼   63% higher than AReaL-Static-Optimal(   ∼   1,660 token/s), 80% higher than verl-Greedy-Heuristic(   ∼   1,500 token/s), and 300% higher than verl-Colocated(   ∼   680 token/s).
+The gap is similarly pronounced on DAPO-Math-17K (   ∼   60% over AReaL-Static-Optimal,    ∼   40% over verl-Greedy-Heuristic, and    ∼   200% over verl-Colocated) and R2E-Gym (   ∼   49% over AReaL-Static-Optimal,    ∼   83% over verl-Greedy-Heuristic, and    ∼   209% over verl-Colocated). 
+ 
+ 
+  Reward convergence. 
+Because all methods train the same model for the same number of steps, they reach comparable final rewards.
+The key difference is the wall-clock time required to get there.
+Libra finishes first on every benchmark:
+17.9 hours on Search-R1 (   ∼       1.6  ×     faster than AReaL-Static-Optimal and    ∼       2.5  ×     faster than verl-Static-Uniform),
+26.7 hours on DAPO-Math-17K (   ∼       1.6  ×     faster than AReaL-Static-Optimal and    ∼       1.4  ×     faster than verl-Greedy-Heuristic),
+and 63.2 hours on R2E-Gym (   ∼       1.5  ×     faster than AReaL-Static-Optimal and    ∼       1.85  ×     faster than verl-Greedy-Heuristic).
+The red dot on each reward curve marks Libra’s termination point, visually emphasising its shortest time-to-target. 
+ 
+ 
+ 
+  7.2.  Effectiveness of Causality-Aware Routing 
+
+ 
+ To isolate the impact of routing quality, we compare Libra’s C-MLFQ scheduler against four alternatives on the Search-R1 workload with the same heterogeneous bucket configuration.
+ Oracle  routes each request using the ground-truth remaining sequence length known at runtime; it represents an unattainable upper bound since the true length is unavailable in advance.
+ Prediction-Based  employs the embedding-based length predictor from   ( Shahout et al., 2025 ) , which estimates sequence lengths from hidden-state embeddings.
+Under RL training, however, the LLM is continuously updated, causing the predictor’s embeddings to drift and accuracy to degrade without periodic retraining.
+ MLFQ  adopts a reactive policy that migrates a request only after its length exceeds the current bucket’s upper bound, inevitably incurring late and frequent migrations.
+ Load Balancing  distributes requests uniformly across buckets, ignoring sequence length. 
+ 
+ 
+ Table   2   reports per-decision routing accuracy, migration ratio, and system throughput, while Figure   9   traces throughput evolution across training steps.
+C-MLFQ achieves 91.1% per-decision accuracy, closing most of the gap to the Oracle (100%) and substantially outperforming Prediction-Based (65.2%), MLFQ (44.8%), and Load Balancing (31.2%). This accuracy advantage directly translates into system throughput: Libra delivers 2,848 tokens/s, outperforming Prediction-Based, MLFQ, and Load Balancing by 19%, 49%, and 90%, respectively. Figure   9   corroborates this trend: Libra sustains 2,500–2,800 tokens/s across training steps, closely tracking the Oracle curve and consistently exceeding the other policies by 400–1,000 tokens/s. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+  
+ 
+ 
+       
+ 
+ 
+ Method  
+     
+       
+ 
+ 
+ Per Decision  
+ 
+ Acc%  
+     
+       
+ 
+ 
+ Migrate  
+ 
+ Ratio% *   
+     
+       
+ 
+ 
+ Throughput  
+ 
+ (token/s)  
+      
+ 
+       
+ 
+ 
+ Load Balancing  
+     
+       
+ 
+ 
+ 31.2  
+     
+       
+ 
+ 
+ 0  
+     
+       
+ 
+ 
+ 1502  
+      
+ 
+       
+ 
+ 
+ MLFQ  
+     
+       
+ 
+ 
+ 44.8  
+     
+       
+ 
+ 
+ 108  
+     
+       
+ 
+ 
+ 1917  
+      
+ 
+       
+ 
+ 
+ Prediction Based  
+     
+       
+ 
+ 
+ 65.2  
+     
+       
+ 
+ 
+ 48.9  
+     
+       
+ 
+ 
+ 2400  
+      
+ 
+       
+ 
+ 
+ C-MLFQ  
+     
+       
+ 
+ 
+ 91.1  
+     
+       
+ 
+ 
+ 8.2  
+     
+       
+ 
+ 
+ 2848  
+      
+ 
+       
+ 
+ 
+ Oracle  
+     
+       
+ 
+ 
+ 100  
+     
+       
+ 
+ 
+ 0  
+     
+       
+ 
+ 
+ 3102  
+      
+ 
+      
+  *Migration Ratio       =    total migrated tokens  total tokens      .    
+   Table 2 .   Comparison of routing policies.  
+   
+   
+   Figure 9 .   C-MLFQ ablation study.  
+   
+ 
+ 
+ 
+  7.3.  Ablation Study 
+
+ 
+ Figure   10   quantifies the incremental throughput gains from progressively enabling Libra’s four core components on R2E-Gym (Qwen3-14B).
+Panel (a) shows throughput evolution across training steps, and panel (b) presents the waterfall breakdown of average throughput contributions.
+Starting from the verl-Static-Uniform baseline (423 token/s), enabling the Planner with homogeneous TP raises throughput to 510 token/s (      ∼   20  %     ) by better balancing rollout and training.
+Heterogeneous TP support adds a further 41 token/s (      ∼   10  %     ).
+The C-MLFQ scheduler contributes the largest gain, 115 token/s(      ∼   27  %     ), by routing requests to size-appropriate TP buckets.
+Finally, Elasticity yields 97 token/s gain, dynamically shifting idle workers to the bottleneck stage.
+In total, Libra reaches 763 token/s—78% above the baseline.
+Panel (a) also shows that Libra recovers fastest from workload drift (dashed vertical markers), confirming that elasticity is essential for sustained performance under shifting conditions. 
+ 
+   Ablation study on R2E-Gym showing throughput curves and a waterfall chart of per-component throughput gains.  
+   Figure 10 .   Ablation study on R2E-Gym (Qwen3-14B).
+(a) Throughput over training steps for progressively enabled Libra components.
+(b) Waterfall breakdown of average throughput gains from each component.  Ablation study on R2E-Gym showing throughput curves and a waterfall chart of per-component throughput gains.  
+ 
+ 
+ 
+  7.4.  Overhead Analysis 
+
+ 
+ Table   3   breaks down the worker-state transition costs collected from Qwen3-14B training on R2E-Gym.
+Switching a GPU from training to rollout incurs a 15 ms context teardown and a 10.8 s vLLM activation; because model weights already reside on the GPU and Libra reuses the CUDA-graph replay and  torch.compile  cache, this is a one-time warm-up cost per transition.
+The reverse path (rollout   →   training) captures a 3.6 s snapshot in the background, overlaps it with ongoing training, and reloads state via RDMA in 4.4 s; gradient-channel registration and zero-gradient joining together add    ≲   40 ms.
+These transitions are non-blocking to core clusters and, more importantly, are triggered only when the planner reconfigures workers rather than at every step.
+Measured against the average step time of 454.16 s on R2E-Gym, the total transition cost is below 3.5%, so its impact on overall throughput is negligible. 
+ 
+ 
+ Figure   11   quantifies the two remaining runtime overheads.
+Panel (a) shows KV-cache migration latency versus prefix length.
+Same-node transfer stays below 330 ms even at 40 K tokens, while cross-node transfer reaches 733 ms.
+Recomputation (TP   =   8) grows quadratically with length and catches up with cross-node migration at the longest sequences; Libra’s cost-aware C-MLFQ therefore selects the cheaper of migration or recomputation on a per-request basis.
+Panel (b) measures planner search time as the cluster scales.
+Without memoization, search time rises to 12.3 s on 128 GPUs; with memoization it is capped at 1.9 s (   ∼   6.5   ×    reduction), ensuring that re-planning remains a tiny fraction of the overall iteration time. 
+ 
+ 
+   Table 3 .   Worker state transition breakdown in the Elastic Hybrid Pool.  
+ 
+ 
+  Direction  
+  Operation  
+  Overhead  
+  Mechanism   
+ 
+      
+ 
+ 
+ Training  
+ 
+    →     
+ 
+ Rollout  
+      
+  Training context teardown  
+  15 ms  
+    
+ 
+ 
+ Release local resources  
+        
+ 
+  
+  vLLM instance activation  
+  10.8 s  
+    
+ 
+ 
+ Enable CUDA graph replay;  
+ 
+ Reuse torch.compile cache  
+        
+ 
+      
+ 
+ 
+ Rollout  
+ 
+    →     
+ 
+ Training  
+      
+  Snapshot capture  
+  3.6 s  
+  Per-step, overlapped with training   
+ 
+  State reload  
+  4.4 s  
+  Proceeds via RDMA   
+ 
+  Gradient channel setup  
+    ≲    20 ms  
+  One-time registration   
+ 
+  Training state alignment  
+  20 ms  
+  Join via zero-gradient sync   
+ 
+ 
+   
+   Figure 11 .   Overhead analysis.
+(a) KV cache migration latency across sequence lengths.
+(b) Planner search time vs. GPU count.  
+ 
+ 
+ 
+  7.5.  Cost Evaluator Fidelity 
+
+   
+   Figure 12 .   Cost Evaluator fidelity validation.
+(a) Rollout step-time prediction accuracy (MAPE) across sequence lengths and tensor-parallel degrees.
+(b) Training iteration-time MAPE for different models and pipeline-parallel configurations.
+(c) End-to-end scatter plot of CE-predicted versus measured iteration time over 100 estimations.  
+ 
+ 
+ Figure   12   assesses the prediction fidelity of Libra’s Cost Evaluator (CE), which underpins resource management decisions.
+Panel (a) measures rollout step-time prediction error across sequence lengths from 512 to 40 K tokens and TP sizes from 1 to 8.
+The mean absolute percentage error (MAPE) stays between 3.1% and 5.9%, confirming that the CE accurately captures decode-time variance under diverse parallelism settings.
+Panel (b) evaluates training iteration-time prediction on two representative models: Qwen3-14B (MAPE 2.4–2.6%) and Qwen3-30B-A3B (MAPE 5.0–5.5%), demonstrating robust pipeline-makespan modeling even with heterogeneous micro-batch lengths.
+Panel (c) compares CE-predicted and real iteration times across 100 independent estimations.
+The predictions align closely with real measurements, yielding an overall MAPE of 6.35% and a maximum error of 9.30%. 
+ 
+ 
+ 
+ 
+  8.  Related Work 
+
+ 
+  RL frameworks for LLM post-training. 
+Colocated frameworks  ( Sheng et al., 2025b ;  Hu et al., 2025 ;  Zhu et al., 2025 ;  Yao et al., 2023b )  interleave training and rollout on the same GPU cluster.
+While simple to deploy, they suffer from blocking caused by long-tail trajectories.
+More recent disaggregated frameworks  ( Fu et al., 2026 ;  Sheng et al., 2025a ;  Zhong et al., 2025a ;  Gao et al., 2025b ;  Gao et al., 2026 ;  Wang et al., 2025a ;  Han et al., 2025 )  physically separate rollout and training into distinct clusters and execute them asynchronously, improving compute utilization.
+These works all treat rollout as an inherent bottleneck and optimize it in isolation, without considering how GPUs should be jointly allocated between rollout and training or how to re-balance that allocation as workload drifts over time.
+Libra closes this gap by unifying periodic cross-stage resource planning, heterogeneous rollout execution, and non-blocking elastic reconfiguration in a single system. 
+ 
+ 
+  Rollout optimization for Agentic RL. 
+Long-tail trajectories severely degrade rollout efficiency in agentic RL, motivating a line of work that predicts request length to enable finer-grained scheduling.
+Heddle  ( Zhang et al., 2026 )  employs a pre-trained model to estimate trajectory length for priority scheduling; however, as the actor model evolves through RL training, the predictor’s accuracy degrades.
+Seer  ( Qin et al., 2025 )  exploits intra-group GRPO response length similarity to accelerate rollout, while RhymeRL  ( He et al., 2025 )  leverages cross-epoch historical rollout similarity.
+In agentic RL, however, tool-call outcomes heavily influence response length, rendering both intra-group length similarity and cross-epoch response similarity unreliable.
+In contrast, Libra avoids length prediction: its C-MLFQ scheduler exploits tool-call outcomes as a causal signal for late-binding deterministic routing. 
+ 
+ 
+  Resource management frameworks. 
+Resource management systems  ( Zheng et al., 2022 ;  Miao et al., 2022 ;  Strati et al., 2025 ;  Li et al., 2023 )  optimize parallelism strategies and resource allocation for distributed LLM pre-training.
+However, in RL post-training, rollout and training are no longer isolated phases: the end-to-end iteration time is bounded by     max  ⁡   (   T  rollout   ,   T  train   )     , so GPU allocation across stages is inherently coupled.
+None of the above frameworks consider this cross-stage coupling, nor do they support heterogeneous rollout execution or dynamic reallocation between rollout and training as the workload evolves.
+Libra addresses this with a periodic global planner that jointly optimizes GPU allocation across both stages and triggers elastic reconfiguration when the workload shifts. 
+ 
+ 
+ 
+  9.  Conclusion 
+
+ 
+ This paper presents Libra, a resource orchestration system designed for agentic RL post-training.
+Libra introduces a periodic global resource planner that jointly optimizes GPU allocation across rollout and training clusters, together with an elastic hybrid pool that enables lightweight, non-blocking worker reallocation between stages.
+In addition, Libra proposes a causality-driven multi-level feedback queue (C-MLFQ) scheduler that routes requests to heterogeneous rollout buckets based on causal signals from tool-return outcomes.
+Our evaluation shows Libra gets substantial throughput and convergence speedups. 
+ 
+ 
+ 
+ References 
+
+ 
+  Agrawal  et al.  (2024) 
+  A. Agrawal, N. Kedia, J. Mohan, A. Panwar, N. Kwatra, B. S. Gulavani, R. Ramjee, and A. Tumanov 
+ 
+  Vidur: a large-scale simulation framework for llm inference .
+ 
+  Proceedings of Machine Learning and Systems   6 ,  pp. 351–366 .
+ 
+ Cited by:   §4.5  ,
+  §4.5  .
+  
+  Bai  et al.  (2022) 
+  Y. Bai, A. Jones, K. Ndousse, A. Askell, A. Chen, N. DasSarma, D. Drain, S. Fort, D. Ganguli, T. Henighan, N. Joseph, S. Kadavath, J. Kernion, T. Conerly, S. El-Showk, N. Elhage, Z. Hatfield-Dodds, D. Hernandez, T. Hume, S. Johnston, S. Kravec, L. Lovitt, N. Nanda, C. Olsson, D. Amodei, T. Brown, J. Clark, S. McCandlish, C. Olah, B. Mann, and J. Kaplan 
+ 
+  Training a helpful and harmless assistant with reinforcement learning from human feedback .
+ 
+ External Links:   2204.05862 ,
+ Link  
+ 
+ Cited by:   §1  .
+  
+  Christiano  et al.  (2017) 
+  P. F. Christiano, J. Leike, T. Brown, M. Martic, S. Legg, and D. Amodei 
+ 
+  Deep reinforcement learning from human preferences .
+ 
+  Advances in neural information processing systems   30 .
+ 
+ Cited by:   §1  .
+  
+  Comanici  et al.  (2025) 
+  G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen,  et al.  
+ 
+  Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities .
+ 
+  arXiv preprint arXiv:2507.06261 .
+ 
+ Cited by:   §1  .
+  
+  Feng  et al.  (2025) 
+  J. Feng, S. Huang, X. Qu, G. Zhang, Y. Qin, B. Zhong, C. Jiang, J. Chi, and W. Zhong 
+ 
+  ReTool: reinforcement learning for strategic tool use in llms .
+ 
+ External Links:   2504.11536 ,
+ Link  
+ 
+ Cited by:   §1  .
+  
+  Fu  et al.  (2026) 
+  W. Fu, J. Gao, X. Shen, C. Zhu, Z. Mei, C. He, S. Xu, G. Wei, J. Mei, J. Wang,  et al.  
+ 
+  Areal: a large-scale asynchronous reinforcement learning system for language reasoning .
+ 
+  Advances in Neural Information Processing Systems   38 ,  pp. 36256–36282 .
+ 
+ Cited by:   §2.1  ,
+  4th item  ,
+  §8  .
+  
+  Gao  et al.  (2025a) 
+  W. Gao, Y. Zhao, D. An, T. Wu, L. Cao, S. Xiong, J. Huang, W. Wang, S. Yang, W. Su,  et al.  
+ 
+  Rollpacker: mitigating long-tail rollouts for fast, synchronous rl post-training .
+ 
+  arXiv preprint arXiv:2509.21009 .
+ 
+ Cited by:   §2.2  .
+  
+  Gao  et al.  (2026) 
+  W. Gao, Y. Zhao, D. Muhtar, D. An, X. Shang, T. Wu, L. Cao, S. Xiong, W. Wang, J. Huang, T. Ma, S. Yang, J. Wang, L. Qu, B. Zheng, and W. Wang 
+ 
+  ROSE: rollout on serving gpus via cooperative elasticity for agentic rl .
+ 
+ External Links:   2605.06534 ,
+ Link  
+ 
+ Cited by:   §8  .
+  
+  Gao  et al.  (2025b) 
+  W. Gao, Y. Zhao, T. Wu, S. Xiong, W. Wang, D. An, L. Cao, D. Muhtar, Z. Liu, H. Zhao, J. Huang, S. Yang, Y. Li, W. Su, J. Wang, L. Qu, B. Zheng, and W. Wang 
+ 
+  RollArt: scaling agentic rl training via disaggregated infrastructure .
+ 
+ External Links:   2512.22560 ,
+ Link  
+ 
+ Cited by:   §8  .
+  
+  Gou  et al.  (2024) 
+  Z. Gou, Z. Shao, Y. Gong, Y. Yang, M. Huang, N. Duan, W. Chen,  et al.  
+ 
+  Tora: a tool-integrated reasoning agent for mathematical problem solving .
+ 
+ In  International Conference on Learning Representations ,
+ 
+ Vol.  2024 ,  pp. 48362–48395 .
+ 
+ Cited by:   §1  .
+  
+  Guo  et al.  (2025) 
+  D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Xu, H. Ding, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Chen, J. Yuan, J. Tu, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. You, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Zhou, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang 
+ 
+  DeepSeek-r1 incentivizes reasoning in llms through reinforcement learning .
+ 
+  Nature   645  ( 8081 ),  pp. 633–638 .
+ 
+ External Links:   ISSN 1476-4687 ,
+ Link ,
+ Document  
+ 
+ Cited by:   §1  .
+  
+  Han  et al.  (2025) 
+  Z. Han, A. You, H. Wang, K. Luo, G. Yang, W. Shi, M. Chen, S. Zhang, Z. Lan, C. Deng,  et al.  
+ 
+  AsyncFlow: an asynchronous streaming rl framework for efficient llm post-training .
+ 
+  arXiv preprint arXiv:2507.01663 .
+ 
+ Cited by:   §8  .
+  
+  He  et al.  (2025) 
+  J. He, T. Li, E. Feng, D. Du, Q. Liu, T. Liu, Y. Xia, and H. Chen 
+ 
+  History rhymes: accelerating llm reinforcement learning with rhymerl .
+ 
+ External Links:   2508.18588 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  §1  ,
+  §8  .
+  
+  Hu  et al.  (2025) 
+  J. Hu, X. Wu, W. Shen, J. K. Liu, Z. Zhu, W. Wang, S. Jiang, H. Wang, H. Chen, B. Chen, W. Fang, Xianyu, Y. Cao, H. Xu, and Y. Liu 
+ 
+  OpenRLHF: an easy-to-use, scalable and high-performance rlhf framework .
+ 
+ External Links:   2405.11143 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  1st item  ,
+  §8  .
+  
+  Jain  et al.  (2025) 
+  N. Jain, J. Singh, M. Shetty, L. Zheng, K. Sen, and I. Stoica 
+ 
+  R2E-gym: procedural environments and hybrid verifiers for scaling open-weights swe agents .
+ 
+ External Links:   2504.07164 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  2nd item  .
+  
+  Jiang  et al.  (2025) 
+  D. Jiang, Y. Lu, Z. Li, Z. Lyu, P. Nie, H. Wang, A. Su, H. Chen, K. Zou, C. Du,  et al.  
+ 
+  VerlTool: towards holistic agentic reinforcement learning with tool use .
+ 
+  arXiv preprint arXiv:2509.01055 .
+ 
+ Cited by:   §1  .
+  
+  Jimenez  et al.  (2024) 
+  C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan 
+ 
+  Swe-bench: can language models resolve real-world github issues? .
+ 
+ In  International Conference on Learning Representations ,
+ 
+ Vol.  2024 ,  pp. 54107–54157 .
+ 
+ Cited by:   §1  .
+  
+  Jin  et al.  (2025) 
+  B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han 
+ 
+  Search-r1: training llms to reason and leverage search engines with reinforcement learning .
+ 
+ External Links:   2503.09516 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  1st item  .
+  
+  Kumar  et al.  (2025) 
+  K. Kumar, T. Ashraf, O. Thawakar, R. M. Anwer, H. Cholakkal, M. Shah, M. Yang, P. H. S. Torr, F. S. Khan, and S. Khan 
+ 
+  LLM post-training: a deep dive into reasoning large language models .
+ 
+ External Links:   2502.21321 ,
+ Link  
+ 
+ Cited by:   §1  .
+  
+  Kwon  et al.  (2023) 
+  W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. Gonzalez, H. Zhang, and I. Stoica 
+ 
+  Efficient memory management for large language model serving with pagedattention .
+ 
+ In  Proceedings of the 29th symposium on operating systems principles ,
+ 
+  pp. 611–626 .
+ 
+ Cited by:   §6  .
+  
+  Li  et al.  (2023) 
+  J. Li, H. Xu, Y. Zhu, Z. Liu, C. Guo, and C. Wang 
+ 
+  Lyra: elastic scheduling for deep learning clusters .
+ 
+ In  Proceedings of the Eighteenth European Conference on Computer Systems ,
+ 
+  pp. 835–850 .
+ 
+ Cited by:   §8  .
+  
+  MAA (2025) 
+  MAA 
+ 
+  American invitational mathematics examination - aime .
+ 
+ External Links:   Link  
+ 
+ Cited by:   Figure 3  ,
+  Figure 3  .
+  
+  [23] 
+   (2025) 
+ 
+  Megatron-lm .
+ 
+ Note:  https://github.com/NVIDIA/Megatron-LM 
+ 
+ Cited by:   §B.3  ,
+  §4.3  ,
+  §6  .
+  
+  Mei  et al.  (2025) 
+  Z. Mei, W. Fu, K. Li, G. Wang, H. Zhang, and Y. Wu 
+ 
+  Real: efficient rlhf training of large language models with parameter reallocation .
+ 
+  Proceedings of Machine Learning and Systems   7 .
+ 
+ Cited by:   4th item  .
+  
+  Miao  et al.  (2022) 
+  X. Miao, Y. Wang, Y. Jiang, C. Shi, X. Nie, H. Zhang, and B. Cui 
+ 
+  Galvatron: efficient transformer training over multiple gpus using automatic parallelism .
+ 
+  Proc. VLDB Endow.   16  ( 3 ),  pp. 470–479 .
+ 
+ External Links:   ISSN 2150-8097 ,
+ Link ,
+ Document  
+ 
+ Cited by:   §1  ,
+  §4.5  ,
+  §8  .
+  
+  Ouyang  et al.  (2022) 
+  L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. L. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, J. Schulman, J. Hilton, F. Kelton, L. Miller, M. Simens, A. Askell, P. Welinder, P. Christiano, J. Leike, and R. Lowe 
+ 
+  Training language models to follow instructions with human feedback .
+ 
+ External Links:   2203.02155 ,
+ Link  
+ 
+ Cited by:   §1  .
+  
+  Paszke  et al.  (2019) 
+  A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga, A. Desmaison, A. Köpf, E. Yang, Z. DeVito, M. Raison, A. Tejani, S. Chilamkurthy, B. Steiner, L. Fang, and S. Chintala 
+ 
+  PyTorch: an imperative style, high-performance deep learning library .
+ 
+ External Links:   Document  
+ 
+ Cited by:   §B.3  ,
+  §4.3  .
+  
+  Qin  et al.  (2025) 
+  R. Qin, W. He, W. Huang, Y. Zhang, Y. Zhao, B. Pang, X. Xu, Y. Shan, Y. Wu, and M. Zhang 
+ 
+  Seer: online context learning for fast synchronous llm reinforcement learning .
+ 
+  arXiv preprint arXiv:2511.14617 .
+ 
+ Cited by:   §1  ,
+  §1  ,
+  §2.2  ,
+  §8  .
+  
+  Salpekar  et al.  (2026) 
+  O. Salpekar, R. Varma, K. Yu, V. Ivanov, Y. Wang, A. Sharif, M. Si, S. Xu, F. Tian, S. Zheng, T. Rice, A. Garg, S. Peng, S. Siravara, W. Fu, R. de Castro, A. Gangidi, A. Obraztsov, S. Narang, S. Edunov, M. Naumov, C. Tang, and M. Oldham 
+ 
+  Training llms with fault tolerant hsdp on 100,000 gpus .
+ 
+ External Links:   2602.00277 ,
+ Link  
+ 
+ Cited by:   §4.4  ,
+  §4.4  .
+  
+  Schulman  et al.  (2017) 
+  J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov 
+ 
+  Proximal policy optimization algorithms .
+ 
+ External Links:   1707.06347 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  §7  .
+  
+  Shahout  et al.  (2025) 
+  R. Shahout, E. Malach, C. Liu, W. Jiang, M. Yu, and M. Mitzenmacher 
+ 
+  Don’t stop me now: embedding based scheduling for llms .
+ 
+ In  International Conference on Learning Representations ,
+ 
+ Vol.  2025 ,  pp. 63345–63368 .
+ 
+ Cited by:   §7.2  .
+  
+  Shao  et al.  (2024) 
+  Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu,  et al.  
+ 
+  Deepseekmath: pushing the limits of mathematical reasoning in open language models .
+ 
+  arXiv preprint arXiv:2402.03300 .
+ 
+ Cited by:   §1  .
+  
+  Sheng  et al.  (2025a) 
+  G. Sheng, Y. Tong, B. Wan, W. Zhang, C. Jia, X. Wu, Y. Wu, X. Li, C. Zhang, Y. Peng, H. Lin, X. Liu, and C. Wu 
+ 
+  Laminar: a scalable asynchronous rl post-training framework .
+ 
+ External Links:   2510.12633 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  §2.2  ,
+  2nd item  ,
+  §8  .
+  
+  Sheng  et al.  (2025b) 
+  G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu 
+ 
+  HybridFlow: a flexible and efficient rlhf framework .
+ 
+ In  Proceedings of the Twentieth European Conference on Computer Systems ,
+ 
+  EuroSys ’25 ,  New York, NY, USA ,  pp. 1279–1297 .
+ 
+ External Links:   ISBN 9798400711961 ,
+ Link ,
+ Document  
+ 
+ Cited by:   §1  ,
+  §6  ,
+  1st item  ,
+  §7  ,
+  §8  .
+  
+  Shinn  et al.  (2023) 
+  N. Shinn, F. Cassano, A. Gopinath, K. Narasimhan, and S. Yao 
+ 
+  Reflexion: language agents with verbal reinforcement learning .
+ 
+ In  Advances in Neural Information Processing Systems ,   A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (Eds.) ,
+ 
+ Vol.  36 ,  pp. 8634–8652 .
+ 
+ External Links:   Link  
+ 
+ Cited by:   §1  .
+  
+  Strati  et al.  (2025) 
+  F. Strati, Z. Zhang, G. Manos, I. S. Périz, Q. Hu, T. Chen, B. Buzcu, S. Han, P. Delgado, and A. Klimovic 
+ 
+  Sailor: automating distributed training over dynamic, heterogeneous, and geo-distributed clusters .
+ 
+ In  Proceedings of the ACM SIGOPS 31st Symposium on Operating Systems Principles ,
+ 
+  SOSP ’25 ,  New York, NY, USA ,  pp. 204–220 .
+ 
+ External Links:   ISBN 9798400718700 ,
+ Link ,
+ Document  
+ 
+ Cited by:   §1  ,
+  §4.5  ,
+  §4.5  ,
+  §8  .
+  
+  Tan  et al.  (2026) 
+  X. Tan, Y. Feng, Y. Zhou, Y. Jiang, Y. Zhu, and H. Xu 
+ 
+  OrchestrRL: dynamic compute and network orchestration for disaggregated rl .
+ 
+ External Links:   2601.01209 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  2nd item  .
+  
+  Team  et al.  (2025) 
+  K. Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, C. Tang, C. Wang, D. Zhang, E. Yuan, E. Lu, F. Tang, F. Sung, G. Wei, G. Lai, H. Guo, H. Zhu, H. Ding, H. Hu, H. Yang, H. Zhang, H. Yao, H. Zhao, H. Lu, H. Li, H. Yu, H. Gao, H. Zheng, H. Yuan, J. Chen, J. Guo, J. Su, J. Wang, J. Zhao, J. Zhang, J. Liu, J. Yan, J. Wu, L. Shi, L. Ye, L. Yu, M. Dong, N. Zhang, N. Ma, Q. Pan, Q. Gong, S. Liu, S. Ma, S. Wei, S. Cao, S. Huang, T. Jiang, W. Gao, W. Xiong, W. He, W. Huang, W. Xu, W. Wu, W. He, X. Wei, X. Jia, X. Wu, X. Xu, X. Zu, X. Zhou, X. Pan, Y. Charles, Y. Li, Y. Hu, Y. Liu, Y. Chen, Y. Wang, Y. Liu, Y. Qin, Y. Liu, Y. Yang, Y. Bao, Y. Du, Y. Wu, Y. Wang, Z. Zhou, Z. Wang, Z. Li, Z. Zhu, Z. Zhang, Z. Wang, Z. Yang, Z. Huang, Z. Huang, Z. Xu, Z. Yang, and Z. Lin 
+ 
+  Kimi k1.5: scaling reinforcement learning with llms .
+ 
+ External Links:   2501.12599 ,
+ Link  
+ 
+ Cited by:   §1  .
+  
+  Wang  et al.  (2025a) 
+  T. Wang, Z. Wu, J. Liu, J. Hao, J. Wang, and K. Shao 
+ 
+  Distrl: an asynchronous distributed reinforcement learning framework for on-device control agent .
+ 
+ In  International Conference on Learning Representations ,
+ 
+ Vol.  2025 ,  pp. 74757–74782 .
+ 
+ Cited by:   §2.1  ,
+  §8  .
+  
+  Wang  et al.  (2025b) 
+  W. Wang, S. Xiong, G. Chen, W. Gao, S. Guo, Y. He, J. Huang, J. Liu, Z. Li, X. Li, Z. Liu, H. Zhao, D. An, L. Cao, Q. Cao, W. Deng, F. Du, Y. Gu, J. Li, X. Li, M. Liu, Y. Luo, Z. Liu, Y. Wang, P. Wang, T. Wu, Y. Wu, Y. Zhao, S. Zhao, J. Yang, S. Yang, Y. Tan, H. Yi, Y. Xu, Y. Yuan, X. Zhang, L. Qu, W. Su, W. Wang, J. Wang, and B. Zheng 
+ 
+  Reinforcement learning optimization for large-scale learning: an efficient and user-friendly scaling library .
+ 
+ External Links:   2506.06122 ,
+ Link  
+ 
+ Cited by:   §2.1  ,
+  1st item  .
+  
+  Wu  et al.  (2025) 
+  B. Wu, S. Wang, Y. Tang, J. Ding, E. Helenowski, L. Tan, T. Xu, T. Gowda, Z. Chen, C. Zhu,  et al.  
+ 
+  LlamaRL: a distributed asynchronous reinforcement learning framework for efficient large-scale llm training .
+ 
+  arXiv preprint arXiv:2505.24034 .
+ 
+ Cited by:   §2.1  .
+  
+  Yang  et al.  (2025) 
+  A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv,  et al.  
+ 
+  Qwen3 technical report .
+ 
+  arXiv preprint arXiv:2505.09388 .
+ 
+ Cited by:   §7  .
+  
+  Yao  et al.  (2023a) 
+  S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao 
+ 
+  REACT: synergizing reasoning and acting in language models .
+ 
+ In  11th International Conference on Learning Representations, ICLR 2023 ,
+ 
+ Cited by:   §1  .
+  
+  Yao  et al.  (2023b) 
+  Z. Yao, R. Y. Aminabadi, O. Ruwase, S. Rajbhandari, X. Wu, A. A. Awan, J. Rasley, M. Zhang, C. Li, C. Holmes,  et al.  
+ 
+  Deepspeed-chat: easy, fast and affordable rlhf training of chatgpt-like models at all scales .
+ 
+  arXiv preprint arXiv:2308.01320 .
+ 
+ Cited by:   §1  ,
+  1st item  ,
+  §8  .
+  
+  Yu  et al.  (2025) 
+  Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, M. Qiao, Y. Wu, and M. Wang 
+ 
+  DAPO: an open-source llm reinforcement learning system at scale .
+ 
+ External Links:   2503.14476 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  §1  ,
+  3rd item  .
+  
+  Zhang  et al.  (2026) 
+  Z. Zhang, Y. Zhong, C. Yang, C. Jin, B. Wu, X. Wei, Y. Liu, and X. Jin 
+ 
+  Heddle: a distributed orchestration system for agentic rl rollout .
+ 
+ External Links:   2603.28101 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  §1  ,
+  §2.2  ,
+  §8  .
+  
+  Zheng  et al.  (2022) 
+  L. Zheng, Z. Li, H. Zhang, Y. Zhuang, Z. Chen, Y. Huang, Y. Wang, Y. Xu, D. Zhuo, E. P. Xing,  et al.  
+ 
+  Alpa: automating inter-and    {   intra-operator   }    parallelism for distributed deep learning .
+ 
+ In  16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22) ,
+ 
+  pp. 559–578 .
+ 
+ Cited by:   §1  ,
+  §8  .
+  
+  Zhong  et al.  (2025a) 
+  Y. Zhong, Z. Zhang, X. Song, H. Hu, C. Jin, B. Wu, N. Chen, Y. Chen, Y. Zhou, C. Wan, H. Zhou, Y. Jiang, Y. Zhu, and D. Jiang 
+ 
+  StreamRL: scalable, heterogeneous, and elastic rl for llms with disaggregated stream generation .
+ 
+ External Links:   2504.15930 ,
+ Link  
+ 
+ Cited by:   §1  ,
+  §1  ,
+  §2.2  ,
+  §8  .
+  
+  Zhong  et al.  (2025b) 
+  Y. Zhong, Z. Zhang, B. Wu, S. Liu, Y. Chen, C. Wan, H. Hu, L. Xia, R. Ming, Y. Zhu,  et al.  
+ 
+  Optimizing    {   rlhf   }    training for large language models with stage fusion .
+ 
+ In  22nd USENIX Symposium on Networked Systems Design and Implementation (NSDI 25) ,
+ 
+  pp. 489–503 .
+ 
+ Cited by:   §2.2  .
+  
+  Zhu  et al.  (2025) 
+  Z. Zhu, C. Xie, X. Lv, and slime Contributors 
+ 
+  Slime: an llm post-training framework for rl scaling .
+ 
+ Note:   https://github.com/THUDM/slime GitHub repository. Corresponding author: Xin Lv 
+ 
+ Cited by:   §1  ,
+  1st item  ,
+  §8  .
+  
+ 
+ 
+ 
+  Appendix A  Offline Profile and Prefix-Tree Lifecycle 
+
+ 
+ This appendix details the offline profile phase that precedes formal training, and provides empirical measurements on prefix-tree coverage and fallback frequency that complement the main text. 
+ 
+ 
+  A.1.  Offline Profile Phase 
+
+ 
+ Before the first training iteration, Libra executes an  offline profile phase  whose primary goal is to obtain the initial trajectory-length distribution of the target workload.
+Using the initial policy model, Libra generates trajectories for the entire training corpus; the resulting length distribution then drives two downstream tasks: (1) calibrating the cost evaluator (CE) and deriving the initial resource-allocation plan, and (2) bootstrapping the C-MLFQ prefix tree with historical trajectory data. 
+ 
+ 
+ CE calibration. 
+
+ 
+ The profile trajectories are fed to the CE to fit the per-operator polynomial latency models described in Section   4.5  .
+The CE records the execution time of each layer type (Linear, Attention, etc.) at varying sequence lengths, yielding the coefficients     γ  ,  η  ,  θ     for the polynomial     T  ⁡   (  L  )     .
+These models then drive the planner’s initial DP search (Algorithm   1  ), producing the first rollout partition     P  rollout     and training strategy     S  train    . 
+ 
+ 
+ 
+ Prefix-tree bootstrap. 
+
+ 
+ Every profile trajectory is inserted into the prefix tree following the procedure described in Phase 3 of Section   5  .
+Consequently, every prompt in the training corpus is present in the tree from the very first training step.
+The profile phase produces     N  ×  K     trajectories in total.
+These trajectories are inserted into the trie, which naturally shares prefixes: any two trajectories that follow the same tool-return sequence up to depth    d    share the path from the root to depth    d   .
+Consequently, the trie compactly represents the full history without materializing     N  ×  K     independent branches.
+Table   4   shows the resulting tree statistics for the three benchmarks. 
+ 
+ 
+   Table 4 .   Offline profile statistics and initial prefix-tree coverage.  
+ 
+ 
+      
+ 
+ 
+ Benchmark  
+      
+      
+ 
+ 
+ #Prompts  
+      
+      
+ 
+ 
+ Profile Time  
+      
+      
+ 
+ 
+ Avg. Tree Depth  
+       
+ 
+      
+ 
+ 
+ Search-R1  
+      
+      
+ 
+ 
+ 17,000  
+      
+      
+ 
+ 
+    ∼   1.24 h  
+      
+      
+ 
+ 
+ 5.2  
+       
+ 
+      
+ 
+ 
+ R2E-Gym  
+      
+      
+ 
+ 
+ 8,135  
+      
+      
+ 
+ 
+    ∼   3.8 h  
+      
+      
+ 
+ 
+ 22.0  
+       
+ 
+      
+ 
+ 
+ DAPO-Math-17K  
+      
+      
+ 
+ 
+ 17,000  
+      
+      
+ 
+ 
+    ∼   2.8 h  
+      
+      
+ 
+ 
+ 2.5  
+       
+ 
+ 
+ 
+ All profile experiments use Qwen3-14B on NVIDIA A800 80GB GPUs, deployed on 46 GPUs with TP=8 and DP=6, processing a batch of 1,024 prompts. 
+ 
+ 
+ 
+ 
+  A.2.  Tree Update and Policy-Drift Adaptation 
+
+ 
+ As RL training progresses, the policy model evolves and the trajectory distribution shifts.
+Libra updates the tree by inserting each completed trajectory along its return-state sequence (Phase 3 of Section   5  ),
+creating child nodes for unseen states as needed and recording the remaining length at every visited node.
+Consequently, subsequent lookups immediately benefit from the latest observations.
+To further adapt to policy drift and amortize stale statistics, Libra additionally rebuilds the tree offline at regular intervals (every    T    training steps, default     T  =  50    ) using the most recent trajectories.
+Because the tree is a lightweight lookup structure (a trie with scalar statistics per node), both incremental insertion and full rebuild take less than one second and incur no online overhead.
+This dual update mechanism is the primary means through which C-MLFQ adapts to policy drift without retraining a parametric prediction model. 
+ 
+ 
+ 
+  A.3.  Fallback Frequency and Tree Coverage 
+
+ 
+ A runtime routing lookup walks the tree from the root along the tool-return sequence observed so far.
+If the next return state has never been seen under the current prefix, the scheduler falls back to the parent node’s statistics (Section   5  ).
+We instrumented Libra on the Search-R1 workload to measure how often this fallback occurs. 
+ 
+ 
+   Table 5 .   Fallback frequency per training phase (Search-R1).  
+ 
+ 
+      
+ 
+ 
+ Training  
+ 
+ Phase  
+      
+      
+ 
+ 
+ Avg.  
+ 
+  Tree Lookups  
+      
+      
+ 
+ 
+ Avg.  
+ 
+  Fallbacks  
+      
+      
+ 
+ 
+ Fallback  
+ 
+ Ratio  
+       
+ 
+      
+ 
+ 
+ Steps 1–50  
+      
+      
+ 
+ 
+ 3,952  
+      
+      
+ 
+ 
+ 236  
+      
+      
+ 
+ 
+ 5.98%  
+       
+ 
+      
+ 
+ 
+ Steps 51–100  
+      
+      
+ 
+ 
+ 4,248  
+      
+      
+ 
+ 
+ 174  
+      
+      
+ 
+ 
+ 4.10%  
+       
+ 
+      
+ 
+ 
+ Steps 101–200  
+      
+      
+ 
+ 
+ 9,424  
+      
+      
+ 
+ 
+ 347  
+      
+      
+ 
+ 
+ 3.68%  
+       
+ 
+      
+ 
+ 
+ Steps 201–400  
+      
+      
+ 
+ 
+ 16,492  
+      
+      
+ 
+ 
+ 462  
+      
+      
+ 
+ 
+ 2.80%  
+       
+ 
+ 
+ 
+ Table   5   shows that the fallback ratio decreases as training proceeds.
+During the initial phase (steps 1–50), the tree contains only the offline profile data, yet the fallback ratio is below 6%.
+As the policy explores new tool-return combinations, the tree is periodically rebuilt with fresh trajectories, and the fallback ratio drops to under 4% by the later stages of training.
+This empirically confirms that the offline profile provides sufficient initial coverage, and that periodic updates effectively amortize the sparse-revisit concern. 
+ 
+ 
+ 
+ 
+  Appendix B  Correctness of Non-blocking joining 
+
+ 
+ This appendix formalizes the aggregation rule of the non-blocking joining protocol
+and proves that the zero-gradient placeholder preserves mathematical equivalence.
+We further analyze optimizer-state consistency under asynchronous recovery and provide empirical validation. 
+ 
+ 
+  B.1.  Aggregation Rule and Gradient Equivalence 
+
+ 
+ Let the core training pool contain     N  c     data-parallel replicas.
+For each core replica     i  ∈   {   1  ,  …  ,   N  c    }     , let     g  i     denote its locally computed gradient.
+When a healthy hybrid worker    h    is attached to core replica    i   , its gradient     g  h     is routed to    i    through the asynchronous side channel.
+The core rank accumulates this external gradient into its local backward pass, yielding an effective gradient 
+ 
+
+  
+  (2)  
+  
+        g  ~   i   =    g  i   +   g  h     .     
+    
+ 
+ (If multiple hybrid workers map to the same core replica,     g  h     is the sum of their individual gradients.) 
+ 
+ 
+ The core replicas then execute a standard intra-core All-Reduce (mean): 
+ 
+
+  
+  (3)  
+  
+       g  ¯   =    1   N  c    ​    ∑   i  =  1    N  c      g  ~   i      .     
+    
+ 
+ 
+ 
+ During the joining window, the hybrid worker has not yet finished loading its snapshot, so it emits a zero-gradient placeholder, i.e.,      g  h   =  0    . Substituting into the above equations gives 
+ 
+
+  
+  (4)  
+  
+        g  ¯   ′   =    1   N  c    ​    ∑   i  =  1    N  c     (    g  i   +  0   )     =    1   N  c    ​    ∑   i  =  1    N  c     g  i      .     
+    
+ 
+ 
+ 
+ Equation   4   is identical to the averaged gradient produced when training with only the core pool and no hybrid workers at all.
+Therefore, the zero-gradient placeholder does not alter the effective batch size, nor does it introduce any scaling factor into the learning rate.
+This property holds regardless of how many hybrid workers are joining simultaneously,
+because the intra-core All-Reduce group size     N  c     remains strictly constant. 
+ 
+ 
+ State catch-up for joining workers. 
+
+ 
+ When a hybrid worker transitions from rollout to training, its local weights still reflect the stale rollout state; computing real gradients from this stale state and injecting them into the core pool would introduce noise and break the mathematical equivalence proved above.
+Libra prevents this by having the joining worker emit a zero-gradient placeholder through the side channel.
+The core rank accumulates this zero into its local backward pass, leaving the core gradient unchanged, while the joining worker’s stale weights produce no harmful update. 
+ 
+ 
+ Crucially, the zero-gradient step also serves as the joining worker’s catch-up mechanism.
+After the core rank completes its intra-core All-Reduce and optimizer step, the updated weights are synchronized back to the joining worker through the same side channel.
+Because the joining worker contributed a zero gradient, the state update computed at the core rank is exactly the same as if no hybrid worker were present.
+Consequently, once the state synchronization completes, the joining worker attains identical parameters to the core pool.
+In parallel, the joining worker asynchronously loads the latest snapshot (weights and optimizer state) from the corresponding core rank via a CPU-memory P2P channel.
+The snapshot acts as a fallback consistency checkpoint: once the transfer completes, the joining worker’s optimizer moments are overwritten by the snapshot values, ensuring that the transient moment divergence caused by the zero-gradient step is fully erased.
+From the next training step onward, the worker computes real gradients from the synchronized weights and routes them through the side channel like any healthy hybrid worker, thereby re-entering the training process. 
+ 
+ 
+ 
+ 
+  B.2.  Optimizer State Consistency 
+
+ 
+ SGD without momentum. 
+
+ 
+ Under plain SGD, the parameter update is     θ  ←   θ  −   η  ​   g  ¯       .
+For the joining worker,       g  ¯   ′   =   g  ¯      as shown above, so its weights evolve identically to the core replicas.
+Once the snapshot is loaded, the worker’s weights are overwritten by the snapshot values, attaining exact consistency with the core pool at the snapshot step. 
+ 
+ 
+ 
+ Adam and momentum-based optimizers. 
+
+ 
+ During the brief joining window, the joining worker’s local optimizer state can transiently diverge from the healthy replicas. For Adam, the healthy replicas update their moments as 
+ 
+
+  
+  (5)  
+  
+    m    
+        ←     β  1   ​  m   +    (   1  −   β  1    )   ​    g  ¯   ′      ,     
+    
+  
+  (6)  
+  
+    v    
+        ←     β  2   ​  v   +    (   1  −   β  2    )   ​    (    g  ¯   ′   )   2      ,     
+    
+ 
+ whereas the joining worker, having emitted a zero gradient, experiences pure exponential decay: 
+ 
+
+  
+  (7)  
+  
+    m    
+        ←    β  1   ​  m    ,     
+    
+  
+  (8)  
+  
+    v    
+        ←    β  2   ​  v    .     
+    
+ 
+ 
+ 
+ However, this divergence is fully resolved by the snapshot reload. The asynchronously captured snapshot contains the complete optimizer state     (  m  ,  v  )     together with the model weights at the moment it was taken.
+When the joining worker finishes loading the snapshot, its entire state vector—parameters, first moment, and second moment—is atomically overwritten by the snapshot values.
+Consequently, the worker re-enters training with exactly the same state as the healthy replicas had at the snapshot step.
+From the next training step onward, all replicas again receive the same averaged gradient     g  ¯    , and their optimizer states evolve in lock-step. 
+ 
+ 
+ The duration of the transient divergence is bounded by the joining window length. As measured in Table   3  , the total joining overhead (snapshot reload plus zero-gradient sync) is approximately 4.4 s, which corresponds to only a fraction of one training step on our evaluated workloads (average step time    >    400 s).
+Thus the transient state mismatch is both brief and immediately erased by snapshot overwrite. 
+ 
+ 
+ 
+ 
+  B.3.  Empirical Validation 
+
+ 
+ To empirically validate that non-blocking joining does not degrade training convergence,
+we run a controlled paired experiment on the Search-R1 workload (Qwen3-14B, 500 training steps).
+Both configurations use identical planner decisions, heterogeneous TP buckets, and C-MLFQ routing;
+the only difference is how worker transitions are handled. 
+ 
+ 
+  Libra-Non-Blocking. 
+The core training cluster continues advancing while joining workers reload their snapshots asynchronously via the zero-gradient protocol described above. 
+ 
+ 
+  Libra-Sync-Join. 
+To emulate the behavior of conventional training frameworks (e.g., FSDP  ( Paszke et al., 2019 ) , Megatron-LM  ( , 2025 ) ),
+whenever a hybrid worker transitions back to training, the entire core training cluster is torn down and rebuilt with the new worker included.
+This involves destroying the existing NCCL communicators, re-initializing the distributed training context, redistributing model and optimizer states, and re-warming the first training step. 
+ 
+   
+   Figure 13 .   Validation of non-blocking joining on Search-R1.
+(a) Reward convergence over wall-clock time: Libra-NonBlocking reaches the same reward faster than Libra-Sync-Join.
+(b) Per-step time: Libra-Sync-Join incurs a    ∼   150 s spike at each transition step, while Libra-Non-Blocking remains flat.  
+ 
+ 
+  Convergence equivalence.  Figure   13  (a) shows that Libra-Non-Blocking and Libra-Sync-Join reach the same final reward (   0.70   ) after 500 training steps. 
+ 
+ 
+  Overhead quantification. 
+Figure   13  (b) shows that Libra-Sync-Join incurs a    ∼   150 s spike at every transition step,
+reflecting the full cost of global communicator rebuild and state redistribution. 
+ 
+ 
+ 
+ 
+  Appendix C  Rational of Rollout Cluster Parallelism Design 
+
+ 
+ In Libra, the rollout cluster is designed with heterogeneous Tensor Parallelism (TP) as the primary parallelism strategy, while Pipeline Parallelism (PP) and Expert Parallelism (EP) are not explicitly included in the current rollout configuration.
+This appendix justifies this design choice from three perspectives: workload characteristics, problem orthogonality, and extensibility. 
+ 
+ 
+  C.1.  Workload Characteristics of Agentic RL Rollout 
+
+ 
+ Agentic RL rollout is dominated by autoregressive decoding of long, variable-length trajectories. The key performance bottlenecks are (1) memory bandwidth and KV-cache pressure, especially for long sequences, and (2) straggler effects caused by a small fraction of long-tailed trajectories.
+TP partitions model weights and the KV cache across GPUs, directly alleviating memory bottlenecks and balancing computation.
+In contrast, PP splits model layers across devices, introducing sequential dependencies that do not help with stragglers and often amplify them: a single long request holding a pipeline stage blocks all downstream stages until completion. 
+ 
+ 
+ 
+  C.2.  Problem Orthogonality: Why TP Suffices for Long-Tail Mitigation 
+
+ 
+ Libra’s core contribution is mitigating straggler effects in heterogeneous rollout.
+As shown in Figure   4  , TP size directly determines the throughput trade-off: small TP (e.g., 1, 2) incurs low communication overhead and is ideal for short sequences, whereas large TP (e.g., 4, 8) offers better memory scalability and sustained throughput for long sequences. 
+ 
+ 
+ PP does not offer this trade-off.
+It distributes layers sequentially, so a single long request still incurs high latency through all stages, and pipeline bubbles worsen under length imbalance.
+EP, while useful for Mixture-of-Experts (MoE) models, addresses expert load balancing rather than sequence-length-induced stragglers.
+Thus, PP and EP are orthogonal to Libra’s primary optimization target. 
+ 
+ 
+ 
+  C.3.  Extensibility: How Libra Can Support PP and EP 
+
+ 
+ Libra’s heterogeneous rollout cluster design is not inherently closed to PP or EP.
+Extending the rollout cluster to support PP and EP follows the following principles. 
+ 
+ 
+ Pipeline Parallelism in rollout. 
+
+ 
+ If a model is too large to fit within a single node, PP can be introduced inside each heterogeneous bucket as an additional intra-bucket dimension.
+The bucket then consumes       t  ​  p   ×  p   ​  p     GPUs rather than     t  ​  p     GPUs.
+Extending the rollout DP (Algorithm   1  ) to support this requires two localized changes: (1) expanding the candidate set    𝒯    to enumerate feasible     (   T  ​  P   ,   P  ​  P   )     combinations with their corresponding total GPU counts,
+and (2) updating the CE interface to accept a PP argument so that the latency model accounts for inter-stage pipeline bubbles. Please note that vidur’s latency model natively supports PP.
+The DP’s optimal-substructure property remains unchanged because the state transition still consumes a fixed number of GPUs per bucket.
+The C-MLFQ routing can also be adapted to this setting, as the heterogeneous buckets retain their relative affinity for long and short sequences. 
+ 
+ 
+ 
+ Expert Parallelism in rollout. 
+
+ 
+ For MoE models, EP can be transparent to Libra’s planner because the inference engine handles it automatically.
+In vLLM, the engine automatically enables EP when the number of experts exceeds the TP size and is divisible by it,
+and to fall back to TP-only execution otherwise to avoid unnecessary all-to-all communication.
+Because Libra’s heterogeneous rollout already traverses a range of TP configurations (e.g., TP=1, 2, 4, 8), each bucket implicitly covers both the EP-enabled and EP-disabled regimes:
+a smaller TP may trigger EP, while a larger TP may not. The planner therefore does not need to enumerate EP as an explicit dimension; extending rollout to MoE models amounts to letting the inference engine select EP automatically within each bucket. The inter-bucket scheduling mechanism remains unchanged. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+   
+    Experimental support, please
+     view the build logs 
+    for errors. Generated by
+     
+       
+        L
+         A 
+        T
+         E 
+       
+       xml 
+       
+     .
+   
+   
+     Instructions for reporting errors 
+     We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below: 
+     
+       Click the "Report Issue"  ()  button, located in the page header. 
+     
+      Tip:  You can select the relevant text first, to include it in your report. 
+     Our team has already identified  the following issues . We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all. 
+     Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a  list of packages that need conversion , and welcome  developer contributions . 
+   
+  
+   
+     
+       
+        We gratefully acknowledge support from
+        our  major funders ,
+          member institutions   ,    ,
+        and all contributors.
+       
+       
+         About 
+         · 
+         Help 
+         · 
+         Contact 
+         · 
+         Subscribe 
+         · 
+         Copyright 
+         · 
+         Privacy 
+         · 
+         Accessibility 
+         · 
+         Operational Status  (opens in new tab)  
+       
+     
+
+     
+       Major funding support from 
+       
+         
+           
+         
+         
+           
+         
+         
+           
+         
+       
+     
+   
+  
+   
+    
+   
+  
+ 
+
+

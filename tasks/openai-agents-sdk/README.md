@@ -52,6 +52,17 @@ uv run --locked python -m unittest discover -s tests -v
 
 每课约 15～25 分钟，可分三次完成：1～3、4～6、7～8。这是建议学习节奏，不是课程效果保证。
 
+### Dapr 选修课（9～11）
+
+第 6 课之后可接着读 [Dapr 逐课教程](./DAPR.md)：9 状态 API 与 key/value、10 Runner 重读会话历史、11 ETag 并发与故障边界。代码有中文注释；默认不用 Dapr 服务或 API key，真实 sidecar 实验需显式开启。
+
+```bash
+uv sync --locked --extra dapr
+uv run --locked --extra dapr python run_dapr.py --all
+```
+
+独立入口不改变原八课的依赖与运行方式。DaprSession 保存会话，不会自动使 Agent 工作流持久化执行。
+
 ## 离线与真实调用究竟差在哪里
 
 `lab/runtime.py` 只负责选择模型、运行配置和会话位置，不重新实现 SDK。

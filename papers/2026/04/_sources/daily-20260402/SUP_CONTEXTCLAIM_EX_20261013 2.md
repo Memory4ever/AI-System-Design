@@ -1,0 +1,5 @@
+# ContextClaim `2603.30025v1` — 拟贡献前关闭
+
+精确完整AB在 [Batch8](SUP_ADMISSION_BATCH8_20261013.json)，当前待代表性负侧准入校准，未记证据完成或已最终排除。
+
+原稿将entity extraction→Wikipedia retrieval→LLM summary的既有contextaugmentation提前到claim verifiability classification，并在两NLP数据集/model/learning设置上评价；AB只说收益随domain/model/settings变化，却未说明新成立条件或通用false-verifiability盲区的受控反证。流程所在stage改变、新paradigm命名与任务准确率本身不足以建立本项目长期增量。它可能具有任务研究价值；本项目拟贡献前关闭不是否认retrieval可帮助claim检测，亦不把Wikipedia存在当事实真值或完整可验证性保证。

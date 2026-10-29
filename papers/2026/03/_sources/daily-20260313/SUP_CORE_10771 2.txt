@@ -1,0 +1,2106 @@
+Word Recovery in Large Language Models Enables Character-Level Tokenization Robustness
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Background
+2.1
+Character-Level Tokenization
+2.2
+Models and Datasets
+3
+Detecting Word Recovery in Hidden States
+Experiment.
+Discussion.
+4
+Causal Role of Word Recovery
+Experiment.
+5
+In-Group Attention Analysis
+Experiment.
+6
+Related Works
+Tokenization Robustness.
+Mechanistic Interpretability.
+7
+Conclusion
+References
+A
+Effect of Top-
+K
+K
+Choice in Word Recovery Decoding
+B
+Additional Analysis: In-Group Word Recovery Decoding
+License: CC BY 4.0
+arXiv:2603.10771v1 [cs.CL] 11 Mar 2026
+Word Recovery in Large Language Models Enables Character-Level Tokenization Robustness
+Zhipeng Yang
+Affiliation:
+Mohamed bin Zayed University of Artificial Intelligence (MBZUAI)
+Shu Yang
+Affiliation:
+Provable Responsible AI and Data Analytics (PRADA) Lab
+Affiliation:
+King Abdullah University of Science and Technology
+Lijie Hu
+Affiliation:
+Mohamed bin Zayed University of Artificial Intelligence (MBZUAI)
+Di Wang
+Affiliation:
+Provable Responsible AI and Data Analytics (PRADA) Lab
+Affiliation:
+King Abdullah University of Science and Technology
+Correspondence to:
+di.wang@kaust.edu.sa
+Abstract
+Large language models (LLMs) trained with canonical tokenization exhibit surprising robustness to non-canonical inputs such as character-level tokenization, yet the mechanisms underlying this robustness remain unclear. We study this phenomenon through mechanistic interpretability and identify a core process we term
+word recovery
+. We first introduce a decoding-based method to detect word recovery, showing that hidden states reconstruct canonical word-level token identities from character-level inputs. We then provide causal evidence by removing the corresponding subspace from hidden states, which consistently degrades downstream task performance. Finally, we conduct a fine-grained attention analysis and show that in-group attention among characters belonging to the same canonical token is critical for word recovery: masking such attention in early layers substantially reduces both recovery scores and task performance. Together, our findings provide a mechanistic explanation for tokenization robustness and identify word recovery as a key mechanism enabling LLMs to process character-level inputs.
+Keywords:
+Machine Learning, ICML
+1
+Introduction
+Large language models (LLMs) are typically trained and evaluated using a fixed, canonical tokenization scheme, most commonly based on subword methods such as Byte Pair Encoding (BPE), which map raw text into discrete tokens drawn from a learned vocabulary
+(
+Sennrich et al., 2016
+;
+Kudo and Richardson, 2018
+)
+. This tokenization process is traditionally regarded as a lossy preprocessing step: words are converted into sequences of token indices, and fine-grained character-level information is largely abstracted away before the model’s core computation begins
+(
+Chai et al., 2024
+;
+Erdogan et al., 2026
+;
+Wang et al., 2024
+)
+. Under this view, an LLM’s linguistic competence is fundamentally tied to the token units it was trained on, and deviations from the training tokenization should substantially impair performance.
+Figure 1
+:
+Overview of word recovery in large language models under character-level tokenization. A character-level input (e.g., “What is natural gas?”) is processed by the transformer, where early-layer in-group attention aggregates information among characters belonging to the same canonical token. This enables the model to reconstruct word-level representations in hidden states, which are then used for downstream contextual understanding.
+Table 1:
+Performance and word recovery under character-level tokenization.
+For each model and benchmark, we report accuracy under canonical tokenization (
+Canon
+), the change in accuracy under character-level tokenization (
+Char
+Δ
+\Delta
+), and the corresponding
+word recovery score
+measured from character-level inputs. Since recovery is defined layerwise, we report the maximum recovery score across layers in this table.
+Benchmark
+Gemma-2-9B-It
+Qwen2.5-7B-Instruct
+Llama-3.2-3B-Instruct
+Canon
+Char
+Δ
+\Delta
+Recovery
+Canon
+Char
+Δ
+\Delta
+Recovery
+Canon
+Char
+Δ
+\Delta
+Recovery
+ARC-E
+96.8
+96.8
+−
+3.50
+-3.50
+96.8
+95.6
+95.6
+−
+2.30
+-2.30
+75.0
+88.6
+88.6
+−
+35.80
+-35.80
+72.2
+ARC-C
+90.6
+90.6
+−
+4.00
+-4.00
+96.6
+91.6
+91.6
+−
+4.00
+-4.00
+75.5
+76.6
+76.6
+−
+33.80
+-33.80
+73.6
+CSQA
+80.7
+80.7
+−
+5.90
+-5.90
+96.4
+85.3
+85.3
+−
+9.10
+-9.10
+59.4
+73.9
+73.9
+−
+33.40
+-33.40
+57.7
+OpenbookQA
+87.8
+87.8
+−
+7.80
+-7.80
+95.7
+86.6
+86.6
+−
+8.20
+-8.20
+61.8
+77.0
+77.0
+−
+30.80
+-30.80
+60.5
+Surprisingly, however, recent studies have shown that LLMs trained with canonical tokenization can still perform competitively when evaluated on non-canonical tokenizations, including character-level sequences and randomly segmented tokenizations that break learned token boundaries
+(
+Zheng et al., 2025
+)
+. This robustness has been observed across multiple model families and downstream tasks, suggesting that it is not an isolated artifact of a particular architecture or dataset. At the same time, prior work has documented cases where tokenization obscures orthographic or morphological information and leads to brittle behavior
+(
+Edman et al., 2024
+;
+Wang et al., 2024
+)
+, motivating a long-standing debate over whether tokenization fundamentally limits language model understanding.
+These seemingly conflicting findings challenge the conventional understanding of tokenization as a hard constraint on model capability and raise a central question: how do LLMs internally process and interpret fragmented inputs that deviate from their training tokenization? In particular, it remains unclear whether models directly reason over character-level representations throughout the network, or whether they internally reconstruct higher-level lexical units that resemble canonical tokens and use them as intermediates for downstream computation. Answering this question requires moving beyond input–output behavior and toward an analysis of the internal representations and mechanisms that support robustness to non-canonical tokenization.
+In this work, we address this question through the lens of mechanistic interpretability, aiming to uncover the internal computations that enable LLMs to bridge the gap between character-level inputs and effective language understanding. Concretely, we focus on
+character-level tokenization
+as a representative and extreme form of non-canonical tokenization, in which the input is decomposed into individual characters and explicit word boundaries are removed (Figure
+1
+). We identify a core process we term
+word recovery
+, in which models reconstruct canonical word- or subword-level identities within their hidden states and use these recovered units as intermediates for downstream computation. Our analysis proceeds in three stages. First, we introduce a decoding-based framework that probes hidden states across layers using the model’s output embedding, yielding a layerwise
+word recovery score
+that quantifies how many canonical tokens become recoverable from character-level representations. This reveals that word recovery is ubiquitous across datasets and model families, while its layerwise dynamics are strongly model-dependent. Second, we test the functional importance of word recovery via targeted subspace interventions: at selected layers and character spans, we remove the component of the residual stream aligned with specific recovered tokens and measure the resulting degradation in task performance. This intervention reveals a tight correspondence between recovery and causal necessity, with early recovered tokens playing a disproportionate role in enabling accurate predictions. Finally, we perform a fine-grained attention analysis by selectively masking
+in-group attention
+, attention among characters belonging to the same canonical token, and show that disrupting in-group attention in early layers consistently reduces both recovery scores and downstream performance.
+Together, these results reveal that robustness to character-level tokenization does not arise from direct character-level reasoning. Instead, LLMs internally reconstruct word-level representations and rely on them as intermediate units for contextual understanding. We show that this robustness arises from an internal, causally relevant
+word recovery
+mechanism, supported by in-group attention in early layers that aggregates character information into lexical representations. Our work clarifies the internal structure underlying tokenization robustness and contributes to a growing body of mechanistic interpretability research aimed at understanding how modern language models represent and manipulate linguistic information.
+(a)
+Gemma-2-9b-It
+(b)
+Qwen2.5-7B-Instruct
+(c)
+Llama-3.2-3B-Instruct
+Figure 2
+:
+Layerwise word recovery under character-level tokenization.
+We show the word recovery score across four datasets and three models. Recovery patterns are consistent across datasets within each model, while the layerwise behavior of recovery varies across models.
+2
+Background
+2.1
+Character-Level Tokenization
+Large language models (LLMs) are typically trained using a fixed, canonical tokenization scheme, most commonly based on subword methods such as Byte Pair Encoding (BPE). Given an input string
+x
+x
+, canonical tokenization maps
+x
+x
+to a sequence of tokens
+x
+↦
+(
+t
+1
+,
+t
+2
+,
+…
+,
+t
+N
+)
+,
+t
+i
+∈
+𝒱
+,
+x\mapsto(t_{1},t_{2},\dots,t_{N}),\quad t_{i}\in\mathcal{V},
+where
+𝒱
+\mathcal{V}
+is a learned subword vocabulary and each
+t
+i
+t_{i}
+corresponds to a word or subword unit. The model then operates on the corresponding sequence of token indices. Under this formulation, tokenization is commonly viewed as a preprocessing step that abstracts away internal character structure, since the model does not directly observe the characters composing each token.
+In contrast, under character-level tokenization, the same input string
+x
+x
+is represented as a sequence of characters
+x
+↦
+(
+c
+1
+,
+c
+2
+,
+…
+,
+c
+M
+)
+,
+x\mapsto(c_{1},c_{2},\dots,c_{M}),
+where each
+c
+j
+c_{j}
+is a single character. Each canonical token
+t
+i
+t_{i}
+corresponds to a contiguous span of characters in the original string. We denote this span by
+𝒢
+⁡
+(
+t
+i
+)
+=
+{
+c
+s
+i
+,
+c
+s
+i
++
+1
+,
+…
+,
+c
+e
+i
+}
+,
+\mathcal{G}(t_{i})=\{c_{s_{i}},c_{s_{i}+1},\dots,c_{e_{i}}\},
+where the concatenation of characters in
+𝒢
+⁡
+(
+t
+i
+)
+\mathcal{G}(t_{i})
+recovers
+t
+i
+t_{i}
+. We refer to
+𝒢
+⁡
+(
+t
+i
+)
+\mathcal{G}(t_{i})
+as an
+in-group
+, and each
+c
+j
+∈
+𝒢
+⁡
+(
+t
+i
+)
+c_{j}\in\mathcal{G}(t_{i})
+as an
+in-group token
+with respect to
+t
+i
+t_{i}
+. Character tokens belonging to different canonical tokens are referred to as
+out-of-group tokens
+. This induces a latent grouping structure over character-level inputs, which is not explicitly provided to the model but plays a central role in our subsequent analysis.
+2.2
+Models and Datasets
+We conduct our analysis on a diverse set of instruction-tuned large language models to evaluate the generality of the proposed mechanisms across architectures and model scales. Specifically, we study Gemma-2-9B-It
+(
+Team et al., 2024
+)
+, Qwen2.5-7B-Instruct
+(
+Yang et al., 2024
+)
+, and Llama-3.2-3B-Instruct
+(
+Meta., 2024
+)
+. We evaluate models on a set of question answering benchmarks, including ARC-Easy (ARC-E), ARC-Challenge (ARC-C), CommonsenseQA (CSQA), and OpenbookQA. These datasets have been used in prior work to study robustness to non-canonical tokenization, showing that models trained with canonical tokenization can retain competitive performance under character-level or randomly segmented inputs
+(
+Zheng et al., 2025
+)
+. We therefore adopt these benchmarks as a controlled testbed for analyzing internal mechanisms underlying tokenization robustness. For each dataset, we evaluate model performance under both canonical tokenization and character-level tokenization. Summary results are reported in Table
+1
+. All evaluations are conducted without additional fine-tuning, enabling us to isolate how pretrained models internally process character-level inputs.
+(a)
+ARC-E
+(b)
+ARC-C
+(c)
+CSQA
+(d)
+OpenbookQA
+Figure 3
+:
+Layerwise effects of targeted word-recovery intervention for Gemma-2-9B-It.
+The line plot shows task performance under targeted intervention applied starting from each transformer layer, while the shaded area shows the corresponding word recovery score at the intervention starting layer under character-level tokenization.
+3
+Detecting Word Recovery in Hidden States
+Although large language models are capable of processing character-level inputs despite being trained with canonical tokenization, it is unclear whether they directly reason over characters or instead reconstruct higher-level lexical units internally. We adopt the hypothesis that LLMs do not natively operate on individual characters as semantic units. Instead, when presented with character-level inputs, they first aggregate character information to recover meaningful word-level or subword-level representations corresponding to canonical tokens, which are then used for downstream computation. Under this hypothesis, robustness to character-level tokenization arises from an internal
+word recovery
+process rather than direct character-level understanding.
+To operationalize this hypothesis, we analyze whether hidden states at different layers encode the original canonical tokens corresponding to the input text. Let
+x
+x
+be an input string, canonically tokenized as
+(
+t
+1
+,
+…
+,
+t
+N
+)
+(t_{1},\dots,t_{N})
+under a BPE tokenizer, and represented under character-level tokenization as
+(
+c
+1
+,
+…
+,
+c
+M
+)
+(c_{1},\dots,c_{M})
+. For a given layer
+ℓ
+\ell
+, let
+h
+j
+(
+ℓ
+)
+h^{(\ell)}_{j}
+denote the hidden state corresponding to character token
+c
+j
+c_{j}
+. We decode each hidden state using the model’s output embedding matrix
+(
+Nostalgebraist., 2020
+)
+, yielding a distribution over the vocabulary:
+p
+j
+(
+ℓ
+)
+=
+softmax
+⁡
+(
+W
+out
+​
+h
+j
+(
+ℓ
+)
+)
+,
+p^{(\ell)}_{j}=\mathrm{softmax}(W_{\text{out}}h^{(\ell)}_{j}),
+where
+p
+j
+(
+ℓ
+)
+∈
+ℝ
+|
+𝒱
+|
+p^{(\ell)}_{j}\in\mathbb{R}^{|\mathcal{V}|}
+. For each position
+j
+j
+, we extract the top-
+K
+K
+predicted token identities according to
+p
+j
+(
+ℓ
+)
+p^{(\ell)}_{j}
+. For each input example, we define the set of target canonical tokens
+𝒯
+=
+{
+t
+1
+,
+…
+,
+t
+N
+}
+,
+\mathcal{T}=\{t_{1},\dots,t_{N}\},
+where duplicates are removed to avoid overcounting repeated tokens. Let
+𝒫
+(
+ℓ
+)
+\mathcal{P}^{(\ell)}
+denote the union of all tokens appearing in the top-
+K
+K
+predictions across the entire character sequence at layer
+ℓ
+\ell
+:
+𝒫
+(
+ℓ
+)
+=
+⋃
+j
+=
+1
+M
+TopK
+⁡
+(
+p
+j
+(
+ℓ
+)
+)
+.
+\mathcal{P}^{(\ell)}=\bigcup_{j=1}^{M}\mathrm{TopK}(p^{(\ell)}_{j}).
+We say that a canonical token
+t
+∈
+𝒯
+t\in\mathcal{T}
+is
+recovered
+at layer
+ℓ
+\ell
+if
+t
+∈
+𝒫
+(
+ℓ
+)
+t\in\mathcal{P}^{(\ell)}
+. The recovery score at layer
+ℓ
+\ell
+is then defined as
+R
+(
+ℓ
+)
+=
+|
+𝒯
+∩
+𝒫
+(
+ℓ
+)
+|
+|
+𝒯
+|
+,
+R^{(\ell)}=\frac{|\mathcal{T}\cap\mathcal{P}^{(\ell)}|}{|\mathcal{T}|},
+which measures the proportion of unique canonical tokens whose identities are recoverable from the layer-
+ℓ
+\ell
+hidden states. This set-based formulation captures whether the model has internally reconstructed the lexical identities present in the input, independent of their specific positions in the character sequence. Tracking
+R
+(
+ℓ
+)
+R^{(\ell)}
+across layers allows us to characterize when and how word-level representations emerge during processing.
+Because our recovery metric aggregates decoded tokens across the entire character sequence, it may overestimate recovery by allowing tokens to be detected outside their original character spans. To address this potential concern, we include an ablation in Appendix
+B
+that restricts decoding to in-group character ranges, verifying that our core conclusions about the timing and prevalence of word recovery remain unchanged.
+Experiment.
+We measure the word recovery score across four datasets (ARC-E, ARC-C, CSQA, and OpenbookQA) and three models (Gemma-2-9B-It, Qwen2.5-7B-Instruct, and Llama-3.2-3B-Instruct) at every transformer layer. Unless otherwise specified, we use
+K
+=
+5
+K=5
+for top-
+K
+K
+decoding when computing recovery scores (see Appendix
+A
+for an analysis of robustness to the choice of
+K
+K
+). Table
+1
+summarizes the maximum recovery score achieved across layers for each model and dataset, while Figure
+2
+reports the full layerwise recovery curves. Across all settings, we observe that word recovery is a universal phenomenon: all models are able to recover a substantial fraction of canonical word tokens from character-level inputs in their hidden states. The maximum recovery scores range from 57.7 to 96.8 across models and datasets, indicating that a large portion of lexical information is internally reconstructed despite the absence of canonical tokenization. Moreover, within each model, recovery curves are highly consistent across datasets, suggesting that word recovery reflects a model-level property rather than dataset-specific behavior.
+At the same time, the layerwise dynamics of word recovery vary substantially across models. Gemma-2-9B-It recovers most word tokens in early layers, with recovery saturating quickly and remaining high throughout the network. In contrast, Qwen2.5-7B-Instruct and Llama-3.2-3B-Instruct exhibit a two-stage recovery pattern: an initial phase in early layers where a subset of word tokens becomes recoverable, followed by a sharp increase in recovery in mid-to-late layers. This difference highlights that, while word recovery is common across models, the internal pathways by which it emerges are model-dependent.
+Discussion.
+For Qwen2.5-7B-Instruct and Llama-3.2-3B-Instruct, a significant portion of word recovery occurs in mid-to-late layers. Prior interpretability studies
+(
+Yang et al., 2025
+;
+Wiegreffe et al., 2024
+)
+have shown that these layers are often associated with contextual integration, reasoning, and task-specific computation. The temporal overlap between word recovery and these stages raises a natural question: is word recovery a necessary and causally relevant step for contextual understanding, or is it merely a byproduct of other internal computations? In the following section, we investigate the causal role of word recovery by directly intervening on recovered word-level representations and measuring the resulting impact on downstream performance.
+(a)
+ARC-E
+(b)
+ARC-C
+(c)
+CSQA
+(d)
+OpenbookQA
+Figure 4
+:
+Layerwise effects of targeted word-recovery intervention for Qwen2.5-7B-Instruct.
+The line plot shows task performance under targeted intervention applied starting from each transformer layer, while the shaded area shows the corresponding word recovery score at the intervention starting layer under character-level tokenization.
+(a)
+ARC-E
+(b)
+ARC-C
+(c)
+CSQA
+(d)
+OpenbookQA
+Figure 5
+:
+Layerwise effects of targeted word-recovery intervention for Llama-3.2-3B-Instruct.
+The line plot shows task performance under targeted intervention applied starting from each transformer layer, while the shaded area shows the corresponding word recovery score at the intervention starting layer under character-level tokenization.
+4
+Causal Role of Word Recovery
+Decoding analyses reveal that canonical word-level representations are recoverable from hidden states when LLMs process character-level inputs. However, recoverability alone does not imply functional importance: word recovery may emerge as a byproduct of downstream task computation rather than serving as a causal intermediate. To establish a causal role for word recovery, it is therefore necessary to directly intervene on the internal representations corresponding to recovered word tokens and evaluate the impact on model behavior. Our goal is to test whether removing word-level information from hidden states impairs the model’s ability to understand and respond to the input.
+We design a targeted intervention that removes the contribution of recovered word tokens from the model’s residual stream. Let
+W
+out
+∈
+ℝ
+d
+×
+|
+𝒱
+|
+W_{\text{out}}\in\mathbb{R}^{d\times|\mathcal{V}|}
+denote the model’s output embedding matrix, and let
+w
+t
+∈
+ℝ
+d
+w_{t}\in\mathbb{R}^{d}
+be the output embedding corresponding to a canonical token
+t
+t
+. Following prior work
+(
+Nostalgebraist., 2020
+)
+, we treat
+w
+t
+w_{t}
+as a direction in representation space associated with the lexical identity of token
+t
+t
+. For an input sequence processed under character-level tokenization, consider a canonical token
+t
+t
+whose characters occupy positions
+[
+s
+,
+e
+)
+[s,e)
+in the character sequence. At a given layer
+ℓ
+\ell
+, let
+h
+j
+(
+ℓ
+)
+∈
+ℝ
+d
+h^{(\ell)}_{j}\in\mathbb{R}^{d}
+denote the residual stream activation at position
+j
+∈
+[
+s
+,
+e
+)
+j\in[s,e)
+. We project these activations onto the token direction
+w
+t
+w_{t}
+and subtract the resulting component:
+h
+j
+(
+ℓ
+)
+←
+h
+j
+(
+ℓ
+)
+−
+⟨
+h
+j
+(
+ℓ
+)
+,
+w
+t
+⟩
+​
+w
+t
+.
+h^{(\ell)}_{j}\leftarrow h^{(\ell)}_{j}-\langle h^{(\ell)}_{j},w_{t}\rangle\,w_{t}.
+This operation removes the contribution of the recovered word token
+t
+t
+from the hidden states corresponding to its character span, while preserving orthogonal components of the representation.
+We apply this intervention across a range of layers, starting from a specified layer
+ℓ
+0
+\ell_{0}
+through the final layer, and restrict it to the character positions associated with the target canonical token. By intervening only on a localized subspace and a localized span, we avoid globally perturbing the residual stream and isolate the effect of removing word-level information. The intervention is performed during generation, allowing us to directly measure its impact on downstream predictions. If word recovery serves as a necessary intermediate for understanding character-level inputs, then removing the corresponding word-level subspace should degrade downstream task performance. Conversely, if word recovery is merely epiphenomenal, such targeted interventions should have limited effect. This subspace-based removal therefore provides a direct test of whether recovered word representations play a causal role in the model’s contextual understanding.
+(a)
+Gemma-2-9b-It
+(b)
+Qwen2.5-7B-Instruct
+(c)
+Llama-3.2-3B-Instruct
+Figure 6
+:
+Layerwise effects of in-group attention masking.
+For each model, we plot task accuracy under character-level tokenization when in-group attention (attention among characters belonging to the same canonical token) is masked starting from different transformer layers. Results are shown across four datasets.
+Experiment.
+We present targeted word-recovery intervention results for three models in Figures
+3
+,
+4
+, and
+5
+. For each benchmark, the line plot reports task performance under targeted intervention applied starting from each transformer layer, while the shaded area shows the corresponding word recovery score at the intervention starting layer under character-level tokenization.
+Across all models and datasets, we observe a strong correspondence between word recovery and task performance under intervention. When the intervention is applied starting from early layers where canonical word tokens first become recoverable, task performance drops substantially. This indicates that the recovered word-level representations are functionally necessary for downstream computation. As the intervention starting layer moves deeper into the network, task performance rapidly improves and eventually saturates, suggesting that once recovered word representations have been consumed for contextual understanding, removing them in later layers has little additional effect.
+Notably, Qwen2.5-7B-Instruct and Llama-3.2-3B-Instruct exhibit a compact, two-stage word recovery process. In early layers, only a small fraction of canonical word tokens (approximately one quarter) are recovered; nevertheless, removing this early recovered subset leads to a large degradation in task performance. In later layers, recovery expands to include most canonical tokens, but interventions applied after this stage no longer substantially affect performance. This pattern suggests that early recovered word tokens play a disproportionate role in enabling context understanding, while word-level representations recovered in later layers are largely redundant for task computation.
+Together, these results provide causal evidence that word recovery is not merely an epiphenomenon of model computation, but a necessary intermediate mechanism through which LLMs process character-level inputs.
+(a)
+Gemma-2-9b-It
+(b)
+Qwen2.5-7B-Instruct
+(c)
+Llama-3.2-3B-Instruct
+Figure 7
+:
+Early-layer in-group attention supports word recovery.
+We plot word recovery scores across layers when in-group attention is masked in the first five layers, compared to the baseline without masking (dashed).
+5
+In-Group Attention Analysis
+Word recovery requires aggregating information distributed across multiple character tokens that together correspond to a single canonical token. In transformer architectures, attention provides the primary mechanism for information integration across positions. We therefore hypothesize that
+in-group attention
+, attention among characters belonging to the same canonical token, plays a critical role in enabling word recovery. If this hypothesis is correct, selectively disrupting in-group attention should impair the model’s ability to recover word-level representations and, consequently, degrade downstream performance.
+Consider an input sequence represented under character-level tokenization as
+(
+c
+1
+,
+…
+,
+c
+M
+)
+(c_{1},\dots,c_{M})
+. Let
+𝒢
+⁡
+(
+t
+i
+)
+=
+{
+c
+s
+i
+,
+…
+,
+c
+e
+i
+}
+\mathcal{G}(t_{i})=\{c_{s_{i}},\dots,c_{e_{i}}\}
+denote the set of character tokens corresponding to a canonical token
+t
+i
+t_{i}
+, as defined in Section
+2
+. For a given attention head
+h
+h
+at layer
+ℓ
+\ell
+, let
+A
+(
+ℓ
+,
+h
+)
+∈
+ℝ
+M
+×
+M
+A^{(\ell,h)}\in\mathbb{R}^{M\times M}
+denote the pre-softmax attention score matrix. We define
+in-group attention
+as attention from positions within
+𝒢
+⁡
+(
+t
+i
+)
+\mathcal{G}(t_{i})
+to other positions in the same group:
+A
+j
+​
+k
+(
+ℓ
+,
+h
+)
+for
+​
+j
+,
+k
+∈
+𝒢
+⁡
+(
+t
+i
+)
+.
+A^{(\ell,h)}_{jk}\quad\text{for }j,k\in\mathcal{G}(t_{i}).
+This attention pattern enables characters belonging to the same canonical token to exchange information and form a coherent internal representation. To test the causal role of in-group attention, we design an intervention that selectively suppresses attention within each canonical token group. For each canonical token span
+𝒢
+⁡
+(
+t
+i
+)
+=
+[
+s
+i
+,
+e
+i
+)
+\mathcal{G}(t_{i})=[s_{i},e_{i})
+, we modify the attention scores by adding a mask:
+A
+j
+​
+k
+(
+ℓ
+,
+h
+)
+←
+−
+∞
+for all
+​
+j
+,
+k
+∈
+[
+s
+i
+,
+e
+i
+)
+,
+A^{(\ell,h)}_{jk}\leftarrow-\infty\quad\text{for all }j,k\in[s_{i},e_{i}),
+while leaving all other attention scores unchanged. This masking prevents character tokens within the same group from attending to one another, without affecting attention across different groups or to surrounding context.
+We apply this in-group attention masking in a layer-selective manner to distinguish when in-group aggregation is required. Specifically, we consider masking applied from a chosen layer
+ℓ
+0
+\ell_{0}
+through the final layer. By comparing the effects of early-layer and late-layer masking, we can determine whether in-group attention is primarily needed during the initial formation of word-level representations or during later stages of processing. If in-group attention is a necessary mechanism for word recovery, then suppressing it should reduce both the recoverability of canonical tokens in hidden states and the model’s downstream performance. Conversely, if word recovery is already complete, masking in-group attention in later layers should have a limited effect. This intervention therefore provides a fine-grained causal test of how and when attention supports the emergence of word-level representations from character-level inputs.
+Experiment.
+We evaluate the role of in-group attention by measuring task performance under layerwise in-group attention masking, as shown in Figure
+6
+. For each model, we mask in-group attention starting from different transformer layers and report accuracy under character-level tokenization across four datasets. We find that masking in-group attention in early layers leads to a substantial drop in task performance, while masking in later layers has a significantly smaller effect. This pattern confirms the importance of information exchange among in-group tokens during early stages of processing.
+To directly assess the impact of in-group attention on word recovery, we further measure recovery scores under early-layer masking. Based on the in-group masking dynamics in Figure
+6
+, we mask in-group attention in the first five layers and compute the resulting word recovery score across all layers. Figure
+7
+plots recovery scores under masking (solid lines) alongside the baseline without masking (dashed lines). Across all models and datasets, early-layer in-group attention masking leads to a consistent reduction in word recovery scores, indicating that in-group attention in early layers is critical for enabling the word recovery process.
+6
+Related Works
+Tokenization Robustness.
+Whether tokenization fundamentally constrains the capabilities of large language models has been a persistent question in NLP research. A substantial body of work argues that standard subword tokenization schemes fragment words in ways that obscure orthographic and morphological structure, resulting in brittle behavior and sensitivity to rare forms, misspellings, or unconventional inputs
+(
+Edman et al., 2024
+;
+Chai et al., 2024
+;
+Wang et al., 2024
+)
+. These concerns have motivated the design of tokenizers that explicitly encode linguistic structure, including approaches that incorporate derivational morphology, compound boundaries, or contextual information into subword vocabularies
+(
+Klein and Tsarfaty, 2020
+;
+Hofmann et al., 2021
+;
+Hofmann et al., 2022
+;
+Yehezkel and Pinter, 2023
+;
+Bauwens and Delobelle, 2024
+;
+Neitemeier et al., 2025
+)
+. Other lines of work aim to mitigate tokenization brittleness by introducing stochasticity at training time, for example through BPE-dropout or related randomized segmentation strategies, with the goal of improving robustness and generalization to unseen forms
+(
+Provilkov et al., 2020
+;
+Sims et al., 2025
+;
+Fu et al., 2025
+;
+Fu and Wang, 2023
+)
+.
+In contrast, an emerging set of results suggests that modern LLMs may internally compensate for many tokenization-induced limitations. Prior studies have shown that token embeddings often encode substantial character-level and orthographic information, particularly in larger models, enabling sensitivity to spelling patterns even when character structure is not explicitly represented in the input sequence
+(
+Kaushal and Mahowald, 2022
+;
+Itzhak and Levy, 2022
+;
+Cosma et al., 2025
+)
+. Other work argues that language models implicitly construct higher-level lexical representations, effectively maintaining an internal vocabulary that allows them to compose non-canonical or fragmented token sequences into coherent semantic units
+(
+Feucht et al., 2024
+;
+Kaplan et al., 2025
+)
+.
+Most closely related to our setting, recent work by
+Zheng et al. (2025)
+shows that instruction-tuned LLMs retain strong performance under a wide range of non-canonical tokenizations, including character-level and randomly segmented inputs, often preserving over 90% of canonical-tokenization accuracy across benchmarks. While this work establishes the prevalence of tokenization robustness at the behavioral level, it does not explain the internal mechanisms that enable such robustness, which we investigate in this paper.
+Mechanistic Interpretability.
+Mechanistic interpretability seeks to explain the behavior of large language models by identifying the internal computations and representations that give rise to their outputs
+(
+Elhage et al., 2021
+)
+. A substantial body of work aims to uncover structured transformer circuits—compositions of attention heads and neurons that implement specific algorithmic functions such as copying, induction, or reasoning primitives
+(
+Olsson et al., 2022
+;
+Gould et al., 2024
+;
+Wang et al., 2023
+;
+Marks et al., 2024
+;
+Zhang et al., 2025c
+;
+Cui et al., 2025
+;
+Zhang et al., 2025b
+;
+Wang et al., 2025b
+)
+. Beyond circuit discovery, many studies analyze intermediate representations directly. Probing methods such as the LogitLens decode hidden states into the output vocabulary, enabling layerwise inspection of how semantic information evolves during inference
+(
+Nostalgebraist., 2020
+)
+. These techniques have been extended to track hidden-state dynamics and reasoning trajectories in LLMs, revealing structured internal computation across depth
+(
+Dar et al., 2023
+;
+Halawi et al., 2024
+;
+Merullo et al., 2024
+;
+Wiegreffe et al., 2024
+;
+Yang et al., 2025
+;
+Chen et al., 2025
+)
+.
+Causal intervention provides a complementary perspective by testing the functional necessity of internal components. Prior work intervenes on neurons, attention heads, or representation subspaces to quantify their causal contribution to model predictions
+(
+Vig et al., 2020
+;
+Meng et al., 2022
+;
+Geva et al., 2023
+;
+Zhang et al., 2025a
+;
+Zhang et al., 2025d
+;
+Jiang et al., 2025
+;
+Wang et al., 2025a
+;
+Dong et al., 2025
+;
+Su et al., 2025
+)
+. Finally, recent research addresses the challenge of superposition, where multiple concepts are encoded within shared activations—using sparse autoencoders and related techniques to extract disentangled, interpretable features from high-dimensional representations
+(
+Elhage et al., 2022
+;
+Scherlis et al., 2022
+;
+Gao et al., 2024
+;
+Anthropic., 2024
+;
+Ferrando et al., 2024
+;
+Yu et al., 2025
+;
+Yao et al., 2025
+)
+.
+7
+Conclusion
+Large language models (LLMs) trained with canonical tokenization exhibit surprising robustness to non-canonical inputs such as character-level tokenization, yet the mechanisms underlying this robustness remain unclear. We study this phenomenon through mechanistic interpretability and identify a core process we term
+word recovery
+. We first introduce a decoding-based method to detect word recovery, showing that hidden states reconstruct canonical word-level token identities from character-level inputs. We then provide causal evidence by removing the corresponding subspace from hidden states, which consistently degrades downstream task performance. Finally, we conduct a fine-grained attention analysis and show that in-group attention among characters belonging to the same canonical token is critical for word recovery: masking such attention in early layers substantially reduces both recovery scores and task performance. Together, our findings provide a mechanistic explanation for tokenization robustness and identify word recovery as a key mechanism enabling LLMs to process character-level inputs.
+Impact Statement
+This paper aims to advance the scientific understanding of large language models by analyzing the internal mechanisms underlying robustness to non-canonical tokenization. Our work is methodological in nature and focuses on mechanistic interpretability rather than developing new model capabilities. The findings may contribute to improved transparency and reliability in language models. We do not anticipate immediate negative societal impacts arising directly from this work; broader ethical considerations remain dependent on downstream applications of language models rather than the analyses presented here.
+References
+Anthropic. (2024)
+Anthropic.
+Scaling monosemanticity: extracting interpretable features from claude 3 sonnet.
+.
+In
+Transformer Circuits Thread
+,
+Cited by:
+§6
+.
+Bauwens and Delobelle (2024)
+T. Bauwens and P. Delobelle
+BPE-knockout: pruning pre-existing bpe tokenisers with backwards-compatible morphological semi-supervision
+.
+In
+Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)
+,
+pp. 5810–5832
+.
+Cited by:
+§6
+.
+Chai
+et al.
+(2024)
+Y. Chai, Y. Fang, Q. Peng, and X. Li
+Tokenization falling short: on subword robustness in large language models
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2024
+,
+pp. 1582–1599
+.
+Cited by:
+§1
+,
+§6
+.
+Chen
+et al.
+(2025)
+X. Chen, J. Wu, S. Yang, R. Zhan, Z. Wu, Z. Luo, D. Wang, M. Yang, L. S. Chao, and D. F. Wong
+Repreguard: detecting llm-generated text by revealing hidden representation patterns
+.
+Transactions of the Association for Computational Linguistics
+13
+,
+pp. 1812–1831
+.
+Cited by:
+§6
+.
+Cosma
+et al.
+(2025)
+A. Cosma, S. Ruseti, E. Radoi, and M. Dascalu
+The strawberry problem: emergence of character-level understanding in tokenized language models
+.
+arXiv preprint arXiv:2505.14172
+.
+Cited by:
+§6
+.
+Cui
+et al.
+(2025)
+X. Cui, S. Yang, T. Huang, W. Lin, L. Hu, and D. Wang
+The compositional architecture of regret in large language models
+.
+arXiv preprint arXiv:2506.15617
+.
+Cited by:
+§6
+.
+Dar
+et al.
+(2023)
+G. Dar, M. Geva, A. Gupta, and J. Berant
+Analyzing transformers in embedding space
+.
+In
+Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+pp. 16124–16170
+.
+Cited by:
+§6
+.
+Dong
+et al.
+(2025)
+W. Dong, Q. Yang, S. Yang, L. Hu, M. Ding, W. Lin, T. Zheng, and D. Wang
+Understanding and mitigating cross-lingual privacy leakage via language-specific and universal privacy neurons
+.
+arXiv preprint arXiv:2506.00759
+.
+Cited by:
+§6
+.
+Edman
+et al.
+(2024)
+L. Edman, H. Schmid, and A. Fraser
+CUTE: measuring llms’ understanding of their tokens
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 3017–3026
+.
+Cited by:
+§1
+,
+§6
+.
+Elhage
+et al.
+(2022)
+N. Elhage, T. Hume, C. Olsson, N. Schiefer, T. Henighan, S. Kravec, Z. Hatfield-Dodds, R. Lasenby, D. Drain, C. Chen,
+et al.
+Toy models of superposition
+.
+arXiv preprint arXiv:2209.10652
+.
+Cited by:
+§6
+.
+Elhage
+et al.
+(2021)
+N. Elhage, N. Nanda, C. Olsson, T. Henighan, N. Joseph, B. Mann, A. Askell, Y. Bai, A. Chen, T. Conerly,
+et al.
+A mathematical framework for transformer circuits
+.
+Transformer Circuits Thread
+1
+(
+1
+),
+pp. 12
+.
+Cited by:
+§6
+.
+Erdogan
+et al.
+(2026)
+M. Erdogan, A. Gorle, S. Chandak, M. Pilanci, and T. Weissman
+An information-theoretic perspective on llm tokenizers
+.
+arXiv preprint arXiv:2601.09039
+.
+Cited by:
+§1
+.
+Ferrando
+et al.
+(2024)
+J. Ferrando, O. Obeso, S. Rajamanoharan, and N. Nanda
+Do i know this entity? knowledge awareness and hallucinations in language models
+.
+arXiv preprint arXiv:2411.14257
+.
+Cited by:
+§6
+.
+Feucht
+et al.
+(2024)
+S. Feucht, D. Atkinson, B. C. Wallace, and D. Bau
+Token erasure as a footprint of implicit vocabulary items in llms
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 9727–9739
+.
+Cited by:
+§6
+.
+Fu
+et al.
+(2025)
+S. Fu, L. Ding, J. Zhang, and D. Wang
+Short-length adversarial training helps llms defend long-length jailbreak attacks: theoretical and empirical evidence
+.
+arXiv preprint arXiv:2502.04204
+.
+Cited by:
+§6
+.
+Fu and Wang (2023)
+S. Fu and D. Wang
+Theoretical analysis of robust overfitting for wide dnns: an ntk approach
+.
+arXiv preprint arXiv:2310.06112
+.
+Cited by:
+§6
+.
+Gao
+et al.
+(2024)
+L. Gao, T. D. la Tour, H. Tillman, G. Goh, R. Troll, A. Radford, I. Sutskever, J. Leike, and J. Wu
+Scaling and evaluating sparse autoencoders
+.
+arXiv preprint arXiv:2406.04093
+.
+Cited by:
+§6
+.
+Geva
+et al.
+(2023)
+M. Geva, J. Bastings, K. Filippova, and A. Globerson
+Dissecting recall of factual associations in auto-regressive language models
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 12216–12235
+.
+Cited by:
+§6
+.
+Gould
+et al.
+(2024)
+R. Gould, E. Ong, G. Ogden, and A. Conmy
+Successor heads: recurring, interpretable attention heads in the wild
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§6
+.
+Halawi
+et al.
+(2024)
+D. Halawi, J. Denain, and J. Steinhardt
+Overthinking the truth: understanding how language models process false demonstrations
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§6
+.
+Hofmann
+et al.
+(2021)
+V. Hofmann, J. Pierrehumbert, and H. Schütze
+Superbizarre is not superb: derivational morphology improves bert’s interpretation of complex words
+.
+In
+Proceedings of the 59th Annual Meeting of the Association for Computational Linguistics and the 11th International Joint Conference on Natural Language Processing (Volume 1: Long Papers)
+,
+pp. 3594–3608
+.
+Cited by:
+§6
+.
+Hofmann
+et al.
+(2022)
+V. Hofmann, H. Schuetze, and J. Pierrehumbert
+An embarrassingly simple method to mitigate undesirable properties of pretrained language model tokenizers
+.
+In
+Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers)
+,
+pp. 385–393
+.
+Cited by:
+§6
+.
+Itzhak and Levy (2022)
+I. Itzhak and O. Levy
+Models in a spelling bee: language models implicitly learn the character composition of tokens
+.
+In
+Proceedings of the 2022 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies
+,
+pp. 5061–5068
+.
+Cited by:
+§6
+.
+Jiang
+et al.
+(2025)
+X. Jiang, L. Zhang, J. Zhang, Q. Yang, G. Hu, D. Wang, and L. Hu
+Msrs: adaptive multi-subspace representation steering for attribute alignment in large language models
+.
+arXiv preprint arXiv:2508.10599
+.
+Cited by:
+§6
+.
+Kaplan
+et al.
+(2025)
+G. Kaplan, M. Oren, Y. Reif, and R. Schwartz
+From tokens to words: on the inner lexicon of llms
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§6
+.
+Kaushal and Mahowald (2022)
+A. Kaushal and K. Mahowald
+What do tokens know about their characters and how do they know it?
+.
+In
+Proceedings of the 2022 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies
+,
+pp. 2487–2507
+.
+Cited by:
+§6
+.
+Klein and Tsarfaty (2020)
+S. Klein and R. Tsarfaty
+Getting the## life out of living: how adequate are word-pieces for modelling complex morphology?
+.
+In
+Proceedings of the 17th SIGMORPHON workshop on computational research in phonetics, phonology, and morphology
+,
+pp. 204–209
+.
+Cited by:
+§6
+.
+Kudo and Richardson (2018)
+T. Kudo and J. Richardson
+SentencePiece: a simple and language independent subword tokenizer and detokenizer for neural text processing
+.
+EMNLP 2018
+,
+pp. 66
+.
+Cited by:
+§1
+.
+Marks
+et al.
+(2024)
+S. Marks, C. Rager, E. J. Michaud, Y. Belinkov, D. Bau, and A. Mueller
+Sparse feature circuits: discovering and editing interpretable causal graphs in language models
+.
+arXiv preprint arXiv:2403.19647
+.
+Cited by:
+§6
+.
+Meng
+et al.
+(2022)
+K. Meng, D. Bau, A. Andonian, and Y. Belinkov
+Locating and editing factual associations in gpt
+.
+Advances in neural information processing systems
+35
+,
+pp. 17359–17372
+.
+Cited by:
+§6
+.
+Merullo
+et al.
+(2024)
+J. Merullo, C. Eickhoff, and E. Pavlick
+Language models implement simple word2vec-style vector arithmetic
+.
+In
+Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers)
+,
+pp. 5030–5047
+.
+Cited by:
+§6
+.
+Meta. (2024)
+A. Meta.
+Llama 3.2: revolutionizing edge ai and vision with open, customizable models
+.
+Cited by:
+§2.2
+.
+Neitemeier
+et al.
+(2025)
+P. Neitemeier, B. Deiseroth, C. Eichenberg, and L. Balles
+Hierarchical autoregressive transformers: combining byte-and word-level processing for robust, adaptable language models
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+Cited by:
+§6
+.
+Nostalgebraist. (2020)
+Nostalgebraist.
+Interpreting gpt: the logit lens
+.
+Note:
+https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens
+Cited by:
+§3
+,
+§4
+,
+§6
+.
+Olsson
+et al.
+(2022)
+C. Olsson, N. Elhage, N. Nanda, N. Joseph, N. DasSarma, T. Henighan, B. Mann, A. Askell, Y. Bai, A. Chen,
+et al.
+In-context learning and induction heads
+.
+arXiv preprint arXiv:2209.11895
+.
+Cited by:
+§6
+.
+Provilkov
+et al.
+(2020)
+I. Provilkov, D. Emelianenko, and E. Voita
+BPE-dropout: simple and effective subword regularization
+.
+In
+Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics
+,
+pp. 1882–1892
+.
+Cited by:
+§6
+.
+Scherlis
+et al.
+(2022)
+A. Scherlis, K. Sachan, A. S. Jermyn, J. Benton, and B. Shlegeris
+Polysemanticity and capacity in neural networks
+.
+arXiv preprint arXiv:2210.01892
+.
+Cited by:
+§6
+.
+Sennrich
+et al.
+(2016)
+R. Sennrich, B. Haddow, and A. Birch
+Neural machine translation of rare words with subword units
+.
+In
+Proceedings of the 54th annual meeting of the association for computational linguistics (volume 1: long papers)
+,
+pp. 1715–1725
+.
+Cited by:
+§1
+.
+Sims
+et al.
+(2025)
+A. Sims, C. Lu, K. Kaleb, J. N. Foerster, and Y. W. Teh
+StochasTok: improving fine-grained subword understanding in llms
+.
+In
+ICLR 2025 Workshop on Building Trust in Language Models and Applications
+,
+Cited by:
+§6
+.
+Su
+et al.
+(2025)
+Y. Su, J. Zhang, S. Yang, X. Wang, L. Hu, and D. Wang
+Understanding how value neurons shape the generation of specified values in llms
+.
+arXiv preprint arXiv:2505.17712
+.
+Cited by:
+§6
+.
+Team
+et al.
+(2024)
+G. Team, M. Riviere, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupatiraju, L. Hussenot, T. Mesnard, B. Shahriari, A. Ramé,
+et al.
+Gemma 2: improving open language models at a practical size
+.
+arXiv preprint arXiv:2408.00118
+.
+Cited by:
+§2.2
+.
+Vig
+et al.
+(2020)
+J. Vig, S. Gehrmann, Y. Belinkov, S. Qian, D. Nevo, Y. Singer, and S. Shieber
+Investigating gender bias in language models using causal mediation analysis
+.
+Advances in neural information processing systems
+33
+,
+pp. 12388–12401
+.
+Cited by:
+§6
+.
+Wang
+et al.
+(2024)
+D. Wang, Y. Li, J. Jiang, Z. Ding, Z. Luo, G. Jiang, J. Liang, and D. Yang
+Tokenization matters! degrading large language models through challenging their tokenization
+.
+arXiv preprint arXiv:2405.17067
+.
+Cited by:
+§1
+,
+§1
+,
+§6
+.
+Wang
+et al.
+(2023)
+K. R. Wang, A. Variengien, A. Conmy, B. Shlegeris, and J. Steinhardt
+Interpretability in the wild: a circuit for indirect object identification in gpt-2 small
+.
+In
+The Eleventh International Conference on Learning Representations
+,
+Cited by:
+§6
+.
+Wang
+et al.
+(2025a)
+K. Wang, J. Li, S. Yang, Z. Zhang, and D. Wang
+When truth is overridden: uncovering the internal origins of sycophancy in large language models
+.
+arXiv preprint arXiv:2508.02087
+.
+Cited by:
+§6
+.
+Wang
+et al.
+(2025b)
+X. Wang, S. Yang, L. Wang, L. Zhang, H. Xie, L. Hu, and D. Wang
+PAHQ: accelerating automated circuit discovery through mixed-precision inference optimization
+.
+arXiv preprint arXiv:2510.23264
+.
+Cited by:
+§6
+.
+Wiegreffe
+et al.
+(2024)
+S. Wiegreffe, O. Tafjord, Y. Belinkov, H. Hajishirzi, and A. Sabharwal
+Answer, assemble, ace: understanding how transformers answer multiple choice questions
+.
+arXiv preprint arXiv:2407.15018
+.
+Cited by:
+§3
+,
+§6
+.
+Yang
+et al.
+(2024)
+A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei,
+et al.
+Qwen2. 5 technical report
+.
+arXiv preprint arXiv:2412.15115
+.
+Cited by:
+§2.2
+.
+Yang
+et al.
+(2025)
+Z. Yang, J. Li, S. Xia, and X. Hu
+Internal chain-of-thought: empirical evidence for layer-wise subtask scheduling in llms
+.
+In
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 22547–22575
+.
+Cited by:
+§3
+,
+§6
+.
+Yao
+et al.
+(2025)
+J. Yao, S. Yang, J. Xu, L. Hu, M. Li, and D. Wang
+Understanding the repeat curse in large language models from a feature perspective
+.
+arXiv preprint arXiv:2504.14218
+.
+Cited by:
+§6
+.
+Yehezkel and Pinter (2023)
+S. Yehezkel and Y. Pinter
+Incorporating context into subword vocabularies
+.
+In
+Proceedings of the 17th Conference of the European Chapter of the Association for Computational Linguistics
+,
+pp. 623–635
+.
+Cited by:
+§6
+.
+Yu
+et al.
+(2025)
+M. Yu, H. Li, P. Singh, X. Li, D. Wang, and L. Hu
+Pixel: adaptive steering via position-wise injection with exact estimated levels under subspace calibration
+.
+arXiv preprint arXiv:2510.10205
+.
+Cited by:
+§6
+.
+Zhang
+et al.
+(2025a)
+J. Zhang, S. Yang, J. Wu, D. F. Wong, and D. Wang
+Understanding and mitigating political stance cross-topic generalization in large language models
+.
+arXiv preprint arXiv:2508.02360
+.
+Cited by:
+§6
+.
+Zhang
+et al.
+(2025b)
+L. Zhang, W. Dong, Z. Zhang, S. Yang, L. Hu, N. Liu, P. Zhou, and D. Wang
+Eap-gp: mitigating saturation effect in gradient-based automated circuit identification
+.
+arXiv preprint arXiv:2502.06852
+.
+Cited by:
+§6
+.
+Zhang
+et al.
+(2025c)
+L. Zhang, L. Hu, and D. Wang
+Mechanistic unveiling of transformer circuits: self-influence as a key to model reasoning
+.
+In
+Findings of the Association for Computational Linguistics: NAACL 2025
+,
+pp. 1387–1404
+.
+Cited by:
+§6
+.
+Zhang
+et al.
+(2025d)
+Z. Zhang, Y. Li, Z. Kan, K. Cheng, L. Hu, and D. Wang
+Locate-then-edit for multi-hop factual recall under knowledge editing
+.
+In
+Forty-second International Conference on Machine Learning
+,
+Cited by:
+§6
+.
+Zheng
+et al.
+(2025)
+B. S. Zheng, A. Liu, O. Ahia, J. Hayase, Y. Choi, and N. A. Smith
+Broken tokens? your language model can secretly handle non-canonical tokenizations
+.
+arXiv preprint arXiv:2506.19004
+.
+Cited by:
+§1
+,
+§2.2
+,
+§6
+.
+Appendix A
+Effect of Top-
+K
+K
+Choice in Word Recovery Decoding
+In the main experiments, we measure word recovery by decoding the top-
+K
+K
+predicted tokens from each character-level hidden state and aggregating them across the sequence. This choice introduces a potential sensitivity to the value of
+K
+K
+: smaller
+K
+K
+values provide a stricter notion of recoverability, while larger
+K
+K
+values may increase recall at the cost of including less confident predictions.
+To assess the robustness of our findings to this design choice, we repeat the word recovery analysis using a range of values
+K
+∈
+{
+1
+,
+2
+,
+3
+,
+5
+,
+10
+,
+20
+}
+K\in\{1,2,3,5,10,20\}
+. Across all models and datasets, we find that the qualitative behavior of word recovery remains consistent (Figure
+8
+, Figure
+9
+, Figure
+10
+). In particular, the layerwise recovery curves exhibit similar shapes and relative ordering across models, and the same early-vs.-late recovery patterns described in the main text persist for all tested values of
+K
+K
+.
+While increasing
+K
+K
+naturally leads to higher absolute recovery scores, the onset layer at which recovery begins and the saturation behavior across layers are largely unchanged. This indicates that our conclusions about the emergence and dynamics of word recovery do not depend on a specific choice of
+K
+K
+. Based on this analysis, we use
+K
+=
+5
+K=5
+in the main experiments as a balance between strictness and robustness.
+Appendix B
+Additional Analysis: In-Group Word Recovery Decoding
+In the main analysis, we define word recovery using a set-based decoding formulation that aggregates top-
+K
+K
+predictions across the entire character sequence (Section
+3
+). While this formulation captures whether canonical lexical identities are present anywhere in the hidden states, it may overestimate recovery if a token is predicted spuriously at positions unrelated to its original character span. To address this concern, we conduct a more restrictive decoding analysis that limits recovery to
+in-group character ranges
+. Specifically, for each canonical token
+t
+i
+t_{i}
+with character span
+𝒢
+⁡
+(
+t
+i
+)
+=
+[
+s
+i
+,
+e
+i
+)
+\mathcal{G}(t_{i})=[s_{i},e_{i})
+, we restrict decoding to hidden states within this span. Let
+𝒫
+group
+(
+ℓ
+)
+​
+(
+t
+i
+)
+=
+⋃
+j
+=
+s
+i
+e
+i
+−
+1
+TopK
+⁡
+(
+p
+j
+(
+ℓ
+)
+)
+,
+\mathcal{P}^{(\ell)}_{\text{group}}(t_{i})=\bigcup_{j=s_{i}}^{e_{i}-1}\mathrm{TopK}(p^{(\ell)}_{j}),
+and we say that
+t
+i
+t_{i}
+is recovered at layer
+ℓ
+\ell
+under in-group decoding if
+t
+i
+∈
+𝒫
+group
+(
+ℓ
+)
+​
+(
+t
+i
+)
+t_{i}\in\mathcal{P}^{(\ell)}_{\text{group}}(t_{i})
+. The corresponding in-group recovery score is defined as
+R
+group
+(
+ℓ
+)
+=
+1
+|
+𝒯
+|
+∑
+t
+i
+∈
+𝒯
+𝕀
+[
+t
+i
+∈
+𝒫
+group
+(
+ℓ
+)
+(
+t
+i
+)
+]
+.
+R^{(\ell)}_{\text{group}}=\frac{1}{|\mathcal{T}|}\sum_{t_{i}\in\mathcal{T}}\mathbb{I}\big[t_{i}\in\mathcal{P}^{(\ell)}_{\text{group}}(t_{i})\big].
+This formulation ensures that a canonical token is counted as recovered only if its identity is decodable from the hidden states of its own character span, rather than from unrelated positions elsewhere in the sequence.
+Across all models and datasets, we find that in-group decoding yields slightly lower absolute recovery scores than the set-based formulation, as expected under the stricter criterion (Figure
+11
+). However, the qualitative conclusions remain unchanged. In particular, (i) word recovery still emerges reliably across layers under character-level tokenization, (ii) the relative ordering of models and datasets is preserved, and (iii) the layerwise recovery dynamics, early saturation in Gemma-2-9B-It and two-stage recovery in Qwen2.5-7B-Instruct and Llama-3.2-3B-Instruct, remain consistent.
+These results indicate that the main findings are not driven by spurious global decoding effects. Instead, recovered word-level representations are localized to the character spans from which they originate, supporting the interpretation of word recovery as a genuine internal aggregation process rather than an artifact of set-based decoding.
+(a)
+ARC-E
+(b)
+ARC-C
+(c)
+CSQA
+(d)
+OpenbookQA
+Figure 8
+:
+Effect of top-
+K
+K
+choice on word recovery for Gemma-2-9B-It.
+We report layerwise word recovery scores under character-level tokenization for different values of
+K
+∈
+{
+1
+,
+2
+,
+3
+,
+5
+,
+10
+,
+20
+}
+K\in\{1,2,3,5,10,20\}
+across four datasets. While larger
+K
+K
+yields uniformly higher absolute recovery scores, the overall layerwise trends and relative recovery dynamics remain consistent across choices of
+K
+K
+, indicating that our findings are not sensitive to the specific value of
+K
+K
+.
+(a)
+ARC-E
+(b)
+ARC-C
+(c)
+CSQA
+(d)
+OpenbookQA
+Figure 9
+:
+Effect of top-
+K
+K
+choice on word recovery for Qwen2.5-7B-Instruct.
+(a)
+ARC-E
+(b)
+ARC-C
+(c)
+CSQA
+(d)
+OpenbookQA
+Figure 10
+:
+Effect of top-
+K
+K
+choice on word recovery for Llama-3.2-3B-Instruct.
+(a)
+Gemma-2-9b-It
+(b)
+Qwen2.5-7B-Instruct
+(c)
+Llama-3.2-3B-Instruct
+Figure 11
+:
+In-group word recovery decoding across layers.
+We report word recovery scores when decoding is restricted to the character span corresponding to each canonical token (in-group decoding). Dashed lines show the original set-based decoding over the full character sequence. While in-group decoding yields lower absolute recovery scores, the layerwise recovery dynamics and relative trends remain consistent, indicating that word recovery does not arise from spurious matches elsewhere in the sequence.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

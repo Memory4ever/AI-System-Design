@@ -1,0 +1,821 @@
+Latent Discrete Diffusion Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+Our approach.
+Contributions.
+2 Preliminaries on Diffusion Models
+Notation.
+2.1 Continuous Diffusion Models
+2.2 Masked Discrete Diffusion Models
+Forward process.
+Generative process.
+Objective function.
+2.3 Limits and Motivation
+3 Latent Discrete Diffusion Models: LDDMs
+3.1 General Framework for LDDMs
+Forward process.
+FUJI-LDDM: FUlly JoInt denoising.
+SEQ-LDDM: SEQuential denoising.
+Fixed variance.
+3.2 Objective functions
+Training procedure.
+4 Related Works
+Non-factorized denoisers.
+Continuous latents.
+5 Experiments
+Models and backbones.
+Metrics and protocol.
+5.1 Small dimensional experiments
+Results.
+5.2 Text modeling
+Setup.
+Results.
+6 Conclusion
+References
+A Related Works
+Non-factorized denoisers via copulas and speculative decoding.
+Continuous relaxations and consistency.
+Latent variables for dependency modeling.
+Joint continuous–discrete co-evolution.
+Token-wise continuous augmentation.
+B Additional remarks on continuous and discrete diffusion
+B.1 Derivations for continuous diffusion
+Forward process.
+Posterior distributions.
+ELBO loss.
+Loss weighting.
+Noise schedules.
+Deterministic DDIM sampling.
+B.2 Discrete diffusion
+C LDDMs general framework
+C.1 LDDMs ELBO Derivation
+FUJI-LDDMs
+SEQ-LDDMs.
+D Neural network architectures
+DiT (single–modality).
+MM-DiT (multi–modal, joint).
+Encoder ℰφ\mathcal{E}_{\varphi}.
+Off-the-shelf encoder.
+E Experimental Setup
+E.1 Low-dimensional dataset
+E.2 Text dataset (LM1B)
+E.3 Metrics
+Validation perplexity (ELBO-based).
+Generative perplexity.
+Entropy.
+Sliced Wasserstein distance (SWD).
+E.4 Generated sequences
+MDLM.
+FUJI-LDDM Qwen3.
+License: CC BY-SA 4.0
+arXiv:2510.18114v1 [cs.LG] 20 Oct 2025
+Latent Discrete Diffusion Models
+Dario Shariatian
+††thanks: Corresponding author; work done during an internship at Sakana AI.
+Affiliation: INRIA, Department of Computer Science, PSL Research University
+Affiliation: Paris, France
+Email: dario.shariatian@inria.fr
+Alain Durmus
+Affiliation: Ecole Polytechnique, CMAP, IP Paris
+Affiliation: Palaiseau, France
+Email: alain.durmus@polytechnique.edu
+Stefano Peluchetti
+Affiliation: Sakana AI
+Affiliation: Tokyo, Japan
+Email: stepelu@sakana.ai
+Abstract
+We study discrete diffusion for language and other categorical data and focus on a common limitation of masked denoisers: reverse transitions typically factorize across positions, which can weaken joint structure and degrade quality in few-step generation. We propose Latent Discrete Diffusion Models (LDDMs), which couple a masked discrete diffusion over tokens with a continuous diffusion over latent embeddings. The latent channel provides a softer signal and carries cross-token dependencies that help resolve ambiguities. We present two instantiations: (i) FUJI-LDDMs, which perform fully joint denoising of tokens and latents, and (ii) SEQ-LDDMs, which sequentially resolve the latent and then the discrete chain conditionally on it. For both variants we derive ELBO-style objectives and discuss design choices to learn informative latents yet amenable to diffusoin modeling. In experiments, LDDMs yield improvements on unconditional generation metrics as compared to state-of-the-art masked discrete diffusion baselines, and are effective at lower sampling budgets, where unmasking many tokens per step is desirable.
+1 Introduction
+Diffusion models have become a standard tool for high-fidelity generation on continuous modalities such as images and audio (Esser et al., 2024; Ho et al., 2020; Chen et al., 2021). For discrete data, diffusion offers coarse-to-fine generation with parallel token refinement, flexible conditioning/infilling via bidirectional attention, and opportunities for faster sampling through block updates.
+Early approaches adapted continuous diffusion to categorical data by embedding tokens in ℝd\mathbb{R}^{d} and running a continuous process in the embedding space (Dieleman et al., 2022). Subsequent work emphasized staying in discrete state space and reported improved performance and scaling characteristics. Within discrete formulations, masked processes are particularly effective and scalable in high dimensions (Sahoo et al., 2024; Lou et al., 2024; Hoogeboom et al., 2021; Austin et al., 2021).
+However, discrete data, like text, remains challenging for discrete diffusion. Despite steady progress and large-model training (Nie et al., 2025; Song et al., 2025), auto-regressive (AR) models remain strong baselines across model sizes, while discrete diffusion primarily differentiates itself by enabling multi-token unmasking per step enabling faster sampling speeds (Campbell et al., 2022; Lou et al., 2024; Hoogeboom et al., 2021; Austin et al., 2021; Zheng et al., 2025a; Ni et al., 2025; Kang et al., 2025).
+A key limitation is the factorized model: if unmasked, individual tokens are updated independently given a noise sequence, which discards joint structure. The effect is magnified in the few-step regime, where independent per-token decisions can combine into jointly inconsistent outputs (Liu et al., 2025a). Predictor–corrector samplers and tailored unmasking schedules help but do not fully address this sensitivity (Wang et al., 2025; Gat et al., 2024a; Liu et al., 2025b; Shi et al., 2024; Pham et al., 2025). In continuous diffusion, denoising is soft and reversible, allowing errors to amortize, whereas unveiling a token in masked discrete diffusion is a hard commitment. A softer auxiliary signal may mitigate this rigidity and stabilize training (Sahoo et al., 2025).
+Our approach.
+We augment masked discrete diffusion with a continuous latent channel that carries cross-token information and supplies a softer learning and inference signal. Concretely, we introduce Latent Discrete Diffusion Models (LDDMs), which couple a masked discrete diffusion over tokens with a continuous diffusion over latent embeddings. Latents can be obtained from a pre-trained encoder or via a custom encoder trained to be highly informative for conditional reconstruction, improving coherence when many tokens are unmasked simultaneously.
+We instantiate two core variants. FUJI-LDDMs perform FUlly JoInt denoising in both channels, co-evolving tokens and latents at each step. SEQ-LDDMs perform SEQuential denoising, resolving the latent first and then conditioning the entire discrete chain on it, akin in spirit to Xu et al. (2024) but with modalities reversed. For both FUJI and SEQ we derive principled ELBO objectives and discuss design choices (e.g., loss weighting, schedules).
+Contributions.
+(i) We make explicit how factorized reverse transitions limit masked discrete diffusion in the few-step regime and highlight differences from continuous models. (ii) We propose Latent Discrete Diffusion Models (LDDMs), latent-augmented processes that leverage joint token structure while retaining parallelism. (iii) We derive ELBO-style training objectives and outline design choices for stable optimization. (iv) On unconditional generation benchmarks, LDDMs show consistent gains, most pronounced at low sampling budgets.
+2 Preliminaries on Diffusion Models
+We first briefly present continuous and discrete diffusion models from a variational perspective, following (Ho et al., 2020).
+Notation.
+Given a measurable space (𝖤,ℰ)(\mathsf{E},\mathcal{E}), we denote by 𝒫⁡(𝖤)\mathcal{P}(\mathsf{E}) the set of probability measures on 𝖤\mathsf{E}. Given two probability measures μ,ν∈𝒫⁡(𝖤)\mu,\nu\in\mathcal{P}(\mathsf{E}), the Kullback-Leibler divergence of μ\mu with respect to ν\nu is defined as KL⁡(μ|ν)=∫log⁡(𝑑μ/𝑑ν)​𝑑μ\mathrm{KL}(\mu|\nu)=\int\log(\mathrm{d}\mu/\mathrm{d}\nu)\mathrm{d}\mu if μ≪ν\mu\ll\nu, and KL⁡(μ|ν)=+∞\mathrm{KL}(\mu|\nu)=+\infty otherwise. We denote by δx\updelta_{x} the Dirac mass at x∈𝖤x\in\mathsf{E}. For any μ∈ℝd\mu\in\mathbb{R}^{d} and Σ\Sigma a semi-definite positive matrix, y↦N⁡(y,μ,Σ)y\mapsto\mathrm{N}(y;\mu,\Sigma), the density of the Gaussian distribution with mean μ\mu and covariance Σ\Sigma.
+2.1 Continuous Diffusion Models
+In this first setting, we aim to sample from a continuous distribution on the state space 𝖸=ℝd\mathsf{Y}=\mathbb{R}^{d}, d∈ℕ∗d\in\mathbb{N}^{*}, with density q0𝖸q^{\mathsf{Y}}_{0} with respect to the Lebesgue measure. The forward, or noising process, {Yt}t=0T\{Y_{t}\}_{t=0}^{T}, evolves in 𝖸\mathsf{Y} and is a Markovian process starting from Y0∼q0𝖸Y_{0}\sim q^{\mathsf{Y}}_{0}, and driven for t>0t>0 by the following updates:
+Yt=αt​Yt−1+σt​εt,Y_{t}=\alpha_{t}Y_{t-1}+\sigma_{t}\varepsilon_{t}\;,
+(2)
+where {εt}t=0T\{\varepsilon_{t}\}_{t=0}^{T} are i.i.d. standard Gaussian random variables, independent from Y0Y_{0}, and {αt}t=0T\{\alpha_{t}\}_{t=0}^{T}, {σt}t=0T\{\sigma_{t}\}_{t=0}^{T} are two sequences of positive real number, referred to as the noise schedule. Then, given Y0Y_{0}, (Yt)t=1T(Y_{t})_{t=1}^{T} is a Gaussian process which is also Markov. We can decompose the joint density of {Yt}t=0T\{Y_{t}\}_{t=0}^{T} as
+q0:T(y0:T)=q0(y0)qT|0(yT|y0)∏t=2Tqt−1|t,0(yt−1|yt,y0),q_{0:T}(y_{0:T})=q_{0}(y_{0})q_{T|0}(y_{T}|y_{0})\prod_{t=2}^{T}{q_{t-1|t,0}(y_{t-1}|y_{t},y_{0})}\;,
+(3)
+where qt−1|t,0q_{t-1|t,0} are Gaussian transition densities, such that for any y0,yt∈𝖸y_{0},y_{t}\in\mathsf{Y}, qt−1|t,0​(yt−1|yt,y0)=N⁡(yt−1,μ~t−1​(yt,y0),Σ~t−1)q_{t-1|t,0}(y_{t-1}|y_{t},y_{0})=\mathrm{N}(y_{t-1};\tilde{\mu}_{t-1}(y_{t},y_{0}),\tilde{\Sigma}_{t-1}), where
+μ~t−1​(yt,y0)=αt​σ¯t−12σ¯t2​yt+α¯t−1​σt2σ¯t2​y0,Σ~t−1=σ¯t−12​σt2σ¯t2​Id,\tilde{\mu}_{t-1}(y_{t},y_{0})=\frac{\alpha_{t}\,\bar{\sigma}_{t-1}^{2}}{\bar{\sigma}_{t}^{2}}\,y_{t}+\frac{\bar{\alpha}_{t-1}\,\sigma_{t}^{2}}{\bar{\sigma}_{t}^{2}}\,y_{0},\qquad\tilde{\Sigma}_{t-1}=\frac{\bar{\sigma}_{t-1}^{2}\,\sigma_{t}^{2}}{\bar{\sigma}_{t}^{2}}\,\mathrm{I}_{d},
+(4)
+with α¯t,σ¯t\bar{\alpha}_{t},\bar{\sigma}_{t} defined recursively as α¯t/α¯t−1=αt\bar{\alpha}_{t}/\bar{\alpha}_{t-1}=\alpha_{t}, and σ¯t2=αt2​σ¯t−12+σt2\bar{\sigma}_{t}^{2}=\alpha_{t}^{2}\bar{\sigma}_{t-1}^{2}+\sigma_{t}^{2}, see Section B.1 for more details. Based on this decomposition, we consider the variational family associated with our generative process, parameterized by θ\theta defined for y0:T∈𝖸T+1y_{0:T}\in\mathsf{Y}^{T+1} as
+p0:Tθ(y0:T)=pTθ(yT)∏t=1Tqt−1|t,0(yt−1|yt,yθ(yt,t)),p^{\theta}_{0:T}(y_{0:T})=p^{\theta}_{T}(y_{T})\prod_{t=1}^{T}q_{t-1|t,0}(y_{t-1}|y_{t},y_{\theta}(y_{t},t))\;,
+(5)
+where pTθ∼N⁡(0,σ¯T2​Id)p^{\theta}_{T}\sim\mathrm{N}(0,\bar{\sigma}_{T}^{2}\mathrm{I}_{d}), and yθy_{\theta} is the continuous denoiser parameterized by a neural network with weights θ\theta. This family is then fitted by minimizing the negative Evidence Lower Bound (ELBO) given by
+L𝖸​(θ)=LT𝖸+L0𝖸+𝔼⁡[∑t=2Tλt𝖸,ELBO​‖Y0−yθ​(Yt,t)‖2],\mathrm{L}^{\mathsf{Y}}(\theta)=\mathrm{L}^{\mathsf{Y}}_{T}+\mathrm{L}^{\mathsf{Y}}_{0}+\mathbb{E}\left[\sum_{t=2}^{T}\ {\lambda}^{\mathsf{Y},\text{ELBO}}_{t}\ \|Y_{0}-y_{\theta}(Y_{t},t)\|^{2}\right]\;,
+(6)
+where
+λt𝖸,ELBO=α¯t−12​σt22​σ¯t−12​σ¯t2,{\lambda}^{\mathsf{Y},\text{ELBO}}_{t}=\frac{\bar{\alpha}_{t-1}^{2}\,\sigma^{2}_{t}}{2\bar{\sigma}_{t-1}^{2}\,\bar{\sigma}_{t}^{2}}\;,
+(7)
+and LT,L0L_{T},L_{0} are given in (38) but are typically neglected, see Section B.1 for more details. In practice, during optimization, the multiplicative factors λt𝖸,ELBO{\lambda}^{\mathsf{Y},\text{ELBO}}_{t} can deviate from their true ELBO values (Karras et al., 2022; Dieleman, 2024). In addition, it holds that for any t∈{0,…,T}t\in\{0,\ldots,T\},
+qt|0​(yt|y0)=N⁡(yt,α¯t​y0,σ¯t2​Id),q_{t|0}(y_{t}|y_{0})=\mathrm{N}(y_{t};\ \bar{\alpha}_{t}y_{0},\ \bar{\sigma}_{t}^{2}\mathrm{I}_{d})\;,
+(8)
+where qt|0q_{t|0} is the conditional distribution of YtY_{t} given Y0Y_{0}. Plugging (8) with stochastic optimization of (6) yields a simulation-free training procedure. We mention that we can use the trained denoiser network yθy_{\theta} with a deterministic generation procedure, as introduced in DDIM (Song et al., 2020); see Section B.1 for more details.
+2.2 Masked Discrete Diffusion Models
+We now consider a target distribution on the discrete space 𝖷S\mathsf{X}^{S} of sequences of SS tokens, where 𝖷={0,…,K−1}\mathsf{X}=\{0,\ldots,K-1\} and the mask state is 𝐦=K−1\mathbf{m}=K-1, so 𝖷S\mathsf{X}^{S} has size KSK^{S}.
+Let (e1,…,eK)(e_{1},\ldots,e_{K}) be the canonical basis of ℝK\mathbb{R}^{K} and set m=eK{m}=e_{K}.
+We identify each token 𝐱∈𝖷\mathbf{x}\in\mathsf{X} with its one-hot vector x∈{e1,…,eK}⊂ℝKx\in\{e_{1},\ldots,e_{K}\}\subset\mathbb{R}^{K}.
+We also identify categorical distributions on 𝖷\mathsf{X} with points in the simplex 𝜹K={p∈ℝK:pi≥0,∑i=1Kpi=1}\bm{\delta}_{K}=\{p\in\mathbb{R}^{K}:\ p_{i}\geq 0,\ \sum_{i=1}^{K}p_{i}=1\}.
+We follow Sahoo et al. (2024, Section 3) for the discrete-time masked process and do not pursue continuous-time variants (Campbell et al., 2022; Lou et al., 2024; Pham et al., 2025).
+Forward process.
+For a single token, the forward Markov chain {Xt}t=0T\{X_{t}\}_{t=0}^{T} on 𝖷\mathsf{X} starts from X0∼q0X_{0}\sim q_{0} and evolves by
+qt|t−1​(xt∣xt−1)={mif ​xt−1=mγt​xt−1+(1−γt)​melse,q_{t\mid t-1}(x_{t}\mid x_{t-1})=\begin{cases}{m}&\text{if }x_{t-1}={m}\\
+\gamma_{t}x_{t-1}+(1-\gamma_{t}){m}&\text{else}\end{cases}\;,
+(9)
+with γt∈[0,1]\gamma_{t}\in[0,1] and γ¯t=∏s=1tγs\bar{\gamma}_{t}=\prod_{s=1}^{t}\gamma_{s}.
+This yields the closed-form marginal
+qt|0​(xt∣x0)=γ¯t​x0+(1−γ¯t)​m,q_{t\mid 0}(x_{t}\mid x_{0})=\bar{\gamma}_{t}x_{0}+(1-\bar{\gamma}_{t}){m}\;,
+(10)
+and we require γ¯T=0\bar{\gamma}_{T}=0 so that the chain reaches the mask state at t=Tt=T. For sequences of length SS, the forward process evolves component-wise on 𝖷S\mathsf{X}^{S}. Conditioned on x0x_{0}, the reverse bridge transitions factorize across positions,
+qt−1|t,0​(xt−1∣xt,x0)=∏i=1Sqt−1|t,0​(xt−1i∣xti,x0i),q_{t-1\mid t,0}(x_{t-1}\mid x_{t},x_{0})=\prod_{i=1}^{S}q_{t-1\mid t,0}(x_{t-1}^{i}\mid x_{t}^{i},x_{0}^{i})\;,
+(11)
+with
+qt−1|t,0​(xt−1i∣xti,x0i)={xtiif ​xti≠m(1−γ¯t−1)​m+(γ¯t−1−γ¯t)​x0i1−γ¯tif ​xti=m.q_{t-1\mid t,0}(x_{t-1}^{i}\mid x_{t}^{i},x_{0}^{i})=\begin{cases}x_{t}^{i}&\text{if }x_{t}^{i}\neq{m}\\
+\displaystyle\frac{(1-\bar{\gamma}_{t-1}){m}+(\bar{\gamma}_{t-1}-\bar{\gamma}_{t})x_{0}^{i}}{1-\bar{\gamma}_{t}}&\text{if }x_{t}^{i}={m}\end{cases}\;.
+(12)
+Generative process.
+We define the variational generative family {Xtθ}t=0T\{X_{t}^{\theta}\}_{t=0}^{T} by
+p𝖷,θ(x0:T)=[∏i=1Sδm(xTi)]∏t=1Tpt−1|t𝖷,θ(xt−1∣xt),pt−1|t𝖷,θ(xt−1∣xt)=∏i=1Spt−1|t𝖷,θ,i(xt−1i∣xt),p^{\mathsf{X},\theta}(x_{0:T})=\Big[\prod_{i=1}^{S}\updelta_{{m}}(x_{T}^{i})\Big]\ \prod_{t=1}^{T}p^{\mathsf{X},\theta}_{t-1\mid t}(x_{t-1}\mid x_{t})\;,\qquad p^{\mathsf{X},\theta}_{t-1\mid t}(x_{t-1}\mid x_{t})=\prod_{i=1}^{S}p^{\mathsf{X},\theta,i}_{t-1\mid t}(x_{t-1}^{i}\mid x_{t})\;,
+(13)
+so each reverse transition factorizes across sequence positions while allowing the network to condition on the full xtx_{t}. Let xθ​(xt,t)∈𝜹KSx_{\theta}(x_{t},t)\in\bm{\delta}_{K}^{S} denote the per-position categorical predictions, with the mask coordinate set to zero for each position. We parameterize pt−1|t𝖷,θp^{\mathsf{X},\theta}_{t-1|t} as follows:
+pt−1|t𝖷,θ,i​(xt−1i∣xt)=qt−1|t,0​(xt−1i∣xti,xθi​(xt,t))={xtiif ​xti≠m(1−γ¯t−1)​m+(γ¯t−1−γ¯t)​xθi​(xt,t)1−γ¯tif ​xti=m.p^{\mathsf{X},\theta,i}_{t-1\mid t}(x_{t-1}^{i}\mid x_{t})=q_{t-1\mid t,0}\big(x_{t-1}^{i}\mid x_{t}^{i},\ x_{\theta}^{i}(x_{t},t)\big)=\begin{cases}x_{t}^{i}&\text{if }x_{t}^{i}\neq{m}\\
+\displaystyle\frac{(1-\bar{\gamma}_{t-1}){m}+(\bar{\gamma}_{t-1}-\bar{\gamma}_{t})\,x_{\theta}^{i}(x_{t},t)}{1-\bar{\gamma}_{t}}&\text{if }x_{t}^{i}={m}\end{cases}\;.
+(14)
+Objective function.
+The objective is the negative ELBO:
+L𝖷​(θ)\displaystyle\mathrm{L}^{\mathsf{X}}(\theta)
+=LT𝖷+L0𝖷+𝔼⁡[∑t=2Tλt𝖷,ELBO​log⁡⟨xθ​(Xt,t),X0⟩]≥𝔼⁡[−log⁡p0𝖷,θ​(X0)],\displaystyle=\mathrm{L}^{\mathsf{X}}_{T}+\mathrm{L}^{\mathsf{X}}_{0}+\mathbb{E}\Big[\sum_{t=2}^{T}{\lambda}^{\mathsf{X},\text{ELBO}}_{t}\ \log\langle x_{\theta}(X_{t},t),X_{0}\rangle\Big]\ \geq\ \mathbb{E}\big[-\log p^{\mathsf{X},\theta}_{0}(X_{0})\big]\;,
+(15)
+where the expectation is over X0∼q0X_{0}\sim q_{0} and Xt∼qt|0(⋅∣X0)X_{t}\sim q_{t\mid 0}(\cdot\mid X_{0}), and
+λt𝖷,ELBO=γ¯t−γ¯t−11−γ¯t,LT𝖷=𝔼[KL(qT|0(⋅∣X0)∥pT𝖷,θ)],L0𝖷=−𝔼[log⟨xθ(X1,1),X0⟩].{\lambda}^{\mathsf{X},\text{ELBO}}_{t}=\frac{\bar{\gamma}_{t}-\bar{\gamma}_{t-1}}{1-\bar{\gamma}_{t}}\;,\qquad\mathrm{L}^{\mathsf{X}}_{T}=\mathbb{E}\big[\mathrm{KL}\big(q_{T\mid 0}(\cdot\mid X_{0})\ \|\ p^{\mathsf{X},\theta}_{T}\big)\big]\;,\qquad\mathrm{L}^{\mathsf{X}}_{0}=-\mathbb{E}\big[\log\langle x_{\theta}(X_{1},1),X_{0}\rangle\big]\;.
+(16)
+LT𝖷,L0𝖷\mathrm{L}^{\mathsf{X}}_{T},\mathrm{L}^{\mathsf{X}}_{0} are typically neglected. By construction, xθ​(xt,t)∈𝜹KSx_{\theta}(x_{t},t)\in\bm{\delta}_{K}^{S} assigns zero mass to the mask coordinate at each position. Because the reverse transition in (13) factorizes across positions, the induced predictor learns a factorized approximation p0|t𝖷,θ​(x0∣xt)≈∏i=1Sq0|ti​(x0i∣xti)p^{\mathsf{X},\theta}_{0\mid t}(x_{0}\mid x_{t})\approx\prod_{i=1}^{S}q^{i}_{0\mid t}(x_{0}^{i}\mid x_{t}^{i}) in KL\mathrm{KL} divergence.
+2.3 Limits and Motivation
+The objective in (15) trains a discrete denoiser that discards joint dependencies across tokens. The limitation is stark at t=Tt=T, where q0|Ti=q0iq^{i}_{0\mid T}=q^{i}_{0}: the model learns independent token marginals. An analogous limitation appears in continuous diffusion when Gaussian transitions are parameterized with diagonal covariance. The key difference is that continuous diffusion performs soft denoising steps: components are refined through small, reversible adjustments, allowing errors to amortize across steps or to be mitigated by finer solvers and adaptive schedulers (Karras et al., 2022).
+In masked discrete diffusion, unmasking is a hard commitment. When multiple tokens are unmasked simultaneously, independent per-token predictions can combine into sequences that are marginally plausible yet jointly inconsistent. Empirically, samplers that reveal multiple tokens per step tend to perform best when the unmasking schedule progressively increases the number of unmasked tokens, highlighting how early-stage ambiguity limits quality (e.g., constant vs. cosine schedules in (Pham et al., 2025; Shi et al., 2024)). Predictor–corrector variants that re-noise between steps soften this rigidity but cannot fully remove the bias introduced by simultaneous commitments, leading to mild mode collapse and entropy–quality trade-offs (Gat et al., 2024b; Wang et al., 2025).
+The following proposition quantifies this observation.
+Proposition 1.
+(Liu et al., 2025a, Proposition 1)
+Let q𝖷q^{\mathsf{X}} be the path measure of the forward masked diffusion process on 𝖷S\mathsf{X}^{S}. Let p𝖷,θp^{\mathsf{X},\theta} be any factorized Markovian reverse model initialized at the all-mask state. Then
+L𝖷​(θ)≥∑t=1T𝔼⁡[KL⁡(qt−1|t𝖷​(Xt−1∣Xt)|∏i=1Sqt−1|t𝖷,i​(Xt−1i∣Xt))]+H⁡(q0𝖷),\mathrm{L}^{\mathsf{X}}(\theta)\ \geq\ \sum_{t=1}^{T}\mathbb{E}\Big[\mathrm{KL}\Big(q^{\mathsf{X}}_{t-1\mid t}(X_{t-1}\mid X_{t})\ \Big|\ \prod_{i=1}^{S}q^{\mathsf{X},i}_{t-1\mid t}(X_{t-1}^{i}\mid X_{t})\Big)\Big]\ +\ \mathrm{H}(q^{\mathsf{X}}_{0})\;,
+(17)
+where L𝖷\mathrm{L}^{\mathsf{X}} is the negative ELBO in (15), H\mathrm{H} is the Shannon entropy, and qt−1|t𝖷,iq^{\mathsf{X},i}_{t-1\mid t} denotes the ii-th marginal of the true reverse qt−1|t𝖷q^{\mathsf{X}}_{t-1\mid t}.
+Thus, the performance of any factorized model is bounded by how much the true reverse qt−1|t𝖷q^{\mathsf{X}}_{t-1\mid t} deviates from a product form. To overcome this limitation, one can reintroduce token dependencies into the reverse process via:
+(i) autoregressive or Gibbs-style updates that sample one token at a time;
+(ii) non-factorized updates with explicit couplings (e.g., copulas or energy-based corrections); or
+(iii) latent variables that encode joint structure while keeping per-token updates simple.
+We pursue the third option, as motivated next.
+Proposition 2.
+Let (X,Y)∼q0𝖹(X,Y)\sim q^{\mathsf{Z}}_{0} be coupled random variables with marginals q0𝖷q^{\mathsf{X}}_{0} and q0𝖸q^{\mathsf{Y}}_{0}. Suppose we seek to model XX and can sample Y∼q0𝖸Y\sim q^{\mathsf{Y}}_{0}. Consider a discrete diffusion model defined by
+p𝖷,θ(x0:T)=∫p|y𝖷,θ(x0:T∣y)q0𝖸(dy),p^{\mathsf{X},\theta}(x_{0:T})=\int p^{\mathsf{X},\theta}_{|y}(x_{0:T}\mid y)q^{\mathsf{Y}}_{0}(\mathrm{d}y)\;,
+(18)
+where for each yy the conditional process p|y𝖷,θ(⋅∣y)p^{\mathsf{X},\theta}_{|y}(\cdot\mid y) is of the form (13) but conditioned on yy. Then
+L𝖷(θ)≥∑t=1T𝔼[KL(qt−1|t,y𝖷(Xt−1∣Xt,Y)|∏i=1Sqt−1|t,y𝖷,i(Xt−1i∣Xt,Y))]+𝔼[H(q0|y𝖷(⋅∣Y))],\mathrm{L}^{\mathsf{X}}(\theta)\ \geq\ \sum_{t=1}^{T}\mathbb{E}\Big[\mathrm{KL}\Big(q^{\mathsf{X}}_{t-1\mid t,y}(X_{t-1}\mid X_{t},Y)\ \Big|\ \prod_{i=1}^{S}q^{\mathsf{X},i}_{t-1\mid t,y}(X_{t-1}^{i}\mid X_{t},Y)\Big)\Big]\ +\ \mathbb{E}\big[\mathrm{H}(q^{\mathsf{X}}_{0\mid y}(\cdot\mid Y))\big]\;,
+(19)
+where qt−1|t,y𝖷,iq^{\mathsf{X},i}_{t-1\mid t,y} denotes the ii-th marginal of the true conditional reverse.
+See Section B.2 for a proof. If the conditioning variable YY is such that Xt|YX_{t}\mid Y becomes closer to a factorizable distribution, the lower bound tightens, suggesting improved generative performance. In our setting, YY is not observed; instead, we construct Y∼ℰφ(⋅|X)Y\sim\mathcal{E}_{\varphi}(\cdot|X) via a dedicated encoder ℰφ\mathcal{E}_{\varphi} and model its distribution with a separate latent diffusion process. This introduces a trade-off between better reconstruction of XX and the difficulty of correctly modeling the auxiliary latent YY, which we formalize next.
+3 Latent Discrete Diffusion Models: LDDMs
+As motivated above, we introduce a latent variable y∈𝖸y\in\mathsf{Y} to condition the discrete denoiser. We take a continuous latent space 𝖸=ℝS′​d′\mathsf{Y}=\mathbb{R}^{S^{\prime}d^{\prime}} of total dimension d=S′​d′d=S^{\prime}d^{\prime}, interpreted as a concatenation y=(y1,…,yS′)y=(y^{1},\ldots,y^{S^{\prime}}) with yi∈ℝd′y^{i}\in\mathbb{R}^{d^{\prime}}. Exploring discrete latents is left to future work.
+3.1 General Framework for LDDMs
+Our formulation follows a variational framework with three components: (i) a latent encoder ℰφ\mathcal{E}_{\varphi} mapping data x0x_{0} to latent embeddings y0y_{0}; (ii) a forward noising process applied independently to the data and latent modalities, yielding {(xt,yt)}t=0T\{(x_{t},y_{t})\}_{t=0}^{T}; (iii) a denoising process {(xtθ,ytθ)}t=0T\{(x_{t}^{\theta},y_{t}^{\theta})\}_{t=0}^{T}.
+We temporarily make channel superscripts explicit. For the data channel we use q𝖷q^{\mathsf{X}} and p𝖷,θp^{\mathsf{X},\theta}, and for the latent channel we use q𝖸q^{\mathsf{Y}} and p𝖸,θp^{\mathsf{Y},\theta}. Joint path measures on Z=(X,Y)Z=(X,Y) use q𝖹q^{\mathsf{Z}} and p𝖹,θp^{\mathsf{Z},\theta}. When unambiguous, we drop superscripts and write qq and pθp^{\theta} for clarity.
+We denote by q0𝖷q^{\mathsf{X}}_{0} the data distribution on 𝖷S\mathsf{X}^{S}. A trainable encoder with density ℰφ(⋅∣x0)\mathcal{E}_{\varphi}(\cdot\mid x_{0}), parameterized by φ\varphi, stochastically maps discrete tokens x0x_{0} to continuous embeddings. Let q0𝖸q^{\mathsf{Y}}_{0} be the induced marginal latent distribution and q0𝖹=q0𝖷​ℰφq^{\mathsf{Z}}_{0}=q^{\mathsf{X}}_{0}\,\mathcal{E}_{\varphi} the joint at t=0t=0. Let TT be the time horizon and t∈{1,…,T}t\in\{1,\ldots,T\} the current timestep. We consider a diffusion process {Zt=(Xt,Yt)}t=0T\{Z_{t}=(X_{t},Y_{t})\}_{t=0}^{T} starting from Z0∼q0𝖹Z_{0}\sim q^{\mathsf{Z}}_{0} with forward path measure q𝖹q^{\mathsf{Z}}; its marginals are q𝖷q^{\mathsf{X}} and q𝖸q^{\mathsf{Y}}. Dependence on φ\varphi is omitted for brevity.
+Any sequence in 𝖷S\mathsf{X}^{S} is said to lie in the data channel, any sequence in 𝖸\mathsf{Y} is said to lie in the latent channel. Data and latent are considered distinct modalities, as each channel requires tailored parameterization.
+Forward process.
+The forward process q𝖹q^{\mathsf{Z}} noises each modality independently:
+q𝖹(x0:T,y0:T)\displaystyle q^{\mathsf{Z}}(x_{0:T},y_{0:T})
+=q0𝖷​(x0)⏟data⋅ℰφ​(y0|x0)⏟latent encoder×q𝖷|0(x1:T|x0)⋅q𝖸|0(y1:T|y0)⏟multi-modal noising process,\displaystyle=\underbrace{q^{\mathsf{X}}_{0}(x_{0})}_{\text{data}}\cdot\underbrace{\mathcal{E}_{\varphi}(y_{0}|x_{0})}_{\text{latent encoder}}\times\underbrace{q^{\mathsf{X}}_{|0}(x_{1:T}|x_{0})\cdot q^{\mathsf{Y}}_{|0}(y_{1:T}|y_{0})}_{\text{multi-modal noising process}}\;,
+(20)
+where q𝖷|0q^{\mathsf{X}}_{|0} is the masked discrete forward from Section 2.2 with schedule (γt)(\gamma_{t}) and q𝖸|0q^{\mathsf{Y}}_{|0} is the continuous forward from Section 2.1 with schedule (αt,σt)(\alpha_{t},\sigma_{t}). Because 𝖸\mathsf{Y} is continuous, we choose a Gaussian encoder:
+ℰφ​(y0|x0)=N⁡(y0,μφ​(x0),σφ​(x0)2​Id).\displaystyle\mathcal{E}_{\varphi}(y_{0}|x_{0})=\mathrm{N}(y_{0};\mu_{\varphi}(x_{0}),\sigma_{\varphi}(x_{0})^{2}\mathrm{I}_{d})\;.
+(21)
+Our generative models are path distributions of the general form pθ(z0:T)=pTθ(zT)pθ(z0:T−1|zT)p^{\theta}(z_{0:T})=p^{\theta}_{T}(z_{T})p^{\theta}(z_{0:T-1}|z_{T}) on 𝖹=𝖷S×𝖸\mathsf{Z}=\mathsf{X}^{S}\times\mathsf{Y}. We now give two core variants.
+FUJI-LDDM: FUlly JoInt denoising.
+pθ(z0:T)\displaystyle p^{\theta}(z_{0:T})
+=pT𝖷,θ​(xT)⋅pT𝖸,θ​(yT)⏟initialization⋅∏t=1Tpt−1|t𝖷,θ​(xt−1|zt)⋅pt−1|t𝖸,θ​(yt−1|zt)⏟joint transitions,\displaystyle=\underbrace{p^{\mathsf{X},\theta}_{T}(x_{T})\cdot p^{\mathsf{Y},\theta}_{T}(y_{T})}_{\text{initialization}}\cdot\prod_{t=1}^{T}\underbrace{p^{\mathsf{X},\theta}_{t-1|t}(x_{t-1}|z_{t})\cdot p^{\mathsf{Y},\theta}_{t-1|t}(y_{t-1}|z_{t})}_{\text{joint transitions}}\;,
+(22)
+Each transition factorizes across components within its channel. For initialization we take pT𝖷,θp^{\mathsf{X},\theta}_{T} to be the all-mask distribution on 𝖷S\mathsf{X}^{S}, and pT𝖸,θ∼N⁡(0,σ¯T2​Id)p^{\mathsf{Y},\theta}_{T}\sim\mathrm{N}(0,\bar{\sigma}_{T}^{2}\mathrm{I}_{d}). These models involve a joint denoising process where, at each step, both modalities interact with each other. These joint interactions ease the task of data and latent reconstruction. See Figure 1.
+SEQ-LDDM: SEQuential denoising.
+Let TXT_{X} and TYT_{Y} be horizons on the data and latent channels. SEQ-LDDM first denoises the latent to y0y_{0} and then denoises the data conditioned on y0y_{0}:
+pθ(z0:T)=pTX𝖷,θ​(xTX)⋅pTY𝖸,θ​(yTY)⏟initialization⋅∏t=1TYpt−1|t𝖸,θ​(yt−1∣yt)⏟1: latent channel⋅∏t=1TXpt−1|t𝖷,θ​(xt−1∣xt,y0)⏟2: data channel,p^{\theta}(z_{0:T})=\underbrace{p^{\mathsf{X},\theta}_{T_{X}}(x_{T_{X}})\cdot p^{\mathsf{Y},\theta}_{T_{Y}}(y_{T_{Y}})}_{\text{initialization}}\cdot\underbrace{\prod_{t=1}^{T_{Y}}p^{\mathsf{Y},\theta}_{t-1\mid t}(y_{t-1}\mid y_{t})}_{\text{1: latent channel}}\cdot\underbrace{\prod_{t=1}^{T_{X}}p^{\mathsf{X},\theta}_{t-1\mid t}(x_{t-1}\mid x_{t},y_{0})}_{\text{2: data channel}}\;,
+(23)
+where each transition factorizes across components within its channel. Initialization mirrors FUJI. SEQ exposes a clean latent y0y_{0} throughout data denoising, which can accelerate sampling while shifting modeling burden to the latent channel. The SEQ core model can be viewed as a special case of FUJI by choosing an appropriate noise schedule, noising data first and latents last. We leave the possible exploration of schedules interpolating between both core models to further work.
+Fixed variance.
+We fix the encoder variance σφ\sigma_{\varphi} to a constant σlat2\sigma_{\text{lat}}^{2}. Larger σlat\sigma_{\text{lat}} smooths the latent distribution but increases ambiguity during denoising. We do not explore this trade-off further and set σlat2=10−4\sigma_{\text{lat}}^{2}=10^{-4} in experiments.
+data (tokens)latent (cont.)X0X_{0}X1X_{1}⋯\cdotsXT−1X_{T-1}XTX_{T}Y0Y_{0}Y1Y_{1}⋯\cdotsYT−1Y_{T-1}YTY_{T}ℰφ\mathcal{E}_{\varphi}X0θX_{0}^{\theta}X1θX_{1}^{\theta}XT−1θX_{T-1}^{\theta}XTθX_{T}^{\theta}Y0θY_{0}^{\theta}Y1θY_{1}^{\theta}YT−1θY_{T-1}^{\theta}YTθY_{T}^{\theta}
+Figure 1: Two-channel schematic of FUJI-LDDMs. Dashed blue arrows show the forward noising process, and green/red lines show the generative joint diffusion process.
+3.2 Objective functions
+We now derive the objective functions underlying our Latent Discrete Diffusion Models (LDDMs). Starting from the evidence lower bound (ELBO), we obtain explicit loss formulations for our two core variants FUJI-LDDM and SEQ-LDDM.
+Proposition 3.
+FUJI-LDDMs parameterized with the noise schedules given in Section 2, and using fixed variance σφ2=σlat2\sigma_{\varphi}^{2}=\sigma_{\text{lat}}^{2}, admit the following negative ELBO:
+LFUJIELBO​(θ,φ)\displaystyle\mathrm{L}^{\text{ELBO}}_{\text{FUJI}}(\theta,\varphi)
+=𝔼⁡[LT𝖷+LT𝖸+L0𝖷+L0𝖹+∑t=2Tλt𝖷,ELBO​log⁡⟨xθ​(Zt,t),X0⟩⏟Lt−1𝖷+λt𝖸,ELBO​‖Y0−yθ​(Zt,t)‖2⏟Lt−1𝖸]\displaystyle=\mathbb{E}\Bigg[\mathrm{L}^{\mathsf{X}}_{T}+\mathrm{L}^{\mathsf{Y}}_{T}+\mathrm{L}^{\mathsf{X}}_{0}+\mathrm{L}^{\mathsf{Z}}_{0}+\sum_{t=2}^{T}\underbrace{{\lambda}^{\mathsf{X},\text{ELBO}}_{t}\log\langle x_{\theta}(Z_{t},t),X_{0}\rangle}_{\mathrm{L}^{\mathsf{X}}_{t-1}}+\underbrace{{\lambda}^{\mathsf{Y},\text{ELBO}}_{t}\|Y_{0}-y_{\theta}(Z_{t},t)\|^{2}}_{\mathrm{L}^{\mathsf{Y}}_{t-1}}\Bigg]
+(24)
+≥𝔼⁡[−log⁡p0𝖷,θ​(X0)],\displaystyle\geq\mathbb{E}\big[-\log p^{\mathsf{X},\theta}_{0}(X_{0})\big]\;,
+(25)
+where
+λt𝖸,ELBO=α¯t−12​σt22​σ¯t−12​σ¯t2,λt𝖷,ELBO=γ¯t−γ¯t−11−γ¯t,{\lambda}^{\mathsf{Y},\text{ELBO}}_{t}=\frac{\bar{\alpha}_{t-1}^{2}\,\sigma_{t}^{2}}{2\,\bar{\sigma}_{t-1}^{2}\,\bar{\sigma}_{t}^{2}}\;,\qquad{\lambda}^{\mathsf{X},\text{ELBO}}_{t}=\,\frac{\bar{\gamma}_{t}-\bar{\gamma}_{t-1}}{1-\bar{\gamma}_{t}}\;,
+(26)
+LT𝖷,LT𝖸,L0𝖷\mathrm{L}^{\mathsf{X}}_{T},\mathrm{L}^{\mathsf{Y}}_{T},\mathrm{L}^{\mathsf{X}}_{0} are given in (65), and L0𝖹\mathrm{L}^{\mathsf{Z}}_{0} is given in (72). We neglect the extremal terms LT𝖷,LT𝖸,L0𝖷,L0𝖹\mathrm{L}^{\mathsf{X}}_{T},\mathrm{L}^{\mathsf{Y}}_{T},\mathrm{L}^{\mathsf{X}}_{0},\mathrm{L}^{\mathsf{Z}}_{0} in practice.
+The ELBO loss function for our SEQ-LDDMs is derived similarly. We summarize the reconstruction terms for both variants in Table 1. See the full derivations in Section C.1.
+Core Model
+Data Reconstruction (Lt−1𝖷\mathrm{L}^{\mathsf{X}}_{t-1})
+Latent Reconstruction (Lt−1𝖸\mathrm{L}^{\mathsf{Y}}_{t-1})
+FUJI
+𝔼⁡[λt𝖷​log⁡⟨xθ​(Xt,Yt,t),X0⟩]\mathbb{E}\big[\lambda^{\mathsf{X}}_{t}\log\langle x_{\theta}(X_{t},Y_{t},t),X_{0}\rangle\big]
+𝔼⁡[λt𝖸​‖yθ​(Xt,Yt,t)−Y0‖2]\mathbb{E}\big[\lambda^{\mathsf{Y}}_{t}\|y_{\theta}(X_{t},Y_{t},t)-Y_{0}\|^{2}\big]
+SEQ
+𝔼⁡[λt𝖷​log⁡⟨xθ​(Xt,Y0,t),X0⟩]\mathbb{E}\big[\lambda^{\mathsf{X}}_{t}\log\langle x_{\theta}(X_{t},Y_{0},t),X_{0}\rangle\big]
+𝔼⁡[λt𝖸​‖yθ​(Yt,t)−Y0‖2]\mathbb{E}\big[\lambda^{\mathsf{Y}}_{t}\|y_{\theta}(Y_{t},t)-Y_{0}\|^{2}\big]
+Table 1: Objective functions for our two core LDDMs. Y0∼ℰφ(⋅∣X0)Y_{0}\sim\mathcal{E}_{\varphi}(\cdot\mid X_{0}) is the latent embedding.
+Training procedure.
+In practice, we optimize
+L⁡(θ,φ)=𝔼⁡[λtx​log⁡⟨xθ​(Zt,t),X0⟩+λlatent​λty​‖yθ​(Zt,t)−Y0‖2],\mathrm{L}(\theta,\varphi)=\mathbb{E}\big[\lambda_{t}^{x}\log\langle x_{\theta}(Z_{t},t),X_{0}\rangle+\lambda^{\text{latent}}\,\lambda_{t}^{y}\|y_{\theta}(Z_{t},t)-Y_{0}\|^{2}\big]\;,
+(27)
+with λlatent>0\lambda^{\text{latent}}>0 a hyperparameter. To avoid early-stage instabilities such as latent collapse, we adopt a two-stage schedule inspired by (Rombach et al., 2022; Vahdat et al., 2021; Dieleman, 2025): start with λlatent=0\lambda^{\text{latent}}=0 to prioritize data reconstruction and form a meaningful latent structure, then linearly ramp λlatent\lambda^{\text{latent}} from 00 to 11. Optionally, the encoder and/or data denoiser can be gradually frozen (e.g., via decaying learning rates); we leave more elaborate schedules to future work.
+During optimization, the sampling distribution for t∼ωt\sim\omega and the weights (λtx,λty)(\lambda_{t}^{x},\lambda_{t}^{y}) may follow the ELBO choices or be modified for performance, as modern practice suggests (Karras et al., 2022; Esser et al., 2024). One may also switch targets from y0y_{0}-prediction to ε\varepsilon-, vv- (Salimans and Ho, 2022), or rectified-flow prediction (Liu et al., 2023); we leave this exploration to future work.
+We observed a latent blow-up failure mode in FUJI-LDDMs: when λlatent\lambda^{\text{latent}} is zero or too small, the encoder can increase the latent magnitude to maintain a high signal-to-noise ratio through the forward process, which lowers the data loss but destabilizes latent denoising (the latent denoiser must resolve sequence semantics early and in latent space alone). We employ a simple, parameter-free fix: normalize encoder outputs to unit norm before noising. If y0=(y01,…,y0S′)∈𝖸y_{0}=(y_{0}^{1},\ldots,y_{0}^{S^{\prime}})\in\mathsf{Y}, enforce
+‖y0i‖2=1for ​i∈{1,…,S′}.\|y_{0}^{i}\|_{2}=1\quad\text{for }i\in\{1,\ldots,S^{\prime}\}\;.
+(28)
+This clamps latent scale, prevents SNR gaming, and stabilizes training in both stages
+4 Related Works
+We review concurrent advances in discrete diffusion that address the limitations of factorized denoisers by either inducing cross-token dependencies or coupling the discrete path to a continuous representation. A more extensive review is provided in Appendix A.
+Non-factorized denoisers.
+One line of work augments masked diffusion with inference-time, non-factorized predictions. Discrete Copula Diffusion (DCD) (Liu et al., 2025a) pairs per-token diffusion marginals with an auxiliary autoregressive copula to impose dependency structure, improving few-step quality at the cost of an AR loop. Self-speculative decoding (Campbell et al., 2025) modifies attention to draft and verify a joint proposal in a single forward pass, reducing evaluations and relaxing strict factorization. These approaches operate purely within the discrete diffusion process and primarily target the sampler.
+Continuous latents.
+A complementary direction introduces continuous variables to capture joint structure along the diffusion path. VADD (Xie et al., 2025) associates a continuous latent with each reverse transition and trains a VAE-style model to obtain non-factorized posteriors; the latent prior remains simple and decoupled across steps. Immediately concurrent to our work in continuous augmentations of the discrete path, CCDD (Zhou et al., 2025) is a closely related FUJI-style formulation, but instantiated with latents sized to the token sequence (S=S′S=S^{\prime}) and without a learned encoder; CADD (Zheng et al., 2025b) adopts a token-wise augmentation in which each discrete variable carries a continuous latent derived from an encoder, and no separate network is used to parameterize the latent denoiser. While this simplifies optimization by emphasizing data reconstruction, it entangles channels and can induce quality–entropy trade-offs at inference.
+5 Experiments
+We evaluate LDDMs in two settings: a controlled synthetic task designed to isolate the effect of conditional factorization, and unconditional language modeling on LM1B (Chelba et al., 2014). We compare our two core variants from Section 3, FUJI (joint denoising) and SEQ (sequential denoising), against MDLM, a strong masked discrete diffusion baseline (Sahoo et al., 2024).
+Models and backbones.
+For FUJI we use a multi-modal DiT (MM-DiT; (Esser et al., 2024)) with modality-specific MLP heads and shared attention across channels. For SEQ, the latent channel uses a lightweight MLP-based denoiser without attention, while the data channel uses the same DiT backbone as FUJI. For MDLM, we use the same DiT backbone as the data channel to isolate algorithmic differences. On LM1B, we initialize latents with a pretrained Qwen3 0.6B sentence encoder (Team, 2025). We found the loss terms λt𝖷,λt𝖸\lambda^{\mathsf{X}}_{t},\lambda^{\mathsf{Y}}_{t} to have important impact on generative performance as compared to other design choices. Full architectural and optimization details (depth/width, schedules, batch sizes) are in Appendix D.
+Metrics and protocol.
+On the synthetic task we report the sliced Wasserstein distance (SWD) between generated and target distributions. On LM1B we report generative perplexity under a fixed teacher (GPT-2 Large; (Radford et al., 2019)) and the token entropy of generated samples. Definitions and computation are in Section E.3. Unless stated otherwise, sampling budgets are reported as the number of reverse steps on the data channel. For SEQ we additionally report the total number of function evaluations (NFE), counting both latent and data steps; we keep the latent denoiser small so SEQ remains competitive in wall-clock.
+5.1 Small dimensional experiments
+We first probe whether LDDMs can recover a discrete distribution that is conditionally factorized given a low-dimensional latent. The binary sawtooth dataset is defined on 𝖷={0,1}S\mathsf{X}=\{0,1\}^{S} with
+q0𝖷=q0|y𝖷​q𝖸,Y∼U⁡[0,1],q^{\mathsf{X}}_{0}=q^{\mathsf{X}}_{0\mid y}\,q^{\mathsf{Y}}\;,\qquad Y\sim\mathrm{U}[0,1]\;,
+(29)
+and
+q0|y𝖷(x0∣y)=∏i=1Sq0|y𝖷,i(x0i∣y),q0|y𝖷,i(⋅∣y)∼ℬ(ωi−y),q^{\mathsf{X}}_{0\mid y}(x_{0}\mid y)=\prod_{i=1}^{S}q^{\mathsf{X},i}_{0\mid y}(x_{0}^{i}\mid y)\;,\qquad q^{\mathsf{X},i}_{0\mid y}(\cdot\mid y)\sim\mathcal{B}\big(\omega^{\,i-y}\big)\;,
+(30)
+where ℬ\mathcal{B} is the Bernoulli distribution and ωi−y\omega^{\,i-y} denotes a 1-periodic linear ramp (“sawtooth”) evaluated at coordinate ii with a shift yy along the index axis (the explicit formula is given in (75)). A heatmap of ωi−y=q0|y𝖷,i​(1|y)\omega_{i-y}=q^{\mathsf{X},i}_{0|y}(1|y) for varying y∈ℝy\in\mathbb{R} and i∈{1,⋯,S}i\in\{1,\cdots,S\} is shown in Figure 3. Thus YY acts as a global shift that displaces a shared pattern across coordinates. By construction, q0|y𝖷q^{\mathsf{X}}_{0\mid y} factorizes over coordinates while the unconditional q0𝖷q^{\mathsf{X}}_{0} does not, and each marginal q0𝖷,iq^{\mathsf{X},i}_{0} is ℬ⁡(1/2)\mathcal{B}(1/2). In particular, a one-step factorized reverse cannot recover q0𝖷q^{\mathsf{X}}_{0}. We use S=128S=128 for the data sequence and a single latent block S′=1S^{\prime}=1 with d′=32d^{\prime}=32. In SEQ we fix the latent horizon to TY=64T_{Y}=64 and vary the data horizon. We set λt𝖸=1\lambda^{\mathsf{Y}}_{t}=1 and λt𝖷=λt𝖷,ELBO\lambda^{\mathsf{X}}_{t}={\lambda}^{\mathsf{X},\text{ELBO}}_{t}.
+Additional configuration details are in Section E.1.
+Results.
+Figure 2 summarizes SWD (left) and sample entropy (right) versus data-channel sampling budget. In this setting where q0|y𝖷q^{\mathsf{X}}_{0\mid y} factorizes, SEQ attains near-optimal SWD with 1–2 data steps, as conditioning on Y0Y_{0} resolves the global shift and reduces the reverse to independent component-wise updates. FUJI and MDLM require roughly 1616 data steps to match the target; FUJI improves over MDLM in the few-step regime, consistent with joint cross-channel information improving early unmasking commitments.
+Overall, conditioning the discrete chain on trainable continuous latents closes much of the factorization gap in this controlled scenario, especially when few steps are used on the data channel.
+Figure 2: SWD↓\downarrow as a function of function evaluation on the data channel. Latent steps for SEQ are fixed to TY=64T_{Y}=64.
+Figure 3: Values of q0|y𝖷,i​(1|y)q^{\mathsf{X},i}_{0|y}(1|y) across coordinates for y∈[0,1]y\in[0,1].
+5.2 Text modeling
+We next evaluate LDDMs on LM1B (Chelba et al., 2014), a large-scale language modeling corpus with roughly one billion tokens. This setting probes whether latent-augmented discrete diffusion scales to realistic text and can leverage pretrained continuous representations. We use sequences of length S=128S=128 with sentence packing.
+Setup.
+We compare FUJI-LDDM to MDLM under matched training configurations. We set λt𝖸=1\lambda^{\mathsf{Y}}_{t}=1 and for λt𝖷\lambda^{\mathsf{X}}_{t} we explore both λt𝖷,ELBO{\lambda}^{\mathsf{X},\text{ELBO}}_{t} and λt𝖷=1\lambda^{\mathsf{X}}_{t}=1. To instantiate the latent denoiser without additional training cost, we use a frozen Qwen3-Embedding 0.6B encoder (Team, 2025) obtaining sentence-level representations. We clip each vector of the last layers embeddings to the recommended minimal of 32 dimensions, and ℓ2\ell_{2} normalize them, yielding a latent shape (S′,d′)=(128,32)(S^{\prime},d^{\prime})=(128,32). Full architectural, optimization, and schedule details are in Section E.2.
+Results.
+Table 2 summarizes generative perplexity (lower is better) and sample entropy. FUJI with constant weighting (λt𝖷=1)(\lambda^{\mathsf{X}}_{t}=1) achieves the lowest generative perplexity across all budgets, with entropy very close to MDLM trained under ELBO weighting. FUJI with ELBO weighting improves over MDLM at moderate budgets but remains behind the constant-weighted FUJI. Validation perplexity trends (Table 3) show the same ordering and indicate that the latent channel provides useful signal even with a frozen encoder trained on a different retrieval task.
+Overall, these results suggest that latent augmentation can facilitate few-step discrete generation on text while maintaining entropy, and that loss weighting materially impacts performance. Because the latent encoder is frozen and not tailored to our objective, there is likely headroom from end-to-end learned latents and schedule/weighting refinements. We include qualitative samples in Section E.4.
+Steps
+8
+16
+32
+64
+128
+MDLM (λt𝖷=λt𝖷,ELBO)(\lambda^{\mathsf{X}}_{t}={\lambda}^{\mathsf{X},\text{ELBO}}_{t})
+462.36
+4.42
+314.59
+4.36
+273.77
+4.40
+202.01
+4.43
+189.22
+4.45
+MDLM (λt𝖷=1)(\lambda^{\mathsf{X}}_{t}=1)
+515.76
+4.45
+286.50
+4.38
+220.92
+4.39
+217.88
+4.43
+189.47
+4.41
+FUJI Qwen3 (λt𝖷=λt𝖷,ELBO)(\lambda^{\mathsf{X}}_{t}={\lambda}^{\mathsf{X},\text{ELBO}}_{t})
+495.16
+4.41
+363.24
+4.39
+263.24
+4.38
+221.69
+4.38
+214.86
+4.38
+FUJI Qwen3 (λt𝖷=1)(\lambda^{\mathsf{X}}_{t}=1)
+441.77
+4.40
+304.86
+4.38
+228.95
+4.37
+200.47
+4.39
+175.80
+4.38
+Table 2: Generative perplexity↓\downarrow, with entropy shown in light gray within each cell. Ground-truth data admit a generative perplexity of 49.9149.91 and an entropy of 4.394.39. FUJI Qwen3 uses a frozen Qwen3-Embedding 0.6B encoder.
+Validation PPL
+MDLM (λt𝖷=λt𝖷,ELBO)(\lambda^{\mathsf{X}}_{t}={\lambda}^{\mathsf{X},\text{ELBO}}_{t})
+≤\leq 39.99
+MDLM (λt𝖷=1)(\lambda^{\mathsf{X}}_{t}=1)
+≤\leq 36.55
+FUJI Qwen3 (λt𝖷=λt𝖷,ELBO)(\lambda^{\mathsf{X}}_{t}={\lambda}^{\mathsf{X},\text{ELBO}}_{t})
+≤\leq 29.99
+FUJI Qwen3 (λt𝖷=1)(\lambda^{\mathsf{X}}_{t}=1)
+≤\leq 24.49
+Table 3: Validation PPL↓\downarrow. FUJI Qwen3 uses a frozen Qwen3-Embedding 0.6B encoder.
+6 Conclusion
+We revisited masked discrete diffusion through the lens of the factorization bottleneck and introduced Latent Discrete Diffusion Models (LDDMs), which couple a masked discrete process with a continuous latent channel. We instantiated two variants, FUJI (fully joint denoising of tokens and latents) and SEQ (latent-first, then data), and derived corresponding ELBO-based objectives. This design preserves parallel token updates while supplying a softer, global signal that can carry cross-token information.
+Empirically, LDDMs improve unconditional generation under few-step budgets. On the binary sawtooth task, SEQ resolves the conditionally factorized target with one or two data steps. On LM1B, FUJI yields lower generative perplexity across sampling budgets while maintaining entropy close to the data baseline. These observations are consistent with the view that an auxiliary continuous channel can reduce the brittleness of simultaneous token unmasking.
+References
+Esser et al. (2024)
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, Dustin Podell, Tim Dockhorn, Zion English, Kyle Lacey, Alex Goodwin, Yannik Marek, and Robin Rombach.
+Scaling rectified flow transformers for high-resolution image synthesis, 2024.
+URL https://arxiv.org/abs/2403.03206.
+Ho et al. (2020)
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+Denoising diffusion probabilistic models, 2020.
+URL https://arxiv.org/abs/2006.11239.
+Chen et al. (2021)
+Nanxin Chen, Yu Zhang, Heiga Zen, Ron J Weiss, Mohammad Norouzi, and William Chan.
+Wavegrad: Estimating gradients for waveform generation.
+In International Conference on Learning Representations, 2021.
+URL https://openreview.net/forum?id=NsMLjcFaO8O.
+Dieleman et al. (2022)
+Sander Dieleman, Laurent Sartran, Arman Roshannai, Nikolay Savinov, Yaroslav Ganin, Pierre H Richemond, Arnaud Doucet, Robin Strudel, Chris Dyer, Conor Durkan, et al.
+Continuous diffusion for categorical data.
+arXiv preprint arXiv:2211.15089, 2022.
+Sahoo et al. (2024)
+Subham Sekhar Sahoo, Marianne Arriola, Yair Schiff, Aaron Gokaslan, Edgar Marroquin, Justin T Chiu, Alexander Rush, and Volodymyr Kuleshov.
+Simple and effective masked diffusion language models, 2024.
+URL https://arxiv.org/abs/2406.07524.
+Lou et al. (2024)
+Aaron Lou, Chenlin Meng, and Stefano Ermon.
+Discrete diffusion language modeling by estimating the ratios of the data distribution, 2024.
+URL https://openreview.net/forum?id=71mqtQdKB9.
+Hoogeboom et al. (2021)
+Emiel Hoogeboom, Didrik Nielsen, Priyank Jaini, Patrick Forré, and Max Welling.
+Argmax flows and multinomial diffusion: Learning categorical distributions.
+Advances in Neural Information Processing Systems, 34:12454–12465, 2021.
+Austin et al. (2021)
+Jacob Austin, Daniel D Johnson, Jonathan Ho, Daniel Tarlow, and Rianne Van Den Berg.
+Structured denoising diffusion models in discrete state-spaces.
+Advances in Neural Information Processing Systems, 34:17981–17993, 2021.
+Nie et al. (2025)
+Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li.
+Large language diffusion models, 2025.
+URL https://arxiv.org/abs/2502.09992.
+Song et al. (2025)
+Yuxuan Song, Zheng Zhang, Cheng Luo, Pengyang Gao, Fan Xia, Hao Luo, Zheng Li, Yuehang Yang, Hongli Yu, Xingwei Qu, Yuwei Fu, Jing Su, Ge Zhang, Wenhao Huang, Mingxuan Wang, Lin Yan, Xiaoying Jia, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Yonghui Wu, and Hao Zhou.
+Seed diffusion: A large-scale diffusion language model with high-speed inference, 2025.
+URL https://arxiv.org/abs/2508.02193.
+Campbell et al. (2022)
+Andrew Campbell, Joe Benton, Valentin De Bortoli, Thomas Rainforth, George Deligiannidis, and Arnaud Doucet.
+A continuous time framework for discrete denoising models.
+Advances in Neural Information Processing Systems, 35:28266–28279, 2022.
+Zheng et al. (2025a)
+Kaiwen Zheng, Yongxin Chen, Hanzi Mao, Ming-Yu Liu, Jun Zhu, and Qinsheng Zhang.
+Masked diffusion models are secretly time-agnostic masked models and exploit inaccurate categorical sampling.
+In The Thirteenth International Conference on Learning Representations, 2025a.
+URL https://openreview.net/forum?id=CTC7CmirNr.
+Ni et al. (2025)
+Jinjie Ni, Qian Liu, Chao Du, Longxu Dou, Hang Yan, Zili Wang, Tianyu Pang, and Michael Qizhe Shieh.
+Training optimal large diffusion language models, 2025.
+URL https://arxiv.org/abs/2510.03280.
+Kang et al. (2025)
+Wonjun Kang, Kevin Galim, Seunghyuk Oh, Minjae Lee, Yuchen Zeng, Shuibai Zhang, Coleman Hooper, Yuezhou Hu, Hyung Il Koo, Nam Ik Cho, and Kangwook Lee.
+Parallelbench: Understanding the trade-offs of parallel decoding in diffusion llms, 2025.
+URL https://arxiv.org/abs/2510.04767.
+Liu et al. (2025a)
+Anji Liu, Oliver Broadrick, Mathias Niepert, and Guy Van den Broeck.
+Discrete copula diffusion, 2025a.
+URL https://arxiv.org/abs/2410.01949.
+Wang et al. (2025)
+Guanghan Wang, Yair Schiff, Subham Sekhar Sahoo, and Volodymyr Kuleshov.
+Remasking discrete diffusion models with inference-time scaling, 2025.
+URL https://arxiv.org/abs/2503.00307.
+Gat et al. (2024a)
+Itai Gat, Tal Remez, Neta Shaul, Felix Kreuk, Ricky T. Q. Chen, Gabriel Synnaeve, Yossi Adi, and Yaron Lipman.
+Discrete flow matching, 2024a.
+URL https://arxiv.org/abs/2407.15595.
+Liu et al. (2025b)
+Sulin Liu, Juno Nam, Andrew Campbell, Hannes Stärk, Yilun Xu, Tommi Jaakkola, and Rafael Gómez-Bombarelli.
+Think while you generate: Discrete diffusion with planned denoising, 2025b.
+URL https://arxiv.org/abs/2410.06264.
+Shi et al. (2024)
+Jiaxin Shi, Kehang Han, Zhe Wang, Arnaud Doucet, and Michalis Titsias.
+Simplified and generalized masked diffusion for discrete data.
+Advances in neural information processing systems, 37:103131–103167, 2024.
+Pham et al. (2025)
+Le-Tuyet-Nhi Pham, Dario Shariatian, Antonio Ocello, Giovanni Conforti, and Alain Oliviero Durmus.
+Discrete markov probabilistic models: An improved discrete score-based framework with sharp convergence bounds under minimal assumptions.
+In Forty-second International Conference on Machine Learning, 2025.
+URL https://openreview.net/forum?id=biJiSMLGOV.
+Sahoo et al. (2025)
+Subham Sekhar Sahoo, Justin Deschenaux, Aaron Gokaslan, Guanghan Wang, Justin Chiu, and Volodymyr Kuleshov.
+The diffusion duality, 2025.
+URL https://arxiv.org/abs/2506.10892.
+Xu et al. (2024)
+Yilun Xu, Gabriele Corso, Tommi Jaakkola, Arash Vahdat, and Karsten Kreis.
+Disco-diff: Enhancing continuous diffusion models with discrete latents.
+In Forty-first International Conference on Machine Learning, 2024.
+URL https://openreview.net/forum?id=psup68MBvt.
+Karras et al. (2022)
+Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine.
+Elucidating the design space of diffusion-based generative models.
+Advances in neural information processing systems, 35:26565–26577, 2022.
+Dieleman (2024)
+Sander Dieleman.
+Noise schedules considered harmful, 2024.
+URL https://sander.ai/2024/06/14/noise-schedules.html.
+Song et al. (2020)
+Jiaming Song, Chenlin Meng, and Stefano Ermon.
+Denoising diffusion implicit models.
+arXiv:2010.02502, October 2020.
+URL https://arxiv.org/abs/2010.02502.
+Gat et al. (2024b)
+Itai Gat, Tal Remez, Neta Shaul, Felix Kreuk, Ricky TQ Chen, Gabriel Synnaeve, Yossi Adi, and Yaron Lipman.
+Discrete flow matching.
+Advances in Neural Information Processing Systems, 37:133345–133385, 2024b.
+Rombach et al. (2022)
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models, 2022.
+URL https://arxiv.org/abs/2112.10752.
+Vahdat et al. (2021)
+Arash Vahdat, Karsten Kreis, and Jan Kautz.
+Score-based generative modeling in latent space, 2021.
+URL https://arxiv.org/abs/2106.05931.
+Dieleman (2025)
+Sander Dieleman.
+Generative modelling in latent space, 2025.
+URL https://sander.ai/2025/04/15/latents.html.
+Salimans and Ho (2022)
+Tim Salimans and Jonathan Ho.
+Progressive distillation for fast sampling of diffusion models.
+In International Conference on Learning Representations, 2022.
+URL https://openreview.net/forum?id=TIdIXIpzhoI.
+Liu et al. (2023)
+Xingchao Liu, Chengyue Gong, and qiang liu.
+Flow straight and fast: Learning to generate and transfer data with rectified flow.
+In The Eleventh International Conference on Learning Representations, 2023.
+URL https://openreview.net/forum?id=XVjTT1nw5z.
+Campbell et al. (2025)
+Andrew Campbell, Valentin De Bortoli, Jiaxin Shi, and Arnaud Doucet.
+Self-speculative masked diffusions, 2025.
+URL https://arxiv.org/abs/2510.03929.
+Xie et al. (2025)
+Tianyu Xie, Shuchen Xue, Zijin Feng, Tianyang Hu, Jiacheng Sun, Zhenguo Li, and Cheng Zhang.
+Variational autoencoding discrete diffusion with enhanced dimensional correlations modeling, 2025.
+URL https://arxiv.org/abs/2505.17384.
+Zhou et al. (2025)
+Cai Zhou, Chenxiao Yang, Yi Hu, Chenyu Wang, Chubin Zhang, Muhan Zhang, Lester Mackey, Tommi Jaakkola, Stephen Bates, and Dinghuai Zhang.
+Coevolutionary continuous discrete diffusion: Make your diffusion language model a latent reasoner, 2025.
+URL https://arxiv.org/abs/2510.03206.
+Zheng et al. (2025b)
+Huangjie Zheng, Shansan Gong, Ruixiang Zhang, Tianrong Chen, Jiatao Gu, Mingyuan Zhou, Navdeep Jaitly, and Yizhe Zhang.
+Continuously augmented discrete diffusion model for categorical generative modeling, 2025b.
+URL https://arxiv.org/abs/2510.01329.
+Chelba et al. (2014)
+Ciprian Chelba, Tomas Mikolov, Mike Schuster, Qi Ge, Thorsten Brants, Phillipp Koehn, and Tony Robinson.
+One billion word benchmark for measuring progress in statistical language modeling, 2014.
+URL https://arxiv.org/abs/1312.3005.
+Team (2025)
+Qwen Team.
+Qwen3 technical report, 2025.
+URL https://arxiv.org/abs/2505.09388.
+Radford et al. (2019)
+Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al.
+Language models are unsupervised multitask learners.
+OpenAI blog, 1(8):9, 2019.
+Peebles and Xie (2023)
+William Peebles and Saining Xie.
+Scalable diffusion models with transformers, 2023.
+URL https://arxiv.org/abs/2212.09748.
+Appendix A Related Works
+We review recent directions in discrete diffusion that reintroduce cross-token dependencies and/or couple the diffusion path with a continuous representation to improve performance.
+Non-factorized denoisers via copulas and speculative decoding.
+Discrete Copula Diffusion (DCD) [Liu et al., 2025a] augments a discrete diffusion model at inference time with a separate copula model instantiated as a small autoregressive (AR) language model. At each step tt, DCD combines (a) univariate marginals from causal and non-causal denoisers with (b) a dependency structure from the AR copula via a projection step. Sampling performs an AR pass over the currently masked subset followed by the diffusion update. Reported results show improved few-step quality with fewer calls to the diffusion model, at the cost of an auxiliary AR model and an additional AR pass whose compute scales with the masked span.
+Self-speculative decoding [Campbell et al., 2025] modifies the attention mask to include a causal drafting block and validates the draft against the full (non-causal) network via speculative acceptance. This yields a non-factorized proposal over the masked subset in a single forward of the full model and can reduce the number of evaluations in their setup.
+LDDMs pursue complementary aims by training a continuous latent that captures cross-token dependencies and using it to condition parallel denoising.
+Continuous relaxations and consistency.
+Sahoo et al. [2025] establish a duality between Gaussian diffusion and uniform-state discrete diffusion via an argmax map on continuous latents. They propose lower-variance training by feeding soft probabilities to the denoiser and adapt consistency-style distillation to discrete models.
+Latent variables for dependency modeling.
+Xie et al. [2025] introduce Variational Autoencoding Discrete Diffusion (VADD). They associate one continuous latent yty_{t} per transition, obtained with an encoder ℰtφ\mathcal{E}_{t}^{\varphi} trained as part of a classical VAE. The generative process thus only involves sampling a Gaussian random variable at each transition. This yields non-factorized posteriors and improves few-step quality without external AR models. In contrast, our LDDMs learn a persistent continuous latent trajectory Y0:TY_{0:T} coupled to the discrete chain, enabling flexible denoising sequencing (FUJI joint denoising or SEQ latent-first denoising). Importantly, in LDDMs, the latent distribution is modeled by its own diffusion model, which enables encoding more complex information and relationships.
+Joint continuous–discrete co-evolution.
+Contemporaneous work [Zhou et al., 2025] proposes CCDD, which co-evolves continuous embeddings and discrete tokens within one network. In their experiments, continuous embeddings are derived from a large pretrained encoder (e.g., Qwen3-Embedding [Team, 2025]), and cross-modal classifier-free guidance is explored. LDDMs share the co-evolution view but (i) allow a learned encoder to tailor latents to the objective (while we also evaluate a frozen encoder at scale), and (ii) derive an ELBO that balances data and latent terms. Their instantiation sizes latents to the token sequence (S=S′)(S=S^{\prime}) in reported setups.
+Token-wise continuous augmentation.
+Contemporaneous work, Continuously Augmented Discrete Diffusion (CADD) [Zheng et al., 2025b], attaches a continuous diffusion to each token position so that masked tokens carry soft hints instead of a hard 𝐦\mathbf{m} token. Moreover, they do not use a separate network for the latent denoiser, which they obtain directly from the data denoiser xθx_{\theta} and the encoder ℰφ\mathcal{E}_{\varphi}, simplifying training (data reconstruction loss only) but inducing quality/entropy tradeoffs at inference. Our LDDMs target a complementary regime: instead of per-token embeddings, we use compact sentence-level latents to encode global joint structure, which is beneficial when many tokens must be unveiled simultaneously.
+Appendix B Additional remarks on continuous and discrete diffusion
+B.1 Derivations for continuous diffusion
+Forward process.
+The forward process is designed to satisfy the marginals
+yt=α¯t​y0+σ¯t​ε,ε∼𝒩⁡(0,Id),y_{t}=\bar{\alpha}_{t}\,y_{0}+\bar{\sigma}_{t}\,\varepsilon\;,\qquad\varepsilon\sim\mathcal{N}(0,\mathrm{I}_{d})\;,
+(31)
+with α¯0=1\bar{\alpha}_{0}=1 and σ¯0=0\bar{\sigma}_{0}=0. It suffices to specify (α¯t,σ¯t)(\bar{\alpha}_{t},\bar{\sigma}_{t}) for t∈{0,…,T}t\in\{0,\ldots,T\} (or, equivalently, for a rescaled grid t∈{0,1/T,…,1}t\in\{0,1/T,\ldots,1\}). For two consecutive times s=t−1/T<ts=t-1/T<t we set
+αt|s=α¯tα¯s,σt|s2=σ¯t2−αt|s2​σ¯s2,\alpha_{t\mid s}=\frac{\bar{\alpha}_{t}}{\bar{\alpha}_{s}}\;,\qquad\sigma_{t\mid s}^{2}=\bar{\sigma}_{t}^{2}-\alpha_{t\mid s}^{2}\,\bar{\sigma}_{s}^{2}\;,
+(32)
+which yields the Gaussian forward kernel
+qt|s𝖸​(yt∣ys)=𝒩⁡(αt|s​ys,σt|s2​Id).q^{\mathsf{Y}}_{t\mid s}(y_{t}\mid y_{s})=\mathcal{N}\!\big(\alpha_{t\mid s}\,y_{s},\ \sigma_{t\mid s}^{2}\,\mathrm{I}_{d}\big)\;.
+(33)
+Posterior distributions.
+The bridge posterior qs|t,0𝖸​(ys∣yt,y0)q^{\mathsf{Y}}_{s\mid t,0}(y_{s}\mid y_{t},y_{0}) is Gaussian with
+qs|t,0𝖸​(ys∣yt,y0)\displaystyle q^{\mathsf{Y}}_{s\mid t,0}(y_{s}\mid y_{t},y_{0})
+=𝒩⁡(μ~s|t​(yt,y0),σ~s|t2​Id),\displaystyle=\mathcal{N}\!\big(\,\tilde{\mu}_{s\mid t}(y_{t},y_{0}),\ \tilde{\sigma}_{s\mid t}^{2}\,\mathrm{I}_{d}\,\big)\;,
+(34)
+μ~s|t​(yt,y0)\displaystyle\tilde{\mu}_{s\mid t}(y_{t},y_{0})
+=αt|s​σ¯s2σ¯t2​yt+α¯s​σt|s2σ¯t2​y0,\displaystyle=\frac{\alpha_{t\mid s}\,\bar{\sigma}_{s}^{2}}{\bar{\sigma}_{t}^{2}}\,y_{t}+\frac{\bar{\alpha}_{s}\,\sigma_{t\mid s}^{2}}{\bar{\sigma}_{t}^{2}}\,y_{0}\;,
+(35)
+σ~s|t2\displaystyle\tilde{\sigma}_{s\mid t}^{2}
+=σt|s2​σ¯s2σ¯t2.\displaystyle=\frac{\sigma_{t\mid s}^{2}\,\bar{\sigma}_{s}^{2}}{\bar{\sigma}_{t}^{2}}\;.
+(36)
+Writing the noise at time tt as ε⁡(yt,y0)=(yt−α¯t​y0)/σ¯t\varepsilon(y_{t},y_{0})=(y_{t}-\bar{\alpha}_{t}y_{0})/\bar{\sigma}_{t}, the posterior mean can be equivalently expressed as
+μ~s|t​(yt,y0)=1αt|s​(yt−σt|s2σ¯t​ε​(yt,y0)).\tilde{\mu}_{s\mid t}(y_{t},y_{0})=\frac{1}{\alpha_{t\mid s}}\Big(y_{t}-\frac{\sigma_{t\mid s}^{2}}{\bar{\sigma}_{t}}\,\varepsilon(y_{t},y_{0})\Big)\;.
+(37)
+ELBO loss.
+Let pT𝖸,θ​(yT)=𝒩⁡(0,σ¯T2​Id)p^{\mathsf{Y},\theta}_{T}(y_{T})=\mathcal{N}(0,\bar{\sigma}_{T}^{2}\mathrm{I}_{d}) and pθ​(ys∣yt)p_{\theta}(y_{s}\mid y_{t}) be Gaussian with the same covariance as the bridge and mean obtained by replacing y0y_{0} with a predictor (e.g., yθ​(yt,t)y_{\theta}(y_{t},t) or εθ​(yt,t)\varepsilon_{\theta}(y_{t},t)) in μ~s|t\tilde{\mu}_{s\mid t}. The negative ELBO decomposes as
+L𝖸​(θ)=𝔼⁡[KL(q𝖸T|0(⋅∣Y0)∥p𝖸,θT)⏟LT+∑t=2TKL(q𝖸t−1|t,0(⋅∣Yt,Y0)∥pθ(⋅∣Yt))⏟Lt−1−log⁡pθ​(Y0∣Y1)⏟L0],\mathrm{L}^{\mathsf{Y}}(\theta)=\mathbb{E}\Big[\underbrace{\mathrm{KL}\big(q^{\mathsf{Y}}_{T\mid 0}(\cdot\mid Y_{0})\,\|\,p^{\mathsf{Y},\theta}_{T}\big)}_{L_{T}}+\sum_{t=2}^{T}\underbrace{\mathrm{KL}\big(q^{\mathsf{Y}}_{t-1\mid t,0}(\cdot\mid Y_{t},Y_{0})\,\|\,p_{\theta}(\cdot\mid Y_{t})\big)}_{L_{t-1}}\;-\;\underbrace{\log p_{\theta}(Y_{0}\mid Y_{1})}_{L_{0}}\Big]\;,
+(38)
+where the expectation is over Y0∼q0𝖸Y_{0}\sim q^{\mathsf{Y}}_{0} and Yt∼qt|0𝖸(⋅∣Y0)Y_{t}\sim q^{\mathsf{Y}}_{t\mid 0}(\cdot\mid Y_{0}). With the usual parameterizations, Lt−1L_{t-1} reduces to a weighted MSE, and the extremal terms LTL_{T} and L0L_{0} are typically small and often omitted in practice.
+Loss weighting.
+Different prediction targets lead to different weights:
+(ε-prediction)L𝖸​(θ)\displaystyle\text{($\varepsilon$-prediction)}\qquad\mathrm{L}^{\mathsf{Y}}(\theta)
+=𝔼⁡[σt|s22​σ¯s2​αt|s2​‖εθ​(Yt,t)−ε⁡(Yt,Y0)‖2],\displaystyle=\mathbb{E}\Big[\frac{\sigma_{t\mid s}^{2}}{2\,\bar{\sigma}_{s}^{2}\,\alpha_{t\mid s}^{2}}\ \|\varepsilon_{\theta}(Y_{t},t)-\varepsilon(Y_{t},Y_{0})\|^{2}\Big]\;,
+(39)
+(y0-prediction)L𝖸​(θ)\displaystyle\text{($y_{0}$-prediction)}\qquad\mathrm{L}^{\mathsf{Y}}(\theta)
+=𝔼⁡[α¯s2​σt|s22​σ¯s2​σ¯t2​‖yθ​(Yt,t)−Y0‖2],\displaystyle=\mathbb{E}\Big[\frac{\bar{\alpha}_{s}^{2}\,\sigma_{t\mid s}^{2}}{2\,\bar{\sigma}_{s}^{2}\,\bar{\sigma}_{t}^{2}}\ \|y_{\theta}(Y_{t},t)-Y_{0}\|^{2}\Big]\;,
+(40)
+so that in the y0y_{0}-prediction case the time weight is
+λt𝖸,ELBO=α¯s2​σt|s22​σ¯s2​σ¯t2.{\lambda}^{\mathsf{Y},\text{ELBO}}_{t}=\frac{\bar{\alpha}_{s}^{2}\,\sigma_{t\mid s}^{2}}{2\,\bar{\sigma}_{s}^{2}\,\bar{\sigma}_{t}^{2}}\;.
+(41)
+These weights can be replaced by alternative choices (e.g., schedule- or SNR-based) without changing the model class.
+Noise schedules.
+The relation between (α¯t,σ¯t)(\bar{\alpha}_{t},\bar{\sigma}_{t}) depends on the diffusion type. In the variance-preserving (VP) case, σ¯t2=1−α¯t2\bar{\sigma}_{t}^{2}=1-\bar{\alpha}_{t}^{2}. In the variance-exploding (VE) case, α¯t=1\bar{\alpha}_{t}=1 and σ¯t2=σ2​(t)\bar{\sigma}_{t}^{2}=\sigma^{2}(t) with σ2​(T)≫1\sigma^{2}(T)\gg 1. We focus on VP and consider τ=t/T∈[0,1]\tau=t/T\in[0,1]. Two common VP choices are listed in Figure 4.
+Schedule
+α¯t2\bar{\alpha}_{t}^{2}
+VP-Linear
+1−τ1-\tau
+VP-Cosine
+cos2⁡(τ+s1+s​π2)\cos^{2}\left(\frac{\tau+s}{1+s}\frac{\pi}{2}\right)
+Figure 4: Classical choices for noise schedules. For the cosine schedule, we set s=0.008s=0.008.
+Deterministic DDIM sampling.
+A deterministic variant of the diffusion process, known as DDIM [Song et al., 2020], can be obtained by defining the forward process directly through the posterior qs|t,0𝖸q^{\mathsf{Y}}_{s|t,0} and (3), but without stochasticity. We set:
+qs|t𝖸​(ys∣yt,y0)=N⁡(ys,μ~s|tη​(yt,y0),η2​Σ~s|t2).q^{\mathsf{Y}}_{s|t}(y_{s}\mid y_{t},y_{0})=\mathrm{N}\left(y_{s};\tilde{\mu}_{s|t}^{\eta}(y_{t},y_{0}),\ \eta^{2}\tilde{\Sigma}^{2}_{s|t}\right)\;.
+(42)
+where η∈[0,1]\eta\in[0,1] controls the level of stochasticity in the sampling process, Σ~s|t2=σt|s2​σ¯s2σ¯t2\tilde{\Sigma}^{2}_{s|t}=\frac{\sigma^{2}_{t|s}\,\bar{\sigma}_{s}^{2}}{\bar{\sigma}_{t}^{2}},
+μ~s|tη​(yt,y0)=α¯s​y0+σ¯s2−η2​Σ~2​s|t​ε​(yt,y0)andε⁡(yt,y0)=yt−α¯t​y0σ¯t,\tilde{\mu}^{\eta}_{s|t}(y_{t},y_{0})=\bar{\alpha}_{s}y_{0}+\sqrt{\bar{\sigma}_{s}^{2}-\eta^{2}\tilde{\Sigma}^{2}{s|t}}\ \varepsilon(y_{t},y_{0})\qquad\text{and}\qquad\varepsilon(y_{t},y_{0})=\frac{y_{t}-\bar{\alpha}_{t}y_{0}}{\bar{\sigma}_{t}}\;,
+(43)
+Setting η=1\eta=1 recovers the original Markovian diffusion process, while η=0\eta=0 yields a purely deterministic trajectory (DDIM) that preserves the same marginal qt𝖸q^{\mathsf{Y}}_{t} at every timestep. The loss function is the same up to a different multiplicative factor λ𝖸\lambda^{\mathsf{Y}} and in practice sampling the generative process consists in applying qs|t𝖸q^{\mathsf{Y}}_{s|t} with η=0\eta=0 and a trained denoiser ϵθ\epsilon_{\theta} (or yθy_{\theta}), providing faster and smoother generation paths with minimal loss of sample quality. We leave the exploration of the DDIM sampler for LDDMs latent channel to further work.
+B.2 Discrete diffusion
+Here, we give a proof of Proposition 2.
+Proof of Proposition 2.
+Consider the augmented process Z~t=(Xt,Y0)\tilde{Z}_{t}=(X_{t},Y_{0}) where X0,Y0∼q0𝖹X_{0},Y_{0}\sim q^{\mathsf{Z}}_{0} and XtX_{t} is driven by a forward noising process as given in (9). Denote by q𝖸~q^{\tilde{\mathsf{Y}}} the path measure of {Z~t}t=0T\{\tilde{Z}_{t}\}_{t=0}^{T}. We first use the data processing inequality on KL⁡(q0𝖹∣p0𝖷,θ)\mathrm{KL}(q^{\mathsf{Z}}_{0}\mid p^{\mathsf{X},\theta}_{0}):
+KL⁡(q0𝖹∣p0𝖷,θ)\displaystyle\mathrm{KL}(q^{\mathsf{Z}}_{0}\mid p^{\mathsf{X},\theta}_{0})
+≤𝔼[KL(q0|y𝖹(⋅|Y)∣p0|y𝖷,θ(⋅|Y))]\displaystyle\leq\mathbb{E}\left[\mathrm{KL}(q^{\mathsf{Z}}_{0|y}(\cdot|Y)\mid p^{\mathsf{X},\theta}_{0|y}(\cdot|Y))\right]
+(44)
+=𝔼[logq0|y𝖹(X0|Y)−logp0|y𝖷,θ(X0|Y))].\displaystyle=\mathbb{E}\left[\log q^{\mathsf{Z}}_{0|y}(X_{0}|Y)-\log p^{\mathsf{X},\theta}_{0|y}(X_{0}|Y))\right]\;.
+(45)
+Finally, we bound −𝔼​log⁡p0|y𝖷,θ​(X0|Y)-\mathbb{E}\log p^{\mathsf{X},\theta}_{0|y}(X_{0}|Y) with the classical ELBO bound involving the diffusion path q𝖸~q^{\tilde{\mathsf{Y}}}:
+𝔼[−logp0|y𝖷,θ(X0|Y))]\displaystyle\mathbb{E}\left[-\log p^{\mathsf{X},\theta}_{0|y}(X_{0}|Y))\right]
+≤𝔼[−log𝔼[p𝖷,θ|y(X1:T|Y)q𝖸~1:T|0,y(X1:T|X0,Y)|X0,Y]]\displaystyle\leq\mathbb{E}\left[-\log\mathbb{E}\left[\frac{p^{\mathsf{X},\theta}_{|y}(X_{1:T}|Y)}{q^{\tilde{\mathsf{Y}}}_{1:T|0,y}(X_{1:T}|X_{0},Y)}\ \bigg|\ X_{0},Y\right]\right]
+(46)
+≤−𝔼[log(p𝖷,θ|y(X1:T|Y)q𝖸~1:T|0,y(X1:T|X0,Y))]\displaystyle\leq-\mathbb{E}\left[\log\left(\frac{p^{\mathsf{X},\theta}_{|y}(X_{1:T}|Y)}{q^{\tilde{\mathsf{Y}}}_{1:T|0,y}(X_{1:T}|X_{0},Y)}\right)\right]
+(47)
+≤−𝔼⁡[log⁡pT|y𝖷,θ​(XT|Y)+∑t=1Tlog⁡pt−1|t,y𝖷,θ​(Xt−1|Xt,Y)qt|t−1,y𝖸~​(Xt|Xt−1,Y)],\displaystyle\leq-\mathbb{E}\bigg[\log p^{\mathsf{X},\theta}_{T|y}(X_{T}|Y)+\sum_{t=1}^{T}\log\frac{p^{\mathsf{X},\theta}_{t-1|t,y}(X_{t-1}|X_{t},Y)}{q^{\tilde{\mathsf{Y}}}_{t|t-1,y}(X_{t}|X_{t-1},Y)}\bigg]\;,
+(48)
+But:
+qt|t−1,y𝖸~​(xt|xt−1,y)=qt−1|t,y𝖸~​(xt−1|xt,y)​qt|y𝖸~​(xt|y)qt−1,y𝖸~​(xt−1|y),q^{\tilde{\mathsf{Y}}}_{t|t-1,y}(x_{t}|x_{t-1},y)=\frac{q^{\tilde{\mathsf{Y}}}_{t-1|t,y}(x_{t-1}|x_{t},y)q^{\tilde{\mathsf{Y}}}_{t|y}(x_{t}|y)}{q^{\tilde{\mathsf{Y}}}_{t-1,y}(x_{t-1}|y)}\;,
+(49)
+so:
+𝔼[−logp0|y𝖷,θ(X0|Y))]≤\displaystyle\mathbb{E}\left[-\log p^{\mathsf{X},\theta}_{0|y}(X_{0}|Y))\right]\leq
+(50)
+−𝔼⁡[log⁡pT|y𝖷,θ​(XT|Y)qT|y𝖸~​(XT|Y)−log⁡q0|y𝖸~​(X0|Y)+∑t=1Tlog⁡pt−1|t,y𝖷,θ​(Xt−1|Xt,Y)log⁡qt−1|t,y𝖸~​(Xt−1|Xt,Y)]\displaystyle-\mathbb{E}\bigg[\log\frac{p^{\mathsf{X},\theta}_{T|y}(X_{T}|Y)}{q^{\tilde{\mathsf{Y}}}_{T|y}(X_{T}|Y)}-\log q^{\tilde{\mathsf{Y}}}_{0|y}(X_{0}|Y)+\sum_{t=1}^{T}\log\frac{p^{\mathsf{X},\theta}_{t-1|t,y}(X_{t-1}|X_{t},Y)}{\log q^{\tilde{\mathsf{Y}}}_{t-1|t,y}(X_{t-1}|X_{t},Y)}\bigg]
+(51)
+≤KL(qT|y𝖸~(⋅|Y)∣pT|y𝖷,θ(⋅|Y))+𝔼[H(q0|y𝖸~(⋅|Y))]+∑t=1T𝔼[KL(qt−1|t,y𝖸~(⋅|Xt,Y)∣pt−1|t,y𝖷,θ(⋅|Xt,Y)],\displaystyle\leq\mathrm{KL}\left(q^{\tilde{\mathsf{Y}}}_{T|y}(\cdot|Y)\mid p^{\mathsf{X},\theta}_{T|y}(\cdot|Y)\right)+\mathbb{E}\left[\mathrm{H}(q^{\tilde{\mathsf{Y}}}_{0|y}(\cdot|Y))\right]+\sum_{t=1}^{T}\mathbb{E}\left[\mathrm{KL}(q^{\tilde{\mathsf{Y}}}_{t-1|t,y}(\cdot|X_{t},Y)\mid p^{\mathsf{X},\theta}_{t-1|t,y}(\cdot|X_{t},Y)\right]\;,
+(52)
+where H\mathrm{H} maps a distribution to its entropy. Here, KL(qT|y𝖸~(⋅|Y)∣pT|y𝖷,θ(⋅|Y))=0\mathrm{KL}\left(q^{\tilde{\mathsf{Y}}}_{T|y}(\cdot|Y)\mid p^{\mathsf{X},\theta}_{T|y}(\cdot|Y)\right)=0 because both distributions are the Dirac mass at the mask state. The latter term is the ELBO term L𝖷\mathrm{L}^{\mathsf{X}}:
+L𝖷(θ)=𝔼[H(q0|y𝖸~(⋅|Y))]+∑t=1T𝔼[KL(qt−1|t,y𝖸~(⋅|Xt,Y)∣pt−1|t,y𝖷,θ(⋅|Xt,Y)].\mathrm{L}^{\mathsf{X}}(\theta)=\mathbb{E}\left[\mathrm{H}(q^{\tilde{\mathsf{Y}}}_{0|y}(\cdot|Y))\right]+\sum_{t=1}^{T}\mathbb{E}\left[\mathrm{KL}(q^{\tilde{\mathsf{Y}}}_{t-1|t,y}(\cdot|X_{t},Y)\mid p^{\mathsf{X},\theta}_{t-1|t,y}(\cdot|X_{t},Y)\right]\;.
+(53)
+We can also rewrite L𝖷\mathrm{L}^{\mathsf{X}} by following the derivations leading to the closed-form discrete diffusion loss in (15). To do so, let us work with
+qt−1|t,0,y𝖸~​(xt−1|xt,x0,y)=qt|t−1,y𝖸~​(xt|xt−1,y)​qt−1|0,y𝖸~​(xt−1|x0,y)qt|0,y𝖸~​(xt|x0,y),q^{\tilde{\mathsf{Y}}}_{t-1|t,0,y}(x_{t-1}|x_{t},x_{0},y)=\frac{q^{\tilde{\mathsf{Y}}}_{t|t-1,y}(x_{t}|x_{t-1},y)q^{\tilde{\mathsf{Y}}}_{t-1|0,y}(x_{t-1}|x_{0},y)}{q^{\tilde{\mathsf{Y}}}_{t|0,y}(x_{t}|x_{0},y)}\;,
+(54)
+thus obtaining:
+L𝖷​(θ)\displaystyle\mathrm{L}^{\mathsf{X}}(\theta)
+=KL(qT|y𝖸~(⋅|Y)∣pT|y𝖷,θ(⋅|Y))−𝔼[logp0|1𝖷,θ(X0|Y)]\displaystyle=\mathrm{KL}\left(q^{\tilde{\mathsf{Y}}}_{T|y}(\cdot|Y)\mid p^{\mathsf{X},\theta}_{T|y}(\cdot|Y)\right)-\mathbb{E}\left[\log p^{\mathsf{X},\theta}_{0|1}(X_{0}|Y)\right]
+(55)
++∑t=2T𝔼[KL(qt−1|t,0,y𝖸~(⋅|Xt,X0,Y)∣pt−1|t𝖷,θ(⋅|Xt))].\displaystyle+\sum_{t=2}^{T}\mathbb{E}\left[\mathrm{KL}(q^{\tilde{\mathsf{Y}}}_{t-1|t,0,y}(\cdot|X_{t},X_{0},Y)\mid p^{\mathsf{X},\theta}_{t-1|t}(\cdot|X_{t}))\right]\;.
+(56)
+Since qt−1|t,0,y𝖸~q^{\tilde{\mathsf{Y}}}_{t-1|t,0,y} factorizes, the minimum of L𝖷​(θ)\mathrm{L}^{\mathsf{X}}(\theta) is attained when −𝔼​log⁡pt−1|t,y𝖷,θ,i​(Xt−1i|Xt,Y)-\mathbb{E}\log p^{\mathsf{X},\theta,i}_{t-1|t,y}(X_{t-1}^{i}|X_{t},Y) is minimized, i.e., when we recover the true distribution qt−1|t,y𝖸~,iq^{\tilde{\mathsf{Y}},i}_{t-1|t,y} for all i∈{1,⋯,S}i\in\{1,\cdots,S\}.
+Plugging into (53), the ELBO loss L𝖷​(θ)\mathrm{L}^{\mathsf{X}}(\theta) is thus lower bounded by:
+L𝖷(θ)≥𝔼[H(q0|y𝖸~(⋅|Y))]+∑t=1T𝔼[KL(qt−1|t,y𝖸~(⋅|Xt,Y)|∏i=1Sqt−1|t,y𝖸~,i(⋅|Xt,Y)].\mathrm{L}^{\mathsf{X}}(\theta)\geq\mathbb{E}\left[\mathrm{H}(q^{\tilde{\mathsf{Y}}}_{0|y}(\cdot|Y))\right]+\sum_{t=1}^{T}\mathbb{E}\left[\mathrm{KL}(q^{\tilde{\mathsf{Y}}}_{t-1|t,y}(\cdot|X_{t},Y)\ \Big|\ \prod_{i=1}^{S}q^{\tilde{\mathsf{Y}},i}_{t-1|t,y}(\cdot|X_{t},Y)\right]\;.
+(57)
+This ends the proof.
+∎
+Appendix C LDDMs general framework
+C.1 LDDMs ELBO Derivation
+Recall the forward process of our LDDMs (20):
+q𝖹(x0:T,y0:T)\displaystyle q^{\mathsf{Z}}(x_{0:T},y_{0:T})
+=q0𝖷​(x0)⏟data⋅ℰφ​(y0|x0)⏟latent encoder×q𝖷|0(x1:T|x0)⋅q𝖸|0(y1:T|y0)⏟multi-modal noising process,\displaystyle=\underbrace{q^{\mathsf{X}}_{0}(x_{0})}_{\text{data}}\cdot\underbrace{\mathcal{E}_{\varphi}(y_{0}|x_{0})}_{\text{latent encoder}}\times\underbrace{q^{\mathsf{X}}_{|0}(x_{1:T}|x_{0})\cdot q^{\mathsf{Y}}_{|0}(y_{1:T}|y_{0})}_{\text{multi-modal noising process}}\;,
+(58)
+In our study, the latent encoder is parameterized as a Gaussian distribution with constant variance:
+ℰφ​(y0|x0)=N⁡(y0,μφ​(x0),σlat2​Id).\mathcal{E}_{\varphi}(y_{0}|x_{0})=\mathrm{N}(y_{0};\mu_{\varphi}(x_{0}),\sigma_{\text{lat}}^{2}\mathrm{I}_{d})\;.
+(59)
+FUJI-LDDMs
+Recall that the FUJI-LDDMs admit the following form:
+pθ(z0:T)\displaystyle p^{\theta}(z_{0:T})
+=pT𝖷,θ​(xT)⋅pT𝖸,θ​(yT)⏟initialization×∏t=1Tpt−1|t𝖷,θ​(xt−1|zt)⋅pt−1|t𝖸,θ​(yt−1|zt)⏟joint transitions,\displaystyle=\underbrace{p^{\mathsf{X},\theta}_{T}(x_{T})\cdot p^{\mathsf{Y},\theta}_{T}(y_{T})}_{\text{initialization}}\times\prod_{t=1}^{T}\underbrace{p^{\mathsf{X},\theta}_{{t-1}|t}(x_{t-1}|z_{t})\cdot p^{\mathsf{Y},\theta}_{{t-1}|t}(y_{t-1}|z_{t})}_{\text{joint transitions}}\;,
+(60)
+where the transitions pt−1|t𝖷,θ​(xt−1|zt)p^{\mathsf{X},\theta}_{{t-1}|t}(x_{t-1}|z_{t}) and pt−1|t𝖸,θ​(yt−1|zt)p^{\mathsf{Y},\theta}_{{t-1}|t}(y_{t-1}|z_{t}) are the discrete and continuous transitions given in section 2, but conditioned on the couple zt=(xt,yt)z_{t}=(x_{t},y_{t}) at each timestep tt. We compute the negative ELBO as follows:
+−log⁡p0θ​(x0)\displaystyle-\log p^{\theta}_{0}(x_{0})
+=−log(∫𝖷T×𝖸T+1pθ(z0:T)dy0dz1:T)\displaystyle=-\log\left(\int_{\mathsf{X}^{T}\times\mathsf{Y}^{T+1}}p^{\theta}(z_{0:T})\mathrm{d}y_{0}\mathrm{d}z_{1:T}\right)
+(61)
+=−log(∫𝖷T×𝖸T+1pθ(z0:T)q𝖹|0(z1:T|z0)ℰφ(y0|x0)q|0𝖹(dz1:T|z0)ℰφ(dy0|x0))\displaystyle=-\log\left(\int_{\mathsf{X}^{T}\times\mathsf{Y}^{T+1}}\frac{p^{\theta}(z_{0:T})}{q^{\mathsf{Z}}_{|0}(z_{1:T}|z_{0})\mathcal{E}_{\varphi}(y_{0}|x_{0})}q^{\mathsf{Z}}_{|0}(\mathrm{d}z_{1:T}|z_{0})\mathcal{E}_{\varphi}(\mathrm{d}y_{0}|x_{0})\right)
+(62)
+≤−∫𝖷T×𝖸T+1log(pθ(z0:T)q𝖹|0(z1:T|z0)ℰφ(y0|x0))q|0𝖹(dz1:T|z0)ℰφ(dy0|x0).\displaystyle\leq-\int_{\mathsf{X}^{T}\times\mathsf{Y}^{T+1}}\log\left(\frac{p^{\theta}(z_{0:T})}{q^{\mathsf{Z}}_{|0}(z_{1:T}|z_{0})\mathcal{E}_{\varphi}(y_{0}|x_{0})}\right)q^{\mathsf{Z}}_{|0}(\mathrm{d}z_{1:T}|z_{0})\mathcal{E}_{\varphi}(\mathrm{d}y_{0}|x_{0})\;.
+(63)
+The forward process q𝖹|0q^{\mathsf{Z}}_{|0} can be rewritten as:
+q|0𝖹(z1:T|z0)=qT|0𝖹(zT|z0)q0|1𝖹(z0|z1)∏i=2Tqt−1|t,0𝖹(zt−1|zt,z0),q^{\mathsf{Z}}_{|0}(z_{1:T}|z_{0})=q^{\mathsf{Z}}_{T|0}(z_{T}|z_{0})q^{\mathsf{Z}}_{0|1}(z_{0}|z_{1})\prod_{i=2}^{T}q^{\mathsf{Z}}_{t-1|t,0}(z_{t-1}|z_{t},z_{0})\;,
+(64)
+where qT|0𝖹,q0|1𝖹,qt−1|t,0𝖹q^{\mathsf{Z}}_{T|0},q^{\mathsf{Z}}_{0|1},q^{\mathsf{Z}}_{t-1|t,0} factorize across modality. Then, regrouping each term:
+−𝔼⁡[log⁡p0θ​(x0)]\displaystyle-\mathbb{E}\left[\log p^{\theta}_{0}(x_{0})\right]
+(65)
+≤𝔼⁡[log⁡ℰφ​(Y0|X0)]⏟LencoderNE+−𝔼⁡[log⁡(p0|1𝖷,θ​(X0|Z1))]⏟L0𝖷​−𝔼⁡[log⁡(p0|1𝖸,θ​(Y0|Z1))]⏟L0𝖸\displaystyle\leq\underbrace{\mathbb{E}\left[\log\mathcal{E}_{\varphi}(Y_{0}|X_{0})\right]}_{L^{\text{NE}}_{\text{encoder}}}+\underbrace{-\mathbb{E}\left[\log\left(p^{\mathsf{X},\theta}_{0|1}(X_{0}|Z_{1})\right)\right]}_{\mathrm{L}^{\mathsf{X}}_{0}}\ \underbrace{-\mathbb{E}\left[\log\left(p^{\mathsf{Y},\theta}_{0|1}(Y_{0}|Z_{1})\right)\right]}_{\mathrm{L}^{\mathsf{Y}}_{0}}
+(66)
++𝔼[KL(q𝖷T|0(⋅|X0)∣p𝖷,θT)]⏟LT𝖷+𝔼[KL(q𝖸T|0(⋅|Y0)∣p𝖸,θT)]⏟LT𝖸\displaystyle+\underbrace{\mathbb{E}\left[\mathrm{KL}(q^{\mathsf{X}}_{T|0}(\cdot|X_{0})\mid p^{\mathsf{X},\theta}_{T})\right]}_{\mathrm{L}^{\mathsf{X}}_{T}}+\underbrace{\mathbb{E}\left[\mathrm{KL}(q^{\mathsf{Y}}_{T|0}(\cdot|Y_{0})\mid p^{\mathsf{Y},\theta}_{T})\right]}_{\mathrm{L}^{\mathsf{Y}}_{T}}
+(67)
++∑t=2T𝔼[KL(q𝖷t−1|t,0(⋅|Xt,X0)∣p𝖷,θt−1|t(⋅|Zt))]⏟Lt−1𝖷+𝔼[KL(q𝖸t−1|t,0(⋅|Yt,Y0)∣p𝖸,θt−1|t(⋅|Zt))]⏟Lt−1𝖸.\displaystyle+\sum_{t=2}^{T}\underbrace{\mathbb{E}\bigg[\mathrm{KL}\left(q^{\mathsf{X}}_{{t-1}|t,0}(\cdot|X_{t},X_{0})\mid p^{\mathsf{X},\theta}_{t-1|t}(\cdot|Z_{t})\right)\bigg]}_{\mathrm{L}^{\mathsf{X}}_{t-1}}+\underbrace{\mathbb{E}\bigg[\mathrm{KL}\left(q^{\mathsf{Y}}_{{t-1}|t,0}(\cdot|Y_{t},Y_{0})\mid p^{\mathsf{Y},\theta}_{{t-1}|t}(\cdot|Z_{t})\right)\bigg]}_{\mathrm{L}^{\mathsf{Y}}_{t-1}}\;.
+(68)
+We recover conventional terms for each modality, except for the negative entropy term LencoderNEL^{\text{NE}}_{\text{encoder}}. First, we neglect extremal terms LT𝖷,LT𝖸\mathrm{L}^{\mathsf{X}}_{T},\mathrm{L}^{\mathsf{Y}}_{T} which are zero or near zero and depend only of the noise schedules. Second, as we outlined in Section 2.2, we neglect L0𝖷\mathrm{L}^{\mathsf{X}}_{0}.
+Finally, we regroup L0𝖸\mathrm{L}^{\mathsf{Y}}_{0} and LencoderNE\mathrm{L}_{\text{encoder}}^{\text{NE}} into a single term L0zL_{0}^{z}. This results in computing a KL\mathrm{KL} divergence between two dependent Gaussian distributions, akin to classical diffusion terms. Let (yθ,σθ2​Id)(y_{\theta},\sigma_{\theta}^{2}\mathrm{I}_{d}) be the mean and covariance of the Gaussian distribution p0|1𝖸,θp^{\mathsf{Y},\theta}_{0|1}. Because we do not know how to characterize the distribution of Y0Y_{0} given X0,Y1X_{0},Y_{1} straightforwardly, we resort to a full KL\mathrm{KL} computation:
+L0𝖹=L0𝖸+LencoderNE\displaystyle\mathrm{L}^{\mathsf{Z}}_{0}=\mathrm{L}^{\mathsf{Y}}_{0}+\mathrm{L}_{\text{encoder}}^{\text{NE}}
+=𝔼⁡[log⁡(ℰφ(⋅|x0)p𝖸,θ0|1(⋅|z1))]\displaystyle=\mathbb{E}\left[\log\left(\frac{\mathcal{E}_{\varphi}(\cdot|x_{0})}{p^{\mathsf{Y},\theta}_{0|1}(\cdot|z_{1})}\right)\right]
+(69)
+=𝔼⁡[−‖Y0−μφ​(X0)‖22​σφ​(X0)2+‖Y0−yθ​(Z1)‖22​σθ​(Z1)2+d​log⁡(σθ​(Z1)σφ​(X0))]\displaystyle=\mathbb{E}\left[-\frac{\|Y_{0}-\mu_{\varphi}(X_{0})\|^{2}}{2\sigma_{\varphi}(X_{0})^{2}}+\frac{\|Y_{0}-y_{\theta}(Z_{1})\|^{2}}{2\sigma_{\theta}(Z_{1})^{2}}+d\log\left(\frac{\sigma_{\theta}(Z_{1})}{\sigma_{\varphi}(X_{0})}\right)\right]
+(70)
+=−d2+𝔼⁡[‖Y0−yθ​(Z1)‖22​σθ​(Z1)2+d​log⁡(σθ​(Z1)σφ​(X0))],\displaystyle=-\frac{d}{2}+\mathbb{E}\left[\frac{\|Y_{0}-y_{\theta}(Z_{1})\|^{2}}{2\sigma_{\theta}(Z_{1})^{2}}+d\log\left(\frac{\sigma_{\theta}(Z_{1})}{\sigma_{\varphi}(X_{0})}\right)\right]\;,
+(71)
+where dd is the dimension of the continuous space 𝖸\mathsf{Y}.
+In the case of the fixed variance design choice σφ2=σθ2=σlat2\sigma_{\varphi}^{2}=\sigma_{\theta}^{2}=\sigma_{\text{lat}}^{2}, as we make in this work, this leads to:
+L0𝖹=𝔼⁡[‖Y0−yθ​(Z1)‖22​σlat2]−d2.\mathrm{L}^{\mathsf{Z}}_{0}=\mathbb{E}\left[\frac{\|Y_{0}-y_{\theta}(Z_{1})\|^{2}}{2\sigma_{\text{lat}}^{2}}\right]-\frac{d}{2}\;.
+(72)
+This mirrors the existing denoising loss terms Lt−1𝖸\mathrm{L}^{\mathsf{Y}}_{t-1}. We have found this term negligible empirically, and leave additional exploration, e.g., when σφ2,σθ2\sigma_{\varphi}^{2},\sigma_{\theta}^{2} are trainable, to further work. Using the formulas laid out in (6) and (15), we recover the final loss objective
+LFUJIELBO​(θ,φ)=𝔼⁡[∑t=2T(λt𝖷​log⁡⟨xθ​(Zt,t),X0⟩+λt𝖸​‖Y0−y0θ​(Zt,t)‖2)].\mathrm{L}^{\text{ELBO}}_{\text{FUJI}}(\theta,\varphi)=\mathbb{E}\left[\sum_{t=2}^{T}\left(\lambda^{\mathsf{X}}_{t}\log\langle x_{\theta}(Z_{t},t),X_{0}\rangle+\lambda^{\mathsf{Y}}_{t}\|Y_{0}-y_{0}^{\theta}(Z_{t},t)\|^{2}\right)\right]\;.
+(73)
+SEQ-LDDMs.
+Recall that SEQ-LDDMs admit the following form:
+The same derivations done in (65) are straightforwardly adapted to SEQ-LDDMs and result in the following loss objective:
+LSEQELBO​(θ,φ)=𝔼⁡[∑t=2T(λt𝖷​log⁡⟨xθ​(Z~t,t),X0⟩+λt𝖸​‖Y0−y0θ​(Yt,t)‖2)],\mathrm{L}^{\text{ELBO}}_{\text{SEQ}}(\theta,\varphi)=\mathbb{E}\left[\sum_{t=2}^{T}\left(\lambda^{\mathsf{X}}_{t}\log\langle x_{\theta}(\tilde{Z}_{t},t),X_{0}\rangle+\lambda^{\mathsf{Y}}_{t}\|Y_{0}-y_{0}^{\theta}(Y_{t},t)\|^{2}\right)\right]\;,
+(74)
+where Z~t=(Xt,Y0)\tilde{Z}_{t}=(X_{t},Y_{0}).
+Appendix D Neural network architectures
+DiT (single–modality).
+We use the Diffusion Transformer (DiT) blocks of Peebles and Xie [2023] with bidirectional self-attention and timestep embeddings added to token features. This backbone is used (i) as the MDLM denoiser and (ii) as the latent denoiser in SEQ-LDDM.
+MM-DiT (multi–modal, joint).
+To evolve data and latent channels jointly, we adopt the multi-modal DiT of Esser et al. [2024]. The input sequence is the concatenation of SS data tokens and S′S^{\prime} latent tokens. A single self-attention layer attends across the full (S+S′)(S+S^{\prime}) sequence, while feed-forward blocks (MLPs), input embeddings, layer norms, and timestep conditioning are modality-specific. Outputs are given by two heads, yielding both xθx_{\theta} (token distribution) and yθy_{\theta} (latent y0y_{0} prediction). We use MM-DiT both for the encoder ℰφ\mathcal{E}_{\varphi} and for the joint denoiser in FUJI-LDDM; in SEQ-LDDM, the data denoiser is MM-DiT conditioned on Y0Y_{0}, while the latent denoiser is the single–modality DiT above.
+Encoder ℰφ\mathcal{E}_{\varphi}.
+When trained from scratch, μφ\mu_{\varphi} the mean of the encoder is given by an MM-DiT that receives the SS input tokens together with S′S^{\prime} learnable latent embeddings of the hidden dimension size, and returns S′S^{\prime} latent vectors in ℝd′\mathbb{R}^{d^{\prime}} as the last S′S^{\prime} tokens embeddings; the latent y0∈ℝS′​d′y_{0}\in\mathbb{R}^{S^{\prime}d^{\prime}} is the concatenation of these vectors.
+Off-the-shelf encoder.
+For some LM1B runs, we replace μφ\mu_{\varphi} with the frozen pretrained Qwen3-Embedding 0.6B model [Team, 2025]. For our latents, we select the last layer embedding, yielding S′=SS^{\prime}=S and we clip and normalize each embedding from 10241024 dimensions to the recommended minimum of d′=32d^{\prime}=32, yielding a total latent space of dimension d=4096d=4096. This choice eases our computational burden, but is not necessarily optimal for our objective; these sentence models produce semantic vector representation that enable information retrieval with cosine similarity, whereas we are trying to encode joint structure information in our latent vectors for a data denoising task.
+Appendix E Experimental Setup
+All models use the architectures described in Appendix D. We provide time conditioning as normalized timestep t/Tt/T. In SEQ-LDDM, the data denoiser is not time-conditioned (it conditions only on Y0Y_{0}).
+Unless otherwise stated, the time horizon is set to T=T𝖷=T𝖸=4000T={T_{\mathsf{X}}}={T_{\mathsf{Y}}}=4000 during training. The latent channel uses a cosine noise schedule and the data channel uses a linear schedule; the latent loss uses y0y_{0}-prediction. We found that loss weights seemed to have important impact on generative performance. We set λt𝖸=1\lambda^{\mathsf{Y}}_{t}=1, yielding a much more stable loss than λt𝖸,ELBO{\lambda}^{\mathsf{Y},\text{ELBO}}_{t}. We find that λt𝖷\lambda^{\mathsf{X}}_{t} has a less trivial behavior across existing models; we explore ELBO-derived weights λtx=λtx,ELBO\lambda^{x}_{t}=\lambda^{x,\mathrm{ELBO}}_{t} or simple unit weights λtx=1\lambda^{x}_{t}=1. We adopt the two-stage procedure from Section 3 when training end to end. We apply token-wise unit-norm normalization to latent vectors in all runs.
+Training is performed in bf16 precision with gradient clipping at 1.01.0. Sampling uses high-precision fp64 floating point arithmetic, to avoid spurious results with lower generative perplexity at the cost of entropic collapse [Zheng et al., 2025a].
+E.1 Low-dimensional dataset
+See Section 5.1 for the definition the data distribution q0𝖷q^{\mathsf{X}}_{0}. The probability ω⁡(i,y)\omega(i,y) of observing a 11 at sequence position ii for a given latent shift yy is defined as:
+ω⁡(i,y)=s+(1−2​s)⋅(1−|2​((K⋅(i−1S+y))(mod1))−1|)\omega(i,y)=s+(1-2s)\cdot\left(1-\left|2\left(\left(K\cdot\left(\frac{i-1}{S}+y\right)\right)\pmod{1}\right)-1\right|\right)
+(75)
+Where:
+•
+i∈{1,…,S}i\in\{1,\dots,S\} is the position in the sequence.
+•
+SS is the total sequence length.
+•
+y∈[0,1]y\in[0,1] is the latent random shift.
+•
+KK is the number of sawtooth periods, here set to K=2K=2.
+•
+s∈[0,0.5]s\in[0,0.5] is the minimum probability of the wave, here set to 0.010.01.
+We generate an effectively infinite stream of data by resampling at the end of each epoch.
+The sequence length is S=128S=128. The latent has shape S′=1S^{\prime}=1 with d′=32d^{\prime}=32, so the total latent dimension is d=32d=32. For the backbones, we use MM-DiT (multi-modal joint) and DiT (single-modality) with hidden size 6464, 44 transformer layers, 44 attention heads, and dropout 0.10.1.
+We use a two-stage training procedure. Stage 1 runs for 1,0001{,}000 steps. Stage 2 linearly increases the latent weight λlatent\lambda_{\text{latent}} from 00 to 11 until a total of 5,0005{,}000 steps is reached, and then continues training to 10,00010{,}000 steps. We train with batch size 10241024 using AdamW (learning rate ×10−31\!\times\!10^{-3}, weight decay 0.010.01) and a 200200-step linear warmup; we maintain an exponential moving average (EMA) of model weights with decay 0.990.99.
+For evaluation, we generate 20,00020{,}000 samples and compute the sliced Wasserstein distance (SWD) using 1,0001{,}000 random Gaussian vectors, as defined in Section E.3.
+For SEQ-LDDM, we use a fixed budget of 6464 denoising steps on the latent channel to obtain stable latents; the data-channel budget is varied as reported in the main text.
+E.2 Text dataset (LM1B)
+We evaluate on LM1B [Chelba et al., 2014].
+Tokenization uses the Qwen3 tokenizer from HuggingFace; the vocabulary size is K=151,670K=151{,}670, which includes the added [mask] token. We use packed sequences of length S=128S=128. For the latent, we employ Qwen3-Embedding 0.6B [Team, 2025] as the encoder. FUJI-LDDM uses an MM-DiT joint denoiser; MDLM uses a single-modality DiT. Both use hidden size 768768, 1212 transformer layers, 1212 attention heads, and dropout 0.10.1. We maintain an EMA with decay 0.99990.9999. The parameter count is 92.192.1M for MDLM and 179.3179.3M for FUJI-LDDM.
+We train on 88 H100 GPUs with per-GPU batch size 6464 (effective batch size 512512).
+Optimization uses AdamW (learning rate ×10−43\!\times\!10^{-4}, weight decay 0.030.03) with 2,5002{,}500 warmup steps followed by cosine decay.
+Under these conditions, a single full run requires approximately 8080 H100-hours for FUJI-LDDM and 3535 H100-hours for MDLM.
+For evaluation, we sample 128 sequences and vary the denoising budget using {8,16,32,64,128}\{8,16,32,64,128\} steps. Generative perplexity is measured by a fixed GPT-2 Large teacher; token entropy is computed from generated samples, as detailed in Section E.3.
+E.3 Metrics
+We adopt metrics used classically to measure the performance of generative model for categorical data [Sahoo et al., 2024, Zheng et al., 2025a].
+Validation perplexity (ELBO-based).
+Given a validation set 𝒟={x0(m)}m=1M\mathcal{D}=\{x_{0}^{(m)}\}_{m=1}^{M} of length-SS sequences, and a model pθ​(x0)p_{\theta}(x_{0}), we report
+PPLx​(𝒟)=exp⁡(1M​S​∑m=1MNLL^ELBO,x​(x0(m))),\mathrm{PPL}_{x}(\mathcal{D})=\exp\left(\frac{1}{MS}\sum_{m=1}^{M}\widehat{\mathrm{NLL}}_{\mathrm{ELBO},x}\left(x_{0}^{(m)}\right)\right)\;,
+(76)
+where NLL^ELBO,x​(x0)\widehat{\mathrm{NLL}}_{\mathrm{ELBO},x}(x_{0}) is the data-channel negative ELBO in LDDMs L𝖷\mathrm{L}^{\mathsf{X}}.
+Generative perplexity.
+For model samples 𝒳^={x1:S(m)}m=1M\widehat{\mathcal{X}}=\{x_{1:S}^{(m)}\}_{m=1}^{M} and a fixed autoregressive teacher pgen_pplp_{\text{gen\_ppl}}, we compute
+GenPPLT(𝒳^)=exp(1M​S∑m=1M∑s=1S−logpgen_ppl(xs(m)∣x<s(m))),\mathrm{GenPPL}_{T}(\widehat{\mathcal{X}})=\exp\left(\frac{1}{MS}\sum_{m=1}^{M}\sum_{s=1}^{S}-\log p_{\text{gen\_ppl}}\left(x_{s}^{(m)}\mid x_{<s}^{(m)}\right)\right)\;,
+(77)
+Special tokens are omitted when scoring. In our experiments we use GPT-2 Large as pgen_pplp_{\text{gen\_ppl}}.
+Entropy.
+For the same sample set 𝒳^\widehat{\mathcal{X}}, we estimate the per-position marginal token distributions
+p^i(k)=1M∑m=1M{xi(m)=k},k∈𝖷,i∈{1,…,S}.\widehat{p}_{i}(k)\;=\;\frac{1}{M}\sum_{m=1}^{M}\mathbf{1}\!\{x^{(m)}_{i}=k\}\,,\qquad k\in\mathsf{X},\;i\in\{1,\dots,S\}.
+(78)
+We report the mean positional entropy as:
+Ent(𝒳^)=1S∑i=1SH(p^i)=1S∑i=1S(−∑k∈𝖷p^i(k)logp^i(k)),\mathrm{Ent}(\widehat{\mathcal{X}})\;=\;\frac{1}{S}\sum_{i=1}^{S}H\!\big(\widehat{p}_{i}\big)\;=\;\frac{1}{S}\sum_{i=1}^{S}\bigg(-\sum_{k\in\mathsf{X}}\widehat{p}_{i}(k)\,\log\widehat{p}_{i}(k)\bigg)\,,
+(79)
+with the convention 0​log⁡0=00\log 0=0
+Sliced Wasserstein distance (SWD).
+For μ,ν∈𝒫⁡(ℝd)\mu,\nu\in\mathcal{P}(\mathbb{R}^{d}) and p≥1p\geq 1, define
+𝐖pp​(μ,ν)=infγ∈ℳ⁡(μ,ν)∫‖x−y‖p​γ​(𝑑x,𝑑y),\mathbf{W}_{p}^{p}(\mu,\nu)=\inf_{\gamma\in\mathcal{M}(\mu,\nu)}\int\left\|x-y\right\|^{p}\gamma\!\left(\mathrm{d}x,\mathrm{d}y\right)\;,
+(80)
+and the sliced Wasserstein distance
+SWDp​(μ,ν)=∫ℝd𝐖p​(⟨u,⋅⟩#​μ,⟨u,⋅⟩#​ν)​N​(𝑑u,0,Id),\mathrm{SWD}_{p}(\mu,\nu)=\int_{\mathbb{R}^{d}}\mathbf{W}_{p}\left(\langle u,\cdot\rangle_{\#}\mu,\ \langle u,\cdot\rangle_{\#}\nu\right)\mathrm{N}(\mathrm{d}u;0,\mathrm{I}_{d})\;,
+(81)
+where ⟨u,⋅⟩#​μ\langle u,\cdot\rangle_{\#}\mu is the pushforward of μ\mu by x↦⟨u,x⟩x\mapsto\langle u,x\rangle. In one dimension, for α,β∈𝒫⁡(ℝ)\alpha,\beta\in\mathcal{P}(\mathbb{R}),
+𝐖pp​(α,β)=∫01|Fα−1​(t)−Fβ−1​(t)|p​𝑑t,\mathbf{W}_{p}^{p}(\alpha,\beta)=\int_{0}^{1}\left|F_{\alpha}^{-1}(t)-F_{\beta}^{-1}(t)\right|^{p}\mathrm{d}t\;,
+(82)
+where Fα−1,Fβ−1F^{-1}_{\alpha},F^{-1}_{\beta} are the inverse CDFs of α,β\alpha,\beta. Hence for empirical measures α^=1n​∑i=1nδxi\hat{\alpha}=\frac{1}{n}\sum_{i=1}^{n}\delta_{x_{i}} and β^=1n​∑i=1nδyi\hat{\beta}=\frac{1}{n}\sum_{i=1}^{n}\delta_{y_{i}},
+𝐖pp​(α^,β^)=1n​∑i=1n|x(i)−y(i)|p,\mathbf{W}_{p}^{p}(\hat{\alpha},\hat{\beta})=\frac{1}{n}\sum_{i=1}^{n}\left|x_{(i)}-y_{(i)}\right|^{p}\;,
+(83)
+with x(i),y(i)x_{(i)},y_{(i)} the sorted samples. We report SWD1\mathrm{SWD}_{1} estimated by Monte Carlo over directions u∼N⁡(0,Id)u\sim\mathrm{N}(0,\mathrm{I}_{d}) averaging the corresponding one-dimensional 𝐖1\mathbf{W}_{1} values.
+E.4 Generated sequences
+Generated sequences on LM1B, uncurated. MDLM is trained with λt𝖷=λt𝖷,ELBO\lambda^{\mathsf{X}}_{t}={\lambda}^{\mathsf{X},\text{ELBO}}_{t}, and FUJI-LDDM Qwen3 is trained with λt𝖷=1\lambda^{\mathsf{X}}_{t}=1.
+MDLM.
+FUJI-LDDM Qwen3.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

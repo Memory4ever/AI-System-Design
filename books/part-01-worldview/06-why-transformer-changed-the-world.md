@@ -52,6 +52,9 @@ h'_i = sum_j a(i, j, X) * v_j
 
 这就是 Attention 的高层含义：一种 differentiable、content-dependent 的信息路由机制。第 14 章会进一步解释 Query、Key、Value、scaled dot-product 和 mask；本章只保留架构层结论。
 
+解释这项能力时，还要核对理论抽象保留了哪种路由：只允许读取少数位置的hard-attention模型可能丢掉soft权重的全局聚合，只允许均匀计数的模型又可能丢掉按query寻找内容的能力。[有限共同任务对照](https://arxiv.org/html/2610.32104v1#S5)暴露了这些差别，但不能把某类电路或通信模型包含一个算法，直接反推特定Transformer能在给定数据、优化和长度上学到它；允许无限本地计算的抽象尤其可能高估实际计算预算。可表达的构造、有限训练可学得、同分布成功与更长输入泛化须分验，有限失败也不证明绝对不可能。比较时固定任务/输入表示、模型与位置编码、训练/搜索预算并保留seed差异；已有公式条件或学习机制未被推翻，短路径与soft动态路由仍是合理设计，额外结构或监督则按任务与总费用另验。
+<!-- source-family:SF-2026-ARXIV-2610-32104 -->
+
 ## 为什么短依赖路径重要
 
 在全局 Self Attention 中，位置 `i` 与位置 `j` 可以在同一层直接交换信息。无论二者相隔几个 token，最短信号路径不再随距离线性增长。
@@ -195,3 +198,5 @@ Transformer 的突破不是孤立公式，而是信息流与执行形态的共�
 - Jonas Gehring et al., "Convolutional Sequence to Sequence Learning", 2017: https://arxiv.org/abs/1705.03122
 - Tri Dao et al., "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness", 2022: https://arxiv.org/abs/2205.14135
 - Reiner Pope et al., "Efficiently Scaling Transformer Inference", 2022: https://arxiv.org/abs/2211.05102
+
+- `SF-2026-ARXIV-2610-32104` — Daily2026-10-27，exact-v1 S3.2–3/S4.2/S5必要，R102正式2+1+2=5（原B6的U3不属本文增量）。仅soft/global与dynamic/query抽象缺口、expressivity/learnability/length分责；保abstract Easy非原theorem反证、bestseed/config选择与Index对象变化/有限失败，未读全F证明/任务附件或核代码/复现，不采普遍impossibility或模型排名。实际独核/POST见本日REVIEW。

@@ -1,0 +1,355 @@
+SOURCE 30785 S3->S6
+3 Adaptive Context Management
+This section presents AdaCoM, an adaptive context management framework for long-horizon agentic tasks. We first describe its workflow and flexible modification action space (Section 3.1), and then introduce the reinforcement learning procedure for training the context manager (Section 3.2).
+3.1 Flexible Context Management Paradigm
+Agent’s vanilla workflow.
+Given a task query qq, a ReAct-style agent 𝒜\mathcal{A} maintains an accumulated context ctvanilla=(q,a1,o1,…,at,ot)c_{t}^{\mathrm{vanilla}}=(q,a_{1},o_{1},\ldots,a_{t},o_{t}) at turn tt, where aia_{i} contains the agent’s reasoning and tool invocation and oio_{i} is the corresponding environment observation. The agent generates the next action by conditioning on the entire context: at+1∼𝒜⁡(ctvanilla)a_{t+1}\sim\mathcal{A}(c_{t}^{\mathrm{vanilla}}). This append-only workflow is common in long-horizon tasks, but suffers from long-context degradation as context accumulates.
+AdaCoM-augmented workflow.
+AdaCoM uses an external manager to modify the agent’s running context, leaving the underlying agent 𝒜\mathcal{A} frozen. We denote the context manager’s policy by πθ(⋅∣p)\pi_{\theta}(\cdot\mid p), which selects structured modification actions given a management prompt pp.
+Let c~t−1\tilde{c}_{t-1} denote the managed context after turn t−1t-1, with c~0=(q)\tilde{c}_{0}=(q). At turn tt, the agent first acts on the managed context, at∼𝒜⁡(c~t−1)a_{t}\sim\mathcal{A}(\tilde{c}_{t-1}), and the environment returns an observation oto_{t}. We append the new action and observation to obtain the pre-management context ct=Append⁡(c~t−1,at,ot)c_{t}=\mathrm{Append}(\tilde{c}_{t-1},a_{t},o_{t}). The manager samples a structured modification action mt∼πθ(⋅∣pt)m_{t}\sim\pi_{\theta}(\cdot\mid p_{t}), with pt=𝒫⁡(ct)p_{t}=\mathcal{P}(c_{t}), where 𝒫\mathcal{P} constructs the prompt with the management instruction and output schema. Applying mtm_{t} to ctc_{t} produces the next managed context c~t\tilde{c}_{t}. The next agent action is then generated from c~t\tilde{c}_{t}.
+AdaCoM’s action space.
+A central design goal of AdaCoM is operation-level flexibility. Rather than committing to a predefined operation such as summarization, we formulate context management as general-purpose modification over a message sequence. At each turn, the pre-management context ctc_{t} is represented as an ordered list of messages with unique message IDs.
+The manager action mtm_{t} is a structured list of modification operations, expressed in JSON as
+mt=[δt(1),δt(2),…,δt(nt)],m_{t}=\bigl[\delta_{t}^{(1)},\delta_{t}^{(2)},\ldots,\delta_{t}^{(n_{t})}\bigr],
+where each operation δt(j)\delta_{t}^{(j)} selects one or more messages and specifies how they should be rewritten, deleted, or merged; it can also specify the role of the resulting message.
+Each operation contains four fields:
+(1) ids(j)\mathrm{ids}^{(j)}, the IDs of the targeted messages;
+(2) role(j)∈{system,user,assistant}\mathrm{role}^{(j)}\in\{\textsc{system},\textsc{user},\textsc{assistant}\}, the role of the resulting message;
+(3) justification(j)\mathrm{justification}^{(j)}, a short rationale that elicits the manager’s reasoning about the modification, encouraging higher-quality edits; it is removed before the managed context is shown to the agent; and
+(4) new​_​content(j)\mathrm{new\_content}^{(j)}, the resulting content, where empty content deletes the targeted messages and non-empty content rewrites or merges them.
+Messages not targeted by any operation are copied unchanged, and an empty action list leaves the context unchanged.
+The full manager prompt is provided in Appendix H.
+This action space supports diverse context-management operations beyond a fixed strategy. AdaCoM can remove stale information, condense verbose evidence, merge related messages, or leave the context unchanged when fidelity is important.
+3.2 Training the Context Manager
+Problem formulation.
+We formulate manager learning as a Markov decision process (MDP) induced by the frozen agent and the environment. At each manager step tt, the current pre-management context ctc_{t} is formatted into a prompt pt=𝒫⁡(ct)p_{t}=\mathcal{P}(c_{t}). The manager policy emits a structured modification action mt∼πθ(⋅∣pt)m_{t}\sim\pi_{\theta}(\cdot\mid p_{t}), which is then applied to ctc_{t} to update the managed context. A rollout induces a sequence of manager decision points τ=((p1,m1),…,(pT,mT))\tau=((p_{1},m_{1}),\ldots,(p_{T},m_{T})). The rollout terminates when the frozen agent emits a final answer or exceeds the maximum number of interaction steps. The trajectory-level outcome reward is the task reward of the agent’s final answer.
+Training overview.
+We first use supervised fine-tuning (SFT) to initialize the manager with the required output format, and then optimize it with Group Relative Policy Optimization (GRPO) (Shao et al., 2024). For each query, we sample multiple rollouts from the current manager policy and evaluate the final answer produced by the frozen agent. For tasks with deterministic answers, an LLM judge compares the final answer against the ground truth and produces a binary score; for open-ended tasks, it scores the answer according to a task-specific rubric.
+Process reward design.
+We additionally introduce process rewards to improve credit assignment in long-horizon interactions. We use rule-based process rewards computed directly from trajectories, without invoking an additional LLM judge. If the managed context exceeds the given context length limit, we apply a token penalty to the manager step that produced the over-length context.
+When the agent issues two consecutive tool calls with the same tool name and parameters, we apply a redundant-action penalty to the intervening manager action, treating repetition as a proxy for insufficient preservation of useful information.
+We also introduce format penalties for structurally invalid manager outputs, including JSON parsing failures, nonexistent message IDs, and missing fields. Finally, when a benchmark provides task-specific intermediate signals, we incorporate them as positive process rewards, as detailed in Section 4.
+Two-level advantage estimation.
+In our setting, outcome rewards and process rewards are defined at different granularities and may have different numerical scales, so directly adding their raw values can make optimization sensitive to reward scaling.
+Motivated by prior work on reward normalization in RL-based LLM training (Ding et al., 2025; Liu et al., 2026), we first convert them into separately normalized advantages before combining them to improve training stability.
+Specifically, for each query qq, we sample a group of GG rollouts {τi}i=1G\{\tau_{i}\}_{i=1}^{G} from the old manager policy πθold\pi_{\theta_{\mathrm{old}}}. To index rollouts within the group, we add an index ii to the notation. Thus, pi,tp_{i,t} and mi,tm_{i,t} denote the management prompt and manager action at step tt of rollout ii, respectively. The ii-th rollout is τi=((pi,1,mi,1),…,(pi,Ti,mi,Ti))\tau_{i}=((p_{i,1},m_{i,1}),\ldots,(p_{i,T_{i}},m_{i,T_{i}})), where TiT_{i} is the number of manager steps in rollout ii, and each action satisfies mi,t∼πθold(⋅∣pi,t)m_{i,t}\sim\pi_{\theta_{\mathrm{old}}}(\cdot\mid p_{i,t}). Let RiR_{i} denote the terminal outcome reward of rollout τi\tau_{i}, and let Qi,tQ_{i,t} denote the aggregate process reward assigned to manager step tt in rollout ii, obtained by summing all applicable process-reward components described above.
+We compute advantages at two granularities.
+The task-level advantage assigns the same normalized outcome reward to each step in rollout τi\tau_{i}:
+AiR=Ri−μRσR+ε,A^{R}_{i}=\frac{R_{i}-\mu_{R}}{\sigma_{R}+\varepsilon},
+where μR\mu_{R} and σR\sigma_{R} are the mean and standard deviation of {Rj}j=1G\{R_{j}\}_{j=1}^{G}. The step-level advantage normalizes process rewards over all steps in the group:
+Ai,tQ=Qi,t−μQσQ+ε,A^{Q}_{i,t}=\frac{Q_{i,t}-\mu_{Q}}{\sigma_{Q}+\varepsilon},
+where μQ\mu_{Q} and σQ\sigma_{Q} are computed over {Qi,t:i=1,…,G,t=1,…,Ti}\{Q_{i,t}:i=1,\ldots,G,\;t=1,\ldots,T_{i}\}.
+We combine the two levels as Ai,t=AiR+α​Ai,tQA_{i,t}=A^{R}_{i}+\alpha A^{Q}_{i,t}, where α\alpha controls the balance between outcome and process supervision. We then re-normalize Ai,tA_{i,t} over all steps in the group:
+A^i,t=(Ai,t−μA)/(σA+ε),\hat{A}_{i,t}=({A_{i,t}-\mu_{A}})/({\sigma_{A}+\varepsilon}),
+where μA\mu_{A} and σA\sigma_{A} are computed over {Ai,t:i=1,…,G,t=1,…,Ti}\{A_{i,t}:i=1,\ldots,G,\;t=1,\ldots,T_{i}\}. When σR=0\sigma_{R}=0, all rollouts in the group receive the same outcome reward. The task-level term then vanishes, and the step-level term provides the only learning signal within such same-outcome groups.
+Policy optimization.
+We optimize πθ\pi_{\theta} with a PPO-style clipped surrogate over manager-emitted tokens. Let uu index the tokens in mi,tm_{i,t}, and let ri,t,u​(θ)r_{i,t,u}(\theta) be the token-level importance ratio between πθ\pi_{\theta} and πθold\pi_{\theta_{\mathrm{old}}}. The objective is
+𝒥⁡(θ)=𝔼⁡[1Z​∑i,t,umin⁡(ri,t,u​(θ)​A^i,t,r¯i,t,u​(θ)​A^i,t)],\mathcal{J}(\theta)=\mathbb{E}\left[\frac{1}{Z}\sum_{i,t,u}\min\!\left(r_{i,t,u}(\theta)\hat{A}_{i,t},\bar{r}_{i,t,u}(\theta)\hat{A}_{i,t}\right)\right],
+where r¯i,t,u​(θ)=clip⁡(ri,t,u​(θ),1−ϵ,1+ϵ)\bar{r}_{i,t,u}(\theta)=\mathrm{clip}(r_{i,t,u}(\theta),1-\epsilon,1+\epsilon), the expectation is over q∼𝒟q\sim\mathcal{D} and rollouts sampled from πθold\pi_{\theta_{\mathrm{old}}}, and Z=∑i=1G∑t=1Ti|mi,t|Z=\sum_{i=1}^{G}\sum_{t=1}^{T_{i}}|m_{i,t}| is the total number of manager-emitted tokens.
+4 Experiments and Analysis
+4.1 Experimental Setup
+Agent / Setting
+ReAct
+SumAgent
+MemAct
+SumCoM
+AdaCoM w/o train.
+AdaCoM
+CM Model
+–
+agent itself
+agent itself
+Qwen3-4B-Inst.
+Qwen3-4B-Inst.
+Qwen3-4B-Inst.
+CM Trained
+–
+×\times
+×\times
+✓\checkmark
+×\times
+✓\checkmark
+Qwen3-Max
+27.78
+26.67 ↓\downarrow4.0%
+37.33 ↑\uparrow34.4%
+32.22 ↑\uparrow16.0%
+21.11 ↓\downarrow24.0%
+36.67 ↑\uparrow32.0%
+Kimi-K2-Instruct
+18.56
+30.44 ↑\uparrow64.0%
+16.89 ↓\downarrow9.0%
+33.78 ↑\uparrow82.0%
+28.02 ↑\uparrow51.0%
+36.20 ↑\uparrow95.0%
+GLM-4.5-Air
+32.56
+11.56 ↓\downarrow64.5%
+32.00 ↓\downarrow1.7%
+26.44 ↓\downarrow18.8%
+21.33 ↓\downarrow34.5%
+35.33 ↑\uparrow8.5%
+DeepSeek-V3
+17.78
+19.56 ↑\uparrow10.0%
+16.67 ↓\downarrow6.2%
+25.11 ↑\uparrow41.2%
+17.57 ↓\downarrow1.2%
+26.19 ↑\uparrow47.3%
+Avg.
+24.17
+22.06 ↓\downarrow8.7%
+25.72 ↑\uparrow6.4%
+29.39 ↑\uparrow21.6%
+22.01 ↓\downarrow8.9%
+33.60 ↑\uparrow39.0%
+Table 1: Mean@3 (%) on BrowseComp-Plus across four agents.
+Each non-ReAct cell reports the absolute score and the relative change against the same-agent ReAct baseline.
+Bold and underline indicate the best and second-best results in each row.
+The average is computed over agents.
+Pass@3 results are reported in Appendix C.
+Benchmarks.
+We evaluate on two representative long-horizon tasks: web search and deep research.
+For web search, we use BrowseComp-Plus (Chen et al., 2025b), a BrowseComp-derived benchmark (Wei et al., 2025) with a verified corpus for controlled evaluation. The agent is provided with two tools: search(query, top_k), which retrieves the top-kk relevant documents, and get_document(doc_id), which returns the corresponding document content. We create a disjoint training/test split of 680/150 instances and use Qwen3-Embed-8B as the retriever, following Sun et al. (2025). The maximum number of iterations is set to 35, and GPT-4o (2024-11-20) is used as a judge to produce a binary correctness score.
+For deep research, we follow the data construction procedure of MCP-Bench (Wang et al., 2025) and build a Wikipedia-MCP-based benchmark, denoted as MCP-Bench-Wiki. The agent can use nine Wikipedia MCP tools, covering search and content retrieval. Following the original benchmark protocol, we use Claude Opus 4.6 as the judge. While the original benchmark evaluates reports along six dimensions, we focus on three dimensions most relevant to context management: task fulfillment (TF), information grounding (IG), and parallelism and efficiency (PE).
+The overall score is computed as 0.4​TF+0.4​IG+0.2​PE0.4\,\mathrm{TF}+0.4\,\mathrm{IG}+0.2\,\mathrm{PE}. Scores on all evaluation dimensions are provided in Appendix C.
+For BrowseComp-Plus, we report mean@3, the average accuracy over three independent runs, and pass@3, whether at least one run answers correctly. For MCP-Bench-Wiki, we report mean@3, the average rubric-based score over three runs.
+Implementation.
+AdaCoM is initialized from Qwen3-4B-Instruct, briefly warmed up with SFT to learn the edit format, and then trained with the RL procedure in Section 3.2. For the SFT warm-up, we use GPT-5 (2025-08-07) and Claude Opus 4.6 to generate edit trajectories for BrowseComp-Plus and MCP-Bench-Wiki, respectively, with Qwen3-Max serving as the frozen agent on the corresponding training set. For RL training, we build on Trinity-RFT (Pan et al., 2025) with group size G=8G=8 for both benchmarks.
+We set the manager’s own input context-window length to 32,768 tokens and its maximum output length to 4,096 tokens.
+For BrowseComp-Plus, we additionally use positive process rewards as the benchmark provides gold and key document IDs. When a search result contains a gold or key document, we assign a gold-doc-found or key-doc-found reward to the preceding manager step, crediting the context management that led the agent to issue the successful search. Additional experimental settings and process reward parameters are deferred to Appendix A.
+Baselines.
+We compare AdaCoM against five baselines.
+(i) ReAct : the vanilla ReAct loop without context management.
+(ii) SumAgent (Summarization Agent): a summarization paradigm used in MEM1 (Zhou et al., 2025) and IterResearch (Chen et al., 2025a), where the agent conditions on the original question, previous summary, and latest tool interaction to update the summary and issue the next action.
+(iii) MemAct (Zhang et al., 2025): the agent can invoke a prune tool to summarize selected historical messages, remove them, and append the generated summary.
+(iv) SumCoM (Summarization Context Manager): a trained external Qwen3-4B-Instruct manager summarizes the context after each agent step while the agent remains frozen. This ablates our flexible management actions by replacing them with a fixed summarization operation; we adapt prompts from ReSum (Wu et al., 2025) and use the same training procedure as AdaCoM.
+(v) AdaCoM w/o training: the original Qwen3-4B-Instruct backbone used as the context manager with the same modification action space but without SFT or RL.
+Agent naming.
+For readability, we use shortened names for frozen agents when unambiguous: Qwen for Qwen3-Max, DeepSeek for DeepSeek-V3, Kimi for Kimi-K2-Instruct, GLM for GLM-4.5-Air, Gemini for Gemini-2.5-Flash, and Seed for Seed-1.6-Flash.
+Figure 2: Per-agent trajectory outcome distribution shifts (%) on BrowseComp-Plus, computed as AdaCoM minus ReAct.
+Figure 3: Post-AdaCoM agent context length across four agents, each paired with its self-trained AdaCoM: (a) per-modification distribution; (b) per-step trace on task 199.
+4.2 Main Results
+Table 1 reports the results on BrowseComp-Plus.
+For AdaCoM, we train a separate context manager for each target agent, including Qwen, DeepSeek, Kimi, and GLM.
+Overall, AdaCoM consistently improves over the vanilla ReAct baseline across all four agents, achieving an average relative gain of 39.0% and a 95.0% relative gain on Kimi.
+These results demonstrate the effectiveness of learning an external context manager while keeping the underlying agent unchanged.
+We further compare against several alternatives to understand where the gains come from.
+First, AdaCoM w/o training performs inconsistently and is worse than ReAct on average, indicating that the manager must be trained to induce effective context-management strategies.
+Second, SumCoM improves some agents but degrades GLM, suggesting that a fixed summarization operation is not sufficiently compatible with varied agent backbones.
+Third, self-management baselines such as MemAct and SumAgent also exhibit unstable behavior and do not outperform ReAct across all agents.
+This supports the hypothesis that asking the agent to manage its own context may require agent-side training, since the resulting summaries may not be reliably usable by the original agent (Wu et al., 2025).
+Notably, MemAct marginally outperforms AdaCoM on Qwen. We attribute this to Qwen’s strong intrinsic agentic capability, which enables it to invoke the pruning tool effectively even without additional training. However, this advantage does not generalize to other agents, whereas AdaCoM provides consistent gains across agents.
+Table 2 reports the results on MCP-Bench-Wiki, which serves as a supplementary evaluation beyond web search.
+MCP-Bench-Wiki tests AdaCoM in deep research tasks requiring multi-step MCP tool invocation, evidence gathering, and long-form report synthesis.
+Due to the higher cost of deep research rollouts and evaluation, we evaluate two representative agents, Kimi and DeepSeek.
+The results show AdaCoM improves both agents over ReAct, achieving 9.0% and 22.3% relative gains on Kimi and DeepSeek, respectively, indicating that the advantages of learned external context management can be extended to tool-use-intensive tasks like deep research.
+Agent / Setting
+ReAct
+AdaCoM w/o train.
+AdaCoM
+Kimi-K2-Instruct
+55.05
+44.35 ↓\downarrow19.4%
+60.01 ↑\uparrow9.0%
+DeepSeek-V3
+47.51
+47.82 ↑\uparrow0.7%
+58.09 ↑\uparrow22.3%
+Avg.
+51.28
+46.09 ↓\downarrow10.1%
+59.05 ↑\uparrow15.2%
+Table 2: Mean@3 on MCP-Bench-Wiki across two agents.
+Each non-ReAct cell reports the absolute score and the relative change against the ReAct baseline.
+4.3 Analysis: How AdaCoM Helps Agents
+Trajectory outcome taxonomy.
+To understand how learned context management helps agents solve long-horizon tasks, we analyze how AdaCoM changes outcome distributions on the BrowseComp-Plus test set.
+We categorize trajectories into four interpretable outcomes:
+(i) Correct answer, where the agent terminates with a correct final answer;
+(ii) Incorrect answer, where the agent terminates with a definitive but wrong final answer;
+(iii) Early give-up, where the agent stops within ten iterations without providing a definitive answer; and
+(iv) Max iter. reached, where the agent reaches the iteration limit without a valid answer. We omit non-definitive stops after more than ten iterations to keep the analysis focused.
+Outcome shifts and underlying causes.
+Figure 2 reports the change in outcome ratios from ReAct to AdaCoM, computed as the ratio under AdaCoM minus the ratio under ReAct.
+Overall, AdaCoM increases the proportion of correct answers across all backbones compared to ReAct, while also shifting the composition of failure modes.
+For Qwen, DeepSeek, and GLM, AdaCoM reduces Incorrect answer and Early give-up, suggesting fewer wrong commitments and early give-ups.
+Paired trajectory inspection shows that these reductions are mainly tied to mitigating constraint forgetting and premature abandonment.
+In failed ReAct trajectories, agents often commit to candidates satisfying only part of the task requirements or give up after several ineffective searches despite remaining solvable directions.
+In successful AdaCoM trajectories, the manager often maintains a compact state message immediately after the user task message, listing task requirements, unresolved constraints, useful evidence, current leads, rejected candidates, and ineffective queries.
+These elements help the agent verify candidates against all requirements and keep searching rather than committing to wrong answers or abandoning the task.
+For Kimi, AdaCoM sharply reduces Max iter. reached, indicating fewer long, unproductive trajectories.
+This reduction is mainly tied to mitigating redundant exploration: in failed ReAct trajectories, Kimi often repeatedly issues identical or near-identical tool calls.
+On the BrowseComp-Plus test set, an average of 42.6% of Kimi’s tool-use steps per task are repetitive.
+AdaCoM reduces such loops by recording prior attempts and pruning redundant or unhelpful tool results from the active context, thereby lowering the reasoning burden and making repeated exploration less likely.
+Importantly, we do not explicitly prompt AdaCoM on what to record or how to organize the context.
+AdaCoM learns to record and update task requirements, search progress, and prior attempts as needed, helping agents maintain an adaptive task state rather than merely shortening the context.
+Figure 4: Cross-agent transfer of AdaCoM on BrowseComp-Plus. Each group on the xx-axis is a target agent; bars within a group show BrowseComp-Plus mean@3 under ReAct and various trained AdaCoMs.
+4.4 Analysis: Specific Strategies across Agents
+We further compare the learned context management behavior across agents on the BrowseComp-Plus test set.
+Figure 4 shows that the learned strategies differ systematically across agents.
+The mean post-management context length forms a clear trend: about 1.91.9K tokens for DeepSeek, 3.43.4K for Kimi, 5.25.2K for Qwen, and 7.07.0K for GLM.
+Notably, this trend aligns with the agents’ vanilla ReAct performance on BrowseComp-Plus, ordered from lower to higher as DeepSeek, Kimi, Qwen, and GLM.
+In other words, managers for stronger ReAct agents preserve more context, while managers for weaker agents compress more aggressively.
+Per-task context-length curves further reveal two characteristic strategies.
+For GLM and Qwen, AdaCoM follows a tiered management strategy: it lets the context grow by retaining raw tool results and performs occasional batched compression.
+For DeepSeek and Kimi, AdaCoM follows an eager distillation strategy: it compresses nearly every round to keep the context short, with Kimi preserving slightly more raw context than DeepSeek.
+Fidelity–Reliability Trade-off.
+These empirical strategies reveal a Fidelity–Reliability Trade-off.
+Using vanilla ReAct performance as a proxy for agent capability, stronger agents such as GLM and Qwen can exploit longer raw contexts, so AdaCoM intervenes later and more lightly; weaker agents such as DeepSeek and Kimi benefit from shorter, distilled contexts, so AdaCoM compresses more frequently.
+This reflects a balance between fidelity and reliability: preserving raw trajectories retains fine-grained evidence, but beyond an agent’s effective context length, additional raw content can harm reasoning.
+Conversely, aggressive compression improves reliability but may discard details.
+Thus, effective context management is not a fixed operation such as summarization, but an agent-compatible strategy that preserves as much fidelity as possible while keeping reasoning reliable.
+Relation to fixed summarization.
+This also explains the behavior of SumCoM in Table 1.
+Since SumCoM always applies a fixed summarization pattern, it resembles the eager distillation strategy and brings larger gains for weaker ReAct agents such as DeepSeek and Kimi.
+However, it is less suitable for agents such as GLM and Qwen that can benefit from preserving more raw context, which explains why SumCoM lags behind AdaCoM and even degrades GLM.
+We provide a detailed case study showing how AdaCoM maintains task constraints and search progress while adopting agent-specific compression strategies in Appendix D.
+5 Cross-Agent Transferability
+In practical agent applications, users may choose various agents for tasks of varying difficulty, making it costly to train a separate context manager for every agent. We therefore investigate whether a trained AdaCoM can be reused across agents without retraining on each target agent.
+Experimental setup and overall results.
+On BrowseComp-Plus, we evaluate the four trained managers from Section 4, each trained with one source agent among DeepSeek, Kimi, Qwen, and GLM, on eight target agents. The target set includes the four source agents and four held-out agents that never participate in manager training: GPT-OSS-20B, Gemini, Seed, and GPT-4o-mini.
+Figure 4 reports the accuracy of each target agent under ReAct and ReAct equipped with each of the four trained managers. Trained managers improve over ReAct in most configurations: 23 of 28 cross-agent pairs, plus all 4 self-trained pairs, achieve positive gains, with an average relative improvement of 25.0% across all 32 pairs and 22.1% across the 28 cross-agent pairs alone. The largest cross-agent gain reaches 79.6% on Kimi under the DeepSeek-trained manager, comparable to its 95.0% self-trained gain and showing that non-self managers can approach self-trained performance. These results show that trained context managers are not narrowly tied to their source agents and can transfer broadly to unseen target agents.
+We also observe similar cross-agent transfer improvements on MCP-Bench-Wiki, with detailed results deferred to Appendix C, suggesting that transfer is not limited to web search but also extends to tool-use-intensive deep research tasks.
+Capability-based transfer patterns.
+We next ask what factors predict successful transfer on BrowseComp-Plus. A clear pattern is that effective transfer is closely related to source-target capability proximity, measured by ReAct baseline performance. Higher-baseline target agents, including GLM, Qwen, Gemini, and GPT-OSS-20B, generally benefit more from managers trained on higher-baseline sources such as GLM or Qwen, whereas lower-baseline targets such as Kimi, DeepSeek, Seed, and GPT-4o-mini tend to prefer managers trained on lower-baseline sources such as DeepSeek or Kimi. This pattern is consistent with the Fidelity–Reliability Trade-off in Section 4.4: agents with higher baseline performance can benefit from managers that preserve more raw context, while agents with lower performance tend to benefit from more aggressive compression and distillation.
+Exceptions and agent-specific factors.
+Capability proximity is a strong but incomplete predictor of transfer. In several exceptional cases, managers trained on agents with similar capability do not yield the best transfer performance. For example, DeepSeek gains little from AdaCoM (Kimi): although their ReAct baselines are similar, DeepSeek prefers concise working memories with key findings and document IDs, whereas AdaCoM (Kimi) tends to record detailed search histories. Similarly, GLM gains little from managers trained on other agents because these managers compress too aggressively. For Gemini, AdaCoM (Qwen) underperforms AdaCoM (Kimi) because Gemini does not use AdaCoM (Qwen)’s report-style working memory effectively. Overall, capability proximity is a useful first-order rule, while compatibility between the manager’s modification style and the target agent’s reasoning style further affects transfer quality. Detailed trajectory analyses are provided in Appendix C.3.
+Practical implications.
+These results suggest a practical deployment strategy for context management with closed-source agents. Instead of training a separate manager for every agent, practitioners can train a small set of managers for representative agents and reuse them across capability-similar targets. Capability proximity provides a useful first-order heuristic, while agent-specific style compatibility remains important when selecting the best manager within a capability group.
+SOURCE 30785 Sx1->bib
+Limitations
+Evaluation scope.
+Our experiments cover two long-horizon task families, web search (BrowseComp-Plus) and deep research (MCP-Bench-Wiki), both centered on knowledge-intensive search. We do not evaluate AdaCoM on other long-horizon settings such as code agents, embodied agents, or longform writing, where the structure of useful context may differ. In addition, due to the higher cost of deep-research rollouts and evaluation, MCP-Bench-Wiki uses only two agents, so conclusions on that benchmark are based on a small agent pool.
+Manager capacity.
+Our manager is initialized from a relatively small Qwen3-4B-Instruct model. This makes AdaCoM practical and inexpensive, but a 4B manager may have limited capacity to losslessly preserve or compress evidence for very strong agents whose reasoning relies on high-fidelity context. We therefore do not extensively evaluate newer and stronger closed-source agents, as such a capacity mismatch could underestimate the framework’s potential. For example, the relatively small gains on GLM may partially reflect this mismatch in addition to its already-high baseline. Due to computational constraints, we do not train larger context managers in this work. For stronger target agents, future work can pair them with more capable managers, or draw on the strategies discovered by AdaCoM, such as tiered management for high-capability agents and eager distillation for lower-capability agents, to inform the design of context-management capabilities in future agent training.
+Inference overhead.
+AdaCoM introduces an additional manager inference at every agent step, increasing per-rollout token cost and wall-clock latency compared with vanilla ReAct. Our goal in this work is to discover agent-compatible management patterns rather than to optimize runtime efficiency. Notably, our findings on stronger agents suggest a natural mitigation: AdaCoM learns a tiered management strategy that intervenes only occasionally (Section 4.4), indicating that in deployment the manager need not be invoked at every step. Triggering it only every few rounds or when the context approaches a length threshold could substantially reduce the overhead while preserving the benefits.
+KV cache efficiency.
+AdaCoM modifies the agent’s running context between steps, which can reduce the effectiveness of KV cache reuse Kwon et al. (2023). This limitation is shared by many context-management paradigms, including summarization-based methods, because changing earlier context tokens invalidates cached states. In this work, we focus on discovering agent-compatible context-management strategies and therefore do not optimize for KV cache preservation. However, our findings suggest a possible direction for cache-aware context-management: for stronger agents that can reliably process longer contexts, the manager can preserve raw context for more steps and compress only near the agent’s effective context length. Such tiered management may reduce the frequency of cache-breaking operations while still preventing long-context degradation.
+SOURCE 30785 A1.SS2->A2
+A.2 Detailed Parameter Settings
+Process rewards.
+We use the same rule-based process reward parameters across agents and benchmarks unless otherwise specified. The token penalty is set to −0.8-0.8, the redundant-action penalty to −0.4-0.4, and the format penalty to −0.5-0.5. For BrowseComp-Plus, we additionally use positive document-retrieval rewards: gold-doc-found is set to 0.60.6, and key-doc-found is set to 0.30.3. Positive and negative process rewards are accumulated when multiple rules are triggered at the same step.
+Hyperparameters.
+We set the process reward weight α\alpha to 0.10.1, the rollout batch size to 3232 trajectories, and the training batch size to 768768 manager-step samples. The learning rate is 5×10−65\times 10^{-6}, the KL coefficient is 0.0060.006, and the PPO clipping range is 0.20.2. We do not use an entropy bonus. During rollouts, the manager sampling temperature is set to 1.01.0; we found that lower temperatures more easily lead to degenerate repetitive outputs. The maximum number of rollout iterations is 3535. We train for at most 4040 epochs and apply early stopping if the evaluation score does not improve for 2020 rollout steps.
+We train the SFT warm-up for five epochs on BrowseComp-Plus and two epochs on MCP-Bench-Wiki.
+Context length.
+Under ReAct, each agent uses its own default maximum context length as provided by the model API: 256256K for Qwen3-Max, 128128K for GLM-4.5-Air, 256256K for Kimi-K2-Instruct, and 128128K for DeepSeek-V3. Under AdaCoM, since the context manager is configured with a 3232K-token context budget, the agent’s effective input is also capped at 3232K tokens regardless of the underlying model’s native context window.
+SOURCE 30785 A3.SS2->A4
+C.2 Ablation Study on Process Reward
+We ablate the effect of process rewards in AdaCoM. Specifically, we train the managers for DeepSeek-V3 and Qwen3-Max with the process-reward weight set to α=0\alpha=0, so that the advantage is computed only from the outcome reward. Table 5 compares the original AdaCoM with this variant on BrowseComp-Plus. Removing process rewards consistently reduces performance for both agents. For DeepSeek-V3, mean@3 drops from 26.19%26.19\% to 24.38%24.38\%; for Qwen3-Max, it drops from 36.67%36.67\% to 33.33%33.33\%. These results indicate that process rewards provide useful intermediate supervision beyond the sparse final-answer reward.
+Setting
+DeepSeek-V3
+Qwen3-Max
+AdaCoM w/o pr.
+24.38
+33.33
+AdaCoM
+26.19
+36.67
+Table 5: Mean@3 (%) of the original AdaCoM and AdaCoM without process reward on BrowseComp-Plus.
+Figure 5: Cross-agent transfer of AdaCoM on MCP-Bench-Wiki. Each group on the xx-axis is a target agent; bars within a group show MCP-Bench-Wiki mean@3 under ReAct and the two trained AdaCoMs.
+Agent
+Setting
+TF
+IG
+PE
+Overall
+Kimi-K2-Instruct
+ReAct
+52.5
+51.0
+68.2
+55.0
+AdaCoM w/o train.
+40.7
+50.1
+40.0
+44.4
+AdaCoM (DeepSeek-V3)
+56.6
+60.4
+62.4
+59.3
+AdaCoM (Kimi-K2-Instruct)
+58.9
+61.6
+59.0
+60.0
+GPT-4o-mini
+ReAct
+45.0
+58.2
+60.3
+53.3
+AdaCoM w/o train.
+45.3
+61.0
+35.8
+49.7
+AdaCoM (DeepSeek-V3)
+51.0
+63.8
+62.5
+58.5
+AdaCoM (Kimi-K2-Instruct)
+48.0
+63.4
+58.3
+56.2
+DeepSeek-V3
+ReAct
+42.1
+48.0
+57.3
+47.5
+AdaCoM w/o train.
+41.3
+58.6
+39.2
+47.8
+AdaCoM (DeepSeek-V3)
+49.1
+64.4
+63.5
+58.1
+AdaCoM (Kimi-K2-Instruct)
+45.8
+62.2
+60.3
+55.3
+Seed-1.6-Flash
+ReAct
+23.1
+50.1
+41.8
+37.7
+AdaCoM w/o train.
+26.0
+48.8
+34.9
+36.9
+AdaCoM (DeepSeek-V3)
+31.6
+55.2
+48.8
+44.5
+AdaCoM (Kimi-K2-Instruct)
+26.6
+52.0
+43.3
+40.1
+Table 6:
+Per-dimension mean@3 (%) of AdaCoM and baselines on MCP-Bench-Wiki.
+We report task fulfillment (TF), information grounding (IG), and parallelism and efficiency (PE), with Overall computed as 0.4×TF+0.4×IG+0.2×PE0.4\times\mathrm{TF}+0.4\times\mathrm{IG}+0.2\times\mathrm{PE}.
+Bold indicates the best result within each target agent and column.
+C.3 Analysis: Transfer Exceptions and Agent Specific Factors
+We inspect exceptional transfer cases on BrowseComp-Plus to better understand factors beyond baseline capability. Although capability proximity explains the dominant transfer pattern, some managers trained on capability similar agents do not yield the best performance because their modification style is not well matched to the reasoning style of the target agent.
+DeepSeek and Kimi prefer different working memory styles.
+Although DeepSeek and Kimi have similar ReAct baselines, DeepSeek gains little from AdaCoM (Kimi). Trajectory inspection shows that AdaCoM (DeepSeek) and AdaCoM (Kimi) organize the working memory differently. AdaCoM (DeepSeek) tends to preserve concise key findings and document IDs that directly support the current search direction. In contrast, AdaCoM (Kimi) records a more detailed search history, including issued queries, returned document IDs, and summaries of document contents. This suggests that DeepSeek is more compatible with compact and exact clues, whereas Kimi benefits more from detailed attempt histories. As a result, a manager trained for Kimi can introduce unnecessary context for DeepSeek even though the two agents have similar baseline capability.
+GLM is sensitive to aggressive compression.
+GLM also gains relatively little from managers trained on other agents. These managers do convert some ReAct failures into successes, but they also introduce regressions on tasks that ReAct already solves. We find that the main issue is excessive compression: managers trained on other agents often summarize or delete evidence more aggressively than GLM prefers. Since the Qwen3-4B-Instruct manager may not paraphrase evidence losslessly due to the limited capability, such compression can remove fine-grained information that GLM could otherwise exploit from raw context. In contrast, AdaCoM (GLM) compresses only occasionally and in larger batches, better preserving the information density required by GLM.
+Gemini is less compatible with report style memory.
+For Gemini, AdaCoM (Qwen) underperforms AdaCoM (Kimi) despite Qwen and Gemini having similar ReAct baseline performance. We find that AdaCoM (Qwen) often produces working memory in a structured report style, containing previous queries and summarized results. When Gemini reads this report, it tends to mirror the report format in its own response instead of continuing the search, which can cause the agent to give up early without a valid answer. This case shows that transfer quality can depend on whether the manager’s modification style is compatible with the target agent’s reasoning behavior, beyond capability proximity alone.

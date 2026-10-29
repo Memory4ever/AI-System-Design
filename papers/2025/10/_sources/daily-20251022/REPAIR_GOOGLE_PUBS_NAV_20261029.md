@@ -1,0 +1,51 @@
+# Google pubs 本日有限导航恢复
+
+仅Daily2025-10-22补BJT2025-10-21的来源缺层。以下为本日真实原件的导航条目，不是37个本日论文/准入候选/日期请求/Methods配额；37路径、35不同题名，同题不同目录路径未据此认定不同家族。
+
+入口：`https://research.google/pubs/?category=2025&search=language%20model`。原件`REPAIR_EVENT_GOOGLE_PUBS_LM_P1/P2/P3_20261029.raw`各自request.json保存完整URL、真实UTC抓取时刻、status/bytes/header。p1/p2/p3实际200，368430/334910/294625bytes；页计数分别1–15/16–30/31–37 of37。实际年filter2025勾选，主题由原URL保留。
+
+当前原始分页anchor的href均为`javascript(0):void`，data-page和form data-max-pages显示2/3及总3；不是声称已看到带page的静态href。为核实际形状，IAB进入同入口后点Go to page2，真实变为`?category=2025&page=2`并丢失search，显示16–30 of680/46页，立即停止该宽导航，不采用其内容/覆盖。随后仅按用户明确page参数及本页data-page2/3保留原year/theme参数直取两页，上述37计数/末页next与last均aria-disabled=true验证主题未扩；未猜page4或其它主题网格。web同URL失败独立保留为辅助访问失败，不否认本次direct成功。
+
+仅实读全部37条title/path及各末项venue/year字段，不称所有AB/Methods已读。日期字段只有年/venue/to-appear，没有可用Oct21日级first或重要修订信号；标题相关本身不把整年目录推进逐项日期查证。未出现与本日既成候选身份冲突或具体可定位Oct21的新事件线索，不改108候选/32Books。医学/地震/量子/单细胞等标题不借通用模型字样引回暂缓科学应用；其余架构、训练、RAG、评估、Agent等只保导航权限，不因未读本日正文写C/NC。日级历史缺额与DM历史段仍精确隔离；HTTP200和完成此三页不授Google全源Coverage通过、零事件或无遗漏。
+
+| 页 | 原始标题/路径 | 原目录venue/year（非first日） |
+| --- | --- | --- |
+| 1 | [Toward expert-level medical question answering with large language models](https://research.google/pubs/towards-physician-level-medical-question-answering-with-large-language-models/) | Nature Medicine (2025) |
+| 1 | [Towards accurate differential diagnosis with large language models](https://research.google/pubs/towards-accurate-differential-diagnosis-with-large-language-models/) | Nature (2025) |
+| 1 | [Gemini & Physical World: Large Language Models Can Estimate the Intensity of Earthquake Shaking from Multi-Modal Social Media Posts](https://research.google/pubs/gemini-physical-world-large-language-models-can-estimate-the-intensity-of-earthquake-shaking-from-multi-modal-social-media-posts/) | Geophysical Journal International (2025), ggae436 |
+| 1 | [SSDTrain: Faster Large Language Model Training Using SSD-Based Activation Offloading](https://research.google/pubs/ssdtrain-faster-large-language-model-training-using-ssd-based-activation-offloading/) | Design Automation Conference (DAC) (2025) |
+| 1 | [A Scalable Framework for Evaluating Health Language Models](https://research.google/pubs/a-scalable-framework-for-evaluating-health-language-models/) | (2025) |
+| 1 | [Astute RAG: Overcoming Imperfect Retrieval Augmentation and Knowledge Conflicts for Large Language Models](https://research.google/pubs/astute-rag-overcoming-imperfect-retrieval-augmentation-and-knowledge-conflicts-for-large-language-models/) | The Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (ACL 2025) (2025) (to appear) |
+| 1 | [Synthetic Text Generation for Training Large Language Models (LLMs) via Gradient Matching](https://research.google/pubs/synthetic-text-generation-for-training-large-language-models-llms-via-gradient-matching/) | International Conference on Machine Learning (ICML) (2025) |
+| 1 | [A personal health large language model for sleep and fitness coaching](https://research.google/pubs/a-personal-health-large-language-model-for-sleep-and-fitness-coaching/) | Nature Medicine (2025) |
+| 1 | [Crosslingual Capabilities and Knowledge Barriers in Multilingual Large Language Models](https://research.google/pubs/crosslingual-capabilities-and-knowledge-barriers-in-multilingual-large-language-models/) | COLM (2025) |
+| 1 | [Synthesizing and Adapting Error Correction Data for Mobile Large Language Model Applications](https://research.google/pubs/synthesizing-and-adapting-error-correction-data-for-mobile-large-language-model-applications/) | Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 6: Industry Track) (2025) |
+| 1 | [The Role of Outgoing Connection Heterogeneity in Feedforward Layers of Large Language Models](https://research.google/pubs/the-role-of-outgoing-connection-heterogeneity-in-feedforward-layers-of-large-language-models/) | Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing, Association for Computational Linguistics, Suzhou, China (to appear) |
+| 1 | [Analyzing Similarity Metrics for Data Selection for Language Model Pretraining](https://research.google/pubs/analyzing-similarity-metrics-for-data-selection-for-language-model-pretraining/) | Advances in Neural Information Processing Systems (NeurIPS) (2025) (to appear) |
+| 1 | [HEART: Emotionally-driven test-time scaling of Language Models](https://research.google/pubs/heart-emotionally-driven-test-time-scaling-of-language-models/) | 2025 |
+| 1 | [PLAN-TUNING: Post-Training Language Models to Learn Step-by-Step Planning for Complex Problem Solving](https://research.google/pubs/plan-tuning-post-training-language-models-to-learn-step-by-step-planning-for-complex-problem-solving/) | 2025 |
+| 1 | [RADAR: Benchmarking Language Models on Imperfect Tabular Data](https://research.google/pubs/radar-benchmarking-language-models-on-imperfect-tabular-data/) | 2025 |
+| 2 | [Tracing the Representation Geometry of Language Models from Pretraining to Post-training](https://research.google/pubs/tracing-the-representation-geometry-of-language-models-from-pretraining-to-post-training/) | 2025 |
+| 2 | [Escaping Collapse: The Strength of Weak Data for Large Language Model Training](https://research.google/pubs/escaping-collapse-the-strength-of-weak-data-for-large-language-model-training/) | Advances in Neural Information Processing Systems 38 (NeurIPS 2025) |
+| 2 | [Addax: Utilizing Zeroth-Order Gradients to Improve Memory Efficiency and Performance of SGD for Fine-Tuning Language Models](https://research.google/pubs/addax-utilizing-zeroth-order-gradients-to-improve-memory-efficiency-and-performance-of-sgd-for-fine-tuning-language-models/) | 2025 |
+| 2 | [Quantifying Cross-Modality Memorization in Vision-Language Models](https://research.google/pubs/quantifying-cross-modality-memorization-in-vision-language-models/) | Advances in Neural Information Processing Systems (2025) |
+| 2 | [Latent Concept Disentanglement in Transformer-based Language Models](https://research.google/pubs/latent-concept-disentanglement-in-transformer-based-language-models/) | 2025 |
+| 2 | [Landscape of Thoughts: Visualizing the Reasoning Process of Large Language Models](https://research.google/pubs/landscape-of-thoughts-visualizing-the-reasoning-process-of-large-language-models/) | Reasoning and Planning for LLMs @ ICLR 2025 |
+| 2 | [Scaling Large Language Models For Next-Generation Single-Cell Analysis](https://research.google/pubs/scaling-large-language-models-for-next-generation-single-cell-analysis/) | bioRxiv (2025) |
+| 2 | [Scaling Embedding Layers in Language Models](https://research.google/pubs/scaling-embedding-layers-in-language-models/) | 2025 |
+| 2 | [Communication-Efficient Language Model Training Scales Reliably and Robustly: Scaling Laws for DiLoCo](https://research.google/pubs/communication-efficient-language-model-training-scales-reliably-and-robustly-scaling-laws-for-diloco/) | (2025) (to appear) |
+| 2 | [How Does Code Pretraining Affect Language Model Task Performance](https://research.google/pubs/how-does-code-pretraining-affect-language-model-task-performance/) | Transactions on Machine Learning Research (2025) |
+| 2 | [Asking Clarifying Questions for Preference Elicitation with Large Language Models](https://research.google/pubs/asking-clarifying-questions-for-preference-elicitation-with-large-language-models/) | (2025) |
+| 2 | [Addax: Utilizing Zeroth-Order Gradients to Improve Memory Efficiency and Performance of SGD for Fine-Tuning Language Models](https://research.google/pubs/addax-utilizing-zeroth-order-gradients-to-improve-memory-efficiency-and-performance-of-sgd-for-fine-tuning-language-models-2/) | ICLR (2025) |
+| 2 | [Item language model](https://research.google/pubs/item-language-model/) | 2025 |
+| 2 | [Racing Thoughts: Explaining Large Language Model Contextualization Errors](https://research.google/pubs/racing-thoughts-explaining-large-language-model-contextualization-errors/) | NAACL 2025 (2025) |
+| 2 | [A Remote Sensing Vision-Language Foundation Model for Zero-Shot Tasks](https://research.google/pubs/a-remote-sensing-vision-language-foundation-model-for-zero-shot-tasks/) | 2025 |
+| 3 | [MUSE: Machine Unlearning Six-Way Evaluation for Language Models](https://research.google/pubs/muse-machine-unlearning-six-way-evaluation-for-language-models/) | International Conference on Learning Representations (2025) |
+| 3 | [Asking Clarifying Questions for Preference Elicitation with Large Language Models](https://research.google/pubs/asking-clarifying-questions-for-preference-elicitation-with-large-language-models-2/) | 1st Workshop on Next Generation of IR and Recommender Systems with Language Agents, Generative Models, and Conversational AI (GENNEXT@SIGIR'25), Padua, IT (2025) |
+| 3 | [Quantum many-body physics calculations with large language models](https://research.google/pubs/quantum-many-body-physics-calculations-with-large-language-models/) | Nature Communications Physics (2025) |
+| 3 | [Language Models Know More Than They Show: Exploring Hallucinations From the Model’s Viewpoint](https://research.google/pubs/language-models-know-more-than-they-show-exploring-hallucinations-from-the-models-viewpoint/) | 2025 |
+| 3 | [Inference-Aware Fine-Tuning for Best-of-N Sampling in Large Language Models](https://research.google/pubs/inference-aware-fine-tuning-for-best-of-n-sampling-in-large-language-models/) | Proceedings of the 13th International Conference on Learning Representations (ICLR-25), Singapore (2025) |
+| 3 | [LawInstruct: A Resource for Studying Language Model Adaptation to the Legal Domain](https://research.google/pubs/lawinstruct-a-resource-for-studying-language-model-adaptation-to-the-legal-domain/) | Findings of the Association for Computational Linguistics: NAACL 2025, Association for Computational Linguistics, Albuquerque, New Mexico, pp. 127-152 |
+| 3 | [Exploring large language models for specialist-level oncology care](https://research.google/pubs/exploring-large-language-models-for-specialist-level-oncology-care/) | NEJM AI (2025) |
+
+停止：page3（31–37/37），next/last禁用；无其它主题/年度全池扩展、正文Methods或逐条日期请求。本日有效层供sole reader后到独核，未自签DAY/FINAL。

@@ -1,0 +1,324 @@
+How Hard is it to Confuse a World Model?
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+Research problem.
+Background and setting.
+2 Most Confusing Instance Search
+Optimization.
+3 Numerical Experiments
+3.1 World Model Architecture and Training
+3.2 Confusing Instance Search Implementation
+3.3 Task and Policy Construction
+3.4 Experimental Results
+How does model quality affect the ease of finding confusing instances?
+How close are confusing instances to their reference models?
+How does model dynamics during the confusing instance search ?
+4 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.21232v1 [cs.LG] 24 Oct 2025
+How Hard is it to Confuse a World Model?
+Waris Radji
+Odalric-Ambrym Maillard
+Affiliation: Univ. Lille, Inria, CNRS, Centrale Lille, UMR 9189-CRIStAL, F-59000 Lille, France
+Email: {waris.radji,odalric.maillard}@inria.fr
+Abstract
+In reinforcement learning (RL) theory, the concept of most confusing instances is central to establishing regret lower bounds, that is, the minimal exploration needed to solve a problem. Given a reference model and its optimal policy, a most confusing instance is the statistically closest alternative model that makes a suboptimal policy optimal. While this concept is well-studied in multi-armed bandits and ergodic tabular Markov decision processes, constructing such instances remains an open question in the general case. In this paper, we formalize this problem for neural network world models as a constrained optimization: finding a modified model that is statistically close to the reference one, while producing divergent performance between optimal and suboptimal policies. We propose an adversarial training procedure to solve this problem and conduct an empirical study across world models of varying quality. Our results suggest that the degree of achievable confusion correlates with uncertainty in the approximate model, which may inform theoretically-grounded exploration strategies for deep model-based RL.
+|
+1 Introduction
+Model-based reinforcement learning (RL) achieves superior sample efficiency by learning dynamics models that enable planning and simulation (Chua et al., 2018; Janner et al., 2019; Hansen et al., 2023; Hafner et al., 2025). But a fundamental challenge remains: how should agents explore when their world models are uncertain? Existing deep RL methods rely on heuristic uncertainty quantification, including, for example, ensemble disagreement (Pathak et al., 2019; Shyam et al., 2019), prediction error bonuses (Pathak et al., 2017), and variational inference in Bayesian neural networks (Houthooft et al., 2016). These strategies that have good empirical results lack direct connections to the requirements of optimal exploration.
+Multi-armed bandits (MABs) offer a precise characterization of exploration difficulty through regret lower bounds: optimal algorithms must accumulate sufficient statistical evidence to distinguish the true environment from confusing instances—plausible alternative models that are statistically similar to the true model yet require different optimal actions (Lai and Robbins, 1985; Burnetas and Katehakis, 1996; Burnetas and Katehakis, 1997).
+Exploration strategies that explicitly construct and resolve such confusing instances achieve asymptotically optimal regret in various settings (Honda and Takemura, 2011; Pesquerel and Maillard, 2022). However, finding these instances in practice, especially for continuous or high-dimensional domains with learned models, remains unexplored and NP-Hard (Radji and Maillard, 2025; Boone and Maillard, 2025).
+Research problem.
+The central computational challenge is identifying the most confusing instance: the alternative model that is statistically closest to the learned model while still inducing a different optimal policy. For general Markov decision processes, this search is NP-hard, making optimal exploration seemingly intractable in high-dimensional state spaces.
+In this paper, we investigate this problem empirically for probabilistic world models based on variational autoencoder (VAE) architectures (Ha and Schmidhuber, 2018). We formalize the search for the most confusing instance as a constrained optimization problem, via Lagrangian relaxation, introducing the suboptimality cost, that is, the minimal log-likelihood ratio required to reverse policy rankings between the learned model and a confusing alternative. Our key empirical finding is a relationship between model quality and confusion resistance: better-trained models have higher suboptimality costs. This intuitive relationship suggests that suboptimality cost is related to model uncertainty, offering a promising approach to quantifying exploration difficulty that paves the way for new exploration strategies in deep model-based RL.
+Background and setting.
+We consider episodic reinforcement learning in continuous state and action spaces 𝒮\mathcal{S} and 𝒜\mathcal{A} with reward function R:𝒮×𝒜→ℝR:\mathcal{S}\times\mathcal{A}\to\mathbb{R} (Sutton et al., 1998). A learned world model MθM_{\theta} with parameters θ\theta approximates environment dynamics through probabilistic transitions Pθ​(st+1|st,at)P_{\theta}(s_{t+1}|s_{t},a_{t}), trained on observed environment data. We assume these transitions are differentiable with respect to θ\theta, enabling gradient-based optimization.
+Given a starting state s0s_{0}, let Vπ​(s0,M)V_{\pi}(s_{0};M) denote the expected return of policy π\pi under model MM, as
+|
+Vπ​(s0,M)=𝔼τ∼M,π​[∑t=0T−1R⁡(st,at)],V_{\pi}(s_{0};M)=\mathbb{E}_{\tau\sim M,\pi}\left[\sum_{t=0}^{T-1}R(s_{t},a_{t})\right], |
+|
+(1) |
+where τ=(s0,a0,s1,…,sT−1,aT−1)\tau=(s_{0},a_{0},s_{1},\ldots,s_{T-1},a_{T-1}) is a trajectory of fixed horizon TT.
+Consider π∗\pi^{*} optimal under the reference model MθM_{\theta}, and πsub\pi_{\text{sub}} suboptimal under MθM_{\theta}, meaning Vπ∗​(s0,Mθ)>Vπsub​(s0,Mθ)V_{\pi^{*}}(s_{0};M_{\theta})>V_{\pi_{\text{sub}}}(s_{0};M_{\theta}).
+2 Most Confusing Instance Search
+Definition 1 (Confusing Instance).
+Given reference model MθM_{\theta} with optimal policy π∗\pi^{*} and suboptimal policy πsub\pi_{\text{sub}} at state s0s_{0}, a model M~=Mθ~\widetilde{M}=M_{\tilde{\theta}} is a confusing instance if it is statistically close to MθM_{\theta} yet inverts the policy ranking:
+|
+Vπ∗(s0;M~)<Vπsub(s0;M~),and KLTπ∗(Mθ∥Mθ~)=𝔼τ∼Mθ,π∗[∑t=0T−1logPθ​(st+1|st,at)Pθ~​(st+1|st,at)], is small.V_{\pi^{*}}(s_{0};\widetilde{M})<V_{\pi_{\text{sub}}}(s_{0};\widetilde{M}),\ \text{and KL}_{T}^{\pi^{*}}(M_{\theta}\|M_{\tilde{\theta}})=\underset{{\tau\sim M_{\theta},\pi^{*}}}{\mathbb{E}}\left[\sum_{t=0}^{T-1}\log\frac{P_{\theta}(s_{t+1}|s_{t},a_{t})}{P_{\tilde{\theta}}(s_{t+1}|s_{t},a_{t})}\right],\text{ is small}. |
+|
+(2) |
+The last quantity represents the expected log-likelihood ratio of trajectories generated by π∗\pi^{*} under the two models. A small (minimal) divergence implies we cannot reliably distinguish between MθM_{\theta} and M~\widetilde{M} by executing only the optimal policy; yet the models prescribe different optimal behaviors.
+Definition 2 (Suboptimality Cost).
+Among all confusing instances, we seek the one that is statistically closest to the reference model. The suboptimality cost is the infimum of KL divergences over all confusing instances:
+|
+𝐊(s0,π∗,πsub)=infθ~{KLTπ∗(Mθ∥Mθ~):Vπ∗(s0;M~)<Vπsub(s0;M~)}.\mathbf{K}(s_{0},\pi^{*},\pi_{\text{sub}})=\inf_{\tilde{\theta}}\left\{\text{KL}_{T}^{\pi^{*}}(M_{\theta}\|M_{\tilde{\theta}}):V_{\pi^{*}}(s_{0};\widetilde{M})<V_{\pi_{\text{sub}}}(s_{0};\widetilde{M})\right\}. |
+|
+(3) |
+This cost quantifies the minimal statistical evidence needed to distinguish which policy is truly superior. RL theory indicates that algorithms must accumulate at least 𝐊\mathbf{K} nats to avoid linear regret. Thus, 𝐊\mathbf{K} measures model uncertainty for exploration: low values indicate the model is easily confused and requires more data, while high values indicate alternative explanations are statistically distant, making the model reliable for decision-making.
+Optimization.
+Finding (3) is a challenging constrained optimization: the objective involves expectations over stochastic trajectories, and the constraint depends on value functions that themselves require trajectory rollouts. While this problem is generally NP-hard, the differentiable structure of neural world models enables tractable local optimization via gradient descent. We address these challenges through Lagrangian relaxation and sampling-based gradient estimation:
+|
+ℒ(θ~,λ)=KLTπ∗(Mθ∥Mθ~)+λmax(0,Vπ∗(Mθ~)−Vπsub(Mθ~))\mathcal{L}(\tilde{\theta},\lambda)=\text{KL}_{T}^{\pi^{*}}(M_{\theta}\|M_{\tilde{\theta}})+\lambda\max\left(0,V_{\pi^{*}}(M_{\tilde{\theta}})-V_{\pi_{\text{sub}}}(M_{\tilde{\theta}})\right) |
+|
+(4) |
+where λ≥0\lambda\geq 0 is the Lagrange multiplier. The algorithm alternates between:
+|
+(Primal)θ~(k+1)\displaystyle\text{(Primal)}\quad\tilde{\theta}^{(k+1)} |
+←θ~(k)−αθ​∇θ~ℒ​(θ~(k),λ(k))\displaystyle\leftarrow\tilde{\theta}^{(k)}-\alpha_{\theta}\nabla_{\tilde{\theta}}\mathcal{L}(\tilde{\theta}^{(k)},\lambda^{(k)}) |
+|
+(5) |
+|
+(Dual)λ(k+1)\displaystyle\text{(Dual)}\quad\lambda^{(k+1)} |
+←max⁡(0,λ(k)+αλ⋅c⁡(θ~(k)))\displaystyle\leftarrow\max\left(0,\lambda^{(k)}+\alpha_{\lambda}\cdot c(\tilde{\theta}^{(k)})\right) |
+|
+(6) |
+where c⁡(θ~)=Vπ∗​(Mθ~)−Vπsub​(Mθ~)c(\tilde{\theta})=V_{\pi^{*}}(M_{\tilde{\theta}})-V_{\pi_{\text{sub}}}(M_{\tilde{\theta}}).
+When the constraint is violated (c>0c>0), the multiplier λ\lambda increases, penalizing the objective more heavily. When satisfied (c≤0c\leq 0), we record the current KL as a candidate for 𝐊\mathbf{K}. The infimum is the smallest KL achieved among all feasible iterates. An analogy can be made with policy gradient algorithms with KL regularization (Schulman et al., 2015; Schulman et al., 2017): instead of optimizing the policy, we optimize a world model.
+3 Numerical Experiments
+While our framework applies to any differentiable probabilistic model, we instantiate it for variational autoencoder world models in our experiments due to their straightforward implementation and interpretable latent representations. A VAE world model decomposes as Mθ=(ϕ,ψ,ξ)M_{\theta}=(\phi,\psi,\xi), where ϕ\phi is an encoder mapping states to latent codes z∼qϕ​(z|s)z\sim q_{\phi}(z|s), ψ\psi models the latent dynamics pψ​(z′|z,a)p_{\psi}(z^{\prime}|z,a), and ξ\xi is a decoder reconstructing states s∼pξ​(s|z)s\sim p_{\xi}(s|z). We focus on fully observable environments in our experiments, so our model uses a feedforward architecture without recurrent components.
+Algorithm 1 Compute Suboptimality Cost in VAE
+0:
+Reference model Mθ=(ϕ,ψ,ξ)M_{\theta}=(\phi,\psi,\xi), policies π∗,πsub\pi^{*},\pi_{\text{sub}}, horizon TT
+0:
+Suboptimality cost 𝐊\mathbf{K}
+1:
+Initialize: ψ~←ψ\tilde{\psi}\leftarrow\psi, λ←1.0\lambda\leftarrow 1.0, 𝐊best←+∞\mathbf{K}_{\text{best}}\leftarrow+\infty
+2:
+for k=1,…,Kk=1,\ldots,K do
+3:
+Sample NN initial states: s0(n)∼p0s_{0}^{(n)}\sim p_{0} for n=1,…,Nn=1,\ldots,N
+4:
+Encode: z0(n)=ϕ⁡(s0(n))z_{0}^{(n)}=\phi(s_{0}^{(n)}) (deterministic for frozen encoder)
+5:
+for n=1,…,Nn=1,\ldots,N do
+6:
+Rollout π∗\pi^{*} in Mθ~=(ϕ,ψ~,ξ)M_{\tilde{\theta}}=(\phi,\tilde{\psi},\xi): generate trajectory τ∗(n)={(zt,at,rt)}t=0T−1\tau^{*(n)}=\{(z_{t},a_{t},r_{t})\}_{t=0}^{T-1}
+7:
+Rollout πsub\pi_{\text{sub}} in Mθ~M_{\tilde{\theta}}: generate trajectory τsub(n)\tau_{\text{sub}}^{(n)}
+8:
+end for
+9:
+Compute average KL: KL¯=1N​T∑n=1N∑t=0T−1KL(pψ(⋅|zt(n),at(n))∥pψ~(⋅|zt(n),at(n)))\overline{\text{KL}}=\frac{1}{NT}\sum_{n=1}^{N}\sum_{t=0}^{T-1}\text{KL}(p_{\psi}(\cdot|z_{t}^{(n)},a_{t}^{(n)})\|p_{\tilde{\psi}}(\cdot|z_{t}^{(n)},a_{t}^{(n)}))
+10:
+Compute average returns: V∗¯=1N​∑n∑trt∗(n)\overline{V^{*}}=\frac{1}{N}\sum_{n}\sum_{t}r_{t}^{*(n)}, Vsub¯=1N​∑n∑trtsub,(n)\overline{V_{\text{sub}}}=\frac{1}{N}\sum_{n}\sum_{t}r_{t}^{\text{sub},(n)}
+11:
+Constraint violation: c=V∗¯−Vsub¯c=\overline{V^{*}}-\overline{V_{\text{sub}}}
+12:
+if c≤0c\leq 0 then
+13:
+𝐊best←min⁡(𝐊best,KL¯)\mathbf{K}_{\text{best}}\leftarrow\min(\mathbf{K}_{\text{best}},\overline{\text{KL}}) {Record feasible KL}
+14:
+end if
+15:
+Update dynamics: ψ~←ψ~−αψ​∇ψ~[KL¯+λ⋅max⁡(0,c)]\tilde{\psi}\leftarrow\tilde{\psi}-\alpha_{\psi}\nabla_{\tilde{\psi}}[\overline{\text{KL}}+\lambda\cdot\max(0,c)]
+16:
+Update multiplier: λ←max⁡(0,λ+η⋅c)\lambda\leftarrow\max(0,\lambda+\eta\cdot c)
+17:
+end for
+18:
+return 𝐊best\mathbf{K}_{\text{best}}
+3.1 World Model Architecture and Training
+Our VAE-based world model consists of three components:
+•
+Encoder ϕ\phi: Two-layer MLP with hidden dimension 64 and tanh activations, mapping observations s∈ℝ4s\in\mathbb{R}^{4} to latent codes z∈ℝdzz\in\mathbb{R}^{d_{z}} where dz∈{32,64}d_{z}\in\{32,64\}.
+•
+Dynamics ψ\psi: Two-layer MLP with hidden dimension 64, taking concatenated latent-action pairs (z,a)∈ℝdz+2(z,a)\in\mathbb{R}^{d_{z}+2} and outputting Gaussian parameters (μψ,σψ2)(\mu_{\psi},\sigma_{\psi}^{2}) for the next latent state. We parameterize variance as σ2=(softplus​(logvarraw)+10−8)2\sigma^{2}=(\text{softplus}(\text{logvar}_{\text{raw}})+10^{-8})^{2} for numerical stability.
+•
+Decoder ξ\xi: Two-layer MLP with hidden dimension 64 and tanh activations, reconstructing state differences Δ​s∈ℝ4\Delta s\in\mathbb{R}^{4} from latent codes.
+We train on 50,000 transitions collected via random exploration (500 trajectories of 200 steps each, with action repeat sampled uniformly). The loss combines reconstruction and KL regularization:
+|
+ℒtrain=𝔼(s,a,Δ​s)∼𝒟[∥Δs^−Δs∥2]+0.01⋅KL(qϕ(⋅|s)∥𝒩(0,I))\mathcal{L}_{\text{train}}=\mathbb{E}_{(s,a,\Delta s)\sim\mathcal{D}}\left[\|\Delta\hat{s}-\Delta s\|^{2}\right]+0.01\cdot\text{KL}(q_{\phi}(\cdot|s)\|\mathcal{N}(0,I)) |
+|
+(7) |
+Training proceeds for 500 epochs with the Adam optimizer (learning rate 10−310^{-3}) and batch size 256. We save checkpoints at epochs 100, 200, 300, 400, and 500, providing a spectrum of model qualities from under-trained (high uncertainty) to well-trained (low uncertainty).
+3.2 Confusing Instance Search Implementation
+To isolate dynamical uncertainty from representational artifacts, we freeze the encoder ϕ\phi and decoder ξ\xi, perturbing only the latent dynamics ψ\psi. This ensures the confusing instance operates in the same representational space, making comparisons meaningful, and avoiding trivial confusion of the model by distorting the representation itself.
+For Gaussian latent dynamics pψ​(z′|z,a)=𝒩⁡(μψ​(z,a),diag​(σψ2​(z,a)))p_{\psi}(z^{\prime}|z,a)=\mathcal{N}(\mu_{\psi}(z,a),\text{diag}(\sigma_{\psi}^{2}(z,a))), the pointwise KL divergence has closed form:
+|
+KL(pψ∥pψ~)=12∑i=1dz[logσ~ψ,i2σψ,i2+σψ,i2+(μψ,i−μ~ψ,i)2σ~ψ,i2−1]\text{KL}(p_{\psi}\|p_{\tilde{\psi}})=\frac{1}{2}\sum_{i=1}^{d_{z}}\left[\log\frac{\tilde{\sigma}_{\psi,i}^{2}}{\sigma_{\psi,i}^{2}}+\frac{\sigma_{\psi,i}^{2}+(\mu_{\psi,i}-\tilde{\mu}_{\psi,i})^{2}}{\tilde{\sigma}_{\psi,i}^{2}}-1\right] |
+|
+(8) |
+We approximate trajectory-level KL by averaging pointwise KL along rollouts:
+|
+KLTπ∗(Mθ∥Mθ~)≈𝔼τ∼Mθ~,π∗[1T∑t=0T−1KL(pψ(⋅|zt,at)∥pψ~(⋅|zt,at))]\text{KL}_{T}^{\pi^{*}}(M_{\theta}\|M_{\tilde{\theta}})\approx\mathbb{E}_{\tau\sim M_{\tilde{\theta}},\pi^{*}}\left[\frac{1}{T}\sum_{t=0}^{T-1}\text{KL}(p_{\psi}(\cdot|z_{t},a_{t})\|p_{\tilde{\psi}}(\cdot|z_{t},a_{t}))\right] |
+|
+(9) |
+We optimize confusing instances for 2500 iterations with N=128N=128 trajectory samples per iteration. The learning rate for dynamics parameters follows a linear schedule from 5×10−45\times 10^{-4} to 1×10−41\times 10^{-4}, with gradient clipping at max norm 1.0. The Lagrange multiplier λ\lambda is initialized to 1.0 and updated with step size η=0.1\eta=0.1. We use the Adam optimizer and save checkpoints every 100 iterations. Algorithm 1 presents the complete procedure for computing suboptimality cost.
+3.3 Task and Policy Construction
+We evaluate on a U-shaped maze environment with a 5×55\times 5 grid structure from Radji (2025). The agent has a continuous state representation (2D position and velocity) and must navigate to a fixed goal location. We use a dense reward signal equal to the negative Manhattan distance between the agent’s position and the goal.
+We construct two policy-maze pairs to define optimal and suboptimal behaviors. The optimal policy π∗\pi^{*} is computed via breadth-first search (BFS) on the original discretized U-Maze, following the shortest path. The suboptimal policy πsub\pi_{\text{sub}} is obtained by first moving one wall in the maze to create an alternative layout, then computing BFS on this modified maze. When executed in the original U-Maze, this policy follows a longer route and is thus suboptimal. Both policies have been augmented with Gaussian noise of 𝒩⁡(0,1)\mathcal{N}(0,1) to introduce stochasticity during rollouts. Figure 1 shows the maze configurations used to construct the two policies.
+Original MazeSGModified MazeSGWall S Start G Goal
+Figure 1: Maze configurations for policy construction. Left: Original U-maze where π∗\pi^{*} follows the shortest path around the obstacle. Right: Modified maze where the wall configuration is altered, allowing πsub\pi_{\text{sub}} to take a direct vertical path. When executed in the original maze, πsub\pi_{\text{sub}} cannot pass through the wall and must take a longer route.
+3.4 Experimental Results
+Figure 2: Confusing instance search optimization dynamics. Left: KL divergence (logarithmic scale) and constraint evolution over training iterations. Right: Time to first constraint satisfaction.
+How does model quality affect the ease of finding confusing instances?
+Figure 2 reveals a clear trend: under-trained models (epochs 100-200) are easily confused, with the constraint satisfied almost immediately and remaining deeply negative throughout training. In contrast, well-trained models (epochs 300-500) exhibit strong resistance, requiring the optimizer to explore significantly higher KL values before finding confusing instances. The rightmost panel quantifies this relationship precisely: the time to first constraint satisfaction grows from 165 iterations (epoch 100) to 1506 iterations (epoch 500). Notably, this growth appears logarithmic rather than linear: the increments diminish as models improve. This sublinear scaling aligns with fundamental exploration theory: efficient algorithms should accumulate evidence at diminishing rates as they learn, achieving sublinear regret. The pattern seems to demonstrate that the suboptimality cost 𝐊\mathbf{K} increases monotonically with model quality, as better-trained models have learned tighter dynamics distributions that fundamentally constrain the space of statistically plausible yet behaviorally-distinct alternatives.
+Figure 3: Statistical closeness of confusing instances. Left/Center: State visitation densities (log scale) under random policy. Right: Log-density ratio shows localized changes: blue indicates higher probability in the confusing instance, red indicates lower probability.
+How close are confusing instances to their reference models?
+Figure 3 visualizes the statistical proximity between reference and confusing models through state visitation densities obtained under a fully random policy run for 200 timesteps. We examine the confusing instance found at epoch 500, the hardest to confuse. At first glance, the left and center panels show similar overall patterns, but the log-density ratio (right panel) reveals the mechanism of confusion through localized redistributions. Blue regions indicate where the confused model assigns higher visitation probability. These correspond to wall regions where the confused model effectively enables passage, creating shortcuts that make the suboptimal policy viable. Red regions show where the confused model assigns a lower probability. Crucially, most of the state space remains white, indicating preserved statistical similarity. The confusing instance achieves behavioral change through minimal, targeted perturbations: it exploits the reference model’s uncertainty about wall dynamics precisely where shortcuts matter, while maintaining near-identical predictions elsewhere.
+How does model dynamics during the confusing instance search ?
+Figure 4 visualizes how the learned dynamics evolve during our optimization procedure across different model quality levels and search iterations. Each row corresponds to a reference model checkpoint (epochs 100-500), and each column shows trajectories at different points during the confusing instance search (iterations 0-1800). Green trajectories follow the optimal policy π∗\pi^{*}, while red trajectories follow the suboptimal policy πsub\pi_{\text{sub}}, both rolled out in the current confusing model candidate Mθ~M_{\tilde{\theta}}.
+At iteration 0, the confusing model is initialized to match the reference model, so πsub\pi_{\text{sub}} cannot successfully navigate through walls and remains trapped at the starting region (visible as red spiral patterns in the bottom-left corner). As optimization progresses, the dynamics are perturbed to enable wall passage for πsub\pi_{\text{sub}}, indicated by red trajectories successfully reaching the goal through the middle shortcut.
+The horizontal progression reveals the central finding of our work: under-trained models (epoch 100) are confused almost immediately, with successful suboptimal trajectories appearing by iteration 300. In contrast, well-trained models (epoch 500) exhibit strong resistance, requiring over 1500 iterations before πsub\pi_{\text{sub}} trajectories emerge. This visual pattern directly confirms the relationship between model quality and confusion resistance quantified by suboptimality cost.
+Figure 4: Trajectory evolution during confusing instance search. Rows show reference models of increasing quality (epochs 100-500). Columns show optimization progress (iterations 0-1800). Green: optimal policy π∗\pi^{*}. Red: suboptimal policy πsub\pi_{\text{sub}}. Better-trained models resist confusion longer, with successful suboptimal trajectories appearing much later in the optimization.
+4 Conclusion
+We formalized the problem of finding most confusing instances for neural probabilistic world models and developed a tractable optimization framework. Our empirical investigation on VAE-based world models reveals that suboptimality cost increases with model quality, with better-trained models exhibiting stronger resistance to confusion through localized perturbations in decision-critical regions. This relationship validates 𝐊\mathbf{K} as a principled measure of decision-relevant uncertainty that directly connects to information-theoretic exploration requirements.
+These findings open several important questions for future research. First, how can suboptimality cost drive exploration during planning? One could prioritize trajectories passing through low-𝐊\mathbf{K} regions or actively seek states where computing 𝐊\mathbf{K} reveals high confusion potential, but translating this intuition into practical algorithms remains an open challenge. Second, how does our framework scale across different neural architectures? We focused on small VAE-based models and whether our optimization approach generalizes; architectural choices will potentially affect confusion resistance, which warrants investigation. Finally, how does the notion of confusing instances extend to partially observable environments or environments with known supports? Addressing these questions could bridge the gap between exploration theory and deep RL, potentially yielding principled, efficient exploration strategies for complex sequential decision-making systems.
+References
+Chua et al. [2018]
+Kurtland Chua, Roberto Calandra, Rowan McAllister, and Sergey Levine.
+Deep reinforcement learning in a handful of trials using
+probabilistic dynamics models.
+Advances in neural information processing systems, 31, 2018.
+Janner et al. [2019]
+Michael Janner, Justin Fu, Marvin Zhang, and Sergey Levine.
+When to trust your model: Model-based policy optimization.
+Advances in neural information processing systems, 32, 2019.
+Hansen et al. [2023]
+Nicklas Hansen, Hao Su, and Xiaolong Wang.
+Td-mpc2: Scalable, robust world models for continuous control.
+arXiv preprint arXiv:2310.16828, 2023.
+Hafner et al. [2025]
+Danijar Hafner, Wilson Yan, and Timothy Lillicrap.
+Training agents inside of scalable world models.
+arXiv preprint arXiv:2509.24527, 2025.
+Pathak et al. [2019]
+Deepak Pathak, Dhiraj Gandhi, and Abhinav Gupta.
+Self-supervised exploration via disagreement.
+In International conference on machine learning, pages
+5062–5071. PMLR, 2019.
+Shyam et al. [2019]
+Pranav Shyam, Wojciech Jaśkowski, and Faustino Gomez.
+Model-based active exploration.
+In International conference on machine learning, pages
+5779–5788. PMLR, 2019.
+Pathak et al. [2017]
+Deepak Pathak, Pulkit Agrawal, Alexei A Efros, and Trevor Darrell.
+Curiosity-driven exploration by self-supervised prediction.
+In International conference on machine learning, pages
+2778–2787. PMLR, 2017.
+Houthooft et al. [2016]
+Rein Houthooft, Xi Chen, Yan Duan, John Schulman, Filip De Turck, and Pieter
+Abbeel.
+Vime: Variational information maximizing exploration.
+Advances in neural information processing systems, 29, 2016.
+Lai and Robbins [1985]
+T.L Lai and Herbert Robbins.
+Asymptotically efficient adaptive allocation rules.
+Adv. Appl. Math., 6(1):4–22, March 1985.
+ISSN 0196-8858.
+doi:10.1016/0196-8858(85)90002-8.
+URL https://doi.org/10.1016/0196-8858(85)90002-8.
+Burnetas and Katehakis [1996]
+AN Burnetas and M.N. Katehakis.
+Optimal adaptive policies for sequential allocation problems.
+Advances in Applied Mathematics, 17(2):122–142, 1996.
+ISSN 01968858.
+doi:10.1006/aama.1996.0007.
+URL
+https://www.scopus.com/inward/record.uri?eid=2-s2.0-0030159874&doi=10.1006%2faama.1996.0007&partnerID=40&md5=d85e5bed756c8e385cb6f773ec6aeae9.
+cited By 35.
+Burnetas and Katehakis [1997]
+Apostolos N. Burnetas and Michael N. Katehakis.
+Optimal adaptive policies for markov decision processes.
+Mathematics of Operations Research, 22(1):222–255, 1997.
+ISSN 0364765X, 15265471.
+URL http://www.jstor.org/stable/3690147.
+Honda and Takemura [2011]
+Junya Honda and Akimichi Takemura.
+An asymptotically optimal policy for finite support models in the
+multiarmed bandit problem.
+Machine Learning, 85(3):361–391, 2011.
+Pesquerel and Maillard [2022]
+Fabien Pesquerel and Odalric-Ambrym Maillard.
+Imed-rl: Regret optimal learning of ergodic markov decision
+processes.
+Advances in Neural Information Processing Systems,
+35:26363–26374, 2022.
+Radji and Maillard [2025]
+Waris Radji and Odalric-Ambrym Maillard.
+The confusing instance principle for online linear quadratic control.
+In Reinforcement Learning Conference, 2025.
+Boone and Maillard [2025]
+Victor Boone and Odalric-Ambrym Maillard.
+The regret lower bound for communicating markov decision processes.
+arXiv preprint arXiv:2501.13013, 2025.
+Ha and Schmidhuber [2018]
+David Ha and Jürgen Schmidhuber.
+World models.
+arXiv preprint arXiv:1803.10122, 2(3), 2018.
+Sutton et al. [1998]
+Richard S Sutton, Andrew G Barto, et al.
+Reinforcement learning: An introduction, volume 1.
+MIT press Cambridge, 1998.
+Schulman et al. [2015]
+John Schulman, Sergey Levine, Pieter Abbeel, Michael Jordan, and Philipp
+Moritz.
+Trust region policy optimization.
+In International conference on machine learning, pages
+1889–1897. PMLR, 2015.
+Schulman et al. [2017]
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347, 2017.
+Radji [2025]
+Waris Radji.
+Pointax: Jax-native pointmaze environment, 2025.
+URL https://github.com/riiswa/pointax.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

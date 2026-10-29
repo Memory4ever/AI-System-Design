@@ -1,0 +1,1436 @@
+
+
+
+Noise Projection: Closing the Prompt–Agnostic Gap Behind Text-to-Image Misalignment in Diffusion Models
+
+
+
+
+
+
+
+
+
+
+
+
+
+Skip to main content
+
+  
+    
+      Report GitHub Issue
+      ×
+    
+
+    
+      Title:
+      
+
+      
+Content selection saved. Describe the issue below:
+
+      Description:
+      
+    
+
+    
+      Submit without GitHub
+      Submit in GitHub
+    
+  
+
+
+
+
+
+  
+  
+    
+  
+  
+    
+      
+    
+  
+    Why HTML?
+    
+      Report Issue
+        
+      Back to Abstract
+    
+    
+      Download PDF
+        
+      Contents
+    
+    
+      Reading mode
+    
+    
+      Colour theme
+    
+
+
+
+
+
+Abstract
+
+1 Introduction
+
+2 Related Works
+
+3 Background
+
+
+3.1 Latent Diffusion Models
+
+3.2 Achieving Text-Image Alignment
+
+3.3 Motivation of Projecting Noise
+
+
+4 Method
+
+
+4.1 Model Architecture
+
+
+4.1.1 Noise Projector
+
+4.1.2 Reward Model
+
+
+4.2 Training a Reward Model
+
+
+4.2.1 Preparing Data
+
+4.2.2 Aligning Reward Model with VLM
+
+
+4.3 Training the Noise Projector
+
+
+4.3.1 Pretraining
+
+4.3.2 Final Training
+
+
+
+5 Experiment
+
+
+5.1 Experimental Settings
+
+5.2 Single-Prompt Evaluation
+
+5.3 Multi-Prompt Evaluation
+
+5.4 Investigation on Projected Distribution
+
+5.5 Sensitivity Analysis
+
+
+6 Conclusion
+
+References
+
+
+
+
+  
+    License: CC BY 4.0
+  
+  
+arXiv:2510.14526v1 [cs.CV] 16 Oct 2025
+
+
+
+Noise Projection: Closing the Prompt–Agnostic Gap Behind Text-to-Image Misalignment in Diffusion Models
+
+
+Yunze Tong
+
+  
+Didi Zhu
+
+  
+Zijing Hu
+
+  
+Jinluan Yang
+
+  
+Ziyu Zhao
+
+Affiliation: Zhejiang University
+
+Affiliation: Hangzhou, Zhejiang, China
+
+Email: tyz01@zju.edu.cn
+
+
+Abstract
+    
+
+In text-to-image generation, different initial noises induce distinct denoising paths with a pretrained Stable Diffusion (SD) model. While this pattern could output diverse images, some of them may fail to align well with the prompt. Existing methods alleviate this issue either by altering the denoising dynamics or by drawing multiple noises and conducting post-selection. In this paper, we attribute the misalignment to a training–inference mismatch: during training, prompt-conditioned noises lie in a prompt-specific subset of the latent space, whereas at inference the noise is drawn from a prompt-agnostic Gaussian prior. To close this gap, we propose a noise projector that applies text-conditioned refinement to the initial noise before denoising. Conditioned on the prompt embedding, it maps the noise to a prompt-aware counterpart that better matches the distribution observed during SD training, without modifying the SD model.
+Our framework consists of these steps: we first sample some noises and obtain token-level feedback for their corresponding images from a vision–language model (VLM), then distill these signals into a reward model, and finally optimize the noise projector via a quasi-direct preference optimization.
+Our design has two benefits: (i) it requires no reference images or handcrafted priors, and (ii) it incurs small inference cost, replacing multi-sample selection with a single forward pass.Extensive experiments further show that our prompt-aware noise projection improves text-image alignment across diverse prompts.
+  
+
+
+
+
+
+
+
+
+
+1 Introduction
+
+
+
+With the availability of large-scale data and powerful computing resources, diffusion models have emerged as highly effective generative frameworks. By learning to predict noise at varying levels, a diffusion model can start from pure Gaussian noise xtx_{t} and iteratively denoise to reconstruct a clean image x0x_{0}. Song et al. further interpret this sampling process as a probability flow ordinary differential equation (ODE), where the only stochasticity arises from the initial noise. Consequently, any random noise sample can eventually be mapped to a clean image. To enable text-conditioned generation, Stable Diffusion (SD) [23] incorporates text embeddings to guide the denoising trajectory, allowing outputting diverse images aligned with the input prompt from different random noises.
+
+
+
+However, when sampling multiple images from the same prompt, different initial noises correspond to distinct ODE trajectories, leading to inconsistent text–image alignment, i.e., some samples faithfully match the prompt while others deviate. To address this, some optimization-based methods locally adjust the denoising path using reference images or human priors [39, 37, 15, 12], injecting auxiliary information to correct the ODE and reduce misalignment. These methods typically rely on external inputs and alter the denoising direction at every step.
+In contrast, sampling-based methods [6, 20, 19] pursue a global exploration strategy: they leave the denoising process unchanged but generate many candidates from diverse initial noise states through repeated sampling. The best-aligned images are then selected via human evaluation.
+By covering a broader region of the distribution, these methods are more likely to yield images with stronger text–image alignment. However, this advantage comes at the expense of higher computational cost due to the large number of function evaluations required.
+We illustrate this comparison in Figure 1: optimization-based methods (purple) enhance alignment through stepwise modifications of the denoising process, typically by incorporating reference images during training or applying prior-guided interventions at inference; sampling-based methods instead select a suitable initial noise (red dot at T=49T=49) from multiple random candidates.
+
+
+Figure 1: The comparison among several denoising patterns. Green path denotes normal denoising with a pretrained model, which has the risk of inducing text-image misalignment problem. Purple path reveals that optimization-based methods in essence modifies the ODE sampler locally. Red path denotes denoising from a better noise, which could be regarded as sampled from a prompt-conditioning distribution instead of normal Gaussian.
+
+
+
+In this paper, we aim to enhance text–image alignment by refining the original noise with a single projection rather than relying on multiple sampling. Concretely, we train a lightweight noise projector that takes the initial random noise and the text embedding as input, and produces a refined noise through a one-step propagation. Ideally, each initial noise—regardless of quality—can be mapped to a more suitable counterpart by the trained projector, which is then fed directly into the pretrained SD model. The key idea is to integrate text-conditioned information into the noise refinement process, thereby projecting the noise into a distribution that may deviate slightly from the Gaussian 𝒩⁡(0,1)\mathcal{N}(0,1) but aligns more closely with the given prompt.
+
+
+
+Our motivation stems from the asymmetry between training and inference in SD. During training, prompts are mixed, and each noisy input is constructed by adding deterministic noise to clean images that exactly match the prompt. Thus, the noises available for each prompt form only a subset of all noisy inputs, and their implicit distribution may not follow 𝒩⁡(0,1)\mathcal{N}(0,1). Instead, it is the aggregate of noises across all prompts that conforms to the Gaussian distribution, illustrated as the blue area in Figure 1. At inference, however, generation is conditioned on a single deterministic prompt, while the initial noise is sampled from 𝒩⁡(0,1)\mathcal{N}(0,1) without prompt awareness. This mismatch can cause the sampled noise to deviate from the prompt-specific distribution observed during training, leading to poor alignment. To mitigate this, we introduce a noise projector that maps the initial noise toward the prompt-conditioned distribution, depicted as the yellow area in Figure 1.
+
+
+
+To train the proposed noise projector, we leverage feedback from a pretrained Vision–Language Model (VLM). Given a set of prompts and seeds that determine the initial noises, we first generate images and obtain token-level scores from the VLM—one score per token per image—quantifying how strongly the image expresses the semantics of each prompt token (thus reflecting how well the initial noise realizes those semantics through the generation process).
+A reward model is then trained to approximate the VLM’s scoring behavior. Finally, we adopt a quasi-direct preference optimization scheme to update the noise projector with the supervision from the reward model.
+The pipeline is fully automated, and optimization is confined to the reward model and the noise projector, whose parameter counts are far smaller than the SD backbone.
+Our design offers two key advantages: (i) training does not rely on human-provided reference images, nor does it impose constraints on the form of conditioning text, and (ii) inference incurs small overhead, since refining noise requires only a single forward pass through the noise projector without resorting to repeated sampling.
+
+
+
+Our contributions are summarized as follows: (1) We analyze text–image misalignment from the perspective of initial noise, providing new insights into how it arises. (2) We propose a noise projector that converts a standard-Gaussian noise into a prompt-aware refined one, effectively steering it toward a prompt-conditioned distribution of the noise space and thereby improving alignment. (3) We develop a reinforcement-learning–based framework that uses VLM-proxied rewards to train the noise projector, eliminating the need for reference images during training and repeated sampling at inference. (4) Extensive experiments across diverse prompts validate the effectiveness of our method.
+
+
+
+
+
+2 Related Works
+
+
+
+Diffusion Models.
+Diffusion models (DMs) have achieved remarkable success across diverse generative tasks [22, 38, 29]. They typically adopt a UNet or Transformer backbone to estimate noise from corrupted inputs and progressively denoise toward a clean sample. Song et al. interpret this iterative process via a stochastic differential equation (SDE) and further derive a probability flow ordinary differential equation (ODE) that preserves the same marginal distribution. Latent diffusion models [23] extend this framework to a compressed latent space, enabling efficient large-scale training. Moreover, advances in sampling strategies have accelerated inference [26, 14] and facilitated conditional generation through guidance techniques [9, 15, 16].
+
+
+
+Improving Text-Image Alignment for DMs.
+For text-to-image generation, the primary goal is to ensure alignment between textual descriptions and synthesized images. However, without sufficient data scale or model capacity, DMs often fail under certain initial noise. To address this challenge, three major strategies have emerged: (1) scaling models or training datasets to improve coverage of the data distribution [22, 17]; (2) incorporating human priors [30, 1, 28] or reference images [37, 39] to locally guide the denoising trajectory, achieved via fine-tuning or training-free integration; and (3) leveraging reward models or preference data to refine intermediate trajectories through direct preference optimization or reinforcement learning [35, 13, 40, 5]. The first strategy expands the data space and modifies latent distributions, while the latter two primarily adjust the ODE dynamics implied by the pretrained model.
+
+
+
+
+
+3 Background
+
+
+
+
+3.1 Latent Diffusion Models
+
+
+
+Latent Diffusion Models (LDMs) [23] first compress images into latent representations using a pre-trained variational autoencoder (VAE). The diffusion process is then applied in the latent space for efficient modeling.
+Denoising diffusion probabilistic models (DDPMs) [10] define a forward process that gradually perturbs a clean data sample 𝐱0\mathbf{x}_{0} into Gaussian noise through a sequence of conditional distributions.
+In closed form, the noisy sample at step tt is drawn from
+q⁡(𝐱t∣𝐱0)=𝒩⁡(α¯t​𝐱0,(1−α¯t)​𝐈)q(\mathbf{x}_{t}\mid\mathbf{x}_{0})=\mathcal{N}\!\big(\sqrt{\bar{\alpha}_{t}}\,\mathbf{x}_{0},\;(1-\bar{\alpha}_{t})\mathbf{I}\big),
+where α¯t=∏s=1t(1−βs)\bar{\alpha}_{t}=\prod_{s=1}^{t}(1-\beta_{s}) and σ2​(t)=1−α¯t\sigma^{2}(t)=1-\bar{\alpha}_{t}.
+Training reduces to learning a noise predictor ϵθ​(𝐱t,t)\epsilon_{\theta}(\mathbf{x}_{t},t) that estimates ϵ\epsilon in 𝐱t=α¯t​𝐱0+σ⁡(t)​ϵ,ϵ∼𝒩⁡(0,I)\mathbf{x}_{t}=\sqrt{\bar{\alpha}_{t}}\mathbf{x}_{0}+\sigma(t)\epsilon,\epsilon\sim\mathcal{N}(0,I).
+Song et al. presented a continuous-time formulation for this variance-preserving diffusion, which corresponds to the stochastic differential equation (SDE)
+
+
+
+
+
+d​𝐱t=−12​β​(t)​𝐱t​d​t+β⁡(t)​d​𝐰t.d\mathbf{x}_{t}=-\tfrac{1}{2}\beta(t)\,\mathbf{x}_{t}\,dt+\sqrt{\beta(t)}\,d\mathbf{w}_{t}.
+
+(1)
+
+
+The reverse process is interpreted as iterative denoising, where the model ϵθ​(𝐱t,t)\epsilon_{\theta}(\mathbf{x}_{t},t) reconstructs 𝐱0\mathbf{x}_{0} from 𝐱t\mathbf{x}_{t}.
+The reverse-time dynamics of Eq. 1 yield the generative process. An equivalent deterministic formulation is given by the
+probability-flow ordinary differential equation (ODE):
+
+
+
+
+
+d​𝐱td​t=−12​β​(t)​𝐱t+12​β​(t)​1σ⁡(t)​ϵθ​(𝐱t,t),\tfrac{d\mathbf{x}_{t}}{dt}=-\tfrac{1}{2}\beta(t)\,\mathbf{x}_{t}+\tfrac{1}{2}\beta(t)\,\tfrac{1}{\sigma(t)}\,\epsilon_{\theta}(\mathbf{x}_{t},t),
+
+(2)
+
+
+which shares the same marginals as the SDE.
+In practice, modern pretrained models retain the DDPM-style forward training objective, while inference relies on integrating the ODE sampler with efficient solvers (e.g., DDIM [26], DPM-Solver [18], or Euler ancestral methods [14]). By modifying the ODE dynamics, some works enable diverse sampling behaviors tailored to their specific tasks.
+
+
+
+
+
+3.2 Achieving Text-Image Alignment
+
+
+
+With Eq. 2, diverse images can be generated. However, such unconditional sampling lacks text guidance, so the generated results may not reflect the desired semantics. To obtain samples with specific labels, classifier-free guidance (CFG) [9] is widely adopted for efficient text conditioning. In this setting, a text embedding 𝐜\mathbf{c} is provided as input, yielding the noise estimator ϵθ​(𝐱t,t,𝐜)\epsilon_{\theta}(\mathbf{x}_{t},t,\mathbf{c}).
+A single model thus supports predicting the denoising directions for both conditional and unconditional cases through ϵθ​(𝐱t,t,𝐜)\epsilon_{\theta}(\mathbf{x}_{t},t,\mathbf{c}) and ϵθ​(𝐱t,t,∅)\epsilon_{\theta}(\mathbf{x}_{t},t,\varnothing), respectively.
+During denoising, the effective output is defined as ϵ~θ​(𝐱t,t,𝐜)=(1+w)​ϵθ​(𝐱t,t,𝐜)−w​ϵθ​(𝐱t,t,∅)\tilde{\epsilon}_{\theta}(\mathbf{x}_{t},t,\mathbf{c})=(1+w)\epsilon_{\theta}(\mathbf{x}_{t},t,\mathbf{c})-w\epsilon_{\theta}(\mathbf{x}_{t},t,\varnothing),
+which steers generation toward the desired prompt.
+
+
+
+
+
+3.3 Motivation of Projecting Noise
+
+
+
+In text-to-image (T2I) generation, achieving strong alignment between text and visual output is critical. However, for challenging prompts or rare visual concepts, standard CFG often fails to provide sufficient guidance, and pretrained models may struggle to produce well-aligned samples. To mitigate this issue without incurring heavy retraining costs, prior works integrate additional information from reference images or human-defined priors. Such techniques, whether through fine-tuning or sampling interventions, can be interpreted as modifications to the ODE sampler in Eq. 2, where auxiliary information is injected during denoising. While effective, these optimization-based methods typically require extra inputs and careful hyperparameter tuning.
+
+
+
+An alternative direction enhances alignment without external priors by sampling multiple candidates. These approaches generate outputs from diverse initial noises or by repeating sampling during inference, followed by evaluation to select the best candidate. Unlike ODE-modification methods, they leave the pretrained denoising dynamics unchanged and instead enlarge the search space of initial noise. The observed improvement in text-image alignment arises from post-selection: well-aligned samples correspond to a subset of initial noises that form an implicit posterior distribution conditioned on the prompt.
+To better illustrate this phenomenon, consider two sampled noises, ϵ0\epsilon_{0} and ϵ1\epsilon_{1}. For each, we generate images under two different text prompts 𝐜𝟎\mathbf{c_{0}} and 𝐜𝟏\mathbf{c_{1}}, denoted as xϵ0,𝐜𝟎,xϵ0,𝐜𝟏,xϵ1,𝐜𝟎,xϵ1,𝐜𝟏x_{\epsilon_{0},\mathbf{c_{0}}},x_{\epsilon_{0},\mathbf{c_{1}}},x_{\epsilon_{1},\mathbf{c_{0}}},x_{\epsilon_{1},\mathbf{c_{1}}}. It is possible that xϵ0,𝐜𝟎x_{\epsilon_{0},\mathbf{c_{0}}} better aligns with 𝐜𝟎\mathbf{c_{0}} than xϵ1,𝐜𝟎x_{\epsilon_{1},\mathbf{c_{0}}}, while the reverse holds for 𝐜𝟏\mathbf{c_{1}}. This phenomenon can be understood via Eq. 2: during sampling, text conditions 𝐜\mathbf{c} can pair arbitrarily with noises ϵ\epsilon, whereas during training, noisy inputs are constructed by adding sample-specific deterministic noise at varying scales. As a result: (1) the effective noise space during training is narrower than that of fully random Gaussian noise; and (2) each text condition is only observed with the noise realizations derived from its paired training images. Consequently, at inference time, well-aligned generations correspond only to certain regions of the noise space—a subset of the Gaussian prior—thus defining a prompt-dependent noise distribution. In other words, producing semantically faithful images implicitly requires sampling from a unique, condition-specific distribution.
+
+
+
+We use Figure 1 to illustrate the difference between optimization-based and sampling-based methods. Without introducing additional priors or altering the data distribution, optimization-based methods can be viewed as locally modifying the ODE, thereby altering the denoising trajectory, as indicated by the purple line. Since denoising proceeds step by step, errors made in early stages propagate, so these methods require the trajectory to remain accurate throughout; otherwise, a local deviation may cause complete failure. In contrast, sampling-based methods aim to select better initial noises that align with the given condition. Statistically, selected noises are more likely to lie within favorable regions of the distribution, making the subsequent denoising more likely to yield aligned outputs. However, this comes at the cost of multiple function evaluations during inference. Motivated by this trade-off, we ask: can we simplify sampling-based methods into a faster optimization-based approach that achieves accurate alignment with lower inference cost?
+
+
+
+To this end, we propose a noise projector that utilizes text guidance before denoising begins. The projector is designed to map any randomly sampled noise to a refined noise. Once trained, it directly improves text-image alignment while avoiding repeated sampling during inference. Moreover, the projector operates independently of the standard SD pipeline, requiring no modification of pretrained model parameters.
+
+
+
+
+
+
+4 Method
+
+
+
+
+4.1 Model Architecture
+
+
+
+Our method involves training two models: a noise projector, which maps the original noise to a refined one with improved text-image alignment, and a reward model, which provides supervision signals to train the projector. Both take a noise sample and a text embedding as input, sharing the same backbone architecture in the early layers but differing in their output heads to match task-specific objectives. The overall design is illustrated in Figure 2.
+The backbone begins with a cross-attention module to couple noise and text, producing mixed latents that encode both semantic and stochastic information. The latents are then processed by a Mixture of Experts (MoE), where the router selectively activates experts to disentangle different semantic components. The MoE output represents a projected latent that integrates text-conditioned semantics. Finally, a UNet module reconstructs the noise layout from the projected latents.
+
+
+
+Beyond these shared modules, the noise projector and reward model incorporate task-specific output heads. Their detailed designs are described below.
+
+
+
+
+4.1.1 Noise Projector
+
+
+
+The noise projector refines an input noise sample conditioned on text. The text input is the embedding of the full prompt, identical to the conditional input used in Stable Diffusion. This embedding conveys the complete semantic context, while the mapping from text tokens to pixel-level noise primarily occurs in the MoE. Unlike a standard UNet output, we append an auto-encoder that predicts both μ\mu and σ\sigma, from which the final refined noise is sampled via reparameterization with ϵinit\epsilon_{\text{init}}. This design prevents the refined noise from drifting too far from the 𝒩⁡(0,1)\mathcal{N}(0,1) initialization, which could otherwise lead to invalid images during early training. Details are provided in Section 4.3.1.
+
+
+
+
+
+4.1.2 Reward Model
+
+
+
+Unlike the noise projector, the reward model conditions on the embedding of a single token rather than the entire sentence, enabling token-level feedback and reducing reward sparsity which will be discussed in Section 4.2. Built on the shared backbone, it incorporates an extra MLP and a classification head, producing a normalized probability distribution aligned with the discrete scoring format.
+
+
+Figure 2: 
+The architecture of our model. Both the noise projector and the reward model share the same backbone with cross-attention, MoE, and UNet components. At the output stage, the reward model attaches a classification head, while the noise projector integrates the encoder of a VAE.
+
+
+
+
+
+
+
+4.2 Training a Reward Model
+
+
+
+To guide the noise projector toward generating noise distributions that better align with the conditional prompt, obtaining reliable supervision signals is crucial. We use a large Vision Language Model (VLM) as the source of rewards due to its strong semantic understanding. However, the large parameter size of VLMs makes them impractical to involve in training. Therefore, we train a smaller reward model that approximates the predictive behavior of the VLM. This reward model acts as a proxy, enabling efficient training of the noise projector without requiring human evaluation, and can be executed fully automatically.
+
+
+
+
+4.2.1 Preparing Data
+
+
+
+We begin by generating a set of noises from predefined seeds and running the Stable Diffusion (SD) pipeline to obtain their corresponding images conditioned on prompts. Each image, together with one semantic token from its prompt, is then fed into the VLM. The VLM assigns a discrete score from 0 to 9, reflecting how well the image (and thus the noise) represents the given token. By traversing all semantically meaningful tokens in the prompt, we obtain a batch of token-level scores for each noise sample. This yields training pairs of the form {ϵi,uj,si​j}i,j\{\epsilon_{i},u_{j},s_{ij}\}_{i,j}, where ϵi\epsilon_{i} denotes the ii-th noise, uju_{j} the embedding of the jj-th token, and si​js_{ij} the score measuring how well ϵi\epsilon_{i} aligns with uju_{j}.
+
+
+
+
+
+4.2.2 Aligning Reward Model with VLM
+
+
+
+With these token-level pairs, we train a reward model RϕR_{\phi} to approximate the VLM’s judgments. Since the scores are discrete values between 0 and 9, this task can be formulated as multi-class classification. Specifically, the classification head of RϕR_{\phi} outputs a 10-dimensional vector, i.e., Rϕ​(ϵ,u)∈ℝ10R_{\phi}(\epsilon,u)\in\mathbb{R}^{10}. We then optimize RϕR_{\phi} using cross-entropy loss over the collected pairs:
+
+
+
+
+
+ℒRM=∑i,jℓCE​(Rϕ​(ϵi,uj),si​j).\mathcal{L}_{\text{RM}}=\sum_{i,j}\ell_{\text{CE}}(R_{\phi}(\epsilon_{i},u_{j}),s_{ij}).
+
+(3)
+
+
+After convergence, RϕR_{\phi} provides an efficient and faithful proxy to the VLM, offering dense token-level supervision for training the noise projector.
+
+
+
+
+
+
+4.3 Training the Noise Projector
+
+
+
+With a well-trained reward model RϕR_{\phi}, we proceed to train the noise projector PθP_{\theta}.
+
+
+
+
+4.3.1 Pretraining
+
+
+Figure 3: 
+The overall framework of our method, which consists of four stages: (a) data preparation for training the reward model (Section 4.2.1), (b) reward model training with the collected data (Section 4.2.2), (c) pretraining the noise projector (Section 4.3.1), and (d) final quasi-DPO training (Section 4.3.2).
+
+
+
+
+As discussed in Section 3.3, for a given conditional prompt, the set of effective noises that lead to well-aligned images forms a distribution that is distinct from, yet close to, the standard Gaussian 𝒩⁡(0,1)\mathcal{N}(0,1). The goal of PθP_{\theta} is to map arbitrary input noise into this refined distribution.
+
+
+
+However, a challenge arises in the early stage of training: a randomly initialized PθP_{\theta} may project noise far away from 𝒩⁡(0,1)\mathcal{N}(0,1). When the deviation is too large, the reward model RϕR_{\phi} cannot provide effective optimization signals because such highly deviated noise lies outside its training distribution. In this case, the optimization becomes unstable, and the projected noise may even fail to produce valid images after denoising, as the pretrained SD model requires inputs close to 𝒩⁡(0,1)\mathcal{N}(0,1). To resolve this, we introduce a pretraining stage to stabilize PθP_{\theta} before reinforcement learning.
+
+
+
+As described in Section 4.1, the noise projector can be decomposed as Pθ=mθ0⋅qθ1P_{\theta}=m_{\theta_{0}}\cdot q_{\theta_{1}}. Here, mθ0m_{\theta_{0}} includes the cross-attention, MoE, and UNet modules, while qθ1q_{\theta_{1}} is the encoder of a variational autoencoder (VAE) with decoder pψp_{\psi}. Given a text embedding 𝐜\mathbf{c} and an initial noise ϵinit\epsilon_{\text{init}}, PθP_{\theta} outputs μ^\hat{\mu} and σ^\hat{\sigma} of the same shape as ϵinit\epsilon_{\text{init}}. The refined noise is then sampled via the reparameterization trick: ϵrefined=μ^+σ^⊙ϵnormal,ϵnormal∼𝒩⁡(0,1)\epsilon_{\text{refined}}=\hat{\mu}+\hat{\sigma}\odot\epsilon_{\text{normal}},\epsilon_{\text{normal}}\sim\mathcal{N}(0,1).
+
+
+
+To prevent ϵrefined\epsilon_{\text{refined}} from drifting too far from 𝒩⁡(0,1)\mathcal{N}(0,1), we regularize the posterior defined by (μ^,σ^)(\hat{\mu},\hat{\sigma}) with a KL loss:
+
+
+
+
+
+ℒconstraint=λ2​(μ^2+σ^2−2​log⁡σ^−1),\mathcal{L}_{\text{constraint}}=\tfrac{\lambda}{2}\big(\hat{\mu}^{2}+\hat{\sigma}^{2}-2\log\hat{\sigma}-1\big),
+
+(4)
+
+
+which encourages μ^≈0\hat{\mu}\!\approx\!0 and σ^≈1\hat{\sigma}\!\approx\!1. Consequently, since ϵnormal∼𝒩⁡(0,1)\epsilon_{\text{normal}}\sim\mathcal{N}(0,1), the refined noise ϵrefined\epsilon_{\text{refined}} remains close to the standard Gaussian distribution.
+
+
+
+To ensure that the VAE captures the information from mθ0​(ϵinit,𝐜)m_{\theta_{0}}(\epsilon_{\text{init}},\mathbf{c}), we also apply a reconstruction loss:
+
+
+
+
+
+ℒreconstruction=ℓMSE​(mθ0​(ϵinit,𝐜),pψ​(ϵrefined)).\mathcal{L}_{\text{reconstruction}}=\ell_{\text{MSE}}\!\big(m_{\theta_{0}}(\epsilon_{\text{init}},\mathbf{c}),\;p_{\psi}(\epsilon_{\text{refined}})\big).
+
+(5)
+
+
+This ensures that the VAE reconstructs the intermediate refined noise mθ0​(ϵinit,𝐜)m_{\theta_{0}}(\epsilon_{\text{init}},\mathbf{c}), with information consistently propagated through both qθ1q_{\theta_{1}} and pψp_{\psi}.
+
+
+
+Finally, the pretraining stage jointly optimizes the noise projector and the decoder of VAE with:
+
+
+
+
+
+ℒwarmup=ℒconstraint+ℒreconstruction.\mathcal{L}_{\text{warmup}}=\mathcal{L}_{\text{constraint}}+\mathcal{L}_{\text{reconstruction}}.
+
+(6)
+
+
+Eq. 6 ensures that projected noise remains close to the Gaussian prior while retaining semantic information, thereby stabilizing subsequent RL-based training. After pretraining, we discard the decoder pψp_{\psi} and carry PθP_{\theta} into the next stage.
+
+
+
+
+
+4.3.2 Final Training
+
+
+
+With the reward model RϕR_{\phi} trained, we now optimize the noise projector PθP_{\theta}. The training input includes noises, each determined by a single seed within a fixed range, along with conditioning prompts.
+For each pair {ϵinit,𝐜}\{\epsilon_{\text{init}},\mathbf{c}\}, we obtain a projected noise ϵrefined\epsilon_{\text{refined}} via reparameterization:
+ϵrefined=μ^+σ^⊙ϵinit\epsilon_{\text{refined}}=\hat{\mu}+\hat{\sigma}\odot\epsilon_{\text{init}}. Using ϵinit\epsilon_{\text{init}} directly in the reparameterization offers two advantages: (1) it already follows 𝒩⁡(0,1)\mathcal{N}(0,1), avoiding redundant resampling; and (2) it preserves the structural characteristics of the original noise. If ϵinit\epsilon_{\text{init}} is already well aligned, then ideally μ^→0\hat{\mu}\!\to\!0 and σ^→1\hat{\sigma}\!\to\!1, yielding ϵrefined≈ϵinit\epsilon_{\text{refined}}\approx\epsilon_{\text{init}} and preventing unnecessary modifications.
+
+
+
+For each noise pair (ϵinit,ϵrefined)(\epsilon_{\text{init}},\epsilon_{\text{refined}}), the reward model outputs Rϕ​(ϵinit,u),Rϕ​(ϵrefined,u)∈ℝ10R_{\phi}(\epsilon_{\text{init}},u),R_{\phi}(\epsilon_{\text{refined}},u)\in\mathbb{R}^{10}, representing normalized distributions over discrete scores, where the 00-th entry indicates the worst alignment and the 99-th entry the best. We convert this to a scalar reward by multiplying with v=(0,1,…,9)⊤∈ℝ10v=(0,1,\dots,9)^{\top}\in\mathbb{R}^{10}: Rϵ=Rϕ​(ϵ,u)​v\mathrm{R}_{\epsilon}=R_{\phi}(\epsilon,u)v.
+We then adopt a quasi-direct preference optimization (DPO) objective:
+
+
+
+
+
+ℒunweighted=log⁡(1+exp⁡(−(Rϵrefined−Rϵinit))).\mathcal{L}_{\text{unweighted}}=\log\!\big(1+\exp(-(\mathrm{R}_{\epsilon_{\text{refined}}}-\mathrm{R}_{\epsilon_{\text{init}}}))\big).
+
+(7)
+
+
+This contrastive formulation encourages PθP_{\theta} to increase rewards relative to the refined noise. Although Rϵinit\mathrm{R}_{\epsilon_{\text{init}}} does not depend on PθP_{\theta}, including it in the loss reweights samples according to their initial quality, similar to the role of the reference model in standard DPO. In this way, variations in the alignment quality of original noises are used to scale the incremental reward contributed by PθP_{\theta}.
+
+
+
+To further account for reward magnitude, we deploy an extra reweighting scheme. Let r⁡(ϵ)r(\epsilon) denote the discrete score index assigned to ϵ\epsilon (i.e., the argmax of Rϕ​(ϵ)R_{\phi}(\epsilon)). Intuitively, samples with low scores (e.g., r=0r=0) require stronger optimization than those already judged as well-aligned (r=9r=9). We therefore define a weight vector w∈ℝ10w\in\mathbb{R}^{10}:
+
+
+
+
+
+w[i]=1+wmax−wmaxi9,i=0,…,9,w[i]=1+w_{\text{max}}-{w_{\text{max}}}^{\tfrac{i}{9}},\quad i=0,\dots,9,
+
+
+
+where wmaxw_{\text{max}} is a hyperparameter (set to 5). The weighted objective becomes
+
+
+
+
+
+ℒlogit=∑{ϵinit,𝐜}w⁡[rϵrefined]⋅log⁡(1+exp⁡(−β⁡(Rϵrefined−Rϵinit))).\mathcal{L}_{\text{logit}}=\!\!\!\!\sum_{\{\epsilon_{\text{init}},\mathbf{c}\}}\!\!\!\!w[r_{\epsilon_{\text{refined}}}]\cdot\log\!\big(1+\exp(-\beta(\mathrm{R}_{\epsilon_{\text{refined}}}-\mathrm{R}_{\epsilon_{\text{init}}}))\big).
+
+(8)
+
+
+We reuse Eq. 4 to prevent severe deviation of the noise distribution. The final training objective becomes:
+
+
+
+
+
+ℒfinal=ℒlogit+τ​ℒconstraint,\mathcal{L}_{\text{final}}=\mathcal{L}_{\text{logit}}+\tau\mathcal{L}_{\text{constraint}},
+
+(9)
+
+
+where τ\tau balances noise refinement with maintaining proximity to the standard Gaussian distribution.
+Unlike standard DPO, our optimization relies on a reward model, and gradients flow only through the refined branch. Crucially, since RϕR_{\phi} is trained with token-level supervision from a VLM (Section 4.2.1), our rewards are significantly denser than sentence-level signals, providing more effective guidance for training the noise projector.
+
+
+Figure 4: 
+Qualitative comparison of generated images. For complex prompts that often induce text–image misalignment, our noise projector effectively refines the noise to yield well-aligned generations. In cases where the original SDXL already produces satisfactory results (i.e., the rightmost column), our noise projector leaves the structure largely unchanged, preserving the same well-aligned layout as the original.
+
+
+
+
+
+
+
+
+5 Experiment
+
+
+
+
+5.1 Experimental Settings
+
+
+
+Evaluation Metrics.
+Our objective is to assess the alignment between generated images and their conditioning prompts. We adopt three evaluation protocols:
+
+
+
+
+• 
+
+
+QwenScore:
+Conventional reward models take an image-prompt pair as input and directly output a scalar score to indicate the alignment, but such judgments are limited by the scope of their training data. In contrast, large vision–language models (VLMs) are trained on massive web-scale corpora and further enhanced by instruction tuning, which equips them with stronger semantic understanding and the ability to follow fine-grained evaluation instructions. We therefore query the VLM for discrete scores between 0 and 99 to measure image–prompt alignment. Specifically, we adopt the instruction-tuned Qwen2.5-VL-7B [2] as the evaluator, with the full instruction prompt detailed in the Appendix.
+
+
+• 
+
+
+BERTScore:
+BERTScore [3] is a text-based metric for evaluating text-image alignment. Given an image, a textual description is first generated using a VLM, and the semantic similarity between the description and the original prompt is then computed. The similarity is quantified using the recall metric of BERT [4]. For implementation, we employ instruction-tuned Qwen2.5-VL-7B to generate captions and DeBERTa-XLarge [7] to obtain text embeddings for similarity calculation.
+
+
+• 
+
+
+ImageReward:
+ImageReward [31] is a reward model trained on human-preference data. It directly takes images as input and produces scalar scores indicative of human judgments of quality and preference.
+
+
+
+
+
+Dataset. Our paradigm constructs a background dataset by fixing a range of random seeds, each mapped to a Gaussian noise sample, and generating the corresponding images with a pretrained Stable Diffusion (SD) model. This process requires no external human-provided images and can be applied to any problematic conditioning prompt. Once the target prompts are specified, the dataset is constructed automatically.
+The prompts in our experiments are drawn from two sources and evaluated separately: (1) DrawBench [24], which offers challenging cases for assessing text–image alignment; and (2) GPT-4o [21], which we explicitly query to provide diverse prompts that are likely to induce misalignment, such as object omission, spatial confusion, and underrepresented textual content.
+To assess the effectiveness of the noise projector, we consider two evaluation settings: (i) single-prompt, where the projector is trained for one specific prompt, and (ii) multi-prompt, where a single projector is trained to handle multiple prompts simultaneously.
+
+
+
+Implementation Details.
+We adopt SDXL [22] as the base model to generate images at a resolution of 1024 ×\times 1024, and conduct all experiments on NVIDIA A100 GPUs. The framework involves training two components: a reward model and the final noise projector, with architectural details provided in the Appendix. For the reward model, training inputs are constructed from noises generated by seeds in the range [0,300)[0,300). For the noise projector, the training set includes noises from [0,50)[0,50) in the single-prompt setting and [0,100)[0,100) in the multi-prompt setting. The hyperparameters wmaxw_{\text{max}} and τ\tau are set to 5 and 200, respectively, and gradient norms are clipped to stabilize training.
+
+
+
+Since both our method and several baselines require training, we evaluate performance on both seen and unseen noises. Results on seen noises reflect the ability to fit the training distribution [33, 36], while results on unseen noises indicate generalization to a wider range [41, 32, 34]. Among the two, performance on unseen data serves as the primary evaluation protocol, as it demonstrates the projector’s capability to handle arbitrary noises. Seen-data performance is measured using the same (or a subset of) noise samples employed in projector training, whereas unseen-data performance is measured on a disjoint range of random seeds not accessed by either the reward model or the projector. Specifically, we use seeds in [0,50)[0,50) to evaluate seen noises and seeds in [350,500)[350,500) to evaluate unseen noises.
+
+
+
+Compared Baselines.
+We compare our method against four baselines: the pretrained model, a finetuned model, PAG [1], and AutoGuidance [15]. The finetuned model is trained on a dataset of images generated with the same noise seeds as our method, with LoRA [11] applied for efficient adaptation. PAG modifies the sampling trajectory by replacing the self-attention maps in the diffusion U-Net with identity matrices. AutoGuidance adjusts classifier-free guidance (CFG) using a weaker model checkpoint to improve image quality. For all training-based baselines, the range of seen noises is kept identical to ours to ensure fairness and avoid introducing extra information.
+
+
+
+
+
+
+Prompt Source
+Method
+Seen Seeds
+Unseen Seeds
+
+
+QwenScore
+BERTScore
+ImageReward
+QwenScore
+BERTScore
+ImageReward
+
+
+DrawBench
+Pretrained Model
+68.40 ±31.01\pm 31.01
+0.8048 ±0.0289\pm 0.0289
+1.3199 ±0.8725\pm 0.8725
+69.49 ±30.33\pm 30.33
+0.8038 ±0.0295\pm 0.0295
+1.2746 ±0.8456\pm 0.8456
+
+
+Finetuned Model
+70.25 ±30.21\pm 30.21
+0.8067 ±0.0306\pm 0.0306
+1.3484 ±0.7947\pm 0.7947
+69.08 ±30.70\pm 30.70
+0.8051 ±0.0302\pm 0.0302
+1.2811 ±0.8436\pm 0.8436
+
+
+PAG
+50.40 ±32.92\pm 32.92
+0.7847 ±0.0362\pm 0.0362
+0.1402 ±1.4210\pm 1.4210
+52.24 ±32.52\pm 32.52
+0.7812 ±0.0364\pm 0.0364
+0.0678 ±1.3965\pm 1.3965
+
+
+AutoGuidance
+63.07 ±33.03\pm 33.03
+0.8017 ±0.0369\pm 0.0369
+0.8761 ±1.2097\pm 1.2097
+64.05 ±32.63\pm 32.63
+0.7989 ±0.0334\pm 0.0334
+0.8410 ±1.1786\pm 1.1786
+
+
+Ours
+70.03 ±30.55\pm 30.55
+0.8069 ±0.0272\pm 0.0272
+1.3289 ±0.8042\pm 0.8042
+70.55 ±30.04\pm 30.04
+0.8060 ±0.0297\pm 0.0297
+1.3040 ±0.8447\pm 0.8447
+
+
+GPT
+Pretrained Model
+70.50 ±28.85\pm 28.85
+0.8217 ±0.0237\pm 0.0237
+0.9591 ±1.1735\pm 1.1735
+70.77 ±28.96\pm 28.96
+0.8221 ±0.0236\pm 0.0236
+0.9420 ±1.1786\pm 1.1786
+
+
+Finetuned Model
+70.54 ±28.97\pm 28.97
+0.8209 ±0.0245\pm 0.0245
+1.0084 ±1.1441\pm 1.1441
+70.37 ±29.34\pm 29.34
+0.8219 ±0.0235\pm 0.0235
+0.9779 ±1.1599\pm 1.1599
+
+
+PAG
+49.91 ±32.48\pm 32.48
+0.8048 ±0.0300\pm 0.0300
+-0.1211 ±1.3268\pm 1.3268
+48.95 ±31.88\pm 31.88
+0.8024 ±0.0292\pm 0.0292
+-0.0719 ±1.3346\pm 1.3346
+
+
+AutoGuidance
+65.05 ±30.36\pm 30.36
+0.8187 ±0.0275\pm 0.0275
+0.3720 ±1.3529\pm 1.3529
+65.45 ±30.14\pm 30.14
+0.8173 ±0.0270\pm 0.0270
+0.3562 ±1.3715\pm 1.3715
+
+
+Ours
+71.87 ±28.24\pm 28.24
+0.8226 ±0.0224\pm 0.0224
+1.0000 ±1.1867\pm 1.1867
+71.45 ±28.45\pm 28.45
+0.8228 ±0.0234\pm 0.0234
+1.0017 ±1.1580\pm 1.1580
+
+
+Table 1: 
+Comparison results of text–image alignment under multiple prompts. Higher values indicate better performance across all evaluation metrics. We report results separately on seen and unseen data, with both mean and standard deviation. The bold and underline entries denote the best and second-best results, respectively.
+
+
+
+
+
+
+5.2 Single-Prompt Evaluation
+
+
+
+In this setting, a noise projector is trained to specialize in one specific prompt. Detailed Results are reported in the Appendix. For seen data, the finetuned model shows clear improvements, e.g., QwenScore increases by 4.66 on the third prompt. However, such improvements do not extend to unseen data, where the corresponding gain is only 0.18. This is because finetuning alters the parameters of the pretrained model, thereby changing the associated ODE sampler. Without explicit supervision from humans or VLMs, the adapted sampler remains confined to the training distribution and fails to sustain alignment improvements to unseen inputs.
+A similar limitation is observed for PAG and AutoGuidance. Both methods locally alter the sampling path—by replacing attention maps or adjusting the negative guidance term—but do so without explicit supervised feedback. Consequently, their performance is unstable and may even fall below that of the pretrained SD model for certain prompts.
+In contrast, our method consistently improves text-image alignment on both seen and unseen data. This advantage arises because the noise projector leverages supervised signals from the VLM to project raw noises into more informative and alignment-friendly ones.
+
+
+
+
+
+5.3 Multi-Prompt Evaluation
+
+
+
+The training process of our noise projector naturally supports multiple conditioning prompts as input, allowing a single projector to handle diverse prompts simultaneously. To validate this ability, we select five prompts from each prompt set and mix them to train a noise projector. Evaluation results are reported in Table 1.
+
+
+
+We could observe that our method consistently improves text–image alignment across mixed prompts. Moreover, in most cases, the noise projector yields smaller standard deviations than baseline methods. This observation is consistent with our key assumption: the projector enhances alignment by mapping raw noise into a distribution enriched with semantic information. Because it is trained on a limited set of noises, the resulting distribution is narrower than the normal Gaussian used in pretrained SD models, leading to outputs that are more similar to each other. Another quantitative evidence supporting this explanation is provided in Section 5.4.
+
+
+Figure 5: The innerly-computed FID and IS comparison with a single prompt.
+
+
+
+
+
+5.4 Investigation on Projected Distribution
+
+
+
+As discussed in Section 3.3, each prompt is paired only with the noise realizations from its training images. The most suitable initial noises for a given prompt may not span the entire Gaussian space.
+Pretrained models tend to favor these noises, yielding well-aligned outputs but failing on less suitable ones. During inference, the ideal noise distribution for a prompt therefore does not necessarily follow the standard Gaussian.
+This analysis motivates our noise projection approach, which we further examine using Fréchet Inception Distance (FID) [8] and Inception Score (IS) [25].
+FID assesses similarity and diversity relative to a reference set, and IS measures output diversity from inception features. For a single prompt, 5000 images are generated with unseen noises (seeds 1000–6000). FID is computed by splitting the images into two groups, taking each as reference in turn, and averaging results over 10 runs. IS is computed by dividing the images into 10 splits and measuring the KL divergence between each split and the whole set. In this setting, lower IS and FID indicate reduced diversity, implying a narrower noise distribution. Results are shown in Figure 5.
+
+
+
+There are two observations. First, images produced with our noise projector exhibit lower diversity than those from the pretrained model, confirming that the projector reduces the noise distribution into a narrower form. Second, the finetuned model produces even narrower outputs than our method. This is expected, since training directly on a limited image set pushes generations closer to the training distribution. In contrast, our projector is guided not only by the provided noises but also by signals from the reward model, which emphasize text–image alignment rather than replication. Therefore, its outputs remain more diverse than those of the finetuned model while improving alignment.
+
+
+
+
+
+
+τ\tau
+QwenScore
+BERTScore
+ImageReward
+
+
+100
+69.31 ±30.26\pm 30.26
+0.8029 ±0.0291\pm 0.0291
+1.2669 ±0.8465\pm 0.8465
+
+
+150
+70.22 ±30.36\pm 30.36
+0.8046 ±0.0298\pm 0.0298
+1.2839 ±0.8114\pm 0.8114
+
+
+200 (default)
+70.55 ±30.04\pm 30.04
+0.8060 ±0.0297\pm 0.0297
+1.3040 ±0.8447\pm 0.8447
+
+
+250
+69.98 ±30.08\pm 30.08
+0.8041 ±0.0300\pm 0.0300
+1.2872 ±0.8117\pm 0.8117
+
+
+300
+70.13 ±30.04\pm 30.04
+0.8047 ±0.0312\pm 0.0312
+1.3017 ±0.8503\pm 0.8503
+
+
+Table 2: Ablation study on τ\tau with prompts from DrawBench.
+
+
+
+
+
+
+5.5 Sensitivity Analysis
+
+
+
+τ\tau balances the reward term and the distributional constraint. We study its effect on the noise projector using DrawBench prompts, with results in Table 2. Performance remains stable across a moderate range of τ\tau (200–300), where the projector consistently outperforms the baseline. However, reducing τ\tau to a small value (100) leads to clear degradation. This highlights the importance of ℒconstraint\mathcal{L}_{\text{constraint}}, which regulates the deviation of sampled noises from the standard Gaussian and thereby prevents reward hacking.
+
+
+
+
+
+
+6 Conclusion
+
+
+
+In this paper, we study text–image misalignment in stable diffusion and trace it to a training–inference mismatch: during training, each prompt implicitly induces a prompt-specific noise distribution that allows strong alignment, whereas at inference, initial noise is drawn from a prompt-agnostic Gaussian. Thus, we propose a noise projector that maps random noise to a prompt-aware version. Denoising is then applied on this refined noise for better alignment.
+We train the projector with a quasi-direct preference optimization scheme, and results on both single- and multi-prompt settings show clear gains.
+
+
+
+
+
+
+
+
+References
+
+
+      
+
+[1]
+
+Donghoon Ahn, Hyoungwon Cho, Jaewon Min, Wooseok Jang, Jungwoo Kim, SeonHwa Kim, Hyun Hee Park, Kyong Hwan Jin, and Seungryong Kim.
+
+
+Self-rectifying diffusion sampling with perturbed-attention guidance.
+
+
+In European Conference on Computer Vision, pages 1–17. Springer, 2024.
+
+
+      
+
+[2]
+
+Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Junyang Lin.
+
+
+Qwen2.5-vl technical report, 2025.
+
+
+      
+
+[3]
+
+Kevin Black, Michael Janner, Yilun Du, Ilya Kostrikov, and Sergey Levine.
+
+
+Training diffusion models with reinforcement learning.
+
+
+arXiv preprint arXiv:2305.13301, 2023.
+
+
+      
+
+[4]
+
+Jacob Devlin.
+
+
+Bert: Pre-training of deep bidirectional transformers for language understanding.
+
+
+arXiv preprint arXiv:1810.04805, 2018.
+
+
+      
+
+[5]
+
+Luca Eyring, Shyamgopal Karthik, Karsten Roth, Alexey Dosovitskiy, and Zeynep Akata.
+
+
+Reno: Enhancing one-step text-to-image models through reward-based noise optimization.
+
+
+Neural Information Processing Systems (NeurIPS), 2024.
+
+
+      
+
+[6]
+
+Xiefan Guo, Jinlin Liu, Miaomiao Cui, Jiankai Li, Hongyu Yang, and Di Huang.
+
+
+Initno: Boosting text-to-image diffusion models via initial noise optimization.
+
+
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 9380–9389, 2024.
+
+
+      
+
+[7]
+
+Pengcheng He, Xiaodong Liu, Jianfeng Gao, and Weizhu Chen.
+
+
+Deberta: Decoding-enhanced bert with disentangled attention.
+
+
+In International Conference on Learning Representations, 2021.
+
+
+      
+
+[8]
+
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter.
+
+
+Gans trained by a two time-scale update rule converge to a local nash equilibrium, 2018.
+
+
+      
+
+[9]
+
+Jonathan Ho and Tim Salimans.
+
+
+Classifier-free diffusion guidance, 2022.
+
+
+      
+
+[10]
+
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+
+
+Denoising diffusion probabilistic models.
+
+
+Advances in Neural Information Processing Systems, 33:6840–6851, 2020.
+
+
+      
+
+[11]
+
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen.
+
+
+Lora: Low-rank adaptation of large language models, 2021.
+
+
+      
+
+[12]
+
+Zijing Hu, Fengda Zhang, Long Chen, Kun Kuang, Jiahui Li, Kaifeng Gao, Jun Xiao, Xin Wang, and Wenwu Zhu.
+
+
+Towards better alignment: Training diffusion models with reinforcement learning against sparse rewards.
+
+
+arXiv preprint arXiv:2503.11240, 2025a.
+
+
+      
+
+[13]
+
+Zijing Hu, Fengda Zhang, and Kun Kuang.
+
+
+D-fusion: Direct preference optimization for aligning diffusion models with visually consistent samples.
+
+
+arXiv preprint arXiv:2505.22002, 2025b.
+
+
+      
+
+[14]
+
+Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine.
+
+
+Elucidating the design space of diffusion-based generative models.
+
+
+Advances in neural information processing systems, 35:26565–26577, 2022.
+
+
+      
+
+[15]
+
+Tero Karras, Miika Aittala, Tuomas Kynkäänniemi, Jaakko Lehtinen, Timo Aila, and Samuli Laine.
+
+
+Guiding a diffusion model with a bad version of itself, 2024.
+
+
+      
+
+[16]
+
+Tuomas Kynkäänniemi, Miika Aittala, Tero Karras, Samuli Laine, Timo Aila, and Jaakko Lehtinen.
+
+
+Applying guidance in a limited interval improves sample and distribution quality in diffusion models.
+
+
+Advances in Neural Information Processing Systems, 37:122458–122483, 2024.
+
+
+      
+
+[17]
+
+Black Forest Labs.
+
+
+Flux.
+
+
+https://github.com/black-forest-labs/flux, 2024.
+
+
+      
+
+[18]
+
+Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu.
+
+
+Dpm-solver: A fast ode solver for diffusion probabilistic model sampling in around 10 steps.
+
+
+arXiv preprint arXiv:2206.00927, 2022.
+
+
+      
+
+[19]
+
+Nanye Ma, Shangyuan Tong, Haolin Jia, Hexiang Hu, Yu-Chuan Su, Mingda Zhang, Xuan Yang, Yandong Li, Tommi Jaakkola, Xuhui Jia, et al.
+
+
+Inference-time scaling for diffusion models beyond scaling denoising steps.
+
+
+arXiv preprint arXiv:2501.09732, 2025.
+
+
+      
+
+[20]
+
+Boming Miao, Chunxiao Li, Xiaoxiao Wang, Andi Zhang, Rui Sun, Zizhe Wang, and Yao Zhu.
+
+
+Noise diffusion for enhancing semantic faithfulness in text-to-image synthesis.
+
+
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 23575–23584, 2025.
+
+
+      
+
+[21]
+
+OpenAI.
+
+
+Gpt-4o system card, 2024.
+
+
+      
+
+[22]
+
+Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas Müller, Joe Penna, and Robin Rombach.
+
+
+SDXL: Improving latent diffusion models for high-resolution image synthesis.
+
+
+In The Twelfth International Conference on Learning Representations, 2024.
+
+
+      
+
+[23]
+
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+
+
+High-resolution image synthesis with latent diffusion models.
+
+
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pages 10684–10695, 2022.
+
+
+      
+
+[24]
+
+Chitwan Saharia, William Chan, Saurabh Saxena, Lala Li, Jay Whang, Emily L Denton, Kamyar Ghasemipour, Raphael Gontijo Lopes, Burcu Karagol Ayan, Tim Salimans, et al.
+
+
+Photorealistic text-to-image diffusion models with deep language understanding.
+
+
+Advances in Neural Information Processing Systems, 35:36479–36494, 2022.
+
+
+      
+
+[25]
+
+Tim Salimans, Ian Goodfellow, Wojciech Zaremba, Vicki Cheung, Alec Radford, and Xi Chen.
+
+
+Improved techniques for training gans, 2016.
+
+
+      
+
+[26]
+
+Jiaming Song, Chenlin Meng, and Stefano Ermon.
+
+
+Denoising diffusion implicit models.
+
+
+arXiv preprint arXiv:2010.02502, 2020.
+
+
+      
+
+[27]
+
+Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+
+
+Score-based generative modeling through stochastic differential equations.
+
+
+In International Conference on Learning Representations, 2021.
+
+
+      
+
+[28]
+
+Aravindan Sundaram, Ujjayan Pal, Abhimanyu Chauhan, Aishwarya Agarwal, and Srikrishna Karanam.
+
+
+Cocono: Attention contrast-and-complete for initial noise optimization in text-to-image synthesis, 2024.
+
+
+      
+
+[29]
+
+Yunze Tong, Fengda Zhang, Zihao Tang, Kaifeng Gao, Kai Huang, Pengfei Lyu, Jun Xiao, and Kun Kuang.
+
+
+Latent score-based reweighting for robust classification on imbalanced tabular data.
+
+
+In Forty-second International Conference on Machine Learning, 2025.
+
+
+      
+
+[30]
+
+Guangxuan Xiao, Tianwei Yin, William T Freeman, Frédo Durand, and Song Han.
+
+
+Fastcomposer: Tuning-free multi-subject image generation with localized attention.
+
+
+International Journal of Computer Vision, pages 1–20, 2024.
+
+
+      
+
+[31]
+
+Jiazheng Xu, Xiao Liu, Yuchen Wu, Yuxuan Tong, Qinkai Li, Ming Ding, Jie Tang, and Yuxiao Dong.
+
+
+Imagereward: Learning and evaluating human preferences for text-to-image generation.
+
+
+Advances in Neural Information Processing Systems, 36:15903–15935, 2023.
+
+
+      
+
+[32]
+
+Jinluan Yang, Anke Tang, Didi Zhu, Zhengyu Chen, Li Shen, and Fei Wu.
+
+
+Mitigating the backdoor effect for multi-task model merging via safety-aware subspace.
+
+
+arXiv preprint arXiv:2410.13910, 2024a.
+
+
+      
+
+[33]
+
+Jinluan Yang, Ruihao Zhang, Zhengyu Chen, Teng Xiao, Yueyang Wang, Fei Wu, and Kun Kuang.
+
+
+Discovering invariant neighborhood patterns for heterophilic graphs.
+
+
+arXiv preprint arXiv:2403.10572, 2024b.
+
+
+      
+
+[34]
+
+Jinluan Yang, Zhengyu Chen, Teng Xiao, Yong Lin, Wenqiao Zhang, and Kun Kuang.
+
+
+Leveraging invariant principle for heterophilic graph structure distribution shifts.
+
+
+In Proceedings of the ACM on Web Conference 2025, pages 1196–1204, 2025a.
+
+
+      
+
+[35]
+
+Jinluan Yang, Dingnan Jin, Anke Tang, Li Shen, Didi Zhu, Zhengyu Chen, Ziyu Zhao, Daixin Wang, Qing Cui, Zhiqiang Zhang, et al.
+
+
+Mix data or merge models? balancing the helpfulness, honesty, and harmlessness of large language model via model merging.
+
+
+arXiv preprint arXiv:2502.06876, 2025b.
+
+
+      
+
+[36]
+
+Jinluan Yang, Ruihao Zhang, Zhengyu Chen, Fei Wu, and Kun Kuang.
+
+
+Unifying adversarial perturbation for graph neural networks.
+
+
+arXiv preprint arXiv:2509.00387, 2025c.
+
+
+      
+
+[37]
+
+Hu Ye, Jun Zhang, Sibo Liu, Xiao Han, and Wei Yang.
+
+
+Ip-adapter: Text compatible image prompt adapter for text-to-image diffusion models.
+
+
+2023.
+
+
+      
+
+[38]
+
+Hengrui Zhang, Jiani Zhang, Balasubramaniam Srinivasan, Zhengyuan Shen, Xiao Qin, Christos Faloutsos, Huzefa Rangwala, and George Karypis.
+
+
+Mixed-type tabular data synthesis with score-based diffusion in latent space.
+
+
+In The twelfth International Conference on Learning Representations, 2024.
+
+
+      
+
+[39]
+
+Lvmin Zhang, Anyi Rao, and Maneesh Agrawala.
+
+
+Adding conditional control to text-to-image diffusion models, 2023.
+
+
+      
+
+[40]
+
+Zikai Zhou, Shitong Shao, Lichen Bai, Shufei Zhang, Zhiqiang Xu, Bo Han, and Zeke Xie.
+
+
+Golden noise for diffusion models: A learning framework.
+
+
+In International Conference on Computer Vision, 2025.
+
+
+      
+
+[41]
+
+Didi Zhu, Yibing Song, Tao Shen, Ziyu Zhao, Jinluan Yang, Min Zhang, and Chao Wu.
+
+
+Remedy: Recipe merging dynamics in large vision-language models.
+
+
+In The Thirteenth International Conference on Learning Representations, 2025.
+
+
+    
+
+
+
+
+
+
+  
+    Experimental support, please
+    view the build logs
+    for errors. Generated by
+    
+      
+        L
+        A
+        T
+        E
+      
+      xml
+      
+    .
+  
+  
+    
+Instructions for reporting errors
+    
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+    
+      
+Click the "Report Issue" (
+            
+          ) button, located in the page header.
+    
+    
+Tip: You can select the relevant text first, to include it in your report.
+    
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+    
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+  
+
+  
+    
+      
+        We gratefully acknowledge support from our major funders,
+        member institutions, ,
+        and all contributors.
+      
+      
+        About ·
+        Help ·
+        Contact ·
+        Subscribe ·
+        Copyright ·
+        Privacy ·
+        Accessibility ·
+        Operational Status (opens in new tab)
+      
+    
+  
+
+  
+    
+      
+    
+  
+
+

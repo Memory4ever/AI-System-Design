@@ -1,0 +1,1021 @@
+Warning: truncated output (original token count: 23572)
+Total output lines: 1205
+
+https://arxiv.org/html/2610.29183v1
+Resuming Vision-Language Inference across Onboard Interruptions
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract.
+1 Introduction
+2 Background
+2.1 On-Satellite Vision-Language Models
+2.2 Bus-enforced Shutdowns in On-Satellite VLM Inference
+3 Design Overview
+4 Efficient Checkpointing
+4.1 Block-wise Prefill Checkpointing
+4.2 Checkpointing Vision and Decode
+4.3 I/O-Efficient Storage Layout
+5 Dynamic Recovery
+5.1 Dependency-Aware Recovery
+5.2 Recovery as a Scheduling Problem
+5.3 Optimal Recovery Plan
+6 Implementation
+7 Evaluation
+7.1 Experiment setup
+7.2 End-to-end performance
+7.3 Recovery latency
+7.4 Checkpoint overhead
+7.5 Disk wear
+7.6 Energy consumption
+7.7 Case Study: Real Deployment on Sat-1 and Sat-2
+8 Discussion
+9 Related Work
+10 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.29183v1 [cs.DC] 21 Oct 2026
+Resuming Vision-Language Inference across Onboard Interruptions
+Xiaolong Huang
+Affiliation: Peking University , Beijing , China
+email: huangxiaolong@pku.edu.cn
+,
+Yinyuan Zhang
+Affiliation: Peking University , Beijing , China
+email: yinyuanzhang16@stu.pku.edu.cn
+,
+Daliang Xu
+Note: Corresponding author.
+Affiliation: Beijing University of Posts and Telecommunications , Beijing , China
+email: xudaliang@bupt.edu.cn
+,
+Yun Ma
+Affiliation: Peking University , Beijing , China
+email: mayun@pku.edu.cn
+,
+Qing Li
+Affiliation: Beijing University of Posts and Telecommunications , Beijing , China
+email: qingli@bupt.edu.cn
+,
+Mengwei Xu
+Affiliation: Beijing University of Posts and Telecommunications , Beijing , China
+email: mwx@bupt.edu.cn
+,
+Shangguang Wang
+Affiliation: Beijing University of Posts and Telecommunications , Beijing , China
+email: sgwang@bupt.edu.cn
+,
+Gang Huang
+Affiliation: Peking University , Beijing , China
+email: hg@pku.edu.cn
+and
+Xuanzhe Liu
+Affiliation: Peking University , Beijing , China
+email: liuxuanzhe@pku.edu.cn
+Abstract.
+Executing vision-language models (VLMs) aboard low-Earth orbit satellites enables flexible processing of observation data without first downlinking it to the ground. On commercial off-the-shelf payloads, however, a request may span multiple execution windows: power and thermal constraints, fault-triggered reboots, and competing payload demands can interrupt inference before it completes. Each shutdown discards volatile activations and KV caches, forcing an unprotected request to repeat work after restart.
+We present OrbitWeaver, a framework that preserves VLM inference progress across onboard interruptions through coordinated checkpointing and recovery. Its phase-aware checkpointing selects recovery boundaries according to the state lifetimes and computational characteristics of vision encoding, language-model prefill, and decoding, balancing storage traffic against recomputation. Its dependency-aware dynamic recovery schedules restoration from partially completed states across the layer and token-chunk dimensions. By overlapping checkpoint and weight reads with recomputation, it reduces restart latency; the recovery planner computes an optimal execution order under its scheduling model within 100 ms.
+Experiments on satellite payload hardware using on-orbit telemetry traces show up to a 4.07 × \times end-to-end speedup and a 3.56 × \times reduction in SSD write volume over the evaluated baselines. A 72-hour deployment on two low-Earth orbit satellites demonstrates that OrbitWeaver retains inference progress and resumes execution across repeated bus-enforced shutdowns.
+1. Introduction
+Low-Earth orbit (LEO) satellites are emerging as powerful platforms for satellite computing ( Denby and Lucia, 2020 ) , a new paradigm that shifts heavy data processing directly to orbit to overcome the intolerable latency of the traditional bent-pipe architecture.
+Backed by the integration of commercial off-the-shelf (COTS) edge hardware (e.g., NVIDIA GPUs on Starcloud-1 ( Starcloud, Inc., n.d. ) ), this high-performance orbital infrastructure is now physically accessible and cost-effective ( Xing et al., 2024 ; Federal Communications Commission, 2026 ; Agüera y Arcas et al., 2025 ) .
+Leveraging these advanced platforms, Vision-Language Models (VLMs) are rapidly becoming the premier workload for dynamic space missions.
+Instead of relying on fragmented, task-specific models, VLMs offer unified, on-the-fly functional elasticity for effortless mission redirection ( Zhang et al., 2025b ; Kuckreja et al., 2024 ; Wang and Qiu, 2025 ) .
+Pioneering space-agency initiatives, such as NASA’s Prithvi geospatial foundation model and the European Space Agency’s (ESA) Phi-Sat-2 mission, have recently validated the feasibility of executing such foundation models directly in orbit ( Du et al., 2025a ) , marking the dawn of intelligent satellite computing.
+Mismatch: sustained VLM execution vs. bus-enforced interruptions.
+On-orbit VLM inference requires sustained computation, while spacecraft-level control can interrupt payload execution before a request completes.
+Long-running on-orbit VLM workloads.
+VLM inference on satellites can involve high-resolution images or multiple images within a single request.
+These inputs can produce long visual-token sequences, increasing the computation needed to complete the request.
+For example, Earth observation (EO) workloads can involve processing image sequences of up to 30 frames ( Ding et al., 2026 ) and images reaching 44.93 megapixels ( Luo et al., 2025 ) .
+Our in-orbit evaluation of Qwen3-VL 2B on Sat-1 and Sat-2 shows that a typical 3-minute mission processes only 8 frames ( > 32 ​ K >32K tokens).
+Short and unpredictable inference survival windows.
+Onboard computing payloads face unpredictable interruptions that severely truncate execution windows. These abrupt halts primarily stem from three sources:
+(i) Bus-enforced hard shutdowns due to dynamic power constraints or thermal violations ( Common Instrument Interface Project, 2011 ) . For example, VLM inference on Sat-1 and Sat-2 1 1
+1
+We refer to the two satellites as Sat-1 and Sat-2 throughout this paper. spikes the payload temperature from 45 ∘ ​ C 45^{\circ}\text{C} to 55 ∘ ​ C 55^{\circ}\text{C} in just 48 s, leading to sudden thermal cutoffs that vary drastically depending on the satellite’s orbital state.
+(ii) On-orbit anomalies (e.g., radiation-induced SEUs or software faults) that trigger the Fault Detection, Isolation, and Recovery (FDIR) system. FDIR forces sudden system reboots to clear errors; our private LEO satellite telemetry data reveals that in worst-case scenarios, such reboots occur as frequently as once per minute ( Evans et al., 2016 ) .
+(iii) Resource contention from intermittent, high-priority payloads (e.g., bursty transceivers or laser transmitters) that preempt shared bus resources ( Fong et al., 2011 ) .
+To tackle this mismatch, we propose OrbitWeaver, an efficient and reliable VLM inference engine designed for satellite computing.
+OrbitWeaver achieves transparent, minimal-overhead preservation of VLM execution progress by dynamically checkpointing essential states to onboard non-volatile storage (e.g., eMMC/SSD).
+Upon rebooting, it swiftly reconstructs the context to resume inference.
+Achieving this goal requires addressing two challenges:
+∙ \bullet Checkpointing phase: fast checkpointing vs. efficient recovery.
+Preserving execution progress creates a dilemma: minimizing checkpointing I/O for active inference speed versus maximizing progress preservation for rapid recovery.
+Fine-grained checkpointing (e.g., per-token/layer) captures complete progress but incurs substantial I/O overheads, whereas coarse-grained checkpointing (e.g., per-chunk) minimizes I/O but forces expensive recomputation of discarded intra-chunk states.
+This trade-off manifests across all VLM phases.
+For instance, in memory-bound decoding, saving per-token KV caches and hidden states ensures optimal recovery at prohibitive costs (>100%), while merely saving token IDs eliminates I/O but forces full KV cache recomputation from scratch, introducing a latency of > 50 >50 seconds.
+∙ \bullet Recovery phase: unavoidable weight-checkpoint I/O in unstructured resumption.
+Unlike traditional LLM context switching with uniform states (e.g., full prompt KV caches), arbitrary orbital bus-enforced interruptions leave an irregular, “staircase-like” inference progress state.
+Resuming from this unstructured state complicates masking the coupled I/O overhead of reloading static weights alongside dynamic KV caches and hidden states from disparate positions.
+Specifically, loading a layer’s weights unlocks computation across multiple chunks, whereas loading its KV cache only enables that specific chunk.
+With numerous valid starting points along this irregular boundary, finding the optimal execution sequence to maximize compute-I/O overlap under complex dependency constraints becomes a highly non-trivial scheduling challenge.
+To solve these challenges, OrbitWeaver incorporates two key techniques:
+∙ \bullet Phase-aware checkpointing.
+To resolve the checkpointing dilemma, OrbitWeaver leverages the heterogeneous lifespans of VLM states (persistent KV caches vs. transient hidden states) and phase-specific bottlenecks to establish adaptive recovery boundaries:
+(i) Vision encoding (layer boundary):
+Because bidirectional self-attention couples all image patches, patch chunks cannot be finalized independently.
+OrbitWeaver therefore persists the full-patch hidden state after each vision layer, using layer boundaries as recovery points.
+(ii) LLM prefill (2D block boundary):
+Because prefill is compute-bound, checkpointing both KV Cache and hidden states minimally impacts active inference.
+To mitigate SSD wear-out, OrbitWeaver groups operations into 2D blocks (execution grids spanning multiple sequence chunks and model layers), checkpointing transient hidden states exclusively at block boundaries.
+(iii) LLM decoding (multi-token boundary):
+Decoding is memory-bound, making per-token checkpointing prohibitively expensive.
+Recognizing that the decoding recovery bottleneck is massive weight-loading I/O rather than lightweight recomputation, OrbitWeaver aggregates KV cache updates across multi-token boundaries.
+This amortizes flash write overhead, as the slight recomputation increase is completely masked by the inevitable weight-loading I/O.
+∙ \bullet Dependency-aware dynamic recovery.
+To mitigate coupled I/O bottlenecks during unstructured resumption, we observe that despite recovery computation heavily outweighing I/O latency, strict dependencies still cause severe I/O stalls.
+To maximize compute-I/O overlap, OrbitWeaver unlocks dependencies multi-dimensionally:
+(i) 2D block-first recovery:
+Rigid layer- or chunk-first strategies only resolve single-dimension dependencies.
+Instead, executing a 2D block immediately unlocks both horizontal (chunk) and vertical (layer) dependencies, triggering a computation cascade to mask concurrent SSD reads.
+(ii) Optimal scheduling plan:
+Selecting the optimal ready block to minimize recovery latency is critical, as each choice unlocks distinct downstream computation cascades to maximize I/O masking; yet this scheduling is NP-hard.
+We dramatically prune this search space via two domain-specific properties: (a) deferring hidden state loads to retain DRAM activations and avoid redundant SSD reads, and (b) packing layer-wise I/O to coalesce weight reads into coarse-grained streams.
+This enables OrbitWeaver to mathematically solve the optimal execution order within 100 ms.
+We implemented OrbitWeaver atop transformers ( Wolf et al., 2020 ) and evaluated it on hardware testbeds mirroring two real satellite computing payloads: the NVIDIA Jetson Orin NX (16 GB) and AGX Orin (64 GB).
+These represent the onboard platforms of Sat-1 and Sat-2.
+Our evaluations are driven by five interruption traces: four derived from telemetry collected on Sat-1 and Sat-2, and one from the Dellingr satellite ( Hatfield, 2018 ) .
+Using these scenarios, we run advanced edge-viable VLMs, including Qwen3-VL 2B/4B/8B and MiniCPM-V 4.5, on remote sensing QA datasets.
+Compared to three state-of-the-art baselines (two variants of a representative intermittent DNN execution runtime and a conventional KV cache context-saving approach), OrbitWeaver achieves up to a 4.07 × \times end-to-end speedup.
+Furthermore, it reduces checkpointing and recovery latency by up to 61.9% and 85.6%, respectively, while slashing SSD write volume by up to 3.56 × \times .
+To the best of our knowledge, we are the first academic work to successfully deploy and sustain VLM inference directly in orbit. We deployed OrbitWeaver on Sat-1 and Sat-2 for a 72-hour in-situ earth observation case study. The deployment demonstrates that OrbitWeaver preserves progress and sustains VLM inference across repeated bus-enforced shutdowns.
+Our contributions are summarized as follows:
+•
+We are the first to identify the bottleneck of bus-enforced shutdowns in on-satellite VLM
+inference.
+•
+We propose OrbitWeaver, the first efficient and reliable VLM inference system for satellite computing by introducing efficient checkpointing and recovery.
+•
+We implement OrbitWeaver and deploy it on Sat-1 and Sat-2. Our evaluation shows that OrbitWeaver achieves up to a 4.07 × \times end-to-end speedup, while a 72-hour in-orbit deployment demonstrates sustained VLM inference across repeated bus-enforced shutdowns.
+2. Background
+Figure 1. Satellite architecture diagram. TT&C = = Telemetry, Tracking, and Command; OBC = = On-Board Computer; FDIR = = Fault Detection, Isolation, and Recovery; EPS = = Electrical Power System. Satellite computing architecture with payload sensing and computing components connected to bus support and control subsystems.
+Figure 2. The temperature trace measures payload enclosure temperature. TT&C = = Telemetry, Tracking, and Command; OBC = = On-Board Computer; FDIR = = Fault Detection, Isolation, and Recovery; EPS = = Electrical Power System. Three-panel workflow showing the payload enclosure temperature trace, thermal-triggered payload power off, spacecraft bus recovery control, and VLM inference stages from image tokens to KV cache.
+2.1. On-Satellite Vision-Language Models
+Satellite computing shifts data processing and services directly to orbit.
+This approach overcomes the severe communication bottlenecks of the traditional bent-pipe architecture, where limited downlink bandwidth and brief contact windows make downlinking raw data for ground-side processing intolerably slow for modern space missions ( Denby and Lucia, 2020 ) .
+This orbital computing capability is enabled by moving beyond traditional radiation-hardened controllers and integrating commercial off-the-shelf (COTS) computing platforms—such as CPUs, GPUs, and FPGAs—into modern satellites ( Xing et al., 2024 ; Denby et al., 2023 ; Giuffrida et al., 2022 ; Rapuano et al., 2021 ) .
+Consequently, satellites are evolving from simple data collectors into orbital edge nodes capable of executing diverse tasks.
+Early examples include onboard filtering to discard cloudy images (Phi-Sat-1 ( Giuffrida et al., 2022 ) ) or select high-value samples (Kodan ( Denby et al., 2023 ) ).
+More recently, platforms like Starcloud-1 are pushing hardware boundaries by carrying data-center-class NVIDIA H100 GPUs in orbit, demonstrating that high-performance AI accelerators can now be deployed as standard satellite payloads.
+As shown in Figure 1 , a typical satellite computing platform consists of a computing payload and a spacecraft bus that supports, monitors, and controls the payload.
+The payload runs a VLM inference engine on top of an operating system, using SSD for persistent storage, RAM for volatile memory, and CPUs and GPUs for computation.
+During inference, the engine loads model weights and input data from SSD into RAM and dispatches tensor operations to the processors, while intermediate tensors and runtime states remain in volatile memory.
+Meanwhile, the spacecraft bus supplies payload power through the electrical power system (EPS), monitors payload temperature through sensors, and manages communication and fault protection through TT&C and the onboard computer (OBC) with FDIR.
+These bus subsystems communicate over a CAN bus and can disconnect payload power or trigger a reboot when power, thermal, or safety constraints require intervention, abruptly interrupting the ongoing inference.
+Vision-Language Models for LEO satellites.
+With advanced hardware in orbit, satellite computing tasks are rapidly shifting toward VLMs.
+For critical applications like Earth observation (EO), traditional fragmented, task-specific models are being replaced by VLMs, which offer a “one-for-all”, prompt-driven framework that provides functional elasticity for dynamic missions without retraining overhead ( Du et al., 2025a ) .
+Furthermore, driven by the massive expansion of LEO constellations, initiatives like Starcloud ( Feilden et al., 2024 ) are actively constructing “space data centers” to deliver real-time, space-native VLM inference and token generation services directly to users.
+Robust, sustained VLM execution is therefore essential for next-generation LEO systems.
+On-satellite VLM inference pipeline.
+A VLM is a multimodal model that converts images and text instructions into text outputs by combining visual encoding with language-model generation.
+As illustrated in Figure 2 , after the on-board camera captures an image, the acquired visual data is fed into the VLM for inference, initiating a three-phase pipeline.
+In the first phase (vision encoding), a Vision Transformer partitions the input image into patches and encodes them into visual tokens ( Dosovitskiy et al., 2021 ) .
+During the second phase (LLM prefill), the model processes these visual tokens alongside the prompt tokens, establishing the attention state and initializing the Key-Value (KV) cache for the multimodal context.
+Finally, in the LLM decoding phase, the language model generates the response autoregressively, producing one token at a time while continuously utilizing and updating the KV cache established during the prefill phase.
+These phases involve different intermediate states, including visual tokens, prefill states, KV cache, and partial outputs.
+2.2. Bus-enforced Shutdowns in On-Satellite VLM Inference
+Onboard computing payloads operate under strict spacecraft-wide power and safety constraints.
+The spacecraft bus can abruptly disconnect payload power to preserve essential functions or protect hardware, regardless of the inference software’s status ( National Aeronautics and Space Administration, 2025 ; Evans et al., 2016 ) .
+We term these platform-initiated interruptions bus-enforced shutdowns , which can terminate VLM requests unpredictably. They primarily stem from three sources:
+∙ \bullet Dynamic power and thermal constraints.
+The electrical power system (EPS) autonomously sheds non-essential loads (e.g., computing payloads) when demand exceeds supply ( National Aeronautics and Space Administration, 2025 ; Ali et al., 2026 ) .
+This power availability fluctuates with solar illumination and battery aging, which alters discharge curves over time and makes supply highly non-linear.
+Furthermore, thermal limits force sudden shutdowns. As shown in Figure 2 , VLM inference on Sat-1 spikes the payload enclosure temperature from 45 ∘ ​ C 45^{\circ}\text{C} to the 55 ∘ ​ C 55^{\circ}\text{C} threshold in just 48 s, triggering an immediate power-off. Driven by external orbital states, these shutdowns are entirely decoupled from VLM execution boundaries (e.g., prefill and decoding steps).
+∙ \bullet Hardware/software anomalies and FDIR interventions.
+The harsh space environment introduces stochastic anomalies, such as radiation-induced Single-Event Upsets (SEUs) or software faults (e.g., erroneously activating Sun-pointing during an eclipse).
+The onboard Fault Detection, Isolation, and Recovery (FDIR) system continuously monitors payload health. Upon detecting these anomalies or hardware violations (e.g., overcurrent) ( Evans et al., 2016 ) , FDIR forces sudden system reboots to clear errors. These fault-protection actions occur randomly, completely ignoring any payload execution schedule. Our private LEO satellite telemetry data reveals worst-case scenarios where these unpredictable reboots occur once per minute.
+∙ \bullet Resource contention from intermittent payloads.
+The computing payload shares the bus with high-priority, intermittent payloads (e.g., bursty transceivers) ( Fong et al., 2011 ) . Their unpredictable activation—driven by ground station visibility or mission commands—aggressively consumes limited power and thermal budgets, often preempting the computing payload ( Fong et al., 2011 ; Ali et al., 2026 ) .
+Together, these stochastic factors render payload shutdown timing and duration highly erratic and not practical to profile offline.
+On-satellite VLM inference needs fast checkpointing and recovery.
+As illustrated in Figure 2 , bus-enforced shutdowns can terminate any inference phase and discard its in-memory states, including ViT/LLM hidden states and the KV cache.
+Restoring power alone therefore cannot resume execution; recovery requires checkpoints persisted in non-volatile storage.
+Consequently, VLM inference requires low-overhead checkpointing and rapid recovery without advance knowledge of shutdown timing.
+Our scope addresses execution interruption and volatile state loss, assuming persistent weights and checkpoints in non-volatile storage remain intact (leaving radiation-induced persistent storage corruption to orthogonal hardware research).
+3. Design Overview
+Satellite computing architecture with payload sensing and computing components connected to bus support and control subsystems.
+Figure 3. Overview Satellite computing architecture with payload sensing and computing components connected to bus support and control subsystems.
+We present OrbitWeaver, an efficient and reliable VLM inference system designed for COTS satellites.
+Figure 3 shows the overview of OrbitWeaver.
+To address the progress-loss problem caused by bus-enforced shutdowns, OrbitWeaver adopts checkpointing and recovery to make VLM inference resumable across power-off and reset events.
+During inference, OrbitWeaver persists selected boundary states from volatile memory to SSD; after a shutdown, it validates and reloads the latest checkpoint to reconstruct the execution context and continue the unfinished request instead of restarting from scratch.
+However, making checkpointing and recovery efficient on COTS satellites is nontrivial.
+Checkpointing must preserve enough state to resume each VLM phase, but excessive persistence increases SSD traffic, energy use, and normal-path latency.
+Recovery must reload model weights and checkpointed states from SSD, but a poor recovery order exposes I/O stalls and leaves little useful computation time within each short execution window.
+To address these two challenges, OrbitWeaver introduces two techniques.
+Efficient checkpointing.
+OrbitWeaver defines phase-aware recoverable units that preserve only the states needed for resumption while bounding runtime checkpoint overhead.
+For LLM prefill, OrbitWeaver uses block-wise checkpointing over token chunks and layer groups, avoiding the hidden-state write cost of layer-wise checkpointing and the recomputation cost of chunk-wise checkpointing.
+For vision encoding, OrbitWeaver checkpoints layer-boundary hidden states because bidirectional attention makes patch chunks invalid recovery units.
+For decoding, OrbitWeaver batches KV cache checkpoints across generated tokens to avoid excessive small writes.
+OrbitWeaver further uses phase-specific storage layouts to reduce I/O interference, avoid unnecessary recovery reads, and ensure crash-consistent checkpoint persistence.
+Dynamic recovery.
+OrbitWeaver reduces recovery latency by scheduling SSD reads and block computation over the checkpointed frontier.
+Instead of following a fixed chunk-first or layer-first order, OrbitWeaver restores the states that unlock useful computation and overlaps later SSD reads with dependency-ready blocks.
+By exploiting the regular dependency structure of VLM prefill, OrbitWeaver reduces recovery planning to layer-level I/O ordering and solves it with a lightweight dynamic programming algorithm.
+4. Efficient Checkpointing
+OrbitWeaver preserves VLM progress across satellite shutdowns by persisting intermediate states at checkpoint boundaries.
+Each boundary must expose enough state for correct resumption while limiting SSD traffic, energy cost, and runtime overhead. We identify three primary issues:
+•
+VLM phases expose different state dependencies, so a uniform checkpoint boundary cannot efficiently support vision encoding, prefill, and decoding;
+•
+Checkpoint granularity creates a recomputation–write trade-off: persisting more states reduces replay after shutdowns, but increases checkpoint writes during normal execution.
+•
+Checkpoint persistence must be storage-aware: fragmented writes increase runtime overhead and SSD wear, while storing hidden states and KV tensors in an interleaved layout forces recovery to read unnecessary data.
+To address these issues, OrbitWeaver designs phase-aware recoverable units.
+It uses block-wise checkpointing for prefill (§ 4.1 ), phase-specific checkpointing for vision and decoding (§ 4.2 ), and an SSD layout that supports efficient and crash-consistent checkpoint persistence (§ 4.3 ).
+4.1. Block-wise Prefill Checkpointing
+When prefill completes without a shutdown, preserving its KV cache is sufficient for the later decoding phase.
+However, a satellite reset may occur in the middle of prefill, discarding all in-memory progress before the final KV cache is produced.
+Therefore, OrbitWeaver must checkpoint prefill at finer granularity, along its layer and token dimensions. This leads to two straightforward checkpoint placements.
+Figure 4. OrbitWeaver’s checkpointing strategies. Comparison of layer-wise, chunk-wise, and block-wise prefill checkpointing, with computation blocks, intermediate states, and checkpoint boundaries.
+Trade-off between checkpointing overhead and lost computation for different block sizes.
+Figure 5. Storage–recomputation trade-off of different checkpointing granularities. Trade-off between checkpointing overhead and lost computation for different block sizes.
+Naïve solution: Layer-wise checkpointing.
+A natural design is to follow the LLM’s layer-by-layer execution order and place a checkpoint boundary after each layer, as shown in Figure 4 (a).
+However, this layer-level granularity comes at a high checkpointing cost.
+Since recovery from a layer boundary requires the input to the next layer, OrbitWeaver must persist the full-sequence hidden state at every layer boundary, whose size scales with the multimodal input length, including both visual tokens and prompt tokens.
+As shown in Figure 5 , layer-wise checkpointing minimizes lost progress but requires the largest checkpoint storage: about 14.34 14.34 GiB for Qwen3-VL 2B and 27.65 27.65 GiB for MiniCPM-V 4.5.
+Naïve solution: Chunk-wise checkpointing.
+Another design is to partition the input sequence into fixed-size chunks and place a checkpoint boundary after each chunk completes all L L layers, as shown in Figure 4 (b).
+This reduces checkpoint traffic: after a chunk finishes all layers, the checkpoint only needs to preserve the KV tensors produced by the chunk, rather than full-sequence hidden states after every layer.
+As shown in Figure 5 , chunk-wise checkpointing keeps storage near the total KV size, but incurs the highest recomputation overhead: about 14.34 × 10 3 14.34\times 10^{3} and 18.43 × 10 3 18.43\times 10^{3} token-layers for Qwen3-VL 2B and MiniCPM-V 4.5, respectively.
+The comparison above reveals a structural property of LLM prefill: KV tensors are long-lived context; once produced, they are reused by later chunks and by decoding. Hidden states are short-lived boundary states; they are only needed to feed the next layer group after recovery.
+Layer-wise checkpointing over-preserves hidden states, while chunk-wise checkpointing under-preserves them and cannot resume inside a chunk.
+OrbitWeaver exploits this separation by maintaining a minimal recovery frontier: it accumulates KV tensors for completed computation and materializes hidden states only at sparse layer-group boundaries.
+OrbitWeaver design: Block-wise checkpointing.
+Based on this frontier view, OrbitWeaver partitions prefill along both the token and layer dimensions.
+It splits the input sequence into chunks of C C tokens and groups the L L LLM layers into groups of G G consecutive layers, forming a two-dimensional grid of recoverable units (Figure 4 (c)).
+Each unit computes G G layers over C C tokens.
+When a unit completes, OrbitWeaver persists the KV tensors produced by the unit and the hidden states at the output boundary of the layer group.
+This design preserves only the states needed at the recovery frontier.
+Compared with layer-wise checkpointing, it avoids persisting full-sequence hidden states after every layer.
+Compared with chunk-wise checkpointing, it can resume inside a chunk and replay at most the unfinished G × C G\times C unit instead of the entire chunk across all L L layers.
+The choice of G G and C C determines where OrbitWeaver operates on the storage–recomputation trade-off.
+Smaller units reduce recomputation after a reset but increase transfer, write, and metadata overhead; larger units reduce checkpointing overhead but lose more computation after a shutdown.
+OrbitWeaver selects G G and C C through lightweight offline calibration on the LRS-VQA ( Luo et al., 2025 ) for each model-device pair.
+The calibration profiles a small set of candidate configurations on representative prefill inputs and selects the one that satisfies a user-defined checkpoint overhead budget while bounding the replay cost after a reset.
+With G = 4 G=4 , OrbitWeaver reduces lost progress to about 2.04 × 10 3 2.04\times 10^{3} token-layers for both models, with checkpoint sizes of 8.96 8.96 GiB for Qwen3-VL 2B and 13.82 13.82 GiB for MiniCPM-V 4.5 (Figure 5 ).
+4.2. Checkpointing Vision and Decode
+Beyond LLM prefill, the other VLM phases expose different recovery boundaries.
+Vision encoding is dominated by layer-by-layer bidirectional attention, while decoding advances autoregressively one token at a time.
+OrbitWeaver therefore uses phase-specific checkpointing policies for these two phases.
+Layer-wise vision checkpointing.
+Unlike LLM prefill, whose causal attention allows completed token chunks to be finalized independently, vision encoding uses bidirectional self-attention over all patches ( Dosovitskiy et al., 2021 ) .
+Since each patch output depends on the full patch sequence, patch chunks cannot serve as valid recovery units.
+Once a vision layer completes, its full-patch hidden state becomes the complete input to the next layer, so OrbitWeaver checkpoints vision encoding at layer boundaries by persisting this state.
+Batched decode checkpointing.
+Decoding advances autoregressively, generating one output token at a time.
+Each generated token appends new entries to the KV cache, and future tokens depend on these entries.
+Therefore, decoding only checkpoints the KV cache as its recoverable progress state, while hidden states are transient within each decode step and need not be persisted.
+Checkpointing after every token minimizes replay but is inefficient: each token adds only a small KV slice, so per-token checkpoints cause frequent device-to-host transfers and fragmented SSD writes.
+This is especially costly for memory-bound decoding ( Zhong et al., 2024 ) , where extra checkpoint writes compete with incremental KV cache access.
+OrbitWeaver therefore batches decode checkpoints.
+It accumulates the KV slices for D D generated tokens and persists them as one checkpoint unit, together with the generated token IDs and the current decode position.
+If a reset occurs between two decode checkpoints, recovery reloads the latest persisted KV cache and replays at most D D decode steps.
+4.3. I/O-Efficient Storage Layout
+The checkpointing policies above define logical recoverable units; OrbitWeaver then lays out their persisted states according to each phase’s access
+pattern to reduce I/O overhead and ensure crash consistency.
+Figure 6. Checkpoint storage layout for prefill, vision, and decode. Storage layout for persisted checkpoints across prefill, vision, and decoding, including KV cache and hidden-state buffers.
+Prefill layout.
+This layout is optimized for the asymmetric access patterns of checkpointing and recovery.
+For block-wise prefill checkpoints, OrbitWeaver stores the states produced at each completed block boundary as one contiguous record (Figure 6 (a)), which turns each checkpoint into a sequential write.
+Each record separates boundary hidden states from the block’s multi-layer KV tensors: the former resumes the next layer group, while the latter serves later chunks and decoding.
+This separation lets recovery restore only the needed hidden-state or KV region, avoiding unnecessary I/O.
+OrbitWeaver further stores KV tensors in layer-major order, allowing a layer’s prefix KV to be restored through sequential reads.
+Vision layout.
+For vision checkpoints, OrbitWeaver reduces storage overhead by persisting only the layer-boundary hidden states (Figure 6 (b)).
+Each hidden-state checkpoint is written as one contiguous record.
+To tolerate resets during checkpoint writes, OrbitWeaver alternates between two aligned buffers: the new buffer is marked valid only after its write completes, while the previous buffer remains valid during the write.
+If a reset interrupts the current write, recovery selects the newest complete buffer.
+Decode layout.
+Decode checkpoints must handle a dynamically growing output sequence (Figure 6 (c)).
+Since future token length is unknown, OrbitWeaver uses an append-only layout instead of preallocating fixed regions for layers or positions.
+Each decode checkpoint appends the KV slices generated by one decode batch as a single record.
+Within the record, keys from all layers are written contiguously, followed by values from all layers, turning batched KV updates into sequential writes.
+This layout grows naturally with generation while preserving efficient checkpoint persistence.
+Checksum and crash consistency.
+System resets can happen during checkpoint writes, leaving partially written checkpoint data on storage.
+To handle this, OrbitWeaver appends a checksum-protected commit footer to each checkpoint record.
+The footer contains the record length, checkpoint index, and payload checksum, and the record is considered committed only after this footer is durably written.
+5. Dynamic Recovery
+After the satellite recovers from a shutdown, the VLM inference must restore the checkpointed state from the SSD and resume computation.
+The latency of this process greatly affects the end-to-end completion time of a request.
+Fast recovery is critical.
+To motivate the need for fast recovery, we run a controlled experiment with Qwen3-VL 2B/4B/8B on Jetson AGX Orin and Jetson Orin NX.
+The workload is a 64K-token remote-sensing VQA request constructed from our evaluation datasets.
+We fix the checkpointed execution progress and reset pattern, and vary the recovery time paid at the beginning of each execution window.
+Figure 7 shows that increasing recovery time from 5 s to 25 s raises end-to-end completion time by up to 5.04 × \times and 5.56 × \times on AGX and Orin, respectively.
+Therefore, OrbitWeaver minimizes exposed recovery I/O before computation resumes.
+Two line plots showing that end-to-end time increases with recovery time on AGX and Orin. AGX reports Qwen3-VL 2B, 4B, and 8B, while Orin reports Qwen3-VL 2B and 4B.
+Figure 7. Impact of recovery latency on interrupted VLM inference with a 64K-token request. Two line plots showing that end-to-end time increases with recovery time on AGX and Orin. AGX reports Qwen3-VL 2B, 4B, and 8B, while Orin reports Qwen3-VL 2B and 4B.
+In this section, we first show why fixed recovery orders create avoidable I/O stalls (§ 5.1 ).
+Then we formulate recovery as an I/O–computation scheduling problem (§ 5.2 ).
+Finally, we illustrate the algorithm to find the optimal schedule (§ 5.3 ).
+5.1. Dependency-Aware Recovery
+Following the execution order of existing LLM prefill implementations, the most direct recovery strategy is to replay the remaining prefill blocks in the same static order.
+The order of existing implementations is typically chunk-first or layer-first. However, recovery optimizes a different objective from normal inference: it must load weights and checkpoints and start computation as early as possible.
+To minimize recovery latency, we need to minimize exposed I/O , i.e., the time computation stalls waiting for unfinished reads.
+Figure 8. Fixed recovery orders expose avoidable I/O stalls. Four examples of static and optimal recovery orders over two layers and three chunks. Orange boxes denote model parameters, dark green boxes denote KV checkpoints, and arrows denote compute order.
+∙ \bullet Chunk-first static recovery.
+In Figure 8 (a), the first chunk has completed before the shutdown.
+A chunk-first order resumes from ( L 1 , C 2 ) (L_{1},C_{2}) and proceeds to ( L 2 , C 2 ) (L_{2},C_{2}) .
+This switch requires W 2 W_{2} and K ​ V 2 , 1 KV_{2,1} ; any part of these reads not hidden by the computation of ( L 1 , C 2 ) (L_{1},C_{2}) becomes exposed I/O.
+Thus, chunk-first recovery can stall when it switches to a higher layer before the required laye…4572 tokens truncated…% of prefill progress, with each request generating 64 tokens during decoding.
+Figure 11 reports cold-cache recovery latency at these progress points.
+Across all tested devices, models, and progress points, OrbitWeaver achieves recovery speedups of 1.22 × 1.22\times – 6.97 × 6.97\times over the baselines.
+For example, on AGX with Qwen3-VL 4B at 20% progress, SONIC-layer, SONIC-chunk, and HCache take 6.85 × 6.85\times , 6.36 × 6.36\times , and 4.40 × 4.40\times as long as OrbitWeaver, respectively.
+Even at 80% progress with MiniCPM-V 4.5, they take 2.95 × 2.95\times , 2.56 × 2.56\times , and 1.50 × 1.50\times as long, respectively.
+This improvement comes from OrbitWeaver’s dependency-aware recovery: it prioritizes the layer weights, prefix KV cache, and hidden states that unlock useful computation, defers other reads until their consumer blocks are ready, and overlaps SSD reads with dependency-ready computation.
+By contrast, fixed chunk-first or layer-first recovery exposes more I/O before computation can resume.
+7.4. Checkpoint overhead
+OrbitWeaver runs with low normal-path overhead.
+Figure 12 reports uninterrupted inference latency across the tested devices and models with prompt lengths from 2K to 32K tokens, with each request generating 64 tokens during decoding.
+Part of each prompt is occupied by image tokens, and the rest is filled with text tokens.
+Across all settings, OrbitWeaver remains within 5% of the no-checkpoint execution time while preserving recoverable progress.
+Compared with SONIC-layer, SONIC-chunk, and HCache, OrbitWeaver achieves speedups of up to 2.63 × 2.63\times , 2.16 × 2.16\times , and 1.64 × 1.64\times , respectively; the corresponding geometric-mean speedups are 1.62 × 1.62\times , 1.38 × 1.38\times , and 1.08 × 1.08\times .
+This low normal-path overhead comes from OrbitWeaver’s block-wise checkpointing, which avoids persisting full-sequence hidden states after every layer, and its storage layout, which writes the states of each completed block as a contiguous record.
+Together, these designs reduce device-to-host transfers and fragmented SSD writes during inference.
+7.5. Disk wear
+Bar charts compare total SSD writes and device-level write amplification across checkpointing methods.
+Figure 13. Total SSD writes and device-level write amplification (DLWA). Bar charts compare total SSD writes and device-level write amplification across checkpointing methods.
+A bar chart compares energy consumption across checkpointing methods.
+Figure 14. Energy consumption. A bar chart compares energy consumption across checkpointing methods.
+OrbitWeaver reduces SSD writes and write amplification.
+Figure 14 reports total SSD writes and DLWA for Qwen3-VL 2B on Orin, with prompt lengths of 2K–32K tokens and 64 generated tokens per request.
+Across these lengths, SONIC-layer, SONIC-chunk, and HCache write 2.33 × 2.33\times – 3.56 × 3.56\times , 1.08 × 1.08\times – 2.13 × 2.13\times , and 1.10 × 1.10\times – 2.20 × 2.20\times as much data as OrbitWeaver, respectively.
+Compared with SONIC-layer, SONIC-chunk, and HCache, OrbitWeaver reduces DLWA by 33.6–45.4%, 14.3–46.4%, and 15.0–46.2%, respectively.
+These reductions come from OrbitWeaver’s phase-aware checkpointing, which avoids persisting redundant intermediate states, and its storage layout, which batches checkpoint states into aligned, contiguous records and produces a mostly sequential write stream.
+Together, these designs minimize SSD wear under repeated checkpointing.
+7.6. Energy consumption
+OrbitWeaver incurs low energy overhead.
+Figure 14 compares uninterrupted Qwen3-VL 2B inference on Orin with and without OrbitWeaver checkpointing, measuring energy for 2K–32K prompt tokens and 64 generated tokens per request.
+Across all tested prompt lengths, OrbitWeaver consumes only 3.75%–4.74% more energy than the no-checkpoint baseline.
+This overhead comes from persisting recoverable states during normal inference and is consistent with the low runtime overhead in Figure 12 .
+The no-checkpoint baseline provides a lower bound for an uninterrupted run but loses all in-memory progress after a reset.
+OrbitWeaver therefore pays a small persistence cost to avoid repeating completed VLM computation after interruptions.
+7.7. Case Study: Real Deployment on Sat-1 and Sat-2
+Two payload enclosure temperature and power traces compare OrbitWeaver and no-checkpoint execution across three interrupted execution windows. OrbitWeaver resumes after shutdowns and reaches decoding, while no checkpoint restarts from the beginning after each shutdown and fails to complete.
+Figure 15. An example in-orbit VLM execution across interrupted windows on Sat-1. Temperature refers to the payload enclosure temperature. Two payload enclosure temperature and power traces compare OrbitWeaver and no-checkpoint execution across three interrupted execution windows. OrbitWeaver resumes after shutdowns and reaches decoding, while no checkpoint restarts from the beginning after each shutdown and fails to complete.
+OrbitWeaver sustains VLM execution across repeated in-orbit interruptions.
+We deploy OrbitWeaver on Sat-1 and Sat-2 for 72 hours and execute 25 VLM requests on each satellite.
+Each request runs Qwen3-VL 2B on remote-sensing images with a 32K-token input, with each request generating 64 tokens during decoding.
+We impose a 20-minute timeout on each request.
+On Sat-1, 21 requests experience 47 bus-enforced shutdowns; on Sat-2, 20 requests experience 44 bus-enforced shutdowns.
+Across both deployments, 41 of the 50 requests are interrupted, and OrbitWeaver completes all 50 requests despite a total of 91 bus-enforced shutdowns.
+OrbitWeaver preserves progress across bus-enforced shutdowns.
+Figure 15 shows one execution on Sat-1 that spans three execution windows and two bus-enforced shutdowns.
+After each shutdown, OrbitWeaver restores the latest committed checkpoint during recovery (green regions) and resumes the unfinished request, completing it in the third window.
+For comparison, Figure 15 (b) shows a separate no-checkpoint execution under repeated bus-enforced shutdowns.
+Because the baseline loses all in-memory VLM states after each shutdown, its inference progress (purple line) resets to zero.
+It therefore repeats previously completed work and remains in prefill after the third window.
+The aggregate deployment demonstrates that OrbitWeaver repeatedly recovers across two satellites, while this trace illustrates how preserving progress enables completion across interrupted execution windows.
+8. Discussion
+Generalizability.
+OrbitWeaver primarily targets orbital edge computing ( Denby and Lucia, 2020 ) to reduce reliance on ground-based processing.
+Starcloud ( Feilden et al., 2024 ) and Project Suncatcher ( Agüera y Arcas et al., 2025 ) envision dedicated space-based clouds.
+Better power and thermal provisioning may reduce interruptions, but inference progress must still survive power cycling, resource contention, and unexpected resets.
+OrbitWeaver’s checkpointing and recovery principles apply to these platforms, complementing hardware co-design by letting interrupted requests resume rather than restart.
+9. Related Work
+∙ \bullet Satellite Computing
+Satellite computing systems use onboard perception and decision-making to reduce downlink demand and response latency ( Denby and Lucia, 2020 ; Giuffrida et al., 2022 ; Denby et al., 2023 ; Cheng et al., 2024 ; Liu et al., 2024a ; Du et al., 2025b ; Zhang et al., 2025b ; Wang and Qiu, 2025 ; Leyva-Mayorga et al., 2023 ; Zhai et al., 2024 ; Zhang et al., 2024 ; Tao et al., 2024 ; Furutanpey et al., 2025 ; Yang et al., 2024 ; Chen et al., 2025 ; Zhang et al., 2025a ) .
+Phi-Sat-1 and Kodan reduce downlink demand through onboard filtering ( Giuffrida et al., 2022 ; Denby et al., 2023 ) .
+EagleEye couples onboard target detection with follow-up observation scheduling across a constellation ( Cheng et al., 2024 ) .
+Grace and VISO adapt VLMs to remote sensing and on-orbit execution ( Zhang et al., 2025b ; Wang and Qiu, 2025 ) .
+On-satellite COTS measurements show that thermal and energy constraints strongly shape onboard performance ( Xing et al., 2024 ) .
+OrbitWeaver instead preserves VLM progress across resets so long-running requests complete despite intermittent satellite execution.
+∙ \bullet Intermittent Computing
+Intermittent computing systems preserve progress across repeated power or state loss ( Ransford et al., 2011 ; Lucia and Ransford, 2015 ; Van Der Woude and Hicks, 2016 ; Colin and Lucia, 2016 ; Maeng et al., 2017 ; Maeng and Lucia, 2018 ; Ganesan et al., 2019 ; Surbatovich et al., 2020 ; Kortbeek et al., 2022 ; Surbatovich et al., 2023 ; Wu et al., 2024 ; Mohapatra et al., 2025 ) .
+Mementos uses checkpoints on energy-harvesting devices ( Ransford et al., 2011 ) .
+DINO introduces task boundaries for consistent intermittent execution ( Lucia and Ransford, 2015 ) .
+Chain provides tasks and channels for intermittent execution ( Colin and Lucia, 2016 ) .
+Alpaca avoids whole-program checkpoints through task-based privatization ( Maeng et al., 2017 ) .
+SONIC and Zygarde apply intermittent execution to embedded DNN inference ( Gobieski et al., 2019 ; Islam and Nirjon, 2020 ) .
+OrbitWeaver extends checkpointing and task-based execution to interruptions from diverse causes, windows of tens of seconds to minutes, and multi-GiB KV and activation states persisted to SSD/eMMC.
+The challenges shift to balancing checkpoint size against preserved progress and scheduling recovery I/O with computation.
+∙ \bullet Efficient LLM and VLM Inference
+Modern VLMs combine visual encoders with language models for flexible visual reasoning and instruction following ( Radford et al., 2021 ; Alayrac et al., 2022 ; Li et al., 2023 ; Liu et al., 2023a ; Dai et al., 2023 ; Peng et al., 2024 ; Chen et al., 2024 ; Wang et al., 2024 ) .
+LLM serving engines, also used as VLM backends, optimize continuous execution through batching, scheduling, memory offloading, attention kernels, structured generation, prefix/KV cache reuse, and phase disaggregation ( Yu et al., 2022 ; Dao et al., 2022 ; Dao, 2024 ; Sheng et al., 2023 ; Kwon et al., 2023 ; Zheng et al., 2024 ; Agrawal et al., 2024 ; Zhong et al., 2024 ; Patel et al., 2024 ; Miao et al., 2024 ; Jin et al., 2023 ) .
+Long-context inference systems further reduce KV cache memory footprint or movement through eviction, quantization, compression, streaming, offloading, prefetching, or cache-centric disaggregation ( Zhang et al., 2023 ; Liu et al., 2023b ; Xiao et al., 2024 ; Liu et al., 2024c ; Hooper et al., 2024 ; Li et al., 2024 ; Lee et al., 2024 ; Liu et al., 2024b ; Gao et al., 2025 ; Qin et al., 2025 ) .
+Unlike these systems, OrbitWeaver targets intermittent on-orbit inference, where volatile activations and KV caches are lost after resets unless they are made durable and recovered efficiently.
+10. Conclusion
+This paper presents OrbitWeaver, a runtime for efficient and reliable on-satellite VLM inference through efficient checkpointing and dynamic recovery.
+Evaluation demonstrates up to 4.07 × 4.07\times end-to-end speedup with less than 5% runtime overhead, while in-orbit deployment confirms sustained progress across bus-enforced shutdowns.
+References
+Agrawal et al. (2024)
+A. Agrawal, N. Kedia, A. Panwar, J. Mohan, N. Kwatra, B. Gulavani, A. Tumanov, and R. Ramjee
+Taming throughput-latency tradeoff in llm inference with sarathi-serve .
+In 18th USENIX Symposium on Operating Systems Design and Implementation ,
+OSDI ’24 , Berkeley, CA, USA , pp. 117–134 .
+Cited by: §9 .
+Agüera y Arcas et al. (2025)
+B. Agüera y Arcas, T. Beals, M. Biggs, J. V. Bloom, T. Fischbacher, K. Gromov, U. Köster, R. Pravahan, and J. Manyika
+Towards a future space-based, highly scalable ai infrastructure system design .
+External Links: 2511.19468 ,
+Link
+Cited by: §1 ,
+§8 .
+Alayrac et al. (2022)
+J. Alayrac, J. Donahue, P. Luc, A. Miech, I. Barr, Y. Hasson, K. Lenc, A. Mensch, K. Millican, M. Reynolds, R. Ring, E. Rutherford, S. Cabi, T. Han, Z. Gong, S. Samangooei, M. Monteiro, J. Menick, S. Borgeaud, A. Brock, A. Nematzadeh, S. Sharifzadeh, M. Binkowski, R. Barreira, O. Vinyals, A. Zisserman, and K. Simonyan
+Flamingo: a visual language model for few-shot learning .
+In Advances in Neural Information Processing Systems ,
+Vol. 35 , Red Hook, NY, USA , pp. 23716–23736 .
+Cited by: §9 .
+Ali et al. (2026)
+H. Ali, A. Iqbal, A. M. Alatwi, A. Ali, and B. M. Khan
+Design and experimental validation of an autonomous electrical power system (EPS) for CubeSats .
+Scientific Reports 16 ( 1 ).
+External Links: Document
+Cited by: §2.2 ,
+§2.2 .
+Chen et al. (2025)
+Y. Chen, Q. Zhang, R. Xing, Y. Li, X. Ma, Y. Zhang, A. Zhou, and S. Wang
+SLICE: energy-efficient satellite-ground co-inference via layer-wise scheduling optimization .
+IEEE Transactions on Services Computing 18 ( 4 ), pp. 2388–2402 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Chen et al. (2024)
+Z. Chen, J. Wu, W. Wang, W. Su, G. Chen, S. Xing, M. Zhong, Q. Zhang, X. Zhu, L. Lu, B. Li, P. Luo, T. Lu, Y. Qiao, and J. Dai
+InternVL: scaling up vision foundation models and aligning for generic visual-linguistic tasks .
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+Los Alamitos, CA, USA , pp. 24185–24198 .
+Cited by: §9 .
+Cheng et al. (2024)
+Z. Cheng, B. Denby, K. McCleary, and B. Lucia
+EagleEye: nanosatellite constellation design for high-coverage, high-resolution sensing .
+In Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1 ,
+New York, NY, USA , pp. 117–132 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Colin and Lucia (2016)
+A. Colin and B. Lucia
+Chain: tasks and channels for reliable intermittent programs .
+In Proceedings of the 2016 ACM SIGPLAN International Conference on Object-Oriented Programming, Systems, Languages, and Applications ,
+OOPSLA ’16 , New York, NY, USA , pp. 514–530 .
+External Links: Document
+Cited by: §9 .
+Common Instrument Interface Project (2011)
+Common Instrument Interface Project
+Hosted payload guidelines document .
+Technical report
+Technical Report CII-CI-0001 , Earth System Science Pathfinder Program Office, NASA Langley Research Center .
+External Links: Link
+Cited by: §1 .
+Dai et al. (2023)
+W. Dai, J. Li, D. Li, A. M. H. Tiong, J. Zhao, W. Wang, B. Li, P. Fung, and S. C. H. Hoi
+InstructBLIP: towards general-purpose vision-language models with instruction tuning .
+In Advances in Neural Information Processing Systems ,
+Vol. 36 , Red Hook, NY, USA , pp. 49250–49267 .
+Cited by: §9 .
+Dao et al. (2022)
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré
+FlashAttention: fast and memory-efficient exact attention with io-awareness .
+In Advances in Neural Information Processing Systems ,
+Vol. 35 , Red Hook, NY, USA , pp. 16344–16359 .
+Cited by: §9 .
+Dao (2024)
+T. Dao
+FlashAttention-2: faster attention with better parallelism and work partitioning .
+In International Conference on Learning Representations ,
+Vienna, Austria .
+External Links: Link
+Cited by: §9 .
+Denby et al. (2023)
+B. Denby, K. Chintalapudi, R. Chandra, B. Lucia, and S. Noghabi
+Kodan: addressing the computational bottleneck in space .
+In Proceedings of the 28th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 3 ,
+New York, NY, USA , pp. 392–403 .
+External Links: Document ,
+Link
+Cited by: §2.1 ,
+§9 .
+Denby and Lucia (2020)
+B. Denby and B. Lucia
+Orbital edge computing: nanosatellite constellations as a new class of computer system .
+In Proceedings of the Twenty-Fifth International Conference on Architectural Support for Programming Languages and Operating Systems ,
+New York, NY, USA , pp. 939–954 .
+External Links: Document ,
+Link
+Cited by: §1 ,
+§2.1 ,
+§8 ,
+§9 .
+Ding et al. (2026)
+Y. Ding, J. Xiao, Z. Zhang, C. Chen, L. Liao, G. Xia, and M. Wang
+LongEarth-R1: benchmarking and aligning vision-language models for long-horizon earth observation reasoning .
+External Links: 2608.13344 ,
+Link
+Cited by: §1 .
+Dosovitskiy et al. (2021)
+A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, J. Uszkoreit, and N. Houlsby
+An image is worth 16x16 words: transformers for image recognition at scale .
+In International Conference on Learning Representations ,
+Online .
+External Links: Link
+Cited by: §2.1 ,
+§4.2 .
+Du et al. (2025a)
+A. Du, R. Del Prete, A. Mousist, N. Manser, F. Marre, A. Barton, C. Seubert, G. Meoni, and T. Chin
+First on-orbit demonstration of a geospatial foundation model .
+External Links: 2512.01181 ,
+Link
+Cited by: §1 ,
+§2.1 .
+Du et al. (2025b)
+K. Du, Y. Cheng, P. Olsen, S. Noghabi, and J. Jiang
+Earth+: on-board satellite imagery compression leveraging historical earth observations .
+In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 1 ,
+New York, NY, USA , pp. 361–376 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Evans et al. (2016)
+D. Evans, M. Ortega, R. Zeif, and T. Sergert
+OPS-SAT: FDIR design on a mission that expects bugs—and lots of them .
+In SpaceOps 2016 Conference ,
+Reston, VA, USA .
+External Links: Document
+Cited by: §1 ,
+§2.2 ,
+§2.2 .
+Federal Communications Commission (2026)
+Federal Communications Commission
+Space bureau accepts for filing spacex’s application for orbital data centers .
+Note: https://docs.fcc.gov/public/attachments/DA-26-113A1.pdf DA 26-113; ICFS File No. SAT-LOA-20260108-00016
+Cited by: §1 .
+Feilden et al. (2024)
+E. Feilden, A. Oltean, and P. Johnston
+Why we should train AI in space .
+White Paper
+Technical Report v1.03 , Lumen Orbit (now Starcloud) .
+External Links: Link
+Cited by: §2.1 ,
+§8 .
+Fong et al. (2011)
+C.-J. Fong, D. Whiteley, E. Yang, K. Cook, V. Chu, B. Schreiner, D. Ector, P. Wilczynski, T.-Y. Liu, and N. Yen
+Space and ground segment performance and lessons learned of the FORMOSAT-3/COSMIC mission: four years in orbit .
+Atmospheric Measurement Techniques 4 ( 6 ), pp. 1115–1132 .
+External Links: Document
+Cited by: §1 ,
+§2.2 .
+Furutanpey et al. (2025)
+A. Furutanpey, Q. Zhang, P. Raith, T. Pfandzelter, S. Wang, and S. Dustdar
+FOOL: addressing the downlink bottleneck in satellite computing with neural feature compression .
+IEEE Transactions on Mobile Computing 24 ( 8 ), pp. 6747–6764 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Ganesan et al. (2019)
+K. Ganesan, J. San Miguel, and N. D. Enright Jerger
+The what’s next intermittent computing architecture .
+In Proceedings of the 25th IEEE International Symposium on High Performance Computer Architecture ,
+HPCA ’19 , Piscataway, NJ, USA , pp. 211–223 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Gao et al. (2025)
+S. Gao, Y. Chen, and J. Shu
+Fast state restoration in llm serving with hcache .
+In Proceedings of the Twentieth European Conference on Computer Systems ,
+EuroSys ’25 , New York, NY, USA .
+External Links: Document ,
+ISBN 979-8-4007-1196-1
+Cited by: 4th item ,
+§9 .
+Giuffrida et al. (2022)
+G. Giuffrida, L. Fanucci, G. Meoni, M. Batic, L. Buckley, A. Dunne, C. van Dijk, M. Esposito, J. Hefele, N. Vercruyssen, G. Furano, M. Pastena, and J. Aschbacher
+The Φ \Phi -Sat-1 mission: the first on-board deep neural network demonstrator for satellite earth observation .
+IEEE Transactions on Geoscience and Remote Sensing 60 , pp. 1–14 .
+External Links: Document ,
+Link
+Cited by: §2.1 ,
+§9 .
+Gobieski et al. (2019)
+G. Gobieski, B. Lucia, and N. Beckmann
+Intelligence beyond the edge: inference on intermittent embedded systems .
+In Proceedings of the Twenty-Fourth International Conference on Architectural Support for Programming Languages and Operating Systems ,
+New York, NY, USA , pp. 199–213 .
+External Links: Document ,
+Link
+Cited by: 2nd item ,
+3rd item ,
+§7.1 ,
+§9 .
+Hatfield (2018)
+M. Hatfield Dellingr: the little CubeSat that could (Website)
+NASA .
+External Links: Link
+Cited by: §1 ,
+§7.2 ,
+Table 2 .
+Hooper et al. (2024)
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami
+KVQuant: towards 10 million context length llm inference with kv cache quantization .
+In Advances in Neural Information Processing Systems ,
+Vol. 37 , Red Hook, NY, USA , pp. 1270–1303 .
+Cited by: §9 .
+Islam and Nirjon (2020)
+B. Islam and S. Nirjon
+Zygarde: time-sensitive on-device deep inference and adaptation on intermittently-powered systems .
+Proceedings of the ACM on Interactive, Mobile, Wearable and Ubiquitous Technologies 4 ( 3 ), pp. 1–29 .
+External Links: Document
+Cited by: §9 .
+Jin et al. (2023)
+Y. Jin, C. Wu, D. Brooks, and G. Wei
+S 3 S^{3} : increasing gpu utilization during generative inference for higher throughput .
+In Advances in Neural Information Processing Systems ,
+Vol. 36 , Red Hook, NY, USA , pp. 18015–18027 .
+Cited by: §9 .
+Kortbeek et al. (2022)
+V. Kortbeek, S. Ghosh, J. D. Hester, S. Campanoni, and P. Pawełczak
+WARio: efficient code generation for intermittent computing .
+In Proceedings of the 43rd ACM SIGPLAN International Conference on Programming Language Design and Implementation ,
+PLDI ’22 , New York, NY, USA , pp. 777–791 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Kuckreja et al. (2024)
+K. Kuckreja, M. S. Danish, M. Naseer, A. Das, S. Khan, and F. S. Khan
+GeoChat: grounded large vision-language model for remote sensing .
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,
+Los Alamitos, CA, USA , pp. 27831–27840 .
+External Links: Document
+Cited by: §1 .
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with PagedAttention .
+In Proceedings of the 29th Symposium on Operating Systems Principles ,
+SOSP ’23 , New York, NY, USA , pp. 611–626 .
+External Links: Document
+Cited by: §6 ,
+§9 .
+Lee et al. (2024)
+W. Lee, J. Lee, J. Seo, and J. Sim
+InfiniGen: efficient generative inference of large language models with dynamic kv cache management .
+In 18th USENIX Symposium on Operating Systems Design and Implementation ,
+OSDI ’24 , Berkeley, CA, USA , pp. 155–172 .
+Cited by: §9 .
+Leyva-Mayorga et al. (2023)
+I. Leyva-Mayorga, M. Martinez-Gost, M. Moretti, A. Pérez-Neira, M. A. Vázquez, P. Popovski, and B. Soret
+Satellite edge computing for real-time and very-high resolution earth observation .
+IEEE Transactions on Communications 71 ( 10 ), pp. 6180–6194 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Li et al. (2023)
+J. Li, D. Li, S. Savarese, and S. Hoi
+BLIP-2: bootstrapping language-image pre-training with frozen image encoders and large language models .
+In Proceedings of the 40th International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol. 202 , Honolulu, HI, USA , pp. 19730–19742 .
+External Links: Link
+Cited by: §9 .
+Li et al. (2024)
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen
+SnapKV: llm knows what you are looking for before generation .
+In Advances in Neural Information Processing Systems ,
+Vol. 37 , Red Hook, NY, USA , pp. 22947–22970 .
+Cited by: §9 .
+Liu et al. (2023a)
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+Visual instruction tuning .
+In Advances in Neural Information Processing Systems ,
+Vol. 36 , New Orleans, LA, USA , pp. 34892–34916 .
+External Links: Link
+Cited by: §9 .
+Liu et al. (2024a)
+W. Liu, Z. Lai, Q. Wu, H. Li, Q. Zhang, Z. Li, Y. Li, and J. Liu
+In-orbit processing or not? sunlight-aware task scheduling for energy-efficient space edge computing networks .
+In IEEE INFOCOM 2024 - IEEE Conference on Computer Communications ,
+Piscataway, NJ, USA , pp. 881–890 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Liu et al. (2024b)
+Y. Liu, H. Li, Y. Cheng, S. Ray, Y. Huang, Q. Zhang, K. Du, J. Yao, S. Lu, G. Ananthanarayanan, M. Maire, H. Hoffmann, A. Holtzman, and J. Jiang
+CacheGen: kv cache compression and streaming for fast large language model serving .
+In Proceedings of the ACM SIGCOMM 2024 Conference ,
+SIGCOMM ’24 , New York, NY, USA , pp. 38–56 .
+External Links: Document
+Cited by: §9 .
+Liu et al. (2023b)
+Z. Liu, A. Desai, F. Liao, W. Wang, V. Xie, Z. Xu, A. Kyrillidis, and A. Shrivastava
+Scissorhands: exploiting the persistence of importance hypothesis for llm kv cache compression at test time .
+In Advances in Neural Information Processing Systems ,
+Vol. 36 , Red Hook, NY, USA , pp. 52342–52364 .
+Cited by: §9 .
+Liu et al. (2024c)
+Z. Liu, J. Yuan, H. Jin, S. Zhong, Z. Xu, V. Braverman, B. Chen, and X. Hu
+KIVI: a tuning-free asymmetric 2bit quantization for kv cache .
+In Proceedings of the 41st International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol. 235 , Vienna, Austria , pp. 32332–32344 .
+Cited by: §6 ,
+§9 .
+Lucia and Ransford (2015)
+B. Lucia and B. Ransford
+A simpler, safer programming and execution model for intermittent systems .
+In Proceedings of the 36th ACM SIGPLAN Conference on Programming Language Design and Implementation ,
+New York, NY, USA , pp. 575–585 .
+External Links: ISBN 9781450334686 ,
+Link ,
+Document
+Cited by: §9 .
+Luo et al. (2025)
+J. Luo, Y. Zhang, X. Yang, K. Wu, Q. Zhu, L. Liang, J. Chen, and Y. Li
+When large vision-language model meets large remote sensing imagery: coarse-to-fine text-guided token pruning .
+In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV) ,
+Los Alamitos, CA, USA , pp. 9206–9217 .
+Cited by: §1 ,
+§4.1 ,
+§7.1 .
+Maeng et al. (2017)
+K. Maeng, A. Colin, and B. Lucia
+Alpaca: intermittent execution without checkpoints .
+Proceedings of the ACM on Programming Languages 1 ( OOPSLA ), pp. 1–30 .
+External Links: Document
+Cited by: §9 .
+Maeng and Lucia (2018)
+K. Maeng and B. Lucia
+Adaptive dynamic checkpointing for safe efficient intermittent computing .
+In 13th USENIX Symposium on Operating Systems Design and Implementation ,
+OSDI ’18 , Berkeley, CA, USA , pp. 129–144 .
+Cited by: §9 .
+Miao et al. (2024)
+X. Miao, G. Oliaro, Z. Zhang, X. Cheng, Z. Wang, Z. Zhang, R. Y. Y. Wong, A. Zhu, L. Yang, X. Shi, C. Shi, Z. Chen, D. Arfeen, R. Abhyankar, and Z. Jia
+SpecInfer: accelerating large language model serving with tree-based speculative inference and verification .
+In Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems ,
+ASPLOS ’24 , New York, NY, USA , pp. 932–949 .
+External Links: Document
+Cited by: §9 .
+Mohapatra et al. (2025)
+S. Mohapatra, V. Kortbeek, M. A. van Eerden, J. Broekhoff, S. Ahmed, and P. Pawełczak
+Data cache for intermittent computing systems with non-volatile main memory .
+In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 ,
+ASPLOS ’25 , New York, NY, USA , pp. 227–243 .
+External Links: Document ,
+Link
+Cited by: §9 .
+National Aeronautics and Space Administration (2025)
+National Aeronautics and Space Administration Basics of space flight: chapter 11—onboard systems, electrical power distribution (Website)
+NASA Science .
+External Links: Link
+Cited by: §2.2 ,
+§2.2 .
+NVM Express, Inc. (2022)
+NVM Express, Inc.
+NVM Express NVM Command Set Specification, Revision 1.0c .
+Specification
+Technical Report Revision 1.0c , NVM Express, Inc. .
+External Links: Link
+Cited by: §6 .
+Patel et al. (2024)
+P. Patel, E. Choukse, C. Zhang, A. Shah, Í. Goiri, S. Maleki, and R. Bianchini
+Splitwise: efficient generative llm inference using phase splitting .
+In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture ,
+ISCA ’24 , Piscataway, NJ, USA , pp. 118–132 .
+External Links: Document
+Cited by: §9 .
+Peng et al. (2024)
+Z. Peng, W. Wang, L. Dong, Y. Hao, S. Huang, S. Ma, and F. Wei
+Grounding multimodal large language models to the world .
+In International Conference on Learning Representations ,
+Vienna, Austria .
+External Links: Link
+Cited by: §9 .
+Qin et al. (2025)
+R. Qin, Z. Li, W. He, J. Cui, F. Ren, M. Zhang, Y. Wu, W. Zheng, and X. Xu
+Mooncake: trading more storage for less computation—a KVCache-centric architecture for serving LLM chatbot .
+In 23rd USENIX Conference on File and Storage Technologies ,
+FAST ’25 , Santa Clara, CA , pp. 155–170 .
+Cited by: §9 .
+Radford et al. (2021)
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark, G. Krueger, and I. Sutskever
+Learning transferable visual models from natural language supervision .
+In Proceedings of the 38th International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol. 139 , Online , pp. 8748–8763 .
+Cited by: §9 .
+Ransford et al. (2011)
+B. Ransford, J. Sorber, and K. Fu
+Mementos: system support for long-running computation on RFID-scale devices .
+In Proceedings of the 16th International Conference on Architectural Support for Programming Languages and Operating Systems ,
+New York, NY, USA , pp. 159–170 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Rapuano et al. (2021)
+E. Rapuano, G. Meoni, T. Pacini, G. Dinelli, G. Furano, G. Giuffrida, and L. Fanucci
+An FPGA-based hardware accelerator for CNNs inference on board satellites: benchmarking with Myriad 2-based solution for the CloudScout case study .
+Remote Sensing 13 ( 8 ), pp. 1518 .
+External Links: Document ,
+Link
+Cited by: §2.1 .
+Sheng et al. (2023)
+Y. Sheng, L. Zheng, B. Yuan, Z. Li, M. Ryabinin, D. Y. Fu, Z. Xie, B. Chen, C. W. Barrett, J. E. Gonzalez, P. Liang, C. Ré, I. Stoica, and C. Zhang
+FlexGen: high-throughput generative inference of large language models with a single gpu .
+In Proceedings of the 40th International Conference on Machine Learning ,
+Proceedings of Machine Learning Research , Vol. 202 , Honolulu, HI, USA , pp. 31094–31116 .
+Cited by: §9 .
+Starcloud, Inc. (n.d.)
+Starcloud, Inc. Starcloud-1 (Website)
+Starcloud .
+External Links: Link
+Cited by: §1 .
+Surbatovich et al. (2020)
+M. Surbatovich, B. Lucia, and L. Jia
+Towards a formal foundation of intermittent computing .
+Proceedings of the ACM on Programming Languages 4 ( OOPSLA ).
+External Links: Document ,
+Link
+Cited by: §9 .
+Surbatovich et al. (2023)
+M. Surbatovich, N. Spargo, L. Jia, and B. Lucia
+A type system for safe intermittent computing .
+Proceedings of the ACM on Programming Languages 7 ( PLDI ).
+External Links: Document ,
+Link
+Cited by: §9 .
+Tao et al. (2024)
+B. Tao, O. Chabra, I. Janveja, I. Gupta, and D. Vasisht
+Known knowns and unknowns: near-realtime earth observation via query bifurcation in Serval .
+In 21st USENIX Symposium on Networked Systems Design and Implementation ,
+NSDI ’24 , Santa Clara, CA, USA , pp. 809–824 .
+External Links: Link
+Cited by: §9 .
+Tavakkol et al. (2018)
+A. Tavakkol, J. Gómez-Luna, M. Sadrosadati, S. Ghose, and O. Mutlu
+MQSim: a framework for enabling realistic studies of modern multi-queue SSD devices .
+In 16th USENIX Conference on File and Storage Technologies (FAST 18) ,
+Berkeley, CA, USA , pp. 49–66 .
+Cited by: §7.1 .
+Van Der Woude and Hicks (2016)
+J. Van Der Woude and M. Hicks
+Intermittent computation without hardware support or programmer intervention .
+In 12th USENIX Symposium on Operating Systems Design and Implementation (OSDI 16) ,
+Berkeley, CA, USA , pp. 17–32 .
+Cited by: §9 .
+Wang and Qiu (2025)
+M. Wang and H. Qiu
+VISO: accelerating in-orbit object detection with language-guided mask learning and sparse inference .
+In Proceedings of the IEEE/CVF International Conference on Computer Vision ,
+ICCV ’25 , Los Alamitos, CA, USA , pp. 23300–23310 .
+Cited by: §1 ,
+§9 .
+Wang et al. (2024)
+W. Wang, Q. Lv, W. Yu, W. Hong, J. Qi, Y. Wang, J. Ji, Z. Yang, L. Zhao, X. Song, J. Xu, K. Chen, B. Xu, J. Li, Y. Dong, M. Ding, and J. Tang
+CogVLM: visual expert for pretrained language models .
+In Advances in Neural Information Processing Systems ,
+Vol. 37 , Red Hook, NY, USA , pp. 121475–121499 .
+Cited by: §9 .
+Wolf et al. (2020)
+T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz, J. Davison, S. Shleifer, P. von Platen, C. Ma, Y. Jernite, J. Plu, C. Xu, T. L. Le Scao, S. Gugger, M. Drame, Q. Lhoest, and A. M. Rush
+Transformers: state-of-the-art natural language processing .
+In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System Demonstrations ,
+Online , pp. 38–45 .
+External Links: Document
+Cited by: §1 .
+Wu et al. (2024)
+Y. Wu, B. Min, M. Ismail, W. Xiong, C. Jung, and D. Lee
+IntOS: persistent embedded operating system and language support for multi-threaded intermittent computing .
+In 18th USENIX Symposium on Operating Systems Design and Implementation ,
+OSDI ’24 , Santa Clara, CA , pp. 425–443 .
+External Links: ISBN 978-1-939133-40-3 ,
+Link
+Cited by: §9 .
+Xiao et al. (2024)
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis
+Efficient streaming language models with attention sinks .
+In International Conference on Learning Representations ,
+Vienna, Austria .
+External Links: Link
+Cited by: §9 .
+Xing et al. (2024)
+R. Xing, M. Xu, A. Zhou, Q. Li, Y. Zhang, F. Qian, and S. Wang
+Deciphering the enigma of satellite computing with COTS devices: measurement and analysis .
+In Proceedings of the 30th Annual International Conference on Mobile Computing and Networking ,
+New York, NY, USA , pp. 420–435 .
+External Links: Document ,
+Link
+Cited by: §1 ,
+§2.1 ,
+§9 .
+Yang et al. (2024)
+C. Yang, Q. Sun, Q. Zhang, H. Lu, C. A. Ardagna, S. Wang, and M. Xu
+Toward efficient satellite computing through adaptive compression .
+IEEE Transactions on Services Computing 17 ( 6 ), pp. 4411–4422 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Yu et al. (2022)
+G. Yu, J. S. Jeong, G. Kim, S. Kim, and B. Chun
+Orca: a distributed serving system for transformer-based generative models .
+In 16th USENIX Symposium on Operating Systems Design and Implementation ,
+OSDI ’22 , Berkeley, CA, USA , pp. 521–538 .
+Cited by: §9 .
+Zandieh et al. (2025)
+A. Zandieh, M. Daliri, M. Hadian, and V. Mirrokni
+TurboQuant: online vector quantization with near-optimal distortion rate .
+External Links: 2504.19874 ,
+Document ,
+Link
+Cited by: §6 .
+Zhai et al. (2024)
+Z. Zhai, L. Zeng, T. Ouyang, S. Yu, Q. Huang, and X. Chen
+SECO: multi-satellite edge computing enabled wide-area and real-time earth observation missions .
+In IEEE INFOCOM 2024 - IEEE Conference on Computer Communications ,
+Piscataway, NJ, USA , pp. 2548–2557 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Zhang et al. (2025a)
+Q. Zhang, S. Wang, J. Guan, P. K. Donta, X. Ma, Y. Zhang, R. V. Prasad, S. Dustdar, and X. Liu
+SatCooper: enhancing cooperative inference analytics for satellite service via multi-exit DNNs .
+IEEE Transactions on Mobile Computing 24 ( 9 ), pp. 8314–8328 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Zhang et al. (2024)
+Q. Zhang, X. Yuan, R. Xing, Y. Zhang, Z. Zheng, X. Ma, M. Xu, S. Dustdar, and S. Wang
+Resource-efficient in-orbit detection of earth objects .
+In IEEE INFOCOM 2024 - IEEE Conference on Computer Communications ,
+Piscataway, NJ, USA , pp. 551–560 .
+External Links: Document ,
+Link
+Cited by: §9 .
+Zhang et al. (2025b)
+Y. Zhang, J. Yang, Z. Chen, W. Zhu, J. Zhao, and Y. Gao
+A satellite-ground synergistic large vision-language model system for earth observation .
+In Proceedings of the 33rd ACM International Conference on Multimedia ,
+New York, NY, USA , pp. 11825–11833 .
+External Links: ISBN 9798400720352 ,
+Link ,
+Document
+Cited by: §1 ,
+§9 .
+Zhang et al. (2023)
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, Z. Wang, and B. Chen
+H2O: heavy-hitter oracle for efficient generative inference of large language models .
+In Advances in Neural Information Processing Systems ,
+Vol. 36 , Red Hook, NY, USA , pp. 34661–34710 .
+Cited by: §9 .
+Zheng et al. (2024)
+L. Zheng, L. Yin, Z. Xie, C. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. W. Barrett, and Y. Sheng
+SGLang: efficient execution of structured language model programs .
+In Advances in Neural Information Processing Systems ,
+Vol. 37 , Red Hook, NY, USA , pp. 62557–62583 .
+Cited by: §6 ,
+§9 .
+Zhong et al. (2024)
+Y. Zhong, S. Liu, J. Chen, J. Hu, Y. Zhu, X. Liu, X. Jin, and H. Zhang
+DistServe: disaggregating prefill and decoding for goodput-optimized large language model serving .
+In 18th USENIX Symposium on Operating Systems Design and Implementation ,
+OSDI ’24 , Berkeley, CA, USA , pp. 193–210 .
+Cited by: §4.2 ,
+§9 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

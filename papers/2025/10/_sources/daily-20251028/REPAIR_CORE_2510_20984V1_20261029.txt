@@ -1,0 +1,2011 @@
+Learning Grouped Lattice Vector Quantizers for Low-Bit LLM Compression
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Background and Related Work
+2.1 LLM Post-Training Quantization (PTQ)
+2.2 Lattice Vector Quantization (LVQ)
+2.3 Companding for Quantization
+3 Method
+3.1 Salience-Determined Bit Allocation
+3.2 Lattice Codebook Learning
+3.3 Group-Specific Companding
+3.4 Quantization Pipeline and Runtime Decoding
+4 Experiments
+4.1 Perplexity Results on Llama Models
+4.2 Zero-Shot Accuracy on Llama Models
+4.3 Fractional and Sub-2-Bit Quantization
+4.4 Inference Throughput
+4.5 Ablation Studies
+5 Conclusion
+References
+A A Brief Theoretical Derivation of Babai Rounding’s Error Bound
+A.1 Algorithm Description
+A.2 Gram-Schmidt Orthogonalization
+A.3 Error Vector Decomposition
+A.4 Norm Calculation
+A.5 Coefficient Bound
+A.6 LLL-Reduced Basis Case
+A.7 Final Error Bound
+B Storage Overhead Analysis
+Representative cases.
+Observation.
+C Broader Impact
+D Ablation Study of Bit Allocation
+E Ablation Study of Group-Specific Lattice Quantization
+F Ablation Study of Group-Specific Companding
+G Ablation Study of Group Size
+H Ablation Study of Calibration Dataset Size
+I Babai Rounding vs. Greedy Coordinate Descent (GCD)
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.20984v1 [cs.LG] 23 Oct 2025
+Learning Grouped Lattice Vector Quantizers for Low-Bit LLM Compression
+Xi Zhang
+Email: xi.zhang@ntu.edu.sg
+Xiaolin Wu
+Affiliation: Southwest Jiaotong University
+Email: wslin@ntu.edu.sg
+Jiamang Wang
+Affiliation: Alibaba Group
+Weisi Lin
+Nanyang Technological University
+Abstract
+Large Language Models (LLMs) have demonstrated remarkable capabilities but typically require extensive computational resources and memory for inference. Post-training quantization (PTQ) can effectively reduce these demands by storing weights in lower bit-width formats. However, standard uniform quantization often leads to notable performance degradation, particularly in low-bit scenarios.
+In this work, we introduce a Grouped Lattice Vector Quantization (GLVQ) framework that assigns each group of weights a customized lattice codebook, defined by a learnable generation matrix. To address the non-differentiability of the quantization process, we adopt Babai rounding to approximate nearest-lattice-point search during training, which enables stable optimization of the generation matrices. Once trained, decoding reduces to a simple matrix-vector multiplication, yielding an efficient and practical quantization pipeline.
+Experiments on multiple benchmarks show that our approach achieves a better trade-off between model size and accuracy compared to existing post-training quantization baselines, highlighting its effectiveness in deploying large models under stringent resource constraints.
+Our source code is available on GitHub repository: https://github.com/xzhang9308/GLVQ.
+††footnotetext:
+Corresponding author.
+1 Introduction
+Large language models (LLMs) have achieved extraordinary success across a wide range of natural language processing tasks, including machine translation, question answering, text generation, and summarization [55, 13, 44]. These models, exemplified by the GPT [44], BERT [13], Llama [50], Qwen [3] and DeepSeek [34], are at the forefront of AI innovation.
+Beyond supervised pretraining, reinforcement learning techniques, most notably reinforcement learning from human feedback (RLHF), have further enhanced LLMs by aligning them with human preferences and improving their safety, helpfulness, and controllability [49, 41, 4, 35, 36, 17].
+However, their exceptional performance comes at exorbitant computation and memory costs, which hinders their deployment on edge devices and in other resource-limited scenarios [57]. For instance, state-of-the-art models with billions of parameters often require hundreds of gigabytes of memory and expensive hardware for inference [6, 44], posing serious challenges for scalability and accessibility.
+Quantization has emerged as a key technique to alleviate the resource burdens by reducing the precision of model weights from 16-bit or 32-bit floating-point representations to low-bit integers [26, 5].
+This significantly reduces the memory footprint and computation load, improving model economy and inference speed.
+A relatively simple method is Post-training quantization (PTQ), which quantizes a pre-trained LLM model without retraining
+[31, 19]. However, PTQ has difficulties in achieving ultra-low bit-widths, such as 2 or 3 bits per weight [10]. Severe quantization errors can lead to significant degradation in model performance, such as higher perplexity in language tasks [19] or noticeable drops in downstream quality, thereby limiting the practical utility of low-bit quantization.
+Figure 1: An overview of the GLVQ framework. The LLM weight matrix is partitioned into column-wise groups, each assigned a salience-determined bitwidth. Each group undergoes a tailored companding transformation and is quantized using a learned group-specific lattice codebook, enabling fine-grained control over precision and compression efficiency.
+Recently, some progresses have been made in LLM weight quantization, including
+vector quantization (VQ) techniques [51, 15, 52] and salience-aware bit allocation [25]. Vector quantization methods, such as QuIP# [51], leverage structured codebooks (e.g., E8 lattice) to improve quantization fidelity by aligning the codebook structure with the statistical properties of model weights. However, QuIP# is constrained by the use of fixed lattice designs across the entire model, which fails to account for the diversity of parameter distributions across different groups or layers. This uniform approach can lead to suboptimal quantization for certain groups, ultimately limiting both compression performance and overall model quality. In contrast, AQLM [15] proposes learning free-form VQs for different groups, which allows for more flexible quantization. However, this approach has the drawback that decoding requires the lookup operation, which is computationally more expensive than QUIP# and other existing PTQ methods.
+In this paper, we propose a novel framework,
+Grouped Lattice Vector Quantization (GLVQ)
+(illustrated in Fig. 1),
+aiming to increase the LLM compression ratio by reducing quantization resolution to be below 3 bits per weight. Specifically,
+GLVQ end-to-end optimizes the geometric structure of the lattice codebook for each quantization group based on that group’s unique parameter distribution. By shaping the lattice to fit the data distribution of each group, we reduce quantization distortion, preserve critical information better, and improve model fidelity over nonadaptive lattices under extreme compression regimes.
+Compared to free-form VQ used in AQLM [15], GLVQ employs a structured codebook, hence it enjoys the operational advantage of much lower quantization complexity.
+Further investigations reveal that LLM parameter distributions can be highly skewed or heavy-tailed. If this unfortunately happens, optimizing GLVQ alone has limited effect, because the lattice cells of each group have congruent shape, albeit optimized, and have regular configurations.
+To counteract this, we incorporate group-specific companding transformations. These functions reshape each group’s parameter distribution into a more uniform space before applying the lattice quantizer, thereby reducing distortion in the low-magnitude regions and enabling the lattice to allocate codepoints more effectively. Together, group-specific lattice codebook optimization and companding form a powerful synergy that maintains high accuracy while significantly reducing bit-width requirements.
+We validate our approach on popular LLM benchmarks, demonstrating its effectiveness in improving perplexity and inference efficiency compared to state-of-the-art quantization methods [19, 51, 15, 14]. Our results show that GLVQ not only enables higher compression ratios but also maintains robust performance across diverse language tasks, making it a practical solution for deploying LLMs in resource-constrained environments. Furthermore, our framework provides insights into the interplay between parameter distribution and quantization fidelity, opening new directions for research in efficient model compression.
+This paper makes the following key contributions:
+•
+We propose a novel grouped lattice vector quantization approach that dynamically adapts lattice structures to fit the unique distribution of each weight group.
+•
+We introduce a group-specific companding mechanism that reshapes each parameter distribution prior to lattice quantization, further reducing quantization distortion and improving overall performance.
+•
+Extensive experiments on post-training quantization benchmarks for LLMs show that GLVQ achieves a superior trade-off between accuracy and inference efficiency under extreme compression regimes.
+2 Background and Related Work
+2.1 LLM Post-Training Quantization (PTQ)
+Recent surveys [20, 22] have emphasized the importance of post-training quantization (PTQ) methods in the context of large language models (LLMs), particularly as model scales reach billions of parameters. Classic approaches such as AdaRound [39], BitSplit [56], AdaQuant [27], BRECQ [31], and OBQ [18] have been shown to work well for smaller networks. However, applying these techniques directly to LLMs often incurs prohibitive computational overhead due to their reliance on expensive solvers and per-layer fine-grained adjustments.
+In an effort to address scalability challenges, multiple PTQ frameworks have emerged. For instance, GPT3.int8() [10], ZeroQuant [61], and Lut-gemm [42] employed straightforward round-to-nearest (RTN) quantization strategies and introduced granular control to manage the trade-off between model size and accuracy. GPTQ [19] proposed a more data-aware layer-wise optimization to minimize the ℓ2\ell_{2} reconstruction error. Follow-up studies [12] argued that 4-bit RTN might be near-optimal for certain classes of networks, but data-aware schemes like GPTQ can exceed this limit without compromising efficiency. Meanwhile, 8-bit quantization of both weights and activations has also been investigated [10, 58, 61], revealing that “outlier features” can substantially degrade performance, and spurring specialized outlier-handling techniques.
+Subsequent efforts prioritized addressing such outliers in weight matrices. For example, SpQR [11] maintains a sparse, higher-precision representation of large-magnitude weights to mitigate their outsized influence. Similarly, AWQ [32] employs per-channel scaling to handle channels with large activation magnitudes, while SqueezeLLM [30] adopts diagonal Fisher approximations and K-means clustering to perform non-uniform quantization, selectively preserving critical weights in full precision. A notable result is QuIP [7], which strategically rotates (e.g., via Hadamard transform) and then projects weights onto a lattice to control outliers, enabling 2-bit per-parameter compression with only minor increases in perplexity.
+Beyond these developments, recent research introduces vector quantization (VQ) to further enhance LLM compression. Transformer-VQ [33] applies VQ to the Attention key vectors, effectively reducing Attention complexity to linear time. Other VQ-based approaches generally optimize discrete code assignments (often in the form of one-hot vectors) and their associated codebooks [15, 51]. For instance, AQLM [15] proposes an additive quantization strategy that is input-adaptive, while QuIP# [51] leverages a highly symmetric E8E_{8} lattice to handle weights that follow (approximately) a spherical sub-Gaussian distribution. GPTVQ [54] interleaves column-wise quantization steps with updates to the unquantized parameters, guided by the Hessian of the per-layer output reconstruction MSE, and then employs SVD and integer quantization for additional codebook compression.
+PV-Tuning [37] shows how relying on straight-through estimators (STE) alone can be suboptimal, proposing a stage-wise method that separately optimizes continuous parameters (e.g., scales, codebooks) and discrete assignments. QTIP [52] decouples the notion of codebook size from both bitrate and dimensionality through a stateful decoding, thereby facilitating ultra-high-dimensional VQ. NestQuant [46] proposes a novel PTQ scheme for weights and activations that is based on self-similar nested lattices.
+2.2 Lattice Vector Quantization (LVQ)
+Scalar quantization maps each parameter to a discrete code individually. Vector quantization, instead, quantizes a group of parameters as a vector by mapping it to the nearest code vector from a codebook [23].
+Lattice-based quantization [9, 21, 16] goes a step further, leveraging a structured grid in the high-dimensional space for efficient quantization.
+Formally, let 𝐆∈ℝd×d\mathbf{G}\in\mathbb{R}^{d\times d} be a generation matrix, which defines a full-rank lattice:
+Λ={𝐆​𝐳|𝐳∈ℤd}.\Lambda=\bigl\{\mathbf{G}\,\mathbf{z}\,\big|\,\mathbf{z}\in\mathbb{Z}^{d}\bigr\}.
+Each column of 𝐆\mathbf{G} acts as a basis vector in ℝd\mathbb{R}^{d}, so any lattice point can be written as an integer combination of these basis vectors.
+Given a vector 𝐱∈ℝd\mathbf{x}\in\mathbb{R}^{d}, the encoding operation aims to find an integer vector 𝐳^∈ℤd\hat{\mathbf{z}}\in\mathbb{Z}^{d} such that the corresponding lattice point 𝐆​𝐳^\mathbf{G}\,\hat{\mathbf{z}} is close to 𝐱\mathbf{x} in the Euclidean sense:
+|
+𝐳^=arg⁡min𝐳∈ℤd​‖𝐱−𝐆​𝐳‖.\hat{\mathbf{z}}\;=\;\arg\min_{\mathbf{z}\in\mathbb{Z}^{d}}\,\|\mathbf{x}-\mathbf{G}\,\mathbf{z}\|. |
+|
+(1) |
+In general, solving the nearest–lattice–point problem is both computationally prohibitive for large dd and non-differentiable, motivating the use of efficient approximate methods such as Babai rounding [2].
+Once the integer lattice index 𝐳^\hat{\mathbf{z}} is found and stored, we can decode the quantized vector by multiplying back:
+𝐱^=𝐆​𝐳^,\hat{\mathbf{x}}\;=\;\mathbf{G}\,\hat{\mathbf{z}},
+yielding a point on the lattice that approximates the original vector 𝐱\mathbf{x}.
+Learnable LVQ.
+Recent studies have shown that learning or adapting the generation matrix 𝐆\mathbf{G} to a given data distribution can significantly reduce quantization error at a fixed bit budget [29, 63, 60, 59, 64]. This is especially beneficial in low-bit regimes where per-dimension scalar methods often struggle. Additionally, practical implementations of LVQ can incorporate companding or pre/post-transformation steps to further align the data with the lattice geometry [16, 62].
+2.3 Companding for Quantization
+Many neural network weight distributions exhibit high dynamic range and non-uniform behavior (Gaussian or sub-Gaussian), which can amplify quantization errors in the low-magnitude regime.
+Companding (derived from “compressing” and “expanding”) [48, 28, 53] offers a simple, yet effective strategy to reshape these distributions before quantization, thereby reducing distortion in critical regions. Typically, the companding process comprises two stages:
+Given a value xx, , a nonlinear function F⁡(⋅)F(\cdot) is applied before quantization to produce z=F⁡(x)z=F(x), and the inverse function is applied after quantization to obtain the reconstruction x^=F−1​(z^)\hat{x}=F^{-1}(\hat{z}), where z^\hat{z} denotes the quantized value (e.g., using scalar or lattice-based quantization). This two-step compress-and-expand reduces errors near zero, where neural parameters are often concentrated, and avoids over-allocation of code space for very large or very small values.
+A well-known example of FF is the μ\mu-law transformation [1, 24], originally used in audio signal processing:
+|
+Fμ​(x)=sgn⁡(x)​ln⁡(1+μ​|x|)ln⁡(1+μ),F_{\mu}(x)=\mathrm{sgn}(x)\,\frac{\ln\bigl(1+\mu|x|\bigr)}{\ln(1+\mu)}, |
+|
+(2) |
+where μ>0\mu>0 is a hyperparameter controlling curvature. This two-step process allocates finer resolution near zero and avoids overuse of code space for large outliers.
+3 Method
+The key idea of GLVQ is to endow each weight group with its own lattice codebook, thereby matching the heterogeneous statistics observed across different portions of an LLM.
+Unfortunately, jointly optimizing both the size (bit-width) and the structure (lattice basis) of every codebook is combinatorial and intractable.
+We therefore decompose the problem into two sequential sub-tasks:
+1.
+Bit allocation.
+Given a global bit budget, we first determine the codebook size for each group by assigning an integer bit-width bgb_{g}.
+A lightweight heuristic prefers higher precision for groups whose weight statistics exhibit larger dynamic ranges or higher sensitivity, under the constraint
+∑gbg​ℓg≤Budget\sum_{g}b_{g}\,\ell_{g}\leq\text{Budget}.
+2.
+Lattice codebook learning.
+With bgb_{g} fixed (implying a lattice codebook of 2bg2^{b_{g}} points), we reshape every weight group 𝐖g∈ℝmg×ng\mathbf{W}_{g}\in\mathbb{R}^{m_{g}\times n_{g}} into a matrix of size d×ℓgd\times\ell_{g} (dd is the lattice dimension).
+We then learn a group-specific generation matrix 𝐆g∈ℝd×d\mathbf{G}_{g}\in\mathbb{R}^{d\times d} and the corresponding integer indices 𝐙g∈ℤd×ℓg\mathbf{Z}_{g}\in\mathbb{Z}^{d\times\ell_{g}} can be obtained via Babai rounding [2]. Hence the quantized weight matrix is
+|
+𝐖^g=Qg​(𝐖g)=𝐆g​𝐙g.\widehat{\mathbf{W}}_{g}=Q_{g}(\mathbf{W}_{g})\;=\;\mathbf{G}_{g}\,\mathbf{Z}_{g}. |
+|
+Fixing the size beforehand simplifies the search space and lets the optimizer focus on discovering a lattice structure that best fits the local weight distribution.
+The Babai rounding algorithm does not always return the exact nearest lattice point; nevertheless, its approximation error is formally bounded, as proved in Appendix A.
+Group-specific companding.
+To further curb quantization error, we learn a nonlinear companding function Fg​(⋅)F_{g}(\cdot) per group. Each weight group undergoes
+|
+𝐖^g=Fg−1​(Qg​(Fg​(𝐖g))),\widehat{\mathbf{W}}_{g}\;=\;F_{g}^{-1}\!\bigl(Q_{g}\!\bigl(F_{g}(\mathbf{W}_{g})\bigr)\bigr), |
+|
+where QgQ_{g} is the lattice quantizer defined above.
+This adaptive companding allocates finer resolution near weight values that are most influential for the layer’s output, yielding markedly lower error than a fixed uniform quantizer.
+3.1 Salience-Determined Bit Allocation
+To achieve optimal bit allocation under strict resource constraints, we adopt the Salience-Determined Bit Allocation (SDBA) mechanism proposed in Slim-LLM [25], which dynamically assigns bit-widths to each group based on its importance.
+Given the weight matrix 𝐖\mathbf{W}, calibration input 𝐗\mathbf{X}, and a target average bit-width NN, SDBA solves the following constrained optimization problem:
+|
+arg​minb1,…,bGDKL(𝐖𝐗∥𝐖^𝐗),s.t.1G∑g=1Gbg=Nand|𝒢N+1|=|𝒢N−1|,\operatorname*{arg\,min}_{b_{1},\ldots,b_{G}}\,\,D_{\text{KL}}\left(\mathbf{W}\mathbf{X}\,\big\|\,\widehat{\mathbf{W}}\mathbf{X}\right),\quad\text{s.t.}\quad\frac{1}{G}\sum_{g=1}^{G}b_{g}=N\quad\text{and}\quad|\mathcal{G}_{N+1}|=|\mathcal{G}_{N-1}|, |
+|
+(3) |
+where bg∈ℤ+∩[N−1,N+1]b_{g}\in\mathbb{Z}^{+}\cap\bigl[N-1,\;N+1\bigr] is the bit-width allocated to group gg, 𝒢N+1={g∣bg=N+1}\mathcal{G}_{N+1}=\{g\mid b_{g}=N+1\}, and 𝒢N−1={g∣bg=N−1}\mathcal{G}_{N-1}=\{g\mid b_{g}=N-1\}. This constraint ensures a balanced allocation: the number of groups assigned N+1N+1 bits equals those assigned N−1N-1 bits, while the majority receive NN bits. For example, in 2-bit quantization, the highest-salience groups use 3 bits, an equal number of low-salience groups use 1 bit, and the rest use 2 bits.
+To solve this efficiently, we leverage Slim-LLM’s double-pointer search algorithm. For a weight matrix with mm output channels and group size g=128g=128, the search space is limited to [0,m/(2​g)][0,m/(2g)], requiring only 𝒪⁡(log⁡m)\mathcal{O}(\log m) iterations.
+3.2 Lattice Codebook Learning
+The key innovation behind GLVQ is the ability to adaptively learn a specialized lattice structure for each weight group, rather than imposing a fixed, universal lattice (such as the E8E_{8} lattice employed by QuIP# [51]). Recent studies, such as Slim-LLM [25], show that even after standard preprocessing, large language models (LLMs) exhibit significant heterogeneity across weight groups, motivating the need for group-specific quantization schemes.
+Specifically, GLVQ learns a generation matrix
+𝐆g∈ℝd×d\mathbf{G}_{g}\in\mathbb{R}^{d\times d}
+for each weight group gg, where the dimension dd (e.g., chosen from {8,16,32,…}\{8,16,32,\dots\}) controls both computational complexity and the granularity of quantization. Crucially, the integer lattice indices 𝐙g\mathbf{Z}_{g} are not directly optimized, but rather determined via Babai rounding, making 𝐆g\mathbf{G}_{g} the only explicitly learned parameter.
+Consider the weight matrix for the gg-th group,
+𝐖g∈ℝmg×ng\mathbf{W}_{g}\in\mathbb{R}^{m_{g}\times n_{g}}.
+We reshape it into a matrix with dimension
+d×ℓgd\times\ell_{g},
+by partitioning it into ℓg\ell_{g} contiguous sub-blocks of dimension dd and stacking these blocks as columns, such that d​ℓg=mg​ngd\,\ell_{g}=m_{g}n_{g}.
+Quantization then approximates each sub-block using a lattice structure defined by 𝐆g\mathbf{G}_{g}:
+|
+𝐖^g=𝐆g​𝐙g,\widehat{\mathbf{W}}_{g}=\mathbf{G}_{g}\mathbf{Z}_{g}, |
+|
+(4) |
+where 𝐙g∈ℤd×ℓg\mathbf{Z}_{g}\in\mathbb{Z}^{d\times\ell_{g}} holds the integer lattice indices computed by rounding each column of 𝐆g−1​𝐖g\mathbf{G}_{g}^{-1}\mathbf{W}_{g}.
+Given calibration inputs
+𝐗∈ℝng×N\mathbf{X}\in\mathbb{R}^{n_{g}\times N}
+(consisting of NN samples), GLVQ minimizes the reconstruction error of the layer outputs after quantization:
+|
+ℒg=‖𝐖g​𝐗−𝐖^g​𝐗‖22=‖𝐖g​𝐗−𝐆g​𝐙g​𝐗‖22.\mathcal{L}_{g}=\bigl\|\mathbf{W}_{g}\mathbf{X}-\widehat{\mathbf{W}}_{g}\mathbf{X}\bigr\|_{2}^{2}=\bigl\|\mathbf{W}_{g}\mathbf{X}-\mathbf{G}_{g}\mathbf{Z}_{g}\mathbf{X}\bigr\|_{2}^{2}. |
+|
+(5) |
+Due to the discrete nature of 𝐙g\mathbf{Z}_{g}, we solve (5) by alternating between two efficient steps:
+1.
+Lattice index assignment (fix 𝐆g\mathbf{G}_{g}).
+Fixing the lattice basis 𝐆g\mathbf{G}_{g}, we update integer indices using Babai rounding [2]:
+|
+𝐳i=⌊𝐆g−1​𝐰i⌉,\mathbf{z}_{i}=\bigl\lfloor\mathbf{G}_{g}^{-1}\mathbf{w}_{i}\bigr\rceil, |
+|
+(6) |
+for each column 𝐰i\mathbf{w}_{i} of 𝐖g\mathbf{W}_{g}. This assignment is computationally efficient with complexity 𝒪⁡(d3)\mathcal{O}(d^{3}).
+2.
+Generation matrix optimization (fix 𝐙g\mathbf{Z}_{g}).
+With fixed lattice indices 𝐙g\mathbf{Z}_{g}, we optimize 𝐆g\mathbf{G}_{g} via gradient descent. The gradient is given by:
+|
+∇𝐆gℒg=−2​(𝐖g​𝐗−𝐆g​𝐙g​𝐗)​(𝐙g​𝐗)⊤.\nabla_{\mathbf{G}_{g}}\mathcal{L}_{g}=-2\bigl(\mathbf{W}_{g}\mathbf{X}-\mathbf{G}_{g}\mathbf{Z}_{g}\mathbf{X}\bigr)(\mathbf{Z}_{g}\mathbf{X})^{\!\top}. |
+|
+(7) |
+Spectral normalization is applied after each update to constrain the singular values of 𝐆g\mathbf{G}_{g} within a stable range [σmin,σmax][\sigma_{\min},\sigma_{\max}].
+To avoid overfitting to the finite calibration set, GLVQ employs a Frobenius regularization term that penalizes deviations from the initial lattice structure:
+|
+ℒreg=λ​‖𝐆g−𝐆g(0)‖22,λ=0.1,\mathcal{L}_{\text{reg}}=\lambda\bigl\|\mathbf{G}_{g}-\mathbf{G}_{g}^{(0)}\bigr\|_{2}^{2},\qquad\lambda=0.1, |
+|
+(8) |
+where 𝐆g(0)\mathbf{G}_{g}^{(0)} is initialized using the Cholesky decomposition of the group’s covariance matrix, aligning initial lattice directions with the group’s principal weight distributions.
+3.3 Group-Specific Companding
+The weight distributions of LLMs are typically heavy-tailed and highly non-uniform; directly quantizing such values wastes many code-points on rare outliers.
+GLVQ therefore inserts an element-wise companding stage before lattice quantization and the corresponding expansion after decoding.
+Distinct from prior work that uses a single global non-linearity, we learn an independent curvature parameter μg\mu_{g} for every group so that the transformation adapts to local statistics.
+For group gg we adopt the μ\mu-law transformation:
+|
+Fg​(x)=sgn⁡(x)​ln⁡(1+μg​|x|)ln⁡(1+μg),Fg−1​(y)=sgn⁡(y)​(1+μg)|y|−1μg,F_{g}(x)=\operatorname{sgn}(x)\,\frac{\ln\!\bigl(1+\mu_{g}|x|\bigr)}{\ln(1+\mu_{g})},\qquad F_{g}^{-1}(y)=\operatorname{sgn}(y)\,\frac{(1+\mu_{g})^{|y|}-1}{\mu_{g}}, |
+|
+(9) |
+where μg>0\mu_{g}>0 controls the compression strength.
+Applied to the reshaped weights, the overall encode–decode chain is
+|
+𝐖~g=Fg​(𝐖g)→𝐙g=⌊𝐆g−1​𝐖~g⌉→𝐖^g=Fg−1​(𝐆g​𝐙g).\widetilde{\mathbf{W}}_{g}=F_{g}\!\bigl(\mathbf{W}_{g}\bigr)\quad\rightarrow\quad\mathbf{Z}_{g}=\bigl\lfloor\mathbf{G}_{g}^{-1}\widetilde{\mathbf{W}}_{g}\bigr\rceil\quad\rightarrow\quad\widehat{\mathbf{W}}_{g}=F_{g}^{-1}\!\bigl(\mathbf{G}_{g}\mathbf{Z}_{g}\bigr). |
+|
+(10) |
+Given calibration inputs 𝐗∈ℝng×N\mathbf{X}\in\mathbb{R}^{n_{g}\times N},
+the reconstruction loss proposed in Eq. 5 can be updated with the new definition of 𝐖g\mathbf{W}_{g} in Eq. 10, accompanying with a Frobenius penalty on the lattice basis:
+|
+ℒg=‖𝐖g​𝐗−𝐖^g​𝐗‖22+λ​‖𝐆g−𝐆0‖22,λ=0.1.\mathcal{L}_{g}=\bigl\|\mathbf{W}_{g}\mathbf{X}-\widehat{\mathbf{W}}_{g}\mathbf{X}\bigr\|_{2}^{2}+\lambda\|\mathbf{G}_{g}-\mathbf{G}_{0}\|_{2}^{2},\qquad\lambda=0.1. |
+|
+(11) |
+Because both FgF_{g} and Fg−1F_{g}^{-1} are differentiable in μg\mu_{g},
+we update μg\mu_{g} jointly with 𝐆g\mathbf{G}_{g} via gradient descent, while 𝐙g\mathbf{Z}_{g} is refreshed by Babai rounding at every iteration.
+We initialise
+|
+μg(0)=100​tanh⁡(κg/10),\mu_{g}^{(0)}=100\,\tanh\!\bigl(\kappa_{g}/10\bigr), |
+|
+(12) |
+where κg\kappa_{g} is the sample kurtosis of 𝐖g\mathbf{W}_{g}, so that heavier-tailed groups start with stronger companding.
+After each update we project μg\mu_{g} onto the practical range [10, 255][10,\,255] to ensure numerical stability.
+3.4 Quantization Pipeline and Runtime Decoding
+We present the full pseudocode for GLVQ in Algorithm 1.
+Starting from initial values 𝐆g(0)\mathbf{G}_{g}^{(0)} and μg(0)\mu_{g}^{(0)},
+each iteration (i) reshapes the weight block, applies the group-specific
+μg\mu_{g}-law companding, and produces latent vectors
+𝐘g\mathbf{Y}_{g}; (ii) quantizes these vectors via Babai
+rounding to obtain integer codes 𝐙g\mathbf{Z}_{g};
+(iii) reconstructs provisional weights
+𝐖^g\widehat{\mathbf{W}}_{g} by inverse companding the lattice outputs; and
+(iv) minimizes a reconstruction loss augmented with a Frobenius penalty on
+𝐆g\mathbf{G}_{g}.
+Gradients update the generation matrix and curvature parameter,
+while 𝐙g\mathbf{Z}_{g} is implicitly refreshed at the next rounding step.
+The loop stops when the relative loss reduction falls below ε\varepsilon,
+returning the final compact representation 𝐖^g\widehat{\mathbf{W}}_{g} that
+combines group-specific lattice precision with adaptive companding.
+This design delivers state-of-the-art accuracy under tight bit budgets while meeting the memory and latency constraints of real-world LLM deployment.
+Offline compression.
+After the optimization in Alg. 1, each weight group is represented by
+(i) an integer-code tensor and
+(ii) a small set of side parameters—a d×dd{\times}d FP16 generation matrix plus one FP16 scalar μg\mu_{g}.
+Because dd is modest (−328\!-\!32) and the matrix is shared by all codes in the group, the storage overhead is tiny.
+For the default configuration used in our experiments (d=16d{=}16, 4-bit weights, mg=4096m_{g}{=}4096, ng=128n_{g}{=}128), the side information adds only 0.2%\mathbf{0.2\%} to the weight codes.
+Aggregated over the entire Llama 2-7B model, this amounts to roughly 𝟐​MB\mathbf{2\,\text{MB}} of extra storage on top of a 1.1 GB 4-bit payload—versus 13.4 GB in FP16.
+A detailed derivation is provided in Appendix B.
+On-the-fly decoding.
+During inference we materialise just a handful of sub-blocks, apply
+𝐰^=Fg−1​(𝐆g​𝐳)\widehat{\mathbf{w}}=F_{g}^{-1}\!\bigl(\mathbf{G}_{g}\mathbf{z}\bigr)
+and release the data immediately after use.
+This streaming strategy cuts peak activation-plus-weight memory by
+>𝟏𝟎×\mathbf{>10\times} versus the common practice of
+pre-decompressing an entire layer.
+The additional computation is modest—d2+dd^{2}{+}d multiplies per
+sub-block—and increases end-to-end latency by only 22–3%3\%
+relative to a standard 4-bit uniform PTQ baseline.
+Algorithm 1 Pseudo code of GLVQ algorithm.
+0:
+Group weights 𝐖g∈ℝmg×ng\mathbf{W}_{g}\in\mathbb{R}^{m_{g}\times n_{g}}, calibration inputs 𝐗∈ℝng×T\mathbf{X}\in\mathbb{R}^{n_{g}\times T}, initial generation matrix 𝐆g(0)∈ℝd×d\mathbf{G}_{g}^{(0)}\in\mathbb{R}^{d\times d}, initial companding parameter μg(0)\mu_{g}^{(0)}
+1:
+𝐆g←𝐆g(0)\mathbf{G}_{g}\leftarrow\mathbf{G}_{g}^{(0)}, μg←μg(0)\mu_{g}\leftarrow\mu_{g}^{(0)}
+2:
+repeat
+3:
+𝐖~g←Fμg​(reshape​(𝐖g,[d,ℓ]))\widetilde{\mathbf{W}}_{g}\leftarrow F_{\mu_{g}}\!\bigl(\text{reshape}(\mathbf{W}_{g},[d,\ell])\bigr) {apply companding; ℓ=mg​ng/d\ell=m_{g}n_{g}/d}
+4:
+𝐙g←round​(𝐆g−1​𝐖~g)\mathbf{Z}_{g}\leftarrow\text{round}\!\bigl(\mathbf{G}_{g}^{-1}\widetilde{\mathbf{W}}_{g}\bigr) {Babai lattice rounding}
+5:
+𝐖^g←reshape​(Fμg−1​(𝐆g​𝐙g),[mg,ng])\widehat{\mathbf{W}}_{g}\leftarrow\text{reshape}\!\bigl(F_{\mu_{g}}^{-1}(\mathbf{G}_{g}\mathbf{Z}_{g}),[m_{g},n_{g}]\bigr) {inverse compand & reshape}
+6:
+ℒg←‖𝐖g​𝐗−𝐖^g​𝐗‖F2+λ​‖𝐆g−𝐆g(0)‖F2\mathcal{L}_{g}\leftarrow\bigl\|\mathbf{W}_{g}\mathbf{X}-\widehat{\mathbf{W}}_{g}\mathbf{X}\bigr\|_{F}^{2}+\lambda\bigl\|\mathbf{G}_{g}-\mathbf{G}_{g}^{(0)}\bigr\|_{F}^{2} {reconstruction + regularizer}
+7:
+𝐆g←𝐆g−ηG​∇𝐆gℒg\mathbf{G}_{g}\leftarrow\mathbf{G}_{g}-\eta_{G}\nabla_{\mathbf{G}_{g}}\mathcal{L}_{g} {update generation matrix}
+8:
+μg←μg−ημ​∇μgℒg\mu_{g}\leftarrow\mu_{g}-\eta_{\mu}\nabla_{\mu_{g}}\mathcal{L}_{g} {update companding parameter}
+9:
+until |ℒg(t)−ℒg(t−1)|/ℒg(t−1)<ε\bigl|\mathcal{L}_{g}^{(t)}-\mathcal{L}_{g}^{(t-1)}\bigr|/\mathcal{L}_{g}^{(t-1)}<\varepsilon {convergence check}
+10:
+return 𝐖^g\widehat{\mathbf{W}}_{g}
+4 Experiments
+In this section, we evaluate the performance of our proposed grouped Lattice vector quantization (GLVQ) framework on the Llama 1 and 2 models [50], which range from 7 billion to 70 billion parameters.
+To ensure a fair comparison, we follow the experimental setup used in QuIP#. Specifically,
+we evaluate perplexity on the Wikitext-2 [38] and C4 [45] datasets, utilizing context lengths of 2048 for Llama 1 and 4096 for Llama 2 models. For zero-shot tasks, we use the LM Eval framework to measure accuracy on tasks such as ARC, PIQA, and the Winograd Schema Challenge (Wino). We report both perplexity and zero-shot accuracy for all methods to offer a comprehensive evaluation.
+We implement our method using PyTorch [43] and CUDA [40], with all experiments conducted on NVIDIA A100 GPUs. For timing experiments, we use an NVIDIA RTX 4090 GPU. We adopt 4M tokens from the RedPajama 1T dataset [8] as the calibration sequences in our experiments.
+We implement two variants of our model with lattice dimensions d=8d=8 and d=32d=32, referred to as GLVQ-8D and GLVQ-32D, respectively.
+For baselines, we compare our method against several state-of-the-art PTQ approaches, including OmniQuant [47], AWQ [32] QuIP# [51], AQLM [15] and QTIP [52].
+4.1 Perplexity Results on Llama Models
+Our evaluation focuses on perplexity over the Wikitext-2 [38] and C4 [45] datasets, using a context length of 2048 for Llama 1 and 4096 for Llama 2. Results are reported in Table 1.
+Across all settings, GLVQ consistently achieves lower perplexity than existing methods, particularly in low-bit regimes. For example, under the 2-bit quantization regime on Llama 2-70B, GLVQ-32D achieves a perplexity of 3.36 on Wikitext-2, significantly lower than QTIP (3.78) and QuIP# (3.91), highlighting that the performance gap becomes most pronounced under extreme compression levels.
+We also observe consistent improvements across model scales and datasets. On Llama 1-13B, GLVQ-32D improves upon QuIP# by 0.41 perplexity points (5.38 vs. 5.79) at 2-bit on Wikitext-2, and 0.53 points (6.95 vs. 7.48) on C4. These results validate the robustness of our method across both small and large Llama variants.
+Notably, the performance gain is more pronounced as the bit-width decreases, highlighting the advantage of GLVQ’s group-specific lattice codebooks and companding functions. The combination of adaptive vector quantization and nonlinear transformation helps mitigate the quantization error that typically worsens at extreme compression levels.
+Furthermore, GLVQ-32D consistently outperforms GLVQ-8D, demonstrating that larger lattice dimensions improve quantization fidelity by offering a more expressive codebook structure. This supports our design choice of learning group-specific lattices with adjustable resolution.
+Table 1: Perplexity (↓) of competing methods on Wikitext2 and C4 for Llama 1 and 2. All results use a context length of 2048 for Llama 1 and 4096 for Llama 2.
+Method |
+Bits |
+Wikitext 2 |
+C4 |
+|
+|
+|
+1-7 |
+1-13 |
+1-30 |
+1-65 |
+2-7 |
+2-13 |
+2-70 |
+1-7 |
+1-13 |
+1-30 |
+1-65 |
+2-7 |
+2-13 |
+2-70 |
+Fp16 |
+16 |
+5.68 |
+5.09 |
+4.10 |
+3.53 |
+5.12 |
+4.57 |
+3.12 |
+7.08 |
+6.61 |
+5.98 |
+5.62 |
+6.63 |
+6.05 |
+4.97 |
+OmniQ |
+2 |
+15.5 |
+13.2 |
+8.71 |
+7.58 |
+– |
+– |
+– |
+24.9 |
+18.3 |
+13.9 |
+10.8 |
+– |
+– |
+– |
+QuIP# |
+2 |
+6.86 |
+5.97 |
+5.02 |
+4.36 |
+6.19 |
+5.35 |
+3.91 |
+8.36 |
+7.48 |
+6.71 |
+6.19 |
+8.16 |
+7.20 |
+5.71 |
+QTIP |
+2 |
+6.52 |
+5.80 |
+4.83 |
+4.21 |
+5.91 |
+5.26 |
+3.78 |
+7.99 |
+7.31 |
+6.56 |
+6.08 |
+7.76 |
+6.99 |
+5.56 |
+GLVQ-8D |
+2 |
+6.28 |
+5.64 |
+4.57 |
+4.01 |
+5.69 |
+5.02 |
+3.62 |
+7.83 |
+7.17 |
+6.48 |
+5.94 |
+7.33 |
+6.56 |
+5.25 |
+GLVQ-32D |
+2 |
+6.00 |
+5.38 |
+4.32 |
+3.81 |
+5.41 |
+4.80 |
+3.36 |
+7.61 |
+6.95 |
+6.22 |
+5.80 |
+7.14 |
+6.33 |
+5.04 |
+4.2 Zero-Shot Accuracy on Llama Models
+We report zero-shot accuracy of GLVQ and baseline methods on Llama-2 models under 4-bit, 3-bit and 2-bit quantization across four tasks from LM Eval: ARC-Challenge, ARC-Easy, PIQA, and Winogrande. Results are summarized in Table 2.
+GLVQ-8D consistently matches or outperforms existing methods across all bit-widths and model sizes. At 4-bit precision, GLVQ-8D achieves the highest accuracy on most tasks, e.g., 51.2% on ARC-Challenge and 81.6% on PIQA (2-70B), slightly surpassing QTIP and QuIP#.
+As the bit-width decreases, the performance gap becomes more evident. At 2-bit precision, GLVQ maintains strong performance—e.g., 40.0% on ARC-Challenge and 78.0% on PIQA (2-13B)—outperforming QuIP# (39.5%, 77.3%) and QTIP (39.2%, 77.8%). On the smallest model (2-7B), GLVQ-8D again leads with the highest scores on all tasks, demonstrating its robustness under extreme compression.
+These results confirm that GLVQ preserves downstream task accuracy more effectively than existing vector quantization methods, especially in low-bit regimes.
+Table 2: Zero-shot accuracy (acc in LM Eval, not acc_norm) for Llama 2 models.
+|
+2-70 |
+2-13 |
+2-7 |
+Method |
+Bits |
+ArcC |
+ArcE |
+PIQA |
+WINO |
+Bits |
+ArcC |
+ArcE |
+PIQA |
+WINO |
+Bits |
+ArcC |
+ArcE |
+PIQA |
+WINO |
+FP16 |
+16 |
+51.1 |
+77.7 |
+81.1 |
+77.0 |
+16 |
+45.6 |
+73.3 |
+73.5 |
+69.6 |
+16 |
+40.0 |
+69.3 |
+78.5 |
+67.3 |
+OmniQ |
+4 |
+49.8 |
+77.9 |
+80.7 |
+75.8 |
+4 |
+43.1 |
+70.2 |
+78.4 |
+67.8 |
+4 |
+37.9 |
+67.8 |
+77.1 |
+67.0 |
+QuIP |
+4 |
+47.0 |
+74.3 |
+80.3 |
+76.0 |
+4 |
+44.9 |
+73.3 |
+79.0 |
+69.7 |
+4 |
+– |
+– |
+– |
+– |
+AQLM |
+4 |
+51.0 |
+78.1 |
+81.4 |
+76.9 |
+4 |
+43.9 |
+72.2 |
+78.6 |
+70.4 |
+4 |
+40.3 |
+68.9 |
+77.7 |
+67.3 |
+QuIP# |
+4 |
+50.6 |
+78.1 |
+81.4 |
+77.1 |
+4 |
+45.5 |
+73.9 |
+78.9 |
+69.9 |
+4 |
+40.5 |
+69.1 |
+78.4 |
+67.6 |
+QTIP |
+4 |
+50.0 |
+77.6 |
+81.5 |
+77.0 |
+4 |
+45.9 |
+73.2 |
+78.6 |
+69.9 |
+4 |
+40.4 |
+69.2 |
+78.5 |
+67.4 |
+GLVQ-8D |
+4 |
+51.2 |
+78.0 |
+81.6 |
+77.3 |
+4 |
+46.0 |
+74.0 |
+79.2 |
+70.5 |
+4 |
+40.7 |
+69.5 |
+78.6 |
+67.8 |
+OmniQ |
+3 |
+47.6 |
+75.7 |
+79.7 |
+73.5 |
+3 |
+42.0 |
+69.0 |
+77.7 |
+65.9 |
+3 |
+35.3 |
+62.6 |
+73.6 |
+63.6 |
+QuIP |
+3 |
+46.3 |
+73.2 |
+80.0 |
+74.6 |
+3 |
+41.5 |
+70.4 |
+76.9 |
+69.9 |
+3 |
+– |
+– |
+– |
+– |
+AQLM |
+3 |
+50.0 |
+77.6 |
+81.3 |
+77.2 |
+3 |
+43.6 |
+73.5 |
+77.8 |
+67.6 |
+3 |
+38.7 |
+67.8 |
+76.6 |
+68.4 |
+QuIP# |
+3 |
+50.9 |
+77.7 |
+81.4 |
+76.4 |
+3 |
+44.0 |
+72.5 |
+78.4 |
+69.1 |
+3 |
+39.2 |
+68.4 |
+77.3 |
+66.5 |
+QTIP |
+3 |
+49.8 |
+77.5 |
+81.2 |
+76.3 |
+3 |
+43.6 |
+72.5 |
+78.2 |
+69.5 |
+3 |
+39.8 |
+69.7 |
+78.0 |
+66.8 |
+GLVQ-8D |
+3 |
+50.8 |
+78.0 |
+81.6 |
+77.1 |
+3 |
+46.5 |
+74.2 |
+79.3 |
+71.0 |
+3 |
+40.9 |
+69.8 |
+78.8 |
+67.9 |
+OmniQ |
+2 |
+28.7 |
+55.4 |
+68.8 |
+53.2 |
+2 |
+23.0 |
+44.4 |
+62.6 |
+52.6 |
+2 |
+21.6 |
+35.2 |
+57.5 |
+51.5 |
+QuIP |
+2 |
+34.0 |
+62.2 |
+74.8 |
+67.5 |
+2 |
+23.5 |
+45.2 |
+62.0 |
+52.8 |
+2 |
+19.4 |
+26.0 |
+54.6 |
+51.8 |
+AQLM |
+2 |
+47.9 |
+77.7 |
+80.4 |
+75.9 |
+2 |
+38.5 |
+67.0 |
+75.1 |
+69.5 |
+2 |
+33.6 |
+62.8 |
+73.5 |
+64.6 |
+QuIP# |
+2 |
+48.7 |
+77.3 |
+80.3 |
+75.9 |
+2 |
+39.5 |
+69.3 |
+77.3 |
+67.7 |
+2 |
+34.6 |
+64.6 |
+75.1 |
+64.9 |
+QTIP |
+2 |
+48.1 |
+76.9 |
+80.1 |
+76.5 |
+2 |
+39.2 |
+70.6 |
+77.8 |
+71.0 |
+2 |
+35.3 |
+63.9 |
+75.3 |
+66.7 |
+GLVQ-8D |
+2 |
+49.0 |
+77.5 |
+80.5 |
+76.1 |
+2 |
+40.0 |
+70.8 |
+78.0 |
+71.3 |
+2 |
+35.5 |
+64.5 |
+75.5 |
+67.2 |
+4.3 Fractional and Sub-2-Bit Quantization
+To assess GLVQ in more extreme compression regimes, we further evaluate its performance under fractional and ultra-low bit-width settings (1.5 and 1.0 average bits per weight), using the same protocol as in the main experiments. Fractional rates are naturally supported in GLVQ via group-wise bit allocation: each group is assigned an integer bit-width, and the global rate is the arithmetic mean across groups, allowing any rational target (e.g., 1.5 bit by mixing 1-bit and 2-bit groups). No architectural or algorithmic modification is required to support such mixtures.
+Table 3 reports results on WikiText2 for Llama-2 at 1.5 bit and 1.0 bit. At 1.5 bit, GLVQ achieves perplexities of 7.01 (7B), 6.11 (13B), and 4.99 (70B), outperforming PV-Tuning at matched rates and significantly surpassing PB-LLM. Notably, GLVQ approaches the performance of 2-bit baselines despite using substantially fewer bits. Even at the extremely aggressive 1.0 bit regime, GLVQ remains competitive: it attains 7.83 (7B), 7.59 (13B), and 6.11 (70B), outperforming BiLLM and OneBit by large margins on 7B and 13B and closely matching PV-Tuning at similar budgets.
+These findings highlight the robustness of GLVQ’s group-specific lattice design and salience-driven allocation under extreme compression, where competing methods degrade substantially. Unlike approaches that depend on retraining or fine-tuning, GLVQ preserves strong performance even in the ultra-low-rate regime, making it a practical solution for deployment in severe memory- and energy-constrained environments.
+Table 3: Perplexity (↓) of fractional and sub-2-bit quantization on Wikitext2 (Llama-2).
+GLVQ achieves strong performance at 1.5-bit and remains competitive even at 1.0-bit.
+Method |
+7B |
+13B |
+70B |
+Bits |
+PPL |
+Δ\Delta to GLVQ |
+Bits |
+PPL |
+Δ\Delta |
+Bits |
+PPL |
+Δ\Delta |
+BiLLM |
+1.08 |
+32.48 |
++24.65 |
+1.10 |
+16.77 |
++10.66 |
+1.08 |
+8.41 |
++2.30 |
+OneBit |
+1.00 |
+9.73 |
++1.90 |
+1.00 |
+8.76 |
++1.17 |
+– |
+– |
+– |
+PV-Tuning |
+1.02 |
+8.28 |
++0.45 |
+0.97 |
+7.96 |
++0.37 |
+1.00 |
+6.50 |
++0.39 |
+GLVQ (ours) |
+1.00 |
+7.83 |
+0.00 |
+1.00 |
+7.59 |
+0.00 |
+1.00 |
+6.11 |
+0.00 |
+PB-LLM |
+1.70 |
+69.20 |
++62.19 |
+1.70 |
+151.09 |
++144.98 |
+1.70 |
+28.37 |
++23.38 |
+PV-Tuning |
+1.58 |
+7.32 |
++0.31 |
+1.37 |
+6.65 |
++0.54 |
+1.14 |
+5.52 |
++0.53 |
+GLVQ (ours) |
+1.50 |
+7.01 |
+0.00 |
+1.50 |
+6.11 |
+0.00 |
+1.50 |
+4.99 |
+0.00 |
+4.4 Inference Throughput
+We measure inference throughput on a single NVIDIA RTX 4090 GPU, using a batch size of 1 and a 2-bit quantization setup for all competing methods. The results are summarized in Table 4.
+We compare both uniform-precision and mixed-precision variants of GLVQ. The uniform versions (denoted as GLVQ-u) do not use salience-drive bit allocation and instead apply a fixed bit-width across all groups. Despite this simplification, GLVQ-8D-u and GLVQ-32D-u achieve throughput on par with QTIP (e.g., 100.2 vs. 105.2 TOK/s on Llama 2-7B), while consistently delivering lower perplexity (e.g., 5.55 vs. 5.91), demonstrating the effectiveness of group-specific lattice quantization and companding.
+The full GLVQ variants, which leverage salience-determined bit allocation, achieve even better perplexity (e.g., 5.41 with GLVQ-32D vs. 5.91 with QTIP) at the cost of a moderate decrease in speed (e.g., 82.0 vs. 105.2 TOK/s). The reduction in memory bandwidth usage also confirms improved efficiency (e.g., 521 GB/s vs. 628 GB/s). These results highlight that GLVQ offers a flexible trade-off between accuracy and efficiency, and its mixed-precision configuration is particularly advantageous for accuracy-sensitive scenarios such as language generation or summarization.
+Table 4: Inference throughput (TOK/s), MATVEC MEM BW (GB/S), and perplexity on WikiText2 dataset tested on a NVIDIA RTX 4090 for various methods on 2-bit Llama 2-7B and 2-70B models. OOM indicates that the method ran out of memory on the tested model.
+Method |
+2-7B |
+2-70B |
+TOK/S |
+MEM BW |
+Perplexity (↓) |
+TOK/S |
+MEM BW |
+Perplexity (↓) |
+Original Model |
+33.1 |
+– |
+7.0 |
+OOM |
+OOM |
+– |
+Scalar Quantization |
+OmniQuant |
+125.0 |
+– |
+37.4 |
+35.1 |
+– |
+7.81 |
+GPTVQ-1D |
+143.5 |
+– |
+10.1 |
+40.2 |
+– |
+4.82 |
+Vector Quantization |
+GPTVQ(4D) |
+24.0 |
+– |
+7.22 |
+10.4 |
+– |
+4.39 |
+AQLM |
+20.6 |
+– |
+6.59 |
+8.27 |
+– |
+3.94 |
+QUIP# |
+106.3 |
+697 GB/s |
+6.66 |
+25.9 |
+867 GB/s |
+4.16 |
+QTIP |
+105.2 |
+628 GB/s |
+5.91 |
+25.8 |
+840 GB/s |
+3.78 |
+GLVQ-8D-u |
+102.3 |
+615 GB/s |
+5.87 |
+24.9 |
+836 GB/s |
+3.72 |
+GLVQ-32D-u |
+100.2 |
+608 GB/s |
+5.55 |
+24.1 |
+831 GB/s |
+3.49 |
+GLVQ-8D |
+88.4 |
+544 GB/s |
+5.69 |
+20.1 |
+721 GB/s |
+3.62 |
+GLVQ-32D |
+82.0 |
+521 GB/s |
+5.41 |
+18.7 |
+702 GB/s |
+3.36 |
+4.5 Ablation Studies
+To quantify the contribution of each design component in GLVQ, we perform controlled ablations and examine their effects on perplexity. All corresponding results are reported in Appendix Tables 6–13.
+Bit allocation.
+We replace the salience-driven bit allocation with a uniform bit-width across all groups (Appendix D, Table 6). This forces all groups to share the same precision regardless of their sensitivity. Perplexity increases consistently across model scales and bit-widths; for example, on Llama 1–13B at 2-bit it rises from 5.64 to 5.79, and on Llama 2–70B from 3.62 to 3.72. The gap persists at 3-bit and remains visible even at 4-bit, where the precision constraint is relatively loose. These results confirm that group-aware precision allocation is essential for preserving accuracy when operating under tight bit budgets.
+Group-specific lattice codebook.
+We then enforce a single shared lattice basis across all groups instead of learning group-specific bases (Appendix E, Table 7). This substitution consistently harms performance, especially under 2-bit quantization (e.g., Llama 1–13B increases from 5.64 to 5.89; Llama 2–70B from 3.62 to 3.88), and the degradation persists at 3- and 4-bit. These findings indicate that different weight groups exhibit distinct geometric statistics, and a shared codebook cannot align to them simultaneously. Group-specific lattice learning is therefore necessary to realize the full benefit of lattice quantization.
+Group-specific companding.
+Next, we remove the group-wise μ\mu-law companding and apply a fixed global transformation to all groups (Appendix F, Table 8). Perplexity increases across all settings, with the strongest effect again observed at low-bit precision (e.g., Llama 1–13B at 2-bit: 5.64 to 5.87; Llama 2–70B: 3.62 to 3.88). This validates the hypothesis that heavy-tailed and skewed weight distributions must be linearized at the group level to reduce quantization error.
+Group size.
+We ablate the number of columns per group using {32, 64, 128, 256, 512} (Appendix G, Tables 9, 10). Very small groups (32/64) yield slightly lower perplexity but incur significant codebook/storage overhead, whereas very large groups (256/512) compromise accuracy by averaging out distributional differences within the group. A moderate group size of 128 consistently provides the best balance between the adaptation power and additional overhead and is therefore adopted as the default option in the proposed GLVQ.
+Calibration-set size.
+We vary the number of calibration tokens from 100K to 8M (Appendix H, Table 11). Perplexity improves steadily up to about 4M tokens and then saturates; for instance, on Llama 1–13B (2-bit) perplexity is 5.64 at 4M and 5.65 at 8M. Importantly, GLVQ remains competitive even with 500K or 1M tokens, and degradation is gradual even at 100K. This demonstrates both the data efficiency and the robustness of the method in low-calibration regimes.
+Babai rounding vs. GCD.
+Finally, we replace Babai rounding with greedy coordinate descent (GCD) for index assignment (Appendix I, Tables 12, 13). GCD consistently yields worse perplexity; for example, on Llama 1–13B at 2-bit the perplexity rises from 5.64 (Babai) to 5.92 (GCD). Zero-shot results on Llama 2 benchmarks show the same pattern. This confirms that Babai rounding offers both better convergence stability and superior final accuracy, and should be preferred for lattice-based quantization.
+5 Conclusion
+We have introduced a novel approach, grouped lattice vector quantization (GLVQ), for low-bit mixed-precision quantization of Large Language Models (LLMs). By integrating group-wise bit allocation, lattice codebook learning, and companding transformations, GLVQ achieves superior rate-distortion performance compared to scalar or fixed-precision baselines. Our experimental results demonstrate the effectiveness of GLVQ on both language modeling and summarization tasks, highlighting its potential as a practical solution for deploying LLMs in resource-constrained environments. Future research will focus on exploring hierarchical grouping strategies and designing hardware-efficient lattice codebooks.
+Limitations & future work.
+GLVQ still assumes a fixed column partition, which may under-utilize layer-wise sensitivity structure; data-driven grouping may improve rate–distortion trade-offs. The current work also compresses only weights; extending lattice-based quantization to activations would unlock further memory and energy savings but is complicated by dynamic activation statistics.
+Acknowledgements
+This research is supported by the RIE2025 Industry Alignment Fund – Industry Collaboration Projects (IAF-ICP) (Award I2301E0026), administered by A*STAR, as well as supported by Alibaba Group and NTU Singapore through Alibaba-NTU Global e-Sustainability CorpLab (ANGEL). This work is also supported in part by the National Natural Science Foundation of China (No.62301313).
+References
+[1]
+Pulse code modulation (PCM) of voice frequencies, 1988.
+Recommendation ITU-T G.711, originally approved in 1972.
+[2]
+László Babai.
+On Lovász’ lattice reduction and the nearest lattice point problem.
+In Combinatorics, pages 13–20. Springer, 1986.
+[3]
+Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan, Wenbin Ge, Yu Han, Fei Huang, et al.
+Qwen technical report.
+arXiv preprint arXiv:2309.16609, 2023.
+[4]
+Yuntao Bai, Andy Jones, Kamal Ndousse, Amanda Askell, Anna Chen, Nova DasSarma, Dawn Drain, Stanislav Fort, Deep Ganguli, Tom Henighan, et al.
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+arXiv preprint arXiv:2204.05862, 2022.
+[5]
+Rocco Banner, Elad Hoffer, Itay Hubara, and Rami El-Yaniv.
+Post-training quantization for deep neural networks.
+NeurIPS, 31:10487–10497, 2018.
+[6]
+Tom B Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Nicholas Shinn, Edward Koo, Timo Wang, et al.
+Language models are few-shot learners.
+NeurIPS, 33:1877–1901, 2020.
+[7]
+Jerry Chee, Yaohui Cai, Volodymyr Kuleshov, and Christopher M De Sa.
+Quip: 2-bit quantization of large language models with guarantees.
+Advances in Neural Information Processing Systems, 36, 2024.
+[8]
+Together Computer.
+Redpajama: An open source recipe to reproduce llama training dataset, April 2023.
+[9]
+JH Conway, NJA Sloane, and E Bannai.
+Sphere-packings, lattices, and groups, 1987.
+[10]
+Tim Dettmers, Mike Lewis, Younes Belkada, and Luke Zettlemoyer.
+Gpt3. int8 (): 8-bit matrix multiplication for transformers at scale.
+Advances in Neural Information Processing Systems, 35:30318–30332, 2022.
+[11]
+Tim Dettmers, Ruslan Svirschevski, Vage Egiazarian, Denis Kuznedelev, Elias Frantar, Saleh Ashkboos, Alexander Borzunov, Torsten Hoefler, and Dan Alistarh.
+Spqr: A sparse-quantized representation for near-lossless llm weight compression.
+arXiv preprint arXiv:2306.03078, 2023.
+[12]
+Tim Dettmers and Luke Zettlemoyer.
+The case for 4-bit precision: k-bit inference scaling laws.
+In International Conference on Machine Learning, pages 7750–7774. PMLR, 2023.
+[13]
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova.
+Bert: Pre-training of deep bidirectional transformers for language understanding.
+NAACL-HLT, 1:4171–4186, 2019.
+[14]
+Xin Ding, Xiaoyu Liu, Zhijun Tu, Yun Zhang, Wei Li, Jie Hu, Hanting Chen, Yehui Tang, Zhiwei Xiong, Baoqun Yin, et al.
+Cbq: Cross-block quantization for large language models.
+arXiv preprint arXiv:2312.07950, 2023.
+[15]
+Vage Egiazarian, Andrei Panferov, Denis Kuznedelev, Elias Frantar, Artem Babenko, and Dan Alistarh.
+Extreme compression of large language models via additive quantization.
+arXiv preprint arXiv:2401.06118, 2024.
+[16]
+Uri Erez and Ram Zamir.
+Achieving 1/2 log (1 + snr) on the awgn channel with lattice encoding and decoding.
+IEEE Transactions on Information Theory, 50(10):2293–2314, 2004.
+[17]
+Wenkai Fang, Shunyu Liu, Yang Zhou, Kongcheng Zhang, Tongya Zheng, Kaixuan Chen, Mingli Song, and Dacheng Tao.
+Serl: Self-play reinforcement learning for large language models with limited data.
+arXiv preprint arXiv:2505.20347, 2025.
+[18]
+Elias Frantar and Dan Alistarh.
+Optimal brain compression: A framework for accurate post-training quantization and pruning.
+Advances in Neural Information Processing Systems, 35:4475–4488, 2022.
+[19]
+Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh.
+Gptq: Accurate post-training quantization for generative pre-trained transformers.
+arXiv preprint arXiv:2210.17323, 2022.
+[20]
+Amir Gholami, Sehoon Kim, Zhen Dong, Zhewei Yao, Michael W Mahoney, and Kurt Keutzer.
+A survey of quantization methods for efficient neural network inference.
+In Low-Power Computer Vision, pages 291–326. Chapman and Hall/CRC, 2022.
+[21]
+Jerry D Gibson and Khalid Sayood.
+Lattice quantization.
+In Advances in electronics and electron physics, volume 72, pages 259–330. Elsevier, 1988.
+[22]
+Ruihao Gong, Yifu Ding, Zining Wang, Chengtao Lv, Xingyu Zheng, Jinyang Du, Haotong Qin, Jinyang Guo, Michele Magno, and Xianglong Liu.
+A survey of low-bit large language models: Basics, systems, and algorithms.
+arXiv preprint arXiv:2409.16694, 2024.
+[23]
+Robert M. Gray.
+Vector quantization.
+IEEE ASSP Magazine, 1(2):4–29, 1984.
+[24]
+Simon Haykin.
+An Introduction to Analog and Digital Communications.
+John Wiley & Sons, 1994.
+[25]
+Wei Huang, Haotong Qin, Yangdong Liu, Yawei Li, Xianglong Liu, Luca Benini, Michele Magno, and Xiaojuan Qi.
+Slim-llm: Salience-driven mixed-precision quantization for large language models.
+arXiv preprint arXiv:2405.14917, 2024.
+[26]
+Itay Hubara, Matthieu Courbariaux, Daniel Soudry, Rami El-Yaniv, and Yoshua Bengio.
+Quantizing deep convolutional networks for efficient inference: A whitepaper.
+arXiv preprint arXiv:1612.01462, 2017.
+[27]
+Itay Hubara, Yury Nahshan, Yair Hanani, Ron Banner, and Daniel Soudry.
+Accurate post training quantization with small calibration sets.
+In International Conference on Machine Learning, pages 4466–4475. PMLR, 2021.
+[28]
+Hisashi Kaneko.
+A unified formulation of segment companding laws and synthesis of codecs and digital compandors.
+Bell System Technical Journal, 49(7):1555–1588, 1970.
+[29]
+Ahmed Khalil, Robert Piechocki, and Raul Santos-Rodriguez.
+Ll-vq-vae: Learnable lattice vector-quantization for efficient representations.
+arXiv preprint arXiv:2310.09382, 2023.
+[30]
+Sehoon Kim, Coleman Hooper, Amir Gholami, Zhen Dong, Xiuyu Li, Sheng Shen, Michael W Mahoney, and Kurt Keutzer.
+Squeezellm: Dense-and-sparse quantization.
+arXiv preprint arXiv:2306.07629, 2023.
+[31]
+Yuhang Li, Ruihao Gong, Xu Tan, Yang Yang, Peng Hu, Qi Zhang, Fengwei Yu, Wei Wang, and Shi Gu.
+Brecq: Pushing the limit of post-training quantization by block reconstruction.
+arXiv preprint arXiv:2102.05426, 2021.
+[32]
+Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Wei-Ming Chen, Wei-Chen Wang, Guangxuan Xiao, Xingyu Dang, Chuang Gan, and Song Han.
+Awq: Activation-aware weight quantization for on-device llm compression and acceleration.
+Proceedings of Machine Learning and Systems, 6:87–100, 2024.
+[33]
+Lucas D Lingle.
+Transformer-vq: Linear-time transformers via vector quantization.
+arXiv preprint arXiv:2309.16354, 2023.
+[34]
+Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al.
+Deepseek-v3 technical report.
+arXiv preprint arXiv:2412.19437, 2024.
+[35]
+Shunyu Liu, Wenkai Fang, Zetian Hu, Junjie Zhang, Yang Zhou, Kongcheng Zhang, Rongcheng Tu, Ting-En Lin, Fei Huang, Mingli Song, and Dacheng Tao.
+A survey of direct preference optimization.
+arXiv preprint arXiv:2503.11701, 2025.
+[36]
+Shunyu Liu, Minghao Liu, Huichi Zhou, Zhenyu Cui, Yang Zhou, Yuhao Zhou, Wendong Fan, Ge Zhang, Jiajun Shi, Weihao Xuan, et al.
+Verigui: Verifiable long-chain gui dataset.
+arXiv preprint arXiv:2508.04026, 2025.
+[37]
+Vladimir Malinovskii, Denis Mazur, Ivan Ilin, Denis Kuznedelev, Konstantin Burlachenko, Kai Yi, Dan Alistarh, and Peter Richtarik.
+Pv-tuning: Beyond straight-through estimation for extreme llm compression.
+arXiv preprint arXiv:2405.14852, 2024.
+[38]
+Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher.
+Pointer sentinel mixture models, 2016.
+[39]
+Markus Nagel, Rana Ali Amjad, Mart Van Baalen, Christos Louizos, and Tijmen Blankevoort.
+Up or down? adaptive rounding for post-training quantization.
+In International Conference on Machine Learning, pages 7197–7206. PMLR, 2020.
+[40]
+NVIDIA, Péter Vingelmann, and Frank H.P. Fitzek.
+Cuda, release: 10.2.89, 2020.
+[41]
+Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al.
+Training language models to follow instructions with human feedback.
+Advances in neural information processing systems, 35:27730–27744, 2022.
+[42]
+Gunho Park, Baeseong Park, Minsub Kim, Sungjae Lee, Jeonghoon Kim, Beomseok Kwon, Se Jung Kwon, Byeongwook Kim, Youngjoo Lee, and Dongsoo Lee.
+Lut-gemm: Quantized matrix multiplication based on luts for efficient inference in large-scale generative language models.
+arXiv preprint arXiv:2206.09557, 2022.
+[43]
+Adam Paszke, Sam Gross, Soumith Chintala, Gregory Chanan, Edward Yang, Zachary DeVito, Zeming Lin, Alban Desmaison, Luca Antiga, and Adam Lerer.
+Automatic differentiation in pytorch.
+In NIPS-W, 2017.
+[44]
+Alec Radford, Karthik Narasimhan, Tim Salimans, and Ilya Sutskever.
+Language models are unsupervised multitask learners.
+OpenAI Blog, 2019.
+[45]
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J. Liu.
+Exploring the limits of transfer learning with a unified text-to-text transformer.
+arXiv e-prints, 2019.
+[46]
+Semyon Savkin, Eitan Porat, Or Ordentlich, and Yury Polyanskiy.
+Nestquant: Nested lattice quantization for matrix products and llms.
+arXiv preprint arXiv:2502.09720, 2025.
+[47]
+Wenqi Shao, Mengzhao Chen, Zhaoyang Zhang, Peng Xu, Lirui Zhao, Zhiqian Li, Kaipeng Zhang, Peng Gao, Yu Qiao, and Ping Luo.
+Omniquant: Omnidirectionally calibrated quantization for large language models.
+arXiv preprint arXiv:2308.13137, 2023.
+[48]
+Bernard Smith.
+Instantaneous companding of quantized signals.
+Bell System Technical Journal, 36(3):653–709, 1957.
+[49]
+Nisan Stiennon, Long Ouyang, Jeffrey Wu, Daniel Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, and Paul F Christiano.
+Learning to summarize with human feedback.
+Advances in neural information processing systems, 33:3008–3021, 2020.
+[50]
+Hugo Touvron, Benoit Lemoine, Peter Liu, Le Zhang, Xue Ke, Jure Yang, Kenneth W Church, et al.
+Llama: Open and efficient foundation language models.
+arXiv preprint arXiv:2302.13971, 2023.
+[51]
+Albert Tseng, Jerry Chee, Qingyao Sun, Volodymyr Kuleshov, and Christopher De Sa.
+Quip#: Even better llm quantization with hadamard incoherence and lattice codebooks.
+arXiv preprint arXiv:2402.04396, 2024.
+[52]
+Albert Tseng, Qingyao Sun, David Hou, and Christopher De Sa.
+Qtip: Quantization with trellises and incoherence processing.
+arXiv preprint arXiv:2406.11235, 2024.
+[53]
+YP Tsividis, V Gopinathan, and L Toth.
+Companding in signal processing.
+Electronics Letters, 26(17):1331–1332, 1990.
+[54]
+Mart van Baalen, Andrey Kuzmin, Markus Nagel, Peter Couperus, Cedric Bastoul, Eric Mahurin, Tijmen Blankevoort, and Paul Whatmough.
+Gptvq: The blessing of dimensionality for llm quantization.
+arXiv preprint arXiv:2402.15319, 2024.
+[55]
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Lukasz Kaiser Jones, Ashish Nips, and Iliya Polosukhin.
+Attention is all you need.
+NeurIPS, 30:5998–6008, 2017.
+[56]
+Peisong Wang, Qiang Chen, Xiangyu He, and Jian Cheng.
+Towards accurate post-training network quantization via bit-split and stitching.
+In International Conference on Machine Learning, pages 9847–9856. PMLR, 2020.
+[57]
+Zhiqiang Wang, Chao Zhang, Bing Li, Zhen Xu, and Zhiwei Li.
+A survey of model compression and acceleration for deep neural networks.
+ACM Computing Surveys, 54(7):1–34, 2021.
+[58]
+Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu, Julien Demouth, and Song Han.
+Smoothquant: Accurate and efficient post-training quantization for large language models.
+In International Conference on Machine Learning, pages 38087–38099. PMLR, 2023.
+[59]
+Hao Xu, Xiaolin Wu, and Xi Zhang.
+Improving 3d gaussian splatting compression by scene-adaptive lattice vector quantization.
+arXiv preprint arXiv:2509.13482, 2025.
+[60]
+Hao Xu, Xiaolin Wu, and Xi Zhang.
+Multirate neural image compression with adaptive lattice vector quantization.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 7633–7642, 2025.
+[61]
+Zhewei Yao, Reza Yazdani Aminabadi, Minjia Zhang, Xiaoxia Wu, Conglong Li, and Yuxiong He.
+Zeroquant: Efficient and affordable post-training quantization for large-scale transformers.
+Advances in Neural Information Processing Systems, 35:27168–27183, 2022.
+[62]
+Xi Zhang and Xiaolin Wu.
+Lvqac: Lattice vector quantization coupled with spatially adaptive companding for efficient learned image compression.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 10239–10248, 2023.
+[63]
+Xi Zhang and Xiaolin Wu.
+Learning optimal lattice vector quantizers for end-to-end neural image compression.
+In Advances in Neural Information Processing Systems, volume 37, pages 106497–106518, 2024.
+[64]
+Xi Zhang and Xiaolin Wu.
+Receptive field expanded look-up tables for vision inference: Advancing from low-level to high-level tasks.
+arXiv preprint arXiv:2510.10522, 2025.
+Technical Appendices and Supplementary Material
+Appendix A A Brief Theoretical Derivation of Babai Rounding’s Error Bound
+A.1 Algorithm Description
+Babai’s rounding algorithm is a classical method for finding an approximate closest lattice point to a given target vector. Let
+|
+B=[𝐛1,…,𝐛n]∈ℝm×nB=[\mathbf{b}_{1},\ldots,\mathbf{b}_{n}]\in\mathbb{R}^{m\times n} |
+|
+be a lattice basis and 𝐭∈ℝm\mathbf{t}\in\mathbb{R}^{m} be the target vector. The algorithm proceeds in three steps:
+1.
+Compute the real coordinate vector: 𝐱=B−1​𝐭\mathbf{x}=B^{-1}\mathbf{t}. This step expresses the target vector 𝐭\mathbf{t} in terms of the lattice basis BB.
+2.
+Round each coordinate: ci=⌊xi+0.5⌋c_{i}=\lfloor x_{i}+0.5\rfloor. Here, each coordinate xix_{i} is rounded to the nearest integer cic_{i}.
+3.
+Return the lattice point: 𝐯=B​𝐜\mathbf{v}=B\mathbf{c}. This gives the approximate closest lattice point.
+The error vector 𝐞\mathbf{e} is defined as the difference between the target vector and the approximate lattice point:
+|
+𝐞=𝐭−𝐯=B⁡(𝐱−𝐜)=B​𝜹,\mathbf{e}=\mathbf{t}-\mathbf{v}=B(\mathbf{x}-\mathbf{c})=B\boldsymbol{\delta}, |
+|
+(13) |
+where 𝜹=(δ1,…,δn)⊤\boldsymbol{\delta}=(\delta_{1},\ldots,\delta_{n})^{\top} and |δi|≤12|\delta_{i}|\leq\frac{1}{2} due to rounding.
+A.2 Gram-Schmidt Orthogonalization
+To analyze the error, we first orthogonalize the lattice basis BB using the Gram-Schmidt process. Let
+|
+B∗=[𝐛1∗,…,𝐛n∗]B^{*}=[\mathbf{b}_{1}^{*},\ldots,\mathbf{b}_{n}^{*}] |
+|
+be the orthogonalized basis, where each 𝐛i\mathbf{b}_{i} can be expressed as:
+|
+𝐛i=𝐛i∗+∑j=1i−1μj,i​𝐛j∗.\mathbf{b}_{i}=\mathbf{b}_{i}^{*}+\sum_{j=1}^{i-1}\mu_{j,i}\mathbf{b}_{j}^{*}. |
+|
+(14) |
+Here,
+|
+μj,i=⟨𝐛i,𝐛j∗⟩‖𝐛j∗‖2\mu_{j,i}=\frac{\langle\mathbf{b}_{i},\mathbf{b}_{j}^{*}\rangle}{\|\mathbf{b}_{j}^{*}\|^{2}} |
+|
+represents the projection coefficient of 𝐛i\mathbf{b}_{i} onto 𝐛j∗\mathbf{b}_{j}^{*}. This decomposition ensures that 𝐛i∗\mathbf{b}_{i}^{*} is orthogonal to all previous 𝐛j∗\mathbf{b}_{j}^{*} for j<ij<i.
+A.3 Error Vector Decomposition
+Next, we decompose the error vector 𝐞\mathbf{e} in terms of the orthogonal basis B∗B^{*}. Starting from the definition of 𝐞\mathbf{e}, we substitute the expression for 𝐛i\mathbf{b}_{i}:
+|
+𝐞=∑i=1nδi​𝐛i=∑i=1nδi​(𝐛i∗+∑j=1i−1μj,i​𝐛j∗).\mathbf{e}=\sum_{i=1}^{n}\delta_{i}\mathbf{b}_{i}=\sum_{i=1}^{n}\delta_{i}\left(\mathbf{b}_{i}^{*}+\sum_{j=1}^{i-1}\mu_{j,i}\mathbf{b}_{j}^{*}\right). |
+|
+(15) |
+By rearranging the terms, we can rewrite 𝐞\mathbf{e} as:
+|
+𝐞=∑j=1n(δj+∑i=j+1nδi​μj,i)​𝐛j∗.\mathbf{e}=\sum_{j=1}^{n}\left(\delta_{j}+\sum_{i=j+1}^{n}\delta_{i}\mu_{j,i}\right)\mathbf{b}_{j}^{*}. |
+|
+(16) |
+Let αj=δj+∑i=j+1nδi​μj,i\alpha_{j}=\delta_{j}+\sum_{i=j+1}^{n}\delta_{i}\mu_{j,i}. Then,
+|
+𝐞=∑j=1nαj​𝐛j∗.\mathbf{e}=\sum_{j=1}^{n}\alpha_{j}\mathbf{b}_{j}^{*}. |
+|
+(17) |
+A.4 Norm Calculation
+Since the vectors 𝐛j∗\mathbf{b}_{j}^{*} are orthogonal, the squared norm of 𝐞\mathbf{e} is:
+|
+‖𝐞‖2=∑j=1nαj2​‖𝐛j∗‖2.\|\mathbf{e}\|^{2}=\sum_{j=1}^{n}\alpha_{j}^{2}\|\mathbf{b}_{j}^{*}\|^{2}. |
+|
+(18) |
+A.5 Coefficient Bound
+To bound ‖𝐞‖\|\mathbf{e}\|, we first derive an upper bound for each coefficient αj\alpha_{j}.
+Lemma A.1.
+For any 1≤j≤n1\leq j\leq n, the coefficient αj\alpha_{j} satisfies:
+|
+|αj|≤12​(1+∑i=j+1n|μj,i|).|\alpha_{j}|\leq\frac{1}{2}\left(1+\sum_{i=j+1}^{n}|\mu_{j,i}|\right). |
+|
+(19) |
+Proof.
+Using the triangle inequality and the fact that |δi|≤12|\delta_{i}|\leq\frac{1}{2} for all ii, we have:
+|
+|αj|≤|δj|+∑i=j+1n|δi|​|μj,i|≤12+12​∑i=j+1n|μj,i|.|\alpha_{j}|\leq|\delta_{j}|+\sum_{i=j+1}^{n}|\delta_{i}||\mu_{j,i}|\leq\frac{1}{2}+\frac{1}{2}\sum_{i=j+1}^{n}|\mu_{j,i}|. |
+|
+(20) |
+A.6 LLL-Reduced Basis Case
+When the basis BB is LLL-reduced (with parameter δ=3/4\delta=3/4), the projection coefficients satisfy:
+|
+|μj,i|≤12∀j<i.|\mu_{j,i}|\leq\frac{1}{2}\quad\forall j<i. |
+|
+(21) |
+Thus, for each jj,
+|
+∑i=j+1n|μj,i|≤n−j2.\sum_{i=j+1}^{n}|\mu_{j,i}|\leq\frac{n-j}{2}. |
+|
+(22) |
+A.7 Final Error Bound
+Combining the above results, we obtain:
+|
+‖𝐞‖2≤∑j=1n(12​(1+∑i=j+1n|μj,i|))2​‖𝐛j∗‖2.\|\mathbf{e}\|^{2}\leq\sum_{j=1}^{n}\left(\frac{1}{2}\left(1+\sum_{i=j+1}^{n}|\mu_{j,i}|\right)\right)^{2}\|\mathbf{b}_{j}^{*}\|^{2}. |
+|
+(23) |
+For an LLL-reduced basis, using the bound ∑i=j+1n|μj,i|≤n−j2\sum_{i=j+1}^{n}|\mu_{j,i}|\leq\frac{n-j}{2}, we have:
+|
+‖𝐞‖2≤14​∑j=1n(1+n−j2)2​‖𝐛j∗‖2.\|\mathbf{e}\|^{2}\leq\frac{1}{4}\sum_{j=1}^{n}\left(1+\frac{n-j}{2}\right)^{2}\|\mathbf{b}_{j}^{*}\|^{2}. |
+|
+(24) |
+Taking the square root of both sides, the final error bound is:
+|
+‖𝐞‖≤12​∑j=1n(1+n−j2)2​‖𝐛j∗‖2.\|\mathbf{e}\|\leq\frac{1}{2}\sqrt{\sum_{j=1}^{n}\left(1+\frac{n-j}{2}\right)^{2}\|\mathbf{b}_{j}^{*}\|^{2}}. |
+|
+(25) |
+Appendix B Storage Overhead Analysis
+For each group gg we store the integer codes for mg​ngm_{g}n_{g} weights
+(bgb_{g} bits per weight) and a small amount of side information:
+a d×dd\times d FP16 generation matrix plus one FP16 scalar,
+|
+Byteswt​(g)=mg​ng​bg8,Bytessid​(g)=2​d2+2.\text{Bytes}_{\text{wt}}(g)=\frac{m_{g}n_{g}b_{g}}{8},\quad\text{Bytes}_{\text{sid}}(g)=2d^{2}+2. |
+|
+(26) |
+The overhead ratio is therefore
+|
+OHg=Bytessid​(g)Byteswt​(g)=16​d2+16mg​ng​bg.\mathrm{OH}_{g}=\frac{\text{Bytes}_{\text{sid}}(g)}{\text{Bytes}_{\text{wt}}(g)}=\frac{16d^{2}+16}{m_{g}n_{g}b_{g}}. |
+|
+(27) |
+Representative cases.
+Table 5 reports the side-information overhead for a fixed row-count
+mg=4096m_{g}=4096 and two typical column widths (ng=128,256n_{g}\!=\!128,256),
+evaluated at lattice dimensions d∈{8,16,32}d\in\{8,16,32\} and bit-widths
+bg∈{2,3,4}b_{g}\in\{2,3,4\}.
+Even in the most demanding configuration (2-bit, d=32d=32, ng=128n_{g}=128),
+the FP16 lattice parameters add only ≈1.6%\approx 1.6\% to the weight codes,
+while the default setting used in our main experiments
+(d=16,ng=128, 4-bitd=16,\ n_{g}=128,\ 4\text{-bit}) incurs
+less than 0.2%0.2\% overhead—confirming that the side information is
+negligible across all practical scenarios.
+Observation.
+Even with the largest lattice (d=32d{=}32) and the most aggressive 2-bit setting, the side-information overhead is below 1.6%1.6\%.
+For the default configuration used in our main experiments (d=16,ng=128,bg=4d{=}16,\,n_{g}{=}128,\,b_{g}{=}4), the overhead is under 0.2%0.2\%, confirming that the FP16 lattice parameters contribute a negligible addition to the overall model size.
+Table 5: Per-group storage overhead (%) with explicit inclusion of the row count mgm_{g}. Results are reported for mg=4096m_{g}=4096, column widths ng∈{128,256}n_{g}\in\{128,256\}, lattice dimensions d∈{8,16,32}d\in\{8,16,32\}, and bit-widths bg∈{2,3,4}b_{g}\in\{2,3,4\}.
+dd |
+mgm_{g} |
+ngn_{g} |
+Overhead (%)† |
+|
+|
+|
+bg=2/ 3/ 4\;b_{g}=2\;/\;3\;/\;4 |
+8 |
+4096 |
+128 |
+0.10 / 0.07 / 0.05 |
+8 |
+4096 |
+256 |
+0.05 / 0.03 / 0.02 |
+16 |
+4096 |
+128 |
+0.39 / 0.26 / 0.20 |
+16 |
+4096 |
+256 |
+0.20 / 0.13 / 0.10 |
+32 |
+4096 |
+128 |
+1.56 / 1.04 / 0.78 |
+32 |
+4096 |
+256 |
+0.78 / 0.52 / 0.39 |
+† Values computed via Eq. (27). |
+Appendix C Broader Impact
+Potential positive societal impacts.:
+(i) Energy and carbon reduction.
+By enabling 2–4 bit deployment of large language models (LLMs) on commodity GPUs or edge SoCs, our method lowers inference energy per token and reduces the overall carbon footprint of AI services.
+(ii) Edge privacy and accessibility.
+Supporting on-device inference allows sensitive user data to remain local, strengthening privacy guarantees, and makes advanced language capabilities available on low-resource or offline devices, fostering digital inclusion.
+(iii) Cost-effective R&D.
+Lower hardware requirements democratise experimentation for academia, small enterprises, and regions with limited compute infrastructure, broadening participation in AI research and application development.
+Potential negative societal impacts.:
+(i) Easier large-scale misuse.
+Compressing powerful LLMs lowers the barrier to deploying them in disinformation, spam, or malicious content generation pipelines.
+(ii) Amplified bias under quantisation.
+Quantisation can introduce distribution shift that disproportionately affects under-represented dialects or demographic groups, potentially worsening fairness metrics if not carefully audited.
+(iii) Expanded surveillance capabilities.
+Running compact LLMs on edge cameras or mobile devices may increase ubiquitous monitoring and privacy intrusion when deployed without appropriate safeguards.
+Appendix D Ablation Study of Bit Allocation
+We assess the impact of group-wise bit allocation by disabling it and assigning a uniform bit-width across all groups. This prevents GLVQ from adapting to the varying importance of different weight groups, resulting in a measurable drop in accuracy. As shown in Table 3 (see Appendix), removing bit allocation consistently increases perplexity across Llama models and bit-widths. For instance, on Llama 1-13B with 2-bit quantization, perplexity increases from 5.64 to 5.79. The degradation becomes more evident at lower bit-widths, where precision budgets are more constrained. These results confirm that salience-driven bit allocation plays a critical role in preserving model accuracy under aggressive compression.
+Table 6: Ablation study on salience-determined bit allocation. We compare GLVQ with and without bit allocation across multiple Llama models on Wikitext2 (perplexity ↓).
+Method |
+1-7B |
+1-13B |
+1-30B |
+1-65B |
+2-7B |
+2-13B |
+2-70B |
+GLVQ-8D w/ bit allocation (2-bit) |
+6.28 |
+5.64 |
+4.57 |
+4.01 |
+5.69 |
+5.02 |
+3.62 |
+GLVQ-8D w/o bit allocation (2-bit) |
+6.44 |
+5.79 |
+4.65 |
+4.10 |
+5.87 |
+5.19 |
+3.72 |
+GLVQ-8D w/ bit allocation (3-bit) |
+5.72 |
+5.10 |
+4.11 |
+3.56 |
+5.13 |
+4.48 |
+3.14 |
+GLVQ-8D w/o bit allocation (3-bit) |
+5.81 |
+5.18 |
+4.17 |
+3.61 |
+5.21 |
+4.55 |
+3.21 |
+GLVQ-8D w/ bit allocation (4-bit) |
+5.70 |
+5.08 |
+4.09 |
+3.52 |
+5.01 |
+4.44 |
+3.02 |
+GLVQ-8D w/o bit allocation (4-bit) |
+5.74 |
+5.13 |
+4.14 |
+3.56 |
+5.08 |
+4.49 |
+3.08 |
+Appendix E Ablation Study of Group-Specific Lattice Quantization
+We evaluate the influence of group-specific lattice learning by replacing each group’s learned generation matrix with a fixed lattice basis (shared across all groups). As summarised in Table 7, removing adaptive lattice optimisation consistently increases perplexity for every model size and bit-width. The degradation is most evident in the 2-bit setting, where the fixed lattice cannot align with group-wise statistics (e.g., Llama 1-13B rises from 5.64 to 5.89). Even at 4 bits, a shared lattice still hurts accuracy, confirming that the learned, group-specific basis is an essential component of GLVQ.
+Table 7: Ablation study on group-specific lattice codebook learning. We compare GLVQ with learned vs. fixed lattice bases across multiple Llama models on WikiText-2 (perplexity ↓).
+Method |
+1-7B |
+1-13B |
+1-30B |
+1-65B |
+2-7B |
+2-13B |
+2-70B |
+GLVQ-8D w/ adaptive lattice (2-bit) |
+6.28 |
+5.64 |
+4.57 |
+4.01 |
+5.69 |
+5.02 |
+3.62 |
+GLVQ-8D w/ fixed lattice (2-bit) |
+6.53 |
+5.89 |
+4.82 |
+4.26 |
+5.95 |
+5.28 |
+3.88 |
+GLVQ-8D w/ adaptive lattice (3-bit) |
+5.72 |
+5.10 |
+4.11 |
+3.56 |
+5.13 |
+4.48 |
+3.14 |
+GLVQ-8D w/ fixed lattice (3-bit) |
+5.87 |
+5.25 |
+4.26 |
+3.70 |
+5.27 |
+4.62 |
+3.28 |
+GLVQ-8D w/ adaptive lattice (4-bit) |
+5.70 |
+5.08 |
+4.09 |
+3.52 |
+5.01 |
+4.44 |
+3.02 |
+GLVQ-8D w/ fixed lattice (4-bit) |
+5.78 |
+5.16 |
+4.17 |
+3.60 |
+5.09 |
+4.52 |
+3.10 |
+Appendix F Ablation Study of Group-Specific Companding
+We also examine the contribution of group-specific μ\mu-law companding by replacing it with a fixed transformation across all groups. As shown in Table 4 (see Appendix), removing this component significantly degrades performance, particularly in low-bit settings where weight distributions are more difficult to approximate with uniform quantizers. For example, at 2-bit quantization on Llama 1-13B, turning off companding raises the perplexity from 5.64 to 5.87. This confirms that companding helps mitigate quantization error by better accommodating heavy-tailed weight distributions. Overall, these ablation results validate the necessity of group-specific companding as a core component of the proposed GLVQ.
+Table 8: Ablation study on group-specific μ\mu-law companding. We compare GLVQ with and without companding across multiple Llama models on Wikitext2 (perplexity ↓).
+Method |
+1-7B |
+1-13B |
+1-30B |
+1-65B |
+2-7B |
+2-13B |
+2-70B |
+GLVQ-8D w/ companding (2-bit) |
+6.28 |
+5.64 |
+4.57 |
+4.01 |
+5.69 |
+5.02 |
+3.62 |
+GLVQ-8D w/o companding (2-bit) |
+6.58 |
+5.87 |
+4.71 |
+4.18 |
+5.97 |
+5.23 |
+3.88 |
+GLVQ-8D w/ companding (3-bit) |
+5.72 |
+5.10 |
+4.11 |
+3.56 |
+5.13 |
+4.48 |
+3.14 |
+GLVQ-8D w/o companding (3-bit) |
+5.84 |
+5.20 |
+4.19 |
+3.63 |
+5.23 |
+4.58 |
+3.23 |
+GLVQ-8D w/ companding (4-bit) |
+5.70 |
+5.08 |
+4.09 |
+3.52 |
+5.01 |
+4.44 |
+3.02 |
+GLVQ-8D w/o companding (4-bit) |
+5.75 |
+5.14 |
+4.12 |
+3.54 |
+5.06 |
+4.48 |
+3.06 |
+Appendix G Ablation Study of Group Size
+We vary the number of columns per group {32,64,128,256,512}\{32,64,128,256,512\} to study the trade-off between granularity and overhead (see Tables 9 and 10).
+Smaller groups (32, 64) offer slightly lower perplexity by adapting more precisely to local weight distributions, but they inflate model size and decoding cost because many lattice codebooks must be stored and reconstructed.
+Conversely, very large groups (256, 512) minimise codebook overhead yet fail to capture fine-grained distributional variation, yielding noticeably higher perplexity—particularly at 2- and 3-bit precision.
+A group size of 128 consistently provides the best balance, delivering the lowest (or near-lowest) perplexity while keeping storage and runtime overhead moderate; we therefore adopt 128 as the default in GLVQ.
+Table 9: Ablation study of GLVQ with different group sizes on Wikitext2 using Llama 1-7B and 2-7B.
+We report perplexity (↓) under different bit-widths.
+Group Size |
+Llama 1-7B (Wikitext2) |
+Llama 2-7B (Wikitext2) |
+2-bit |
+3-bit |
+4-bit |
+2-bit |
+3-bit |
+4-bit |
+32 |
+6.26 |
+5.71 |
+5.68 |
+5.65 |
+5.10 |
+4.97 |
+64 |
+6.26 |
+5.72 |
+5.70 |
+5.66 |
+5.13 |
+5.00 |
+128 |
+6.28 |
+5.72 |
+5.70 |
+5.69 |
+5.13 |
+5.01 |
+256 |
+6.34 |
+5.78 |
+5.75 |
+5.84 |
+5.19 |
+5.08 |
+512 |
+6.47 |
+5.85 |
+5.82 |
+5.91 |
+5.28 |
+5.17 |
+Table 10: Ablation study of GLVQ with different group sizes on C4 using Llama 1-7B and 2-7B.
+We report perplexity (↓) under different bit-widths.
+Group Size |
+Llama 1-7B (C4) |
+Llama 2-7B (C4) |
+2-bit |
+3-bit |
+4-bit |
+2-bit |
+3-bit |
+4-bit |
+32 |
+7.80 |
+7.16 |
+7.04 |
+7.30 |
+6.38 |
+6.28 |
+64 |
+7.81 |
+7.17 |
+7.06 |
+7.32 |
+6.39 |
+6.31 |
+128 |
+7.83 |
+7.17 |
+7.08 |
+7.33 |
+6.40 |
+6.31 |
+256 |
+7.95 |
+7.25 |
+7.15 |
+7.42 |
+6.50 |
+6.39 |
+512 |
+8.14 |
+7.32 |
+7.18 |
+7.51 |
+6.66 |
+6.54 |
+Appendix H Ablation Study of Calibration Dataset Size
+To evaluate data efficiency, we vary the calibration corpus from 100 K to 8 M RedPajama tokens (Appendix Table 11).
+Perplexity drops steadily until about 4 M tokens, after which gains saturate—an 8 M-token set brings no further improvement and occasionally introduces minor noise.
+Crucially, GLVQ remains robust with far fewer samples: reducing the set to 1 M or 500 K tokens incurs only a marginal increase in perplexity, and even a 100 K-token subset delivers competitive accuracy.
+These results confirm that GLVQ attains its best performance with roughly 4 M calibration tokens and degrades gracefully when calibration data are scarce, underlining its practicality in low-resource scenarios.
+Table 11: Perplexity (↓) of GLVQ under different calibration set sizes, evaluated on Wikitext2 and C4 using Llama models (2-bit quantization, context length 2048). Results show that GLVQ achieves best performance at 4M tokens and remains stable across a wide range of calibration sizes.
+Calib Size |
+Tokens |
+Wikitext2 |
+C4 |
+|
+|
+|
+1-7 |
+1-13 |
+1-30 |
+1-65 |
+2-7 |
+2-13 |
+1-7 |
+1-13 |
+1-30 |
+1-65 |
+2-7 |
+2-13 |
+2-70 |
+GLVQ-8D |
+8M |
+6.30 |
+5.65 |
+4.60 |
+4.02 |
+5.71 |
+5.03 |
+7.84 |
+7.18 |
+6.50 |
+5.95 |
+7.34 |
+6.57 |
+5.26 |
+GLVQ-8D |
+4M |
+6.28 |
+5.64 |
+4.57 |
+4.01 |
+5.69 |
+5.02 |
+7.83 |
+7.17 |
+6.48 |
+5.94 |
+7.33 |
+6.56 |
+5.25 |
+GLVQ-8D |
+2M |
+6.34 |
+5.69 |
+4.63 |
+4.06 |
+5.74 |
+5.07 |
+7.87 |
+7.23 |
+6.54 |
+6.00 |
+7.38 |
+6.61 |
+5.30 |
+GLVQ-8D |
+1M |
+6.38 |
+5.73 |
+4.68 |
+4.10 |
+5.78 |
+5.12 |
+7.92 |
+7.29 |
+6.59 |
+6.05 |
+7.43 |
+6.67 |
+5.35 |
+GLVQ-8D |
+500K |
+6.45 |
+5.80 |
+4.74 |
+4.16 |
+5.84 |
+5.19 |
+8.00 |
+7.36 |
+6.67 |
+6.11 |
+7.50 |
+6.74 |
+5.42 |
+GLVQ-8D |
+100K |
+6.58 |
+5.94 |
+4.85 |
+4.29 |
+5.97 |
+5.33 |
+8.17 |
+7.52 |
+6.84 |
+6.27 |
+7.67 |
+6.89 |
+5.60 |
+Appendix I Babai Rounding vs. Greedy Coordinate Descent (GCD)
+We replace Babai rounding with greedy coordinate descent (GCD) and re-train the quantizer (Appendix Tables 12 and 13).
+GCD exhibits unstable optimisation and poorer final perplexity across all model sizes: for 2-bit Llama 1-13B, perplexity rises from 5.64 (Babai) to 5.92 (GCD), and similar gaps persist at 3- and 4-bit settings.
+The results underline Babai rounding’s advantage in both convergence speed and final quality, and we therefore retain it as the default index-assignment method in GLVQ.
+Table 12: Comparison of GLVQ with Babai Rounding vs. GLVQ with Greedy Coordinate Descent (GCD) on Llama 1 & 2. Perplexity (↓) is reported on Wikitext2 and C4 for 4-, 3-, and 2-bit quantization.
+Method |
+Bits |
+Wikitext 2 |
+C4 |
+|
+|
+1-7 |
+1-13 |
+1-30 |
+1-65 |
+2-7 |
+2-13 |
+1-7 |
+1-13 |
+1-30 |
+1-65 |
+2-7 |
+2-13 |
+GLVQ-8D-babai |
+4 |
+5.70 |
+5.08 |
+4.09 |
+3.52 |
+5.01 |
+4.44 |
+7.08 |
+6.55 |
+5.92 |
+5.58 |
+6.31 |
+5.81 |
+GLVQ-8D-GCD |
+4 |
+5.90 |
+5.32 |
+4.28 |
+3.72 |
+5.23 |
+4.65 |
+7.30 |
+6.78 |
+6.18 |
+5.82 |
+6.62 |
+6.04 |
+GLVQ-8D-babai |
+3 |
+5.72 |
+5.10 |
+4.11 |
+3.56 |
+5.13 |
+4.48 |
+7.17 |
+6.60 |
+5.91 |
+5.58 |
+6.40 |
+5.85 |
+GLVQ-8D-GCD |
+3 |
+5.95 |
+5.37 |
+4.36 |
+3.82 |
+5.38 |
+4.72 |
+7.41 |
+6.83 |
+6.13 |
+5.78 |
+6.70 |
+6.08 |
+GLVQ-8D-babai |
+2 |
+6.28 |
+5.64 |
+4.57 |
+4.01 |
+5.69 |
+5.02 |
+7.83 |
+7.17 |
+6.48 |
+5.94 |
+7.33 |
+6.56 |
+GLVQ-8D-GCD |
+2 |
+6.72 |
+6.08 |
+5.01 |
+4.45 |
+6.14 |
+5.46 |
+8.30 |
+7.62 |
+6.96 |
+6.39 |
+7.81 |
+7.00 |
+Table 13: Zeroshot Accuracy comparison of GLVQ with Babai Rounding vs. GLVQ with Greedy Coordinate Descent (GCD) on Llama 2.
+|
+2-13 |
+2-7 |
+Method |
+Bits |
+ArcC |
+ArcE |
+PIQA |
+WINO |
+Bits |
+ArcC |
+ArcE |
+PIQA |
+WINO |
+Original Model |
+16 |
+45.6 |
+73.3 |
+73.5 |
+69.6 |
+16 |
+40.0 |
+69.3 |
+78.5 |
+67.3 |
+GLVQ-8D-babai |
+4 |
+46.0 |
+74.0 |
+79.2 |
+70.5 |
+4 |
+40.7 |
+69.5 |
+78.6 |
+67.8 |
+GLVQ-8D-GCD |
+4 |
+45.3 |
+73.4 |
+78.4 |
+69.8 |
+4 |
+39.9 |
+68.9 |
+77.8 |
+67.0 |
+GLVQ-8D-babai |
+3 |
+46.5 |
+74.2 |
+79.3 |
+71.0 |
+3 |
+40.9 |
+69.8 |
+78.8 |
+67.9 |
+GLVQ-8D-GCD |
+3 |
+45.7 |
+73.5 |
+78.5 |
+70.2 |
+3 |
+40.0 |
+69.0 |
+77.9 |
+67.1 |
+GLVQ-8D-babai |
+2 |
+40.0 |
+70.8 |
+78.0 |
+71.3 |
+2 |
+35.5 |
+64.5 |
+75.5 |
+67.2 |
+GLVQ-8D-GCD |
+2 |
+38.9 |
+69.4 |
+76.7 |
+70.0 |
+2 |
+34.0 |
+63.2 |
+73.9 |
+66.0 |
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

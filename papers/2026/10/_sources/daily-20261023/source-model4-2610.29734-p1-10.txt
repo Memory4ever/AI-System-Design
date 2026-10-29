@@ -1,0 +1,529 @@
+PAGE 1
+Preprint.
+MONITORABILITYISTRAINABLE: POST-TRAINING
+FORCHAIN-OF-THOUGHTMONITORABILITY
+Usman Anwar*,†
+University of Cambridge
+usmananwar391@gmail.com
+Tim Bakker*
+Qualcomm AI Research
+Christos Louizos
+Qualcomm AI Research
+David Krueger
+Mila, University of Montreal
+ABSTRACT
+Chain-of-thought (CoT) monitoring is one of the few practical tools available for
+overseeing capable AI systems, but it is fragile: a model’s reasoning is only useful
+to a monitor if it remains coupled to what the model actually does. This coupling
+can be degraded during training through, for example, CoT compression, opti-
+mization against a monitor, and out-of-context generalization from synthetic doc-
+uments. In this work, we propose an unsupervised post-training objective based
+on maximizing mutual information between CoT and the output for improving
+CoT monitorability. Across three model organisms with degraded CoT, it recov-
+ers most or all of the lost monitorability. Applied to undegraded policies, it further
+improves judged monitorability, improves prediction of unsafe behavior by CoT
+monitors and activation probes, and increases the prevalence of consequential rea-
+soning. These results suggest that monitorability should be treated as a trainable
+attribute of the policy. A dedicated monitorability post-training stage can extend
+current practices that protect CoT from direct optimization pressure.
+1 INTRODUCTION
+Current reasoning models extensively use chain-of-thought (CoT) for serial computation (OpenAI,
+2024; DeepSeek-AI, 2025), creating amonitoring surfacethat exposes reasoning before the model
+acts. Access to CoT often substantially improves practical monitoring (Baker et al., 2025; Arnav
+et al., 2025; Guan et al., 2025), yet CoTs can omit causal influences, rationalize decisions after the
+fact, and fail to verbalize reward hacks (Turpin et al., 2023; Lanham et al., 2023; Chen et al., 2025).
+Appendix G collects examples from frontier systems in which visible reasoning diverges from the
+subsequent answer or action. CoT monitoring therefore appears highly useful in some settings and
+unreliable in others, without a clear account of when it will work (Korbak et al., 2025).
+In this work, we offer a simple perspective that clarifies these conflicting results. We view CoT as an
+intermediate representation that, like other representations in a neural network, is learned in service
+of producing the model’s output. Unlike standard intermediate representations, CoT is expressed
+in natural language and can therefore be inspected directly by humans and other language models.
+This accessibility can make CoT appear to be a complete account of the model’s computation, but it
+remains a learned representation whose contents depend on the pressures that shape it.
+This framing highlights a difference between how CoT is learned and how it is used for monitoring.
+Training shapes the CoT to help produce a high-reward output, while a monitor later reuses it to
+predict properties of that output. Monitorability is therefore a question of representation transfer:
+whether a representation learned for one task can support another (Yosinski et al., 2014; Tripuraneni
+et al., 2020). In transfer-learning terms, producing a high-reward output is the source task, and
+predicting a behavioral property of that output from the CoT is the target task (Baker et al., 2025).
+*Equal contribution.
+†Work done while at Qualcomm AI Research. Correspondance at: ua237@cam.ac.uk
+Qualcomm AI Research is an initiative of Qualcomm Technologies, Inc.
+1
+arXiv:2610.29734v1  [cs.LG]  21 Oct 2026
+PAGE 2
+Preprint.
+This transfer view accounts for both successful and unsuccessful CoT monitoring. Monitoring suc-
+ceeds when training for the source task preserves the information required by the target task in a
+form the monitor can use. Standard task objectives need not preserve distinctions that matter only
+to a monitor, and direct or indirect optimization pressure can reshape the CoT (Baker et al., 2025;
+Hadida et al., 2026). Compression makes this problem explicit: optimizing for short, task-sufficient
+reasoning can discard information needed by downstream monitors (Li et al., 2025; Wang et al.,
+2022; Dubois et al., 2022).
+These failures motivate us to ask whether CoT can be deliberately shaped to transfer better to mon-
+itoring tasks that are not specified during training.Our central thesis is that CoT monitorability
+should be explicitly optimized, just as alignment post-training explicitly optimizes LLMs to
+behave in beneficial and aligned ways (Guan et al., 2024).Such training should improve even the
+least-monitorable trajectories, preserve useful capabilities, and avoid increasing the model’s ability
+to selectively control CoT legibility.
+Because the relevant monitoring tasks may be unknown during training, we seek to preserve in-
+formation about the output without choosing a particular behavioral label. We therefore optimize
+conditional mutual information, which measures how much observing the CoT reduces uncertainty
+about the output beyond the prompt alone. Increasing it encourages the CoT to retain output-relevant
+distinctions that future monitoring tasks may need. Our lower-tail objective directs training toward
+the least-informative CoTs. A conditionalχ 2 regularizer limits changes in which outputs follow a
+given CoT, thereby discouraging arbitrary behavioral changes and making it costly to assign CoTs
+new private meanings. The procedure uses neither behavioral labels nor monitor feedback, so it
+does not identify a particular monitor for the model to evade. Across model organisms degraded
+by compression, direct monitor pressure, or out-of-context generalization, our method substantially
+restores monitorability. Applied directly to undegraded models, it also improves safety-behavior
+prediction by CoT monitors and activation probes across three benchmarks and increases the preva-
+lence of consequential reasoning, demonstrating that CoT monitorability can be improved rather
+than merely repaired.
+2 COTMONITORABILITY AS REPRESENTATION TRANSFERABILITY
+Neural networks construct adaptive intermediate representations specialized to their training con-
+text (Bengio et al., 2014). For example, a model-free RL agent trained on Sokoban constructs and
+iteratively refines a world model and plan (Bush et al., 2025). LLMs likewise produce both internal
+numerical activations and intermediate textual outputs such as CoTs; natural language makes the
+latter much easier to interpret.
+Representation transfer depends on whether training on thesourcetask produces a representation
+useful for thetargettask (Yosinski et al., 2014; Kornblith et al., 2021). Across 26 visual tasks,
+Zamir et al. (2018) found highly uneven transfer across source–target pairs, depending on whether
+the source representation retained the necessary information in a form accessible to a low-capacity
+transfer network.
+Monitoring can likewise be viewed as atransfertask. A specific CoT monitoring task is therefore
+more likely to succeed when the CoT contains the relevant information in a form accessible to the
+monitor. Given that standard training optimizes the model for task performance, the CoT is shaped
+primarily by the source task rather than by downstream monitoring tasks. The variable success of
+CoT monitoring is therefore unsurprising: it depends on how well a representation shaped by the
+source task transfers to the monitoring task.
+Under this view, improving CoT monitorability requires making CoT representations more transfer-
+able to relevant monitoring tasks. The most direct approach is to train on these tasks themselves,
+using ground truth monitor labels to optimize models for monitorability. However, prior work found
+only limited and inconsistent gains from directly rewarding monitor accuracy, potentially because
+binary feedback provides little guidance about how the CoT should change (MacDermott et al.,
+2025). More fundamentally, a key appeal of CoT is that it can support monitoring forunknown
+unknowns. We often cannot anticipate which properties of a model’s behavior will matter and there-
+fore cannot construct labeled training data for them in advance. We instead need an objective that
+improves transfer without specifying the eventual monitoring task.
+2
+PAGE 3
+Preprint.
+The representation-transfer literature suggests a general strategy for this setting: when the down-
+stream tasks are unknown, preserve as much information as possible about the object of interest
+(Hjelm et al., 2019; Dubois et al., 2022). We follow the same principle for CoT monitoring. Be-
+cause monitoring is primarily concerned with detecting misbehavior in a model’s actions and out-
+puts (Baker et al., 2025), we seek to shape CoT representations that preserve information relevant to
+actions and outputs.
+3 POST-TRAINING FORCOT MONITORABILITY
+3.1 PROBLEMSTATEMENT
+We consider a reasoning model that produces a chain of thoughtZfollowed by an outputOin
+response to a promptX. Our goal is to develop a post-training procedure that robustly improves CoT
+monitorability without substantially degrading the model’s existing capabilities. Such a procedure
+should satisfy three desiderata:
+R1.Robust improvement.The procedure should improve monitorability across trajectories,
+including the least-monitorable ones, rather than only on average.
+R2.Behavioural conservatism.The procedure should preserve useful capabilities and limit
+arbitrary behavioral changes while allowing shifts away from undesirable behavior.
+R3.Non-manipulability.Post-training should not increase the model’s ability to manipulate its
+CoT and thus evade monitoring, for example by teaching it to produce monitorable-looking
+CoTs while retaining the ability to selectively conceal its reasoning.
+The objective we introduce below directly encodes the first two desiderata. The third cannot be guar-
+anteed by a training objective, but absence of direct monitor feedback supports it by not identifying
+a particular monitor for the model to evade.
+3.2 METHOD
+As motivated in Section 2, for monitoring unknown misbehaviours, the CoT should be maximally
+informative about the model’s output. A natural objective is therefore to maximize the conditional
+mutual informationI(O;Z|X): the information that the CoT provides about the output beyond
+what is already known from the prompt. We use the estimator of Anwar et al. (2026), who apply it as
+a regularizer when training against a CoT monitor to prevent reward hacking and CoT obfuscation.
+Specifically, we estimate it in the following way. For each promptx, we sample a group ofn
+CoT–output pairs{(z i, oi)}n
+i=1 from the rollout policyπ ¯θ, where ¯θis held fixed while the resulting
+rewards are used for a policy update. We then score each output under every CoT sampled for the
+same prompt. This estimator imposes minimal sampling overhead because Group Relative Policy
+Optimization (GRPO) already samplesnrollouts per prompt (Shao et al., 2024). The reward for
+pairiis then defined as
+rMI
+i = 1
+|oi|
+"
+logπ ¯θ(oi |x, z i)−log
+ 
+1
+n
+nX
+k=1
+π¯θ(oi |x, z k)
+!#
+.(1)
+Because average mutual information can increase through already informative trajectories, R1 mo-
+tivates an objective focused on the least-informative ones. We therefore define the Robust MI objec-
+tive asR MI(θ) := LCVaR α(rMI
+θ ), which focuses optimization on the least-informativeαfraction
+of CoTs (Rockafellar & Uryasev, 2000). Here, lowercaser MI
+θ denotes the trajectory-level reward,
+while uppercaseR MI denotes its lower-tail aggregate. To target robust improvement while limiting
+behavioural shift, we optimize the following constrained objective:
+max
+θ
+RMI(θ)subject toD cond
+χ2 (πθ ∥π ref)≤ϵ.(2)
+whereπ θ is the optimized policy,π ref is the initial reference policy, andϵis the conditional output-
+divergence budget. We useχ2-divergence following the prior work of Huang et al. (2025) who found
+3
+PAGE 4
+Preprint.
+thatχ 2 is a more robust regularizer than KL divergence. We useα= 0.75in all experiments unless
+otherwise noted, and refer to the constrained objective asR MI +χ 2.
+In practice, we optimize the constrained objective through the normalized Lagrangian
+L(θ, β) = 1
+1 +β LCVaRα
+
+rMI
+θ
+
+− β
+1 +β
+
+bDcond
+χ2 (πθ∥πref)−ϵ
+
+.(3)
+whereβcontrols the relative strength of the monitorability objective and the conditional divergence
+constraint. We adaptβusing theνPI controller proposed by Sohrabi et al. (2024): when the mea-
+sured divergence exceeds the specified budget, the controller increases the weight assigned to the
+divergence term, and when it falls below the budget, it increases the weight assigned to the mutual-
+information objective. We additionally use gradient masking to separate the two optimization pres-
+sures: the mutual-information gradient is applied only to the CoT tokens, while the divergence
+gradient is applied only to the output tokens.
+Within each prompt group, we cap mutual-information rewards at their empiricalα-quantile and
+then standardize them. Trajectories above this threshold receive the same reward, so differences
+among already-informative CoTs do not drive the policy update. The conditionalχ 2 divergence is
+estimated from the likelihood ratio between the current and reference policies for each complete
+output sequence. We clip the token-level log-likelihood ratios before aggregating them across the
+sequence for numerical stability, and specifyϵas a per-sequenceχ 2-divergence budget.
+3.3 DISCUSSION
+What should be regularized?An important desideratum for our objective is behavioural conser-
+vatism: we want to improve CoT monitorability without degrading useful capabilities or inducing
+arbitrary changes in behavior. A natural approach would be to directly constrain the marginal output
+distribution,π θ(O|X), to remain close to that of the reference policy. However, such a constraint
+is difficult to estimate because computing the marginal output distribution requires integrating over
+the model’s possible CoTs. More importantly, a marginal constraint leaves the conditional mapping
+πθ(O|X, Z)unconstrained. The model could therefore preserve its overall output distribution
+while changing what individual CoTs mean, including by developing a private code between its
+CoTs and outputs.
+We instead constrain the output distribution conditional on the CoT. This acts as a soft regularizer
+on the model’s ‘decoder’: the mapping from a prompt and CoT to an output. Changing the meaning
+of a given CoT then incurs a divergence penalty, making it costly for the model to improve mutual
+information by inventing a new private code. The trade-off is that this constraint does not fix which
+CoTs the model produces. Even whenπ θ(O|X, Z)remains close to the reference policy, changing
+πθ(Z|X)can change the marginal output distribution:
+πθ(O|X) =E Z∼πθ(·|X) [πθ(O|X, Z)].(4)
+The marginal and conditional constraints therefore leave different degrees of freedom: the former
+permits changes to the decoder, whereas the latter permits changes to the distribution over CoTs.
+Revelation and replacement.Under the conditional constraint, monitorability can improve
+through two routes. Underrevelation, the model produces a CoT that exposes its strategy while
+retaining the same behaviour. Underreplacement, probability shifts towards a different CoT–output
+mode, changing both the model’s reasoning and its behaviour. The objective has no intrinsic prefer-
+ence between these routes; their relative cost depends on which modes the reference model already
+supports and how easily optimization can reach them. Appendix F illustrates these routes and how
+the conditional and marginal output constraints restrict them differently.
+4 EXPERIMENTS
+We evaluate two questions. First, can monitorability post-training recover information lost through
+training processes such as compression, direct monitor pressure, or out-of-context generalization?
+Second, can it improve broader monitoring-relevant properties without an intentionally induced
+monitorability failure? We study the second question by measuring how well unsafe behavior can be
+predicted from CoTs and activations, and whether post-training makes the CoT more consequential
+for the final answer.
+4
+PAGE 5
+Preprint.
+0 25 50 75 100
+T oken savings preserved (%)
+0
+25
+50
+75
+100
+Mean monitorability
+loss recovered (%)
+0 25 50 75 100
+T oken savings preserved (%)
+0
+25
+50
+75
+100
+Worst-case monitorability
+loss recovered (%)
+GPQA MMLU-Pro AIME 100 steps 200 steps ε = 0.5 ε = 1
+Figure 1: Mean (left) and worst-case (right) monitorability loss recovered versus token savings
+preserved on GPQA-Diamond, MMLU-Pro, and AIME. Each point shows post-training from a 100-
+or 200-step compressed checkpoint atϵ∈ {0.5,1}. Worst-case monitorability averages the lowest
+score among four CoTs per question. Error bars show±1SE across two post-training runs, holding
+the reference models fixed. On this plot, base model would be at(0,100)(i.e, top left corner) and the
+starting checkpoint be at(100,0) (i.e., bottom right corner) with the dotted line connecting the two.
+Our post-trained models are generally above this line, indicating that they recover monitorability
+while preserving token savings.
+4.1 RECOVERINGDEGRADEDMONITORABILITY
+The first three experiments test recovery after different processes have made the CoT less informative
+to a monitor.
+4.1.1 RECOVERINGCOT COVERAGELOST TOCOMPRESSIONTRAINING
+CoT compression reduces inference costs but can discard intermediate reasoning needed by a mon-
+itor (Kimi Team et al., 2025). We compress the CoT ofGPT-OSS-120Band ask how much of
+the lost monitorability our objective can recover while also preserving compression gains. We ex-
+amine this trade-off by varying the conditional divergence budgetϵ. We perform both compression
+and monitorability post-training on GPQA-main, and evaluate transfer on GPQA-Diamond and two
+OOD settings, MMLU-Pro and AIME.
+Compression training and metrics for CoT-quality evaluation.We use the correctness-gated
+soft length penalty of Li et al. (2025) for compression training. We perform200steps of compression
+training. After100steps, average monitorability on GPQA-Diamond falls from3.794to3.617, and
+further decreases to3.480after200steps. On AIME, it falls from3.869to3.734and3.628after
+100and200steps, respectively; on MMLU-Pro, it falls from3.958to3.910and3.872. Appendix A
+provides the training details and full compression results.
+Following Emmons et al. (2025), we use an LLM judge (GPT-5.6-Luna) to rate each CoT’s
+coverage and legibility on a0–4scale. A score of4indicates that the CoT contains all reasoning
+needed to reach the final output (coverage) and is fully understandable to an unaided human (legi-
+bility). We define the monitorability score for any CoT as the geometric mean of its coverage and
+legibility scores. This reflects the fact that both coverage and legibility are necessary conditions for
+monitorability.
+We use this score to measure how much of the monitorability lost during compression is recovered
+through post-training. Since recovery can require longer CoTs, we also measure how much of the
+original token savings is preserved. LetLdenote median reasoning length andMmean or worst-
+case monitorability, with subscriptsbase,comp, andpostfor the base, compressed, and post-trained
+5
+PAGE 6
+Preprint.
+Table 1: MBPP evaluation after monitorability post-training. Values are mean±one standard error
+across runs.
+Policy Hacking↓True pass↑TPR on hacks (recall)↑FPR on non-hacks↓
+Obfuscating86.3% 11.2% 1.4% 2.9%
+RMI only (3 seeds)10.7±7.5% 20.7±12.0% 54.5±4.5% 20.1±8.5%
+RMI +χ 2,ϵ= 0.4(5 seeds)26.6±2.9% 48.6±1.6% 37.4±7.2% 3.9±0.8%
+models. For each dataset and compressed checkpoint, we compute:
+Token savings preserved= Lbase −L post
+Lbase −L comp
+×100%.
+Monitorability loss recovered= Mpost −M comp
+Mbase −M comp
+×100%.
+Thus, 100% savings preserved means retaining all the token savings achieved by compression, while
+100% monitorability loss recovered means restoring monitorability to the base model’s level.
+Monitorability post-training recovers monitorability lost through compression.Starting from
+either compressed checkpoint, our objective improves mean and worst-case coverage and monitora-
+bility on all three evaluated datasets (Figure 1). From the 200-step checkpoint on GPQA, post-
+training atϵ= 1recovers56.3%of the loss in mean monitorability and60.8%of the loss in worst-
+case monitorability while preserving80.2%of the original token savings. The monitorability gains
+also generalize OOD to MMLU-Pro and AIME. On MMLU-Pro, the same checkpoint recovers
+42.4%of the loss in mean monitorability while preserving82.2%of the original token savings. On
+AIME, it recovers23.6%while preserving72.5%. Increasingϵfrom0.5to1recovers more moni-
+torability on GPQA and MMLU-Pro but gives up more token savings. Appendix A shows coverage
+and monitorability against median reasoning length separately for each dataset (Figures 2–4).
+We additionally include results showing that post-training under our objective preserves or improves
+task performance on MMLU-Pro and AIME, and that Robust MI outperforms the mean-MI abla-
+tion on both mean and worst-case monitorability across all three datasets. We find no meaningful
+improvement in CoT controllability on GPQA after accounting for CoT length (Appendix A).
+4.1.2 UNDOINGCOT OBFUSCATIONDEVELOPED UNDERMONITORPRESSURE
+We next test recovery from obfuscation induced by direct monitor pressure. On MBPP (Austin
+et al., 2021), we follow Anwar et al. (2026) to train a Qwen2.5-7B-Instruct policy to pass revealed
+tests while evading a CoT monitor. We select a checkpoint that frequently fails held-out tests while
+concealing these failures in its CoT, which we nameObfuscating base.
+From this policy, we compare lower-tail MI training without the conditionalχ 2 constraint with our
+full method atϵ= 0.4. As in Anwar et al. (2026), we use held-out unit tests to distinguish between
+hacking and true pass solutions. We apply a frozen CoT-only monitor and compute recall on hacks
+and false-positive rate (FPR) on non-hacks. Appendix B gives the full training and evaluation setup,
+budget sweep, and additional analyses.
+Our method yields a more useful monitor.Table 1 shows that MI post-training withoutχ 2 raises
+recall on hacks from1.4%to54.5%, together with an FPR of20.1%. Our method retains substantial
+recall (37.4%) and reduces the FPR to3.9%, close to the Obfuscating base’s2.9%. It also has
+the highest true-pass rate,48.6%. The regularized objective therefore makes residual hacks more
+detectable while false alarms remain rare.
+Recovery changes behavior through the CoTs the policy produces.Both post-training settings
+substantially reduce hacking, and our method raises true pass from11.2%to48.6%. We perform
+a crossed-CoT intervention in Appendix B and show that this gain is carried primarily by produc-
+ing CoTs that the Obfuscating base already maps to correct code; changing the code policy after a
+fixed CoT has little effect. This supports thereplacementroute in Section 3: recovery shifts prob-
+ability from obfuscated hacks toward correct behavior that is already supported by the reference
+6
+PAGE 7
+Preprint.
+Table 2: Behavior and CoT monitorability before and after recovery. Behavioral rates are measured
+on rollouts that contain defects; monitor accuracy uses all rollouts and recall uses deceptive roll-
+outs. Post-training values are means across independent runs. Each cell reports the rollout mean /
+scenario-level worst case over four rollouts.
+Policy Explicit denial Refusal Disclosure Monitor acc. Recall
+Base0.7%/0.9% 0.5%/1.9% 98.8%/97.2% 97.8%/92.0% 0.0%/0.0%
+Obfuscating55.6%/91.6% 27.1%/63.6% 17.3%/1.9% 75.4%/49.0% 39.5%/21.4%
+RMI only (no divergence)0.0%/0.0% 0.0%/0.0% 100.0%/100.0% 100.0%/100.0%–
+RMI +χ2,ϵ= 0.4 24.5%/43.0% 0.8%/2.8% 74.6%/56.1% 98.4%/94.0% 93.1%/84.9%
+model. Additionally, residual hacks become more detectable, consistent with revelation pattern on
+the remaining samples.
+4.1.3 REVERSINGCOT OBFUSCATIONDEVELOPED FROMOUT-OF-CONTEXT
+GENERALIZATION
+Our third setting uses the customer-support model organism of Haskins et al. (2026). Synthetic-
+document fine-tuning (SDF) first teachesGPT-OSS-120Bto conceal product defects and then
+describes a CoT monitor and the threat of shutdown if concealment reasoning is detected. Although
+the documents contain no examples of obfuscated reasoning and apply no RL pressure to the CoT,
+the model learns to continue denying defects while making its strategy less legible. We test whether
+monitorability post-training reverses this out-of-context generalization.
+We reproduce the SDF recipe and continue training its obfuscating checkpoint for700steps under
+Equation 2. We evaluate on 200 held-out scenarios, labeling an explicit denial on a prompt that
+contains a defect as deceptive. Appendix C gives the reproduction, training, and evaluation protocol.
+Our method increases disclosure and monitor recall.At the obfuscating checkpoint, the model
+denies the defect in55.6%of defect-present rollouts, while monitor recall on these deceptive rollouts
+is39.5%(Table 2). Under our full objective, denial falls to24.5%and recall rises to93.1%. Without
+the divergence term, training eliminates deceptive behavior on this evaluation.
+Because post-training changes how often the policy behaves deceptively, recall is reported condi-
+tional on the rollouts that remain deceptive. The shift from concealed denial toward disclosure is
+a replacement pattern, while the greater detectability of remaining deceptive behavior is consistent
+with revelation. Together, these results extend recovery beyond direct monitor pressure: the un-
+supervised objective reverses both behavior and CoT obfuscation learned through out-of-context
+generalization.
+4.2 EFFECTSBEYONDRECOVERY
+The remaining experiments broaden the evaluation beyond settings constructed around an induced
+monitorability failure.
+4.2.1 IMPROVINGSAFETYMONITORINGACROSSBENCHMARKS
+CoT monitoring is useful when intermediate reasoning predicts whether the model’s eventual re-
+sponse will be safe. Following the prefix-based evaluation of Chan et al. (2025), we test whether our
+objective makes this information easier to extract from the CoT text and from final-token activations,
+which provide a complementary view of the model’s internal representation.
+We independently train full-parameterDeepSeek-R1-Distill-Qwen-7Bpolicies on Harm-
+Bench (Mazeika et al., 2024), StrongREJECT (Souly et al., 2024), and SORRY-Bench (Xie et al.,
+2025). For each held-out question, we sample a CoT, sample continuations from its prefixes, and
+label them as safe or unsafe using the benchmark evaluators. Two CoT monitors predict this label
+from the question and prefix, while a linear probe predicts it from the prefix’s final-token activation.
+Table 3 reports safe-class F1 and balanced accuracy across all prefix–continuation pairs. Appendix D
+gives the full protocol and results at fixed positions in the CoT.
+7
+PAGE 8
+Preprint.
+Table 3: Safety behavior and prediction before and after monitorability post-training (ϵ= 1). Each
+cell reports Base→Ours.
+GPT-4.1-nano CoT Monitor Qwen3.5-35B-A3B CoT Monitor Activation Probe
+Benchmark Unsafe Behavior Safe-class F1 Balanced Acc. Safe-class F1 Balanced Acc. Safe-class F1 Balanced Acc.
+HarmBench25.7%→19.0% 61.6%→76.7% 60.5%→70.2% 63.0%→82.0% 63.8%→74.6% 80.3%→87.4% 71.4%→80.2%
+StrongREJECT31.1%→22.4% 66.9%→74.0% 64.1%→67.4% 68.5%→75.7% 68.1%→73.4% 80.0%→81.4% 74.1%→77.1%
+SORRY-Bench21.9%→22.8% 68.2%→72.5% 61.3%→66.1% 64.5%→71.3% 64.5%→69.8% 79.9%→83.0% 68.5%→73.6%
+Table 4: Consequential-reasoning results atδ= 0.10. Trace coverage and span density are percent-
+ages; brackets give 95% bootstrap intervals.
+Condition Policy Trace coverage Span density Mean sentences
+SCRUPLES, GPT-OSS-20B
+No cue Base15.0 [8.0,22.0] 7.3 [3.9,10.9] 32.7
+RMI +χ 2 18.0 [11.0,26.0] 4.3 [2.4,6.3] 61.4
+Cue Base24.0 [16.0,33.0] 8.6 [5.5,11.9] 34.6
+RMI +χ 2 32.0 [23.0,41.0] 5.9 [4.0,8.0] 77.8
+GPQA Diamond, GPT-OSS-120B
+Base init. Initial41.9 [34.8,49.0] 29.0 [24.3,33.3] 70.8
+RMI +χ 2,ϵ=.5 43.4 [36.4,50.5] 27.1 [22.9,31.0] 80.6
+RMI +χ 2,ϵ= 1 45.5 [38.4,52.5] 27.7 [23.7,31.5] 114.5
+Compressed Initial37.4 [30.8,43.9] 26.4 [21.7,31.1] 24.1
+RMI +χ 2,ϵ=.5 40.9 [34.3,48.0] 32.5 [27.2,37.5] 31.6
+RMI +χ 2,ϵ= 1 41.9 [34.8,49.0] 30.7 [26.0,35.2] 34.8
+Post-training makes safety outcomes more predictable.Our objective improves safe-class F1
+and balanced accuracy for both CoT monitors and the activation probe across all three benchmarks
+(Table 3). Unsafe behavior decreases on HarmBench and StrongREJECT and remains similar on
+SORRY-Bench. Balanced accuracy improves across these different behavioral shifts, showing better
+discrimination between safe and unsafe continuations. The gains also appear at almost every evalu-
+ated CoT position (Figure 6). Together, the monitor and probe results show that post-training makes
+safety-relevant information more accessible in both the written CoT and its final-token activations.
+4.2.2 MAKING THECOT MORECONSEQUENTIAL FOR THEFINALANSWER
+A CoT can appear interpretable even when its reasoning has little effect on the model’s answer.
+Following Du et al. (2026), we sample continuations from progressively longer prefixes and ask
+whether adding a span of reasoning changes the probability of the trace’s own final answer. We call
+such a span aconsequential spanwhen the change exceeds an effect thresholdδwith at least 95%
+posterior probability. Trace coverage measures the fraction of CoTs containing at least one conse-
+quential span, while span density measures their frequency. Appendix E gives the full evaluation
+procedure.
+Setup.On SCRUPLES, a binary ethical-judgment benchmark (Lourie et al., 2021), we compare
+the baseGPT-OSS-20Bpolicy with the policy after 50 steps of monitorability post-training under
+an ordinary prompt and a cue that biases the answer toward B. The cue lets us evaluate consequential
+reasoning when the prompt exerts an external influence on the answer. On GPQA Diamond, we eval-
+uate the base and200-step compressed policies from Section 4.1.1, before and after monitorability
+post-training atϵ=.5and1. Appendix E gives the full setup and threshold sweep.
+GPQA: recovery is clearest from the compressed policy.Starting from the compressed policy,
+monitorability post-training increases both trace coverage and span density under both budgets (Ta-
+ble 4); the same directional pattern appears at the other tested effect thresholds (Appendix E). The
+density increase persists after accounting for the additional opportunities created by longer traces.
+For the compressed policy, post-training therefore restores consequential reasoning alongside CoT
+monitorability.
+8
+PAGE 9
+Preprint.
+Across undegraded policies, post-training increases trace coverage.From the uncompressed
+GPQA policy, trace coverage rises under both budgets while density remains close to its initial value.
+SCRUPLES shows a similar pattern: post-training increases trace coverage under both prompts,
+while CoTs become roughly twice as long and span density drops. Under the answer cue, answer-B
+frequency remains nearly unchanged as coverage rises, separating the coverage gain from a large
+shift in final-answer behavior (Appendix E). Across these settings, post-training makes consequen-
+tial reasoning more prevalent across traces, but the CoTs also become longer, leaving consequential
+spans less dense.
+5 RELATEDWORK
+Chain-of-thought monitoring.Recent work has shown that access to CoT can substantially im-
+prove practical monitoring over observing the prompt or output alone (Baker et al., 2025; Arnav
+et al., 2025; Guan et al., 2025). This opportunity is nevertheless fragile, motivating work on stress-
+testing CoT monitors and measuring the information that traces expose (Korbak et al., 2025; Em-
+mons et al., 2025). Monitorability is related to, but weaker than, complete faithfulness: CoTs can
+omit causal influences or rationalize decisions after the fact (Turpin et al., 2023; Lanham et al., 2023;
+Chen et al., 2025), yet still provide relevant evidence that helps a practical monitor. Accordingly,
+we study whether CoT retains accessible signal about what the model will do, rather than whether it
+provides a complete account of the model’s internal computation.
+Training-induced losses of monitorability.The information exposed in CoT depends on the ob-
+jectives that shape it. Direct optimization against a CoT monitor can teach a policy to retain unde-
+sirable behavior while making that behavior less legible (Baker et al., 2025). Without direct mon-
+itor feedback, output supervision can produce obfuscation that generalizes to unseen tasks (Hadida
+et al., 2026), while synthetic documents that describe monitoring incentives can induce concealment
+through out-of-context generalization (Haskins et al., 2026). Separately, CoT-compression objec-
+tives reward short, task-sufficient traces and need not preserve information useful to downstream
+monitors (Li et al., 2025). A stronger failure mode is steganography: models can encode informa-
+tion in apparently benign text (Mathew et al., 2024; Motwani et al., 2024; Zolkowski et al., 2025).
+Applied to CoT, such encoding could preserve information relevant to the output while making it
+inaccessible to an external monitor (Stickland & Korbak, 2025).
+Training for monitorability.Prior work has explored directly rewarding monitor judgments, al-
+though such feedback can produce limited or monitor-specific improvements (MacDermott et al.,
+2025). The closest methodological precursor is Anwar et al. (2026), who establish information-
+theoretic conditions for CoT monitorability and introduce CoT–output mutual information as a
+monitorability objective. Their experiments use this objective during reinforcement learning with
+verifiable rewards, alongside task and monitor rewards, to prevent monitorability from degrading
+under optimization. We instead use mutual information as a dedicated unsupervised post-training
+signal, without task rewards, behavioral labels, or monitor feedback, and ask whether it can recover
+monitorability after degradation. Our objective also focuses optimization on the least-informative
+trajectories and our conditional constraint provides behavior regularization and an inductive bias
+against steganography by penalizing new mappings between CoTs and outputs.
+Representation learning and transfer.As developed in Section 2, our framing connects CoT
+monitoring to representation transfer: a training objective determines which factors remain accessi-
+ble to downstream predictors (Bengio et al., 2014; Yosinski et al., 2014). Transfer improves when
+a source representation preserves information required by downstream tasks (Zamir et al., 2018;
+Tripuraneni et al., 2020). This motivates training CoTs to retain information about model outputs,
+which are the object of many monitoring tasks. Mutual-information objectives provide a general way
+to preserve shared information (Hjelm et al., 2019). We apply this principle to CoTs and outputs,
+while recognizing that the resulting representation is useful only insofar as their shared information
+is relevant and accessible downstream (Tschannen et al., 2020). We therefore evaluate whether in-
+creasing CoT–output mutual information improves performance across natural-language monitors.
+9
+PAGE 10
+Preprint.
+6 CONCLUSION
+Successful chain-of-thought monitoring requires that a model’s visible reasoning contains informa-
+tion that predicts what a model will do. We therefore cast monitorability as a representation-learning
+problem: training should make the CoT a more informative external representation of behavior. Our
+unsupervised objective optimizes a lower-tail estimate of mutual information between CoT and out-
+put through a monitor-independent training signal.
+Across compressed reasoning, monitor-evasion, and synthetic-document obfuscation settings, this
+objective recovers monitoring signal without behavioral labels or monitor feedback. Across three
+safety benchmarks, it also improves prediction of unsafe behavior by CoT monitors and an activation
+probe. Our consequential-reasoning analysis further shows that post-training increases trace cover-
+age for both compressed and undegraded policies. Together, these results establish monitorability
+as a trainable capability that post-training can restore or improve beyond its initial level.
+In our experiments, task performance remains stable after compression recovery, but MBPP and
+synthetic-document recovery shift behavior toward correct or honest outputs. Future work may
+study how independently monitorability and task behavior can be controlled. Our evaluations use
+controlled model organisms, so it remains to be established whether the gains extend to naturally
+occurring monitoring failures in stronger agents. Future work should test transfer across monitor
+models, prompting schemes, and forms of misbehavior; robustness under subsequent post-training
+and monitor evasion pressure; and whether monitorability gains remain compatible with concise
+reasoning. Overall, our results suggest that CoT monitorability, which is an increasingly important
+requirement for effective oversight, is a tractable target for post-training.
+10
+

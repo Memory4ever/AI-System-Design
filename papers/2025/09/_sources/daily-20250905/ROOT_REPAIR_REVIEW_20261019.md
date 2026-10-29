@@ -607,3 +607,96 @@ root非作者，直接实际读既存精确v1完整II–IV/Eq1–5、TablesI–I
 原III-E健康peer恢复假设不能由ZeRO/FSDP标签推出完整optimizer存在，只有所需完整状态在同边界可核重建才采用；原III-G保持持久checkpoint、未覆盖所有stall。P/N独立故障模型不覆盖相关failure domain，O(n/p)不因p并行就一般O(1)，共享表读取不含维护/竞争成本；Eq1 t为steps/d为时间的单位还需step duration一致换算，不照录通用最优checkpoint频率。真实Ascend/Kunpeng/所列7–175B与32–4800device、TableI1k–18k只通信表阶段；97→147.5s、11s detection与固定1800s baseline、step/2重放估算均具体限定，不签全规模RTO/所有小于10s/完整收敛无损。
 
 实际完整读当前Ch35 step一致性/安全保存点与Checkpoint事务完整前后、恢复全费、DeadPool committed generation/无spare/Odyssey/FailureDomain完整交接及本人末注。现文规定quiesce边界但没解释故障落optimizer前/中时如何选择等待与可恢复step，唯一TRAIN-CHECKPOINT小gap成立。实际逐字读86.1批准稿/marker/拟注，保持device完成/完整state/groupepoch前提及持久退路，未将原不闭sharding配方补造。授仅完整“安全保存点通常位于optimizer step完成后…”段后、Checkpoint事务标题前一自然段/独立03047 marker/本人注；保存后root一次实际POST，不预整合或DAY。
+
+## 73. 2026-10-20恢复：03234/03047实际写后复核通过
+
+用户明确恢复后重读当前合同/Books上下文、本日作者89与本记录71–72，不重做有效Source。root作为非写入者实际顺读当前Ch30完整BCA/00582 inline→TeRA完整新增/独立03234标记→参数化步长两完整段及本人末注，另读Ch35完整step一致性/安全保存点→FlashRecovery完整新增/独立03047标记→Checkpoint事务完整流程及loader/ownership后侧和本人末注。首次合并输出截断的Ch30局部已单独完整重新输出读取，不以截断或标记代替顺读。
+
+两段承接各自前文，采用范围与71/72批准原稿一致：TeRA区分可训自由度/矩阵rank，保单零轴/冻结scaffold身份、未采用未闭误差定理及重建/搜索费用；FlashRecovery区分optimizer前阻止提交/已进入更新的等待，保完整同世代state、device完成/通信group与持久退路，不授分片天然冗余或任意fault精确恢复。原前后段、inline来源与其他日期末注均保持。两本人注如实写保存时待POST，后续只同步本次已发生事实，无须第三次审阅。
+
+限定两章及State的working/cached空白检查均返回0；本次未改两章正文、index或他人修改。**两项实际nonwriter POST通过，指定位置生效释放，本日实际整合26→28。** 不等本日DAY/FINAL；其余七项必要Source与报告归并仍普通。恢复由Bernoulli接续作者记录，root继续本日独核，不新建平行账本。
+
+## 74. SESGO03329必要Source、五分与Ch66具体已有覆盖提案
+
+复用作者单次正常200/209015B/1.795081s原件[exact-v1](REPAIR_03329_V1_20261020.raw)及[头](REPAIR_03329_V1_20261020.headers.raw)，root未重GET。实际完整读Bias Detection Methodology及Eq1、Dataset制备/四类来源与Table1、Bias Assessment全部方法/表2–3和直接图注、Discussion与附录A1–A3/全表。四类文化历史例证只读制备背景/必要样例，不冒逐条审校4156题、全部引用、图像像素、代码或复现。官方abs当前仅v1同题四作者，未见撤回/勘误；旧Sep4联合日证/准入复用。
+
+拟2+1+2=5，限定贡献为固定题源/语言与本地构念后，将准确率、错误方向与ambiguous/disambiguated人口分别比较，检验翻译后的评价是否仍测同一对象；不是公平保证或英语对齐必然不能迁移。4156题分四类1318/684/1344/810，原生与BBQ改写人口不相同，xenophobia没有匹配英语题。六模型包含8B/7B开放权重及未披露规模API，不从脚注equivalent size授同容量/训练预算。Matched英西语与完整本地题库是两条对照，后者变化不唯一归因语言；未见实际英语缓解方案的随机对照训练，不能把行为差额当已识别alignment迁移因果。
+
+F(Target)/F(Other)按错误方向及正负问题映射，正文又限定其总和与1-accuracy关系；Eq1的signed距离同时含错误量与方向，不是纯偏差大小。平衡错误而accuracy<1时距离仍非零，不能照录“perfect accuracy and/or balanced errors”即0。TableA3 DeepSeek温度1/disambiguated的accuracy .722、Ft-Fo显示.000而bias显示.000，与sigma取±1的距离式不直接相容，不能自补sign(0)=0或隐藏未舍入数。主表2/3标题的ambiguous角色与正文/Llama读数亦有交换嫌疑，未获代码不默调标签。故不采用其完整指标实现、统一排名或仅温度不足的全模型因果。必要负侧可由A1/A2分项读数保留：匹配语言方向/幅度不一致，A3没有普遍单调改善，不抹去部分模型/条件逆向。
+
+重复运行/置信区间、完整API revision、精度/硬件/batch与实际抽取失败分母未齐；固定结构system为英语也属条件。文献选题未作全部目标文化人审资格，作者自己提出user/expert validation为后续。题源/本地化、生成/解析、分项计分、人审与温度多次调用全部计费；不从闭题选择归真实伤害、内在偏见或线上安全。
+
+实际顺读当前Ch66 Prompt variants→正负framing/类别映射→配对总体抵消、人口cue/构念、ContextualStereoSet及其样本单位/语言负侧→targeted alignment的ambiguous/disambiguated与目标/非目标属性整条链，另读跨语言任务/实现对齐。现有具体正文已承载本次可支持的窄长期命题：不能用一个跨语/整体绝对分数掩盖不同人口与方向，也不以翻译/低均差认证公平。拟唯一PLATFORM-EVALUATION-SYSTEM/Ch66已有覆盖，不因本文指标冲突把原准入降C或提无须证据的全新段；完整SESGO配方及文化代表性留报告边界。交Bernoulli一次必要非请求者原域/评分/具体NC核，当前不预Books决定完成。
+
+## 75. InAbHyD03345必要Source、五分与解释质量评价差额提案
+
+root正常一次[exact-v1](ROOT_03345_V1_20261020.raw)HTTP200/1301335B/32.687430s/exit0，[头](ROOT_03345_V1_20261020.headers.raw)保留。实际读完整§3/公式/Table2、§4.1–4.5/Table3和直接图注、§5及AppendixC两个生成算法、E全部错误/自验样例；未读曲线像素、全部D数值曲线、生成器/解析/证明实现或复现。官方abs精确v1为原题两作者，当前v2/v3题名/日期角色分开，未见明确纠错/撤回，不将2026新结果回填。旧Sep4联合日证/准入有效。
+
+拟2+1+2=5：有限已知本体树中隐去规则并生成观测，再分别评价“能解释所有观测”“恢复预置隐藏规则”“假设集合的简约质量”；这改变推理能力评价对象，而不是科学应用或模型没有推理的证明。每节点2/3子节点、三属性/成员，虚构概念与固定语法转自然语言，三子任务可控制缺哪条property/membership/subtype。Ground-truth只是生成器所藏规则，不由此得唯一现实原因或最简全局解释；有限树形一元关系也不等全部FOL命题/全部归纳。复制观测能通过较弱解释检查却缺少压缩，这是本文实际错误样例，不是对原模型内部算法的读出。
+
+q(H)在解释失败时0，否则为候选假设在proof trees中平均使用次数与隐藏规则相同均值的比；参考q=1是按定义归一，不证明所有合法候选的全局最大值为1，也不保证proof选择/逻辑等价改写不改变计数。原示例10/5除9/3为2/3，只支持该协议。正文称C含complete generation/evaluation algorithm，但所见只有两个生成算法，未把缺失parser/proof search补成已核可执行oracle。Strong exact-match也不能自动惩罚一切合法替代解释；采用该三路分账，不采用完整scorer正确性/最优性。
+
+每配置100例，accuracy用Wilson95%区间，quality未给同等统计；ontology高度、axioms数量、观测数与假设数同时变，不能单因果归深度或组合。8shot ID/OOD是不同示范支持；Llama3-70B与R1-Distill-Llama-70B比较改变checkpoint/蒸馏/数据/预算，未在同一基座随机控制RLVR，10–20%文字收益不能当RLVR净效应。模型snapshot、精度/hardware/API完整采样/全token预算未齐，未读图像素不重建精确曲线。数据生成、提示/示范、重复调用、解析与证明搜索/人审都付费；结论限所测合成支持集，不授人类级差距或世界真实因果。
+
+当前Ch66 Constraint Graph完整两段与01815标记承载“生成/约束验证支持多解”，RealBench等明确参考实现非唯一、test pass不等完整需求；仍未解释补全缺失规则时“解释充分性/预置规则匹配/相对简约”三个不同判据。拟唯一PLATFORM-EVALUATION-SYSTEM/Ch66窄gap，只在Constraint Graph完整成本/模拟器限制段及01815独立标记后、Release Gate标题前一自然段，保前一Agent环境验证与后一发布门衔接。不在Ch25另写物理world model。交Bernoulli一次必要原域/五分/owner非请求者核，未授位/写书。
+
+### 75.1 逐字PRE提案（待非请求者核）
+
+补全未知规则的任务，还要把“解释了观察”与“找到了好的解释”分开：先从固定规则系统隐藏部分规则，再生成观测，分别检查候选能否推出全部观测、是否恢复生成器预置规则，以及它是否用较少且可复用的假设解释这些观测。直接复述每条观测可能通过较弱检查，却没有形成更紧凑的解释；反过来，不同合法假设也不该仅因不等于预置答案就被当作没有推理。[受限本体树对照](https://arxiv.org/html/2509.03345v1)把这三类判据显式分账，但它的简约分数依赖证明树、假设表示与参考集，不证明唯一现实原因或全局最优理论。应共同保存生成器、隐藏规则、可用信息、输出解析和证明选择，并计入合成、示范、模型调用与核验费用；复杂度与输入长度共变、不同checkpoint的收益也不能直接归因某种RL方法。Oracle或替代解释资格未闭时，保留原观测与分项结果、独立逻辑检查和人工审校；真实环境任务仍回到实际结果验证，不用一个合成解释分批准因果理解或发布。
+<!-- source-family:SF-2025-ARXIV-2509-03345 -->
+
+拟本人注：Bernoulli继任Boyle，Daily2025-09-05补Sep4；root实际exact-v1 §3–5/Table2–3、C生成算法/E反侧与所见直接图注，2+1+2=5。仅解释充分性/预置规则匹配/相对简约三路评价；保FOL子域、proof/representation依赖、非同基座RL因果/长度混杂和全费。未核parser/proof实现、图像素或复现；当前待非请求者Source/评分/owner/PRE及新位协调，不预写入/POST。
+
+## 76. 03341非请求者核已消费，六分中心争议正式采用
+
+实际完整读Bernoulli作者91的必要原域、独立加权抵消与共同gradient反例、原威胁/utility权限和Ch72具体比较，与root70相合。原六分中心主张争议/Books暂缓正式采用，不把理论缺口改普通NC、访问受阻或真实DP保证无效；两层合用，不第三Source，不新写Books。当前七正式中心争议，仍须作者归并其它普通差额后完整日级验收。
+
+## 77. Window-F1 03240必要原域/五分及逐字PRE通过，新精确位授权
+
+root作为非作者直接读既存exact-v1完整S3–6/Table1–6、A/B/D必要说明与公式，HTMLParser保留math alttext，未看曲线像素/核代码、私有标签或复现。作者92的2+1+2=5采用域成立：时间容忍、标签密度与计数单位改变同一输出的解释，不是医疗能力或通用新时序模型。原日证/准入复用，不重GET。
+
+实际对Table1复核：TPw按预测点、FNw按真值点累计，增加一个旧命中附近预测可使TP=1/FN=1变TP=2/FN=1，recall从1/2至2/3，不能称多找回一个事件。paK=0直接印式的>=0边界也不能默改成至少一次命中。保留原式问题并不否定所有实测，本文窄采用不依赖其完整metricrecipe正确；窗口越宽及密集ROAD的random退化、Table4按主体两位小数/双侧检验和20min双满分均具体。T3 ADARP总405与89+319不齐，ROAD主体/会话与连续标签不能拼点级人口；Table6的高precision不等高eventrecall。历史stress标签作为target的部署限制S6明确，A5000/CPU两运行域/JAX差异、batch与单signal时间不授真实传感器端到端或临床SLO。
+
+实际顺读当前Ch66完整Stream Boundary/taskification两段→OAKS完整时间lag/lapse/miss段与07392绑定→Model Self-report标题及来源真值两完整段。前文拥有切分与时间分母，但缺同一输出的命中容忍/randomfloor和预测点/事件混合计数反侧，唯一PLATFORM-EVALUATION-SYSTEM/Ch66小gap成立。92.1原一自然段/独立marker/拟本人注已逐字读过，保留采样率、边界裁切、重复匹配、主体统计/真实输入与全费/严格计分退路，不照录未闭完整配方，PRE通过。
+
+授仅完整OAKS段及其07392 inline之后、Model Self-report标题之前原92.1一自然段/独立03240标记/本人注，不拆原绑定或其他notes；作者真实保存后root一次实际完整新增/完整两侧/本人注POST。未预第29整合/整日验收，其他来源和候选普通继续。
+
+## 78. CBD、ANNIE及底座适配对照的实际非请求者必要Source与Books裁决
+
+**03348 CBD，2+2+2=6通过。** 直接读作者既存exact-v1完整S3/Eq6–13/两个算法、S4/T1–4、S5/T5、S6与B/T6及全部必要评价文字/图注；未核曲线像素、线上日志、实现或复现。随机cut后缀去噪、真实prefix每轮重置、最终sample的属性目标匹配与inverse消费者的接口确实不同。Eq12减小目标误差而非总最大化return，Alg2遗漏y/向量到单state与phi/varphi口径不默修成完整recipe；条件分布不授因果识别或可达硬保证。ER1.10、validity98.7%及较大修正退步、D4RL多行弱于DL均保留，150episode seeds不等训练重复；百分比增益相对DiffBid，不是全部最强对照。H100/batch512/500epochs/100步与线上360CPU/约20s调用/额外6ms是不同人口，业务投放同预算不等总算力免费。实际完整读当前Ch79目标return→FlowAgent完整段/07339 inline→独立Transition两完整段及后surrogate链，前者未承载本次prefix训练/最终属性匹配/inverse接口，唯一AGENT-PLANNING窄gap成立。94.1逐字原一段/marker/拟注PRE通过，授仅完整FlowAgent段及07339 inline之后、Transition标题前；实际保存后root一次POST，未预整合。
+
+**03383 ANNIE，2+1+2=5、安全受影响域深入通过，具体已有覆盖。** 直接读既存exact-v1完整S3定义/阈值、S4 benchmark/四指标/全部Eq5–9、S5.T2全行、S6评价/实机与S8限制；只核评价权限，不扩攻击制作recipe，未看曲线像素/核代码/真机或复现。AD印式在每步attacked=benign且距离非零时给N而非0，未补归一/零分母；AC角度不管幅度，TSRC/ASR/真实风险不等。仿真九场/各20test、单场迁移、十次实机中四次接近的回放不等通用实时危险率，ACT/Baku差异不能单归normalization。对第三方相机/网络的威胁宣称未给实际接管证据，不采“普遍容易篡改”前提或ISO合规认证。实际完整读Ch26 Safety envelope与Evaluation ladder的off-log/动力学、任务/接触/near-miss、真实trial与同rollout分母链，现文具体承载所支持的窄命题。唯一MULTIMODAL-EMBODIED-VLA/Ch26具体已有覆盖通过，不伪称完整taxonomy/指标已吸收，无新正文/marker/书注。
+
+**03421 Generalist/Specialist，2+1+2=5通过。** 不重GET，使用本日已完成39页重建PDF；实际完整物理pp5–6方法/统计、pp8–13结果、pp17–21分析/限制，另真实渲染并查看pp14–16/Fig5–7完整页面。启动时误猜fallback渲染路径不可用，已定位当前override工具正常渲染；未把错误当材料受阻。未核私有队列、外部GoogleSheet细表、其余图像或实现/复现。Fig5是四模型平均FT高于LP而非每task，Fig6的10%平均DINOv3 .728高于领域DINO .720，不能授领域模型恒优；Fig7单A10080/APTOS3662下更新范围改变MiB/分钟，不是完整生命周期净费或推理SLO。DINOv2/v3/RETFound同时改变数据/目标/teacher/规模，904K领域继续训练与142M/1689M自然数据不能作单变量因果。200bootstrap标准差再除sqrt200不是原总体性能不确定性的通用区间；不采这些显著性、未对齐跨模型cosine或临床效果。唯一TRAIN-PRETRAINING/Ch28具体gap为基座来源×下游更新权限×标签/适配费，当前开篇及后objective/消费者交接未展开这项选择矩阵。实际读当前完整“本章要回答的问题”/核心判断段与符号/随机参数起点，96.1原段及拟注PRE通过，授仅完整核心判断段之后、符号约定段之前一自然段/独立marker/本人注；不复制临床结论，真实保存后root一次POST。
+
+两新位不等实际整合，原Source/评分不因Book决定改写，所有共享修改与他人注保留。本日必要Source七项现均有真实分责与裁决，报告归并/待POST和完整六节仍普通，不提前DAY。
+
+## 79. SESGO/解释评价层接纳及03240/03345实际POST通过
+
+完整消费作者97/98真实非请求者原域及具体owner，03329正式五分/Ch66已有覆盖，03345五分/窄gap与75.1原PRE采用；没有第三Source。03345新位已在当前完整ConstraintGraph/01815之后、ReleaseGate之前协调，不把旧PRE当写权。
+
+作者99/100真实保存后，root分别实际顺读Ch66完整OAKS/07392 inline→03240完整新段/独立marker→ModelSelf-report标题与来源真值两完整段；ConstraintGraph完整生成/多解及成本/模拟器两段/01815独立marker→03345完整新段/独立marker→ReleaseGate/联邦可见性完整开头。另实际读两条Bernoulli本人末注/前他注，不以标记或作者自读代语义。两段逐字符合批准稿，计数/窗口/随机机会、三路解释判据与proof/参考权限、原输入可得性和全部费用/退路近文，原绑定与完整两侧均保持。
+
+本章working/cached限定空白检查0；本次root未写机制正文/末注或触动index。**03240/03345两项真实非writer POST通过，精确位置生效释放，实际整合28→30。** 本人注仅需同步已经发生的本节事实，不再额外验行政收据；03348/03421待真正保存与POST，本日仍未DAY/FINAL。
+
+## 80. CBD03348与底座适配03421实际POST通过，32项整合生效
+
+作者真实保存后，root非写入者实际顺读当前Ch79 FlowAgent完整段/07339 inline→CBD完整新增/独立marker→Transition标题与proposal/事实提交两完整段；Ch28完整本章问题/核心判断→03421完整新增/独立marker→符号约定/随机参数起点与loss解释，另实际读两章Bernoulli完整本人末注及前他注。两新增逐字符合94.1/96.1批准稿，真实prefix、目标值匹配/inverse consumer不授可达、真实观察闭环和全费保留；基座/更新权限/标签/资源的矩阵不复制临床效果或单因果，完整生命周期与原通用基座退路近文。原段与inline来源均未拆移，知识owner/章节交接相合，未重复Source/PRE。
+
+限定两章working/cached空白检查均0；本次root未改书稿或index。**两项实际nonwriter POST通过并释放，30→32实际整合；本轮无未执行Books授权或待POST。** 作者只同步本人注既成事实并整理真实六节/计数；七必要Source已真实分责处理，仍须完整日级非作者复核和保存完成态后最终检查，不由本节直接签整日完成。
+
+## 81. 09-05当前六部分实际日级复核通过，待保存完成态
+
+root非报告作者（Bernoulli继任Boyle），本次实际完整读当前README六部分及候选70行/逐项证据；首合并输出中TinyDrop附近截断已另完整读回，不以截断算全读。先核发现四主题/两邻页的主题与停止范围、导航非全文义务、Daily14来源与实际触发表外行；原窗口/冻结旧候选与Sep4增量窗口分开。日期/准入/root和作者各自原件审阅及真实POST按身份、精确版本、采用命题未变的有效层复用，不无差别重读所有附件。
+
+表内70唯一=69arxiv+旧Anthropic1，无重复；32整合以本日已通过的指定nonwriter真实POST为准，30具体NC均指向实际承载论点，七中心争议保原分数/反证/重开条件而非改C/访问失败；旧Anthropic仅报告层保持。安全/纠错/实际设计反证包括03054位长修订、撤回/局部配方不闭、03341/03377等均沿真实受影响原域处理，不从索引、摘要或marker签Source。非候选明确关闭的分层样本复用本日既有SCREEN/作者23/28/30校准及root源/独核记录；它们按题名范围、贡献组合、必要局部、撤回与先稿分别保留实际读取层，不冒全部282的完整精确v1/Methods验收。与已过层无关的图像、实现、复现或所有引用文献未核，不称全量。
+
+普通研究/待写/待POST0、无新写锁。14具名跨日、七机构历史段与19305先稿关系经既有实际有界恢复独核后隔离，不支撑正面Coverage/Evidence/Books、无遗漏或保证；05359窗前正文身份去重有效。报告“旧轮”块明确其历史范围，旧统一101 Unknown不覆盖已恢复日期层。候选表后一句仍用“不预评分全部或整体Source完成”可能误读成69当窗项未审，要求作者只改成已69完成相应审阅、而168日期对象/导航不自动升级；不改变任何材料裁决。
+
+本次实际V3通过；程序复核70行、69唯一ID、处置32/30/7/1、原Anthropic完整行/原窗口相同、原连续§4保留及全部本地引用0错误。限定README/作者/本独核/State的working及cached空白检查均0，不冒全仓原件空白检查。**本轮六部分DAY通过，准许作者据实保存完成态及上述一句范围澄清，再由root检查该真实完成稿；尚未发生保存完成态FINAL，不先增加132分母中的完成数。** 不重Source/Books或新增第三行政收据，不stage/commit/push。
+
+## 82. 09-05保存完成态实际FINAL通过，整日接纳
+
+root实际读回22:07:07+08:00保存的完成态header、当前§1、候选表后已澄清的69/168范围句、§5和§6。原70/32/30/7/1、明确隔离的14跨日/七来源/19305与中心争议不变，DAY81真实发生、作者未自签新增Source/Books或改旧冻结证据。真实完成态V3再次通过，限定README/作者/本独核的working/cached空白检查均0；此前实际整段原行/窗口/连续块与本地引用检查仍有效，本次不重复全原件或书稿。
+
+**实际完成态FINAL通过，接纳2025-09-05本次补查安全终态，累计17→18/132。** 不授保留项正面Coverage/Evidence/Books或无遗漏，不把本日任务范围写成全2025完成。无普通研究/待写/待POST或本日写锁；作者可仅同步本节已经发生的最终事实，无需新的行政收据。后续换日须fresh独立上下文，不继承本日材料池或来源成功；无stage/commit/push。

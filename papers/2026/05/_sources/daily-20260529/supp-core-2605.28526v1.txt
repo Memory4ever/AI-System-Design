@@ -1,0 +1,658 @@
+Source: https://arxiv.org/html/2605.28526v1
+Main text extraction; fulltext_chars=26957
+
+arXiv:2605.28526v1 [cs.AI] 27 May 2026 
+ 
+ 
+ Entropy-aware Masking for Masked Language Modeling 
+
+ 
+ 
+ 
+ Gokul Srinivasagan
+ 
+    
+ Kai Hartung
+ 
+    
+ Munir Georges
+ 
+ Affiliation:  AImotion Bavaria, Technische Hochschule Ingolstadt, Germany
+ 
+ Affiliation:  {Gokul.Srinivasagan, Kai.Hartung, Munir.Georges}@thi.de 
+ 
+
+ Abstract 
+    
+ Masked language modeling has become a standard pretraining objective for training encoder-based language models. In this approach, certain tokens in the input are masked, and the model learns to predict them using the surrounding context. This process enables the model to capture both syntactic and semantic properties of language. Conventionally, the tokens selected for masking are chosen at random, which may not always yield the most effective learning signals. In this work, we examine a token masking strategy based on entropy distribution. We use the model’s entropy over token predictions to identify which tokens should be masked. This method aims to target tokens that are more informative and uncertain to improve the training efficacy. We also propose a novel self-masking approach that enhances training efficiency without relying on an external reference model. Experimental results demonstrate that our method achieves an average performance improvement of 5% in GLUE scores compared to the baseline. Further, we experiment with combining knowledge distillation with entropy masking, resulting in the best overall results. 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ The last few years have witnessed groundbreaking advancements in the field of natural language understanding, largely driven by the emergence of large pretrained language models  ( Zhao et al., 2023 ) .
+Their success is primarily attributed to a two-stage training process  ( Devlin et al., 2019 ;  Liu et al., 2019 ) : an initial self-supervised pretraining phase, followed by supervised fine-tuning for specific downstream tasks like sentiment classification.
+For encoder-based architectures, such as BERT  ( Devlin et al., 2019 ) , the pretraining objective typically involves masked language modeling (MLM).
+This training paradigm involves replacing tokens in the input sequence with mask tokens and training the model to predict these masked tokens using the surrounding context.
+This enables the model to learn both syntactic structure and semantic understanding of language  ( Rogers et al., 2020 ) .
+However, these MLM approaches rely on randomly selecting tokens to be masked, which may not be the most effective strategy for learning meaningful representations  ( Gu et al., 2020 ;  Lad et al., 2022 ) . 
+
+ 
+ 
+ 
+ So in this work, we propose an alternative method for the selection of masked tokens during pretraining by utilizing entropy.
+In the context of language models, entropy measures the uncertainty in the model’s prediction over the vocabulary.
+We can utilize this entropy to identify tokens and contexts in which the model is uncertain in its prediction and select tokens to mask, specifically to address this uncertainty.
+We explore with two sources for the entropy:
+(1) entropy computed from an external pretrained reference model, and (2) our novel self-masking approach, where entropy is computed from the target model itself during training.
+To fully utilize the reference model, we also explore the combination of our approach with knowledge distillation, since this also uses a teacher model as reference for training the student model. We also perform several ablation studies like increasing the size of the pretraining dataset, varying the masking percentage and fine-tuning with weight freezing to test the effectiveness of our proposed approach. 
+
+ 
+ 
+ 
+ 
+ 2  Method 
+
+ 
+
+ 
+ Figure 1:  
+The overall process of entropy-aware masked language modeling using teacher-masking.
+ 
+ 
+ 
+ First, we define the training objective for masked language modeling.
+ 𝒱 \mathcal{V}  is the vocabulary available to the language model  P θ P_{\theta}  with tokens  t ∈ 𝒱 t\in\mathcal{V} .
+ 𝐓 = t 1 ​ … ​ t n \mathbf{T}=t_{1}...t_{n}  is the ground truth sequence of  n n  tokens. 
+
+ 
+ 
+ 
+ For the masking, we first define the mask  ℳ ⊂ { 1 , 2 , … , n } \mathcal{M}\subset\{1,2,...,n\}  as a subset of indices and  i ∈ ℳ i\in\mathcal{M}  as indices of tokens  t i t_{i}  to be masked.
+As a replacement for these tokens, we add a special mask token  t m t_{m}  to the vocabulary.
+This mask is applied to produce a masked sequence  𝐓 ℳ = t 1 ′ ​ … ​ t n ′ \mathbf{T_{\mathcal{M}}}=t^{\prime}_{1}...t^{\prime}_{n}  for  𝐓 \mathbf{T} , such that 
+
+ 
+ 
+
+ 
+ 
+ t j ′ = { t m if  ​ j ∈ M t j else t^{\prime}_{j}=\begin{cases}t_{m}&\text{if }j\in M\\
+t_{j}&\text{else}\end{cases} 
+ 
+ 
+
+ 
+ 
+ 
+ The masked sequence  𝐓 ℳ \mathbf{T}_{\mathcal{M}}  serves as input to the model  P θ P_{\theta}  with parameters  θ \theta .
+It is tasked with predicting the original tokens  t i t_{i}  for each mask token  t m t_{m} .
+The respective loss is computed as the negative log likelihood the model assigns to the replaced tokens  t i t_{i} : 
+
+ 
+ 
+
+ 
+ 
+ ℒ MLM = − ∑ i ∈ ℳ log P θ ( t i ∣ 𝐓 ℳ ) \mathcal{L}_{\text{MLM}}=-\sum_{i\in\mathcal{M}}\log P_{\theta}\left(t_{i}\mid\mathbf{T}_{\mathcal{M}}\right) 
+ 
+ 
+
+ 
+ 
+ 
+ Our baseline model uses random masking for training, so each position in  𝐓 \mathbf{T}  is a possible candidate for masking the token at that position with an equal probability  p p . 
+
+ 
+ 
+ 
+ 2.1  Entropy masking 
+
+ 
+
+ 
+ Instead of random selection, we now introduce entropy-based selection, visualized in figure  1 .
+Entropy measures a model’s uncertainty in its prediction.
+When the entropy for a token is high, the model’s probability distribution over possible choices from the vocabulary is nearly uniform.
+This indicates uncertainty since many tokens are similarly likely to fit.
+Conversely, when the entropy is low, the distribution is sharply peaked, so only a few tokens have a high probability to fit in the context, and the model’s confidence in these tokens is high.
+With this adaptation, we intend to focus the model’s learning on those tokens about which the model is uncertain and, in turn, include fewer repetitions on tokens the model is already certain about.
+With this focus, the feedback for any single prediction is expected to be more informative. 
+
+ 
+ 
+ 
+ We access this uncertainty in form of the entropy over the model’s probability assignments for each token in a given sequence.
+The entropy  e t j e_{t_{j}}  for a token  t j t_{j}  is computed from the model’s probability estimates for each option  v ∈ V v\in V  as: 
+
+ 
+ 
+
+ 
+ 
+ e t j = − ∑ v ∈ V P t j ( v ) log P t j ( v ) e_{t_{j}}=-\sum_{v\in V}P_{t_{j}}(v)\log P_{t_{j}}(v) 
+ 
+ 
+
+ 
+ 
+ 
+ The estimate for the probability distribution over  V V  at a position  i i  in the sequence is in turn computed from the model’s output logits  f θ ​ ( 𝐓 ) f_{\theta}(\mathbf{T})  for the input sequence  𝐓 \mathbf{T} : 
+
+ 
+ 
+
+ 
+ 
+ 𝐏 t j ​ ( V ) = s ​ o ​ f ​ t ​ m ​ a ​ x ​ ( f θ ​ ( 𝐓 ) j ) \mathbf{P}_{t_{j}}(V)=softmax(f_{\theta}(\mathbf{T})_{j}) 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 2.2  Entropy sources 
+
+ 
+
+ 
+ We derive the entropy in two different variants. 
+
+ 
+ 
+ 
+ Teacher-masking  is the use of a pretrained external reference model to estimate the token entropy.
+Similar to knowledge distillation, the pretrained model guides the model to be trained, even though no predictions by the teacher are directly available to the student model in our case.
+As this external teacher model does not change during the training process, the selection of the masks is necessarily static and the learning signals may become less informative as training goes on. 
+
+ 
+ 
+ 
+ Self-masking : To reduce the influence of the external reference model, we use the target model itself to estimate the entropy.
+This allows us to update the masks as the model learns and to align them with what the model currently is least certain about.
+Our self-masking has a problem at the start of the training, as the uninitiated model does not yet provide any informative probability estimates.
+To mitigate this cold start issue, we start the training with an initial teacher-masking phase, before switching to the self-masking. 
+
+ 
+ 
+ 
+ 
+ 2.3  Selection strategies 
+
+ 
+
+ 
+ We explore four different strategies for the usage of the token-wise entropy  e t e_{t}  to select mask  ℳ \mathcal{M} .
+For each strategy, we select  k k  tokens to be masked, where  k k  is 15% of the current sequence length. 
+
+ 
+ 
+ 
+ High entropy masking .
+This strategy selects the  k k  tokens with the highest entropy in the sequence.
+This means, in a context of comparatively well understood tokens, the model has to predict the tokens with the highest uncertainty. 
+
+ 
+ 
+ 
+ Low entropy masking  selects the  k k  tokens with the lowest entropy in the sequence.
+In this variant, the model has to predict the best understood tokens from a comparatively uncertain context. 
+
+ 
+ 
+ 
+ Mid-entropy masking .
+In this strategy, the mid-range entropy values are selected to be masked. This is a control strategy to test that the extreme values of the entropy are relevant. 
+
+ 
+ 
+ 
+ Marginal entropy masking .
+In this strategy, which is the inverse of the mid-entropy strategy, half of the masked tokens are in the high entropy range and half in the low entropy range, so that mid-entropy tokens are not masked. 
+
+ 
+ 
+ 
+ Alternating entropy masking .
+The tokens are masked alternatively over each batch.
+With a probability of 50%, a batch is masked using either high or low entropy masking.
+The model has to predict uncertain tokens in a certain context and vice versa. 
+
+ 
+ 
+ 
+ 
+ 2.4  Implementation Details 
+
+ 
+
+ 
+ We train two variations of BERT models with varying configurations as depicted in the table below: 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Model 
+ #Layer 
+ Dim. 
+ #Attn 
+ #Param 
+ 
+ 
+ 
+ BERT 
+ 12 
+ 768 
+ 12 
+ 109M 
+ 
+ BERTlet 
+ 4 
+ 512 
+ 8 
+ 28.8M 
+ 
+ 
+
+ 
+ 
+ 
+ We use only the MLM objective for our experiments. As reference models, we use pretrained BERT models of the same dimensions that are available on Hugging Face  Wolf et al. (2020) . We pretrain the models on the wikitext-103 dataset  Merity et al. (2016) , which contains around 30k samples from Wikipedia articles. We utilize 95% of the data for training and reserve 5% for testing. Each model is pretrained for 25 epochs with a learning rate of 1e-4.
+Unless specified, all our models use a 15% masking ratio for masked language modeling.
+During fine-tuning, the models are trained for 50 epochs with early-stopping with patience value 5 and a learning rate of 5e-5.
+The models are trained with the mixed precision format BF16.
+For fine-tuning we use a batch size of 256.
+All our experiments are carried out on a single Nvidia A100 80GB GPU.
+For training, we use the transformers  Wolf et al. (2020)  and datasets  Lhoest et al. (2021)  libraries.
+We run all our experiments twice with different seed values and report the mean values as results. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Experiments 
+
+ 
+
+ 
+ 3.1  Teacher-masking 
+
+ 
+
+ 
+ 
+ 
+ 
+ Model 
+ CoLa 
+ MRPC 
+ QNLI 
+ QQP 
+ RTE 
+ SST-2 
+ MNLI 
+ Total 
+ 
+ 
+ 
+ BERT  (baseline) 
+ 69.42 
+ 81.80 
+ 74.98 
+ 83.75 
+ 52.35 
+ 82.34 
+ 68.25 
+ 73.27 
+ 
+ BERTlet  (baseline) 
+ 69.32 
+ 81.79 
+ 65.20 
+ 82.24 
+ 53.07 
+ 79.36 
+ 65.51 
+ 70.93 
+ 
+ BERT max 
+ 67.98 
+ 78.05 
+ 80.72 
+ 86.15 
+ 52.71 
+ 85.78 
+ 73.76 
+ 75.02 
+ 
+ BERTlet max 
+ 68.74 
+ 81.01 
+ 76.04 
+ 84.67 
+ 56.32 
+ 81.54 
+ 70.19 
+ 74.07 
+ 
+ BERT min 
+ 69.42 
+ 81.03 
+ 79.68 
+ 85.01 
+ 54.51 
+ 81.31 
+ 72.65 
+ 74.80 
+ 
+ BERTlet min 
+ 69.03 
+ 79.68 
+ 65.62 
+ 82.60 
+ 51.62 
+ 80.62 
+ 69.91 
+ 71.30 
+ 
+ BERT marg 
+ 69.51 
+ 79.53 
+ 82.13 
+ 86.38 
+ 54.51 
+ 83.14 
+ 72.58 
+ 75.40 
+ 
+ BERTlet marg 
+ 69.03 
+ 79.94 
+ 66.14 
+ 82.42 
+ 54.51 
+ 80.39 
+ 69.93 
+ 64.17 
+ 
+ BERT alt 
+ 68.74 
+ 81.07 
+ 82.92 
+ 86.71 
+ 53.07 
+ 86.58 
+ 73.99 
+ 76.15 
+ 
+ BERTlet alt 
+ 68.84 
+ 81.37 
+ 65.95 
+ 82.20 
+ 53.43 
+ 80.96 
+ 70.26 
+ 62.79 
+ 
+ BERT mid 
+ 69.13 
+ 81.22 
+ 50.54 
+ 63.18 
+ 52.71 
+ 50.92 
+ 35.22 
+ 57.56 
+ 
+ BERTlet mid 
+ 69.13 
+ 81.22 
+ 60.66 
+ 80.74 
+ 52.71 
+ 79.82 
+ 59.85 
+ 62.23 
+ 
+ 
+
+ 
+ Table 1:  
+Performance of models trained with teacher-masking on the GLUE benchmark.
+Total is the average score over all tasks.
+ m ​ a ​ x max ,  m ​ i ​ n min  and  m ​ i ​ d mid  describe high, low and mid-entropy token masking respectively,  m ​ a ​ r ​ g marg  masks half high and half low entropy tokens and  a ​ l ​ t alt  masks randomly either high or low entropy tokens.
+ 
+ 
+ 
+ Table  1  shows the performance of the BERT and BERTlet models trained with the teacher-masking approach.
+The model subscripts indicate the mask selection strategy used, as described in section  2.3 .
+The results show that high entropy masking produces improvements of 2 to 3 points for both BERT and BERTlet models.
+This shows that the model learns semantic relationships between comparatively less surprising tokens and highly unpredictable tokens.
+The low entropy strategy also improves, but not as much as the high entropy masking.
+The BERTlet model in particular benefits from the high entropy version.
+The marginal and alternating entropy strategies help the BERT model but hurt the smaller BERTlet model.
+These show that the influence depends on model size and that extreme entropy masking provides more reliable improvement than the mixed approaches.
+Using the mid-entropy strategy results in a strong deterioration for both model sizes and for the larger BERT in particular.
+This further confirms that it is meaningful to use the extreme entropy values. All further experiments are derived from the most successful constellations of these experiments. 
+
+ 
+ 
+ 
+ 
+ 3.2  Self-masking 
+
+ 
+
+ 
+ 
+ 
+ 
+ Model 
+ CoLa 
+ MRPC 
+ QNLI 
+ QQP 
+ RTE 
+ SST-2 
+ MNLI 
+ Total 
+ 
+ 
+ 
+ BERT max,cold 
+ 69.13 
+ 81.22 
+ 49.46 
+ 63.18 
+ 52.71 
+ 50.92 
+ 35.22 
+ 57.41 
+ 
+ BERTlet max,cold 
+ 69.13 
+ 80.30 
+ 60.77 
+ 81.02 
+ 54.51 
+ 77.87 
+ 62.00 
+ 61.37 
+ 
+ BERT max,init 
+ 69.42 
+ 81.22 
+ 84.81 
+ 89.04 
+ 52.35 
+ 86.81 
+ 71.62 
+ 76.47 
+ 
+ BERTlet max,init 
+ 68.84 
+ 80.39 
+ 78.82 
+ 85.80 
+ 55.96 
+ 83.72 
+ 72.54 
+ 75.15 
+ 
+ 
+
+ 
+ Table 2:  
+Performance of models trained with self-masking on the GLUE benchmark.
+Total is the average score over all tasks.
+ m ​ a ​ x max  marks the high entropy token masking approach,  c ​ o ​ l ​ d cold  models are trained with self-masking only, while  i ​ n ​ i ​ t init  refers to initial teacher-masking followed by self-masking.
+ 
+ 
+ 
+ Building on the teacher-masking results, we use high entropy masking as the best selection strategy to explore self-masking training.
+The cold-start models purely trained with self-masking are denoted as ’cold’ in table  2 , while the models initially trained using the teacher-masking are subscripted with ’init’.
+As expected, the pure self-masking training does suffer from the cold start, resulting in the deteriorated performance for the resulting models.
+In contrast, the reference-initialized models improve over the baseline by 4 points and 3 points for the BERTlet and BERT models respectively.
+They improve by 1 point each over the teacher-masked high-entropy models, indicating a positive effect of the self-masking after initialization. 
+
+ 
+ 
+ 
+ 
+ 3.3  Fine-tuning with weight freezing 
+
+ 
+
+ 
+ The language models can learn in both pretraining and fine-tuning phases of the training.
+To ensure the improvement observed in the downstream tasks doesn’t come mainly at the later stage of training, we freeze the BERTlet model pretrained with high entropy masking and only train the classification layer for one epoch.
+The results reveal an improvement of 3% over the baseline proving the effectiveness in the learning process during pretraining. 
+
+ 
+ 
+ 
+ 
+ 3.4  Effect of masking percentage 
+
+ 
+
+ 
+ To explore the effect of a different percentage of masked tokens  Wettig et al. (2023) , we also run high entropy masking experiments with BERT max  and BERT min .
+On one hand we increase the masking percentage to 40% and on the other we reduce it to masking only one token per sequence.
+For the increased masking percentage, we observe no significant improvement over the default 15%.
+For the single token masking, we observe a drop of around 1% in GLUE score.
+Based on these results, we find that a varying masking percentage has no to small negative impact. 
+
+ 
+ 
+ 
+ 
+ 3.5  Effect of a larger training corpus 
+
+ 
+
+ 
+ To assess the impact of a larger pretraining dataset on performance, we perform experiments with the bookcorpus dataset  ( Zhu et al., 2015 ) , which contains around 4.9B samples.
+We train a BERTlet max,init  model on this dataset and observe an average GLUE score of 77.09, which is 2 points higher than the results from the wikitext-103 dataset and 5 points higher than the baseline BERTlet trained on bookcorpus (71.66).
+This highlights the influence of a larger dataset in capturing complex linguistic patterns as it improves the performance of the downstream tasks. 
+
+ 
+ 
+ 
+ 
+ 3.6  Effect of knowledge distillation 
+
+ 
+
+ 
+ As we are already working with a reference model to achieve the best improvements with our approach BERTlet max,init , we explore if we can get further improvement by using the teacher model to guide the student model from both ends of training.
+On one hand, knowledge distillation guides the student’s output distribution by computing an additional loss from the difference between student and teacher prediction.
+On the other hand, the initial input masking guides the student’s focus in training by masking tokens based on the entropy. 
+
+ 
+ 
+ 
+ All our knowledge distillation experiments give equal weights to loss from gold labels and teacher labels.
+We use BERTlet max,init  self-masking models with two approaches to model initialization: i) Complete transfer and ii) Transfer after initialization.
+The complete transfer approach uses knowledge distillation from the start of the training.
+The second approach uses only teacher-masking in the initial epoch and the knowledge distillation sets in only in the following epochs together with the self-masking.
+This provides some additional freedom for the target model in contrast to the complete transfer approach.
+Our experimental results show that the model trained with transfer after initialization (77.19%) outperforms the complete transfer approach (76.04%) by around 1% point GLUE score.
+The slightly worse performance may be due to an overfitting of the model due to the forced alignment by both entropy masking and distillation in the initial phase. But both of these two approaches outperform the model trained only with knowledge distillation. 
+
+ 
+ 
+ 
+ 
+ 3.7  Weight analysis 
+
+ 
+
+ 
+ To identify which architectural components are most impacted during fine-tuning, we analyze how the weights of the fine-tuned models diverge from the pretrained state for BERTlet max,init .
+We extract the weight values for the pretrained model and the fine-tuned models for each of the GLUE tasks and compute the difference for each fine-tuned to the pretrained models.
+The feed-forward network in the final layer consistently exhibits the highest degree of deviation across all tasks.
+Among the fine-tuned models, the one trained on MNLI displays the greatest deviation at 7077.23%, while the model fine-tuned on CoLA shows the smallest variation at 167.33%.
+These results suggest that the size of the fine-tuning dataset significantly influences the degree of model variability. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Conclusion 
+
+ 
+
+ 
+ In this work, we explored several entropy token selection strategies.
+When using an external reference model, high entropy token selection gives the best performance, followed by low entropy selection.
+Self token masking with weight initialization on initial iterations helps to avoid the cold start problem and offers the best results.
+Even on its own, the self-masking approach proves to offer comparative performance to knowledge distillation.
+These results can be further improved upon by combining the approach with knowledge distillation. 
+
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ Due to computational limitations, we could not experiment with models with parameters more than 110 million.
+All our models are pretrained on English datasets.
+We have not experimented with other multilingual datasets, leaving room for future work. We also plan to investigate the effectiveness of our approach on other model architectures as part of future work  Sun et al. (2020) ;  Lan et al. (2020) . 
+
+ 
+ 
+ 
+ 
+ Acknowledgements 
+
+ 
+
+ 
+ We thank the anonymous reviewers for their constructive feedback on our paper. This work has been supported by the Verkehrsverbund Großraum Ingolstadt (VGI) as part of the project newMIND. 
+
+ 
+ 
+ 
+ 
+ 

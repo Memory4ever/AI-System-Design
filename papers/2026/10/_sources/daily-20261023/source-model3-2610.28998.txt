@@ -1,0 +1,1396 @@
+https://arxiv.org/html/2610.28998v1
+FlashNext-RL: A System Optimization Study for Long-Horizon Agentic RL of Qwen3.8-Flash-Next
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Inference Optimization through vLLM Configuration Tuning
+2.1 Topology
+Expert parallelism.
+TP degree.
+2.2 Final Configuration
+Engines.
+One n-gram table per node.
+Router replay.
+2.3 Live Behavior
+3 Training Optimization
+3.1 Setup
+Hardware.
+Data and metric.
+The memory plan.
+3.2 Isolated Optimizations
+3.2.1 Host Offload: Pageable vs. PinnedArena
+3.2.2 Gradients: Blocking Host Copies vs. GPU-Resident Expert Gradients
+Overlapping the remaining host traffic.
+3.2.3 Context Parallelism: Ulysses CP 4 vs. CP 8
+3.2.4 MoE: DeepEP vs. Mixture-of-Kittens
+3.2.5 Static Expert Placement
+3.2.6 QSA Indexer: PyTorch vs. cuDNN Fused Indexer + Top-k
+3.2.7 QSA Attention: Dense vs. cuDNN DSA vs. Triton vs. CuTe
+Sparse attention is required.
+cuDNN DSA.
+GQA-native Triton.
+dK/dV.
+3.2.8 Gated Residual: Eager vs. Compiled vs. Fused
+3.2.9 Other Fused Kernels
+‣ 3.2.9 Other Fused Kernels
+3.2.10 N-gram Lookup: CPU Gather vs. UVA Gather
+3.2.11 Compilation and Stalls
+‣ 3.2.11 Compilation and Stalls
+3.2.12 Freezing the First Two Layers
+3.3 Putting It Together
+8-layer ladder.
+Full model.
+4 End-to-End RL Optimization
+4.1 System Overview
+4.2 Host Memory
+The budget.
+Measure PSS, not RSS.
+Memory optimizations.
+Trainer state.
+Batch path.
+Sandbox setup.
+Batch 1,024: the final placement.
+4.3 Weight Transfer
+4.4 Checkpointing
+Full checkpoint.
+Streamed HF weights.
+HF weights from the broadcast.
+5 A Real SWE RL Run
+Setup.
+Speed.
+Sequence lengths.
+Stability.
+Illustrative capacity estimate.
+6 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.28998v1 [cs.LG] 20 Oct 2026
+FlashNext-RL: A System Optimization Study for Long-Horizon Agentic RL of Qwen3.8-Flash-Next
+Zhewei Yao
+Yuxiong He
+Affiliation: Snowflake AI Research
+Abstract
+Long-horizon agentic reinforcement learning (RL) requires both efficient rollout generation and training on long sequences.
+However, the memory requirements and model-specific operators of Qwen3.8-Flash-Next make this difficult with existing open-source implementations.
+To resolve these limitations, we introduce FlashNext-RL, a model-specific RL training optimization framework based on prime-rl, with vLLM for software engineering (SWE) rollout generation.
+Our main focus is BF16 training of the full 48-layer model on a single 8 × \times B200 node, with the first two layers, the n-gram table, the sparse-attention indexer and the multi-token prediction head frozen.
+We optimize host offload, gradient accumulation and the kernels for mixture-of-experts, sparse attention and the gated residual stream.
+In the full-model development study, non-padding training throughput increases from approximately 395 tokens/s/GPU in the initial 32K-token configuration to 4,438 tokens/s/GPU in the optimized 131K-token configuration, with hardware matmul throughput (aka without considering the cost of attention components) increasing from approximately 20 to 213 TFLOPs/GPU.
+A controlled cumulative study on an 8-layer model further quantifies the contributions of individual optimizations.
+Together with three inference nodes, the system supports a live SWE RL run with a target batch of 1,024 trainable rollouts and a 131,072-token context limit.
+Over steps 5–15, an iteration takes 22.4 minutes on average, with bounded entropy and trainer–sampler mismatch KL.
+These results highlight the importance of tailoring RL training to the model’s architecture, memory layout and kernel requirements, rather than relying only on general-purpose RL infrastructure.
+1 Introduction
+Reinforcement learning (RL) is widely used in large language model (LLM) post-training to improve reasoning capabilities [ 35 , 9 , 47 ] .
+More recently, it has been applied to agentic tasks that require interaction with an environment over multiple turns [ 19 , 28 ] .
+Software engineering (SWE) is a representative example: an agent reads a repository, executes commands and tests, and edits code to resolve an issue [ 17 ] .
+SWE-Gym, R2E-Gym and SWE-smith provide environments or training data for developing such agents [ 27 , 16 , 43 ] , while SWE-rebench addresses task collection and decontaminated evaluation [ 2 ] .
+In our setting, a rollout may contain many interaction turns, but its total context is capped at 131,072 tokens; a training batch contains approximately one thousand trainable rollouts.
+Open-source RL systems, including DeepSpeed-Chat, OpenRLHF, HybridFlow and AReaL, address different aspects of training and generation [ 46 , 14 , 37 , 12 ] .
+In this work, we build on prime-rl for training and orchestration [ 29 ] , and verifiers for environments [ 3 ] .
+Qwen3.8-Flash-Next introduces architectural changes within the Qwen model family [ 42 , 31 ] .
+The model configuration used in this study has the following components, consistent with the released configuration [ 32 ] :
+•
+Hybrid attention. 36 of the 48 layers use Gated DeltaNet (GDN) linear attention [ 44 ] . The other 12 use Qwen Sparse Attention (QSA), where a lightweight indexer selects up to 512 blocks of 4 keys per query. Related sparse-attention designs include NSA and DeepSeek Sparse Attention [ 48 , 11 ] .
+•
+Gated residual. A 4-branch residual stream ( 4 × 2560 4\times 2560 ) is mixed by learned read and write gates. Related multi-stream residual designs include hyper-connections and mHC [ 52 , 41 ] .
+•
+N-gram embedding. A frozen 51B-parameter n-gram table supplies per-layer embeddings (PLE). Engram provides a related conditional-memory design [ 6 ] .
+•
+Fine-grained MoE. Each layer has 512 routed experts with top-10 routing and an intermediate size of 640, plus a shared expert. This follows the broader use of sparse mixture-of-experts (MoE) layers [ 36 , 10 ] .
+•
+Multi-token prediction (MTP). An additional 4B-parameter head supports multi-token prediction, a technique studied in prior work [ 13 , 10 ] . We use this head for speculative decoding [ 21 , 4 ] , rather than training it during RL.
+In total, the model has 125B parameters (6B activated per token), plus the 51B n-gram table and the 4B MTP head.
+However, the open-source implementations we evaluated did not meet our target of efficient training at a 131K-token context on one B200 node.
+vLLM provides the serving backend [ 20 ] , and training frameworks such as NeMo AutoModel and ms-swift provide useful infrastructure [ 26 , 51 ] .
+Our target additionally requires model-specific backward kernels and memory planning across the RL loop.
+In particular, we encountered three limitations:
+1.
+GPU memory. Without context parallelism, retaining one residual-stream input per layer for activation checkpointing [ 5 ] requires 48 × 131,072 × 10,240 48\times 131{,}072\times 10{,}240 BF16 values, or about 129 GB (120 GiB) per GPU, before accounting for weights, gradients and layer-local intermediates.
+2.
+Host memory. With CPU offload [ 33 , 50 ] , storing an fp32 master parameter, an fp32 gradient and two fp32 AdamW moments requires 16 bytes per parameter. Our planning budget is about 1.9 TiB before the n-gram table and the remaining RL system state, exceeding the node’s host-memory capacity once these are included.
+3.
+Kernels. We found few efficient implementations of the backward pass of QSA’s sparse grouped-query attention, of MoE kernels for an intermediate size of 640 at expert parallelism 8, or of fused kernels for the gated residual and the per-layer embeddings.
+To resolve those limitations, we introduce FlashNext-RL, which focuses on model-specific RL training optimization for Qwen3.8-Flash-Next in prime-rl, with SWE as the example.
+The RL setup uses four 8 × \times B200 nodes: one for training and three for inference.
+We train the full 48-layer model, but freeze the first two layers, the n-gram table, the QSA indexer and the MTP head; this is not an update of every model parameter.
+The contributions of FlashNext-RL are summarized as below.
+1.
+Inference (Section 2 ). A vLLM serving configuration for long agentic rollouts (per node, 2 engines of tensor parallelism 4 with expert parallelism; MTP speculative decoding; BF16 weights and KV cache).
+2.
+Training (Section 3 ). A single-node BF16 trainer with CPU offload, streaming Muon [ 18 , 22 ] , expert and context parallelism, and model-specific kernels. The optimized full-model development configuration reaches 4,438 non-padding tokens/s/GPU and 213 hardware matmul TFLOPs/GPU (Table 12 ). Isolated comparisons and an 8-layer cumulative study quantify the contributions of individual optimizations.
+3.
+End-to-end RL (Section 4 ). The memory, weight-transfer and checkpoint optimizations that let one training node run within a 2 TB host-memory budget along with three inference nodes
+4.
+A real SWE RL run (Section 5 ). An end-to-end demonstration reporting iteration time, throughput, sequence lengths and short-run numerical behavior.
+Note that our goal is not to reach the best model accuracy or the most efficient RL recipe, but to identify the model-specific RL training optimizations that make long-horizon agentic RL of Qwen3.8-Flash-Next practical.
+2 Inference Optimization through vLLM Configuration Tuning
+We use vLLM for rollout generation [ 20 ] ; the version used in our experiments is 0.31 and supports Qwen3.8-Flash-Next.
+This section describes serving configuration and the model-specific changes required by the RL loop, rather than a new inference backend.
+Both the weights and the KV cache are in BF16.
+2.1 Topology
+Expert parallelism.
+On B200, vLLM’s BF16 MoE backend rounds the per-rank expert intermediate size up to a multiple of 128.
+With tensor parallelism (TP) alone, each 640-wide expert is split across ranks: at TP 4, each rank holds 160 columns, padded to 256 (1.6 × \times ), and the routed experts take 90.0 GiB per rank.
+With expert parallelism (EP), each expert stays whole and needs no padding: 56.25 GiB per rank.
+The padding reduces memory available for the KV cache and increases weight traffic for the selected experts during decoding.
+TP degree.
+We replay real SWE rollouts turn by turn against each candidate engine, in a closed loop that reproduces the real prefix-cache behavior and MTP acceptance, and measure output tokens/s per GPU at a fixed number of concurrent sessions per GPU.
+Table 1 shows the result.
+TP 2 is the fastest at light load, but it has too little KV cache for SWE contexts of 64K tokens: beyond 10.5 sessions per GPU, its prefix cache stops hitting and it starts to preempt requests.
+TP 8 has the most KV cache but the lowest throughput at every load.
+We select TP 4 with EP for the target concurrency; it reaches 1,091 output tokens/s/GPU at 26 sessions per GPU in this replay.
+Table 1:
+BF16 engine on B200 GPUs uses replayed SWE rollouts and MTP3.
+Output tokens/s per GPU;
+“KV” is the KV-cache capacity per engine in tokens.
+The best measured configuration per row is in bold.
+Sessions/GPU
+TP2 + EP (KV 1.76M)
+TP4 + EP (KV 5.95M)
+TP8 + EP (KV 8.41M)
+7
+835
+715
+–
+10.5
+985
+814
+–
+17.5
+840 (prefix hit 0.06)
+943
+658
+26
+771 (318 preemptions)
+1,091
+567
+35
+783 (preempting)
+788
+530
+2.2 Final Configuration
+Here is our final configurations used for the real training.
+Engines.
+•
+2 engines of TP 4 + EP per node , i.e., 6 engines on the 3 inference nodes, on vLLM’s V2 model runner. The V2 runner is required, because vLLM 0.31 captures routed experts (for router replay, below) with prefix caching on only in that runner.
+•
+MTP3 speculative decoding , with the model’s own MTP head as the draft model; it accepts 1.82–1.88 draft tokens per round on the replayed rollouts. The trainer does not update the MTP head, so its acceptance may decay over a long run, and we monitor it.
+•
+BF16 weights and KV cache , with prefix caching on.
+•
+gpu_memory_utilization = 0.86 , about 5.6M KV tokens per engine. At 0.92, the KV cache is fully allocated at startup, and all 6 engines ran out of memory at the first weight update, when a 4.83 GiB receive buffer met 3.3 GiB of free memory (Section 4.3 ).
+•
+112 sessions per engine ( max_num_seqs ), 672 rollouts in flight in total. In addition, the orchestrator stops admitting new sessions to an engine whose KV-cache usage passes 65% (and resumes below 55%), because the hybrid prefix cache stops hitting past about 70% usage.
+One n-gram table per node.
+By default, each engine loads its own copy of the approximately 95.4 GiB frozen n-gram table into pinned host memory, i.e., two copies per node.
+We instead map a single copy per node from a node-local tmpfs and share it between both engines; the second engine then adds only 2.2 GB.
+The table must live on a tmpfs: cudaHostRegister refuses a writable shared mapping of a regular file, and the pod’s /dev/shm is a 100 GiB memory-backed volume that evicts the pod when it overflows.
+Router replay.
+In BF16, two implementations of this model often pick different top-10 experts for the same token, and in our offline measurements these routing flips explain about 96% of the trainer–inference mismatch.
+The engines therefore return the routed experts of every token through vLLM’s auxiliary-output connector ( [ T , 48 , 10 ] [T,48,10] uint16, 960 bytes per token), and the trainer replays them [ 23 ] .
+The live-run mismatch KL is reported in Section 5 .
+2.3 Live Behavior
+In steps 5–15 of the live SWE run (Section 5 ), engine telemetry reports 17.1K output tokens/s across the 6 engines: 2.8–2.9K per engine, 5.7K per node, or about 710 per GPU.
+•
+Sessions. Of the 112 sessions per engine, about 77 are generating at any time; the others are between turns, waiting for a command to finish in their sandbox. Hardly any request waits for an engine slot (0.4–0.8 on average).
+•
+KV cache. Usage averages 50% and peaks at 72%, so the admission cap engages only at the peaks; the prefix cache hits 85% of prompt tokens.
+•
+MTP. The mean acceptance length is 2.55, i.e., each forward pass of the target model emits 2.55 tokens on average.
+At 672 rollouts in flight, about two thirds of the session slots are actively generating. Command execution in the sandboxes therefore contributes to unused serving capacity; these measurements do not isolate its contribution from GPU limits.
+3 Training Optimization
+Our main target is BF16 training of the full 48-layer model at a 131K-token bin on a single 8 × \times B200 node.
+We first describe the memory layout, then compare individual optimizations and evaluate their cumulative effect on an 8-layer model.
+The full-model configuration freezes the components listed in Section 1 ; the 8-layer ladder does not freeze its first two layers.
+3.1 Setup
+Hardware.
+One node has 8 B200 GPUs (179 GiB each), 192 CPU cores and about 2.0 TB of host memory.
+The four nodes are connected by 8 × \times 400 Gb/s EFA.
+Data and metric.
+All throughput numbers in this section are measured by replaying recorded RL steps through the trainer, without generation and without the weight broadcast.
+The batches are real SWE rollouts, packed into 131,072-token bins by the trainer’s own packing.
+Throughput measurements in the cumulative ladder disable PSS sampling, since walking process page tables measurably slows this offload-heavy workload. The separate memory ladder samples PSS every 30 s; its step times are therefore indicative rather than directly comparable throughput measurements.
+Generation is capped at the same length: the total context of a rollout (the prompt plus all turns) is at most 131,072 tokens, so a whole trajectory always fits in one training bin.
+REAL tokens/s/GPU is the number of non-padding tokens in a step divided by the step time and by the 8 GPUs, averaged over the steady steps (step 1 includes compilation).
+For model TFLOPs/GPU, we count forward and backward matmuls on each non-padding token’s active path ( 6 ​ P 6P for a trainable matrix with P P weights), sparse-attention products, indexer scores and an estimate of the GDN recurrence, without activation-checkpoint recompute. On the replay batches, this is 40.3 GFLOP per token for the unfrozen 48-layer model, 39.1 with the first two layers frozen, and 8.2 for the 8-layer model. Frozen matrices incur no weight-gradient cost, and output-head FLOPs are counted only at positions evaluated by the fused head. Hardware FLOPs additionally count checkpoint recompute, attention-backward score recompute and output-head logit recompute. Excluding attention, indexer scores and the GDN recurrence, the full model’s hardware matmul cost is 48.4 GFLOP per token with two layers frozen and 50.1 without. 1 1
+1
+The 8-layer model keeps the full 248K-vocabulary output head, which is 19% of its FLOPs (4% at 48 layers), so 8-layer and 48-layer TFLOPs/GPU are not comparable.
+The supplied FLOP accounting treats router weights and the QSA indexer as frozen. The output head uses fp32/TF32, and GDN retains an fp32 state; BF16 describes the main model compute rather than every operation. TFLOP rates are accounting estimates, not hardware-counter measurements.
+The memory plan.
+Table 2 shows why a single node is hard.
+Under CPU offload, the host holds fp32 master parameters, fp32 gradients and optimizer state. For a conservative planning budget, we use approximately 129B parameters before accounting for frozen components; Table 13 gives the measured final state.
+With AdamW (two moments), this does not fit alongside the approximately 95.4 GiB n-gram table and the remaining system state. Muon [ 18 , 22 ] keeps one moment for its matrices and reduces the optimizer footprint.
+The official model repository describes pretraining with Muon and AdamW [ 31 ] , and we retain this division between parameter groups.
+The checkpointed residual stream also leaves insufficient GPU memory for the remaining tensors under our unsharded 131K configuration (Section 1 ).
+Our layout is:
+•
+FSDP2 with CPU offload [ 30 ] : parameters and optimizer state are offloaded to host memory, and FSDP units are gathered on the GPU as needed. Expert gradients accumulate on the GPU during a step before being offloaded (Section 3.2.2 ). Prior work describes fully sharded training and CPU offload more broadly [ 50 , 33 ] .
+•
+StreamingMuon : Muon’s Newton–Schulz orthogonalization runs on the GPU, one parameter at a time, with each parameter streamed from host memory. Updates of an A × B A\times B matrix are scaled by 0.2 ​ max ⁡ ( A , B ) 0.2\sqrt{\max(A,B)} so that their RMS matches AdamW’s [ 22 ] .
+•
+Expert parallelism 8 : each GPU owns 64 of each layer’s 512 experts.
+•
+Ulysses context parallelism 4 [ 15 ] : a 131K sequence is split over 4 GPUs (Section 3.2.3 ).
+•
+Full activation checkpointing , with the forward pass’s routing decisions reused in the recompute.
+•
+The first 2 layers frozen (Section 3.2.12 ).
+Table 2: Approximate host-memory budget for 129B parameters before layer freezing, on a node with about 1,937 GiB available. The Muon row assumes one fp32 moment per parameter for budgeting; the implementation uses AdamW for the remaining parameter groups. Final measured state sizes are in Table 13 .
+Optimizer
+Bytes/param
+Host for parameters
++ n-gram table ( ∼ \sim 95.4 GiB)
+AdamW
+16
+1,922 GiB
+2,018 GiB (does not fit)
+Muon budget
+12
+1,442 GiB
+1,537 GiB (fits)
+3.2 Isolated Optimizations
+Each subsection below compares one technique with its alternative, with everything else fixed.
+These comparisons were measured during development, on the code and data of that time; Section 3.3 measures all optimizations again in a single cumulative ladder on the same data.
+3.2.1 Host Offload: Pageable vs. PinnedArena
+FSDP2’s pinned offload allocates from PyTorch’s caching host allocator, which rounds every block up to a power of two (+28% here) and never returns freed blocks; on the full model, the process was killed at 1,887 GiB of host memory.
+Pageable offload fits (1,555 GiB peak) but copies at pageable speed: one StreamingMuon step takes about 75 s.
+Pinning the existing buffers in place with cudaHostRegister does not work either: once a registered region is freed and its address reused, the next registration fails and the rank dies.
+PinnedArena maps one exact-size region per rank and registers it once; FSDP’s flat parameter shards and StreamingMuon’s moments are carved out of it, so no registered memory is ever freed.
+A second exact-size gradient arena receives FSDP’s gradient copies to the host (Section 4.2 ).
+As Table 3 shows, the Muon step drops from 66–75 s to 12.4 s.
+Table 3: Host offload path, full model on one node. Left: CP 1 with 32K bins (about 0.64M tokens per step). Right: CP 4 with a 131K bin.
+CP 1, 32K
+CP 4, 131K
+Offload
+Muon step
+Step
+Muon step
+Step
+REAL tok/s/GPU
+Pageable
+∼ \sim 75 s
+–
+66 s
+349 s
+∼ \sim 426
+PinnedArena
+20–28 s
+161–179 s
+28 s
+288 s
+∼ \sim 516
++ pinned gradients
+12.4 s
+121–131 s
+12.5 s
+242 s
+571–638
+3.2.2 Gradients: Blocking Host Copies vs. GPU-Resident Expert Gradients
+With PinnedArena, a micro step of about 32K local tokens still took about 51 s, against about 8 s of compute.
+A profile put 89.3% of the autograd thread’s samples inside FSDP2’s new_sharded_grad.to("cpu") , with the GPUs at 7–8% utilization.
+From the second micro step on, whenever a gradient already exists on the host, FSDP2 copies the new one with non_blocking=False and adds it on the host.
+As a result, about 63 GB of fp32 gradients per rank, mostly those of the EP-local experts, moved at 1.8 GB/s in every micro step.
+The EP-local experts are FSDP units of world size 1, so their sharded and unsharded gradients are the same tensor.
+For these units, we skip the gradient sync on every micro step but the last: their gradients accumulate on the GPU and go to the host once per step, through the pinned non-blocking path.
+The dense units (about 4 GB per rank) keep an offloaded accumulator, whose copies we also make pinned and non-blocking, with the addition moved off the critical path.
+Table 4 shows a 2.4–2.7 × \times throughput improvement. The expert accumulator requires about 60 GB per rank, although the measured peak increase is smaller because tensor lifetimes overlap differently.
+On the final configuration, the dense accumulator gives another 4% (3,233/3,277 → \rightarrow 3,383/3,372 REAL tokens/s/GPU).
+Table 4: GPU-resident expert gradients, full model, CP 4, 131K bin, 16-sample batches (about 1.1M tokens per step), steps 2 and 3.
+Gradient path
+Micro step
+Step
+GPU peak (alloc.)
+REAL tok/s/GPU
+FSDP2 host accumulation
+∼ \sim 51 s
+242 / 243 s
+118.5 GiB
+571 / 589
+GPU-resident expert gradients
+13–16 s
+101 / 91 s
+149.3 GiB
+1,368 / 1,571
+Overlapping the remaining host traffic.
+The offloaded expert parameters still travel from host to device at every layer.
+Expert-weight prefetch copies these size-one shards on a separate stream, so that the copy overlaps the previous layer, and casts them to BF16 on a host thread first, which halves the bytes.
+On the full model, this gives +3.0% (4,067 → \rightarrow 4,190 REAL tokens/s/GPU), for 19 GiB more host memory and a few GiB of GPU memory outside PyTorch’s pool; on 8 layers, where the offload traffic is small, it is neutral ( − - 0.6%).
+3.2.3 Context Parallelism: Ulysses CP 4 vs. CP 8
+A 131K micro batch requires context parallelism (CP) in our memory layout. A ring-attention implementation for softmax attention does not directly implement the GDN recurrence, so we use a Ulysses-style layout [ 15 ] : in each layer, an all-to-all switches from a sequence shard to a head shard and back (with the Q, K and V all-to-alls packed into one). The headwise GDN and PLE adaptations below are specific to our implementation.
+•
+GDN splits its 16 key and 48 value heads over the CP ranks; the short convolution and the per-head decay parameters are sliced per local head.
+•
+QSA attention splits its 24 query heads; its 2 KV heads are replicated, since there are fewer of them than CP ranks.
+•
+The QSA indexer has only 4 heads and sums its scores over them, so it is not split: each rank all-gathers the small indexer projections, computes the selection redundantly (22 ms at 131K, Section 3.2.6 ) and caches it for the recompute.
+•
+The PLE convolution uses a sequence-to-channel all-to-all over its 10,240 channels, which avoids a halo exchange and the edge cases at packed-sequence boundaries.
+•
+MoE, shared expert, gated residual and norms are token-local and run on the local shard.
+CP 4 is faster than CP 8 (1,368/1,571 vs. 1,132/1,182 REAL tokens/s/GPU in the setting of Table 4 ): every micro step has fixed costs, and CP 8 halves the number of tokens they are amortized over.
+CP 8 peaks lower (124.9 vs. 149.3 GiB allocated), but CP 4 fits.
+Checkpointing several layers as one segment would also save memory, but it costs 11–22% more backward time, so we do not use it.
+3.2.4 MoE: DeepEP vs. Mixture-of-Kittens
+The baseline MoE layer dispatches tokens with DeepEP [ 49 ] at EP 8 and runs the experts with grouped GEMMs.
+Mixture-of-Kittens (MoK) [ 39 ] , built on ThunderKittens [ 38 ] , fuses dispatch, the expert GEMMs and combine into one persistent kernel, for both the forward and the backward pass, and overlaps communication with compute inside it.
+As Table 5 shows, it is 1.56–2.24 × \times faster per layer.
+It also peaks much lower (15.9 vs. 71.1 GiB at 131K tokens per rank), although part of its symmetric-memory workspace may be allocated outside PyTorch’s allocator and not counted.
+Two further changes take another 22.7% off the MoK layer:
+•
+Native intermediate size 640. Upstream MoK requires a multiple of 256 and therefore pads 640 to 768, i.e., 20% more expert FLOPs. Our fork computes the tile counts over the intermediate dimension by ceiling division and lets TMA zero-fill the tail tile, so any multiple of 128 works.
+•
+More communication SMs. At 32K tokens per rank, the layer is bound by dispatch and combine more than by the GEMMs (about 10 of 45 ms), so giving the in-kernel all-to-all 52/52 SMs (forward/backward) instead of 24/28 matters more than the padding.
+Relative to the padded baseline, the native size reduces layer time by 4.8%; the subsequent SM change reduces the remaining time by 18.7%, for a combined reduction of 22.7%.
+On the full model, the two together raise throughput by 5.3% (3,405 → \rightarrow 3,586 REAL tokens/s/GPU).
+Table 5: MoE layer at EP 8. Left: forward + backward, DeepEP with grouped GEMMs vs. MoK (upstream build: intermediate size padded to 768, 24/28 communication SMs). Right: MoK at 32K tokens per rank, forward + recompute + backward.
+Tokens/rank
+DeepEP
+MoK
+Speedup
+16K
+32.2 ms
+20.7 ms
+1.56 × \times
+64K
+130.1 ms
+67.6 ms
+1.92 × \times
+131K
+294.0 ms
+131.5 ms
+2.24 × \times
+MoK variant
+Comm SMs
+Time
+I padded to 768
+24/28
+47.7 ms
+I native 640
+24/28
+45.4 ms
+I native 640
+52/52
+36.9 ms ( − - 22.7%)
+3.2.5 Static Expert Placement
+Expert load is skewed, and at EP 8 the busiest rank sets the pace of every MoE layer.
+We record the expert loads of a few real steps and fit a static permutation that assigns experts to GPUs with the longest-processing-time-first heuristic.
+Routes stay in logical expert ids; the MoE layer maps them to physical slots, and the weight broadcast and the HF export map the weights back to the logical order.
+On held-out micro steps, the max/mean rank load drops from 1.233 (contiguous placement) to 1.059 on the full model, and from 1.131 to 1.030 on 8 layers.
+The hottest expert carries at most 0.2 of a rank’s mean load, so no expert needs replicas.
+During development, placement gave +3.4% on 8 layers (17,860 → \rightarrow 18,475 REAL tokens/s/GPU); on the final stack its effect is within 1% (Table 10 ).
+3.2.6 QSA Indexer: PyTorch vs. cuDNN Fused Indexer + Top-k
+QSA’s frozen indexer scores every 4-key block for each query and keeps the top 512.
+cuDNN’s DSA indexer kernels [ 24 ] need 32 or 64 query heads per KV head, while QSA’s indexer has 4, so we zero-pad the 4 heads to 32.
+The fused cuDNN indexer + top-k is then 5.5 × \times faster than the PyTorch implementation at 131K (Table 6 ).
+Because the indexer is frozen, the selection is computed once in the forward pass and reused in the recompute.
+The cuDNN kernels compile one specialization per sequence length, which costs about 1 s of host JIT time per new length while the other ranks wait; at 48 layers, this would have been about 24 s per micro step.
+We therefore pad each sequence to a power-of-two bucket (at least 4,096) by wrapping its own rows.
+The padded blocks lie outside the causal window of every real query, so the selections are unchanged, and only about 6 buckets are ever compiled.
+On 8 layers, this raised throughput from 8,243 to 13,571 REAL tokens/s/GPU during development.
+Table 6: QSA indexer + top-k, one B200, real layer inputs.
+Sequence length
+PyTorch
+cuDNN fused
+8K
+1.7 ms
+0.2 ms
+64K
+35.3 ms
+6.1 ms
+131K
+123.8 ms
+22.5 ms
+3.2.7 QSA Attention: Dense vs. cuDNN DSA vs. Triton vs. CuTe
+Sparse attention is required.
+The original model code ran QSA as dense attention with FlashAttention [ 7 , 8 , 34 ] , which computes a different function once a sequence is longer than 2,048 tokens, where the block selection starts.
+Block-sparse masks do not help: on real data, a tile of 128 consecutive queries touches 90–94% of the causal key tiles.
+The trainer must therefore run token-level sparse attention, as inference does.
+cuDNN DSA.
+The cuDNN sparse-attention kernels we evaluated [ 24 ] target the MLA layout used in DeepSeek models [ 10 , 11 ] . Packing [ K | V ] [K|V] and [ Q | 0 ] [Q|0] and zero-padding the 12 query heads of each KV group lets them compute our grouped-query attention, but the forward pass then leaves 52 of 64 head slots unused and the backward pass runs at only about 95 TFLOP/s in our benchmark.
+GQA-native Triton.
+Our Triton [ 40 ] kernel processes queries in windows: the 64 MMA rows hold the 12 heads of 5 consecutive queries, over the union of their selected blocks, with a per-query membership mask.
+Neighboring queries select mostly the same blocks (the union for 5 queries is about 2 × \times the blocks of one query, not 5 × \times ), so gather traffic drops to about 0.41 × \times .
+The dK/dV backward iterates over keys, using a key-tile CSR and a fixed-order reduction.
+The kernel is 1.58 × \times faster than DSA at 16K and 1.34 × \times at 64K (Table 7 ).
+dK/dV.
+dK/dV then took 97 of about 130 ms of the backward pass at 64K, bound by bandwidth from re-reading q q and d ​ O dO for every key tile.
+We first moved the Triton gathers to TMA in a 3-stage pipeline (97 → \rightarrow 76.5 ms) and then wrote a new CuTe-DSL [ 25 ] kernel for sm100:
+•
+64-key CSR tiles; each step processes 5 queries × \times 12 heads, i.e., 60 of the 64 MMA rows, gathered with cp.async directly into swizzled MMA tiles through a 2-stage ring;
+•
+warp specialization: 4 gather warps (which also stage the per-row metadata), 4 compute warps for P P and d ​ S dS , and 1 MMA warp;
+•
+all accumulators in tensor memory: double-buffered S S / d ​ P dP plus the d ​ V T dV^{T} / d ​ K T dK^{T} halves, 512 columns in total;
+•
+the MN-major operands are views of the gathered K-major tiles, so each row is gathered only once;
+•
+the MMA warp issues the dV/dK update of step i − 1 i-1 before S S / d ​ P dP of step i i , which frees a gather stage one phase earlier.
+The kernel takes 46.7 ms at 64K (1.63 × \times faster than the Triton TMA version), close to both its gather floor and its MMA floor (about 41 and 40 ms when each phase runs alone).
+On the full model, the TMA gathers give +2.4% and the CuTe kernel another +4.4% (3,412 → \rightarrow 3,490 → \rightarrow 3,642 REAL tokens/s/GPU).
+Table 7: QSA attention, forward + backward per layer, real layer-7 selections, one sequence (one B200).
+Implementation
+16K
+64K
+dK/dV kernel at 64K
+cuDNN DSA (MLA kernels, padded heads)
+53.7 ms
+219.8 ms
+–
+GQA-native Triton
+33.9 ms
+164.5 ms
+97 ms
++ TMA gathers in dK/dV
+29.0 ms
+138.5 ms
+76.2 ms
++ CuTe-DSL dK/dV (final)
+20.7 ms
+106.4 ms
+46.7 ms
+3.2.8 Gated Residual: Eager vs. Compiled vs. Fused
+Each layer reads the input of each of its two branches (attention and MLP) from the 10,240-wide residual stream, with a group norm, a down projection to 320 and a sigmoid-gated mix, and injects the branch output back: 96 read/inject pairs per forward pass.
+Even compiled, these operations are memory-bound and keep large intermediates for the backward pass.
+Our fused read and inject kernels (Triton plus cuBLAS) instead recompute the cheap intermediates in the backward pass.
+Table 8 shows a 1.95 × \times speedup over torch.compile at 131K and 8 × \times less memory kept per read/inject pair, which lowers the transient memory of each layer by about 10 GiB.
+In a real GDN decoder layer, forward + backward time drops by 31%.
+Table 8: One gated-residual read + inject, forward + backward, one B200. “Kept” is the memory saved for the backward at 131K.
+Eager
+torch.compile
+Fused
+16K
+9.55 ms
+4.40 ms
+3.42 ms
+131K
+75.17 ms
+34.74 ms
+17.84 ms
+Kept at 131K
+15.79 GiB
+5.79 GiB
+0.71 GiB
+3.2.9 Other Fused Kernels
+•
+PLE gate, norm and convolution. A single packing-aware kernel, which restarts the convolution history at every packed-sequence boundary. It is 5.1 × \times faster than the original eager path at 131K (70.71 → \rightarrow 13.92 ms) and, unlike that path, does not convolve across sequence boundaries.
+•
+Attention q/k norm and partial RoPE. A single Triton operator for the forward and backward pass: 2.28 ms, against 13.5 ms eager and 5.2 ms compiled (32K tokens, 24 heads). It gives +6.4% on 8 layers and +2.7% on the full model.
+•
+Fused decoder glue. Triton kernels for every RMSNorm, the QSA norm, RoPE and output gate, the PLE gate chain, and the decoder’s shared-expert, routed and residual additions. On top of the q/k norm operator above, it gives +3.4% on 8 layers (18,026 → \rightarrow 18,643) but only +0.7% on the full model (4,406 → \rightarrow 4,438), whose step time is dominated by MoE, attention, GDN and offload.
+3.2.10 N-gram Lookup: CPU Gather vs. UVA Gather
+The 51B-parameter n-gram table (about 95.4 GiB, or 102 GB, in BF16) is frozen and lives in host memory.
+The original code gathered its rows on the CPU and copied them to the GPU.
+Under CP, the lookup runs on all 131K ids of the sequence, and the CPU index_select left the GPU idle for about 540 ms of every micro step (6.3%).
+Our UVA kernel lets the GPU read the rows directly from a host mapping of the table, on a side stream (Table 9 ).
+The mapping is a tmpfs file shared by all 8 ranks, since cudaHostRegister refuses a writable shared mapping of a regular file.
+On the full model, this change alone gives +8.1% (3,402 → \rightarrow 3,688 REAL tokens/s/GPU).
+Table 9: N-gram row gather for T T tokens ( [ T , 16 × 160 ] [T,16\times 160] BF16 rows from the frozen table), one B200.
+T T
+CPU, 1 thread
+CPU, 16 threads
+UVA on GPU
+16K
+40–42 ms
+14 ms
+5.2 ms
+131K
+395–464 ms
+117–131 ms
+42 ms (no host cores)
+3.2.11 Compilation and Stalls
+With the 8 ranks synchronized by every MoE and FSDP collective, a stall on one rank stalls all of them.
+•
+Compilation under CP. When CP is on, we compile [ 1 ] only the token-local blocks (the gated residual, the shared expert and the final mixer); compiling whole layers split them into resume frames around the eager all-to-alls and broke the activation-checkpoint recompute.
+•
+Recompilation. A torch.compiler.disable on the n-gram lookup caused a graph break whose resume frame recompiled for every new token count, so forward + backward time swung between 75 and 214 s per step on 8 layers. Moving the lookup out of the compiled layer removed it.
+•
+Autotuning stragglers. FLA’s [ 45 ] Triton kernels use the token count, rounded to 1,024, as an autotuning key. A rank whose micro batch fell into a new bucket re-tuned for seconds while the others waited; one rank was idle 45.5% of the time. We remove the token count from those keys; together with other fixes made at the same time, 8-layer throughput went from 5,059 to 8,243 REAL tokens/s/GPU.
+•
+Pre-warming. Compiling the dynamic-shape specializations and the indexer buckets at startup cuts step 1 from 171.9 to 23.8 s; it does not change the steady state (Table 10 ).
+•
+Copies and bookkeeping. Removing a materialized transpose pair in GDN gives +6.8% on 8 layers. Deferring the per-micro-step logging until after the last micro step raises the fraction of time the GPU is busy from 90% to 96% on the full model.
+3.2.12 Freezing the First Two Layers
+Freezing the 2 layers closest to the embedding removes their gradients, their optimizer state and their backward pass, including the largest single transient of the model: the backward pass of layer 1, the PLE layer, over the 10,240-wide stream.
+On 8 layers with 64K tokens on one GPU, the activation peak drops from 107.6 to 78.6 GiB.
+On the full model, freezing is worth about 10% (2,878/3,090 → \rightarrow 3,233/3,277 REAL tokens/s/GPU) and 37 GiB of host memory (Section 4.2 ).
+3.3 Putting It Together
+8-layer ladder.
+Figure 1 and Table 10 add the optimizations one at a time to the first 8 layers of the model (6 GDN + 2 QSA layers, the same 3:1 mix as the full model, including the PLE layer and the n-gram table), on Qwen3.8-Flash-Next’s own rollouts.
+The baseline (L0) is the simplest configuration that runs at this shape: no compilation, DeepEP, QSA on cuDNN DSA, the eager gated residual, the CPU n-gram gather, pageable offload, and FSDP’s default resharding after every forward pass. 2 2
+2
+A few fixes cannot be turned off and are in every rung: the indexer’s power-of-two buckets, the packing-aware PLE convolution, the reuse of the forward routes in the recompute, the FLA autotuning fix, the removed GDN transpose, the packed Q/K/V all-to-all and the deferred logging.
+Throughput goes from 2,391 to 17,678 REAL tokens/s/GPU (7.4 × \times ), and model TFLOPs/GPU from 20 to 146 (195 including the recompute); run-to-run noise is ± \pm 0.3%.
+•
+The offload path comes first. Keeping the parameters resident across micro steps (+64%) and the expert gradients on the GPU (2.54 × \times ) make up most of the gain: before these changes, the GPUs mostly wait for host copies.
+•
+Then come the kernels : MoK (+24.6%), the fused gated residual (+14%), GQA-native QSA (+13.6%), the UVA n-gram gather (+5.6%), CuTe dK/dV (+3.4%) and the fused glue (+3.2%).
+•
+Order matters. torch.compile costs 20% on L0, where the step is bound by the eager gated residual and pageable copies, but gains 2% on the final stack. Expert placement (+1%), pre-warming (0%, it only shortens step 1) and expert prefetch ( − - 0.6%) have small or negligible effects at 8 layers.
+Table 11 gives the complementary view, removing one optimization at a time from the final 8-layer stack:
+MoK, the fused gated residual and the sparse attention kernels are each worth 15–22%.
+Figure 1: Cumulative trainer optimizations of FlashNext-RL on the 8-layer model: REAL tokens/s/GPU (top) and TFLOPs/GPU (bottom). Real rollouts, one node, 131K bins.
+Table 10: 8-layer ladder (cumulative), mean of steps 2–7 on the same 8 batches. Model TFLOPs count the forward and backward passes; hardware (HW) TFLOPs add the recompute. Peak is rank 0’s reserved GPU memory.
+Rung
+Change
+REAL tok/s/GPU
+vs. prev.
+Model TFLOPs
+HW TFLOPs
+Peak GPU
+L0
+baseline (see text)
+2,391
+–
+20
+26
+49.1 GiB
+L1
++ torch.compile (token-local blocks)
+1,916
+− - 19.9%
+16
+21
+44.4 GiB
+L2
++ parameters resident across micro steps
+3,142
++64.0%
+26
+35
+52.5 GiB
+L3
++ PinnedArena
+3,225
++2.6%
+27
+36
+52.8 GiB
+L4
++ pinned gradient copies
+3,381
++4.8%
+28
+37
+52.7 GiB
+L5
++ GPU-resident expert gradients
+8,587
++154.0%
+71
+95
+64.9 GiB
+L6
++ dense gradient accumulation
+9,618
++12.0%
+79
+106
+65.0 GiB
+L7
++ fused gated residual
+10,981
++14.2%
+91
+121
+61.4 GiB
+L8
++ UVA n-gram gather
+11,591
++5.6%
+96
+128
+62.1 GiB
+L9
++ MoK (I = 640, 52/52 SMs)
+14,445
++24.6%
+119
+160
+49.1 GiB
+L10
++ static expert placement
+14,586
++1.0%
+120
+161
+49.1 GiB
+L11
++ GQA-native Triton QSA
+16,573
++13.6%
+137
+183
+49.2 GiB
+L12
++ CuTe dK/dV
+17,135
++3.4%
+141
+189
+48.0 GiB
+L13
++ compile pre-warm
+17,138
++0.0%
+141
+189
+48.9 GiB
+L14
++ fused decoder glue
+17,678
++3.2%
+146
+195
+45.4 GiB
+L15
++ expert-weight prefetch
+17,570
+− - 0.6%
+145
+194
+47.3 GiB
+Table 11: Removing one optimization at a time from the final 8-layer stack (L14; 17,651 REAL tokens/s/GPU on the same node).
+Removed
+REAL tok/s/GPU
+Change
+MoK, back to DeepEP
+13,699
+− - 22.4%
+Fused gated residual and glue
+14,191
+− - 19.6%
+GQA-native QSA, back to cuDNN DSA
+15,028
+− - 14.9%
+UVA n-gram gather, back to CPU
+16,058
+− - 9.0%
+MoK communication SMs, back to 24/28
+16,845
+− - 4.6%
+CuTe dK/dV, back to Triton TMA
+16,966
+− - 3.9%
+torch.compile
+17,319 ∗
+− - 2.0%
+Static expert placement
+17,632
+− - 0.1%
+∗ Against L14 on its own node (17,678).
+Full model.
+Table 12 summarizes the full-model development measurements. The optimized 48-layer configuration reaches 4,438 REAL tokens/s/GPU at a 131K-token bin, corresponding to 213 hardware matmul TFLOPs/GPU . The initial configuration records approximately 395 REAL tokens/s/GPU at a 32K-token bin. These measurements document progress during development, rather than a controlled same-configuration speedup: the bin size, batch size and other settings change across rows.
+Table 12: Full 48-layer RL trainer development on one node. The initial row uses CP 1 and 32K bins; subsequent rows use CP 4 and 131K bins. Rows marked † use 16-sample batches (about 1.1M tokens); later rows use the earlier rollout batches of 7.1–7.6M tokens (median sample 66K). HW TFLOPs count matmuls only (49.8 GFLOP per token before freezing, 48.1 after, on these steps). Configurations and batch sizes vary, so the endpoints are not a controlled speedup comparison.
+Configuration
+REAL tok/s/GPU
+HW TFLOPs/GPU
+First full-model step (CP 1, 32K bins, pageable offload)
+∼ \sim 395
+20
+CP 4, 131K bin, pageable offload †
+∼ \sim 426
+21
++ PinnedArena †
+∼ \sim 516
+26
++ GPU-resident expert gradients †
+1,368–1,571
+68–78
++ GQA-native Triton QSA (real steps from here on)
+2,297–2,333
+114–116
++ MoK, static placement, pre-warm, GDN transpose drop
+2,878–3,090
+143–154
++ freeze the first 2 layers
+3,233–3,277
+156–158
++ dense gradient accumulation
+3,412
+164
++ CuTe dK/dV, native MoK size + 52/52 SMs, UVA n-gram, q/k norm + RoPE, deferred logging
+4,406
+212
++ fused decoder glue
+4,438
+213
+4 End-to-End RL Optimization
+Trainer and inference throughput alone do not determine RL performance.
+The live loop must also buffer trajectories, transfer updated weights and save checkpoints within a limited memory budget.
+This section describes the integration and memory optimizations needed to deploy the model-specific RL trainer.
+4.1 System Overview
+Figure 2 shows the layout of FlashNext-RL.
+The RL setup uses four 8 × \times B200 nodes.
+The training node runs the 8 trainer ranks and the control plane (k3s server) of the sandbox cluster, but no sandboxes.
+Each of the three inference nodes runs 2 vLLM engines (Section 2 ) and its share of the SWE sandboxes, one Kubernetes pod per rollout.
+The first inference node also runs the orchestrator and the environment workers (Section 4.2 ).
+The orchestrator keeps 672 rollouts in flight, and the total context of each rollout is capped at 131,072 tokens, the trainer’s bin size (Section 3.1 ).
+A finished rollout returns its tokens and the routed experts of every token; the orchestrator assembles a batch and sends it over ZMQ to the training node, where rank 0 packs it into micro batches for all ranks.
+After each step, trainer rank 0 broadcasts the new weights to all 24 inference GPUs with NCCL over EFA.
+Generation and training overlap: the engines keep generating while the trainer works on the previous batch.
+Trainer: 8 × \times B200 FSDP2 + CPU offload, EP 8, CP 4 Host RAM (2 TB): fp32 shards, Muon state, grads, n-gram table k3s server (no sandboxes) Node-local NVMe: DCP checkpoints
+Training node vLLM engine tp4 + EP, MTP3 vLLM engine tp4 + EP, MTP3 SWE sandboxes (k3s pods), shared n-gram tmpfs vLLM engine tp4 + EP, MTP3 vLLM engine tp4 + EP, MTP3 SWE sandboxes (k3s pods), shared n-gram tmpfs vLLM engine tp4 + EP, MTP3 vLLM engine tp4 + EP, MTP3 SWE sandboxes (k3s pods), shared n-gram tmpfs Orchestrator, env workers, kubectl exec s
+Inference node 1
+Inference node 2
+Inference node 3 Shared Lustre: HF weight checkpoints NCCL weight broadcast ZMQ training batches rollouts DCP HF export
+Figure 2: The RL setup of FlashNext-RL: one training node and three inference nodes, with the orchestrator on the first inference node. Blue: NCCL weight broadcast; orange: rollouts and training batches (with routed experts); gray: checkpoints.
+4.2 Host Memory
+The budget.
+The training node has about 2.0 TB of host memory, and the trainer alone needs most of it.
+Table 13 gives the per-rank accounting of the final configuration: the 8 ranks hold about 1.4 TiB of offloaded state, plus the 95 GiB n-gram table that they share.
+In our first configuration, the same node also ran the orchestrator, which buffers the rollouts with their routed experts (960 bytes per token, about 1 GB per 32 rollouts), the environment workers, one kubectl exec process per running sandbox command (about 135 MB each, up to about 90 GB in total), and the k3s server.
+We keep a host-memory safety margin on this node and stop the trainer when available memory falls below it, rather than let the kernel’s OOM killer pick a victim.
+Most of the fixes below started with a run or a replay crossing that margin.
+Table 13: Host memory per trainer rank (8 ranks on the training node), final configuration.
+Structure
+Size per rank
+Where
+fp32 parameter shards (incl. the 2 frozen layers)
+58.9 GiB
+PinnedArena
+StreamingMuon moments
+56.8 GiB
+PinnedArena
+fp32 gradients
+56.1 GiB
+gradient arena
+n-gram table (BF16)
+95.4 GiB per node
+shared tmpfs mapping
+Measure PSS, not RSS.
+Summing the per-process resident set size (RSS) overstates the trainer’s memory by 43%: 2,251 GiB of RSS against 1,578 GiB of proportional set size (PSS), because all 8 ranks map the shared n-gram tmpfs and each counts it in full.
+Likewise, the pool of forked torch.compile workers shows 152 GiB of RSS but only 5–8 GiB of PSS (copy-on-write pages).
+We therefore log PSS per process group every 10 s and use it to attribute every drop in available memory.
+Memory optimizations.
+Table 14 lists the changes and what each one saved; Figure 3 shows the host and GPU memory of the full model as the trainer-side optimizations are added.
+Trainer state.
+•
+Gradient arena. FSDP2’s pinned gradient copies came from the caching host allocator, rounded up to powers of two and never freed: 73.8 GiB reserved per rank for 58.4 GiB of gradients. The first gradient of each parameter in a step now lands in an exact-size buffer of a pinned arena, and later micro steps accumulate into it as before. Available memory rises by about 105 GiB per node, with forward/backward and Muon times unchanged.
+•
+Re-freezing after EP. Applying EP replaces the expert weights with new parameters, which default to requires_grad=True , so the experts of the 2 frozen layers became trainable again. They never received a gradient, but they were given gradient buffers and optimizer moments. Re-freezing them after EP saves 37 GiB per node.
+•
+Lazy optimizer state. Allocating the Muon moments at construction put 450 GiB of new pinned memory at trainer startup, exactly when the orchestrator starts its first 630 sandboxes (the environment workers grew from 2 to 236 GB and kubectl from 0 to 80 GB within 60 s). The moments are now created at the first optimizer step.
+Batch path.
+•
+Copies of the training batch. A batch of 1,024 rollouts has about 39M tokens, and its routed experts alone take 960 bytes per token, about 37 GB. The step boundary held two full batches: the previous step’s micro batches stayed alive while the next batch was received and decoded. In addition, each rank widened the routed experts of its data-parallel group (about 19.5M tokens) to int32 on the host, about 37 GB per rank or 300 GB per node held for the whole step; each ZMQ frame was copied to bytes before decoding; and the orchestrator kept the routed experts of every buffered rollout twice, about 37 GB more per batch of buffered rollouts. We now drop the previous batch first, keep the wire dtype on the host and widen on the GPU, decode in place, convert one micro batch at a time, and drop the per-turn copies of the routed experts once the training samples are built.
+•
+One CP shard per rank. Every CP rank received the whole micro batch and kept the full routed-experts tensor on the host. Each rank now keeps only its own quarter of the rows: 720 bytes per token less, or about 14 GB per rank and 110 GB per node for a 39M-token batch.
+•
+Per-CP payloads. Each rank still decoded the full payload of its data-parallel group. The packer now publishes one payload per (data-parallel rank, CP rank) pair. On a 16M-token test batch, the dip in available memory while the batch is received shrinks from 104–108 GiB to 31–33 GiB, and receiving and converting it takes 4.3–5.7 s per rank instead of 9.3–9.8 s; scaled linearly to a 39M-token batch, the dip shrinks from about 260 GiB to about 80 GiB.
+Sandbox setup.
+•
+Node-local harness tarball. Every sandbox setup read the 238 MB agent-harness tarball into the environment worker’s memory and piped it through its own kubectl exec ; with hundreds of sandboxes starting at once, the environment workers reached about 200 GB. The launcher now copies the tarball to the local disk of each node (checked by SHA-256), and each sandbox mounts it read-only through verifiers’ host_files [ 3 ] . Sandbox setup drops from 17.9 to 4.7 s (in a 20-sandbox test), the environment workers from 200 to 17.6 GB, and the minimum available memory during a short test run rises from 82 to 289 GiB.
+Figure 3 measures the trainer-side optimizations on the full model.
+The exact-size arenas use no more host memory than pageable offload (trainer PSS of 1,567, 1,572 and 1,584 GiB with pageable offload, PinnedArena and the gradient arena), whereas FSDP2’s default pinned offload was killed at 1,887 GiB.
+What they buy is speed at the same footprint: the StreamingMuon step goes from 78 to 28 to 12.5 s, and the full step from 415 to 330 to 216 s.
+Freezing the first 2 layers saves another 45 GiB of host memory, and the expert prefetch costs 19 GiB.
+On the GPU, every configuration uses 173–178 GiB of the 179 GiB.
+The checkpoint path had memory problems of its own, which we cover in Section 4.4 .
+With all of the above, the trainer’s host memory stays flat across steps and checkpoints.
+Batch 1,024: the final placement.
+With these fixes, available memory still crossed or approached the safety margin while a 39M-token batch was shipped, received or converted.
+Three more fixes make each stage of the batch path hold the batch only about once:
+•
+Streaming batch encode in the orchestrator. When shipping a batch, the orchestrator held the training samples and a full encoding of the batch at the same time, +36 GB within 15 s. It now encodes the batch sample by sample into one buffer and frees each sample as it goes, with the same bytes on the wire; the peak for a full-size batch drops from 74.8 to 39.1 GiB.
+•
+Rank-0 packer holds the batch once. The packer peaked at about 2.6 × \times the batch size (the received frame, the decoded batch, the micro-batch grid and all queued per-rank payloads), about 57 GiB per receive. It now decodes the routed experts as views into the received frame, keeps them as uncopied chunks while packing, and keeps at most one payload in the send queue.
+•
+Per-micro-batch decode on every rank. Each rank held its whole payload plus all decoded micro batches while converting them to tensors, about 75 GiB across the 8 ranks for 1–2 min per step. Micro batches are now decoded one at a time from zero-copy views and freed once converted, and the per-rank peak drops from 14.7 to 5.3 GiB.
+Finally, we moved the orchestrator, the environment workers, the model-request proxies and the kubectl exec processes to the first inference node, whose host memory is mostly unused.
+In the live run, this stack uses about 190 GB there (orchestrator 73–90 GB, environment workers about 30 GB, kubectl 76–96 GB). Moving it was necessary for the target batch to fit within the training node’s memory budget.
+We also leave the expert prefetch of Section 3.2.2 off, because its 19 GiB of host memory did not fit within the safety margin.
+The live-run memory measurements are summarized in Table 16 ; median available host memory is about 300 GiB.
+Table 14: Memory optimizations on the training node.
+Optimization
+Problem
+Saved
+PinnedArena (Section 3.2.1 )
+Caching host allocator rounds up to 2 k 2^{k} ; in-place registration crashes
+fits (default pinned offload killed at 1,887 GiB)
+Gradient arena
+Pinned gradients rounded to 2 k 2^{k} and never freed
+∼ \sim 105 GiB per node
+Re-freeze after EP
+Frozen layers’ experts got gradients and moments
+37 GiB per node
+Lazy optimizer state
+450 GiB allocated during the sandbox startup burst
+450 GiB off the startup peak
+Batch copies
+Two batches at the step boundary; int32 routes on the host; orchestrator copies
+∼ \sim 300 GB (int32 routes) + one batch + ∼ \sim 37 GB per buffered batch
+CP host shard
+Full routed experts on every CP rank
+∼ \sim 110 GB per node
+Per-CP payloads
+Every rank decodes the full payload
+receive dip ∼ \sim 260 → \rightarrow ∼ \sim 80 GiB
+Node-local harness tarball
+238 MB tarball piped per sandbox
+environment workers 200 → \rightarrow 17.6 GB
+Streaming batch encode
+Orchestrator holds samples + full encoding
+∼ \sim 36 GB at ship time
+Rank-0 packer
+Packer holds ∼ \sim 2.6 × \times the batch
+∼ \sim 57 GiB peak per receive
+Per-micro-batch decode
+Every rank holds payload + decoded batch
+∼ \sim 75 GiB across 8 ranks
+Orchestrator on the first inference node
+Orchestrator stack on the training node
+∼ \sim 150–190 GB
+Per-tensor arena storage (Section 4.4 )
+DCP cloned every arena view on save
+∼ \sim 940 GiB per save
+N-gram table out of DCP
+Every rank loaded the 95 GiB table on resume
+up to 760 GiB on resume
+Streamed HF export
+Whole BF16 model gathered on rank 0
+∼ \sim 225 GiB on rank 0
+Figure 3: The full model on one node as the trainer’s memory optimizations are added: trainer host memory (PSS), GPU memory and StreamingMuon step time. FSDP2’s default pinned offload was killed before finishing a step.
+4.3 Weight Transfer
+After every step, the trainer sends about 260 GB of BF16 weights to the 6 engines.
+The network is not the bottleneck: a node-to-node send over EFA runs at about 390 GB/s, so the bytes alone take about 0.7 s per receiving node.
+The cost lies in gathering, converting and loading the weights, and in the memory each of these stages needs.
+Our path is as follows:
+•
+Sender, one layer at a time. Trainer rank 0 builds an NCCL communicator with the 24 inference GPUs. For each layer, the trainer gathers the FSDP shards on the GPU, converts the parameter names to those of the HF checkpoint, undoes the static expert placement and restacks the 512 experts into the checkpoint’s fused layout ( [ 512 , 1280 , 2560 ] [512,1280,2560] and [ 512 , 2560 , 640 ] [512,2560,640] ), so that each engine loads them with one call per shard.
+•
+No n-gram transfer. The 95 GiB n-gram table is never sent; each engine keeps its own copy, which vLLM’s layerwise reload leaves untouched.
+•
+Bounded messages. A layer is about 4.8 GiB. We send it in buckets of at most 1 GiB instead of as one message, which bounds the receiver’s transient memory.
+•
+Receiver. Each engine reloads layer by layer and yields clones rather than views of the receive buffer, so each buffer is freed as soon as its layer is loaded; with views, two partially loaded modules per layer kept every receive buffer alive until the engine ran out of memory.
+Measured updates took 15–18 s from the trainer’s first send until the engines resumed. The live-run broadcast timings, reported separately in Table 16 , average 18.6 s. Weight updates pause generation; training otherwise overlaps rollout collection.
+4.4 Checkpointing
+We save two kinds of checkpoints: a full DCP (PyTorch Distributed Checkpoint) checkpoint to resume from (fp32 parameters, all optimizer state, scheduler, progress and data loader; 923 GB), and HF-format BF16 weights for serving and evaluation (about 225 GB).
+Full checkpoint.
+The DCP checkpoint goes to the training node’s local NVMe rather than to the shared file system: a save takes about 70 s, at the price of losing the checkpoint if the node is replaced.
+Two fixes made it possible:
+•
+Per-tensor arena storage. DCP’s writer clones any tensor whose storage is larger than the tensor itself and keeps the clones until the rank’s file is written. Every arena tensor was a view into one arena-wide storage, so a save copied all parameter shards and moments, about 940 GiB per node. Each arena tensor now wraps its own slice of the mapping (same address, still registered), and DCP writes directly from the arena.
+•
+The n-gram table out of DCP. DCP saved the frozen table once and, on load, read the whole saved tensor on every rank, 95 GiB per rank. The table never changes and lives in the shared mapping, so we leave it out of both save and load and only check on load that the mapping is populated.
+Resuming from a live checkpoint reproduces the next live step.
+Streamed HF weights.
+The original export gathered the whole BF16 model in rank 0’s host memory before writing it, +225 GiB.
+Our streamed export all-gathers one layer at a time on the GPU, through the same gather-and-convert path as the weight broadcast, and rank 0 writes one file per layer from a writer thread.
+Files that never change (the n-gram shards, the MTP head and the frozen layers) are linked from the base model, or written once per run and hardlinked into every step.
+This keeps host memory flat, but the export still sits on the training path: with it, a checkpoint step cost 307 s (71 s for DCP and 236 s for the streamed weights). Checkpoint cost depends on the model, not on the batch size.
+HF weights from the broadcast.
+We therefore overlap part of the export with the weight broadcast and background disk writes. At a checkpoint step, rank 0 copies the layers that the weight broadcast has already gathered and converted into a small pool of pinned host buffers, and writer threads drain them to disk.
+Only the layers that found no free buffer are gathered again, and the training step waits only while all buffers are busy.
+In a trainer-only replay with 4 buffers, the export’s time on the training path drops from 200–208 s to 45–50 s, with the same output as the streamed export.
+In the real SWE RL run (Section 5 ), the checkpoint at step 15 allocates 4 buffers of 4.89 GiB once (5.1 s); 20 of the 49 layer files come from the broadcast and 29 are gathered again.
+The HF weights take 32.3 s on the training path, the background write finishes 132.5 s after it started, and the whole checkpoint step costs 102 s instead of 307 s (Table 15 ).
+The checkpoint is complete: 1,658 tensors and 360 GB of logical weights.
+Table 15: Checkpoint cost on the training path. ∗ The background write finished 132.5 s after it started.
+Exporter
+DCP
+HF weights (on path)
+Checkpoint-step overhead
+Streamed per layer
+71 s
+236 s
+307 s
+From the broadcast, 4 buffers
+70 s
+32.3 s ∗
+102 s
+5 A Real SWE RL Run
+We evaluate FlashNext-RL in a live SWE RL run, using steps 5–15 as the post-warmup reporting window.
+The initial steps include compilation, optimizer-state allocation and sandbox startup, and are excluded from the performance summary.
+Setup.
+The run uses the layout of Figure 2 : one training node with the trainer configuration of Section 3 , except for the expert prefetch, whose 19 GiB of host memory the node cannot spare (Section 4.2 ), and three inference nodes with the 6 engines of Section 2 and 672 rollouts in flight.
+The orchestrator runs on the first inference node.
+The target batch is 1,024 trainable rollouts; collection can slightly exceed this target.
+Groups of rollouts whose advantages are all zero (every rollout of a prompt gets the same reward) carry no learning signal and are not used for training. The orchestrator therefore keeps collecting until it has 1,024 trainable rollouts, so each step collects more: 1,249–1,584 rollouts in steps 5–15, 1,393 on average, of which 1,024–1,031 are trained (Table 16 ).
+A full checkpoint is written every 15 steps.
+Speed.
+Table 16 gives the per-step breakdown.
+One iteration takes 1,344 s (22.4 min) on average, and 1,137–1,690 s across steps.
+Of that time, the trainer works for 1,013 s: 964 s of forward and backward passes over about 36.5M packed tokens, 10 s of data loading, 12 s of StreamingMuon and 19 s of weight broadcast.
+Over the forward and backward passes, it processes 4,737 tokens/s/GPU (4,494–4,921), counting the packed 131K bins, i.e., about 229 hardware TFLOPs/GPU for the matmuls alone (Section 3.1 ); since this count includes the padding of the bins, it is not directly comparable with the REAL tokens/s/GPU of Section 3.3 .
+For the remaining 331 s (186–702 s), the trainer waits for rollouts, so the loop is bound by generation.
+The iteration-level generation rate averages 17.1K output tokens/s (Table 16 ); engine-level telemetry is reported separately in Section 2.3 . The checkpoint at step 15 adds 102 s to that step.
+Table 16: The real SWE RL run, steps 5–15. “Collected / trained” counts rollouts; “Wait” is the trainer’s wait for the batch; trainer tokens/s/GPU count the packed 131K bins over the forward and backward passes; “Gen.” is the number of output tokens generated per second of the iteration; “Min avail.” is the training node’s minimum available host memory during the step. Step 15 includes a 102 s checkpoint.
+Step
+Collected / trained
+Iteration (s)
+Wait (s)
+Fwd/bwd (s)
+Broadcast (s)
+Trainer tok/s/GPU
+Gen. tok/s
+Min avail. (GiB)
+5
+1,249 / 1,024
+1,174
+186
+948
+17.9
+4,494
+17.7K
+165
+6
+1,356 / 1,028
+1,260
+276
+943
+17.2
+4,700
+17.9K
+161
+7
+1,341 / 1,026
+1,166
+203
+927
+16.5
+4,699
+18.1K
+156
+8
+1,264 / 1,024
+1,137
+196
+904
+16.6
+4,812
+17.7K
+159
+9
+1,298 / 1,026
+1,331
+307
+988
+15.8
+4,708
+16.9K
+158
+10
+1,351 / 1,031
+1,306
+328
+940
+18.0
+4,739
+16.9K
+153
+11
+1,446 / 1,030
+1,501
+404
+1,056
+19.4
+4,628
+16.1K
+147
+12
+1,378 / 1,024
+1,288
+233
+1,014
+20.0
+4,719
+18.1K
+140
+13
+1,504 / 1,024
+1,275
+335
+899
+21.4
+4,921
+17.6K
+143
+14
+1,547 / 1,024
+1,690
+702
+951
+17.2
+4,893
+14.6K
+153
+15
+1,584 / 1,024
+1,652
+470
+1,031
+25.2
+4,797
+16.8K
+137
+Mean
+1,393 / 1,026
+1,344
+331
+964
+18.6
+4,737
+17.1K
+152
+Sequence lengths.
+Figure 4 shows the lengths of the collected rollouts.
+In steps 5–15, the median rollout has 29K tokens, the p90 61K and the p99 108K, and some reach the 131,072-token cap; rollouts longer than 64K are 7.7% of all rollouts but hold 19% of the tokens.
+Lengths grow over the first steps (the median goes from 23K at step 1 to about 29K at step 5) and then stay flat.
+Figure 4: Rollout lengths in the real SWE RL run. Left: distribution over steps 5–15 (15,323 collected rollouts), with its median, p90 and p99. Right: median, mean and p90 per step (step 2’s traces were not saved).
+Stability.
+Figure 5 shows the entropy and the trainer–sampler mismatch KL per step.
+After step 1, entropy remains within 0.66–0.76 nats per token, and mismatch KL with router replay remains within 3.6–4.0 × 10 − 3 \times 10^{-3} . These measurements show no numerical collapse over the observed run, but do not establish long-run convergence or task-quality improvement.
+On the systems side, the minimum available host memory of the training node stays within 137–165 GiB per step.
+Figure 5: Entropy and trainer–sampler mismatch KL per step in the real SWE RL run.
+Illustrative capacity estimate.
+We estimate the additional training capacity needed to match the optimized trainer’s service time, rather than claiming measured multi-node scaling or an exact end-to-end node requirement.
+The estimate uses the following assumptions:
+•
+Slowdown proxy. The 8-layer ladder gives a 7.4 × \times ratio (2,391 vs. 17,678 REAL tokens/s/GPU, Table 10 ). Its baseline already includes mandatory correctness and compilation fixes, so it is not an unmodified stock implementation. The full-model development measurements at a 131K bin give a ratio of about 10.4 × \times (426 vs. 4,438, Table 12 ), but differ in batch size and configuration and are not a controlled speedup comparison.
+•
+Scaling. Trainer throughput scales linearly with the number of training nodes. This is optimistic for the stock trainer, whose step was dominated by host copies.
+•
+Inference unchanged. The generation side stays at three inference nodes.
+Applying these slowdown proxies to all 1,013 s of trainer work gives an illustrative requirement of 8–11 training nodes, or 11–14 nodes including inference, assuming ideal scaling.
+The corresponding single-node service time would be 2.1–2.9 h rather than 17 min. This extrapolation treats fixed overheads as if they scaled with kernel throughput and is not a measured resource requirement; matching the 22.4-minute iteration time could require less training capacity because training overlaps generation.
+Separately, the fp32 parameters, gradients and AdamW moments in the planning budget exceed one node’s host-memory capacity when the n-gram table is included (Table 2 ).
+6 Conclusion
+In this study, we explored model-specific RL training optimization for long-horizon agents using Qwen3.8-Flash-Next.
+To address the model’s memory and kernel requirements, we introduced FlashNext-RL, combining a single-node BF16 trainer with vLLM-based rollout generation.
+Our experiments show that optimizing host transfers and gradient accumulation is necessary before kernel improvements can translate into end-to-end gains.
+The live SWE run further demonstrates the importance of bounded batch buffering, layerwise weight updates and partially overlapped checkpoint export.
+The resulting system supports a target batch of 1,024 trainable rollouts with one training node and three inference nodes.
+The main lesson is that efficient RL training requires adapting the offload path, parallel layout and backward kernels to the model architecture; general-purpose RL infrastructure alone does not resolve these bottlenecks.
+Our evaluation is limited to this hardware configuration and a short training run; it does not establish long-run convergence, final task accuracy or multi-node training scalability.
+These remain important directions for future work.
+References
+[1]
+J. Ansel, E. Yang, H. He, N. Gimelshein, A. Jain, M. Voznesensky, B. Bao, P. Bell, et al. (2024)
+PyTorch 2: faster machine learning through dynamic Python bytecode transformation and graph compilation .
+In Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 ,
+pp. 929–947 .
+External Links: Document ,
+Link
+Cited by: 1st item .
+[2]
+I. Badertdinov, A. Golubev, M. Nekrashevich, A. Shevtsov, S. Karasik, A. Andriushchenko, M. Trofimova, D. Litvintseva, and B. Yangel (2025)
+SWE-rebench: An Automated Pipeline for Task Collection and Decontaminated Evaluation of Software Engineering Agents .
+arXiv preprint arXiv:2505.20411 .
+Cited by: §1 .
+[3]
+W. Brown (2025)
+Verifiers: Environments for LLM reinforcement learning .
+Note: https://github.com/PrimeIntellect-ai/verifiers
+Cited by: §1 ,
+1st item .
+[4]
+C. Chen, S. Borgeaud, G. Irving, J. Lespiau, L. Sifre, and J. Jumper (2023)
+Accelerating Large Language Model Decoding with Speculative Sampling .
+arXiv preprint arXiv:2302.01318 .
+Cited by: 5th item .
+[5]
+T. Chen, B. Xu, C. Zhang, and C. Guestrin (2016)
+Training Deep Nets with Sublinear Memory Cost .
+arXiv preprint arXiv:1604.06174 .
+Cited by: item 1 .
+[6]
+X. Cheng, R. Tian, W. Zeng, D. Dai, Q. Chen, B. Wang, Z. Xie, K. Huang, et al. (2026)
+Conditional Memory via Scalable Lookup: A New Axis of Sparsity for Large Language Models .
+arXiv preprint arXiv:2601.07372 .
+Cited by: 3rd item .
+[7]
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré (2022)
+FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness .
+arXiv preprint arXiv:2205.14135 .
+Cited by: §3.2.7 .
+[8]
+T. Dao (2023)
+FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning .
+arXiv preprint arXiv:2307.08691 .
+Cited by: §3.2.7 .
+[9]
+DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, et al. (2025)
+DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning .
+arXiv preprint arXiv:2501.12948 .
+Cited by: §1 .
+[10]
+DeepSeek-AI, A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, et al. (2024)
+DeepSeek-V3 Technical Report .
+arXiv preprint arXiv:2412.19437 .
+Cited by: 4th item ,
+5th item ,
+§3.2.7 .
+[11]
+DeepSeek-AI, A. Liu, A. Mei, B. Lin, B. Xue, B. Wang, B. Xu, B. Wu, et al. (2025)
+DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models .
+arXiv preprint arXiv:2512.02556 .
+Cited by: 1st item ,
+§3.2.7 .
+[12]
+W. Fu, J. Gao, X. Shen, C. Zhu, Z. Mei, C. He, S. Xu, G. Wei, et al. (2025)
+AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning .
+arXiv preprint arXiv:2505.24298 .
+Cited by: §1 .
+[13]
+F. Gloeckle, B. Y. Idrissi, B. Rozière, D. Lopez-Paz, and G. Synnaeve (2024)
+Better & Faster Large Language Models via Multi-token Prediction .
+arXiv preprint arXiv:2404.19737 .
+Cited by: 5th item .
+[14]
+J. Hu, X. Wu, W. Shen, J. K. Liu, Z. Zhu, W. Wang, S. Jiang, H. Wang, et al. (2024)
+OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework .
+arXiv preprint arXiv:2405.11143 .
+Cited by: §1 .
+[15]
+S. A. Jacobs, M. Tanaka, C. Zhang, M. Zhang, S. L. Song, S. Rajbhandari, and Y. He (2023)
+DeepSpeed Ulysses: System Optimizations for Enabling Training of Extreme Long Sequence Transformer Models .
+arXiv preprint arXiv:2309.14509 .
+Cited by: 4th item ,
+§3.2.3 .
+[16]
+N. Jain, J. Singh, M. Shetty, L. Zheng, K. Sen, and I. Stoica (2025)
+R2E-Gym: Procedural Environments and Hybrid Verifiers for Scaling Open-Weights SWE Agents .
+arXiv preprint arXiv:2504.07164 .
+Cited by: §1 .
+[17]
+C. E. Jimenez, J. Yang, A. Wettig, S. Yao, K. Pei, O. Press, and K. Narasimhan (2023)
+SWE-bench: Can Language Models Resolve Real-World GitHub Issues? .
+arXiv preprint arXiv:2310.06770 .
+Cited by: §1 .
+[18]
+K. Jordan, Y. Jin, V. Boza, J. You, F. Cesista, L. Newhouse, and J. Bernstein (2024)
+Muon: An optimizer for hidden layers in neural networks .
+Note: https://kellerjordan.github.io/posts/muon/
+Cited by: item 2 ,
+§3.1 .
+[19]
+Kimi Team, Y. Bai, Y. Bao, Y. Charles, C. Chen, G. Chen, H. Chen, H. Chen, et al. (2025)
+Kimi K2: Open Agentic Intelligence .
+arXiv preprint arXiv:2507.20534 .
+Cited by: §1 .
+[20]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica (2023)
+Efficient Memory Management for Large Language Model Serving with PagedAttention .
+arXiv preprint arXiv:2309.06180 .
+Cited by: §1 ,
+§2 .
+[21]
+Y. Leviathan, M. Kalman, and Y. Matias (2022)
+Fast Inference from Transformers via Speculative Decoding .
+arXiv preprint arXiv:2211.17192 .
+Cited by: 5th item .
+[22]
+J. Liu, J. Su, X. Yao, Z. Jiang, G. Lai, Y. Du, Y. Qin, W. Xu, et al. (2025)
+Muon is Scalable for LLM Training .
+arXiv preprint arXiv:2502.16982 .
+Cited by: item 2 ,
+2nd item ,
+§3.1 .
+[23]
+W. Ma, H. Zhang, L. Zhao, Y. Song, Y. Wang, Z. Sui, and F. Luo (2025)
+Stabilizing MoE Reinforcement Learning by Aligning Training and Inference Routers .
+arXiv preprint arXiv:2510.11370 .
+Cited by: §2.2 .
+[24]
+NVIDIA (2025)
+cuDNN frontend .
+Note: https://github.com/NVIDIA/cudnn-frontend
+Cited by: §3.2.6 ,
+§3.2.7 .
+[25]
+NVIDIA (2025)
+CUTLASS and CuTe DSL .
+Note: https://github.com/NVIDIA/cutlass
+Cited by: §3.2.7 .
+[26]
+NVIDIA (2025)
+NeMo AutoModel .
+Note: https://github.com/NVIDIA-NeMo/Automodel
+Cited by: §1 .
+[27]
+J. Pan, X. Wang, G. Neubig, N. Jaitly, H. Ji, A. Suhr, and Y. Zhang (2024)
+Training Software Engineering Agents and Verifiers with SWE-Gym .
+arXiv preprint arXiv:2412.21139 .
+Cited by: §1 .
+[28]
+Prime Intellect Team, M. Senghaas, F. Obeid, S. Jaghouar, W. Brown, J. M. Ong, D. Auras, M. Sirovatka, et al. (2025)
+INTELLECT-3: Technical Report .
+arXiv preprint arXiv:2512.16144 .
+Cited by: §1 .
+[29]
+Prime Intellect (2025)
+prime-rl .
+Note: https://github.com/PrimeIntellect-ai/prime-rl
+Cited by: §1 .
+[30]
+PyTorch Contributors (2026)
+PyTorch FSDP2: fully_shard and CPUOffloadPolicy .
+Note: https://docs.pytorch.org/docs/2.14/distributed.fsdp.fully_shard.html Version 2.14 documentation; accessed October 17, 2026
+Cited by: 1st item .
+[31]
+Qwen Team (2026)
+On the Design of Qwen3.8-Next Architecture: Evaluation, Efficiency, and Training Stability .
+Technical report
+Alibaba Group .
+Note: https://github.com/QwenLM/Qwen3.8-Flash-Next
+Cited by: §1 ,
+§3.1 .
+[32]
+Qwen Team (2026)
+Qwen3.8-Flash-Next model configuration .
+Note: https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/main/config.json Accessed October 17, 2026
+Cited by: §1 .
+[33]
+J. Ren, S. Rajbhandari, R. Y. Aminabadi, O. Ruwase, S. Yang, M. Zhang, D. Li, and Y. He (2021)
+ZeRO-Offload: Democratizing Billion-Scale Model Training .
+arXiv preprint arXiv:2101.06840 .
+Cited by: item 2 ,
+1st item .
+[34]
+J. Shah, G. Bikshandi, Y. Zhang, V. Thakkar, P. Ramani, and T. Dao (2024)
+FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision .
+arXiv preprint arXiv:2407.08608 .
+Cited by: §3.2.7 .
+[35]
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. K. Li, Y. Wu, and D. Guo (2024)
+DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models .
+arXiv preprint arXiv:2402.03300 .
+Cited by: §1 .
+[36]
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean (2017)
+Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer .
+arXiv preprint arXiv:1701.06538 .
+Cited by: 4th item .
+[37]
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu (2024)
+HybridFlow: A Flexible and Efficient RLHF Framework .
+arXiv preprint arXiv:2409.19256 .
+Cited by: §1 .
+[38]
+B. F. Spector, S. Arora, A. Singhal, D. Y. Fu, and C. Ré (2024)
+ThunderKittens: Simple, Fast, and Adorable AI Kernels .
+arXiv preprint arXiv:2410.20399 .
+Cited by: §3.2.4 .
+[39]
+S. H. Sul, N. Brown, H. Wildermuth, W. Lin, F. Cassano, and C. Ré (2026)
+Mixture-of-Kittens: MoE Megakernel for NVL72s .
+arXiv preprint arXiv:2609.36070 .
+Cited by: §3.2.4 .
+[40]
+P. Tillet, H. T. Kung, and D. Cox (2019)
+Triton: an intermediate language and compiler for tiled neural network computations .
+In Proceedings of the 3rd ACM SIGPLAN International Workshop on Machine Learning and Programming Languages ,
+pp. 10–19 .
+External Links: Document ,
+Link
+Cited by: §3.2.7 .
+[41]
+Z. Xie, Y. Wei, H. Cao, C. Zhao, C. Deng, J. Li, D. Dai, H. Gao, et al. (2025)
+mHC: Manifold-Constrained Hyper-Connections .
+arXiv preprint arXiv:2512.24880 .
+Cited by: 2nd item .
+[42]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, et al. (2025)
+Qwen3 Technical Report .
+arXiv preprint arXiv:2505.09388 .
+Cited by: §1 .
+[43]
+J. Yang, K. Lieret, C. E. Jimenez, A. Wettig, K. Khandpur, Y. Zhang, B. Hui, O. Press, L. Schmidt, and D. Yang (2025)
+SWE-smith: Scaling Data for Software Engineering Agents .
+arXiv preprint arXiv:2504.21798 .
+Cited by: §1 .
+[44]
+S. Yang, J. Kautz, and A. Hatamizadeh (2024)
+Gated Delta Networks: Improving Mamba2 with Delta Rule .
+arXiv preprint arXiv:2412.06464 .
+Cited by: 1st item .
+[45]
+S. Yang and Y. Zhang (2024)
+FLA: a Triton-based library for hardware-efficient implementations of linear attention mechanism .
+Note: https://github.com/fla-org/flash-linear-attention
+Cited by: 3rd item .
+[46]
+Z. Yao, R. Y. Aminabadi, O. Ruwase, S. Rajbhandari, X. Wu, A. A. Awan, J. Rasley, M. Zhang, et al. (2023)
+DeepSpeed-Chat: Easy, Fast and Affordable RLHF Training of ChatGPT-like Models at All Scales .
+arXiv preprint arXiv:2308.01320 .
+Cited by: §1 .
+[47]
+Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, et al. (2025)
+DAPO: An Open-Source LLM Reinforcement Learning System at Scale .
+arXiv preprint arXiv:2503.14476 .
+Cited by: §1 .
+[48]
+J. Yuan, H. Gao, D. Dai, J. Luo, L. Zhao, Z. Zhang, Z. Xie, Y. X. Wei, et al. (2025)
+Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention .
+arXiv preprint arXiv:2502.11089 .
+Cited by: 1st item .
+[49]
+C. Zhao, S. Zhou, L. Zhang, C. Deng, Z. Xu, Y. Liu, K. Yu, J. Li, and L. Zhao (2025)
+DeepEP: an efficient expert-parallel communication library .
+Note: https://github.com/deepseek-ai/DeepEP
+Cited by: §3.2.4 .
+[50]
+Y. Zhao, A. Gu, R. Varma, L. Luo, C. Huang, M. Xu, L. Wright, H. Shojanazeri, et al. (2023)
+PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel .
+arXiv preprint arXiv:2304.11277 .
+Cited by: item 2 ,
+1st item .
+[51]
+Y. Zhao, J. Huang, J. Hu, X. Wang, Y. Mao, D. Zhang, H. Zhang, Z. Jiang, et al. (2024)
+SWIFT:A Scalable lightWeight Infrastructure for Fine-Tuning .
+arXiv preprint arXiv:2408.05517 .
+Cited by: §1 .
+[52]
+D. Zhu, H. Huang, Z. Huang, Y. Zeng, Y. Mao, B. Wu, Q. Min, and X. Zhou (2024)
+Hyper-Connections .
+arXiv preprint arXiv:2409.19606 .
+Cited by: 2nd item .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

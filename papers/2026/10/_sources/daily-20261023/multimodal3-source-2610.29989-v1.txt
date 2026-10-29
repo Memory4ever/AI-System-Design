@@ -1,0 +1,501 @@
+Official exact-v1 HTML text: https://arxiv.org/html/2610.29989v1
+Downloaded main text; actual necessary reading scope is recorded separately in SOURCE_MULTIMODAL3.md. Preservation does not assert all included appendices were reviewed.
+Abstract
+Autoregressive video diffusion models generate videos chunk by chunk, yet producing plausible continuations does not guarantee that they capture how scenes evolve.
+Under teacher forcing, strong temporal redundancy may allow local visual continuity to serve as a shortcut for current-chunk denoising, reducing the pressure to model visual evolution.
+We introduce Future Chunk Prediction (FCP), an auxiliary objective jointly optimized with teacher-forced denoising that predicts temporally separated chunks without access to the intervening visual context.
+Drawing supervision directly from training videos, FCP requires no additional pretrained visual encoder and leaves autoregressive inference unchanged.
+Our method achieves superior physical plausibility over standard teacher-forced autoregressive training with a lower overall training compute budget, highlighting the effectiveness and efficiency of future-chunk supervision for modeling visual evolution.
+Intriguingly, our visualizations suggest that FCP fosters a more structured representation space, which may be valuable for building autoregressive world models.
+ 1 Introduction
+Autoregressive video generation ( Yang et al., 2025 ; Huang et al., 2025 ; Zhu et al., 2026 ; Yuan et al., 2026 ) has emerged as an important direction in video generation, offering a flexible paradigm in which visual sequences can be extended continuously.
+It typically operates through chunk-wise temporal rollout, where each new chunk is generated conditioned on preceding visual context.
+As an important pathway toward generative world modeling ( Bruce et al., 2024 ; Valevski et al., 2025 ) , such a history-conditioned generator is expected not merely to produce plausible successive chunks, but also to model how visual scenes evolve over time.
+However, the ability to extend a video does not by itself guarantee that the model has learned how the scene should evolve.
+We argue that a key reason is standard teacher forcing, where the current chunk is denoised given ground-truth history.
+Due to the strong temporal redundancy in videos, neighboring chunks often share highly similar appearance and motion patterns.
+As a result, the model may rely heavily on local visual continuity to recover the current chunk, creating a shortcut that provides limited pressure to capture the underlying dynamics of scene evolution.
+This motivates us to seek supervision that goes beyond what can be readily inferred from local visual continuity.
+A natural place to look is farther into the future.
+As the prediction target moves farther from the observed history, local appearance and motion continuity provide less direct support for recovering the target, thereby placing greater pressure on the model to capture temporal progression.
+Importantly, this supervision comes directly from the training video itself, without requiring external pretrained representations or semantic alignment ( Yu et al., 2025 ; Zhang et al., 2025a ) .
+Motivated by this intuition, we introduce Future Chunk Prediction (FCP), a simple auxiliary objective for autoregressive video diffusion training.
+In addition to denoising the target chunk under standard teacher forcing, FCP uses the learned intermediate representation to predict a target beyond the current chunk, without exposing the model to the intervening ground-truth visual context.
+This complementary objective places additional training pressure on the learned representations to capture information relevant to visual evolution, a capability fundamental to effective temporal rollout in autoregressive video generation.
+Importantly, FCP is introduced only during training and leaves the original autoregressive inference process unchanged.
+To assess whether this additional supervision improves the modeling of visual evolution, we focus on physical plausibility as a concrete and challenging evaluation dimension.
+Our method demonstrates improved physical plausibility over standard teacher-forced autoregressive training under matched data exposure and training budget, highlighting the effectiveness and efficiency of future-chunk supervision.
+These results highlight the potential of exploiting richer predictive supervision from existing video data, rather than relying solely on increased training resources.
+Beyond the improvements in generation quality, we further examine how FCP affects the intermediate video representations.
+Interestingly, the introduced supervision induces more pronounced spatiotemporal organization in the representation space, suggesting that FCP also meaningfully reshapes the representations learned during training.
+This finding highlights the potential of future prediction for learning representations better suited to autoregressive video generation, which may further benefit generative world modeling.
+ 2 Related Work
+ 2.1 Autoregressive Video Diffusion
+Conventional video diffusion models typically synthesize fixed-duration clips in a single denoising process ( Ho et al., 2022 ; Blattmann et al., 2023 ; Team, 2025 ; Wang et al., 2025a ) .
+Autoregressive video diffusion instead extends video chunk by chunk, conditioning on preceding visual context ( Voleti et al., 2022 ; Chen et al., 2024 ; Teng et al., 2025 ) .
+This formulation supports streaming generation and provides a basis for interactive visual simulation and generative world modeling ( Bruce et al., 2024 ; He et al., 2025 ; Yang et al., 2025 ; Valevski et al., 2025 ) .
+Prior work addresses rollout quality by adapting bidirectional models into causal few-step generators through distribution matching or adversarial training ( Yin et al., 2025 ; Lin et al., 2025 ) , exposing models to self-generated histories or extended student rollouts ( Huang et al., 2025 ; Cui et al., 2025 ; Liu et al., 2025 ) , and examining the causal compatibility of teacher supervision with student generation ( Zhu et al., 2026 ; Zheng et al., 2026 ) .
+Other approaches manage historical context through active windows, cached states, or global anchors ( Gao et al., 2025 ; Yang et al., 2025 ; Liu et al., 2025 ) , while selective retrieval and cache compression balance long-range consistency against computational and memory costs ( Cai et al., 2025 ; Samuel et al., 2026 ; Ji et al., 2026 ) .
+Our approach complements these directions by adding future-chunk supervision to teacher-forced training without prescribing rollout distillation or inference-time context management.
+ 2.2 Representation Alignment for Generation
+Aligning intermediate diffusion features with vision foundation models can accelerate training and improve generation quality ( Yu et al., 2025 ) .
+Video extensions use cross-frame and multi-feature alignment ( Hwang et al., 2025 ; Lee et al., 2025 ) , or relational supervision targeting physical plausibility ( Zhang et al., 2025a ) .
+These methods rely on targets from external pretrained encoders ( Oquab et al., 2024 ; Wang et al., 2023 ) , which may complicate scaling to large video corpora.
+Our approach instead derives supervision from future chunks in the training videos, without an additional pretrained vision model, offering a data-native path toward scaling.
+Our work was developed independently of and concurrently with Next Forcing ( Xu et al., 2026 ) , the closest related approach. We include relevant comparisons in our experiments and provide a more detailed discussion in the appendix.
+ 3 Preliminaries
+ 3.1 Flow Matching
+Flow matching learns a time-dependent vector field that continuously connects the data distribution to a simple noise distribution.
+Let \mathbf{x} denote a clean video sample, \bm{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I}) denote Gaussian noise, and t\sim\mathcal{U}(0,1) .
+We define the intermediate state along a linear probability path as
+ \widetilde{\mathbf{x}}_{t}=(1-t)\mathbf{x}+t\bm{\epsilon}, 
+ (1) 
+whose target velocity is \bm{\epsilon}-\mathbf{x} .
+A conditional velocity model \mathbf{v}_{\theta} is trained with
+ \mathcal{L}_{\mathrm{FM}}(\theta)=\mathbb{E}_{\mathbf{x},\bm{\epsilon},t,\mathbf{c}}\left[\left\lVert\mathbf{v}_{\theta}(\widetilde{\mathbf{x}}_{t},t,\mathbf{c})-(\bm{\epsilon}-\mathbf{x})\right\rVert_{2}^{2}\right], 
+ (2) 
+where \mathbf{c} denotes optional conditioning information.
+At inference, a numerical sampler follows the learned velocity field to transform noise at t=1 into a video sample at t=0 .
+ 3.2 Autoregressive Video Generation
+Autoregressive video generation, also referred to as streaming video generation, generates videos through chunk-wise temporal rollout ( Yin et al., 2025 ) .
+In diffusion-based instantiations, each autoregressive step generates a multi-frame chunk conditioned on the preceding observed or generated context.
+Repeatedly applying a fixed-length chunk generator supports long-form video generation over a flexible number of chunks.
+This chunk-wise formulation is distinct from discrete-token autoregressive video generation ( Hong et al., 2023 ; Yu et al., 2024 ; Kondratyuk et al., 2024 ; Wang et al., 2024 ) , which sequentially predicts tokenized representations, and from single-shot generation, which produces a fixed-length clip in one invocation.
+Let \mathbf{x}_{1:K}=\{\mathbf{x}_{1},\ldots,\mathbf{x}_{K}\} denote a video divided into K ordered, non-overlapping chunks of equal length, and let \mathbf{c} denote the text condition.
+The conditional distribution of the complete video can be factorized as
+ p(\mathbf{x}_{1:K}\mid\mathbf{c})=\prod_{k=1}^{K}p(\mathbf{x}_{k}\mid\mathbf{x}_{<k},\mathbf{c}), 
+ (3) 
+where \mathbf{x}_{<k} denotes the chunks preceding \mathbf{x}_{k} .
+ 3.3 Teacher-Forced Training
+Different training paradigms for autoregressive video generation construct the historical context using either clean chunks ( Voleti et al., 2022 ; Huang et al., 2025 ; Zhang et al., 2025b ) or noise-perturbed ones ( Chen et al., 2024 ; Ruhe et al., 2024 ) .
+Here, we adopt the clean-history setting.
+A common realization of this setting is teacher-forced training, in which the historical context \mathbf{x}_{<k} is taken directly from the ground-truth video.
+Under the flow-matching formulation introduced in Section  3.1 , Gaussian noise \bm{\epsilon}_{k} and a flow time t are sampled to perturb the target chunk \mathbf{x}_{k} along the linear probability path, yielding \widetilde{\mathbf{x}}_{k,t} .
+The model predicts the corresponding velocity while conditioned on the clean preceding chunks \mathbf{x}_{<k} and text condition \mathbf{c} :
+ \mathcal{L}_{\mathrm{TF}}(\theta)=\mathbb{E}_{\mathbf{x}_{1:K},\mathbf{c},k,t,\bm{\epsilon}_{k}}\left[\left\lVert\mathbf{v}_{\theta}(\widetilde{\mathbf{x}}_{k,t},t,\mathbf{x}_{<k},\mathbf{c})-(\bm{\epsilon}_{k}-\mathbf{x}_{k})\right\rVert_{2}^{2}\right]. 
+ (4) 
+Together, this defines a teacher-forced flow-matching objective for chunk-wise autoregressive video generation.
+ 4 Method
+ Figure 1: Overview of Future Chunk Prediction (FCP). Intermediate representations from the autoregressive backbone condition auxiliary transformer blocks for future-chunk prediction.
+In this section, we detail our proposed method.
+Section  4.1 introduces the general formulation of Future Chunk Prediction (FCP) and formalizes its auxiliary future-prediction objective, while Section  4.2 presents the FCP architecture adopted in this work.
+ 4.1 Future Chunk Prediction
+Building upon the teacher-forced formulation in Section  3.3 , each target chunk is denoised conditioned on its temporally contiguous ground-truth history.
+As discussed in Section  1 , the strong temporal redundancy of video allows this immediately preceding correct context to provide substantial support for current-chunk denoising, reducing the pressure to capture temporal progression and potentially hindering the learning of representations that capture visual evolution.
+This observation suggests a simple design principle: we seek a learning signal that is less directly supported by such immediately preceding context, yet remains intrinsic to the training video itself, allowing the supervision to scale naturally with video data without relying on external pretrained representations.
+To this end, we introduce Future Chunk Prediction (FCP), which supplements next-chunk denoising with an auxiliary task of predicting temporally more distant chunks from the same video.
+By excluding the intervening chunks from the visual context, this task discourages reliance on local temporal continuity and encourages stronger predictive representations of visual evolution.
+Formally, re-indexing a factor in equation  3 , standard next-chunk prediction given the observed prefix \mathbf{x}_{\leq k} models
+ p(\mathbf{x}_{k+1}\mid\mathbf{x}_{\leq k},\mathbf{c}). 
+FCP instead requires the same available context to support prediction of a farther target:
+ p_{\mathrm{FCP}}(\mathbf{x}_{k+\Delta}\mid\mathbf{x}_{\leq k},\mathbf{c}),\qquad\Delta>1,\quad k+\Delta\leq K, 
+ (5) 
+where \Delta is an integer temporal offset measured in chunks.
+In this formulation, the intervening chunks \mathbf{x}_{k+1:k+\Delta-1} are excluded from the conditioning context, yielding a supervisory signal that is distinct from and complementary to standard teacher forcing.
+A natural implementation of FCP uses an auxiliary predictor with dedicated parameters.
+In preliminary experiments, sharing generator parameters between teacher-forced denoising and masked-context future prediction degraded temporal coherence, possibly because the two objectives place competing demands on shared parameters.
+However, training this predictor in isolation would leave the main generator unaffected.
+We therefore condition the predictor on the generator’s intermediate hidden states and backpropagate the auxiliary loss through them ( DeepSeek-AI, 2024 ) .
+This design regularizes these representations to capture visual evolution and better support autoregressive rollout.
+For a practical realization of the above formulation, let \mathbf{h}_{k} denote the generator’s intermediate hidden states corresponding to chunk k .
+The auxiliary prediction is then expressed as
+ p_{\mathrm{FCP}}\!\left(\mathbf{x}_{k+\Delta}\mid\mathbf{h}_{k}\right),\qquad\Delta\geq 1. 
+ (6) 
+Compared with equation  5 , this formulation incorporates two deliberate choices regarding the conditioning information.
+First, we omit explicit text conditioning, encouraging the auxiliary predictor to derive predictive information from \mathbf{h}_{k} rather than a separate textual input.
+Second, we condition the auxiliary predictor on \mathbf{h}_{k} rather than \mathbf{h}_{\leq k} , encouraging a more compact encoding of predictive information while reducing computational cost.
+We examine the effects of these conditioning choices through ablation studies in Section  5 .
+ 4.2 FCP Architecture
+Building on the formulation in equation  6 , we present one concrete implementation of FCP to evaluate the effectiveness of the proposed approach.
+For the autoregressive generator, we use a standard video diffusion model ( Wang et al., 2025a ) whose backbone consists of stacked diffusion transformer (DiT) blocks with chunk-causal attention.
+The auxiliary predictor adopts a lightweight counterpart of this DiT architecture with a separate set of parameters.
+Figure  1 illustrates the overall architecture, with component-specific designs described below.
+Source Representations.
+We extract intermediate features associated with chunk k in both clean and noise-perturbed states, denoted by \mathbf{h}_{k}^{\mathrm{clean}} and \mathbf{h}_{k}^{\mathrm{noisy}} , respectively.
+Clean context provides historical information for subsequent chunk generation, while the noisy target is progressively denoised to produce the current chunk.
+We consider both roles essential to autoregressive generation and therefore regularize both types of representations through future-prediction supervision.
+Parallel Future Prediction.
+Each future offset has a separate predictor conditioned directly on \mathbf{h}_{k} , rather than on hidden states from preceding predictors ( DeepSeek-AI, 2024 ; Xu et al., 2026 ) .
+In the chained design (Figure  2(a) ), information from the noisy input for f_{t+2} can reach the predictor for f_{t+3} along the red path.
+Given video’s temporal redundancy, this may create a shortcut that weakens the pressure on the source representation to encode future evolution.
+Our parallel design (Figure  2(b) ) removes inter-offset information flow, preventing this particular shortcut.
+Its independent branches could also run concurrently across GPUs or be flexibly loaded and unloaded during training.
+ (a) Chained prediction: information from noisy intermediate targets may leak to subsequent predictors along the red arrows.
+ (b) Parallel prediction: offset-specific predictors can run concurrently across GPUs and be flexibly enabled or disabled during training.
+ Figure 2: Two variants of future-prediction supervision, illustrated through the green paths from \mathbf{h}_{t} to f_{t+3} . The chained design passes hidden states between predictors, whereas the parallel design conditions each predictor directly on the source representations.
+Feature Conditioning.
+To capture information at different semantic levels, we extract features from multiple generator layers, concatenate them along the channel dimension at corresponding token positions, and fuse them with an MLP.
+Inspired by prior AdaLN-based conditioning designs ( Wang et al., 2026b ; Pan et al., 2026 ; Wang et al., 2026a ) , we inject the fused features into every auxiliary DiT block through token-wise AdaLN modulation, preserving fine-grained conditioning across spatiotemporal positions.
+Asymmetric Text Conditioning.
+Unlike the text-conditioned main generator, the auxiliary predictors omit text cross-attention from every DiT block.
+Consistent with equation  6 , this asymmetry blocks a direct pathway through which text prompts could leak cues about future events, encouraging the predictors to rely on the generator’s source representations instead.
+This design also reduces the predictors’ parameter count and computational cost.
+ 4.3 Training and Inference
+Training.
+We jointly optimize the autoregressive generator and auxiliary predictors using flow matching.
+For each offset \Delta in a predefined set \mathcal{D} , a separate auxiliary predictor follows the flow-matching objective in Section  3.1 , conditioned on either clean or noisy source representations.
+Target noise and flow time are resampled for each auxiliary prediction.
+Let \mathcal{L}_{\Delta}^{\mathrm{clean}} and \mathcal{L}_{\Delta}^{\mathrm{noisy}} denote the corresponding losses, each averaged over all valid supervision pairs (k,k+\Delta) satisfying k+\Delta\leq K .
+The resulting joint objective takes the form:
+ \mathcal{L}_{\mathrm{total}}=\mathcal{L}_{\mathrm{TF}}+\sum_{\Delta\in\mathcal{D}}w_{\Delta}\frac{\mathcal{L}_{\Delta}^{\mathrm{clean}}+\mathcal{L}_{\Delta}^{\mathrm{noisy}}}{2}. 
+ (7) 
+Here, w_{\Delta} controls the contribution of each offset.
+Clean and noisy source representations share the predictor for a given offset, and the auxiliary losses backpropagate through these representations into the generator.
+Inference.
+At inference, we discard all FCP-specific modules, retaining the same autoregressive generator and rollout procedure as the teacher-forcing baseline without additional overhead.
+Qualitative visualizations of the auxiliary predictors suggest that they capture plausible future evolution despite limited visual fidelity.
+We leave their potential use for sampling acceleration through early-stage denoising or generation enhancement through prediction ensembling to future work.
+ 5 Experiments
+ 5.1 Implementation Details
+We initialize our autoregressive generators from official Wan checkpoints ( Wang et al., 2025a ) .
+For our implementation, we choose the image-to-video setting, treating the initial frame as fixed clean context and generating subsequent chunks of three latent frames.
+Each auxiliary predictor contains three DiT blocks initialized from the corresponding generator; the generators and predictors are then jointly optimized.
+Further model and training details are provided in Appendix  A .
+ 5.2 Benchmarks
+Modeling visual evolution involves diverse aspects of temporal dynamics, making its comprehensive evaluation an open challenge ( Li et al., 2025b ; Ma et al., 2026 ; Wu et al., 2026 ) .
+In this work, we focus primarily on physical plausibility ( Brooks et al., 2024 ; Kang et al., 2025 ; Agarwal et al., 2025 ) , motivated by the availability of dedicated benchmarks and systematic research on its evaluation.
+This choice is further motivated by the role of physical plausibility in shaping the perceived realism of generated videos.
+We adopt Physics-IQ Verified ( Rädsch et al., 2026 ) as our primary benchmark because its reference-based numerical metrics assess generated continuations against real-world recordings without relying on VLM-based judgments.
+We further evaluate on WorldModelBench ( Li et al., 2025a ) , PAI-Bench-G ( Zhou et al., 2025 ) , and PhyGround ( Lin et al., 2026 ) as complementary physics-related benchmarks.
+ Table 1: 
+Physics-IQ Verified results for image-to-video generation ( Rädsch et al., 2026 ) .
+Baseline scores are primarily from the benchmark.
+IQ is the overall score.
+Params counts visual-denoiser parameters.
+ Bold and underlined mark the best and second-best autoregressive scores.
+ Model 
+ Params 
+ IQ \uparrow 
+ SP \uparrow 
+ ST \uparrow 
+ WS \uparrow 
+ MSE \uparrow 
+ Bidirectional 
+ Wan2.2-5B ( Wang et al., 2025a ) 
+ 5B 
+ 24.9 
+ 34.2 
+ 22.1 
+ 21.1 
+ 22.1 
+ Sora 2 ( OpenAI, 2025 ) 
+ – 
+ 26.5 
+ 37.3 
+ 27.0 
+ 26.9 
+ 14.8 
+ Cosmos3-Nano ( Aditi et al., 2026 ) 
+ A8B 
+ 29.1 
+ 40.4 
+ 22.0 
+ 24.6 
+ 29.5 
+ Wan2.2-14B ( Wang et al., 2025a ) 
+ A14B 
+ 32.2 
+ 51.1 
+ 20.5 
+ 28.5 
+ 28.9 
+ HunyuanVideo-1.5 ( Team, 2025 ) 
+ 8.3B 
+ 33.4 
+ 47.1 
+ 26.9 
+ 29.7 
+ 30.0 
+ Grok Imagine Video ( xAI, 2026 ) 
+ – 
+ 34.8 
+ 52.7 
+ 21.4 
+ 35.7 
+ 29.6 
+ Autoregressive 
+ Causal Forcing ( Zhu et al., 2026 ) 
+ 1.3B 
+ 12.1 
+ 21.4 
+ 8.5 
+ 11.4 
+ 7.2 
+ Causal Forcing Stage 1 ( Zhu et al., 2026 ) 
+ 1.3B 
+ 19.2 
+ 26.7 
+ 15.4 
+ 16.9 
+ 17.9 
+ Causal Forcing++ ( Zhao et al., 2026 ) 
+ 1.3B 
+ 21.8 
+ 31.9 
+ 20.8 
+ 18.9 
+ 15.6 
+ Helios-Base ( Yuan et al., 2026 ) 
+ 14B 
+ 26.9 
+ 32.7 
+ 31.7 
+ 21.8 
+ 21.4 
+ MAGI-1-4.5B ( Teng et al., 2025 ) 
+ 4.5B 
+ 31.1 
+ 27.6 
+ 49.5 
+ 20.8 
+ 26.6 
+ Wan2.1-1.3B + FCP (Ours) 
+ 1.3B 
+ 30.9 
+ 36.2 
+ 29.6 
+ 23.2 
+ 34.5 
+ Wan2.2-5B + FCP (Ours) 
+ 5B 
+ 33.8 
+ 36.8 
+ 41.1 
+ 25.2 
+ 31.9 
+ 5.3 Datasets
+We train our models on a mixture of internally sourced videos and WISA-80K ( Wang et al., 2025b ) , using the original text annotations from each source.
+The training data primarily comprises general-purpose real-world videos, without using data from physics simulators.
+We select videos longer than five seconds and use approximately the first five seconds, sampled at the default frame rate of the corresponding model.
+Incorporating physics-simulator data ( Aditi et al., 2026 ) may further improve physical plausibility as training scales, but we leave this possibility to future work.
+ 5.4 Main Results
+ Table 2: 
+Controlled Physics-IQ Verified ( Rädsch et al., 2026 ) comparisons on Wan2.2-TI2V-5B.
+The shaded row and columns mark our default configuration and overall IQ scores, respectively.
+ ID 
+ Method 
+ I2V 
+ V2V 
+ IQ \uparrow 
+ SP \uparrow 
+ ST \uparrow 
+ WS \uparrow 
+ IQ \uparrow 
+ SP \uparrow 
+ ST \uparrow 
+ WS \uparrow 
+ (a) 
+ Teacher Forcing 
+ 30.4 
+ 34.8 
+ 32.8 
+ 24.0 
+ 40.6 
+ 48.5 
+ 40.8 
+ 37.8 
+ (b) 
+   + FCP (3 offsets) 
+ 32.1 
+ 33.6 
+ 39.3 
+ 23.2 
+ 43.0 
+ 50.3 
+ 44.6 
+ 39.8 
+ (c) 
+    + FCP (3 offsets, chained) 
+ 30.7 
+ 34.6 
+ 33.0 
+ 23.3 
+ 40.5 
+ 48.5 
+ 39.3 
+ 37.9 
+ (d) 
+   + FCP (5 offsets) 
+ 33.8 
+ 36.8 
+ 41.1 
+ 25.2 
+ 44.4 
+ 51.1 
+ 47.2 
+ 40.7 
+ (e) 
+    + FCP (5 offsets, chained) 
+ 31.0 
+ 35.6 
+ 33.0 
+ 23.9 
+ 39.9 
+ 47.6 
+ 38.9 
+ 36.6 
+ (f) 
+   + FCP (offsets 1, 3, 5) 
+ 33.1 
+ 36.9 
+ 38.5 
+ 25.5 
+ 43.5 
+ 51.8 
+ 43.8 
+ 40.6 
+ Figure 3: Qualitative comparison of teacher forcing (top) and FCP (bottom).
+Left: FCP predicts domino toppling along the expected direction (green arrows), whereas teacher forcing produces an anomalous collapse at the center (red box).
+Right: FCP captures the rise in water level as the ice melts (green \Delta ), a detail missed by teacher forcing.
+Physics-IQ Verified.
+Differences in training data and settings limit the attribution of cross-model performance gaps to methodological improvements.
+We therefore place greater emphasis on the controlled comparisons in Tables  2 and  4 , where matched data and experimental settings enable a fairer assessment.
+Compared with teacher forcing, FCP raises the IQ score from 27.6 to 30.9 for the 1.3B model.
+For the 5B model, it improves I2V and V2V scores from 30.4 to 33.8 and from 40.6 to 44.4, respectively.
+These consistent gains support the effectiveness of future-prediction supervision in improving physical plausibility across scales and conditioning settings.
+Table  1 provides broader context for these results.
+Our 5B model outperforms larger bidirectional models, including Wan2.2-14B ( Wang et al., 2025a ) , HunyuanVideo-1.5 ( Team, 2025 ) , and Cosmos3-Nano ( Aditi et al., 2026 ) , as well as autoregressive pre-training results from comparably sized MAGI-1-4.5B ( Teng et al., 2025 ) and larger Helios-Base ( Yuan et al., 2026 ) .
+Qualitative Analysis of Physical Dynamics.
+Figure  3 complements the quantitative results with two examples of temporal evolution.
+FCP preserves the direction of domino toppling and captures the water-level rise visible in the ice-melting sequence, whereas the teacher-forcing baseline exhibits an anomalous central collapse in the former and misses the subtle level change in the latter.
+Together, these examples suggest that FCP better captures physically plausible visual evolution, which is central to the perceived realism of generated videos.
+ Table 3: 
+Results on WorldModelBench, PAI-Bench-G, and PhyGround.
+All variants are based on Wan2.2-TI2V-5B and use matched training settings.
+ Benchmark 
+ Metric 
+ Teacher Forcing 
+ + FCP (Ours) 
+ WorldModelBench 
+ ( Li et al., 2025a ) 
+ Instruction \uparrow 
+ 1.77 
+ 1.81   (+0.04) 
+ Physical Laws \uparrow 
+ 4.28 
+ 4.47   (+0.19) 
+ Common Sense \uparrow 
+ 1.17 
+ 1.36   (+0.19) 
+ Total \uparrow 
+ 7.22 
+ 7.64   (+0.42) 
+ PAI-Bench-G 
+ ( Zhou et al., 2025 ) 
+ AV \uparrow 
+ 63.54 
+ 64.81   (+1.27) 
+ Common Sense \uparrow 
+ 90.90 
+ 92.10   (+1.20) 
+ Human \uparrow 
+ 81.62 
+ 82.46   (+0.84) 
+ Industry \uparrow 
+ 85.65 
+ 87.24   (+1.59) 
+ Physics \uparrow 
+ 90.09 
+ 90.29   (+0.20) 
+ Robot \uparrow 
+ 70.56 
+ 72.95   (+2.39) 
+ Domain Score \uparrow 
+ 81.13 
+ 82.38   (+1.25) 
+ PhyGround 
+ ( Lin et al., 2026 ) 
+ General \uparrow 
+ 2.63 
+ 2.66   (+0.03) 
+ Physics \uparrow 
+ 2.75 
+ 2.80   (+0.05) 
+Other Physics-Related Benchmarks.
+We further evaluate on physics-related benchmarks, including WorldModelBench ( Li et al., 2025a ) , PAI-Bench-G ( Zhou et al., 2025 ) , and PhyGround ( Lin et al., 2026 ) .
+As shown in Table  3 , FCP generally outperforms teacher forcing under matched settings, supporting the generalizability of our approach.
+These evaluations rely on VLM-based judgments of specified criteria, which may be less sensitive to subtle differences in the timing and magnitude of physical changes than direct comparison with real-world reference videos.
+This limited sensitivity may partly explain the modest gains on some metrics.
+ 5.5 Ablation Studies
+ ID 
+ Clean 
+ Noisy 
+ Text 
+ Chain 
+ IQ \uparrow 
+ SP \uparrow 
+ (a) 
+ 27.6 
+ 32.8 
+ (b) 
+ \checkmark 
+ 28.8 
+ 33.0 
+ (c) 
+ \checkmark 
+ 29.9 
+ 34.7 
+ (d) 
+ \checkmark 
+ \checkmark 
+ 30.9 
+ 36.2 
+ (e) 
+ \checkmark 
+ \checkmark 
+ \checkmark 
+ 29.8 
+ 34.8 
+ (f) 
+ \checkmark 
+ \checkmark 
+ \checkmark 
+ 30.1 
+ 34.3 
+ Table 4: Ablation of the main FCP design components. The shaded row and column mark the default setting and overall IQ score, respectively.
+ Figure 4: Training convergence on Physics-IQ Verified versus estimated training compute.
+We primarily conduct ablation studies on Wan2.1-1.3B under identical settings across variants; detailed settings and results are provided in Appendices  A.2 and  B.1 , respectively.
+Source Representations.
+While prior representation-alignment methods ( Yu et al., 2025 ) primarily regularize intermediate features along the denoising process, clean historical context in autoregressive video generation also serves a predictive role, carrying information from the immediate past to support anticipation of future visual evolution.
+Results in Table  4 support this view: regularizing clean-context or noisy-target representations improves IQ over teacher forcing by 1.2 and 2.3 points, respectively, while their combination yields a 3.3-point gain.
+Parallel Future Prediction.
+Chained prediction provides a natural alternative ( DeepSeek-AI, 2024 ; Xu et al., 2026 ) to our parallel design; however, as illustrated in Figure  2(a) , it may exploit intermediate future information as a shortcut.
+Consistent with this concern, Table  4 shows that parallel prediction improves the IQ score by 0.8, from 30.1 to 30.9.
+The limitation of chained prediction is more pronounced in the controlled 5B comparison in Table  2 : the two chained variants (3 and 5 offsets) yield only marginal IQ-score gains over teacher forcing on I2V and fail to improve V2V performance.
+This larger degradation may arise because the higher-capacity model can more readily exploit the potential leakage of intermediate future information illustrated in Figure  2(a) .
+Together, these results show that our parallel design consistently outperforms the chained alternative across model scales and conditioning settings.
+It also supports nonconsecutive future offsets, as evaluated in row (f) of Table  2 , through the independent branches shown in Figure  2(b) .
+Training Efficiency.
+The closely related approach Next Forcing ( Xu et al., 2026 ) conditions future prediction on the full historical representations \mathbf{h}_{\leq k} , motivating a full-context FCP variant for comparison.
+Figure  4 compares teacher forcing, this full-context variant, and our default configuration.
+Compared with standard teacher forcing, our configuration achieves higher IQ scores at comparable estimated training compute, indicating that its gains do not arise simply from additional computation.
+Furthermore, our configuration is estimated to require 42.6% and 50.7% less training compute than the full-context variant to reach the same IQ scores of 29 and 30, respectively.
+These results indicate that extending the conditioning context from \mathbf{h}_{k} to \mathbf{h}_{\leq k} provides no additional benefit for modeling video evolution, while the lower computational cost of \mathbf{h}_{k} makes our formulation better suited to scaling autoregressive video models.
+Text-Free Future Prediction.
+Comparing rows (d) and (e) in Table  4 , adding explicit text conditioning to the auxiliary predictors reduces the IQ score by 1.1.
+This supports withholding text from future predictors, as direct textual cues may reveal future evolution and weaken their reliance on visual representations.
+ Figure 5: Spatial Feature Similarity Maps. Each map shows within-frame similarity to a selected query token. The top and bottom rows correspond to teacher forcing and FCP, respectively.
+ Figure 6: Spatiotemporal Feature Similarity Maps. The top row shows video frames, while the bottom row visualizes similarity to a selected query token across space and time.
+ 5.6 Representation Space Analysis
+Beyond physical-plausibility evaluation, we visualize the generator’s intermediate representations using query-to-token similarity maps.
+As shown in Figure  5 , teacher forcing produces diffuse responses extending into unrelated regions, whereas FCP yields more selective responses aligned with the queried object and visually related instances.
+Figure  6 further shows that high-similarity regions remain aligned with corresponding content as it moves across frames.
+Together, these visualizations suggest that FCP-trained representations capture clearer spatial structure and meaningful temporal correspondence.
+We believe that such semantically structured representations may provide a useful foundation for future world models.
+ 6 Conclusion
+We introduced Future Chunk Prediction (FCP), an auxiliary objective that predicts temporally separated chunks from the same training video in autoregressive video diffusion.
+Optimized jointly with the standard teacher-forced denoising objective, FCP provides complementary supervision to the generator’s intermediate representations without requiring an additional pretrained encoder.
+The auxiliary predictors are removed at inference, leaving the autoregressive generation process unchanged.
+Controlled comparisons show improved physical plausibility across model scales and conditioning settings.
+More surprisingly, our visualizations suggest that FCP also induces a more structured representation space, which we believe may be important for autoregressive world models.
+Together, these findings support future prediction as a promising training principle for autoregressive video generation.
+Reproducibility Statement
+Sections  4 and  5 describe our method, training setup, datasets, and evaluation protocols, with further implementation details in Appendix  A .
+Our code is available at https://github.com/TencentARC/Looking-Ahead ; model checkpoints are not included in this source package.
+For the public portion of our training data, we will provide source links and selection criteria; we will also provide representative examples of the internally sourced data.
+The complete internal corpus cannot be released, so exact reproduction of training with identical data may not be possible; nevertheless, we will make every effort to support reproducibility.
+AI Use Statement
+Generative AI tools were used to assist with implementing FCP and the associated training, inference, and evaluation code, as well as with translation.
+We did not use these tools to generate datasets, develop the conceptual framework, formulate mathematical claims, propose or refine research hypotheses, design or provide feedback on methods or experiments, clean or reformat datasets, conduct qualitative data analysis, or interpret results; this work contains no mathematical proofs.
+We also used generative AI for drafting and editing manuscript text, searching for and summarizing relevant literature, writing-related brainstorming, formatting in-text citations, and suggesting paper structure, titles, section headings, and keywords.
+The authors reviewed and tested AI-assisted code, checked AI-assisted text and literature recommendations, and take full responsibility for the final content of this work.

@@ -1,0 +1,1248 @@
+SABlock: Semantic-Aware KV Cache Eviction with Adaptive Compression Block Size
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I Introduction
+II Background and Motivation
+II-A KV Cache in LLM Inference
+II-B Limitations of Existing KV Cache Eviction Methods
+II-C Opportunity for Adaptive Block Size Configuration
+III Framework Design
+III-A Semantic-Aware Segmentation
+III-B Segment-Guided Token Scoring
+III-C Budget-Driven Adaptive Block Size Search
+IV Performance Evaluation
+IV-A Experimental Settings
+IV-B Overall Performance on LongBench
+IV-C Context Retrieval under NIAH
+IV-D Evaluation of Resource Consumption
+IV-E Ablation Studies
+IV-F Sensitivity Analysis
+V Related Work
+VI Conclusions
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.22556v1 [cs.CL] 26 Oct 2025
+SABlock: Semantic-Aware KV Cache Eviction with Adaptive Compression Block Size
+Jinhan Chen, Jianchun Liu, Hongli Xu, Xianjun Gao, Shilong Wang
+Affiliation: School of Computer Science and Technology, University of Science and Technology of China
+Suzhou Institute for Advanced Research, University of Science and Technology of China
+Abstract
+The growing memory footprint of the Key-Value (KV) cache poses a severe scalability bottleneck for long-context Large Language Model (LLM) inference.
+While KV cache eviction has emerged as an effective solution by discarding less critical tokens, existing token-, block-, and sentence-level compression methods struggle to balance semantic coherence and memory efficiency.
+To this end, we introduce SABlock, a semantic-aware KV cache eviction framework with adaptive block sizes.
+Specifically, SABlock first performs semantic segmentation to align compression boundaries with linguistic structures, then applies segment-guided token scoring to refine token importance estimation.
+Finally, for each segment, a budget-driven search strategy adaptively determines the optimal block size that preserves semantic integrity while improving compression efficiency under a given cache budget.
+Extensive experiments on long-context benchmarks demonstrate that SABlock consistently outperforms state-of-the-art baselines under the same memory budgets. For instance, on Needle-in-a-Haystack (NIAH), SABlock achieves 99.9% retrieval accuracy with only 96 KV entries, nearly matching the performance of the full-cache baseline that retains up to 8K entries. Under a fixed cache budget of 1,024, SABlock further reduces peak memory usage by 46.28% and achieves up to 9.5×\times faster decoding on a 128K context length.
+Index Terms: Large language models, Long-context inference, KV cache eviction, Adaptive block size.
+I Introduction
+Large Language Models (LLMs)[1, 2, 3] have emerged as indispensable tools for a wide range of downstream tasks, such as document summarization[4] and question answering[5].
+LLM inference typically follows an autoregressive paradigm, where each token is generated based on all previously produced tokens.
+During this process, the model computes key and value projections for each token at every attention layer.
+To eliminate redundant computations, modern inference systems employ a Key-Value (KV) cache, which stores these intermediate representations and thereby accelerates decoding [6, 7, 8].
+However, in recent years, as context lengths have increased substantially to capture longer dependencies and support more sophisticated applications, the memory overhead of the KV cache has become a critical bottleneck [9].
+For example, in Llama-3-8B, with a batch size of 16 and a sequence length of 16K, the KV cache consumes about 128 GB of memory, which is more than 8 times larger than the 16 GB memory footprint of model weights. In addition, the size of the KV cache grows linearly with the input sequence length (details in Section 2.1), leading to an increasing memory demand that conflicts with the limited storage capacity available during inference [10].
+This enormous memory footprint not only severely limits the maximum batch size and degrades inference throughput, but also necessitates high-end, expensive hardware, hindering the widespread deployment of long-context LLMs.
+Therefore, the paramount purpose in enabling practical long-context LLM inference is to reduce KV cache memory consumption without sacrificing generation quality.
+To address the memory bottleneck, KV cache eviction [11, 12, 13, 14, 15] has been proposed as a promising solution, which compresses the cache by selectively retaining the KV entries of tokens deemed important while discarding the rest.
+Compared with alternatives such as quantization or offloading to external memory, KV eviction directly controls cache size and delivers immediate memory savings during inference.
+The selection of tokens is typically determined by the position-based methods (e.g., sliding windows [11]) or attention scores that quantify token importance [12].
+However, since eviction is inherently irreversible, removing those crucial tokens for future generations will lead to permanent information loss, causing the model to hallucinate or generate incoherent content.
+Fig. 1: Segmentation strategies applied to the same prompt: token-level, block-level, sentence-level, and our semantic-aware adaptive blocks (the first segment uses a block size of 3 and the second segment uses a block size of 2).
+Red tokens indicate evicted content, while bold tokens denote preserved content.
+For example, H2O[12] shows that discarding “heavy-hitter” tokens leads to substantial performance drops, such as from about 85% to 54% on COPA and from 43% to 27% on OpenBookQA, highlighting the risks of erroneous eviction decisions.
+Consequently, the challenge for KV cache eviction lies in devising a policy that can precisely identify and preserve critical tokens, achieving a balance between memory efficiency and generation quality.
+Among existing KV cache eviction strategies, token-level methods [12, 15, 16] represent the most straightforward approach, visualized in Fig. 1. They adopt a greedy selection strategy that progressively retains tokens with higher attention scores, offering fine-grained flexibility but neglecting the semantic dependencies among neighboring words.
+In practice, natural language is not a uniformly distributed sequence of tokens but a hierarchical organization of words, phrases, and sentences. This inherent semantic granularity variation makes compression at the token level prone to disrupting contextual integrity and causing semantic discontinuity or information loss.
+Building on this idea, block-level methods [17, 18] group consecutive tokens into fixed-size blocks for compression, aiming to preserve local semantic continuity.
+While this design alleviates fragmentation to some extent, it also introduces new problems. When the block size is too large, a single block may span multiple semantic units and mix unrelated content; when it is too small, the block fails to capture sufficient contextual information.
+In other words, both designs suffer from fundamental semantic limitations. Compression based on a fixed block size struggles to balance semantic coherence and memory efficiency.
+From a semantic viewpoint, sentence-level methods [19] further extend this line of work by treating each sentence as an independent compression unit.
+Unlike token- or block-level methods that may fragment contextual meaning, this design preserves the complete semantic information within a sentence, thereby maintaining coherence across compression boundaries.
+However, sentence lengths vary dramatically, and the distribution of important information across sentences is highly uneven.
+Some sentences convey essential meaning concisely, while others contribute little despite their length.
+Under limited cache budgets, retaining entire sentences leads to redundancy and inefficient use of memory resources.
+To address these limitations, we propose SABlock, a semantic-aware KV cache eviction framework with adaptive block sizes.
+SABlock first performs semantic segmentation to ensure that compression respects natural boundaries.
+It then applies a segment-guided token scoring mechanism to propagate segment-level importance to individual tokens, producing more refined scores.
+Finally, under a given cache budget, SABlock performs an adaptive block size search for each segment to balance semantic coherence and memory efficiency.
+Fig. 1 illustrates the segmentation results of different strategies on the same input prompt, demonstrating that our method achieves semantic awareness with adaptive block sizes.
+The adaptive block size in SABlock is determined through a budget-driven search strategy.
+We observe that the optimal block size depends on the available cache budget: with a tighter budget, smaller blocks better preserve essential details, whereas a relaxed budget favors larger blocks that enable more efficient compression.
+Specifically, SABlock first uses refined token scores to perform global selection, which allocates a local retention budget to each segment.
+Then, within each segment, SABlock performs the search in descending order of candidate block sizes, checking whether the ratio between the importance score at the current block size and that at the token level exceeds a predefined semantic fidelity threshold.
+The largest block size satisfying this condition is selected.
+This procedure preserves coherent semantic structures while adaptively handling non-uniform information density, thus ensuring efficient and reliable cache compression across different budget settings.
+Our contributions are summarized as follows:
+•
+We introduce SABlock, a semantic-aware KV cache eviction framework that jointly enhances generation quality and memory efficiency under varying cache budgets.
+•
+We propose a semantic segmentation and segment-guided scoring approach, which ensures compression aligns with natural language boundaries and prevents the loss of critical information.
+•
+Building on the segmentation and refined token scores, we design a budget-driven adaptive block size search strategy that selects the proper block size satisfying semantic fidelity for each segment.
+•
+Extensive experiments on long-context benchmarks show that SABlock consistently outperforms state-of-the-art methods across diverse budgets and tasks.
+In particular, with a 128K context length, SABlock reduces peak memory usage by 46.28% and achieves up to 9.5×\times faster decoding compared with the full-cache setting.
+II Background and Motivation
+II-A KV Cache in LLM Inference
+(a) Cross-sentence rate vs. block size.
+(b) Block-level redundancy illustration.
+(c) Redundancy rate heatmap.
+Fig. 2: Illustration of the limitations of block-level KV cache eviction strategies.
+LLMs are commonly composed of multiple stacked Transformer decoder layers, where the self-attention mechanism is the core computational component[20].
+In this mechanism, the input for the tt-th token, xt∈ℝdx_{t}\in\mathbb{R}^{d}, is transformed into three distinct representations: a query vector (qtq_{t}), a key vector (ktk_{t}), and a value vector (vtv_{t}).
+Formally, these vectors are obtained via linear projections of xtx_{t}:
+qt=Wq​xt,kt=Wk​xt,vt=Wv​xtq_{t}=W_{q}x_{t},\quad k_{t}=W_{k}x_{t},\quad v_{t}=W_{v}x_{t}
+(1)
+where WqW_{q}, WkW_{k}, and Wv∈ℝd×dW_{v}\in\mathbb{R}^{d\times d} denote the weight matrices.
+Next, the attention output for token tt is computed using its query vector qtq_{t} and the full history of key and value vectors:
+Attention​(xt)=softmax​(qt​KtTD)​Vt\text{Attention}(x_{t})=\text{softmax}\left(\frac{q_{t}K_{t}^{T}}{\sqrt{D}}\right)V_{t}
+(2)
+where Kt=concat​(Kt−1,kt)K_{t}=\text{concat}(K_{t-1},k_{t}), Vt=concat​(Vt−1,vt)V_{t}=\text{concat}(V_{t-1},v_{t}) (with K1=[k1]K_{1}=[k_{1}] and V1=[v1]V_{1}=[v_{1}]), and DD is the key dimension.
+Accordingly, the output for the tt-th token requires all the keys and values from the previous tokens i∈{1,…,t−1}i\in\{1,\dots,t-1\}.
+To avoid recomputing the representations of previous tokens, these keys and values are stored and reused, forming the KV cache.
+During the process, the KV cache is populated and utilized across two distinct phases:
+•
+Prefill Phase: In this phase, the model first computes the KV pairs for the full input sequence and stores them in the cache for reuse during inference.
+•
+Decoding Phase: During decoding, the model computes the query, key, and value for the new token, reuses cached keys and values of all previous tokens, and appends the new ones for subsequent steps.
+The size of the KV cache can be computed as 2×b×l×L×h×c×p2\times b\times l\times L\times h\times c\times p, where the factor 2 accounts for both keys and values, bb is the batch size, ll is the number of layers, LL is the sequence length, hh is the number of attention heads, cc is the dimension per head, and pp is the precision (e.g., FP16, INT8). As the sequence length grows, the storage demand for the KV cache increases. For example, with a batch size of 32 under FP16, the KV cache requires about 16GB of memory at a sequence length of 32K, and grows to nearly 64GB at 128K. Therefore, the management and optimization of the KV cache are crucial for inference efficiency.
+II-B Limitations of Existing KV Cache Eviction Methods
+To mitigate the memory overhead of long-context LLM inference, researchers have proposed various KV cache eviction strategies.
+The core idea is to discard less important KV entries to reduce memory usage, while retaining critical information to maintain generation quality.
+This creates a fundamental trade-off between memory efficiency and inference performance.
+Despite implementation differences, existing methods can be generally categorized by their compression granularity, which defines the basic level at which the KV cache is evaluated and evicted, typically at the token-, block-, or sentence-level.
+1) Token-level eviction methods evaluate the importance of each token independently and retain only those with the highest attention scores, thereby enabling flexible filtering.
+Despite this advantage, these methods still have notable limitations.
+Specifically, token-level eviction methods severely disrupt the continuity of semantic information when applied to long contexts. By treating tokens as independent units, these methods disregard the syntactic and semantic dependencies that naturally span across multiple tokens.
+As a result, some tokens that appear unimportant, such as function words or digits in a sequence, may be removed even though they are indispensable parts of larger semantic structures.
+Once such tokens are discarded in isolation, the integrity of the entire segment is broken, and the model can no longer reconstruct the underlying meaning.
+This problem is exacerbated in long-context scenarios, where semantic dependencies are highly entangled and extend over long spans.
+In such cases, token-level eviction not only leads to fragmented context but also introduces severe information loss, making the generated outputs prone to errors, omissions, or hallucinations.
+This limitation has been substantiated by prior work.
+For instance, SnapKV [15] observes that simply selecting tokens with the highest attention scores often undermines information integrity, leading to cases where an LLM may retain only partial details, such as the country code of a phone number, while hallucinating the rest.
+The authors attribute this issue to the tendency of attention mechanisms to assign disproportionately high weights to the initial tokens within a cluster, which makes naive token-level compression particularly harmful.
+Their ablation studies further confirm that token-level methods without additional mechanisms (e.g., pooling) suffer from significant retrieval accuracy degradation, thereby providing concrete evidence of the inherent weakness of token-level eviction.
+Thus, while token-level eviction methods offer flexible information filtering, their performance degrades significantly in tasks requiring semantic continuity and context integrity, especially over long texts and in complex scenarios.
+2) Block-level eviction methods outperform token-level methods in preserving semantic coherence, but they still face two significant limitations that undermine their effectiveness.
+First, block-level methods are prone to semantic fragmentation due to their reliance on a fixed block size.
+This approach creates a fundamental mismatch, as the rigid, uniform length of blocks is inherently misaligned with the variable, unbounded length of natural language’s semantic units, such as sentences or phrases.
+Consequently, a single block may span across multiple semantic units, causing the information within the block to lose coherence, which in turn affects semantic understanding and reasoning [19].
+This disregard for natural linguistic boundaries is known to degrade generation performance [21, 19].
+Previous research indicates that overlooking natural boundaries, like sentence boundaries, can negatively affect language model performance[21, 19].
+For example, a block might simultaneously contain the subject of one sentence and the object of another, leading to grammatical and semantic confusion, thereby impacting the accuracy of the generated results.
+To validate this issue, we conduct an analysis on the LongBench benchmark [22].
+As illustrated in Fig. 2(a), our results show that even a modest block size of 7 causes an average of 21.65% of blocks crossing multiple semantic segments, which leads to semantic fragmentation. Moreover, as the block size increases, the likelihood of a block crossing semantic boundaries also rises, exacerbating the issue of semantic fragmentation.
+Fig. 3: Performance comparison under a fixed KV cache budget of 96 on three categories of the LongBench benchmark. We compare SentenceKV, SentenceKV with an additional block size of 5 (SentenceKV w. Block(5)), and our method.
+Second, block-level methods often retain many uninformative tokens, leading to inefficient utilization of memory resources.
+Block-level eviction methods typically require that an entire block be either fully retained or evicted, creating an unavoidable trade-off. When a block contains a mix of important and unimportant tokens, the system is forced to preserve the entire chunk just to save a few critical pieces of information. This policy forces the retention of a large number of uninformative tokens, leading to significant memory waste.
+As shown in Fig. 2(b), given the block size of 7, tokens 196–202 are processed together. Although token 196 has a high attention score, retaining it also forces the retention of low-attention tokens 197–202, which contribute little to semantic coherence.
+To quantify this effect, we measure the redundancy rate, defined as the fraction of attention scores wasted on non-essential tokens relative to a token-level baseline.
+As our results in Fig. 2(c) show, this redundancy rate grows substantially with the block size, confirming the approach’s inherent inefficiency.
+Fig. 4: Answer accuracy under different cache budgets and compression block sizes. The first example demonstrates that compression with a small block size better retains critical information under a low budget, while the second shows that our adaptive method succeeds when fixed block sizes fail.
+3) Sentence-level eviction methods[19] further improve upon block-level compression by extending the basic compression unit from fixed-length blocks to natural-language sentences.
+This design enables the cache structure to follow the semantic boundaries of sentences, thereby preserving complete semantic information. By retaining sentences as integral units, sentence-level methods maintain semantic integrity and contextual coherence to a large extent.
+However, despite these advantages, these methods still face fundamental limitations that restrict their efficiency.
+Specifically, sentence lengths vary dramatically, and the distribution of information within sentences is highly uneven, i.e., non-uniform information density.
+Some sentences condense crucial content within a few tokens, while others are long but semantically sparse. Under strict cache budgets, retaining entire sentences inevitably keeps a large number of uninformative tokens, leading to severe redundancy and inefficient utilization of memory resources.
+As a result, sentence-level eviction methods tend to preserve a significant amount of low-value content.
+To reduce redundancy within sentences, one possible improvement is to partition each sentence into fixed-size sub-blocks, thereby enabling finer-grained selection. However, this approach still lacks flexibility and cannot adapt to the actual distribution of information. As shown in Fig. 3, such partitioning provides only limited performance gains. For instance, Few-shot Learning improves from 52.0 to 61.3, but the score remains below the 69.7 achieved by our method. These results highlight the need for an adaptive block size mechanism for efficient KV cache compression.
+II-C Opportunity for Adaptive Block Size Configuration
+The above analysis reveals that the existing KV cache eviction methods suffer from fundamental limitations.
+Existing token-, block-, and sentence-level eviction methods either disrupt semantic continuity, misalign with semantic units, or redundantly retain irrelevant content.
+These issues become more pronounced in long-context scenarios, where semantic dependencies are complex and information density is highly uneven.
+Consequently, the core challenge in efficient KV cache eviction is that no single and fixed block size configuration is universally effective under varying cache budgets.
+In practice, even under the same cache budget, the most suitable block size may vary across different segments, since the distribution of information along the sequence is highly uneven. Some regions contain dense and critical contextual information, whereas others consist of relatively sparse or redundant content.
+Moreover, the overall cache budget is not fixed, as it varies with factors such as context length, batch size, and hardware environment. When the budget changes, the block size configuration must be adjusted accordingly: larger blocks are preferred when memory is sufficient, while smaller blocks are required under tighter budgets.
+This suggests that compression should not rely on a single and fixed block size but instead adopt an adaptive configuration to leverage the complementary strengths of varied block sizes.
+TABLE I: Average score performance of different block sizes under varying budgets.
+Block Size
+Budget
+1
+3
+5
+7
+9
+Optimal
+Block Size
+16
+22.74
+22.71
+22.52
+22.37
+22.27
+1
+32
+23.35
+24.19
+24.17
+24.10
+24.15
+3
+64
+24.15
+25.44
+25.93
+25.83
+25.88
+5
+96
+24.47
+25.69
+26.66
+27.04
+27.03
+7
+128
+24.80
+26.08
+27.01
+27.57
+27.98
+9
+256
+25.48
+26.96
+28.01
+28.44
+28.40
+7
+512
+26.94
+27.73
+29.06
+29.18
+29.21
+9
+1024
+27.98
+28.62
+29.82
+29.80
+29.95
+9
+2048
+30.03
+29.95
+30.55
+30.68
+30.79
+9
+4096
+30.92
+30.73
+31.02
+31.00
+31.03
+9
+We observe that the choice of compression block size is largely constrained by the available cache budget.
+Fig. 4 presents two representative question-answering scenarios.
+In Query 1, when the cache budget is 40, both a relatively large block size (e.g., 7) and a finer block size (e.g., 1) preserve sufficient context and yield correct answers.
+However, when the budget is reduced to 20, the large-block method fails because it must retain entire blocks, leading to the truncation of critical information.
+In contrast, the small-block method enables more flexible selection of tokens and maintains correctness.
+In Query 2, with a budget of 60, the large-block method better preserves token dependencies and the overall semantic structure.
+Meanwhile, the small-block method isolates individual tokens, breaking semantic integrity and producing incorrect answers.
+When the budget drops to 30, both fixed-block-size methods fail, while only our proposed adaptive block size method successfully produces the correct answer.
+These results demonstrate that a fixed block size cannot resolve the trade-off between semantic coherence and memory efficiency across different budgets, highlighting the necessity of adopting adaptive block sizes.
+Quantitative experiments further validate this observation. Table I presents the average LongBench benchmark scores obtained with different block sizes under varying budgets, evaluated on LLama-3-8B.
+When the budget is extremely limited (e.g., 16), token-level compression (block size = 1) achieves the best score results.
+As the budget increases, the optimal block size gradually shifts from 3 to 5, and under sufficient budgets (≥\geq128), the best score performance is achieved with a block size of 9.
+However, using large block sizes under small budgets causes severe semantic loss and accuracy degradation, which demonstrates that a fixed block size cannot adapt to different budgets.
+Although both case studies and experimental results demonstrate that the compression block size must adapt to the memory budget, incorporating this adaptivity into a coherent selection process remains highly non-trivial.
+The core challenge, therefore, is to adaptively adjust the block size under a global budget constraint while preserving essential semantic information.
+III Framework Design
+To enable efficient long-context inference under varied memory budgets, we propose SABlock, a semantic-aware KV cache eviction framework with adaptive block sizes.
+As illustrated in Fig. 5, SABlock ensures semantic awareness through segmentation and segment-guided token scoring, then applies an adaptive block size search within segments to produce the final compressed KV cache. Specifically, SABlock first segments the sequence into semantically coherent spans (①) and enhances token-level scoring with segment-level weights to preserve important contextual units (②).
+On top of this, SABlock introduces a budget-driven adaptive block size search mechanism: given a fixed global cache budget, each segment implicitly receives its share of retained tokens through global selection, and the largest block size that still preserves semantic integrity (i.e., satisfying a predefined fidelity threshold) is then chosen (③).
+Once the block size is determined, SABlock compresses each segment using the chosen block size and merges the selected tokens to construct the final KV cache (④).
+This design naturally aligns compression block size with cache budget, thereby achieving a better trade-off between memory efficiency and inference quality.
+Fig. 5: Overview of SABlock.
+III-A Semantic-Aware Segmentation
+Traditional block-level eviction methods typically divide input sequences into fixed-length chunks without regard for natural language structure, which often disrupts semantic continuity and causes critical contextual information to be lost. To improve the coherence of compressed representations, we first segment the sequence into a set of semantically aligned spans {S1,S2,…,Sk}\{S_{1},S_{2},\dots,S_{k}\}, with each treated as an independent unit in subsequent compression stages.
+Before segmentation, we first identify the region that is eligible for compression. Specifically, SABlock distinguishes between two regions: the compressible region and the uncompressed region. The uncompressed region consists of the final nrcntn_{\text{rcnt}} tokens in the prompt, which form an observation window that provides crucial local context for subsequent generation. Prior works such as SnapKV [12] adopt a similar approach, always preserving the KV cache for these recent prompt tokens to avoid degrading generation quality. Following this convention, we retain the KV cache for the most recent tokens {xt−nrcnt+1,…,xt}\{x_{t-n_{\text{rcnt}}+1},\dots,x_{t}\} and apply eviction only to the earlier portion of the prompt {x1,…,xt−nrcnt}\{x_{1},\dots,x_{t-n_{\text{rcnt}}}\}.
+For the compressible region, SABlock performs semantic-aware segmentation in order to reduce information loss across compression boundaries. Although embedding-based segmentation methods are available, such as those that detect shifts in cosine similarity[23], they tend to introduce significant computational overhead. To address this, we adopt a lightweight punctuation-based strategy that leverages natural language delimiters (such as commas and periods) to identify semantically meaningful boundaries. This method strikes a balance between generation accuracy and runtime efficiency, enabling fast segmentation without the need for additional model inference or large memory buffers. The output is a sequence of segments {S1,S2,…,Sk}\{S_{1},S_{2},\dots,S_{k}\}, each maintaining semantic coherence and serving as an independent unit for the subsequent compression.
+III-B Segment-Guided Token Scoring
+After performing segmentation, the basic unit of compression becomes semantic segments {S1,S2,…,Sk}\{S_{1},S_{2},\dots,S_{k}\} that are aligned with linguistic boundaries.
+However, if SABlock continues to rely solely on the attention scores of individual tokens for global selection, a critical issue emerges. Some segments that are globally important inevitably include tokens whose individual scores are slightly lower, even though these tokens carry essential semantic connections required for maintaining contextual coherence.
+Strict point-wise filtering may remove such tokens, inadvertently fragmenting important segments and breaking semantic continuity.
+Algorithm 1 Segment-Guided Token Scoring
+Input: Attention matrix A∈ℝH×nrcnt×TA\in\mathbb{R}^{H\times n_{\text{rcnt}}\times T}, segments {Sk}\{S_{k}\} in the compressible region, hyperparameters α,η,ε\alpha,\eta,\varepsilon
+Output: Segment-guided token scores s~t\tilde{s}_{t} for all tt in the compressible region
+1
+# Head-mean attention scores
+2
+Compute mean attention A¯q,t\bar{A}_{q,t} across heads via (3)
+3
+foreach token tt in ∪kSk\cup_{k}S_{k} do
+4
+Compute window-based attention score sts_{t} via (4)
+5
+# Segment-level statistics computation
+6
+foreach segment SkS_{k} do
+7
+Tk←{t:t∈Sk}T_{k}\leftarrow\{\,t:t\in S_{k}\,\} // token indices
+8
+Compute IkI_{k} from {st:t∈Tk}\{s_{t}:t\in T_{k}\} via (5)
+9
+Compute DkD_{k} from {st:t∈Tk}\{s_{t}:t\in T_{k}\} via (6)
+10
+Compute segment weight ωk\omega_{k} via (7)
+11
+# Segment-guided token score adjustment
+12
+foreach t∈Rmidt\in R_{\text{mid}} do
+13
+Let k⁡(t)k(t) be the index such that t∈Sk⁡(t)t\in S_{k(t)}
+14
+Compute adjusted token score s~t\tilde{s}_{t} via (8)
+To address this issue, SABlock introduces a segment-guided weighting mechanism on top of window-based attention scores.
+As shown in Algorithm 1, we first compute the head-mean attention and window-based scores for each token (Lines 1–1).
+Next, for each segment SkS_{k}, two statistics (i.e., the average importance IkI_{k} and the entropy-based diversity DkD_{k}) are calculated. These quantities jointly characterize both the overall importance and the distributional spread of attention within segment SkS_{k} (Line 1).
+Finally, each token score is adjusted by a factor derived from the statistics of its corresponding segment (Line 1). This ensures that globally important segments are not fragmented during selection.
+Specifically, let A∈ℝH×nrcnt×TA\in\mathbb{R}^{H\times n_{\text{rcnt}}\times T} denote the attention matrix computed from the observation window[15], where HH is the number of heads, nrcntn_{\text{rcnt}} is the number of recent tokens, and TT is the length of the compressible region. We define A¯∈ℝnrcnt×T\bar{A}\in\mathbb{R}^{n_{\text{rcnt}}\times T} as the mean attention across heads:
+A¯q,t=1H​∑h=1HA⁡[h,q,t],\bar{A}_{q,t}=\frac{1}{H}\sum_{h=1}^{H}A[h,q,t],
+(3)
+where A⁡[h,q,t]A[h,q,t] represents the attention weight from query position qq to key position tt in head hh. Based on this, conventional KV cache eviction methods[15, 16] adopt the window-based attention score sts_{t} as the importance measure of token tt:
+st=∑q=1nrcntA¯q,t.s_{t}=\sum_{q=1}^{n_{\text{rcnt}}}\bar{A}_{q,t}.
+(4)
+In our method, the segment-level weights are modeled from two perspectives, i.e., importance and diversity. For each semantic segment SkS_{k}, we define:
+Ik=1|Tk|​∑t∈Tkst,I_{k}=\frac{1}{|T_{k}|}\sum_{t\in T_{k}}s_{t},
+(5)
+Dk=−1|Tk|∑t∈Tk∑q=1nrcnt,A^q,tlog(A^q,t+ε)D_{k}=-\,\frac{1}{|T_{k}|}\sum_{t\in T_{k}}\sum_{q=1}^{n_{\text{rcnt}}},\hat{A}_{q,t}\,\log\!\bigl(\hat{A}_{q,t}+\varepsilon\bigr)
+(6)
+where TkT_{k} denotes the set of token indices within segment SkS_{k}, and A^q,t=A¯q,t∑q=1nrcntA¯q,t\hat{A}_{q,t}=\frac{\bar{A}_{q,t}}{\sum_{q=1}^{n_{\text{rcnt}}}\bar{A}_{q,t}} is the normalized distribution of attention weights for token tt. Here, IkI_{k} measures the average attention of tokens within the segment, while DkD_{k} captures the dispersion of attention distribution inside the segment.
+We then combine these two indicators into segment-level weights:
+ωk=Ik⋅(1+η​Dk),\omega_{k}=I_{k}\cdot\bigl(1+\eta D_{k}\bigr),
+(7)
+where η≥0\eta\geq 0 is a hyperparameter balancing the importance IkI_{k} and diversity DkD_{k}. This factor strengthens segments that are both important and diverse.
+Subsequently, during token scoring, we adjust each token score using its segment factor:
+s~t=st⋅(1+α⋅ωk⁡(t)),\tilde{s}_{t}=s_{t}\cdot\bigl(1+\alpha\cdot\omega_{k(t)}\bigr),
+(8)
+where k⁡(t)k(t) denotes the segment index of token tt, and α≥0\alpha\geq 0 is a hyperparameter controlling the influence of the segment factor on token scoring. A larger α\alpha increases segment influence, whereas a smaller α\alpha emphasizes individual token scores.
+This mechanism does not alter the relative ordering of tokens within each segment but raises the priority of all tokens in important segments, increasing the likelihood that entire segments are preserved in the global selection. Consequently, the final selection not only retains fine-grained token-level details but also explicitly integrates segment-level weights, effectively preventing semantic fragmentation.
+Algorithm 2 Budget-Driven Adaptive Block Size Search
+Input: Token scores {s~t}\{\tilde{s}_{t}\}, segments {Sk}\{S_{k}\}, token budget BB, maximum block size gmaxg_{\max}, semantic fidelity threshold τ\tau
+1
+Output: Selected block sizes and corresponding token sets {(gk∗,Tk∗)}\{(g_{k}^{*},T_{k}^{*})\}, the final retained token set T∗T^{*}
+2
+# Global Top-BB selection and implicit budgets
+3
+Compute the Top-BB token set TtopBT_{\text{topB}} via (9)
+4
+foreach segment SkS_{k} do
+5
+Compute the implicit budget bkb_{k} via (10)
+6
+# Block size search for each segment
+7
+foreach segment SkS_{k} do
+8
+Gk←{g∈ℕ∣1≤g≤min⁡(|Sk|,bk,gmax)}G_{k}\leftarrow\{g\in\mathbb{N}\mid 1\leq g\leq\min(|S_{k}|,b_{k},g_{\max})\}
+9
+for each gg in descending order of GkG_{k} do
+10
+Partition SkS_{k} into blocks {Ck,m(g)}\{C_{k,m}^{(g)}\}
+11
+Compute block score Φ⁡(Ck,m(g))=∑t∈Ck,m(g)s~t\Phi(C_{k,m}^{(g)})=\sum_{t\in C_{k,m}^{(g)}}\tilde{s}_{t}
+12
+n←0,Tk​(g)←∅n\leftarrow 0,\;T_{k}(g)\leftarrow\emptyset
+13
+for block cc in descending Φ\Phi order do
+14
+if n+|c|≤bkn+|c|\leq b_{k} then
+15
+Tk​(g)←Tk​(g)∪cT_{k}(g)\leftarrow T_{k}(g)\cup c, n←n+|c|n\leftarrow n+|c|
+16
+else
+17
+Select Top-(bk−n)(b_{k}-n) tokens from cc by s~t\tilde{s}_{t}; add to Tk​(g)T_{k}(g)
+18
+break
+19
+S​c​o​r​ek​(g)←∑t∈Tk​(g)s~tScore_{k}(g)\leftarrow\sum_{t\in T_{k}(g)}\tilde{s}_{t}
+20
+Compute token-level baseline score S​c​o​r​ekbase=∑i∈TtopB∩Sks~tScore_{k}^{\mathrm{base}}=\sum_{i\in T_{\text{topB}}\cap S_{k}}\tilde{s}_{t}
+21
+Compute the ratio Rk​(g)R_{k}(g) via (11)
+22
+if Rk​(g)≥τR_{k}(g)\geq\tau then
+23
+gk∗←gg_{k}^{*}\leftarrow g, Tk∗←Tk​(g)T_{k}^{*}\leftarrow T_{k}(g);
+24
+break
+25
+# Aggregate selected tokens
+26
+Obtain the final retained token set T∗T^{*} via (13)
+27
+return {(gk∗,Tk∗)},T∗\{(g_{k}^{*},T_{k}^{*})\},\;T^{*}
+III-C Budget-Driven Adaptive Block Size Search
+Building upon the enhanced token scores s~t\tilde{s}_{t}, SABlock proposes a budget-driven adaptive block size search mechanism.
+The goal is to dynamically determine the most suitable block size for each segment introduced in Section III-A.
+We observe that larger compression budgets allow the use of larger block sizes, while tighter budgets naturally require smaller ones.
+To achieve this, we design an implicit alignment strategy in two steps.
+First, the number of tokens to be retained in each segment, referred to as the implicit budget, is determined through global selection.
+Second, within each segment, we search for the largest block size that can effectively cover the assigned token budget.
+This ensures semantic coherence while naturally aligning block size selection with budget allocation.
+The procedure is summarized in Algorithm 2.
+Given a total budget BB, we first select the Top-BB tokens across the entire sequence (Lines 2–2):
+TtopB=TopBt​(s~t),|TtopB|=B.T_{\mathrm{topB}}=\mathrm{TopB}_{t}(\tilde{s}_{t}),\quad|T_{\mathrm{topB}}|=B.
+(9)
+Segment SkS_{k} is implicitly assigned a budget, defined as the number of its tokens selected in the Top-BB results:
+bk=|TtopB∩Sk|.b_{k}=|T_{\mathrm{topB}}\cap S_{k}|.
+(10)
+With bk{b_{k}} determined, the block size gk{g_{k}} is searched in each segment.
+Larger gkg_{k} correspond to larger blocks, whereas smaller gkg_{k} correspond to finer selection, reducing to token-level methods in the extreme case.
+The candidate set is defined as
+Gk={g∈ℕ∣1≤g≤min⁡(|Sk|,bk,gmax)}G_{k}=\{g\in\mathbb{N}\mid 1\leq g\leq\min(|S_{k}|,b_{k},g_{\max})\},
+which ensures feasible block size choices for each segment while reducing the search space.
+The search starts from the largest candidate block size and proceeds downward.
+For each block size gg, segment SkS_{k} is partitioned into non-overlapping blocks {Ck,m​(g)}\{C_{k,m}(g)\}, each scored as
+Φ⁡(Ck,m(g))=∑t∈Ck,m(g)s~t\Phi(C_{k,m}^{(g)})=\sum_{t\in C_{k,m}^{(g)}}\tilde{s}_{t} (Line 2).
+We select the highest-scoring blocks until bkb_{k} tokens are covered.
+If the final block exceeds bkb_{k}, it is refined by selecting the top tokens inside the block to precisely match the budget (Line 2).
+To ensure quality, SABlock compares the score of the candidate set with the token-level baseline:
+Rk​(g)=S​c​o​r​ek​(g)S​c​o​r​ekbase,R_{k}(g)=\frac{Score_{k}(g)}{Score_{k}^{\mathrm{base}}},
+(11)
+where S​c​o​r​ek​(g)=∑t∈Tk​(g)s~tScore_{k}(g)=\sum_{t\in T_{k}(g)}\tilde{s}_{t} and S​c​o​r​ekbase=∑t∈TtopB∩Sks~tScore_{k}^{\mathrm{base}}=\sum_{t\in T_{\text{topB}}\cap S_{k}}\tilde{s}_{t}.
+Since the baseline always gives the maximum score, Rk​(g)R_{k}(g) acts as a fidelity measure.
+A high Rk​(g)R_{k}(g) indicates that the compressed blocks preserve most of the important tokens, thereby ensuring semantic fidelity at larger block sizes.
+If the ratio exceeds the predefined semantic fidelity threshold (i.e., Rk​(g)≥τR_{k}(g)\geq\tau), the block size gg is considered valid for segment SkS_{k} and selected as a feasible choice.
+The final decision for segment SkS_{k} is:
+gk∗=max⁡{g∈Gk∣Rk​(g)≥τ},Tk∗=Tk​(gk∗).g_{k}^{*}=\max\{g\in G_{k}\mid R_{k}(g)\geq\tau\},\quad T_{k}^{*}=T_{k}(g_{k}^{*}).
+(12)
+If no candidate block size satisfies the condition, we fall back step by step to a smaller gg until reaching token-level selection.
+Finally, the retained tokens across all segments are aggregated into a unified set (Line 2):
+T∗=⋃kTk∗,|T∗|=B.T^{*}=\bigcup_{k}T_{k}^{*},\quad|T^{*}|=B.
+(13)
+These retained tokens are combined with the most recent ones to form the compressed KV cache.
+In Section IV-E, we empirically validate the effectiveness of this strategy and show that it maintains a positive correlation between budget and block size.
+Specifically, when the budget is ample, the method tends to favor larger block sizes.
+In contrast, under more constrained budgets, it adaptively resorts to smaller block sizes approaching token-level selection.
+In summary, SABlock unifies semantic segmentation, segment-guided scoring, and adaptive block size selection into a cohesive framework.
+This design allows the compression process to naturally adapt to varying memory budgets while preserving important contextual information.
+IV Performance Evaluation
+TABLE II: Detailed accuracy comparison on 16 LongBench tasks with different KV cache budgets.
+The optimal result is shown in bold, and the sub-optimal result is underlined.
+Method
+Single-Document QA
+Multi-Document QA
+Summarization
+Few-shot Learning
+Synthetic
+Code
+Avg.
+NrtQA
+Qasper
+MF-en
+HotpotQA
+2WikiMQA
+Musique
+GovReport
+QMSum
+MultiNews
+TREC
+TriviaQA
+SAMSum
+PCount
+PR-en
+Lcc
+R&P
+Llama-3.1-8B-Instruct, KV cache budget=full
+FullKV
+21.0
+12.78
+27.02
+15.83
+16.67
+10.02
+34.2
+22.59
+26.9
+69.5
+91.37
+43.89
+6.94
+72.79
+65.11
+57.14
+37.11
+Llama-3.1-8B-Instruct, KV cache budget=128
+StreamingLLM
+12.47
+5.38
+15.11
+9.71
+12.40
+5.67
+18.06
+19.61
+18.70
+41.00
+82.55
+38.76
+9.38
+71.47
+59.06
+48.89
+29.33
+H2O
+19.63
+8.39
+18.50
+13.08
+13.48
+6.87
+26.68
+21.71
+25.05
+62.00
+88.67
+37.74
+6.44
+68.26
+53.63
+43.00
+32.07
+SnapKV
+17.28
+8.69
+21.84
+14.13
+14.07
+6.76
+22.56
+22.54
+21.72
+61.00
+90.51
+40.29
+7.14
+67.87
+60.65
+49.23
+32.89
+PyramidKV
+14.15
+8.30
+21.65
+12.53
+12.96
+7.07
+22.39
+22.02
+21.65
+63.00
+87.44
+40.65
+7.00
+71.75
+57.23
+47.73
+32.41
+ChunkKV
+18.05
+8.86
+22.39
+12.50
+13.42
+7.11
+22.63
+22.36
+21.65
+64.00
+90.14
+40.96
+7.09
+68.34
+57.59
+50.31
+32.96
+SentenceKV
+19.10
+7.28
+21.74
+15.18
+14.49
+7.91
+22.05
+22.62
+21.44
+46.50
+91.09
+40.87
+6.48
+71.49
+58.87
+48.77
+32.30
+SABlock
+17.38
+8.26
+22.04
+14.16
+14.08
+7.10
+23.02
+22.43
+22.18
+63.50
+90.69
+40.82
+7.00
+70.69
+58.14
+48.17
+33.10
+Llama-3.1-8B-Instruct, KV cache budget=2,048
+StreamingLLM
+15.94
+10.26
+17.56
+11.51
+14.07
+6.47
+28.90
+20.56
+26.63
+66.00
+89.98
+43.27
+7.92
+68.72
+65.07
+56.05
+34.37
+H2O
+21.44
+11.56
+25.23
+15.05
+15.47
+8.86
+32.09
+23.05
+26.96
+69.00
+91.53
+44.18
+5.21
+70.96
+65.22
+56.15
+36.37
+SnapKV
+20.51
+12.13
+26.67
+16.44
+15.82
+9.87
+30.93
+22.98
+26.50
+68.50
+91.18
+43.46
+6.74
+72.30
+64.91
+56.58
+36.60
+PyramidKV
+20.08
+12.29
+26.08
+15.99
+16.29
+9.49
+31.33
+24.06
+26.53
+69.00
+91.37
+43.38
+7.06
+72.22
+65.28
+55.83
+36.63
+ChunkKV
+20.94
+12.04
+26.56
+17.21
+15.52
+9.59
+31.27
+22.95
+26.78
+69.50
+91.54
+43.49
+6.44
+72.96
+64.84
+56.51
+36.76
+SentenceKV
+20.19
+12.27
+27.04
+17.12
+15.96
+9.85
+30.55
+23.04
+26.69
+67.00
+91.54
+43.87
+6.83
+72.96
+65.00
+57.04
+36.68
+SABlock
+20.74
+12.29
+26.33
+16.72
+16.11
+10.11
+31.66
+23.97
+26.96
+70.00
+91.56
+43.75
+7.06
+72.22
+65.30
+56.81
+36.97
+Mistral-7B-Instruct-v0.3, KV cache budget=full
+FullKV
+29.06
+41.58
+52.88
+49.37
+39.01
+28.58
+34.97
+25.66
+27.78
+76.0
+88.59
+47.48
+5.0
+98.5
+61.48
+62.53
+48.03
+Mistral-7B-Instruct-v0.3, KV cache budget=128
+StreamingLLM
+21.42
+22.18
+26.73
+37.73
+33.31
+17.61
+16.78
+19.79
+17.91
+45.50
+85.64
+40.52
+5.50
+80.00
+54.98
+52.02
+36.10
+H2O
+26.01
+29.37
+45.30
+45.65
+32.91
+24.16
+21.98
+23.16
+21.19
+34.00
+88.00
+44.17
+6.00
+94.50
+53.89
+52.40
+40.17
+SnapKV
+26.78
+30.63
+48.03
+47.58
+35.09
+25.35
+21.93
+22.12
+21.84
+69.50
+88.59
+43.91
+6.00
+94.00
+55.70
+55.14
+43.26
+PyramidKV
+26.82
+29.77
+48.18
+48.29
+36.35
+24.61
+22.31
+21.97
+21.33
+69.00
+88.80
+44.07
+4.50
+94.00
+55.39
+52.34
+42.98
+ChunkKV
+25.83
+29.74
+50.69
+46.67
+36.08
+25.24
+21.89
+22.06
+21.21
+71.00
+88.08
+43.27
+4.00
+93.00
+57.57
+57.36
+43.36
+SentenceKV
+25.73
+29.55
+48.18
+48.97
+36.18
+25.19
+21.90
+22.44
+20.76
+47.50
+90.16
+43.33
+8.00
+94.00
+54.54
+53.35
+41.86
+SABlock
+27.08
+30.64
+50.19
+47.33
+36.34
+25.79
+22.38
+22.68
+21.81
+69.00
+89.02
+44.43
+6.50
+95.50
+55.47
+53.72
+43.62
+Mistral-7B-Instruct-v0.3, KV cache budget=2,048
+StreamingLLM
+25.91
+32.00
+35.77
+44.90
+35.05
+20.18
+27.63
+21.76
+26.94
+70.50
+89.14
+45.93
+4.50
+81.00
+62.24
+60.68
+42.76
+H2O
+29.60
+38.75
+52.79
+49.43
+38.39
+27.62
+29.02
+24.98
+27.59
+63.50
+89.11
+47.16
+5.50
+99.00
+61.46
+61.24
+46.57
+SnapKV
+30.27
+40.52
+53.07
+49.72
+38.55
+28.40
+30.91
+25.41
+27.38
+75.50
+88.86
+47.27
+5.00
+99.00
+62.21
+62.23
+47.77
+PyramidKV
+29.41
+40.31
+52.81
+50.14
+39.57
+28.63
+30.22
+25.44
+27.44
+75.50
+89.27
+46.14
+4.00
+98.50
+61.76
+61.98
+47.57
+ChunkKV
+29.32
+39.38
+52.34
+50.19
+38.66
+28.65
+31.01
+25.48
+27.84
+76.00
+88.64
+47.11
+5.50
+99.00
+62.07
+62.13
+47.71
+SentenceKV
+29.72
+40.42
+52.75
+50.19
+39.63
+28.44
+30.00
+24.82
+27.57
+75.50
+88.81
+46.88
+5.50
+98.50
+61.91
+62.72
+47.71
+SABlock
+30.26
+41.22
+53.38
+50.49
+39.36
+29.15
+30.62
+25.53
+27.84
+76.00
+89.57
+47.27
+5.50
+98.50
+62.11
+62.07
+48.01
+Fig. 6: Average score performance across 16 LongBench tasks under varying KV cache budgets.
+IV-A Experimental Settings
+Experimental Models: We conduct experiments on two widely adopted open-source large language models, namely Llama-3.1-8B-Instruct [3] and Mistral-7B-Instruct-v0.3 [24], to validate the effectiveness of our method and baselines. Both models adopt grouped-query attention (GQA) to improve decoding efficiency, but differ in their overall design (i.e., Llama uses rotary embeddings; Mistral features sliding-window attention), offering complementary perspectives on KV cache behavior across model families.
+Baseline Methods: We compare SABlock with six representative methods.
+(1) Position-based: StreamingLLM [11] adopts a sliding-window strategy that retains the initial and most recent tokens.
+(2) Attention-based: These methods score tokens with attention distributions and can be divided into three categories.
+① Token-level: H2O [12] evicts tokens by cumulative attention scores; SnapKV [15] scores tokens using attention scores obtained from an observation window; PyramidKV [16] assigns different cache budgets to each layer.
+② Block-level: ChunkKV [17] groups consecutive tokens into fixed-size blocks.
+③ Sentence-level: SentenceKV [19] preserves entire sentences based on syntactic segmentation.
+Benchmark Datasets: We evaluate on two representative long-context benchmarks.
+(1) LongBench [22] tests a model’s ability to reason over extended contexts across 16 tasks, spanning QA, summarization, code completion, and synthetic reasoning.
+(2) Needle-in-a-Haystack (NIAH) [25] focuses on retrieval and localization of critical information, assessing performance on single-needle, multi-needle, and multi-needle reasoning tasks.
+These two benchmarks jointly evaluate semantic comprehension and factual retention, providing a holistic view of KV cache compression performance.
+Performance Metrics: We report four metrics to comprehensively evaluate each method.
+(1) LongBench average score: the mean accuracy across all 16 tasks, following the official LongBench evaluation protocol [22], which adopts F1 for QA, Rouge-L for summarization, accuracy for synthetic reasoning, and edit similarity for code generation.
+(2) NIAH accuracy: the percentage of correctly retrieved or reasoned needles across different NIAH sub-tasks [25].
+(3) Peak memory usage: the GPU memory consumed during decoding.
+(4) Decoding latency: Token-by-Token (TBT) latency under sequential decoding without batching.
+(a) (a) FullKV, accuracy 100.0%.
+(b) (b) StreamingLLM, accuracy 36.9%.
+(c) (c) H2O, accuracy 44.6%.
+(d) (d) ChunkKV, accuracy 83.3%.
+(e) (e) SentenceKV, accuracy 72.1%.
+(f) (f) SABlock, accuracy 99.9%.
+Fig. 7: NIAH retrieval heatmaps on Llama-3.1-8B-Instruct with KV cache budget of 96 under 8K context length.
+The horizontal axis denotes the total context length (in tokens), while the vertical axis denotes the relative depth at which the needle is inserted.
+Color intensity represents the retrieval score, with greener cells indicating higher ROUGE-based similarity to the hidden needle.
+Implementation Details: (1) Hyperparameters Settings: In segment-guided token scoring, we set the smoothing factor ε=10−6\varepsilon=10^{-6} to avoid numerical instability in the entropy computation. We use α=0.9\alpha=0.9 to control the influence of segment-level importance, and set η=1.0\eta=1.0 to scale the contribution of dispersion in the segment weight calculation. In budget-driven adaptive block size search, we use a maximum block size gmax=13g_{\max}=13, and a semantic fidelity threshold τ=0.85\tau=0.85. All these hyperparameters are determined empirically based on experimental results.
+Moreover, we retain the latest nrcnt=8n_{\text{rcnt}}=8 tokens of each sequence to ensure prompt stability and conversational coherence[16]. (2) Runtime Environment: All experiments are conducted on a server with 4× NVIDIA A100 80GB PCIe GPUs and 2× Intel Xeon Platinum 8360Y CPUs [26].
+We use Ubuntu 22.04, CUDA 12.6, and PyTorch 2.6.0. FlashAttention-2 is enabled for efficient long-context attention computation, and KV cache compression is applied after the prefill stage to control peak memory usage.
+IV-B Overall Performance on LongBench
+The overall evaluation results on the LongBench benchmark are presented in Table II and Fig. 6. The table reports detailed scores across different tasks, while the figure summarizes the average score performance over 16 sub-tasks under varying cache budgets.
+In general, the performance of all methods improves as the cache budget increases, but the degree of improvement and relative differences vary significantly.
+Traditional approaches such as StreamingLLM and H2O suffer from a sharp accuracy drop under extremely small cache budgets (e.g., 128), as they can only retain partial local information and fail to preserve long-range dependencies.
+SnapKV and PyramidKV exhibit more stable performance with larger caches, but their reliance on fixed block sizes imposes bottlenecks in tasks such as multi-document QA and summarization.
+In contrast, SABlock maintains high performance even under tight cache budgets and gradually approaches the full-cache baseline as the cache budget increases. For example, with only 2,048 KV entries preserved, it significantly reduces memory consumption while still matching or outperforming FullKV.
+Moreover, with 1.8% of the KV cache retained (KV cache budget = 128), the performance drops by only 9.99% compared to the full-cache baseline.
+In summary, SABlock consistently demonstrates a leading trend across different model architectures, indicating that its semantic-aware adaptive block size strategy effectively avoids semantic fragmentation and ensures good generalization.
+IV-C Context Retrieval under NIAH
+We further evaluate SABlock on the NIAH benchmark to assess its retrieval capability under long-context settings. The NIAH test is designed to examine a model’s ability to accurately retrieve embedded key information from lengthy documents, where the challenge lies in the random distribution and variable depth of the target information. This poses stricter requirements on the information retention ability of KV cache compression methods.
+In this experiment, we conduct evaluations using the Llama-3.1-8B-Instruct model with a context length of 8K tokens and a fixed KV cache budget of 96, comparing against baselines including FullKV, StreamingLLM, H2O, ChunkKV, and SentenceKV. Even with 80GB of GPU memory, it is infeasible to concurrently process 20 inference requests with an 8K context length, highlighting the necessity of efficient KV cache compression.
+As shown in Fig. 7, SABlock achieves an accuracy of 99.9% with only 96 KV entries, closely matching FullKV (100%) and significantly outperforming other baselines such as StreamingLLM (36.9%) and H2O (44.6%). SABlock consistently retrieves the target information (needle) across varying insertion depths and sequence lengths, exhibiting strong robustness. For instance, even when the needle is deeply buried in a 7K+ token document, SABlock retains sufficient KV entries for the relevant segment and reconstructs its content through coarse-grained blocks.
+We attribute this strong performance to two key factors: (1) semantic segmentation ensures that needles embedded within coherent spans are preserved as a whole, reducing fragmentation; (2) adaptive block size allows the use of larger blocks when segments contain concentrated importance, increasing coverage efficiency. Compared to other approaches, SABlock dynamically allocates capacity in a content-aware manner, making it particularly well-suited for retrieval-heavy long-context scenarios.
+Fig. 8: Peak memory usage (left) and decoding latency (right) on a single A100 GPU across different context lengths.
+TABLE III: Ablation study of SABlock.
+Approach
+Avg. Score
+Relative Drop
+SABlock
+33.78
+–
+w/o Segment-Guided Scoring
+33.03
+−-2.22%
+w/o Adaptive Block Size
+33.36
+−-1.24%
+TABLE IV: Block size ablation.
+Approach
+Avg. Score
+Relative Drop
+Adaptive (Ours)
+33.78
+–
+Token-level
+32.15
+−-4.83%
+Block-level (block size=5)
+32.81
+−-2.87%
+Block-level (block size=10)
+32.20
+−-4.68%
+IV-D Evaluation of Resource Consumption
+To comprehensively assess the efficiency improvements brought by SABlock, we evaluate the resource consumption from two aspects: peak memory and decoding latency. All experiments are conducted using Mistral-7B-Instruct-v0.3 with FlashAttention-2 [27], running on a single NVIDIA A100 80GB GPU. Except for the full-cache baseline, all methods use a fixed KV cache budget of 1,024.
+Peak Memory: As shown in the left plot of Fig. 8, SABlock consistently reduces peak memory usage across various context lengths. In long-context scenarios (e.g., 128K tokens), SABlock significantly reduces the budget of the KV cache compared to FullKV, resulting in a 46.28% drop in peak memory usage and effectively alleviating memory bottlenecks. This improvement is crucial in practice. For example, a 256K context length already leads to GPU memory overflow on A100, which is roughly equivalent to handling 32 inference requests with an 8K context length (batch size is 32), a highly common serving scenario.
+By compressing the KV cache, SABlock not only supports longer contexts but also enables higher concurrency under limited hardware memory, making efficient deployment feasible.
+Decoding Latency: The right plot of Fig. 8 illustrates decoding latency. As input length increases, FullKV experiences a sharp rise in latency due to attention computation costs. In contrast, SABlock compresses the KV cache after the prefill stage, effectively reducing the computational burden per decoding step. At an input length of 128K tokens, latency is reduced by 89.49%, achieving a 9.5×\times speedup. This brings tangible benefits to real-time applications such as dialogue systems, where fast token generation is crucial.
+IV-E Ablation Studies
+To evaluate the contribution of each module in SABlock, we conduct ablation experiments based on Llama-3.1-8B-Instruct under a fixed KV cache budget of 96, using the LongBench average score as the metric.
+SABlock is composed of two key components: (1) Segment-Guided Token Scoring, which enhances token importance by injecting segment-level semantics, and (2) Budget-Driven Adaptive Block Size Search, which dynamically selects the block size per segment according to retained positions and budget availability.
+We first analyze the effectiveness of these two mechanisms, and then further examine the block size selection trends under varying budgets to demonstrate that our search strategy naturally adapts block size choices to the budget, which in turn helps maintain generation quality.
+Effectiveness of Segment-Guided Token Scoring: Table III shows that removing the segment-guided token scoring mechanism (w/o Segment-Guided Scoring) leads to a performance drop of 2.22%.
+This validates that relying solely on token-level attention scores can cause semantic fragmentation, as globally important segments may contain some tokens with relatively low scores.
+By propagating segment-level importance and diversity into token scoring, this mechanism raises the collective priority of key segments, ensuring that semantically complete chunks are preserved in global selection.
+Effectiveness of Budget-Driven Adaptive Block Size Search: As shown in the same table, disabling adaptive block size selection (w/o Adaptive Block Size) causes a 1.24% drop in LongBench average score.
+To further analyze different strategies, Table IV compares our adaptive approach with token-level and fixed block-level baselines (g=5,10g{=}5,10).
+The adaptive strategy consistently outperforms these alternatives.
+While token-level compression captures fine-grained details, it risks breaking semantic continuity across tokens.
+Fixed block-level methods, although simple, misalign with semantic boundaries and require careful tuning of block size.
+Our adaptive mechanism effectively balances fidelity and efficiency by tailoring the block size to both content structure and memory constraints.
+Fig. 9: Stacked proportions of selected block sizes gg under different KV cache budgets KK (left yy-axis). The solid line (right yy-axis) shows the average block size g¯\bar{g}, indicating that larger budgets favor larger blocks while smaller budgets favor smaller ones.
+Block Size Selection Trends: Fig. 9 illustrates the distribution of selected block sizes under varying cache budgets KK.
+As the budget increases, larger block sizes (e.g., g=13g{=}13) are used more frequently, while smaller block sizes (e.g., g=1,2,3g{=}1,2,3) dominate under tighter budgets.
+This trend naturally arises from our top-down search procedure, where larger blocks are preferentially selected when they can efficiently cover global positions without violating segment-level fidelity.
+To balance expressiveness and efficiency, we limit the search space to {1,2,3,5,7,9,11,13}\{1,2,3,5,7,9,11,13\}, which still provides sufficient coverage.
+These results demonstrate that SABlock’s compression block size adapts naturally to the available memory budget, without requiring explicit budget segmentation or cross-segment coordination.
+IV-F Sensitivity Analysis
+To assess the robustness of SABlock to various hyperparameter settings, we conduct sensitivity analyses on its two major components: (1) segment-guided token scoring, which involves weighting factors η\eta and α\alpha, and (2) budget-driven block size search, which is controlled by the semantic fidelity threshold τ\tau. All experiments are conducted under a fixed KV cache budget of 96 using the Llama-3.1-8B-Instruct model on LongBench. As shown in Fig. 10, SABlock maintains stable performance across a wide range of values, indicating low sensitivity and ease of deployment.
+(a) Impact of η\eta and α\alpha.
+(b) Impact of τ\tau.
+Fig. 10: Sensitivity of SABlock under KV budget of 96. Bars report LongBench average scores.
+Impact of Weighting Factors η\eta and α\alpha in Segment-Guided Scoring: Fig. 10(a) presents the LongBench average scores under various combinations of η\eta and α\alpha. All tested configurations yield scores around 33 with minor fluctuations, demonstrating strong robustness of our method. Along the α\alpha dimension, increasing its value from 0.1 to 0.9 does not lead to significant changes. Only when α\alpha is too small (e.g., 0.1) does the score drop slightly, indicating that the segment-guided adjustment becomes too weak, and the behavior degenerates to token-level scoring. Along the η\eta dimension, which controls the influence of intra-segment attention diversity, performance remains highly stable. This suggests that once the segment-level signal is sufficiently strong, additional diversity weighting introduces little variance.
+Impact of Semantic Fidelity Threshold τ\tau in Block Size Search: Fig. 10(b) reports the impact of τ\tau on compression behavior and downstream performance.
+A smaller τ\tau leads to more aggressive compression with larger block sizes, potentially sacrificing fine-grained details;
+a larger τ\tau favors smaller block sizes and higher local fidelity but risks fragmenting semantically coherent units.
+We observe that performance varies smoothly within the range τ∈[0.80,1.00]\tau\in[0.80,1.00], with the best overall result achieved at τ≈0.85\tau\approx 0.85, which we set as the default choice in all experiments.
+This balanced value allows SABlock to retain sufficient semantic information while still enabling effective compression.
+Across all tested hyperparameters, SABlock demonstrates low sensitivity and stable performance. These results validate SABlock as a practical and reliable KV cache compression solution, capable of maintaining high quality under diverse conditions and strict resource constraints.
+V Related Work
+Efficient Inference for LLMs: LLMs face substantial computational and memory overhead during inference, which has motivated a variety of efficient inference techniques. To address the high complexity of attention, existing approaches propose variants such as Multi-Query Attention [28, 29], Kernel-based Attention [30], and Low-Rank Attention [31, 32], which reduce computational and memory costs. Another line of work focuses on dynamic inference by adaptively selecting model sub-structures based on the input, where early exiting [33, 34] allows models to terminate inference at different layers, thereby reducing computation and latency. At the system level, operator fusion [35, 36] reduces memory accesses and kernel launch overhead, scheduling and batching [37, 38, 39] improve hardware utilization, and memory management [40, 41, 15, 18] alleviates the long-context bottleneck by compressing the KV cache through techniques such as quantization, merging, eviction, or offloading. Our work primarily focuses on KV cache eviction within memory management and proposes a new eviction framework that reduces memory requirements during inference.
+KV Cache Eviction: The core objective of KV cache eviction is to reduce memory usage while preserving the critical information required for generation. Early approaches, such as StreamingLLM [11], adopt a sliding-window strategy that retains the initial and most recent tokens, but this ignores semantic importance and struggles with tasks requiring long-range dependencies. Later methods began to score token importance: H2O [12] removes low-scoring tokens based on cumulative attention scores, SnapKV [15] leverages an observation window to extract attention distributions and identify key tokens, PyramidKV [16] assigns different cache budgets across layers in a hierarchical manner to improve the preservation of critical information, and ChunkKV [17] groups consecutive tokens into fixed-size blocks to preserve local semantic continuity. However, most of these methods perform eviction at a fixed block size (either token-level or block-level), leaving adaptive block size largely unexplored. To address the semantic fragmentation caused by fixed-block-size compression, SentenceKV [19] performs compression at the sentence level, treating each sentence as a unit. However, it still suffers from redundant retention when sentences are long. In contrast, SABlock innovatively introduces semantic-aware adaptive block size compression, improving memory efficiency while preserving contextual coherence.
+VI Conclusions
+In this work, we propose SABlock, a semantic-aware KV cache eviction framework with adaptive block size, to address the limitations of existing token-level, block-level, and sentence-level compression methods. By dynamically selecting the block size based on segment-level semantics and global memory budgets, SABlock effectively balances memory efficiency and contextual coherence. Extensive experiments on long-context benchmarks demonstrate that SABlock significantly outperforms state-of-the-art baselines on diverse benchmarks and under different memory constraints.
+References
+[1]
+S. Zhang, S. Roller, N. Goyal, M. Artetxe, M. Chen, S. Chen, C. Dewan, M. Diab, X. Li, X. V. Lin, T. Mihaylov, M. Ott, S. Shleifer, K. Shuster, D. Simig, P. S. Koura, A. Sridhar, T. Wang, and L. Zettlemoyer, “OPT: Open pre-trained transformer language models,” https://arxiv.org/abs/2205.01068, 2022.
+[2]
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, and et al., “GPT-4 technical report,” arXiv preprint arXiv:2303.08774, 2023. [Online]. Available: https://arxiv.org/abs/2303.08774
+[3]
+A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan, and et al., “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783, 2024. [Online]. Available: https://arxiv.org/abs/2407.21783
+[4]
+L. Huang, S. Cao, N. N. Parulian, H. Ji, and L. Wang, “Efficient attentions for long document summarization,” in Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL-HLT), 2021, pp. 1419–1436.
+[5]
+E. Kamalloo, N. Dziri, C. L. A. Clarke, and D. Rafiei, “Evaluating open-domain question answering in the era of large language models,” in Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers). Toronto, Canada: Association for Computational Linguistics, July 9–14 2023, pp. 5591–5606.
+[6]
+D. Waddington, J. Colmenares, J. Kuang, and F. Song, “Kv-cache: A scalable high-performance web-object cache for manycore,” in 2013 IEEE/ACM 6th International Conference on Utility and Cloud Computing (UCC). IEEE, 2013, pp. 123–130.
+[7]
+M. Ott, S. Edunov, A. Baevski, A. Fan, S. Gross, N. Ng, D. Grangier, and M. Auli, “fairseq: A fast, extensible toolkit for sequence modeling,” in Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics (Demonstrations), W. Ammar, A. Louis, and N. Mostafazadeh, Eds. Minneapolis, Minnesota: Association for Computational Linguistics, June 2019, pp. 48–53.
+[8]
+J. Yan, J. Liu, H. Xu, and L. Huang, “Accelerating mixture-of-expert inference with adaptive expert split mechanism,” arXiv preprint arXiv:2509.08342, 2025.
+[9]
+J. Y. Yang, B. Kim, J. Bae, B. Kwon, G. Park, E. Yang, S. J. Kwon, and D. Lee, “No token left behind: Reliable kv cache compression via importance-aware mixed precision quantization,” 2024. [Online]. Available: https://arxiv.org/abs/2402.18096
+[10]
+R. Pope, S. Douglas, A. Chowdhery, J. Devlin, J. Bradbury, A. Levskaya, J. Heek, K. Xiao, S. Agrawal, and J. Dean, “Efficiently scaling transformer inference,” arXiv preprint arXiv:2211.05102, 2022. [Online]. Available: https://arxiv.org/abs/2211.05102
+[11]
+G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis, “Efficient streaming language models with attention sinks,” in Proceedings of the International Conference on Learning Representations (ICLR), Vienna, Austria, May 2024, pp. 1–21.
+[12]
+Z. Zhang, Y. Sheng, T. Zhou, T. Chen, L. Zheng, R. Cai, Z. Song, Y. Tian, C. Ré, C. Barrett, Z. Wang, and B. Chen, “H2o: Heavy-hitter oracle for efficient generative inference of large language models,” in Proceedings of the Advances in Neural Information Processing Systems (NeurIPS), New Orleans, LA, USA, Dec 2023.
+[13]
+J. Zhao, Z. Fang, S. Li, S. Yang, and S. He, “Buzz: Beehive-structured sparse kv cache with segmented heavy hitters for efficient llm inference,” https://arxiv.org/abs/2410.23079, 2024.
+[14]
+Y. Chen, G. Wang, J. Shang, S. Cui, Z. Zhang, T. Liu, S. Wang, Y. Sun, D. Yu, and H. Wu, “NACL: A general and effective kv cache eviction framework for llms at inference time,” CoRR, vol. abs/2408.03675, 2024. [Online]. Available: https://arxiv.org/abs/2408.03675
+[15]
+Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye, T. Cai, P. Lewis, and D. Chen, “Snapkv: Llm knows what you are looking for before generation,” in Proceedings of the Thirty-eighth Annual Conference on Neural Information Processing Systems (NeurIPS), 2024.
+[16]
+Z. Cai, Y. Zhang, B. Gao, Y. Liu, T. Liu, K. Lu, W. Xiong, Y. Dong, B. Chang, J. Hu, and W. Xiao, “Pyramidkv: Dynamic kv cache compression based on pyramidal information funneling,” 2024. [Online]. Available: https://arxiv.org/abs/2406.02069
+[17]
+X. Liu, Z. Tang, P. Dong, Z. Li, B. Li, X. Hu, and X. Chu, “Chunkkv: Semantic-preserving kv cache compression for efficient long-context llm inference,” arXiv preprint arXiv:2502.00299, 2025. [Online]. Available: https://arxiv.org/abs/2502.00299
+[18]
+C. Xiao, P. Zhang, X. Han, G. Xiao, Y. Lin, Z. Zhang, Z. Liu, and M. Sun, “InfLLM: Training-free long-context extrapolation for llms with an efficient context memory,” in Proceedings of the Thirty-eighth Annual Conference on Neural Information Processing Systems (NeurIPS), 2024.
+[19]
+Y. Zhu, A. Falahati, D. Yang et al., “Sentencekv: Efficient llm inference via sentence-level semantic kv caching,” arXiv preprint arXiv:2504.00970, 2025, accessed: May 6, 2025. [Online]. Available: https://arxiv.org/abs/2504.00970
+[20]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin, “Attention is all you need,” 2023. [Online]. Available: https://arxiv.org/abs/1706.03762
+[21]
+Z. Dai, Z. Yang, Y. Yang, J. Carbonell, Q. Le, and R. Salakhutdinov, “Transformer-xl: Attentive language models beyond a fixed-length context,” arXiv preprint arXiv:1901.02860, 2019.
+[22]
+Y. Bai, X. Lv, J. Zhang, H. Lyu, J. Tang, Z. Huang, Z. Du, X. Liu, A. Zeng, L. Hou, and et al., “Longbench: A bilingual, multitask benchmark for long context understanding,” arXiv preprint arXiv:2308.14508, 2023.
+[23]
+LangChain, “Langchain: Building applications with llms through composability,” GitHub repository, 2022. [Online]. Available: https://github.com/langchain-ai/langchain
+[24]
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier et al., “Mistral 7b,” arXiv preprint arXiv:2310.06825, 2023.
+[25]
+G. Kamradt, “Needle in a haystack - pressure testing llms,” https://github.com/gkamradt/LLM-Needle-Haystack, 2023, gitHub repository.
+[26]
+J. Liu, J. Yan, J. Qi, H. Xu, S. Wang, C. Qiao, and L. Huang, “Adaptive local update and neural composition for accelerating federated learning in heterogeneous edge networks,” IEEE Transactions on Networking, 2025.
+[27]
+T. Dao, “Flashattention-2: Faster attention with better parallelism and work partitioning,” arXiv preprint arXiv:2307.08691, 2023.
+[28]
+J. Ainslie, J. Lee-Thorp, M. de Jong, Y. Zemlyanskiy, F. Lebrón, and S. Sanghai, “Gqa: Training generalized multi-query transformer models from multi-head checkpoints,” arXiv preprint arXiv:2305.13245, 2023.
+[29]
+N. Shazeer, “Fast transformer decoding: One write-head is all you need,” arXiv preprint arXiv:1911.02150, 2019.
+[30]
+K. Choromanski, V. Likhosherstov, D. Dohan, X. Song, A. Gane, T. Sarlos, P. Hawkins, J. Davis, A. Mohiuddin, L. Kaiser et al., “Rethinking attention with performers,” arXiv preprint arXiv:2009.14794, 2020.
+[31]
+S. Wang, B. Z. Li, M. Khabsa, H. Fang, and H. Ma, “Linformer: Self-attention with linear complexity,” arXiv preprint arXiv:2006.04768, 2020.
+[32]
+X. Ma, X. Kong, S. Wang, C. Zhou, J. May, H. Ma, and L. Zettlemoyer, “Luna: Linear unified nested attention,” in Advances in Neural Information Processing Systems (NeurIPS), vol. 34, 2021, pp. 2441–2453.
+[33]
+S. Fan, X. Jiang, X. Li, X. Meng, P. Han, S. Shang, A. Sun, Y. Wang, and Z. Wang, “Not all layers of llms are necessary during inference,” arXiv preprint arXiv:2403.02181, 2024.
+[34]
+M. Elhoushi, A. Shrivastava, D. Liskovich, B. Hosmer, B. Wasti, L. Lai, A. Mahmoud, B. Acun, S. Agarwal, A. Roman, A. Aly, B. Chen, and C.-J. Wu, “Layerskip: Enabling early exit inference and self-speculative decoding,” in Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), L.-W. Ku, A. Martins, and V. Srikumar, Eds., Aug 2024.
+[35]
+X. Luo, Z. Liu, Y. Zhou, S. Fang, Z. Huang, Y. Feng, C. Zhang, S. Sun, Z. Zheng, J. Leng et al., “Clusterfusion: Expanding operator fusion scope for llm inference via cluster-level collective primitive,” arXiv preprint arXiv:2508.18850, 2025.
+[36]
+M. Salmani and I. Soloveychik, “Llm inference acceleration via efficient operation fusion,” arXiv preprint arXiv:2502.17728, 2025.
+[37]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C.-H. Yu, J. Gonzalez, H. Zhang, and I. Stoica, “Efficient memory management for large language model serving with pagedattention,” in Proceedings of the 29th Symposium on Operating Systems Principles (SOSP), 2023, pp. 611–626.
+[38]
+C. Holmes, M. Tanaka, M. Wyatt, A. A. Awan, J. Rasley, S. Rajbhandari, R. Y. Aminabadi, H. Qin, A. Bakhtiari, L. Kurilenko, and Y. He, “Deepspeed-fastgen: High-throughput text generation for llms via mii and deepspeed-inference,” arXiv preprint arXiv:2401.08671, 2024.
+[39]
+ModelTC, “Lightllm,” https://github.com/ModelTC/lightllm, 2024, online; accessed February 2024.
+[40]
+R. Liu, H. Bai, H. Lin, Y. Li, H. Gao, Z. Xu, L. Hou, J. Yao, and C. Yuan, “IntactKV: Improving large language model quantization by keeping pivot tokens intact,” in Findings of the Association for Computational Linguistics ACL 2024, L.-W. Ku, A. Martins, and V. Srikumar, Eds. Bangkok, Thailand and virtual meeting: Association for Computational Linguistics, Aug 2024, pp. 7716–7741. [Online]. Available: https://aclanthology.org/2024.findings-acl.460
+[41]
+Z. Wang, B. Jin, Z. Yu, and M. Zhang, “Model tells you where to merge: Adaptive kv cache merging for llms on long-context tasks,” 2024. [Online]. Available: https://arxiv.org/abs/2407.08454
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

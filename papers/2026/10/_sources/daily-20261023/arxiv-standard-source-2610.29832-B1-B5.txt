@@ -1,0 +1,628 @@
+https://arxiv.org/html/2610.29832v1
+B.1 Construction of semantic class set and handling unobserved ground-truth classes
+Previous work on semantic calibration [ 33 ] establishes evaluation metrics based entirely on the sampled distribution. When adapting this purely sample-based perspective into a training objective, if the correct semantic class is absent from the generated samples, the evidential loss ℒ MSE \mathcal{L}_{\text{MSE}} can still be computed, as the label vector 𝒒 \bm{q} then simply consists of all zero entries. Consequently, the gradient only suppresses the incorrect overconfident completions, but lacks the effect of increasing the likelihoods of the correct completions.
+To remedy this and ensure the gradient direction toward the ground-truth class established in Corollary 1 remains available, S-EDL conditionally introduces s ∗ s^{*} into the semantic class set 𝒮 x \mathcal{S}_{x} strictly when it is absent from the generated samples. This guarantees that we do not artificially inflate the sample count or alter the distribution when the model naturally generates the correct answer. We apply this conditional handling as follows to maximize consistency across the training and evaluation pipelines.
+•
+When the ground-truth class is already present in the sampled generations, we use the sampled set directly without any modifications during both training and evaluation.
+•
+When the ground-truth class is unobserved during training, we explicitly include it by feeding the ground-truth sequence y y to the model to compute its log-likelihood and applying a penalty of − 4.6 -4.6 . This penalty scales down its probability mass to reflect that the sequence was not naturally sampled, while still preserving the gradient path for optimization.
+•
+When the ground-truth class is unobserved during evaluation, we similarly include it but strictly set its sampled count to 0 0 , ensuring the evaluation accurately reflects the true generative distribution of the model.
+Deterministically adding the ground-truth completion y y means the estimator is no longer a pure Monte Carlo estimator based solely on samples from p 𝜽 p_{\bm{\theta}} . Instead, it creates a hybrid objective that mixes the generative distribution of the model with a supervised finite-candidate signal. We accept this theoretical trade-off to maintain a robust and differentiable training path.
+B.2 Find-first algorithm for semantic clustering
+Algorithm 1 Find-first semantic clustering
+1:
+generated sequences z ( 1 ) , … , z ( N ) z^{(1)},\dots,z^{(N)} ; equivalence oracle Match ;
+string similarity function σ ⁡ ( ⋅ , ⋅ ) \sigma(\cdot,\cdot)
+2:
+clusters 𝒞 \mathcal{C} , each a pair ( r , M ) (r,M) of representative answer and member set
+3:
+𝒞 ← ⟨ ⟩ \mathcal{C}\leftarrow\langle\ \rangle
+4:
+for i = 1 , … , N i=1,\dots,N do
+5:
+K ← | 𝒞 | K\leftarrow|\mathcal{C}|
+6:
+π ← arg ⁡ sort k ∈ { 1 , … , K } ⁡ ( − σ ⁡ ( z ( i ) , r k ) ) \pi\leftarrow\arg\!\operatorname{sort}_{k\in\{1,\dots,K\}}\big(-\sigma(z^{(i)},r_{k})\big)
+⊳ \triangleright order reps by descending similarity to z ( i ) z^{(i)}
+7:
+j ← Match ​ ( z ( i ) , [ r π ⁡ ( 1 ) , … , r π ⁡ ( K ) ] ) j\leftarrow\textsc{Match}\big(z^{(i)},\;[r_{\pi(1)},\dots,r_{\pi(K)}]\big)
+⊳ \triangleright position in list, or ⊥ \bot if none equivalent
+8:
+if j ≠ ⊥ j\neq\bot then
+9:
+M π ⁡ ( j ) ← M π ⁡ ( j ) ∪ { z ( i ) } M_{\pi(j)}\leftarrow M_{\pi(j)}\cup\{z^{(i)}\}
+⊳ \triangleright assign z ( i ) z^{(i)} to the matched cluster
+10:
+else
+11:
+append ( r , M ) ← ( z ( i ) , { z ( i ) } ) (r,M)\leftarrow(z^{(i)},\{z^{(i)}\}) to 𝒞 \mathcal{C}
+⊳ \triangleright open a new cluster
+12:
+end if
+13:
+end for
+14:
+return 𝒞 \mathcal{C}
+Sequence-level training methods like Dr.GRPO require comparing N N sampled sequences against the ground truth answer, resulting in an O ⁡ ( N ) O(N) computational complexity per prompt. By contrast, computing the evidential loss in S-EDL requires grouping the generated sequences into semantic classes. A naive pairwise comparison between all sequences scales as O ⁡ ( N 2 ) O(N^{2}) , imposing a substantial computational bottleneck.
+To address this scaling gap, we introduce a find-first semantic clustering algorithm as shown in Algorithm 1 . Instead of brute-force pairwise comparison, the algorithm maintains a growing list of cluster representatives and dynamically evaluates each new sequence against them. To optimize the comparison order, we sort the existing representatives by descending string similarity to the new sequence using rapidfuzz [ 2 ] . The equivalence oracle Match is then instantiated in two ways depending on the evaluation domain.
+Mathematical tasks Match ​ ( z , [ r 1 , … , r K ] ) \textsc{Match}(z,[r_{1},\dots,r_{K}]) evaluates equivalence using a symbolic verifier (e.g. math-verify [ 21 ] ). It sequentially checks the candidate against the sorted representatives and returns the first index j j where z ≡ r j z\equiv r_{j} , returning ⊥ \bot if no match exists. The string similarity ordering heavily biases the search toward early termination.
+General tasks For general subject tasks that rely on an LLM as a judge, Match replaces iterative pairwise checks with a single listwise classification prompt. The judge evaluates the sequence against all current cluster representatives in one forward pass, directly returning the matched index in { 1 , … , K } \{1,\dots,K\} or ⊥ \bot . The system is shown in Section C.5.1 . In this context, the string similarity ordering ensures the most plausible candidate appears first in the prompt context. By grouping the comparisons into a single listwise operation, the temporal complexity of semantic clustering is reduced to exactly O ⁡ ( N ) O(N) , identically matching the scaling of Dr.GRPO.
+B.3 Dataset construction
+GSM8K
+We use the original training and test splits from the official release, along with the provided solutions and chain-of-thought reasoning steps.
+MATH
+We utilize the official training split and the associated chain-of-thought solutions. For evaluation, we employ the widely adopted MATH-500 test split.
+ChemistryQA
+We use the official training and test splits. To construct the training data, we prompt the GPT-OSS-120B model [ 1 ] to generate chain-of-thought solutions, retaining only those that yield the correct final answer. This filtering process results in 3062 training samples. For evaluation, we use the complete test set and assess performance directly against the provided ground-truth answers.
+FormulaReasoning
+We similarly use the official training and test splits. We generate chain-of-thought solutions using the GPT-OSS-120B model and filter for correctness, which yields 4096 training samples. We evaluate on the complete test set using the official ground-truth answers. During the cross-domain evaluation, we observed that models fine-tuned on the MATH dataset experience a severe accuracy degradation for all studied fine-tuning methods. This drop makes calibration performance indistinguishable across the fine-tuning methods, as most samples exhibit uniformly low semantic confidence and low accuracy across all methods. We identified that the models struggle to recall the necessary physical laws. Consequently, we manually augment the testing prompts with the relevant physical laws as hints. These hint-augmented prompts are applied exclusively during the cross-domain evaluation. Furthermore, these hint-augmented prompts are used across evaluation of all fine-tuning methods to ensure fairness.
+Examples of the training prompts are provided in Section C.6 .
+Table 3 : EDL fine-tuning hyperparameters for Qwen3-8B-Base across the four evaluation datasets.
+Hyperparameter
+GSM8K
+MATH
+ChemistryQA
+FormulaReasoning
+Model & LoRA
+Model max_seq_length
+2048
+4096
+4096
+4096
+LoRA r r / α \alpha / dropout
+16 / 32 / 0.0
+16 / 32 / 0.0
+16 / 32 / 0.0
+16 / 32 / 0.0
+LoRA target modules
+Q,K,V,O,gate,up,down
+Q,K,V,O,gate,up,down
+Q,K,V,O,gate,up,down
+Q,K,V,O,gate,up,down
+LoRA bias
+none
+none
+none
+none
+Precision
+bf16
+bf16
+bf16
+bf16
+Optimizer (cosine schedule)
+Optimizer
+AdamW
+AdamW
+AdamW
+AdamW
+LR scheduler
+cosine
+cosine
+cosine
+cosine
+Warmup ratio
+0.06
+0.06
+0.06
+0.06
+Max grad norm
+1.0
+1.0
+1.0
+1.0
+Gradient checkpointing
+enabled
+enabled
+enabled
+enabled
+EDL training
+EDL initialization
+base
+base
+base
+base
+num_train_epochs
+1
+1
+1
+1
+Per-device batch size
+4
+4
+4
+4
+Peak LR
+× 10 − 4 2\!\times\!10^{-4}
+× 10 − 4 2\!\times\!10^{-4}
+× 10 − 4 2\!\times\!10^{-4}
+× 10 − 4 2\!\times\!10^{-4}
+edl_weight_start_step
+0.5
+0.5
+0.5
+0.5
+EDL β \beta
+1.2
+1.2
+1.2
+1.2
+EDL weight λ MSE \lambda_{\text{MSE}}
+5.0
+5.0
+5.0
+5.0
+N train N_{\text{train}}
+32
+8
+8
+8
+Sampling max_tokens
+256
+768
+768
+768
+Sampling temperature
+1.0
+1.0
+1.0
+1.0
+Sampling top_p
+0.9
+0.9
+0.9
+0.9
+Evaluation
+N eval N_{\text{eval}}
+50
+50
+50
+50
+Temperature
+0.8
+0.8
+0.8
+0.8
+top_p
+0.9
+0.9
+0.9
+0.9
+max_tokens
+1024
+2048
+2048
+2048
+Note. All EDL runs use a cosine LR schedule with warmup_ratio = 0.06 =0.06 over the entire num_train_epochs ; the EDL loss is enabled starting at fraction edl_weight_start_step of total steps. Where EDL initialization is base , the cosine schedule covers the full run and EDL begins partway through the decay; where EDL initialization is SFT ckpt (epoch=1) , the run is short and the cosine schedule covers only the EDL phase.
+Table 4 : EDL fine-tuning hyperparameters for Ministral-3-8B-Base across the four evaluation datasets.
+Hyperparameter
+GSM8K
+MATH
+ChemistryQA
+FormulaReasoning
+Model & LoRA
+Model max_seq_length
+2048
+4096
+4096
+4096
+LoRA r r / α \alpha / dropout
+16 / 32 / 0.0
+16 / 32 / 0.0
+16 / 32 / 0.0
+16 / 32 / 0.0
+LoRA target modules
+Q,K,V,O,gate,up,down
+Q,K,V,O,gate,up,down
+Q,K,V,O,gate,up,down
+Q,K,V,O,gate,up,down
+LoRA bias
+none
+none
+none
+none
+Precision
+bf16
+bf16
+bf16
+bf16
+Optimizer (cosine schedule)
+Optimizer
+AdamW
+AdamW
+AdamW
+AdamW
+LR scheduler
+cosine
+cosine
+cosine
+cosine
+Warmup ratio
+0.06
+0.06
+0.06
+0.06
+Max grad norm
+1.0
+1.0
+1.0
+1.0
+Gradient checkpointing
+enabled
+enabled
+enabled
+enabled
+EDL training
+EDL initialization
+base
+SFT ckpt (epoch=1)
+SFT ckpt (epoch=1)
+SFT ckpt (epoch=1)
+num_train_epochs
+2.5
+0.3
+0.3
+0.5
+Per-device batch size
+4
+4
+4
+4
+Peak LR
+× 10 − 4 2\!\times\!10^{-4}
+× 10 − 5 5\!\times\!10^{-5}
+× 10 − 5 5\!\times\!10^{-5}
+× 10 − 5 5\!\times\!10^{-5}
+edl_weight_start_step
+0.8
+0.0
+0.0
+0.0
+EDL β \beta
+1.2
+1.2
+1.2
+1.2
+EDL weight λ MSE \lambda_{\text{MSE}}
+5.0
+5.0
+5.0
+5.0
+N train N_{\text{train}}
+32
+12
+12
+8
+Sampling max_tokens
+256
+512
+512
+512
+Sampling temperature
+1.0
+0.5
+0.5
+1.0
+Sampling top_p
+0.9
+0.9
+0.9
+0.9
+Evaluation
+N eval N_{\text{eval}}
+50
+50
+50
+50
+Temperature
+0.6
+0.6
+0.6
+0.6
+top_p
+0.9
+0.9
+0.9
+0.9
+max_tokens
+1024
+2048
+2048
+2048
+Note. All EDL runs use a cosine LR schedule with warmup_ratio = 0.06 =0.06 over the entire num_train_epochs ; the EDL loss is enabled starting at fraction edl_weight_start_step of total steps. Where EDL initialization is base , the cosine schedule covers the full run and EDL begins partway through the decay; where EDL initialization is SFT ckpt (epoch=1) , the run is short and the cosine schedule covers only the EDL phase.
+Table 5 : EDL fine-tuning hyperparameters for MiMo-7B-Base across the four evaluation datasets.
+Hyperparameter
+GSM8K
+MATH
+ChemistryQA
+FormulaReasoning
+Model & LoRA
+Model max_seq_length
+2048
+4096
+4096
+4096
+LoRA r r / α \alpha / dropout
+16 / 32 / 0.0
+16 / 32 / 0.0
+16 / 32 / 0.0
+16 / 32 / 0.0
+LoRA target modules
+Q,K,V,O,gate,up,down
+Q,K,V,O,gate,up,down
+Q,K,V,O,gate,up,down
+Q,K,V,O,gate,up,down
+LoRA bias
+none
+none
+none
+none
+Precision
+bf16
+bf16
+bf16
+bf16
+Optimizer (cosine schedule)
+Optimizer
+AdamW
+AdamW
+AdamW
+AdamW
+LR scheduler
+cosine
+cosine
+cosine
+cosine
+Warmup ratio
+0.06
+0.06
+0.06
+0.06
+Max grad norm
+1.0
+1.0
+1.0
+1.0
+Gradient checkpointing
+enabled
+enabled
+enabled
+enabled
+EDL training
+EDL initialization
+base
+SFT ckpt (epoch=1)
+SFT ckpt (epoch=1)
+SFT ckpt (epoch=1)
+num_train_epochs
+2.5
+0.3
+0.3
+0.5
+Per-device batch size
+4
+4
+4
+4
+Peak LR
+× 10 − 4 2\!\times\!10^{-4}
+× 10 − 5 5\!\times\!10^{-5}
+× 10 − 5 5\!\times\!10^{-5}
+× 10 − 5 5\!\times\!10^{-5}
+edl_weight_start_step
+0.8
+0.0
+0.0
+0.0
+EDL β \beta
+1.2
+1.2
+1.2
+1.2
+EDL weight λ MSE \lambda_{\text{MSE}}
+5.0
+5.0
+5.0
+5.0
+N train N_{\text{train}}
+32
+12
+12
+12
+Sampling max_tokens
+256
+512
+512
+512
+Sampling temperature
+1.0
+0.5
+0.5
+1.0
+Sampling top_p
+0.9
+0.9
+0.9
+0.9
+Evaluation
+N eval N_{\text{eval}}
+50
+50
+50
+50
+Temperature
+0.7
+0.7
+0.7
+0.7
+top_p
+0.9
+0.9
+0.9
+0.9
+max_tokens
+1024
+2048
+2048
+2048
+Note. All EDL runs use a cosine LR schedule with warmup_ratio = 0.06 =0.06 over the entire num_train_epochs ; the EDL loss is enabled starting at fraction edl_weight_start_step of total steps. Where EDL initialization is base , the cosine schedule covers the full run and EDL begins partway through the decay; where EDL initialization is SFT ckpt (epoch=1) , the run is short and the cosine schedule covers only the EDL phase.
+B.4 Training hyperparameters
+The full training and evaluation hyperparameters for each (model, dataset) cell are listed in Table 3 , Table 4 , and Table 5 , covering Qwen3-8B-Base, Ministral-3-8B-Base, and MiMo-7B-Base respectively.
+For MATH and GSM8K we use math-verify [ 21 ] for semantic clustering at both training and evaluation time. On ChemistryQA and FormulaReasoning, we employ GPT-OSS-20B [ 1 ] as an LLM-as-judge for semantic clustering at both training and evaluation time, with the system prompt shown in Section C.5.1 .
+B.5 Hyperparameters of baselines
+BLoB
+During training, we set bayes_samples to 1, bayes_epsilon to 0.05, bayes_beta to 0.2, and bayes_kllr to 0.1, with bayes_kl_reweighting enabled. During evaluation, we use 5 Bayesian samples. We refer readers to the official BLoB codebase for the precise definitions of these hyperparameters.
+RCFT
+During training, we configure the hyperparameters by setting rcft_alpha to 0.5, rcft_calibration_scale to 0.001, rcft_num_bins to 10, and rcft_eps to 0.000001. Please refer to the official RCFT codebase for detailed explanations of these variables.
+LS
+During training, we apply a label smoothing coefficient of 0.1 0.1 .
+Dr.GRPO
+We start the fine tuning process from the supervised checkpoint at epoch 1. To ensure a fair comparison, we set the total number of training steps for Dr.GRPO to exactly match the number of steps where the evidential loss is active during S-EDL training. We use a group size of 8. Following Liu et al. [29] , we do not use the KL divergence penalty w.r.t. the reference model.
+Appendix C Extended experimental results
+C.1 In-distribution evaluations across varying temperatures
+We evaluate the fine-tuned models across a range of sampling temperatures from 0.4 to 1.0 to test the effectiveness of calibration performance at different temperatures. The experimental settings are identical to those detailed in Section 5.2 , except for the varied temperature values, and we report the average performance metrics for the three models in Fig. 5 . S-EDL and Dr.GRPO maintain competitive semantic accuracy across the temperature spectrum. Furthermore, S-EDL generally achieves low calibration error across the evaluated temperatures. In addition, this experiment also indicates that temperature scaling techniques [ 22 , 41 ] can be used together with our method to further boost the calibration performance.
+(a) Fine-tuned model: Qwen3-8B-Base
+(b) Fine-tuned model: Ministral3-8B-Base
+(c) Fine-tuned model: MiMo-7B-Base
+Figure 5 : Average in-distribution performance across varying temperatures. Experiment settings are consistent with Section 5.2 , except for the various temperatures. Note that certain data points, such as those for LS, may fall outside the plotted area because the y-axis limits are clamped to ensure better readability and visual clarity.
+C.2 Visualization of the accuracy-calibration plane
+(a) Qwen3-8B-Base
+(b) Ministral3-8B-Base
+(c) MiMo-7B-Base
+Figure 6 : Accuracy–calibration plane, averaged across the four datasets. Bottom-right is the best corner (high S-Acc, low smECE).
+Fig. 6 visualizes the averaged semantic accuracy and smECE plane across the four evaluated datasets. An optimal model should be situated in the bottom right corner of the plane, indicating both high accuracy and low calibration error. S-EDL consistently lies on the Pareto frontier of this plane across all three models.
+C.3 Extended per-token probability profiles
+(a) GSM8K
+(b) ChemistryQA
+(c) FormulaReasoning
+Figure 7 : Token probability distributions on GSM8K, ChemistryQA, and FormulaReasoning benchmarks.
+We provide the extended per token probability profiles for the GSM8K, ChemistryQA, and FormulaReasoning datasets to supplement the main text analysis. Fig. 7 visualizes the token probability distributions across these three benchmarks. Consistent with the observations on the MATH dataset, the absolute difference between the S-EDL mean and the supervised fine tuning mean stays below 0.06 across all model and dataset pairs. This demonstrates that S-EDL achieves semantic calibration improvements without causing a drastic or systematic shift in the overall token level probability distribution. See Fig. 7 for the complete visual comparisons.
+C.4 Additional ablation study on β \beta and λ MSE \lambda_{\text{MSE}}
+(a) Pass@1 ( ↑ \uparrow )
+(b) S-Acc. ( ↑ \uparrow )
+(c) smECE ( ↓ \downarrow )
+Figure 8 : Ablation study on β \beta and λ MSE \lambda_{\text{MSE}} with Ministral3-8B-Base trained on MATH and evaluated on MATH-500. The bottom x x -axis varies β \beta with λ MSE = 5.0 \lambda_{\text{MSE}}=5.0 held fixed; the top x x -axis varies λ MSE \lambda_{\text{MSE}} with β = 1.2 \beta=1.2 fixed. The default values β = 1.2 \beta=1.2 and λ MSE = 5.0 \lambda_{\text{MSE}}=5.0 demonstrate strong performance and are used throughout all experiments.
+We present an additional ablation study on the hyperparameters β \beta and λ MSE \lambda_{\text{MSE}} using the Ministral3-8B-Base model trained on the MATH dataset and evaluated on the MATH-500 benchmark. As shown in Fig. 8 , the performance trends are consistent with those observed on the GSM8K dataset in the main text. Setting β \beta to a value close to 1, such as 1.01, severely weakens the evidential learning signal, which leads to a noticeable drop in accuracy and a spike in calibration error compared to the SFT baseline. In contrast, using the default parameters of β = 1.2 \beta=1.2 and λ MSE = 5.0 \lambda_{\text{MSE}}=5.0 provides a strong balance across all metrics, improving both Pass@1 and semantic accuracy while effectively lowering the smECE. This confirms that the selected default hyperparameters generalize well to harder reasoning tasks.
+C.5 Prompts
+C.5.1 System prompt of the LLM-as-judge
+System prompt of the LLM-as-judge for semantic clustering
+You are an answer-equivalence judge.
+Task:
+•
+You are given a Candidate Answer and a list of cluster representatives indexed as:
+0: …, 1: …, 2: …
+•
+Return the index of the cluster representative that is equivalent to the Candidate Answer.
+•
+If none are equivalent, return − 1 -1 .
+Equivalence rules:
+1.
+Treat formatting differences as equivalent when numeric meaning matches:
+decimal/fraction/scientific/percentage/currency/unit notation.
+2.
+Unit omission is acceptable if numeric value matches.
+3.
+Allow rounding differences only when values agree to at least 3 significant digits.
+4.
+Reject sign flips and order-of-magnitude errors.
+5.
+For non-numeric answers, judge semantic equivalence of meaning, ignoring minor
+phrasing or word-order differences.
+6.
+For chemical equations:
+•
+Arrow variants are equivalent ( → \rightarrow , ->, ⟶ \longrightarrow , ⇌ \rightleftharpoons ).
+•
+Ordering of species within each side is irrelevant (A + B ≡ \equiv B + A).
+•
+Subscript/superscript vs inline notation is equivalent
+( N 2 ​ H 4 ≡ \mathrm{N_{2}H_{4}}\equiv N2H4, ClO 3 − ≡ \mathrm{ClO_{3}^{-}}\equiv ClO3-).
+•
+Stoichiometrically scaled equations (all coefficients multiplied by the same
+positive integer) are equivalent.
+•
+State symbol omission is acceptable, but conflicting state symbols are NOT equivalent
+(e.g., H2O matches H2O(l), but H2O(g) does NOT match H2O(l)).
+Few-shot examples:
+Candidate Answer: 3.50 mol
+Cluster representatives:
+0: 3500 mmol
+1: 3.5 moles
+2: 0.35 mol
+Matching index: 1
+Candidate Answer: 84 2 \frac{84}{2}
+Cluster representatives:
+0: 41
+1: 42
+2: − 42 -42
+Matching index: 1
+Candidate Answer: 42
+Cluster representatives:
+0: 42 J
+1: 43
+Matching index: 0
+Candidate Answer: the speed is about 10.3 m/s 2
+Cluster representatives:
+0: 10.3 m/s
+1: − 10.3 -10.3 m/s 2
+Matching index: − 1 -1
+Candidate Answer: 4 ClO 3 − \mathrm{ClO_{3}^{-}} (aq) + 3 N 2 ​ H 4 \mathrm{N_{2}H_{4}} (g) → \rightarrow
+4 Cl − \mathrm{Cl^{-}} (aq) + 6 H 2 ​ O \mathrm{H_{2}O} (l) + 6 NO(g)
+Cluster representatives:
+0: 3 N 2 ​ H 4 \mathrm{N_{2}H_{4}} (g) + 4 ClO 3 − \mathrm{ClO_{3}^{-}} (aq) -> 6 NO(g)
++ 6 H 2 ​ O \mathrm{H_{2}O} (g) + 4 Cl − \mathrm{Cl^{-}} (aq)
+1: 3 N 2 ​ H 4 \mathrm{N_{2}H_{4}} (g) + 4 ClO 3 − \mathrm{ClO_{3}^{-}} (aq) → \rightarrow
+6 NO(g) + 6 H 2 ​ O \mathrm{H_{2}O} (l) + 4 Cl − \mathrm{Cl^{-}} (aq)
+Matching index: 1
+Output format:
+•
+Final line must be exactly:
+Matching index: <integer>
+•
+Use − 1 -1 when none match.
+C.6 Examples of training prompts
+In the following, we provide examples of the training prompts used for fine tuning Qwen3-8B-Base. We intentionally do not enclose the chain of thought reasoning within <think> and </think> blocks. We empirically observed that the base models have not been extensively trained on data containing these special tokens. Introducing these structural tokens during LoRA fine tuning causes the model to append random text after the \boxed{} output and occasionally become trapped in repetitive generation loops.
+An example of training prompts on GSM8K dataset
+<|im_start|>system
+Solve the following problem. First, reason through the problem step by step after ’Reasoning:’. Then, provide your final answer after ’My answer is:’ wrapped in \boxed{}.<|im_end|>
+<|im_start|>user
+Question: Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia sell altogether in April and May?
+Answer:<|im_end|>
+<|im_start|>assistant
+Reasoning: Natalia sold 48/2 = <<48/2=24>>24 clips in May.
+Natalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.
+My answer is: \boxed{72}<|endoftext|>
+An example of training prompts on MATH dataset
+<|im_start|>system
+Solve the following problem. First, reason through the problem step by step after ’Reasoning:’. Then, provide your final answer after ’My answer is:’ wrapped in \boxed{}.<|im_end|>
+<|im_start|>user
+Question: How many 4-letter words with at least one consonant can be constructed from the letters $A$, $B$, $C$, $D$, and $E$? (Note that $B$, $C$, and $D$ are consonants, any word is valid, not just English language words, and letters may be used more than once.)
+Answer:<|im_end|>
+<|im_start|>assistant
+Reasoning: First we count the number of all 4-letter words with no restrictions on the word. Then we count the number of 4-letter words with no consonants. We then subtract to get the answer.
+Each letter of a word must be one of $A$, $B$, $C$, $D$, or $E$, so the number of 4-letter words with no restrictions on the word is $5\times 5\times 5\times 5=625$. Each letter of a word with no consonant must be one of $A$ or $E$. So the number of all 4-letter words with no consonants is $2\times 2\times 2\times 2=16$. Therefore, the number of 4-letter words with at least one consonant is $625-16=609$.
+My answer is: \boxed{609}<|endoftext|>
+An example of training prompts on ChemistryQA dataset
+<|im_start|>system
+Solve the following problem. First, reason through the problem step by step after ’Reasoning:’. Then, provide your final answer after ’My answer is:’ wrapped in \boxed{}.<|im_end|>
+<|im_start|>user
+Question: A mixture of #"N"_2#, #"O"_2#. and #"CO"_2# has a total pressure of #"740 torr"# In this mixture, the partial pressure of #"N"_2# is #"120 torr"# and the partial pressure of #"O"_2# is #"400 torr"#. What is the partial pressure of #"CO"_2# ?
+Answer:<|im_end|>
+<|im_start|>assistant
+Reasoning: The total pressure equals the sum of the partial pressures:
+\[
+‘
+P_{\text{total}} = P_{\mathrm{N_2}} + P_{\mathrm{O_2}} + P_{\mathrm{CO_2}}.
+\]
+Given \(P_{\text{total}} = 740\ \text{torr},\; P_{\mathrm{N_2}} = 120\ \text{torr},\; P_{\mathrm{O_2}} = 400\ \text{torr}\),
+\[
+‘
+P_{\mathrm{CO_2}} = 740 - (120 + 400) = 740 - 520 = 220\ \text{torr}.
+\]
+My answer is: \boxed{220\ \text{torr}}<|endoftext|>
+An example of training prompts on FormulaReasoning dataset
+<|im_start|>system
+Solve the following problem. First, reason through the problem step by step after ’Reasoning:’. Then, provide your final answer with units after ’My answer is:’ wrapped in \boxed{}.<|im_end|>
+<|im_start|>user
+Question: Rational classification and utilization of waste can protect the environment and turn waste into valuables. Under certain conditions, 1 ton of classified waste can "extract" [X] of fuel oil, where the calorific value of the fuel oil is 3.0 × \times 10^7 J/kg. Question: [c_water=4.2 × \times 10^3 J/(kg ⋅
+

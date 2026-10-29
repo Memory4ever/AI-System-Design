@@ -1,0 +1,1208 @@
+https://arxiv.org/html/2605.28150v1
+
+arXiv:2605.28150v1 [cs.LG] 27 May 2026 
+ 
+ 
+ Off-Policy Learning to Reason Works Because It Is More Pessimistic Than You Think 
+
+ 
+ 
+ 
+ Otmane Sakhi
+ 
+ Affiliation:  Criteo AI Lab
+ 
+ Email:  o.sakhi@criteo.com 
+ 
+    
+ Aleksei Arzhantsev
+ 
+ Affiliation:  Criteo AI Lab, CREST IP Paris
+ 
+ Email:  a.arzhantsev@criteo.com 
+ 
+    
+ Imad Aouali
+ 
+ Affiliation:  Criteo AI Lab
+ 
+ Email:  i.aouali@criteo.com 
+ 
+    
+ Flavian Vasile
+ 
+ Affiliation:  Criteo AI Lab
+ 
+ Email:  f.vasile@criteo.com 
+ 
+
+ Abstract 
+    
+ Large scale reinforcement learning has become a central tool for improving reasoning in large language models. At this scale, generation is often lagged or asynchronous, so updates are performed on data collected by older policies. This makes learning inherently off-policy. Most existing approaches nevertheless remain rooted in PPO-style trust-region objectives, treating training as approximately on-policy and using importance weights to correct distribution mismatch. These corrections can introduce high variance, destabilize optimization, and accelerate entropy collapse. Recent work suggests an alternative: rather than correcting the mismatch, one can embrace off-policy data and remove importance weights, often yielding stronger algorithms. In this paper, we provide an intuitive construction of off-policy objectives that include successful off-policy objectives and show that their effectiveness can be understood through implicit pessimism: they optimize toward target policies that are more conservative than their nominal objectives suggest. This perspective explains why some particular implementation choices improve stability: they implicitly control the effective target distribution. We then propose a principled modification that stabilize this induced distribution and improve off-policy learning. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Reinforcement learning (RL) has emerged as a fundamental tool for improving
+the reasoning capabilities of large language models (LLMs)  [ 1 ,  2 ,  3 ] .
+By optimizing models against task-specific or verifiable rewards, RL enables
+gains beyond supervised fine-tuning  [ 1 ,  2 ] , particularly on complex
+reasoning tasks such as mathematics, coding, and multi-step
+problem solving  [ 4 ,  2 ,  5 ] . 
+
+ 
+ 
+ 
+ The reinforcement learning pipelines used for modern language models,
+however, differ significantly from the classical online setting. At large
+scale, generating rollouts for reasoning models is expensive. Completions are often produced
+asynchronously, by lagged inference workers, or by checkpoints that are
+older than the policy currently being updated. As a result, the data used for
+training are not sampled from the policy being optimized, but from an
+older behavior policy. Large-scale reinforcement learning for language
+model reasoning is therefore inherently off-policy  [ 5 ,  6 ,  7 ] . 
+
+ 
+ 
+ 
+ Despite this, many existing methods are still motivated by on-policy or
+near-on-policy trust-region algorithms  [ 8 ] , such as PPO  [ 9 ]  and GRPO  [ 10 ] . These
+methods attempt to correct the mismatch between the behavior policy and
+the learned policy using importance weighting, clipping , filtering, or
+related heuristics  [ 9 ,  10 ,  3 ] . While these corrections are effective in some
+settings, they can introduce high-variance updates and become unstable
+when the policy lag is large. In practice, the mechanisms introduced to
+control these ratios often become central to training stability, rather
+than secondary implementation details. 
+
+ 
+ 
+ 
+ Recent work suggests a different approach: instead of correcting
+off-policy data to make it look on-policy, one can train directly on data
+sampled from the behavior policy and remove importance weights entirely.
+ A ⋆ A^{\star} -PO  [ 11 ]  and more recently OAPL  [ 7 ]  are a representative example of this direction. Both optimize a simple
+regression objective, and has been
+shown to work well in large-scale reasoning settings. However, the reason
+for its success is not fully understood. In particular, their nominal derivations suggest one target distribution, while practical
+implementations decouple the
+temperature used for advantage computation from the temperature used for
+regularization. These choices are empirically important, but their role is
+not explained by the nominal derivation. 
+
+ 
+ 
+ 
+ In this paper, we study ratio-free off-policy objectives.
+Our goal is not to derive another trust-region surrogate, but to
+understand what target policy these objectives actually optimize toward
+when trained on data from an older policy. We show that the answer is
+different from the usual exponential target associated with
+KL-regularized policy optimization  [ 12 ,  8 ] . Instead, these objectives induce a
+Lambert-tempered target policy  [ 13 ] . This target can be more conservative than
+the nominal exponential objective suggests, especially on high-advantage
+samples and small regularizations. 
+
+ 
+ 
+ 
+ This observation provides a simple explanation for why off-policy
+learning without importance weights can work well. The objective is not
+merely ignoring the distribution mismatch. Rather, under the right
+advantage normalization, the mismatch induces a form of implicit
+pessimism  [ 14 ,  15 ,  16 ] : the learned policy increases the probability of good samples,
+but does not over-commit exponentially to the highest observed rewards.
+This is particularly valuable in language-model reasoning, where rollouts are stale and a small number of sampled completions
+can otherwise dominate the update. 
+
+ 
+ 
+ 
+ Our analysis also reveals that this pessimism is not automatic. The
+target policy depends sensitively on how the advantage is normalized. We
+identify three qualitative regimes. In the positive regime, the target is
+conservative and tempers large advantages. At the boundary, the target
+recovers the usual exponential update, which is fragile because small
+changes in the advantage baseline can move the objective into a different
+regime. In the negative regime, the target becomes more aggressive than
+the exponential update, making it more prone to entropy collapse. 
+
+ 
+ 
+ 
+ This perspective clarifies the behavior of OAPL. We show that the
+advantage estimator suggested by its nominal theory can induce an
+unstable target at the population level when the group size is finite,
+even though it is normalized on each sampled group. This explains why the implementation of  A ⋆ A^{\star} -PO  [ 11 ]  and OAPL  [ 7 ]  deviates from the theory by using a
+larger temperature  β \beta  for advantage computation than for regularization. Our
+analysis shows that this choice moves the advantage closer to a centered
+group advantage, which pushes the induced target back toward the pessimistic regime. 
+
+ 
+ 
+ 
+ Motivated by this understanding, we propose a simpler, more principled
+modification. Instead of relying on temperature decoupling and hyperparameter tuning as an
+implementation heuristic, we directly choose the advantage baseline so
+that the induced target lies in the pessimistic Lambert regime. The
+resulting rule is a  β \beta -shifted mean advantage: start from the usual
+group-centered reward advantage and shift it upward by  β \beta . This choice is easy to implement, introduces no additional
+temperature hyperparameter, and guarantees that the induced Lambert target
+is in the desired conservative regime. 
+
+ 
+ 
+ 
+ Empirically, this modification improves the robustness of off-policy
+learning. Compared with OAPL, the resulting method is less sensitive to
+the regularization strength and remains more stable under larger policy
+lags. In our experiments, it maintains entropy more reliably and avoids
+the collapse or instability observed in OAPL under aggressive
+regularization or stale rollouts. 
+
+ 
+ 
+ 
+ Contributions.  Our contributions are as follows: 
+
+ 
+ 
+ •  
+ 
+ We analyze a class of ratio-free off-policy objectives for language-model reasoning, including the objective underlying  A ⋆ A^{\star} -PO/OAPL, and show that these objectives induce Lambert-tempered target policies whose behavior is controlled by an implicit pessimism parameter determined by the advantage normalization. 
+
+ 
+ 
+ •  
+ 
+ We use this characterization to explain why the nominal  A ⋆ A^{\star} -PO/OAPL
+advantage can induce an unstable target, and why the practical
+temperature decoupling used improves stability. We then propose a simple  β \beta -shifted-mean advantage that targets the
+pessimistic Lambert regime by construction, removing the need for the
+temperature-decoupling heuristic. 
+
+ 
+ 
+ •  
+ 
+ We empirically show that this modification improves stability
+and robustness under varying temperatures and policy
+lags. 
+
+ 
+ 
+ 
+ 
+ 
+ Outline. 
+
+ 
+
+ 
+ The rest of the paper is organized as follows. Section  2  introduces the
+reinforcement learning setting for language-model reasoning and reviews
+standard trust-region methods. Section  3  studies ratio-free off-policy
+objectives and derives their induced target policies. Section  4  analyzes
+the resulting Lambert regimes, explains the behavior of OAPL, and
+introduces our shifted-mean advantage. Section  5  presents empirical
+comparisons under different regularization strengths and policy lags while Section  6  concludes. 
+
+ 
+ 
+ 
+ 
+ 
+ 2  Preliminaries 
+
+ 
+
+ 
+ We consider reinforcement learning for language-model reasoning. Let
+ x ∼ 𝒟 x\sim\mathcal{D}  denote a prompt and let
+ y = ( y 1 , … , y T ) y=(y_{1},\ldots,y_{T})  denote a sampled completion. A policy
+ π θ \pi_{\theta}  defines the autoregressive distribution 
+
+ 
+ 
+
+ 
+ 
+ π θ ​ ( y ∣ x ) = ∏ t = 1 T π θ ​ ( y t ∣ x , y < t ) . \pi_{\theta}(y\mid x)=\prod_{t=1}^{T}\pi_{\theta}(y_{t}\mid x,y_{<t}). 
+ 
+ 
+
+ 
+ After generating a completion, the model receives a scalar, bounded reward
+ r ⁡ ( x , y ) ∈ [ 0 , 1 ] r(x,y)\in[0,1] , for example from a verifier, a unit test, or a reward model.
+For a group of  G ≥ 2 G\geq 2  completions  y 1 : G y_{1:G}  sampled for the same prompt, we
+write  r i = r ⁡ ( x , y i ) r_{i}=r(x,y_{i})  and use  A ^ i \widehat{A}_{i}  to denote a group-relative
+score indicating whether completion  y i y_{i}  should be upweighted or
+downweighted relative to the group. 
+
+ 
+ 
+ 
+ Trust-region optimization and GRPO. 
+
+ 
+
+ 
+ Trust-region optimization has established itself as a staple for large scale, deep RL  [ 10 ,  5 ,  17 ] . The idea is to optimize a policy that improves  π old \pi_{\mathrm{old}}  while staying in its vicinity, in the KL regularized sense.
+Group Relative Policy Optimization (GRPO) can be viewed as a PPO-style
+trust-region method adapted to the LLM setting  [ 9 ,  10 ] .
+Given a behavior policy  π old \pi_{\mathrm{old}}  used to generate completions,
+GRPO optimizes a clipped surrogate objective of the form 
+
+ 
+ 
+
+ 
+ 
+ 𝔼 y 1 : G ∼ π old ( ⋅ ∣ x ) [ 1 G ∑ i = 1 G 1 T i ∑ t = 1 T i min ( ρ i , t ( θ ) A ^ i , clip ( ρ i , t ( θ ) , 1 − ϵ , 1 + ϵ ) A ^ i ) ] , \displaystyle\mathbb{E}_{y_{1:G}\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{T_{i}}\sum_{t=1}^{T_{i}}\min\left(\rho_{i,t}(\theta)\widehat{A}_{i},\,\mathrm{clip}\!\left(\rho_{i,t}(\theta),1-\epsilon,1+\epsilon\right)\widehat{A}_{i}\right)\right], 
+ 
+ (1) 
+ 
+
+ 
+ where 
+
+ 
+ 
+
+ 
+ 
+ ρ i , t ​ ( θ ) = π θ ​ ( y i , t ∣ x , y i , < t ) π old ​ ( y i , t ∣ x , y i , < t ) , A ^ i = r i − r ¯ G σ G . \rho_{i,t}(\theta)=\frac{\pi_{\theta}(y_{i,t}\mid x,y_{i,<t})}{\pi_{\mathrm{old}}(y_{i,t}\mid x,y_{i,<t})},\qquad\widehat{A}_{i}=\frac{r_{i}-\bar{r}_{G}}{\sigma_{G}}. 
+ 
+ 
+
+ 
+ The ratio  ρ i , t ​ ( θ ) \rho_{i,t}(\theta)  measures the change in token probability
+between the policy being optimized and the behavior policy that generated
+the data. The clipping operation restricts this ratio, preventing the new
+policy from moving too far from  π old \pi_{\mathrm{old}}  on sampled tokens. 
+
+ 
+ 
+ 
+ This objective is effective when the data are fresh and the optimized
+policy remains close to the behavior policy. However, large-scale LLM RL
+often violates this near-on-policy assumption  [ 3 ,  6 ] . Indeed, rollouts are often generated by stale
+checkpoints. As optimization proceeds, the current policy  π θ \pi_{\theta}  can
+move far from the behavior policy  π old \pi_{\mathrm{old}} , making the data
+increasingly off-policy. In this regime, importance weighting becomes
+high-variance, and clipping or filtering becomes a central stabilizing
+heuristic rather than a minor implementation detail. 
+
+ 
+ 
+ 
+ 
+ Embracing Off-Policy Generations. 
+
+ 
+
+ 
+ A natural way to avoid importance weighting is to define the desired
+policy directly as an improvement over the behavior policy
+ π old \pi_{\mathrm{old}} . The dominant formulation is the KL-regularized
+trust-region objective. For a fixed context  x x , it solves 
+
+ 
+ 
+
+ 
+ 
+ max π 𝔼 y ∼ π ( ⋅ ∣ x ) [ r ( y , x ) ] − β KL ( π ( ⋅ ∣ x ) ∥ π old ( ⋅ ∣ x ) ) . \max_{\pi}\;\mathbb{E}_{y\sim\pi(\cdot\mid x)}\left[r(y,x)\right]-\beta\operatorname{KL}\left(\pi(\cdot\mid x)\,\|\,\pi_{\mathrm{old}}(\cdot\mid x)\right). 
+ 
+ 
+
+ 
+ The solution is the exponentially tilted behavior policy 
+
+ 
+ 
+
+ 
+ 
+ π β ⋆ ​ ( y ∣ x ) = exp ⁡ ( r ⁡ ( y , x ) / β ) 𝔼 y ′ ∼ π old ( ⋅ ∣ x ) [ exp ( r ( y ′ , x ) / β ) ] ​ π old ​ ( y ∣ x ) . \pi_{\beta}^{\star}(y\mid x)=\frac{\exp(r(y,x)/\beta)}{\mathbb{E}_{y^{\prime}\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\exp(r(y^{\prime},x)/\beta)\right]}\pi_{\mathrm{old}}(y\mid x). 
+ 
+ 
+
+ 
+ Equivalently, the optimal sentence-level log-ratio satisfies 
+
+ 
+ 
+
+ 
+ 
+ β log π β ⋆ ​ ( y ∣ x ) π old ​ ( y ∣ x ) = r ( y , x ) − β log 𝔼 y ′ ∼ π old ( ⋅ ∣ x ) [ exp ( r ( y ′ , x ) / β ) ] . \beta\log\frac{\pi_{\beta}^{\star}(y\mid x)}{\pi_{\mathrm{old}}(y\mid x)}=r(y,x)-\beta\log\mathbb{E}_{y^{\prime}\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\exp(r(y^{\prime},x)/\beta)\right]. 
+ 
+ 
+
+ 
+ Thus the KL-regularized target can be viewed as specifying an optimal
+advantage, or target log-ratio, relative to  π old \pi_{\mathrm{old}} . 
+
+ 
+ 
+ 
+ In practice, the expectation above is unavailable and is estimated from a
+group of completions
+ y 1 : G ∼ π old ( ⋅ ∣ x ) y_{1:G}\sim\pi_{\mathrm{old}}(\cdot\mid x) , with
+ r i = r ⁡ ( y i , x ) r_{i}=r(y_{i},x) . This gives the empirical advantage 
+
+ 
+ 
+
+ 
+ 
+ A ^ i β = r i − β ​ log ⁡ ( 1 G ​ ∑ j = 1 G exp ⁡ ( r j / β ) ) . \widehat{A}_{i}^{\beta}=r_{i}-\beta\log\left(\frac{1}{G}\sum_{j=1}^{G}\exp(r_{j}/\beta)\right). 
+ 
+ 
+
+ 
+ This estimator is biased for finite  G G , due to the logarithm of the
+empirical average, but it is consistent. 
+
+ 
+ 
+ 
+ Recent off-policy objectives use this target without trying to correct
+the behavior-policy samples into on-policy samples. Instead, they regress
+the current policy log-ratio toward the KL-regularized target: 
+
+ 
+ 
+
+ 
+ 
+ min π θ 𝔼 y 1 : G ∼ π old ( ⋅ ∣ x ) [ 1 G ∑ i = 1 G ( β log π θ ​ ( y i ∣ x ) π old ​ ( y i ∣ x ) − A ^ i β ) 2 ] . \min_{\pi_{\theta}}\;\mathbb{E}_{y_{1:G}\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\frac{1}{G}\sum_{i=1}^{G}\left(\beta\log\frac{\pi_{\theta}(y_{i}\mid x)}{\pi_{\mathrm{old}}(y_{i}\mid x)}-\widehat{A}_{i}^{\beta}\right)^{2}\right]. 
+ 
+ 
+
+ 
+ This objective embraces off-policy data rather than correcting it with
+importance weights: the old policy provides the samples, and the loss
+directly constrains how the learned policy should move relative to
+ π old \pi_{\mathrm{old}}  on those samples. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Regularized Off-Policy Optimization 
+
+ 
+
+ 
+ Importance-weight-free learning can lead to behavior-tilted targets. 
+
+ 
+
+ 
+ Instead of correcting samples from  π old \pi_{\mathrm{old}}  to mimic on-policy data from
+ π θ \pi_{\theta} , we first consider the most direct ratio-free objective:
+weighted maximum likelihood on behavior-policy samples. 
+
+ 
+ 
+ 
+ Let  G ≥ 1 G\geq 1  and let  y 1 : G ∼ π old ( ⋅ ∣ x ) y_{1:G}\sim\pi_{\mathrm{old}}(\cdot\mid x) 
+denote a group of completions sampled from the behavior policy. For each
+completion  y i y_{i} , let  r i = r ⁡ ( x , y i ) r_{i}=r(x,y_{i})  be its reward and let
+ u i = u G ( r i ; r 1 : G ) ≥ 0 u_{i}=u_{G}(r_{i};r_{1:G})\geq 0  be a nonnegative reward-dependent weight.
+A natural off-policy objective is 
+
+ 
+ 
+
+ 
+ 
+ 𝔼 y 1 : G ∼ π old ( ⋅ ∣ x ) [ 1 G ∑ i = 1 G u i log π θ ( y i ∣ x ) ] . \displaystyle\mathbb{E}_{y_{1:G}\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\frac{1}{G}\sum_{i=1}^{G}u_{i}\log\pi_{\theta}(y_{i}\mid x)\right]. 
+ 
+ (2) 
+ 
+
+ 
+ This objective is attractive because it contains no importance-weighting
+ratio. The behavior policy simply provides samples, and high-reward
+samples receive larger weights. 
+
+ 
+ 
+ 
+ A common choice in offline RL  [ 18 ,  19 ]  is an exponential reward weight,
+ u i = exp ⁡ ( ( r i − r ¯ G ) / η ) , u_{i}=\exp\left((r_{i}-\bar{r}_{G})/\eta\right), 
+which up-weights completions that outperform the group average. This objective is desirable as it makes the behavior policy
+the base measure of the target distribution. To see this, fix a prompt
+ x x  and consider the population version of Eq. ( 2 )
+over all sequence distributions  π ( ⋅ ∣ x ) \pi(\cdot\mid x) : 
+
+ 
+ 
+
+ 
+ 
+ max π ∈ Δ 𝔼 y ∼ π old ( ⋅ ∣ x ) [ u ( x , y ) log π ( y ∣ x ) ] . \max_{\pi\in\Delta}\;\mathbb{E}_{y\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[u(x,y)\log\pi(y\mid x)\right]. 
+ 
+ 
+
+ 
+ The optimizer is  π ⋆ ​ ( y ∣ x ) ∝ π old ​ ( y ∣ x ) ​ u ​ ( x , y ) \pi^{\star}(y\mid x)\propto\pi_{\mathrm{old}}(y\mid x)u(x,y) . Therefore, when  u ⁡ ( x , y ) = exp ⁡ ( r ⁡ ( x , y ) / η ) u(x,y)=\exp(r(x,y)/\eta) , 
+
+ 
+ 
+
+ 
+ 
+ π ⋆ ​ ( y ∣ x ) ∝ π old ​ ( y ∣ x ) ​ exp ⁡ ( r ⁡ ( x , y ) η ) . \pi^{\star}(y\mid x)\propto\pi_{\mathrm{old}}(y\mid x)\exp\left(\frac{r(x,y)}{\eta}\right). 
+ 
+ 
+
+ 
+ Thus, weighted maximum likelihood recovers a
+ behavior-tilted  distribution  [ 12 ] . This is the same qualitative form as
+the exponentially tilted distributions arising from KL-regularized
+trust-region objectives: the behavior policy remains the base measure, and
+the reward only reweights it. 
+
+ 
+ 
+ 
+ While the theoretical target is desirable, a major problem of this objective is that it can be overly aggressive in finite
+samples. The expectation under  π old \pi_{\mathrm{old}}  is approximated by a
+small set of sampled completions, so weighted maximum likelihood can
+rapidly concentrate probability mass on the observed high-weight samples.
+With sharp exponential weights, this effect is amplified: the empirical
+target becomes highly peaked, and optimization can collapse toward the
+weighted empirical distribution. This leads to entropy collapse in practice and requires additional care to control  [ 19 ] . 
+
+ 
+ 
+ 
+ Ideally, we want an update that preserves the simplicity of
+Eq. ( 2 ) and does not require importance sampling,
+while avoiding the aggressiveness of exponential behavior tilting.
+We can achieve this by adding to weighted likelihood a simple quadratic
+penalty in log-probability space. 
+
+ 
+ 
+ 
+ 
+ Regularize toward  π old \pi_{\mathrm{old}} . 
+
+ 
+
+ 
+ Based on the previous observation, our off-policy objective implements the simple intuition of maximizing reward while staying close to  π old \pi_{\mathrm{old}} . We do so by adding a sentence-level regularizer to the weighted likelihood objective. Let  β > 0 \beta>0 . We focus on: 
+
+ 
+ 
+
+ 
+ 
+ 𝔼 y 1 : G ∼ π old ( ⋅ ∣ x ) [ 1 G ∑ i = 1 G ( A ^ i log π θ ( y i | x ) − β 2 ( log π θ ​ ( y i | x ) π old ​ ( y i | x ) ) 2 ) ] , \displaystyle\mathbb{E}_{y_{1:G}\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\frac{1}{G}\sum_{i=1}^{G}\left(\widehat{A}_{i}\log\pi_{\theta}(y_{i}|x)-\frac{\beta}{2}\left(\log\frac{\pi_{\theta}(y_{i}|x)}{\pi_{\mathrm{old}}(y_{i}|x)}\right)^{2}\right)\right]\,, 
+ 
+ (3) 
+ 
+
+ 
+ 
+ 
+ where  A ^ i \widehat{A}_{i}  is a group-wise advantage that will be specified later. The first term is an advantage-weighted log-likelihood term. The second term
+penalizes squared movement in sentence log-probability relative to the
+behavior policy. Importantly, this penalty is not an importance weight:
+it does not multiply the gradient by a likelihood ratio, and it does not
+attempt to transform off-policy samples into on-policy samples. Instead,
+it directly regularizes how far the learned policy can move from the
+behavior policy on observed sentences. 
+
+ 
+ 
+ 
+ This objective has a clean stationary target policy, characterized by the next proposition. 
+
+ 
+ 
+ 
+ Proposition 3.1   (Lambert-tempered policy – sentence level) . 
+ 
+ Fix a context  x x , and let  𝒴 ⁡ ( x ) \mathcal{Y}(x)  denote the set of possible
+responses. Let  A ⁡ ( x , y ) A(x,y)  be a sentence-level advantage for response
+ y ∈ 𝒴 ⁡ ( x ) y\in\mathcal{Y}(x) . Consider the sentence-level objective 
+
+ 
+ 
+
+ 
+ 
+ 𝒥 s ​ ( π ) = ∑ y ∈ 𝒴 ⁡ ( x ) π old ​ ( y ∣ x ) ​ [ A ⁡ ( x , y ) ​ log ⁡ π ⁡ ( y ∣ x ) − β 2 ​ ( log ⁡ π ⁡ ( y ∣ x ) π old ​ ( y ∣ x ) ) 2 ] , \mathcal{J}_{s}(\pi)=\sum_{y\in\mathcal{Y}(x)}\pi_{\mathrm{old}}(y\mid x)\left[A(x,y)\log\pi(y\mid x)-\frac{\beta}{2}\left(\log\frac{\pi(y\mid x)}{\pi_{\mathrm{old}}(y\mid x)}\right)^{2}\right], 
+ 
+ 
+
+ 
+ optimized over distributions  π ( ⋅ ∣ x ) ∈ Δ ( 𝒴 ( x ) ) \pi(\cdot\mid x)\in\Delta(\mathcal{Y}(x)) ,
+with  β > 0 \beta>0 . Let  π ⋆ ( ⋅ ∣ x ) \pi^{\star}(\cdot\mid x)  be an interior stationary
+point of  𝒥 s \mathcal{J}_{s} . If its normalization multiplier satisfies
+ τ s > 0 \tau_{s}>0 , then for every  y ∈ 𝒴 ⁡ ( x ) y\in\mathcal{Y}(x) , 
+
+ 
+ 
+
+ 
+ 
+ π ⋆ ​ ( y ∣ x ) = π old ​ ( y ∣ x ) τ s ​ W 0 ​ ( τ s ​ exp ⁡ ( A ⁡ ( x , y ) β ) ) , \displaystyle\pi^{\star}(y\mid x)=\frac{\pi_{\mathrm{old}}(y\mid x)}{\tau_{s}}W_{0}\left(\tau_{s}\exp\left(\frac{A(x,y)}{\beta}\right)\right), 
+ 
+ (4) 
+ 
+
+ 
+ where  W 0 W_{0}  is the principal branch of the Lambert  W W  function, and
+ τ s \tau_{s}  is chosen so that 
+
+ 
+ 
+
+ 
+ 
+ ∑ y ∈ 𝒴 ⁡ ( x ) π ⋆ ​ ( y ∣ x ) = 1 . \sum_{y\in\mathcal{Y}(x)}\pi^{\star}(y\mid x)=1. 
+ 
+ 
+
+ 
+ In the limit  τ s → 0 \tau_{s}\to 0 , Eq. ( 4 )
+recovers 
+
+ 
+ 
+
+ 
+ 
+ π ⋆ ​ ( y ∣ x ) ∝ π old ​ ( y ∣ x ) ​ exp ⁡ ( A ⁡ ( x , y ) β ) . \pi^{\star}(y\mid x)\propto\pi_{\mathrm{old}}(y\mid x)\exp\left(\frac{A(x,y)}{\beta}\right). 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ This proposition is the main lens through which we analyze ratio-free
+off-policy objectives. It shows that, once the advantage  A A  is fixed,
+the objective does not generally target the usual exponential
+KL-regularized policy. Instead, it induces a Lambert-tempered target whose
+shape is controlled by the normalization multiplier  τ s \tau_{s} . Before
+studying the regimes of this multiplier, we first show that this objective
+is closely connected to optimal advantage regression losses  [ 11 ,  7 ] . 
+
+ 
+ 
+ 
+ 
+ Connection to  A ⋆ A^{\star} -PO and OAPL. 
+
+ 
+
+ 
+ These losses can be viewed as a squared regression objective on the sentence-level
+log-ratio between the learned policy and the behavior policy. To see this,
+define 
+
+ 
+ 
+
+ 
+ 
+ ℓ θ ​ ( y i ∣ x ) = log ⁡ π θ ​ ( y i ∣ x ) π old ​ ( y i ∣ x ) . \ell_{\theta}(y_{i}\mid x)=\log\frac{\pi_{\theta}(y_{i}\mid x)}{\pi_{\mathrm{old}}(y_{i}\mid x)}. 
+ 
+ 
+
+ 
+ For a fixed sample  y i y_{i}  and a fixed advantage  A ^ i \widehat{A}_{i} , the
+corresponding term in our objective satisfies 
+
+ 
+ 
+
+ 
+ 
+ A ^ i ​ log ⁡ π θ ​ ( y i ∣ x ) − β 2 ​ ( log ⁡ π θ ​ ( y i ∣ x ) π old ​ ( y i ∣ x ) ) 2 \displaystyle\widehat{A}_{i}\log\pi_{\theta}(y_{i}\mid x)-\frac{\beta}{2}\left(\log\frac{\pi_{\theta}(y_{i}\mid x)}{\pi_{\mathrm{old}}(y_{i}\mid x)}\right)^{2} 
+ = − 1 2 ​ β ​ ( β ​ ℓ θ ​ ( y i ∣ x ) − A ^ i ) 2 + C i , \displaystyle=-\frac{1}{2\beta}\left(\beta\ell_{\theta}(y_{i}\mid x)-\widehat{A}_{i}\right)^{2}+C_{i}, 
+ 
+ 
+
+ 
+ where  C i C_{i}  do not depend on  θ \theta . Therefore,
+maximizing our regularized weighted log-likelihood objective is
+equivalent, up to constants and a positive rescaling, to minimizing 
+
+ 
+ 
+
+ 
+ 
+ 𝔼 y 1 : G ∼ π old ( ⋅ ∣ x ) [ 1 G ∑ i = 1 G ( β log π θ ​ ( y i ∣ x ) π old ​ ( y i ∣ x ) − A ^ i ) 2 ] . \mathbb{E}_{y_{1:G}\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\frac{1}{G}\sum_{i=1}^{G}\left(\beta\log\frac{\pi_{\theta}(y_{i}\mid x)}{\pi_{\mathrm{old}}(y_{i}\mid x)}-\widehat{A}_{i}\right)^{2}\right]. 
+ 
+ 
+
+ 
+ This is precisely the  A ⋆ A^{\star} -PO / OAPL form when  A ^ i \widehat{A}_{i}  is chosen as the
+log-sum-exp centered advantage 
+
+ 
+ 
+
+ 
+ 
+ A ^ i β = r i − β ​ log ⁡ ( 1 G ​ ∑ j = 1 G exp ⁡ ( r j / β ) ) . \widehat{A}_{i}^{\beta}=r_{i}-\beta\log\left(\frac{1}{G}\sum_{j=1}^{G}\exp(r_{j}/\beta)\right). 
+ 
+ 
+
+ 
+ 
+ 
+ Thus, OAPL is not a separate objective from the one analyzed above; it is
+a particular instantiation obtained by a specific choice of advantage.
+Consequently, Proposition  3.1  characterizes
+the target policy induced by OAPL as well. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Practical Off-Policy Optimization is Pessimistic 
+
+ 
+
+ 
+ 4.1  Analysis of the objective 
+
+ 
+
+ 
+ Our previous proposition shows that the Lambert target policy is governed by the
+density ratio  ρ s ⋆ ​ ( y ∣ x ) = π ⋆ ​ ( y ∣ x ) / π old ​ ( y ∣ x ) \rho_{s}^{\star}(y\mid x)=\pi^{\star}(y\mid x)/\pi_{\mathrm{old}}(y\mid x) .
+At the optimal solution, this ratio satisfies 
+
+ 
+ 
+
+ 
+ 
+ log ⁡ ρ s ⋆ ​ ( y ∣ x ) + τ s ​ ρ s ⋆ ​ ( y ∣ x ) = A ⁡ ( x , y ) β . \displaystyle\log\rho_{s}^{\star}(y\mid x)+\tau_{s}\rho_{s}^{\star}(y\mid x)=\frac{A(x,y)}{\beta}. 
+ 
+ (5) 
+ 
+
+ 
+ Thus  τ s \tau_{s}  is not merely a normalization constant: it determines the
+shape of the target policy. The sign of  τ s \tau_{s}  is controlled by the
+normalization of the exponential tilt. Define 
+
+ 
+ 
+
+ 
+ 
+ Z exp ​ ( x ) = ∑ y ∈ 𝒴 ⁡ ( x ) π old ​ ( y ∣ x ) ​ exp ⁡ ( A ⁡ ( x , y ) β ) . Z_{\exp}(x)=\sum_{y\in\mathcal{Y}(x)}\pi_{\mathrm{old}}(y\mid x)\exp\left(\frac{A(x,y)}{\beta}\right). 
+ 
+ 
+
+ 
+ Then, on the principal branch, 
+
+ 
+ 
+
+ 
+ 
+ τ s > 0 ⟺ Z exp ( x ) > 1 , τ s = 0 ⟺ Z exp ( x ) = 1 , \tau_{s}>0\quad\Longleftrightarrow\quad Z_{\exp}(x)>1,\qquad\tau_{s}=0\quad\Longleftrightarrow\quad Z_{\exp}(x)=1, 
+ 
+ 
+
+ 
+ and, whenever a real stationary solution exists, 
+
+ 
+ 
+
+ 
+ 
+ τ s < 0 ⟺ Z exp ( x ) < 1 . \tau_{s}<0\quad\Longleftrightarrow\quad Z_{\exp}(x)<1. 
+ 
+ 
+
+ 
+ This means that the way the advantage  A ⁡ ( x , y ) A(x,y)  is centered  directly determines 
+which regime the target policy lies in. In particular, adding a
+context-dependent shift  b ⁡ ( x ) b(x)  to the advantage rescales the exponential
+mass by  e − b ( x ) / β e^{-b(x)/\beta} . Unlike in standard policy-gradient
+estimators, where such shifts can reduce variance without changing the objective, such shifts are not innocuous here: they change the target
+distribution optimized by the off-policy log-likelihood objective. 
+
+ 
+ 
+ 
+ The pessimistic regime:  τ s > 0 \tau_{s}>0 . 
+
+ 
+
+ 
+ When  τ s > 0 \tau_{s}>0 , the Lambert target is more conservative than the
+exponential, KL-regularized target. Indeed, for every response  y y , 
+
+ 
+ 
+
+ 
+ 
+ ρ s ⋆ ​ ( y ∣ x ) = 1 τ s ​ W 0 ​ ( τ s ​ exp ⁡ ( A ⁡ ( x , y ) β ) ) ≤ exp ⁡ ( A ⁡ ( x , y ) β ) , \rho_{s}^{\star}(y\mid x)=\frac{1}{\tau_{s}}W_{0}\left(\tau_{s}\exp\left(\frac{A(x,y)}{\beta}\right)\right)\leq\exp\left(\frac{A(x,y)}{\beta}\right), 
+ 
+ 
+
+ 
+ since  W 0 ​ ( z ) ≤ z W_{0}(z)\leq z  for  z ≥ 0 z\geq 0 . Moreover,  W 0 ​ ( z ) W_{0}(z)  is linear near
+the origin: 
+
+ 
+ 
+
+ 
+ 
+ W 0 ​ ( z ) = z + O ⁡ ( z 2 ) as  ​ z → 0 , W_{0}(z)=z+O(z^{2})\quad\text{as }z\to 0, 
+ 
+ 
+
+ 
+ and grows only logarithmically for large  z z 
+
+ 
+ 
+
+ 
+ 
+ W 0 ​ ( z ) = log ⁡ z − log ⁡ log ⁡ z + o ⁡ ( 1 ) as  ​ z → ∞ . W_{0}(z)=\log z-\log\log z+o(1)\quad\text{as }z\to\infty. 
+ 
+ 
+
+ 
+ Therefore low-advantage responses are treated similarly to the
+exponential update, whereas very high-advantage responses are strongly
+tempered. This is precisely the desired pessimistic behavior: the policy
+does not over-commit exponentially to a small number of high-reward
+off-policy samples, which helps protect against over-optimization and
+entropy collapse  [ 13 ] . 
+
+ 
+ 
+ 
+ The special case  τ s = 1 \tau_{s}=1  gives the particularly simple target 
+
+ 
+ 
+
+ 
+ 
+ ρ s ⋆ ​ ( y ∣ x ) = W 0 ​ ( exp ⁡ ( A ⁡ ( x , y ) β ) ) . \rho_{s}^{\star}(y\mid x)=W_{0}\left(\exp\left(\frac{A(x,y)}{\beta}\right)\right). 
+ 
+ 
+
+ 
+ 
+ 
+ For large positive advantages, this ratio grows approximately linearly in
+ A ⁡ ( x , y ) / β A(x,y)/\beta , rather than exponentially. Thus  τ s = 1 \tau_{s}=1  implements a
+simple form of pessimism  [ 14 ] : it preserves the ordering induced by the advantage while
+substantially reducing the incentive to collapse onto the largest
+estimated rewards. This policy was demonstrated to be minimax for offline preference learning  [ 13 ] . 
+
+ 
+ 
+ 
+ 
+ The exponential boundary:  τ s = 0 \tau_{s}=0 . 
+
+ 
+
+ 
+ The case  τ s = 0 \tau_{s}=0  is the boundary between pessimistic and optimistic
+targets. Eq. ( 5 ) reduces to 
+
+ 
+ 
+
+ 
+ 
+ ρ s ⋆ ​ ( y ∣ x ) = exp ⁡ ( A ⁡ ( x , y ) β ) . \rho_{s}^{\star}(y\mid x)=\exp\left(\frac{A(x,y)}{\beta}\right). 
+ 
+ 
+
+ 
+ Thus the stationary policy is the usual exponential-tilting target
+associated with KL-regularized policy optimization, 
+
+ 
+ 
+
+ 
+ 
+ π ⋆ ​ ( y ∣ x ) ∝ π old ​ ( y ∣ x ) ​ exp ⁡ ( A ⁡ ( x , y ) β ) . \pi^{\star}(y\mid x)\propto\pi_{\mathrm{old}}(y\mid x)\exp\left(\frac{A(x,y)}{\beta}\right). 
+ 
+ 
+
+ 
+ However, in the present objective, reaching exactly this regime requires
+the exponential tilt to be correctly normalized at the population level: 
+
+ 
+ 
+
+ 
+ 
+ ∑ y π old ​ ( y ∣ x ) ​ exp ⁡ ( A ⁡ ( x , y ) β ) = 1 . \sum_{y}\pi_{\mathrm{old}}(y\mid x)\exp\left(\frac{A(x,y)}{\beta}\right)=1. 
+ 
+ 
+
+ 
+ This makes the  τ s = 0 \tau_{s}=0  target delicate. Small errors in the
+advantage baseline can move the population objective into either the
+pessimistic regime  τ s > 0 \tau_{s}>0  or the unstable regime  τ s < 0 \tau_{s}<0 .
+Moreover, the exponential target is highly sensitive to large positive
+advantage estimates, since its density ratio grows as
+ exp ⁡ ( A ⁡ ( x , y ) / β ) \exp(A(x,y)/\beta) . This sensitivity is one reason why directly
+targeting the KL-regularized update can be brittle in large-scale
+off-policy training. 
+
+ 
+ 
+ 
+ 
+ The unstable regime:  τ s < 0 \tau_{s}<0 . 
+
+ 
+
+ 
+ When  τ s < 0 \tau_{s}<0 , write  τ s = − | τ s | \tau_{s}=-|\tau_{s}| . The stationarity equation
+becomes 
+
+ 
+ 
+
+ 
+ 
+ log ⁡ ρ s ⋆ ​ ( y ∣ x ) + τ s ​ ρ s ⋆ ​ ( y ∣ x ) = A ⁡ ( x , y ) β . \log\rho_{s}^{\star}(y\mid x)+\tau_{s}\rho_{s}^{\star}(y\mid x)=\frac{A(x,y)}{\beta}. 
+ 
+ (6) 
+ 
+
+ 
+ Equivalently, 
+
+ 
+ 
+
+ 
+ 
+ ρ s ⋆ ​ ( y ∣ x ) = exp ⁡ ( A ⁡ ( x , y ) β ) ​ exp ⁡ ( | τ s | ​ ρ s ⋆ ​ ( y ∣ x ) ) . \rho_{s}^{\star}(y\mid x)=\exp\left(\frac{A(x,y)}{\beta}\right)\exp\left(|\tau_{s}|\rho_{s}^{\star}(y\mid x)\right). 
+ 
+ 
+
+ 
+ Thus, whenever the principal-branch solution exists, 
+
+ 
+ 
+
+ 
+ 
+ ρ s ⋆ ​ ( y ∣ x ) ≥ exp ⁡ ( A ⁡ ( x , y ) β ) . \rho_{s}^{\star}(y\mid x)\geq\exp\left(\frac{A(x,y)}{\beta}\right). 
+ 
+ 
+
+ 
+ The target is therefore more aggressive than the exponential update: it
+amplifies high-advantage responses even more strongly than the
+KL-regularized target. This regime is also numerically fragile. From
+Equation ( 6 ), 
+
+ 
+ 
+
+ 
+ 
+ ∂ ρ s ⋆ ​ ( y ∣ x ) ∂ ( A ⁡ ( x , y ) / β ) = ρ s ⋆ ​ ( y ∣ x ) 1 + τ s ​ ρ s ⋆ ​ ( y ∣ x ) . \frac{\partial\rho_{s}^{\star}(y\mid x)}{\partial(A(x,y)/\beta)}=\frac{\rho_{s}^{\star}(y\mid x)}{1+\tau_{s}\rho_{s}^{\star}(y\mid x)}. 
+ 
+ 
+
+ 
+ For  τ s < 0 \tau_{s}<0 , the denominator can approach zero, causing the target
+ratio to become extremely sensitive to small errors in the advantage. This makes
+ τ s < 0 \tau_{s}<0  a regime to avoid: it is more peaked than the exponential
+target, more sensitive to advantage noise, and more prone to rapid
+entropy collapse. 
+
+ 
+ 
+ 
+ 
+ 
+ 4.2  The nominal advantage regression target is in the unstable regime 
+
+ 
+
+ 
+ As discussed above,  A ⋆ A^{\star} -PO and OAPL instantiate the regularized off-policy objective with a specific choice of advantage. The previous analysis shows that advantage normalization strongly influences the induced target policy, and is therefore a target-design choice. OAPL uses the log-sum-exp centered advantage 
+
+ 
+ 
+
+ 
+ 
+ A ^ i β = r i − β log ( 1 G ∑ j = 1 G exp ( r j / β ) ) , A β ( x , y ) = 𝔼 π old [ A ^ i β ∣ y i = y , x ] \widehat{A}_{i}^{\beta}=r_{i}-\beta\log\left(\frac{1}{G}\sum_{j=1}^{G}\exp(r_{j}/\beta)\right)\,,\quad A^{\beta}(x,y)=\mathbb{E}_{\pi_{\mathrm{old}}}[\widehat{A}_{i}^{\beta}\mid y_{i}=y,x] 
+ 
+ 
+
+ 
+ This gives by Jensen’s inequality: 
+
+ 
+ 
+
+ 
+ 
+ 𝔼 y ∼ π old ( ⋅ ∣ x ) [ exp ( A β ​ ( x , y ) β ) ] ≤ 𝔼 [ exp ( A ^ i β β ) ] = 1 ⟹ τ s ≤ 0 . \displaystyle\mathbb{E}_{y\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\exp\left(\frac{A^{\beta}(x,y)}{\beta}\right)\right]\leq\mathbb{E}\left[\exp\left(\frac{\widehat{A}_{i}^{\beta}}{\beta}\right)\right]=1\implies\tau_{s}\leq 0\,. 
+ 
+ 
+
+ 
+ 
+ 
+ In non-degenerate finite- G G  settings, the inequality is  strict . Hence
+the target induced by this biased estimator
+lies in the unstable, negative- τ s \tau_{s}  regime, even though the empirical group is
+exponentially normalized. 
+
+ 
+ 
+ 
+ This explains why the implementation choice of OAPL deviates from the
+nominal theory. In the experimental setup, OAPL decouples the temperature
+ β 1 \beta_{1}  used for regularization from the temperature  β 2 \beta_{2}  used
+for advantage computation, choosing  β 2 ≫ β 1 \beta_{2}\gg\beta_{1} . This choice
+makes the advantage closer to a centered group advantage and pushes the induced target back toward the stable positive- τ s \tau_{s}  regime. This is discussed more in Appendix  C.1 . This implicitly
+implements the pessimism needed to stabilize off-policy learning. Rather than relying on this heuristic and an additional hyperparameter, we propose to target the Lambert policy, which was demonstrated to be more stable in RL settings  [ 13 ]  and closer to a  χ \chi -square divergence, implementing the principle of pessimism in the face of uncertainty  [ 14 ,  16 ] . 
+
+ 
+ 
+ 
+ 
+ 4.3  Lambert Policy as a target 
+
+ 
+
+ 
+ The preceding analysis suggests a simple design principle: instead of
+trying to target the fragile exponential boundary  τ s = 0 \tau_{s}=0 , choose a
+positive Lambert multiplier by construction. Specifically, we want to be in the regime
+ τ s > 1 \tau_{s}>1  to benefit from the induced pessimism. Recall that the Lambert target ratio is 
+
+ 
+ 
+
+ 
+ 
+ ρ ⋆ ​ ( y ∣ x ) = π ⋆ ​ ( y ∣ x ) π old ​ ( y ∣ x ) = 1 τ s ​ W 0 ​ ( τ s ​ exp ⁡ ( A ⁡ ( x , y ) β ) ) , \rho^{\star}(y\mid x)=\frac{\pi^{\star}(y\mid x)}{\pi_{\mathrm{old}}(y\mid x)}=\frac{1}{\tau_{s}}W_{0}\left(\tau_{s}\exp\left(\frac{A(x,y)}{\beta}\right)\right), 
+ 
+ 
+
+ 
+ where  τ s \tau_{s}  is chosen so that  𝔼 y ∼ π old ( ⋅ ∣ x ) [ ρ ⋆ ( y ∣ x ) ] = 1 . \mathbb{E}_{y\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\rho^{\star}(y\mid x)\right]=1. 
+
+ 
+ 
+ 
+ We give the simple sufficient condition on the advantage to obtain  τ s ≥ 1 \tau_{s}\geq 1  in the following proposition. 
+
+ 
+ 
+ 
+ Proposition 4.1   (Shifted mean baseline yields a pessimistic Lambert target) . 
+ 
+ Fix a context  x x  and let  β > 0 \beta>0 . For a sentence-level advantage
+ A ⁡ ( x , y ) A(x,y) , define the Lambert mass function 
+
+ 
+ 
+
+ 
+ 
+ M A ( τ ) = 𝔼 y ∼ π old ( ⋅ ∣ x ) [ 1 τ W 0 ( τ exp ( A ⁡ ( x , y ) β ) ) ] . M_{A}(\tau)=\mathbb{E}_{y\sim\pi_{\mathrm{old}}(\cdot\mid x)}\left[\frac{1}{\tau}W_{0}\left(\tau\exp\left(\frac{A(x,y)}{\beta}\right)\right)\right]. 
+ 
+ 
+
+ 
+ Let  τ s \tau_{s}  be the positive normalization multiplier satisfying  M A ​ ( τ s ) = 1 M_{A}(\tau_{s})=1 . We have: 
+
+ 
+ 
+
+ 
+ 
+ 𝔼 y ∼ π old ( ⋅ ∣ x ) [ A ( x , y ) ] ≥ β ⟹ τ s ≥ 1 . \mathbb{E}_{y\sim\pi_{\mathrm{old}}(\cdot\mid x)}[A(x,y)]\geq\beta\implies\tau_{s}\geq 1. 
+ 
+ 
+
+ 
+ Consequently, the following choice of the advantage induces a Lambert multiplier satisfying  τ s ≥ 1 \tau_{s}\geq 1 . 
+
+ 
+ 
+
+ 
+ 
+ A ^ i = r i − r ¯ + β , \widehat{A}_{i}=r_{i}-\bar{r}+\beta, 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 5  Experiments 
+
+ 
+
+ 
+ We empirically evaluate whether directly targeting the pessimistic
+Lambert regime improves the stability of off-policy
+learning for language-model reasoning. Our experiments compare OAPL with
+our Lambert objective and stress test them under small regularization strength and large policy lag. 
+
+ 
+ 
+ 
+ All experiments start from Qwen3-8B  [ 17 ]  as the initial policy. We train on
+the DeepScaleR dataset  [ 20 ] . For training, we use four H100 GPUs, with one prompt per device, group size  G = 4 G=4 , maximum generation length  T = 4096 T=4096 , and AdamW  [ 21 ]  with a learning rate of  10 − 6 10^{-6} . 
+
+ 
+ 
+ 
+ We report evaluation reward as average accuracy on a held-out mixture of
+math benchmarks consisting of Minerva  [ 4 ] , AIME2025, AMC23, and BRUMO  [ 22 ] .
+We also report the average generation entropy, which
+measures whether the policy maintains diversity or collapses during
+training. 
+
+ 
+ 
+ 
+ For each  β > 0 \beta>0 , we compare two ratio-free off-policy objectives that use the same
+regularized log-ratio regression form, but differ in how the advantage is
+defined. We compare the following advantages: 
+
+ 
+ 
+
+ 
+ 
+ 
+ A ^ i OAPL = r i − β ​ log ⁡ ( 1 G ​ ∑ j = 1 G exp ⁡ ( r j / β ) ) , A ^ i Lambert = r i − r ¯ + β . \displaystyle\widehat{A}_{i}^{\mathrm{OAPL}}=r_{i}-\beta\log\left(\frac{1}{G}\sum_{j=1}^{G}\exp(r_{j}/\beta)\right),\qquad\widehat{A}_{i}^{\mathrm{Lambert}}=r_{i}-\bar{r}+\beta\,. 
+ 
+ 
+
+ 
+ The Lambert choice directly targets the pessimistic Lambert regime. As shown in
+Proposition  4.1 , it guarantees that the induced
+Lambert multiplier satisfies  τ s ≥ 1 \tau_{s}\geq 1 . 
+
+ 
+ 
+ 
+ To study off-policy learning, rollouts are generated by a lagged behavior
+policy  π old \pi_{\mathrm{old}} , while updates are applied to the current
+policy  π θ \pi_{\theta} . The policy lag  L L  denotes the number of
+optimization steps between the behavior policy used to generate the data
+and the current policy being updated. Larger  L L  therefore corresponds
+to more stale, more off-policy data. 
+
+ 
+ 
+ 
+ First, we set  L = 32 L=32 , and we study sensitivity to the regularization strength. We compare
+OAPL and Lambert for  β ∈ { 10 − 1 , 10 − 2 , 10 − 3 } \beta\in\{10^{-1},10^{-2},10^{-3}\} .
+Figure  1  (Top) reports evaluation reward and entropy during
+training. Lambert remains stable across all three values of  β \beta ,
+whereas OAPL becomes unstable for small  β \beta . In particular, when
+the regularization is weak, OAPL exhibits rapid entropy collapse and
+degraded reward, while Lambert maintains higher entropy and continues to
+improve. This supports the theoretical prediction that the Lambert target
+is less sensitive to aggressive regularization because large advantages
+are tempered rather than amplified exponentially. 
+
+ 
+ 
+ 
+ Second, we study robustness to stale rollouts by varying the policy lag  L ∈ { 32,128,256 } L\in\{32,128,256\} . Figure  1  (Bottom) reports evaluation reward and entropy for
+each lag. Lambert is consistently more stable as the lag increases. It
+maintains reasonable entropy and converges to higher reward, while OAPL
+becomes highly sensitive to stale data. Depending on the lag, OAPL either
+collapses to low entropy or exhibits unstable entropy growth, both of
+which are reflected in degraded or unstable reward curves. 
+
+ 
+ 
+ 
+ The Lambert advantage makes off-policy learning more robust. The improvement is pronounced in the regimes predicted by our analysis to be difficult
+for off-policy learning: small  β \beta , where exponential targets
+become sharp, and large policy lag,  β \beta  small is necessary to allow learning. These results support
+our main claim that targeting the pessimistic Lambert regime stabilizes
+off-policy learning for LLM reasoning. 
+
+ 
+ 
+ 
+ 
+ 
+ Figure 1 :  Lambert improves off-policy stability. 
+Top: Lambert remains stable while OAPL
+collapses for small  β \beta . Bottom: Lambert maintains higher
+reward and stable entropy under stale rollouts, while OAPL becomes unstable. 
+ 
+ 
+ 
+ 6  Conclusion 
+
+ 
+
+ 
+ By characterizing regularized, ratio-free off-policy objectives as inducing Lambert-tempered policies, we showed that advantage normalization is not a benign baseline choice but a mechanism that determines whether the update is pessimistic, exponential, or unstable. This lens explains both the empirical strength and the fragility of optimal advantage regression methods: their nominal log-sum-exp advantage can induce an aggressive population target, while practical temperature decoupling implicitly restores a more conservative update. Building on this understanding, we proposed a shifted-mean advantage that targets the pessimistic Lambert regime by construction, improving robustness to regularization strength and policy lag in our experiments. We view token-level variants of the theory as a promising direction for making off-policy reasoning algorithms more principled and reliable. 
+
+ 
+ 
+ 
+ 
+ 7  Acknowledgment 
+
+ 
+
+ 
+ This project was provided with computational AI and storage
+resources by GENCI at IDRIS thanks to the grant 2025-A0191016862 on the supercomputer Jean Zay
+(V100/A100/H100 partitions). 
+
+ 
+ 
+ 
+ 
+ 

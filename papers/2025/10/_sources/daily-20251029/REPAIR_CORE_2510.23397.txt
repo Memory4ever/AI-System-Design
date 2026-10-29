@@ -1,0 +1,995 @@
+VideoTG-R1: Boosting Video Temporal Grounding via Curriculum Reinforcement Learning on Reflected Boundary Annotations
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+I Introduction
+II Related Work
+II-A Video Temporal Grounding
+II-B RL in VTG
+II-C Data Selection in MLLMs
+III Method
+III-A Boundary Reflection Agent
+III-A1 Boundary Reflection
+III-A2 Partially Annotated Sample Filter
+III-B Curriculum Reinforcement Learning
+III-B1 Difficulty Estimation Agent
+III-B2 Curriculum RL Strategy
+IV Experiments
+IV-A Datasets, Evaluation, and Baseline Models
+IV-B Implementation Details
+IV-C Comparison with State-of-the-Art
+IV-D Ablation Study
+IV-D1 Ablation of different modules
+IV-D2 Ablation of boundary reflection agent
+IV-D3 Ablation of curriculum RL strategy
+IV-D4 Distribution of Boundary Reflection Score
+IV-D5 Training Difficulty of Samples with Low Zero-shot IoU
+IV-D6 Training Curves of GRPO and VideoTG-R1
+IV-D7 More partially annotated samples
+IV-D8 Qualitative Analysis
+IV-D9 Prompt Templates
+V Conclusion
+References
+License: CC BY 4.0
+arXiv:2510.23397v1 [cs.CV] 27 Oct 2025
+VideoTG-R1: Boosting Video Temporal Grounding via Curriculum Reinforcement Learning on Reflected Boundary Annotations
+Lu Dong
+Haiyu Zhang
+Han Lin
+Ziang Yan
+Xiangyu Zeng
+Hongjie Zhang
+Yifei Huang
+Yi Wang
+Zhen-Hua Ling
+Limin Wang
+Yali Wang
+††thanks: Lu Dong is with University of Science and Technology of China, Hefei 230027, China, and also with Shanghai Artificial Intelligence Laboratory, Shanghai 202150, China. (Email: dl1111@mail.ustc.edu.cn)††thanks: Haiyu Zhang is with Beihang University, Beijing 100191, China, and also with Shanghai Artificial Intelligence Laboratory, Shanghai 202150, China. (Email: zhyzhy@buaa.edu.cn)††thanks: Han Lin is with Shanghai Jiao Tong University, Shanghai 200240, China, and also with Shanghai Artificial Intelligence Laboratory, Shanghai 202150, China. (Email: linhan1201@sjtu.edu.cn)††thanks: Ziang Yan is with Zhejiang University, Hangzhou 310058, China, and also with Shanghai Artificial Intelligence Laboratory, Shanghai 202150, China. (Email: yanziang@pjlab.org.cn)††thanks: Xiangyu Zeng and Limin Wang are with State Key Laboratory for Novel Software Technology, Nanjing University, Nanjing 210023, China, and also with Shanghai Artificial Intelligence Laboratory, Shanghai 202150, China. (Email: XiangyuZeng2001@outlook.com and lmwang@nju.edu.cn)††thanks: Hongjie Zhang, Yifei Huang, and Yi Wang are with Shanghai Artificial Intelligence Laboratory, Shanghai 202150, China. (Email: nju.zhanghongjie@gmail.com, hyf015@gmail.com, and wangyi@pjlab.org.cn)††thanks: Zhen-Hua Ling is with University of Science and Technology of China, Hefei 230027, China (Email: zhling@ustc.edu.cn)††thanks: Yali Wang is with Shenzhen Institute of Advanced Technology, Chinese Academy of Sciences, Shenzhen 518055, China, and also with Shanghai Artificial Intelligence Laboratory, Shanghai 202150, China. (Email: yl.wang@siat.ac.cn).
+Yali Wang is the corresponding author.
+Abstract
+Video temporal grounding (VTG) aims to locate precise segments in videos based on language queries, which is a fundamental challenge in video understanding. While recent Multimodal Large Language Models (MLLMs) have shown promise in tackling VTG through reinforcement learning (RL), they overlook
+the challenges arising from both the quality and difficulty of training
+samples. (1) Partially annotated samples. Many samples contain relevant segments beyond the annotated interval, introducing ambiguous supervision. (2) Hard-to-ground samples. Samples with poor zero-shot performance produce consistently low and indistinguishable rewards during RL training, exhibiting no clear preference among multiple outputs and thus hindering learning efficiency. To address these challenges, we propose VideoTG-R1, a novel curriculum RL framework with reflected boundary annotations, enabling data-efficient training. Specifically, we propose a Boundary Reflection Agent that utilizes MLLMs to predict query-relevant timestamps outside the annotated intervals, allowing us to identify and filter out partially annotated samples, thereby reducing ambiguity. Furthermore, we introduce a Difficulty Estimation Agent to assess the training difficulty of each sample and design a curriculum RL strategy that
+dynamically masks the videos of hard-to-ground samples according to the training steps, easing the training difficulty and providing clearer preference.
+Experiments on the VTG and grounded VideoQA tasks demonstrate the effectiveness of our method.
+Remarkably, with only 10% of the training samples and 21% of the computational budget, VideoTG-R1 outperforms full-data counterparts under both group relative policy optimization (GRPO) and supervised fine-tuning (SFT). The code is available at https://github.com/ldong1111/VideoTG-R1.
+Index Terms: Video temporal grounding, multimodal large language model, reinforcement learning.
+I Introduction
+Fig. 1: Overview. VideoTG-R1 is a multi-agent system for efficient RL training. It contains three key modules to address the primary challenges in VTG. Boundary Reflection Agent quantifies the missing annotations and identifies the partially annotated samples. Difficulty Estimation Agent estimate the difficulty of each sample via zero-shot evaluation. Curriculum-RL strategy learns the hard samples in an easy-to-hard manner by dynamically masking the videos.
+Understanding long-form videos is a core ambition in computer vision [1, 2]. A fundamental step toward this goal is Video Temporal Grounding (VTG) [3],
+which aims to pinpoint the event timestamp within a video based on the given query.
+VTG has a wide range of applications, including smart home assistants [4], video retrieval [5], and human-computer interaction systems [6].
+Traditional VTG approaches typically adopt a two-stage feature-based pipeline [7, 8, 9, 10, 11, 12], which first extracts features with pretrained models and then adopts task-specific grounding models to predict the timestamps. While effective, the task-specific design often fails to generalize in a zero-shot setting, which is crucial for real-world scenarios [13]. Recently, Multimodal Large Language Models (MLLMs) [13, 14, 15] have emerged as versatile generalists, addressing VTG tasks directly in a zero-shot manner by their unified, multitask reasoning capabilities. However, MLLMs tend to over-penalize false negatives during supervised fine-tuning (SFT) [16]. Inspired by the strong reasoning capabilities exhibited by reinforcement-learning (RL) [17, 18] in LLMs, researchers have begun to explore RL-based frameworks to effectively post-train MLLMs for VTG [19].
+Despite the potential of RL for VTG, current approaches
+overlook the challenges arising from both the quality and difficulty of training samples.
+(1) Partially annotated samples. Many samples contain relevant segments beyond annotated intervals. As shown in Case 1 in Fig. 1, the query “Water hitting the rocks from an ocean” appears at both the beginning and the end of the video, but the end segment is unannotated, i.e., this sample’s ground-truths are partially annotated. These partially annotated samples introduce ambiguous supervision, which misleads the optimization process and degrades the final performance. (2) Hard-to-ground samples.
+Samples with poor zero-shot grounding performance produce consistently low and indistinguishable rewards during RL training,
+exhibiting no clear preference among multiple outputs and thus hindering the learning efficiency of RL.
+To address these two issues, we introduce VideoTG-R1,
+a novel curriculum reinforcement learning framework with reflected boundary annotations to enable more data-efficient training.
+Specifically, we propose a Boundary Reflection Agent that
+utilizes MLLMs to predict query-relevant timestamps outside the annotated intervals, allowing us to identify and filter out partially annotated samples, thereby mitigating the ambiguous supervision. Additionally, we employ a Difficulty Estimation Agent to assess the training difficulty of each sample and design a curriculum RL strategy that dynamically masks the videos of hard-to-ground samples according to the training steps. This approach eases the training difficulty of hard-to-ground samples, provides clearer preference during the RL training progress, and facilitates better convergence.
+In summary, our contributions are threefold:
+•
+We propose a novel VideoTG-R1 framework to address two major challenges during the RL post-training stage in VTG, i.e., partially annotated samples and hard-to-ground samples.
+•
+We propose a Boundary Reflection
+Agent to mitigate the ambiguous supervision caused by partially annotated samples, and introduce a Difficulty Estimation Agent along with a curriculum RL strategy to alleviate the training difficulty of hard-to-ground samples.
+•
+We validate VideoTG-R1 through comprehensive evaluation on VTG and grounded Video Question Answering (VideoQA). We achieve state-of-the-art performance. Moreover, with only 10% of the training samples and 21% of the computational budget, our method outperforms full-data counterparts under both GRPO and SFT paradigms.
+II Related Work
+II-A Video Temporal Grounding
+The ability to decompose and recognize salient content segments within videos [20, 21, 22, 23, 24, 25, 26, 27, 28] is a fundamental requirement for video understanding, reflecting a deep comprehension of both the temporal structure and semantic content. A key task within this domain is Video Temporal Grounding (VTG) [3, 29, 9, 10, 11, 12], which aims to localize natural-language queries within untrimmed videos. Early VTG approaches adopt feature-based pipelines. They first extract video and language features using pre-trained encoders, then predict timestamps based on multimodal interaction. These can be categorized into proposal-free [7, 8, 30, 31] and proposal-based [32, 33, 34] methods. CRNet [9] proposes a multi-choice generator to generate favorable representations for each candidate moment.
+DMFAT [10] systematically analyzes and mitigates both visual and combinatorial biases in the training data without using a proposal-generation module. While effective, these approaches are difficult to generalize to zero-shot scenarios.
+Recent works have resorted to MLLMs [13, 14, 35, 36, 26, 37, 38, 15] for their unified, multitask reasoning capabilities.
+VTimeLLM [13]
+proposes a boundary-aware three-stage training strategy to progressively integrate temporal information into MLLMs.
+However, these methods tend to over-penalize false negatives during SFT [16]. In this work, we focus on RL to improve the capability of MLLMs in the VTG task.
+II-B RL in VTG
+Recent works [39, 18] have significantly advanced LLM reasoning capabilities via reinforcement learning. For VTG, several methods [19, 40] adopt RL with rigorously designed rewards to enhance VTG performance.
+However, the impact of data quality and how to train hard-to-ground samples effectively have been underexplored. In this work, we enhance RL for VTG by filtering out partially annotated samples and employing a curriculum RL strategy to ease the training difficulty of hard-to-ground samples.
+II-C Data Selection in MLLMs
+Low-quality samples in instruction datasets can lead to low training efficiency and degrade performance. Most previous works [41, 42, 43, 44] aim to curate a subset of data that maximizes model performance while minimizing unnecessary computation.
+For instance, COINCIDE [42] utilizes inter-cluster transferability and density to represent the sample quality.
+These methods emphasize data diversity and representativeness, but often lack task-specific interpretability. In this work, we filter out partially annotated samples to avoid ambiguity in supervision, specifically tailored for VTG and offering strong interpretability. Regarding training efficiency, recent works [45, 40] have concentrated on tasks with discrete reward signals, e.g., ImageQA and VideoQA. [45] unlocks the model’s potential by tackling the hardest samples and then gradually transitioning to easier ones. However, the training efficiency of VTG with contiguous reward signals has been less explored. In this work, we aim to ease the training difficulty of hard-to-ground samples for VTG.
+III Method
+In this section, we explain in detail the two key components of VideoTG-R1 in Fig. 1. First, we present Boundary Reflection Agent to identify and filter out partially annotated samples (Sec. III-A). Second, we propose Curriculum Reinforcement Learning (RL) with a Difficulty Estimation Agent and a Curriculum RL strategy, where the Difficulty Estimation Agent assesses the training difficulty of each sample and a Curriculum RL strategy to provide clearer preference during RL training (Sec. III-B).
+III-A Boundary Reflection Agent
+To address the issue of partially annotated samples in video temporal grounding datasets, we introduce a Boundary Reflection Agent. This agent identifies and filters out partially annotated samples to curate a cleaner subset, thereby facilitating more data-efficient training. The pipeline is shown in Fig. 2. To be concrete, given a dataset 𝒟\mathcal{D} of NN samples, each sample 𝒮=(𝒬,𝒱,𝒯)\mathcal{S}=(\mathcal{Q},\mathcal{V},\mathcal{T}) consists of a query 𝒬\mathcal{Q}, a video
+𝒱\mathcal{V} and ground truth (GT) timestamps 𝒯\mathcal{T}. We employ a Boundary Reflection Agent to identify a subset 𝒟c⊆𝒟\mathcal{D}_{c}\subseteq\mathcal{D} that only contains fully annotated samples.
+III-A1 Boundary Reflection
+Fig. 2: Boundary Reflection Agent. First, the annotated segments are removed from the original video. Then, a boundary reflection prompt augmented with a timestamp metadata and a grounding instruction is fed to an MLLM to estimate the total duration of query-relevant segments outside the annotated video. Finally, we can identify and discard partially annotated samples.
+Boundary Reflection identifies the partially annotated samples in video temporal grounding datasets. Specifically, it uses a pretrained MLLM (e.g., Qwen2.5-VL 7B [46]) to estimate the total duration of query-relevant segments outside the annotated video 𝒱o=𝒱−𝒱a\mathcal{V}_{o}=\mathcal{V}-\mathcal{V}_{a}, where 𝒱a\mathcal{V}_{a} denotes the segments corresponding to the GT timestamps 𝒯\mathcal{T}. This is formulated as:
+B​R=BMLLM​(𝒫B​R,𝒱o),BR=B_{\text{MLLM}}(\mathcal{P}_{BR},\mathcal{V}_{o}),
+(1)
+where B​RBR denotes the Boundary Reflection score, with higher values indicating more unannotated ground-truths in the video 𝒱\mathcal{V}. BMLLMB_{\text{MLLM}} represents a pretrained MLLM. 𝒫B​R\mathcal{P}_{BR} denotes the boundary reflection prompt, which is sample-specific.
+Since different annotated GT segments 𝒱a\mathcal{V}_{a} can have very different durations, the same absolute B​RBR may have a larger effect on shorter annotated intervals than on longer ones. To account for this length sensitivity, we normalize B​RBR by the duration of the annotated GT segment. Formally, we define
+B​Rnorm=B​R|𝒱a|,BR_{\mathrm{norm}}\;=\;\frac{BR}{\lvert\mathcal{V}_{a}\rvert},
+(2)
+where |𝒱a|\lvert\mathcal{V}_{a}\rvert denotes the total duration of the annotated segments.
+Fig. 3: Left: Difficulty Estimation Agent. We perform zero-shot evaluation with an MLLM to estimate the difficulty of each sample, and then split the dataset into “hard” and “easy” samples based on their predicted IoUs. Right: Curriculum RL strategy. For hard-to-ground samples, we dynamically mask the segment outside the annotated video according to the training step, which eases training difficulty and provides clearer preference during the RL training process.
+Simply inputting 𝒱o\mathcal{V}_{o} into MLLM may cause confusion regarding temporal information. That is, 𝒱o\mathcal{V}_{o} consists of two non-contiguous video segments, one before and one after the annotated video, making the model lack knowledge of their exact split points and the duration of the removed annotated segment. To address these issues, we construct the boundary reflection prompt 𝒫B​R\mathcal{P}_{BR} by incorporating explicit timestamp metadata along with the grounding instruction for 𝒱o\mathcal{V}_{o}. This timestamp metadata details the original video’s total duration, the timestamp of the removed interval, and the timestamps of the two subclips. The complete prompt template is provided in the supplementary materials.
+III-A2 Partially Annotated Sample Filter
+By leveraging the contextual understanding capabilities of MLLMs, the Boundary Reflection score captures subtle event boundaries that may be overlooked by annotators, especially in long or complex videos. This metric thus serves as a valuable indicator for diagnosing partially annotated samples in video temporal grounding datasets.
+To filter out partially-annotated samples from the dataset 𝒟\mathcal{D}, we first discard samples with normalized boundary reflection score B​Rnorm>τBR_{\mathrm{norm}}>\tau.
+Then, from this filtered pool, we randomly draw samples until reaching our desired dataset size. By excluding partially annotated samples, we eliminate ambiguity during training and improve the overall quality of the dataset, thereby enhancing the training efficiency and the capability of the models.
+III-B Curriculum Reinforcement Learning
+Previous works have highlighted GRPO’s struggles with hard samples (those exhibiting low zero-shot performance) in discrete reward tasks like ImageQA and VideoQA [45, 40]. In these scenarios, the model often generates identical rewards (either all correct or all incorrect). This prevents GRPO from discerning relative preferences, causing advantage estimates to collapse and thus eliminating the training signal. Similarly, in the VTG task, we observe that the generated rewards for hard-to-ground samples are consistently low and undifferentiated, lacking clear preference signals. This makes it challenging to effectively train on hard-to-ground samples with GRPO.
+To address this issue, we propose a curriculum reinforcement learning framework that eases the training difficulty of hard-to-ground samples. The pipeline is shown in Fig. 3.
+First, we assess the training difficulty of each samples using a Difficulty Estimation Agent. Then, we design a curriculum RL strategy that dynamically masks the videos of hard-to-ground samples according to the training steps. This allows the model to initially train on relatively easy instances with simplified video contexts, and gradually transition to more challenging ones as training progresses.
+III-B1 Difficulty Estimation Agent
+The difficulty estimation agent (DEA) partitions video temporal grounding samples into “hard” and “easy” subsets. Specifically, it leverages a pretrained MLLM to evaluate the prediction difficulty. This is formulated as:
+𝒯pred=DMLLM​(𝒫E​S​A,𝒱),\mathcal{T}_{\mathrm{pred}}\;=\;D_{\mathrm{MLLM}}\bigl(\mathcal{P}_{ESA},\,\mathcal{V}\bigr),
+(3)
+where 𝒫E​S​A\mathcal{P}_{ESA} denotes the grounding prompt corresponding to each sample. We then compute the Intersection over Union (IoU) between the predicted timestamp 𝒯pred\mathcal{T}_{\mathrm{pred}} and the ground-truth timestamp 𝒯\mathcal{T}:
+IoU⁡(𝒯pred,𝒯)=|𝒯pred∩𝒯||𝒯pred∪𝒯|.\mathrm{IoU}\bigl(\mathcal{T}_{\mathrm{pred}},\,\mathcal{T}\bigr)\;=\;\frac{\bigl|\,\mathcal{T}_{\mathrm{pred}}\cap\mathcal{T}\,\bigr|}{\bigl|\,\mathcal{T}_{\mathrm{pred}}\cup\mathcal{T}\,\bigr|}.
+(4)
+To estimate training difficulty for GRPO, we generate the top-kk predictions for each sample and take the zero-shot maximum IoU (IoUm​a​xz​s\mathrm{IoU}_{max}^{zs}) among them as the difficulty score. Low IoUm​a​xz​s\mathrm{IoU}_{max}^{zs} tighten the upper bound on GRPO’s convergence, which indicates that those samples are harder to learn.
+Consequently, we regard samples with low IoUm​a​xz​s\mathrm{IoU}_{max}^{zs} as hard-to-ground samples (i.e., IoUm​a​xz​s≤β\mathrm{IoU}_{max}^{zs}\leq\beta), and the rest as easy-to-ground samples. Based on this, we adapt the curriculum RL strategy on the hard-to-ground samples to stabilize reward estimation.
+III-B2 Curriculum RL Strategy
+We propose a curriculum RL strategy to ease the training difficulty of hard-to-ground samples. Specifically, we mask the segments 𝒱o\mathcal{V}_{o} outside the ground-truth segments to reduce the length of negative intra-video segments. To ensure that the newly unmasked video always contains the ground-truth video, the masked segments are positioned at the beginning and end of the original video, well outside the ground-truth interval.
+We introduce a dynamic mask ratio m⁡(t)m(t) to control the fraction of hard-to-ground samples drawn from 𝒱o\mathcal{V}_{o} at training step tt as follows:
+m⁡(t)={m0​(1−tw​T),0≤t≤w​T,0,t>w​T,m(t)=\begin{cases}m_{0}\,\displaystyle\Bigl(1-\frac{t}{w\,T}\Bigr),&0\leq t\leq wT,\\[10.00002pt]
+0,&t>wT,\end{cases}
+(5)
+where TT is the total number of training steps, ww is the warmup ratio, and m0m_{0} is the initial mask ratio.
+For easy-to-ground samples, we fix m⁡(t)=0m(t)=0 throughout training. For hard-to-ground samples, the mask ratio decays linearly from m0m_{0} to 00 over the first w​TwT training steps, and then maintain full videos as input thereafter. The variable ratio of mm eases the training difficulty of hard-to-ground samples, leading to better performance.
+This approach ensures that the model is gradually exposed to increasingly difficult samples during training, enabling it to consistently generate multiple outputs with distinguishable preferences at every training stage.
+To avoid positional bias, i.e., the ground-truth segment consistently appears in the same centered location, we introduce random shifts to the unmasked region within the original video. Specifically, we first compute the remaining video length by the mask ratio m⁡(t)m(t), then randomly select a window of that size from the interval encompassing the ground truth segment. This randomness encourages robustness and prevents overfitting to specific positional patterns.
+We adopt the GRPO [17] for reinforcement learning. Following VideoChat-R1 [19], the training rewards are a format reward and an IoU reward:
+RV​T​G=Rf​o​r​m​a​t+RI​o​U.R_{VTG}=R_{format}+R_{IoU}.
+(6)
+IV Experiments
+IV-A Datasets, Evaluation, and Baseline Models
+For training VideoTG-R1, we select 10% training data from VideoMind’s Grounder dataset [15], yielding 21K samples across 8 datasets, i.e., QVHighlights (0.5K) [30], DiDeMo (3.3K) [47], TACoS (0.9K) [48], QuerYD (1.9K) [49], HiREST-MR (0.8K) [50], HiREST-Step (0.4K) [51], CosMo-Cap (8.7K) [36], and InternVid-VTime (5.4K) [13]. We evaluate VideoTG-R1 on both VTG and grounded VideoQA benchmarks, including: 1) Charades-STA [3] contains 6.6K indoor human-activity videos, split into 12.4K training and 3.7K test samples. 2) ActivityNet-Captions [29] (ANet) contains 20K YouTube videos with 37.4K training and 17.0K test samples. 3) NExT-GQA [52] contains 1.6K daily-life videos with 3.4K validation and 5.5K test QA pairs. 4) RexTime contains 8.1K YouTube videos and is annotated with 8.7K training, 0.9K validation, and 2.1K test QA pairs. Following VideoMind [15], the grounded VideoQA benchmarks consist of two sub-tasks: VTG and keyframe-based question answering tasks.
+For the VTG task, we report mean Intersection over Union (mIoU) as well as recall at IoU thresholds of 0.3, 0.5, and 0.7. For the grounded VideoQA task, we additionally report Acc (accuracy), IoP (Intersection over Prediction), Acc@IoU, and Acc@IoP. The Acc@IoU and Acc@IoP denote the percentages of test samples correctly predicted based on the respective IoU or IoP threshold.
+For VTG baseline models, we consider both feature-based and MLLM-based approaches: 1) feature-based methods: 2D-TAN [32], MMN [33], VDI [53], Moment-DETR [30], and UniVTG [34]. UniVTG adopts a unified transformer and task head to jointly train VTG, highlight detection and video summarization, thereby enabling scalable multitask learning. 2) MLLM-based methods includes: a) SFT-based methods: VideoChat [54],
+VTimeLLM [13], TimeChat [35], Momentor [55],
+E.T. Chat [56],
+ChatVTG [57], VideoChat-TPO [26], VideoMind [15]. VideoMind employs a chain-of-LoRA strategy to reason video tasks step by step. b) GRPO-based method: VideoChat-R1 [19].
+IV-B Implementation Details
+We leverage Qwen2.5-VL 7B [46] as the backbone of our boundary reflection agent and curriculum RL strategy. For grounded VideoQA, following VideoMind [15], we employ Qwen2-VL 7B [58] as the QA answerer. Videos are sampled at 2 FPS with a maximum of 384 frames. We train VideoTG-R1 for 2 epochs using a batch size of 16. For GRPO, the top-kk rollout parameter is set to 8. All experiments are conducted with 16 NVIDIA A100 GPUs. The hyperparameters τ\tau, β\beta, m0m_{0}, and ww are set to 0, 0.3, 0.5, and 50%, respectively.
+Method
+Size
+FT
+R@0.3
+R@0.5
+R@0.7
+mIoU
+Moment-DETR
+–
+✓
+65.8
+52.1
+30.6
+45.5
+UniVTG
+–
+✓
+70.8
+58.1
+35.6
+50.1
+VideoChat-R1
+7B
+✓
+-
+71.7
+50.2
+60.8
+VTimeLLM
+13B
+55.3
+34.3
+14.7
+34.6
+TimeChat
+7B
+51.5
+32.2
+13.4
+–
+Momentor
+7B
+42.6
+26.6
+11.6
+28.5
+HawkEye
+7B
+50.6
+31.4
+14.5
+33.7
+ChatVTG
+7B
+52.7
+33.0
+15.9
+34.9
+VideoChat-TPO
+7B
+58.3
+40.2
+18.4
+38.1
+VideoMind
+7B
+73.5
+59.1
+31.2
+50.2
+VideoTG-R1 (Ours)
+7B
+79.5
+64.8
+39.2
+55.9
+TABLE I: Zero-shot Video Temporal Grounding on Charades-STA [3]. FT indicates whether fine-tuned on the downstream training set.
+Method
+Size
+FT
+R@0.3
+R@0.5
+R@0.7
+mIoU
+2D-TAN
+–
+✓
+60.4
+43.4
+25.0
+42.5
+MMN
+–
+✓
+64.5
+48.2
+29.4
+46.6
+VDI
+–
+✓
+–
+48.1
+28.8
+–
+VideoChat
+7B
+8.8
+3.7
+1.5
+7.2
+ChatVTG
+7B
+40.7
+22.5
+9.4
+27.2
+Momentor
+7B
+42.9
+23.0
+12.4
+29.3
+E.T. Chat
+4B
+24.1
+12.8
+6.1
+18.9
+VideoMind
+7B
+48.4
+30.3
+15.7
+33.3
+VideoChat-R1
+7B
+-
+33.4
+17.7
+36.6
+VideoTG-R1 (Ours)
+7B
+59.0
+38.6
+21.7
+40.6
+TABLE II: Zero-shot Video Temporal Grounding on ActivityNet-Captions [29].
+Method
+Size
+FT
+R@0.3
+R@0.5
+mIoU
+Acc
+Acc
+@IoU=0.5
+VTimeLLM
+7B
+✓
+43.69
+26.13
+29.92
+57.58
+17.13
+TimeChat
+7B
+✓
+40.13
+21.42
+26.29
+49.46
+10.92
+VTimeLLM
+7B
+28.84
+17.41
+20.14
+36.16
+–
+TimeChat
+7B
+14.42
+7.61
+11.65
+40.04
+–
+LITA
+13B
+29.49
+16.29
+21.49
+34.44
+–
+VideoMind
+7B
+38.22
+25.52
+27.61
+74.59
+20.20
+VideoTG-R1 (Ours)
+7B
+41.21
+31.73
+32.24
+75.71
+25.86
+TABLE III: Zero-shot grounded VideoQA on ReXTime [59].
+Method
+Size
+IoU
+Acc
+Acc
+@IoU=0.5
+mIoP
+Acc
+@IoP=0.5
+R@0.3
+R@0.5
+mIoU
+FrozenBiLM NG+
+890M
+13.5
+6.1
+9.6
+70.8
+–
+24.2
+17.5
+SeViLA
+4B
+29.2
+13.8
+21.7
+68.1
+–
+29.5
+16.6
+LangRepo
+8×\times7B
+–
+12.2
+18.5
+–
+–
+31.3
+17.1
+LLoVi
+1.8T
+–
+15.3
+20.0
+–
+–
+37.3
+24.3
+HawkEye
+7B
+37.0
+19.5
+25.7
+–
+–
+–
+–
+VideoChat-TPO
+7B
+41.2
+23.4
+27.7
+–
+–
+35.6
+25.5
+VideoMind
+7B
+50.2
+25.8
+31.4
+76.9†
+20.2†
+39.0
+28.2
+VideoTG-R1 (Ours)
+7B
+50.6
+28.0
+34.2
+77.4
+22.5
+38.3
+26.5
+TABLE IV: Zero-shot grounded VideoQA on NExT-GQA [52]. Here, Acc@IoP=0.5 is also termed Acc@GQA. † indicates our evaluation using the official checkpoint. Note that VideoMind’s training data includes the NExT-GQA training set, so its performance is not strictly zero-shot.
+IV-C Comparison with State-of-the-Art
+As shown in Table I, II, III, and IV, VideoTG-R1 achieves state-of-the-art performance across these four benchmarks. Specifically, on Charades-STA and ANet, VideoTG-R1 outperforms previous SoTA by margins of 5.7% and 4.0% on mIoU, respectively.
+For the grounded VideoQA task, VideoTG-R1 outperforms VideoMind [15] on RexTime by 4.63% in mIoU and 5.66% in Acc@IoU@0.5, and VideoTG-R1 outperforms VideoChat-TPO [26] on NExT-GQA by 6.5% in mIoU and 1.0% in Acc@IoP@0.5.
+Overall, these results highlight that the grounding timestamps generated by our VideoTG-R1 are of higher quality.
+Training
+Mode
+Sample
+Ratio
+Sample
+Method
+DM
+Normalized
+Cost
+Charades-STA
+ANet
+R@0.5
+mIoU
+R@0.5
+mIoU
+SFT
+100%
+Random
+×\times
+1.000
+40.1
+38.3
+21.7
+26.4
+10%
+Random
+×\times
+0.100
+32.0
+31.2
+20.0
+25.0
+10%
+BRA
+×\times
+0.139
+43.5
+39.4
+26.5
+30.2
+10%
+BRA
+✓\checkmark
+0.205
+44.5
+40.5
+29.0
+32.5
+GRPO
+100%
+Random
+×\times
+1.000
+64.5
+55.4
+36.1
+38.1
+10%
+Random
+×\times
+0.100
+62.9
+53.8
+35.1
+37.4
+10%
+BRA
+×\times
+0.127
+64.3
+55.3
+37.6
+39.8
+10%
+BRA
+✓\checkmark
+0.174
+64.8
+55.9
+38.6
+40.6
+TABLE V: Ablations of the boundary reflection agent (BRA) and dynamic masking (DM) under both GRPO and SFT.
+Normalized cost is expressed in relative A100 GPU-hours, including preprocessing and training.
+Sample
+Sample
+Normalized
+Charades-STA
+ANet
+Ratio
+Method
+Cost
+R@0.5
+mIoU
+R@0.5
+mIoU
+10%
+Random
+0.100
+62.9
+53.8
+35.1
+37.4
+10%
+COINCIDE [42]
+0.879
+63.3
+54.1
+35.9
+37.7
+10%
+PreSel [60]
+0.187
+63.5
+54.4
+36.2
+38.3
+10%
+BRA (GT)
+0.119
+62.1
+53.1
+34.1
+36.8
+10%
+BRA
+0.127
+64.3
+55.3
+37.6
+39.8
+TABLE VI: Ablation of sampling methods under GRPO. “BRA (GT)” indicates boundary reflection applied to the alignment between the query and the ground-truth interval.
+Setting
+Thre.
+τ\tau
+ADT
+ASR
+Charades-STA
+ANet
+R@0.5
+mIoU
+R@0.5
+mIoU
+base
+0
+Hard
+50%
+64.8
+55.9
+38.6
+40.6
+(A)
+0.1
+Hard
+50%
+64.5
+55.4
+38.1
+39.9
+1
+Hard
+50%
+64.3
+55.1
+37.4
+39.1
+10
+Hard
+50%
+63.7
+54.7
+36.1
+38.2
+(B)
+0
+None
+50%
+64.3
+55.3
+37.6
+39.8
+0
+All
+50%
+63.7
+54.1
+36.5
+38.0
+(C)
+0
+Hard
+30%
+64.6
+55.7
+38.2
+40.3
+0
+Hard
+100%
+64.1
+54.3
+37.4
+39.6
+TABLE VII: Ablations for (A) threshold τ\tau of B​RnormBR_{\mathrm{norm}}, (B) augmentation data type (ADT), and (C) augmentation step ratio (ASR).
+Fig. 4: Out-of-domain evaluation across varying sample ratios. Models are trained with GRPO on the Charades-STA dataset, and tested on the ActivityNet-Captions dataset. Results are presented for a) R@0.5 and b) mIoU metrics.
+IV-D Ablation Study
+We conduct comprehensive ablation experiments on Charades-STA and ANet to explore the effects of different modules, the hyperparameters, more ablation, and more evaluation of boundary reflection agent (BRA), and the hyperparameters for curriculum reinforcement learning.
+The findings from these ablation studies provide more in-depth insights into the critical elements that contribute to the effectiveness of our proposed framework.
+IV-D1 Ablation of different modules
+(1) Ablation in GRPO. We ablate the two modules of VideoTG-R1, i.e., the boundary reflection agent (BRA) and the dynamic masking (DM) in our curriculum RL strategy. From the lower half of Table V, we make the following observations: (a) With only 10% of the data, BRA beats random selection by 1.5% mIoU on Charades-STA and 2.4% mIoU on ANet. Compared to full-sample training (which runs 5.8× slower in terms of runtime), BRA still matches the performance on Charades-STA and exceeds the performance by 1.7% on ANet. These results confirm that unambiguous, fully annotated samples are crucial for video temporal grounding. (b) The DM further improves the performance by 0.6% mIoU on Charades-STA and 0.8% mIoU on ANet, which highlights the importance of reducing training difficulty for hard-to-ground samples. (c) The preprocessing cost of BRA and DM is relatively small (2.7% for BRA, 4.7% for DM), since evaluation is much faster than GRPO training. DM is slower than BRA because it predicts multiple top-k outputs, whereas BRA only predicts top-1. The relatively low overhead demonstrates that VideoTG-R1 is scalable to larger datasets.
+(2) Ablation in SFT. To further evaluate the quality of the data curated by our method, we also integrate BRA and DM into SFT to validate their generalization. From the top half of Table V, we observe: (a) With only 10% of the data, BRA boosts the random baseline by 8.2% mIoU on Charades-STA and 5.2% mIoU on ANet. BRA also surpasses the full sample training, underscoring the data efficiency of unambiguous, fully annotated samples. (b) The DM further improves by 1.1% mIoU on Charades-STA and 2.3% mIoU on ANet, which also highlights the benefit of reducing training difficulty for hard-to-ground samples. (c) The gains of BRA and DM under GRPO are smaller than under SFT, underscoring GRPO’s robustness on partially annotated and hard-to-ground samples. We attribute this to GRPO’s narrow reward range and Gaussian smoothing, which reduce sensitivity to the signals from ambiguous and challenging samples, whereas SFT’s unconstrained cross-entropy loss is more prone to such difficult samples.
+Fig. 5:
+a) Proportion of Partially Annotated Sample (PAS) in the manually labeled subset. We randomly select 100 samples from each of three datasets and annotate them. b) F1-score of PAS prediction using random selection and BRA. GT labels are drawn from the manually labeled subset.
+Fig. 6: Distribution of B​RnormBR_{\mathrm{norm}} across the eight datasets in our training set.
+Fig. 7: a) Top-1 IoU Reward curves for different groups, categorized by their zero-shot maximum IoU (IoUm​a​xz​s\mathrm{IoU}_{max}^{zs}). b) Advantage curves of different groups, categorized by their zero-shot maximum IoU (IoUm​a​xz​s\mathrm{IoU}_{max}^{zs}).
+Fig. 8: a) Top-1 IoU Reward curves of GRPO and VideoTG-R1 (Ours). b) Advantage curves of GRPO and VideoTG-R1 (Ours).
+IV-D2 Ablation of boundary reflection agent
+(1) Data selection strategy
+Table VI presents a comparison between various data selection strategies, including random, COINCIDE [42], PreSel [60], BRA (GT), and our BRA. Here, BRA (GT) evaluates the alignment between the query and the ground-truth interval, whereas the default BRA evaluates whether the query event occurs inside non-GT intervals.
+We make two main observations. (a) BRA achieves the best overall performance and low normalized cost. We attribute this to the stronger interpretability of BRA for VTG tasks: partially annotated samples are widespread in VTG datasets (see Fig. 5 a)), and BRA can filter out these partially annotated samples. (b) BRA (GT) performs substantially worse than BRA, and even underperforms the random baseline. This result stems from that the query events of the GT intervals are mostly human-annotated and of high quality, so additional model-based re-checking can introduce spurious noise. By contrast, non-GT intervals lack manual verification, and using the model to inspect non-GT intervals produces meaningful gains.
+(2) Hyperparameters.
+We ablate the threshold τ\tau of B​RnormBR_{\mathrm{norm}} in the boundary reflection agent, i.e., we discard samples whose normalized boundary reflection score B​Rnorm>τBR_{\mathrm{norm}}>\tau. τ\tau controls the noise tolerance for samples with annotation omission. From Table VII (A), we can observe that raising the threshold τ\tau admits more ambiguous, partially annotated samples and steadily degrades performance, highlighting the high quality of fully-annotated samples.
+(3) Generalization for out-of-domain evaluation.
+Following VideoChat-R1 [19], we also apply BRA to out-of-domain scenarios, i.e., training on Charades-STA and evaluating on ANet, to further validate its effectiveness.
+Fig.4 illustrates the out-of-domain performance under varying sample ratios. We observe that: a) At 25% and 50% sample ratios, BRA significantly outperforms random selection, exceeding it by 5.5% and 5.3% in R@0.5, and by 4.2% and 4.7% in mIoU, respectively. These results demonstrate the superior generalization of BRA. b) Notably, BRA at 50% matches the performance of training with 100% of the samples, highlighting the data efficiency of unambiguous, fully annotated samples. c) As shown by the red line in Fig. 4, using a larger amount of high-quality data curated by BRA consistently improves model performance. This further validates the effectiveness of our approach and highlights the importance of high-quality data.
+(4) Label quality of partially annotated sample prediction.
+To evaluate the label quality of BRA for partially annotated samples, we manually label 100 samples from each of three datasets: InternVid-VTime [13], DeDiMo [47], and QVHighlights [30]. Then we compute the F1-score of random selection and our BRA to evaluate their selection quality. From Fig.5 a), it is evident that partially annotated samples are a prevalent phenomenon. From Fig. 5 b), we can observe that BRA outperforms random selection across every dataset, especially on the model-annotated InternVid-VTime, indicating that our BRA can effectively identify partially annotated samples.
+IV-D3 Ablation of curriculum RL strategy
+We systematically evaluate two pivotal hyperparameters of curriculum RL strategy: i) Augmentation data type: which types of samples should be masked. ii) Augmentation step ratio: the proportion of steps during which masking is applied.
+From Table VII (B) and (C), we find: a) Masking all samples hurts performance. We attribute this to overfitting: excessively masking easy-to-ground samples makes them “too easy", encouraging the model to memorize superficial artifacts rather than learn robust alignment.
+b) Going to 100% masking of hard-to-ground samples also slightly degrades results, likely because excessive masking creates boundary artifacts that widen the training/test distribution gap. Including some original hard-to-ground samples is thus crucial for exposing the model to realistic video.
+IV-D4 Distribution of Boundary Reflection Score
+To demonstrate the generality of partially annotated samples (PAS) and their variation across datasets, we present the model-predicted
+B​RnormBR_{\mathrm{norm}} distributions on the training sets of multiple datasets. B​RnormBR_{\mathrm{norm}} denotes the ratio between the duration of ground-truth that is missing (i.e., unannotated) to the duration of the originally annotated ground-truth. From Fig.6, we observe that: 1) Across all datasets, the proportion of PAS segments is substantial (≥39%\geq 39\%), which is consistent with the results in Fig. 5 a), i.e., partially annotated samples are a prevalent phenomenon.
+2) The HiREST-Step dataset shows the highest PAS proportion, which we attribute to its queries consisting of atomic, single-step events that frequently occur in the video.
+3) The QVHighlights dataset exhibits the lowest PAS proportion, since its annotators are instructed to annotate multiple occurrences of a query in the video. However, as shown in Fig. 5 a), there remains a non-negligible PAS proportion after careful manual inspection.
+IV-D5 Training Difficulty of Samples with Low Zero-shot IoU
+To verify that our proposed zero-shot maximum IoU (IoUm​a​xz​s\mathrm{IoU}_{max}^{zs}) metric can discriminate the training difficulty of GRPO across samples, we partition the full training set into four groups according to each sample’s IoUm​a​xz​s\mathrm{IoU}_{max}^{zs}. The four groups correspond to the following intervals:
+[0,0],(0, 0.3],(0.3, 0.7],(0.7, 1].[0,0],\quad(0,\,0.3],\quad(0.3,\,0.7],\quad(0.7,\,1].
+Their proportions are 14.8%, 15.8%, 37.4%, and 32.0%, respectively. For each group, we track the average Top-1 IoU reward and advantage as a function of training step, and report the curves in Fig. 7. The plots reveal two clear trends: 1) Samples with low IoUm​a​xz​s\mathrm{IoU}_{max}^{zs}
+achieve substantially lower Top-1 IoU reward throughout training, i.e., they are harder to learn and behave as hard samples; 2) Low IoUm​a​xz​s\mathrm{IoU}_{max}^{zs}
+groups also exhibit lower and more unstable advantage trajectories, indicating that they are more difficult for GRPO to learn. Overall, these results validate the effectiveness of the metric
+IoUm​a​xz​s\mathrm{IoU}_{max}^{zs} for distinguishing training difficulty of GRPO across samples.
+IV-D6 Training Curves of GRPO and VideoTG-R1
+We compare the training curves of GRPO and our VideoTG-R1 in Fig. 8, including Top-1 IoU reward curves and advantage curves. The plots show that VideoTG-R1 consistently outperforms GRPO: it rises faster in the early training steps, achieves a higher Top-1 IoU reward throughout training, and also attains higher advantage values across the whole run. This consistent gap indicates that VideoTG-R1 both speeds up learning and improves localization quality, producing more accurate and stable grounding than the naive GRPO.
+Fig. 9: More partially annotated examples. Examples (a) and (b) are from the InternVid-VTime dataset, (c) and (d) are from the DiDeMo dataset, (e) and (f) are from the QVHighlights dataset.
+IV-D7 More partially annotated samples
+To demonstrate the prevalence of partially annotated samples in existing VTG datasets, we present a series of representative examples in Fig. 9. Specifically, we categorize these partially annotated samples into three types: (1) Monotonous video content without clear scene transitions (Fig. 9 a), b), and d)).
+(2) Clips with back-and-forth switching (Fig. 9 e), f)).
+(3) Sequences with repeated motion patterns (Fig. 9 c)).
+These examples, taken from the InternVid-VTime, DiDeMo, and QVHighlights datasets, underscore the inherent ambiguity in the existing VTG dataset.
+IV-D8 Qualitative Analysis
+Fig. 10: Qualitative examples of the ground truth, VideoChat-R1, and VideoTG-R1 (Ours). Examples are from the ActivityNet-Captions dataset.
+Fig. 10 shows the qualitative comparison between a baseline VideoChat-R1 and our VideoTG-R1. From these case studies, we draw the following observations: (1) In Fig. 10 a), our method’s thinking process more effectively supports grounding reasoning and produces superior results compared to the baseline, demonstrating that VideoTG-R1 generates more accurate query-relevant temporal locations.
+(2) In Fig. 10 b), both the baseline and our method fail to accurately localize the query due to the video content of rapid movements. However, the baseline exhibits more hallucinations (i.e., the man is wearing a white shirt, yet VideoChat-R1 erroneously predicts a jacket), highlighting that fully annotated samples can drive the model toward better optimization directions.
+Fig. 11: Prompts used in VideoTG-R1.
+IV-D9 Prompt Templates
+We present the BRA and DEA prompts utilized by VideoTG-R1 across various operations, as shown in Fig. 11. Additionally, the GRPO training prompt follows the same design as VideoChat-R1 [19]. These prompts are meticulously designed to guide VideoTG-R1 in effectively performing its subtasks, ensuring accurate responses.
+V Conclusion
+In this work, we propose a curriculum reinforcement learning framework with reflected boundary annotations. We propose a boundary reflection agent that utilizes MLLMs to predict query-relevant timestamps outside the annotated intervals, allowing us to identify and filter out partially annotated samples. Additionally, we employ a Difficulty Estimation Agent to assess the training difficulty of each sample and design a curriculum RL strategy that dynamically masks videos of hard-to-ground samples according to the training steps, easing the training difficulty of hard-to-ground samples and providing clearer preference during the RL training progress. Interestingly, with only 10% of the training samples and 21% of the computational budget, our method outperforms full-data counterparts under both GRPO and SFT paradigms.
+While VideoTG-R1 demonstrates substantial improvements in the VTG task, it still has some limitations. First, VideoTG-R1 requires additional model inference to identify partially annotated samples and hard-to-ground samples. Secondly, our curriculum RL strategy uses a dynamic masking that considers only the temporal distance from the ground-truth segment, without accounting for the semantic relevance to the query. A potential direction is to integrate additional models to enable semantic-guided masking.
+References
+[1]
+Adrien Gaidon, Zaid Harchaoui, and Cordelia Schmid.
+Temporal localization of actions with actoms.
+IEEE Transactions on Pattern Analysis and Machine Intelligence, 35(11):2782–2795, 2013.
+[2]
+Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blistein, Ori Ram, Dan Zhang, Evan Rosen, et al.
+Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+arXiv preprint arXiv:2507.06261, 2025.
+[3]
+Jiyang Gao, Chen Sun, Zhenheng Yang, and Ram Nevatia.
+Tall: Temporal activity localization via language query.
+In Proceedings of the IEEE international conference on computer vision, pages 5267–5275, 2017.
+[4]
+Jingkang Yang, Shuai Liu, Hongming Guo, Yuhao Dong, Xiamengwei Zhang, Sicheng Zhang, Pengyun Wang, Zitang Zhou, Binzhu Xie, Ziyue Wang, et al.
+Egolife: Towards egocentric life assistant.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 28885–28900, 2025.
+[5]
+Fabian Caba Heilbron, Victor Escorcia, Bernard Ghanem, and Juan Carlos Niebles.
+Activitynet: A large-scale video benchmark for human activity understanding.
+In Proceedings of the ieee conference on computer vision and pattern recognition, pages 961–970, 2015.
+[6]
+Yifei Huang, Minjie Cai, Zhenqiang Li, Feng Lu, and Yoichi Sato.
+Mutual context network for jointly estimating egocentric gaze and action.
+IEEE Transactions on Image Processing, 29:7795–7806, 2020.
+[7]
+Daizong Liu, Xiaoye Qu, Xing Di, Yu Cheng, Zichuan Xu, and Pan Zhou.
+Memory-guided semantic learning network for temporal sentence grounding.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 36, pages 1665–1673, 2022.
+[8]
+Daizong Liu, Xiaoye Qu, and Wei Hu.
+Reducing the vision and language bias for temporal sentence grounding.
+In Proceedings of the 30th ACM International Conference on Multimedia, pages 4092–4101, 2022.
+[9]
+Xin Sun, Jialin Gao, Yizhe Zhu, Xuan Wang, and Xi Zhou.
+Video moment retrieval via comprehensive relation-aware network.
+IEEE Transactions on Circuits and Systems for Video Technology, 33(9):5281–5295, 2023.
+[10]
+Xuemei Zhang, Peng Zhao, Jinsheng Ji, Xiankai Lu, and Yilong Yin.
+Video corpus moment retrieval via deformable multi granularity feature fusion and adversarial training.
+IEEE Transactions on Circuits and Systems for Video Technology, 2023.
+[11]
+Zhaobo Qi, Yibo Yuan, Xiaowen Ruan, Shuhui Wang, Weigang Zhang, and Qingming Huang.
+Collaborative debias strategy for temporal sentence grounding in video.
+IEEE Transactions on Circuits and Systems for Video Technology, 2024.
+[12]
+Lu Dong, Haiyu Zhang, Hongjie Zhang, Yifei Huang, Zhen-Hua Ling, Yu Qiao, Limin Wang, and Yali Wang.
+Weakly supervised temporal sentence grounding via positive sample mining.
+IEEE Transactions on Circuits and Systems for Video Technology, 2025.
+[13]
+Bin Huang, Xin Wang, Hong Chen, Zihan Song, and Wenwu Zhu.
+Vtimellm: Empower llm to grasp video moments.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 14271–14280, 2024.
+[14]
+De-An Huang, Shijia Liao, Subhashree Radhakrishnan, Hongxu Yin, Pavlo Molchanov, Zhiding Yu, and Jan Kautz.
+Lita: Language instructed temporal-localization assistant.
+In European Conference on Computer Vision, pages 202–218. Springer, 2024.
+[15]
+Ye Liu, Kevin Qinghong Lin, Chang Wen Chen, and Mike Zheng Shou.
+Videomind: A chain-of-lora agent for long video reasoning.
+arXiv preprint arXiv:2503.13444, 2025.
+[16]
+Ziyu Liu, Zeyi Sun, Yuhang Zang, Xiaoyi Dong, Yuhang Cao, Haodong Duan, Dahua Lin, and Jiaqi Wang.
+Visual-rft: Visual reinforcement fine-tuning.
+arXiv preprint arXiv:2503.01785, 2025.
+[17]
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al.
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300, 2024.
+[18]
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948, 2025.
+[19]
+Xinhao Li, Ziang Yan, Desen Meng, Lu Dong, Xiangyu Zeng, Yinan He, Yali Wang, Yu Qiao, Yi Wang, and Limin Wang.
+Videochat-r1: Enhancing spatio-temporal perception via reinforcement fine-tuning.
+arXiv preprint arXiv:2504.06958, 2025.
+[20]
+Hao Zhou, Chongyang Zhang, Yan Luo, Chuanping Hu, and Wenjun Zhang.
+Thinking inside uncertainty: Interest moment perception for diverse temporal grounding.
+IEEE Transactions on Circuits and Systems for Video Technology, 32(10):7190–7203, 2022.
+[21]
+Binglu Wang, Xun Zhang, and Yongqiang Zhao.
+Exploring sub-action granularity for weakly supervised temporal action localization.
+IEEE Transactions on Circuits and Systems for Video Technology, 32(4):2186–2198, 2021.
+[22]
+Yufan Hu, Jie Fu, Mengyuan Chen, Junyu Gao, Jianfeng Dong, Bin Fan, and Hongmin Liu.
+Learning proposal-aware re-ranking for weakly-supervised temporal action localization.
+IEEE Transactions on Circuits and Systems for Video Technology, 34(1):207–220, 2023.
+[23]
+Songchun Zhang and Chunhui Zhao.
+Cross-video contextual knowledge exploration and exploitation for ambiguity reduction in weakly supervised temporal action localization.
+IEEE Transactions on Circuits and Systems for Video Technology, 2023.
+[24]
+Yibo Zhao, Hua Zhang, Zan Gao, Weili Guan, Meng Wang, and Shengyong Chen.
+A snippets relation and hard-snippets mask network for weakly-supervised temporal action localization.
+IEEE Transactions on Circuits and Systems for Video Technology, 2024.
+[25]
+Yuxiang Shao, Feifei Zhang, and Changsheng Xu.
+Text-video knowledge guided prompting for weakly supervised temporal action localization.
+IEEE Transactions on Circuits and Systems for Video Technology, 2024.
+[26]
+Ziang Yan, Zhilin Li, Yinan He, Chenting Wang, Kunchang Li, Xinhao Li, Xiangyu Zeng, Zilei Wang, Yali Wang, Yu Qiao, et al.
+Task preference optimization: Improving multimodal large language models with vision task alignment.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 29880–29892, 2025.
+[27]
+Zixuan Zhao, Shuming Liu, Chengze Zhao, and Xu Zhao.
+Constructing semantical structure by segmentation integrated video embedding for temporal action detection.
+IEEE Transactions on Circuits and Systems for Video Technology, 2025.
+[28]
+Hongmin Liu, Xueli Li, Bin Fan, and Jinglin Xu.
+Brtal: Boundary refinement temporal action localization via offset-driven diffusion models.
+IEEE Transactions on Circuits and Systems for Video Technology, 2025.
+[29]
+Ranjay Krishna, Kenji Hata, Frederic Ren, Li Fei-Fei, and Juan Carlos Niebles.
+Dense-captioning events in videos.
+In Proceedings of the IEEE International Conference on Computer Vision, pages 706–715, 2017.
+[30]
+Jie Lei, Tamara L Berg, and Mohit Bansal.
+Detecting moments and highlights in videos via natural language queries.
+Advances in Neural Information Processing Systems, 34:11846–11858, 2021.
+[31]
+Jinhyun Jang, Jungin Park, Jin Kim, Hyeongjun Kwon, and Kwanghoon Sohn.
+Knowing where to focus: Event-aware transformer for video grounding.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 13846–13856, 2023.
+[32]
+Songyang Zhang, Houwen Peng, Jianlong Fu, and Jiebo Luo.
+Learning 2d temporal adjacent networks for moment localization with natural language.
+In Proceedings of the AAAI conference on artificial intelligence, volume 34, pages 12870–12877, 2020.
+[33]
+Zhenzhi Wang, Limin Wang, Tao Wu, Tianhao Li, and Gangshan Wu.
+Negative sample matters: A renaissance of metric learning for temporal grounding.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 36, pages 2613–2623, 2022.
+[34]
+Kevin Qinghong Lin, Pengchuan Zhang, Joya Chen, Shraman Pramanick, Difei Gao, Alex Jinpeng Wang, Rui Yan, and Mike Zheng Shou.
+Univtg: Towards unified video-language temporal grounding.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 2794–2804, 2023.
+[35]
+Shuhuai Ren, Linli Yao, Shicheng Li, Xu Sun, and Lu Hou.
+Timechat: A time-sensitive multimodal large language model for long video understanding.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 14313–14323, 2024.
+[36]
+Xiangyu Zeng, Kunchang Li, Chenting Wang, Xinhao Li, Tianxiang Jiang, Ziang Yan, Songze Li, Yansong Shi, Zhengrong Yue, Yi Wang, et al.
+Timesuite: Improving mllms for long video understanding via grounded tuning.
+arXiv preprint arXiv:2410.19702, 2024.
+[37]
+Ye Liu, Jixuan He, Wanhua Li, Junsik Kim, Donglai Wei, Hanspeter Pfister, and Chang Wen Chen.
+R2 tuning: Efficient image-to-video transfer learning for video temporal grounding.
+In European Conference on Computer Vision, pages 421–438. Springer, 2024.
+[38]
+Yongliang Wu, Xinting Hu, Yuyang Sun, Yizhou Zhou, Wenbo Zhu, Fengyun Rao, Bernt Schiele, and Xu Yang.
+Number it: Temporal grounding videos like flipping manga.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 13754–13765, 2025.
+[39]
+Aaron Jaech, Adam Kalai, Adam Lerer, Adam Richardson, Ahmed El-Kishky, Aiden Low, Alec Helyar, Aleksander Madry, Alex Beutel, Alex Carney, et al.
+Openai o1 system card.
+arXiv preprint arXiv:2412.16720, 2024.
+[40]
+Jinyoung Park, Jeehye Na, Jinyoung Kim, and Hyunwoo J Kim.
+Deepvideo-r1: Video reinforcement fine-tuning via difficulty-aware regressive grpo.
+arXiv preprint arXiv:2506.07464, 2025.
+[41]
+Samir Yitzhak Gadre, Gabriel Ilharco, Alex Fang, Jonathan Hayase, Georgios Smyrnis, Thao Nguyen, Ryan Marten, Mitchell Wortsman, Dhruba Ghosh, Jieyu Zhang, et al.
+Datacomp: In search of the next generation of multimodal datasets.
+Advances in Neural Information Processing Systems, 36:27092–27112, 2023.
+[42]
+Jaewoo Lee, Boyang Li, and Sung Ju Hwang.
+Concept-skill transferability-based data selection for large vision-language models.
+EMNLP 2024-2024 Conference on Empirical Methods in Natural Language Processing, Proceedings of the Conference, 2024.
+[43]
+Yiwei Ma, Guohai Xu, Xiaoshuai Sun, Jiayi Ji, Jie Lou, Debing Zhang, and Rongrong Ji.
+Mllm-selector: Necessity and diversity-driven high-value data selection for enhanced visual instruction tuning.
+arXiv preprint arXiv:2503.20502, 2025.
+[44]
+Xiyao Wang, Zhengyuan Yang, Chao Feng, Hongjin Lu, Linjie Li, Chung-Ching Lin, Kevin Lin, Furong Huang, and Lijuan Wang.
+Sota with less: Mcts-guided sample selection for data-efficient visual reasoning self-improvement.
+arXiv preprint arXiv:2504.07934, 2025.
+[45]
+Wenyi Xiao, Leilei Gan, Weilong Dai, Wanggui He, Ziwei Huang, Haoyuan Li, Fangxun Shu, Zhelun Yu, Peng Zhang, Hao Jiang, et al.
+Fast-slow thinking for large vision-language model reasoning.
+arXiv preprint arXiv:2504.18458, 2025.
+[46]
+Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al.
+Qwen2. 5-vl technical report.
+arXiv preprint arXiv:2502.13923, 2025.
+[47]
+Lisa Anne Hendricks, Oliver Wang, Eli Shechtman, Josef Sivic, Trevor Darrell, and Bryan Russell.
+Localizing moments in video with natural language.
+In Proceedings of the IEEE international conference on computer vision, pages 5803–5812, 2017.
+[48]
+Michaela Regneri, Marcus Rohrbach, Dominikus Wetzel, Stefan Thater, Bernt Schiele, and Manfred Pinkal.
+Grounding action descriptions in videos.
+Transactions of the Association for Computational Linguistics, 1:25–36, 2013.
+[49]
+Andreea-Maria Oncescu, Joao F Henriques, Yang Liu, Andrew Zisserman, and Samuel Albanie.
+Queryd: A video dataset with high-quality text and audio narrations.
+In ICASSP 2021-2021 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP), pages 2265–2269. IEEE, 2021.
+[50]
+Abhay Zala, Jaemin Cho, Satwik Kottur, Xilun Chen, Barlas Oguz, Yashar Mehdad, and Mohit Bansal.
+Hierarchical video-moment retrieval and step-captioning.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 23056–23065, 2023.
+[51]
+Triantafyllos Afouras, Effrosyni Mavroudi, Tushar Nagarajan, Huiyu Wang, and Lorenzo Torresani.
+Ht-step: Aligning instructional articles with how-to videos.
+Advances in Neural Information Processing Systems, 36:50310–50326, 2023.
+[52]
+Junbin Xiao, Angela Yao, Yicong Li, and Tat-Seng Chua.
+Can i trust your answer? visually grounded video question answering.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 13204–13214, 2024.
+[53]
+Dezhao Luo, Jiabo Huang, Shaogang Gong, Hailin Jin, and Yang Liu.
+Towards generalisable video moment retrieval: Visual-dynamic injection to image-text pre-training.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 23045–23055, 2023.
+[54]
+KunChang Li, Yinan He, Yi Wang, Yizhuo Li, Wenhai Wang, Ping Luo, Yali Wang, Limin Wang, and Yu Qiao.
+Videochat: Chat-centric video understanding.
+arXiv preprint arXiv:2305.06355, 2023.
+[55]
+Long Qian, Juncheng Li, Yu Wu, Yaobo Ye, Hao Fei, Tat-Seng Chua, Yueting Zhuang, and Siliang Tang.
+Momentor: Advancing video large language model with fine-grained temporal reasoning.
+arXiv preprint arXiv:2402.11435, 2024.
+[56]
+Ye Liu, Zongyang Ma, Zhongang Qi, Yang Wu, Ying Shan, and Chang W Chen.
+Et bench: Towards open-ended event-level video-language understanding.
+Advances in Neural Information Processing Systems, 37:32076–32110, 2024.
+[57]
+Mengxue Qu, Xiaodong Chen, Wu Liu, Alicia Li, and Yao Zhao.
+Chatvtg: Video temporal grounding via chat with video dialogue large language models.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 1847–1856, 2024.
+[58]
+Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al.
+Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution.
+arXiv preprint arXiv:2409.12191, 2024.
+[59]
+Jr-Jen Chen, Yu-Chien Liao, Hsi-Che Lin, Yu-Chu Yu, Yen-Chun Chen, and Frank Wang.
+Rextime: A benchmark suite for reasoning-across-time in videos.
+Advances in Neural Information Processing Systems, 37:28662–28673, 2024.
+[60]
+Bardia Safaei, Faizan Siddiqui, Jiacong Xu, Vishal M Patel, and Shao-Yuan Lo.
+Filter images first, generate instructions later: Pre-instruction data selection for visual instruction tuning.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pages 14247–14256, 2025.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

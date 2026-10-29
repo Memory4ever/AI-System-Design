@@ -1,0 +1,1170 @@
+Vision Foundation Models Can Be Good Tokenizers for Latent Diffusion Models
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Preliminaries
+3 Method: Vision Foundation Model VAE
+3.1 Overview
+3.2 VFM-VAE Encoder Architecture
+3.3 VFM-VAE Decoder Architecture
+3.4 Training Objectives
+4 Experiments
+4.1 Setup
+4.2 Tokenizer Quality: Reconstruction and Representation
+4.3 Impact on Diffusion Models: Representation Diagnose
+4.4 Generation Performance
+4.5 Ablation Studies - All components Are Necessary
+5  Limitations and discussions
+References
+A CKNNA Evaluation Details
+B Architectural Details of VFM-VAE
+B.1 Attention Projection (from UniTok)
+B.2 Upsampling Module
+B.3 Global and Spatial Branches
+C More Analysis of VFM-VAE
+C.1 Not Only One VFM Choice
+C.2 Verifying Improvements Are Not Due to Stronger VFMs
+C.3 Text-to-Image and VLM Integration
+D Hyperparameter And More Implementation Details
+E More Qualitative Results
+E.1 Reconstruction Visualization
+E.2 Generation Visualization
+License: CC BY 4.0
+arXiv:2510.18457v1 [cs.CV] 21 Oct 2025
+Vision Foundation Models Can Be Good Tokenizers for Latent Diffusion Models
+Tianci Bi
+Affiliation: IAIR, Xi’an Jiaotong University
+Xiaoyi Zhang
+Affiliation: Microsoft Research Asia
+Yan Lu
+Affiliation: Microsoft Research Asia
+Nanning Zheng
+Affiliation: IAIR, Xi’an Jiaotong University
+Abstract
+The performance of Latent Diffusion Models (LDMs) is critically dependent on the quality of their visual tokenizer. While recent works have explored incorporating Vision Foundation Models (VFMs) via distillation, we identify a fundamental flaw in this approach: it inevitably weakens the robustness of alignment with the original VFM, causing the aligned latents to deviate semantically under distribution shifts. In this paper, we bypass distillation by proposing a more direct approach: Vision Foundation Model Variational Autoencoder (VFM-VAE). To resolve the inherent tension between the VFM’s semantic focus and the need for pixel-level fidelity, we redesign the VFM-VAE decoder with Multi-Scale Latent Fusion and Progressive Resolution Reconstruction blocks, enabling high-quality reconstruction from spatially coarse VFM features.
+Furthermore, we provide a comprehensive analysis of representation dynamics during diffusion training, introducing the proposed SE-CKNNA metric as a more precise tool for this diagnosis. This analysis allows us to develop a joint tokenizer-diffusion alignment strategy that dramatically accelerates convergence. Our innovations in tokenizer design and training strategy lead to superior performance and efficiency: our system reaches a gFID (w/o CFG) of 2.20 in merely 80 epochs (a 10×10\times speedup over prior tokenizers). With continued training to 640 epochs, it further attains a gFID (w/o CFG) of 1.62, establishing direct VFM integration as a superior paradigm for LDMs. Our code and models are available at project page.
+Figure 1:
+Comparison of VFM-VAE and Previous Visual Tokenizers for LDM.
+(a) Distillation-based approach: VAE variants Yao et al. (2025); Leng et al. (2025) distill advanced representation from VFM.
+(b) Our VFM-VAE: directly leverage frozen VFM as a part of VAE.
+(c) Combing our visual tokenizer with LDMs variants leads faster converge and advanced performance.
+1 Introduction
+Latent Diffusion Models (LDMs) (Rombach et al., 2022) have emerged as the dominant paradigm in visual synthesis, achieving impressive visual fidelity through an elegant two-stage framework: first train a visual tokenizer (typically a Variational Autoencoder) (Kingma & Welling, 2013) that encodes high-dimensional images into a compact latent space, then learn the diffusion process within this acquired representation space. This approach has proven to be remarkably effective in training high-quality scalable generative models while significantly reducing computational requirements.
+The quality of latent representations produced by the visual tokenizer is crucial to the success of the diffusion process. Recently, numerous works (Yao et al., 2025; Leng et al., 2025; Li et al., 2024c; Yang et al., 2025) have explored incorporating Vision Foundation Model (VFM) representations into visual tokenizers, motivated by the significant progress in self-supervised (Oquab et al., 2023; Siméoni et al., 2025) and weakly-supervised (Radford et al., 2021; Zhai et al., 2023; Tschannen et al., 2025) representation learning. For example, VA-VAE (Yao et al., 2025) aligns VAE latents with VFM features through a carefully designed similarity loss, while REPA-E (Leng et al., 2025) jointly trains VAE and the diffusion model to achieve alignment of VFM representations in the latter.
+Despite these promising developments, we identify a fundamental limitation in the existing approaches: alignment-based distillation inevitably introduces representation degradation compared to the original VFM. Our empirical analysis reveals that aligned representations exhibit unexpected brittleness to semantic-preserving transformations (Figure 2), indicating a reduction in critical information during the distillation process.
+This observation motivates our key insight: rather than training a VAE to mimic VFM representations through distillation, we should directly utilize frozen VFM encoders within the VAE framework. While conceptually straightforward, this approach faces a significant challenge: VFMs are optimized for semantic understanding rather than pixel-level reconstruction, creating a fundamental tension between semantic richness and reconstruction fidelity when paired with standard decoders.
+Inspired by the success of VFMs in dense prediction tasks (Liu et al., 2023; Bolya et al., 2025), we hypothesize that frozen VFM encoders can enable high-fidelity image reconstruction with appropriate architectural adaptations. To this end, we systematically enhance the standard VAE decoder with two key innovations: Multi-Scale Latent Fusion and Progressive Resolution Reconstruction Blocks. The Multi-Scale Latent Fusion mechanism effectively leverages the hierarchical information inherent in VFM features across different semantic levels, while the Progressive Resolution Reconstruction Blocks enable stable training through advanced synthesis architectures and multi-resolution supervision. This design specifically addresses the challenge of reconstructing pixel-accurate images from semantically-rich but spatially-coarse VFM representations.
+By combining these architectural innovations with a comprehensive training objective that balances semantic preservation and reconstruction fidelity, we present Vision Foundation Model Variational Autoencoder (VFM-VAE), the first framework to successfully reconstruct high-quality images from a compact latent space, directly driven by frozen VFM encoders, thus eliminating the need for distillation-based alignment.
+Building upon VFM-VAE, we conduct a comprehensive study of representation dynamics during diffusion training. We extend the commonly used representation distance metric CKNNA (Huh et al., 2024) to SE-CKNNA (Semantic-Equivariant CKNNA), a more precise metric that better captures semantic equivalence. Our analysis reveals that the SE-CKNNA score strongly correlates with the average alignment between diffusion model features and those of the VFM, while the alignment within shallower layers remains consistently and significantly weaker than in deeper ones. By incorporating representation-aware supervision to strengthen these shallow-layer representations, we achieve remarkable efficiency gains: our system reaches a gFID of 2.03 within 64 training epochs, representing a 10× speedup over previous methods.
+Our contributions are threefold:
+•
+We propose VFM-VAE, the first VAE framework to directly leverage frozen VFM encoders to enable latent diffusion from its compressed representation, eliminating distillation-induced degradation while maintaining high reconstruction quality through specialized decoder architectures.
+•
+We conduct an in-depth analysis of how the VAE latent space influences the internal dynamics of a downstream diffusion model, introducing the SE-CKNNA metric as part of our diagnostic toolkit. Motivated by this analysis, we propose a joint tokenizer and diffusion alignment strategy to fully leverage VFM representations.
+•
+We demonstrate highly competitive results on ImageNet 256×256256\times 256: when trained with our joint alignment strategy, VFM-VAE achieves a gFID of 1.62 in just 640 epochs without classifier-free guidance, showcasing its superior performance and efficiency.
+Figure 2: Brittleness of aligned representations under semantic-preserving transformations.
+Specifically, CKNNA (Huh et al., 2024) values for VA-VAE (Yao et al., 2025) and SD-VAE (Rombach et al., 2022) are computed with DINOv2-Large (Oquab et al., 2023), while those for VFM-VAE are computed with SigLIP2-Large (Tschannen et al., 2025). Under semantic-preserving transformations, VFM-VAE demonstrates notably stronger alignment with VFM features than VA-VAE.
+2 Preliminaries
+Latent Diffusion Models.
+We briefly review latent diffusion models through the perspective of stochastic interpolants (Albergo et al., 2023; Ma et al., 2024).
+Latent diffusion models operate in a two-stage framework. First, a visual tokenizer (typically a VAE) compresses high-dimensional pixel space into a lower-dimensional latent space. The VAE consists of an encoder ℰ\mathcal{E} and decoder 𝒟\mathcal{D}, trained jointly to minimize: ℒVAE​(ℰ,𝒟)=ℒKL+ℒMSE+ℒLPIPS+ℒGAN\mathcal{L}_{\text{VAE}}(\mathcal{E},\mathcal{D})=\mathcal{L}_{\text{KL}}+\mathcal{L}_{\text{MSE}}+\mathcal{L}_{\text{LPIPS}}+\mathcal{L}_{\text{GAN}}, where the loss combines KL divergence, mean squared error, perceptual loss, and adversarial loss terms.
+Given the trained encoder ℰ\mathcal{E}, we map data 𝐱∼p⁡(𝐱)\mathbf{x}\sim p(\mathbf{x}) to latent representations 𝐳=ℰ⁡(𝐱)\mathbf{z}=\mathcal{E}(\mathbf{x}). The diffusion process is then defined in this latent space through a time-dependent interpolation between encoded data 𝐳∗=ℰ⁡(𝐱∗)\mathbf{z}_{*}=\mathcal{E}(\mathbf{x}_{*}) and Gaussian noise ϵ∼𝒩⁡(𝟎,𝐈)\bm{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I}): 𝐳t=αt​𝐳∗+σt​ϵ\mathbf{z}_{t}=\alpha_{t}\mathbf{z}_{*}+\sigma_{t}\bm{\epsilon}, where α0=1\alpha_{0}=1, σ0=0\sigma_{0}=0, αT=0\alpha_{T}=0, σT=1\sigma_{T}=1. Here, αt\alpha_{t} and σt\sigma_{t} are monotonically decreasing and increasing functions of t∈[0,T]t\in[0,T], respectively. For linear interpolants, we use αt=1−t\alpha_{t}=1-t and σt=t\sigma_{t}=t with T=1T=1.
+The latent diffusion model learns a velocity field 𝐯θ​(𝐳t,t)\mathbf{v}_{\theta}(\mathbf{z}_{t},t) by minimizing the following objective: ℒv​(θ)=𝔼𝐱∗,ϵ,t​[‖𝐯θ​(𝐳t,t)−(α˙t​𝐳∗+σ˙t​ϵ)‖2]\mathcal{L}_{v}(\theta)=\mathbb{E}_{\mathbf{x}_{*},\bm{\epsilon},t}\left[\|\mathbf{v}_{\theta}(\mathbf{z}_{t},t)-(\dot{\alpha}_{t}\mathbf{z}_{*}+\dot{\sigma}_{t}\bm{\epsilon})\|^{2}\right], where 𝐳∗=ℰ⁡(𝐱∗)\mathbf{z}_{*}=\mathcal{E}(\mathbf{x}_{*}), 𝐳t\mathbf{z}_{t} is constructed according to the interpolation formula, and α˙t,σ˙t\dot{\alpha}_{t},\dot{\sigma}_{t} denote time derivatives.
+At inference, we generate samples by solving the probability flow ODE: d​𝐳td​t=𝐯θ​(𝐳t,t)\frac{d\mathbf{z}_{t}}{dt}=\mathbf{v}_{\theta}(\mathbf{z}_{t},t), 𝐳0∼𝒩⁡(𝟎,𝐈)\mathbf{z}_{0}\sim\mathcal{N}(\mathbf{0},\mathbf{I}), integrating from t=0t=0 to t=Tt=T. The final image is obtained by decoding: 𝐱^=𝒟⁡(𝐳T)\hat{\mathbf{x}}=\mathcal{D}(\mathbf{z}_{T}). As evident from these formulations, the visual tokenizer plays a crucial role in both the diffusion training process and the final image reconstruction during inference.
+Figure 3: Overview of VFM-VAE architecture design. The model couples a frozen VFM encoder with a multi-scale decoder to preserve semantic alignment and enable high-fidelity reconstruction.
+3 Method: Vision Foundation Model VAE
+3.1 Overview
+To address the fundamental limitations of alignment-based distillation approaches, we propose Vision Foundation Model Variational Autoencoder (VFM-VAE), which directly leverages frozen pre-trained VFM encoders along with learnable specialized decoders for high-fidelity reconstruction. As illustrated in Figure 3, our framework comprises three key components: (1) a VFM-VAE encoder that serves as a lightweight wrapper around the pre-trained VFM, (2) a carefully designed VFM-VAE decoder that captures dense hierarchical information from the encoder to reconstruct high-quality images, and (3) a comprehensive training objective that balances semantic preservation with reconstruction fidelity. We describe each component in detail below.
+3.2 VFM-VAE Encoder Architecture
+Unlike previous approaches that train VAE encoders from scratch to align with VFM representations, we directly leverage a pre-trained VFM as our encoder Φ\Phi, keeping it frozen throughout training to preserve its rich semantic representation extraction ability.
+Following insights from the literature where VFM is used for dense prediction tasks (Liu et al., 2023; Bolya et al., 2025), we recognize that optimal features for reconstruction may not reside solely in the final layer. Therefore, we extract multi-scale features from different depths of the VFM hierarchy.
+Given an input image 𝐱∈ℝH×W×3\mathbf{x}\in\mathbb{R}^{H\times W\times 3}, the VFM encoder extracts features in multiple layers.
+{𝐟shallow,𝐟middle,𝐟final}=Φ⁡(𝐱)\{\mathbf{f}_{\text{shallow}},\mathbf{f}_{\text{middle}},\mathbf{f}_{\text{final}}\}=\Phi(\mathbf{x})
+(1)
+where these features correspond to the shallow, middle, and final layers of the VFM, capturing a comprehensive spectrum of information, from fine-grained spatial details to high-level semantics.
+Similarly to the usual VAE for latent diffusion (Rombach et al., 2022), we need to further reduce the latent dimension to facilitate learning of the diffusion model. Hence we then concatenate these multi-scale features along the channel dimension and apply a learnable lightweight projection network, 𝒞\mathcal{C}, which outputs the parameters of a diagonal Gaussian posterior distribution—the mean 𝝁\bm{\mu} and the log-variance log⁡𝝈2\log\bm{\sigma}^{2}:
+𝝁,log⁡𝝈2=𝒞⁡(Concat​[𝐟shallow,𝐟middle,𝐟final])\bm{\mu},\log\bm{\sigma}^{2}=\mathcal{C}(\text{Concat}[\mathbf{f}_{\text{shallow}},\mathbf{f}_{\text{middle}},\mathbf{f}_{\text{final}}])
+(2)
+The final latent code 𝐳\mathbf{z} is then sampled via the reparameterization trick (Kingma & Welling, 2013):
+𝐳=𝝁+𝝈⊙ϵ,where ​𝝈=exp⁡(12​log⁡𝝈2)​ and ​ϵ∼𝒩⁡(𝟎,𝐈)\mathbf{z}=\bm{\mu}+\bm{\sigma}\odot\bm{\epsilon},\quad\text{where }\bm{\sigma}=\exp(\frac{1}{2}\log\bm{\sigma}^{2})\text{ and }\bm{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I})
+(3)
+We also add a representation reconstruction loss to ensure that 𝐳\mathbf{z} preserves essential information from the original high-dimensional VFM representation, which will be introduced in the following subsection. This overall encoder design is crucial for maintaining the semantic richness of the VFM while ensuring computational efficiency for the subsequent diffusion training.
+3.3 VFM-VAE Decoder Architecture
+Unlike the standard SD-VAE decoder (Rombach et al., 2022), which maps a single latent input to a single image output, our proposed decoder architecture incorporates two key upgrades: Multi-Scale Latent Fusion and Progressive Resolution Reconstruction Blocks. These components are specifically designed to address the challenge of reconstructing high-fidelity images from semantically-rich but detail-poor VFM representations. Below, we first introduce the Multi-Scale Latent Fusion mechanism, followed by a detailed description of the Progressive Reconstruction Blocks.
+Multi-Scale Latent Fusion.
+Given the latent representation 𝐳\mathbf{z}, we first decompose it into global and spatial components for scale-specific processing. A global component, 𝐳g=GlobalPool​(𝐳)∈ℝc\mathbf{z}_{g}=\text{GlobalPool}(\mathbf{z})\in\mathbb{R}^{c}, captures overall style information, functioning as a holistic descriptor that is invariant to spatial layout. Concurrently, a set of spatial components, {𝐳s(i)∈ℝc×hi×wi}i=1N\{\mathbf{z}_{s}^{(i)}\in\mathbb{R}^{c\times h_{i}\times w_{i}}\}_{i=1}^{N}, are generated by applying reshape operations to create different scales from 𝐳\mathbf{z}. The reshape operations include techniques like pixel shuffling and unshuffling (Shi et al., 2016); further implementation details are provided in the Appendix B. These decomposed latent components then serve as inputs to the subsequent progressive reconstruction blocks.
+Progressive Reconstruction Blocks.
+To substantially enhance the VAE decoder’s fidelity in detail synthesis, we redesign its core architecture around a principle of progressive, multi-scale reconstruction. The decoder synthesizes the image through a series of NN blocks {ℬi}i=1N\{\mathcal{B}_{i}\}_{i=1}^{N}. For instance, to generate a 256×256256\times 256 image, the decoder employs N=6N=6 blocks, each responsible for upsampling and refining features at resolutions of 8,16,32,64,128,8,16,32,64,128, and 256256 pixels, respectively. The input to each block is strategically controlled, governed by a clear separation of global and spatial guidance:
+𝐡(i)={ℬi​(Upsample​(𝐳s(1)),𝐳g)if ​i=1ℬi​(Upsample​(Concat​[𝐡(i−1),𝐳s(i)]),𝐳g)if ​2≤i≤4ℬi​(Upsample​(𝐡(i−1)),𝐳g)if ​5≤i≤6\mathbf{h}^{(i)}=\begin{cases}\mathcal{B}_{i}(\text{Upsample}(\mathbf{z}_{s}^{(1)}),\mathbf{z}_{g})&\text{if }i=1\\
+\mathcal{B}_{i}(\text{Upsample}(\text{Concat}[\mathbf{h}^{(i-1)},\mathbf{z}_{s}^{(i)}]),\mathbf{z}_{g})&\text{if }2\leq i\leq 4\\
+\mathcal{B}_{i}(\text{Upsample}(\mathbf{h}^{(i-1)}),\mathbf{z}_{g})&\text{if }5\leq i\leq 6\end{cases}
+(4)
+where the upsample operation doubles the feature map’s spatial resolution; further implementation details are provided in the Appendix B.
+A key principle of our design is that the global semantic control, provided by the global component 𝐳g\mathbf{z}_{g} is supplied to every block. This ensures that a consistent, holistic style is maintained across all scales of the synthesis process, from the initial layout to the finest textures.
+In contrast to this constant global control, the spatial components 𝐳s(i)\mathbf{z}_{s}^{(i)} are injected carefully. They are exclusively supplied to the initial, low-resolution blocks (i≤4)(i\leq 4). The rationale is to use this direct spatial guidance to firmly establish the image’s foundational layout and core structure. Once this scaffold is built, the subsequent high-resolution blocks (5≤i≤6)(5\leq i\leq 6) are free to focus solely on refining the propagated features and synthesizing intricate details, without being constrained by the initial coarse guidance.
+The core building block of our decoder is a Modulated ConvNeXt block, which we adapt from the standard ConvNeXt (Liu et al., 2022) architecture to enable fine-grained stylistic control. The global style information, provided by the global component 𝐳g\mathbf{z}_{g}, is injected into each block via modulated convolutions (Karras et al., 2019; Sauer et al., 2023). This modulation is applied at the first 1×11\times 1 point-wise convolution—the layer responsible for channel mixing. Here, the global component 𝐳g\mathbf{z}_{g} is passed through a block-specific, learned affine transformation γi\gamma_{i} to produce per-channel scaling factors. These factors then perform channel-wise weighting on the convolution’s weights, effectively modulating the feature maps based on the global style. For a given block input 𝐡in\mathbf{h}_{\text{in}}, the complete operation, including the residual connection, is:
+ℬi​(𝐡in,𝐳g)=ModConv​(𝐡in,γi​(𝐳g))+𝐡in\mathcal{B}_{i}(\mathbf{h}_{\text{in}},\mathbf{z}_{g})=\text{ModConv}(\mathbf{h}_{\text{in}},\gamma_{i}(\mathbf{z}_{g}))+\mathbf{h}_{\text{in}}
+(5)
+To ensure that each block in this progressive hierarchy learns meaningful and scale-appropriate features, we introduce a direct supervision mechanism at every resolution. This is achieved by attaching a lightweight ToRGBi\text{ToRGB}_{i} head to the output of each block. A critical aspect of this design is a feature-space residual connection, which ensures that the supervision at a finer scale is coherently informed by the structure established at coarser ones. This principle is implemented via our ToRGB heads, itself a lightweight, modulated 1×11\times 1 convolution. Its operation is defined as follows, correctly handling the initial state where 𝐡(0)\mathbf{h}^{(0)} is absent:
+𝐱^i={ToRGBi​(𝐡(1),𝐳g)if ​i=1ToRGBi​(𝐡(i)+Upsample​(𝐡(i−1)),𝐳g)if ​i>1\hat{\mathbf{x}}_{i}=\begin{cases}\text{ToRGB}_{i}(\mathbf{h}^{(1)},\mathbf{z}_{g})&\text{if }i=1\\
+\text{ToRGB}_{i}(\mathbf{h}^{(i)}+\text{Upsample}(\mathbf{h}^{(i-1)}),\mathbf{z}_{g})&\text{if }i>1\end{cases}
+(6)
+By forcing each block to generate a plausible image 𝐱^i\hat{\mathbf{x}}_{i} via its ToRGBi\text{ToRGB}_{i} head, our design enforces a strong learning signal at each stage of the synthesis. The feature-fusion step provides the ToRGBi\text{ToRGB}_{i} head with a rich, multi-layer context, allowing it to generate a projection based on both newly refined details from 𝐡(i)\mathbf{h}^{(i)}
+and stable, structural information from 𝐡(i−1)\mathbf{h}^{(i-1)}.
+3.4 Training Objectives
+The training objective for our VFM-VAE is designed to address a dual challenge: achieving high-fidelity image reconstruction while ensuring the compact latent 𝐳\mathbf{z} preserves the rich semantic information from the frozen VFM encoder. To this end, our comprehensive loss function combines several components targeting representation preservation, reconstruction fidelity, and perceptual realism: ℒtotal=λrep​ℒrep+∑i=1Nλi​ℒrecon(i)+λGAN​ℒGAN+λLPIPS​ℒLPIPS\mathcal{L}_{\text{total}}=\lambda_{\text{rep}}\mathcal{L}_{\text{rep}}+\sum_{i=1}^{N}\lambda_{i}\mathcal{L}_{\text{recon}}^{(i)}+\lambda_{\text{GAN}}\mathcal{L}_{\text{GAN}}+\lambda_{\text{LPIPS}}\mathcal{L}_{\text{LPIPS}}.
+Representation Regularization Loss.
+To ensure our projected latent 𝐳\mathbf{z} maintains semantic alignment with the original VFM features, we employ a dual-component regularization loss, ℒrep\mathcal{L}_{\text{rep}}. First, we include the standard Kullback-Leibler (KL) divergence loss, ℒKL​(𝐳)\mathcal{L}_{\text{KL}}(\mathbf{z}), a cornerstone of VAEs that regularizes the latent space distribution. Second, to explicitly enforce semantic similarity, we leverage the VF loss (Yao et al., 2025), denoted as ℒVF​(𝐳,𝐟final)\mathcal{L}_{\text{VF}}(\mathbf{z},\mathbf{f}_{\text{final}}). This loss, which computes cosine similarity and matrix distance, is specifically crafted to regularize high-dimensional representations without overly constraining their capacity. Our combined representation loss is therefore ℒrep=ℒKL+ℒVF\mathcal{L}_{\text{rep}}=\mathcal{L}_{\text{KL}}+\mathcal{L}_{\text{VF}}.
+Multi-Resolution Reconstruction Loss.To ensure stable training and to impose a strong learning signal on each decoder block individually, we apply direct pixel-level supervision across all resolutions. The reconstruction loss for the ii-th block is an L1 loss: ℒrecon(i)=∥fri​(𝐱)−𝐱^i∥1\mathcal{L}^{(i)}_{\text{recon}}=\lVert\mathrm{f}_{r_{i}}(\mathbf{x})-\hat{\mathbf{x}}_{i}\rVert_{1}, where fri\mathrm{f}_{r_{i}} is an operation that downsamples the ground-truth image 𝐱\mathbf{x} to match the resolution of the block’s output, 𝐱^i\hat{\mathbf{x}}_{i}. This multi-scale supervision is crucial for preventing mode collapse in early stage and ensuring each block learns its role in the hierarchical synthesis.
+Adversarial and Perceptual Losses. To transcend the limitations of pixel-wise metrics and enhance the perceptual quality and realism of the final, full-resolution output, we incorporate two powerful, complementary losses. First, inspired by recent advances in generative modeling (Sauer et al., 2023; Sauer et al., 2024), we employ an adversarial loss ℒGAN\mathcal{L}_{\text{GAN}}. This involves a discriminator with a DINOv2-based backbone (Oquab et al., 2023). Second, we include the LPIPS perceptual loss (Zhang et al., 2018), ℒLPIPS\mathcal{L}_{\text{LPIPS}}, which more closely aligns with human perception of image similarity.
+• The proposed VFM-VAE architecture effectively balances semantic representation quality with reconstruction fidelity, providing an ideal foundation for subsequent diffusion training.
+Table 1: System-level generative performance on ImageNet 256×256. We evaluated VFM-VAE against leading VAEs as tokenizers for LDM training. Our results demonstrate that VFM-VAE provides a superior latent foundation, enabling generative models to consistently achieve higher performance. A standout achievement is its pairing with REG (Wu et al., 2025), which reaches a gFID of 1.62 in just 640 epochs without classifier-free guidance (Ho & Salimans, 2022).
+Generation w/o CFG
+Generation w/ CFG
+Tokenizer
+Generative Model
+Training Epoches
+#params
+rFID↓\downarrow
+gFID↓\downarrow
+IS↑\uparrow
+gFID↓\downarrow
+sFID↓\downarrow
+IS↑\uparrow
+Prec.↑\uparrow
+Rec.↑\uparrow
+AutoRegressive (AR)
+MaskGiT
+MaskGiT (Chang et al., 2022)
+555
+227M
+2.28
+6.18
+182.1
+-
+-
+-
+-
+-
+VQGAN (Yu et al., 2021)
+LlamaGen (Sun et al., 2024)
+300
+3.1B
+0.59
+9.38
+112.9
+2.18
+5.97
+263.3
+0.81
+0.58
+VQVAE (Yao et al., 2025)
+VAR (Tian et al., 2024)
+350
+2.0B
+-
+-
+-
+1.80
+-
+365.4
+0.83
+0.57
+LFQ tokenizers
+MagViT-v2 (Yu et al., 2023)
+1080
+307M
+1.50
+3.65
+200.5
+1.78
+-
+319.4
+-
+-
+LDM (Rombach et al., 2022)
+MAR (Li et al., 2024b)
+800
+945M
+0.53
+2.35
+227.8
+1.55
+-
+303.7
+0.81
+0.62
+Latent Diffusion Models (LDM)
+MaskDiT (Zheng et al., 2023)
+1600
+675M
+5.69
+177.9
+2.28
+5.67
+276.6
+0.80
+0.61
+DiT (Peebles & Xie, 2023)
+1400
+675M
+9.62
+121.5
+2.27
+4.60
+278.2
+0.83
+0.57
+SiT (Ma et al., 2024)
+1400
+675M
+8.61
+131.7
+2.06
+4.50
+270.3
+0.82
+0.59
+FasterDiT Yao et al. (2024)
+400
+675M
+7.91
+131.3
+2.03
+4.63
+264.0
+0.81
+0.60
+MDT (Gao et al., 2023a)
+1300
+675M
+6.23
+143.0
+1.79
+4.57
+283.0
+0.81
+0.61
+SD-VAE (Rombach et al., 2022)
+MDTv2 (Gao et al., 2023b)
+1080
+675M
+0.58
+-
+-
+1.58
+4.52
+314.7
+0.79
+0.65
+Representation Alignment Methods
+80
+675M
+3.46
+159.8
+1.67
+4.12
+266.3
+0.80
+0.63
+E2E-VAE (Leng et al., 2025)
+REPA (Yu et al., 2024)
+800
+675M
+0.28
+1.83
+217.3
+1.26
+4.11
+314.9
+0.79
+0.66
+64
+675M
+5.14
+130.2
+2.11
+4.16
+252.3
+0.81
+0.58
+80
+675M
+4.29
+-
+-
+-
+-
+-
+-
+VA-VAE (Yao et al., 2025)
+LightningDiT (Yao et al., 2025)
+800
+675M
+0.30
+2.17
+205.6
+1.35
+4.15
+295.3
+0.79
+0.65
+80
+675M
+7.90
+122.6
+-
+-
+-
+-
+-
+REPA
+800
+675M
+5.90
+157.8
+1.42
+4.70
+305.7
+0.80
+0.65
+80
+675M
+3.40
+184.1
+1.86
+4.49
+321.4
+0.76
+0.63
+SD-VAE
+REG (Wu et al., 2025)
+480
+675M
+0.58
+2.20
+219.1
+1.40
+4.24
+296.9
+0.77
+0.66
+64
+675M
+3.80
+152.8
+2.16
+4.26
+232.8
+0.82
+0.58
+80
+675M
+3.41
+160.4
+-
+-
+-
+-
+-
+LightningDiT
+560
+675M
+2.06
+205.8
+1.57
+4.56
+254.4
+0.80
+0.64
+64
+685M
+2.42
+215.2
+2.03
+5.23
+261.7
+0.83
+0.58
+80
+685M
+2.22
+218.8
+-
+-
+-
+-
+-
+480
+685M
+1.67
+238.3
+1.34
+4.59
+302.7
+0.78
+0.65
+VFM-VAE
+REG
+640
+685M
+0.52
+1.62
+241.6
+1.31
+4.63
+300.2
+0.78
+0.66
+4 Experiments
+In this section, we present a comprehensive evaluation of VFM-VAE. Our analysis begins with VFM-VAE’s core performance in image reconstruction and latent representation quality. We then diagnose how different tokenizer latents affect the internal learning of LDMs, critically examining this under two conditions: with and without explicit alignment losses introduced during diffusion training. Finally, we demonstrate the superior system-level generation performance achieved when using VFM-VAE. The evaluation is organized as follows:
+•
+Tokenizer Quality: Reconstruction and Representation. We first evaluate VFM-VAE as a standalone module, analyzing how our architectural innovations contribute to reconstruction fidelity and a semantically rich latent space (Table 2,  3).
+•
+Impact on Diffusion Models: Representation Diagnose. We then investigate how the tokenizer’s latent space influences LDM training, diagnosing internal representations under two conditions: with and without explicit alignment losses (Table 2, Figure 2,  4).
+•
+Generation Performance. We demonstrate improved convergence and sample quality when integrating VFM-VAE with different generative models (Table 1, Figure 5).
+4.1 Setup
+Baselines. Our analysis covers several representative models. For visual tokenizers, we benchmark VFM-VAE against SD-VAE (Rombach et al., 2022) and alignment-based VAEs, including VA-VAE (Yao et al., 2025) and REPA-E (Leng et al., 2025). For generative models, we compare with REPA (Yu et al., 2024) and the recent REG (Wu et al., 2025), both designed to align diffusion transformer features with those of a VFM. Together, these tokenizers and generative models form the most relevant and competitive baselines for evaluation.
+Implementation details. All tokenizer and generative model training is conducted on ImageNet (Russakovsky et al., 2015) at 256×256 resolution. VFM-VAE adopts the same f16d32 configuration as VA-VAE for fair comparison. VA-VAE is aligned with DINOv2-Large (Oquab et al., 2023), while VFM-VAE uses SigLIP2-Large (Tschannen et al., 2025) by default (see Appendix C.1 for rationale). For generative models, we evaluate two settings: (1) LightningDiT-XL, matching all parameters with the VA-VAE baseline, and (2) REG, which employs a SiT-XL backbone (Ma et al., 2024) with an additional alignment loss. Full training details and hyperparameters are provided in Appendix D.
+Evaluation. For reconstruction performance, we report Fréchet Inception Distance (FID; Heusel et al., 2017) and Inception Score (IS; Salimans et al., 2016) on the full ImageNet 50K validation set. For generative performance, we follow the ADM (Dhariwal & Nichol, 2021) setup and report generation FID (gFID), spatial FID (sFID; Nash et al., 2021), IS, as well as precision (Prec.) and recall (Rec.) (Kynkäänniemi et al., 2019). The analysis of CKNNA follows the protocol described in  Huh et al. (2024).
+Table 2: Reconstruction, generation, and representation metrics. The generation results are obtained by training LightningDiT-XL (Yao et al., 2025) on ImageNet. #Images indicates the number of training images used for each tokenizer. Details of SE-CKNNA are provided in Sec. 4.3. CKNNA and SE-CKNNA are computed with their respective aligned VFMs (DINOv2-Large for SD-VAE). CKNNA∗\text{CKNNA}^{*} denotes the metric computed with a unified reference, DINOv2-Giant, for fair cross-tokenizer comparison. Relative Change represents the variation between SE-CKNNA and CKNNA, calculated as |SE-CKNNA−CKNNA|/CKNNA|\text{SE-CKNNA}-\text{CKNNA}|/\text{CKNNA}.
+Tokenizer
+#Images
+Reconstruction
+Generation
+Representation
+rFID↓\downarrow
+rIS↑\uparrow
+Epochs
+gFID↓\downarrow
+gIS↑\uparrow
+CKNNA∗↑\text{CKNNA}^{*}\uparrow
+CKNNA
+SE-CKNNA
+Relative Change↑\uparrow
+SD-VAE
+60M
+0.58
+207.6
+80
+7.13
+-
+0.003
+0.004
+0.005
+-
+VA-VAE
+160M
+0.30
+213.6
+64
+5.14
+130.2
+0.009
+0.202
+0.135
+−33.2%-33.2\%
+VFM-VAE
+44M
+0.52
+208.0
+64
+3.80
+152.8
+0.111
+0.188
+0.191
++1.6%\mathbf{+1.6\%}
+Figure 4: CKNNA comparison across layers of the generative models.
+(a) Without explicit VFM alignment, the diffusion model combined with VFM-VAE consistently achieves higher layer-wise CKNNA than other tokenizer baselines.
+(b) With alignment enabled, the VFM-VAE system further improves, surpassing other diffusion-aligned baselines in average CKNNA.
+4.2 Tokenizer Quality: Reconstruction and Representation
+VFM-VAE achieves semantic-rich representations and impressive reconstruction fidelity.
+Reconstruction ability defines the upper bound of generation quality, making strong reconstruction metrics essential for any tokenizer in LDMs. For qualitative results, a visual comparison between VFM-VAE and mainstream VAEs is provided in Appendix E.1. VFM-VAE preserves object structure and natural textures without compromise. Quantitatively (Table 2), its dual-branch design for semantic and spatial control surpasses SD-VAE in fidelity-oriented metrics such as FID and IS, meeting the key requirements of an effective tokenizer.
+Beyond reconstruction, we evaluate alignment via the CKNNA metric between VAE latents and their VFM features. Because the target VFMs differ (DINOv2-Large for VA-VAE and SigLIP2-Large for VFM-VAE), we also compute CKNNA with a unified reference, DINOv2-Giant (Oquab et al., 2023), for fair comparison. Remarkably, using only 25% of the training images of VA-VAE, VFM-VAE achieves comparable alignment alongside strong reconstruction. These results indicate that its advantages arise from pretrained VFM features and a well-designed architecture that balance alignment and reconstruction. Further ablation results are reported in Section 4.5.
+4.3 Impact on Diffusion Models: Representation Diagnose
+CKNNA might not be sufficient to evaluate latent representation of visual tokenizer.
+Though CKNNA (Huh et al., 2024) has been used to evaluate representations within diffusion models, its effectiveness in assessing visual tokenizers remains underexplored. As shown in Table 2, both VA-VAE and VFM-VAE achieve similar CKNNA scores (computed with DINOv2-Giant); however, when integrated into generative models, VFM-VAE outperforms VA-VAE by a significant margin. This discrepancy suggests that CKNNA alone may not fully capture the representational properties that make a tokenizer effective for generative modeling.
+Motivated by the observation that diffusion models often encounter suboptimal images deviating from the clean image distribution during training, we extend CKNNA to SE-CKNNA (Semantic-Equivariant CKNNA). Specifically, we apply a series of semantic-preserving transformations to the evaluated images and then feed the perturbed images into both the VFM and the VAE to extract features and compute CKNNA. These transformations include additive noise perturbations with increasing strengths 0.05,0.1,0.15,0.2{0.05,0.1,0.15,0.2} and equivariant perturbations such as scale interpolations 0.25,0.5,0.75,1.0{0.25,0.5,0.75,1.0} and discrete rotations 0∘,90∘,180∘,270∘{0^{\circ},90^{\circ},180^{\circ},270^{\circ}}. As illustrated in Figure 2 and summarized in Table 2, VFM-VAE attains a substantially higher SE-CKNNA score than VA-VAE, indicating stronger alignment with VFM features under these perturbations and thus providing more robust representations for generative modeling. While SE-CKNNA can reflect the stability of feature alignment to some extent, its influence on diffusion models remains hypothetical. Could a higher SE-CKNNA indicate that diffusion models develop stronger implicit alignment between input and output during training, making their internal features more consistent with those of the VFM? We further verify this assumption in the next paragraph.
+SE-CKNNA of latent representation reflects the representation quality in LDMs.
+In Figure 4a, we compare layer-wise CKNNA within generative models trained without explicit alignment. We find that VFM-VAE consistently achieves higher layer-wise CKNNA and superior generative performance. Moreover, while the VA-VAE baseline exhibits consistently weaker layer-wise CKNNA compared to its alignment upper bound (computed between DINOv2-Large and DINOv2-Giant), VFM-VAE combined with LightningDiT reaches a peak CKNNA of 0.46—corresponding to 85% of the upper bound (computed between SigLIP2-Large and DINOv2-Giant)—indicating that it inherits VFM properties more effectively.
+For the direct generation metric, VFM-VAE + LightningDiT achieves an FID of 3.80 at 64 epochs, significantly outperforming the VA-VAE baseline’s FID of 5.14 at the same diffusion training stage.
+• These results validate our hypothesis and demonstrate that SE-CKNNA effectively captures how tokenizer alignment contributes to improvements in generative modeling.
+Joint tokenizer and diffusion alignment yields consistently high-quality representations.
+Building on the strong results achieved without explicit alignment, we further explore combining VFM-VAE with alignment methods in diffusion models.
+As shown in Figure 4, when paired with LightningDiT, shallow-layer alignment remains weak, improving only around layer 16. Ideally, the model should maintain features well aligned with VFM throughout its depth. This raises a natural question: can we explicitly enforce VFM alignment in the shallow layers to ensure consistency across all depths?
+To this end, we incorporate REG (Wu et al., 2025), a leading alignment method for diffusion models. REG extends REPA by aligning shallow layers with VFM patch features from clean images and concatenating the VFM class token with generative tokens to introduce global semantic guidance.
+As illustrated in Figure 4, combining VAE-side alignment (via VFM-VAE) with shallow-layer alignment (via REG) produces uniformly high layer-wise CKNNA across all depths, with averages notably surpassing those of REG or REPA alone.
+4.4 Generation Performance
+This alignment advantage also directly translates into improved generative performance (Table 1): without classifier-free guidance (CFG;  Ho & Salimans,  2022), VFM-VAE + REG achieves an FID of 2.22 in only 64 epochs, matching the performance of REG trained for 480 epochs. At 480 epochs, the result further improves to 1.67, surpassing the final performance of all compared methods. Ultimately, after 640 epochs, our model achieves FIDs of 1.62 (without CFG) and 1.31 (with CFG), showing faster convergence and better generation quality.
+• VFM-VAE gives the generative model stronger representational learning ability, even when the tokenizer is trained on fewer images.
+By keeping VFM alignment in both the tokenizer and diffusion model, the approach achieves faster convergence and superior generation.
+In addition, Figure 5 shows a qualitative comparison across training stages using a fixed seed and noise.
+Models with VFM-VAE consistently generate better images than the VA-VAE baseline.
+More notably, the model using VFM-VAE + REG, which keeps strong alignment across all layers, can already produce detailed and realistic images after only 100k steps (about 80 epochs) without CFG.
+Figure 5: Stage-wise visualization of generative model training results.
+Shown under a fixed random seed and identical initial noise, our approach demonstrates impressive performance and greatly accelerates image generation learning.
+4.5 Ablation Studies - All components Are Necessary
+The overall architecture comprises a frozen VFM, a lightweight encoder, and a decoder. Throughout the design, we employ a dual-branch structure for semantic and spatial control, while continuously adding feature-regularization losses during training to preserve alignment with VFM features. Building on this foundation, we progressively extend a minimal baseline with additional components and evaluate their effects on reconstruction performance:
+•
+SD-VAE-Style Baseline. We begin with a simple VAE design where the VFM is SigLIP2-Large-Patch16-256. The encoder and decoder each contain two convolutional layers for pre- and post-sampling encoding/decoding. The loss functions consist only of L1, LPIPS, and adversarial terms.
+•
+Multi-scale Latent Fusion. Building on this baseline, we introduce Multi-scale Latent Fusion as described in Sec. 3.3. We also upgrade the upsampling modules and incorporate multi-scale reconstruction losses to stabilize training and accelerate early convergence.
+•
+Modern Blocks. We substitute modulated convolution blocks with modern ConvNeXt-based variants, and insert self-attention at low-resolution stages to better decode semantic features.
+•
+Encoder Mofications. We aggregate features from the shallow (first), intermediate (central), and final VFM layers, thereby leveraging information across multiple semantic levels, and further upgrade the VFM backbone to SigLIP2-Large-Patch16-512 for better detail representation.
+Table 3: VFM-VAE module ablation study.
+Setting
+#params
+rFID↓\downarrow
+rIS↑\uparrow
+SD-VAE-style Baseline
+43.0M
+19.69
+74.9
++ Multi-scale Latent Fusion
+88.0M
+14.35
+93.6
++ Modern Blocks
+132.3M
+1.08
+194.6
++ Encoder Modifications
+140.6M
+0.71
+206.8
+As shown in Table 3, we conduct lightweight alignment training on 5M images for a quick evaluation. The minimal baseline produces an FID of 19.79, rendering it nearly unusable. Adding spatial control reduces FID by about 27%. With enhanced encoder/decoder capacity and modernized modules, rFID drops to 1.08, essentially meeting the standard for fast convergence and usable reconstruction. Incorporating additional tricks further reduces rFID below 1, achieving even higher reconstruction fidelity.
+In summary, this ablation study demonstrates that the carefully designed VFM-VAE significantly improves reconstruction quality while maintaining VFM feature alignment, with each module contributing an indispensable role. In addition to ablations on architectural components, we also validate the feasibility of integrating VFM-VAE with different VFMs (see Appendix C.1), further highlighting the generality of the VFM-VAE design.
+5 Limitations and discussions
+We presented VFM-VAE, which directly integrates frozen Vision Foundation Models into latent diffusion, eliminating the degradation from distillation-based alignment.
+The framework achieves strong semantic alignment and high reconstruction fidelity but remains limited to continuous latent models and moderate resolutions.
+Overall, VFM-VAE demonstrates clear potential within generative modeling, combining semantic robustness with faithful reconstruction.
+Acknowledgments
+This work was conducted while Tianci Bi was interning at Microsoft Research Asia.
+Tianci Bi and Nanning Zheng were supported in part by the NSFC under Grant No.62088102.
+Ethics Statement
+This work relies solely on publicly available benchmark datasets (e.g., ImageNet) and open-source implementations.
+No personally identifiable information, sensitive data, or proprietary content is involved at any stage.
+The proposed methods are intended purely for academic research in generative modeling and not for deployment in security-critical or high-risk domains.
+Beyond the common ethical considerations of generative model research—such as potential misuse or dataset bias—we identify no additional ethical concerns.
+Reproducibility Statement
+We provide hyperparameter details in Section 4.1 and Appendix D.
+We will release the implementation and pretrained model checkpoints in the future to ensure the reproducibility of our results.
+LLM Usage
+Large language models (ChatGPT) were used only for language refinement of the paper draft.
+They did not contribute to research ideation, experimental design, or analysis.
+All technical content, methods, and results were created and verified by the authors.
+References
+Albergo et al. (2023)
+Michael S Albergo, Nicholas M Boffi, and Eric Vanden-Eijnden.
+Stochastic interpolants: A unifying framework for flows and diffusions.
+arXiv preprint arXiv:2303.08797, 2023.
+Bai et al. (2025)
+Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, et al.
+Qwen2. 5-vl technical report.
+arXiv preprint arXiv:2502.13923, 2025.
+Bolya et al. (2025)
+Daniel Bolya, Po-Yao Huang, Peize Sun, Jang Hyun Cho, Andrea Madotto, Chen Wei, Tengyu Ma, Jiale Zhi, Jathushan Rajasegaran, Hanoona Rasheed, et al.
+Perception encoder: The best visual embeddings are not at the output of the network.
+arXiv preprint arXiv:2504.13181, 2025.
+Chang et al. (2022)
+Huiwen Chang, Han Zhang, Lu Jiang, Ce Liu, and William T Freeman.
+Maskgit: Masked generative image transformer.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pp.  11315–11325, 2022.
+Chen et al. (2025)
+Jiuhai Chen, Zhiyang Xu, Xichen Pan, Yushi Hu, Can Qin, Tom Goldstein, Lifu Huang, Tianyi Zhou, Saining Xie, Silvio Savarese, et al.
+Blip3-o: A family of fully open unified multimodal models-architecture, training and dataset.
+arXiv preprint arXiv:2505.09568, 2025.
+Dhariwal & Nichol (2021)
+Prafulla Dhariwal and Alexander Nichol.
+Diffusion models beat gans on image synthesis.
+Advances in neural information processing systems, 34:8780–8794, 2021.
+Gao et al. (2023a)
+Shanghua Gao, Pan Zhou, Ming-Ming Cheng, and Shuicheng Yan.
+Masked diffusion transformer is a strong image synthesizer.
+In 2023 IEEE/CVF International Conference on Computer Vision (ICCV), pp.  23107–23116, 2023a.
+doi: 10.1109/ICCV51070.2023.02117.
+Gao et al. (2023b)
+Shanghua Gao, Pan Zhou, Ming-Ming Cheng, and Shuicheng Yan.
+Mdtv2: Masked diffusion transformer is a strong image synthesizer.
+arXiv preprint arXiv:2303.14389, 2023b.
+Henry et al. (2020)
+Alex Henry, Prudhvi Raj Dachapally, Shubham Pawar, and Yuxuan Chen.
+Query-key normalization for transformers.
+arXiv preprint arXiv:2010.04245, 2020.
+Heusel et al. (2017)
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter.
+Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+Advances in neural information processing systems, 30, 2017.
+Ho & Salimans (2022)
+Jonathan Ho and Tim Salimans.
+Classifier-free diffusion guidance.
+arXiv preprint arXiv:2207.12598, 2022.
+Hu et al. (2024)
+Xiwei Hu, Rui Wang, Yixiao Fang, Bin Fu, Pei Cheng, and Gang Yu.
+Ella: Equip diffusion models with llm for enhanced semantic alignment.
+arXiv preprint arXiv:2403.05135, 2024.
+Huh et al. (2024)
+Minyoung Huh, Brian Cheung, Tongzhou Wang, and Phillip Isola.
+The platonic representation hypothesis.
+arXiv preprint arXiv:2405.07987, 2024.
+Isola et al. (2017)
+Phillip Isola, Jun-Yan Zhu, Tinghui Zhou, and Alexei A Efros.
+Image-to-image translation with conditional adversarial networks.
+In Proceedings of the IEEE conference on computer vision and pattern recognition, pp.  1125–1134, 2017.
+Karras et al. (2019)
+Tero Karras, Samuli Laine, and Timo Aila.
+A style-based generator architecture for generative adversarial networks.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pp.  4401–4410, 2019.
+Kingma & Welling (2013)
+Diederik P Kingma and Max Welling.
+Auto-encoding variational bayes.
+arXiv preprint arXiv:1312.6114, 2013.
+Kouzelis et al. (2025)
+Theodoros Kouzelis, Ioannis Kakogeorgiou, Spyros Gidaris, and Nikos Komodakis.
+Eq-vae: Equivariance regularized latent space for improved generative image modeling.
+arXiv preprint arXiv:2502.09509, 2025.
+Kynkäänniemi et al. (2019)
+Tuomas Kynkäänniemi, Tero Karras, Samuli Laine, Jaakko Lehtinen, and Timo Aila.
+Improved precision and recall metric for assessing generative models.
+Advances in neural information processing systems, 32, 2019.
+Leng et al. (2025)
+Xingjian Leng, Jaskirat Singh, Yunzhong Hou, Zhenchang Xing, Saining Xie, and Liang Zheng.
+Repa-e: Unlocking vae for end-to-end tuning with latent diffusion transformers.
+arXiv preprint arXiv:2504.10483, 2025.
+Li et al. (2024a)
+Daiqing Li, Aleks Kamko, Ehsan Akhgari, Ali Sabet, Linmiao Xu, and Suhail Doshi.
+Playground v2. 5: Three insights towards enhancing aesthetic quality in text-to-image generation.
+arXiv preprint arXiv:2402.17245, 2024a.
+Li et al. (2024b)
+Tianhong Li, Yonglong Tian, He Li, Mingyang Deng, and Kaiming He.
+Autoregressive image generation without vector quantization.
+Advances in Neural Information Processing Systems, 37:56424–56445, 2024b.
+Li et al. (2024c)
+Xiang Li, Kai Qiu, Hao Chen, Jason Kuen, Jiuxiang Gu, Bhiksha Raj, and Zhe Lin.
+Imagefolder: Autoregressive image generation with folded tokens.
+arXiv preprint arXiv:2410.01756, 2024c.
+Lipman et al. (2022)
+Yaron Lipman, Ricky TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le.
+Flow matching for generative modeling.
+arXiv preprint arXiv:2210.02747, 2022.
+Liu et al. (2023)
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+Visual instruction tuning.
+Advances in neural information processing systems, 36:34892–34916, 2023.
+Liu et al. (2022)
+Zhuang Liu, Hanzi Mao, Chao-Yuan Wu, Christoph Feichtenhofer, Trevor Darrell, and Saining Xie.
+A convnet for the 2020s.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pp.  11976–11986, 2022.
+Ma et al. (2025)
+Chuofan Ma, Yi Jiang, Junfeng Wu, Jihan Yang, Xin Yu, Zehuan Yuan, Bingyue Peng, and Xiaojuan Qi.
+Unitok: A unified tokenizer for visual generation and understanding.
+arXiv preprint arXiv:2502.20321, 2025.
+Ma et al. (2024)
+Nanye Ma, Mark Goldstein, Michael S Albergo, Nicholas M Boffi, Eric Vanden-Eijnden, and Saining Xie.
+Sit: Exploring flow and diffusion-based generative models with scalable interpolant transformers.
+In European Conference on Computer Vision, pp.  23–40. Springer, 2024.
+Nash et al. (2021)
+Charlie Nash, Jacob Menick, Sander Dieleman, and Peter W Battaglia.
+Generating images with sparse representations.
+arXiv preprint arXiv:2103.03841, 2021.
+Oquab et al. (2023)
+Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, et al.
+Dinov2: Learning robust visual features without supervision.
+arXiv preprint arXiv:2304.07193, 2023.
+Peebles & Xie (2023)
+William Peebles and Saining Xie.
+Scalable diffusion models with transformers.
+In Proceedings of the IEEE/CVF international conference on computer vision, pp.  4195–4205, 2023.
+Radford et al. (2021)
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al.
+Learning transferable visual models from natural language supervision.
+In International conference on machine learning, pp.  8748–8763. PmLR, 2021.
+Rombach et al. (2022)
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition, pp.  10684–10695, 2022.
+Russakovsky et al. (2015)
+Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, et al.
+Imagenet large scale visual recognition challenge.
+International journal of computer vision, 115(3):211–252, 2015.
+Salimans et al. (2016)
+Tim Salimans, Ian Goodfellow, Wojciech Zaremba, Vicki Cheung, Alec Radford, and Xi Chen.
+Improved techniques for training gans.
+Advances in neural information processing systems, 29, 2016.
+Sauer et al. (2023)
+Axel Sauer, Tero Karras, Samuli Laine, Andreas Geiger, and Timo Aila.
+Stylegan-t: Unlocking the power of gans for fast large-scale text-to-image synthesis.
+In International conference on machine learning, pp.  30105–30118. PMLR, 2023.
+Sauer et al. (2024)
+Axel Sauer, Dominik Lorenz, Andreas Blattmann, and Robin Rombach.
+Adversarial diffusion distillation.
+In European Conference on Computer Vision, pp.  87–103. Springer, 2024.
+Shi et al. (2016)
+Wenzhe Shi, Jose Caballero, Ferenc Huszár, Johannes Totz, Andrew P Aitken, Rob Bishop, Daniel Rueckert, and Zehan Wang.
+Real-time single image and video super-resolution using an efficient sub-pixel convolutional neural network.
+In Proceedings of the IEEE conference on computer vision and pattern recognition, pp.  1874–1883, 2016.
+Siméoni et al. (2025)
+Oriane Siméoni, Huy V Vo, Maximilian Seitzer, Federico Baldassarre, Maxime Oquab, Cijo Jose, Vasil Khalidov, Marc Szafraniec, Seungeun Yi, Michaël Ramamonjisoa, et al.
+Dinov3.
+arXiv preprint arXiv:2508.10104, 2025.
+Sun et al. (2024)
+Peize Sun, Yi Jiang, Shoufa Chen, Shilong Zhang, Bingyue Peng, Ping Luo, and Zehuan Yuan.
+Autoregressive model beats diffusion: Llama for scalable image generation.
+arXiv preprint arXiv:2406.06525, 2024.
+Sun et al. (2023)
+Quan Sun, Yuxin Fang, Ledell Wu, Xinlong Wang, and Yue Cao.
+Eva-clip: Improved training techniques for clip at scale.
+arXiv preprint arXiv:2303.15389, 2023.
+Tian et al. (2024)
+Keyu Tian, Yi Jiang, Zehuan Yuan, Bingyue Peng, and Liwei Wang.
+Visual autoregressive modeling: Scalable image generation via next-scale prediction.
+Advances in neural information processing systems, 37:84839–84865, 2024.
+Tschannen et al. (2025)
+Michael Tschannen, Alexey Gritsenko, Xiao Wang, Muhammad Ferjad Naeem, Ibrahim Alabdulmohsin, Nikhil Parthasarathy, Talfan Evans, Lucas Beyer, Ye Xia, Basil Mustafa, et al.
+Siglip 2: Multilingual vision-language encoders with improved semantic understanding, localization, and dense features.
+arXiv preprint arXiv:2502.14786, 2025.
+Wu et al. (2025)
+Ge Wu, Shen Zhang, Ruijing Shi, Shanghua Gao, Zhenyuan Chen, Lei Wang, Zhaowei Chen, Hongcheng Gao, Yao Tang, Jian Yang, et al.
+Representation entanglement for generation: Training diffusion transformers is much easier than you think.
+arXiv preprint arXiv:2507.01467, 2025.
+Yang et al. (2025)
+Jiawei Yang, Tianhong Li, Lijie Fan, Yonglong Tian, and Yue Wang.
+Latent denoising makes good visual tokenizers.
+arXiv preprint arXiv:2507.15856, 2025.
+Yao et al. (2024)
+Jingfeng Yao, Cheng Wang, Wenyu Liu, and Xinggang Wang.
+Fasterdit: Towards faster diffusion transformers training without architecture modification.
+Advances in Neural Information Processing Systems, 37:56166–56189, 2024.
+Yao et al. (2025)
+Jingfeng Yao, Bin Yang, and Xinggang Wang.
+Reconstruction vs. generation: Taming optimization dilemma in latent diffusion models.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pp.  15703–15712, 2025.
+Yu et al. (2021)
+Jiahui Yu, Xin Li, Jing Yu Koh, Han Zhang, Ruoming Pang, James Qin, Alexander Ku, Yuanzhong Xu, Jason Baldridge, and Yonghui Wu.
+Vector-quantized image modeling with improved vqgan.
+arXiv preprint arXiv:2110.04627, 2021.
+Yu et al. (2023)
+Lijun Yu, José Lezama, Nitesh B Gundavarapu, Luca Versari, Kihyuk Sohn, David Minnen, Yong Cheng, Vighnesh Birodkar, Agrim Gupta, Xiuye Gu, et al.
+Language model beats diffusion–tokenizer is key to visual generation.
+arXiv preprint arXiv:2310.05737, 2023.
+Yu et al. (2024)
+Sihyun Yu, Sangkyung Kwak, Huiwon Jang, Jongheon Jeong, Jonathan Huang, Jinwoo Shin, and Saining Xie.
+Representation alignment for generation: Training diffusion transformers is easier than you think.
+arXiv preprint arXiv:2410.06940, 2024.
+Zhai et al. (2023)
+Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and Lucas Beyer.
+Sigmoid loss for language image pre-training.
+In Proceedings of the IEEE/CVF international conference on computer vision, pp.  11975–11986, 2023.
+Zhang et al. (2018)
+Richard Zhang, Phillip Isola, Alexei A Efros, Eli Shechtman, and Oliver Wang.
+The unreasonable effectiveness of deep features as a perceptual metric.
+In Proceedings of the IEEE conference on computer vision and pattern recognition, pp.  586–595, 2018.
+Zheng et al. (2023)
+Hongkai Zheng, Weili Nie, Arash Vahdat, and Anima Anandkumar.
+Fast training of diffusion models with masked transformers.
+arXiv preprint arXiv:2306.09305, 2023.
+Zhuo et al. (2024)
+Le Zhuo, Ruoyi Du, Han Xiao, Yangguang Li, Dongyang Liu, Rongjie Huang, Wenze Liu, Xiangyang Zhu, Fu-Yun Wang, Zhanyu Ma, et al.
+Lumina-next: Making lumina-t2x stronger and faster with next-dit.
+Advances in Neural Information Processing Systems, 37:131278–131315, 2024.
+Appendix A CKNNA Evaluation Details
+Centered Kernel Nearest-Neighbor Alignment (CKNNA) (Huh et al., 2024) measures how well two representations preserve the same local neighborhood structures.
+Given kernel similarity matrices K,L∈ℝn×nK,L\in\mathbb{R}^{n\times n} from two representations of the same nn samples,
+we construct a binary mask Ai​j=𝟏{i≠j,j∈knnkK(i)∧j∈knnkL(i)}A_{ij}=\mathbf{1}\{i\neq j,\,j\in\operatorname{knn}_{k}^{K}(i)\wedge j\in\operatorname{knn}_{k}^{L}(i)\}
+to retain only the pairs that are common kk-nearest neighbors in both spaces.
+The masked kernels are defined as K(k)=K⊙AK^{(k)}=K\odot A and L(k)=L⊙AL^{(k)}=L\odot A.
+Each kernel is then double-centered using the centering matrix H=I−1n​𝟏𝟏⊤H=I-\tfrac{1}{n}\mathbf{1}\mathbf{1}^{\top} to remove global offsets and scale differences, ensuring that the comparison focuses purely on neighborhood covariance rather than absolute similarity values.
+The final CKNNA score is the normalized inner product between the centered, locally masked kernels:
+CKNNAk​(K,L)=⟨H​K(k)​H,H​L(k)​H⟩F‖H​K(k)​H‖F2​‖H​L(k)​H‖F2∈[0,1],\mathrm{CKNNA}_{k}(K,L)=\frac{\langle HK^{(k)}H,\;HL^{(k)}H\rangle_{F}}{\sqrt{\|HK^{(k)}H\|_{F}^{2}\,\|HL^{(k)}H\|_{F}^{2}}}\in[0,1],
+where higher values indicate stronger agreement on local neighborhood structures.
+Following Huh et al. (2024), we fix k=10k=10 and apply outlier filtering with channel-wise normalization before computing CKNNA.
+For layer-wise analysis in generative models, we use spatial tokens only (discarding [CLS] tokens as in (Yu et al., 2024; Wu et al., 2025)) and compute the alignment after global pooling along the spatial dimension for both model and reference features.
+Appendix B Architectural Details of VFM-VAE
+B.1 Attention Projection (from UniTok)
+Motivation. We adopt the Attention Projection module from UniTok (Ma et al., 2025) for its simplicity, stability, and computational efficiency. It provides a unified mechanism for channel compression before sampling and re-expansion during decoding, maintaining a well-structured representation distribution that remains aligned with VFM features.
+Encoder-side (compression).
+We extract shallow, middle, and final features from the frozen VFM.
+If their spatial sizes (and thus tokenizations) do not match the target latent configuration, we first apply a shuffle operation to reconcile the spatial mismatch and then concatenate the tokens.
+Importantly, the concatenated tokens are passed only once through the Attention Projection to obtain the latent representation, from which we compute distribution statistics (e.g., mean and variance) and sample the latent code.
+Decoder-side (expansion).
+During decoding, the same Attention Projection is reused to expand channel dimensions and distribute the outputs to the semantic and spatial branches of the decoder, allowing the model to effectively recombine abundant low-level cues for high-quality reconstruction.
+B.2 Upsampling Module
+We improve upon the StyleGAN-T (Sauer et al., 2023) upsampling unit with a pure PyTorch implementation for better readability and extensibility. The module normalizes input features via GroupNorm, performs 3×33\times 3 depthwise and 1×11\times 1 pointwise convolutions for local extraction and channel mixing, upsamples with PixelShuffle, and finally applies a fixed Gaussian blur to suppress checkerboard artifacts. It serves two roles: (1) progressively increasing spatial resolution across backbone blocks, and (2) refining features in the output pathway before the ToRGB head. This design retains StyleGAN-T’s efficiency while enhancing stability and visual fidelity.
+B.3 Global and Spatial Branches
+The decoder receives two complementary latent streams: a global branch and a spatial branch.
+The global branch is a lightweight MLP mapping network that transforms the pooled latent vector into a global style code, providing semantic control and ensuring consistent appearance across scales.
+The spatial branch processes multi-resolution latent features through hierarchical convolutional blocks. Each latent is adapted to the target resolution via PixelUnshuffle or PixelShuffle, combined with 3×33{\times}3 and 1×11{\times}1 convolutions, GroupNorm, and GELU activation.
+Together, the two branches fuse holistic semantics with fine-grained spatial details, enabling the decoder to generate coherent and detailed reconstructions across progressive resolutions.
+Appendix C More Analysis of VFM-VAE
+C.1 Not Only One VFM Choice
+VFM features are crucial for both reconstruction and generation quality.
+In Table 4, we compare EVA-CLIP-Large (Sun et al., 2023), DINOv2-Large (Oquab et al., 2023), and SigLIP2-Large (Tschannen et al., 2025) under strong alignment, focusing on reconstruction and alignment performance.
+While DINOv2-Large shows slightly weaker reconstruction than SigLIP2-Large, this raises a key question:
+is the generation gap between VFM-VAE (aligned with SigLIP2-Large) and VA-VAE (aligned with DINOv2-Large) simply due to differences in the underlying VFMs?
+We address this issue in Appendix C.2.
+Notably, although EVA-CLIP-Large surpasses SigLIP2-Large in both reconstruction and alignment, SigLIP2 employs a more balanced training objective and consistently delivers stronger downstream performance.
+Considering training efficiency and feature generalization, we adopt SigLIP2 for long-term training.
+Overall, the strong reconstruction and alignment results of both EVA-CLIP and DINOv2 demonstrate that VFM-VAE is broadly compatible with current mainstream VFMs rather than tied to a specific one.
+Table 4: Comparison across VFMs. CKNNA is computed with own VFM.
+VFM
+rFID↓\downarrow
+rIS↑\uparrow
+CKNNA
+EVA-CLIP-Large
+2.25
+172.0
+0.270
+DINOv2-Large
+3.77
+178.8
+0.335
+SigLIP2-Large
+2.70
+158.4
+0.220
+Table 5: Differences in reconstruction and generation quality under fair comparison of VFMs and training duration.
+CKNNA is computed with the respective VFM. Generation metrics are reported without CFG.
+Tokenizer
+VFM
+Training Duration
+CKNNA
+Reconstruction
+Generation
+rFID↓\downarrow
+rIS↑\uparrow
+gFID↓\downarrow
+gIS↑\uparrow
+VA-VAE
+DINOv2-Large
+160M (125 epochs)
+0.202
+0.30
+213.6
+5.14
+130.2
+VA-VAE
+SigLIP2-Large
+51M (40 epochs)
+0.099
+0.84
+207.4
+7.83
+115.1
+VFM-VAE
+SigLIP2-Large
+44M (≈\approx 38 epochs)
+0.188
+0.52
+208.0
+3.80
+152.8
+C.2 Verifying Improvements Are Not Due to Stronger VFMs
+VFM-VAE consistently achieves faster convergence and higher generation quality than the VA-VAE baseline across all generative models.
+A key distinction, however, lies in the choice of underlying VFMs for alignment: VFM-VAE is built upon SigLIP2-Large, trained primarily with contrastive objectives to support both vision–language alignment and dense visual representation learning, whereas VA-VAE is aligned with DINOv2-Large, a purely vision-based self-supervised model.
+This difference introduces a natural trade-off between alignment and reconstruction quality.
+As shown in Section C.1, when VFM-VAE is aligned with DINOv2-Large, its reconstruction slightly lags behind that of the SigLIP2-Large variant.
+To determine whether the performance gap originates from the VFMs themselves, we conducted a controlled comparison.
+Following VA-VAE’s strong alignment setup, we retrained a VA-VAE using SigLIP2-Large on 51M images (≈\approx 40 epochs), achieving strong reconstruction before training the same generative model.
+Results in Table 5 lead to two main observations:
+•
+VA-VAE requires substantially longer training to achieve competitive alignment and reconstruction, while VFM-VAE reaches a balanced trade-off in far fewer epochs.
+•
+Even after matching the VFM choice and training duration, the VA-VAE variant still underperforms VFM-VAE, confirming that the improvement arises not merely from using a stronger VFM but from VFM-VAE’s architectural design that leverages VFM features as the starting point, yielding stronger representational learning throughout the generative process.
+C.3 Text-to-Image and VLM Integration
+Motivation.
+While the main paper focuses on reconstruction and alignment, it remains important to examine how VFM-VAE performs when integrated into text-to-image generation and multimodal systems.
+A strong visual tokenizer should not only reconstruct accurately but also provide semantically consistent latents that interface smoothly with vision–language models (VLMs).
+To validate this property, we combine VFM-VAE and VA-VAE respectively with BLIP3-o (Chen et al., 2025) in a unified text-to-image framework and compare their effectiveness in generative modeling.
+Setting and pipeline.
+Given a text prompt, BLIP3-o first produces a fixed number of tokens (default 64).
+We extract the hidden states before the LM head as semantic conditioning for the diffusion model.
+During training, the diffusion model predicts a latent that is flow-matched (Lipman et al., 2022) to the VAE encoder latent; during inference, this latent is decoded by the VAE decoder to generate the final image.
+The visual–language backbone is Qwen2.5-VL-3B-Instruct (Bai et al., 2025), and the diffusion backbone is Lumina-Next (DiT) (Zhuo et al., 2024), where the patch size is reduced to 1 and the input/output channels are aligned to a latent of 16×32×3216\times 32\times 32.
+We pretrain the system for one epoch on the official BLIP3-o pretraining corpora, focusing solely on the text-to-image objective.
+Since more than 80% of the dataset consists of long prompts, we omit GenEval and evaluate exclusively on DPG-Bench (higher is better) (Hu et al., 2024) and MJHQ-30K (gFID, lower is better) (Li et al., 2024a).
+DPG-Bench results.
+VFM-VAE + BLIP3-o achieves a higher overall score (59.1) than VA-VAE + BLIP3-o (55.4) (see Table 6).
+At the L1 level, improvements are evident in relation, global, and other categories, while a slight decrease is observed in entity.
+This indicates that VFM-VAE provides stronger global and relational understanding, enhancing compositional reasoning and text–image alignment, albeit with slightly weaker recall of local structures.
+MJHQ-30K results.
+VFM-VAE + BLIP3-o also achieves significantly lower gFID across nearly all categories (see Table 7), reducing the overall score from 23.00 to 16.98.
+Notable gains are seen in animals (44.78→32.08)(44.78\rightarrow 32.08), fashion (42.80→30.27)(42.80\rightarrow 30.27), indoor (44.01→34.37)(44.01\rightarrow 34.37), and people (48.65→36.62)(48.65\rightarrow 36.62), with comparable results on plants and a minor trade-off in logo.
+Summary.
+Under identical VLM and diffusion backbones, replacing VA-VAE with VFM-VAE yields more semantically aligned and generation-friendly latents, leading to higher text–image consistency, and overall better visual quality—even with only one epoch of pretraining.
+Table 6: Text-to-image generation results with BLIP3-o on DPG-Bench (higher is better, after 1 epoch of pretraining).
+VFM-VAE + BLIP3-o achieves higher overall scores, indicating stronger text–image alignment.
+Text-to-image Model
+entity
+global
+other
+attribute
+relation
+overall
+VA-VAE + BLIP3-o
+73.2
+69.1
+71.2
+70.1
+77.9
+55.4
+VFM-VAE + BLIP3-o
+68.4
+70.9
+75.2
+71.1
+80.0
+59.1
+Table 7: Text-to-image generation results with BLIP3-o on MJHQ-30K (lower gFID is better, after 1 epoch of pretraining).
+VFM-VAE + BLIP3-o achieves consistently lower gFID.
+Text-to-image Model
+animals
+art
+fashion
+food
+indoor
+landscape
+logo
+people
+plants
+vehicles
+overall
+VA-VAE + BLIP3-o
+44.8
+43.4
+42.8
+46.1
+44.0
+47.4
+59.0
+48.7
+50.7
+40.5
+23.0
+VFM-VAE + BLIP3-o
+32.1
+36.0
+30.3
+44.7
+34.4
+41.3
+60.4
+36.6
+50.9
+39.2
+17.0
+Appendix D Hyperparameter And More Implementation Details
+For VFM-VAE training, model hyperparameters are listed in Table 9, and training hyperparameters in Table 10.
+Our multi-stage training strategy follows the general structure of VA-VAE (Yao et al., 2025).
+In the strong alignment stage, large representation regularization losses are applied to quickly establish VFM–VAE alignment.
+In the weak alignment stage, the weight of this loss is reduced to maintain alignment while shifting focus toward reconstruction quality.
+Notably, VA-VAE is trained on the full ImageNet training set (1,281,167 images), whereas VFM-VAE is trained on a filtered subset containing only images with a minimum resolution of 256 (1,152,196 images).
+We further introduce two fine-tuning components:
+•
+SSIM fine-tuning. Rapid convergence in reconstruction can occasionally cause RGB channel misalignment, leading to color noise near edges. We apply an SSIM loss for targeted refinement.
+•
+PatchGAN (Isola et al., 2017) fine-tuning. The original DINO-based discriminator, due to its large patch size, provides weak supervision for fine details. Adding a finer-grained PatchGAN discriminator improves reconstruction fidelity.
+The reconstruction and alignment improvements achieved across the four training stages are summarized in Table 8.
+For the generative model, LightningDiT follows the same configuration as the VA-VAE system.
+When using REG, we apply several adjustments: the latent size changes from 32×32×432\times 32\times 4 to 16×16×3216\times 16\times 32; the SiT-XL patch size is reduced from 2 to 1; batch size is increased from 256 to 1024; the learning rate is doubled; β2\beta_{2} is reduced from 0.999 to 0.95; and QK normalization (Henry et al., 2020) is added to the attention module.
+These modifications collectively stabilize long-term training.
+All experiments are conducted on a single node with 8×\times192GB NVIDIA B200 GPUs.
+Table 8: Reconstruction and alignment performance across four training stages of VFM-VAE.
+After training period
+rFID↓\downarrow
+rIS↑\uparrow
+CKNNA (computed with SigLIP2-Large)↑\uparrow
+Stage 1: Strong alignment
+1.05
+198.2
+0.221
+Stage 2: + Weak alignment
+0.60
+210.3
+0.188
+Stage 3: + SSIM fine-tuning
+0.54
+211.2
+0.188
+Stage 4: + PatchGAN fine-tuning
+0.52
+208.0
+0.188
+Table 9: VFM-VAE Structural Hyperparameters.
+Category
+Name
+Value
+VFM Backbone
+VFM name
+SigLIP2-Large-Patch16-512
+Feature
+from layers
+[0, 12, -1]
+resolutions
+[32, 32, 32]
+in dims
+[1024, 1024, 1024]
+out dims
+[64, 64, 64]
+Latent
+how to compress / decompress
+attnproj / attnproj
+decompress dim
+512
+resolution
+16
+z dimension
+32
+Concat z
+resolutions
+[8, 16, 32, 64]
+mapped dims
+[512, 256, 128, 128]
+Attention
+attn resolutions
+[8, 16, 32]
+attn depths
+[2, 2, 2]
+Table 10: VFM-VAE Training Hyperparameters.
+Setting
+Strong Alignment
+Weak Alignment
+SSIM Fine-tuning
+PatchGAN Fine-tuning
+Batch size
+512
+Optimizer
+Adam
+Betas
+(0.0, 0.99)
+Learning rate
+1×10−41\times 10^{-4}
+1×10−41\times 10^{-4}
+5×10−45\times 10^{-4}
+5×10−45\times 10^{-4}
+L1 loss weight
+1.0
+1.0
+1.0
+-
+LPIPS loss weight
+10.0
+10.0
+2.0
+-
+DINO discriminator loss weight
+1.0
+1.0
+1.0
+1.0
+PatchGAN discrminator loss weight
+-
+-
+-
+1.0
+Feature matching loss weight (Isola et al., 2017)
+-
+-
+-
+10.0
+SSIM loss weight
+-
+-
+1.0
+-
+Multiscale pixel loss weight
+0.1 (to 5M = 0)
+-
+-
+-
+Representation reglarization loss weight
+5.0
+1.0
+-
+-
+KL loss weight
+1×10−61\times 10^{-6}
+1×10−61\times 10^{-6}
+-
+-
+Trainable parameters
+Entire tokenizer
+Entire tokenizer
+The decoder
+The second half of the decoder
+Equivariance regularization (Kouzelis et al., 2025)
+Yes
+Yes
+Yes
+No
+Training images
+20M
+20M
+1M
+3M
+Appendix E More Qualitative Results
+E.1 Reconstruction Visualization
+Figure 6: Qualitative comparison of reconstructions from different VAEs.
+E.2 Generation Visualization
+Figure 7: Visualization of VFM-VAE + REG (640 epochs).
+Generation uses CFG with w=4.0w=4.0; class label is ”Border collie” (232).
+Figure 8: Visualization of VFM-VAE + REG (640 epochs).
+Generation uses CFG with w=4.0w=4.0; class label is ”Macaw” (88).
+Figure 9: Visualization of VFM-VAE + REG (640 epochs).
+Generation uses CFG with w=4.0w=4.0; class label is ”Bald Eagle” (22).
+Figure 10: Visualization of VFM-VAE + REG (640 epochs).
+Generation uses CFG with w=4.0w=4.0; class label is ”Giant Panda” (388).
+Figure 11: Visualization of VFM-VAE + REG (640 epochs).
+Generation uses CFG with w=4.0w=4.0; class label is ”Lakeside” (975).
+Figure 12: Visualization of VFM-VAE + REG (640 epochs).
+Generation uses CFG with w=4.0w=4.0; class label is ”Volcano” (980).
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

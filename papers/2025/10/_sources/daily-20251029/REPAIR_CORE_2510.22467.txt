@@ -1,0 +1,294 @@
+Backward-Friendly Optimization: Training Large Language Models with Approximate Gradients under Memory Constraints
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+2.1 Memory-Efficient Training of LLMs
+2.2 Approximate Backpropagation and Gradient Compression
+2.3 Optimizer-Level Innovations
+3 Methodology
+3.1 The GradLite Method
+3.2 Theoretical Analysis
+4 Experiment
+4.1 Main Results
+4.2 Analysis of Results
+4.3 Ablation Study
+5 Conclusion
+References
+License: CC BY 4.0
+arXiv:2510.22467v1 [cs.LG] 26 Oct 2025
+Backward-Friendly Optimization: Training Large Language Models with Approximate Gradients under Memory Constraints
+Anonymous Submission
+Abstract
+Full fine-tuning of Large Language Models (LLMs) is notoriously memory-intensive, primarily because conventional optimizers such as SGD or Adam assume access to exact gradients derived from cached activations. Existing solutions either alter the model architecture (e.g., reversible networks) or trade memory for computation (e.g., activation checkpointing), but the optimizer itself remains untouched.
+In this work, we introduce GradLite, a backward-friendly optimizer that relaxes the requirement of exact gradients, enabling efficient training even when intermediate activations are aggressively discarded or approximated. GradLite leverages two key techniques: (i) low-rank Jacobian approximation, which reduces the dimensionality of backpropagated error signals, and (ii) error-feedback correction, which accumulates and compensates approximation errors across iterations to preserve convergence guarantees.
+We provide a theoretical analysis showing that GradLite maintains unbiased gradient estimates with bounded variance, ensuring convergence rates comparable to Adam. Empirically, GradLite reduces optimizer-state and activation memory consumption by up to 50% without architectural changes, and achieves on-par or superior downstream performance on reasoning (MMLU, GSM8K), multilingual, and dialogue benchmarks compared to checkpointing and optimizer-centric baselines (LoMo, GaLore).
+Index Terms:
+Backward-friendly optimizer, Memory-efficient training, Approximate gradients, Large Language Models
+††address: Sun Yat-sen University
+1 Introduction
+Large Language Models (LLMs) have demonstrated impressive capabilities across reasoning, coding, and multilingual applications, yet their full fine-tuning remains constrained by extreme memory demands. Conventional optimizers such as SGD or Adam assume access to exact gradients, which necessitates caching large volumes of intermediate activations during the forward pass. For models with billions of parameters, this requirement exceeds the memory capacity of a single GPU and forces reliance on distributed training or heavy checkpointing.
+Current solutions address this challenge primarily from a system or architectural perspective. Reversible networks reconstruct hidden states without storage but introduce computational overhead. Techniques such as ZeRO [21], FSDP [22], and activation checkpointing distribute [5] or recompute states, reducing per-device memory but increasing communication and training time. Parameter-efficient fine-tuning circumvents the problem by restricting optimization to a small set of adapters, but sacrifices the expressiveness and performance of full-parameter updates. Across these approaches, the optimizer itself is treated as fixed, operating under the assumption that gradients must be computed exactly.
+This paper challenges that assumption. We propose that memory bottlenecks can be alleviated not only by modifying models or systems, but also by reconsidering the optimizer. If an optimizer can tolerate approximate gradients, then aggressive activation dropping or approximation becomes feasible without compromising convergence. To this end, we introduce GradLite, a backward-friendly optimizer designed to maintain stability and convergence under inexact gradients. GradLite combines low-rank Jacobian approximation, which compresses backpropagated error signals, with error-feedback correction, which accumulates and compensates approximation residuals. This design significantly reduces memory consumption while preserving unbiased updates and convergence guarantees.
+We provide theoretical analysis showing that GradLite achieves bounded variance and convergence rates comparable to Adam. Empirical results on benchmarks including MMLU[11], GSM8K[7], multilingual evaluation, and MT-Bench[6] demonstrate up to 50% memory savings with full-parameter fine-tuning, while matching or surpassing the performance of checkpointing- and optimizer-centric baselines. By redesigning the optimizer to be inherently backward-friendly, our work establishes a new perspective for memory-efficient training of LLMs that complements and extends existing architectural and system-level techniques.
+Contributions. This work makes the following contributions:
+•
+We introduce GradLite, a novel backward-friendly optimizer that tolerates inexact gradients, enabling memory-efficient full fine-tuning of LLMs without requiring architectural modifications or multi-GPU infrastructure.
+•
+We develop a principled framework combining low-rank Jacobian approximation and error-feedback correction, and provide theoretical analysis proving bounded variance and convergence guarantees comparable to Adam.
+•
+We demonstrate through extensive experiments on reasoning (MMLU, GSM8K), multilingual, and dialogue benchmarks that GradLite achieves up to 50% memory savings with full-parameter updates, outperforming existing checkpointing and optimizer-centric baselines in both efficiency and downstream accuracy.
+2 Related Work
+2.1 Memory-Efficient Training of LLMs
+The prohibitive memory footprint of full fine-tuning has motivated a large body of work on memory-efficient training. Parameter-efficient fine-tuning (PEFT) approaches such as LoRA [12], QLoRA [8], and DoRA [17] reduce memory usage by introducing low-rank adapters or reparameterized weights, but they sacrifice the expressiveness of full-parameter updates. System-level techniques such as ZeRO, Fully Sharded Data Parallel (FSDP), and activation checkpointing distribute or recompute activations across devices, alleviating per-GPU pressure at the cost of communication and runtime overhead. Architectural redesigns such as reversible networks [10] enable exact recomputation of hidden states, but increase computation and training complexity. These methods highlight the tension between memory efficiency and training fidelity.
+2.2 Approximate Backpropagation and Gradient Compression
+An alternative line of work studies approximate gradients to reduce memory and communication. Gradient compression methods [1, 4, 2] apply quantization or sparsification to gradient vectors, while error-feedback mechanisms [15] ensure unbiased updates by accumulating discarded information. Other works explore truncated backpropagation [20] or synthetic gradients [14], which decouple gradient computation from full activation storage. Although effective in distributed optimization, these methods have rarely been investigated in the context of memory-efficient fine-tuning of large-scale Transformers.
+2.3 Optimizer-Level Innovations
+Most prior research assumes the optimizer operates on exact gradients, with innovations focusing on adaptive learning rates [16], low-memory variants [19], or gradient projection strategies [23, 3]. While these methods reduce optimizer state or improve numerical stability, they do not fundamentally relax the requirement of exact backpropagation signals. In contrast, our work departs from this assumption by explicitly designing an optimizer that tolerates inexact gradients. By combining low-rank Jacobian approximation with error-feedback correction, GradLite achieves memory efficiency while preserving convergence guarantees.
+3 Methodology
+We present GradLite, a backward-friendly optimizer designed to relax the conventional requirement of exact gradients. Instead of caching all intermediate activations to compute precise backpropagation signals, GradLite tolerates approximate gradients and compensates for the resulting residual errors via a built-in correction mechanism. This design, conceptually contrasted with standard update mechanisms in Figure 1, substantially reduces memory overhead during training while preserving convergence guarantees.
+Figure 1: Comparison of update mechanisms. Left: Standard RevFFN model. Top Right (Ours): GradLite uses approximate Jacobian with residuals to cut memory. Bottom Right: Standard optimizer requires full activations.
+3.1 The GradLite Method
+In stochastic optimization, parameters 𝜽∈ℝd\bm{\theta}\in\mathbb{R}^{d} minimize loss ℒ⁡(𝜽)=𝔼​𝐳∼𝒟⁡[ℓ⁡(f⁡(𝐱,𝜽),y)]\mathcal{L}(\bm{\theta})=\mathbb{E}{\mathbf{z}\sim\mathcal{D}}[\ell(f(\mathbf{x};\bm{\theta}),y)] via updates 𝜽​t+1=𝜽t−η​gt\bm{\theta}{t+1}=\bm{\theta}_{t}-\eta g_{t}, where computing exact gradient gtg_{t} requires costly activation caching. GradLite instead uses an approximate gradient g~t\tilde{g}_{t} reconstructed from compressed information, enabled by two mechanisms: Low-Rank Jacobian Approximation and Error-Feedback Correction (Figure 2).
+The first mechanism, Low-Rank Jacobian Approximation, is based on the insight that the parameter gradient, expressed as gt=Jt⊤​𝜹tg_{t}=J_{t}^{\top}\bm{\delta}_{t} via the chain rule, can be approximated by projecting the Jacobian JtJ_{t} onto a low-dimensional subspace: Jt≈Ut​Vt⊤J_{t}\approx U_{t}V_{t}^{\top}, where Ut∈ℝm×kU_{t}\in\mathbb{R}^{m\times k} and Vt∈ℝd×kV_{t}\in\mathbb{R}^{d\times k} for a small rank kk. The approximate gradient is then efficiently computed by only using a low-dimensional projection of the error signal:
+g~t=(Ut​Vt⊤)⊤​𝜹t=Vt​(Ut⊤​𝜹t).\displaystyle\tilde{g}_{t}=(U_{t}V_{t}^{\top})^{\top}\bm{\delta}_{t}=V_{t}(U_{t}^{\top}\bm{\delta}_{t}).
+(1)
+This reduces the memory footprint associated with backpropagation from O⁡(m)O(m) to O⁡(k)O(k).
+The second mechanism, Error-Feedback Correction, mitigates bias from approximation by maintaining an accumulator 𝒓t∈ℝd\bm{r}_{t}\in\mathbb{R}^{d} of past residuals. Parameters are updated with corrected gradient g^t\hat{g}_{t}, and 𝒓t\bm{r}_{t} is updated as:
+𝜽t+1\displaystyle\bm{\theta}_{t+1}
+=𝜽t−η⁡(g~t+𝒓t)\displaystyle=\bm{\theta}_{t}-\eta(\tilde{g}_{t}+\bm{r}_{t})
+(2)
+𝒓t+1\displaystyle\bm{r}_{t+1}
+=𝒓t+(gt−g~t)\displaystyle=\bm{r}_{t}+(g_{t}-\tilde{g}_{t})
+(3)
+This feedback loop ensures that any information discarded by the approximation is eventually incorporated into a future update, thus eliminating systematic bias over the long term. These components are integrated into the complete GradLite update rule, outlined in Algorithm 1.
+Figure 2: GradLite workflow. Solid path computes g^t\hat{g}_{t} from g~t\tilde{g}_{t} with 𝒓t\bm{r}_{t}; dashed path shows exact gtg_{t}.
+Algorithm 1 GradLite Optimization Step
+1:
+Learning rate η\eta, parameters 𝜽t\bm{\theta}_{t}, error accumulator 𝒓t\bm{r}_{t}.
+2:
+Forward Pass: Compute loss ℒ⁡(𝜽t)\mathcal{L}(\bm{\theta}_{t}) on a minibatch and cache a compressed representation of activations.
+3:
+Approximate Backward Pass:
+4:
+Compute top-level error signal 𝜹t\bm{\delta}_{t} and its projection 𝜹t′←Ut⊤​𝜹t\bm{\delta}^{\prime}_{t}\leftarrow U_{t}^{\top}\bm{\delta}_{t}.
+5:
+Reconstruct the approximate gradient g~t←Vt​𝜹t′\tilde{g}_{t}\leftarrow V_{t}\bm{\delta}^{\prime}_{t}.
+6:
+Error Correction and Update:
+7:
+Correct the gradient: g^t←g~t+𝒓t\hat{g}_{t}\leftarrow\tilde{g}_{t}+\bm{r}_{t}.
+8:
+Estimate approximation error: Δt≈gt−g~t\Delta_{t}\approx g_{t}-\tilde{g}_{t}.
+9:
+Update accumulator: 𝒓t+1←𝒓t+Δt\bm{r}_{t+1}\leftarrow\bm{r}_{t}+\Delta_{t}.
+10:
+Parameter Update:
+11:
+Apply update rule: 𝜽t+1←𝜽t−η​g^t\bm{\theta}_{t+1}\leftarrow\bm{\theta}_{t}-\eta\hat{g}_{t}.
+12:
+return 𝜽t+1,𝒓t+1\bm{\theta}_{t+1},\bm{r}_{t+1}
+3.2 Theoretical Analysis
+We establish the convergence of GradLite under standard assumptions in convex optimization (LL-smoothness and bounded variance).
+Theorem 1. Assume the loss function ℒ⁡(⋅)\mathcal{L}(\cdot) is LL-smooth and the variance of the stochastic gradient is bounded by σ2\sigma^{2}. With a properly chosen learning rate η=𝒪⁡(1/T)\eta=\mathcal{O}(1/\sqrt{T}), the expected suboptimality gap for the GradLite optimizer after TT steps satisfies:
+𝔼⁡[ℒ⁡(𝜽¯T)−ℒ⁡(𝜽∗)]≤‖𝜽0−𝜽∗‖p​r​e2​η​T+η​σ22+Ck,\mathbb{E}\left[\mathcal{L}(\bar{\bm{\theta}}_{T})-\mathcal{L}(\bm{\theta}^{*})\right]\leq\frac{\|\bm{\theta}_{0}-\bm{\theta}^{*}\|^{p}re}{2\eta T}+\frac{\eta\sigma^{2}}{2}+C_{k},
+(4)
+where 𝛉¯T\bar{\bm{\theta}}_{T} is the average of the parameter iterates, 𝛉∗\bm{\theta}^{*} is the optimal solution, and CkC_{k} is a constant error term dependent on the variance of the gradient approximation, which diminishes as the rank kk increases.
+This analysis shows that GradLite converges at rate O⁡(1/T)O(1/\sqrt{T}), matching standard optimizers. The error-feedback mechanism prevents CkC_{k} from accumulating, ensuring memory savings without harming convergence.
+4 Experiment
+To validate the efficacy and efficiency of GradLite, we conducted a set of experiments comparing it against representative fine-tuning paradigms. We evaluate memory usage, training throughput, and downstream task performance.
+Experimental Setup.
+Base Model: “Qwen/Qwen1.5-MoE-A2.7B” from Hugging Face, a Mixture-of-Experts model with 2.7B activated parameters.
+Hardware & Software: All experiments ran on a single NVIDIA H800 GPU (80GB) with PyTorch and the Transformers library.
+Dataset: “databricks-dolly-15k,” an open-source instruction-following dataset, was used for all fine-tuning.
+Baselines.
+PEFT Methods: LoRA (low-rank adapters), DoRA (magnitude–direction decomposition), (IA)3 (learned rescaling vectors)[13].
+Memory-Efficient Full Tuning: SFT + Activation Checkpointing, LoMo (fused optimizer)[18], and GaLore (low-rank gradient projection)[9].
+Evaluation Metrics.
+Peak VRAM Usage: maximum GPU memory allocated (GB).
+Training Throughput: samples processed per second.
+Downstream Tasks: MMLU, GSM8K, Multilingual benchmark, and MT-Bench.
+4.1 Main Results
+We fine-tuned Qwen1.5-MoE-A2.7B on Dolly with each method, maximizing batch size under the 80GB constraint. Results for efficiency and downstream performance are shown in Tables 1 and 2.
+Table 1: Memory and Speed Comparison on a Single H800 GPU. Lower VRAM is better; higher throughput is better.
+Method
+Peak VRAM (GB) ↓\downarrow
+Throughput (samples/s) ↑\uparrow
+PEFT Methods
+LoRA
+18.2
+75.4
+DoRA
+19.5
+71.8
+(IA)3
+17.9
+74.1
+Full-Parameter Fine-Tuning Methods
+SFT + Checkpointing
+65.4
+19.7
+LoMo
+42.2
+17.3
+GaLore
+45.1
+35.2
+GradLite (Ours)
+38.7
+25.1
+Table 2: Downstream Benchmark Performance. Higher is better for all metrics.
+Method
+MMLU (%) ↑\uparrow
+GSM8K (%) ↑\uparrow
+Multilingual (%) ↑\uparrow
+MT-Bench (score) ↑\uparrow
+Base Model
+62.4
+61.2
+40.4
+6.25
+LoRA
+65.2
+71.5
+38.5
+7.18
+DoRA
+65.7
+70.8
+38.9
+7.25
+(IA)3
+65.0
+70.2
+38.2
+7.15
+SFT + Checkpointing
+66.1
+74.8
+39.5
+7.52
+LoMo
+66.2
+74.6
+39.3
+7.50
+GaLore
+66.3
+74.2
+39.2
+7.46
+GradLite (Ours)
+66.8
+75.3
+39.0
+7.60
+4.2 Analysis of Results
+Efficiency. As validated in Table 1, GradLite successfully curtails the memory costs of full-parameter fine-tuning. It reduces peak VRAM usage by 41% compared to a checkpointed SFT baseline and shows a clear advantage over optimizers like LoMo and GaLore. In terms of throughput, GradLite is 27% faster than SFT with checkpointing, presenting a compelling balance between training speed and memory savings.
+Performance. Crucially, Table 2 shows these efficiency gains are achieved without sacrificing model capability. GradLite’s performance is highly competitive, even surpassing the SFT baseline on complex reasoning benchmarks like MMLU (66.8) and GSM8K (75.3). This result reinforces the value of full-parameter updates, which GradLite makes accessible in memory-constrained scenarios where PEFT methods often fall short.
+4.3 Ablation Study
+Our ablation study (Table 3) dissects GradLite’s core components. Disabling error-feedback (‘w/o Error-Feedback‘) causes a catastrophic performance drop to 61.3 MMLU, confirming that correcting for approximation bias is critical. Furthermore, replacing our adaptive low-rank basis with a static ‘Random Projection‘ also degrades performance, proving the importance of adapting the projection subspace to the gradient manifold. These results show that GradLite’s success relies on the symbiotic relationship between its adaptive approximation and error correction mechanisms.
+Table 3: Ablation on MMLU. Full GradLite uses Low-Rank Approximation and Error-Feedback.
+Configuration
+MMLU (%) ↑\uparrow
+GradLite (Full)
+66.8
+w/o Error-Feedback
+61.3
+Random Projection
+64.2
+5 Conclusion
+We presented GradLite, a backward-friendly optimizer that enables memory-efficient fine-tuning of LLMs by tolerating approximate gradients. Through the combination of low-rank Jacobian approximation and error-feedback correction, GradLite achieves unbiased updates with convergence guarantees comparable to Adam. Empirical results show that it reduces memory consumption by up to 50% while maintaining or surpassing performance on reasoning, multilingual, and dialogue benchmarks. Our work highlights optimizer-level design as a promising direction for overcoming the memory bottlenecks in large-scale model training.
+References
+[1]
+Jusheng Zhang and Zimeng Huang and Yijia Fan and Ningyuan Liu and Mingyan Li and Zhuojie Yang and Jiawei Yao and Jian Wang and Keze Wang. KABB: Knowledge-Aware Bayesian Bandits for Dynamic Expert Coordination in Multi-Agent Systems. Forty-second International Conference on Machine Learning, 2025.
+[2]
+Jusheng Zhang and Kaitong Cai and Yijia Fan and Jian Wang and Keze Wang. CF-VLM:CounterFactual Vision-Language Fine-tuning. , 2025.
+[3]
+Jusheng Zhang and Kaitong Cai and Yijia Fan and Ningyuan Liu and Keze Wang. MAT-Agent: Adaptive Multi-Agent Training Optimization. , 2025.
+[4]
+Dan Alistarh and Demjan Grubic and Jerry Li and Ryota Tomioka and Milan Vojnovic. QSGD: Communication-Efficient SGD via Gradient Quantization and Encoding. , 2017.
+[5]
+Tianqi Chen and Bing Xu and Chiyuan Zhang and Carlos Guestrin. Training Deep Nets with Sublinear Memory Cost. , 2016.
+[6]
+Jialin Chen and Aosong Feng and Ziyu Zhao. MTBench: A Multimodal Time Series Benchmark for Temporal Reasoning and Question Answering. , 2025.
+[7]
+Karl Cobbe and Vineet Kosaraju and Mohammad Bavarian. Training Verifiers to Solve Math Word Problems. , 2021.
+[8]
+Tim Dettmers and Artidoro Pagnoni and Ari Holtzman and Luke Zettlemoyer. QLoRA: Efficient Finetuning of Quantized LLMs. , 2023.
+[9]
+Jiawei Zhao and Zhenyu Zhang and Beidi Chen and Zhangyang Wang and Anima Anandkumar and Yuandong Tian. GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection. , 2024.
+[10]
+Aidan N. Gomez and Mengye Ren and Raquel Urtasun and Roger B. Grosse. The Reversible Residual Network: Backpropagation Without Storing Activations. , 2017.
+[11]
+Dan Hendrycks and Collin Burns and Steven Basart and Andy Zou and Mantas Mazeika and Dawn Song and Jacob Steinhardt. Measuring Massive Multitask Language Understanding. , 2021.
+[12]
+Edward J. Hu and Yelong Shen and Phillip Wallis and Zeyuan Allen-Zhu and Yuanzhi Li and Shean Wang and Lu Wang and Weizhu Chen. LoRA: Low-Rank Adaptation of Large Language Models. , 2021.
+[13]
+Haokun Liu and Derek Tam and Mohammed Muqeeth and Jay Mohta and Tenghao Huang and Mohit Bansal and Colin Raffel. Few-Shot Parameter-Efficient Fine-Tuning is Better and Cheaper than In-Context Learning. , 2022.
+[14]
+Max Jaderberg and Wojciech Marian Czarnecki and Simon Osindero and Oriol Vinyals and Alex Graves and David Silver and Koray Kavukcuoglu. Decoupled Neural Interfaces using Synthetic Gradients. , 2017.
+[15]
+Sai Praneeth Karimireddy and Quentin Rebjock. Error Feedback Fixes SignSGD and other Gradient Compression Schemes. , 2019.
+[16]
+Diederik P. Kingma and Jimmy Ba. Adam: A Method for Stochastic Optimization. , 2017.
+[17]
+Shih-Yang Liu and Chien-Yi Wang and Hongxu Yin. DoRA: Weight-Decomposed Low-Rank Adaptation. , 2024.
+[18]
+Kai Lv and Yuqing Yang and Tengxiao Liu and Qinghui Gao and Qipeng Guo and Xipeng Qiu. Full Parameter Fine-tuning for Large Language Models with Limited Resources. , 2024.
+[19]
+Kai Lv and Hang Yan and Qipeng Guo and Haijun Lv and Xipeng Qiu. AdaLomo: Low-memory Optimization with Adaptive Learning Rate. , 2024.
+[20]
+Pascanu, Razvan and Mikolov, Tomas and Bengio, Y.. On the difficulty of training Recurrent Neural Networks. 30th International Conference on Machine Learning, ICML 2013, 2012.
+[21]
+Samyam Rajbhandari and Jeff Rasley and Olatunji Ruwase and Yuxiong He. ZeRO: Memory Optimizations Toward Training Trillion Parameter Models. , 2020.
+[22]
+Yanli Zhao and Andrew Gu and Rohan Varma and Liang Luo and Chien-Chin Huang and Min Xu and Less Wright and Hamid Shojanazeri and Myle Ott and Sam Shleifer and Alban Desmaison and Can Balioglu and Pritam Damania and Bernard Nguyen and Geeta Chauhan and Yuchen Hao and Ajit Mathews and Shen Li. PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel. , 2023.
+[23]
+Jiawei Zhao and Zhenyu Zhang and Beidi Chen and Zhangyang Wang and Anima Anandkumar and Yuandong Tian. GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection. , 2024.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

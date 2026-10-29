@@ -2,19 +2,21 @@
 
 **规范：** V3
 **窗口：** 2025-09-20T09:00:00+08:00 ～ 2025-09-21T09:00:00+08:00
-**窗口说明：** 用户授权仅补遗漏，原窗口、候选及连续§4冻结；[本日原基线](../_sources/daily-20250921/baseline-before-supplement-20261012.md)保留旧事实。
+**窗口说明：** 用户授权仅补遗漏，保留原小时窗、旧候选日期/评分及有效连续§4，不冻结旧空表；[本日原基线](../_sources/daily-20250921/baseline-before-supplement-20261012.md)保留旧事实，本轮运行前快照见修复日志A1。
 **补充窗口：** 2025-09-20 ～ 2025-09-20
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-12T11:38:39+08:00
+**检查时间：** 2026-10-24T03:41:54+08:00
 
 ## 1. 结论
 
-本轮仅补Sep20完整自然日，Anscombe实际六部分DAY§15及完成态FINAL§16通过，研究和行政普通待办0。原0正式候选/原窗口及连续§4冻结；§4的TTD-DR与原root No Change只属旧有效层，不代本轮验收。未确认新增落窗贡献候选，确定新增0、完整候选Evidence0、Books新写0；不能据此称零事件或全网无遗漏。
+本轮只补Sep20 BJT遗漏，作者James、唯一reader Godel。[修复日志A1–A6](../_sources/daily-20250921/REPAIR_20261024.md)记录真实恢复与停止。已撤回旧Advanced同月空查询的日级覆盖解释；105份旧精确v1最早公告界全部晚于Sep20，不能用这些submitted命中称当天论文。Godel R4联合核验DiffusionNFT arXiv v1为Sep22 BJT、Shift/RelRepair为Sep23 BJT；R5确认目标窗无常规公告对应提交段，不机械回扩整周，也不从周六日历推出零事件。
 
-新四主题155次出现、114唯一发现只是submitted日级线索，作者和Anscombe均实际读105精确v1完整题摘，另9明确范围项只标题层。当前集合为97窄贡献潜力、7具名题摘/core排除、1当前官方撤回；表外RelRepair1窄潜力、PLLM1具体排除及PING v2行政修订关闭分开，共108新增题摘身份/事件，不把它们并成114当天论文。97+RelRepair的first/event日级证据尚不支持评分、采用或完整Evidence；旧SFT/Shift两个定点参照题摘不计新增池。局部P不要求全部全文，必要日证不足不删贡献、也不假“已有覆盖”。
+实际新增目标日DataCite登记主题切片0命中、精确日窗正控1命中，仅这一有界入口；另查官方博客/作者具名日期线索，Qwen3-Omni二手Sep20被官方Sep22 News纠正，RelRepair第三方Sep20/TSE并无出版方公开证据。AIPsycho出版PDF/OAI已恢复，但年份、标准化Jan1、元数据datestamp不是首次公开日。没有确认新增落窗贡献候选：新增确定0、完整候选Evidence0、Books新写0；不是零事件、无遗漏或全部Books已有覆盖。Godel R6采用新增来源差额、R7实际完整DAY通过，作者A8真实完成保存检查后R8唯一FINAL通过；研究及行政普通0。
 
-必要准入core、五个含糊标题恢复、教师自洽/视觉文本旁路/数学独立化与安全强断言的反侧已分批实际独核；[首批](../_sources/daily-20250921/SUP_FIRST_20261012.md)、[具名分类](../_sources/daily-20250921/SUP_AB_20261012.md)、[必要局部](../_sources/daily-20250921/SUP_MIN_CORE_20261012.md)保留精确位置与采用限制。源记录见[本轮实际范围](../_sources/daily-20250921/SUP_SOURCES_20261012.md)，原[scan](../_sources/daily-20250921/scan.md)只复用未变身份/旧层。§5保留项不授正面Coverage/Evidence/Books或无遗漏；本日实际交付root验收计数，不自行写共享State。
+旧155次出现/114唯一发现仍只是导航；105精确v1完整题摘＝97窄潜力+7具体EX+1撤回，另9仅标题范围层，全部有效层复用不第三。表外RelRepair窄潜力、PLLM具体EX、PING v2行政修订另计3个身份/事件，共108完整题摘身份/事件，不是108当窗候选；旧SFT/Shift参照不计新增。97+RelRepair既不整体预入选，也不合并成98份完整Evidence或统一外部终态。具名先发/新差额按§5分别保留，未知日不降分、不撤P，不扩Methods配额。
+
+必要准入和反侧见旧[具名分类](../_sources/daily-20250921/SUP_AB_20261012.md)、[必要局部](../_sources/daily-20250921/SUP_MIN_CORE_20261012.md)及[Anscombe有效层](../_sources/daily-20250921/SUP_INDEPENDENT_20261011.md)；旧DAY/FINAL不授本轮差额。§4连续原块不变，TTD-DR/root No Change仅原窗有效层。本轮不写共享State、不预支日级计数。
 
 ## 2. 来源覆盖
 
@@ -33,19 +35,21 @@
 | SRC-BAIDU-ERNIE | 新Blog实际两页，p2六项Nov11/7→Oct16→Sep12首次跨→Jun30且仅previous，停止2/2 | 已检查 | 不保证其他独立代码事件 |
 | SRC-XIAOMI-MIMO | 新首页Paper8日期Oct21→Sep19→Jun4；Blog15无日字段。实际script/route/t.u恢复8557/6159 async组件，More仅同array8+7，停止有限切片 | 已检查 | 无date Blog无法恢复Sep20历史；旧Sep19小时缺口历史隔离，不作新hour门 |
 | SRC-MINIMAX | 新EN/P2各12 datedcard同序列止Oct27，不当分页；CN13项Oct27→Jan15稀疏夹窗；Agent当前3 datedtechblog/llms.txt索引均2026，不读后日正文，停止 | 已检查 | EN历史缺段与CN/Agent完整性不授；不能继承旧Agent1篇或错误/news/2锚点计数 |
-| SRC-ARXIV | 新availability排程+12注册分类4主题submitted发现49/23/35/48→114unique；相关105精确v1AB及9title范围层；实际advanced announced_date_first Sep20→21四主题CS/crosslist查询各noresult，止各首页；轻撤回20377已核 | 已检查 | no常规batch/窄query0不证全部P排窗；提交/公告年月不等first day，异常公告或他站首发日证精确保留 |
+| SRC-ARXIV | 旧12分类四主题submitted49/23/35/48→114unique及105精确v1AB/9标题层复用；本轮105最早界晚于Sep20、三具名S/L/U联合日界经Godel R4/5；Advanced仅年月空查询不作日证；新增目标BJT日DataCite登记主题查询page1/size100、total0/无next，正控total1，止各1页，见修复日志A2–A4 | 已检查 | 仅约定主题/实际切片；登记日不等公告日，后登记异常事件及他站先发不被0命中排除。无正常公告对应提交段不代表周六零事件；未确认潜力不授Evidence/Books |
 | 表外：[medRxiv PING](https://api.biorxiv.org/details/medrxiv/10.1101/2025.09.17.25336018) | 仅具名DOI官方API完整题摘/版本日字段；v2正文/PDF403后[精确sourceXML](https://www.medrxiv.org/content/early/2025/09/20/2025.09.17.25336018.source.xml)200恢复，实际完整AB/版本元数据/update fn：v1 Sep19、v2 Sep20，只caption/LaTeX/intro行政调整，停止此版本说明 | 已检查 | 非arXiv；不搬v1首次，不授完整v1 Evidence或全篇diff，后续有具体重要修订信号才重开 |
-| 表外：[eScholarship AIPsycho出版身份](https://escholarship.org/uc/item/39k8f46q) | 仅2509.16530v1评论所指CogSci更早出版门；具名出版方原入口curl403、web robotcheck，未取得可读原日证，有限恢复后停止，不绕过验证/扩出版库存 | 受阻 | August发表评论不等已独立确认首次；必要出版方原日级记录到达只重开该身份日期/事件门，终态隔离 |
+| 表外：[eScholarship AIPsycho出版身份](https://escholarship.org/uc/item/39k8f46q) | 原item仍robotcheck；本轮同身份PDF封面恢复Publication Date仅2025；官方OAI GetRecord仅本记录，dc.date=2025-01-01、datestamp=2025-07-25T14:42:32Z，止身份/日期字段，见A6 | 已检查 | 正文不再不可访问；年份/标准化Jan1/元数据修改戳和作者August comment均不冒实际首次公开日。必要首次/新增事件日仍未确认，不采用性能或本日新贡献 |
 
-本轮请求/失败/恢复独名原件、分页和停止见[SUP_SOURCES](../_sources/daily-20250921/SUP_SOURCES_20261012.md)及所列`SUP_*.request.json`/`.raw`；原[首查](../_sources/daily-20250921/fetch-results.json)、[补查](../_sources/daily-20250921/supplement-fetch.json)仍保留。所有“已检查”只限上述入口/切片，隔离缺口不是Coverage通过，不代表全站。
+旧来源实际请求/失败/恢复、分页和停止复用[SUP_SOURCES](../_sources/daily-20250921/SUP_SOURCES_20261012.md)及`SUP_*.request.json`/`.raw`；原[首查](../_sources/daily-20250921/fetch-results.json)、[补查](../_sources/daily-20250921/supplement-fetch.json)保留。本轮新增原字段/URL/执行时刻、查询和停止见修复日志A2–A6；未保存完整响应字节者明示为现场原字段摘录，不倒造旧raw。所有“已检查”只限上述入口/切片，隔离缺口不是Coverage通过，不代表全站。
 
 其他表外触发仅具名身份/日期或必要家族原件恢复：SCAN作者项目、MANZANO Apple发表字段、DiffusionNFT官方repo活动、Shift Snowflake原Blog/旧v1、RelRepair/Challenging精确作者稿及PLLM v2；实际范围/停止与未读边界见SUP_SOURCES及必要局部。没有新增机构固定扫描或Weekly触发，不将每个原件设为研究队列。
+
+本轮另按实际comment线索有限检查Follow-your-emoji、SeeingCulture、SimDPS、e2e4robotics具名作者页的日期/身份，及Qwen官方News和RelRepair第三方索引，止各单页；具体无日字段/访问失败与旧新稿边界见A5。辅助查询只目标日主题/官方域首返回页，不以搜索日替代原日，不扩机构历年或会议库存。
 
 ## 3. 候选与判断
 
 无确定落窗且通过贡献筛选的家族，不建立评分或全文队列。日期保留不计候选。
 
-原候选表为空且冻结。本轮105API题摘的97窄潜力/7具体EX/1撤回与9title层，以及表外三项完整AB的处置身份完整列在[本日具名分类](../_sources/daily-20250921/SUP_AB_20261012.md)；公共first/event证据未确认者列§5，不改成分数0或“已审重复”。PLLM/Overhearing/RLsurvey因具体无独立增量关闭而非survey体裁；五个领域标题重开后FairTune、VCASFT、Pain保局部模型形成/反侧，UNIPHY/Forest只科学应用范围关闭。20375保既定proxy上maxvote未胜single的局部负側，Epistemic24721必要原文存在bounded lens/暂停/原warrant恢复规则，撤销两项原EX；均不採通用检测、独立truth或安全保证。
+原候选表为空；本轮没有冻结它，实际未发现满足日期资格的新增家族。旧105API题摘的97窄潜力/7具体EX/1撤回与9title层，以及表外三项完整AB身份见[本日具名分类](../_sources/daily-20250921/SUP_AB_20261012.md)，只复用具体有效判断，不继承其统一日期终态标签。三具名arXiv日界见A2/R4，其中RelRepair在105之外；105中除DiffusionNFT/Shift外的103份只复算最早界晚于目标日，不能冒确切公告日。具名作者事件仍依§5隔离。PLLM/Overhearing/RLsurvey具体无增量而非体裁关闭，Overhearing与Skill撤回本轮Godel R3校准；FairTune/VCASFT/Pain、20375局部负侧、Epistemic权限/停止接口的有效窄P不撤销，不采用通用检测/独立truth/安全保证。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -58,9 +62,11 @@
 
 ## 5. 缺口与下一步
 
-研究及行政普通待办0：必要准入/core、SFT/Shift差额、具名出版方有限入口、来源尾核与最终集合及完整六节均已实际独核§15，完成态行政FINAL§16已通过。Epistemic、AI-text负侧、Overhearing及五标题重开层不再保过时未读任务。AI-text未成功的partial PDF不授阅读，其完整AB已足最小准入。下列为本窗终态保留项，不用于正面Coverage/Evidence、Books、无遗漏或性能/安全保证，不是98篇全文待办。
+本轮研究及行政普通待办0：新增A4–A6已Godel R6采用、完整六节已R7 DAY通过，作者A8真实完成保存检查及R8唯一FINAL已实际发生。无剩余扫描/Source/owner/Books/保存或最终核验待办。下列具名日期/事件与历史来源限制为本窗终态保留项，按具体身份和来源隔离，不支持正面证据、Books或无遗漏断言，不授全面Coverage/Evidence、性能/安全保证或Books Integration完成。不是把旧97+RelRepair批量终态化。未获共享Books写位，也没有本轮确认新增候选，不产生待写/POST队列。
 
-日期/事件终态保留：97窄P及RelRepair的官方first-public/重要新事件日级材料尚缺；共用arXiv必要公告入口已实际四主题查询和排程，不把submitted、无常规batch、索引日期/announcement年月当公开日。SCAN原项目无原日字段、MANZANO当前官方January2026仅发表字段、DiffusionNFT currentrepo活动非原paper first；SFT新参数恢复和Shift新GQA/FP8细节确有差额，不能相似题名直接关闭，但未确认新事件落窗。AIPsycho comment August出版经出版方curl403/web robotcheck有限恢复仍无可读原日证，保更早首次门不冒称已证窗外。原材料/精确ID及必要命题见AB/MIN_CORE/SOURCES。接受官方当期公开列表/异常批次或具名作者已公开正文日证，取得后只重开对应身份的日期/事件→必要Evidence/具体Books，不扩全月或要求小时。
+日期证明分层：DiffusionNFT16117的arXiv v1公告日为Sep22 BJT，Shift16495/RelRepair16701为Sep23 BJT（A2、Godel R4），仅这三条有完整联合日界；其余旧105元数据的最早界也晚于目标日（A3、R5），不能据此声称所有精确公告日或全球first均已恢复。旧97窄潜力+RelRepair不是98个当窗候选，也不统一授“外部终态/完整Evidence”。目标日登记主题切片0只按A4有限范围采用，不证明全部异常公告不存在；无具名早稿信号者不无限逐项排假想渠道。
+
+具名采用限制及重开条件分别保留：SCAN16548作者页无原日字段；MANZANO16197的Apple January2026仅正式发表字段；DiffusionNFT项目activity非原paper first；SFT16596相对2024稿的参数恢复、Shift新稿相对May/July稿的GQA/FP8差额不能因主题相同关闭，但没有Sep20新增事件日证。Follow-your-emoji16630同时有2024旧稿和2025 faster稿，不能互相代日期；SeeingCulture16517只月级News、e2e4robotics16434原页无首发日、SimDPS16342具名页不可访问。AIPsycho16530出版PDF/OAI可读但只有年份/标准化日期及修改戳，作者August comment不替首次公开日，撤回“正文不可读”的旧限制。以上不支持本日新增采用或Books；取得对应官方原公开列表、作者已公开正文日字段或明确重要修订说明，只重开相应身份的日期/事件→必要Source/Books，不扩月/周库存或索取精确小时。旧AB/core中的贡献潜力和反侧保持，不以日期尚缺撤P或降分。
 
 来源限制：Meta必要历史原入口未恢复、Google Publications日级历史与当前月页连接/快照局限、Hunyuan current9项与动态页不可读、Z.ai新版目录缺Sep20、MiniMax EN历史分页/CN稀疏/Agent历史完整性及MiMo无日Blog。Seed默认缺数组已实际explicit-US恢复，不能再列同一伪hold；其他来源仅有限实际切片无命中，不获得全站召回。收到Sep20主题相关历史原列表或具体原event后定点恢复其源，不将全部当前目录当队列。
 
@@ -70,7 +76,13 @@
 
 ## 6. 复核
 
-本轮增量复核者：Anscombe（非作者）。
+本轮唯一独立复核者：Godel（非作者）。
+
+结论：通过（R7完整DAY、作者A8真实完成保存检查、R8唯一FINAL）。
+
+[本轮独核](../_sources/daily-20250921/REPAIR_REVIEW_20261024.md)R3对Overhearing具体EX与Skill撤回作有限校准，R4核三精确DOI原字段/夏令时/周末联合区间，R5核105元数据最早界与常规公告无目标窗原像；R6实际采用登记主题发现/正控、具名作者日期及出版方PDF/OAI恢复，R7实际顺读完整六节、分层复用/新增0/无Books写位和保存前一致性，完整DAY通过。未重读105题摘/全部附件、未授全球first/整池终态或全面Coverage/Evidence/Books；旧有效层仅按其范围复用。作者随后按R7同步完成态并交A8真实保存检查，Godel R8回读完成态/计数/终态标记与保存检查，唯一FINAL通过。本段及§1/5仅按R8授权回填已发生结果，无研究或采用权限变化。下列Anscombe/root为旧轮有效层，普通0/完成仅对应其当时范围，不能替代本轮差额验收。
+
+旧轮增量复核者：Anscombe（非作者）。
 
 结论：通过
 

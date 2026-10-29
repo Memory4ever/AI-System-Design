@@ -1,0 +1,470 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.29229v1
+Original retrieval 2026-10-23 BJT. Download is not evidence of having reviewed all content. Necessary reviewed sections and conclusions are in SOURCE_MULTIMODAL.md.
+Abstract
+Streaming video understanding (SVU) requires video-LLMs to process incoming video continuously while answering user queries with low latency. Recent methods reduce query-time cost by prefilling frames into KV caches during idle time and reusing the cached KVs at query time. To bound per-frame computation over unbounded video streams, these methods restrict the context available during prefill. This creates a fundamental context mismatch: the restricted context may omit information needed to properly contextualize video tokens, yet, still contain information irrelevant to the eventual query, which is unknown during prefill. We propose FrameBlend , a simple yet effective plug-and-play method to address this mismatch through selective KV recomputation, without requiring any additional training. At query time, FrameBlend re-prefills selected video tokens using query-relevant context and replaces their cached KVs with recomputed ones. Crucially, this recomputation enables shorter attention windows during idle-time prefill, substantially reducing prefill cost while improving accuracy. Experiments across three SVU frameworks and five streaming and offline benchmarks demonstrate accuracy gains of up to 3.9 pp. On RVS-Ego, FrameBlend reduces per-frame prefill FLOPs by over 20% and total processing time by 14–59% for retrieval-based frameworks, including the cost of query-time recomputation. These results demonstrate that a simple change in how contextualization is distributed between idle time and query time can improve the accuracy-efficiency trade-off for SVU.
+ 1 Introduction
+Recent video large language models (video-LLMs) have demonstrated strong video understanding capabilities ( Li et al., 2024 ; Bai et al., 2025a ; Bai et al., 2025b ) . These advances, together with growing demand for real-time applications such as robotics ( Mu et al., 2023 ) , autonomous driving ( Shao et al., 2024 ) , and surveillance systems  ( Rao et al., 2022 ) , have spurred interest in streaming video understanding (SVU). In SVU, a video-LLM continuously processes an incoming video stream and answers user queries as they arrive. This setting imposes three constraints. First, during idle time , i.e., no query is pending, the model must keep pace with a potentially unbounded stream under limited compute and memory. Second, because future queries are unknown during idle-time processing, it is difficult to decide in advance which information to preserve. Third, at query time , the model must respond with minimal latency, leaving little room for additional computation before answering.
+To meet these requirements, recent methods prefill incoming frames into key-value (KV) caches during idle time and directly reuse the cached KVs at query time ( Di et al., 2025 ; Ning et al., 2026 ; Zhang et al., 2026 ) . However, letting every incoming token attend to all preceding tokens incurs a cumulative attention cost that grows quadratically with stream length, which is prohibitive for long streams. Existing methods therefore limit the prefill context, either through sliding-window attention, which restricts attention to recent frames ( Di et al., 2025 ; Chen et al., 2026a ; Chen et al., 2026b ) , or through KV cache compression, which condenses accumulated context into a fixed-size memory  ( Kim et al., 2025 ; Ning et al., 2026 ; Zhang et al., 2026 ) .
+Both strategies can create a mismatch between the context used to construct KVs during idle-time prefill and the context used at query time. With sliding-window attention, a token cannot attend to earlier tokens outside its window, even if those tokens are later retrieved together with it to answer a query. With KV cache compression, information from tokens that are later compressed or evicted may remain encoded in retained KVs, even when it is irrelevant to the query ( Pang et al., 2026 ) . Reused KVs may thus both omit relevant context and retain irrelevant context. Direct KV reuse leaves these representations uncorrected, potentially degrading answer quality ( Yao et al., 2025 ) .
+ Figure 1: Motivation and performance of FrameBlend. 
+(a) Sliding-window attention can omit inter-token context needed at query time.
+(b) KV compression can retain unnecessary context from evicted tokens.
+(c) FrameBlend improves SVU framework accuracy while reducing total latency.
+To resolve this mismatch, we propose FrameBlend , a training-free method that selectively recomputes cached KVs at query time. Inspired by recomputation techniques in LLM serving ( Yao et al., 2025 ; Hu et al., 2025 ) , FrameBlend re-prefills a selected subset of tokens under the query-time context and overwrites their cached KVs. Whereas prior methods either rely on costly operations to identify recomputation targets or select them in a query-agnostic manner, FrameBlend uses QTS (query-relevant token-level selection), a lightweight, frequency-based mechanism guided by query relevance. Moreover, in SVU, query-time recomputation fundamentally changes how idle-time prefill should be designed; rather than using large attention windows to preserve context in advance, FrameBlend instead uses shorter windows, as missing context can be recovered once the query arrives. This not only reduces prefill cost but can also improve accuracy over longer windows. We attribute this gain to reduced contextual interference: since future queries are unknown at prefill time, shorter windows limit how much query-irrelevant information is baked into the cached KVs. Together, shorter attention windows during idle-time prefill and query-time KV recomputation form the core principle of FrameBlend, improving both efficiency and accuracy without training, and with minimal modifications to existing SVU frameworks.
+We evaluate FrameBlend on three SVU frameworks—ReKV  ( Di et al., 2025 ) , HERMES  ( Zhang et al., 2026 ) , and LiveVLM  ( Ning et al., 2026 ) —across two streaming benchmarks: RVS  ( Zhang et al., 2024 ) and OVO-Bench  ( Niu et al., 2025 ) . We also assess general video understanding ability on three offline benchmarks ( Fu et al., 2025 ; Zhou et al., 2025 ; Mangalam et al., 2023 ) . FrameBlend matches or improves aggregate accuracy on every framework-benchmark pair, with gains of up to 3.2 pp on streaming benchmarks and 3.9 pp on offline benchmarks. For ReKV and LiveVLM, FrameBlend further reduces per-frame prefill FLOPs by 22.2–26.0% and prefill latency by 12.6–60.5% on RVS. Even after accounting for query-time recomputation, total FLOPs and latency decrease by 19.0–23.2% and 14.1–58.7%, respectively.
+Our contributions are summarized as follows:
+ • 
+We propose FrameBlend, a plug-and-play, training-free method that selectively recomputes KVs for relevant tokens at query time.
+To our knowledge, it is the first query-aware recomputation method for SVU.
+ • 
+We show that query-time recomputation enables shorter attention windows during idle-time prefill, reducing prefill cost while matching or exceeding the accuracy of longer windows.
+ • 
+Across ReKV, HERMES, and LiveVLM on two streaming and three offline benchmarks, FrameBlend consistently improves (or matches) aggregate accuracy for every framework–benchmark pair, with gains of up to 3.2 pp and 3.9 pp, respectively. For ReKV and LiveVLM on RVS, it also reduces per-frame prefill FLOPs by 22.2–26.0% and total latency by 14.1–58.7%.
+ 2 Related work
+Streaming video understanding.
+The central challenge in SVU is efficiently storing and utilizing the information in potentially unbounded video streams, under memory and computation constraints. One line of work addresses this by maintaining an explicit memory of visual representations from incoming frames  ( Zhang et al., 2024 ; Qian et al., 2025 ; Wang et al., 2025 ; Zeng et al., 2025 ) . However, these stored representations must still be processed by the backbone LLM to answer the incoming query, often leading to long query-time latency for LLM prefill computation.
+Recently, a growing line of work instead prefills incoming frames into KV cache during idle time and directly reuses the cached KVs at query time, thereby shifting much of the prefill computation to idle time  ( Di et al., 2025 ; Chen et al., 2026b ; Chen et al., 2026a ; Kim et al., 2025 ; Yang et al., 2025 ; Ning et al., 2026 ; Zhang et al., 2026 ) .
+These approaches can be categorized according to how they manage the context during the prefill and decoding.
+During prefill, allowing each frame to attend to all preceding frames becomes prohibitively expensive as the stream grows.
+Therefore, some approaches restrict attention to recent frames using sliding-window attention  ( Di et al., 2025 ; Chen et al., 2026b ; Chen et al., 2026a ) , while others apply KV cache compression to reduce redundant tokens  ( Kim et al., 2025 ; Yang et al., 2025 ; Ning et al., 2026 ; Zhang et al., 2026 ) .
+During decoding, retrieval-based methods independently select query-relevant KVs at each layer based on their similarity to the query  ( Di et al., 2025 ; Chen et al., 2026a ; Ning et al., 2026 ) .
+In contrast, non-retrieval methods use the entire bounded KV memory, which has been progressively compressed during prefill, to generate the final prediction at the query time  ( Kim et al., 2025 ; Yang et al., 2025 ; Zhang et al., 2026 ) .
+These works directly reuse the stored KVs for decoding, which can create a context mismatch between prefill and decoding. Our work mitigates this mismatch by selectively recomputing cached KVs with query-relevant context at query time.
+Selective recomputation of KV cache.
+The idea of recomputing the cache for resolving context mismatch has been studied recently in the field of long-context LLMs. In these scenarios, the primary goal is to approximate the behavior of full-context KVs, by recomputing only a fraction of the KVs that have been previously prefilled by computing in short chunks. For example, CacheBlend dynamically selects and recomputes the KVs for tokens that deviate large by such recomputations ( Yao et al., 2025 ) .
+EPIC instead statically recomputes the first few tokens of each cached chunk  ( Hu et al., 2025 ) . These ideas have been extended to vision-language model serving, where MPIC recomputes the first few image tokens  ( Zhao et al., 2025 ) , while VLCache dynamically adjusts the recomputation ratio across layers  ( Qin et al., 2025 ) .
+These methods, however, are not specifically designed for SVU, where recomputation must be both query-aware and efficient under a tight query-time latency budget.
+Their recomputation targets are determined either by query-agnostic heuristics or by additional query-time operations. In contrast, FrameBlend selects query-relevant recomputation targets and leverages existing backbone retrieval results where applicable, thereby minimizing additional target-selection operations.
+ 3 Preliminaries
+In this section, we formally describe the problem of streaming video understanding and the idea of KV cache reuse. For the sake of simple exposition, we focus on describing the case of ReKV—a method with sliding-window prefill and decoding based on selective retrieval ( Di et al., 2025 ) .
+Consider a standard streaming video question-answering task, where the model is given a stream of video frames. More concretely, define the video token stream as an unlimited sequence of tokens
+ \displaystyle\mathcal{X}=(\mathbf{x}_{1},\mathbf{x}_{2},\mathbf{x}_{3},\ldots), 
+ (1) 
+where the tokens are temporally ordered. That is, \mathcal{X} consists of the tokenized version of each video frame, concatenated in the temporal order. The user query \mathbf{q} may arrive in the middle of this stream, e.g., after the first N video tokens, asking a specific question about the video. Then, the video-LLM must generate an answer \hat{y} using the observed token sequence \mathcal{X}_{\leq N}=(\mathbf{x}_{1},\ldots,\mathbf{x}_{N}) .
+Because storing all tokens \mathcal{X}_{\leq N} and processing them after the query arrives incurs too much latency and storage requirements, we consider KV cache reuse ( Di et al., 2025 ; Ning et al., 2026 ; Zhang et al., 2026 ) . Concretely, we divide the streaming inference into two phases: idle time and query time , corresponding to before and after the query arrives, respectively.
+ Idle time. During idle time, each incoming video token \mathbf{x}_{n} is processed continually, forming the (layerwise) memory \mathcal{M}_{n}^{\ell} for each transformer layer \ell\in\{1,\ldots,L\} . For standard sliding-window methods, e.g., ReKV ( Di et al., 2025 ) , this is simply done by prefilling w most recent tokens (\mathbf{x}_{n-w+1},\ldots,\mathbf{x}_{n}) to the video-LLM and storing the key-value (KV) cache \mathbf{c}^{\ell}_{n}=(\mathbf{k}_{n}^{\ell},\mathbf{v}_{n}^{\ell}) from each layer. That is, the memory will keep accumulating these KV caches as
+ \displaystyle\mathcal{M}_{n}^{\ell}=(\mathbf{c}^{\ell}_{1},\mathbf{c}^{\ell}_{2},\ldots,\mathbf{c}^{\ell}_{n}). 
+ (2) 
+More recent methods employ mechanisms to continually update and compress the previously generated memory, keeping the total storage cost sublinear in n ( Ning et al., 2026 ; Zhang et al., 2026 ) .
+ Query time. When the query \mathbf{q} arrives at time N , the model utilizes the current memory \{\mathcal{M}_{N}^{\ell}\}_{\ell} to generate the response, rather than prefilling the entire observed sequence from scratch. To reduce the cost of loading the memory, one can first select a subset of KV caches \mathcal{S}^{\ell}\subseteq\mathcal{M}_{N}^{\ell} for each layer \ell , that is most relevant for answering the target query \mathbf{q} . This is typically done by applying some similarity metric \rho(\cdot,\cdot) between the query and the keys of each KV, i.e.,
+ \displaystyle\mathcal{S}^{\ell}=\left\{(\mathbf{k}^{\ell}_{i},\mathbf{v}^{\ell}_{i})~\big|~\rho(\mathbf{k}^{\ell}_{i},\mathbf{q})\in\mathrm{ArgTopK}\big(\{\rho(\mathbf{k}^{\ell}_{i},\mathbf{q})\}_{i=1}^{N}\big)\right\}. 
+ (3) 
+For example, many prior works use the dot-product similarity between the stored key and the query representation derived from \mathbf{q} ( Di et al., 2025 ; Chen et al., 2026a ; Ning et al., 2026 ) . In contrast, the methods that compress-and-store the KV during idle time typically utilize the whole memory—i.e., \mathcal{S}^{\ell}=\mathcal{M}_{N}^{\ell} —as it is already compact ( Kim et al., 2025 ; Yang et al., 2025 ; Zhang et al., 2026 ) . Critically, we note that these KV subsets \mathcal{S}^{\ell} do not need to correspond to an identical set of tokens across different layers; in fact, different layers commonly select different tokens.
+ 4 Method
+ Figure 2: 
+ Overview of FrameBlend. 
+FrameBlend uses a short attention window during idle-time prefill and selectively recomputes the KVs of query-relevant tokens at query time.
+We propose FrameBlend , a simple yet effective plug-and-play method to reduce the prefill cost and improve the accuracy of SVU frameworks by selectively recomputing the KV cache at query time. We first formally describe how FrameBlend works ( Section   4.1 ), and discuss how it allows us to use a shorter attention window ( Section   4.2 ). By default, we focus on describing the case of applying on retrieval-based methods, e.g., ReKV ( Di et al., 2025 ) or LiveVLM ( Ning et al., 2026 ) . Then, we additionally discuss how to adapt it for KV compression methods, e.g., Zhang et al. (2026) .
+ 4.1 Selective Recomputation of KV Cache
+After the base SVU framework (e.g., ReKV) determines the layerwise KV sets \{\mathcal{S}^{\ell}\}_{\ell=1}^{L} for answering the query \mathbf{q} , FrameBlend operates in two simple steps: (1) Recomputation target selection: We select a subset of the loaded KV sets to recompute; (2) Recomputing and decoding: We recompute the KVs and use them for decoding the answer. We describe each step below.
+Step 1: Recomputation target selection.
+In this step, we select a subset of the retrieved KV cache \mathcal{S}^{\ell} that will be recomputed, using the QTS (query-relevant token-level selection) criterion.
+The design principle of QTS is twofold. First, we prioritize the most query-relevant KVs, because they will have the largest impacts on the final answer. Second, we select KVs in a way that recomputing can be done efficiently, in order to minimize the query-time latency. Typical recomputing methods for LLM serving, e.g., CacheBlend ( Yao et al., 2025 ) , are suboptimal in this sense; they focus on approximating the properties of full KV cache by recomputing KVs that get updated the most, gradually proceeding over the layers. This is not aligned well for SVU, being query-agnostic and
+requiring a tedious sequential selection procedure between transformer layers.
+In short, QTS makes selection at the token-level, i.e., select KVs corresponding to the same tokens at every layer. This design is geared toward minimizing the latency, by enabling an allocation of constant computational budget over the layers and removing any inter-layer operations.
+QTS selects the tokens that have been most frequently selected as \mathcal{S}^{\ell} across all layers. More concretely, the set of recomputation target tokens is defined as
+ \displaystyle\mathcal{P}=\left\{\mathbf{x}_{i}~\big|~\phi(\mathbf{x}_{i})\in\mathrm{ArgTopK}\big(\{\phi(\mathbf{x}_{i})\}_{i=1}^{N}\big)\right\},\qquad\mathrm{where}\quad\phi(\mathbf{x}_{i}):=\left|\left\{\ell:\mathbf{c}_{i}^{\ell}\in\mathcal{S}^{\ell}\right\}\right|. 
+ (4) 
+Since this \mathcal{P} is computed directly from the backbone framework’s selections, it captures the cross-layer agreement on the query relevance of \mathbf{x}_{i} without additional operations.
+For frameworks without query-time retrieval, e.g., HERMES  ( Zhang et al., 2026 ) , QTS simply applies the same similarity-based retrieval to the tokens in memory ( Equation   3 ), and chooses the highest-similarity tokens. The results of this retrieval only affect which tokens to recompute, and the backbone’s original decoding context remains unchanged.
+Step 2: Recomputing and decoding.
+The tokens in \mathcal{P} are jointly re-prefilled through all LLM layers in temporal order, which requires a single forward pass over |\mathcal{P}| video tokens.
+The recomputed KVs then replace the corresponding KVs in \{\mathcal{S}^{\ell}\}_{\ell=1}^{L} to construct the final decoding context. Concretely, let \hat{\mathbf{c}}_{i}^{\ell} denote the recomputed KV of token i at layer \ell .
+The replacement is defined as
+ \tilde{\mathbf{c}}_{i}^{\ell}=\begin{cases}\hat{\mathbf{c}}_{i}^{\ell},&\mathbf{x}_{i}\in\mathcal{P},\\
+\mathbf{c}_{i}^{\ell},&\text{otherwise},\end{cases}\qquad\tilde{\mathcal{S}}^{\ell}=\left\{\tilde{\mathbf{c}}_{i}^{\ell}\mid\mathbf{c}_{i}^{\ell}\in\mathcal{S}^{\ell}\right\}. 
+ (5) 
+The answer is decoded using \tilde{\mathcal{S}}^{\ell} , following the same temporal ordering and positional encoding policy as the backbone SVU framework.
+Additionally, to avoid repeated vision-encoder computation during recomputation, FrameBlend retains each observed video token in CPU memory during idle-time prefill.
+ 4.2 Prefilling with a short attention window
+ Figure 3: Effect of window size. Accuracy of ReKV with FrameBlend on OVO-Bench.
+With post-query recomputation, we revisit the amount of context required during prefill.
+Since recomputing provides inter-token context at the query time, FrameBlend may need less contextual information during the idle time. In other words, we may need a shorter window for the prefill.
+Our experimental results confirm this intuition. In Figure   3 , we report the accuracy of FrameBlend applied on ReKV with various window sizes, measured on the OVO-Bench for LLaVA-OV-7B. For simplicity, we have used K=\infty for recomputing (i.e., recompute all retrieved cache).
+From Figure   3 , we observe that reducing prefill windows can improve accuracy for FrameBlend, as short as 196 tokens—which correspond to a single video frame. This is in stark contrast with the observations of ReKV, where a longer window generally leads to better performance ( Di et al., 2025 ) . We attribute this gain to reduced contextual interference at prefill  ( Pang et al., 2026 ; Shen et al., 2026 ) : since the future query is unknown, a longer context increases the risk of encoding unnecessary contextual information into the KVs.
+Results on additional benchmarks are provided in Appendix  C .
+FrameBlend thus reduces the attention window to 1–68% of the backbone’s original window size, depending on the benchmark,
+reducing prefill compute and improving accuracy over longer ones.
+ 5 Experiments
+ 5.1 Experimental setup
+ Benchmarks. 
+We evaluate FrameBlend on five streaming and offline video understanding benchmarks, covering both multiple-choice and open-ended question answering.
+For streaming evaluation, we use OVO-Bench  ( Niu et al., 2025 ) and RVS  ( Zhang et al., 2024 ) . On RVS, following Zhang et al. (2026) , we use GPT-3.5-turbo-0125 to evaluate open-ended answers.
+For offline evaluation, we use MLVU  ( Zhou et al., 2025 ) , Video-MME  ( Fu et al., 2025 ) , and EgoSchema  ( Mangalam et al., 2023 ) .
+We use the official development set for MLVU, the full EgoSchema test set evaluated by the official evaluation server, and Video-MME without subtitles.
+ Base SVU methods. To evaluate FrameBlend as a plug-and-play method, we integrate it into three frameworks: ReKV  ( Di et al., 2025 ) ; LiveVLM  ( Ning et al., 2026 ) ; HERMES  ( Zhang et al., 2026 ) . We retain the original configuration of each framework except for applying the query-time recomputation and the short prefill window introduced by FrameBlend.
+ Video-LLMs. We evaluate on two open-weight backbone video-LLMs: LLaVA-OneVision-7B (LLaVA-OV-7B)  ( Li et al., 2024 ) and Qwen2.5-VL-7B  ( Bai et al., 2025b ) .
+ Hyperparameters. All video inputs have been sampled at 0.5 FPS.
+We set the recomputation budget to K=7840 video tokens, corresponding to 40 frames for LLaVA-OV-7B. For FrameBlend, we have tuned prefill window sizes for each framework-benchmark pair.
+ Hardware. All efficiency experiments have been conducted on a single NVIDIA A100 80GB GPU.
+ Omitted details. See Appendix  A .
+ 5.2 Main results
+ Table 1: FrameBlend on streaming benchmarks. We compare the accuracy of various SVU frameworks with and without FrameBlend on streaming VQA benchmarks.
+ RVS-Ego 
+ RVS-Movie 
+ OVO-Bench 
+ Method 
+ Acc. 
+ Score 
+ Acc. 
+ Score 
+ Real-time 
+ Backward 
+ Avg. 
+ LLaVA-OV-7B 
+ ReKV 
+ 59.3 
+ 3.93 
+ 49.2 
+ 3.45 
+ 61.5 
+ 43.2 
+ 52.3 
+ ReKV + FrameBlend 
+ 62.4 
+ 3.99 
+ 50.1 
+ 3.41 
+ 63.0 
+ 44.6 
+ 53.8 
+ LiveVLM 
+ 60.1 
+ 3.95 
+ 51.5 
+ 3.50 
+ 63.6 
+ 43.5 
+ 53.5 
+ LiveVLM + FrameBlend 
+ 62.8 
+ 4.01 
+ 51.7 
+ 3.53 
+ 65.8 
+ 43.6 
+ 54.7 
+ HERMES 
+ 60.7 
+ 3.97 
+ 54.4 
+ 3.56 
+ 65.7 
+ 48.9 
+ 57.3 
+ HERMES + FrameBlend 
+ 62.0 
+ 4.00 
+ 56.2 
+ 3.61 
+ 66.6 
+ 48.4 
+ 57.5 
+ Qwen2.5-VL-7B 
+ ReKV 
+ 66.6 
+ 4.02 
+ 60.1 
+ 3.63 
+ 62.5 
+ 45.3 
+ 53.9 
+ ReKV + FrameBlend 
+ 69.7 
+ 4.05 
+ 62.6 
+ 3.67 
+ 65.4 
+ 44.3 
+ 54.9 
+ HERMES 
+ 68.0 
+ 4.08 
+ 61.7 
+ 3.65 
+ 66.7 
+ 48.2 
+ 57.4 
+ HERMES + FrameBlend 
+ 71.2 
+ 4.06 
+ 64.6 
+ 3.70 
+ 67.8 
+ 48.2 
+ 58.0 
+ Streaming video understanding. 
+As shown in Table  1 , FrameBlend improves the understanding performance of the backbone frameworks.
+On LLaVA-OV-7B, it improves RVS-Ego accuracy by 1.3–3.1 pp, RVS-Movie accuracy by 0.2–1.8 pp, and OVO-Bench average accuracy by 0.2–1.5 pp across ReKV, HERMES, and LiveVLM.
+Similar improvements are observed on Qwen2.5-VL-7B, showing that FrameBlend consistently improves streaming performance across different backbone video-LLMs.
+These results demonstrate that FrameBlend is a simple yet effective method that can be applied to diverse SVU frameworks.
+ Table 2: FrameBlend on offline benchmarks. We compare the accuracy of various SVU frameworks with and without FrameBlend on offline VQA benchmarks.
+ Video-MME 
+ MLVU 
+ EgoSchema 
+ LLaVA-OV-7B 
+ Short 
+ Medium 
+ Long 
+ Total 
+ Holistic 
+ Single- 
+ Detail 
+ Multi- 
+ Detail 
+ Total 
+ Total 
+ ReKV 
+ 71.2 
+ 55.3 
+ 46.9 
+ 57.8 
+ 83.2 
+ 73.1 
+ 41.1 
+ 68.4 
+ 60.0 
+ ReKV + FrameBlend 
+ 70.7 
+ 57.0 
+ 50.7 
+ 59.4 
+ 83.6 
+ 73.4 
+ 41.3 
+ 68.7 
+ 60.3 
+ LiveVLM 
+ 68.4 
+ 56.2 
+ 48.4 
+ 57.7 
+ 82.7 
+ 70.8 
+ 41.1 
+ 67.0 
+ 60.6 
+ LiveVLM + FrameBlend 
+ 69.6 
+ 56.1 
+ 48.8 
+ 58.1 
+ 83.4 
+ 71.9 
+ 42.8 
+ 68.1 
+ 60.5 
+ HERMES 
+ 70.4 
+ 52.0 
+ 44.9 
+ 55.8 
+ 81.2 
+ 61.5 
+ 35.7 
+ 60.2 
+ 59.7 
+ HERMES + FrameBlend 
+ 71.1 
+ 57.4 
+ 47.6 
+ 58.7 
+ 83.4 
+ 65.4 
+ 41.3 
+ 64.1 
+ 61.3 
+ Offline video understanding. 
+Following prior work  ( Di et al., 2025 ; Zhang et al., 2026 ) , we further evaluate FrameBlend on offline benchmarks to demonstrate its general video understanding capability.
+As shown in Table  2 , FrameBlend improves accuracy by 0.3–3.9 pp on MLVU and 0.4–2.9 pp on Video-MME across ReKV, HERMES, and LiveVLM.
+On EgoSchema, it maintains comparable performance or improves it, with changes ranging from -0.1 to +1.6 pp.
+Overall, these results demonstrate that FrameBlend improves the general video understanding capability of SVU frameworks beyond streaming settings.
+ 5.3 Efficiency Analysis
+ Table 3: Efficiency metrics. We compare SVU methods with and without FrameBlend on RVS-Ego.
+ Prefill (idle time) 
+ Answering (query time) 
+ Total 
+ LLaVA-OV-7B 
+ TFLOPs/f 
+ ms/f 
+ Recomp. (s) 
+ TTFT (s) 
+ TFLOPs 
+ Latency (s) 
+ ReKV 
+ 4.38 
+ 81.1 
+ – 
+ 0.17 
+ 4647.8 
+ 90.6 
+ ReKV + FrameBlend 
+ 3.24 
+ 32.0 
+ 0.77 
+ 0.93 
+ 3567.4 
+ 37.4 
+ LiveVLM 
+ 3.78 
+ 32.6 
+ – 
+ 0.04 
+ 4007.2 
+ 37.6 
+ LiveVLM + FrameBlend 
+ 2.94 
+ 28.5 
+ 0.77 
+ 0.84 
+ 3247.6 
+ 32.3 
+ HERMES 
+ 4.07 
+ 46.4 
+ – 
+ 0.03 
+ 4333.0 
+ 51.7 
+ HERMES + FrameBlend 
+ 3.57 
+ 37.7 
+ 0.95 
+ 1.04 
+ 3914.3 
+ 42.0 
+ (a) Total latency
+ (b) Peak VRAM
+ Figure 4: Efficiency at varying numbers of input frames. We analyze ReKV with FrameBlend under varying video lengths, and observe that the efficiency gain increases as the video gets longer.
+(a) RVS-Ego
+(b) RVS-Movie
+(c) OVO-Bench
+ Figure 5: TTFT–accuracy trade-off. We compare ReKV with and without FrameBlend, and the offline LLaVA-OV-7B using 64 uniformly sampled frames.
+ Idle- and query-time efficiency. 
+We evaluate the efficiency of FrameBlend on RVS-Ego by separately measuring idle-time and query-time costs.
+For idle-time efficiency, we report cost on a per-frame basis, as SVU continuously processes incoming frames before a query arrives.
+We analytically estimate FLOPs and measure wall-clock latency, reported as TFLOPs per frame and milliseconds per frame, respectively.
+For query-time efficiency, we report recomputation latency and time to first token (TTFT) per question.
+Since RVS-Ego contains multiple questions in each video, we evaluate each question independently using all video frames preceding that question as input.
+As shown in Table  3 , FrameBlend reduces per-frame prefill FLOPs by 12–26% and prefill latency by 13–61% across ReKV, HERMES, and LiveVLM.
+Although recomputation increases TTFT to approximately one second, the savings in idle-time computation exceed the additional query-time cost: total FLOPs decrease by 10–23% and total latency by 14–59%.
+These savings mainly result from the shorter prefill window enabled by recomputation, which reduces the attention computation required for each incoming frame.
+ Efficiency across different video lengths. 
+Since the benefit of reducing per-frame prefill cost accumulates over a video stream, we further evaluate efficiency as the number of input frames increases.
+Figure  4(a) shows that FrameBlend increasingly reduces total latency over ReKV as the video grows longer, due to its shorter prefill window.
+Similarly, peak VRAM in Figure  4(b) exhibits greater memory savings as the video grows longer.
+This is because, in ReKV, the shorter prefill window keeps fewer KVs resident on the GPU while offloading older KVs to host memory.
+Additionally, peak VRAM is similar between ReKV and FrameBlend for short inputs, where memory usage is dominated by vision encoder activations.
+ Comparison with query-time prefill. 
+We also compare FrameBlend with an offline LLaVA-OV-7B baseline that uniformly samples and prefills 64 frames at query time.
+This places FrameBlend between two settings: ReKV minimizes TTFT by directly reusing cached KVs, whereas the offline baseline performs the full prefill after the query arrives.
+As shown in Figure  5 , FrameBlend incurs additional TTFT over ReKV due to recomputation, but remains substantially faster than the offline baseline while achieving higher accuracy than ReKV.
+Thus, FrameBlend provides a balanced TTFT–accuracy trade-off by introducing selective recomputation to SVU frameworks.
+ 5.4 Recomputation target selection analysis
+ Table 4: Comparison against CacheBlend. 
+Accuracy and TTFT when applied on ReKV.
+ OVO-Bench 
+ RVS-Movie 
+ RVS-Ego 
+ LLaVA-OV-7B 
+ Acc. 
+ Added TTFT (s) 
+ Acc. 
+ Added TTFT (s) 
+ Acc. 
+ Added TTFT (s) 
+ ReKV 
+ 52.3 
+ – 
+ 49.2 
+ – 
+ 59.3 
+ – 
+ ReKV + CacheBlend 
+ 52.7 
+ 0.90 
+ 48.0 
+ 1.51 
+ 61.4 
+ 2.26 
+ ReKV + FrameBlend 
+ 53.8 
+ 0.67 
+ 50.1 
+ 0.75 
+ 62.4 
+ 0.76 
+We compare QTS with CacheBlend  ( Yao et al., 2025 ) to evaluate the effect of recomputation target selection.
+For a controlled comparison, we follow the released CacheBlend implementation while using the same prefill window size and KV replacement policy as FrameBlend. This setup isolates the effect of target selection: the CacheBlend-based variant fully recomputes early layers to identify targets in a query-agnostic manner, whereas QTS directly selects query-relevant targets without such additional computation.
+As shown in Table  4 , FrameBlend consistently achieves higher accuracy with lower added TTFT across all streaming benchmarks. These results show that QTS provides a more favorable accuracy–latency trade-off for selective recomputation in SVU.
+ 5.5 Ablation Study
+ Table 5: Ablation studies. We ablate two key components of FrameBlend.
+ RVS-Ego 
+ RVS-Movie 
+ OVO-Bench 
+ LLaVA-OV-7B 
+ Acc. 
+ Score 
+ Acc. 
+ Score 
+ Real-time 
+ Backward 
+ Avg. 
+ ReKV 
+ 59.3 
+ 3.93 
+ 49.2 
+ 3.45 
+ 61.5 
+ 43.2 
+ 52.3 
+    + short window 
+ 60.7 
+ 3.94 
+ 46.8 
+ 3.30 
+ 63.3 
+ 43.0 
+ 53.1 
+    + recomputation 
+ 58.7 
+ 3.94 
+ 48.9 
+ 3.46 
+ 61.7 
+ 44.8 
+ 53.2 
+    + both 
+ 62.4 
+ 3.99 
+ 50.1 
+ 3.41 
+ 63.0 
+ 44.6 
+ 53.8 
+We ablate the two key components of FrameBlend on ReKV: a shorter attention window during idle-time prefill and selective recomputation at query time.
+As shown in Table  5 , applying either component alone has mixed effects across benchmarks.
+A shorter prefill window removes part of the inter-token context, which can reduce unnecessary context but may also discard useful context for answering the query.
+Query-time recomputation complements this by selectively restoring query-relevant context among the selected tokens.
+Consequently, combining the shorter prefill window with recomputation achieves the highest overall accuracy across all benchmarks.
+ 6 Conclusion
+In this work, we introduced FrameBlend, a simple yet effective plug-and-play method for SVU.
+FrameBlend addresses the context mismatch in prior SVU frameworks by selectively recomputing cached KVs at query time without requiring any training.
+To enable efficient recomputation under the tight query-time latency budget of SVU, we propose QTS, which selects query-relevant recomputation targets with minimal additional overhead.
+We further show that, with query-time recomputation, using shorter attention windows during idle-time prefill can improve performance while substantially reducing computation.
+Evaluated across three SVU frameworks and five streaming and offline video understanding benchmarks, FrameBlend consistently improves (or matches) performance while reducing the overall computational cost.
+ Limitations. 
+While FrameBlend improves accuracy and overall efficiency, several limitations remain and could be addressed in future work.
+Although we evaluate FrameBlend across multiple SVU frameworks, video-LLM backbones, and benchmarks, our experiments are limited to 7B-scale backbone models, and its effectiveness on both smaller and larger models remains to be explored.
+In addition, FrameBlend currently uses a fixed prefill window selected for each framework and benchmark; automatically adapting the window to different video streams could further improve its practicality.
+Finally, although FrameBlend reduces overall computation, selective recomputation introduces additional query-time latency. Dynamically adjusting the recomputation budget according to latency constraints could further improve its applicability to settings with stricter query-time latency requirements.
+AI use statement
+In this work, we used generative AI tools to help develop theoretical models or conceptual frameworks, propose or refine hypotheses, design or provide feedback on research methodology or experiments, implement methods, assist with translation, and interpret experimental results.
+We have not used generative AI tools to generate synthetic datasets, formulate mathematical claims, provide critical ingredients for proving mathematical claims, assist in writing proofs, clean or reformat datasets, or support qualitative and thematic data analysis.
+Additionally, we used generative AI tools to create or modify scientific figures or images, create or edit software code, create research artifacts, draft parts of the paper, summarize or analyze existing literature, discover research topics or identify gaps, brainstorm research ideas, source or search for information, improve the readability, and identify relevant literature.
+We have reviewed all AI-assisted work.
+We carefully reviewed AI-assisted hypotheses, interpretations of experimental results, scientific figures, code, and other research artifacts for correctness.
+We take responsibility for the final content of this work, including text, claims, or artifacts produced with the aid of generative AI.
+Reproducibility statement
+We provide framework-specific implementation details in Appendix  A , prefill-window configurations in Appendix  B . Section  5 describes the benchmarks, backbone models, hyperparameters, and hardware used in our experiments. Together, these details specify the experimental settings and evaluation procedures used to reproduce our results.
+

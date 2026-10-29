@@ -1,0 +1,236 @@
+Learning Consistent Taxonomic Classification through Hierarchical Reasoning (https://arxiv.org/html/2601.14610v1)
+citeturn31061view0 [wordlim: 200] Crawled: 2 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.14610v1","lineno":null}); Total lines: 302
+--------------------------------------------------------------------------------
+HyperNet-Adaptation for Diffusion-Based Test Case Generation (https://arxiv.org/html/2601.15041v1)
+citeturn31061view1 [wordlim: 200] Crawled: last week; Content type: text/html; Source: open({"ref_id":"turn31051view2","lineno":232}); Total lines: 682
+L141: The architecture of HyNeA consists of four components (see cite86†Fig. 3 ):
+L142: 
+L143:   * •
+L144: 
+L145: SUT: The system under test whose behavior is evaluated.
+L146: 
+L147:   * •
+L148: 
+L149: Manipulator: The LDM and HyperNet used to produce and manipulate test cases.
+L150: 
+L151:   * •
+L152: 
+L153: Optimizer: The optimizer used to adapt weights in the HyperNet used in HyNeA during generation of test cases.
+L154: 
+L155:   * •
+L156: 
+L157: Objectives: The loss function that define the criteria for successful test case generation.
+L158: Figure 3. HyNeA’s component interaction throughout Optimization. Each component and its respective In- and Outputs are described in the following sections.
+L159: 
+L160: HyNeA replaces the supervised reconstruction objective used in ControlNet-style training with a behavior-driven feedback loop. Rather than enforcing a fixed pairing between training images and control signals, the model is evaluated based on the properties of its final generated outputs.
+L161: Given an initial control signal $c_{0}\in\mathcal{C}$, the Manipulator produces a final image $\hat{X}\sim p_{\theta}(\cdot\mid c_{0})$. A corresponding control value $\hat{c}\in\mathcal{C}$ is extracted from $\hat{X}$ using the SUT’s prediction. We define a collection of loss terms $\{\omega_{i}\}_{i=1}^{K}$, each evaluating properties of the generated image that are targeted in the optimization. The overall training objective is defined as:
+L162: (3)  |  | $$\mathcal{L}=\mathbb{E}_{\hat{X}\sim p_{\theta}(\cdot\mid c_{0})}\left[\sum_{i=1}^{K}\alpha_{i}\,\omega_{i}(\cdot)\right].$$  |
+L163: A key distinction from standard ControlNet-based diffusion training lies in how the loss is applied throughout the diffusion process. Conventional methods compute losses independently at each denoising step and backpropagate gradients locally, keeping memory usage low. In contrast, HyNeA evaluates the alignment objective with respect to the final generated image, aggregating the influence of the control signal across all denoising steps.
+L164: This yields more informative gradients for guiding generation but increases memory demand, making techniques such as gradient checkpointing necessary to keep training feasible.
+L165: When multiple loss terms are used, the coefficients $\alpha_{i}$ allow for fine-grained control over their relative contributions. In this work, we set $\alpha_{i}=1$ for all $i$, such that no explicit reweighting is applied and each loss term contributes equally to the overall objective.
+L166: ### 3.1. System under Test
+L167: 
+L168: We consider three vision tasks: multiclass classification, binary classification, and object detection. In all cases, the SUT $\phi_{P}(\cdot)$ maps an input image $X$ to a prediction $y$,
+L169: 
+L170:  | $$X\xrightarrow{\phi_{P}}y.$$  |
+L171: 
+L172: Multiclass Classification. For standard classification, the output is $y\in\mathbb{R}^{C}$, where $C$ is the number of classes. The predicted class is obtained by $\hat{c}=\arg\max y$.
+L173: Binary Classification. For binary attribute prediction, the output is either a single logit $y\in\mathbb{R}$ (one attribute) or a vector $y\in\mathbb{R}^{C}$ (multiple independent attributes). Unlike multiclass classification, attributes are evaluated independently: an attribute $c$ is predicted as present if $y_{c}>0$.
+L174: Object Detection. We focus on one-stage dense object detector, which predict a large number of candidate objects per image. Accordingly, the model outputs $y\in\mathbb{R}^{D\times C}$, where $D$ is the number of detections and $C$ the number of classes. Each detection $d$ has an associated class distribution; its predicted class is $\hat{c}_{d}=\arg\max y_{d}$. Detections can be ranked by their maximum confidence values, producing an ordered list from the most to the least confident predictions.
+L175: We follow this ranking in our implementation and restrict evaluation to the top-5 detections. This restriction is necessary because object detectors can produce thousands of detections per image (cite87†Jocher et al., 2023 ), while our optimization relies on a single scalar loss value. Aggregating a large number of detections into one loss causes the contribution of individual detections to be heavily diluted, leading to vanishing controllability during optimization.
+L176: ### 3.2. Manipulator
+L177: 
+L178: The manipulators in HyNeA are LDMs with varying architectures. While the specific architecture is not critical, it is important that we can copy the weights of relevant blocks to initialize the HyperNet. The original networks are frozen and do not change, but the copied HyperNet is trainable.
+L179: 
+L180: To manipulate the latent states of the LDM, we add zero layers, which are inserted between a copied block and a standard block to modulate the copied networks outputs (see cite10†Section 2.3 ).
+L181: Unlike standard ControlNets, which require control signals to be spatially aligned with the input image, HyNeA directly uses the SUT’s predictions as control inputs. Since these predictions may be non-spatial, we introduce a trainable condition embedding function $\phi_{c}(\cdot)$ that projects arbitrary SUT outputs into a spatial control signal compatible with the image latent space.
+L182: The projection mechanism and its dimensionality-dependent cases are formalized in cite88†Algorithm 1 and further described in cite14†Section 3.2.1 .
+L183: #### 3.2.1. Control Projector
+L184: 
+L185: The SUT’s output $\hat{y}$ may vary significantly in structure depending on the task, such as sequences of vectors (e.g., object detection scores), or flat vectors (e.g., classification outputs). To use these signals as conditioning inputs for HyNeA, they must be transformed into a tensor with the same spatial dimensionality as the image latent $X$.
+L186: The control projector $\phi_{c}$ therefore performs a dimensionality-aware projection. If $\hat{y}$ already matches the spatial dimensionality of $X$, a convolution is used to adapt channel dimensions while preserving spatial structure. If $\hat{y}$ is missing exactly one spatial dimension, convolution is applied along the existing dimensions, followed by a linear expansion of the missing dimension.
+L187: For fully non-spatial outputs, a linear projection is used to expand the signal into a spatial representation. In all cases, the resulting tensor is reshaped to match the spatial dimensions of $X$, yielding a control signal that can be injected into the diffusion process.
+L188: Algorithm 1 Control Projector $\phi_{c}$
+L189: 
+L190: Input: $\hat{y}$ ; # SUT’s prediction
+L191: 
+L192: Output: $c$ ; # Control signal projected to match spatial dimensions of $X$
+L193: 
+L194: 1 if $\hat{y}.\operatorname{ndim}=X.\operatorname{ndim}$ then
+L195: 
+L196:       2 $c\leftarrow\operatorname{Conv2D}(\hat{y})$ ; # Convolute to match spatial size
+L197: 
+L198: 3 else if $X.\operatorname{ndim}-\hat{y}.\operatorname{ndim}=1$ then
+L199: 
+L200:       4 $c\leftarrow\operatorname{Conv1D}(\hat{y})$ ; # Convolute along existing dimensions
+L201:       5 $c\leftarrow\operatorname{Linear}(c)$ ; # Expand missing dimension with linear layer
+L202: 
+L203: 6 else
+L204: 
+L205:       7 $c\leftarrow\operatorname{Linear}(\hat{y})$ ; # No matching dimensions; expand fully with linear layer
+L206: 
+L207: 8 $c\leftarrow\operatorname{flatten}(c)$ ; # Flatten to a single vector
+L208: 
+L209: 9 $c\leftarrow\operatorname{reshape}(c,X.\operatorname{shape})$ ; # Reshape to match $X$
+L210: 
+L211: 10 return $c$ ; # Projected control signal aligned with $X$
+L212: ### 3.3. Optimizer
+L213: 
+L214: As HyNeA leverages the weights of a HyperNet to generate test cases, these weights are optimized as in standard neural network training, but independently for each instance.
+L215: 
+L216: To optimize the weights $\theta$ in HyNeA, we use AdamW (cite89†Loshchilov et al., 2017 ) as the primary optimizer. AdamW has shown strong convergence properties across a variety of tasks, including classification and generative model training (cite82†Leng et al., 2025 ; cite71†Zhang et al., 2023 ).
+L217: We pair AdamW with the OneCycle learning rate schedule (cite90†Smith and Topin, 2019 ), which accelerates convergence by varying the learning rate from a minimal value $lr_{min}$ to a maximal value $lr_{max}$ following a curve resembling a positively skewed Gaussian. At the start of training, the learning rate increases rapidly to allow fast exploration, then gradually decreases to stabilize convergence.
+L218: After each backpropagation step, the scheduler updates the learning rate slightly, enabling smooth adaptation throughout training.
+L219: The values of $lr_{min}$ and $lr_{max}$ depend on the capabilities of the generative network (its ability to separate features in images) and the robustness of the SUT (how easily its predictions can be changed). Therefore, there is no universal choice; the learning rates must be selected based on the specific use case. Generally one should consider a tradeoff between generation quality and runtime to select an appropriate schedule.
+L220: Similarly, the number of steps in the schedule varies by task, but for our experiments we use 2,500 steps, aiming to produce small, incremental changes that effectively influence SUT behavior without destabilizing the generator.
+L221: ### 3.4. Objectives
+L222: 
+L223: In HyNeA, objectives are functions that determine the overall loss during a forward pass through the network. These objectives guide the generator toward producing test cases that meaningfully alter the SUT’s behavior.
+L224: 
+L225: Visual Fidelity. For all tasks, we include an image-based loss that quantifies how much the generated image differs from the original. We use the Frobenius distance between two images $A$ and $B$, as defined in cite91†(4) .
+L226: (4)  |  | $$\omega_{dF}(A,B):=\sqrt{\operatorname{tr}((A-B)^{\intercal}(A-B))}.$$  |
+L227: 
+L228: Behavior Steering. In addition to image similarity, HyNeA considers the outputs of the SUT as control signals. To generate targeted failures, we enforce a loss that moves the SUT’s outputs toward a desired target, representing a specific failure or behavior we want to explore.
+L229: For classification tasks, we use the cross-entropy loss to measure the difference between the SUT’s output $\hat{y}$ and the target class $t$, as defined in cite92†(5) .
+L230: 
+L231: (5)  |  | $$\omega_{CE}(\hat{y},t):=-\hat{y}_{t}+\log\sum_{c=1}^{C}\exp(\hat{y}_{c}).$$  |
+L232: 
+L233: where $C$ is the total number of classes. This loss encourages the SUT to predict the target class while penalizing deviations.
+L234: For binary classification, we adapt the objective to binary cross-entropy (BCE) loss with logits. Here, $\hat{y}$ can be a single value if predicting a single binary class, or a vector of length $C$ for multiple binary classes. The target vector is defined as $t=C\times\{0,1\}$, indicating which classes should be positive. The BCE loss for a specific class $c$ is given in cite93†(6) .
+L235: (6)  |  | $$\omega_{BCE}(\hat{y}_{c},t_{c}):=-\left[t_{c}\log\sigma(\hat{y}_{c})+(1-t_{c})\log(1-\sigma(\hat{y}_{c}))\right].$$  |
+L236: 
+L237: where $\sigma(\cdot)$ is the sigmoid function. This formulation directly measures how far the predicted probability is from the desired binary target.
+L238: In object detection, each image can produce multiple predictions, resulting in a $D\times C$ tensor $\hat{y}$, where $D$ is the number of detected objects. We compute the mean-reduced cross-entropy loss over all detections, as shown in cite94†(7) .
+L239: 
+L240: (7)  |  | $$\omega_{CEm}(\hat{y},t):=\frac{1}{D}\sum_{d=1}^{D}\omega_{CE}(\hat{y}_{d},t).$$  |
+L241: This ensures that the loss considers every detection in the image, averaging their contributions to guide the generator toward producing failures across multiple objects.
+L242: 
+L243: In HyNeA, all loss terms are backpropagated through the network. For each task the Visual Fidelity objective is combined with an appropriate Behavior Steering objective depending on the type of SUT cite95†(3) :
+L244: 
+L245:   * •
+L246: 
+L247: Classification: $\mathcal{L}_{C}=\omega_{dF}+\omega_{CE}$
+L248: 
+L249:   * •
+L250: Binary Classification: $\mathcal{L}_{B}=\omega_{dF}+\omega_{BCE}$
+L251: 
+L252:   * •
+L253: 
+L254: Object Detection: $\mathcal{L}_{O}=\omega_{dF}+\omega_{CEm}$
+L255: 
+L256: This combined objective ensures that the generated images both meaningfully alter the SUT’s output and remain visually coherent relative to the original image.
+L257: ## 4. Empirical Study
+L258: ### 4.1. Research Questions
+L259: 
+L260: RQ_{1} (effectiveness): How effective is HyNeA in generating diverse, yet semantically faithful failure-inducing test cases?
+L261: We investigate the effectiveness of HyNeA at exposing failures compared to existing baseline approaches. Beyond raw failure discovery, effective software testing requires test cases that induce controlled, meaningful changes while maintaining diversity to avoid redundant coverage. Accordingly, we assess additional quality measures, including changes in image space and the diversity of the generated test cases from each method in the embedding space.
+L262: RQ_{2} (efficiency): How efficient is HyNeA in generating failure-inducing test cases?
+L263: 
+L264: We assess whether HyNeA’s efficiency in terms of budget use and runtime is competitive with respect to baseline methods.
+L265: 
+L266: RQ_{3} (validity): Are generated test cases by HyNeA semantically valid?
+L267: 
+L268: Generating test cases is only useful when they remain semantically valid, therefore we compare HyNeA with our baseline propositions in terms of realism and semantic preservation.
+L269: RQ_{4} (sensitivity): How do HyNeA’s hyperparameter selection affect performance?
+L270: 
+L271: As HyNeA’s methodology is based on adapting network weights, the most important parameter is the learning rate. In this research question, we investigate how the choice of the learning rate affects the performance of HyNeA in terms of effectiveness, efficiency and validity.
+L272: ### 4.2. Metrics & Measures
+L273: 
+L274: #### 4.2.1. Metrics used in RQ_{1}
+L275: ##### MS-SSIM ($\uparrow$)
+L276: To quantify structural changes between the original and generated images, we use the multi-scale Structural Similarity Index (MS-SSIM) (cite96†Wang et al., 2003 ), an extension of SSIM that evaluates image similarity across multiple spatial scales. MS-SSIM addresses a known limitation of SSIM—its dependence on image scale and viewing distance—by repeatedly downsampling the image pair and aggregating luminance, contrast, and structural comparisons at each scale.
+L277: This yields a metric that aligned more closely with human perception and is less sensitive to minor color or brightness variations. Higher MS-SSIM values indicate that the generated image remains structurally close to the original, meaning fewer structural modifications were required to produce a valid test case.
+L278: ##### Embedding Diversity ($\uparrow$)
+L279: We also evaluate the diversity of generated images, as test case generation benefits from covering a wide range of possibilities. Directly measuring diversity in image space is challenging, so we use embeddings from a pretrained ResNet ($\phi_{E}(\cdot))$ on ImageNet. These embedding are produced by passing an image $X$ through the embedding network $E=\phi_{E}(X)$. Embeddings for similar content are close, while embeddings for more diverse content diverge.
+L280: We quantify diversity as the mean variance across embeddings $E$ of multiple outputs, as shown in cite97†(8) L281: (8)  |  | $$\operatorname{diversity}(E):=\frac{1}{|E|}\sum_{i=1}^{|E|}\operatorname{Var}(E_{i}).$$  |
+L282: 
+L283: Higher values indicate that the method produces more diverse test cases.
+L284: ##### Trace Difference ($\downarrow$)
+L285: While diversity should be high across samples, test cases should remain semantically close to the original inputs. To assess semantic changes, the trace difference metric compares embeddings of the original image $E_{0}$ and the generated test case $E_{t}$ using differences in the covariance of their embeddings, as defined in cite98†(9) .
+L286: Intuitively, this metric captures changes in per-dimension variance while discarding cross-dimensional correlations, which is shown when reformulating it to a $\ell_{1}$-distance based metric as shown in cite56†Section A.1 .
+L287: (9)  |  | $$\operatorname{trace\Delta}(E_{0},E_{t}):=\operatorname{tr}(|\operatorname{cov}(E_{0}^{\intercal})-\operatorname{cov}(E_{t}^{\intercal})|)$$  |
+L288: 
+L289: Here, $\operatorname{cov}(\cdot)$ denotes the covariance matrix. Lower values indicate that the semantic content of the network’s input remains similar, even though a test case has been generated.
+L290: ##### Misclassification Rate ($\uparrow$)
+L291: 
+L292: To assess task performance, we measure how many generated test cases change the predictions of the SUT. The same overall principle applies to classification, binary classification, and object detection, but the exact computation differs by task.
+L293: 
+L294: (10)  |  | $$\operatorname{mr}_{C}(\mathcal{Y},\hat{\mathcal{Y}}):=\frac{1}{B}\sum_{i=1}^{B}\left[\argmax\mathcal{Y}_{i}\neq\argmax\hat{\mathcal{Y}}_{i}\right].$$  |
+L295: For binary classification, we only evaluate whether the targeted class logit flips sign, indicating that the model’s decision boundary has been crossed. Let $c$ be the targeted class. The misclassification rate is given by cite99†(11) .
+L296: 
+L297: (11)  |  | $$\operatorname{mr}_{B}(\mathcal{Y}_{c},\hat{\mathcal{Y}}_{c}):=\frac{1}{B}\sum_{i=1}^{B}\left[(\mathcal{Y}_{i,c}>0)\neq(\hat{\mathcal{Y}}_{i,c}>0)\right].$$  |
+L298: For multi-class classification, the misclassification rate is defined in cite100†(10) . Let $\mathcal{Y}$ denote the predictions on the initial images and $\hat{\mathcal{Y}}$ the predictions on the corresponding test cases. Both prediction sets are tensors of shape $B\times C$, with $B$ denoting the number of SUT outputs and $C$ the number of classes. The Iverson bracket $[\cdot]$ evaluates to $1$ if its statement is true and $0$ otherwise.
+L299: For object detection, each SUT output contains multiple detections, so predictions are of shape $B\times D\times C$, where $D$ is the number of detections. We compute the misclassification rate by averaging over detections as well, as shown in cite101†(12) .
+L300: 
+L301: (12)  |  | $$\operatorname{mr}_{O}(\mathcal{Y},\hat{\mathcal{Y}}):=\frac{1}{BD}\sum_{i=1}^{B}\sum_{j=1}^{D}\left[\argmax\mathcal{Y}_{i,j}\neq\argmax\hat{\mathcal{Y}}_{i,j}\right].$$  |
+L302: A higher misclassification rate indicates that more test cases induced meaningful behavioral changes in the SUT.
+L303: ##### Escape Ratio ($\downarrow$)
+L304: Following Mimicry (cite62†Weißl et al., 2025 ), we measure whether generated test cases respect their intended target, providing a proxy for controllability of the generation process. For classification, the escape ratio remains identical to the original formulation and is shown in cite102†(13) . Let cite103†(14) return the class ordering for the targeted class $c$. The two highest-scoring classes in the original prediction are $\mathcal{Y}_{c,\pi 1}$ and $\mathcal{Y}_{c,\pi 2}$.
+L305: (13)  |  | $\displaystyle\operatorname{esc}_{C}(\mathcal{Y},\hat{\mathcal{Y}})$  | $\displaystyle:=\frac{1}{B}\sum_{i=1}^{B}\left[\argmax\hat{\mathcal{Y}}_{i}\notin\{\mathcal{Y}_{c,\pi 1},\,\mathcal{Y}_{c,\pi 2}\}\right],$  |
+L306: (14)  |  | $\displaystyle\pi$  | $\displaystyle=\argsort\mathcal{Y}_{c}.$  |
+L307: For binary classification, we aim to determine whether modifying the target logit unintentionally alters other binary attributes. We therefore adapt the escape ratio to count how many non-target classes change sign, using the binary misclassification rate defined earlier. This is shown in cite104†(15) .
+L308: 
+L309: (15)  |  | $$\operatorname{esc}_{B}(\mathcal{Y},\hat{\mathcal{Y}}):=\frac{1}{C-1}\sum_{j=1}^{C}\operatorname{mr}_{B}(\mathcal{Y}_{j},\hat{\mathcal{Y}}_{j})\,[j\neq c].$$  |
+L310: For escape ratio, lower is better: a small value indicates precise control, meaning the targeted failure mode is influenced without unintentionally affecting unrelated features. A high escape ratio signals that test case generation affects additional outputs, suggesting insufficient fine-grained control.
+L311: ##### Confidence Reduction ($\uparrow$).
+L312: 
+L313: For object detection, each input produces multiple detections. To evaluate whether the generated test cases consistently reduce confidence in the original class across all detections, we measure the average decrease in the class-$c$ logit. The confidence reduction is defined in cite105†(16) . Predictions have shape $B\times D\times C$, with $B$ the number of inputs and $D$ the number of detections per input.
+L314: (16)  |  | $$\operatorname{cr}(\mathcal{Y}_{c},\hat{\mathcal{Y}}_{c}):=\frac{1}{BD}\sum_{i=1}^{B}\sum_{j=1}^{D}\left(\mathcal{Y}_{i,j,c}-\hat{\mathcal{Y}}_{i,j,c}\right).$$  |
+L315: 
+L316: Higher values indicate stronger confidence reduction in the original class across all detections, showing that the test cases uniformly suppress the model’s confidence in the targeted class.
+L317: #### 4.2.2. Measures used in RQ_{2}
+L318: 
+L319: ##### Average runtime per generated test case ($\downarrow$).
+L320: 
+L321: To assess HyNeA’s efficiency relative to the baseline methods Mimicry and GIFTbench, we compare the average runtime in seconds required to generate a single test case.
+L322: ##### Computational budget ($\downarrow$).
+L323: 
+L324: We define the computational budget as the number of SUT evaluations, which makes results comparable across methods. In addition to the implemented baselines, we also extrapolate the expected runtime of a hybrid approach that combines search-based strategies like Mimicry with diffusion models.
+L325: 
+L326: #### 4.2.3. Measures used in RQ_{3}
+L327: ##### Label preservation ($\uparrow$).
+L328: 
+L329: Label preservation is defined as the fraction of generated test cases that human evaluators judge to retain the original class label. A higher score indicates that a larger proportion of the generated test cases remain semantically valid to human annotators, suggesting that any observed change in the SUT’s behavior corresponds to a genuine failure rather than a semantic shift in the input.
+L330: ##### Image realism ($\uparrow$).
+L331: 
+L332: Image realism captures the overall perceived realism of generated images as assessed by human evaluators on a normalized scale from 0 (very unrealistic) to 1 (perfect realism). This metric quantifies the visual quality of the generated images: while object presence may still be identifiable in stylized or cartoon-like images, such cases are arguably not valid test inputs for the SUT.
+L333: ##### Ambiguity score ($\downarrow$).
+L334: 
+L335: The ambiguity score is defined as the fraction of generated images for which human evaluators could not decisively determine whether the original class label was preserved (i.e., marked as Unsure). Lower ambiguity is preferred, as a high ambiguity score may indicate that generated test cases fall outside the valid input domain and are nonsensical even to human observers.
+L336: ##### Inter-rater agreement ($\uparrow$).
+L337: 
+L338: We report Fleiss’ $\kappa$ to quantify inter-rater agreement among human evaluators in the annotation study. Higher values indicate stronger agreement between annotators, whereas low agreement may suggest poor response quality or the presence of test inputs that are difficult or impossible for humans to interpret reliably.
+L339: #### 4.2.4. Metrics & Measures used in RQ_{4}
+L340: 
+L341: RQ_{4} uses a combined set of metrics from RQ_{1}-RQ_{3} (MS-SSIM, image realism, and runtime). These metrics are evaluated jointly to identify the best trade-off across different learning-rate configurations. In addition, we include the FID score to enable trade-off assessment without relying on human annotators.
+L342: ### 4.3. Baseline Methods
+L343: 
+L344: We compare our approach against two recent generative–based test case generation methods, Mimicry (cite62†Weißl et al., 2025 ) and GIFTbench (cite63†Maryam et al., 2025 ).
+L345: Mimicry is a StyleGAN-based method that generates targeted test cases by mixing latent vectors within the StyleGAN latent space, enabling controlled generation toward decision boundaries of the SUT. It first samples an initial latent vector and renders the corresponding image. Based on the SUT’s second most likely class for this image, Mimicry then samples a second latent vector associated with the target class.
+L346: These two vectors are interpolated using a population of interpolation vectors that are optimized toward via a multi-objective optimizer. In our work, to guarantee a fair comparison, we exchange Mimicry’s objective functions with the loss terms defined in cite16†Section 3.4 .
+L347: GIFTbench, in contrast, is a diffusion-based method for generating failure cases by manipulating the latent representation of a diffusion model within a population-based optimization framework. It employs single-point crossover to recombine latent vectors and mutation operators that inject noise at varying scales. The method relies on fine-tuned instances of Stable Diffusion 1.5, which are guided by natural-language prompts to generate the corresponding outputs.
+L348: While the original work did not consider object detection as a testing domain (cite63†Maryam et al., 2025 ), the approach can be readily extended by adapting the fitness calculation, while all other components remain unchanged.
+L349: ### 4.4. Objects of Study
+L350: 
+L351: We evaluate our approach across three popular DL vision tasks, namely classification, binary classification, and object detection, each paired with a task-specific diffusion generator and a corresponding SUT.
+L352: #### 4.4.1. Multi-Class Classification
+L353: We adopte the ImageNet-1k dataset, a standard benchmark for large-scale image classification which contains 14 million images across 1,000 classes. Its diversity and visual complexity motivate the use of diffusion models that can capture fine-grained visual structure. We focus on ten classes: goldfish, great white shark, tiger shark, hammerhead shark, electric ray, stingray, cock, hen, teddy bear, pizza.
+L354: These overlap with the classes used in Mimicry, whereas GIFTbench supports two of them (teddy bear, pizza).
+L355: SUT. We use a pretrained WideResNet-50 model from the torchvision library (cite106†maintainers and contributors, 2016 ) to ensure reproducibility and a fair comparison, as the same model is used in the evaluation of Mimicry.
+L356: Diffusion Model. We employ a transformer-based LDM of the REPA-E family, which has demonstrated state-of-the-art generative performance on ImageNet benchmarks (cite82†Leng et al., 2025 ). REPA-E extends the REPA training paradigm, by including the encoder and decoder networks in training, which makes it well suited for high-fidelity, class-conditional generation.
+L357: #### 4.4.2. Multi-label Binary Classification
+L358: 
+L359: CelebA provides facial images annotated with 40 binary attributes, making it a standard benchmark for multi-attribute prediction. We select ten attributes for detailed evaluation: Arched Eyebrows, Big Lips, Big Nose, Chubby, Eyeglasses, Goatee, Heavy Makeup, Male, Smiling, Wearing Hat. This selection is intended to cover a range of attributes at varying levels of granularity and overlaps with existing work by GIFTbench (cite63†Maryam et al., 2025 ).
+L360: SUT. We use a ResNet50-based attribute classifier pretrained on ImageNet via torchvision (cite106†maintainers and contributors, 2016 ). The model is fine-tuned on the CelebA training split and outputs 40 logits, one per attribute, effectively functioning as an ensemble of binary classifiers (cite107†Chen et al., 2026 ).
+L361: Diffusion Model. We use a pretrained UNet-based LDM (cite108†CompVis Team, 2022 ), following the Stable Diffusion architecture (cite80†Rombach et al., 2022 ). We select this network because it is pretrained and publicly available, which ensures good reproducibility and avoids introducing training bias that could arise from tuning a custom generative model.
+L362: Although this architecture is less recent and has slightly lower capacity than transformer-based models such as REPA-E models (cite82†Leng et al., 2025 ), it nevertheless demonstrates that our method applies consistently across different families of generative models.
+L363: #### 4.4.3. Object Detection
+L364: We consider object detection in a driving context, focusing on urban road scenes with multiple interacting objects. The benchmark setting is based on real-world driving imagery and semantic segmentation annotations derived from the KITTI dataset (cite109†Geiger et al., 2013 ) and a custom dataset located in Munich, Germany (cite110†cccccsys, 2024 ). This task reflects the safety-critical nature of perception systems used in autonomous driving and enables evaluation on complex, structured scenes.
+L365: SUT. We use YOLOv8 (cite87†Jocher et al., 2023 ), chosen due to its strong accuracy–speed tradeoff and its widespread use in autonomous driving research (cite111†Tian and Li, 2024 ; cite112†Wibowo et al., 2023 ; cite113†Yu et al., 2022 ; cite114†Jiang and Zhan, 2025 ; cite115†Im Choi and Tian, 2022 ; cite116†Lambertenghi and Stocco, 2024 ).
+L366: Diffusion Model. For test generation, we rely on a Stable Diffusion 1.5 model fine-tuned on real-world road scenes (cite110†cccccsys, 2024 ), implemented via the diffusers library (cite117†von Platen et al., ). Generation is guided using a segmentation-based ControlNet (cite71†Zhang et al., 2023 ) trained on driving-scene segmentations, with KITTI-derived segmentation maps serving as control signals.
+L367: This setup reflects a standard diffusion pipeline used in practice and allows structured control over generated driving scenarios.
+L368: ### 4.5. Experimental Setup
+L369: All experiments use pre-trained diffusion models across  ImageNet (cite82†Leng et al., 2025 ),  CelebA (cite80†Rombach et al., 2022 ), and  Driving (cite110†cccccsys, 2024 ). We begin by generating an initial origin image: ImageNet samples are conditioned on a class index. CelebA samples use no conditioning, since facial attributes can be evaluated on the generated image itself and then inverted. Driving samples use a positive prompt (cite57†Appendix B ) and a negative prompt (cite57†Appendix B ).
+L370: For ImageNet and Driving, we verify that the initial generation is valid by checking whether the conditioned class is still detected by the SUT; for Driving, the class must appear as the most likely class in at least one of the top-5 detections. For the Mimicry experiments, we use a population size of 100 individuals and optimize for 25 generations, resulting in a theoretical maximum of 2,700 evaluations when accounting for separate evaluations of the initial and final populations.
+L371: We select this budget based on Mimicry’s convergence study, which indicates that the most significant decrease in loss occurs within the first 20 generations (corresponding to a budget of 2,100 evaluations), suggesting that extending optimization to 25 generations should yield stable and high-quality results. Competing methods are constrained to the same computational budget.
+

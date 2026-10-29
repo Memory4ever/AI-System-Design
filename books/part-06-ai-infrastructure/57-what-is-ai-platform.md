@@ -79,6 +79,10 @@ Control Plane 不应进入每个 token 的毫秒级调度循环；Data Plane 也
 
 平台边界还可横跨两套执行域，而不必先把成熟HPC训练栈全部搬进Kubernetes：持久VM保存控制与服务配置，diskless GPU节点按需注册进集群、重启后重新enroll；训练继续交Slurm/既有fabric调优，Kubernetes提供用户入口和推理路径，由受限API/脚本交接作业。这种分工复用旧优化，却使端点可用性、控制状态和计算节点生命周期分开；控制VM持续运行，不表示维护期间GPU请求仍可用。[HPC foundation-model平台的有限运行记录](https://arxiv.org/html/2604.12599v1)仍有共享存储、弹性、身份迁移与managed fine-tuning未完成项，namespace或Git配置不自动构成成熟安全/HA。节点重新配置、RAMdisk与持久存储、权重搬运及网络接口/NCCL选择都付费，容器能加入集群也不等fabric性能已追平原生训练；多节点推理还出现timeout与精度/架构支持失败。恢复、SLO或完整费用未满足时，保留Slurm训练与显式维护窗口，隔离未成熟服务，不用统一UI或存活controlplane签发整个平台生产能力。<!-- source-family:SF-2026-ARXIV-2604-12599 -->
 
+执行环境的复用还要分清共享基底与实例私有写入，而不把一次恢复成功当作租户状态已隔离：[一个重要VM扩展](https://arxiv.org/html/2509.09525v1#S6)将公共文件放入共享只读virtio-pmem基底，绕过guest页缓存并在host保留一份缓存；每VM另有以O_DIRECT打开的私有可写设备，再由guest联合文件系统组合，避免把所有缓存层都复制给每个实例。基底版本、模板/VM镜像、写层归属和清理完成须共同绑定，O_DIRECT本身不授写入持久性或故障原子性。若进一步让多个Agent共享browser进程，各自tabs也不是跨租户安全边界，只能在另验权限和会话状态的同可信域提出资源方案。有限评价使用记录的LLM输出/时延重放，超配争用仍可延长执行；峰值页缓存、资源时间积与实际账单不是同一收益。模板制备、内核与恢复路径维护、CoW/搬运、写层和browser驻留/reset、并发与安全回归均付费；共享条件、完成状态或净效用未通过时，保独立VM/browser、普通文件缓存和冷启动，不由少一份缓存或较低P99签发隔离与生产可靠性。
+
+<!-- source-family:SF-2025-ARXIV-2509-09525 -->
+
 ### 控制权迁移：共享库何时不再是平台边界
 
 在单一产品、少量调用方且协议稳定时，把路由、鉴权和重试封装在共享 client library 里是合理的：请求少一次网络跳转，团队也可以直接随业务扩展接口。问题不在“client 太旧”，而在规模变化后控制权仍被复制到每个进程。调用方和服务数量增加，区域路由、数据驻留、访问控制、流量整形与协议迁移便需要所有 client 协同升级；一次无关回滚甚至可能重新带回已修复的策略，使发布 fan-out 本身成为故障源。
@@ -222,3 +226,5 @@ OpenAI Habitat 的 2026-09-11 工程报告支持共享 Python library 向集中�
 - **SF-2026-ARXIV-2606-25532**：Primary `arXiv:2606.25532v1`；Method `https://arxiv.org/html/2606.25532v1 — §Physically constrained multi-agent discovery engine; Evolutionary Knowledge Graph and algorithmic chain of thought`；Evaluation `https://arxiv.org/html/2606.25532v1 — §Hardware-compliance evaluation and discovered-system validation`；未证明边界 `https://arxiv.org/html/2606.25532v1 — §Exact-v1 research-prototype and evaluated hardware-design boundary`；Artifact `Not Disclosed — exact-v1 does not disclose a repository or release artifact used by this review`。
 
 - `SF-2026-ARXIV-2604-12599` — Daily2026-04-16补Apr15；[exact-v1](https://arxiv.org/html/2604.12599v1) §4.1–4.4/5.1–5.3/6.1–6.5，2+2+2=6。只2026实际运行接口/恢复成熟度，不将2025genericarchitecture重归新；disklessGPU/持久VM、Slurm/K8s分责、NCCL/存储/多节点失败与全费近文。R108Source/R86date与resume_apr16_review实际A48逐字PRE有效，root授本窄位置，resume_apr16_review实际真实正文/完整邻接/本人注POST通过；作者仅同步此注并实际读回，不授部署复现/HA/安全或DAY。
+
+- `SF-2025-ARXIV-2509-09525` — Carson，Daily2025-09-13补Sep12；[exact-v1](https://arxiv.org/html/2509.09525v1)§2/4–8必要接口与§9.1/9.6，Zeno168首Source/Carson R112一次必要采用，正式2+2+2=6，仅同题SOSP2024后的重要VM/browser/pagecache扩展，唯一Ch57，不重计旧mm-template/CoW。只共享readonlybase/私有write与同可信域资源接口；保O_DIRECT非持久原子、tabs非tenant隔离、LLMtrace重放/不同收益分母、超配反侧及全费，不授安全/账单或SLO保证。未核原代码/硬件或复现；Zeno176原三项PRE/root本次fresh新授已过，作者按R112原稿真实保存，Zeno181唯一actual完整非writer POST通过，I36生效/窄位释放，未DAY。

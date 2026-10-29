@@ -15,7 +15,6 @@ async def run(rt):
     )
     agent = Agent(
         name="CatalogTutor",
-        model=model,
         tools=[lookup_topic],
         instructions="先调用 lookup_topic 查询 lora，再用中文解释，不能假装已经查询。",
     )

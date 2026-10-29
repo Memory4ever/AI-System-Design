@@ -1,0 +1,314 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.28827v1
+Original retrieval 2026-10-23 BJT. Download is not evidence of having reviewed all content. Necessary reviewed sections and conclusions are in SOURCE_MULTIMODAL.md.
+Abstract
+We present WorldStream , an open-ended 3D world model with three simultaneous capabilities: it extends playable terrain beyond any pre-specified map, acts on open-ended language in the running world, and restores visited places with their edits. A hierarchical planner over a typed decision model emits structured decision state: Macro fixes settlement, ecology, transport, and hydrological structure across a group of tiles; Micro specializes that contract into tile semantics under measured terrain and accepted neighbor commitments. Deterministic local code compiles accepted plans into terrain, roads, settlements, vegetation, and entities. Streaming separates their reach: plans run ahead along the predicted corridor, compilation only where movement will soon need it, geometry behind the user released. One world record retains plans, seeds, object identities and mutable state, boundary commitments, and edits by attribute, revised as the user advances and edits; returning tiles recompile from it. The same record grounds interaction: the model acts on existing entities, including stateful NPCs that update as they act, edits the present region, or attaches intent to unplanned regions. Together they yield a world expanding under bounded budgets, connected across independently planned tiles, and interactive.
+ Figure 1 : Representative WorldStream v1 runtime regions include dense city blocks, a rural settlement, streamed forest, desert terrain, and coastal terrain (top). A shared retained-state interface grounds language actions in the running world: users can ask for directions, direct nearby actors, edit present terrain, and summon distant actors (bottom). 
+ \makeabstract 
+ 1 Introduction
+World models have moved from latent dynamics used for prediction and control [ 1 , 2 , 3 , 4 ] to interactive visual environments that a person can enter and act in [ 5 , 6 , 7 , 8 , 9 , 10 , 11 , 12 , 13 ] . Open-world games, embodied simulation, and interactive content creation have all adopted this second form, and they impose a requirement that prediction alone does not address. A predictive model is evaluated on the view it produces next; an interactive environment is evaluated on what persists after that view is replaced. Its extent, contents, and accumulated user history must outlive any rendered frame.
+Two lines of work each supply part of this. Learned generative world models produce responsive views from user action, and their consistency horizon has extended steadily [ 14 , 15 , 16 , 17 ] . Their state is maintained in frames and latents, providing no persistent place identifier: a region released from memory can only be resynthesized, and an individual object cannot be referenced for later modification. Procedural and code-driven 3D systems hold the complementary position [ 18 , 19 , 20 , 21 , 22 , 23 , 24 , 25 , 26 , 27 , 28 , 29 ] . Learned object generation and stylization complement these systems by producing reusable geometry from a reference image, object-part sequence, or text instruction [ 30 , 31 , 32 ] . Explicit scene systems compile geometry from semantic specifications over such asset libraries, leaving every object inspectable and editable, but pay their generation cost before play begins over a scene fixed in advance. That setting determines neither which part of an unbounded world to prepare next, nor what should persist once a prepared region is unloaded.
+Open-ended exploration requires both at once, and imposes three concurrent requirements on the runtime. First, the world must extend past any pre-specified map while the user is inside it, under a per-frame cost that does not grow with explored extent. Second, open-ended language must be interpreted against the entities and terrain that currently exist and applied to the running world, covering both the region the user occupies and regions that have not yet been generated. Third, a previously visited place must be reproduced, together with its accepted edits, after its geometry has been evicted to keep render memory bounded. No single stage of a generation pipeline supplies all three: extent is a scheduling property, grounded change is a representation property, and reproducibility is a property of what the system stores.
+We present WorldStream , which meets these requirements by using a large decision model for planning and deterministic local code for realization, with both operating on a single persistent world record. Planning is organized at two complementary spatial scales. Macro planning takes regional terrain and water summaries together with the accepted state of nearby tiles as input, and determines multi-tile settlement, ecology, transport, and hydrological structure; Micro planning specializes each regional contract into executable tile semantics, under the measured surface and the boundary commitments its neighbors have already made. Both scales are required, as each addresses a distinct failure mode the other does not: a planner conditioned only on local evidence produces terrain-compatible but regionally unrelated tiles, whereas a regional plan alone does not determine how its structure continues across each local boundary. At both scales, Jev produces decisions under a typed schema in which every field returns a preferred value together with a distribution over the permitted alternatives [ 33 ] . A bounded resolution procedure then searches those distributions for a joint assignment admitted by the terrain, the regional contract, and the already-accepted neighbors, which establishes that a plan is executable before any geometry is built.
+To connect model reasoning with spatial construction, WorldStream expresses every accepted plan as a compact, executable semantic specification. The specification records how a place is organized, which content families it contains, how it connects to neighboring tiles, and which parameters its generators receive. Deterministic local code expands this information into terrain, roads, settlements, vegetation, and entities, using canonical road ports and continuous height and water sampling to connect independently processed tiles. One model decision can therefore control many concrete objects while local code resolves their coordinates and geometric constraints deterministically. This explicit separation supports two streaming horizons: planning establishes semantics ahead of movement, and construction realizes the subset approaching the active area, keeping runtime work bounded as explored extent grows.
+Persistent execution builds on this specification by assigning each place a retained tile record. That record combines the accepted plan with boundary commitments, stable object state, revisions, and user edits; loaded geometry is a reproducible realization of this retained state. Eviction releases only the realization, and revisit recompiles the accepted place under a bounded render-memory budget. Language interaction updates the same record through entity actions, current-region edits, and future-region intent, and each accepted change becomes a revision consumed by later planning, construction, and reconstruction. Persistent identity, streaming residency, and grounded interaction therefore operate through one shared state model. Figure 2 summarizes this organization; Section 6 isolates each mechanism and verifies its effect.
+Our contributions are:
+ • 
+ Dual-frontier streaming under bounded residency, with a semantic frontier planning connected regions ahead of movement and a narrower realization frontier compiling only the geometry needed in the near future. Direction-aware admission bounds each stage without retaining the full explored world.
+ • 
+ Geography-conditioned hierarchical planning with executable spatial contracts, where Macro decisions organize multi-tile structure and Micro decisions specialize it under measured terrain and accepted boundaries. Joint resolution converts typed probability distributions into feasible plans before compilation.
+ • 
+ Revisioned world state for durable interaction, retaining plans, seeds, boundary commitments, stable identities, mutable actor state, and user edits beyond geometry. It grounds current and future actions, rejects stale asynchronous updates, and drives reconstruction.
+ (a) World knowledge (b) Hierarchical planning (c) Local compilation (d) 3D realization terrain assets rules MACRO MICRO condition accepted plan compile geography + assets + rules regional intent + tile semantics deterministic code + constraints playable geometry + state 
+ Figure 2 : WorldStream workflow. World knowledge conditions a hierarchical Macro–Micro planner; local code compiles the accepted plan into a streamed, interactive 3D world. Plans, identities, seeds, and edits persist independently of rendered geometry, enabling consistent interaction and revisit. 
+ 2 Persistent World Representation for Streaming and Revisits
+Streaming changes resident geometry from moment to moment. WorldStream represents the world with persistent tile records and derives the current rendered view from them. The record definition and reconstruction conditions establish stable identity across eviction and revisit.
+To make this separation operational, WorldStream uses the tile as the common unit of persistent state and runtime work. Micro planning, local compilation, scheduling, loading, and eviction all act on fixed-size tiles. Each tile corresponds to one identifiable locale—several city blocks, a village with its surrounding fields, or a section of forest or coast—while its dimensions remain a runtime configuration. Its record retains the accepted plan, source geographic evidence, boundary commitments, entity state, and user edits. Planning thereby receives a stable spatial substrate, interaction receives addressable targets, and rendering derives its resources from the same authoritative record.
+Formally, the retained record is
+ R_{i}=(G_{i},M_{i},B_{i},O_{i},U_{i},\rho_{i},V_{i}), 
+ (1) 
+where G_{i} is geographic evidence, M_{i} the accepted semantic plan, B_{i} the shared boundary commitments, O_{i} explicit object state, U_{i} user edits and future intent, \rho_{i} the monotonically increasing revision, and V_{i} the compatible generator and asset versions. The loaded realization is derived from this record,
+ X_{i}=\operatorname{Compile}(R_{i}). 
+ (2) 
+The runtime treats R_{i} as authoritative: eviction removes X_{i} , whereas planning and editing create a new revision of R_{i} . This relationship also defines the tile lifecycle:
+ 1. 
+ Sample geographic evidence. Read stable height, flatness, and water values from the map or seeded surface (Section 2.1 ).
+ 2. 
+ Plan semantic content. Macro establishes regional structure, while Micro resolves executable local content (Section 3 ).
+ 3. 
+ Compile playable geometry. Local generators build the planned terrain, roads, buildings, vegetation, and entities (Section 3.3 ).
+ 4. 
+ Retain world state. Plans, identities, seeds, revisions, and accepted edits survive beyond the active render cache (Section 4.3 ).
+ 5. 
+ Reconstruct on revisit. Returning tiles deterministically rebuild the accepted place from those retained records (Section 4.4 ).
+ 2.1 Geographic Evidence and the Tile Substrate
+Geographic evidence provides the common physical substrate for planning and realization. Each tile carries coordinate-aligned height, slope, water, and surface samples over its footprint, drawn from an existing map or a deterministic seeded surface, following established terrain representations based on procedural and hydrological structure [ 34 , 35 ] . These values constrain semantic decisions and later drive terrain construction, collision, placement, and navigation. Sampling remains stable in world coordinates, so neighboring tiles agree at their shared boundary while being processed independently. Tile boundaries therefore divide work while preserving surface continuity. Adjacent tiles form a Macro region spanning watersheds, buildable corridors, and ecological transitions.
+ 2.2 Retained State and Reconstruction
+Once a plan has been accepted, realization completes the tile’s persistent identity by fixing stable seeds, explicit object state, and compatible generator and asset versions in R_{i} . The displayed geometry is one compiled realization of that identity. Reconstruction recompiles the same record, while an edit creates a new revision consumed by later compilations. Because planning, compilation, and editing commit to records, these operations can proceed concurrently across tiles. Section 5 details revision commit, and Section 4.4 gives the conditions for faithful recompilation.
+ 3 Geography-Aware Hierarchical World Planning
+Each new place connects to accepted neighbors, conforms to the measured surface, and yields an executable specification. WorldStream distributes this decision across two spatial scales, resolves their output jointly, and realizes the accepted specification with deterministic local code.
+ 3.1 From Regional Structure to Tile Plans
+At the regional scale, Macro planning establishes the context inherited by every tile. It operates on relief and flatness distributions, drainage and shoreline extent, and the land-use levels and road ports accepted along planned boundaries. From these inputs it determines settlement gradients, ecological structure, transport corridors, and water organization across the region.
+The regional context becomes an explicit input to Micro planning. When the scheduler admits tile i , the Micro Planner combines finer surface evidence with the covering Macro contract and the accepted commitments of adjacent tiles. It then derives tile-level semantics and generator parameters. Let G_{r} and g_{i} denote regional and tile-level geographic evidence, and let N_{r} and N_{i} denote accepted nearby state at the two scales. The two-stage data flow is
+ \displaystyle M_{r} 
+ \displaystyle=P_{M}(G_{r},N_{r}), 
+ (3) 
+ \displaystyle m_{i} 
+ \displaystyle=P_{\mu}(g_{i},M_{r},N_{i}). 
+Here M_{r} is the accepted regional contract and m_{i} is the plan for tile i . Their schemas reflect the different spatial responsibilities: M_{r} records regional roles, gradients, corridors, and boundary obligations, while the Micro result is
+ m_{i}=(Z_{i},C_{i},A_{i},\Theta_{i}), 
+ (4) 
+where Z_{i} assigns semantic roles to local areas, C_{i} references boundary connections, A_{i} identifies facilities and entity anchors, and \Theta_{i} contains generator parameters. Together these fields form the explicit interface consumed by local realization, which derives meshes and per-instance placements during compilation. Geographic knowledge and descriptions of available generators condition both planning stages: the former supplies relevant domain constraints, and the latter maps accepted decisions to supported realization procedures. Figure 3 follows this complete contract from regional structure to tile plan and local realization.
+ Figure 3 : WorldStream planning and realization. (a) Macro planning combines geographic evidence with cross-tile commitments. (b) A selected tile expands into a structured Micro plan encoding land use, roads, facilities, vegetation, water setbacks, and entity anchors. (c) Local generators realize that plan as connected roads, varied buildings, civic space, and a planted waterfront. 
+Applied to a specific tile, this contract is specialized according to local evidence. A settlement contract relates a center, lower-density outskirts, civic areas, and rural land along a transport corridor; its tile plans place those roles on buildable terrain and connect them to accepted road ports. An ecological contract relates forest, wetland, and transition areas to relief and water; its tile plans use moisture, elevation, slope, and distance to water to select plant communities, canopy density, clearings, and riparian vegetation. In both cases, the Macro contract defines the regional relation and the Micro plan supplies the executable local composition.
+ 3.2 Planner Decisions and Local Validation
+Within each tile, the hierarchical context is expressed as a coordinated semantic program. It specifies the roles and relationships of local areas together with terrain form, road structure, vegetation organization, abundance, and the generators that realize them. For every typed choice, the planner returns a preferred value and a probability distribution over allowed alternatives. Preferred values express the intended plan, while the distributions retain plausible substitutes for ambiguous terrain or boundaries and provide the scores used by joint resolution.
+Because these fields are spatially coupled, their scores are resolved jointly into an executable assignment. Dense housing occupies buildable ground, water setbacks follow the measured shoreline, and land-use levels agree with the Macro role and accepted neighbors. Independent maximum-probability selection violates one or more of these constraints for 63% of the distributions measured in Section 6 . The resolver removes choices excluded by the measured surface, Macro contract, or boundary commitments and evaluates the remaining combinations together. If p_{q}(z_{q}) is the planner probability of assigning choice z_{q} to local area q , \mathcal{F} is the feasible assignment set, and R(z,N_{i}) is a deterministic consistency term, the accepted assignment is
+ z^{\star}=\arg\max_{z\in\mathcal{F}}\left[\sum_{q}\log p_{q}(z_{q})+R(z,N_{i})\right]. 
+ (5) 
+The objective preserves semantic preference through the probability term and favors smooth internal and cross-tile transitions through R . Membership in \mathcal{F} establishes executability. The accepted assignment is stored in M_{i} and becomes the stable input to local realization and reconstruction.
+ 3.3 Terrain and the Asset Interface
+Once m_{i} has been accepted, deterministic local generators reproduce its geometry under a compatible implementation, establishing the accepted plan as the durable form of that place. Terrain code reconstructs height and water as the continuous geographic substrate; content-specific algorithms then populate that surface from asset-library records exposing semantic role, environmental compatibility, bounds, scale, and rendering metadata. The accepted plan and measured surface jointly determine selection and placement through a shared realization interface for roads, settlements, vegetation, and other content families. Figure 4 shows six representative families.
+ (a) City 
+ (b) Rural land 
+ (c) Forest 
+ (d) Mountain 
+ (e) Coast 
+ (f) Desert 
+ Figure 4 : Terrain-and-asset realizations from persisted generated worlds. Panels show the same local-generation interface across constructed and natural settings, preserving accepted plans and geographic inputs. 
+Compilation follows their spatial dependencies. Terrain and water define buildable ground; road connections reserve circulation space; buildings and major objects occupy compatible footprints; vegetation and smaller details fill remaining eligible space under masks and spacing constraints.
+ 3.4 Content-Specific Placement
+From this shared interface, realization branches into placement algorithms matched to each content structure. Streets and building footprints follow connectivity from committed boundary ports; plant positions follow spatial correlation in a coherent field.
+Roads and settlements.
+Road generation begins from committed boundary ports and the selected street framework, connects planned entries, and reserves sufficient space for roads and adjacent development. The regional contract supplies corridor orientation and settlement intensity, while local terrain checks define admissible ground. Building placement then uses the resulting circulation structure and available development footprints. Candidate footprints respect water, slope, occupancy, and asset-scale constraints. Settlement type and density jointly control frontage occupancy, building mix, height, and open space. This decomposition follows procedural city, example-driven street, and hierarchical terrain-aware road modeling [ 18 , 36 , 37 , 38 , 39 ] .
+Natural environments.
+Natural areas require spatial correlation across their local extent. Recognizable woodland contains dense groups, gaps, edge growth, and understory, none of which survives independent uniform sampling alone. The vegetation code therefore combines seeded spatial proposals with coherent environmental fields, and filters those proposals through community-specific acceptance rules and final geometric checks [ 40 , 41 ] . The accepted plan supplies a community, species mix, structure, and abundance; from these fields the code selects natural assets and evaluates each candidate against biome compatibility, local slope and relief, land–water masks, and proximity to actual water. Accepted trees and rocks are further subject to trunk and crown spacing checks, after which shrubs and smaller details populate the remaining compatible ground.
+Three quantities drive the vegetation compiler at ground position x : an abundance parameter \alpha , a coherent field \phi(x)\in[0,1] , and local suitability s(x)\in[0,1] . A community profile h_{c} turns them into the proposal probability
+ \pi_{c}(x)=\operatorname{clamp}\!\left(\alpha\,s(x)\,h_{c}(\phi(x)),0,1\right). 
+ (6) 
+Community profiles map the coherent field to different spatial structures; masks, spacing, eligibility, and budgets filter the proposals. Stable seeds make the result repeatable, while minimum-distance sampling provides a related spacing mechanism [ 42 ] .
+ 4 Streaming Runtime and Persistent Residency
+Continuous traversal produces a demand boundary that moves with the player. The runtime anticipates upcoming tiles, admits planning and construction under finite budgets, and releases geometry behind the player while preserving retained state. Figure 5 summarizes the progression from the active neighborhood to direction-aware prefetch and budgeted admission.
+ 4.1 Movement-Driven Demand and Prefetch
+To convert motion into spatial demand, the scheduler assigns unseen tiles to three roles. The required set \mathcal{R} covers the player’s immediate neighborhood and receives the strongest priority. A larger preferred set \mathcal{P} maintains the visible and near-future surroundings. Beyond it, directional prefetch supplies speculative candidates along movement and camera direction. These windows move over the tile lattice independently of the fixed spatial support used by Macro planning.
+Write \mathcal{P}(\mathbf{c},b) for the preferred window of half-extent b centered at world position \mathbf{c} . Given velocity \mathbf{v} and planning horizon H_{p} , the motion-predicted candidate set is the sweep of that window along the predicted path,
+ \mathcal{A}(H_{p})=\bigcup_{0\leq\tau\leq H_{p}}\mathcal{P}(\mathbf{p}+\tau\mathbf{v},b),\qquad\eta(i)=\inf\{\tau:i\in\mathcal{P}(\mathbf{p}+\tau\mathbf{v},b)\}. 
+ (7) 
+Here \mathbf{p} and \mathbf{v} are the current position and velocity, and \eta(i) is the predicted time at which tile i first enters the moving preferred window. The implementation evaluates window-crossing events, including diagonal crossings. A camera-facing supplement \mathcal{V} prepares content when view direction carries useful information or the player is stationary; the full speculative candidate set is \mathcal{G}=\mathcal{A}\cup\mathcal{V} .
+Under this demand model, predicted entry time determines how work advances along the route. Figure 5 contrasts the proposed corridor with the subset admitted by a fixed budget: a tile crossed in two seconds is prepared ahead of a nearer tile behind the player, extending effective lookahead along the direction travelled. Recomputing the corridor after a turn shifts priority to the new direction, while completed plans remain available for reuse.
+ Required \mathcal{R} : plan and build now. 
+ Preferred-only \mathcal{P}\setminus\mathcal{R} : near-future buffer. 
+ Prefetch \mathcal{G}\setminus\mathcal{P} : motion / camera candidate. 
+ Outside demand : no current work. 
+ Planning-only : plan admitted; build later. 
+ Arrow : observed travel direction. 
+ Figure 5 : Directional demand and budgeted admission on a square tile lattice. Dark green tiles are required immediately; light green tiles extend the visible and near-future buffer; pale blue tiles are speculative motion- or camera-facing candidates; gray tiles lie outside current demand. A blue outline marks a speculative tile that survives the planning budget and receives a semantic plan, but remains outside the shorter construction horizon. White arrows show observed travel direction. On square tiles, northeast motion crosses the north and east boundaries together and produces an L-shaped first-arrival front; the third panel shows corridor recomputation after an observed turn. 
+ 4.2 Budgeted Planning and Construction
+Budgeted admission turns predicted demand into bounded work. Motion prediction and camera-facing windows define the candidate pool, while separate budgets select candidates for planning and construction. Let \mathcal{L}\supseteq\mathcal{R} denote the required neighborhood together with a one-tile halo that absorbs prediction error at its edge. Under planning budget K_{p} , construction budget K_{c}\leq K_{p} , and construction horizon H_{c}\leq H_{p} , the admitted sets are
+ \displaystyle\mathcal{Q} 
+ \displaystyle=\operatorname{Top}_{K_{p}}(\mathcal{L}\cup\mathcal{G}), 
+ (8) 
+ \displaystyle\mathcal{C} 
+ \displaystyle=\operatorname{Top}_{K_{c}}\left(\mathcal{Q}\cap\left[\mathcal{L}\cup\{i:\eta(i)\leq H_{c}\}\right]\right). 
+ (9) 
+ \operatorname{Top}_{K} retains the K highest-priority candidates under the corresponding budget. The shorter construction horizon makes geometry a subset of semantic preparation, while recent dispatch-to-finish times adapt both horizons to current tile-preparation cost. The resulting sets satisfy
+ \mathcal{C}\subseteq\mathcal{Q},\qquad|\mathcal{Q}|\leq K_{p},\qquad|\mathcal{C}|\leq K_{c}. 
+ (10) 
+These properties give each stage an explicit concurrency bound and ensure that compilation consumes an accepted plan. Within those bounds, priority bands place required and preferred tiles above speculative candidates; ETA, distance, camera alignment, and a stable coordinate tie-break order tiles within each band. Entry time determines how far the budget reaches along the corridor while the near field retains priority. Deduplication then shares running work, and queue reconciliation reuses jobs already in flight when a tile re-enters the window.
+ 4.3 Resource Residency and Reconstruction
+After construction, residency is represented according to content behavior. Unique and interactive objects—actors, landmarks, and user-addressable content—carry explicit identity and mutable state. Dense procedural content retains its plan, parameters, masks, seed, and compatible generator version to recover the layout deterministically. An individual edit promotes the affected object into an explicit record, allowing one edited tree to persist while the surrounding forest remains parametric. This division bounds persistent storage by addressable and modified state while keeping every addressable object restorable. Repeated objects share prototypes and materials, prepared assets are cached across tiles, and installation binds cached assets before replacing visible content.
+ 4.4 Consistency Across Independently Processed Tiles
+Asynchronous processing introduces a second requirement: tiles must agree independently of arrival order and travel direction. Three record-level mechanisms provide this consistency.
+ 1. 
+ A shared boundary record. Both incident tiles read one authoritative accepted record for their common edge—the canonical road port, edge elevation, and ecological transition—and route their generated geometry to it. Independent compilation of either tile therefore produces matching roads, terrain profiles, and vegetation edges along that boundary.
+ 2. 
+ A schedule-independent plan key. A planning result is keyed by tile identity, geographic evidence, Macro contract, neighboring commitments, edits, and the active capability and generator versions. Look-ahead requests, in-window requests, and revisits share the same semantic result whenever these inputs agree.
+ 3. 
+ A revision stamp on background work. Every planning or compilation job carries its source revision. Installation accepts results whose source revision matches the current record, preserving the latest committed edit.
+Cross-tile context also includes soft neighbor summaries. An accepted settlement level, ecological transition, or facility near a boundary shapes the next tile while allowing a distinct land-use label. Hard records preserve physical connections; soft summaries guide semantic continuity.
+These three records fix what a tile means, independently of when and in what order the runtime got to it. Recompiling the record therefore reproduces the accepted place, and the explored world grows asynchronously while identity stays stable across interaction, unloading, and revisit.
+ 5 Grounded Language Interaction and World Editing
+Language interaction reads and writes the tile records maintained by the streaming runtime. Each change is grounded in current world state and persists through a committed record revision.
+ 5.1 Grounded Action Selection and Execution
+Given utterance u , action selection combines the current world context with the available capabilities and resolves an operation with grounded parameters. The same interface covers entity actions, current-region edits, and semantic intent for future tiles. Formally,
+ (a,\theta)=P_{a}(u,W_{\mathrm{local}},\mathcal{K}),\qquad W^{\prime}=\Phi_{a}(W;\theta), 
+ (11) 
+where u is the utterance, \mathcal{K} the available capabilities, W the world record and W_{\mathrm{local}} the compact view of it supplied to the planner, a the chosen action, and \theta its grounded parameters. The local function \Phi_{a} realizing a then maps W to a new revision W^{\prime} . W_{\mathrm{local}} carries nearby entities, points of interest, and the capability descriptions, which grounds an utterance in targets present in the world. Execution then passes to \Phi_{a} , which validates the current state and supplies the continuous detail, leaving movement, animation, collision handling, and rendering with the controllers. Table 1 summarizes the division across request classes.
+ Table 1 : Language-interaction classes and the division between semantic decisions and local execution. 
+ Request 
+ Semantic decision 
+ Runtime realization 
+ Object query 
+ Reference an entity or place 
+ Read state and derive its spatial relation 
+ Entity action 
+ Target + action with parameters 
+ Update state; navigate, avoid, animate 
+ Entity creation 
+ Type + motion intent in a spawn context 
+ Load the asset and start its controller 
+ Future intent 
+ Desired semantics for an unplanned area 
+ Retain intent for later hierarchical planning 
+ Region edit 
+ Operation + relations over semantic fields 
+ Recompile terrain, networks, ecology, assets 
+ 5.2 Editing Existing and Future World State
+Region editing reuses the realization pipeline through a structured semantic program. The planner predicts target and extent, spatial composition, zone or content types, shape and orientation, and generator parameters such as vegetation structure and abundance. Joint prediction preserves containment, adjacency, and connection among these fields, and local code converts the program into terrain, water, navigation, networks, and content placement.
+Whether the target already exists determines when this program is realized. Existing-place edits compile against the accepted region; future-region edits retain the same fields as inputs to later Macro and Micro planning. Both paths preserve one semantic representation and converge on the same asynchronous commit protocol. Let an interaction start from tile revision \rho_{i}^{s} and produce candidate update \Delta_{i} . Its commit rule is
+ \operatorname{Commit}(i,\Delta_{i},\rho_{i}^{s})=\begin{cases}\operatorname{Apply}(R_{i},\Delta_{i})^{\rho_{i}^{s}+1},&\text{if }\rho_{i}=\rho_{i}^{s}\text{ and the target remains valid},\\
+\varnothing,&\text{otherwise}.\end{cases} 
+ (12) 
+Revision validation is the final gate between prepared work and world state. Resources are prepared first; successful validation atomically installs visible state and the new retained record. This optimistic rule [ 43 ] preserves the latest revision for later interaction and reconstruction.
+ 6 Experimental Evaluation
+Evaluation proceeds along four mechanisms in the runtime: hierarchical planning, movement-driven prefetch, grounded language interaction, and local execution. Figure 6 first shows representative outcomes from persisted runtime and interaction runs. Subsequent experiments isolate one mechanism at a time while holding its inputs and downstream implementation fixed.
+Setup.
+Rendering uses a Three.js-based WebGL runtime at 1920\times 1080 . The executor runs three persistent compile worker processes, and demand is re-evaluated over a required 3\times 3 neighborhood. Reported times are wall-clock measurements unless stated otherwise. Three limits apply throughout. Planning ablations report one complete run per variant: they control the spatial input and the execution path, and do not estimate model-sampling variance. Prefetch replays measure backend tile readiness, with browser installation excluded. The interaction benchmark measures interpretation against fixed world facts, and does not isolate a complete edit–evict–revisit cycle.
+ (a) City NPC 
+ (b) City district 
+ (c) Rural road 
+ (d) Sheep interaction 
+ (e) Farmland interaction 
+ (f) Forest–desert transition 
+ (g) Dense forest 
+ (h) Desert 
+ (i) Coast 
+ Figure 6 : Sequential visual cases from one continuous WorldStream runtime tour recorded at 1920 \times 1080. The ordered samples show interaction and traversal through urban, rural, agricultural, forest, transition, desert, and coastal environments. Panels (a), (c), (e), (f), and (h) are crops of their source frames to make the recorded dialogue, rural dwelling, farmer and crops, forest–desert boundary, rocks, and cacti legible at three-column scale; the remaining panels show complete game-view frames. 
+ 6.1 Planning Mechanisms
+ Figure 7 : Hierarchical planning ablation on the same four-Macro city-to-rural request. (a) Macro only provides settlement envelopes and a connected road skeleton but no local content. (b) Micro only uses accepted neighbors without a regional objective, retains natural land cover, and fails to form the requested settlement. (c) Flat Micro makes independent local decisions and lacks city-scale organization. (d) Without Micro-neighbor context, Macro centers and road ports remain, but tiles are repeatedly overbuilt and abrupt city/non-city cuts appear. (e) The Full hierarchy produces a connected, bounded urban-to-rural gradient. 
+ Table 2 : Compiled geometry for the locally realized variants in Figure 7 . Counts are total published instances. For variants with developed content, boundary jump is the mean absolute change in semantic development level across adjacent quadrant edges; lower is smoother. Macro only is omitted because it publishes no local content. 
+ Variant 
+ Roads 
+ Buildings 
+ Facilities 
+ Boundary jump 
+ Full hierarchy 
+ 47 
+ 250 
+ 13 
+ 0.089 
+ Micro only 
+ 0 
+ 0 
+ 0 
+ – 
+ Flat Micro 
+ 0 
+ 0 
+ 0 
+ – 
+ No Micro-neighbor 
+ 686 
+ 2,686 
+ 16 
+ 0.361 
+Planning is evaluated in two steps, beginning with the responsibilities of its spatial scales. All settings use the same city-to-rural request, geographic evidence, and local generators; only the information available to planning changes. Removing Macro context reveals the structure produced from local evidence alone, while removing accepted Micro neighbors reveals how regional intent behaves without local continuity. The resulting failures are complementary. Local planning without Macro context remains terrain-compatible but never forms the requested city. Macro guidance without neighbor context preserves centers and coarse roads, yet repeatedly overbuilds individual tiles and creates abrupt transitions. Figure 7 and Table 2 therefore expose a clear division of labor: Macro context determines where large-scale structure belongs, whereas Micro neighbors regulate how that structure continues across local boundaries.
+With the spatial hierarchy established, the second planning experiment isolates the resolution step that makes its typed output executable. To remove model variation, 100 probability distributions produced by the decision model are retained and evaluated under two resolution rules. The independent baseline selects the highest-probability label for each quadrant separately. The joint solver uses the same probabilities but searches for an assignment that simultaneously satisfies terrain, water, biome, Macro-role, and adjacency constraints. Table 3 reports the fraction of assignments satisfying each constraint; overall success requires every hard constraint.
+ Selection method 
+ Overall 
+ Biome 
+ Terrain 
+ Macro 
+ Suburban 
+ Landsc. 
+ Water 
+ Independent 
+ 37% 
+ 55% 
+ 69% 
+ 74% 
+ 82% 
+ 84% 
+ 88% 
+ Joint solver 
+ 100% 
+ 100% 
+ 100% 
+ 100% 
+ 100% 
+ 100% 
+ 100% 
+ Gain 
+ \times 2.70 
+ \times 1.82 
+ \times 1.45 
+ \times 1.35 
+ \times 1.22 
+ \times 1.19 
+ \times 1.14 
+ Table 3 : Overall and per-constraint success rates on shared model-produced probability distributions. Overall success requires all hard constraints; the final row reports multiplicative gain over independent selection. 
+Independent selection leaves 63% of plans invalid even though every field comes from the same model output. Joint resolution makes all 100 plans executable without changing those probabilities. This shows that structured output alone is insufficient: the fields must be resolved as a coupled spatial decision. Hierarchy and joint constraints thus address different failure modes—one organizes intent across space, while the other enforces consistency within each local plan.
+ 6.2 Streaming Readiness
+Streaming readiness is evaluated by separating semantic lookahead from geometric readiness at tile arrival. The same 100 route traces are replayed with identical planning and construction times, worker limits, and a required 3\times 3 arrival neighborhood. The four controlled settings differ only in when their planning and construction stages become eligible. No prefetch starts both stages only after a tile enters the current demand window. Plan ahead requests semantic plans along the predicted route before arrival, but still defers construction until the tile enters the local construction window. Directional also admits construction along the motion-predicted corridor, using fixed planning and construction horizons. Adaptive retains the same directional policy but adjusts its lookahead from recent dispatch-to-finish times, expanding the active horizon when preparation becomes slower. We measure how many of the nine required tiles are ready at arrival and their cumulative waiting time on the complete 4 km benchmark route (Figure 8 ).
+Semantic readiness and visible readiness are not interchangeable. Planning ahead shortens recovery while leaving arrival coverage unchanged, as construction still begins too late. Directional prefetch is the mechanism that prevents most stalls: it brings almost the full neighborhood into the ready set before arrival and reduces total route waiting to 3.52 s. Adaptive lookahead then reduces the remaining tail. These mechanisms contribute differently: semantic lookahead reduces the cost of a miss, directional construction avoids the miss, and adaptation tunes the residual margin.
+ Figure 8 : Prefetch ablation over 100 route replays. (a) Four methods are compared on arrival coverage and 4 km waiting reduction; directional prefetch prepares almost the full 3\times 3 neighborhood before arrival. (b) Relative reductions obtained by adaptive lookahead over the directional policy on four lower-is-better metrics; raw directional and adaptive values are shown beside each metric. 
+ 6.3 Grounded Interaction
+Grounded interaction is measured by whether open-ended natural language selects the intended executable world operation. The same underlying world change can be phrased in many different ways, while scope, negation, compound instructions, and references to missing entities can make an otherwise plausible request unsafe or ambiguous. Each free-form request is therefore scored against either its intended world operation or safe non-execution when no valid operation exists. The benchmark uses 80 bilingual requests spanning actor and landmark interaction, current and future world editing, ambiguous or compound instructions, explicit no-action language, and unavailable targets or actions (Table 4 ). World facts, retained state, and available runtime capabilities are held fixed across all requests, so measured success reflects language interpretation rather than variation in the underlying scene.
+The intended operation is recovered in 76 of 80 requests (95.0%). Performance is strongest for explicit actions and safety-sensitive cases: no-action requests and unavailable targets or capabilities are handled perfectly, without substituting a different entity or operation. The remaining errors concentrate on scope—especially distinguishing a future-world instruction from a current edit—rather than on recognizing the requested content itself. Temporal and spatial scope therefore need the same explicit representation as action and target.
+ Table 4 : Accuracy of mapping open-ended requests to the intended world operation or safe non-execution. 
+ Request family 
+ Correct 
+ Tested distinction 
+ Actor / landmark 
+ 19 / 20 
+ Action or direction grounded to a known target 
+ World editing 
+ 18 / 20 
+ Present-region edit or future-region intent 
+ Clarification 
+ 19 / 20 
+ Ambiguous scope or multiple actions 
+ No action 
+ 10 / 10 
+ Negation , explanation, or quoted example 
+ Unavailable 
+ 10 / 10 
+ Missing target or unsupported operation 
+ 6.4 Local Execution Efficiency
+Local execution is evaluated by the cost of compiling an accepted plan into publishable tile records. The executor discards results whose source revision has become obsolete, while the optimization targets repeated work inside a single compilation. Terrain checks are shared across nearby placements instead of recomputed for every building or plant; reusable spatial indices accelerate collision and spacing tests; asset, ecology, and spatial-field data are cached or kept in compact form rather than repeatedly parsed and copied; and vegetation layers share deterministic cell-level sampling instead of initializing each candidate independently. Together, these changes reduce the cost of generating dense content while preserving every published object record exactly. Table 5 reports their combined effect across representative tile contents.
+ Table 5 : Wall-clock time for compiling accepted semantic plans into publishable tile records before and after the complete optimization. Both versions publish identical objects, asset identities, transforms, and instance counts. The final row reports compilation speedup. 
+ Dense 
+ forest 
+ Forest– 
+ wetland 
+ Light 
+ village 
+ Park 
+ Light 
+ mountain 
+ Farmland 
+ Coast– 
+ wetland 
+ Before (s) 
+ 10.780 
+ 5.102 
+ 1.196 
+ 1.218 
+ 0.164 
+ 0.176 
+ 0.205 
+ After (s) 
+ 3.323 
+ 2.699 
+ 0.718 
+ 0.960 
+ 0.159 
+ 0.171 
+ 0.188 
+ Speedup 
+ \times 3.24 
+ \times 1.89 
+ \times 1.67 
+ \times 1.27 
+ \times 1.03 
+ \times 1.03 
+ \times 1.09 
+Vegetation-heavy terrain shows the largest speedup: dense-forest compilation is 3.24\times faster and forest–wetland compilation is 1.89\times faster, while light-village and park tiles improve by 1.67\times and 1.27\times , respectively. Across 12 newly published tiles in the complete streaming runtime, local compilation averages 2.134 s and reaches 3.318 s at maximum. Process-level concurrency contributes separately to runtime throughput: replacing two compile threads with two persistent worker processes raises warm throughput from 0.234 to 0.464 tiles/s, a measured 1.99 \times increase, because compiler state is then loaded once per process and independent tile compilations no longer contend for a single interpreter under the same workload and runtime configuration.
+Taken together, the experiments trace one path from a semantic decision to a continuously inhabitable world. Regional planning establishes large-scale structure; directional scheduling converts that structure into geometry before the player arrives; retained state carries the accepted result into later interaction and reconstruction. The resulting world expands in explored area while its semantics, geometry, and accumulated user changes remain coupled over movement and time.
+ 7 Discussion and Conclusion
+ 7.1 Design Implications and Limitations
+At system level, persistent explicit state provides the interface among semantic planning, procedural construction, interaction, and rendering. Planning writes intent, generators realize that intent under spatial constraints, and the renderer derives a transient view. The retained record carries identity across all three stages. Related code-driven and programmable world models similarly separate executable state evolution from visual realization [ 29 , 44 ] ; WorldStream extends this separation to movement-driven expansion through bounded residency, cross-tile commitments, revision-aware interaction, and deterministic revisit. This organization allows planners, generators, and renderers to evolve independently while preserving one world state.
+The current prototype instantiates this organization with a bounded generation vocabulary, local controllers, and relational edit geometry. Curated geographic rules provide terrain and ecological plausibility, while reconstruction depends on retained records and compatible generator and asset versions. Expansion quality follows the available surface evidence, planning throughput, and readiness maintained ahead of movement. Long-running worlds also require storage policies for accumulated records and simulation policies for dynamic actors outside the active neighborhood. These boundaries define future questions while preserving planning, streaming, and persistence interfaces.
+ 7.2 Outlook and Conclusion
+Looking forward, the retained plan-and-record interface supports two complementary paths toward higher visual fidelity. A streaming visual decoder could consume low-poly realization, camera state, object identity, and edits, combining explicit control with long-horizon visual synthesis from WorldPlay and programmable or code-guided renderers [ 17 , 44 , 45 ] . Its evaluation would measure added latency and the consistency of edited places after revisit. Alternatively, richer explicit generators could replace the present assets and local realization procedures while preserving the same planner contracts. Agentic open-world construction, recursive scene programs, and unified urban context provide candidate mechanisms [ 28 , 46 , 47 ] ; prefetch and caching would prepare and reuse their detail within the existing streaming budgets.
+ WorldStream formulates world generation as a continuous runtime. A typed decision model supplies connected regional and local semantics; deterministic local code realizes them under finite budgets; and retained tile records carry identity beyond resident geometry. Direction-aware scheduling prepares the world ahead of movement, while grounded language actions update the same records used by planning, construction, eviction, and revisit. Together these mechanisms connect model-based planning, explicit 3D generation, streaming exploration, interaction, and durable world identity within one extensible world-model loop.
+

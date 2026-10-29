@@ -1,0 +1,1294 @@
+https://arxiv.org/html/2610.30076v1
+Circuits of LLM Classifiers
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Problem Formulation
+3 Optimizing Classification Circuits
+3.1 Optimal Circuit Setup
+State.
+Actions.
+3.2 Generating circuits for unseen prompts: LMCircuit
+4 Analysis of the Optimal Circuit
+4.1 Fundamental Limits of Circuits for a Fixed and Finite Pool
+Practical significance of Proposition .
+4.2 Scaling Laws for Classification Circuits
+5 Experiments
+5.1 Results
+6 Conclusion
+Acknowledgments
+References
+A Related Work
+Sequential information acquisition:
+Routing and Cascading Methods:
+LLMs as classifiers, judges, and annotators.
+Theory of LLM orchestration and test-time compute:
+Aggregating Noisy Classifiers:
+B Proofs
+B.1 Proofs for Fixed-Prompt Scaling
+Preliminaries
+Allocation of queries.
+B.2 Proof of the Population Scaling Law
+C Additional Experimental Details
+C.1 Data
+AgentJudgeBench ( Verma et al., 2026 ) .
+BeaverTails ( Ji et al., 2023 ) .
+BIG-Bench Hard ( Suzgun et al., 2023 ) .
+Decision Index ( Multimodal Art, 2026 ) .
+HealthBench ( Arora et al., 2025 ) .
+LMArena ( Chiang et al., 2024 ) .
+PolitiCAUSE ( Garcia-Corral et al., 2024 ) .
+Embedding model.
+C.2 Training the Probabilistic Model
+Architecture.
+Loss function.
+Optimization and calibration.
+Generating circuits.
+C.3 Full list of baselines
+C.4 Additional Experimental Results
+C.4.1 Calibration of the circuit’s beliefs.
+C.4.2 Joint distribution between instruments
+C.4.3 How does the circuit allocate its queries?
+C.5 Circuit Examples
+License: CC BY 4.0
+arXiv:2610.30076v1 [cs.LG] 21 Oct 2026
+Circuits of LLM Classifiers
+Hadi Khalaf
+Sajani Vithana
+Kunal Talreja
+Haewon Jeong
+Viveck R. Cadambe
+Flavio Calmon
+Affiliation: Harvard School of Engineering and Applied Science
+Affiliation: Kempner Institute for the Study of Natural & Artificial Intelligence
+Affiliation: School of Electrical and Computer Engineering, Georgia Institute of Technology
+Affiliation: Department of Electrical and Computer Engineering, University of California, Santa Barbara
+Affiliation: Center for Computational Mathematics, Flatiron Institute
+Abstract
+Language models make it easy to build classifiers by simply prompting a model with the sample to classify. However, their predictions are neither deterministic nor uniformly reliable across samples. How can we combine predictions from different models to improve reliability? We view LLM classifiers as noisy measurement instruments of an underlying target label. Our goal is to maximize average classification accuracy at a given average query cost. To this end, we introduce circuits that organize LLM classifiers into an adaptive sequence of queries and decisions. We then characterize the optimal circuit, obtain the fundamental limits of achievable accuracy, and provide practical insights on realizing the optimal circuit. Across seven classification tasks spanning safety, health, political science, human preference, agent evaluation, decision-making and reasoning, our method improves the cost–accuracy frontier over routing and cascading baselines. We provide our code here .
+1 1 footnotetext: Equal contribution. Correspondence to sajani@seas.harvard.edu .
+1 Introduction
+Large language models (LLMs) are increasingly used in prediction and classification tasks as (auto-) raters ( Vu et al., 2024 ) , verifiers ( Cobbe et al., 2021 ; Kwok et al., 2026 ) , judges ( Zheng et al., 2023 ; Chiang et al., 2024 ) , and more. A main draw of LLMs as classifiers is their ease of implementation and deployment ( Brown et al., 2020 ; Liu et al., 2023a ) . By simply specifying a new classification task in natural language, we can prompt these systems to assign labels in a range of applications such as content moderation ( OpenAI et al., 2024 ) , scientific review ( Liu & Shah, 2023 ) , guardrailing ( Inan et al., 2023 ) , and qualitative data analysis in social sciences ( Halterman & Keith, 2025 ) .
+Here, a “classifier” is defined by a combination of backend model choice, instruction prompt, grading rubric, decoding parameters (e.g., temperature, chain-of-thought), and more. “Fitting” a classifier then boils down to navigating these choices during inference.
+Consider first the task of designing a single LLM classifier. Even after fixing the model and instructions, repeated evaluations of the same prompt can return conflicting labels ( Haldar & Hockenmaier, 2025 ; Wang et al., 2023a ) 1 1
+1
+Unless the model is decoded with temperature T = 0 T=0 , a choice rarely made in practice, particularly if the LLM reasons prior to responding. . It is therefore useful to view an LLM classifier as a noisy measurement instrument ( Brennan, 1992 ; Kahneman et al., 2021 ) . Naturally, if an instrument is noisy, we should collect more than one measurement with our tool, or measure with multiple (independent) instruments to control error. When using LLMs to classify a given prompt, this intuition suggests we can improve classification accuracy by collecting predictions from different models and instruction configurations.
+Of course, querying multiple models incurs a cost (e.g., API calls add up). A key challenge is deciding which classifier, if any, to query next as we collect measurements. These decisions create a tradeoff between accuracy and expected inference cost. In this paper, we ask:
+How should we combine LLM classifiers to optimize the cost-accuracy trade-off in a given task?
+Figure 1 : Classification circuits and their cost–accuracy tradeoffs. Majority voting, routing, and cascades are examples of circuits, differing in how they select and combine LLM classifiers. For any prompt, our method searches over a broad class of circuits and uses a dynamic program to determine which classifier to query next and when to stop. The right panel shows such circuits for the prompt z z : starting from its embedding, the circuit may predict immediately (as in A ) or sequentially acquire additional LLM measurements as needed (as in B and C ). Across prompts, these decisions produce the cost–accuracy frontier for the BeaverTails safety dataset.
+Strategies for combining classifiers, such as bagging ( Breiman, 1996 ) and boosting ( Schapire & Freund, 2013 ) , are familiar in machine learning. More recently, this question has received growing attention in work on LLM routing ( Ding et al., 2024 ; Ong et al., 2025 ) , cascading ( Chen et al., 2024b ; Jung et al., 2025 ; Bouchard, 2026 ) , and multi-judge evaluation ( Verga et al., 2024 ; Turkmen et al., 2026 ) . These methods show that combining multiple LLM classifiers outperforms any single model.
+We refer to any procedure that queries one or more LLM classifiers and combines their outputs into a final decision as a classification circuit , or a circuit for short. The name reflects how these strategies use LLMs. The classifiers act as components, while decision rules determine how their outputs are passed forward, combined, or used to select the next query. Changing either the components or how they are connected produces a different circuit. For example, routing queries a single selected model, cascades query models sequentially in a fixed order, and voting schemes like majority voting query several models in parallel and aggregate their outputs. Different circuits using the same set of classifiers can therefore have different accuracy and cost, as shown in Figure 1 .
+Given the many ways of combining LLM classifiers, which circuit is best? What is the “optimal” circuit when samples come from a known distribution, such as a large safety classification dataset? What properties should we promote across classifiers to improve accuracy, such as independence or decorrelated errors?
+And what is the best achievable tradeoff between cost and accuracy?
+We show that existing ways of combining LLM classifiers are facets of a common decision-theoretic formulation. This formulation maximizes average classification accuracy while minimizing the average cost, and is essentially a Bayesian sequential decision problem ( Wald, 1992 ; DeGroot, 1962 ) , closely related to sequential hypothesis testing ( Chernoff, 1959 ; Naghshvar & Javidi, 2013 ) .
+The fundamental challenge is to determine the value of an additional query given the observed measurements. For this formulation, an optimal circuit is given by the solution to a dynamic program.
+Analyzing this dynamic program offers several insights into combining LLM classifiers. A first insight is that a query is valuable not only for its label, but also for what it reveals about how hard the sample is to classify. When classifiers disagree, the circuit learns to spend more queries on difficult prompts while resolving easier ones quickly. A second insight concerns how accuracy improves with additional query cost. For a fixed sample, asymptotically, the optimal error decreases with increasing cost at a rate determined by the most informative classifier per unit cost. A final, more obvious insight is that the error of any circuit lies between two limits: the Bayes error before any query is made and the Bayes error given the outputs of all classifiers. The latter is the accuracy ceiling for any way of combining a given set of classifiers.
+Solving for this dynamic program requires a joint distribution between the ground truth label and instruments for a prompt. In practice, however, the joint distribution is unknown. We show that this optimal circuit can nevertheless be approximated in two steps. First, we fit a single probabilistic model of the joint distribution of the label and classifier outputs using a labeled training set. Then, we solve the dynamic program with the learned model, which results in a prompt-dependent policy that determines which LLM to query and when to stop. In a range of classification tasks, this two-step approach Pareto-dominates routing and cascading baselines in the cost–accuracy tradeoff.
+Contributions. Our contributions are as follows:
+•
+Optimal classification circuits. We introduce classification circuits as a general framework for combining LLM classifiers. Under a cost–accuracy tradeoff, we show that the optimal circuit for a given prompt can be solved exactly through a dynamic program.
+•
+Properties of classification circuits. We identify the accuracy ceiling for a fixed pool of classifiers, quantify the value of adding complementary classifiers, and show how the distribution of prompt difficulty determines how average accuracy scales with cost.
+•
+Learning circuits from data. We show how to approximate the optimal circuit from a labeled training set by learning the distributions required by the dynamic program from prompt embeddings and classifier outputs. Across seven classification tasks, circuits improve the cost–accuracy frontier over routing and cascading baselines.
+2 Problem Formulation
+Let Z ∼ 𝒫 Z Z\sim\mathcal{P}_{Z} denote a random variable representing a classification prompt drawn from a prompt space 𝒵 \mathcal{Z} . In our applications, a prompt consists of the text to be classified together with task-specific information defining the classification problem. Each prompt z z has a binary target label y ⁡ ( z ) ∈ { 0 , 1 } y(z)\in\{0,1\} . To predict y ⁡ ( z ) y(z) for a realized prompt Z = z Z=z , we query a subset of measurement instruments from a pool of available instruments denoted by ℋ \mathcal{H} .
+Definition 1 (Measurement instrument) .
+A measurement instrument, indexed by i ∈ ℋ i\in\mathcal{H} , is characterized by a conditional distribution Q X | Z [ i ] Q^{[i]}_{X\mid Z} that takes a prompt z z as input and outputs a measurement X ( i ) ∈ 𝒳 i X^{(i)}\in\mathcal{X}_{i} . For a prompt z z , instrument i i has a query cost c i ​ ( z ) > 0 c_{i}(z)>0 2 2
+2
+For LLMs, c i ​ ( z ) c_{i}(z) is estimated from the input prompt, reasoning and output-token limits, and the token prices. .
+An instrument can correspond to a particular configuration of an LLM. For example, two instruments may differ in the underlying model, instruction prompt or rubric, reasoning configuration, or inference harness. Each such configuration defines a distinct distribution of the form in Definition 1 .
+We next study how to compose LLMs as measurement instruments into classification circuits that improve prediction accuracy. Informally, a classification circuit for a prompt z z specifies which instruments to query, how subsequent queries depend on the measurements obtained so far, and when to stop before producing a final prediction of y ⁡ ( z ) y(z) . Because this circuit may vary with the prompt, we use π \pi to denote the circuit policy and π ⁡ ( z ) \pi(z) for the circuit instantiated on z z . A few example circuits are given in Figure 2 .
+Definition 2 (Classification circuit) .
+Fix a finite instrument pool ℋ \mathcal{H} , where querying instrument i ∈ ℋ i\in\mathcal{H}
+returns an outcome in 𝒳 i \mathcal{X}_{i} . For t ≥ 0 t\geq 0 , let
+𝒯 t = { ( ( A 1 , x 1 ) , … , ( A t , x t ) ) : ∅ ≠ A r ⊆ ℋ , x r ∈ { 0 , 1 } A r , A r ∩ A s = ∅ for r ≠ s } \mathcal{T}_{t}\;=\;\Bigl\{\,\bigl((A_{1},x_{1}),\dots,(A_{t},x_{t})\bigr)\;:\;\varnothing\neq A_{r}\subseteq\mathcal{H},\;x_{r}\in\{0,1\}^{A_{r}},\;A_{r}\cap A_{s}=\varnothing\ \text{for }r\neq s\,\Bigr\}
+denote the set of all histories of length t t . Here A r A_{r} is the set of instruments
+queried in round r r , x r x_{r} records their responses, and the disjointness constraint
+encodes that no item in ℋ \mathcal{H} is queried twice. We set 𝒯 0 = { ∅ } \mathcal{T}_{0}=\{\varnothing\} and
+write A ⁡ ( h t ) = ⋃ r ≤ t A r A(h_{t})=\bigcup_{r\leq t}A_{r} for the instruments already queried in
+h t ∈ 𝒯 t h_{t}\in\mathcal{T}_{t} .
+A classification circuit is a pair π = ( π 𝗊𝗎𝖾𝗋𝗒 , π 𝗉𝗋𝖾𝖽𝗂𝖼𝗍 ) \pi=(\pi_{\mathsf{query}},\pi_{\mathsf{predict}}) .
+The query policy π 𝗊𝗎𝖾𝗋𝗒 \pi_{\mathsf{query}} is a family { π 𝗊𝗎𝖾𝗋𝗒 , t } t ≥ 0 \{\pi_{\mathsf{query},t}\}_{t\geq 0} of maps
+π 𝗊𝗎𝖾𝗋𝗒 , t : 𝒵 × 𝒯 t ⟶ 2 ℋ ∖ A ⁡ ( h t ) , A t + 1 = π 𝗊𝗎𝖾𝗋𝗒 , t ​ ( z , h t ) , \pi_{\mathsf{query},t}:\mathcal{Z}\times\mathcal{T}_{t}\longrightarrow 2^{\mathcal{H}\setminus A(h_{t})},\qquad A_{t+1}=\pi_{\mathsf{query},t}(z,h_{t}),
+where 2 ℋ ∖ A ⁡ ( h t ) 2^{\mathcal{H}\setminus A(h_{t})} is the power set of the instruments left unqueried
+in h t h_{t} . Thus the query policy determines, for a given prompt z z , which instruments are
+queried in each round: starting from h 0 = ∅ h_{0}=\varnothing , the process terminates if
+A t + 1 = ∅ A_{t+1}=\varnothing , and otherwise queries the instruments in A t + 1 A_{t+1} , observes
+x t + 1 ∈ { 0 , 1 } A t + 1 x_{t+1}\in\{0,1\}^{A_{t+1}} , and appends ( A t + 1 , x t + 1 ) (A_{t+1},x_{t+1}) to the history h t h_{t} .
+Call h = ( ( A 1 , x 1 ) , … , ( A τ , x τ ) ) ∈ 𝒯 τ h=\bigl((A_{1},x_{1}),\dots,(A_{\tau},x_{\tau})\bigr)\in\mathcal{T}_{\tau} terminal for z z
+if A r + 1 = π 𝗊𝗎𝖾𝗋𝗒 , r ​ ( z , h r ) A_{r+1}=\pi_{\mathsf{query},r}(z,h_{r}) for every 0 ≤ r < τ 0\leq r<\tau , where h r h_{r} is the
+length- r r prefix of h h , and π 𝗊𝗎𝖾𝗋𝗒 , τ ​ ( z , h ) = ∅ \pi_{\mathsf{query},\tau}(z,h)=\varnothing . Let
+𝒯 ⋆ ​ ( z ) \mathcal{T}^{\star}(z) be the set of such histories considering all possible 0 ≤ τ ≤ | ℋ | 0\leq\tau\leq|\mathcal{H}| . The decision rule is a map
+π 𝗉𝗋𝖾𝖽𝗂𝖼𝗍 : 𝒵 × 𝒯 ⋆ ​ ( z ) ⟶ { 0 , 1 } , Y ^ π ​ ( z ) = π 𝗉𝗋𝖾𝖽𝗂𝖼𝗍 ​ ( z , h ) . \pi_{\mathsf{predict}}:\mathcal{Z}\times\mathcal{T}^{\star}(z)\longrightarrow\{0,1\},\qquad\widehat{Y}_{\pi}(z)=\pi_{\mathsf{predict}}(z,h).
+Figure 2 : Illustration of a few known circuits within the framework of Definition 2 .
+Remark 1 .
+Definition 2 permits repeated independent queries to the same instrument. In particular, items i , j ∈ ℋ i,j\in\mathcal{H} may correspond to two independent queries of the same instrument, with
+Q X | Z [ i ] = Q X | Z [ j ] Q^{[i]}_{X\mid Z}=Q^{[j]}_{X\mid Z} and c i ​ ( z ) = c j ​ ( z ) c_{i}(z)=c_{j}(z) . We assume that | ℋ | < ∞ |\mathcal{H}|<\infty , so only finitely many queries can be included.
+We focus on the binary setting throughout this work, i.e., 𝒳 i = { 0 , 1 } \mathcal{X}_{i}=\{0,1\} for all i ∈ ℋ i\in\mathcal{H} . For a fixed prompt Z = z Z=z , executing a circuit π ⁡ ( z ) \pi(z) in Definition 2 produces the collected measurements h = ( A i , x i ) i ≤ τ h=(A_{i},x_{i})_{i\leq\tau} for some τ \tau . Let 𝒜 = ∪ i ≤ τ A i ⊆ ℋ \mathcal{A}=\cup_{i\leq\tau}A_{i}\subseteq\mathcal{H} denote the subset of instruments queried by π ⁡ ( z ) \pi(z) and let 𝑿 ∈ { 0 , 1 } | 𝒜 | \bm{X}\in\{0,1\}^{|\mathcal{A}|} be the corresponding measurements. Then, the circuit’s prediction on the target label is given by Y ^ π ​ ( z ) = π 𝗉𝗋𝖾𝖽𝗂𝖼𝗍 ​ ( z , 𝑿 ) \hat{Y}_{\pi}(z)=\pi_{\mathsf{predict}}(z,\bm{X}) .
+Over the prompt distribution, the probability of error of a circuit policy π \pi is
+𝖤 ( π ) = Pr ( Y ^ π ( Z ) ≠ y ( Z ) ) = 𝔼 Z [ 𝔼 𝑿 | Z [ 𝟏 { Y ^ π ( Z ) ≠ y ( Z ) } | Z ] ] , \displaystyle\mathsf{E}(\pi)=\Pr\!\left(\hat{Y}_{\pi}(Z)\neq y(Z)\right)=\mathbb{E}_{Z}\!\left[\mathbb{E}_{\bm{X}\mid Z}\!\left[\mathbf{1}_{\{\hat{Y}_{\pi}(Z)\neq y(Z)\}}\,\middle|\,Z\right]\right],
+(1)
+and the expected query cost is given by
+𝖢 ⁡ ( π ) = 𝔼 Z ​ [ 𝔼 𝑿 | Z ​ [ ∑ i ∈ 𝒜 c i ​ ( Z ) ∣ Z ] ] \displaystyle\mathsf{C}(\pi)=\mathbb{E}_{Z}\Big[\mathbb{E}_{\bm{X}\mid Z}\!\Big[\sum_{i\in\mathcal{A}}c_{i}(Z)\mid Z\Big]\Big]
+(2)
+where the inner expectation is over the instrument measurements, conditional on a fixed prompt.
+Since each LLM query uses fresh randomness, we model measurements as independent conditional on a prompt.
+Assumption 1 (Conditional independence of measurements) .
+Conditional on Z = z Z=z , the measurements { X ( i ) } i ∈ ℋ \{X^{(i)}\}_{i\in\mathcal{H}} are jointly independent. Thus, for any ( x i ) i ∈ ℋ (x_{i})_{i\in\mathcal{H}} ,
+Pr ( X ( i ) = x i , ∀ i ∈ ℋ ∣ Z = z ) = ∏ i ∈ ℋ Q X | Z [ i ] ( x i ∣ z ) . \Pr\Big(X^{(i)}=x_{i},\ \forall i\in\mathcal{H}\mid Z=z\Big)=\prod_{i\in\mathcal{H}}Q^{[i]}_{X\mid Z}(x_{i}\mid z).
+At first glance, this may seem to rule out correlated errors observed across language models ( Kim et al., 2025 ) . The distinction is that independence holds within a prompt, whereas error correlation is measured across prompts. We also validate this empirically in Figure 7 .
+3 Optimizing Classification Circuits
+Classification circuits encompass many ways of combining the same instruments. We study one particular criterion for choosing among them, the expected cost–accuracy tradeoff, and show how to construct the resulting circuits for any prompt. We present all proofs in Appendix B .
+Our goal is to find a circuit policy π \pi that best trades off classification error against query cost. We control this tradeoff with a parameter λ ≥ 0 \lambda\geq 0 that weights cost relative to error, and define the objective
+ℒ λ ​ ( π ) = 𝖤 ⁡ ( π ) + λ ​ 𝖢 ​ ( π ) \mathcal{L}_{\lambda}(\pi)=\mathsf{E}(\pi)+\lambda\,\mathsf{C}(\pi) .
+For a given λ \lambda , the optimal policy is
+π λ ⋆ ∈ arg ⁡ min π ∈ Π ​ ℒ λ ​ ( π ) \pi^{\star}_{\lambda}\in\arg\min_{\pi\in\Pi}\mathcal{L}_{\lambda}(\pi)
+(3)
+where Π \Pi denotes the set of all circuit policies described in Definition 2 . We first show that the class Π \Pi can be restricted to a smaller class without loss of optimality with respect to this objective.
+Proposition 1 .
+Any circuit that queries multiple instruments simultaneously has a sequential counterpart that achieves the same probability of error in Equation 1 at the same cost in Equation 2 . Hence an optimal circuit for Equation 3 can always be chosen to query one instrument at a time.
+The optimal solution to Equation 3 can hence be viewed as a sequence of decisions. Among all possible sequential circuits, the dynamic program resulting from the Bellman equations ( Bellman, 1966 ) gives the optimal solution to Equation 3 .
+3.1 Optimal Circuit Setup
+Designing the optimal circuit is equivalent to making sequential query-or-stop decisions. At each step, given the responses observed so far, the policy either selects the next model to query or stops and predicts. The resulting policy defines the optimal circuit. We first introduce the objects that appear in the dynamic program: 1) the state of a circuit, 2) the actions available in each state, and the
+transitions between states.
+State.
+Fix a prompt z z . At any point during the execution of a circuit, the information gathered so far is the set of (instrument, response) pairs observed,
+s = { ( j , x ( j ) ) : j ∈ ℳ ⁡ ( s ) } , \displaystyle s=\{(j,\,x^{(j)}):j\in\mathcal{M}(s)\},
+(4)
+where ℳ ⁡ ( s ) ⊆ ℋ \mathcal{M}(s)\subseteq\mathcal{H} is the set of instruments queried so far. We call s s the state , with 𝒮 \mathcal{S} denoting the set of all possible states. | 𝒮 | = 3 | ℋ | |\mathcal{S}|=3^{|\cal H|} since we assume that each instrument indexed i ∈ ℋ i\in\mathcal{H} can only be queried once 3 3
+3
+Multiple independent queries to the same instrument are added as separate indices in ℋ \mathcal{H} (Remark 1 ). . s 0 = ∅ s_{0}=\varnothing denotes the initial state in which nothing has been queried. Querying an instrument i ∉ ℳ ⁡ ( s ) i\notin\mathcal{M}(s) at state s s , and observing x x moves the circuit to the state s ∪ { ( i , x ) } s\cup\{(i,x)\} .
+Actions.
+In a state s s , the circuit chooses one of two
+actions: (a) stop , and output the Bayes prediction y ^ π ​ ( z ) = arg ⁡ max y ∈ { 0 , 1 } ​ P D ​ ( Y = y ∣ z , s ) \hat{y}_{\pi}(z)=\arg\max_{y\in\{0,1\}}P_{D}(Y=y\mid z,s) , where Y Y denotes the unobserved label y ⁡ ( z ) y(z) , and P D P_{D} denotes the probabilistic model used to estimate the posterior belief, or (b) query an instrument i ∉ ℳ ⁡ ( s ) i\notin\mathcal{M}(s) at cost c i ​ ( z ) c_{i}(z) , observe its response x ( i ) x^{(i)} , and
+move to the state s ∪ { ( i , x ( i ) ) } s\cup\{(i,x^{(i)})\} . If ℳ ⁡ ( s ) = ℋ \mathcal{M}(s)=\mathcal{H} ,
+only stop is available.
+For a fixed prompt z z at state s s , the circuit’s posterior belief on the target label y ⁡ ( z ) = 1 y(z)=1 is given by,
+q z ​ ( s ) = P D ​ ( Y = 1 ∣ z , s ) \displaystyle q_{z}(s)=P_{D}\left(Y=1\mid z,s\right)
+(5)
+If the circuit stops at s s , the optimal prediction is the more likely label, with Bayes error
+e z ​ ( s ) = min ⁡ { q z ​ ( s ) , 1 − q z ​ ( s ) } . e_{z}(s)=\min\{q_{z}(s),1-q_{z}(s)\}.
+(6)
+For a given λ ≥ 0 \lambda\geq 0 , let V λ , z ​ ( s ) V_{\lambda,z}(s) denote the minimum ℒ λ ​ ( π ) \mathcal{L}_{\lambda}(\pi) (for prompt z z ) at state s s . The Bellman equations ( Bellman, 1966 ) , together with Assumption 1 , characterize V λ , z ​ ( s ) V_{\lambda,z}(s) as:
+V λ , z ​ ( s ) \displaystyle V_{\lambda,z}(s)
+= min ⁡ { e z ​ ( s ) ⏟ 𝗉𝗋𝖾𝖽𝗂𝖼𝗍 , min i ∉ ℳ ⁡ ( s ) ⁡ [ λ ​ c i ​ ( z ) + ∑ x ∈ { 0 , 1 } Q X | Z [ i ] ​ ( x | z ) ​ V λ , z ​ ( s ∪ ( i , x ) ) ] ⏟ 𝗊𝗎𝖾𝗋𝗒 ⁡ ( i ) } \displaystyle=\min\left\{\underbrace{e_{z}(s)}_{\mathsf{predict}},\;\min_{i\notin\mathcal{M}(s)}\underbrace{\left[\lambda c_{i}(z)+\sum_{x\in\{0,1\}}Q^{[i]}_{X|Z}(x|z)\,V_{\lambda,z}\!\bigl(s\cup(i,x)\bigr)\right]}_{\mathsf{query}(i)}\right\}
+(7)
+The first term in Equation 7 is the terminal error for stopping and predicting the label at state s s . The second term selects the unqueried instrument with the lowest expected loss, paying λ ​ c i ​ ( z ) \lambda c_{i}(z) immediately and continuing from the subsequent state.
+V λ , z ​ ( s ) V_{\lambda,z}(s) values can be computed exactly by backward induction over n n stages. For a fixed prompt z z and weight λ \lambda , solving Equation 7 yields the optimal circuit policy: 1) which models to query, 2) in what order, and 3) when to stop. This optimal policy is the solution π λ ∗ \pi^{*}_{\lambda} in Equation 3 .
+Figure 3 : Generating circuits. We first fit a probabilistic model from labeled prompts and instrument measurements ( Section 3.2 ). At inference time, a prompt embedding is passed through this model, and a dynamic program generates a circuit that adaptively queries instruments and decides when to stop ( Equation 7 ).
+3.2 Generating circuits for unseen prompts: LMCircuit
+Notice that the optimal policy is determined entirely by the label posterior at each state q z ​ ( s ) q_{z}(s) and the instrument output distributions Q X | Z [ i ] Q^{[i]}_{X|Z} for a given prompt z z . This suggests a two-step approach for solving Equation 7 : (i) estimate the probabilities q z ​ ( s ) = P D ​ ( Y = 1 | s , z ) q_{z}(s)=P_{D}(Y=1|s,z) , ∀ s ∈ 𝒮 \forall s\in\mathcal{S} and Q X | Z [ i ] ( ⋅ | z ) Q^{[i]}_{X|Z}(\cdot|z) , for a given z z from a training set and (ii) plug the estimates into the dynamic program solver. The training set contains prompts, their ground truth labels, and measurements from instruments in ℋ \mathcal{H} . To estimate the probabilities, we represent each prompt z z by an embedding ϕ ⁡ ( z ) ∈ ℝ d \phi(z)\in\mathbb{R}^{d} and fit a model f θ f_{\theta} with outputs,
+f θ ​ ( ϕ ⁡ ( z ) , s ) = ( η θ ​ ( ϕ ⁡ ( z ) , s ) , ν θ ( 1 ) ​ ( ϕ ⁡ ( z ) , s ) , … , ν θ ( n ) ​ ( ϕ ⁡ ( z ) , s ) ) , ∀ s ∈ 𝒮 f_{\theta}(\phi(z),s)=\left(\eta_{\theta}(\phi(z),s),\>\nu_{\theta}^{(1)}(\phi(z),s),\>\ldots,\nu_{\theta}^{(n)}(\phi(z),s)\right),\quad\forall s\in\mathcal{S}
+where η θ ​ ( ϕ ⁡ ( z ) , s ) ≈ Pr ⁡ ( Y = 1 ∣ ϕ ⁡ ( z ) , s ) \eta_{\theta}(\phi(z),s)\approx\Pr\!\left(Y=1\mid\phi(z),s\right) is an estimate of the label posterior, while ν θ ( i ) ​ ( ϕ ⁡ ( z ) , s ) ≈ Pr ⁡ ( X ( i ) = 1 ∣ ϕ ⁡ ( z ) , s ) \nu_{\theta}^{(i)}(\phi(z),s)\approx\Pr\!\left(X^{(i)}=1\mid\phi(z),s\right) is an estimate of the instrument probabilities. We then use the above estimates to compute the dynamic program for any new prompt. Since the distributions do not depend on λ \lambda , the same fitted model generates circuits that operate at different points of the cost–accuracy frontier.
+Remark 2 (Zero-cost prediction) .
+At the initial state s 0 = ∅ s_{0}=\varnothing , the LMCircuit can give a prediction on the output label for a prompt z z without querying any instrument, i.e., at zero cost, with Pr ⁡ ( Y = 1 ∣ z ) ≈ η θ ​ ( ϕ ⁡ ( z ) , s 0 ) \Pr(Y=1\mid z)\approx\eta_{\theta}(\phi(z),s_{0}) ,
+where η θ ​ ( ϕ ⁡ ( z ) , s 0 ) \eta_{\theta}(\phi(z),s_{0}) is an output of f θ ​ ( ϕ ⁡ ( z ) , s 0 ) f_{\theta}(\phi(z),s_{0}) .
+The fitted model f θ f_{\theta} can then run completely on CPU. Hence, it provides a practical and lightweight way to organize how inference is allocated and optimized over LLM classifiers.
+4 Analysis of the Optimal Circuit
+This section studies the properties of optimal circuits. For a fixed instrument pool ℋ \mathcal{H} , we first characterize the two endpoints of the error–cost tradeoff: (i) when it is optimal to make no queries, and (ii) what the best possible accuracy is using all the instruments. We then ask how adding one additional instrument to an existing pool improves this maximum accuracy, which yields practical guidance for assembling a pool of instruments. Finally, we derive scaling laws for circuits, i.e., the rate at which the error of the optimal circuit decreases with query cost on a prompt, and how this rate changes once averaged over a population of prompts with varying difficulty . All proofs are provided in Appendix B of the appendix.
+4.1 Fundamental Limits of Circuits for a Fixed and Finite Pool
+In this section, we consider the two extreme circuits for a given prompt z z and an instrument pool ℋ \mathcal{H} : 1) Zero-cost circuit , where no instrument is queried and the output is predicted based on the prior belief, and 2) Full-cost circuit , where all instruments in ℋ \mathcal{H} are queried.
+For a prompt z z , consider the circuit π 0 ​ ( z ) \pi_{0}(z) that stops at state s 0 = ∅ s_{0}=\varnothing , i.e., before any instrument is queried. It then predicts the more likely label according to its prior belief q z ​ ( ∅ ) = P D ​ ( Y = 1 ∣ z ) q_{z}(\varnothing)=P_{D}(Y=1\mid z) , and incurs the Bayes error 𝖤 π 0 ​ ( z ) = min y ∈ { 0 , 1 } ⁡ P D ​ ( Y = y ∣ z ) \mathsf{E}_{\pi_{0}}(z)=\min_{y\in\{0,1\}}P_{D}(Y=y\mid z) .
+Proposition 2 (Optimality of the zero-cost circuit) .
+The zero-cost circuit π 0 ​ ( z ) \pi_{0}(z) is optimal for prompt z z if and only if λ ≥ λ LB ( z ) ≔ sup π : 𝖢 π ​ ( z ) > 0 [ 𝖤 π 0 ​ ( z ) − 𝖤 π ​ ( z ) ] + 𝖢 π ​ ( z ) \lambda\geq\lambda_{\mathrm{LB}}(z)\coloneq\sup_{\pi:\mathsf{C}_{\pi}(z)>0}\frac{\bigl[\mathsf{E}_{\pi_{0}}(z)-\mathsf{E}_{\pi}(z)\bigr]_{+}}{\mathsf{C}_{\pi}(z)} .
+Letting c min ​ ( z ) ≔ min i ∈ ℋ ⁡ c i ​ ( z ) c_{\min}(z)\coloneq\min_{i\in\mathcal{H}}c_{i}(z) , we have that λ ≥ 1 2 ​ c min ​ ( z ) \lambda\geq\frac{1}{2c_{\min}(z)} is sufficient for π 0 \pi_{0} to be optimal.
+Proposition 2 states that for all λ \lambda exceeding a certain threshold, it is optimal to make no queries. At the other endpoint, λ = 0 \lambda=0 , the circuit uses all measurements in ℋ \mathcal{H} to maximize accuracy, and its minimum error is the Bayes error after observing the full instrument pool. Let 𝑿 ( ℋ ) \bm{X}^{(\mathcal{H})} denote the measurements obtained by querying every instrument in ℋ \mathcal{H} .
+Proposition 3 (Minimum error for full-cost circuit) .
+For a prompt z z and instrument pool ℋ \mathcal{H} , the minimum achievable error is
+𝖤 min ​ ( z , ℋ ) \displaystyle\mathsf{E}_{\min}(z,\mathcal{H})
+= 𝔼 𝑿 ( ℋ ) | Z = z [ min y ∈ { 0 , 1 } P D ( Y = y | z , 𝑿 ( ℋ ) ) ] \displaystyle=\mathbb{E}_{\bm{X}^{(\mathcal{H})}\mid Z=z}\left[\min_{y\in\{0,1\}}P_{D}\!\left(Y=y\,\middle|\,z,\bm{X}^{(\mathcal{H})}\right)\right]
+(8)
+As a result, 𝖤 min ​ ( z , ℋ ) \mathsf{E}_{\min}(z,\mathcal{H}) is a lower bound on the error of any circuit constructed from ℋ \mathcal{H} for any λ \lambda . This limit allows us to answer how much performance can improve when another instrument becomes available. Denote this instrument by i 𝗇𝖾𝗐 i_{\mathsf{new}} , and let the corresponding distribution generating observations be Q X | Z [ i 𝗇𝖾𝗐 ] ( ⋅ | z ) Q^{[i_{\mathsf{new}}]}_{X|Z}(\cdot|z) . Then, the new pool is denoted by ℋ 𝗇𝖾𝗐 = ℋ ∪ i 𝗇𝖾𝗐 \mathcal{H}_{\mathsf{new}}=\mathcal{H}\cup i_{\mathsf{new}} . The next result characterizes the value of adding a new instrument to the existing pool.
+Proposition 4 (Gain from adding one extra instrument) .
+Over Z ∼ 𝒫 Z Z\sim\mathcal{P}_{Z} ,
+𝔼 Z ​ [ 𝖤 ⁡ ( Z , ℋ ) − 𝖤 ⁡ ( Z , ℋ new ) ] ≤ 1 2 I ( Y ; X ( i new ) | 𝑿 ( ℋ ) , Z ) \mathbb{E}_{Z}[\mathsf{E}(Z,\mathcal{H})-\mathsf{E}(Z,\mathcal{H}_{\mathrm{new}})]\leq\sqrt{\frac{1}{2}I\!\left(Y;X^{(i_{\mathrm{new}})}\,\middle|\,\bm{X}^{(\mathcal{H})},Z\right)}
+(9)
+where the mutual information is computed under the joint distribution of
+( Y , 𝐗 ( ℋ ) , X ( i new ) , Z ) (Y,\bm{X}^{(\mathcal{H})},X^{(i_{\mathrm{new}})},Z) .
+What makes a new instrument useful?
+Its value is not determined by the instrument’s accuracy but by the information it provides about the target beyond the measurements already available.
+Practical significance of Proposition 4 .
+To generate the circuit for any prompt z z , we use a labeled training set to estimate the joint distribution of ( Y , 𝑿 ( ℋ ) ) (Y,\bm{X}^{(\mathcal{H})}) , conditional on z z . As the pool size | ℋ | |\mathcal{H}| increases, this joint distribution becomes more difficult to estimate, which can degrade the performance of the resulting dynamic program. At the same time, a larger pool provides more opportunities to obtain complementary measurements, enabling more powerful circuits for a wider range of prompts. Pool construction must therefore balance the additional information supplied by new instruments against the statistical cost of estimating their joint behavior. Proposition 4 suggests a greedy strategy for constructing a task-specific instrument pool. Given a candidate pool of N N instruments, we can initialize ℋ \mathcal{H} with a low-cost instrument and iteratively add the candidate that maximizes the conditional-information bound in Equation 9 , until the additional gains are non-significant. The resulting pool can be used in the dynamic program. 4 4
+4
+The mutual information term can be estimated using an LMCircuit model ( Section 3.2 ). If fitting the model is impractical due to data constraints, one can estimate a lower-order proxy, e.g., conditional Pearson correlation. Figure 12 shows that greedy selection by conditional information reaches the full-pool frontier with 2–3 instruments on the four tasks shown, and dominates accuracy-first, cheapest-first, and random ordering methods of building the pool.
+4.2 Scaling Laws for Classification Circuits
+In this section, we characterize the resulting relationship between optimal error and expected query cost through its error–cost scaling law . In particular, we study how the error probability decreases with query cost as λ → 0 \lambda\to 0 and consider its implications in a given population of prompts.
+For each instrument i ∈ ℋ i\in\mathcal{H} , its accuracy on prompt z z is Q X | Z [ i ] ​ ( y ⁡ ( z ) ∣ z ) Q^{[i]}_{X\mid Z}(y(z)\mid z) , which we denote by a i ​ ( z ) a_{i}(z) . For the asymptotic analysis, we make the following assumptions: (1) each instrument can be queried arbitrarily many times, (2) every instrument is at least as accurate as random guessing on every prompt, i.e., a i ​ ( z ) ∈ [ 1 / 2 , 1 ) a_{i}(z)\in[1/2,1) for all i ∈ ℋ i\in\mathcal{H} and z ∈ 𝒵 z\in\mathcal{Z} , and (3) the response distribution is symmetric with respect to the ground-truth label: conditional on H y : y ⁡ ( z ) = y H_{y}:y(z)=y , an independent call to instrument i i returns the correct label y y with probability a i ​ ( z ) a_{i}(z) . While the optimal query and stopping decisions continue to satisfy the Bellman equation in Equation 7 , they can no longer be realized using backward induction in this asymptotic regime.
+For a fixed prompt z z , it is useful to view the sequential decision problem as a hypothesis test between H 0 : y ⁡ ( z ) = 0 H_{0}:\ y(z)=0 and H 1 : y ⁡ ( z ) = 1 H_{1}:\ y(z)=1 . Each collected measurement provides information about which label is correct. A measurement from instrument i i is distributed as Ber ⁡ ( 1 − a i ​ ( z ) ) \operatorname{Ber}(1-a_{i}(z)) under H 0 H_{0} and Ber ⁡ ( a i ​ ( z ) ) \operatorname{Ber}(a_{i}(z)) under H 1 H_{1} . Then, the KL-divergence d i ​ ( z ) = D KL ​ ( Ber ⁡ ( a i ​ ( z ) ) ∥ Ber ⁡ ( 1 − a i ​ ( z ) ) ) d_{i}(z)=D_{\mathrm{KL}}\!\left(\operatorname{Ber}(a_{i}(z))\,\middle\|\,\operatorname{Ber}(1-a_{i}(z))\right) quantifies the expected information provided by one measurement for distinguishing the two hypotheses.
+Because instruments differ in cost, we normalize this quantity and define the information rate of instrument i i to be: I i ​ ( z ) ≔ d i ​ ( z ) c i ​ ( z ) I_{i}(z)\coloneq\frac{d_{i}(z)}{c_{i}(z)} and maximum information rate of the model pool to be: I ⁡ ( z ) ≔ max i ∈ ℋ ⁡ I i ​ ( z ) I(z)\coloneq\max_{i\in\mathcal{H}}I_{i}(z) .
+Thus I ⁡ ( z ) I(z) measures the largest information rate available for classifying prompt z z .
+For a fixed prompt z z , let 𝖤 λ ​ ( z ) \mathsf{E}_{\lambda}(z) and 𝖢 λ ​ ( z ) \mathsf{C}_{\lambda}(z) denote the error probability and expected query cost of the optimal circuit for parameter λ \lambda . As λ \lambda approaches zero, the circuit places progressively less weight on query cost and can spend more to reduce its error. For 0 < I ⁡ ( z ) < ∞ 0<I(z)<\infty , the optimal error approaches zero, but doing so requires an expected cost that grows without bound. This raises the question of how quickly error decreases as more cost is incurred. The following result shows that the decay is exponential with cost, at rate I ⁡ ( z ) I(z) .
+Theorem 1 (Scaling law for a fixed prompt) .
+For every prompt z z with 0 < I ⁡ ( z ) < ∞ 0<I(z)<\infty , we have that
+lim λ ↓ 0 − log ⁡ 𝖤 λ ​ ( z ) 𝖢 λ ​ ( z ) = I ⁡ ( z ) . \lim_{\lambda\downarrow 0}\frac{-\log\mathsf{E}_{\lambda}(z)}{\mathsf{C}_{\lambda}(z)}=I(z).
+(10)
+The information rate also determines how the optimal
+circuit allocates its queries.
+How does the optimal circuit allocate its queries?
+As λ ↓ 0 \lambda\downarrow 0 , the optimal circuit spends nearly all of its expected cost on instruments with the largest information rate, I i ​ ( z ) = I ​ ( z ) I_{i}(z)=I(z) ; see Proposition 5 .
+For a fixed λ \lambda , the optimal next query can still depend on the measurements collected so far and on its cost, so the optimal circuit may query several instruments. However, as λ ↓ 0 \lambda\downarrow 0 , the fraction of expected query cost spent on instruments with I i ​ ( z ) < I ​ ( z ) I_{i}(z)<I(z) tends to zero.
+This result characterizes the optimal circuit for a fixed prompt as λ ↓ 0 \lambda\downarrow 0 . The information rate I ⁡ ( z ) I(z) determines the rate of error decay. It then offers a natural notion of prompt “difficulty”: a prompt with smaller I ⁡ ( z ) I(z) requires more query cost to attain the same error level.
+Now consider a population of prompts Z ∼ 𝒫 Z Z\sim\mathcal{P}_{Z} , and let 𝖤 λ \mathsf{E}_{\lambda} and 𝖢 λ \mathsf{C}_{\lambda} denote the average error probability and expected query cost of the optimal circuit. While Theorem 1 establishes exponential error decay for each prompt with I ⁡ ( z ) > 0 I(z)>0 , the population may contain prompts on which every instrument performs only slightly better than random guessing. Thus, information rates can be arbitrarily close to zero across the population. The population error–cost tradeoff therefore depends on the
+distribution of these rates, as characterized by the following theorem.
+Theorem 2 (Scaling law across prompts) .
+Assume that, for almost every prompt z z , the prior Bayes
+error 𝖤 π 0 ​ ( z ) \mathsf{E}_{\pi_{0}}(z) is bounded below by a uniform
+positive constant, query costs are uniformly bounded above, and 0 < I ⁡ ( z ) < ∞ 0<I(z)<\infty . Then
+lim λ ↓ 0 − log ⁡ 𝖤 λ 𝖢 λ = ( 𝔼 ⁡ [ 1 I ⁡ ( Z ) ] ) − 1 , \lim_{\lambda\downarrow 0}\frac{-\log\mathsf{E}_{\lambda}}{\mathsf{C}_{\lambda}}=\left(\mathbb{E}\left[\frac{1}{I(Z)}\right]\right)^{-1},
+(11)
+where the right-hand side is zero if the expectation is infinite.
+An important consequence is that exponential error decay for almost every prompt need not imply exponential decay with average cost across the population. To characterize the resulting error–cost tradeoff even further, we can consider how the probability of small information rates decreases as they approach zero.
+Corollary 1 (Scaling law across prompts under a tail assumption) .
+Under the conditions of Theorem 2 , suppose that,
+for some α > 0 \alpha>0 ,
+Pr ⁡ ( I ⁡ ( Z ) ≤ r ) ≍ r α as ​ r ↓ 0 , \Pr(I(Z)\leq r)\asymp r^{\alpha}\qquad\text{as }r\downarrow 0,
+where r > 0 r>0 5 5
+5
+The notation f ⁡ ( t ) ≍ g ⁡ ( t ) f(t)\asymp g(t) as t → 0 t\to 0 means that
+f ⁡ ( t ) / g ⁡ ( t ) f(t)/g(t) is bounded above and below by positive
+constants for all sufficiently small t > 0 t>0 . . In this case, 𝔼 ⁡ [ 1 / I ⁡ ( Z ) ] \mathbb{E}[1/I(Z)] is finite for α > 1 \alpha>1 . Then, as λ ↓ 0 \lambda\downarrow 0 :
+(i)
+If α > 1 \alpha>1 , the error decays exponentially with
+cost, at the rate given in Theorem 2 .
+(ii)
+If α = 1 \alpha=1 , the error decays at a
+stretched-exponential rate, − log ⁡ 𝖤 λ ≍ 𝖢 λ . -\log\mathsf{E}_{\lambda}\asymp\sqrt{\mathsf{C}_{\lambda}}.
+(iii)
+If 0 < α < 1 0<\alpha<1 , the error decays polynomially, 𝖤 λ ≍ 𝖢 λ − α 1 − α \mathsf{E}_{\lambda}\asymp\mathsf{C}_{\lambda}^{-\frac{\alpha}{1-\alpha}} .
+The results point to an obvious limit of inference-time computation: even an optimal circuit cannot compensate for a lack of informative measurements. Improving the instruments on the hardest prompts can therefore change the scaling law itself.
+5 Experiments
+Setup. We consider seven tasks: AgentJudgeBench ( Verma et al., 2026 ) for judging whether an AI agent’s planned tool calls are correct, BeaverTails ( Ji et al., 2023 ) for safety classification, BIG-Bench Hard ( Suzgun et al., 2023 ) for reasoning questions, Decision Index ( Multimodal Art, 2026 ) for decision tasks, HealthBench ( Arora et al., 2025 ) to evaluate whether a text satisfies a physician’s rubric, LMArena ( Chiang et al., 2024 ) for classifying human rater preference, and PolitiCause ( Garcia-Corral et al., 2024 ) for detecting causality in political text. For each task, a training set is used to estimate the LMCircuit (as described in Section 3.2 ) required by the dynamic program. We then vary the parameter λ \lambda on a validation set to obtain circuits at different operating points and report test accuracy against average query cost. Within each task, costs are normalized relative to the most expensive instrument. Additional details are in Appendix C .
+We benchmark against (1) Predictive routers , including RouteLLM ( Ong et al., 2025 ) , HybridLLM ( Ding et al., 2024 ) , and CARROT ( Somerstep et al., 2025 ) ; (2) Model cascades , including Cascade Routing ( Dekoninck et al., 2025 ) , Consistency Cascade ( Yue et al., 2024 ) , Cascaded Selective ( Jung et al., 2025 ) , and FrugalGPT ( Chen et al., 2024b ) ; (3) Sampling methods , namely Adaptive-Consistency ( Aggarwal et al., 2023 ) ; and (4) individual instruments and majority voting.
+5.1 Results
+Figure 4 : LMCircuit improves the cost-accuracy frontier over routing and cascading baselines. As λ \lambda decreases and additional queries become less costly, the circuits make more calls and also change which instruments they use (see lower panel). The allocations differ substantially across tasks, indicating that the value of an instrument depends on the classification problem and on other measurements available to the circuit.
+Figure 5 : LMCircuit is substantially faster to construct than most routing and cascading baselines. Across all seven tasks, LMCircuit is trained in 1–3 minutes, while some baselines require minutes to hours.
+LMCircuit improves the cost–accuracy frontier. Across the seven tasks, the learned circuits attain higher accuracy than every individual instrument and than the routing and cascade baselines at nearly all budgets ( Figure 4 ). The choice of instruments that the circuit uses depends on the task and is not predictable from cost or accuracy alone. On LMArena, the two mid-cost Gemma models (26B and 31B) are the most informative per unit cost, and the circuit queries almost exclusively these two for most budgets. On BeaverTails, the cheapest model, Gemma 4B, carries the most information per unit cost ( Figure 11 ). Hence, the circuit queries it on most prompts and reserves the expensive models for the highest budgets.
+LMCircuit provides calibrated decisions. For a given prompt z z , the distribution estimator outputs an estimate of Pr ⁡ ( Y = 1 ∣ z ) \Pr(Y=1\mid z) . Based on its confidence, LMCircuit assesses whether the prompt is easy or hard, selects the instrument path accordingly, and updates its posterior belief after each measurement. As expected, under the same cost-accuracy parameter λ \lambda , harder prompts require more model calls ( Figure 10 ). An advantage of our method is that LMCircuit ’s prior alone can yield a label prediction without querying any instrument . Therefore, at the low-cost end of the frontier, the average query cost can fall below that of the cheapest individual instrument. Figure 6 further shows that LMCircuit produces better calibrated decisions on unseen data.
+LMCircuit learns whether more queries help and how reliable each instrument is. For any given prompt, initially, the circuit predicts its label from the prompt embedding alone, without querying any instrument (Remark 2 ). We call this the embedding prediction . To investigate the impact of LLM calls on top of embedding predictions, we organize unseen prompts by the fraction of recorded calls that return the correct label ( Figure 9 ). On noisy prompts, where this fraction lies between ( 1 / 2 , 1 ) (1/2,1) , the circuit at budget 1 improves the accuracy of embedding prediction by 5%–44%. On prompts where every call is correct, it matches majority voting (within 1.3% accuracy difference) while using 38%–86% fewer calls.
+The fitted model of LMCircuit is accurate about the instruments. The dynamic program relies on the fitted model’s estimates of how each instrument responds on a given prompt. Figure 8 shows that, without access to test labels, the fitted model predicts 1) each instrument’s accuracy on unseen prompts, 2) the correlations of the instruments’ answers and errors across prompts. Across the seven tasks, the implied correlations between instruments’ answers, and between their errors, are within 4%–17% of the measured values, and the implied accuracy of each instrument is within 1.2%–3.6% of its measured accuracy.
+LMCircuit is easy and fast to implement. Our method is less complex than many baselines ( Figure 5 ), attaining significantly shorter training times. The estimation step uses a simple neural network together with pretrained embeddings of prompts. We do not require token probabilities or training larger models (such as DistilBERT or DeBERTa) for each instrument as in other methods, and the dynamic program is cheap for moderate pools of models. We note, however, that the dynamic program grows exponentially with the number of models. In many applications, this is less restrictive than it may seem, since a small, well-chosen pool of classifiers is often sufficient (see Section 4.1 for guidance on model pool selection).
+Types of noise in measurements: A measurement instrument is subject to two types of noise: (1) stochastic noise , errors that can be reduced through repeated or correlated measurements, and (2) systematic noise , errors that are inherent to how the instrument was trained. Our results show that the dynamic program automatically adapts to both. It selects highly correlated models to reduce (1) when queried models are moderately accurate ( ∼ \sim 75–80%, Figure 13 ), and less correlated models to reduce (2) when queried models are less accurate ( ∼ \sim 63–66%, Figure 14 ).
+6 Conclusion
+As LLM classifiers become components of larger systems, a practical question is how inference should be organized and allocated among them to maximize accuracy at the lowest expected cost. We take a decision-theoretic view of this problem, using a lightweight probabilistic model to characterize the available classifiers and a dynamic program to decide what to query and when to stop. We are then able to generate circuits for any prompt while offering control on the error–cost tradeoff. One challenge is to extend this to larger pools of general measurement instruments with potential feedback among them. More broadly, our framework can broaden access to high-quality and automated decision-making for practitioners without frontier-model budgets.
+Acknowledgments
+This work was supported in part by the National Science Foundation under Grant No: 2506573, CIF-2231707, CIF-2312667, and a Gift by Coefficient Giving. Hadi Khalaf is supported by a Kempner Graduate Research Fellowship which has been made possible by a gift
+from the Chan Zuckerberg Initiative Foundation to establish the Kempner Institute for the Study of Natural and Artificial Intelligence at Harvard University. The Flatiron Institute is funded by the Simons Foundation.
+References
+Agarwal et al. (2025)
+Sandhini Agarwal, Lama Ahmad, Jason Ai, Sam Altman, Andy Applebaum, Edwin
+Arbus, Rahul K Arora, Yu Bai, Bowen Baker, Haiming Bao, et al.
+gpt-oss-120b & gpt-oss-20b model card.
+arXiv preprint arXiv:2508.10925 , 2025.
+Aggarwal et al. (2023)
+Pranjal Aggarwal, Aman Madaan, Yiming Yang, et al.
+Let’s sample step by step: Adaptive-consistency for efficient
+reasoning and coding with llms.
+In Proceedings of the 2023 Conference on Empirical Methods in
+Natural Language Processing , pp. 12375–12396, 2023.
+Aggarwal et al. (2024)
+Pranjal Aggarwal, Aman Madaan, Ankit Anand, Srividya Pranavi Potharaju, Swaroop
+Mishra, Pei Zhou, Aditya Gupta, Dheeraj Rajagopal, Karthik Kappaganthu,
+Yiming Yang, et al.
+Automix: Automatically mixing language models.
+Advances in Neural Information Processing Systems ,
+37:131000–131034, 2024.
+Arora et al. (2025)
+Rahul K. Arora, Jason Wei, Rebecca Soskin Hicks, Preston Bowman, Joaquin
+Quiñonero-Candela, Foivos Tsimpourlas, Michael Sharman, Meghan Shah, Andrea
+Vallone, Alex Beutel, Johannes Heidecke, and Karan Singhal.
+Healthbench: Evaluating large language models towards improved human
+health, 2025.
+Bellman (1966)
+Richard Bellman.
+Dynamic programming.
+Science , 153(3731):34–37, 1966.
+Belloni et al. (2026)
+Alexandre Belloni, Yan Chen, and Yehua Wei.
+Online pandora’s box for contextual llm cascading, 2026.
+Bouchard (2026)
+Dylan Bouchard.
+Is escalation worth it? a decision-theoretic characterization of llm
+cascades, 2026.
+Breiman (1996)
+Leo Breiman.
+Bagging predictors.
+Machine learning , 24(2):123–140, 1996.
+Brennan (1992)
+Robert L Brennan.
+Generalizability theory.
+Educational Measurement: Issues and Practice , 11(4):27–34, 1992.
+Bretagnolle & Huber (1979)
+Jean Bretagnolle and Catherine Huber.
+Estimation des densités: risque minimax.
+Zeitschrift für Wahrscheinlichkeitstheorie und verwandte
+Gebiete , 47(2):119–137, 1979.
+Brown et al. (2020)
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla
+Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell,
+Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon
+Child, Aditya Ramesh, Daniel Ziegler, Jeffrey Wu, Clemens Winter, Chris
+Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess,
+Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever,
+and Dario Amodei.
+Language models are few-shot learners.
+In H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin
+(eds.), Advances in Neural Information Processing Systems , volume 33,
+pp. 1877–1901. Curran Associates, Inc., 2020.
+Chen et al. (2024a)
+Lingjiao Chen, Jared Quincy Davis, Boris Hanin, Peter Bailis, Ion Stoica, Matei
+Zaharia, and James Zou.
+Are more LLM calls all you need? towards the scaling properties of
+compound AI systems.
+In The Thirty-eighth Annual Conference on Neural Information
+Processing Systems , 2024a.
+Chen et al. (2024b)
+Lingjiao Chen, Matei Zaharia, and James Zou.
+FrugalGPT: How to use large language models while reducing cost and
+improving performance.
+Transactions on Machine Learning Research , 2024b.
+ISSN 2835-8856.
+Chernoff (1959)
+Herman Chernoff.
+Sequential design of experiments.
+In Breakthroughs in Statistics: Methodology and Distribution ,
+pp. 345–360. Springer, 1959.
+Chiang et al. (2024)
+Wei-Lin Chiang, Lianmin Zheng, Ying Sheng, Anastasios N. Angelopoulos, Tianle
+Li, Dacheng Li, Banghua Zhu, Hao Zhang, Michael I. Jordan, Joseph E.
+Gonzalez, and Ion Stoica.
+Chatbot arena: an open platform for evaluating llms by human
+preference.
+In Proceedings of the 41st International Conference on Machine
+Learning , ICML’24. JMLR.org, 2024.
+Cobbe et al. (2021)
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz
+Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano,
+Christopher Hesse, and John Schulman.
+Training verifiers to solve math word problems, 2021.
+Dawid & Skene (1979)
+Alexander Philip Dawid and Allan M Skene.
+Maximum likelihood estimation of observer error-rates using the em
+algorithm.
+Journal of the Royal Statistical Society: Series C (Applied
+Statistics) , 28(1):20–28, 1979.
+DeGroot (1962)
+Morris H DeGroot.
+Uncertainty, information, and sequential experiments.
+The Annals of Mathematical Statistics , 33(2):404–419, 1962.
+Dekoninck et al. (2025)
+Jasper Dekoninck, Maximilian Baader, and Martin Vechev.
+A unified approach to routing and cascading for LLMs.
+In Aarti Singh, Maryam Fazel, Daniel Hsu, Simon Lacoste-Julien, Felix
+Berkenkamp, Tegan Maharaj, Kiri Wagstaff, and Jerry Zhu (eds.),
+Proceedings of the 42nd International Conference on Machine Learning ,
+volume 267 of Proceedings of Machine Learning Research , pp. 12987–13010. PMLR, 13–19 Jul 2025.
+Dietterich (2000)
+Thomas G Dietterich.
+Ensemble methods in machine learning.
+In International workshop on multiple classifier systems , pp. 1–15. Springer, 2000.
+Ding et al. (2024)
+Dujian Ding, Ankur Mallick, Chi Wang, Robert Sim, Subhabrata Mukherjee, Victor
+Ruhle, Laks V. S. Lakshmanan, and Ahmed Hassan Awadallah.
+Hybrid LLM: Cost-efficient and quality-aware query routing.
+In International Conference on Learning Representations , 2024.
+Feng et al. (2025)
+Tao Feng, Yanzhen Shen, and Jiaxuan You.
+Graphrouter: A graph-based router for llm selections.
+In Y. Yue, A. Garg, N. Peng, F. Sha, and R. Yu (eds.),
+International Conference on Learning Representations , volume 2025,
+pp. 26186–26203, 2025.
+Garcia-Corral et al. (2024)
+Paulina Garcia-Corral, Hannah Béchara, Ran Zhang, and Slava Jankin.
+Politicause: An annotation scheme and corpus for causality in
+political texts.
+In Proceedings of the 2024 Joint International Conference on
+Computational Linguistics, Language Resources and Evaluation (LREC-COLING
+2024) , pp. 12836–12845, 2024.
+Goel et al. (2025)
+Shashwat Goel, Joschka Strüber, Ilze Amanda Auzina, Karuna K Chandra,
+Ponnurangam Kumaraguru, Douwe Kiela, Ameya Prabhu, Matthias Bethge, and Jonas
+Geiping.
+Great models think alike and this undermines AI oversight.
+In Forty-second International Conference on Machine Learning ,
+2025.
+Golovin & Krause (2011)
+Daniel Golovin and Andreas Krause.
+Adaptive submodularity: Theory and applications in active learning
+and stochastic optimization.
+Journal of Artificial Intelligence Research , 42:427–486, 2011.
+doi: 10.1613/jair.3278 .
+Guo et al. (2026)
+Y. Guo, Stefanus Jasin, and C. A. A. Lin.
+Congestion-aware static LLM cascades: Analysis of a steady-state
+framework.
+SSRN preprint 6759238 , 2026.
+Haldar & Hockenmaier (2025)
+Rajarshi Haldar and Julia Hockenmaier.
+Rating roulette: Self-inconsistency in LLM-as-a-judge frameworks.
+In Christos Christodoulopoulos, Tanmoy Chakraborty, Carolyn Rose, and
+Violet Peng (eds.), Findings of the Association for Computational
+Linguistics: EMNLP 2025 , pp. 24986–25004, Suzhou, China, November 2025.
+Association for Computational Linguistics.
+ISBN 979-8-89176-335-7.
+doi: 10.18653/v1/2025.findings-emnlp.1361 .
+Halterman & Keith (2025)
+Andrew Halterman and Katherine A. Keith.
+Codebook llms: Evaluating llms as measurement tools for political
+science concepts.
+Political Analysis , 34(2):188–204, 2025.
+ISSN 1476-4989.
+doi: 10.1017/pan.2025.10017 .
+Han et al. (2024)
+Seungju Han, Kavel Rao, Allyson Ettinger, Liwei Jiang, Bill Yuchen Lin, Nathan
+Lambert, Yejin Choi, and Nouha Dziri.
+Wildguard: Open one-stop moderation tools for safety risks,
+jailbreaks, and refusals of llms.
+Advances in neural information processing systems ,
+37:8093–8131, 2024.
+Hay et al. (2012)
+Nicholas Hay, Stuart Russell, David Tolpin, and Solomon Eyal Shimony.
+Selecting computations: Theory and applications, 2012.
+Hu et al. (2024)
+Qitian Jason Hu, Jacob Bieker, Xiuyu Li, Nan Jiang, Benjamin Keigwin, Gaurav
+Ranganath, Kurt Keutzer, and Shriyash Kaustubh Upadhyay.
+Routerbench: A benchmark for multi-LLM routing system.
+In Agentic Markets Workshop at ICML 2024 , 2024.
+Huang et al. (2026a)
+Baihe Huang, Shanda Li, Tianhao Wu, Yiming Yang, Ameet Talwalkar, Kannan
+Ramchandran, Michael I. Jordan, and Jiantao Jiao.
+Sample complexity and representation ability of test-time scaling
+paradigms.
+In The Fourteenth International Conference on Learning
+Representations , 2026a.
+Huang et al. (2025)
+Hui Huang, Xingyuan Bu, Hongli Zhou, Yingqi Qu, Jing Liu, Muyun Yang, Bing Xu,
+and Tiejun Zhao.
+An empirical study of llm-as-a-judge for llm evaluation: Fine-tuned
+judge model is not a general substitute for gpt-4.
+In Findings of the Association for Computational Linguistics:
+ACL 2025 , pp. 5880–5895, 2025.
+Huang et al. (2026b)
+Jingkai Huang, Will Ma, and Zhengyuan Zhou.
+Optimal bayesian stopping for efficient inference of consistent LLM
+answers.
+In Forty-third International Conference on Machine Learning ,
+2026b.
+Inan et al. (2023)
+Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi Rungta, Krithika Iyer,
+Yuning Mao, Michael Tontchev, Qing Hu, Brian Fuller, Davide Testuggine, and
+Madian Khabsa.
+Llama guard: Llm-based input-output safeguard for human-ai
+conversations, 2023.
+Ji et al. (2023)
+Jiaming Ji, Mickel Liu, Josef Dai, Xuehai Pan, Chi Zhang, Ce Bian, Boyuan Chen,
+Ruiyang Sun, Yizhou Wang, and Yaodong Yang.
+Beavertails: Towards improved safety alignment of llm via a
+human-preference dataset.
+Advances in Neural Information Processing Systems ,
+36:24678–24704, 2023.
+Jung et al. (2025)
+Jaehun Jung, Faeze Brahman, and Yejin Choi.
+Trust or escalate: LLM judges with provable guarantees for human
+agreement.
+In The Thirteenth International Conference on Learning
+Representations , 2025.
+Kahneman et al. (2021)
+Daniel Kahneman, Olivier Sibony, and Cass R Sunstein.
+Noise: A flaw in human judgment.
+2021.
+Kim et al. (2025)
+Elliot Myunghoon Kim, Avi Garg, Kenny Peng, and Nikhil Garg.
+Correlated errors in large language models.
+In Forty-second International Conference on Machine Learning ,
+2025.
+Kim et al. (2024)
+Seungone Kim, Jay Shin, Joel Jang, Shayne Longpre, Hwaran Lee, Sangdoo Yun,
+Ryan Shin, Sungdong Kim, James Thorne, Minjoon Seo, et al.
+Prometheus: Inducing fine-grained evaluation capability in language
+models.
+In International Conference on Learning Representations ,
+volume 2024, pp. 29927–29962, 2024.
+Kohli (2026)
+Guneet Kohli.
+Nine judges, two effective votes: Correlated errors undermine LLM
+evaluation panels.
+arXiv preprint arXiv:2605.29800 , 2026.
+Kwok et al. (2026)
+Jacky Kwok, Shulu Li, Pranav Atreya, Yuejiang Liu, Yixing Jiang, Chelsea Finn,
+Marco Pavone, Ion Stoica, and Azalia Mirhoseini.
+Llm-as-a-verifier: A general-purpose verification framework.
+arXiv preprint arXiv:2607.05391 , 2026.
+Lee et al. (2024)
+Harrison Lee, Samrat Phatale, Hassan Mansoor, Thomas Mesnard, Johan Ferret,
+Kellie Ren Lu, Colton Bishop, Ethan Hall, Victor Carbune, Abhinav Rastogi,
+and Sushant Prakash.
+RLAIF vs. RLHF: Scaling reinforcement learning from human
+feedback with AI feedback.
+In Forty-first International Conference on Machine Learning ,
+2024.
+Li et al. (2026)
+Guokai Li, Alys Liang, Mo Liu, Murray Lei, Stefanus Jasin, Fenghua Yang, and
+Preet Baxi.
+Sequential sampling for binary classification: Two llms are (almost)
+all you need, 2026.
+Liu et al. (2023a)
+Pengfei Liu, Weizhe Yuan, Jinlan Fu, Zhengbao Jiang, Hiroaki Hayashi, and
+Graham Neubig.
+Pre-train, prompt, and predict: A systematic survey of prompting
+methods in natural language processing.
+ACM computing surveys , 55(9):1–35,
+2023a.
+Liu & Shah (2023)
+Ryan Liu and Nihar B. Shah.
+Reviewergpt? an exploratory study on using large language models for
+paper reviewing, 2023.
+Liu et al. (2023b)
+Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang, Ruochen Xu, and Chenguang Zhu.
+G-eval: Nlg evaluation using gpt-4 with better human alignment.
+In Proceedings of the 2023 Conference on Empirical Methods in
+Natural Language Processing , pp. 2511–2522. Association for Computational
+Linguistics, 2023b.
+doi: 10.18653/v1/2023.emnlp-main.153 .
+Lu et al. (2023)
+Keming Lu, Hongyi Yuan, Runji Lin, Junyang Lin, Zheng Yuan, Chang Zhou, and
+Jingren Zhou.
+Routing to the expert: Efficient reward-guided ensemble of large
+language models, 2023.
+URL https://arxiv.org/abs/2311.08692 .
+Mao et al. (2023)
+Anqi Mao, Christopher Mohri, Mehryar Mohri, and Yutao Zhong.
+Two-stage learning to defer with multiple experts.
+Advances in neural information processing systems ,
+36:3578–3606, 2023.
+Moslem & Kelleher (2026)
+Yasmin Moslem and John D. Kelleher.
+Dynamic model routing and cascading for efficient LLM inference: A
+survey.
+arXiv preprint arXiv:2603.04445 , 2026.
+Multimodal Art (2026)
+Multimodal Art.
+Jev decision index.
+Hugging Face Spaces, 2026.
+URL
+https://huggingface.co/spaces/multimodalart/jev-decision-index .
+Version 0.3.2, accessed October 13, 2026.
+Naghshvar & Javidi (2013)
+Mohammad Naghshvar and Tara Javidi.
+Active sequential hypothesis testing.
+The Annals of Statistics , 41(6):2703–2738, 2013.
+ISSN 00905364, 21688966.
+Nitinawarat et al. (2013)
+Sirin Nitinawarat, George K. Atia, and Venugopal V. Veeravalli.
+Controlled sensing for multihypothesis testing.
+IEEE Transactions on Automatic Control , 58(10):2451–2464, 2013.
+doi: 10.1109/TAC.2013.2261188 .
+Ong et al. (2025)
+Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chiang, Tianhao Wu, Joseph E.
+Gonzalez, M Waleed Kadous, and Ion Stoica.
+RouteLLM: Learning to route LLMs from preference data.
+In The Thirteenth International Conference on Learning
+Representations , 2025.
+OpenAI et al. (2024)
+OpenAI, Josh Achiam, Steven Adler, and Sandhini Agarwal et. al.
+Gpt-4 technical report, 2024.
+Ratner et al. (2016)
+Alexander J. Ratner, Christopher De Sa, Sen Wu, Daniel Selsam, and Christopher
+Ré.
+Data programming: Creating large training sets, quickly.
+Advances in neural information processing systems ,
+29:3567 – 3575, 2016.
+Schapire & Freund (2013)
+Robert E Schapire and Yoav Freund.
+Boosting: Foundations and algorithms, 2013.
+Singhi et al. (2025)
+Nishad Singhi, Hritik Bansal, Arian Hosseini, Aditya Grover, Kai-Wei Chang,
+Marcus Rohrbach, and Anna Rohrbach.
+When to solve, when to verify: Compute-optimal problem solving and
+generative verification for llm reasoning, 2025.
+Snell et al. (2025)
+Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar.
+Scaling LLM test-time compute optimally can be more effective than
+scaling parameters for reasoning.
+In International Conference on Learning Representations , 2025.
+Somerstep et al. (2025)
+Seamus Somerstep, Felipe Maia Polo, Allysson Flavio Melo de Oliveira, Prattyush
+Mangal, Mírian Silva, Onkar Bhardwaj, Mikhail Yurochkin, and Subha
+Maity.
+Carrot: A cost aware rate optimal router.
+arXiv preprint arXiv:2502.03261 , 2025.
+Song et al. (2025)
+Wei Song, Zhenya Huang, Cheng Cheng, Weibo Gao, Bihan Xu, GuanHao Zhao, Fei
+Wang, and Runze Wu.
+Irt-router: Effective and interpretable multi-llm routing via item
+response theory, 2025.
+Suzgun et al. (2023)
+Mirac Suzgun, Nathan Scales, Nathanael Schärli, Sebastian Gehrmann, Yi Tay,
+Hyung Won Chung, Aakanksha Chowdhery, Quoc Le, Ed H Chi, Denny Zhou, et al.
+Challenging big-bench tasks and whether chain-of-thought can solve
+them.
+In Findings of the Association for Computational Linguistics:
+ACL 2023 , pp. 13003–13051, 2023.
+Tan et al. (2025)
+Sijun Tan, Siyuan Zhuang, Kyle Montgomery, William Tang, Alejandro Cuadron,
+Chenguang Wang, Raluca Popa, and Ion Stoica.
+Judgebench: A benchmark for evaluating llm-based judges.
+In International Conference on Learning Representations ,
+volume 2025, pp. 63277–63303, 2025.
+Team et al. (2026)
+Gemma Team, Sherif El Abd, and Vaibhav Aggarwal et. al.
+Gemma 4 technical report, 2026.
+Thakur et al. (2025)
+Aman Singh Thakur, Kartik Choudhary, Venkat Srinik Ramayapally, Sankaran
+Vaidyanathan, and Dieuwke Hupkes.
+Judging the judges: Evaluating alignment and vulnerabilities in
+LLMs-as-judges.
+In Proceedings of the Fourth Workshop on Generation, Evaluation
+and Metrics , 2025.
+Turkmen et al. (2026)
+Yigit Turkmen, Baturalp Buyukates, and Melih Bastopcu.
+Don’t always pick the highest-performing model: An information
+theoretic view of LLM ensemble selection.
+In ICML 2026 Statistical Frameworks for Uncertainty in Agentic
+Systems , 2026.
+Verga et al. (2024)
+Pat Verga, Sebastian Hofstatter, Sophia Althammer, Yixuan Su, Aleksandra
+Piktus, Arkady Arkhangorodsky, Minjie Xu, Naomi White, and Patrick Lewis.
+Replacing judges with juries: Evaluating llm generations with a panel
+of diverse models.
+arXiv preprint arXiv:2404.18796 , 2024.
+Verma et al. (2026)
+Abhigya Verma, Amit Kumar Saha, Seganrasan Subramanian, and Sai Harshitha
+Aluru.
+Agentjudgebench: A multi-difficulty benchmark for evaluating llm
+judges on agentic tool-calling, 2026.
+Vershinin et al. (2026)
+George Vershinin, Asaf Cohen, and Omer Gurewitz.
+Active sequential hypothesis testing with non-homogeneous costs.
+In ICASSP 2026 - 2026 IEEE International Conference on
+Acoustics, Speech and Signal Processing (ICASSP) , pp. 91–95, 2026.
+doi: 10.1109/ICASSP55912.2026.11463839 .
+Vu et al. (2024)
+Tu Vu, Kalpesh Krishna, Salaheddin Alzubi, Chris Tar, Manaal Faruqui, and
+Yun-Hsuan Sung.
+Foundational autoraters: Taming large language models for better
+automatic evaluation.
+In Proceedings of the 2024 Conference on Empirical Methods in
+Natural Language Processing , pp. 17086–17105, November 2024.
+Wald (1992)
+Abraham Wald.
+Sequential tests of statistical hypotheses.
+In Breakthroughs in statistics: Foundations and basic theory ,
+pp. 256–298. Springer, 1992.
+Wang et al. (2025)
+Xinyuan Wang, Yanchi Liu, Wei Cheng, Xujiang Zhao, Zhengzhang Chen, Wenchao Yu,
+Yanjie Fu, and Haifeng Chen.
+Mixllm: Dynamic routing in mixed large language models, 2025.
+Wang et al. (2023a)
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V. Le, Ed H. Chi, Sharan Narang,
+Aakanksha Chowdhery, and Denny Zhou.
+Self-consistency improves chain of thought reasoning in language
+models.
+In The Eleventh International Conference on Learning
+Representations , 2023a.
+Wang et al. (2023b)
+Yidong Wang, Zhuohao Yu, Zhengran Zeng, Linyi Yang, Cunxiang Wang, Hao Chen,
+Chaoya Jiang, Rui Xie, Jindong Wang, Xing Xie, Wei Ye, Shikun Zhang, and Yue
+Zhang.
+Pandalm: An automatic evaluation benchmark for LLM instruction
+tuning optimization.
+arXiv preprint arXiv:2306.05087 , 2023b.
+Yang et al. (2025)
+An Yang, Anfeng Li, and Baosong Yang et. al.
+Qwen3 technical report, 2025.
+Yue et al. (2024)
+Murong Yue, Jie Zhao, Min Zhang, Liang Du, and Ziyu Yao.
+Large language model cascades with mixture of thought representations
+for cost-efficient reasoning.
+In International Conference on Learning Representations ,
+volume 2024, pp. 21691–21728, 2024.
+Zhang et al. (2025)
+Haozhen Zhang, Tao Feng, and Jiaxuan You.
+Router-r1: Teaching llms multi-round routing and aggregation via
+reinforcement learning.
+arXiv preprint arXiv:2506.09033 , 2025.
+Zhang et al. (2024)
+Xuechen Zhang, Zijian Huang, Ege Onur Taga, Carlee Joe-Wong, Samet Oymak, and
+Jiasi Chen.
+Efficient contextual llm cascades through budget-constrained policy
+learning, 2024.
+Zheng et al. (2023)
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao
+Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, Hao Zhang, Joseph E.
+Gonzalez, and Ion Stoica.
+Judging LLM-as-a-judge with MT-bench and chatbot arena.
+In Thirty-seventh Conference on Neural Information Processing
+Systems Datasets and Benchmarks Track , 2023.
+Zhu et al. (2025)
+Lianghui Zhu, Xinggang Wang, and Xinlong Wang.
+Judgelm: Fine-tuned large language models are scalable judges.
+In The Thirteenth International Conference on Learning
+Representations , 2025.
+Appendix A Related Work
+This work is closely related to the following fields: 1) Sequential information acquisition (decision-theoretic foundations), 2) Routing and cascading methods, 3) LLMs as classifiers, judges, and annotators, 4) Theory of LLM orchestration and test-time compute, and 5) Aggregating Noisy Classifiers.
+Sequential information acquisition:
+Our formulation is based on sequential hypothesis testing. Wald’s sequential probability ratio test ( Wald, 1992 ) established that stopping adaptively, as soon as the accumulated evidence crosses a threshold, requires fewer samples on average than any fixed-sample test with the same error probabilities. Chernoff extended this to the sequential design of experiments ( Chernoff, 1959 ) , where the decision-maker chooses which experiment to run next, and DeGroot cast the problem as Bayesian decision-making in which each experiment is valued by its expected reduction in posterior uncertainty ( DeGroot, 1962 ) . These fundamental ideas are the principle behind our circuits. Since each LLM query is a costly experiment, the circuit selects the next instrument by the expected improvement in its posterior belief, and it stops once that belief is confident enough that further queries are not worth their cost. The modern literature on active hypothesis testing and controlled sensing ( Naghshvar & Javidi, 2013 ; Nitinawarat et al., 2013 ; Vershinin et al., 2026 ) develops this framework further, deriving information-theoretic lower bounds on expected sample size under multiple hypotheses and heterogeneous action costs, and showing that simple posterior-driven policies attain the optimal error exponents. These works solve a single testing instance in which the observation model is known in advance. In our setting, each prompt is one such instance, but there are countably many possibilities of prompts, and the observation model of each instrument for any given prompt must be learned from data.
+Routing and Cascading Methods:
+In routing, a prompt is assigned to a single model in a pool of models that is predicted to handle it best. For example, RouteLLM ( Ong et al., 2025 ) trains binary routers between a strong and a weak model, while HybridLLM ( Ding et al., 2024 ) trains a classifier to predict whether a cheap model’s answer will be of acceptable quality and routes to the large model only when it is needed. CARROT ( Somerstep et al., 2025 ) routes by predicting both expected quality and expected cost per model for a query and minimizing a weighted combination, with a minimax-rate-optimality guarantee for the resulting router. More routing mechanisms ( Lu et al., 2023 ; Feng et al., 2025 ; Wang et al., 2025 ; Zhang et al., 2025 ; Song et al., 2025 ; Hu et al., 2024 ) can be found in the survey ( Moslem & Kelleher, 2026 ) . The circuits proposed in this work generalize routers since a circuit decides after each observation whether the evidence collected so far is sufficient or whether another model should be queried.
+In cascading, models are queried one after another in a fixed order, typically from cheapest to most expensive, and the process stops as soon as some confidence or quality criterion is met. FrugalGPT ( Chen et al., 2024b ) chains LLM APIs from cheap to expensive and uses a learned scorer to decide whether the current answer is reliable enough to stop. Automix ( Aggarwal et al., 2024 ) has a small model self-verify its own answer and uses this verification signal to decide whether to escalate to a larger model. Yue et al. (2024) escalate based on agreement between a weak model’s answers under different reasoning formats, treating disagreement as the trigger for the strong model. Jung et al. (2025) use judges of increasing size with a conformal-style confidence threshold that guarantees a target level of agreement with humans. More cascading methods can be found in the survey ( Moslem & Kelleher, 2026 ) . Our approach differs from these cascades in two ways. First, a cascade queries models in a fixed order and only decides whether to escalate, whereas a circuit chooses which model to query next based on the prompt and the outputs observed so far. Second, a cascade typically returns the output of the model at which it stops, discarding earlier outputs once they have triggered escalation, whereas a circuit combines all observed outputs into a posterior belief on the label and predicts from that belief.
+Among cascading methods, TREACLE ( Zhang et al., 2024 ) and cascade-routing ( Dekoninck et al., 2025 ) do not follow a fixed order of models. Using reinforcement learning, TREACLE ( Zhang et al., 2024 ) learns a policy that selects the next LLM and prompting scheme based on the question and the consistency of responses so far, under a budget shared across a dataset of questions. Our circuits also adapt the next query to past model outputs, but rather than training the policy itself, we learn a probabilistic model of how each instrument responds on a given prompt and compute the optimal query-and-stop policy from it by dynamic programming. The resulting circuit is optimal with respect to the learned model and its error–cost tradeoff can be analyzed, neither of which holds for a policy trained end-to-end by reinforcement learning. Cascade routing ( Dekoninck et al., 2025 ) selects the next model after each output by estimating, for each set of remaining models, the quality of the best output it would produce net of its cost, and finally returns the output with the highest estimated quality. Our circuits also choose the next model from the full pool after each observation, but differ in two respects. The decision to continue is solved exactly by dynamic programming rather than by a one-shot estimate of what the remaining models would yield, and the prediction combines all observed outputs through the posterior on the label rather than selecting one output.
+LLMs as classifiers, judges, and annotators.
+Prompting turns an LLM into a classifier without training ( Brown et al., 2020 ; Liu et al., 2023a ) , and this has made LLMs default raters in many pipelines. They judge model outputs ( Zheng et al., 2023 ; Liu et al., 2023b ; Wang et al., 2023b ) , either as prompted frontier models or as judges fine-tuned for the task ( Kim et al., 2024 ; Zhu et al., 2025 ; Vu et al., 2024 ; Huang et al., 2025 ) . They provide feedback for alignment ( Lee et al., 2024 ) , act as safety classifiers and guardrails ( Inan et al., 2023 ; Han et al., 2024 ; OpenAI et al., 2024 ) , and annotate text in the social sciences and in scientific review ( Halterman & Keith, 2025 ; Liu & Shah, 2023 ) . A parallel line of work measures the reliability of raters. This includes documenting position and verbosity biases, disagreement with humans, and vulnerability to adversarial inputs ( Tan et al., 2025 ; Thakur et al., 2025 ) , as well as low intra-rater reliability, where the same judge returns different labels across runs ( Haldar & Hockenmaier, 2025 ) .
+Theory of LLM orchestration and test-time compute:
+A growing body of work analyzes how to allocate inference across LLM calls. For a single model, the test-time scaling literature studies how accuracy improves with the number of LLM calls or the amount of verification ( Snell et al., 2025 ; Singhi et al., 2025 ) . Within this line, Chen et al. (2024a) shows that accuracy under majority voting can be non-monotone in the number of calls, Huang et al. (2026a) give sample-complexity bounds for voting and verifier-based selection, and Huang et al. (2026b) characterize when to stop sampling through Bayesian optimal stopping.
+For multiple models, routing has been analyzed as a cost-aware prediction problem ( Somerstep et al., 2025 ) . Cascades have been studied from several angles: as a sequence of linear programs ( Dekoninck et al., 2025 ) , as a Pandora’s Box search problem ( Belloni et al., 2026 ) , and as a queueing system with congestion ( Guo et al., 2026 ) . Information-theoretic criteria have also been proposed for choosing which models to include in an ensemble ( Turkmen et al., 2026 ) . These rest on older foundations in metareasoning ( Hay et al., 2012 ) , adaptive submodularity ( Golovin & Krause, 2011 ) , and learning to defer ( Mao et al., 2023 ) . Closest to our analysis, concurrent work by Li et al. (2026) studies sequential binary classification over heterogeneous LLMs with known accuracies, costs, and latencies. They show that in the high-confidence limit a policy alternating between two hypothesis-specific specialists is asymptotically optimal. Our asymptotic analysis agrees with this: under symmetric accuracies the two specialists coincide, and the optimal circuit concentrates its cost on the instrument with the highest information rate per unit cost. These works, however, analyze a single instance with known model parameters and unlimited repeated queries. Our main focus is on the practical problem of a finite pool of instruments whose reliabilities vary across prompts and must be learned from data, for which we solve the exact dynamic program and show that the resulting circuits improve the cost–accuracy frontier in practice.
+Aggregating Noisy Classifiers:
+We draw from work on combining the outputs of multiple noisy classifiers to determine a true label. In the context of LLMs, aggregating the outputs of smaller models can be used to approximate the judgement of frontier models at lower cost ( Verga et al., 2024 ) . Previous work in crowdsourcing and weak supervision ( Dawid & Skene, 1979 ; Ratner et al., 2016 ) learn the error rate of each individual classifier and aggregate them for the distribution over the true label, assuming independence between the errors of each classifier. Ensemble diversity ( Dietterich, 2000 ) extends this to a machine learning setting by accounting for the correlation of errors between models, which remains an important hurdle for combining the outputs of large language models ( Goel et al., 2025 ; Kim et al., 2025 ; Kohli, 2026 ) .
+In this spirit, our probabilistic model learns a distribution over their responses and prompt embeddings, enabling the dynamic program to account for correlation between model outputs.
+Appendix B Proofs
+Proof of Proposition 1 .
+Consider a circuit that queries a batch ( i 1 , … , i k ) (i_{1},\ldots,i_{k}) . Replace the batch by the same k k queries in any fixed order, without allowing the intermediate responses to affect subsequent queries. After all k k responses have been observed, the circuit proceeds exactly as the original circuit would after observing the batch. The resulting circuit therefore has the same measurements, the same final prediction, and the same total query cost. Repeating this replacement for every batch gives the desired sequential circuit.
+∎
+Proof of Proposition 2 .
+Consider the objective function for a fixed prompt z z :
+ℒ λ ​ ( π , z ) = 𝖤 π ​ ( z ) + λ ​ 𝖢 π ​ ( z ) \displaystyle\mathcal{L}_{\lambda}(\pi,z)=\mathsf{E}_{\pi}(z)+\lambda\mathsf{C}_{\pi}(z)
+(12)
+Then, the zero-cost circuit is optimal when:
+𝖤 π 0 ​ ( z ) ≤ 𝖤 π ​ ( z ) + λ ​ 𝖢 π ​ ( z ) \displaystyle\mathsf{E}_{\pi_{0}}(z)\leq\mathsf{E}_{\pi}(z)+\lambda\mathsf{C}_{\pi}(z)
+(13)
+since 𝖢 π 0 ​ ( z ) = 0 \mathsf{C}_{\pi_{0}}(z)=0 for the zero-cost circuit. This, together with λ ≥ 0 \lambda\geq 0 directly results in proving Proposition 2 .
+Now consider the expression:
+λ L ​ B = sup π : C π ​ ( z ) > 0 [ 𝖤 π 0 ​ ( z ) − 𝖤 π ​ ( z ) ] + 𝖢 π ​ ( z ) \displaystyle\lambda_{LB}=\sup_{\pi:C_{\pi}(z)>0}\frac{[\mathsf{E}_{\pi_{0}}(z)-\mathsf{E}_{\pi}(z)]_{+}}{\mathsf{C}_{\pi}(z)}
+(14)
+The upper bound on λ L ​ B \lambda_{LB} is obtained using the following bounds: 𝖤 π 0 ​ ( z ) ≤ 1 2 \mathsf{E}_{\pi_{0}}(z)\leq\frac{1}{2} , 𝖤 π ​ ( z ) ≥ 0 \mathsf{E}_{\pi}(z)\geq 0 , and 𝖢 π ​ ( z ) ≥ 𝖢 𝗆𝗂𝗇 ​ ( z ) \mathsf{C}_{\pi}(z)\geq\mathsf{C}_{\mathsf{min}}(z) .
+∎
+Proof of Proposition 4 .
+Fix a prompt z z , and write X = X ( ℋ ) X=X^{(\mathcal{H})} and
+X new = X ( i new ) X_{\mathrm{new}}=X^{(i_{\mathrm{new}})} . Define
+η z ​ ( x ) = P D ​ ( Y = 1 ∣ z , X = x ) , η z ​ ( x , u ) = P D ​ ( Y = 1 ∣ z , X = x , X new = u ) . \eta_{z}(x)=P_{D}(Y=1\mid z,X=x),\qquad\eta_{z}(x,u)=P_{D}(Y=1\mid z,X=x,X_{\mathrm{new}}=u).
+Since the Bayes accuracy for a binary label is
+g ⁡ ( q ) = max ⁡ { q , 1 − q } g(q)=\max\{q,1-q\} , we have
+E min ​ ( z , ℋ ) − E min ​ ( z , ℋ new ) = 𝔼 ⁡ [ g ⁡ ( η z ​ ( X , X new ) ) − g ⁡ ( η z ​ ( X ) ) ∣ Z = z ] ≤ 𝔼 ⁡ [ | η z ​ ( X , X new ) − η z ​ ( X ) | ∣ Z = z ] , \displaystyle E_{\min}(z,\mathcal{H})-E_{\min}(z,\mathcal{H}_{\mathrm{new}})=\mathbb{E}\left[g(\eta_{z}(X,X_{\mathrm{new}}))-g(\eta_{z}(X))\mid Z=z\right]\leq\mathbb{E}\left[|\eta_{z}(X,X_{\mathrm{new}})-\eta_{z}(X)|\mid Z=z\right],
+where the inequality follows because g g is 1 1 -Lipschitz.
+Since Y Y is binary, conditioning on X = x X=x , the inner
+expectation equals
+TV ( P D ( Y , X new ∣ z , x ) , P D ( Y ∣ z , x ) P D ( X new ∣ z , x ) ) . \operatorname{TV}\left(P_{D}(Y,X_{\mathrm{new}}\mid z,x),P_{D}(Y\mid z,x)P_{D}(X_{\mathrm{new}}\mid z,x)\right).
+By Pinsker’s inequality and Jensen’s inequality,
+E min ​ ( z , ℋ ) − E min ​ ( z , ℋ new ) ≤ 1 2 I ( Y ; X new ∣ X , Z = z ) . E_{\min}(z,\mathcal{H})-E_{\min}(z,\mathcal{H}_{\mathrm{new}})\leq\sqrt{\frac{1}{2}I(Y;X_{\mathrm{new}}\mid X,Z=z)}.
+Averaging over Z Z and applying Jensen’s inequality again,
+𝔼 Z ​ [ E min ​ ( Z , ℋ ) − E min ​ ( Z , ℋ new ) ] ≤ 1 2 I ( Y ; X ( i new ) ∣ X ( ℋ ) , Z ) . \mathbb{E}_{Z}\left[E_{\min}(Z,\mathcal{H})-E_{\min}(Z,\mathcal{H}_{\mathrm{new}})\right]\leq\sqrt{\frac{1}{2}I\left(Y;X^{(i_{\mathrm{new}})}\mid X^{(\mathcal{H})},Z\right)}.
+Nonnegativity follows because additional measurements can
+always be ignored.
+∎
+B.1 Proofs for Fixed-Prompt Scaling
+We first show that any circuit achieving error probability ε \varepsilon requires expected cost at least log ⁡ ( 1 / ε ) / I ⁡ ( z ) − O ⁡ ( 1 ) \log(1/\varepsilon)/I(z)-O(1) , and then construct a sequential likelihood-ratio test that attains this bound up to an additive constant.
+Preliminaries
+Fix a prompt z z and suppress its dependence in the notation. Write a i ≔ a i ​ ( z ) a_{i}\coloneqq a_{i}(z) for an instrument’s accuracy on prompt z z and c i ≔ c i ​ ( z ) c_{i}\coloneqq c_{i}(z) for its cost. For the asymptotic analysis, each instrument i ∈ ℋ i\in\mathcal{H} may be queried arbitrarily many times, with independent randomness across calls.
+Recall that classification reduces to testing H 0 : y ⁡ ( z ) = 0 H_{0}:y(z)=0 against H 1 : y ⁡ ( z ) = 1 H_{1}:y(z)=1 , where a query to instrument i i produces
+X ∣ H 1 ∼ Ber ( a i ) , X ∣ H 0 ∼ Ber ( 1 − a i ) . X\mid H_{1}\sim\operatorname{Ber}(a_{i}),\qquad X\mid H_{0}\sim\operatorname{Ber}(1-a_{i}).
+The log-likelihood ratio contributed by a measurement x ∈ { 0 , 1 } x\in\{0,1\} is
+L i ​ ( x ) = log ⁡ Pr ⁡ ( X = x ∣ H 1 , i ) Pr ⁡ ( X = x ∣ H 0 , i ) = ( 2 ​ x − 1 ) ​ ℓ i , ℓ i := log ⁡ a i 1 − a i . L_{i}(x)=\log\frac{\Pr(X=x\mid H_{1},i)}{\Pr(X=x\mid H_{0},i)}=(2x-1)\ell_{i},\qquad\ell_{i}:=\log\frac{a_{i}}{1-a_{i}}.
+(15)
+By our assumption in this analysis, an instrument’s measurement distribution is symmetric under the two hypotheses, so
+𝔼 1 ​ [ L i ​ ( X ) ] = d i , 𝔼 0 ​ [ L i ​ ( X ) ] = − d i , \mathbb{E}_{1}[L_{i}(X)]=d_{i},\qquad\mathbb{E}_{0}[L_{i}(X)]=-d_{i},
+where 𝔼 y \mathbb{E}_{y} denotes expectation under H y H_{y} and d i ≔ D KL ​ ( Ber ⁡ ( a i ​ ( z ) ) ∥ Ber ⁡ ( 1 − a i ​ ( z ) ) ) = ( 2 ​ a i − 1 ) ​ ℓ i d_{i}\coloneq D_{\mathrm{KL}}\!\left(\operatorname{Ber}(a_{i}(z))\,\middle\|\,\operatorname{Ber}(1-a_{i}(z))\right)=(2a_{i}-1)\ell_{i} .
+A sequential circuit chooses an instrument A t ∈ ℋ A_{t}\in\mathcal{H} at each step t t , observes its measurement X t X_{t} , and stops at a stopping time τ \tau . The choice of A t A_{t} and the decision to continue depend only on the preceding history ℱ t − 1 = σ ⁡ ( A 1 , X 1 , … , A t − 1 , X t − 1 ) \mathcal{F}_{t-1}=\sigma(A_{1},X_{1},\ldots,A_{t-1},X_{t-1}) . Let N i = ∑ t = 1 τ 𝟏 { A t = i } N_{i}=\sum_{t=1}^{\tau}\mathbf{1}{\{A_{t}=i\}} denote the number of queries to i i .
+Write q = q z ​ ( ∅ ) ∈ ( 0 , 1 ) q=q_{z}(\varnothing)\in(0,1) for the prior probability of H 1 H_{1} and m = min ⁡ { q , 1 − q } m=\min\{q,1-q\} . For a circuit π \pi , let P y π P_{y}^{\pi} and 𝔼 y π \mathbb{E}_{y}^{\pi} denote probability and expectation under H y H_{y} , and define its prior-averaged query counts by
+N ¯ i π = q ​ 𝔼 1 π ​ [ N i ] + ( 1 − q ) ​ 𝔼 0 π ​ [ N i ] . \bar{N}_{i}^{\pi}=q\mathbb{E}_{1}^{\pi}[N_{i}]+(1-q)\mathbb{E}_{0}^{\pi}[N_{i}].
+The error probability and expected cost, conditional on the fixed prompt, are
+𝖤 ⁡ ( π ) \displaystyle\mathsf{E}(\pi)
+= q ​ P 1 π ​ ( Y ^ = 0 ) + ( 1 − q ) ​ P 0 π ​ ( Y ^ = 1 ) , \displaystyle=qP_{1}^{\pi}(\hat{Y}=0)+(1-q)P_{0}^{\pi}(\hat{Y}=1),
+(16)
+𝖢 ⁡ ( π ) \displaystyle\mathsf{C}(\pi)
+= ∑ i ∈ ℋ c i ​ N ¯ i π . \displaystyle=\sum_{i\in\mathcal{H}}c_{i}\bar{N}_{i}^{\pi}.
+(17)
+For an optimal circuit at price λ \lambda , these are 𝖤 λ ​ ( z ) \mathsf{E}_{\lambda}(z) and 𝖢 λ ​ ( z ) \mathsf{C}_{\lambda}(z) , respectively.
+Lemma 1 (Information lower bound) .
+Every sequential circuit with finite expected cost satisfies
+D KL ( P y π ∥ P 1 − y π ) = ∑ i ∈ ℋ d i 𝔼 y π [ N i ] , y ∈ { 0 , 1 } , D_{\mathrm{KL}}(P_{y}^{\pi}\|P_{1-y}^{\pi})=\sum_{i\in\mathcal{H}}d_{i}\mathbb{E}_{y}^{\pi}[N_{i}],\qquad y\in\{0,1\},
+(18)
+where P y π P_{y}^{\pi} denotes the distribution of the complete terminated history under H y H_{y} . Consequently,
+log ⁡ m 2 ​ 𝖤 ​ ( π ) ≤ ∑ i ∈ ℋ d i ​ N ¯ i π ≤ I ​ 𝖢 ​ ( π ) . \log\frac{m}{2\mathsf{E}(\pi)}\leq\sum_{i\in\mathcal{H}}d_{i}\bar{N}_{i}^{\pi}\leq I\mathsf{C}(\pi).
+(19)
+Proof.
+The querying and stopping rules depend only on the observed history and are identical under both hypotheses. Their contributions therefore cancel from the likelihood ratio of the terminated history. By the chain rule for relative entropy,
+D KL ( P 1 π ∥ P 0 π ) \displaystyle D_{\mathrm{KL}}(P_{1}^{\pi}\|P_{0}^{\pi})
+= 𝔼 1 π ​ [ ∑ t = 1 τ L A t ​ ( X t ) ] = 𝔼 1 π ​ [ ∑ t = 1 τ d A t ] = ∑ i ∈ ℋ d i ​ 𝔼 1 π ​ [ N i ] . \displaystyle=\mathbb{E}_{1}^{\pi}\left[\sum_{t=1}^{\tau}L_{A_{t}}(X_{t})\right]=\mathbb{E}_{1}^{\pi}\left[\sum_{t=1}^{\tau}d_{A_{t}}\right]=\sum_{i\in\mathcal{H}}d_{i}\mathbb{E}_{1}^{\pi}[N_{i}].
+The second equality follows by conditioning on the history before each query, since 𝔼 1 ​ [ L A t ​ ( X t ) ∣ ℱ t − 1 ] = d A t \mathbb{E}_{1}[L_{A_{t}}(X_{t})\mid\mathcal{F}_{t-1}]=d_{A_{t}} . Reversing the hypotheses gives D KL ( P 0 π ∥ P 1 π ) = ∑ i d i 𝔼 0 π [ N i ] D_{\mathrm{KL}}(P_{0}^{\pi}\|P_{1}^{\pi})=\sum_{i}d_{i}\mathbb{E}_{0}^{\pi}[N_{i}] , proving Equation 18 .
+To relate the acquired information to classification error, let α π = P 1 π ​ ( Y ^ = 0 ) \alpha_{\pi}=P_{1}^{\pi}(\hat{Y}=0) and β π = P 0 π ​ ( Y ^ = 1 ) \beta_{\pi}=P_{0}^{\pi}(\hat{Y}=1) . By Equation 16 ,
+𝖤 ⁡ ( π ) = q ​ α π + ( 1 − q ) ​ β π ≥ m ⁡ ( α π + β π ) . \mathsf{E}(\pi)=q\alpha_{\pi}+(1-q)\beta_{\pi}\geq m(\alpha_{\pi}+\beta_{\pi}).
+The Bretagnolle–Huber inequality
+( Bretagnolle & Huber, 1979 ) gives, in either
+direction,
+D KL ( P y π ∥ P 1 − y π ) ≥ log 1 2 ​ ( α π + β π ) ≥ log m 2 ​ 𝖤 ​ ( π ) . D_{\mathrm{KL}}(P_{y}^{\pi}\|P_{1-y}^{\pi})\geq\log\frac{1}{2(\alpha_{\pi}+\beta_{\pi})}\geq\log\frac{m}{2\mathsf{E}(\pi)}.
+Averaging these inequalities with weights q q and
+1 − q 1-q , and applying Equation 18 , yields
+log ⁡ m 2 ​ 𝖤 ​ ( π ) ≤ ∑ i d i ​ N ¯ i π . \log\frac{m}{2\mathsf{E}(\pi)}\leq\sum_{i}d_{i}\bar{N}_{i}^{\pi}.
+Finally, d i ≤ I ​ c i d_{i}\leq Ic_{i} for every instrument, so ∑ i d i ​ N ¯ i π ≤ I ​ ∑ i c i ​ N ¯ i π = I ​ 𝖢 ​ ( π ) \sum_{i}d_{i}\bar{N}_{i}^{\pi}\leq I\sum_{i}c_{i}\bar{N}_{i}^{\pi}=I\mathsf{C}(\pi) .
+∎
+Lemma 2 (Likelihood-ratio test) .
+Suppose 0 < I < ∞ 0<I<\infty , and choose
+i ⋆ ∈ arg ⁡ max i ⁡ I i i^{\star}\in\arg\max_{i}I_{i} . For every B ≥ 0 B\geq 0 , there exists a sequential circuit π B \pi_{B} using only instrument i ⋆ i^{\star} such that
+𝖤 ⁡ ( π B ) ≤ e − B , I ​ 𝖢 ​ ( π B ) ≤ B + ℓ i ⋆ . \mathsf{E}(\pi_{B})\leq e^{-B},\qquad I\mathsf{C}(\pi_{B})\leq B+\ell_{i^{\star}}.
+(20)
+Proof.
+Query instrument i ⋆ i^{\star} repeatedly, and let
+S t = log ⁡ q 1 − q + ∑ k = 1 t L i ⋆ ​ ( X k ) S_{t}=\log\frac{q}{1-q}+\sum_{k=1}^{t}L_{i^{\star}}(X_{k})
+denote the posterior log-odds after t t queries. Write b = log ⁡ ( q / ( 1 − q ) ) b=\log(q/(1-q)) , so S 0 = b S_{0}=b .
+Consider the stopping rule
+τ B = inf { t ≥ 0 : | S t | ≥ B } , \tau_{B}=\inf\{t\geq 0:|S_{t}|\geq B\},
+which predicts H 1 H_{1} if S τ B ≥ 0 S_{\tau_{B}}\geq 0 and H 0 H_{0} otherwise. The posterior probability of error at any stopping state with log-odds S t S_{t} is
+min ⁡ { Pr ⁡ ( H 1 ∣ ℱ t ) , Pr ⁡ ( H 0 ∣ ℱ t ) } = 1 1 + e | S t | . \min\{\Pr(H_{1}\mid\mathcal{F}_{t}),\Pr(H_{0}\mid\mathcal{F}_{t})\}=\frac{1}{1+e^{|S_{t}|}}.
+Thus, once we establish that τ B \tau_{B} is finite, the stopping rule immediately gives
+𝖤 ⁡ ( π B ) ≤ e − B \mathsf{E}(\pi_{B})\leq e^{-B} .
+It remains to bound the expected stopping time. If | b | ≥ B |b|\geq B , the circuit stops without querying, and both inequalities hold.
+Suppose | b | < B |b|<B . Each query changes S t S_{t} by ± ℓ i ⋆ \pm\ell_{i^{\star}} , so for T n = τ B ∧ n T_{n}=\tau_{B}\wedge n , we have that
+| S T n | ≤ B + ℓ i ⋆ . |S_{T_{n}}|\leq B+\ell_{i^{\star}}.
+Under H y H_{y} , the process ( 2 ​ y − 1 ) ​ ( S t − b ) − t ​ d i ⋆ (2y-1)(S_{t}-b)-t\,d_{i^{\star}} is a martingale. Since τ B \tau_{B} is not yet known to have finite expectation, we first apply optional stopping at the bounded stopping time T n T_{n} . Using | S T n | ≤ B + ℓ i ⋆ |S_{T_{n}}|\leq B+\ell_{i^{\star}} gives
+d i ⋆ ​ 𝔼 y π B ​ [ T n ] = 𝔼 y π B ​ [ ( 2 ​ y − 1 ) ​ ( S T n − b ) ] ≤ B + ℓ i ⋆ − ( 2 ​ y − 1 ) ​ b . d_{i^{\star}}\mathbb{E}_{y}^{\pi_{B}}[T_{n}]=\mathbb{E}_{y}^{\pi_{B}}\left[(2y-1)(S_{T_{n}}-b)\right]\leq B+\ell_{i^{\star}}-(2y-1)b.
+Since T n ↑ τ B T_{n}\uparrow\tau_{B} , monotone convergence gives the same bound for d i ⋆ ​ 𝔼 y π B ​ [ τ B ] d_{i^{\star}}\mathbb{E}_{y}^{\pi_{B}}[\tau_{B}] . In particular, τ B \tau_{B} has finite expectation under both hypotheses.
+Every query has cost c i ⋆ c_{i^{\star}} , and d i ⋆ = I ​ c i ⋆ d_{i^{\star}}=Ic_{i^{\star}} . Averaging over the prior therefore yields
+I ​ 𝖢 ​ ( π B ) = d i ⋆ ​ ( q ​ 𝔼 1 π B ​ [ τ B ] + ( 1 − q ) ​ 𝔼 0 π B ​ [ τ B ] ) ≤ B + ℓ i ⋆ + ( 1 − 2 ​ q ) ​ b ≤ B + ℓ i ⋆ , \displaystyle I\mathsf{C}(\pi_{B})=d_{i^{\star}}\left(q\mathbb{E}_{1}^{\pi_{B}}[\tau_{B}]+(1-q)\mathbb{E}_{0}^{\pi_{B}}[\tau_{B}]\right)\leq B+\ell_{i^{\star}}+(1-2q)b\leq B+\ell_{i^{\star}},
+where the last inequality follows because b = log ⁡ ( q / ( 1 − q ) ) b=\log(q/(1-q)) has the same sign as 2 ​ q − 1 2q-1 .
+Since τ B \tau_{B} is finite almost surely and | S τ B | ≥ B |S_{\tau_{B}}|\geq B , the posterior error bound above gives 𝖤 ⁡ ( π B ) ≤ e − B \mathsf{E}(\pi_{B})\leq e^{-B} .
+∎
+Together, the two lemmas bound the optimal error–cost tradeoff from both sides. The information lower bound applies to every adaptive circuit, while the likelihood-ratio test achieves the same leading rate using only an instrument maximizing I i I_{i} .
+Lemma 3 (Optimal error and cost for a fixed prompt) .
+Suppose 0 < I < ∞ 0<I<\infty . Let 𝖤 λ \mathsf{E}_{\lambda} and 𝖢 λ \mathsf{C}_{\lambda} denote the error and
+expected cost of any circuit minimizing 𝖤 ⁡ ( π ) + λ ​ 𝖢 ​ ( π ) \mathsf{E}(\pi)+\lambda\mathsf{C}(\pi) . As λ ↓ 0 \lambda\downarrow 0 ,
+𝖤 λ \displaystyle\mathsf{E}_{\lambda}
+= Θ ⁡ ( λ / I ) , \displaystyle=\Theta(\lambda/I),
+(21)
+I ​ 𝖢 λ \displaystyle I\mathsf{C}_{\lambda}
+= log ⁡ ( I / λ ) + O ⁡ ( 1 ) . \displaystyle=\log(I/\lambda)+O(1).
+(22)
+Proof.
+For 0 < λ < I 0<\lambda<I , set η = λ / I \eta=\lambda/I and choose B = log ⁡ ( 1 / η ) B=\log(1/\eta) in Lemma 2 . By optimality,
+𝖤 λ + λ ​ 𝖢 λ ≤ η ⁡ ( 1 + log ⁡ 1 η + ℓ i ⋆ ) . \mathsf{E}_{\lambda}+\lambda\mathsf{C}_{\lambda}\leq\eta\left(1+\log\frac{1}{\eta}+\ell_{i^{\star}}\right).
+(23)
+To bound the error separately, combine
+Equation 23 with the
+information lower bound Equation 19 .
+Writing x λ = 𝖤 λ / η x_{\lambda}=\mathsf{E}_{\lambda}/\eta gives
+x λ + log ⁡ m 2 ​ η ​ x λ ≤ 1 + log ⁡ 1 η + ℓ i ⋆ , x_{\lambda}+\log\frac{m}{2\eta x_{\lambda}}\leq 1+\log\frac{1}{\eta}+\ell_{i^{\star}},
+or equivalently,
+x λ − log ⁡ x λ ≤ 1 + ℓ i ⋆ + log ⁡ 2 m . x_{\lambda}-\log x_{\lambda}\leq 1+\ell_{i^{\star}}+\log\frac{2}{m}.
+(24)
+For a fixed prompt, the right-hand side is constant. Since x − log ⁡ x x-\log x diverges as either x ↓ 0 x\downarrow 0 or x → ∞ x\to\infty , the sequence x λ x_{\lambda} is bounded above and away from zero. Hence 𝖤 λ = Θ ⁡ ( η ) = Θ ⁡ ( λ / I ) \mathsf{E}_{\lambda}=\Theta(\eta)=\Theta(\lambda/I) .
+For the cost, Equation 19 and Equation 23 imply
+log ⁡ m 2 ​ 𝖤 λ ≤ I ​ 𝖢 λ ≤ 1 + log ⁡ 1 η + ℓ i ⋆ . \log\frac{m}{2\mathsf{E}_{\lambda}}\leq I\mathsf{C}_{\lambda}\leq 1+\log\frac{1}{\eta}+\ell_{i^{\star}}.
+Since 𝖤 λ = Θ ⁡ ( η ) \mathsf{E}_{\lambda}=\Theta(\eta) , the lower bound equals log ⁡ ( 1 / η ) + O ⁡ ( 1 ) \log(1/\eta)+O(1) and we obtain our result.
+∎
+Proof of Theorem 1 .
+Restoring the dependence on z z , Lemma 3 gives
+− log ⁡ 𝖤 λ ​ ( z ) = log ⁡ I ⁡ ( z ) λ + O ⁡ ( 1 ) = I ⁡ ( z ) ​ 𝖢 λ ​ ( z ) + O ⁡ ( 1 ) . -\log\mathsf{E}_{\lambda}(z)=\log\frac{I(z)}{\lambda}+O(1)=I(z)\mathsf{C}_{\lambda}(z)+O(1).
+∎
+Allocation of queries.
+The same information bound also characterizes which instruments an optimal circuit uses. In particular, any expected cost spent on instruments with strictly lower information rates remains bounded as λ ↓ 0 \lambda\downarrow 0 .
+Proposition 5 (Asymptotic query allocation) .
+Fix a prompt with 0 < I < ∞ 0<I<\infty , and let N ¯ i λ \bar{N}_{i}^{\lambda} be the expected number of queries to instrument i i under an optimal circuit. Then
+∑ i : I i < I c i N ¯ i λ = O ( 1 ) . \sum_{i:I_{i}<I}c_{i}\bar{N}_{i}^{\lambda}=O(1).
+Consequently,
+∑ i : I i < I c i N ¯ i λ 𝖢 λ ⟶ 0 as λ ↓ 0 . \frac{\sum_{i:I_{i}<I}c_{i}\bar{N}_{i}^{\lambda}}{\mathsf{C}_{\lambda}}\longrightarrow 0\qquad\text{as }\lambda\downarrow 0.
+Proof.
+By Equation 19 ,
+∑ i d i ​ N ¯ i λ ≥ log ⁡ m 2 ​ 𝖤 λ . \sum_{i}d_{i}\bar{N}_{i}^{\lambda}\geq\log\frac{m}{2\mathsf{E}_{\lambda}}.
+Using d i = I i ​ c i d_{i}=I_{i}c_{i} and 𝖢 λ = ∑ i c i ​ N ¯ i λ \mathsf{C}_{\lambda}=\sum_{i}c_{i}\bar{N}_{i}^{\lambda} , we obtain
+∑ i ( I − I i ) ​ c i ​ N ¯ i λ \displaystyle\sum_{i}(I-I_{i})c_{i}\bar{N}_{i}^{\lambda}
+= I ​ 𝖢 λ − ∑ i d i ​ N ¯ i λ ≤ I ​ 𝖢 λ − log ⁡ m 2 ​ 𝖤 λ = O ⁡ ( 1 ) , \displaystyle=I\mathsf{C}_{\lambda}-\sum_{i}d_{i}\bar{N}_{i}^{\lambda}\leq I\mathsf{C}_{\lambda}-\log\frac{m}{2\mathsf{E}_{\lambda}}=O(1),
+(25)
+where the last equality follows from
+Lemma 3 .
+If any instrument has I i < I I_{i}<I , define Δ = min i : I i < I ( I − I i ) > 0 \Delta=\min_{i:I_{i}<I}(I-I_{i})>0 . Equation 25 then gives
+Δ ∑ i : I i < I c i N ¯ i λ ≤ O ( 1 ) , \Delta\sum_{i:I_{i}<I}c_{i}\bar{N}_{i}^{\lambda}\leq O(1),
+so the total expected cost allocated to strictly suboptimal instruments is O ⁡ ( 1 ) O(1) . If every instrument attains I I , the sum is zero. Finally, Equation 22 implies
+𝖢 λ → ∞ \mathsf{C}_{\lambda}\to\infty . Dividing the bounded suboptimal expenditure by the total expected cost proves the result.
+∎
+B.2 Proof of the Population Scaling Law
+We now consider the prompt distribution Z ∼ 𝒫 Z Z\sim\mathcal{P}_{Z} . To extend the fixed-prompt results to a population, we need bounds that hold uniformly across prompts.
+Assumption 2 (Uniformity across prompts) .
+There exist constants m 0 , c max > 0 m_{0},c_{\max}>0 such that, for almost
+every prompt z z ,
+min ⁡ { q z ​ ( ∅ ) , 1 − q z ​ ( ∅ ) } \displaystyle\min\{q_{z}(\varnothing),1-q_{z}(\varnothing)\}
+≥ m 0 , min i : I i ​ ( z ) = I ⁡ ( z ) c i ( z ) ≤ c max . \displaystyle\geq m_{0},\qquad\min_{i:I_{i}(z)=I(z)}c_{i}(z)\leq c_{\max}.
+(26)
+The first condition ensures that the error probability before
+querying is bounded away from zero, while the second ensures
+that at least one instrument with the highest information rate
+has bounded query cost.
+We first establish uniform error bounds and use them to prove
+the population scaling law. We then obtain the finer error–cost
+rates under the polynomial tail assumption.
+Lemma 4 (Uniform fixed-prompt error bounds) .
+Under Assumption 2 , for every fixed r 0 > 0 r_{0}>0 ,
+there exist positive constants, independent of z z and λ \lambda ,
+such that, for almost every z z and all sufficiently small
+λ \lambda ,
+𝖤 λ ​ ( z ) \displaystyle\mathsf{E}_{\lambda}(z)
+≍ min ⁡ { 1 , λ I ⁡ ( z ) } , \displaystyle\asymp\min\left\{1,\frac{\lambda}{I(z)}\right\},
+0 < I ⁡ ( z ) ≤ r 0 , \displaystyle 0<I(z)\leq r_{0},
+(27)
+𝖤 λ ​ ( z ) \displaystyle\mathsf{E}_{\lambda}(z)
+= O ⁡ ( λ ) , \displaystyle=O(\lambda),
+I ⁡ ( z ) > r 0 . \displaystyle I(z)>r_{0}.
+(28)
+Proof.
+For each prompt, choose an information-rate-maximizing instrument
+i ⋆ i^{\star} with c i ⋆ ​ ( z ) ≤ c max c_{i^{\star}}(z)\leq c_{\max} . We first bound the
+overshoot term appearing in Equation 24 .
+For a i ∈ [ 1 / 2 , 1 ) a_{i}\in[1/2,1) , we have
+ℓ i − d i \displaystyle\ell_{i}-d_{i}
+= 2 ​ ( 1 − a i ) ​ log ⁡ a i 1 − a i ≤ 2 ​ ( 1 − a i ) ​ log ⁡ 1 1 − a i ≤ 2 e , \displaystyle=2(1-a_{i})\log\frac{a_{i}}{1-a_{i}}\leq 2(1-a_{i})\log\frac{1}{1-a_{i}}\leq\frac{2}{e},
+where the last inequality uses
+u ​ log ⁡ ( 1 / u ) ≤ 1 / e u\log(1/u)\leq 1/e for u ∈ ( 0 , 1 ) u\in(0,1) .
+Since d i ⋆ = I ⁡ ( z ) ​ c i ⋆ ​ ( z ) d_{i^{\star}}=I(z)c_{i^{\star}}(z) ,
+ℓ i ⋆ ​ ( z ) ≤ 2 e + c max ​ I ​ ( z ) . \ell_{i^{\star}}(z)\leq\frac{2}{e}+c_{\max}I(z).
+(29)
+Suppose first that λ < I ⁡ ( z ) ≤ r 0 \lambda<I(z)\leq r_{0} .
+By Equation 24 ,
+x λ − log ⁡ x λ ≤ 1 + 2 e + c max ​ r 0 + log ⁡ 2 m 0 . x_{\lambda}-\log x_{\lambda}\leq 1+\frac{2}{e}+c_{\max}r_{0}+\log\frac{2}{m_{0}}.
+The right-hand side is uniform over this range.
+As x − log ⁡ x x-\log x diverges at both zero and infinity,
+x λ x_{\lambda} lies in a fixed compact interval inside
+( 0 , ∞ ) (0,\infty) . Consequently,
+𝖤 λ ​ ( z ) ≍ λ I ⁡ ( z ) if ​ λ < I ⁡ ( z ) ≤ r 0 . \mathsf{E}_{\lambda}(z)\asymp\frac{\lambda}{I(z)}\qquad\text{if }\lambda<I(z)\leq r_{0}.
+Now suppose 0 < I ⁡ ( z ) ≤ λ 0<I(z)\leq\lambda .
+Stopping without querying gives error at most 1 / 2 1/2 ,
+so optimality implies
+λ ​ 𝖢 λ ​ ( z ) ≤ 1 2 , I ⁡ ( z ) ​ 𝖢 λ ​ ( z ) ≤ 1 2 . \lambda\mathsf{C}_{\lambda}(z)\leq\frac{1}{2},\qquad I(z)\mathsf{C}_{\lambda}(z)\leq\frac{1}{2}.
+The information lower bound Equation 19
+therefore yields 𝖤 λ ​ ( z ) ≥ m 0 2 ​ e \mathsf{E}_{\lambda}(z)\geq\frac{m_{0}}{2\sqrt{e}} . Since 𝖤 λ ​ ( z ) ≤ 1 / 2 \mathsf{E}_{\lambda}(z)\leq 1/2 ,
+the error is bounded above and below by positive constants.
+Combining the two ranges proves
+Equation 27 .
+Finally, consider I ⁡ ( z ) > r 0 I(z)>r_{0} .
+For sufficiently small λ \lambda , we have
+λ < I ⁡ ( z ) \lambda<I(z) . By Equation 24
+and Equation 29 ,
+x λ − log ⁡ x λ ≤ K 0 + c max ​ I ​ ( z ) , K 0 = 1 + 2 e + log ⁡ 2 m 0 . x_{\lambda}-\log x_{\lambda}\leq K_{0}+c_{\max}I(z),\qquad K_{0}=1+\frac{2}{e}+\log\frac{2}{m_{0}}.
+Since x − log ⁡ x ≥ x / 2 x-\log x\geq x/2 for every x > 0 x>0 ,
+x λ ≤ 2 ​ K 0 + 2 ​ c max ​ I ​ ( z ) . x_{\lambda}\leq 2K_{0}+2c_{\max}I(z).
+It follows that
+𝖤 λ ​ ( z ) = λ ​ x λ I ⁡ ( z ) ≤ 2 ​ λ ​ ( K 0 r 0 + c max ) , \mathsf{E}_{\lambda}(z)=\frac{\lambda x_{\lambda}}{I(z)}\leq 2\lambda\left(\frac{K_{0}}{r_{0}}+c_{\max}\right),
+proving Equation 28 .
+∎
+Proof of Theorem 2 .
+Write L λ = log ⁡ ( 1 / λ ) L_{\lambda}=\log(1/\lambda) . For each fixed prompt z z with 0 < I ⁡ ( z ) < ∞ 0<I(z)<\infty ,
+Lemma 4 gives
+𝖤 λ ​ ( z ) = Θ ​ ( λ ) \mathsf{E}_{\lambda}(z)=\Theta(\lambda) .
+Hence
+− log ⁡ 𝖤 λ ​ ( z ) L λ ⟶ 1 . \frac{-\log\mathsf{E}_{\lambda}(z)}{L_{\lambda}}\longrightarrow 1.
+Combining this with Theorem 1 yields
+𝖢 λ ​ ( z ) L λ ⟶ 1 I ⁡ ( z ) . \frac{\mathsf{C}_{\lambda}(z)}{L_{\lambda}}\longrightarrow\frac{1}{I(z)}.
+(30)
+To average this limit across prompts, we first establish
+a uniform bound on the expected cost.
+For each z z , choose an instrument i ⋆ i^{\star} attaining I ⁡ ( z ) I(z) with c i ⋆ ​ ( z ) ≤ c max c_{i^{\star}}(z)\leq c_{\max} . Consider the sequential likelihood-ratio test that repeatedly queries i ⋆ i^{\star} and stops when the log-likelihood ratio
+exits ( − B , B ) (-B,B) . We have established that this test has error probability at most e − B e^{-B} and expected query cost at most
+B + ℓ i ⋆ ​ ( z ) I ⁡ ( z ) . \frac{B+\ell_{i^{\star}}(z)}{I(z)}.
+Setting B = L λ B=L_{\lambda} and using optimality gives
+𝖤 λ ​ ( z ) + λ ​ 𝖢 λ ​ ( z ) ≤ λ + λ ​ L λ + ℓ i ⋆ ​ ( z ) I ⁡ ( z ) . \mathsf{E}_{\lambda}(z)+\lambda\mathsf{C}_{\lambda}(z)\leq\lambda+\lambda\frac{L_{\lambda}+\ell_{i^{\star}}(z)}{I(z)}.
+By Equation 29 ,
+ℓ i ⋆ ​ ( z ) ≤ 2 / e + c max ​ I ​ ( z ) \ell_{i^{\star}}(z)\leq 2/e+c_{\max}I(z) .
+Consequently,
+0 ≤ 𝖢 λ ​ ( z ) L λ ≤ ( 1 + 2 e ​ L λ ) ​ 1 I ⁡ ( z ) + 1 + c max L λ . 0\leq\frac{\mathsf{C}_{\lambda}(z)}{L_{\lambda}}\leq\left(1+\frac{2}{eL_{\lambda}}\right)\frac{1}{I(z)}+\frac{1+c_{\max}}{L_{\lambda}}.
+(31)
+If 𝔼 ⁡ [ 1 / I ⁡ ( Z ) ] < ∞ \mathbb{E}[1/I(Z)]<\infty , the right-hand side
+provides an integrable bound for sufficiently small
+λ \lambda . Dominated convergence and
+Equation 30 therefore yield
+lim λ ↓ 0 𝖢 λ L λ = 𝔼 ⁡ [ 1 I ⁡ ( Z ) ] . \lim_{\lambda\downarrow 0}\frac{\mathsf{C}_{\lambda}}{L_{\lambda}}=\mathbb{E}\left[\frac{1}{I(Z)}\right].
+If 𝔼 ⁡ [ 1 / I ⁡ ( Z ) ] = ∞ \mathbb{E}[1/I(Z)]=\infty , Fatou’s lemma gives
+lim inf λ ↓ 0 𝖢 λ L λ ≥ 𝔼 ⁡ [ 1 I ⁡ ( Z ) ] = ∞ . \liminf_{\lambda\downarrow 0}\frac{\mathsf{C}_{\lambda}}{L_{\lambda}}\geq\mathbb{E}\left[\frac{1}{I(Z)}\right]=\infty.
+Thus, in either case,
+lim λ ↓ 0 𝖢 λ L λ = 𝔼 ⁡ [ 1 I ⁡ ( Z ) ] , \lim_{\lambda\downarrow 0}\frac{\mathsf{C}_{\lambda}}{L_{\lambda}}=\mathbb{E}\left[\frac{1}{I(Z)}\right],
+(32)
+where the limit is interpreted as infinite when the
+expectation diverges.
+We next bound the population error.
+Since 0 < I ⁡ ( Z ) < ∞ 0<I(Z)<\infty almost surely, there exist
+0 < a < b < ∞ 0<a<b<\infty such that
+p ≔ Pr ⁡ ( a ≤ I ⁡ ( Z ) ≤ b ) > 0 . p\coloneq\Pr(a\leq I(Z)\leq b)>0.
+By Lemma 4 , for sufficiently small
+λ \lambda and some constant k > 0 k>0 ,
+𝖤 λ \displaystyle\mathsf{E}_{\lambda}
+≥ 𝔼 [ 𝖤 λ ( Z ) 𝟏 { a ≤ I ( Z ) ≤ b } ] ≥ k ​ p b λ . \displaystyle\geq\mathbb{E}\left[\mathsf{E}_{\lambda}(Z)\mathbf{1}_{\{a\leq I(Z)\leq b\}}\right]\geq\frac{kp}{b}\lambda.
+Therefore,
+lim sup λ ↓ 0 − log ⁡ 𝖤 λ L λ ≤ 1 . \limsup_{\lambda\downarrow 0}\frac{-\log\mathsf{E}_{\lambda}}{L_{\lambda}}\leq 1.
+(33)
+Suppose first that 𝔼 ⁡ [ 1 / I ⁡ ( Z ) ] < ∞ \mathbb{E}[1/I(Z)]<\infty .
+For any fixed r 0 > 0 r_{0}>0 , Lemma 4
+gives
+𝖤 λ \displaystyle\mathsf{E}_{\lambda}
+≤ K λ 𝔼 [ 1 I ⁡ ( Z ) 𝟏 { I ( Z ) ≤ r 0 } ] + K ′ λ = O ( λ ) , \displaystyle\leq K\lambda\mathbb{E}\left[\frac{1}{I(Z)}\mathbf{1}_{\{I(Z)\leq r_{0}\}}\right]+K^{\prime}\lambda=O(\lambda),
+for constants K , K ′ > 0 K,K^{\prime}>0 .
+Together with the lower bound above, this implies
+𝖤 λ = Θ ⁡ ( λ ) \mathsf{E}_{\lambda}=\Theta(\lambda) , and hence
+− log ⁡ 𝖤 λ L λ ⟶ 1 . \frac{-\log\mathsf{E}_{\lambda}}{L_{\lambda}}\longrightarrow 1.
+Combining this with Equation 32 ,
+we obtain
+lim λ ↓ 0 − log ⁡ 𝖤 λ 𝖢 λ = ( 𝔼 ⁡ [ 1 I ⁡ ( Z ) ] ) − 1 . \lim_{\lambda\downarrow 0}\frac{-\log\mathsf{E}_{\lambda}}{\mathsf{C}_{\lambda}}=\left(\mathbb{E}\left[\frac{1}{I(Z)}\right]\right)^{-1}.
+Finally, if 𝔼 ⁡ [ 1 / I ⁡ ( Z ) ] = ∞ \mathbb{E}[1/I(Z)]=\infty ,
+Equation 32 gives
+𝖢 λ / L λ → ∞ \mathsf{C}_{\lambda}/L_{\lambda}\to\infty ,
+while Equation 33 shows
+that − log 𝖤 λ / L λ -\log\mathsf{E}_{\lambda}/L_{\lambda}
+remains bounded. Therefore,
+lim λ ↓ 0 − log ⁡ 𝖤 λ 𝖢 λ = 0 , \lim_{\lambda\downarrow 0}\frac{-\log\mathsf{E}_{\lambda}}{\mathsf{C}_{\lambda}}=0,
+completing the proof.
+∎
+We now prove Corollary 1 .
+The tail assumption allows us to determine the orders of
+both the population error and expected cost. We first
+establish an identity that recovers expected cost from
+the optimal error.
+Lemma 5 (Recovering cost from error) .
+Let Π \Pi be a fixed policy class containing a zero-cost
+policy with error at most 1 / 2 1/2 . For each λ > 0 \lambda>0 ,
+let ( 𝖤 λ , 𝖢 λ ) (\mathsf{E}_{\lambda},\mathsf{C}_{\lambda}) denote the
+error and cost of a policy minimizing
+𝖤 ⁡ ( π ) + λ ​ 𝖢 ​ ( π ) \mathsf{E}(\pi)+\lambda\mathsf{C}(\pi) over Π \Pi .
+Then
+𝖢 λ = ∫ λ ∞ 𝖤 s s 2 ​ 𝑑 s − 𝖤 λ λ . \mathsf{C}_{\lambda}=\int_{\lambda}^{\infty}\frac{\mathsf{E}_{s}}{s^{2}}\,ds-\frac{\mathsf{E}_{\lambda}}{\lambda}.
+(34)
+If minimizers are not unique, the identity holds for
+any measurable selection.
+Proof.
+Let
+V ⁡ ( λ ) = min π ∈ Π ⁡ { 𝖤 ⁡ ( π ) + λ ​ 𝖢 ​ ( π ) } . V(\lambda)=\min_{\pi\in\Pi}\{\mathsf{E}(\pi)+\lambda\mathsf{C}(\pi)\}.
+As the infimum of affine functions of λ \lambda ,
+V V is concave and hence differentiable almost
+everywhere. At every point of differentiability,
+the cost of any optimal policy equals V ′ ​ ( λ ) V^{\prime}(\lambda) .
+Therefore,
+d d ​ λ ​ V ⁡ ( λ ) λ = λ ​ 𝖢 λ − V ⁡ ( λ ) λ 2 = − 𝖤 λ λ 2 . \frac{d}{d\lambda}\frac{V(\lambda)}{\lambda}=\frac{\lambda\mathsf{C}_{\lambda}-V(\lambda)}{\lambda^{2}}=-\frac{\mathsf{E}_{\lambda}}{\lambda^{2}}.
+The zero-cost policy gives
+0 ≤ V ⁡ ( λ ) ≤ 1 / 2 0\leq V(\lambda)\leq 1/2 , so
+V ⁡ ( λ ) / λ → 0 V(\lambda)/\lambda\to 0 as λ → ∞ \lambda\to\infty .
+Integrating from λ \lambda to infinity gives
+V ⁡ ( λ ) λ = ∫ λ ∞ 𝖤 s s 2 ​ 𝑑 s . \frac{V(\lambda)}{\lambda}=\int_{\lambda}^{\infty}\frac{\mathsf{E}_{s}}{s^{2}}\,ds.
+Substituting
+V ⁡ ( λ ) = 𝖤 λ + λ ​ 𝖢 λ V(\lambda)=\mathsf{E}_{\lambda}+\lambda\mathsf{C}_{\lambda}
+proves Equation 34 .
+∎
+Proof of Corollary 1 .
+Let D = 1 / I ⁡ ( Z ) D=1/I(Z) denote the inverse information rate.
+The assumed lower tail
+Pr ⁡ ( I ⁡ ( Z ) ≤ r ) ≍ r α \Pr(I(Z)\leq r)\asymp r^{\alpha} implies
+Pr ⁡ ( D > t ) ≍ t − α ( t → ∞ ) . \Pr(D>t)\asymp t^{-\alpha}\qquad(t\to\infty).
+(35)
+By the tail-integral formula,
+𝔼 ⁡ [ D ] = ∫ 0 ∞ Pr ⁡ ( D > t ) ​ 𝑑 t . \mathbb{E}[D]=\int_{0}^{\infty}\Pr(D>t)\,dt.
+Thus, 𝔼 ⁡ [ D ] < ∞ \mathbb{E}[D]<\infty if and only if
+α > 1 \alpha>1 . In this case, the exponential
+error-decay rate follows directly from
+Theorem 2 . To obtain the finer scaling for the remaining cases,
+we first determine the population error.
+Choose d 0 > 0 d_{0}>0 sufficiently large that the tail bounds
+in Equation 35 hold for t ≥ d 0 t\geq d_{0} ,
+and define
+M λ = 𝔼 [ min { 1 , λ D } 𝟏 { D ≥ d 0 } ] . M_{\lambda}=\mathbb{E}\left[\min\{1,\lambda D\}\mathbf{1}_{\{D\geq d_{0}\}}\right].
+By Lemma 4 , the expected error over
+prompts with D ≥ d 0 D\geq d_{0} is of order M λ M_{\lambda} ,
+while prompts with D < d 0 D<d_{0} contribute at most
+O ⁡ ( λ ) O(\lambda) . Since
+M λ ≥ λ ​ d 0 ​ Pr ⁡ ( D ≥ d 0 ) = Ω ⁡ ( λ ) M_{\lambda}\geq\lambda d_{0}\Pr(D\geq d_{0})=\Omega(\lambda)
+for sufficiently small λ \lambda , the latter contribution
+does not change the asymptotic order. Hence
+𝖤 λ ≍ M λ \mathsf{E}_{\lambda}\asymp M_{\lambda} .
+For λ < 1 / d 0 \lambda<1/d_{0} , the tail-integral formula gives
+M λ \displaystyle M_{\lambda}
+= λ ​ d 0 ​ Pr ⁡ ( D ≥ d 0 ) + λ ​ ∫ d 0 1 / λ Pr ⁡ ( D > t ) ​ 𝑑 t ≍ λ ⁡ ( 1 + ∫ d 0 1 / λ t − α ​ 𝑑 t ) . \displaystyle=\lambda d_{0}\Pr(D\geq d_{0})+\lambda\int_{d_{0}}^{1/\lambda}\Pr(D>t)\,dt\asymp\lambda\left(1+\int_{d_{0}}^{1/\lambda}t^{-\alpha}\,dt\right).
+Evaluating the integral yields
+𝖤 λ ≍ { λ , α > 1 , λ ​ log ⁡ ( 1 / λ ) , α = 1 , λ α , 0 < α < 1 . \mathsf{E}_{\lambda}\asymp\begin{cases}\lambda,&\alpha>1,\\[2.84526pt]
+\lambda\log(1/\lambda),&\alpha=1,\\[2.84526pt]
+\lambda^{\alpha},&0<\alpha<1.\end{cases}
+(36)
+We next determine the expected cost.
+For α > 1 \alpha>1 , Equation 32
+already establishes
+𝖢 λ ∼ 𝔼 ⁡ [ D ] ​ log ⁡ ( 1 / λ ) . \mathsf{C}_{\lambda}\sim\mathbb{E}[D]\log(1/\lambda).
+If α = 1 \alpha=1 , then
+𝖤 s ≍ s ​ log ⁡ ( 1 / s ) \mathsf{E}_{s}\asymp s\log(1/s) near zero.
+Consequently,
+∫ λ ∞ 𝖤 s s 2 ​ 𝑑 s ≍ ∫ λ s 0 log ⁡ ( 1 / s ) s ​ 𝑑 s ≍ ( log ⁡ ( 1 / λ ) ) 2 , \int_{\lambda}^{\infty}\frac{\mathsf{E}_{s}}{s^{2}}\,ds\asymp\int_{\lambda}^{s_{0}}\frac{\log(1/s)}{s}\,ds\asymp(\log(1/\lambda))^{2},
+where s 0 > 0 s_{0}>0 is fixed.
+Since 𝖤 λ / λ = Θ ⁡ ( log ⁡ ( 1 / λ ) ) \mathsf{E}_{\lambda}/\lambda=\Theta(\log(1/\lambda)) is of lower order,
+Equation 34 gives
+𝖢 λ ≍ ( log ⁡ ( 1 / λ ) ) 2 . \mathsf{C}_{\lambda}\asymp(\log(1/\lambda))^{2}.
+Finally, suppose 0 < α < 1 0<\alpha<1 .
+Since 𝖤 s ≍ s α \mathsf{E}_{s}\asymp s^{\alpha} ,
+Equation 34 gives
+𝖢 λ = O ⁡ ( λ α − 1 ) . \mathsf{C}_{\lambda}=O(\lambda^{\alpha-1}).
+For the matching lower bound, choose constants
+u , v > 0 u,v>0 such that, for sufficiently small λ \lambda ,
+u ​ λ α ≤ 𝖤 λ ≤ v ​ λ α . u\lambda^{\alpha}\leq\mathsf{E}_{\lambda}\leq v\lambda^{\alpha}.
+Fix a > 1 a>1 large enough that u ​ a α > v ua^{\alpha}>v .
+Optimality of the circuit at price a ​ λ a\lambda implies
+𝖤 a ​ λ + a ​ λ ​ 𝖢 a ​ λ ≤ 𝖤 λ + a ​ λ ​ 𝖢 λ . \mathsf{E}_{a\lambda}+a\lambda\mathsf{C}_{a\lambda}\leq\mathsf{E}_{\lambda}+a\lambda\mathsf{C}_{\lambda}.
+Therefore,
+𝖢 λ \displaystyle\mathsf{C}_{\lambda}
+≥ 𝖤 a ​ λ − 𝖤 λ a ​ λ ≥ u ​ a α − v a ​ λ α − 1 . \displaystyle\geq\frac{\mathsf{E}_{a\lambda}-\mathsf{E}_{\lambda}}{a\lambda}\geq\frac{ua^{\alpha}-v}{a}\lambda^{\alpha-1}.
+Hence
+𝖢 λ ≍ λ α − 1 \mathsf{C}_{\lambda}\asymp\lambda^{\alpha-1} .
+Combining the three cases,
+𝖢 λ ≍ { log ⁡ ( 1 / λ ) , α > 1 , ( log ⁡ ( 1 / λ ) ) 2 , α = 1 , λ α − 1 , 0 < α < 1 . \mathsf{C}_{\lambda}\asymp\begin{cases}\log(1/\lambda),&\alpha>1,\\[2.84526pt]
+(\log(1/\lambda))^{2},&\alpha=1,\\[2.84526pt]
+\lambda^{\alpha-1},&0<\alpha<1.\end{cases}
+(37)
+It remains to eliminate λ \lambda between
+Equation 36 and
+Equation 37 .
+For α > 1 \alpha>1 , Theorem 2 gives
+lim λ ↓ 0 − log ⁡ 𝖤 λ 𝖢 λ = 1 𝔼 ⁡ [ D ] . \lim_{\lambda\downarrow 0}\frac{-\log\mathsf{E}_{\lambda}}{\mathsf{C}_{\lambda}}=\frac{1}{\mathbb{E}[D]}.
+For α = 1 \alpha=1 ,
+− log ⁡ 𝖤 λ = log ⁡ ( 1 / λ ) − log ⁡ log ⁡ ( 1 / λ ) + O ⁡ ( 1 ) ≍ 𝖢 λ . -\log\mathsf{E}_{\lambda}=\log(1/\lambda)-\log\log(1/\lambda)+O(1)\asymp\sqrt{\mathsf{C}_{\lambda}}.
+For 0 < α < 1 0<\alpha<1 ,
+𝖤 λ ≍ λ α ≍ 𝖢 λ − α / ( 1 − α ) . \mathsf{E}_{\lambda}\asymp\lambda^{\alpha}\asymp\mathsf{C}_{\lambda}^{-\alpha/(1-\alpha)}.
+These establish the three regimes in
+Corollary 1 .
+∎
+Appendix C Additional Experimental Details
+C.1 Data
+In this work, we consider the following seven classification datasets.
+AgentJudgeBench ( Verma et al., 2026 ) .
+Each prompt is a user request, the tools available to an AI agent and the tool calls the agent planned, together with one of two criteria: whether the plan uses exactly the right set of tools (tool selection), or whether it covers every part of the request (query coverage). An instrument answers whether the plan fully meets the criterion without seeing the reference plan. We draw 1,000 requests, giving 20,850 prompts. The seven instruments are: Prometheus-2-7B, gpt-oss-20b, gpt-oss-120b, QwQ-32B, Gemini-2.5-Pro, GPT-5.4 and Claude Sonnet 4.5.
+BeaverTails ( Ji et al., 2023 ) .
+Each prompt is a user request together with a model’s response. An instrument answers whether the response is unsafe under the benchmark’s harm categories.
+BIG-Bench Hard ( Suzgun et al., 2023 ) .
+Each prompt is a question with two answer options from one of eight tasks (boolean expressions, causal judgement, formal fallacies, hyperbaton, navigate, snarks, sports understanding and web of lies), with 1,865 questions in total. An instrument answers which option is correct. The 46 instruments are models from 0.36B to 123B parameters.
+Decision Index ( Multimodal Art, 2026 ) .
+Each prompt is a request from one of six binary decision tasks: whether clinical-trial reports entail a statement (NLI4CT), a yes/no question about cause and effect (CLadder), which of two limericks is the original (BPoMP), whether Wikipedia introductions support a multi-hop claim (HoVer), whether a tweet is sarcastic (iSarcasmEval) and which of two headline edits is funnier (Humicroedit), with 24,928 questions in total. The 18 instruments are entrants of the Decision Index leaderboard, from 0.4B to 36B parameters.
+HealthBench ( Arora et al., 2025 ) .
+Each prompt is a conversation between a user and an AI assistant together with one rubric criterion written by physicians, and an instrument answers whether the last response meets the criterion, using the benchmark’s grading instruction. Each prompt was judged by two to five physicians. Therefore, the target is the probability that a randomly chosen physician judges the criterion met. The eight instruments are configurations of three reasoning models : Granite 4.2 3B with reasoning off, low and default, and gpt-oss-20b (low, medium and high effort) and gpt-oss-120b (low and medium effort) ( Agarwal et al., 2025 ) .
+LMArena ( Chiang et al., 2024 ) .
+Each prompt is a user message together with two responses and an instrument answers which response is more likely to be preferred (A or B). The order in which the two responses are shown is drawn at random for every run of the prompt. We consider 34,952 single-turn English comparisons.
+PolitiCAUSE ( Garcia-Corral et al., 2024 ) .
+Each prompt is one sentence from political text, and an instrument answers whether the sentence states a causal relation.
+On BeaverTails, HealthBench, LMArena and PolitiCAUSE, we query the instruments ourselves. Each instrument is given the dataset’s official classification instruction, with the model’s default decoding (unless we state otherwise). BeaverTails, LMArena and PolitiCAUSE share seven instruments: Gemma 4 ( Team et al., 2026 ) (E2B, E4B, 26B-A4B and 31B, instruction-tuned) and Qwen3 ( Yang et al., 2025 ) (4B, 8B and 32B). At their defaults, the Gemma models answer directly and the Qwen3 models reason before answering. On AgentJudgeBench, BIG-Bench Hard and Decision Index, we use the answers each benchmark recorded. No call costs were recorded there, so on BIG-Bench Hard and Decision Index a call costs $0.01 per million tokens per billion active parameters, and on AgentJudgeBench we price each call at the model’s API price with the prompt’s input tokens and an assumed output length.
+Each dataset is split into five folds, keeping prompts that share a source together. Each fold serves once as the test set, and the remaining prompts are divided into training and validation.
+Embedding model.
+The embedding ϕ ⁡ ( z ) \phi(z) is built from Qwen3-Embedding-0.6B ( Yang et al., 2025 ) with last-token pooling, which gives a 1024-dimensional vector per text.
+C.2 Training the Probabilistic Model
+Architecture.
+The model f θ f_{\theta} assumes that each prompt belongs to one of T T latent types. It first maps the embedding to h ⁡ ( z ) = W ​ ϕ ​ ( z ) ∈ ℝ 64 h(z)=W\phi(z)\in\mathbb{R}^{64} with a learned matrix W W , and three networks take h ⁡ ( z ) h(z) as input:
+1.
+a type head , a two-layer network of width 128, gives the probability ρ t ​ ( z ) \rho_{t}(z) that z z is of type t t ;
+2.
+a measurement head , a two-layer network of width 128, gives the probability μ i ​ t ​ ( z ) \mu_{it}(z) that instrument i i returns 1 1 on a prompt of type t t ;
+3.
+a label head gives the probability η t ​ ( z , s ) \eta_{t}(z,s) that Y = 1 Y=1 on a prompt of type t t at state s s . It encodes each observed pair ( j , x ) ∈ s (j,x)\in s as g ⁡ ( e j + e x ′ + e t ′′ ) g(e_{j}+e^{\prime}_{x}+e^{\prime\prime}_{t}) , where e j e_{j} , e x ′ e^{\prime}_{x} and e t ′′ e^{\prime\prime}_{t} are learned 64-dimensional embeddings of the instrument, the measurement and the type, and g g is a two-layer network. It sums these vectors over the state and passes [ h ⁡ ( z ) + e t ′′ , ∑ ( j , x ) ∈ s g ⁡ ( e j + e x ′ + e t ′′ ) , | ℳ ⁡ ( s ) | / n ] [\,h(z)+e^{\prime\prime}_{t},\ \sum_{(j,x)\in s}g(e_{j}+e^{\prime}_{x}+e^{\prime\prime}_{t}),\ |\mathcal{M}(s)|/n\,] through a two-layer network of width 128 and a linear output.
+The measurements observed so far update the type by Bayes’ rule,
+w t ​ ( z , s ) ∝ ρ t ​ ( z ) ​ ∏ ( j , x ) ∈ s μ j ​ t ​ ( z ) x ​ ( 1 − μ j ​ t ​ ( z ) ) 1 − x , w_{t}(z,s)\propto\rho_{t}(z)\prod_{(j,x)\in s}\mu_{jt}(z)^{x}\bigl(1-\mu_{jt}(z)\bigr)^{1-x},
+(38)
+and the outputs of f θ f_{\theta} average over the types:
+η θ ​ ( ϕ ⁡ ( z ) , s ) = ∑ t w t ​ ( z , s ) ​ η t ​ ( z , s ) , ν θ ( i ) ​ ( ϕ ⁡ ( z ) , s ) = ∑ t w t ​ ( z , s ) ​ μ i ​ t ​ ( z ) . \eta_{\theta}(\phi(z),s)=\sum_{t}w_{t}(z,s)\,\eta_{t}(z,s),\qquad\nu^{(i)}_{\theta}(\phi(z),s)=\sum_{t}w_{t}(z,s)\,\mu_{it}(z).
+(39)
+Loss function.
+For a prompt z z , let 𝒟 ⁡ ( z ) \mathcal{D}(z) be the multiset of its recorded measurements ( i , x ) (i,x) , and let a 1 ​ ( z ) a_{1}(z) and a 0 ​ ( z ) a_{0}(z) be the numbers of annotations that give label 1 1 and label 0 0 . For a hard label, a y ⁡ ( z ) ​ ( z ) = 1 a_{y(z)}(z)=1 and the other count is zero. On HealthBench, they count the physicians who judged the criterion met and not met. For each prompt z z in a minibatch B B we draw a state s z s_{z} : a number k k uniformly from { 0 , … , n } \{0,\dots,n\} , a uniformly random set ℳ ⁡ ( s z ) \mathcal{M}(s_{z}) of k k instruments, and for each i ∈ ℳ ⁡ ( s z ) i\in\mathcal{M}(s_{z}) one of its recorded measurements on z z , chosen uniformly. With ℓ ⁡ ( p , x ) = − x ​ log ⁡ p − ( 1 − x ) ​ log ⁡ ( 1 − p ) \ell(p,x)=-x\log p-(1-x)\log(1-p) the binary cross-entropy, the label loss is
+ℒ Y ​ ( θ ) = ∑ z ∈ B [ a 1 ​ ( z ) ​ ℓ ​ ( η θ ​ ( ϕ ⁡ ( z ) , s z ) , 1 ) + a 0 ​ ( z ) ​ ℓ ​ ( η θ ​ ( ϕ ⁡ ( z ) , s z ) , 0 ) ] ∑ z ∈ B ( a 0 ​ ( z ) + a 1 ​ ( z ) ) . \mathcal{L}_{Y}(\theta)=\frac{\sum_{z\in B}\bigl[a_{1}(z)\,\ell\bigl(\eta_{\theta}(\phi(z),s_{z}),1\bigr)+a_{0}(z)\,\ell\bigl(\eta_{\theta}(\phi(z),s_{z}),0\bigr)\bigr]}{\sum_{z\in B}\bigl(a_{0}(z)+a_{1}(z)\bigr)}.
+(40)
+For the measurement loss we draw a second state s z ′ s^{\prime}_{z} in the same way and score the prediction for every unqueried instrument against all its recorded measurements,
+ℒ X ​ ( θ ) = 1 | B | ​ ∑ z ∈ B 1 N ′ ​ ( z ) ​ ∑ ( i , x ) ∈ 𝒟 ⁡ ( z ) , i ∉ ℳ ⁡ ( s z ′ ) ℓ ⁡ ( ν θ ( i ) ​ ( ϕ ⁡ ( z ) , s z ′ ) , x ) , \mathcal{L}_{X}(\theta)=\frac{1}{|B|}\sum_{z\in B}\frac{1}{N^{\prime}(z)}\sum_{(i,x)\in\mathcal{D}(z),\ i\notin\mathcal{M}(s^{\prime}_{z})}\ell\bigl(\nu^{(i)}_{\theta}(\phi(z),s^{\prime}_{z}),x\bigr),
+(41)
+where N ′ ​ ( z ) N^{\prime}(z) is the number of terms in the inner sum. We minimize ℒ Y + ℒ X \mathcal{L}_{Y}+\mathcal{L}_{X} .
+Optimization and calibration.
+We use AdamW (learning rate 2 × 10 − 3 2\times 10^{-3} , weight decay 10 − 4 10^{-4} , batch size 256) with a cosine schedule over at most 300 epochs. After each epoch we compute ℒ Y \mathcal{L}_{Y} on a fixed set of validation states, one per validation prompt, keep the epoch where it is lowest, and stop after 30 epochs without improvement. We train one model for each T ∈ { 1 , 2 , 4 , 8 } T\in\{1,2,4,8\} and keep the one with the lowest validation loss ℒ Y + ℒ X \mathcal{L}_{Y}+\mathcal{L}_{X} . We then fit one temperature per head on ten states per validation prompt, η = σ ⁡ ( u η / τ η ) \eta=\sigma(u_{\eta}/\tau_{\eta}) and ν ( i ) = σ ⁡ ( u ν , i / τ ν ) \nu^{(i)}=\sigma(u_{\nu,i}/\tau_{\nu}) on the logits u u , each chosen to minimize the validation negative log-likelihood. We train five models per fold by changing the random seed.
+Generating circuits.
+We solve Equation 7 with q z ​ ( s ) = η θ ​ ( ϕ ⁡ ( z ) , s ) q_{z}(s)=\eta_{\theta}(\phi(z),s) and with ν θ ( i ) ​ ( ϕ ⁡ ( z ) , s ) \nu^{(i)}_{\theta}(\phi(z),s) in place of Q X | Z [ i ] ​ ( 1 ∣ z ) Q^{[i]}_{X|Z}(1\mid z) . On BIG-Bench Hard and Decision Index, which have a large set of instruments, we keep the eight whose per-task cost–accuracy frontier on the training and validation prompts comes closest to that of all instruments. The program uses a cost known before the query. On the datasets we query ourselves, c i ​ ( z ) c_{i}(z) is the input tokens of z z times the input price plus the 95th percentile of instrument i i ’s output length on training prompts times the output price. On the other three, c i ​ ( z ) c_{i}(z) is instrument i i ’s mean recorded cost on training prompts. Costs are divided by the mean cost of the most expensive instrument. We solve Equation 7 for λ = 0 \lambda=0 , for 201 values of λ \lambda spaced geometrically from 10 − 8 10^{-8} to 10 2 10^{2} , and for λ = ∞ \lambda=\infty (the zero-cost prediction). For each budget, we choose the λ \lambda with the best validation metric among those whose mean validation cost is within the budget and report its test metric. Since some benchmarks have class imbalance, we always optimize for balanced accuracy and report balanced accuracy in our plots.
+C.3 Full list of baselines
+•
+Predictive routers: RouteLLM ( Ong et al., 2025 ) , HybridLLM ( Ding et al., 2024 ) , and CARROT ( Somerstep et al., 2025 )
+•
+Model cascades: Cascade Routing ( Dekoninck et al., 2025 ) , Consistency Cascades ( Yue et al., 2024 ) , Cascaded Selective ( Jung et al., 2025 ) , and FrugalGPT ( Chen et al., 2024b )
+•
+Sampling methods: Adaptive-Consistency ( Aggarwal et al., 2023 )
+RouteLLM and Consistency Cascade route between two instruments, and we sweep every pair. Since HybridLLM fine-tunes a separate router for each pair of instruments, we use a single pair: the cheapest instrument and the most accurate of the costlier instruments on the training prompts.
+C.4 Additional Experimental Results
+In this subsection, we provide additional experimental analysis of our learned circuits.
+C.4.1 Calibration of the circuit’s beliefs.
+Our method returns a predictive distribution over the ground truth label, allowing us to assess whether its confidence is well calibrated. The circuit’s belief at the terminal state s T s_{T} is p ^ ​ ( z ) = η θ ​ ( ϕ ⁡ ( z ) , s T ) \hat{p}(z)=\eta_{\theta}(\phi(z),s_{T}) . We evaluate these probabilities with the Brier score
+𝖡𝗋𝗂𝖾𝗋 ⁡ ( π ) = 𝔼 Z ​ 𝔼 𝑿 | Z ​ [ ( p ^ ​ ( Z ) − Y ) 2 ] , \mathsf{Brier}(\pi)=\mathbb{E}_{Z}\,\mathbb{E}_{\bm{X}\mid Z}\!\left[\big(\hat{p}(Z)-Y\big)^{2}\right],
+(42)
+which is small only when the forecasts are both calibrated and sharp. A forecast is calibrated if, among the prompts forecast at probability p p , a fraction p p have label 1 1 . While the dynamic program never optimizes for the Brier metric directly , it attains very competitive calibration across different budgets; see Figure 6 . We also report the calibration of majority voting, treating the fraction of the instruments’ calls that give label 1 1 as its forecast probability.
+Figure 6 : The circuit’s beliefs are calibrated at every budget. For each task, left: Brier score on the test set ( lower is better ) against expected cost per item; right: reliability diagrams of the circuits at different budgets and of majority voting. The dashed line is perfect calibration. The circuit’s expected calibration error is at most 2.1 % 2.1\% at every budget on six tasks, and at most 5.2 % 5.2\% on BIG-Bench Hard, whereas majority voting’s is 4.8 % 4.8\% to 24.6 % 24.6\% and its miscalibration differs in direction by task.
+C.4.2 Joint distribution between instruments
+To test the assumption that LLMs are conditionally independent given any prompt ( Assumption 1 ), we queried eight instruments 100 times each on 20 prompts from BeaverTails. For any two instruments, we compute the Pearson correlation ϕ \phi of their answers in two ways: within a prompt , across its 100 calls, averaged over prompts; and across prompts , pooling all 2,000 calls. Under the assumption, the first is zero, while the second can be large because the instruments share the (latent) difficulty of each prompt. To test the joint independence of all eight instruments on a prompt, we use their total correlation
+𝖳𝖢 ⁡ ( z ) = ∑ i H ⁡ ( X ( i ) ∣ Z = z ) − H ⁡ ( X ( 1 ) , … , X ( 8 ) ∣ Z = z ) , \mathsf{TC}(z)=\sum_{i}H\big(X^{(i)}\mid Z=z\big)-H\big(X^{(1)},\dots,X^{(8)}\mid Z=z\big),
+(43)
+estimated in bits from the 100 calls, which is zero if and only if the answers are jointly independent. We compare it with a permutation null that shuffles each instrument’s calls independently, preserving each instrument’s answer frequencies while removing any dependence between instruments.
+We present these results in Figure 7 .
+Figure 7 : Instrument answers are independent within a prompt but correlated across prompts. (a) ϕ \phi coefficient of two instruments’ answers within a prompt, averaged over prompts on which both instruments’ answers vary. (b) The same coefficient across prompts, pooling all calls. (c) Total correlation of the eight answers on each prompt ( Equation 43 ) against the 95th percentile of its permutation null. Red marks a rejection at the 5% level. Within a prompt the coefficients lie between − 0.10 -0.10 and 0.15 0.15 , while across prompts they reach 0.69 0.69 . Only one of the 20 prompts rejects joint independence, the rate expected by chance.
+Given labeled data, the fitted model treats measurements as independent given the embedding and the latent type ( Section C.2 ). Since the type is unobserved, a measurement changes the model’s prediction of the other instruments’ measurements, so the model can represent dependence between instruments that the embedding alone does not explain. We use this joint to estimate correlations on the test prompts, without the true labels, and compare them with those measured from the recorded calls and labels on the same set of prompts, pooling the five test folds. Write ν x ( i ) ​ ( ϕ , s ) \nu^{(i)}_{x}(\phi,s) for the model’s probability that instrument i i answers x x at state s s (so ν 1 ( i ) = ν θ ( i ) \nu^{(i)}_{1}=\nu^{(i)}_{\theta} ), η x ​ ( ϕ , s ) \eta_{x}(\phi,s) for its belief that Y = x Y=x at state s s , and e i = 𝟏 { X ( i ) ≠ Y } e_{i}=\mathbf{1}\{X^{(i)}\neq Y\} for the error of instrument i i . Then
+Pr ⁡ ( X ( i ) = x , X ( j ) = x ′ ∣ ϕ ) \displaystyle\Pr\big(X^{(i)}=x,X^{(j)}=x^{\prime}\mid\phi\big)
+= ν x ( i ) ​ ( ϕ , ∅ ) ​ ν x ′ ( j ) ​ ( ϕ , { ( i , x ) } ) , \displaystyle=\nu^{(i)}_{x}(\phi,\varnothing)\,\nu^{(j)}_{x^{\prime}}\big(\phi,\{(i,x)\}\big),
+(44)
+Pr ⁡ ( e i = 1 ∣ ϕ ) \displaystyle\Pr(e_{i}=1\mid\phi)
+= ∑ x ν x ( i ) ​ ( ϕ , ∅ ) ​ [ 1 − η x ​ ( ϕ , { ( i , x ) } ) ] , \displaystyle=\sum_{x}\nu^{(i)}_{x}(\phi,\varnothing)\big[1-\eta_{x}(\phi,\{(i,x)\})\big],
+Pr ⁡ ( e i = e j = 1 ∣ ϕ ) \displaystyle\Pr(e_{i}=e_{j}=1\mid\phi)
+= ∑ x Pr ⁡ ( X ( i ) = x , X ( j ) = x ∣ ϕ ) ​ [ 1 − η x ​ ( ϕ , { ( i , x ) , ( j , x ) } ) ] , \displaystyle=\sum_{x}\Pr\big(X^{(i)}=x,X^{(j)}=x\mid\phi\big)\big[1-\eta_{x}(\phi,\{(i,x),(j,x)\})\big],
+where two binary instruments err together only when they give the same answer. Averaging these moments over the test prompts gives the implied correlations, and the implied accuracy of instrument i i is 1 − 𝔼 ⁡ [ Pr ⁡ ( e i = 1 ∣ ϕ ) ] 1-\mathbb{E}[\Pr(e_{i}=1\mid\phi)] .
+Consider Figure 8 . The fitted model recovers nearly all of the dependence between instruments : on six of the seven tasks, the implied correlations of answers and of errors are within 4% of the measured ones on average, and on BIG-Bench Hard, the smallest task, they are 83% to 85% of them. The model also predicts each instrument’s accuracy on unseen prompts with high fidelity : the predicted accuracies are within 1.2 points of the measured ones on average on five tasks, 2.1 points on AgentJudgeBench and 3.6 points on BIG-Bench Hard.
+Figure 8 : The fitted model predicts each instrument’s accuracy on unseen data without labels and recovers nearly all of the dependence between instruments. Correlations and accuracies implied by the fitted model on unlabeled test prompts ( Equation 44 ) against those measured from recorded calls and labels. Left: correlation of two instruments’ answers across prompts (one point per pair). Middle: correlation of their errors. Right: accuracy of each instrument. The dashed line is equality.
+C.4.3 How does the circuit allocate its queries?
+We first examine how the value of additional queries depends on the reliability of the instrument pool for a given prompt; see Figure 9 . For a given prompt z z , let r ⁡ ( z ) r(z) be the proportion of the recorded calls of the instruments the circuit can query that return the label y ⁡ ( z ) y(z) . A prompt is (1) all right if r ⁡ ( z ) = 1 r(z)=1 , (2) noisy if 1 / 2 < r ⁡ ( z ) < 1 1/2<r(z)<1 , (3) mostly wrong if 0 < r ⁡ ( z ) ≤ 1 / 2 0<r(z)\leq 1/2 , and (4) all wrong if r ⁡ ( z ) = 0 r(z)=0 . On HealthBench, prompts on which the physicians disagree are left out. On noisy prompts, correct measurements occur more often, so additional queries provide further evidence for the correct label. On mostly wrong and all wrong prompts, the measurements favor the incorrect label, so additional queries to the same pool tend to reinforce the error.
+Figure 9 : Additional queries improve accuracy when instrument errors vary across calls. We stratify unseen prompts by r ⁡ ( z ) r(z) and report accuracy for four predictors: the embedding prediction η θ ​ ( ϕ ⁡ ( z ) , s 0 ) \eta_{\theta}(\phi(z),s_{0}) , which makes no instrument calls; our circuit at normalized budgets of 0.03 0.03 and 1 1 ; and majority voting over the instruments the circuit can query. Numbers above the bars give the mean number of calls per prompt, and percentages below each group give its share of the test set. Relative to the embedding prediction, the circuit at budget 1 1 improves accuracy on noisy prompts by 5–44 percentage points. On all right prompts, it comes within 1.3 percentage points of majority voting on four tasks while using 38–86% fewer calls.
+We next examine how the circuit allocates those measurements across prompts; see Figure 10 . Let s ⁡ ( z ) s(z) be the fraction of these recorded calls on z z that return 1 1 , and define the instruments’ disagreement by d ⁡ ( z ) = 1 − | 2 ​ s ​ ( z ) − 1 | d(z)=1-|2s(z)-1| , so that d ⁡ ( z ) = 0 d(z)=0 when all calls agree and d ⁡ ( z ) = 1 d(z)=1 when they split evenly. We also record whether the embedding prediction 𝟏 { η θ ( ϕ ( z ) , s 0 ) ≥ 1 / 2 } \mathbf{1}\{\eta_{\theta}(\phi(z),s_{0})\geq 1/2\} agrees with the majority of these calls. The dynamic program tends to continue querying when its posterior belief remains near 1 / 2 1/2 , where an additional measurement can still change the optimal prediction. Agreement between the embedding and subsequent measurements typically moves the belief away from 1 / 2 1/2 and shortens the circuit, whereas disagreement induces further queries.
+Figure 10 : The circuit allocates more queries when the prior prediction and instrument measurements disagree. We present the expected number of calls per test prompt for circuits at normalized budgets 0.03 0.03 , 0.1 0.1 , and 0.2 0.2 on Arena, BeaverTails and PolitiCAUSE, grouped by prompt type (left), instrument disagreement d ⁡ ( z ) d(z) (middle: 0 0 , ( 0 , 1 / 3 ] (0,1/3] , ( 1 / 3 , 2 / 3 ] (1/3,2/3] , and ( 2 / 3 , 1 ] (2/3,1] ), and whether the embedding prediction agrees with the majority of the recorded calls (right). Percentages below each group give its share of the test set. Mean calls increase from all right to mostly wrong prompts on every task. The clearest separation occurs when conditioning on agreement with the embedding prediction: at budget 0.2 0.2 , the circuit makes 1.7 1.7 – 1.9 × 1.9\times as many calls when the embedding and instrument majority disagree on Arena ( 1.84 1.84 vs. 1.08 1.08 ), BeaverTails ( 1.77 1.77 vs. 0.95 0.95 ) and PolitiCAUSE ( 1.85 1.85 vs. 1.11 1.11 ).
+Lastly, Section 4.2 shows that, as λ ↓ 0 \lambda\downarrow 0 , the optimal circuit concentrates its queries on instruments with the largest prompt-specific information rate I i ​ ( z ) = d i ​ ( z ) / c i ​ ( z ) I_{i}(z)=d_{i}(z)/c_{i}(z) . Since d i ​ ( z ) d_{i}(z) depends on the unknown label, we construct an analogue using the fitted model that measures the information provided by the first query to instrument i i , beyond the embedding, per unit cost:
+r ^ i = I ^ i c ¯ i , I ^ i = 𝔼 ^ ​ [ h ⁡ ( η θ ​ ( ϕ ⁡ ( Z ) , s 0 ) ) − h ⁡ ( η θ ​ ( ϕ ⁡ ( Z ) , { ( i , X ( i ) ) } ) ) ] , \hat{r}_{i}=\frac{\hat{I}_{i}}{\bar{c}_{i}},\qquad\hat{I}_{i}=\widehat{\mathbb{E}}\!\left[h\!\left(\eta_{\theta}(\phi(Z),s_{0})\right)-h\!\left(\eta_{\theta}(\phi(Z),\{(i,X^{(i)})\})\right)\right],
+(45)
+where h ⁡ ( p ) = − p ​ log 2 ​ p − ( 1 − p ) ​ log 2 ⁡ ( 1 − p ) h(p)=-p\log_{2}p-(1-p)\log_{2}(1-p) , c ¯ i \bar{c}_{i} is the mean cost of instrument i i , and the expectation is taken over validation prompts, their recorded responses, and the fitted models of every fold and seed. Thus I ^ i \hat{I}_{i} estimates I ⁡ ( Y ; X ( i ) ∣ ϕ ⁡ ( Z ) ) I(Y;X^{(i)}\mid\phi(Z)) in bits, and r ^ i \hat{r}_{i} measures information per unit cost. Unlike I i ​ ( z ) I_{i}(z) , however, r ^ i \hat{r}_{i} is averaged over prompts and describes only the value of the first query.
+We define the entry point of instrument i i as the smallest expected cost per item at which the circuit makes at least 0.05 0.05 expected calls per prompt to i i . The Spearman rank correlation between entry order and r ^ i \hat{r}_{i} is 1.00 1.00 , 0.96 0.96 , and 0.79 0.79 on Arena, BeaverTails, and PolitiCAUSE, respectively. For comparison, the corresponding correlations are 0.75 0.75 , 0.89 0.89 , and 0.93 0.93 for inverse cost; 0.79 0.79 , 0.21 0.21 , and 0.71 0.71 for accuracy; and − 0.79 -0.79 , 0.04 0.04 , and 0.43 0.43 for low redundancy, measured as the negative mean error correlation with the remaining instruments.
+Figure 11 : Instruments with higher information per unit cost enter the circuit earlier. Expected calls per unseen prompt to each instrument as a function of the circuit’s expected cost per item. Instruments are colored by their rank under the estimated information rate r ^ i \hat{r}_{i} in Equation 45 , with the corresponding value in bits per unit cost shown in parentheses. Across the three tasks, instruments with larger r ^ i \hat{r}_{i} tend to begin receiving calls at lower expected cost. The highest-rate instrument enters first on every task, including Arena, where Gemma 26B is not the cheapest instrument.
+Figure 12 : Building the instrument pool. We build the instrument pool one instrument at a time according to different strategies: by estimated conditional information given the embedding and the pool (greedy algorithm), by accuracy on the training calls (most accurate first), cheapest first, or in random order (mean of three runs). Every point is our circuit restricted to that pool, using a single fitted model (an earlier version of the model without latent types). The circled point is the circuit with all instruments. Top: frontier area of test accuracy. Middle: test accuracy when every instrument in the pool is queried ( λ = 0 \lambda=0 ). Bottom: the upper bound I / 2 \sqrt{I/2} of Proposition 4 on the drop in Bayes error from adding each instrument ( I I its estimated conditional information, in nats), and the drop in the model’s Bayes error 𝔼 ⁡ [ min ⁡ { η , 1 − η } ] \mathbb{E}[\min\{\eta,1-\eta\}] that the instrument’s answers actually produce, both on test.
+C.5 Circuit Examples
+We present two examples of circuits our method builds for individual test prompts at three values of λ \lambda ; see Figure 13 and Figure 14 . Using our trained probabilistic model, the prompt’s embedding gives the initial belief η θ ​ ( ϕ ⁡ ( z ) , s 0 ) \eta_{\theta}(\phi(z),s_{0}) , shown as “Embedding @ p % p\% ”. For each λ \lambda , the circuit either predicts immediately or asks an instrument. Each node is the state reached after that instrument’s answer, where p % p\% is the updated belief η θ ​ ( ϕ ​ ( z ) , s ) \eta_{\theta}(\phi(z),s) given every answer so far. Instrument names are colored by cost, from green (cheapest) to red. The highlighted path is the one followed with the prompt’s recorded answers. At stopping, the circuit predicts the label with belief above 1 / 2 1/2 .
+Figure 13 : Example of generated circuit and instrument’s error correlations on BeaverTails
+Figure 14 : Example of generated circuit and instrument’s error correlations on LMArena
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

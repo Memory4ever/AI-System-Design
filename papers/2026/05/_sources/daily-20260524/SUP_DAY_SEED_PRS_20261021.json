@@ -1,0 +1,173 @@
+{
+  "total_count": 2,
+  "incomplete_results": false,
+  "items": [
+    {
+      "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/787",
+      "repository_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni",
+      "labels_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/787/labels{/name}",
+      "comments_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/787/comments",
+      "events_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/787/events",
+      "html_url": "https://github.com/ByteDance-Seed/VeOmni/pull/787",
+      "id": 4508595894,
+      "node_id": "PR_kwDOOQA4gs7epAzG",
+      "number": 787,
+      "title": "[trainer, ops] feat: rework MoE load-balance monitor (model-agnostic, EP/DP-aware)",
+      "user": {
+        "login": "Luosuu",
+        "id": 43507393,
+        "node_id": "MDQ6VXNlcjQzNTA3Mzkz",
+        "avatar_url": "https://avatars.githubusercontent.com/u/43507393?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Luosuu",
+        "html_url": "https://github.com/Luosuu",
+        "followers_url": "https://api.github.com/users/Luosuu/followers",
+        "following_url": "https://api.github.com/users/Luosuu/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Luosuu/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Luosuu/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Luosuu/subscriptions",
+        "organizations_url": "https://api.github.com/users/Luosuu/orgs",
+        "repos_url": "https://api.github.com/users/Luosuu/repos",
+        "events_url": "https://api.github.com/users/Luosuu/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Luosuu/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "labels": [
+
+      ],
+      "state": "closed",
+      "locked": false,
+      "assignees": [
+
+      ],
+      "milestone": null,
+      "comments": 2,
+      "created_at": "2026-05-23T14:51:35Z",
+      "updated_at": "2026-05-24T08:34:10Z",
+      "closed_at": "2026-05-24T08:34:10Z",
+      "assignee": null,
+      "author_association": "COLLABORATOR",
+      "issue_field_values": [
+
+      ],
+      "type": null,
+      "active_lock_reason": null,
+      "draft": false,
+      "pull_request": {
+        "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/pulls/787",
+        "html_url": "https://github.com/ByteDance-Seed/VeOmni/pull/787",
+        "diff_url": "https://github.com/ByteDance-Seed/VeOmni/pull/787.diff",
+        "patch_url": "https://github.com/ByteDance-Seed/VeOmni/pull/787.patch",
+        "merged_at": "2026-05-24T08:34:10Z"
+      },
+      "body": "## Summary\n\nThe previous `veomni/utils/moe_monitor.py` was dead code: the architecture depended on each model's router patch calling `register_forward_hook(router_forward_hook)` at construction, but **no patch in the repo ever did**. Only `Qwen3MoeTopKRouter` even returned `router_indices` in its forward output, and there was no all-reduce across DP/EP, so the heatmap would have been per-rank even if the hook had fired. Enabling `moe_load_balance_monitor_interval > 0` produced only a \"no recorded data\" warning at step time.\n\nThis PR replaces it with a working, model-agnostic, distributed-aware design covering **Qwen3-MoE family and DeepSeek-V3** out of the box.\n\n### Two-track recognition\n\nThe Qwen3 family and DeepSeek-V3 surface their routing decisions at different points in the forward path. `attach_moe_router_monitor(model, monitor)` handles both:\n\n- **`ROUTER_EXTRACTORS` registry** — routers whose forward output exposes `[num_tokens, top_k]` indices directly (Qwen3 family: `Qwen3MoeTopKRouter`, `Qwen3VLMoeTopKRouter`, `Qwen3OmniMoeTopKRouter`). A forward hook reads `output[2]` and accumulates.\n- **`EXTERNAL_RECORD_ROUTERS` set** — routers whose patched MoE block calls `record_router_indices(self.gate, topk_indices)` explicitly (DeepSeek-V3, whose top-k math — sigmoid + `e_score_correction_bias` + group-limited top-k — lives in `DeepseekV3MoE.route_tokens_to_experts`, not in the router itself). No hook is registered; the layer is pre-registered so heatmap row order is stable across resumes.\n\n`record_router_indices` is symmetric to the existing `maybe_replay_indices` — same on/off singleton gating, no-op when no monitor is active or it's paused, safe to leave at the call site on non-monitored runs.\n\n### Other changes\n\n- **DP+SP all-reduce of counts** before normalization, using `parallel_state.fsdp_group` (the `dp_sp` mesh dim — every rank with a distinct token slice). EP siblings replicate the router gate and produce identical counts, so they are deliberately excluded to avoid inflating by `ep_size`.\n- **Pause / resume / sticky disable** for RL phase scoping (`pause` during rollout, `resume` during update; `disable` survives subsequent `resume` calls).\n- **Backend-agnostic `compute_metrics(step, format_only_on)`** so non-source ranks participate in the all-reduce without paying for the heatmap build. Caller wraps the returned dict (PIL image + scalars) for whatever logger backend it has.\n- **Fail loud, not fall back**: a registered extractor returning `None` is now an `AssertionError`; matplotlib is a hard dep (`pyproject.toml`), not optional.\n\nThe trainer callback no longer requires `wandb.enable` to construct the monitor; only the `wandb.log` emission is gated by it. `on_train_begin` attaches the hooks (so the model is fully parallelized first) and self-disables cleanly if zero routers are recognized.\n\n`make patchgen` regenerated the DeepSeek-V3 GPU/NPU modeling files for the new `DeepseekV3MoE.forward` patch; no other family's generated files changed.\n\n## Future work\n\n- **verl `VeOmniEngine` integration.** The pause/resume/disable surface and the backend-agnostic `compute_metrics(step, format_only_on=...)` were designed to drop into verl's RL engine: monitor created in `_init_moe_monitor()` with `dp_group = parallel_state.fsdp_group`, lazily attached on the first `forward_backward_batch`, paused when `forward_only=True` (rollout / log-prob) and resumed when `forward_only=False` (update). The interval counter increments per `train_batch`; on each interval the engine merges `compute_metrics(...)` into `outputs[\"metrics\"]` on global rank 0 only, so verl's existing `Tracking` logger picks it up for free. This wiring is staged locally and will land in a separate verl PR.\n- **GLM-MoE-DSA, Qwen3.5-MoE coverage.** Same pattern as DeepSeek-V3 — register the router class in `EXTERNAL_RECORD_ROUTERS` and insert one `record_router_indices(self.gate, topk_indices)` line in the patched MoE block.\n\n## Test plan\n\n- [x] `pytest tests/utils/test_moe_monitor.py tests/utils/test_moe_monitor_wandb_smoke.py` — 19 unit + wandb-offline-smoke tests, all green (includes DeepSeek-V3-style external-record path + paused/inactive no-op + idempotent re-registration)\n- [x] `pytest tests/utils/test_moe_router_replay.py tests/models/test_moe_router_replay_invariants.py` — 16 passed, 4 skipped (replay path untouched)\n- [x] `make quality` — clean\n- [x] `make patchgen` — DeepSeek-V3 GPU/NPU regen verified; no other family touched\n- [x] **End-to-end on mlx worker** against Qwen3-30B-A3B, 8×H100, EP=8, 6 training steps with `moe_load_balance_monitor_interval=2`:\n  - `MoE router monitor created: num_experts=128, interval=2, ep_size=8`\n  - `attached to 48 router module(s)` (every MoE layer)\n  - 3 logging events at steps 2 / 4 / 6 with sensible early-training imbalance:\n    | step | max_vio.max | avg_vio.max | avg_vio.avg |\n    |------|-------------|-------------|-------------|\n    | 2    | 14.62       | 1.54        | 1.42        |\n    | 4    | 15.00       | 1.75        | 1.51        |\n    | 6    | 15.00       | 1.80        | 1.60        |\n  - 3 well-formed 1280×960 RGBA heatmap PNGs in the wandb offline run\n  - Clean shutdown, `EXIT=0`\n",
+      "reactions": {
+        "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/787/reactions",
+        "total_count": 1,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 1
+      },
+      "timeline_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/787/timeline",
+      "performed_via_github_app": null,
+      "state_reason": null,
+      "score": 1.0
+    },
+    {
+      "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/786",
+      "repository_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni",
+      "labels_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/786/labels{/name}",
+      "comments_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/786/comments",
+      "events_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/786/events",
+      "html_url": "https://github.com/ByteDance-Seed/VeOmni/pull/786",
+      "id": 4508041290,
+      "node_id": "PR_kwDOOQA4gs7enPkH",
+      "number": 786,
+      "title": "[model, omni] feat: Update Qwen-Image & Add veomni fsdp state API",
+      "user": {
+        "login": "FoolPlayer",
+        "id": 45593998,
+        "node_id": "MDQ6VXNlcjQ1NTkzOTk4",
+        "avatar_url": "https://avatars.githubusercontent.com/u/45593998?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/FoolPlayer",
+        "html_url": "https://github.com/FoolPlayer",
+        "followers_url": "https://api.github.com/users/FoolPlayer/followers",
+        "following_url": "https://api.github.com/users/FoolPlayer/following{/other_user}",
+        "gists_url": "https://api.github.com/users/FoolPlayer/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/FoolPlayer/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/FoolPlayer/subscriptions",
+        "organizations_url": "https://api.github.com/users/FoolPlayer/orgs",
+        "repos_url": "https://api.github.com/users/FoolPlayer/repos",
+        "events_url": "https://api.github.com/users/FoolPlayer/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/FoolPlayer/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "labels": [
+        {
+          "id": 10116054169,
+          "node_id": "LA_kwDOOQA4gs8AAAACWva8mQ",
+          "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/labels/docker",
+          "name": "docker",
+          "color": "ededed",
+          "default": false,
+          "description": null,
+          "archived_at": null,
+          "archived_by": null
+        }
+      ],
+      "state": "closed",
+      "locked": false,
+      "assignees": [
+
+      ],
+      "milestone": null,
+      "comments": 0,
+      "created_at": "2026-05-23T12:09:08Z",
+      "updated_at": "2026-05-26T02:49:45Z",
+      "closed_at": "2026-05-26T02:49:44Z",
+      "assignee": null,
+      "author_association": "COLLABORATOR",
+      "issue_field_values": [
+
+      ],
+      "type": null,
+      "active_lock_reason": null,
+      "draft": false,
+      "pull_request": {
+        "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/pulls/786",
+        "html_url": "https://github.com/ByteDance-Seed/VeOmni/pull/786",
+        "diff_url": "https://github.com/ByteDance-Seed/VeOmni/pull/786.diff",
+        "patch_url": "https://github.com/ByteDance-Seed/VeOmni/pull/786.patch",
+        "merged_at": "2026-05-26T02:49:44Z"
+      },
+      "body": "### What does this PR do?\r\n\r\n> Concise overview of the change. Reference related issues/PRs.\r\n\r\n1. Update Qwen-Image\r\n\r\n2. Add veomni fsdp state API\r\n\r\n### Checklist Before Starting\r\n\r\n- Search for relative PRs/issues and link here: ...\r\n- PR title follows `[{modules}] {type}: {description}` format (enforced by [check_pr_title.yml](.github/workflows/check_pr_title.yml))\r\n  - **Allowed modules:** `agent`, `ci`, `ckpt`, `config`, `data`, `dist`, `docker`, `docs`, `logging`, `lora`, `misc`, `model`, `omni`, `optim`, `ops`, `parallel`, `perf`, `release`, `task`, `trainer`\r\n  - **Allowed types:** `feat`, `fix`, `refactor`, `chore`, `test`\r\n  - Breaking changes: prepend `[BREAKING]` — e.g. `[BREAKING][parallel, model] feat: dynamic batching`\r\n\r\n### Test\r\n\r\n> Validation results (training curves, eval metrics) for changes not covered by CI.\r\n\r\n### API and Usage Example\r\n\r\n> Show API changes and usage examples if applicable.\r\n\r\n### Design & Code Changes\r\n\r\n> High-level design description and specific change list.\r\n\r\n### Checklist Before Submitting\r\n\r\n- Read the [Contribute Guide](https://github.com/ByteDance-Seed/VeOmni/blob/main/CONTRIBUTING.md)\r\n- Applied pre-commit checks\r\n- Added/updated documentation\r\n- If `tasks/` training scripts were moved or renamed: updated `docs/` examples and verified `python3 scripts/ci/check_doc_task_paths.py` passes (also enforced by the **Check doc task paths** CI workflow)\r\n- Added tests to CI workflow (or explained why not feasible)\r\n",
+      "reactions": {
+        "url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/786/reactions",
+        "total_count": 1,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 1
+      },
+      "timeline_url": "https://api.github.com/repos/ByteDance-Seed/VeOmni/issues/786/timeline",
+      "performed_via_github_app": null,
+      "state_reason": null,
+      "score": 1.0
+    }
+  ],
+  "search_type": "lexical"
+}

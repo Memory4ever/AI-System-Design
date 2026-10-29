@@ -1,0 +1,1455 @@
+https://arxiv.org/html/2605.28022v1
+
+arXiv:2605.28022v1 [cs.CL] 27 May 2026 
+ 
+ 
+ Beyond  Pass@ ​ k \text{Pass@}k : Redundancy-Aware RLVR for Multi-Sample Code Generation 
+
+ 
+ 
+ 
+ Florian Le Bronnec
+ 
+ Email:  florian.lebronnec@riken.jp 
+ 
+ Affiliation:  RIKEN Center for Computational Science, Tokyo, Japan
+ 
+    
+ Alexandre Verine
+ 
+ Email:  alexandre.verine@ens.fr 
+ 
+ Affiliation:  École Normale Supérieure Paris, PSL University, Paris, France
+ 
+    
+ Rio Yokota
+ 
+ Email:  rio.yokota@riken.jp 
+ 
+ Affiliation:  RIKEN Center for Computational Science, Tokyo, Japan
+ 
+    
+ Benjamin Negrevergne
+ 
+ Email:  benjamin.negrevergne@dauphine.psl.eu 
+ 
+ Affiliation:  LAMSADE, CNRS, Université Paris-Dauphine-PSL, Paris, France
+ 
+
+ Abstract 
+    
+ LLMs for code generation are commonly evaluated in repeated-sampling settings using  Pass@ ​ k \text{Pass@}k , where multiple candidate programs are executed against unit tests under a finite sampling budget. While recent verifier-based reinforcement learning (RLVR) methods improve executable correctness, how these objectives affect redundancy among sampled programs remains poorly understood. In this work, we study implementation-level redundancy in code generation using JPlag, a plagiarism-detection system for code. Across models and benchmarks, we show that correctness-only RLVR often concentrates generations around repeated implementations, whereas  Pass@ ​ k \text{Pass@}k -aware objectives maintain lower redundancy and improve larger-budget performance. 
+
+ 
+    
+ Motivated by these observations, we augment RLVR with direct anti-redundancy rewards based on JPlag similarity. Across 3 models and 3 benchmarks, discouraging near-duplicate generations reliably improves finite-budget executable performance, often matching or outperforming specialized  Pass@ ​ k \text{Pass@}k -aware objectives. 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Code generation and  Pass@ ​ k \text{Pass@}k . 
+
+ 
+
+ 
+ When solving programming tasks with large language models (LLMs), it is common to generate multiple candidate programs until one successfully passes the task tests  ( Hui et al., 2024 ;  Zheng et al., 2025 ;  Jiang et al., 2026 ) . This repeated-sampling setting is formalized through  Pass@ ​ k \text{Pass@}k , which is the probability that at least one of  k k  sampled programs is correct  ( Chen et al., 2021 ;  Guo and others, 2025 ) . 
+
+ 
+ 
+ 
+ 
+ RLVR for code generation. 
+
+ 
+
+ 
+ Because generated programs can be executed directly against tests, code generation is a natural setting for reinforcement learning with verifiable rewards (RLVR)  ( Li et al., 2022 ) . State-of-the-art coding models rely heavily on such post-training optimization to improve executable correctness  ( Grattafiori and others, 2024 ;  Olmo and others, 2026 ) . As coding benchmarks increasingly emphasize repeated-sampling evaluation, RL objectives have also shifted from optimizing isolated generations toward optimizing finite-budget executable success under  Pass@ ​ k \text{Pass@}k  metrics  ( Tang et al., 2025 ;  Walder and Karkhanis, 2026 ) . 
+
+ 
+ 
+ 
+ 
+ Finite-budget  Pass@ ​ k \text{Pass@}k  evaluation. 
+
+ 
+
+ 
+ Although these objectives improve executable performance under different sampling budgets, the sampled-program behaviors underlying these gains remain poorly understood. In particular,  Pass@ ​ k \text{Pass@}k  measures whether at least one sampled program is correct, but does not distinguish between repeatedly generating near-duplicate implementations and covering a broader set of distinct implementation patterns. This distinction matters because the usefulness of repeated sampling changes with  k k : larger sampling budgets can benefit not only from reliable generations, but also from reducing redundancy among generated programs. This motivates our first research question: 
+
+ 
+ 
+ 
+ Q1.   When multi-sample performance improves, does the model use its sampling budget to produce less redundant solutions or to repeat near-duplicate implementations? 
+
+ 
+ 
+ 
+ 
+ JPlag as a redundancy diagnostic. 
+
+ 
+
+ 
+ Executable correctness alone does not distinguish between repeatedly sampling near-duplicate programs and producing a broader set of implementations under a fixed sampling budget. To study redundancy among generated programs, we use JPlag, a program-similarity system originally developed for plagiarism detection  ( Prechelt et al., 2002 ) . Unlike lexical overlap metrics, JPlag uses a programming-language-aware tokenization and matching procedure, making it substantially less sensitive to superficial edits such as variable renaming, formatting changes, or comments. This makes it a useful diagnostic for repeated implementations in multi-sample code generation. 
+
+ 
+ 
+ 
+ Applying this diagnostic to RLVR methods, we find that objectives targeting larger- k k   Pass@ ​ k \text{Pass@}k  performance tend to produce sampled sets with lower redundancy and higher JPlag diversity. 
+
+ 
+ 
+ 
+ 
+ Direct anti-redundancy training. 
+
+ 
+
+ 
+ These observations motivate our second research question: 
+
+ 
+ 
+ 
+ Q2.   Can implementation redundancy itself serve as a useful optimization target for finite-budget code generation? 
+
+ 
+ 
+ 
+ To investigate this, we train RLVR objectives with explicit group-level anti-redundancy rewards based on JPlag similarity. This simple intervention reliably improves finite-budget executable performance, across models and benchmarks, often matching or outperforming specialized  Pass@ ​ k \text{Pass@}k -aware objectives. 
+
+ 
+ 
+ 
+ 
+ Contributions. 
+
+ 
+
+ 
+ Our contributions are as follows: 
+
+ 
+ 
+ •  
+ 
+ We introduce JPlag as a practical diagnostic for implementation-level redundancy in multi-sample code generation. 
+
+ 
+ 
+ •  
+ 
+ We show that  Pass@ ​ k \text{Pass@}k -aware RL objectives systematically maintain lower redundancy among sampled programs than correctness-only RLVR. 
+
+ 
+ 
+ •  
+ 
+ We show that directly discouraging near-duplicate generations improves finite-budget executable performance and can match or outperform specialized  Pass@ ​ k \text{Pass@}k -aware objectives, without simply increasing sampling entropy or relying on superficial output variation. 
+
+ 
+ 
+ 
+ 
+ 
+ Overall, our results identify implementation redundancy as both a useful diagnostic and a practical optimization target for repeated-sampling code generation. 
+
+ 
+ 
+ 
+ 
+ 
+ 2  Related Work 
+
+ 
+
+ 
+ Repeated-sampling evaluation for code generation. 
+
+ 
+
+ 
+ Pass@ ​ k \text{Pass@}k  measures the probability that at least one of  k k  sampled programs solves a coding task  ( Chen et al., 2021 ;  Li et al., 2022 ) . This metric makes finite-budget sampling central to code-generation evaluation, but it reduces a sampled set to executable success. Two models can therefore obtain similar  Pass@ ​ k \text{Pass@}k  while producing very different sampled sets: one may repeatedly generate near-duplicate solutions, while another may distribute samples across less redundant implementations. Our work studies this implementation-level redundancy directly. 
+
+ 
+ 
+ 
+ 
+ Pass@ ​ k \text{Pass@}k -aware RLVR. 
+
+ 
+
+ 
+ RLVR improves executable code generation by optimizing verifier feedback from unit tests or task checkers  ( Shao et al., 2024 ;  Li et al., 2022 ;  Gehring et al., 2025 ) . Recent work adapts RLVR to repeated-sampling evaluation through objectives aligned with  Pass@ ​ k \text{Pass@}k   ( Tang et al., 2025 ;  Walder and Karkhanis, 2026 ) . These methods are the closest methodological neighbors to our work: they change credit assignment over sampled groups to improve finite-budget executable success. We ask a complementary question: how do these objectives affect redundancy among the sampled programs, and can redundancy itself serve as a useful group-level training signal? 
+
+ 
+ 
+ 
+ 
+ Diversity and redundancy in generated programs. 
+
+ 
+
+ 
+ Several studies show that post-training can improve generation quality while reducing diversity or concentrating the sampled distribution  ( Kirk et al., 2024 ;  Le Bronnec et al., 2024 ) . Explicit diversity incentives have also been explored for reasoning tasks, particularly in mathematical settings  ( Hu et al., 2026 ) . For code generation, prior work has analyzed diversity using model-based or semantic evaluation pipelines  ( Lee et al., 2025 ) . Such approaches aim to capture broad behavioral or algorithmic differences between generated programs. We focus on a more specific notion: whether repeated-sampling RLVR produces near-duplicate implementations, and how this redundancy relates to finite-budget performance. While JPlag is not a full semantic-equivalence metric, it provides a practical code-aware signal that is robust to superficial edits and sufficiently informative to analyze and discourage repeated implementations. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Background and Setup 
+
+ 
+
+ 
+ Generation setup. 
+
+ 
+
+ 
+ For each programming problem  x x , a model with parameters  θ \theta  defines a distribution over candidate programs  y ∼ π θ ( ⋅ ∣ x ) y\sim\pi_{\theta}(\cdot\mid x) . We study the multi-sample setting: for each prompt, we sample a set of  n n  independent programs 
+
+ 
+ 
+
+ 
+ 
+ Y ( n ) = { y 1 , … , y n } . Y^{(n)}=\{y_{1},\ldots,y_{n}\}. 
+ 
+ 
+
+ 
+ Each program is executed against the task tests or checker, producing a binary correctness value  c ⁡ ( x , y i ) ∈ { 0 , 1 } c(x,y_{i})\in\{0,1\} . 
+
+ 
+ 
+ 
+ 
+ Pass@ ​ k \text{Pass@}k  evaluation. 
+
+ 
+
+ 
+ We use  Pass@ ​ k \text{Pass@}k  as the main executable evaluation metric throughout this work. For a task  x x ,  Pass@ ​ k \text{Pass@}k  measures whether at least one of  k k  sampled programs is correct: 
+
+ 
+ 
+
+ 
+ 
+ Pass@ k ( x ) = 𝔼 Y ( k ) ∼ π θ ( ⋅ ∣ x ) k [ max y i ∈ Y ( k ) c ( x , y i ) ] . \text{Pass@}k(x)\!=\!\mathbb{E}_{\!Y^{(k)}\sim\pi_{\theta}(\cdot\mid x)^{k}}\!\!\left[\!\max_{y_{i}\in Y^{(k)}}\!c(x,y_{i})\!\right]. 
+ 
+ (1) 
+ 
+
+ 
+ 
+ 
+ In practice, we estimate this quantity from a larger set of  n n  sampled programs. Let  m = ∑ y ∈ Y ( n ) c ⁡ ( x , y ) m=\sum_{y\in Y^{(n)}}c(x,y) 
+denote the number of correct samples. We then use the standard estimator 
+
+ 
+ 
+
+ 
+ 
+ Pass@ ​ k ^ ​ ( x ) = 1 − ( n − m k ) / ( n k ) , \widehat{\text{Pass@}k}(x)=1-\binom{n-m}{k}\Big/\binom{n}{k}, 
+ 
+ (2) 
+ 
+
+ 
+ with value  1 1  when  n − m < k n-m<k . 
+
+ 
+ 
+ 
+ For a dataset  𝒳 = { x 1 , … , x N } \mathcal{X}=\{x_{1},\ldots,x_{N}\} , we report 
+
+ 
+ 
+
+ 
+ 
+ Pass@ ​ k ​ ( 𝒳 ) = 1 N ​ ∑ ℓ = 1 N Pass@ ​ k ^ ​ ( x ℓ ) . \text{Pass@}k(\mathcal{X})=\frac{1}{N}\sum_{\ell=1}^{N}\widehat{\text{Pass@}k}(x_{\ell}). 
+ 
+ (3) 
+ 
+
+ 
+ 
+ 
+ In the remainder of the paper, we simply write  Pass@ ​ k \text{Pass@}k  or p@ k k  for the dataset-level metric when the evaluation set is clear from context. 
+
+ 
+ 
+ 
+ 
+ 3.1  Verifier-Based RLVR for Code Generation 
+
+ 
+
+ 
+ Verifier-based reinforcement learning with verifiable rewards uses executable feedback to post-train code models. We write these methods in a group-sampling form: for each prompt  x x , the policy samples a group  Y ( n ) = { y 1 , … , y n } Y^{(n)}=\{y_{1},\ldots,y_{n}\} , with each  y i ∼ π θ ( ⋅ ∣ x ) y_{i}\sim\pi_{\theta}(\cdot\mid x)  drawn independently. A reward  R ⁡ ( x , Y ( n ) ) R(x,Y^{(n)})  is then computed over the samples: 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ J RLVR ​ ( θ ) = 𝔼 x ​ 𝔼 Y ( n ) ∼ π θ ( ⋅ ∣ x ) n ​ [ R ⁡ ( x , Y ( n ) ) ] . \displaystyle J_{\mathrm{RLVR}}(\theta)=\mathbb{E}_{x}\mathbb{E}_{\begin{subarray}{c}Y^{(n)}\sim\pi_{\theta}(\cdot\mid x)^{n}\!\!\!\end{subarray}}\left[R(x,Y^{(n)})\right]. 
+ 
+ (4) 
+ 
+
+ 
+ In policy-gradient implementations, the group reward is transformed into per-sample advantages to assign credit within a sampled group and reduce gradient variance. Updates then take the form 
+
+ 
+ 
+
+ 
+ 
+ ∑ i = 1 n A ⁡ ( x , y i , Y ( n ) ) ​ ∇ θ ​ log ⁡ π θ ​ ( y i ∣ x ) , \sum_{i=1}^{n}A(x,y_{i},Y^{(n)})\nabla_{\theta}\log\pi_{\theta}(y_{i}\mid x), 
+ 
+ (5) 
+ 
+
+ 
+ where the methods below differ mainly in how the advantage  A ⁡ ( x , y i , Y ( n ) ) A(x,y_{i},Y^{(n)})  is constructed. 
+
+ 
+ 
+ 
+ Base-RLVR. 
+
+ 
+
+ 
+ The standard correctness-only baseline uses executable correctness as a group reward by summing verifier outcomes: 
+
+ 
+ 
+
+ 
+ 
+ R corr ​ ( x , Y ( n ) ) = ∑ i = 1 n c ⁡ ( x , y i ) . R_{\mathrm{corr}}(x,Y^{(n)})=\sum_{i=1}^{n}c(x,y_{i}). 
+ 
+ (6) 
+ 
+
+ 
+ Under this objective, each correct generation contributes additively to the reward, so credit is assigned independently to successful samples within the group. 
+
+ 
+ 
+ 
+ 
+ Pass@ k k -RLVR. 
+
+ 
+
+ 
+ Tang et al. (2025)  instead consider the repeated-sampling evaluation setting directly, where success depends on whether at least one program in the sampled set is correct. For a sampled group  Y ( k ) Y^{(k)}  of size  k k , 
+
+ 
+ 
+
+ 
+ 
+ R pass ​ @ ​ k ​ ( x , Y ( k ) ) = max y j ∈ Y ( k ) ⁡ c ⁡ ( x , y j ) . R_{\mathrm{pass@}k}(x,Y^{(k)})=\max_{y_{j}\in Y^{(k)}}c(x,y_{j}). 
+ 
+ (7) 
+ 
+
+ 
+ With  r j = c ⁡ ( x , y j ) r_{j}=c(x,y_{j}) , the leave-one-out advantage is 
+
+ 
+ 
+
+ 
+ 
+ A i = max j ⁡ r j − max j ≠ i ⁡ r j . A_{i}=\max_{j}r_{j}-\max_{j\neq i}r_{j}. 
+ 
+ (8) 
+ 
+
+ 
+ 
+ 
+ Thus a sample receives positive advantage only when removing it changes the group-level success outcome. We use the centered variant from  Tang et al. (2025)  in all experiments. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Scores 
+ 
+ 
+ 
+ Generation A 
+ 
+ 
+ 
+ Generation B 
+ 
+ 
+ 
+ 
+ 
+ JPlag: 1.00 
+ 1-gram: 0.45 
+ 
+ 
+ 
+ 
+ 
+def max_val(lst):
+    numbers = [x for x in lst
+               if isinstance(x, int)]
+    return max(numbers) 
+ 
+ 
+ 
+ 
+ 
+def max_val(het_list):
+    numbers = [item for item in het_list
+               if isinstance(item, int)]
+    return max(numbers) 
+ 
+ 
+ 
+ 
+ 
+ 
+ JPlag: 0.68 
+ 1-gram: 0.56 
+ 
+ 
+ 
+ 
+ 
+def max_val(het_list):
+    max_value = float(’-inf’)
+    for item in het_list:
+        if (isinstance(item, int) or (isinstance(item, str)
+                and item.isdigit())):
+            num = int(item)
+            max_value = num if num > max_value else max_value
+    return max_value 
+ 
+ 
+ 
+ 
+ 
+def max_val(het_list):
+    numbers = [
+        int(item) for item in het_list
+        if (isinstance(item, int) or (isinstance(item, str)
+             and item.isdigit()))
+    ]
+    return max(numbers) if numbers else None 
+ 
+ 
+ 
+
+ 
+ Table 1:  Qualitative examples illustrating how JPlag similarity compares with lexical overlap. All examples use the prompt: “Write a function to find the maximum value in a given heterogeneous list.” The generated programs differ in variable names, surface form, and control structure. 
+ 
+ 
+ 
+ PKPO. 
+
+ 
+
+ 
+ Walder and Karkhanis (2026)  extend the same pass-at- k k  principle to groups with size  n ≥ k n\geq k . Rather than computing the advantage from a single sampled group, PKPO averages the leave-one-out advantage of each sample over all  k k -subsets: 
+
+ 
+ 
+
+ 
+ 
+ A i PKPO = 1 ( n k ) ​ ∑ I ⊆ { 1 , … , n } | I | = k , i ∈ I ( max j ∈ I ⁡ r j − max j ∈ I ∖ { i } ⁡ r j ) . A_{i}^{\mathrm{PKPO}}=\frac{1}{\binom{n}{k}}\!\sum_{\begin{subarray}{c}I\subseteq\{1,\ldots,n\}\\
+|I|=k,\ i\in I\end{subarray}}\!\!\!\Bigg(\max_{j\in I}r_{j}-\max_{j\in I\setminus\{i\}}r_{j}\Bigg). 
+ 
+ 
+
+ 
+ 
+ 
+ This mirrors the standard  Pass@ ​ k \text{Pass@}k  estimator eq. ( 2 ) while reducing variance relative to relying on a single sampled group. In our experiments, we use their proposed  sloo_minus_one  estimator. 
+
+ 
+ 
+ 
+ 
+ 
+ 3.2  Diversity and Redundancy Diagnostics 
+
+ 
+
+ 
+ To study how RL objectives use a finite sampling budget, we measure redundancy among sampled programs using several complementary diagnostics. Existing approaches span a broad spectrum of tradeoffs. Lexical  n n -gram diversity measures local surface overlap between generations and is lightweight to compute, but remains sensitive to superficial edits. Embedding-based diagnostics such as the Vendi score  ( Friedman and Dieng, 2023 )  computed over code embeddings  ( Kryvosheieva et al., 2025 )  capture broader dispersion patterns, but are less directly interpretable in terms of repeated implementations. 
+
+ 
+ 
+ 
+ JPlag diversity. 
+
+ 
+
+ 
+ Executable code generation provides a setting where redundancy can be analyzed more directly through program similarity. Our main diagnostic is therefore based on JPlag, a program-similarity system originally developed for plagiarism detection  ( Prechelt et al., 2002 ) . Compared to lexical overlap metrics, JPlag is substantially less sensitive to superficial edits such as variable renaming or formatting changes, making it better aligned with repeated implementations in generated code. At the same time, JPlag remains lightweight, interpretable, and scalable compared to semantic or execution-based similarity pipelines, making it practical for repeated-sampling RLVR analysis. 
+
+ 
+ 
+ 
+ Table  1  illustrates this behavior on generated solution pairs for the same prompt. Programs with different variable names but similar control structure receive high JPlag similarity, while programs relying on different implementations receive lower similarity despite solving the same task. 
+
+ 
+ 
+ 
+ For each prompt  x x  and sampled set of programs  Y ( n ) Y^{(n)} , we compute  s ⁡ ( y i , y j ) ∈ [ 0 , 1 ] s(y_{i},y_{j})\in[0,1]  , the JPlag similarity between sampled programs  y i y_{i}  and  y j y_{j} . We define JPlag diversity (JDiv) as one minus the mean pairwise similarity: 
+
+ 
+ 
+
+ 
+ 
+ JDiv ( Y ( n ) ) = − 2 n ⁡ ( n − 1 ) ∑ 1 ≤ i < j ≤ n s ( y i , y j ) . \text{JDiv}(Y^{(n)})\!=\!1\!-\!\frac{2}{n(n\!-\!1)}\!\!\sum_{1\leq i<j\leq n}\!\!\!\!s(y_{i},y_{j}). 
+ 
+ (9) 
+ 
+
+ 
+ 
+ 
+ Larger values indicate lower redundancy among sampled programs. Appendix  E  additionally studies cluster-based diagnostics derived from JPlag similarity graphs. We also report lexical and embedding-based diversity diagnostics in our experiments. While correlated with JPlag diversity, these metrics capture partially different aspects of sampled-program variation (App.  D , Fig.  D.5 ). 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ (a)  Pass@ ​ 1 \text{Pass@}1   
+ 
+ 
+ (b)  Pass@ ​ 10 \text{Pass@}10   
+ 
+ 
+ (c)  JPlag diversity 
+ 
+ Figure 1:  Training dynamics for Qwen3-4B on MBPP. Correctness-only RLVR improves  Pass@ ​ 1 \text{Pass@}1   while reducing JPlag diversity, indicating increasing concentration on near-duplicate implementations. In contrast, pass@k-aware objectives systematically maintain higher diversity and primarily improve larger-budget performance ( Pass@ ​ 10 \text{Pass@}10 ). 
+ 
+ 
+ 
+ 
+ 
+ 4  RL Objectives Reshape Sample Redundancy 
+
+ 
+
+ 
+ Same executable optimum, different finite-sample training signals. 
+
+ 
+
+ 
+ With binary verifier rewards, correctness-only RLVR and  Pass@ ​ k \text{Pass@}k -aware objectives optimize the same executable outcome and do not explicitly encourage implementation diversity. Their main difference lies in how training credit is assigned within sampled groups. Correctness-only RLVR reinforces each successful generation independently, whereas  Pass@ ​ k \text{Pass@}k -aware objectives reward generations according to whether they change the success of the sampled set. As a result, these objectives may induce qualitatively different generation behaviors during training. We study whether these differences manifest as systematic changes in redundancy among sampled programs. 
+
+ 
+ 
+ 
+ 
+ Experimental setup. 
+
+ 
+
+ 
+ We compare how different RLVR objectives reshape executable performance and sampled-program redundancy after post-training from the same base models. We train Qwen3-4B, Qwen3-8B  ( Yang and others, 2025 ) , and Olmo3-7B  ( Olmo and others, 2026 )  with correctness-only RLVR and  Pass@ ​ k \text{Pass@}k -aware objectives on MBPP  ( Austin et al., 2021 ) , Code-Contest  ( Li et al., 2022 ) , and TACO-Cobalt  ( Chen et al., 2026 ;  Li et al., 2023 ) . All methods use the same training budget and sampling configuration. Evaluation uses  200 200  sampled generations per prompt from the test set. 
+
+ 
+ 
+ 
+ 
+ Correctness-only RLVR concentrates repeated implementations. 
+
+ 
+
+ 
+ Across models and datasets, correctness-only RLVR tends to improve executable reliability while concentrating sampled generations around repeated implementations. Figure  1  illustrates this behavior for Qwen3-4B on MBPP: while Base-RLVR improves  Pass@ ​ 1 \text{Pass@}1 , JPlag diversity steadily decreases during training, indicating increasing concentration on near-duplicate solutions. 
+
+ 
+ 
+ 
+ Table  2  shows that this trend extends beyond a single training run. The table aggregates prompt-level comparisons between each RL-trained model and its corresponding base model across all datasets and models, resulting in  2745 2745  total prompt-level comparisons per method. Relative to the corresponding base model, Base-RLVR decreases JPlag diversity in  57.2 % 57.2\%  of comparisons and decreases Vendi score in  65.3 % 65.3\%  of comparisons. Although the mean JPlag-diversity change remains modest overall, the aggregate direction is consistent with correctness-only RLVR repeatedly reinforcing a narrower set of successful implementations during training. 
+
+ 
+ 
+ 
+ 
+ Pass@ ​ k \text{Pass@}k -aware objectives reduce redundancy among sampled programs. 
+
+ 
+
+ 
+ In contrast to correctness-only RLVR,  Pass@ ​ k \text{Pass@}k -aware objectives systematically maintain lower redundancy among sampled generations during training. In Table  2 , Pass@ k k -RLVR increases JPlag diversity in  66.9 % 66.9\%  of comparisons and Vendi score in  73.3 % 73.3\%  of comparisons. PKPO exhibits the same overall JPlag-diversity trend, increasing JPlag diversity in  60.0 % 60.0\%  of comparisons. 
+
+ 
+ 
+ 
+ Together with the trajectories in Figure  1  and App.  H , these results indicate that repeated-sampling objectives implicitly reduce redundancy among sampled programs, despite optimizing the same executable outcome as correctness-only RLVR. This effect emerges without any explicit diversity reward, suggesting that group-level  Pass@ ​ k \text{Pass@}k  credit assignment changes how the finite sampling budget is used during training. 
+
+ 
+ 
+ 
+ Taken together, these results suggest that repeated-sampling RL objectives differ not only in executable performance, but also in the redundancy structure of the sampled programs they produce. This raises a natural question: can directly discouraging redundant samples make finite sampling budgets more effective? 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Executable 
+ Redundancy 
+ 
+ Meth. 
+ Change 
+ p@1 
+ p@10 
+ p@100 
+ JDiv 
+ Vendi 
+ 
+ Base-RLVR 
+ ↑ \uparrow % 
+ 45.5% 
+ 37.6% 
+ 24.5% 
+ 36.1% 
+ 33.3% 
+ 
+ 
+ ↓ \downarrow % 
+ 13.5% 
+ 10.6% 
+ 5.6% 
+ 57.2% 
+ 65.3% 
+ 
+ 
+ Δ \Delta 
+ 9.5 
+ 11.5 
+ 10.6 
+ -0.046 
+ -0.53 
+ 
+ Pass@ k k -RLVR 
+ ↑ \uparrow % 
+ 38.9% 
+ 35.4% 
+ 25.8% 
+ 66.9% 
+ 73.3% 
+ 
+ 
+ ↓ \downarrow % 
+ 29.6% 
+ 19.7% 
+ 5.5% 
+ 32.4% 
+ 26.6% 
+ 
+ 
+ Δ \Delta 
+ 4.5 
+ 11.3 
+ 12.4 
+ 0.123 
+ 0.32 
+ 
+ PKPO 
+ ↑ \uparrow % 
+ 45.7% 
+ 42.4% 
+ 30.0% 
+ 60.0% 
+ 57.6% 
+ 
+ 
+ ↓ \downarrow % 
+ 26.7% 
+ 15.7% 
+ 3.6% 
+ 38.9% 
+ 42.4% 
+ 
+ 
+ Δ \Delta 
+ 7.2 
+ 14.9 
+ 15.5 
+ 0.083 
+ -0.13 
+ 
+ JPlag-RLVR 
+ ↑ \uparrow % 
+ 48.4% 
+ 46.2% 
+ 32.3% 
+ 77.4% 
+ 73.8% 
+ 
+ (Our) 
+ ↓ \downarrow % 
+ 28.7% 
+ 12.1% 
+ 2.2% 
+ 22.6% 
+ 26.2% 
+ 
+ 
+ Δ \Delta 
+ 16.4 
+ 19.7 
+ 17.3 
+ 0.298 
+ 0.33 
+ 
+
+ 
+ 
+ Table 2:  Aggregate changes after RLVR post-training, comparing each post-trained model against its corresponding base model on the same prompt across all evaluated datasets and models. Each comparison corresponds to one prompt evaluated before and after post-training. For each metric,  ↑ \uparrow % and  ↓ \downarrow % report the fraction of comparisons where the post-trained model improves or decreases relative to the base model, while  Δ \Delta  reports the mean signed change. Correctness-only RLVR tends to improve executable performance while increasing redundancy among sampled programs, whereas repeated-sampling objectives more consistently improve both executable performance and JPlag diversity. 
+ 
+ 
+ 
+ 
+ 5  Redundancy-Aware RLVR 
+
+ 
+
+ 
+ 
+ 
+ 
+ (a)  Qwen3-4B 
+ 
+ 
+ (b)  Qwen3-8B 
+ 
+ 
+ (c)  Olmo3-7B 
+ 
+ Figure 2:  Tradeoff between repeated-sampling performance and redundancy on MBPP. The y-axis reports  Pass@ ​ 10 \text{Pass@}10 ; the x-axis reports JPlag diversity, where higher values indicate less plagiarism-style redundancy. Arrows show movement from the base model to each training objective. Methods that move up and right improve multi-sample success while reducing redundancy. 
+ 
+ 
+ 5.1  Proposed Method 
+
+ 
+
+ 
+ We answer this question with a minimal intervention: augment the standard executable RLVR objective with a group-level anti-redundancy reward. The goal is not to reward diversity in isolation, but to discourage sampled groups from containing near-duplicate implementations while preserving executable correctness as the primary training signal. 
+
+ 
+ 
+ 
+ Direct anti-redundancy training. 
+
+ 
+
+ 
+ For a sampled group  Y ( n ) = { y 1 , … , y n } Y^{(n)}=\{y_{1},\ldots,y_{n}\} , we define a scalar anti-redundancy reward  R div ​ ( x , Y ( n ) ) R_{\mathrm{div}}(x,Y^{(n)})  from pairwise relations between generated programs. We combine it with the correctness reward  R corr R_{\mathrm{corr}}  from Equation  6 : 
+
+ 
+ 
+ 
+ 
+ 
+ R ⁡ ( x , Y ( n ) ) \displaystyle R(x,Y^{(n)}) 
+ = R corr ​ ( x , Y ( n ) ) \displaystyle=R_{\mathrm{corr}}(x,Y^{(n)}) 
+ 
+ (10) 
+ 
+ 
+ 
+ + λ div ​ R div ​ ( x , Y ( n ) ) , \displaystyle+\lambda_{\mathrm{div}}R_{\mathrm{div}}(x,Y^{(n)}), 
+ 
+ 
+
+ 
+ 
+ 
+ where  λ div \lambda_{\mathrm{div}}  controls the strength of the anti-redundancy term. 
+
+ 
+ 
+ 
+ 
+ Marginal contribution within sampled groups. 
+
+ 
+
+ 
+ Because  R div R_{\mathrm{div}}  is group-level, its training signal should depend on each sample’s marginal contribution to the sampled set. We therefore use the same leave-one-out construction as the repeated-sampling objectives in Section  3.1 . For the diversity component, the advantage of sample  i i  is 
+
+ 
+ 
+
+ 
+ 
+ A i div = R div ​ ( x , Y ( n ) ) − R div ​ ( x , Y − i ( n ) ) , A_{i}^{\mathrm{div}}=R_{\mathrm{div}}(x,Y^{(n)})-R_{\mathrm{div}}(x,Y^{(n)}_{-i}), 
+ 
+ (11) 
+ 
+
+ 
+ where  Y − i ( n ) = Y ( n ) ∖ { y i } Y^{(n)}_{-i}=Y^{(n)}\setminus\{y_{i}\} . This assigns positive advantage to samples that make the group less redundant and negative advantage to samples that mainly duplicate other generations. 
+
+ 
+ 
+ 
+ 
+ JPlag-RLVR. 
+
+ 
+
+ 
+ Our main instantiation uses JPlag-diversity from Equation  9  as  R div R_{\mathrm{div}} . This yields a simple redundancy-aware RLVR objective: retain the executable reward, but add an explicit penalty against repeated samples within  Y ( n ) Y^{(n)} . We also evaluate simpler lexical and embedding-based variants as controls in Section  5.3 . 
+
+ 
+ 
+ 
+ 
+ 
+ 5.2  Main Results 
+
+ 
+
+ 
+ 
+ 
+ 
+ MBPP 
+ Code-Contest 
+ TACO 
+ 
+ 
+ p@1 
+ p@10 
+ p@100 
+ JDiv. 
+ 1gDiv. 
+ Vendi 
+ p@1 
+ p@10 
+ p@100 
+ JDiv. 
+ 1gDiv. 
+ Vendi 
+ p@1 
+ p@10 
+ p@100 
+ JDiv. 
+ 1gDiv. 
+ Vendi 
+ 
+ Qwen3-4b 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Base-RLVR 
+ 72.4 
+ 82.4 
+ 86.8 
+ 0.301 
+ 0.153 
+ 1.23 
+ 16.8 
+ 31.5 
+ 39.6 
+ 0.396 
+ 0.375 
+ 2.32 
+ 24.0 
+ 39.8 
+ 48.9 
+ 0.357 
+ 0.363 
+ 2.13 
+ 
+ Pass@ k k -RLVR 
+ 73.6 
+ 87.8 
+ 92.9 
+ 0.389 
+ 0.218 
+ 1.30 
+ 12.1 
+ 29.3 
+ 41.4 
+ 0.572 
+ 0.485 
+ 3.29 
+ 18.4 
+ 39.9 
+ 55.4 
+ 0.503 
+ 0.475 
+ 3.04 
+ 
+ PKPO 
+ 72.5 
+ 86.5 
+ 92.2 
+ 0.462 
+ 0.279 
+ 1.47 
+ 13.4 
+ 31.7 
+ 46.0 
+ 0.410 
+ 0.350 
+ 2.40 
+ 19.5 
+ 42.5 
+ 56.0 
+ 0.497 
+ 0.430 
+ 2.62 
+ 
+ JPlag-RLVR (Our) 
+ 93.2 ∗ 
+ 98.9 ∗ 
+ 99.3 ∗ 
+ 0.822 ∗ 
+ 0.446 ∗ 
+ 1.82 ∗ 
+ 17.8 
+ 35.3 ∗ 
+ 46.2 
+ 0.523 
+ 0.460 
+ 2.92 
+ 27.4 ∗ 
+ 46.7 ∗ 
+ 60.2 ∗ 
+ 0.640 ∗ 
+ 0.526 ∗ 
+ 3.29 ∗ 
+ 
+ Qwen3-8b 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Base-RLVR 
+ 79.1 
+ 88.0 
+ 90.8 
+ 0.305 
+ 0.143 
+ 1.24 
+ 17.4 
+ 33.5 
+ 45.6 
+ 0.370 
+ 0.348 
+ 2.37 
+ 29.2 
+ 48.2 
+ 58.5 
+ 0.337 
+ 0.362 
+ 2.33 
+ 
+ Pass@ k k -RLVR 
+ 74.5 
+ 89.5 
+ 93.6 
+ 0.510 
+ 0.326 
+ 1.77 
+ 13.5 
+ 33.9 
+ 47.6 
+ 0.495 
+ 0.455 
+ 3.39 
+ 15.8 
+ 37.7 
+ 54.1 
+ 0.522 
+ 0.478 
+ 3.89 
+ 
+ PKPO 
+ 79.3 
+ 97.1 
+ 99.0 
+ 0.583 
+ 0.342 
+ 1.78 
+ 15.0 
+ 32.0 
+ 45.6 
+ 0.410 
+ 0.366 
+ 2.43 
+ 25.5 
+ 51.0 
+ 64.7 
+ 0.501 
+ 0.412 
+ 2.95 
+ 
+ JPlag-RLVR (Our) 
+ 90.0 ∗ 
+ 98.5 ∗ 
+ 99.2 ∗ 
+ 0.927 ∗ 
+ 0.598 ∗ 
+ 2.71 ∗ 
+ 20.3 ∗ 
+ 35.8 
+ 47.7 
+ 0.466 
+ 0.411 
+ 2.39 
+ 30.3 
+ 55.5 ∗ 
+ 68.7 ∗ 
+ 0.696 ∗ 
+ 0.548 ∗ 
+ 3.34 
+ 
+ Olmo3-7b 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Base-RLVR 
+ 64.8 
+ 84.1 
+ 91.9 
+ 0.555 
+ 0.395 
+ 1.81 
+ 14.5 
+ 29.0 
+ 41.2 
+ 0.465 
+ 0.438 
+ 3.20 
+ 26.3 
+ 45.5 
+ 58.0 
+ 0.426 
+ 0.435 
+ 2.75 
+ 
+ Pass@ k k -RLVR 
+ 60.9 
+ 83.7 
+ 92.5 
+ 0.632 
+ 0.446 
+ 2.21 
+ 7.4 
+ 20.1 
+ 35.0 
+ 0.536 
+ 0.554 
+ 4.99 
+ 14.7 
+ 37.4 
+ 55.1 
+ 0.544 
+ 0.505 
+ 3.59 
+ 
+ PKPO 
+ 64.7 
+ 86.7 
+ 94.0 
+ 0.569 
+ 0.373 
+ 1.85 
+ 11.9 
+ 30.5 
+ 45.0 
+ 0.516 
+ 0.496 
+ 3.58 
+ 19.7 
+ 44.1 
+ 59.3 
+ 0.573 
+ 0.552 
+ 3.47 
+ 
+ JPlag-RLVR (Our) 
+ 71.6 ∗ 
+ 95.0 ∗ 
+ 98.2 ∗ 
+ 0.872 ∗ 
+ 0.598 ∗ 
+ 2.71 ∗ 
+ 14.3 
+ 30.1 
+ 41.2 
+ 0.495 
+ 0.474 
+ 3.33 
+ 26.0 
+ 46.5 
+ 58.9 
+ 0.549 
+ 0.503 
+ 3.15 
+ 
+
+ 
+ Table 3:  Main executable performance and redundancy diagnostics across models, datasets, and training objectives.  Pass@ ​ 1 \text{Pass@}1 ,  Pass@ ​ 10 \text{Pass@}10 , and  Pass@ ​ 100 \text{Pass@}100   report finite-budget executable success. JDiv. denotes JPlag diversity, 1gDiv. denotes 1-gram diversity, and Vendi denotes embedding-space diversity; higher is better for all three redundancy diagnostics. A star (*) marks methods significantly better than all non-diversity baselines under a paired bootstrap test over prompts ( p < 0.05 p<0.05 ). 
+ 
+ 
+ Experimental setup. 
+
+ 
+
+ 
+ We use the experimental setup as in Section  4 . Additional training details, including optimization budgets, hyperparameters, and dataset splits, are provided in Appendix  F . 
+
+ 
+ 
+ 
+ 
+ Direct anti-redundancy improves finite-budget performance. 
+
+ 
+
+ 
+ Table  3  shows that directly optimizing anti-redundancy is effective despite its simplicity. Across models and benchmarks, JPlag-RLVR often matches or outperforms specialized  Pass@ ​ k \text{Pass@}k -aware objectives while producing substantially lower redundancy among sampled programs. The gains are especially strong on MBPP, where JPlag-RLVR achieves the best  Pass@ ​ 1 \text{Pass@}1   and  Pass@ ​ 10 \text{Pass@}10   results for all three models, and on TACO, where it gives the strongest results for Qwen3-4B and Qwen3-8B. 
+
+ 
+ 
+ 
+ For example, on MBPP with Qwen3-8B, JPlag-RLVR improves  Pass@ ​ 1 \text{Pass@}1   from  79.1 79.1  to  90.0 90.0  and  Pass@ ​ 10 \text{Pass@}10   from  88.0 88.0  to  98.5 98.5 , while increasing JPlag diversity from  0.305 0.305  to  0.927 0.927 . On TACO with Qwen3-8B, it improves  Pass@ ​ 10 \text{Pass@}10   from  48.2 48.2  to  55.5 55.5  and  Pass@ ​ 100 \text{Pass@}100   from  58.5 58.5  to  68.7 68.7 , again with the highest JPlag diversity among all methods. 
+
+ 
+ 
+ 
+ 
+ Anti-redundancy reshapes the performance–redundancy tradeoff. 
+
+ 
+
+ 
+ Figure  2  summarizes this effect on MBPP. While the primary objective remains improved repeated-sampling performance, the JPlag-diversity axis provides an interpretable view of how different RL objectives use the sampling budget. Relative to correctness-only RLVR, JPlag-RLVR achieves higher executable performance together with lower measured redundancy among sampled programs. This supports the central hypothesis of the paper: directly discouraging near-duplicate generations can make finite sampling budgets more effective. 
+
+ 
+ 
+ 
+ 
+ Gains are broadly distributed across prompts. 
+
+ 
+
+ 
+ The improvements from JPlag-RLVR are not driven by a few outlier tasks. Table  2  shows that JPlag-RLVR improves the largest fraction of prompt-level comparisons for  Pass@ ​ 1 \text{Pass@}1 ,  Pass@ ​ 10 \text{Pass@}10 , and  Pass@ ​ 100 \text{Pass@}100 , while also giving the strongest average executable gains. These gains coincide with the largest increase in JPlag diversity. Appendix  E  further shows that JPlag-RLVR generally increases correct-only JPlag diversity and cluster dispersion, suggesting that anti-redundancy training increases useful variation rather than merely producing diverse incorrect outputs. 
+
+ 
+ 
+ 
+ 
+ 
+ 5.3  Ablations and Analysis 
+
+ 
+
+ 
+ 
+ 
+ 
+ (a)  Pass@ ​ 1 \text{Pass@}1   
+ 
+ 
+ (b)  Pass@ ​ 10 \text{Pass@}10   
+ 
+ 
+ (c)  JPlag diversity 
+ 
+ Figure 3:  Effect of the JPlag-RLVR coefficient during training for Qwen3-4B on MBPP. Larger diversity weight produces a stronger increase in JPlag diversity and, in this run, also improves  Pass@ ​ 10 \text{Pass@}10 . 
+ 
+ 
+ Simpler anti-redundancy rewards partially help. 
+
+ 
+
+ 
+ We compare JPlag-based rewards with simpler group-level anti-redundancy signals in shorter experiments on Qwen3-4B on MBPP (Appendix  C ). We evaluate entropy regularization, lexical 1-gram diversity, and Vendi-embedding-based diversity rewards. Among these alternatives, 1-gram diversity gives the strongest repeated-sampling gains, suggesting that even simple lexical anti-redundancy signals can improve finite-budget performance. However, JPlag-RLVR gives the strongest redundancy diagnostics and the best  Pass@ ​ 100 \text{Pass@}100 , indicating that code-structure-aware similarity provides a more effective signal for reducing repeated implementations. Entropy and Vendi-based rewards are weaker in this focused comparison. 
+
+ 
+ 
+ 
+ 
+ Anti-redundancy is not just higher sampling entropy. 
+
+ 
+
+ 
+ Increasing sampling temperature provides a simple test of whether the gains come merely from more random generations at inference time. As temperature increases from  T = 1 T=1  to  T = 2 T=2 , Base-RLVR achieves higher  Pass@ ​ 100 \text{Pass@}100   and lower measured redundancy, but these improvements remain substantially smaller than those obtained with explicit anti-redundancy training and come at the cost of lower  Pass@ ​ 1 \text{Pass@}1 . In particular, JPlag-RLVR achieves much larger gains in  Pass@ ​ 10 \text{Pass@}10   and  Pass@ ​ 100 \text{Pass@}100   while further reducing redundancy. This suggests that effective anti-redundancy training is not equivalent to simply increasing sampling entropy. 
+
+ 
+ 
+ 
+ 
+ Anti-redundancy gains are not explained by trivial verbosity. 
+
+ 
+
+ 
+ A possible concern is that anti-redundancy rewards could be satisfied through superficial reward hacking, such as longer completions, markdown artifacts, or non-executable text rather than genuinely different programs. We do not find evidence for this explanation: both raw completion lengths and extracted executable-code lengths remain broadly comparable across methods (Appendix  G ). This suggests that the gains are not simply caused by producing longer or superficially modified outputs. 
+
+ 
+ 
+ 
+ 
+ Redundancy reduction must be paired with correctness. 
+
+ 
+
+ 
+ Optimizing anti-redundancy without executable correctness is also insufficient. As a sanity check, we train Qwen3-4B on MBPP using only the JPlag diversity reward, removing the correctness term. Appendix  B  shows that this objective rapidly increases JPlag diversity, but executable performance collapses. Thus, lower redundancy is useful only when coupled with the verifier reward: the goal is not diversity in isolation, but non-redundant correct generations under a finite sampling budget. 
+
+ 
+ 
+ 
+ 
+ Balancing correctness and redundancy. 
+
+ 
+
+ 
+ Figure  3  studies the effect of the anti-redundancy coefficient on Qwen3-4B for MBPP. Compared with Base-RLVR, both redundancy-aware runs increase JPlag diversity throughout training and improve  Pass@ ​ 10 \text{Pass@}10 . Larger coefficients reduce redundancy more strongly, but can slightly weaken executable reliability despite higher diversity. This illustrates the central tradeoff of redundancy-aware RLVR: anti-redundancy is useful as a controlled training signal, not as an objective to maximize independently of correctness. 
+
+ 
+ 
+ 
+ 
+ Redundancy-aware training remains effective across random seeds. 
+
+ 
+
+ 
+ The improvements from JPlag-RLVR persist across independent training runs. We evaluate five seeds for Qwen3-4B on MBPP and TACO, covering both a relatively high-success short-form benchmark and a more difficult competitive-programming benchmark. Across these runs, JPlag-RLVR maintains substantially higher JPlag diversity than the baselines and achieves the strongest average repeated-sampling executable performance. Its variance is broadly comparable to the other RLVR objectives, suggesting that the anti-redundancy reward improves finite-budget behavior without introducing additional instability in these experiments. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Method 
+ T T 
+ p@1 
+ p@10 
+ p@100 
+ JDiv 
+ Vendi 
+ 
+ Base-RLVR 
+ 1 1 
+ 75.0 
+ 85.4 
+ 90.0 
+ 0.297 
+ 1.21 
+ 
+ Base-RLVR 
+ 1.5 1.5 
+ 74.4 
+ 86.7 
+ 92.0 
+ 0.356 
+ 1.29 
+ 
+ Base-RLVR 
+ 2 2 
+ 70.9 
+ 87.4 
+ 92.4 
+ 0.417 
+ 1.47 
+ 
+ JPlag-RLVR 
+ 1 1 
+ 93.2 
+ 98.9 
+ 99.3 
+ 0.822 
+ 1.82 
+ 
+
+ 
+ 
+ Table 4:  Temperature ablation for Qwen3-4B on MBPP. Increasing the sampling temperature for Base-RLVR trades lower  Pass@ ​ 1 \text{Pass@}1   for higher  Pass@ ​ 10 \text{Pass@}10 , higher  Pass@ ​ 100 \text{Pass@}100 , and higher JPlag diversity. Explicit anti-redundancy rewards still achieve substantially stronger multi-sample performance. 
+ 
+ 
+ 
+ 
+ 
+ 6  Conclusion 
+
+ 
+
+ 
+ We studied redundancy as a hidden axis of repeated-sampling RLVR for code generation. Our results show that objectives with similar executable rewards can induce different sampled-program behavior: correctness-only RLVR often concentrates generations around repeated implementations, whereas  Pass@ ​ k \text{Pass@}k -aware objectives tend to maintain lower redundancy and improve larger-budget performance. 
+
+ 
+ 
+ 
+ We then showed that this redundancy signal can be used directly. A simple JPlag-based anti-redundancy objective generally improves finite-budget  Pass@ ​ k \text{Pass@}k  performance, often matching or outperforming specialized  Pass@ ​ k \text{Pass@}k -aware methods while increasing useful variation among successful generations. 
+
+ 
+ 
+ 
+ Overall, these results suggest that finite-budget code generation should not be understood only through marginal correctness. How a model allocates its samples across repeated or distinct implementations is itself a useful diagnostic and a practical optimization target. 
+
+ 
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ JPlag as a redundancy diagnostic. 
+
+ 
+
+ 
+ Our analysis relies on JPlag as a practical diagnostic for implementation-level redundancy in generated code. Compared with lexical overlap metrics, JPlag is substantially less sensitive to superficial edits such as variable renaming or formatting changes, making it useful for studying repeated implementations in sampled code generations. However, it remains an approximate structural similarity measure rather than a semantic equivalence oracle: two programs can implement the same underlying algorithm while receiving low JPlag similarity, and conversely structurally similar programs may differ semantically. Nevertheless, our results show that even this relatively simple structural signal is already useful both as a diagnostic and as a training objective, suggesting that richer program-analysis or semantic-equivalence tools could further improve redundancy-aware training in future work. 
+
+ 
+ 
+ 
+ 
+ Scale and benchmark scope. 
+
+ 
+
+ 
+ Our experiments are limited to three open-weight models and competitive-programming-style benchmarks involving relatively short executable programs. Because RLVR training with repeated sampling, sandbox execution, and pairwise similarity computation is computationally expensive, we do not extensively explore larger-scale models, broader hyperparameter sweeps, or seed variation across all model–dataset settings. We include a targeted multi-seed evaluation for Qwen3-4B on MBPP and TACO, but broader stability studies remain future work. It also remains unclear whether the same redundancy patterns hold for long-horizon software engineering tasks, multi-file repositories, or agentic coding settings. 
+
+ 
+ 
+ 
+ 
+ Dependence on executable verifiers. 
+
+ 
+
+ 
+ Like other RLVR methods, our approach depends on executable reward signals derived from tests or task checkers. Weak or incomplete test suites can reward programs that satisfy the verifier without fully solving the intended task. More generally, our framework applies most naturally to domains where correctness can be checked automatically. 
+
+ 
+ 
+ 
+ 
+ Potential risks. 
+
+ 
+
+ 
+ By improving finite-budget code generation, our method could also make repeated-sampling attacks more effective by reducing the number of attempts needed to elicit harmful or insecure code from models, although we do not investigate this behavior. Like other verifier-based methods, it may also exploit incomplete tests rather than satisfy the intended specification. We restrict our experiments to standard programming benchmarks and sandboxed execution. 
+
+ 
+ 
+ 
+ 
+ 
+ Acknowledgements 
+
+ 
+
+ 
+ This work was supported by the French government under the management of Agence Nationale de la Recherche as part of the “Investissements d’avenir” program, reference ANR-19-P3IA-0001. This work was granted access to the HPC resources of IDRIS under the allocations 2025-AD011014053R2, 2025-A0181016159, and 2025-AD011014022R3 made by GENCI. 
+
+ 
+ 
+ 
+ 
+ 

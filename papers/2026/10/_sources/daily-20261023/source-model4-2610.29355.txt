@@ -1,0 +1,749 @@
+https://arxiv.org/html/2610.29355v1
+GaP-MoE : Explicit Expert Specialization in Mixture-of-Experts via Orthogonal Gradient Accumulation and Projection
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Works
+2.1 Sparse Mixture-of-Experts
+2.2 Expert Specialization and Representation Collapse
+3 Proposal of GaP-MoE
+3.1 Dynamic Leader Selection
+3.2 Gradient Projection
+3.3 Gradient Accumulation
+Role-dependent Buffer Update
+Extension to K > 2 K>2
+3.4 Theoretical Justification of GaP-MoE
+4 Experiments
+4.1 Fine-tuning
+4.2 From-scratch
+4.3 Expert Specialization Without Router Training
+4.4 Generalizability with Different MoE
+4.5 Expert Output Differentiation
+4.6 Short-term Gradient Consistency
+5 Conclusion and Future Work
+References
+A Algorithm of GaP-MoE
+B Proof of Proposition 1
+C Detailed hyperparameter settings
+C.1 Common Experimental Setting
+C.2 Experimental Settings
+D Expert Output Angles Across All Layers
+License: CC BY 4.0
+arXiv:2610.29355v1 [cs.LG] 21 Oct 2026
+GaP-MoE : Explicit Expert Specialization in Mixture-of-Experts via Orthogonal Gradient Accumulation and Projection
+Donghyun Jeong
+Affiliation: Department of Statistics and Data Science
+Affiliation: University of Seoul
+Affiliation: Republic of Korea
+Email: dandong00@uos.ac.kr
+Yoon-Yeong Kim
+† † thanks: Corresponding Author
+Affiliation: Department of Statistics
+Affiliation: University of Seoul
+Affiliation: Republic of Korea
+Email: yykim@uos.ac.kr
+Abstract
+Sparse Mixture-of-Experts (SMoE) models improve scalability by routing input tokens to only a subset of expert networks, but they often suffer from representation collapse, in which multiple experts converge toward similar functions and lose their intended diversity. Prior work has addressed this limitation either by improving router architectures or by introducing auxiliary loss terms that implicitly penalize similarity among experts. However, router-based approaches remain vulnerable to routing collapses, and loss-based approaches can conflict with the task’s original objective during optimization. In this work, we propose GaP-MoE (Gradient Accumulation and Projection in MoE), which induces expert specialization by directly manipulating expert output gradients rather than modifying the loss function. At each training step, GaP-MoE stochastically selects one of the T ​ o ​ p ​ K TopK routed experts as a leader based on normalized routing scores, and projects the gradients of the remaining follower experts onto the orthogonal complement of the subspace spanned by the leader’s recent gradients. This removes directional overlap between expert gradients without altering the task loss, allowing specialization to emerge as a direct consequence of the optimization dynamics rather than an externally imposed constraint. We evaluate GaP-MoE in both fine-tuning settings (BERT-based, on GLUE) and from-scratch pretraining settings (GPT-2-based, on WikiText-103, enwik8, and text8), and further confirm its compatibility as a drop-in module for existing SMoE architectures. Experimental results show that GaP-MoE achieves performance comparable to or better than standard SMoE.
+A Preprint
+Keywords Mixture-of-Experts ⋅ \cdot
+Expert Specialization ⋅ \cdot
+Representation Collapse
+1 Introduction
+With the development of Transformer-based models ( Vaswani et al., 2017 ) , numerous deep learning models have made remarkable progress across various tasks in recent years. The simplest way to improve the performance of deep learning models for each task is to follow the so-called “scaling law,” which involves increasing both the model size and the dataset size ( Kaplan and others, 2020 ; Brown and others, 2020 ) . However, this also implies an increase in computational cost.
+A commonly used approach to address this issue is the Sparse Mixture-of-Experts (SMoE) ( Shazeer et al., 2017 ) . Instead of a single neural network, SMoE uses multiple independent networks called experts to increase the overall model capacity ( Jacobs et al., 1991 ) , and applies T ​ o ​ p ​ K TopK routing , which selects the K K experts best suited to process each input token. Each selected expert processes the token using its own parameters, and the router combines their outputs as a weighted sum using the corresponding routing scores, which were originally used for T ​ o ​ p ​ K TopK routing .
+However, SMoE does not inherently guarantee that different experts learn distinct functions. For example, if the router collapses, tokens may be assigned disproportionately to only a small subset of experts or distributed without meaningful expert preference, preventing the experts from receiving sufficiently differentiated training signals ( Krishnamurthy et al., 2023 ) . Even when the router does not collapse, experts may remain insufficiently specialized if they observe similar inputs or evolve from similar initialization conditions ( Dai et al., 2024 ) .
+Therefore, regardless of whether insufficient specialization originates from the routing process or the optimization dynamics of the experts, encouraging expert specialization remains important for fully utilizing the capacity of SMoE.
+Consequently, various studies have been conducted to promote expert specialization. Some approaches identify low-dimensional degeneration of expert representations as a cause of insufficient specialization and encourage low-dimensional operations at the router level ( Chi et al., 2022 ) .
+Other approaches dynamically adjust the number of experts used for routing ( Pham et al., 2024 ) , efficiently measure and regulate parameter similarity ( Do et al., 2025 ) , or directly orthogonalize token output representations ( Liu et al., 2024 ) .
+More recently, this line of research has extended to gradient regulation, where auxiliary loss functions are introduced to prevent gradient conflicts among tokens within the same expert ( Yang et al., 2025 ; Guo et al., 2026 ) .
+However, existing specialization methods have potential drawbacks. Router-based methods primarily improve routing decisions and encourage specialization indirectly by modifying the geometry or distribution of token assignments, rather than directly constraining how the selected experts learn their representations ( Wang et al., 2026 ) .
+Methods that regulate expert parameters or representations through auxiliary loss functions can more directly induce specialization. However, such auxiliary objectives may conflict with the original task loss used to train the model parameters, potentially hindering both learning processes ( Wang et al., 2024 ; Guo et al., 2026 ) .
+Accordingly, we propose Gradient Accumulation and Projection in Mixture-of-Experts, or GaP-MoE , a learning algorithm that retains the standard training procedure of SMoE while explicitly applying orthogonality constraints to already-computed expert output gradients.
+Rather than introducing an additional loss term, GaP-MoE directly modifies redundant gradient directions after the task gradients have been generated, thereby preserving the original task objective while promoting expert specialization.
+Specifically, we store the recent output gradients received by each expert as an orthonormal basis using the Gram–Schmidt process. Among the T ​ o ​ p ​ K TopK selected experts, one expert is probabilistically designated as a leader according to the normalized routing scores, while the remaining experts are treated as followers. The leader retains its original task gradient, whereas each follower removes the component of its output gradient that overlaps with the subspace spanned by the leader’s accumulated gradients. In this way, GaP-MoE encourages co-routed experts to follow differentiated update directions without requiring additional forward or backward passes.
+The key benefits of GaP-MoE are as follows.
+•
+Explicitly induces expert specialization through gradient orthogonalization.
+•
+Reuses already computed expert output gradients, avoiding additional forward/backward passes and gradient recomputation.
+•
+Its simple structure ensures compatibility with various existing router architectures and auxiliary loss functions.
+2 Related Works
+2.1 Sparse Mixture-of-Experts
+Following the conventional SMoE formulation ( Shazeer et al., 2017 ) , a Mixture-of-Experts module consists of a set of N N neural networks, denoted as E 1 , … , E N E_{1},\ldots,E_{N} , each with independent parameters. It is generally used to replace the FFN layer in Transformer models, in which each expert is typically implemented as a two-layer MLP ( Lepikhin et al., 2020 ; Fedus et al., 2022 )
+y i ( x ) = W i 2 ( σ ( W i 1 x + b i 1 ) ) + b i 2 , i ∈ 1 , … , N y_{i}(x)=W^{2}_{i}(\sigma(W^{1}_{i}x+b^{1}_{i}))+b^{2}_{i},i\in{1,\ldots,N}
+where x x is the input token, and ( W i 1 , W i 2 ) (W^{1}_{i},W^{2}_{i}) and ( b i 1 , b i 2 ) (b^{1}_{i},b^{2}_{i}) denote the weights and biases of the i i -th expert. However, this form is not fixed, and various types of experts and corresponding architectures are being studied ( Zhang et al., 2023 ; Zhang et al., 2022 ) .
+SMoE additionally employs a gating network, or router, G ⁡ ( x ) G(x) that computes a routing score for each expert w.r.t. token x x . Based on these scores, the router selects the K K highest-scoring experts and retains their scores, while suppressing the scores of all unselected experts to zero. The token is then passed to the selected expert, and their outputs are combined using the corresponding routing scores as
+S ​ M ​ o ​ E ​ ( x ) = ∑ i = 1 N G i ​ ( x ) ​ y i ​ ( x ) SMoE(x)=\sum_{i=1}^{N}G_{i}(x)y_{i}(x)
+(1)
+Since G i ​ ( x ) = 0 G_{i}(x)=0 for experts not included in the T ​ o ​ p ​ K TopK , only a subset of experts is activated for each token, thereby achieving sparse computation.
+2.2 Expert Specialization and Representation Collapse
+Chi et al. (2022) describe representation collapse as the degeneration of representations during neural network training and investigate this phenomenon in sparse Mixture-of-Experts (SMoE) models. Their analysis suggests that routing-induced updates can constrain token hidden representations toward a low-dimensional subspace spanned by expert embeddings and draw representations of tokens routed to the same expert closer together, potentially limiting their expressive capacity.
+Subsequent studies have used the term representation collapse more broadly to describe several forms of insufficient differentiation among experts. These include cases in which multiple experts learn similar representations, thereby limiting specialization, and cases in which the router assigns most tokens to only a small subset of experts ( Pham et al., 2024 ; Do et al., 2025 ; Do et al., 2023 ) .
+Research that aims to make individual experts learn distinct representations or functions is generally studied under the notion of expert specialization ( Krishnamurthy et al., 2023 ; Dai et al., 2024 ) .
+Recent studies have employed various approaches to promote expert specialization and alleviate representation collapse. A prominent example is router-based methods, which prevent tokens from being concentrated on specific experts and encourage more differentiated routing decisions. XMoE ( Chi et al., 2022 ) maps routing representations to a low-dimensional space to mitigate representational degeneration.
+( Nguyen et al., 2025 ) further analyzed how perturbing a cosine router, which has recently emerged as an alternative to the conventional linear router, can help prevent representation collapse.
+Other studies address representation collapse by directly regulating expert weights, outputs, or gradients. Guo et al. (2026) promote expert specialization using a loss that orthogonalizes expert parameters, alongside a loss that promotes more diverse routing. SimSMoE ( Do et al., 2025 ) induces differentiation by reducing the similarity between the output representations produced by different experts. SD-MoE ( Huang et al., 2026 ) decomposes expert and gradient matrices via SVD into dominant and expert-specific components, facilitating the learning of an expert-specific subspace.
+However, existing methods encourage expert outputs to explore diverse subspaces either implicitly through routing mechanisms or explicitly through additional loss functions. In contrast, our method, GaP-MoE, directly differentiates the update directions of expert outputs by projecting follower gradients away from the recent gradient subspace of a dynamically selected leader. This promotes expert specialization without introducing an additional optimization objective, while preserving the original task gradient of the selected leader.
+(a) Dynamic Leader Selection
+(b) Gradient Accumulation and Projection
+Figure 1: (a) GaP-MoE selects a leader expert from the T ​ o ​ p ​ K TopK set using normalized routing probabilities p i p_{i} . (b) The aggregated output gradients of the leader E j l E_{j}^{l} are stored in Q j Q_{j} as orthonormal basis vectors. When the similarity between their most recent basis vectors exceeds the threshold γ \gamma , the follower gradient is projected onto the orthogonal complement of the leader subspace and used to update E k f E_{k}^{f} .
+Algorithm 1 GaP-MoE (short version)
+Input : mini-batch tokens { x n } \{x_{n}\} ; router G ⁡ ( ⋅ ) G(\cdot)
+Parameter : experts { θ i } \{\theta_{i}\} ; buffers { Q i } \{Q_{i}\}
+1:
+for each token x n x_{n} do
+2:
+Route x n x_{n} to top-2 experts; sample leader l l
+3:
+Compute expert outputs and weighted MoE output
+4:
+end for
+5:
+Backpropagate to obtain gradients g n g_{n} for all tokens
+6:
+Projection : for each follower E k f E_{k}^{f} , project g k f g_{k}^{f} using leader buffer Q j Q_{j} if cossim ⁡ ( b j ( r ) , b k ( r ) ) > γ \mathrm{cossim}(b_{j}^{(r)},b_{k}^{(r)})>\gamma
+7:
+Accumulation : for each expert i i , average its leader gradients and update Q i Q_{i} via Gram–Schmidt
+8:
+Update { θ i } \{\theta_{i}\} with (projected) gradients
+3 Proposal of GaP-MoE
+For simplicity, this section describes the method based on T ​ o ​ p ​ 2 Top2 routing. GaP-MoE consists of three main components: Dynamic Leader Selection , Gradient Accumulation , and Gradient Projection . The overall process is illustrated in Figure 1 , with the training procedure summarized in Algorithm 1 . The full algorithm is provided in Appendix A .
+3.1 Dynamic Leader Selection
+For each d i ​ n d_{in} -dimensional input token x ∈ ℝ d i ​ n x\in\mathbb{R}^{d_{in}} , the router computes sparse routing scores G i ​ ( x ) G_{i}(x) over N N experts, where G i ​ ( x ) > 0 G_{i}(x)>0 only for the T ​ o ​ p ​ K TopK selected experts. GaP-MoE normalizes these nonzero routing scores and uses them as the probabilities for selecting one leader expert as
+p i = G i ​ ( x ) ∑ i = 1 N G i ​ ( x ) , l ∼ Categorical ⁡ ( p 1 , … , p N ) . p_{i}=\frac{G_{i}(x)}{\sum_{i=1}^{N}G_{i}(x)},\quad l\sim\mathrm{Categorical}(p_{1},\dots,p_{N}).
+(2)
+If expert E j E_{j} is sampled as the leader, denoted by E j l E_{j}^{l} , its original task gradient is preserved without projection. Each remaining selected expert E k E_{k} , denoted by E k f E_{k}^{f} , becomes a follower whose output gradient is subsequently differentiated from the leader’s gradient subspace through the projection described in Section 3.2 .
+3.2 Gradient Projection
+Gradient projection modifies a gradient direction by removing its component along a specified subspace. It has been widely used to mitigate gradient interference in continual and multi-task learning ( Yu et al., 2020 ; Lopez-Paz and Ranzato, 2017 ) .
+GaP-MoE adopts this principle to reduce overlapping update directions between co-routed experts, rather than between different tasks ( Farajtabar et al., 2020 ) .
+For clarity, let the output of the i i -th expert be y i = θ i ​ x y_{i}=\theta_{i}x , where θ i ∈ ℝ H × d i ​ n \theta_{i}\in\mathbb{R}^{H\times d_{in}} denotes the weight matrix of the i i -th expert with H H denoting the output dimension.
+The gradient with respect to the expert output is
+g i = ∂ ℒ ∂ y i , g_{i}=\frac{\partial\mathcal{L}}{\partial y_{i}},
+(3)
+where ℒ \mathcal{L} denotes the task loss for the current token 1 1
+1
+Since the i i -th expert can either be selected as leader or follower, we use upper indices l l and f f to discriminate the selection, i.e., g i l g_{i}^{l} and g i f g_{i}^{f} , respectively. .
+For a leader-follower pair ( E j l , E k f ) (E_{j}^{l},E_{k}^{f}) , GaP-MoE determines whether projection is required by comparing their most recently stored gradient basis, ( b j ( r ) , b k ( r ) ) (b_{j}^{(r)},b_{k}^{(r)}) , from the gradient buffers Q j Q_{j} and Q k Q_{k} described in Section 3.3 .
+Specifically, projection is activated when
+cossim ⁡ ( b j ( r ) , b k ( r ) ) = b j ( r ) ⋅ b k ( r ) ‖ b j ( r ) ‖ ⋅ ‖ b k ( r ) ‖ > γ , \mathrm{cossim}(b_{j}^{(r)},b_{k}^{(r)})=\frac{b_{j}^{(r)}\cdot b_{k}^{(r)}}{\left\|b_{j}^{(r)}\right\|\cdot\left\|b_{k}^{(r)}\right\|}>\gamma,
+where γ ∈ [ − 1 , 1 ] \gamma\in[-1,1] is a similarity threshold. Setting γ = − 1 \gamma=-1 activates projection for every leader-follower pair.
+When projection is activated, the follower output gradient is modified as
+g k f ∗ = ( I − α Q j ⊤ Q j ) g k f , g_{k}^{f*}=(I-\alpha Q_{j}^{\top}Q_{j})g_{k}^{f},
+(4)
+where Q j ⊤ ​ Q j Q_{j}^{\top}Q_{j} projects onto the subspace spanned by the leader’s buffered gradients, and α ∈ [ 0 , 1 ] \alpha\in[0,1] controls the projection intensity.
+The projected gradient g k f ∗ g_{k}^{f*} is then used to update the follower E k f E_{k}^{f} , while the leader E j l E_{j}^{l} retains its original task gradient g j l g_{j}^{l} . This reduces redundant update directions and encourages the two experts to evolve toward differentiated output representations.
+(a) Insufficient Expert Specialization Without GaP-MoE
+(b) Explicit Specialization With GaP-MoE
+Figure 2: Effect of gradient projection in the output representation space. The gray oval represents the past output gradient subspace of the leader expert ( g l ​ ( ⋅ ) ​ x g^{l}(\cdot)x ). The yellow and green lines represent the output vectors of the follower and leader experts, respectively, for the input token x x , while the dotted lines represent their corresponding gradient update terms ( − η ​ g ​ ( t ) ​ x -\eta g(t)x ). If these output vectors are aligned with the same subspace, the output gradient term − η ​ g ​ ( t ) ​ x -\eta g(t)x is also aligned with that subspace. However, by projecting the follower’s gradient term, its output can escape from the existing subspace and encode different information, as illustrated by the red line.
+3.3 Gradient Accumulation
+GaP-MoE maintains a gradient buffer Q i ∈ ℝ h × H Q_{i}\in\mathbb{R}^{h\times H} for each expert i i , where h h is the buffer size.
+Because multiple tokens in a mini-batch may select the same expert as their leader, their output gradients are aggregated before being stored.
+Define
+𝒯 i l = { x : Expert ​ E i ​ is selected as the leader for token ​ x } . \mathcal{T}_{i}^{l}=\{\,x:\text{Expert }E_{i}\text{ is selected as the leader for token }x\}.
+(5)
+The corresponding mean gradient is then given by
+g ¯ i l = 1 | 𝒯 i l | ​ ∑ τ ∈ 𝒯 i l g i , τ l . \bar{g}_{i}^{l}=\frac{1}{|\mathcal{T}_{i}^{l}|}\sum_{\tau\in\mathcal{T}_{i}^{l}}g_{i,\tau}^{l}.
+(6)
+Here, we write g i , τ l g_{i,\tau}^{l} to denote the leader output gradient of expert E i E_{i} for the τ \tau -th token in the current mini-batch.
+To retain only a new gradient direction, g ¯ i \bar{g}_{i} is orthogonalized against the current orthonormal basis vectors b i ( 1 ) , … , b i ( r ) b_{i}^{(1)},...,b_{i}^{(r)} in Q i Q_{i} as
+g ^ i = g ¯ i ∥ g ¯ i ∥ 2 , v i = g ^ i − ∑ m = 1 r ( b i ( m ) ⊤ ​ g ^ i ) ​ b i ( m ) . \hat{g}_{i}=\frac{\bar{g}_{i}}{\lVert\bar{g}_{i}\rVert_{2}},\quad v_{i}=\hat{g}_{i}-\sum_{m=1}^{r}\left(b_{i}^{(m)\top}\hat{g}_{i}\right)b_{i}^{(m)}.
+(7)
+v i v_{i} is normalized to obtain a new basis vector
+b i new = v i ∥ v i ∥ 2 , b_{i}^{\text{new}}=\frac{v_{i}}{\lVert v_{i}\rVert_{2}},
+(8)
+which is appended to Q i Q_{i} .
+When the buffer reaches its maximum size h h , the oldest vector is removed following a First-In-First-Out policy as
+Q i ← { Q i ∪ { b i new } , r < h ( Q i ∖ { b i ( 1 ) } ) ∪ { b i new } , r = h Q_{i}\leftarrow\begin{cases}Q_{i}\cup\{b_{i}^{\text{new}}\},&r<h\\[4.0pt]
+\left(Q_{i}\setminus\{b_{i}^{(1)}\}\right)\cup\{b_{i}^{\text{new}}\},&r=h\end{cases}
+(9)
+Consequently, Q i Q_{i} represents the recent unprojected update subspace of expert E i E_{i} and is used for the projection in Section 3.2 .
+Role-dependent Buffer Update
+Within a mini-batch, the same expert pair ( E j , E k ) (E_{j},E_{k}) may take opposite roles for different tokens, appearing as ( E j l , E k f ) (E_{j}^{l},E_{k}^{f}) for one token and ( E j f , E k l ) (E_{j}^{f},E_{k}^{l}) for another token.
+In this case, only the gradient received as the leader g j l g_{j}^{l} is used to update Q j Q_{j} , while the projected gradient g j f ∗ g_{j}^{f*} is not used. This is to prevent the direction altered by the projection from being immediately reflected in the buffer, which would make the training process noisy.
+Extension to K > 2 K>2
+For K > 2 K>2 , GaP-MoE selects one leader from the T ​ o ​ p ​ K TopK experts and treats the remaining K − 1 K-1 experts as followers. The leader buffer is then used to project each follower gradient independently.
+3.4 Theoretical Justification of GaP-MoE
+GaP-MoE aims to prevent co-routed experts from being repeatedly updated in similar directions. As illustrated in Figure 2(a) , when two experts receive highly aligned gradients for the same token, their output representations may continue to evolve toward similar functions.
+In contrast, Figure 2(b) shows how GaP-MoE projects the follower gradient away from the leader’s recent gradient subspace, thereby directing the follower toward a different update direction. GaP-MoE therefore reduces the gradient components shared by co-routed experts rather than directly constraining their output representations.
+For analysis, let the outputs of the leader and follower experts for an input token x x be y l = θ l ​ x y^{l}=\theta^{l}x and y f = θ f ​ x y^{f}=\theta^{f}x , respectively.
+We measure their output difference as follows.
+Definition 1 (Expert Output Difference) .
+For an input token x x , the expert output difference between the leader and follower experts is
+S ⁡ ( θ l , θ f , x ) = ‖ y l − y f ‖ = ‖ ( θ l − θ f ) ​ x ‖ . S(\theta^{l},\theta^{f};x)=\left\|y^{l}-y^{f}\right\|=\left\|(\theta^{l}-\theta^{f})x\right\|.
+A larger S S indicates that the two experts produce more differentiated representations for the same input.
+To describe how gradient projection affects the outputs, consider the standard SGD update
+θ ⁡ ( t + 1 ) = θ ⁡ ( t ) − η ​ g θ ​ ( t ) , \theta(t+1)=\theta(t)-\eta g_{\theta}(t),
+(10)
+where η \eta is the learning rate and t t denotes the optimization step. Since g θ ​ ( t ) = ∂ ℒ ∂ θ = ∂ ℒ ∂ y ​ ∂ y ∂ θ = g ⁡ ( t ) ​ x ⊤ g_{\theta}(t)=\frac{\partial\mathcal{L}}{\partial\theta}=\frac{\partial\mathcal{L}}{\partial y}\frac{\partial y}{\partial\theta}=g(t)x^{\top} , multiplying Eq. ( 10 ) by x x gives the corresponding update in the expert-output space:
+θ ⁡ ( t + 1 ) ​ x = θ ⁡ ( t ) ​ x − η ​ g ​ ( t ) ​ ‖ x ‖ 2 2 . \theta(t+1)x=\theta(t)x-\eta g(t)||x||_{2}^{2}.
+(11)
+The output difference can be related to the angle between the expert outputs through the law of cosines:
+S 2 ( θ l , θ f ; x ) = | | θ l x | | 2 2 + | | θ f x | | 2 2 − 2 | | θ l x | | 2 | | θ f x | | 2 cos ψ x , \displaystyle S^{2}(\theta^{l},\theta^{f};x)=||\theta^{l}x||_{2}^{2}+||\theta^{f}x||_{2}^{2}-2||\theta^{l}x||_{2}||\theta^{f}x||_{2}\cos\psi_{x},
+(12)
+where cos ⁡ ψ x = ( θ l ​ x ) ⊤ ​ ( θ f ​ x ) ‖ θ l ​ x ‖ 2 ​ ‖ θ f ​ x ‖ 2 \cos\psi_{x}=\frac{(\theta^{l}x)^{\top}(\theta^{f}x)}{||\theta^{l}x||_{2}||\theta^{f}x||_{2}} .
+Thus, when ‖ θ l ​ x ‖ ≈ ‖ θ f ​ x ‖ ≈ c \left\|\theta^{l}x\right\|\approx\left\|\theta^{f}x\right\|\approx c , a larger angle ψ x \psi_{x} corresponds to a larger output difference, motivating GaP-MoE to suppress aligned expert-update directions.
+However, directly controlling ψ x \psi_{x} during optimization would require an explicit output-level constraint. GaP-MoE instead promotes output differentiation by modifying the follower update direction. To characterize this mechanism, let Q j Q_{j} contain the orthonormal basis vectors accumulated from the recent leader gradients, and define P j = Q j ⊤ ​ Q j P_{j}=Q_{j}^{\top}Q_{j} as the orthogonal projector onto the corresponding gradient subspace.
+Under full projection, i.e., α = 1 \alpha=1 , the follower output gradient becomes g k f ∗ = ( I − P j ) g k f g_{k}^{f*}=(I-P_{j})g_{k}^{f} . Using Eq. ( 11 ), the resulting follower output after one update becomes
+θ k f ∗ ( t + 1 ) x = θ k f ( t ) x − η ( I − P j ) g k f ‖ x ‖ 2 2 . \displaystyle\theta_{k}^{f*}(t+1)x=\theta_{k}^{f}(t)x-\eta(I-P_{j})g_{k}^{f}\left\|x\right\|_{2}^{2}.
+(13)
+Substituting Eq. ( 13 ) into the inner product with the leader, which is our target to reduce, yields
+⟨ θ j l ( t ) x − η g j l ( t ) x , θ k f ( t ) x − η g k f ∗ ( t ) x ⟩ = ⟨ θ j l ( t ) x , θ k f ( t ) x ⟩ + ⟨ − η g j l ( t ) x , θ k f ( t ) x ⟩ + ⟨ − η g k f ∗ ( t ) x , θ j l ( t ) x ⟩ + η 2 ⟨ g j l ( t ) x , g k f ∗ ( t ) x ⟩ . \begin{gathered}\langle\theta_{j}^{l}(t)x-\eta g_{j}^{l}(t)x,\,\theta_{k}^{f}(t)x-\eta g_{k}^{f*}(t)x\rangle\\
+=\langle\theta_{j}^{l}(t)x,\theta_{k}^{f}(t)x\rangle+\langle-\eta g_{j}^{l}(t)x,\theta_{k}^{f}(t)x\rangle+\langle-\eta g_{k}^{f*}(t)x,\theta_{j}^{l}(t)x\rangle+\eta^{2}\langle g_{j}^{l}(t)x,g_{k}^{f*}(t)x\rangle.\end{gathered}
+(14)
+This equation builds the theoretical advantages of GaP-MoE in the following proposition.
+Proposition 1 (Gradient Projection for Expert Separation) .
+The projection to follower output gradients can reduce ⟨ ​ θ j l ​ ( t + 1 ) ​ x , θ k f ​ ( t + 1 ) ​ x ​ ⟩ \textlangle\theta_{j}^{l}(t+1)x,\theta_{k}^{f}(t+1)x\textrangle subject to the efficiency of MoE training.
+Proof.
+See Appendix B .
+∎
+Orthogonalizing the output gradients serves to reduce the alignment between the two different expert output vectors through which a single token passes.
+It should be noted that we do not perform direct optimization for our reduction goal. Aggressively minimizing this similarity could drive the two representations toward opposite directions, i.e., ψ = π \psi=\pi . In such a case, their contributions may cancel each other in the weighted sum of Eq. ( 1 ), potentially hindering MoE optimization.
+Instead, GaP-MoE orthogonalizes the follower update with respect to the leader gradient subspace, thereby alleviating excessive output alignment without explicitly forcing the expert outputs apart.
+Proposition 1 characterizes this mechanism by showing that the projection removes the follower-gradient component shared with the leader subspace, while minimally altering the original task gradient.
+4 Experiments
+Although MoE is being applied in various fields thanks to its scalability ( Riquelme et al., 2021 ; You et al., 2021 ; Lin et al., 2026 ) , this paper focuses on natural language tasks.
+Since GaP-MoE is designed to deliver relative performance improvements when combined with other models, we compare it to the baseline SMoE ( Shazeer et al., 2017 ) across various tasks and subsequently compare the performance changes when combined with various models already published for specific tasks. For all tasks, each feed-forward sub-layer of the baseline models is replaced with a MoE layer consisting of four experts—composed of two linear layers and a GELU—and the T ​ o ​ p ​ 2 Top2 routing method is employed.
+For more detailed experimental setup, see Appendix C .
+The hyperparameter controlling the projection intensity is set to its maximum value of 1 for all tasks; however, during the first epoch, it is set to increase linearly from 0.1 to 1.0 in steps to mitigate the impact of noisy gradient changes. Additionally, the projection threshold γ \gamma for GaP-MoE is set to -1 and 0.7, respectively, to represent both full projection and minimal projection scenarios.
+We evaluate GaP-MoE in both fine-tuning and from-scratch scenarios.
+4.1 Fine-tuning
+Based on BERT ( Devlin et al., 2019 ) , we use the publicly available pretrained version, bert-base-uncased, obtained via the HuggingFace Transformers library ( Wolf et al., 2020 ) .
+We replace the 12 feed-forward layers with MoE layers consisting of four experts of the same parameter size, and initialize the experts identically based on the pretrained parameters. For the tasks, we use the GLUE benchmark ( Wang et al., 2018 ) , which includes a total of eight NLP tasks such as sentence reasoning and sentiment classification, and evaluate the model using task-specific metrics such as accuracy and F1 score. After training for five epochs, we summarize the final results based on the best performance.
+Table 1 shows the fine-tuning evaluation results.
+In the fine-tuning experiments reported here, GaP-MoE is applied to all 12 MoE layers. While this configuration yields consistent but modest improvements in average performance over the SMoE baseline, we are investigating whether selectively applying GaP-MoE to a subset of layers can provide further benefits.
+It is worth noting that performing projection at all times yielded higher results on average than projecting only when the last basis similarity was high. This suggests that, in MoE architectures, gradient projection more often aids expert specialization than hinders learning.
+Models
+CoLA
+SST-2
+MRPC
+STS-B
+QQP
+MNLI
+QNLI
+RTE
+Avg.
+SMoE
+56.00
+93.16
+85.21
+89.28
+91.20
+84.54
+91.45
+64.86
+81.96
+GaP-MoE( γ = − 1 \gamma=-1 )
+56.37
+93.20
+84.64
+89.22
+91.28
+84.75
+91.58
+65.46
+82.06
+GaP-MoE( γ = 0.7 \gamma=0.7 )
+56.44
+93.00
+85.29
+89.27
+91.28
+84.52
+91.45
+64.62
+81.98
+Table 1: Evaluation results on the GLUE benchmark. For evaluation metrics, CoLA uses the Matthews correlation coefficient, STS-B uses Pearson’s correlation coefficient, and all others use accuracy. For all of them, the higher the score, the better. Results are averaged over three seeds.
+Models
+WikiText-103
+enwik8
+text8
+SMoE
+78.80
+2.005
+1.962
+GaP-MoE( γ = 0.7 \gamma=0.7 )
+76.50
+1.953
+1.945
+Table 2: Evaluation results of from-scratch environments. For evaluation metrics, WikiText-103 uses perplexity, while enwik8 and text8 use BPC. For all of them, the lower the score, the better. Results are averaged over three seeds.
+Models
+WikiText-103
+SMoE
+83.63
+GaP-MoE( γ = − 1 \gamma=-1 )
+81.35
+GaP-MoE( γ = 0.7 \gamma=0.7 )
+82.44
+Table 3: Performance on the WikiText-103 dataset without router training. Instead of using a trained router, two experts were randomly selected for each token. The lower the score, the better. Results are averaged over three seeds.
+Models
+CoLA
+STS-B
+RTE
+XMoE
+58.65
+86.65
+64.86
+XMoE+GaP-MoE( γ = − 1 \gamma=-1 )
+57.80
+86.67
+65.10
+XMoE+GaP-MoE( γ = 0.7 \gamma=0.7 )
+58.76
+86.36
+65.82
+SimSMoE
+57.89
+88.90
+65.22
+SimSMoE+GaP-MoE( γ = − 1 \gamma=-1 )
+58.01
+88.97
+65.46
+SimSMoE+GaP-MoE( γ = 0.7 \gamma=0.7 )
+58.09
+88.95
+65.58
+Table 4: Evaluation results of generalizability experiments. For evaluation metrics, CoLA uses the Matthews correlation coefficient, STS-B uses Pearson’s correlation coefficient, and RTE uses accuracy. For all of them, the higher the score, the better. Results are averaged over three seeds.
+Figure 3: Each bar represents, in order, the expert output similarity of SMoE and GaP-MoE with γ = − 1 \gamma=-1 and γ = 0.7 \gamma=0.7 , respectively, trained using a single seed on COLA. The x-axis shows each token passed through the layers in the first sequence of COLA’s evaluation set.
+(a) SMoE
+(b) GaP-MoE( γ \gamma =-1)
+(c) GaP-MoE( γ \gamma =0.7)
+Figure 4: The angle between expert output vectors in the sixth layer when a single token is input into the three models that have been trained on the QNLI dataset. ∠ \angle HD is the angle of the output vectors calculated in the original 768-dimensional output space. PCA was applied to each vector to visualize them in two dimensions, and the angle in this two-dimensional space is denoted as ∠ \angle 2D. The red lines represent the outputs of the experts selected as T ​ o ​ p ​ 2 Top2 , while the black dashed lines show the results of passing the token through experts not selected as T ​ o ​ p ​ 2 Top2 . Results for all layers of the token are provided in Appendix D . The number in parentheses refers to the projection threshold γ \gamma .
+4.2 From-scratch
+We use GPT-2 ( Radford et al., 2019 ) as the backbone model. To fit our computational budget, we adopt a reduced GPT-2 Small configuration with 6 transformer layers, 8 attention heads, and an intermediate dimension of 2048. The original GPT-2 Small consists of 12 layers, 12 attention heads, and an intermediate dimension of 3072. Additionally, for the from-scratch task, we replaced only the last two layers with GaP-MoE—which exhibit relatively stronger gradient consistency, as will be discussed in 4.6 —while retaining the standard SMoE layers for the rest of the network.
+The expert parameters are randomly initialized. We conduct experiments on WikiText-103 ( Merity et al., 2016 ) , enwik8, and text8 ( Mahoney, 2011 ) , all of which are evaluated on the next-token prediction task. WikiText-103 is evaluated using perplexity (PPL), whereas enwik8 and text8 are evaluated using bits per character (BPC). The validation loss is evaluated every 1,000 training steps, and training is terminated if the validation loss does not improve for three consecutive evaluations.
+Table 2 presents the from-scratch evaluation results. Compared to the baseline SMoE, from-scratch experiments also showed that GaP-MoE generally performed better. However, on text8—a relatively easy dataset created by retaining only alphabetic characters and spaces from enwik8—the performance improvement wasn’t as significant as it was for the other two tasks.
+4.3 Expert Specialization Without Router Training
+GaP-MoE is particularly robust to router failure because it induces expert specialization directly through the gradients generated during training. Table 4 shows the difference in model performance on the WikiText-103 dataset when the router was not trained at all, and instead two experts were randomly selected and trained. Although performance decreased significantly overall compared to Table 2 , the performance drop is considerably smaller for GaP-MoE. In other words, this suggests that GaP-MoE explicitly guides the process to prevent expert specialization from failing.
+4.4 Generalizability with Different MoE
+One of the novelties of GaP-MoE is that it can be easily applied to various MoE architectures. We conducted additional experiments by applying two models—XMoE ( Chi et al., 2022 ) and SimSMoE ( Do et al., 2025 ) , which address the same problem to our GaP-MoE experimental framework.
+Since no official implementation of XMoE is publicly available, and the official SimSMoE implementation is designed for pre-training rather than our fine-tuning setting, we implemented the core mechanisms of both methods within our unified experimental framework.
+To efficiently evaluate the various experimental results, we categorized the tasks in the GLUE benchmark into three groups and conducted one experiment for each task. These are CoLA for the single-sentence classification task, STS-B for the sentence pair similarity task, and RTE for the natural language inference task.
+Table 4 shows the results of evaluating each model by applying the GaP-MoE architecture to three fine-tuning tasks.
+Interestingly, while applying GaP-MoE resulted in improved performance on most tasks, it was found to be more significantly affected by γ \gamma than the GaP-MoE-only model. Identifying the appropriate γ \gamma value for each task and model should be addressed in future research.
+4.5 Expert Output Differentiation
+Figure 4 shows the cosine similarity between expert outputs in the final layer for all tokens in an input sequence, whereas Figure 4 visualizes the angles between expert outputs in the sixth layer using a single input token.
+When the projection threshold γ \gamma was set to − 1 -1 , the similarity decreased substantially. In contrast, setting γ \gamma to 0.7 0.7 resulted in only a marginal reduction in similarity, as projection was applied only when the similarity exceeded the threshold. This suggests that gradient projection can be used to differentiate expert outputs.
+4.6 Short-term Gradient Consistency
+To empirically examine whether expert gradients exhibit the short-term gradient consistency assumed in the theoretical justification, we track for each expert of the first and the last layer, the cosine similarity between its current output gradient and the orthonormal basis accumulated t t steps earlier ( t ∈ { 1 , 3 , 5 , 10 } t\in\{1,3,5,10\} ) whenever that expert is selected as leader.
+Figure 5 visualizes these trajectories across layers and gap sizes. In the first step, the cosine similarity values are generally greater than 0, but they fluctuate significantly. In contrast, when the model reaches the intermediate step, the cosine similarity stabilizes. To avoid noisy updates, it is recommended to gradually increase the projection intensity α \alpha from a low level to a high level during the initial training phase.
+Once the updates have stabilized to some extent, the variance in similarity decreases. At this point, the early layers maintain a similarity level above 0 but converge toward 0 as the gap widens. Conversely, the later layers consistently maintain a high level of similarity. In other words, since there are some differences in short-term consistency across layers, theoretical performance differences may exist between layers; therefore, we expect that performance will be enhanced by not unnecessarily increasing the buffer size. In our experiments, we used buffer sizes of 8 and 16 (for training from scratch and fine-tuning, respectively).
+(a) Similarity for each expert at the first step
+(b) Similarity for each expert at the intermediate step
+Figure 5: In both cases, the top figure shows the first MoE layer, and the bottom figure shows the last MoE layer; the t ∈ [ 1 , 3 , 5 , 10 ] t\in[1,3,5,10] used to set the Gap indicates how many time steps back the expert was compared to.
+5 Conclusion and Future Work
+This study proposed GaP-MoE, which retains the standard training procedure of sparse MoE with T ​ o ​ p ​ K TopK routing while imposing explicit orthogonalization constraints only on pre-computed expert output gradients. Through dynamic leader selection and gradient projection, GaP-MoE encourages experts to learn more diverse output representations without introducing additional parameter constraints or requiring gradient recomputation. Experimental results demonstrated that GaP-MoE achieves competitive or improved performance over the baseline SMoE and can be effectively combined with existing specialization methods, demonstrating its compatibility with different MoE architectures.
+One limitation of this work is that the hyperparameters introduced by GaP-MoE, including the buffer size h h , the choice of layers to which GaP-MoE is applied during fine-tuning, projection threshold γ \gamma , and projection intensity α \alpha , were not systematically explored. Consequently, the reported settings may not be optimal, and the relationship between these hyperparameters and model performance remains insufficiently understood. In addition, our evaluation was limited to relatively small-scale models. Future work will therefore focus on systematic hyperparameter optimization and validating GaP-MoE on larger-scale language models.
+References
+Brown et al. (2020)
+T. B. Brown et al.
+Language models are few-shot learners .
+Advances in Neural Information Processing Systems .
+Cited by: §1 .
+Chi et al. (2022)
+Z. Chi, L. Dong, S. Huang, D. Dai, S. Ma, B. Patra, S. Singhal, P. Bajaj, X. Song, X. Mao, et al.
+On the representation collapse of sparse mixture of experts .
+Advances in Neural Information Processing Systems 35 , pp. 34600–34613 .
+Cited by: §1 ,
+§2.2 ,
+§2.2 ,
+§4.4 .
+Dai et al. (2024)
+D. Dai, C. Deng, C. Zhao, R. Xu, H. Gao, D. Chen, J. Li, W. Zeng, X. Yu, Y. Wu, et al.
+Deepseekmoe: towards ultimate expert specialization in mixture-of-experts language models .
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+pp. 1280–1297 .
+Cited by: §1 ,
+§2.2 .
+Devlin et al. (2019)
+J. Devlin, M. Chang, K. Lee, and K. Toutanova
+Bert: pre-training of deep bidirectional transformers for language understanding .
+In Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers) ,
+pp. 4171–4186 .
+Cited by: §4.1 .
+Do et al. (2025)
+G. Do, H. Le, and T. Tran
+Simsmoe: toward efficient training mixture of experts via solving representational collapse .
+In Findings of the Association for Computational Linguistics: NAACL 2025 ,
+pp. 2012–2025 .
+Cited by: §1 ,
+§2.2 ,
+§2.2 ,
+§4.4 .
+Do et al. (2023)
+T. G. Do, L. Khiem, Q. Pham, T. Nguyen, T. Doan, B. Nguyen, C. Liu, S. Ramasamy, X. Li, and S. Hoi
+Hyperrouter: towards efficient training and inference of sparse mixture of experts .
+In Proceedings of the 2023 conference on empirical methods in natural language processing ,
+pp. 5754–5765 .
+Cited by: §2.2 .
+Farajtabar et al. (2020)
+M. Farajtabar, N. Azizan, A. Mott, and A. Li
+Orthogonal gradient descent for continual learning .
+In International conference on artificial intelligence and statistics ,
+pp. 3762–3773 .
+Cited by: §3.2 .
+Fedus et al. (2022)
+W. Fedus, B. Zoph, and N. Shazeer
+Switch transformers: scaling to trillion parameter models with simple and efficient sparsity .
+Journal of Machine Learning Research 23 ( 120 ), pp. 1–39 .
+Cited by: §2.1 .
+Guo et al. (2026)
+H. Guo, H. Lu, G. Nan, B. Chu, J. Zhuang, Y. Yang, W. Che, X. Cao, S. Leng, Q. Cui, et al.
+Advancing expert specialization for better moe .
+Advances in Neural Information Processing Systems 38 , pp. 48767–48809 .
+Cited by: §1 ,
+§1 ,
+§2.2 .
+Huang et al. (2026)
+R. Huang, F. Dong, X. Zhang, H. Cao, Z. Huang, A. Chen, J. Zhou, M. Chen, Y. Yang, M. Dong, et al.
+SD-moe: spectral decomposition for effective expert specialization .
+arXiv preprint arXiv:2602.12556 .
+Cited by: §2.2 .
+Jacobs et al. (1991)
+R. A. Jacobs, M. I. Jordan, S. J. Nowlan, and G. E. Hinton
+Adaptive mixtures of local experts .
+Neural computation 3 ( 1 ), pp. 79–87 .
+Cited by: §1 .
+Kaplan et al. (2020)
+J. Kaplan et al.
+Scaling laws for neural language models .
+arXiv preprint arXiv:2001.08361 .
+Cited by: §1 .
+Krishnamurthy et al. (2023)
+Y. Krishnamurthy, C. Watkins, and T. Gaertner
+Improving expert specialization in mixture of experts .
+arXiv preprint arXiv:2302.14703 .
+Cited by: §1 ,
+§2.2 .
+Lepikhin et al. (2020)
+D. Lepikhin, H. Lee, Y. Xu, D. Chen, O. Firat, Y. Huang, M. Krikun, N. Shazeer, and Z. Chen
+Gshard: scaling giant models with conditional computation and automatic sharding .
+arXiv preprint arXiv:2006.16668 .
+Cited by: §2.1 .
+Lin et al. (2026)
+B. Lin, Z. Tang, Y. Ye, J. Huang, J. Zhang, Y. Pang, P. Jin, M. Ning, J. Luo, and L. Yuan
+Moe-llava: mixture of experts for large vision-language models .
+IEEE Transactions on Multimedia .
+Cited by: §4 .
+Liu et al. (2024)
+B. Liu, L. Ding, L. Shen, K. Peng, Y. Cao, D. Cheng, and D. Tao
+Diversifying the mixture-of-experts representation for language models with orthogonal optimizer .
+In ECAI 2024: 27th European Conference on Artificial Intelligence, 19–24 October 2024, Santiago de Compostela, Spain–Including 13th Conference on Prestigious Applications of Intelligent Systems (PAIS 2024) ,
+pp. 2966–2973 .
+Cited by: §1 .
+Lopez-Paz and Ranzato (2017)
+D. Lopez-Paz and M. Ranzato
+Gradient episodic memory for continual learning .
+Advances in neural information processing systems 30 .
+Cited by: §3.2 .
+Mahoney (2011)
+M. Mahoney
+Large text compression benchmark .
+Note: http://mattmahoney.net/dc/text.html
+Cited by: §4.2 .
+Merity et al. (2016)
+S. Merity, C. Xiong, J. Bradbury, and R. Socher
+Pointer sentinel mixture models .
+arXiv preprint arXiv:1609.07843 .
+Cited by: §4.2 .
+Nguyen et al. (2025)
+H. Nguyen, P. Akbarian Saravi, T. Pham, T. T. Nguyen Vu, S. Zhang, and N. Ho
+Statistical advantages of perturbing cosine router in mixture of experts .
+In International Conference on Learning Representations ,
+Vol. 2025 , pp. 95812–95844 .
+Cited by: §2.2 .
+Pham et al. (2024)
+Q. Pham, G. Do, H. Nguyen, T. Nguyen, C. Liu, M. Sartipi, B. T. Nguyen, S. Ramasamy, X. Li, S. Hoi, et al.
+CompeteSMoE–effective training of sparse mixture of experts via competition .
+arXiv preprint arXiv:2402.02526 .
+Cited by: §1 ,
+§2.2 .
+Radford et al. (2019)
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, I. Sutskever, et al.
+Language models are unsupervised multitask learners .
+OpenAI blog 1 ( 8 ), pp. 9 .
+Cited by: §4.2 .
+Riquelme et al. (2021)
+C. Riquelme, J. Puigcerver, B. Mustafa, M. Neumann, R. Jenatton, A. Susano Pinto, D. Keysers, and N. Houlsby
+Scaling vision with sparse mixture of experts .
+In Advances in Neural Information Processing Systems , M. Ranzato, A. Beygelzimer, Y. Dauphin, P.S. Liang, and J. W. Vaughan (Eds.) ,
+Vol. 34 , pp. 8583–8595 .
+External Links: Link
+Cited by: §4 .
+Shazeer et al. (2017)
+N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean
+Outrageously large neural networks: the sparsely-gated mixture-of-experts layer .
+arXiv preprint arXiv:1701.06538 .
+Cited by: §1 ,
+§2.1 ,
+§4 .
+Vaswani et al. (2017)
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin
+Attention is all you need .
+Advances in neural information processing systems 30 .
+Cited by: §1 .
+Wang et al. (2018)
+A. Wang, A. Singh, J. Michael, F. Hill, O. Levy, and S. R. Bowman
+GLUE: a multi-task benchmark and analysis platform for natural language understanding .
+In Proceedings of the 2018 EMNLP workshop BlackboxNLP: Analyzing and interpreting neural networks for NLP ,
+pp. 353–355 .
+Cited by: §4.1 .
+Wang et al. (2024)
+L. Wang, H. Gao, C. Zhao, X. Sun, and D. Dai
+Auxiliary-loss-free load balancing strategy for mixture-of-experts .
+arXiv preprint arXiv:2408.15664 .
+Cited by: §1 .
+Wang et al. (2026)
+X. Wang, S. Hayou, and E. Nalisnick
+The myth of expert specialization in moes: why routing reflects geometry, not necessarily domain expertise .
+arXiv preprint arXiv:2604.09780 .
+Cited by: §1 .
+Wolf et al. (2020)
+T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz, et al.
+Transformers: state-of-the-art natural language processing .
+In Proceedings of the 2020 conference on empirical methods in natural language processing: system demonstrations ,
+pp. 38–45 .
+Cited by: §4.1 .
+Yang et al. (2025)
+L. Yang, D. Shen, C. Cai, F. Yang, T. Gao, D. Zhang, and X. Li
+Solving token gradient conflict in mixture-of-experts for large vision-language model .
+In International Conference on Learning Representations ,
+Vol. 2025 , pp. 33561–33587 .
+Cited by: §1 .
+You et al. (2021)
+Z. You, S. Feng, D. Su, and D. Yu
+Speechmoe: scaling to large acoustic models with dynamic routing mixture of experts .
+arXiv preprint arXiv:2105.03036 .
+Cited by: §4 .
+Yu et al. (2020)
+T. Yu, S. Kumar, A. Gupta, S. Levine, K. Hausman, and C. Finn
+Gradient surgery for multi-task learning .
+Advances in neural information processing systems 33 , pp. 5824–5836 .
+Cited by: §3.2 .
+Zhang et al. (2022)
+X. Zhang, Y. Shen, Z. Huang, J. Zhou, W. Rong, and Z. Xiong
+Mixture of attention heads: selecting attention heads per token .
+In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing ,
+pp. 4150–4162 .
+Cited by: §2.1 .
+Zhang et al. (2023)
+Y. Zhang, R. Cai, T. Chen, G. Zhang, H. Zhang, P. Chen, S. Chang, Z. Wang, and S. Liu
+Robust mixture-of-expert training for convolutional neural networks .
+In Proceedings of the IEEE/CVF International Conference on Computer Vision ,
+pp. 90–101 .
+Cited by: §2.1 .
+Appendix
+Appendix A Algorithm of GaP-MoE
+Algorithm 2 GaP-MoE Update (Top-2 Routing)
+Input : mini-batch of tokens { x n } n = 1 B \{x_{n}\}_{n=1}^{B} ; routing scores G ⁡ ( x n ) G(x_{n}) from router
+Parameter : expert weights { θ i } i = 1 N \{\theta_{i}\}_{i=1}^{N} ; gradient buffers { Q i } i = 1 N \{Q_{i}\}_{i=1}^{N} ; buffer size h h ; projection threshold γ \gamma ; projection intensity α \alpha
+Output : updated expert weights { θ i ​ ( t + 1 ) } i = 1 N \{\theta_{i}(t+1)\}_{i=1}^{N} , updated buffers { Q i } \{Q_{i}\}
+1:
+Initialize 𝒯 i l ← ∅ , ∀ i ∈ [ 1 , N ] \mathcal{T}_{i}^{l}\leftarrow\emptyset,\ \forall i\in[1,N]
+2:
+for each token x n x_{n} in the mini-batch do
+3:
+Select top-2 experts E j , E k E_{j},E_{k} via routing scores G ⁡ ( x n ) G(x_{n})
+4:
+Normalize scores over the selected pair to obtain p j , p k p_{j},p_{k}
+5:
+Sample leader l ∼ Categorical ⁡ ( p j , p k ) l\sim\mathrm{Categorical}(p_{j},p_{k})
+6:
+if l = j l=j then
+7:
+Assign E j ← E j l E_{j}\leftarrow E_{j}^{l} (leader), E k ← E k f E_{k}\leftarrow E_{k}^{f} (follower)
+8:
+𝒯 j l ← 𝒯 j l ∪ { x n } \mathcal{T}_{j}^{l}\leftarrow\mathcal{T}_{j}^{l}\cup\{x_{n}\}
+9:
+else
+10:
+Assign E k ← E k l E_{k}\leftarrow E_{k}^{l} (leader), E j ← E j f E_{j}\leftarrow E_{j}^{f} (follower)
+11:
+𝒯 k l ← 𝒯 k l ∪ { x n } \mathcal{T}_{k}^{l}\leftarrow\mathcal{T}_{k}^{l}\cup\{x_{n}\}
+12:
+end if
+13:
+Compute expert outputs y j = θ j ​ x n y_{j}=\theta_{j}x_{n} , y k = θ k ​ x n y_{k}=\theta_{k}x_{n}
+14:
+Compute weighted MoE output for x n x_{n} using y j , y k y_{j},y_{k}
+15:
+end for
+16:
+Compute loss L L and backpropagate to obtain output gradients g n = ∂ L / ∂ y n g_{n}=\partial L/\partial y_{n} for all tokens
+17:
+for each follower expert E k f E_{k}^{f} paired with leader E j l E_{j}^{l} do
+18:
+// Projection, using buffers prior to this step’s update
+19:
+if cossim ⁡ ( b j ( r ) , b k ( r ) ) > γ \mathrm{cossim}(b_{j}^{(r)},b_{k}^{(r)})>\gamma then
+20:
+g k f ∗ ← ( I − α Q j ⊤ Q j ) g k f g_{k}^{f*}\leftarrow(I-\alpha\,Q_{j}^{\top}Q_{j})g_{k}^{f}
+21:
+else
+22:
+g k f ∗ ← g k f g_{k}^{f*}\leftarrow g_{k}^{f}
+23:
+end if
+24:
+end for
+25:
+for each expert i i do
+26:
+{Accumulation, updates buffer for next step}
+27:
+if 𝒯 i l ≠ ∅ \mathcal{T}_{i}^{l}\neq\emptyset then
+28:
+g ¯ i l ← 1 | 𝒯 i l | ​ ∑ t ∈ 𝒯 i l g t \bar{g}_{i}^{l}\leftarrow\frac{1}{|\mathcal{T}_{i}^{l}|}\sum_{t\in\mathcal{T}_{i}^{l}}g_{t}
+29:
+b i new ← GramSchmidt ⁡ ( g ¯ i l , Q i ) b_{i}^{\text{new}}\leftarrow\mathrm{GramSchmidt}(\bar{g}_{i}^{l},Q_{i})
+30:
+Update Q i Q_{i} with b i new b_{i}^{\text{new}} (FIFO, evict oldest if | Q i | = h |Q_{i}|=h )
+31:
+end if
+32:
+end for
+33:
+Update all expert weights using g i l g_{i}^{l} (leaders) and g i f ∗ g_{i}^{f*} (followers) via the optimizer
+34:
+return { θ i ​ ( t + 1 ) } \{\theta_{i}(t+1)\} , { Q i } \{Q_{i}\}
+Appendix B Proof of Proposition 1
+Proof.
+Recall the inner product of output space between leader and follower after SGD update:
+⟨ θ j l ( t ) x − η g j l ( t ) x , θ k f ( t ) x − η g k f ∗ ( t ) x ⟩ = ⟨ θ j l ( t ) x , θ k f ( t ) x ⟩ + ⟨ − η g j l ( t ) x , θ k f ( t ) x ⟩ + ⟨ − η g k f ∗ ( t ) x , θ j l ( t ) x ⟩ + η 2 ⟨ g j l ( t ) x , g k f ∗ ( t ) x ⟩ . \begin{gathered}\langle\theta_{j}^{l}(t)x-\eta g_{j}^{l}(t)x,\,\theta_{k}^{f}(t)x-\eta g_{k}^{f*}(t)x\rangle\\
+=\langle\theta_{j}^{l}(t)x,\theta_{k}^{f}(t)x\rangle+\langle-\eta g_{j}^{l}(t)x,\theta_{k}^{f}(t)x\rangle+\langle-\eta g_{k}^{f*}(t)x,\theta_{j}^{l}(t)x\rangle+\eta^{2}\langle g_{j}^{l}(t)x,g_{k}^{f*}(t)x\rangle.\end{gathered}
+(15)
+For η 2 ⟨ g j l ( t ) x , g k f ∗ ( t ) x ⟩ \eta^{2}\langle g_{j}^{l}(t)x,g_{k}^{f*}(t)x\rangle in ( 15 ),
+⟨ ​ ∂ L ∂ y j l ​ ‖ x ‖ 2 , ( I − P j ) ​ ∂ L ∂ y k f ​ ‖ x ‖ 2 ​ ⟩ \displaystyle\textlangle\frac{\partial L}{\partial y_{j}^{l}}\left\|x\right\|^{2},(I-P_{j})\frac{\partial L}{\partial y_{k}^{f}}\left\|x\right\|^{2}\textrangle
+= ⟨ ​ ∂ L ∂ y j l ​ x , ( I − P j ) ​ ∂ L ∂ y k f ​ x ​ ⟩ ​ ‖ x ‖ 2 ≈ 0 \displaystyle=\textlangle\frac{\partial L}{\partial y_{j}^{l}}x,(I-P_{j})\frac{\partial L}{\partial y_{k}^{f}}x\textrangle\left\|x\right\|^{2}\approx 0
+This is because the projection I − P j I-P_{j} made the vector ∂ L ∂ y k f ​ x \frac{\partial L}{\partial y_{k}^{f}}x orthogonal to ∂ L ∂ y j l ​ x \frac{\partial L}{\partial y_{j}^{l}}x by eliminating the overlapping direction of it.
+The parameters at time t t can be expressed by accumulating updates from an initial time t 0 t_{0} , where t 0 t_{0} denotes the earliest time at which the short-term gradient consistency assumption holds:
+θ i ​ ( t ) \displaystyle\theta_{i}(t)
+= θ i ​ ( t 0 ) − η ​ ∑ s = t 0 t − 1 g i ​ ( s ) \displaystyle=\theta_{i}(t_{0})-\eta\sum_{s=t_{0}}^{t-1}g_{i}(s)
+(16)
+where
+⟨ g i ​ ( s − 1 ) , g i ​ ( s ) ⟩ ‖ g i ​ ( s − 1 ) ‖ 2 ​ ‖ g i ​ ( s ) ‖ 2 ≈ 1 , ∀ t 0 < s ≤ t − 1 . \displaystyle\frac{\langle g_{i}(s-1),g_{i}(s)\rangle}{\|g_{i}(s-1)\|_{2}\,\|g_{i}(s)\|_{2}}\approx 1,\quad\forall\,t_{0}<s\leq t-1.
+Under this assumption, the accumulated gradients satisfy
+η ​ ∑ s = t 0 t − 1 g i ​ ( s ) ≈ α i ​ ( t ) ​ g i ​ ( t ) , \displaystyle\eta\sum_{s=t_{0}}^{t-1}g_{i}(s)\approx\alpha_{i}(t)g_{i}(t),
+(17)
+where α i ​ ( t ) \alpha_{i}(t) is a scalar representing the accumulated update magnitude. Therefore, the parameter at time t t can be expressed as
+θ i ​ ( t ) = θ ​ ( t 0 ) i − α i ​ ( t ) ​ g i ​ ( t ) , \displaystyle\theta_{i}(t)=\theta(t_{0})_{i}-\alpha_{i}(t)g_{i}(t),
+(18)
+where g i ​ ( t ) g_{i}(t) denotes the current unit gradient of expert i i .
+Then, for ⟨ − η g k f ∗ ( t ) x , θ j l ( t ) x ⟩ \langle-\eta g_{k}^{f*}(t)x,\theta_{j}^{l}(t)x\rangle in ( 15 )
+⟨ − η g k f ∗ ( t ) x , θ j l ( t ) x ⟩ \displaystyle\langle-\eta g_{k}^{f*}(t)x,\theta_{j}^{l}(t)x\rangle
+= ⟨ − η g k f ∗ ( t ) x , θ j l ( t 0 ) x ⟩ + η α j ( t ) ⟨ g k f ∗ ( t ) x , θ j l ( t ) x ⟩ \displaystyle=\langle-\eta g_{k}^{f*}(t)x,\theta_{j}^{l}(t_{0})x\rangle+\eta\alpha_{j}(t)\langle g_{k}^{f*}(t)x,\theta_{j}^{l}(t)x\rangle
+≈ ⟨ − η g k f ∗ ( t ) x , θ j l ( t 0 ) x ⟩ + 0 . \displaystyle\approx\langle-\eta g_{k}^{f*}(t)x,\theta_{j}^{l}(t_{0})x\rangle+0.
+(19)
+where the last approximation follows from the same argument as above.
+∎
+Therefore, orthogonalizing the output gradients serves to reduce the alignment between the two different expert output vectors through which a single token passes. However, when the two vectors point in completely opposite directions, this becomes a major obstacle to the training of MoE, which uses a linear combination of outputs from multiple experts as its final output.
+Appendix C Detailed hyperparameter settings
+C.1 Common Experimental Setting
+Settings
+Value
+Hidden size
+768
+Number of Experts
+4
+Top-k routing
+2
+Weight decay
+0.01
+Auxiliary loss weight
+0.01
+Optimizer
+AdamW(0.9, 0.999)
+Train batch size
+32
+Initial α \alpha
+0.1
+Warmup
+0.1 → 1.0 0.1\to 1.0 for 1 epoch
+Load best model at end
+True
+Max sequence length
+128
+C.2 Experimental Settings
+Fine-tuning
+NVIDIA RTX A6000 D6 (48GB)
+Settings
+Value
+Learning rate
+2e-5
+Epochs
+5
+Basis rank
+16
+FFN intermediate
+3072
+Eval batch size
+64
+Training from Scratch
+NVIDIA RTX A6000 Ada generation (48GB)
+Settings
+Value
+Learning rate
+3e-4
+Epochs
+50
+Early stopping patience
+3
+Basis rank
+8
+FFN intermediate
+2048
+Eval batch size
+32
+Appendix D Expert Output Angles Across All Layers
+Fine-tuned models with QNLI, the angle of expert outputs of each layer. The input token is organization of the input sequence What organization is devoted to Jihad against Israel? , from QNLI test set. Output after 3 epochs, which was the best model for all.
+Angle visualization of SMoE
+Angle visualization of GaP-MoE(-1)
+Angle visualization of GaP-MoE(0.7)
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

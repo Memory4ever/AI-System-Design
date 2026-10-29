@@ -268,13 +268,8 @@ Registry 应把 connector weights、训练 provenance、activation modality、cr
 
 <!-- source-family:SF-2026-ARXIV-2607-21738 -->
 
-### 派生链水印是 Provenance Sensor，不是所有权裁决
-
-训练、微调和 merge 形成多级模型派生链后，仅记录最终 artifact 的发布者会丢失中间贡献。可检测的 multi-user watermark 可以把 carrier、插入顺序、检测阈值与 parent lineage 绑定到每个模型版本，为“某段贡献是否仍可检出”提供独立信号。Registry 应把该信号保存为带方法版本和误检边界的 provenance evidence，而不是把检测结果直接写成所有权事实。
-
-水印会受到剪枝、量化、adapter merge、共谋与未知变换影响，阈值选择也会产生误检；它因此不能替代签名、训练输入记录和完整派生 manifest。高风险发布仍需多种证据交叉确认，无法稳定检测时回退显式 lineage 与受控构建流程。
-
-<!-- semantic-body-binding:SF-2026-ARXIV-2606.17123 -->
+许可证据还应沿具体依赖边交接，而不只在最终模型或应用上留一个license标签：分别绑定dataset、model与application的不可变身份、原条款及其版本、声明的使用/分发关系，再保留检测器所用的条款分类、兼容矩阵和缺失状态。[受限依赖链审计](https://arxiv.org/html/2509.09873v1)以元数据与静态调用线索建立关系，将编码后的义务/禁止条件交给规则矩阵检查；这能提出条款丢失或显式冲突的审查线索，不会把标签变更、代码提及或规则命中升级成真实执行、法律适用或违法裁决。多个上游允许集合的交集可产生待审声明候选，空集提示换组件或补授权，但有建议不等仓库已改、原权利人已许可或全部实际用途合规；未知/错误元数据也不能靠矩阵补真。收集消歧、依赖核验、条款维护与版本迁移、完整用途及独立人工审查均计费，受支持链接上的比例不外推全部生态。关系、原条款或适用条件不可信时保留Unknown与原声明，阻断高风险复用或交独立权利审核，不用一个推荐名称自动放行或重许可。
+<!-- source-family:SF-2025-ARXIV-2509-09873 -->
 
 ### 黑盒服务的 Provenance 只能形成统计证据，不能替代 Artifact Lineage
 
@@ -415,3 +410,5 @@ Primary-source 与官方入口：
 <!-- daily-books-trace:SF-2026-ARXIV-2607-25750:end -->
 
 - `SF-2026-ARXIV-2602-09434` — Daily `2026-02-12`；[exact-v1](https://arxiv.org/html/2602.09434v1) §3–7/Table1–2/D.3。具体 owner 差额受影响深入：whitebox refusal geometry family sensor；closed-set、定向擦除未测、非身份/promotion proof。root 必要原源/具体 owner 写前通过并授窄锁；root 已实际顺读两段、完整邻接与本末注，非作者 POST 通过，窄锁释放。未核代码/复现，非日级 Gate。
+
+- `SF-2025-ARXIV-2509-09873` — Carson，Daily2025-09-16补Sep15BJT；Zeno244/245唯一先行首必要exact-v1，作者135/136发生交接延迟重取/原读，137复用该已读层作唯一不同角色必要采用，正式2+2+2=6/唯一Ch59；本原一自然段/独立marker/本人注及完整两侧经Zeno250纯PRE通过，root本轮fresh仅授完整producer-consumer两段/21738独立marker后、水印标题及完整两段/17123绑定前；本人已按原稿真实保存，Zeno281唯一actual完整nonwriter POST通过，本日按真实顺序I31即时生效/窄位释放；仅同步既成事实，不第三Source/书段或预DAY。只artifact依赖身份/条款与检测规则/缺失状态交接；保元数据/静态关系误差、自有矩阵非独立legal truth、已支持link分母与建议非实际授权/修复。未核完整矩阵/法律文本/代码/图像素或复现，不提供法律裁决、全生态合规率或自动重许可保证，后到层仅按真实状态同步，不预POST/DAY。

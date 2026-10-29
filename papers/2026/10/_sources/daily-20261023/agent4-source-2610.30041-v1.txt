@@ -1,0 +1,88 @@
+Abstract
+Text skills can extend the capabilities of tool-using agents, but long skill descriptions increase computational costs. Soft prompts provide a compact alternative, yet learning from entire successful trajectories may also introduce unnecessary behavioral changes. We find that the useful effect of a text skill is highly concentrated in a small subset of trajectory positions. Based on this observation, we propose Behavioral Localization, which compares the frozen agent with and without the text skill to identify positions where the skill both increases the likelihood of successful tokens and meaningfully changes the next token distribution. We use these localized positions to supervise a short soft prompt. Experiments on SpreadsheetBench with a frozen Qwen3.6-35B-A3B agent show that the top 10% of trajectory positions capture 96.12% of the total positive skill gain. In the shared prompt setting, selective supervision improves success from 30.36% with full trajectory to 36.79%. Under task-specific conditions, using the top 10% localized positions achieves 57.38%, outperforming both the full text skill and the on-policy OPCD baseline. These results show that a small set of behaviorally relevant trajectory positions can provide effective supervision of soft skills.
+ 1 Introduction
+As agents are increasingly deployed across diverse domains, tasks often differ substantially in their knowledge requirements, operational procedures, and behavioral patterns. These task-specific differences are difficult to address efficiently through repeated retraining or modification of the underlying agent  Liu et al. (2024) . A flexible solution is to provide agents with task-specific guidance that helps them develop more effective task behaviors  Li et al. (2026) .
+A direct approach to task adaptation is known as an agent skill, where natural language prompts are used to specify task goals, operational rules, and expected behaviors, allowing the model to perform new tasks without updating its parameters  Anthropic (2025) . However, this approach often relies on lengthy and carefully designed prompts, and its effectiveness can be sensitive to wording and example selection. As tasks become more complex, the prompts typically grow longer, increasing both context usage and inference cost  Mu et al. (2023) .
+To obtain more compact and learnable skill representations, prior work has explored directly optimizing prompts in continuous representation spaces. Compared with natural language instructions, soft prompts typically require less storage and can support task adaptation by updating a small set of trainable prompt embeddings  Tao et al. (2026) ; Lester et al. (2021) . However, these continuous vectors lack clear counterparts in natural language  Deng et al. (2022) . As a result, while learning a target skill, a soft prompt can also introduce unexpected behavioral changes  Ma et al. (2022) . For agents, because generation is sequential, even small shifts in early predictions can propagate and amplify over subsequent steps, leading to incorrect tool selection, malformed outputs, or task execution failures  Bengio et al. (2015) ; Li et al. (2023) . Thus, acquiring new capabilities may come at the cost of degrading abilities that the base model already possesses  Zhu et al. (2022) .
+We find that the behavioral effect of a skill is highly concentrated in a small number of critical decision points, while much of the remaining trajectory is already correctly handled by the base agent. This suggests that robust soft skill adaptation should focus on which behaviors truly need to be learned. Based on this observation, we propose Behavioral Localization, which identifies the trajectory positions where a text skill meaningfully changes the predictions of base agent and selectively uses these positions to train a compact soft skill. At the same time, we constrain selected preservation positions toward the base distribution to reduce unnecessary behavioral drift.
+Our contributions are shown below.
+First, through token-level distributional analysis, we find that skill induced behavioral changes are highly sparse.
+Second, we show that training a soft prompt using only selected positions by Behavioral Localization in the trajectory as supervision outperforms training on the full trajectory.
+ 2 Related Work
+Prompt learning provides a foundation for representing task-specific capabilities in continuous spaces. Prompt Tuning, Prefix-Tuning, and P-Tuning show that a frozen base model can be adapted by optimizing only a small set of continuous prompt embeddings  Lester et al. (2021) ; Li and Liang (2021) ; Liu et al. (2022) . Later work explores how these representations can be reused. For example, SPoT transfers learned soft prompts from source tasks to similar target tasks  Vu et al. (2022) . XPrompt finds that some prompt tokens can hurt downstream performance and removes these negative parts  Ma et al. (2022) . These studies mainly focus on how soft prompts are parameterized and reused. Another line of work compresses long natural language contexts into compact latent representations. Gisting compresses long prompts into a small number of reusable gist tokens  Mu et al. (2023) . ICAE encodes long contexts into a few memory slots that can directly condition a language model  Ge et al. (2024) . These methods mainly aim to preserve the semantics of the original text after compression.
+Agent skills differ from general text compression because their main purpose is to guide an agent’s behavior. Therefore, a compressed representation should preserve the behavioral effect introduced by the skill. Recent work has begun to reuse successful agent trajectories to compress textual skills offline. SoftSkill compresses a natural-language skill into a short continuous prefix while keeping the base model frozen  Tao et al. (2026) . It trains the prefix by predicting the next tokens in successful trajectories. LatentSkill instead converts textual skills into task-specific LoRA adapters, moving reusable skill knowledge from the context space into the model’s weight space  Yu et al. (2026) . These studies show that textual agent skills can be encoded as compact latent representations. However, they mainly focus on how a skill should be represented or stored. In contrast, we study which behavioral changes introduced by a skill should be used to learn such a representation.
+ 3 Behavioral Locator
+ 3.1 Problem formulation
+Let p_{\theta} be a frozen agent and let S denote a text skill shared by a family of tasks. Our training set consists of task description x^{i} and it’s trajectory \tau^{i}=(y^{i}_{1},\ldots,y^{i}_{T}) . \tau^{i} is a verified successful trajectory called the teacher trajectory. \tau^{i}_{t} denotes the sequence before position t .
+If we seek a soft prompt P^{*}\in\mathbb{R}^{L\times d} that can replace S at inference time. The parameters of the base model \theta remain frozen, only P is optimized.
+We aim to identify a sparse set of trajectory positions
+ \displaystyle\mathcal{C}\subseteq{1,\ldots,T},\qquad|\mathcal{C}|\ll T, 
+ (1) 
+We use \mathcal{C} to supervise a short soft prompt. The goal is to focus on skill useful behavior while avoiding harmful updates induced by other trajectory positions.
+ 3.2 Method
+We compute the next token probability distributions along the teacher trajectory under three different conditions.
+ \displaystyle p_{t}^{\mathrm{s}} 
+ \displaystyle=p_{\theta}(\cdot\mid S,x,\tau^{i}_{t}) 
+ (2) 
+ \displaystyle p_{t}^{\mathrm{n}} 
+ \displaystyle=p_{\theta}(\cdot\mid x,\tau^{i}_{t}) 
+ \displaystyle p_{t} 
+ \displaystyle=p_{\theta}(\cdot\mid P,x,\tau^{i}_{t}) 
+Here, p^{\mathrm{s}} , p^{\mathrm{n}} , and p denote the next token distributions under the text skill, non-skill, and soft prompt, respectively.
+First, we define the positive gain G induced by the skill on the base model as follows.
+ \displaystyle G_{t}^{i}=\log p_{t}^{\mathrm{s}}(y_{t}^{i})-\log p_{t}^{\mathrm{n}}(y_{t}^{i}) 
+ (3) 
+at position t of the teacher trajectory, it measures how much the probability of the successful token y_{t} increases after adding the text Skill, compared with the no-skill condition.
+Next, we define the distributional shift JS induced by the skill on the base model as follows.
+ \displaystyle JS_{t}^{i}=\frac{1}{2}D_{\mathrm{KL}}\left(p_{t}^{\mathrm{s}}\;\|\;m_{t}^{i}\right)+\frac{1}{2}D_{\mathrm{KL}}\left(p_{t}^{\mathrm{n}}\;\|\;m_{t}^{i}\right) 
+ (4) 
+where
+ \displaystyle m_{t}^{i} 
+ \displaystyle=\frac{1}{2}\left(p_{t}^{\mathrm{s}}+p_{t}^{\mathrm{n}}\right) 
+ (5) 
+at position t of the teacher trajectory, it measures how much the full next-token distribution changes after adding the text Skill, compared with the no-skill condition. By combining the two metrics, we define the localization score U_{t}^{i}=G_{t}^{i}JS_{t}^{i} at each position. We then select the top k\% of positions as the training targets.
+At the selected core positions, we minimize the full vocabulary KL divergence between the predictive distributions under the text skill and soft skill conditions. At the unselected preservation positions, we use the token distribution of the no-skill model as a behavioral anchor, encouraging the soft-prompt model to preserve the original predictive behavior of the base model as much as possible.
+ 4 Experiment
+ Figure 1: 
+Aggregate concentration on 61 successful training trajectories.
+Positive gold token gain is highly concentrated under teacher forcing.
+ 4.1 Setup
+We conduct our experiments on SpreadsheetBench Ma et al. (2024) . We use GPT-5.5 to generate the successful teacher trajectories. All experiments use Qwen3.6-35B-A3B as the frozen student model, with all parameters fixed during training. Each soft prompt has a length of 8 and is initialized using the embeddings of the first same tokens of the full text skill.
+During evaluation, we use greedy decoding with a maximum of 4,096 token cost and set the execution timeout for each task to 600 seconds. A task is considered successful only if the generated output passes all SpreadsheetBench checks.
+ 4.2 Main Result
+We use the Behavioral Locator to select key positions and optimize both a shared soft prompt across tasks and task-specific soft prompts for individual tasks.
+As shown in Figure  1 , the positive gain is highly concentrated in a small subset of trajectory positions. Selecting only 10% of the tokens captures 96.12% of the total positive Skill effect. This motivates us to use a sparse set of relevant tokens as supervision for soft skill learning.
+ Table 1: 
+Main SpreadsheetBench results. Bold denotes the best learned soft
+prompt under each setting.
+ Setting 
+ Method 
+ Success Rate 
+ Shared soft prompt 
+ No Skill 
+ 97/280 (34.64%) 
+ Text Skill 
+ 118/280 (42.14%) 
+ SoftSkill 
+ 85/280 (30.36%) 
+ OPCD 
+ 107/280 (38.21%) 
+ Ours (5%) 
+ 101/280 (36.07%) 
+ Ours (10%) 
+ 103/280 (36.79%) 
+ Task-specific soft prompt 
+ No Skill 
+ 26/61 (42.62%) 
+ Text Skill 
+ 32/61 (52.46%) 
+ SoftSkill 
+ 28/61 (45.90%) 
+ OPCD 
+ 30/61 (49.18%) 
+ Ours (5%) 
+ 28/61 (45.90%) 
+ Ours (10%) 
+ 35/61 (57.38%) 
+No Skill measures the capability of the base agent, while Text Skill represents the up bound by providing the full text skill. SoftSkill is the offline full-trajectory compression baseline. OPCD is an important on-policy distillation baseline that trains online rather than relying on fixed teacher trajectories. Our method instead relies on lower cost offline teacher trajectories. Under the shared prompt setting, our method improves over full-trajectory SoftSkill, although it remains below the on-policy OPCD baseline. More importantly, under task-specific condition, selecting the top 10% localized positions achieves 57.38%, outperforming both Text Skill and OPCD. These results support a small subset of token can provide sufficient supervision for learning effective soft prompts.
+

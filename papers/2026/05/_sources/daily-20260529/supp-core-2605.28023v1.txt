@@ -1,0 +1,1194 @@
+Source: https://arxiv.org/html/2605.28023v1
+Main text extraction; fulltext_chars=120846
+
+arXiv:2605.28023v1 [cs.CV] 27 May 2026 
+ 
+ 
+ VCap: Hypergeometric Rewards 
+ for Weak-to-Strong Visual Captioning 
+
+ 
+ 
+ 
+ Xingyu Lu
+ 
+ Affiliation:  Tsinghua Shenzhen International Graduate School
+ 
+    
+ Jinpeng Wang
+ 
+ Affiliation:  Harbin Institute of Technology, Shenzhen
+ 
+    
+ Yi-Fan Zhang
+ 
+ Affiliation:  Chinese Academy of Sciences
+ 
+    
+ Yankai Yang
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Yancheng Long
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Yiyang Fan
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Xuanyu Zheng
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Haonan Fan
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Kaiyu Jiang
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Tianke Zhang
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Changyi Liu
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Bin Wen
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Fan Yang
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Tingting Gao
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Han Li
+ 
+ Affiliation:  Kuaishou Technology †  Project leader. ‡  Corresponding authors: Jinpeng Wang and Chun Yuan. 
+ 
+    
+ Chun Yuan
+ 
+ Affiliation:  Tsinghua Shenzhen International Graduate School
+ 
+
+ Abstract 
+    
+ Visual captioning requires models to capture visual content faithfully while minimizing both omission and hallucination.
+As the dominant paradigm for captioning, MLLMs have achieved strong performance through scaling and high-quality data. Recently, RL has emerged as a key route to driving MLLMs toward higher precision and broader coverage, however, existing reward designs for captioning fail to provide fine-grained and reliable signals for factual verification, limiting their effectiveness.
+To address this, we propose  VCap , a Witness-Adjudicator reward that pairs the reference caption (a  witness ) with the visual signal (an  adjudicator ).
+By explicitly verifying factual consistency between the reference and policy-generated captions grounded in the visual signal, VCap delivers a reward signal with hypergeometric-distribution-level precision for caption quality verification. This design enables effective learning even from imperfect references, facilitating weak-to-strong generalization in RL training.
+In our experiments, an 8B model trained with VCap outperforms open- and closed-source SOTA models on multiple image and video captioning benchmarks. Human evaluation further confirms its strong alignment with factual correctness. Additionally, VCap improves MLLM perceptual capability, generalizes across tasks, and surpasses best-of-N distillation, challenging prior assumptions about RLVR. 
+
+ 
+  
+ † † footnotetext:  Email:  xylu18@gmail.com . 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Figure 1:  VCap (8B) vs. frontier models across visual captioning benchmarks. 
+ 
+ 
+ Visual captioning translates visual perception into natural language. A reliable captioner should express salient visual facts, including objects, attributes, relationships, and events, while avoiding both omissions and fabrications. At the fact level, caption quality is governed by two complementary dimensions:  Correctness , whether each stated fact is grounded in the visual signal, and  Completeness , whether the important visual content is sufficiently covered. The impact extends beyond captioning itself: faithful captions serve as supervision, intermediate representations, and synthetic data for cross-modal alignment, retrieval, agent reasoning, and downstream multimodal training, where factual errors can silently propagate. 
+
+ 
+ 
+ 
+ Existing efforts to improve caption quality follow three main routes: scaling models and pretraining data, curating and distilling stronger reference captions, and optimizing captioners with reinforcement learning (RL). The first two approaches share a common ceiling: even carefully curated data inevitably propagate omissions and hallucinations into the model. RL, in principle, offers a way beyond this limitation. Dominant reward designs, VQA-based  [ 48 ] , VLM-as-judge  [ 50 ] , and imitation-style rewards  [ 41 ,  47 ]  (e.g., CIDEr, DPO), all constrain reference signals to a single role: a limited question pool, a judge’s ability, or an explicit imitation target. These designs can provide useful signals, but they struggle to jointly supervise  both  correctness and completeness at fine granularity. The core obstacle is that the complete set of visual facts is unavailable in practice: no reference enumerates it, and no reward proxy fully recovers it. 
+
+ 
+ 
+ 
+ To address this limitation, we introduce  VCap , which separates the roles of textual reference and visual evidence in reward modeling. VCap treats the reference caption not as a target to imitate, but as partial evidence about the visual input. The reference caption acts as a stochastic  witness : to expose a subset of visual facts. This witness plays a dual role. As a  recall anchor , it requires the policy caption to cover the facts it mentions. As an  error detector , it helps identify hallucinated policy claims when they collide with witnessed facts under visual verification. The visual input plays the complementary role of an  adjudicator : it verifies matches and mismatches at the witness-activated slots, but does not serve as an oracle that enumerates all facts in the scene. 
+
+ 
+ 
+ 
+ This role separation admits a closed-form analysis. Let  ℱ \mathcal{F}  denote the latent visual fact set with  | ℱ | = N |\mathcal{F}|=N ,  R R  the reference fact subset with  | R | = m |R|=m , and  Φ ⁡ ( y ) = C ∪ E \Phi(y)=C\cup E  the policy fact set, where  | C | = c |C|=c  are correct facts and  | E | = n − c |E|=n-c  are hallucinated facts. Treating  R R  as a stochastic subset of  ℱ \mathcal{F} , VCap yields hypergeometric reward factors for completeness and correctness: 
+
+ 
+ 
+
+ 
+ 
+ P comp = ∏ i = 0 m − 1 c − i N − i , P corr = ∏ j = 0 n − c − 1 N − m − j N − j . P_{\text{comp}}\;=\;\prod_{i=0}^{m-1}\frac{c-i}{N-i},\qquad P_{\text{corr}}\;=\;\prod_{j=0}^{n-c-1}\frac{N-m-j}{N-j}. 
+ 
+ (1) 
+ 
+
+ 
+ The first term increases as the policy covers more correct facts, while the second decreases as hallucinations grow. Both are jointly optimized when the policy approaches the image-information ceiling, i.e.,  c → N c\to N  and  n − c → 0 n-c\to 0 . Crucially, the location of this optimum does not depend on the reference size  m m : smaller or imperfect references change the steepness of the supervision landscape, but not its optimum. We call this property  two-axis weak-to-strong generalization . Unlike imitation-style rewards, whose optimum is tied to the reference caption itself, VCap uses the reference as sampled probes of the latent fact space, allowing weak references to guide stronger captioners. 
+
+ 
+ 
+ 
+ We evaluate these predictions at scale across image and video captioning. On image-captioning benchmarks, an 8B captioner trained with VCap outperforms several leading open- and closed-source MLLMs, including substantially larger systems, achieving strong results on CapMAS and DecapBench. The same training recipe transfers to video captioning, reaching state-of-the-art performance on VDC and ranking competitively on VCapsBench. Human evaluation on a held-out 500-image set ranks VCap first in per-image factual correctness, and the VCap reward agrees with human pairwise preferences on  61.1 % 61.1\%  of model pairs against a  50 % 50\%  random baseline, providing evidence that the witness-adjudicator signal captures human factual judgments. The resulting captioning checkpoints further generalize to image and video QA without QA-specific fine-tuning, suggesting that VCap improves underlying visual perception rather than only the surface form of captions. Finally, controlled best-of- N N  and ablation studies show that VCap-driven RL improves beyond what can be explained solely by self-distillation from sampled captions, and that removing either reward dimension or modality produces the failure modes predicted by the two-axis factorization. 
+
+ 
+ 
+ 
+ We summarize the contributions of this paper as follows: 
+
+ 
+ 
+ •  
+ 
+ A fact-level framework for visual captioning.  We formalize visual captioning along two complementary axes, Correctness and Completeness, and identify why existing captioning rewards struggle to provide fine-grained supervision for both axes simultaneously. 
+
+ 
+ 
+ •  
+ 
+ A Witness-Adjudicator reward for weak-to-strong captioning.  We propose VCap, which treats a reference caption as stochastic witness and the visual content as an adjudicator. This role separation yields hypergeometric reward signals, enabling weak-to-strong captioning enhancement. 
+
+ 
+ 
+ •  
+ 
+ Strong empirical performance and analysis.  Trained with VCap, an 8B captioner achieves leading performance across image- and video-captioning benchmarks. Human evaluation supports its factual correctness, downstream QA results suggest improved visual perception, and controlled best-of- N N  and ablation studies show that VCap-driven RL goes beyond imitation or self-distillation. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 2  Methodology 
+
+ 
+
+ 
+ This section presents our methodology in three steps.
+First, we formalize visual captioning as a fact-level information extraction task that captures salient visual facts while tolerating lossy representations (Section  2.1 ).
+Next, we introduce VCap reward for visual captioning, which assigns complementary roles to reference captions and the visual input, with the former acting as a witness and the latter as an adjudicator (Section  2.2 ).
+Finally, we embed this reward in a combinatorial framework and derive two-axis weak-to-strong generalization directly from hypergeometric expressions (Section  2.3 ). 
+
+ 
+ 
+ 
+ 2.1  Formal Definition: Captioning as Fact-Level Lossy Extraction 
+
+ 
+
+ 
+ We formalize visual captioning as a lossy, fact-level information extraction problem. Since natural language can only express limited content, captioning is inherently lossy.
+A visual signal  x x  (an image or a short video) induces a latent set of describable facts  ℱ ⁡ ( x ) \mathcal{F}(x) , which we conceptualize as finite, ranging over objects, attributes, scene events, and relations.
+We denote by  Φ ⁡ ( y ) \Phi(y)  the set of facts expressed by a caption  y y . A reference caption  y ref y_{\text{ref}}  induces a fact set  R := Φ ⁡ ( y ref ) R:=\Phi(y_{\text{ref}})  which can contain mistakes. For a policy caption  y y , we decompose its fact set as  Φ ⁡ ( y ) = C ∪ E \Phi(y)=C\cup E , where  C ⊆ ℱ ⁡ ( x ) C\subseteq\mathcal{F}(x)  denotes the set of correct facts supported by  x x , and  E E  denotes the set of facts inconsistent with the visual signal.
+At the fact level, caption quality is governed by two complementary axes:  Correctness , requiring every fact in  Φ ⁡ ( y ) \Phi(y)  to be supported by  x x , and  Completeness , requiring  Φ ⁡ ( y ) \Phi(y)  to cover as many facts in  ℱ ⁡ ( x ) \mathcal{F}(x)  as possible. A reward function for captioning must therefore supervise both axes at the fact level, over a fact space  ℱ ⁡ ( x ) \mathcal{F}(x)  that is neither directly observable nor exhaustively enumerable in practice.
+This formulation highlights the central challenge: learning to optimize over an unobserved fact space using only partial and indirect supervision. 
+
+ 
+ 
+ 
+ Figure 2:  VCap overview.  (a) VCap’s reward mechanism: reference (witness) and image (adjudicator) jointly produce Correctness, Completeness, and Text Quality scores. (b) For video, a global reward and a per - segment reward are combined. (c) Self - improvement: the policy model iteratively regenerates stronger references, which sharpen the reward signal to further refine the policy. 
+ 
+ 
+ 
+ 2.2  VCap: Witness-Adjudicator Reward for Visual Captioning 
+
+ 
+
+ 
+ As shown in Fig  2  (a), VCap’s Witness-Adjudicator Reward is computed by a frozen reward model (MLLM) that takes the triple  ( x , y ref , y ) (x,y_{\text{ref}},y)  as input and produces a structured judgment in a single evaluation pass.
+The reward model is instructed (Appendix  A.5 ) to compare  y ref y_{\text{ref}}  and  y y  at the fact level, flagging two kinds of problems: facts that are present in  y ref y_{\text{ref}}  but missing from  y y  (candidate omissions), and facts in  y y  that contradict  y ref y_{\text{ref}}  at a shared slot (candidate hallucinations).
+Each candidate problem is then verified against the visual signal  x x : an apparent omission is counted only if  x x  actually supports the missing fact, and an apparent contradiction is counted only if  x x  disagrees with the policy fact (when  x x  disagrees with  y ref y_{\text{ref}}  instead, the verdict on  x x  overrides  y ref y_{\text{ref}}  so that hallucinations latent in the reference cannot enter the reward).
+The reward model lists detected problems and emits three integer scores in  { 0 , 1 , … , 10 } \{0,1,\dots,10\}  summarizing the policy caption:  s corr s_{\text{corr}}  measures  Correctness , penalizing policy claims that conflict with the reference and are verified by the visual signal. This corresponds to the collision avoidance event  E ∩ R = ∅ E\cap R=\emptyset .  s comp s_{\text{comp}}  measures  Completeness , namely whether the policy caption covers the facts in the reference, with confirmed omissions penalized via the event  R ⊆ C R\subseteq C , and  s txt s_{\text{txt}}  measures  Text Quality  (fluency, coherence, conciseness, and absence of self-evaluative meta-text such as “all elements have been described,” so the policy cannot inflate its score by self-assessment).
+The three scores are combined into the sentence-level reward  r ⁡ ( x , y ref , y ) r(x,y_{\text{ref}},y)  by three hyperparameters  ( w corr , w comp , w txt ) (w_{\text{corr}},w_{\text{comp}},w_{\text{txt}}) ; the explicit aggregation formula is given in Appendix  A.1.2 . 
+
+ 
+ 
+ 
+ For video captioning (Fig  2  (b)), where a long visual signal causes the global pass to miss locally salient facts, we additionally choose a random temporal segment per sample, run the same reward model on the per-segment caption against a per-segment reference to obtain a local reward in exactly the same form, and combine it with the global reward by another fixed weighted sum (also given in Appendix  A.1.2 ); the local term captures fine-grained temporal facts that a global score blurs, while the global term retains cross-segment events that no single segment can resolve. 
+
+ 
+ 
+ 
+ In this construction the reference caption and the visual signal play disjoint, non-interchangeable roles.
+The reference caption acts as a  stochastic witness : its decomposed fact set  R = Φ ⁡ ( y ref ) ⊂ ℱ ⁡ ( x ) R=\Phi(y_{\text{ref}})\subset\mathcal{F}(x)  is read as a uniformly random subset of  ℱ ⁡ ( x ) \mathcal{F}(x)  rather than a target to imitate, and serves only to mark the slots of  ℱ ⁡ ( x ) \mathcal{F}(x)  at which the policy will be probed.
+The visual signal acts as an  adjudicator : it never traverses  ℱ ⁡ ( x ) \mathcal{F}(x)  as a per-fact oracle, but binarily resolves each fact-level overlap or conflict between  y ref y_{\text{ref}}  and  y y  at whichever slot the two meet, with its verdict overriding  y ref y_{\text{ref}}  on disagreement.
+The two roles are complementary and cannot be swapped: Without visual adjudication, hallucinations latent in  y ref y_{\text{ref}}  and superficial wording matches between  y y  and  y ref y_{\text{ref}}  would both pollute the reward; without a reference witness, no probability structure exists to localize the policy’s facts in  ℱ ⁡ ( x ) \mathcal{F}(x) , and the visual content alone can only provide holistic, fact-unlocalized signal. And the supervision they jointly produce is symmetric on both fact-level axes, as the analysis of Section  2.3  makes precise. 
+
+ 
+ 
+ 
+ 
+ 2.3  Hypergeometric Analysis: Two-Axis Weak-to-Strong 
+
+ 
+
+ 
+ By modeling the fact set as a finite combinatorial space, the VCap reward can be analyzed in closed form. We construct that space, express each axis’s pass probability as an exact cumulative product, and then deduce all required monotonicity properties without invoking any large - N N  approximation. 
+
+ 
+ 
+ 
+ Finite combinatorial model. 
+
+ 
+ Let  ℱ \mathcal{F}  denote the latent fact set with  | ℱ | = N |\mathcal{F}|=N , viewed as  N N  slots, each holding a distinct fact.
+The reference fact set has size  | R | = m |R|=m ; the policy fact set decomposes as  Φ ⁡ ( y ) = C ∪ E \Phi(y)=C\cup E  with  | C | = c |C|=c  correct facts and  | E | = n − c |E|=n-c  erroneous facts, so the total caption size is  | Φ ⁡ ( y ) | = n |\Phi(y)|=n .
+We assume that  R R ,  C C , and  E E  are drawn uniformly without replacement from the  N N  slots. All facts are exchangeable and an erroneous fact is detected if and only if it lands on a slot that also belongs to  R R ; in that case the visual adjudicator verifies the conflict and confirms the error.
+Under these assumptions  R R  supplies a sparse detection net of  m m  armed slots and the visual input acts only on those armed slots.
+ N N  is an analytical abstraction, not an algorithmic input: the reward only evaluates the discrete events  R ⊆ C R\subseteq C  and  E ∩ R = ∅ E\cap R=\emptyset  via visual adjudication and never estimates  | ℱ | |\mathcal{F}| . 
+
+ 
+ 
+ 
+ 
+ Completeness axis: subset coverage as a cumulative product. 
+
+ 
+ The recall test checks whether all  m m  reference facts fall inside  C C , i.e.,  R ⊆ C R\subseteq C  (wrong facts cannot cover  R R ).
+Drawing the  m m  reference facts sequentially without replacement, this probability admits the cumulative - product expression 
+
+ 
+ 
+
+ 
+ 
+ P recall ​ ( c ∣ m , N ) = ( N − m c − m ) ( N c ) = ∏ i = 0 m − 1 c − i N − i , P_{\text{recall}}(c\mid m,N)\;=\;\frac{\binom{N-m}{\,c-m\,}}{\binom{N}{c}}\;=\;\prod_{i=0}^{m-1}\frac{c-i}{N-i}, 
+ 
+ (2) 
+ 
+
+ 
+ where each factor  ( c − i ) / ( N − i ) (c-i)/(N-i)  is the conditional probability that the  ( i + 1 ) (i{+}1) -th reference fact lands in  C C  given that the previous  i i  already have.
+When  c < m c<m ,  R ⊆ C R\subseteq C  is impossible and  P recall = 0 P_{\text{recall}}=0 , providing a strong signal that pushes the policy to increase  c c  until it at least covers the reference facts. Once  c ≥ m c\geq m , raising  c c  to  c + 1 c+1  strictly enlarges every factor, so  P recall P_{\text{recall}}  is strictly monotone increasing in  c c  for every  m ≥ 1 m\geq 1 ; the supervision pulls the policy unambiguously toward  c → N c\to N , the saturation of correct facts at the visual - information ceiling.
+ m m  enters ( 2 ) only as the  number  of factors, not as their location, so enlarging  m m  multiplies more strictly - increasing - in - c c  factors and hence sharpens the gradient on  c c  but does not move the optimum away from  c → N c\to N . 
+
+ 
+ 
+ 
+ 
+ Correctness axis: collision avoidance as a cumulative product. 
+
+ 
+ The collision test asks whether the  n − c n-c  uniformly drawn error positions all avoid the  m m  reference slots, i.e.,  E ∩ R = ∅ E\cap R=\emptyset .
+Drawing the  n − c n-c  error positions sequentially without replacement, this probability admits the similar expression 
+
+ 
+ 
+
+ 
+ 
+ P coll ​ ( n − c ∣ m , N ) = ( N − m n − c ) ( N n − c ) = ∏ j = 0 n − c − 1 N − m − j N − j , P_{\text{coll}}(n-c\mid m,N)\;=\;\frac{\binom{N-m}{\,n-c\,}}{\binom{N}{\,n-c\,}}\;=\;\prod_{j=0}^{n-c-1}\frac{N-m-j}{N-j}, 
+ 
+ (3) 
+ 
+
+ 
+ where each factor  ( N − m − j ) / ( N − j ) (N-m-j)/(N-j)  is the conditional probability that the  ( j + 1 ) (j{+}1) -th erroneous fact misses  R R  given that the previous  j j  already have.
+When  n − c = 0 n-c=0 , the empty product equals  1 1 .
+For every  m ≥ 1 m\geq 1 , each factor is strictly less than one, so  P coll P_{\text{coll}}  is strictly monotone decreasing in  n − c n-c , pulling the policy unambiguously toward  n − c → 0 n-c\to 0  (zero unsupported facts).
+A larger  m m  shrinks each ratio and multiplicatively sharpens the penalty for each additional erroneous fact, but does not change the location of the optimum at  n − c → 0 n-c\to 0 . 
+
+ 
+ 
+ 
+ 
+ Two-axis weak-to-strong and self-improvement. 
+
+ 
+ Because  P recall P_{\text{recall}}  and  P coll P_{\text{coll}}  depend on disjoint variables ( c c  vs.  n − c n-c ) and operate on disjoint fact subsets, the reward jointly pushes the policy toward  ( c → N , n − c → 0 ) (c\to N,\;n-c\to 0)  for every  m ≥ 1 m\geq 1 , without imposing a structural trade - off between completeness and correctness.
+The reference size  m m  controls only the steepness of supervision (through the number of factors in ( 2 ) and the per - factor strength in ( 3 )), never the location of the optimum, so weakening the reference softens the gradient on both axes simultaneously without shifting where the policy is being pushed.
+This analysis suggests a natural self-improvement loop. Starting from weak references produced, optimization under the witness-adjudicator reward can push the policy beyond the initial reference quality because the optimum is not tied to the reference itself. If regenerating the references with the trained policy can yield captions that cover more correct facts and contain fewer errors, then the new reference pool has strictly larger average witness size  m m , which by the same equations sharpens the supervision gradient on both axes and accelerates convergence toward the same fixed optimum  ( c → N , n − c → 0 ) (c\to N,\;n-c\to 0)  in the next iteration (Fig  2  (c)).
+Two - axis weak - to - strong and self - improvement are therefore two faces of the same fact: under the Witness - Adjudicator Reward, reference quality controls the speed of convergence and never its destination. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 3  Experiments 
+
+ 
+
+ 
+ We evaluate VCap on the two modalities the closed-form analysis of
+Section  2.3  predicts it should generalize across, image
+captioning and video captioning, and ask three questions.
+First, does an 8B captioner trained with the Witness–Adjudicator Reward match
+or surpass open- and closed-source state of the art that exceeds it by one to
+two orders of magnitude in scale?
+Second, do the gains transfer from images to long videos under the same reward,
+including the per-segment local term of Equation ( 5 )?
+Third, does self-improvement through regenerated references yield the gains predicted by the  m m -independence property in Equations ( 2 ) and ( 3 )?
+The main-result protocol below answers all three; ablations that decompose
+the result along each axis of the closed form follow in
+Section  3.6 . 
+
+ 
+ 
+ 
+ 3.1  Setup 
+
+ 
+
+ 
+ We train all VCap variants from  Qwen3-VL-8B-Instruct  with GRPO,
+using the Witness-Adjudicator Reward of Section  2.2  on
+the triple  ( x , y ref , y ) (x,y_{\text{ref}},y) , with the per-segment local term of
+Equation ( 5 ) enabled for video; all weights are held
+fixed across image and video training (Appendix  A.1 ).
+ VCap (e1)  is trained against an initial reference pool from an
+off-the-shelf captioner, and  VCap (e2)  is retrained from the same
+backbone against references regenerated by VCap (e1), the self-improvement
+schedule of Section  2.3 .
+We evaluate on four benchmarks:
+ CapMAS   [ 18 ]  (CLAIR, Coverage, Factuality, with Avg
+their mean) and
+ DecapBench   [ 52 ]  (Precision, Recall, DCScore, with
+Avg the mean of Precision and Recall) on images, and
+ VCapsBench  (atomic-QA AR/IR/CR) and
+ VDC   [ 1 ]  ( 𝑡𝑝 ​ _ ​ 𝑎𝑐𝑐 \mathit{tp\_acc}  on five aspects,
+with Avg their mean) on video.
+Baselines include the unmodified backbone  Qwen3-VL-8B-Instruct ,
+ Qwen3-VL-235B-Instruct ,  Qwen3.5-397B ,
+ Gemini 3-Flash ,  Gemini 3.1 Pro ,  Seed 2.0 Pro ,
+ GPT-5.4  (image only), and the caption-RL peer
+ CapRL   [ 49 ]  (image only); every baseline is scored
+through the identical pipeline.
+For all judge-based scores, we evaluate every model using the same pipeline and interface, and strive to remain as consistent as possible with the original paper. 
+
+ 
+ 
+ 
+ Table 1:  Image-captioning results on CapMAS and DecapBench. 
+ 
+ 
+ 
+ 
+ CapMAS 
+ DecapBench 
+ 
+ Model 
+ CLAIR 
+ Coverage 
+ Factuality 
+ Avg 
+ Precision 
+ Recall 
+ DCScore 
+ Avg 
+ 
+ CapRL 
+ 79.65 
+ 69.53 
+ 63.76 
+ 70.98 
+ 75.93 
+ 50.09 
+ 59.47 
+ 63.01 
+ 
+ Qwen3-VL-8B-Instr 
+ 86.19 
+ 71.30 
+ 76.25 
+ 77.91 
+ 82.73 
+ 55.61 
+ 65.70 
+ 69.17 
+ 
+ Qwen3-VL-235B-Instr 
+ 84.44 
+ 71.23 
+ 77.12 
+ 77.60 
+ 79.76 
+ 55.99 
+ 64.99 
+ 67.88 
+ 
+ Qwen3.5-397B 
+ 84.97 
+ 73.18 
+ 77.02 
+ 78.39 
+ 78.15 
+ 56.21 
+ 64.53 
+ 67.18 
+ 
+ Seed 2.0 Pro 
+ 88.03 
+ 73.43 
+ 77.68 
+ 79.71 
+ 77.74 
+ 56.95 
+ 64.89 
+ 67.35 
+ 
+ Gemini 3.1 Pro 
+ 89.19 
+ 72.00 
+ 78.37 
+ 79.85 
+ 83.76 
+ 56.63 
+ 66.46 
+ 70.20 
+ 
+ GPT-5.4 
+ 88.18 
+ 73.92 
+ 81.99 
+ 81.36 
+ 86.27 
+ 60.08 
+ 70.10 
+ 73.18 
+ 
+ VCap (e1) 
+ 89.14 
+ 73.95 
+ 81.48 
+ 81.52 
+ 87.80 
+ 58.83 
+ 69.52 
+ 73.32 
+ 
+ VCap (e2) 
+ 89.99 
+ 74.18 
+ 86.42 
+ 83.53 
+ 86.42 
+ 60.92 
+ 70.35 
+ 73.67 
+ 
+ 
+
+ 
+ 
+ 
+ Table 2:  Video-captioning results on VCapsBench and VDC. 
+ 
+ 
+ 
+ 
+ VCapsBench 
+ VDC 
+ 
+ Model 
+ AR  ↑ \uparrow 
+ IR  ↓ \downarrow 
+ CR  ↑ \uparrow 
+ Background 
+ Camera 
+ Detailed 
+ Main Object 
+ Short 
+ Avg 
+ 
+ Qwen3-VL-8B-Instr 
+ 63.28 
+ 11.77 
+ 71.73 
+ 25.63 
+ 32.54 
+ 37.51 
+ 35.28 
+ 22.96 
+ 30.78 
+ 
+ Qwen3-VL-235B-Instr 
+ 64.64 
+ 12.35 
+ 73.75 
+ 39.64 
+ 32.87 
+ 38.57 
+ 39.00 
+ 23.56 
+ 34.73 
+ 
+ Qwen3.5-397B 
+ 65.68 
+ 12.05 
+ 74.68 
+ 37.76 
+ 30.53 
+ 35.87 
+ 36.88 
+ 22.96 
+ 32.80 
+ 
+ Gemini 3.1 Pro 
+ 65.91 
+ 11.68 
+ 74.62 
+ 36.56 
+ 28.54 
+ 33.98 
+ 35.43 
+ 22.57 
+ 31.41 
+ 
+ Seed 2.0 Pro 
+ 76.53 
+ 13.39 
+ 88.36 
+ 34.91 
+ 27.39 
+ 33.54 
+ 34.55 
+ 21.54 
+ 30.39 
+ 
+ VCap (e1) 
+ 71.34 
+ 14.01 
+ 82.96 
+ 40.71 
+ 33.22 
+ 38.90 
+ 39.82 
+ 23.42 
+ 35.21 
+ 
+ VCap (e2) 
+ 72.15 
+ 13.67 
+ 83.57 
+ 41.56 
+ 34.00 
+ 40.22 
+ 40.74 
+ 23.50 
+ 36.01 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 3.2  Main Results 
+
+ 
+
+ 
+ Tables  1  and  2  report the full results.
+On image captioning,  VCap (e2) attains the best score on every CapMAS
+metric : CLAIR  89.99 89.99 , Coverage  74.18 74.18 , Factuality  86.42 86.42 , Avg
+ 83.53 83.53 , and on DecapBench Recall ( 60.92 60.92 ), DCScore ( 70.35 70.35 ), and Avg
+( 73.67 73.67 ), surpassing  GPT-5.4  ( 81.36 81.36 / 73.18 73.18  Avg) and the
+open-source  Qwen3.5-397B  at  30 × 30\times - 50 × 50\times  its parameter
+count without any distillation.
+On video captioning,  VCap (e2) achieves the best VDC score among the evaluated models.  (Avg
+ 36.01 36.01 ,  + 1.28 +1.28  over the next-best  Qwen3-VL-235B-Instruct ,  + 5.23 +5.23 
+over the backbone) on four of the five aspects, and is second on VCapsBench
+on both AR ( 72.15 72.15 ) and CR ( 83.57 83.57 ) behind  Seed 2.0 Pro 
+( 76.53 76.53 / 88.36 88.36 ); the residual gap on VCapsBench, whose score is dominated
+by holistic temporal QA rather than per-fact decomposition, is consistent
+with our reward signal matching the metric most tightly when both operate at
+the fact level.
+ The e1 → \to e2 self-improvement is monotone on every metric
+across all four benchmarks : CapMAS Avg  + 2.01 +2.01 , DecapBench Avg  + 0.35 +0.35 ,
+VCapsBench AR  + 0.81 +0.81 , VDC Avg  + 0.80 +0.80 , which is consistent with the  m m -independence prediction of Section  2.3 : Regenerating references with the refined
+policy sharpens the supervision on both
+axes, and pushes the policy toward the visual-information ceiling
+without any data curriculum or distillation. 
+
+ 
+ 
+ 
+ 
+ 3.3  Human Evaluation and Reward-Model Alignment 
+
+ 
+
+ 
+ The benchmark numbers above are produced by automatic judges; we now corroborate
+them with human annotation, on the same 500 image set, and use the
+human verdicts to test whether the Witness–Adjudicator reward itself ranks
+captions the way humans do.
+For every image, the five candidate captions,  VCap (e2) ,
+ Seed 2.0 Pro ,  Gemini 3.1 Pro ,  GPT-5.4 , and
+ Qwen3.5-397B , are mutually used as references, and a Judge model
+( Qwen3-VL-235B-Instruct ) extracts, for each ordered pair, the
+fact-level propositions  missing  from the candidate and those
+ inconsistent  with the image; an automatic verifier filters obvious
+errors and the surviving propositions are sent to human annotators, who
+label each as a true missing/inconsistency or not.
+Figure  3  (left) summarizes the resulting proposition pools
+and human-confirmed counts; Figure  3  (right) reports the
+pairwise agreement between the VCap reward and human ranking. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Model 
+ | M | |M| 
+ | I | |I| 
+ M ^ \hat{M} 
+ I ^ \hat{I} 
+ r ¯ H \bar{r}_{\mathrm{H}} 
+ r ~ H \tilde{r}_{\mathrm{H}} 
+ r ¯ V \bar{r}_{\mathrm{V}} 
+ w ¯ \bar{w} 
+ 
+ 
+ 
+ VCap (e2) 
+ 7,563 
+ 993 
+ 4,137 
+ 494 
+ 2.27 
+ 2 
+ 1.46 
+ 1,511 
+ 
+ Seed 2.0 Pro 
+ 7,318 
+ 1,429 
+ 4,289 
+ 442 
+ 2.85 
+ 3 
+ 2.19 
+ 497 
+ 
+ Gemini 3.1 Pro 
+ 11,906 
+ 1,459 
+ 6,964 
+ 576 
+ 2.81 
+ 3 
+ 3.42 
+ 446 
+ 
+ GPT-5.4 
+ 13,257 
+ 1,851 
+ 7,997 
+ 996 
+ 3.58 
+ 4 
+ 3.71 
+ 372 
+ 
+ Qwen3.5-397B 
+ 15,684 
+ 1,367 
+ 9,749 
+ 593 
+ 3.47 
+ 4 
+ 4.21 
+ 351 
+ 
+ 
+
+ 
+ 
+ 
+ Figure 3:  Human evaluation on the 500-image set.
+ Left:  per-model statistics.
+ | M | |M| / | I | |I| : total Judge-proposed missing/inconsistent propositions.
+ M ^ \hat{M} / I ^ \hat{I} : human-confirmed true missing/inconsistent counts.
+ r ¯ H \bar{r}_{\mathrm{H}} / r ~ H \tilde{r}_{\mathrm{H}} : mean and median per-image
+human rank, where  1 1  denotes the best model.
+ r ¯ V \bar{r}_{\mathrm{V}} : mean per-image rank under the VCap reward.
+ w ¯ \bar{w} : average caption length in words.
+ Right:  per-image pairwise agreement (%) between the VCap reward
+and human ranking, ties counted as agreement. 
+ 
+ 
+ Human evaluation confirms VCap as the best image captioner. 
+ VCap (e2)  ranks first on true missing ( M ^ \hat{M} ) and on the human
+mean and median per-image rank ( r ¯ H \bar{r}_{\mathrm{H}} ,  r ~ H \tilde{r}_{\mathrm{H}} ),
+and is second only to  Seed 2.0 Pro  on true inconsistencies, despite
+producing captions roughly  3 3 – 4 × 4\times  longer than the closed-source
+baselines and therefore exposing far more facts to potential challenge.
+ Seed 2.0 Pro  is the only baseline within  2.2 % 2.2\%  on total true
+issues  M ^ + I ^ \hat{M}{+}\hat{I} ;  Qwen3.5-397B  produces  2.4 × 2.4\times  as
+many real omissions per caption as  VCap (e2)  despite being
+ ∼ 50 × \sim\!50\times  larger. 
+
+ 
+ 
+ 
+ The Witness-Adjudicator reward agrees with human pairwise
+preference. 
+For every image we rank the five captions both by the VCap reward and by
+the human verdict, and compute, for each unordered pair of models, the
+fraction of images on which the two rankings agree on which caption is
+better (Figure  3 , right).
+Across all  ( 5 2 ) = 10 \binom{5}{2}{=}10  pairs the mean agreement is
+ 61.1 % \mathbf{61.1\%}  against a random baseline of  50 % 50\% , exceeds  50 % 50\%  on
+ 9 / 10 9/10  pairs, and reaches  71.7 % 71.7\%  on  VCap (e2)  vs.  GPT-5.4 ; the only pair that dips below random,
+ Seed 2.0 Pro  vs.  Gemini 3.1 Pro  ( 49.3 % 49.3\% ), is precisely
+the pair humans themselves rank within  0.04 0.04  on  r ¯ H \bar{r}_{\mathrm{H}} .
+At the macro level, the VCap mean-rank column  r ¯ V \bar{r}_{\mathrm{V}}  tracks
+ r ¯ H \bar{r}_{\mathrm{H}}  closely: both place  VCap (e2)  clearly first
+and the same two models in the bottom half, disagreeing only on adjacent
+near-ties ( Seed  vs.  Gemini ,  GPT-5.4  vs.  Qwen3.5 ), demonstrating that the reward signal driving training is
+well aligned with human judgment. 
+
+ 
+ 
+ 
+ 
+ 3.4  Best-of- N N  Distillation: VCap Surpasses the Self-Distillation Ceiling 
+
+ 
+
+ 
+ A recent line of work argues RLVR is implicit self-distillation: the
+policy converges to its own Best-of- N N  ceiling and never crosses it.
+We test this with three SFT runs that all start from
+ Qwen3-VL-8B-Instruct  and differ only in the teacher whose
+BoN-of- 8 8  samples (scored by the VCap reward) are used as targets:
+the backbone itself ( Self-distill ),  VCap (e1) , and
+ VCap (e2) . 
+
+ 
+ 
+ 
+ Table 3:  Best-of- 8 8  distillation ablation. All students are SFT from
+ Qwen3-VL-8B-Instruct  on the BoN-of- 8 8  samples from the listed
+teacher, scored by the VCap reward.  Bold / underline 
+mark the best/second-best per column. 
+ 
+ 
+ 
+ 
+ CapMAS 
+ DecapBench 
+ 
+ Model 
+ CLAIR 
+ Coverage 
+ Factuality 
+ Avg 
+ Precision 
+ Recall 
+ DCScore 
+ Avg 
+ 
+ 
+ 
+ Qwen3-VL-8B-Instr 
+ 86.19 
+ 71.30 
+ 76.25 
+ 77.91 
+ 82.73 
+ 55.61 
+ 65.70 
+ 69.17 
+ 
+ + Self-distill 
+ 84.84 
+ 71.09 
+ 77.02 
+ 77.65 
+ 80.98 
+ 54.95 
+ 64.86 
+ 67.97 
+ 
+ VCap (e1) 
+ 89.14 
+ 73.95 
+ 81.48 
+ 81.52 
+ 87.80 
+ 58.83 
+ 69.52 
+ 73.32 
+ 
+ + Distill from VCap (e1) 
+ 88.62 
+ 73.00 
+ 84.37 
+ 82.00 
+ 86.50 
+ 58.56 
+ 68.71 
+ 72.53 
+ 
+ VCap (e2) 
+ 89.99 
+ 74.18 
+ 86.42 
+ 83.53 
+ 86.42 
+ 60.92 
+ 70.35 
+ 73.67 
+ 
+ + Distill from VCap (e2) 
+ 89.10 
+ 73.71 
+ 86.29 
+ 83.02 
+ 86.22 
+ 59.75 
+ 69.44 
+ 72.99 
+ 
+ 
+
+ 
+ 
+ 
+ Three observations follow.
+(i)  Self-distill regresses  ( − 0.26 -0.26  CapMAS Avg,  − 1.20 -1.20 
+DecapBench Avg): the backbone’s BoN samples do not introduce new information beyond its existing output distribution; thus naive self-distillation merely re-fits the same manifold with additional sampling noise, challenging the view that the gains from RLVR can be attributed to self-distillation.
+(ii)  VCap  e ​ 1 , e ​ 2 e1{,}e2  lift the same backbone by  + 3.6 +3.6 / + 5.6 +5.6 
+CapMAS and  + 4.2 +4.2 / + 4.5 +4.5  DecapBench , an order of magnitude beyond what
+BoN selection extracts.
+(iii) Once VCap has shifted the policy, sample-level distillation
+ does  transfer the gain, which means students trained on  e ​ 1 e1 / e ​ 2 e2 ’s BoN
+samples perform close to their teacher on every metric,
+and even exceed the  e ​ 1 e1  teacher on CapMAS Avg ( 82.00 82.00  vs.  81.52 81.52 ).
+The reward, not BoN selection, supplies the shift; sample
+imitation suffices only  after  the shift. 
+
+ 
+ 
+ 
+ 
+ 3.5  Generalization Beyond Captioning: Image and Video QA 
+
+ 
+
+ 
+ If VCap genuinely improves how the policy reads visual facts rather than
+merely shaping the caption form, the gain should transfer to downstream
+multimodal understanding without any QA supervision.
+We test this on (a) four image-QA benchmarks under the Prism
+framework  [ 30 ] : AI2D, MMStar, RealWorldQA, V ⋆ \star , and
+(b) four video-QA benchmarks evaluated directly on the trained
+checkpoints: MMVU, MLVU, VideoMMMU, and LVBench.
+Both VCap variants and all baselines are scored under the identical
+pipeline; the same captioning checkpoints used in
+Section  3.2  are evaluated here, with no QA-specific
+fine-tuning. 
+
+ 
+ 
+ 
+ Table 4:  Generalization to image and video QA.
+Image QA applies the Prism framework  [ 30 ]  on four datasets.
+Video QA reports each benchmark’s official metric. 
+ 
+ 
+ 
+ 
+ Image QA (Prism) 
+ Video QA 
+ 
+ Model 
+ AI2D 
+ MMStar 
+ RWQA 
+ V ⋆ \star 
+ Avg 
+ MMVU 
+ MLVU 
+ VMMMU 
+ LVBench 
+ Avg 
+ 
+ 
+ 
+ CapRL 
+ 83.71 
+ 66.87 
+ 63.27 
+ 52.36 
+ 66.56 
+ – 
+ – 
+ – 
+ – 
+ – 
+ 
+ Qwen3-VL-8B-Instr 
+ 81.83 
+ 65.20 
+ 60.78 
+ 50.79 
+ 64.65 
+ 60.80 
+ 74.20 
+ 57.00 
+ 45.64 
+ 60.99 
+ 
+ VCap (e1) 
+ 83.19 
+ 66.53 
+ 60.92 
+ 48.17 
+ 64.70 
+ 62.50 
+ 74.43 
+ 58.44 
+ 46.16 
+ 63.00 
+ 
+ VCap (e2) 
+ 83.81 
+ 67.13 
+ 62.48 
+ 52.88 
+ 66.58 
+ 63.10 
+ 73.92 
+ 60.44 
+ 46.35 
+ 63.82 
+ 
+ Qwen3-VL-235B-Instr 
+ 85.40 
+ 69.00 
+ 62.88 
+ 52.88 
+ 67.54 
+ 70.30 
+ 80.59 
+ 72.67 
+ 54.55 
+ 69.58 
+ 
+ Qwen3-VL-235B-Think 
+ 86.04 
+ 70.27 
+ 66.01 
+ 47.64 
+ 67.49 
+ 74.30 
+ 78.98 
+ 75.78 
+ 50.87 
+ 70.18 
+ 
+ 
+
+ 
+ 
+ 
+ Caption-only RL transfers to QA. 
+On image QA,  VCap (e2)  lifts the backbone by  + 1.93 +1.93  on Prism Avg
+( 66.58 66.58  vs.  64.65 64.65 ), with consistent gains on every dataset
+(AI2D  + 1.98 +1.98 , MMStar  + 1.93 +1.93 , RealWorldQA  + 1.70 +1.70 , V ⋆ \star   + 2.09 +2.09 ), and
+ matches   CapRL ’s Avg ( 66.58 66.58  vs.  66.56 66.56 ) despite
+ CapRL  being trained with a QA-based reward, i.e., on a signal
+much closer to the evaluation target than ours.
+On video QA, where  CapRL  is not applicable, the gains are larger:
+ VCap (e2)  adds  + 2.83 +2.83  on Avg and  + 8.56 +8.56  on VideoMMMU over the
+backbone, and improves over  VCap (e1)  on the more perception-heavy
+benchmarks (VideoMMMU  + 3.00 +3.00 , LVBench  + 0.20 +0.20 ).
+Since VCap was never trained on any QA data, these results suggest that VCap improves visual fact extraction in a way that transfers beyond caption generation, the VCap reward sharpens the policy’s
+fact-level reading of the visual signal, and that sharper reading is what
+both captioning and QA share, validating the broader claim that VCap
+strengthens MLLM understanding, not just caption form. 
+
+ 
+ 
+ 
+ 
+ 3.6  Ablation Study 
+
+ 
+
+ 
+ We isolate the contribution of each input modality and each score
+dimension to the Witness–Adjudicator reward by retraining  VCap (e1) 
+under five lesions: removing the reference caption (the reward model
+sees only the image), removing the reference image (it sees only the
+caption pair), or zeroing one of the three score weights
+ w corr / w comp / w txt w_{\text{corr}}/w_{\text{comp}}/w_{\text{txt}}  before aggregation.
+Table  5  reports image-captioning quality under the same
+evaluation pipeline as Section  3.2 . 
+
+ 
+ 
+ 
+ Table 5:  Reward-system ablation. “ − -  modality” removes one reference
+input from the reward model; “ − -  dimension” zeros the corresponding
+score weight before aggregation. All numbers are percentages. 
+ 
+ 
+ 
+ 
+ CapMAS 
+ DecapBench 
+ 
+ Setup 
+ CLAIR 
+ Coverage 
+ Factuality 
+ Avg 
+ Precision 
+ Recall 
+ DCScore 
+ Avg 
+ 
+ Qwen3-VL-8B-Instr (no RL) 
+ 86.19 
+ 71.30 
+ 76.25 
+ 77.91 
+ 82.73 
+ 55.61 
+ 65.71 
+ 69.17 
+ 
+ VCap (e1) – full reward 
+ 89.14 
+ 73.95 
+ 81.48 
+ 81.52 
+ 87.80 
+ 58.83 
+ 69.52 
+ 73.32 
+ 
+ Modality ablation 
+ 
+ − -  reference caption 
+ 86.45 
+ 70.24 
+ 76.27 
+ 77.65 
+ 85.80 
+ 53.24 
+ 64.82 
+ 69.52 
+ 
+ − -  reference image 
+ 87.97 
+ 73.77 
+ 81.37 
+ 81.04 
+ 86.87 
+ 56.45 
+ 67.48 
+ 71.66 
+ 
+ Dimension ablation 
+ 
+ − -  Correctness 
+ 87.16 
+ 73.34 
+ 76.03 
+ 78.84 
+ 86.96 
+ 58.64 
+ 69.09 
+ 72.80 
+ 
+ − -  Completeness 
+ 88.56 
+ 72.94 
+ 80.98 
+ 80.83 
+ 87.91 
+ 55.26 
+ 66.80 
+ 71.59 
+ 
+ − -  Text Quality 
+ 88.95 
+ 74.18 
+ 81.00 
+ 81.38 
+ 87.43 
+ 58.60 
+ 69.17 
+ 73.02 
+ 
+ 
+
+ 
+ 
+ 
+ Mixed-modality supervision strictly beats single-modality
+supervision. 
+Both modality ablations underperform the full reward
+( − 3.87 -3.87 / − 0.48 -0.48  on CapMAS Avg and  − 3.80 -3.80 / − 1.66 -1.66  on DecapBench Avg for
+removing reference caption/image, respectively), validating the
+non-interchangeable roles assigned to the two reference channels in
+Section  2.2 .
+The asymmetry  − ≫ − 0.48 -3.87\!\gg\!-0.48  on CapMAS Avg, and the analogous gap
+on DecapBench, identifies that removing the image effectively disables the adjudicator, yet the damage is milder than removing the witness; this matches our design where the witness first localizes the fact slots to be judged. 
+
+ 
+ 
+ 
+ Per-dimension impact tracks each metric’s definition. 
+Removing  Completeness  hurts coverage-style metrics most
+(Coverage  − 1.01 -1.01 , Recall  − 3.57 -3.57 ), while removing  Correctness 
+hurts factuality- and precision-style metrics most
+(CLAIR  − 1.98 -1.98 , Factuality  − 5.45 -5.45 , Precision  − 0.84 -0.84 ), the alignment is
+exactly what the construction promises, since  s comp s_{\text{comp}}  penalizes
+omissions and  s corr s_{\text{corr}}  penalizes contradictions.
+Removing  Text Quality , by contrast, costs only  − 0.14 -0.14  on CapMAS
+Avg and  − 0.30 -0.30  on DecapBench Avg, the smallest of the three, justifying
+its small weight  w txt = 0.01 w_{\text{txt}}{=}0.01  in the aggregation. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Conclusion 
+
+ 
+
+ 
+ We recast visual captioning as fact-level lossy extraction along two independent axes, Correctness and Completeness, and proposed VCap, a Witness Adjudicator reward in which the reference caption serves as a stochastic witness and the image serves as an adjudicator; under this assignment of roles, fact detection follows a hypergeometric distribution, and it is precisely this property that endows VCap with weak-to-strong property, supporting a natural self-improvement loop toward the information ceiling. An 8B captioner trained with VCap surpasses advanced open and closed source SOTAs on visual captioning benchmarks. Alignment with human annotation confirms that VCap supervises both correctness and completeness of captions, the BoN study shows that VCap drives the captioner along a weak-to-strong trajectory that goes beyond what prior work deemed achievable. Generalization experiments verify that VCap broadly enhances the model’s visual perception, and ablations further establish the rationality and necessity of VCap’s design. 
+
+ 
+ 
+ 
+ Limitations. 
+
+ 
+ Four limitations scope our claims. (i) Image and video policies are trained separately because long-video encoding is roughly an order of magnitude more expensive than image encoding under our hardware budget, so cross-modal synergy under VCap is left open. (ii) The human evaluation runs on a 500-image set with internal annotators; a larger pool would tighten per-pair agreement and probe long-tail factual phenomena. (iii) We only optimize with GRPO; whether other on-policy RL algorithms reproduce the same two-axis trajectory is not empirically verified. (iv) Dedicated captioning specialists comparable to our setting are scarce, undersized, or outdated: among image caption-RL works we only include the recent  CapRL  as a peer, while video captioning has even fewer up-to-date specialists, forcing the rest of our baselines to lean on closed-source generalist MLLMs. 
+
+ 
+ 
+ 
+ 
+ 
+ 

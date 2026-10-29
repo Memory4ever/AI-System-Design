@@ -1,0 +1,1494 @@
+MemTrain: Self-Supervised Context Memory Training 
+ 
+ 
+ 
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ Report GitHub Issue
+
+ × 
+ 
+
+ 
+ Title: 
+ 
+
+ Content selection saved. Describe the issue below:
+
+
+ Description: 
+ 
+ 
+
+ 
+ Submit without GitHub 
+ Submit in GitHub 
+ 
+ 
+ 
+ 
+ arXiv is now an independent nonprofit! 
+ Learn more 
+ &times; 
+ 
+
+ 
+ 
+ 
+ Back to arXiv 
+ 
+ 
+ 
+ 
+ Why HTML? 
+ 
+ 
+ 
+ 
+ Report Issue 
+ 
+ 
+ 
+ 
+ 
+ 
+ Back to Abstract 
+ 
+ 
+ 
+ 
+ 
+ 
+ Download PDF 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Abstract 
+ 1 Introduction 
+ 2 Related Works 
+ 
+ Memory for Long-Horizon LLM Agents. 
+ Reinforcement Learning for LLM Pre-training. 
+ 
+ 3 Self-Supervised Memory Training 
+ 
+ 3.1 Problem Setup 
+ 3.2 End-to-End Masked Reconstruction 
+ 3.3 Intermediate Memory Recall 
+ 3.4 Joint GRPO Optimization 
+ 
+ 4 Experiments 
+ 
+ 4.1 Memory Training Setup 
+ 
+ Dataset. 
+ Implementation. 
+ 
+ 4.2 Long-Text Multi-Hop QA 
+ 
+ Post-Training. 
+ Evaluation. 
+ Results. 
+ 
+ 4.3 Multi-Hop QA With Search Tool 
+ 
+ Post-Training. 
+ Evaluation. 
+ Results. 
+ 
+ 
+ 5 Analysis 
+ 
+ 5.1 Ablation Study 
+ 5.2 Memory Training V.S. Post-Training Scaling 
+ 5.3 Case Study 
+ 
+ 6 Conclusion 
+ References 
+ A Prompt Template 
+ 
+ 
+ 
+ 
+ 
+ License: arXiv.org perpetual non-exclusive license
+ 
+ 
+arXiv:2606.03197v1 [cs.CL] 02 Jun 2026 
+ 
+ 
+ MemTrain: Self-Supervised Context Memory Training
+
+ 
+ 
+ Ziheng Li 
+ 
+ Affiliation:  State Key Laboratory of General Artificial Intelligence, School of Intelligence Science and Technology, Peking University
+ 
+ Email:  liziheng@pku.edu.cn 
+ 
+    
+ Xingrun Xing 
+ 
+ Email:  zhdeng@pku.edu.cn 
+ 
+    
+ Haoqing Wang 
+ 
+ Affiliation:  Samsung Research, Beijing, China
+ 
+    
+ Zhi-Hong Deng
+ 
+    
+ Yehui Tang
+ 
+ Email:  yehui.tang @samsung.com † ˜Equal Contribution 
+ 
+ 
+ Affiliation:   Corresponding Author
+ 
+
+ Abstract
+
+ 
+ Memory is an indispensable capability for long-horizon LLM agents, enabling them to preserve and utilize information accumulated across extended interactions.
+Existing memory-agent approaches are typically trained end-to-end with reinforcement learning on downstream tasks.
+However, collecting high-quality annotated problems for memory-intensive scenarios is costly, and the resulting training data often lack sufficient diversity to cover general memory behaviors.
+In this work, we propose MemTrain, a self-supervised training framework for generally enhancing the context-memory capability of LLM agents for more effective downstream post-training.
+MemTrain introduces two coupled proxy tasks over unlabeled Wikipedia corpora:
+(1) an end-to-end masked reconstruction objective, which requires the model to recover masked entities after multiple rounds of memory updates, thereby encouraging memory maintenance from the final outcome perspective; and
+(2) an intermediate memory recall objective, which requires the model to reconstruct masked historical information using intermediate memory states, encouraging faithful compression and memory completeness throughout the interaction process.
+The two objectives are jointly optimized using GRPO.
+Extensive experiments on long-text QA and search-based QA benchmarks demonstrate that MemTrain consistently improves downstream memory-intensive reasoning performance across different models, achieving gains of up to 17.67 points over direct task-specific post-training.
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 1 Introduction
+
+
+ 
+ Large language models (LLMs) have rapidly evolved into increasingly capable agents that can reason, plan, and interact with external environments  ( Singh et al., 2025 ; Team et al., 2025 ; DeepSeek-AI et al., 2025 ) .
+However, a key bottleneck for long-horizon agentic tasks is memory : the ability to preserve and utilize information acquired many turns earlier.
+In realistic interactive settings, an agent continuously receives new observations, generates intermediate thoughts, and must maintain relevant past information across turns.
+A straightforward solution is to append the full interaction history into the prompt  ( Yao et al., 2023 ) , but this quickly becomes prohibitively expensive as the trajectory grows.
+Consequently, enabling agents to operate with a fixed-size persistent memory remains an important challenge for scalable long-horizon deployment.
+
+ 
+ 
+ Recent work has explored context memory agents  ( Zhou et al., 2025b ; Yu et al., 2025a ; Yan et al., 2025 ; Yuan et al., 2026 ) , where each interaction round is conditioned on a compact memory state rather than the entire history.
+At turn t , the model receives an input of the form [\texttt{memory}_{t-1};\texttt{input}_{t}] , produces a response, and updates the memory into \texttt{memory}_{t} . This paradigm allows near-constant context usage while preserving historical information, and can be optimized end-to-end within the language model itself.
+However, existing memory agents are typically trained using reinforcement learning with verifiable reward (RLVR) on downstream tasks. Such approaches require expensive labeled data, making it difficult to obtain sufficiently diverse training data that covers the wide range of memory behaviors.
+Consequently, memory capabilities learned in this manner are often domain-specific and exhibit limited generalization. These limitations highlight the need for a general-purpose self-supervised training paradigm.
+
+ 
+ 
+ Meanwhile, recent advances in reasoning have explored reinforcement learning with pre-training data ( Dong et al., 2025 ; Li et al., 2025 ; Xing et al., 2025 ) .
+They construct self-supervised proxy tasks over unlabeled corpora by chain-of-thought next-token prediction to generally improve the reasoning ability.
+However, memory learning poses distinct challenges from reasoning.
+The memory target is inherently latent and process-dependent, as the model must continuously decide what information to preserve, compress, and recall over time.
+Consequently, designing a proxy task that faithfully captures the underlying memory mechanism remains a significant challenge.
+
+ 
+ 
+ To address this challenge, we propose MemTrain , a self-supervised training framework for improving the general context-memory capability of LLM agents in order to better support downstream post-training.
+MemTrain is built upon two coupled proxy tasks constructed from Wikipedia passages:
+(1) an end-to-end masked reconstruction task, which requires the model to recover masked entities after multiple rounds of memory updates, thereby encouraging effective memory maintenance and utilization; and
+(2) an intermediate memory recall task, which requires the model to reconstruct additional masked entities from earlier interaction history using intermediate memory states, encouraging memory completeness and faithful compression throughout the memory update process. The two objectives are jointly optimized with GRPO.
+Extensive experiments show that MemTrain consistently improves downstream long-text QA and search-based QA performance over direct task training. The average improvements reach 5.17 points and 10.58 points respectively on Qwen3-4B-Instruct-2507 and reach 17.67 and 8.50 points on Qwen2.5-7B-Instruct.
+
+ 
+ 
+ Our contributions are summarized as follows:
+
+ 
+ • 
+ 
+ We propose MemTrain, the first self-supervised training framework designed to generally improve the context-memory capability of LLM agents for effective downstream post-training.
+
+ 
+ • 
+ 
+ We introduce a novel memory-oriented proxy training paradigm that jointly provides outcome-level and process-level supervision signals for memory generation and utilization.
+
+ 
+ • 
+ 
+ Extensive experiments on long-text QA and search-based QA tasks demonstrate that MemTrain consistently improves downstream post-training performance ceiling on both 4B and 7B models.
+
+ 
+ 
+ 
+
+
+ 
+ 2 Related Works
+
+
+ 
+ Memory for Long-Horizon LLM Agents.
+
+
+ 
+ The most widely adopted memory management strategy for LLM agents is to continually append environmental observations and model responses to the context window  ( Yao et al., 2023 ) , which is fundamentally limited by the finite context window of LLMs.
+To enable unbounded memory, external memory systems have been proposed, where interaction records are compressed or summarized and stored externally.  ( Yoon et al., 2024 ; Li et al., 2023 ; Chhikara et al., 2025 ; Xu et al., 2025 ) .
+ Qian et al. (2026) ; Xu et al. (2025) ; Chen et al. (2026) further introduce multi-agent frameworks to support more sophisticated and efficient memory management.
+However, external memory systems often overlook the intrinsic synergy between memory and reasoning, while simultaneously increasing overall system complexity.
+More recent studies  ( Zhou et al., 2025b ; Yu et al., 2025a ; Wu et al., 2026 ; Ye et al., 2025 ; Yuan et al., 2026 ) integrate memory construction and utilization directly into the reasoning process of the agent itself, enabling end-to-end optimization.
+Despite their effectiveness, these approaches typically rely on costly task-specific annotations, severely limiting the data diversity.
+In this work, we instead propose a self-supervised training framework that enables training on common Internet corpora, significantly enhancing data diversity.
+
+ 
+ 
+ Figure 1: Comparison between existing long-horizon agent and context memory agent. Conventionally, to handle long-context document or multi-turn environment interaction, LLM has to preserve all input in the context, causing high computational cost and attention pressure. By contrast, context memory agent maintains a fixed-length context memory updated at each turn, allowing handle increasing input within feasible resource limit. 
+ 
+
+
+ 
+ Reinforcement Learning for LLM Pre-training.
+
+
+ 
+ Reinforcement learning has been extensively adopted during post-training to enhance the reasoning and tool-use capabilities of LLMs  ( DeepSeek-AI et al., 2025 ; Yu et al., 2025c ) . However, post-training methods generally depend on curated question-answer datasets, which limits both scalability and generalization.
+Motivated by the success of self-supervised language model pre-training, recent works have explored reinforcement pre-training paradigms that leverage large-scale Internet text.
+Quiet-STaR  ( Zelikman et al., 2024 ; Huang et al., 2025 ) generates latent rationales at each token position to better predict future text.
+RPT  ( Dong et al., 2025 ) introduces the next-token reasoning RLVR objective and demonstrates scalable reinforcement learning pre-training for the first time.
+RLPT  ( Li et al., 2025 ) adopts a similar formulation while incorporating a generative reward model. RLP  ( Hatamizadeh et al., 2025 ) replaces next-token prediction with a contrastive reward to explicitly induce reasoning.
+PretrainZero  ( Xing et al., 2025 ) further proposes an active pre-training framework that synthesizes more informative and valuable training samples. Nevertheless, existing RL-based pre-training approaches primarily focus on single-turn reasoning, leaving the problem of learning effective multi-turn memory maintenance and utilization largely unexplored.
+
+ 
+
+
+
+
+ 
+ 3 Self-Supervised Memory Training
+
+
+ 
+ In this section, we first formulate the context memory agent (§  3.1 ). We then introduce the two proxy task – end-to-end masked reconstruction (§  3.2 ) and intermediate memory recall (§  3.3 ). Finally we describe how we conduct the memory training using GRPO (§  3.4 ).
+
+ 
+ 
+ 3.1 Problem Setup
+
+
+ 
+ Our study is built upon the framework of multi-turn context memory proposed in MemAgent  ( Yu et al., 2025a ) .
+As shown in Figure  1 , existing context-memory mechanisms can be abstracted as maintaining a fixed-length memory state m_{t} at interaction step t . At each interaction step, the model receives an input tuple (m_{t-1},a_{t-1},i_{t}) , where a_{t} denotes the action selected by the model at the current step. The action space depends on the target application. For long-context reading agents, actions may correspond to requesting the next text chunk or generating the final answer. For search agents, actions may involve invoking an external search tool or directly returning an answer. For non-terminal actions that interact with the environment, i_{t} represents the environment input or feedback returned after executing the selected action. Conditioned on (m_{t-1},a_{t-1},i_{t}) , the model produces the updated memory state and action, i.e., (m_{t},a_{t}) , which are then used in the subsequent interaction step.
+
+ 
+ 
+ Compared with the conventional agent paradigm, where the entire interaction history is continually appended to the context window, context memory maintains a constant context size throughout the trajectory. This design removes the dependence on ever-growing context length, enabling long-horizon interaction beyond the model’s native context limit while mitigating attention dilution and avoiding the increasing computational cost associated with long-context processing.
+
+ 
+ 
+ Figure 2: Illustration of MemTrain rollout pipeline during GRPO training. First, we select N passages from the Wikipedia corpus and constructed a chunked input collection c_{1:T-1} . Then we sample G_{1} multi-turn trajectories o^{E}_{1:T} for recovering masked word \hat{y} by sequentially reading c_{1:T-1} and update context memory. For each multi-turn trajectory, we randomly select a intermediate memory to recover an input chunk before and generate G_{2} intermediate memory recall trajectory. Finally, we compute reward and advantage for all G_{1}T+G_{1}G_{2} interactions. 
+ 
+
+
+ 
+ 3.2 End-to-End Masked Reconstruction
+
+
+ 
+ We construct training samples from raw Wikipedia text. First, we randomly select one passage as the pivot passage. We then retrieve n_{1} semantically related passages from the corpus together with N\!-\!n_{1}\!-\!1 randomly sampled passages. These N passages are concatenated in random order to form a long document. Next, we randomly select an entity y (e.g., a number or location) from the pivot passage and replace all occurrences of this entity in the document with a special token [MASK].
+
+ 
+ 
+ Following the practice in context-memory research  ( Yu et al., 2025b ) , we segment the long document into fixed-length chunks \{c_{1},c_{2},\dots,c_{T}\} , where each chunk corresponds to an interaction step. The LLM sequentially processes these chunks to generate a multi-turn trajectory o_{i}^{E} (the i -th rollout) following
+ o_{i,t}^{E}\sim\pi_{\theta}(\cdot|q^{E},o_{i,t-1}^{E},c_{t}) ,
+where q^{E} denotes the reconstruction prompt detailed in Appendix  A .
+For t&lt;T , the output o_{i,t}^{E} serves as the context memory for the next interaction step, while o_{i,T}^{E} denotes the final answer prediction generated solely based on the memory state o_{i,T-1}^{E} , without external input.
+Since all occurrences of y are masked, the model cannot simply copy the answer from the document and must instead infer the masked entity through comprehensive long-range information aggregation. This setup provides an end-to-end supervision signal: successful prediction requires preserving and integrating relevant information across multiple memory updates rather than relying on local context alone.
+
+ 
+
+
+ 
+ 3.3 Intermediate Memory Recall
+
+
+ 
+ End-to-end rewards alone are often coarse and may not sufficiently constrain the quality of intermediate memory states.
+The model may incidentally preserve the information necessary for the final prediction while discarding other important details.
+Furthermore, due to error accumulation across multiple interaction steps, optimization based solely on end-to-end outcomes may provide weak and unstable learning signals.
+
+ 
+ 
+ To address this issue, we introduce the Intermediate Memory Recall (IMR) task. After generating the i -th complete trajectory o_{i}^{E} , we randomly select an intermediate interaction step k . We then take the corresponding memory state o^{E}_{i,k} together with a randomly selected previous chunk input c_{l} ( l&lt;k ).
+The model is then required to recover the entity \tilde{y}_{i} from the masked chunk \tilde{c}_{l} within a single interaction step, following o^{I}_{i,j}\sim\pi_{\theta}(\cdot|q^{I},\tilde{x}_{i}) , where \tilde{x}_{i}=o^{E}_{i,k}\oplus\tilde{c}_{l} and q^{I} is the IMR task prompt detailed in Appendix  A .
+
+ 
+ 
+ This objective explicitly encourages the model to preserve sufficient historical information within the current memory state. As a result, the learned memory representations become both information-rich and directly retrievable for downstream reasoning.
+
+ 
+
+
+ 
+ 3.4 Joint GRPO Optimization
+
+
+ 
+ We employ GRPO as the reinforcement learning algorithm.
+Figure  2 provides an overview.
+For each training sample (p_{1:N},y) , we first sample G_{1} end-to-end trajectories \{o_{i}^{E}\}_{i=1}^{G_{1}} under the current policy. Then, for each sampled trajectory o_{i}^{E} , we construct one IMR prompt and further sample G_{2} IMR trajectories \{o_{i,j}^{I}\}_{j=1}^{G_{2}} .
+We extract the answers \hat{y}^{E}_{i} and \hat{y}^{I}_{i,j} from these trajectories and compute the exact-match reward.
+For the IMR task, we have:
+
+ 
+
+ 
+ 
+ R_{i,j}^{I}=\mathbb{I}[\hat{y}^{I}_{i,j}=\tilde{y}_{i}]. 
+ 
+ (1) 
+ 
+ 
+ For the end-to-end task, the reward consists of two components: the exact-match reward for the final prediction and the associated IMR rewards:
+
+ 
+
+ 
+ 
+ R_{i}^{E}=\mathbb{I}[\hat{y}^{E}_{i}=y]+\frac{\lambda}{G_{2}}\sum_{j=1}^{G_{2}}R_{i,j}^{I}, 
+ 
+ (2) 
+ 
+ 
+ where \lambda is a balancing coefficient.
+The intuition behind this design is twofold. First, IMR rewards directly train the model to retrieve and reason over information stored in memory. Second, augmenting end-to-end rewards with IMR outcomes encourages the model to generate memory states that remain useful for future retrieval and reasoning.
+
+ 
+ 
+ Since each end-to-end trajectory consists of multiple interaction steps, we treat each step as an independent conversation instance for advantage estimation and policy optimization. Following Dr. GRPO  ( Liu et al., 2025 ) , we adopt the unnormalized advantage formulation:
+
+ 
+
+ 
+ 
+ \hat{A}_{i,j,k}=R_{i}-{\rm mean}\{R_{i}\}_{i=1}^{G}, 
+ 
+ (3) 
+ 
+ 
+ where i,j and k denote the index for trajectory, interaction step, and token, respectively. The advantage computed from the final trajectory reward is broadcast to all interaction steps.
+Finally, all end-to-end and IMR samples are jointly optimized using the GRPO objective in Eq. ( 4 ). For notational simplicity, we omit q^{E/I} and define a unified trajectory collection o_{i}=(o_{i,1}^{E},\cdots,o_{i,|o_{i}^{E}|}^{E},o_{i,1}^{I},\cdots,o_{i,G_{2}}^{I}) ,
+which combines the end-to-end trajectory with its associated IMR trajectories.
+
+ 
+ 
+ 
+
+ 
+ 
+ \begin{split}\mathcal{J}(\theta)\!=\!\mathbb{E}_{(p,y)\sim\mathcal{D},\{o^{E}_{i}\}_{i=1}^{G_{1}}\sim\pi_{\theta}(\cdot|c),\{o_{i,j}^{I}\}_{j=1}^{G_{2}}\sim\pi_{\theta}(\cdot|\tilde{x}_{i})}\left[\frac{1}{\sum_{i=1}^{G_{1}}|o_{i}^{E}|+G_{1}G_{2}}\sum_{i=1}^{G_{1}+G_{2}}\sum_{j=1}^{|o_{i}|}\sum_{k=1}^{|o_{i,j}|}C_{i,j,k}\right],\end{split} 
+ 
+ (4) 
+ 
+ 
+ 
+
+ 
+ 
+ \begin{split}C_{i,j,k}=\min\!\Big(r_{i,j,k}(\theta)\hat{A}_{i,j,k},{\rm clip}(r_{i,j,k}(\theta),1\!-\!\varepsilon_{\rm low},1\!+\!\varepsilon_{\rm high})\hat{A}_{i,j,k}\Big)-D_{\mathrm{KL}}(\pi_{\theta}||\pi_{\rm ref})),\end{split} 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ r_{i,j,k}(\theta)=\begin{cases}\frac{\pi_{\theta}(o_{i,j,k}|c_{j},o_{i,j,&lt;k})}{\pi_{\rm old}(o_{i,j,k}|c_{j},o_{i,j,&lt;k})}&amp;i\leq G_{1},\\
+\frac{\pi_{\theta}(o_{i,j,k}|\hat{x}_{i},o_{i,j,&lt;k})}{\pi_{\rm old}(o_{i,j,k}|\hat{x}_{i},o_{i,j,&lt;k})}&amp;i&gt;G_{1}.\end{cases} 
+ 
+ 
+ 
+ 
+
+
+
+
+ 
+ 4 Experiments
+
+
+ 
+ We evaluate the effectiveness of MemTrain by measuring the final downstream performance after post-training. We consider two representative tasks: (1) long-context multi-hop question answering (§  4.2 ), which closely matches the memory training setting where the model reads chunked long documents and answers questions; and (2) multi-hop question answering with search tools (§  4.3 ), an out-of-domain retrieval-augmented setting in which the model iteratively retrieves external information and performs reasoning to produce the final answer.
+For post-training, we adopt  ( Yu et al., 2025a ) and MEM1  ( Zhou et al., 2025a ) , as they are the only open-source algorithms among related works.
+
+ 
+ 
+ 4.1 Memory Training Setup
+
+
+ 
+ Dataset.
+
+
+ 
+ We use the most general Wikipedia as the unsupervised corpus for memory training.
+Entities are identified using the NER system provided by the spaCy library.
+For each pivot passage, we retrieve the top-29 semantically related passages from the corpus and further augment them with 120 randomly sampled passages.
+This process produces 30k training documents with lengths ranging from 24k to 40k tokens.
+
+ 
+
+
+ 
+ Implementation.
+
+
+ 
+ Our training framework is implemented based on veRL  ( Sheng et al., 2025 ) .
+We adopt GRPO  ( DeepSeek-AI et al., 2025 ) with a KL regularization coefficient of 1\times 10^{-3} , and follow DAPO  ( Yu et al., 2025c ) by filtering out samples whose rewards are entirely zero or entirely one.
+Following prior context memory agent works  ( Yu et al., 2025a ; Zhou et al., 2025b ) , we limit the context length to 8192 tokens, including 1024 tokens for instructions, 5120 tokens for input chunks, 1024 tokens for memory, and 1024 tokens for model responses.
+Consequently, each input consists of at most 40k/5k=8 chunks.
+We use a batch size of 32, generate G_{1}=8 end-to-end rollouts, and sample G_{2}=8 IMR trajectories for each rollout.
+Training is conducted for 300 steps with a learning rate of 1\times 10^{-6} .
+The IMR coefficient \lambda is set to 0.5.
+For backbone model selection, we evaluate two widely used instruction models: Qwen3-4B-Instruct-2507 and Qwen2.5-7B-Instruct.
+
+ 
+
+
+
+
+ 
+ 4.2 Long-Text Multi-Hop QA
+
+
+ 
+ Post-Training.
+
+
+ 
+ We adopt MemAgent  ( Yu et al., 2025a ) as the downstream post-training algorithm.
+All hyperparameters follow the settings described in the MemAgent paper.
+We train for 500 steps for convergence using a rollout batch size of 32, an update batch size of 8, and a learning rate of 1\times 10^{-6} .
+For each backbone, we train two variants: one directly post-trained with MemAgent and another initialized from the MemTrain checkpoint before post-training, with three different seeds.
+
+ 
+
+
+ 
+ Evaluation.
+
+
+ 
+ We evaluate on the long-context HotpotQA benchmark introduced by  Yu et al. (2025a) , which is specifically designed to study performance under varying context lengths.
+The input length ranges from 7k to 896k tokens.
+For direct evaluation of the original backbone models, the entire document is provided in a single context window.
+For models trained after MemTrain or MemAgent, we adopt the chunked memory pipeline.
+
+ 
+
+
+ 
+ Results.
+
+
+ 
+ Table  1 demonstrates that our memory training framework consistently provides substantial gains for subsequent memory-oriented post-training. Compared with directly applying MemAgent, the combination of MemTrain and MemAgent achieves significantly higher average performance on both backbone models, improving 5.17% on Qwen3-4B-Instruct and 17.67% on Qwen2.5-7B-Instruct. More importantly, these improvements are highly consistent across all context lengths, ranging from 7k to 896k tokens, indicating that the proposed memory training stage provides a strong initialization for downstream long-horizon memory learning.
+
+ 
+ 
+ Another notable observation is the strong length generalization ability introduced by MemTrain. Although the training context length (32k \sim 40k) is closest to 28k, the gains transfer effectively to both substantially shorter and longer contexts. This effect is particularly evident on Qwen2.5-7B-Instruct. While MemAgent drops from 62.50% at 28k to 41.41% at 896k, corresponding to a decrease of 21.09% points, MemTrain+MemAgent only decreases from 77.34% to 68.75%, a much smaller drop of 8.59% points despite the 32 \times increase in context length.
+The improvements also extend to shorter contexts such as 7k and 14k, indicating that MemTrain learns more transferable and length-generalizable memory maintenance and retrieval behaviors rather than overfitting to a specific training horizon.
+Similar trends are consistently observed on Qwen3-4B-Instruct.
+
+ 
+ 
+ Furthermore, MemTrain alone already endows the model with considerable multi-turn question answering and memory capabilities, despite being trained entirely without labeled supervision. Compared with the original models, MemTrain improves the average performance from 21.97% to 56.15% on Qwen3-4B-Instruct and from 20.80% to 45.41% on Qwen2.5-7B-Instruct.
+
+ 
+ 
+ 
+ 
+ 
+ Model 
+ Length 
+
+ 
+ 7k 
+ 14k 
+ 28k 
+ 56k 
+ 112k 
+ 224k 
+ 448k 
+ 896k 
+ Avg 
+
+ 
+ Qwen3-4B-Instruct 
+ 57.81 
+ 51.56 
+ 34.38 
+ 10.94 
+ 8.59 
+ 4.69 
+ 3.91 
+ 3.91 
+ 21.97 
+
+ 
+ +MemTrain 
+ 63.28 
+ 60.16 
+ 60.16 
+ 57.03 
+ 60.94 
+ 58.59 
+ 48.44 
+ 40.62 
+ 56.15 
+
+ 
+ +MemAgent 
+ 70.31 
+ 64.06 
+ 71.88 
+ 62.50 
+ 64.84 
+ 66.41 
+ 64.06 
+ 57.03 
+ 65.14 
+
+ 
+ +MemTrain+MemAgent 
+ 79.69 
+ 73.44 
+ 75.78 
+ 73.44 
+ 68.75 
+ 67.19 
+ 61.72 
+ 62.50 
+ 70.31 
+
+ 
+ Qwen2.5-7B-Instruct 
+ 53.12 
+ 51.56 
+ 35.16 
+ 13.28 
+ 10.16 
+ 1.56 
+ 1.56 
+ 0.00 
+ 20.80 
+
+ 
+ +MemTrain 
+ 59.38 
+ 55.47 
+ 48.44 
+ 46.09 
+ 42.19 
+ 38.28 
+ 39.84 
+ 33.59 
+ 45.41 
+
+ 
+ +MemAgent 
+ 64.06 
+ 67.19 
+ 62.50 
+ 59.38 
+ 55.47 
+ 50.00 
+ 46.88 
+ 41.41 
+ 55.86 
+
+ 
+ +MemTrain+MemAgent 
+ 76.56 
+ 79.69 
+ 77.34 
+ 75.00 
+ 70.31 
+ 75.78 
+ 64.84 
+ 68.75 
+ 73.53 
+
+ 
+ 
+ Table 1: Model performance for long-text QA across different context lengths. 
+ 
+
+
+
+
+ 
+ 4.3 Multi-Hop QA With Search Tool
+
+
+ 
+ Post-Training.
+
+
+ 
+ We adopt MEM1  ( Zhou et al., 2025b ) as the downstream post-training algorithm.
+Following the original MEM1 setup, training is performed on 2-objective HotpotQA and Natural Questions, with at most 6 search turns and a length limit of 1k tokens for both model responses and retrieved search results.
+We employ the same retriever and local database as MEM1, and train 200 steps until convergence using a rollout batch size of 32, an update batch size of 8, and a learning rate of 5\times 10^{-7} .
+As in the long-context QA setting, we train both a directly post-trained model and a model initialized from MemTrain.
+
+ 
+
+
+ 
+ Evaluation.
+
+
+ 
+ We evaluate on 7 challenging multi-hop QA benchmarks, including 2WikiMultiHopQA  ( Ho et al., 2020 ) , Bamboogle  ( Mallen et al., 2023 ) , HotpotQA  ( Yang et al., 2018 ) , TriviaQA  ( Joshi et al., 2017 ) , Natural Questions, PopQA, and MusiQUE  ( Trivedi et al., 2022 ) .
+Following the MEM1 implementation, we augment the evaluation set into a two-objective setting and report exact-match accuracy averaged across the two objectives.
+
+ 
+ 
+ 
+ 
+ 
+ Model 
+ TrivalQA 
+ Bamboogle 
+ HotpoQA 
+ NQ 
+ PopQA 
+ 2WiKi 
+ MusiQUE 
+ Avg 
+
+ 
+ Qwen3-4B-Instruct-2507 
+ 42.71 
+ 21.78 
+ 18.94 
+ 19.92 
+ 21.81 
+ 14.36 
+ 4.76 
+ 20.61 
+
+ 
+ +MEM1 
+ 44.29 
+ 23.39 
+ 18.80 
+ 21.97 
+ 23.62 
+ 12.80 
+ 5.63 
+ 21.50 
+
+ 
+ +MemTrain+MEM1 
+ 55.63 
+ 34.68 
+ 27.85 
+ 32.24 
+ 37.91 
+ 25.84 
+ 10.43 
+ 32.08 
+
+ 
+ Qwen2.5-7B-Instruct 
+ 18.84 
+ 8.87 
+ 11.15 
+ 12.22 
+ 12.59 
+ 10.45 
+ 4.43 
+ 11.22 
+
+ 
+ +MEM1 
+ 49.08 
+ 22.58 
+ 19.79 
+ 24.21 
+ 27.13 
+ 17.81 
+ 6.96 
+ 23.94 
+
+ 
+ +MemTrain+MEM1 
+ 57.21 
+ 30.65 
+ 27.73 
+ 35.18 
+ 38.36 
+ 27.32 
+ 10.64 
+ 32.44 
+
+ 
+ 
+ Table 2: Model performance for multi-hop QA with search tools across different benchmarks. 
+ 
+ 
+ Figure 3: Ablations results on long-context HotpotQA across different context length. 
+ 
+
+
+ 
+ Results.
+
+
+ 
+ Table  2 shows that MemTrain generalizes well to search-based multi-hop QA despite a clear distribution shift from memory training.
+Across models, MemTrain+MEM1 consistently improves over MEM1 on all benchmarks.
+On Qwen3-4B-Instruct-2507, the average performance increases by 10.58 points, and on Qwen2.5-7B-Instruct by 8.50 points.
+MemTrain-only models are not involved in comparison because the they are not exposed to tool-use environment.
+
+ 
+ 
+ The improvements are consistent across datasets and are more pronounced on harder multi-hop tasks. In particular, the largest gains are observed on PopQA, NQ, and 2Wiki, with improvements of +11.23, +10.97, and +9.51 on Qwen2.5-7B-Instruct, and +14.29, +10.27, and +13.04 on Qwen3-4B-Instruct-2507, respectively. This may be attributed to the fact that these tasks require maintaining and integrating a larger number of intermediate evidences across retrieval steps, where improved memory construction and utilization from memory training becomes more critical.
+Notably, on MusiQUE, directly applying MEM1 yields only marginal improvements over the base model (e.g., +2.53 on Qwen2.5-7B-Instruct), whereas incorporating MemTrain leads to a much larger gain (+6.21), suggesting that memory-aware training is particularly beneficial in more retrieval-sensitive settings.
+
+ 
+
+
+
+
+
+
+ 
+ 5 Analysis
+
+
+ 
+ 
+ 
+ 
+ 
+ MemAgent 
+ 
+ 
+ 
+ MemTrain+MemAgent 
+ 
+
+ 
+ Question 
+
+ 
+ 
+ 
+ The director of the romantic comedy “Big Stone Gap” is based in what New York city? 
+ 
+
+ 
+ Chunk 1 
+
+ 
+ 
+ 
+ (Documents 1–36 omitted) …Document 37: Adriana Trigiani is an Italian American best-selling author, television writer, film director , and entrepreneur based in Greenwich Village, New York City . 
+ 
+
+ 
+ 
+ 
+ Memory 1 
+ 
+ 
+ 
+ Memory 1 
+ 
+
+ 
+ 
+ 
+ …Document 37 mentions Adriana Trigiani, an Italian American best-selling author, television writer, film director , and entrepreneur based in Greenwich Village, New York City . While she is a film director and based in New York City, there is no direct evidence that she directed “Big Stone Gap”… 
+ 
+ 
+ 
+ …The problem asks about the director of “Big Stone Gap.” However, after reviewing the provided section, no film titled “Big Stone Gap” is mentioned . The only romantic comedy films discussed are “Nola” and “Just Another Romantic Wrestling Comedy”… 
+ 
+
+ 
+ Chunk 2 
+
+ 
+ 
+ 
+ (Documents 38–43 omitted) …Document 44: Big Stone Gap is a 2014 American drama romantic comedy film written and directed by Adriana Trigiani and produced by Donna Gigliotti…(Documents 45–50 omitted) 
+ 
+
+ 
+ 
+ 
+ Memory 2 
+ 
+ 
+ 
+ Memory 2 
+ 
+
+ 
+ 
+ 
+ …Document 44 confirms “Big Stone Gap” (2014) was written and directed by Adriana Trigiani . Document 37 confirms Adriana Trigiani is based in Greenwich Village, New York City . Thus, the director is based in … 
+ 
+ 
+ 
+ …Document 44 confirms “Big Stone Gap” (2014) was written and directed by Adriana Trigiani. However, no information about her base location is available in memory. Thus, the required information is not present… 
+ 
+
+ 
+ … 
+
+ 
+ 
+ 
+ Final Answer 
+ 
+ 
+ 
+ Final Answer 
+ 
+
+ 
+ 
+ 
+ Greenwich Village 
+ 
+ 
+ 
+ Cannot be determined 
+ 
+
+ 
+ Table 3: Case study comparing models with and without MemTrain. Key information is underlined in the input chunks and highlighted in bold within the memory. Critical differences are marked in red . 
+ 
+ 
+ Figure 4: Performance comparison between MemTrain and continual post-training. 
+ 
+ 
+ 5.1 Ablation Study
+
+
+ 
+ To further investigate the contribution of each component in MemTrain, we design two ablation variants:
+(1) End-to-End , which removes the IMR branch and retains only the end-to-end prediction objective; and
+(2) Decoupled , which computes rewards for end-to-end trajectories solely based on final prediction correctness, decoupled from IMR.
+
+ 
+ 
+ As shown in Figure  3 , the Full model consistently outperforms both ablation variants across all evaluated context lengths, demonstrating the importance of IMR.
+Specifically, removing the IMR branch decreases the average score from 70.31% to 63.28%.
+This degradation consistently appears across all context lengths, indicating that the end-to-end prediction objective alone does not provide sufficient supervision for identifying and preserving critical information throughout extremely long interaction histories.
+
+ 
+ 
+ Compared with the End-to-End variant, the Decoupled variant achieves stronger performance on relatively shorter contexts ( \leq 56k ), suggesting that IMR learning improves memory utilization.
+However, its performance deteriorates significantly as the context length increases.
+One possible explanation is that the decoupled objective fails to provide sufficient guidance for high-quality memory generation, forcing the model to solve tasks based on poorly constructed memories and consequently leading to more severe hallucination under long-horizon settings.
+
+ 
+
+
+ 
+ 5.2 Memory Training V.S. Post-Training Scaling
+
+
+ 
+ In this section, we compare the gains brought by memory training with those obtained from simply scaling post-training.
+Starting from the MemAgent checkpoint at step 500 on Qwen3-4B-Instruct-2507, we continue post-training for an additional 300 steps.
+We report the average accuracy across all input lengths.
+
+ 
+ 
+ As shown in Figure  4 , post-training is already close to saturation after step 500, and further scaling yields only marginal improvements or even performance degradation.
+Even at the best-performing checkpoint around step 700, the model initialized with MemTrain still maintains an advantage of 2.64 percentage points.
+These results suggest that although memory training introduces additional computational cost, it effectively raises the performance ceiling of downstream post-training in a manner that cannot be replicated by simply extending post-training.
+Therefore, allocating additional GPU resources to memory-oriented training appears to be a meaningful investment.
+
+ 
+
+
+ 
+ 5.3 Case Study
+
+
+ 
+ We present a representative case of Qwen3-4B-Instruct-2507 to understand the effect of MemTrain.
+As shown in Table  3 , direct MemAgent fails to retain the critical information at the memory update step after chunk 1, resulting in an inability to answer despite finding the director’s identity in chunk 2.
+MemTrain successfully preserves the key entity information (Adriana Trigiani’s location) in memory from chunk 1, enabling correct answer deduction in chunk 2.
+
+ 
+
+
+
+
+ 
+ 6 Conclusion
+
+
+ 
+ In this work, we introduce MemTrain, the first self-supervised memory training framework for improving the general-purpose memory capability of LLMs.
+We design two coupled proxy tasks—end-to-end masked reconstruction and intermediate memory recall—to jointly encourage memory completeness, faithful compression, and effective utilization.
+We perform memory training on Wikipedia corpora and demonstrate consistent improvements on downstream long-text and search-based question answering tasks across two models.
+
+ 
+
+
+ 
+ References
+
+
+ 
+ Chen et al. (2026) 
+ R. Chen, J. Wang, W. Li, X. Wei, and Q. Li 
+ 
+ To Retrieve or To Think? An Agentic Approach for Context Evolution .
+ 
+ arXiv .
+ 
+ External Links: 2601.08747 ,
+ Document 
+ 
+ Cited by: §2 .
+ 
+ Chhikara et al. (2025) 
+ P. Chhikara, D. Khant, S. Aryan, T. Singh, and D. Yadav 
+ 
+ Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory .
+ 
+ In ECAI 2025 - 28th European Conference on Artificial Intelligence, 25-30 October 2025, Bologna, Italy - Including 14th Conference on Prestigious Applications of Intelligent Systems (PAIS 2025) , I. Lynce, N. Murano, M. Vallati, S. Villata, F. Chesani, M. Milano, A. Omicini, and M. Dastani (Eds.) ,
+ 
+ Frontiers in Artificial Intelligence and Applications , pp. 2993–3000 .
+ 
+ External Links: Document 
+ 
+ Cited by: §2 .
+ 
+ DeepSeek-AI et al. (2025) 
+ DeepSeek-AI, D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, X. Zhang, X. Yu, Y. Wu, Z. F. Wu, Z. Gou, Z. Shao, Z. Li, Z. Gao, A. Liu, B. Xue, B. Wang, B. Wu, B. Feng, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, D. Dai, D. Chen, D. Ji, E. Li, F. Lin, F. Dai, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Bao, H. Xu, H. Wang, H. Ding, H. Xin, H. Gao, H. Qu, H. Li, J. Guo, J. Li, J. Wang, J. Chen, J. Yuan, J. Qiu, J. Li, J. L. Cai, J. Ni, J. Liang, J. Chen, K. Dong, K. Hu, K. Gao, K. Guan, K. Huang, K. Yu, L. Wang, L. Zhang, L. Zhao, L. Wang, L. Zhang, L. Xu, L. Xia, M. Zhang, M. Zhang, M. Tang, M. Li, M. Wang, M. Li, N. Tian, P. Huang, P. Zhang, Q. Wang, Q. Chen, Q. Du, R. Ge, R. Zhang, R. Pan, R. Wang, R. J. Chen, R. L. Jin, R. Chen, S. Lu, S. Zhou, S. Chen, S. Ye, S. Wang, S. Yu, S. Zhou, S. Pan, S. S. Li, S. Zhou, S. Wu, S. Ye, T. Yun, T. Pei, T. Sun, T. Wang, W. Zeng, W. Zhao, W. Liu, W. Liang, W. Gao, W. Yu, W. Zhang, W. L. Xiao, W. An, X. Liu, X. Wang, X. Chen, X. Nie, X. Cheng, X. Liu, X. Xie, X. Liu, X. Yang, X. Li, X. Su, X. Lin, X. Q. Li, X. Jin, X. Shen, X. Chen, X. Sun, X. Wang, X. Song, X. Zhou, X. Wang, X. Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Y. Zhang, Y. Xu, Y. Li, Y. Zhao, Y. Sun, Y. Wang, Y. Yu, Y. Zhang, Y. Shi, Y. Xiong, Y. He, Y. Piao, Y. Wang, Y. Tan, Y. Ma, Y. Liu, Y. Guo, Y. Ou, Y. Wang, Y. Gong, Y. Zou, Y. He, Y. Xiong, Y. Luo, Y. You, Y. Liu, Y. Zhou, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zheng, Y. Zhu, Y. Ma, Y. Tang, Y. Zha, Y. Yan, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Xu, Z. Xie, Z. Zhang, Z. Hao, Z. Ma, Z. Yan, Z. Wu, Z. Gu, Z. Zhu, Z. Liu, Z. Li, Z. Xie, Z. Song, Z. Pan, Z. Huang, Z. Xu, Z. Zhang, and Z. Zhang 
+ 
+ DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning .
+ 
+ arXiv .
+ 
+ External Links: 2501.12948 ,
+ Document 
+ 
+ Cited by: §1 ,
+ §2 ,
+ §4.1 .
+ 
+ Dong et al. (2025) 
+ Q. Dong, L. Dong, Y. Tang, T. Ye, Y. Sun, Z. Sui, and F. Wei 
+ 
+ Reinforcement Pre-Training .
+ 
+ Cited by: §1 ,
+ §2 .
+ 
+ Hatamizadeh et al. (2025) 
+ A. Hatamizadeh, S. N. Akter, S. Prabhumoye, J. Kautz, M. Patwary, M. Shoeybi, B. Catanzaro, and Y. Choi 
+ 
+ RLP: Reinforcement as a Pretraining Objective .
+ 
+ In The Fourteenth International Conference on Learning Representations ,
+ 
+ Cited by: §2 .
+ 
+ Ho et al. (2020) 
+ X. Ho, A. Duong Nguyen, S. Sugawara, and A. Aizawa 
+ 
+ Constructing A Multi-hop QA Dataset for Comprehensive Evaluation of Reasoning Steps .
+ 
+ In Proceedings of the 28th International Conference on Computational Linguistics , D. Scott, N. Bel, and C. Zong (Eds.) ,
+ 
+ Barcelona, Spain (Online) , pp. 6609–6625 .
+ 
+ External Links: Document 
+ 
+ Cited by: §4.3 .
+ 
+ Huang et al. (2025) 
+ W. Huang, Y. Xiong, X. Ye, Z. Deng, H. Chen, Z. Lin, and G. Ding 
+ 
+ Fast Quiet-STaR: Thinking Without Thought Tokens .
+ 
+ In Findings of the Association for Computational Linguistics: EMNLP 2025 , C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.) ,
+ 
+ Suzhou, China , pp. 18771–18781 .
+ 
+ External Links: Document ,
+ ISBN 979-8-89176-335-7 
+ 
+ Cited by: §2 .
+ 
+ Joshi et al. (2017) 
+ M. Joshi, E. Choi, D. Weld, and L. Zettlemoyer 
+ 
+ TriviaQA: A Large Scale Distantly Supervised Challenge Dataset for Reading Comprehension .
+ 
+ In Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , R. Barzilay and M. Kan (Eds.) ,
+ 
+ Vancouver, Canada , pp. 1601–1611 .
+ 
+ External Links: Document 
+ 
+ Cited by: §4.3 .
+ 
+ Li et al. (2025) 
+ S. Li, K. Li, Z. Xu, G. Huang, E. Yang, K. Li, H. Wu, J. Wu, Z. Zheng, C. Zhang, K. Shi, K. Deng, Q. Yi, R. Xiong, T. Xu, Y. Jiang, J. Yan, Y. Zeng, G. Xu, J. Xue, Z. Xu, Z. Fang, S. Li, Q. Liu, X. Li, Z. Li, Y. Tao, F. Gao, C. Jiang, B. C. Wang, K. Liu, J. Zhu, W. Lam, W. Wang, B. Zhou, and D. Wang 
+ 
+ Reinforcement Learning on Pre-Training Data .
+ 
+ Cited by: §1 ,
+ §2 .
+ 
+ Li et al. (2023) 
+ Y. Li, B. Dong, F. Guerin, and C. Lin 
+ 
+ Compressing Context to Enhance Inference Efficiency of Large Language Models .
+ 
+ In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , H. Bouamor, J. Pino, and K. Bali (Eds.) ,
+ 
+ Singapore , pp. 6342–6353 .
+ 
+ External Links: Document 
+ 
+ Cited by: §2 .
+ 
+ Liu et al. (2025) 
+ Z. Liu, C. Chen, W. Li, P. Qi, T. Pang, C. Du, W. S. Lee, and M. Lin 
+ 
+ Understanding R1-Zero-Like Training: A Critical Perspective .
+ 
+ arXiv .
+ 
+ External Links: 2503.20783 ,
+ Document 
+ 
+ Cited by: §3.4 .
+ 
+ Mallen et al. (2023) 
+ A. Mallen, A. Asai, V. Zhong, R. Das, D. Khashabi, and H. Hajishirzi 
+ 
+ When Not to Trust Language Models: Investigating Effectiveness of Parametric and Non-Parametric Memories .
+ 
+ In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.) ,
+ 
+ Toronto, Canada , pp. 9802–9822 .
+ 
+ External Links: Document 
+ 
+ Cited by: §4.3 .
+ 
+ Qian et al. (2026) 
+ H. Qian, Z. Cao, and Z. Liu 
+ 
+ MemoBrain: Executive Memory as an Agentic Brain for Reasoning .
+ 
+ arXiv .
+ 
+ External Links: 2601.08079 ,
+ Document 
+ 
+ Cited by: §2 .
+ 
+ Sheng et al. (2025) 
+ G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu 
+ 
+ HybridFlow: A Flexible and Efficient RLHF Framework .
+ 
+ In Proceedings of the Twentieth European Conference on Computer Systems ,
+ 
+ pp. 1279–1297 .
+ 
+ External Links: 2409.19256 ,
+ Document 
+ 
+ Cited by: §4.1 .
+ 
+ Singh et al. (2025) 
+ A. Singh, A. Fry, A. Perelman, A. Tart, A. Ganesh, A. El-Kishky, A. McLaughlin, A. Low, A. J. Ostrow, A. Ananthram, A. Nathan, A. Luo, A. Helyar, A. Madry, A. Efremov, A. Spyra, A. Baker-Whitcomb, A. Beutel, A. Karpenko, A. Makelov, A. Neitz, A. Wei, A. Barr, A. Kirchmeyer, A. Ivanov, A. Christakis, A. Gillespie, A. Tam, A. Bennett, A. Wan, A. Huang, A. M. Sandjideh, A. Yang, A. Kumar, A. Saraiva, A. Vallone, A. Gheorghe, A. G. Garcia, A. Braunstein, A. Liu, A. Schmidt, A. Mereskin, A. Mishchenko, A. Applebaum, A. Rogerson, A. Rajan, A. Wei, A. Kotha, A. Srivastava, A. Agrawal, A. Vijayvergiya, A. Tyra, A. Nair, A. Nayak, B. Eggers, B. Ji, B. Hoover, B. Chen, B. Chen, B. Barak, B. Minaiev, B. Hao, B. Baker, B. Lightcap, B. McKinzie, B. Wang, B. Quinn, B. Fioca, B. Hsu, B. Yang, B. Yu, B. Zhang, B. Brenner, C. R. Zetino, C. Raymond, C. Lugaresi, C. Paz, C. Hudson, C. Whitney, C. Li, C. Chen, C. Cole, C. Voss, C. Ding, C. Shen, C. Huang, C. Colby, C. Hallacy, C. Koch, C. Lu, C. Kaplan, C. Kim, C. J. Minott-Henriques, C. Frey, C. Yu, C. Czarnecki, C. Reid, C. Wei, C. Decareaux, C. Scheau, C. Zhang, C. Forbes, D. Tang, D. Goldberg, D. Roberts, D. Palmie, D. Kappler, D. Levine, D. Wright, D. Leo, D. Lin, D. Robinson, D. Grabb, D. Chen, D. Lim, D. Salama, D. Bhattacharjee, D. Tsipras, D. Li, D. Yu, D. J. Strouse, D. Williams, D. Hunn, E. Bayes, E. Arbus, E. Akyurek, E. Y. Le, E. Widmann, E. Yani, E. Proehl, E. Sert, E. Cheung, E. Schwartz, E. Han, E. Jiang, E. Mitchell, E. Sigler, E. Wallace, E. Ritter, E. Kavanaugh, E. Mays, E. Nikishin, F. Li, F. P. Such, F. d. A. B. Peres, F. Raso, F. Bekerman, F. Tsimpourlas, F. Chantzis, F. Song, F. Zhang, G. Raila, G. McGrath, G. Briggs, G. Yang, G. Parascandolo, G. Chabot, G. Kim, G. Zhao, G. Valiant, G. Leclerc, H. Salman, H. Wang, H. Sheng, H. Jiang, H. Wang, H. Jin, H. Sikchi, H. Schmidt, H. Aspegren, H. Chen, H. Qiu, H. Lightman, I. Covert, I. Kivlichan, I. Silber, I. Sohl, I. Hammoud, I. Clavera, I. Lan, I. Akkaya, I. Kostrikov, I. Kofman, I. Etinger, I. Singal, J. Hehir, J. Huh, J. Pan, J. Wilczynski, J. Pachocki, J. Lee, J. Quinn, J. Kiros, J. Kalra, J. Samaroo, J. Wang, J. Wolfe, J. Chen, J. Wang, J. Harb, J. Han, J. Wang, J. Zhao, J. Chen, J. Yang, J. Tworek, J. Chand, J. Landon, J. Liang, J. Lin, J. Liu, J. Wang, J. Tang, J. Yin, J. Jang, J. Morris, J. Flynn, J. Ferstad, J. Heidecke, J. Fishbein, J. Hallman, J. Grant, J. Chien, J. Gordon, J. Park, J. Liss, J. Kraaijeveld, J. Guay, J. Mo, J. Lawson, J. McGrath, J. Vendrow, J. Jiao, J. Lee, J. Steele, J. Wang, J. Mao, K. Chen, K. Hayashi, K. Xiao, K. Salahi, K. Wu, K. Sekhri, K. Sharma, K. Singhal, K. Li, K. Nguyen, K. Gu-Lemberg, K. King, K. Liu, K. Stone, K. Yu, K. Ying, K. Georgiev, K. Lim, K. Tirumala, K. Miller, L. Ahmad, L. Lv, L. Clare, L. Fauconnet, L. Itow, L. Yang, L. Romaniuk, L. Anise, L. Byron, L. Pathak, L. Maksin, L. Lo, L. Ho, L. Jing, L. Wu, L. Xiong, L. Mamitsuka, L. Yang, L. McCallum, L. Held, L. Bourgeois, L. Engstrom, L. Kuhn, L. Feuvrier, L. Zhang, L. Switzer, L. Kondraciuk, L. Kaiser, M. Joglekar, M. Singh, M. Shah, M. Stratta, M. Williams, M. Chen, M. Sun, M. Cayton, M. Li, M. Zhang, M. Aljubeh, M. Nichols, M. Haines, M. Schwarzer, M. Gupta, M. Shah, M. Huang, M. Dong, M. Wang, M. Glaese, M. Carroll, M. Lampe, M. Malek, M. Sharman, M. Zhang, M. Wang, M. Pokrass, M. Florian, M. Pavlov, M. Wang, M. Chen, M. Wang, M. Feng, M. Bavarian, M. Lin, M. Abdool, M. Rohaninejad, N. Soto, N. Staudacher, N. LaFontaine, N. Marwell, N. Liu, N. Preston, N. Turley, N. Ansman, N. Blades, N. Pancha, N. Mikhaylin, N. Felix, N. Handa, N. Rai, N. Keskar, N. Brown, O. Nachum, O. Boiko, O. Murk, O. Watkins, O. Gleeson, P. Mishkin, P. Lesiewicz, P. Baltescu, P. Belov, P. Zhokhov, P. Pronin, P. Guo, P. Thacker, Q. Liu, Q. Yuan, Q. Liu, R. Dias, R. Puckett, R. Arora, R. T. Mullapudi, R. Gaon, R. Miyara, R. Song, R. Aggarwal, R. J. Marsan, R. Yemiru, R. Xiong, R. Kshirsagar, R. Nuttall, R. Tsiupa, R. Eldan, R. Wang, R. James, R. Ziv, R. Shu, R. Nigmatullin, S. Jain, S. Talaie, S. Altman, S. Arnesen, S. Toizer, S. Toyer, S. Miserendino, S. Agarwal, S. Yoo, S. Heon, S. Ethersmith, S. Grove, S. Taylor, S. Bubeck, S. Banesiu, S. Amdo, S. Zhao, S. Wu, S. Santurkar, S. Zhao, S. R. Chaudhuri, S. Krishnaswamy, Shuaiqi, Xia, S. Cheng, S. Anadkat, S. P. Fishman, S. Tobin, S. Fu, S. Jain, S. Mei, S. Egoian, S. Kim, S. Golden, S. Q. Mah, S. Lin, S. Imm, S. Sharpe, S. Yadlowsky, S. Choudhry, S. Eum, S. Sanjeev, T. Khan, T. Stramer, T. Wang, T. Xin, T. Gogineni, T. Christianson, T. Sanders, T. Patwardhan, T. Degry, T. Shadwell, T. Fu, T. Gao, T. Garipov, T. Sriskandarajah, T. Sherbakov, T. Kaftan, T. Hiratsuka, T. Wang, T. Song, T. Zhao, T. Peterson, V. Kharitonov, V. Chernova, V. Kosaraju, V. Kuo, V. Pong, V. Verma, V. Petrov, W. Jiang, W. Zhang, W. Zhou, W. Xie, W. Zhan, W. McCabe, W. DePue, W. Ellsworth, W. Bain, W. Thompson, X. Chen, X. Qi, X. Xiang, X. Shi, Y. Dubois, Y. Yu, Y. Khakbaz, Y. Wu, Y. Qian, Y. T. Lee, Y. Chen, Y. Zhang, Y. Xiong, Y. Tian, Y. Cha, Y. Bai, Y. Yang, Y. Yuan, Y. Li, Y. Zhang, Y. Yang, Y. Jin, Y. Jiang, Y. Wang, Y. Wang, Y. Liu, Z. Stubenvoll, Z. Dou, Z. Wu, and Z. Wang 
+ 
+ OpenAI GPT-5 System Card .
+ 
+ Cited by: §1 .
+ 
+ Team et al. (2025) 
+ K. Team, Y. Bai, Y. Bao, G. Chen, J. Chen, N. Chen, R. Chen, Y. Chen, Y. Chen, Y. Chen, Z. Chen, J. Cui, H. Ding, M. Dong, A. Du, C. Du, D. Du, Y. Du, Y. Fan, Y. Feng, K. Fu, B. Gao, H. Gao, P. Gao, T. Gao, X. Gu, L. Guan, H. Guo, J. Guo, H. Hu, X. Hao, T. He, W. He, W. He, C. Hong, Y. Hu, Z. Hu, W. Huang, Z. Huang, Z. Huang, T. Jiang, Z. Jiang, X. Jin, Y. Kang, G. Lai, C. Li, F. Li, H. Li, M. Li, W. Li, Y. Li, Y. Li, Z. Li, Z. Li, H. Lin, X. Lin, Z. Lin, C. Liu, C. Liu, H. Liu, J. Liu, J. Liu, L. Liu, S. Liu, T. Y. Liu, T. Liu, W. Liu, Y. Liu, Y. Liu, Y. Liu, Y. Liu, Z. Liu, E. Lu, L. Lu, S. Ma, X. Ma, Y. Ma, S. Mao, J. Mei, X. Men, Y. Miao, S. Pan, Y. Peng, R. Qin, B. Qu, Z. Shang, L. Shi, S. Shi, F. Song, J. Su, Z. Su, X. Sun, F. Sung, H. Tang, J. Tao, Q. Teng, C. Wang, D. Wang, F. Wang, H. Wang, J. Wang, J. Wang, J. Wang, S. Wang, S. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Y. Wang, Z. Wang, Z. Wang, Z. Wang, C. Wei, Q. Wei, W. Wu, X. Wu, Y. Wu, C. Xiao, X. Xie, W. Xiong, B. Xu, J. Xu, J. Xu, L. H. Xu, L. Xu, S. Xu, W. Xu, X. Xu, Y. Xu, Z. Xu, J. Yan, Y. Yan, X. Yang, Y. Yang, Z. Yang, Z. Yang, Z. Yang, H. Yao, X. Yao, W. Ye, Z. Ye, B. Yin, L. Yu, E. Yuan, H. Yuan, M. Yuan, H. Zhan, D. Zhang, H. Zhang, W. Zhang, X. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Y. Zhang, Z. Zhang, H. Zhao, Y. Zhao, H. Zheng, S. Zheng, J. Zhou, X. Zhou, Z. Zhou, Z. Zhu, W. Zhuang, and X. Zu 
+ 
+ Kimi K2: Open Agentic Intelligence .
+ 
+ arXiv .
+ 
+ External Links: 2507.20534 ,
+ Document 
+ 
+ Cited by: §1 .
+ 
+ Trivedi et al. (2022) 
+ H. Trivedi, N. Balasubramanian, T. Khot, and A. Sabharwal 
+ 
+ MuSiQue: Multihop Questions via Single-hop Question Composition .
+ 
+ Transactions of the Association for Computational Linguistics 10 , pp. 539–554 .
+ 
+ External Links: Document 
+ 
+ Cited by: §4.3 .
+ 
+ Wu et al. (2026) 
+ X. Wu, K. Li, Y. Zhao, L. Zhang, L. Ou, H. Yin, Z. Zhang, X. Yu, D. Zhang, Y. Jiang, P. Xie, F. Huang, M. Cheng, S. Wang, H. Cheng, and J. Zhou 
+ 
+ ReSum: Unlocking Long-Horizon Search Intelligence via Context Summarization .
+ 
+ arXiv .
+ 
+ External Links: 2509.13313 ,
+ Document 
+ 
+ Cited by: §2 .
+ 
+ Xing et al. (2025) 
+ X. Xing, Z. Fan, J. Lou, G. Li, J. Zhang, and D. Zhang 
+ 
+ PretrainZero: Reinforcement Active Pretraining .
+ 
+ Cited by: §1 ,
+ §2 .
+ 
+ Xu et al. (2025) 
+ W. Xu, Z. Liang, K. Mei, H. Gao, J. Tan, and Y. Zhang 
+ 
+ A-Mem: Agentic Memory for LLM Agents .
+ 
+ In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+ 
+ Cited by: §2 .
+ 
+ Yan et al. (2025) 
+ S. Yan, X. Yang, Z. Huang, E. Nie, Z. Ding, Z. Li, X. Ma, J. Bi, K. Kersting, J. Z. Pan, H. Schütze, V. Tresp, and Y. Ma 
+ 
+ Memory-R1: Enhancing Large Language Model Agents to Manage and Utilize Memories via Reinforcement Learning .
+ 
+ Note: https://arxiv.org/abs/2508.19828v5 
+ 
+ Cited by: §1 .
+ 
+ Yang et al. (2018) 
+ Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. Cohen, R. Salakhutdinov, and C. D. Manning 
+ 
+ HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering .
+ 
+ In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , E. Riloff, D. Chiang, J. Hockenmaier, and J. Tsujii (Eds.) ,
+ 
+ Brussels, Belgium , pp. 2369–2380 .
+ 
+ External Links: Document 
+ 
+ Cited by: §4.3 .
+ 
+ Yao et al. (2023) 
+ S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao 
+ 
+ ReAct: Synergizing Reasoning and Acting in Language Models .
+ 
+ arXiv .
+ 
+ External Links: 2210.03629 ,
+ Document 
+ 
+ Cited by: §1 ,
+ §2 .
+ 
+ Ye et al. (2025) 
+ R. Ye, Z. Zhang, K. Li, H. Yin, Z. Tao, Y. Zhao, L. Su, L. Zhang, Z. Qiao, X. Wang, P. Xie, F. Huang, S. Chen, J. Zhou, and Y. Jiang 
+ 
+ AgentFold: Long-Horizon Web Agents with Proactive Context Management .
+ 
+ arXiv .
+ 
+ External Links: 2510.24699 ,
+ Document 
+ 
+ Cited by: §2 .
+ 
+ Yoon et al. (2024) 
+ C. Yoon, T. Lee, H. Hwang, M. Jeong, and J. Kang 
+ 
+ CompAct: Compressing Retrieved Documents Actively for Question Answering .
+ 
+ In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , Y. Al-Onaizan, M. Bansal, and Y. Chen (Eds.) ,
+ 
+ Miami, Florida, USA , pp. 21424–21439 .
+ 
+ External Links: Document 
+ 
+ Cited by: §2 .
+ 
+ Yu et al. (2025a) 
+ H. Yu, T. Chen, J. Feng, J. Chen, W. Dai, Q. Yu, Y. Zhang, W. Ma, J. Liu, M. Wang, et al. 
+ 
+ Memagent: reshaping long-context llm with multi-conv rl-based memory agent .
+ 
+ arXiv preprint arXiv:2507.02259 .
+ 
+ Cited by: Appendix A ,
+ §1 ,
+ §2 ,
+ §3.1 ,
+ §4.1 ,
+ §4.2 ,
+ §4.2 ,
+ §4 .
+ 
+ Yu et al. (2025b) 
+ H. Yu, T. Chen, J. Feng, J. Chen, W. Dai, Q. Yu, Y. Zhang, W. Ma, J. Liu, M. Wang, and H. Zhou 
+ 
+ MemAgent: Reshaping Long-Context LLM with Multi-Conv RL-based Memory Agent .
+ 
+ In The Fourteenth International Conference on Learning Representations ,
+ 
+ Cited by: §3.2 .
+ 
+ Yu et al. (2025c) 
+ Q. Yu, Z. Zhang, R. Zhu, Y. Yuan, X. Zuo, Y. Yue, W. Dai, T. Fan, G. Liu, L. Liu, X. Liu, H. Lin, Z. Lin, B. Ma, G. Sheng, Y. Tong, C. Zhang, M. Zhang, W. Zhang, H. Zhu, J. Zhu, J. Chen, J. Chen, C. Wang, H. Yu, Y. Song, X. Wei, H. Zhou, J. Liu, W. Ma, Y. Zhang, L. Yan, M. Qiao, Y. Wu, and M. Wang 
+ 
+ DAPO: An Open-Source LLM Reinforcement Learning System at Scale .
+ 
+ arXiv .
+ 
+ External Links: 2503.14476 ,
+ Document 
+ 
+ Cited by: §2 ,
+ §4.1 .
+ 
+ Yuan et al. (2026) 
+ Q. Yuan, J. Lou, Z. Li, J. Chen, Y. Lu, H. Lin, L. Sun, D. Zhang, and X. Han 
+ 
+ MemSearcher: Training LLMs to Reason, Search and Manage Memory via End-to-End Reinforcement Learning .
+ 
+ arXiv .
+ 
+ External Links: 2511.02805 ,
+ Document 
+ 
+ Cited by: §1 ,
+ §2 .
+ 
+ Zelikman et al. (2024) 
+ E. Zelikman, G. R. Harik, Y. Shao, V. Jayasiri, N. Haber, and N. Goodman 
+ 
+ Quiet-STaR: Language Models Can Teach Themselves to Think Before Speaking .
+ 
+ In First Conference on Language Modeling ,
+ 
+ Cited by: §2 .
+ 
+ Zhou et al. (2025a) 
+ Z. Zhou, A. Qu, Z. Wu, S. Kim, A. Prakash, D. Rus, B. K. H. Low, and P. P. Liang 
+ 
+ MEM1: Learning to Synergize Memory and Reasoning for Efficient Long-Horizon Agents .
+ 
+ In The Fourteenth International Conference on Learning Representations ,
+ 
+ Cited by: §4 .
+ 
+ Zhou et al. (2025b) 
+ Z. Zhou, A. Qu, Z. Wu, S. Kim, A. Prakash, D. Rus, J. Zhao, B. K. H. Low, and P. P. Liang 
+ 
+ Mem1: learning to synergize memory and reasoning for efficient long-horizon agents .
+ 
+ arXiv preprint arXiv:2506.15841 .
+ 
+ Cited by: §1 ,
+ §2 ,
+ §4.1 ,
+ §4.3 .
+ 
+ 
+
+
+ 
+ 
+ 
+ 
+ ⬇ 
+ You are presented with a problem , a section of an article that may contain the answer to the problem , and a previous memory . Please read the provided section carefully and update the memory with the new information that helps to answer the problem . Be sure to retain all relevant details from the previous memory while adding any new , useful information .
+ 
+ &lt; problem &gt; Based on the entire article , which entity is represented by the { MASK } placeholder ? &lt;/ problem &gt;
+ 
+ &lt; memory &gt; { memory } &lt;/ memory &gt;
+ 
+ &lt; section &gt; { chunk } &lt;/ section &gt;
+ 
+ 
+ 
+ Updated memory :
+ 
+ 
+ ⬇ 
+ You are presented with a problem and a previous memory . Please answer the problem based on the previous memory and put the answer in boxed {}.
+ 
+ &lt; problem &gt; Based on the entire article , which entity is represented by the { MASK } placeholder ? &lt;/ problem &gt;
+ 
+ &lt; memory &gt; { memory } &lt;/ memory &gt;
+ 
+ &lt; section &gt; { section } &lt;/ section &gt;
+ 
+ 
+ ⬇ 
+ You are presented with a memory from previously read sections , and a section containing placeholder [ TARGET ]. Based on the memory , please predict the entity marked by [ TARGET ] and put the answer in boxed {}.
+ 
+ &lt; memory &gt; { memory } &lt;/ memory &gt;
+ 
+ &lt; section &gt; { masked chunk } &lt;/ section &gt;
+ 
+ 
+ 
+ 
+ Appendix A Prompt Template
+
+
+ 
+ MemTrain employs three prompt templates, as illustrated below.
+For the end-to-end masked reconstruction task, we adopt the prompt design from MemAgent  ( Yu et al., 2025a ) and set the problem as a fixed masked prediction instruction.
+Specifically, the memory generation prompt is applied iteratively until all text chunks have been processed, after which the answer generation prompt is used to produce the final output.
+For the intermediate memory recall task, we introduce the placeholder [TARGET] to distinguish it from [MASK], thereby preventing the LLM from being confused about which reconstruction objective to perform.
+
+ 
+
+
+ 
+ 
+ 
+ 
+ 
+ Experimental support, please
+ view the build logs 
+ for errors. Generated by
+ 
+ 
+ L
+ A 
+ T
+ E 
+ 
+ xml 
+ 
+ .
+ 
+ 
+ Instructions for reporting errors
+
+ We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+ support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+ methods listed below:
+
+ 
+ Click the "Report Issue" ( 
+ 
+ ) button, located in the page header. 
+ 
+ Tip: You can select the relevant text first, to include it in your report.
+
+ Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+ may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+ should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+ all.
+
+ Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+
+ 
+ 
+ 
+ 
+ 
+ We gratefully acknowledge support from
+ our major funders ,
+ member institutions , ,
+ and all contributors.
+ 
+ 
+ About 
+ &middot; 
+ Help 
+ &middot; 
+ Contact 
+ &middot; 
+ Subscribe 
+ &middot; 
+ Copyright 
+ &middot; 
+ Privacy 
+ &middot; 
+ Accessibility 
+ &middot; 
+ Operational Status (opens in new tab) 
+ 
+ 
+
+ 
+ Major funding support from

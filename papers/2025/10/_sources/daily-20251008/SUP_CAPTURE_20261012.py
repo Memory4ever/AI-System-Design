@@ -45,14 +45,14 @@ DAILY = {
 }
 
 
-def fetch(name, url, headers=(), body=None):
+def fetch(name, url, headers=(), body=None, timeout=25):
     OUT.mkdir(exist_ok=True)
     raw = OUT / (name + ".raw")
     record = OUT / (name + ".request.json")
     if raw.exists() or record.exists():
         raise RuntimeError("Existing request must not be overwritten: " + name)
     started = datetime.now().astimezone().isoformat()
-    cmd = ["curl", "--location", "--silent", "--show-error", "--max-time", "25",
+    cmd = ["curl", "--location", "--silent", "--show-error", "--max-time", str(timeout),
            "--user-agent", "Mozilla/5.0", "--output", str(raw),
            "--write-out", "%{http_code}\\n%{url_effective}\\n%{size_download}", url]
     for header in headers:

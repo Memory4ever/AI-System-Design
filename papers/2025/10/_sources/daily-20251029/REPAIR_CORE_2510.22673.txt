@@ -1,0 +1,1249 @@
+Alias-Free ViT: Fractional Shift Invariance via Linear Attention
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+Contributions.
+2 Methods
+2.1 Preliminaries: the Vision Transformer
+Multi-Head Self-Attention.
+Feed-Forward Network.
+2.2 Linear Attention
+2.3 Alias-Free Vision Transformer
+Shift invariance and equivariance.
+Patch embedding.
+Positional encoding.
+Shift-Equivariant Attention.
+MLP.
+Layer normalization.
+Class token.
+Class Attention.
+3 Implementation
+Conv Patch Embedding.
+AFT Block.
+Classification.
+4 Experiments
+4.1 Accuracy and shift consistency
+4.2 Adversarial robustness
+4.3 Robustness to realistic shifts
+4.4 Ablation study
+5 Related work
+Shift invariant convnets.
+Shift invariant transformers.
+Linear attention.
+6 Discussion and limitations
+Polynomial activation function
+Runtime performance
+References
+A Full proofs
+Proposition 2.
+Class Attention.
+B Additional results
+B.1 Additional datasets
+B.2 Global average pooling vs AF Class Attention
+B.3 Polynomial vs GELU comparison
+C Translation visualization
+D Experiments details
+D.1 Batch size choice
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.22673v1 [cs.CV] 26 Oct 2025
+Alias-Free ViT:
+Fractional Shift Invariance via Linear Attention
+Hagay Michaeli
+Affiliation: Technion
+Affiliation: Haifa, Israel
+Email: hagaymi@campus.technion.ac.il
+Daniel Soudry
+Affiliation: Technion
+Affiliation: Haifa, Israel
+Email: daniel.soudry@gmail.com
+Abstract
+Transformers have emerged as a competitive alternative to convnets in vision tasks, yet they lack the architectural inductive bias of convnets, which may hinder their potential performance.
+Specifically, Vision Transformers (ViTs) are not translation-invariant and are more sensitive to minor image translations than standard convnets.
+Previous studies have shown, however, that convnets are also not perfectly shift-invariant, due to aliasing in downsampling and nonlinear layers.
+Consequently, anti-aliasing approaches have been proposed to certify convnets translation robustness.
+Building on this line of work, we propose an Alias-Free ViT, which combines two main components.
+First, it uses alias-free downsampling and nonlinearities.
+Second, it uses linear cross-covariance attention that is shift-equivariant to both integer and fractional translations, enabling a shift-invariant global representation.
+Our model maintains competitive performance in image classification and outperforms similar-sized models in terms of robustness to adversarial translations.11
+1
+Our code is available at github.com/hmichaeli/alias_free_vit.
+1 Introduction
+Transformers, primarily designed for language modeling [57], have become dominant in vision tasks [25, 33].
+Since they were originally designed for sequential data, their underlying attention mechanism is not sensitive to the locality of information in visual data.
+As a result, Vision Transformers (ViTs) exhibit a lack of shift-invariance, a shortcoming that becomes evident in cases where small image translations lead to significant deviations in output [24, 50].
+To mitigate this gap, many studies have been conducted on the integration of convolutional priors, such as spatial hierarchy and shift-invariance, into ViT architectures.
+For example, approaches include hierarchical patch merging [38], the incorporation of convolutional layers [60], and the design of relative positional encodings [61].
+Furthermore, some works have drawn parallels between self-attention and dynamic convolutions [26, 9, 1], motivating reinterpretations of the attention mechanism through a convolutional lens.
+Despite being more spatially aware than transformers, convnets are not perfectly shift-invariant due to aliasing introduced by strided convolutions and pooling layers [4, 66].
+This has led to a line of research that aims to restore shift-invariance, by methods including anti-aliasing filters [66, 31, 21, 22, 70, 39] and adaptive sampling techniques [6, 45].
+Building on these advances, recent works have adapted such methods for transformer architectures.
+For example, Adaptive Polyphase Sampling (APS) has been employed to achieve cyclic shift-equivariance in ViTs [46, 13].
+However, despite the latter approach efficiently guaranteeing shift-invariance for integer pixel cyclic shifts, it falls short in fractional (i.e., sub-pixel) shifts and “standard” shifts (i.e. imitating camera translation) [50, 39, 11].
+As aliasing is primarily related to downsampling layers, which are not frequently used in ViTs, only few studies have been conducted on integrating aliasing-reduction techniques to achieve shift-invariance in ViTs.
+Qian et al. [41] propose plugging a low-pass filter post self-attention to reduce aliasing, however, this only provides a partial solution, as it does not resolve the inherent lack of shift-equivariance in self-attention and aliasing in other nonlinearities.
+Recent works study aliasing in latent diffusion models
+[69, 2, 63] that typically include attention layers, in order to improve their consistency i.e. in video generation.
+However, these works do not address the main issue in the self-attention operation.
+A similar problem may also hinder transformer neural operators which have recently become popular [37, 27, 51], as aliasing has been shown to be related to discretization errors
+[68, 5, 43].
+Another emerging direction focuses on linear and softmax-free attention mechanisms, initially proposed to reduce the quadratic complexity of standard attention in large language models (LLMs) [32, 7, 58].
+In the vision domain, models such as XCiT [16] and SimA [34] demonstrate that alternative attention formulations, e.g., using cross-covariance or linear attention, can maintain competitive performance without directly computing a full attention map.
+Beyond improved efficiency, we now show that such mechanisms enable designing a transformer-based architecture that is shift-equivariant, similar to convnets.
+Contributions.
+In this paper
+•
+We present in Section 2 a certain class of shift-equivariant attention layers (SEA), including linear attention and cross-covariance attention, which is useful for vision tasks.
+•
+We design in Section 3 a shift-invariant, alias-free Vision Transformer (AFT) using cross-covariance attention and alias-free nonlinearities and show it has a competitive performance in image classification.
+•
+We show in Section 4 that the AFT is robust (∼99%\sim 99\% consistency) to fractional cyclic shifts, and significantly more robust to practical translations than other similar models, albeit with increased computational overhead due to the alias-free components.
+Figure 1:
+Overview of the Alias-Free Vision Transformer (AFT) architecture.
+The input image is first processed by an alias-free patch embedding module composed of convolutional layers (Conv), batch normalization (BN), and alias-free activation, composed of upsampling (AF-Up), GELU and downsampling (AF-Down).
+The result is reshaped to a token matrix form and fed through LL Alias-Free Transformer blocks, each consisting of alias-free layer normalization (AF-LN), cross-covariance attention (XCA), alias-free local patch interaction (AF-LPI), and alias-free MLP (AF-MLP) layers, interconnected by residual connections.
+The result is concatenated with a learnable class token embedding and fed into two Alias-Free Class Attention blocks composed of an XCA layer and an MLP applied on the class token.
+The final representation is the updated class token, which is fed into a final linear classifier.
+Detailed explanations of each component are provided in Section 3.
+2 Methods
+2.1 Preliminaries: the Vision Transformer
+The Vision Transformer (ViT) [15] transfers the Transformer architecture [57] from text to images by interpreting an image as a sequence of visual tokens.
+Given an input x∈ℝC×H×Wx\!\in\!\mathbb{R}^{C\times H\times W}, the image is partitioned into N=H​Wp2N=\frac{HW}{p^{2}} non-overlapping patches of resolution p×pp\times p.
+Each patch is flattened and projected by a learned linear layer into a DD-dimensional embedding, forming X∈ℝN×DX\in\mathbb{R}^{N\times D}.
+For classification, a learnable “class” token is prepended to XX and later serves as a global representation, propagated into the classification module.
+Learnable absolute positional encodings 𝒫∈ℝ(N+1)×D\mathcal{P}\in\mathbb{R}^{\left(N+1\right)\times D} are then added to compensate for the permutation-invariance of self-attention.
+The resulting sequence X~=X+𝒫\tilde{X}=X+\mathcal{P} is processed by LL identical Transformer encoder blocks.
+Each block is composed of a Multi-Head Self-Attention (MHSA) module with a two-layer Feed-Forward Network (FFN), interleaved with Layer Normalization (LN) and residual connections:
+X^(ℓ)\displaystyle\hat{X}^{\left(\ell\right)}
+=X~(ℓ−1)+MHSA⁡(LN⁡(X~(ℓ−1))),\displaystyle=\tilde{X}^{\left(\ell-1\right)}+\mathrm{MHSA}\!\left(\mathrm{LN}\left(\tilde{X}^{\left(\ell-1\right)}\right)\right),
+(1)
+X~(ℓ)\displaystyle\tilde{X}^{\left(\ell\right)}
+=X^(ℓ)+FFN⁡(LN⁡(X^(ℓ))),\displaystyle=\hat{X}^{\left(\ell\right)}+\mathrm{FFN}\!\left(\mathrm{LN}\left(\hat{X}^{\left(\ell\right)}\right)\right),
+(2)
+where ℓ=1,…,L\ell\!=\!1,\dots,L and X~(0)=X~\tilde{X}^{\left(0\right)}=\tilde{X}.
+Multi-Head Self-Attention.
+Each of the hh heads linearly projects the input into queries, keys and values,
+Q=X​Wq,K=X​Wk,V=X​WvQ=XW_{q},\;K=XW_{k},\;V=XW_{v}, with Wq,Wk,Wv∈ℝD×dhW_{q},W_{k},W_{v}\in\mathbb{R}^{D\times d_{h}} and dh=D/hd_{h}=D/h.
+Self-Attention is then computed as
+SA⁡(X)=softmax⁡(Q​K⊤/dh)​V.\mathrm{SA}\left(X\right)=\mathrm{softmax}\!\left(QK^{\top}/\sqrt{d_{h}}\right)V\,.
+(3)
+The outputs of all heads are concatenated and projected back to ℝD\mathbb{R}^{D} by a final linear layer.
+Feed-Forward Network.
+The FFN first expands the embedding dimension to 4​D4D, applies a GELU activation [29], and projects back:
+FFN⁡(X)=W2​GELU​(W1​X+b1)+b2,\mathrm{FFN}\left(X\right)=W_{2}\,\mathrm{GELU}\left(W_{1}X+b_{1}\right)+b_{2},
+(4)
+with W1∈ℝ4​D×DW_{1}\in\mathbb{R}^{4D\times D} and W2∈ℝD×4​DW_{2}\in\mathbb{R}^{D\times 4D}.
+2.2 Linear Attention
+Notably, Equation 3 requires computing Q​K⊤∈ℝN×NQK^{\top}\in\mathbb{R}^{N\times N} explicitly, which has a quadratic cost in the number of tokens.
+This has motivated many linear complexity variants of self-attention [32, 7, 58].
+In vision, SimA removes softmax entirely by maintaining stability using ℓ1\ell_{1}–normalized QQ and KK [34].
+XCiT mixes channels instead of tokens with cross-covariance attention (XCA) [16],
+XCA⁡(X)=V​softmax​(K^⊤​Q^/τ),\mathrm{XCA}(X)=V\,\mathrm{softmax}\left(\hat{K}^{\top}\ \hat{Q}/\tau\right),
+(5)
+where Q^,K^\hat{Q},\hat{K} are ℓ2\ell_{2}-normalized along the token dimension and
+τ>0\tau>0 is a learnable temperature.
+2.3 Alias-Free Vision Transformer
+Next, we describe our proposed model, replacing every ViT component that is not shift-equivariant with a modification that restores equivariance.
+For brevity, the analysis is given for a one-dimensional signal.
+The same principles can be applied in the two-dimensional case by viewing the sequence of NN tokens in a two-dimensional representation, namely X∈ℝHp×Wp×D.X\in\mathbb{R}^{\frac{H}{p}\times\frac{W}{p}\times D}.22
+2
+In practice two-dimensional signals tokens are also stacked into a one-dimensional sequence (formally the row-stack). Nevertheless, shift-equivariance in the two dimensions is still maintained under this representation.
+Similar to Karras et al. [31] and Michaeli et al. [39], we view the input as a discrete sampling of an underlying band-limited continuous signal.
+The main difference from a standard convnet emerges after tokenization: the patch-embedding matrix
+X∈ℝN×DX\!\in\!\mathbb{R}^{N\times D} stores the sequence length NN along its first axis, and the embedding dimension DD in the second axis.
+Thus, the spatial and channel roles are swapped compared to convnet feature maps, where the channel index comes first and spatial indices follow.
+Throughout our analysis, we therefore interpret the DD columns of XX as DD “channels” of a length-NN one-dimensional signal.
+Maintaining shift-equivariance then amounts to ensuring that each column transforms equivariantly under fractional translations in the continuous domain.
+Shift invariance and equivariance.
+We reuse the definitions of Michaeli et al. [39].
+Let x⁡[n]x[n] be a discrete signal, TT its sample spacing, and z⁡(t)z(t) the unique 12​T\tfrac{1}{2T}-band-limited signal with x⁡[n]=z⁡(n​T)x[n]=z(nT).
+For any (possibly non-integer) shift Δ∈ℝ\Delta\!\in\!\mathbb{R},
+τΔ​x​[n]=z⁡(n​T+Δ).\tau_{\Delta}x[n]\;=\;z(nT+\Delta).
+An operator ff is shift-equivariant if f⁡(τΔ​x)=τΔ​f​(x)f(\tau_{\Delta}x)=\tau_{\Delta}f(x) and shift-invariant if f⁡(τΔ​x)=f⁡(x)f(\tau_{\Delta}x)=f(x) for all xx and Δ\Delta.
+In some cases, we may claim that a value is shift-equivariant.
+This is a slight abuse of the definition to say the overall operator computing this value is shift-equivariant w.r.t. the input signal.
+Patch embedding.
+Algebraically, the tokenization process described in Section 2.1 is equivalent to a convolution with kernel size pp, stride pp, and DD output
+channels.
+By separating this stride-pp convolution into a stride-1 convolution followed by an alias-free downsampling [21], the composite operator becomes shift-equivariant [66, 31, 39].
+However, this requires inserting a single low-pass filter with cut-off 1/p1/p, which would severely attenuate high-frequency content, especially for large patches.
+Instead, we employ a convolutional patch-embedding that replaces the single stride-pp layer with a short convnet of progressively smaller strides, often used in hybrid models [16, 60, 65, 23].
+Here, we can avoid aliasing by plugging a low-pass filter with a larger cut-off before each downsampling layer, and by using an alias-free activation function [31, 39].
+This gradual approach still enables the network to learn high-frequency features, despite the anti-aliasing components.
+Positional encoding.
+Absolute positional encoding injects the global index of each token and therefore breaks shift-equivariance.
+Several relative schemes have been proposed that depend only on pairwise offsets and thus preserve shift-equivariance at the token level [49, 38, 8].
+These methods, however, do not guarantee equivariance to pixel-level translations, as they cause the patch contents themselves to change.
+Notably, the convolutional patch embedding already breaks permutation invariance of the tokens, possibly reducing the need for additional positional signals.
+Moreover, recent studies demonstrate that hybrid transformers can learn effectively without any explicit positional encoding [3, 67].
+Consistent with this observation, we find empirically (Section 4.4) that positional encoding may be unnecessary in architectures that include convolutional layers inside the transformer blocks, such as XCiT [16].
+Shift-Equivariant Attention.
+We next show a class of attention operations that, by removing the softmax in Equation 3, are shift-equivariant.
+This primarily includes the linear attention, which, although still less common, is attractive for its lower complexity [32, 53] and yields competitive vision results [34].
+Formally,
+SEA⁡(X)=Q​f​(K⊤​V),\mathrm{SEA}\left(X\right)\;=\;Qf\left(K^{\top}V\right)\,,
+(6)
+where we keep the existing notation
+Q=X​Wq,K=X​Wk,V=X​WvQ=XW_{q},\;K=XW_{k},\;V=XW_{v}, and let f:ℝD×D→ℝD×Df:\mathbb{R}^{D\times D}\rightarrow\mathbb{R}^{D\times D} be an arbitrary function.
+We now establish the desired property in three steps.
+Proposition 1.
+QQ, KK and VV are shift-equivariant.
+Proof.
+Each column of QQ, KK or VV is a fixed linear combination of the columns of XX.
+As the columns of XX are merely the channels of the same signals, they translate together, and any linear combination of them is also shift-equivariant.
+∎
+Proposition 2.
+f⁡(K⊤​V)f\left(K^{\top}V\right) is shift-invariant.
+Proof sketch.
+Consider the matrix entry (K⊤​V)i​j=Ki⊤​Vj\left(K^{\top}V\right)_{ij}=K_{i}^{\top}V_{j}, where KiK_{i} and VjV_{j} denote columns.
+By Parseval’s theorem,
+Ki⊤​Vj=12​π​∫−ππK^i​(ω)​V^j∗​(ω)​𝑑ω.K_{i}^{\top}V_{j}=\frac{1}{2\pi}\int_{-\pi}^{\pi}\hat{K}_{i}(\omega)\,\hat{V}_{j}^{*}(\omega)\,d\omega.
+A fractional translation by τ\tau multiplies both Fourier transforms by the same phase factor ej​ω​τe^{j\omega\tau}, which cancels in the product.
+Hence, every entry of K⊤​VK^{\top}V remains unchanged due to a translation (see formal proof in appendix A).
+An important observation is that since K⊤​VK^{\top}V is shift-invariant, any matrix operation can be applied on it
+without compromising this property.
+Proposition 3.
+V′=Q​f​(K⊤​V)V^{\prime}=Qf\left(K^{\top}V\right) is shift-equivariant.
+Proof.
+Column jj of V′V^{\prime} satisfies
+Vj′=∑i=1DQi​f​(K⊤​V)i​j,V^{\prime}_{\,j}\;=\;\sum_{i=1}^{D}Q_{i}\,f\left(K^{\top}V\right)_{ij},
+i.e. a sum of shift-equivariant columns QiQ_{i} (Proposition 1) scaled by shift-invariant coefficients f​(K⊤​V)i​jf\left(K^{\top}V\right)_{ij} (Proposition 2).
+The resulting column is therefore shift-equivariant.
+∎
+As mentioned above, since K⊤​VK^{\top}V is shift-invariant, any matrix operation ff can be applied on it without compromising the overall shift-equivariance.
+By the same argument, K⊤​QK^{\top}Q is also shift-invariant; thus a row-wise softmax on K⊤​QK^{\top}Q as used in XCA (Equation 5) is permissible.
+Note that in XCA, the columns of QQ and KK are ℓ2\ell_{2}-normalized along the token dimension, which as well maintains shift-equivariance [39].
+MLP.
+The MLP linear layers apply the same linear transformation on all tokens, maintaining shift-equivariance as in Proposition 1.
+However, pointwise nonlinearities induce aliasing that breaks fractional shift-equivariance.
+This can be solved similarly to [39] by an alias-free activation function, which includes upsampling before the nonlinearity and downsampling back after low-pass filtering.
+Layer normalization.
+Per-token LayerNorm rescales each column differently and breaks equivariance.
+The same problem has been addressed by
+Michaeli et al. [39], by using a global variant, namely
+X^i​j=Xi​j−μσ2+ϵ,μi=1D​∑jXi​j,σ2=1N​D​∑i,j(Xi​j−μi)2.\hat{X}_{ij}=\frac{X_{ij}-\mu}{\sqrt{\sigma^{2}+\epsilon}},\quad\mu_{i}=\tfrac{1}{D}\sum_{j}X_{ij},\;\sigma^{2}=\tfrac{1}{ND}\sum_{i,j}(X_{ij}-\mu_{i})^{2}.
+(7)
+where μ\mu is computed per token and σ2\sigma^{2} per layer.
+Class token.
+Prepending the “class” token interferes with the signal representation of the columns of the embedding matrix, and breaks shift-equivariance.
+A simple solution is to instead construct a global representation using global average pooling over the embedding dimension after the last transformer block, i.e.
+X¯=1N​∑i=1NXi(L)∈ℝD,\bar{X}=\frac{1}{N}\sum_{i=1}^{N}X^{\left(L\right)}_{i}\in\mathbb{R}^{D}\,,
+(8)
+similar to the common approach in convnets and a few other ViTs [38, 23, 64].
+This, assuming shift-equivariance is maintained, yields a shift-invariant global representation [39].
+Class Attention.
+Some ViTs append the class token only after LL patch-only blocks and update it through a few class-attention (CA) layers [55, 16, 10].
+These layers usually fix the patch embeddings and update only the class token embedding by attending it to itself and to the frozen patch embeddings.
+We find that when using SEA after concatenating the class token, Propositions 1, 2 and 3 still hold w.r.t. the patch tokens, and additionally the class token remains shift-invariant (see proof in appendix A).
+Retaining similarity to the original class attention blocks, we only propagate the class embedding through the MLP, which also prevents aliasing in the nonlinearity.
+We use this approach instead of global average pooling since we find it performs slightly better.
+3 Implementation
+We implement the Alias-Free Vision Transformer (AFT) based on XCiT architecture [16].
+XCiT replaces standard self-attention with cross-covariance attention, described in Equation 5. This, by Proposition 3, preserves shift-equivariance.
+The remaining modifications focus on eliminating aliasing in the patch-embedding, local patch interaction (LPI), and MLP blocks. The overall model is presented in Figure 1.
+Conv Patch Embedding.
+XCiT patch embedding (PE) module is a sequence of blocks composed of strided convolution, batch normalization, and GELU.
+Similar to [39], we replace the strided convolution with a stride of 1 and insert an alias-free downsampling at the end of the block, implemented by truncation of high-frequencies in the Fourier domain, using Fast Fourier Transform (FFT) [44, 21].
+We replace zero-padding with circular padding.
+We use alias-free activation functions by wrapping the GELU activation with upsampling and alias-free downsampling layers [31, 39].
+In contrast to [39], we find that replacing the GELU with a polynomial activation to get perfect shift-invariance degrades the model performance significantly.
+Conversely, we find that keeping GELU affects the translation-robustness marginally.
+We do not add positional encodings and do not prepend a class token at this stage; the class token is appended only before the class attention blocks.
+AFT Block.
+Following the patch embedding, XCiT is composed of a sequence of Blocks, each consisting of three components: cross-covariance attention (XCA), local patch interaction (LPI), and MLP.
+As argued in Section 2.3, the XCA is already shift-equivariant.
+The LPI consists of two convolutional layers, batch normalization, and activation layers, and we treat each of them as in the PE, forming an alias-free version we denote AF-LPI.
+The MLP applies a shared two-layer FFN on each token, and can be viewed as a convolutional layer with kernel size 1. Therefore, the only required modification to form the alias-free variant (AF-MLP) is converting the activation function into an alias-free activation.
+We replace all LayerNorm instances, applied before XCA, LPI, and MLP, with the alias-free layer norm described in Section 2.3.
+Classification.
+After the last AFT block we append a learnable class token and apply two AF class attention blocks.
+Each block consists of AF-LN, an XCA layer, and an MLP applied only to the class token.
+Residual connections are used around XCA and the MLP, mirroring the AFT blocks.
+By the SEA properties, the patch tokens remain shift-equivariant and the class token is shift-invariant (see Proposition 4).
+The final prediction is obtained by a linear classifier applied to the class token.
+4 Experiments
+We evaluate our Alias-Free Transformer (AFT) on the ImageNet dataset [12] and compare its accuracy and shift consistency with the baseline XCiT model.
+We additionally compare our method with the adaptive polyphase sampling (APS) approach [46, 13], which we implement by replacing the strided-convolutions in the PE with stride-1 convolutions followed by APSPool [6], and using the
+standard class attention blocks for classification (maintaining integer shift-invariance).
+We use the nano and small XCiT versions with 12 layers and patch-size 16, processing inputs of size 224×224224\times 224.
+We train all models for 400 epochs, following the XCiT training recipe [16], using PyTorch [40], on a single machine with 8 ×\times NVIDIA RTX A6000.
+We observe a slight improvement for the AF models when training with a smaller batch size; therefore, we reduce the batch size from 1024 to 512 for the AF versions (See additional details in Section D.1).
+In Sections 4.1 and 4.2 we evaluate the baseline, APS, and AFT models using cyclic translations and implement m/nm/n-fractional translation by translating in mm pixels the nn-upsampled image using sinc-interpolation, as our and the APS models were initially designed under those assumptions.
+In Section 4.3 we use more “realistic” types of translations, and add additional publicly available ViTs to the comparison.
+4.1 Accuracy and shift consistency
+The results in Table 1 (left) show the classification accuracy and consistency, defined as the percentage of validation samples whose prediction did not change after a random translation.
+The alias-free models have similar accuracy to the baseline models, and much higher consistency in both integer and half-pixel translations.
+The APS models, on the other hand, achieve near-100% consistency under integer translations, as expected.
+However, they have a more modest improvement in consistency to half-pixel shifts.
+Table 1: ImageNet accuracy and cyclic shift consistency.
+Left: Shift consistency is defined as the percentage of test samples that did not change their prediction following a random translation.
+The alias-free models have similar accuracy to the baseline models, and much higher consistency in both integer and half-pixel translations.
+Right: Adversarial accuracy is defined as the percentage of correctly classified samples in the worst case at the corresponding grid (Equation 9).
+See Appendix B for additional results.
+Model
+Test
+accuracy
+Integer
+shift consist.
+Half-pixel
+shift consist.
+Adversarial
+integer grid
+Adversarial
+half-pixel grid
+XCiT-Nano (Baseline)
+70.4
+83.7
+82.0
+50.9
+52.9
+XCiT-Nano-APS
+68.4
+100.0
+87.5
+68.4
+62.9
+XCiT-Nano-AF (ours)
+70.5
+99.2
+98.7
+69.9
+69.5
+XCiT-Small (Baseline)
+82.0
+91.4
+89.8
+70.9
+71.3
+XCiT-Small-APS
+81.3
+100.0
+94.0
+81.3
+78.2
+XCiT-Small-AF (ours)
+81.8
+99.5
+99.4
+81.3
+81.1
+4.2 Adversarial robustness
+To show a practical implication of shift consistency, we ask whether an adversary, free to translate the image within a prespecified grid, can find any shift that flips the label.
+We define adversarial accuracy as the fraction of images that are classified correctly in the worst-case at this grid.
+In Table 1 (right), we show results for cyclic integer and half-pixel translations, reporting adversarial accuracy over the following grids
+Tinteger={(i,j)|−6≤i,j≤6}Thalf={(i2,j2)|−6≤i,j≤6}T_{\mathrm{integer}}=\left\{\,\left(i,j\right)\,\middle|\,-6\leq i,j\leq 6\,\right\}\qquad T_{\mathrm{half}}=\left\{\,\left(\tfrac{i}{2},\tfrac{j}{2}\right)\,\middle|\,-6\leq i,j\leq 6\,\right\}
+(9)
+The AFT models maintain high accuracy under both integer and half-pixel attacks, having 2% relative accuracy reduction in the nano version and less than 1% reduction in the small model. This is in contrast to the baseline models, with relative accuracy reductions of 25% and 14% in the nano and small models respectively.
+As expected, the APS models maintain their accuracy under the integer grid adversarial attacks.
+Their accuracy under half-pixel grid attacks decreases slightly in comparison to the baseline models.
+The reason for this is that the APS is invariant to any two half-pixel translations, as these differ in exact integer translations.
+We expect the APS accuracy to decrease more under arbitrary fractional translations, as can be seen in Section 4.3 and [39]. See Appendix B for additional results.
+4.3 Robustness to realistic shifts
+The experiments above use cyclic translations, which may leave unnatural image artifacts in realistic cases (where the input is not a sample of some periodic signal).
+We therefore test two more realistic perturbations and measure adversarial accuracy exactly as in Section 4.2. See Appendix C for visualizations of the used translations.
+•
+Crop-shifts.
+The image is first center-cropped, then cropped in offsets (δx,δy)(\delta_{x},\delta_{y}) with |δx|,|δy|≤s|\delta_{x}|,|\delta_{y}|\leq s.
+This mimics a camera translation that moves content out of view instead of wrapping it around.
+•
+Bilinear fractional shifts.
+To simulate sub-pixel motion, we translate the image by (δx/6,δy/6)(\delta_{x}/6,\delta_{y}/6) with |δx|,|δy|≤s|\delta_{x}|,|\delta_{y}|\leq s, using bilinear interpolation. Here, we leave an edge of one pixel of the original image in each direction to avoid edge artifacts.
+We compare the baseline, APS and AFT XCiT-Small models with other publicly available trained models, in similar scale as XCiT-small (26M) (indicates number of parameters): CvT-13 (20M), Swin-T (28M), and ViT-Base (86M).
+We repeat these experiments with ss (max-shift) in the range 0 to 6.
+The results in Figure 2 show our model has improved robustness to both these types of realistic shifts, despite not being specifically designed for them.
+Among the additional baselines, the vanilla ViT degrades the most under crop-shifts, whereas under bilinear fractional shifts it is surprisingly competitive and in fact better than the hybrid backbones (XCiT, Swin, CvT).
+(a) Adversarial “Crop-shifts”
+(b) Adversarial Bilinear fractional shifts
+Figure 2:
+ImageNet adversarial accuracy under realistic translations.
+Adversarial accuracies under (a) "Crop-shifts," simulating camera translations, and (b) "Bilinear fractional shifts," simulating realistic sub-pixel image translations. The Alias-Free Transformer (AFT) consistently outperforms baseline XCiT, APS, and other vision transformer variants (CvT, Swin and ViT), demonstrating superior robustness against realistic translations.
+4.4 Ablation study
+We conduct an ablation study on XCiT-Nano to evaluate the impact of each of the alias-free modifications on the model performance.
+We train the baseline model on ImageNet with one specific change, and report the results in Table 2.
+Surprisingly, replacing the layer norm with alias-free layer-norm and replacing class attention with average pooling cause a much larger degradation in accuracy in comparison to the marginal degradation in the final alias-free model.
+On the other hand, removing the positional encoding leads to a small improvement in accuracy, emphasizing that it may be unnecessary in hybrid architectures.
+Model
+Accuracy
+Change (%)
+Baseline
+70.4
+–
+Cyclic convolution
+70.4
++0.0%
+AvgPool
+69.1
+–1.8%
+AF-LayerNorm
+69.6
+–1.1%
+No positional encoding
+70.7
++0.4%
+AF (AvgPool)
+70.4
++0.0%
+AF (AF Class Attention)
+70.6
++0.3%
+Table 2: Ablation study on alias-free components of XCiT-Nano (ImageNet).
+Evaluation of isolated alias-free modifications to the baseline model. Alias-free layer normalization (AF-LayerNorm) and replacing class-attention with average pooling (AvgPool) result in notable accuracy degradation individually. Removing positional encoding slightly improves performance. The final combined alias-free model retains near-baseline accuracy.
+Model
+Train time
+[hours]
+XCiT-Small (Baseline)
+69
+XCiT-Small-APS
+98
+XCiT-Small-AF (ours)
+487
+Table 3: Training runtime. Train time was measured on 8 ×\times NVIDIA RTX A6000 using batch size 1024 for the baseline model and batch size 512 in the APS and AF models, due to memory constraints.
+5 Related work
+A few studies have shown a broad effect of aliasing in deep neural networks, e.g., breaking shift-equivariance in convnets [66, 4], inconsistencies in image generation [31, 69, 63], and breaking continuous-discrete equivalence in neural operators [68, 54, 19, 5].
+Shift invariant convnets.
+For a long time, convolutional neural networks have held dominance in vision thanks to their useful inductive biases, including translation invariance.
+However, previous studies have shown their output can in fact change in a large extent due to small translations [4, 17].
+This has led to extensive research to find the root causes and resolve this problem.
+Zhang [66], Azulay and Weiss [4] have identified shift-invariance breaks as a result of aliasing in downsampling and nonlinear layers.
+Consequently, other studies suggested solving this problem by plugging a low-pass filter before downsampling [66, 28, 22], and preventing aliasing in nonlinearities by using smooth activation functions [30, 56, 39] and by applying activations after upsampling [31, 39, 59].
+Other works suggested maintaining shift-invariance in convnets by downsampling on adaptive grids [6, 45].
+Specifically, the adaptive sampling method (APS) [6, 45] has been shown to retain perfect consistency to integer
+cyclic translations, while the anti-aliasing approach maintains consistency in fractional translations as well.
+Worth mentioning here are recent works that propose transforming the input into a “canonic” shift-invariant representation [50, 11], which theoretically makes equivariance of the following neural network unnecessary.
+Shift invariant transformers.
+Vision transformers have gained dominance despite not having the convnet priors and being even more sensitive to image translations.
+Some studies have proposed hierarchical ViT architectures similar to convnets [38, 18, 14, 61, 48],
+and “hybrid” architectures including convolutional layers directly [60].
+Furthermore, some works have drawn parallels between self-attention and dynamic convolutions [26, 9, 1], motivating reinterpretations of the attention mechanism through a convolutional lens.
+Few studies have taken inspiration from these studies aiming to retain shift-invariance in convnets and implemented their ideas into ViTs.
+Qian et al. [41] proposes plugging a low-pass filter post self-attention to reduce aliasing, partially improving consistency similar to Zhang [66].
+Rojas-Gomez et al. [46], Ding et al. [13] adapt the adaptive sampling method (APS) into ViT layers, certifying consistency to integer cyclic translations.
+Other studies proposed more general framework for group equivariant attention [47, 62].
+Yet, to the best of our knowledge, no other work has dealt with the invariance of ViTs to fractional shifts.
+Linear attention.
+The standard Transformer architecture relies on softmax-based attention [57], characterized by quadratic computational complexity in the number of tokens.
+To overcome scalability limitations, linear and kernel-based attention mechanisms have been proposed [32, 7], substantially reducing complexity while maintaining performance.
+For example, linear attention leverages a linear approximation of the softmax kernel, achieving significant efficiency gains [58].
+In vision, models like SimA [34] and XCiT [16] utilize simplified normalization schemes to replace the expensive softmax operation, enabling to avoid a direct computation of full attention maps.
+6 Discussion and limitations
+In this paper, we propose a shift-invariant alias-free vision transformer by introducing a class of shift-equivariant attention operations.
+We show that the AFT maintains competitive accuracy and superior robustness to fractional shifts, compared to other ViTs.
+We next discuss a few of our model limitations.
+Polynomial activation function
+Michaeli et al. [39] propose replacing nonlinear activation functions, such as GELU, with polynomial approximations.
+This mathematically ensures the overall activation layer (including upsampling) is shift-equivariant w.r.t. continuous domain, namely perfectly consistent to fractional shifts.
+In our experiments, we observe that this leads to a significant reduction in performance, which is caused specifically due to the activation replacement in the patch-embedding stage (see Appendix B).
+On the other hand, we observe that the filtered activation function using GELU leads to a rather small reduction in consistency.
+Notably, the certified consistency is limited to cyclic shifts and fractional shifts performed by sinc-interpolation, both induce artifacts that do not appear in natural images.
+We find that similar to the AFC, our model also has significant improvement in robustness to realistic translations despite the imperfect consistency to cyclic shifts.
+Runtime performance
+The alias-free modifications we perform in our model to attain shift invariance, despite not requiring any additional parameter, cause a substantial runtime increase, as shown in Table 3.
+This is mainly due to the downsampling and upsampling, which are implemented in the Fourier domain using FFT, similar to other works [39, 69, 21, 22, 42], seemingly underoptimized for GPU as of today [20, 52].
+Acknowledgments and Disclosure of Funding
+The research of DS was funded by the European Union (ERC, A-B-C-Deep, 101039436).
+Views and opinions expressed are however those of the author only and do not necessarily reflect those of the European Union or the European Research Council Executive Agency (ERCEA).
+Neither the European Union nor the granting authority can be held responsible for them.
+DS also acknowledges the support of the Schmidt Career Advancement Chair in AI.
+References
+[1]
+Jean-Marc Andreoli.
+Convolution, attention and structure embedding, March 2020.
+URL http://arxiv.org/abs/1905.01289.
+arXiv:1905.01289 [cs].
+[2]
+Md Fahim Anjum.
+Advancing Diffusion Models: Alias-Free Resampling and Enhanced Rotational Equivariance, November 2024.
+URL http://arxiv.org/abs/2411.09174.
+arXiv:2411.09174 [cs].
+[3]
+Bouzid Arezki, Fangchen Feng, and Anissa Mokraoui.
+Convolutional Transformer-Based Image Compression.
+In 2023 Signal Processing: Algorithms, Architectures, Arrangements, and Applications (SPA), pages 154–159, September 2023.
+doi: 10.23919/SPA59660.2023.10274433.
+URL http://arxiv.org/abs/2409.04118.
+arXiv:2409.04118 [eess].
+[4]
+Aharon Azulay and Yair Weiss.
+Why do deep convolutional networks generalize so poorly to small image transformations?
+Journal of Machine Learning Research, 20:1–25, 2019.
+URL https://youtu.be/MpUdRacvkWk.
+arXiv: 1805.12177v4 ISBN: 1805.12177v4.
+[5]
+Francesca Bartolucci, Emmanuel de Bézenac, Bogdan Raonić, Roberto Molinaro, Siddhartha Mishra, and Rima Alaifari.
+Representation Equivalent Neural Operators: a Framework for Alias-free Operator Learning.
+Advances in Neural Information Processing Systems, 36, May 2023.
+ISSN 10495258.
+URL https://arxiv.org/abs/2305.19913v2.
+arXiv: 2305.19913 Publisher: Neural information processing systems foundation.
+[6]
+Anadi Chaman and Ivan Dokmanić.
+Truly shift-invariant convolutional neural networks.
+Proceedings of the IEEE Computer Society Conference on Computer Vision and Pattern Recognition, pages 3772–3782, November 2020.
+ISSN 10636919.
+doi: 10.48550/arxiv.2011.14214.
+URL https://arxiv.org/abs/2011.14214v4.
+arXiv: 2011.14214 Publisher: IEEE Computer Society ISBN: 9781665445092.
+[7]
+Krzysztof Choromanski, Valerii Likhosherstov, David Dohan, Xingyou Song, Andreea Gane, Tamas Sarlos, Peter Hawkins, Jared Davis, Afroz Mohiuddin, Lukasz Kaiser, David Belanger, Lucy Colwell, and Adrian Weller.
+Rethinking Attention with Performers, November 2022.
+URL http://arxiv.org/abs/2009.14794.
+arXiv:2009.14794 [cs].
+[8]
+Xiangxiang Chu, Zhi Tian, Bo Zhang, Xinlong Wang, and Chunhua Shen.
+Conditional Positional Encodings for Vision Transformers, February 2023.
+URL http://arxiv.org/abs/2102.10882.
+arXiv:2102.10882 [cs].
+[9]
+Jean Baptiste Cordonnier, Andreas Loukas, and Martin Jaggi.
+On the Relationship between Self-Attention and Convolutional Layers.
+8th International Conference on Learning Representations, ICLR 2020, November 2019.
+URL https://arxiv.org/abs/1911.03584v2.
+arXiv: 1911.03584 Publisher: International Conference on Learning Representations, ICLR.
+[10]
+Marco Cotogni, Fei Yang, Claudio Cusano, Andrew D. Bagdanov, and Joost van de Weijer.
+Exemplar-free Continual Learning of Vision Transformers via Gated Class-Attention and Cascaded Feature Drift Compensation, July 2023.
+URL http://arxiv.org/abs/2211.12292.
+arXiv:2211.12292 [cs].
+[11]
+Berken Utku Demirel and Christian Holz.
+Shifting the Paradigm: A Diffeomorphism Between Time Series Data Manifolds for Achieving Shift-Invariancy in Deep Learning, February 2025.
+URL http://arxiv.org/abs/2502.19921.
+arXiv:2502.19921 [cs].
+[12]
+Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei.
+ImageNet: A large-scale hierarchical image database.
+In 2009 IEEE Conference on Computer Vision and Pattern Recognition, pages 248–255. IEEE, June 2009.
+ISBN 978-1-4244-3992-8.
+doi: 10.1109/CVPR.2009.5206848.
+[13]
+Peijian Ding, Davit Soselia, Thomas Armstrong, Jiahao Su, and Furong Huang.
+Reviving Shift Equivariance in Vision Transformers, June 2023.
+URL http://arxiv.org/abs/2306.07470.
+arXiv:2306.07470 [cs].
+[14]
+Xiaoyi Dong, Jianmin Bao, Dongdong Chen, Weiming Zhang, Nenghai Yu, Lu Yuan, Dong Chen, and Baining Guo.
+CSWin Transformer: A General Vision Transformer Backbone with Cross-Shaped Windows, January 2022.
+URL http://arxiv.org/abs/2107.00652.
+arXiv:2107.00652 [cs].
+[15]
+Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby.
+An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale.
+ICLR 2021 - 9th International Conference on Learning Representations, October 2020.
+URL https://arxiv.org/abs/2010.11929v2.
+arXiv: 2010.11929 Publisher: International Conference on Learning Representations, ICLR.
+[16]
+Alaaeldin El-Nouby, Hugo Touvron, Mathilde Caron, Piotr Bojanowski, Matthijs Douze, Armand Joulin, Ivan Laptev, Natalia Neverova, Gabriel Synnaeve, Jakob Verbeek, and Hervé Jegou.
+XCiT: Cross-Covariance Image Transformers, June 2021.
+URL http://arxiv.org/abs/2106.09681.
+arXiv:2106.09681 [cs].
+[17]
+Logan Engstrom, Brandon Tran, Dimitris Tsipras, Ludwig Schmidt, and Aleksander Madry.
+Exploring the Landscape of Spatial Robustness.
+36th International Conference on Machine Learning, ICML 2019, 2019-June:3218–3238, December 2017.
+doi: 10.48550/arxiv.1712.02779.
+URL https://arxiv.org/abs/1712.02779v4.
+arXiv: 1712.02779 Publisher: International Machine Learning Society (IMLS) ISBN: 9781510886988.
+[18]
+Haoqi Fan, Bo Xiong, Karttikeya Mangalam, Yanghao Li, Zhicheng Yan, Jitendra Malik, and Christoph Feichtenhofer.
+Multiscale Vision Transformers.
+Proceedings of the IEEE International Conference on Computer Vision, pages 6804–6815, April 2021.
+ISSN 15505499.
+doi: 10.1109/ICCV48922.2021.00675.
+URL https://arxiv.org/abs/2104.11227v1.
+arXiv: 2104.11227 Publisher: Institute of Electrical and Electronics Engineers Inc. ISBN: 9781665428125.
+[19]
+V. Fanaskov and I. Oseledets.
+Spectral Neural Operators, May 2022.
+URL http://arxiv.org/abs/2205.10573.
+arXiv:2205.10573 [cs, math].
+[20]
+Daniel Y. Fu, Hermann Kumbong, Eric Nguyen, and Christopher Ré.
+FlashFFTConv: Efficient Convolutions for Long Sequences with Tensor Cores, November 2023.
+URL http://arxiv.org/abs/2311.05908.
+arXiv:2311.05908 [cs].
+[21]
+Julia Grabinski, Steffen Jung, Janis Keuper, and Margret Keuper.
+FrequencyLowCut Pooling - Plug and Play Against Catastrophic Overfitting.
+In Shai Avidan, Gabriel Brostow, Moustapha Cissé, Giovanni Maria Farinella, and Tal Hassner, editors, Computer Vision – ECCV 2022, pages 36–57, Cham, 2022. Springer Nature Switzerland.
+ISBN 978-3-031-19781-9.
+doi: 10.1007/978-3-031-19781-9_3.
+[22]
+Julia Grabinski, Janis Keuper, and Margret Keuper.
+Fix your downsampling ASAP! Be natively more robust via Aliasing and Spectral Artifact free Pooling, July 2023.
+URL http://arxiv.org/abs/2307.09804.
+arXiv:2307.09804 [cs].
+[23]
+Ben Graham, Alaaeldin El-Nouby, Hugo Touvron, Pierre Stock, Armand Joulin, Herve Jegou, and Matthijs Douze.
+LeViT: a Vision Transformer in ConvNet’s Clothing for Faster Inference.
+In 2021 IEEE/CVF International Conference on Computer Vision (ICCV), pages 12239–12249, Montreal, QC, Canada, October 2021. IEEE.
+ISBN 978-1-6654-2812-5.
+doi: 10.1109/ICCV48922.2021.01204.
+URL https://ieeexplore.ieee.org/document/9711161/.
+[24]
+Suriya Gunasekar.
+Generalization to translation shifts: a study in architectures and augmentations, July 2022.
+URL https://arxiv.org/abs/2207.02349v1.
+arXiv: 2207.02349.
+[25]
+Kai Han, Yunhe Wang, Hanting Chen, Xinghao Chen, Jianyuan Guo, Zhenhua Liu, Yehui Tang, An Xiao, Chunjing Xu, Yixing Xu, Zhaohui Yang, Yiman Zhang, and Dacheng Tao.
+A Survey on Visual Transformer.
+IEEE Transactions on Pattern Analysis and Machine Intelligence, 45(1):87–110, December 2020.
+doi: 10.1109/TPAMI.2022.3152247.
+URL http://arxiv.org/abs/2012.12556.
+arXiv: 2012.12556v6 Publisher: IEEE Computer Society.
+[26]
+Qi Han, Zejia Fan, Qi Dai, Lei Sun, Ming Ming Cheng, Jiaying Liu, and Jingdong Wang.
+On the Connection between Local Attention and Dynamic Depth-wise Convolution.
+ICLR 2022 - 10th International Conference on Learning Representations, 3, June 2021.
+URL https://arxiv.org/abs/2106.04263v5.
+arXiv: 2106.04263 Publisher: International Conference on Learning Representations, ICLR.
+[27]
+Zhongkai Hao, Zhengyi Wang, Hang Su, Chengyang Ying, Yinpeng Dong, Songming Liu, Ze Cheng, Jian Song, and Jun Zhu.
+GNOT: A General Neural Operator Transformer for Operator Learning, June 2023.
+URL http://arxiv.org/abs/2302.14376.
+arXiv:2302.14376 [cs].
+[28]
+Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+Delving Deep into Rectifiers: Surpassing Human-Level Performance on ImageNet Classification.
+In 2015 IEEE International Conference on Computer Vision (ICCV), pages 1026–1034, Santiago, Chile, December 2015. IEEE.
+ISBN 978-1-4673-8391-2.
+doi: 10.1109/ICCV.2015.123.
+URL http://ieeexplore.ieee.org/document/7410480/.
+[29]
+Dan Hendrycks and Kevin Gimpel.
+Gaussian Error Linear Units (GELUs), June 2023.
+URL http://arxiv.org/abs/1606.08415.
+arXiv:1606.08415 [cs].
+[30]
+Md Tahmid Hossain, Shyh Wei Teng, Ferdous Sohel, and Guojun Lu.
+Anti-aliasing Deep Image Classifiers using Novel Depth Adaptive Blurring and Activation Function, October 2021.
+URL https://arxiv.org/abs/2110.00899v1.
+arXiv: 2110.00899.
+[31]
+Tero Karras, Miika Aittala, Samuli Laine, Erik Härkönen, Janne Hellsten, Jaakko Lehtinen, and Timo Aila.
+Alias-Free Generative Adversarial Networks.
+In Advances in Neural Information Processing Systems, volume 34, pages 852–863. Curran Associates, Inc., 2021.
+URL https://arxiv.org/abs/2106.12423.
+[32]
+Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret.
+Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention.
+In Proceedings of the 37th International Conference on Machine Learning, pages 5156–5165. PMLR, November 2020.
+URL https://proceedings.mlr.press/v119/katharopoulos20a.html.
+ISSN: 2640-3498.
+[33]
+Salman Khan, Muzammal Naseer, Munawar Hayat, Syed Waqas Zamir, Fahad Shahbaz Khan, and Mubarak Shah.
+Transformers in Vision: A Survey.
+ACM Computing Surveys, 54(10), January 2021.
+ISSN 15577341.
+doi: 10.1145/3505244.
+URL https://arxiv.org/abs/2101.01169v5.
+arXiv: 2101.01169 Publisher: Association for Computing Machinery.
+[34]
+Soroush Abbasi Koohpayegani and Hamed Pirsiavash.
+SimA: Simple Softmax-Free Attention for Vision Transformers.
+In Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV), pages 2607–2617, January 2024.
+[35]
+Jonathan Krause, Michael Stark, Jia Deng, and Li Fei-Fei.
+3D Object Representations for Fine-Grained Categorization.
+In 2013 IEEE International Conference on Computer Vision Workshops, pages 554–561, December 2013.
+doi: 10.1109/ICCVW.2013.77.
+URL https://ieeexplore.ieee.org/document/6755945.
+[36]
+Alex Krizhevsky.
+Learning Multiple Layers of Features from Tiny Images.
+2009.
+[37]
+Zhijie Li, Tianyuan Liu, Wenhui Peng, Zelong Yuan, and Jianchun Wang.
+A transformer-based neural operator for large-eddy simulation of turbulence, June 2024.
+URL http://arxiv.org/abs/2403.16026.
+arXiv:2403.16026 [physics].
+[38]
+Ze Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan Wei, Zheng Zhang, Stephen Lin, and Baining Guo.
+Swin Transformer: Hierarchical Vision Transformer using Shifted Windows.
+Proceedings of the IEEE International Conference on Computer Vision, pages 9992–10002, March 2021.
+ISSN 15505499.
+doi: 10.1109/ICCV48922.2021.00986.
+URL https://arxiv.org/abs/2103.14030v2.
+arXiv: 2103.14030 Publisher: Institute of Electrical and Electronics Engineers Inc. ISBN: 9781665428125.
+[39]
+Hagay Michaeli, Tomer Michaeli, and Daniel Soudry.
+Alias-Free Convnets: Fractional Shift Invariance via Polynomial Activations.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 16333–16342, 2023.
+doi: 10.48550/arXiv.2303.08085.
+ISSN: 23318422.
+[40]
+Adam Paszke, Sam Gross, Soumith Chintala, Gregory Chanan, Edward Yang, Zachary DeVito, Zeming Lin, Alban Desmaison, Luca Antiga, and Adam Lerer.
+Automatic differentiation in PyTorch.
+2017.
+[41]
+Shengju Qian, Hao Shao, Yi Zhu, Mu Li, and Jiaya Jia.
+Blending Anti-Aliasing into Vision Transformer.
+Advances in Neural Information Processing Systems, 34:5416–5429, December 2021.
+URL https://github.com/amazon-research/anti-aliasing-transformer.
+[42]
+Md Ashiqur Rahman and Raymond A. Yeh.
+Truly Scale-Equivariant Deep Nets with Fourier Layers, November 2023.
+URL http://arxiv.org/abs/2311.02922.
+arXiv:2311.02922 [cs].
+[43]
+Bogdan Raonic, Roberto Molinaro, Tim De Ryck, Tobias Rohner, Francesca Bartolucci, Rima Alaifari, Siddhartha Mishra, and Emmanuel de Bézenac.
+Convolutional Neural Operators for robust and accurate learning of PDEs.
+Advances in Neural Information Processing Systems, 36:77187–77200, December 2023.
+URL https://proceedings.neurips.cc/paper_files/paper/2023/hash/f3c1951b34f7f55ffaecada7fde6bd5a-Abstract-Conference.html.
+[44]
+Oren Rippel, Jasper Snoek, and Ryan P. Adams.
+Spectral representations for convolutional neural networks.
+Advances in Neural Information Processing Systems, 2015-January:2449–2457, 2015.
+ISSN 10495258.
+arXiv: 1506.03767 Publisher: Neural information processing systems foundation.
+[45]
+Renan A. Rojas-Gomez, Teck-Yian Lim, Alex Schwing, Minh Do, and Raymond A. Yeh.
+Learnable Polyphase Sampling for Shift Invariant and Equivariant Convolutional Networks.
+Advances in Neural Information Processing Systems, 35:35755–35768, December 2022.
+URL https://proceedings.neurips.cc/paper_files/paper/2022/hash/e87b1e06be8c3594c810e8991e77ea40-Abstract-Conference.html.
+[46]
+Renan A. Rojas-Gomez, Teck-Yian Lim, Minh N. Do, and Raymond A. Yeh.
+Making Vision Transformers Truly Shift-Equivariant.
+pages 5568–5577, 2024.
+URL https://openaccess.thecvf.com/content/CVPR2024/html/Rojas-Gomez_Making_Vision_Transformers_Truly_Shift-Equivariant_CVPR_2024_paper.html.
+[47]
+David W. Romero and Jean-Baptiste Cordonnier.
+Group Equivariant Stand-Alone Self-Attention For Vision, March 2021.
+URL http://arxiv.org/abs/2010.00977.
+arXiv:2010.00977 [cs].
+[48]
+Chaitanya Ryali, Yuan-Ting Hu, Daniel Bolya, Chen Wei, Haoqi Fan, Po-Yao Huang, Vaibhav Aggarwal, Arkabandhu Chowdhury, Omid Poursaeed, Judy Hoffman, Jitendra Malik, Yanghao Li, and Christoph Feichtenhofer.
+Hiera: A Hierarchical Vision Transformer without the Bells-and-Whistles, June 2023.
+URL http://arxiv.org/abs/2306.00989.
+arXiv:2306.00989 [cs].
+[49]
+Peter Shaw, Jakob Uszkoreit, and Ashish Vaswani.
+Self-Attention with Relative Position Representations, April 2018.
+URL http://arxiv.org/abs/1803.02155.
+arXiv:1803.02155 [cs].
+[50]
+Ofir Shifman and Yair Weiss.
+Lost in Translation: Modern Neural Networks Still Struggle with Small Realistic Image Transformations.
+In Computer Vision – ECCV 2024: 18th European Conference, Milan, Italy, September 29–October 4, 2024, Proceedings, Part LXIX, pages 231–247, Berlin, Heidelberg, 2024. Springer-Verlag.
+ISBN 978-3-031-72889-1.
+doi: 10.1007/978-3-031-72890-7_14.
+URL https://doi.org/10.1007/978-3-031-72890-7_14.
+[51]
+Benjamin Shih, Ahmad Peyvan, Zhongqiang Zhang, and George Em Karniadakis.
+Transformers as Neural Operators for Solutions of Differential Equations with Finite Regularity, May 2024.
+URL http://arxiv.org/abs/2405.19166.
+arXiv:2405.19166 [cs].
+[52]
+Matteo Spanio and Antonio Rodà.
+TorchFX: A modern approach to Audio DSP with PyTorch and GPU acceleration, April 2025.
+URL http://arxiv.org/abs/2504.08624.
+arXiv:2504.08624 [eess].
+[53]
+Yutao Sun, Li Dong, Shaohan Huang, Shuming Ma, Yuqing Xia, Jilong Xue, Jianyong Wang, and Furu Wei.
+Retentive Network: A Successor to Transformer for Large Language Models, August 2023.
+URL http://arxiv.org/abs/2307.08621.
+arXiv:2307.08621 [cs].
+[54]
+Karn Tiwari, N. M. Anoop Krishnan, and Prathosh A. P.
+CoNO: Complex Neural Operator for Continuous Dynamical Systems, October 2023.
+URL http://arxiv.org/abs/2310.02094.
+arXiv:2310.02094 [nlin, physics:physics].
+[55]
+Hugo Touvron, Matthieu Cord, Alexandre Sablayrolles, Gabriel Synnaeve, and Hervé Jégou.
+Going deeper with Image Transformers, April 2021.
+URL http://arxiv.org/abs/2103.17239.
+arXiv:2103.17239 [cs] version: 2.
+[56]
+Cristina Vasconcelos, Hugo Larochelle, Vincent Dumoulin, Nicolas Le Roux, and Ross Goroshin.
+An Effective Anti-Aliasing Approach for Residual Networks, November 2020.
+URL http://arxiv.org/abs/2011.10675.
+arXiv:2011.10675 [cs].
+[57]
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Ł ukasz Kaiser, and Illia Polosukhin.
+Attention is All you Need.
+In Advances in Neural Information Processing Systems, volume 30. Curran Associates, Inc., 2017.
+URL https://proceedings.neurips.cc/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html.
+[58]
+Sinong Wang, Belinda Z. Li, Madian Khabsa, Han Fang, and Hao Ma.
+Linformer: Self-Attention with Linear Complexity, June 2020.
+URL http://arxiv.org/abs/2006.04768.
+arXiv:2006.04768 [cs].
+[59]
+Emmy S. Wei.
+Aliasing-Free Convolutional Nonlinear Networks Using Implicitly Defined Functions.
+March 2022.
+URL https://hal.science/hal-03475613.
+[60]
+Haiping Wu, Bin Xiao, Noel Codella, Mengchen Liu, Xiyang Dai, Lu Yuan, and Lei Zhang.
+CvT: Introducing Convolutions to Vision Transformers.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV), pages 22–31, October 2021a.
+[61]
+Kan Wu, Houwen Peng, Minghao Chen, Jianlong Fu, and Hongyang Chao.
+Rethinking and improving relative position encoding for vision transformer.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision, pages 10033–10041, 2021b.
+[62]
+Renjun Xu, Kaifan Yang, Ke Liu, and Fengxiang He.
+$E(2)$-Equivariant Vision Transformer, July 2023.
+URL http://arxiv.org/abs/2306.06722.
+arXiv:2306.06722 [cs].
+[63]
+Cuihong Yu, Cheng Han, and Chao Zhang.
+DMFFT: improving the generation quality of diffusion models using fast Fourier transform.
+Scientific Reports, 15(1):10200, March 2025.
+ISSN 2045-2322.
+doi: 10.1038/s41598-025-94381-8.
+URL https://www.nature.com/articles/s41598-025-94381-8.
+Publisher: Nature Publishing Group.
+[64]
+Weihao Yu, Mi Luo, Pan Zhou, Chenyang Si, Yichen Zhou, Xinchao Wang, Jiashi Feng, and Shuicheng Yan.
+MetaFormer Is Actually What You Need for Vision, July 2022.
+URL http://arxiv.org/abs/2111.11418.
+arXiv:2111.11418 [cs].
+[65]
+Li Yuan, Yunpeng Chen, Tao Wang, Weihao Yu, Yujun Shi, Zi-Hang Jiang, Francis E. H. Tay, Jiashi Feng, and Shuicheng Yan.
+Tokens-to-Token ViT: Training Vision Transformers From Scratch on ImageNet.
+pages 558–567, 2021.
+URL https://openaccess.thecvf.com/content/ICCV2021/html/Yuan_Tokens-to-Token_ViT_Training_Vision_Transformers_From_Scratch_on_ImageNet_ICCV_2021_paper.html?ref=https://githubhelp.com.
+[66]
+Richard Zhang.
+Making convolutional networks shift-invariant again.
+36th International Conference on Machine Learning, ICML 2019, 2019-June:12712–12722, 2019.
+URL https://richzhang.github.io/antialiased-cnns/.
+arXiv: 1904.11486 ISBN: 9781510886988.
+[67]
+Tianxiao Zhang, Wenju Xu, Bo Luo, and Guanghui Wang.
+Depth-Wise Convolutions in Vision Transformers for Efficient Training on Small Datasets.
+Neurocomputing, 617:128998, February 2025.
+ISSN 09252312.
+doi: 10.1016/j.neucom.2024.128998.
+URL http://arxiv.org/abs/2407.19394.
+arXiv:2407.19394 [cs].
+[68]
+Jianwei Zheng, Wei Li, Ni Xu, Junwei Zhu, Xiaoxu Lin, and Xiaoqin Zhang.
+Alias-Free Mamba Neural Operator.
+Advances in Neural Information Processing Systems, 37:52962–52995, December 2024.
+URL https://proceedings.neurips.cc/paper_files/paper/2024/hash/5ee553ec47c31e46a1209bb858b30aa5-Abstract-Conference.html.
+[69]
+Yifan Zhou, Zeqi Xiao, Shuai Yang, and Xingang Pan.
+Alias-Free Latent Diffusion Models: Improving Fractional Shift Equivariance of Diffusion Latent Space.
+CVPR, 2025.
+[70]
+Xueyan Zou, Fanyi Xiao, Zhiding Yu, and Yong Jae Lee.
+Delving Deeper into Anti-aliasing in ConvNets.
+International Journal of Computer Vision 2022, pages 1–15, August 2020.
+ISSN 15731405.
+doi: 10.1007/S11263-022-01672-Y/FIGURES/11.
+URL http://arxiv.org/abs/2008.09604.
+arXiv: 2008.09604 Publisher: Springer.
+Appendix A Full proofs
+Proposition 2.
+f⁡(K⊤​V)f\left(K^{\top}V\right) is shift-invariant.
+Proof.
+The problem can be simplified by considering an arbitrary entry in K⊤​VK^{\top}V, since
+(K⊤​V)i,j=Ki⊤​Vj,\left(K^{\top}V\right)_{i,j}=K_{i}^{\top}V_{j}\,,
+where Ki,VjK_{i},\,V_{j} are the ii-th and jj-th columns of KK and VV, representing 1-dimensional signals.
+By Parseval theorem, this inner product between signals equals to their inner product in Fourier domain:
+Ki⊤​Vj=12​π​∫−ππKi^​(ω)​Vj^∗​(ω)​𝑑ω.K_{i}^{\top}V_{j}=\frac{1}{2\pi}\int_{-\pi}^{\pi}\hat{K_{i}}\left(\omega\right)\hat{V_{j}}^{*}\left(\omega\right)d\omega\,.
+(10)
+Denote KτK^{\tau} and VτV^{\tau} the queries and values of a τ\tau-shifted input signal w.r.t. the input signal of KK and VV.
+Following Proposition 1, a translation by τ\tau of the input xx yields a translation by τ\tau of both KK and VV.
+The Fourier transform of the translated signals differs by a phase which cancels out in the inner product, thus we get the same product:
+Kiτ⊤​Vjτ\displaystyle K_{i}^{\tau\top}V_{j}^{\tau}
+=12​π​∫−ππKiτ^​(ω)​Vjτ^∗​(ω)​𝑑ω\displaystyle=\frac{1}{2\pi}\int_{-\pi}^{\pi}\hat{K_{i}^{\tau}}\left(\omega\right)\hat{V_{j}^{\tau}}^{*}\left(\omega\right)d\omega
+(11)
+=12​π​∫−ππKi^​(ω)​ej​ω​τ​(Vj^​(ω)​ej​ω​τ)∗​𝑑ω\displaystyle=\frac{1}{2\pi}\int_{-\pi}^{\pi}\hat{K_{i}}\left(\omega\right)e^{j\omega\tau}\left(\hat{V_{j}}\left(\omega\right)e^{j\omega\tau}\right)^{*}d\omega
+(12)
+=12​π​∫−ππKi^​(ω)​Vj^∗​(ω)​𝑑ω\displaystyle=\frac{1}{2\pi}\int_{-\pi}^{\pi}\hat{K_{i}}\left(\omega\right)\hat{V_{j}}^{*}\left(\omega\right)d\omega
+(13)
+=Ki⊤​Vj.\displaystyle=K_{i}^{\top}V_{j}\>.
+(14)
+∎
+Class Attention.
+Below we formalize the statement regarding shift-invariance of the Class Attention layer in Section 2.3.
+Proposition 4.
+Let Q=X​WqQ=XW_{q}, K=X​WkK=XW_{k} and V=X​WvV=XW_{v} be the query, key and value matrices of a patch sequence X∈ℝN×DX\in\mathbb{R}^{N\times D}.
+Append the sequence with a class token,
+Q~=[Q⊤,qcls]⊤,K~=[K⊤,kcls]⊤,V~=[V⊤,vcls]⊤,\tilde{Q}\;=\;\left[Q^{\top},\,q_{\mathrm{cls}}\right]^{\top},\qquad\tilde{K}\;=\;\left[K^{\top},\,k_{\mathrm{cls}}\right]^{\top},\qquad\tilde{V}\;=\;\left[V^{\top},\,v_{\mathrm{cls}}\right]^{\top},
+(15)
+with learnable vectors qcls,kcls,vcls∈ℝDq_{\mathrm{cls}},k_{\mathrm{cls}},v_{\mathrm{cls}}\in\mathbb{R}^{D}.
+Our CA layer applies the SEA update
+V~′=SEA⁡(Q~,K~,V~)=Q~​f​(K~⊤​V~)∈ℝ(N+1)×D,\tilde{V}^{\prime}\;=\;\mathrm{SEA}\!\left(\tilde{Q},\,\tilde{K},\,\tilde{V}\right)\;=\;\tilde{Q}\,f\!\left(\tilde{K}^{\top}\tilde{V}\right)\;\in\;\mathbb{R}^{\left(N+1\right)\times D},
+(16)
+where
+f:ℝ(D×D)→ℝD×Df\colon\mathbb{R}^{\left(D\times D\right)}\!\to\!\mathbb{R}^{D\times D}
+is any matrix function.
+Denote the output by
+V~′=[V′⁣⊤,vcls′]⊤\tilde{V}^{\prime}=\left[V^{\prime\,\top},\,v_{\mathrm{cls}}^{\prime}\right]^{\top}
+with V′∈ℝN×DV^{\prime}\in\mathbb{R}^{N\times D}.
+Then
+1.
+Patch equivariance:
+V′V^{\prime} is shift-equivariant.
+2.
+Class invariance:
+vcls′v_{\mathrm{cls}}^{\prime} is shift-invariant.
+Proof.
+Let QτQ^{\tau} KτK^{\tau} and VτV^{\tau} be the keys and values obtained from the τ\tau-translated input XX, and define
+Q~τ=[(Qτ)⊤,qcls]⊤,K~τ=[(Kτ)⊤,kcls]⊤,V~τ=[(Vτ)⊤,vcls]⊤.\tilde{Q}^{\tau}\;=\;\left[\left(Q^{\tau}\right)^{\top},\,q_{\mathrm{cls}}\right]^{\top},\quad\tilde{K}^{\tau}\;=\;\left[\left(K^{\tau}\right)^{\top},\,k_{\mathrm{cls}}\right]^{\top},\quad\tilde{V}^{\tau}\;=\;\left[\left(V^{\tau}\right)^{\top},\,v_{\mathrm{cls}}\right]^{\top}.
+(17)
+Shift-invariance of the attention weights.
+Since the translation τ\tau acts only on patch tokens, we get
+K~τ⊤​V~τ=(Kτ)⊤​Vτ+kcls​vcls⊤=K⊤​V+kcls​vcls⊤=K~⊤​V~,\tilde{K}^{\tau\,\top}\tilde{V}^{\tau}\;=\;\left(K^{\tau}\right)^{\!\top}V^{\tau}+k_{\mathrm{cls}}v_{\mathrm{cls}}^{\top}\;=\;K^{\top}V+k_{\mathrm{cls}}v_{\mathrm{cls}}^{\top}\;=\;\tilde{K}^{\top}\tilde{V},
+(18)
+where the middle equality uses Proposition 2.
+The rank-one class term kcls​vcls⊤k_{\mathrm{cls}}v_{\mathrm{cls}}^{\top} is constant (independent of the input translation), hence f⁡(K~⊤​V~)f(\tilde{K}^{\top}\tilde{V}) is shift-invariant.
+It holds that
+V~′=Q~​f​(K~⊤​V~)=[Q⊤​f​(K~⊤​V~),qcls⊤​f​(K~⊤​V~)]⊤\tilde{V}^{\prime}=\tilde{Q}f\left(\tilde{K}^{\top}\tilde{V}\right)=\left[Q^{\top}f\left(\tilde{K}^{\top}\tilde{V}\right),\,q_{\mathrm{cls}}^{\top}f\left(\tilde{K}^{\top}\tilde{V}\right)\right]^{\top}
+(19)
+Patch equivariance.
+From Equation 19, the patch tokens post CA are V′=Q⊤​f​(K~⊤​V~)V^{\prime}=Q^{\top}f\left(\tilde{K}^{\top}\tilde{V}\right), where f⁡(K~⊤​V~)f\left(\tilde{K}^{\top}\tilde{V}\right) is shift-invariant, therefore V′V^{\prime} is shift-equivariant similar to Proposition 3.
+Class invariance.
+From Equation 19, the class token post CA is qcls⊤​f​(K~⊤​V~)q_{\mathrm{cls}}^{\top}f\left(\tilde{K}^{\top}\tilde{V}\right), which is shift-invariant.
+∎
+Appendix B Additional results
+B.1 Additional datasets
+We evaluate all models from section 4.1 on three additional classification benchmarks — CIFAR-10, CIFAR-100 [36], and Stanford Cars [35] — under two protocols: (i) fine-tuning ImageNet-pretrained checkpoints and (ii) training from scratch.
+In both protocols, we train each model using the ImageNet recipe of Table 8 with 1,0001{,}000 epochs, where in the fine-tuning protocol, we initialize the model weights using the checkpoints from section 4.1.
+We report top-1 accuracy together with cyclic shift consistency for integer and half-pixel translations, defined exactly as in Section 4.1.
+Across all datasets, AFT maintains near-perfect shift-equivariance (above 99% consistency in integer and half-pixel shifts).
+Additionally, when fine-tuned, the XCiT-Small-AF model is slightly but consistently more accurate than the baseline on all three datasets, suggesting that the shift-invariance prior can benefit larger transformers when adapting to small datasets.
+Table 4: CIFAR and Stanford Cars (fine-tuning): accuracy and cyclic shift consistency. We fine-tune ImageNet-pretrained checkpoints on CIFAR-10/100 and Stanford Cars. Metrics are top-1 test accuracy and consistency to integer and half-pixel cyclic translations (as in Section 4.1).
+CIFAR-10
+CIFAR-100
+Stanford Cars
+Model
+Test
+accuracy
+Integer
+shift consist.
+Half-pixel
+shift consist.
+Test
+accuracy
+Integer
+shift consist.
+Half-pixel
+shift consist.
+Test
+accuracy
+Integer
+shift consist.
+Half-pixel
+shift consist.
+XCiT-Nano (Baseline)
+98.0
+98.0
+98.1
+84.3
+89.4
+89.9
+92.3
+95.2
+95.1
+XCiT-Nano-APS
+97.7
+100.0
+99.4
+84.1
+100.0
+96.9
+92.2
+100.0
+97.0
+XCiT-Nano-AF (ours)
+97.7
+99.9
+99.9
+84.3
+99.6
+99.4
+92.1
+99.9
+99.8
+XCiT-Small (Baseline)
+98.2
+98.4
+98.5
+85.6
+87.4
+89.6
+92.6
+95.4
+96.3
+XCiT-Small-APS
+98.3
+100.0
+99.5
+85.4
+100.0
+96.2
+92.2
+100.0
+97.2
+XCiT-Small-AF (ours)
+98.4
+99.9
+99.9
+85.8
+99.6
+99.5
+93.0
+99.9
+99.9
+Table 5: CIFAR and Stanford-Cars (from scratch): accuracy and cyclic shift consistency. Models are trained from scratch on each dataset using the ImageNet training setup with 1,0001{,}000 epochs; metrics as in Section 4.1.
+CIFAR-10
+CIFAR-100
+Stanford Cars
+Model
+Test
+accuracy
+Integer
+shift consist.
+Half-pixel
+shift consist.
+Test
+accuracy
+Integer
+shift consist.
+Half-pixel
+shift consist.
+Test
+accuracy
+Integer
+shift consist.
+Half-pixel
+shift consist.
+XCiT-Nano (Baseline)
+97.2
+98.0
+98.0
+82.4
+90.3
+90.2
+86.5
+91.6
+91.7
+XCiT-Nano-APS
+97.2
+100.0
+99.2
+82.3
+100.0
+97.1
+84.1
+100.0
+93.3
+XCiT-Nano-AF (ours)
+96.5
+99.9
+99.9
+81.3
+99.5
+99.4
+85.3
+99.7
+99.6
+XCiT-Small (Baseline)
+98.3
+98.7
+98.7
+85.3
+91.3
+91.3
+89.6
+95.1
+94.5
+XCiT-Small-APS
+98.0
+100.0
+99.4
+85.1
+100.0
+95.7
+90.5
+100.0
+96.5
+XCiT-Small-AF (ours)
+97.6
+99.9
+99.9
+83.4
+99.6
+99.6
+88.5
+99.8
+99.8
+B.2 Global average pooling vs AF Class Attention
+In section 2 we propose two mechanisms to get a shift-invariant global representation out of the AFT —
+a global average pooling over the embedding dimension and an alias-free class attention that leverages SEA to maintain a shift-invariant class token.
+We compare the final AF class attention (AFCA) head with a global average pooling (AvgPool) head within the AFT architecture.
+As shown in Table 6, both AFCA and AvgPool maintain near-perfect shift consistency.
+AFCA demonstrates consistent improvement over AvgPool in top-1 accuracy, most visible in the Small variant.
+Table 6: AF class attention vs. global average pooling (AFT).
+Top-1 accuracy and cyclic shift consistency (integer and half-pixel) on ImageNet.
+AvgPool and AFCA retain near-perfect equivariance, while AFCA provides a consistent accuracy gain, most notably for the Small variant.
+Model
+Test
+accuracy
+Integer
+shift consist.
+Half-pixel
+shift consist.
+XCiT-Nano-AF (AvgPool)
+70.35
+99.0
+98.6
+XCiT-Nano-AF (AF-CA)
+70.48
+99.2
+99.4
+XCiT-Small-AF (AvgPool)
+80.70
+99.5
+99.4
+XCiT-Small-AF (AF-CA)
+81.81
+99.5
+99.4
+B.3 Polynomial vs GELU comparison
+Similar to the Alias-Free ConvNet (AFC) of Michaeli et al. [39], certified shift-invariance in the
+Alias-Free Transformer (AFT) can be achieved by replacing the filtered GELU activations with polynomial approximations.
+We therefore train an alias-free XCiT-Nano variant whose activations are polynomials with learnable coefficients
+per embedding channel, following Michaeli et al. [39].
+We use polynomials of degree 2 in the AFT blocks and degree 3 in the patch-embedding stage (PE), which remains alias-free thanks to the downsampling layers following the activations in the PE.
+The results in Table 7 show that the full polynomial model (“Poly”) has near-100% shift consistency, with a small gap that can be attributed to numerical errors, similar to the case in the APS model (see Table 1).
+However, we observe that unlike in the AFC, polynomial activations lead to a significant reduction in accuracy.
+Interestingly, when the four GELU activations in the PE are retained and only the block activations are replaced (“GELU (PE), Poly (Blocks)”), most of the lost accuracy is recovered.
+This may indicate that polynomial activations limit the representational capacity of the convolutional PE which is
+much shallower than the convnet tested in AFC.
+Table 7: Effect of polynomial activations on ImageNet performance and shift consistency. Top-1 accuracy and consistency (%) of XCiT-Nano with the standard filtered GELU, full polynomial replacement (Poly), and a hybrid that keeps GELU in the patch-embedding (PE)
+Model
+Test
+accuracy
+Integer
+shift consist.
+Half-pixel
+shift consist.
+GELU
+70.4
+98.8
+98.4
+Poly
+65.8
+99.7
+99.6
+GELU (PE), Poly (Blocks)
+68.5
+99.4
+98.7
+Appendix C Translation visualization
+We provide visual examples of the translations described in the paper in Figures 3 and 4.
+(a) Original image
+(b) Circular integer shift
+(c) Circular half-pixel shift
+Figure 3:
+Visualization of cyclic shifts.
+(a) Original ImageNet [12] validation-set image. (b) Circular shift of 16 pixels in horizontal and vertical axes. (c) Circular shift of 16.5 pixels in horizontal and vertical axes. The original image is upsampled by a factor 2, circularly shifted by 33 pixels, and downsampled by factor 2.
+(a) Original image
+(b) Crop-shift
+(c) Bilinear fractional shift
+Figure 4:
+Visualization of realistic shifts.
+(a) Original ImageNet [12] validation-set image — 224×224224\times 224 center crop of the original 256×256256\times 256 image.
+(b) Crop-shift of the original image of 16 pixels in the horizontal and vertical axes. The cropped area is shifted by 16 pixels with respect to the cropped area in the original image.
+(c) Bilinear fractional shift of 0.5 pixels in horizontal and vertical axes. We use a 226×226226\times 226 center crop of the original 256×256256\times 256 image and simulate a fractional-pixel shift using a grid-sample with a fractional offset.
+Appendix D Experiments details
+As mentioned in Section 4, we used the same training settings as in XCiT [16], except for lowering the batch size for the AF model.
+We report the used training hyperparameters in Table 8.
+Table 8: Hyperparameters. Unless stated otherwise, the same settings apply to all models.
+Category
+Parameter
+Value
+Optimizer
+Optimizer
+AdamW
+(β1,β2)(\beta_{1},\beta_{2})
+(0.9, 0.999)(0.9,\,0.999)
+Weight decay
+0.050.05
+Learning rate scheduling
+Base LR
+1×10−31\times 10^{-3} (Baseline), 5×10−45\times 10^{-4} (AF, APS)
+Warm-up epochs
+55
+LR decay
+Cosine
+Min LR
+1×10−51\times 10^{-5}
+Data
+Resolution
+224×224224\times 224
+Batch size
+10241024 (Baseline), 512512 (AF, APS)
+Regularization
+Layer scale (ϵ\epsilon init)
+1.01.0
+Stochastic depth
+0.00.0 (Nano), 0.050.05 (Small)
+D.1 Batch size choice
+Aiming to avoid expensive hyperparameter tuning, we used the XCiT original recipe [16].
+However, in our early experimentations, we observed fluctuations in the training curves of the AF and APS models, which were alleviated by reducing the batch size.
+To decide fair batch sizes, we trained the Nano variants of Baseline, APS, and AF with batch sizes 512 and 1024 and picked, for each method, the configuration that performed best.
+The Baseline favored 1024 (top-1 70.470.4 vs. 70.170.1 at 512), while APS and AF favored 512 (APS: 68.768.7 vs. 67.267.2 at 1024; AF: 70.470.4 vs. 70.170.1 at 1024).
+We therefore used batch size 10241024 for the Baseline and 512512 for APS and AF throughout the paper.
+Note that the figures above for the AF and APS models are with an AvgPool head.
+We applied the same choice to the Nano and Small variants with CA and AFCA heads without further tuning.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

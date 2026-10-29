@@ -1,0 +1,450 @@
+Exact-v1 HTML https://arxiv.org/html/2606.02800v1 ; named section only, not entire report.
+ 
+ 4.2 Generator Training
+
+
+ 
+ The Cosmos 3 Generator is trained using a progressive multimodal curriculum designed to jointly model visual, auditory, and action-conditioned world dynamics across diverse resolutions, durations, and conditioning modalities. The training recipe emphasizes scalability, high-fidelity generation, and efficient long-context learning. During pre-training, the model learns general generative priors from large-scale data spanning images, videos, and audio. Subsequent training stages progressively introduce richer multimodal supervision, including actions and transfer sequences, enabling the model to learn temporally coherent world evolution and physically grounded interactions.
+
+ 
+ 
+ Training objective.
+
+
+ 
+ The Cosmos 3 generator is optimized under a rectified flow matching objective across all modalities. For a target latent from any modality, we construct a noisy latent via the straight-line interpolation x_{\sigma}=\sigma\cdot\epsilon+(1-\sigma)\cdot x_{0} , where x_{0} is the clean target, \epsilon\sim\mathcal{N}(0,I) , and \sigma\in[0,1] is the noise level. A single denoiser v_{\theta}(x_{\sigma},\sigma,c) is trained to predict the constant velocity v^{*}=\epsilon-x_{0} via masked mean-squared error, where conditioning tokens ( \eg , clean conditional frames in image-to-video tasks) are gated out of the loss.
+We apply per-modality time sampling, drawing noise level \sigma independently for each modality (images, videos, audio, and action).
+Following Waver ( Zhang et al., 2025c ) , we use logit-normal noise distribution for image, audio, and action batches and mode sampling for video batches. We found that using mode sampling yields better generation quality. We further map t through a rectified-flow shift reparameterization \sigma=s\cdot\bar{t}/(1+(s-1)\cdot\bar{t}) with \bar{t}=1-t , where s\geq 1 biases the marginal toward higher noise.
+
+ 
+
+
+ 
+ 4.2.1 Pre-Training
+
+
+ 
+ During the pre-training stage, we jointly train the model to generate images, videos, and audio across diverse resolutions and generation tasks. To support this, we employ a multi-resolution training strategy and optimize the model jointly over multiple generation tasks, including Text-to-Image, Text-to-(Video+Audio), Image-to-(Video+Audio), and Video-to-(Video+Audio).
+
+ 
+ 
+ Multi-resolution training.
+
+
+ 
+ Rather than committing to a single output resolution, we train simultaneously across three resolution tiers (256p, 480p, 720p), five aspect ratios and variable number of frames, as shown in Tab.   5 . This exposes the model to high-fidelity content while encouraging resolution-agnostic representations. The training data is partitioned accordingly: the 256p stream draws from the full dataset (all native resolutions are eligible), the 480p stream is restricted to source material with native resolution at or above 480p, and the 720p stream uses only content at or above 720p, preserving sharpness and fine detail at the highest tier. Each resolution tier imposes a different maximum frame budget: up to 400 frames at 256p and 480p, and 300 frames at 720p. We restrict 720p to 300 frames due to the sequence length constraints. Training batches are composed across the four tiers using a 1:1:2:1 ratio for image-only, video-256p, video-480p, and video-720p samples, respectively. We find that this distribution provides a strong balance between high-fidelity learning and sample diversity, enabling the model to observe more training examples while still emphasizing higher-resolution content.
+We use resolution-adaptive shift values: s=1 at 256p, s=3 at 480p, and s=5 at 720p.
+
+ 
+ 
+ Table 5 : Image/Video Model Specifications. Supported configurations for image and video modalities. Each row shows the FPS range, frame counts (video only), and image/video dimensions (w, h) for the five supported aspect ratios at each resolution. 
+ 
+ 
+ 
+ 
+ Video 
+ Dimensions (w, h) by aspect ratio for images/videos 
+
+ 
+ Resolution 
+ FPS 
+ # frames 
+ 16:9 
+ 4:3 
+ 1:1 
+ 3:4 
+ 9:16 
+
+ 
+ 256p 
+ 10–30 
+ 5–400 
+ (320, 192) 
+ (320, 256) 
+ (256, 256) 
+ (256, 320) 
+ (192, 320) 
+
+ 
+ 480p 
+ 10–30 
+ 5–400 
+ (832, 480) 
+ (736, 544) 
+ (640, 640) 
+ (544, 736) 
+ (480, 832) 
+
+ 
+ 720p 
+ 10–30 
+ 5–300 
+ (1280, 720) 
+ (1104, 832) 
+ (960, 960) 
+ (832, 1104) 
+ (720, 1280) 
+
+ 
+ 
+ 
+ 
+ To prevent gratuitous recompilation overhead while supporting variable sequence lengths, we use token packing with a fixed budget of 74,000 tokens per sequence. Sequences at various resolutions are packed together to fill each batch, maximizing GPU utilization without padding (depicted in Fig.   10 ).
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Image–video pre-training data mixture
+ by resolution 
+
+ 
+ 
+ 
+ Figure 10 : Left: Multi-resolution training and sequence packing. 
+The three resolution tiers (256p, 480p, 720p) differ in their maximum frame budget,
+eligible source material, and rectified-flow noise-shift value; variable-length sequences
+from different tiers are packed together to fill a fixed 74,000-token context window,
+maximizing GPU utilization without padding.
+ Right: Data mixture used in generator pre-training. We use joint image-video training, with videos sampled 80\% of the time and images the remaining 20\% . Within each split, we train at multiple resolutions: 256p, 480p, and 720p. For video batches, we additionally sample uniformly among three conditioning modes—text-to-video, image-to-video, and video-to-video. The exact data mixture is shown in the right panel.
+ 
+ 
+
+
+ 
+ Training modes.
+
+
+ 
+ For a latent video tensor of shape C\times T\times H\times W , let T_{\textrm{cond}} denote the number of conditional latent frames and T_{\textrm{noised}} the number of noisy latent frames ( T=T_{\textrm{cond}}+T_{\textrm{noised}} ). During training, no noise is applied to the first T_{\textrm{cond}} frames, which serve as conditional inputs; only the remaining T_{\textrm{noised}} frames are noised, and the model learns to denoise them. Different choices of T_{\textrm{cond}} and T_{\textrm{noised}} yield different training modes. We use four generation modes—Text-to-Image, Text-to-Video, Image-to-Video, and Video-to-Video—distinguished solely by the number of conditioning visual frames prepended to each sample, with sampling ratios of 20\% , 56\% , 16\% , and 8\% , respectively. All modes use the structured JSON caption format described in Sec.   3.2 .
+
+ 
+ 
+ 
+ • 
+ 
+ Text-to-Image (T2I). Images are treated as a special case of videos with the temporal dimension restricted to T=1 . In this mode, images are drawn randomly from all three resolution tiers and aspect ratios, then sequence-packed before being sent to the model. Since an image sample yields far fewer tokens than a video, a typical sequence contains many more samples than its video counterpart.
+
+ 
+ • 
+ 
+ Text-to-Video (T2V). In text-to-video training, T_{\textrm{cond}}=0 . The model learns to denoise the entire video conditioned solely on text. Alongside the caption, the model receives duration, FPS, and timestamp metadata as additional fields in the JSON caption, enabling it to generate videos of specified length and temporal extent.
+
+ 
+ • 
+ 
+ Image-to-Video (I2V). For single-frame conditioning ( T_{\textrm{cond}}=1 ), the first latent frame is held clean while subsequent frames are noised. The model learns to generate future frames consistent with both the initial frame and the caption.
+
+ 
+ • 
+ 
+ Video-to-Video (V2V). For multi-frame conditioning ( T_{\textrm{cond}}=2 ), the model is conditioned on the first five frames of a video (equivalently, the first two latent frames) and learns to predict future frames consistent with both the conditioning frames and the input prompt.
+
+ 
+ 
+ 
+
+
+ 
+ FPS modulation.
+
+
+ 
+ We train the model with varying FPS values, so the physical temporal spacing between tokens differs across samples: a clip sampled at 30 FPS packs frames more densely in real time than the same number of tokens sampled at 16 FPS. To reflect this, we modulate the temporal axis of 3D MRoPE position encodings by assigning temporal coordinates in proportion to real-world time rather than token index (see Sec.   2 ), with a base rate of 24 FPS. Duration and FPS are also appended to the text prompt, allowing the model to be conditioned on specific temporal characteristics at inference time.
+
+ 
+
+
+ 
+ Optimization.
+
+
+ 
+ Only the generation-specific parameters are updated during the generator pre-training. The reasoner tower remains frozen, preserving the language and visual understanding capabilities. We use FusedAdamW with learning rate 10^{-4} , (\beta_{1},\beta_{2})=(0.9,0.99) , weight decay 0.05 , and gradient clipping at norm 1.0. The learning rate schedule follows a linear decay with warmup, from the peak lr to a floor of 0.30\times over n iterations. To enable classifier-free guidance, we use a text-dropout rate of 10\% across all modalities.
+
+ 
+
+
+ 
+ Tokens trained.
+
+
+ 
+ In the pre-training stage, Cosmos3-Nano was trained on 31.05 T tokens using 1024 NVIDIA GB200 GPUs, while Cosmos3-Super was trained on 17.86 T tokens using 2048 NVIDIA GB200 GPUs.
+
+ 
+
+
+
+
+ 
+ 4.2.2 Mid-Training
+
+
+ 
+ Mid-training bridges the gap between broad pre-training and downstream deployment. At this point, the Generator has already learned general image, video, and audio generation from large-scale data, but the target Physical AI applications require stronger coverage of rare dynamics, embodied scenes, control interfaces, and high-quality visual domains. We therefore continue training from the pre-trained checkpoint with a curated mixture that both preserves the original visual generation modes and introduces new sources of supervision. The stage has two complementary objectives: domain specialization , which increases exposure to high-value Physical AI domains, and multimodal integration , which extends the model from visual and audio generation to action- and control-conditioned world modeling.
+
+ 
+ 
+ Domain specialization.
+
+
+ 
+ While retaining its general knowledge, the model is exposed to highly curated specialized datasets to improve quality and reliability in application-critical Physical AI scenarios. For images, we use a 15.6M-sample mid-training pool that emphasizes high-quality real imagery while adding synthetic and text-rendering data to broaden concept coverage and preserve legible text generation. For videos, we incorporate 74.7M curated clips spanning robotics, autonomous driving, human activity, physics, and synthetic simulation data. These sources target failure modes that are underrepresented in generic web-scale pre-training, such as long-horizon interactions, fine-grained human and robot motion, physical object dynamics, and safety-critical driving or warehouse scenarios. By mixing these domain-focused datasets with the existing image and video training modes, mid-training improves Physical AI relevance without discarding the broad visual priors learned during pre-training, as described in Sec.   3.2.1 .
+
+ 
+
+
+ 
+ Multimodal integration.
+
+
+ 
+ Mid-training expands the Generator from image, video, and audio generation into a unified Physical AI model that can also consume and synthesize action and control signals. We keep the same clean-prefix/noisy-target formulation used in pre-training for T2I, T2V, I2V, and V2V, so existing visual capabilities remain active while new modality-specific tokens are introduced in the diffusion subsequence. This lets action, audio, control, and video tokens share the same temporal coordinate system and two-way attention pattern described in Sec.   2 . In addition to the pre-training modes, we add two additional families of multimodal supervision: action and video transfer.
+
+ 
+ • 
+ 
+ Action. 
+We introduce paired text-video-action training data using the unified action representation in Sec.   2.1.3 . The model is trained not only to predict future video conditioned on actions, but also to infer actions from observed trajectories and to jointly generate actions and visual futures. This teaches the Generator a causal interface between controllable interventions and world evolution.
+
+ 
+ • 
+ 
+ Video transfer. 
+We add control-conditioned transfer data in which clean control signals are provided as inputs and the model denoises the corresponding target image or video. The control signals include edge, blur, depth, and segmentation maps from high-quality video corpora, as well as world-scenario maps for driving scenes. This exposes the model to spatially grounded constraints while retaining text conditioning and visual generation quality.
+
+ 
+ 
+ The mixing ratios of different modalities are shown in Tab.   6 .
+
+ 
+ 
+ Table 6 : Generator mid-training data mixture. After pre-training is done, we introduce new modalities (action and transfer) in the mid-training stage with the data ratios listed below. 
+ 
+ 
+ 
+ 
+ 
+ Training stream 
+ 
+ 
+ 
+ Modes / Conditioning 
+ 
+ Share 
+
+ 
+ 
+ 
+ Image 
+ 
+ 
+ 
+ T2I 
+ 
+ 10% 
+
+ 
+ 
+ 
+ Video 
+ 
+ 
+ 
+ T2V, I2V, V2V 
+ 
+ 32% 
+
+ 
+ 
+ 
+ Video + Audio 
+ 
+ 
+ 
+ T2(V+Audio), I2(V+Audio), V2(V+Audio) 
+ 
+ 8% 
+
+ 
+ 
+ 
+ Action 
+ 
+ 
+ 
+ Forward dynamics, inverse dynamics, policy 
+ 
+ 25% 
+
+ 
+ 
+ 
+ General Transfer 
+ 
+ 
+ 
+ Edge, blur, depth, and segmentation controls 
+ 
+ 20% 
+
+ 
+ 
+ 
+ Driving Transfer 
+ 
+ 
+ 
+ World-scenario-map controls 
+ 
+ 5% 
+
+ 
+ 
+ 
+
+
+ 
+ Multi-resolution training.
+
+
+ 
+ Similar to pre-training, mid-training uses multi-resolution across 256p, 480p, and 720p within a fixed 74K context window. To better handle dynamics and reduce temporal and high-resolution artifacts, we increase rectified-flow shift values to 3 , 5 , and 10 for 256p, 480p, and 720p, respectively.
+
+ 
+
+
+ 
+ Training objective.
+
+
+ 
+ Similar to pre-training, we use the rectified flow objective for all modalities. For action, we inherit the vision noise schedule. The total loss in mid-training is the sum of per-modality velocity MSEs weighted by modality-specific loss scales, with action losses scaled by 10\times to compensate for the smaller per-element MSE of normalized action vectors.
+
+ 
+
+
+ 
+ Optimization.
+
+
+ 
+ Similar to pre-training, we use FusedAdamW with learning rate 10^{-4} , weight decay 0.05 , gradient clipping at norm 1.0, and loss scale 10. The learning rate follows a LambdaLinear schedule with start factor 0.4 and cycle length 100{,}000 .
+
+ 
+
+
+ 
+ Tokens trained.
+
+
+ 
+ In the mid-training stage, Cosmos3-Nano model was trained on 2.4 T tokens using 1024 NVIDIA GB200 GPUs, while Cosmos3-Super model was trained on 1.9 T tokens using 2048 NVIDIA GB200 GPUs.
+
+ 
+
+
+
+
+ 
+ 4.2.3 Text-to-Image Post-Training
+
+
+ 
+ To demonstrate the omnimodal capability of Cosmos3-Super, we further specialize the model into a text-to-image checkpoint, Cosmos3-Super-Text2Image. Our goal is to transfer the model’s physically grounded world understanding to high-quality image generation, aiming for strong open-source T2I results while improving physical plausibility and scene-level alignment.
+
+ 
+ 
+ We perform text-to-image specialization using a two-stage SFT, following the common text-to-image foundation-model training paradigm that emphasizes semantic enhancement before preference-oriented refinement.
+
+ 
+ 
+ 
+ • 
+ 
+ Stage 1: broad T2I specialization. We fine-tune the model for 20k training steps on the curated high-quality SFT dataset. The training mixture is sampled with a controlled ratio of 45\% general real image data, 40\% synthetic image data, and 15\% text-rendering-only data, balancing visual fidelity, caption alignment, and language retention. We use a base learning rate of 1\times 10^{-4} , 2k warmup iterations, and a linear learning-rate decay schedule, while keeping all other hyperparameters consistent with the Cosmos 3 mid-training stage.
+
+ 
+ • 
+ 
+ Stage 2: high-quality refinement. We perform a final 2k-step SFT pass using 470 k carefully curated ultra-high-quality image–caption pairs. This stage further improves visual aesthetics, prompt-following, text-rendering quality, and alignment with human preferences.
+
+ 
+ • 
+ 
+ Resolution and context length. For both stages, we use a fixed context window of 70k tokens and train only on images with a resolution higher than 720p.
+
+ 
+ 
+ 
+ 
+ Overall, Cosmos3-Super-Text2Image delivers strong text-to-image results across both semantic alignment and English text-rendering benchmarks. On UniGenBench, it achieves the best overall score among the evaluated models, reaching 91.26 on the full benchmark (see Tab.   11 ). With an agentic workflow, the model ranked top-1 among open-weight models on the Artificial Analysis Text-to-Image leaderboard ( Sec.   6.2.1 ). These results suggest that downstream T2I modality adaptation from Cosmos 3 is highly effective: it improves scene-level prompt alignment while preserving the model’s physically grounded generation capability.
+
+ 
+
+
+ 
+ 4.2.4 Image-to-Video Post-Training
+
+
+ 
+ Image-to-Video capability is fundamentally important for comprehensive visual understanding. It probes the model’s understanding of physical laws, object permanence, and intricate scene geometry, while also serving as a critical predictive mechanism for embodied AI and robot planning, where simulating plausible future frames yields an effective world model ( Wiedemer et al., 2025 ; Chen et al., 2025a ) . While Cosmos 3 is inherently designed to handle a diverse array of tasks natively, we utilize SFT to explicitly showcase and specialize its potential in the I2V domain. To demonstrate these capabilities, we employ the following procedure:
+
+ 
+ 
+ 
+ • 
+ 
+ Data and training mixture. We fine-tune the model using filtered pre-training data that have been refined for a more balanced topic diversity, augmented via an agentic workflow that identifies model weak spots to retrieve targeted examples from the pre-training set. This is combined with 1,000 high-quality manually curated videos and a dataset of approximately 20k synthetic video clips spanning diverse topics (accounting for roughly 6% of the total tokens). While all video sequences are trained exclusively using the I2V formulation, our training mixture also incorporates 20% T2I image tokens to preserve the model’s semantic alignment.
+
+ 
+ • 
+ 
+ Resolution and duration. We specialize the model for temporal generation at a targeted resolution of 480p and targeted duration of 189 frames, corresponding to roughly 8 seconds at 24fps. This configuration balances inference speed with temporal context, enabling fast, physically plausible video generation over a meaningful time horizon.
+
+ 
+ • 
+ 
+ Training schedule. The I2V post-training stage runs for a duration of 10k iterations at a learning rate of 1\times 10^{-5} . The model processes roughly 50B tokens over the course of SFT.
+
+ 
+ 
+ 
+ 
+ Through post-training, Cosmos3-Super-Image2Video achieves leading quality in image-to-video generation. In particular, the model ranked top-1 among open-weight models on the Artificial Analysis Image-to-Video leaderboard ( Sec.   6.2.2 ). For details on the usage of this model, please refer to Sec.   6.3.1 .
+
+ 
+
+
+ 
+ 4.2.5 Robot Policy Post-Training
+
+
+ 
+ We conduct robot policy post-training to investigate whether our Cosmos 3 omnimodal world models can be extended into powerful robot policy models. Mid-training enables Cosmos 3 to model multimodal sequences, including language, visual observations, and actions, and to generate actions jointly with videos. We further customize it for robot policy learning by incorporating proprioceptive signals, reducing inference latency, and adapting the model to produce executable actions for closed-loop control.
+
+ 
+ 
+ As a pilot study, we use the DROID robot platform and dataset ( Khazatsky et al., 2024 ) due to its popularity and broad community adoption. The DROID platform uses a Franka Panda 7-DoF manipulator with a Robotiq 2F-85 parallel-jaw gripper to perform tabletop manipulation tasks in diverse real-world environments. The DROID dataset comprises 76k trajectories, 350 hours of interaction data, 86 tasks, and 564 scenes, providing substantial scale and broad task diversity for real-world robot policy learning. We ingest DROID at a high resolution of 360 \times 640, apply community-provided idle-frame filtering and failure-demonstration removal, and use random image augmentation during training.
+
+ 
+ 
+ We post-train Cosmos3-Nano-Policy-DROID by resuming from our mid-trained Cosmos3-Nano model, with a freshly initialized action encoder, action-decoding MLP, and action embedding tokens. We apply a 5 \times learning-rate multiplier to the action-related parameters to facilitate faster adaptation. The policy input consists of the current proprioceptive robot state and a three-view visual observation. Specifically, the wrist-view image, with a raw resolution of 360 \times 640, is placed above two external-view images, each with a raw resolution of 180 \times 320, which are concatenated side by side on the bottom left and bottom right. The resulting canvas is 540 \times 640. The policy is trained to predict 32 future absolute joint-position actions, along with auxiliary RGB video frames as additional outputs, operating at 15Hz. We use the official DROID short task instructions as the prompts during this post-training study. We use a learning rate of 2\times 10^{-4} with other hyperparameters following the mid-training setup.
+
+ 
+ 
+ At inference time, we sample the model using 4 diffusion steps with a shifted noise schedule of 5. We also apply classifier-free guidance with CFG parallelism at a guidance scale of 3, and skip video-latent decoding to further reduce inference overhead. Together, these optimizations provide a significant inference speedup, enabling policy server deployment on 2 NVIDIA RTX Pro 6000 GPUs. The downstream joint-position controller is implemented using Franky ( Schneider, 2023 ) and executes the predicted 32 actions at 15Hz.
+
+ 
+ 
+ Overall, Cosmos3-Nano-Policy-DROID achieves strong results in robotic policy tasks. As detailed in Sec.   6.2.5 , it ranks first on both RoboLab ( Yang et al., 2026a ) and RoboArena ( Atreya et al., 2025 ) , demonstrating the effectiveness of Cosmos3 as a foundation model backbone for robot policy learning.
+
+ 
+
+
+
+

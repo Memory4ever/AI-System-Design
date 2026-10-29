@@ -181,6 +181,8 @@ invalidation 规则不能混用。
 
 另一个选择不共享后续层的 indices，而是决定在多深的位置永久缩小本次 Prefill 的 token support。可观察前面若干层 attention 的相对方差，以校准门槛选择执行裁剪的层位：单遍路径先完整执行前层，再让剩余层只处理所保留的 token；两遍路径则先取得 selector 结果，再从第零层重启压缩输入。前层已支付的完整计算、额外观察/score workspace 与重启预算必须分别计入，不能把更晚的 selection depth 当作更多 index reuse，也不能只用剩余 token 数推总 TTFT。方差稳定只是选择代理，不证明删去的 token 没有证据价值；不同门槛、输入人口与层位仍有质量反侧，Full-before 与两遍压缩对照也不是同一执行图。校准漂移、早删证据或总成本不合适时，保留逐层独立选择、原共享计划或完整 Prefill，而不是让一次永久裁剪继承缓存失效规则。<!-- source-family:SF-2026-ARXIV-2601-07667 -->
 
+选定永久裁剪的层位后，保留策略还可以让 selector 和 backbone 一起适配，而不只离线设阈值。在一条[受限可训练裁剪分支](https://arxiv.org/html/2610.26754v1#S4)中，gate 在某层 mixer 后、MLP 前读取状态，保留指定 non-prunable tokens，并停止未选 document tokens 的后续计算；保留项的 score 再作为上层 attention 的 per-key 权重（等价加 log-bias），让选择信号参与训练。Top-k 集合仍离散，不能把该梯度当作对集合选择的精确梯度；full/pruned 双分支 loss 及 LoRA 共同适配也不等于保持原 checkpoint。低层 full-attention 默认仍保存完整 prompt KV，上层 full-attention 只建立保留项与生成项的 KV，原位置编号和后续生成位置不可随裁剪任意重排；recurrence 的低层 summary 又不能逐 token 删除。训练与 scorer、bias/kernel/graph 和全部 forward 均计费，同任务平均质量接近也可伴随具体人名、地点或证据遗漏，不能授逐例无损；任务漂移、不愿重训或净质量—费用失配时，扩大保留量、回原启发式或完整 Prefill，训练 loss 不替代后面的独立丢弃误差验收。<!-- source-family:SF-2026-ARXIV-2610-26754 -->
+
 若要让永久裁剪具有可解释的误差预算，选择提案与验收观察还须分开：预先固定候选、阈值和监测层，用独立的 query-position 样本审计每个 head 的丢弃 attention mass，并同时控制所有可选层，才不会把“挑到一层看起来稳定”当作固定检验通过。这个界只管指定观察分布下的期望丢弃概率质量，不管最坏位置、事实真值或未来 Decode；浅层集中而深层重新读取被删证据的反例，阻止它升级为无条件输出保证。[条件理论](https://arxiv.org/html/2610.09757v1)还需要后层 support-transfer 与算子界，足够 margin 也只保证同一 greedy 首 token，不保证整段生成。Observer、统计提取、gather 与物理页/传输都计费，逻辑删 token 不等按同一比例释放 bytes；论文没有实测加速或非劣质量。界太松、独立性破坏或后层条件无法验证时保留完整 Prefill，不用更积极的 entropy 排名代替验收。<!-- source-family:SF-2026-ARXIV-2610-09757 -->
 
 视觉 token 的永久裁剪还可以用 head 间表示的谱分散度提出保留集合，而不是用 attention mass 或相对方差打分。一条条件分支先从校准样本的逐层 matrix entropy 找到下降层位，再把该层每个 token 的 head features 中心化、逐行归一，按 trace-normalized Gram 的谱熵保留高分 token；非零行条件下，较小的 head×head 双 Gram 与 feature×feature Gram 具有相同非零谱，减少的是这个 scorer 的 eigendecomposition 维度。[EntropyPrune 的必要方法与同层对照](https://arxiv.org/html/2602.17196v1)并不由 entropy 下降证明被删 token 没有语义价值，零中心行的数值 guard 也未披露，不能代造完整无损实现。所谓64×是128/32维矩阵立方复杂度比，不是完整请求加速；在 A6000/LLaVA 的受测 MME 设置，prefill/latency 约1.6×/1.4×仍伴随分数下降，同层192-token 对照也只约束有限任务。前层完整执行、中心化/归一/构造Gram、谱计算和剩余 decode 均进入成本，层位、feature state、保留数与数值条件须共同绑定；语义、数值或总预算失配时扩大保留范围、回到既有 selector 或完整 prefill，不把谱等价签成任务正确性。<!-- source-family:SF-2026-ARXIV-2602-17196 -->
@@ -257,6 +259,8 @@ T_p = c_1 + c_2 + ... + c_n
 每个 iteration 只调度部分 prompt tokens，使 scheduler 可以在 chunks 之间安排 Decode。它减少 head-of-line blocking，却带来更多调度边界、较小矩阵、复杂的 KV reservation，并可能增加单请求 TTFT。
 
 所以 chunk size 是 throughput、TTFT 和 TPOT interference 之间的 policy，不是越小越公平。
+
+显存受限且仍需完整prompt决定保留哪些KV时，还可改在层轴上推进：同一层先处理全部chunks，保完整causal KV到层末才选取/打包，下一层只消费已形成的hidden bridge，完成层仅保压缩后的decode cache。[受限构建分支](https://arxiv.org/html/2610.24499v1#S4)因此将选择可见性与驻留时长分开，并以两遍分块评分避免完整query×prefix临时矩阵；active-layer KV和prompt-wide bridge仍随长度线性增长。相同selector/预算不证明压缩本身无损，精确算术下的causal路径等价也不替代真实kernel数值检查。多次dispatch、bridge读写、两遍评分、gather和层间同步都计费，较低构建峰值仍可增加TTFT；单请求首token可行更不等多请求或长输出SLO。预算宽裕、延迟更紧或selector不支持层末接口时，原token-major chunked/full prefill与显式offload仍合理。<!-- source-family:SF-2026-ARXIV-2610-24499 -->
 
 #### 等长 Chunk 也不代表等量工作
 
@@ -441,6 +445,10 @@ Chunked Prefill 不改变模型语义，而是重新安排 work 的时间粒度�
 重复 prefill 增加计算与尾延迟，attention signal 也不等于正确坐标。所测 GUI 模型与任务不能外推所有 VLM；second pass 没有稳定改善定位或超出预算时，应回退单次 prefill、外部 detector 或显式 region proposal。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2610-24499` — Daily2026-10-21，exact-v1 §3–5/6.4–6.6/T6/8/9，6分；construction/live peak、O(S)/finiteprecision/TTFT反侧及单请求范围；R76必要Source/owner/PRE通过，无code/复现，实际POST另见本日REVIEW。
+
+- `SF-2026-ARXIV-2610-26754` — Daily2026-10-21，exact-v1 §3.1/§4.1–4.3/Eq3–10/§5.2–5.4与AppB/C2/C4/D1/D4/E必要域，2+2+2=6，具体可训练永久裁剪差额深入。Source分担见本日EVIDENCE_BATCH B2；保手选层位、non-prunable、FA/recurrence状态区别、top-k非精确可导、co-adaptation非原checkpoint保持及局部遗漏。未采用未闭温度lowering/训练设备口径或倍率保证，未核实现/复现。reader实际必要原件/当前owner/三处收窄逐字PRE通过，reader R25已实际核验新增、完整两侧与本人注，写后通过，不授日级。
 
 - `SF-2026-ARXIV-2610-09757` — Daily `2026-10-09`；[exact-v1](https://arxiv.org/html/2610.09757v1) §2～6/8～9必要理论与反例，2+2+2=6。root作者必要Source/实际owner/PRE由supplement_20260311非作者独核通过；仅独立observer同时层验收、后层条件与首token保证的边界，不认证实现、实测收益或整段生成。原ASL与视觉谱裁剪分支保留，root只写已核单段；supplement_20260311非writer实际164～198完整邻接、新180及本注回对有效原证，POST通过。
 

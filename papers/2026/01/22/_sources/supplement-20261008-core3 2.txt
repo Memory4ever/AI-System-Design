@@ -1,0 +1,553 @@
+Warning: truncated output (original token count: 24731)
+Total output lines: 627
+
+
+SOURCE https://arxiv.org/html/2601.12298v1
+Abstract
+Edge deployment of low-batch large language models (LLMs) faces critical memory bandwidth bottlenecks when executing memory-intensive general matrix-vector multiplications (GEMV) operations. While digital processing-in-memory (PIM) architectures promise to accelerate GEMV operations, existing PIM-equipped edge devices still suffer from three key limitations: limited bandwidth improvement, component under-utilization in mixed workloads, and low compute capacity of computing units (CUs).
+In this paper, we propose CD-PIM to address these challenges through three key innovations.
+First, we introduce a high-bandwidth compute-efficient mode (HBCEM) that enhances bandwidth by dividing each bank into four pseudo-banks through segmented global bitlines. Second, we propose a low-batch interleaving mode (LBIM) to improve component utilization by overlapping GEMV operations with GEMM operations. Third, we design a compute-efficient CU that performs enhanced GEMV operations in a pipelined manner by serially feeding weight data into the computing core.
+Forth, we adopt a column-wise mapping for the key-cache matrix and row-wise mapping for the value-cache matrix, which fully utilizes CU resources.
+Our evaluation shows that compared to a GPU-only baseline and state-of-the-art PIM designs, our CD-PIM achieves 11.42 \times and 4.25 \times speedup on average within a single batch in HBCEM mode, respectively.
+Moreover, for low-batch sizes, the CD-PIM achieves an average speedup of 1.12 \times in LBIM compared to HBCEM.
+††footnotetext: †Corresponding author. This work was funded in part by the National Key Research and Development Program of China under Grant 2022YFB4400900, in part by the Strategic Industries and Key Technologies Project of Jiangsu Province under Grant BE2023020-3, in part by the Basic Research Program of Jiangsu Province under Grant BK20243042, and in part by the Nanjing University-China Mobile Communications Group Co., Ltd. Joint Institute.
+I Introduction
+Transformer-based large language models (LLMs)[1] have demonstrated exceptional capabilities across a wide range of applications, such as question answering[2] and code completion[3]. Compared to cloud services[4], which handle large-batch requests requiring high compute capacity, on-device LLM inference[5] typically processes low-batch requests and demands high bandwidth to achieve low-latency interactions in real-time applications[6].
+The inference process in LLMs is typically divided into two stages: the prefill stage and the decode stage[7]. In the prefill stage, the LLM processes the entire input token sequence in a single step, primarily relying on compute-intensive general matrix-matrix multiplication (GEMM) operations [8]. In contrast, the decode stage generates one token at a time in an autoregressive manner, which relies on memory-intensive general matrix-vector multiplication (GEMV) operations [9]. However, the limited memory bandwidth of the edge device leads to increased decode latency [10].
+To mitigate memory bandwidth bottlenecks in the decode stage, digital processing-in-memory (PIM) architectures are increasingly adopted as hardware accelerators. Based on the placement of computing unit (CU), PIM designs can be categorized into subarray-level[11], bank-level[12], bankgroup (BG)-level[13], and I/O-level[14] architectures. Among these, bank-level PIM offers a favorable trade-off between area cost and internal memory bandwidth by exploiting bank-level parallelism, where CUs are integrated within the memory bank[15]. This approach is prevalent in recently released production-grade PIM devices[16]. In such architectures, PIM‑equipped processors perform the GEMM operations on the host processor while offloading the GEMV operations to PIM, thereby improving the overall performance of LLM inference [17, 18, 19, 20].
+To achieve efficient on-device inference, the current PIM designs mainly face three challenges:
+(1) The previous work AttAcc[13] leverages the large number of high-bandwidth memory (HBM) banks to achieve an internal bandwidth of 242 TB/s for cloud services. However, edge devices have far fewer memory banks, making existing PIM architectures essential for efficiently accelerating LLM inference on the edge. This resource limitation prevents on-device inference from meeting strict low-latency requirements. In addition, existing PIM architectures employ CU with relatively low compute capacity for GEMV operations, as they operate at an internal memory clock frequency lower than the maximum supported digital clock frequency[15], and only one CU is integrated per bank to perform GEMV operations [21].
+(2) Current PIM architectures operate in a blocked mode, where the processor and PIM cannot execute simultaneously, which limits the efficiency of PIM. In particular, for compute‑intensive workloads with long input sequences and short output sequences, the prefill latency on the processor becomes the dominant factor in the end‑to‑end inference latency. A straightforward solution would be to use PIM as a stand-alone accelerator with dedicated memory, enabling simultaneous execution of GEMV operations in the PIM and GEMM operations in the processor [22] [23]. However, this approach is impractical for edge devices due to constrained memory resources. Therefore, PIM must be integrated into the existing memory system to enable concurrent GEMV and GEMM execution;
+(3) In the attention layer, fixed mapping of key (K)-cache matrix and value (V)-cache matrix leads to imbalanced CUs resource utilization due to differing computation flows [13]. In particular, if the K-cache matrix ( \textup{H}_{\textup{dim}} , L) is partitioned row-wise, where \textup{H}_{\textup{dim}} denotes the embedding dimension and L represents the number of tokens accumulated from the prefill stage up to the current decoding step, the appended ( \textup{H}_{\textup{dim}} , 1) column vector is processed by only one CU, leading to imbalanced PIM CUs utilization. However, for the V-cache matrix, row-wise data mapping can fully utilize CU resources.
+To address this challenge, we propose cross-division-PIM (CD-PIM), a high-bandwidth and compute-efficient PIM accelerator optimized for low-batch LLM inference on edge devices. The CD-PIM architecture partitions each memory bank into four pseudo-banks (Pbanks), thereby improving internal bandwidth with minor changes to routing and peripheral circuitry. Furthermore, it seamlessly integrates PIM into the existing memory systems and supports two operation modes: high-bandwidth compute-efficient mode (HBCEM) and low-batch interleaving mode (LBIM). In HBCEM, CD-PIM maximizes internal memory bandwidth by simultaneously activating four Pbanks to accelerate GEMV operations, whereas in LBIM, it overlaps the GEMV latency with GEMM latency to reduce end-to-end inference latency. Furthermore, a compute-efficient CU is designed to perform GEMV operations in a pipelined manner.
+The main contributions of our work are as follows:
+•
+For challenge (1), we propose a high-bandwidth compute-efficient LPDDR5-based CD-PIM architecture that fully accelerates GEMV operations in HBCEM for memory-intensive workloads with short input sequences and long output sequences. The CD-PIM divides each bank into four Pbanks by segmenting the global bitline (GBL), achieving a 4 \times improvement in memory bandwidth. A lightweight high compute CU is designed to efficiently perform GEMV operations in a pipelined manner by serially feeding weight data from the separated buffers into the computing core, enabling higher compute capacity. (Sec. III-A)
+•
+For challenge (2), we overlap the GEMV latency in PIM with GEMM latency in processor to reduce end-to-end inference latency in LBIM for compute-intensive workload by activating two Pbanks for GEMV operations and another two Pbanks for GEMM operations, enabling the simultaneous execution of PIM and the processor. (Sec. III-B)
+•
+For challenge (3), we adopt column-wise mapping for the K-cache matrix and row-wise mapping for the V-cache matrix, which fully utilizes CU resources through inner-product and outer-product operations. (Sec. III-C)
+We evaluate the proposed architecture on both compute-intensive and memory-intensive workloads using an NVIDIA Jetson AGX Orin 64 GB [24] and an Apple iPhone 15 Pro [25]. Our evaluation demonstrates that compared to a GPU-only baseline and state-of-the-art (SOTA) PIM designs, the CD-PIM achieves an average of 11.42 \times and 4.25 \times speedup in HBCEM. For compute-intensive workloads with low batch sizes, the CD-PIM achieves an average of 1.12 \times speedup in LBIM compared to HBCEM.
+II Background
+II-A Transformer-based LLM Inference
+Transformer-based LLM consists of multiple cascaded Transformer decoder layers [26]. For each request, inference begins with the prefill stage, in which multiple tokens from the input sequence are processed in parallel to generate the first output token [27]. The decode stage then generates subsequent tokens iteratively, each time using the previously generated token as input. This process continues until the entire output sequence is produced. Owing to this iterative nature, the input to each decoder layer during the decode stage is a single vector, leading to memory-intensive GEMV operations, in contrast to the GEMM operations performed in the prefill stage. Since the prefill stage is executed only once per request, whereas the decode stage must be repeated hundreds of times, the decode latency dominates the end-to-end inference latency.
+II-B Bank-level PIM-equipped Accelerators
+Bank-level PIM‑equipped LLM accelerators typically place the CU within the bank to exploit higher internal memory bandwidth than the external memory interface.
+To overcome the limited bandwidth improvements on device, FOLD-PIM [5] divides the GBL into upper and lower segments and employs a single CU operating at twice the internal memory clock frequency. Similarly, Pipe-PIM [15] divides the GBL into left and right segments and employs two CUs, each operating at the internal memory clock frequency. Although these PIM architectures highly efficiently accelerate the GEMV operation, they operate in blocked mode, thereby limiting PIM utilization.
+A digital PIM integrates CU for performing GEMV operations and a vector buffer for storing and reusing the input vector and partial sums at the bank’s periphery. In bank‑level digital PIM, the CU is placed within the bank region. However, the vector buffer may reside in the bank region [5], the BG region [13], or the I/O region [14]. Locating the vector buffer farther from the CU increases data transfer energy. To minimize transfer energy, this work places the vector buffer adjacent to the computing unit.
+On-device LLM inference services typically exhibit two key characteristics: handling only a small number of requests concurrently and requiring low-latency interaction. For example, AIOS [28] is presented as an LLM‑embedded management system that supports six interfaces. However, current PIM architectures operate in blocked mode, preventing concurrent operation of PIM and processor computations [29]. This serialization inherently under-utilizes resources. In particular, for low-batch scenarios, the blocked computation mode leads to longer inference latency, constraining PIM adoption in edge devices. Although prior work[30] enables PIM–NPU co-processing via dual row buffer banks, this approach incurs considerable area overhead.
+Compared with HBM‑based PIM [13], which integrates four dies per rank and over 128 banks per die for cloud devices, LPDDR5‑PIM provides only a limited number of banks, restricting bank‑level parallelism to enhance internal memory bandwidth. Therefore, expanding the internal memory bandwidth is crucial for efficiently accelerating GEMV operations on edge devices. Moreover, the variable workload distribution [31] and the diversity of compute and memory resources across edge devices [32] largely determine the proportion of time‑to‑first‑token (TTFT) in the overall inference latency. In particular, for compute‑intensive workloads with long input sequences and short output sequences, constrained compute resources cause TTFT to dominate the end‑to‑end inference latency.
+In conventional DRAM dies, the bandwidth of the external memory interface exceeds the internal clock frequency due to the burst-transfer scheme [33]. However, prior bank‑level digital PIM designs [34] execute GEMV operations at the internal clock frequency, thereby limiting CU compute capacity. This reduced compute capacity prevents such PIM architectures from fully accelerating low‑batch LLM inference.
+TABLE I: Two Edge Device Specifications
+Device
+DRAM
+Throughput
+(TFLOPS)
+Bandwidth
+(GB/s)
+Jetson AGX Orin
+LPDDR5
+42.5
+204.8
+iPhone 15 Pro
+LPDDR5
+4.29
+51.2
+III CD-PIM: High-Bandwidth Compute-Efficient PIM Architecture
+In this section, we introduce CD-PIM, a high-bandwidth compute-efficient PIM architecture that accelerates GEMV operations by exploiting bank-level parallelism at low implementation cost. CD-PIM leverages its high memory bandwidth to accelerate the decode stage in HBCEM. Moreover, to support low‑batch, compute‑intensive workloads, a CD‑PIM‑equipped processor overlaps decode latency by simultaneously executing CD‑PIM for the decode stage and the processor for the prefill stage in LBIM. Notably, both the input and weight data in this paper are represented with 8-bit precision, which does not lead to any noticeable degradation in LLM inference accuracy. In addition, we introduce three new instructions to support PIM operation.
+III-A The Proposed CD-PIM
+Compared with conventional DRAM-PIM architectures, as shown in Fig. (a), CD-PIM integrates additional CU directly into each bank. Fig. (b) illustrates the overall architecture of the CD-PIM with two CUs for accelerating GEMV operation. The top and bottom CU perform INT8 multiplication-and-accumulation (MAC) operations in a pipelined manner by receiving weight data from banks through the left and right global BLSAs (SA_TL, SA_TR, SA_BL, SA_BR). Each CU can handle a 32 B data width per compute cycle. To enhance compute capacity, the CU is designed to operate at 400 MHz, which is twice the internal clock frequency of LPDDR5[5]. As a result, the CU can pipelined process (64, 1) vector data from both the left-SA and right-SA within a single memory cycle. Each CU is equipped with a 64 B input buffer for storing the input vector and a 128 B output buffer for storing partial sums.
+By employing two pipelined CUs in each bank, CD‑PIM provides a 2\times computational advantage over DH‑PIM[34] equipped with the same DRAM die. In addition, owing to the dedicated mapping strategies for the K-cache and V-cache matrix, the CU is capable of supporting both inner-product and outer-product operations.
+Fig. illustrates the details of the CD‑PIM architecture.
+First, each bank is divided into a left-bank and a right-bank
+by equally splitting the global bitline (GBL), the bitline sense amplifier (BLSA), and the global BLSA into left-GBL/right-GBL, BLSA-left/BLSA-right, and global BLSA-left/global BLSA-right, respectively.
+Owing to this separation, the left-bank and right-bank can be accessed simultaneously by the column decoder. Furthermore, each left-GBL and right-GBL is further partitioned into an upper-GBL and a lower-GBL through isolation transistors, which divides both the left-bank and the right-bank into an upper-bank and a lower-bank. These upper and lower banks can be accessed simultaneously by the row decoder. As a result, CD-PIM partitions each bank into four Pbanks (Bank_TL, Bank_TR, Bank_BL, Bank_BR), all of which can be activated concurrently to perform GEMV operations, therefore achieving a higher memory bandwidth compared to FOLD-PIM [5].
+TABLE II: Command Selection Table
+Command Description
+SEL0
+SEL1
+PIM_MAC_FM
+1
+1
+MACT_LDB
+0
+1
+MACB_LDT
+1
+0
+III-B HBCEM and LBIM
+Table II summarizes the three PIM instructions by controlling the SEL0 and SEL1 signals. The PIM_MAC_FM instruction activates four Pbanks simultaneously to fully accelerate the GEMV operation.
+The MACT_LDB instruction activates the top CU to execute the GEMV operation, whilethe processor performs the GEMM operation by accessing data from the bottom bank. Similarly, the MACB_LDT instruction activates the bottom CU to execute the GEMV operation while accessing data from the top bank.
+Therefore, by simultaneously performing GEMV in PIM and GEMM in the processor, the GEMV latency is overlapped with the GEMM latency.
+For conventional edge devices, the prefill and decode stages of LLM inference are executed on the processor. However, for memory-intensive workloads, the limited memory bandwidth causes significant inference latency, as shown in Fig. (a). For (Lin, Lout) = (128, 2048) with LLAMA-1B on the NVIDIA Jetson AGX Orin 64 GB, the end-to-end inference latency reaches 35.7s, while the processor compute utilization is 85%. To accelerate decode stage, we offload the decode stage to PIM in HBCEM, activating four Pbanks to fully accelerate the GEMV operation using PIM_MAC_FM instruction as illustrated in Fig. (b). By exploiting the high internal memory bandwidth of PIM, the decode stage latency is reduced by 90.2% compared with processor execution, leading to a total inference latency of 3.53s.
+For compute-intensive workloads, although PIM accelerates GEMV operation, the TTFT dominates the end-to-end inference latency, particularly on low compute capacity edge devices, as shown in Fig. (b). For (Lin, Lout) = (2048, 128) with LLAMA-13B, offloading the decode stage to PIM causes the TTFT portion of the latency to increase from 53.7\% on the NVIDIA Jetson AGX Orin 64 GB to 65.2\% on the Apple iPhone 15 Pro.
+To address this issue, CD-PIM executes GEMV and GEMM operations concurrently, activating two Pbanks for the GEMV operations and another two Pbanks for the GEMM operations in LBIM, using the MACT_LDB and MACB_LDT instructions.
+Although the PIM compute capacity in LBIM is reduced by half compared to HBCEM, the GEMV latency is effectively overlapped with GEMM latency, as illustrated in Fig. (c).
+Fig. 1: Detailed data mapping of the CD-PIM: (a) K-cache matrix data mapping and outer-product compute flow; (b) V-cache matrix data mapping and inner-product compute flow.
+III-C Data Mapping
+In the decode stage, the computation flow is composed of the QKV generation layer, the attention layer, and the feed-forward network (FFN).
+First, the input token is fed into the QKV generation layer to derive the query (Q), K, and V vectors of size (1,\textup{H}_{\textup{dim}}) .
+The newly generated K and V vectors are concatenated with the K-cached matrix (\textup{H}_{\textup{dim}},\textup{L}) and V-cached matrix (\textup{L},\textup{H}_{\textup{dim}}) .
+Subsequently, the Q vector is forwarded to the attention layer, where a GEMV operation is performed with the K-cached matrix. The resulting vector is normalized using the softmax function to produce the attention weight vector (1,\textup{L}) .
+This weight vector is then multiplied with the V-cached matrix to compute the attention output (1,\textup{H}_{\textup{dim}}) .
+Finally, the attention output is passed to the FFN layer to generate the next token.
+During the attention layer, the data mapping of the KV-cached matrix is adjusted according to the compute flow. For the K-cache matrix mapping in column-wise, each data chunk corresponds to a vector of size (1\times 32) , which can be accessed by a Pbank in a single burst operation. At the bank level, each bank is able to access a matrix organized as a (2\times 64) data chunk. Before the GEMV operation, the Q vector is loaded into the CU input buffer. The Q vector is partitioned into sub-vectors of size (1\times 1024) , which are sequentially transferred to the LPDDR5 dies. Each (1\times 1024) sub-vector is further divided into sixteen (1\times 64) sub-vectors, corresponding to the 16 banks of the LPDDR5 device. Within each bank, a (1\times 64) sub-vector is broadcast to the input buffers of the two CUs.
+During the GEMV operation, each CU performs an outer product between the 1\textup{B} input data stored in the input buffer and a (1\times 32\textup{B}) weight vector, producing a (1\times 32) partial-sum vector. The same input data is then multiplied with another (1\times 32\textup{B}) weight vector to obtain a new (1\times 32) partial-sum vector. Consequently, within a single internal memory clock cycle, the CU multiplies the 1\textup{B} input data with (1\times 64\textup{B}) weight data, resulting in a (1\times 64) partial-sum vector. In the following cycle, the produced (1\times 64) partial-sum vector is accumulated with the results generated in the previous step, as illustrated in Fig. 1(a).
+For example, the input data \textup{IN}_{1} is multiplied with the weight vector \textup{A}_{1} to produce the partial-sum vector \textup{PA}_{1} . The same input data \textup{IN}_{1} is also multiplied with the weight vector \textup{A}_{2} , yielding the partial-sum vector \textup{PA}_{2} . Next, the input data \textup{IN}_{2} is multiplied with the weight vector \textup{B}_{1} and added to \textup{PA}_{1} to generate the updated partial-sum vector \textup{PB}_{1} . Similarly, \textup{IN}_{2} is multiplied with the weight vector \textup{B}_{2} and accumulated with \textup{PA}_{2} , producing the updated partial-sum vector \textup{PB}_{2} .
+Following this compute flow, each bank can perform a ((1,1)\times(1,128)) GEMV operation within a single memory internal clock cycle. For each (1\times 1024) input-vector segment, the input buffer capacity supports the processing of a (64\times 128) matrix per bank. At the die level, a (1024\times 128) matrix can be processed. Subsequently, the next (1\times 1024) input-vector segment is transferred to the DRAM die, enabling continuous computation.
+For the V-cache matrix mapping in row-wise, three main differences are identified compared to the K-cache matrix, as shown in Fig. 1(b). First, each data chunk corresponds to a (32\times 1) vector, and each bank can access a matrix organized as a (64\times 2) data chunk, whereas the K-cache matrix accesses a (2\times 64) data chunk. Second, the attention vector (1,\textup{L}) is divided into multiple (1\times 64) sub-vectors. Each sub-vector is broadcast to all input buffers of the CUs. Third, during the GEMV operation, each CU performs an inner product between a (1\times 32) attention vector \textup{IN}_{1-32} and a (32\times 1) weight vector \textup{A}_{1} to generate a partial sum \textup{PA}_{1} . The subsequent (1\times 32\textup{B}) attention data \textup{IN}_{33-64} is then multiplied with a (32\times 1\textup{B}) weight vector \textup{B}_{1} and added to \textup{PA}_{1} to produce a new partial sum \textup{PB}_{1} .
+Following this computation flow, each bank can execute a ((1,64)\times(64,2)) GEMV operation within a single internal clock cycle. For each (1\times 64) attention vector, the output buffer capacity supports the processing of a (64\times 128) matrix within a bank, and at the die level, a (64\times 2048) matrix can be processed. The next (1\times 64) attention vector is then transferred to the DRAM die for continuous computation.
+IV Evaluation
+IV-A Methodology
+We implemented CD-PIM on top of 4GB LPDDR5 by modifying Ramulator2 [35], an open-source DRAM simulator. Each LPDDR5 die provides 16 data pins, operating at a rate of 6.4 Gbps per pin.
+In our experimental setup, we employ the Apple iPhone 15 Pro and the NVIDIA Jetson AGX Orin as edge devices to evaluate the performance of CD-PIM, which are equipped with 4 and 16 LPDDR5 dies, respectively, providing total memory capacities of 16 GB and 64 GB.
+For performance evaluation, we compare CD-PIM with GPU-only baseline and AttAcc[13] baseline execution on the Apple iPhone 15 Pro and the NVIDIA Jetson AGX Orin. We further assess CD-PIM under batch sizes of one and four, considering both HBCEM and LBIM across different LLM parameters.
+IV-B Performance Results
+Fig. 2 shows the normalized performance evaluation of the GPU and AttAcc compared with CD-PIM in HBCEM and LBIM under a single-batch scenario. On the NVIDIA Jetson AGX Orin, CD-PIM in HBCEM achieves a speedup of 4.48 \times –10.51 \times for LLAMA-1B, 6.71 \times –13.74 \times for LLAMA-7B, and 7.47 \times –14.6 \times for LLAMA-13B relative to the GPU-only baseline [36]. These increases result from exploiting the higher internal memory bandwidth of PIM compared to the external memory bandwidth of the GPU. Furthermore, as the model size increases from LLAMA-1B to LLAMA-13B, the decode stage incurs higher latency. By accelerating the GEMV operation with PIM, the performance improvements become more pronounced.
+Fig. 2: Normalized performance of LLaMA-1B, -7B, and -13B (batch size =1 ) under various Lin and Lout on the NVIDIA Jetson AGX Orin and Apple iPhone 15 Pro.
+Fig. 3: Normalized performance of the NVIDIA Jetson AGX Orin equipped with CD‑PIM under HBCEM and LBIM (batch size =4 ).
+Fig. 4: Normalized performance of the Apple iPhone 15 Pro equipped with CD‑PIM under HBCEM and LBIM (batch size =4 ).
+For the Apple iPhone 15 Pro, CD-PIM in HBCEM achieves a higher speedup compared to the NVIDIA Jetson AGX Orin. Owing to the iPhone’s lower memory bandwidth relative to the Jetson, the decode stage incurs longer latency, making the workload more memory-intensive. Consequently, accelerating the GEMV operation with PIM yields greater performance improvements on the iPhone. In particular, for the memory-intensive case with (Lin, Lout) = (128, 2048), the speedup increases from 10.1 \times on the Jetson AGX Orin to 18.6 \times for LLAMA-1B on the iPhone 15 Pro.
+However, due to limited compute capacity, CD-PIM in HBCEM is less efficient for compute-intensive workloads compared to memory-intensive workloads. Fig. 3 presents the performance evaluation of CD-PIM in both HBCEM and LBIM under a four-batch scenario on the NVIDIA Jetson AGX Orin platform, where Lin is fixed at 2048. For LLAMA-1B, when Lout increases from 2 to 128, CD-PIM in LBIM achieves a speedup of 1.01 \times –1.41 \times over HBCEM baseline by overlapping the latency of the decode stage. In contrast, for LLAMA-7B and LLAMA-13B, the performance speedup in LBIM initially grows with Lout from 2 to 32, but then decreases because at Lout = 128, the decode stage latency surpasses the TTFT latency.
+For the Apple iPhone 15 Pro, CD-PIM in LBIM achieves a speedup of 1.01 \times –1.23 \times over HBCEM in LLAMA-1B, which is lower than the performance speedup on the NVIDIA Jetson AGX Orin, since for compute-intensive workloads, the reduced compute capacity has a stronger impact than the reduced memory bandwidth. Consequently, the TTFT latency contribution to end-to-end inference latency is higher on the iPhone 15 Pro than on the Jetson AGX Orin. For LLAMA-7B and LLAMA-13B, CD-PIM in LBIM achieves speedups of 1.01 \times –1.46 \times and 1.01 \times –1.44 \times over HBCEM, respectively, when Lout ranges from 2 to 128, because the decode stage latency increases to nearly half of the total inference latency, as shown in Fig. 4.
+Fig. 5: The area and power breakdown of CU.
+IV-C Area and Power Overhead
+Compared with CUs that only support inner-products, the proposed CU supports both inner- and outer-products. Fig. 5 illustrates the area and power breakdown of CU.
+We evaluated the CU area and power using Synopsys Design Compiler, which shows that each PU occupies 14{,}941~\mu\text{m}^{2} and consumes 4.5~\text{mW} in TSMC 28 nm. This corresponds to 0.8\% of a 32 Gb LPDDR5 die area and adds 144~\text{mW} in total, confirming the cost efficiency of CD-PIM.
+V Conclusion
+In this paper, we propose CD-PIM to address the inefficiency of GEMV acceleration for memory-intensive workloads and the longer TTFT latency in compute-intensive workloads. The CD‑PIM divides each bank into four Pbanks to enhance internal memory bandwidth and is equipped with two CUs to achieve high computational capacity. For memory-intensive workloads, CD-PIM in HBCEM fully accelerates GEMV operations; for compute-intensive workloads, CD‑PIM in LBIM overlaps the decode latency by executing CD‑PIM for the decode stage and the processor for the prefill stage simultaneously. A high compute capacity CU is designed to execute GEMV in a pipelined manner. We also analyze the area and power overhead of CD-PIM, showing that the proposed architecture delivers significant performance improvements with only minimal hardware cost.
+STOP chars 28575 / 28575
+
+SOURCE https://arxiv.org/html/2601.12904v1
+Abstract.
+Retrieval-Augmented Generation enhances Large Language Models by integrating external knowledge, which reduces hallucinations but increases prompt length. This increase leads to higher computational costs and longer Time to First Token. To mitigate this issue, existing solutions aim to reuse the preprocessed KVCache of each retrieved chunk to accelerate RAG. However, the lack of cross-chunk contextual information leads to a significant drop in generation quality, leaving the potential benefits of KVCache reuse largely unfulfilled.
+The challenge lies in how to reuse the precomputed KVCache chunk while preserving generation quality. We propose FusionRAG, a novel inference framework that optimizes both the preprocessing and reprocessing stages of RAG. In the offline preprocessing stage, we embed information from other related text chunks into each chunk, while in the online reprocessing stage, we recompute the KVCache for tokens that the model focuses on. As a result, we achieve a better trade-off between generation quality and efficiency.
+According to our experiments, FusionRAG significantly improves generation quality at the same recomputation ratio compared to previous state-of-the-art solutions. By recomputing fewer than 15% of the tokens, FusionRAG achieves up to 70% higher normalized-F1 scores than baselines and reduces TTFT by 2.66-9.39 \times compared to Full Attention.
+Keywords: Large Language Models; Retrieval-Augmented Generation; KVCache; Prefix Caching; Inference Acceleration; Cache Management
+††cc-license: by
+1. Introduction
+1.1. Motivation
+Retrieval-Augmented Generation(RAG) (Lewis et al., 2020; Lin et al., 2025) is a widely used technique to supplement background knowledge during Large Language Models(LLMs) inference, thereby reducing hallucinations. Recent studies on the inference scaling law of RAG (Yue et al., 2024) show that retrieving more document chunks and performing more retrieval iterations both improve generation results. However, appending retrieved document chunks to the original, relatively shorter question prompt significantly increases the prompt length. This prolonged prompt increases user wait time, measured as Time to First Token (TTFT) and adds computational overhead(Jin et al., 2024). For instance, in the Musique dataset, a typical long-context question-answering benchmark with 200 samples, each query processes an average of 17k tokens during the prefill stage, while the subsequent decode stage generates fewer than 5 tokens. The temporal distribution reveals that the prefill stage dominates the overall inference latency, accounting for 95.53% of the total inference time. This firmly establishes the computational overhead of the prefill stage as the critical bottleneck for end-to-end latency in RAG scenarios.
+To address this issue, previous works (Gao et al., 2024; Kwon et al., 2023; Lu et al., 2024; Agarwal et al., 2025) have explored leveraging KVCache reuse in RAG systems.
+These methods can be categorized into two strategies.
+Single-stage methods, exemplified by Cache-Craft (Agarwal et al., 2025), select cache copies from historical user sessions during multi-turn conversations. The selection of cache copies is based on two types of attention characteristics: intra-attention (attention within a chunk) and inter-attention (attention across different chunks).
+Two-stage methods, represented by TurboRAG (Lu et al., 2024) and CacheBlend (Yao et al., 2025), adopt an offline + online strategy, as shown in Figure 1. The offline preprocessing stage is specifically introduced to address the high storage overhead of single-stage methods, which must store multiple KVCache copies for each text chunk. In the offline preprocessing stage, LLMs process each text chunk to generate and save its KVCache. The online stage then bypasses prefill computation by stitching these saved KVCaches together—an approach we call Full Reuse. In contrast, Full Attention is the standard method of processing the entire prompt online, with no offline preprocessing.
+Figure 1. Comparison of Two-stage methods. Left: Existing methods (Full Reuse and CacheBlend) perform minimal offline preprocessing and rely on online recomputation. Right: FusionRAG introduces Similarity-Guided offline preprocessing (§3.1) to precompute cross-attention among similar chunks, and Query-Guided selection (§3.2) to identify critical tokens online, achieving better quality and speed trade-offs.
+Full Reuse achieves significant TTFT reduction at the cost of generation quality degradation. This quality decline arises from two sources. First, independently computing KVCache for each chunk produces overlapping position IDs (e.g., [0…l, 0…l, 0…l]) when naively concatenated. TurboRAG (Lu et al., 2024) addresses this issue by reordering position IDs into consecutive sequences [0…l, l+1…2l, 2l+1…3l]. Second, even with corrected position IDs, further study (Yao et al., 2025) reveals a more fundamental problem: the KVCache deviates from Full Attention. This deviation is caused by the lack of cross-attention when chunks are computed independently and results in a noticeable quality decline.
+To enhance generation quality, CacheBlend pioneered the selective recomputation framework, where only a small portion of tokens are recomputed based on KV deviation analysis, establishing the foundation for research in this area. Meanwhile, Cache-Craft adopts an alternative strategy, targeting
+tokens with high inter-attention as context-sensitive candidates
+for recomputation.
+As illustrated in Figure 1, the standard online processing in two-stage methods is replaced with an online reprocessing phase, where critical tokens are identified before the prefill stage. This reprocessing phase aims to minimize the deviation by fully computing the causal attention not only to the user query but also to these critical tokens, thereby restoring generation quality. CacheBlend’s core hypothesis is that KVCache deviations are localized to a limited subset of tokens. This implies that recomputing fewer than 15% of tokens can, in principle, recover most of the lost generation quality, offering an optimal trade-off between computational cost and quality.
+However, there still exists a quality gap between these methods and Full Attention. As shown in Figure 2, we evaluate the generation quality of Qwen2.5-7B-Instruct (Yang et al., 2024a) with CacheBlend and Cache-Craft mechanisms against smaller Qwen2.5-1.5B-Instruct and Qwen2.5-3B-Instruct models using full attention. As depicted in Figure 2, the generation performance of the Qwen2.5-7B-Instruct model using CacheBlend and Cache-Craft (recomputing only 15% of tokens) decline sharply, falling to a level comparable to the smaller Qwen2.5-3B-Instruct model operating with full attention. Notably, the 3B model requires less than half of the computational resources for training and inference compared to the 7B model. This discrepancy suggests a critical need for a more effective caching approach that retains both computational efficiency and high-quality generation outcomes.
+(a) Within the recomputation ratio range of [0, 0.15], we evaluat the generation quality of Qwen2.5-7B under the CB (CacheBlend), CC (Cache-Craft) and FR (FusionRAG), and compared the results with the quality of Qwen2.5 models (1.5B, 3B, and 7B) under the Full Attention.
+(b) Comparisons of different schemes on performance and generation quality.
+Figure 2. Comparison of the Effectiveness and Efficiency of Existing KVCache Reuse Methods. FusionRAG achieves superior performance in both generation quality and efficiency.
+To achieve a better trade-off between cost and quality, especially at low recomputation ratios, we identify three primary sources of the gap in generation quality. The limitations are as follows:
+First, existing recomputation methods fail to efficiently restore quality without incurring significant latency. We analyzed KV deviation for the same question across three different models. As shown in Figure 3(a), even after recomputing 15% of the most critical tokens—identified by a postmortem oracle—over 50% of the KV deviation still remains in the second layer of the LLM. This demonstrates that a small recomputation budget in the online stage is fundamentally insufficient to compensate for the majority of the KV deviation. Cache-Craft even recommends recomputing over 30% of tokens to achieve acceptable quality, which confirms that fully restoring quality requires a computational budget so substantial that it significantly increases online latency.
+Second, existing token selection methods are suboptimal. For example, CacheBlend exhibits a certain bias in selecting tokens for recomputation during the online selection phase: it identifies tokens with high KV deviation in the second layer as critical tokens. As shown in Figure 3(b), using an example from the Musique dataset, the peak KV deviations in the second layer are predominantly concentrated at the beginning of each chunk. Additionally, tokens located in chunks that are retrieved later generally show higher KV deviations. This phenomenon can be attributed to the fact that each token can only attend to preceding tokens, leading to incomplete contextual information for tokens at the start of a chunk and those appearing in later-retrieved chunks. As a result, these tokens are more likely to exhibit higher KV deviations, making CacheBlend’s selection policy less capable of capturing the actual semantic focuses.
+Third, efficiently scheduling and managing KVCache recomputation presents significant challenges. For example, the recomputation introduces additional overhead in both cache access and scheduling. This is particularly evident in scenarios involving large-scale models or long input sequences, where frequent cache access (potentially from disk) may offset the inference speedup gained through caching. Additionally, methods like Cache-Craft that maintain multiple KVCache copies for each text chunk across different prefix contexts significantly increase storage overhead.
+1.2. Our Solution
+To address the above issues and achieve a better trade-off between performance and efficiency in the RAG scenario, we optimized both phases of the two-stage RAG framework and proposed a new FusionRAG inference framework, as shown in the right part of Figure 1. To tackle the issue of insufficient cross-attention in the online stage, we enhanced the offline preprocessing stage. By leveraging the similarity between the retrieved texts and the positive correlation between their recall probabilities, we performed Similarity-Guided Preliminary Cross-attention Preprocessing during offline preprocessing. As shown in Figure 2, FusionRAG significantly improves generation quality at the same recomputation ratio. In the online reprocessing stage, we introduced a Query-Guided Selection to ensure a more evenly distributed selection of tokens for recomputation.
+(a) Cumulative probability distribution of KV Deviation.
+(b) The KV deviation is concentrated in tokens with early positions and higher indices.
+Figure 3. Visualize KV deviation on a Musique question.
+To efficiently implement the FusionRAG framework within an LLM serving system, we focus on three key components essential to its integration and execution. First, we introduce Alternative Path, which enhances cache reuse rates by seamlessly integrating with existing prefix-based KVCache reuse. This approach operates without modifying the hash table interface and, crucially, ensures that each text chunk maintains only one replica. Second, we design an asynchronous KVCache and scheduler to address GPU waiting issues caused by I/O blocking during KVCache reads. Finally, we redesign and optimize the sparse attention operator (Q-Sparse-Attn) to make it suitable for FusionRAG’s reprocessing stage and support batch decoding.
+We implemented FusionRAG on transformers (Wolf et al., 2020) and compared it with state-of-the-art KVCache Reuse methods across four QA benchmark datasets and five open-source models.
+By recomputing only 15% of the tokens, we achieved improvements of up to 70% in normalized-F1-score, surpassing the state-of-the-art methods like CacheBlend and Cache-Craft.
+In terms of performance, with 15% recomputation on a 32K context, Q-Sparse-Attn reduces computation time by approximately up to 77% compared to the state-of-the-art attention operators FlashAttention (Dao et al., 2022) and SDPA from pytorch (Paszke et al., 2019). Additionally, compared to Full Attention, FusionRAG reduces TTFT by 2.66-9.39 \times when processing 27K contexts in Musique under 15% KVCache recomputation in end-to-end single question testing. In multi-question testing, FusionRAG achieves a throughput improvement of 1.2-4.3 \times compared to the baseline by recomputing 15% of the KVCache.
+Table 1. Terminology to description cache reuse
+Notation
+Description
+D , hd
+Model’s depth and hidden size
+X[i]
+i-th token of the input
+KV[i] , KV[:,l]
+i-th token’s or l -th layer’s KVCache
+\Delta_{KV}[:,\ l]
+KV deviation on l -th layer
+C_{i},KV_{i}^{\text{cached}}
+i -th text chunk in knowledge base
+and it’s correspondent preprocessed KV
+C_{\text{top }i},KV_{\text{top }i}^{\text{cached}}
+i -th retrieved text chunk for a question
+and it’s correspondent preprocessed KV
+|\cdot|
+The number of tokens in a text
+\text{cat}(\cdots)
+Concatenate multiple tensors(vectors)
+along the token sequence dimension
+\text{argTopk}(\cdot)
+Find the indices
+of the top- k elements in a vector
+2. Preliminary and Problem Definition
+2.1. LLM and Prefix KVCache Reuse
+LLM has attracted significant attention due to its remarkable performance across a wide range of tasks and successful commercialization in real-world applications(Techopedia, 2023; Daivi, 2024; Zharovskikh, 2023; CellStrat, 2023).
+It utilizes an autoregressive Transformer architecture (Vaswani et al., 2017; Chowdhery et al., 2023; Brown et al., 2020) and a single run step of LLM can be conceptualized as:
+(1)
+\displaystyle\text{output},\,KV^{\text{updated}}=\operatorname{LLM}(X,\,\text{indices},\,KV^{\text{past}})
+In this process, input tokens X are first transformed into an input matrix via an embedding table and then fed into the first layer. Subsequently, the input of each layer is the output of the previous layer. For each layer’s input matrix, the input matrix is multiplied by three different weight matrices in the attention module to produce query, key, and value matrices, incorporating positional embeddings based on the input position indices. The LLM then multiplies query and key matrices to compute the attention scores, which represent the similarity between query and key, followed by scaling the scores and applying a mask before passing them through a softmax function to obtain the final attention weights. The generated key and value matrices are appended to the existing KV^{\text{past}} to obtain the updated KV^{\text{updated}} , which accelerates future token generation. We refer to this intermediate result as the Key-Value Cache (KVCache) in this paper. Finally, the next token is sampled from the output of the model’s last layer.
+In real u…2731 tokens truncated…bjective of our work is to maximize TTFT reduction while preserving generation quality.
+3. FusionRAG Framework
+To achieve a better balance between quality and efficiency, we propose a novel inference framework called FusionRAG.
+Our design is based on two key insights derived from the above observations.
+Insight 1: Shift online reprocessing costs to the offline preprocessing stage for amortization.
+While increasing the ratio of critical tokens recomputed during reprocessing can improve generation quality, it also raises computational costs during online prefill, diminishing overall benefits. To keep the online recomputation ratio low, we focus on enhancing the preprocessing stage, where computations can be performed offline and their costs can be amortized through reuse across multiple inferences. This design philosophy aligns with the research approach in the compression domain, where compression itself requires time, but for datasets that are repeatedly used, the preprocessing costs can be amortized through subsequent reuse (Zhang et al., 2020).
+While increasing the ratio of critical tokens recomputed during reprocessing can improve generation quality, it also raises computational costs during online prefill, diminishing overall benefits. To keep the online recomputation ratio low, we focus on enhancing the preprocessing stage, where computations can be performed offline and their costs can be amortized through reuse across multiple inferences.
+The crux here is that, since all retrieved chunks are semantically similar to the user question, they are also likely similar to each other. This relationship can be identified offline without knowledge of specific user queries. Thus, by grouping these similar chunks together, we enhance the needed cross-attention during the preprocessing stage by allowing them to attend to each other, thereby improving the quality of the cached representations.
+Insight 2: The selection of critical tokens should be content-dependent rather than position-dependent.
+The critical token selection algorithm should not favor specific text chunks or tokens due to retrieval order or other inherent biases. Intuitively, the selection of critical tokens should be guided by the relevance between the user question and the retrieved chunk, leveraging the model’s own attention to identify the most informative parts of the text.
+Based on these insights, FusionRAG operates in both of the two main stages. The modifications compared to CacheBlend are illustrated on the right side of Figure 1.
+3.1. Offline Stage: Similarity-Guided Preliminary Cross-attention Preprocessing
+To find semantically similar chunks, we utilize their similarity in the vector space. If vector A is highly similar to vector B , and vector A is also similar to vector C , then vectors B and C are likely similar as well. This transitive property allows us to group related text chunks based on their embeddings. With this in mind, we can use an embedding model to find the top- n similar documents for each text chunk, expecting that related chunks will likely be retrieved together (Co-occurrence) in response to user queries.
+To validate this assumption, we used BGEM3 (Chen et al., 2024) to retrieve the top- n relevant documents for each text chunk. Our findings, shown in Figure 7(a), indicate a high probability that RAG retrieves related text chunks for the same question. Even with only two text chunks recalled, the chance that RAG retrieves related blocks is over 50%. With ten blocks recalled, this probability rises above 80%. These results confirm that RAG tends to retrieve materials with high intrinsic relevance to each other for a given question.
+(a) Performing RAG on text chunks to recall the probabilities of other text chunks under the same question.
+(b) Similarity-Guided Preliminary Cross-attention Preprocessing can reduce KV deviation.
+Figure 7. The text chunks retrieved by RAG for the same question often exhibit a high similarity. The proposed offline preprocessing method effectively reduces KV deviation.
+Based on this characteristic, we enhanced the offline preprocessing stage as follows. We perform RAG on the text chunk C_{i} , retrieving the top- n most relevant text chunks [C_{i,\text{top }1},C_{i,\text{top }2},\cdots,C_{i,\text{top }n}] along with their KVCache [KV_{i,\text{top }1}^{\text{cached}},KV_{i,\text{top }2}^{\text{cached}},\cdots,KV_{i,\text{top }n}^{\text{cached}}] . Let X=\operatorname{cat}(\mathcal{S},C_{i,\text{top }1},\cdots,C_{i,\text{top }n}) . After concatenating these KVCache entries and inputting them into the model with positions set to \left[|X|+1:|X|+|C_{i}|\right] , we recompute the C_{i} ’s KVCache KV_{i}^{\text{cached}^{\prime}} .
+(10)
+\displaystyle\_,\,KV=
+\displaystyle\operatorname{LLM}(C_{i},\,\left[|X|+1:|X|+|C_{i}|\right],
+\displaystyle\text{cat}(KV_{\mathcal{S}},\,KV_{i,\text{top }1}^{\text{cached}},\,\cdots,\,KV_{i,\text{top }n}^{\text{cached}}))
+\displaystyle KV_{i}^{\text{cached}^{\prime}}=
+\displaystyle KV\left[|X|+1:|X|+|C_{i}|\right]
+We incorporate cross-attention in the preprocessing stage, thereby shifting part of the computational workload offline and bridging the gap between Full Reuse and Full Attention. This approach reduces the need for online reprocessing while enhancing generation quality. It effectively transfers some computational burden from the online stage to the offline stage, where costs can be amortized across multiple inferences.
+In Figure 7(b), we show the KV deviation of the model’s second layer after similarity-guided preliminary cross-attention processing. Compared to Figure 3(b), the offline preprocessing reduced the KV deviation of the second layer by 70%, and this approach is not affected by position, as the KV deviation of all tokens decreases uniformly.
+Offline Preprocessing Cost Analysis:
+We quantify the computational overhead of the Similarity-Guided preprocessing stage to demonstrate its practicality. Using Qwen2.5-7B-Instruct with a batch size of 10, our measurements on the HotpotQA dataset show that the preprocessing stage processes text chunks at a rate of 0.218 seconds per chunk. This translates to a throughput of approximately 275 text chunks per minute, which is sufficient for most real-world RAG applications.
+This overhead is practical and cost-effective for two reasons. First, the preprocessing is performed only once per document corpus and amortized across all subsequent queries, making the per-query overhead effectively zero. Second, the preprocessing stage is highly parallelizable and can be easily scaled across multiple GPUs or distributed computing resources, further reducing the wall-clock time in production deployments.
+Discussion: While the discussion above focuses on embedding vector-based RAG(Izacard and Grave, 2020), similarity-guided preliminary cross-attention processing can generalize to other paradigms. For example, in graph-based RAG(Edge et al., 2024; Hu et al., 2024; Guo et al., 2024), each text chunk is represented as a vertex connected to related chunks by edges. These connections can help identify high co-occurrence probabilities, guiding preprocessing. A statistics-based approach could also analyze retrieval traces to anticipate co-occurrence. Integrating FusionRAG with these methods remains for future work.
+(a) DCT within chunks in CacheBlend.
+(b) DCT across chunks in CacheBlend.
+(c) DCT within chunks in FusionRAG.
+(d) DCT across chunks in FusionRAG.
+Figure 8. A visualization of the distribution of critical tokens (DCT) for a representative sample from Musique, illustrates the positions of 15% critical tokens selected by CacheBlend and Query-Guided Selection within each chunk, as well as the selection ratio for each chunk.
+3.2. Online Stage: Query-Guided Selection
+To select unbiased critical tokens, we propose a method based on attention weights, termed Query-Guided Selection. Prior work (Cai et al., 2024; Jiang et al., 2024; Li et al., 2024; Liu et al., 2023; Zhang et al., 2023) has shown that in the final layers of attention, certain columns of the attention weight matrix exhibit significantly higher values, forming vertical slash patterns. The corresponding tokens of these columns are particularly critical. Based on this observation, we propose the following Query-Guided Selection process:
+After the user submits a question, a prefill operation is performed on the question to generate the query matrix of the final layer. Then Query-Guided Selection computes attention weights by multiplying this query matrix and the key matrix of the final layer for each chunk. The attention weight is a matrix, where the number of rows and columns is the token count of the user question and the RAG text chunk, respectively. Subsequently, we sum each column of this matrix, resulting in a vector with a length equal to the token count of the retrieval text chunk, which is the
+STOP chars 35000 / 73200
+
+SOURCE https://arxiv.org/html/2601.13228v1
+Abstract
+Diffusion language models enable any-order generation and bidirectional conditioning, offering appealing flexibility for tasks such as infilling, rewriting, and self-correction. However, their formulation—predicting one part of a sequence from another within a single-step dependency—limits modeling depth and often yields lower sample quality and stability than autoregressive (AR) models. To address this, we revisit autoregressive modeling as a foundation and reformulate diffusion-style training into a structured multi-group prediction process. We propose Any-order Any-subset Autoregressive modeling (A3), a generalized framework that extends the standard AR factorization to arbitrary token groups and generation orders. A3 preserves the probabilistic rigor and multi-layer dependency modeling of AR while inheriting diffusion models’ flexibility for parallel and bidirectional generation. We implement A3 through a two-stream attention architecture and a progressive adaptation strategy that transitions pretrained AR models toward any-order prediction. Experiments on question answering, commonsense reasoning, and story infilling demonstrate that A3 outperforms diffusion-based models while maintaining flexible decoding. This work offers a unified approach for a flexible, efficient, and novel language modeling paradigm.
+1 Introduction
+Diffusion language models have recently emerged as a powerful alternative to autoregressive (AR) modeling for text generation (Li et al., 2022; Gong et al., 2025; Gulrajani and Hashimoto, 2024; Sahoo et al., 2024). By iteratively denoising partially masked sequences, they allow any-order generation and bidirectional context conditioning, enabling novel capabilities such as global rewriting, infilling, and self-correction. These properties make diffusion models conceptually appealing for flexible text generation beyond the rigid left-to-right paradigm.
+However, diffusion modeling also introduces fundamental limitations. In each denoising step, the model predicts one part of the sequence conditioned on another, forming only a single-layer dependency structure. This simplification weakens the model’s ability to capture deep, hierarchical dependencies across tokens. As a result, despite their flexibility, diffusion-based models often underperform AR models in generation quality and training stability (Kim et al., 2025; Sahoo et al., 2024; Zheng et al., 2024). These challenges highlight an inherent trade-off between the expressive power of AR factorization and the flexibility of diffusion-style generation.
+Motivated by this observation, we revisit autoregressive modeling as a foundation for constructing a more expressive and stable framework. AR models naturally capture rich, recursive dependencies through sequential conditioning but suffer from their strict left-to-right constraint. We therefore reformulate diffusion training in a more structured way by extending its two-group prediction to multiple groups, so that the model can preserve AR’s multi-layer dependency structure while supporting arbitrary generation orders. This leads to Any-order Any-subset Autoregressive modeling (A3), a unified framework that generalizes standard AR factorization to allow token groups of arbitrary composition and order. A3 retains the probabilistic rigor and stability of AR training while inheriting diffusion models’ flexibility for parallel generation and bidirectional context use.
+To realize A3 in practice, we design a two-stream attention architecture that supports arbitrary group orderings, and develop a progressive training strategy that adapts pretrained AR models to any-order prediction. Our framework naturally supports diverse inference strategies, including groupwise AR sampling and dynamic resampling, offering a tunable trade-off between generation speed and quality.
+Through comprehensive experiments on question answering (Joshi et al., 2017), commonsense reasoning (Zellers et al., 2019; Sakaguchi et al., 2020; Sap et al., 2019; Bisk et al., 2020), and story infilling tasks (Mostafazadeh et al., 2016), we show that A3 achieves strong performance across diverse benchmarks while enabling flexible and efficient generation. Notably, A3 outperforms state-of-the-art diffusion-based models despite using substantially less training data, and demonstrates promising scaling behavior with model size. These results suggest that A3 provides a new direction for bridging the gap between AR and parallel generation paradigms.
+Our contributions can be summarized as follows:
+•
+Conceptually, we propose A3, a new sequence modeling paradigm that reformulates diffusion-style group prediction into a generalized autoregressive framework, preserving dependency depth while enabling any-order, any-subset generation.
+•
+Practically, we design a two-stream attention architecture and a progressive training recipe that extend pretrained AR models to support arbitrary group orderings.
+•
+Empirically, we demonstrate that A3 surpasses diffusion-based approaches, offering a flexible and scalable foundation for next-generation language modeling.
+2 Any-order Any-subset Autoregressive Modeling
+2.1 Formulation
+In this section, we will demonstrate the formulation of our proposed Any-order Any-subset Autoregressive modeling (A3). Masked diffusion language models provide a flexible approach to sequence generation by iteratively predicting masked subsets of tokens conditioned on visible context (He et al., 2023; Nie et al., 2025). Concretely, during training, given a sequence x_{1:N} , the index set {1,2,\dots,N} is partitioned into two disjoint subsets G_{1} and G_{2} . The model predicts the masked tokens x_{G_{2}} conditioned on the visible tokens x_{G_{1}} :
+P(x_{G_{2}}\mid x_{G_{1}})=\prod_{t\in G_{2}}P(x_{t}\mid x_{G_{1}}).
+(1)
+This one-step conditional formulation enables parallel prediction and bidirectional context use, supporting any-order generation through repeated resampling of subsets. However, it models only shallow dependencies—each token in G_{2} depends directly on x_{G_{1}} but not recursively on other predicted tokens. As a result, the global dependency structure is limited to one layer of conditioning, unlike the multi-step compositional nature of autoregressive (AR) factorization.
+To enrich the dependency structure while retaining the flexibility of arbitrary grouping, we reformulate this process through an autoregressive lens. Starting from the AR formulation,
+P(x_{1:N})=\prod_{t=1}^{N}P(x_{t}\mid x_{<t}),
+(2)
+we generalize the token-wise sequence to a group-wise factorization. The index set \{1,\dots,N\} is partitioned into K disjoint groups \{G_{1},G_{2},\dots,G_{K}\} , and the joint probability is expressed as
+P(x_{1:N})=\prod_{k=1}^{K}P(x_{G_{k}}\mid x_{G_{<k}}).
+(3)
+Each group G_{k} may contain one or more tokens, and the group order is arbitrary.
+This generalization retains the recursive dependency structure of AR while introducing diffusion-style flexibility. Each factor can be viewed as predicting one subset of tokens from previously generated subsets, but now organized into multiple layers of dependency.
+Training the model on randomly sampled group partitions and permutations exposes it to diverse factorization orders and improves robustness to different conditional structures. This resembles the permutation LM objective of XLNet (Yang et al., 2019) but at the group level, enabling richer structural modeling. This formulation bridges diffusion’s parallel prediction and AR’s hierarchical modeling, forming the foundation of Any-order Any-subset Autoregressive modeling (A3).
+2.2 Discussion with Previous Paradigms
+Comparison with Masked Diffusion Language Models. Masked diffusion language models (MDLMs) have recently emerged as an alternative to AR decoding, aiming to overcome the sequential bottleneck of one-token-at-a-time generation. By iteratively denoising partially masked sequences, MDLMs can update multiple tokens in parallel and exploit bidirectional context (Austin et al., 2021; Li et al., 2022; Gong et al., 2025; Nie et al., 2025). This flexibility enables controllable, any-order generation and supports tasks such as infilling and global rewriting. However, diffusion approaches face two major limitations. First, inference speed is constrained by the need for many iterative refinement steps, with generation efficiency depending critically on noise schedules and step counts (Gong et al., 2025). While large-scale efforts such as DiffuGPT and LLaDA demonstrate that diffusion LMs can match or surpass AR models in quality, they still require careful tuning and incur nontrivial decoding costs (Gong et al., 2025; Nie et al., 2025). Second, training stability is less favorable than AR: discrete diffusion objectives require complex forward–reverse processes and additional pretraining or adaptation, making optimization more resource-intensive and sensitive to hyperparameters (He et al., 2023).
+In contrast, A3 preserves the probabilistic rigor and training simplicity of AR modeling while introducing flexible groupwise factorization. This allows parallel prediction of token subsets without relying on multi-step denoising schedules, thereby offering both efficiency and stability.
+Comparison with AR Multi-Token Prediction. Another line of work seeks to improve AR efficiency by enabling the model to predict multiple future tokens per step (Gloeckle et al., 2024; Kou et al., 2024). Multi-token objectives and speculative decoding significantly reduce inference latency: for instance, predicting four tokens at once can yield up to threefold speedups while preserving or even improving generation quality, particularly in reasoning and code generation tasks (Gloeckle et al., 2024). These methods retain the training stability of standard AR, since the additional objectives can be implemented as auxiliary losses with negligible computational overhead. However, multi-token prediction remains bound to a fixed left-to-right ordering, limiting its modeling flexibility. The approach accelerates sequential decoding but does not enable infilling, bidirectional conditioning, or arbitrary ordering of token generation.
+A3 generalizes beyond this paradigm by relaxing the strict AR factorization. Through arbitrary group partitions and orderings, A3 supports both sequential and parallel decoding strategies, combining the efficiency gains of multi-token prediction with greater structural flexibility. For more discussions with related work, refer to Appendix B.
+3 Implementations of Training and Flexible Inference
+In this section, we describe the implementation of A3. We begin with the architectural design of A3, where we use a two-stream attention mechanism to enable predictions in arbitrary orders. Next, we present our efficient continuous pretraining strategy, which progressively adapts the model from standard AR prediction to group-based prediction. Finally, we introduce the flexible inference strategy of A3, which leverages its general formulation to support diverse decoding modes.
+3.1 Architecture Design with Two-stream Attention
+Limitations of Current Architecture. The decoder-only Transformer has become the backbone of modern large language models due to its simplicity and effectiveness in next-token prediction. It operates with a single stream of hidden states, where information flow is regulated by a causal attention mask. This mask ensures that the representation of the k -th token can only attend to the first k tokens, thereby enforcing the AR constraint required for language modeling. While well-suited for the standard left-to-right objective, this design assumes a fixed generation order: given the first k tokens, the model is trained to treat the (k+1) -th position as the unique next target. Such rigidity makes it incompatible with any-order prediction, where the next position to be generated need not follow the sequential index.
+The encoder-only Transformer, widely used in masked language modeling, represents the opposite design. Rather than causal masking, it processes the full sequence bidirectionally, with missing information represented by mask tokens. Through position embeddings on these masks, the model identifies which locations are to be predicted, allowing arbitrary subsets of tokens to be reconstructed simultaneously. However, this formulation limits dependency modeling: masked positions are predicted in parallel and conditioned only on observed context in a single pass. Without recursive, multi-layered dependencies across tokens, the encoder-only approach struggles to match the generative fidelity of AR models.
+Figure 1: Architecture of the A3 model. Blue entries in the attention mask denote 0 , and white entries denote -\infty . The model employs a two-stream attention module with distinct causal masks. The content stream encodes contextual information and attends to tokens within its own group as well as all preceding groups. The query stream encodes positional conditions and attends only to tokens in preceding groups. The final cross-entropy loss is computed between the input context and the query stream’s output. For illustration, we provide an example grouping with G_{1}=\{1,2,3\},G_{2}=\{5,6\},G_{3}=\{4\} , showing how the forward process and causal masks are applied.
+Two-stream Attention Design for Any-order Prediction. To combine the flexibility of encoder-style masking with the dependency modeling strength of autoregression, A3 extend the two-stream attention mechanism proposed by XLNet (Yang et al., 2019). The model maintains two parallel representations for each position: a content stream, which encodes semantic and contextual information from the observed tokens, and a query stream, which provides position-aware signals to drive prediction of the next group. This separation allows A3 to retain the recursive structure of autoregression while relaxing the generation order constraint of decoder-only models. Figure 1 illustrates the pipeline of the forward process.
+Formally, let X=(x_{1},\dots,x_{N}) denote the sequence, partitioned into groups \{G_{1},\dots,G_{K}\} . In the content stream, the input consists of the observed tokens, embedded and passed through Transformer layers with a designed causal mask. This mask ensures that a token at group k can attend to all tokens in groups \leq k , i.e., both its own group and all groups before it. Thus, the content stream at group k aggregates all contextual evidence available up to that point. For group G_{k} , the hidden states in the content stream at layer l are computed as:
+H^{(l)}_{c}(i)=\text{Attn}\!\left(Q=H^{(l-1)}_{c}(i),\;K=H^{(l-1)}_{c}(\leq G_{k}),\;V=H^{(l-1)}_{c}(\leq G_{k})\right).
+(4)
+In the query stream, the input is a shared learnable query vector injected at every position. The key and value matrices are tied to those of the content stream, while the queries are separate. With an appropriately designed causal mask, each query vector at group k can only attend to content tokens in groups <k , not including its own group. This forces the query representation to serve as the position-aware predictor for the tokens in group k , relying only on prior context rather than future information. Conceptually, the query stream specifies where to predict (positional conditioning), while the content stream provides what to predict (contextual grounding). The hidden states in the query stream at layer l for group G_{k} are:
+H^{(l)}_{q}(i)=\text{Attn}\!\left(Q=H^{(l-1)}_{q}(i),\;K=H^{(l-1)}_{c}(<G_{k}),\;V=H^{(l-1)}_{c}(<G_{k})\right),
+(5)
+where the initialization H^{(l-1)}_{q}(i)=w is a learnable query vector shared across positions, and the causal mask ensures the query stream at group k can only access content states from strictly earlier groups.
+Finally, the predictive distribution for token x_{i}\in G_{k} is parameterized by:
+p(x_{i}\mid X_{<G_{k}})=\text{Softmax}\!\left(W\cdot H^{(L)}_{q}(i)\right),
+(6)
+where L is the final layer and W projects the query hidden state to the vocabulary.
+3.2 Multi-Stage Training with Progressive Token Grouping
+Figure 2: Causal masks for content stream and query stream in different stages. Blue for 0 and white for -\infty . Stage 1: AR initialization to reproduce AR factorization. Stage 2: Group expansion by allowing groups of size greater than one. Stage 3: Order permutation with introducing any-order prediction.
+Building on the connection between standard AR and A3, we design a progressive adaptation strategy that smoothly transitions from left-to-right generation to fully flexible any-order prediction. To leverage the stability and strong initialization of existing AR models, we begin training A3 from a pretrained AR checkpoint and gradually relax its constraints through three stages:
+•
+Stage 1: AR Initialization. We align A3 with conventional AR training by setting the two-stream causal masks to exactly reproduce left-to-right factorization (Figure 2 Stage 1). Formally, the sequence x_{1:N} is partitioned into singleton groups:
+G_{1}=\{1\},\;G_{2}=\{2\},\;\dots,\;G_{N}=\{N\}.
+(7)
+This ensures that P(x_{1:N})=\prod_{t=1}^{N}P(x_{t}\mid x_{<t}) , identical to standard AR, providing a stable initialization.
+•
+Stage 2: Group Expansion. We expand beyond token-level prediction by allowing groups of size greater than one (Figure 2 Stage 2). Concretely, the sequence is partitioned into contiguous segments of fixed size s>1 , e.g.,
+G_{1}=\{1,\dots,s\},\quad G_{2}=\{s+1,\dots,2s\},\quad\dots
+(8)
+with s gradually increased from 1 to 4 . This teaches the model to predict multiple tokens jointly within each group while still maintaining AR dependencies across groups.
+•
+Stage 3: Order Permutation. We introduce any-order prediction within groups (Figure 2 Stage 3). The group structure G_{1},G_{2},\dots,G_{K} remains sequential, but the token indices assigned to each group are drawn from a random permutation of \{1,\dots,N\} . For example, if \pi is a random permutation of indices, then
+G_{1}=\{\pi(1),\dots,\pi(s)\},\quad G_{2}=\{\pi(s+1),\dots,\pi(2s)\},\quad\dots
+(9)
+The model therefore learns to predict tokens in arbitrary subsets, while still preserving a group-to-group AR factorization:
+P(x_{1:N})=\prod_{k=1}^{K}P(x_{G_{k}}\mid x_{G_{<k}}).
+(10)
+This exposes the model to diverse intra-group orderings and enables it to generalize to arbitrary prediction targets at inference.
+By the end of this curriculum, the model is able to predict arbitrary subsets of tokens as coherent groups while preserving the recursive dependency structure of AR. Importantly, at every stage of training, each token in the sequence belongs to exactly one group, so all tokens are always predicted, maximizing the learning signal and computational efficiency.
+3.3 Flexible Inference via Groupwise Decoding
+Building on the A3 formulation, we propose flexible inference strategies that extend beyond conventional AR decoding. The first decoding method we introduce is groupwise AR sampling, which generalizes standard left-to-right generation by sampling groups of tokens sequentially rather than strictly one-by-one. Formally, let the token positions of a sequence be partitioned into K groups \mathcal{G}=\{G_{1},G_{2},\ldots,G_{K}\} , where G_{k}\subseteq\{1,\ldots,n\} and \bigcup_{k=1}^{K}G_{k}=\{1,\ldots,n\} . Given a prompt covering groups G_{1},\ldots,G_{k_{0}} , the model generates subsequent groups by conditioning on all preceding groups:
+p_{\theta}(x_{G_{k_{0}+1}},\ldots,x_{G_{K}}\mid x_{G_{\leq k_{0}}})=\prod_{k=k_{0}+1}^{K}p_{\theta}(x_{G_{k}}\mid x_{G_{<k}}).
+(11)
+Here, x_{G_{k}} denotes the tokens within group G_{k} , and x_{G_{<k}} the tokens of all earlier groups. This reduces to the classical AR factorization when |G_{k}|=1 for all k , but naturally generalizes to larger groups. The procedure is summarized in Algorithm 1. Concretely, several grouping strategies can be applied:
+1.
+Token-wise grouping. Each token is treated as its own group, i.e., G_{k}=\{k\} . The decoding reduces to the standard left-to-right AR generation:
+p_{\theta}(x_{1},\ldots,x_{n})=\prod_{t=1}^{n}p_{\theta}(x_{t}\mid x_{<t}).
+(12)
+2.
+Fixed-size grouping. Tokens are partitioned into groups of size s , e.g., G_{k}=\{(k-1)s+1,\ldots,ks\} for s\in\{2,4\} . In this case, the model predicts s tokens jointly per step and accelerates decoding.
+3.
+Task-specific grouping. For infilling tasks we allow groups to be arbitrary index subsets and then assign group ids so that groups containing masked positions are decoded after groups used as context. Concretely, let the sequence be partitioned into left, middle and right index sets L,M,R (so \{1,\dots,n\}=L\cup M\cup R ). We choose an index k_{0} such that every group G_{k} satisfying G_{k}\cap M=\emptyset has k\leq k_{0} , while every group that contains any masked position satisfies k>k_{0} (groups need not be contiguous and a single group may contain tokens from both L and R ). Under this design, all context groups (those covering L and R ) appear before the masked groups, and the model performs:
+p_{\theta}(x_{M}\mid x_{G_{\leq k_{0}}})=\prod_{k=k_{0}+1}^{K}p_{\theta}\big(x_{G_{k}}\mid x_{G_{<k}}\big),
+(13)
+which realizes AR dependencies inside each masked group while conditioning on both left and right contexts. This flexible assignment enables infilling where context groups are formed from arbitrary subsets of L\cup R , and masked spans are predicted group-by-group. This capability distinguishes A3 from conventional AR models, which cannot directly condition on future context during generation.
+Dynamic Resampling Inference. Beyond fixed grouping, A3 also supports a more adaptive inference procedure inspired by iterative refinement (Li et al., 2022; Chen et al., 2024a). Here, the grouping \mathcal{G} is not fixed. At each step, the model evaluates all unfinished positions simultaneously, conditioned on the completed tokens. Formally, suppose U_{t}\subseteq\{1,\dots,n\} is the set of unfinished (blank) positions at iteration t , and F_{t} is its complement of finished positions. The model computes predictive distributions
+p_{\theta}(x_{i}\mid x_{F_{t}}),\quad\forall i\in U_{t}.
+(14)
+Based on these distributions, we then select a subset S_{t}\subseteq U_{t} to be committed at this step, according to some criterion such as maximum confidence, lowest entropy (Kim et al., 2025), or simply random sampling. Once S_{t} is chosen, the tokens at S_{t} are sampled and added to the finished set:
+F_{t+1}=F_{t}\cup S_{t},\quad U_{t+1}=U_{t}\setminus S_{t}.
+(15)
+This process repeats until U_{T}=\emptyset , at which point the sequence is fully generated. The procedure is summarized in Algorithm 2. The advantage of this dynamic resampling strategy is twofold. First, it allows the model to adaptively choose the granularity of generation based on prediction confidence, committing to easy tokens early while deferring more uncertain positions until later. Second, unlike diffusion-style denoising which follows a pre-specified noise schedule, A3 inference directly uses the conditional distributions defined by the AR factorization, ensuring consistency between training and inference.
+These inference strategies highlight a trade-off between efficiency and flexibility. Fixed-group sampling is fast but less adaptive, as performance depends on group alignment with text structure. Dynamic resampling is slower since all unfinished positions are reevaluated at each step, but it yields greater accuracy by adapting token commitment to model confidence. We will compare these strategies in the next section on real-world tasks.
+Algorithm 1 Groupwise AR Sampling
+1:
+Prompt tokens x_{1:m} , grouping strategy \mathcal{G}=\{G_{1},G_{2},\ldots,G_{K}\} , model f_{\theta}
+2:
+Generated sequence \hat{x}_{1:n}
+3:
+Initialize \hat{x}_{1:m}\leftarrow x_{1:m}
+4:
+Find the last group index k_{0} in the prompt
+5:
+for k=k_{0}+1 to K do
+6:
+Compute context representation h\leftarrow f_{\theta}(\hat{x}_{G_{<k}})
+7:
+Sample tokens \hat{x}_{G_{k}}\sim p_{\theta}(\cdot\mid h)
+8:
+end for
+9:
+return Completed sequence \hat{x}_{1:n}
+Algorithm 2 Dynamic Resampling
+1:
+: Prompt tokens, model f_{\theta} , criterion
+2:
+Initialize F_{0} with prompt tokens, U_{0} with blank positions
+3:
+while U_{t}\neq\emptyset do
+4:
+for each i\in U_{t} do
+5:
+Compute p_{\theta}(x_{i}\mid x_{F_{t}})
+6:
+end for
+7:
+Select subset S_{t}\subseteq U_{t} based on criterion
+8:
+for each i\in S_{t} do
+9:
+Sample \hat{x}_{i}\sim p_{\theta}(x_{i}\mid x_{F_{t}})
+10:
+end for
+11:
+Update F_{t+1}\leftarrow F_{t}\cup S_{t} , U_{t+1}\leftarrow U_{t}\setminus S_{t}
+12:
+end while
+13:
+return Completed sequence x_{1:n}
+4 Experiments
+4.1 Setup
+Training Setup. We initialize our models from the LLaMA series, including LLaMA-3.1-8B, LLaMA-3.2-3B, and LLaMA-3.2-1B (Dubey et al., 2024). For training data, we construct a mixture of the FineWeb dataset (Penedo et al., 2024) and the SlimPajama dataset (Soboleva et al., 2023), following prior work on DLMs and AR models. From this mixture, we sample 2B tokens and apply sequence packing with a maximum context length of 2048. All models are trained with full-parameter fine-tuning in bf16. In the progressive adaptation recipe, the first two training stages are trained for one epoch over 20% of the dataset, while the final stage is trained for one epoch over the full dataset. Additional training details are provided in Appendix A.
+Evaluation Setup. We adopt the evaluation protocol of Gong et al. (2025) to compare our models against both diffusion and AR baselines. For reading comprehension, we evaluate on TriviaQA (Joshi et al., 2017) using exact match accuracy. For commonsense reasoning, we consider HellaSwag (Zellers et al., 2019), Winogrande (Sakaguchi et al., 2020), SIQA (Sap et al., 2019), and PIQA (Bisk et al., 2020), all assessed by multiple-choice accuracy. For story infilling, we use ROCStories (Mostafazadeh et al., 2016) and report ROUGE scores (Lin, 2004). We compare against two categories of baselines: (a) the base AR model LLaMA-3.1-8B, and (b) recent diffusion language models of varying sizes, including Plaid-1B (Gulrajani and Hashimoto, 2024), Dream-7B (Ye et al., 2025), and DiffuLlama-7B (Gong et al., 2025).
+4.2 Main Results
+The results in Table 1 show that A3 consistently outperforms diffusion-based models across QA, commonsense reasoning, and infilling tasks. For example, A3-8B achieves 19.4 accuracy on TriviaQA and 78.1 on PIQA, surpassing all the diffusion baselines, while also attaining competitive ROUGE scores for story infilling. These gains are particularly noteworthy given that A3 is trained on only 2B tokens, whereas DiffuLlama is trained on 65B. Although A3 still underperforms the AR baseline, this gap is likely attributable to limited training data; with larger-scale pretraining, we expect A3 to close the difference further.
+Importantly, A3 demonstrates clear scaling behavior: performance improves steadily from 1B to 3B to 8B parameters, indicating that the method benefits from larger models in the same way as conventional AR training. Overall, these results confirm that A3 offers a favorable balance between AR and diffusion paradigms, combining strong reasoning accuracy with flexible generation, and holds promise for further improvements under larger-scale training.
+Additionally, we compare A3-8B with the diffusion models Dream and DiffuLlama on conditional generation quality. For each model, we use the same 100 randomly sampled 128-token prefixes from the Pile (Gao et al., 2020) as conditioning inputs. Each model then generates a 2048-token continuation, and we evaluate the quality of the generated text using perplexity computed by Llama-3.1-8B. The results are summarized in Table 2. While Dream achieves slightly lower perplexity under the random sampling schedule, A3-8B consistently outperforms both baselines when using confidence- or entropy-based dynamic sampling, demonstrating clear gains from our sampling strategy.
+Table 1: Comprehensive evaluation of different language models. There are 4 types of these models: AR for autoregressive, DD for
+discrete diffusion, CD for continuous diffusion and A3 for our proposed model. For the infilling task, we use ROUGE-1/2/L score; for other tasks, we use the accuracy (%) metric. * refers to the results reported in DiffuLlama (Gong et al., 2025).
+Model
+Size
+Type
+QA
+CommonSense Reasoning
+Infilling
+TriQA
+HSwag
+Wino.
+SIQA
+PIQA
+ROCStories
+Llama-3.1
+8B
+AR
+52.1
+76.0
+63.9
+46.7
+80.3
+11.7/2.3/10.5
+Plaid*
+1B
+CD
+1.2
+39.3
+51.3
+32.3
+54.5
+12.1/1.1/11.2
+Dream
+7B
+DD
+18.3
+26.9
+51.8
+36.6
+55.8
+11.7/2.3/10.5
+DiffuLlama*
+7B
+DD
+18.5
+58.7
+56.4
+43.2
+63.3
+23.3/5.5/21.2
+A3
+1B
+A3
+10.2
+40.2
+52.8
+35.1
+64.7
+11.8/1.7/11.1
+3B
+A3
+15.9
+49.6
+54.3
+38.9
+70.1
+11.3/2.3/10.2
+8B
+A3
+19.4
+58.4
+60.2
+45.2
+78.1
+19.2/4.6/18.6
+Table 2: Conditional generation quality (measured by perplexity using Llama-3.1-8B) of previous diffusion models with A3 using different dynamic sampling strategy.
+Model
+Random
+Confidence
+Entropy
+step=512
+step=1024
+step=512
+step=1024
+step=512
+step=1024
+Dream
+58.4
+46.2
+21.3
+17.2
+18.7
+16.4
+DiffuLlama
+72.3
+58.4
+24.1
+18.3
+20.9
+14.3
+A3-8B
+66.4
+49.3
+20.1
+16.8
+14.3
+11.2
+4.3 Ablation Study
+Sampling Strategies. To better understand the trade-offs between the two proposed inference strategies in Section 3.3, we conducted unconditional generation experiments under the A3 decoding framework. For groupwise AR sampling, we vary the group size from 1 to 4. For dynamic resampling, we vary the group size from 1 to 16 and implemented two selection criteria: (1) Confidence-based: selecting positions with highest maximum softmax probability. (2) Entropy-based: selecting positions with minimum output entropy. For each sequence, we sample with temperature of 1.5 and top-p of 0.95. Figure 3 reports the log of perplexity measured by Llama-3.1-8B and the average decoding time for one sequence.
+Figure 3: Unconditional generation log(perplexity) and speed using A3-8B. The perplexity is measured by Llama-3.1-8B and we compare several decoding strategies. Dynamic resampling will cost more time but have lower perplexity.
+We observe that dynamic resampling methods consistently achieve lower perplexity than groupwise AR sampling, indicating that they produce higher-quality generations. The confidence-based and entropy-based criteria yield very similar performance, with confidence being slightly better at smaller group sizes. However, all strategies show a trend of increasing perplexity as group size grows, reflecting the trade-off between decoding granularity and modeling accuracy. We can also see that decoding time decreases sharply with larger group sizes. Groupwise AR sampling is fastest at the same group size because it only generates the designated group per step, while dynamic resampling requires evaluating all unfinished tokens at each iteration, making it slower. However, as group size increases, dynamic resampling speeds up considerably, nearly matching the efficiency of groupwise sampling at large group sizes.
+Overall, these results demonstrate a speed–accuracy trade-off. Groupwise AR sampling is faster but less accurate, while dynamic resampling achieves better perplexity at the cost of slower decoding. Importantly, A3 provides the flexibility to choose between these strategies depending on the requirements of the application, making it more flexible than conventional AR or diffusion-based methods.
+Curriculum schedule. A3 introduces a different causal mask and attention flow from a standard AR transformer, and the model must progressively adapt from strict left-to-right prediction to multi-token and eventually arbitrary-order factorization. To assess the sensitivity of the schedule, we train two variants on 0.5B tokens: 1. original curriculum, and 2. skipping stage 1 and 2 (directly training on stage 3: order permutations). Results are shown in Table 3. Skipping the early stages consistently hurts performance by 4–6 points on several benchmarks, which proves the importance of such adaptation stage. An adaptive schedule, e.g., based on training loss, may further improve robustness. We plan to investigate this direction in the future work.
+Performance with more data. Since the training budget for A3 is much less than the baseline (2B for A3, 60B for DiffuLlama and 15T for Llama-3.1-8B), in order to isolate the architecture effect on the worse performance than the AR baseline, we track how A3 improves under increasing post-training data. We use 1.5B, 2B (default) and 2.5B tokens to train A3. The results are shown in Table 4.3. Performance increases steadily with more data. This confirms that A3 benefits strongly from data scale and that the gap to fully-trained AR models is due to training budget, not a limitation of the A3 architecture.
+Robustness on context length. In order to investigate whether A3 is robust across different context lengths, we input contexts with length of 512, 1024 and 2048 to A3 and calculate the loss. The results are shown in Table 4.3. The model loss keeps stable within the training length, indicating the robustness of A3 across different context lengths.
+Table 3: Performance with different training curriculum schedule. We evaulate two variants trained on 0.5B tokens: 1. original curriculum and, 2. skipping stage 1 and 2 (directly training on stage 3: order permutations).
+Schedule
+QA
+CommonSense Reasoning
+Infilling
+TriQA
+HSwag
+Wino.
+SIQA
+PIQA
+ROCStories
+Original
+15.6
+49.3
+56.7
+39.6
+69.4
+13.2/2.3/12.6
+Skipping Stage 1 & 2
+11.3
+44.2
+54.1
+37.3
+64.2
+13.1/2.2/12.4
+Table 4: Performance of A3 with different training data on TriviaQA and perplexity measured by Llama-3.1-8B.
+Model
+TriviaQA
+\log(\text{Perplexity})
+A3 (1.5B tokens)
+16.2
+2.9
+A3 (2B tokens)
+19.4
+2.5
+A3 (2.5B tokens)
+22.5
+2.3
+AR (15T)
+52.1
+0.8
+Table 5: Model loss of A3 across context lengths, which is stably small.
+Length
+Model loss
+256
+3.54
+512
+3.51
+1024
+3.34
+2048
+3.23
+5 Conclusion
+We have presented Any-order Any-subset Autoregressive modeling (A3), a novel framework that generalizes traditional autoregressive factorization to enable flexible, groupwise generation of tokens in arbitrary orders. By combining a two-stream attention architecture with a progressive training strategy, A3 achieves the dual goals of generation flexibility and modeling stability. Our approach supports a wide range of decoding strategies, including groupwise autoregressive sampling and dynamic resampling, offering a tunable trade-off between speed and accuracy. Through comprehensive experiments, we demonstrate that A3 outperforms diffusion-based models in reasoning, question answering, and infilling tasks. These results highlight A3’s ability to balance efficiency, flexibility, and quality, making it a promising direction for future sequence modeling. In the future, we plan to explore scaling A3 to larger models and datasets, as well as applying it to more challenging tasks such as long-context reasoning.
+STOP chars 34950 / 34950

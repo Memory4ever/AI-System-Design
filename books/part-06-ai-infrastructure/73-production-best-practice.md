@@ -260,6 +260,8 @@ Agent 进一步把一次模型请求扩展成带 Context、Memory、Tools 和 Wo
 
 Production 从固定 traffic sweep 与人工配置演进到 telemetry→proposal→sandbox evaluation→guarded apply→rollback 的闭环后，模型或 Agent 只拥有候选变更，control plane 持有版本与提交权。capacity search 也必须绑定 warm-up、arrival、artifact 与 SLO，而不是把单点吞吐当作可发布容量。
 
+闭环中的门禁本身也要先验收：返回正常分数不表示它读到了所声明的风险信号；可固定实际输入，删除该信号作对照，并逐项确认依赖的 request 格式、tool 约束等经过 gateway 后真正生效。模型、prompt 或请求链变更会使旧资格失效；评价应保独立任务上的误受/误拒和不确定性，不能只凭一个总体 agreement 批准自改。恢复资格则另绑定已保存的旧 prompt/schema/skill 或 checkpoint 及真实 restore 演练，不把重新生成 undo 当直接回滚，也不把 probe 行为回到噪声范围写成逐轨迹完全相同。[受限自改实验](https://arxiv.org/html/2610.27465v1)支持区分这两份证据，但不把它们作为充分安全证明；probe、版本驻留与再验都有成本，回滚仍不能收回已经交付的回答和工具 effect。任一资格不明时保留 shadow/canary 或人工审批。<!-- source-family:SF-2026-ARXIV-2610-27465 -->
+
 自动闭环缩短调优周期，却增加试验流量、错误 cost model 与回滚状态。证据不足、blast radius 不可控或 rollback 未演练时，应停在 shadow/canary 或人工审批；生产成熟度由可恢复的决策链衡量，不由工具数量衡量。
 
 ## 自检问题
@@ -277,6 +279,10 @@ Production 从固定 traffic sweep 与人工配置演进到 telemetry→proposal
 
 Production readiness 是持续运行的证据与控制闭环，不是上线前一次 checklist。Part VI 到此完成从工具到平台的推导：统一对象、治理 workload 与 GPU、交付服务、建立 evidence，再用成本、租户和安全约束平台行为。
 
+服务仍返回答案时，质量回归也可能来自软件语义而非设备bit错误。若有可信reference，可先按实现语义映射组件，再将两侧中间激活的布局、shape与执行顺序对齐；同名module不保证做同一运算，无法映射的节点应显式保留。定位可寻找归一误差首次持续上升的位置，把下游传播与一次尖峰分开；reference的低/高精度差提供数值噪声参照，却不能把一个经验阈值当作所有模型的正确性界。
+
+Ekka的受限模型stack对照支持这条诊断分支，不保证完整软件/硬件检出率：可复现bug选择、可信reference、hook粒度和对齐样例都会限制覆盖，top3组件的pass@k也不是实际修复成功率。Trace采集、双侧执行/精度参照、磁盘和LLM工具调用均付费；无reference、映射失配或特殊并发无法重现时，保留最小复现、版本bisect、人工核查及发布回滚，不由正常response或低误差比批准生产正确。<!-- source-family:SF-2026-ARXIV-2606-04594 -->
+
 ### Accelerator Silent Corruption 需要轻量检测与可界定恢复
 
 传统 fail-stop 监控能发现设备退出，却看不到量化 integer arithmetic 或浮点 GEMM 静默产生的错误。全量重算最可靠但代价高；更细的 production 分支分别为整数路径维护 syndrome state、为浮点路径 sketch 误差而不是完整 product，在检测到可恢复模式时局部修复，超出 code/sketch 能力时再触发重算、摘除设备或回滚。检测器只拥有 corruption evidence，不能自行宣告模型输出语义正确。<!-- source-family:SF-2026-ARXIV-2609-19743 --><!-- source-family:SF-2026-ARXIV-2609-19758 -->
@@ -286,6 +292,10 @@ Production readiness 是持续运行的证据与控制闭环，不是上线前�
 保护预算还应按算子分配，不能把 dense GEMM 的检出率移植到 MoE gate。以 row/column norm 构成的 Cauchy–Schwarz 全局上界，能省去 checksum roundoff-margin 的求值，却因界较松漏掉局部扰动；router 的微小 logit 变化又可能改选 experts。[受控 bit-flip 对照](https://arxiv.org/html/2610.18557v1#S3)中，bf16/L40S上的dense层检出接近checksum，而所测Mixtral gate仅保留约55%的检出能力；这不证明所有router都同样脆弱。该实验以生成token序列改变标记SDC，不是语义错误率，fusion中的FlashAttention matmul也未保护。KV还会复用未检错误，因此须沿token传播与任务结果验收，校验kernel和阈值求值开销分别计账。覆盖不足或高风险gate应保留checksum/重算与设备隔离，不由局部无误报签发完整输出正确或真实硬件故障率。<!-- source-family:SF-2026-ARXIV-2610-18557 -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2606-04594` — Daily2026-06-05补Jun04，[Ekka exact-v1](https://arxiv.org/html/2606.04594v1) §3–5/A1必要域，2+2+2=6。只采用可信reference下的软件语义映射、激活对齐与持续偏移定位；Eq1分子为target-low对reference-full误差，分母为reference-low对reference-full误差加epsilon。17例可复现选择/九例消融、经验阈值、top3 diagnosis而非检出/修复率及全部执行成本均限原域。reader R7必要Source/actual owner/PRE通过，笔记按原式修正；root明确授两段窄位，作者已实际保存/自读，reader R11唯一非writer actualPOST已通过，本项整合生效且窄位释放，未核实现/复现，不签DAY。
+
+- `SF-2026-ARXIV-2610-27465` — Daily2026-10-22，[Recoverability exact-v1](https://arxiv.org/html/2610.27465v1)必要门禁/恢复协议与反侧，2+2+2=6，安全域深入。只采用门禁 signal/request 生效与 retained artifact restore 分责；保有限 probe、噪声、不同 split、不显著反侧及完整成本，不授充分安全或真实 harm 率。作者 I1/reader R84 Source/实际 owner/PRE 通过；实际写后核验见当日 REVIEW，未核实现或复现。
 
 - **CB-VER（arXiv:2604.03539v1；Status: Experimental）**：exact-v1 支持 converges-before graph、组件 interface composition 与 CHC-based synthesis 在其 benchmarks 中的可行性；不证明未建模环境、实际实现或一般 AI 平台控制面的端到端正确性。https://arxiv.org/abs/2604.03539v1
 

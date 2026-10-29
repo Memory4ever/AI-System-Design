@@ -1,0 +1,481 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.29380v1
+Original retrieval 2026-10-23 BJT. Download is not evidence of having reviewed all content. Necessary reviewed sections and conclusions are in SOURCE_MULTIMODAL.md.
+Abstract
+Practical image generation requires both human preference alignment and few-step efficiency, yet combining reinforcement learning (RL) with distillation is often multi-stage and may erode RL gains We observe that few-step RL progressively improves structural coherence, even with specialized rewards, but leaves low-level artifacts that these rewards may fail to penalize. To address this gap, we propose AdvFidelity, which integrates artifact-sensitive fidelity supervision into RL through an online adversarial reward. This enables joint reward alignment and high-fidelity few-step generation within a single RL stage, without distribution matching distillation (DMD) or other explicit distillation objectives. We train a discriminator to rank high-quality references (positives) above content-matched reconstructions (negatives) produced by the current generator. Reconstructing moderately noised references largely preserves style and scene layout while exposing low-level degradations. This encourages the discriminator to assess artifacts rather than content differences. With negatives reconstructed online, alternating updates adapt fidelity supervision to the generator’s evolving failure modes. References can come from existing target-domain data or full-step model samples. Built on LeapAlign, AdvFidelity backpropagates gradients from both rewards through the few-step sampling trajectories used at inference. Across two model backbones and three task settings, AdvFidelity matches full-step LeapAlign in alignment, task performance, and overall generation quality and remains highly competitive with other evaluated full-step RL methods, using only 4 or 8 steps without CFG.
+ 1 Introduction
+Few-step distillation and reinforcement learning (RL) are two important procedures in the post-training of image generation models. In real-world production, they are usually performed sequentially: RL is first applied for human preference alignment  ( Liu et al., 2026 ; Xue et al., 2025a ; Zheng et al., 2025 ; Xue et al., 2025b ) , and few-step distillation is subsequently performed for efficient inference  ( Song et al., 2023 ; Kim et al., 2024 ; Luo et al., 2023 ; Yin et al., 2024a ) . This sequential pipeline is cumbersome and often suboptimal, as distillation may wash out the reward gains obtained from RL. Recent works, such as DMDR  ( Jiang et al., 2025 ) and RTDMD  ( Huang et al., 2026 ) , adopt a joint training approach: they first warm up with distribution matching distillation (DMD)  ( Yin et al., 2024b ) and then optimize the RL and DMD objectives in parallel.
+During joint optimization, these methods use the pretrained base model, which is not aligned with the target reward, as a fixed reference score model for DMD. Matching this base distribution may oppose the policy’s shift toward reward-preferred outputs. This raises a practical question: does introducing DMD compromise the gains achieved by the same RL method in the full-step setting? Existing evaluations primarily compare joint methods with base models and other few-step generators, with limited comparisons against corresponding full-step RL baselines.
+In this work, we remove the DMD constraint of matching a frozen, RL-agnostic reference distribution. Our framework jointly learns reward alignment and few-step generation within a single RL stage, matching the alignment performance and overall generation quality of its full-step RL baseline without a separate distillation warm-up. We build on a key observation: RL pipelines that directly optimize few-step rollouts  ( Zheng et al., 2025 ; Liang et al., 2026 ) already improve few-step image quality during training, even with highly specialized rewards (e.g., the OCR reward in Figure  1(a) ). However, these gains are incomplete: few-step outputs retain subtle noise artifacts that task rewards may fail to penalize (Figure  1(b) ), especially at later training iterations. This motivates an artifact-sensitive fidelity reward that complements task-specific rewards, enabling joint reward alignment and artifact suppression.
+ (a) Few-step RL with a sparse OCR reward: collapsed generations regain structural coherence during training, while grid-pattern artifacts persist after the reward is satisfied
+ (b) Artifact-laden generations (left of each pair) receive preference scores comparable to or even higher than those of clean images, providing insufficient supervision to recover the clean image distribution.
+ Figure 1: Motivation of AdvFidelity.
+We propose AdvFidelity, which uses an adversarially trained discriminator  ( Goodfellow et al., 2020 ) as a fidelity reward. Its design addresses two practical challenges. First, a fixed discriminator may miss artifacts that emerge as the policy evolves. We therefore update the generator and discriminator alternately, training the discriminator on high-quality references and negatives reconstructed by the current generator to adapt fidelity supervision to changing failure modes. Second, differences in style, semantics, or layout can provide shortcuts for discrimination. We construct content-matched pairs by moderately noising each reference and reconstructing it with the current generator, largely preserving its high-level appearance. This reduces high-level differences and encourages the discriminator to focus on low-level artifacts.
+Fidelity references can come from full-step base-model outputs, existing target-domain images, or samples from a model that covers the desired visual domain. Base-model outputs are often suitable for rewards targeting subject identity preservation, text accuracy, or compositional correctness, which improve task correctness without substantially changing the desired visual appearance. High-quality real images can also serve directly as references in industrial applications such as e-commerce and film production, where photorealism is a priority.
+We instantiate AdvFidelity with LeapAlign  ( Liang et al., 2026 ) and evaluate FLUX.1-dev with the HPSv2 reward on HPDv2 and GenEval prompts, and Qwen-Image-Edit-2511 on virtual dressing with a DINO similarity reward that encourages garment consistency and realism. Using only 4 or 8 sampling steps without classifier-free guidance (CFG), AdvFidelity matches full-step LeapAlign in alignment, task performance, and overall generation quality, and remains highly competitive with other evaluated full-step RL methods. The LeapAlign comparison uses the same base model, reward, and task data, with gains on multiple metrics. These settings use target-domain model sampling, base-model sampling, and target-data reuse, respectively.
+Our contributions are summarized as follows.
+ • 
+We propose AdvFidelity, a framework that jointly learns reward alignment and few-step generation within a single RL stage, without distillation warm-up or parallel DMD training. It removes DMD’s constraint of matching a frozen, RL-agnostic base distribution.
+ • 
+We develop an online adversarial fidelity reward trained on content-matched positive–negative pairs. Online updates adapt the discriminator to evolving artifacts, while matched reconstruction reduces high-level differences and encourages the discriminator to focus on low-level quality.
+ • 
+Experiments across two model backbones and three task settings demonstrate that, using only 4 or 8 sampling steps without CFG, AdvFidelity matches full-step LeapAlign in alignment, task performance, and overall generation quality, and remains highly competitive with other evaluated full-step RL methods.
+ 2 Related Work
+ Reinforcement Learning. 
+Reinforcement learning has become a major approach for aligning image generation models with human preferences and task-specific criteria. Policy-gradient methods formulate denoising as a Markov Decision Process and optimize terminal rewards. DDPO  ( Black et al., 2024 ) establishes this paradigm, and Flow-GRPO  ( Liu et al., 2026 ) , DanceGRPO  ( Xue et al., 2025b ) , and MixGRPO  ( Li et al., 2025 ) adapt group-relative policy optimization  ( Shao et al., 2024 ) to diffusion and flow models. DPO-based methods  ( Rafailov et al., 2023 ; Wallace et al., 2024 ; Liang et al., 2025 ) instead learn from preference pairs without an explicit reward model. AWM  ( Xue et al., 2025a ) and DiffusionNFT  ( Zheng et al., 2025 ) use reward-dependent objectives on forward-noised samples. Direct-gradient methods, including ReFL  ( Xu et al., 2023 ) , DRaFT  ( Clark et al., 2024 ) , and DRTune  ( Wu et al., 2024 ) , propagate differentiable reward gradients through sampling, with different gradient truncation and trajectory designs. LeapAlign  ( Liang et al., 2026 ) uses leap trajectories to extend reward gradients to arbitrary generation steps. In pipelines such as DiffusionNFT and LeapAlign, reduced-step rollouts or shortened gradient paths primarily serve to reduce training cost, rather than explicitly train a few-step inference model. We study how fidelity supervision can support reward alignment and few-step generation at the inference sampling budget.
+ Few-Step Distillation. 
+Few-step distillation reduces the sampling budget of image generation models to one or a few steps. Consistency-based approaches, including Consistency Models  ( Song et al., 2023 ) , Latent Consistency Models  ( Luo et al., 2023 ) , and Phased Consistency Models  ( Wang et al., 2024 ) , promote consistent predictions across noise levels or trajectory phases. Distribution Matching Distillation (DMD)  ( Yin et al., 2024b ) estimates distribution-matching gradients using a fixed reference score model and an online fake-score model. DMD2  ( Yin et al., 2024a ) removes the original regression loss, improves fake-score tracking, and incorporates adversarial supervision from real images. These methods learn few-step generation through explicit consistency or distribution-matching objectives. Applying distillation after RL may reduce reward gains. AdvFidelity instead learns few-step generation through task and fidelity rewards within RL, without an explicit distillation objective.
+ Joint Reward Alignment and Few-Step Generation. 
+DMDR  ( Jiang et al., 2025 ) and RTDMD  ( Huang et al., 2026 ) combine reward optimization with DMD after a distillation cold start, retaining fixed-reference score supervision and an online fake-score model. Their evaluations mainly compare with base models and other few-step generators. DMDR includes full-step ReFL comparisons, but its GRPO variant lacks a corresponding baseline. RTDMD reports near-parity with a published full-step Flow-GRPO baseline on GenEval, but does not establish that their training data and reward configurations are comparable, or report results on other prompt distributions for that model. Although it also uses HPS and PickScore as training rewards, it does not report corresponding full-step RL comparisons in these preference-alignment settings. These comparisons leave preservation of full-step RL gains insufficiently established.
+Reward-Instruct  ( Luo et al., 2026 ) learns few-step generators through regularized reward maximization without diffusion distillation losses. It reports quality metrics and full-step ReFL and DRaFT comparisons, but not its own full-step counterpart. It maintains quality through parameter regularization, stochastic sampling, and fixed pretrained rewards. AdvFidelity learns an online fidelity reward and compares against full-step LeapAlign, its underlying RL method.
+ Online Adversarial Rewards. 
+Adv-GRPO  ( Mao et al., 2026 ) trains an adversarial reward to mitigate reward hacking and align generations with reference domains; we follow its use of a frozen DINOv2  ( Oquab et al., 2023 ) backbone and a trainable head. Its reported setup contrasts Qwen-Image  ( Wu et al., 2025 ) references with SD3 rollouts without constructing content-matched reference–reconstruction pairs. Consequently, fidelity differences are confounded with source-model characteristics, making style or content differences available as discrimination shortcuts. AdvFidelity combines task and fidelity rewards without DMD and constructs each negative by reconstructing a moderately noised reference with the current generator (Sec.  3.4 ). This largely preserves style and scene layout, reducing high-level shortcuts and encouraging the discriminator to focus on low-level artifacts. Online updates adapt this supervision as the policy evolves. Our ablations support the benefits of both adaptive fidelity supervision and content-matched negatives (Sec.  4.4 ).
+ 3 Method
+ 3.1 Preliminaries: RL on Few-Step Rollouts
+We consider text-conditioned flow-matching generators that transport a noise sample \epsilon\sim\mathcal{N}(0,I) to an image conditioned on a prompt c . With a sampling budget of \tau denoising steps, the resulting policy is written as x\sim\pi_{\theta}(\cdot\mid c;\tau) . We use text-conditioned notation for simplicity; in image editing tasks, the conditioning also includes the input images.
+RL-based post-training optimizes the policy against a reward r(x,c) encoding human preferences or task-specific criteria:
+ \max_{\theta}\;\mathbb{E}_{c\sim\mathcal{C}}\,\mathbb{E}_{x\sim\pi_{\theta}(\cdot\mid c;\tau)}\big[r(x,c)\big]. 
+ (1) 
+Advantage-based methods, such as GRPO  ( Shao et al., 2024 ) , sample groups of rollouts and normalize their rewards into advantages. Reward-feedback (ReFL) methods  ( refl ; Liang et al., 2026 ) instead use differentiable rewards to backpropagate gradients through the sampling process. We instantiate AdvFidelity with LeapAlign  ( Liang et al., 2026 ) , a ReFL-family framework that propagates reward gradients through leap-based trajectories. The generator is trained using the few-step sampling budget used at inference.
+ Figure 2: Framework of AdvFidelity. (a) Joint RL update: the few-step generator G_{\theta} ( \pi_{\theta} ) rolls out a trajectory from Gaussian noise x_{1} to the generated image x_{0} , and is updated with both the task reward r_{\mathrm{spec}} and the fidelity reward D_{\phi} . (b) Content-matched pair: a high-quality reference image x^{+} is perturbed with moderate noise and reconstructed by the current G_{\theta} to form a matched negative x^{-} . (c) Online update: the discriminator D_{\phi} is trained on these pairs with a BT loss and supplies the fidelity reward for subsequent generator updates. Each training iteration performs (a) once and then repeats pair construction and the discriminator update in (b)–(c).
+ 3.2 Overview of AdvFidelity
+AdvFidelity builds on the observation that reward optimization on few-step rollouts can progressively recover structural coherence, while low-level artifacts persist under preference rewards alone. To supply the missing fidelity supervision, we augment the preference or task-specific reward with a fidelity reward r_{\mathrm{fid}} learned by an online discriminator:
+ \max_{\theta}\;\mathbb{E}_{c\sim\mathcal{C}}\,\mathbb{E}_{x\sim\pi_{\theta}(\cdot\mid c;\tau)}\big[r_{\mathrm{spec}}(x,c)+\lambda\,r_{\mathrm{fid}}(x)\big], 
+ (2) 
+where r_{\mathrm{spec}} measures human preference or task-specific criteria, r_{\mathrm{fid}}(x)=D_{\phi}(x) assesses visual fidelity, and \lambda balances the two rewards. The fidelity reward is non-stationary because the discriminator is updated alongside the policy (Sec.  3.3 ). Under ReFL, we follow LeapAlign  ( Liang et al., 2026 ) and minimize the thresholded reward loss \mathcal{L}(\theta)=\mathbb{E}\big[\max(0,\,m-r(x,c))\big] , with r(x,c)=r_{\mathrm{spec}}(x,c)+\lambda D_{\phi}(x) . This loss suppresses further reward updates for samples whose combined reward reaches the margin m .
+Figure  2 illustrates the alternating generator and discriminator updates. The discriminator learns from high-quality reference images and content-matched negatives reconstructed by the current generator. References may come from existing data or be generated as needed; their selection depends on the visual requirements of the target task (Sec.  3.4 ). Starting from a pretrained generator, AdvFidelity jointly learns preference alignment and high-fidelity few-step generation within a single RL stage, without a separate distillation warm-up or a teacher-provided score or trajectory objective.
+ 3.3 Adversarial Fidelity Reward
+ Discriminator as reward. Following Mao et al. (2026) , D_{\phi} consists of a frozen DINOv2  ( Oquab et al., 2023 ) backbone and a lightweight trainable MLP head h_{\phi} . The head operates on the [CLS] token, without directly using patch tokens, and input images are evaluated at the RL resolution. The frozen backbone provides a stable feature space, while the online-trained head adapts to the generator’s artifacts. Its score is used directly as the fidelity reward, r_{\mathrm{fid}}(x)=D_{\phi}(x) .
+ Training the discriminator online. We train D_{\phi} to rank a high-quality reference x^{+} above its matched reconstruction x^{-} , produced by the current policy (Sec.  3.4 ), using a Bradley–Terry (BT) loss:
+ \mathcal{L}_{D}=\mathbb{E}_{(x^{+},x^{-})}\big[{-}\log\sigma\big(D_{\phi}(x^{+})-D_{\phi}(x^{-})\big)\big], 
+ (3) 
+where \sigma is the sigmoid function. Because the [CLS] token is a global representation, whole-image scores may be insensitive to localized defects such as grid patterns and texture noise. We therefore apply the same [CLS]-based scoring head to whole images and randomly cropped regions during generator and discriminator training. Cropping makes local defects occupy more of the input and can reduce reliance on global cues such as overall tone or border effects, without introducing a separate patch-token scorer.
+ Adapting to evolving artifacts. Generator updates can change the artifacts encountered by the discriminator. We therefore regenerate negatives with the current policy and perform multiple discriminator updates per generator update. The update ratio is specified in the implementation details. During generator updates, the discriminator parameters are held fixed while gradients propagate through its score; during discriminator updates, only the MLP head is optimized. This alternating process allows the fidelity reward to adapt as the generator changes, reducing the risk that new artifacts escape the supervision of a fixed reward.
+ Compatibility with other RL methods. The fidelity reward is a scalar and can be incorporated into different RL objectives. In our ReFL implementation, its gradient is propagated through the sampling process together with that of r_{\mathrm{spec}} . In advantage-based methods such as GRPO, the same score can contribute to the rewards used to compute rollout advantages. Our experiments use the LeapAlign implementation.
+ 3.4 Content-Matched Pair Construction
+The BT loss learns any features that consistently distinguish positives from negatives. If unrelated image populations are used, differences in style, semantics, or layout can become shortcuts for discrimination. We instead construct content-matched pairs by reconstructing each reference with the current generator, largely preserving its high-level appearance while exposing low-level degradations.
+ Noise-anchored negatives. Given a reference image x^{+} , we introduce moderate noise at level t :
+ x_{t}=(1{-}t)\,x^{+}+t\,\epsilon,\quad\epsilon\sim\mathcal{N}(0,I). 
+ (4) 
+The current generator then completes the remaining denoising from x_{t} to obtain x^{-} , using one or two steps in practice. Reconstruction uses the conditioning associated with x^{+} : for text-to-image generation, this is a paired prompt or a caption; for image editing, it also includes the corresponding input images. With moderate noise ( t\leq 0.5 ), x_{t} retains much of the reference structure, allowing the reconstruction to largely preserve style and scene layout. The remaining differences are thus more concentrated in fine details, encouraging the discriminator to assess fidelity rather than high-level content. In all three experimental settings, the noise level is randomly sampled from \{0.3,0.5\} for each matched negative. Negatives are reconstructed online, so the pairs reflect the current generator’s failure modes.
+ Choosing reference images. Fidelity references, or anchors, should cover the target visual quality and style, but need not maximize the task reward, which is optimized directly through r_{\mathrm{spec}} . We choose among three acquisition strategies according to visual compatibility and data availability:
+ • 
+ Base-model sampling. When the base model’s full-step outputs cover the target visual quality and style, we use them directly as anchors. This strategy is suitable when reward optimization primarily improves task correctness within a visual domain already covered by the base model. For GenEval, these are 50-step FLUX.1-dev outputs.
+ • 
+ Target-data reuse. Suitable existing target-domain images can be reused directly, regardless of base-model coverage. Sources include high-quality real images and existing high-quality generated images. When RL follows target-domain supervised fine-tuning (SFT), its ground-truth images can likewise be reused for both photorealistic and stylized tasks. For virtual dressing, real ground-truth try-on images from the training split serve as references.
+ • 
+ Target-domain model sampling. When base-model coverage is insufficient and suitable data are unavailable or disallowed by the experimental protocol, we sample a model that produces high-quality images in the target domain. An existing RL-aligned model is one possible source. Its samples can be prepared once and reused across runs with the same target visual requirements; the source model’s scores and denoising trajectories are not used during AdvFidelity training. For HPDv2, we use 50-step samples from an HPSv2-aligned LeapAlign checkpoint.
+All three strategies use the same content-matched pair construction. References may be stored beforehand or generated as needed; a fixed reference set is not required.
+ 3.5 Adversarial Training Procedure
+ Algorithm 1 AdvFidelity Training
+ 0: 
+  pretrained policy \pi_{\theta} , discriminator D_{\phi} , task reward r_{\mathrm{spec}} , reference source \mathcal{R} , sampling budget \tau , noise level t , reward weight \lambda , discriminator update ratio K 
+ 1: 
+   while not converged do 
+ 2: 
+   Sample conditioning c and rollouts x\sim\pi_{\theta}(\cdot\mid c;\tau) 
+ 3: 
+    r\leftarrow r_{\mathrm{spec}}(x,c)+\lambda\,D_{\phi}(x) ; update \theta with the thresholded reward loss (Sec.  3.2 )
+ 4: 
+    for k=1 to K do 
+ 5: 
+    Obtain a reference and its conditioning (x^{+},c^{+}) from \mathcal{R} 
+ 6: 
+    Sample \epsilon\sim\mathcal{N}(0,I) ; x_{t}\leftarrow(1{-}t)\,x^{+}+t\,\epsilon 
+ 7: 
+    Complete denoising from x_{t} with the current policy conditioned on c^{+} to obtain x^{-} 
+ 8: 
+    Update \phi with the BT loss on (x^{+},x^{-}) (Eq.  3 )
+ 9: 
+    end for 
+ 10: 
+   end while 
+Algorithm  1 summarizes the alternating updates. In our FLUX experiments, the policy is initialized from the original FLUX.1-dev model. Each generator update optimizes both rewards on a few-step rollout from Gaussian noise. Each discriminator update obtains a reference from the chosen source and reconstructs a matched negative using the current generator. Preference alignment and few-step generation are therefore learned jointly, while reference acquisition can use existing images or model-generated samples.
+Under ReFL, gradients of the discriminator score flow into the generator, inducing an adversarial interaction analogous to GAN training. Here, the discriminator supplies one reward within a multi-reward objective, and its training negatives are content-matched reconstructions rather than unrelated generations. Its role is to supervise the fidelity of few-step outputs as the task reward improves preference or task-specific performance.
+ 4 Experiments
+We evaluate AdvFidelity on preference alignment with HPDv2 prompts, compositional generation with GenEval prompts, and a production-oriented virtual dressing task. The first two settings follow the experimental protocols of LeapAlign  ( Liang et al., 2026 ) , including its training and evaluation prompt sets and evaluation procedures, and initialize AdvFidelity from the original FLUX.1-dev model. AdvFidelity jointly learns reward alignment and few-step generation in a single generator training stage, with the fidelity discriminator trained online from the chosen references. AdvFidelity uses 4 or 8 sampling steps for FLUX and 8 steps for virtual dressing, without classifier-free guidance (CFG). We compare against full-step LeapAlign RL trained on the same base model in each setting, including both CFG and non-CFG variants for virtual dressing. Together, these experiments evaluate the three reference acquisition strategies in Sec.  3.4 across different visual domains and rewards.
+ 4.1 Preference Alignment on HPDv2
+ Implementation Details. 
+We fine-tune FLUX.1-dev on the HPDv2 prompt set, which comprises 50,000 training prompts and 400 test prompts, using HPSv2  ( Wu et al., 2023 ) as the preference reward. We report HPSv2, PickScore  ( Kirstain et al., 2023 ) , ImageReward  ( Xu et al., 2023 ) , and the alignment and image-quality sub-scores of UnifiedReward  ( Wang et al., 2025 ) . Following LeapAlign, the table labels HPSv2 as an in-domain metric and PickScore, ImageReward, and UnifiedReward as out-of-domain metrics. HPSv3  ( Ma et al., 2025 ) is shaded and reported separately for reference only, as it can assign misleading scores to images with few-step artifacts; Appendix  B examines artifact sensitivity on content-matched pairs.
+We compare against DanceGRPO  ( Xue et al., 2025b ) , MixGRPO  ( Li et al., 2025 ) , ReFL  ( Xu et al., 2023 ) , DRTune  ( Wu et al., 2024 ) , DRaFT-LV  ( Clark et al., 2024 ) , and LeapAlign  ( Liang et al., 2026 ) . For HPDv2 and GenEval, results for these methods and the pretrained baseline are taken from LeapAlign. RTDMD ∗ denotes the officially released four-step FLUX.1-dev RTDMD  ( Huang et al., 2026 ) checkpoint evaluated at 4 and 8 NFEs. The public FLUX.1-dev RTDMD configurations use 25,432 PickScore prompts for DMD warm-up and 50,000 GenEval prompts with CLIPScore, HPSv2, PickScore, and GenEval rewards for RL. For a fairer comparison, we also retrain RTDMD using its released code at 4 and 8 steps with the same task training prompts and HPSv2 reward as AdvFidelity under LeapAlign’s protocol; unmarked RTDMD entries report these runs.
+The fidelity discriminator consists of a frozen DINOv2-Large  ( Oquab et al., 2023 ) encoder and a trainable MLP head. We use crop sizes of 256 and 384 pixels with a crop-level loss weight of 0.3. The generator and discriminator are optimized with AdamW at learning rates of 1\times 10^{-4} and 5\times 10^{-5} , respectively. The gradient discount factor is 0.3, the reward margin m is 0.55, and the fidelity reward weight \lambda is 0.05. The discriminator performs four updates per generator update.
+ Table 1: Quantitative comparison of preference alignment on FLUX.1-dev. Bold and underlined values denote the best and second best results. Higher is better. † HPSv3 is shaded and reported for reference only, as it assigns unreliable scores to artifact-laden images. ∗ Officially released RTDMD models; unmarked RTDMD rows are retrained under the same protocol as AdvFidelity.
+ In-Domain 
+ Out-of-Domain 
+ Methods 
+ NFE 
+ HPSv2 
+ PickScore 
+ ImgRwd 
+ UR-Align 
+ UR-IQ 
+ HPSv3 † 
+ Pre-trained Models 
+ FLUX.1-dev 
+ 50 
+ 0.3083 
+ 22.6970 
+ 1.0210 
+ 3.4428 
+ 3.4792 
+ 13.3406 
+ RL Methods 
+ DanceGRPO 
+ 50 
+ 0.3451 
+ 23.1186 
+ 1.2347 
+ 3.4660 
+ 3.6199 
+ 14.8336 
+ MixGRPO 
+ 50 
+ 0.3692 
+ 23.5184 
+ 1.6155 
+ 3.4393 
+ 3.6241 
+ 14.7530 
+ ReFL 
+ 50 
+ 0.3852 
+ 23.6299 
+ 1.3468 
+ 3.4786 
+ 3.6870 
+ 15.5127 
+ DRTune 
+ 50 
+ 0.3882 
+ 23.5185 
+ 1.3384 
+ 3.4793 
+ 3.6679 
+ 15.5606 
+ DRaFT-LV 
+ 50 
+ 0.3859 
+ 23.6437 
+ 1.3562 
+ 3.4868 
+ 3.6887 
+ 15.3699 
+ LeapAlign 
+ 50 
+ 0.4096 
+ 23.7239 
+ 1.5105 
+ 3.4837 
+ 3.7284 
+ 15.7548 
+ Joint Methods 
+ RTDMD* 
+ 4 
+ 0.3352 
+ 22.7344 
+ 1.2304 
+ 3.4243 
+ 3.6373 
+ 14.6269 
+ RTDMD* 
+ 8 
+ 0.3283 
+ 22.4196 
+ 1.0885 
+ 3.4167 
+ 3.6769 
+ 14.5304 
+ RTDMD 
+ 4 
+ 0.3724 
+ 22.8279 
+ 1.3020 
+ 3.4015 
+ 3.7452 
+ 15.1737 
+ RTDMD 
+ 8 
+ 0.3923 
+ 23.3059 
+ 1.4134 
+ 3.4779 
+ 3.7482 
+ 15.0931 
+ AdvFidelity 
+ 4 
+ 0.4055 
+ 23.6211 
+ 1.5164 
+ 3.4981 
+ 3.7338 
+ 15.4299 
+ AdvFidelity 
+ 8 
+ 0.4125 
+ 23.7685 
+ 1.5255 
+ 3.5024 
+ 3.7509 
+ 15.3197 
+ Table 2: Compositional generation results on FLUX.1-dev, with HPSv2 as the training reward. Bold and underlined values denote the best and second best results. Higher is better. ∗ Officially released RTDMD models; unmarked RTDMD rows are retrained under the same protocol as AdvFidelity.
+ Methods 
+ NFE 
+ Overall 
+ Single Obj 
+ Two Obj 
+ Count 
+ Color 
+ Pos 
+ AttrB 
+ Pre-trained Models 
+ FLUX.1-dev 
+ 50 
+ 0.6481 
+ 99.38 
+ 85.10 
+ 66.56 
+ 76.06 
+ 19.00 
+ 42.75 
+ RL Methods 
+ DanceGRPO 
+ 50 
+ 0.6775 
+ 99.38 
+ 90.15 
+ 69.38 
+ 76.33 
+ 22.25 
+ 49.00 
+ MixGRPO 
+ 50 
+ 0.7232 
+ 99.69 
+ 93.69 
+ 80.00 
+ 80.05 
+ 24.25 
+ 56.25 
+ ReFL 
+ 50 
+ 0.7011 
+ 99.38 
+ 92.68 
+ 69.06 
+ 75.80 
+ 26.75 
+ 57.00 
+ DRTune 
+ 50 
+ 0.7101 
+ 99.38 
+ 93.69 
+ 73.12 
+ 76.86 
+ 27.50 
+ 55.50 
+ DRaFT-LV 
+ 50 
+ 0.7024 
+ 99.69 
+ 92.42 
+ 74.06 
+ 75.53 
+ 24.00 
+ 55.75 
+ LeapAlign 
+ 50 
+ 0.7420 
+ 99.38 
+ 96.46 
+ 72.50 
+ 80.59 
+ 30.25 
+ 66.00 
+ Joint Methods 
+ RTDMD* 
+ 4 
+ 0.6521 
+ 97.50 
+ 85.86 
+ 53.44 
+ 78.19 
+ 26.75 
+ 49.50 
+ RTDMD* 
+ 8 
+ 0.6828 
+ 99.69 
+ 91.41 
+ 63.44 
+ 73.14 
+ 25.50 
+ 56.50 
+ RTDMD 
+ 4 
+ 0.6794 
+ 99.38 
+ 92.68 
+ 73.75 
+ 63.83 
+ 33.25 
+ 44.75 
+ RTDMD 
+ 8 
+ 0.7236 
+ 99.69 
+ 95.45 
+ 72.81 
+ 74.73 
+ 36.25 
+ 55.25 
+ AdvFidelity 
+ 4 
+ 0.7535 
+ 99.38 
+ 96.46 
+ 74.06 
+ 82.45 
+ 30.75 
+ 69.00 
+ AdvFidelity 
+ 8 
+ 0.7759 
+ 100.0 
+ 98.99 
+ 82.50 
+ 84.57 
+ 26.75 
+ 72.75 
+ Reference Images and Matched Negatives. 
+We use target-domain model sampling (Sec.  3.4 ). In this setting, HPSv2 optimization encourages pronounced cartoon and fantasy styles, substantially shifting the visual distribution from that of the original FLUX.1-dev model. Fidelity references should cover this preferred appearance. Although HPDv2 provides approximately 430,000 images from multiple generative models, this heterogeneous collection does not consistently reflect the reward-preferred appearance. We therefore prepare 50,000 reference image–prompt pairs once, using 50-step samples from the official HPSv2-aligned LeapAlign  ( Liang et al., 2026 ) checkpoint, and use them directly without filtering by any reward score. Following LeapAlign’s HPSv2 scoring procedure, we obtain mean scores of 0.2583 for the released HPDv2 images and 0.3881 for these generated references, providing a quantitative comparison of their compatibility with the training reward. This reference set can be reused across training runs with the same target visual requirements, while the fidelity discriminator adapts online to each generator. AdvFidelity itself starts from the original FLUX.1-dev model and does not use the reference model’s scores or denoising trajectories.
+Across HPDv2, GenEval, and virtual dressing, the noise level is randomly sampled from \{0.3,0.5\} when constructing each matched negative. The current generator completes the remaining denoising in one or two steps.
+ Figure 3: Qualitative comparisons on (a) HPDv2 preference-alignment prompts and (b) GenEval compositional prompts. Full-step FLUX.1-dev and LeapAlign are compared with 4- and 8-step RTDMD and AdvFidelity. Please zoom in for artifact details
+ Results. 
+Table  1 shows that 8-step AdvFidelity achieves higher scores than 50-step LeapAlign on the five primary metrics, with HPSv2 increasing from 0.4096 to 0.4125. Among the evaluated 50-step RL methods, 8-step AdvFidelity leads on HPSv2, PickScore, UR-Align, and UR-IQ, while MixGRPO retains the highest ImageReward. At 4 steps, its HPSv2 and PickScore remain close to those of full-step LeapAlign, while ImageReward, UR-Align, and UR-IQ are higher. Compared with retrained RTDMD at the same sampling budgets, AdvFidelity achieves higher HPSv2, PickScore, ImageReward, and UR-Align scores at both 4 and 8 steps. It also exceeds the released RTDMD ∗ checkpoint on all five primary metrics at both sampling budgets. Figure  3 (a) shows substantially reduced few-step artifacts relative to RTDMD, while retaining the preferred appearance and fine details of full-step RL outputs. Together, the quantitative and qualitative results support overall visual quality comparable to full-step RL with far fewer sampling steps.
+ 4.2 Compositional Generation on GenEval
+ Implementation Details and Reference Images. 
+We evaluate compositional generation on GenEval  ( Ghosh et al., 2023 ) , using HPSv2  ( Wu et al., 2023 ) as the preference reward. GenEval assesses object presence, counting, color, spatial relations, and attribute binding in familiar visual scenes. Training uses 50,000 prompts, and evaluation follows the standard protocol with 553 test prompts, generating four images per prompt. Although both settings optimize HPSv2, we observe much milder changes in visual style on GenEval prompts than on HPDv2 prompts. The original FLUX.1-dev model’s 50-step outputs therefore remain suitable fidelity references, allowing us to use base-model sampling (Sec.  3.4 ) without an RL-aligned reference model. These references supervise fidelity and need not satisfy every compositional constraint; the generator is optimized directly with HPSv2. Therefore, we prepare 5,000 reference image–prompt pairs using 50-step FLUX.1-dev inference.
+Matched-negative construction and the remaining training settings follow Sec.  4.1 . We report the overall GenEval score and its sub-category scores.
+ Results. 
+Table  2 shows overall scores of 0.7535 and 0.7759 for 4- and 8-step AdvFidelity, respectively, compared with 0.7420 for 50-step LeapAlign. Both variants exceed all evaluated 50-step RL baselines on the overall score and improve color and attribute binding over LeapAlign. They also outperform both retrained RTDMD and released RTDMD ∗ at the corresponding sampling budgets on the overall score. These results show that base-model references can provide effective fidelity supervision while the generator learns improved compositional performance and few-step generation jointly. Figure  3 (b) provides qualitative examples at both sampling budgets.
+ 4.3 Virtual Dressing on Real Data
+ Table 3: Quantitative comparison on virtual dressing with Qwen-Image-Edit-2511.
+ In-Domain 
+ Out-of-Domain 
+ Methods 
+ CFG 
+ NFE 
+ DINO 
+ Realism 
+ Consistency 
+ Alignment 
+ Coherence 
+ Qwen-Image-Edit-2511 
+ \checkmark 
+ 40 
+ 0.7426 
+ 5.96 {\scriptstyle\pm 0.86} 
+ 8.60 {\scriptstyle\pm 0.49} 
+ 8.77 {\scriptstyle\pm 0.45} 
+ 7.91 {\scriptstyle\pm 0.51} 
+ LeapAlign 
+ \times 
+ 40 
+ 0.7793 
+ 8.06 {\scriptstyle\pm 0.62} 
+ 9.35 {\scriptstyle\pm 0.40} 
+ 9.03 {\scriptstyle\pm 0.44} 
+ 8.19 {\scriptstyle\pm 0.49} 
+ LeapAlign 
+ \checkmark 
+ 40 
+ 0.7874 
+ 8.33 {\scriptstyle\pm 0.42} 
+ 9.28 {\scriptstyle\pm 0.42} 
+ 9.06 {\scriptstyle\pm 0.39} 
+ 8.30 {\scriptstyle\pm 0.46} 
+ AdvFidelity 
+ \times 
+ 8 
+ 0.7929 
+ 8.45 {\scriptstyle\pm 0.36} 
+ 9.54 {\scriptstyle\pm 0.27} 
+ 9.11 {\scriptstyle\pm 0.45} 
+ 8.32 {\scriptstyle\pm 0.42} 
+ Figure 4: Qualitative comparison on virtual dressing with Qwen-Image-Edit-2511. AdvFidelity uses 8 steps without CFG; the full-step comparisons use 40 steps, with CFG settings indicated above each column. Please zoom in for artifact details
+ Implementation Details and Reference Images. 
+We evaluate AdvFidelity on virtual dressing using Qwen-Image-Edit-2511  ( Wu et al., 2025 ) . The task takes a prompt and a reference garment image as input, and generates an image that presents the garment as described by the prompt. The task data consist of outfit images collected from the web, comprising 1,000 training pairs and 124 test samples. We use target-data reuse (Sec.  3.4 ): real ground-truth try-on images drawn exclusively from the training split of the paired task data serve directly as fidelity references. Suitable real images are often available in industrial applications; when RL follows target-domain SFT, the SFT ground-truth images can likewise be reused as references. Our dressing setting illustrates this use of existing target data without an RL-aligned reference model or additional reference-image generation. Matched negatives are reconstructed online by the current generator, and the discriminator architecture and objective follow Sec.  4.1 . The generator and discriminator are both optimized with AdamW at a learning rate of 5\times 10^{-5} , the reward margin m is 1, the fidelity reward weight \lambda is 0.01, and the discriminator performs two updates per generator update. To encourage garment consistency and realism, we use DINO feature similarity between each generated image and its ground truth as the task-specific reward. Thus, training ground-truth images serve both as fidelity references and as comparison targets for this reward. We report DINO similarity and use Gemini 3.5 Flash to evaluate Realism, Consistency, Alignment, and Coherence on the 124 test samples, each on an integer scale from 1 to 10. We repeat Gemini evaluation three times on the same generated images to reduce the effect of stochastic MLLM scoring, and report the mean \pm standard deviation across the three runs.
+ Results. 
+Table  3 shows that 8-step AdvFidelity without CFG achieves the highest DINO similarity and the highest mean Gemini scores across all four evaluation aspects among the compared methods. Its DINO similarity is 0.7929, compared with 0.7874 for 40-step LeapAlign with CFG. These results support the applicability of AdvFidelity to a practical image-editing task with real-image references and a DINO similarity reward for garment consistency and realism, enabling few-step inference without CFG. Figure  4 provides qualitative comparisons; the displayed prompts are shortened for readability, with full prompts shown in Figure  9 .
+ 4.4 Ablation Studies
+We evaluate four cumulative configurations of AdvFidelity at 8-step inference on HPDv2, together with two comparison baselines. The original FLUX.1-dev model sampled in 8 steps is the pretrained baseline. LeapAlign+DMD distills the official full-step LeapAlign checkpoint to 8 steps and represents sequential RL followed by distillation. The vanilla AdvFidelity configuration uses a frozen discriminator trained on references from base-model sampling and unpaired rollout negatives. We then add online discriminator updates (+adaptive r_{\mathrm{fid}} ), replace the references with images obtained through target-domain model sampling (+target-anchored positives), and introduce content-matched negatives to obtain the full method. The Base and Target labels in Table  4 denote these two reference acquisition strategies, respectively.
+ Table 4: Ablation study at 8-step inference under HPDv2 setting. Bold values denote the best results.
+ Methods 
+ Paired 
+ Anchor 
+ r_{fid} 
+ HPSv2 
+ PickScore 
+ ImgRwd 
+ UR-Align 
+ UR-IQ 
+ FLUX.1-dev 
+ – 
+ – 
+ – 
+ 0.2929 
+ 22.3912 
+ 0.9532 
+ 3.4227 
+ 3.7024 
+ LeapAlign + DMD 
+ – 
+ – 
+ – 
+ 0.3978 
+ 22.9654 
+ 1.3976 
+ 3.4259 
+ 3.7164 
+ Vanilla 
+ \times 
+ Base 
+ Frozen 
+ 0.3416 
+ 22.6735 
+ 1.1650 
+ 3.4404 
+ 3.7123 
+ +Adaptive r_{\mathrm{fid}} 
+ \times 
+ Base 
+ \checkmark 
+ 0.3558 
+ 22.8637 
+ 1.2171 
+ 3.4494 
+ 3.7215 
+ +Target-anchored positives 
+ \times 
+ Target 
+ \checkmark 
+ 0.3920 
+ 23.2588 
+ 1.3567 
+ 3.4456 
+ 3.7141 
+ +Paired Data (Full) 
+ \checkmark 
+ Target 
+ \checkmark 
+ 0.4125 
+ 23.7685 
+ 1.5255 
+ 3.5024 
+ 3.7509 
+ Figure 5: Qualitative ablation comparison on FLUX.1-dev with HPDv2 prompts at 8-step inference. Components are added cumulatively from the vanilla configuration to the full method.
+ Results. 
+Sequential DMD lowers the full-step LeapAlign checkpoint’s HPSv2 score from 0.4096 to 0.3978 and PickScore from 23.7239 to 22.9654, illustrating a loss of alignment gains in this configuration. Online discriminator updates improve all five reported metrics over the frozen-discriminator variant, supporting the benefit of adapting fidelity supervision to the current generator. Switching to target-style references further raises HPSv2 from 0.3558 to 0.3920, consistent with improved reference compatibility in this stylized setting. Adding content-matched negatives then improves all five metrics, with the full method achieving the strongest results among the ablation configurations. Figure  5 illustrates progressively reduced grid-like artifacts as the components are added. Together, these results support online fidelity supervision, suitable reference selection, and content-matched reconstruction within the joint training framework.
+ 5 Conclusion
+We presented AdvFidelity, a framework that jointly learns reward alignment and few-step generation within a single RL stage, without distillation warm-up or DMD. It builds on the observation that reward optimization on few-step trajectories improves structural coherence, while low-level artifacts may escape task-reward supervision. AdvFidelity therefore complements the task reward with an online fidelity discriminator trained on content-matched pairs that reduce high-level differences and encourage attention to low-level artifacts. Through LeapAlign, both rewards are optimized along the few-step sampling trajectories used at inference. Experiments across two model backbones and three task settings show that, using only 4 or 8 steps without CFG, AdvFidelity matches full-step LeapAlign in alignment, task performance, and overall generation quality and remains highly competitive with other evaluated full-step RL methods.
+

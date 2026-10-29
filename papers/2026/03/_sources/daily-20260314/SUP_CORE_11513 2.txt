@@ -1,0 +1,1829 @@
+Can Small Language Models Use What They Retrieve?An Empirical Study of Retrieval Utilization Across Model Scale
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+Retrieval-augmented generation.
+Context distraction.
+Parametric vs. non-parametric knowledge.
+RAG fine-tuning for small models.
+Faithfulness and grounding evaluation.
+Oracle probing.
+Small model capabilities.
+3
+Experimental Setup
+3.1
+Models
+3.2
+Datasets
+3.3
+Retrieval Systems
+BM25.
+Dense (E5-large-v2).
+Hybrid (RRF).
+Oracle.
+3.4
+Parametric Knowledge Split
+3.5
+Evaluation Protocol
+3.6
+Reproducibility
+4
+Results
+4.1
+Pilot Study: Retrieval Hurts Across All Methods
+4.2
+Oracle Retrieval Fails for Small Models
+4.3
+Retrieval Destroys Parametric Knowledge
+4.4
+The Net Trade-off Is Negative
+4.5
+Per-Dataset Analysis
+4.6
+Prompt Robustness
+4.7
+Cross-Architecture Validation
+5
+Error Analysis
+Irrelevant generation
+Refusal
+Format-related failures
+6
+Discussion
+6.1
+The Utilization Bottleneck
+6.2
+Why Does Context Hurt Known Answers?
+6.3
+Implications for Practitioners
+6.4
+What Scale Is Needed?
+Key takeaway.
+7
+Conclusion
+Task scope.
+Model diversity.
+Quantization.
+Corpus coverage and oracle quality.
+Prompt sensitivity.
+Domain and language scope.
+References
+A
+Retrieval Hit Rates by Dataset
+B
+Latency Analysis
+C
+Statistical Significance Tests
+Oracle vs. None (
+Unknown
+).
+Noisy vs. None (
+Known
+— distraction).
+Oracle vs. Noisy (
+Known
+— distraction quality).
+D
+Pilot Study Full Results
+E
+Supplementary Figures
+F
+Example Error Outputs
+Irrelevant generation (73% of 3B failures).
+Refusal (7% of 3B failures).
+Wrong entity (8% of 3B failures).
+Partial match (2% of 3B failures).
+Verbose correct (6% of 3B failures).
+License: CC BY 4.0
+arXiv:2603.11513v1 [cs.CL] 12 Mar 2026
+Can Small Language Models Use What They Retrieve?
+An Empirical Study of Retrieval Utilization Across Model Scale
+Sanchit Pandey
+Affiliation:
+BITS Pilani, Hyderabad Campus
+Affiliation:
+Telangana, India
+Email:
+f20220740@hyderabad.bits-pilani.ac.in
+Abstract
+Retrieval-augmented generation (RAG) is widely deployed to improve factual
+accuracy in language models, yet it remains unclear whether smaller models
+(
+≤
+{\leq}
+7B parameters) can effectively utilize retrieved information.
+To investigate this question, we evaluate five model sizes (360M–8B) from three architecture families (SmolLM2, Qwen2.5, Llama 3.1) under four retrieval conditions: no retrieval, BM25, dense (E5-large-v2), and
+oracle
+retrieval in which the retrieved passages are guaranteed to contain the answer, allowing us to isolate utilization behavior from retrieval accuracy.
+We introduce a parametric knowledge split that separates questions a model can already answer from those that require external knowledge, allowing us to isolate utilization failure from retrieval quality failure.
+We find three key results.
+First, even with oracle retrieval, models
+≤
+{\leq}
+7B fail to extract the
+correct answer 85–100% of the time on questions they cannot answer alone,
+indicating a fundamental utilization bottleneck.
+Second, any retrieval—including oracle—destroys 42–100% of previously
+correct parametric answers, suggesting a
+distraction effect
+driven by the mere
+presence of context rather than its quality.
+Third, error analysis of 2,588 oracle failures shows that the dominant failure
+mode is irrelevant generation (61–100%), where the model ignores the provided context completely.
+The pattern is robust across three prompt templates and three retrieval
+methods.
+Taken together these results indicate that for sub-7B models, the RAG bottleneck is
+context utilization, not retrieval quality, and that deploying RAG at this
+scale produces a net negative trade-off under standard evaluation
+conditions.
+1
+Introduction
+Retrieval-augmented generation (RAG) has become a standard technique for
+improving factual accuracy in language models
+(
+Lewis et al., 2020
+;
+Guu et al., 2020
+)
+.
+By retrieving relevant passages from an external corpus and conditioning
+generation on them, RAG systems can reduce hallucination and provide
+up-to-date information.
+The appeal of combining small, efficient models with powerful retrieval is
+particularly strong for deployment on edge devices, in cost-constrained
+settings, and for privacy-sensitive applications.
+However, existing RAG evaluations focus primarily on large models (
+>
+>
+10B parameters), leaving an important question largely unexplored:
+can smaller language models actually make effective use of retrieved information?
+Prior work has shown that irrelevant context degrades LLM performance
+(
+Shi et al., 2023
+;
+Yoran et al., 2024
+)
+, but this conflates two
+distinct failure modes: (1) the retriever returning unhelpful passages, and
+(2) the model failing to utilize helpful passages.
+Mallen et al. (2023)
+investigate when retrieval helps based on
+entity popularity, but do not isolate the model’s ability to extract from
+context.
+To separate retrieval quality from utilization, we introduce an
+oracle
+condition in which the provided passages are guaranteed to contain the answer—an experimental setting that has not been systematically examined across model scales.
+Our goal in this research is diagnostic.
+Instead of proposing a new RAG method, we aim to measure the utilization bottleneck quantitatively, providing an empirically grounded target for future work on fine-tuning, architectural design, or selective retrieval.
+To study this question, we evaluate five model sizes (360M to 8B parameters) from three architecture families under four retrieval conditions (none, BM25, dense, oracle) on 1,000 questions drawn from Natural Questions and HotpotQA.
+The experimental design includes three methodological components:
+(1) oracle retrieval drawn from the same corpus used by evaluated retrievers,
+eliminating corpus distribution mismatch and cleanly isolating utilization
+from retrieval quality;
+(2) a parametric knowledge split that classifies each (model, question) pair
+as
+Known
+or
+Unknown
+, enabling separate analysis of
+retrieval benefit and retrieval harm; and
+(3) systematic robustness checks across retrieval methods (BM25, dense,
+hybrid), prompt templates (forced, permissive, minimal), and question types
+(factoid, multi-hop).
+Using oracle retrieval together with parametric knowledge splits, we conduct a scaling study that isolates retrieval utilization from retrieval quality.
+Our key findings are:
+(a) even with perfect retrieval, the 7B model extracts the correct answer
+only 14.6% of the time for
+Unknown
+questions;
+(b) retrieval destroys 42–100% of correct answers on
+Known
+questions;
+(c) error analysis reveals the dominant failure is irrelevant generation; and
+(d) the pattern holds across all retrieval methods and prompt templates
+tested.
+2
+Related Work
+Retrieval-augmented generation.
+Lewis et al. (2020)
+and
+Guu et al. (2020)
+introduce
+RAG for knowledge-intensive tasks, typically evaluating on large models.
+Izacard and Grave (2021)
+show that Fusion-in-Decoder benefits
+from more passages, but evaluate models
+≥
+{\geq}
+3B with task-specific
+fine-tuning.
+In contrast, we study the under-explored sub-7B regime using instruction-tuned (rather than fine-tuned) models.
+Asai et al. (2024)
+propose Self-RAG with self-reflection tokens
+to decide when to retrieve.
+Jiang et al. (2023)
+introduce FLARE, which generates forward-looking
+retrieval queries during generation.
+Our results bring into question a key assumption of such systems: that the model can
+effectively use passages once retrieved.
+At smaller model scales, the primary bottleneck lies in the “use” step itself; selective retrieval may reduce distraction but does not resolve the underlying utilization failure.
+Context distraction.
+Shi et al. (2023)
+demonstrate that irrelevant context degrades LLM
+performance, but evaluate only large models (
+>
+>
+10B) and do not include an
+oracle condition.
+Yoran et al. (2024)
+study making RAG robust to irrelevant context
+but do not isolate parametric vs. retrieved knowledge.
+The oracle setting in our experiments isolates utilization from distraction, revealing that even
+relevant
+context can degrade performance at smaller scales.
+Liu et al. (2024)
+show that language models struggle to utilize
+information in the middle of long contexts, motivating our attention dilution
+hypothesis.
+Xiong et al. (2023)
+investigate long-context capabilities in
+smaller models, finding significant degradation below 7B parameters.
+Parametric vs. non-parametric knowledge.
+Mallen et al. (2023)
+investigate when retrieval helps based on
+entity popularity, operating at the entity level.
+Our parametric split operates at the individual (model, question) level,
+providing finer-grained analysis.
+Longpre et al. (2021)
+study parametric–retrieved knowledge
+conflicts in large models; we extend this to the small-model regime.
+RAG fine-tuning for small models.
+Zhang et al. (2024)
+propose RAFT (Retrieval-Augmented Fine-Tuning),
+showing that training models specifically for RAG significantly improves
+utilization.
+Shi et al. (2024)
+study retrieval-augmented language model
+pre-training.
+These results reinforce our finding that standard instruction-tuning is
+insufficient for grounding at small scales.
+Faithfulness and grounding evaluation.
+Min et al. (2023)
+introduce FActScore for fine-grained
+factuality evaluation.
+Es et al. (2024)
+propose RAGAS, a framework specifically designed
+to evaluate RAG pipelines along multiple dimensions including faithfulness.
+Our EM-based evaluation complements these frameworks; we discuss the relationship in Section
+3
+.
+Oracle probing.
+Petroni et al. (2021)
+use gold passages for knowledge probing in
+KILT.
+We build on this idea with a systematic scaling study incorporating parametric splits, multiple retrieval baselines, and an error taxonomy designed to reveal the mechanism of failure.
+Small model capabilities.
+Recent small-model releases such as Phi-3
+(
+Abdin et al., 2024
+)
+and Gemma
+(
+Gemma Team et al., 2024
+)
+demonstrate strong per-parameter performance. This makes the utilization bottleneck we identify particularly notable: even capable small models struggle to ground their answers in retrieved context.
+3
+Experimental Setup
+3.1
+Models
+We evaluate five instruction-tuned models spanning approximately 22
+×
+\times
+in parameter count from three architecture families.
+The four local models use identical 4-bit NF4 quantization via BitsAndBytes
+with double quantization to ensure fair comparison.
+Llama-3.1-8B-Instruct is evaluated via Groq API inference (FP16), allowing a cross-precision validation.
+The qualitative pattern—where no retrieval outperforms all retrieval methods—matches that observed in the 4-bit local models, indicating that the results are not artifacts of quantization.
+All five models are decoder-only, instruction-tuned transformers.
+Model
+Params
+Quant.
+Backend
+SmolLM2-360M-Inst.
+360M
+NF4 4-bit
+Local T4
+Qwen2.5-1.5B-Inst.
+1.5B
+NF4 4-bit
+Local T4
+Qwen2.5-3B-Inst.
+3.0B
+NF4 4-bit
+Local T4
+Qwen2.5-7B-Inst.
+7.0B
+NF4 4-bit
+Local T4
+Llama-3.1-8B-Inst.
+†
+8.0B
+FP16
+Groq API
+Table 1:
+Models evaluated.
+†
+Llama-3.1-8B uses FP16 via API;
+absolute values not directly comparable, but the
+qualitative pattern is consistent (see Section
+4.7
+).
+3.2
+Datasets
+The evaluation set consists of 500 questions each from Natural Questions Open
+(
+Kwiatkowski et al., 2019
+, NQ;)
+and HotpotQA
+(
+Yang et al., 2018
+)
+, totalling 1,000 evaluation questions.
+NQ provides single-hop factoid questions; HotpotQA provides multi-hop
+reasoning questions.
+The observed effect sizes (40–65pp distraction,
+p
+<
+0.001
+p<0.001
+after
+Bonferroni correction) provide ample statistical power for all pairwise
+comparisons made, consistent with prior controlled RAG studies of similar
+scale
+(
+Mallen et al., 2023
+)
+.
+We also constructed a PopQA long-tail evaluation set (500 questions), but
+our 500K-passage corpus achieved 0% hit rate across all retrieval methods,
+reflecting the challenge of covering long-tail entities with a sub-million
+passage corpus.
+3.3
+Retrieval Systems
+All retrieval systems—including the oracle—retrieve from the same 500K-passage
+Wikipedia corpus (
+≈
+{\approx}
+2% of English Wikipedia, sampled via
+deterministic hashing of article titles, chunked at 100 words per passage).
+This eliminates corpus distribution mismatch between conditions.
+BM25.
+We use the bm25s library with English stopword removal,
+achieving hit@5 of 10.5% overall.
+Dense (E5-large-v2).
+We encode all 500K passages with
+intfloat/e5-large-v2
+(1024-dim embeddings) and index with FAISS
+IndexFlatIP.
+Dense retrieval achieves hit@5 of 16.3% overall.
+Hybrid (RRF).
+Reciprocal Rank Fusion
+(
+Cormack et al., 2009
+,
+k
+=
+60
+k{=}60
+;)
+combines BM25 and dense rankings, achieving hit@5 of 14.9%.
+Notably, hybrid underperforms pure dense retrieval, suggesting the BM25
+signal adds noise at this corpus scale.
+Oracle.
+For each question, we identify the passage in the same
+500K corpus containing a gold answer string, placed at rank 1.
+This achieves 100% hit@1 for the 756 questions where the corpus contained a
+matching passage (75.6% coverage).
+We report primary results on these corpus-matched questions only, excluding
+244 questions that would require synthetic passages.
+A sensitivity analysis excluding the lowest-scoring 15% of oracle passages
+yielded qualitatively identical results (
+≤
+{\leq}
+1pp EM change for all models).
+Method
+@1
+@5
+@10
+@20
+BM25
+4.9
+10.5
+13.1
+16.9
+Dense
+8.7
+16.3
+19.5
+22.9
+Hybrid (RRF)
+6.2
+14.9
+19.0
+21.9
+Oracle
+100.0
+100.0
+100.0
+100.0
+Table 2:
+Retrieval hit rates (%) on the 1,000-question evaluation set
+(NQ + HotpotQA).
+3.4
+Parametric Knowledge Split
+Each (model, question) pair is classified by first running the model under the
+none
+condition.
+Correctly answered questions (EM = 1) are labeled
+Known
+and
+others
+Unknown
+.
+This yields model-specific splits: SmolLM2-360M knows 1.3%,
+Qwen2.5-1.5B knows 9.0%, Qwen2.5-3B knows 13.6%, and Qwen2.5-7B knows
+18.5%.
+Note: the
+Known
+set for SmolLM2-360M contains only 11 questions;
+its distraction effect estimates should be interpreted with extreme caution.
+3.5
+Evaluation Protocol
+Exact Match (EM) with standard normalization (lowercasing, article
+removal, punctuation stripping) serves as our primary metric, with F1 as a secondary
+check.
+All results include 95% bootstrap confidence intervals (2,000 resamples).
+Pairwise comparisons use McNemar’s test with Bonferroni correction across 24
+comparisons (
+α
+=
+0.002
+\alpha=0.002
+).
+EM penalises verbose or paraphrased correct answers; our error analysis
+accounts for this (verbose correct + partial match = 7–8% of failures),
+and relaxed EM improves scores modestly (
+∼
+{\sim}
+6pp for 7B) but does not
+change qualitative conclusions.
+These evaluation choices are complementary to frameworks such as RAGAS
+(
+Es et al., 2024
+)
+and FActScore
+(
+Min et al., 2023
+)
+,
+which we leave as future work.
+3.6
+Reproducibility
+The code-base is available at
+https://anonymous.4open.science/r/rag-utilization-study-C67F
+.
+Experiments were conducted on free-tier Kaggle T4 GPU instances.
+The evaluation dataset and oracle passage mappings will be released to
+facilitate replication.
+4
+Results
+4.1
+Pilot Study: Retrieval Hurts Across All Methods
+Before the oracle experiment, we conducted a pilot study (
+n
+=
+200
+n{=}200
+;
+100 NQ + 100 HotpotQA) comparing four models across three retrieval methods
+and a no-retrieval baseline.
+Model
+None
+BM25
+Dense
+Hybrid
+SmolLM2-360M
+1.5
+0.0
+0.0
+0.0
+Qwen2.5-1.5B
+14.5
+5.5
+3.5
+6.0
+Qwen2.5-3B
+19.5
+5.5
+12.0
+6.5
+Qwen2.5-7B
+16.5
+–
+14.0
+–
+Table 3:
+Pilot study EM (%) across retrieval methods (
+n
+=
+200
+n{=}200
+). No
+retrieval outperforms all retrieval methods for every model.
+Across all models, the no-retrieval baseline outperforms every retrieval method tested.
+The
+Δ
+\Delta
+EM (dense
+−
+-
+none) was negative at every scale:
+−
+1.5
+-1.5
+pp (360M),
+−
+11.0
+-11.0
+pp (1.5B),
+−
+7.5
+-7.5
+pp (3B),
+−
+2.5
+-2.5
+pp (7B).
+These observations raise a central question: is the problem that retrieval itself is noisy, or that small models struggle to use even high-quality passages?
+The oracle experiment is designed to address this distinction directly.
+4.2
+Oracle Retrieval Fails for Small Models
+Table
+4
+and Figure
+1
+present our primary results
+on corpus-matched questions (
+n
+=
+756
+n{=}756
+).
+Split
+Retrieval
+360M
+1.5B
+3B
+7B
+Unknown
+None
+0.0
+0.0
+0.0
+0.0
+Noisy (dense)
+0.0
+4.6 [3.0–6.3]
+6.2 [4.4–8.1]
+8.0 [5.9–10.2]
+Oracle
+0.0
+10.0 [7.8–12.2]
+12.8 [10.5–15.5]
+14.6 [11.9–17.6]
+Known
+None
+100.0
+100.0
+100.0
+100.0
+Noisy (dense)
+0.0
+36.0 [26.7–46.5]
+46.4 [36.8–55.2]
+48.8 [41.0–56.6]
+Oracle
+0.0
+43.0 [32.6–53.5]
+54.4 [45.6–62.4]
+58.4 [51.2–65.7]
+Table 4:
+Exact Match (%) by parametric split, retrieval condition, and model
+size [95% CI]. Corpus-matched oracle only (
+n
+=
+756
+n{=}756
+). All non-zero
+differences from None are significant at
+p
+<
+0.001
+p<0.001
+(McNemar,
+Bonferroni-corrected), except SmolLM2-360M. The 360M
+Known
+cell
+is based on
+n
+=
+11
+n{=}11
+only and should be interpreted with extreme caution.
+Figure 1:
+Retrieval utilization across model scale.
+Left:
+For
+Unknown
+questions, oracle retrieval achieves at most 14.6% EM
+at 7B, meaning 85%+ of retrieval effort is wasted.
+Right:
+For
+Known
+questions, all retrieval methods destroy
+42–64% of previously correct answers. Error bars are 95% bootstrap CIs.
+For
+Unknown
+questions, the oracle condition guarantees that the answer appears in the passage, yet the 7B model achieves only 14.6% EM [11.9–17.6].
+The 1.5B model manages 10.0% [7.8–12.2], and the 360M scores 0.0%
+across all conditions.
+Even with a perfect retrieval system, 85–100% of retrieval effort is
+wasted for these models.
+Oracle retrieval roughly doubles the benefit compared to noisy retrieval
+(14.6% vs. 8.0% for 7B), confirming that retrieval quality does
+matter—but even perfect retrieval yields very low absolute performance,
+demonstrating that the binding constraint is utilization, not retrieval
+quality.
+4.3
+Retrieval Destroys Parametric Knowledge
+The
+Known
+rows of Table
+4
+reveal a severe distraction
+effect.
+Models achieving 100% EM without retrieval suffer catastrophic drops when
+passages are added: the 7B model loses 51.2pp with noisy retrieval and
+41.6pp with oracle retrieval; the 1.5B model loses 64.0pp and 57.0pp
+respectively.
+All distraction effects are significant at
+p
+<
+0.001
+p<0.001
+.
+Notably, the difference between oracle and noisy distraction is
+not significant
+for models below 7B (1.5B:
+p
+=
+0.26
+p{=}0.26
+; 3B:
+p
+=
+0.07
+p{=}0.07
+), suggesting that the
+presence
+of any context—not its
+quality—drives the distraction effect.
+Only at 7B does oracle retrieval preserve significantly more knowledge than
+noisy retrieval (
+p
+=
+0.003
+p{=}0.003
+).
+Figure 2:
+The distraction effect: percentage of
+Known
+answers
+destroyed by adding retrieval context. For models
+≤
+{\leq}
+3B, oracle and
+noisy retrieval cause statistically indistinguishable harm—context
+presence, not quality, drives distraction.
+4.4
+The Net Trade-off Is Negative
+The expected net EM change from adding retrieval is:
+Δ
+​
+EM
+net
+=
+p
+unk
+⋅
+Δ
+​
+EM
+unk
++
+p
+kn
+⋅
+Δ
+​
+EM
+kn
+\Delta\mathrm{EM}_{\mathrm{net}}=p_{\mathrm{unk}}\cdot\Delta\mathrm{EM}_{\mathrm{unk}}+p_{\mathrm{kn}}\cdot\Delta\mathrm{EM}_{\mathrm{kn}}
+(1)
+Model
+p
+kn
+p_{\mathrm{kn}}
+Δ
+\Delta
+Unk
+Δ
+\Delta
+Kn
+Net
+360M
+∗
+0.013
++0.0
+−
+-
+100.0
+−
+-
+1.3
+1.5B
+0.090
++4.6
+−
+-
+64.0
+−
+-
+1.6
+3B
+0.136
++6.2
+−
+-
+53.6
+−
+-
+1.9
+7B
+0.185
++8.0
+−
+-
+51.2
+−
+-
+2.9
+Table 5:
+Net EM trade-off for noisy (dense) retrieval. The net effect is
+negative for every model tested.
+∗
+360M:
+p
+kn
+p_{\mathrm{kn}}
+based on
+n
+=
+11
+n{=}11
+; interpret with caution.
+For the 7B model:
+(
+0.815
+×
+8.0
+)
+−
+(
+0.185
+×
+51.2
+)
+=
++
+6.5
+−
+9.5
+=
+−
+3.0
+(0.815\times 8.0)-(0.185\times 51.2)=+6.5-9.5=-3.0
+percentage points.
+Even with oracle retrieval, the 7B model nets only
++
+4.2
++4.2
+pp—a modest
+gain requiring perfect retrieval to achieve.
+4.5
+Per-Dataset Analysis
+The pattern is consistent across both datasets but with notable differences.
+Oracle utilization on
+Unknown
+questions is slightly higher on
+HotpotQA for larger models (16.9% vs. 12.5% for 7B), possibly because
+multi-hop questions have more distinctive answer strings that are easier to
+locate within the passage.
+The distraction effect is stronger for HotpotQA at 1.5B (70.4% destruction
+vs. 53.1% for NQ), suggesting multi-hop context is more confusing for
+smaller models.
+Despite these differences, the qualitative pattern—negative net
+trade-off, low utilization, severe distraction—holds for both datasets.
+4.6
+Prompt Robustness
+One possible concern is that the results might depend on the specific prompt template used.
+We tested three prompt variants on Qwen2.5-3B with dense retrieval on the
+200-question pilot set:
+v1 (forced):
+“Answer based on the provided context.” (default)
+v2 (permissive):
+“Use context only if it helps; otherwise rely on
+your own knowledge.”
+v3 (minimal):
+Question with “Reference material” appended, no
+instruction to use it.
+Prompt
+Overall EM
+In ctx.
+Not in ctx.
+v1 (forced)
+12.0
+27.1
+3.8
+v2 (permissive)
+12.5
+28.6
+3.8
+v3 (minimal)
+9.0
+18.6
+3.8
+No retrieval
+19.5
+37.1
+10.0
+Table 6:
+Prompt ablation on Qwen2.5-3B
+×
+\times
+dense (
+n
+=
+200
+n{=}200
+). No prompt
+recovers the no-retrieval baseline (19.5% EM).
+The permissive prompt (v2), which explicitly allows the model to ignore
+context, performs nearly identically to the forced prompt (12.5% vs. 12.0%).
+Even when told it may rely on its own knowledge, the 3B model still performs
+7pp worse than no retrieval.
+None of the three approaches recovers the no-retrieval baseline of 19.5%.
+4.7
+Cross-Architecture Validation
+To test whether this behavior generalizes beyond the SmolLM2 and Qwen2.5 families, we evaluated Llama-3.1-8B-Instruct. (via Groq API, FP16) on 200 NQ questions under all
+three retrieval methods.
+Despite being a different architecture family and using full-precision
+inference, Llama-3.1-8B exhibits the same pattern: every retrieval method
+reduces accuracy relative to no retrieval.
+Retrieval
+EM (%)
+F1 (%)
+None
+24.0
+34.5
+BM25
+16.5
+24.2
+Dense
+17.5
+25.3
+Hybrid
+16.5
+25.2
+Table 7:
+Llama-3.1-8B-Instruct (FP16, Groq API) on 200 NQ questions.
+Same qualitative pattern: none outperforms all retrieval methods.
+Not directly comparable to 4-bit local models in absolute terms.
+The
+Δ
+\Delta
+EM ranges from
+−
+6.5
+-6.5
+pp (dense) to
+−
+7.5
+-7.5
+pp (BM25/hybrid),
+consistent with the Qwen2.5-7B results.
+This cross-architecture, cross-precision replication substantially
+strengthens our claim that the utilization bottleneck is not family-specific.
+5
+Error Analysis
+To find out why models fail on oracle questions, we classify all 2,588
+corpus-matched oracle failures across four local models into six categories
+using automated heuristics.
+Figure 3:
+Oracle failure taxonomy (% of failures per category,
+corpus-matched only,
+n
+=
+2,588
+n{=}2{,}588
+). Irrelevant generation is dominant
+at all scales (61–100%). Refusal is unexpectedly high at 7B (24%).
+Inter-annotator agreement: 89% (96 manually reviewed samples).
+Irrelevant generation
+is the most frequent failure mode, accounting for 100% of 360M failures, 64% at 1.5B, 73% at 3B, and 61% at 7B.
+The model generates text with no meaningful overlap with the provided passage,
+suggesting it ignores the context entirely.
+Refusal
+appears the second largest category for
+instruction-tuned models (20% at 1.5B, 24% at 7B), where models respond
+with hedging language despite the answer being present.
+The 3B model shows substantially lower refusal (7%) than both 1.5B and 7B,
+likely reflecting differences in instruction tuning recipes across model
+sizes within the Qwen2.5 family rather than a genuine scaling property.
+Format-related failures
+(partial match + verbose correct) account
+for 7–8% of errors.
+Adjusting EM to count these as correct yields modest improvements (e.g., 7B
+oracle on
+Unknown
+: 14.6%
+→
+\to
+∼
+{\sim}
+21%), but the fundamental
+utilization gap remains large.
+A qualitative shift occurs between 360M and 1.5B: 360M produces completely
+incoherent outputs, while models
+≥
+{\geq}
+1.5B at least attempt to engage with
+the passage.
+This suggests a minimum capability threshold (
+∼
+{\sim}
+1B parameters) below
+which RAG is completely nonfunctional.
+6
+Discussion
+6.1
+The Utilization Bottleneck
+Overall the results find that the primary bottleneck for small-model RAG is not
+retrieval quality, but context utilization.
+The oracle condition eliminates retrieval noise, yet performance
+remains dramatically low.
+This re-frames the problem: efforts to improve retrieval for small-model
+deployment (better embeddings, hybrid search, re-ranking) address at most
+half the gap between noisy and oracle performance—the larger half requires
+improving the model’s ability to condition on retrieved text.
+6.2
+Why Does Context Hurt Known Answers?
+We consider three possible explanations for the distraction effect, each requiring
+further investigation:
+(1)
+attention dilution
+, where longer contexts may reduce the weight
+on the question
+(
+Liu et al., 2024
+)
+;
+(2)
+instruction conflict
+, where the prompt to “answer based on
+context” overrides parametric knowledge; and
+(3)
+position bias
+, where small models preferentially attend to early
+context tokens.
+The prompt ablation (Table
+6
+) provides partial evidence for
+hypothesis (2): even the permissive prompt fails to recover baseline
+performance.
+We observe that oracle and noisy retrieval cause statistically
+similar distraction for models below 7B further supporting that the presence of context, not its quality, drives the harm.
+6.3
+Implications for Practitioners
+Our net trade-off analysis (Table
+5
+) has direct practical
+implications.
+For sub-7B models on general-domain QA, RAG frequently reduces rather than
+improves overall accuracy under standard prompting conditions.
+Practitioners should consider:
+(1) using retrieval only when the model is likely to lack the answer
+(adaptive retrieval), conditional on reliable confidence estimation;
+(2) investing in larger models rather than better retrieval infrastructure;
+or (3) training small models specifically for context utilization via
+RAG-aware fine-tuning
+(
+Zhang et al., 2024
+, e.g., RAFT-style;)
+.
+6.4
+What Scale Is Needed?
+Utilization improves roughly log-linearly with scale in our experiments, but remains far below practical levels even at 7B.
+Extrapolating the oracle utilization curve (0% at 360M
+→
+\to
+10% at
+1.5B
+→
+\to
+13% at 3B
+→
+\to
+15% at 7B), robust context utilization
+(
+>
+>
+50% oracle EM) may require models larger than
+7B—consistent with
+Shi et al. (2023)
+’s finding that distraction
+resistance emerges primarily in models
+>
+>
+10B parameters.
+Key takeaway.
+Improving retrieval systems alone is unlikely to substantially improve small-model RAG performance unless models themselves become better at conditioning on retrieved context.
+7
+Conclusion
+We present a controlled study demonstrating that small language models
+(
+≤
+{\leq}
+7B parameters) struggle to utilize retrieved information for
+extractive question answering.
+Even under oracle retrieval—where the passage is guaranteed to contain the
+answer—models still fail to extract the correct answer 85–100% of the time,
+with the dominant failure being complete disregard of the provided context.
+At the same time, adding retrieval context overturns 42–64% of answers the
+model previously answered correctly, an effect driven by the presence of context rather
+than its quality.
+This pattern holds across three architecture families, three retrieval methods, and three prompt templates.
+Deploying RAG with sub-7B models for extractive QA frequently reduces rather
+than improves accuracy under standard prompting conditions.
+The bottleneck for small-model RAG is context utilization—a capability that
+scales slowly with model size and appears to require substantially more than
+7B parameters to emerge robustly.
+Several directions may help address this limitation, including RAG-aware fine-tuning, selective retrieval conditioned on model confidence, and architectural modifications aimed at improving context grounding at smaller scales.
+Limitations
+Our conclusions should be interpreted within the scope of extractive
+question-answering settings, where grounding success can be measured
+objectively via exact answer matching.
+Task scope.
+Our evaluation is limited to extractive question answering.
+The results may not extend directly to generative tasks such as summarization with retrieved documents, reasoning tasks where retrieved information serves as
+background rather than containing a direct answer, or tasks where partial
+utilization is sufficient.
+Model diversity.
+We evaluate five models from three families (SmolLM2, Qwen2.5, Llama 3.1).
+While the pattern across the tested model families suggest generalizability,
+results may differ for other architectures (e.g., Phi-3, Gemma).
+All five are decoder-only, instruction-tuned transformers; encoder-decoder
+models may exhibit different utilization characteristics.
+Quantization.
+All local models use 4-bit NF4 quantization.
+However, the FP16 Llama-3.1-8B results (Table
+7
+) demonstrate
+qualitatively identical behaviour to the 4-bit local models across all
+retrieval conditions, providing cross-precision validation of our main
+finding without requiring additional local experiments.
+Furthermore, the 360M model’s near-zero performance without retrieval (1.3%
+EM) suggests that quantization alone cannot explain utilization failure.
+Corpus coverage and oracle quality.
+Our corpus covers
+≈
+{\approx}
+2% of English Wikipedia (500K passages),
+limiting oracle coverage to 75.6%.
+Some oracle passages may contain incidental answer mentions.
+Expanding coverage would improve oracle quality and enable PopQA evaluation.
+Prompt sensitivity.
+Our three-prompt ablation demonstrates robustness of the qualitative pattern,
+but is limited to the 200-question pilot set and one model size (3B, with
+spot checks on 7B).
+Domain and language scope.
+We evaluate English-language, Wikipedia-domain QA only.
+Performance may differ on specialized domains or other languages, though the utilization bottleneck should persist or worsen in lower-resource
+settings.
+References
+Abdin
+et al.
+(2024)
+M. Abdin, S. A. Jacobs, A. A. Awan, J. Aneja, A. Awadallah, H. Awadalla, N. Bach, A. Bahree, A. Bakhtiari, H. Behl,
+et al.
+Phi-3 technical report: a highly capable language model locally on your phone
+.
+Computing Research Repository
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Asai
+et al.
+(2024)
+A. Asai, Z. Wu, Y. Wang, A. Sil, and H. Hajishirzi
+Self-RAG: learning to retrieve, generate, and critique through self-reflection
+.
+In
+Proceedings of the 12th International Conference on Learning Representations (ICLR 2024)
+,
+External Links:
+Link
+Cited by:
+§2
+.
+Cormack
+et al.
+(2009)
+G. V. Cormack, C. L. A. Clarke, and S. Buettcher
+Reciprocal rank fusion outperforms condorcet and individual rank learning methods
+.
+In
+Proceedings of the 32nd Annual International ACM SIGIR Conference on
+Research and Development in Information Retrieval
+,
+pp. 758–759
+.
+External Links:
+Document
+Cited by:
+§3.3
+.
+Es
+et al.
+(2024)
+S. Es, J. James, L. Espinosa-Anke, and S. Schockaert
+RAGAS: automated evaluation of retrieval augmented generation
+.
+In
+Proceedings of the 18th Conference of the European Chapter of the
+Association for Computational Linguistics (EACL 2024)
+,
+pp. 150–158
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+,
+§3.5
+.
+Gemma Team
+et al.
+(2024)
+Gemma Team, T. Mesnard, C. Hardin, R. Dadashi, S. Bhupatiraju, S. Pathak, L. Sifre, M. Riviere, M. S. Kale, J. Love,
+et al.
+Gemma: open models based on Gemini research and technology
+.
+Computing Research Repository
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Guu
+et al.
+(2020)
+K. Guu, K. Lee, Z. Tung, P. Pasupat, and M. Chang
+REALM: retrieval-augmented language model pre-training
+.
+In
+Proceedings of the 37th International Conference on Machine Learning (ICML 2020)
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+.
+Izacard and Grave (2021)
+G. Izacard and E. Grave
+Leveraging passage retrieval with generative models for open domain question answering
+.
+In
+Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics (EACL 2021)
+,
+pp. 874–880
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Jiang
+et al.
+(2023)
+Z. Jiang, F. F. Xu, L. Gao, Z. Sun, Q. Liu, J. Dwivedi-Yu, Y. Yang, J. Callan, and G. Neubig
+Active retrieval augmented generation
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing (EMNLP 2023)
+,
+pp. 7969–7992
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Kwiatkowski
+et al.
+(2019)
+T. Kwiatkowski, J. Palomaki, O. Redfield, M. Collins, A. Parikh, C. Alberti, D. Epstein, I. Polosukhin, J. Devlin, K. Lee, K. Toutanova, L. Jones, M. Kelcey, M. Chang, A. M. Dai, J. Uszkoreit, Q. Le, and S. Petrov
+Natural questions: a benchmark for question answering research
+.
+In
+Transactions of the Association for Computational Linguistics
+,
+Vol.
+7
+,
+pp. 452–466
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§3.2
+.
+Lewis
+et al.
+(2020)
+P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. Küttler, M. Lewis, W. Yih, T. Rocktäschel, S. Riedel, and D. Kiela
+Retrieval-augmented generation for knowledge-intensive NLP tasks
+.
+In
+Advances in Neural Information Processing Systems 33 (NeurIPS 2020)
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+.
+Liu
+et al.
+(2024)
+N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and P. Liang
+Lost in the middle: how language models use long contexts
+.
+In
+Transactions of the Association for Computational Linguistics
+,
+Vol.
+12
+,
+pp. 157–173
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+,
+§6.2
+.
+Longpre
+et al.
+(2021)
+S. Longpre, K. Perisetla, A. Chen, N. Ramesh, C. DuBois, and S. Singh
+Entity-based knowledge conflicts in question answering
+.
+In
+Proceedings of the 2021 Conference on Empirical Methods in Natural
+Language Processing (EMNLP 2021)
+,
+pp. 7052–7063
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Mallen
+et al.
+(2023)
+A. Mallen, A. Asai, V. Zhong, R. Das, D. Khashabi, and H. Hajishirzi
+When not to trust language models: investigating effectiveness of parametric and non-parametric memories
+.
+In
+Proceedings of the 61st Annual Meeting of the Association for
+Computational Linguistics (Volume 1: Long Papers)
+,
+pp. 9802–9822
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1
+,
+§2
+,
+§3.2
+.
+Min
+et al.
+(2023)
+S. Min, K. Krishna, X. Lyu, M. Lewis, W. Yih, P. W. Koh, M. Iyyer, L. Zettlemoyer, and H. Hajishirzi
+FActScore: fine-grained atomic evaluation of factual precision in long form text generation
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural
+Language Processing (EMNLP 2023)
+,
+pp. 12076–12100
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+,
+§3.5
+.
+Petroni
+et al.
+(2021)
+F. Petroni, A. Piktus, A. Fan, P. Lewis, M. Yazdani, N. D. Cao, J. Thorne, Y. Jernite, V. Karpukhin, J. Maillard, V. Plachouras, T. Rocktäschel, and S. Riedel
+KILT: a benchmark for knowledge intensive language tasks
+.
+In
+Proceedings of the 2021 Conference of the North American Chapter of
+the Association for Computational Linguistics: Human Language
+Technologies (NAACL-HLT 2021)
+,
+pp. 2523–2544
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§2
+.
+Shi
+et al.
+(2023)
+F. Shi, X. Chen, K. Misra, N. Scales, D. Dohan, E. H. Chi, N. Schärli, and D. Zhou
+Large language models can be easily distracted by irrelevant context
+.
+In
+Proceedings of the 40th International Conference on Machine Learning (ICML 2023)
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§6.4
+.
+Shi
+et al.
+(2024)
+W. Shi, S. Min, M. Yasunaga, M. Seo, R. James, M. Lewis, L. Zettlemoyer, and W. Yih
+REPLUG: retrieval-augmented black-box language models
+.
+Computing Research Repository
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Xiong
+et al.
+(2023)
+W. Xiong, J. Liu, I. Molybog, H. Zhang, P. Bhargava, R. Hou, L. Martin, R. Rungta, K. A. Sankararaman, B. Oguz, M. Khabsa, H. Fang, Y. Mehdad, S. Narang, K. Malik, A. Fan, S. Bhosale, S. Edunov, M. Lewis, S. Wang, and H. Ma
+Effective long-context scaling of foundation models
+.
+Computing Research Repository
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Yang
+et al.
+(2018)
+Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. W. Cohen, R. Salakhutdinov, and C. D. Manning
+HotpotQA: a dataset for diverse, explainable multi-hop question answering
+.
+In
+Proceedings of the 2018 Conference on Empirical Methods in Natural
+Language Processing (EMNLP 2018)
+,
+pp. 2369–2380
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§3.2
+.
+Yoran
+et al.
+(2024)
+O. Yoran, T. Wolfson, O. Ram, and J. Berant
+Making retrieval-augmented language models robust to irrelevant context
+.
+In
+Proceedings of the 12th International Conference on Learning Representations (ICLR 2024)
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+.
+Zhang
+et al.
+(2024)
+T. Zhang, S. G. Patil, N. Jain, S. Shen, M. Zaharia, I. Stoica, and J. E. Gonzalez
+RAFT: adapting language model to domain-specific RAG
+.
+Computing Research Repository
+.
+External Links:
+Link
+Cited by:
+§2
+,
+§6.3
+.
+Appendix A
+Retrieval Hit Rates by Dataset
+Method
+Dataset
+@1
+@5
+@10
+@20
+BM25
+NQ
+7.6
+15.8
+20.0
+26.8
+BM25
+HotpotQA
+7.2
+15.6
+19.4
+23.8
+BM25
+PopQA
+0.0
+0.0
+0.0
+0.0
+Dense
+NQ
+15.8
+28.2
+32.6
+38.2
+Dense
+HotpotQA
+10.2
+20.8
+26.0
+30.6
+Dense
+PopQA
+0.0
+0.0
+0.0
+0.0
+Hybrid
+NQ
+11.2
+24.8
+31.2
+35.2
+Hybrid
+HotpotQA
+7.4
+20.0
+25.8
+30.6
+Hybrid
+PopQA
+0.0
+0.0
+0.0
+0.0
+Table 8:
+Retrieval hit rates (%) by dataset.
+Appendix B
+Latency Analysis
+Component
+Latency (ms/query)
+BM25 retrieval
+3.5
+FAISS search (exact IP)
+180.2
+E5-large-v2 query encoding
+∼
+{\sim}
+50
+Dense total
+∼
+{\sim}
+230
+Hybrid (BM25+dense+RRF)
+∼
+{\sim}
+234
+Table 9:
+Latency measured on Kaggle T4 GPU with 500K-passage corpus.
+BM25 is
+≈
+{\approx}
+66
+×
+\times
+faster than dense retrieval.
+Appendix C
+Statistical Significance Tests
+All pairwise comparisons use McNemar’s test with Bonferroni correction
+(24 comparisons,
+α
+=
+0.002
+\alpha=0.002
+).
+Oracle vs. None (
+Unknown
+).
+Significant for 1.5B, 3B, 7B (all
+p
+<
+0.001
+p<0.001
+). Not significant for 360M
+(
+p
+=
+1.0
+p=1.0
+; 0 correct in both conditions).
+Noisy vs. None (
+Known
+— distraction).
+Significant for all models
+≥
+{\geq}
+1.5B (all
+p
+<
+0.001
+p<0.001
+).
+Oracle vs. Noisy (
+Known
+— distraction quality).
+Not significant for 1.5B (
+p
+=
+0.26
+p=0.26
+) or 3B (
+p
+=
+0.07
+p=0.07
+).
+Significant for 7B (
+p
+=
+0.003
+p=0.003
+).
+This confirms that for models below 7B, distraction is driven by context
+presence, not quality.
+Appendix D
+Pilot Study Full Results
+Model
+None EM
+Dense EM
+Δ
+\Delta
+EM
+SmolLM2-360M
+1.5
+0.0
+−
+-
+1.5
+Qwen2.5-1.5B
+14.5
+3.5
+−
+-
+11.0
+Qwen2.5-3B
+19.5
+12.0
+−
+-
+7.5
+Qwen2.5-7B
+16.5
+14.0
+−
+-
+2.5
+Table 10:
+Pilot study full results (
+n
+=
+200
+n{=}200
+,
+Δ
+\Delta
+EM = dense
+−
+-
+none).
+Appendix E
+Supplementary Figures
+Figure 4:
+Oracle utilization gap: the pink region shows the fraction of
+retrieval effort that is wasted (answer in passage, model still fails).
+Even at 7B, 85% of oracle retrievals are unused.
+Figure 5:
+Error category breakdown as stacked proportions.
+Irrelevant generation decreases as a share with scale but remains the
+dominant failure mode. Refusal is non-monotone across Qwen2.5 sizes,
+likely reflecting instruction-tuning recipe differences.
+Appendix F
+Example Error Outputs
+Representative examples from each error category (Qwen2.5-3B, oracle
+retrieval).
+Irrelevant generation (73% of 3B failures).
+Q:
+“What country is the Jutland Peninsula in?”
+Gold:
+Denmark.
+Prediction:
+“The Jutland Peninsula is a large body of water that
+separates the North Sea from the Baltic Sea.”
+The model generates a plausible-sounding but factually wrong response with no
+overlap with the passage content.
+Refusal (7% of 3B failures).
+Q:
+“Who wrote the music for Phantom of the Opera?”
+Gold:
+Andrew Lloyd Webber.
+Prediction:
+“Based on the provided context, I cannot determine who
+wrote the music for Phantom of the Opera.”
+The answer appears in the oracle passage, but the model refuses to extract it.
+Wrong entity (8% of 3B failures).
+Q:
+“Who directed Schindler’s List?”
+Gold:
+Steven Spielberg.
+Prediction:
+“Liam Neeson.”
+The model extracts a named entity from the passage but selects the wrong one.
+Partial match (2% of 3B failures).
+Q:
+“What is the capital of Australia?”
+Gold:
+Canberra.
+Prediction:
+“The capital of Australia is Canberra, which was
+selected as the capital in 1908.”
+Correct answer present but embedded in verbose output.
+Verbose correct (6% of 3B failures).
+Q:
+“When was the Eiffel Tower built?”
+Gold:
+1889.
+Prediction:
+“According to the context, the Eiffel Tower was
+constructed between 1887 and 1889 for the 1889 World’s Fair in Paris,
+France.”
+Semantically correct and grounded, but EM counts this as incorrect.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

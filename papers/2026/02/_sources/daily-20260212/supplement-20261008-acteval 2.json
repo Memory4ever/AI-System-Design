@@ -1,0 +1,186 @@
+Breaking the Pre-Sampling Barrier:Activation-Informed Difficulty-Aware Self-Consistency (https://arxiv.org/html/2602.09438v1)
+citeturn31771view0 [wordlim: 200] Crawled: yesterday; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2602.09438v1","lineno":237}); Total lines: 347
+L154: #### 3.1.3 Training a Linear Difficulty Probe
+L155: 
+L156: Having identified the DSN set $\mathcal{S}$, we now use these neurons as input features to train a lightweight estimator for difficulty prediction. Specifically, for each input problem, we input it into the language model and extract a feature vector by collecting only the activation values of neurons $n\in\mathcal{S}$:
+L157: 
+L158:  | $$\mathbf{h}_{i}=\{a_{n}(q_{i})\mid n\in\mathcal{S}\}\in\mathbb{R}^{|\mathcal{S}|}.$$  |  | (6)
+L159: To normalize for differences in activation magnitude across neurons, we apply normalization to the feature vector prior to probe training.
+L160: 
+L161: We train a difficulty probe in the form of a linear estimator for difficulty prediction. The probe consists of a weight vector $\mathbf{w}$ and bias $b$, and outputs the probability that the input problem belongs to the hard difficulty category through a sigmoid function:
+L162: 
+L163:  | $$\hat{y}_{i}=P(\text{Hard}\mid q_{i})=\sigma(\mathbf{w}^{\top}\mathbf{h}_{i}+b).$$  |  | (7)
+L164: The probe is trained using the binary difficulty labels $y_{i}$, with optimization performed by minimizing the Binary Cross-Entropy (BCE) loss between the actual labels and predicted probabilities:
+L165: 
+L166:  | $$\mathcal{L}=-\frac{1}{N}\sum_{i=1}^{N}\left[y_{i}\log(\hat{y}_{i})+(1-y_{i})\log(1-\hat{y}_{i})\right].$$  |  | (8)
+L167: During training, all language model parameters remain frozen, with only the probe parameters being updated. This design ensures that difficulty prediction focuses on decoding signals already encoded in DSN activations, rather than learning new representations. Once training is complete, the difficulty probe can estimate problem difficulty from a single forward pass during inference.
+L168: ### 3.2 Difficulty-Adaptive Inference
+L169: 
+L170: Algorithm 2 Difficulty-Adaptive Inference
+L171: 
+L172: Input: Query $q$, LLM $M$, Trained probe $P$
+L173: Parameter: Difficulty threshold $\tau$, Confidence threshold $\gamma$, Window size $w$
+L174: Output: Final answer $\hat{a}$
+L175: 
+L176: 1:  Extract DSN activations $a\leftarrow\text{ExtractDSN}(M(q),S)$
+L177: 
+L178: 2:  Predict difficulty: $P_{hard}\leftarrow P(a)$
+L179: 
+L180: 3:  if $P_{hard}<\tau$ then
+L181: 
+L182: 4:   return $M(q)$ $\triangleright$ Single Sample Reasoning
+L183: 
+L184: 5:  else
+L185: 
+L186: 6:   $\mathcal{S}\leftarrow[]$
+L187: 
+L188: 7:   repeat
+L189: 8:    $n_{need}\leftarrow w-\max_{a^{\prime}}f_{window}(a^{\prime},\mathcal{S}[-w:])$
+L190: 
+L191: 9:    Generate $n_{need}$ samples: $\mathcal{S}\leftarrow\mathcal{S}\cup\{M(q)\}_{i=1}^{n_{need}}$
+L192: 
+L193: 10:    $a^{*}\leftarrow\arg\max_{a^{\prime}}\text{Count}(a^{\prime},\mathcal{S})/|\mathcal{S}|$
+L194: 
+L195: 11:   until $\text{Conf}(a^{*})\geq\gamma$
+L196: 
+L197: 12:   return $a^{*}$ $\triangleright$ Dynamic window reasoning
+L198: 
+L199: 13:  end if
+L200: In the online phase, the trained difficulty probe is used to immediately estimate the difficulty of each input problem and dynamically select an inference strategy accordingly. The key idea of this phase is to secure both computational efficiency and inference stability by performing additional sampling only when necessary based on the problem difficulty distribution, instead of applying the same SC inference to all inputs.
+L201: #### 3.2.1 Difficulty Prediction
+L202: Given an input query $q$, we run the language model once to extract FFN activation signals corresponding to the DSN set. This activation vector is used as input to the difficulty probe trained in the step 1, which computes the probability that the input problem belongs to the hard difficulty category: $P_{\text{hard}}=P(\text{Hard}\mid q)$. Since this process is based on a single forward pass, it requires no additional sampling or repeated inference.
+L203: Therefore, the computational cost incurred in the difficulty estimation step is nearly identical to single-sample inference and serves as a lightweight decision signal for subsequent inference strategy selection.
+L204: #### 3.2.2 Difficulty-Based Routing
+L205: The estimated difficulty probability $P_{\text{hard}}$ is compared with a difficulty threshold $\tau$ to determine the inference path. In this work, we set $\tau$ as the average value of $P_{\text{hard}}$ observed in each dataset. That is, we define $\tau=\mathbb{E}_{q\sim\mathcal{D}}[P(\text{Hard}\mid q)]$, which represents the baseline corresponding to an “averagely difficult problem” in that dataset.
+L206: This setup allows ACTSC to naturally reflect differences in difficulty distributions across datasets, instead of using a fixed threshold. As a result, ACTSC selectively applies SC inference only to relatively difficult problems in a specific dataset.
+L207: Specifically, when $P_{\text{hard}}<\tau$, the input problem is judged to be relatively easy, and the single inference result from the language model is used directly as the final answer. Conversely, when $P_{\text{hard}}\geq\tau$, we judge that single inference alone is likely to produce unstable answers and proceed with the Self-Consistency-based multiple sampling procedure.
+L208: This difficulty-based routing prevents unnecessary sampling for easy problems while allocating additional inference resources only to difficult problems.
+L209: #### 3.2.3 Dynamic Window Reasoning
+L210: For problems judged as hard, we apply a dynamic window reasoning strategy instead of the conventional SC approach that uses a fixed number of samples. Let $\mathcal{S}$ denote the set of answers generated during the inference process. We maintain a sliding window consisting of the most recent $w$ answers and continuously track the most frequent answer within that window.
+L211: At each iteration, we calculate the number of additional samples needed $n_{\text{need}}$ based on the frequency of the current most frequent answer in the window and generate only that many new inference samples. This allows inference to terminate without unnecessary additional sampling when the answer distribution has sufficiently converged.
+L212: When the confidence $\text{Conf}(a^{*})$ of the most frequent answer $a^{*}$ in the window exceeds a predefined threshold $\gamma$, that answer is returned as the final output. This termination condition allows SC inference to stop based on convergence state rather than a fixed number of samples, enabling adaptive adjustment of the inference amount needed for each problem.
+L213: This dynamic window reasoning improves computational efficiency compared to conventional fixed-sample SC while preventing performance degradation by continuing inference until answer stability is secured.
+L214: Method  | MATH-500  | AIME 2024  | AIME 2025
+L215: Sample $\downarrow$  | Prepare / Inference$\downarrow$  | Acc $\uparrow$  | Sample $\downarrow$  | Prepare / Inference$\downarrow$  | Acc $\uparrow$  | Sample $\downarrow$  | Prepare / Inference$\downarrow$  | Acc $\uparrow$
+L216: Qwen2.5-3B
+L217: SC  | 40.00  | – / 22.3  | 61.80  | 40.00  | – / 42.3  | 11.20  | 40.00  | – / 35.6  | 6.67
+L218: AC  | 15.00 (-62.5%)  | – / 14.0  | 61.79  | 34.68 (-13.3%)  | – / 44.1  | 11.20  | 36.73 (-8.2%)  | – / 42.4  | 6.67
+L219: ESC  | 20.21 (-49.5%)  | – / 15.0  | 61.81  | 38.81 (-3.0%)  | – / 43.0  | 11.20  | 39.83 (-0.4%)  | – / 37.8  | 6.67
+L220: DSC  | 17.44 (-56.4%)  | 2.8 / 12.4  | 61.79  | 37.85 (-5.4%)  | 4.9 / 41.3  | 11.20  | 37.90 (-5.2%)  | 4.9 / 35.1  | 6.67
+L221: ACTSC  | 9.71 (-75.7%)  | – / 8.6  | 61.60  | 28.17 (-29.6%)  | – / 33.7  | 11.20  | 30.13 (-24.7%)  | – / 29.4  | 10.00
+L222: Qwen2.5-7B
+L223: SC  | 40.00  | – / 21.2  | 66.71  | 40.00  | – / 42.2  | 16.67  | 40.00  | – / 37.3  | 16.67
+L224: AC  | 11.32 (-71.7%)  | – / 10.3  | 66.76  | 32.30 (-19.3%)  | – / 41.2  | 16.67  | 32.58 (-18.6%)  | – / 39.3  | 16.67
+L225: ESC  | 15.99 (-60.0%)  | – / 11.7  | 66.76  | 37.11 (-7.2%)  | – / 41.5  | 16.67  | 37.64 (-5.9%)  | – / 37.4  | 16.67
+L226: DSC  | 17.50 (-56.2%)  | 0.4 / 9.2  | 66.72  | 34.11 (-14.7%)  | 5.0 / 37.8  | 16.67  | 33.86 (-15.3%)  | 5.2 / 32.7  | 16.67
+L227: ACTSC  | 6.72 (-83.2%)  | – / 5.7  | 69.60  | 24.70 (-38.3%)  | – / 29.0  | 16.67  | 26.20 (-34.5%)  | – / 27.6  | 13.33
+L228: Gemma3-4B
+L229: SC  | 40.00  | – / 164.0  | 67.64  | 40.00  | – / 163.8  | 13.33  | 40.00  | – / 164.1  | 16.67
+L230: AC  | 10.64 (-73.4%)  | – / 46.0  | 67.64  | 27.30 (-31.8%)  | – / 116.7  | 13.33  | 27.12 (-32.2%)  | – / 119.1  | 16.67
+L231: ESC  | 14.40 (-64.0%)  | – / 59.7  | 67.64  | 33.70 (-15.7%)  | – / 139.3  | 13.33  | 32.72 (-18.2%)  | – / 136.3  | 16.67
+L232: DSC  | 11.78 (-70.5%)  | 4.9 / 48.5  | 67.64  | 29.78 (-25.5%)  | 17.0 / 122.5  | 13.33  | 28.96 (-27.6%)  | 17.7 / 119.8  | 16.67
+L233: ACTSC  | 5.17 (-87.1%)  | – / 21.5  | 70.00  | 18.80 (-53.0%)  | – / 78.1  | 10.00  | 17.90 (-55.2%)  | – / 74.5  | 16.67
+L234: Table 1: Performance comparison of various reasoning methods on mathematical reasoning benchmarks. We compare Self-Consistency (SC), Adaptive Consistency (AC), Early-Stopping Self-Consistency (ESC), and Difficulty-Adaptive Self-Consistency (DSC). Relative sample reduction vs. SC is reported in parentheses next to the Sample count.
+L235: ## 4 Experiments
+L236: 
+L237: ### 4.1 Experimental Setup
+L238: #### 4.1.1 Benchmarks
+L239: To evaluate the generalization capabilities of ACTSC, we employ both mathematical and non-mathematical reasoning benchmarks, covering diverse domains and difficulty levels. For mathematical reasoning, we use MATH-500 cite50†Hendrycks et al.
+L240: (2021) , a curated subset of 500 advanced problems from the MATH dataset, and AIME 2024 cite51†Mathematical Association of America (2024) and AIME 2025 cite52†Mathematical Association of America (2025) , each containing 30 high-difficulty problems from the American Invitational Mathematics Examination, which are more challenging than MATH. For non-mathematical reasoning, we include GPQA-Diamond cite53†Rein et al. (2024) , a benchmark for expert-level scientific knowledge,and MMLU-Pro cite54†Wang et al.
+L241: (2024) , which covers diverse domains of expert-level world knowledge. In this experiment, we randomly sample 100 questions from MMLU-Pro due to its scale, using a fixed random seed of 42, resulting in 1,400 evaluation instances in total.
+L242: #### 4.1.2 Models
+L243: 
+L244: In this experiment, we use three instruction-tuned LLMs: Gemma3-it (4B) cite55†Team et al. (2025) and Qwen2.5-Instruct (3B & 7B) cite56†Qwen et al. (2025) . These models differ in architecture and scale, allowing us to examine the robustness of the experimental results across diverse model configurations.
+L245: #### 4.1.3 Methods
+L246: 
+L247: We compare ACTSC against four SC-based methods. SC uses a fixed sampling budget of $k=40$, while the remaining methods dynamically determine the number of samples based on their stopping criteria, with a maximum budget of $k=40$. All methods use the same decoding configuration, with a temperature of 0.7 and top-$p$ set to 0.8.
+L248: 
+L249:   * •
+L250: 
+L251: SC cite38†Wang et al. (2022) generates a fixed set of $k=40$ reasoning paths and selects the final answer via majority voting.
+L252: 
+L253:   * •
+L254: AC cite39†Aggarwal et al. (2023) generates reasoning paths sequentially and terminates sampling when the agreement ratio exceeds 0.95.
+L255: 
+L256:   * •
+L257: 
+L258: ESC cite40†Li et al. (2024) samples reasoning paths in windows of size $w=5$ and stops when all answers within a window are identical.
+L259: 
+L260:   * •
+L261: 
+L262: DSC cite41†Wang et al. (2025) estimates problem difficulty via pre-sampling; generates a single sample for easy problems and adaptively samples for hard problems until the agreement ratio reaches 0.95.
+L263: 
+L264:   * •
+L265: ACTSC (Ours) predicts problem difficulty using a trained probe without pre-sampling; for easy problems ($P_{\text{hard}}<\tau$), a single sample is generated, while for hard problems ($P_{\text{hard}}\geq\tau$), sampling is performed in windows of size $w=5$ and terminates when the confidence of the most frequent answer exceeds $\gamma=0.50$.
+L266: #### 4.1.4 Metrics
+L267: In this study, we use the following evaluation metrics. Sample denotes the average number of response samples generated per problem during inference. Token cost is measured as the average number of input and output tokens and is divided into the preparation and inference phases. Prepare represents the token cost incurred during the pre-processing stage required by the DSC method for difficulty estimation, while Inference refers to the token cost used during the inference stage.
+L268: All token costs are reported in thousands (k). The sample count and token cost metrics are used to evaluate inference efficiency. Accuracy (Acc) denotes the proportion of correctly answered problems on each benchmark and is used as a metric to evaluate the accuracy of each method.
+L269: ### 4.2 Experimental Results
+L270: #### 4.2.1 Main Results
+L271: Table cite57†1 summarizes the efficiency and accuracy results on mathematical reasoning benchmarks. The results show that ACTSC substantially improves efficiency while maintaining accuracy comparable to existing self-consistency variants. In particular, ACTSC achieves higher efficiency than DSC, which also incorporates difficulty information, by requiring fewer samples while maintaining comparable accuracy and eliminating preparation overhead.
+L272: For instance, on AIME 2025 with Gemma3-4B, ACTSC reduces the average number of samples by 38.2% (28.96 $\rightarrow$ 17.90) and the total token cost by 45.8% (137.5k $\rightarrow$ 74.5k) relative to DSC, while maintaining comparable accuracy.
+L273: These efficiency gains are consistently observed across models of different scales and mathematical benchmarks spanning a wide range of difficulty levels, including high-difficulty AIME datasets. This consistency indicates that the proposed ACTSC framework, which leverages activation-informed difficulty estimation, provides appropriate sampling budgets across diverse models and problem distributions.
+L274: Figure 3: Total token cost vs. average number of samples for Gemma3-4B on (a) MATH-500 and (b) AIME average. The dashed line indicates a linear scaling baseline. Markers represent adaptive consistency methods.
+L275: #### 4.2.2 Performance on Hard Benchmarks
+L276: Reducing inference cost becomes increasingly difficult as benchmark difficulty rises, since a larger fraction of hard problems typically requires more sampling to stabilize reasoning. To evaluate efficiency under such conditions, we compare performance on a relatively easier benchmark (MATH-500) and a harder benchmark (AIME, averaged over 2024 and 2025). As shown in Figure cite58†3 (a), several adaptive methods achieve noticeable efficiency gains over SC on MATH-500.
+L277: However, Figure cite58†3 (b) shows that these gains largely diminish on AIME, where most methods converge toward the high-cost behavior of SC.
+L278: In contrast, the proposed method maintains a clear efficiency advantage even on the harder benchmark, with the separation from other methods becoming more pronounced as difficulty increases. Notably, Table cite57†1 shows that DSC incurs substantially higher preparation cost as benchmark difficulty rises: its average preparation cost increases from 4.9k tokens on MATH-500 to 17.4k tokens on AIME, reflecting the growing expense of pre-difficulty estimation on harder datasets.
+L279: The proposed method is unaffected by this trend, as it does not rely on any preparation stage, enabling efficient allocation of sampling budgets regardless of dataset difficulty.
+L280: Method  | Sample$\downarrow$  | Prepare / Inference$\downarrow$  | Acc$\uparrow$
+L281: GPQA-Diamond
+L282: SC  | 40.0  | – / 19.6  | 36.67
+L283: AC  | 18.4 (-54.0%)  | – / 14.8  | 36.72
+L284: ESC  | 24.7 (-38.3%)  | – / 14.3  | 36.67
+L285: DSC  | 23.1 (-42.3%)  | 3.4 / 12.2  | 36.66
+L286: ACTSC  | 8.7 (-78.3%)  | – / 6.2  | 38.46
+L287: MMLU-Pro
+L288: SC  | 40.0  | – / 5.7  | 56.62
+L289: AC  | 9.8 (-75.5%)  | – / 5.3  | 56.59
+L290: ESC  | 13.7 (-65.8%)  | – / 4.2  | 56.59
+L291: DSC  | 11.1 (-72.3%)  | 1.2 / 3.0  | 56.60
+L292: ACTSC  | 6.6 (-83.5%)  | – / 2.9  | 56.36
+L293: Table 2: Performance on non-mathematical benchmarks (GPQA-Diamond and MMLU-Pro) using Qwen2.5-7B.
+L294: #### 4.2.3 Generalization to Non-Mathematical Reasoning
+L295: To assess generalization beyond mathematical reasoning, we evaluate the proposed method on two non-mathematical benchmarks using Qwen2.5-7B. As shown in Table cite59†2 , the results align with those from mathematical benchmarks, with the proposed method consistently improving efficiency compared to other comparison methods while maintaining comparable accuracy.
+L296: Specifically, compared to DSC, the proposed method reduces the average number of samples by 62.3% (23.1 $\rightarrow$ 8.7) and the total token cost by 60.3% (15.6k $\rightarrow$ 6.2k) on GPQA-Diamond, and by 40.5% (11.1 $\rightarrow$ 6.6) and 31.0% (4.2k $\rightarrow$ 2.9k) on MMLU-Pro, respectively.
+L297: These consistent gains across domains indicate that the proposed activation-informed difficulty estimation generalizes beyond mathematical reasoning and enables domain-independent allocation of appropriate sampling budgets.
+L298: ### 4.3 Analysis
+L299: #### 4.3.1 Probe Validity and Calibration
+L300: We validate our proposed method through detailed analysis. To this end, we systematically examine the relationship between DSN-based probes and actual problem difficulty, and confirm that the signals extracted from internal representations are consistently aligned with true difficulty. Figure cite60†4 shows the distribution of logit values output by the trained probe across different actual difficulty ranges.
+L301: A progressive increase in the distribution center of probe logits is observed from MATH Level 1 to Level 5, with AIME 2024 and 2025 problems concentrated in even higher logit regions than MATH Level 5. This indicates that the probe’s logit outputs have been trained to reflect the relative magnitude of actual problem difficulty, demonstrating that difficulty-related signals can be linearly extracted from internal representations without token generation.
+L302: Figure cite61†5 presents the difficulty distribution results using a probe trained on internal activations from the Qwen2.5-7B model. As the MATH difficulty level increases, the model exhibits an ideal trend: the proportion of problems classified as easy decreases while the proportion classified as hard increases. This demonstrates that the probe trained on the model’s activations accurately distinguishes difficulty levels across problems.
+L303: cite62†Image: Refer to caption Figure 4: Distribution of difficulty prediction logits produced by the DSN probe across different actual difficulty levels. Violin plots show the distribution of probe logits for MATH-500 Level 1–5 and AIME 2024/2025. Blue and red dashed lines represent the mean and median, respectively.
+L304: #### 4.3.2 Computational Overhead of the Difficulty Probe
+L305: We analyze the computational overhead of the difficulty probe by distinguishing between a one-time offline cost and an inference-time cost. All measurements are conducted using the Qwen2.5-7B model with AIME 2025 as the reference dataset. The offline phase consists of difficulty-sensitive neuron (DSN) identification and linear probe training. DSN identification requires 138.7 seconds, and probe training adds 5.9 seconds, resulting in a total offline cost of 144.6 seconds.
+L306: This cost is incurred once per model and is amortized across all subsequent inference runs.
+L307: At inference time, ACTSC estimates difficulty using FFN activations from a single forward pass without additional token generation. The measured overhead for computing $P(\text{Hard})$ is 0.59 seconds per sample, which is comparable to standard single-sample inference and negligible relative to multi-sample self-consistency. Unlike pre-sampling-based methods such as DSC, this overhead is independent of dataset size and task difficulty.
+L308: Once trained, the probe introduces a fixed and predictable cost while enabling substantial reductions in self-consistency sampling.
+L309: cite63†Image: Refer to caption Figure 5: Distribution of easy and hard problems across MATH difficulty levels using model-specific probes trained on internal activations of Qwen2.5-7B model. Percentages indicate the proportion of problems classified as easy or hard at each difficulty level.
+L310: ## 5 Conclusion
+L311: We analyzed the inefficiency of existing self-consistency based reasoning methods that rely on pre-sampling or additional model calls for difficulty estimation. We demonstrated that feed-forward network (FFN) activation patterns in large language models correlate with problem difficulty, and this information can be extracted without generating additional tokens.
+L312: Based on this observation, we proposed Activation-Informed Difficulty-Aware Self-Consistency (ACTSC), which estimates problem difficulty using activations from a single forward pass and dynamically applies self-consistency sampling only when necessary. By using a lightweight activation-based probe, ACTSC enables adaptive inference without requiring a preparation stage.
+L313: Experimental results across diverse reasoning benchmarks and multiple model scales demonstrate that ACTSC substantially reduces inference cost compared to existing self-consistency variants while maintaining comparable or even superior accuracy in some cases. These findings show that internal activations can serve as an effective signal for difficulty-aware test-time scaling and suggest a new direction for efficient inference control in large language models.
+L314: ## References
+L315:   * Aggarwal et al. (2023) P. Aggarwal, A. Madaan, Y. Yang, and Mausam Let’s sample step by step: adaptive-consistency for efficient reasoning and coding with LLMs. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing, H. Bouamor, J. Pino, and K. Bali (Eds.), Singapore, pp. 12375–12396. External Links: cite64†Link†aclanthology.org , cite65†Document†dx.doi.org Cited by: cite66†§1 , cite67†1st item , cite68†2nd item .
+L316:   * Alain and Bengio (2016) G. Alain and Y. Bengio Understanding intermediate layers using linear classifier probes. arXiv preprint arXiv:1610.01644. Cited by: cite69†§1 .
+L317:   * Belinkov (2022) Y. Belinkov Probing classifiers: promises, shortcomings, and advances. Computational Linguistics 48 (1), pp. 207–219. Cited by: cite69†§1 .
+L318:   * Cheng et al. (2025) Z. Cheng et al. Think more, hallucinate less: mitigating hallucinations via tree search over self-generated responses. In Findings of the Association for Computational Linguistics: ACL 2025, Cited by: cite70†§2.2 .
+L319:   * Hendrycks et al. (2021) D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt Measuring mathematical problem solving with the math dataset. In Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks, J. Vanschoren and S. Yeung (Eds.), Vol. 1, pp. . External Links: cite71†Link†datasets-benchmarks-proceedings.neurips.cc Cited by: cite72†§3.1 , cite73†§4.1.1 .
+L320:   * Lee et al. (2025) S. Lee, H. Park, J. Kim, and J. Ok Semantic exploration with adaptive gating for efficient problem solving with language models. arXiv preprint arXiv:2501.05752. Cited by: cite70†§2.2 .
+L321:   * Li et al. (2024) Y. Li, P. Yuan, S. Feng, B. Pan, X. Wang, B. Sun, H. Wang, and K. Li Escape sky-high cost: early-stopping self-consistency for multi-step reasoning. In The Twelfth International Conference on Learning Representations, External Links: cite74†Link†openreview.net Cited by: cite66†§1 , cite75†2nd item , cite70†§2.2 , cite76†3rd item .
+L322:   * Mathematical Association of America (2024) Mathematical Association of America American invitational mathematics examination (aime) 2024. Note: Official competition problemscite77†https://www.maa.org†www.maa.org Cited by: cite73†§4.1.1 .
+L323:   * Mathematical Association of America (2025) Mathematical Association of America American invitational mathematics examination (aime) 2025. Note: Official competition problemscite78†https://www.maa.org/competitions†www.maa.org Cited by: cite73†§4.1.1 .
+L324:   * Qwen et al. (2025) Qwen, :, A. Yang, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Li, D. Liu, F. Huang, H. Wei, H. Lin, J. Yang, J. Tu, J. Zhang, J. Yang, J. Yang, J. Zhou, J. Lin, K. Dang, K. Lu, K. Bao, K. Yang, L. Yu, M. Li, M. Xue, P. Zhang, Q. Zhu, R. Men, R. Lin, T. Li, T. Tang, T. Xia, X. Ren, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Wan, Y. Liu, Z. Cui, Z. Zhang, and Z. Qiu Qwen2.5 technical report. External Links: 2412.15115, cite79†Link Cited by: cite80†§4.1.2 .
+L325:   * Rein et al. (2024) D. Rein, B. L. Hou, A. C. Stickland, J. Petty, R. Y. Pang, J. Dirani, J. Michael, and S. R. Bowman Gpqa: a graduate-level google-proof q&a benchmark. In First Conference on Language Modeling, Cited by: cite73†§4.1.1 .
+L326:   * Snell et al. (2025) C. V. Snell, J. Lee, K. Xu, and A. Kumar Scaling LLM Test-Time Compute Optimally Can be More Effective than Scaling Parameters for Reasoning. In The Thirteenth International Conference on Learning Representations, External Links: cite81†Link†openreview.net Cited by: cite82†§1 .
+L327:   * Team et al. (2025) G. Team, A. Kamath, J. Ferret, S. Pathak, N. Vieillard, R. Merhej, S. Perrin, T. Matejovicova, A. Ramé, M. Rivière, et al. Gemma 3 technical report. arXiv preprint arXiv:2503.19786. Cited by: cite80†§4.1.2 .
+L328:   * Wang et al. (2025) X. Wang, S. Feng, Y. Li, P. Yuan, Y. Zhang, C. Tan, B. Pan, Y. Hu, and K. Li Make every penny count: difficulty-adaptive self-consistency for cost-efficient reasoning. In Findings of the Association for Computational Linguistics: NAACL 2025, L. Chiruzzo, A. Ritter, and L. Wang (Eds.), Albuquerque, New Mexico, pp. 6904–6917. External Links: cite83†Link†aclanthology.org , cite84†Document†dx.doi.org , ISBN 979-8-89176-195-7 Cited by: cite66†§1 , cite85†3rd item , cite70†§2.2 , cite86†4th item .
+L329:   * Wang et al. (2022) X. Wang, J. Wei, D. Schuurmans, Q. Le, E. Chi, S. Narang, A. Chowdhery, and D. Zhou Self-consistency Improves Chain of Thought Reasoning in Language Models. arXiv preprint arXiv:2203.11171. Cited by: cite82†§1 , cite87†§2.1 , cite88†1st item .
+L330:   * Wang et al. (2024) Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang, et al. Mmlu-pro: a more robust and challenging multi-task language understanding benchmark. Advances in Neural Information Processing Systems 37, pp. 95266–95290. Cited by: cite73†§4.1.1 .
+L331:   * Wei et al. (2022) J. Wei, X. Wang, D. Schuurmans, M. Bosma, F. Xia, E. Chi, Q. V. Le, D. Zhou, et al. Chain-of-thought prompting elicits reasoning in large language models. Advances in neural information processing systems 35, pp. 24824–24837. Cited by: cite82†§1 , cite87†§2.1 .
+L332: Experimental support, please cite89†view the build logs for errors. Generated by cite90†L A T E xml†math.nist.gov .
+L333: ## Instructions for reporting errors
+L334: 
+L335: We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the methods listed below:
+L336: 
+

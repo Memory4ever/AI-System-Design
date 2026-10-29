@@ -1,0 +1,194 @@
+Coordinated Cooling and Compute Management for AI Datacenters (https://arxiv.org/html/2601.08113v1)
+citeturn30724view0 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08113v1","lineno":225}); Total lines: 446
+L216: To map that demand to physical resources, we use profiled throughput information from a single TP8 (8-GPU) because it provides the maximum parallelism. This configuration serves as a reference for capacity estimation, ensuring that cluster-level sizing reflects the maximum achievable throughput under full GPU utilization. From these measurements, we obtain the effective 30-minute capacity $C_{8}^{(30)}$.
+L217: The number of TP groups (servers) required to reliably serve the forecast load is calculated as $N=\lceil\hat{L}_{30}/C_{8}^{(30)}\rceil$, where $\hat{L}_{30}$ denotes the total token demand predicted by the LSTM during the next 30 minute interval and $C_{8}^{(30)}$ represents the profiled token-processing capacity (tokens per 30 minutes) of a TP8 server over the same horizon.
+L218: This profile-anchored sizing translates the forecasted workload into a robust GPU budget, which is subsequently passed to the window-level mixed-integer linear program (MILP) for fine-grained allocation across TP modes.
+L219: ### IV-B Window-Level TP Selection
+L220: 
+L221: At the start of each control window, denoted as $w$ (5 minutes), the system verifies the optimal TP configuration mix $m\in\mathcal{M}$, where $\mathcal{M}$ is the set of potential GPU parallelism settings, e.g. $TP_{2},TP_{4}$, etc. The objective of optimization is to reduce overall power consumption while (i) meeting the anticipated token demand $\hat{L}_{w}$, (ii) adhering to the specified GPU budget $G_{max}$ and (iii) maintaining compliance with thermal regulation.
+L222: The forecast workload $\hat{L}_{w}$ (total tokens in window $w$) is given from an LSTM model that was trained on traces from the past. The decision variable $Y_{m,w}$ is the number of pools of TP_{m} to be selected for window $w$. The choice of sets $\mathbf{Y}_{w}=\{Y_{2,w},Y_{4,w},Y_{8,w}\}$ is formulated as an MILP with the GPU budget and the temperature constraints.
+L223:  | $\displaystyle\min_{\mathbf{Y}_{m,w}}\quad$  | $\displaystyle\sum_{m}\sum_{t}{P_{GPU_{m,w,t}}\,Y_{m,w}}$  |  | (12a)
+L224:  | s.t.  | $\displaystyle\sum_{m}C_{m,w}\,Y_{m,w}\geq\hat{L}_{w}$  |  | (12b)
+L225:  |  | $\displaystyle\sum_{m}m\,Y_{m,w}\leq G_{\max}$  |  | (12c)
+L226:  |  | $\displaystyle\theta_{GPU,w}(\mathbf{Y}_{w},\hat{L}_{w},\theta_{c})\leq\theta_{GPU}^{\max}$  |  | (12d)
+L227: The MILP at the pool-level in (cite92†12a )–(cite93†12d ) determines the optimal number of TP pools $Y_{m,w}$ for each configuration $m$ during the control window $w$. Designed to minimize the energy consumption of the GPU  (cite92†12a ).
+L228: The constraint (cite94†12b ) guaranties that the aggregate capacity of all active pools $C_{m,w}$ is adequate to support the expected token demand; The constraint (cite95†12c ) applies the constraint budget of the GPUs $G_{\max}$ (total available GPUs), while (cite93†12d ) will ensure that the resulting temperature $\theta_{GPU,w}$ from the thermal dynamics in (cite96†11 ) remains below the maximum allowable limit, i.e., $\theta_{\mathrm{GPU}}(t)\leq\theta_{\mathrm{GPU,max}}$, under the selected TP configuration $Y_{w}$ and the forecast workload $\hat{L}_{w}$.
+L229: Here, $C_{m,w}$, $P_{GPU_{m,w}}$ and $\theta_{GPU,w}$ denote the profiled token-processing capacity (tokens per 5 min), the GPU power in the window, and the temperature that correspond to configuration TP_{m}, respectively. When the runtime configuration for the pool is reached, expressed as $\mathbf{Y}^{\star}_{w}=(Y^{\star}_{2,w},Y^{\star}_{4,w},Y^{\star}_{8,w})$, the runtime controller uses a smart-switch algorithm and maps the TP pools as desired to the currently idle GPUs.
+L230: When sufficient idle resources exist, it allows the fast reconfiguration of TP without restarting the serving process or repeating expensive re-sharding.
+L231: Moreover, to design a fair and deterministic dispatch of inference request allocations among the designated multi pools, we utilize a proportional deterministic dispatch (Algorithm 1). This algorithm assigns tasks to the pools with respect to their evaluated capacities, resulting in an alternating schedule among the pools with respect to their relative weights.
+L232: Thus, two pools with the same type (e.g., two pools of TP_{4}) are load-balanced by design, with the consequence that job allocation is capacity-aware and predictable for each designated window.
+L233: Algorithm 1 Capacity-Proportional Deterministic Dispatch
+L234: 
+L235: 1: Input: Active pools $\mathcal{R}^{\prime}=\{p\}$ with capacities $C_{p}$; window job list $\{(t_{j},n_{j})\}_{j=1}^{J_{w}}$ sorted by arrival time. where $n_{j}$ denotes the token length of job $j$.
+L236: 
+L237: 2: Output: Mapping $f:\{1,\dots,J_{w}\}\to\mathcal{R}^{\prime}$ (job $\to$ pool)
+L238: 
+L239: 3: Compute shares $s_{p}\leftarrow C_{p}/\sum_{q\in\mathcal{R}^{\prime}}C_{q}$
+L240: 4: Balanced-round $n_{p}\approx s_{p}J_{w}$ to integers $n_{p}$ such that $\sum_{p}n_{p}=J_{w}$
+L241: 
+L242: 5: Build a deterministic weighted schedule $S$ by interleaving each pool $p$ exactly $n_{p}$ times
+L243: 
+L244: 6: for $j=1$ to $J_{w}$ do
+L245: 
+L246: 7:   $f(j)\leftarrow S[j]$
+L247: 
+L248: 8: return $f$
+L249: The Capacity-proportional deterministic dispatch algorithm allocates inference jobs across active GPU pools based on their effective capacities. Here, $\mathcal{R}^{\prime}$ indicates the set of active GPU pools considered in the current scheduling window, and $p$ stands for the index of each of these pools in $\mathcal{R}^{\prime}$. $C_{p}$ is the effective processing capacity of the pool $p$, defined as the number of tokens processed per window.
+L250: The number of inference jobs that arrive in the current scheduling window is expressed as $J_{w}$, $s_{p}$ is the normalized capacity share of the pool $p$, and ${n}_{p}$ denotes the number of jobs scheduled for the pool $p$. The function $f:\{1,\ldots,J_{w}\}\rightarrow\mathcal{R}^{\prime}$ assigns each job $j$ to a specific group $p$ based on the deterministic schedule determined by the algorithm.
+L251: ### IV-C Cooling MPC Formulation
+L252: Utilizing the computational power within a physics-based rack model framework, we regulate the temperature of the RCU supply and the flow rate. $u_{k}:=(\theta_{\mathrm{RCU}}(k),\,\Phi_{\mathrm{RCU}}(k)),$ reduce cooling power with the adoption of thermal safety. Let $x_{k}\in\mathbb{R}^{N_{k}}$ denote the overall thermal state for each active server. for server $i$ governed by the zonal energy balance equations (Eqs. cite97†1 –cite98†3 ), with $N_{k}$ the number of active servers in the time interval $k$.
+L253: We find the discretized dynamics for the sampling time interval $\Delta t$ by numerically combining the ODE Eqs. (cite97†1 )-(cite98†3 )
+--------------------------------------------------------------------------------
+Coordinated Cooling and Compute Management for AI Datacenters (https://arxiv.org/html/2601.08113v1)
+citeturn30724view1 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08113v1","lineno":283}); Total lines: 446
+L268: We adopt DistilBERT because it provides strong semantic representations with a smaller model footprint, leading to lower inference latency and overhead, which is critical for real-time scheduling and control decisions in LLM serving [cite107†53 ]. This classification enables the enforcement of class-specific latency and thermal constraints, allowing frequency selection to be formulated as an optimization problem that is token length–aware and ensures compliance with SLOs.
+L269: For each incoming job $j$, we formulate a binary MILP problem that selects a frequency $f$ from the set $\mathcal{F}=\{1000,1200,1400,1600,1800\}$ MHz. The DVFS optimization problem minimizes GPU power while respecting both the per-class latency and the GPU temperature limits:
+L270:  | $\displaystyle\min_{x_{f,j}}\quad$  | $\displaystyle\sum_{f\in\mathcal{F}}P_{GPU}(f,n_{j})\,x_{f,j}$  |  | (15a)
+L271:  | s.t.  | $\displaystyle\sum_{f\in\mathcal{F}}x_{f,j}=1,$  |  | (15b)
+L272:  |  | $\displaystyle\sum_{f\in\mathcal{F}}lat_{c}(n_{j},f)\,x_{f,j}\leq lat^{\max}_{c(j)},$  |  | (15c)
+L273:  |  | $\displaystyle\sum_{f\in\mathcal{F}}\theta_{\mathrm{GPU}}(f,n_{j})\,x_{f,j}\leq\theta_{GPU}^{\max},$  |  | (15d)
+L274:  |  | $\displaystyle x_{f,j}\in\{0,1\},\ \forall f\in\mathcal{F}.$  |  | (15e)
+L275: Objective (cite108†15a ) minimizes the power of the GPU by selecting the optimal operating frequency $f$ for each job $j$, subject to several constraints. Constraint (cite109†15b ) enforces a one-hot selection, ensuring that exactly one frequency is chosen per job. Constraint (cite110†15c ) guaranties that the job latency at the selected frequency does not exceed the class-specific latency bound $lat^{\max}_{c(j)}$, where $c(j)\!\in\!\{\text{S},\text{M},\text{L}\}$ corresponds to short, medium or long job classes.
+L276: Constraint (cite111†15d ) ensures thermal safety by keeping the GPU temperature below its upper threshold $\theta_{GPU}^{\max}$. Here, $n_{j}$ denotes the context token length of the job $j$, while $P_{GPU}(f,n_{j})$, $L_{c}(n_{j},f)$, and $\theta_{\mathrm{GPU}}(f,n_{j})$ represent the GPU power, latency, and temperature profiles associated with frequency $f$, respectively.
+L277: TABLE III: Job classification by input/output token thresholds (DistilBERT-based predictor).
+L278: Query Type  | Class  | Context Token Length  | Generated Token Length
+L279: --- | --- | --- | ---
+L280: Short  | S  | $<256$  | $<100$
+L281: Medium  | M  | $<1024$  | $<350$
+L282: Long  | L  | $<8192$  | $\geq 350$
+L283: TABLE IV: Parameters of the control algorithm.
+L284: Notation  | Value  | Unit  | Description
+L285: --- | --- | --- | ---
+L286: $T_{S}$  | 30  | sec  | Control sampling time
+L287: $N_{p}$  | 2  | –  | Prediction horizon of MPC
+L288: $\theta_{\mathrm{RCU}}^{\min}$  | 18  | ^{∘}C  | Lower bound of supply-air temp
+L289: $\theta_{\mathrm{RCU}}^{\max}$  | 27  | ^{∘}C  | Upper bound of supply-air temp
+L290: $\Phi_{\mathrm{RCU}}^{\min}$  | 0.009  | m^{3}/s  | Lower bound of supply airflow rate
+L291: $\Phi_{\mathrm{RCU}}^{\max}$  | 0.03  | m^{3}/s  | Upper bound of supply airflow rate
+L292: $\theta_{\mathrm{ret}}^{\max}$  | 70  | ^{∘}C  | Upper limit of return-air temperature
+L293: $\theta_{\mathrm{c}}^{\max}$  | 12  | ^{∘}C  | Upper limit of cold-aisle inlet temp
+L294: $\theta_{\mathrm{GPU}}^{\max}$  | 50  | ^{∘}C  | Upper limit of GPU inlet temperature
+L295: $K_{p}$  | 4.5  | –  | Proportional gain of PID controller
+L296: $K_{i}$  | 0.18  | –  | Integral gain of PID controller
+L297: $K_{d}$  | 0.1  | –  | Derivative gain of PID controller
+L298: The proposed controller is designed within a specified operating range of temperature and airflow as shown in Table cite112†IV , allowing stable system cooling. For this purpose, the limits $\theta_{\mathrm{RCU}}$ and $\Phi_{\mathrm{RCU}}$ constrain the operation of the cooling unit within the range, while $\theta_{\mathrm{ret}}^{\max}$, $\theta_{\mathrm{c}}^{\max}$, and $\theta_{\mathrm{GPU}}^{\max}$ enforce the thermal safety of the rack and GPU modules.
+L299: The PID gains $(K_{p},K_{i},K_{d})$ define the dynamic response of the controller (for a detailed mathematical formulation, see Appendix cite34†A-D ).
+L300: ## V Numerical Experiments
+L301: 
+L302: Fig. 3: Simulation results of the hierarchical control framework integrating workload utilization, cluster-level provisioning, MILP-based frequency tuning, computing power consumption, and cooling regulation. The bottom panels show the comparison between PID and MPC controllers in the cooling layer, illustrating the control efforts required by supply air temperature and airflow rate from both controllers.
+L303: ### V-A Evaluation Setup
+L304: 
+L305: We evaluate the proposed joint cooling–computing framework through a one-day simulation on GPU clusters, which captures diurnal workload variations derived from the real-world Azure LLM Inference Trace. The hierarchical controller operates on multiple temporal scales: cluster-level planning every $30$ minutes, pool-level TP scheduling every $5$ minutes, cooling control per minute, and DVFS on per-job level.
+L306: Before the DVFS stage, we employ a DistilBERT-based job classification model to predict the output length category from the input context tokens. The classifier achieves $91\%$ accuracy on validation set, allowing the controller to anticipate the expected service duration and select appropriate GPU frequencies that balance latency and power efficiency.
+L307: The MILP optimization problems for the TP and server allocation are solved using PuLP [cite113†54 ], while the cooling control is formulated as an MPC problem solved by SciPy SLSQP [cite114†55 ]. The simulation integrates real GPU profiling data and production-level inference traces, including a one-week Azure workload that covers coding and conversation traces.
+L308: To further validate the practicality of our approach, we conducted one-hour real system experiments on servers equipped with 8 × Tesla V100 GPUs (16 GB each) running the Llama-2-7B model [cite79†42 ]. The control algorithm is implemented on top of vLLM [cite115†56 ], allowing dynamic TP configuration, workload scheduling, and DVFS runtime adjustment. The proposed framework is compared with a baseline configuration consisting of a single TP8 pool operating at fixed, non optimized GPU frequency clocks.
+L309: ### V-B Hierarchical Control–Based Provisioning
+L310: 
+L311: We simulate the proposed hierarchical control framework using a subset of the utilization profile shown in Fig. cite116†3 (a), which is derived from the Microsoft Azure LLM inference dataset, which captures normalized token and job arrival patterns, providing realistic diurnal workload dynamics that serve as the foundation for LSTM-based forecasting and subsequent hierarchical control simulation.
+L312: At the cluster level, the LP-based provisioning controller dynamically manages the number of active GPU servers according to the workload forecast from the LSTM model. As illustrated in Fig. cite116†3 (b), the controller activates or deactivates GPU servers every 30 minutes to align the computing capacity with the predicted demand. When off-peak conditions exist, only a few servers are kept online to reduce idle energy consumption, while more servers are brought online as utilization increases.
+--------------------------------------------------------------------------------
+Hierarchical Precision and Recursion for Accelerating Symmetric Linear Solves on MXUs (https://arxiv.org/html/2601.08082v1)
+citeturn30724view2 [wordlim: 200] Crawled: 6 days ago; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08082v1","lineno":229}); Total lines: 327
+L220: In this section, we first describe the hardware and software ecosystem used to run our experiments. We then analyze performance on NVIDIA architectures, starting with the symmetric rank-$k$ update (SYRK) and triangular solve (TRSM), followed by a detailed study of the Cholesky factorization (POTRF).
+L221: We then present results on an AMD MI300X system focusing on the AI-style mixed-precision Cholesky configurations; we omit the AMD TRSM and SYRK results, since they mirror the NVIDIA trends and lead to the same qualitative conclusions. Finally, we discuss cross-platform portability, demonstrating that our Julia-based implementation achieves consistent behavior across both NVIDIA and AMD GPUs.
+L222: ### IV-A Hardware and Software Specifications
+L223: We evaluated our implementation on two high-end GPU platforms: the NVIDIA H200 and the AMD MI300X. The NVIDIA H200, based on the Hopper™ architecture, features 141 GB of HBM3e memory and delivers up to 4.8 TB/s of memory bandwidth. The AMD MI300X offers 192 GB of HBM3 memory with a peak bandwidth of 2.1 TB/s, along with 304 compute units and 256 MB of L3 cache.
+L224: These architectural capabilities provide the memory capacity and bandwidth required to support fine-grained recursive workloads and efficient reuse of intermediate results.
+L225: All benchmarks were conducted using Julia 1.12.0, with GPU support enabled via CUDA.jl (v5.9.5), AMDGPU.jl (v2.1.4), KernelAbstractions.jl (v0.9.39), and GPUArrays.jl (v11.3.1). Our Julia-based implementation is fully portable across vendors, with performance-critical kernels dispatching to either NVIDIA’s cuBLAS/cuSOLVER or AMD’s rocBLAS/hipSOLVER backends, depending on the target device.
+L226: For our benchmarks, we generated dense, symmetric positive-definite matrices with random uniform entries. To ensure positive definiteness and robust conditioning, we added the dimension $n$ to the diagonal elements of the matrix.
+L227: cite72†Image: Refer to caption Fig. 4: Speedup of Recursive SYRK on NVIDIA H200. Relative performance of the recursive Symmetric Rank-k update compared to cuBLAS FP64. The pure FP16 implementation achieves up to 149x speedup, while layered mixed-precision configurations deliver between 19x and 27x acceleration.
+L228: ### IV-B Results Analysis on NVIDIA H200
+L229: #### SYRK Performance
+L230: Figure cite73†4 reports the speedup of our Julia-based nested recursive SYRK implementation on the NVIDIA H200 GPU, normalized against cuBLAS SYRK in FP64. As the matrix size increases, our recursive kernel consistently outperforms cuBLAS across all precision configurations. The FP64 variant already achieves up to a $14\times$ speedup at $n=65{,}536$, benefiting from increased concurrency and improved reuse of tile-local data.
+L231: The Pure F16 configuration exposes the hardware’s peak throughput, reaching a $149\times$ speedup. By selectively exploiting this low-precision performance, mixed-precision layouts such as [FP16, FP16, FP32] achieve more than $19\times$ acceleration, while the five-layer configuration [FP16, FP16, FP16, FP16, FP32] delivers up to $27\times$ speedup with practical accuracy.
+L232: These results highlight the strong synergy between recursive decomposition and low-precision computation for accelerating memory-bound SYRK workloads on modern MXU-equipped GPUs.
+L233: cite74†Image: Refer to caption Fig. 5: Speedup of Recursive TRSM on NVIDIA H200. Performance of the recursive Triangular Solve normalized to cuBLAS FP64. The pure FP16 implementation achieves up to 6x speedup, while layered mixed-precision configurations deliver up to 5.3x acceleration.
+L234: #### TRSM Performance
+L235: Figure cite75†5 shows the speedup of our Julia-based recursive TRSM implementation on the NVIDIA H200 GPU, normalized to cuBLAS TRSM in Float64 (baseline = 1.0). For smaller matrices, all precision configurations perform similarly to the FP64 baseline. As the matrix size increases, our recursive and mixed-precision variants begin to clearly outperform cuBLAS. The Pure F16 implementation achieves the highest throughput, reaching up to $6\times$ speedup at $n=65{,}536$.
+L236: Layered mixed-precision hierarchies such as [F16, F16, F16, F16, F32] still provide substantial gains, delivering up to $5.3\times$ acceleration while offering better numerical robustness than pure FP16. These results indicate that even for a dependency-heavy kernel like TRSM, recursive decomposition combined with reduced-precision arithmetic can significantly improve performance on bandwidth-rich architectures such as the H200.
+L237: cite76†Image: Refer to caption Fig. 6: Cholesky Throughput on NVIDIA H200. Effective TFLOPs achieved by the recursive solver across matrix sizes. The deep mixed-precision and pure FP16 configurations demonstrate superior hardware utilization, delivering throughput significantly exceeding that of the standard high-precision solver.
+L238: #### Cholesky Throughput:
+L239: Figure cite77†6 reports the Cholesky throughput on the NVIDIA H200, showing the effective TFLOP/s achieved by our recursive solver across matrix sizes and comparing it against cuSOLVER FP64. For large problems (e.g., $n=65{,}536$), the FP64 and FP32 recursive variants already match or slightly exceed the cuSOLVER FP64 throughput, while the deep mixed-precision configuration [F16, F16, F16, F16, F16, F32] reaches more than $2\times$ the FP64 cuSOLVER rate.
+L240: The Pure F16 implementation attains the highest raw throughput overall, approaching $3\times$ the FP64 baseline, demonstrating how hierarchical mixed precision can fully exploit the H200’s MXUs for Cholesky factorization. At the same matrix size, both cuSOLVER FP64 and our recursive FP64 achieve roughly $65\%$ of the peak FP64 Tensor Core performance, whereas Pure F16 reaches about $30\%$ of the theoretical FP16 peak.
+L241: This drop in efficiency at lower precision reflects a shift in the bottleneck: as computation becomes cheaper, the algorithm increasingly becomes limited by memory bandwidth and data movement overhead rather than flops. In this regime, our deepest mixed-precision configuration [F16, F16, F16, F16, F16, F16, F16, F32] sustains about $22\%$ of the FP16 peak, yet remains roughly two orders of magnitude more accurate than Pure F16.
+L242: Together, these results highlight that peak utilization alone is not the right objective: carefully layered mixed precision can trade a modest reduction in hardware efficiency for dramatically improved accuracy while still delivering multi$\times$ speedup over the standard high-precision solver.
+L243: cite78†Image: Refer to caption Fig. 7: Cholesky Speedup on NVIDIA H200. Performance of the full nested recursive solver compared to cuSOLVER FP64. The pure FP16 implementation achieves up to 6x speedup, while layered mixed-precision configurations deliver up to 5.3x acceleration.
+L244: #### Cholesky Performance
+--------------------------------------------------------------------------------
+Hierarchical Online-Scheduling for Energy-Efficient Split Inference with Progressive Transmission (https://arxiv.org/html/2601.08135v1)
+citeturn30724view3 [wordlim: 200] Crawled: today; Content type: text/html; Source: open({"ref_id":"https://arxiv.org/html/2601.08135v1","lineno":324}); Total lines: 630
+L286: Specifically, for each device $n$, we evaluate the best utility $U_{s_{n}}(\omega^{*}_{n},\tilde{p}^{*}_{n})$ for each candidate $s_{n}\in\mathcal{S}$ using $\omega^{*}_{n}$ and $\tilde{p}^{*}_{n}$. The split point that maximizes this utility, $s_{n}^{\star}=\arg\max_{s\in\mathcal{S}}U_{s_{n}}(\omega^{*}_{n},\tilde{p}^{*}_{n})$, is then selected, and its associated $(\omega^{\star}_{n},\tilde{p}^{\star}_{n})$ are retained as the global optimal task-level resource allocation.
+L287: Furthermore, to enhance scalability and reduce computational complexity in dense-user scenarios, a regional aggregation strategy can be employed. This approach groups users with similar channel conditions in geographical locations, computing a representative resource allocation for the cluster rather than iterating for each user individually.
+L288: 
+L289: Algorithm 2 ENACHI Algorithm
+L290: 
+L291: 1:  Input: $\boldsymbol{Q}_{m}$, $V,\mathcal{S},\omega,p_{\max},\bar{E}_{n}$.
+L292: 2:  Output: Decisions $[\boldsymbol{\omega}^{*}_{m},\boldsymbol{p}^{*}_{m},\boldsymbol{s}^{*}_{m}]$
+L293: 
+L294: 3:  Initialize partition vector $\boldsymbol{s}^{*}_{m}=[s_{0},\dots,s_{0}]$.
+L295: 
+L296: 4:  for each user $n=1$ to $N$ do
+L297: 
+L298: 5:   for each candidate partition point $i\in\mathcal{S}$ do
+L299: 
+L300: 6:    Calculate $U_{i}(s_{n,m}^{*},\tilde{p}_{n,m}^{*})$ using Algorithm 1;
+L301: 
+L302: 7:  $\boldsymbol{s}^{\star}_{m}=\arg\max_{i\in\mathcal{S}}\boldsymbol{U}_{i}$;
+L303: 8:  Solve $[\boldsymbol{\omega}^{\star}_{m},\boldsymbol{\tilde{p}}^{\star}_{m}]$ using Algorithm 1$(\boldsymbol{s}_{m}^{\star},\boldsymbol{Q}_{m})$;
+L304: 
+L305: 9:  Initialize inner power queues $q_{n,m,1}=0$ for all $n$.
+L306: 
+L307: 10:  Initialize received packets set $\mathcal{X}_{n,m,0}=\emptyset$ for all $n$.
+L308: 
+L309: 11:  for each time slot $k=1,2,\dots,K$ do
+L310: 
+L311: 12:   for each user $n=1$ to $N$ do
+L312: 
+L313: 13:    if user $n$ is not terminated then
+L314: 
+L315: 14:     Calculate $p_{n,m,k}^{*}$ using (cite94†25 );
+L316: 15:     for $\!j\!=\!1,2,\cdots\!,\min\{|\mathcal{X}_{n,m}|\!-\!|\mathcal{X}_{n,m,k}|,b_{n,m,k}\}$ do
+L317: 
+L318: 16:      Select feature packet according to (cite95†26 );
+L319: 
+L320: 17:     Transmit feature packet $\Psi_{n,m,k}$ with $p_{n,m,k}^{*}$;
+L321: 
+L322: 18:     Updates $\mathcal{X}_{n,m,k}=\mathcal{X}_{n,m,k-1}\cup\Psi_{n,m,k}$;
+L323: 
+L324: 19:     Evaluates uncertainty $h_{s}(\mathcal{X}_{n,m,k}\,|\,\Lambda_{s})$;
+L325: 
+L326: 20:     if $h_{s}(\mathcal{X}_{n,m,k}|\Lambda_{s})\!<\!H_{\text{th}}$ or deadline reached then
+L327: 21:      Send TERMINATION signal to user $n$;
+L328: 
+L329: 22:     Update $q_{n,m,k}$.
+L330: 
+L331: 23:  Observe actual energy $E_{n,m}$ for all $n$;
+L332: 
+L333: 24:  Update $Q_{n,m+1}=[Q_{n,m}+E_{n,m}-\bar{E}_{n}]^{+}$.
+L334: ### III-C Packet-Level Reference-Tracking and Adaptation
+L335: 
+L336: While Stage I provides a frame-wise resource reference based on a tractable surrogate model, this solution is derived from statistical fitting, failing to capture the variability of individual inputs.
+L337: To address the limitations of the task-level solution, we seek to enable the per-slot adaptation. Since the partition point $\boldsymbol{s}_{m}$ and bandwidth $\boldsymbol{\omega}_{m}$ have already been determined in the first stage, the online adaptation focuses on adjusting the transmit power $\boldsymbol{p}_{n,m,k}$ and regulating packet delivery via task-aware progressive transmission to balance per-slot efficiency with long-term energy sustainability.
+L338: Consequently, the task-aware packet-level inner control loop is introduced. Its objective is twofold: opportunistically maximize the per-slot transmission of feature packets based on instantaneous channel conditions, and ensure the long-term average transmit power robustly tracks the reference $\tilde{p}_{n,m}^{\star}$ from the task-level. This forms the per-slot optimization problem:
+L339:  | $\displaystyle\mathcal{P}2.1:\max_{{p_{n,m,k}}}$  | $\displaystyle\quad\frac{1}{k_{n,m}}\sum_{k=1}^{k_{n,m}}b_{n,m,k}$  |  | (22a)
+L340:  | s.t.  | $\displaystyle\quad\frac{1}{k_{n,m}}\sum_{k=1}^{k_{n,m}}p_{n,m,k}\leq\tilde{p}_{n,m}^{\star},$  |  | (22b)
+L341:  |  | $\displaystyle\quad p_{n,m,k}\in(0,p_{\max}],$  |  | (22c)
+L342: where $b_{n,m,k}$ represents the maximal packet size defined in (cite96†4 ), $p_{n,m,k}$ denotes the per-slot transmit power, and ${k_{n,m}}=\frac{T_{n,m}^{\text{tr}}}{t_{\text{slot}}}$ is the actual transmit slot number.
+L343: To enforce the long-term power constraint (cite97†22b ) in the per-slot domain, we adopt a finite-horizon Lyapunov-based optimization for the inner control loop, as it operates over the limited number of slots within a single frame. A virtual power queue $q_{n,m,k}\geq 0$ is defined for each device $n$ within frame $m$, which tracks the deviation between the accumulated transmit power $p_{n,m,k}$ and the reference power $\tilde{p}_{n,m}$ obtained from the task-level stage.
+L344: This approach decomposes the problem into tractable, per-slot subproblems, analogous to the task-level optimization. We define the virtual power queue dynamics as:
+L345:  | $$q_{n,m,k+1}=\left[q_{n,m,k}+p_{n,m,k}-\tilde{p}_{n,m}\right]^{+},$$  |  | (23)
+L346: 
+L347: where $q_{n,m,1}=0$.
+L348: 
+L349: Then, we transform problem $\mathcal{P}2.1$ into a multiple deterministic, per-slot optimization problem, which aims to opportunistically maximize the drift-plus-penalty term. This transformed drift-plus-penalty problem can be stated as:
+L350:  | $\displaystyle\mathcal{P}2.2:\max_{{p_{n,m,k}}}$  | $\displaystyle\quad v\times b_{n,m,k}-q_{n,m,k}p_{n,m,k}$  |  | (24a)
+L351:  | s.t.  |  (cite97†22b ), (cite98†22c ),  |  | (24b)
+L352: 
+L353: where $v$ is the inner-loop Lyapunov control parameter. Analogous to $V$ in the task-level, $v$ governs the trade-off in the packet-level optimization, balancing the objective of maximizing per-slot transmitted packets $b_{n,m,k}$ against the need to stabilize the power queue $q_{n,m,k}$.
+L354: Problem $\mathcal{P}2.2$ is a strictly concave optimization problem with respect to the variable $p_{n,m,k}$. As detailed in the Appendix C, this holds because the Hessian matrix of the objective function is symmetric and positive definite. Therefore, the optimal solution for the per-slot transmit power $p_{n,m,k}^{\star}$ can be derived analytically using the KKT conditions:
+L355:  | $$p_{n,m,k}^{\star}=\frac{v\,\omega_{n,m}}{q_{n,m,k}DL_{s}^{\text{h}}L_{s}^{\text{w}}}\ln 2-\frac{\sigma^{2}}{h_{n,m,k}},$$  |  | (25)
+L356: 
+L357: where $h_{n,m,k}$ is the deterministic channel gain of time slot $k$.
+L358: 
+L359: This solution yields a dynamic per-slot power policy that adapts to instantaneous queue states and channel dynamics. This per-slot policy thus translating the static, task-level budget into a fine-grained, adaptive control action.
+

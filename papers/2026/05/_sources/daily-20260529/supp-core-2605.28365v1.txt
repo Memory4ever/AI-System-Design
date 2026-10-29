@@ -1,0 +1,1065 @@
+Source: https://arxiv.org/html/2605.28365v1
+Main text extraction; fulltext_chars=87613
+
+arXiv:2605.28365v1 [cs.AI] 27 May 2026 
+ 
+ 
+ 
+Risk-Controlled Lean-as-Judge for 
+ Natural-Language Mathematical Reasoning 
+
+ 
+ 
+ 
+ Pauline Bourigault
+ 
+ Affiliation:  Imperial College London
+ 
+    
+ Xiaotong Ji
+ 
+ Affiliation:  Huawei Noah’s Ark Lab
+ 
+    
+ Matthieu Zimmer
+ 
+ Affiliation:  Huawei Noah’s Ark Lab
+ 
+    
+ Rasul Tutunov
+ 
+ Affiliation:  Huawei Noah’s Ark Lab
+ 
+    
+ Haitham Bou-Ammar
+ 
+ Affiliation:  Huawei Noah’s Ark Lab
+ 
+ Affiliation:  UCL Centre for AI
+ 
+
+ Abstract 
+    
+ Lean is increasingly used to judge natural-language mathematical answers, but its signal is partial: many answers never formalize, and a failed proof may reflect an ill-typed statement or a missing library fact, not a wrong answer. On MATH-500 we show this signal is (i) sharply coverage-dependent, that is the proof-winning answer is correct  96 % 96\%  of the time at high proved coverage but  20 % 20\%  at low, and (ii) sparse and often unfaithful: a  7 7 B autoformalizer proves a class for only  28 % 28\%  of problems, and a manual audit finds only  ≈ 43 % \approx\!43\%  of those proofs faithful. We propose  CovCal , a selector over Lean-trace diagnostics that certifies a finite-sample selective-risk bound on accepted answers or abstains, under two regimes (a conservative Bonferroni bound and a tighter dev-then-cal rule). Feasibility depends on autoformalization coverage: with the  7 7 B formalizer the signal is too sparse and Bonferroni abstains on all  20 20  bootstrap partitions, whereas a prover-specialized formalizer reaches  79 % 79\%  coverage and flips it to feasible on  17 17  of  20 20 , accepting  ≈ 48 % \approx\!48\%  of problems at  0.98 0.98  accepted accuracy. Since self-consistency alone is already  91 % 91\%  accurate, our contribution is a precise account of when, and with which formalizer, a partial formal signal can be trusted under risk control. 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ Figure 1:  CovCal  treats Lean as a partial-observation judge: trust formal evidence when coverage is sufficient, and abstain when coverage is too low. The method couples Lean-based formal traces with finite-sample selective prediction. 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ A Lean-kernel-checked proof
+is strong positive evidence for the formal statement that Lean has checked.
+Recent NLP systems use this signal by translating natural-language question–answer pairs into Lean, attempting proof search, and preferring candidates whose formal proofs succeed  ( Yao et al., 2025 ;  Liu et al., 2025 ) . Our question is complementary:  when should a downstream system trust this formal signal, and when should it treat the signal as out-of-coverage?  The distinction matters because proof failure is not the same as mathematical falsity. A failed attempt may reflect an incorrect answer, but it may also reflect an ill-typed formalization, missing library context, or a proof-search timeout. Treating proof failure as a negative correctness signal therefore risks conflating mathematical incorrectness with lack of formal coverage. 
+
+ 
+ 
+ 
+ In our pipeline, this asymmetry appears as a sharp reliability gap. When the answer classes holding most of the model’s sampled solutions are formally proved, raw formal selection has a low error rate; when few of those solutions land in a proved class, its error rate rises sharply. A second view gives the same message: a proof is reliable when the proved answer clearly outweighs the highest-weight unresolved rival, that is the most-sampled answer class Lean left unresolved, but becomes unsafe when a heavily sampled rival remains unresolved. We refer to this empirical pattern as a  coverage cliff : formal selection is accurate when proofs cover most of the sampled answer mass and unreliable otherwise. 
+
+ 
+ 
+ 
+ This motivates a partial-observation view
+of Lean-based answer selection (Figure  1 ). The system does not observe the truth or falsity of every candidate answer. It observes only which normalized answer classes reach a usable Lean statement and which of those are proved. An  answer class  is a group of candidate strings that denote the same final answer, such as  1 / 2 1/2 ,  0.5 0.5 , and  2 / 4 2/4 . Candidate classes that are not formalized or not proved are therefore unresolved, not automatically wrong.  CovCal  uses simple diagnostics of this partial observation, that is typed coverage, proved coverage, unresolved rival mass, and formal margin, and accepts a formal answer only when a predeclared rule satisfies a finite-sample selective-risk certificate. 
+
+ 
+ 
+ 
+ The threshold rule is chosen from a fixed finite grid, where each cell sets one cutoff for typed coverage, proved coverage, and the formal margin. We report two certification regimes. The Bonferroni regime searches over the whole grid on the calibration split and applies a union-bound correction for this search. The dev-then-cal regime chooses the threshold on an independent development split and certifies that single threshold once on the calibration split. Both regimes certify only the accepted formal predictions under their assumptions; neither certifies fallback answers or unresolved
+candidates. 
+
+ 
+ 
+ 
+ Contributions. 
+
+ 
+
+ 
+ 
+ 1.  
+ 
+ Coverage cliff.  On MATH-500, the proof-winning answer—the highest-weight answer class with a Lean proof—is correct  96 % 96\%  of the time at high proved coverage but only  20 % 20\%  at low coverage. Hence, a Lean proof is reliable only when coverage and margin are high. 
+
+ 
+ 
+ 2.  
+ 
+ A real but sparse and imperfect signal.  The formal signal must be faithfulness-audited, not read as correctness: Lean proves a class for only  28 % 28\%  of problems, and a manual audit finds only  ≈ 43 % \approx\!43\%  of those proofs faithful to the problem (the rest are true-but-irrelevant or trivial  𝚇 = 𝚇 \mathtt{X}=\mathtt{X}  identities). 
+
+ 
+ 
+ 3.  
+ 
+ Method.  We consider formal answer selection as a partial-observation selective-prediction problem, propose  CovCal , which is a risk-controlled selector over coverage diagnostics with finite-sample certificates under two regimes, and prove that unresolved inequivalent answer classes cannot be certified from formal observations alone without abstention. 
+
+ 
+ 
+ 4.  
+ 
+ Feasibility is formalizer-governed.  Certificate feasibility is governed by autoformalization coverage: a  7 7 B formalizer is too sparse for any Bonferroni certificate ( 0 / 20 0/20  bootstrap dev/cal/test splits), whereas a prover-specialized formalizer at  79 % 79\%  coverage flips it to feasible ( 17 / 20 17/20 ). 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 2  Formal Verifiers as NLP Judges 
+
+ 
+
+ 
+ A general Lean-based judging pipeline has four stages. First, a candidate final answer is extracted from a natural-language solution. Second, the problem and candidate answer are translated into one or more Lean statements. Third, Lean attempts to elaborate each statement. Fourth, proof search attempts to close the elaborated statement.
+A verified proof gives strong positive evidence for the formal statement, but any stage can fail for reasons unrelated to the truth of the original informal answer. Autoformalization may change the semantics of the problem. Elaboration may fail because of syntax, type-class inference, missing imports, or library mismatch. Proof search may time out even for true statements. Hence, the absence of a proof is a heterogeneous event, not a mathematical label. 
+
+ 
+ 
+ 
+ Prior work demonstrates the usefulness of this pipeline. FANS uses Lean 4 to formalize question–answer pairs and assist answer selection  ( Yao et al., 2025 ) . Safe uses Lean 4 for retrospective step-aware verification of natural-language mathematical reasoning  ( Liu et al., 2025 ) . These works show that formal proof can improve math reasoning systems. Our question is complementary: how much of the candidate-answer space
+is visible to the formal pipeline, and when is that partial trace sufficient for answer selection? 
+
+ 
+ 
+ 
+ The answer requires separating three notions that are often collapsed: (i) whether a candidate answer is mathematically correct, (ii) whether its intended formal statement is well represented in Lean, and (iii) whether the current prover can decide it within budget.  CovCal  does not solve (i)–(iii). Instead, it measures the observable mass of candidates for which (ii) and (iii) are available, then calibrates the risk of trusting the resulting formal selection. 
+
+ 
+ 
+ 
+ 
+ 3  Problem Setup 
+
+ 
+
+ 
+ We first describe the objects used by the selector. As a running example, suppose a model samples  K = 32 K=32  solutions to the same problem. Several samples may end with surface forms such as  1 / 2 1/2 ,  0.5 0.5 , and  2 / 4 2/4 ; these should count as one final-answer class rather than three different answers. Another group of samples may end with  3 / 4 3/4 .  CovCal  reasons over these normalized classes and their total weights, not over raw strings. 
+
+ 
+ 
+ 
+ Let  x ∈ 𝒳 x\in\mathcal{X}  be a natural-language mathematical problem with reference answer  a ⋆ ​ ( x ) a^{\star}(x) . A generator or ensemble produces  K K  candidate answers  a 1 , … , a K a_{1},\ldots,a_{K}  with nonnegative weights  q j ​ ( x ) q_{j}(x)  satisfying  ∑ j K q j ​ ( x ) = 1 \sum^{K}_{j}q_{j}(x)=1 . The weights may be self-consistency frequencies  ( Wang et al., 2023 ) , normalized reranker scores, or a uniform distribution over sampled candidates. 
+
+ 
+ 
+ 
+ Answer classes. 
+
+ 
+
+ 
+ Raw candidate strings are a poor unit of selection:  1 / 2 1/2 ,  0.5 0.5 , and  2 4 \frac{2}{4}  may be the same answer, while two candidates with the same surface form may correspond to different formalizations. We therefore map candidates to normalized answer classes 
+
+ 
+ 
+
+ 
+ 
+ e x ​ ( a j ) ∈ 𝒞 ⁡ ( x ) , e_{x}(a_{j})\in\mathcal{C}(x), 
+ 
+ (1) 
+ 
+
+ 
+ using answer extraction, algebraic simplification, exact string normalization, or formal equivalence checks when available. The class weight is 
+
+ 
+ 
+
+ 
+ 
+ Q c ( x ) = ∑ j : e x ​ ( a j ) = c q j ( x ) , ∑ c ∈ 𝒞 ⁡ ( x ) Q c ( x ) = 1 . Q_{c}(x)=\sum_{j:e_{x}(a_{j})=c}q_{j}(x),\qquad\sum_{c\in\mathcal{C}(x)}Q_{c}(x)=1. 
+ 
+ (2) 
+ 
+
+ 
+ All coverage, margin, and selection quantities are computed over classes instead of raw candidates. This prevents an unresolved duplicate of an already proved answer from being treated as a rival. 
+
+ 
+ 
+ 
+ 
+ Formal observation. 
+
+ 
+
+ 
+ For each pair  ( x , a j ) (x,a_{j}) , a formalization module attempts to produce one or more Lean artifacts. A verifier elaborates each artifact and attempts proof search. We summarize the best status for candidate  a j a_{j}  by 
+
+ 
+ 
+
+ 
+ 
+ s j \displaystyle s_{j} 
+ ∈ 𝒮 , \displaystyle\in\mathcal{S}, 
+ 
+ 
+ 
+ 𝒮 \displaystyle\mathcal{S} 
+ = { 𝚙𝚛𝚘𝚟𝚎𝚍 , 𝚝𝚢𝚙𝚎𝚌𝚑𝚎𝚌𝚔𝚎𝚍 , 𝚒𝚕𝚕𝚝𝚢𝚙𝚎𝚍 , \displaystyle=\{\mathtt{proved},\mathtt{typechecked},\mathtt{illtyped}, 
+ 
+ 
+ 
+ 
+ 𝚝𝚒𝚖𝚎𝚘𝚞𝚝 , 𝚞𝚗𝚏𝚘𝚛𝚖𝚊𝚕𝚒𝚣𝚎𝚍 } . \displaystyle\qquad\mathtt{timeout},\mathtt{unformalized}\}. 
+ 
+ (3) 
+ 
+
+ 
+ The five statuses are defined in Appendix  F  ( 𝚙𝚛𝚘𝚟𝚎𝚍 \mathtt{proved}  is a kernel-checked proof;  𝚝𝚢𝚙𝚎𝚌𝚑𝚎𝚌𝚔𝚎𝚍 \mathtt{typechecked}  elaborates but is unproved; the rest are failures); optional decisive negation/inequivalence statuses are supported but not required. 
+
+ 
+ 
+ 
+ For each answer class  c c , define class-level indicators 
+
+ 
+ 
+
+ 
+ 
+ P c ​ ( x ) \displaystyle P_{c}(x) 
+ = 𝕀 { ∃ j : e x ( a j ) = c , s j = 𝚙𝚛𝚘𝚟𝚎𝚍 } , \displaystyle=\mathbb{I}\{\exists j:e_{x}(a_{j})=c,\ s_{j}=\mathtt{proved}\}, 
+ 
+ (4) 
+ 
+ 
+ T c ​ ( x ) \displaystyle T_{c}(x) 
+ = 𝕀 { ∃ j : e x ( a j ) = c , s j ∈ 𝒮 typ } , \displaystyle=\mathbb{I}\{\exists j:e_{x}(a_{j})=c,\ s_{j}\in\mathcal{S}_{\mathrm{typ}}\}, 
+ 
+ 
+ 
+ 𝒮 typ \displaystyle\mathcal{S}_{\mathrm{typ}} 
+ = { 𝚙𝚛𝚘𝚟𝚎𝚍 , 𝚝𝚢𝚙𝚎𝚌𝚑𝚎𝚌𝚔𝚎𝚍 , 𝚝𝚒𝚖𝚎𝚘𝚞𝚝 } . \displaystyle=\{\mathtt{proved},\mathtt{typechecked},\mathtt{timeout}\}. 
+ 
+ (5) 
+ 
+
+ 
+ 𝒮 typ \mathcal{S}_{\mathrm{typ}}  is the elaborated-statement set;  𝚝𝚒𝚖𝚎𝚘𝚞𝚝 \mathtt{timeout}  qualifies since proof search runs only after elaboration.
+The formal observation  𝒪 ⁡ ( x ) \mathcal{O}(x)  consists of answer classes, class weights, statuses, proof artifacts when available, error logs, and the fixed prover budget. A selector returns an answer class  c ^ ​ ( x ) \hat{c}(x) , a representative answer  a ^ ​ ( x ) \hat{a}(x) , or abstains with  ⊥ \bot . 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Coverage Diagnostics 
+
+ 
+
+ 
+ The diagnostics answer three questions about the formal trace. How much candidate mass reached a well-formed Lean statement? How much candidate mass was actually proved? And, if a class was proved, does it dominate the strongest unresolved rival? These quantities are pipeline-agnostic and can be computed from answer-class weights and Lean status logs. 
+
+ 
+ 
+ 
+ Definition 1   (Typed coverage) . 
+ 
+ The typed coverage mass is 
+
+ 
+ 
+
+ 
+ 
+ C typ ​ ( x ) = ∑ c ∈ 𝒞 ⁡ ( x ) Q c ​ ( x ) ​ T c ​ ( x ) . C_{\mathrm{typ}}(x)=\sum_{c\in\mathcal{C}(x)}Q_{c}(x)T_{c}(x). 
+ 
+ (6) 
+ 
+
+ 
+ 
+ 
+ 
+ Typed coverage measures how much candidate probability reached a well-formed Lean statement. Low typed coverage points to autoformalization, parsing, answer-normalization, or library-interface failure. 
+
+ 
+ 
+ 
+ Definition 2   (Proved coverage) . 
+ 
+ The proved coverage mass is 
+
+ 
+ 
+
+ 
+ 
+ C prf ​ ( x ) = ∑ c ∈ 𝒞 ⁡ ( x ) Q c ​ ( x ) ​ P c ​ ( x ) . C_{\mathrm{prf}}(x)=\sum_{c\in\mathcal{C}(x)}Q_{c}(x)P_{c}(x). 
+ 
+ (7) 
+ 
+
+ 
+ 
+ 
+ 
+ Proved coverage measures how much answer-class probability is positively decided by the formal pipeline. It is distinct from proof existence: proving a low-weight class may be much less informative than proving the dominant class. 
+
+ 
+ 
+ 
+ Definition 3   (Unresolved rival mass and formal margin) . 
+ 
+ If at least one class is proved, let 
+
+ 
+ 
+
+ 
+ 
+ c + ( x ) = arg max c : P c ​ ( x ) = 1 Q c ( x ) c^{+}(x)=\arg\max_{c:P_{c}(x)=1}Q_{c}(x) 
+ 
+ (8) 
+ 
+
+ 
+ be the highest-weight proved class. The unresolved rival mass is 
+
+ 
+ 
+
+ 
+ 
+ R unres ( x ) = max c ≠ c + ​ ( x ) : P c ​ ( x ) = 0 Q c ( x ) , R_{\mathrm{unres}}(x)=\max_{c\neq c^{+}(x):P_{c}(x)=0}Q_{c}(x), 
+ 
+ (9) 
+ 
+
+ 
+ with  R unres ​ ( x ) = 0 R_{\mathrm{unres}}(x)=0  when every other class is also proved or no rival exists. The formal margin is 
+
+ 
+ 
+
+ 
+ 
+ M ⁡ ( x ) = Q c + ​ ( x ) ​ ( x ) − R unres ​ ( x ) , M(x)=Q_{c^{+}(x)}(x)-R_{\mathrm{unres}}(x), 
+ 
+ (10) 
+ 
+
+ 
+ and  M ⁡ ( x ) = − ∞ M(x)=-\infty  if no class is proved. 
+
+ 
+ 
+ 
+ 
+ The margin captures the main reliability condition: a proof of one answer is not decisive if a higher-weight inequivalent answer class remains unresolved. 
+
+ 
+ 
+ 
+ Conflict indicators. 
+
+ 
+
+ 
+ If two inequivalent final-answer classes are both proved for the same informal problem, we mark a conflict and reject formal selection by default. This should not be read as a Lean inconsistency. It usually indicates an answer-normalization error, a semantic mismatch between generated formal statements, or incompatible autoformalizations of the informal problem. 
+
+ 
+ 
+ 
+ 
+ Coverage cliffs. 
+
+ 
+
+ 
+ We use  coverage cliff  for the empirical scenario in which the reliability of formal answer selection changes sharply as a function of  C typ C_{\mathrm{typ}} ,  C prf C_{\mathrm{prf}} ,  R unres R_{\mathrm{unres}} , or  M M . The hypothesis is stronger than “hard examples have lower proof rates”: below a coverage threshold, failed or missing proofs become non-diagnostic because unresolved classes may be false, unformalized, or unproved. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Risk-Controlled Formal Selection 
+
+ 
+
+ 
+ CovCal  is a selective wrapper around a base Lean selector. It does not require training a new theorem prover or changing the formalizer. Its contribution is to decide when the formal signal is sufficiently covered to determine the answer. 
+
+ 
+ 
+ 
+ Base formal selector. 
+
+ 
+
+ 
+ The base selector returns the highest-weight proved answer class, 
+
+ 
+ 
+
+ 
+ 
+ g F ​ ( x ) = c + ​ ( x ) , g_{\mathrm{F}}(x)=c^{+}(x), 
+ 
+ (11) 
+ 
+
+ 
+ with  g F ( x ) = ⊥ g_{\mathrm{F}}(x)=\bot  if no class is proved or if a conflict is detected. The returned natural-language answer is a canonical representative of  c + ​ ( x ) c^{+}(x) . More sophisticated formal selectors can be substituted, but the coverage logic is unchanged. 
+
+ 
+ 
+ 
+ 
+ Acceptance rule. 
+
+ 
+
+ 
+ For a threshold tuple  τ = ( τ typ , τ prf , τ M ) \tau=(\tau_{\mathrm{typ}},\tau_{\mathrm{prf}},\tau_{M}) , define 
+
+ 
+ 
+
+ 
+ 
+ A τ ( x ) = 𝕀 { \displaystyle A_{\tau}(x)=\mathbb{I}\{ 
+ C typ ​ ( x ) ≥ τ typ , C prf ​ ( x ) ≥ τ prf , \displaystyle C_{\mathrm{typ}}(x)\geq\tau_{\mathrm{typ}},\ C_{\mathrm{prf}}(x)\geq\tau_{\mathrm{prf}}, 
+ 
+ 
+ 
+ 
+ M ( x ) ≥ τ M , g F ( x ) ≠ ⊥ , \displaystyle M(x)\geq\tau_{M},\ g_{\mathrm{F}}(x)\neq\bot, 
+ 
+ 
+ 
+ 
+ no conflict } . \displaystyle\text{no conflict}\}. 
+ 
+ (12) 
+ 
+
+ 
+ If  A τ ​ ( x ) = 1 A_{\tau}(x)=1 ,  CovCal  returns  g F ​ ( x ) g_{\mathrm{F}}(x) . If  A τ ​ ( x ) = 0 A_{\tau}(x)=0 , the selective version abstains. A full-coverage system may instead call a fallback  g N ​ ( x ) g_{\mathrm{N}}(x)  such as self-consistency or a learned natural-language verifier; the formal selective-risk certificate below applies only to the accepted formal predictions, not to fallback outputs. Algorithm  1  (Appendix  B ) summarizes the instance-level decision rule. 
+
+ 
+ 
+ 
+ 
+ Risk-controlled threshold selection. 
+
+ 
+
+ 
+ Given a target selective-risk level  ϵ \epsilon  and a finite grid  𝒯 \mathcal{T} ,  CovCal  chooses the least conservative rule whose calibration certificate is valid. We report two valid regimes; both produce a certificate of the form “with probability  ≥ 1 − δ \geq 1-\delta , the selected  τ ^ \hat{\tau}  has population selective risk at most  ϵ \epsilon ,” but they differ in sample efficiency. 
+
+ 
+ 
+ 
+ The default operational regime is Bonferroni: optimize over the grid on the calibration split and pay a  | 𝒯 | |\mathcal{T}| -fold union-bound penalty. Formally, 
+
+ 
+ 
+
+ 
+ 
+ τ ^ Bonf = arg ⁡ max τ ∈ 𝒯 ⁡ m τ s.t. U δ / | 𝒯 | ​ ( k τ , m τ ) ≤ ϵ , \hat{\tau}_{\mathrm{Bonf}}=\arg\max_{\tau\in\mathcal{T}}m_{\tau}\quad\text{s.t.}\quad U_{\delta/|\mathcal{T}|}(k_{\tau},m_{\tau})\leq\epsilon, 
+ 
+ (13) 
+ 
+
+ 
+ where  m τ m_{\tau}  and  k τ k_{\tau}  are the number of accepted calibration examples and accepted errors, and  U α ​ ( k , m ) U_{\alpha}(k,m)  is the one-sided Clopper–Pearson upper bound with  U α ​ ( k , 0 ) = 1 U_{\alpha}(k,0)=1 . If no threshold is feasible, the selective method returns reject-all. This regime is conservative but makes no assumption on the dependence structure between the  | 𝒯 | |\mathcal{T}|  cell statistics: they are jointly nested under the same calibration sample, so a generic union bound is the safest valid statement. 
+
+ 
+ 
+ 
+ A tighter alternative is a dev-then-cal rule. First, a threshold
+ τ ^ DC \hat{\tau}_{\mathrm{DC}}  is selected using only the development split, for example by choosing the highest-coverage grid cell whose empirical dev error is at most  ϵ \epsilon  under a deterministic tie-break. If no such cell exists, the procedure returns reject-all. Second, the selected threshold is evaluated once on the independent calibration split and is accepted only when 
+
+ 
+ 
+
+ 
+ 
+ U δ ​ ( k τ ^ DC cal , m τ ^ DC cal ) ≤ ϵ . U_{\delta}\!\left(k_{\hat{\tau}_{\mathrm{DC}}}^{\mathrm{cal}},m_{\hat{\tau}_{\mathrm{DC}}}^{\mathrm{cal}}\right)\leq\epsilon. 
+ 
+ (14) 
+ 
+
+ 
+ Because  τ ^ DC \hat{\tau}_{\mathrm{DC}}  is a function only of the dev split, it is independent of the calibration sample. Hence, a single Clopper–Pearson bound at level  δ \delta  is sufficient. Theorem  2  gives the finite-sample guarantee under i.i.d. dev/cal/deployment samples. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Method 
+ Overall 
+ Accepted 
+ Acc. frac. 
+ Test diag. UB 
+ 
+ Regime-independent selectors ( n cal = 151 n_{\text{cal}}=151 ,  ϵ = 0.15 \epsilon=0.15 ) 
+ 
+ Self-consistency 
+ 0.910 [0.903, 0.916] 
+ 0.910 [0.903, 0.916] 
+ 1.000 [1.000, 1.000] 
+ 0.138 [0.131, 0.146] 
+ 
+ Confidence-only abst. 
+ 0.866 [0.857, 0.875] 
+ 0.969 [0.966, 0.973] 
+ 0.894 [0.884, 0.903] 
+ 0.068 [0.063, 0.072] 
+ 
+ Raw Lean + fallback 
+ 0.891 [0.884, 0.899] 
+ 0.891 [0.884, 0.899] 
+ 1.000 [1.000, 1.000] 
+ 0.159 [0.150, 0.168] 
+ 
+ Proof-existence abst. 
+ 0.193 [0.182, 0.203] 
+ 0.877 [0.857, 0.896] 
+ 0.220 [0.209, 0.231] 
+ 0.258 [0.234, 0.282] 
+ 
+ Calibrated formal selectors — Bonferroni regime 
+ 
+ CovCal 
+ reject-all ( 0 / 20 0/20  partitions certify) 
+ 
+ Calibrated formal selectors — dev-then-cal regime ( 12 / 20 12/20  partitions certify) 
+ 
+ CovCal 
+ 0.194 [0.184, 0.205] 
+ 0.932 [0.914, 0.949] 
+ 0.209 [0.197, 0.220] 
+ 0.192 [0.168, 0.216] 
+ 
+ CovCal +fallback 
+ 0.905 [0.896, 0.913] 
+ 0.905 [0.896, 0.913] 
+ 1.000 [1.000, 1.000] 
+ 0.144 [0.135, 0.154] 
+ 
+ 
+
+ 
+ 
+ Table 1:  When  CovCal  accepts ( ≈ 21 % \approx\!21\%  of items) it is  0.93 0.93  accurate, but only dev-then-cal certifies this ( 12 / 20 12/20  partitions); Bonferroni rejects the sparse signal outright. As self-consistency alone is already  91 % 91\%  accurate, the contribution is the  certificate , not raw accuracy. Main MATH-500 run (Qwen2.5-Math-7B-Instruct,  n cal = 151 n_{\text{cal}}\!=\!151 ,  ϵ = 0.15 \epsilon\!=\!0.15 ;  K = 20 K\!=\!20  bootstrap, seed-mean  95 % 95\%  interval).  Test diag. UB  is a held-out Clopper–Pearson bound computed after rule selection—a diagnostic, not the certificate of Table  3 ; the top block is regime-independent. 
+ 
+ 
+ 
+ Practical choices. 
+
+ 
+
+ 
+ The default class weights are self-consistency frequencies; a class is marked proved if any of its artifacts is kernel-checked, and two inequivalent proved classes trigger rejection rather than a choice. All implementation choices, and the quantities frozen before calibration labels are used, are listed in Appendix  B . 
+
+ 
+ 
+ 
+ 
+ 
+ 6  Finite-Sample Guarantees 
+
+ 
+
+ 
+ The guarantee certifies the selective risk of the complete frozen pipeline: candidate generation, answer normalization, formalization, proof search, coverage computation, and formal selection. It does not certify unresolved candidates and does not interpret failed Lean proofs as negative labels.
+The probability in the guarantee is over the random draw of calibration and future deployment examples, including any example-level randomness that is part of the frozen pipeline. In the reported bootstrap summaries, candidate and formalization logs are fixed, so only the dev/cal/test partition varies. 
+
+ 
+ 
+ 
+ Selective risk. 
+
+ 
+
+ 
+ Let  𝒟 cal = { ( X i , C i ⋆ ) } i = 1 n \mathcal{D}_{\mathrm{cal}}=\{(X_{i},C_{i}^{\star})\}_{i=1}^{n}  be a calibration set drawn i.i.d. from the same population as future test examples, where  X i X_{i}  is the problem and  C i ⋆ C_{i}^{\star}  is its normalized reference answer class. The pipeline outputs used by  A τ A_{\tau}  and  g F g_{\mathrm{F}}  are computed without inspecting  C i ⋆ C_{i}^{\star}  except for final evaluation. For  τ ∈ 𝒯 \tau\in\mathcal{T} , let 
+
+ 
+ 
+
+ 
+ 
+ m τ \displaystyle m_{\tau} 
+ = ∑ i = 1 n A τ ​ ( X i ) , \displaystyle=\sum_{i=1}^{n}A_{\tau}(X_{i}), 
+ 
+ 
+ 
+ k τ \displaystyle k_{\tau} 
+ = ∑ i = 1 n A τ ( X i ) 𝕀 { g F ( X i ) ≠ C i ⋆ } . \displaystyle=\sum_{i=1}^{n}A_{\tau}(X_{i})\mathbb{I}\{g_{\mathrm{F}}(X_{i})\neq C_{i}^{\star}\}. 
+ 
+ (15) 
+ 
+
+ 
+ The population selective risk is 
+
+ 
+ 
+
+ 
+ 
+ R ⁡ ( τ ) = Pr ⁡ [ g F ​ ( X ) ≠ C ⋆ ∣ A τ ​ ( X ) = 1 ] , R(\tau)=\Pr[g_{\mathrm{F}}(X)\neq C^{\star}\mid A_{\tau}(X)=1], 
+ 
+ (16) 
+ 
+
+ 
+ with the harmless convention  R ⁡ ( τ ) = 0 R(\tau)=0  when  Pr [ A τ ( X ) = 1 ] = 0 \Pr[A_{\tau}(X)=1]=0 . 
+
+ 
+ 
+ 
+ Theorem 1   (Uniform selective-risk calibration under Bonferroni) . 
+ 
+ Assume the threshold grid  𝒯 \mathcal{T}  is fixed before inspecting calibration labels, and the pipeline used to compute  A τ A_{\tau}  and  g F g_{\mathrm{F}}  is fixed before calibration. If the calibration examples are i.i.d. from the deployment population, then with probability at least  1 − δ 1-\delta  over the calibration sample and any example-level pipeline randomness, for all  τ ∈ 𝒯 \tau\in\mathcal{T} , 
+
+ 
+ 
+
+ 
+ 
+ R ⁡ ( τ ) ≤ U δ / | 𝒯 | ​ ( k τ , m τ ) . R(\tau)\leq U_{\delta/|\mathcal{T}|}(k_{\tau},m_{\tau}). 
+ 
+ (17) 
+ 
+
+ 
+ Consequently, whenever Eq.  13  returns a feasible threshold, the selected rule has selective risk at most  ϵ \epsilon  with probability at least  1 − δ 1-\delta . 
+
+ 
+ 
+ 
+ 
+ Accepted calibration errors at a fixed threshold are Bernoulli, so a one-sided Clopper–Pearson bound  ( Clopper and Pearson, 1934 )  controls its risk; the Bonferroni correction makes this simultaneous over the grid, letting the threshold be chosen after seeing calibration errors (proof in Appendix  A ). 
+
+ 
+ 
+ 
+ Theorem 2   (Dev-then-cal selective-risk calibration, no union bound) . 
+ 
+ Partition i.i.d. samples from the population  𝒫 \mathcal{P}  into an independent development split  𝒟 dev \mathcal{D}_{\mathrm{dev}}  and calibration split  𝒟 cal \mathcal{D}_{\mathrm{cal}} . Let  τ ^ = f ⁡ ( 𝒟 dev ) \hat{\tau}=f(\mathcal{D}_{\mathrm{dev}})  be any  σ ⁡ ( 𝒟 dev ) \sigma(\mathcal{D}_{\mathrm{dev}}) -measurable choice of threshold cell in  𝒯 ∪ { ⊥ } \mathcal{T}\cup\{\bot\} ; in particular,  τ ^ \hat{\tau}  may be the maximum-coverage dev-feasible cell with a deterministic tie-break. Let  m = m τ ^ cal m=m_{\hat{\tau}}^{\mathrm{cal}}  and  k = k τ ^ cal k=k_{\hat{\tau}}^{\mathrm{cal}}  be the accept count and accepted-error count on the calibration split. Define the certified output threshold 
+
+ 
+ 
+
+ 
+ 
+ τ ^ out = { ⊥ τ ^ = ⊥ , or  m = 0 , or  U δ ( k , m ) > ϵ , τ ^ otherwise. \widehat{\tau}_{\mathrm{out}}=\begin{cases}\bot&\hat{\tau}=\bot,\ \text{or }m=0,\ \text{or }U_{\delta}(k,m)>\epsilon,\\
+\hat{\tau}&\text{otherwise.}\end{cases} 
+ 
+ 
+
+ 
+ Then 
+
+ 
+ 
+
+ 
+ 
+ Pr [ τ ^ out ≠ ⊥ ⟹ R ( τ ^ out ) ≤ U δ ( k , m ) ≤ ϵ ] ≥  1 − δ . \Pr\!\bigl[\widehat{\tau}_{\mathrm{out}}\neq\bot\ \Longrightarrow\ R(\widehat{\tau}_{\mathrm{out}})\leq U_{\delta}(k,m)\leq\epsilon\bigr]\\
+\geq\ 1-\delta. 
+ 
+ (18) 
+ 
+
+ 
+ 
+ 
+ 
+ Because  τ ^ \hat{\tau}  is fixed on dev, the cal split sees a single threshold, so the bound uses level  δ \delta  rather than  δ / | 𝒯 | \delta/|\mathcal{T}| ; strict dev/cal separation is the load-bearing assumption (proof in Appendix  A ). 
+
+ 
+ 
+ 
+ 
+ dev-then-cal procedure. 
+
+ 
+
+ 
+ The selection rule, that is the highest-coverage dev-feasible cell then a single cal-side Clopper–Pearson check at level  δ \delta , and the boundary cases it handles (empty splits, zero accepts, all-errors, multiple  ϵ \epsilon  targets, and the i.i.d./measurability requirements) are given in Appendix  B . 
+
+ 
+ 
+ 
+ 
+ Comparison of the two regimes. 
+
+ 
+
+ 
+ At our settings ( | 𝒯 | = 125 |\mathcal{T}|=125 ,  δ = 0.05 \delta=0.05 ), Theorem  1  spends  α = × 10 − 4 \alpha=4\!\times\!10^{-4}  per cell while Theorem  2  spends  α = 0.05 \alpha=0.05  on a single cal-side bound, so the two regimes can disagree on feasibility for the same observations. The cliff (Section  8.1 ) is a property of the data and is identical under either regime; only the certificate’s verdict depends on the bound. Section  8.3  reports both. 
+
+ 
+ 
+ 
+ 
+ No coverage, no verifier-only certificate. 
+
+ 
+
+ 
+ The next proposition explains why coverage diagnostics are necessary. 
+
+ 
+ 
+ 
+ Proposition 1   (Unresolved answer classes are indistinguishable) . 
+ 
+ Fix a problem  x x  and a formal observation  𝒪 ⁡ ( x ) \mathcal{O}(x) . Suppose a verifier-only selector  h h  selects a proved class  c s = h ⁡ ( 𝒪 ⁡ ( x ) ) c_{s}=h(\mathcal{O}(x)) , but there is an unresolved answer class  c u c_{u}  with  Q c u ​ ( x ) > 0 Q_{c_{u}}(x)>0 ,  P c u ​ ( x ) = 0 P_{c_{u}}(x)=0 , and no formal evidence in  𝒪 ⁡ ( x ) \mathcal{O}(x)  proving, disproving, or identifying  c u c_{u}  as equivalent to  c s c_{s} . Then there are two latent correctness assignments over the informal answer classes that are both compatible with the same formal observation but disagree on whether  c s c_{s}  is correct. Hence no non-vacuous pointwise correctness certificate for  h h  follows from  𝒪 ⁡ ( x ) \mathcal{O}(x)  alone unless the selector resolves  c u c_{u} , assumes it away, uses external semantic information or labels, or abstains. 
+
+ 
+ 
+ 
+ 
+ Intuitively, the formal log records what Lean could decide, not the truth values of classes it never resolved: an unresolved inequivalent rival leaves the selected proved class and that rival equally compatible with the same observation (proof in Appendix  A ). This is a certification statement, not an empirical claim that unresolved candidates are usually correct. Missing formal evidence is not evidence of mathematical falsehood. Calibration turns the partial observation into a controlled selective problem, using Lean where coverage suffices and forcing abstention or fallback elsewhere. 
+
+ 
+ 
+ 
+ 
+ 
+ 7  Experimental Protocol  
+ 
+   Code repository 
+
+ 
+
+ 
+ We evaluate whether Lean-derived coverage diagnostics predict when formal answer selection is reliable. The main experiment uses a filtered MATH-500 short-answer subset  ( Hendrycks et al., 2021 ;  Lightman et al., 2024 ) : 378 of 500 examples remain after excluding proof-only, diagram-dependent, and non-normalizable references. The split is 76/151/151 development/calibration/test, with  ϵ = 0.15 \epsilon=0.15  and  δ = 0.05 \delta=0.05 . We also report a harder levels-4/5 subset of the same run, an autoformalizer ablation that swaps Qwen2.5-Coder for Goedel-Prover-V2-8B/-32B with generation held fixed (Sec.  8.3 ), and an AMC/AIME out-of-distribution set (Appendix  H ). 
+
+ 
+ 
+ 
+ For each problem, Qwen2.5-Math-7B-Instruct generates  K = 32 K=32  candidate solutions. We extract final answers, normalize them into answer classes, and assign each class a self-consistency weight  Q c Q_{c} . The pipeline then formalizes the top four answer classes and attempts Lean proof search. The resulting class statuses, which are  proved ,  typechecked ,  timeout ,  illtyped , and  unformalized , are the only formal observations used by  CovCal . 
+
+ 
+ 
+ 
+ We compare self-consistency, confidence-only abstention, raw Lean with fallback, proof-existence abstention, and  CovCal  with and without fallback. Thresholds are chosen on the calibration split using either the Bonferroni grid certificate or the dev-then-cal certificate from Sec.  6 . The main target is  ϵ = 0.15 \epsilon=0.15  with  δ = 0.05 \delta=0.05 ; the harder levels-4/5 subset uses the stricter  ϵ = 0.10 \epsilon=0.10 . Prompts (Appendix  E ), the candidate/formalization pipeline (Appendix  C ), the analysis log schema (Appendix  F ), and filtering, hardware, and tactic-portfolio details (Appendix  G ) are in appendices. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Bin 
+ # 
+ Proof rate 
+ Winner acc. 
+ 
+ by proved coverage   C prf C_{\mathrm{prf}}  (all  n = 378 n=378 ) 
+ 
+ C prf < 0.25 C_{\mathrm{prf}}<0.25 
+ 283 
+ 0.035 
+ 0.20 
+ 
+ 0.25 ≤ C prf < 0.50 0.25\leq C_{\mathrm{prf}}<0.50 
+ 6 
+ 1.000 
+ 0.33 
+ 
+ 0.50 ≤ C prf < 0.75 0.50\leq C_{\mathrm{prf}}<0.75 
+ 4 
+ 1.000 
+ 1.00 
+ 
+ C prf ≥ 0.75 C_{\mathrm{prf}}\geq 0.75 
+ 85 
+ 1.000 
+ 0.96 
+ 
+ by formal margin   M M  (the  105 105  proved problems) 
+ 
+ M < 0 M<0 
+ 10 
+ 1.000 
+ 0.10 
+ 
+ 0 ≤ M < 0.25 0\leq M<0.25 
+ 5 
+ 1.000 
+ 0.40 
+ 
+ 0.25 ≤ M < 0.5 0.25\leq M<0.5 
+ 5 
+ 1.000 
+ 0.80 
+ 
+ M ≥ 0.5 M\geq 0.5 
+ 85 
+ 1.000 
+ 0.98 
+ 
+ 
+
+ 
+ 
+ Table 2:  The coverage/margin cliff on the main run.  #  is problems per bin;  Proof rate  the fraction with a kernel-proved class;  Winner acc.  the accuracy of the highest-weight proved class among problems with a proof. The signal is sparse (most problems are in the lowest  C prf C_{\mathrm{prf}}  bin with almost no proofs) but sharply reliable when present:  96 % 96\%  at  C prf ≥ 0.75 C_{\mathrm{prf}}\geq 0.75  vs  20 % 20\%  at  C prf < 0.25 C_{\mathrm{prf}}<0.25  ( 98 % 98\%  vs  10 % 10\%  by margin). 
+ 
+ 
+ 
+ 8  Results 
+
+ 
+
+ 
+ The results support three main claims. First, the formal signal is real but sparse: Lean proves at least one answer class for only  28 % 28\%  of problems, and a manual audit finds only  ≈ 43 % \approx\!43\%  of proved statements faithful to the problem (versus the  74 % 74\%  an automated check labels non-trivial-and-correct; Sec.  8.2 ). Second, the signal is sharply coverage-dependent: the highest-weight proved class matches the reference answer  96 % 96\%  of the time at high proved coverage but only  20 % 20\%  at low coverage, and  98 % 98\%  versus  10 % 10\%  binned by formal margin (Tab.  2 ). Third, certifiability depends on autoformalization coverage: with the  7 7 B Qwen2.5-Coder formalizer the sparse signal forces Bonferroni to reject on all  20 20  bootstrap partitions (dev-then-cal certifies  12 / 20 12/20 ), whereas the prover-specialized Goedel-Prover-V2-8B lifts coverage to  79 % 79\%  and flips Bonferroni to feasible on  17 / 20 17/20  (Tab.  1  and  3 ). Unless a column says calibration certificate, upper bounds in answer-selection tables are held-out diagnostics computed after rule selection. 
+
+ 
+ 
+ 
+ 8.1  Main Answer-Selection Results 
+
+ 
+
+ 
+ On the main run, self-consistency is already  91 % 91\%  accurate with no abstention. The formal signal is far sparser than the candidate signal: proof-existence and the calibrated formal selectors accept only about  20 20 – 22 % 22\%  of test items, though their accepted accuracy is high ( 0.88 0.88 – 0.93 0.93 ). Crucially, the conservative Bonferroni certificate cannot use this sparse signal at all. It returns reject-all on every partition. Thus, a nontrivial accepted set is certified only under the more sample-efficient dev-then-cal regime, and even then on only  12 12  of  20 20  partitions, with the held-out test diagnostic ( ≈ 0.19 \approx 0.19 ) sitting above  ϵ \epsilon  because the accepted set is small. The fallback variant recovers self-consistency-level overall accuracy, but the certificate applies only to the formal accepted predictions, not the fallback outputs. 
+
+ 
+ 
+ 
+ The main diagnostic signal is not that hard examples have fewer proofs. Low-margin examples can have proof existence but still be unreliable because a stronger unresolved rival answer remains. This is the empirical reason for treating unproved candidate mass as unresolved instead of false. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Autoformalizer (gen. fixed) 
+ n cal n_{\text{cal}} 
+ Bonferroni ( α = δ / | 𝒯 | \alpha=\delta/|\mathcal{T}| ) 
+ Dev-then-cal ( α = δ \alpha=\delta ) 
+ UB ratio 
+ 
+ reject@ K = 20 K\!=\!20 
+ med cal UB 
+ reject@ K = 20 K\!=\!20 
+ med cal UB 
+ (med) 
+ 
+ 
+ 
+ Qwen2.5-Coder-7B (main) 
+ 151 
+ 20/20 
+ – 
+ 8/20 
+ 0.121 
+ – 
+ 
+ Goedel-Prover-V2-8B 
+ 151 
+ 3/20 
+ 0.127 
+ 0/20 
+ 0.062 
+ 0.49 × \times 
+ 
+ Goedel-Prover-V2-32B 
+ 151 
+ 7/20 
+ 0.143 
+ 3/20 
+ 0.115 
+ 0.81 × \times 
+ 
+ 
+
+ 
+ Table 3:  The two certificate regimes on the main run ( K = 20 K\!=\!20  bootstrap,  ϵ = 0.15 \epsilon=0.15 ). Bonferroni applies  α = δ / | 𝒯 | = × 10 − 4 \alpha=\delta/|\mathcal{T}|=4\!\times\!10^{-4}  over the  125 125 -cell grid; dev-then-cal applies  α = δ = 0.05 \alpha=\delta=0.05  (Theorem  2 ).  reject@ K K  counts refusing seeds;  med cal UB  is the median calibration-side bound over feasible seeds (– if none). Generation is held fixed; the Goedel-Prover-V2 rows vary only the autoformalizer. 
+ 
+ 
+ 
+ 8.2  Faithfulness Audit and Qualitative Examples 
+
+ 
+
+ 
+ An automated rational-evaluation check classifies the  314 314  proved artifacts as genuine
+( 40.1 % 40.1\% , a  ℚ \mathbb{Q} -true arithmetic identity), structural ( 33.4 % 33.4\% , a true
+gcd/divisor/quantified statement), trivial ( 22.9 % 22.9\% , an  𝚇 = 𝚇 \mathtt{X}=\mathtt{X}  identity), or
+spurious ( 2.5 % 2.5\% ,  ℚ \mathbb{Q} -false), so  73.6 % 73.6\%  are non-trivial and correct. But
+non-trivial-and-correct is not  faithful : a true statement may not capture the problem.
+A manual audit of  45 45  stratified examples (single annotator; diagnostic error analysis) makes
+the gap explicit: genuine proofs are faithful ( 6 / 6 6/6 ) and trivial ones are not, but
+ structural  statements almost never are ( 0 / 6 0/6 ). They assert a true side-fact or bare existence (e.g.  ∃ n , n > 125 ∧ n = 129 \exists n,\ n>125\wedge n=129  for a problem whose answer is  129 129 ), omitting the problem’s actual condition, while the audited  spurious  cases are classifier
+false-positives (e.g.  ( 3 : ℚ ) / 20 = 0.15 (3{:}\mathbb{Q})/20=0.15 ), not real errors. Reweighting the audited
+per-category rates by population frequency, only  ≈ 43 % \approx\!43\%  of proved statements are
+faithful, about half the  73.6 % 73.6\%  that typecheck and
+hold. Faithful verification is thus rarer than proof success suggests, and the audited failures
+are heterogeneous, including semantic drift, proof-search failure on faithful statements, and ill-typed
+statements, and supporting our treatment of a missing proof as unresolved rather than negative.
+Appendix  I  gives three worked examples (A)–(C): a proof trusted when the
+proved class dominates the formally visible mass (A), a missing proof treated as unresolved
+rather than wrong (B), and a low-weight or trivially formalized rival correctly distrusted by
+the margin (C). 
+
+ 
+ 
+ 
+ 
+ 8.3  Ablations and Certification Regimes 
+
+ 
+
+ 
+ The binding constraint on the main run is autoformalization coverage: only  28 % 28\%  of problems reach any proof (with the  7 7 B Qwen2.5-Coder autoformalizer), which is what forces the conservative Bonferroni certificate to reject and leaves the tighter dev-then-cal regime feasible on only  12 12  of  20 20  partitions. Table  3  compares the two regimes on the same frozen observations. Because coverage is the bottleneck, we also vary the autoformalizer, holding generation fixed. The prover-specialized Goedel-Prover-V2-8B raises proved coverage from  28 % 28\%  to  79 % 79\%  at the same proof-winner precision ( 86 % 86\% ), and this denser signal flips the certificate from infeasible to feasible: Bonferroni now certifies on  17 17  of  20 20  partitions (versus  0 0  with Qwen2.5-Coder) and dev-then-cal on all  20 20 , each accepting about  48 % 48\%  of test items at  0.98 0.98  accepted accuracy (Table  3 ). Scaling the formalizer further to the  32 32 B Goedel-Prover-V2 does not extend this gain: proved coverage is  64 % 64\%  (below the  8 8 B’s  79 % 79\% ) and the certificate is marginally less feasible (Bonferroni  13 / 20 13/20 , dev-then-cal  17 / 20 17/20 ), indicating that prover specialization rather than raw model scale is what lifts coverage past the feasibility threshold. The autoformalizer, not the certificate machinery, thus governs whether risk-controlled formal selection is possible, though the faithfulness caveat of Sec.  8.2  still applies to the underlying proofs.
+Additional per-level breakdowns,  ϵ \epsilon -sensitivity, status-count, and hard-subset details are reported in Appendix  H . 
+
+ 
+ 
+ 
+ 
+ 
+ 9  Related Work 
+
+ 
+
+ 
+ Math reasoning and verifiers. 
+Self-consistency, outcome-reward models, and process-reward models are common signals for natural-language mathematical reasoning  ( Wang et al., 2023 ;  Cobbe et al., 2021 ;  Uesato et al., 2022 ;  Lightman et al., 2024 ;  Wang et al., 2024 ) . Lean-based systems such as FANS and Safe instead use formal proof as a positive correctness signal  ( Yao et al., 2025 ;  Liu et al., 2025 ) . Our focus is complementary: when the formal proof is absent, we ask whether the remaining formal trace is sufficiently covered to support answer selection. 
+
+ 
+ 
+ 
+ Autoformalization and theorem proving. 
+LLM autoformalization and Lean/Isabelle theorem proving remain sensitive to domain, library context, and dependency retrieval  ( Wu et al., 2022 ;  Jiang et al., 2023 ;  Yang et al., 2023 ;  Azerbayev et al., 2023 ;  Zheng et al., 2021 ;  Yu et al., 2025 ;  Patel et al., 2026 ;  Lin et al., 2025 ) . These works motivate our treatment of proof failure as heterogeneous instead of as a negative label. We use Qwen2.5-Math for generation and Qwen2.5-Coder for autoformalization  ( Yang et al., 2024 ;  Hui et al., 2024 ) ; our contribution is the risk-controlled wrapper. 
+
+ 
+ 
+ 
+ Selective prediction and risk control. 
+Selective classification trades coverage for risk  ( El-Yaniv and Wiener, 2010 ;  Geifman and El-Yaniv, 2017 ) . Risk-controlling prediction and conformal risk-control methods certify population risk for calibrated rules under distributional assumptions  ( Bates et al., 2021 ;  Angelopoulos et al., 2024 ) .  CovCal  adapts this perspective to formal answer selection with partial observations: unresolved answer mass does not become a larger prediction set, but instead forces abstention unless a coverage rule can be certified. 
+
+ 
+ 
+ 
+ 
+ 10  Conclusion 
+
+ 
+
+ 
+ We documented a coverage cliff in Lean-as-judge for natural-language mathematical reasoning and proposed  CovCal , a selective wrapper that certifies risk only where enough formal evidence is visible, treating missing formal evidence as unresolved rather than negative. Whether its finite-sample certificate (Bonferroni or dev-then-cal) holds depends on autoformalization coverage: a  7 7 B formalizer leaves the signal too sparse for Bonferroni to certify any partition, whereas a prover-specialized formalizer at  79 % 79\%  coverage flips it to feasible on  17 17  of  20 20 .  CovCal  is a conservative interface for using Lean as a judge; feasible when the formalizer covers enough answer mass, but not a guarantee that all answers are verified. 
+
+ 
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ Scope of the certificate. 
+
+ 
+
+ 
+ The selective-risk guarantee covers only examples for which  A τ ^ ​ ( x ) = 1 A_{\hat{\tau}}(x)\!=\!1  and a formal answer is returned. It does not certify individual mathematical truth, does not assign a label to unresolved answer classes, and does not extend to fallback predictions made when  A τ ^ ​ ( x ) = 0 A_{\hat{\tau}}(x)\!=\!0 . 
+
+ 
+ 
+ 
+ 
+ Distributional assumptions. 
+
+ 
+
+ 
+ Both regimes require exchangeability of the calibration sample with future test points. The dev-then-cal regime additionally requires independence between the dev and cal splits and that  τ ^ \hat{\tau}  be a function of dev only; leakage from the cal split into threshold selection would invalidate Theorem  2 . Distribution shift between calibration and deployment also voids the bound. 
+
+ 
+ 
+ 
+ 
+ Feasibility depends on the autoformalizer. 
+
+ 
+
+ 
+ The certificate is only as good as the formal coverage it is given. With a  7 7 B autoformalizer only about  28 % 28\%  of problems are proved, and at  n cal = 151 n_{\text{cal}}\!=\!151  the Bonferroni certificate returns reject-all on every bootstrap partition (dev-then-cal certifies  12 / 20 12/20 , with the held-out diagnostic sometimes exceeding  ϵ \epsilon  on the small accepted set). A prover-specialized formalizer raises coverage to  79 % 79\%  and makes Bonferroni feasible on  17 / 20 17/20 , so the limitation is not the certificate but the formalizer: the method is informative only when autoformalization covers enough answer mass, and the operator must supply a sufficiently specialized formalizer. Raw scale is not a substitute for specialization. The  32 32 B Goedel-Prover-V2 variant attains lower proved coverage ( 64 % 64\% ) than the  8 8 B ( 79 % 79\% ) and is marginally less feasible (Sec.  8.3 ). 
+
+ 
+ 
+ 
+ 
+ Single dataset and pipeline. 
+
+ 
+
+ 
+ The empirical evidence is from one dataset family (MATH-500), one candidate generator, and one proof style. We vary the autoformalizer (up to a  32 32 B prover) but cannot claim the cliff or the coverage numbers transfer to symbolic Olympiad problems, multi-step formal proofs, other answer formats, or systems built on agentic provers with retrieval. 
+
+ 
+ 
+ 
+ 
+ Bootstrap and partition variability. 
+
+ 
+
+ 
+ The reported  K = 20 K\!=\!20  bootstrap captures variance from the dev/cal/test partition but not from candidate sampling or autoformalization stochasticity; the same observations are reused across seeds. A multi-seed re-run of generation and formalization would estimate the latter sources of variability. 
+
+ 
+ 
+ 
+ 
+ Faithfulness of proved statements. 
+
+ 
+
+ 
+ A kernel-checked proof certifies the  generated  statement, not that the statement faithfully captures the informal problem. An automated rational-evaluation check of the  314 314  proved artifacts finds  73.6 % 73.6\%  non-trivial and correct, but our manual audit ( 45 45  stratified examples) shows this overstates faithfulness: many true  structural  statements assert a side-fact or bare existence, so only  ≈ 43 % \approx\!43\%  of proved statements are faithful to the problem, and a wrong answer class is proved in  8 % 8\%  of problems. This audit is diagnostic error analysis, not benchmark-grade annotation ( e.g. , it uses a single annotator and small per-category samples) and the automated diagnostics alone do not flag a faithful-looking but semantically drifted statement. 
+
+ 
+ 
+ 
+ 
+ 
+ Ethical Considerations 
+
+ 
+
+ 
+ Formal verification can make mathematical reasoning systems more reliable, but overclaiming from failed verification can mislabel correct reasoning as incorrect or produce misleading training signals. The proposed calibration framework is intended to make such limitations explicit. The work uses public math datasets and local open models; no personal data is involved. The main risk is that users may interpret calibrated acceptance as a guarantee for all examples rather than for the accepted subset under the stated data assumptions. 
+
+ 
+ 
+ 
+ 
+ 

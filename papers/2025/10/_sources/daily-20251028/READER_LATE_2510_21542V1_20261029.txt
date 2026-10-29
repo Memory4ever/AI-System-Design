@@ -1,0 +1,1747 @@
+HollowFlow: Efficient Sample Likelihood Evaluation using Hollow Message Passing
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Background
+2.1 Boltzmann Generators and Observables
+2.2 Normalizing Flows
+Continuous Normalizing Flows
+Equivariant flows
+2.3 HollowNets
+3 Hollow Message Passing
+Permutation Equivariant Conditioner
+Euclidean Symmetries of Node Features:
+4 Computational Complexity
+4.1 Graph Connectivity
+4.2 Divergence Calculation Speed-up
+5 Experiments
+Criteria to Assess Effectiveness
+6 Related Works
+Efficient Sample Likelihoods in Probability Flow Generative Models
+Boltzmann Emulators and Other Surrogates
+Non-backtracking Graphs
+7 Limitations
+8 Conclusions
+References
+A Adaptation of HollowFlow to Attention
+B Derivations and Proofs
+B.1 Hollowness of HollowFlow
+Notational remarks
+Case 1: pd=f​a​l​s​e\text{pd}=false:
+Base case:
+Induction step:
+Case 2: pd=t​r​u​e\text{pd}=true:
+Base case:
+Induction step:
+Jacobian diagonal with dd backward passes:
+Further remarks
+B.2 Computational Complexities
+B.3 Memory scaling of B⁡(t)B(t)
+C Additional Results
+C.1 Non-equivariant HollowFlow
+C.2 Multi-head HollowFlow
+C.3 Alanine Dipeptide
+D Experimental Details
+D.1 Code and Libraries
+D.2 Benchmark Systems
+D.3 Training Data
+D.4 Hyperparameters
+Choice of the Hyperparameter kk
+Discontinuities Caused by kkNN Graph
+Hyperparameters Used in Experiments:
+D.5 Errors
+D.6 Runtimes
+D.7 Weight Clipping
+D.8 Computing Infrastructure
+License: CC BY 4.0
+arXiv:2510.21542v1 [stat.ML] 24 Oct 2025
+HollowFlow: Efficient Sample Likelihood Evaluation using Hollow Message Passing
+Johann Flemming Gloy
+Affiliation: Department of Computer Science and EngineeringChalmers University of Technology and University of GothenburgSE-41296 Gothenburg, Sweden.
+Email: gloy@chalmers.se
+Simon Olsson
+††thanks: Corresponding author
+Affiliation: Department of Computer Science and EngineeringChalmers University of Technology and University of GothenburgSE-41296 Gothenburg, Sweden.
+Email: simonols@chalmers.se
+Abstract
+Flow and diffusion-based models have emerged as powerful tools for scientific applications, particularly for sampling non-normalized probability distributions, as exemplified by Boltzmann Generators (BGs). A critical challenge in deploying these models is their reliance on sample likelihood computations, which scale prohibitively with system size nn, often rendering them infeasible for large-scale problems. To address this, we introduce HollowFlow, a flow-based generative model leveraging a novel non-backtracking graph neural network (NoBGNN). By enforcing a block-diagonal Jacobian structure, HollowFlow likelihoods are evaluated with a constant number of backward passes in nn, yielding speed-ups of up to 𝒪⁡(n2)\mathcal{O}(n^{2}): a significant step towards scaling BGs to larger systems. Crucially, our framework generalizes: any equivariant GNN or attention-based architecture can be adapted into a NoBGNN. We validate HollowFlow by training BGs on two different systems of increasing size. For both systems, the sampling and likelihood evaluation time decreases dramatically, following our theoretical scaling laws. For the larger system we obtain a 102×10^{2}\times speed-up, clearly illustrating the potential of HollowFlow-based approaches for high-dimensional scientific problems previously hindered by computational bottlenecks.
+1 Introduction
+Figure 1: Summary of HollowFlow: (a) A vector field bb is parametrized with an (equivariant) non-backtracking graph neural network (NoBGNN) and a series of (equivariant) neural networks τi\tau_{i}, such that its Jacobian 𝐉b\mathbf{J}_{b} (b) can be decomposed into a block-hollow and block-diagonal part with block size dd (in this example, d=3,n=5d=3,n=5). (c) Efficient evaluation of the trace of the Jacobian with only dd instead of n​dnd backward passes (BP) through the network. The vector components are one where the entry is green and zero elsewhere.
+Efficiently sampling high-dimensional, non-normalized densities — a cornerstone of Bayesian inference and molecular dynamics — remains computationally intractable for many scientific applications. Boltzmann generators (BGs) [1] address this by training a surrogate model ρ1​(𝐱)\rho_{1}(\mathbf{x}) to approximate the Boltzmann distribution μ⁡(𝐱)=Z−1​exp⁡(−β​u​(𝐱))\mu(\mathbf{x})=Z^{-1}\exp(-\beta u(\mathbf{x})), where u⁡(𝐱)u(\mathbf{x}) is the potential energy of the system configuration 𝐱∈Ω⊂ℝN\mathbf{x}\in\Omega\subset\mathbb{R}^{N}, β\beta the inverse temperature, and ZZ the intractable partition function. While BGs enable unbiased estimation of observables through reweighting 𝐱i∼ρ1\mathbf{x}_{i}\sim\rho_{1} with weights wi∝μ⁡(𝐱i)/ρ1​(𝐱i)w_{i}\propto\mu(\mathbf{x}_{i})/\rho_{1}(\mathbf{x}_{i}), their practicality is limited by a fundamental trade-off: likelihood computations of expressive surrogates rely on NN automatic differentiation backward passes with system dimensionality NN, rendering them infeasible for large-scale problems.
+To address this problem, we outline a framework combining non-backtracking equivariant graph neural networks with continuous normalizing flows (CNFs), breaking this trade-off. This strategy enforces a Jacobian that can easily be split into a block-diagonal and a block-hollow part, reducing the number of backward passes required for likelihood computation to scale as 𝒪⁡(1)\mathcal{O}(1) in NN. Our contributions include:
+Hollow Message Passing (HoMP): A general scheme for message passing with a block-diagonal Jacobian structure.
+Theoretical Proofs and Guarantees: A proof of the block-diagonal structure of HoMP and scaling laws of the computational complexity of forward and backward passes.
+Scalable Boltzmann Generators: A HollowFlow-based BG implementation achieving 10110^{1}–102×10^{2}\times faster sampling and likelihood evaluation, e.g., 102×10^{2}\times for LJ55, a system of 55 particles in 3-dimensions interacting via pair-wise Lennard-Jones potentials.
+Experiments on multi-particle systems validate HollowFlow’s scalability, bridging a critical gap in high-dimensional generative modelling for the sciences.
+2 Background
+2.1 Boltzmann Generators and Observables
+Computing observables by averaging over the Boltzmann distribution is a central challenge in chemistry, physics, and biology. The Boltzmann distribution is given by,
+|
+μ⁡(𝐱)=Z−1​exp⁡(−β​u​(𝐱))\mu(\mathbf{x})=Z^{-1}\exp(-\beta u(\mathbf{x})) |
+|
+(1) |
+where β=(kB​T)−1\beta=(k_{\textrm{B}}T)^{-1} is the inverse thermal energy and u:Ω→ℝu:\Omega\rightarrow\mathbb{R} is the potential energy of a system configuration 𝐱∈Ω⊆ℝN\mathbf{x}\in\Omega\subseteq\mathbb{R}^{N}.
+Observables are experimentally measurable quantities, such as free energies [2, 3, 4]. Generating ensembles which align with certain observables can give us fundamental insights into the physics of molecules, including mechanisms, rates, and affinities of drugs binding their targets [5, 6], protein folding [7, 8], or phase transitions [9, 10, 11, 12].
+The primary strategies for generating samples from the Boltzmann distribution involve Markov Chain Monte Carlo (MCMC) or molecular dynamics (MD) simulations. These approaches generate unbiased samples from the Boltzmann distribution asymptotically, however, mix slowly on the complex free energy landscape of physical systems, where multiple, metastable states are separated by low-probability channels. In turn, extremely long simulations are needed to generate independent sampling statistics using these methods. In the molecular simulation community, this problem has stimulated the development of a host of enhanced sampling methods, for a recent survey, see [13].
+Boltzmann Generators [1] instead try to learn an efficient surrogate from biased simulation data, and recover unbiased sampling statistics through importance weighting. The key advantage of BGs is that sampling using modern generative methods, such as normalizing flows, is much faster than the conventional simulation based approaches, which would enable amortization of the compute cost per Boltzmann distributed sample.
+2.2 Normalizing Flows
+To enable reweighting, evaluating the sample likelihood under a model, ρ1\rho_{1}, is critical. A normalizing flow (NF) [14, 15] allows efficient sampling, and sample likelihood evaluation, by parameterizing a diffeomorphism, ϕθ:ℝN→ℝN\phi_{\theta}:\mathbb{R}^{N}\rightarrow\mathbb{R}^{N}, with a constrained Jacobian structure. The diffeomorphism (or flow) ϕθ\phi_{\theta} maps an easy-to-sample base distribution, ρ0\rho_{0} to an approximation ρ1\rho_{1} of the empirical data density, pDp_{D}, e.g., by minimizing the forward Kullback-Leibler divergence, DKL(pD||ρ1)=𝔼𝐱∼pD[logpD(𝐱)−logρ1(𝐱)]D_{\mathrm{KL}}(p_{D}||\rho_{1})=\mathbb{E}_{\mathbf{x}\sim p_{D}}\left[\log p_{D}(\mathbf{x})-\log\rho_{1}(\mathbf{x})\right]. The change in log-density when transforming samples with ϕθ\phi_{\theta} is given by
+|
+Δ​log⁡ρNF​(𝐱):=log⁡ρ1​(𝐱)−log⁡ρ0​(ϕθ−1​(𝐱))=log⁡|det∂ϕθ−1​(𝐱)∂𝐱|.\Delta\log\rho^{\text{NF}}(\mathbf{x}):=\log\rho_{1}(\mathbf{x})-\log\rho_{0}(\phi_{\theta}^{-1}(\mathbf{x}))=\log\left|\det\frac{\partial\phi_{\theta}^{-1}(\mathbf{x})}{\partial\mathbf{x}}\right|. |
+|
+(2) |
+Computing the log-determinant of a general N×NN\times N Jacobian is computationally expensive (𝒪⁡(N3)\mathcal{O}(N^{3})), however, endowing the Jacobian ∂ϕθ−1​(𝐱)∂𝐱\frac{\partial\phi_{\theta}^{-1}(\mathbf{x})}{\partial\mathbf{x}} with structure, i.e., triangular [16, 17, 18], can make the likelihood evaluation fast.
+Continuous Normalizing Flows
+A flow can also be parametrized as the solution to an initial value problem, specified by a velocity field bθ​(𝐱,t):ℝN×[0,1]→ℝNb_{\theta}(\mathbf{x},t):\mathbb{R}^{N}\times[0,1]\rightarrow\mathbb{R}^{N} of an ordinary differential equation (ODE)
+|
+d​𝐱​(t)=bθ​(𝐱⁡(t),t)​d​t,𝐱⁡(0)∼ρ0,𝐱⁡(1)∼ρ1.\displaystyle\mathrm{d}\mathbf{x}(t)=b_{\theta}(\mathbf{x}(t),t)\,\mathrm{d}t,\,\,\mathbf{x}(0)\sim\rho_{0},\,\,\mathbf{x}(1)\sim\rho_{1}. |
+|
+(3) |
+The general solution to this problem is a flow, ϕθ​(𝐱⁡(t),t):ℝN×[0,1]→ℝN\phi_{\theta}(\mathbf{x}(t),t):\mathbb{R}^{N}\times[0,1]\rightarrow\mathbb{R}^{N}, which satisfies the initial condition, e.g., ϕθ​(𝐱⁡(0),0)=𝐱⁡(0)\phi_{\theta}(\mathbf{x}(0),0)=\mathbf{x}(0). Such a model is known as a continuous normalizing flow (CNF). The ODE eq. 3 together with the prior ρ0\rho_{0} gives rise to a time-dependent distribution ρ⁡(𝐱⁡(t),t)\rho(\mathbf{x}(t),t) given by the continuity equation
+|
+∂tρt=−∇⋅(ρtbθ(𝐱,t)),\displaystyle\partial_{t}\rho_{t}=-\nabla\cdot(\rho_{t}b_{\theta}(\mathbf{x},t)), |
+|
+(4) |
+with ∂t\partial_{t} and ∇⁣⋅\nabla\cdot denoting the partial derivative w.r.t. tt and the divergence operator, respectively. Solving eq. 4 we get the change in log-probability for the CNF,
+|
+ΔlogρCNF:=logρ1(𝐱(1))−logρ0(𝐱(0))=−∫01∇⋅bθ(𝐱(t),t)dt.\displaystyle\Delta\log\rho^{\text{CNF}}:=\log\rho_{1}(\mathbf{x}(1))-\log\rho_{0}(\mathbf{x}(0))=-\int_{0}^{1}\nabla\cdot b_{\theta}(\mathbf{x}(t),t)\,\mathrm{d}t. |
+|
+(5) |
+In principle, CNFs allow for much more expressive architectures to be used to parametrize bθb_{\theta}.
+The currently most scalable approach to train CNFs is conditional flow matching (CFM) or related objectives [19, 20, 21, 22]. In CFM, the intractable flow matching loss, where bθb_{\theta} is regressed directly against the unknown true vector field ut​(𝐱)u_{t}(\mathbf{x}), of a flow ϕ\phi, is replaced by the conditional flow matching loss which has the same gradient w.r.t. the parameters θ\theta [20]:
+|
+ℒCFM=𝔼t∼𝒰⁡[0,1],𝐱∼pt​(𝐱|𝐳),𝐳∼p⁡(𝐳)||bθ​(𝐱,t)−ut​(𝐱|𝐳)||22.\displaystyle\mathcal{L}_{\text{CFM}}=\mathbb{E}_{t\sim\mathcal{U}[0,1],\mathbf{x}\sim p_{t}(\mathbf{x}|\mathbf{z}),\mathbf{z}\sim p(\mathbf{z})}||b_{\theta}(\mathbf{x},t)-u_{t}(\mathbf{x}|\mathbf{z})||_{2}^{2}. |
+|
+(6) |
+The true vector field ut​(𝐱)u_{t}(\mathbf{x}) and its corresponding probability density pt​(𝐱)p_{t}(\mathbf{x}) are given as marginals over the conditional probability and an arbitrary conditioning distribution p⁡(𝐳)p(\mathbf{z}):
+|
+pt​(𝐱)=∫pt​(𝐱|z)​p​(𝐳)​𝑑𝐳andut​(𝐱)=∫pt​(𝐱|𝐳)​ut​(𝐱|𝐳)pt​(𝐱)​p​(𝐳)​𝑑𝐳.\displaystyle p_{t}(\mathbf{x})=\int p_{t}(\mathbf{x}|z)p(\mathbf{z})\,\mathrm{d}\mathbf{z}\quad\text{and}\quad u_{t}(\mathbf{x})=\int\frac{p_{t}(\mathbf{x}|\mathbf{z})u_{t}(\mathbf{x}|\mathbf{z})}{p_{t}(\mathbf{x})}p(\mathbf{z})\,\mathrm{d}\mathbf{z}. |
+|
+(7) |
+where we parameterize pt​(𝐱|𝐳)p_{t}(\mathbf{x}|\mathbf{z}) and ut​(𝐱|𝐳)u_{t}(\mathbf{x}|\mathbf{z}) with a linear interpolant with connections to optimal transport theory [22]:
+|
+z=(𝐱0,𝐱1),p⁡(𝐳)=π⁡(𝐱0,𝐱1)pt​(𝐱|𝐳)=𝒩⁡(t​𝐱1+(1−t)​𝐱0,σ),ut​(𝐱|𝐳)=𝐱1−𝐱0,\displaystyle z=(\mathbf{x}_{0},\mathbf{x}_{1}),\quad p(\mathbf{z})=\pi(\mathbf{x}_{0},\mathbf{x}_{1})\quad p_{t}(\mathbf{x}|\mathbf{z})=\mathcal{N}(t\mathbf{x}_{1}+(1-t)\mathbf{x}_{0},\sigma),\quad u_{t}(\mathbf{x}|\mathbf{z})=\mathbf{x}_{1}-\mathbf{x}_{0}, |
+|
+(8) |
+where the coupling π⁡(𝐱1,𝐱0)\pi(\mathbf{x}_{1},\mathbf{x}_{0}) minimizes the 2-Wasserstein optimal transport map between the prior ρ0​(𝐱0)\rho_{0}(\mathbf{x}_{0}) and the target μ⁡(𝐱1)\mu(\mathbf{x}_{1}) using a mini-batch approximation [23, 20, 22].
+Unfortunately, akin to general Jacobian log-determinant calculation of normalizing flows, computation of ∇⋅bθ​(𝐱⁡(t),t)\nabla\cdot b_{\theta}(\mathbf{x}(t),t) (eq. 5) requires 𝒪⁡(N)\mathcal{O}(N) backward passes, for each numerical integration step along tt, making the evaluation of sample likelihoods impractical in high-dimensions, and consequently, their use for BGs limited.
+Equivariant flows
+Symmetries can be described in terms of a group 𝒢\mathcal{G} that acts on a finite-dimensional vector space V≅ℝdV\cong\mathbb{R}^{d} through a group representation ρ:𝒢→G​L​(d,ℝ)\rho:\mathcal{G}\rightarrow GL(d,\mathbb{R}). A function f:ℝd→ℝdf:\mathbb{R}^{d}\rightarrow\mathbb{R}^{d} is called 𝒢\mathcal{G}-equivariant if f⁡(ρ⁡(g)​x)=ρ⁡(g)​f​(x)f(\rho(g)x)=\rho(g)f(x) and h:ℝd→V′h:\mathbb{R}^{d}\rightarrow V^{\prime} is called 𝒢\mathcal{G}-invariant if h⁡(ρ⁡(g)​𝐱)=h⁡(𝐱)h(\rho(g)\mathbf{x})=h(\mathbf{x}) for all g∈𝒢g\in\mathcal{G} and 𝐱∈ℝd\mathbf{x}\in\mathbb{R}^{d} where V′V^{\prime} is another vector space. If the vector field bθb_{\theta} of a CNF is ℋ\mathcal{H}-equivariant, where ℋ<𝒢\mathcal{H}<\mathcal{G} and the prior density ρ0\rho_{0} is 𝒢\mathcal{G}-invariant it has been shown that the push forward density, of the flow ϕ\phi, ρ1\rho_{1} is ℋ\mathcal{H}-invariant [24, 25, 23]. In practical applications, symmetries under the Euclidean group E⁡(3)E(3) are of particular interest as these are the symmetries that are naturally obeyed by many physical systems such as molecules. Thus, several GNN architectures have been proposed that are equivariant or invariant under the action of E⁡(3)E(3) or some subgroup of E⁡(3)E(3) [26, 27].
+2.3 HollowNets
+Reverse-mode automatic differentiation, or back-propagation, allows for the computation of vector-Jacobian products with a cost which is asymptotically equal to that of the forward pass [28]. In practice, we use this mode to compute the divergence of velocity fields parametrized with neural networks. However, isolating the diagonal of the Jacobian to compute the divergence, for general, free-form vector fields, requires 𝒪⁡(N)\mathcal{O}(N) backward passes [29, 30].
+Using a special neural network construction HollowNet, Chen and Duvenaud showed, that one can access the full diagonal of the Jacobian, 𝐉∈ℝN×N\mathbf{J}\in\mathbb{R}^{N\times N}, with a single backward pass.
+A HollowNet depends on two components:
+|
+|
+Conditioner: hi=ci(𝐱¬i),where ci:ℝN−1→ℝnh\displaystyle\textbf{Conditioner: }h_{i}=c_{i}(\mathbf{x}_{\neg i}),\text{where }c_{i}:\mathbb{R}^{N-1}\rightarrow\mathbb{R}^{n_{h}} |
+|
+(9) |
+|
+|
+Transformer: bi=τi(𝐱i,𝐡i),where τi:ℝ×ℝnh→ℝ\displaystyle\textbf{Transformer: }b_{i}=\tau_{i}(\mathbf{x}_{i},\mathbf{h}_{i}),\text{where }\tau_{i}:\mathbb{R}\times\mathbb{R}^{n_{h}}\rightarrow\mathbb{R} |
+|
+(10) |
+where hih_{i} is a latent embedding which is independent of the ii’th dimension of the input, 𝐱\mathbf{x}. Applying the chain rule to bi=τi​(ri,ci​(r¬i))b_{i}=\tau_{i}(r_{i},c_{i}(r_{\neg i})), the Jacobian 𝐉=d​bd​𝐱\mathbf{J}=\frac{\mathrm{d}b}{\mathrm{d}\mathbf{x}} decomposes as follows:
+|
+d​bd​𝐱=∂τ∂𝐱⏟𝐉diag+∂τ∂𝐡​∂𝐡∂𝐱⏟𝐉hollow,\displaystyle\frac{\mathrm{d}b}{\mathrm{d}\mathbf{x}}=\underbrace{\frac{\partial\tau}{\partial\mathbf{x}}}_{\mathbf{J}^{\mathrm{diag}}}+\underbrace{\frac{\partial\tau}{\partial\mathbf{h}}\frac{\partial\mathbf{h}}{\partial\mathbf{x}}}_{\mathbf{J}^{\mathrm{hollow}}}, |
+|
+(11) |
+which splits the Jacobian into diagonal 𝐉diag\mathbf{J}^{\mathrm{diag}} and ‘hollow’ 𝐉hollow\mathbf{J}^{\mathrm{hollow}} contributions [29]. The divergence can then be evaluated in 𝒪⁡(1)\mathcal{O}(1) backward passes, through rewiring the compute graph and computing 𝟙T​𝐉diag\mathbb{1}^{T}\mathbf{J}^{\mathrm{diag}}.
+3 Hollow Message Passing
+It is straightforward to construct HollowNets for regular feed-forward neural networks, and convolutional neural networks, through masking operations [29]. However, extending these principles to cases where the data or its domain are subject to other symmetries is not as straightforward.
+To address this problem, we develop Hollow Message Passing (HoMP) to work with graph data, subject to permutation equivariance. We further specialize this approach to work with data which is subject to common Euclidean symmetries, useful in molecular applications. Here, molecules and particle systems are represented as points in ℝd\mathbb{R}^{d} (typically d=3d=3), one for each of the nn atoms or particles, making N=d​nN=dn. HoMP depends on the following developments:
+Permutation Equivariant Conditioner: We make the conditioner functions {ci}i=1n\{c_{i}\}_{i=1}^{n} permutation equivariant, using a non-backtracking GNN (NoBGNN) in combination with a changing underlying graph structure such that it fulfils the same constraints as the original conditioner. Namely, ∂hi∂𝐱i=0​∀i∈{1,…,n}\frac{\partial h_{i}}{\partial\mathbf{x}_{i}}=0\ \forall i\in\{1,...,n\}.
+Euclidean Symmetries of Node Features: We lift the HollowNet from working with scalar features, i.e., 𝐱i∈ℝ\mathbf{x}_{i}\in\mathbb{R} to work with Euclidean features, e.g., 𝐱i∈ℝd\mathbf{x}_{i}\in\mathbb{R}^{d}. Moreover, NoBGNN allows for the use of message passing architectures that are invariant or equivariant under the group action ρ⁡(g),g∈𝒢\rho(g),g\in\mathcal{G} of a group 𝒢\mathcal{G}. Furthermore, for each ii there can be additional scalar input data Zi∈ℝZ_{i}\in\mathbb{R}. In practice (see section 5), 𝐱i∈ℝ3\mathbf{x}_{i}\in\mathbb{R}^{3} are the coordinates of an atom while ZiZ_{i} encodes the atom type.
+Permutation Equivariant Conditioner
+We design a GNN for the conditioner such that information from any node never returns to itself. A GNN where this holds for one message passing step is called a non-backtracking GNN [31] or a line graph GNN [32] and can be constructed as follows:
+Let G=(N,E)G=(N,E) be a directed graph with nodes N:={1,…,n}N:=\{1,...,n\} and edges E⊆{(i,j)|i,j∈N,i≠j}E\subseteq\{(i,j)|i,j\in N,i\neq j\}. To each node ii, we assign a node feature nin_{i}. Given GG, we construct the non-backtracking line graph L⁡(G)=(Nl​g,El​g)L(G)=(N^{lg},E^{lg}), where
+|
+Nl​g=E,El​g={(i,j,k)|(i,j)∈E,(j,k)∈E and i≠k}.\displaystyle N^{lg}=E,\quad E^{lg}=\{(i,j,k)|(i,j)\in E,(j,k)\in E\text{ and }i\neq k\}. |
+|
+(12) |
+The node features of L⁡(G)L(G) are ni​jl​gn^{lg}_{ij} are defined to be
+|
+ni​jl​g=ni.\displaystyle n^{lg}_{ij}=n_{i}. |
+|
+(13) |
+The hidden states hi​j0h^{0}_{ij} on L⁡(G)L(G) are initialized to be hi​j0=ni​jl​gh^{0}_{ij}=n^{lg}_{ij}. Using this setup, a standard message passing scheme [33] is applied on L⁡(G)L(G):
+|
+ml​i​jt=ϕ⁡(hl​it,hi​jt),mi​jt\displaystyle m^{t}_{lij}=\phi(h^{t}_{li},h^{t}_{ij}),\quad m^{t}_{ij} |
+=∑l∈𝒩l​g​(i,j)ml​i​jt,hi​jt+1=ψ⁡(hi​jt,mi​jt),\displaystyle=\sum_{l\in\mathcal{N}^{lg}(i,j)}m^{t}_{lij},\quad h^{t+1}_{ij}=\psi(h^{t}_{ij},m^{t}_{ij}), |
+|
+(14) |
+|
+bj\displaystyle b_{j} |
+=∑i∈𝒩⁡(j)R⁡(hi​jTl​g,nj)\displaystyle=\sum_{i\in\mathcal{N}(j)}R(h_{ij}^{T^{lg}},n_{j}) |
+|
+(15) |
+ϕ\phi, ψ\psi and RR are all learnable functions, 𝒩l​g​(i,j)={k|(k,i,j)∈El​g}\mathcal{N}^{lg}(i,j)=\{k|(k,i,j)\in E^{lg}\}, 𝒩⁡(i)={k|(k,i)∈E}\mathcal{N}(i)=\{k|(k,i)\in E\} and Tl​gT^{lg} is the number of message passing steps on the line graph.
+(a)
+(b)
+(c)
+Figure 2: Schematic example of line graph message passing. Blue: original graph (GG), orange: line graph (L⁡(G)L(G)), gray: information flow between GG and L⁡(G)L(G). 2(a) Construction of the line graph nodes. Every node in L⁡(G)L(G) corresponds to one edge in G. The dashed arrows indicate information flow before the message passing from GG to L⁡(G)L(G). 2(b) Construction of the edges of L⁡(G)L(G). 2(c) Information flow after the message passing (dashed arrows) from L⁡(G)L(G) to GG.
+This construction is illustrated in fig. 2. The blue nodes and edges are part of GG while the orange nodes and edges are part of L⁡(G)L(G). The gray dashed arrow in fig. 2(a) illustrate the projection of the node features onto L⁡(G)L(G) (eq. 13). The orange arrows in fig. 2(b) illustrate the message passing on L⁡(G)L(G) (eq. 14). Figure 2(c) visualizes the projection of the node features from L⁡(G)L(G) back to GG as summarized in eq. 15. Equations 13 and 14 take the role of the conditioner c⁡(𝐱)c(\mathbf{x}) while eq. 15 takes the role of the transformer τ⁡(h,𝐱)\tau(h,\mathbf{x}) (see appendix B).
+So far, this GNN is, except in special cases that we detail in appendix B, only non-backtracking if just one message passing step is performed. In general, to ensure the non-backtracking nature of the GNN, some connections in L⁡(G)L(G) need to be removed after an appropriate number of message passing steps. This can be done by keeping track of which nodes of L⁡(G)L(G) received information of which nodes of GG after each message passing step. To this end, we define the three dimensional time-dependent backtracking array B⁡(t)∈ℝn×n×nB(t)\in\mathbb{R}^{n\times n\times n}
+|
+B​(t)i​j​k={1if​∂hi​jt∂𝐱k≠00else.\displaystyle B(t)_{ijk}=\begin{cases}1\quad\text{if}\ \frac{\partial h^{t}_{ij}}{\partial\mathbf{x}_{k}}\neq 0\\
+0\quad\text{else.}\end{cases} |
+|
+(16) |
+with the additional convention that ∂hi​jt∂𝐱k=0\frac{\partial h^{t}_{ij}}{\partial\mathbf{x}_{k}}=0 whenever (i,j)∉E(i,j)\notin E. Notice that whenever B​(t)i​j​j=1B(t)_{ijj}=1 information that started in node jj will return to node jj during readout. Algorithm 1 shows in detail how B⁡(t)B(t) is calculated (steps 8 and 11) and used to remove edges in L⁡(G)L(G) (step 10). A more detailed explanation and a proof that this construction does indeed result in a non-backtracking GNN for an arbitrary number of message passing steps is given in appendix B.
+Euclidean Symmetries of Node Features:
+In typical molecular applications, nodes are represented in Euclidean space (e.g., 𝐱i∈ℝd\mathbf{x}_{i}\in\mathbb{R}^{d} where d=3d=3) and may have additional features ZiZ_{i} (such as atom type). Our goal is to embed (𝐱i,Zi)∈ℝd×ℝ(\mathbf{x}_{i},Z_{i})\in\mathbb{R}^{d}\times\mathbb{R} into a set of equivariant (𝐯i\mathbf{v}_{i}) and invariant (sis_{i}) node features, ni=(vi,si)=embed​(𝐱i,Zi)∈ℝnh×d×ℝnhn_{i}=(v_{i},s_{i})=\texttt{embed}(\mathbf{x}_{i},Z_{i})\in\mathbb{R}^{n_{h}\times d}\times\mathbb{R}^{n_{h}} which serve as inputs for message passing on L⁡(G)L(G)(see eq. 13). For this task, we can use any 𝒢\mathcal{G}-equivariant embeddings inherent to GNN architectures such as PaiNN or E3NN (for d=3d=3 and 𝒢<E⁡(3)\mathcal{G}<E(3)) [26, 27].
+The message passing and readout functions (eqs. 14 and 15) are made 𝒢\mathcal{G}-equivariant by using the message and update functions of any 𝒢\mathcal{G}-equivariant GNN. As we only modify the underlying graph of the GNN, this trivially ensures equivariance.
+By construction, the dd-dimensional node inputs 𝐱i\mathbf{x}_{i} allow the Jacobian 𝐉b\mathbf{J}_{b} to be easily split into a block-diagonal and block-hollow part with block size d×dd\times d. This observation and its consequences are summarized in algorithm 1 and theorem 1 (see appendix B for a proof and additional explanations). Algorithm 1 can also run on the pairwise euclidean differences of the node features 𝐱i\mathbf{x}_{i} (pd=t​r​u​e\text{pd}=true in algorithm 1) . This is common practice in molecular applications to achieve translation invariance.
+A brief illustration of algorithm 1 can be found in fig. 1.
+Algorithm 1 Hollow message passing
+1:
+{𝐱i,Zi}i=1n​ where ​𝐱i∈ℝd​ and ​Zi∈ℝ,pd∈{t​r​u​e,f​a​l​s​e}\{\mathbf{x}_{i},Z_{i}\}_{i=1}^{n}\text{ where }\ \mathbf{x}_{i}\in\mathbb{R}^{d}\text{ and }Z_{i}\in\mathbb{R},\quad\text{pd}\in\{true,false\}
+2:
+{bi}i=1n,bi∈ℝd\{b_{i}\}_{i=1}^{n},\ b_{i}\in\mathbb{R}^{d}
+3:
+if pd then
+4:
+di​j=𝐱i−𝐱jd_{ij}=\mathbf{x}_{i}-\mathbf{x}_{j}, ei​j=embed​(di​j,Zi)e_{ij}=\texttt{embed}(d_{ij},Z_{i})
+5:
+else
+6:
+ni=embed​(𝐱i,Zi)n_{i}=\texttt{embed}(\mathbf{x}_{i},Z_{i})
+7:
+end if
+8:
+Calculate G=(N,E)G=(N,E), e.g., as a kkNN graph. Self-loops, i.e., (i,i)∈E(i,i)\in E are prohibited.
+9:
+Calculate the line graph L⁡(G)=(Nl​g,El​g)L(G)=(N^{lg},E^{lg}) and its node features ni​jl​gn^{lg}_{ij}:
+10:
+Nl​g=EN^{lg}=E, El​g={(i,j,k)|(i,j)∈E,(j,k)∈E and i≠k}E^{lg}=\{(i,j,k)|(i,j)\in E,(j,k)\in E\text{ and }i\neq k\}, ni​jl​g={ei​j​if pdni​elsen^{lg}_{ij}=\begin{cases}e_{ij}\ \text{if }\text{pd}\\
+n_{i}\ \text{else}\end{cases}
+11:
+Calculate initial node features hi​j0h^{0}_{ij} and initial backtracking array B​(0)i​j​kB(0)_{ijk}:
+12:
+hi​j0={ψ~(∑k∈𝒩l​g​(i,j)ϕ~(nl​gk​i))if pdni​jl​g​elseh^{0}_{ij}=\begin{cases}\tilde{\psi}(\ \ \sum\limits_{\mathclap{k\in\mathcal{N}^{lg}(i,j)}}\ \ \tilde{\phi}(n^{lg}_{ki}))\ \text{if }\text{pd}\\[14.22636pt]
+n^{lg}_{ij}\ \text{else}\end{cases}, B​(0)i​j​k={(1​if​k∈𝒩l​g​(i,j), 0​else)​ if pd(1​if​k=i, 0​else)​ else B(0)_{ijk}=\begin{cases}(1\ \text{if}\ k\in\mathcal{N}^{lg}(i,j),\ 0\ \text{else})\text{ if }\text{pd}\\[14.22636pt]
+(1\ \text{if}\ k=i,\ 0\ \text{else})\text{ else }\end{cases}
+13:
+14:
+for t←0t\leftarrow 0 to (Tl​g−1)(T^{lg}-1) do
+15:
+Remove appropriate edges of L⁡(G)L(G): El​g←El​g∖{(i,j,k)∈El​g|B​(t)i​j​k=1}E^{lg}\leftarrow E^{lg}\setminus\{(i,j,k)\in E^{lg}|B(t)_{ijk}=1\}
+16:
+Update backtracking array: B​(t+1)i​j​k=maxl∈𝒩l​g​(i,j)⁡{B​(t)l​i​k,B​(t)i​j​k}B(t+1)_{ijk}=\max_{l\in\mathcal{N}^{lg}(i,j)}\{B(t)_{lik},B(t)_{ijk}\}
+17:
+Do message passing:
+18:
+mk​i​jt=ϕ⁡(hi​jt,hk​it),mi​jt=∑k∈𝒩l​g​(i,j)mk​i​jt,hi​jt+1=ψ⁡(hi​jt,mi​jt)m^{t}_{kij}=\phi(h^{t}_{ij},h^{t}_{ki}),\quad m^{t}_{ij}=\sum_{k\in\mathcal{N}^{lg}(i,j)}m^{t}_{kij},\quad h^{t+1}_{ij}=\psi(h^{t}_{ij},m^{t}_{ij})
+19:
+end for
+20:
+Perform readout and project back to GG:
+21:
+bj=∑i∈𝒩⁡(j)R⁡(hi​jTl​g,ni​j),where ​ni​j={embed(𝐱i.detach()−𝐱j,Zi)if pdnjelseb_{j}=\sum_{i\in\mathcal{N}(j)}R(h_{ij}^{T^{lg}},n_{ij}),\quad\text{where }n_{ij}=\begin{cases}\texttt{embed}(\mathbf{x}_{i}.\texttt{detach()}-\mathbf{x}_{j},Z_{i})\quad\text{if }\text{pd}\\
+n_{j}\quad\text{else}\end{cases}
+Theorem 1 (Block-hollowness of HoMP).
+Algorithm 1 defines a function b:ℝd​n→ℝd​nb:\mathbb{R}^{dn}\rightarrow\mathbb{R}^{dn} whose Jacobian 𝐉b⁡(𝐱)∈ℝd​n×d​n\mathbf{J}_{b(\mathbf{x})}\in\mathbb{R}^{dn\times dn} can be split into a block-hollow and a block-diagonal part, i.e.,
+|
+𝐉b⁡(𝐱)=𝐉c⁡(𝐱)+𝐉τ⁡(𝐱)\displaystyle\mathbf{J}_{b(\mathbf{x})}=\mathbf{J}_{c(\mathbf{x})}+\mathbf{J}_{\tau(\mathbf{x})} |
+|
+(17) |
+where 𝐉c⁡(𝐱)\mathbf{J}_{c(\mathbf{x})} is block-hollow, while 𝐉τ⁡(𝐱)\mathbf{J}_{\tau(\mathbf{x})} is block-diagonal with block size d×dd\times d, respectively. This structure of the Jacobian enables the exact computation of differential operators that only include diagonal terms of the Jacobian with dd instead of n​dnd backward passes through the network.
+In appendix A we show how HoMP can be adapted to attention mechanisms as well.
+4 Computational Complexity
+4.1 Graph Connectivity
+The number of backward passes through a vector field bb parametrized by algorithm 1 that is required to compute its divergence is reduced by a factor of nn compared to a standard GNN. However, the forward pass through bb is slower than through a standard GNN, as bb is operating on the line graph. This overhead will scale with the number of edges, which we denote #​E\#E for GG and #​El​g\#E^{lg} for L⁡(G)L(G). In table 1 we show how the number of edges varies with graph types. For a fully connected graph, #​El​g\#E^{lg} scales as n3n^{3} resulting in an impractical overhead in high-dimensional systems. To address this, we consider kk nearest-neighbors (kkNN) graphs instead which scale as #​El​g=𝒪⁡(n​k2)\#E^{lg}=\mathcal{O}(nk^{2}). Choosing k≤𝒪⁡(n)k\leq\mathcal{O}(\sqrt{n}) will leave the cost of a forward-pass through bb comparable to a standard GNN with a fully connected graph. To test whether this restriction in connectivity results in a sufficiently expressive model, we empirically test different values for kk in section 5.
+Using a kkNN graph poses a locality assumption that might limit the model’s ability to learn the equilibrium distribution of systems with long-range interaction (e.g., systems with coulomb interactions such as molecules). One possible strategy to circumvent this problem is described in appendix C.
+Table 1: Number of edges of L⁡(G)L(G) and GG
+|
+fully connected |
+kk neighbors |
+#​E\#E |
+𝒪⁡(n2)\mathcal{O}(n^{2}) |
+𝒪⁡(n​k)\mathcal{O}(nk) |
+#​El​g\#E^{lg} |
+𝒪⁡(n3)\mathcal{O}(n^{3}) |
+𝒪⁡(n​k2)\mathcal{O}(nk^{2}) |
+4.2 Divergence Calculation Speed-up
+We summarize our runtime estimations for one integration step during inference RTs​t​e​p\text{RT}^{step}, including likelihood calculations, for HollowFlow and a standard GNN based flow model in the following theorem:
+Theorem 2.
+Consider a GNN-based flow model with a fully connected graph Gf​cG_{fc} and TT message passing steps and a HollowFlow model with a kk neighbors graph GkG_{k} and Tl​gT^{lg} message passing steps. Let both graphs have nn nodes and dd-dimensional node features.
+The computational complexity of sampling from the fully connected GNN-based flow model including sample likelihoods is
+|
+RTs​t​e​p​(Gf​c)\displaystyle\text{RT}^{step}(G_{fc}) |
+=𝒪⁡(T​n3​d),\displaystyle=\mathcal{O}(Tn^{3}d), |
+|
+(18) |
+while the complexity of the HollowFlow model for the same task is
+|
+RTs​t​e​p​(L⁡(Gk))\displaystyle\text{RT}^{step}(L(G_{k})) |
+=𝒪⁡(n⁡(Tl​g​k2+d​k)).\displaystyle=\mathcal{O}(n(T^{lg}k^{2}+dk)). |
+|
+(19) |
+Moreover, the speed-up of HollowFlow compared to the GNN-based flow model is
+|
+RTs​t​e​p​(Gf​c)RTs​t​e​p​(L⁡(Gk))=𝒪⁡(T​n2​dTl​g​k2+d​k).\displaystyle\frac{\text{RT}^{step}(G_{fc})}{\text{RT}^{step}(L(G_{k}))}=\mathcal{O}\left(\frac{Tn^{2}d}{T^{lg}k^{2}+dk}\right). |
+|
+(20) |
+A derivation of these estimates can be found in section B.2.
+5 Experiments
+We test HollowFlow on two Lennard-Jones systems with 13 and 55 particles, respectively, (LJ13, LJ55). We also present results on Alanine dipeptide (ALA2) in Appendix C.3.
+To this end, we train a CNF (for training details and hyperparameters see appendix D) using the conditional flow matching loss [20] to sample from the equilibrium distribution of these systems. We parametrize the vector field of our CNF using the O⁡(3)O(3)-equivariant PaiNN architecture [26]. We additionally use minibatch optimal transport [22, 34] and equivariant optimal transport [23]. For each system we train multiple different models:
+Baseline: O⁡(3)O(3)-equivariant GNN on a fully connected graph with 3–7 message passing steps.
+HollowFlow: O⁡(3)O(3)-equivariant HollowFlow on a kkNN graph with different values for kk with two message passing steps.
+In the case of LJ13, we systematically test all values of kk from 22 to 1212 in steps of 22 to gain insight into how kk affects the performance and runtime of the model. Based on our findings and the theoretical scaling laws, we pick k∈{7,27}k\in\{7,27\} for LJ55.
+Motivated by the symmetry of pairwise interactions between atoms, all kkNN graphs are symmetrized, i.e., whenever the edge (i,j)(i,j) is included in the kkNN graph the edge (j,i)(j,i) is included as well, even if it is not naturally part of the kkNN graph.
+All training details and hyperparameters are reported in appendix D.
+Criteria to Assess Effectiveness
+We measure the sampling efficiency through the Kish effective samples size (ESS) [35]. As the ESS is highly sensitive to outliers, we remove a right and left percentile of the log importance weights, log⁡wi\log w_{i}, to get a more robust, yet biased, metric, ESSrem (see section D.7) [36]. As HoMP is, in general, a restriction compared to normal message passing, we expect the ESS to be lower. However, as long as the speed-up is sufficiently large, our method can still be an overall improvement.
+To gauge the improvement we introduce a compute normalized, relative ESS, i.e., the number of effective samples per GPU second and GPU usage during inference (see eq. 21). This gives us fairer grounds for comparison of HollowFlow against our baseline, a standard O⁡(3)O(3)-equivariant CNF. Further, by dividing the relative ESS for all hollow architectures by the baseline relative ESS, we get the effective speed-up (EffSU) and correspondingly the EffSUrem calculated from the relative ESSrem in the same way. To ensure a fair comparison, we ran all inference tasks on the same type of GPU for every system, respectively. Details can be found in appendix D.
+The results for LJ13 and LJ55 are listed in tables 2 and 3. For both systems we observe that the ESS and the ESSrem are highest for the baseline and significantly smaller for HollowFlow. However, the relative ESSrem is significantly higher for all HollowFlow models. This is reflected in the effective speed-up EffSUrem, gauging how many times more samples we can generate per compute compared to our non-hollow baseline. While the maximal EffSUrem that we observe for LJ13 is about 3.33.3 for k=k= 66, for LJ55 we observe a maximal EffSUrem of about 93.793.7 for k=k= 77. This shows that HollowFlow can reduce the compute required for sampling by about two orders of magnitude on our larger test system.
+In fig. 3 we provide a detailed analysis of the runtime of different parts of models trained on LJ13 during sampling. Figure 3(b) demonstrates that the vast majority of the compute in the baseline model is spent on the divergence calculations while only a tiny fraction is spent on the forward pass. fig. 3(a) shows that exactly the opposite is true for HollowFlow, resulting in a decrease of runtime by a factor of up to ∼15\sim 15, depending on kk.
+|
+relative ESS=ESS×#samplesRT×(GPU usage),EffSU​(⋅)= relative ESS​(⋅)relative ESS​(baseline)\displaystyle\text{ relative ESS}=\frac{\text{ESS}\times\text{\#samples}}{\text{RT}\times\text{(GPU usage)}},\quad\text{EffSU}(\cdot)=\frac{\text{ relative ESS}(\cdot)}{{\text{relative ESS}}(\text{baseline})} |
+|
+(21) |
+(a)
+(b)
+Figure 3: Runtimes of HollowFlow and baseline for generating 10510^{5} LJ13 equilibrium samples. All runtimes are multiplied by the GPU usage. 3(a) Total runtime RT​(L​(G))\text{RT}(L(G)) and runtime of the forward passes RTf​(L​(G))\text{RT}^{f}(L(G)) and backward passes RT∇​(L​(G))\text{RT}^{\nabla}(L(G)) of HollowFlow. In light blue: speed-up (ratio of the runtimes of the fully connected baseline RT​(G)\text{RT}(G)) and HollowFlow . 3(b) Total runtime and runtime of the forward and backward passes for the non-hollow fully connected baseline. The forward and backward runtimes of the baseline were extrapolated from other runs, see section D.6 While the total runtime of the baseline is massively dominated by the backward pass, the opposite is true for HollowFlow.
+Table 2: Comparison of HollowFlow trained using different kkNN graphs and the non-hollow fully connected baseline, all trained on LJ13. The two rightmost columns show the effective speed-up compared to the baseline eq. 21 with and without weight clipping. Bold indicates best performance.
+|
+ESS (%)(\%) |
+ESS(↑)r​e​m{}_{rem}\ (\uparrow) (%)(\%) |
+EffSU(↑)r​e​m{}_{rem}\ (\uparrow) |
+EffSU |
+k=2k=2 |
+0.0540.0390.0680.054_{0.039}^{0.068} |
+2.922.892.952.92_{2.89}^{2.95} |
+1.0591.0491.0701.059_{1.049}^{1.070} |
+1.160.321.961.16_{0.32}^{1.96} |
+k=4k=4 |
+0.0410.0010.1070.041_{0.001}^{0.107} |
+10.3410.2810.4010.34_{10.28}^{10.40} |
+2.6492.6312.6672.649_{2.631}^{2.667} |
+0.640.011.620.64_{0.01}^{1.62} |
+k=6k=6 |
+3.3002.4104.3013.300_{2.410}^{4.301} |
+20.2020.1120.2920.20_{20.11}^{20.29} |
+3.2603.2433.278\mathbf{3.260}_{3.243}^{3.278} |
+31.877.7753.8031.87_{7.77}^{53.80} |
+k=8k=8 |
+2.7452.2503.2362.745_{2.250}^{3.236} |
+20.6420.5520.7220.64_{20.55}^{20.72} |
+2.3102.2972.3232.310_{2.297}^{2.323} |
+18.265.6531.1218.26_{5.65}^{31.12} |
+k=10k=10 |
+1.0570.8031.3011.057_{0.803}^{1.301} |
+16.5016.4116.5816.50_{16.41}^{16.58} |
+1.4841.4751.4921.484_{1.475}^{1.492} |
+5.511.619.195.51_{1.61}^{9.19} |
+k=12k=12 |
+4.0693.2604.9264.069_{3.260}^{4.926} |
+19.7219.6319.8019.72_{19.63}^{19.80} |
+1.6271.6191.6361.627_{1.619}^{1.636} |
+20.115.6635.5520.11_{5.66}^{35.55} |
+baseline |
+2.1320.4172.2312.132_{0.417}^{2.231} |
+40.7340.6040.87\mathbf{40.73}_{40.60}^{40.87} |
+11 |
+11 |
+Table 3: Comparison of HollowFlow trained using different kkNN graphs and the non-hollow fully connected baseline, all trained on LJ55. The two rightmost columns show the effective speed-up compared to the baseline eq. 21 with and without weight clipping. Bold indicates best performance.
+|
+ESS (%)(\%) |
+ESS(↑)r​e​m{}_{rem}\ (\uparrow) (%)(\%) |
+EffSU(↑)r​e​m{}_{rem}\ (\uparrow) |
+EffSU |
+k=7k=7 |
+0.0060.0030.0100.006_{0.003}^{0.010} |
+0.530.510.560.53_{0.51}^{0.56} |
+93.73788.48499.071\mathbf{93.737}_{88.484}^{99.071} |
+82.2631.04136.5682.26_{31.04}^{136.56} |
+k=27k=27 |
+0.0070.0030.0120.007_{0.003}^{0.012} |
+0.640.610.680.64_{0.61}^{0.68} |
+9.4668.9659.9869.466_{8.965}^{9.986} |
+8.463.3114.908.46_{3.31}^{14.90} |
+k=55k=55 |
+0.0200.0140.0250.020_{0.014}^{0.025} |
+0.740.710.770.74_{0.71}^{0.77} |
+4.3654.1444.5834.365_{4.144}^{4.583} |
+9.114.5713.189.11_{4.57}^{13.18} |
+baseline |
+0.0480.0290.0510.048_{0.029}^{0.051} |
+2.962.893.03\mathbf{2.96}_{2.89}^{3.03} |
+11 |
+11 |
+6 Related Works
+Efficient Sample Likelihoods in Probability Flow Generative Models
+Evaluating the change in probability associated with probability flow generative models is subject to research but broadly fall into two different categories: 1) approximate estimator by invoking stochastic calculus [37]
+or trace estimators [38, 39, 30] which are efficient, but prone to high variance 2) NFs with structured Jacobians [16, 17, 18, 40, 41], possibly combined with annealing strategies [42, 43, 44, 45] which offer efficiency, but limited expressivity or an inability to exploit certain data symmetries such as permutation equivariance.
+Boltzmann Emulators and Other Surrogates
+Several works forego quantitative alignment with a physical potential energy function u⁡(𝐱)u(\mathbf{x}) in favor of scaling to larger systems through coarse-graining or enabling faster sampling. These qualitative and semi-quantitative Boltzmann surrogates are often referred to as Boltzmann Emulators [46]. Some notable examples include, SMA-MD [47],
+BioEmu [48], AlphaFlow [49], JAMUN [50]. and OpenComplex2 [51]. Other approaches, instead aim to mimic MD simulations with large time-steps including ITO [52, 53, 54], TimeWarp [41], ScoreDynamics [55] and related approaches [56, 57, 58, 59, 60].
+Non-backtracking Graphs
+Non-backtracking graphs are applied in a variety of classical algorithms, e.g., [61, 62]. NoBGNNs that are non-backtracking for only one message passing step have been applied in a range of other context including for community detection [32], as way to reduce over-squashing [31] and alleviate redundancy in message passing [63]. However, nobody has yet exploited these methods to construct a NoBGNN that is non-backtracking for an arbitrary number of message passing steps to give the Jacobian a structure that allows for cheap divergence calculations.
+7 Limitations
+We demonstrate good theoretical scaling properties of HollowFlow to large systems and support this experimentally on systems of up to 165 dimensions. However, the kkNN graph used in the current HollowFlow implementation involves an assumption of locality, which may break down in molecular and particle systems with long-range interactions, such as electrostatics. Future work involves exploring strategies to incorporate such long-range interactions, which may involve other strategies to construct the graph used in HollowFlow, Ewald-summation-based methods [64, 65],
+or linear/fast attention [66, 67]. Also, the fact that some edges in the line graph underlying HollowFlow need to be removed after each message passing step might be problematic at scale. Despite that, there is still a wide range of physical systems where long-range interactions are effectively shielded, such as metals and covalent solids, which might enjoy the properties of HollowFlow models even without these technical advances.
+Overall, the performance of our baseline is not in line with state-of-the-art in terms of ESS for the studied systems. However, since our HollowFlow models build directly on the baseline we anticipate any improvement in the baseline to translate into the HollowFlow models as well.
+8 Conclusions
+We introduced HollowFlow, a flow-based generative model leveraging a novel NoBGNN based on Hollow Message Passing (HoMP), enabling sample likelihood evaluations with a constant number of backward passes independent of system size. We demonstrated theoretically that we can achieve sampling speed-ups of up to 𝒪⁡(n2)\mathcal{O}(n^{2}), if the underlying graph GG of HollowFlow is a kkNN graph. By training a Boltzmann generator on two different systems, we found significant performance gains in terms of compute time for sampling and likelihood evaluation, the largest system enjoying a 102×10^{2}\times speed-up in line with our theoretical predictions. Since HoMP can be adopted into any message-passing-based architecture [68], our work can pave the way to dramatically boost the efficiency of expressive CNF-based Boltzmann Generators for high-dimensional systems.
+Acknowledgements
+This work was partially supported by the Wallenberg AI, Autonomous Systems and Software Program (WASP) funded by the Knut and Alice Wallenberg Foundation. Results were enabled by resources provided by the National Academic Infrastructure for Supercomputing in Sweden (NAISS) at Alvis (projects: NAISS 2024/22-688 and NAISS 2025/22-841), partially funded by the Swedish Research Council through grant agreement no. 2022-06725. The authors thank Ross Irwin and Selma Moqvist and other team members of the AIMLeNS lab at Chalmers University of Technology for discussions, feedback and comments.
+References
+[1]
+Frank Noé, Simon Olsson, Jonas Köhler and Hao Wu
+“Boltzmann generators: Sampling equilibrium states of many-body systems with deep learning”
+In Science 365.6457
+American Association for the Advancement of Science, 2019, pp. eaaw1147
+[2]
+Jan Prinz, Bettina Keller and Frank Noé
+“Probing molecular kinetics with Markov models: Metastable states, transition pathways and spectroscopic observables”
+In Physical Chemistry Chemical Physics 13.38, 2011, pp. 16912–16927
+DOI: 10.1039/c1cp21258c
+[3]
+Simon Olsson et al.
+“Combining experimental and simulation data of molecular processes via augmented Markov models”
+In Proceedings of the National Academy of Sciences of the United States of America 114.31, 2017, pp. 8265–8270
+[4]
+Christopher Kolloff and Simon Olsson
+“Rescuing off-equilibrium simulation data through dynamic experimental data with dynAMMo”
+In Machine Learning: Science and Technology 4.4, 2023
+DOI: 10.1088/2632-2153/ad10ce
+[5]
+Ignasi Buch, Toni Giorgino and Gianni De
+“Complete reconstruction of an enzyme-inhibitor binding process by molecular dynamics simulations”
+In Proceedings of the National Academy of Sciences 108.25
+Proceedings of the National Academy of Sciences, 2011, pp. 10184–10189
+DOI: 10.1073/pnas.1103547108
+[6]
+Nuria Plattner and Frank Noé
+“Protein conformational plasticity and complex ligand-binding kinetics explored by atomistic simulations and Markov models”
+In Nature Communications 6.1
+Springer ScienceBusiness Media LLC, 2015
+DOI: 10.1038/ncomms8653
+[7]
+Kresten Lindorff-Larsen, Stefano Piana, Ron Dror and David Shaw
+“How fast-folding proteins fold”
+In Science 334.6055
+American Association for the Advancement of Science, 2011, pp. 517–520
+[8]
+Frank Noé et al.
+“Constructing the equilibrium ensemble of folding pathways from short off-equilibrium simulations”
+In Proceedings of the National Academy of Sciences 106.45
+Proceedings of the National Academy of Sciences, 2009, pp. 19011–19016
+DOI: 10.1073/pnas.0905466106
+[9]
+M. Parrinello and A. Rahman
+“Polymorphic transitions in single crystals: A new molecular dynamics method”
+In Journal of Applied Physics 52.12
+AIP Publishing, 1981, pp. 7182–7190
+DOI: 10.1063/1.328693
+[10]
+William. Swope and Hans. Andersen
+“10610^{6}-particle molecular-dynamics study of homogeneous nucleation of crystals in a supercooled atomic liquid”
+In Physical Review B 41.10
+American Physical Society (APS), 1990, pp. 7042–7054
+DOI: 10.1103/physrevb.41.7042
+[11]
+Pieter ten Wolde, Maria. Ruiz-Montero and Daan Frenkel
+“Numerical Evidence for bcc Ordering at the Surface of a Critical fcc Nucleus”
+In Physical Review Letters 75.14
+American Physical Society (APS), 1995, pp. 2714–2717
+DOI: 10.1103/physrevlett.75.2714
+[12]
+Hendrik Jung et al.
+“Machine-guided path sampling to discover mechanisms of molecular self-organization”
+In Nature Computational Science 3.4
+Springer ScienceBusiness Media LLC, 2023, pp. 334–345
+DOI: 10.1038/s43588-023-00428-z
+[13]
+Jérôme Hénin et al.
+“Enhanced Sampling Methods for Molecular Dynamics Simulations [Article v1.0]”
+In Living Journal of Computational Molecular Science 4.1
+University of Colorado at Boulder, 2022
+DOI: 10.33011/livecoms.4.1.1583
+[14]
+Esteban. Tabak and Eric Vanden-Eijnden
+“Density estimation by dual ascent of the log-likelihood”
+In Communications in Mathematical Sciences 8.1
+International Press of Boston, 2010, pp. 217–233
+[15]
+Danilo Rezende and Shakir Mohamed
+“Variational Inference with Normalizing Flows”, 2016
+arXiv: http://arxiv.org/abs/1505.05770
+[16]
+Laurent Dinh, Jascha Sohl-Dickstein and Samy Bengio
+“Density estimation using Real NVP”, 2016
+eprint:arXiv:1605.08803
+[17]
+George Papamakarios, Theo Pavlakou and Iain Murray
+“Masked Autoregressive Flow for Density Estimation”, 2017
+eprint:arXiv:1705.07057
+[18]
+Durk Kingma and Prafulla Dhariwal
+“Glow: Generative flow with invertible 1x1 convolutions”
+In Advances in neural information processing systems 31, 2018
+[19]
+Qiang Liu
+“Rectified flow: A marginal preserving approach to optimal transport”
+In arXiv preprint arXiv:2209.14577, 2022
+[20]
+Yaron Lipman et al.
+“Flow Matching for Generative Modeling”, 2023
+arXiv: https://arxiv.org/abs/2210.02747
+[21]
+Michael. Albergo, Nicholas. Boffi and Eric Vanden-Eijnden
+“Stochastic Interpolants: A Unifying Framework for Flows and Diffusions”
+In arXiv, 2023
+URL: http://arxiv.org/abs/2303.08797
+[22]
+Alexander Tong et al.
+“Improving and generalizing flow-based generative models with minibatch optimal transport” Expert Certification
+In Transactions on Machine Learning Research, 2024
+URL: https://openreview.net/forum?id=CD9Snc73AW
+[23]
+Leon Klein, Andreas Krämer and Frank Noé
+“Equivariant flow matching”, 2023
+arXiv: https://arxiv.org/abs/2306.15030
+[24]
+Jonas Köhler, Leon Klein and Frank Noe
+“Equivariant Flows: Exact Likelihood Generative Learning for Symmetric Densities”
+In Proceedings of the 37th International Conference on Machine Learning 119, Proceedings of Machine Learning Research
+PMLR, 2020, pp. 5361–5370
+URL: https://proceedings.mlr.press/v119/kohler20a.html
+[25]
+Danilo Rezende, Sébastien Racanière, Irina Higgins and Peter Toth
+“Equivariant Hamiltonian Flows”, 2019
+arXiv: https://arxiv.org/abs/1909.13739
+[26]
+Kristof. Schütt, Oliver. Unke and Michael Gastegger
+“Equivariant message passing for the prediction of tensorial properties and molecular spectra”
+In CoRR abs/2102.03150, 2021
+arXiv: https://arxiv.org/abs/2102.03150
+[27]
+Mario Geiger and Tess Smidt
+“e3nn: Euclidean Neural Networks”, 2022
+arXiv: https://arxiv.org/abs/2207.09453
+[28]
+Andreas Griewank and Andrea Walther
+“Evaluating Derivatives: Principles and Techniques of Algorithmic Differentiation, Second Edition”
+Society for IndustrialApplied Mathematics, 2008
+DOI: 10.1137/1.9780898717761
+[29]
+Ricky.. Chen and David Duvenaud
+“Neural Networks with Cheap Differential Operators”
+In CoRR abs/1912.03579, 2019
+arXiv: http://arxiv.org/abs/1912.03579
+[30]
+Will Grathwohl, Ricky.. Chen, Jesse Bettencourt and David Duvenaud
+“Scalable Reversible Generative Models with Free-form Continuous Dynamics”
+In International Conference on Learning Representations, 2019
+URL: https://openreview.net/forum?id=rJxgknCcK7
+[31]
+Seonghyun Park et al.
+“Non-backtracking Graph Neural Networks”, 2024
+arXiv: https://arxiv.org/abs/2310.07430
+[32]
+Zhengdao Chen, Xiang Li and Joan Bruna
+“Supervised Community Detection with Line Graph Neural Networks”, 2020
+arXiv: https://arxiv.org/abs/1705.08415
+[33]
+Justin Gilmer et al.
+“Neural Message Passing for Quantum Chemistry”, 2017
+arXiv: https://arxiv.org/abs/1704.01212
+[34]
+Aram-Alexandre Pooladian et al.
+“Multisample Flow Matching: Straightening Flows with Minibatch Couplings.”
+In ICML 202, Proceedings of Machine Learning Research
+PMLR, 2023, pp. 28100–28127
+URL: http://dblp.uni-trier.de/db/conf/icml/icml2023.html#PooladianBDALC23
+[35]
+Leslie Kish
+“Survey Sampling”
+John Wiley & Sons, 1965
+[36]
+Selma Moqvist et al.
+“Thermodynamic Interpolation: A Generative Approach to Molecular Thermodynamics and Kinetics”
+In Journal of Chemical Theory and Computation 21.5
+American Chemical Society (ACS), 2025, pp. 2535–2545
+DOI: 10.1021/acs.jctc.4c01557
+[37]
+Marta Skreta et al.
+“The Superposition of Diffusion Models Using the Itô Density Estimator”, 2024
+eprint:arXiv:2412.17762
+[38]
+M.F. Hutchinson
+“A stochastic estimator of the trace of the influence matrix for laplacian smoothing splines”
+In Communications in Statistics - Simulation and Computation 19.2
+Informa UK Limited, 1990, pp. 433–450
+DOI: 10.1080/03610919008812866
+[39]
+Ryan. Adams et al.
+“Estimating the Spectral Density of Large Implicit Matrices”, 2018
+eprint:arXiv:1802.03451
+[40]
+Laurence Midgley et al.
+“SE(3) Equivariant Augmented Coupling Flows”
+In Thirty-seventh Conference on Neural Information Processing Systems, 2023
+URL: https://openreview.net/forum?id=KKxO6wwx8p
+[41]
+Leon Klein et al.
+“Timewarp: Transferable Acceleration of Molecular Dynamics by Learning Time-Coarsened Dynamics”
+In Advances in Neural Information Processing Systems 36
+Curran Associates, Inc., 2023, pp. 52863–52883
+URL: https://proceedings.neurips.cc/paper_files/paper/2023/file/a598c367280f9054434fdcc227ce4d38-Paper-Conference.pdf
+[42]
+Laurence Midgley et al.
+“Flow Annealed Importance Sampling Bootstrap”
+In The Eleventh International Conference on Learning Representations, 2023
+URL: https://openreview.net/forum?id=XCTVFJwS9LJ
+[43]
+Michael. Albergo and Eric Vanden-Eijnden
+“NETS: A Non-Equilibrium Transport Sampler”, 2024
+eprint:arXiv:2410.02711
+[44]
+Marta Skreta et al.
+“Feynman-Kac Correctors in Diffusion: Annealing, Guidance, and Product of Experts”, 2025
+eprint:arXiv:2503.02819
+[45]
+Charlie. Tan et al.
+“Scalable Equilibrium Sampling with Sequential Boltzmann Generators”, 2025
+eprint:arXiv:2502.18462
+[46]
+Bowen Jing et al.
+“Torsional Diffusion for Molecular Conformer Generation”, 2022
+eprint:arXiv:2206.01729
+[47]
+Juan Viguera, Sara Romeo, Ola Engkvist and Simon Olsson
+“Generation of conformational ensembles of small molecules via surrogate model-assisted molecular dynamics”
+In Machine Learning: Science and Technology 5.2
+IOP Publishing, 2024, pp. 025010
+DOI: 10.1088/2632-2153/ad3b64
+[48]
+Sarah Lewis et al.
+“Scalable emulation of protein equilibrium ensembles with generative deep learning”
+Cold Spring Harbor Laboratory, 2024
+DOI: 10.1101/2024.12.05.626885
+[49]
+Bowen Jing, Bonnie Berger and Tommi Jaakkola
+“AlphaFold Meets Flow Matching for Generating Protein Ensembles”, 2024
+eprint:arXiv:2402.04845
+[50]
+Ameya Daigavane et al.
+“JAMUN: Bridging Smoothed Molecular Dynamics and Score-Based Learning for Conformational Ensembles”, 2024
+eprint:arXiv:2410.14621
+[51]
+Qiwei Ye
+“Towards Unraveling Biomolecular Conformational Landscapes with a Generative Foundation Model”
+Cold Spring Harbor Laboratory, 2025
+DOI: 10.1101/2025.05.01.651643
+[52]
+Mathias Schreiner, Ole Winther and Simon Olsson
+“Implicit Transfer Operator Learning: Multiple Time-Resolution Surrogates for Molecular Dynamics”, 2023
+arXiv: https://arxiv.org/abs/2305.18046
+[53]
+Juan Diez, Mathias Schreiner, Ola Engkvist and Simon Olsson
+“Boltzmann priors for Implicit Transfer Operators”
+In The Thirteenth International Conference on Learning Representations, 2025
+URL: https://openreview.net/forum?id=pRCOZllZdT
+[54]
+Juan Diez, Mathias Schreiner and Simon Olsson
+“Transferable Generative Models Bridge Femtosecond to Nanosecond Time-Step Molecular Dynamics”, 2025
+eprint:arXiv:2510.07589
+[55]
+Tim Hsu, Babak Sadigh, Vasily Bulatov and Fei Zhou
+“Score Dynamics: Scaling Molecular Dynamics with Picoseconds Time Steps via Conditional Diffusion Model”
+In Journal of Chemical Theory and Computation 20.6
+American Chemical Society (ACS), 2024, pp. 2335–2348
+DOI: 10.1021/acs.jctc.3c01361
+[56]
+Fabian. Thiemann et al.
+“Force-Free Molecular Dynamics Through Autoregressive Equivariant Networks”, 2025
+eprint:arXiv:2503.23794
+[57]
+Magnus Petersen, Gemma Roig and Roberto Covino
+“DynamicsDiffusion: Generating and Rare Event Sampling of Molecular Dynamic Trajectories Using Diffusion Models”, 2024
+URL: https://openreview.net/forum?id=kKXIYUi8ff
+[58]
+Bowen Jing, Hannes Stärk, Tommi Jaakkola and Bonnie Berger
+“Generative Modeling of Molecular Dynamics Trajectories”, 2024
+eprint:arXiv:2409.17808
+[59]
+Pantelis. Vlachas, Julija Zavadlav, Matej Praprotnik and Petros Koumoutsakos
+“Accelerated Simulations of Molecular Systems through Learning of Effective Dynamics”
+In Journal of Chemical Theory and Computation 18.1
+American Chemical Society (ACS), 2021, pp. 538–549
+DOI: 10.1021/acs.jctc.1c00809
+[60]
+Mhd Murtada, Z. Brotzakis and Michele Vendruscolo
+“MD-LLM-1: A Large Language Model for Molecular Dynamics”, 2025
+eprint:arXiv:2508.03709
+[61]
+Mark Kempton
+“Non-backtracking random walks and a weighted Ihara’s theorem”, 2016
+arXiv: https://arxiv.org/abs/1603.05553
+[62]
+M… Newman
+“Spectral community detection in sparse networks”, 2013
+arXiv: https://arxiv.org/abs/1308.6494
+[63]
+Rongqin Chen, Shenghui Zhang, Leong U and Ye Li
+“Redundancy-Free Message Passing for Graph Neural Networks”
+In Advances in Neural Information Processing Systems 35
+Curran Associates, Inc., 2022, pp. 4316–4327
+URL: https://proceedings.neurips.cc/paper_files/paper/2022/file/1bd6f17639876b4856026744932ec76f-Paper-Conference.pdf
+[64]
+Arthur Kosmala, Johannes Gasteiger, Nicholas Gao and Stephan Günnemann
+“Ewald-based Long-Range Message Passing for Molecular Graphs”
+In International Conference on Machine Learning (ICML), 2023
+[65]
+Bingqing Cheng
+“Latent Ewald summation for machine learning of long-range interactions”
+In npj Computational Materials 11.1
+Springer ScienceBusiness Media LLC, 2025
+DOI: 10.1038/s41524-025-01577-7
+[66]
+J. Frank, Stefan Chmiela, Klaus-Robert Müller and Oliver. Unke
+“Euclidean Fast Attention: Machine Learning Global Atomic Representations at Linear Cost”, 2024
+eprint:arXiv:2412.08541
+[67]
+Alessandro Caruso et al.
+“Extending the RANGE of Graph Neural Networks: Relaying Attention Nodes for Global Encoding”, 2025
+eprint:arXiv:2502.13797
+[68]
+Petar Veličković
+“Message passing all the way up”
+In ICLR 2022 Workshop on Geometrical and Topological Representation Learning, 2022
+URL: https://openreview.net/forum?id=Bc8GiEZkTe5
+[69]
+Michael. Bronstein, Joan Bruna, Taco Cohen and Petar Veličković
+“Geometric Deep Learning: Grids, Groups, Graphs, Geodesics, and Gauges”, 2021
+arXiv: https://arxiv.org/abs/2104.13478
+[70]
+Petar Veličković et al.
+“Graph Attention Networks”, 2018
+arXiv: https://arxiv.org/abs/1710.10903
+[71]
+Jason Ansel et al.
+“PyTorch 2: Faster Machine Learning Through Dynamic Python Bytecode Transformation and Graph Compilation”
+In 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 (ASPLOS ’24)
+ACM, 2024
+DOI: 10.1145/3620665.3640366
+[72]
+Michael Poli et al.
+“TorchDyn: Implicit Models and Neural Numerical Methods in PyTorch”
+URL: https://github.com/DiffEqML/torchdyn
+[73]
+Kristof. Schütt et al.
+“SchNetPack: A Deep Learning Toolbox For Atomistic Systems”
+In Journal of Chemical Theory and Computation 15.1, 2019, pp. 448–455
+DOI: 10.1021/acs.jctc.8b00908
+[74]
+Kristof. Schütt et al.
+“SchNetPack 2.0: A neural network toolbox for atomistic machine learning”
+In The Journal of Chemical Physics 158.14, 2023, pp. 144801
+DOI: 10.1063/5.0138367
+[75]
+Stefan Elfwing, Eiji Uchibe and Kenji Doya
+“Sigmoid-Weighted Linear Units for Neural Network Function Approximation in Reinforcement Learning”, 2017
+eprint:arXiv:1702.03118
+[76]
+Diederik. Kingma and Jimmy Ba
+“Adam: A Method for Stochastic Optimization”, 2017
+arXiv: https://arxiv.org/abs/1412.6980
+Appendix A Adaptation of HollowFlow to Attention
+As illustrated in [69], attention can be considered a special case of message passing neural networks. Thus, the adaptation is straightforward, we outline two possible strategies in this section.
+First, we replace the general message function ϕ\phi (eq. 14) by a product of the importance coefficients from a self-attention mechanism a:ℝnh×ℝnh→ℝa:\mathbb{R}^{n_{h}}\times\mathbb{R}^{n_{h}}\rightarrow\mathbb{R} and a learnable function ϕ~:ℝnh→ℝnh\tilde{\phi}:\mathbb{R}^{n_{h}}\rightarrow\mathbb{R}^{n_{h}}:
+|
+mk​i​jt=a⁡(hi​jt,hk​it)​ϕ~​(hi​jt),mi​jt=∑k∈𝒩l​g​(i,j)mk​i​jt,hi​jt+1=ψ⁡(hi​jt,mi​jt).\displaystyle m^{t}_{kij}=a(h^{t}_{ij},h^{t}_{ki})\tilde{\phi}(h^{t}_{ij}),\quad m^{t}_{ij}=\sum_{k\in\mathcal{N}^{lg}(i,j)}m^{t}_{kij},\quad h^{t+1}_{ij}=\psi(h^{t}_{ij},m^{t}_{ij}). |
+|
+(22) |
+𝒩l​g​(i,j)\mathcal{N}^{lg}(i,j) is defined in eq. 28.
+Second, for graph-attention-like mechanism [70], we define the line graph softmax function for a graph GqG^{q} with the corresponding notion of nearest neighbors 𝒩l​g,q​(i,j)\mathcal{N}^{lg,q}(i,j):
+|
+softmaxi​jq​(yi​j​k)=exp⁡(yi​j​k)∑l∈𝒩l​g,q​(i,j)exp⁡(yi​j​l).\displaystyle\text{softmax}^{q}_{ij}(y_{ijk})=\frac{\exp\left(y_{ijk}\right)}{\sum_{l\in\mathcal{N}^{lg,q}(i,j)}\exp\left(y_{ijl}\right)}. |
+|
+(23) |
+The updates of HollowFlow then become
+|
+αk​i​jt,q\displaystyle\alpha^{t,q}_{kij} |
+=softmaxi​jq​(a⁡(hi​jt,hk​it))\displaystyle=\text{softmax}^{q}_{ij}(a(h^{t}_{ij},h^{t}_{ki})) |
+|
+(24) |
+|
+hi​jt+1\displaystyle h_{ij}^{t+1} |
+=σ⁡(∑k∈𝒩l​g,q​(i,j)αk​i​jt,q​𝐖i​j​hk​it),\displaystyle=\sigma\left(\sum_{k\in\mathcal{N}^{lg,q}(i,j)}\alpha^{t,q}_{kij}\mathbf{W}_{ij}h^{t}_{ki}\right), |
+|
+(25) |
+where 𝐖i​j∈ℝnh×nh\mathbf{W}_{ij}\in\mathbb{R}^{n_{h}\times n_{h}} is a learnable weight matrix, σ:ℝ→ℝ\sigma:\mathbb{R}\rightarrow\mathbb{R} is a nonlinearity (applied element wise) and a:ℝnh×ℝnh→ℝa:\mathbb{R}^{n_{h}}\times\mathbb{R}^{n_{h}}\rightarrow\mathbb{R} is a non-linear self-attention function, typically a feed-forward neural network. One can also generalize to multi-head attention by independently executing eqs. 24 and 25, possibly even on differently connected graphs {Gq}q=1H\{G_{q}\}_{q=1}^{H} potentially circumventing expressiveness problems, and then concatenating the result:
+|
+αk​i​jt,q\displaystyle\alpha^{t,q}_{kij} |
+=softmaxi​jq​(a⁡(𝐖q​hi​jt,𝐖q​hk​it))\displaystyle=\text{softmax}^{q}_{ij}(a(\mathbf{W}^{q}h^{t}_{ij},\mathbf{W}^{q}h^{t}_{ki})) |
+|
+(26) |
+|
+hi​jt+1\displaystyle h_{ij}^{t+1} |
+=‖q=1Hσ⁡(∑k∈𝒩l​g,q​(i,j)αk​i​jt,q​𝐖i​jq​hk​it).\displaystyle=\bigparallel_{q=1}^{H}\sigma\left(\sum_{k\in\mathcal{N}^{lg,q}(i,j)}\alpha^{t,q}_{kij}\mathbf{W}_{ij}^{q}h^{t}_{ki}\right). |
+|
+(27) |
+Here, 𝐖q\mathbf{W}^{q} and 𝐖i​jq∈ℝnh×nh×H\mathbf{W}_{ij}^{q}\in\mathbb{R}^{n_{h}\times n_{h}\times H} are learnable weight matrices and HH is the number of attention heads.
+These formulations demonstrate that both self-attention and graph-attention layers can be integrated into HollowFlow without altering its block-hollow Jacobian structure, enabling efficient divergence computations within attention-based architectures.
+Appendix B Derivations and Proofs
+B.1 Hollowness of HollowFlow
+We first reintroduce some notation and do then restate algorithm 1 and theorem 1 and proof it.
+Notational remarks
+By 𝒩l​g​(i,j)\mathcal{N}^{lg}(i,j) and 𝒩⁡(i)\mathcal{N}(i) we mean the following notions of nearest neighbors:
+|
+𝒩l​g​(i,j)={k|(k,i,j)∈El​g}\displaystyle\mathcal{N}^{lg}(i,j)=\{k|(k,i,j)\in E^{lg}\} |
+|
+(28) |
+|
+𝒩⁡(i)={k|(k,i)∈E}.\displaystyle\mathcal{N}(i)=\{k|(k,i)\in E\}. |
+|
+(29) |
+Equation 28 is illustrated in fig. 4. The functions ϕ,ϕ~,ψ,ψ~\phi,\tilde{\phi},\psi,\tilde{\psi} and RR used in algorithm 1 are all learnable functions. B⁡(t)∈ℝn×n×nB(t)\in\mathbb{R}^{n\times n\times n} is the three-dimensional time-dependent back tracking array (see eq. 16 and algorithm 1), the integer tt indicates the current message passing step. The binary variable pd∈{t​r​u​e,f​a​l​s​e}\text{pd}\in\{true,false\} indicated whether the algorithms runs on the (translation invariant) pairwise differences or not. The detach​()\texttt{detach}() method means that derivatives w.r.t. the detached variable are ignored (i.e., equal to zero).
+Figure 4: Schematic example of the graph GG (in blue) and its line graph L⁡(G)L(G) (in orange): The line graph nodes encircled with a continuos red line correspond to 𝒩l​g​(j,i)\mathcal{N}^{lg}(j,i) while the node encircled with a dashed red line corresponds to 𝒩l​g​(i,j)\mathcal{N}^{lg}(i,j). Two edges of L⁡(G)L(G) are labelled explicitly to illustrate our labelling convention.
+Algorithm 1 Hollow message passing
+1:
+{𝐱i,Zi}i=1n​ where ​𝐱i∈ℝd​ and ​Zi∈ℝ,pd∈{t​r​u​e,f​a​l​s​e}\{\mathbf{x}_{i},Z_{i}\}_{i=1}^{n}\text{ where }\ \mathbf{x}_{i}\in\mathbb{R}^{d}\text{ and }Z_{i}\in\mathbb{R},\quad\text{pd}\in\{true,false\}
+2:
+{bi}i=1n,bi∈ℝd\{b_{i}\}_{i=1}^{n},\ b_{i}\in\mathbb{R}^{d}
+3:
+if pd then
+4:
+di​j=𝐱i−𝐱jd_{ij}=\mathbf{x}_{i}-\mathbf{x}_{j}, ei​j=embed​(di​j,Zi)e_{ij}=\texttt{embed}(d_{ij},Z_{i})
+5:
+else
+6:
+ni=embed​(𝐱i,Zi)n_{i}=\texttt{embed}(\mathbf{x}_{i},Z_{i})
+7:
+end if
+8:
+Calculate G=(N,E)G=(N,E), e.g., as a kkNN graph. Self-loops, i.e., (i,i)∈E(i,i)\in E are prohibited.
+9:
+Calculate the line graph L⁡(G)=(Nl​g,El​g)L(G)=(N^{lg},E^{lg}) and its node features ni​jl​gn^{lg}_{ij}:
+10:
+Nl​g=EN^{lg}=E, El​g={(i,j,k)|(i,j)∈E,(j,k)∈E and i≠k}E^{lg}=\{(i,j,k)|(i,j)\in E,(j,k)\in E\text{ and }i\neq k\}, ni​jl​g={ei​j​if pdni​elsen^{lg}_{ij}=\begin{cases}e_{ij}\ \text{if }\text{pd}\\
+n_{i}\ \text{else}\end{cases}
+11:
+Calculate initial node features hi​j0h^{0}_{ij} and initial backtracking array B​(0)i​j​kB(0)_{ijk}:
+12:
+hi​j0={ψ~(∑k∈𝒩l​g​(i,j)ϕ~(nl​gk​i))if pdni​jl​g​elseh^{0}_{ij}=\begin{cases}\tilde{\psi}(\ \ \sum\limits_{\mathclap{k\in\mathcal{N}^{lg}(i,j)}}\ \ \tilde{\phi}(n^{lg}_{ki}))\ \text{if }\text{pd}\\[14.22636pt]
+n^{lg}_{ij}\ \text{else}\end{cases}, B​(0)i​j​k={(1​if​k∈𝒩l​g​(i,j), 0​else)​ if pd(1​if​k=i, 0​else)​ else B(0)_{ijk}=\begin{cases}(1\ \text{if}\ k\in\mathcal{N}^{lg}(i,j),\ 0\ \text{else})\text{ if }\text{pd}\\[14.22636pt]
+(1\ \text{if}\ k=i,\ 0\ \text{else})\text{ else }\end{cases}
+13:
+14:
+for t←0t\leftarrow 0 to (Tl​g−1)(T^{lg}-1) do
+15:
+Remove appropriate edges of L⁡(G)L(G): El​g←El​g∖{(i,j,k)∈El​g|B​(t)i​j​k=1}E^{lg}\leftarrow E^{lg}\setminus\{(i,j,k)\in E^{lg}|B(t)_{ijk}=1\}
+16:
+Update backtracking array: B​(t+1)i​j​k=maxl∈𝒩l​g​(i,j)⁡{B​(t)l​i​k,B​(t)i​j​k}B(t+1)_{ijk}=\max_{l\in\mathcal{N}^{lg}(i,j)}\{B(t)_{lik},B(t)_{ijk}\}
+17:
+Do message passing:
+18:
+mk​i​jt=ϕ⁡(hi​jt,hk​it),mi​jt=∑k∈𝒩l​g​(i,j)mk​i​jt,hi​jt+1=ψ⁡(hi​jt,mi​jt)m^{t}_{kij}=\phi(h^{t}_{ij},h^{t}_{ki}),\quad m^{t}_{ij}=\sum_{k\in\mathcal{N}^{lg}(i,j)}m^{t}_{kij},\quad h^{t+1}_{ij}=\psi(h^{t}_{ij},m^{t}_{ij})
+19:
+end for
+20:
+Perform readout and project back to GG:
+21:
+bj=∑i∈𝒩⁡(j)R⁡(hi​jTl​g,ni​j),where ​ni​j={embed(𝐱i.detach()−𝐱j,Zi)if pdnjelseb_{j}=\sum_{i\in\mathcal{N}(j)}R(h_{ij}^{T^{lg}},n_{ij}),\quad\text{where }n_{ij}=\begin{cases}\texttt{embed}(\mathbf{x}_{i}.\texttt{detach()}-\mathbf{x}_{j},Z_{i})\quad\text{if }\text{pd}\\
+n_{j}\quad\text{else}\end{cases}
+Theorem 1 (Block-hollowness of HoMP).
+Algorithm 1 defines a function b:ℝd​n→ℝd​nb:\mathbb{R}^{dn}\rightarrow\mathbb{R}^{dn} whose Jacobian 𝐉b⁡(𝐱)∈ℝd​n×d​n\mathbf{J}_{b(\mathbf{x})}\in\mathbb{R}^{dn\times dn} can be split into a block-hollow and a block-diagonal part, i.e.,
+|
+𝐉b⁡(𝐱)=𝐉c⁡(𝐱)+𝐉τ⁡(𝐱)\displaystyle\mathbf{J}_{b(\mathbf{x})}=\mathbf{J}_{c(\mathbf{x})}+\mathbf{J}_{\tau(\mathbf{x})} |
+|
+(30) |
+where 𝐉c⁡(𝐱)\mathbf{J}_{c(\mathbf{x})} is block-hollow, while 𝐉τ⁡(𝐱)\mathbf{J}_{\tau(\mathbf{x})} is block-diagonal with block size d×dd\times d, respectively. This structure of the Jacobian enables the exact computation of differential operators that only include diagonal terms of the Jacobian with dd instead of n​dnd backward passes through the network.
+Remark: Figure 4 might be a helpful illustration to keep track of the indices when reading the proof.
+Proof.
+By the chain rule step 14 gives
+|
+d​bjd​𝐱k=∑i∈𝒩⁡(j)(∂R∂hi​jTl​g​∂hi​jTl​g∂𝐱k+∂R∂ni​j​∂ni​j∂𝐱k).\displaystyle\frac{db_{j}}{d\mathbf{x}_{k}}=\sum_{i\in\mathcal{N}(j)}\left(\frac{\partial R}{\partial h^{T^{lg}}_{ij}}\frac{\partial h^{T^{lg}}_{ij}}{\partial\mathbf{x}_{k}}+\frac{\partial R}{\partial n_{ij}}\frac{\partial n_{ij}}{\partial\mathbf{x}_{k}}\right). |
+|
+(31) |
+If we show that ∂∂𝐱j​hi​jt=0​∀t≥0\frac{\partial}{\partial\mathbf{x}_{j}}h^{t}_{ij}=0\ \forall t\geq 0 and (∂ni​j∂𝐱k=0​ if ​j≠k)\left(\frac{\partial n_{ij}}{\partial\mathbf{x}_{k}}=0\text{ if }j\neq k\right) for all (i,j)∈E(i,j)\in E and for all k∈{1,…,n}k\in\{1,...,n\} the Jacobian decomposes as stated. We split the proof into two cases:
+Case 1: pd=f​a​l​s​e\text{pd}=false:
+That ∂ni​j∂𝐱k=0​ if ​j≠k\frac{\partial n_{ij}}{\partial\mathbf{x}_{k}}=0\text{ if }j\neq k is trivial for all k∈{1,…,n}k\in\{1,...,n\} as ni​j=embed​(𝐱j,Zj)n_{ij}=\texttt{embed}(\mathbf{x}_{j},Z_{j}).
+We show ∂∂𝐱j​hi​jt=0\frac{\partial}{\partial\mathbf{x}_{j}}h^{t}_{ij}=0\ for all t≥0t\geq 0 and for all (i,j)∈E(i,j)\in E by induction on tt:
+Base case:
+1.
+hi​j0=embed​(𝐱i,Zi)h^{0}_{ij}=\texttt{embed}(\mathbf{x}_{i},Z_{i}) is by definition independent of 𝐱j\mathbf{x}_{j} for all (i,j)∈E(i,j)\in E.
+2.
+Furthermore, B​(0)i​j​kB(0)_{ijk} is by definition one exactly when hi​j0h^{0}_{ij} depends on 𝐱k\mathbf{x}_{k} and zero otherwise (see step 8).
+Induction step:
+Assume
+1.
+hi​jth^{t}_{ij} is independent of 𝐱j\mathbf{x}_{j} for all (i,j)∈E(i,j)\in E and
+2.
+B​(t)i​j​kB(t)_{ijk} is zero exactly when hi​jth^{t}_{ij} is independent of 𝐱k\mathbf{x}_{k}.
+We want to show that these conditions also hold for t+1t+1.
+To see that hi​jt+1h^{t+1}_{ij} is independent of 𝐱j\mathbf{x}_{j} for all (i,j)∈E(i,j)\in E, by step 12 of algorithm 1 and the first induction hypothesis, we only need to show that hk​ith^{t}_{ki} does not depend on 𝐱j\mathbf{x}_{j} for all k∈𝒩l​g​(i,j)k\in\mathcal{N}^{lg}(i,j). Assume hk​ith^{t}_{ki} does depend on 𝐱j\mathbf{x}_{j}. By the second induction hypothesis, this implies B​(t)k​i​j=1B(t)_{kij}=1 and by step 10 of algorithm 1 thus (k,i,j)∉El​g(k,i,j)\notin E^{lg}. This means k∉𝒩l​g​(i,j)k\notin\mathcal{N}^{lg}(i,j), a contradiction.
+Next, we prove (B​(t+1)i​j​k=0​ if and only if ​hi​jt+1​ is independent of ​𝐱kB(t+1)_{ijk}=0\text{ if and only if }h^{t+1}_{ij}\text{ is independent of }\mathbf{x}_{k}) by proving both implications:
+B​(t+1)i​j​k=0⟹hi​jt+1​ is independent of ​𝐱kB(t+1)_{ijk}=0\implies h^{t+1}_{ij}\text{ is independent of }\mathbf{x}_{k}:
+Assume Bi​j​k​(t+1)=0B_{ijk}(t+1)=0. By step 11 of algorithm 1 this implies B​(t)l​i​k=0​∀l∈𝒩l​g​(i,j)B(t)_{lik}=0\ \forall\ l\in\mathcal{N}^{lg}(i,j) and B​(t)i​j​k=0B(t)_{ijk}=0. By the second induction hypothesis it follows that hl​ith^{t}_{li} and hi​jth^{t}_{ij} are independent of 𝐱k\mathbf{x}_{k} for all l∈𝒩l​g​(i,j)l\in\mathcal{N}^{lg}(i,j) which by step 12 of algorithm 1 implies that hi​jt+1h^{t+1}_{ij} is independent of 𝐱k\mathbf{x}_{k}.
+hi​jt+1​ is independent of ​𝐱k⟹B​(t+1)i​j​k=0h^{t+1}_{ij}\text{ is independent of }\mathbf{x}_{k}\implies B(t+1)_{ijk}=0:
+Assume hi​jt+1h^{t+1}_{ij} is independent of 𝐱k\mathbf{x}_{k}. By step 12 of algorithm 1 this implies that hi​jth^{t}_{ij} and hl​ith^{t}_{li} are independent of 𝐱k\mathbf{x}_{k} for all l∈𝒩l​g​(i,j)l\in\mathcal{N}^{lg}(i,j). By the second induction hypothesis and step 11 of algorithm 1 we get B​(t+1)i​j​k=0B(t+1)_{ijk}=0 as desired.
+Case 2: pd=t​r​u​e\text{pd}=true:
+That ∂ni​j∂𝐱k=0​ if ​j≠k\frac{\partial n_{ij}}{\partial\mathbf{x}_{k}}=0\text{ if }j\neq k is trivial for all k∈{1,…,n}k\in\{1,...,n\} as ni​j=embed(𝐱i.detach()−𝐱j,Zi))n_{ij}=\texttt{embed}(\mathbf{x}_{i}.\texttt{detach()}-\mathbf{x}_{j},Z_{i})) and the detach​()\texttt{detach}() method means that we ignore derivatives w.r.t. the detached variable.
+We again show ∂∂𝐱j​hi​jt=0\frac{\partial}{\partial\mathbf{x}_{j}}h^{t}_{ij}=0\ for all t≥0t\geq 0 and for all (i,j)∈E(i,j)\in E by induction on tt. The only difference compared to case 1 is the base case, as hi​j0h_{ij}^{0} is initialized differently.
+Base case:
+1.
+hi​j0h_{ij}^{0} is a function of nk​il​gn^{lg}_{ki} where k∈𝒩l​g​(i,j)k\in\mathcal{N}^{lg}(i,j). As k≠jk\neq j and i≠ji\neq j, hi​j0h_{ij}^{0} is independent of 𝐱j\mathbf{x}_{j}.
+2.
+We need to show B​(0)i​j​kB(0)_{ijk} is zero exactly when hi​j0h^{0}_{ij} is independent of 𝐱k\mathbf{x}_{k}. Assume B​(0)i​j​k=0B(0)_{ijk}=0. Then k∉𝒩l​g​(i,j)k\notin\mathcal{N}^{lg}(i,j) by step 8. Thus, by definition of hi​j0h_{ij}^{0} (step 8), hi​j0h_{ij}^{0} is independent of 𝐱k\mathbf{x}_{k}. Conversely, let hi​j0h_{ij}^{0} be independent of 𝐱k\mathbf{x}_{k}. Then k∉𝒩l​g​(i,j)k\notin\mathcal{N}^{lg}(i,j) meaning B​(0)i​j​k=0B(0)_{ijk}=0 by step 8.
+Induction step:
+The induction step is the same as in case 1.
+Jacobian diagonal with dd backward passes:
+We can now exploit the decomposition eq. 31 of the Jacobian to get all its diagonal terms with only dd vector-Jacobian products (backward passes). This can be achieved by applying the detach() operation to hi​jTl​gh^{T^{lg}}_{ij} in step 14 of algorithm 1 such that the block-diagonal part of the decomposition eq. 31 remains unchanged while the hollow part vanishes. If we construct dd column vectors {vi∈ℝd​n}i=1d\{v_{i}\in\mathbb{R}^{dn}\}_{i=1}^{d} as
+|
+(vi)j={1if​j=i+d⁡(k−1),k∈{1,…,n}0else,\displaystyle(v_{i})_{j}=\begin{cases}1\quad\text{if}\ j=i+d(k-1),\ k\in\{1,...,n\}\\
+0\quad\text{else,}\end{cases} |
+|
+(32) |
+The vector-Jacobian products {𝐉b​vi}i=1d\{\mathbf{J}_{b}v_{i}\}_{i=1}^{d}
+do then give us access to all diagonal terms of 𝐉b\mathbf{J}_{b}, e.g., tr​(𝐉b)=∑i=1dviT​𝐉b​vi\text{tr}(\mathbf{J}_{b})=\sum_{i=1}^{d}v_{i}^{T}\mathbf{J}_{b}v_{i} (see fig. 1 for an illustration in the case n=5,d=3n=5,d=3).
+∎
+Further remarks
+The conditioner c⁡(𝐱)c(\mathbf{x}) and the transformer τ⁡(h,𝐱)\tau(h,\mathbf{x}) shown in fig. 1 can explicitly be written component-wise as follows:
+|
+cj​(𝐱)\displaystyle c_{j}(\mathbf{x}) |
+={hi​jTl​g}i∈𝒩⁡(j):=hj\displaystyle=\{h^{T^{lg}}_{ij}\}_{i\in\mathcal{N}(j)}:=h_{j} |
+|
+(33) |
+|
+τj​(hj,𝐱j)\displaystyle\tau_{j}(h_{j},\mathbf{x}_{j}) |
+=∑i∈𝒩⁡(j)R⁡(hi​jTl​g,ni​j),\displaystyle=\sum_{i\in\mathcal{N}(j)}R(h_{ij}^{T^{lg}},n_{ij}), |
+|
+(34) |
+where hi​jTl​gh^{T^{lg}}_{ij} and ni​jn_{ij} are defined as in algorithm 1.
+Whenever a directed graph GG acyclic, its directed line graph L⁡(G)L(G) will also be acyclic which implies that even without edge removal in L⁡(G)L(G) (step 10 in algorithm 1) message passing on the line graph ensures that information starting from node ii of GG can never return to itself after an arbitrary number of message passing steps. If the shortest cycle in GG has length gg (i.e., GG has girth gg), one can do at most g−2g-2 message passing steps without returning information if no edges of L⁡(G)L(G) are removed. The shift −2-2 comes from the fact that initialization of the node features (step 7 in algorithm 1) and the readout (step 14 in algorithm 1) effectively bridge one edge of GG each.
+B.2 Computational Complexities
+Theorem 2.
+Consider a GNN-based flow model with a fully connected graph Gf​cG_{fc} and TT message passing steps and a HollowFlow model with a kk neighbors graph GkG_{k} and Tl​gT^{lg} message passing steps. Let both graphs have nn nodes and dd-dimensional node features.
+The computational complexity of sampling from the fully connected GNN-based flow model including sample likelihoods is
+|
+RTs​t​e​p​(Gf​c)\displaystyle\text{RT}^{step}(G_{fc}) |
+=𝒪⁡(T​n3​d),\displaystyle=\mathcal{O}(Tn^{3}d), |
+|
+(18) |
+while the complexity of the HollowFlow model for the same task is
+|
+RTs​t​e​p​(L⁡(Gk))\displaystyle\text{RT}^{step}(L(G_{k})) |
+=𝒪⁡(n⁡(Tl​g​k2+d​k)).\displaystyle=\mathcal{O}(n(T^{lg}k^{2}+dk)). |
+|
+(19) |
+Moreover, the speed-up of HollowFlow compared to the GNN-based flow model is
+|
+RTs​t​e​p​(Gf​c)RTs​t​e​p​(L⁡(Gk))=𝒪⁡(T​n2​dTl​g​k2+d​k).\displaystyle\frac{\text{RT}^{step}(G_{fc})}{\text{RT}^{step}(L(G_{k}))}=\mathcal{O}\left(\frac{Tn^{2}d}{T^{lg}k^{2}+dk}\right). |
+|
+(20) |
+Proof.
+The sampling procedure involves a forward pass and one divergence calculation for each integration step. We start by estimating the runtimes of the forward pass RTf\text{RT}^{f}. The key assumption is that the computational complexity of the forward pass is proportional to the number of edges of the graph (see table 1) and the number of message passing steps.:
+|
+RTf​(Gf​c)=𝒪⁡(T​#​Ef​c)=𝒪⁡(T​n2)\displaystyle\text{RT}^{f}(G_{fc})=\mathcal{O}(T\#E_{fc})=\mathcal{O}(Tn^{2}) |
+|
+(35) |
+|
+RTf​(L⁡(Gk))=𝒪⁡(Tl​g​#​Ekl​g)=𝒪⁡(Tl​g​n​k2).\displaystyle\text{RT}^{f}(L(G_{k}))=\mathcal{O}(T^{lg}\#E^{lg}_{k})=\mathcal{O}(T^{lg}nk^{2}). |
+|
+(36) |
+The computational complexity of the divergence calculation R​T∇RT^{\nabla} will be proportional to the number of backward passes necessary to compute the divergence times the complexity for each backward pass. For the fully connected GNN we need d​ndn backward passes at the cost of 𝒪⁡(T​#​Ef​c)\mathcal{O}(T\#E_{fc}):
+|
+RT∇​(Gf​c)=𝒪⁡(T​#​Ef​c​d​n)=𝒪⁡(T​n3​d).\displaystyle\text{RT}^{\nabla}(G_{fc})=\mathcal{O}(T\#E_{fc}dn)=\mathcal{O}(Tn^{3}d). |
+|
+(37) |
+For HollowFlow we only need dd backward passes by exploiting the structure of the Jacobian (See theorem 1). Each of these backward passes has a complexity 𝒪⁡(#​Ek)\mathcal{O}(\#E_{k}), as we only need to backpropagate through the transformer, not the conditioner:
+|
+RT∇​(L⁡(Gk))=𝒪⁡(#​Ek​d)=𝒪⁡(d​n​k).\displaystyle\text{RT}^{\nabla}(L(G_{k}))=\mathcal{O}(\#E_{k}d)=\mathcal{O}(dnk). |
+|
+(38) |
+The runtime of one integration step, RTs​t​e​p\text{RT}^{step}, that is proportional to the total runtime, will scale as RTf+RT∇\text{RT}^{f}+\text{RT}^{\nabla}. Thus, we get
+|
+RTs​t​e​p​(Gf​c)\displaystyle\text{RT}^{step}(G_{fc}) |
+=RTf​(Gf​c)+RT∇​(Gf​c)=𝒪⁡(T​n2)+𝒪⁡(T​n3​d)=𝒪⁡(T​n3​d),\displaystyle=\text{RT}^{f}(G_{fc})+\text{RT}^{\nabla}(G_{fc})=\mathcal{O}(Tn^{2})+\mathcal{O}(Tn^{3}d)=\mathcal{O}(Tn^{3}d), |
+|
+(39) |
+|
+RTs​t​e​p​(L⁡(Gk))\displaystyle\text{RT}^{step}(L(G_{k})) |
+=RTf​(L⁡(Gk))+RT∇​(L⁡(Gk))=𝒪⁡(Tl​g​n​k2)+𝒪⁡(d​n​k)=𝒪⁡(n⁡(Tl​g​k2+d​k)),\displaystyle=\text{RT}^{f}(L(G_{k}))+\text{RT}^{\nabla}(L(G_{k}))=\mathcal{O}(T^{lg}nk^{2})+\mathcal{O}(dnk)=\mathcal{O}(n(T^{lg}k^{2}+dk)), |
+|
+(40) |
+where the right term in the sum in eq. 39 dominates as 𝒪⁡(n3)>𝒪⁡(n2)\mathcal{O}(n^{3})>\mathcal{O}(n^{2}) and dd is a constant independent of nn and TT.
+The speed-up during sampling with likelihood evaluation when using HollowFlow compared to a standard, fully connected GNN is thus
+|
+RTs​t​e​p​(Gf​c)RTs​t​e​p​(L⁡(Gk))=𝒪⁡(T​n2​dTl​g​k2+d​k)=𝒪⁡(T​n​dTl​g),\displaystyle\frac{\text{RT}^{step}(G_{fc})}{\text{RT}^{step}(L(G_{k}))}=\mathcal{O}\left(\frac{Tn^{2}d}{T^{lg}k^{2}+dk}\right)=\mathcal{O}\left(\frac{Tnd}{T^{lg}}\right), |
+|
+(41) |
+where the last equality assumes k=𝒪⁡(n)k=\mathcal{O}(\sqrt{n}) (see section 4.1). In conclusion, we expect a speed-up of 𝒪⁡(n2)\mathcal{O}(n^{2}) for constant kk and a speed-up of 𝒪⁡(n)\mathcal{O}(n) for k=𝒪⁡(n)k=\mathcal{O}(\sqrt{n}).
+∎
+B.3 Memory scaling of B⁡(t)B(t)
+From the definition of B⁡(t)B(t) (eq. 16) one might expect a cubic memory scaling in nn. However, it is sufficient to only save information about from which nodes of GG all the nodes of L⁡(G)L(G) have received information from. If GG has nn nodes and L⁡(G)L(G) has nl​gn_{lg} nodes, the size of the array will effectively be n​nl​gnn_{lg}. For a kkNN graph, nl​g=𝒪⁡(n​k)n_{lg}=\mathcal{O}(nk) so the memory requirements of B⁡(t)B(t) in our implementation scale as n2​kn^{2}k.
+Appendix C Additional Results
+C.1 Non-equivariant HollowFlow
+Adaptation of HollowFlow to non-equivariant GNN architectures is straightforward as HollowFlow only affects the construction of the underlying graph while preserving the message and update functions of the GNN including their equivariance properties. Relaxing permutation symmetry can be done by using unique embeddings for all nodes in the graph (as done for Alanine Dipeptide, see section C.3).
+C.2 Multi-head HollowFlow
+Using a kkNN graph poses a locality assumption that might limit the models ability when learning the distribution of systems with long-range interactions (e.g., systems with coulomb interactions such as molecules). To circumvent the locality assumption while still keeping the computational cost manageable, we additional consider a multi-head strategy with HH heads. The central idea is to run HoMP on HH different graphs in parallel and sum up the result. These graphs can be constructed in different ways, we explore the following two strategies:
+1.
+Non-overlapping scale separation: Consider a fully connected graph GG embedded in euclidean space with #​E\#E edges and sort the edges by length. Divide this list into HH equally sized chunks of length #​E/H\#E/H with no overlap. If there is a remainder, distribute the remaining edges to the heads as equally as possible.
+2.
+Overlapping scale separation with overlap number II: Consider a fully connected graph GG embedded in euclidean space with #​E\#E edges and sort the edges by length. Divide this list into HH equally sized chunks of size #​E/(H−I)\#E/(H-I) such that the centers of these chunks are spaced evenly. If there is a remainder, distribute the remaining edges to the heads as equally as possible.
+Both strategies ensure that there is no locality assumption. The first strategy assumes scale separability while the second one allows for a (limited) scale overlap. In terms of scaling, observe that #​E=𝒪⁡(n2)\#E=\mathcal{O}(n^{2}) for a fully connected graph. Thus, each head has 𝒪⁡(n2/(H−I))\mathcal{O}(n^{2}/(H-I)) edges giving us on average 𝒪⁡(n/(H−I))\mathcal{O}(n/(H-I)) edges per node. Finally, the line graph of each head has thus 𝒪⁡(n3/(H−I)2)\mathcal{O}(n^{3}/(H-I)^{2}) edges, giving us 𝒪⁡(H​n3/(H−I)2)\mathcal{O}(Hn^{3}/(H-I)^{2}) line graph edges in total. Thus, if we, e.g., choose the number of heads HH and the overlap number II proportional to nn, the scaling is 𝒪⁡(n2)\mathcal{O}(n^{2}).
+We test both of the aforementioned multi-head strategies on LJ13, LJ55 and Alanine Dipeptide. The results together with the single-head results from the main paper can be found in tables 4, 5 and 6.
+Table 4: LJ13
+|
+ESS (%)(\%) |
+ESS(↑)r​e​m{}_{rem}\ (\uparrow) (%)(\%) |
+EffSU(↑)r​e​m{}_{rem}\ (\uparrow) |
+EffSU |
+k=2k=2 |
+0.0540.0390.0680.054_{0.039}^{0.068} |
+2.922.892.952.92_{2.89}^{2.95} |
+1.0591.0491.0701.059_{1.049}^{1.070} |
+1.160.321.961.16_{0.32}^{1.96} |
+k=4k=4 |
+0.0410.0010.1070.041_{0.001}^{0.107} |
+10.3410.2810.4010.34_{10.28}^{10.40} |
+2.6492.6312.6672.649_{2.631}^{2.667} |
+0.640.011.620.64_{0.01}^{1.62} |
+k=6k=6 |
+3.3002.4104.3013.300_{2.410}^{4.301} |
+20.2020.1120.2920.20_{20.11}^{20.29} |
+3.2603.2433.278\mathbf{3.260}_{3.243}^{3.278} |
+31.877.7753.8031.87_{7.77}^{53.80} |
+k=8k=8 |
+2.7452.2503.2362.745_{2.250}^{3.236} |
+20.6420.5520.7220.64_{20.55}^{20.72} |
+2.3102.2972.3232.310_{2.297}^{2.323} |
+18.265.6531.1218.26_{5.65}^{31.12} |
+k=10k=10 |
+1.0570.8031.3011.057_{0.803}^{1.301} |
+16.5016.4116.5816.50_{16.41}^{16.58} |
+1.4841.4751.4921.484_{1.475}^{1.492} |
+5.511.619.195.51_{1.61}^{9.19} |
+k=12k=12 |
+4.0693.2604.9264.069_{3.260}^{4.926} |
+19.7219.6319.8019.72_{19.63}^{19.80} |
+1.6271.6191.6361.627_{1.619}^{1.636} |
+20.115.6635.5520.11_{5.66}^{35.55} |
+H=2H=2 |
+2.1991.7832.6042.199_{1.783}^{2.604} |
+17.5517.4717.6417.55_{17.47}^{17.64} |
+1.6131.6041.6221.613_{1.604}^{1.622} |
+12.083.5120.5812.08_{3.51}^{20.58} |
+H=3H=3 |
+0.7410.5470.9320.741_{0.547}^{0.932} |
+13.7813.7113.8513.78_{13.71}^{13.85} |
+1.3391.3311.3471.339_{1.331}^{1.347} |
+4.171.116.984.17_{1.11}^{6.98} |
+H=4H=4 |
+0.3330.0540.7420.333_{0.054}^{0.742} |
+11.3211.2611.3811.32_{11.26}^{11.38} |
+1.0641.0571.0711.064_{1.057}^{1.071} |
+1.850.174.171.85_{0.17}^{4.17} |
+H=2,I=1H=2,I=1 |
+3.7302.4665.2043.730_{2.466}^{5.204} |
+23.3523.2523.4423.35_{23.25}^{23.44} |
+0.8640.8590.8680.864_{0.859}^{0.868} |
+8.531.9814.718.53_{1.98}^{14.71} |
+H=3,I=1H=3,I=1 |
+2.4841.6263.4422.484_{1.626}^{3.442} |
+19.0618.9819.1419.06_{18.98}^{19.14} |
+1.2061.2001.2131.206_{1.200}^{1.213} |
+9.232.3415.609.23_{2.34}^{15.60} |
+H=4,I=1H=4,I=1 |
+0.3220.1890.4080.322_{0.189}^{0.408} |
+11.5211.4611.5811.52_{11.46}^{11.58} |
+0.8450.8400.8510.845_{0.840}^{0.851} |
+1.420.352.331.42_{0.35}^{2.33} |
+H=4,I=2H=4,I=2 |
+2.2391.9342.5412.239_{1.934}^{2.541} |
+15.3215.2515.4015.32_{15.25}^{15.40} |
+0.8490.8440.8540.849_{0.844}^{0.854} |
+7.402.2412.907.40_{2.24}^{12.90} |
+baseline k=6k=6 |
+0.0020.0010.0030.002_{0.001}^{0.003} |
+43.5243.4143.63\mathbf{43.52}_{43.41}^{43.63} |
+1.0101.0051.0141.010_{1.005}^{1.014} |
+0.000.000.000.00_{0.00}^{0.00} |
+baseline |
+2.1320.4172.2312.132_{0.417}^{2.231} |
+40.7340.6040.8740.73_{40.60}^{40.87} |
+11 |
+11 |
+Table 5: LJ55
+|
+ESS (%)(\%) |
+ESS(↑)r​e​m{}_{rem}\ (\uparrow) (%)(\%) |
+EffSU(↑)r​e​m{}_{rem}\ (\uparrow) |
+EffSU |
+k=7k=7 |
+0.0060.0030.0100.006_{0.003}^{0.010} |
+0.530.510.560.53_{0.51}^{0.56} |
+93.73788.48499.071\mathbf{93.737}_{88.484}^{99.071} |
+82.2631.04136.5682.26_{31.04}^{136.56} |
+k=27k=27 |
+0.0070.0030.0120.007_{0.003}^{0.012} |
+0.640.610.680.64_{0.61}^{0.68} |
+9.4668.9659.9869.466_{8.965}^{9.986} |
+8.463.3114.908.46_{3.31}^{14.90} |
+k=55k=55 |
+0.0200.0140.0250.020_{0.014}^{0.025} |
+0.740.710.77\mathbf{0.74}_{0.71}^{0.77} |
+4.3654.1444.5834.365_{4.144}^{4.583} |
+9.114.5713.189.11_{4.57}^{13.18} |
+H=2H=2 |
+0.0080.0030.0110.008_{0.003}^{0.011} |
+0.530.500.560.53_{0.50}^{0.56} |
+5.2594.9465.5805.259_{4.946}^{5.580} |
+6.442.239.076.44_{2.23}^{9.07} |
+H=4H=4 |
+0.0060.0030.0090.006_{0.003}^{0.009} |
+0.710.670.740.71_{0.67}^{0.74} |
+7.1986.8197.5767.198_{6.819}^{7.576} |
+4.861.858.054.86_{1.85}^{8.05} |
+H=6H=6 |
+0.0090.0050.0130.009_{0.005}^{0.013} |
+0.480.450.510.48_{0.45}^{0.51} |
+5.9015.5516.2445.901_{5.551}^{6.244} |
+9.393.8813.899.39_{3.88}^{13.89} |
+H=8H=8 |
+0.0150.0100.0200.015_{0.010}^{0.020} |
+0.530.500.550.53_{0.50}^{0.55} |
+7.1446.7127.5697.144_{6.712}^{7.569} |
+15.416.9623.4115.41_{6.96}^{23.41} |
+H=10H=10 |
+0.0060.0030.0100.006_{0.003}^{0.010} |
+0.530.500.560.53_{0.50}^{0.56} |
+7.6047.1538.0497.604_{7.153}^{8.049} |
+7.022.9011.527.02_{2.90}^{11.52} |
+baseline k=27k=27 |
+0.0070.0030.0120.007_{0.003}^{0.012} |
+0.640.610.670.64_{0.61}^{0.67} |
+0.3240.3070.3420.324_{0.307}^{0.342} |
+0.280.110.480.28_{0.11}^{0.48} |
+baseline |
+0.0480.0290.0510.048_{0.029}^{0.051} |
+2.962.893.032.96_{2.89}^{3.03} |
+11 |
+11 |
+C.3 Alanine Dipeptide
+We additionally trained HollowFlow and a corresponding baseline on Alanine Dipeptide using a number of different graph connecting strategies (multi headed and single headed). For all models, we break permutation equivariance. Interestingly, the overlapping multi-head strategy with H=3H=3 and I=1I=1 seems to perform best in terms of ESSr​e​m\text{ESS}_{rem} out of all HollowFlow models, suggesting that multi-head approaches might be a promising direction to alleviate limitations of HollowFlow. However, we do not observe an effective speed-up of HollowFlow compared to the non-hollow baseline. We believe that further hyperparameter tuning and engineering efforts might close this performance gap.
+Table 6: ALA2
+|
+ESS (%)(\%) |
+ESS(↑)r​e​m{}_{rem}\ (\uparrow) (%)(\%) |
+EffSU(↑)r​e​m{}_{rem}\ (\uparrow) |
+EffSU |
+H=2H=2 |
+0.0080.0050.0110.008_{0.005}^{0.011} |
+0.680.650.710.68_{0.65}^{0.71} |
+0.5660.5440.5890.566_{0.544}^{0.589} |
+3.630.275.563.63_{0.27}^{5.56} |
+H=3H=3 |
+0.0120.0070.0170.012_{0.007}^{0.017} |
+0.230.220.250.23_{0.22}^{0.25} |
+0.1980.1830.2130.198_{0.183}^{0.213} |
+4.970.4210.094.97_{0.42}^{10.09} |
+H=4H=4 |
+0.0060.0030.0080.006_{0.003}^{0.008} |
+0.110.090.130.11_{0.09}^{0.13} |
+0.1140.1020.1280.114_{0.102}^{0.128} |
+2.710.225.562.71_{0.22}^{5.56} |
+H=5H=5 |
+0.0030.0020.0050.003_{0.002}^{0.005} |
+0.040.030.050.04_{0.03}^{0.05} |
+0.0420.0340.0500.042_{0.034}^{0.050} |
+1.430.113.241.43_{0.11}^{3.24} |
+H=3,I=1H=3,I=1 |
+0.0170.0130.0200.017_{0.013}^{0.020} |
+0.730.690.760.73_{0.69}^{0.76} |
+0.3990.3820.4160.399_{0.382}^{0.416} |
+3.640.427.003.64_{0.42}^{7.00} |
+k=11k=11 |
+0.0100.0060.0120.010_{0.006}^{0.012} |
+0.520.500.540.52_{0.50}^{0.54} |
+0.5880.5500.6180.588_{0.550}^{0.618} |
+4.520.298.594.52_{0.29}^{8.59} |
+baseline |
+0.1350.0190.2240.135_{0.019}^{0.224} |
+16.1415.9716.29\mathbf{16.14}_{15.97}^{16.29} |
+𝟏\mathbf{1} |
+11 |
+Appendix D Experimental Details
+D.1 Code and Libraries
+All models and training is implemented using PyTorch [71] with additional use of the following libraries: bgflow [1, 24], torchdyn [72], TorchCFM [22, 20] and SchNetPack [73, 74]. The conditional flow matching and equivariant optimal transport implementation is based on the implementation used in [23]. The implementation of the PaiNN [26] architecture is based on [73, 74]. The code and the models are available here: https://github.com/olsson-group/hollowflow.
+D.2 Benchmark Systems
+The potential energy of the Lennard-Jones systems LJ13 and LJ55 is given by
+|
+UL​J​(𝐱)=ϵ2​τ​[∑i,j((rmdi​j)12−2​(rmdi​j)6)],\displaystyle U^{LJ}(\mathbf{x})=\frac{\epsilon}{2\tau}\left[\sum_{i,j}\left(\left(\frac{r_{m}}{d_{ij}}\right)^{12}-2\left(\frac{r_{m}}{d_{ij}}\right)^{6}\right)\right], |
+|
+(42) |
+where the parameters are as in [23]: rm=1r_{m}=1, ϵ=1\epsilon=1 and τ=1\tau=1. di​jd_{ij} is the pairwise euclidean distance between particle ii and jj. Detailed information about the molecular system (Alanine Dipeptide) can be found in [23].
+D.3 Training Data
+We used the same training data as in [23] available at https://osf.io/srqg7/?view_only=28deeba0845546fb96d1b2f355db0da5. The training data has been generated using MCMC, details can be found in the appendix of [23]. For all systems we used 10510^{5} randomly selected samples for training as in [23]. Validation was done using 10410^{4} of the remaining samples.
+D.4 Hyperparameters
+Choice of the Hyperparameter kk
+Heuristically, we expect maximal expressiveness for mid-range values of kk: By construction, some of the connections in the line graph need to be removed after a certain number of message passing (MP) steps (See appendix B for more details). The larger kk, the more connections need to be removed after only one MP step up to the point where (almost) no connections are left after only one MP step. We thus have two counteracting effects when kk increases: The first MP step gains more connections and thus expressiveness while the second MP step and all later MP steps loose connections and expressiveness. This effect is illustrated in fig. 5. Eventually, the latter seems to take over limiting the expressiveness of the model for large values of kk. This non-linear qualitative scaling of performance with kk is experimentally supported by the results in table 2.
+Figure 5: Average number of connections left in the line graph of a kkNN graph GG as a function of the number of message passing steps. GG has 55 nodes whose coordinates are sampled from a standard Gaussian. The average is taken over 10 independently sampled graphs. The larger kk, the faster the line graph disconnects.
+Discontinuities Caused by kkNN Graph
+The vector field bθ​(x)b_{\theta}(x) (eq. 3) is constructed using a kkNN graph. This might cause discontinuities on the decision boundaries of the kkNN construction. As the divergence of the vector field is only defined if it is differentiable, these discontinuities can cause theoretical issues, including but not limited to the continuity equation not being well-defined everywhere eq. 4. We have not observed any numerical instabilities or other issues in practice.
+To further validate empirically that the discontinuities do not cause problems, we tracked the divergence of a trained, fully connected as well as a trained, 6 nearest-neighbors HollowFlow LJ13 model during sampling using a forward Euler scheme with 20 integration steps. We monitor the maximum and average absolute difference of the divergence of consecutive steps, computed over 1000 initial conditions, to assess whether there are significant discontinuities in the divergence of the nearest-neighbors model compared to the fully connected one. Results can be found in table 7. While both values are slightly higher for the kkNN model, there are no significant differences further supporting our claim that the discontinuities do not cause issues in practice.
+Table 7: Maximal and average absolute difference of the divergence of consecutive steps, computed over 1000 initial conditions, for two different LJ13 HollowFlow models.
+model |
+maximal difference |
+average difference |
+fully connected |
+72.5 |
+5.3 |
+k=6k=6 |
+74.2 |
+5.8 |
+Hyperparameters Used in Experiments:
+Depending on the system, we used a different number of message passing steps and a different value for the hidden dimension nhn_{h}, following [23]. For LJ13, we chose nh=32n_{h}=32 for all runs. All HollowFlow experiments with LJ13 and kkNN graphs used two message passing steps while the baselines and the multi-head experiments used three. For LJ55, we chose nh=64n_{h}=64 for all runs. All HollowFlow experiments with LJ55 and kkNN graphs used two message passing steps while the baselines and the multi-head experiments used seven. For Alanine Dipeptide, we chose nh=64n_{h}=64 and five message passing steps for all runs. All neural networks in the PaiNN architecture use the SiLU activation function [75].
+The training details for LJ13, LJ55 and Alanine Dipeptide are reported in tables 8, 9 and 10. For LJ13, we selected the last model for all kkNN experiments and the fully connected baseline experiment, while we selected the model with the lowest validation loss for all remaining experiments for inference. For LJ55 and Alanine Dipeptide we always selected the model with the lowest validation loss for inference. All training was done using the Adam optimizer [76].
+Generally, we observed that HollowFlow can be trained with a larger learning rate compared to the baseline without running into instability issues. Nevertheless, the effect on model performance seemed limited.
+Table 8: Training details LJ13
+|
+batch size
+|
+learning rate |
+epochs |
+training time (h)
+|
+k=2k=2 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+5.8 |
+k=4k=4 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+6.3 |
+k=6k=6 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+6.7 |
+k=8k=8 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+7.3 |
+k=10k=10 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+7.5 |
+k=12k=12 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+7.9 |
+H=2H=2 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+9.9 |
+H=3H=3 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+10.3 |
+H=4H=4 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+10.7 |
+H=2,I=1H=2,I=1 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+13.1 |
+H=3,I=1H=3,I=1 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+11.0 |
+H=4,I=1H=4,I=1 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+11.3 |
+H=4,I=2H=4,I=2 |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+12.7 |
+baseline k=6k=6 |
+256 |
+5×10−45\times 10^{-4} |
+1000 |
+2.6 |
+baseline |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+2.5 |
+Table 9: Training details LJ55
+|
+batch size
+|
+learning rate |
+epochs |
+training time (h)
+|
+k=7k=7 |
+256 |
+(5×10−45\times 10^{-4} to 5×10−55\times 10^{-5}, 5×10−55\times 10^{-5}) |
+(150, 850) |
+10.5 |
+k=27k=27 |
+70 |
+(5×10−45\times 10^{-4} to 5×10−55\times 10^{-5}, 5×10−55\times 10^{-5}) |
+(150, 69) |
+21.9 |
+k=55k=55 |
+30 |
+5×10−35\times 10^{-3} to 1.7×10−31.7\times 10^{-3} |
+110 |
+32.0 |
+H=2H=2 |
+128 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 850) |
+16.7 |
+H=4H=4 |
+128 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 850) |
+16.8 |
+H=6H=6 |
+80 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 260) |
+11.8 |
+H=8H=8 |
+128 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 850) |
+14.0 |
+H=10H=10 |
+128 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 850) |
+14.0 |
+baseline k=27k=27 |
+1024 |
+(5×10−45\times 10^{-4} to 5×10−55\times 10^{-5}, 5×10−55\times 10^{-5}) |
+(150, 850) |
+6.6 |
+baseline |
+256 |
+(5×10−45\times 10^{-4} to 5×10−55\times 10^{-5}, 5×10−55\times 10^{-5}) |
+(150, 844) |
+24.0 |
+Table 10: Training details Alanine Dipeptide
+|
+batch size
+|
+learning rate |
+epochs |
+training time (h)
+|
+H=2H=2 |
+100 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 850) |
+20.3 |
+H=3H=3 |
+100 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 850) |
+17.2 |
+H=4H=4 |
+128 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 850) |
+16.7 |
+H=5H=5 |
+128 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 850) |
+16.8 |
+H=3,I=1H=3,I=1 |
+80 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 260) |
+11.8 |
+k=11k=11 |
+128 |
+(5×10−35\times 10^{-3} to 5×10−45\times 10^{-4}, 5×10−45\times 10^{-4}) |
+(150, 850) |
+14 |
+baseline |
+1024 |
+5×10−45\times 10^{-4} |
+1000 |
+6.6 |
+All inference details for LJ13, LJ55 and Alanine Dipeptide are reported in tables 11, 12 and 13. The integration of the ODE (eq. 3) was performed using a fourth order Runge Kutta solver with a fixed step size. We used 20 integration steps.
+Table 11: Sampling details LJ13
+|
+RT (s)
+|
+RTf (s)
+|
+RT∇ (s)
+|
+batch size
+|
+GPU usage (%\%)
+|
+GPU mem. usage (%\%)
+|
+#\# samples
+|
+k=2k=2 |
+407 |
+367 |
+29 |
+40000 |
+71 |
+66 |
+2×1052\times 10^{5} |
+k=4k=4 |
+674 |
+577 |
+83 |
+1024 |
+61 |
+92 |
+2×1052\times 10^{5} |
+k=6k=6 |
+887 |
+790 |
+71 |
+3500 |
+73 |
+67 |
+2×1052\times 10^{5} |
+k=8k=8 |
+1141 |
+1023 |
+86 |
+3500 |
+82 |
+46 |
+2×1052\times 10^{5} |
+k=10k=10 |
+1411 |
+1275 |
+97 |
+3500 |
+82 |
+86 |
+2×1052\times 10^{5} |
+k=12k=12 |
+1532 |
+1389 |
+103 |
+3500 |
+83 |
+84 |
+2×1052\times 10^{5} |
+H=2H=2 |
+1723 |
+1527 |
+159 |
+1024 |
+66 |
+73 |
+2×1052\times 10^{5} |
+H=3H=3 |
+1886 |
+1682 |
+165 |
+1024 |
+57 |
+42 |
+2×1052\times 10^{5} |
+H=4H=4 |
+2050 |
+1833 |
+174 |
+1024 |
+54 |
+26 |
+2×1052\times 10^{5} |
+H=2,I=1H=2,I=1 |
+3581 |
+3261 |
+242 |
+1024 |
+79 |
+64 |
+2×1052\times 10^{5} |
+H=3,I=1H=3,I=1 |
+2488 |
+2221 |
+207 |
+1024 |
+66 |
+96 |
+2×1052\times 10^{5} |
+H=4,I=1H=4,I=1 |
+2395 |
+2135 |
+202 |
+1024 |
+60 |
+53 |
+2×1052\times 10^{5} |
+H=4,I=2H=4,I=2 |
+3197 |
+2856 |
+257 |
+1024 |
+59 |
+52 |
+2×1052\times 10^{5} |
+baseline k=6k=6 |
+4599 |
+36 |
+4450 |
+12000 |
+98 |
+64 |
+2×1052\times 10^{5} |
+baseline |
+2508 |
+29 |
+2425 |
+1000 |
+85 |
+18 |
+1×1051\times 10^{5} |
+Table 12: Sampling details LJ55
+|
+RT (s)
+|
+RTf (s)
+|
+RT∇ (s)
+|
+batch size
+|
+GPU usage (%\%)
+|
+GPU mem. usage (%\%)
+|
+#\# samples
+|
+k=7k=7 |
+1370 |
+1147 |
+171 |
+256 |
+73 |
+56 |
+4×1044\times 10^{4} |
+k=27k=27 |
+12609 |
+11820 |
+599 |
+70 |
+96 |
+61 |
+4×1044\times 10^{4} |
+k=55k=55 |
+31439 |
+30028 |
+1114 |
+30 |
+96 |
+83 |
+4×1044\times 10^{4} |
+H=2H=2 |
+22602 |
+20239 |
+2173 |
+10 |
+79 |
+67 |
+4×1044\times 10^{4} |
+H=4H=4 |
+20048 |
+17897 |
+1902 |
+15 |
+87 |
+87 |
+4×1044\times 10^{4} |
+H=6H=6 |
+16586 |
+14618 |
+1707 |
+18 |
+87 |
+84 |
+4×1044\times 10^{4} |
+H=8H=8 |
+14960 |
+13097 |
+1596 |
+20 |
+87 |
+69 |
+4×1044\times 10^{4} |
+H=10H=10 |
+13725 |
+11982 |
+1445 |
+25 |
+90 |
+80 |
+4×1044\times 10^{4} |
+baseline k=27k=27 |
+353693 |
+348 |
+351221 |
+256 |
+99 |
+65 |
+4×1044\times 10^{4} |
+baseline |
+529793 |
+596 |
+525997 |
+250 |
+99 |
+82 |
+4×1044\times 10^{4} |
+Table 13: Sampling details Alanine Dipeptide
+|
+RT (s)
+|
+RTf (s)
+|
+RT∇ (s)
+|
+batch size
+|
+GPU usage (%\%)
+|
+GPU mem. usage (%\%)
+|
+#\# samples
+|
+H=2H=2 |
+2791 |
+2382 |
+370 |
+100 |
+70 |
+79 |
+5×1045\times 10^{4} |
+H=3H=3 |
+2532 |
+2123 |
+369 |
+100 |
+75 |
+81 |
+5×1045\times 10^{4} |
+H=4H=4 |
+2167 |
+1837 |
+284 |
+128 |
+72 |
+92 |
+5×1045\times 10^{4} |
+H=5H=5 |
+2182 |
+1848 |
+285 |
+128 |
+74 |
+85 |
+5×1045\times 10^{4} |
+H=3,I=1H=3,I=1 |
+3734 |
+3236 |
+431 |
+80 |
+79 |
+91 |
+5×1045\times 10^{4} |
+k=11k=11 |
+1838 |
+1633 |
+178 |
+128 |
+78 |
+68 |
+5×1045\times 10^{4} |
+baseline |
+26554 |
+71 |
+26094 |
+1024 |
+99 |
+60 |
+5×1045\times 10^{4} |
+D.5 Errors
+All errors were obtained as a 68%68\% symmetric percentile around the median from bootstrap sampling using 1000 resampling steps. The reported value is the mean of these bootstrap samples.
+D.6 Runtimes
+The runtimes were computed by directly measuring the wall-clock time of the computation of interest. Due to missing data, the runtimes of the forward and backward pass in fig. 3(b) needed to be extrapolated from a different run with the same model by assuming the same ratios to the known total runtime.
+D.7 Weight Clipping
+As described in section 5, we remove a left and right percentile (i.e., one percent on each side) of the log importance weights, log⁡wi\log w_{i}, to make the ESS and EffSU estimations more robust. The corresponding quantities are named ESSrem and EffSUrem. While these metrics are biased, this procedure was necessary to obtain a reliable and robust estimate of the effective speed-up of hollow flow as reflected in the errors of the right most column of tables 4, 5 and 6.
+D.8 Computing Infrastructure
+All experiments were conducted on GPUs. The training and inference for LJ13 and Alanine Dipeptide was conducted on a NVIDIA Tesla V100 SXM2 with 32GB RAM. The training for LJ55 was conducted on a NVIDIA Tesla A100 HGX with 40GB RAM, inference was performed on a NVIDIA Tesla A40 with 48GB RAM.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

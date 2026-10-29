@@ -1,0 +1,628 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.28858v1
+Original retrieval 2026-10-23 BJT. Download is not evidence of having reviewed all content. Necessary reviewed sections and conclusions are in SOURCE_MULTIMODAL.md.
+Abstract
+Distilled diffusion models generate high-quality images in a few sampling steps, but aligning them with task requirements and human preferences is difficult. Methods developed for multi-step diffusion models rely on differentiable rewards, or on score fields and stochastic trajectories that distilled generators may lack. We ask whether a few-step generator can be adapted using only external reward evaluations and reference samples, and show that two binary classifiers suffice. Our method, DualHeads, implements them as lightweight heads on a frozen diffusion backbone. The reward head learns which samples of the same prompt score higher, the reference head separates reference images from generated ones, and the generator maximizes a weighted sum of their logits. When the heads are optimal, this objective is KL-regularized maximization of the learned reward, and the ratio of head weights sets the regularization strength. Empirically, with both rule-based and model-based rewards, a few-step DualHeads generator reaches task rewards close to those of 40-step reinforcement learning methods while preserving image quality, at no extra inference cost. We hope that this simple and elegant dual-head formulation will help advance few-step reward-tilted generation.
+ Figure 1: Four-step samples from DualHeads. Z-Image-Turbo  ( Jiang et al., 2026 ) fine-tuned with DualHeads using the HPSv3 reward  ( Ma et al., 2025 ) .
+ 1 Introduction
+Diffusion distillation  ( Song et al., 2023 ; Yin et al., 2024b ; Sauer et al., 2024a ; Zhou et al., 2024 ) turns powerful diffusion models  ( Song et al., 2021 ; Ho et al., 2020 ; Rombach et al., 2022 ; Liu et al., 2023 ; Lipman et al., 2023 ) into few-step generators that produce high-quality samples in a handful of network evaluations, bringing applications such as real-time interactive video generation within reach  ( Yin et al., 2025 ; Huang et al., 2025 ) .
+Speed alone, however, does not make a sample correct: a distilled student inherits the teacher’s failures, and may still misspell the prompted text, miscount objects, or ignore the requested style. Such failures are readily caught by external evaluators, such as text recognizers, object detectors, or preference models. Using these external evaluators as rewards to post-train a generator is now standard practice for diffusion models  ( Lee et al., 2023 ; Xu et al., 2023 ; Prabhudesai et al., 2024 ) .
+Existing methods fall into two families, each typically addressing only one side of this setting. First, reinforcement learning (RL) with black-box rewards has succeeded for multi-step diffusion models, through policy gradients that reinforce high-reward denoising steps  ( Black et al., 2024 ; Fan et al., 2023 ; Liu et al., 2025 ; Xue et al., 2025 ) or forward-process objectives  ( Zheng et al., 2026 ; Xue et al., 2026 ; Choi et al., 2026a ; Lee et al., 2026 ) . These, however, rely on what distillation removes: policy gradients
+estimate updates from stochastic multi-step rollouts, which become high-variance with only a few steps, and forward-process objectives need a score or velocity field that a distilled generator need not preserve.
+Second, methods designed for few-step generators pay for the step constraint elsewhere: they backpropagate through a differentiable reward  ( Luo, 2025 ) which may not always be feasible, match the generator to the original multi-step model (the teacher) using its score and a second diffusion model fitted to the generator’s samples  ( Luo et al., 2026a ; Jiang et al., 2026 ; Huang et al., 2026a , e.g.,) , or adapt multi-step RL specifically to flow-map generators such as consistency models and MeanFlow  ( Li et al., 2026c ; Huang et al., 2026b ) .
+Methods from both families rely on something beyond samples and black-box scores: trajectory likelihoods, a score field, reward gradients, or the teacher’s score.
+In practice, however, the only thing any few-step generator is guaranteed to provide is samples. This leads to our central question: given only its own samples, black-box reward evaluations, and examples of high-quality images from a reference model, can we tilt a few-step generator toward higher reward regions while keeping it close to those images? 
+We show that this can be done with
+only one backbone network and two binary classifiers. We begin with the standard reference-regularized RL objective ( Levine, 2018 ) ,
+which maximizes the expected reward while penalizing the reverse KL divergence to the reference distribution to prevent reward hacking. Its optimum is the reference distribution reweighted by the exponentiated reward.
+The two terms are, however, hard to optimize directly in our setting, since we treat the reward as a black box and the KL term depends on the density ratio between the generator and the reference. Our key observation is that both can be replaced by quantities learned through classification.
+This leads to DualHeads, a simple framework consisting of two identical lightweight heads on a shared frozen diffusion backbone.
+A reward head learns which samples are better from their black-box rewards: for multiple generations of the same prompt, rewards are normalized within the group and converted into soft optimality labels.
+A reference head distinguishes noised reference images from noised generator predictions.
+Both heads are trained with the same binary cross-entropy objective and updated online as the generator updates.
+To update the generator, we evaluate the two heads on a noised generator prediction and maximize a weighted sum of their logits. Gradients pass through both heads and a single generator forward pass; the sampled trajectory and the head parameters remain fixed.
+The heads are discarded at inference. We note that at the optimum of the reference head, maximizing this weighted sum is equivalent to the reference-regularized objective from above, with the reward-head logit in place of the reward and the ratio of head weights setting the regularization strength.
+We evaluate DualHeads at a four-step setup on complementary modern reward functions, including visual text rendering (OCR), compositional generation (GenEval), and human preference (HPS, PickScore, etc.).
+Compared with existing methods, DualHeads achieves on-par performance in the few-step regime while preserving generation quality. It raises OCR accuracy from 0.59 to 0.92 and GenEval from 0.63 to 0.90 over the base model, and gives the best HPSv3 on Z-Image ( Fig.   1 ).
+Our contributions are:
+ • 
+We introduce DualHeads, a simple framework that adapts few-step generators from reward evaluations and reference samples alone, using two classifier heads on a frozen backbone.
+ • 
+We show that, with optimal heads, the weighted-logit generator objective is a reverse-KL-regularized reward objective whose temperature is set by the head-weight ratio.
+ • 
+We provide
+empirical results with both rule-based and model-based rewards, showing that a four-step student reaches task rewards close to 40-step RL methods while preserving quality.
+ 2 Related Work
+Step distillation of diffusion models.
+Progressive and consistency distillation  ( Salimans and Ho, 2022 ; Song et al., 2023 ) turn a pretrained diffusion model into a few-step generator that covers the sampling trajectory in a small number of large jumps. Latent consistency models  ( Luo et al., 2023 ) extend this to text-to-image latent diffusion.
+Distribution matching distillation (DMD)  ( Yin et al., 2024b ) instead matches the student’s output distribution to the teacher’s by following the gradient from a score difference, which requires an auxiliary network that tracks the student’s score online. DMD2  ( Yin et al., 2024a ) stabilizes this estimator and adds an adversarial term on real data, and TDM  ( Luo et al., 2025 ) extends the matching to every step of the sampling trajectory.
+Parallel work relies on adversarial supervision. ADD  ( Sauer et al., 2024b ) distills with a discriminator on pretrained image features, and LADD  ( Sauer et al., 2024a ) moves the discriminator onto frozen features of the teacher diffusion model itself.
+DualHeads is built on top of a few-step distilled diffusion model. Our reference head follows LADD’s design of heads on frozen diffusion features.
+Reward optimization of diffusion models.
+Methods for optimizing a reward differ mainly in how the reward signal reaches the generator. Differentiable rewards can be backpropagated through directly  ( Xu et al., 2023 ; Clark et al., 2024 ; Prabhudesai et al., 2023 ) , but black-box rewards cannot. Reinforcement learning (RL) removes this requirement: DDPO  ( Black et al., 2024 ) and DPOK  ( Fan et al., 2023 ) use policy gradients, and Flow-GRPO  ( Liu et al., 2025 ) and DanceGRPO  ( Xue et al., 2025 ) adapt group-relative policy optimization  ( Shao et al., 2024 ) to flow models.
+These methods need transition likelihoods along stochastic multi-step rollouts, which recent work avoids by training on the forward process.
+DiffusionNFT  ( Zheng et al., 2026 ) contrasts positive and negative samples under clipped group-relative optimality labels, CRD  ( Zhu et al., 2026 ) matches prompt-centered rewards to cancel an intractable normalizer, and AWM  ( Xue et al., 2026 ) , RAM  ( Bergmeister et al., 2026 ) , RVM  ( Choi et al., 2026a ) , and DGPO  ( Luo et al., 2026b ) use related advantage- or reward-weighted targets. In all of them, the reward serves only as a sample weight or a regression target, and no explicit reward model is learned.
+DualHeads uses labels of the same form as
+DiffusionNFT, but fits them with an explicit classifier and guides the student
+through that classifier’s input gradient.
+Reward optimization coupled with distillation.
+Other methods optimize the reward inside a distillation pipeline and differ mainly in what keeps the generator close to good images while the reward is optimized.
+Most rely on a teacher. Some combine a reward objective with distribution matching  ( Jiang et al., 2026 ; Chen et al., 2026 ; Dong et al., 2026 ; Wang et al., 2026 ; Fan et al., 2026 ) ; for example, RTDMD  ( Huang et al., 2026a ) minimizes a KL divergence to a reward-tilted teacher.
+Closest to our setting, TDM-R1  ( Luo et al., 2026a ) post-trains a few-step student with non-differentiable rewards by learning a diffusion-model surrogate reward, and regularizes it with trajectory distribution matching, which requires the teacher and an online fake score.
+Flow-OPD  ( Fang et al., 2026 ) and DiffusionOPD  ( Li et al., 2026a ) first train task-specific teachers with RL and then distill them into one student, without reducing the step count. REST  ( Li et al., 2026b ) co-trains an eight-step student with an evolving teacher.
+Others do without a teacher. MeanFlowNFT  ( Huang et al., 2026b ) applies forward-process RL to a distilled four-step generator, anchored to a frozen EMA of itself, and Self-OPD  ( Zhang et al., 2026 ) scores branched student rollouts against the student’s own deterministic trajectory.
+Reward Lightning  ( Cheng et al., 2026 ) is closest in architecture: it jointly distills a video teacher into a few-step generator with discriminator and reward heads on one frozen backbone, but its reward head is pretrained on preference pairs and kept frozen.
+DualHeads instead post-trains a distilled generator and refits its reward head online, on pointwise group-relative labels from black-box rewards, while its reference head keeps the generator close to the reference pool.
+ ∼ 
+ x 
+ 0 
+ N 
+ ( 
+ 0 
+ , 
+ I 
+ ) 
+ N 
+ f 
+ θ 
+ x 
+ 1 
+ ϵ 
+ ′ 
+ x 
+ t 
+ i 
+ f 
+ θ 
+ ^ 
+ x 
+ 1 
+ ϵ 
+ x 
+ t 
+ F 
+ ( 
+ x 
+ t 
+ , 
+ c 
+ , 
+ t 
+ ) 
+ D 
+ ϕ 
+ R 
+ ψ 
+ = 
+ s 
+ + 
+ ⁢ 
+ λ 
+ D 
+ D 
+ ϕ 
+ ⁢ 
+ λ 
+ R 
+ R 
+ ψ 
+ = 
+ ⁢ 
+ ∇ 
+ θ 
+ L 
+ f 
+ ( 
+ θ 
+ ) 
+ - 
+ E 
+ [ 
+ ∇ 
+ θ 
+ s 
+ ] 
+ θ 
+ Figure 2: 
+ Generator update of DualHeads. The generator f_{\theta} first rolls out N steps from noise without gradient; the endpoint x_{1} is re-noised to x_{t_{i}} , from which f_{\theta} predicts \hat{x}_{1} in one differentiable step. The prediction is noised to x_{t} and sent to a frozen feature extractor F followed by a reference head D_{\phi} and a reward head R_{\psi} ; the generator ascends the utility s=\lambda_{D}D_{\phi}+\lambda_{R}R_{\psi} through \hat{x}_{1} , while the backbone and both heads stay fixed during its update.
+ 3 Method
+DualHeads adapts a few-step generator so that its samples score higher under an external reward while staying close to a reference distribution. For this, we use two binary classifiers on a shared frozen backbone: one learns reference fidelity , the other reward optimality .
+ Section   3.1 describes the few-step generation setting and the corresponding reward-tilted target.
+ Section   3.2 defines the two classifier objectives and Section   3.3 gives the single utility the generator maximizes.
+ 3.1 Background
+Setup of few-step generator.
+Let \theta denote the parameters of a neural network few-step generator f_{\theta} ; c the frozen prompt embeddings and x an image sample.
+We write time in the flow-matching convention, with data at t=1 . For a clean sample x_{1} 
+and noise \epsilon\sim\mathcal{N}(0,I) , the interpolant at time t\in[0,1] and the
+generator’s clean-data prediction are:
+ x_{t}\;=\;\mathcal{N}_{t}(x_{1};\epsilon)=t\,x_{1}+(1-t)\,\epsilon,\qquad f_{\theta}(x_{t},c,t)\;=\;x_{t}+(1-t)\,v_{\theta}(x_{t},c,t), 
+ (1) 
+where v_{\theta} is the velocity representation of the model output.
+Starting from Gaussian noise x_{t_{0}}\sim\mathcal{N}(0,I) , the N -step stochastic
+sampler follows a timestep grid 0=t_{0}<t_{1}<\cdots<t_{N}=1 .
+At each step, the model predicts the clean endpoint and re-noises it to the next timestep:
+ x_{t_{i+1}}=\mathcal{N}_{t_{i+1}}\!\left(f_{\theta}(x_{t_{i}},c,t_{i});\epsilon_{i+1}\right),\qquad i=0,\ldots,N-1, 
+ (2) 
+where \epsilon_{1},\ldots,\epsilon_{N}\overset{\mathrm{i.i.d.}}{\sim}\mathcal{N}(0,I) are independent Gaussian noise.
+The noising operator satisfies \mathcal{N}_{1}(x;\epsilon)=x ,
+so the final step adds no noise and returns x_{t_{N}}=f_{\theta}(x_{t_{N-1}},c,t_{N-1}) .
+We write p_{\theta}(x|c) for the distribution of the sampler’s output x=x_{t_{N}} .
+Goal: a reward-tilted reference distribution.
+We are given a black-box image reward r(x,c)\in[0,1] and prompt-paired reference samples from a conditional distribution p_{\mathrm{ref}}(x|c) .
+Our goal is to train a few-step generator whose output distribution p_{\theta}(x|c) achieves high expected reward while remaining close to the reference distribution.
+For a fixed prompt c , a standard formulation for KL-regularized RL training is:
+ \displaystyle\mathcal{J}_{c}(\theta) 
+ \displaystyle=\mathrm{KL}\!\left(p_{\theta}(\cdot|c)\,\middle\|\,p_{\mathrm{ref}}(\cdot|c)\right)-\frac{1}{\beta}\mathbb{E}_{x\sim p_{\theta}(\cdot|c)}\big[r(x,c)\big], 
+ (3) 
+ \displaystyle p^{*}(x|c) 
+ \displaystyle=\frac{1}{Z(c)}p_{\mathrm{ref}}(x|c)\exp\!\left(\frac{r(x,c)}{\beta}\right), 
+ (4) 
+where \beta>0 controls the strength of reference regularization relative to reward, p^{*}(x|c) is the optimal solution to Eq.   3 , and Z(c) is the normalizing constant.
+Indeed, \mathcal{J}_{c}(\theta)=\mathrm{KL}(p_{\theta}\|p^{*})-\log Z(c) , so minimizing \mathcal{J}_{c} is equivalent to fitting the reward-tilted target in reverse KL.
+ 3.2 DualHeads
+Since the KL term requires unavailable density ratios and the black-box reward can be non-differentiable, neither term in Eq.   3 is directly tractable. To address this, we propose to learn a classifier surrogate for each: a reference head and a reward head on a shared frozen backbone.
+Two heads on one frozen backbone.
+A pretrained frozen network serves as a feature extractor F(x_{t},c,t) for two lightweight heads with identical architecture: 
+The reference head D_{\phi} distinguishes reference images x_{\mathrm{ref}}\sim p_{\mathrm{ref}} from online generator
+predictions.
+The reward head R_{\psi} instead predicts how good a sample is based on some external evaluation score. Its target is a soft label y\in[0,1] , computed from the reward of the rollout endpoint.
+Both heads are trained with the same binary cross-entropy loss, \operatorname{BCE}(\ell;y)=-y\,\log\sigma(\ell)\!-(1\!-\!y)\log\bigl(1\!-\!\sigma(\ell)\bigr) . For brevity, we use D_{\phi}(x_{t},c,t) for D_{\phi}(F(x_{t},c,t),c,t) and likewise for R_{\psi} .
+ The generator prediction \hat{x}_{1} is formed in two steps: a rollout endpoint x_{1} , sampled using Eq.   2 , is re-noised to a rollout grid timestep t_{i} , yielding x_{t_{i}}=\mathcal{N}_{t_{i}}(x_{1};\epsilon^{\prime}) , and the generator is then applied in one differentiable step, yielding \hat{x}_{1}=f_{\theta}(x_{t_{i}},c,t_{i}) .
+ The reference head uses hard targets: 1 for noised reference images, 0 for noised generator predictions, and its training objective is  ( Goodfellow et al., 2014 ) :
+ \mathcal{L}_{D}(\phi)=\mathbb{E}_{t,\epsilon,x_{\mathrm{ref}}}\!\left[\operatorname{BCE}\!\left(D_{\phi}(\mathcal{N}_{t}(x_{\mathrm{ref}};\epsilon),c,t);1\right)\right]+\mathbb{E}_{t,\epsilon,\hat{x}_{1}}\!\left[\operatorname{BCE}\!\left(D_{\phi}(\mathcal{N}_{t}(\hat{x}_{1};\epsilon),c,t);0\right)\right]. 
+ (5) 
+ The reward head uses soft label targets
+ y , which express reward preference relative to the other samples drawn for the same prompt ; we take y as given here and show our construction of it at the end of this section.
+The loss is identical in form to Eq.   5 1 1 
+ 1 
+ Pairwise preference data can be incorporated directly by assigning target 1 to the winner and 0 to the loser, yielding the same binary classification loss form as the reference head. :
+ \mathcal{L}_{R}(\psi)=\mathbb{E}_{t,\epsilon,(x_{1},y)}\!\left[\operatorname{BCE}\!\left(R_{\psi}(\mathcal{N}_{t}(x_{1};\epsilon),c,t);y\right)\right]. 
+ (6) 
+The label admits a probabilistic explanation: it defines a binary optimality variable o\in\{0,1\} through p(o=1\mid x_{1},c)=y , where o=1 denotes that x_{1} is optimal among the samples for its prompt ( Levine, 2018 ) .
+In both objectives, \epsilon\sim\mathcal{N}(0,I) noises the head’s input at time t\in[t_{\min},t_{\max}] , drawn independently of the training example and of the \epsilon^{\prime} used to form \hat{x}_{1} .
+The optimal heads under binary cross-entropy loss read:
+ \displaystyle D^{*}(x_{t},c,t)=\log\frac{p_{\mathrm{ref},t}(x_{t}\mid c)}{p_{\theta,t}^{\mathrm{pred}}(x_{t}\mid c)},\quad R^{*}(x_{t},c,t)=\log\frac{p(o=1\mid x_{t},c,t)}{p(o=0\mid x_{t},c,t)}, 
+ (7) 
+where p_{\mathrm{ref},t} and p_{\theta,t}^{\mathrm{pred}} denote the noisy distributions of reference images and of generator predictions after noising by \mathcal{N}_{t} , and p(o=1\mid x_{t},c,t) is the probability that the rollout endpoint noised into x_{t} is optimal.
+For D_{\phi} , the target is 1 on references and 0 on predictions, so its conditional mean at x_{t} is the share of the density at x_{t} contributed by references; the corresponding log-odds is the log density ratio.
+For R_{\psi} , the target is y itself, so \sigma(R^{*})=\mathbb{E}[y\mid x_{t},c,t]=p(o=1\mid x_{t},c,t) .
+In practice, both heads only approximate these targets, limited by the frozen backbone features and by optimization error.
+Optimality reward labels.
+Following DiffusionNFT ( Zheng et al., 2026 ) , we build y from rewards normalized within each prompt group.
+For each prompt c we draw a group \mathcal{G}=\{x^{i}\}_{i=1}^{K} of endpoints from the current generator, evaluate r_{i}=r(x^{i},c) , and define
+ A_{i}=\frac{r_{i}-\bar{r}}{\operatorname{Std}(r)+\delta},\qquad y_{i}=\frac{1}{2}+\frac{1}{2}\,\operatorname{clip}\!\left(\frac{A_{i}}{C},-1,1\right), 
+ (8) 
+where \bar{r} and \operatorname{Std}(r) are the group mean and standard deviation, \delta>0 stabilizes the normalization, and C{>}0 controls the labels’ sharpness.
+For the i -th sample of \mathcal{G} , the optimality variable from above therefore satisfies p(o_{i}=1\mid x^{i},c,\mathcal{G})=y_{i} .
+The labels average to \tfrac{1}{2} when no advantage is clipped.
+ 3.3 Generator objective
+With both heads fixed, we train the generator to maximize their weighted logits:
+ \displaystyle\mathcal{L}_{f}(\theta) 
+ \displaystyle=\mathbb{E}_{c,\hat{x}_{1},t,\epsilon}\!\left[-s\!\left(\mathcal{N}_{t}(\hat{x}_{1};\epsilon),c,t\right)\right], 
+ (9) 
+ \displaystyle s(x_{t},c,t) 
+ \displaystyle=\lambda_{D}D_{\phi}(x_{t},c,t)+\lambda_{R}R_{\psi}(x_{t},c,t), 
+where \lambda_{D},\lambda_{R}\geq 0 , \epsilon\sim\mathcal{N}(0,I) , and t is sampled as in head training.
+The expectation averages over prompts, generator predictions, and noising randomness.
+During each generator update, the head parameters and sampled rollout inputs remain fixed, while gradients propagate through the heads and frozen backbone to the prediction \hat{x}_{1}=f_{\theta}(x_{t_{i}},c,t_{i}) .
+Reverse-KL interpretation.
+Given an optimal reference head, Eq.   9 reduces to a standard KL-regularized reward objective.
+Fix a prompt c , a noise level t and the reward head.
+Since D^{*} in Eq.   7 is a log density ratio, \mathbb{E}_{p_{\theta,t}^{\mathrm{pred}}}[D^{*}]=-\mathrm{KL}(p_{\theta,t}^{\mathrm{pred}}\,\|\,p_{\mathrm{ref},t}) , and substituting it into Eq.   9 gives
+ \displaystyle\mathcal{L}_{f,c,t}^{*}(\theta) 
+ \displaystyle=\lambda_{D}\,\mathrm{KL}\!\left(p_{\theta,t}^{\mathrm{pred}}(\cdot\mid c)\,\middle\|\,p_{\mathrm{ref},t}(\cdot\mid c)\right)-\lambda_{R}\,\mathbb{E}_{x_{t}\sim p_{\theta,t}^{\mathrm{pred}}(\cdot\mid c)}\!\left[R_{\psi}(x_{t},c,t)\right]. 
+ (10) 
+The first reference term penalizes the reverse KL to the reference distribution, while the second reward term favors large reward-head logits.
+Connection to reward tilting.
+For \lambda_{D},\lambda_{R}>0 , Eq.   10 is the standard KL-regularized objective ( Schulman et al., 2017 ; Ziegler et al., 2019 ; Ouyang et al., 2022 ) , whose minimizer is
+ p_{t}^{*}(x_{t}\mid c)\propto p_{\mathrm{ref},t}(x_{t}\mid c)\exp\!\left(\frac{\lambda_{R}}{\lambda_{D}}R_{\psi}(x_{t},c,t)\right), 
+ (11) 
+which has the same form as Eq.   4 , with R_{\psi} in place of r and \lambda_{D}/\lambda_{R} in place of \beta .
+The ratio of the head weights therefore sets the regularization strength.
+Note that Eq.   11 holds for the noised predictions at each t , and that R_{\psi} is fitted on samples from the current generator, so p_{t}^{*} is a fixed point of training.
+For unclipped labels close to \tfrac{1}{2} , R^{*}\approx\tfrac{2}{C}\,\mathbb{E}[A\mid x_{t},c,t] , which gives the equivalent temperature \beta_{\mathrm{eq}}=C\lambda_{D}/(2\lambda_{R}) on the scale of the normalized advantage in Eq.   8 .
+Training and inference.
+Training alternates between classifier and generator updates at each iteration ( Algorithm   1 ).
+For each prompt in the batch,
+we sample K few-step rollouts and evaluate their black-box rewards.
+The resulting rewards are used to calculate the soft label and then supervise the reward head. The same rollouts are re-noised to intermediate generator timesteps and passed once through f_{\theta} to obtain predictions \hat{x}_{1} ;
+the reference head is trained to distinguish these predictions from the prompt-paired reference images.
+After updating both heads, we freeze them and update the generator through the weighted classifier logits ( Fig.   2 ).
+After training, we discard both heads; hence, at inference, we only use the fine-tuned few-step generator, at no extra inference cost.
+ Algorithm 1 DualHeads
+ 1: 
+ prompts with paired reference images; frozen backbone F ; generator f_{\theta} ; heads D_{\phi} , R_{\psi} ; reward r ; \lambda_{D} , \lambda_{R} , C , group size K 
+ 2: 
+ For each prompt c , run the sampler Eq.   2 K times; score the endpoints x_{1} with r 
+ 3: 
+ Form soft labels y from group-relative advantages \triangleright Eq.   8 
+ 4: 
+ Re-noise each x_{1} to a grid time t_{i} ; recompute \hat{x}_{1}=f_{\theta}(x_{t_{i}},c,t_{i}) 
+ 5: 
+ Update \phi on \mathcal{L}_{D} with x_{\mathrm{ref}} against \hat{x}_{1} , and \psi on \mathcal{L}_{R} with x_{1} and y \triangleright Eqs.   5 and  6 
+ 6: 
+ Update \theta by ascending s\!\left(\mathcal{N}_{t}(\hat{x}_{1};\epsilon),c,t\right) through \hat{x}_{1} , heads fixed \triangleright Eq.   9 
+ 4 Experiments
+ Table 1: Comparison on compositional image generation ( GenEval ), visual text rendering ( OCR ), and human preference metrics. Image quality and preference scores are computed on DrawBench   ( Saharia et al., 2022 ) prompts. Baseline numbers are from Flow-GRPO  ( Liu et al., 2025 ) where reported, and from our reimplementation otherwise. Abbreviations: Aes. (Aesthetics), ImgRwd (ImageReward), Pick (PickScore), CLIP (CLIPScore), HPS (HPSv2.1). NFE : number of function evaluations. Few-step RL baselines are quoted from their papers; RTDMD reports only GenEval for its GenEval -only run.
+ Method 
+ NFE 
+ GenEval \uparrow 
+ OCR \uparrow 
+ Aes. \uparrow 
+ ImgRwd \uparrow 
+ Pick \uparrow 
+ CLIP \uparrow 
+ HPS \uparrow 
+ Task Metric 
+ Held-out Metric 
+ SD3.5-M (base) 
+ 80 
+ 0.63 
+ 0.59 
+ 5.39 
+ 0.87 
+ 22.34 
+ 27.99 
+ 0.279 
+ SD3.5-M TDM  ( Luo et al., 2025 ) 
+ 4 
+ 0.62 
+ 0.51 
+ 5.58 
+ 0.86 
+ 22.14 
+ 27.18 
+ 0.290 
+ Compositional image generation 
+ Flow-GRPO  ( Liu et al., 2025 ) w/o KL 
+ 80 
+ 0.95 
+ — 
+ 4.93 
+ 0.44 
+ 21.16 
+ — 
+ — 
+ Flow-GRPO  ( Liu et al., 2025 ) w/ KL 
+ 80 
+ 0.95 
+ — 
+ 5.25 
+ 1.03 
+ 22.37 
+ 29.25 
+ 0.274 
+ AWM  ( Xue et al., 2026 ) w/ CFG 
+ 80 
+ 0.86 
+ — 
+ 5.25 
+ 1.06 
+ 22.12 
+ 28.86 
+ 0.278 
+ AWM  ( Xue et al., 2026 ) w/o CFG 
+ 40 
+ 0.91 
+ — 
+ 5.10 
+ 0.39 
+ 21.76 
+ 26.99 
+ 0.235 
+ DiffusionNFT  ( Zheng et al., 2026 ) 
+ 40 
+ 0.92 
+ — 
+ 5.30 
+ 0.63 
+ 22.07 
+ 27.25 
+ 0.253 
+ CRD  ( Zhu et al., 2026 ) 
+ 40 
+ 0.93 
+ — 
+ 5.44 
+ 0.98 
+ 22.48 
+ 28.44 
+ 0.284 
+ Multi-step RL 
+ RSM  ( Lee et al., 2026 ) 
+ 40 
+ 0.97 
+ — 
+ — 
+ — 
+ 22.28 
+ 31.60 
+ — 
+ TDM-R1  ( Luo et al., 2026a ) 
+ 4 
+ 0.92 
+ — 
+ 5.42 
+ 1.11 
+ 22.39 
+ — 
+ — 
+ RTDMD  ( Huang et al., 2026a ) 
+ 4 
+ 0.94 
+ — 
+ — 
+ — 
+ — 
+ — 
+ — 
+ REST  ( Li et al., 2026b ) ‡ 
+ 8 
+ 0.94 
+ — 
+ 5.67 
+ 1.05 
+ 22.79 
+ — 
+ 0.300 
+ DualHeads 
+ 2 
+ 0.89 
+ — 
+ 5.53 
+ 1.01 
+ 22.42 
+ 28.56 
+ 0.281 
+ Few-step RL 
+ DualHeads 
+ 4 
+ 0.90 
+ — 
+ 5.50 
+ 1.01 
+ 22.45 
+ 28.51 
+ 0.285 
+ Visual text rendering 
+ Flow-GRPO  ( Liu et al., 2025 ) w/o KL 
+ 80 
+ — 
+ 0.93 
+ 5.13 
+ 0.58 
+ 21.79 
+ — 
+ — 
+ Flow-GRPO  ( Liu et al., 2025 ) w/ KL 
+ 80 
+ — 
+ 0.92 
+ 5.32 
+ 0.95 
+ 22.44 
+ 28.86 
+ 0.282 
+ AWM  ( Xue et al., 2026 ) w/ CFG 
+ 80 
+ — 
+ 0.96 
+ 5.35 
+ 0.96 
+ 22.36 
+ 28.70 
+ 0.283 
+ AWM  ( Xue et al., 2026 ) w/o CFG 
+ 40 
+ — 
+ 0.97 
+ 5.22 
+ - 0.64 
+ 20.82 
+ 24.54 
+ 0.203 
+ DiffusionNFT  ( Zheng et al., 2026 ) 
+ 40 
+ — 
+ 0.97 
+ 4.89 
+ - 0.81 
+ 20.53 
+ 24.08 
+ 0.196 
+ Multi-step RL 
+ CRD  ( Zhu et al., 2026 ) 
+ 40 
+ — 
+ 0.92 
+ 5.33 
+ 0.87 
+ 22.40 
+ 28.48 
+ 0.281 
+ TDM-R1  ( Luo et al., 2026a ) 
+ 4 
+ — 
+ 0.95 
+ 5.45 
+ 1.09 
+ 22.62 
+ — 
+ — 
+ DMSampler  ( Liu et al., 2026 ) 
+ 4 
+ — 
+ 0.83 
+ — 
+ — 
+ — 
+ — 
+ — 
+ REST  ( Li et al., 2026b ) ‡ 
+ 8 
+ — 
+ 0.96 
+ 5.65 
+ 1.00 
+ 22.83 
+ — 
+ 0.300 
+ DualHeads 
+ 2 
+ — 
+ 0.91 
+ 5.41 
+ 1.06 
+ 22.50 
+ 29.06 
+ 0.293 
+ DualHeads 
+ 4 
+ — 
+ 0.92 
+ 5.46 
+ 1.10 
+ 22.65 
+ 28.75 
+ 0.300 
+ Few-step RL 
+ DualHeads + Nano Banana pool 
+ 4 
+ — 
+ 0.92 
+ 5.62 
+ 1.08 
+ 22.59 
+ 26.86 
+ 0.298 
+ ‡ REST is trained jointly on the task reward and PickScore . 
+ 4.1 Experimental setup
+Models and rewards.
+We use SD3.5 Medium (SD3.5-M) and Z-Image as base models, trained at a resolution of 512^{2} .
+With SD3.5-M, we study two non-differentiable rewards, OCR and GenEval, trained separately, and one multi-reward setting, PickScore + CLIPScore + HPSv2.1. For Z-Image, we use HPSv3 as reward.
+The generators are initialized as few-step distilled diffusion models.
+ Prompt dataset. 
+For OCR and GenEval, we use the corresponding training and test sets from Flow-GRPO.
+For all other rewards, we train on Pick-a-Pic  ( Kirstain et al., 2023 ) and evaluate on DrawBench  ( Saharia et al., 2022 ) .
+Regardless of the training reward, we additionally evaluate every trained model on the OCR and GenEval test sets using their respective rewards.
+ Reference pools. 
+For OCR and GenEval, we generate reference pools with the base model using training-set prompts and 20 steps of sampling.
+For OCR, we generate eight candidates for each of 5,000 prompts and retain the highest-scoring candidate for each prompt only if its OCR reward is at least 0.6 .
+For GenEval, we construct a separate pool using 10,000 rows sampled from the GenEval training set.
+For all other rewards, we use the existing Pick-a-Pic images as the reference pool.
+Alternatively, an external model can generate the reference pool from the same training prompts: we use Nano Banana, Google’s proprietary image-generation model  ( Google DeepMind, 2026 ) .
+ Training and evaluation. 
+Following prior work, we fine-tune the student generator using LoRA  ( Hu et al., 2022 ) with rank 32 and \alpha=64 .
+Each epoch consists of 48 prompt groups, with group size K{=}24 for the main results and K{=}8 for all ablations.
+By default, the reward head is warmed up on samples from the reference distribution with scores from the reward, so that the generator does not receive noisy gradients early in training. This warm-up uses 1000 steps, a very small training budget compared with a full run ( Section   4.3 ).
+Both training and evaluation use four sampling steps, unless stated otherwise, with the LCM sampler  ( Luo et al., 2023 ) and no classifier-free guidance (CFG scale 1 ).
+We also evaluate the trained models using Aesthetic and ImageReward on the same evaluation set.
+Details in Appendix   B .
+ 4.2 Task performance
+Text rendering.
+With four steps, DualHeads raises OCR accuracy from 0.59 to 0.92 ( 0.91 with two), on par with Flow-GRPO with KL and CRD ( Table   1 ). AWM without CFG and DiffusionNFT reach 0.97 but lose image quality (negative ImageReward; HPS \approx 0.20 vs. 0.279 for the base model). DualHeads instead improves all quality and preference scores over the base model, with the highest ImageReward ( 1.10 ) and HPS ( 0.300 , tied with REST) among OCR-trained models. Among few-step methods, only TDM-R1 ( 0.95 ) and REST ( 0.96 ) score higher, using the teacher’s score and 8 NFE with an extra PickScore reward, respectively.
+ OCR GenEval 
+ Figure 3: Qualitative comparison on OCR and GenEval test prompts. DualHeads + NB signifies training with the Nano Banana image pool.
+Compositional generation.
+On GenEval, DualHeads raises the overall score from 0.63 to 0.90 , within the range of multi-step methods ( 0.86 – 0.97 ) and slightly below the few-step baselines ( 0.92 – 0.94 ), which again use the teacher’s score or 8 NFE. Position ( 0.24\to 0.90 ) and counting ( 0.50\to 0.91 ) gain the most; attribute binding remains the weakest ( 0.76 ; Table   5 in Section   C.2 ). DualHeads again improves all quality and preference scores over the base model, whereas Flow-GRPO without KL, AWM without CFG and DiffusionNFT lower ImageReward ( 0.39 – 0.63 ) and PickScore.
+Qualitative comparison.
+In Fig.   3 , DualHeads renders all five OCR texts correctly and blends them into the scene (neon signs, a trail sign, a mural, an envelope). MeanFlowNFT prints the text on flat black plates and misspells “Upgrades Available”, RTDMD mirrors or misspells words (“Propety”, “Readiing”), and TDM-R1 adds a word (“Clup”). On GenEval, the baselines draw isolated objects on plain backgrounds (RSM also misses the TV), while DualHeads often places them in context, e.g., a ski in snow or a zebra beside a bed. The Nano Banana pool makes samples more photographic; it keeps OCR at 0.92 but lowers GenEval to 0.73 ( Section   4.3 ).
+Model-based reward on image quality.
+On Z-Image-Turbo with HPSv3 as the reward ( Table   2 ), four-step DualHeads raises HPSv3 from 11.23 to 13.93 , above TDM-R1 ( 12.67 ) and the 100-NFE base model ( 9.93 ). The gain carries over to held-out preference models, with the best PickScore ( 23.03 ) and HPSv2.1 ( 0.314 ) and a higher ImageReward ( 0.96\to 1.07 ), while GenEval and OCR stay close to Z-Image-Turbo. Aesthetic and CLIPScore drop slightly, and TDM-R1 keeps a higher ImageReward and CLIPScore (samples in Fig.   8 ). With a PickScore + CLIPScore + HPSv2.1 reward on SD3.5-M, DualHeads improves all five metrics over the base model but trails MeanFlowNFT and RTDMD on most ( Table   4 in Section   C.1 ).
+ Table 2: Reinforcing Z-Image   ( Z-Image Team et al., 2025 ) with HPSv3   ( Ma et al., 2025 ) as the training reward ( ∗ ). Z-Image-Turbo and TDM-R1  ( Luo et al., 2026a ) are evaluated at 1024^{2} , except the entries marked † , which are reported in Table 3 of TDM-R1 (at 512^{2} , with Z-Image-Turbo at 4 NFE); the DualHeads rows are EMA weights of one run (reward weight 25) after 120 training iterations, sampled with two and four steps. NFE : number of function evaluations; GenEval : official overall accuracy; OCR : mean OCR score; ImgRwd : ImageReward; CLIP : CLIPScore. The best entry per column is in bold ; shaded rows denote our method.
+ Verifiable metrics 
+ Model-based metrics 
+ Model 
+ NFE 
+ GenEval \uparrow 
+ OCR \uparrow 
+ HPSv3 {}^{\ast}\uparrow 
+ Aes. \uparrow 
+ ImgRwd \uparrow 
+ Pick \uparrow 
+ CLIP \uparrow 
+ HPSv2.1 \uparrow 
+ Z-Image (base;  Z-Image Team et al., 2025 ) 
+ 100 
+ 0.66 † 
+ 0.74 † 
+ 9.93 
+ 5.36 
+ 0.92 
+ 22.39 
+ 28.47 
+ 0.285 
+ Z-Image-Turbo (DMDR;  Jiang et al., 2026 ) 
+ 4 
+ 0.73 † 
+ 0.78 † 
+ 11.23 
+ 5.42 
+ 0.96 
+ 22.86 
+ 27.42 
+ 0.296 
+ TDM-R1  ( Luo et al., 2026a ) 
+ 4 
+ 0.77 † 
+ 0.79 † 
+ 12.67 
+ 5.39 
+ 1.16 
+ 22.82 
+ 28.52 
+ 0.307 
+ DualHeads 
+ 2 
+ 0.76 
+ 0.64 
+ 12.91 
+ 5.27 
+ 1.10 
+ 22.77 
+ 27.31 
+ 0.307 
+ DualHeads 
+ 4 
+ 0.74 
+ 0.75 
+ 13.93 
+ 5.36 
+ 1.07 
+ 23.03 
+ 27.12 
+ 0.314 
+ 4.3 Ablations
+ (a) \beta_{\mathrm{eq}} sweep, warmed-up reward head.
+ (b) Warmed-up vs. fresh reward head.
+ Figure 4: Ablations on OCR. Evaluation OCR score during training, (a) for several values of \beta_{\mathrm{eq}} with a warmed-up reward head, and (b) for a warmed-up versus a freshly initialized reward head.
+Reward strength: Sensitivity to \beta_{\mathrm{eq}}\propto\lambda_{D}/\lambda_{R} .
+Since \beta_{\mathrm{eq}}\propto C\,\lambda_{D}/\lambda_{R} with C=2.5 fixed, sweeping
+ \beta_{\mathrm{eq}} is exactly sweeping the reward-to-reference weight ratio,
+smaller \beta_{\mathrm{eq}} meaning a more reward-weighted objective. OCR reward improves monotonically as \beta_{\mathrm{eq}} falls ( Fig.   4(a) ): over the
+final four checkpoints, 0.907 at \beta_{\mathrm{eq}}=0.1 , 0.888 at 0.25 and
+ 0.862 at 1 , against a \pm 0.029 confidence interval. The ratio being the
+right parameter is confirmed by the two \beta_{\mathrm{eq}}=0.25 runs, which halve
+the absolute weights from (\lambda_{D},\lambda_{R})=(1,10) to (0.5,5) and still
+agree to 0.015 across all sixteen checkpoints. We see no collapse even at
+ \beta_{\mathrm{eq}}=0.1 , so the optimum may lie lower still.
+Warming up the reward head buys speed, not quality.
+At two points of the sweep we initialize the reward head either
+from the warmed-up head used by default ( Section   4.1 ) or from scratch, holding everything else fixed
+( Fig.   4(b) ). A fresh head starts far behind: 0.497 and 0.459 
+below its warmed-up twin at the first checkpoint, as the generator
+receives noisy scoring signals before the reward head is well-trained.
+It recovers by step 3000 , some 8 
+of the \approx\!20 wall-clock hours per run, and converges to within 0.003 and
+ 0.004 of the warmed-up runs, far inside the \pm 0.029 and \pm 0.038 
+intervals. As this holds at both weight settings, the reward head warm-up only speeds up training, at a very small cost, and does not change the final result.
+Choice of data source for the reference pool.
+For the same training prompts, we compare a base-model pool , sampled from the base model, with a Nano Banana pool generated through its API. The two differ well beyond their scores: base-model samples keep SD3.5-M’s flat lighting, sparse layouts and misspelled words, whereas Nano Banana images are photographic, correctly lettered and set in fuller scenes. On OCR, the generator adopts the pool’s style without losing the text (last two rows of Fig.   3 ; more samples in Fig.   7 ): OCR stays at 0.92 ( Table   1 ), the aesthetic score rises from 5.46 to 5.62 , ImageReward, PickScore and HPS barely change, and CLIPScore drops from 28.75 to 26.86 . GenEval, however, falls from 0.90 to 0.73 , showing that the pool can also affect compositional accuracy. The two heads thus largely divide the work: the reward head governs what the reward measures, and the reference head governs everything the reward leaves unspecified, which is set by the reference pool.
+ 5 Conclusion
+We presented DualHeads, a simple method for adapting few-step diffusion generators using only external reward evaluations and reference samples. It turns KL-regularized reward maximization into two binary classification problems, solved by lightweight heads on a frozen diffusion backbone. With four steps, it reaches OCR and GenEval scores of 0.92 and 0.90 , comparable to RL methods with 40–80 NFE, while improving all quality and preference scores over the base model, and gives the best HPSv3 on Z-Image-Turbo. The two heads divide the work: the reward head sets what the reward measures, and the reference pool largely sets the rest, such as style. Appendix   A discusses limitations and future directions.
+AI use statement
+Generative AI tools were used in several parts of this work: to help structure the paper and draft and edit its text and equations, to search and summarize related literature, to inspect implementation and experiment records, and to suggest experimental controls and interpretations of results. The authors reviewed all of this material before using it; in particular, citations and literature summaries were checked against the original papers, and all reported numbers were checked against the experiment logs. The authors take responsibility for the final content of this work, including text, claims, and artifacts produced with the aid of generative AI.
+Reproducibility statement
+ Section   3 specifies the method, and Algorithm   1 summarizes one training iteration. Section   4.1 describes the base models, rewards, prompt sets, reference pools, and evaluation protocol, and Appendix   B gives the training cycle, head architecture, update schedule, and hyperparameters. The base models, prompt sets, and reward models we use are publicly available, and we will release the code, configuration files, and reference pools upon publication.
+Acknowledgments
+This work was supported by Hi! Paris (grant and fellowship), the ANR/France 2030 program (ANR-23-IACL-0005), ANR JCJC “REEL-WORLD”, and a Google DeepMind academic gift. Computing resources were provided by GENCI through access to the IDRIS HPC facilities under allocations 2026-AD011014300R3, 2025-A0190616899, 2026-AD011015894R1, and by Google Gemini. The authors would especially like to thank Julie Mordacq and David Loiseaux for their help.
+

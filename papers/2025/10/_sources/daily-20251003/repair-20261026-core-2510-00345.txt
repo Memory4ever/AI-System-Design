@@ -1,0 +1,2724 @@
+
+
+
+Cutting the Skip: Training Residual-Free Transformers
+
+
+
+
+
+
+
+
+
+
+
+
+
+Skip to main content
+
+  
+    
+      Report GitHub Issue
+      ×
+    
+
+    
+      Title:
+      
+
+      
+Content selection saved. Describe the issue below:
+
+
+      Description:
+      
+    
+
+    
+      Submit without GitHub
+      Submit in GitHub
+    
+  
+
+
+
+
+
+  
+  
+    
+  
+  
+    
+      
+    
+  
+    Why HTML?
+    
+      Report Issue
+        
+      Back to Abstract
+    
+    
+      Download PDF
+        
+      Contents
+    
+    
+      Reading mode
+    
+    
+      Colour theme
+    
+
+
+
+
+
+Abstract
+
+
+1 Introduction
+
+
+2 Transformers: terminology and notation
+
+
+3 Related work on skipless architectures
+
+
+4 Network Jacobian Analysis
+
+
+4.1 Preliminaries
+
+
+4.2 Decomposition of the Network Jacobian
+
+
+4.3 Diving into sub-blocks: Skip connections improve conditioning
+
+
+
+
+5 A New Initialization to Enable Skipless Transformers
+
+
+5.1 Initialization for {\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell}𝐖ℓV​𝐖ℓO{\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell}
+
+
+5.2 Initialization for {\mathbf{W}}^{\text{Q}}_{\ell}{\mathbf{W}}_{\ell}^{\text{K}^{\top}}𝐖ℓQ​𝐖ℓK⊤{\mathbf{W}}^{\text{Q}}_{\ell}{\mathbf{W}}_{\ell}^{\text{K}^{\top}}
+
+
+
+
+6 Experiments
+
+
+6.1 Supervised learning with Skipless ViT
+
+
+6.2 Self-Supervised Learning with Skipless ViT
+
+
+6.2.1 Dense Linear Probing Segmentation
+
+
+6.2.2 Object Discovery
+
+
+
+
+6.3 Qualitative evaluation
+
+
+
+
+7 Discussion
+
+
+8 Conclusion
+
+
+References
+
+
+A Appendix
+
+
+A.1 Jacobian
+
+
+A.2 Proof
+
+
+A.2.1 Softmax Conditioning
+
+
+A.2.2 Proof of Proposed Initialization
+
+
+A.2.3 Conditioning of {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell}
+
+
+A.2.4 Condition of Matrix Concatenation
+
+
+
+
+A.3 Visualization
+
+
+
+
+
+
+
+  
+    License: CC BY-NC-SA 4.0
+  
+  
+arXiv:2510.00345v1 [cs.LG] 30 Sep 2025
+
+
+
+
+
+   Cutting the Skip: Training Residual-Free Transformers
+
+
+
+
+
+Yiping JiJames Martens
+††thanks: Corresponding e-mail:yiping.ji@adelaide.edu.au
+Affiliation: Australian Institute for Machine Learning, Adelaide University
+
+Affiliation: DATA61, CSIRO
+
+  
+Jianqiao Zheng
+
+Affiliation: Australian Institute for Machine Learning, Adelaide University
+
+  
+Ziqin Zhou
+
+Affiliation: Australian Institute for Machine Learning, Adelaide University
+
+  
+Peyman Moghadam
+
+Affiliation: DATA61, CSIRO
+
+  
+Xinyu Zhang
+
+Affiliation: University of Auckland
+
+  
+Hemanth Saratchandran
+
+Affiliation: Australian Institute for Machine Learning, Adelaide University
+
+  
+Simon Lucey
+
+Affiliation: Australian Institute for Machine Learning, Adelaide University
+
+
+Abstract
+    
+
+Transformers have achieved remarkable success across a wide range of applications, a feat often attributed to their scalability. Yet training them without skip (residual) connections remains notoriously difficult. While skips stabilize optimization, they also disrupt the hierarchical structure of representations, raising the long-standing question of whether transformers can be trained efficiently without them. In this work, we address this problem by analyzing the Jacobian of a skipless transformer block, showing why skips improve conditioning and revealing that their stabilization benefits can be recovered through a principled initialization strategy. Building on this insight, we introduce the first method that enables stable and efficient training of skipless transformers without altering the standard architecture. We validate our approach on Vision Transformers (ViTs) in both supervised and self-supervised settings, demonstrating that skipless ViTs trained with our initialization overcome the usual optimization barriers, learn richer hierarchical representations, and outperform strong baselines, that incorporate skip connections, on dense prediction benchmarks. These results show that skip connections are not a fundamental requirement for training ViTs and open new avenues for hierarchical representation learning in vision models.
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1 Introduction
+
+
+
+
+Over the past decade, large transformer-based models have achieved remarkable success, demonstrating strong zero-shot and generalization capabilities across tasks and domains through a single, reusable model (Caron et al., 2021; Comanici et al., 2025; Wang et al., 2025). Their ability to be trained at great depth relies heavily on skip connections (He et al., 2016), which have become a cornerstone of modern deep learning models. This unprecedented scalability in depth is widely regarded as a key factor behind the astonishing performance of transformer-based architectures.
+
+
+
+
+However, the reliance on skip connections raises an important question:
+do such networks truly operate at the depth implied by their architecture?
+Prior work (Veit et al., 2016; Gromov et al., 2025; MacDonald et al., 2023) suggests that residual connections make networks behave as if
+they are much shallower than their nominal depth.
+An earlier study (He et al., 2023) was the first to investigate “skipless transformers”, introducing a modified self-attention block to preserve well-behaved forward kernels.
+Although this modification improved trainability, the resulting models still converged significantly more slowly than their residual counterparts.
+This paper addresses this gap by introducing a theoretically grounded initialization scheme that does not require architectural changes.
+Combined with a second-order optimizer (Vyas et al., 2025), our approach enables skipless Vision Transformers to achieve training speeds comparable to residual-based models.
+
+
+
+
+The concept of skip connections dates back to the 1960s: Rosenblatt et al. (1962) described a three-layer multilayer perceptron referred to as a cross-coupled system, where skip-like couplings were already present. Decades later, skip connections were popularized in ResNets (He et al., 2016) and subsequently adopted in transformers (Vaswani et al., 2017), and they are now considered crucial for training very deep networks. One proposed explanation for their effectiveness is that they improve the conditioning of the network Jacobian, thereby facilitating gradient flow and enabling faster, more stable convergence (Ji et al., 2025b). Empirical evidence also suggests that self-attention tends to be disproportionately ill-conditioned—acting as an optimization bottleneck—compared to other components such as feed-forward networks, underscoring the stabilizing role that residual connections can play within transformers.
+
+
+
+
+While skip connections are vital for optimizing modern neural networks, they also
+change how architectural depth is functionally expressed.
+Deep networks are intended to form compositional hierarchies in which representations become progressively more abstract layer by layer (LeCun et al., 2015).
+However, skip connections disrupt this hierarchy by continually reintroducing
+information from earlier layers into later ones.
+This shortcutting interrupts the intended progression of abstraction (Zhang et al., 2024) and can limit the network’s ability to learn rich, deeply composed features.
+As a result, networks with skips often behave as if they are effectively shallower than their nominal depth suggests.
+Prior studies have shown that in ResNets, skip connections reduce the role of deep compositions, making networks behave like ensembles of shallower subnetworks (Veit et al., 2016).
+In modern transformers, this effect is even more pronounced: after convergence, many deeper layers contribute so little to the final prediction that they can be pruned with minimal loss (Gromov et al., 2025).
+Together, these findings suggest that while skip connections are indispensable for optimization, they may obscure the true representational benefits of depth — motivating our goal of designing transformers without shortcuts.
+
+
+
+
+To the best of our knowledge, the only prior work to train skipless transformers is that of He et al. (2023), who modified the self-attention block to maintain well-behaved forward kernels and prevent the kernel matrix from collapsing toward rank 1.
+Although their method successfully removes residual connections, it does so by altering the standard transformer architecture, and the modified attention blocks are not compatible with widely used optimizations such as Flash Attention (Dao, 2024).
+In contrast, our approach requires no architectural changes: we retain the standard transformer block design and achieve stable training of skipless transformers solely through a principled initialization strategy.
+
+
+
+
+Guided by the first principle of gradient-based optimization—good network conditioning (see Section 4.1)—we analyze the Jacobian of transformers and use this insight to design a principled initialization strategy that enables stable training of skipless models.
+Our main contributions are:
+
+
+
+
+
+• 
+
+
+Jacobian analysis: We provide a theoretical study of the transformer Jacobian and show that skip connections stabilize optimization by improving its conditioning.
+
+
+
+
+• 
+
+
+Initialization without architectural changes: Guided by this analysis, we introduce a simple, theoretically grounded initialization scheme that requires no changes to the transformer block, remains fully compatible with FlashAttention, and enables stable end-to-end training of skipless transformers.
+
+
+
+
+• 
+
+
+Supervised training at parity with residuals: On image classification benchmarks, skipless models trained with a second-order optimizer converge as quickly as standard residual transformers and achieve comparable accuracy.
+
+
+
+
+• 
+
+
+Improved self-supervised representations: In self-supervised learning, skipless models outperform residual transformers in dense prediction tasks, while being parameter-efficient, training faster and producing more semantically coherent representations.
+
+
+
+
+• 
+
+
+Enabling depth studies: Our approach makes it possible— for the first time— to systematically study truly deep (skipless) Vision Transformers, offering new insights into hierarchical representation learning in vision.
+
+
+
+
+
+
+
+
+
+
+2 Transformers: terminology and notation
+
+
+
+
+A standard transformer begins with a token embedding \mathbf{X}_{0}\in\mathbb{R}^{n\times d}𝐗0∈ℝn×d\mathbf{X}_{0}\in\mathbb{R}^{n\times d},
+where nnn is the number of tokens and ddd is the embedding dimension.
+This embedding is then passed through a stack of LLL transformer blocks.
+Each block consists of two main components: a
+Self-Attention Block (SAB) and a
+Feed-Forward Network (FFN), as defined in
+Eqs. 1 and 2, respectively.
+The SAB applies Self-Attention (SA) together with a residual (skip) connection,
+while the FFN applies a multilayer perceptron (MLP), also with a residual connection. We denote by {\mathbf{X}}_{\ell}𝐗ℓ{\mathbf{X}}_{\ell} the output embedding after the \ellℓ\ell-th transformer block.
+In summary, we have
+
+
+
+
+
+
+\displaystyle{\mathbf{X}}_{\ell}𝐗ℓ\displaystyle{\mathbf{X}}_{\ell}
+\displaystyle={\mathbf{X}}_{\ell-1}+\text{SA}(\hat{{\mathbf{X}}}_{\ell-1})\quad\text{and}=𝐗ℓ−1+SA(𝐗^ℓ−1)and\displaystyle={\mathbf{X}}_{\ell-1}+\text{SA}(\hat{{\mathbf{X}}}_{\ell-1})\quad\text{and}
+
+(1)
+
+
+
+
+\displaystyle\hat{{\mathbf{X}}}_{\ell}𝐗^ℓ\displaystyle\hat{{\mathbf{X}}}_{\ell}
+\displaystyle={\mathbf{X}}_{l}+\text{MLP}({\mathbf{X}}_{l}),=𝐗l+MLP​(𝐗l),\displaystyle={\mathbf{X}}_{l}+\text{MLP}({\mathbf{X}}_{l}),
+
+(2)
+
+
+
+Self-attention allows the network to selectively attend to relevant parts of the input
+and is core component of modern transformers.
+
+
+
+
+Omitting \ellℓ\ell for clarity, the self-attention operation is defined as
+
+
+
+
+
+
+\text{SA}(\mathbf{X})=\mathbf{A}\mathbf{V}\mathbf{W}^{\text{O}},SA​(𝐗)=𝐀𝐕𝐖O,\text{SA}(\mathbf{X})=\mathbf{A}\mathbf{V}\mathbf{W}^{\text{O}},
+
+(3)
+
+
+
+where \mathbf{Q}=\mathbf{X}\mathbf{W}^{\text{Q}},\mathbf{K}=\mathbf{X}\mathbf{W}^{\text{K}},\mathbf{V}=\mathbf{X}\mathbf{W}^{\text{V}},𝐐=𝐗𝐖Q,𝐊=𝐗𝐖K,𝐕=𝐗𝐖V,\mathbf{Q}=\mathbf{X}\mathbf{W}^{\text{Q}},\mathbf{K}=\mathbf{X}\mathbf{W}^{\text{K}},\mathbf{V}=\mathbf{X}\mathbf{W}^{\text{V}},
+and the attention matrix is \mathbf{A}=\eta\big(\mathbf{Q}\mathbf{K}^{\top}\big).𝐀=η⁡(𝐐𝐊⊤).\mathbf{A}=\eta\big(\mathbf{Q}\mathbf{K}^{\top}\big).
+Here, \mathbf{Q},\mathbf{K},\mathbf{V}𝐐,𝐊,𝐕\mathbf{Q},\mathbf{K},\mathbf{V} are the
+queries, keys, and values, respectively.
+The parameter matrices
+\mathbf{W}^{\text{Q}},\mathbf{W}^{\text{K}},\mathbf{W}^{\text{V}},\mathbf{W}^{\text{O}}\in\mathbb{R}^{d\times d}𝐖Q,𝐖K,𝐖V,𝐖O∈ℝd×d\mathbf{W}^{\text{Q}},\mathbf{W}^{\text{K}},\mathbf{W}^{\text{V}},\mathbf{W}^{\text{O}}\in\mathbb{R}^{d\times d}
+are learnable, and \eta(\cdot)η⁡(⋅)\eta(\cdot) is typically the \mathrm{softmax}softmax\mathrm{softmax} function.
+
+
+
+
+In practice, multi-head attention is used.
+The projection matrices are divided across hhh heads, such that
+
+
+
+
+
+
+\mathbf{W}^{\text{Q}}_{i},\ \mathbf{W}^{\text{K}}_{i},\ \mathbf{W}^{\text{V}}_{i}\in\mathbb{R}^{d\times d_{h}},\qquad d_{h}=\tfrac{d}{h}.𝐖iQ,𝐖iK,𝐖iV∈ℝd×dh,dh=dh.\mathbf{W}^{\text{Q}}_{i},\ \mathbf{W}^{\text{K}}_{i},\ \mathbf{W}^{\text{V}}_{i}\in\mathbb{R}^{d\times d_{h}},\qquad d_{h}=\tfrac{d}{h}.
+
+
+
+
+For head iii, we compute
+
+
+
+
+
+
+\mathbf{A}_{i}=\eta\big(\mathbf{Q}_{i}\mathbf{K}_{i}^{\top}\big),𝐀i=η⁡(𝐐i​𝐊i⊤),\mathbf{A}_{i}=\eta\big(\mathbf{Q}_{i}\mathbf{K}_{i}^{\top}\big),
+
+
+
+
+and the final output is obtained by concatenating across heads:
+
+
+
+
+
+
+\text{SA}(\mathbf{X})=\text{Concat}\big(\mathbf{A}_{1}\mathbf{V}_{1},\ldots,\mathbf{A}_{h}\mathbf{V}_{h}\big)\mathbf{W}^{\text{O}}.SA​(𝐗)=Concat​(𝐀1​𝐕1,…,𝐀h​𝐕h)​𝐖O.\text{SA}(\mathbf{X})=\text{Concat}\big(\mathbf{A}_{1}\mathbf{V}_{1},\ldots,\mathbf{A}_{h}\mathbf{V}_{h}\big)\mathbf{W}^{\text{O}}.
+
+(4)
+
+
+
+
+
+
+
+
+3 Related work on skipless architectures
+
+
+
+
+Many works have successfully removed skip connections in CNN architectures,
+overcoming optimization challenges and achieving competitive performance
+(Zhang et al., 2022; Zagoruyko & Komodakis, 2017; Martens et al., 2021).
+In contrast, in the transformer domain, to the best of our knowledge,
+only one paper has investigated training skipless language transformers (He et al., 2023) by modifying the Self-Attention Block. Based on thee observation that skipless transformers are suffering from rank collapse (Noci et al., 2022), where the kernel matrix converges in depth to have rank 1, they modified the self-attention block to maintain well-behaved kernels at initialization. Our work differs from this previous attempt in that we focus on the conditioning of the network Jacobian instead of the properties of the kernel, our modifications are purely to the initialization of the weight matrices, and our experiments consider vision models instead of text.
+
+
+
+
+
+
+
+4 Network Jacobian Analysis
+
+
+
+
+
+4.1 Preliminaries
+
+
+
+
+Throughout this paper, when analysing the network Jacobian,
+we denote the transformer network as f(\mathbf{x};\theta)\in\mathbb{R}^{nd}f⁡(𝐱,θ)∈ℝn​df(\mathbf{x};\theta)\in\mathbb{R}^{nd}, where \mathbf{x}=\mathrm{vec}[\mathbf{X}]𝐱=vec⁡[𝐗]\mathbf{x}=\mathrm{vec}[\mathbf{X}] is the vectorized token embedding, nnn is the number of tokens, ddd is the feature dimension, and \thetaθ\theta denotes all learnable network parameters such that p=\dim(\theta)p=dim(θ)p=\dim(\theta).
+Importantly, f(\mathbf{x};\theta)f⁡(𝐱,θ)f(\mathbf{x};\theta) deliberately omits the the token embedding and output-head so that we can focus on the internal interactions
+of the transformer blocks; for this reason the network output is of size ndn​dnd.
+
+
+
+
+For a batch of mmm input examples, we define the stacked output
+
+
+
+
+
+
+F(\theta):=\big[f(\mathbf{x}_{1};\theta);\cdots;f(\mathbf{x}_{m};\theta)\big]\in\mathbb{R}^{mnd}.F⁡(θ):=[f⁡(𝐱1,θ);⋯;f⁡(𝐱m,θ)]∈ℝm​n​d.F(\theta):=\big[f(\mathbf{x}_{1};\theta);\cdots;f(\mathbf{x}_{m};\theta)\big]\in\mathbb{R}^{mnd}.
+
+(5)
+
+
+
+
+
+The network Jacobian is then \mathbf{J}\;=\;\frac{\partial F}{\partial\theta}\;\in\;\mathbb{R}^{mnd\times p}𝐉=∂F∂θ∈ℝm​n​d×p\mathbf{J}\;=\;\frac{\partial F}{\partial\theta}\;\in\;\mathbb{R}^{mnd\times p}, and its conditioning provides a key indicator of the network’s training dynamics. We define the condition number as the ratio of the largest to smallest singular value \kappa(\mathbf{J})=s_{\max}\cdot s_{\min}^{-1}κ⁡(𝐉)=smax⋅smin−1\kappa(\mathbf{J})=s_{\max}\cdot s_{\min}^{-1}.
+
+
+
+
+Prior research has established that a well-conditioned Jacobian is closely linked to improved convergence in feed-forward neural networks (Jacot et al., 2018; Agarwal et al., 2021; Saratchandran et al., 2024).
+In the context of transformers, the study of Jacobian conditioning has largely followed two directions. First, in fine-tuning, numerous works have demonstrated that conditioning low-rank adapters improves optimization and leads to stronger performance when introducing additional parameters (Ji et al., 2025a; Albert et al., 2025b; Albert et al., 2025a).
+Second, in the setting of pretraining, recent studies have shown that conditioning specific components of the transformer architecture itself can enhance training stability and yield better downstream performance (Ji et al., 2025b; Saratchandran & Lucey, 2025; Saratchandran et al., 2025).
+
+
+
+
+A central hypothesis of this work is that residual (skip) connections, while essential for optimization, violate the hierarchical principle of deep networks by continually injecting shallow features into deeper layers. Removing these shortcuts makes training challenging because the Jacobian of skipless transformers is poorly conditioned at random initialization (Ji et al., 2025b). Building on a theoretical analysis of the network Jacobian, we propose a principled initialization strategy that directly improves conditioning. This enables training completely skipless transformers at speeds comparable to standard residual models while learning richer, more semantically coherent internal representations.
+
+
+
+
+
+
+
+4.2 Decomposition of the Network Jacobian
+
+
+
+
+The Jacobian of the transformer network FFF can be decomposed into block columns:
+
+
+
+
+
+
+\mathbf{J}\;=\;\frac{\partial F}{\partial\theta}\;=\;\big[\,\mathbf{J}_{1},\hat{\mathbf{J}}_{1},\;\ldots,\;\mathbf{J}_{L},\hat{\mathbf{J}}_{L}\,\big],𝐉=∂F∂θ=[𝐉1,𝐉^1,…,𝐉L,𝐉^L],\mathbf{J}\;=\;\frac{\partial F}{\partial\theta}\;=\;\big[\,\mathbf{J}_{1},\hat{\mathbf{J}}_{1},\;\ldots,\;\mathbf{J}_{L},\hat{\mathbf{J}}_{L}\,\big],
+
+
+
+
+where
+
+
+
+
+
+
+\mathbf{J}_{\ell}=\frac{\partial F}{\partial\theta^{(\ell)}}\in\mathbb{R}^{mnd\times p_{\ell}},\qquad\hat{\mathbf{J}}_{\ell}=\frac{\partial F}{\partial\hat{\theta}^{(\ell)}}\in\mathbb{R}^{mnd\times\hat{p}_{\ell}}.𝐉ℓ=∂F∂θ(ℓ)∈ℝm​n​d×pℓ,𝐉^ℓ=∂F∂θ^(ℓ)∈ℝm​n​d×p^ℓ.\mathbf{J}_{\ell}=\frac{\partial F}{\partial\theta^{(\ell)}}\in\mathbb{R}^{mnd\times p_{\ell}},\qquad\hat{\mathbf{J}}_{\ell}=\frac{\partial F}{\partial\hat{\theta}^{(\ell)}}\in\mathbb{R}^{mnd\times\hat{p}_{\ell}}.
+
+
+
+
+Here, \mathbf{J}_{\ell}𝐉ℓ\mathbf{J}_{\ell} and \hat{\mathbf{J}}_{\ell}𝐉^ℓ\hat{\mathbf{J}}_{\ell} are the Jacobians of the
+final output with respect to the parameters of the \ellℓ\ell-th
+SAB and FFN sub-blocks, respectively,
+and
+\sum_{\ell=1}^{L}\big(p_{\ell}+\hat{p}_{\ell}\big)=\dim(\theta)=p.∑ℓ=1L(pℓ+p^ℓ)=dim(θ)=p.\sum_{\ell=1}^{L}\big(p_{\ell}+\hat{p}_{\ell}\big)=\dim(\theta)=p.
+
+
+
+
+Following Ji et al. (2025b), we adopt the simplifying assumption that the
+conditioning of the full Jacobian is controlled by its worst-conditioned
+sub-blocks. In particular we write
+
+
+
+
+
+
+\kappa(\mathbf{J})\;\leq\;\max_{\ell}\big\{\kappa(\mathbf{J}_{\ell}),\;\kappa(\hat{\mathbf{J}}_{\ell})\big\}.κ⁡(𝐉)≤maxℓ⁡{κ⁡(𝐉ℓ),κ⁡(𝐉^ℓ)}.\kappa(\mathbf{J})\;\leq\;\max_{\ell}\big\{\kappa(\mathbf{J}_{\ell}),\;\kappa(\hat{\mathbf{J}}_{\ell})\big\}.
+
+(6)
+
+
+
+That is, the spectral condition number of the entire network Jacobian is
+assumed to be no larger than the worst condition number among all SAB and FFN sub-block Jacobians.
+
+
+
+
+This assumption does not hold universally, but we provide justification for it under mild block-incoherence conditions with balanced blocks (see Section A.2.4). Ji et al. demonstrated both theoretically and empirically that SAB sub-block Jacobians
+are significantly less well-conditioned than their
+FFN counterparts. For this reason our focus on this paper is around the condition of the SAB sub-block Jacobian \mathbf{J}_{\ell}𝐉ℓ\mathbf{J}_{\ell}.
+
+
+
+
+
+
+
+4.3 Diving into sub-blocks: Skip connections improve conditioning
+
+
+
+
+With skip connections, the vectorized SAB and FFN sub-block updates at layer \ellℓ\ell are
+
+
+
+
+
+
+\mathbf{x}^{(\ell)}=f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})+\hat{\mathbf{x}}^{(\ell-1)}\in\mathbb{R}^{nd},\qquad\hat{\mathbf{x}}^{(\ell)}=f_{\text{MLP}}(\mathbf{x}^{(\ell)};\hat{\theta}^{(\ell)})+\mathbf{x}^{(\ell)}\in\mathbb{R}^{nd}.𝐱(ℓ)=fSA​(𝐱^(ℓ−1),θ(ℓ))+𝐱^(ℓ−1)∈ℝn​d,𝐱^(ℓ)=fMLP​(𝐱(ℓ),θ^(ℓ))+𝐱(ℓ)∈ℝn​d.\mathbf{x}^{(\ell)}=f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})+\hat{\mathbf{x}}^{(\ell-1)}\in\mathbb{R}^{nd},\qquad\hat{\mathbf{x}}^{(\ell)}=f_{\text{MLP}}(\mathbf{x}^{(\ell)};\hat{\theta}^{(\ell)})+\mathbf{x}^{(\ell)}\in\mathbb{R}^{nd}.
+
+
+
+
+Denoting the derivative of the SA and MLP output with respect to the corresponding inputs by
+
+
+
+
+
+
+{\mathbf{K}}_{\ell}=\frac{\partial f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})}{\partial\hat{\mathbf{x}}^{(\ell-1)}}\in\mathbb{R}^{nd\times nd},\qquad\hat{{\mathbf{K}}_{\ell}}=\frac{\partial f_{\text{MLP}}(\mathbf{x}^{(\ell)};\hat{\theta}^{(\ell)})}{\partial\mathbf{x}^{(\ell)}}\in\mathbb{R}^{nd\times nd},𝐊ℓ=∂fSA​(𝐱^(ℓ−1),θ(ℓ))∂𝐱^(ℓ−1)∈ℝn​d×n​d,𝐊ℓ^=∂fMLP​(𝐱(ℓ),θ^(ℓ))∂𝐱(ℓ)∈ℝn​d×n​d,{\mathbf{K}}_{\ell}=\frac{\partial f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})}{\partial\hat{\mathbf{x}}^{(\ell-1)}}\in\mathbb{R}^{nd\times nd},\qquad\hat{{\mathbf{K}}_{\ell}}=\frac{\partial f_{\text{MLP}}(\mathbf{x}^{(\ell)};\hat{\theta}^{(\ell)})}{\partial\mathbf{x}^{(\ell)}}\in\mathbb{R}^{nd\times nd},
+
+(7)
+
+
+
+we have the derivative of the network output with respect to the SA parameters at layer \ellℓ\ell is:
+
+
+
+
+
+
+\frac{\partial f(\mathbf{x};\theta)}{\partial\theta^{(\ell)}}=\prod_{i=L}^{\ell+1}\left\{\left(\hat{{\mathbf{K}}_{i}}+{\mathbf{I}}_{nd}\right)\left({\mathbf{K}}_{i}+{\mathbf{I}}_{nd}\right)\right\}\left(\hat{{\mathbf{K}}_{\ell}}+{\mathbf{I}}_{nd}\right)\frac{\partial f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})}{\partial\theta^{(\ell)}}\>\>\in\mathbb{R}^{nd\times p_{\ell}}.∂f⁡(𝐱,θ)∂θ(ℓ)=∏i=Lℓ+1{(𝐊i^+𝐈n​d)​(𝐊i+𝐈n​d)}​(𝐊ℓ^+𝐈n​d)​∂fSA​(𝐱^(ℓ−1),θ(ℓ))∂θ(ℓ)∈ℝn​d×pℓ.\frac{\partial f(\mathbf{x};\theta)}{\partial\theta^{(\ell)}}=\prod_{i=L}^{\ell+1}\left\{\left(\hat{{\mathbf{K}}_{i}}+{\mathbf{I}}_{nd}\right)\left({\mathbf{K}}_{i}+{\mathbf{I}}_{nd}\right)\right\}\left(\hat{{\mathbf{K}}_{\ell}}+{\mathbf{I}}_{nd}\right)\frac{\partial f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})}{\partial\theta^{(\ell)}}\>\>\in\mathbb{R}^{nd\times p_{\ell}}.
+
+(8)
+
+
+
+
+
+If skip connections are not present, we have:
+
+
+
+
+
+
+\frac{\partial f(\mathbf{x};\theta)}{\partial\theta^{(\ell)}}=\prod_{i=L}^{\ell+1}\left(\hat{{\mathbf{K}}_{i}}{\mathbf{K}}_{i}\right)\hat{{\mathbf{K}}_{\ell}}\frac{\partial f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})}{\partial\theta^{(\ell)}}\>\>\in\mathbb{R}^{nd\times p_{\ell}}.∂f⁡(𝐱,θ)∂θ(ℓ)=∏i=Lℓ+1(𝐊i^​𝐊i)​𝐊ℓ^​∂fSA​(𝐱^(ℓ−1),θ(ℓ))∂θ(ℓ)∈ℝn​d×pℓ.\frac{\partial f(\mathbf{x};\theta)}{\partial\theta^{(\ell)}}=\prod_{i=L}^{\ell+1}\left(\hat{{\mathbf{K}}_{i}}{\mathbf{K}}_{i}\right)\hat{{\mathbf{K}}_{\ell}}\frac{\partial f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})}{\partial\theta^{(\ell)}}\>\>\in\mathbb{R}^{nd\times p_{\ell}}.
+
+(9)
+
+
+
+
+
+From Eq. 5, the Jacobian {\mathbf{J}}_{\ell}\in\mathbb{R}^{mnd\times p_{\ell}}𝐉ℓ∈ℝm​n​d×pℓ{\mathbf{J}}_{\ell}\in\mathbb{R}^{mnd\times p_{\ell}} is the concatenation of \frac{\partial f(\mathbf{x};\theta)}{\partial\theta^{(\ell)}}\in\mathbb{R}^{nd\times p_{\ell}}∂f⁡(𝐱,θ)∂θ(ℓ)∈ℝn​d×pℓ\frac{\partial f(\mathbf{x};\theta)}{\partial\theta^{(\ell)}}\in\mathbb{R}^{nd\times p_{\ell}} for mmm samples.
+By assumption i), we have \kappa(\mathbf{J_{\ell}})κ⁡(𝐉ℓ)\kappa(\mathbf{J_{\ell}}) is bounded by the largest \kappa(\frac{\partial f(\mathbf{x};\theta)}{\partial\theta^{(\ell)}})κ⁡(∂f⁡(𝐱,θ)∂θ(ℓ))\kappa(\frac{\partial f(\mathbf{x};\theta)}{\partial\theta^{(\ell)}}) for mmm samples.
+Thus, comparing Eqs. 8 and 9, we can see clearly how the skip connections ({\mathbf{I}}_{nd}𝐈n​d{\mathbf{I}}_{nd} term) help network conditioning.
+As we stated before in assumption ii), compared to the conditioning of the MLP \hat{{\mathbf{K}}_{\ell}}𝐊ℓ^\hat{{\mathbf{K}}_{\ell}}, the conditioning of the SA {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell} is much worse
+(explored in Section 5.1 under default truncated normal initialization with Proposition 1). The addition of the identity matrix {\mathbf{I}}_{nd}𝐈n​d{\mathbf{I}}_{nd} in Eq. 8 shifts the spectrum of {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell} from zero, regularizing the smallest singular values.
+
+
+
+
+These observations invite the question: is there an alternative way to maintain the good conditioning of {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell} such that \kappa({\mathbf{K}}_{\ell})\approx\kappa({\mathbf{K}}_{\ell}+{\mathbf{I}}_{nd})κ⁡(𝐊ℓ)≈κ⁡(𝐊ℓ+𝐈n​d)\kappa({\mathbf{K}}_{\ell})\approx\kappa({\mathbf{K}}_{\ell}+{\mathbf{I}}_{nd}) in a skipless transformer?
+
+
+
+
+
+
+
+
+
+5 A New Initialization to Enable Skipless Transformers
+
+
+
+
+Based on the previous analysis, our goal is to improve the conditioning of \kappa({\mathbf{K}}_{\ell})κ⁡(𝐊ℓ)\kappa({\mathbf{K}}_{\ell}). To this end, we first give an expression {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell} at layer \ellℓ\ell:
+
+
+
+
+
+
+{\mathbf{K}}_{\ell}=(\hat{{\mathbf{X}}}_{\ell-1}{{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}}\otimes{\mathbf{I}}_{n})^{\top}{\mathbf{A}}^{\prime}_{\ell}+({{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}})^{\top}\otimes{\mathbf{A}}_{\ell},𝐊ℓ=(𝐗^ℓ−1​𝐖ℓV​𝐖ℓO⊗𝐈n)⊤​𝐀ℓ′+(𝐖ℓV​𝐖ℓO)⊤⊗𝐀ℓ,{\mathbf{K}}_{\ell}=(\hat{{\mathbf{X}}}_{\ell-1}{{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}}\otimes{\mathbf{I}}_{n})^{\top}{\mathbf{A}}^{\prime}_{\ell}+({{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}})^{\top}\otimes{\mathbf{A}}_{\ell},
+
+(10)
+
+
+
+where {\mathbf{A}}_{\ell}\in\mathbb{R}^{n\times n}𝐀ℓ∈ℝn×n{\mathbf{A}}_{\ell}\in\mathbb{R}^{n\times n} is the attention matrix, and {\mathbf{A}}^{\prime}_{\ell}\in\mathbb{R}^{n^{2}\times nd}𝐀ℓ′∈ℝn2×n​d{\mathbf{A}}^{\prime}_{\ell}\in\mathbb{R}^{n^{2}\times nd} is the derivative of the attention matrix with respect to the input \hat{{\mathbf{x}}}^{(\ell-1)}=\mathrm{vec}({\hat{{\mathbf{X}}}_{\ell-1}})𝐱^(ℓ−1)=vec⁡(𝐗^ℓ−1)\hat{{\mathbf{x}}}^{(\ell-1)}=\mathrm{vec}({\hat{{\mathbf{X}}}_{\ell-1}}) (vectorized when forming the derivative matrix) 11
+            1
+            
+            
+            
+            
+            
+            
+            
+          \ellℓ\ell is defined as head index in the previous section but in the following sections we redefine the \ellℓ\ell as the block index.
+
+
+
+
+Using this expression we will proceed to derive a principled initialization for the weight matrices {\mathbf{W}}^{\text{Q}}_{\ell},{\mathbf{W}}^{\text{K}}_{\ell},{\mathbf{W}}^{\text{V}}_{\ell}𝐖ℓQ,𝐖ℓK,𝐖ℓV{\mathbf{W}}^{\text{Q}}_{\ell},{\mathbf{W}}^{\text{K}}_{\ell},{\mathbf{W}}^{\text{V}}_{\ell} and, {\mathbf{W}}^{\text{O}}_{\ell}𝐖ℓO{\mathbf{W}}^{\text{O}}_{\ell} to improve the conditioning of {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell}. {\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell}𝐖ℓV​𝐖ℓO{\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell} appears in both term and {\mathbf{W}}^{\text{Q}}_{\ell}{\mathbf{W}}^{\text{K}}_{\ell}𝐖ℓQ​𝐖ℓK{\mathbf{W}}^{\text{Q}}_{\ell}{\mathbf{W}}^{\text{K}}_{\ell} appears in the {\mathbf{A}}_{\ell}𝐀ℓ{\mathbf{A}}_{\ell} and {\mathbf{A}}^{\prime}_{\ell}𝐀ℓ′{\mathbf{A}}^{\prime}_{\ell}.
+
+
+
+
+
+5.1 Initialization for {\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell}𝐖ℓV​𝐖ℓO{\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell}
+
+
+
+
+A key observation (see Eq. 10) is that the product {\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell}𝐖ℓV​𝐖ℓO{\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell} appears in both terms of the Jacobian. For training to be stable, this product must be well-conditioned in order to improve the condition of {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell}. The best-case scenario is when it is a (scaled) orthonormal matrix, because in that case all of its singular values are equal, so that \kappa({\mathbf{W}}^{V}_{\ell}{\mathbf{W}}^{O}_{\ell})=1κ⁡(𝐖ℓV​𝐖ℓO)=1\kappa({\mathbf{W}}^{V}_{\ell}{\mathbf{W}}^{O}_{\ell})=1. To achieve this, we first initialize a random square matrix {\mathbf{Q}}\in{\mathbb{R}}^{d\times d}𝐐∈ℝd×d{\mathbf{Q}}\in{\mathbb{R}}^{d\times d} with zero-mean, unit-variance entries. Then we perform an SVD decomposition such that {\mathbf{Q}}={\mathbf{U}}{\mathbf{S}}{\mathbf{V}}^{\top}𝐐=𝐔𝐒𝐕⊤{\mathbf{Q}}={\mathbf{U}}{\mathbf{S}}{\mathbf{V}}^{\top} and we assign {\mathbf{W}}^{\text{V}}_{\ell}=c\cdot{\mathbf{U}}𝐖ℓV=c⋅𝐔{\mathbf{W}}^{\text{V}}_{\ell}=c\cdot{\mathbf{U}} and {\mathbf{W}}^{\text{O}}_{\ell}=c\cdot{\mathbf{V}}^{\top}𝐖ℓO=c⋅𝐕⊤{\mathbf{W}}^{\text{O}}_{\ell}=c\cdot{\mathbf{V}}^{\top}, where ccc is a scaling constant. This ensures the matrix {\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell}𝐖ℓV​𝐖ℓO{\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell} is scaled orthonormal.
+
+
+
+
+
+
+
+5.2 Initialization for {\mathbf{W}}^{\text{Q}}_{\ell}{\mathbf{W}}_{\ell}^{\text{K}^{\top}}𝐖ℓQ​𝐖ℓK⊤{\mathbf{W}}^{\text{Q}}_{\ell}{\mathbf{W}}_{\ell}^{\text{K}^{\top}}
+
+
+
+
+Recall the attention {\mathbf{A}}_{\ell}=\mathrm{softmax}({\mathbf{M}}_{\ell})𝐀ℓ=softmax⁡(𝐌ℓ){\mathbf{A}}_{\ell}=\mathrm{softmax}({\mathbf{M}}_{\ell}), where {\mathbf{M}}_{\ell}=\hat{{\mathbf{X}}}_{\ell-1}{\mathbf{W}}_{\ell}^{\text{Q}}{{\mathbf{W}}_{\ell}^{\text{K}}}^{\top}\hat{{\mathbf{X}}}_{\ell-1}^{\top}𝐌ℓ=𝐗^ℓ−1​𝐖ℓQ​𝐖ℓK⊤​𝐗^ℓ−1⊤{\mathbf{M}}_{\ell}=\hat{{\mathbf{X}}}_{\ell-1}{\mathbf{W}}_{\ell}^{\text{Q}}{{\mathbf{W}}_{\ell}^{\text{K}}}^{\top}\hat{{\mathbf{X}}}_{\ell-1}^{\top}. The conditioning of {\mathbf{A}}_{\ell}𝐀ℓ{\mathbf{A}}_{\ell} critically depends on the structure of its logits {\mathbf{M}}_{\ell}𝐌ℓ{\mathbf{M}}_{\ell}.
+
+
+
+Proposition 1 (Softmax conditioning: diagonal dominance vs. diffuse rows).
+
+
+Let S_{\tau}(\mathbf{M}_{\ell})\in\mathbb{R}^{n\times n}Sτ​(𝐌ℓ)∈ℝn×nS_{\tau}(\mathbf{M}_{\ell})\in\mathbb{R}^{n\times n} denote the row-wise softmax with temperature \tau>0τ>0\tau>0.
+
+
+
+
+(Diffuse rows).
+If each row of \mathbf{M}_{\ell}𝐌ℓ\mathbf{M}_{\ell} has a small range (difference between maximum and minimum)\Delta{\ll}\tauΔ≪τ\Delta{\ll}\tau, then S_{\tau}(\mathbf{M}_{\ell})Sτ​(𝐌ℓ)S_{\tau}(\mathbf{M}_{\ell}) is close to the uniform matrix \tfrac{1}{n}\mathbf{1}\mathbf{1}^{\top}1n​𝟏𝟏⊤\tfrac{1}{n}\mathbf{1}\mathbf{1}^{\top}, which has rank 111. In this case
+\kappa(S_{\tau}(\mathbf{M}_{\ell}))\;\gtrsim\;\tfrac{\tau}{\Delta}κ⁡(Sτ​(𝐌ℓ))≳τΔ\kappa(S_{\tau}(\mathbf{M}_{\ell}))\;\gtrsim\;\tfrac{\tau}{\Delta}, and the conditioning worsens as nnn grows.
+
+
+
+
+(Diagonal dominance).
+If \mathbf{M}_{\ell}𝐌ℓ\mathbf{M}_{\ell} is diagonal dominant, i.e. {\textnormal{M}}_{ii}-\max_{j\neq i}{\textnormal{M}}_{ij}\;\geq\;\gamma>0Mi​i−maxj≠i⁡Mi​j≥γ>0{\textnormal{M}}_{ii}-\max_{j\neq i}{\textnormal{M}}_{ij}\;\geq\;\gamma>0, then S_{\tau}(\mathbf{M}_{\ell})Sτ​(𝐌ℓ)S_{\tau}(\mathbf{M}_{\ell}) is close to an identity matrix, and
+
+
+
+
+
+
+\kappa(S_{\tau}(\mathbf{M}_{\ell}))\;\leq\;\frac{1+\varepsilon(\gamma/\tau)}{1-\varepsilon(\gamma/\tau)},κ⁡(Sτ​(𝐌ℓ))≤1+ε⁡(γ/τ)1−ε⁡(γ/τ),\kappa(S_{\tau}(\mathbf{M}_{\ell}))\;\leq\;\frac{1+\varepsilon(\gamma/\tau)}{1-\varepsilon(\gamma/\tau)},
+
+
+
+
+with \varepsilon(\gamma/\tau){\to}0ε⁡(γ/τ)→0\varepsilon(\gamma/\tau){\to}0 as \gamma/\tau{\to}\inftyγ/τ→∞\gamma/\tau{\to}\infty. Hence S_{\tau}(\mathbf{M}_{\ell})Sτ​(𝐌ℓ)S_{\tau}(\mathbf{M}_{\ell}) is well-conditioned when diagonal logits are dominant.
+
+
+
+
+
+An illustration of this proposition is in Section A.2.1. This proposition highlights the key insight: at random initialization, the logits {\mathbf{M}}𝐌{\mathbf{M}} are “diffuse”, hence, the attention matrix {\mathbf{A}}𝐀{\mathbf{A}} is close to the uniform matrix and thus ill-conditioned (see Section A.2.1), which is the main cause of the ill-conditioned \kappa({\mathbf{K}}_{\ell})κ⁡(𝐊ℓ)\kappa({\mathbf{K}}_{\ell}).
+
+
+
+
+To address this, we initialize the query and key projections
+\mathbf{W}^{\mathrm{Q}}_{\ell}𝐖ℓQ\mathbf{W}^{\mathrm{Q}}_{\ell} and \mathbf{W}^{\mathrm{K}}_{\ell}𝐖ℓK\mathbf{W}^{\mathrm{K}}_{\ell} such that
+
+
+
+
+
+
+\mathbf{W}^{\mathrm{Q}}_{\ell}{\mathbf{W}^{\mathrm{K}}_{\ell}}^{\!\top}\;=\;\alpha\mathbf{Z}\,+\,\beta\mathbf{I},𝐖ℓQ​𝐖ℓK⊤=α​𝐙+β​𝐈,\mathbf{W}^{\mathrm{Q}}_{\ell}{\mathbf{W}^{\mathrm{K}}_{\ell}}^{\!\top}\;=\;\alpha\mathbf{Z}\,+\,\beta\mathbf{I},
+
+(11)
+
+
+
+where the entries of \mathbf{Z}𝐙\mathbf{Z} are sampled as
+\mathbf{Z}_{ij}\sim\mathcal{N}\!\big(0,\tfrac{1}{d}\big)𝐙i​j∼𝒩⁡(0,1d)\mathbf{Z}_{ij}\sim\mathcal{N}\!\big(0,\tfrac{1}{d}\big),
+ddd is the weight dimension, \mathbf{I}𝐈\mathbf{I} is the identity matrix, and
+\alpha,\betaα,β\alpha,\beta are scalar constants.
+This scheme—sometimes called mimetic initialization (Trockman & Kolter, 2023)—has been shown empirically to improve both convergence and final performance in transformers.
+
+
+
+
+Our contribution is to provide a theoretical motivation: the identity term
+\beta\mathbf{I}β​𝐈\beta\mathbf{I} encourages diagonal dominance in
+\mathbf{W}^{\mathrm{Q}}_{\ell}{\mathbf{W}^{\mathrm{K}}_{\ell}}^{\!\top}𝐖ℓQ​𝐖ℓK⊤\mathbf{W}^{\mathrm{Q}}_{\ell}{\mathbf{W}^{\mathrm{K}}_{\ell}}^{\!\top},
+which in turn helps ensure that the initial attention operator is
+well-conditioned at the start of training.
+However, we emphasize that diagonal dominance of
+\mathbf{W}^{\mathrm{Q}}_{\ell}{\mathbf{W}^{\mathrm{K}}_{\ell}}^{\!\top}𝐖ℓQ​𝐖ℓK⊤\mathbf{W}^{\mathrm{Q}}_{\ell}{\mathbf{W}^{\mathrm{K}}_{\ell}}^{\!\top}
+does not automatically imply that the transformed matrix
+\mathbf{X}^{\!\top}\mathbf{W}^{\mathrm{Q}}_{\ell}{\mathbf{W}^{\mathrm{K}}_{\ell}}^{\!\top}\mathbf{X}𝐗⊤​𝐖ℓQ​𝐖ℓK⊤​𝐗\mathbf{X}^{\!\top}\mathbf{W}^{\mathrm{Q}}_{\ell}{\mathbf{W}^{\mathrm{K}}_{\ell}}^{\!\top}\mathbf{X}
+is also diagonally dominant.
+In Appendix E we detail the conditions under which this property carries
+over after projection by the token embeddings \mathbf{X}𝐗\mathbf{X}.
+
+
+
+
+A scaled orthonormal {{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}}𝐖ℓV​𝐖ℓO{{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}} and diagonal dominant attention map {\mathbf{A}}_{\ell}𝐀ℓ{\mathbf{A}}_{\ell} guarantees that the second term of {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell}, namely ({{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}})^{\top}\otimes{\mathbf{A}}_{\ell}(𝐖ℓV​𝐖ℓO)⊤⊗𝐀ℓ({{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}})^{\top}\otimes{\mathbf{A}}_{\ell}, is well-conditioned. The remaining question is whether this also ensures a well-conditioned {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell} overall.
+
+
+
+Proposition 2.
+
+
+(Conditioning of {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell})
+Let {\mathbf{K}}_{\ell}={\mathbf{B}}_{\ell}+{\mathbf{E}}_{\ell}𝐊ℓ=𝐁ℓ+𝐄ℓ{\mathbf{K}}_{\ell}={\mathbf{B}}_{\ell}+{\mathbf{E}}_{\ell}, where {\mathbf{E}}_{\ell}=(\hat{{\mathbf{X}}}_{\ell-1}{{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}}\otimes{\mathbf{I}}_{n})^{\top}{\mathbf{A}}^{\prime}_{\ell}𝐄ℓ=(𝐗^ℓ−1​𝐖ℓV​𝐖ℓO⊗𝐈n)⊤​𝐀ℓ′{\mathbf{E}}_{\ell}=(\hat{{\mathbf{X}}}_{\ell-1}{{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}}\otimes{\mathbf{I}}_{n})^{\top}{\mathbf{A}}^{\prime}_{\ell} (the “perturbation term”), and {\mathbf{B}}_{\ell}={{\mathbf{W}}_{l}^{\text{O}}}^{\top}{{\mathbf{W}}_{l}^{\text{V}}}^{\top}\otimes{\mathbf{A}}_{\ell}𝐁ℓ=𝐖lO⊤​𝐖lV⊤⊗𝐀ℓ{\mathbf{B}}_{\ell}={{\mathbf{W}}_{l}^{\text{O}}}^{\top}{{\mathbf{W}}_{l}^{\text{V}}}^{\top}\otimes{\mathbf{A}}_{\ell} (the “dominant term”). With above initialization (which ensures diagonal dominance of {\mathbf{W}}_{\ell}^{\text{Q}}{\mathbf{W}}_{\ell}^{\text{K}^{\top}}𝐖ℓQ​𝐖ℓK⊤{\mathbf{W}}_{\ell}^{\text{Q}}{\mathbf{W}}_{\ell}^{\text{K}^{\top}}), {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell} is well-conditioned.
+
+
+
+
+
+The detailed proof is provided in Section A.2.3. The intuition behind this proposition is that if the largest singular value of perturbation term {\mathbf{E}}_{\ell}𝐄ℓ{\mathbf{E}}_{\ell} is smaller than the smallest singular value of the dominant term {\mathbf{B}}_{\ell}𝐁ℓ{\mathbf{B}}_{\ell}, then \kappa({\mathbf{K}}_{\ell})\approx\kappa({\mathbf{B}}_{\ell})κ⁡(𝐊ℓ)≈κ⁡(𝐁ℓ)\kappa({\mathbf{K}}_{\ell})\approx\kappa({\mathbf{B}}_{\ell}).
+
+
+
+
+Takeaway 
+By initializing {\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell}𝐖ℓV​𝐖ℓO{\mathbf{W}}^{\text{V}}_{\ell}{\mathbf{W}}^{\text{O}}_{\ell} to be scaled orthonormal and {\mathbf{W}}^{\text{Q}}_{\ell}{\mathbf{W}}_{\ell}^{\text{K}^{\top}}𝐖ℓQ​𝐖ℓK⊤{\mathbf{W}}^{\text{Q}}_{\ell}{\mathbf{W}}_{\ell}^{\text{K}^{\top}} to be a diagonally dominant structure, we improve the conditioning of the network Jacobian, addressing the main barrier that has historically prevented the training of completely skipless transformers.
+
+
+
+
+
+
+
+
+
+6 Experiments
+
+
+
+
+We evaluate our methods in supervised learning and self-supervised learning settings. All of our experiments will be on Vision Transformers (ViTs) (Dosovitskiy et al., 2020), which have emerged as powerful models in the field of computer vision, demonstrating remarkable performance across various tasks.
+
+
+
+
+
+6.1 Supervised learning with Skipless ViT
+
+
+
+
+We first validate our skipless ViTs on supervised learning image classification tasks.
+The model in this subsection is ViT-Base (12 layers, 12 heads, head dimension 64, token dimension 768). The skip models are standard ViT-Base, while in the skipless models we remove all skip connections (from both the SABs and FFNs), and use the proposed initialization for the SA weights (choosing \alpha=2,\beta=0.6α=2,β=0.6\alpha=2,\beta=0.6 and c=3c=3c=3)22
+              2
+              
+              
+              
+              
+              
+              
+              
+            We observed that our initialization hyperparameters (\alpha,\beta,c)(α,β,c)(\alpha,\beta,c) are not highly sensitive.. The scaled-corrected uniform orthogonal initialization (Martens et al., 2021) is used for the MLP parameters.
+Our implementation follows the setup in (Xu et al., 2024), except that for a fair comparison we disable the drop path, which is not applicable in skipelss models. All experiments are conducted on the ImageNet-1k (Russakovsky et al., 2015) dataset. We further compare the performance when using AdamW (Loshchilov & Hutter, 2019) and SOAP (Vyas et al., 2025) optimizers.
+
+
+
+Figure 1: Supervised training loss of ViT-Base using AdamW (Left) and SOAP (Right) optimizers.
+
+
+
+Results and Analysis.
+As shown in Table 1, the removal of skip connections severally hampers the convergence of ViT-Base when trained with AdamW. This is evident both in the substantial accuracy drop (61.4% vs. 80.3%), and the high training loss with slow convergence illustrated in Fig. 1 (left). Using SOAP can partially alleviate this issue, enabling skipless models to converge more reliably and recover much of the lost performance, while they still underperform standard ViTs with skip connections.
+Incorporating our proposed initialization significantly mitigates these issues. When trained with AdamW, skipless ViT-Base recovers most of the lost performance. Moreover, when combined with SOAP, skipless models can converge as fast as vanilla ViT-based at the standard 300 epochs and achieve 80.8% accuracy, surpassing the skip-based ViT-Base baseline by 0.5%.
+These results demonstrate that the proposed initialization is essential for enabling competitive training of skipless ViTs across optimizers.
+
+
+
+Table 1: Validation accuracy of ViT-Base on ImageNet-1k using AdamW and SOAP optimizers.
+
+
+
+
+
+
+Model
+Accuracy
+
+
+
+
+
+skip
+ViT-Base + AdamW
+80.3%
+
+
+
+ViT-Base + SOAP
+80.1%
+
+
+
+skipless
+ViT-Base + AdamW
+61.4%
+
+
+
+ViT-Base + SOAP
+77.0%
+
+
+
+skipless + our init
+ViT-Base + AdamW
+78.1%
+
+
+
+ViT-Base + SOAP
+80.8%
+
+
+
+
+
+
+
+
+
+
+6.2 Self-Supervised Learning with Skipless ViT
+
+
+
+
+We further evaluate our skipless ViT model in the self-supervised setting. Specifically, we adopt DINO (Caron et al., 2021), a widely used self-supervised framework based on self-distillation without annotations.
+Here we use ViT-Small (12 layers, 6 heads, head dimension 64, token dimension 384), and \alpha=1.8,\beta=1α=1.8,β=1\alpha=1.8,\beta=1, c=3c=3c=3 for the initialization parameters, and otherwise follow similar model recipe to the previous subsection. We compare results under both AdamW and SOAP optimizers.
+For quantitative evaluation, we extract representations from individual or multiple blocks of frozen pre-trained models, and assess them on two downstream tasks: dense linear probing segmentation (in Section 6.2.1) and object discovery (in Section 6.2.2). For qualitative evaluation (in Section 6.3), we use Principle Component Analysis (PCA) (Abdi & Williams, 2010) to project the learned representations into 3-channel feature maps, visualized as RGB images.
+
+
+
+
+6.2.1 Dense Linear Probing Segmentation
+
+
+
+We evaluate linear probing on dense features for the semantic segmentation task. A linear classifier is trained on top of the representation, with performance measured by mean intersection-over-union (mIoU) on PASCAL VOC2012 (Everingham et al., 2015), ADE20K (Zhou et al., 2019), and COCO-Stuff (Caesar et al., 2018) datasets.
+We sweep over learning rates and train for 30 epochs.
+For ADE20k and COCO-Stuff, we randomly sample 3,000 training images due to resource constraints.
+
+
+
+Table 2: Pretrained DINO ViT-Small models for 300 epochs. We also evaluate the checkpoint at 200 epochs for skipless models. Performance on linear probing segmentation tasks on different datasets.
+
+
+
+
+
+
+VOC2012
+COCOStuff
+ADE20K
+
+
+
+Epochs \rightarrow→\rightarrow
+300
+300
+200
+300
+300
+200
+300
+300
+200
+
+
+
+
+skip
+skipless
+skipless
+skip
+skipless
+skipless
+skip
+skipless
+skipless
+
+
+
+
+
+single feature
+
+
+
+
+
+
+
+
+
+
+
+
+AdamW
+56.3
+62.3
+62.1
+24.6
+24.9
+28.3
+23.7
+22.5
+22.8
+
+
+
+SOAP
+51.3
+57.6
+63.4
+21.3
+23.5
+27.6
+20.5
+21.3
+22.5
+
+
+
+multiscale
+
+
+
+
+
+
+
+
+
+
+
+
+AdamW
+61.6
+65.4
+65.0
+26.7
+28.0
+28.2
+26.0
+26.3
+27.0
+
+
+
+SOAP
+61.3
+59.5
+64.8
+25.9
+25.1
+27.6
+25.3
+23.7
+25.6
+
+
+
+
+
+
+Figure 2: Performance of dense linear probing segmentation results using skip and skipless DINO ViT-Small models with AdamW and SOAP optimizers throughout the pretraining. The range of y-axis is the same for per column.
+
+
+
+Results and Analysis.
+As shown in Table 2, our skipless DINO ViT-Small models trained with the AdamW optimizer achieve higher performance than their skip-based counterparts on the VOC2012 and COCOStuff benchmarks when evaluated with the representation extracted from the single layer.
+In contrast, these models show reduced accuracy on the ADE20K dataset under the same single-layer setting.
+We attribute this to the greater scene complexity in ADE20K, where multi-scale information is critical. The skip-based models can implicitly mix representations across layers, providing a form of multi-scale context.
+However, our skipless models enforce a stricter hierarchical structure, yielding more abstract features at each layer.
+Based on this, when multiscale layer features are explicitly aggregated at evaluation time, skipless models once again surpass their skip-connected counterparts. While training with SOAP, overall we observe the performance drops for both skip and skipless models and we conjecture that is due to the inductive bias of optimizers (Pascanu et al., 2025). Further, we demonstrate the depth analysis in Table 3. We train our models using the AdamW optimizer with different depths for 300 epochs and evaluate using the checkpoint at 200 epochs. Our models with 10 blocks perform comparably with skip models.
+
+
+
+Table 3: End-to-end training performance on dense linear probing segmentation on our models with varied depth (AdamW).
+
+
+
+
+
+depth
+VOC2012
+COCOStuff
+ADE20K
+
+
+
+skip
+12
+61.6
+26.7
+26.0
+
+
+
+
+
+skipless
+12
+65.0
+28.2
+27.0
+
+
+
+11
+66.2
+28.0
+26.7
+
+
+
+10
+64.1
+27.1
+25.2
+
+
+
+9
+61.1
+26.0
+24.4
+
+
+
+
+
+
+
+
+6.2.2 Object Discovery
+
+
+
+Detecting salient objects is a fundamental problem in computer vision with
+applications in real-world vision systems.
+Traditional methods rely on supervised learning using large-scale high-quality annotated data, which is expensive and time-consuming to obtain these annotations (Loshchilov & Hutter, 2019).
+To address this challenge, recent works (Siméoni et al., 2021; Wang et al., 2023) have explored self-supervised pre-trained models, which produce high-quality and abstraction feature representations without requiring manual labels.
+In this subsection, we validate our pretrained DINO models using TokenCuT (Wang et al., 2023), a graph-based algorithm that leverages self-supervised transformer features for salient object detection.
+Following prior observations (Amir et al., 2022) that positional information gradually diminishes across layers, we compare representations from different transformer blocks and report the best-performing results.
+We use VOC2012 (Everingham et al., 2015) and COCO20k (Lin et al., 2014) as the evaluation datasets.
+
+
+
+
+Results and Analysis.
+As shown in Fig. 3, our skipless models consistently outperform their skip-connected counterparts by a substantial margin on both the VOC2012 and COCO20K datasets under both AdamW and SOAP optimization, indicating that the representations from skipless models are abstract and high-quality. Furthermore, in Table 4, we evaluate end-to-end trained models of varying depths and find that skipless ViTs with only 9 layers surpass skip-based 12 layer ViTs on both datasets, highlighting the efficiency of the skipless design.
+
+
+
+Table 4: End-to-end training performance on object discovery on our models with varied depth (AdamW).
+
+
+
+
+
+depth
+VOC2012
+COCO20k
+
+
+
+skip
+12
+32.3
+21.2
+
+
+
+
+
+skipless
+12
+53.5
+36.5
+
+
+
+11
+47.4
+31.9
+
+
+
+10
+43.9
+25.4
+
+
+
+9
+34.8
+24.0
+
+
+
+
+
+Figure 3: Pretrained DINO ViT-Small models for 300 epochs. For skipless models, we also evaluated checkpoint at 200 epochs. Performance on object discovery tasks using TokenCut on VOC2012 and COCO20k datasets.
+
+
+
+
+
+VOC2012
+COCO20k
+
+
+
+
+
+Epoch \rightarrow→\rightarrow
+
+300
+300
+200
+300
+300
+200
+
+
+
+
+
+Optimizer \downarrow↓\downarrow
+
+skip
+skipless
+skipless
+skip
+skipless
+skipless
+
+
+
+
+
+AdamW
+
+32.3
+53.5
+54.0
+21.2
+36.5
+38.5
+
+
+
+
+
+SOAP
+
+49.4
+63.2
+68.1
+27.5
+46.7
+54.1
+
+
+
+
+
+
+
+
+
+
+
+6.3 Qualitative evaluation
+
+
+
+
+To deeply analyze the effectiveness of our skipless ViTs, we visualize representations of pre-trained models.
+Here, we choose the features from 111111-th blocks.
+As shown in Fig. 4, we select the first 40 images from the COCO validation set without cherry-picking. Ten examples are shown in the main paper, and the rest are shown in Fig. 6. PCA is applied to project the representations into three channels and render them as RGB images.
+The figure clearly demonstrates that in models with skip connections, the features appear patchy and noisy, as shallow information is repeatedly injected into deeper layers, hindering the learning of high-level semantic representations. In contrast, skipless models yield clearer object boundaries between different semantic regions with more consistent colors within the same object. These results suggest that skipless ViTs capture more abstract and semantically coherent features.
+
+
+
+Figure 4: Visualize learned representations from pretrained DINO models without cherry-picking.
+
+
+
+
+
+
+
+
+7 Discussion
+
+
+
+
+We restrict our experiments to Vision Transformers, as they provide a well-understood backbone for analysis and visualization. Moreover, because vision is inherently compositional, it serves as a natural domain for probing how skipless models build hierarchical representations.
+
+
+
+
+Although our conditioning analysis relies on a mild block incoherence assumption that we do not explicitly verify, the strong empirical performance of our initialization across varied depths and dense predictions tasks indicates that the theoretical simplification is practically valid.
+
+
+
+
+
+
+
+8 Conclusion
+
+
+
+
+In this paper, we present a theoretical analysis of the transformer Jacobian and, building on this first principle, propose a theoretically grounded initialization scheme that requires no architectural modifications. This scheme enables efficient training of skipless Vision Transformers. Furthermore, our skipless models outperform their residual-based counterparts on dense prediction tasks, suggesting that they learn more abstract and higher-quality internal representations. We hope our work provides new insights into hierarchical representation learning in vision.
+
+
+
+
+
+
+
+
+References
+
+
+
+      
+
+Abdi & Williams (2010)
+
+Hervé Abdi and Lynne J Williams.
+
+
+Principal component analysis.
+
+
+Wiley interdisciplinary reviews: computational statistics, 2(4):433–459, 2010.
+
+
+
+      
+
+Agarwal et al. (2021)
+
+Naman Agarwal, Pranjal Awasthi, and Satyen Kale.
+
+
+A deep conditioning treatment of neural networks.
+
+
+In Algorithmic Learning Theory, pp.  249–305. PMLR, 2021.
+
+
+
+      
+
+Albert et al. (2025a)
+
+Paul Albert, Frederic Z Zhang, Hemanth Saratchandran, Anton van den Hengel, and Ehsan Abbasnejad.
+
+
+Towards higher effective rank in parameter-efficient fine-tuning using khatri–rao product.
+
+
+arXiv preprint arXiv:2508.00230, 2025a.
+
+
+
+      
+
+Albert et al. (2025b)
+
+Paul Albert, Frederic Z Zhang, Hemanth Saratchandran, Cristian Rodriguez-Opazo, Anton van den Hengel, and Ehsan Abbasnejad.
+
+
+Randlora: Full-rank parameter-efficient fine-tuning of large models.
+
+
+arXiv preprint arXiv:2502.00987, 2025b.
+
+
+
+      
+
+Amir et al. (2022)
+
+Shir Amir, Yossi Gandelsman, Shai Bagon, and Tali Dekel.
+
+
+Deep vit features as dense visual descriptors.
+
+
+ECCVW What is Motion For?, 2022.
+
+
+
+      
+
+Caesar et al. (2018)
+
+Holger Caesar, Jasper Uijlings, and Vittorio Ferrari.
+
+
+Coco-stuff: Thing and stuff classes in context.
+
+
+In Proceedings of the IEEE conference on computer vision and pattern recognition, pp.  1209–1218, 2018.
+
+
+
+      
+
+Caron et al. (2021)
+
+Mathilde Caron, Hugo Touvron, Ishan Misra, Hervé Jégou, Julien Mairal, Piotr Bojanowski, and Armand Joulin.
+
+
+Emerging properties in self-supervised vision transformers.
+
+
+In Proceedings of the IEEE/CVF international conference on computer vision, pp.  9650–9660, 2021.
+
+
+
+      
+
+Comanici et al. (2025)
+
+Gheorghe Comanici, Eric Bieber, Mike Schaekermann, Ice Pasupat, Noveen Sachdeva, Inderjit Dhillon, Marcel Blistein, Ori Ram, Dan Zhang, Evan Rosen, et al.
+
+
+Gemini 2.5: Pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+
+
+arXiv preprint arXiv:2507.06261, 2025.
+
+
+
+      
+
+Dao (2024)
+
+Tri Dao.
+
+
+FlashAttention-2: Faster attention with better parallelism and work partitioning.
+
+
+In International Conference on Learning Representations (ICLR), 2024.
+
+
+
+      
+
+Dosovitskiy et al. (2020)
+
+Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al.
+
+
+An image is worth 16x16 words: Transformers for image recognition at scale.
+
+
+arXiv preprint arXiv:2010.11929, 2020.
+
+
+
+      
+
+Everingham et al. (2015)
+
+Mark Everingham, SM Ali Eslami, Luc Van Gool, Christopher KI Williams, John Winn, and Andrew Zisserman.
+
+
+The pascal visual object classes challenge: A retrospective.
+
+
+International journal of computer vision, 111(1):98–136, 2015.
+
+
+
+      
+
+Gromov et al. (2025)
+
+Andrey Gromov, Kushal Tirumala, Hassan Shapourian, Paolo Glorioso, and Dan Roberts.
+
+
+The unreasonable ineffectiveness of the deeper layers.
+
+
+In The Thirteenth International Conference on Learning Representations, 2025.
+
+
+URL https://openreview.net/forum?id=ngmEcEer8a.
+
+
+
+      
+
+He et al. (2023)
+
+Bobby He, James Martens, Guodong Zhang, Aleksandar Botev, Andrew Brock, Samuel L Smith, and Yee Whye Teh.
+
+
+Deep transformers without shortcuts: Modifying self-attention for faithful signal propagation.
+
+
+In The Eleventh International Conference on Learning Representations, 2023.
+
+
+URL https://openreview.net/forum?id=NPrsUQgMjKK.
+
+
+
+      
+
+He et al. (2016)
+
+Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+
+
+Deep residual learning for image recognition.
+
+
+In Proceedings of the IEEE conference on computer vision and pattern recognition, pp.  770–778, 2016.
+
+
+
+      
+
+Jacot et al. (2018)
+
+Arthur Jacot, Franck Gabriel, and Clément Hongler.
+
+
+Neural tangent kernel: Convergence and generalization in neural networks.
+
+
+Advances in neural information processing systems, 31, 2018.
+
+
+
+      
+
+Ji et al. (2025a)
+
+Yiping Ji, Hemanth Saratchandran, Cameron Gordon, Zeyu Zhang, and Simon Lucey.
+
+
+Efficient learning with sine-activated low-rank matrices.
+
+
+In The Thirteenth International Conference on Learning Representations, 2025a.
+
+
+URL https://openreview.net/forum?id=cWGCkd7mCp.
+
+
+
+      
+
+Ji et al. (2025b)
+
+Yiping Ji, Hemanth Saratchandran, Peyman Moghadam, and Simon Lucey.
+
+
+Always skip attention.
+
+
+arXiv preprint arXiv:2505.01996, 2025b.
+
+
+
+      
+
+LeCun et al. (2015)
+
+Yann LeCun, Yoshua Bengio, and Geoffrey Hinton.
+
+
+Deep learning.
+
+
+nature, 521(7553):436–444, 2015.
+
+
+
+      
+
+Lin et al. (2014)
+
+Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dollár, and C Lawrence Zitnick.
+
+
+Microsoft coco: Common objects in context.
+
+
+In European conference on computer vision, pp.  740–755. Springer, 2014.
+
+
+
+      
+
+Loshchilov & Hutter (2019)
+
+Ilya Loshchilov and Frank Hutter.
+
+
+Decoupled weight decay regularization.
+
+
+In International Conference on Learning Representations, 2019.
+
+
+URL https://openreview.net/forum?id=Bkg6RiCqY7.
+
+
+
+      
+
+MacDonald et al. (2023)
+
+Lachlan MacDonald, Jack Valmadre, Hemanth Saratchandran, and Simon Lucey.
+
+
+On skip connections and normalisation layers in deep optimisation.
+
+
+Advances in Neural Information Processing Systems, 36:14705–14724, 2023.
+
+
+
+      
+
+Martens et al. (2021)
+
+James Martens, Andy Ballard, Guillaume Desjardins, Grzegorz Swirszcz, Valentin Dalibard, Jascha Sohl-Dickstein, and Samuel S Schoenholz.
+
+
+Rapid training of deep neural networks without skip connections or normalization layers using deep kernel shaping.
+
+
+arXiv preprint arXiv:2110.01765, 2021.
+
+
+
+      
+
+Noci et al. (2022)
+
+Lorenzo Noci, Sotiris Anagnostidis, Luca Biggio, Antonio Orvieto, Sidak Pal Singh, and Aurelien Lucchi.
+
+
+Signal propagation in transformers: Theoretical perspectives and the role of rank collapse.
+
+
+Advances in Neural Information Processing Systems, 35:27198–27211, 2022.
+
+
+
+      
+
+Pascanu et al. (2025)
+
+Razvan Pascanu, Clare Lyle, Ionut-Vlad Modoranu, Naima Elosegui Borras, Dan Alistarh, Petar Velickovic, Sarath Chandar, Soham De, and James Martens.
+
+
+Optimizers qualitatively alter solutions and we should leverage this.
+
+
+arXiv preprint arXiv:2507.12224, 2025.
+
+
+
+      
+
+Rosenblatt et al. (1962)
+
+Frank Rosenblatt et al.
+
+
+Principles of neurodynamics: Perceptrons and the theory of brain mechanisms, volume 55.
+
+
+Spartan books Washington, DC, 1962.
+
+
+
+      
+
+Russakovsky et al. (2015)
+
+Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, Alexander C. Berg, and Li Fei-Fei.
+
+
+ImageNet Large Scale Visual Recognition Challenge.
+
+
+International Journal of Computer Vision (IJCV), 115(3):211–252, 2015.
+
+
+doi: 10.1007/s11263-015-0816-y.
+
+
+
+      
+
+Saratchandran & Lucey (2025)
+
+Hemanth Saratchandran and Simon Lucey.
+
+
+Enhancing transformers through conditioned embedded tokens.
+
+
+arXiv preprint arXiv:2505.12789, 2025.
+
+
+
+      
+
+Saratchandran et al. (2024)
+
+Hemanth Saratchandran, Thomas X Wang, and Simon Lucey.
+
+
+Weight conditioning for smooth optimization of neural networks.
+
+
+In European Conference on Computer Vision, pp.  310–325. Springer, 2024.
+
+
+
+      
+
+Saratchandran et al. (2025)
+
+Hemanth Saratchandran, Damien Teney, and Simon Lucey.
+
+
+Leaner transformers: More heads, less depth.
+
+
+arXiv preprint arXiv:2505.20802, 2025.
+
+
+
+      
+
+Siméoni et al. (2021)
+
+Oriane Siméoni, Gilles Puy, Huy V Vo, Simon Roburin, Spyros Gidaris, Andrei Bursuc, Patrick Pérez, Renaud Marlet, and Jean Ponce.
+
+
+Localizing objects with self-supervised transformers and no labels.
+
+
+arXiv preprint arXiv:2109.14279, 2021.
+
+
+
+      
+
+Trockman & Kolter (2023)
+
+Asher Trockman and J Zico Kolter.
+
+
+Mimetic initialization of self-attention layers.
+
+
+In International Conference on Machine Learning, pp.  34456–34468. PMLR, 2023.
+
+
+
+      
+
+Vaswani et al. (2017)
+
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin.
+
+
+Attention is all you need.
+
+
+Advances in neural information processing systems, 30, 2017.
+
+
+
+      
+
+Veit et al. (2016)
+
+Andreas Veit, Michael J Wilber, and Serge Belongie.
+
+
+Residual networks behave like ensembles of relatively shallow networks.
+
+
+Advances in neural information processing systems, 29, 2016.
+
+
+
+      
+
+Vyas et al. (2025)
+
+Nikhil Vyas, Depen Morwani, Rosie Zhao, Itai Shapira, David Brandfonbrener, Lucas Janson, and Sham M. Kakade.
+
+
+SOAP: Improving and stabilizing shampoo using adam for language modeling.
+
+
+In The Thirteenth International Conference on Learning Representations, 2025.
+
+
+URL https://openreview.net/forum?id=IDxZhXrpNf.
+
+
+
+      
+
+Wang et al. (2025)
+
+Jianyuan Wang, Minghao Chen, Nikita Karaev, Andrea Vedaldi, Christian Rupprecht, and David Novotny.
+
+
+Vggt: Visual geometry grounded transformer.
+
+
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pp.  5294–5306, 2025.
+
+
+
+      
+
+Wang et al. (2023)
+
+Yangtao Wang, Xi Shen, Yuan Yuan, Yuming Du, Maomao Li, Shell Xu Hu, James L Crowley, and Dominique Vaufreydaz.
+
+
+Tokencut: Segmenting objects in images and videos with self-supervised transformer and normalized cut.
+
+
+IEEE transactions on pattern analysis and machine intelligence, 45(12):15790–15801, 2023.
+
+
+
+      
+
+Xu et al. (2024)
+
+Zhiqiu Xu, Yanjie Chen, Kirill Vishniakov, Yida Yin, Zhiqiang Shen, Trevor Darrell, Lingjie Liu, and Zhuang Liu.
+
+
+Initializing models with larger ones.
+
+
+In The Twelfth International Conference on Learning Representations, 2024.
+
+
+URL https://openreview.net/forum?id=dyrGMhicMw.
+
+
+
+      
+
+Zagoruyko & Komodakis (2017)
+
+Sergey Zagoruyko and Nikos Komodakis.
+
+
+Diracnets: Training very deep neural networks without skip-connections.
+
+
+arXiv preprint arXiv:1706.00388, 2017.
+
+
+
+      
+
+Zhang et al. (2022)
+
+Guodong Zhang, Aleksandar Botev, and James Martens.
+
+
+Deep learning without shortcuts: Shaping the kernel with tailored rectifiers.
+
+
+In International Conference on Learning Representations, 2022.
+
+
+URL https://openreview.net/forum?id=U0k7XNTiFEq.
+
+
+
+      
+
+Zhang et al. (2024)
+
+Xiao Zhang, Ruoxi Jiang, William Gao, Rebecca Willett, and Michael Maire.
+
+
+Residual connections harm generative representation learning.
+
+
+arXiv preprint arXiv:2404.10947, 2024.
+
+
+
+      
+
+Zhou et al. (2019)
+
+Bolei Zhou, Hang Zhao, Xavier Puig, Tete Xiao, Sanja Fidler, Adela Barriuso, and Antonio Torralba.
+
+
+Semantic understanding of scenes through the ade20k dataset.
+
+
+International Journal of Computer Vision, 127(3):302–321, 2019.
+
+
+
+    
+
+
+
+
+
+
+
+Appendix A Appendix
+
+
+
+
+
+A.1 Jacobian
+
+
+
+
+In this section, we provide the derivation of {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell}.
+
+
+
+
+The derivative of the SA output with respect to the input is
+
+
+
+
+
+
+
+
+\displaystyle\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}(\hat{{\mathbf{X}}}_{{\ell}-1})\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}∂vec⁡(SAℓ​(𝐗^ℓ−1))∂𝐱^(ℓ−1)\displaystyle\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}(\hat{{\mathbf{X}}}_{{\ell}-1})\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}
+\displaystyle=\frac{\partial\mathrm{vec}\left({\mathbf{A}}_{\ell}(\hat{{\mathbf{X}}}_{{\ell}-1}){\mathbf{V}}_{{\ell}}\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}=∂vec⁡(𝐀ℓ​(𝐗^ℓ−1)​𝐕ℓ)∂𝐱^(ℓ−1)\displaystyle=\frac{\partial\mathrm{vec}\left({\mathbf{A}}_{\ell}(\hat{{\mathbf{X}}}_{{\ell}-1}){\mathbf{V}}_{{\ell}}\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}
+
+(12)
+
+
+
+
+
+\displaystyle=({{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+({\mathbf{I}}_{d}\otimes{\mathbf{A}}_{\ell})\frac{\partial\mathrm{vec}\left({\mathbf{V}}_{\ell}\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}=(𝐕ℓ⊤⊗𝐈n)​𝐀ℓ′+(𝐈d⊗𝐀ℓ)​∂vec⁡(𝐕ℓ)∂𝐱^(ℓ−1)\displaystyle=({{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+({\mathbf{I}}_{d}\otimes{\mathbf{A}}_{\ell})\frac{\partial\mathrm{vec}\left({\mathbf{V}}_{\ell}\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}
+
+
+
+
+
+
+\displaystyle=({{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+({\mathbf{I}}_{d}\otimes{\mathbf{A}}_{\ell})({{\mathbf{W}}^{\text{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n\times n})=(𝐕ℓ⊤⊗𝐈n)​𝐀ℓ′+(𝐈d⊗𝐀ℓ)​(𝐖ℓV⊤⊗𝐈n×n)\displaystyle=({{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+({\mathbf{I}}_{d}\otimes{\mathbf{A}}_{\ell})({{\mathbf{W}}^{\text{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n\times n})
+
+
+
+
+
+
+\displaystyle=({{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+{{\mathbf{W}}^{\text{V}}_{\ell}}^{\top}\otimes{\mathbf{A}}_{\ell}=(𝐕ℓ⊤⊗𝐈n)​𝐀ℓ′+𝐖ℓV⊤⊗𝐀ℓ\displaystyle=({{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+{{\mathbf{W}}^{\text{V}}_{\ell}}^{\top}\otimes{\mathbf{A}}_{\ell}
+
+
+
+
+
+
+The Jacobian of the attention matrix to the input is
+
+
+
+
+
+
+
+
+\displaystyle{\mathbf{K}}_{l}𝐊l\displaystyle{\mathbf{K}}_{l}
+\displaystyle=\frac{\partial f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})}{\partial\hat{\mathbf{x}}^{(\ell-1)}}\in\mathbb{R}^{nd\times nd},=∂fSA​(𝐱^(ℓ−1),θ(ℓ))∂𝐱^(ℓ−1)∈ℝn​d×n​d,\displaystyle=\frac{\partial f_{\text{SA}}(\hat{\mathbf{x}}^{(\ell-1)};\theta^{(\ell)})}{\partial\hat{\mathbf{x}}^{(\ell-1)}}\in\mathbb{R}^{nd\times nd},
+
+(13)
+
+
+
+
+
+\displaystyle=\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}\left({\mathbf{X}}_{{\ell}-1}\right){\mathbf{W}}_{\ell}^{\text{O}}\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}=∂vec⁡(SAℓ​(𝐗ℓ−1)​𝐖ℓO)∂𝐱^(ℓ−1)\displaystyle=\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}\left({\mathbf{X}}_{{\ell}-1}\right){\mathbf{W}}_{\ell}^{\text{O}}\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}
+
+
+
+
+
+
+\displaystyle=\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}({\mathbf{X}}_{{\ell}-1}){\mathbf{W}}_{\ell}^{\text{O}}\right)}{\partial\mathrm{vec}\left(\text{SA}_{\ell}({\mathbf{X}}_{{\ell}-1})\right)}\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}({\mathbf{X}}_{{\ell}-1})\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}=∂vec⁡(SAℓ​(𝐗ℓ−1)​𝐖ℓO)∂vec⁡(SAℓ​(𝐗ℓ−1))​∂vec⁡(SAℓ​(𝐗ℓ−1))∂𝐱^(ℓ−1)\displaystyle=\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}({\mathbf{X}}_{{\ell}-1}){\mathbf{W}}_{\ell}^{\text{O}}\right)}{\partial\mathrm{vec}\left(\text{SA}_{\ell}({\mathbf{X}}_{{\ell}-1})\right)}\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}({\mathbf{X}}_{{\ell}-1})\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}
+
+
+
+
+
+
+\displaystyle=({{\mathbf{W}}_{\ell}^{\text{O}}}^{\top}\otimes{\mathbf{I}}_{n})\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}({\mathbf{X}}_{{\ell}-1})\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}=(𝐖ℓO⊤⊗𝐈n)​∂vec⁡(SAℓ​(𝐗ℓ−1))∂𝐱^(ℓ−1)\displaystyle=({{\mathbf{W}}_{\ell}^{\text{O}}}^{\top}\otimes{\mathbf{I}}_{n})\frac{\partial\mathrm{vec}\left(\text{SA}_{\ell}({\mathbf{X}}_{{\ell}-1})\right)}{\partial\hat{\mathbf{x}}^{(\ell-1)}}
+
+
+
+
+
+
+\displaystyle=({{\mathbf{W}}_{\ell}^{\text{O}}}^{\top}\otimes{\mathbf{I}}_{n})\left(({{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+{{\mathbf{W}}^{\text{V}}_{\ell}}^{\top}\otimes{\mathbf{A}}_{\ell}\right)=(𝐖ℓO⊤⊗𝐈n)​((𝐕ℓ⊤⊗𝐈n)​𝐀ℓ′+𝐖ℓV⊤⊗𝐀ℓ)\displaystyle=({{\mathbf{W}}_{\ell}^{\text{O}}}^{\top}\otimes{\mathbf{I}}_{n})\left(({{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+{{\mathbf{W}}^{\text{V}}_{\ell}}^{\top}\otimes{\mathbf{A}}_{\ell}\right)
+
+
+
+
+
+
+\displaystyle=(({{\mathbf{W}}_{\ell}^{\text{O}}}^{\top}{{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+{{\mathbf{W}}_{\ell}^{\text{O}}}^{\top}{{\mathbf{W}}^{\text{V}}_{\ell}}^{\top}\otimes{\mathbf{A}}_{l})=((𝐖ℓO⊤​𝐕ℓ⊤⊗𝐈n)​𝐀ℓ′+𝐖ℓO⊤​𝐖ℓV⊤⊗𝐀l)\displaystyle=(({{\mathbf{W}}_{\ell}^{\text{O}}}^{\top}{{\mathbf{V}}_{\ell}}^{\top}\otimes{\mathbf{I}}_{n}){\mathbf{A}}^{\prime}_{\ell}+{{\mathbf{W}}_{\ell}^{\text{O}}}^{\top}{{\mathbf{W}}^{\text{V}}_{\ell}}^{\top}\otimes{\mathbf{A}}_{l})
+
+
+
+
+
+
+\displaystyle=(\hat{{\mathbf{X}}}_{\ell-1}{{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}}\otimes{\mathbf{I}}_{n})^{\top}{\mathbf{A}}^{\prime}_{\ell}+({{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}})^{\top}\otimes{\mathbf{A}}_{\ell}=(𝐗^ℓ−1​𝐖ℓV​𝐖ℓO⊗𝐈n)⊤​𝐀ℓ′+(𝐖ℓV​𝐖ℓO)⊤⊗𝐀ℓ\displaystyle=(\hat{{\mathbf{X}}}_{\ell-1}{{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}}\otimes{\mathbf{I}}_{n})^{\top}{\mathbf{A}}^{\prime}_{\ell}+({{\mathbf{W}}_{\ell}^{\text{V}}}{{\mathbf{W}}_{\ell}^{\text{O}}})^{\top}\otimes{\mathbf{A}}_{\ell}
+
+
+
+
+
+
+
+
+
+A.2 Proof
+
+
+
+
+A.2.1 Softmax Conditioning
+
+
+
+In this section, we provide the empirical demonstration of the Proposition 1. We conduct a simple simulation experiment and the result is shown in Fig. 5. We choose a square matrix {\mathbf{M}}\in{\mathbb{R}}^{10\times 10}𝐌∈ℝ10×10{\mathbf{M}}\in{\mathbb{R}}^{10\times 10} and set \alpha=0.1,\beta=5α=0.1,β=5\alpha=0.1,\beta=5 for the ”peak” case and \alpha=0.1,\beta=0α=0.1,β=0\alpha=0.1,\beta=0 for the ”diffuse” case. Empirically, we can see that when choosing large \betaβ\beta (ensuring diagonal dominance), the softmax produces a near identity matrix with \kappa\approx 1.1κ≈1.1\kappa\approx 1.1. However, if {\mathbf{M}}𝐌{\mathbf{M}} is truncated normal initialized, each row of the softmax output is near uniform and the output is ill-conditioned with \kappa\approx 730.1κ≈730.1\kappa\approx 730.1.
+
+
+
+Figure 5: Left: We choose \alpha=0.1,\beta=5α=0.1,β=5\alpha=0.1,\beta=5 to ensure diagonal dominance. Right: We choose \alpha=0.1,\beta=0α=0.1,β=0\alpha=0.1,\beta=0.
+
+
+
+Distribution of {\mathbf{X}}{\mathbf{X}}^{\top}𝐗𝐗⊤{\mathbf{X}}{\mathbf{X}}^{\top} and {\mathbf{X}}{\mathbf{Z}}{\mathbf{X}}^{\top}𝐗𝐙𝐗⊤{\mathbf{X}}{\mathbf{Z}}{\mathbf{X}}^{\top}
+
+
+
+
+Given {\mathbf{X}}\in\mathbb{R}^{n\times d}\sim\mathcal{N}(0,{\mathbf{I}})𝐗∈ℝn×d∼𝒩⁡(0,𝐈){\mathbf{X}}\in\mathbb{R}^{n\times d}\sim\mathcal{N}(0,{\mathbf{I}}), we have the mean and varicance of {\mathbf{A}}={\mathbf{X}}{\mathbf{X}}^{\top}𝐀=𝐗𝐗⊤{\mathbf{A}}={\mathbf{X}}{\mathbf{X}}^{\top} as follows,
+
+
+
+
+- Diagonal entries (i=ji=ji=j):
+
+
+
+
+
+
+{\mathbf{A}}_{ii}\;\sim\;\chi^{2}_{d},\qquad\mathbb{E}[{\mathbf{A}}_{ii}]=d,\qquad\operatorname{Var}({\mathbf{A}}_{ii})=2d,𝐀i​i∼χd2,𝔼⁡[𝐀i​i]=d,Var⁡(𝐀i​i)=2​d,{\mathbf{A}}_{ii}\;\sim\;\chi^{2}_{d},\qquad\mathbb{E}[{\mathbf{A}}_{ii}]=d,\qquad\operatorname{Var}({\mathbf{A}}_{ii})=2d,
+
+(14)
+
+
+
+where \chiχ\chi is Wishart distribution.
+
+
+
+
+- Off-diagonal entries (i\neq ji≠ji\neq j):
+
+
+
+
+
+
+\mathbb{E}[{\mathbf{A}}_{ij}]=0,\qquad\operatorname{Var}({\mathbf{A}}_{ij})=d,𝔼⁡[𝐀i​j]=0,Var⁡(𝐀i​j)=d,\mathbb{E}[{\mathbf{A}}_{ij}]=0,\qquad\operatorname{Var}({\mathbf{A}}_{ij})=d,
+
+(15)
+
+
+
+
+
+Then given {\mathbf{Z}}\sim\mathcal{N}(0,\tfrac{1}{d}{\mathbf{I}})𝐙∼𝒩⁡(0,1d​𝐈){\mathbf{Z}}\sim\mathcal{N}(0,\tfrac{1}{d}{\mathbf{I}}), we have the mean and variance of
+{\mathbf{B}}={\mathbf{X}}{\mathbf{Z}}{\mathbf{X}}^{\top}𝐁=𝐗𝐙𝐗⊤{\mathbf{B}}={\mathbf{X}}{\mathbf{Z}}{\mathbf{X}}^{\top} as follows,
+
+
+
+
+- Diagonal entries (i=ji=ji=j):
+
+
+
+
+
+
+\mathbb{E}[{\mathbf{B}}_{ii}]=0,\qquad\operatorname{Var}({\mathbf{B}}_{ii})\;\approx\;d+2.𝔼⁡[𝐁i​i]=0,Var⁡(𝐁i​i)≈d+2.\mathbb{E}[{\mathbf{B}}_{ii}]=0,\qquad\operatorname{Var}({\mathbf{B}}_{ii})\;\approx\;d+2.
+
+(16)
+
+
+
+
+
+- Off-diagonal entries (i\neq ji≠ji\neq j):
+
+
+
+
+
+
+\mathbb{E}[{\mathbf{B}}_{ij}]=0,\qquad\operatorname{Var}({\mathbf{B}}_{ij})\;\approx\;1.𝔼⁡[𝐁i​j]=0,Var⁡(𝐁i​j)≈ 1.\mathbb{E}[{\mathbf{B}}_{ij}]=0,\qquad\operatorname{Var}({\mathbf{B}}_{ij})\;\approx\;1.
+
+(17)
+
+
+
+
+
+For the combined matrix (attention map) {\mathbf{C}}=\alpha{\mathbf{B}}+\beta{\mathbf{A}}𝐂=α​𝐁+β​𝐀{\mathbf{C}}=\alpha{\mathbf{B}}+\beta{\mathbf{A}}, we have
+
+
+
+
+- Diagonal entries (i=ji=ji=j):
+
+
+
+
+
+
+\mathbb{E}[{\mathbf{C}}_{ii}]=\beta d,\qquad\operatorname{Var}({\mathbf{C}}_{ii})\;\approx\;\alpha^{2}(d+2)+\beta^{2}(2d).𝔼⁡[𝐂i​i]=β​d,Var⁡(𝐂i​i)≈α2​(d+2)+β2​(2​d).\mathbb{E}[{\mathbf{C}}_{ii}]=\beta d,\qquad\operatorname{Var}({\mathbf{C}}_{ii})\;\approx\;\alpha^{2}(d+2)+\beta^{2}(2d).
+
+(18)
+
+
+
+
+
+- Off-diagonal entries (i\neq ji≠ji\neq j):
+
+
+
+
+
+
+\mathbb{E}[{\mathbf{C}}_{ij}]=0,\qquad\operatorname{Var}({\mathbf{C}}_{ij})\;\approx\;\alpha^{2}+\beta^{2}d.𝔼⁡[𝐂i​j]=0,Var⁡(𝐂i​j)≈α2+β2​d.\mathbb{E}[{\mathbf{C}}_{ij}]=0,\qquad\operatorname{Var}({\mathbf{C}}_{ij})\;\approx\;\alpha^{2}+\beta^{2}d.
+
+(19)
+
+
+
+
+
+The default initialization is equivalent to \beta=0β=0\beta=0 (no diagonal dominance in weight initialization) and \alpha={\mathcal{O}}(\frac{1}{d})α=𝒪⁡(1d)\alpha={\mathcal{O}}(\frac{1}{d}) (usually around 0.040.040.04). All the values in the attention map are mean 000 with a variance much smaller than 111, which satisfy the diffuse condition.
+
+
+
+
+When \beta>0β>0\beta>0, the difference between the diagonal elements and an off-diagonal element \gamma={\mathbf{C}}_{ii}-{\mathbf{C}}{ij}γ=𝐂i​i−𝐂​i​j\gamma={\mathbf{C}}_{ii}-{\mathbf{C}}{ij} follows
+
+
+
+
+
+
+\gamma\sim\mathcal{N}(\beta d,\alpha^{2}(d+3)+\beta^{2}(3d))γ∼𝒩⁡(β​d,α2​(d+3)+β2​(3​d))\gamma\sim\mathcal{N}(\beta d,\alpha^{2}(d+3)+\beta^{2}(3d))
+
+(20)
+
+
+
+(The covariance between {\mathbf{C}}_{ii}𝐂i​i{\mathbf{C}}_{ii} and {\mathbf{C}}{ij}𝐂​i​j{\mathbf{C}}{ij} is close to 000 when ddd is large.), which satisfy the diagonal dominent condition with a proper \betaβ\beta.
+
+
+
+
+
+
+A.2.2 Proof of Proposed Initialization
+
+
+Lemma 1.
+
+
+(Jacobian of the softmax function)
+Let {\mathbf{A}}=\mathrm{softmax}({\mathbf{M}})𝐀=softmax⁡(𝐌){\mathbf{A}}=\mathrm{softmax}({\mathbf{M}}), where {\mathbf{M}}={\mathbf{X}}{\mathbf{W}}^{\text{Q}}{\mathbf{W}}^{\text{K}^{\top}}{\mathbf{X}}^{\top}𝐌=𝐗𝐖Q​𝐖K⊤​𝐗⊤{\mathbf{M}}={\mathbf{X}}{\mathbf{W}}^{\text{Q}}{\mathbf{W}}^{\text{K}^{\top}}{\mathbf{X}}^{\top}. With the proposed initialization (see in Eq. 11), we can show that the 2-norm of the derivative scales, \left\|\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{X}})}\right\|_{2}=O\left(\alpha e^{-\beta}\right)‖∂vec⁡(𝐀)∂vec⁡(𝐗)‖2=O⁡(α​e−β)\left\|\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{X}})}\right\|_{2}=O\left(\alpha e^{-\beta}\right)
+
+
+
+
+Proof.
+
+
+See the derivation in Eq. 12, we have the bound:
+
+
+
+
+
+
+
+
+\left\|\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{X}})}\right\|_{2}\leq\left\|\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{M}})}\right\|_{2}\ ‖∂vec⁡(𝐀)∂vec⁡(𝐗)‖2≤‖∂vec⁡(𝐀)∂vec⁡(𝐌)‖2\left\|\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{X}})}\right\|_{2}\leq\left\|\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{M}})}\right\|_{2}\ 
+
+(21)
+
+
+
+
+
+Since \mathrm{softmax}softmax\mathrm{softmax} is a row normalization, the Jacobian {\mathbf{J}}_{{\mathbf{A}}}=\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{M}})}\in{\mathbb{R}}^{n^{2}\times n^{2}}𝐉𝐀=∂vec⁡(𝐀)∂vec⁡(𝐌)∈ℝn2×n2{\mathbf{J}}_{{\mathbf{A}}}=\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{M}})}\in{\mathbb{R}}^{n^{2}\times n^{2}} is a block diagonal matrix. For each block iii, we have:
+
+
+
+
+
+
+({\textnormal{J}}_{{\mathbf{A}},i})_{jk}={\textnormal{A}}_{ij}(\delta_{jk}-{\textnormal{A}}_{ik}),(J𝐀,i)j​k=Ai​j​(δj​k−Ai​k),({\textnormal{J}}_{{\mathbf{A}},i})_{jk}={\textnormal{A}}_{ij}(\delta_{jk}-{\textnormal{A}}_{ik}),
+
+(22)
+
+
+
+where {\textnormal{A}}_{ij}Ai​j{\textnormal{A}}_{ij} is the iii-th row and jjj-th column entry of {\mathbf{A}}𝐀{\mathbf{A}}.
+
+
+
+
+Obviously, using our proposed initialization (laerger \betaβ\beta leads to more diagonally dominant), we have:
+
+
+
+
+
+
+
+
+{\textnormal{A}}_{ii}=1-{\mathcal{O}}(\alpha e^{-\beta})\quad\text{and}\quad{\textnormal{A}}_{ij}={\mathcal{O}}(\alpha e^{-\beta})Ai​i=1−𝒪⁡(α​e−β)andAi​j=𝒪⁡(α​e−β){\textnormal{A}}_{ii}=1-{\mathcal{O}}(\alpha e^{-\beta})\quad\text{and}\quad{\textnormal{A}}_{ij}={\mathcal{O}}(\alpha e^{-\beta})
+
+(23)
+
+
+
+
+
+Based on this, we analyze the order of magnitude of the elements in
+({\textnormal{J}}_{{\mathbf{A}},i})(J𝐀,i)({\textnormal{J}}_{{\mathbf{A}},i}). In the case of j=kj=kj=k:
+
+
+
+
+
+
+
+
+\displaystyle({\mathbf{J}}_{{\mathbf{A}},i})_{ii}(𝐉𝐀,i)i​i\displaystyle({\mathbf{J}}_{{\mathbf{A}},i})_{ii}
+\displaystyle={\textnormal{A}}_{ii}(1-{\textnormal{A}}_{ii})={\mathcal{O}}(\alpha e^{-\beta}),\text{if }i=j=Ai​i​(1−Ai​i)=𝒪⁡(α​e−β),if ​i=j\displaystyle={\textnormal{A}}_{ii}(1-{\textnormal{A}}_{ii})={\mathcal{O}}(\alpha e^{-\beta}),\text{if }i=j
+
+(24)
+
+
+
+
+\displaystyle({\mathbf{J}}_{{\mathbf{A}},i})_{ii}(𝐉𝐀,i)i​i\displaystyle({\mathbf{J}}_{{\mathbf{A}},i})_{ii}
+\displaystyle={\textnormal{A}}_{ii}(1-{\textnormal{A}}_{ii})={\mathcal{O}}(\alpha e^{-\beta}),\text{if }i\neq j=Ai​i​(1−Ai​i)=𝒪⁡(α​e−β),if ​i≠j\displaystyle={\textnormal{A}}_{ii}(1-{\textnormal{A}}_{ii})={\mathcal{O}}(\alpha e^{-\beta}),\text{if }i\neq j
+
+(25)
+
+
+
+
+
+In the case of j\neq kj≠kj\neq k:
+
+
+
+
+
+
+
+
+({\mathbf{J}}_{{\mathbf{A}},i})_{jk}=-{\textnormal{A}}_{ij}{\textnormal{A}}{ik}={\mathcal{O}}(\alpha e^{-\beta})(𝐉𝐀,i)j​k=−Ai​j​A​i​k=𝒪⁡(α​e−β)({\mathbf{J}}_{{\mathbf{A}},i})_{jk}=-{\textnormal{A}}_{ij}{\textnormal{A}}{ik}={\mathcal{O}}(\alpha e^{-\beta})
+
+(26)
+
+
+
+
+
+Then we have the bound for \|{\mathbf{J}}_{{\mathbf{A}},i}\|‖𝐉𝐀,i‖\|{\mathbf{J}}_{{\mathbf{A}},i}\|:
+
+
+
+
+
+
+
+
+\|{\mathbf{J}}_{{\mathbf{A}},i}\|_{F}=\sqrt{\sum^{d}_{j,k=1}(({\mathbf{J}}_{{\mathbf{A}},i})_{jk})^{2}}=d\cdot{\mathcal{O}}(\alpha e^{-\beta})‖𝐉𝐀,i‖F=∑j,k=1d((𝐉𝐀,i)j​k)2=d⋅𝒪⁡(α​e−β)\|{\mathbf{J}}_{{\mathbf{A}},i}\|_{F}=\sqrt{\sum^{d}_{j,k=1}(({\mathbf{J}}_{{\mathbf{A}},i})_{jk})^{2}}=d\cdot{\mathcal{O}}(\alpha e^{-\beta})
+
+(27)
+
+
+
+Therefore, the 2-norm is:
+
+
+
+
+
+
+
+
+\|{\mathbf{J}}_{{\mathbf{A}},i}\|_{2}\leq\|{\mathbf{J}}_{{\mathbf{A}},i}\|_{F}={\mathcal{O}}(\alpha e^{-\beta})‖𝐉𝐀,i‖2≤‖𝐉𝐀,i‖F=𝒪⁡(α​e−β)\|{\mathbf{J}}_{{\mathbf{A}},i}\|_{2}\leq\|{\mathbf{J}}_{{\mathbf{A}},i}\|_{F}={\mathcal{O}}(\alpha e^{-\beta})
+
+(28)
+
+
+
+
+
+Then we have :
+
+
+
+
+
+
+
+
+\left\|\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{X}})}\right\|_{2}=\underset{i}{\text{max}}\|{\mathbf{J}}_{{\mathbf{A}},i}\|_{2}={\mathcal{O}}(\alpha e^{-\beta})‖∂vec⁡(𝐀)∂vec⁡(𝐗)‖2=max𝑖​‖𝐉𝐀,i‖2=𝒪⁡(α​e−β)\left\|\frac{\partial\mathrm{vec}({\mathbf{A}})}{\partial\mathrm{vec}({\mathbf{X}})}\right\|_{2}=\underset{i}{\text{max}}\|{\mathbf{J}}_{{\mathbf{A}},i}\|_{2}={\mathcal{O}}(\alpha e^{-\beta})
+
+(29)
+
+
+
+∎
+
+
+
+
+
+
+
+A.2.3 Conditioning of {\mathbf{K}}_{\ell}𝐊ℓ{\mathbf{K}}_{\ell}
+
+
+
+In this section we provide the proof for Proposition 2
+
+
+
+Proof.
+
+
+We show that, with proposed initialization, {\mathbf{A}}𝐀{\mathbf{A}} is well conditioned such that \kappa({\mathbf{A}})\approx 1κ⁡(𝐀)≈1\kappa({\mathbf{A}})\approx 1
+
+
+
+
+Next step, we show that the term {\mathbf{E}}𝐄{\mathbf{E}} is a small perturbation of Jacobian {\mathbf{J}}𝐉{\mathbf{J}}.
+
+
+
+
+Bound \|{\mathbf{E}}\|_{2}‖𝐄‖2\|{\mathbf{E}}\|_{2} using norm submultiplicativity:
+
+
+
+
+
+
+\|{\mathbf{E}}\|_{2}\leq\|{\mathbf{W}}_{\ell}^{\text{O}}\|_{2}\|{\mathbf{W}}_{\ell}^{\text{V}}\|_{2}\|{\mathbf{X}}_{\ell-1}\|_{2}\left\|\frac{\partial(\mathrm{vec}({\mathbf{A}}_{\ell}({\mathbf{X}}_{\ell-1})))}{\partial{\mathbf{x}}^{\ell-1}}\right\|_{2}‖𝐄‖2≤‖𝐖ℓO‖2​‖𝐖ℓV‖2​‖𝐗ℓ−1‖2​‖∂(vec⁡(𝐀ℓ​(𝐗ℓ−1)))∂𝐱ℓ−1‖2\|{\mathbf{E}}\|_{2}\leq\|{\mathbf{W}}_{\ell}^{\text{O}}\|_{2}\|{\mathbf{W}}_{\ell}^{\text{V}}\|_{2}\|{\mathbf{X}}_{\ell-1}\|_{2}\left\|\frac{\partial(\mathrm{vec}({\mathbf{A}}_{\ell}({\mathbf{X}}_{\ell-1})))}{\partial{\mathbf{x}}^{\ell-1}}\right\|_{2}
+
+(30)
+
+
+
+
+
+Since \|{\mathbf{W}}_{\ell}^{\text{O}}{\mathbf{W}}_{\ell}^{V}\|_{2}\leq\|{\mathbf{W}}_{\ell}^{\text{O}}\|_{2}\|{\mathbf{W}}_{\ell}^{\text{V}}\|_{2}=1‖𝐖ℓO​𝐖ℓV‖2≤‖𝐖ℓO‖2​‖𝐖ℓV‖2=1\|{\mathbf{W}}_{\ell}^{\text{O}}{\mathbf{W}}_{\ell}^{V}\|_{2}\leq\|{\mathbf{W}}_{\ell}^{\text{O}}\|_{2}\|{\mathbf{W}}_{\ell}^{\text{V}}\|_{2}=1 and \|{\mathbf{X}}\|_{2}‖𝐗‖2\|{\mathbf{X}}\|_{2} is bounded, using Lemma 1, we have:
+
+
+
+
+
+
+\|{\mathbf{W}}_{\ell}^{\text{O}}{\mathbf{W}}_{\ell}^{V}\|_{2}\leq{\mathcal{O}}(\alpha e^{-\beta})‖𝐖ℓO​𝐖ℓV‖2≤𝒪⁡(α​e−β)\|{\mathbf{W}}_{\ell}^{\text{O}}{\mathbf{W}}_{\ell}^{V}\|_{2}\leq{\mathcal{O}}(\alpha e^{-\beta})
+
+(31)
+
+
+
+
+
+Combine the bound \|{\mathbf{B}}\|_{2}\approx 1‖𝐁‖2≈1\|{\mathbf{B}}\|_{2}\approx 1 and \|{\mathbf{E}}\|_{2}\leq{\mathcal{O}}(\alpha e^{-\beta})‖𝐄‖2≤𝒪⁡(α​e−β)\|{\mathbf{E}}\|_{2}\leq{\mathcal{O}}(\alpha e^{-\beta}), and there exists \alphaα\alpha and \betaβ\beta such that \|{\mathbf{E}}\|_{2}\ll\|{\mathbf{B}}\|_{2}‖𝐄‖2≪‖𝐁‖2\|{\mathbf{E}}\|_{2}\ll\|{\mathbf{B}}\|_{2}. Therefore {\mathbf{E}}𝐄{\mathbf{E}} is a small perturbation of {\mathbf{B}}𝐁{\mathbf{B}} and {\mathbf{J}}𝐉{\mathbf{J}} is well-conditioned \kappa({\mathbf{J}})\approx 1κ⁡(𝐉)≈1\kappa({\mathbf{J}})\approx 1.
+
+
+
+
+∎
+
+
+
+
+
+
+
+A.2.4 Condition of Matrix Concatenation
+
+
+
+
+
+
+
+\text{Let }\mathbf{M}=[\mathbf{A}\;\;\mathbf{B}]\in\mathbb{R}^{n\times(d_{1}+d_{2})}.Let ​𝐌=[𝐀​𝐁]∈ℝn×(d1+d2).\text{Let }\mathbf{M}=[\mathbf{A}\;\;\mathbf{B}]\in\mathbb{R}^{n\times(d_{1}+d_{2})}.
+
+
+
+
+Denote the spectral norms and minimal singular values by
+
+
+
+
+
+
+s_{\max}=\max\{\sigma_{\max}(\mathbf{A}),\sigma_{\max}(\mathbf{B})\},\quad s_{\min}=\min\{\sigma_{\min}(\mathbf{A}),\sigma_{\min}(\mathbf{B})\},smax=max⁡{σmax​(𝐀),σmax​(𝐁)},smin=min⁡{σmin​(𝐀),σmin​(𝐁)},s_{\max}=\max\{\sigma_{\max}(\mathbf{A}),\sigma_{\max}(\mathbf{B})\},\quad s_{\min}=\min\{\sigma_{\min}(\mathbf{A}),\sigma_{\min}(\mathbf{B})\},
+
+
+
+
+and the mutual coherence parameter measuring alignment between \mathbf{A}𝐀\mathbf{A} and \mathbf{B}𝐁\mathbf{B} and a balanced condition \tauτ\tau measuring the norm difference of the matrices:
+
+
+
+
+
+
+\rho:=\|\mathbf{A}^{\top}\mathbf{B}\|_{2},ρ:=‖𝐀⊤​𝐁‖2,\rho:=\|\mathbf{A}^{\top}\mathbf{B}\|_{2},
+
+(32)
+
+
+
+
+
+
+
+\tau:=\frac{\max\{\|\mathbf{A}\|_{2},\|\mathbf{B}\|_{2}\}}{\min\{\|\mathbf{A}\|_{2},\|\mathbf{B}\|_{2}\}}=\frac{\max\{\sigma_{\max}(\mathbf{A}),\sigma_{\max}(\mathbf{B})\}}{\min\{\sigma_{\max}(\mathbf{A}),\sigma_{\max}(\mathbf{B})\}}.τ:=max⁡{‖𝐀‖2,‖𝐁‖2}min⁡{‖𝐀‖2,‖𝐁‖2}=max⁡{σmax​(𝐀),σmax​(𝐁)}min⁡{σmax​(𝐀),σmax​(𝐁)}.\tau:=\frac{\max\{\|\mathbf{A}\|_{2},\|\mathbf{B}\|_{2}\}}{\min\{\|\mathbf{A}\|_{2},\|\mathbf{B}\|_{2}\}}=\frac{\max\{\sigma_{\max}(\mathbf{A}),\sigma_{\max}(\mathbf{B})\}}{\min\{\sigma_{\max}(\mathbf{A}),\sigma_{\max}(\mathbf{B})\}}.
+
+(33)
+
+
+
+
+
+For any nonzero vectors \mathbf{x}\in\mathbb{R}^{d_{1}},\mathbf{y}\in\mathbb{R}^{d_{2}}𝐱∈ℝd1,𝐲∈ℝd2\mathbf{x}\in\mathbb{R}^{d_{1}},\mathbf{y}\in\mathbb{R}^{d_{2}} we have
+
+
+
+
+
+
+\frac{\|\mathbf{M}\begin{bmatrix}\mathbf{x}\\
+\mathbf{y}\end{bmatrix}\|^{2}}{\|\begin{bmatrix}\mathbf{x}\\
+\mathbf{y}\end{bmatrix}\|^{2}}=\frac{\begin{bmatrix}\mathbf{x}\\
+\mathbf{y}\end{bmatrix}^{\top}\mathbf{M}^{\top}\mathbf{M}\begin{bmatrix}\mathbf{x}\\
+\mathbf{y}\end{bmatrix}}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}=\frac{\|\mathbf{A}\mathbf{x}\|^{2}+\|\mathbf{B}\mathbf{y}\|^{2}+2\langle\mathbf{A}\mathbf{x},\mathbf{B}\mathbf{y}\rangle}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}.‖𝐌​[𝐱𝐲]‖2‖[𝐱𝐲]‖2=[𝐱𝐲]⊤​𝐌⊤​𝐌​[𝐱𝐲]‖𝐱‖2+‖𝐲‖2=‖𝐀𝐱‖2+‖𝐁𝐲‖2+2​⟨𝐀𝐱,𝐁𝐲⟩‖𝐱‖2+‖𝐲‖2.\frac{\|\mathbf{M}\begin{bmatrix}\mathbf{x}\\
+\mathbf{y}\end{bmatrix}\|^{2}}{\|\begin{bmatrix}\mathbf{x}\\
+\mathbf{y}\end{bmatrix}\|^{2}}=\frac{\begin{bmatrix}\mathbf{x}\\
+\mathbf{y}\end{bmatrix}^{\top}\mathbf{M}^{\top}\mathbf{M}\begin{bmatrix}\mathbf{x}\\
+\mathbf{y}\end{bmatrix}}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}=\frac{\|\mathbf{A}\mathbf{x}\|^{2}+\|\mathbf{B}\mathbf{y}\|^{2}+2\langle\mathbf{A}\mathbf{x},\mathbf{B}\mathbf{y}\rangle}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}.
+
+(34)
+
+
+
+
+
+Hence the largest singular value of \mathbf{M}𝐌\mathbf{M} is
+
+
+
+
+
+
+\displaystyle\sigma_{\max}(\mathbf{M})^{2}σmax​(𝐌)2\displaystyle\sigma_{\max}(\mathbf{M})^{2}
+\displaystyle=\max_{\mathbf{x},\mathbf{y}\neq 0}\frac{\|\mathbf{A}\mathbf{x}\|^{2}+\|\mathbf{B}\mathbf{y}\|^{2}+2\langle\mathbf{A}\mathbf{x},\mathbf{B}\mathbf{y}\rangle}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}=max𝐱,𝐲≠0⁡‖𝐀𝐱‖2+‖𝐁𝐲‖2+2​⟨𝐀𝐱,𝐁𝐲⟩‖𝐱‖2+‖𝐲‖2\displaystyle=\max_{\mathbf{x},\mathbf{y}\neq 0}\frac{\|\mathbf{A}\mathbf{x}\|^{2}+\|\mathbf{B}\mathbf{y}\|^{2}+2\langle\mathbf{A}\mathbf{x},\mathbf{B}\mathbf{y}\rangle}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}
+
+(35)
+
+
+
+
+
+\displaystyle\leq\max_{\mathbf{x},\mathbf{y}\neq 0}\frac{\sigma_{\max}(\mathbf{A})^{2}\|\mathbf{x}\|^{2}+\sigma_{\max}(\mathbf{B})^{2}\|\mathbf{y}\|^{2}+2\rho\|\mathbf{x}\|\|\mathbf{y}\|}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}≤max𝐱,𝐲≠0⁡σmax​(𝐀)2​‖𝐱‖2+σmax​(𝐁)2​‖𝐲‖2+2​ρ​‖𝐱‖​‖𝐲‖‖𝐱‖2+‖𝐲‖2\displaystyle\leq\max_{\mathbf{x},\mathbf{y}\neq 0}\frac{\sigma_{\max}(\mathbf{A})^{2}\|\mathbf{x}\|^{2}+\sigma_{\max}(\mathbf{B})^{2}\|\mathbf{y}\|^{2}+2\rho\|\mathbf{x}\|\|\mathbf{y}\|}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}
+
+
+
+
+
+
+\displaystyle\leq\max\{\sigma_{\max}(\mathbf{A})^{2},\sigma_{\max}(\mathbf{B})^{2}\}+\max_{\mathbf{x},\mathbf{y}\neq 0}\frac{2\rho\|\mathbf{x}\|\|\mathbf{y}\|}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}≤max⁡{σmax​(𝐀)2,σmax​(𝐁)2}+max𝐱,𝐲≠0⁡2​ρ​‖𝐱‖​‖𝐲‖‖𝐱‖2+‖𝐲‖2\displaystyle\leq\max\{\sigma_{\max}(\mathbf{A})^{2},\sigma_{\max}(\mathbf{B})^{2}\}+\max_{\mathbf{x},\mathbf{y}\neq 0}\frac{2\rho\|\mathbf{x}\|\|\mathbf{y}\|}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}
+
+
+
+
+
+
+\displaystyle\leq s_{\max}^{2}+\rho.≤smax2+ρ.\displaystyle\leq s_{\max}^{2}+\rho.
+
+
+
+
+
+
+The smallest singular value of \mathbf{M}𝐌\mathbf{M} is
+
+
+
+
+
+
+\displaystyle\sigma_{\min}(\mathbf{M})^{2}σmin​(𝐌)2\displaystyle\sigma_{\min}(\mathbf{M})^{2}
+\displaystyle=\min_{\mathbf{x},\mathbf{y}\neq 0}\frac{\|\mathbf{A}\mathbf{x}\|^{2}+\|\mathbf{B}\mathbf{y}\|^{2}+2\langle\mathbf{A}\mathbf{x},\mathbf{B}\mathbf{y}\rangle}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}=min𝐱,𝐲≠0⁡‖𝐀𝐱‖2+‖𝐁𝐲‖2+2​⟨𝐀𝐱,𝐁𝐲⟩‖𝐱‖2+‖𝐲‖2\displaystyle=\min_{\mathbf{x},\mathbf{y}\neq 0}\frac{\|\mathbf{A}\mathbf{x}\|^{2}+\|\mathbf{B}\mathbf{y}\|^{2}+2\langle\mathbf{A}\mathbf{x},\mathbf{B}\mathbf{y}\rangle}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}
+
+(36)
+
+
+
+
+
+\displaystyle\geq\min_{\mathbf{x},\mathbf{y}\neq 0}\frac{\sigma_{\min}(\mathbf{A})^{2}\|\mathbf{x}\|^{2}+\sigma_{\min}(\mathbf{B})^{2}\|\mathbf{y}\|^{2}-2\rho\|\mathbf{x}\|\|\mathbf{y}\|}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}≥min𝐱,𝐲≠0⁡σmin​(𝐀)2​‖𝐱‖2+σmin​(𝐁)2​‖𝐲‖2−2​ρ​‖𝐱‖​‖𝐲‖‖𝐱‖2+‖𝐲‖2\displaystyle\geq\min_{\mathbf{x},\mathbf{y}\neq 0}\frac{\sigma_{\min}(\mathbf{A})^{2}\|\mathbf{x}\|^{2}+\sigma_{\min}(\mathbf{B})^{2}\|\mathbf{y}\|^{2}-2\rho\|\mathbf{x}\|\|\mathbf{y}\|}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}
+
+
+
+
+
+
+\displaystyle\geq\min\{\sigma_{\min}(\mathbf{A})^{2},\sigma_{\min}(\mathbf{B})^{2}\}+\min_{\mathbf{x},\mathbf{y}\neq 0}\frac{-2\rho\|\mathbf{x}\|\|\mathbf{y}\|}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}≥min⁡{σmin​(𝐀)2,σmin​(𝐁)2}+min𝐱,𝐲≠0⁡−2​ρ​‖𝐱‖​‖𝐲‖‖𝐱‖2+‖𝐲‖2\displaystyle\geq\min\{\sigma_{\min}(\mathbf{A})^{2},\sigma_{\min}(\mathbf{B})^{2}\}+\min_{\mathbf{x},\mathbf{y}\neq 0}\frac{-2\rho\|\mathbf{x}\|\|\mathbf{y}\|}{\|\mathbf{x}\|^{2}+\|\mathbf{y}\|^{2}}
+
+
+
+
+
+
+\displaystyle\geq s_{\min}^{2}-\rho.≥smin2−ρ.\displaystyle\geq s_{\min}^{2}-\rho.
+
+
+
+
+
+
+Therefore
+
+
+
+
+
+
+\kappa(\mathbf{M})\;=\;\frac{\sigma_{\max}(\mathbf{M})}{\sigma_{\min}(\mathbf{M})}\leq\sqrt{\frac{s_{\max}^{2}+\rho}{s_{\min}^{2}-\rho}}\leq\sqrt{\frac{1+\tfrac{\rho}{s_{\max}^{2}}}{1-\tfrac{\rho}{s_{\min}^{2}}}}\,\cdot\frac{s_{\max}}{s_{\min}}\leq\tau\sqrt{\frac{1+\tfrac{\rho}{s_{\max}^{2}}}{1-\tfrac{\rho}{s_{\min}^{2}}}}\,\kappa_{\max},κ⁡(𝐌)=σmax​(𝐌)σmin​(𝐌)≤smax2+ρsmin2−ρ≤1+ρsmax21−ρsmin2⋅smaxsmin≤τ​1+ρsmax21−ρsmin2​κmax,\kappa(\mathbf{M})\;=\;\frac{\sigma_{\max}(\mathbf{M})}{\sigma_{\min}(\mathbf{M})}\leq\sqrt{\frac{s_{\max}^{2}+\rho}{s_{\min}^{2}-\rho}}\leq\sqrt{\frac{1+\tfrac{\rho}{s_{\max}^{2}}}{1-\tfrac{\rho}{s_{\min}^{2}}}}\,\cdot\frac{s_{\max}}{s_{\min}}\leq\tau\sqrt{\frac{1+\tfrac{\rho}{s_{\max}^{2}}}{1-\tfrac{\rho}{s_{\min}^{2}}}}\,\kappa_{\max},
+
+(37)
+
+
+
+where \kappa_{\max}κmax\kappa_{\max} is the largest condition number of the component matrices.
+
+
+
+
+Under a mild block-incoherence condition (i.e., \rho\rightarrow 0ρ→0\rho\rightarrow 0), and balanced blocks (\tau\rightarrow 1τ→1\tau\rightarrow 1), the concatenated condition number is controlled by the worst block condition number \kappa_{\max}κmax\kappa_{\max}.
+
+
+
+
+
+
+
+
+
+A.3 Visualization
+
+
+
+Figure 6: PCA visualization of representation
+
+
+
+
+
+
+
+
+
+  
+    Experimental support, please
+    view the build logs
+    for errors. Generated by
+    
+      
+        L
+        A
+        T
+        E
+      
+      xml
+      
+    .
+  
+  
+    
+Instructions for reporting errors
+
+    
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+
+    
+      
+Click the "Report Issue" (
+            
+          ) button, located in the page header.
+
+    
+    
+Tip: You can select the relevant text first, to include it in your report.
+
+    
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+
+    
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+  
+
+  
+    
+      
+        We gratefully acknowledge support from our major funders,
+        member institutions, ,
+        and all contributors.
+      
+      
+        About ·
+        Help ·
+        Contact ·
+        Subscribe ·
+        Copyright ·
+        Privacy ·
+        Accessibility ·
+        Operational Status (opens in new tab)
+      
+    
+  
+
+  
+    
+      
+    
+  
+
+

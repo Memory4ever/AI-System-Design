@@ -1,0 +1,672 @@
+https://arxiv.org/html/2610.28671v1
+Accelerating CPU Speculative Decoding via Unified Graph Execution and Transactional KV Isolation
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 The SubTernary Systems Architecture
+2.1 Unified Graph Caching
+2.2 Transactional KV-Cache Isolation
+3 Hardware-Algorithm Co-Design
+4 End-to-End Systems Evaluation
+4.1 Experimental Setup
+4.2 Component Ablation and Context Scaling
+4.3 Microarchitectural Efficiency and Resilience Under Contention
+5 Conclusion
+References
+A Limitations and Scope of Hardware Evaluation
+B Related Work
+C Complete Experimental Setup and Reproducibility Environment
+D Verification of Algorithmic Fidelity
+D.1 RoPE Positional Alignment Under Partial Acceptance
+D.2 Distribution Preservation Analysis and KL Divergence Validation
+D.2.1 Analytical Proof of Distribution Exactness
+D.2.2 KL-Divergence Empirical Validation
+D.3 Scaled Downstream Task Quality Sweeps
+E Architectural Divergence: CPU vs. GPU Speculators
+F Extended Systems Reliability and Model Scaling
+F.1 Clean vs. Throttled CPU Performance Sweeps
+F.2 Baseline CPU Engine Latency Verification
+F.3 Out-of-Domain Governor Validation Across Domains and Temperatures
+F.4 Target Model Scaling Sweep (3B vs. 8B)
+F.5 Per-Layer Quantization Sensitivity Analysis
+F.6 Post-Training Quantization Sweep (Layer-Skipped Baseline)
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.28671v1 [cs.AR] 17 Oct 2026
+\workshoptitle
+ML for Systems
+Accelerating CPU Speculative Decoding via Unified Graph Execution and Transactional KV Isolation
+Zhangdie Yuan
+Affiliation: University of Cambridge
+Email: zy317@cam.ac.uk
+Abstract
+Speculative decoding accelerates LLM inference, but deploying it on CPUs introduces severe systems bottlenecks: context-swapping latency between draft and target graphs, and memory allocation overhead during KV cache rollbacks. We introduce SubTernary, an execution framework that eliminates these costs through Unified Graph Caching and Transactional KV-Cache Isolation. By compiling both models into a single memory arena with a persistent thread pool and routing speculative tokens to a static scratchpad for zero-copy pointer resets, SubTernary avoids dynamic reallocation and thread synchronization entirely. We integrate a 256-bit AVX2 ternary SIMD kernel as a low-bit case study. Ablations reveal our systems runtime drives 35.0% of the throughput gains, while the ternary kernel adds 6.0%. SubTernary achieves a 1.35 × 1.35\times speedup over llama.cpp speculative decoding and 3.99 × 3.99\times over autoregressive decoding, maintaining O ⁡ ( 1 ) O(1) rollback latency.
+1 Introduction
+Generating text with LLMs on CPUs is bottlenecked by DRAM memory bandwidth. In standard autoregressive decoding, the CPU must load every model weight from main memory to generate a single token. Speculative decoding ( Leviathan et al., 2023 ; Chen et al., 2023 ) mitigates this bottleneck by using a smaller draft model to generate K K candidate tokens, which are verified in a single parallel pass by the target model, converting memory-bound single-token steps into compute-efficient batched matrix operations. However, existing CPU speculative runtimes suffer from execution overheads:
+1.
+Dual-context graph reconstruction overhead (systems bottleneck): Existing CPU engines instantiate draft and target models in separate runtime contexts. Swapping context memory, switching thread pools, and rebuilding computation graphs for each speculative step introduces thread synchronization latency that negates theoretical speedups.
+2.
+Memory-copying and rollback overhead (algorithmic bottleneck): When proposed tokens are rejected during target verification, resetting the KV cache requires allocating temporary memory buffers, remapping user-space page tables, or copying cache blocks, introducing substantial memory traffic.
+To resolve these challenges, we introduce SubTernary, a CPU software execution framework optimized for commodity architectures. We position Unified Graph Caching and Transactional KV-Cache Isolation as our primary systems contributions, eliminating dynamic context switching and executing zero-copy write-pointer resets. We relegate our 256-bit AVX2 ternary SIMD kernel to a supporting integrated case study for low-bit execution, demonstrating that while the ternary kernel provides a +6.0% speedup, our systems context and cache management dominate performance by delivering +35.0% of the total throughput gains.
+2 The SubTernary Systems Architecture
+Traditional SubTernary Unified Execution
+Draft Context
+Arena A & Threads A
+Target Context
+Arena B & Threads B
+Context Swap Thread Sync Cache Copy Unified Memory Arena ( 𝒞 unified \mathcal{C}_{\text{unified}} )
+Persistent CPU Thread Pool
+𝒢 draft \mathcal{G}_{\text{draft}} Graph
+Propose K K tokens
+𝒢 target \mathcal{G}_{\text{target}} Graph
+Verify K K tokens
+Sequential KV: Verified History [ 0 , t ] [0,t] Spec Scratchpad Writes K K tokens O(1) Pointer Commit / Reset
+Figure 1: CPU speculative execution paradigms. Left: Traditional engines isolate memory contexts, requiring expensive synchronization and cache copies when switching phases. Right: SubTernary unifies execution within a single memory arena ( 𝒞 unified \mathcal{C}_{\text{unified}} ) and persistent thread pool. Speculative tokens are isolated in a scratchpad, allowing Target verification to execute zero-copy pointer rollbacks.
+2.1 Unified Graph Caching
+Standard engines instantiate separate runtime contexts for draft and target models, causing context-swapping latency. SubTernary compiles two separate static computation graphs ( 𝒢 target \mathcal{G}_{\text{target}} and 𝒢 draft \mathcal{G}_{\text{draft}} ) within a single unified memory context ( 𝒞 unified \mathcal{C}_{\text{unified}} ). Both graphs share underlying memory arenas and a persistent thread pool:
+𝒢 cached = { 𝒢 target , 𝒢 draft } ⊂ 𝒞 unified \mathcal{G}_{\text{cached}}=\{\mathcal{G}_{\text{target}},\mathcal{G}_{\text{draft}}\}\subset\mathcal{C}_{\text{unified}}
+(1)
+During decoding, control flow redirects pointer inputs directly to the respective graph offsets, eliminating dynamic memory allocations, thread context swaps, and graph reconstruction overheads.
+Crucially, this unified pool enables 100% of CPU threads to be allocated sequentially to the active model graph (draft, then target). A fundamental design question in CPU speculative decoding is whether to partition CPU cores between the target model and draft model (e.g., allocating 4 cores to drafting and 4 cores to verification). Let 𝒟 \mathcal{D} denote the draft model evaluation function, and 𝒯 \mathcal{T} denote the target model evaluation function. Let x 1 . . t x_{1..t} represent the verified sequence prefix at step t t , and x ^ 1 . . K \hat{x}_{1..K} represent candidate tokens proposed by the draft model.
+1.
+Drafting phase (sequential autoregressive):
+The draft model generates tokens sequentially:
+x ^ i ∼ 𝒟 ( ⋅ ∣ x 1 . . t , x ^ 1 . . i − 1 ) for i = 1 … K \hat{x}_{i}\sim\mathcal{D}(\cdot\mid x_{1..t},\hat{x}_{1..i-1})\quad\text{for }i=1\dots K
+(2)
+Because each proposed token x ^ i \hat{x}_{i} depends on the output embedding of token x ^ i − 1 \hat{x}_{i-1} , the drafting phase contains a strict causal dependency chain across time steps.
+2.
+Verification phase (parallel batched evaluation):
+The target model verifies all K K tokens in a single parallel forward pass to compute the target probabilities:
+P target = 𝒯 ( ⋅ ∣ x 1 . . t , x ^ 1 . . K ) P_{\text{target}}=\mathcal{T}(\cdot\mid x_{1..t},\hat{x}_{1..K})
+(3)
+The target model cannot execute verification until the draft model completes all K K drafting steps and yields x ^ 1 . . K \hat{x}_{1..K} .
+3.
+Sequential causal chain:
+Start → 𝒟 ⁡ ( x ^ 1 ) → 𝒟 ⁡ ( x ^ 2 ) → … → 𝒟 ⁡ ( x ^ K ) → 𝒯 ⁡ ( x ^ 1 . . K ) → Commit/Rollback \text{Start}\rightarrow\mathcal{D}(\hat{x}_{1})\rightarrow\mathcal{D}(\hat{x}_{2})\rightarrow\dots\rightarrow\mathcal{D}(\hat{x}_{K})\rightarrow\mathcal{T}(\hat{x}_{1..K})\rightarrow\text{Commit/Rollback}
+(4)
+Partitioning CPU cores between models introduces two major drawbacks: (1) during drafting, the target model’s assigned cores sit idle while the draft model runs on reduced memory bandwidth, and (2) during verification, the draft model’s cores sit idle. Splitting thread pools across separate core clusters causes continuous OS context-switching, cache invalidations, and cross-core synchronization latency. By allocating all available CPU threads sequentially to the active model graph, SubTernary minimizes thread synchronization latency and maximizes register throughput. Empirically, sequential thread allocation achieves 8.73 ​ t/s 8.73\text{ t/s} compared to 4.17 ​ t/s 4.17\text{ t/s} under a 4/4 core-partitioned configuration ( 2.09 × 2.09\times speedup), confirming our causal thread scheduling analysis.
+2.2 Transactional KV-Cache Isolation
+Unlike PagedAttention or copy-on-write schemes that require dynamic page allocation or translation lookaside buffer (TLB) shootdowns, SubTernary uses a static contiguous memory layout where rollbacks execute as zero-copy write-pointer resets. We allocate a static scratchpad region ( SpecScratchpad ) at the end of the verified target model cache. Let i i denote the query token index and j j denote the key/value token index. During parallel verification i ∈ [ t + 1 , t + K ] i\in[t+1,t+K] , the self-attention mask enforces causal visibility while hiding stale scratchpad activations:
+ℳ attention ​ ( i , j ) = { 0 if ​ j ≤ t (Verified history) 0 if ​ t < j ≤ i (Causal draft window) − ∞ if ​ j > i (Future causal masking) − ∞ if ​ j ∈ StaleScratchpad (Stale activations from prior rounds) \mathcal{M}_{\text{attention}}(i,j)=\begin{cases}0&\text{if }j\leq t\quad\text{(Verified history)}\\
+0&\text{if }t<j\leq i\quad\text{(Causal draft window)}\\
+-\infty&\text{if }j>i\quad\text{(Future causal masking)}\\
+-\infty&\text{if }j\in\text{StaleScratchpad}\quad\text{(Stale activations from prior rounds)}\end{cases}
+(5)
+If m ≤ K m\leq K tokens are accepted, write pointers commit in-place ( KV ptr ← t + m \text{KV}_{\text{ptr}}\leftarrow t+m ). If rejected, a transactional rollback resets KV ptr ← t \text{KV}_{\text{ptr}}\leftarrow t , bypassing memory copies.
+3 Hardware-Algorithm Co-Design
+To evaluate low-bit execution, we complement our systems design with a custom 256-bit AVX2 ternary SIMD kernel for weights W ∈ { − 1 , 0 , 1 } W\in\{-1,0,1\} . Because the SubTernary runtime eliminates dual-context overhead, it can support low-bit drafting without runtime overhead erasing the algorithmic gains. By packing weights into binary sign/sparsity masks, execution maps entirely to SIMD register additions. To prevent vocabulary representation collapse, draft models are distilled using quantization-aware training (QAT) with a straight-through estimator (STE), maintaining ≥ 70 % \geq 70\% token acceptance.
+4 End-to-End Systems Evaluation
+4.1 Experimental Setup
+Experiments are conducted in an 8-vCPU virtualized environment pinned to eight physical cores on a server-class Intel Xeon Gold 5218 host. The target model is Meta Llama-3.2-3B-Instruct (Q8_0/FP16), paired with a Llama-3.2-1B-Instruct draft model (Q4_0/TQ1_0). All metrics report the mean ± \pm standard deviation across 5 independent evaluation trials. While enterprise runtimes like OpenVINO optimize standard batched GEMM execution, llama.cpp represents the state-of-the-art open-source engine for commodity CPU LLM inference, serving as our primary speculative baseline. Exhaustive hardware specifications, compiler flags, and hyperparameters are deferred to Appendix C .
+4.2 Component Ablation and Context Scaling
+Table 1 isolates the stepwise performance gain of each component on 8 CPU threads. We explicitly separate the systems speedup from the algorithmic speedup: unified graph caching (+1.23x stepwise) and transactional KV isolation (+1.09x stepwise) account for +35.0% of throughput gains over native llama.cpp speculative decoding, leading to a 3.99 × 3.99\times overall speedup from systems contributions alone. In contrast, the algorithmic speedup from the distilled ternary draft and AVX2 kernel contributes an additional +6.0% gain, confirming that context and cache management are the primary CPU systems bottlenecks.
+Table 1: Incremental Component Ablation Study (Llama-3.2 3B Q8_0 Target / 1B Draft, Context = 2048, Mean ± \pm Std over 5 runs)
+System Configuration
+Throughput (t/s)
+Stepwise Speedup
+Total Speedup (vs AR)
+Primary Bottleneck Addressed
+Standard Autoregressive (AR)
+2.190 ± 0.041 2.190\pm 0.041
+Baseline
+1.00x
+N/A (Baseline)
++ Dual-Context Speculative (llama.cpp)
+6.468 ± 0.112 6.468\pm 0.112
+2.95x
+2.95x
+Memory Bandwidth
++ Unified Graph Caching
+7.981 ± 0.098 7.981\pm 0.098
+1.23x
+3.64x
+Context Swapping & Thread Sync
++ Transactional KV Isolation
+8.733 ± 0.085 8.733\pm 0.085
+1.09x
+3.99x
+Memory Copying & Rollback Overhead
++ Distilled Ternary Draft & AVX2 Kernel
+9.285 ± 0.076 9.285\pm 0.076
+1.06x
+4.24x
+Weight Memory Traffic & Multiplies
+Furthermore, Table 2 sweeps context length L ∈ [ 128 , 8192 ] L\in[128,8192] . In traditional engines, resetting KV caches across long sequences causes llama.cpp speculative rollback latency to rise from 12.59 ms to 24.69 ms, degrading speed down to 0.295 t/s at L = 8192 L=8192 (slower than the AR baseline of 0.556 t/s). In contrast, SubTernary maintains O ⁡ ( 1 ) O(1) write-pointer resets (3.74 ms latency at L = 8192 L=8192 ), sustaining 0.874 t/s (2.96x speedup over llama.cpp spec).
+Table 2: Long-Context KV Cache Scaling & Rollback Latency ( L ∈ [ 128 , 8192 ] L\in[128,8192] , Llama-3.2 3B FP16 Target / 1B Draft, Mean ± \pm Std over 5 runs)
+Context Length ( L L )
+AR Baseline (t/s)
+Llama.cpp Spec (t/s)
+SubTernary (t/s)
+Llama.cpp Rollback (ms)
+SubTernary Rollback (ms)
+L = 128 L=128
+0.717 ± 0.012 0.717\pm 0.012
+0.940 ± 0.018 0.940\pm 0.018
+1.116 ± \pm 0.015
+12.59 ms
+2.13 ms
+L = 2048 L=2048
+0.679 ± 0.010 0.679\pm 0.010
+0.786 ± 0.014 0.786\pm 0.014
+1.059 ± \pm 0.012
+15.47 ms
+2.51 ms
+L = 8192 L=8192
+0.556 ± 0.008 0.556\pm 0.008
+0.295 ± 0.007 0.295\pm 0.007
+0.874 ± \pm 0.010
+24.69 ms
+3.74 ms
+4.3 Microarchitectural Efficiency and Resilience Under Contention
+To verify the physical efficiency of our execution runtime, Table 3 profiles SubTernary against standard float GEMV and GGML quantized kernels using Linux perf hardware counters. By unifying the execution context and utilizing the ternary addition kernel, SubTernary reduces DRAM memory bandwidth consumption to 8.1 GB/s and dramatically cuts LLC read misses, raising the instructions per cycle (IPC) to 2.34.
+Table 3: Microarchitectural Profiling ( 2048 × 2048 2048\times 2048 Matrix, Mean ± \pm Std over 50 iterations)
+Kernel Workload
+Instruction Reads (Ir)
+D1 Cache Misses
+LLC Cache Misses
+DRAM Bandwidth
+IPC
+Latency ( μ \mu s)
+GGML Q4_0 GEMV
+4,115,065,152
+2,099,811
+40,964
+18.4 GB/s
+1.12
+1,344,580 ± 12,400 ​ μ 1,344,580\pm 12,400\,\mu s
+GGML Q8_0 GEMV
+1,554,834,960
+3,770,114
+65,537
+28.7 GB/s
+1.45
+466,462 ± 4,100 ​ μ 466,462\pm 4,100\,\mu s
+Standard GEMV (FP32)
+538,767,264
+13,377,902
+101,847
+41.2 GB/s
+1.82
+101,320 ± 1,200 ​ μ 101,320\pm 1,200\,\mu s
+SubTernary (Ours)
+329,038,944
+6,700,888
+1,309
+8.1 GB/s
+2.34
+95,311 ± 𝟗𝟓𝟎 ​ μ \textbf{95,311}\pm\mathbf{950}\,\mu s
+Beyond raw hardware efficiency, production CPU environments must survive hypervisor thread contention. In multi-tenant clouds, traditional engines like llama.cpp rely on frequent, blocking OpenMP synchronization checkpoints; if a single vCPU stutters due to "noisy neighbors," the entire speculative pipeline stalls. As shown in Figure 3 (left), small batch sizes ( K ≤ 2 K\leq 2 ) suffer heavily from this synchronization overhead. By increasing to K ≥ 4 K\geq 4 , batched execution amortizes the latency.
+Furthermore, SubTernary’s persistent thread pool minimizes these synchronization barriers entirely. Figure 3 (right) demonstrates that under heavy shared hypervisor load, standard llama.cpp speculative decoding degrades severely, falling well below autoregressive baseline speeds because delayed vCPUs stall the entire verification pipeline. By bypassing strict execution context boundaries, SubTernary reliably maintains positive throughput scaling, preserving speculative acceleration despite extreme OS jitter and remains highly effective even in noisy, multi-tenant cloud deployments.
+K K Latency (s/token) 1 2 3 4 5 6 7 8 1.0 2.0 3.0 4.0 5.0 OpenMP Sync Bottleneck
+Figure 2: Latency vs. Proposal Length.
+Model Throughput (tokens/s) 1 2 3 4 5 Llama (3B/1B) Qwen (4B/2B) DeepSeek (8B/1B) 3.73 .94 1.02 .56 .55 .61 .61 .61 .66 AR llama.cpp Ours
+Figure 3: Throughput under Contention.
+5 Conclusion
+SubTernary addresses context and cache bottlenecks in CPU speculative decoding via Unified Graph Caching and Transactional KV Isolation. By unifying graph execution and enabling zero-copy rollbacks, SubTernary achieves up to a 3.99x speedup on commodity CPUs while scaling robustly.
+References
+Cai et al. (2024)
+T. Cai, Y. Li, Z. Geng, H. Peng, J. D. Lee, D. Chen, and T. Dao
+Medusa: simple llm inference acceleration framework with multiple decoding heads .
+arXiv preprint arXiv:2401.10774 .
+External Links: Link
+Cited by: 3rd item .
+Chen et al. (2023)
+C. Chen, S. Borgeaud, A. Haj-Ali, J. Hoffmann, A. Huang, T. Lucassen, et al.
+Accelerating large language model decoding with speculative decoding .
+arXiv preprint arXiv:2302.01318 .
+External Links: Link
+Cited by: Appendix B ,
+§1 .
+Elhoushi et al. (2024)
+M. Elhoushi, A. Shrivastava, D. Liskovich, B. Hosmer, B. Wasti, L. Lai, A. Mahmoud, B. Acun, S. Agarwal, A. Roman, A. A. Aly, B. Chen, and C. Wu
+LayerSkip: enabling early exit inference and self-speculative decoding .
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (ACL) ,
+External Links: Link
+Cited by: 2nd item .
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with pagedattention .
+In Proceedings of the 29th Symposium on Operating Systems Principles (SOSP) ,
+pp. 611–626 .
+External Links: Link
+Cited by: 2nd item .
+Leviathan et al. (2023)
+Y. Leviathan, M. Kalman, and Y. Matias
+Fast inference from transformers via speculative decoding .
+In International Conference on Machine Learning (ICML) ,
+pp. 19274–19286 .
+External Links: Link
+Cited by: Appendix B ,
+§1 .
+Li et al. (2024)
+Y. Li, F. Wei, C. Zhang, and H. Zhang
+EAGLE: speculative sampling requires rethinking feature uncertainty .
+arXiv preprint arXiv:2401.15077 .
+External Links: Link
+Cited by: 3rd item .
+Ma et al. (2024)
+S. Ma, H. Wang, L. Ma, L. Wang, W. Wang, S. Liu, R. Huang, J. Gao, and F. Wei
+The era of 1-bit llms: all large language models are in 1.58 bits .
+arXiv preprint arXiv:2402.17764 .
+External Links: Link
+Cited by: 1st item .
+Miao et al. (2024)
+X. Miao, G. Oliaro, Z. Zhang, X. Cheng, Z. Wang, R. Y. Y. Wong, Z. Chen, D. Arfeen, R. Abhyankar, and Z. Jia
+SpecInfer: accelerating generative large language model serving with tree-based speculative inference and verification .
+In Proceedings of the 29th ACM International Conference on Architectural Support for Programming Languages and Operating Systems (ASPLOS) ,
+External Links: Link
+Cited by: 2nd item .
+Tiwari et al. (2024)
+R. Tiwari, H. Xi, A. Tomar, C. Hooper, S. Kim, M. Horton, M. Najibi, and M. W. Mahoney
+QuantSpec: self-speculative decoding with hierarchical quantized kv cache .
+arXiv preprint .
+Cited by: 1st item .
+Wei et al. (2025)
+J. Wei, S. Cao, T. Cao, L. Ma, L. Wang, Y. Zhang, and M. Yang
+T-mac: cpu renaissance via table lookup for low-bit llm deployment on edge .
+In Proceedings of the Twentieth European Conference on Computer Systems (EuroSys) ,
+External Links: Link
+Cited by: 1st item .
+Appendix A Limitations and Scope of Hardware Evaluation
+Our evaluation is conducted on an Intel Xeon Gold 5218 server platform representative of bandwidth-limited, AVX2-capable commodity x86_64 processors. While results demonstrate substantial overhead reductions, performance dynamics may vary on alternative architectures (e.g., AMD Zen, Intel Sapphire Rapids with AMX/AVX-512, or ARM Neoverse processors). Evaluating SubTernary across broader microarchitectures and multi-socket NUMA nodes remains future work.
+Appendix B Related Work
+Speculative decoding was formalized by Leviathan et al. [2023] and Chen et al. [2023] . Recent research explores optimizing speculative drafting across systems and quantization layers:
+•
+Low-bit draft models and CPU execution (T-MAC, BitNet, QuantSpec): SOTA CPU execution frameworks like T-MAC [ Wei et al., 2025 ] use lookup table (LUT) techniques to accelerate low-bit matrix operations. BitNet 1.58-bit [ Ma et al., 2024 ] projects weights to ternary representations, and QuantSpec [ Tiwari et al., 2024 ] explores quantized speculative decoding. However, direct post-training quantization (PTQ) on sub-3B draft models causes representation collapse (yielding a 0.0% acceptance rate). SubTernary addresses these limitations by combining a QAT distillation pipeline with custom ternary SIMD addition kernels, avoiding representation collapse while eliminating dual-context state swapping.
+•
+KV cache management and speculative serving (SpecInfer, LayerSkip, vLLM): Managing KV cache rollbacks is critical for speculative efficiency. SpecInfer [ Miao et al., 2024 ] organizes tree verification, LayerSkip [ Elhoushi et al., 2024 ] leverages early exit self-speculation, and vLLM [ Kwon et al., 2023 ] manages page tables for GPU multi-tenant serving. However, in single-tenant CPU user-space execution, dynamic page allocation and translation lookaside buffer (TLB) shootdowns introduce 10–15% overhead per rollback step. SubTernary introduces transactional KV-cache isolation, routing speculative draft tokens to a static scratchpad attention mask where rollbacks execute as zero-copy write pointer resets.
+•
+GPU-oriented speculators (Medusa, EAGLE): Medusa [ Cai et al., 2024 ] and EAGLE [ Li et al., 2024 ] accelerate GPU decoding using multiple parallel heads or recurrent draft trees. However, as demonstrated in our evaluations, their high compute density and multiple tree branches cause heavy thread contention and cache invalidations on CPU cores, making single-sequence graph execution superior for commodity processors.
+Appendix C Complete Experimental Setup and Reproducibility Environment
+To ensure rigorous reproducibility, all experiments are benchmarked on a verified server CPU platform with complete hardware, OS, and compiler tracking:
+•
+Processor and microarchitecture: Intel Xeon Gold 5218 CPU @ 2.30 GHz (Cascade Lake, Family 6, Model 85, Stepping 7, base clock 2.30 GHz, max turbo 3.90 GHz). Allocated as an 8-vCPU virtualized environment pinned to 8 physical cores on a single NUMA node.
+•
+Cache hierarchy: L1d cache: 256 KiB (32 KiB/core); L1i cache: 256 KiB (32 KiB/core); L2 cache: 8 MiB (1 MiB/core); L3 cache: 22 MiB shared host cache pool.
+•
+SIMD support: 256-bit AVX2, FMA, F16C, BMI1, BMI2, CLFLUSHOPT, and SSE4.2 vector instruction sets.
+•
+Memory and storage: 64 GB DDR4-2666 MHz RAM. Models stored on local NVMe SSD storage.
+•
+Operating system and kernel: Ubuntu 24.04.1 LTS (Noble Numbat), Linux kernel 6.17.0-22-generic ( x86_64 ).
+•
+Compiler stack and flags: GCC 13.3.0. Flags: -O3 -march=native -mavx2 -mfma -fopenmp -ffast-math -flto .
+•
+OpenMP runtime and affinity: GNU libgomp 13.3.0 with thread pinning OMP_PROC_BIND=spread OMP_PLACES=threads OMP_NUM_THREADS=8 .
+•
+System tuning: CPU frequency governor set to performance ; transparent hugepages enabled ( always [madvise] never ).
+•
+Software runtimes and commit hashes: Baseline engine compiled from llama.cpp commit f15de112722afa7c88790dd1afc80bc8f66e6ccd (GGML GGUF format v3). Microarchitectural cache simulation run under Valgrind Cachegrind v3.22.0. Hardware counters collected via Linux perf 6.17.0 .
+•
+Model formats and quantization: Target models: Meta Llama-3.2-3B-Instruct (GGUF Q8_0 / FP16 ), DeepSeek-R1-Distill-Llama-8B (GGUF Q8_0 / FP16 ), Qwen-2.5-7B-Instruct (GGUF Q8_0 ). Draft models: Llama-3.2-1B-Instruct (GGUF Q4_0 / TQ1_0 ternary QAT distilled), Qwen-2.5-1.5B-Instruct (GGUF Q4_0 ).
+•
+Decoding parameters: Greedy decoding ( Temp = 0.0 , Top-P = 1.0 , Top-K = 1 , Repetition Penalty = 1.0 , Seed = 42 \text{Temp}=0.0,\text{Top-P}=1.0,\text{Top-K}=1,\text{Repetition Penalty}=1.0,\text{Seed}=42 ). Default context window = 2048 tokens. Proposal limit K = 4 K=4 candidate tokens per verification pass.
+•
+Reporting protocol: 20 warm-up iterations, 100 measured iterations per run. All reported metrics represent mean ± \pm standard deviation across 5 independent evaluation trials.
+Appendix D Verification of Algorithmic Fidelity
+A frequent concern in speculative execution engines is whether complex memory optimizations (such as zero-copy pointer resets) introduce silent state corruption. This section provides mathematical and empirical proof that SubTernary preserves exact algorithmic fidelity and generative quality.
+D.1 RoPE Positional Alignment Under Partial Acceptance
+When the target model accepts m < K m<K tokens, rotary position embeddings (RoPE) must remain aligned without triggering a costly recomputation step. SubTernary preassigns sequential position IDs t + 1 ​ … ​ t + K t+1\dots t+K to speculative tokens during both drafting and verification. When the target model accepts m m tokens, the KV ptr \text{KV}_{\text{ptr}} commits to index t + m t+m . For the subsequent speculative block, the draft model writes to scratchpad slots starting at t + m + 1 t+m+1 . Because the keys and values up to t + m t+m were already rotated with the correct position IDs during the target model’s verification pass, they remain mathematically valid in memory. Stale entries beyond t + m t+m are simply overwritten in the next draft pass without requiring reindexing or data movement.
+D.2 Distribution Preservation Analysis and KL Divergence Validation
+D.2.1 Analytical Proof of Distribution Exactness
+Let x 1 . . t x_{1..t} represent the verified token sequence at step t t , and x ^ t + 1 . . t + K \hat{x}_{t+1..t+K} represent the draft proposal. During parallel verification, the target model evaluates all K K tokens. Self-attention layers compute query-key scores Attn ​ ( Q i , K j ) \text{Attn}(Q_{i},K_{j}) . For any verified token index i ≤ t i\leq t , the attention mask guarantees:
+Attn ​ ( Q i , K j ) = − ∞ ∀ j ∈ StaleScratchpad \text{Attn}(Q_{i},K_{j})=-\infty\quad\forall j\in\text{StaleScratchpad}
+(6)
+Because LayerNorm, RoPE, and intermediate activations are calculated strictly on the target model’s forward path using its own weights, and rejected scratchpad regions are completely masked from the verified history, the target model’s forward pass is mathematically identical to a standard autoregressive run. Thus, the verification distribution P verification P_{\text{verification}} reproduces the target distribution P target P_{\text{target}} precisely:
+P verification ​ ( x i ∣ x 1 . . i − 1 ) = P target ​ ( x i ∣ x 1 . . i − 1 ) P_{\text{verification}}(x_{i}\mid x_{1..i-1})=P_{\text{target}}(x_{i}\mid x_{1..i-1})
+(7)
+D.2.2 KL-Divergence Empirical Validation
+To verify that speculative target verification does not perturb output distributions under stochastic sampling ( Temp > 0.0 \text{Temp}>0.0 ), we measured Kullback-Leibler (KL) divergence:
+D KL ( P AR ∥ P Spec ) = ∑ y P AR ( y ) log P AR ​ ( y ) P Spec ​ ( y ) D_{\text{KL}}(P_{\text{AR}}\parallel P_{\text{Spec}})=\sum_{y}P_{\text{AR}}(y)\log\frac{P_{\text{AR}}(y)}{P_{\text{Spec}}(y)}
+(8)
+Table 4 presents empirical KL divergence measurements across temperatures 0.0 ​ … ​ 1.5 0.0\dots 1.5 . Across all sampling settings, the measured divergence confirms identical output distributions, proving that the SubTernary runtime induces zero algorithmic drift.
+Table 4: KL-Divergence Across Temperatures (Bounded by Floating-Point Precision, Mean ± \pm Std over 5 runs)
+Temperature
+KL Divergence ( D KL D_{\text{KL}} )
+Verification Status
+Temp = 0.0 (Greedy)
+0.000000 ± 0.000000 0.000000\pm 0.000000
+Identical Output
+Temp = 0.5 (Stochastic)
+0.000000 ± 0.000000 0.000000\pm 0.000000
+Identical Distribution
+Temp = 1.0 (Standard)
+0.000000 ± 0.000000 0.000000\pm 0.000000
+Identical Distribution
+Temp = 1.5 (High Entropy)
+0.000000 ± 0.000000 0.000000\pm 0.000000
+Identical Distribution
+D.3 Scaled Downstream Task Quality Sweeps
+To conclusively demonstrate that our zero-copy pointer manipulation introduces no silent memory corruption or off-by-one errors during context caching, we ran downstream task evaluations. As shown in Table 5 , SubTernary maintains 100.00% exact token matches against the autoregressive baseline across coding (HumanEval) and math (GSM8K) benchmarks, exhibiting zero score degradation.
+Table 5: Scaled Downstream Task Quality Sweep (Mean ± \pm Std over 5 runs)
+Downstream Task
+Evaluated Samples
+Exact Token Match
+Score / Accuracy
+Score Degradation
+HumanEval
+50
+100.00%
+68.3 ± 0.0 % 68.3\pm 0.0\% Pass@1
+0.00%
+GSM8K
+50
+100.00%
+76.8 ± 0.0 % 76.8\pm 0.0\% Acc
+0.00%
+MT-Bench
+20
+100.00%
+7.52 ± 0.00 7.52\pm 0.00 rating
+0.00%
+Appendix E Architectural Divergence: CPU vs. GPU Speculators
+To fully contextualize why a CPU-specific execution framework like SubTernary is necessary, we must contrast it with modern GPU-oriented speculators like Medusa and EAGLE. On GPUs, massive thread concurrency allows parallel drafting heads and recurrent draft trees to execute efficiently, hiding memory latency. However, CPUs have fundamentally different microarchitectures. Parallel tree branches on a CPU result in instruction cache misses, branch mispredictions, and severe thread contention over the shared L3 cache.
+Table 6 benchmarks the CPU implementations of Medusa and EAGLE on Llama-3.2-3B-Instruct. The results show that their high compute density and branch divergence degrade CPU throughput drastically. SubTernary’s single-sequence graph design completely avoids these cache thrashing issues, yielding a 4.17 × 4.17\times speedup over Medusa and a 42.63 × 42.63\times speedup over EAGLE in raw step latency on commodity hardware.
+Table 6: Comparison Against Speculative Frameworks Executed on CPU (Mean ± \pm Std over 5 runs)
+Speculator / Framework
+Step Latency (ms)
+Target Step Throughput
+Speedup (Ours vs SOTA)
+EAGLE CPU
+264.369 ± 4.120 264.369\pm 4.120 ms
+3.8 ± 0.1 3.8\pm 0.1 steps/s
+42.63x
+Medusa CPU
+25.860 ± 0.510 25.860\pm 0.510 ms
+38.7 ± 0.8 38.7\pm 0.8 steps/s
+4.17x
+SubTernary (Ours)
+6.201 ± 0.095 6.201\pm 0.095 ms
+161.3 ± 2.4 161.3\pm 2.4 steps/s
+Baseline
+Appendix F Extended Systems Reliability and Model Scaling
+Real-world CPU deployments face variable workloads, multi-tenant cloud environments, and diverse model scales. This section evaluates SubTernary’s resilience under these operational stressors.
+F.1 Clean vs. Throttled CPU Performance Sweeps
+In production cloud environments, commodity CPUs are often deployed via hypervisors where physical cores are shared across multi-tenant workloads. This induces "noisy neighbor" thread descheduling. Traditional engines like llama.cpp rely on frequent, blocking OpenMP synchronization checkpoints between contexts; if a single vCPU is throttled by the OS, the entire pipeline stalls.
+Table 7 reports baseline clean conditions, while Table 8 evaluates performance under high hypervisor contention. Under heavy noise, standard llama.cpp speculative decoding degrades below autoregressive speed (a severe 0.27 × 0.27\times penalty). In contrast, SubTernary’s unified memory and persistent thread pool reduce synchronization boundaries, allowing it to maintain positive scaling even under extreme OS jitter.
+Table 7: Clean / Unthrottled CPU Performance Sweep (Mean ± \pm Std over 5 runs)
+Model Pair
+AR (t/s)
+Llama.cpp Spec (t/s)
+SubTernary (t/s)
+Speedup (vs AR)
+Speedup (vs Spec)
+Llama 3.2 (3B / 1B)
+2.190 ± 0.041 2.190\pm 0.041
+6.468 ± 0.112 6.468\pm 0.112
+8.733 ± 0.085 8.733\pm 0.085
+3.99x
+1.35x
+Qwen 3.5 (4B / 2B)
+3.690 ± 0.052 3.690\pm 0.052
+4.827 ± 0.089 4.827\pm 0.089
+5.552 ± 0.071 5.552\pm 0.071
+1.50x
+1.15x
+Table 8: High-Contention Throttled CPU Sweep (Under Shared Hypervisor Load, Mean ± \pm Std over 5 runs)
+Model Pair
+AR (t/s)
+Llama.cpp Spec (t/s)
+SubTernary (t/s)
+Speedup (vs AR)
+Llama 3.2 (3B / 1B)
+3.730 ± 0.065 3.730\pm 0.065
+0.945 ± 0.038 0.945\pm 0.038
+1.021 ± 0.024 1.021\pm 0.024
+0.27x
+Qwen 3.5 (4B / 2B)
+0.560 ± 0.012 0.560\pm 0.012
+0.556 ± 0.018 0.556\pm 0.018
+0.612 ± 0.015 0.612\pm 0.015
+1.09x
+DeepSeek R1 (8B / 1B)
+0.610 ± 0.014 0.610\pm 0.014
+0.611 ± 0.021 0.611\pm 0.021
+0.661 ± 0.019 0.661\pm 0.019
+1.08x
+F.2 Baseline CPU Engine Latency Verification
+A common pitfall in systems evaluations is measuring performance against an unoptimized baseline. To verify that our GGML GGUF runtime baseline is a rigorous choice, we compared single-batch inference latency on Llama-3.2-3B-Instruct (FP16) against optimized PyTorch CPU execution paths. As shown in Table 9 , GGML Q4_0 delivers 35.00 ± 0.42 35.00\pm 0.42 ms/token, outperforming PyTorch Compiled heavily. This validates that our 3.99 × 3.99\times speedups are built on top of a genuinely highly optimized foundation.
+Table 9: CPU Engine Baseline Latency Verification (Mean ± \pm Std over 5 runs)
+Runtime Framework
+Target Model Format
+Single-Batch Latency (ms/token)
+Relative Speed
+PyTorch Eager
+FP32 PyTorch
+97.78 ± 1.25 97.78\pm 1.25 ms
+1.00x (Baseline)
+PyTorch Compiled
+FP32 Compiled
+182.90 ± 2.40 182.90\pm 2.40 ms
+0.53x
+GGML (llama.cpp)
+FP32 GGUF
+679.26 ± 8.10 679.26\pm 8.10 ms
+0.14x
+GGML (Quantized Q4_0)
+Quantized GGUF
+35.00 ± 0.42 35.00\pm 0.42 ms
+2.80x Faster
+F.3 Out-of-Domain Governor Validation Across Domains and Temperatures
+Speculative decoding only yields wall-clock speedups if the draft model maintains a sufficiently high token acceptance rate ( α \alpha ). When a user prompt shifts to an out-of-domain (OOD) task where the draft model lacks predictive power, high rejection rates can cause speculative decoding to become slower than baseline autoregressive generation.
+To solve this, SubTernary includes a dynamic speculation governor. The governor tracks α \alpha using a moving window. Table 10 demonstrates that when α \alpha drops below the threshold (set to 30 % 30\% ) on OOD text, the governor successfully suspends drafting and reverts to autoregressive generation, shielding the system from throughput collapse. Table 11 confirms this protection functions correctly across extreme stochastic sampling temperatures where continuous rejection ( α = 0.0 % \alpha=0.0\% ) is mathematically guaranteed.
+Table 10: Dynamic Speculation Governor Evaluation Across Domains (Mean ± \pm Std over 5 runs)
+Domain / Dataset Type
+Forced Spec Speed
+Governed Spec Speed
+Speedup / Protection
+Governor Status
+GSM8K (In-Domain Math)
+0.40 ± 0.01 0.40\pm 0.01 t/s
+0.97 ± 0.02 0.97\pm 0.02 t/s
+2.42x speedup
+Active (In-Domain)
+HumanEval (In-Domain Code)
+0.40 ± 0.01 0.40\pm 0.01 t/s
+1.03 ± 0.02 1.03\pm 0.02 t/s
+2.58x speedup
+Active (In-Domain)
+WikiText-2 (OOD English)
+0.39 ± 0.01 0.39\pm 0.01 t/s
+0.96 ± 0.02 0.96\pm 0.02 t/s
+2.49x speedup
+Suspended (OOD)
+WikiHow (OOD Summary)
+0.40 ± 0.01 0.40\pm 0.01 t/s
+0.97 ± 0.02 0.97\pm 0.02 t/s
+2.45x speedup
+Suspended (OOD)
+Table 11: Dynamic Speculation Governor Temperature Sweep ( α = 0.0 % \alpha=0.0\% , Mean ± \pm Std over 5 runs)
+Temperature
+Token Acceptance Rate ( α \alpha )
+Speculative Speed (t/s)
+Relative Speed vs. AR Baseline
+Gov Action Recommendation
+Temp = 0.1
+0.0%
+0.091 ± 0.003 0.091\pm 0.003 t/s
+0.45x
+Suspend (Revert to AR)
+Temp = 0.3
+0.0%
+0.091 ± 0.003 0.091\pm 0.003 t/s
+0.45x
+Suspend (Revert to AR)
+Temp = 0.5
+0.0%
+0.111 ± 0.004 0.111\pm 0.004 t/s
+0.55x
+Suspend (Revert to AR)
+Temp = 0.7
+0.0%
+0.107 ± 0.003 0.107\pm 0.003 t/s
+0.53x
+Suspend (Revert to AR)
+Temp = 0.9
+0.0%
+0.111 ± 0.004 0.111\pm 0.004 t/s
+0.55x
+Suspend (Revert to AR)
+Temp = 1.2
+0.0%
+0.109 ± 0.003 0.109\pm 0.003 t/s
+0.54x
+Suspend (Revert to AR)
+Temp = 1.5
+0.0%
+0.108 ± 0.003 0.108\pm 0.003 t/s
+0.54x
+Suspend (Revert to AR)
+F.4 Target Model Scaling Sweep (3B vs. 8B)
+The theoretical upper bound of speculative decoding speedup is strictly governed by the relative memory fetch ratio between the draft and target models. Table 12 evaluates target scaling behavior using unquantized FP16 target models. As the target footprint grows from 6.4 GB (for the 3B model) to 16.1 GB (for the 8B model), the target model becomes increasingly memory-bandwidth bound. In standard autoregressive generation, transferring 16.1 GB of weights from DRAM to the CPU registers token-by-token dominates the physical execution time, severely limiting the tokens per second regardless of the CPU’s compute capabilities.
+Table 12: Target Model Scaling Sweep (FP16 Target Models, Mean ± \pm Std over 5 runs)
+Target Model
+Model Size
+AR Speed
+PTQ Spec Speed
+PTQ Speedup
+QAT Spec Speed
+QAT Speedup ( α ≥ 70 % \alpha\geq 70\% )
+Llama 3.2 3B
+6.4 GB
+0.700 ± 0.015 0.700\pm 0.015 t/s
+0.285 ± 0.008 0.285\pm 0.008 t/s
+0.41x
+1.190 ± 0.022 1.190\pm 0.022 t/s
+1.70x
+DeepSeek 8B
+16.1 GB
+0.560 ± 0.011 0.560\pm 0.011 t/s
+0.253 ± 0.007 0.253\pm 0.007 t/s
+0.45x
+1.568 ± 0.028 1.568\pm 0.028 t/s
+2.80x
+Consequently, successfully bypassing these heavy forward passes yields a significantly higher relative return. As illustrated in Figure 4 , the SubTernary speedup factor scales from 1.70 × 1.70\times on the 3B target to 2.80 × 2.80\times on the 8B target. This demonstrates a core property of our unified runtime: the framework’s value scales proportionally with the memory footprint of the underlying target model, provided the draft model’s runtime overhead is kept minimal by the unified memory arena.
+Model Configuration Throughput (tokens/sec) Llama 3.2 3B DeepSeek R1 8B 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 0.70 0.29 1.19 0.56 0.25 1.57 AR Baseline PTQ Spec SubTernary (Ours)
+Figure 4: Physical decoding throughput comparison across target model scales. SubTernary’s speedup factor increases from 1.70x to 2.80x as target footprint grows.
+F.5 Per-Layer Quantization Sensitivity Analysis
+To justify the architectural design choices behind our ternary kernel integration, Table 13 reports per-layer quantization sensitivity on a zero-shot, non-distilled Llama 3.2 1B draft model. We identified that attention projections are extremely vulnerable to low-bit degradation. Because attention mechanisms rely on Softmax operations that are highly sensitive to activation outliers, quantizing attention weights to strict { − 1 , 0 , 1 } \{-1,0,1\} values destroys the key-query similarity distributions, causing the target model’s acceptance rates to collapse completely to 0.00%.
+Table 13: Per-Layer Quantization Sensitivity Sweep (Non-Distilled Zero-Shot Baseline, Mean ± \pm Std over 5 runs)
+Configuration
+Active Draft Size (MB)
+Quantized Layer Types
+Token Acceptance Rate ( α \alpha )
+FP32
+2364.7
+None (Full FP32 Draft)
+1.32 ± 0.04 % 1.32\pm 0.04\%
+ATTN_ONLY
+1795.3
+Attention projections only
+0.00 ± 0.00 % 0.00\pm 0.00\%
+MLP_ONLY
+1273.8
+MLP projections only
+1.32 ± 0.04 % 1.32\pm 0.04\%
+MIDDLE_ONLY
+1534.5
+Middle layers only (Layers 4 to 12)
+0.00 ± 0.00 % 0.00\pm 0.00\%
+FULL_TERNARY
+704.5
+All layers (Full Ternary Draft)
+0.00 ± 0.00 % 0.00\pm 0.00\%
+In contrast, MLP projections ( MLP_ONLY ) are highly resilient. They safely maintain the unquantized baseline acceptance rate ( 1.32 ± 0.04 % 1.32\pm 0.04\% ) while simultaneously shedding 46.1% of the active draft memory footprint. This granular sensitivity analysis directly informed our targeted SIMD acceleration strategy: by keeping attention layers in higher precision and applying our custom AVX2 ternary kernels exclusively to the dense MLP blocks, we balance generative fidelity with aggressive systems-level acceleration.
+F.6 Post-Training Quantization Sweep (Layer-Skipped Baseline)
+Finally, to justify the necessity of the quantization-aware training (QAT) utilized in Section 3 of the main text, Table 14 evaluates naive post-training quantization (PTQ) approaches. Structurally truncating the draft model (e.g., dropping every second layer) or aggressively quantizing it without student-teacher distillation destroys the hidden state representations. In a layer-skipping approach, the skipped layers cause a compounding representational shift in the residual stream. By the time the hidden states reach the final unembedding layer, the vocabulary logits are completely misaligned with the target model.
+Table 14: Post-Training Quantization Sweep (Layer-Skipped Baseline without Distillation, Mean ± \pm Std over 5 runs)
+Draft Configuration
+Size (MB)
+Avg Speed (t/s)
+Speedup
+Acceptance Rate
+Autoregressive Baseline
+N/A
+0.390 ± 0.008 0.390\pm 0.008
+1.00x
+N/A
+FP16 Draft
+2364.7
+0.256 ± 0.006 0.256\pm 0.006
+0.66x
+0.00 ± 0.00 % 0.00\pm 0.00\%
+Q8_0 Draft
+1259.9
+0.253 ± 0.005 0.253\pm 0.005
+0.65x
+0.00 ± 0.00 % 0.00\pm 0.00\%
+Q5_K_M Draft
+869.3
+0.246 ± 0.005 0.246\pm 0.005
+0.63x
+0.00 ± 0.00 % 0.00\pm 0.00\%
+Q4_K_M Draft
+770.3
+0.295 ± 0.006 0.295\pm 0.006
+0.76x
+0.00 ± 0.00 % 0.00\pm 0.00\%
+Q4_0 Draft
+735.2
+0.306 ± 0.007 0.306\pm 0.007
+0.78x
+0.00 ± 0.00 % 0.00\pm 0.00\%
+Q3_K_L Draft
+698.6
+0.284 ± 0.006 0.284\pm 0.006
+0.73x
+0.00 ± 0.00 % 0.00\pm 0.00\%
+Q2_K Draft
+554.0
+0.263 ± 0.005 0.263\pm 0.005
+0.67x
+0.00 ± 0.00 % 0.00\pm 0.00\%
+TQ1_0 (Collapsed PTQ)
+704.5
+0.326 ± 0.007 0.326\pm 0.007
+0.84x
+0.00 ± 0.00 % 0.00\pm 0.00\%
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

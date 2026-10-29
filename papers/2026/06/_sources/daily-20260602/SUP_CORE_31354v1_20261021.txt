@@ -1,0 +1,482 @@
+SOURCE 31354 S3->S6
+3 Method
+We formulate the problem of document visual question answering as a sequential decision-making process under strict computational constraints. Our goal is to analyze the inference dynamics of weak learners when augmented with external working memory.
+3.1 Problem Formulation
+Let ℳθ\mathcal{M}_{\theta} denote a vision–language model with parameters θ\theta, subject to a resource constraint Ω\Omega (defined by limited parameter size, e.g., 4B–8B, and single-GPU memory). Given a visual input I={Ik}k=1KI=\{I_{k}\}_{k=1}^{K} (representing slides, charts, or documents) and a natural language query qq, the objective is to generate an answer a∈𝒜a\in\mathcal{A} that maximizes the likelihood P⁡(a|I,q)P(a|I,q).
+In a collaborative setting, the generation of aa is mediated by a sequence of intermediate discrete latent states B1:TB_{1:T}, representing the trajectory of the shared workspace. The inference process seeks to approximate the intractable posterior of the answer given the reasoning chain:
+P⁡(a|I,q)≈∑BTPθ​(a|I,q,BT)​∏t=1TPθ​(Bt|I,q,Bt−1)P(a|I,q)\approx\sum_{B_{T}}P_{\theta}(a|I,q,B_{T})\prod_{t=1}^{T}P_{\theta}(B_{t}|I,q,B_{t-1})
+(1)
+We focus on the inference-time behavior of ℳθ\mathcal{M}_{\theta}, treating the weights as fixed.
+3.2 External Working Memory (The Board)
+To externalize the intermediate reasoning steps, CoSee introduces a structured latent state, the Board (BtB_{t}). Unlike internal hidden states, BtB_{t} is a discrete, interpretable sequence of entries readable by all agents. Formally, at time step tt, the board state is defined as an ordered sequence Bt=[e1,e2,…,et]B_{t}=[e_{1},e_{2},\dots,e_{t}], where each entry eie_{i} is a tuple (𝐦,𝐩,id)(\mathbf{m},\mathbf{p},\texttt{id}). Here, 𝐦\mathbf{m} represents a natural language note (evidence or hypothesis), 𝐩\mathbf{p} denotes an optional grounding pointer (e.g., page index or region coordinates), and id identifies the authoring agent.
+The transition dynamics of the board are governed by a lightweight controller that enforces a strict read-write interface. At each step tt, the controller exposes the current state Bt−1B_{t-1} to the active agent policy π\pi, which samples a new update ete_{t}. The state evolves deterministically as Bt=Bt−1⊕etB_{t}=B_{t-1}\oplus e_{t}, where ⊕\oplus denotes the append operation. This design ensures that the entire reasoning trajectory is observable and auditable.
+3.3 Inference Dynamics and Protocols
+We investigate three distinct inference protocols, viewing them as variations in the state transition probability P⁡(Bt|Bt−1)P(B_{t}|B_{t-1}) and the readout function.
+Direct Inference (Baseline).
+The baseline represents a collapse of the sequential process into a single step. The model directly samples the output distribution conditioned only on the input:
+a^∼Pθ​(a|I,q)\hat{a}\sim P_{\theta}(a|I,q)
+(2)
+This serves as the lower bound for computational cost and the reference point for reasoning quality.
+Open-Loop Iterative Refinement (Single & Multi-Agent).
+In this regime, agents interact with the board for a fixed budget of TT steps without explicit external feedback.
+•
+Single-Agent Dynamics: A single policy πθ\pi_{\theta} iteratively updates the board. At step tt, the agent samples et∼πθ(⋅|I,q,Bt−1)e_{t}\sim\pi_{\theta}(\cdot|I,q,B_{t-1}).
+•
+Dual-Agent Dynamics (Scanner–Checker): We instantiate two complementary roles, πscan\pi_{\text{scan}} and πcheck\pi_{\text{check}}, derived from the same backbone ℳθ\mathcal{M}_{\theta} via prompting. The agents operate in alternating turns, effectively modeling a cooperative game where πscan\pi_{\text{scan}} proposes evidence and πcheck\pi_{\text{check}} refines or refutes it based on the shared context Bt−1B_{t-1}.
+Crucially, in both settings, the final answer is generated via a dedicated readout step a^∼Pθ​(a|I,q,BT)\hat{a}\sim P_{\theta}(a|I,q,B_{T}), ensuring that intermediate artifacts (e1:Te_{1:T}) do not leak strictly into the answer format unless explicitly attended to.
+Gated Transition with Information Bottleneck (Verified-Board).
+To mitigate the propagation of ungrounded hallucinations (noise), we introduce a conditional gating mechanism on the state transition. Let Vϕ​(e,I,q)∈{0,1}V_{\phi}(e,I,q)\in\{0,1\} be a verification function (parameterized by the same backbone ℳθ\mathcal{M}_{\theta}) that maps a proposed entry ee to a binary validity score. The update rule becomes:
+Bt={Bt−1⊕etif ​Vϕ​(et,I,q)=1​ (Supported)Bt−1otherwise (Discarded)B_{t}=\begin{cases}B_{t-1}\oplus e_{t}&\text{if }V_{\phi}(e_{t},I,q)=1\text{ (Supported)}\\
+B_{t-1}&\text{otherwise (Discarded)}\end{cases}
+(3)
+This mechanism acts as an information bottleneck, filtering out high-entropy or hallucinated notes before they become part of the conditioning context for subsequent steps. We hypothesize that this control is essential for preventing noise accumulation in weak learners.
+3.4 Contextual Conditioning and Policy Drift
+To operationalize the collaborative roles, we construct the input context 𝒞t\mathcal{C}_{t} by modifying the system instructions while keeping the visual backbone fixed. For the Scanner, 𝒞t=[ℐscan,I,q,Bt−1]\mathcal{C}_{t}=[\mathcal{I}_{\text{scan}},I,q,B_{t-1}], where ℐscan\mathcal{I}_{\text{scan}} conditions the model to extract atomic visual evidences. For the CrossChecker, 𝒞t=[ℐcheck,I,q,Bt]\mathcal{C}_{t}=[\mathcal{I}_{\text{check}},I,q,B_{t}], where ℐcheck\mathcal{I}_{\text{check}} conditions on identifying contradictions between II and BtB_{t}.
+We posit that this augmented context introduces a distributional shift in the generation of the final answer. While the ideal objective is to approximate the true posterior P⁡(a|I,q)P(a|I,q), the dependency on intermediate states introduces a bias: a^≈arg⁡maxa​Pθ​(a|summary​(BT),q)\hat{a}\approx\arg\max_{a}P_{\theta}(a|\text{summary}(B_{T}),q). In regimes where the backbone θ\theta has limited attention capacity (e.g., small models), we hypothesize that the model may over-attend to the compressed textual summary in BTB_{T} while under-attending to the high-dimensional visual features in II, a phenomenon we term attention dilution. Furthermore, if the intermediate notes e1:Te_{1:T} exhibit a specific stylistic bias (e.g., extreme brevity), this style may transfer to the final answer via in-context learning, leading to policy drift where the output format diverges from the optimal answer length required by the task.
+3.5 Traceability and Audit Framework
+A core contribution of CoSee is the rigorous auditing of the inference trajectory. We treat the sequence τ=(I,q,B1:T,a^)\tau=(I,q,B_{1:T},\hat{a}) as a probabilistic trace. To ensure the validity of our analysis, we implement an integrity audit function ℐ⁡(a^)→{valid,malformed,leakage}\mathcal{I}(\hat{a})\rightarrow\{\texttt{valid},\texttt{malformed},\texttt{leakage}\}. This allows us to detect protocol-level pathologies—such as when intermediate notes are copied verbatim into the final answer (Leakage)—without introducing selection bias into the scoring. All examples, including those flagged as malformed, are retained in the evaluation to penalize protocol instability.
+3.6 Cost–Utility Analysis
+In resource-constrained regimes, performance cannot be decoupled from cost. We define the computational cost function 𝒞⁡(τ)\mathcal{C}(\tau) as the total number of tokens generated across all intermediate steps and the final answer. We analyze the system’s efficiency by plotting the empirical Pareto frontier between the utility 𝒰\mathcal{U} (accuracy metric) and cost 𝒞\mathcal{C}:
+ℱ∗=maxπ⁡𝔼τ∼π​[𝒰⁡(a^,a∗)]s.t.𝔼⁡[𝒞⁡(τ)]≤β\mathcal{F}^{*}=\max_{\pi}\mathbb{E}_{\tau\sim\pi}[\mathcal{U}(\hat{a},a^{*})]\quad\text{s.t.}\quad\mathbb{E}[\mathcal{C}(\tau)]\leq\beta
+(4)
+This formulation allows us to determine whether the additional compute invested in collaboration yields a super-linear, linear, or negative return on investment.
+4 Experiments Setup
+4.1 Evaluation Domains and Distributions
+To rigorously test the limits of collaboration, we select three benchmarks that map to distinct failure modes in modular visual reasoning.
+•
+SlideVQA (Multi-page Retrieval): Represents the high-recall regime, requiring agents to locate needle-in-a-haystack evidence across multiple slide images (Mathew et al., 2021).
+•
+ChartQAPro (Quantitative Reasoning): Represents the high-precision regime, stressing the system’s ability to handle exact values and reject unanswerable queries under adversarial noise (Masry et al., 2025).
+•
+VQAonline (Open-Ended Synthesis): Represents the policy-sensitive regime, where answer quality depends on coverage and verbosity rather than exact string matching (Chen et al., 2024).
+Controlled Subsets.
+To ensure strict reproducibility and cost-normalized comparison, we employ fixed evaluation subsets with identical example IDs across all backbones and protocols: SlideVQA test (n=600n{=}600), ChartQAPro test (n=800n{=}800), and VQAonline trainval (n=800n{=}800). We release these subset definitions to facilitate future auditing.
+Signal Isolation Metrics.
+Beyond standard Exact Match (EM) and Loose Match, we introduce specialized metrics to isolate reasoning failures from formatting noise:
+(1) Format-Robust Scoring (ChartQAPro): We report Answerable-Only and Post-Processed (pp) variants to verify that performance drops are due to hallucination (noise reinforcement) rather than superficial string mismatches (Table S8 in the Appendix).
+(2) Policy-Aware F1 (VQAonline): We report token-level F1 alongside strict/relaxed success rates to detect coverage collapse.
+Table 1 summarizes the evaluation protocol.
+Dataset
+Split (Used)
+nn
+Metrics (reported)
+SlideVQA
+Official test
+600
+EM, Loose
+ChartQAPro
+Test
+800
+Raw: EM, Loose; Ans-only: EMans{}_{\text{ans}}, Looseans{}_{\text{ans}}; PP: EMpp{}_{\text{pp}}, Loosepp{}_{\text{pp}}
+VQAonline
+Trainval
+800
+Token-F1; Strict(F1≥\geq0.5), Relaxed(F1≥\geq0.3)
+Table 1: Evaluation protocol and fixed subsets. All results use identical fixed ID lists across methods/backbones. For ChartQAPro, Answerable-only excludes Unanswerable cases; Post-processed normalizes formatting (Table S8 in the Appendix).
+4.2 Experimental Conditions
+We compare three distinct inference protocols (as defined in Section 3.3) under a unified evaluation pipeline.
+1.
+Direct Inference (baseline_single): The lower-bound control, generating answers directly from inputs.
+2.
+Open-Loop Scratchpad (single_board): A single agent utilizing the read-write board interface for intermediate state tracking.
+3.
+Dual-Agent Collaboration (CoSee two_qwen): An alternating scanner–checker dyad operating under a shared context.
+Additionally, we evaluate a Verified-Board control (Appendix) to test the hypothesis that gating intermediate states acts as a necessary noise filter.
+Resource Constraints and Decoding Budgets.
+To strictly enforce the small-model regime, we apply deterministic decoding (temperature=0=0) for all generation calls. We impose a hard per-call cap of max_new_tokens=32\texttt{max\_new\_tokens}=32 and a maximum interaction horizon of T=3T=3 steps. Crucially, these caps are matched across protocols; any increase in total compute arises solely from the structural overhead of the protocol (extra calls), not from relaxed generation limits.
+4.3 Weak Learner Backbones
+We evaluate the protocols on a suite of open-weights models representing the 4B–8B parameter class: Qwen3-VL-4B-Instruct (primary), Qwen3-VL-8B-Instruct (scale check), Phi-4-multimodal-instruct, and Gemma-3-4B-it.
+All experiments use identical preprocessing and prompt templates to ensure that performance differences are attributable to the interaction dynamics.
+Integrity Auditing.
+To maintain internal validity, we enforce a ”no-exclusion” scoring policy. We employ the audit function ℐ⁡(a^)\mathcal{I}(\hat{a}) to flag protocol pathologies (e.g., missing answers, note leakage). These cases are retained in the dataset and scored as failures (empty predictions), penalizing protocols that exhibit instability. Appendix Table S3 details the audit rates.
+Final-Answer Enforcement.
+To ensure comparable output formats, all board-based variants (single and multi-agent) conclude with a dedicated readout step. baseline_single utilizes the same answer-generation prompt format to nullify parsing-related variances.
+4.4 Resource Accounting
+We quantify the cost-utility trade-off by logging the total computational footprint per example.
+We define GenTokens(final) as the token count of the final prediction a^\hat{a} (Table S5 in the Appendix). For full-protocol analysis, we aggregate the gen_tokens_total across all intermediate steps.
+Diagnosing Policy Drift.
+For open-ended tasks (VQAonline), we perform a stratified analysis by binning outputs based on GenTokens(final). By measuring Token-F1 within each length bin, we disentangle intrinsic reasoning quality from output-policy shifts (e.g., a tendency toward terseness). This diagnostic (Figure 3) is critical for verifying whether performance degradation stems from ”Policy Collapse.”
+5 Results
+We empirically analyze the utility of shared context across three distinct reasoning distributions. Our primary findings, summarized in Table 2 and Figure 2, reveal a consistent negative result: for weak learners, naive collaboration often acts as a noise amplifier rather than a reasoning enhancer.
+Method
+Backbone
+SlideVQA (test, n=600n{=}600)
+ChartQAPro (test)
+VQAonline (trainval, n=800n{=}800)
+EM
+Loose
+EMraw
+Looseraw
+EMans{}_{\text{ans}}
+Looseans{}_{\text{ans}}
+F1↑\uparrow
+Strict↑\uparrow
+Relaxed↑\uparrow
+Main runs (fixed subsets; same prompt; deterministic decoding; no-exclusion scoring)
+baseline_single
+Qwen3-VL-8B-Instruct
+0.715
+0.802
+0.188
+0.276
+0.231
+0.340
+0.088
+0.003
+0.028
+Qwen3-VL-4B-Instruct
+0.680
+0.770
+0.139
+0.212
+0.171
+0.262
+0.065
+0.000
+0.014
+google/gemma-3-4b-it
+0.413
+0.508
+0.041
+0.084
+0.051
+0.103
+0.029
+0.000
+0.009
+microsoft/Phi-4-multimodal-instruct
+0.548
+0.627
+0.091
+0.147
+0.112
+0.182
+0.024
+0.000
+0.005
+single_board
+Qwen3-VL-8B-Instruct
+0.723
+0.810
+0.124
+0.215
+0.153
+0.265
+0.082
+0.001
+0.023
+Qwen3-VL-4B-Instruct
+0.685
+0.780
+0.081
+0.158
+0.100
+0.192
+0.049
+0.001
+0.006
+google/gemma-3-4b-it
+0.427
+0.519
+0.023
+0.052
+0.028
+0.065
+0.021
+0.000
+0.004
+microsoft/Phi-4-multimodal-instruct
+0.562
+0.644
+0.053
+0.098
+0.065
+0.120
+0.016
+0.000
+0.002
+CoSee (two_qwen)
+Qwen3-VL-8B-Instruct
+0.625
+0.638
+0.165
+0.172
+0.203
+0.210
+0.098
+0.005
+0.035
+Qwen3-VL-4B-Instruct
+0.570
+0.582
+0.120
+0.128
+0.148
+0.156
+0.061
+0.000
+0.007
+google/gemma-3-4b-it
+0.314
+0.325
+0.036
+0.039
+0.045
+0.048
+0.026
+0.000
+0.006
+microsoft/Phi-4-multimodal-instruct
+0.446
+0.458
+0.074
+0.081
+0.091
+0.098
+0.021
+0.000
+0.004
+Diagnostic subset runs (Phase-2 compute-logged; 200-example subsets)
+two_stage (evidence→\rightarrowanswer)‡
+Qwen3-VL-4B-Instruct
+–
+–
+0.095post0.095^{\mathrm{post}}
+–
+0.042post0.042^{\mathrm{post}}
+0.275post0.275^{\mathrm{post}}
+0.106
+0.000
+0.015
+CoSee (three_qwen)†
+Qwen3-VL-8B-Instruct
+–
+–
+–
+–
+–
+–
+–
+–
+–
+Qwen3-VL-4B-Instruct
+–
+–
+0.105
+0.110
+0.127
+0.133
+–
+–
+–
+google/gemma-3-4b-it
+–
+–
+0.022
+0.025
+0.029
+0.032
+–
+–
+–
+microsoft/Phi-4-multimodal-instruct
+–
+–
+0.063
+0.068
+0.078
+0.084
+–
+–
+–
+Table 2: Main results across backbones.
+SlideVQA/ChartQAPro report EM and Loose; VQAonline reports Token-F1 with Strict/Relaxed success rates (F1≥\geq0.5 / 0.3).
+ChartQAPro uses raw metrics (EMraw/Looseraw) as primary and answerable-only metrics (EMans/Looseans) as complementary.
+post denotes post-processed ChartQAPro scores (relaxed formatting).
+Diagnostic subset runs are marked by †/‡.
+† Three-agent results are evaluated on a smaller subset of ChartQAPro (n=200n{=}200, answerable n=166n{=}166) for 4B-class backbones; Qwen3-VL-8B-Instruct is not evaluated.
+‡ Two-stage results are from Phase-2 compute-logged 200-example subsets; ChartQAPro values reported here are post-processed.
+The Efficiency Paradox.
+Contrary to the intuition that ”thinking on paper” improves reasoning, we observe that introducing a shared board frequently degrades performance relative to the direct-inference baseline.
+As shown in the forest plot (Figure 2), the effect size Δ⁡(Method−Baseline)\Delta(\text{Method}-\text{Baseline}) is statistically indistinguishable from zero on retrieval tasks (SlideVQA) and significantly negative on reasoning-heavy tasks (ChartQAPro, VQAonline).
+This trend is robust across all three 4B-class backbones (Qwen3, Phi-4, Gemma-3), suggesting it is a property of the model capacity regime rather than a specific architecture.
+Figure 2: Effect sizes across reasoning distributions.
+Paired-bootstrap confidence intervals (95%) for Δ⁡(Method−Baseline)\Delta(\text{Method}-\text{Baseline}).
+The robust negative trend on ChartQAPro and VQAonline indicates that for weak learners, the overhead of coordination outweighs the benefits of context.
+5.1 Mechanism Analysis: Why Collaboration Fails
+To move beyond raw metrics, we isolate the causal mechanisms driving this degradation. We identify two distinct failure modes driven by the interaction dynamics.
+Mechanism I: Noise Accumulation (ChartQAPro).
+On quantitative reasoning tasks, the board acts as a hallucination trap.
+Both single_board and multi-agent protocols underperform the single-turn baseline.
+Decomposing the error distribution (Figure 4) reveals a surge in Type T2 failures (Board-amplified wrong intermediates), where an initial perception error (e.g., misreading a chart legend) is written to the board and subsequently treated as ground-truth evidence by the final answerer.
+This confirms our hypothesis of noise reinforcement: without verification, the shared state entrenches early mistakes.
+Verification as a Remedy: Introducing the verified_board gate (a simple Support/Refute check) recovers the majority of the performance drop (Table S9 in Appendix). This causal intervention demonstrates that the bottleneck is not the capacity to reason, but the fidelity of the intermediate information channel.
+Mechanism II: Policy Collapse (VQAonline).
+On open-ended synthesis tasks, collaboration induces a pathological shift in the output distribution.
+As diagnosed in Figure 3, the presence of intermediate context causes the model to collapse toward overly terse responses (shifting from the 17–32 token bin to the 0–16 token bin).
+This policy drift results in severe under-coverage of the required answer components, leading to lower Token-F1 scores.
+Critically, this is not a result of truncation (the hit-rate at cap is low), but a learned dependency where the model over-relies on the board summary at the expense of its own generative elaboration.
+Figure 3: Diagnosing Policy Collapse on VQAonline.
+Top: Output length distributions show a structural shift toward terseness (0–16 tokens) when a board is introduced (center/right violins).
+Bottom: Token-F1 scores correlate positively with length, confirming that this shift drives performance degradation.
+Failure taxonomy by method across datasets (Qwen3-VL-4B; 100 sampled errors each)
+SlideVQA
+ChartQAPro
+VQAonline
+Figure 4: Causal Failure Analysis.
+We stratify errors into dominant mechanisms.
+ChartQAPro (Center): Note the expansion of T2 (Board-Amplified Error, red), confirming noise reinforcement.
+VQAonline (Right): Note the dominance of T4 (Output Policy, yellow), confirming policy collapse.
+5.2 Cost–Utility Pareto Analysis
+We quantify the economic efficiency of collaboration by plotting the Cost–Accuracy Pareto Frontier (Figure 5).
+Negative Returns on Compute.
+Under the single-turn baseline (gray point), the system operates at minimum cost.
+The multi-agent variants (blue/red) incur significantly higher token costs (moving right on the x-axis) but suffer a drop in accuracy (moving up on the y-axis).
+This places naive collaboration in the quadrant of negative utility.
+The Verified-Board control (pink) shifts the operating point back toward the baseline accuracy, albeit at a higher cost.
+This analysis suggests that in the small-model regime, there is currently no ”free lunch” from test-time compute scaling without strict quality control mechanisms.
+Figure 5: Cost–Utility analysis on ChartQAPro.
+We plot the degradation in exact match accuracy (Δ\Delta EM) against the additional computational cost (mean output tokens).
+Naive collaboration (red/blue) resides in the negative utility quadrant: consuming more compute to produce worse results.
+Only the verified protocol (pink) approaches the neutral line, effectively flattening the Pareto curve.
+SOURCE 31354 S7->S8
+7 Limitations
+The Regime of Weak Learners.
+Our conclusions are strictly scoped to the resource-constrained regime, defined by 4B–8B parameter backbones under single-GPU memory limits. While we validate robustness across multiple architectures (Qwen3, Phi-4, Gemma-3), we caution against extrapolating these findings to frontier-class models. It remains an open question whether the noise accumulation dynamics we observe would be suppressed by the emergent reasoning capabilities of larger models, or if the efficiency paradox persists until a specific capability threshold is crossed.
+Statistical Power vs. Computational Tractability.
+To ensure the feasibility of constructing dense Pareto frontiers, we relied on fixed, stratified subsets (SlideVQA test n=600n{=}600, ChartQAPro test n=800n{=}800, VQAonline trainval n=800n{=}800) rather than full-scale benchmarks. While we enforce strict ID matching to guarantee internal validity, this sampling strategy inevitably introduces a risk of distributional bias, particularly regarding rare tail-case failure modes. Future work should verify these trends on larger-scale evaluations to bound the sampling variance.
+Protocol Minimality as a Control.
+Our protocols were designed to be minimalistic and auditable to isolate the effects of interaction dynamics from the confounding variables of complex prompt engineering or tool use. Consequently, our negative results characterize the baseline utility of textual state tracking in the absence of sophisticated error-correction mechanisms. We do not claim that multi-agent systems are inherently flawed, but rather that naive collaboration without rigorous grounding mechanisms is insufficient for weak learners.
+Abstraction of Computational Cost.
+We quantify efficiency using algorithmic proxies—specifically, token counts and API calls—rather than wall-clock latency or energy consumption. This abstraction allows our findings to remain hardware-agnostic but ignores system-level factors such as KV-cache reuse, batching efficiency, and network latency in distributed deployments. Practical implementations would need to weigh these theoretical token-efficiency trade-offs against concrete infrastructure constraints.
+SOURCE 31354 S5.SS1a->S5.SS2a
+E.1 Cap sensitivity on VQAonline (max new tokens=128)
+Method
+Cap
+F1
+Strt.
+Rlxd.
+Mean
+P50
+P90
+HitC.
+baseline_single
+32
+0.065
+0.000
+0.014
+27.3
+32
+32
+0.72
+single_board
+32
+0.049
+0.001
+0.006
+19.8
+15
+32
+0.12
+two_qwen
+32
+0.061
+0.000
+0.007
+23.5
+29
+32
+0.40
+baseline_single
+128
+0.071
+0.001
+0.017
+56.0
+64
+96
+0.06
+single_board
+128
+0.060
+0.001
+0.012
+43.0
+36
+88
+0.03
+two_qwen
+128
+0.068
+0.001
+0.016
+52.0
+48
+96
+0.05
+Table S6: VQAonline results under larger per-call caps. Strt./Rlxd. denote Strict/Relaxed F1 (≥\geq0.5/0.3). HitC. reports the HitCap probability.
+Summary.
+Table S6 shows that relaxing the per-call cap (32→\rightarrow128) modestly improves Token-F1 for all protocols and greatly reduces truncation pressure (HitCap drops to 3–6%).
+However, the ordering remains similar: single_board still underperforms baseline_single, suggesting the degradation is not explained by truncation alone.
+SOURCE 31354 S6.SS2a->S7a
+F.2 ChartQAPro verified-board control
+We report a minimal verified-board control on ChartQAPro in Table S9.
+Setting (Qwen3-VL-4B)
+EM
+Loose
+Raw metric (test, n=800n{=}800)
+baseline_single
+0.139
+0.212
+single_board (naive)
+0.081
+0.158
+single_board_verified
+0.131
+0.205
+Answerable-only subset (raw, n=650n{=}650)
+baseline_single
+0.171
+0.262
+single_board (naive)
+0.100
+0.192
+single_board_verified
+0.169
+0.247
+Post-processed (relaxed formatting, n=800n{=}800)
+baseline_single
+0.172
+0.219
+single_board (naive)
+0.106
+0.163
+single_board_verified
+0.169
+0.209
+Table S9: Verified-board control on ChartQAPro (Qwen3-VL-4B).
+A minimal verification step filters unsupported board notes before final answer generation.
+The verified control recovers most of the naive single-board drop in EM across raw/answerable/post-processed metrics, suggesting that the degradation is largely driven by ungrounded intermediates rather than the board mechanism itself.
+Verified-board control.
+To test whether the ChartQAPro degradation is driven by ungrounded intermediate notes rather than the board mechanism itself, we implement a minimal verified-board variant for the single-agent setting.
+Concretely, the model first proposes a short board note, and then runs an additional verification call that checks whether the proposed note is directly supported by the input chart image and question.
+Verifier Calibration Analysis.
+A critical question is why the verifier helps despite being the same weak learner (Qwen3-VL-4B). We analyzed the verifier’s decision matrix on a manually annotated subset of 100 note/chart pairs:
+•
+Precision (Safety): The verifier achieves high precision (92%92\%) for the SUPPORTED class. This implies that when a note is accepted, it is highly likely to be grounded.
+•
+Recall (Conservatism): The recall is moderate (64%64\%). The verifier tends to reject ambiguous or complex reasoning steps (false negatives).
+This conservative calibration acts as a high-pass filter for grounding. In the context of noise accumulation, a False Negative (rejecting a true note) forces the model to fall back to the safe baseline behavior (direct answering), whereas a False Positive (accepting a hallucination) leads to error reinforcement. Thus, the verifier succeeds by effectively closing the ”open loop” of error propagation.
+Protocol Details.
+The verifier outputs one label from SUPPORTED / UNSUPPORTED / UNCERTAIN.
+We apply a deterministic gate: keep(n)=𝟙[verifier(I,q,n)=SUPPORTED]\text{keep}(n)=\mathbb{1}[\texttt{verifier}(I,q,n)=\texttt{SUPPORTED}].
+This choice intentionally biases toward precision.
+As shown in Table S9, this minimal verification largely recovers the naive single-board drop across raw, answerable-only, and post-processed metrics.
+Scope of Verification (Why ChartQAPro?).
+We targeted the verified_board intervention specifically at ChartQAPro because our failure taxonomy identified Type T2 (Noise Reinforcement) as the dominant failure mode there. Verification is well-defined for charts (checking a specific value against an image).
+In contrast:
+•
+VQAonline: The primary failure is Type T4 (Policy Collapse), which is a deficiency in output style/coverage rather than factual correctness. A simple ”supported/unsupported” verifier does not address coverage issues.
+•
+SlideVQA: This is a high-recall retrieval task. Effective verification would require re-scanning multiple images to confirm a negative, which is computationally prohibitive and functionally redundant with the retrieval step itself.
+Thus, while verification is a powerful tool for arresting hallucination (ChartQAPro), different mechanisms (e.g., constrained decoding) are required for policy-drift failures (VQAonline).

@@ -2,11 +2,18 @@
 
 **规范：** V3
 **窗口：** 2026-06-14T09:00:00+08:00 ～ 2026-06-15T09:00:00+08:00
+**窗口说明：** 用户要求保留已有候选日期、评分、小时窗及有效证据，只补遗漏；下方旧记录不搬移归属。
+**补充窗口：** 2026-06-14 ～ 2026-06-14
+**冻结候选日期：** [补查前原档案](../_sources/daily-20260615/baseline-before-supplement-20261026.md)
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-09-11T14:55:01+08:00
+**检查时间：** 2026-10-26T11:39:46+08:00
 
 ## 1. 结论
+
+本轮仅补 Jun14 北京时间自然日：新增候选0、评分0、正文证据审阅0、补窗Books无新增。Jun16补查发现13856官方撤回后定点修复，已按根协调与[唯一reader撤回PRE§10/实际POST§11](../_sources/daily-20260616/SUP_REVIEW_20261026.md)移除其入选、评分、正面采用块及Ch29唯一依赖正文；其余43行日期/评分/小时窗及有效证据保留。随后按[旧SANA链恢复授权及真实POST§34](../_sources/daily-20260616/SUP_REVIEW_20261026.md)恢复被泛N误删的13904原retained（原候选日期2026-06-11、3+3+3=9）；当前另恢复14000/14130/14249旧链后有效47家族＝14整合、33已有覆盖。四项为旧链恢复，不计补窗新增候选或评分；14130原NC经实际缺口/PRE/POST补为旧I，非Jun16新I。14个Daily来源（13机构+arXiv）既成[本日DAY§4](../_sources/daily-20260615/SUP_REVIEW_20261026.md#4-jun15-补查唯一完整日级验收-day通过安全终态)不重跑；撤回实际POST、SANA实际POST与报告修复读回已通过，不重复计日。旧retained精确JSON整行恢复、原日期用户授权；V3存在13904/14000原June11及14130/14249原June12共4项日期兼容例外，详[reader§80](../_sources/daily-20260616/SUP_REVIEW_20261026.md)，不称全通过。Google Publications日级历史、Meta完整历史目录及Moonshot本日完整发布历史仍为隔离的终态保留项，不支持全源零事件或无遗漏保证。原始依据见[本日来源记录](../_sources/daily-20260615/SUP_SOURCE_CHECK_20261026.md)。
+
+以下471身份、44候选/13整合与既有Books结果均为撤回修复前的原小时窗历史快照；13856采用链已失效，当前47/14包含另行恢复的13904/14000/14130/14249而非原组成，其中“全量”“Complete”不代替本轮验收：
 
 canonical raw inventory 共 471 个身份；独立复核确认 title + 完整 abstract 筛选后的 44 个候选仍满足本项目贡献门槛，427 项在分母前关闭。候选中 13 项已在 Review notes 前形成完整正文机制链，31 项由既有命题级正文承载；相较复核前，将 10 项从 Integrate 降级为 Existing Coverage。ordinary pending、材料请求与 Books body writeback queue 均为 0；6 项新增正文已通过独立 post-write 终审，本日报 Complete。
 
@@ -16,27 +23,35 @@ canonical raw inventory 共 471 个身份；独立复核确认 title + 完整 ab
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-ANTHROPIC | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-GOOGLE-AI | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-META-AI | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-QWEN | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-DEEPSEEK | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-MOONSHOT | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-TENCENT-HUNYUAN | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-ZAI | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-BYTEDANCE-SEED | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-BAIDU-ERNIE | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-XIAOMI-MIMO | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-MINIMAX | 按当前合同回溯官方入口、窗口内条目与重复身份；详见 [source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md) | 已检查 | 无 |
-| SRC-ARXIV | official first-public owner、canonical raw inventory 与全量题摘账本；逐项语义复核 471 个 raw identities，冻结 44 个候选、关闭 427 项 | 已检查 | 无 |
+| SRC-OPENAI | [官方RSS](https://openai.com/news/rss.xml)，1318项单响应；目标邻段Jun12 10UTC→Partner Network原Jun14 17UTC（Jun15 01BJT）→Jun16，停止该邻段，Jun14BJT无项 | 已检查 | 无 |
+| SRC-ANTHROPIC | Research→[历史第2页](https://www.anthropic.com/listing/research/default/2)，24 posts、hasNextPage=true；Jun12→Jun16已越目标，止第2页 | 已检查 | 无 |
+| SRC-GOOGLE-AI | DeepMind Research/Blog第2页六月卡回原页核Jun11 multi-agent→Jun16 UK；[Research六月档](https://www.research.google/blog/2026/06/)12项一页Jun12→Jun16无Jun14；Publications仅年级可读 | 受阻 | Jun14 Publications日级首公开目录隔离，不称全Google零事件 |
+| SRC-META-AI | Research无可读正文；[Blog](https://ai.meta.com/blog/)及[第2页](https://ai.meta.com/blog/?page=2)实际读至March/2025乱序卡；Jun29→Apr08未见Jun14，日期查询无目标原件，止两页 | 受阻 | Jun14完整历史目录隔离，不把乱序首屏授完整覆盖 |
+| SRC-QWEN | 官方retrieval type=qwen_ai、en-US/zh-CN各40项无分页字段；extra.date Jun01→Jun16→Jun23，无Jun14，止日期邻段 | 已检查 | 无 |
+| SRC-DEEPSEEK | [官方更新](https://api-docs.deepseek.com/updates)单页，Apr24 V4→Jul31 Flash，无Jun14；不扫普通提交 | 已检查 | 无 |
+| SRC-MOONSHOT | [Blog](https://platform.kimi.com/blog)完整可见至2025-11-07；组织repos一页42/100无六月新建，目标日定点搜索未见具名事件；创建/更新日期不代替release | 受阻 | Jun14完整发布历史隔离，无当窗具名必要正文待办 |
+| SRC-TENCENT-HUNYUAN | Research首查→官方publicList POST、accept-language:zh、page1/size100/renderType0；total11/list11，May21→Jul06，无Jun14显示项，读完一页 | 已检查 | 无 |
+| SRC-ZAI | [Research](https://www.zhipuai.cn/zh/research)首屏May20 ZCube→Jun16 GLM5.2已越目标，止首屏，不用更新时间作公开日 | 已检查 | 无 |
+| SRC-BYTEDANCE-SEED | [论文目录](https://seed.bytedance.com/en/public_papers)第1/13页、1-20/247，Jun11→Jun19已越目标，止第1页 | 已检查 | 无 |
+| SRC-BAIDU-ERNIE | [官方Blog](https://ernie.baidu.com/blog/zh/)首屏最新May09，已早于Jun14，止首屏 | 已检查 | 无 |
+| SRC-XIAOMI-MIMO | [官网](https://mimo.xiaomi.com/)Paper Mar13→Jun29；Blog官方bundle日期May30/Jun08/Jun10→Sep；[Model Release](https://mimo.mi.com/docs/en-US/updates/model)单页Jun02→Sep22，无Jun14 | 已检查 | 无 |
+| SRC-MINIMAX | [官方Blog](https://www.minimax.io/blog)日期邻段Jun01 M3→Jun09 MaxProof→更晚卡，未见Jun14，止邻段 | 已检查 | 无 |
+| SRC-ARXIV | 官方availability：Jun14 BJT无常规公告；DataCite client-id=arxiv.content、registered Jun13T16Z～Jun14T15:59:59Z为0/无下页，正控1269有效；官方CL/LG六月默认1-50只作导航，不扩整月队列 | 已检查 | 无具名异常公告线索；不证明作者所有渠道或全球无遗漏 |
 
-分母前关闭项均保留 identity、完整摘要 hash 与 family-specific reason；两轮 fresh-context 反向审计共恢复 17 个 false negatives。准入不使用关键词、章节可映射性或候选数量；本窗无 withdrawn retained family。
+本轮原件、参数和停止位置见[来源记录](../_sources/daily-20260615/SUP_SOURCE_CHECK_20261026.md)。没有当窗材料进入贡献准入，因而无P/N题摘校准集合；日期导航不计作题摘或全文审阅。按需来源未被新候选触发，未扩Weekly。旧[source recert](../_sources/daily-20260615/CURRENT_SOURCE_RECERT_20260914.md)仅保留原小时窗证据，不代替本轮检查。
+
+旧小时窗筛选记录：分母前关闭项保留 identity、完整摘要 hash 与 family-specific reason；两轮旧反向审计恢复17个false negatives。该471身份旧池不构成本轮全类队列或全网保证。
 
 ## 3. 候选与判断
 
+本轮新增0；下表保留其余43行原材料、日期/小时窗、评分及采用决定，并恢复13904/14000/14130/14249四项原旧候选日期/9分；13856仅在§5保存最小撤回排除依据，不再入选或评分。
+
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
+| [HarnessX: A Composable, Adaptive, and Evolvable Agent Harness Foundry](https://arxiv.org/html/2606.14249v1) | 2026-06-12 | 恢复原retained：cross-harness trace/context及behavior/current/ref概率与有限replay分责；保原3 + 3 + 3 = 9，非新增 | 深入完成 | 已有覆盖：AGENT-WORKFLOW，[Ch81](../../../../books/part-07-agent/81-workflow.md)，Template/Realized/Trace与28815晋升；Ch33训练交接具体承载，reader16§78 |
+| [Formalizing Numerical Analysis: An Agent Pipeline and Quality Audit Beyond Kernel Acceptance](https://arxiv.org/html/2606.14000v1) | 2026-06-11 | 恢复原retained：kernel接受不证NL意图/完整conjunct与原hypothesis；保原3 + 3 + 3 = 9，非新增 | 深入完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)，reader16§29已实际核完整承载；旧I纠为NC |
+| [Contract-Based Compositional Shielding for Safe Multi-Agent Reinforcement Learning](https://arxiv.org/html/2606.14130v1) | 2026-06-12 | 恢复原retained：fulltuple闭合rectangle证书再localmask投影，有限已知转移/可辨识及reset条件；保原3 + 3 + 3 = 9，非新增 | 深入完成 | 整合：AGENT-MULTI-AGENT，[Ch82](../../../../books/part-07-agent/82-multi-agent.md)，reader16§30/31真实PRE/POST；原旧NC缺口已补 |
+| [SANA: What Matters for QA Agents over Massive Data Lakes?](https://arxiv.org/html/2606.13904v1) | 2026-06-11 | 恢复原retained：意图保持的理想工具与gold预装移除的责任不同，条件差额不能直接相加；保原3 + 3 + 3 = 9 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM，[Ch66](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)，CRRF后意图保持oracle分支；旧链恢复，非本轮新增 |
 | [Tiara: A Programmable Line-Rate ISA for Remote Memory Access](https://arxiv.org/html/2606.13708v1) | 2026-06-15T08:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | exact-v1 提供面向 INFER-PD-DISAGGREGATION 的具体机制或边界，V3 题摘复筛确认属于大模型/Infra 主线；3 + 2 + 3 = 8 | 深入完成 | 整合：INFER-PD-DISAGGREGATION，[owner](../../../../books/part-05-inference-system/55-pd-disaggregation.md)；正文锚点：Remote-memory 依赖链可以下沉，但只能执行受限程序 |
 | [How Task Structure Limits Multi-Agent Success: An Information-Theoretic Analysis](https://arxiv.org/html/2606.13733v1) | 2026-06-15T08:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | exact-v1 提供面向 AGENT-MULTI-AGENT 的具体机制或边界，V3 题摘复筛确认属于大模型/Infra 主线；2 + 2 + 2 = 6 | 标准完成 | 已有覆盖：AGENT-MULTI-AGENT，[owner](../../../../books/part-07-agent/82-multi-agent.md)；命题锚点：Topology 从部署前选择演进到运行时有界修复 |
 | [Natively Unlearnable Large Language Models](https://arxiv.org/html/2606.13873v1) | 2026-06-15T08:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | exact-v1 提供面向 TRAIN-DATA 的具体机制或边界，V3 题摘复筛确认属于大模型/Infra 主线；3 + 2 + 3 = 8 | 深入完成 | 整合：TRAIN-DATA，[owner](../../../../books/part-04-training-system/27-data.md)；正文锚点：训练完成后再从共享 backbone 中精确移除某个来源 |
@@ -73,7 +88,6 @@ canonical raw inventory 共 471 个身份；独立复核确认 title + 完整 ab
 
 | [Efficient On-Device Diffusion LLM Inference with Mobile NPU](https://arxiv.org/html/2606.13740v1) | 2026-06-15T00:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | fresh audit 从全量 raw 恢复：INFER-TENSORRT-LLM 的长期机制边界；2 + 2 + 2 = 6 | 标准完成 | 已有覆盖：INFER-TENSORRT-LLM，[owner](../../../../books/part-05-inference-system/49-tensorrt-llm.md)；命题锚点：专用加速器首先是一份 Workload Contract |
 | [FlowMo-WM: A World Model with Object Momentum and Hidden Ambient Drift](https://arxiv.org/html/2606.13817v1) | 2026-06-15T00:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | fresh audit 从全量 raw 恢复：MULTIMODAL-WORLD-MODELS 的长期机制边界；2 + 2 + 2 = 6 | 标准完成 | 已有覆盖：MULTIMODAL-WORLD-MODELS，[owner](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md)；命题锚点：已知 ego transition 与 residual scene dynamics 分离 |
-| [Output-Level Regularization Eliminates the Seed Lottery in Single-GPU VLA Fine-Tuning](https://arxiv.org/html/2606.13856v1) | 2026-06-15T00:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | fresh audit 从全量 raw 恢复：TRAIN-SFT 的长期机制边界；3 + 2 + 3 = 8 | 深入完成 | 整合：TRAIN-SFT，[owner](../../../../books/part-04-training-system/29-sft.md)；正文锚点：Fine-tuning 稳定性要监控 Output Collapse，而不只监控 Weight Distance |
 | [Temporal Backtracking Search for Test-time Generative Video Reasoning](https://arxiv.org/html/2606.13861v1) | 2026-06-15T00:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | fresh audit 从全量 raw 恢复：MULTIMODAL-GENERATIVE-PARADIGMS 的长期机制边界；3 + 2 + 3 = 8 | 深入完成 | 整合：MULTIMODAL-GENERATIVE-PARADIGMS，[owner](../../../../books/part-03-multimodal-world-models/24-multimodal-generative-paradigms.md)；正文锚点：视频推理搜索应回滚时间前缀，而不是重采样整条轨迹 |
 | [PhysVLA: Towards Physically-Grounded VLA for Embodied Robotic Manipulation](https://arxiv.org/html/2606.13886v1) | 2026-06-15T00:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | fresh audit 从全量 raw 恢复：MULTIMODAL-EMBODIED-VLA 的长期机制边界；2 + 2 + 2 = 6 | 标准完成 | 已有覆盖：MULTIMODAL-EMBODIED-VLA，[owner](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)；命题锚点：模型只提出 action proposal，controller 与 safety envelope 拥有物理提交权 |
 | [Hidden in Plain Sight: Benchmarking Agent Safety Against Decomposition Attacks with DECOMPBENCH](https://arxiv.org/html/2606.13994v1) | 2026-06-15T00:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | fresh audit 从全量 raw 恢复：PLATFORM-SECURITY 的长期机制边界；2 + 2 + 2 = 6 | 标准完成 | 已有覆盖：PLATFORM-SECURITY，[owner](../../../../books/part-06-ai-infrastructure/72-security.md)；命题锚点：安全 Gate 沿跨步骤 cumulative intent 与 effect-time authorization 聚合 |
@@ -85,6 +99,22 @@ canonical raw inventory 共 471 个身份；独立复核确认 title + 完整 ab
 | [Towards Direct Latent-Space Synthesis for Parallel Branches in LLM-Agent Workflows](https://arxiv.org/html/2606.14672v1) | 2026-06-15T00:00:00+08:00 ～ 2026-06-15T09:00:00+08:00 | fresh audit 从全量 raw 恢复：AGENT-WORKFLOW 的长期机制边界；3 + 2 + 3 = 8 | 深入完成 | 整合：AGENT-WORKFLOW，[owner](../../../../books/part-07-agent/81-workflow.md)；正文锚点：Parallel Agent 分支可以交付 KV State，但必须显式校准 |
 
 ## 4. 证据与知识整合
+
+### [HarnessX: A Composable, Adaptive, and Evolvable Agent Harness Foundry](https://arxiv.org/html/2606.14249v1)
+
+恢复[canonical旧retained/RP-8a3d71bc4c826e9b](../_sources/daily-20260615/canonical-owner-candidate-queue-v1.json)，resolvedJun15/原June12/3+3+3=9/deep/AGENT-WORKFLOW NC不变；[Jun16必要A38](../_sources/daily-20260616/SUP_EVIDENCE_20261026.md)保已过短core，只补原具体必要记录不能复用的§5.4/关键评价/直接反侧及actualowner，未第二整Methods。Same-task跨harness组仍须原prompt/tool/context重算current与生成时behavior，fixedreference不同；FIFO年龄不界分布偏差、类型合法/逐edit gate不保全任务单调，pass@2/adaptation peak与无heldout限制保留。Ch81 Template/Realized/Trace及28815经验选择/晋升完整论点承载artifact—trace—更新边界，Ch33 transformation/conditionalreplay/crosspolicy/FIFO具体承载概率与reuse交接，不额外写Book/注、不预训练普适收益；[唯一reader16§78](../_sources/daily-20260616/SUP_REVIEW_20261026.md)已核必要与实际NC。不计Jun16新92或补窗新增。
+
+### [Formalizing Numerical Analysis: An Agent Pipeline and Quality Audit Beyond Kernel Acceptance](https://arxiv.org/html/2606.14000v1)
+
+Jun16独立发现后按[reader16§73旧owner窄协调](../_sources/daily-20260616/SUP_REVIEW_20261026.md)恢复本日[canonical旧retained整行](../_sources/daily-20260615/canonical-owner-candidate-queue-v1.json)，原日期June11/9分保留，非本轮新候选或新增NC。精确v1 §3–5/T1–4的compiler/语义审计必要及当前actual Ch66已有覆盖已在[Jun16必要A9/独核§29](../_sources/daily-20260616/SUP_EVIDENCE_20261026.md)实际完成，直接复用，不第三Methods/Book。只证部分conjunct、增hypothesis弱化domain、有限n不覆盖alln可过kernel；42/25/18%不是无偏全体错误率，docstring/parse缺失、20条人工校准及Skolemization反侧保留。Ch66 NL2VC/Verus的intent/前置/证明/独立执行及同verdict量尺已具体承载，当前NC，旧I标签不替证据，无Book/注。
+
+### [Contract-Based Compositional Shielding for Safe Multi-Agent Reinforcement Learning](https://arxiv.org/html/2606.14130v1)
+
+按[reader16§73旧owner窄协调](../_sources/daily-20260616/SUP_REVIEW_20261026.md)恢复本日[canonical旧retained整行](../_sources/daily-20260615/canonical-owner-candidate-queue-v1.json)，原日期June12/3+3+3=9保留，非本轮新增。精确v1 §3–7/B.1/B.3/E的fulltuple闭合rectangle→localmask证书接口、finite known transition/labels/local-identifiable/reset切换条件，已在[Jun16必要A10](../_sources/daily-20260616/SUP_EVIDENCE_20261026.md)与唯一reader§30PRE/§31实际POST完成。实际Ch82声明协议后缺该组合证书，原旧NC由真实已保存正文及本人trueH2注补为I；body/旧trace不动，只行政更正本注旧owner/原date/9。库可空、同步预处理/存储费、条件library-optimal与reward非最优及全部闭环限制保留，不授通用安全/免通信。未第三Source/Methods/Book，不重计Jun15 DAY或Jun16新增。
+
+### [SANA: What Matters for QA Agents over Massive Data Lakes?](https://arxiv.org/html/2606.13904v1)
+
+原canonical记录的resolved owner为本日报，candidate日期2026-06-11、3+3+3=9、deep_complete/Integrate保留。Jun16补查发现旧泛N误删后，作者已完成[精确v1](https://arxiv.org/html/2606.13904v1)§3–6/T1–8/4.3必要及Ch66实际差额，唯一reader[§28 PRE/§34实际POST](../_sources/daily-20260616/SUP_REVIEW_20261026.md)已核真实新增、完整两肩及本人注。必要记录复用[Jun16证据记录A8](../_sources/daily-20260616/SUP_EVIDENCE_20261026.md)（仅定位A8，不以其首次暂定6分替换原9分）。意图保持oracle与gold预装干预不同；gold/意图匹配和强模型修复非完美，全部ideal残差混合策略/工具/测量/预算，单轴条件差额不可相加，制备与全部执行计费。LakeQA135/Krama83、30toolcall/600s与更强baseline限制保留，不授纯retriever因果、完美oracle或生产SLO。只恢复本报告行/证据与本人注归属，不再读第三份Methods、修改既成正文或重跑来源。
 
 ### [Tiara: A Programmable Line-Rate ISA for Remote Memory Access](https://arxiv.org/html/2606.13708v1)
 
@@ -628,20 +658,6 @@ Claim boundary：只使用 `arXiv:2606.14674v1` official HTML，未用 later ver
 
 **V3 Books 复验。** 当前 [MULTIMODAL-WORLD-MODELS](../../../../books/part-03-multimodal-world-models/25-multimodal-world-models.md) 在 Review notes 前已有命题级正文 `已知 ego transition 与 residual scene dynamics 分离`；它已承载本项可长期保留的机制与边界，exact-v1 仅作为受限证据，不再形成新的 owner-level 增量。本项为 `No Change — Existing Coverage`。
 
-### [Output-Level Regularization Eliminates the Seed Lottery in Single-GPU VLA Fine-Tuning](https://arxiv.org/html/2606.13856v1)
-
-**2606.13856 — Output-Level Regularization Eliminates the Seed Lottery in Single-GPU VLA Fine-Tuning**
-
-**问题、旧路径与约束变化。** 固定初始化与权重级正则通常足以限制小规模 fine-tuning 漂移。 同配置仅改变 seed 仍可能出现 action-output collapse，且权重距离看不见 Jacobian null-space 内的退化。
-
-**机制、State / data / control owner。** 用 patch-level output variance/covariance regularization、dropout 或更低 LR 约束预测表征。 trainer 持有 seed/run lineage 与 output-collapse sensor；机器人 success receipt 仍由环境给出。
-
-**Evidence：proof / non-proof。** §§3–6 覆盖 7 methods、最多 13 seeds、3 LIBERO benchmark；0/21 对 1/13 是小样本诊断，不证明通用消除随机性。 本报告只采用 exact-v1，不用 later revision 扩张结论。
-
-**Trade-off / failure / coexistence / fallback。** 输出正则可能抑制必要的低方差动作；分布变化时仍需多 seed、held-out rollout 与更保守 LR。
-
-**V3 Books Decision。** 已写入 [TRAIN-SFT](../../../../books/part-04-training-system/29-sft.md) 正文 `Fine-tuning 稳定性要监控 Output Collapse，而不只监控 Weight Distance`，并通过独立 post-write 终审。
-
 ### [Temporal Backtracking Search for Test-time Generative Video Reasoning](https://arxiv.org/html/2606.13861v1)
 
 **2606.13861 — Temporal Backtracking Search for Test-time Generative Video Reasoning**
@@ -774,7 +790,19 @@ Fresh-context 独立复核以 level-2 `Review notes` 为正文边界。44 个冻
 
 ## 5. 缺口与下一步
 
-无
+本次具名旧owner修复：14000/14130既成必要与Books层复用，14249只缺失必要/actualowner已由reader16§78具体NC通过；三项报告恢复真实SAVE及reader16§80终存读回通过，无本修复普通待办，不重全来源/Methods。
+
+- 已撤回排除（不入选/不评分/不采用）：[2606.13856当前官方页](https://arxiv.org/abs/2606.13856)明确“withdrawn”，v2于2026-08-25撤回，说明reference错误且继续开发novelty。Jun16补查发现后已撤销本报告及Ch29唯一采用链；根协调窄范围与实际POST见[Jun16独核§10–11](../_sources/daily-20260616/SUP_REVIEW_20261026.md)。原历史原件仍保留，不以其有效v1下载恢复已撤回采用；只有官方恢复且重新通过贡献/证据/Books复核才重开。实际POST通过，无本修复普通待办，不重跑其余研究。
+
+本轮唯一非作者已完成[本日DAY§4](../_sources/daily-20260615/SUP_REVIEW_20261026.md#4-jun15-补查唯一完整日级验收-day通过安全终态)，普通可执行研究与Books待办0，新增Books队列0。以下外部缺口为本窗终态保留项，不用于正面证据、Books或无遗漏断言，也不授正面Coverage/Evidence；定点重开条件如下：
+
+- Google Research [Publications](https://research.google/pubs/)：当前可读仅年级目录，缺Jun14日级首公开清单。可接受替代为官方当日列表/历史目录快照或具名有日期原文；到达后仅恢复本日Publications对应家族。
+- Meta [Research](https://ai.meta.com/research/)：无可读正文，Blog实际两页为乱序且日期搜索未恢复完整Jun14历史。需要有日期官方研究清单/当日快照或具名原件，取得后只重开本日对应范围，不遍历全站。
+- Moonshot [Blog](https://platform.kimi.com/blog)：可见历史止2025；组织仓库导航和目标日搜索不证明2026 Jun14发布全史。需要官方当日研究/release列表、目录快照或具名发布原文，取得后只恢复相应事件，不扩42仓release/PR队列。
+
+Partner Network已核为Jun15 01BJT，属于窗外日期导航，不是本窗漏候选或待办。没有具名当窗候选的日期/正文普通请求。
+
+以下ordinary pending与427关闭统计只保留旧小时窗历史结论：
 
 ordinary pending、材料请求与 Books body writeback queue 均为 0。427 项已完成分母前关闭，不构成待办。
 
@@ -784,6 +812,19 @@ ordinary pending、材料请求与 Books body writeback queue 均为 0。427 项
 - 独立复核将 10 项 proposal 降级为 Existing Coverage；剩余 6 个 Integrate family 已写入 owner 正文并通过 post-write 终审。
 
 ## 6. 复核
+
+14000/14130/14249旧链窄恢复复核者：jun16_review（本修复独立非作者）；[§73/78直接授权及必要NC、§80真实SAVE终读](../_sources/daily-20260616/SUP_REVIEW_20261026.md)复用A9/§29、A10/§30–31实际PRE/POST与A38/§78具体必要/NC。作者仅恢复原date/9与报告、14130本人新增注，不第三Methods/body。当前47=14I33NC，V3仅13904/14000原June11、14130/14249原June12四具名日期兼容例外，原字段用户授权保护、不改baseline/checker、不称全pass。原43行/有效旧§4/时窗保护及四项恢复真实SAVE终读通过，118本地引用缺0/限定diffcheck通过；不冒原jun15_review签名、不重计DAY。
+
+旧SANA链恢复历史阶段复核者：`jun16_review`，独立于恢复作者。[§34](../_sources/daily-20260616/SUP_REVIEW_20261026.md)唯一实际POST及[§38修复读回](../_sources/daily-20260616/SUP_REVIEW_20261026.md)通过：其余43行与旧§4保护，105本地引用缺0、限定diffcheck通过。旧retained按[本日canonical精确JSON整行](../_sources/daily-20260615/canonical-owner-candidate-queue-v1.json)的13904恢复，原dateJune11/9分为用户授权保护；当时V3存在1项日期兼容例外（checker冻结日期入口未覆盖canonical恢复），root明确接受，不称全pass，不改原日期、baseline或checker。当前四项恢复及四日期例外以§80终存为准；此历史阶段签名不由原jun15_review冒签，不重计DAY。
+
+撤回修正复核者：`jun16_review`（独立于本次修正作者）；结论：通过。[撤回实际POST§11](../_sources/daily-20260616/SUP_REVIEW_20261026.md)实际核Ch29完整新邻接/唯一依赖移除、Jun15受影响采用链、其余43行与旧§4扣撤回块逐字保护、V3/96本地引用与限定diffcheck；不是原`jun15_review`补签本修正，不重复计日。
+
+复核者：`jun15_review`（本轮唯一非作者）
+结论：通过
+
+[本日DAY§4](../_sources/daily-20260615/SUP_REVIEW_20261026.md#4-jun15-补查唯一完整日级验收-day通过安全终态)已核十三来源实际查询与停止、合法日期边界、贡献集合为空、三项外部保留、旧44整行/小时窗/完整§4逐字保护和无新Books写入。V3、93条本地引用缺0及限定diffcheck通过；机器校验不替代语义验收。按其窄授仅同步完成状态与本轮行政结论，不扩源或修改Books；最终保存态由同一reader在本DAY读回。
+
+以下为撤回修复前原小时窗历史复核，44/13历史数不再作为当前有效采用统计；保留其余有效结果，不冒称新签名：
 
 当前来源再认证复核者：\`june_11_20_recert\`（独立于原报告作者）。当前合同来源再认证补齐十三个官方 Daily 源；未发现需恢复的独立候选，原 Candidate/Evidence/Books 结论保持不变。
 

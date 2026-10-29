@@ -1,0 +1,515 @@
+Official exact-v1: https://arxiv.org/html/2610.29716v1
+Preserved main primary text; actual necessary reading and adopted scope in SOURCE_VLA2.md. No appendix/code/reproduction claim.
+Abstract
+We present SpatialDex, a framework that learns 3D-grounded bimanual dexterity from RGB-only human videos through reconstruction-augmented visuomotor pre-training. The central idea is to learn human behavior together with its spatial context. From each video, we reconstruct the scene geometry and estimate the hand motion, align them at a shared video-level scale using the hand-size prior of 3D hand estimates. We retain the reconstructed geometry as both a policy input and a prediction target. The policy grounds the token grid of a pre-trained vision-language model in this geometry through gated residual fusion, is trained to predict future scene geometry alongside wrist and finger actions, and generates finger motion conditioned on the predicted trajectories of both wrists. Pre-trained on 1M human-video clips and fine-tuned with a small number of robot demonstrations, SpatialDex outperforms the state-of-the-art methods by 16.5 points on nine simulated dexterous tasks across two embodiments and by 38.3 points on six real-world bimanual dexterous tasks. Under a matched comparison, pre-training with reconstructed geometry improves success by 14.2 points over pre-training on hand motion alone. Project page and video: https://spatial-dex.github.io/ 
+ I Introduction 
+Bimanual dexterous manipulation requires coordination between both hands to stabilize, reorient, and transfer objects while adapting to their shapes and changing positions in the surrounding environment. Geometric representations support this coordination by capturing spatial relationships between hands and objects  [ 1 , 2 , 3 , 4 , 5 ] , while pre-trained vision-language models (VLMs) can provide complementary visual and semantic priors  [ 6 , 7 , 8 ] . Learning such coordination therefore demands both spatial grounding and diverse experience of how the two hands act across objects and scene configurations. Robot demonstrations supply the former through depth sensing and executable commands, but collecting them through teleoperation is costly, which limits the range of tasks, objects, and configurations they cover.
+ Fig. 1: 
+ SpatialDex reconstructs scene geometry and estimates hand motion from RGB-only human videos and aligns them at a shared video-level scale to jointly supervise policy pre-training. The policy maps RGB-D observations to bimanual dexterous actions and is adapted to specific tasks through fine-tuning on robot demonstrations. The lower panel shows the six bimanual dexterous manipulation tasks for real-world evaluation.
+Human videos on the web provide an alternative source of rich everyday activities and physical interactions with diverse environments at scale. However, these RGB-only recordings lack explicit scene geometry or robot-compatible action labels. Learning from these videos therefore calls for recovering the demonstrated hand motion and the scene geometry at a consistent scale and keeping them aligned across time.
+Recent methods pre-train vision-language-action (VLA) models on human videos with explicit wrist and finger motion supervision, and transfer learned skills to robots through action-space alignment  [ 9 , 10 , 11 ] . Other approaches exploit 3D cues by predicting point tracks  [ 12 ] , adopting shared hand-object keypoint representations  [ 13 ] , combining calibrated geometry with spatial-language and wrist-motion supervision  [ 14 ] , or reconstructing hand-object interactions to synthesize robot trajectories  [ 15 ] . However, recovering scene geometry at a scale consistent with the recovered hand motion from RGB-only videos remains challenging, as scale errors misalign reconstructed geometry with hand trajectories and compromise spatial supervision. Although some studies integrate geometric and visual features  [ 3 ] or combine spatial and human-motion supervision  [ 14 ] , their training objectives provide limited direct supervision for how fine-grained hand behavior relates to changes in the surrounding scene. How to effectively incorporate these cues into human-video pre-training therefore remains underexplored.
+In this work, we present SpatialDex , a framework for pre-training 3D-grounded visuomotor policies from large-scale RGB-only human videos. The central idea is to learn human behavior together with its spatial context by reconstructing scene geometry alongside hand motion and using both to supervise policy pre-training. To make reconstructed hand-object distances consistent with the demonstrated motion, we use the hand-size prior in 3D hand estimates to calibrate scene geometry with a shared scale across frames and both hands, as illustrated in Figure  1 . The reconstructed geometry then serves the policy in two roles. As an input, it is combined with the image-patch features of a pre-trained VLM through progressive dual-gated fusion, which adds spatial information while retaining the visual priors of the VLM. As a target, future scene geometry is supervised alongside wrist and finger actions, so that the policy captures spatial relationships and scene dynamics. The policy generates finger motion conditioned on the predicted trajectories of both wrists, and it is fine-tuned to bimanual dexterous tasks with a small number of robot demonstrations.
+In summary, the contributions of this work are threefold:
+ • 
+We introduce a data pipeline that aligns reconstructed scene geometry with human hand motion at a shared video-level scale, producing 1M video clips with aligned geometry and motion annotations for policy pre-training.
+ • 
+We develop a reconstruction-augmented visuomotor pre-training framework that combines progressive dual-gated fusion of geometric and visual features with future geometry prediction, and generates finger motion conditioned on both wrist trajectories.
+ • 
+We evaluate SpatialDex on nine simulated tasks across two embodiments and six real-world tasks, reaching mean success rates of 76.3% and 81.7% compared with 59.8% and 43.3% for the state-of-the-art methods.
+ II Related Work 
+ Learning dexterous behavior from human video. 
+Human video provides a scalable source of diverse manipulation experience  [ 16 , 17 , 18 ] , but converting observed behavior into supervision for robot control requires bridging substantial embodiment and action gaps. One line of work recovers human hand motion and uses it to learn transferable action priors  [ 19 ] . VITRA  [ 9 ] , Being-H0.5  [ 10 ] , EgoScale  [ 11 ] , and UniDex  [ 20 ] demonstrate that large-scale egocentric or Internet video can provide useful supervision for dexterous policy learning. A complementary direction uses 3D points and correspondences to guide policies or transfer demonstrations across objects  [ 12 , 13 , 21 , 22 ] . ARM4R  [ 12 ] represents human demonstrations through 3D point trajectories, while Dexterous Point Policy  [ 13 ] uses shared object–hand keypoints to connect human observations with robot actions. These approaches capture either demonstrated hand behavior or the motion of selected scene elements, but the surrounding 3D scene remains only partially represented. Unlike prior approaches that primarily recover action supervision from human videos, SpatialDex additionally reconstructs the surrounding scene and aligns it with the recovered wrist and finger actions.
+ Scene reconstruction and scale calibration. 
+Recent approaches increasingly rely on metric-depth foundation models  [ 23 , 24 , 25 ] to lift RGB human videos into 3D. For example, Dexterous Point Policy  [ 13 ] uses monocular metric depth to lift object observations into 3D, while VideoManip  [ 26 ] uses predicted metric depth as a common spatial reference for hand–object reconstruction. However, predicted metric scale can still deviate from the true physical dimensions, making scene geometry inconsistent with recovered hand motion. To reduce this mismatch, some methods introduce human-hand cues for scale calibration. VIPA-VLA  [ 14 ] , for instance, rescales reconstructed geometry using depth ratios between estimated hand joints and corresponding scene points. SpatialDex instead estimates a shared video-level scale from 3D hand correspondences aggregated across frames and both hands, producing scene geometry consistently aligned with recovered wrist and finger actions for large-scale policy pre-training.
+ Geometry-aware visuomotor policies. 
+Explicit geometry has long supported manipulation through point clouds  [ 1 , 27 ] , voxels  [ 28 ] , and rendered 3D views  [ 29 , 30 ] . While effective for spatial reasoning, these geometry-centric policies typically lack the broad visual and semantic priors of pre-trained vision-language models. Recent VLA methods therefore incorporate depth-derived 3D cues into pre-trained visual representations  [ 2 , 31 , 32 , 3 ] . These methods mainly treat geometry as an additional input to the policy, while the interaction between newly introduced geometric features and pre-trained visual priors is less explicitly modeled. SpatialDex instead explicitly targets this injection problem through reconstruction-augmented pre-training, using progressive geometry fusion and auxiliary forward dynamics prediction to better exploit reconstructed scene geometry.
+ Fig. 2: 
+ Aligned scene and hand reconstruction. From an RGB-only video, SpatialDex recovers hand meshes and wrist trajectories, point clouds and camera poses up to an unknown scale. Aligning the reconstructed hand points with the estimated hand meshes across frames yields one scale shared by the whole video and a rigid transformation per frame, which places the scene geometry and the hand motion in a common frame for pre-training.
+The aligned reconstruction supplies the depth observations, the wrist and finger action targets, and the future geometry targets for policy pre-training.
+ III Reconstruction-Augmented Visuomotor Pre-Training for Dexterous Manipulation 
+We consider a bimanual robot with two multi-fingered hands that observes an RGB-D image and its proprioceptive state, receives a language instruction, and produces the wrist and finger motion of both hands. Our goal is to pre-train such a policy on human videos so that it learns how the hands move together with the spatial context in which they move, and to transfer it to the robot with a small number of demonstrations.
+In this section, we first describe how the scene and the hands are reconstructed from each RGB-only video and aligned at a shared video-level scale, which turns a video into paired supervision of scene geometry and hand motion ( Sec.   III-A ).
+We then present the 3D-grounded policy, which uses this geometry both as an input fused with the visual features of a pre-trained VLM and as a target for predicting future scene geometry, and generates finger motion conditioned on the predicted trajectories of both wrists ( Sec.   III-B ).
+Finally, we describe how the policy is fine-tuned on robot demonstrations with sensor depth in the same input format ( Sec.   III-C ).
+ III-A Aligned Scene and Hand Reconstruction 
+We construct a large-scale dataset that pairs visual observations with hand motion and scene geometry recovered from RGB-only human videos, as illustrated in Figure  2 . For each video, we utilize off-the-shelf hand estimators  [ 33 ] to recover 3D hand meshes and wrist trajectories following VITRA  [ 9 ] . We additionally estimate scene depth and camera poses using monocular reconstruction methods  [ 34 ] .
+Directly combining these estimates, however, introduces two alignment problems. First, although recent monocular reconstruction methods can reliably reconstruct scene geometry and camera motion, the reconstruction is only accurate up to a scaling factor. This makes the reconstructed hand–object distances, wrist trajectories and depth observations inconsistent in scale, resulting in conflicting supervision for learning how hand motion relates to scene geometry. Second, human videos often contain substantial egocentric camera motion, while the robot is deployed with a fixed camera. We address these issues by using the estimated human hands as metric references to calibrate the scene scale, and transforming future geometry and hand motion into the current camera frame to obtain spatially aligned training targets.
+ Hand-based metric scale calibration. 
+To resolve the scale ambiguity, we use the human hand as a metric scale reference.
+Modern MANO-based hand estimators  [ 33 ] predict a hand mesh with an approximately metric size, while the monocular reconstruction  [ 34 ] recovers scene depth only up to an unknown scale. Given the hand mask rendered from the estimated hand mesh and the camera intrinsics, we back-project the reconstructed depth within the hand region to obtain an estimated hand point cloud. We then estimate the metric scale of the scene reconstruction by aligning these hand points with the predicted MANO hand mesh. While prior works estimate one scaling factor for each frame  [ 14 , 15 ] , we jointly solve for a single scale shared across the entire video and a rigid transformation per frame that aligns the estimated mesh with the reconstructed hand points using correspondences from both hands, which aggregates evidence from diverse poses and reduces sensitivity to partial visibility and frame-specific reconstruction errors. After obtaining the scaling factor, we apply the estimated scale to the reconstructed depth maps and camera translations, placing the scene geometry and wrist trajectories at a shared video-level metric scale.
+ Coordinate frame alignment. 
+To address the camera motion misalignment between egocentric videos and static robot cameras, we use the current camera frame as a common spatial reference for scene geometries and hand motions across the prediction horizon. Specifically, during training, we back-project each future depth map into 3D, then transform the point clouds and wrist trajectories from the future camera frame into the current camera frame using known camera poses while keeping finger articulations local for each hand. This removes the effect of camera motion from the training targets and aligns future hand motion and scene geometry with the current observation. Together, our complete alignment pipeline provides spatio-temporally aligned geometric observations, action supervision, and future geometry targets required for bimanual dexterity pre-training.
+ III-B 3D-Grounded Visuomotor Policy 
+ Fig. 3: 
+ 3D-grounded visuomotor policy. Reconstructed geometry enters the policy in two roles. As an input, depth samples from each image patch are encoded jointly in 3D and pooled back to their patches, so that the geometry grid g arrives on the same token grid as the visual features x and is fused into f through two gates and a residual whose weight warms up from zero, leaving the priors of the pre-trained VLM intact. As a target, a training-only predictor estimates future scene geometry from the shared context, which requires the representation to retain spatial structure that the action losses alone do not demand. From the same context, a wrist expert predicts both wrist trajectories and a finger expert predicts finger actions conditioned on them.
+Using the recovered scene geometry and hand motion from large-scale human videos, we pre-train a geometry-augmented visuomotor policy for bimanual control. As illustrated in Figure  3 ,
+given RGB-D observation o_{t}=(o_{t}^{\text{RGB}},o_{t}^{\text{depth}}) , proprioception \rho_{t} consisting of wrist pose and finger articulation, and a task instruction l , the policy \pi(a_{t:t+H}|o_{t},\rho_{t},l) predicts bimanual manipulation action chunks a_{t:t+H} . To enable generalizable semantic grounding, we follow prior works  [ 6 , 2 ] to initialize \pi with a pre-trained VLM and structurally expand its modules to enable dexterous manipulation. The key challenge is to effectively incorporate reconstructed geometry without disrupting the VLM’s visual priors, enabling the policy to better reason about the 3D scene for action prediction.
+ Grid-aligned geometric representation. 
+While the pre-trained VLM provides strong visual and semantic priors for grounding language instructions and interpreting the observed scene, its image-based representation does not explicitly capture the scene’s 3D geometry. The reconstructed depth provides complementary spatial information, but is incompatible with the VLM’s image patch features.
+To bridge the two representations without changing the VLM’s token structure, we follow grid-aligned approaches  [ 2 , 3 ] to encode geometry in 3D and map the resulting features back to their corresponding image patches, as shown in Figure  3 .
+Specifically, we sample depth pixels on a regular grid within each image patch and back-project valid samples into the camera frame using the camera intrinsics. We retain the unnormalized 3D coordinates to preserve metric scale and camera-relative position. Since interacting hands and objects may span multiple image patches, we jointly encode valid points across all patches using Sonata  [ 35 ] . The resulting point features are then mean-pooled according to their original patch assignments, producing a geometric feature grid g that is aligned with the VLM’s visual features x and linearly projected to the same dimension. Invalid samples are assigned zero features before pooling. Patches containing no valid samples therefore yield zero geometric features, while their RGB features remain available to the fusion module.
+ Progressive dual-gated fusion. 
+After depth is encoded into patch-level features aligned with the RGB features, a natural approach is to fuse the two modalities through element-wise addition. However, such direct fusion can be undesirable since the pre-trained VLM expects its visual tokens to retain the semantic representation learned during large-scale pre-training.
+We expect the relative importance of visual and geometric features to vary across spatial locations and stages of manipulation. Following prior work on gated residual injection  [ 36 , 37 , 3 ] , we introduce a dual-gated residual fusion module that independently modulates the visual and geometric features before adding their combination to the original visual representation. A linear warm-up schedule gradually increases the weight of the gated residual update during training, as illustrated in Figure  3 .
+Specifically, let x and g denote the visual and geometric features respectively,
+then the fused representation is
+ f=x+\lambda P_{o}\!\left(\alpha\odot x+\beta\odot g\right), 
+ (1) 
+where P_{o} projects the fused update back to the image-feature dimension, \odot denotes element-wise multiplication, and \lambda controls a warm-up schedule. Modulation weights \alpha and \beta are computed with
+ \displaystyle\alpha 
+ \displaystyle=\sigma\!\left(F_{\alpha}([x;g])\right), 
+ \displaystyle\beta 
+ \displaystyle=\sigma\!\left(F_{\beta}([x;g])\right), 
+where F_{\alpha} and F_{\beta} are learned MLPs, \sigma is the sigmoid function, and [x;g] denotes channel-wise concatenation. The residual formulation preserves the original visual feature x while allowing appearance and geometry to jointly refine it.
+At the beginning of pre-training, the untrained fusion branch can interfere with the pre-trained visual representation. We therefore linearly increase \lambda from zero to one during warm-up and keep it fixed at one thereafter.
+Whereas Any3D-VLA  [ 3 ] learns its 3D representation from synthetic VLA data and visual-grounding data, our geometric encoder and fusion module are learned from large-scale RGB-only human videos covering diverse real-world interactions. The resulting fused feature grid, together with the language instruction and the proprioception \rho_{t} , forms the shared VLM context c for action and forward dynamics prediction.
+ Forward dynamics prediction. 
+Although the policy has access to reconstructed geometry through the fused representation, the strong RGB pathway still provides a shortcut for action prediction, allowing the policy to make limited use of geometric cues. We therefore introduce forward dynamics prediction as an auxiliary objective to explicitly encourage the policy to exploit the reconstructed geometry. Following predictive representation learning  [ 38 , 39 , 40 ] , a geometry predictor predicts a set of 3D points \hat{P}_{t+\delta}^{i}=F_{\mathrm{geom}}(c,i,\delta) for each image patch i and temporal offset \delta , where c is the shared context feature generated by the VLM backbone.
+We construct the targets P_{t+\delta}^{i} using the same grid sampling and back-projection procedure as for the input geometry, ensuring a consistent geometric representation.
+Predicted and target point sets are compared using a geometric distance over valid points:
+ \mathcal{L}_{\mathrm{forward}}=\frac{1}{H\cdot N_{\text{patch}}}\sum_{\delta\in[1\dots H]}\sum_{i\in[0\dots N_{\text{patch}}-1]}d\left(\widehat{P}_{t+\delta}^{i},P_{t+\delta}^{i}\right), 
+ (2) 
+where H is the prediction horizon, N_{\text{patch}} denotes the number of patches in a single frame, and d(\cdot,\cdot) is the symmetric Chamfer distance
+ d(A,B)=\frac{1}{|A|}\sum_{\mathbf{a}\in A}\min_{\mathbf{b}\in B}\|\mathbf{a}-\mathbf{b}\|_{2}^{2}+\frac{1}{|B|}\sum_{\mathbf{b}\in B}\min_{\mathbf{a}\in A}\|\mathbf{b}-\mathbf{a}\|_{2}^{2}. 
+ (3) 
+ Wrist-conditioned bimanual action learning. 
+The geometry-augmented VLM backbone provides a shared representation of appearance, geometry, and language, but dexterous manipulation is inherently asymmetric across different components of the action space. Wrist motion can be recovered relatively reliably from RGB-only videos and transfers naturally across embodiments, whereas fine-grained finger articulation is frequently affected by occlusion and can differ substantially between human hands and the target robot embodiment. Furthermore, finger actions directly determine physical contact and therefore require precise adaptation beyond the motion prior learned from human-video pre-training alone. This suggests a hierarchical decomposition in which the wrist motion provides guidance for refining finger actions.
+Motivated by this insight, we use a wrist expert to jointly predict both wrist trajectories and a finger expert to predict the finger articulation of both hands conditioned on the shared wrist plan, as illustrated in Figure  3 . Let A^{\text{wrist}}=a_{t:t+H}^{\text{wrist}} and A^{\text{finger}}=a^{\text{finger}}_{t:t+H} denote the wrist and finger action chunks, respectively, each containing the actions of both hands.
+We factor the action distribution as
+ \displaystyle p(A^{\text{wrist}},A^{\text{finger}}\mid c)=p_{\text{wrist}}(A^{\text{wrist}}\mid c)\cdot p_{\text{finger}}(A^{\text{finger}}\mid A^{\text{wrist}},c), 
+ (4) 
+where c is the shared context feature generated by the VLM backbone. Both experts are implemented as diffusion transformers  [ 41 , 42 ] . The wrist expert first generates the trajectories of the two wrists,
+and then the finger expert predicts the finger actions conditioned on the wrist plan and the shared context c . The outputs of both experts are trained jointly using recovered wrist and finger actions for both pre-training and fine-tuning.
+ III-C Human-to-Robot Adaptation 
+While human wrist and finger trajectories provide large-scale supervision for coordinated behavior priors, adapting the pre-trained policy to a robot remains challenging due to mismatches in kinematics, appearance, and geometry between the human body and the target embodiment. We therefore fine-tune on a few robot demonstrations, which provide embodiment-specific action and sensor depth supervision, while the geometric encoder, fusion module, and forward dynamics objective are retained unchanged.
+Both the pre-training and fine-tuning stages optimize the denoising objectives of the wrist and finger experts together with the forward dynamics objective:
+ \mathcal{L}=\mathcal{L}_{\mathrm{wrist}}+\lambda_{\mathrm{finger}}\mathcal{L}_{\mathrm{finger}}+\lambda_{\mathrm{forward}}\mathcal{L}_{\mathrm{forward}}, 
+ (5) 
+where \lambda_{\mathrm{finger}} and \lambda_{\mathrm{forward}} control the relative weights of finger prediction and forward dynamics prediction.
+During robot fine-tuning, sensor depth is processed by the same geometric encoder, and future RGB-D observations provide supervision for forward dynamics prediction. Embodiment-specific projection and normalization layers convert the action targets to the robot’s arm and hand command spaces, with unavailable dimensions masked during training.
+At deployment, the policy takes the current RGB-D observation, camera calibration, language instruction, and robot state and predicts a bimanual action chunk.
+Scene reconstruction and geometry prediction are required only during training, and the forward dynamics decoder is removed at deployment.
+ IV Experiments 
+We conduct simulation and real-world experiments to answer three questions. Q1: Does SpatialDex outperform existing policies on bimanual dexterous manipulation tasks in simulation and the real world? Q2: Does reconstructed geometry account for the gain, under a matched comparison with motion-only pre-training on the same videos? Q3: How much does each design choice contribute to the performance?
+ Fig. 4: Wuji–Tianji simulation tasks. Three Wuji–Tianji tasks are used in addition to the six DexJoCo  [ 43 ] tasks for evaluation in simulation.
+ IV-A Experimental Setup 
+ Pre-training data and setup. 
+We initialize the VLM backbone of SpatialDex with pre-trained PaliGemma  [ 44 ] weights. We pre-train SpatialDex on 1M human-video clips from Something-Something v.2  [ 45 ] , EPIC-Kitchens-100  [ 46 ] , Ego4D  [ 47 ] , and Ego-Exo4D  [ 48 ] , processed as described in Section  III-A . We reconstruct scene geometry using VGGT-Omega  [ 34 ] and estimate hand motion using HaWoR  [ 33 ] with the MANO  [ 49 ] hand model. Pre-training takes approximately 72 hours on 32 NVIDIA A100 GPUs with a total batch size of 256.
+We linearly warm up fusion over 20,000 training steps and set the future geometry prediction offset to \delta=16 steps. We predict H=16 actions with 5 denoising steps and execute the first 8 at 5 Hz before replanning.
+ Baseline methods. 
+We compare SpatialDex against policies trained from scratch, pre-trained visuomotor models, geometry-aware VLAs, and human-video-pre-trained policies detailed in Tables   I and  II .
+Pre-trained methods are initialized from their public checkpoints and fine-tuned using the same robot demonstrations as SpatialDex, with embodiment-specific action heads reinitialized to match the target wrist and finger action spaces.
+ TABLE I: Simulation success rates (%). Avg. columns report unweighted means over the four single-arm Allegro tasks, the two bimanual Allegro tasks, the three bimanual Wuji tasks, and all nine tasks. Values are means over three seeds ( 50 episodes/seed). Best results are shown in bold .
+ Method 
+ Allegro + Franka 
+ Wuji + Tianji 
+ Avg. 
+ Fold 
+ Glasses 
+ Hammer 
+ Nail 
+ Water 
+ Plant 
+ Pick 
+ Bucket 
+ Bimanual 
+ Assembly 
+ Bimanual 
+ Microwave 
+ Relocate 
+ Ball 
+ Pass 
+ Toy 
+ Sweep 
+ Trash 
+ Unimanual 
+ Allegro 
+ Bimanual 
+ Allegro 
+ Bimanual 
+ Wuji 
+ All 
+ Tasks 
+ ACT  [ 50 ] 
+ 47.3 
+ 50.0 
+ 47.3 
+ 64.0 
+ 0.0 
+ 66.0 
+ 36.7 
+ 34.0 
+ 24.7 
+ 52.2 
+ 33.0 
+ 31.8 
+ 41.1 
+ iDP3  [ 1 ] 
+ 10.0 
+ 18.0 
+ 48.7 
+ 54.0 
+ 0.0 
+ 38.0 
+ 20.0 
+ 14.7 
+ 10.7 
+ 32.7 
+ 19.0 
+ 15.1 
+ 23.8 
+ \pi_{0.5}   [ 6 ] 
+ 72.0 
+ 84.7 
+ 88.7 
+ 84.0 
+ 5.3 
+ 70.0 
+ 64.7 
+ 36.0 
+ 32.7 
+ 82.4 
+ 37.7 
+ 44.5 
+ 59.8 
+ GR00T N1.5  [ 51 ] 
+ 27.3 
+ 67.3 
+ 72.7 
+ 72.0 
+ 0.7 
+ 50.7 
+ 38.0 
+ 28.7 
+ 24.0 
+ 59.8 
+ 25.7 
+ 30.2 
+ 42.4 
+ ManiFlow  [ 52 ] 
+ 12.7 
+ 20.0 
+ 37.3 
+ 56.7 
+ 0.0 
+ 55.3 
+ 30.7 
+ 24.0 
+ 19.3 
+ 31.7 
+ 27.7 
+ 24.7 
+ 28.4 
+ SpatialVLA  [ 2 ] 
+ 8.7 
+ 14.0 
+ 24.7 
+ 26.0 
+ 0.0 
+ 18.7 
+ 18.7 
+ 11.3 
+ 8.0 
+ 18.4 
+ 9.4 
+ 12.7 
+ 14.5 
+ GeoVLA  [ 32 ] 
+ 12.0 
+ 18.7 
+ 26.7 
+ 28.0 
+ 0.7 
+ 22.0 
+ 24.7 
+ 15.3 
+ 12.0 
+ 21.4 
+ 11.4 
+ 17.3 
+ 17.8 
+ Any3D-VLA  [ 3 ] 
+ 2.7 
+ 25.3 
+ 46.7 
+ 30.0 
+ 0.0 
+ 43.3 
+ 36.0 
+ 26.7 
+ 20.7 
+ 26.2 
+ 21.7 
+ 27.8 
+ 25.7 
+ VITRA  [ 9 ] 
+ 17.3 
+ 46.7 
+ 60.0 
+ 53.3 
+ 0.0 
+ 36.7 
+ 52.0 
+ 34.7 
+ 28.0 
+ 44.3 
+ 18.4 
+ 38.2 
+ 36.5 
+ Being-H0.5  [ 10 ] 
+ 26.7 
+ 45.3 
+ 50.0 
+ 76.7 
+ 0.0 
+ 49.3 
+ 34.7 
+ 25.3 
+ 20.0 
+ 49.7 
+ 24.7 
+ 26.7 
+ 36.4 
+ UniDex  [ 20 ] 
+ 10.7 
+ 16.0 
+ 28.0 
+ 27.3 
+ 1.3 
+ 20.7 
+ 22.0 
+ 16.7 
+ 10.7 
+ 20.5 
+ 11.0 
+ 16.5 
+ 17.0 
+ SpatialDex (Ours) 
+ 77.3 
+ 94.0 
+ 91.3 
+ 79.3 
+ 16.7 
+ 84.0 
+ 88.7 
+ 75.3 
+ 80.0 
+ 85.5 
+ 50.4 
+ 81.3 
+ 76.3 
+ Evaluation environments and protocols. 
+All methods use the same evaluation initializations. A trial is successful if the task is completed within the allowed execution time.
+ Simulation. 
+We use 100 training demonstrations per task.
+We evaluate six DexJoCo  [ 43 ] tasks detailed in Table   I using Allegro hands with Franka arms. We also introduce three tasks: Relocate Ball, Pass Toy, and Sweep Trash using Wuji hands with Tianji arms to evaluate the performance of the policy on an embodiment with more degrees of freedom (Figure  4 ). The first four DexJoCo tasks are unimanual, whereas Bimanual Assembly and Bimanual Microwave require bimanual coordination. We evaluate each method and ablation variant over three random seeds, with 50 episodes per task and seed.
+ Real-world. 
+For each task, we collect 50 demonstration episodes through teleoperation. We evaluate SpatialDex and seven baselines on six tasks using a bimanual Wuji–Tianji platform (Table  II ; the real-world Sweep Trash is a separate task from the simulated one), with ten trials per method and task.
+ Fig. 5: 
+ Real-world rollouts. SpatialDex on Spray Plant, Unzip Bag, and Sweep Trash with Wuji hands and Tianji arms, which involve tool actuation, a deformable object, and coordinated two-hand sweeping. Each row runs from the initial frame on the left to task completion on the right.
+ IV-B Comparative Results 
+ Simulation. 
+As shown in Table   I , SpatialDex achieves 76.3% mean success while the strongest baseline \pi_{0.5} achieves 59.8%.
+The largest gains occur on tasks requiring bimanual coordination, Bimanual Assembly, Bimanual Microwave, Relocate Ball, Pass Toy, and Sweep Trash, while improvements on unimanual tasks are modest and \pi_{0.5} performs better on the Pick Bucket task (84.0% versus 79.3%). Neither human-video pre-training alone (VITRA) nor explicit geometric input alone (iDP3) is sufficient here, which motivates the controlled studies below that isolate each component. Bimanual Assembly remains the most challenging task for all methods, but SpatialDex achieves a higher success rate than the strongest baseline (16.7% versus 5.3%).
+ TABLE II: Real-world success counts. Successful trials out of 10. Best results are shown in bold .
+ Method 
+ Pass 
+ Flower 
+ Pour 
+ Water 
+ Spray 
+ Plant 
+ Unzip 
+ Bag 
+ Sweep 
+ Trash 
+ Pack 
+ Suitcase 
+ Total 
+ ACT  [ 50 ] 
+ 4 / 10 
+ 4 / 10 
+ 1 / 10 
+ 4 / 10 
+ 4 / 10 
+ 5 / 10 
+ 22 / 60 
+ iDP3  [ 1 ] 
+ 1 / 10 
+ 1 / 10 
+ 2 / 10 
+ 1 / 10 
+ 0 / 10 
+ 3 / 10 
+ 8 / 60 
+ \pi_{0.5}   [ 6 ] 
+ 4 / 10 
+ 4 / 10 
+ 5 / 10 
+ 5 / 10 
+ 2 / 10 
+ 6 / 10 
+ 26 / 60 
+ GeoVLA  [ 32 ] 
+ 2 / 10 
+ 2 / 10 
+ 4 / 10 
+ 2 / 10 
+ 3 / 10 
+ 4 / 10 
+ 17 / 60 
+ Any3D-VLA  [ 3 ] 
+ 3 / 10 
+ 4 / 10 
+ 2 / 10 
+ 2 / 10 
+ 3 / 10 
+ 4 / 10 
+ 18 / 60 
+ VITRA  [ 9 ] 
+ 3 / 10 
+ 2 / 10 
+ 5 / 10 
+ 4 / 10 
+ 3 / 10 
+ 5 / 10 
+ 22 / 60 
+ UniDex  [ 20 ] 
+ 3 / 10 
+ 4 / 10 
+ 2 / 10 
+ 4 / 10 
+ 1 / 10 
+ 5 / 10 
+ 19 / 60 
+ SpatialDex (Ours) 
+ 8 / 10 
+ 8 / 10 
+ 9 / 10 
+ 8 / 10 
+ 7 / 10 
+ 9 / 10 
+ 49 / 60 
+ Real-world. 
+As shown in Table   II , SpatialDex achieves a total of 49 successes in 60 trials (81.7%), outperforming the strongest baseline \pi_{0.5} , which achieves 26/60 (43.3%). In particular, Spray Plant and Unzip Bag reach 9/10 and 8/10 successes, respectively, compared with 5/10 for the strongest competing methods on each task. These results show that the gains extend to physical tool actuation and deformable-object manipulation using sensor depth at deployment. Sweep Trash remains the most challenging real-world task for SpatialDex at 7/10, while still exceeding the best baseline at 4/10. We show representative rollouts of SpatialDex in Figure   5 .
+ IV-C Pre-Training and Ablation Studies 
+ TABLE III: Pre-training and component ablations. Success rates (%). Means over three seeds (50 episodes per task and seed).
+ Variant 
+ Allegro + Franka 
+ Wuji + Tianji 
+ Avg. 
+ Hammer 
+ Nail 
+ Bimanual 
+ Assembly 
+ Bimanual 
+ Microwave 
+ Relocate 
+ Ball 
+ Pass 
+ Toy 
+ Sweep 
+ Trash 
+ SpatialDex (Ours) 
+ 94.0 
+ 16.7 
+ 84.0 
+ 88.7 
+ 75.3 
+ 80.0 
+ 73.1 
+ No human pre-training 
+ 62.7 
+ 4.0 
+ 52.0 
+ 64.0 
+ 44.7 
+ 46.0 
+ 45.6 
+ Motion-only pre-training 
+ 80.0 
+ 8.7 
+ 66.7 
+ 77.3 
+ 58.0 
+ 62.7 
+ 58.9 
+ Per-frame alignment 
+ 90.7 
+ 8.0 
+ 68.0 
+ 87.0 
+ 55.3 
+ 74.0 
+ 63.8 
+ RGB-only input 
+ 50.0 
+ 2.3 
+ 41.3 
+ 55.3 
+ 40.0 
+ 32.0 
+ 36.8 
+ 2D depth encoding 
+ 72.0 
+ 6.7 
+ 60.0 
+ 74.0 
+ 50.7 
+ 56.7 
+ 53.3 
+ Concat RGB + geometry 
+ 82.0 
+ 6.0 
+ 69.3 
+ 73.3 
+ 60.7 
+ 62.7 
+ 59.0 
+ No fusion warm-up 
+ 87.3 
+ 15.0 
+ 83.0 
+ 88.7 
+ 67.0 
+ 68.0 
+ 68.2 
+ No forward dynamics loss 
+ 87.3 
+ 12.0 
+ 76.0 
+ 82.7 
+ 65.3 
+ 67.3 
+ 65.1 
+ Joint wrist-finger expert 
+ 90.0 
+ 12.7 
+ 78.7 
+ 85.3 
+ 66.7 
+ 73.3 
+ 67.8 
+ No wrist-trajectory input 
+ 92.0 
+ 13.3 
+ 80.7 
+ 86.0 
+ 68.0 
+ 76.0 
+ 69.3 
+Table  III evaluates all Wuji–Tianji tasks and the three DexJoCo tasks: a unimanual nail-hammering task, a bimanual peg-insertion task, and a bimanual task involving door operation, food placement, and button pressing. These three tasks also show the largest gains over the strongest per-task baselines in Table  I .
+All variants follow the protocol as stated in Section  IV-A .
+ Reconstructed geometry during pre-training. 
+We first isolate the contribution of reconstructed scene geometry during human-video pre-training. Motion-only pre-training uses the same RGB videos, wrist and finger targets, and pre-training budget as SpatialDex, but removes geometric inputs and forward dynamics targets. The variant without human pre-training directly fine-tunes the pre-trained VLM on robot demonstrations. During robot fine-tuning, all variants use the same RGB-D architecture, demonstrations, objectives, and optimization schedule, with matched initialization for newly introduced geometry modules.
+Motion-only pre-training improves mean success from 45.6% to 58.9% over the variant without human pre-training and exceeds \pi_{0.5} at 48.9% on the same six tasks, which supports the benefit of human-motion supervision. Full SpatialDex further improves mean success to 73.1%, a gain of 14.2 percentage points over motion-only pre-training. This isolates the benefit of reconstructed geometry as both input and supervision during pre-training.
+ Joint alignment across frames. 
+Replacing the shared video-level alignment with independent per-frame alignment reduces mean success from 73.1% to 63.8%, a drop of 9.3 percentage points. The largest reductions occur on Pass Toy and Bimanual Microwave, both of which require coordinated motion over multiple stages. These results support constructing scene-action supervision with a shared video-level scale, which keeps reconstructed geometry and wrist trajectories metrically consistent across frames.
+ Geometric representation and supervision. 
+We next study how reconstructed geometry is represented, fused, and supervised while keeping the data and optimization budgets fixed. Removing geometric inputs and fusion while retaining forward dynamics supervision reduces mean success to 36.8%, showing that forward dynamics supervision alone cannot compensate for the absence of geometric observations. Encoding depth directly as a 2D channel or replacing dual-gated fusion with feature concatenation also reduces success on every task. These comparisons support explicit 3D encoding and selective fusion over simply supplying depth to the policy. Removing fusion warm-up reduces mean success from 73.1% to 68.2%, a drop of 4.9 percentage points, with the largest losses on Sweep Trash (sim) and Pass Toy. This supports progressively introducing the geometric update into the pre-trained visual representation. Removing only the forward dynamics objective reduces mean success by 8.0 percentage points while leaving geometric inputs unchanged, isolating the benefit of auxiliary supervision on how the scene evolves.
+ Coordinated action prediction. 
+Replacing the separate wrist and finger experts with a single joint wrist–finger expert reduces mean success by 5.3 percentage points. Keeping separate wrist and finger experts but removing wrist-trajectory conditioning reduces mean success by 3.8 percentage points, with observations and current-state inputs unchanged. Both variants incur their largest losses on Pass Toy, where finger closure must be coordinated with wrist motion that brings the hands and object together. These results support conditioning finger actions on the predicted wrist trajectories, which provide intended future motion beyond the shared current observation.
+ V Conclusion 
+SpatialDex converts RGB-only human videos into aligned scene geometry and hand-motion supervision for bimanual visuomotor pre-training. It incorporates reconstructed geometry as both a representation of the current scene and supervision for forward dynamics prediction. The resulting policy achieves higher mean success than the compared baselines across the evaluated simulation and real-world tasks. Controlled comparisons further show the benefit of incorporating reconstructed geometry beyond motion-only pre-training. These results support jointly using scene geometry and hand motion to transfer human manipulation experience to bimanual robot control.
+ Limitations. 
+The quality of our pre-training supervision depends on the accuracy of hand estimation and scene reconstruction. Therefore, the shared-scale alignment cannot fully correct errors in estimated hand size, pose, or camera motion. At deployment, the policy requires depth observations which can limit its applicability when reliable depth is unavailable or degraded by sensing noise. Adapting the policy to a new robot also requires embodiment-specific demonstrations to account for differences in kinematics, action spaces, and control interfaces.

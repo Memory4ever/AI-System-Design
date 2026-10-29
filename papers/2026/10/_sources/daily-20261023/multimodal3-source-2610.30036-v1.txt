@@ -1,0 +1,436 @@
+Official exact-v1 HTML text: https://arxiv.org/html/2610.30036v1
+Downloaded main text; actual necessary reading scope is recorded separately in SOURCE_MULTIMODAL3.md. Preservation does not assert all included appendices were reviewed.
+Abstract
+Increasing the attention context length significantly improves streaming video generation quality, while incurring prohibitive memory and computational costs as the context grows.
+Existing methods attempt to capture this contextual information through attention selection or compression, but remain limited by bounded representations and lack explicit attention-level supervision to retain historical contributions to current queries.
+To address this, we introduce Attn-Forcing , a novel framework that preserves full-context attention contributions for streaming video generation under bounded memory and computation.
+We achieve this by introducing attention proxies that continuously approximate the attention responses induced by the historical context.
+Specifically, we implement the proxies as learnable visual latents and employ a Proxy Update Module to incorporate visual context from historical latents.
+Moreover, we propose an Attention Matching Loss to explicitly constrain the attention behavior of the learned proxies using full-context attention supervision.
+Extensive qualitative and quantitative experiments demonstrate that Attn-Forcing consistently improves streaming video generation quality and achieves state-of-the-art performance over existing baseline methods.
+ 1 Introduction
+Streaming video generation has gained increasing attention due to its broad applications in interactive content creation, digital humans, live streaming, and persistent virtual environments.
+With recent advances in autoregressive (AR) diffusion models ( Jin et al., 2025 ; Chen et al., 2025 ; Wu et al., 2025b ; Yuan et al., 2026 ; Teng et al., 2025 ; Ma et al., 2026a ) , streaming generation is commonly implemented through chunk-by-chunk generation with causal KV caching in Diffusion Transformers (DiT) ( Peebles and Xie, 2023 ) .
+Existing methods ( Huang et al., 2026 ; Zhu et al., 2026 ; Yi et al., 2025 ; Liu et al., 2026 ; Yang et al., 2025a ) typically retain only a limited-length KV cache during training and inference.
+This truncation of full-context attention discards contributions from historical KV states, leading to degraded generation quality.
+As shown by the experiment in Figure 1 , although Self-Forcing ( Huang et al., 2026 ) is trained with a fixed local attention window, simply increasing the KV cache length at inference consistently yields higher VBench-Long ( Huang et al., 2024 ) scores, highlighting the benefit of broader historical context.
+However, under bounded memory and computational budgets, maintaining increasingly long KV contexts is impractical for streaming generation.
+To address this challenge, Guo et al. (2025) ; Yi et al. (2025) ; Ji et al. (2025) ; Ma et al. (2026b) selectively retain or retrieve relevant historical KV states through adaptive strategies, but remain limited by bounded KV budgets and potentially accumulated errors in current visual latents.
+Another line of work ( Wu et al., 2025b ; Lu et al., 2026 ; Kim et al., 2026 ; Wu et al., 2026 ; Xue et al., 2026 ; Bian et al., 2026 ) compresses historical context into compact representations using dedicated objectives or predefined compression ratios/schedules, but inevitably faces a trade-off between context coverage and information fidelity.
+Fundamentally, these methods still perform attention over bounded historical representations and lack attention-level supervision, making it difficult to preserve the contribution of the full context to current queries.
+Can we capture this contribution without explicitly maintaining the full context?
+ Figure 1: VBench-Long score and peak GPU memory of Self-Forcing ( Huang et al., 2026 ) during 30s video inference with different local attention sizes. A larger attention window generally improves generation quality, but at the cost of increased peak GPU memory.
+In this paper, we answer this question by proposing Attn-Forcing , a novel framework that approximates full-context attention under bounded memory and computation.
+We achieve this by learning additional attention proxies during distribution matching distillation (DMD) training ( Yin et al., 2024 ) .
+Specifically, we implement the proxies as learnable latents and continuously update them through a Proxy Update Module using visual latents evicted from the local attention window to incorporate the visual history.
+We then forward the proxy latents through the DiT and use their layer-wise KV states for subsequent streaming generation.
+However, the DMD training objective primarily matches the model output distribution, without explicitly constraining the attention behavior induced by the learned proxies.
+We therefore introduce an Attention Matching Loss to directly match the attention responses obtained with the learned proxies to those of the historical attention.
+Extensive qualitative and quantitative experiments demonstrate that Attn-Forcing achieves state-of-the-art (SOTA) performance over baseline methods.
+Moreover, ablation studies confirm the effectiveness and advantages of proposed designs, providing valuable insights for the streaming video generation community.
+The contributions of this paper are summarized as follows:
+ • 
+We propose Attn-Forcing, a novel DMD training framework that, for the first time, preserves full-context attention contributions under bounded memory and computation during streaming generation.
+ • 
+We introduce learnable attention proxies to continuously incorporate visual history and a novel Attention Matching Loss to further align their attention responses with full-context attention.
+ • 
+Experiments show that Attn-Forcing improves streaming video generation quality and achieves SOTA performance over baseline methods.
+ 2 Related Work
+ 2.1 Video Diffusion Models
+Early video diffusion models typically extend image diffusion backbones with temporal modules to model spatiotemporal dependencies, enabling high-quality text-to-video generation ( Ho et al., 2022 ; Blattmann et al., 2023 ; Chen et al., 2023 ; Guo et al., 2024 ) .
+With the emergence of Diffusion Transformers (DiT) ( Peebles and Xie, 2023 ) , video generation has progressively shifted toward large-scale transformer architectures with stronger scalability and global temporal modeling.
+Representative models such as Sora ( Brooks et al., 2024 ) , CogVideoX ( Yang et al., 2025b ) , MovieGen ( Polyak et al., 2024 ) , HunyuanVideo ( Kong et al., 2024 ) , and Wan ( Wan et al., 2025 ) have demonstrated impressive video generation capabilities, producing high-fidelity videos with coherent motion, strong temporal consistency, and faithful alignment with textual prompts.
+Recent open-source models, including LTX-Video ( HaCohen et al., 2024 ) , Wan2.2 ( Wan et al., 2025 ) , and HunyuanVideo-1.5 ( Wu et al., 2025a ) , further push the performance and efficiency of open-source video generation.
+Meanwhile, frontier systems such as Veo 3.1 ( Google DeepMind, 2025 ) , Kling 3.0 ( Kuaishou, 2026 ) , Seedance 2.0 ( Seedance et al., 2026 ) , MiniMax H3 ( MiniMax, 2026 ) , and HappyHorse ( Alibaba Cloud, 2026 ) exhibit increasingly sophisticated generation capabilities, including realistic physical dynamics, complex motion, multimodal conditioning, and joint audio-video generation.
+Our work is built upon Wan2.1-T2V-1.3B ( Wan et al., 2025 ) , adapting it for streaming long video generation.
+ 2.2 Long Video Generation
+Long video generation remains challenging for video diffusion models due to the high computational cost of full-sequence modeling and the temporal extrapolation gap between short-video training and long-video inference.
+One line of work seeks to extrapolate pretrained short-video diffusion models to longer durations without costly long-video retraining.
+Representative approaches modify the inference process or temporal modeling through noise rescheduling, progressive denoising, or positional extrapolation, including FreeNoise ( Qiu et al., 2024 ) , FIFO-Diffusion ( Kim et al., 2024 ) , RIFLEx ( Zhao et al., 2025 ) , and Diff-VF ( Yang et al., 2026 ) .
+These methods substantially extend the generation horizon of pretrained video diffusion models while improving temporal continuity over long sequences.
+More recently, autoregressive (AR) video diffusion has emerged as a promising paradigm for streaming long video generation.
+Specifically, CausVid ( Yin et al., 2025 ) introduces causal diffusion distillation to enable efficient streaming generation, while Self-Forcing ( Huang et al., 2026 ) further trains on self-generated histories to reduce the autoregressive train-test discrepancy.
+Subsequent works such as LongLive ( Yang et al., 2025a ) and Self-Forcing++ ( Cui et al., 2026 ) further improve long-horizon generation through dedicated long-rollout training and inference strategies.
+However, due to GPU memory constraints, these methods are restricted to fixed-length KV caches that continuously discard historical information, resulting in degraded and unstable generation quality.
+To address this, recent works explore different strategies for preserving useful historical context under bounded memory and computation.
+Resampling Forcing ( Guo et al., 2025 ) and MemFlow ( Ji et al., 2025 ) dynamically retrieve or activate relevant historical states for current generation, while Deep Forcing ( Yi et al., 2025 ) and FlowCache ( Ma et al., 2026b ) prune or compress KV caches according to their estimated importance.
+Other approaches ( Wu et al., 2025b ; Lu et al., 2026 ; Kim et al., 2026 ; Xue et al., 2026 ; Bian et al., 2026 ) aggregate or compress historical information into compact representations with bounded computational cost.
+However, these methods still perform attention over bounded historical representations and lack explicit attention-level supervision to preserve full-context contributions to current queries.
+To address this, we introduce attention proxies and train them with an additional Attention Matching loss.
+ 3 Method
+In this section, we present the technical details of the proposed Attn-Forcing.
+The overall framework is illustrated in Figure  2 .
+We first introduce the preliminaries of KV caching and distribution matching distillation in Section  3.1 .
+We then present the construction of attention proxies and the Attention Matching Loss in Sections  3.2 and  3.3 , respectively.
+ 3.1 Preliminary
+ KV Cache. 
+Streaming video generation with autoregressive Diffusion Transformers predicts each new video chunk through causal attention over previous chunks, whose key and value states are cached and reused for current generation:
+ \operatorname{Attn}\left(\mathbf{Q}_{i},[\mathbf{K}_{\mathrm{sink}},\mathbf{K}_{\mathrm{local}}],[\mathbf{V}_{\mathrm{sink}},\mathbf{V}_{\mathrm{local}}]\right)=\operatorname{Softmax}\left(\frac{\mathbf{Q}_{i}[\mathbf{K}_{\mathrm{sink}},\mathbf{K}_{\mathrm{local}}]^{\top}}{\sqrt{d_{h}}}\right)[\mathbf{V}_{\mathrm{sink}},\mathbf{V}_{\mathrm{local}}], 
+ (1) 
+where \mathbf{Q}_{i} denotes the queries of the i -th video chunk, while (\mathbf{K}_{\mathrm{sink}},\mathbf{V}_{\mathrm{sink}}) and (\mathbf{K}_{\mathrm{local}},\mathbf{V}_{\mathrm{local}}) denote the cached sink and local key-value states, respectively.
+ Distribution Matching Distillation (DMD). 
+Following prior methods ( Yin et al., 2024 ) , we adopt the DMD objective to distill a multi-step bidirectional diffusion model into a few-step causal generator. Specifically, given the i -th generated video chunk \mathbf{x}_{i} , we perturb it at diffusion timestep t as
+ \mathbf{x}_{i,t}=\alpha_{t}\mathbf{x}_{i}+\sigma_{t}\bm{\epsilon},\qquad\bm{\epsilon}\sim\mathcal{N}(\mathbf{0},\mathbf{I}), 
+ (2) 
+and estimate its score using the pretrained diffusion teacher and a learnable fake-score model. The DMD gradient for the causal generator is given by
+ \nabla_{\theta}\mathcal{L}_{\mathrm{DMD}}=\mathbb{E}_{i,t,\bm{\epsilon}}\left[w_{t}\left(\mathbf{s}_{\mathrm{fake}}(\mathbf{x}_{i,t},t)-\mathbf{s}_{\mathrm{real}}(\mathbf{x}_{i,t},t)\right)\frac{\partial\mathbf{x}_{i}}{\partial\theta}\right], 
+ (3) 
+where \mathbf{s}_{\mathrm{real}} and \mathbf{s}_{\mathrm{fake}} denote the score estimates from the pretrained diffusion teacher and the fake-score model, respectively, and w_{t} denotes the timestep-dependent weighting factor.
+ Figure 2: The framework of Attn-Forcing. During training, learnable proxy latents are continuously updated using visual latents evicted from the local attention window through a Proxy Update Module. Attention Matching Loss further aligns the proxy-induced attention responses with historical attention responses approximated using online accumulated statistics.
+ 3.2 Attention Proxies
+As discussed in the Introduction and Figure  1 , retaining a longer KV context improves generation quality.
+However, due to memory and computational constraints, prior methods ( Huang et al., 2026 ; Yang et al., 2025a ) restrict the KV cache in Eq.  1 to a fixed-length local window during training and inference.
+In this setting, older historical states are continuously evicted as generation proceeds, thereby discarding their attention contributions to current queries.
+Accordingly, to preserve such historical attention contributions without explicitly retaining the growing historical KV cache, we introduce proxy latents to approximate their attention responses to the current query \mathbf{Q}_{i} :
+ \operatorname{Attn}\left(\mathbf{Q}_{i},\mathbf{K}_{\mathrm{proxy}},\mathbf{V}_{\mathrm{proxy}}\right)\approx\operatorname{Attn}\left(\mathbf{Q}_{i},\mathbf{K}_{\mathrm{hist}},\mathbf{V}_{\mathrm{hist}}\right), 
+ (4) 
+where (\mathbf{K}_{\mathrm{hist}},\mathbf{V}_{\mathrm{hist}}) denote the evicted historical KV states and (\mathbf{K}_{\mathrm{proxy}},\mathbf{V}_{\mathrm{proxy}}) denote the key and value states derived from the proxy latents.
+Specifically, as shown in Figure 2 , we implement these proxies as K=3 learnable latents in the same feature space as the DiT visual latents.
+They are randomly initialized and continuously updated using visual latents evicted from the local attention window as follows.
+ \mathbf{P}\leftarrow\mathcal{U}\left(\mathbf{P},\mathbf{x}^{\mathrm{evict}}\right)=\mathcal{G}\left(\mathbf{P},\operatorname{Attn}\left(\mathbf{W}_{Q}(\mathbf{P}),\mathbf{W}_{K}(\mathbf{x}^{\mathrm{evict}}),\mathbf{W}_{V}(\mathbf{x}^{\mathrm{evict}})\right)\right), 
+ (5) 
+where \mathcal{U} denotes the Proxy Update Module, and \mathbf{W}_{Q}(\cdot) , \mathbf{W}_{K}(\cdot) , and \mathbf{W}_{V}(\cdot) denote its learnable query, key, and value projections, respectively.
+For the newly evicted visual latents \mathbf{x}^{\mathrm{evict}} , the current proxy latents \mathbf{P} query the evicted latents through cross-attention to capture their contextual information, which is then further processed and fused with \mathbf{P} through the gated update module \mathcal{G} . More details are provided in Appendix A.3 .
+The updated proxy latents are then propagated through the DiT to obtain the layer-wise key and value states for subsequent chunk generation:
+ \mathbf{K}^{l}_{\mathrm{proxy}}=\mathbf{W}_{K}^{l}(\mathbf{P}^{l}),\qquad\mathbf{V}^{l}_{\mathrm{proxy}}=\mathbf{W}_{V}^{l}(\mathbf{P}^{l}), 
+ (6) 
+where \mathbf{P}^{0}=\mathbf{P} and \mathbf{P}^{l+1}=B^{l}(\mathbf{P}^{l}) , with B^{l} denoting the l -th DiT block, and \mathbf{W}_{K}^{l}(\cdot) and \mathbf{W}_{V}^{l}(\cdot) denoting its key and value projections.
+The resulting proxy KV states are then denoted as \mathbf{K}_{\mathrm{proxy}},\mathbf{V}_{\mathrm{proxy}} and appended between the sink and local KV states in Eq.  1 , yielding
+ \operatorname{Attn}\left(\mathbf{Q}_{i},[\mathbf{K}_{\mathrm{sink}},\mathbf{K}_{\mathrm{proxy}},\mathbf{K}_{\mathrm{local}}],[\mathbf{V}_{\mathrm{sink}},\mathbf{V}_{\mathrm{proxy}},\mathbf{V}_{\mathrm{local}}]\right). 
+ (7) 
+The proxy KV states allow evicted visual context to continue contributing to the attention responses of current queries without explicitly retaining the full historical KV cache.
+ 3.3 Attention Matching Loss
+Although the proxy latents continuously incorporate visual context from the evicted latents, their induced attention responses may not faithfully reproduce those induced by the full historical KV states.
+This is because the standard DMD objective used during training (Eq.  3 ) mainly focuses on distribution-level score matching, rather than directly aligning the attention responses in Eq.  4 .
+However, computing historical attention responses requires explicitly retaining these historical states, resulting in unacceptable memory and computational costs as the historical context grows.
+To address this, we propose an efficient approximation to
+ \operatorname{Attn}\left(\mathbf{Q}_{i},\mathbf{K}_{\mathrm{hist}},\mathbf{V}_{\mathrm{hist}}\right) 
+using online accumulated statistics, avoiding growing memory and computational costs.
+Specifically, we first rewrite the attention response for each query
+ \mathbf{q}\in\mathbf{Q}_{i} in
+ \operatorname{Attn}\left(\mathbf{Q}_{i},\mathbf{K}_{\mathrm{hist}},\mathbf{V}_{\mathrm{hist}}\right) 
+as
+ \mathbf{a}_{\mathrm{hist}}(\mathbf{q})=\frac{\sum_{j\in\mathcal{H}}\kappa(\mathbf{q},\mathbf{k}_{j})\mathbf{v}_{j}}{\sum_{j\in\mathcal{H}}\kappa(\mathbf{q},\mathbf{k}_{j})},\qquad\kappa(\mathbf{q},\mathbf{k})=\exp\left(\frac{\mathbf{q}^{\top}\mathbf{k}}{\sqrt{d_{h}}}\right), 
+ (8) 
+where \mathcal{H} indexes the KV states in
+ (\mathbf{K}_{\mathrm{hist}},\mathbf{V}_{\mathrm{hist}}) .
+Next, following Choromanski et al. (2020) , we leverage the positive random feature representation of the softmax kernel.
+Given a positive random feature \phi_{\omega}(\cdot) , the softmax kernel can be expressed as
+ \kappa(\mathbf{q},\mathbf{k})=\mathbb{E}_{\omega}\left[\phi_{\omega}(\mathbf{q})\phi_{\omega}(\mathbf{k})\right]. 
+ (9) 
+Approximating this expectation with M sampled random features gives
+ \kappa(\mathbf{q},\mathbf{k})\approx\phi(\mathbf{q})^{\top}\phi(\mathbf{k}), 
+ (10) 
+where \phi(\cdot)\in\mathbb{R}^{M} denotes the resulting finite-dimensional positive random feature mapping, with M being the number of random features and the attention scaling absorbed into \phi(\cdot) .
+A detailed derivation is provided in Appendix  A.1 .
+Substituting Eq.  10 into Eq.  8 gives
+ \mathbf{a}_{\mathrm{hist}}(\mathbf{q})\approx\frac{\sum_{j\in\mathcal{H}}\phi(\mathbf{q})^{\top}\phi(\mathbf{k}_{j})\mathbf{v}_{j}}{\sum_{j\in\mathcal{H}}\phi(\mathbf{q})^{\top}\phi(\mathbf{k}_{j})}=\frac{\left(\sum_{j\in\mathcal{H}}\phi(\mathbf{k}_{j})\mathbf{v}_{j}^{\top}\right)^{\top}\phi(\mathbf{q})}{\left(\sum_{j\in\mathcal{H}}\phi(\mathbf{k}_{j})\right)^{\top}\phi(\mathbf{q})}. 
+ (11) 
+This factorization allows the historical attention response to be approximated using two online accumulated statistics:
+ \mathbf{S}_{\mathrm{hist}}=\sum_{j\in\mathcal{H}}\phi(\mathbf{k}_{j})\mathbf{v}_{j}^{\top},\qquad\mathbf{z}_{\mathrm{hist}}=\sum_{j\in\mathcal{H}}\phi(\mathbf{k}_{j}). 
+ (12) 
+Whenever new KV states are evicted from the local attention window, these statistics are incrementally updated as
+ \displaystyle\mathbf{S}_{\mathrm{hist}} 
+ \displaystyle\leftarrow\mathbf{S}_{\mathrm{hist}}+\Phi(\mathbf{K}_{\mathrm{evict}})^{\top}\mathbf{V}_{\mathrm{evict}}, 
+ \displaystyle\mathbf{z}_{\mathrm{hist}} 
+ \displaystyle\leftarrow\mathbf{z}_{\mathrm{hist}}+\Phi(\mathbf{K}_{\mathrm{evict}})^{\top}\mathbf{1}, 
+ (13) 
+where \Phi(\cdot) applies \phi(\cdot) token-wise.
+The sizes of \mathbf{S}_{\mathrm{hist}} and \mathbf{z}_{\mathrm{hist}} are independent of the historical context length, preventing the memory and attention computation from growing with the accumulated history.
+Extending Eq.  11 to all queries in \mathbf{Q}_{i} , we obtain
+ \widehat{\mathbf{A}}_{\mathrm{hist}}=\mathbf{D}^{-1}\Phi(\mathbf{Q}_{i})\mathbf{S}_{\mathrm{hist}},\qquad\mathbf{D}=\operatorname{Diag}\left(\Phi(\mathbf{Q}_{i})\mathbf{z}_{\mathrm{hist}}\right), 
+ (14) 
+where
+ \widehat{\mathbf{A}}_{\mathrm{hist}} 
+provides an efficient approximation to
+ \operatorname{Attn}\left(\mathbf{Q}_{i},\mathbf{K}_{\mathrm{hist}},\mathbf{V}_{\mathrm{hist}}\right) 
+in Eq.  4 .
+Since \widehat{\mathbf{A}}_{\mathrm{hist}} is obtained via random-feature approximation rather than native KV states, directly using it for generation would introduce approximation errors into the attention computation.
+We therefore use it only as an attention-level supervision target.
+For the proxy KV states, the corresponding attention response is
+ \mathbf{A}_{\mathrm{proxy}}=\operatorname{Attn}\left(\mathbf{Q}_{i},\mathbf{K}_{\mathrm{proxy}},\mathbf{V}_{\mathrm{proxy}}\right). 
+ (15) 
+We then define the Attention Matching Loss as
+ \mathcal{L}_{\mathrm{AM}}=\operatorname{MSE}\left(\mathbf{A}_{\mathrm{proxy}},\operatorname{sg}\left(\widehat{\mathbf{A}}_{\mathrm{hist}}\right)\right). 
+ (16) 
+where \operatorname{sg}(\cdot) denotes stop-gradient.
+Since \widehat{\mathbf{A}}_{\mathrm{hist}} approximates the attention response induced by the full historical KV states, minimizing \mathcal{L}_{\mathrm{AM}} provides a tractable surrogate for directly optimizing the approximation objective in Eq.  4 .
+In practice, we apply this objective to the last L DiT layers and average the resulting losses across them.
+Together with the DMD objective, the overall training objective is defined as:
+ \mathcal{L}=\mathcal{L}_{\mathrm{DMD}}+\lambda_{\mathrm{AM}}\mathcal{L}_{\mathrm{AM}}, 
+ (17) 
+where \lambda_{\mathrm{AM}} controls the strength of attention matching.
+The DMD objective jointly optimizes the generator G_{\theta} and proxy-related parameters, while the Attention Matching Loss only optimizes the proxy-related parameters.
+More details are provided in Appendix  A.2 .
+ Table 1: Quantitative comparison on 5s short videos and 30s long videos generated from the official VBench prompts. Best results are shown in bold , and second-best results are underlined .
+ Model 
+ #Params 
+ Resolution 
+ Evaluation Scores on 5s \uparrow 
+ Evaluation Scores on 30s \uparrow 
+ Total 
+ Quality 
+ Semantic 
+ Total 
+ Quality 
+ Semantic 
+ Diffusion models 
+ LTX-Video 
+ 1.9B 
+ 768{\times}512 
+ 79.31 
+ 81.51 
+ 70.53 
+ – 
+ – 
+ – 
+ Wan-2.1 
+ 1.3B 
+ 832{\times}480 
+ 82.84 
+ 83.64 
+ 79.67 
+ – 
+ – 
+ – 
+ Autoregressive models 
+ Self-Forcing 
+ 1.3B 
+ 832{\times}480 
+ 83.76 
+ 84.43 
+ 81.06 
+ 81.92 
+ 82.98 
+ 77.68 
+ Causal-Forcing 
+ 1.3B 
+ 832{\times}480 
+ 83.75 
+ 84.58 
+ 80.41 
+ 80.56 
+ 83.23 
+ 69.90 
+ LongLive 
+ 1.3B 
+ 832{\times}480 
+ 83.53 
+ 84.23 
+ 80.71 
+ 83.15 
+ 84.18 
+ 79.05 
+ Attn-Forcing 
+ 1.3B 
+ 832{\times}480 
+ 84.10 
+ 84.94 
+ 80.74 
+ 83.85 
+ 85.26 
+ 78.18 
+ 4 Experiments
+ 4.1 Implementation Details
+We build Attn-Forcing upon Wan2.1-T2V-1.3B ( Wan et al., 2025 ) , which generates 5s clips at 832\times 480 resolution.
+We first adopt the causal init model from Self-Forcing ( Huang et al., 2026 ) and apply DMD training on it to enable the frame sink and attention proxies.
+We then perform streaming long tuning on 60-second sequences following LongLive ( Yang et al., 2025a ) , using the overall training objective in Eq.  17 .
+Text prompts are sampled from the filtered and LLM-augmented VidProM ( Wang and Yang, 2024 ) dataset.
+During streaming long tuning, we use K=3 proxy latents and M=128 random features, and apply the Attention Matching Loss to the last 6 DiT layers with \lambda_{\mathrm{AM}}=5\times 10^{-4} .
+We use four denoising steps [1000,750,500,250] for each generated chunk, with a frame sink of 3 frames and an effective local attention window of 9 frames.
+We adopt AdamW with learning rates of 1\times 10^{-5} , 2\times 10^{-6} , and 1\times 10^{-4} for the generator, fake-score model, and attention proxies, respectively, and update the generator every 5 fake-score updates.
+Training uses a total batch size of 32 on 16 H20 GPUs.
+We train the short initialization stage for 700 steps and the long streaming stage for 2,300 steps, for a total of 3,000 training steps.
+ Figure 3: Qualitative comparison on 60s videos generated using MovieGen prompts. Attn-Forcing achieves stronger generation quality and motion dynamics. 
+ Evaluation Benchmarks & Metrics. 
+Following the standard VBench evaluation protocol ( Huang et al., 2024 ) , we measure generation quality on both 5s and 30s videos using 946 prompts (each sampled with 5 different seeds) across 16 dimensions, with VBench used for 5s videos and VBench-Long for 30s videos.
+Moreover, for longer-horizon evaluation, we follow Yin et al. (2025) and generate 60s videos using 128 prompts from MovieGen ( Polyak et al., 2024 ) , evaluating them using VBench-Long across six dimensions.
+ Table 2: Quantitative comparison on 60s long videos generated from the official MovieGen prompts. Best results are shown in bold , and second-best results are underlined .
+ Model 
+ Evaluation Scores on 60s \uparrow 
+ Total 
+ Subject 
+ Background 
+ Smoothness 
+ Dynamic 
+ Aesthetic 
+ Imaging Quality 
+ Self-Forcing 
+ 78.29 
+ 97.07 
+ 96.17 
+ 98.51 
+ 34.53 
+ 54.28 
+ 67.32 
+ Causal-Forcing 
+ 79.05 
+ 95.78 
+ 95.80 
+ 97.36 
+ 61.20 
+ 50.46 
+ 64.78 
+ LongLive 
+ 79.26 
+ 97.93 
+ 96.60 
+ 98.85 
+ 35.55 
+ 55.99 
+ 68.81 
+ Attn-Forcing 
+ 82.37 
+ 97.11 
+ 95.84 
+ 98.56 
+ 72.14 
+ 56.03 
+ 69.42 
+ 4.2 Comparison with SOTA Methods
+ Short-Horizon (5s). 
+We compare Attn-Forcing against relevant open-source video generation models of similar scale, including diffusion-based models LTX-Video ( HaCohen et al., 2024 ) and Wan2.1 ( Wan et al., 2025 ) , and autoregressive models Self-Forcing ( Huang et al., 2026 ) , Causal-Forcing ( Zhu et al., 2026 ) , and LongLive ( Yang et al., 2025a ) .
+We first report the quality, semantic, and total VBench scores on 5s videos in Table 1 .
+Attn-Forcing achieves the best quality and total scores at 84.94 and 84.10, respectively, and the second-best semantic score at 80.74, demonstrating superior overall video generation quality.
+ Long-Horizon (30s/60s). 
+For long-horizon evaluation, we generate 30s and 60s videos for all compared autoregressive methods using the VBench and MovieGen prompts, respectively.
+We evaluate the 30s videos across all 16 VBench-Long dimensions, and the 60s videos across six VBench-Long dimensions: subject consistency, background consistency, motion smoothness, dynamic degree, aesthetic quality, and imaging quality.
+As shown in Table 1 and Table 2 , Attn-Forcing shows more pronounced gains in long-horizon generation.
+Specifically, on 30s videos, Attn-Forcing achieves the best total and quality scores of 83.85 and 85.26, while achieving the second-best semantic score of 78.18.
+On the more challenging 60s generation, Attn-Forcing achieves the best total score of 82.37, with a dynamic degree of 72.14 and the best aesthetic and imaging quality scores, consistently surpassing existing baselines and demonstrating its effectiveness in preserving generation quality over extended durations.
+Qualitative comparisons further confirm the advantage of our approach.
+As shown in Figure 3 , Attn-Forcing produces more dynamic long videos while maintaining competitive temporal consistency and visual quality over extended durations.
+ Figure 4: ( Left ) Qualitative comparison of ablations on our proposed modules. ( Right ) The orange and blue curves show the cosine similarity between proxy and exact historical attention with and without \mathcal{L}_{\mathrm{AM}} , respectively. The green dashed curve shows the similarity between exact historical attention and its approximation \widehat{\mathbf{A}}_{\mathrm{hist}} . 
+ 4.3 Ablation Studies
+ Table 3: Ablation studies on key components using 60s videos generated from the 128 MovieGen prompts. The best results for the “Improvement” module are indicated in bold .
+ Model 
+ Evaluation Scores on 60s \uparrow 
+ Total 
+ Background 
+ Smooth 
+ Dynamic 
+ Quality 
+ Improvement 
+ Baseline 
+ 80.03 
+ 96.25 
+ 98.57 
+ 46.30 
+ 68.70 
+ + proxies 
+ 80.16 
+ 96.13 
+ 98.35 
+ 46.82 
+ 69.41 
+ + \mathcal{L}_{\mathrm{AM}} 
+ 82.37 
+ 95.84 
+ 98.56 
+ 72.14 
+ 69.42 
+ Impact of M 
+ M=128 
+ 82.37 
+ 95.84 
+ 98.56 
+ 72.14 
+ 69.42 
+ M=64 
+ 79.50 
+ 95.89 
+ 98.48 
+ 47.08 
+ 67.52 
+ M=32 
+ 79.31 
+ 95.69 
+ 98.27 
+ 47.03 
+ 68.05 
+ Impact of L 
+ L=12 
+ 80.23 
+ 95.00 
+ 98.20 
+ 65.31 
+ 67.06 
+ L=6 
+ 82.37 
+ 95.84 
+ 98.56 
+ 72.14 
+ 69.42 
+ L=3 
+ 79.63 
+ 95.89 
+ 98.46 
+ 45.10 
+ 69.11 
+We conduct ablation studies on the key components of our framework using 60s videos generated from the 128 MovieGen prompts, as follows:
+ Impact of proxies and \mathcal{L}_{\mathrm{AM}} . 
+We first apply the standard streaming long tuning as the baseline.
+Starting from the baseline, introducing learnable attention proxies improves the image quality score from 68.70 to 69.41, while slightly increasing the total score from 80.03 to 80.16, as shown in Table  3 .
+Further incorporating \mathcal{L}_{\mathrm{AM}} substantially improves the total score to 82.37, with a particularly notable gain in dynamic degree from 46.82 to 72.14.
+Visual results in Figure 4 (Left) also show that our full model maintains high generation quality and strong dynamics throughout one minute of generation.
+These qualitative and quantitative comparisons demonstrate the effectiveness of Attn-Forcing.
+Moreover, to directly assess the effect of \mathcal{L}_{\mathrm{AM}} , we compare the cosine similarity between
+ \operatorname{Attn}\left(\mathbf{Q}_{i},\mathbf{K}_{\mathrm{proxy}},\mathbf{V}_{\mathrm{proxy}}\right) and \operatorname{Attn}\left(\mathbf{Q}_{i},\mathbf{K}_{\mathrm{hist}},\mathbf{V}_{\mathrm{hist}}\right) with and without \mathcal{L}_{\mathrm{AM}} at the last DiT layer, and plot the similarity curves over a 60s generation horizon.
+As shown in Figure  4 (Right), incorporating \mathcal{L}_{\mathrm{AM}} (the orange curves) consistently yields higher attention similarity throughout the generation horizon, demonstrating that it effectively improves the approximation of historical attention responses by the learned proxies.
+ Impact of the number of random features M . 
+The number of random features M controls the approximation capacity of the historical attention statistics.
+As shown in Table  3 , reducing M from 128 to 64 or 32 leads to a clear performance drop, with the total score decreasing from 82.37 to 79.50 and 79.31, respectively.
+The degradation is particularly significant in dynamic degree, which drops from 72.14 to around 47, while the image quality score also decreases from 69.42 to 67.52 and 68.05.
+Meanwhile, background consistency and motion smoothness remain relatively stable.
+Therefore, we set M=128 in our final model.
+ Impact of the number of selected layers L . 
+We further study the number of DiT layers L supervised by \mathcal{L}_{\mathrm{AM}} .
+As shown in Table  3 , L=6 achieves the best overall performance, with a total score of 82.37 and a dynamic degree of 72.14.
+Accordingly, we use the last 6 DiT layers in our final model.
+ 4.4 Analysis
+ Full-context attention and \widehat{\mathbf{A}}_{\mathrm{hist}} for generation. 
+We further investigate the effect of directly using
+ Table 4: Quantitative comparison of LongLive, LongLive with a local attention size of 120, and Attn-Forcing. The best results are indicated in bold .
+ Model 
+ Evaluation Scores on 60s \uparrow 
+ Total 
+ Background 
+ Smooth 
+ Dynamic 
+ Quality 
+ LongLive 
+ 79.26 
+ 96.60 
+ 98.85 
+ 35.55 
+ 68.81 
+ w/ Attn. Size = 120 
+ 75.01 
+ 97.08 
+ 99.37 
+ 11.69 
+ 57.27 
+ Attn-Forcing 
+ 82.37 
+ 95.84 
+ 98.56 
+ 72.14 
+ 69.42 
+full-context attention or the approximated historical attention response \widehat{\mathbf{A}}_{\mathrm{hist}} during long-horizon generation.
+We first extend the local attention size of LongLive from 12 to 120 during 60s video inference (240, corresponding to full-context attention, exceeds the available GPU memory).
+As shown in Table  4 , this improves background consistency and motion smoothness from 96.60 and 98.85 to 97.08 and 99.37, respectively.
+However, the total score drops from 79.26 to 75.01, with dynamic degree decreasing from 35.55 to 11.69 and image quality from 68.81 to 57.27.
+This degradation may stem from LongLive being trained with a much shorter attention window due to GPU memory constraints, limiting its ability to handle longer contexts at inference.
+ Figure 5: Qualitative results of directly using \widehat{\mathbf{A}}_{\mathrm{hist}} for generation. Direct use of the approximation results in increasing blur over time.
+We further replace the proxy attention with \widehat{\mathbf{A}}_{\mathrm{hist}} during inference.
+Although \widehat{\mathbf{A}}_{\mathrm{hist}} serves as a good approximation to the exact historical attention response (as illustrated by the green dashed curve in Figure  4 (Right)), directly using this approximation leads to increasing blur as generation proceeds, as shown in Figure  5 .
+This is because \widehat{\mathbf{A}}_{\mathrm{hist}} is obtained through random-feature approximation rather than native KV states, introducing accumulation errors into the inference-time attention computation.
+In contrast, our attention proxies produce native KV states through the standard DiT forward pass while preserving full-context attention contributions.
+ Inference time analysis. 
+Compared with LongLive, Attn-Forcing introduces additional computation for proxy updates and one extra DiT forward pass.
+In practice, these operations incur only approximately 13% additional end-to-end inference time for generating a video on an H20 GPU.
+ 5 Conclusion
+In this work, we presented Attn-Forcing, a novel framework for preserving full-context attention contributions in streaming video generation under bounded memory and computation.
+We achieve this by introducing learnable attention proxies that continuously incorporate evicted visual context and produce native KV states for subsequent generation.
+To further improve their approximation of historical attention responses, we proposed an Attention Matching Loss with efficient full-context supervision constructed from online accumulated statistics.
+Extensive experiments on both short- and long-horizon video generation demonstrate that Attn-Forcing consistently improves generation quality and achieves state-of-the-art performance over existing baselines, highlighting the effectiveness of explicitly modeling historical attention contributions for high-quality streaming video generation.

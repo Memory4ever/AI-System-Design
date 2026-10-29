@@ -252,6 +252,8 @@ adapter working set 都会影响 batch efficiency。动态 adapter 提高共享 
 资产密度，但把第 30、35 章的 lineage 与隔离要求带进 scheduler；是否 merge
 应由 workload、变体数量、更新频率和 SLO 共同决定。
 
+在[请求生命周期的Host critical path边界](./42-what-happens-during-inference.md)下，一个单node engine分支可只提前一轮预测continue、准备metadata与输入buffer，等真实sampled token早反馈回填；再把vocab-sharded logits经all-to-all转成sequence分片，让各worker完成自己的采样。[Albireo的受限单node路径](https://arxiv.org/html/2606.01927v1#S4)还保iteration length、结束后的多余block回收、padding丢弃及统一RNG消费，预测不拥有token提交权。RNG副本、通信与异步状态均增加费用，收益随TP、batch和fabric变化，TTFT可基本不变；多node/PP、取消或采样一致性未验时，保同步准备、原sampling和已验TP，不把吞吐均值或作者生产观察授为通用SLO。<!-- source-family:SF-2026-ARXIV-2606-01927 -->
+
 ### 异步调度跨越 Pipeline Stage 后，Request State 也要分布式提交
 
 单 stage 的异步 scheduler 可以在上一轮 device work 尚未完全返回 CPU 时准备下一轮，减少 host bubble；
@@ -375,6 +377,8 @@ vLLM 将 request lifecycle、token scheduling、KV block ownership 和 GPU execu
 第51章继续比较另一种 runtime 抽象：当请求之间存在可复用的程序结构和 prefix tree 时，scheduler 还可以利用哪些信息。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2606-01927` — Daily2026-06-03补Jun02自然日；exact-v1必要Source、完整actual-owner/PRE及日期准入见本日SUP_MODEL_B4_20261024与SUP_NEXT_REVIEW_20261024。只落实已独核通过的受限机制及主要反侧，未核代码或复现；root实际读取完整直接两侧后按批准稿保存，非writer `jun03_next_reader` 已真实读取完整新增、完整直接两侧与本人注，唯一actualPOST通过（本日SUP_NEXT_REVIEW_20261024，末项R20）；本句只同步既成结果，不授完整DAY。
 
 - **HybridGen（arXiv:2604.18529v1；Status: Experimental）**：支持 KV residency 与 CPU/GPU attention compute placement 联合控制、partial-result dependency 与反馈调度。作者的 `1.41×–3.2×` 只属于所披露实验设置，不证明其他模型、互联、continuous batching 或生产 tail-SLO 下的净收益。https://arxiv.org/abs/2604.18529v1
 

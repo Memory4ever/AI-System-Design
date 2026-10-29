@@ -1,0 +1,567 @@
+Official exact-v1: https://arxiv.org/html/2610.28905v1
+Necessary reviewed scope is recorded separately; cache is not a claim of full reading.
+
+Hidden Messages Between Diffusion Language Model Agents:Causal Evidence for Latent Communication
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related work
+Latent multi-agent communication.
+State across diffusion steps.
+Causal audits.
+3 Hidden communication between diffusion agents
+3.1 Independent trajectories and a continuous interface
+3.2 Supervised task-specific channel adaptation
+3.3 Causal and temporal interventions
+4 Experimental setup
+4.1 Two backbones, three views of the channel
+HM-Synth Chain on Tiny-A2D.
+Dream-7B dependency spanning.
+Distributed QASC.
+Inference and uncertainty.
+5 Results
+5.1 The receiver follows the message, not merely the channel
+5.2 The right moment beats more rounds
+6 Discussion
+What travels through the channel.
+Communication has a clock.
+7 Limitations and future work
+8 Conclusion
+References
+A Implementation and evaluation details
+Code and artifacts.
+B Intervention details
+Deranged message.
+Zero, random, and self controls.
+Integrity.
+License: arXiv.org perpetual non-exclusive license
+arXiv:2610.28905v1 [cs.AI] 20 Oct 2026
+Hidden Messages Between Diffusion Language Model Agents:
+Causal Evidence for Latent Communication
+Alan-Barsag Gazzaev
+Affiliation: ITMO University
+Email: avgazzaev@itmo.ru
+Alexey Gavrilov
+Affiliation: ITMO University
+Email: aogavrilov@itmo.ru
+Sergey Muravyov
+Affiliation: ITMO University
+Email: smuravyov@itmo.ru
+Ilya Makarov
+Affiliation: HSE University
+Email: iamakarov@hse.ru
+Abstract
+Diffusion language models form answers through a sequence of revisable continuous states, but
+multi-agent systems usually discard those states and make agents communicate only after decoding
+text. We ask whether one independent diffusion trajectory can pass a compact hidden message into
+another and, crucially, whether the receiver uses what that message means. In Hidden Messages, a sender
+compresses its denoising state into four signed dense vectors; the receiver consumes them while
+retaining its own context, canvas, and trajectory. Removing a message tests whether the channel
+matters; replacing it with a message from another example tests whether its content matters.
+Across controlled tasks, derangement removes a +63.6-point advantage on Tiny-A2D and
+a +100.0-point advantage on Dream-7B, while targeted substitutions steer the
+receiver toward the substituted fact. On QASC with the two supporting facts split across agents,
+matched communication reaches 80.8%, but a wrong-example message lowers accuracy to
+46.8%, a content effect of +34.0 points. The surprising result is temporal:
+one late transfer reaches 87.8%, exceeding four recurrent exchanges by +7.0
+points. These experiments provide causal evidence for continuous hidden communication between
+diffusion-LM agents and show
+that when information is transferred can matter more than how many times agents exchange it.
+1 Introduction
+Masked diffusion language models generate by repeatedly revising a partially masked sequence
+rather than committing to a left-to-right token stream (Li et al., 2022; Sahoo et al., 2024; Nie et al., 2025; Ye et al., 2025; Zhou et al., 2026). Between the initial mask and the final answer lies a rich
+sequence of continuous states. A single model uses those states internally, then throws them away.
+A group of agents could instead treat them as a communication surface.
+Imagine two agents looking at different pieces of the same problem. One knows which fact is
+needed; the other holds a table containing that fact. A text-only protocol makes the first agent
+finish a sentence before the second can use the request. A hidden-state protocol can hand over a
+compact continuous representation while both answers are still being revised. This is the object
+we study: messages between independent diffusion-LM agents, with no shared canvas, context,
+token prediction, or trajectory. Recent latent multi-agent systems relay hidden states or
+key–value caches between autoregressive models (Du et al., 2026; Zou et al., 2026), while
+other work preserves state within one diffusion model or transfers partially denoised sequences
+(Xia et al., 2026; Rozonoyer et al., 2026; Yun et al., 2026). Here the boundary is agent-to-agent and
+continuous, but each denoising process remains its own. We train a task-specific communication
+adapter with supervision around frozen backbones: the question is whether this learned channel
+carries causally useful content, not whether a communication protocol emerges without supervision.
+An accuracy increase alone, however, is not evidence that a hidden message conveys the sender’s
+example-specific content. The receiver could benefit from a generic activation, extra compute,
+or a distributional cue. Causal audits of latent channels have made this distinction explicit
+for autoregressive agents (Zhang and Emu, 2026; Cheng et al., 2026). We bring this standard to
+diffusion-LM collaboration: the message entering the receiver is replaced while everything else
+is held fixed. A matched message is compared both with no message and with a deranged
+message produced for another example. The first contrast asks whether the channel matters; the
+second asks whether the receiver uses the right content.
+We follow the idea from its smallest causal test to a natural reasoning task. Tiny-A2D asks
+whether a compact diffusion backbone can learn an example-specific channel at all. The Dream-7B
+dependency-spanning task then asks whether the same causal signature survives scale and a dependency that
+requires information to travel out and back. Finally, distributed QASC asks whether the channel
+changes answers when scientific evidence is split across agents. This progression exposes a
+result that a simple
+“more interaction is better” comparison would miss: repeated exchange is indispensable for the
+out-and-back dependency, yet one late transfer beats four recurrent exchanges on QASC. The
+relevant design variable is not raw round count but the match between a task’s dependency
+structure and the moment at which a hidden state becomes useful.
+Our contributions are threefold:
+•
+We introduce a supervised signed dense message channel for diffusion-LM agents and instantiate it on
+Tiny-A2D and Dream-7B while preserving independent contexts, canvases, random-number streams,
+and denoising trajectories.
+•
+We establish content-sensitive communication through receiver-side interventions:
+removing, deranging, zeroing, randomizing, or self-substituting messages while retaining a fixed
+designated receiver.
+•
+We identify a temporal principle across three empirical settings: recurrent communication
+helps when dependencies are sequential, whereas late fusion can be both simpler and more
+accurate when private evidence is independently computable.
+Code and artifacts:
+https://github.com/alanrbtx/hidden-messages-diffusion-agents
+2 Related work
+Latent multi-agent communication.
+Interlat learns compressed hidden-state communication between language-model agents
+(Du et al., 2026); LatentMAS relays latent thoughts through shared working memory
+(Zou et al., 2026); and Latent-DARM bridges diffusion planners and autoregressive executors
+(Berrayana et al., 2026). These works establish that text is not the only viable agent
+interface. Our focus is the denoising-time interface between diffusion-LM agents and the causal
+identity of a compact message, with independent rather than shared canvases. This distinction
+turns communication into a testable object: the sender-side message can be replaced without
+replacing the receiver’s context or trajectory.
+State across diffusion steps.
+MetaState and Relay preserve continuous computation across successive passes of one diffusion
+model (Xia et al., 2026; Rozonoyer et al., 2026). TIE transfers promising partially denoised
+sequences across models (Yun et al., 2026). Hidden Messages instead transports a compressed hidden
+message between separate agents; the receiving canvas itself is never replaced. This distinction
+is important for attributing an effect to communication rather than trajectory selection.
+Causal audits.
+Recent audits show that message presence, example-specific content, and sender identity are
+separate properties of latent channels (Zhang and Emu, 2026; Cheng et al., 2026). We adopt
+matched-versus-deranged replacement as a necessary content test and extend the intervention axis
+to delivery time. The resulting question is not only whether a vector matters, but whether the
+right vector arrives when the receiving computation can use it.
+3 Hidden communication between diffusion agents
+3.1 Independent trajectories and a continuous interface
+Consider agents i\in\{0,\ldots,N-1\}. Agent i has private context c_{i}, a masked canvas
+x_{i}^{t}, and its own denoising trajectory. At an exchange point t, an encoder reads the
+task-relevant part of hidden state \mathbf{h}_{i}^{t} and produces a compact message
+\mathbf{z}_{i}^{t}=E_{\theta}(\mathbf{h}_{i}^{t})\in\mathbb{R}^{K\times d},\qquad K=4,\ d=128.
+(1)
+The transmitted object is a signed BF16 tensor, not token IDs, class probabilities, logits, or a
+partially decoded sequence. Incoming messages from other agents are averaged and decoded into a
+receiver-side conditioning state,
+\bar{\mathbf{z}}_{i}^{t}=\frac{1}{N-1}\sum_{j\neq i}\mathbf{z}_{j}^{t},\qquad\mathbf{r}_{i}^{t}=D_{\phi}(\bar{\mathbf{z}}_{i}^{t}).
+(2)
+On Tiny-A2D, E_{\theta} attends over the sender token states and D_{\phi} fuses the decoded message
+into the receiver’s answer state through a gated residual. On Dream-7B, the encoder reads the
+answer-position state and the decoder produces K virtual prefix embeddings, RMS-matched to the
+backbone input embeddings and prepended to the receiver’s next pass. In recurrent exchange the
+prefix persists until it is replaced. No agent sees another agent’s text context or canvas.
+Agent 0 \starprivate c_{0}, canvas x_{0}^{t}Agent 1private c_{1}, canvas x_{1}^{t}\mathbf{h}_{0}^{t}\rightarrow\mathbf{z}_{0}^{t}\in\mathbb{R}^{4\times 128}\mathbf{h}_{1}^{t}\rightarrow\mathbf{z}_{1}^{t}\in\mathbb{R}^{4\times 128}\mathbf{z}_{0}^{t}\mathbf{z}_{1}^{t}designated receiverCausal content probe: matched \mathbf{z}_{1}(x)\big|deranged \mathbf{z}_{1}(x^{\prime})\big|no message \varnothing
+Recurrent t_{1}\xrightarrow{\mathbf{z}}t_{2}\xrightarrow{\mathbf{z}}t_{3}\xrightarrow{\mathbf{z}}t_{4}\xrightarrow{\mathbf{z}} decision
+Late t_{1}\!\rightarrow\!t_{2}\!\rightarrow\!t_{3}\!\rightarrow\!t_{4}\xrightarrow{\mathbf{z}} decision
+The receiver, not a vote, is scored. Message identity and delivery time are intervened on;
+all local inputs stay fixed.
+Figure 1: Hidden Messages exchanges compact continuous states while each diffusion-LM agent keeps an
+independent canvas and trajectory (top). The receiver consumes the four slots through residual
+fusion on Tiny-A2D or a virtual prefix on Dream-7B. Matched-versus-deranged replacement isolates
+example-specific content; recurrent-versus-late delivery isolates timing (bottom). The star marks
+the predesignated receiver.
+3.2 Supervised task-specific channel adaptation
+The channel is a lightweight, task-specific adapter comprising a message encoder and a receiver-side
+fusion or projection module. The backbone and language-model head are frozen in every reported
+channel experiment; supervision trains the communication interface rather than the diffusion models. For
+Tiny-A2D, the compressor and residual fuser are learned jointly: union-context hidden states act as
+a teacher, while paired matched-versus-deranged supervision makes messages discriminate between
+counterfactual sender facts. For Dream-7B (Ye et al., 2025), an auxiliary classifier first
+encourages the message to preserve the requested slot, returned code, or QASC answer label; a
+variance term prevents collapse. We then freeze the encoder and align the receiver-side projector
+to short answer-oriented prefix embeddings using cosine and relative mean-squared error.
+Supervision shapes the message geometry, but neither the label, teacher context, nor any text
+message is available to the receiver at inference time. The reported settings use task-specific
+channel training, not a single universal adapter transferred across all tasks. Exact optimization settings are given in
+Appendix A.
+3.3 Causal and temporal interventions
+Let Y(x,\mathbf{z}) indicate whether the designated receiver answers example x correctly under
+message input \mathbf{z}. We evaluate three core interventions:
+\displaystyle\Delta_{\mathrm{presence}}
+\displaystyle=\mathbb{E}[Y(x,\mathbf{z}(x))-Y(x,\varnothing)],
+(3)
+\displaystyle\Delta_{\mathrm{content}}
+\displaystyle=\mathbb{E}[Y(x,\mathbf{z}(x))-Y(x,\mathbf{z}(\pi(x)))],
+(4)
+where \pi is a deterministic permutation to a different-target example whenever possible.
+Because the receiver input, local trajectory, and evaluation item are unchanged, the second
+contrast attributes the difference to message identity rather than mere channel presence. We
+also compare recurrent delivery with late-only delivery: agents first process private
+evidence independently, then exchange once immediately before the receiver decision. Zero,
+moment-matched random, and self-message replacements serve as additional checks (Appendix B).
+4 Experimental setup
+4.1 Two backbones, three views of the channel
+HM-Synth Chain on Tiny-A2D.
+We begin with the minimal causal question: can information cross the hidden boundary at all?
+HM-Synth generates chains of two to four lookup facts and splits them across two private contexts.
+Each counterfactual pair keeps the designated receiver’s context fixed but changes a sender-side
+fact and therefore the correct answer. The frozen Tiny-A2D backbone sees 10,000 training examples
+and no union context at inference; only a 6.1 MiB communication module is learned. We evaluate
+1,000 counterfactual pairs (2,000 examples), making both message derangement and targeted fact
+replacement unambiguous.
+This benchmark acts as a microscope for the channel: when the receiver input is fixed and only the
+sender fact changes, a corresponding answer change has only one route across the agent boundary.
+Dream-7B dependency spanning.
+Agent 0 knows which of ten slots is requested but does not have the code table. Agent 1 has the
+complete, randomly ordered table but is not told which slot is requested. Solving the task
+requires a two-stage out-and-back exchange: agent 0 communicates the requested slot, agent 1 uses that message to select
+the relevant code, and agent 1 communicates the code back before agent 0 commits its answer. We
+evaluate 512 counterfactual pairs (1,024 examples) with disjoint private contexts. In addition to
+example derangement, a wrong-fact intervention swaps a table entry while preserving agent 0’s
+context; this lets us test whether the final prediction follows the substituted content.
+The first transfer is therefore a query and the second a reply; a single late handoff cannot
+recover the intermediate computation that never took place.
+Distributed QASC.
+QASC questions are annotated with two facts whose composition supports an eight-way answer
+(Khot et al., 2020). We give one gold fact to each of two agents, add four disjoint
+leakage-filtered distractors per agent, and keep the question and options common. Neither agent
+sees the other’s evidence. The channel is learned only from the 7,134 derived training examples
+and evaluated on all 1,000 derived development examples. Agent 0 is fixed as receiver in every
+condition; there is no voting or logit averaging.
+This setting replaces synthetic codes with ordinary scientific statements while preserving the
+central information constraint: the scored receiver must combine evidence that it never observes
+in one text context.
+Inference and uncertainty.
+For QASC, recurrent communication consists of four synchronous exchanges followed by one receiver
+decision; late-only communication consists of one independent pass per agent, one exchange, and
+the same receiver decision. We reuse identical item order and receiver inputs across conditions.
+HM-Synth and QASC accuracy contrasts use 5,000 and 10,000 paired bootstrap resamples over examples,
+respectively, with percentile 95% intervals. The Dream-7B dependency-spanning row in
+Table 1 reports the aggregate over locked evaluations; its item-level causal
+contrasts have the same direction throughout.
+5 Results
+Table 1: Three views of the hidden channel. Accuracies are percentages and contrasts are
+percentage points. Tiny-A2D establishes content transfer on HM-Synth; the Dream-7B dependency-spanning task
+tests a sequential dependency, and distributed QASC tests split natural evidence. The schedule
+reversal in the last column is the central timing result: late fusion fails on the Dream-7B
+dependency-spanning task but wins on QASC.
+Setting
+No msg.
+Matched
+Deranged
+Late
+Match.-der.
+Late-match.
+HM-Synth (Tiny-A2D)
+8.6%
+72.9%
+9.3%
+–
++63.6
+–
+Dependency spanning (Dream-7B)
+9.8%
+100.0%
+0.0%
+10.8%
++100.0
+-89.2
+QASC (Dream-7B)
+72.6%
+80.8%
+46.8%
+87.8%
++34.0
++7.0
+Tiny-A2D content CI: [+61.5, +65.8];
+QASC content CI: [+30.7, +37.2];
+QASC late-matched CI: [+4.4, +9.6].
+5.1 The receiver follows the message, not merely the channel
+Tiny-A2D supplies the first causal trace. A matched message raises HM-Synth accuracy from
+8.6% to 72.9%; a message from a different-target example returns performance
+to 9.3%. The matched-minus-deranged effect is +63.6 points with 95%
+paired bootstrap CI [+61.5, +65.8], while random, zero, and self messages all remain near chance.
+More revealingly, when we replace the sender’s fact, the receiver changes its answer in
+89.4% of examples and selects the substituted target in 72.9%.
+The vector is therefore carrying a decision-relevant fact, not merely opening a learned gate.
+The Dream-7B dependency-spanning task reproduces the same signature in a harder out-and-back exchange. Matched two-stage
+communication reaches 100.0%, compared with 9.8% without a message
+and 0.0% under derangement. Swapping the table fact steers the receiver to the
+replacement target in 100.0% of examples. Scaling the backbone does not
+wash out the causal dependence on message identity; it sharpens it.
+The same causal signature appears on natural questions. QASC accuracy rises from
+72.6% without communication to 80.8% with matched recurrent messages. The
++8.2-point paired gain has interval [+5.7, +10.7]. More decisively, replacing
+each message with one produced for a different-target question reduces accuracy to
+46.8%: the matched-minus-deranged content effect is +34.0 points with
+interval [+30.7, +37.2]. Wrong content is substantially worse than silence. A channel whose
+benefit came only from additional computation or a constant learned prefix would not be sensitive
+to which question produced the message, much less be harmed by receiving the wrong one.
+5.2 The right moment beats more rounds
+The direction of the schedule effect reverses with the information structure. The Dream-7B
+dependency-spanning task needs messages at two different points: agent 1 cannot select the requested code before
+receiving the slot identity. Recurrent exchange reaches 100.0%, but one late message
+reaches only 10.8%, near the no-communication level. The first message is useful not
+because it contains the final answer, but because it changes what the other agent computes next.
+QASC has a different structure. Each agent can interpret its own supporting fact before any
+exchange. Here, a single late transfer reaches 87.8%, outperforming the four-round recurrent
+schedule by +7.0 points ([+4.4, +9.6]). The late schedule transmits only once and uses
+three agent forward passes, compared with four transmissions and nine forward passes for the
+recurrent schedule, yet it is more accurate. Repeatedly injecting provisional states appears to
+interfere with independent evidence formation; delaying fusion lets the sender first form a more
+decision-ready representation.
+The two regimes suggest a temporal design rule. If one agent’s next computation is conditional on
+another’s partial result, the message must arrive early enough to redirect that computation. If
+private evidence can mature independently, early repeated fusion can be counterproductive and the
+best handoff is close to the decision. Round count is therefore a poor proxy for collaboration
+depth: the useful quantity is whether the exchange point aligns with the task’s latent dependency
+graph.
+6 Discussion
+What travels through the channel.
+Matched accuracy alone would leave the mechanism ambiguous: a learned prefix might simply make the
+receiver more confident or place it in a generally favorable activation regime. The replacement
+experiments tell a more specific story. Messages produced for the wrong example hurt, while
+targeted fact substitutions redirect the receiver toward the substituted answer. We therefore do
+not need to translate the vectors into sentences to test whether they carry decision-relevant
+content; changing their origin while holding the receiver fixed changes the decision in a
+predictable direction. This supports hidden communication, not a claim of a human-readable or
+emergent language.
+Communication has a clock.
+The schedule reversal shows why an agent protocol cannot be summarized by its round count. In the
+Dream-7B dependency-spanning task, the first message determines what the other agent should compute, so waiting
+until the end removes the opportunity to perform that computation. In QASC, each agent can first
+form a useful representation of its own evidence, and early repeated fusion can disturb that
+process. Both settings use the same Dream-7B backbone, so the reversal is not a trivial consequence
+of comparing different model sizes; it is consistent with the dependency structure and the point
+at which a message becomes actionable. The broader design opportunity is an adaptive protocol
+that exchanges when a latent dependency is ready, rather than on a fixed clock.
+7 Limitations and future work
+The controlled evidence spans Tiny-A2D and Dream-7B, but natural-question evidence currently comes
+from Dream-7B on QASC; larger teams, other diffusion backbones, and long-form generation may produce
+different channel geometries. The channels are supervised, task-specific adapters, so the results
+establish learned hidden communication but not an emergent language or a task-independent protocol.
+Initial zero-shot reuse across heterogeneous tasks did not yield a detectable benefit. Applying the
+channel to a new task may therefore require new supervision and adapter retraining or explicit
+cross-domain alignment; successful zero-shot transfer is not established by these experiments.
+Matched text-channel and wall-clock comparisons are also future work. Finally, a latent channel is
+not a privacy mechanism: dense states may encode sensitive information even when they are not
+human-readable. A particularly consequential next setting is multi-agent code generation with
+deliberately partitioned context: different agents may see the specification, relevant source
+files, tests, or execution feedback. Continuous hidden communication could carry task-specific
+intermediate state across these boundaries without requiring every exchange to be verbalized, while
+matched-versus-deranged interventions would test whether successful code changes causally depend on
+the transmitted content. This setting also sharpens the timing question: a message should arrive
+when a cross-agent dependency becomes actionable, rather than at every decoding round. We therefore
+view context-partitioned software engineering, together with a content-dependent message policy, as
+the primary direction for scaling the method.
+8 Conclusion
+With a supervised task-specific adapter, diffusion-LM agents can exchange useful information without
+verbalizing it. From Tiny-A2D
+HM-Synth to the Dream-7B dependency-spanning task and distributed QASC, removing, deranging, or surgically replacing
+the hidden message changes a fixed receiver in the predicted direction. That sequence of
+interventions is the causal evidence: example-specific content crosses the latent boundary. The
+central result is not that more messages are always better. Two-stage exchange is essential when
+one agent’s computation depends on another’s earlier message, while a single late transfer is
+superior when private evidence can mature independently. Hidden communication is therefore a
+temporal coordination problem: the moment of transfer can matter more than the number of rounds.
+Acknowledgments and Disclosure of Funding
+This paper was carried out as part of ITMO University project No. 666001
+“Laboratory of Multi-Agent Modeling and Adaptive Intelligence”.
+The authors declare no competing interests.
+References
+Berrayana et al. (2026)
+L. Berrayana, A. Heakl, M. A. Sohail, T. Hofmann, S. Khan, and W. Chen
+Latent-DARM: bridging discrete diffusion and autoregressive models for reasoning.
+In Latent and Implicit Thinking Workshop at ICLR,
+External Links: Link
+Cited by: §2.
+Cheng et al. (2026)
+J. Cheng, S. Das, and R. Ramnath
+When does latent communication pay? a causal audit of relayed KV caches in multi-agent LLMs.
+arXiv preprint arXiv:2608.04893.
+External Links: Document,
+Link
+Cited by: §1,
+§2.
+Du et al. (2026)
+Z. Du, R. Wang, H. Bai, Z. Cao, X. Zhu, Y. Cheng, B. Zheng, W. Chen, and H. Ying
+Enabling agents to communicate entirely in latent space.
+In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pp. 27106–27129.
+External Links: Document,
+Link
+Cited by: §1,
+§2.
+Khot et al. (2020)
+T. Khot, P. Clark, M. Guerquin, P. Jansen, and A. Sabharwal
+QASC: a dataset for question answering via sentence composition.
+Proceedings of the AAAI Conference on Artificial Intelligence 34 (05), pp. 8082–8090.
+External Links: Document,
+Link
+Cited by: §4.1.
+Li et al. (2022)
+X. L. Li, J. Thickstun, I. Gulrajani, P. Liang, and T. B. Hashimoto
+Diffusion-LM improves controllable text generation.
+In Advances in Neural Information Processing Systems,
+Vol. 35, pp. 4328–4343.
+External Links: Document,
+Link
+Cited by: §1.
+Nie et al. (2025)
+S. Nie, F. Zhu, Z. You, X. Zhang, J. Ou, J. Hu, J. Zhou, Y. Lin, J. Wen, and C. Li
+Large language diffusion models.
+In Advances in Neural Information Processing Systems,
+Vol. 38, pp. 50608–50646.
+External Links: Document,
+Link
+Cited by: §1.
+Rozonoyer et al. (2026)
+B. Rozonoyer, J. Minniti, D. Patel, N. Band, A. J. Bose, T. G. J. Rudner, and A. McCallum
+Learned relay representations for forward-thinking discrete diffusion models.
+arXiv preprint arXiv:2605.22967.
+External Links: Document,
+Link
+Cited by: §1,
+§2.
+Sahoo et al. (2024)
+S. S. Sahoo, M. Arriola, Y. Schiff, A. Gokaslan, E. Marroquin, J. T. Chiu, A. Rush, and V. Kuleshov
+Simple and effective masked diffusion language models.
+In Advances in Neural Information Processing Systems,
+Vol. 37, pp. 130136–130184.
+External Links: Document,
+Link
+Cited by: §1.
+Xia et al. (2026)
+K. Xia, M. Li, L. Wei, Z. Du, X. Yuan, D. Shi, Q. Jin, and W. Lee
+MetaState: persistent working memory enhances reasoning in discrete diffusion language models.
+arXiv preprint arXiv:2603.01331.
+External Links: Document,
+Link
+Cited by: §1,
+§2.
+Ye et al. (2025)
+J. Ye, Z. Xie, L. Zheng, J. Gao, Z. Wu, X. Jiang, Z. Li, and L. Kong
+Dream 7B: diffusion large language models.
+arXiv preprint arXiv:2508.15487.
+External Links: Document,
+Link
+Cited by: §1,
+§3.2.
+Yun et al. (2026)
+H. Yun, J. Park, J. Kim, and E. Yang
+Who should lead decoding now? tracking reliable trajectories for ensembling masked diffusion language models.
+arXiv preprint arXiv:2606.16281.
+External Links: Document,
+Link
+Cited by: §1,
+§2.
+Zhang and Emu (2026)
+H. Zhang and M. Emu
+Do latent channels actually communicate? a causal audit of latent multi-agent LLM.
+arXiv preprint arXiv:2607.26773.
+External Links: Document,
+Link
+Cited by: §1,
+§2.
+Zhou et al. (2026)
+Z. Zhou, L. Chen, H. Tong, and D. Song
+dLLM: simple diffusion language modeling.
+arXiv preprint arXiv:2602.22661.
+External Links: Document,
+Link
+Cited by: Appendix A,
+§1.
+Zou et al. (2026)
+J. Zou, X. Yang, R. Qiu, G. Li, K. Tieu, P. Lu, K. Shen, H. Tong, Y. Choi, J. He, J. Zou, M. Wang, and L. Yang
+Latent collaboration in multi-agent systems.
+In Proceedings of the 43rd International Conference on Machine Learning,
+Note: Spotlight
+External Links: Link
+Cited by: §1,
+§2.
+Appendix A Implementation and evaluation details
+We use the Tiny-A2D checkpoint dllm-hub/Qwen3-0.6B-diffusion-mdlm-v0.1
+[Zhou et al., 2026] and Dream-v0-Instruct-7B, both with BF16 weights. Dream uses SDPA attention,
+and both model checkpoints are released under Apache-2.0. QASC is used under CC-BY-4.0. Exact
+pinned model and dataset revisions are recorded with the released configurations rather than in
+the paper prose. The derived QASC split contains 7,134 training, 1,000 development, and 926 held-out
+examples; this paper reports the full development set and does not select examples by method
+output.
+HM-Synth contains 5,000 training, 500 validation, and 1,000 test counterfactual pairs, with disjoint
+generator ranges and two to four hops. The Tiny-A2D channel has four 128-dimensional slots and
+width 256. Its 960-step AdamW run uses batch size 64, learning rate 3\times 10^{-4}, weight decay
+10^{-2}, union-teacher weight 0.5, and paired-separation weight 0.2 on one quarter of each batch.
+Only split private contexts are available at evaluation.
+The Dream encoder is LayerNorm–Linear–SiLU–Linear with per-slot LayerNorm; its
+Linear–SiLU–Linear prefix projector is RMS-calibrated to input embeddings. Representation
+learning combines answer-class cross-entropy with a feature-variance penalty (weight 0.1, target
+standard deviation 0.2); prefix alignment uses cosine distance plus 0.25 relative MSE. Both stages
+use AdamW for 1,000 steps, batch size 128, learning rate 10^{-3}, weight decay 10^{-4},
+gradient clipping at 1.0, and a 5% warmup.
+Code and artifacts.
+The implementation, exact configurations and revisions, learned channel weights, per-example
+predictions, and table-generation code are available at
+https://github.com/alanrbtx/hidden-messages-diffusion-agents.
+Tiny-A2D used an NVIDIA Quadro RTX 8000 with CUDA 13.0 and PyTorch 2.12 for 1,293.3 seconds
+(0.36 GPU-hours). Dream used NVIDIA H100 80GB GPUs with the same stack: QASC evaluation took
+754.6 seconds (0.21 GPU-hours), and controlled channel training plus evaluation took 8,988.7
+seconds (2.50 GPU-hours). These totals exclude download, artifact verification, and other runs.
+Appendix B Intervention details
+Deranged message.
+The sender message is permuted across evaluation rows while the receiver’s prompt, private context,
+and target stay fixed. For QASC, the permutation is constrained to a different answer label. For
+the controlled task, counterfactual pairs and different-slot batches ensure that both fact and slot
+replacements are defined.
+Zero, random, and self controls.
+The zero condition replaces every message element with zero. The random condition samples a
+tensor with the empirical first and second moments of the matched messages at that round. The
+self condition injects an agent’s own message through the same projection path. These conditions
+help separate task content from vector presence, magnitude, and receiver-side activation.
+Integrity.
+Every agent receives a separate token row and maintains its own diffusion state. Communication-off
+predictions are exactly identical to the unmodified backbone path. The primary output is always
+agent 0; no vote, canvas replacement, logit averaging, or union-context oracle is used. Paired
+bootstrap intervals resample evaluation rows with replacement and recompute the accuracy
+difference for 10,000 replicates.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

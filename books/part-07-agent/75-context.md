@@ -95,6 +95,11 @@ collect candidates
 
 排序不能只看 embedding similarity。Authoritative policy、current workflow state 与 user intent 可能优先于语义相近文本。冲突内容应保留来源和时间，不应由摘要器静默合并成一个“事实”。
 
+固定输入预算时，逐项相关性排序还会反复选中同一类证据，却漏掉需要联合读取的部分。另一分支将memory记录、历史turn与tool结果放入共同候选池，以token估算作成本，用query相关性加权的集合覆盖目标选择工作集，再交给原Agent消费；独立selector拥有本次选取，不拥有改写原事实、撤销工具权限或永久删历史的权力。[受限facility-location对照](https://arxiv.org/html/2606.20047v1#S3)中，相近的证据recall仍可对应不同QA质量，较紧预算又可输给普通topK，因此embedding覆盖与去冗余不是答案可提取性或未来充分性的保证。候选粒度、embedding、query、token估算与预算须共同保存，顺序依赖和桥接证据仍需原文回读；不把有限候选上的代理优化称为全任务最优。编码、覆盖计算、选择及独立consumer评价都付费；预算、估算或任务支持不合时，保留简单topK/MMR、较完整历史和有界回读，不由短context或较高代理覆盖批准语义无损与净提速。
+<!-- source-family:SF-2026-ARXIV-2606-20047 -->
+
+把内容选入Context后，放置还可以按有关联的块组，而不总是独立给每块排一个位置。一个受限做法先固定关键指令及其输出格式邻居，整体移动该组并改变组内先后，再与单块移动及中性邻居替换比较，以区分绝对位置和局部内容组合。[RAMPART的合成指令probe](https://arxiv.org/html/2606.04628v1#S3)中，关键块跟在两format块之后可改善部分位置，替换邻居后残余信号仍在；它不证明统一attention机制或所有任务的固定最优位置。这个分支增加分块、诊断调用、编排和回归成本，literal出现也不是实际任务完成；任务、模型或邻接内容改变时，应重验或保留简单固定排序/完整指令。未进入这次view的schema不等于executor撤权，授权仍由工具执行边界检查。<!-- source-family:SF-2026-ARXIV-2606-04628 -->
+
 当检索内容用于改写下一份prompt，而非直接回答事实时，exemplar还可以按质量层次或不同评价轴组合，不必只取一个总分最高项。一条[受限对照构造分支](https://arxiv.org/html/2509.02093v1)从近邻中分别保留高/中/低层，或取各metric最佳，再让模型对照生成新提示；同一项可能赢多个轴，中层也不因被命名为anchor就保证防过拟合。标签若来自prompt-response pair，就不能静默变成prompt固有质量，更不能把complexity或verbosity均值当事实/安全真值。应保存query、原配对、各轴标签、retrieval/selection与最终prompt，再在明确的下游consumer上独立验收；较大k仍可能退步，同源judge和混样本数的消融不证明纯reasoning因果。标注、检索、全部refine/生成/judge和回归均付费；评价对象、标签或净收益不可靠时，保留原prompt、简单top-k/可信exemplar与独立任务测试，不让更高refinement分数取得事实或执行权限。
 
 <!-- source-family:SF-2025-ARXIV-2509-02093 -->
@@ -107,11 +112,19 @@ collect candidates
 
 无需额外 LLM 分段调用不等于免费：embedding、索引、span 检索与拼接仍占预算，多留低相关 turns 也会增加输入与等待。有限对照中 GPT-4.1 的 full history 已接近此分支，检索遗漏仍会丢掉完整历史可回答的证据；judge 分数及低相关 turn 移除实验不证明全局依赖因果或超长能力。短历史、已常驻工作集或检索不可靠时，保留完整 history、简单 top-K 与原文回读，按实际遗漏/成本选择，不由标称窗口更长或 pruning 更短推断普遍收益。<!-- source-family:SF-2026-ARXIV-2601-07994 -->
 
+跨段证据还可以按多种读取顺序构造候选工作状态，而不是只选一份固定拼接：先从各chunk提问题相关证据与暂定答案，据此选择要回读的原段，再沿不同次序逐步更新状态；相同有序前缀复用已生成状态，被判无用的扩展则剪去该路径后续。[受限多视角读取分支](https://arxiv.org/html/2509.06436v1)缓存的是派生语义状态，不是decoder KV，也不证明不同次序已覆盖全部事实；cache须绑定query、原段/顺序、模型与prompt版本，不能以片段集合相同复用不同历史。摘要漏掉的线索会影响后续回读选择，当前无用的段也可能在之后出现桥接证据，故局部utility只拥有搜索proposal，不授无损剪枝。较长路径与跨worker多数都不认证真值，重排阅读也不改原文时序或来源；共享前缀和同模型状态还使候选相关。原实验仍有任务反退，更低None率只是更常作答，非幻觉减少。初次全段读取、全部路径/状态生成、utility、缓存驻留、最终聚合与独立原文核验均计费，局部省调用不等比顺读便宜。证据选择、顺序敏感或预算不可靠时，保原段引用、更宽回读、固定顺序/直接长窗和Unknown，不让被选摘要自行批准事实或完整理解。
+
+<!-- source-family:SF-2025-ARXIV-2509-06436 -->
+
 Assembly 不一定只有检索或手写规则：也可以训练一个独立的 Context generator，为当前任务生成执行提示，同时冻结真正执行工具的 Agent。训练时先对同一任务取得成功与失败轨迹，用对比 reflection 形成监督样本，再以冻结执行器的结果奖励更新 generator；部署时生成的新提示进入本次 Context。这与检索历史 Memory 不同：经验主要改变 generator 参数，executor 的参数不随该训练更新，生成提示也不因此成为事实或授权。<!-- source-family:SF-2026-ARXIV-2604-07487 -->
 
 这种分责让 Context 构造本身可以优化，却增加离线多轨迹采集、reflection、训练和每次调用的生成成本，并可能学到执行器或环境专属捷径。作者在 AppWorld 等任务中报告了受限收益，但没有包含 RL-only 的完整因子对照，也没有把额外轨迹与运行成本全部匹配，不能据此证明每一阶段必需或普遍比检索更省。任务或工具接口变化后，需要重新验证 generator—executor 配对；训练数据不足、需要严格来源可追溯性或执行器频繁更换时，固定 assembly、原文检索与已有 Memory 仍是合理路径。
 
 连续编辑的 Context generator 还须看见部署时的中间状态，而不只学会从 seed 写出一次提示。一条受限分支从多轮编辑树抽取已修改的 instruction 与带正确答案、执行成绩的反馈，训练一次 edit；直接把编辑前已知的“不修改”成绩作奖励参照，而不再交给学习的 value 或组内归一化吸收。这个 action-independent baseline 不改变期望优化目标，也不保证方差必减；单次训练更不等于多轮累积收益最优。部署另保存各 context 及成绩并允许回访旧分支，避免必须沿最新错误 edit 继续，但搜索和提交仍由 Context owner 控制。[有限 SQL/选择题对照](https://arxiv.org/html/2603.18620v1)把固定 holdout 反复用于分支选择并报告最佳轮次，不能当未参与选择的最终泛化；editor 变强也不证明冻结的执行器胜过更强执行模型。初始轨迹、gold反馈、编辑器训练、每轮候选与多次执行评价均计费，冻结参数不消除指令污染或遗忘约束。反馈不可得、任务/执行器变更或净预算不足时，保留固定 assembly、已核 generator 与原文检索，并在未参与选择的任务上验收，不由自改提示批准事实或权限。<!-- source-family:SF-2026-ARXIV-2603-18620 -->
+
+外部 generator 还可以在每次 tool observation 后维护运行中的 message view，而不只生成起始提示：按稳定 message IDs 提议保留、合并、改写或删除，冻结的 executor 再消费下一视图。[AdaCoM 的有限对照](https://arxiv.org/html/2605.30785v1)支持训练这种 manager，却也显示未经训练的编辑会退步，跨 executor 迁移受保真需求和摘要样式影响；同类任务的原始成绩接近，并不保证能消费相同 working memory。工程上仍须由 runtime 保护原始历史、约束和可回读引用，不允许 role 字段提升来源权限。每步 manager、训练与额外评价均付费，改写早期 prefix 还损失 KV reuse；较短输入或少量成功率改善不认证整轨迹更省。消费者、任务或预算改变时，重验 manager—executor 配对，保留 none、较完整原文和固定 assembly，而不把更激进压缩当普遍更可靠。<!-- source-family:SF-2026-ARXIV-2605-30785 -->
+
+外部manager之外，executor也可在同一输出中写专用operator/address tokens，运行时解析后修改下一次renderedcontext；这仍需要状态owner，不是“native”就能绕过执行检查。[受限context-editing分支](https://arxiv.org/html/2610.25550v1#S3)保稳定block地址、locked系统块和不可编辑actionhistory，改写/移除只影响可见view；编辑旧prefix仍需重prefill。训练先以全trace提出释放资格，再让teacher在此前编辑已生效的当前view上写下一edit，避免原history里仍在、部署view里已不存在的target；后见资格不等线上知道未来，literal检查也不排所有语义误删。实际audit仍有defect，tool形式对照保留stubs/receipt、native会剥edit，且普通compaction未匹配额外FT，不能把全部收益唯一归token语法。Teacher/fullFT、runtime、所有重prefill和回归均计费，trimmedtoken均值与离线估计可overlap时间不等全任务实测净时延；原harness副本仍可触compaction。地址、来源保真或预算不稳时，保留原记录/none、固定compaction或已验manager，不让较短view取得原证删除权。<!-- source-family:SF-2026-ARXIV-2610-25550 -->
 
 ## Context Serving 是派生视图生命周期
 
@@ -175,6 +188,8 @@ prefix KV reuse。`T` 仍是 model-generated derived claim，必须绑定来源 
 更合理。[Trace-as-State 的 matched order evidence](https://arxiv.org/html/2609.02702v1)只覆盖三类长上下文任务和
 一次 fresh second pass，未验证 multi-round Agent，不能外推成任意 Transformer 或交互任务的复杂度保证。
 
+还要分开“本次生成推理”和“把旧推理留在下次Context”：在历史已足够精确重建state的[受限文件任务](https://arxiv.org/html/2610.25760v1#S3)中，移除旧thought但仍生成当前thought，守lock规则可近似保留，而某模型的最终任务成功仍受旧thought保留影响。此比较没有匹配当前计算量；保留还会改变后续写多少reasoning，不能简化成旧推理无价值。固定history时，等长filler、另一history的流畅reasoning与准确state table都不复现自产reasoning的全部行动效果；交换counterfactual reasoning又可让action跟随错误结论，说明可见状态和执行消费需分别验收，而非自产thought获得事实权。高probe读出或state问答不证明action使用同一路径，oracletable也会改变prompt与尝试分母。生成、保留、状态重建及独立执行检查都计费；trace与原观察冲突、保留预算不足或规则违反无法核实时，保留原history/可信state replay和执行前确定性gate，不以可读state或一份连贯计划替代真实约束。<!-- source-family:SF-2026-ARXIV-2610-25760 -->
+
 当模型可以主动 `writeContext`、`readContext` 或 `deleteContext` 时，Context 从一次性 prompt 又演进成
 显式受控的 working state。模型可以把长 observation 压成 notes、暂时移出当前窗口并按需回读，从而让
 attention budget 与 durable source 分离：
@@ -214,6 +229,14 @@ Agent policy、身份和恢复交给 runtime，而不是让一次 tool observati
 
 程序性视觉参考还可以先在临时 branch 中解释，而不把全部截图直接追加给主 Agent：将 skill 拆成带文字状态卡的多个视图，先根据 live observation、近期历史与状态卡选择必要参考图，再在局部窗口对齐当前状态，输出是否适用、子目标、建议计划、禁做事项与验证提示。主路径消费这份结构化 guidance，再决定本次动作；参考图不是当前界面的坐标真值，branch 也只是上下文分工，不自动构成权限或安全隔离。[MMSkills 的有限对照](https://arxiv.org/html/2605.13527v1)支持把“参考表达—当前对齐—主路径决策”分开，直接注入完整参考可能过度锚定，咨询本身也会误解状态、遗漏 coverage 或生成错误步骤。多视图、咨询调用、图像编码、技能构建与完整轨迹都计费，主路径少几步不等端到端更省；覆盖不足、grounding 或预算失配时，回读当前画面、保留纯文本 skill/直接 VLM 与独立结果核验，不让历史成功示例或流畅计划取得本次执行权。<!-- source-family:SF-2026-ARXIV-2605-13527 -->
 
+临时工作还可以沿同一agent的prefix分叉，而不另开一份完整角色历史：branch共享进入前的上下文，在局部展开工具与推理，return时只把摘要接回主路径，并将私有KV回滚到分叉边界。[受限上下文折叠分支](https://arxiv.org/html/2510.11967v1#S3)将长期可见状态与局部计算分开，不等于并行多agent、任意嵌套或已撤销外部动作。分叉revision、原轨迹/工具结果、返回摘要及KV位置须共同保存；摘要可能丢依赖，scope judge只检查给定prompt与return也不认证全部trace正确。训练完整trajectory与压缩奖励仍支付私有生成，峰值窗口与理论累计预算不是已省总tokens；工具调用还可明显增加，训练只计main rollout的时间不代全流程。跨分支事实冲突、摘要不足或费用失配时，回读私有原记录、扩大返回支持或保完整单路径，不由KV回滚、较短主窗口和更长可生成轨迹批准执行撤销、事实保持与净加速。
+
+<!-- source-family:SF-2025-ARXIV-2510-11967 -->
+
+检索到语义相近的示例，还不等于它能直接装入当前工作集：示例中的对象、关系和步骤可能属于另一份结构。可先按语义召回，再分别构造来源示例与当前输入的关系图，以映射和结构重写提出适配后的示例，最后装配给回答模型。[这一受限上下文分支](https://arxiv.org/html/2510.04560v1#S3)把“找什么”与“怎样适配到此刻”分开，但图来自模型/工具提案，结构相似不认证事实、步骤可执行或语义保持；找对示例、甚至能反思仍可能答错。原示例、两份图、映射和改写版本应连同可见输入保存，不能让重写文本取得当前观测真值；union式添加与重embedding也不是完整delete、一致性或状态事务。固定语义检索下的结构消融可以给局部支持，检索消融若同时关闭重写则不能独占检索的因果；按被测模型选困难题和同源支持人口亦不等线上分布。全部支持样本制备、索引/embedding、图抽取/对齐、重写、最终推理与独立答案核验均计费；局部额外tokens和秒数不是全链SLO。对应关系、事实或净预算不稳时，保可信原示例、较窄直接上下文与真实输入回读，不由匹配到示例或更复杂图批准通用推理、记忆正确和执行安全。
+
+<!-- source-family:SF-2025-ARXIV-2510-04560 -->
+
 面对长视频，可见集还可以按原始时间范围组织，而不预先把整段证据压成 captions：每次读取声明子问题、起止区间、采样率和帧预算，先稀疏扫描定位候选，再对同一区间加密重看，或把多个区间按各自密度拼到一次观察中。返回的描述与实体表仍是派生状态，应保留时间 anchors、所见帧与原视频恢复入口；重新观察提供另一份读取，不自动消除 Observer 或记忆更新的错误。<!-- source-family:SF-2026-ARXIV-2603-24558 -->
 
 这个接口把预算从全视频预处理移到按需多轮取证，同时增加视频解码、Observer、Reasoner、实体维护与重读费用。[受限长视频对照](https://arxiv.org/html/2603.24558v1)中，较弱的计划器可能损伤强 Observer，单次大上下文更快，预建索引则可能用更高前置成本换更高精度或多 query 复用；峰值 context 和总 tokens 不能互代完整时延。时间对齐、实体引用或收益不可靠时，应回读原帧、限制轮次并保留均匀采样/静态 captions 或人工核验，不把重复的派生描述当独立事实确认。
@@ -248,6 +271,10 @@ source-linked demonstrations
 fixed point，并以 `O(iterations × demonstrations)` 的 model calls 换取修正机会。原始 demonstrations 仍是
 authority，pseudo-label vector 只是可丢弃视图；真实 label、Memory 或 source artifact 不能被它覆盖。CIRCLE
 只在其 open-world multimodal ICL 设置中支持该机制，不证明 LMM 普遍优于 VLM 或迭代一定提高真实 taxonomy。
+
+示例工作集也可以沿请求流扩展，而不更新学生权重：先以学生输出entropy决定是否检索已有demo，仍不确定时异步请求教师标注，将通过筛选的示例写入pool供后续请求使用；当前回答与未来pool更新因此是两个不同事件。[ICD的受限多模态对照](https://arxiv.org/html/2510.18117v1)用多次教师一致和跨模态匹配筛选，但一致/相似与低entropy均不是真实正确率，不能把稍后得到的教师答案说成本次回答已被纠正。应保存示例来源、教师/encoder版本、可见请求次序、写入资格与失效条件；pool会继承错标和漂移，检索、demo prefill、教师多次调用及驻留均计费。无参数更新不等零蒸馏成本，碳排proxy也不是完整服务实测；示例失配或预算不足时，隔离派生pool、保可信固定demo与原学生/显式教师路径，独立验收当前答案。
+
+<!-- source-family:SF-2025-ARXIV-2510-18117 -->
 
 ### Semantic Policy 与 Recoverable Bookkeeping 应分 Owner
 
@@ -284,6 +311,27 @@ C'_t = compress(C_t, task, budget)
 
 目标不是最短，而是保留对未来决策充分的信息。摘要可能丢失 exception、否定、数字和 provenance；递归摘要还会累积漂移。
 
+有限工作集还可以直接规定重启时带走什么，而不先训练摘要器：每生成一个chunk就清空旧KV，重新编码原问题、固定开头与最近一段推理，再继续生成。这样限制的是下一次调用的可见条件与缓存，而不是只在旧cache上滑动一个attention窗口；对固定原问题、首段和chunk预算，可见工作集有上界，但完整轨迹仍应在外部保存以供审核和必要回读。
+
+[受限Markovian Thinker对照](https://arxiv.org/html/2510.06557v1)支持训练消费者适应这种重启，不证明保留片段是未来任务的Markov充分状态，原问题变长也会增加边界。过短chunk会损质量，重编码/训练反传并不总更快，外推长链成本亦不等实际墙钟测量；清空KV、重复prefill、全部rollout与独立长程回归均计费。旧证据丢失、跨块依赖或净预算不合时，扩大近期工作集、回读原文，或保留完整上下文/经验证摘要，不由固定窗口与长输出授予无限可靠推理。<!-- source-family:SF-2025-ARXIV-2510-06557 -->
+
+压缩规则本身也可以由失败对照迭代，而不永久依赖一份通用摘要prompt。固定执行agent，在训练任务上分别取得完整上下文成功和压缩后失败的轨迹，让LLM比较其信息差额、汇总反馈并更新compression guideline，再用压缩成功任务提出更短规则；还可把teacher成功压缩样本蒸馏为较小compressor。[ACON的受限分支](https://arxiv.org/html/2510.00615v1#S3)把history与最新observation分开触发，但轨迹差异只是提出规则的线索，不证明某条遗漏已被因果定位；contrastive子集择优和success-only蒸馏也不保证未来任务充分，更不使摘要成为事实副本。
+
+规则搜索、双轨迹工具执行、teacher/student训练、每次压缩与后续生成必须一起计费，不能把peak input tokens下降当成总显存或时延同比下降。原模拟任务中更激进的压短步骤仍可损准确率，计入cached-input折扣后history重写常不省钱，而observation压缩的取舍不同；小compressor也可能延续teacher遗漏。规则、阈值或部署消费者失配时，保留原文可回读引用、完整关键状态与不压缩分支，独立验收任务结果和全部费用，不由textual feedback或局部保留率批准长期无损运行。<!-- source-family:SF-2025-ARXIV-2510-00615 -->
+
+压缩监督还可从短QA种子扩成较长训练上下文：回到原文来源，同时扩展已知支持文档与干扰文档，再用目标答案的likelihood变化迭代裁去支持文档首尾的低贡献句，把留下的片段作为摘要target。[BRIEF-Pro的受限对照](https://arxiv.org/html/2510.13799v1)据此训练较小compressor供冻结reader消费，新增的是监督人口和读出分工，不是让摘要自证充分。只扩oracle文档会制造过干净输入，但共同扩展也同时改变长度，不能独占真实噪声鲁棒性的因果；训练时已知支持文档和gold答案的特权更不能带入普通请求。句数指令只近似控制输出长度，word压缩率也不是token、墙钟或总费用；部分reader/任务仍弱于完整上下文。来源扩展、teacher似然试删、compressor训练与全部压缩/reader调用共同计费；跨句证据、来源或新query支持失配时，保留原文引用、较宽上下文与不压缩分支，不由平均压缩率批准开放任务无损。
+
+<!-- source-family:SF-2025-ARXIV-2510-13799 -->
+
+若业务已给出“哪些原句重要”的标签，抽取压缩还可把留存率要求变成文档级校准对象：固定句子评分器，先为每份校准文档求出仍保留指定比例重要句的最大删选阈值，再用这些阈值的低分位决定新文档统一的保留门。[有限conformal抽取分支](https://arxiv.org/html/2509.20461v1#S3)在校准与新文档标签对可交换等条件下，约束的是“新摘录的重要句召回至少达标”的边际概率，不是每份摘录无遗漏、标签已涵盖全部现实关键信息或句子本身正确；目标召回低于一时本就允许漏标注句。评分、分句、重要性偏好和人口变化须重新核验，离散分数ties及端点约定也不能由连续秩推导省略。原句抽取之后再交生成模型改写，不继承这份coverage；还须独立验收最终信息支持与任务效用。全部标注、逐句含原文评分、校准/重校准、可选改写与验证都有成本，句子移除率不等token或总费节省。标签、交换性或下游支持不足时，保原文/更宽摘录、回读引用与领域人工核验，不让统计门替代事实和行动权限。
+
+<!-- source-family:SF-2025-ARXIV-2509-20461 -->
+
+词法minification也有同一边界：删除注释、改名或缩进即使保留部分程序运行语义，也可能丢掉修复线索，或让模型按压缩格式输出而无法匹配原文件。[受限SWE修复对照](https://arxiv.org/html/2606.01326v1#S4)出现输入减少而解决率下降，dedent另有补丁缩进失败；全bench主结果却排除了dedent，不能把全部退步归它。统一tokenizer计数只是代理，小样本变换消融也不等全人口因果。变换、原文映射、所有重试与测试都计费；格式或质量回归时保留原源码/注释、较轻删减与独立测试，不由parser语义或更少token自签消费者无损。<!-- source-family:SF-2026-ARXIV-2606-01326 -->
+
+摘要后的继续执行还可成为单独的训练对象，验收也不能只看压缩器读起来是否完整：一条[分段训练分支](https://arxiv.org/html/2509.13313v1#S3)在预算触发处把历史改成问题加摘要，从该状态重新生成，并把整条rollout的终局相对advantage广播给各segment。它让消费者见到部署时的重启状态，却不给摘要或每段步骤独立真值；按总segment数平均还会使更长轨迹拥有更多项，不能默认为每轨迹等权。摘要生成、分段训练、全部工具/失败轨迹与后续长度都计费，成功query费用不能替全人口预算；同时增加工具步数的对照也不识别广播的单独收益。摘要遗漏未决项、状态保真或净质量失配时，保留原文引用、较完整近期历史与无摘要分支，不把有限窗口重启当作无限可靠探索或完整证据账。
+<!-- source-family:SF-2025-ARXIV-2509-13313 -->
+
 当轨迹主要被冗长工具返回撑大时，先降低远期observation的可见粒度，是比每次生成语义摘要更简单的基线：保留system/user约束、完整reasoning/action记录和最近若干轮的原observation，只把更早返回换成带原文引用的占位视图。它不把旧action重新执行，也不让被保留的reasoning取得事实权；原始工具结果仍须可回读，这是项目的证据合同。此法只减缓增长，reasoning/action本身仍会累积；递归摘要也须独立限制长度，不能默认任何一支恒定内存。[SWE-agent中的有限对照](https://arxiv.org/html/2508.21433v1#S3)表明，view选择还可能改变后续尝试长度，所以应共同验任务质量、完整轨迹与所有调用费，而不只比较当前输入tokens；部分thinking配置的删减/摘要都反退，未显著差异也不是质量等价。摘要调用、cache重用条件、被延长的后续推理与全部工具执行都计价，按API单价估本地token费用不等真实GPU成本；不能把“摘要掩盖失败信号”的解释当已证内部因果。近期窗口遗漏关键旧证据、状态已变或预算无收益时，应回读原文、保留较完整history或经独立验收的摘要，短任务仍可直接传全轨迹，不把更复杂或更短的view自行升级为可靠策略。
 <!-- source-family:SF-2025-ARXIV-2508-21433 -->
 
@@ -312,12 +360,27 @@ Context 是否修改也可由独立 router 先决定，再让具名操作处理�
 
 压缩准入还要算总时间，而不只是比较压缩前后的 token 数：同一请求上，`T_compressor + T_target(compressed) < T_target(original)` 才有时延收益；还要同时验实际压缩率、答案质量和压缩器的显存占用。短输入、便宜的目标模型或较慢的压缩器会使前处理吞掉 prefill 节省；长输入、可摊销的压缩结果或受限显存则可能改变选择。这个 break-even 随目标模型、硬件、长度、批量与并发重算，不能用单一压缩比例作为通用策略。现有作者实验只覆盖所测 LLMLingua 分支、模型/设备与任务，未建立生产尾延迟或任意证据保真保证。<!-- source-family:SF-2026-ARXIV-2604-02985 -->
 
+若同一原文会被多个问题反复读取，压缩也可先于问题完成：将原文切成独立小段，让可训练的压缩器输出少量 soft embeddings，再按原顺序交给冻结的 reader，问题仍以原始 token 输入。一个[受限问答分支](https://arxiv.org/html/2509.19228v1#S3.SS2)用原文加训练问题生成 teacher 答案，只在同一答案的位置匹配各层 hidden states，从而学习压缩器而不更新 reader；它不是逐字重建，也不证明未见问题所需的区别都已保留。分段独立使表示可在问题到达前制备和复用，却仍须绑定 tokenizer、分段边界、压缩器与 reader 身份；缓存这种表示不等于任意位置的 KV 都能复用。这条路径在短输入仍可能变慢，字符计数、拼写等结构任务也可能失真，离线生成只把费用移出请求路径，teacher、训练、缓存维护和实际 reader 消费仍须结算。结构细节、未来问题或净预算不合格时，保留原文回读、不压缩的冻结 reader 与按当前问题选择内容的分支，不由较少 embeddings 推出普遍保真或端到端加速。
+
+<!-- source-family:SF-2025-ARXIV-2509-19228 -->
+
+软压缩的载体还可以来自原文中的位置，而非另加一组从零学习的slots：将原文分段，按覆盖规则选anchor token并叠加可训练标记，让双向encoder把整段信息汇到这些位置，再取各层anchor K/V交给因果reader。[SAC的有限问答对照](https://arxiv.org/html/2510.08907v1)用LM预训与QA目标训练这条接口，说明逐字重构并非所有压缩器都必需的中间任务；它不证明AE普遍有害、原token天然拥有充分语义或未见问题的信息无损。双向预编码、分段边界、anchor选择/位置、LoRA和reader的层KV布局须绑定，不能把它当在线因果cache任意删行，或给另一模型直接续读；较高平均QA仍有任务反退。全部预编码/训练、KV存储与reader消费及独立质量回归都计费，少量anchors不认证完整端到端省时；未来任务、格式兼容或净预算不合时，保原文回读、更大表示或未压缩reader，不让压缩状态替证据签发充分性。
+
+<!-- source-family:SF-2025-ARXIV-2510-08907 -->
+
+若程序性skill会被反复选中，也可在发布前制备绑定目标模型的多分辨率soft-prefix artifact：同一较长slots表示取前缀供较小预算，配合一份共享adapter教消费者读取，query仍保原文本。预算不必由长度单独决定；可以从原skill生成诊断题，以同消费者的full-text答案作银参考，选通过比较的最小分辨率，否则回原文。这只检验相对参考的行为一致性，skill、target与适配版本改变后不能沿旧资格通用分发。
+
+[SKIM的有限对照](https://arxiv.org/html/2606.12203v1)中，弱full-text参考会误导选择，更高预算/更强teacher也不总改善；golden skill与模拟tool训练不证明真实检索、外部工具或权限正确。压缩器/adapter训练、诊断题与judge、每目标artifact存储/更新、读取及全部行为回归均计费，离线制备不签零开销或全链SLO。银参考、执行依赖或净预算失配时，扩大表示并回可审阅原skill/原base与独立工具结果核验，不让较少tokens批准动作完成。
+<!-- source-family:SF-2026-ARXIV-2606-12203 -->
+
 压缩容量也不必只依赖原文长度。一个受限分支让 query-aware encoder 读取分块 Context，由其末端 hidden-state probe 估计相关内容长度 `L_hat`，再以 `k=min(L_hat/r,k_max)` 决定 soft-token slots，并把兼容 K/V 交给目标 reader。它把固定 slot 数变成 query-adaptive capacity，但相关长度不是充分证据，也不证明压缩结果可供任意 reader 使用。Teacher 相关标注、encoder/probe 与 ratio/max policy 都须保存身份，额外 encoding、probe 和质量回归也要计入 break-even；[局部压缩对照](https://arxiv.org/html/2602.03226v1)显示短输入可能因 slots 过少而退步，不支持“压得越短越好”。长度估计失配、必要细节被丢掉或总成本不合算时，应扩大 slots、回读原文或退回固定容量/未压缩输入。
 <!-- source-family:SF-2026-ARXIV-2602-03226 -->
 
 重复日志还可以走另一条分支：不概括含义，而把重复子串替换为短标记并附字典。此时应把字典、标记和说明一并计入目标 tokenizer 的输入预算，并区分两个接口：软件按规则还原原文，以及模型直接在编码态完成任务。前者可以是确定性的 codec 合同，后者仍依赖模型是否正确查表、保持跨行关系并执行目标分析；可逆编码本身不会把这种能力一并交付。<!-- source-family:SF-2026-ARXIV-2604-13066 -->
 
 因此，解压 exact match、字符相似度与目标任务正确性要分开验收，不能把较高的字符串重建分数当作日志诊断或跨记录推理的保证。作者的重复日志实验支持字典表示具有压缩空间、所测模型能够在部分协议下重建文本，但没有验证目标 analytics，也没有证明解压是所有语义任务的能力下界。重复度低、字典开销大、目标任务依赖未验证的编码态操作时，原文或先由软件解码再调用模型仍合理；高风险记录的原始 artifact 和逐字约束不能因 codec 可逆而移交给模型猜测。
+
+不另带显式字典时，压缩视图也可以仍是原词表的离散text：只提示producer用多语词汇/符号保留关系，再让冻结reader直接消费，而不先还原可读自然语言。[受限文本分支](https://arxiv.org/html/2606.19857v1#S3)把人可读性、目标tokenizer长度与指定reader的任务可恢复性分开；低可读或高surprisal不等无信息，局部QA保持也不证明全语义无损或任意模型能读。Producer/reader、prompt、压缩强度、源范围及最终任务须共同绑定，跨pair的质量可能明显回退；强压增加reader thought时，短输入也未必总费更低。全部源读取/分块、压缩与搜索、检索/reader生成、人工审计和原文回读均付费，先读全源再压不能和直接截窗称同信息预算。保留原始artifact与逐字约束，高风险仍用typed字段；消费者、审计或净质量失配时，回可读summary/显式字典、较大原文窗口与有界回读，不由更短符号串或同模型自读的高分批准通用编码、安全通道和删除源记录。 <!-- source-family:SF-2026-ARXIV-2606-19857 -->
 
 "充分"必须相对于未来任务定义，而不是压缩器自认为语义相似。跨 session handover 可以按三层保存：必须逐字保真的决策、约束与授权；对已知 future-query family 足够的统计量；以及无法安全归约、可供以后回读的原始 observation。理论上最小状态只需保持未来 target distribution，但开放 Agent 通常不知道未来 query，也无法证明自动摘要已经达到 predictive equivalence，所以高风险或任务未知时不能删除原文。
 
@@ -380,9 +443,13 @@ retention policy”，不证明论文报告的具体 recall 能跨模型、语�
 
 同步 compaction 在历史较短、压缩频率低时最容易保证一致性：暂停主循环，对当前 Context 生成摘要，替换成功后再继续。长时 Agent 会让这段 stall 直接进入任务 critical path；若改成后台并行，又不能让 compactor 在旧 snapshot 上完成后无条件覆盖期间新增的 observation、tool result 或 policy。需要把 compaction 拆成 `snapshot watermark → background proposal → fidelity check → compare-and-commit`：Context registry 拥有 canonical state 与 replace authority，compactor 只产生带 base revision 的派生候选，workflow 在提交前处理新增 tail 或拒绝 stale proposal。
 
+抽取与提交还可以使用不同的预算时点：由独立writer在窗口尚有余量时多次增量整理任务、约束、未决动作和原文引用，到真正换窗时再组装这些状态，而不是等满窗才同时做理解、压缩与恢复。[一份长任务coding runtime说明](https://mimo.xiaomi.com/blog/mimo-code-long-horizon)给出这种前移分支；每文件single-writer可减少写竞争，却不证明后台视图覆盖最新tail，更不能代替上文的base revision与提交检查。提前writer、持久文件与回读原文增加后台计算、存储和失效维护，抽取不完整时仍需同步补齐或保留原历史。作者同模型harness A/B没有隔离writer，固定触发比例也未经独立最优性验证，不能从长任务组合胜率推出该机制净收益或任意长会话无损。<!-- source-family:SF-2026-MIMO-CODE-LONG-HORIZON -->
+
 并行化能隐藏一部分压缩延迟，却增加双份 Context、取消/重做、版本冲突和 fidelity evaluator 成本；错误 commit 会丢 observation，过于保守则持续浪费后台计算。短会话、高风险逐字记录、剩余 token 很少或无法可靠合并 tail 时，应回退同步压缩、外置原文引用或不压缩。`arXiv:2605.23296v1` 的 §3 与 §5 支持作者 parallel compaction runtime 及 HotpotQA/LoCoMo 等受测合同，§6 不证明任意 Agent、压缩器、并发修改或生产 tail-SLO 都能安全隐藏 stall。
 
 <!-- source-family:SF-2026-ARXIV-2605-23296 -->
+
+可恢复 compaction 还必须区别摘要候选、Hook 执行和 canonical history 的提交。先持久化候选，才能在中断后沿原 operation 继续后续 Hook 与提交；未知 Hook 结果要查询原证据，不能像纯摘要一样重新生成后再执行。[Qwen Code 的固定合同](https://github.com/QwenLM/qwen-code/blob/d03b3116dae52589210a50f84ac099876f75326c/docs/design/2026-10-22-managed-context-compression.md)将 compaction 与 terminal maintenance outcome 原子登记，保留原 audit transcript；纯摘要可能重复计费，但不能因此重复提交历史。窗口边界也不能只沿旧 writer watermark 放置：[MiMo 的 rebuild 修复](https://github.com/XiaomiMiMo/MiMo-Code/pull/2702)把 boundary 放在最新消息之后，并将已接受但未投递的输入另列 deferred state，避免 tail 反复进入窗口或用户输入被摘要截断。这增加候选持久化、revision、tail 与恢复配对成本；原件可低成本完整驻留时，简单同步压缩仍合理。公开合同与局部回归不证明摘要语义无损、任意 Hook 可重试或所有并发部署安全；输入配对或 operation 证据缺失时保持 blocked、回读原文，不把一次压缩完成签成下一任务正确。<!-- source-family:SF-2026-QWEN-CODE-DURABLE-COMPACTION;SF-2026-MIMO-CODE-2702 -->
 
 后台 commit 解决了状态原子性，却没有证明长期行为身份未漂移。普通问答正确率可能在 compaction 后保持，而 persona、role boundary 或 repository instruction 在多轮 coding session 中逐渐衰减。deployment evaluation 因而应从同一 snapshot fork 压缩/未压缩或不同 compactor 分支，用 versioned probes 和真实任务 continuation 分开测 role fidelity 与 task utility；evaluator 只产生 drift evidence，Context owner 才决定发布、回滚或回读原文。
 
@@ -431,6 +498,8 @@ Hint 是高频、会随 plan 改变的 derived state，必须绑定 workflow ste
 或需要完整 provenance 时保留 raw output。作者在特定 coding harness 和 benchmark 上的 token/latency 结果
 只证明受限 feasibility，不保证跨语言、对抗代码或所有 Agent success 不回退。
 
+代码的选择粒度还可以分成两级：先按函数或class提出候选，以当前instruction的条件perplexity变化排序，再把保留函数的预算分给内部完整代码块，按块的代理分数与token成本作受限背包选择。[LongCodeZip的有限对照](https://arxiv.org/html/2510.00446v1#S3)给出这条coarse-to-fine分支，不把PPL差当真实互信息，也不因函数/行边界就认定依赖闭包、语法或运行语义完整。函数身份、原位置、保护集合、block边界、评分模型与实际tokenizer须共同保存；最低保护项放不下、预算重缩放或分数退化时，应扩大预算/回读原文，而非强行删关键依赖。块价值可相互依赖，预算内代理最优不等最终代码正确；EM/相似度、摘要judge或needle命中也不代编译执行。所有评分前向、切分/分配/DP、压缩与目标生成及回归均付费，部分模型仍会退步；短输入、廉价consumer或净收益不足时，保留整函数、只做coarse筛选、原源码与独立测试，不从更短输入签无损或通用加速。<!-- source-family:SF-2025-ARXIV-2510-00446 -->
+
 长文档还可以按 page/section structure 做 learned selection，再与 lexical/semantic retrieval 组合；它比纯
 token pruning 更能保留表格、标题与页面边界，但 selection 错误会整块删除证据。可逆实现应保存 source
 location、选择分数和 raw-artifact fallback，并把 document revision、selector 与 task goal 绑定。短文档、
@@ -475,6 +544,10 @@ store 保留 authoritative bytes，backend cache 只拥有物理 prefix blocks�
 future relevance 不可预测或 strict full-fidelity workload 中，full Context 与保守截断仍合理。TokenPilot 的作者
 实验只支持其 provider-cache、benchmark ordering 与价格合同，不证明自托管 GPU 的 TTFT/goodput 收益。
 
+预算内可接受与值得裁剪也不能共用同一个阈值：若自动摘要在较高水位触发，却先按更低的安全目标删除最旧历史，正常压缩请求也会主动打断可复用前缀。[一个固定实现的纠错](https://github.com/MoonshotAI/kimi-code/pull/4456)先判断完整请求是否真的超过“窗口减输出预留”，只有超出才裁到安全目标，并把摘要输出上限约束到剩余空间。媒体回退同样应固定当次拒绝时的降级范围，不能每加一张新图就滚动改写旧前缀；新请求再被拒绝时才重新评估。它增加估算、快照和前缀诊断成本；估算失准仍需缩减重试，字节前缀保持也不证明服务端命中。无缓存、真超窗或高保真输入场景继续保留原压缩/回读路径，不把较短请求当成更低总费用。<!-- source-family:SF-2026-KIMI-CODE-OCT27 -->
+
+功能回答正确还不能验收缓存集成，连用来确认命中的计数器也可能解析错。应把请求侧的provider/model能力、marker形状与prefix稳定条件，和响应侧cache-read/creation字段的缺省、聚合、计价分别核对；[一种集成检测分支](https://arxiv.org/html/2610.34817v1)将调用点的条件与带核验日期的外部能力表绑定，而不让模型凭记忆判断当前API合同。局部静态检查不能覆盖跨轮prefix重组或mutation，LLM guard也会误报漏报，因此仍须保留多请求投影与真实request/usage对照。能力表维护、静态分析、人工核警和运行探针都计费；已知语法与计数检查可继续作廉价基线，provider语义或meter不可信时保留Unknown/原始usage并回源，不以零cached-token或普通测试通过单独宣告缓存失效或费用已降低。<!-- source-family:SF-2026-ARXIV-2610-34817 -->
+
 驱逐 proposal 还可从主回答的生成轨迹中隔离：在相同上下文另起辅助生成分支，输出待删除的 tool-result cursor，主线程只在工具轮次边界消费已经完成的建议，不把管理 reasoning 再塞回用户回答。[SideQuest 的必要接口](https://arxiv.org/html/2602.22603v1#S3)用成功轨迹的未来最后引用训练这条分支；不再显式引用却不证明内容失效，最终 citation 还可能令暂时无用的结果重新有用。因而 proposal、主轨迹与 raw-artifact 的责任不能合并；版本/过期结果检查及原文恢复是我们的采用条件，不宣称源已实现完整协议。辅助 forward、临时 KV、训练与恢复仍付费，单 H100/SGLang 改变 concurrency 后的峰值吞吐不授同负载质量/SLO 支配。未来效用难预测、成功条件训练不适用或恢复预算不足时，继续完整历史、保守驱逐或关闭分支；并行不等免费删除。<!-- source-family:SF-2026-ARXIV-2602-22603 -->
 
 ## Context 中的信任冲突
@@ -491,6 +564,8 @@ System message、retrieved web content 与 tool result 最终都变成 token，�
 
 模型可以建议如何解释内容，不能改变其 authorization class。
 
+运行中的可信控制更新，也不必通过改写既有system prefix或伪装成user turn传入。[Opus 4.8公开的Messages API合同](https://www.anthropic.com/news/claude-opus-4-8)允许在messages数组中追加system entry，以更新任务权限、token预算或环境信息并保留旧prefix cache；这里的append不等于修改先前bytes，更不使物理cache拥有当前权限。Context owner仍应校验更新的可信来源、scope与policy revision，把当前有效约束绑定到本次request，并由executor在动作边界执行；web、tool或memory内容不能自行升格为system指令。该发布只确认消息接口，不证明所有SDK/backend兼容、任意cache布局无失效或安全性提高，额外context与重处理仍计费；接口不支持或当前约束不能完整兑现时，重建合法request、接受保守cache miss或停止敏感动作，不以缓存命中为授权证书。<!-- source-family:SF-2026-ANTHROPIC-OPUS-4-8 -->
+
 ## Observability 与 Evaluation
 
 Context evaluation 应分解：
@@ -503,6 +578,14 @@ Context evaluation 应分解：
 - privacy：是否越权读取或记录敏感内容。
 
 只评最终答案会无法区分 retrieval miss、bad ranking、compression loss 与 model misuse。
+
+固定目标、进度可从文件重新读出的任务，仍可用最终产物分数验收结果；但它可能对历史替换不敏感，因为遗漏的信息能够从工作产物补回，而用户后来追加的工作方式与禁止范围未必存在于文件中。评价应先区分这两种可恢复性，再分别检查产物、约束留存与实际遵从，不能以任务分近似不变推断交互约束完整。[受限压缩对照](https://arxiv.org/html/2610.31778v1)支持这一测量边界，不证明压缩导致作弊：所测作弊早于首次压缩，真实会话的约束留存又依赖judge，未测其最终任务伤害；少量任务、模型与触发区间也不能签发通用阈值。额外约束标注、分层检查和重跑都有成本；交互约束未知或评价不可靠时，保留原始指令、独立执行检查与可回读历史，而不由基准分数批准删除。
+<!-- source-family:SF-2026-ARXIV-2610-31778 -->
+
+在同一状态重放之外，配对统计还要保留变化方向：固定代码工作树、继续执行的模型、工具和预算，分别从完整历史与摘要续做，把原本成功而摘要后失败计为损害，把反向变化另列为挽救，不能只用总成功率让两者相抵。标识符或修复词串仍在，也不保证消费者能把证据转成正确编辑；[配对修复对照](https://arxiv.org/html/2610.31710v1)中，这两种验收给出了不同的配置排序。字面细节留存集与修复集应各报分母，连续production压缩的后续可评价子群缩小也不能直接当作同一人口的纵向衰减。配对重放、环境还原、重复确认、摘要与全部后续工具执行均计费；私有轨迹及缓存状态未公开时，结果表可重算不等原实验可精确复跑。任务、消费者或预算改变后应重新验收，分歧时保留原历史、更完整状态或回读入口，不把较高保留率当成续做保证。
+<!-- source-family:SF-2026-ARXIV-2610-31710 -->
+
+即使每条外部内容都没有显式指令，选择哪些内容、按什么比例和顺序让模型连续阅读，也可能改变下一次决策。可固定模型、persona与最终问题，仅干预此前的暴露轨迹，再分别测原默认方向、反方向与无变化条件；[有限feed对照](https://arxiv.org/pdf/2606.00914v1)支持把上游选择器纳入Context审计，而不把下游prompt单测当全链安全。效应依模型与任务而变，平衡或披露并非普遍防御，forced-choice建议也不等真实动作；逐帖无恶意标记不认证整体暴露无偏。数据池制备、全部暴露轮次、重跑和防御均计费，轨迹内probe须按run分组并比较可见history基线。选择器或默认方向改变时重验；影响不可控时保留固定可信源、显式来源与人工批准，不由filter未报警批准执行。<!-- source-family:SF-2026-ARXIV-2606-00914 -->
 
 反过来，只用抽取视图与reference的词面重叠来调selector，也不能保证下游reader排序相同。可固定文档、token预算与generator，分别比较所选context自身的coverage proxy、生成答案/摘要及full-context；再以Lead与shuffled位置对照、同unitization换selector，判断收益来自文档前置结构还是减少冗余。[必要有限对照](https://arxiv.org/html/2605.00336v1)出现低预算抽取偏好Lead而生成更偏好MMR的条件差异，不能把extractive dev上调好的阈值直接当生成router。RCD等覆盖/多样性目标仍是代理，ROUGE与BERTScore都不认证事实正确，单个罕见关键约束也可能被删。编码、pairwise相似度、选择/调参、generator与回读一起计费；任务、文档顺序或指标迁移时重校准，收益或充分性不稳则保留full context、简单选择与原文回读，不由更小输入预算签发全链提速或安全。<!-- source-family:SF-2026-ARXIV-2605-00336 -->
 
@@ -714,6 +797,8 @@ Context 是受约束的运行时 working set，不是无限知识仓库。好的
 
 保留未来可用性会降低压缩率，也无法穷举未知问题。作者结果只支持其任务和 future-query construction；高风险或未来需求不可建模时，应保留原始 archive、可逆摘要和按需回读，压缩视图不能取得事实 owner。
 
+未来可用性还需要单独的评价人口：把压缩时已知的问题与未展示的后续问题分开，在实际保留 token 数相同下加入 random deletion 基线，再按是否共享证据和后续 consumer 所需内容分组。保当前问题所需整句，可能漏掉别的问题；保散布的 content words 能改善某些阅读题，却可能丢掉工具调用需要的完整 identifier 与结构，因此没有由一个平均分决定的通用压缩顺序。Label 恢复也不等被保留文本支持，应另报 evidence/原始 handle 保留与 support 核验。[现有对照](https://arxiv.org/html/2610.27301v1)只覆盖公开文本和录制轨迹的 ID 问题，不是 live agent 后继成功；保 archive 也不保证重取命中，构建、检查和回读可能超过 full state 成本。未知需求、证据缺失或净收益不足时，保留更完整历史/可恢复引用与独立后续任务回归，而非以当前题或更少 tokens 批准不可逆删除。<!-- source-family:SF-2026-ARXIV-2610-27301 -->
+
 ### Context Selection 应从 Claim/Action Obligation 反推最小证据包络
 
 按相似度追加更多 token，可能仍漏掉决定能否行动的关键前提。更严格的路径先定义 claim 或 action obligation，再沿 derivation graph 选择覆盖其 closure 的最小 sufficient evidence envelope；包络不充分时状态保持 unresolved，不能用 context 更长冒充 assurance。<!-- source-family:SF-2026-ARXIV-2609-16302 -->
@@ -721,6 +806,53 @@ Context 是受约束的运行时 working set，不是无限知识仓库。好的
 该方法降低 context/cost，却引入 obligation discovery、schema/type 与 solver complexity。图不完整、obligation 不可信或行动风险高时，应回退更宽 evidence set、deterministic checks 或人工审阅；少量 preserved artifacts 与 synthetic 数据不证明自动发现义务。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2606-19857`，Jun20补Jun19；消费sole§108唯一exact-v1必要，2+1+2=5，actualCh75 softcompression/字典codec两完整前肩、未来充分性两后肩及Ch22/82交接已读，仅原词表text低可读-v-pair-specific恢复/额外thought差额深入。保跨pair负侧/强度混杂、LoCoMo低原/CodeRepo全源权限与Kimi行身份未闭/全部费ND；不授通用lossless/安全，未核实现/复现，PRE/SAVE/selfread/actualPOST仅本日实际层。
+
+本人注：`SF-2025-ARXIV-2510-18117` — Locke，Daily2025-10-23补Oct22；exact-v1 §4–5/A.4.1必要，2+1+2=5，当前回答/未来异步教师demo写入差额深入。保三次一致/entropy/相似非truth、SigLIP替换基线、派生pool漂移与教师/检索/prefill全费；不采实测全碳或服务SLO，未核实现/复现。整体PRE/SAVE/全自读/sole actualPOST仅本日实际层。
+
+- `SF-2026-ARXIV-2606-20047` — Daily2026-06-20补Jun19；复用sole唯一必要[exact-v1](https://arxiv.org/html/2606.20047v1)§3/5，作者actualCh75 Assembly/Compression/旧trace核，2+1+2=5。只跨类型集合覆盖与token预算/consumer可提取性分责，保tightbudget输topK、有限100题/tworeader+judge、代理/顺序/全部费用，不采未闭常数近似、fullcontext优越或净速。旧trace非正文采用证据；未核artifact/复现。唯一reader A9实际owner/完整稿PRE已通过，作者按原稿SAVE；完整selfread与sole actualPOST按本日真实后到层，不由本注预签。
+
+- `SF-2025-ARXIV-2510-13799` — Daily2025-10-17补Oct16；exact-v1§3/式1、§4/T1–3必要，2+2+2=6，仅short-to-long共同扩展/答案条件剪裁的训练消费差额。保oracle/gold权限、长度混杂、LongSeal及reader反退、近似句数/word非token和全费，不采完整保真/净速或新任务充分性；未核代码/复现。PRE/真实SAVE/完整自读/solePOST只据canonical实际后到。
+
+- `SF-2026-ARXIV-2610-34817` — `live1028_china`，Daily2026-10-28/Oct27首次公告，只采用[exact-v1](https://arxiv.org/html/2610.34817v1)§V–VIII/Alg1/TIII必要域，2+2+2=6；v2提交不另计重要修订。request条件/readmeter与May10 dated oracle、single-site guard差额经唯一reader必要/actual owner/整段PRE独核；A recall是rule来源同集，B precision-only，27silent request/usage验证不是省费实测，多快照prefix问题不在检测范围。未核artifact或复现；实际SAVE/POST见本日ARXIV_AGENT/REVIEW，不由本注预签。
+
+- `SF-2026-KIMI-CODE-OCT27` — `live1028_china`，Daily2026-10-28，kimi-code同家族4个Oct27实施事件中的[#4456](https://github.com/MoonshotAI/kimi-code/pull/4456)，精确`68a283894163204e93b072cef20db164015a5cad`；2+2+2=6。仅触发/裁剪目标分责及媒体投影快照差额；必要fullCompaction/llmRequester代码与局部regression定义已读，非真实provider命中率/费用测量，未运行或复现。唯一reader必要/实际owner/整体PRE已通过；实际SAVE与写后复核按[本日CHINA](../../papers/2026/10/_sources/daily-20261028/CHINA.md)及REVIEW后到记录，不由本注预签。
+
+- `SF-2026-ARXIV-2610-31778` — `live1027_china`，Daily2026-10-27补Oct26；[exact-v1](https://arxiv.org/html/2610.31778v1)§3–5核心方法、metrics/Q1–Q4与limits首次必要按§9复用，2+1+2=5，实际AGENT-CONTEXT Ch75单段差额。仅文件可恢复/历史独有约束的评价人口边界，不重复既有rulepin/snapshotfork/enforcement；保validsubmission/触发区间、Gemini少compaction、异judge与作弊先于压缩反侧及全标注/重跑成本，不采压缩导致违规/普遍无损或阈值。未核代码/全部附件或复现；PRE/真实SAVE/selfread/solePOST以本日实际记录为准，本注不预签。
+- `SF-2026-ARXIV-2610-31710` — `live1027_china`，Daily2026-10-27补Oct26；[exact-v1](https://arxiv.org/html/2610.31710v1)§3–5与G可得性/工具/预算首次必要按§9复用，2+1+2=5，实际AGENT-CONTEXT Ch75单段差额。仅同代码状态配对damage/rescue分向分母及literal/production异人口，不重复一般replay；保固定Kimi-K3/预算、选PRE成功、后续小子群、输入截断/输出长度与privatecache限制，全部还原/确认/工具费；不采保留率即续做保证、总体损害频率或精确复现，未核代码/运行。PRE/真实SAVE/selfread/solePOST仅本日实际记录，本注不预签。
+
+- `SF-2025-ARXIV-2510-04560` — Arendt，Daily2025-10-08补Oct07；原6，采用R25决定/root R383余必要§4.1–4.2/T1/C/T5/E/F/G2与R433独占actualowner，不第二Methods/owner。仅semantic retrieval→当前对象关系graph结构重写→context装配差额；保source/current/mapping身份、union/重embedding非delete事务、retrieval消融同时关AR、模型选难度3:7/同源8shot人口、局部TextOCR反退和找对/反思仍答错。22.5K/3.26s非全SLO，全部制样/embedding/图/改写/推理/核验费保；不采完整recipe、图即truth/实际导航或通用净速，未核失败像素/全prompt/实现与复现，PRE/SAVE/fullselfread/solePOST仅本日canonical真实后到层，不以本注预签。
+
+- `SF-2025-ARXIV-2510-06557` — Daily2025-10-10补Oct09BJT；[exact-v1](https://arxiv.org/html/2510.06557v1)，2+2+2=6，Jason R12唯一首次必要直接复用。仅清KV/原query+固定首块与近期chunk重编码的context重启差额；保相对原query的界、非Markov充分、过短质量与24k反传反慢/96k成本估算非实测，AIME24选checkpoint非独立holdout及全prefill/训练费。不采无限可靠推理/生产SLO，无代码复现；PRE/SAVE/完整自读/solePOST仅本日canonical真实后到，不预签。 Jason R24整体PRE/窄授后真实SAVE与完整自读/QA已成，R26唯一actualPOST通过，指定窄位释放；仅同步既成态，不授DAY。
+
+- `SF-2025-ARXIV-2510-00446`：Daily2025-10-03补Oct02；[LongCodeZip exact-v1](https://arxiv.org/html/2510.00446v1#S3)，2+1+2=5/函数与块两级预算gap深入。仅PPL代理→coarse→函数预算→块选择；保非MI/依赖闭包、clamp后重缩放/保护集可行性、Seed/Claude/crossmodel反侧、指标资格及2.58+6.59全费，不授语法/执行无损、完整allocator或普遍提速。未核全T4/5/图曲线、代码或复现。R25原分/日门复用；root R95必要/actualowner/整体PRE及窄授通过，真实SAVE/fullselfread后root R98唯一actualPOST通过、指定窄位释放；仅行政同步既成，不授DAY。
+
+- `SF-2025-ARXIV-2510-00615`：Daily2025-10-03补Oct02；[ACON exact-v1](https://arxiv.org/html/2510.00615v1#S3)，2+2+3=7。只采离线full-success/compressed-fail更新guideline、success-only压短/蒸馏及history/observation独立触发/计费；保轨迹分叉非因果、同集择优/teacher筛选、阈值反退、peak-token非HBM/时延与缓存折扣后history不必省费。原文/none退路与训练/工具/压缩/完整生成全费近文，不授无损/事实authority/SLO；未核代码/复现。Kuhn R8日期/R23必要、actualowner与整体PRE通过，真实SAVE/fullselfread，Kuhn R26唯一actualPOST通过，窄位释放，不预DAY。
+
+- `SF-2026-ARXIV-2606-12203` — Daily2026-06-12补Jun11，supp_jun12；[exact-v1](https://arxiv.org/html/2606.12203v1)，2+2+2=6，actual gap深入。§3–5/7/A/C/E必要；只per-skill/target多分辨率artifact与银参考离线校准/原文回退，保模拟tool/弱参考/兼容与全费；完整费用与原路径/独立核验保正文，不授普遍质量/安全或SLO，未核代码/复现。唯一reader jun12_review_finish canonical§43实际必要/actual owner/原两段PRE通过并窄授，作者按原稿真实SAVE，jun12_review_finish唯一§44实际POST已通过，指定窄位已释放，仅同步既成状态，不预DAY。
+
+- `SF-2026-MIMO-CODE-LONG-HORIZON` — Daily2026-06-11补Jun10；[官方工程说明](https://mimo.xiaomi.com/blog/mimo-code-long-horizon)§3.1–3.5/§5及§2 NOTE，2+2+2=6。只补提前多次writer抽取与后续rebuild提交的预算分工，不采固定比例最优、single-writer即原子最新或harness组合收益唯一归因；语法迁移仍计划态、全费用/原文回退保留。未核代码/复现。root SUP_REVIEW_20261026 §2实际必要Source/现owner/逐字PRE通过并窄授，作者真实保存及完整自读后，root已实际完整新增/直接两侧/本人注唯一非writer POST通过，本句只行政同步既成结果，不预签日级。
+
+- `SF-2026-ARXIV-2606-04628` — [RAMPART exact-v1](https://arxiv.org/html/2606.04628v1)，§2–4/F1–2文字图注及§6，5分；只采固定邻居组合/组内顺序与位置分离的受限诊断分支。31-block firmware/literal probe不证完整任务或通用attention因果，schema移除不证executor撤权，零prompt-token方法调用不等零总费；未核代码或复现。
+
+- `SF-2025-ARXIV-2509-20461` — Socrates，Daily2025-09-27补Sep26；[Conformal Importance exact-v1](https://arxiv.org/html/2509.20461v1) S2–6/E4–15/A1.1–2/C5有限必要，2+1+2=5。只按document重要句召回校准抽取view；保marginal非逐件/标签非truth、ties与alpha端点/空标签、abstractive不继承、400split与同源proxy/局部反退及全费，不授临床/法律安全。R14首次准备→作者18唯一actual采用通过；作者24原三项/完整侧组经R23整体纯PRE通过，root本轮fresh独立新窄授后作者27原技术稿真实保存并完整自读，Helmholtz R26唯一actualPOST通过，I5生效且指定窄位即时释放；本句只行政同步既成，不第三POST。未核全部图像素/代码或复现。
+
+- `SF-2025-ARXIV-2509-19228` — Singer，Daily2025-09-25补Sep24；exact-v1 §3.1–3.3/Eq1–3、§4.1–4.6/T1–2/F2–6必要，2+2+2=6。Sartre R12有限Source通过；只采独立segment的query前CE制备/冻结reader与answer位置hidden监督分责，不采任意未来问题充分、字符结构保真、通用4x/总KV50%或净费。保短输入反慢/短context质量反退、OEjudge与MCregex/拼接及LOFT人口、teacherStd退化、所有teacher/训练/缓存/reader费用与原文退路，未核代码/图像素/复现。Sartre R14完整原三项纯PRE通过，root本轮fresh独立新窄授；A26已按原稿真保存/完整自读，Sartre R20唯一非writer actualPOST通过，新I2生效且本指定窄位释放；仅行政同步既成结果，不第三POST或授日级。
+
+- `SF-2026-ARXIV-2606-01326`：2+1+2=5；exact-v1 §3–4/T1–4与dedent分析；保全bench无dedent、tokenizer代理、样本/分母限制与patch格式反例，不采任意程序无损或全部退步因果。 未核实现或复现。独立Source/owner/逐字PRE通过，root实际保存；非writer `jun03_next_reader` 已真实读取完整新增、完整直接两侧与本人注，唯一actualPOST通过（本日SUP_NEXT_REVIEW_20261024，末项R20）；本句只同步既成结果，不授完整DAY。
+
+- `SF-2026-ARXIV-2606-00914`：精确v1 PDF §3–6；3+2+2=7。仅feed选择干预与默认方向，保null、防御失败、建议非动作；HTML同版本URL日期/摘要差异保留，不采2785总量或格式历史逐字一致；未复现。 Source/逐字PRE经独立复核通过，root已实际保存；非writer真实完整写后复核已通过（SUP_RESUME_REVIEW_20261024 R12）。
+
+- `SF-2025-ARXIV-2509-13313` — author18，Daily2025-09-18补Sep17；[ReSum exact-v1](https://arxiv.org/html/2509.13313v1)§2–4/T1–2/A–D.2必要，2+2+3=7，summary-conditioned continuation/segment消费差额深入。保segment非独立真值/非轨迹等权、format门、§3与B gap合同冲突、GRPO40/ReSum60及query预算混杂、summary模型与分项反退、D成功人口非总费；未授无限成功/可靠gap或完整原证账，未核图全部点/实现或复现。
+
+- `SF-2026-QWEN-CODE-DURABLE-COMPACTION` / `SF-2026-MIMO-CODE-2702` — Daily2026-10-23，各家族2+2+2=6；固定Qwen合同Admission/Execution/Recovery及MiMo rebuild spec S2.6必要。候选/hook/terminal与newest boundary/deferred分责；旧已清原文不可恢复，不授无损并发。独立reader Source/actualowner/联合逐字PRE通过，root已存本段，独立reader实际POST已通过，未运行代码。
+
+- `SF-2026-ARXIV-2610-25760` — Daily2026-10-21窗Oct20；exact-v1 §3–7，2+1+2=5。保当前生成/旧thought保留/compute分账、attempt与strictsuccess分母、secondpass/oracle与probe/action限制；未核代码/复现。reader R135必要Source/actualowner/完整PRE原样通过，root已授Trace-as-State完整成本段后/state tools前单段及本人注；作者真实保存，唯一reader R140 actualPOST通过并生效释放；只行政同步，不第三核、不授DAY。
+
+- `SF-2026-ARXIV-2610-27301` — Daily2026-10-22，[exact-v1](https://arxiv.org/html/2610.27301v1)§2–6/8与C/G/L/N必要域，3+2+2=7。仅同token random基线/known-hidden/evidence-ID消费者使排序反转的验收差额；保EI反转非token-matched、FEVER label非support、recorded ID非live、ECov known损失与恢复高费，不授通用最优压缩或archive无损。作者G3/reader R66必要Source/具体owner/PRE通过，actualPOST另见本日REVIEW；未核实现或复现。
+
+- `SF-2026-ARXIV-2605-30785` — Daily2026-06-02补Jun01；[exact-v1](https://arxiv.org/html/2605.30785v1)，6分，必要域见作者SUP及独立原件。root R10日证/准入、R19必要Source/实际owner/完整PRE通过并授本单段+本人注；root R20实际完整新增/直接完整两侧/本人note及两层限定diff-check POST通过，第6/7真实整合生效、两位释放；仅行政同步，不第三Source/PRE/POST，未核代码/复现。保manager/consumer样式兼容、32K/native条件不匹配、破KV与全费；runtime保护是工程要求非论文已实现。
 
 - `SF-2026-MOONSHOT-KIMI-CODE-20261016` — [Daily 2026-10-17](../../papers/2026/10/17/README.md)，PR4019精确commit `18c6d642`；ORG_A事件A。仅持久比较基线/生命周期，保record-before-notify及无工具仍推进基线，不采消费ACK/exactly-once/遵从保证。仅读代码/测试源，未运行；同家族guard事件B仅报告不写书，实际非作者写后复核已通过（本日REVIEW/ORG_A及root接纳）。
 
@@ -850,3 +982,11 @@ Review note：`SF-2026-ARXIV-2606-29522`；Method `https://arxiv.org/html/2606.2
 - `SF-2025-ARXIV-2509-02093` — Noether，Daily2025-09-04补Sep3；[exact-v1](https://arxiv.org/html/2509.02093v1) III-B/C与IV-A/C/V旧必要层，Ohm37补II/III-A/D/完整IV/TableII/V，2+1+2=5。仅exemplar分层/多轴选择与consumer身份，保prompt/response混用未闭、同源judge、top3混杂/k反退和全费用，不采精确改善或中层必防过拟合，未核代码/图像/运行对象或复现。Ohm§42真实必要Source/正式评分/具体owner与逐字PRE通过，root仅协调完整排序段后/共享speaker身份首段前本单段/独立marker/本人注；已实际保存并经Ohm§46一次真实完整新增/完整直接两侧/本人注POST通过，本指定窄位即时生效释放；不预整日DAY。
 
 - `SF-2025-ARXIV-2508-21433` — Godel，Daily2025-09-02补Sep01；[exact-v1](https://arxiv.org/html/2508.21433v1)§3–6/A/B/C/Tables1–4必要Source，2+2+2=6，仅observation视图/后续轨迹/费用consumer分责。保SWE限定、thinking反退、未显著非等效、API估价非本地实耗/全部费、增长与假说边界，不授普效/无损或生产SLO。原文回读/证据权限是项目推导；未核全D/E/图像素/代码或复现，不回投v3新增OpenHands/hybrid。Newton43实际必要Source/具体owner/本逐字PRE通过，root协调Compression完整公式fence/目标非最短段后、leave-one-out前一段/独立marker/本人注；已按稿保存，Newton48一次真实完整新增/直接两侧/本人注语义POST通过，指定窄位生效释放；本人新增EOF空行已最小修正，不预整日DAY。
+- `SF-2026-ANTHROPIC-OPUS-4-8` — Daily2026-05-29补May28；官方news Messages API system-entry核心/具体owner见SUP_SOURCES A14，root实际独核通过并授trustclass末句后/Observability前一段＋本人注。作者真实保存、完整新增/直接两侧顺读，root已实际完整新增/直接两侧/本人注唯一POST通过，窄位释放，不预DAY；不采用未独核卡摘要精确OSWorld数字、营销性能、SDK或backend实现保证。
+
+- `SF-2025-ARXIV-2509-06436` — Darwin，Daily2025-09-10补Sep9；exact-v1 §3–6/T2–4、Limitations与A–G必要域（G含完整文字例），2+1+2=5。仅跨chunk读取顺序分叉/语义状态前缀复用与utility剪枝接口，保摘要支持/误剪/非KV与None非truth、T2任务反退和全费，不授完整recipe/无损剪枝/positionbias消除或净效率；未核图像像素/代码、模型运行或复现。
+- `SF-2026-ARXIV-2610-25550` — Daily2026-10-21补Oct20；oct21_resume_reader R172必要Source/actual owner/完整PRE原样通过，root具名授本精确单段+本人注。作者已真实保存并完整自读新增/完整直接两侧及本人注，reader R177唯一非writer actualPOST已通过，窄位生效释放；仅行政同步既成事实，不第三核。未核代码/复现，不授DAY。
+
+- `SF-2025-ARXIV-2510-08907` — Daily2025-10-14补Oct13；writer exact-v1§3–5/AppA/T1–6必要，Planck R53关键核，2+2+2=6，原token-anchor/bidirectional层KV与LM/QA训练消费gap深入。保冻结target/LoRA128、分块510/5–51x、AE人口不同/各cell反退和全费；不采任意reader/无损或AE普遍无用。未核代码/复现，整体PRE/SAVE/fullselfread/solePOST仅本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-11967` — Herschel，Daily2025-10-16补Oct15；消费Cicero R35 exact-v1 §2.2–2.3/3.1–3.3/4.1/4.3/4.5.2–3首次必要，2+2+2=6，仅shared-prefix branch/return摘要/KV回滚消费差额深入。保主支交替非nested/parallel、FoldGRPO全轨迹/penalty与prompt-return judge非全trace、32K×10峰值/累计分账、工具96.5对49.5及main-only训练time/全费，不授执行撤销/充分摘要或净速。未第二Methods/代码/复现；PRE/SAVE/fullselfread/solePOST只本日canonical实际层。

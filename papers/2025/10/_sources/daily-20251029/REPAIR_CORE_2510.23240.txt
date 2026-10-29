@@ -1,0 +1,1003 @@
+Autoregressive Styled Text Image Generation, but Make it Reliable
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+3 Eruku Architecture
+3.1 VAE Image Tokenizer
+3.2 Autoregressive Text Encoder
+3.3 Autoregressive Image Decoder
+4 Eruku Training
+4.1 Training Strategy
+4.2 Training Data
+5 Experiments
+5.1 Results
+6 Conclusion
+References
+1 Style Text Reliance Analysis
+2 Ablation on Second Stage Training
+3 Results Including Color Correction
+License: CC BY 4.0
+arXiv:2510.23240v1 [cs.CV] 27 Oct 2025
+Autoregressive Styled Text Image Generation, but Make it Reliable
+Carmine Zaccagnino1 Fabio Quattrini1 Vittorio Pippi1
+Silvia Cascianelli1 Alessio Tonioni2 Rita Cucchiara1
+1University of Modena and Reggio Emilia
+2Google
+Abstract
+Generating faithful and readable styled text images (especially for Styled Handwritten Text generation - HTG) is an open problem with several possible applications across graphic design, document understanding, and image editing.
+A lot of research effort in this task is dedicated to developing strategies that reproduce the stylistic characteristics of a given writer, with promising results in terms of style fidelity and generalization achieved by the recently proposed Autoregressive Transformer paradigm for HTG. However, this method requires additional inputs, lacks a proper stop mechanism, and might end up in repetition loops, generating visual artifacts. In this work, we rethink the autoregressive formulation by framing HTG as a multimodal prompt-conditioned generation task, and tackle the content controllability issues by introducing special textual input tokens for better alignment with the visual ones. Moreover, we devise a Classifier-Free-Guidance-based strategy for our autoregressive model. Through extensive experimental validation, we demonstrate that our approach, dubbed Eruku, compared to previous solutions requires fewer inputs, generalizes better to unseen styles, and follows more faithfully the textual prompt, improving content adherence.
+1 Introduction
+Generating images containing some desired string in a specific style is a challenging task that has drawn renewed interest in the Computer Vision and Document Analysis communities. While state-of-the-art generative models, with notoriously poor performance on this task, are making steady progress for generic and simple styles [31, 32, 55, 56], they still are not being applied to the details-oriented variant that focuses on handwriting, which is also known as Handwritten Text Generation (HTG) [18, 19, 3].
+Typically, models for HTG receive as input one or more style images, containing text written in a reference handwriting style, and a text string that specifies some desired content. Then, the models are tasked to generate another image containing the desired textual content in the reference style.
+Research efforts in the last few years have brought to impressive performance with models following mainly the adversarial (GAN-based) [25, 17, 58] or the diffusion-based [39, 10, 40] generative paradigms. However, these kinds of approaches exhibit poor generalization capabilities when tasked to generate images in handwriting styles that differ substantially from those observed during training. Moreover, they typically impose constraints on the output length, and are difficult and inefficient to train, usually requiring multiple auxiliary networks or supervision signals to ensure style fidelity and content readability in the output.
+Figure 1: Our proposed Eruku model can generate text images with arbitrary length and with great text adherence, respecting both the generation text and with the conditioning writing style.
+More recently, Pippi et al. [45] tackled these issues by proposing to treat HTG as an autoregressive image generation problem.
+Specifically, their model is given a text line image as reference style example, alongside its transcription. The image is represented as a sequence of visual embeddings obtained with a Variational AutoEncoder (VAE). Then, the model autoregressively generates the VAE-compatible visual embeddings of an image containing the desired text in the style of the reference example.
+This approach generalizes well to novel styles, both handwritten and typewritten, thanks to training on massive synthetic datasets. Moreover, it does not have architectural restrictions preventing it from generating arbitrarily long images, and is trained with a simple loss that does not entail terms from external models.
+However, the approach proposed in [45] also presents important drawbacks. First, it requires as input the transcription of the style image. This helps the model associate style features with textual content, but creates a strong dependency on accurate transcriptions, which may not be available in real-world scenarios, or may be unreliable when obtained with text recognition networks, which can be imperfect. Moreover, to stop the generation, it relies on a heuristic that entails emitting 10 consecutive padding tokens, which are then discarded. This strategy is somewhat inefficient.
+Finally, the model often struggles to precisely render the desired text, suffering from issues typical of autoregressive generation models such as repetitions, incomplete sequences, and failure to stop at the correct length (see Figure 1).
+Neverthless, the autoregressive formulation provides undeniable advantages like training efficiency and the ability to generate arbitrary-length outputs. Therefore, in this work, we follow the same formulation, improving its key aspects.
+To this end, we introduce key modeling novelties to
+•
+free the model from requiring the transcription of the style image as input, making it instead optional;
+•
+provide the model with an explicit stopping mechanism via a single, dedicated end of generation token;
+•
+enforce adherence to the desired text sequence without relying on auxiliary networks for supervision.
+We achieve these goals by introducing special visual and textual tokens to guide the generation, and by a Classifier-Free Guidance (CFG)-inspired approach that works only on the textual inputs.
+Our method, dubbed Eruku, is built upon a VAE and an autoregressive Transformer trained on a large-scale synthetic dataset of text images. Specifically, the Transformer is trained to iteratively predict VAE-compatible embeddings, including our introduced special tokens, and to generate by exploiting our CFG-inspired mechanism.
+We conduct extensive experiments on multiple handwritten and typewritten datasets, all different from the synthetic one used in training. The obtained results show that Eruku achieves robustness to missing or noisy inputs and improves text fidelity while maintaining strong generalization to unseen styles. The code and weights of our approach will be available upon publication.
+2 Related Work
+Figure 2: Training framework of Eruku, our autoregressive text image generation model. We condition generation on: the textual content of a style image TsT_{s} (“Style”), the generation text TgT_{g} (“Gen”), and the style image IsI_{s}. Eruku is trained on next-token prediction, learning to generate an image containing the generation text TgT_{g} with the same writing style as the style image IsI_{s}. Providing the style text TsT_{s} enables the model to link each character with its representation style, but we also enable generation without the style text TsT_{s} by dropping it during inference and using synchronization tokens to separate the sequence components. We represent images with VAE [45] continuous latents. Our model automatically learns to stop generation emitting the Visual End of Generation token <EOG>.
+HTG approaches can be broadly categorized into two paradigms: online and offline. Online HTG conceptualizes handwriting as a temporal sequence of strokes. Models in this setting take as input a style representation encoded in the form of stroke trajectories and then predict subsequent trajectories, which are finally rendered as an image [18, 2, 1, 9, 33, 50]. However, the need for specialized hardware such as digitizing tablets to capture stroke-level data makes this approach costly and impractical in scenarios where the reference style is derived from existing manuscripts, such as historical collections. This limitation has motivated the development of offline HTG, where both the style reference and the generated samples are static images. Offline HTG has therefore attracted more research attention and also constitutes the focus of this paper.
+Offline HTG aims at generating text images that reflect a user-defined content string [3, 15] and, in the Styled variant focus of this work, one or more reference style images [25, 5, 43, 58, 11, 45, 16, 17, 28, 10, 36]. For our model, we use a single text line image as reference since this provides rich stylistic cues while remaining convenient for the user to supply.
+Most HTG models are either GAN-based [25, 11, 16, 17, 34, 28] and diffusion-based frameworks [64, 39, 40, 10], and rely on convolutional backbones. In these methods, content and style are encoded separately and fused in later stages, which prevents the modeling of content-sensitive stylistic phenomena (e.g., ligatures or character-specific rendering variations such as repeated letters). To address this issue, recent Transformer-based adversarial approaches [5, 43, 58] introduce cross-attentions to capture style–content interactions. To further exploit such interactions, [45] introduces an encoder-decoder autoregressive Transformer that generates styled text images by conditioning on both the style image and its textual content, learning how to link the style characters with their visual appearance. However, this introduces two limitations: first, the required textual content of the style image might not always be available or easy to obtain; second, when the style is particularly complex, the binding between text style image and text style content can fail and the generation is prone to collapse.
+To address this, we introduce explicit synchronization and stop tokens so that our proposed Eruku is able to generate styled text even when not provided with the textual content of the style image.
+The majority of existing HTG methods target short sequences, typically single words. As a consequence, when longer outputs are attempted, models often fail to preserve character quality, proportion, and consistency across the output image. Moreover, fixed-size canvases in word-level models lead to variations in scale and misaligned baselines due to the presence of ascenders and descenders. This makes naïvely concatenating word images unsuitable for producing longer text. To address this, some methods have been explicitly trained on line or paragraph-level data [11, 26, 45, 36]. For length-constrained diffusion models, [40] proposed an algorithm to stitch and blend shorter generations into longer sequences. In this work, we exploit an autoregressive framework without constraints on the output size.
+Following the success of next-token prediction in natural text generation [59, 46], autoregressive image generation has initially been explored by predicting discrete image tokens [57, 49, 12, 48, 62, 52, 62]. However, discrete tokenization of images limits generation quality due to compression and optimization problems [57, 7, 24, 37], and therefore many recent approaches are evolving towards the prediction of continous latent vectors [54, 30, 20, 13, 53, 14, 63]. In line with this progress, [45] introduced an autoregressive approach that predicts the continous latents of a custom-trained β\beta-VAE [22]. To automatically stop the generation at the end of the sentence, the model learns a padding token in the VAE’s latent space, stopping generation during inference after 10 consecutive padding tokens. However, this approach is not fully stable as these padding tokens are similar to the tokens representing spaces, and also requires the model to run for more iterations than necessary. In our approach, we introduce a stop token to explicitly stop the generation at the end of the sentence.
+Since the seminal paper [23], CFG has been applied to diffusion- and autoregressive-based image generation [51, 54, 52] to improve alignment with the target conditioning. This technique is also used in HTG models [40, 36, 41, 6]. In this work, we apply it in our continuous autoregressive model, adapting it to support the newly introduced synchronization and stop tokens. This constitutes the first application of this technique in autoregressive HTG models.
+3 Eruku Architecture
+Our HTG approach takes as input a reference style image (IsI_{s}) and the text content to be rendered, dubbed generation text (TgT_{g}) from here on. Optionally, the model also takes as input the text contained in the style sample, which we call style text (TsT_{s}). Then, it is tasked to generate a text image IgI_{g} containing TgT_{g} in the same style as IsI_{s} (Figure 2).
+Specifically, we generate IgI_{g} by using an autoregressive Transformer Encoder-Decoder model operating in the latent space of a Variational AutoEncoder (VAE), which acts as an image tokenizer.
+The Transformer Encoder, ℰ\mathcal{E}, takes as input TgT_{g}, optionally preceded TsT_{s}. The Transformer Decoder, 𝒟\mathcal{D}, is fed with the IsI_{s}, tokenized by the VAE Encoder. Then, the model autoregressively outputs embeddings of the VAE latent space and stops generating by emitting a special token. Finally, these latent space tokens are decoded by the VAE Decoder, which outputs the desired text image IgI_{g}. The details of our pipeline are given below.
+3.1 VAE Image Tokenizer
+To project the style image IsI_{s} into a compressed latent space and then convert the embeddings generated by the autoregressive Transformer into the output image IgI_{g}, we reuse the continuous β\beta-VAE provided in [45], frozen.
+Specifically, given an RGB (3×H×W{3\times H\times W}) text image II, the VAE Encoder projects it into a latent space representation.
+Given the VAE’s number of channels, cc, and its downscaling factor, ff, the resulting latent vector will have shape c×h×wc\times h\times w, where w=W/fw=W/f and h=H/fh=H/f.
+This is then reshaped into a ww-long sequence of h⋅ch\cdot c vectors, 𝐯=[v0,…,vw]\mathbf{v}=[v_{0},...,v_{w}], so that each one encodes a vertical slice of the text image.
+The VAE Decoder is tasked to reconstruct a grayscale version of the text image without the background, therefore enforcing the latent space to represent text style rather than background content. The model was trained with a combination of reconstruction loss, KL divergence, Cross-Entropy from a pretrained writing style classification network [45], and a CTC loss from a pretrained HTR model [45].
+3.2 Autoregressive Text Encoder
+Eruku autoregressive Transformer Encoder takes as inputs text tokens obtained by tokenizing TsT_{s} (if given) and TgT_{g} at character-level with the byte-by-byte tokenizer from ByT5 [60], separated and followed by two special tokens. Specifically, the input to the Encoder is:
+𝐭=[ts,1,…,ts,ls,<SOG>,tg,1,…,tg,lg,<EOG>].\mathbf{t}=[t_{s,1},...,t_{s,l_{s}},\texttt{<SOG>},t_{g,1},...,t_{g,l_{g}},\texttt{<EOG>}].
+The textual End of Generation token <EOG> is a utility token automatically inserted by the tokenizer. The textual Start of Generation token <SOG> is an additional special token that we introduce to signal the model that the following tokens are part of the generated image that the model is tasked to render. The <SOG>, coupled with appropriate training, enables the model to learn to ignore the style text if it is unable to match it to the style image, or if the style text is not present at all.
+The Encoder performs multi-layer self-attention on 𝐭\mathbf{t} and passes its output to the Autoregressive Decoder.
+3.3 Autoregressive Image Decoder
+Eruku autoregressive Transformer Decoder takes as inputs the visual tokens 𝐯s\mathbf{v}_{s} obtained by tokenizing the style image IsI_{s} with the VAE Encoder, linearly projected into embedding vectors with size compatible with the Transformer dimension (𝒟d​i​m\mathcal{D}_{dim}), thus obtaining the sequence 𝐞s\mathbf{e}_{s}. Moreover, we prepend and append two additional learnable embeddings: one for the Start of sequence token, eSOSe_{\texttt{SOS}}, and one for the visual Start of generation token, eSOGe_{\texttt{SOG}}. Therefore, the input to the Decoder is 𝐞=[eSOS,es,1,…,es,ws,eSOG]\mathbf{e}=[e_{\texttt{SOS}},e_{s,1},...,e_{s,w_{s}},e_{\texttt{SOG}}].
+The Decoder performs multi-layer self-attention on 𝐞\mathbf{e} and cross-attention between 𝐞\mathbf{e} and the output of the Transformer Encoder, and iteratively generates a sequence of embeddings e^g,i∈𝐞^\hat{e}_{g,i}\in\mathbf{\hat{e}}.
+At each generation step, the current embedding e^g,i\hat{e}_{g,i} is linearly projected into two separate vectors: s^i∈ℝ3\hat{s}_{i}\in\mathbb{R}^{3} and v^g,i∈ℝc⋅h\hat{v}_{g,i}\in\mathbb{R}^{c\cdot h}.
+The value of s^i\hat{s}_{i} belongs to a dictionary of three elements, {\{<SOG>,<IMG>,<EOG>}\}, within a next-token prediction scheme. In particular:
+•
+Visual Start of Generation token <SOG>, meaning that the model suggests to insert the start of generation token at that point in the sequence. This behavior is mainly useful in training, but it also enables the model to recover cases in which the TsT_{s} is incorrect.
+In this case, we append eSOGe_{\texttt{SOG}} to the generated sequence of embeddings and run another generation step.
+•
+Visual token <IMG>, meaning that the model is continuing to generate image tokens in v^i\hat{v}_{i}. In this case, we append its linear projection e^g,i\hat{e}_{g,i} to the generated sequence and run another generation step.
+•
+Visual End of Generation token <EOG> meaning that the model suggests that the entire generation text TgT_{g} has been rendered in the output image. In this case, we stop the autoregressive generation process.
+Note that the visual <SOG> and <EOG> tokens also act as a synchronization signal alongside the corresponding textual <SOG> and <EOG> tokens in the Autoregressive Encoder (see Section 3.3).
+In fact, as detailed in Section 4, during training Eruku consistently observes paired textual/visual <SOG> and textual/visual <EOG> tokens. As a consequence, it implicitly learns an alignment between the boundaries of corresponding textual and visual segments. At inference time, the model receives the visual <SOG> already aligned with the textual <SOG>, and is encourages to produce the appropriate number of visual tokens to ensure that the textual <EOG> provided to the encoder corresponds meaningfully to the visual <EOG> generated by the decoder.
+In the rest of the paper, where it is clear from the context, we use <SOG> and <EOG> for both the textual and visual tokens for simplicity of notation.
+The generation process continues until either a visual <EOG> token is predicted.
+At the end of the process, the sequence of v^g,i\hat{v}_{g,i}’s, 𝐯g\mathbf{v}_{g}, is passed to the VAE Decoder to obtain the final generated image IgI_{g}.
+Text Classifier-Free Guidance.
+In order to improve Eruku’s ability to correctly render the desired text TgT_{g} within the output image, we use an inference-time strategy based on Classifier-Free Guidance (CFG).
+CFG was developed in the context of conditional Diffusion Models [23] to increase prompt-image alignment by sharpening the sampling distribution towards the conditioning.
+To this end, the model is tasked to generate with the conditioning signal (conditional generation) and with a null condition ∅\emptyset (unconditional generation), and the results are combined, scaled with a parameter γ\gamma to regulate the intensity of this operation.
+Recently, this technique has been successfully applied in Autoregressive image generation models [30] and in Autoregressive image editing models [38, 8].
+Recall that our proposed Eruku is conditioned on three inputs: the sequence of embeddings representing the style image, 𝐞s\mathbf{e}_{s}, the sequence of style text tokens 𝐭s\mathbf{t}_{s}, and that of the generation text tokens, 𝐭g\mathbf{t}_{g}. The last two are gathered in a single sequence 𝐭\mathbf{t}.
+To enforce content adherence in the generated image, we apply the CFG formula to the e^g,i\hat{e}_{g,i}’s, but we keep the style image conditioning in the unconditional generation to retain style consistency also in the unconditional branch, i.e.,
+p⁡(e^g,i|e^g,<iCLOSE\displaystyle p(\hat{e}_{g,i}|\hat{e}_{g,{<i}}
+,𝐞s,𝐭)=\displaystyle,\mathbf{e}_{s},\mathbf{t})=
+p⁡(e^g,i|e^g,<i,𝐞s,∅)+\displaystyle p(\hat{e}_{g,i}|\hat{e}_{g,{<i}},\mathbf{e}_{s},\emptyset)~+
+γ⋅(p(e^g,i|e^g,<i,𝐞s,𝐭)−(p(e^g,i|e^g,<i,𝐞s,∅)).\displaystyle\gamma\cdot(p(\hat{e}_{g,i}|\hat{e}_{g,{<i}},\mathbf{e}_{s},\mathbf{t})-(p(\hat{e}_{g,i}|\hat{e}_{g,{<i}},\mathbf{e}_{s},\emptyset)).
+4 Eruku Training
+Note that the training samples for our model consist of tuples containing the style text TgT_{g}, the generation text TgT_{g}, the style image IsI_{s}, and the target text image IgI_{g}. We build a dataset by synthesizing such samples as detailed in Section 4.2, and we train our model in two phases, as depicted in Figure 2 and described in the following.
+4.1 Training Strategy
+At training time, the input to the Transformer Encoder is the same as what is given at inference, i.e., a sequence of textual tokens t, computed from TsT_{s} and TgT_{g} as explained in Section 3.2.
+For the training input to the Transformer Decoder, IsI_{s} and IgI_{g} are converted to sequences of vectors in the VAE’s latent space, i.e., vs\textbf{v}_{s} and vg\textbf{v}_{g}, and projected into sequences of image embeddings es\textbf{e}_{s} and eg\textbf{e}_{g}. By adding the embeddings of the special visual tokens, we obtain
+𝐞=[eSOS,es,1,…,es,ws,eSOG,eg,1,…,eg,wg,eEOG].\mathbf{e}=[e_{\texttt{SOS}},e_{s,1},...,e_{s,w_{s}},e_{\texttt{SOG}},e_{g,1},...,e_{g,w_{g}},e_{\texttt{EOG}}].
+Then, the model is tasked to replicate the entire sequence of embeddings 𝐞\mathbf{e}, excluding eSOSe_{\texttt{SOS}}, i.e., to iteratively output the sequence of vectors
+𝐞^=[e^s,1,…,e^s,ws,e^SOG,e^g,1,…,e^g,wg,e^EOG].\mathbf{\hat{e}}=[\hat{e}_{s,1},...,\hat{e}_{s,w_{s}},\hat{e}_{\texttt{SOG}},\hat{e}_{g,1},...,\hat{e}_{g,w_{g}},\hat{e}_{\texttt{EOG}}].
+For the generation during training we apply a teacher-forcing strategy.
+From each e^i∈𝐞^\hat{e}_{i}\in\mathbf{\hat{e}}, we obtain the corresponding s^i\hat{s}_{i} and v^i\hat{v}_{i} vectors. Then, we compute a Cross-Entropy (CE) loss ℒC​E\mathcal{L}_{CE} on the s^i\hat{s}_{i}’s and a Mean Square Error (MSE) loss ℒM​S​E\mathcal{L}_{MSE} on the v^i\hat{v}_{i}’s.
+Specifically, the ℒC​E\mathcal{L}_{CE} is computed with respect to the reference values in the ground truth sequence given by:
+𝐬=[<IMG>×ws,<SOG>,<IMG>×wg,<EOG>].\mathbf{s}=[\texttt{<IMG>}_{\times w_{s}},\texttt{<SOG>},\texttt{<IMG>}_{\times w_{g}},\texttt{<EOG>}].
+This sequence is also used to select the v^i\hat{v}_{i}’s corresponding to the style image, v^s,i\hat{v}_{s,i}, and to the desired text image, v^g,i\hat{v}_{g,i}. Then, the ℒM​S​E\mathcal{L}_{MSE} is computed respectively between the v^s,i\hat{v}_{s,i}’s and the corresponding vector in 𝐯s\mathbf{v}_{s}, and between the v^g,i\hat{v}_{g,i}’s and the corresponding vector in 𝐯g\mathbf{v}_{g}.
+Training for Classifier-Free-Guidance.
+To enable the text CFG as described in Section 3.3, we need to train the model to generate also without conditioning inputs. In our case, this would mean generating without any textual input but only the conditioning given by the style image IgI_{g}.
+To this end, with a given probability pu​n​c​o​n​dp_{uncond} during training, we replace all text embeddings in the models’ textual input 𝐭\mathbf{t} with a learnable text unconditional embedding, <UNCOND>. In this way, we obtain the ∅\emptyset conditioning for the unconditional generation. We refer to this setting as text-unconditional generation.
+Second Training Phase.
+After pre-training, we fine-tune Eruku to enable it to generate also when the style text is not available.
+To this end, with a given probability pd​r​o​pp_{drop} during training, we do not feed the model with the tokens corresponding to TsT_{s}, i.e., the input to the Transformer Encoder becomes
+𝐭=[<SOG>,tg,1,…,tg,lg,<EOG>].\mathbf{t}=[\texttt{<SOG>},t_{g,1},...,t_{g,l_{g}},\texttt{<EOG>}].
+Moreover, in this phase, we use samples whose length is more varied compared to those used in the first training phase. This allows the model to handle longer sequences, which is overall beneficial also in terms of performance [45]. Text-unconditional training is also performed during this second phase in order to preserve unconditional generation capabilities, as suggested by [42].
+4.2 Training Data
+Commonly, HTG models are trained on a single dataset, hindering their generalization capabilities on out-of-distribution styles, words, and languages. Therefore, we train our model on a specifically-prepared massive and varied synthetic dataset11
+1
+https://huggingface.co/datasets/blowing-up-groundhogs/font-square-pretrain-20M.
+To obtain the dataset, we collect over 100k typewritten and calligraphic fonts available online and use them to render text words as greyscale ink over a white background. Then, we apply random geometric transformations and split the resulting image to obtain the style image and the generated image.
+The rendered words are picked from a large corpus of English and random words as the one used in [45]. Specifically, For the pre-training stage, we generate samples consisting of 2 to 3 words for the style images and 2 to 3 words for the target text image, and obtain 23M samples.
+For the fine-tuning stage, we synthesise 10M samples whose style image contains 1 to 8 words and the target text image contains 1 to 32 words.
+5 Experiments
+Following [58, 45], we re-run previous approaches, using their publicly released weights, under a unified setup to enable a fair comparison with the State-of-the-Art. For all test datasets considered, we maintain a fixed set of reference style images and target texts to guide generation, ensuring consistency across methods.
+Implementation details.
+We use the pretrained weights from the Emuru VAE [45], which has 4 Encoder layers and 4 Decoder layers, a downscaling factor f=8f=8 and one output channel (c=1c=1).
+The Autoregressive Transformer architecture or Eruku is the same as T5-Large [47], with ℰd​i​m=𝒟d​i​m=1024\mathcal{E}_{dim}=\mathcal{D}_{dim}=1024.
+During training, we pad the target images of samples within the same batch so that they have all the same, inter-batch maximum length. For padding, we use the visual <EOG> to teach the model that, once all the visual tokens for IgI_{g} are generated, the <EOG> is the only possible output.
+The first training phase is performed with a batch size of 128 over 65000 iterations, whereas the second phase lasts 5000 iterations with a batch size of 2. In both phases, we use gradient accumulation with a virtual batch size of 256, AdamW as optimizer, with a learning rate of 1e-4, and weight decay 1e-2.
+Evaluation Scores.
+To comprehensively assess the performance of our model, we employ multiple scores capturing different aspects of HTG.
+These include the task-specific Handwriting Distance (HWD) [44], to capture style fidelity, the Absolute Character Error Rate Difference (Δ\DeltaCER) [45], which quantifies readability relative to the reference style, the standard image quality evaluation Fréchet Inception Distance (FID) [21], and the binarized version of the FID, (BFID) [45], which focuses on font fidelity disregarding color and texture of the background.
+Datasets.
+Our proposed Eruku is trained only on a large synthetic dataset of images containing English text rendered in calligraphy and typewritten fonts, the same as the one use in [45]. To evaluate its generalization performance, we apply Eruku directly, i.e., without fine-tuning, on multiple multi-writer datasets. These include the IAM [35] dataset (both word- and line-level), and the line-level CVL [27] and RIMES [4] datasets. Moreover, we consider the line-level Karaoke [45] dataset, consisting of song lyrics in English, French, German, and Italian rendered using 100 publicly available fonts22
+2
+https://fonts.google.com/, encompassing both calligraphy and typewritten styles on a white background.
+Compared Methods.
+We compare Eruku against State-of-the-Art HTG methods with publicly released code and pretrained weights. Specifically, we include Convolutional GAN-based models HiGAN+ [17] and TS-GAN [11], Transformer GAN-based methods HWT [5], VATr [43], and VATr++ [58], as well as diffusion-based approaches DiffPen [40] and One-DM [10]. Finally, we consider the Autoregressive Transformer-based Emuru [45], which is the closest to our approach.
+5.1 Results
+First, we perform ablation analyses of Eruku’s main characteristics. To this end, we consider the line-level version of the IAM dataset, since it is the most commonly adopted in HTG literature.
+Style Text Drop.
+We validate the effect of dropping the style text TsT_{s} in the Eruku input. In Table 1, we report the results obtained by applying varying style text drop probability pd​r​o​pp_{drop} in the second phase of training. For this comparison, we generate both with and without TsT_{s} and use γ=1.25\gamma=1.25 for the text CFG. Note that the baseline model is the first line in the same Table 1, i.e., our Eruku architecture trained with style text TsT_{s}, which is also provided during inference.
+Observing the results, we can see that the baseline model, which was not trained with style text dropout (pd​r​o​p=0p_{drop}=0), does not work well when the style text is not provided during inference. This is expected, as it has never been trained in this setting.
+As intended, the ability of the model to generate without style text is significantly improved with increasing values of pd​r​o​pp_{drop}. In particular, moving from pd​r​o​p=0p_{drop}=0 to pd​r​o​p=1p_{drop}=1 yields significant performance improvements when style text is not provided. An added benefit of this style text dropout strategy is that the model trained with pd​r​o​p=0.1p_{drop}=0.1 improves its HWD and FID significantly also when provided with TsT_{s}, without any decrease in Δ\DeltaCER. This leads us to believe that this form of style text dropout makes the model more robust to style text that it would otherwise fail to match to the style image. Therefore, the model is able to leverage the provided style text TsT_{s} better than to the baseline model.
+With increasing values of pd​r​o​pp_{drop}, we can see that the model’s performance increases without the TsT_{s} input and decreases when TsT_{s} is provided. We attribute this to the model losing the ability to match TsT_{s} and IgI_{g} if no longer provided with sufficient paired samples in the second phase of training. To show this, we also report the results of a model finetuned with pd​r​o​p=1p_{drop}=1, which learns quite well how to generate without style text input. When we input TsT_{s} to this model, its performance drops.
+In light of these results, we find pd​r​o​p=0.1p_{drop}=0.1 to be the best tradeoff between non-style text-conditioned generation and style text-conditioned generation and use this value for our final model.
+pd​r​o​pp_{drop}
+TsT_{s}
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+0.0
+✓
+1.81
+0.48
+14.20
+3.88
+✗
+3.03
+1.02
+86.97
+77.46
+0.1
+✓
+1.75
+0.48
+13.49
+4.45
+✗
+2.15
+0.47
+16.71
+8.10
+0.3
+✓
+1.79
+0.50
+16.67
+4.62
+✗
+2.17
+0.46
+18.73
+5.00
+0.6
+✓
+1.74
+0.51
+15.34
+5.47
+✗
+2.05
+0.46
+16.91
+6.11
+1.0
+✓
+2.02
+0.75
+21.41
+15.63
+✗
+2.03
+0.38
+15.97
+4.25
+Table 1: Effect of the style text drop probability applied in training, pd​r​o​pp_{drop}, on the performance of Eruku on IAM Lines, both when the style text TsT_{s} is given or not at inference time. For reference, we also report the result of Eruku fed with TsT_{s} obtained by running TrOCR on the style image IsI_{s} (dubbed Ts∗T_{s}^{*}).
+Text-CFG.
+To validate the effect of the proposed text-CFG on the model’s performance, we consider its effect at different values of the scale γ\gamma at inference time. As a reference, we also consider the performance obtained by a variant of our approach not trained to perform text-unconditional generation, which is therefore ran without CFG at inference time. The results of this analysis are reported in Table 2.
+We can observe that increasing the CFG scale directly impacts the Δ\DeltaCER, and therefore the correctness and readability of the text within the output image. For values of γ\gamma up to 1.25, this improvement does not hinder the style adherence measured by HWD. When increasing beyond that value, there are diminishing advantages in terms of Δ\DeltaCER, and worsening HWD values, indicating that style adherence decreases as γ\gamma increases beyond 1.25. For this reason, we select γ=1.25\gamma=1.25 as the default CFG scale value for Eruku. Nonetheless, a user could change this CFG scale value to obtain a different style-text adherence trade-off.
+Note that an alternative, popular way in the HTG literature to improve the readability of the text output is to fine-tune the models using an auxiliary HTR network [43, 58, 40]. As an ablation, we also try the same approach on Eruku by introducing, in the second stage of training, supervision from an OCR model trained [61] on the same synthetic data used for Eruku in that phase of training.
+The results obtained are reported in Table 2 by adding the suffix “+ OCR”. We observe that OCR fine-tuning proves to be less style-preserving than CFG at obtaining the same Δ\DeltaCER values, as reflected in the HWD scores. Therefore, we do not perform OCR fine-tuning for the final Eruku model, which, as mentioned in Section 4, is trained without any need for auxiliary networks. To further isolate the effect of CFG training, we also train Eruku’s variants without conditioning dropout, and then fine-tune using the OCR model [61]. The results, reported in Table 2, show that these variants are worse in both style preservation and text correctness. Finally, we qualitatively show the effect of γ\gamma in Figure 3.
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+Eruku (γ=1\gamma=1)
+1.83
+0.18
+20.12
+12.52
+Eruku (γ=1.125\gamma=1.125)
+1.73
+0.10
+17.44
+7.71
+Eruku (γ=1.25\gamma=1.25)
+1.70
+0.06
+16.40
+4.88
+Eruku (γ=1.375\gamma=1.375)
+1.73
+0.04
+16.76
+4.01
+Eruku (γ=1.5\gamma=1.5)
+1.80
+0.04
+17.51
+4.07
+Eruku (γ=1\gamma=1) + OCR
+1.82
+0.14
+16.02
+7.99
+Eruku (γ=1.125\gamma=1.125) + OCR
+1.75
+0.08
+15.27
+4.99
+Eruku (γ=1.25\gamma=1.25) + OCR
+1.78
+0.05
+16.45
+4.86
+Eruku (γ=1.375\gamma=1.375) + OCR
+1.84
+0.04
+18.04
+5.18
+Eruku (γ=1.5\gamma=1.5) + OCR
+1.91
+0.03
+19.66
+6.02
+Eruku*
+1.83
+0.21
+21.10
+17.11
+Eruku* + OCR
+1.82
+0.18
+18.48
+11.25
+Table 2: Effect of the text CFG scale on the performance of Eruku. γ=1\gamma=1 means that the text CFG is not performed. We also report the results of a variant not trained to support the text CFG (dubbed Eruku*) and variants trained with the additional supervision of an auxiliary OCR network (noted ‘+ OCR’).
+Comparison with the State-of-the-Art.
+In Tables 5, 5 and 5 and Figure 4, we report a quantitative and qualitative comparison between Eruku and other State-of-the-Art HTG approaches. The comparison is performed both on the dataset that most of the competitors have seen in training (IAM) and on unseen datasets. Recall that, instead, for Emuru and our Eruku approach, all the datasets are unseen. Our model exhibits strong generalization capabilities, maintaining solid performance on all line-level datasets. This is underscored by the fact that it is the best-performing model in terms of HWD on all datasets except for IAM Words. The lower performance on this word-level dataset could be attributed to the particular emphasis given during training to long-context generation in the second stage. A potential mitigation that could be implemented in future approaches is to supplement the dataset used for long-context training with a larger sample of short images. consisting of one or very few words.
+Figure 3: Qualitative analysis of the CFG effect on generation at varying γ\gamma’s. We generate by giving as IsI_{s} the top image in the figure (Style) and as TsT_{s} the text contained in the bottom image (Ref.).
+IAM Words
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+TS-GAN
+4.22
+0.28
+129.57
+86.45
+HiGAN+
+3.12
+0.20
+50.19
+21.92
+HWT
+2.01
+0.15
+27.83
+15.09
+VATr
+2.19
+0.00
+30.26
+15.81
+VATr++
+2.54
+0.07
+31.91
+17.15
+One-DM
+2.28
+0.10
+27.54
+10.73
+DiffPen
+1.78
+0.06
+15.54
+6.06
+Emuru
+3.03
+0.19
+63.61
+37.73
+Eruku
+3.23
+0.77
+79.66
+63.31
+IAM Lines
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+TS-GAN
+3.21
+0.02
+44.17
+19.45
+HiGAN+
+3.25
+0.00
+74.41
+34.18
+HWT
+2.97
+0.33
+44.72
+30.26
+VATr
+2.37
+0.02
+35.32
+27.97
+VATr++
+2.38
+0.03
+34.00
+21.67
+One-DM
+2.83
+0.13
+43.89
+21.54
+DiffPen
+2.13
+0.03
+12.89
+6.87
+Emuru
+1.87
+0.14
+13.89
+6.19
+Eruku
+1.70
+0.06
+16.40
+4.88
+Table 3: Comparison on the word-level and line-level IAM datasets. Note that Eruku and Emuru have not been trained on IAM.
+CVL Lines
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+TS-GAN
+3.07
+0.13
+42.12
+31.97
+HiGAN+
+3.07
+0.12
+78.44
+39.47
+HWT
+2.59
+0.38
+31.22
+16.73
+VATr
+2.36
+0.06
+34.40
+24.64
+VATr++
+2.18
+0.12
+35.53
+19.87
+One-DM
+2.66
+0.06
+60.45
+26.58
+DiffPen
+2.99
+0.01
+40.40
+17.50
+Emuru
+1.82
+0.13
+14.39
+10.77
+Eruku
+1.72
+0.04
+12.32
+6.62
+RIMES Lines
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+TS-GAN
+3.26
+0.12
+109.04
+36.39
+HiGAN+
+3.39
+0.14
+160.57
+47.38
+HWT
+3.36
+0.45
+118.21
+35.26
+VATr
+3.09
+0.07
+113.76
+30.21
+VATr++
+2.83
+0.10
+110.04
+35.61
+One-DM
+3.36
+0.20
+121.18
+36.07
+DiffPen
+2.58
+0.04
+89.79
+18.25
+Emuru
+2.18
+0.25
+26.93
+13.26
+Eruku
+1.81
+0.11
+27.51
+10.15
+Table 4: Comparison on the CVL and RIMES datasets. Note that none of the approaches has been trained on these datasets.
+Karaoke Calligraphy
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+TS-GAN
+4.59
+0.23
+60.30
+12.68
+HiGAN+
+4.90
+0.08
+125.75
+69.41
+HWT
+4.50
+0.32
+62.69
+43.03
+VATr
+3.89
+0.05
+72.22
+47.66
+VATr++
+3.96
+0.01
+67.16
+46.53
+One-DM
+4.31
+0.04
+59.73
+38.30
+DiffPen
+4.18
+0.16
+34.19
+25.78
+Emuru
+2.24
+0.13
+13.87
+7.99
+Eruku
+2.04
+0.13
+12.39
+7.30
+Karaoke Typewritten
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+TS-GAN
+4.70
+0.32
+141.41
+75.78
+HiGAN+
+5.19
+0.07
+135.34
+63.39
+HWT
+4.57
+0.37
+72.78
+37.40
+VATr
+4.14
+0.05
+80.38
+41.02
+VATr++
+4.15
+0.01
+76.03
+41.69
+One-DM
+4.80
+0.05
+70.75
+44.06
+DiffPen
+4.71
+0.14
+78.07
+61.16
+Emuru
+1.28
+0.11
+9.85
+4.33
+Eruku
+1.21
+0.11
+10.29
+5.07
+Table 5: Comparison on the Karaoke dataset. Note that none of the approaches has been trained on these datasets.
+Figure 4: Qualitative results between our proposed Eruku, and the State-of-the-Art Emuru and DiffPen models on the considered datasets. We task the models to generate a replica of the reported reference image (Ref.) by giving them as input the text contained in Ref. and the reported style image (Style).
+6 Conclusion
+In this paper, we have tackled the limitations of the current State-of-the-Art Autoregressive HTG approach, namely the dependency on accurate style image transcriptions, the inefficient and error-prone stopping mechanism, and the poor adherence to the target text to render. To this end, we have introduced Eruku, an Autoregressive Tranformer Encoder-Decoder that incorporates special visual and textual tokens and a novel CFG-inspired mechanism acting on the text inputs. Through extensive experiments on a variety of handwritten and typewritten datasets, we validate the effectiveness of our approach in operating even with missing or noisy style image transcriptions and in generating images whose content closely adheres to the desired target text, while maintaining generalization capabilities and output length flexibility.
+References
+[1]
+Emre Aksan and Otmar Hilliges.
+STCN: Stochastic Temporal Convolutional Networks.
+In ICLR, 2018.
+[2]
+Emre Aksan, Fabrizio Pece, and Otmar Hilliges.
+DeepWriting: Making digital ink editable via deep generative modeling.
+In CHI, 2018.
+[3]
+Eloi Alonso, Bastien Moysset, and Ronaldo Messina.
+Adversarial Generation of Handwritten Text Images Conditioned on Sequences.
+In ICDAR, 2019.
+[4]
+Emmanuel Augustin, Matthieu Carré, Emmanuèle Grosicki, J-M Brodin, Edouard Geoffrois, and Françoise Prêteux.
+RIMES evaluation campaign for handwritten mail processing.
+In IWFHR, 2006.
+[5]
+Ankan Kumar Bhunia, Salman Khan, Hisham Cholakkal, Rao Muhammad Anwer, Fahad Shahbaz Khan, and Mubarak Shah.
+Handwriting Transformers.
+In ICCV, 2021.
+[6]
+Kai Brandenbusch.
+Semi-Supervised Adaptation of Diffusion Models for Handwritten Text Generation.
+arXiv preprint arXiv:2412.15853, 2024.
+[7]
+Huiwen Chang, Han Zhang, Lu Jiang, Ce Liu, and William T Freeman.
+Maskgit: Masked generative image transformer.
+In CVPR, 2022.
+[8]
+Yixiao Chen, Zhiyuan Ma, Guoli Jia, Che Jiang, Jianjun Li, and Bowen Zhou.
+Context-aware autoregressive models for multi-conditional image generation, 2025.
+[9]
+Gang Dai, Yifan Zhang, Qingfeng Wang, Qing Du, Zhuliang Yu, Zhuoman Liu, and Shuangping Huang.
+Disentangling Writer and Character Styles for Handwriting Generation.
+In CVPR, 2023.
+[10]
+Gang Dai, Yifan Zhang, Quhui Ke, Qiangya Guo, and Shuangping Huang.
+One-DM: One-Shot Diffusion Mimicker for Handwritten Text Generation.
+In ECCV, 2024.
+[11]
+Brian Davis, Chris Tensmeyer, Brian Price, Curtis Wigington, Bryan Morse, and Rajiv Jain.
+Text and Style Conditioned GAN for Generation of Offline Handwriting Lines.
+In BMVC, 2020.
+[12]
+Patrick Esser, Robin Rombach, and Bjorn Ommer.
+Taming transformers for high-resolution image synthesis.
+In CVPR, 2021.
+[13]
+Lijie Fan, Tianhong Li, Siyang Qin, Yuanzhen Li, Chen Sun, Michael Rubinstein, Deqing Sun, Kaiming He, and Yonglong Tian.
+Fluid: Scaling Autoregressive Text-to-image Generative Models with Continuous Tokens.
+In ICLR, 2025a.
+[14]
+Lijie Fan, Luming Tang, Siyang Qin, Tianhong Li, Xuan Yang, Siyuan Qiao, Andreas Steiner, Chen Sun, Yuanzhen Li, Tao Zhu, et al.
+Unified autoregressive visual generation and understanding with continuous tokens.
+arXiv preprint arXiv:2503.13436, 2025b.
+[15]
+Sharon Fogel, Hadar Averbuch-Elor, Sarel Cohen, Shai Mazor, and Roee Litman.
+ScrabbleGAN: Semi-Supervised Varying Length Handwritten Text Generation.
+In CVPR, 2020.
+[16]
+Ji Gan and Weiqiang Wang.
+HiGAN: Handwriting Imitation Conditioned on Arbitrary-Length Texts and Disentangled Styles.
+In AAAI, 2021.
+[17]
+Ji Gan, Weiqiang Wang, Jiaxu Leng, and Xinbo Gao.
+HiGAN+: Handwriting Imitation GAN with Disentangled Representations.
+ACM Trans. Graphics, pages 1–17, 2022.
+[18]
+Alex Graves.
+Generating Sequences with Recurrent Neural Networks.
+arXiv preprint arXiv:1308.0850, 2013.
+[19]
+TSF Haines, O Mac Aodha, and GJ Brostow.
+My Text in Your Handwriting.
+ACM Trans. Graphics, 35(3), 2016.
+[20]
+Jian Han, Jinlai Liu, Yi Jiang, Bin Yan, Yuqi Zhang, Zehuan Yuan, Bingyue Peng, and Xiaobing Liu.
+Infinity: Scaling Bitwise AutoRegressive Modeling for High-Resolution Image Synthesis, 2025.
+[21]
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter.
+GANs Trained by a Two Time-Scale Update Rule Converge to a Local Nash Equilibrium.
+In NeurIPS, 2017.
+[22]
+Irina Higgins, Loic Matthey, Arka Pal, Christopher P Burgess, Xavier Glorot, Matthew M Botvinick, Shakir Mohamed, and Alexander Lerchner.
+beta-vae: Learning basic visual concepts with a constrained variational framework.
+ICLR, 2017.
+[23]
+Jonathan Ho and Tim Salimans.
+Classifier-Free Diffusion Guidance.
+In NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications, 2021.
+[24]
+Minyoung Huh, Brian Cheung, Pulkit Agrawal, and Phillip Isola.
+Straightening out the straight-through estimator: Overcoming optimization challenges in vector quantized networks.
+In ICML, 2023.
+[25]
+Lei Kang, Pau Riba, Yaxing Wang, Marçal Rusiñol, Alicia Fornés, and Mauricio Villegas.
+GANwriting: Content-Conditioned Generation of Styled Handwritten Word Images.
+In ECCV, 2020.
+[26]
+Lei Kang, Pau Riba, Marcal Rusinol, Alicia Fornes, and Mauricio Villegas.
+Content and style aware generation of text-line images for handwriting recognition.
+IEEE Trans. PAMI, pages 1–1, 2021.
+[27]
+Florian Kleber, Stefan Fiel, Markus Diem, and Robert Sablatnig.
+CVL-DataBase: An Off-Line Database for Writer Retrieval, Writer Identification and Word Spotting.
+In ICDAR, 2013.
+[28]
+Praveen Krishnan, Rama Kovvuri, Guan Pang, Boris Vassilev, and Tal Hassner.
+TextStyleBrush: Transfer of Text Aesthetics from a Single Example.
+IEEE Trans. PAMI, 2023.
+[29]
+Minghao Li, Tengchao Lv, Lei Cui, Yijuan Lu, Dinei Florencio, Cha Zhang, Zhoujun Li, and Furu Wei.
+TrOCR: Transformer-based optical character recognition with pre-trained models.
+AAAI, 2023.
+[30]
+Tianhong Li, Yonglong Tian, He Li, Mingyang Deng, and Kaiming He.
+Autoregressive Image Generation without Vector Quantization.
+In NeurIPS, 2024.
+[31]
+Zeyu Liu, Weicong Liang, Zhanhao Liang, Chong Luo, Ji Li, Gao Huang, and Yuhui Yuan.
+Glyph-byt5: A customized text encoder for accurate visual text rendering.
+arXiv preprint arXiv:2403.09622, 2024a.
+[32]
+Zeyu Liu, Weicong Liang, Yiming Zhao, Bohan Chen, Ji Li, and Yuhui Yuan.
+Glyph-byt5-v2: A strong aesthetic baseline for accurate multilingual visual text rendering.
+arXiv preprint arXiv:2406.10208, 2024b.
+[33]
+Troy Luhman and Eric Luhman.
+Diffusion Models for Handwriting Generation.
+arXiv preprint arXiv:2011.06704, 2020.
+[34]
+Canjie Luo, Yuanzhi Zhu, Lianwen Jin, Zhe Li, and Dezhi Peng.
+SLOGAN: Handwriting Style Synthesis for Arbitrary-Length and Out-of-Vocabulary Text.
+IEEE Trans. Neural Netw. Learn. Syst., 2022.
+[35]
+U-V Marti and Horst Bunke.
+The IAM-database: an English sentence database for offline handwriting recognition.
+Int. J. Doc. Anal. Recognit., pages 39–46, 2002.
+[36]
+Martin Mayr, Marcel Dreier, Florian Kordon, Mathias Seuret, Jochen Zöllner, Fei Wu, Andreas Maier, and Vincent Christlein.
+Zero-Shot Paragraph-level Handwriting Imitation with Latent Diffusion Models.
+arXiv preprint arXiv:2409.00786, 2024.
+[37]
+Fabian Mentzer, David Minnen, Eirikur Agustsson, and Michael Tschannen.
+Finite Scalar Quantization: VQ-VAE Made Simple.
+In ICLR, 2024.
+[38]
+Jiteng Mu, Nuno Vasconcelos, and Xiaolong Wang.
+Editar: Unified conditional generation with autoregressive models.
+In CVPR, 2025.
+[39]
+Konstantina Nikolaidou, George Retsinas, Vincent Christlein, Mathias Seuret, Giorgos Sfikas, Elisa Barney Smith, Hamam Mokayed, and Marcus Liwicki.
+WordStylist: Styled Verbatim Handwritten Text Generation with Latent Diffusion Models.
+In ICDAR, 2023.
+[40]
+Konstantina Nikolaidou, George Retsinas, Giorgos Sfikas, and Marcus Liwicki.
+DiffusionPen: Towards Controlling the Style of Handwritten Text Generation.
+ECCV, 2024.
+[41]
+Konstantina Nikolaidou, George Retsinas, Giorgos Sfikas, Silvia Cascianelli, Rita Cucchiara, and Marcus Liwicki.
+Dual Orthogonal Guidance for Robust Diffusion-based Handwritten Text Generation.
+arXiv preprint arXiv:2508.17017, 2025.
+[42]
+Prin Phunyaphibarn, Phillip Y. Lee, Jaihoon Kim, and Minhyuk Sung.
+Unconditional Priors Matter! Improving Conditional Generation of Fine-Tuned Diffusion Models.
+arXiv preprint arXiv:2503.20240, 2025.
+[43]
+Vittorio Pippi, Silvia Cascianelli, and Rita Cucchiara.
+Handwritten Text Generation from Visual Archetypes.
+In CVPR, 2023a.
+[44]
+Vittorio Pippi, Fabio Quattrini, Silvia Cascianelli, and Rita Cucchiara.
+HWD: A Novel Evaluation Score for Styled Handwritten Text Generation.
+In BMVC, 2023b.
+[45]
+Vittorio Pippi, Fabio Quattrini, Silvia Cascianelli, Alessio Tonioni, and Rita Cucchiara.
+Zero-Shot Styled Text Image Generation, but Make It Autoregressive.
+In CVPR, 2025.
+[46]
+Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al.
+Language models are unsupervised multitask learners.
+OpenAI blog, page 9, 2019.
+[47]
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J Liu.
+Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer.
+Journal of Machine Learning Research, pages 1–67, 2020.
+[48]
+Aditya Ramesh, Mikhail Pavlov, Gabriel Goh, Scott Gray, Chelsea Voss, Alec Radford, Mark Chen, and Ilya Sutskever.
+Zero-shot text-to-image generation.
+In ICML, 2021.
+[49]
+Ali Razavi, Aaron Van den Oord, and Oriol Vinyals.
+Generating diverse high-fidelity images with vq-vae-2.
+NeurIPS, 2019.
+[50]
+Min-Si Ren, Yan-Ming Zhang, Qiu-Feng Wang, Fei Yin, and Cheng-Lin Liu.
+Diff-Writer: A Diffusion Model-Based Stylized Online Handwritten Chinese Character Generator.
+In ICONIP, 2023.
+[51]
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In CVPR, 2022.
+[52]
+Peize Sun, Yi Jiang, Shoufa Chen, Shilong Zhang, Bingyue Peng, Ping Luo, and Zehuan Yuan.
+Autoregressive Model Beats Diffusion: Llama for Scalable Image Generation.
+arXiv preprint arXiv:2406.06525, 2024.
+[53]
+NextStep Team, Chunrui Han, Guopeng Li, Jingwei Wu, Quan Sun, Yan Cai, Yuang Peng, Zheng Ge, Deyu Zhou, Haomiao Tang, et al.
+NextStep-1: Toward Autoregressive Image Generation with Continuous Tokens at Scale.
+arXiv preprint arXiv:2508.10711, 2025.
+[54]
+Michael Tschannen, Cian Eastwood, and Fabian Mentzer.
+Givt: Generative infinite-vocabulary transformers.
+In ECCV, 2025.
+[55]
+Yuxiang Tuo, Wangmeng Xiang, Jun-Yan He, Yifeng Geng, and Xuansong Xie.
+Anytext: Multilingual visual text generation and editing.
+2023.
+[56]
+Yuxiang Tuo, Yifeng Geng, and Liefeng Bo.
+Anytext2: Visual text generation and editing with customizable attributes, 2024.
+[57]
+Aaron Van Den Oord, Oriol Vinyals, et al.
+Neural discrete representation learning.
+NeurIPS, 30, 2017.
+[58]
+Bram Vanherle, Vittorio Pippi, Silvia Cascianelli, Nick Michiels, Frank Van Reeth, and Rita Cucchiara.
+VATr++: Choose Your Words Wisely for Handwritten Text Generation.
+IEEE Trans. PAMI, 2024.
+[59]
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin.
+Attention is all you need.
+In NeurIPS, 2017.
+[60]
+Linting Xue, Aditya Barua, Noah Constant, Rami Al-Rfou, Sharan Narang, Mihir Kale, Adam Roberts, and Colin Raffel.
+ByT5: Towards a token-free future with pre-trained byte-to-byte models.
+Trans. Assoc. Comput. Linguist., pages 291–306, 2022.
+[61]
+Mohamed Yousef and Tom E Bishop.
+OrigamiNet: Weakly-Supervised, Segmentation-Free, One-Step, Full Page Text Recognition by learning to unfold.
+In CVPR, 2020.
+[62]
+Jiahui Yu, Yuanzhong Xu, Jing Yu Koh, Thang Luong, Gunjan Baid, Zirui Wang, Vijay Vasudevan, Alexander Ku, Yinfei Yang, Burcu Karagol Ayan, et al.
+Scaling autoregressive models for content-rich text-to-image generation.
+TMLR, 2022.
+[63]
+Chunting Zhou, Lili Yu, Arun Babu, Kushal Tirumala, Michihiro Yasunaga, Leonid Shamis, Jacob Kahn, Xuezhe Ma, Luke Zettlemoyer, and Omer Levy.
+Transfusion: Predict the next token and diffuse images with one multi-modal model, 2025.
+[64]
+Yuanzhi Zhu, Zhaohai Li, Tianwei Wang, Mengchao He, and Cong Yao.
+Conditional Text Image Generation with Diffusion Models.
+In CVPR, 2023.
+\thetitle
+Supplementary Material
+In this document, we report additional analyses on style text independence and the effect of the training strategies adopted in the second phase of training. Moreover, we report results that include color correction of the output.
+1 Style Text Reliance Analysis
+When compared to Emuru [45], Eruku does not need style text input. A possible workaround to use Eruku with a style sample with no known ground-truth textual transcription is to use an OCR model to obtain it. We test both Emuru and Eruku with style text input obtained from running TrOCR-Base [29] as an OCR model and comparing them against each other when using the Ts∗T_{s}^{*} text generated by TrOCR, against Eruku ran with no style text input and against a version of Eruku which has never been trained with style text dropout. The results are displayed in Table 6.
+Eruku is (except for FID) better than Emuru even when using the ground truth text TsT_{s}. When using Ts∗T^{*}_{s}, Eruku is able to maintain very low Δ\DeltaCER, whereas Emuru tends to collapse and/or generate incorrect text more often. Both manage to maintain style consistency. Eruku with no style text gets even better Δ\DeltaCER scores, but compromises in a significant way on style adherence, as indicated by the high HWD score. The version of Eruku trained with no style text dropout and style text from OCR suffers, just like Emuru, from significantly increased Δ\DeltaCER from the reliance on this noisy style text.
+Emuru is incapable of running with no style text input.
+2 Ablation on Second Stage Training
+In the second stage of pretraining, as described in Section 4, two variations are made to the way the model trains: it is trained on the dataset of images with longer context described in Section 4.2, and it is trained to randomly drop style text conditioning with a probability of pd​r​o​p=0.1p_{drop}=0.1. We investigate the effects of each of those by running training for the same amount of iterations as the full Eruku second stage of training, but with just one strategy or the other. We then compare those runs on IAM lines to the full second stage of training and to the result of just the first stage of training.
+The results, shown in Table 7, highlight how long-context training improves Δ\DeltaCER significantly. Style text dropout instead, in addition to allowing the model to generate unconditionally as shown in Section 5, also improves style image adherence, as indicated by the improvement in HWD. The model using both strategies (Eruku) combines the advantages of both and reaches the best HWD values and much-improved Δ\DeltaCER values when compared to the model resulting from the first stage of training.
+3 Results Including Color Correction
+Since it relies on the same VAE as Emuru, Eruku generates images with a white background and usually very dark text strokes. This allows the simple color correction strategy proposed in [45] for Emuru to be applicable also for Eruku. The strategy uses the VAE’s background removal abilities to isolate the mask containing the text within the style image, then computes the average of the color values among the foreground ink pixels and applies that to those of the generated image.
+The effect of such color correction post-processing can be observed quantitatively in Table 8 (especially in terms of FID).
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+Eruku w/ TsT_{s}
+1.70
+0.06
+16.40
+4.88
+Emuru w/ TsT_{s}
+1.87
+0.14
+13.89
+6.19
+Eruku w/ Ts∗T_{s}^{*}
+1.73
+0.06
+16.59
+5.07
+Eruku pd​r​o​p=0p_{drop}=0 w/ Ts∗T_{s}^{*}
+1.72
+0.53
+15.81
+7.68
+Emuru w/ Ts∗T_{s}^{*}
+1.79
+0.42
+14.09
+6.23
+Eruku w/o TsT_{s}
+2.51
+0.04
+20.44
+9.63
+Emuru w/o TsT_{s}
+-
+-
+-
+-
+Table 6: Emuru and Eruku results on IAM lines when fed with the actual TsT_{s} or a TsT_{s} obtained by running TrOCR on the style image IsI_{s} (dubbed Ts∗T_{s}^{*}). As a reference, we report the results of the generation without TsT_{s}.
+longer input
+pd​r​o​p=0.1p_{drop}=0.1
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+✗
+✗
+1.81
+0.40
+14.20
+3.38
+✓
+✗
+1.92
+0.04
+19.45
+5.50
+✗
+✓
+1.75
+0.40
+13.49
+4.45
+✓
+✓
+1.70
+0.06
+16.40
+4.88
+Table 7: Ablation analysis on the effect of the second training phase inputs and strategy in terms of performance on IAM Lines.
+HWD↓\downarrow
+Δ\DeltaCER↓\downarrow
+FID↓\downarrow
+BFID↓\downarrow
+Eruku
+1.70
+0.06
+16.40
+4.88
+Emuru
+1.87
+0.14
+13.89
+6.19
+Eruku w/ c.c.
+1.68
+0.04
+12.21
+4.54
+Emuru w/ c.c.
+1.85
+0.14
+11.40
+6.20
+Table 8: Emuru and Eruku results on IAM lines in the standard setting and when the color correction strategy (c.c.) is applied as post-processing.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

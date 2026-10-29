@@ -4,40 +4,48 @@
 
 **窗口：** 2026-05-24T09:00:00+08:00 ～ 2026-05-25T09:00:00+08:00
 
+**窗口说明：** 用户授权仅补遗漏；保既有225候选完整行、日期评分、原小时窗及连续旧§4，不搬移旧材料。
+
+**补充窗口：** 2026-05-24 ～ 2026-05-24
+
+**冻结候选日期：** [原报告](../_sources/daily-20260525/baseline-before-supplement-20261021.md)
+
 **状态：** 完成
 
 **Books：** 纳入本次
 
-**检查时间：** 2026-09-16T14:11:00+08:00
+**检查时间：** 2026-10-21T09:46:05+08:00
 
 ## 1. 结论
 
-当前冻结 raw identity 仍为 **499 = 402 official-day-owned + 97 owner-day ambiguous terminal isolation**。402 个可正面归属项由 400 条 official OAI direct arXiv membership 与 OpenAI 官方 RSS 的 2 条事件组成；97 条 DataCite-recovered identity 只保留 identity/version 与既有阅读成果，不再进入 Candidate Denominator、Evidence 或 Books。
+本轮仅补北京时间2026-05-24完整自然日，14个每日来源按实际可用边界检查并有限封口，新增候选0、新Books改动0。原225候选完整行、日期评分、原小时窗和连续旧§4逐字保留；未重审旧225或把499/97库存转成队列。首次启动、窗口/入口与首批空准入包由root R1–4独立核，R5–6已实际核十四源停止包、Hunyuan/Seed必要原始分页日期及新恢复七个官方目录，R7完整六部分DAY和R8完成保存态有限FINAL均已通过，普通可执行待办0。
 
-对 402 个 day-owned identity 的当前贡献投影为 **402 = 225 candidate + 177 family-specific pre-denominator closure + 0 withdrawn**。Evidence 为 **225 = 224 complete + 1 blocked**：106 deep complete、118 standard complete、1 deep blocked；score distribution 为 `{'6': 120, '7': 38, '8': 38, '9': 29}`。唯一 blocked 是 official-day-owned 的 `2605.23857`，材料请求保持精确。
+arXiv官方规则在适用EDT下不设May24常规批次，Sunday20:00是BJTMay25 08:00；本日精确DataCite主题查询也为0，但两者不证明没有特殊事件或机构先行正文。七个机构有限可读目录/相邻API边界没有May24新增，另外七个固定来源的历史片或相关标题目录缺段仍明确隔离，不支持全源无遗漏、候选或正面Books。没有为了凑数，把搜索误出的community反馈和功能请求当成官方研究。
 
-Books 对账为 **225 = 44 Applied + 1 Deferred + 0 Integrate + 166 No Change — Existing Coverage + 8 Report Only + 6 Structural Candidate**。8 个 owner-day ambiguous Applied 依赖已从本 Daily 的正面归属中撤回并写入 quarantine；现有 Books 正文不删除，但 05-25 不再把它们当作 Applied evidence。独立 fresh non-author 已核对 owner-day 分区、候选/Evidence/Books 集合、quarantine、唯一 blocked family、材料请求和当前正文 binding，未发现新的实质缺陷，本日报完成。
+保留的旧225有效处置为106深入完成＋118标准完成＋1正文受阻，Books44整合＋166具体已有覆盖＋8仅报告＋6结构候选＋1暂缓；只是原小时批次的范围，不是本轮发现数或新验收其原文结论。旧499＝402正面归属＋97资格隔离、402＝225候选＋177关闭仅保历史路由。旧23857正文和97资格没有因本次0新增而获通过。实际依据见[唯一补查](../_sources/daily-20260525/SUP_SOURCES_20261021.md)及[独立复核](../_sources/daily-20260525/SUP_REVIEW_20261021.md)。
 
 ## 2. 来源覆盖
 
+本节是本轮May24自然日的实际范围与停止点，不继承原小时批次的来源成功。下表七项可读有限目录与七项受阻历史片各按所述范围处理；原批次[source-coverage-v3.json](../_sources/daily-20260525/source-coverage-v3.json)和[owner证据](../_sources/daily-20260525/official-owner-batch-evidence-v3.json)只作旧有效依据，不替本轮覆盖。新原件、实际失败与恢复路径在[本轮A2–3](../_sources/daily-20260525/SUP_SOURCES_20261021.md#a3-十四源有限停止与发现封口)。
+
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | 官方 News/Research RSS；两条 00:00Z 事件完成 event-type 与贡献筛选 | 已检查 | 2 raw，均在候选分母前关闭 |
-| SRC-ANTHROPIC | 官方 Research；相邻公开项为 05-22，早于窗口 | 已检查 | 无 |
-| SRC-GOOGLE-AI | DeepMind Research/Google Publications；相邻 dated research 为 05-19 与 05-28 | 已检查 | 部分 publications 仅年/venue，不据此支持全站 day-level no-hit |
-| SRC-META-AI | 官方 Publications 入口 | 受阻 | 入口返回空/内部错误；不用于支持 no-hit，按外部保留项隔离 |
-| SRC-QWEN | 官方 article index；相邻 05-20 与 05-29 | 已检查 | 无 |
-| SRC-DEEPSEEK | 官方 News/Research；相邻 04-24 与 06-24 | 已检查 | 无 |
-| SRC-MOONSHOT | Kimi Blog；无窗内 dated research/release/RFC | 已检查 | 无 |
-| SRC-TENCENT-HUNYUAN | 官方 publicList；五条可见记录均在窗外 | 已检查 | 无 |
-| SRC-ZAI | 官方 Research；相邻 05-20 与 06-16 | 已检查 | 无 |
-| SRC-BYTEDANCE-SEED | 官方 Research/Public Papers；相邻 05-16 与 05-29 | 已检查 | 无 |
-| SRC-BAIDU-ERNIE | 官方技术 Blog；最近明确 dated 项为 05-09 | 已检查 | 无 |
-| SRC-XIAOMI-MIMO | 官方 dated papers；相邻 03-13 与 06-29 | 受阻 | undated blog cards 不支持 day-level no-hit，按外部边界隔离 |
-| SRC-MINIMAX | 官方 Blog/Agent Tech；相邻 03-18 与 05-26/27 | 已检查 | 无 |
-| SRC-ARXIV | 05-25 08:00 BJT official announcement schedule；400 条 OAI direct membership；97 条仅由 DataCite 恢复 identity/version | 受阻 | 497 arXiv identities = 225 retained + 177 closure + 97 owner-day terminal isolation；隔离项不支持正面归属 |
+| SRC-OPENAI | [Research](https://openai.com/research/)142行与[Index](https://openai.com/research/index/)169行，Index实际Oct19→Sep22/Load more；RSS点击内部错误。May24官方域/Research主题查询及一次路径收窄混出community用户帖，仅作来源类型排除。 | 受阻 | 未恢复May24历史Research片；用户反馈/功能请求不作官方研究，无命中不授无遗漏。 |
+| SRC-ANTHROPIC | 本日root R6实际六个官方主题目录：[FRT](https://www.anthropic.com/research/team/frontier-red-team) May22→Jun03、[Engineering](https://www.anthropic.com/engineering) Apr23→May25、[Alignment](https://www.anthropic.com/research/team/alignment) May08→Jul08、[Interpretability](https://www.anthropic.com/research/team/interpretability) May07→Jul06、[Economics](https://www.anthropic.com/research/team/economics) Apr22→Jun16、[Societal](https://www.anthropic.com/research/team/societal-impacts) Apr30→Jun12，均读到跨May24即止；不再沿主Research当前页授受阻。 | 已检查 | 六相关主题的有限可见切片无May24；不扫暂缓Science/203全库存，不签删除史或未列渠道。 |
+| SRC-GOOGLE-AI | [Research pubs](https://research.google/pubs/)当前页与[DeepMind Research](https://deepmind.google/research/)307行，421只2026 facet计数；本日root R6实际[May2026 Blog archive](https://research.google/blog/2026/05/)到底四卡May01/19/27/28，无May24，不点窗外正文。 | 受阻 | Google Blog有限月档已恢复无May24；仅Pubs日级目录与DeepMind历史切片仍未恢复，不能由Blog替它们授Coverage或扩AI for Science。 |
+| SRC-META-AI | [Research](https://ai.meta.com/research/)一次Timeout；[Publications](https://ai.meta.com/research/publications/)实际Sorry, this content isn’t available right now；May24官方域检索无确定研究。 | 受阻 | 必要历史目录不可读，不能作零命中。 |
+| SRC-QWEN | [旧入口](https://qwenlm.github.io/)实际重定向qwen.ai；新[Research](https://qwen.ai/research)动态0行，旧可见Qwen3Guard非本日；本日日期查询无确定事件。 | 受阻 | May24官方研究/Blog历史片未恢复。 |
+| SRC-DEEPSEEK | [News/Research](https://www.deepseek.com/news/)39行，新闻Sep10→Apr24、研究Jun24→Feb25夹过May24；只读可见相邻目录，不打开窗外论文。 | 已检查 | 仅该有限可见切片无May24新增，不授所有历史渠道无遗漏。 |
+| SRC-MOONSHOT | [Kimi Blog](https://platform.kimi.com/blog)109行，最新Nov7 2025再向旧；May24/2026限定官方域日期检索为空。 | 受阻 | 2026目标日正式研究/发布历史片未恢复；不转普通GitHub提交队列。 |
+| SRC-TENCENT-HUNYUAN | [Research](https://hunyuan.tencent.com/research)动态0行；实际浏览器先不支持subagent visibility、再无该选项超时。新HTML/main路由确认research复用Blog组件，Bnu48NkA→CeX5xNqy确认POST publicList及真实API主机；page1/size20/renderType0，zh totalNum11/list11、en9/list9，完整可见列表May21→Jul6（en Apr30→Jul8）跨窗。 | 已检查 | 本日新原件与列表边界有效，无May24项；仅当前全tab可见目录，不授全历史或body历史逐字内容。 |
+| SRC-ZAI | [Research](https://www.zhipuai.cn/zh/research)175行，可见Jun16→May20 ZCube→Apr29，跨May24即停止。 | 已检查 | 该有限目录无May24新增，不扩全机构。 |
+| SRC-BYTEDANCE-SEED | [Papers](https://seed.bytedance.com/en/public_papers)page1 1–20/246末May26；新main脚本确认get_article_list_v2 GET，实际article_type1/count20/page_token20/US，20条至BJTMay16→Apr15，跨目标日即止。另[Research/Blog](https://seed.bytedance.com/en/research?view_from=homepage_tab)当前5卡；同新API type2/page0/count20/US实际15条/total96/has_more，Jun19→Apr23跨窗；未读96全量。SeedRealtime卡原无日期，实际原文标Aug5。 | 已检查 | 只上述英文可见目录与相邻API边界无May24；不是全96/246全量审阅或所有语言/历史渠道保证。 |
+| SRC-BAIDU-ERNIE | [Blog](https://ernie.baidu.com/blog/zh/)68行page1，最新May9→Apr30→Apr15至Nov21 2025，已跨May24后停止；不为旧页再遍历。 | 已检查 | 该Blog有限可见列表无May24新增。 |
+| SRC-XIAOMI-MIMO | [Paper/Blog](https://mimo.xiaomi.com/)338行；Paper8项Jun29→Mar13→更旧，Blog15卡无日期且More未恢复；May24本日官方域日期查询为空，新原HTML58220bytes未含2026日期串。 | 受阻 | Paper有限目录已查；Blog目标日期/历史片仍缺，空查询不作无遗漏。 |
+| SRC-MINIMAX | [Blog](https://www.minimax.io/blog)77行13个dated卡，Oct19→May27/26→Mar18→2025，跨May24即止。 | 已检查 | 当前该有限列表无May24研究新增，不扩普通项目提交。 |
+| SRC-ARXIV | 本日root R2实际[availability](https://info.arxiv.org/help/availability.html)适用EDT：May24无常规批次；Sunday20:00在May25 BJT08。CL正确2026-05月表一次timeout未读；本日DataCite主题精确UTCMay23 16:00～May24 15:59:59，page1/size100/total0/totalPages0。 | 受阻 | 常规日程与辅助主题0有效，不证明特殊事件不存在；官方相关标题目录未恢复，不授全分类Coverage，旧499/97不变队列。 |
 
-完整 owner 证据见 [`official-owner-batch-evidence-v3.json`](../_sources/daily-20260525/official-owner-batch-evidence-v3.json)，14-source 结构化记录见 [`source-coverage-v3.json`](../_sources/daily-20260525/source-coverage-v3.json)，499 条逐项题摘与非模板理由见 [`screening-outcomes-v3.json`](../_sources/daily-20260525/screening-outcomes-v3.json)。`已检查` 仅指注册入口的有界核验；受阻/无日级时间的入口不支持“无遗漏”。普通 GitHub commit/PR 未扩入 Daily denominator。
+DataCite查询原始时窗UTCMay23 16:00:00～May24 15:59:59对应BJTMay24，只负责主题线索；total0不冒充论文实际发布时间、全球首公开或互联网零事件证明。Hunyuan只完整核当前全tab的zh11/en9标题/日期；Seed只核相邻publication页20项与首个Blog请求15项，未审全部96/246，未把窗外题名变候选。无新增按需事件触发，未扫描每周组或普通GitHub提交。
 
 ## 3. 候选与判断
 
@@ -2261,16 +2269,31 @@ Books：Applied；owner=MULTIMODAL-GENERATIVE-PARADIGMS。
 Books：Applied；owner=MULTIMODAL-GENERATIVE-PARADIGMS。
 <!-- review:SF-2026-ARXIV-2605-23903:end -->
 
+### 本轮May24补查：证据与Books判断
+
+没有新增候选，因而没有新的单篇证据采用或Books owner差额；不为制造书稿diff重审原225或把旧quarantine恢复为本日证据。常规公告日程、主题辅助0及机构相邻目录只支持§2明确的有限检查结果，不支持完整Coverage或全互联网无遗漏。初筛误入的community用户建议/故障帖不提供官方研究机制或可靠性证据；SeedRealtime原无日期卡已沿真实官方链接核为Aug5窗外，未把其发布日期改成May24，也未顺带审阅该窗外发布。
+
+必要本轮原件和有限停止见[唯一SUP A2–3](../_sources/daily-20260525/SUP_SOURCES_20261021.md)；root R2–6已独核对应日程/查询/分页身份；新增可用的Anthropic六主题目录与Google五月Blog档均经本日独立实读，前者解除原笼统受阻，后者不替Pubs/DeepMind历史片授通过。原225连续证据块在本小节以上完整保留，旧106深入/118标准/1受阻与各Books决定不因本轮0新增改标签。
+
 ## 5. 缺口与下一步
 
-1. 97 条 DataCite-recovered identity 已全部进入 owner-day terminal isolation；其 56 个旧 candidate、Evidence 与 Books 投影不再属于本 Daily。精确 identity 清单与 reopen condition 见 [`screening-outcomes-v3.json`](../_sources/daily-20260525/screening-outcomes-v3.json) 和 [`materials-request-v3.json`](../_sources/daily-20260525/materials-request-v3.json)。
-2. 八个 ambiguous Applied family（2605.22863、2605.22873、2605.22949、2605.22967、2605.23080、2605.23128、2605.23668、2605.23826）已写为 owner-unresolved quarantine。现有 Books 正文保留，但不再由 05-25 提供正面 provenance；只有恢复 official owner day 或转交另一 verified owner report 后才能重开。
-3. 唯一 day-owned blocked candidate 是 2605.23857；其 exact-v1 body 请求继续保留。2605.22834 与 2605.23491 在 owner day 未恢复前不再以 exact-v1 body 缺失阻塞本报告。
-4. 本次没有扩来源、重跑 499 条或删除 Books。fresh non-author 已确认 97/402 partition、225 Evidence/Books 投影、8 个 quarantine 与材料清单一致；后续只在材料请求的精确重开条件满足时重开受影响 family。
+普通可执行扫描/准入/新候选原证/Books待办：无。root R5–6已通过有限来源停止及七页定点恢复；R7整日DAY与R8完成保存态有限FINAL均已通过，不再新增研究、查询或Books修改。
 
-终态保留项：97 个 owner-day ambiguous identity、`2605.23857` exact-v1 正文，以及 Meta/MiMo 日级入口限制均已隔离，不用于支持正面证据、Books 或无遗漏断言。定点重开条件：取得 97 项的 official arXiv announcement membership 或 verified owner report、取得 `2605.23857` 可重放的 official exact-v1 HTML/PDF 正文，或取得能唯一落入本窗的 Meta/MiMo 官方事件/历史索引；触发后只重开命中的 Source Family 或来源切片。
+本窗终态保留项均不用于支持正面证据、Books、完整Coverage或无遗漏断言，恢复后仅定点重开：
+
+- 新补查来源限制：OpenAI、Meta、Qwen、Moonshot的May24研究/发布历史切片，Google Pubs日级目录/DeepMind历史切片，MiMo Blog日期片，以及arXiv目标日相关标题列表；Anthropic六主题与Google May Blog已由本日R6恢复，不再笼统列外部终态。具体成功、失败与分页止点见§2。当前首页、空查询和常规无公告日程均不替目标历史全域保证。恢复条件是该源/该日可读带日期原始列表、官方导出或连续相邻边界；特定材料以后有原件时只核其身份和本窗事件，不遍历历年库存。
+- 原资格保留：97个旧identity及其八个旧Applied quarantine（2605.22863/22873/22949/22967/23080/23128/23668/23826）继续不由05-25提供正面provenance；精确清单在[原screening](../_sources/daily-20260525/screening-outcomes-v3.json)与[材料请求](../_sources/daily-20260525/materials-request-v3.json)。没有本补窗新命中就不重开97队列，也不删除既有Books正文；可接受精确官方公告、verified owner或当前合同允许且无冲突的完整联合日期界，不沿旧membership-only文字排斥有效组合。
+- 原唯一正文受阻：[2605.23857v1](https://arxiv.org/abs/2605.23857v1)继续请求可重放完整official exact-v1 HTML/PDF的必要机制/实验；旧缺正文不当新已完成，不恢复为正面Books。原22834/23491仍按资格请求路由，没有新线索不扩全文恢复。其它旧有效层复用，不把0新增当重新验证旧225全部原文。
+
+本轮没有另开窗外论文或移动旧日期；外部材料到达时只处理受影响身份/来源与真实归属日。
 
 ## 6. 复核
+
+复核者：`/root`（本轮报告作者`/root/supp_may22_author`）。结论：通过。R7已实际完整六部分DAY验收，不沿旧Complete代授；R8完成保存态有限FINAL已实际读回并通过；仅同步既成事实，不重复来源/Books。
+
+R1独立本日上下文和旧有效边界、R2实际官方公告日程/一次目录失败、R3精确DataCite原件与A2入口范围、R4机构搜索代表性限制、R5十四源及Hunyuan/Seed原始分页日期、R6六Anthropic主题与Google五月Blog实际边界已通过。R7已实际当前六部分、R6行政差额与冻结/引用/格式检查并通过。没有拟入选新材料，因此无虚构单篇Source、评分、owner/PRE或Books POST；新扫描/书稿普通待办0。全表仍225原行，原小时窗与连续旧§4保持，已完成V3、225URL唯一/原225逐字/连续旧§4冻结、273本地引用/52路径零缺失及限定diff检查，不能代替实际语义复核。
+
+### 原225既有有效终审（历史范围）
 
 - **作者侧结果：** `499=402+97`；`402=225+177+0`；Evidence `225=224+1`；Books `225=44+1+166+8+6`；8 个 ambiguous Applied 依赖已 quarantine，2605.23128 不再由本 Daily 正面拥有。
 - **独立复核：** fresh non-author 未参与本日 author repair 或 Books 写回；先找 owner-day、set projection、quarantine、blocked/materials 与 binding 反例，未发现新的实质缺陷。

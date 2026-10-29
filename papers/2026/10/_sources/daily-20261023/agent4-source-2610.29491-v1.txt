@@ -1,0 +1,720 @@
+Abstract
+A model’s failures can reveal gaps in the behavioral criteria guiding its training.
+We introduce RubricOpt, a framework that lets a policy revise these criteria within preference optimization.
+The policy diagnoses its own rubric-free outputs, retains requirements already covered by the rubric, and edits clauses that leave recurring failures unaddressed.
+A shared semantic representation connects task demands, preference-data contrasts, and rubric clauses, while a deterministic gate checks evidence references and fixed semantic anchors.
+The rubric then guides Direct Preference Optimization (DPO) during training, with preference pairs, labels, and the objective held fixed, and is removed at evaluation.
+Our analysis relates the local effect on rubric-free success to semantic alignment and a residual beyond the measured factors.
+Experiments on capability and open-ended generation benchmarks show that rubric conditioning can improve outcomes over ordinary DPO, with gains and regressions varying across models and datasets.
+A matched continuation isolates the contribution of revision from additional training and finds mixed incremental effects for the tested edit, whose feedback overlaps the evaluation set.
+RubricOpt thus brings the behavioral specification itself into the policy’s feedback loop.
+ 1 Introduction
+Language models can supply rewards for their own iterative preference training  ( Yuan et al., 2024 ) .
+They can also improve their judgment skills by assessing their own judgments  ( Wu et al., 2025a ) .
+The corresponding question for semantic training rubrics is how revising their behavioral requirements affects learned behavior, including when a revision yields gains beyond continuing training with the existing rubric.
+Written rubrics specify desired response properties and can supply reward signals  ( Gunjal et al., 2025 ) or guide the construction of synthetic preference data  ( Gallego, 2025 ) .
+EvoRubrics jointly trains a policy and a rubric generator to adapt rubric-based rewards as learning proceeds  ( Ding et al., 2026 ) .
+SERPO co-evolves response evidence, query-specific rubrics, and policy parameters, using rubric scores as rewards for test-time reinforcement learning  ( Wang et al., 2026a ) .
+We study rubric revision in Direct Preference Optimization (DPO)  ( Rafailov et al., 2023 ) , holding the pairs, labels, and objective fixed while changing the rubric context.
+A matched continuation with the existing rubric measures the edit’s incremental contribution.
+ Figure 1: The RubricOpt loop. (a) Task demand and preference-data supply share eight factor axes. (b) Matched Prefer/Avoid clauses condition both responses during DPO. (c) Rubric-free evaluation supplies feedback for policy self-revision and the next refine / keep decision. Dashed frames group stages. Green boxes denote computation.
+We introduce RubricOpt to study how a model revises its own training rubric across preference-training rounds ( Fig.   1 ).
+Fine-grained evaluation describes response quality through explicit skills  ( Ye et al., 2024 ) .
+We use a fixed eight-factor ontology to connect the model’s task failures, the contrasts in its preference data, and the rubric’s Prefer/Avoid clauses.
+Diagnosis-guided self-evolution uses failure histories to direct subsequent learning  ( Wei et al., 2026 ) .
+RubricOpt applies this diagnostic idea to rubric revision, with the current policy reading task outcomes, self-judged factor scores, and judge feedback on its own outputs to attribute recurring failures to the eight factors.
+It retains explicit requirements for further learning and proposes clause edits where the wording leaves recurring failures uncovered.
+A deterministic gate checks evidence references, factor anchors, and edit size before carrying the rubric into the next round.
+Training-only Semantic Rubric Steering uses the resulting rubric to condition both responses of a preference pair during DPO  ( Rafailov et al., 2023 ) , with the pairs, labels, and objective held fixed.
+Its exposure decreases during training, and evaluation uses the resulting policy without the rubric.
+This use of training-only information has a precedent in privileged-information learning  ( Vapnik & Vashist, 2009 ) .
+Our analysis relates the extra update induced by a rubric to rubric-free success through its alignment with task demand ( Sec.   3.3 ).
+The experiments evaluate how changes to the training specification affect comprehensive capability and open-ended generation.
+Fixed-state probes and criterion comparisons show that rubric text changes the learning update and can alter rubric-free outcomes ( Sec.   4.1 ).
+Across model families and preference corpora, rubric conditioning improves some capability and generation evaluations over ordinary DPO, with gains and regressions varying by setting ( Tabs.   1 and  2 ).
+The dataset comparison relates these effect profiles to the behavioral contrasts available in each corpus ( Sec.   4.2 ).
+A matched continuation separates revision from further optimization and finds mixed incremental results from the tested edit ( Tab.   3 ).
+RubricOpt makes the behavioral specification itself an object of policy-driven revision within preference learning.
+Shared semantic coordinates connect failure diagnosis and preference-data contrasts to editable rubric clauses, while training-only steering connects those clauses to subsequent parameter updates.
+This closes the loop from learned behavior to the specification of further learning, with the effect of revision evaluated independently of additional training.
+ 2 Related Work
+Preference Optimization and Credit Assignment.
+The family descends from RLHF, in which a reward model is fit to pairwise human judgements  ( Stiennon et al., 2020 ) and a policy is then optimised against it at assistant scale  ( Ouyang et al., 2022 ; Bai et al., 2022 ) .
+DPO instead fits chosen–rejected pairs with a classification objective  ( Rafailov et al., 2023 ) , whose implicit reward is the log density ratio between the policy and the reference  ( Sugiyama et al., 2012 ; Chen et al., 2025 ) .
+Later objectives change one component of that recipe: IPO replaces it with a squared loss on the pairwise margin  ( Azar et al., 2024 ) , KTO drops the pairing requirement by scoring each response against a reference point  ( Ethayarajh et al., 2024 ) , and SimPO removes the reference model and normalises the margin by length  ( Meng et al., 2024 ) .
+Two analyses place the family in a wider frame: one connects these objectives to imitation learning  ( Xiao et al., 2025 ) , and one disentangles how their update suppresses the rejected response and preserves the chosen one  ( Chen et al., 2026 ) .
+A complementary line assigns credit inside a response rather than to the response as a whole: TDPO reweights tokens by a forward-KL penalty  ( Zeng et al., 2024 ) , TIS-DPO reweights them by importance sampling against an estimated weight  ( Liu et al., 2025 ) , SEPO selects tokens using a token-level reward estimate  ( Yang et al., 2025b ) , T-REG uses a token-level reward as a regulariser  ( Zhou et al., 2025 ) , and TIDPO guides the update by token importance  ( Yang et al., 2026 ) .
+RubricOpt operates at a different level: a semantic factor names a behavioral distinction that can span several tokens or reasoning steps, while the pairwise loss itself is left unchanged.
+Criteria and Behavioral Diagnosis.
+Written criteria already enter learning through several interfaces.
+As reward signals, Rubrics as Rewards scores on-policy responses against a rubric  ( Gunjal et al., 2025 ) .
+As data, Configurable Preference Tuning builds rubric-conditioned synthetic preference pairs  ( Gallego, 2025 ) .
+And as weights, CoRT contrasts rubric-conditioned with rubric-free replays to form token-level weights  ( Zhang et al., 2026 ) .
+Criterion-conditioned training also has close relatives outside preference optimisation: learning using privileged information trains on a signal that is absent at test time  ( Vapnik & Vashist, 2009 ) .
+Context distillation trains on a context and then evaluates without it, introduced as an alignment technique  ( Askell et al., 2021 ) and developed as a standalone method  ( Snell et al., 2022 ) .
+And classifier-free guidance interpolates between conditioned and unconditioned predictions  ( Ho & Salimans, 2022 ) .
+On the diagnostic side, fine-grained evaluation describes response quality through interpretable skill sets and error taxonomies—FLASK by grading along skill dimensions  ( Ye et al., 2024 ) , EvalTree by profiling weaknesses as a hierarchical capability tree  ( Zeng et al., 2025 ) , and ErrorMap and ErrorAtlas by charting the failure landscape into error categories   ( Ashury-Tahan et al., 2026 ) —and diagnosis-driven post-training then acts on what those tools find, with DiagEvo feeding diagnosed errors back into self-evolution through a hierarchical error memory  ( Wei et al., 2026 ) and APTER turning expert-grounded rubrics into post-training supervision   ( Wang et al., 2026b ) .
+RubricOpt uses shared semantic coordinates to connect task diagnosis, preference-data contrasts, and edits to the training rubric.
+Self-Improvement and Recursive Feedback.
+Self-improvement methods differ in the component they revise and how that revision enters subsequent behavior.
+Self-Refine edits outputs from self-feedback  ( Madaan et al., 2023 ) , and automatic prompt optimisation edits inference-time text from feedback  ( Pryzant et al., 2023 ) .
+In parameter learning, Self-Rewarding uses the model to generate its own reward signals  ( Yuan et al., 2024 ) , Meta-Rewarding trains judgment skills through a meta-judge  ( Wu et al., 2025a ) , and self-play preference optimisation regenerates preferences  ( Wu et al., 2025b ) .
+Rubric evolution also enters the reward interface through joint policy–generator learning  ( Ding et al., 2026 ) and co-evolving query-specific rubrics during test-time reinforcement learning  ( Wang et al., 2026a ) .
+RubricOpt places self-revision in the semantic rubric that conditions preference training.
+The current policy proposes clause edits from feedback about its own behavior, then learns under the resulting rubric in the next round.
+The initial clause bank, factor ontology, task outcomes, and fixed scoring prompt provide the reference points for revision.
+ 3 RubricOpt: Method and Analysis
+RubricOpt alternates preference learning under a written rubric with revision of that rubric by the resulting policy.
+Problem Setup.
+We study preference optimization on a fixed dataset \mathcal{D}=\{({\bm{x}},{\bm{y}}^{+},{\bm{y}}^{-})\} of chosen–rejected pairs, with a trainable policy \pi_{\theta} and a frozen reference \pi_{\mathrm{ref}} trained by DPO  ( Rafailov et al., 2023 ) ,
+ \mathcal{L}=-\mathbb{E}\left[\log\sigma\left(\beta\left[\bar{\ell}_{\theta}({\bm{y}}^{+}\mid{\bm{x}})-\bar{\ell}_{\mathrm{ref}}({\bm{y}}^{+}\mid{\bm{x}})-\bar{\ell}_{\theta}({\bm{y}}^{-}\mid{\bm{x}})+\bar{\ell}_{\mathrm{ref}}({\bm{y}}^{-}\mid{\bm{x}})\right]\right)\right], 
+ (1) 
+with \bar{\ell}({\bm{y}}\mid{\bm{x}})=L^{-1}\log\pi({\bm{y}}\mid{\bm{x}}) averaged over the L response tokens.
+The pairs, labels, and objective are held fixed; only the text that conditions a pair may change, which is the degree of freedom RubricOpt introduces.
+Behavior is described by a fixed eight-factor ontology \mathcal{F}=\{f_{1},\ldots,f_{8}\} (appendix  A.2 ), on which a blind judge returns one ordinal score per factor, z_{k}({\bm{x}},{\bm{y}})\in\{0,\ldots,4\} (appendix  A.3 ).
+Every behavioral quantity here is a contrast between two groups of these scores, and only two contrasts are used.
+Responses to a benchmark B are grouped by the task outcome o\in\{0,1\} , and semantic demand is the mean score gap between the groups, measured for one model on one task,
+ D_{m,B,k}=\mathbb{E}[z_{k}\mid o=1,m,B]-\mathbb{E}[z_{k}\mid o=0,m,B]. 
+ (2) 
+Inside a preference pair the two responses are contrasted by \Delta z_{k}=z_{k}({\bm{x}},{\bm{y}}^{+})-z_{k}({\bm{x}},{\bm{y}}^{-}) , and semantic supply summarizes its distribution,
+ \mu_{k}=\mathbb{E}[\Delta z_{k}],\qquad C_{k}=\Pr(\Delta z_{k}\neq 0),\qquad P_{k}=\Pr(\Delta z_{k}>0), 
+ (3) 
+as the mean signed contrast, the contrast coverage, and the share of pairs whose contrast agrees with the label.
+Demand is a property of the model–task pair and supply a property of the dataset, and both live on the same eight axes.
+The artifact RubricOpt edits is a rubric R_{r} , a short natural-language specification whose clauses are keyed to factors, with r indexing rounds and a frozen clause bank supplying the initial R_{0} .
+For factor group \mathcal{G}\subseteq\mathcal{F} the training context is
+ c_{r}=\operatorname{render}(R_{r},\mathcal{G}), 
+ (4) 
+where the renderer concatenates the current Prefer/Avoid clauses in the fixed factor order and \varnothing denotes the absent criterion.
+Here \mathcal{G}=\mathcal{F} except in the factor-set ablation of Sec.   4.2 .
+A conditioning context is therefore u\in\{c_{r},\varnothing\} , \pi_{\theta}({\bm{y}}\mid{\bm{x}},u) is the policy under that context, the main evaluations use \pi_{\theta}({\bm{y}}\mid{\bm{x}}) , and Sec.   4.2 tests rubric reinsertion at inference time.
+Appendix  A.1 collects the symbols used throughout.
+ 3.1 Diagnosis and Conditioning
+Shared Behavioral Coordinates.
+With the coordinates of Sec.   3 fixed, the diagnosis is a measurement on one model and one dataset: we score responses from Qwen3-4B on each benchmark and each HelpSteer3 pair, then read out demand D_{m,B,k} ( Eq.   2 ) and supply \mu_{k} , C_{k} , P_{k} ( Eq.   3 ).
+We mark demand gaps of at least 0.15 on the 0 – 4 scale as meaningful and contrast coverage below 0.25 as sparse.
+ Tab.   7 reports the complete Qwen3-4B demand matrix. Judge checks and length controls appear in appendices  A.3 and  D.1 .
+The measurement separates the factors into Common ( f_{2} reasoning validity, f_{5} completeness), Specific ( f_{4} factual grounding, f_{7} clarity, f_{8} efficiency), and Low-demand ( f_{1} comprehension, f_{3} verification, f_{6} instruction adherence).
+The shared factor ontology links task diagnosis, preference-data contrasts, and clause-level feedback.
+All eight factors enter the initial rubric from the frozen clause bank.
+The demand and supply measurements characterize the learning setting; recurring failures whose requirements are incompletely expressed determine subsequent wording edits.
+Training-Only Conditioning.
+Each round fixes R_{r} and its full-factor context c_{r}=\operatorname{render}(R_{r},\mathcal{F}) .
+At step t of N , let \rho_{t}=t/N and independently sample u_{t}=c_{r} with probability q(\rho_{t}) and u_{t}=\varnothing otherwise for each pair, sharing it across both responses, the policy, and the frozen reference.
+Exposure is q(\rho)=1 for \rho\leq 0.1 , \{1+\cos[\pi(\rho-0.1)/0.8]\}/2 for 0.1<\rho\leq 0.9 , and 0 thereafter.
+With response-token mean log-probability \bar{\ell}({\bm{y}}\mid{\bm{x}},u)=L({\bm{y}})^{-1}\log\pi({\bm{y}}\mid{\bm{x}},u) , training uses the unchanged DPO objective
+ \displaystyle M_{u} 
+ \displaystyle=\bar{\ell}_{\theta}({\bm{y}}^{+}\mid{\bm{x}},u)-\bar{\ell}_{\rm ref}({\bm{y}}^{+}\mid{\bm{x}},u)-\bar{\ell}_{\theta}({\bm{y}}^{-}\mid{\bm{x}},u)+\bar{\ell}_{\rm ref}({\bm{y}}^{-}\mid{\bm{x}},u), 
+ (5) 
+ \displaystyle\mathcal{L} 
+ \displaystyle=-\mathbb{E}[\log\sigma(\beta M_{u_{t}})]. 
+Rubric tokens are masked from the loss and excluded from response-length normalization.
+Evaluation uses \pi_{\theta}({\bm{y}}\mid{\bm{x}}) without a rubric.
+ 3.2 Evidence-Grounded Recursive Refinement
+Given rubric R_{r} , the policy trained with its rendered context c_{r} , and item-level benchmark feedback \mathcal{B}_{r+1} , one iteration is
+ R_{r}\longrightarrow c_{r}\longrightarrow\pi_{r+1}\longrightarrow\mathcal{B}_{r+1}\longrightarrow R_{r+1}. 
+ (6) 
+Five prompt stages extract benchmark failures, synthesize recurring patterns, attribute them to the eight factors, propose conservative clause updates, and audit the candidate rubric.
+The policy \pi_{r+1} performs this analysis and proposes the edits itself, using task outcomes, self-judged factor scores, and fixed-judge feedback on its own rubric-free outputs.
+Attribution compares each recurring failure with the current clauses. An explicit requirement is retained for further learning, while an incompletely expressed requirement is eligible for refinement.
+A separate deterministic gate checks evidence references, factor anchors, and edit size before accepting a change.
+A covered requirement or a failed check returns keep .
+The accepted rubric is rendered as c_{r+1}=\operatorname{render}(R_{r+1},\mathcal{G}) for the next training round; keep retains the corresponding clauses from R_{r} .
+Full prompts, stage contracts, and the deterministic acceptance checks are in appendix  C.2 .
+ Figure 2: Policy-driven rubric refinement (appendix  C.2 ). Prompt stages 1–5 diagnose failures, attribute gaps, propose edits, and audit the candidate. The audit is advisory; step 6 decides acceptance. Covered requirements and rejected edits retain the original clause. The excerpt shows the factual-grounding edit. The dashed frame groups prompt stages. Green boxes denote computation.
+ 3.3 Analysis of the Steering Effect
+The Update and Its Rubric-Free Effect.
+Fix one round, with rubric context c=c_{r} and absent context 0=\varnothing .
+For s_{u}({\bm{y}})=L^{-1}\nabla_{\theta}\log\pi_{\theta}({\bm{y}}\mid{\bm{x}},u) , the per-pair loss gradient is
+ g_{u}=\nabla_{\theta}[-\log\sigma(\beta M_{u})]=-\kappa_{u}[s_{u}({\bm{y}}^{+})-s_{u}({\bm{y}}^{-})],\qquad\kappa_{u}=\beta\sigma(-\beta M_{u}), 
+ (7) 
+Let d_{u}=s_{u}({\bm{y}}^{+})-s_{u}({\bm{y}}^{-}) and v_{u}=\mathbb{E}_{\mathcal{D}}[\kappa_{u}d_{u}] be the mean descent direction.
+Independent pair-level context sampling gives v_{q}=v_{0}+q\Delta v , where \Delta v=v_{c}-v_{0} is the rubric’s extra update direction.
+Fix the evaluation prompt law \nu , binary success rule o_{B} , and factor scores z=(z_{1},\ldots,z_{8})^{\top} .
+Assume finite prompt and response spaces and a positive, continuously differentiable policy.
+Rubric-free deployment uses P_{\theta}({\bm{x}},{\bm{y}})=\nu({\bm{x}})\pi_{\theta}({\bm{y}}\mid{\bm{x}},0) , with success probability p=p_{B}(\theta)=\mathbb{E}_{P_{\theta}}[o_{B}]\in(0,1) .
+The extra direction changes deployment log-probabilities at rate
+ h({\bm{x}},{\bm{y}})=\left\langle\nabla_{\theta}\log\pi_{\theta}({\bm{y}}\mid{\bm{x}},0),\Delta v\right\rangle. 
+ (8) 
+Let \bm{D}=\mathbb{E}[z\mid o_{B}=1]-\mathbb{E}[z\mid o_{B}=0] be population demand under P_{\theta} , and a the least-squares coefficients of h on centered factor scores.
+Write \epsilon_{h},\epsilon_{o} for the root-mean-square projection residuals of h and o_{B}-p , respectively; the full construction is in appendix  B.2 .
+ Proposition 1 (Local success from semantic alignment) 
+ At a shared parameter state and reference, with the update directions held fixed, 
+ \left\langle\nabla_{\theta}p_{B},v_{q}-v_{0}\right\rangle=q\,p(1-p)\bigl(\bm{D}^{\top}a+\mathcal{R}\bigr), 
+ (9) 
+ where |\mathcal{R}|\leq\epsilon_{o}\epsilon_{h}/[p(1-p)] .
+For q>0 , if \bm{D}^{\top}a>\epsilon_{o}\epsilon_{h}/[p(1-p)] , then
+ p_{B}(\theta+\eta v_{q})>p_{B}(\theta+\eta v_{0}) for all sufficiently small \eta>0 .
+The comparison reverses when \bm{D}^{\top}a<-\epsilon_{o}\epsilon_{h}/[p(1-p)] . 
+Demand \bm{D} describes the behaviors associated with success; a expresses the rubric-induced change in deployment log-probabilities in those semantic coordinates.
+Their alignment sets the sign of the local success effect when it dominates the residual contribution outside the measured factors.
+Changing the preference corpus can change the update directions and hence this alignment, even under the same rubric.
+For two rendered rubrics c_{0},c_{1} at a shared policy and reference, replacing \Delta v by v_{c_{1}}-v_{c_{0}} gives the local edit comparison at a common exposure rate.
+This comparison motivates the matched keep / refine continuation in Sec.   4.3 , which measures the edit’s incremental effect over further training with the existing rubric.
+ 4 Experiments
+The analysis in Sec.   3.3 organizes three empirical questions: how rubric text changes the training update, how conditioning affects rubric-free outcomes across datasets, and what an edit adds beyond continuing with the existing rubric.
+We examine them through fixed-state probes and a criterion-identity pilot, dataset-matched ordinary-DPO controls, and matched keep / refine continuations, respectively.
+Models and Datasets.
+We cover two families and three sizes: Qwen3-4B-Instruct and Qwen3-8B-Instruct from the Qwen3 family  ( Yang et al., 2025a ) , and Mistral-7B-Instruct-v0.3 from the Mistral family  ( Jiang et al., 2023 ) .
+Formal runs train a rank- 64 LoRA adapter ( \alpha=128 , dropout 0.05 ) at learning rate 10^{-6} , global batch 64 , DPO \beta=1 .
+We use two public preference datasets, HelpSteer3  ( Wang et al., 2025 ) and Tulu3  ( Lambert et al., 2025 ) .
+Benchmark Classes.
+Evaluation covers two benchmark classes, summarized separately.
+The comprehensive-capability suite is seven accuracy benchmarks—GSM8K  ( Cobbe et al., 2021 ) , MATH-Hard  ( Hendrycks et al., 2021 ) , BBH  ( Suzgun et al., 2023 ) , MuSR  ( Sprague et al., 2024 ) , ARC  ( Clark et al., 2018 ) , TruthfulQA  ( Lin et al., 2022 ) , and MMLU-Pro  ( Wang et al., 2024 ) —each with a task check defining the binary success outcome o_{B} in Prop.   1 .
+The open-ended generative suite is three protocols—MT-Bench  ( Zheng et al., 2023 ) , Arena-Hard  ( Li et al., 2024 ) , and WildBench  ( Lin et al., 2024 ) —on which a judge scores free-form responses and there is no task check.
+Generative protocols are scored on matched item sets under one judge.
+Feedback and Evaluation.
+The refinement engine reads item-level outputs from first-round rubric-free benchmark evaluations: judge rationales on Arena-Hard, MT-Bench, and WildBench, and correctness feedback on GSM8K, MATH-Hard, and MMLU-Pro.
+The keep and refine continuations are then compared on matched evaluation items under the same benchmark protocols.
+This evaluates a rubric update informed by benchmark feedback, with the unchanged-rubric branch controlling for additional training.
+Feedback items overlap the final evaluation set, so the continuation comparison measures adaptation to the observed benchmark feedback.
+The diagnostic/held-out split in Sec.   3.1 assesses measurement stability.
+Generation, judging, extraction, paired tests, and all absolute scores are in appendix  D.1 .
+ 4.1 How Rubric Text Changes Learning
+Context-Dependent Updates.
+In Eq.   7 , context enters the update through both the margin-dependent weight \kappa_{u} and the pair direction d_{u} .
+A fixed-state probe over 7{,}253 preference pairs gives conditioned–unconditioned gradient cosines of 0.74 – 0.79 and relative gradient changes of 0.65 – 0.72 .
+The likelihood probe measures the semantic sensitivity of the pairwise margin: the f_{5} completeness criterion’s margin-change slope is 0.0226 nats per response token per unit of \Delta z_{5} , compared with 0.0116 when read against reasoning contrast \Delta z_{2} .
+Criterion Identity at Fixed Exposure.
+Changing the criterion text can change v_{c} in Sec.   3.3 while preserving the conditioning interface.
+A 150 -step pilot compares reasoning ( f_{2} ) and clarity ( f_{7} ) criteria of nearly equal length, using the same pairs and conditioned rows at q=0.2 .
+MuSR pass@4 is 70.8\% under the reasoning criterion, 68.6\% under the clarity criterion, and 70.8\% under ordinary DPO.
+The paired f_{2} – f_{7} comparison has 17 prompts passing only under f_{2} and 6 only under f_{7} (appendix  C.1 ).
+The two criterion texts produce different rubric-free outcomes on MuSR pass@4, with the reasoning criterion matching ordinary DPO there.
+ 4.2 Dataset Contrasts and Rubric-Free Outcomes
+The Two Datasets Contrast Different Factors.
+The shared coordinates of Sec.   3 are what make the two datasets comparable.
+ Fig.   3 a reports contrast coverage C_{k} on both, and Tab.   8 gives the HelpSteer3 statistics behind it.
+HelpSteer3 leaves three factors sparse against the 0.25 sparsity rule: f_{2} reasoning validity ( 0.146 ), f_{4} factual and evidential grounding ( 0.149 ), and f_{3} verification and calibration ( 0.220 ).
+Reasoning validity ( f_{2} ) is meaningful on five of the seven benchmarks but is contrasted in only 14.6\% of HelpSteer3 pairs, while completeness ( f_{5} ) is meaningful on four and contrasted in 47.4\% .
+Tulu3 contrasts seven of the eight factors more often than HelpSteer3 does, and no factor of its eight falls below that rule; its lowest coverage is 0.294 .
+Its largest advantages over HelpSteer3 are on f_{2} ( +0.268 ), f_{8} ( +0.199 ), f_{4} ( +0.161 ), and f_{7} ( +0.135 ).
+These profiles describe the frequency of behavioral contrasts on the same axes used for task demand in Sec.   3.1 .
+The full demand matrix is Tab.   7 , and across diagnostic and held-out subsets its largest change is 0.045 , with every gap keeping its sign.
+ Fig.   3 b groups the same gaps by task family: verification and calibration separates success from failure about six times more strongly on the knowledge benchmarks than on the reasoning benchmarks ( 0.131 against 0.020 ), and clarity and organization runs the other way ( 0.051 against 0.105 ).
+Demand profiles differ between the two Qwen3 models in a task-dependent way ( Fig.   4 ).
+On BBH, the eight-factor profiles of Qwen3-4B and Qwen3-8B are negatively correlated ( r=-0.751 ): completeness and clarity change from positive to negative gaps, while verification and calibration becomes more strongly associated with success.
+TruthfulQA retains a similar relative profile across the two models ( r=0.953 ), although the gap magnitudes change.
+These measurements support diagnosing semantic priorities for each model and task.
+ Figure 3: Diagnosis on shared semantic factors. (a) Contrast coverage (fraction of pairs) on both corpora using the same frozen judge; the dashed line marks the 0.25 sparsity threshold. (b) Qwen3-4B demand, averaged equally over four reasoning or three knowledge benchmarks. Demand is the success–failure gap on the 0 – 4 judge scale. Factors follow appendix  A.2 .
+ Figure 4: Semantic demand in Qwen3-4B and Qwen3-8B. Lines connect the same factor; error bars show recorded 95\% confidence intervals. r is Pearson correlation across the eight factors.
+Conditioning Effects Across Datasets.
+ Tab.   1 reports the Tulu3 capability results and the HelpSteer3 open-ended results for both Qwen3 models.
+BBH improves in both Qwen3 models, with effects measured against their own ordinary-DPO controls.
+On Qwen3-4B, conditioning raises BBH from 15.43 to 19.64 ( +4.20 ) and MATH-Hard from 39.15 to 43.35 , and the seven-task average from 48.20 to 50.02 .
+The other five benchmarks move by at most 2.28 points.
+Qwen3-8B gains 9.61 BBH points.
+The Mistral-7B Tulu3 run decreases BBH by 7.95 points relative to ordinary DPO ( Tab.   2 ; appendix  D.2 ).
+On Qwen3-4B, the four rubric compositions raise Arena-Hard by 1.4 – 2.2 percentage points relative to ordinary DPO ( Tab.   10 ). Common + Specific has the highest WildBench point estimate, while the full rubric has the highest MT-Bench score and average relative change across the three protocols.
+ Table 1: Rubric-free Qwen3 results on both benchmark suites, each from its own dataset. Capability scores and their unweighted seven-task mean are percentages from the Tulu3 runs. The open-ended protocols come from the HelpSteer3 runs: MT-Bench and WildBench use native scores and Arena-Hard is the win rate against GPT-4-0314 (%). Open-ended \mathrm{Avg.}\,\Delta=\frac{100}{3}\sum_{b}(s_{b}/s_{b}^{\mathrm{DPO}}-1) averages relative changes across all three benchmarks against the same block’s DPO control. Bold marks maxima within each model block (including ties). Shading marks rubric-trained rows.
+ Tulu3 
+ comprehensive capability (%) 
+ HelpSteer3 
+ open-ended generation 
+ Method 
+ GSM8K 
+ MATH- 
+ Hard 
+ BBH 
+ MuSR 
+ ARC 
+ Truthful 
+ QA 
+ MMLU- 
+ Pro 
+ Avg. 
+ MT- 
+ Bench 
+ Arena- 
+ Hard (%) 
+ Wild- 
+ Bench 
+ Avg. \Delta 
+ (%) 
+ Qwen3-4B 
+ Instruct 
+ 85.90 
+ \mathbf{62.24} 
+ 12.82 
+ \mathbf{43.39} 
+ \mathbf{62.80} 
+ 52.27 
+ 41.98 
+ \mathbf{51.63} 
+ 6.320 
+ 49.0 
+ \mathbf{3.730} 
+ -2.96 
+ Ordinary DPO 
+ 84.53 
+ 39.15 
+ 15.43 
+ 42.59 
+ 61.09 
+ 52.71 
+ 41.88 
+ 48.20 
+ 6.890 
+ 50.9 
+ 3.617 
+ 0.00 
+ RubricOpt -R1 
+ \mathbf{86.81} 
+ 43.35 
+ 19.64 
+ 43.12 
+ 61.35 
+ 53.74 
+ \mathbf{42.10} 
+ 50.02 
+ \mathbf{6.930} 
+ \mathbf{53.0} 
+ 3.727 
+ \mathbf{+2.58} 
+ RubricOpt -R2 
+ 80.74 
+ 37.12 
+ \mathbf{22.73} 
+ 42.06 
+ 59.47 
+ \mathbf{55.16} 
+ 40.43 
+ 48.24 
+ — 
+ Qwen3-8B 
+ Instruct 
+ \mathbf{91.90} 
+ 70.13 
+ 37.43 
+ 54.90 
+ 94.10 
+ \mathbf{78.20} 
+ 67.60 
+ 70.61 
+ 7.410 
+ 64.5 
+ 4.074 
+ -0.05 
+ Ordinary DPO 
+ 91.80 
+ — 
+ 38.66 
+ \mathbf{55.20} 
+ 94.65 
+ 76.80 
+ 67.35 
+ — 
+ 7.219 
+ 64.2 
+ 4.211 
+ 0.00 
+ RubricOpt -R1 
+ 91.40 
+ \mathbf{72.77} 
+ \mathbf{48.26} 
+ 55.15 
+ \mathbf{95.00} 
+ 77.85 
+ \mathbf{68.30} 
+ \mathbf{72.68} 
+ \mathbf{7.416} 
+ \mathbf{65.7} 
+ \mathbf{4.329} 
+ \mathbf{+2.62} 
+Variation Across Datasets and Models.
+In Prop.   1 , the local effect depends on task demand and the corpus-dependent update direction.
+The ordinary-DPO controls measure the full rubric’s finite-training effect separately within each dataset.
+On Qwen3-4B, the capability effect is larger on Tulu3: BBH improves by 4.20 points, compared with 0.23 on HelpSteer3, and the seven-task mean by 1.82 points, compared with 0.18 ( Tabs.   1 and  10 ).
+Both methods train for one epoch within each dataset.
+On HelpSteer3, Qwen3-8B gains 0.20 MT-Bench points and 1.5 Arena-Hard points ( Tab.   1 ).
+Mistral-7B gains 0.29 MT-Bench points and 1.8 Arena-Hard points ( Tab.   2 ).
+ Table 2: Mistral-7B results on both benchmark suites, each from its own dataset. Capability scores and their unweighted seven-task mean are percentages. Open-ended Avg. \Delta follows the definition in Tab.   1 . Bold marks maxima within each dataset block; shading marks rubric-trained rows.
+ Tulu3 
+ comprehensive capability (%) 
+ HelpSteer3 
+ open-ended generation 
+ Method 
+ GSM8K 
+ MATH- 
+ Hard 
+ BBH 
+ MuSR 
+ ARC 
+ Truthful 
+ QA 
+ MMLU- 
+ Pro 
+ Avg. 
+ MT- 
+ Bench 
+ Arena- 
+ Hard (%) 
+ Wild- 
+ Bench 
+ Avg. \Delta 
+ (%) 
+ Instruct 
+ 45.75 
+ 19.65 
+ 36.95 
+ \mathbf{52.45} 
+ \mathbf{79.45} 
+ \mathbf{58.75} 
+ 30.05 
+ \mathbf{46.15} 
+ 5.090 
+ 18.1 
+ 2.336 
+ -8.44 
+ Ordinary DPO 
+ 44.45 
+ 20.90 
+ \mathbf{40.40} 
+ 50.95 
+ 76.50 
+ 53.90 
+ 30.00 
+ 45.30 
+ 4.850 
+ 24.0 
+ 2.477 
+ 0.00 
+ RubricOpt -R1 
+ \mathbf{47.90} 
+ \mathbf{21.50} 
+ 32.45 
+ 51.85 
+ 75.60 
+ 55.40 
+ \mathbf{32.15} 
+ 45.26 
+ \mathbf{5.140} 
+ \mathbf{25.8} 
+ \mathbf{2.480} 
+ \mathbf{+4.53} 
+Adding Factors to a Common Rubric.
+Four HelpSteer3 compositions each contain the Common factors f_{2} and f_{5} , with the Specific or Low-demand factors added.
+Their seven-task means differ by at most 0.13 points and exceed ordinary DPO’s 52.56 by at most 0.18 .
+Common raises BBH by 0.90 points relative to ordinary DPO, adding Specific yields 0.47 , adding Low yields 0.40 , and including both yields 0.23 .
+All four compositions improve Arena-Hard by 1.4 – 2.2 points, with a different ordering from BBH.
+The small average differences among compositions do not identify a superior factor set.
+The full ontology supplies a fixed set of clauses for subsequent editing.
+Per-benchmark results are in Tab.   10 .
+Rubric Dependence at Inference Time.
+Reinserting a rubric at inference time has task-dependent effects on the same trained checkpoint (appendix  D.1 ).
+On matched sampled BBH items, the trained R_{1} wording changes accuracy by -1.25 points and the candidate R_{2} by +3.70 points.
+The separate greedy MATH-Hard evaluation changes by +0.68 and +0.76 points respectively.
+ 4.3 What the Rubric Edit Contributes
+The edit comparison in Sec.   3.3 fixes the starting policy and varies only the rubric-induced update direction; it is carried through a matched continuation, with keep controlling for additional training. The trained Qwen3-4B policy reviews its first-round feedback and finds a recurring f_{4} gap in its training rubric.
+The frozen clause prohibited unsupported assertions but left the evidence requirement for “common knowledge” ambiguous.
+The revised Prefer/Avoid pair reads:
+ Prefer: factual claims are grounded in the given information or explicitly sourced common knowledge.
+ Avoid: invented facts, unsupported assertions, or inferences from vague common knowledge .
+Round 1 refines only f_{4} ; the other seven factors return keep because no recurring uncovered requirement is identified.
+The edit adds seven words across the Prefer/Avoid pair in a 234 -token rubric.
+ Tab.   3 evaluates it through two HelpSteer3 continuations from the same Qwen3-4B policy, using the same pairs, frozen reference, optimizer settings, seed, and pair-level exposure mask.
+The keep branch retains R_{0} ; the refine branch uses R_{1} .
+Unchanged-rubric continuation raises BBH from 14.96 to 18.05 , a gain of 3.09 points.
+Relative to that continuation, the edit changes BBH by -0.25 points, MT-Bench by +0.406 , and Arena-Hard by -0.1 percentage points.
+The edit’s incremental effects differ across tasks: BBH decreases slightly, while the MT-Bench point estimate recovers part of the decline under unchanged-rubric continuation, from 6.93 in round 1 to 6.419 under keep and 6.825 under refine .
+Evaluation protocols and paired comparisons are in appendix  D.2 .
+ Table 3: Qwen3-4B matched continuation on HelpSteer3. Both branches start from RubricOpt -R1 and differ only in rubric text. Evaluation is rubric-free. Open-ended Avg. \Delta follows the relative-DPO definition in Tab.   1 . Bold marks column maxima.
+ Method 
+ BBH 
+ MATH-Hard 
+ MT-Bench 
+ Arena-Hard 
+ WildBench 
+ Avg. \Delta (%) 
+ RubricOpt -R1 
+ 14.96 
+ \mathbf{64.18} 
+ \mathbf{6.93} 
+ 53.0 
+ 3.727 
+ +2.58 
+ RubricOpt -R2 ( keep ) 
+ \mathbf{18.05} 
+ 63.82 
+ 6.419 
+ \mathbf{54.6} 
+ 3.781 
+ +1.66 
+ RubricOpt -R2 ( refine ) 
+ 17.80 
+ 63.72 
+ 6.825 
+ 54.5 
+ \mathbf{3.836} 
+ \mathbf{+4.06} 
+The revision trace records how failure attribution and edit constraints determine the next rubric.
+Factor f_{3} receives the strongest failure signal, but its existing Avoid clause already names the concrete requirement.
+The engine nevertheless proposes an f_{3} rewrite.
+The gate rejects it because it drops part of the frozen semantic anchor; cross-factor vocabulary also triggers a warning.
+Factor f_{3} therefore returns to keep .
+This rejection preserves the original f_{3} clause for further learning.
+On Qwen3-8B, attribution marks every requirement in the feedback set as already covered and the operator returns keep for all factors.
+The subsequent 4B feedback pass produces a three-factor R_{2} candidate for a future training round.
+ 5 Conclusion
+RubricOpt connects policy self-evaluation to revision of the behavioral specification guiding preference learning.
+Its semantic rubric translates failure feedback into training-time criteria while preference pairs, labels, and the optimization objective remain fixed.
+Experiments across comprehensive capability and open-ended generation show that rubric semantics can shape rubric-free behavior, with benefits depending on the model and preference corpus.
+The tested revision yields mixed incremental results over unchanged-rubric continuation.
+This makes the behavioral specification itself adaptable through the policy’s feedback loop.
+Scope and Future Work.
+The study uses an associative demand measure and a manually specified ontology.
+Evaluating successive revisions on feedback-disjoint tasks and comparing proposals from initial and updated policies under a shared training budget would test the scope for sustained self-improvement.
+Reproducibility Statement
+Every trained method in this paper is a rank- 64 LoRA adapter over a released checkpoint, and the appendices specify the dataset, optimizer, schedule, seed, conditioning rate, reference convention, evaluation protocols, and judge configuration for every reported run.
+The two preference datasets are public, and the seven accuracy benchmarks and three open-ended protocols are used through their released forms.
+The initial formal rubrics can be reconstructed from the canonical bank in appendix  A.2 and the template in appendix  C.1 .
+The accepted HelpSteer3 R_{1} edit is quoted in Sec.   4.3 .
+The refinement operator is specified as five stages with their inputs, outputs, and the deterministic acceptance checks (appendix  C.2 ).
+Broader Impact Statement
+RubricOpt exposes behavioral criteria as short, inspectable training artifacts, with an evidence trail for each accepted edit.
+The policy under diagnosis proposes the edits, so its interpretation of failures can reinforce its own biases.
+Deterministic checks enforce evidence references and textual constraints; rubric-free evaluation measures the resulting behavior.
+Deployments should review proposed rubric changes against their intended behaviors and evaluate each edit with a matched continuation control.
+
+
+NECESSARY C2/C3; appendix formulas not adopted
+
+ C.2 Stages, Contracts and the Deterministic Gate
+
+
+
+
+
+Evidence Set and Engine.
+
+
+ 
+
+ Fig.   2 in the main text gives the six-step workflow.
+The diagnostic stage reads item-level judge rationales for the all-eight-factor method against ordinary DPO and the Instruct model on Arena-Hard, MT-Bench (including a dedicated second-turn batch), and WildBench, together with generated correctness items carrying a gold answer on GSM8K, MATH-Hard, and MMLU-Pro.
+That evidence is the first-round rubric-free benchmark evaluation output, read item by item, as described in Sec.   4 .
+The analysis and proposal engine is the current policy itself, the all-eight-factor merged checkpoint, so the model that reads the benchmark feedback is the model the feedback is about.
+The external anchors are the gold answers and benchmark outcomes, the fixed judge’s rationales and checklists, and the frozen [math] text.
+
+ 
+ 
+
+Five prompt stages process feedback from policy [math] , trained with the frozen round- [math] rubric [math] , in the order 1 (benchmark diagnostic), 2 (cross-benchmark synthesis), 3 (factor attribution), 4 (conservative update), and 5 (rubric audit), followed by step 6 (deterministic gate).
+Each stage is a separate call with its own schema, and no stage sees the next stage’s output.
+
+ 
+ 
+
+Stage 1 sees the factor schema, the criterion currently in force, and one benchmark’s evidence, and returns a four-key YAML document:
+
+ 
+ 
+ 
+
+ preserve:
+  - behavior: / factor: / evidence:
+ improve:
+  - failure_mode: / factor: / evidence:
+ criterion_gaps:
+  - factor: / current_problem: / suggested_direction:
+ overall_diagnosis: 
+ 
+
+ 
+ 
+ 
+
+Stage 1 uses only [math] – [math] and separates behaviors to preserve from those to improve.
+An isolated example requires strong evidence, and attributing a benchmark change to the criterion requires behavioral evidence.
+The output must be concrete and concise.
+
+ 
+ 
+
+Stage 2 aggregates every stage-1 report for one policy.
+It may not rewrite the criterion or propose wording.
+It organises evidence and records disagreement, adding the benchmarks that support each pattern, an evidence-strength level (strong, moderate, weak), and an explicit record of contradictions.
+A benchmark where the policy did not change still counts as evidence about what is stable.
+
+ 
+ 
+
+Stage 3 attributes each recurring behaviour onto the ontology and decides whether the current wording already covers it.
+The coverage decision follows this rule:
+
+ 
+ 
+ 
+
+If the current Prefer/Avoid wording states this failure mode in full, the model simply did not learn it: the decision is keep .
+If the wording does not state the failure mode, or states only part of it, that is the only case in which refine may be considered .
+
+ 
+ 
+ 
+
+Attribution disambiguates reasoning validity, verification and calibration, completeness, and instruction adherence, naming the primary factor when several are involved.
+It attributes only what the evidence supports.
+
+ 
+ 
+
+Stage 4 proposes the smallest clause edits that address high-confidence recurring gaps while preserving factor identity and behaviors marked for preservation.
+Edits may clarify wording, narrow an overly broad reading, make an implicit requirement explicit, or refine a matched Avoid clause.
+Stage 4 prohibits examples, task-specific tricks, benchmark or dataset names, scores, numerical weights, and intensifiers.
+Unsupported changes return keep .
+The output is a candidate [math] and a per-factor ledger with the action, reason, and old and new clauses.
+
+ 
+ 
+
+Stage 5 audits semantic identity, benchmark and dataset leakage, evidential support, specificity, Prefer/Avoid matching, preserved behaviors, and edit magnitude.
+It emits a justification per axis and one PASS or FAIL .
+The audit is advisory rather than decisive: in one executed round it returned a clean eight-of-eight PASS on a candidate that the deterministic gate then rejected.
+
+ 
+
+
+
+
+
+Step 6: The Deterministic Gate.
+
+
+ 
+
+The binding checks constrain eligibility, semantic identity, and procedural consistency.
+
+ 
+ 
+
+Acceptance is decided by eight checks in round 1 and ten in round 2.
+Round 2 adds that only gate-accepted factors may differ, and that the recorded decisions are consistent with the rendered rubric.
+
+ 
+ 
+ 
+ 
+
+ 1. 
+ 
+
+ All eight factors must occur exactly once, each with a keep / refine decision.
+ 
+
+ 
+
+
+ 2. 
+ 
+
+ The input clauses of every refinement must match the frozen canonical wording byte-for-byte.
+ 
+
+ 
+
+
+ 3. 
+ 
+
+ Each new clause must retain at least [math] of the old clause’s content tokens, with its length change inside [math] words.
+ 
+
+ 
+
+
+ 4. 
+ 
+
+ Every factor must retain one matched Prefer/Avoid pair.
+ 
+
+ 
+
+
+ 5. 
+ 
+
+ Clauses must contain no benchmark or dataset names, digits, intensifiers, or example markers.
+ 
+
+ 
+
+
+ 6. 
+ 
+
+ Every refinement must be traceable to an attribution judging the failure not fully covered.
+ 
+
+ 
+
+
+ 7. 
+ 
+
+ Edit magnitude must remain within the specified budget.
+ 
+
+ 
+
+
+ 8. 
+ 
+
+ Cross-factor vocabulary imports raise a warning rather than a rejection.
+ 
+
+ 
+
+
+ 9. 
+ 
+
+ In round 2, only gate-accepted factors may differ.
+ 
+
+ 
+
+
+ 10. 
+ 
+
+ In round 2, the recorded decisions must agree with the rendered rubric.
+ 
+
+ 
+
+ 
+ 
+ 
+ 
+
+Failures of the binding checks reject the affected edit, so a factor that violates a check is reverted to keep .
+
+ 
+
+
+
+
+
+
+
+ C.3 Matched Re-Optimization and the Dataset Control
+
+
+ 
+
+The shared recipe is in Sec.   4 : rank- [math] LoRA ( [math] , dropout [math] ), mean-per-token DPO with [math] at learning rate [math] , global batch [math] , and seed [math] .
+The formal runs and the HelpSteer3 continuations take [math] steps.
+The HelpSteer3 continuations start from the frozen RubricOpt -R1 checkpoint and use fresh AdamW and FP32 LoRA adapters, cosine decay with [math] warmup, and one shared exposure mask on identical ordered pairs.
+Their reference is the frozen RubricOpt -R1 checkpoint with the new adapter disabled, and the starting policy of every other block is the released Instruct checkpoint with its own adapter disabled.
+Only the rubric text differs: keep uses [math] and refine uses [math] .
+The primary comparison RubricOpt -R2 ( refine ) minus RubricOpt -R2 ( keep ) measures editing; comparison with RubricOpt -R1 includes further training.
+
+ 
+ 
+
+Tulu3 uses the same initial rubric and training recipe on an independently assembled dataset, over [math] steps at global batch [math] .
+The budgets match ordinary DPO within each dataset by epoch count, not across datasets by step count.
+The Tulu3 second-round change combines editing and additional training.

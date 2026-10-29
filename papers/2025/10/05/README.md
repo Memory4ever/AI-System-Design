@@ -2,34 +2,32 @@
 
 **规范：** V3
 **窗口：** 2025-10-04T09:00:00+08:00 ～ 2025-10-05T09:00:00+08:00
-**窗口说明：** 用户授权已有Daily增量补查，2026-10-12继续本日；原窗口、旧候选日期/评分、有效审阅及连续§4冻结，新增仅前一完整BJT自然日，不catchup、不继承旧公开时刻义务。
+**窗口说明：** 用户授权已有Daily增量补查，2026-10-26独立修复本日；原窗口、旧候选日期/评分、有效审阅及连续§4冻结，新增仅前一完整BJT自然日，不catchup、不继承旧公开时刻义务。
 **补充窗口：** 2025-10-04 ～ 2025-10-04
 **冻结候选日期：** [同日补查前原档案](../_sources/daily-20251005/baseline-before-supplement-20261012.md)
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-12T03:19:35+08:00
+**检查时间：** 2026-10-26T14:37:44+08:00
 
 ## 1. 结论
 
-本轮2026-10-12增量补查范围及冻结见[SUP_SCOPE](../_sources/daily-20251005/SUP_SCOPE_20261012.md)。五主题84跨入口/76唯一身份只是UTC Oct02 18→Oct03 18邻接提交发现，不证明Oct04公开。三段有界分类题名70跨入口/66唯一，与五主题合130身份，CL/LG25/208和CV/RO25/118未返回部分不扩队列。实际66精确v1完整题摘（含一个旧同v1再次阅读）：前五批64合51P13C/N0已root实际通过；[两项具名重开](../_sources/daily-20251005/SUP_SIXTH_20261012.md)02490窄P/15930必要局部后C已root§10实际通过，合52P14C/N0。03185科学题材误关与02463必要强安全反侧有效，不重读未变层。另40同身份有效复用37P3C，不认领新二次全AB阅读；24明确范围外止题名。合106贡献处置89P17C，不是本日候选或Evidence数量；范围理由/复用权限见[REUSE](../_sources/daily-20251005/SUP_REUSE_20261012.md)。
+本轮仅补 BJT 2025-10-04 自然日。有限来源发现、身份/日期恢复、03315窄贡献与外部隔离边界获 Rawls R2–R5 实际限定复核后，完整六节已由 R6 唯一实际 DAY 通过；作者已据真实裁决保存完成态。[唯一作者记录](../_sources/daily-20251005/REPAIR_20261026.md)与[Rawls 唯一独核](../_sources/daily-20251005/REPAIR_REVIEW_20261026.md)保留实际角色与边界，不继承旧完成标签，不预签完成态FINAL。
 
-作者实际17家族决定/安全局部只支持准入与反侧，不等17篇完整Evidence；新增15930 HTML方法/误差与PDF p3资源预测表、p4结论用于决定C，不读02490全文。[FIRST](../_sources/daily-20251005/SUP_FIRST_20261012.md)§6的02549差额已root§7核回。官方FOIA另C，不混arXiv66。公开日/必要先稿门已有限恢复并在[DATE](../_sources/daily-20251005/SUP_DATE_20261012.md)集中89P一次日级请求；02490只加共同日级门、不重复年月失败入口。正式新增0、正面Evidence采用0、Books提案/写入0，不是89主题已被Books覆盖或无研究发布。
+当前确定新增候选 0；这不是本日零发布、全部主题已被 Books 覆盖或互联网无遗漏。旧 89 项补查潜力与原 39 项潜力共 128 个 arXiv 首公告事件，精确 v1 与适用 2025 规则给出的最早界分别为 BJT Oct06、Oct07，均晚于补窗。Rawls R4 已实际独立核对该身份/日期层；贡献潜力、必要反侧及删除版本处置保留，不重评分、不搬旧归属、不把这些身份扩成 Methods 队列。
 
-原正式0、44身份/39潜力/4关闭/1删除及有效Curie层保留，不把原完成标签当本轮验收。root§8 DAY后发现的02490/15930题名停止不足已局部修正并由§10实际核回；[root§11修订六部分DAY及§12完成态FINAL](../_sources/daily-20251005/SUP_INDEPENDENT_20261012.md)均实际通过，研究/Books及独核普通剩余0，外部保留精确隔离。作者仅同步真实裁决，计数由root维护。旧有效64题摘、40身份和来源层保持，不扩130或未返回分类。下列为原轮历史范围与有效判断。
+五组本窗 registered 主题/真实 alias/单复数查询均无命中，邻日同查询正控正常；registered 仅发现代理。官方 CL/CV/DC 有界相关标题补检另恢复 32 个精确 DOI：25 个最早界晚于窗、6 个最晚界早于窗、1 个跨日。跨日的 [03315 v1](https://arxiv.org/abs/2510.03315v1)有稳定 attention 近似与上下文神经元发现的具体潜力，完整题摘已读；未获确定公开日，不评分、不列正式候选、不用于正面 Evidence 或 Books。具体原件/分组及准入边界见作者 A2–A5，不能由查询空或周末日程将它关闭。
 
-十四每日源按目标窗主题有限处理。四主题26次命中去重24家族，官方日期范围相关标题有界补检18个新身份，原作者实际读42精确v1完整题摘/版本史。Curie独立标题抽检实际另读03751v1、03689v1完整题摘/历史并恢复潜力，合计44身份：4贡献关闭、1管理员删除版本、原37加独立新增2共39贡献潜力日期隔离。新增2份不回填作者原阅读；不是44篇本日新论文，不把submitted/Atom published当首次公开。正式候选0、正面Evidence采用0、Books提案/实际写入0。
-
-19具名家族必要安全/设计反侧与准入消歧核心已有限阅读，不等19篇完整Evidence；保留RAPO证明导数争议、LIBERO-PRO局部非零成功、CPS黑盒victim/白盒surrogate分界、ICL poisoning flip与净accuracy不同、PsychoLex临床/记忆边界。Curie FIRST及2026-10-05T09:57:23+08:00 DAY实际通过，已回核两恢复项与44/39的阅读角色；见[独立DAY](../_sources/daily-20251005/FINAL_INDEPENDENT_REVIEW.md)和[筛选](../_sources/daily-20251005/SCREENING.md)。普通研究、Books及独立复核剩余0，作者仅同步该真实裁决，未自审。
+旧有效十四源、题摘、必要安全/反侧和独核分层复用。已知早稿/其他渠道及必要历史目录仍具名隔离；旧 128 项的 arXiv 日请求不再是当前缺口。当前没有经本窗日期准入的新增采用命题，因此不作未读 owner 的“已有覆盖”判断，也未提出或写入 Books。旧连续 §4 完整保留，其旧日期 hold/完成叙述只代表历史；本轮边界见其末尾增补。
 
 ## 2. 来源覆盖
 
-本表为2026-10-12本轮实际范围；旧来源表保留在[冻结原档案](../_sources/daily-20251005/baseline-before-supplement-20261012.md)，不把旧页数/语言/成功权限混成本轮。新原件、URL参数/头、执行时刻/exit/status与实际停止详见[SUP_SOURCES](../_sources/daily-20251005/SUP_SOURCES_20261012.md)。Google/Meta复用root本日实际web层，不重复失败路径；列表保存不等正文读完或日期已证。
+本表复用 2026-10-12 的真实 [Source 原件与有限停止](../_sources/daily-20251005/SUP_SOURCES_20261012.md)；表内 own/fresh/页数仅属于该旧作者的实际请求，不冒称 Goodall 本轮重新抓取。2026-10-26 新增的主题查询、相邻官方标题、具体日期及目录恢复由[作者 A3–A5](../_sources/daily-20251005/REPAIR_20261026.md)给出实际参数/原件/停止，以下相应行同步新边界。目录/题名成功不等全文、日级归属或完整 Coverage。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
-| SRC-OPENAI | ownResearch403；RSS1287items只实际读Oct02→06日期/title邻界，无Oct04项；root本日§3实核RSS及FOIA短正文C | 受阻 | Research必要历史段未恢复；RSS/FOIA不证明无研究 |
+| SRC-OPENAI | 旧 Research403/RSS目标相邻切片及 FOIA 核心说明有效复用；本轮官方 Oct03 Updating GPT-5 完整短节与 Sep29/Oct06 邻接已读，定点核 10-04 同事件正式行，只去重；直连仍403、web成功分开 | 受阻 | Research必要历史段仍缺；旧安全release不搬日期/重评分，不由RSS/FOIA证明无研究 |
 | SRC-ANTHROPIC | freshPublicationList174 dated records；CyberDefendersOct03 18:31Z=Oct04 02:31BJT，邻界Sep15→Oct06；同官方URL/不变事件复用10-04冻结候选/有效Curie仅去重 | 已检查 | 本窗可见1重复事件，非零；不重复评分或搬移旧行，不授174正文或全史 |
-| SRC-GOOGLE-AI | owncurlpubs/Blog/page2 exit28；root本日DeepMind真实page2读30日期题名Oct30→Sep29→Mar28(total265)；OctBlog首页12最旧Oct09，page2/pubsweb失败即停 | 受阻 | Google目标历史段未恢复，不继承旧2/2或37条；DeepMind仅相邻切片，不扩265 |
+| SRC-GOOGLE-AI | 旧 DeepMind page2 的30日期/题名相邻切片有效复用；本轮 Google October Blog page2 精确原URL45秒超时，有限官方日期搜索只回窗外/非严格匹配，止本段 | 受阻 | Google目标历史段未恢复；不继承旧成功页数或扩265库存 |
 | SRC-META-AI | ownResearch exit35；root本日results页5现代12 Sep24→Aug05，global_search页5现代12 Nov18→Oct13→Sep24→Sep15；旧卡/People不进队列 | 受阻 | 仅两切片，Oct04必要完整日期段未恢复；不授2877库存全量 |
 | SRC-QWEN | 旧Blog五项Sep23→Jul24；fresharticles-en40完整title/path/extra.date读完，最早Nov13,2025；config586B非researchcfg，page_config50027错误非旧60成功 | 受阻 | Sep23与Nov13之间Oct04历史段缺，不停壳却也不假称恢复60/全部历史 |
 | SRC-DEEPSEEK | freshResearchJS本地31日期/title全读，Oct21→May14；NewsRSC16日期/title，Dec01→Sep29；ViewAll本地展开后即停 | 已检查 | 仅可见目录；月精度不造日，未审31/16正文或授全史 |
@@ -40,25 +38,28 @@
 | SRC-BAIDU-ERNIE | freshBlog首页10+真实page2六条，2/2date/title/intro全读，Oct16→Sep12→Jun30即停 | 已检查 | 仅技术Blog，不授仓库/机构全史，代码创建日不代公告 |
 | SRC-XIAOMI-MIMO | freshPaper8日期/title全读、Oct21→Sep19；undatedBlog15title/nav，真实More只本地slice展开即停 | 受阻 | 未知Blogfirstpublic不能补造Oct04；8/15非全文队列，非全部历史 |
 | SRC-MINIMAX | freshEN12最旧Oct27/CN13多Jan15；EN?page2同12非新增；Agent当前仅2026Oct08/Sep22/Sep19三条，非旧May13 | 受阻 | Oct04历史段未恢复，不授旧目录权限/重复页成功或全史 |
-| SRC-ARXIV | own五主题28/6/19/29/2=84跨入口76唯一，start0/max80 total=entries；UTCOct02 18→03 18只发现；CLLG25/208、systems20/20、CVRO25/118有界title合130身份；66完整AB/40有效复用/24只title有限停止 | 受阻 | 106处置89P17C已独核，但与24title均不授当日论文；Advanced day formerror/月一hit仅Oct月，CL月列表429；[DATE](../_sources/daily-20251005/SUP_DATE_20261012.md)89P日级/修订身份请求一次隔离，不用submitted或未返还分类证明覆盖 |
+| SRC-ARXIV | 旧五主题/有限题名与题摘按不变身份复用；本轮五组registered主题查询各page1/total0无next，邻日同式size1正控正常；官方CL/CV/DC四个25题名切片仅导航/相关标题补检；128旧精确v1事件下界及32具名相关身份日期已解析 | 受阻 | 03315唯一跨日区间与具体他渠道首日仍缺；官方Oct04专属日列表未恢复，不能由注册代理/月列表/周末日程证明全公告召回或零事件；不扩全月/全类/旧池Methods |
 | 表外：[OpenAI Academy FOIA](https://academy.openai.com/public/resources/managing-foia-requests-with-custom-gpts-2025-10-04) | 完整官方短说明日期/变更字段读完，root§3关闭成熟人工review/检索起草流程 | 已检查 | 未观看视频；updated2026不声称2025正文逐字不变，C不另索日期 |
 | 表外：[TeLLMe旧官方v1](https://arxiv.org/abs/2504.16266v1) | 同家族旧完整题摘/作者/history与官方originally announced April2025月字段实际读，仅恢复旧三机制身份 | 已检查 | April月足以窗前；15926新增修订不因同家族全关，不双计旧机制，必要新事件日/差额仍隔离 |
-| 表外：[AIES出版方](https://ojs.aaai.org/index.php/AIES/article/view/36605) | 同标题/作者/contrastive-bias/2575五轴完整AB，PublishedOct15，原gzip解压实际读 | 已检查 | 后发出版不证正文首次公开，02742日级门仍保留；不扫整个AIES |
-| 表外：[IndiCASA作者news](https://tensorteen.github.io/news/) | 只目标Jul18 accepted AIES公告实际读 | 已检查 | 接受不证当时正文公开，不扩作者其他论文 |
-| 表外：[ASRU官方议程](https://2025.ieeeasru.org/program/technical-program-schedule/) | 只目标row398同标题/四作者与PosterSession1 December7所在日期 | 已检查 | 后期会议不证02569首次公开日，没有读整会议题摘 |
-| 表外：[U-LAG作者页](https://anujithm.github.io/) | 只同稿完整AB与September accepted IROS news | 已检查 | 现正文没有原公开日，September接受不等当时正文公开，02526必要修订/日期仍隔离 |
-| SRC-OPENREVIEW | Oracle-RLAIF唯一note N2UmSTFFUV：API403、forum200实际redirect challenge、PDF403，原件/停止见DATE | 受阻 | 未读成功公开note/稿，不由搜索摘录或创建字段证明首公开；不扩venue/重试原路径 |
+| 表外：[AIES出版方](https://ojs.aaai.org/index.php/AIES/article/view/36605) | 同标题/作者/contrastive-bias/2575五轴完整AB，PublishedOct15，原gzip解压实际读 | 已检查 | 后发出版只作旧身份/发表状态，不证明首公开；02742的arXiv事件本轮已O，无具体Oct04早正文/修订信号，不新增日期请求或扫整个AIES |
+| 表外：[IndiCASA作者news](https://tensorteen.github.io/news/) | 只目标Jul18 accepted AIES公告实际读 | 已检查 | 接受只作旧身份线索，不证明当时正文公开；对应arXiv事件已O，无具体Oct04正文/修订信号不新增请求，不扩作者其他论文 |
+| 表外：[ASRU官方议程](https://2025.ieeeasru.org/program/technical-program-schedule/) | 只目标row398同标题/四作者与PosterSession1 December7所在日期 | 已检查 | 后期会议只作02569身份/会议状态，不证首公开；其arXiv事件已O，无具体Oct04正文/修订信号不新增日期请求，未读整会议题摘 |
+| 表外：[U-LAG作者页](https://anujithm.github.io/) | 只同稿完整AB与September accepted IROS news | 已检查 | September接受不等正文公开，保留旧身份/接受限制；02526的arXiv事件已O，无具体Oct04早正文/修订信号不新增日期请求 |
+| SRC-OPENREVIEW | 旧 Oracle-RLAIF note N2UmSTFFUV 原件有限停止复用；本轮同API403、forum challenge；新03315 note OIcNvCOpoB API403，搜索可见PDF不冒称成功note或首日 | 受阻 | 两精确note/同稿公开日未恢复，只定点重开；不扩venue，不以创建或搜索日期代公开 |
+| 补检：[DataCite](https://api.datacite.org/dois) | 五组本窗registered查询、三份联合日证与32份exact DOI原件；同DOI/arxiv.content/findable/唯一v1、L≤U逐项核；别名/单复数与停止见作者A4/A5 | 已检查 | 登记日不是公告日；03315跨Oct02–07，不截日；邻日正控仅1条，不扩190项 |
+| 表外：[Frames作者出版行](https://hadiasghari.com/publications.html) | 仅03799同题/作者、ECML AIMLAI2024及指向该arXiv的目标行实际读并保存 | 已检查 | 旧workshop身份不证明正文上线日或修订日，不作2024/2026日期倒证 |
+| 表外：[UCSC eScholarship](https://escholarship.org/uc/item/16p9s8g2) | 仅03727同题/作者线索；实际原页web/curl均JS核验，保存失败原响应 | 受阻 | 索引摘要/年度/毕业题目不证明同正文公开日 |
 
-以上具名身份恢复为实际表外/按需触发；没有每周组常规扫描，精确原文恢复不扩为全机构/会议研究。必要历史缺段已停止于这些当前可用入口，不支持完整Coverage或无遗漏。
+按需仅为以上具名原文、出版/作者与两个 OpenReview 身份；没有每周组常规扫描。必要历史缺段与03315等具体日证保留不支持正面 Coverage/Evidence；已核 arXiv 下界排除与具体首稿渠道缺口分开，不因后者缩减普通池。
 
 ## 3. 候选与判断
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
 
-正式候选0。39项在SCREENING逐项给出具体增量，含Curie独立恢复的03751/03689，但只有提交日线索，没有完全落窗first-public证明；不评分，不用访问或Books状态反推准入。03669v1管理员删除不入选/不评分/不进Books，不用后来的v3替换事件。
+当前确定新增候选 0。03315 完整精确题摘有具体贡献潜力，但合法联合区间跨补窗，放在 §5，不评分或假定当窗；不是贡献排除、Evidence 完成或“仅报告”终态。首批 Advisor/HyperAdaLoRA/Compositional Generalization 的窄贡献潜力获 Rawls R2 校准，但完整联合日期均 Oct06，本日不入选。
 
-本轮106贡献处置89P仅潜力/必要日级身份保留，17C含root§10实际核回的15930；不是新增正式候选。Anthropic Oct04可见CyberDefenders为10-04冻结候选同事件/有效Curie已审，只去重不搬日期或重复评分。没有用接受、后期会议、month announcement或lateID替代Oct04 first-public。
+原正式候选表无行，原日期/评分无改动；并非以保护空表阻止新增。原 39、补查 89 的有效贡献及必要反侧继续保留，当前仅排除对应 arXiv 首公告事件。旧 4C/17C 与管理员删除版本处置有效，未以当前有效版本替换被删除 v1。Anthropic CyberDefenders 与 OpenAI Updating GPT-5 为 10-04 已有正式同事件，仅定点去重，不重复评分或搬旧行。
 
 ## 4. 证据与知识整合
 
@@ -74,40 +75,33 @@ CPS victim黑盒有query反馈而surrogate有白盒依赖，1-in-8 MDR不是现�
 
 02490/15930具名title遗漏只局部重开，见[SIXTH](../_sources/daily-20251005/SUP_SIXTH_20261012.md)。02490完整AB的rapid drift下DRL退化与bounded ES维数/局部极小约束提供learned-policy/反馈接口潜力，不采用未控synergy或安全保证，未知日不读全core。15930实际方法/误差与PDF p3 Table5核回为成熟四类卷积块、常规资源拟合及混合分配预测：3564不是实测吞吐，没有独立留出/跨板卡或完整布局布线验证。C基于成熟拟合/分配示例无新机制或已验证边界，不以缺holdout、CNN/法语/仅标题类比关闭；root§10已实际读HTML决定段、PDF p3/p4及渲染表核回1P1C，不因局部通过授Evidence。
 
+### 本轮修复边界（2026-10-26）
+
+以上是连续旧有效证据原块，逐字保留，旧“尚缺arXiv日证/普通0/Books由root独占”等描述不覆盖本轮新判断或当前窄授权机制。Rawls R2/R4 已实际核首批与128个精确事件下界，R5核新增日期/03315及来源边界，R6完整DAY通过；本轮恢复记录见[作者 A2–A5](../_sources/daily-20251005/REPAIR_20261026.md)。
+
+03315 目前只完成精确 v1 完整题摘与日期恢复。它提出在固定 token 分布、broad/弱 content dependence attention heads 条件下，用 calibration text 估分母，将 GPT2-Small 第一层多个 heads 近似成线性上下文摘要，再从权重发现相关神经元；这是可核机制潜力，不是普遍解释/控制保证。日期区间 Oct02–07 不能收为单日，未采其方法/实验为正面 Evidence，也不借小模型/近似限制把它排为C。
+
+旧必要安全/设计反侧按原权限复用，不重新认领全部附件、实验复现或实现验证。没有经本窗准入的新采用命题，就没有本轮可提交的 actual owner/gap/Books PRE；未读书稿不能记“已有覆盖”，也不为制造差额改书。Books 提案/写入均0的实际边界由 Rawls R5核回，并纳入R6完整DAY；并非用户限定仅报告或作者自行免做 Books。
+
 ## 5. 缺口与下一步
 
-本轮研究、Books及独核普通待办无。两项具名重开已由root§10核回，[§11修订六部分DAY及§12完成态FINAL](../_sources/daily-20251005/SUP_INDEPENDENT_20261012.md)实际通过，行政等待已关闭。66/24/89集合已同步，无待读core/分页；原64、40复用及十四源停止有效，不重复所有core或扩130。
+本轮研究、必要证据处置及Books普通待办无。Rawls R6已实际完整DAY通过，R5的32身份/03315、他渠道与Source有限停止已纳入整日判断；作者据此保存完成态，不自审或预签FINAL。以下为本窗已隔离的外部终态保留，不是普通未读改称终态。
 
-本轮以下为**已隔离的外部终态保留项**，不用于正面证据、不进入Books、不支持完整Coverage、零事件、无遗漏或性能/安全保证；有具名替代才定点重开，root§11已实际确认修订后的安全终态边界：
+- **03315 v1：** [原页](https://arxiv.org/abs/2510.03315v1)、[同DOI原件](../_sources/daily-20251005/REPAIR_TITLE_DC_03315_20261026.json)；L=BJT Oct02 08:00，U=Oct07 10:46:57，跨日且不可截取。精确 [OpenReview OIcNvCOpoB](https://openreview.net/forum?id=OIcNvCOpoB) API403。需要同精确正文的官方日公告、合法更紧bounds，或可核作者/公开note发布日；Updated、Available月、搜索/SciRate日期不代。只重开其日期及受影响necessary/owner/Books，不扩别日。
+- **具体其他渠道/旧家族：** 02561 Oracle 的精确note/API403与forum challenge；03727同题eScholarship原页JS核验，年度/毕业题目不证正文公开；03799作者行证旧workshop身份但无同正文上线/修订日；15926已确认April旧家族，新差额没有可核Oct04公开事件。各身份及实际原件/有限停止见[作者 A3/A5](../_sources/daily-20251005/REPAIR_20261026.md)及[旧DATE有效恢复层](../_sources/daily-20251005/SUP_DATE_20261012.md)。替代为对应原公开稿/日证及必要修订差额，只重开该身份。接受/后期发表不是日证，不要求全文附件或一切历史渠道。
+- **来源历史段：** OpenAI Research、Google Blog page2/pubs、Meta目标段、Qwen Sep23→Nov13、Hunyuan2025语言/历史段、ZAI Oct研究段、MiniMax Oct04历史及MiMo未标日期Blog。旧实际入口/停止复用，本轮有限官方日期搜索未恢复完整段，Google精确page2仍超时。可接受具名官方本窗正文/原日期列表/有效对应语言接口；只重开该源该窗，不拿搜索空/现代目录/重复页证明零。
+- **arXiv范围限制：** 官方Oct04专属公告列表未恢复。五组registered仅登记代理，CL/CV/DC月页切片只作有界补检，不保证所有公告日/新命名机制召回；已有具体相关身份按精确日门处置，不能扩大这一局限为全月待逐项Methods。只在出现具体遗漏或新的有效本窗公告入口时定点重开。
 
-- 89P每项身份及唯一自然日/必要修订请求见[DATE精确集合](../_sources/daily-20251005/SUP_DATE_20261012.md)。只需官方公开日或完全落窗bounds，不索小时；TeLLMe旧April不双计、接受/后期会议不代firstpublic，OpenReview challenge不代成功正文。重开该身份日期门及受影响证据/具体Books，不要求全部源码/所有论文全文。
-- §2的OpenAI Research、Google Blog第二页/pubs、Meta目标历史段、Qwen Sep23→Nov13、Hunyuan2025实际语言入口、ZAI Oct研究段、MiniMax Oct04历史及MiMo未标日期Blog必要缺段；现入口已有限停止。可接受具名官方Oct04正文/准确历史日期列表或对应语言接口，只重开该源该窗；新Seed两type末页为空/false已收束，85/94与40/45切片差额不是普通分页未读，也不授全史。
-- 若日级门恢复，02549中心指标单位、理论假设/评价反侧及其他具名局部争议仍按对应采用命题核实；当前仅必要准入层，不能由批次通过授完整Evidence或把未比较owner判已有覆盖。
-
-下列原有效停止/完成叙述只历史，不代本轮验收；旧39原日期和带时刻原请求保持，但时刻义务不施给新补窗。
-
-可执行研究、Books及独立复核剩余0。Curie已于2026-10-05T09:57:23+08:00实际完成03751/03689、44身份/39潜力阅读角色及三文件变化回核；FIRST、十四有限源、19必要安全反侧/消歧及分层样本有效复用，无需重读核心/附件。以下是本窗终态隔离而非可执行待办；不以完成态断言日期已核或来源绝无遗漏。
-
-本窗终态保留项均**不用于正面Evidence、不进入Books、不支持零事件/无遗漏或性能/安全保证**：
-
-- 39潜力精确身份见SCREENING，含Curie独立恢复03751v1/03689v1；缺官方首次公开历史公告或完全落窗bounds。可接受同身份官方带时刻公告/真实作者首发布记录，不能用submitted、DataCite注册、年度目录代替。只重开该家族日期准入及受影响证据/Books，不遍历全部附件。
-- OpenAI/Meta原Research目标窗段、Google pubs日级首次公开、Hunyuan2025目录、ZAI10月、MiniMax Agent/Blog历史段及Seed total可见差额：表内可用入口已实际有限处理。只有对应官方历史页/接口/公告到达，才定点重开该源该窗；搜索首页或全年元数据不替代。
-- Qwen接口/旧配置已恢复，撤销“仅应用壳未恢复”普通待办；当前目录的未展示历史完整性仍不保证。只有明确新增的目标窗官方身份才重开，不要求逐审60+40旧正文。
-
-4贡献关闭不因日期未核另建请求，管理员删除版本仅保留必要依据。05164/06254 ID与submitted发现日异常、03799旧workshop及03727thesis旧成果身份仍按具名潜力隔离，不能补造当前first-public；这些不是正面采用。
+这些保留均不用于正面 Evidence、不进入 Books、不支撑无遗漏、零事件、性能或安全保证。原 89/39 的 arXiv 日请求已被本轮下界核验替代，不继续批量请求；原其他有效反侧/早稿线索不抹掉。25个邻侧事件晚于窗、6个早于窗只是本次停止线索，不启动或补写其归属日报，不增加年度计数。
 
 ## 6. 复核
 
-复核者：root（本轮非作者；报告作者Ptolemy）
+复核者：Rawls `01a176cd-9b08-7be1-9907-e4be757d944d`（本轮唯一非writer；作者Goodall）
 
 结论：通过
 
-实际依据为[本日独核§3–12](../_sources/daily-20251005/SUP_INDEPENDENT_20261012.md)：原64完整v1题摘及必要局部、40复用权限、十四源停止和02549差额有效；两题名遗漏由§10实际核回1P1C，§11实际重新完整回读六部分、89唯一日级请求/02490一次及原窗口/连续§4，修订DAY通过。§12实际回读完成态header/§1/4/5/6、V3/限定diff与冻结后FINAL通过。当前66实读/40有效复用/24题名、106处置89P17C/N0与17必要局部角色一致，原44/39和Curie历史层保留。普通0，外部终态边界不授正面Coverage/Evidence；不认领root重读40全AB、全部附件或实验/代码验证。
+已实际读回[唯一独核 R6完整DAY](../_sources/daily-20251005/REPAIR_REVIEW_20261026.md)：Rawls通读六节并发现AIES/U-LAG旧日请求措辞不清，作者仅修四个来源gap单元，Rawls实际回核后通过。R2–R5覆盖首批3窄P/2代表C、三份合法组合日期、五组查询/邻日正控、75次相邻题名、128旧事件下界、32相关身份日期/03315完整题摘窄P与跨日隔离、他渠道及十四源有限停止；R6纳入整日处置，不扩大为全部附件、实验/代码复现或完整Coverage。
 
-完成态机器层已实际运行：V3通过，12Markdown/260inlineTargets结构/本地引用/行尾0错误；66实读/40复用交集0，130有界身份余24只题名，89请求唯一且属于106处置，02490一次且15930不索日期。原窗口相等、§3原空表及原说明连续前缀逐字保持、连续原§4前缀保持均True；§3新旧整节不全等，因为原前缀之后追加本轮说明。新作者Markdown空白与限定cached/unstaged diff-check通过，实际README diff和本日变更范围已检查。机器结果不代root§11语义DAY或§12实际FINAL。下列原有效复核为历史，不代本輪通过。
+旧 Curie/root 有效筛选、必要反侧与独核按不变层复用，详见[Curie最终](../_sources/daily-20251005/FINAL_INDEPENDENT_REVIEW.md)、[旧补查独核](../_sources/daily-20251005/SUP_INDEPENDENT_20261012.md)。它们不替代本轮DAY或完成态FINAL，也不认领 Rawls 重读全部旧题摘/附件。
 
-复核者：Curie（FIRST及DAY、两恢复项独立写后核通过；作者Huygens未自审）
-
-结论：通过
-
-已实际读回Curie FIRST与2026-10-05T09:57:23+08:00最终DAY通过：19必要精确v1 core（16HTML/3PDF）、十四有限来源、61标题/57唯一/18新身份归并及分层题摘有效，另独立完整AB/历史恢复03751v1、03689v1并完成作者变化回核。分层样本为FIRST九份题摘及额外03584/03731/03763/03847/03891/06254，覆盖关闭/删除、多模态、LoRA、训练、小模型/综述、集群和稀疏学习；不认领其余题摘独立二次全验或全部附件、实现/实验复现。原作者42+独立2=44身份、原37+2=39日期潜力，不回填作者原阅读，不授正面Evidence。终态隔离与精确重开条件通过；Books提案/写入0，无共享修改待核。V3及引用/空白检查只验接口，不替代上述独立语义裁决。
+R6时V3、本轮三个Markdown的working/cached限定diff-check、65本地目标、原小时窗与3904B连续旧§4保护均实际通过，README全部diff已核。完成态保存后的实际QA记录于[作者A8](../_sources/daily-20251005/REPAIR_20261026.md)，机器只检查接口，不代语义复核。全本日sources广范围cached检查的旧副本 `baseline-before-supplement-20261012 2.md:73` EOF空行警告保留，未修复/unstage，不声称全dirty树清洁。完成态变化由同一独核后续唯一FINAL核验，作者不代签、不更新State或年度计数。

@@ -159,6 +159,9 @@ Y = AllReduce(sum_i Y_i_partial)
 
 这样中间 `d_ff` activation 不需要 AllGather，只在 MLP 末端聚合一次。Megatron-LM 的经典 TP 价值来自成对安排 operator layout，而不是独立切每个 linear 后立即恢复完整 tensor。
 
+成对的row/column布局已能省去许多恢复完整张量的通信；若前后算子已有的分区与复制不相齐，另一条分支是不先强迫全局改成同一布局，而是求各tile在归约维和输出区域的重叠，把一次乘法展开为若干local GEMM。每个局部项仍须先取得正确输入，再执行GEMM并把结果累加到对应输出；异步get的future、GEMM和remote accumulate的事件依赖，以及输出副本最终归并，共同保证这不是任意交换执行顺序。[受限切片执行](https://arxiv.org/html/2510.08874v1)用预取、并发上限和内存池换取重叠，也增加临时驻留与调度状态；跨节点锁与get/put不能按节点内原子累加的成本理解。其FP32单节点PVC/H100对照中，通信最少的outer-product仍可能因累加kernel干扰GEMM而更慢，部分MLP也落后DTensor，故字节最少不等总时间最短。布局、shape、依赖与backend应共同验收，切片准备、复制归并、临时buffer和全部搜索均计费；伪码歧义、数值或净收益未闭时，保留已验的规则TP/DTensor与显式重分布，不从直接执行的局部测量批准全局最优IR或多节点训练加速。
+<!-- source-family:SF-2025-ARXIV-2510-08874 -->
+
 ## Attention 怎样切 Heads 与 Projections
 
 Q/K/V projection 的输出维度可以按 heads 切分。若 `H` query heads 能被 `p` 整除，每 rank 处理约 `H/p` 个 heads，并局部计算 Attention。
@@ -349,3 +352,5 @@ Primary-source / official documentation 校验入口：
 - Megatron Core Parallelism Strategies Guide: https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/parallelism-guide.html
 - SwiftQK（QK-Norm sufficient-statistic communication；Status: Experimental）:
   https://arxiv.org/abs/2608.09160
+
+- `SF-2025-ARXIV-2510-08874` — Fermat，Daily2025-10-14补Oct13；exact-v1§3–6/Alg1–2/关键评价必要，2+2+2=6，任意layout重叠切片/依赖与累加干扰gap深入，Planck R34关键支持反侧复核。保FP32单节点PVC/H100、best-of10非CI、DTensor反退、伪码歧义与全费；未核代码/复现，不采全局最优IR/端到端训练保证。整体PRE/真实SAVE/fullselfread/实际POST仅按本日canonical真实层。

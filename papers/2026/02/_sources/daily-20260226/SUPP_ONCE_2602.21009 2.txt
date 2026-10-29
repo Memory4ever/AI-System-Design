@@ -1,0 +1,2603 @@
+HiSAC: Hierarchical Sparse Activation Compression for Ultra-long Sequence Modeling in Recommenders
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Related Work
+3
+Method
+3.1
+Problem Formulation
+3.2
+Overview of Method
+3.3
+Tokenization of User Historical Behaviors
+3.4
+Sparse Activation by Hierarchical Voting
+3.5
+Soft-Routing Attention for Compression
+3.6
+Online Deployment
+4
+Experiments
+4.1
+Setup
+4.1.1
+Dataset
+.
+4.1.2
+Metrics
+.
+4.1.3
+Compared Methods & Implementation Details
+.
+4.2
+Overall Performance Comparison
+4.3
+Ablation Study
+4.4
+Hyperparameters Analysis
+4.5
+Online Experiments
+5
+Conclusion
+References
+A
+Case Study of Soft-Routing Attention
+B
+Implementation Details of Multimodal Encoding and RQ
+-
+VAE
+B.1
+Multimodal Encoding
+B.2
+RQ-VAE Training Procedure
+C
+Matrix Formulation of Soft-Routing Attention
+D
+Comparison with Two-Stage Methods
+License: arXiv.org perpetual non-exclusive license
+arXiv:2602.21009v1 [cs.IR] 24 Feb 2026
+HiSAC: Hierarchical Sparse Activation Compression for Ultra-long Sequence Modeling in Recommenders
+DOI:
+XXXXXXX.XXXXXXX
+Conference:
+Make sure to enter the correct
+conference title from your rights confirmation email; June 03–05,
+2018; Woodstock, NY
+ISBN:
+978-1-4503-XXXX-X/2018/06
+CCS:
+Information systems Retrieval models and ranking;
+Kun Yuan
+Note:
+Both authors contributed equally to this research.
+Affiliation:
+Alibaba Group
+,
+Beijing
+,
+China
+email:
+yuankun.yuan@taobao.com
+,
+Junyu Bi
+Affiliation:
+Alibaba Group
+,
+Beijing
+,
+China
+email:
+bijunyu.bjy@taobao.com
+,
+Daixuan Cheng
+Note:
+Work done during an internship at Alibaba Group.
+Affiliation:
+Renmin University
+,
+Beijing
+,
+China
+email:
+daixuancheng6@gmail.com
+,
+Changfa Wu
+Affiliation:
+Alibaba Group
+,
+Beijing
+,
+China
+email:
+wuchangfa.wcf@taobao.com
+,
+Shuwen Xiao
+Affiliation:
+Alibaba Group
+,
+Beijing
+,
+China
+email:
+shuwen.xsw@taobao.com
+,
+Binbin Cao
+Affiliation:
+Alibaba Group
+,
+Beijing
+,
+China
+email:
+simon.cbb@taobao.com
+,
+Jian Wu
+Affiliation:
+Alibaba Group
+,
+Beijing
+,
+China
+email:
+joshuawu.wujian@taobao.com
+and
+Yuning Jiang
+Affiliation:
+Alibaba Group
+,
+Beijing
+,
+China
+email:
+mengzhu.jyn@taobao.com
+2018
+Abstract.
+Modern recommender systems leverage ultra-long user behavior sequences to capture dynamic preferences, but end-to-end modeling is infeasible in production due to latency and memory constraints. While summarizing history via interest centers offers a practical alternative, existing methods struggle to (1) identify user-specific centers at appropriate granularity and (2) accurately assign behaviors, leading to quantization errors and loss of long-tail preferences. To alleviate these issues, we propose
+Hierarchical Sparse Activation Compression
+(HiSAC), an efficient framework for personalized sequence modeling. HiSAC encodes interactions into multi-level semantic IDs and constructs a global hierarchical codebook. A hierarchical voting mechanism sparsely activates personalized
+interest-agents
+as fine-grained preference centers. Guided by these agents, Soft-Routing Attention aggregates historical signals in semantic space, weighting by similarity to minimize quantization error and retain long-tail behaviors. Deployed on Taobao’s “Guess What You Like” homepage, HiSAC achieves significant compression and cost reduction, with online A/B tests showing a consistent
+1.65%
+CTR uplift—demonstrating its scalability and real-world effectiveness.
+Keywords:
+Long Sequence Modeling, Recommender System.
+1.
+Introduction
+Modern recommender systems
+(
+Zhang et al., 2019
+)
+, widely deployed in domains such as e-commerce and video streaming, rely on user behavior sequences to capture evolving preferences
+(
+Zhou et al., 2018
+;
+Pi et al., 2020
+;
+Chang et al., 2023
+)
+.
+For highly active users, these histories can contain thousands of interactions, reflecting both short-term and long-term dynamics.
+While such ultra-long sequences provide rich signals for personalization, directly modeling them in production environments is computationally expensive and memory-intensive, often driving inference latency beyond acceptable limits in real-time serving.
+Although many strategies have been explored for compressing long behavior sequences, substantial limitations persist in practical recommendation scenarios.
+For instance, ELASTIC
+(
+Deng et al., 2024
+)
+and PolyEncoder
+(
+Humeau et al., 2019
+)
+transform each user’s behaviors into a fixed set of
+global
+interest embeddings, overlooking that users vary widely in both the number and granularity of their interest centers.
+Other grouping approaches—such as temporal segmentation, locality-sensitive hashing (LSH)
+(
+Kitaev et al., 2020
+)
+, and K-Means clustering—are often unstable and sensitive to hyperparameters: temporal splitting ignores semantic proximity, while hash- and cluster-based techniques can misassign semantically related behaviors to different groups.
+These issues highlight two fundamental challenges:
+(1) accurately identifying user-specific interest centers, whose number and granularity differ across individuals; and
+(2) reliably assigning historical behaviors to the most compatible interest center to reduce quantization error and preserve semantic consistency.
+Deficiencies in the second aspect naturally lead to loss of rare yet valuable long-tail preferences, diminishing recommendation diversity and overall quality.
+To address these challenges, we propose
+Hierarchical Sparse Activation Compression
+(HiSAC),
+a framework for ultra-long sequence modeling that suppresses noise and attention dilution while maintaining stable, semantically consistent interest grouping.
+Firstly
+, HiSAC tokenizes user histories into discrete multi-level semantic identifiers via a large-scale multimodal encoder
+(integrating product text and images) and a Residual Quantized Variational Autoencoder (RQ-VAE)
+(
+Lee et al., 2022
+)
+.
+Secondly
+, a global hierarchical semantic tree is built and a
+hierarchical voting mechanism
+then aligns each user’s tokenized sequence to this hierarchy,
+pruning and retaining the most representative branches to produce personalized
+interest-agents
+capturing both coarse- and fine-grained preference centers.
+Finally
+, guided by these agents,
+Soft-Routing Attention
+aggregates signals from past interactions in the learned semantic space,
+weighting contributions by similarity to reduce quantization error
+(
+Van Den Oord et al., 2017
+)
+and preserve infrequent yet valuable long-tail behaviors.
+The resulting compact, expressive user representation accelerates retrieval and ranking, lowers serving costs,
+and—in industrial-scale deployment—yields a consistent
+1.65%
+CTR uplift over the strongest prior compression method.
+Our main contributions are:
+•
+We design a hierarchical voting mechanism for sparse activation of user interests, built upon a multimodal RQ-VAE. This mechanism generates user-specific interest-agents that represent the primary centers of user interest.
+•
+We develop a Soft-Routing Attention mechanism to reliably assign behaviors, minimize quantization error, and inherently preserve long-tail preferences.
+•
+We validate HiSAC in industrial-scale deployment, demonstrating reduced computational and serving costs alongside a 1.65% CTR uplift.
+2.
+Related Work
+Sequence Modeling in Recommendation.
+Modeling user interaction sequences
+(
+Xie et al., 2022
+;
+Zhou et al., 2019
+;
+Sun et al., 2019
+;
+Liu et al., 2024
+)
+is central to modern recommender systems, enabling fine-grained tracking of dynamic preferences.
+Early attention-based models like DIN
+(
+Zhou et al., 2018
+)
+leveraged recent behaviors to capture short-term interests, achieving notable gains.
+Later work recognized that longer histories offer a richer view of user preferences, yet processing ultra-long sequences incurs high computational, memory, and latency costs.
+To mitigate this, two-stage methods such as SIM
+(
+Pi et al., 2020
+)
+and TWIN
+(
+Chang et al., 2023
+;
+Si et al., 2024
+)
+first retrieve a subset of behaviors before ranking, effectively shortening the sequence.
+While efficient, these approaches risk retrieval–ranking inconsistency and discard potentially valuable behavioral signals.
+Sequence Compression for Ultra-long Histories.
+To improve efficiency, various sequence compression strategies have been explored. ELASTIC
+(
+Deng et al., 2024
+)
+and PolyEncoder
+(
+Humeau et al., 2019
+)
+compress sequences into a fixed set of global interest embeddings, offering computational savings but ignoring diversity in
+user-specific interest granularity
+. Locality-sensitive hashing (LSH)
+(
+Kitaev et al., 2020
+)
+, K-Means clustering, and temporal segmentation
+(
+Chai et al., 2025
+;
+Liao et al., 2025
+)
+have also been used for grouping behaviors, but temporal splitting disregards semantic proximity, and clustering- or hash-based methods can suffer from instability and misassignment, undermining personalization and discarding valuable long-tail signals.
+Quantized Representation Learning.
+Vector Quantized Variational Autoencoders (VQ-VAE)
+(
+Van Den Oord et al., 2017
+)
+introduce discrete codebooks to learn compact latent representations, defining quantization error as the
+ℓ
+2
+\ell_{2}
+distance between encoder outputs and selected codebook vectors. Extensions such as VQ-VAE-2
+(
+Razavi et al., 2019
+)
+employ multi-level quantization, while Residual Quantized VAE (RQ-VAE)
+(
+Lee et al., 2022
+)
+progressively quantizes residuals to reduce total quantization error. These approaches have proved effective in domains like vision and speech, and their principles can be adapted to recommender systems for scalable sequence modeling.
+Our method combines multimodal RQ-VAE tokenization, hierarchical voting, and soft-routing attention to identify user-specific interest centers. Unlike global fixed embeddings
+(
+Deng et al., 2024
+;
+Humeau et al., 2019
+)
+, HiSAC learns personalized interest agents, reduces quantization error, preserves long-tail preferences, and scales to industrial deployment.
+Figure 1.
+Overview of HiSAC, which compresses ultra-long user sequences in three stages:
+(a) tokenization of historical behaviors;
+(b) sparse activation by hierarchical voting for interest-agents selection;
+(c) soft-routing attention to produce the compressed representation.
+3.
+Method
+3.1.
+Problem Formulation
+Consider a recommender system with an item set
+ℐ
+\mathcal{I}
+and a set of users
+𝒰
+\mathcal{U}
+, each user
+u
+∈
+𝒰
+u\in\mathcal{U}
+has an interaction history represented as an ordered sequence:
+(1)
+H
+u
+=
+[
+h
+1
+,
+…
+,
+h
+n
+,
+…
+,
+h
+N
+]
+,
+h
+n
+∈
+ℐ
+​
+and
+​
+1
+≤
+n
+≤
+N
+,
+H_{u}=[h_{1},\dots,h_{n},\dots,h_{N}],\quad h_{n}\in\mathcal{I}\text{ and }1\leq n\leq N,
+where
+N
+N
+denotes the sequence length. The goal of the ranking model
+f
+f
+in the recommender system is to estimate the probability
+y
+^
+∈
+[
+0
+,
+1
+]
+\hat{y}\in[0,1]
+that user
+u
+u
+will interact with a target item
+i
+i
+(e.g., click, purchase, like and so on), conditioned on the historical sequence
+H
+u
+H_{u}
+.
+For highly active users,
+N
+N
+can be extremely large, sometimes exceeding
+10
+4
+10^{4}
+interactions, which makes direct sequence modeling computationally expensive and poses significant scalability challenges in industrial applications.
+To address this, we aim to construct a compressed representation of user interests:
+(2)
+H
+^
+u
+=
+[
+z
+^
+1
+,
+…
+,
+z
+^
+K
+]
+,
+\hat{H}_{u}=[\hat{z}_{1},\dots,\hat{z}_{K}],
+where each
+z
+^
+k
+∈
+ℝ
+d
+′
+\hat{z}_{k}\in\mathbb{R}^{d^{\prime}}
+is a summary of a distinct aspect of the user’s interests,
+K
+≪
+N
+K\ll N
+denotes the length of
+H
+^
+u
+\hat{H}_{u}
+. Crucially,
+H
+^
+u
+\hat{H}_{u}
+is not a subsequence of items from
+H
+u
+H_{u}
+, but rather a compact set of interest-level representations that capture diverse and informative behavioral patterns.
+3.2.
+Overview of Method
+The proposed method is designed to model ultra-long user behavior sequences by mitigating noise and attention dilution, whose structure is shown in Figure
+1
+.
+It compresses sequences in three stages: (a) tokenizing historical behaviors, (b) hierarchical voting for sparse activating coarse- and fine-grained interest agents, and (c) soft-routing attention to produce a compact, expressive representation.
+Beyond these core components, we also provide details on its industrial-scale deployment, demonstrating HiSAC’s practicality in real-world recommendation systems.
+3.3.
+Tokenization of User Historical Behaviors
+In modern recommender systems, item representations are typically learned end-to-end, effectively capturing task-specific patterns but often inheriting biases from item popularity and exposure frequency—compromising fairness and generalization. To mitigate this, we employ a large-scale multimodal encoder to generate embeddings for all items in the corpus
+ℐ
+\mathcal{I}
+. By jointly processing heterogeneous modalities, the encoder integrates complementary semantic cues while reducing biases inherent in interaction-driven learning.
+As shown in Figure
+1
+-(a), for an item
+h
+∈
+ℐ
+h\in\mathcal{I}
+, we collect its descriptive metadata-including title, category labels, and domain-specific text—along with its product image. These multimodal signals are processed by an encoder that aligns and fuses them via modality-specific encoders and shared fusion layers. The resulting embedding unifies visual and textual semantics in a common space, enabling effective retrieval and ranking. By decoupling item representation learning from the recommendation model’s optimization, our approach mitigates exposure bias and improves embedding generalization.
+Although multimodal-based embeddings offer rich semantic information, they reside in a continuous feature space where clustering behavior can be ambiguous and direct grouping of items may incur substantial quantization errors.
+To mitigate these issues, we employ the Residual Quantized Variational Autoencoder (RQ-VAE)
+(
+Lee et al., 2022
+)
+to discretize the continuous embeddings
+𝐞
+\mathbf{e}
+into a
+L
+L
+-level hierarchy of codebooks.
+RQ-VAE applies residual quantization: the first level directly quantizes the encoder output, while each subsequent level iteratively quantizes the residual from the preceding level. The implementation details of multimodal encoding and RQ-VAE are available at Appendix
+B
+.
+Using the learned codebook, each item
+h
+h
+is mapped to an
+L
+L
+-level
+semantic identifier
+(SID)
+(
+Lee et al., 2022
+)
+, and the user’s historical interaction sequence
+H
+u
+H_{u}
+is correspondingly tokenized into the semantic space. This process preserves semantic structure while yielding a compact, discrete representation that facilitates efficient interest modeling and candidate matching.
+3.4.
+Sparse Activation by Hierarchical Voting
+To address the first challenge in Section
+1
+, accurately identifying user-specific interest centers, we construct a set of
+interest-agents
+for each user via a hierarchical voting mechanism that derives agents from the tokenized sequence in two steps as shown in Figure
+1
+-(b):
+Step 1: Building Global Hierarchical Semantic Tree
+.
+We first organize the entire SID space into a global
+(
+L
++
+1
+)
+(L+1)
+-level tree, where each node at level
+l
+l
+corresponds to a codeword index in the
+l
+l
+-th codebook. The root (level 0) is a virtual node connected to all level-1 nodes. A path from the root to a leaf (level
+L
+L
+) uniquely defines a complete SID, thereby encoding a fine-grained semantic concept. This static tree serves as a shared semantic index across all users and enables efficient hierarchical aggregation.
+Step 2: Voting for Interest-Agents
+.
+Given a user’s tokenized history, we project each item onto its corresponding leaf node. We then perform a bottom-up vote propagation:
+(1)
+Each leaf node receives a vote count equal to the number of items mapped to it;
+(2)
+For internal nodes, the vote count is the sum of votes from all its descendants. Starting from the root, we traverse the tree top-down. At each level
+l
+∈
+{
+1
+,
+…
+,
+L
+}
+l\in\{1,\dots,L\}
+, for every activated parent node (initially only the root), we retain only the top-
+k
+(
+l
+)
+k^{(l)}
+child nodes with the highest vote counts and deactivate the rest. This layer-wise sparsification ensures that computational resources are focused on the most salient semantic branches that best reflect the user’s dominant interests.
+The remaining active leaf nodes after pruning define the user’s
+interest-agents
+:
+(3)
+𝒜
+u
+=
+{
+a
+1
+,
+…
+,
+a
+K
+}
+,
+𝒲
+u
+=
+{
+w
+a
+,
+1
+,
+…
+,
+w
+a
+,
+K
+}
+,
+\mathcal{A}_{u}=\{a_{1},\dots,a_{K}\},\quad\mathcal{W}_{u}=\{w_{a,1},\dots,w_{a,K}\},
+each agent
+a
+a
+is represented by its full root-to-leaf path (which is an
+L
+L
+-level SID).
+w
+a
+w_{a}
+denotes weight of
+a
+a
+, computed as the softmax-normalized count of items assigned to each agent, and reflects the strength of the corresponding interest.
+K
+=
+∏
+l
+=
+1
+L
+k
+(
+l
+)
+K=\prod_{l=1}^{L}k^{(l)}
+is the size of
+𝒜
+u
+\mathcal{A}_{u}
+. This sparse, adaptive selection avoids combinatorial explosion and yields a compact yet expressive interest summary suitable for downstream modeling.
+3.5.
+Soft-Routing Attention for Compression
+Once
+𝒜
+u
+=
+{
+a
+1
+,
+…
+,
+a
+K
+}
+\mathcal{A}_{u}=\{a_{1},\dots,a_{K}\}
+has been determined, a common approach is
+Hard-Routing
+, which assigns each historical interaction to its corresponding interest agent via exact SID matching. However, such hard assignment can amplify quantization errors in discrete interest representations and fails to utilize long-tail interactions—defined here as items whose SIDs do not match any activated agent.
+To address these limitations, we propose a
+soft-routing attention
+mechanism that allows each interest agent to aggregate information from
+all
+historical interactions in a similarity-aware manner. Our key insight is:
+routing decisions should be based on debiased semantic similarity, while the aggregated representation must remain aligned with the downstream ranking objective
+. This leads us to leverage two distinct item embeddings:
+•
+Semantic embedding
+𝐞
+∈
+ℝ
+d
+\mathbf{e}\in\mathbb{R}^{d}
+:
+Produced by the frozen multimodal encoder and RQ-VAE (Section
+3.3
+), this embedding captures intrinsic cross-modal semantics (e.g., visual appearance and textual attributes) and is
+not updated
+during recommendation training. It is used solely to compute similarity between items and interest agents.
+•
+Ranking embedding
+𝐞
+′
+∈
+ℝ
+d
+′
+\mathbf{e}^{\prime}\in\mathbb{R}^{d^{\prime}}
+: Learned end-to-end within the recommendation model (e.g., via CTR or ranking loss), this embedding captures interaction-driven signals—such as user preferences and collaborative patterns—and is concatenated with item-side features (e.g., category, brand). Additionally, a time-decay feature, which quantifies the temporal distance between each historical interaction and the current request timestamp, is incorporated as side information. The resulting representation is
+trainable
+and serves as the content embedding for subsequent aggregation.
+For each interest agent
+a
+a
+, its semantic prototype
+𝐳
+a
+∈
+ℝ
+d
+\mathbf{z}_{a}\in\mathbb{R}^{d}
+is obtained by summing the corresponding codewords from all
+L
+L
+levels of the RQ-VAE codebooks.
+Note that
+𝐳
+a
+\mathbf{z}_{a}
+resides in the same embedding space as
+𝐞
+i
+\mathbf{e}_{i}
+, enabling direct computation of the
+L
+2
+L_{2}
+distance.
+Intuitively, a smaller
+L
+2
+L_{2}
+distance between
+𝐳
+a
+\mathbf{z}_{a}
+and
+𝐞
+i
+\mathbf{e}_{i}
+indicates higher semantic similarity, and thus should correspond to a larger attention weight.
+Therefore, we compute soft routing weights using the negative
+L
+2
+L_{2}
+distances between
+𝐳
+a
+\mathbf{z}_{a}
+and each
+𝐞
+i
+\mathbf{e}_{i}
+, normalized via a temperature-controlled softmax:
+(4)
+𝐳
+^
+k
+=
+w
+a
+,
+k
+⋅
+∑
+i
+=
+1
+N
+exp
+⁡
+(
+−
+‖
+𝐞
+i
+−
+𝐳
+a
+,
+k
+‖
+2
+τ
+)
+∑
+j
+=
+1
+N
+exp
+⁡
+(
+−
+‖
+𝐞
+j
+−
+𝐳
+a
+,
+k
+‖
+2
+τ
+)
+⏟
+semantic based attention weight
+⋅
+𝐞
+i
+′
+,
+\mathbf{\hat{z}}_{k}=w_{a,k}\cdot\sum_{i=1}^{N}\underbrace{\frac{\exp\left(-\frac{\left\|\mathbf{e}_{i}-\mathbf{z}_{a,k}\right\|_{2}}{\tau}\right)}{\sum_{j=1}^{N}\exp\left(-\frac{\left\|\mathbf{e}_{j}-\mathbf{z}_{a,k}\right\|_{2}}{\tau}\right)}}_{\text{semantic based attention weight}}\cdot\mathbf{e}^{\prime}_{i},
+where
+τ
+>
+0
+\tau>0
+controls the sharpness of the distribution. The final agent representation
+z
+^
+k
+\hat{z}_{k}
+is thus a weighted combination of ranking embeddings, with weights derived from debiased semantic similarity. This design effectively mitigates quantization artifacts and preserves signals from long-tail interactions.
+w
+a
+,
+k
+w_{a,k}
+is used to mark the strength of the interest.
+Finally, we define the compressed sequence as
+H
+^
+u
+=
+{
+z
+^
+1
+,
+…
+​
+z
+^
+K
+}
+\hat{H}_{u}=\{\hat{z}_{1},\dots\,\hat{z}_{K}\}
+.
+The routing computation admits an efficient matrix implementation analogous to attention mechanisms, which is detailed in Appendix
+C
+.
+Figure 2.
+Comparison of industrial deployment architectures.
+(a) Standard HiSAC combined with multi-head attention (MHA).
+(b) Optimized deployment incorporating online and offline cache for reduced latency and cost.
+3.6.
+Online Deployment
+We deploy HiSAC with multi-head attention (MHA)
+(
+Vaswani et al., 2017
+)
+for cross modeling between compressed user sequences and candidate items, achieving an optimal balance between accuracy and latency in large-scale production.
+As shown in Figure
+2
+, we further apply three optimizations:
+(1) Offline Interest-Agent Construction.
+For ultra-long sequences, a user’s primary interests typically remain stable over short time horizons. Leveraging this property, we construct each user’s
+interest tree
+offline once per day, avoiding repeated computation online.
+Specifically, a multimodal encoder with Residual RQ-VAE initializes the item corpus, which is updated daily for newly added items.
+Historical behaviors are tokenized into semantic IDs, followed by personalized interest-tree building and interest-agent extraction.
+These are stored and directly retrieved during online inference, effectively reducing latency and improving runtime efficiency.
+(2) Request-Level Compression.
+In serving, direct MHA between
+N
+N
+sequence tokens and
+M
+M
+candidate items incurs
+𝒪
+⁡
+(
+N
+​
+M
+)
+\mathcal{O}(NM)
+complexity.
+Since the user’s sequence remains unchanged for all candidates within a request, we compress it from
+N
+N
+to
+K
+K
+tokens once per request (
+𝒪
+⁡
+(
+N
+​
+K
+)
+\mathcal{O}(NK)
+).
+The compressed sequence is then used in MHA-based cross modeling with the
+M
+M
+candidates (
+𝒪
+⁡
+(
+K
+​
+M
+)
+\mathcal{O}(KM)
+), significantly lowering the total cost
+𝒪
+⁡
+(
+N
+​
+K
+)
++
+𝒪
+⁡
+(
+K
+​
+M
+)
+\mathcal{O}(NK)+\mathcal{O}(KM)
+when
+K
+≪
+N
+,
+M
+K\ll N,M
+.
+This optimization achieves substantial latency reduction without affecting recommendation accuracy.
+(3) Cache-Enhanced MHA.
+Profiling shows over 70% of serving-side FLOPs come from query/key/value linear projections in MHA.
+Moreover, for most requests, as the interest-agents remain stable within a short time window and candidate items largely retain static semantic features, we decompose the MHA computation into three parts:
+•
+Candidate queries
+: Pre-computed offline from static features and stored in a high-throughput cache, removing online query projection overhead.
+•
+User keys/values
+: Computed once after sequence compression per request and cached for reuse within the same request window.
+•
+Attention execution
+: Cached queries and keys/values are loaded to perform attention scoring and aggregation.
+This cache-oriented design preserves identical outputs to vanilla MHA while reducing projection FLOPs by
+≈
+72
+%
+\approx 72\%
+and lowering per-request inference time by
+38
+%
+38\%
+, with hit rates above
+99
+%
+99\%
+in our production benchmark.
+Overall, these deployment optimizations jointly enable HiSAC to operate under industrial real-time constraints, with over 40% end-to-end latency reduction and no measurable loss in recommendation performance.
+Table 1.
+Results on the both Datasets.
+Dataset
+Industrial Dataset
+Taobao-MM
+Sequence Length
+1k
+2k
+4k
+10k
+1k
+Method
+AUC
+GAUC
+AUC
+GAUC
+AUC
+GAUC
+AUC
+GAUC
+AUC
+GAUC
+MHA
+0.6415
+0.5501
+0.6420
+0.5507
+0.6424
+0.5511
+0.6419
+0.5503
+0.6692
+0.6096
+Patching
+0.6385
+0.5466
+0.6404
+0.5485
+0.6417
+0.5493
+0.6420
+0.5508
+0.6679
+0.6084
+K-Means
+0.6407
+0.5486
+0.6419
+0.5504
+0.6421
+0.5511
+0.6426
+0.5515
+0.6693
+0.6092
+LSH
+0.6399
+0.5470
+0.6410
+0.5488
+0.6418
+0.5509
+0.6422
+0.5512
+0.6685
+0.6089
+Aggregator
+0.6427
+0.5513
+0.6433
+0.5517
+0.6436
+0.5517
+0.6438
+0.5518
+0.6699
+0.6101
+HiSAC
+0.6429
+0.5514
+0.6438
+0.5520
+0.6440
+0.5522
+0.6444
+0.5525
+0.6704
+0.6114
+PatchRec
+0.6414
+0.5498
+0.6429
+0.5516
+0.6435
+0.5518
+0.6440
+0.5518
+0.6687
+0.6079
+HiSAC + PatchRec
+0.6431
+0.5514
+0.6441
+0.5519
+0.6441
+0.5524
+0.6447
+0.5530
+0.6695
+0.6091
+ELASTIC
+0.6422
+0.5511
+0.6434
+0.5518
+0.6438
+0.5521
+0.6442
+0.5521
+0.6709
+0.6117
+HiSAC + ELASTIC
+0.6433
+0.5516
+0.6446
+0.5524
+0.6448
+0.5528
+0.6449
+0.5531
+0.6721
+0.6126
+Longer
+0.6428
+0.5514
+0.6437
+0.5519
+0.6443
+0.5525
+0.6448
+0.5529
+0.6714
+0.6122
+HiSAC + Longer
+0.6435
+0.5518
+0.6449
+0.5530
+0.6452
+0.5533
+0.6455
+0.5537
+0.6733
+0.6135
+4.
+Experiments
+4.1.
+Setup
+4.1.1.
+Dataset
+.
+We evaluate our method on two datasets.
+Industrial Dataset
+: We constructed a large-scale industrial dataset using authentic, high-quality user interaction logs collected from Taobao, one of the world’s largest e-commerce platforms. The logs were continuously recorded over a 14-day period, with several billion interaction events generated daily. In total, the dataset contains approximately 200 million users, 1 billion items, and about 30 billion interaction records. The maximum sequence length per user is capped at 10,000. Data from the first 13 days is used for training, while the final day serves as the validation set.
+Taobao-MM
+1
+1
+1
+https://huggingface.co/datasets/TaoBao-MM/Taobao-MM
+: Taobao-MM
+(
+Wu et al., 2025
+)
+is an officially released multi-modal dataset provided by Taobao. For our experiments, we use all 8.86M users and 275 million items. User-side features include user ID, age, gender, while item-side features consist of item ID and category. The maximum allowed sequence length for this dataset is 1,000.
+4.1.2.
+Metrics
+.
+In offline experiments, we adopt three standard metrics widely used in recommendation systems. We adopt the Area Under the ROC Curve (AUC) and Group AUC (GAUC). GAUC is calculated as the average of per-user AUCs, which mitigates the influence of highly active users and better reflects the typical user experience.
+In online experiments, we evaluate two categories of metrics:
+utility and user engagement. Utility metrics quantify the recommendation system’s ability to drive user actions and downstream revenue. We primarily track Item Page View (IPV), Click-Through Rate (CTR), Click-Through Conversion Rate (CTCVR) and Orders.
+4.1.3.
+Compared Methods & Implementation Details
+.
+We begin by presenting several representative and widely adopted sequence compression techniques. These methods are combined with multi-head attention (MHA) to facilitate user sequence modeling:
+•
+K-Means
+(
+Chong et al., 2021
+)
+: As adopted in the Routing Transformer
+(
+Roy et al., 2021
+)
+, this approach clusters tokens into dynamic groups based on feature similarity, allowing intra-cluster attention and providing a stable, task-adaptive, similarity-driven compression mechanism.
+•
+LSH
+: The locality-sensitive hashing
+(
+Datar et al., 2004
+)
+mechanism used in Reformer
+(
+Kitaev et al., 2020
+)
+buckets similar tokens together, enabling attention computation within buckets and thereby reducing complexity while maintaining semantic proximity in long user histories.
+•
+Patching
+: Groups historical items according to their timestamps, preserving temporal ordering and enabling time-aware compression of behavioral sequences.
+•
+Aggregator
+: The method leverages a set of learnable tokens to compress user behavior sequences, following a similar design philosophy to ELASTIC
+(
+Deng et al., 2024
+)
+and PolyEncoder
+(
+Humeau et al., 2019
+)
+.
+We further integrate our proposed method with several state-of-the-art (SOTA) approaches widely adopted in the industry to validate its effectiveness.
+These approaches include:
+•
+PatchRec
+(
+Liao et al., 2025
+)
+: The method divides the user’s behavioral history into sequential blocks according to temporal order, performs pooling within each block to produce its representation, and employs different block sizes to separately model long-term and short-term behaviors.
+•
+ELASTIC
+(
+Deng et al., 2024
+)
+: In this approach, a fixed-size set of representation vectors is learned. The user’s behavior sequence is then compressed by applying cross-attention that aligns each behavior with the most relevant representation in the set.
+•
+Longer
+(
+Chai et al., 2025
+)
+: This method partitions the user’s behaviors into evenly spaced short sequences according to chronological order. Each short sequence is then compressed into a final representation vector using Linear Attention
+(
+Shen et al., 2021
+)
+, thereby reducing the overall sequence length.
+All models are trained using the Adam optimizer for dense parameters and Adagrad for sparse parameters, with an initial learning rate of
+1
+×
+10
+−
+3
+1\times 10^{-3}
+.
+For the Industrial Dataset, the input features comprise user ID, gender, item ID, item category, and the user behavior sequence.
+Item information is encoded by a frozen CLIP
+(
+Radford et al., 2021
+)
+, while the RQ-VAE is configured with 2 quantization layers, each containing a codebook of 512 entries.
+For fairness, all compared methods compress the user sequence into 200 groups.
+For Taobao-MM Dataset we adopt SCL-based multimodal embeddings
+(
+Sheng et al., 2024
+)
+to train the RQ-VAE, which is configured with a codebook size of
+200
+×
+2
+200\times 2
+(i.e., 200 entries per layer across 2 layers). The input features include user ID, age, gender, item ID, item category, and the user behavior sequence.
+4.2.
+Overall Performance Comparison
+In this section, we compare the performance of HiSAC against all baseline methods on both datasets, the user sequence is compressed into 200 groups. The results are illustrated in Table
+1
+.
+Compared with Different Compression Methods.
+We adopt a simplified MHA baseline, where the candidate item acts as the query and the compressed historical sequence serves as both key and value. Results show that Patching compression performs worst, as it fails to preserve semantic relationships among items. K-Means clustering improves performance via explicit modeling of inter-item similarity, but its iterative updates incur high computational cost and leave notable quantization artifacts. LSH alleviates complexity while maintaining reasonable clustering quality, though inherent randomness in hashing introduces performance variance. The Aggregator mechanism yields additional gains by learning shared user-interest representations, but sacrifices personalization. In contrast, our HiSAC method, introducing interest-agents and Soft-Routing Attention, captures fine-grained personalized interests while mitigating quantization error, achieving the best overall performance.
+Robustness and Generalizability Across SOTA Models.
+To rigorously assess the robustness and generalizability of our framework, we integrate HiSAC into several representative state-of-the-art (SOTA) sequence modeling architectures that employ sequence compression. Specifically, in each architecture, the original compression or grouping module is replaced with HiSAC, while all other components remain unchanged. For fair comparison, the number of compressed groups is fixed at 200—consistent with HiSAC+MHA. Results show that these SOTA baselines already outperform the plain MHA model; however, their compression mechanisms exhibit suboptimal inductive bias, limiting their ability to fully capture sequential information. Replacing them with HiSAC yields more semantically coherent groupings that better align with personalized user interests, thereby unlocking latent modeling capacity and consistently improving both AUC and GAUC across all methods.
+Figure 3.
+Sequence length scaling on model performance.
+Sequence Length Scaling Analysis.
+We evaluate six methods across varying sequence lengths to assess their ability to leverage long-range user interaction histories (Figure
+3
+).
+Plain Multi-Head Attention (MHA) shows moderate gains with increasing length but declines beyond 10k, indicating that attention dilution and noise accumulation
+(
+Zeng et al., 2023
+)
+impair performance.
+In contrast, compression-based methods consistently improve as sequences grow, as reduced input length and noise suppression alleviate attention dilution.
+HiSAC achieves the largest gain, effectively exploiting long-range context without saturation, whereas Patching plateaus with longer sequences.
+Aggregator also benefits but is limited by insufficient representation capacity and poor preservation of fine-grained temporal patterns.
+Overall, sequence compression mitigates the drawbacks of long histories, with HiSAC maximizing information retention and delivering the best performance.
+4.3.
+Ablation Study
+To evaluate the individual contribution of each core component in HiSAC, we perform an ablation study under the same experimental setting as the main evaluation, where the sequence length is fixed at 10,000.
+By systematically removing or substituting specific modules, we quantitatively analyze their impact on recommendation performance using the industrial-scale dataset.
+•
+w/o Multimodal Encoder
+: The multimodal item embeddings are replaced with embeddings learned directly within the recommender model, while maintaining the same embedding dimensionality for fairness.
+•
+w/o Text Information
+: The textual metadata of each item (e.g., title, category) is removed from the multimodal encoder input, and only the corresponding product image is used.
+•
+w/o Product Image
+: The product image of each item is removed from the multimodal encoder input, and only textual metadata is used.
+•
+w/o RQ-VAE
+: The RQ-VAE codebook generation is substituted with RQ-KMeans, maintaining the same number of quantization levels and identical codebook size per level to ensure comparability.
+•
+w/o Soft-Routing Attention
+: Soft-Routing Attention for sequence compression is replaced with Hard-Routing, where each interaction is mapped to its corresponding semantic ID. The representation dimensionality is kept identical across both approaches.
+•
+w/o Long-Tail Interests
+: In this variant, historical interactions that cannot be matched to any interest agent are discarded, and Soft-Routing Attention is subsequently applied for sequence compression.
+•
+w/o Hierarchical Voting
+: For this experiment, all user interests are preserved in the personal interest-tree without applying the hierarchical voting mechanism.
+Table 2.
+The Ablation Results on Tokenization
+Methods
+AUC
+GAUC
+w/o Multimodal Encoder
+0.6424
+0.5511
+w/o Text Information
+0.6429
+0.5516
+w/o Product Image
+0.6431
+0.5517
+w/o RQ-VAE
+0.6438
+0.5518
+HiSAC
+0.6444
+0.5525
+Table 3.
+The Ablation Results on Compression
+Methods
+AUC
+GAUC
+w/o Soft-Routing Attention
+0.6429
+0.5515
+w/o Long-Tail Interests
+0.6438
+0.5523
+w/o Hierarchical Voting
+0.6445
+0.5525
+HiSAC
+0.6444
+0.5525
+Ablation on Tokenization Components.
+As illustrated in Table
+2
+, we conduct ablation studies on two key components of HiSAC’s tokenization pipeline. First, removing the Multimodal Encoder leads to a
+0.2
+0.2
+pt
+2
+2
+2
+pt = percentage points (absolute difference in percentages).
+AUC drop, confirming that semantically enriched item representations—beyond popularity cues—are essential for capturing nuanced user preferences. Within this encoder, textual metadata and product images provide complementary signals: ablating either modality (
+w/o Text Information
+or
+w/o Product Image
+) degrades performance by
+0.15
+0.15
+pt and
+0.13
+0.13
+pt in AUC, respectively, with text showing slightly stronger impact due to its richer contextual discriminability in our industrial setting. Second, replacing RQ-VAE with RQ-KMeans reduces AUC by
+0.06
+0.06
+pt, as direct clustering of raw embeddings yields less distinct clusters and higher quantization error. Cluster analysis corroborates this: RQ-VAE achieves a higher Silhouette Coefficient
+(
+Dinh et al., 2019
+)
+(
+0.42
+0.42
+vs.
+0.28
+0.28
+) and lower reconstruction error
+(
+Van Den Oord et al., 2017
+)
+(
+0.018
+0.018
+vs.
+0.027
+0.027
+), indicating that its learned latent space enhances cluster separability and codebook coherence, ultimately improving recommendation accuracy.
+Analysis of Soft-Routing Attention.
+We attribute the gains of Soft-Routing Attention to two primary factors in Table
+3
+:
+(i) reduced quantization error through soft assignment of interactions to interest agents, and
+(ii) effective utilization of users’ long-tail interests.
+To verify these effects, we conduct two targeted ablations.
+Both
+w/o Soft-Routing Attention
+and
+w/o Long-Tail Interests
+exclude long-tail interests; however, the latter employs Soft-Routing Attention and achieves an AUC increase of
+0.09
+0.09
+pt over
+w/o Soft-Routing Attention
+, indicating its role in reducing quantization error.
+Incorporating long-tail interests into HiSAC yields a further AUC improvement of
+0.06
+0.06
+pt, confirming that long-tail interactions contain valuable signals that can be exploited to enhance recommendation performance.
+Ablation on Hierarchical Voting.
+To assess the impact of
+Hierarchical Voting
+, we evaluate a variant that retains all user interests as
+interest-agents
+without voting-based selection. As shown in Table
+3
+, this configuration yields only a 0.01pt AUC gain, indicating that indiscriminate retention provides negligible improvement in discriminative capability. Meanwhile, the average number of
+interest-agents
+per user triples (about 300% of baseline), causing a proportional increase in online computational cost. These results confirm that
+Hierarchical Voting
+, coupled with soft-routing, effectively distills dominant user interests and significantly reduces computation without sacrificing predictive performance.
+Table 4.
+Analysis of the two space embeddings.
+Methods
+AUC
+GAUC
+Both Semantic Embedding
+0.6253
+0.5392
+Alignment
+0.6365
+0.5463
+Decoupling
+0.6404
+0.5491
+Analysis of Semantic and Ranking Embeddings
+.
+A core principle of HiSAC is the explicit decoupling of semantic and ranking representations. We use frozen semantic embeddings
+𝐞
+i
+\mathbf{e}_{i}
+—derived from RQ-VAE—to compute soft-routing attention weights, while distinct, trainable ranking embeddings
+𝐞
+i
+′
+\mathbf{e}^{\prime}_{i}
+serve as aggregation content. To validate this design, we evaluate three variants on a large-scale industrial dataset (Table
+4
+).
+First
+, using the same
+𝐞
+i
+\mathbf{e}_{i}
+for both routing and aggregation drops AUC by
+1.5
+pt, revealing that semantic embeddings lack task-specific signals needed for effective ranking.
+Second
+, an alternative inspired by He et al.
+(
+He et al., 2025
+)
+aligns the two embeddings via an auxiliary loss (applied only to the item embedding; side information is trained end-to-end by the ranking model). Though it improves over the single-embedding baseline, it still underperforms our decoupled design.
+Critically, this alignment reduces the average number of activated interest agents per user by
+13%
+(from 182 to 158), indicating that co-optimization biases RQ-VAE codebooks toward dominant patterns and suppresses diverse semantic pathways. This collapse in interest coverage particularly harms users with heterogeneous preferences, degrading ranking performance.
+Finally
+, our decoupled strategy preserves semantic diversity—enabling unbiased, broad-coverage routing—while leveraging expressive, task-aware ranking embeddings for prediction. This separation of concerns allows HiSAC to balance semantic fidelity and ranking efficacy, achieving superior overall performance.
+Ablations show HiSAC’s components are vital: multimodal RQ-VAE tokenization outperforms unimodal or KMeans variants; soft-routing attention reduces quantization error and captures long-tail interests; hierarchical voting cuts agent count by 2/3 with negligible loss; and decoupling semantic/ranking embeddings prevents codebook bias, preserving interest diversity (13% higher coverage). Shared embeddings harm heterogeneous users. Together, these enable accurate, efficient, and robust recommendation.
+4.4.
+Hyperparameters Analysis
+To gain deeper insights into the proposed HiSAC framework, we conduct ablation studies on key hyperparameters and design choices: RQ-VAE quantization depth, number of interest-agents, top-
+K
+K
+voting strategy, and soft-routing temperature
+τ
+\tau
+.
+In all experiments,
+the RQ-VAE uses
+L
+L
+codebook levels, each of size 512
+, ensuring consistent semantic resolution across the hierarchy.
+Effect of RQ-VAE Levels (
+L
+L
+) with Controlled Agent Capacity.
+To isolate the impact of semantic granularity from agent capacity, we adjust the per-level selection thresholds
+k
+(
+l
+)
+k^{(l)}
+such that the average number of activated interest agents per user remains approximately 200 across all hierarchy depths. As shown in Figure
+4
+-(a), both HiSAC and HiSAC-Hard improve when increasing
+L
+L
+from 1 to 2, confirming the benefit of multi-granular modeling. However, at
+L
+=
+3
+L=3
+, HiSAC plateaus while HiSAC-Hard degrades—despite having comparable agent counts. This indicates that the performance drop in HiSAC-Hard stems from increased quantization mismatch under finer granularity, not insufficient capacity. HiSAC mitigates this via soft-routing’s ability to recover semantically similar but non-matching interactions.
+Figure 4.
+Parameter analysis results for Interest-Agents generation, including the impact of RQ-VAE quantization levels,
+the number of interest-agents
+K
+K
+, the hierarchical voting top-
+k
+k
+strategy.
+Each curve reports model performance under varying parameter values with other settings fixed.
+Effect of Hierarchical Budget Allocation.
+With the RQ-VAE depth fixed at
+L
+=
+2
+L=2
+and the total number of interest agents constrained to 200, we study how to allocate this budget across the hierarchical levels. We compare three allocation strategies:
+(
+k
+(
+1
+)
+,
+k
+(
+2
+)
+)
+=
+[
+(
+50
+,
+4
+)
+,
+(
+100
+,
+2
+)
+,
+(
+200
+,
+1
+)
+]
+(k^{(1)},k^{(2)})=[(50,4),(100,2),(200,1)]
+, where
+k
+(
+l
+)
+k^{(l)}
+denotes the number of top nodes retained at level
+l
+l
+. As shown in Figure
+4
+-(b), performance consistently improves as more of the agent budget is allocated to the coarser (higher) level (
+k
+(
+1
+)
+k^{(1)}
+). This trend is further supported by our empirical observation that, within each level-1 semantic category, user interests are highly concentrated on only a few top level-2 subcategories. Consequently, retaining a large
+k
+(
+2
+)
+k^{(2)}
+yields diminishing returns, as most users exhibit sparse activation over fine-grained codes. These findings suggest that, under a constrained agent budget, broad coverage of high-level semantic categories—which capture fundamental user intent—is more beneficial than fine-grained diversification at deeper levels.
+Effect of Total Agent Budget (
+K
+K
+) under Optimal Allocation.
+Building on the above insight, we now study how total agent capacity affects performance when using a well-chosen allocation strategy. Fixing
+L
+=
+2
+L=2
+, we vary the overall budget to yield average agent counts of approximately
+K
+=
+100,150,200
+,
+K=100,150,200,
+and
+250
+250
+. Figure
+4
+-(c) shows that HiSAC achieves near-optimal performance at
+K
+≈
+200
+K\approx 200
+, while HiSAC-Hard continues to improve up to
+K
+=
+250
+K=250
+. This confirms that soft-routing is more sample-efficient: it effectively leverages long-tail interactions through semantic similarity, without requiring exhaustive exact-match coverage. In contrast, hard-routing demands a larger agent set to maintain sufficient recall of historical behaviors.
+Effect of the Temperature Coefficient
+τ
+\tau
+.
+We study the softmax temperature
+τ
+\tau
+in the routing module (Eq.
+4
+), which governs the sharpness of attention weights: larger
+τ
+\tau
+yields smoother distributions, while smaller
+τ
+\tau
+encourages sharper focus on high-similarity interactions.
+As shown in Figure
+5
+-(a) (
+L
+=
+2
+L=2
+,
+K
+=
+200
+K=200
+), performance peaks at
+log
+⁡
+(
+τ
+)
+=
+−
+0.18
+\log(\tau)=-0.18
+.
+Further analysis (Figure
+5
+-(b)) shows that lowering
+τ
+\tau
+sharpens the attention distribution, concentrating interactions on the most similar interest agents and suppressing less relevant ones—enhancing selectivity and reducing noise. However, if
+τ
+\tau
+is too small, the distribution becomes overly peaked, effectively degenerating into Hard-Routing and harming robustness by ignoring useful contextual signals. The optimal
+τ
+\tau
+thus balances noise suppression with sufficient softness for adaptive aggregation.
+Figure 5.
+Impact of the temperature coefficient
+τ
+\tau
+on AUC and the distribution of attention weight.
+Table 5.
+The Online A/B Testing Results.
+Method
+IPV
+CTR
+CTCVR
+Orders
+HiSAC
+1.93%
+1.65%
+2.24%
+2.56%
+4.5.
+Online Experiments
+We validated the real-world performance and scalability of HiSAC through a large-scale online deployment in the “Guess What You Like” homepage feed of the Taobao recommendation system, followed by a controlled two-week A/B test involving hundreds of millions of daily active users.
+As shown in Table
+5
+, the proposed approach consistently improves all monitored business metrics.
+Specifically, the click-through rate (CTR) increases by
+1.65
+%
+1.65\%
+and the item page view (IPV) by
+1.93
+%
+1.93\%
+, demonstrating that enhanced preference modeling leads to more engaging recommendations in a live production environment.
+Moreover, the conversion-through-click rate (CTCVR) is lifted by
+2.24
+%
+2.24\%
+, and the number of orders increases by
+2.56
+%
+2.56\%
+, indicating that the additional user engagements translate into high-quality clicks and more purchases, thereby generating substantial business value.
+5.
+Conclusion
+We proposed HiSAC, a hierarchical semantic-agent compression framework for modeling multi-granular user interests in large-scale recommendation.
+Combining Residual RQ-VAE encoding, hierarchical voting, and soft-routing, HiSAC captures diverse interests while mitigating quantization errors from hard assignment.
+The framework has been deployed on a large-scale e-commerce platform, where it achieved a 1.65% improvement in online CTR over strong baselines, demonstrating its practical value and effectiveness.
+References
+Chai et al
+.
+(2025)
+Zheng Chai, Qin Ren, Xijun Xiao, Huizhi Yang, Bo Han, Sijun Zhang, Di Chen, Hui Lu, Wenlin Zhao, Lele Yu, et al
+.
+2025.
+Longer: Scaling up long sequence modeling in industrial recommenders. In
+Proceedings of the Nineteenth ACM Conference on Recommender Systems
+. 247–256.
+Chang et al
+.
+(2023)
+Jianxin Chang, Chenbin Zhang, Zhiyi Fu, Xiaoxue Zang, Lin Guan, Jing Lu, Yiqun Hui, Dewei Leng, Yanan Niu, Yang Song, et al
+.
+2023.
+TWIN: TWo-stage interest network for lifelong user behavior modeling in CTR prediction at kuaishou. In
+Proceedings of the 29th ACM SIGKDD Conference on Knowledge Discovery and Data Mining
+. 3785–3794.
+Chong et al
+.
+(2021)
+Bao Chong et al
+.
+2021.
+K-means clustering algorithm: a brief review.
+Academic Journal of Computing & Information Science
+4, 5 (2021), 37–40.
+Datar et al
+.
+(2004)
+Mayur Datar, Nicole Immorlica, Piotr Indyk, and Vahab S Mirrokni. 2004.
+Locality-sensitive hashing scheme based on p-stable distributions. In
+Proceedings of the twentieth annual symposium on Computational geometry
+. 253–262.
+Deng et al
+.
+(2024)
+Jiaxin Deng, Shiyao Wang, Song Lu, Yinfeng Li, Xinchen Luo, Yuanjun Liu, Peixing Xu, and Guorui Zhou. 2024.
+ELASTIC: Efficient Linear Attention for Sequential Interest Compression.
+arXiv preprint arXiv:2408.09380
+(2024).
+Dinh et al
+.
+(2019)
+Duy-Tai Dinh, Tsutomu Fujinami, and Van-Nam Huynh. 2019.
+Estimating the optimal number of clusters in categorical data clustering by silhouette coefficient. In
+International Symposium on Knowledge and Systems Sciences
+. Springer, 1–17.
+He et al
+.
+(2020)
+Kaiming He, Haoqi Fan, Yuxin Wu, Saining Xie, and Ross Girshick. 2020.
+Momentum contrast for unsupervised visual representation learning. In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+. 9729–9738.
+He et al
+.
+(2025)
+Ruining He, Lukasz Heldt, Lichan Hong, Raghunandan Keshavan, Shifan Mao, Nikhil Mehta, Zhengyang Su, Alicia Tsai, Yueqi Wang, Shao-Chuan Wang, et al
+.
+2025.
+Plum: Adapting pre-trained language models for industrial-scale generative recommendations.
+arXiv preprint arXiv:2510.07784
+(2025).
+Humeau et al
+.
+(2019)
+Samuel Humeau, Kurt Shuster, Marie-Anne Lachaux, and Jason Weston. 2019.
+Poly-encoders: Transformer architectures and pre-training strategies for fast and accurate multi-sentence scoring.
+arXiv preprint arXiv:1905.01969
+(2019).
+Kitaev et al
+.
+(2020)
+Nikita Kitaev, Łukasz Kaiser, and Anselm Levskaya. 2020.
+Reformer: The efficient transformer.
+arXiv preprint arXiv:2001.04451
+(2020).
+Lee et al
+.
+(2022)
+Doyup Lee, Chiheon Kim, Saehoon Kim, Minsu Cho, and Wook-Shin Han. 2022.
+Autoregressive image generation using residual quantization. In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+. 11523–11532.
+Li et al
+.
+(2023)
+Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi. 2023.
+Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models. In
+International conference on machine learning
+. PMLR, 19730–19742.
+Liao et al
+.
+(2025)
+Jiayi Liao, Ruobing Xie, Sihang Li, Xiang Wang, Xingwu Sun, Zhanhui Kang, and Xiangnan He. 2025.
+Multi-Grained Patch Training for Efficient LLM-based Recommendation. In
+Proceedings of the 48th International ACM SIGIR Conference on Research and Development in Information Retrieval
+. 1572–1581.
+Liu et al
+.
+(2024)
+Chengkai Liu, Jianghao Lin, Jianling Wang, Hanzhou Liu, and James Caverlee. 2024.
+Mamba4rec: Towards efficient sequential recommendation with selective state space models.
+arXiv preprint arXiv:2403.03900
+(2024).
+Pi et al
+.
+(2020)
+Qi Pi, Guorui Zhou, Yujing Zhang, Zhe Wang, Lejian Ren, Ying Fan, Xiaoqiang Zhu, and Kun Gai. 2020.
+Search-based user interest modeling with lifelong sequential behavior data for click-through rate prediction. In
+Proceedings of the 29th ACM International Conference on Information & Knowledge Management
+. 2685–2692.
+Radford et al
+.
+(2021)
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, et al
+.
+2021.
+Learning transferable visual models from natural language supervision. In
+International conference on machine learning
+. PmLR, 8748–8763.
+Razavi et al
+.
+(2019)
+Ali Razavi, Aaron Van den Oord, and Oriol Vinyals. 2019.
+Generating diverse high-fidelity images with vq-vae-2.
+Advances in neural information processing systems
+32 (2019).
+Roy et al
+.
+(2021)
+Aurko Roy, Mohammad Saffar, Ashish Vaswani, and David Grangier. 2021.
+Efficient content-based sparse attention with routing transformers.
+Transactions of the Association for Computational Linguistics
+9 (2021), 53–68.
+Shen et al
+.
+(2021)
+Zhuoran Shen, Mingyuan Zhang, Haiyu Zhao, Shuai Yi, and Hongsheng Li. 2021.
+Efficient attention: Attention with linear complexities. In
+Proceedings of the IEEE/CVF winter conference on applications of computer vision
+. 3531–3539.
+Sheng et al
+.
+(2024)
+Xiang-Rong Sheng, Feifan Yang, Litong Gong, Biao Wang, Zhangming Chan, Yujing Zhang, Yueyao Cheng, Yong-Nan Zhu, Tiezheng Ge, Han Zhu, et al
+.
+2024.
+Enhancing Taobao Display Advertising with Multimodal Representations: Challenges, Approaches and Insights. In
+Proceedings of the 33rd ACM International Conference on Information and Knowledge Management
+. 4858–4865.
+Si et al
+.
+(2024)
+Zihua Si, Lin Guan, ZhongXiang Sun, Xiaoxue Zang, Jing Lu, Yiqun Hui, Xingchao Cao, Zeyu Yang, Yichen Zheng, Dewei Leng, et al
+.
+2024.
+Twin v2: Scaling ultra-long user behavior sequence modeling for enhanced ctr prediction at kuaishou. In
+Proceedings of the 33rd ACM International Conference on Information and Knowledge Management
+. 4890–4897.
+Sun et al
+.
+(2019)
+Fei Sun, Jun Liu, Jian Wu, Changhua Pei, Xiao Lin, Wenwu Ou, and Peng Jiang. 2019.
+BERT4Rec: Sequential recommendation with bidirectional encoder representations from transformer. In
+Proceedings of the 28th ACM international conference on information and knowledge management
+. 1441–1450.
+Van Den Oord et al
+.
+(2017)
+Aaron Van Den Oord, Oriol Vinyals, et al
+.
+2017.
+Neural discrete representation learning.
+Advances in neural information processing systems
+30 (2017).
+Vaswani et al
+.
+(2017)
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017.
+Attention is all you need.
+Advances in neural information processing systems
+30 (2017).
+Wu et al
+.
+(2025)
+Bin Wu, Feifan Yang, Zhangming Chan, Yu-Ran Gu, Jiawei Feng, Chao Yi, Xiang-Rong Sheng, Han Zhu, Jian Xu, Mang Ye, and Bo Zheng. 2025.
+MUSE: A Simple Yet Effective Multimodal Search-Based Framework for Lifelong User Interest Modeling.
+arXiv:2512.07216 [cs.IR]
+https://arxiv.org/abs/2512.07216
+Xie et al
+.
+(2022)
+Xu Xie, Fei Sun, Zhaoyang Liu, Shiwen Wu, Jinyang Gao, Jiandong Zhang, Bolin Ding, and Bin Cui. 2022.
+Contrastive learning for sequential recommendation. In
+2022 IEEE 38th international conference on data engineering (ICDE)
+. IEEE, 1259–1273.
+Zeng et al
+.
+(2023)
+Ailing Zeng, Muxi Chen, Lei Zhang, and Qiang Xu. 2023.
+Are transformers effective for time series forecasting?. In
+Proceedings of the AAAI conference on artificial intelligence
+, Vol. 37. 11121–11128.
+Zhang et al
+.
+(2019)
+Shuai Zhang, Lina Yao, Aixin Sun, and Yi Tay. 2019.
+Deep learning based recommender system: A survey and new perspectives.
+ACM computing surveys (CSUR)
+52, 1 (2019), 1–38.
+Zhou et al
+.
+(2019)
+Guorui Zhou, Na Mou, Ying Fan, Qi Pi, Weijie Bian, Chang Zhou, Xiaoqiang Zhu, and Kun Gai. 2019.
+Deep interest evolution network for click-through rate prediction. In
+Proceedings of the AAAI conference on artificial intelligence
+, Vol. 33. 5941–5948.
+Zhou et al
+.
+(2018)
+Guorui Zhou, Xiaoqiang Zhu, Chenru Song, Ying Fan, Han Zhu, Xiao Ma, Yanghui Yan, Junqi Jin, Han Li, and Kun Gai. 2018.
+Deep interest network for click-through rate prediction. In
+Proceedings of the 24th ACM SIGKDD international conference on knowledge discovery & data mining
+. 1059–1068.
+Appendix A
+Case Study of Soft-Routing Attention
+Figure 6.
+Soft-routing in action. Behavior_0 (main interest) and Behavior_1 (long-tail) are assigned to different hierarchical interest-agents based on semantic similarity, demonstrating HiSAC’s ability to retain sparse signals.
+In Figure
+6
+, we present a case study demonstrating HiSAC’s ability to model heterogeneous user interests. The user’s dominant behavior (Behavior_0: T-shirt) exhibits strong semantic alignment with a dedicated interest-agent (e.g., Agent_0 representing “topwear”). Consequently, it is assigned a large routing weight to this agent, ensuring accurate and efficient encoding of the core preference. In contrast, the long-tail behavior (Behavior_1: cotton socks) does not have a perfectly matching agent in the codebook—no agent is explicitly dedicated to “socks.” However, HiSAC leverages the frozen multimodal semantic space to identify agents with related semantics, such as Agent_4 (“footwear”), and distributes the behavior across these agents with weights proportional to their semantic similarity. This soft-routing mechanism ensures that even sparse or niche interactions are meaningfully preserved in the final user representation, avoiding the quantization loss inherent in hard-assignment approaches.
+Appendix B
+Implementation Details of Multimodal Encoding and RQ
+-
+VAE
+B.1.
+Multimodal Encoding
+We adopt a cross-modal representation learning strategy to encode textual metadata and product images into a shared embedding space via a frozen CLIP
+(
+Radford et al., 2021
+)
+:
+•
+The textual metadata of each item, including title, category, and description, is tokenized and processed by the text encoder (text tower) of a pretrained CLIP model
+(
+Radford et al., 2021
+)
+. The encoder outputs a
+d
+d
+-dimensional representation denoted as
+x
+text
+∈
+ℝ
+d
+x_{\text{text}}\in\mathbb{R}^{d}
+.
+•
+The product image is resized to
+224
+×
+224
+224\times 224
+pixels, normalized, and processed by the visual encoder (image tower) of the same pretrained CLIP model. The encoder outputs a
+d
+d
+-dimensional representation denoted as
+x
+img
+∈
+ℝ
+d
+x_{\text{img}}\in\mathbb{R}^{d}
+.
+We employ a Q-Former
+(
+Li et al., 2023
+)
+with
+n
+q
+n_{q}
+learnable query tokens
+Q
+∈
+ℝ
+n
+q
+×
+d
+Q\in\mathbb{R}^{n_{q}\times d}
+to integrate text and image features.
+The Q-Former applies multi-head cross-attention from
+Q
+Q
+to
+x
+text
+x_{\text{text}}
+and
+x
+img
+x_{\text{img}}
+:
+Q
+~
+=
+CrossAttn
+⁡
+(
+Q
+,
+[
+x
+text
+,
+x
+img
+]
+)
+\tilde{Q}=\mathrm{CrossAttn}(Q,\;[x_{\text{text}},x_{\text{img}}])
+followed by mean pooling to produce the fused multimodal embedding
+e
+mm
+e_{\text{mm}}
+. This
+e
+mm
+e_{\text{mm}}
+is then fed into the RQ-VAE module.
+The Q-Former is optimized to align text and image representations in a shared space using a symmetric InfoNCE objective
+(
+He et al., 2020
+)
+:
+ℒ
+align
+=
+InfoNCE
+⁡
+(
+Q
+~
+↔
+x
+img
+)
++
+InfoNCE
+⁡
+(
+Q
+~
+↔
+x
+text
+)
+,
+\mathcal{L}_{\text{align}}=\mathrm{InfoNCE}(\tilde{Q}\leftrightarrow x_{\text{img}})\;+\;\mathrm{InfoNCE}(\tilde{Q}\leftrightarrow x_{\text{text}}),
+where
+InfoNCE
+⁡
+(
+A
+↔
+B
+)
+\mathrm{InfoNCE}(A\leftrightarrow B)
+denotes the standard bidirectional contrastive loss between modality
+A
+A
+and
+B
+B
+over a batch.
+B.2.
+RQ-VAE Training Procedure
+Given the fused multimodal embedding
+e
+mm
+∈
+ℝ
+d
+e_{\text{mm}}\in\mathbb{R}^{d}
+obtained from the Q-Former, we employ a Residual Quantized Variational Autoencoder (RQ-VAE)
+(
+Lee et al., 2022
+)
+to discretize and cluster item representations into compact codebook entries:
+•
+The RQ-VAE encoder maps
+e
+mm
+e_{\text{mm}}
+into a latent vector
+e
+∈
+ℝ
+d
+e\in\mathbb{R}^{d}
+, which is progressively quantized through
+L
+L
+residual codebook levels, each codebook containing a series of learnable codewords. At each level
+l
+l
+, the quantized output
+z
+(
+l
+)
+z^{(l)}
+is added to the residual from the previous level, enabling finer partitioning of the embedding space.
+•
+The quantized vector
+z
+^
+\hat{z}
+(sum of residual quantizations) is passed to the decoder to reconstruct the original multimodal embedding
+e
+^
+mm
+∈
+ℝ
+d
+\hat{e}_{\text{mm}}\in\mathbb{R}^{d}
+. This ensures that the quantization process preserves semantic fidelity.
+The RQ-VAE training objective consists of a reconstruction term and a commitment term applied at each residual quantization level:
+ℒ
+RQ-VAE
+=
+‖
+e
+mm
+−
+e
+^
+mm
+‖
+2
+2
+⏟
+Reconstruction
++
+β
+​
+∑
+l
+=
+1
+L
+‖
+e
+(
+l
+)
+−
+sg
+⁡
+(
+z
+(
+l
+)
+)
+‖
+2
+2
+⏟
+Commitment at level
+l
+.
+\mathcal{L}_{\text{RQ-VAE}}=\underbrace{\|e_{\text{mm}}-\hat{e}_{\text{mm}}\|_{2}^{2}}_{\text{Reconstruction}}+\beta\sum_{l=1}^{L}\underbrace{\|e^{(l)}-\mathrm{sg}(z^{(l)})\|_{2}^{2}}_{\text{Commitment at level $l$}}.
+Here,
+β
+\beta
+denotes the loss coefficient, which is set to
+0.25
+0.25
+uniformly across all quantization levels following the standard configuration in RQ-VAE
+(
+Lee et al., 2022
+)
+.
+e
+(
+l
+)
+e^{(l)}
+is the input to the
+l
+l
+-th residual codebook, obtained by subtracting all previously quantized codewords from the initial encoder output
+e
+e
+, i.e.,
+e
+(
+1
+)
+=
+e
+,
+e
+(
+l
+)
+=
+e
+(
+l
+−
+1
+)
+−
+z
+(
+l
+−
+1
+)
+,
+l
+>
+1
+;
+e^{(1)}=e,\quad e^{(l)}=e^{(l-1)}-z^{(l-1)},\;l>1;
+and
+z
+(
+l
+)
+∈
+ℝ
+d
+z^{(l)}\in\mathbb{R}^{d}
+is the quantized codeword selected from the
+l
+l
+-th codebook via nearest-neighbor search;
+sg
+⁡
+(
+⋅
+)
+\mathrm{sg}(\cdot)
+denotes the stop-gradient operation, preventing gradient flow into the codebooks.
+We adopt the EMA-based codebook update strategy proposed in VQ-VAE v2
+(
+Razavi et al., 2019
+)
+, with a decay factor of 0.99, applied to codeword counts and assigned vector sums.
+Appendix C
+Matrix Formulation of Soft-Routing Attention
+For each
+a
+∈
+𝒜
+u
+a\in\mathcal{A}_{u}
+, we denote its quantized embedding by
+z
+a
+∈
+ℝ
+d
+z_{a}\in\mathbb{R}^{d}
+.
+Here,
+𝒜
+u
+\mathcal{A}_{u}
+represents the set of interest-agents for user
+u
+u
+obtained via the hierarchical voting mechanism, and
+z
+a
+z_{a}
+is the codeword embedding extracted from the RQ-VAE codebook.
+The quantized embeddings for all
+K
+K
+interest-agents are organized row-wise using a stack operation:
+Z
+=
+Stack
+⁡
+(
+[
+z
+a
+,
+1
+,
+…
+,
+z
+a
+,
+K
+]
+)
+∈
+ℝ
+K
+×
+d
+,
+Z=\mathrm{Stack}([z_{a,1},\dots,z_{a,K}])\in\mathbb{R}^{K\times d},
+where
+Stack
+⁡
+(
+⋅
+)
+\mathrm{Stack}(\cdot)
+concatenates
+K
+K
+vectors into a matrix, preserving the ordering of agents.
+In the
+Semantic Space
+, the embeddings of the
+N
+N
+historical items
+H
+u
+H_{u}
+are:
+E
+=
+Stack
+⁡
+(
+[
+e
+1
+,
+…
+,
+e
+N
+]
+)
+∈
+ℝ
+N
+×
+d
+E=\mathrm{Stack}([e_{1},\dots,e_{N}])\in\mathbb{R}^{N\times d}
+where
+e
+i
+e_{i}
+is the semantic representation of
+h
+i
+∈
+H
+u
+h_{i}\in H_{u}
+, produced by the multimodal encoder followed by RQ-VAE.
+These preserve rich modality-aware semantics independent of the ranking model.
+In the
+Ranking Space
+, where representations are trained end-to-end via the ranking objective, the corresponding item embeddings are:
+E
+′
+=
+S
+​
+t
+​
+a
+​
+c
+​
+k
+​
+(
+[
+e
+1
+′
+,
+…
+,
+e
+N
+′
+]
+)
+∈
+ℝ
+N
+×
+d
+′
+E^{\prime}=Stack([e^{\prime}_{1},\dots,e^{\prime}_{N}])\in\mathbb{R}^{N\times d^{\prime}}
+These ranking-space embeddings combine semantic, collaborative, and position-dependent signals optimized for recommendation accuracy.
+The routing between interest-agents and historical items is established by computing a similarity matrix
+W
+∈
+ℝ
+K
+×
+N
+W\in\mathbb{R}^{K\times N}
+:
+W
+i
+,
+j
+=
+−
+‖
+E
+j
+−
+Z
+i
+‖
+2
+τ
+W_{i,j}=-\frac{\|E_{j}-Z_{i}\|_{2}}{\tau}
+where
+∥
+⋅
+∥
+2
+\|\cdot\|_{2}
+is the Euclidean distance and
+τ
+>
+0
+\tau>0
+is a temperature scaling factor controlling the sharpness of the weight distribution.
+The negative sign ensures that smaller distances correspond to larger similarity scores.
+Applying
+row-wise
+softmax to
+W
+W
+yields normalized routing weights directly:
+H
+^
+u
+=
+𝒲
+u
+⊙
+(
+Softmax
+⁡
+(
+W
+)
+⋅
+E
+′
+)
+=
+[
+z
+^
+1
+,
+…
+,
+z
+^
+K
+]
+\hat{H}_{u}=\mathcal{W}_{u}\odot(\mathrm{Softmax}(W)\cdot E^{\prime})=[\hat{z}_{1},\dots,\hat{z}_{K}]
+where
+𝒲
+u
+\mathcal{W}_{u}
+is the agent weight matrix (as in Eq.
+3
+), each
+z
+^
+k
+∈
+ℝ
+d
+′
+\hat{z}_{k}\in\mathbb{R}^{d^{\prime}}
+is the aggregated ranking-space embedding for the
+i
+i
+-th interest-agent.
+This mechanism mirrors the structure of multi-head attention:
+interest-agents act as
+queries
+, historical items serve as both
+keys
+and
+values
+, and attention weights are computed via negative Euclidean distance rather than the standard dot product.
+The choice of
+L
+2
+L_{2}
+distance emphasizes metric preservation in the learned embedding spaces, producing more stable agent–item routing than cosine similarity in our industrial setting.
+Overall, this formulation enables each agent to selectively aggregate signals from semantically related items, thereby improving the fidelity of user modeling.
+Appendix D
+Comparison with Two-Stage Methods
+Modern recommendation systems increasingly adopt a two-stage architecture to handle long user behavior sequences efficiently.
+The first stage, termed the
+General Search Unit
+(GSU), retrieves a short and relevant subsequence from the full historical behaviors by applying lightweight matching or retrieval mechanisms.
+This step acts as a coarse filter, focusing subsequent computation on potentially informative interactions while suppressing noise and reducing sequence length.
+The second stage, the
+Exact Search Unit
+(ESU), performs fine-grained user interest modeling on the retrieved subsequence, typically employing attention-based or Transformer architectures.
+ESU refines the representation by capturing intricate temporal dependencies
+and high-resolution feature interactions most pertinent to the target item.
+Together, GSU and ESU form a coarse-to-fine pipeline: GSU efficiently narrows the search space, and ESU leverages the reduced yet relevant history to generate precise representations for final prediction.
+Representative implementations of the two-stage paradigm include:
+•
+SIM
+(
+Pi et al., 2020
+)
+: A two-stage long-sequence modeling framework based on the GSU–ESU paradigm. It includes two variants:
+SIM-Hard
+and
+SIM-Soft
+. In
+SIM-Hard
+, the GSU stage performs retrieval using the item category as the matching key, whereas
+SIM-Soft
+relies on the cosine similarity between item embeddings. In the ESU stage, multi-head attention (MHA) is applied to perform cross-attention between the retrieved short sequence and the target item, enabling target-aware interaction modeling.
+•
+TWIN
+(
+Chang et al., 2023
+)
+: In SIM, the retrieval objectives of the GSU and ESU stages are not fully aligned. TWIN addresses this by employing the same retrieval strategy (MHA-based cross-attention) and parameter settings in both stages, thereby enhancing the consistency and coherence of the overall model pipeline.
+Table 6.
+Comparison with Two-Stage Methods.
+Methods
+AUC
+GAUC
+SIM-Hard
+0.6393
+0.5481
+SIM-Soft
+0.6398
+0.5484
+TWIN
+0.6404
+0.5491
+HiSAC
+0.6444
+0.5525
+We evaluate our approach on an industrial dataset with sequences of length 10k, as illustrated in Table
+6
+. All two-stage algorithms first retrieve 256 user historical interactions during the GSU stage, and then interact these retrieved histories with candidate items in the ESU stage. The ESU stage uniformly employs MHA for modeling. As observed, due to discarding the majority of user interaction information in the two-stage retrieval process, these methods exhibit a performance gap compared to full-sequence modeling.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

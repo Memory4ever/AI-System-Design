@@ -1,0 +1,1388 @@
+https://arxiv.org/html/2605.28222v1
+
+arXiv:2605.28222v1 [cs.CL] 27 May 2026 
+ 
+ 
+ Analyzing Quality-Latency-Resource Trade-offs in a Technical
+Documentation RAG Assistant Using LoRA Adaptation 
+
+ 
+ 
+ 
+ Evgenii Palnikov
+ 
+ Affiliation:  HSE University
+ 
+    
+ Elizaveta Gavrilova
+ 
+ Affiliation:  HSE University
+ 
+
+ Abstract 
+    
+ We study quality–latency–resource trade-offs in a documentation-grounded
+retrieval-augmented generation (RAG) system that uses Low-Rank Adaptation
+(LoRA) of the generator. We build a manually verified benchmark of
+5,144 question–answer pairs over the official Kubernetes documentation and
+combine it with a fixed hybrid-retrieval pipeline (BGE-M3 dense, BGE-M3 native
+sparse, Reciprocal Rank Fusion, cross-encoder reranking). Over this benchmark we
+ablate 20 LoRA configurations on  Llama-3.2-3B-Instruct  and
+ Llama-3.1-8B-Instruct  across rank and target-module choices, and
+evaluate each on token-level F1, LLM-judged groundedness and correctness
+(pass@4), inference latency, inference memory, and training cost, all reported
+with bootstrap 95% confidence intervals. Pareto analysis shows that LoRA
+adapters acting only on the q and v attention projections consistently
+dominate the front, while the 3B/8B choice mainly defines operating regime.
+A param-matched control comparison further indicates that the q/v advantage
+is structural rather than purely parametric. The benchmark, selected adapters,
+and code are available at  https://github.com/EugPal/rag-lora-tradeoffs . 
+
+ 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Retrieval-augmented generation (RAG) has become a standard way to ground
+large language models (LLMs) in external corpora when their parametric
+memory is insufficient or stale  ( Lewis et al., 2020 ;  Gao et al., 2023 ;  Wu et al., 2024 ) .
+For  documentation-oriented  assistants – where users expect answers
+backed by specific configuration flags, API versions, or feature gates –
+the bar is even higher: a deployable system must combine factual accuracy
+and visible support from the retrieved context with acceptable latency,
+inference memory, and training cost. In practice these objectives are in
+direct tension. Larger generators improve answer quality but increase
+inference memory and latency; richer retrieval and reranking add overhead;
+more expressive LoRA  ( Hu et al., 2022 )  adapters change the cost of
+training. Picking a working point therefore requires reasoning about a
+ multi-objective  trade-off rather than a single quality metric. 
+
+ 
+ 
+ 
+ Existing work largely studies these dimensions in isolation. RAG surveys
+focus on retrieval/fusion/reranking design choices
+ ( Gao et al., 2023 ;  Yu et al., 2024 ) ; parameter-efficient fine-tuning
+surveys focus on the LoRA family in general purpose tasks
+ ( Han et al., 2024 ;  Wang et al., 2025 ) ; RAG-evaluation work focuses on quality
+and groundedness on standard QA sets  ( Es et al., 2024 ;  Yu et al., 2024 ) .
+A few recent papers combine RAG with LoRA, but they typically treat LoRA
+as a single technique – a single rank, a single target-module set – and
+compare it against alternatives like DoRA or full fine-tuning
+ ( Tahir et al., 2024 ;  Zhao et al., 2024a ;  Baqar & Khanda, 2025 ) . This leaves an open
+question:  how does the choice of LoRA configuration – rank, target
+modules, base-model size – interact with retrieval quality, latency, and
+training cost when the rest of the RAG pipeline is held fixed? 
+
+ 
+ 
+ 
+ We address this question by constructing a documentation-grounded RAG
+benchmark and analysing a structured space of LoRA configurations on it. Our
+benchmark consists of  5,144 5{,}144  manually verified question–answer pairs
+over the official Kubernetes documentation, paired with a fixed hybrid
+retrieval pipeline (BGE-M3  ( Chen et al., 2024 )  dense + BGE-M3 native
+sparse + Reciprocal Rank Fusion  ( Cormack et al., 2009 )  + a cross-encoder
+reranker). Over this pipeline we
+ablate 20 LoRA configurations on  Llama-3.2-3B-Instruct  and
+ Llama-3.1-8B-Instruct  (5 ranks  × \times  2 target-module sets per
+base model) against the corresponding non-adapted baselines. Each
+configuration is evaluated on (i) token-level F1, (ii) LLM-as-a-judge
+groundedness and correctness (pass@4), (iii) inference latency,
+(iv) inference VRAM, and (v) training time and VRAM, with bootstrap 95%
+confidence intervals on all point estimates and paired bootstrap on key
+ Δ ​ F 1 \Delta F_{1}  comparisons. To probe robustness, we re-run the full grid under
+10 retrieval/prompting ablation regimes. 
+
+ 
+ 
+ 
+ Three findings emerge. First, on every Pareto front we examine –
+F1-vs-latency, F1-vs-inference-memory, and F1-vs-training-cost –
+non-dominated points are dominated by LoRA adapters that act only on the
+ q q  and  v v  attention projections.  full_attention  adapters
+( q , k , v , o q,k,v,o ) never appear on the training Pareto front and win at most
+ 2 / 10 2/10  ablation regimes on groundedness. Second, the 3B/8B choice mainly
+determines the operating regime rather than the achievable quality: the
+strongest LoRA-adapted 3B configuration is statistically indistinguishable
+from the unadapted 8B baseline on  F 1 F_{1}  ( Δ ​ F 1 ∈ [ − 0.021 , + 0.026 ] \Delta F_{1}\in[-0.021,+0.026] ),
+while costing roughly  9 9  GB less inference VRAM. Third, a  param-matched 
+control comparison – in which the total number of trainable LoRA
+parameters is held constant across the  q / v q/v  and full-attention schemes –
+shows that the  q / v q/v  advantage is structural and not a consequence of having
+more parameters. 
+
+ 
+ 
+ 
+ Our contributions are: (i) a manually verified, license-clean RAG
+benchmark over Kubernetes documentation, designed for multi-criteria
+evaluation; (ii) a systematic LoRA-configuration study within a fixed
+hybrid-retrieval pipeline, with statistical inference on all reported
+trade-offs; (iii) a param-matched control comparison that isolates the
+structural effect of the target-module choice from the effect of parameter
+count; (iv) the released benchmark and selected adapters, intended as a
+reproducible starting point for follow-up work on retrieval-augmented
+fine-tuning of documentation assistants. 
+
+ 
+ 
+ 
+ 
+ 2  Related Work 
+
+ 
+
+ 
+ RAG and retrieval components. 
+
+ 
+ Retrieval-augmented generation  ( Lewis et al., 2020 )  has been thoroughly
+surveyed in recent years  ( Gao et al., 2023 ;  Wu et al., 2024 ) : modern RAG is
+not a single architecture but a family of designs that differ in how
+retrieval, fusion, reranking, and context use are organised. On the
+retrieval side, dense passage retrieval was canonicalised by
+ Karpukhin et al. (2020) , classical sparse retrieval by BM25
+ ( Robertson & Walker, 1994 ;  Robertson et al., 1995 ;  Robertson & Zaragoza, 2009 ) , and
+training-aware extensions such as RocketQA  ( Qu et al., 2021 )  and
+ColBERTv2  ( Santhanam et al., 2022 )  show that retrieval quality
+depends as much on the training scheme as on the index type. Recent
+multi-functional embedders – in particular BGE-M3
+ ( Chen et al., 2024 )  – are widely adopted in hybrid pipelines
+combined with cross-encoder reranking
+ ( Nogueira & Cho, 2019 ;  Yoon et al., 2024 )  and rank-level fusion
+ ( Cormack et al., 2009 ) . For documentation-grounded assistants the overall
+quality is therefore a property of the whole pipeline, not of the
+generator alone. 
+
+ 
+ 
+ 
+ 
+ Parameter-efficient fine-tuning. 
+
+ 
+ Full fine-tuning of instruction-tuned LLMs is expensive in both compute
+and memory; PEFT surveys  ( Han et al., 2024 ;  Wang et al., 2025 )  document a
+large literature of methods that change model behaviour while keeping the
+backbone frozen. Among these, LoRA  ( Hu et al., 2022 )  introduces low-rank
+adapters on linear projections and has spawned a family of follow-ups,
+including QLoRA  ( Dettmers et al., 2023 )  and LoRA+
+ ( Hayou et al., 2024 ) , plus throughput-focused training infrastructure
+such as ASPEN  ( Ye et al., 2023 ) . Collectively, this line shows that LoRA
+can deliver domain adaptation without full fine-tuning. It does not, however,
+answer the question of which LoRA  configuration  – rank, target
+modules, base-model size – to pick when the adapter is plugged into a
+retrieval-augmented system. 
+
+ 
+ 
+ 
+ 
+ RAG evaluation, groundedness, and quality–cost trade-offs. 
+
+ 
+ The evaluation literature  ( Yu et al., 2024 ;  Es et al., 2024 )  stresses
+that RAG quality must be measured not only on the final answer but on
+retrieval quality, groundedness of the answer in retrieved evidence, and
+generation properties. Closer to the trade-off framing of this paper,
+ Baek et al. (2026)  treat LoRA-configuration selection itself as
+a non-trivial optimisation problem inside the LoRA hyperparameter space,
+and  Baqar & Khanda (2025)  compare RAG, LoRA, and DoRA jointly from an
+accuracy-and-faithfulness viewpoint. 
+
+ 
+ 
+ 
+ 
+ Combining RAG and LoRA. 
+
+ 
+ A small but growing body of work studies RAG and LoRA together. JORA
+ ( Tahir et al., 2024 )  contributes infrastructure for retrieval-augmented
+LoRA fine-tuning; RAMoLE  ( Zhao et al., 2024a )  uses retrieval to select
+between multiple LoRA experts at inference time. Among empirical studies,
+ Baqar & Khanda (2025)  is closest in spirit to this work – it
+contrasts RAG, LoRA, and DoRA on question answering – but, like other
+work in this group, treats LoRA as a single technique to be plugged in
+rather than as a configuration space to be searched over. 
+
+ 
+ 
+ 
+ 
+ Research gap. 
+
+ 
+ Across the four sub-areas above, work on RAG focuses on retrieval and
+pipeline design; work on LoRA/PEFT focuses on efficient adaptation in the
+abstract; work on RAG evaluation establishes that groundedness and
+multi-criteria analysis are necessary. What remains underexplored is the
+ systematic empirical analysis of how different LoRA configurations
+inside a fixed RAG architecture for technical documentation interact with
+answer quality, latency, inference memory, and training cost . This is
+the gap addressed by the present paper. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Task and Benchmark 
+
+ 
+
+ 
+ 3.1  Task formulation 
+
+ 
+
+ 
+ We consider documentation-grounded question answering over a fixed corpus
+ D = { d 1 , … , d n } D=\{d_{1},\dots,d_{n}\}  of text chunks. A fixed retrieval-and-reranking module
+ R R  maps every question  q q  to a context  c = R ⁡ ( q , D ) c=R(q,D) . The research variable is
+the generator configuration  x ∈ 𝒳 x\in\mathcal{X} , characterised by the base
+model, the LoRA rank, and the set of target modules. For each configuration
+ x x  the system produces an answer  a x ​ ( q , c ) a_{x}(q,c) . We associate with  x x  a quality
+score  Q ​ ( x ) = F 1 ​ ( x ) Q(x)=F_{1}(x)  and a cost vector
+ C ⁡ ( x ) = ( L inf ​ ( x ) , M inf ​ ( x ) , T train ​ ( x ) , M train ​ ( x ) ) C(x)=\bigl(L_{\mathrm{inf}}(x),M_{\mathrm{inf}}(x),T_{\mathrm{train}}(x),M_{\mathrm{train}}(x)\bigr) , where  L inf L_{\mathrm{inf}}  is mean inference
+latency,  M inf M_{\mathrm{inf}}  is peak inference VRAM,  T train T_{\mathrm{train}}  is
+total training time, and  M train M_{\mathrm{train}}  is peak training VRAM. The goal
+is not a single  x ∗ = arg ⁡ max ⁡ Q ⁡ ( x ) x^{\ast}=\arg\max Q(x)  but the Pareto-optimal set
+ ( Lewis et al., 2020 ;  Yu et al., 2024 ) . 
+
+ 
+ 
+ 
+ 
+ 3.2  Corpus and QA construction 
+
+ 
+
+ 
+ The corpus is the official Kubernetes documentation, cleaned and segmented
+into semantically coherent chunks suitable for retrieval and answer
+attribution. The QA set was built in two stages. We hand-wrote 500 QA pairs
+directly from the documentation, then drafted further candidates one-by-one
+with an LLM agent based on GPT-5.4 – not via bulk synthetic augmentation.
+All candidates went through manual verification by the author: pairs were
+discarded on ambiguous questions, missing supporting evidence, duplicates,
+or factual errors in the reference answer. Of  5,467 5{,}467  candidates,  323 323 
+( ≈ 5.9 % \approx 5.9\% ) were rejected and  ≈ 20 % \approx 20\%  of the remaining pairs
+were edited; the rest were accepted as-is. The final benchmark contains
+ 5,144 5{,}144  verified pairs ( 500 500  hand-written +  4,644 4{,}644  LLM-drafted and
+manually verified), partitioned into train/eval/test as in
+Table  1 . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Split 
+ Rows 
+ Exact 
+ Normal 
+ 
+ Train 
+ 3,614 
+ 1,449 
+ 2,165 
+ 
+ 
+ 
+ Eval 
+ 745 
+ 361 
+ 384 
+ 
+ Test 
+ 785 
+ 475 
+ 310 
+ 
+ 
+
+ 
+ Table 1:  Split sizes and distribution of answer types ( exact  vs.  normal ). 
+ 
+ 
+ Same-family risk. 
+
+ 
+ The QA-generation model (GPT-5.4) and the LLM judge used in
+§ 6  ( gpt-5.4-mini ) belong to the same model family,
+which raises a same-family-bias concern. There is no direct train/test leak:
+the judge is not trained on the gold answers, and all gold answers were
+manually verified. We discuss this residual risk explicitly as a limitation
+(§ 9 ). 
+
+ 
+ 
+ 
+ 
+ 
+ 3.3  Answer types 
+
+ 
+
+ 
+ We annotate each QA pair as either  exact  or  normal .
+ exact  pairs require near-literal answers – flags, paths, field
+names, API versions, feature gates – while  normal  pairs are
+factual answers that tolerate paraphrasing as long as the meaning is
+preserved. This typology was designed for this benchmark; it is used as
+a supervision signal at training time and as a stratification axis at
+evaluation time, but it is  not  passed to the generator at inference,
+which receives only the question and the retrieved context. This separation
+of training- and test-time conditioning follows the evaluation protocols in
+prior RAG work  ( Yu et al., 2024 ;  Es et al., 2024 ) . 
+
+ 
+ 
+ 
+ 
+ 
+ 4  RAG Pipeline 
+
+ 
+
+ 
+ The pipeline follows the standard three-step structure – retrieval,
+reranking, generation – consistent with modern RAG surveys
+ ( Lewis et al., 2020 ;  Gao et al., 2023 ;  Wu et al., 2024 ) . 
+
+ 
+ 
+ 
+ Retrieval. 
+
+ 
+ The main configuration uses a hybrid retrieval contour. Dense retrieval
+runs over a FAISS  ( Douze et al., 2024 ;  Johnson et al., 2019 )  index
+of BGE-M3  ( Chen et al., 2024 )  embeddings; sparse retrieval uses
+the native sparse channel of BGE-M3. Dense and sparse candidate lists
+are merged via Reciprocal Rank Fusion  ( Cormack et al., 2009 ) . Classical
+BM25  ( Robertson & Zaragoza, 2009 )  is used only as the sparse component in a
+separate ablation regime (§ 7.4 ), not in the main
+pipeline. 
+
+ 
+ 
+ 
+ 
+ Reranking. 
+
+ 
+ The fused candidate list passes through a pretrained cross-encoder
+reranker,  BAAI/bge-reranker-v2-m3 , building on the standard
+cross-encoder and listwise reranking literature
+ ( Nogueira & Cho, 2019 ;  Yoon et al., 2024 )  and on retrieval
+extensions of large language models  ( Li et al., 2023 ) . 
+
+ 
+ 
+ 
+ 
+ Generator and prompting. 
+
+ 
+ The generator is one of two instruction-tuned models from the Llama 3
+family  ( Dubey et al., 2024 ) :  Llama-3.2-3B-Instruct  and
+ Llama-3.1-8B-Instruct . Both are decoder-only transformers with
+RoPE positional encoding, grouped-query attention, and SwiGLU MLP
+blocks. At inference we use a  neutral  prompting mode, with no
+explicit instruction to “answer only from the context” – the role
+of strict grounding is left to LoRA fine-tuning and to retrieval quality
+rather than to prompt engineering. This separates the contribution of
+adaptation from that of prompt-side anchoring and keeps the comparison
+between adapters honest. At training time the model retains the option
+to condition on the answer-type label ( exact / normal ,
+§ 3.3 ), but the inference prompt does not carry
+that label. This split between training and test-time conditioning
+follows established practice in RAG evaluation
+ ( Yu et al., 2024 ;  Es et al., 2024 ) . 
+
+ 
+ 
+ 
+ 
+ Inference context. 
+
+ 
+ The main inference regime uses  eval_top_k = 2 =2  retrieved
+chunks, matching  embed_top_k = 2 =2  at training time. For
+sensitivity analysis we additionally run the full grid with
+ eval_top_k ∈ { 1 , 4 } \in\{1,4\}  (§ 7.5 ). 
+
+ 
+ 
+ 
+ 
+ 
+ 5  LoRA Configurations and Experimental Design 
+
+ 
+
+ 
+ 5.1  Configuration space 
+
+ 
+
+ 
+ Full fine-tuning of the chosen Llama-3 models is too expensive for the
+configuration search we want to run. We therefore use Low-Rank
+Adaptation  ( Hu et al., 2022 ) , which is well-suited for ablations
+because it changes the generator’s behaviour while keeping the backbone
+frozen  ( Dettmers et al., 2023 ;  Han et al., 2024 ) . 
+
+ 
+ 
+ 
+ We train 20 LoRA adapters on top of two base models. For each base model
+we vary two factors: the LoRA rank  r ∈ { 4 , 8 , 16 , 32 , 64 } r\in\{4,8,16,32,64\}  and the
+set of adapted modules. The latter takes two values:
+ qv_only  adapts the  q q  and  v v  attention projections only;
+ full_attention  adapts all four major attention projections
+( q q ,  k k ,  v v ,  o o ). The two unadapted base models,  3B baseline 
+and  8B baseline , serve as controls evaluated under the same
+inference protocol. 
+
+ 
+ 
+ 
+ 
+ 5.2  Fixed training hyperparameters 
+
+ 
+
+ 
+ All training runs use a common optimisation setup:
+ num_train_epochs = 8 =8 ,  learning_rate = 2 × 10 − 5 =2\times 10^{-5} ,
+AdamW  ( Kingma & Ba, 2015 ;  Loshchilov & Hutter, 2019 )  with cosine schedule
+ ( Loshchilov & Hutter, 2017 )  and a linear warm-up over  ≈ 3 % \approx 3\%  of the
+total steps, in  bf16  mixed precision. We use
+ embed_top_k = 2 =2  retrieved chunks per training example.
+LoRA-side hyperparameters are also fixed across runs:
+ bias = = none ,  task_type = = CAUSAL_LM ,
+and  lora_dropout = 0.05 =0.05 . We tie  lora_alpha  to rank
+via the rule  α = 2 ​ r \alpha=2r . With these constraints, the comparison
+isolates three sources of variation: the base-model size, the rank, and
+the target-module choice. 
+
+ 
+ 
+ 
+ The training prompt uses a mixed-context strategy. When supporting
+chunks are pre-annotated for an example they are used directly;
+otherwise the context is materialised from the retrieval contour
+(§ 4 ). This is methodologically close to
+retrieval-augmented fine-tuning setups such as JORA
+ ( Tahir et al., 2024 ) , and narrows the gap between idealised training
+and the actual inference regime. 
+
+ 
+ 
+ 
+ 
+ 5.3  Hardware and inference stack 
+
+ 
+
+ 
+ All runtime cost metrics ( latency ,  inference VRAM ,
+ training time ,  training VRAM ) are measured on a
+ single  hardware configuration, to remove device-related variance
+from the comparison. The compute node runs in Yandex DataSphere: one
+NVIDIA A100 (40 GB), 28 vCPU, and 114 GB of host RAM. The same node is
+used both for LoRA training and for inference, so training and inference
+metrics are directly comparable across configurations. 
+
+ 
+ 
+ 
+ The inference stack is Hugging Face Transformers with PEFT: the base
+model is loaded in its native precision without quantisation
+( --no-quant-generator  and  --no-quant-judge  are set),
+the LoRA adapter is attached separately via
+ PeftModel.from_pretrained , and the mixed-precision setting
+matches training ( bf16 ). The retrieval contour uses
+ BAAI/bge-m3  for dense embeddings and
+ BAAI/bge-reranker-v2-m3  for reranking
+( reranker_batch_size = 16 =16 ,  retrieve_top_n = 20 =20 ).
+Generation is greedy (no sampling) with a fixed maximum answer length
+shared across configurations. 
+
+ 
+ 
+ 
+ Latency is measured per-sample (effective generator batch size of 1) as
+the mean wall-clock time per test example over the full test split
+( n = 785 n=785 ), counting all pipeline stages: query embedding, dense and
+sparse retrieval, reranking, prompt construction, and generation.
+Inference VRAM is logged as peak device memory via
+ torch.cuda.max_memory_allocated()  at the end of each run. 
+
+ 
+ 
+ 
+ 
+ 5.4  Hypotheses 
+
+ 
+
+ 
+ The experimental design tests four working hypotheses:
+(i) scaling the base model improves quality but raises both latency and
+inference memory;
+(ii) increasing rank expands adaptation capacity, but with diminishing
+returns at high  r r ;
+(iii) broader target-module coverage ( full_attention ) is not
+necessarily preferable once training and inference costs are factored in;
+and
+(iv) among the resulting configurations, the practically useful working
+points are not the per-metric maxima but the Pareto-optimal set. 
+
+ 
+ 
+ 
+ 
+ 
+ 6  Evaluation Methodology 
+
+ 
+
+ 
+ 6.1  Quality metrics 
+
+ 
+
+ 
+ The primary quality metric is  token-level  F 1 F_{1}  between the
+generated and the gold answer  ( Yu et al., 2024 ) . All headline
+results and per-regime tables and plots in
+§ 7  and Appendix  I  are computed on the
+held-out test split ( n = 785 n=785 ); the eval split ( n = 745 n=745 ) is used for
+configuration selection during the experimental loop. Along with the
+point estimate of  F 1 F_{1}  we report a non-parametric bootstrap 95%
+confidence interval ( 1,000 1{,}000  resamples on the test split). For paired
+comparisons of  Δ ​ F 1 \Delta F_{1}  between configurations we use the paired
+bootstrap on the same test split, which is appropriate for ranking close
+configurations on a shared sample. 
+
+ 
+ 
+ 
+ We do not report embedding-based semantic metrics such as BERTScore
+ ( Zhang et al., 2020 ) . For documentation-grounded question
+answering with a high share of  exact  questions, token  F 1 F_{1}  is
+the most directly interpretable similarity metric; the semantic side of
+quality is instead captured by the judge-based scores described next. 
+
+ 
+ 
+ 
+ 
+ 6.2  Judge-based groundedness and correctness 
+
+ 
+
+ 
+ We add two judge-based quality axes computed by an external LLM judge,
+ gpt-5.4-mini . The judge receives only the triple
+ (question, context, answer)  and is blind to the generator
+identity – no  model_id  or configuration name is provided –
+so that scores are not contaminated by adapter or model branding. It
+assigns two independent ratings:  correctness , the content-level
+accuracy of the answer with respect to the provided context, and
+ groundedness , the degree to which the answer is supported by the
+context with no unsupported additions
+ ( Yu et al., 2024 ;  Es et al., 2024 ;  Baqar & Khanda, 2025 ) . 
+
+ 
+ 
+ 
+ We aggregate these into two pass-at- k k  scores,
+ correctness_pass@4  and  groundedness_pass@4 : the
+fraction of answers that the judge rates  ≥ 4 \geq 4  on the corresponding
+scale. These judge-based scores are used as a  second  axis of
+quality alongside  F 1 F_{1} , not as a replacement. As
+§ 7.3  shows, the configuration that maximises
+ F 1 F_{1}  is often not the configuration that maximises grounding, which is
+itself an informative finding. 
+
+ 
+ 
+ 
+ 
+ 6.3  Cost metrics 
+
+ 
+
+ 
+ We measure four cost quantities. The two inference-side metrics are mean
+latency  L inf L_{\mathrm{inf}}  and peak inference VRAM  M inf M_{\mathrm{inf}} 
+(§ 5.3 ). The two training-side metrics are total
+training time  T train T_{\mathrm{train}}  and peak training VRAM
+ M train M_{\mathrm{train}} . The four together form the cost vector used in the
+Pareto analysis (§ 3.1 ). This setup follows the
+quality–cost framing used in RAG and LoRA evaluation literature
+ ( Es et al., 2024 ;  Baek et al., 2026 ;  Baqar & Khanda, 2025 ) . 
+
+ 
+ 
+ 
+ 
+ 6.4  Pareto analysis 
+
+ 
+
+ 
+ Comparison across the resulting configuration set is done with a
+multi-objective Pareto analysis. A configuration  x x  is Pareto-optimal
+if there is no other configuration  x ′ x^{\prime}  that is at least as good on
+quality and at least as good on every cost dimension, and strictly
+better on at least one of them (§ 3.1 ). In the
+two-dimensional fronts of § 7  the quality coordinate is
+ F 1 F_{1}  and the cost coordinate alternates between mean inference latency,
+peak inference VRAM, training time, and training VRAM. This protocol
+focuses the discussion on the non-dominated set rather than on a single
+“best” configuration; the latter view is incompatible with the actual
+practical question of choosing a working point under a cost budget. 
+
+ 
+ 
+ 
+ 
+ 
+ 7  Results 
+
+ 
+
+ 
+ All results below are computed on the held-out test split ( n = 785 n=785 ) with the
+fixed hybrid-retrieval pipeline described in § 4  and the
+fixed training and inference setup described in § 5 . Unless
+noted otherwise, F1 denotes token-level F1 and  grnd@4  (resp.
+ corr@4 ) denotes the LLM-judge groundedness (resp. correctness)
+pass@4 score (§ 6 ). 95% bootstrap confidence intervals (CIs)
+are computed with  1,000 1{,}000  resamples; for paired comparisons of  Δ ​ F 1 \Delta F_{1} 
+between configurations we use the paired bootstrap on the same test split. 
+
+ 
+ 
+ 
+ 7.1  Quality vs. inference cost 
+
+ 
+
+ 
+ Figure 1:  Token-level F1 vs. end-to-end inference latency (per query) in the
+base regime. Error bars are 95% bootstrap CIs on  F 1 F_{1} . The Pareto front
+(red dashed) connects the two non-dominated configurations,
+ 3B r64 qv_only  and  8B r64 qv_only ; all
+ full_attention  adapters lie strictly inside the front. 
+ 
+ 
+ On the F1-vs-latency front the non-dominated configurations are
+ 3B r64 qv_only  ( F 1 = 0.597 F_{1}=0.597  [0.574, 0.622]) and
+ 8B r64 qv_only  ( F 1 = 0.617 F_{1}=0.617  [0.593, 0.639]); see
+Table  2 . The 8B point gains  Δ ​ F 1 = + 0.020 \Delta F_{1}=+0.020  over
+the 3B point with paired-bootstrap 95% CI  [ + 0.0005 , + 0.0410 ] [+0.0005,+0.0410]  – a small
+but statistically supported margin – at the cost of an additional
+ ∼ \sim 9 GB of inference memory and a  0.057 0.057  s latency increase. Notably,
+ 3B r64 qv_only  is statistically indistinguishable from the
+unadapted  8B baseline  ( 0.595 0.595  [0.572, 0.620]):
+ Δ ​ F 1 ∈ [ − 0.021 , + 0.026 ] \Delta F_{1}\in[-0.021,+0.026] . The runtime-front choice is therefore not
+between two qualities but between two operating regimes. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Config. 
+ F 1 F_{1}  [95% CI] 
+ Lat. (s) 
+ VRAM (GB) 
+ 
+ 
+ 
+ 3B r64 qv_only 
+ 0.597 [0.574, 0.622] 
+ 0.598 
+ 12.76 
+ 
+ 8B r64 qv_only 
+ 0.617 [0.593, 0.639] 
+ 0.655 
+ 21.93 
+ 
+ 
+
+ 
+ Table 2:  Non-dominated points on the F1-vs-latency front in the base regime. 
+ 
+ 
+ The F1-vs-inference-VRAM view cleanly separates the 3B and 8B families
+(VRAM difference  ∼ \sim 9 GB), whereas within each family the VRAM spread is
+only  0.3 0.3 – 0.4 0.4  GB – well below the 95% CI width of  F 1 F_{1} . Inference
+memory therefore acts as a discrete family selector rather than a continuous
+trade-off knob. 
+
+ 
+ 
+ 
+ 
+ 7.2  Training cost 
+
+ 
+
+ 
+ Figure 2:  F 1 F_{1}  vs. training wall-clock time (minutes) over all 20 LoRA
+configurations. The Pareto front (red dashed) is dominated by
+ qv_only  adapters; no  full_attention  configuration appears
+on it. Error bars are 95% bootstrap CIs on  F 1 F_{1} . 
+ 
+ 
+ Figure 3:  F 1 F_{1}  vs. peak training GPU memory, split by base-model family
+(3B / 8B). Within each family, the training Pareto front is again populated
+entirely by  qv_only  adapters. Error bars are 95% bootstrap CIs on
+ F 1 F_{1} . 
+ 
+ 
+ The cheapest training point is  3B r4 qv_only  ( 52.95 52.95  min,
+ 19.07 19.07  GB). Stronger training-side trade-offs cluster around
+ qv_only  configurations at  r = 32 r{=}32  and  r = 64 r{=}64  for the 3B
+family and  r = 16 r{=}16  and  r = 64 r{=}64  for the 8B family.  No 
+ full_attention  configuration appears on the training Pareto front
+(Table  3 ). Within the 8B family the upper
+ qv_only  points ( r = 16 r{=}16  and  r = 64 r{=}64 ) have largely overlapping
+ F 1 F_{1}  CIs, so the choice between them is driven by secondary criteria, not
+by a robust quality gap. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Config. 
+ F 1 F_{1}  [95% CI] 
+ Train (min) 
+ VRAM (GB) 
+ 
+ 
+ 
+ 3B r4 qv_only 
+ 0.572 [0.550, 0.592] 
+ 52.95 
+ 19.07 
+ 
+ 3B r8 qv_only 
+ 0.573 [0.552, 0.594] 
+ 54.08 
+ 19.09 
+ 
+ 3B r16 qv_only 
+ 0.583 [0.562, 0.605] 
+ 55.90 
+ 19.13 
+ 
+ 3B r32 qv_only 
+ 0.592 [0.569, 0.614] 
+ 52.41 
+ 19.20 
+ 
+ 3B r64 qv_only 
+ 0.597 [0.574, 0.622] 
+ 53.32 
+ 19.39 
+ 
+ 8B r4 qv_only 
+ 0.610 [0.588, 0.633] 
+ 68.57 
+ 31.31 
+ 
+ 8B r16 qv_only 
+ 0.615 [0.593, 0.634] 
+ 68.38 
+ 31.39 
+ 
+ 8B r64 qv_only 
+ 0.617 [0.595, 0.640] 
+ 68.93 
+ 31.74 
+ 
+ 
+
+ 
+ Table 3:  Non-dominated points on the training Pareto front (time and VRAM).
+All training-front points use the  qv_only  adaptation scheme. 
+ 
+ 
+ 
+ 7.3  Groundedness as a second quality axis 
+
+ 
+
+ 
+ Figure 4:  F 1 F_{1}  vs. LLM-judge groundedness pass@4 in the base regime. Error
+bars are 95% bootstrap CIs on both axes. Adapted configurations cluster
+tightly in the upper right, while the unadapted baselines are clearly
+separated on  grnd@4 . 
+ 
+ 
+ The configuration with the highest point F1,  8B r64 qv_only 
+( F 1 = 0.617 F_{1}=0.617 ,  grnd@4 = 0.818 =0.818 ), does  not  maximise groundedness.
+The grnd@4 maximum ( 0.825 0.825 ) is reached by  8B r16 qv_only 
+( F 1 = 0.615 F_{1}=0.615 ); the two are statistically indistinguishable on  F 1 F_{1} 
+( Δ ​ F 1 ∈ [ − 0.011 , + 0.016 ] \Delta F_{1}\in[-0.011,+0.016] ). LoRA-adapted configurations also shift
+grnd@4 upward by  0.05 0.05 – 0.08 0.08  over the unadapted baselines at comparable
+latency – a margin that exceeds the typical CI width ( ≈ 0.03 \approx 0.03 ).
+Within already-adapted configurations, grnd@4 spread mostly falls inside
+the CIs and separation is driven by the 3B/8B choice. Task quality and
+grounding are therefore not interchangeable: for documentation QA, the
+choice of optimal configuration depends on whether the deployment prioritises
+exact-match agreement, supportedness, or a compromise between them. 
+
+ 
+ 
+ 
+ 
+ 7.4  Robustness across retrieval and prompting 
+
+ 
+
+ 
+ Figure 5:  Frequency with which each adaptation scheme yields the best
+configuration across the 10 retrieval/prompting ablation regimes, separately
+for  F 1 F_{1}  (blue) and  grnd@4  (orange). 
+ 
+ 
+ To test whether the LoRA conclusions are an artefact of one pipeline
+choice, we re-run the full grid under 10 retrieval/prompting regimes:
+five retrieval variants ( base ,  reranker_off ,
+ dense_only ,  sparse_only ,  hybrid_bm25 ) crossed
+with two prompting modes ( neutral ,  explicit_grounded ).
+Two main observations hold across all 10 modes
+(Table  4 , full per-regime tables in
+Appendix  I ). First, the best-F1 configuration is
+ 8B r64 qv_only  in  all  10 modes, and the best-grnd@4
+configuration concentrates on  qv_only  adapters in 8 of 10 modes
+( full_attention  appears only in two  sparse -based modes).
+Second, the F1-optimal and grnd@4-optimal points never coincide
+( same_point = no  in 10/10 modes). The choice of working
+configuration is therefore a function of the retrieval–prompting setup
+ and  the quality criterion, not of LoRA alone. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Criterion 
+ qv_only  wins 
+ full_attention  wins 
+ 
+ 
+ 
+ Best  F 1 F_{1} 
+ 10/10 
+ 0/10 
+ 
+ Best  grnd@4 
+ 8/10 
+ 2/10 
+ 
+ 
+
+ 
+ Table 4:  Frequency with which each adaptation scheme yields the best
+configuration across the 10 retrieval/prompting ablation regimes. 
+ 
+ 
+ 
+ 7.5  Statistical robustness of  Δ ​ F 1 \Delta F_{1} 
+
+ 
+
+ 
+ Table  5  reports paired-bootstrap CIs for six key
+comparisons. The reliably supported effects are
+(i)  3B r64 qv_only  over  3B baseline ,
+(ii)  3B r64 qv_only  over the param-matched
+ 3B r64 full_attention  adapter, and
+(iii) the family-level  Δ ​ F 1 \Delta F_{1}  of  qv_only  over
+ full_attention  averaged over the eight param-matched pairs
+analysed in § 8 . In contrast, the gaps between
+ 3B r64 qv_only  and the  8B baseline , and between the top
+two 8B  qv_only  points, are not distinguishable from sampling
+noise at  n = 785 n=785 . The headline of this work is therefore not any single
+local maximum on  F 1 F_{1} , but the structural advantage of the
+ qv_only  adaptation scheme. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Comparison 
+ Δ ​ F 1 \Delta F_{1} 
+ 95% CI 
+ 
+ 
+ 
+ 3B r64 qv_only  -  3B baseline 
+ + 0.056 +0.056 
+ [ + 0.033 , + 0.078 ] [+0.033,+0.078] 
+ 
+ 3B r64 qv_only  -  8B baseline 
+ + 0.003 +0.003 
+ [ − 0.021 , + 0.026 ] [-0.021,+0.026] 
+ 
+ 8B r64 qv_only  -  3B r64 qv_only 
+ + 0.020 +0.020 
+ [ + 0.0005 , + 0.0410 ] [+0.0005,+0.0410] 
+ 
+ 8B r64 qv_only  -  8B r16 qv_only 
+ + 0.003 +0.003 
+ [ − 0.011 , + 0.016 ] [-0.011,+0.016] 
+ 
+ 3B r64 qv_only  -  3B r64 full_attention 
+ + 0.020 +0.020 
+ [ + 0.004 , + 0.036 ] [+0.004,+0.036] 
+ 
+ qv_only  -  full_attention ∗ 
+ + 0.007 +0.007 
+ [ + 0.001 , + 0.012 ] [+0.001,+0.012] 
+ 
+ 
+
+ 
+ *  mean  Δ ​ F 1 \Delta F_{1}  over the 8 param-matched
+pairs (Table  6 ). 
+
+ 
+ Table 5:  Paired-bootstrap 95% CIs on  Δ ​ F 1 \Delta F_{1}  ( n = 785 n=785 ,  1,000 1{,}000 
+resamples). 
+ 
+ 
+ 
+ 
+ 8  Param-Matched Control Comparison 
+
+ 
+
+ 
+ Up to this point, the  F 1 F_{1}  advantage of  qv_only  adapters
+(§ 7.1 –§ 7.4 ) could
+have two natural explanations. The first is  structural : adapting
+exactly the two projections that select and re-weight the retrieved
+context is sufficient inside this RAG architecture, while extending
+adaptation to  k k  and  o o  projections grows the adapter without buying
+proportional quality. The second is  parametric : with the same
+rank  r r ,  full_attention  adapts twice as many projections as
+ qv_only  and thus splits a fixed-shape low-rank budget more
+thinly across attention sub-spaces, so the per-projection capacity may
+simply be too small. 
+
+ 
+ 
+ 
+ To distinguish the two, we run a param-matched control. Because
+ full_attention  adapts four projections instead of two, equal
+total LoRA parameter counts are achieved by halving the rank for
+ full_attention . We therefore pair each  qv_only 
+configuration at rank  r r  with the  full_attention  configuration
+at rank  r / 2 r/2 , computing  Δ ​ F 1 = F 1 ​ ( qv_only ) − F 1 ​ ( full_attention ) \Delta F_{1}=F_{1}(\textsc{qv\_only})-F_{1}(\textsc{full\_attention})  on the test split with paired bootstrap
+95% confidence intervals. Results are reported in
+Table  6 . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Family 
+ Param budget 
+ qv_only 
+ full_attention 
+ Δ ​ F 1 \Delta F_{1} 
+ 95% CI 
+ 
+ 
+ 
+ 3B 
+ 256 d d 
+ r = 64 r{=}64 
+ r = 32 r{=}32 
+ + 0.021 +0.021 
+ [ + 0.005 , + 0.037 ] [+0.005,+0.037] 
+ 
+ 3B 
+ 128 d d 
+ r = 32 r{=}32 
+ r = 16 r{=}16 
+ + 0.002 +0.002 
+ [ − 0.013 , + 0.017 ] [-0.013,+0.017] 
+ 
+ 3B 
+ 64 d d 
+ r = 16 r{=}16 
+ r = 8 r{=}8 
+ + 0.005 +0.005 
+ [ − 0.008 , + 0.020 ] [-0.008,+0.020] 
+ 
+ 3B 
+ 32 d d 
+ r = 8 r{=}8 
+ r = 4 r{=}4 
+ − 0.002 -0.002 
+ [ − 0.014 , + 0.011 ] [-0.014,+0.011] 
+ 
+ 8B 
+ 256 d d 
+ r = 64 r{=}64 
+ r = 32 r{=}32 
+ + 0.015 +0.015 
+ [ − 0.001 , + 0.030 ] [-0.001,+0.030] 
+ 
+ 8B 
+ 128 d d 
+ r = 32 r{=}32 
+ r = 16 r{=}16 
+ + 0.008 +0.008 
+ [ − 0.006 , + 0.023 ] [-0.006,+0.023] 
+ 
+ 8B 
+ 64 d d 
+ r = 16 r{=}16 
+ r = 8 r{=}8 
+ + 0.016 +0.016 
+ [ + 0.003 , + 0.027 ] [+0.003,+0.027] 
+ 
+ 8B 
+ 32 d d 
+ r = 8 r{=}8 
+ r = 4 r{=}4 
+ + 0.003 +0.003 
+ [ − 0.009 , + 0.017 ] [-0.009,+0.017] 
+ 
+ 
+
+ 
+ Table 6:  Param-matched comparison between  qv_only  and
+ full_attention  at equal total LoRA parameter count.  d d  is
+the per-projection rank dimensionality budget. Paired-bootstrap 95% CIs
+on  Δ ​ F 1 \Delta F_{1} . 
+ 
+ 
+ Two observations follow. First, at equal parameter budget,
+ qv_only  is significantly better in 2 of 8 pairs (one in each
+family), statistically indistinguishable from  full_attention 
+in the remaining 6, and significantly worse in none. The advantage
+therefore survives the parameter-count control: it is not the case that
+ full_attention  would dominate once you give it the same budget
+as  qv_only . Second, the only family-budget combination at
+which  full_attention  comes close is 3B at the smallest budget
+( 32 ​ d 32d ,  r = 8 r{=}8  vs.  r = 4 r{=}4 ), where the CI of  Δ ​ F 1 \Delta F_{1}  straddles
+zero on the negative side. This is consistent with the interpretation
+that at very low rank  qv_only  is itself capacity-constrained,
+and  full_attention  can match it by spreading the same budget
+over more projections; once rank grows beyond  r = 8 r{=}8  for either scheme,
+the structural advantage of  qv_only  re-emerges. 
+
+ 
+ 
+ 
+ 
+ 9  Discussion 
+
+ 
+
+ 
+ 9.1  Why  qv_only  wins on the Pareto front 
+
+ 
+
+ 
+ Across every Pareto front in § 7  the non-dominated
+points concentrate around  qv_only  adapters, and the
+paired-bootstrap test against the param-matched
+ full_attention  alternative gives a mean
+ Δ ​ F 1 = + 0.007 \Delta F_{1}=+0.007   [ + 0.001 , + 0.012 ] [+0.001,+0.012] 
+(§ 7.5 , § 8 ). The most plausible
+explanation is that, inside a fixed retrieval contour, the adapter’s
+job is not to globally restructure attention but to refine how the
+generator  selects from  and  re-weights  the already-supplied
+context. The  q q  and  v v  projections are precisely the two attention
+projections that control these two operations; adapting also  k k  and
+ o o  increases the adapter size and the training cost faster than it
+buys robust gain on the front. 
+
+ 
+ 
+ 
+ 
+ 9.2  Backbone size sets the regime, not the verdict 
+
+ 
+
+ 
+ The 3B/8B split looks structural but should not be read as the
+headline. A larger 8B backbone does set the upper  F 1 F_{1}  ceiling, but it
+almost automatically commits the system to a more expensive operating
+regime – roughly  9 9  GB of additional inference VRAM and  ∼ \sim 15
+extra training minutes per adapter. Crucially, the strongest adapted 3B
+configuration is statistically indistinguishable from the unadapted 8B
+baseline ( Δ ​ F 1 ∈ [ − 0.021 , + 0.026 ] \Delta F_{1}\in[-0.021,+0.026] ). So scaling the backbone is
+not the only way to recover that level of quality: targeted LoRA
+adaptation closes the gap at a fraction of the cost. The backbone
+choice is therefore best understood as selecting an operating regime
+(small vs. large inference budget), with the within-regime quality
+controlled mainly by the adapter scheme. 
+
+ 
+ 
+ 
+ 
+ 9.3  Rank effect is sub-linear but practically useful 
+
+ 
+
+ 
+ Increasing  r r  helps  F 1 F_{1}  more than it hurts inference cost in this
+pipeline. For 3B  qv_only , going from  r = 4 r{=}4  to  r = 64 r{=}64  moves
+ F 1 F_{1}  from  0.572 0.572  to  0.597 0.597 , while latency stays in  0.60 0.60 – 0.63 0.63  s
+and inference VRAM moves only from  12.67 12.67  to  12.76 12.76  GB – well
+inside the noise of measurement. The dominant inference cost in this
+pipeline is the base model and the retrieval contour, not the LoRA
+adapter itself. The same monotone-but-saturating pattern holds for the
+8B family, but the upper rungs ( r = 16 r{=}16  vs.  r = 64 r{=}64 ) are within
+paired-bootstrap noise, so within the top 8B configurations the rank
+should be picked by secondary criteria (e.g., groundedness, or training
+cost), not by point F1. 
+
+ 
+ 
+ 
+ 
+ 9.4  Retrieval and prompting shift the optimum but not the family 
+
+ 
+
+ 
+ The 10-mode ablation shows that switching off the reranker, going
+dense- or sparse-only, or replacing the native sparse channel with BM25,
+together with the choice of neutral vs. explicit-grounded prompting,
+ does  move the per-mode optimum point inside the same
+configuration grid. What it does  not  do is overturn the qualitative
+pattern:  8B r64 qv_only  is the best- F 1 F_{1}  configuration in
+ 10 / 10 10/10  modes, and  qv_only  adapters win on
+ grnd@4  in 8 of 10. Retrieval and prompting therefore decide how
+favourable the operating environment is, not which adaptation scheme
+should be used in it. 
+
+ 
+ 
+ 
+ 
+ 9.5  Sensitivity to context budget ( top k \mathrm{top}_{k} ) 
+
+ 
+
+ 
+ A separate generalisation run varies the number of retrieved chunks at
+inference time, holding all adapters fixed. Increasing
+ eval_top_k  from  1 1  to  4 4  raises the best  F 1 F_{1}  from  0.600 0.600 
+to  0.632 0.632  but adds  ∼ \sim 0.12 s of latency
+(Figure  6 , Table  7 ). The best- F 1 F_{1} 
+configuration is  8B r64 qv_only  for all three values of
+ top_k ; the runtime Pareto front collapses to a single point at
+ top_k = 1 =1  and gains  3B r64 qv_only  as a second
+non-dominated point at  top_k ∈ { 2 , 4 } \in\{2,4\} . The conclusion is
+that broadening retrieval is not a free quality lever, but the
+structural ranking of LoRA configurations survives the change. 
+
+ 
+ 
+ 
+ Figure 6:  Effect of the retrieval cutoff  k k  on the best  F 1 F_{1}  (left axis,
+blue; with 95% bootstrap CI) and on mean end-to-end inference latency
+(right axis, red). The chosen working point  k = 2 k\!=\!2  corresponds to the
+“knee” of the curve, beyond which marginal  F 1 F_{1}  gains are dominated by
+marginal latency cost. 
+ 
+ 
+ 
+ 
+ 
+ top_k 
+ Best- F 1 F_{1}  config 
+ F 1 F_{1}  [95% CI] 
+ Lat. (s) 
+ Runtime front 
+ 
+ 
+ 
+ 1 1 
+ 8B r64 qv_only 
+ 0.600 [0.577, 0.623] 
+ 0.604 
+ { 8B r64 qv_only } 
+ 
+ 2 2 
+ 8B r64 qv_only 
+ 0.617 [0.593, 0.639] 
+ 0.655 
+ { 3B r64 qv_only ,  8B r64 qv_only } 
+ 
+ 4 4 
+ 8B r64 qv_only 
+ 0.632 [0.612, 0.654] 
+ 0.719 
+ { 3B r64 qv_only ,  8B r64 qv_only } 
+ 
+ 
+
+ 
+ Table 7:  Sensitivity to retrieval context budget at inference time, in
+the base regime. All adapters held fixed. 
+ 
+ 
+ 
+ 9.6  Error analysis 
+
+ 
+
+ 
+ To make the discussion of residual errors quantitative, we sampled 100
+mis-predictions on the test split ( 50 50  each from
+ 3B r64 qv_only  and  8B r64 qv_only ,
+ F 1 < 1 F_{1}<1 ,  seed = 42 =42 ) and labelled them into four operational
+classes:  retrieval miss ,  overclaiming ,  incomplete
+answer , and  exact/precision failure 
+(Table  8 ).  Exact/precision  errors dominate
+( 53 % 53\%  overall,  66 % 66\%  for the 8B adapter): a substantial share of the
+remaining gap is not about missing knowledge but about reproducing a
+literal command, flag, version, or field name verbatim. Incomplete
+answers ( 24 % 24\% ) and retrieval misses ( 19 % 19\% ) follow; pure overclaiming
+is rare in this sample ( 4 % 4\% ). This taxonomy suggests two natural
+follow-up directions: post-hoc constrained decoding for the exact-class
+sub-distribution, and groundedness-aware re-training for the
+incomplete-answer class. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Error type 
+ 3B r64 qv_only 
+ 8B r64 qv_only 
+ Total 
+ 
+ 
+ 
+ retrieval miss 
+ 11 (22%) 
+ 8 (16%) 
+ 19 (19%) 
+ 
+ overclaiming 
+ 2 (4%) 
+ 2 (4%) 
+ 4 (4%) 
+ 
+ incomplete answer 
+ 17 (34%) 
+ 7 (14%) 
+ 24 (24%) 
+ 
+ exact/precision failure 
+ 20 (40%) 
+ 33 (66%) 
+ 53 (53%) 
+ 
+ 
+
+ 
+ Table 8:  Manual error-type taxonomy on a balanced 100-sample subset of
+mis-predictions ( F 1 < 1 F_{1}<1 , fixed random seed). 
+ 
+ 
+ 
+ 
+ 10  Conclusion 
+
+ 
+
+ 
+ We presented a systematic study of LoRA configurations inside a fixed
+documentation-grounded RAG pipeline. Three findings stand out. First,
+on every Pareto front we examined –  F 1 F_{1}  against latency, inference
+VRAM, training time, and training VRAM – the non-dominated points
+concentrate around adapters that act on the  q q  and  v v  attention
+projections only; full-attention adapters do not appear on the training
+Pareto front in this study, and the param-matched control comparison
+confirms that the advantage of  qv_only  is structural rather
+than just a parameter-count artefact. Second, the 3B/8B choice
+determines the operating regime (small vs. large inference budget),
+but a strong LoRA-adapted 3B configuration reaches statistically
+comparable  F 1 F_{1}  to the unadapted 8B baseline at roughly  9 9  GB less
+inference VRAM, so backbone size and adaptation interact as
+ complements , not substitutes. Third, judge-based groundedness is
+not interchangeable with  F 1 F_{1} : the configuration that maximises  F 1 F_{1} 
+is not the configuration that maximises grounding, and at fixed  F 1 F_{1} 
+the difference between them is robust across the 10 retrieval/prompting
+ablation regimes. 
+
+ 
+ 
+ 
+ Practically, the paper produces three recommended working points: a
+lightweight one ( 3B r64 qv_only ) when the deployment is
+inference-cost-constrained but expects high quality; the F1-maximising
+one ( 8B r64 qv_only ) when an 8B budget is available; and a
+grounding-maximising 8B alternative ( 8B r16 qv_only ) when
+supportedness is the priority. 
+
+ 
+ 
+ 
+ To support reproducible follow-up work, we will release the manually
+verified Kubernetes QA benchmark and the selected LoRA adapters
+together with this paper. The most natural extensions of this study
+are multi-seed validation for the close-CI comparisons, a
+human-agreement study for the LLM judge, a port of the ablation
+protocol to a second documentation domain, and a re-measurement of the
+runtime axis on alternative inference stacks. 
+
+ 
+ 
+ 
+ 
+ 

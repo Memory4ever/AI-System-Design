@@ -2,16 +2,16 @@
 
 **规范：** V3
 **窗口：** 2025-09-04T09:00:00+08:00 ～ 2025-09-05T09:00:00+08:00
-**状态：** 进行中
+**状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-19T16:26:07+08:00
+**检查时间：** 2026-10-20T22:07:07+08:00
 **补充窗口：** 2025-09-04 ～ 2025-09-04
 **冻结候选日期：** [补查前原报告](../_sources/daily-20250905/baseline-before-supplement-20261011.md)
 **窗口说明：** 用户授权仅补已有Daily来源遗漏；原窗口、候选日期/评分/有效审阅及连续旧§4冻结。新材料只按Sep04完整BJT自然日公开日期，不执行catchup、不要求小时。旧完成标签及旧catchup缺口仅历史保留，不授本轮增量验收。
 
 ## 1. 结论
 
-2026-10-19按用户授权fresh重新执行本日修复，仅补2025-09-04完整BJT自然日。运行前完整稿已保存[本轮基线](../_sources/daily-20250905/baseline-before-repair-20261019.md)，原窗口、Anthropic旧完整行/日期/评分与连续旧§4保持。正确四主题129出现/96unique与旧169重18、新78；有界月表两邻页50题名又得35新身份，21精确v1题摘经作者§28/30最小纠正校准为15P/6AB-C，另14title-C。合282有限身份中234题摘读取层=168初筛P/61C/3旧事件/2撤回（其后05359具名窗前正文去重见§5），另48仅题名；原02846是current AB关闭层，不称234全精确v1。原101/新45/6/单个04515及导航15日证均实际独核，168日期对象=69同Sep4、8同Sep3、67同Sep5、10最早晚于Sep4、14跨日，非168正式候选/Source完成。八导航Sep3只交09-04定点核既有身份/漏项，不重Source；导航七Sep4原件研究由root负责、Boyle已逐项非请求者核。当前表58家族（旧Anthropic1+已准备新57）：24真实整合、27具体NC、03312/03141/02718/02785/03114五正式中心争议已实际独核，03025一必要Source/具体NC提案待root。root61/62已03018/03020/03113真实POST生效释放，root60已02966六分有限Source/Ch26具体NC；03114原六分争议由Boyle§82非请求者核并root59接纳。当前14普通：03025待root；03047/03131/03136/03234/03240/03329/03341/03345/03348/03377/03383/03421十三仍有必要Source/独核工作，其中03131/03136由root研究提案、Boyle一次非请求者核，不重复GET。精确层次见作者§3，不改称外阻或普通0。七机构有限尾、14cross与两具名先稿角色已有独核范围；Google过滤共因本日原七请求实际category正确，作者§77定点核无新GET。当前无Books写锁/待POST，无DAY，旧有效层不第三重审。
+2026-10-19按用户授权fresh重新执行本日修复，仅补2025-09-04完整BJT自然日。运行前完整稿已保存[本轮基线](../_sources/daily-20250905/baseline-before-repair-20261019.md)，原窗口、Anthropic旧完整行/日期/评分与连续旧§4保持。正确四主题129出现/96unique与旧169重18、新78；有界月表两邻页50题名又得35新身份，21精确v1题摘经作者§28/30最小纠正校准为15P/6AB-C，另14title-C。合282有限身份中234题摘读取层=168初筛P/61C/3旧事件/2撤回（其后05359具名窗前正文去重见§5），另48仅题名；原02846是current AB关闭层，不称234全精确v1。原101/新45/6/单个04515及导航15日证均实际独核，168日期对象=69同Sep4、8同Sep3、67同Sep5、10最早晚于Sep4、14跨日，非168正式候选/Source完成。八导航Sep3只作09-04定点交接，导航七Sep4有效层复用，不重Source。2026-10-20解除额度暂停后由Bernoulli继任Boyle，当前逐项归并70唯一家族（69个arxiv ID+旧Anthropic1）：32实际整合、30具体已有覆盖、7正式中心争议、旧Anthropic1仅报告。root73/79/80各实际写后结果均已生效释放，不由marker/自读预签；全部必要Source、具体owner及32项书稿实际落实已独核。普通获取/研究未读/待写/待POST均为0，无本日未执行授权或写锁；root81完整非作者六节DAY及root82真实完成态FINAL均已实际通过，09-05本次补查接纳，累计18/132；本日无普通待办。七机构历史缺段、14cross与19305具名先稿关系继续有限隔离，05359已明确窗前同正文去重，不授保留项正面Coverage、Evidence、Books或无遗漏。
 
 以下为旧轮结果及有效层边界：
 
@@ -42,7 +42,7 @@
 | SRC-BAIDU-ERNIE | Blog两页10+6，Nov11/07→Oct16→Sep12→Aug14→Jun30，page2无next | 已检查 | 返回16卡无Sep04列项，不授全年研究表 |
 | SRC-XIAOMI-MIMO | 当前Paper8含May12/Jun04/Sep19/Oct21 2025；Blog8visible+7hidden为同数组slice，15route实际读取日期；2/3壳另恢复真实iframe正文Sep22/Sep21 2026，14/15 Dec16/22 2025，其余2026 | 受阻 | 15日期已读，未跳过可访问iframe；仍缺Sep04原事件/目录，不扩2026研究 |
 | SRC-MINIMAX | EN12（末Oct27 2025）、CN13（多Jan15 2025），无可核next；旧EN page2同12不算新页。Agent Tech3唯一Sep19/22/Oct08 2026 | 受阻 | 2025Sep历史中段未恢复，不能由两端夹段授全年已查 |
-| SRC-ARXIV | 旧错位代理154次/122unique加两已知邻区25+25题名得169；本次root正确Sep2 18Z～Sep3 18Z四主题model50/system13/agent26/multimodal40，start0/max150到返回末页，129次/96unique，重18新78。新66精确v1题摘完整筛选并非请求者校准；12题名中2补AB，其余止题名。两批原件/停止见ROOT_DISCOVERY_SCREEN与作者§9/12/15 | 未完成 | 常规主题发现完成层不等全学科召回；原13U经作者§18/23决定域校准7P/5C/1撤回，168P日期对象69本窗/8Sep3/67Sep5/10L晚于本窗/14跨日；root另月表CL skip125/show25及CV skip225/show25有界50题名补检、35新身份中21题摘经§28/30校准，03010实际借用BLV决定域核后C，现15P/6AB-C、14题名层，未当Source完成，必要Source/先稿关系另责，不沿101整体Unknown或旧list400作终点 |
+| SRC-ARXIV | 旧错位代理154次/122unique加两已知邻区25+25题名得169；本次root正确Sep2 18Z～Sep3 18Z四主题model50/system13/agent26/multimodal40，start0/max150到返回末页，129次/96unique，重18新78。新66精确v1题摘完整筛选并非请求者校准；12题名中2补AB，其余止题名。两批原件/停止见ROOT_DISCOVERY_SCREEN与作者§9/12/15 | 受阻 | 常规主题发现完成层不等全学科召回；原13U经作者§18/23决定域校准7P/5C/1撤回，168P日期对象69本窗/8Sep3/67Sep5/10L晚于本窗/14跨日；root另月表CL skip125/show25及CV skip225/show25有界50题名补检、35新身份中21题摘经§28/30校准，03010实际借用BLV决定域核后C，现15P/6AB-C、14题名层，导航题摘不直接授Source；本日69确定候选必要Source/owner已逐项处置，其中7中心争议隔离。14具名跨日日期关系经有限恢复后仍受阻，见§5，不授完整覆盖；无普通未读队列，不沿101整体Unknown或旧list400作终点 |
 | 表外：[DataCite精确DOI](https://api.datacite.org/dois) | 限定集合101/45/6/15及单个04515，均独立client-id=arxiv.content、一页精确唯一/无next，完整字段与人工L/U后helper复算；101由root§2独核，45/6/04515/导航15由作者§15/21/26/29非请求者核 | 已检查 | 仅条件arxiv v1公告日，不授全球first/Source；14跨界不可截目标日 |
 | 表外：[Springer05359](https://link.springer.com/chapter/10.1007/978-3-032-02548-7_2) | 同题三作者/完整AB及First Online/Published Aug22 2025，止精确DOI页面，不以版权2026覆盖在线日期；root§21实际独核 | 已检查 | 同正文窗前公开事件去重，不称原研究已审/历史samebytes或全家族窗外，不扩全文/评分 |
 | 表外：[IJCNN19305程序](https://confcats-siteplex.s3.us-east-1.amazonaws.com/ijcnn25/IJCNN_2025_Program_77b2d8aef4.pdf) | 同题三作者具名搜索信号；正常PDF一次45s得852535/11784231B即超时停止，未冒完整目标页实读 | 受阻 | 仅窗前介绍线索，正文first资格仍限定；不重慢下载/全会库存 |
@@ -125,11 +125,25 @@
 | [Training LLMs to be Better Text Embedders through Bidirectional Reconstruction](https://arxiv.org/html/2509.03020v1) | 2025-09-04 | 真实pair的双向EOS生成重建后另行对比训练，消费目标分责；2+1+2=5 | 深入完成 | 整合：AGENT-RAG [Ch76双向EOS重建训练接口](../../../../books/part-07-agent/76-rag.md)，root§62真实POST生效释放 |
 | [Mitigating Multimodal Hallucinations via Gradient-based Self-Reflection](https://arxiv.org/html/2509.03113v1) | 2025-09-04 | 输入gradient局部sensor提出noun条件mask和两条件logit控制，非视觉真值；2+1+2=5 | 深入完成 | 整合：MODEL-SAMPLING [Ch20敏感度sensor/条件解码](../../../../books/part-02-model/20-sampling.md)，root§62真实POST生效释放 |
 | [Towards Realistic Hand-Object Interaction with Gravity-Field Based Diffusion Bridge](https://arxiv.org/html/2509.03114v1) | 2025-09-04 | 语言条件接触场与随机bridge/soft约束接口；2+2+2=6 | 争议 | 暂缓：MULTIMODAL-EMBODIED-VLA/Ch26，正Gaussian势/负梯度方向与接触/停止可行性桥未闭，Boyle§82及root§59已核 |
-| [Unveiling the Response of Large Vision-Language Models to Visually Absent Tokens](https://arxiv.org/html/2509.03025v1) | 2025-09-04 | 可读视觉缺失信号、原forward使用与外接detector后行为权限分验；2+1+2=5 | 待审阅 | 暂缓：WORLDVIEW-REPRESENTATION/Ch5最终有限采用的具体NC提案待root，见作者§83 |
+| [Unveiling the Response of Large Vision-Language Models to Visually Absent Tokens](https://arxiv.org/html/2509.03025v1) | 2025-09-04 | 可读视觉缺失信号、原forward使用与外接detector后行为权限分验；2+1+2=5 | 标准完成 | 已有覆盖：WORLDVIEW-REPRESENTATION [Ch5读出/原行为/干预权限](../../../../books/part-01-worldview/05-what-neural-networks-learn.md)，root§65已通过最终有限采用 |
+| [RecBase](https://arxiv.org/html/2509.03131v1) | 2025-09-04 | 残差码本逐级启用/reset与离散ID消费者版本分责；2+1+2=5 | 深入完成 | 整合：MULTIMODAL-REPRESENTATION [Ch23码本训练与ID交接](../../../../books/part-03-multimodal-world-models/23-multimodal-representation.md)，root§69实际POST生效释放 |
+| [GVote](https://arxiv.org/html/2509.03136v1) | 2025-09-04 | 近似futurequery投票取原KV索引并集与硬容量/实际读取分责；2+1+2=5 | 深入完成 | 整合：INFER-KV-CACHE [Ch45预算producer](../../../../books/part-05-inference-system/45-why-kv-cache-speeds-up.md)，root§69实际POST生效释放 |
+| [TeRA](https://arxiv.org/html/2509.03234v1) | 2025-09-04 | tensorfold固定scaffold/对角坐标产生高rank与自由度分责；2+1+2=5 | 深入完成 | 整合：TRAIN-LORA [Ch30高rank/低自由度](../../../../books/part-04-training-system/30-lora.md)，root§73实际POST生效释放 |
+| [FlashRecovery](https://arxiv.org/html/2509.03047v1) | 2025-09-04 | optimizer前/中phase决定等待/停止与可重建恢复step；2+2+2=6 | 深入完成 | 整合：TRAIN-CHECKPOINT [Ch35按phase选择恢复边界](../../../../books/part-04-training-system/35-checkpoint.md)，root§73实际POST生效释放 |
+| [CXL-NDP](https://arxiv.org/html/2509.03377v1) | 2025-09-04 | precision-plane读取/losslesscodec与格式转换/计时权限；2+2+2=6 | 争议 | 暂缓：INFER-GPU-MEMORY/Ch54，原v1格式/功耗/计时中心争议已root§71采用，不以TRACE后版回填 |
+| [On the MIA Vulnerability Gap Between Private GANs and Diffusion Models](https://arxiv.org/html/2509.03341v1) | 2025-09-04 | 训练稳定性到MIA风险/架构次序的证明及同威胁质量条件；2+2+2=6 | 争议 | 暂缓：PLATFORM-SECURITY/Ch72，root70+作者91实际非请求者核后root正式采用，中心证明未闭，不写书 |
+| [Evaluation of Stress Detection as Time Series Events – A Novel Window-Based F1-metric](https://arxiv.org/html/2509.03240v1) | 2025-09-04 | 时间容忍/预测与真事件计数支持、randomfloor和输入可见性；2+1+2=5 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM [Ch66时间容忍/计数单位](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)，root79实际POST生效释放 |
+| [SESGO: Spanish Evaluation of Stereotypical Generative Outputs](https://arxiv.org/html/2509.03329v1) | 2025-09-04 | 本地/翻译题源下准确率、错误方向与信息条件分别计分；2+1+2=5 | 标准完成 | 已有覆盖：PLATFORM-EVALUATION-SYSTEM [Ch66极性/方向/信息条件](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)，root74与作者97实际非请求者核 |
+| [Language Models Do Not Follow Occam’s Razor: A Benchmark for Inductive and Abductive Reasoning](https://arxiv.org/html/2509.03345v1) | 2025-09-04 | 缺失规则补全的解释充分/预置匹配/相对简约三路评价；2+1+2=5 | 深入完成 | 整合：PLATFORM-EVALUATION-SYSTEM [Ch66解释评价三路](../../../../books/part-06-ai-infrastructure/66-evaluation-system.md)，root79实际POST生效释放 |
+| [Generative Auto-Bidding in Large-Scale Competitive Auctions via Diffusion Completer-Aligner](https://arxiv.org/html/2509.03348v1) | 2025-09-04 | 固定真实prefix后缀训练/最终属性匹配与inverse动作消费；2+2+2=6 | 深入完成 | 整合：AGENT-PLANNING [Ch79真实prefix/后缀修正与动作consumer](../../../../books/part-07-agent/79-planning.md)，root80实际POST生效释放 |
+| [Annie: Be Careful of Your Robots](https://arxiv.org/html/2509.03383v1) | 2025-09-04 | 任务失败/动作分布偏离与真实state风险违规分别验收；2+1+2=5 | 深入完成 | 已有覆盖：MULTIMODAL-EMBODIED-VLA [Ch26任务/分布偏离/物理风险分验](../../../../books/part-03-multimodal-world-models/26-multimodal-embodied-vla.md)，root78实际安全必要域通过 |
+| [Generalist versus Specialist Vision Foundation Models for Ocular Disease and Oculomics](https://arxiv.org/pdf/2509.03421v1) | 2025-09-04 | 预训练来源×更新权限/标签量/适配与生命周期费用联合选择；2+1+2=5 | 深入完成 | 整合：TRAIN-PRETRAINING [Ch28预训/适配权限与预算选择](../../../../books/part-04-training-system/28-pretraining.md)，root80实际POST生效释放 |
 
-本轮新增正式候选先列已准备的57项，不以此表暂存规模作最终分母：已核日证69潜力、14跨界与8个导航Sep3事件按本日/交接分责处理，不预评分全部或整体Source完成。原101不再统一日期Unknown；67同Sep5、10最早晚于Sep4仅为窗外事件路由。旧40 AB关闭/24title、3OLD/1撤回和本次新AB-C/title/03044撤回差额按精确理由保留，原Anthropic整行完全冻结，不因补窗移归属。
+本轮新增正式候选69项（连旧Anthropic共70家族）均已完成各自所需审阅及Books处置，七中心争议按原分数、反证与重开条件隔离；168日期对象及导航线索不自动成为候选、评分对象或Source通过，14跨界与8个导航Sep3事件按本日/交接分责处理。原101不再统一日期Unknown；67同Sep5、10最早晚于Sep4仅为窗外事件路由。旧40 AB关闭/24title、3OLD/1撤回和本次新AB-C/title/03044撤回差额按精确理由保留，原Anthropic整行完全冻结，不因补窗移归属。
 
 ## 4. 证据与知识整合
+
+下面先保留补查前的连续原证块，其“无新增/日期潜力”等表述只属于旧轮范围，不能覆盖本轮69项新增；本轮采用与32项真实整合见该块之后的逐项证据。
 
 [必要核心](../_sources/daily-20250905/NECESSARY_CORE.md)记录44arXiv+Anthropic1实际版本、段落/PDF物理页、已证明/未证明内容；另两撤回状态只支持排除。HTML优先，04198/03828实际HTML404后PDF恢复，不把所有已下载core授全篇全文审阅。日期保留不进入正面采用链。
 
@@ -371,13 +385,63 @@ raw-gradient范数累计只调整标量步幅，momentum仍决定polar方向，�
 
 ### [Unveiling the Response of Large Vision-Language Models to Visually Absent Tokens](https://arxiv.org/html/2509.03025v1)
 
-清楚对照且原回答正确的人口内发现FFN缺视觉读出，不证明原forward已可靠使用或唯一因果；外接detector/生成回滚又改变可见context和输出人口。正文linear与F2 MLP读出不齐、T2 Yes/POPE与T3二元化MCQ反退、T4局部指标和全部标注/训练/回滚费用保留。作者§83必要方法/原式/主表及F1–5、A–C已实际读，最终仅采用读出/原行为/干预证据权限→Ch5具体NC提案，未冒动态回滚完整recipe已有覆盖，拟5分待root，无新书段注。
+清楚对照且原回答正确的人口内发现FFN缺视觉读出，不证明原forward已可靠使用或唯一因果；外接detector/生成回滚又改变可见context和输出人口。正文linear与F2 MLP读出不齐、T2 Yes/POPE与T3二元化MCQ反退、T4局部指标和全部标注/训练/回滚费用保留。作者§83必要方法/原式/主表及F1–5、A–C已实际读，最终仅采用读出/原行为/干预证据权限→Ch5具体NC，root65已实际五分通过；未冒动态回滚完整recipe已有覆盖，无新书段注。
+
+### [RecBase](https://arxiv.org/html/2509.03131v1)
+
+残差码本逐级启用与低usage首级reset改变离散ID语义，必须与encoder/码本及下游消费者共同版本化；原正entropy最小化方向、局部消融反退与再编码全费保留。作者§85真实非请求者必要Source5、Ch23小gap/原PRE及root66有效，root69实际完整新增/两侧/本人注POST通过，整合生效释放，不第三读。
+
+### [GVote](https://arxiv.org/html/2509.03136v1)
+
+按近似futurequery和Gaussian/RoPE代理投票取得原KV索引并集，只是预算proposal而非未来真值；C0并入、capacity、统计人口/未见query、临时矩阵/OOM与gather全费限定采用。作者§84真实非请求者必要Source5/Ch45差额与root66有效，root69实际POST通过、生效释放，不签普遍无损或2倍。
+
+### [TeRA](https://arxiv.org/html/2509.03234v1)
+
+固定随机tensor scaffold上的少量对角坐标可产生高rank更新，但不覆盖任意dense自由度，rank上界非每seed必满秩；单零轴初始化、fold/seed身份、未闭Theorem3与重建/搜索全费保留。作者§87真实非请求者必要Source5/Ch30原PRE、root71写位有效，root73一次实际POST通过、生效释放。
+
+### [FlashRecovery](https://arxiv.org/html/2509.03047v1)
+
+optimizer前阻止幸存者提交，已进入更新则先等待健康参与者完成，再选择可重建的同世代step；入口barrier/heartbeat不替device完成，DP不自动保完整分片state。持久兜底/通信epoch、实际4800卡条件、检测与重放估算/相关fault及全费保留。作者§86/ root72必要Source6与原PRE通过，root73实际POST通过、生效释放。
+
+### [CXL-NDP](https://arxiv.org/html/2509.03377v1)
+
+原v1 precision-plane读取的目标数值格式、metadata比例/功耗与计时对象未闭，lossless恢复原位型不证明降精度无误差；2/4位型投影、140/4096比例和32模块功耗反侧均在作者§88实际非请求者核。root71正式六分中心争议/Books暂缓，不拿TRACE后版倒填、不据此声称全硬件结果虚假。
+
+### [On the MIA Vulnerability Gap Between Private GANs and Diffusion Models](https://arxiv.org/html/2509.03341v1)
+
+加权loss抵消不控制未加权score差，共同noise不消除分叉后共同gradient差，期望稳定到事件界和不同上界到真实风险次序亦缺条件。MNIST/不同可见接口/质量与运行预算、有限攻击非DP否定等边界保留。root70加作者91实际非请求者原域/反例核、root76正式六分中心争议/Books暂缓，不第三Source或写书。
+
+### [Evaluation of Stress Detection as Time Series Events – A Novel Window-Based F1-metric](https://arxiv.org/html/2509.03240v1)
+
+同一预测的时间容忍、标签密度与TP/FN单位改变分数；增加旧命中附近预测可提高按印式recall而未多找回事件，paK0边界不默改。宽窗random退化、subject统计/计数不齐、历史stress标签输入和两硬件域限定解释。作者92与root77实际必要Source5、Ch66原PRE通过并授位，原段已存/作者99完整自读，root79一次实际完整写后POST通过、生效释放；只同步本人注，不第三读原证或正文。
+
+### [SESGO: Spanish Evaluation of Stereotypical Generative Outputs](https://arxiv.org/html/2509.03329v1)
+
+本地题源、matched翻译、正负framing及Unknown/充分信息人口分验；signed总体错误不纯等bias，Eq1/DeepSeek温度1零值与T2/3角色未闭，不采用完整指标或alignment迁移因果。root74与作者97实际非请求者必要Source5/Ch66极性映射、原item/方向与信息条件具体已有覆盖，无新书写。
+
+### [Language Models Do Not Follow Occam’s Razor: A Benchmark for Inductive and Abductive Reasoning](https://arxiv.org/html/2509.03345v1)
+
+有限本体树隐藏规则后，将解释所有观测、恢复预置规则和相对简约分开；q依proof/representation，reference为1非全局最优。长度/高度、不同checkpoint的RL因果、未核parser及全费保留。root75与作者98实际非请求者必要Source5/Ch66差额和75.1原PRE通过，随后获得root当前窄位授权、原75.1真实保存；root79一次实际完整写后POST通过、生效释放。
+
+### [Generative Auto-Bidding in Large-Scale Competitive Auctions via Diffusion Completer-Aligner](https://arxiv.org/html/2509.03348v1)
+
+固定真实历史并随机cut后缀训练，采样后匹配指定属性再经inverseconsumer产动作；不是因果/硬动态可达性，原Alg2/Eq5未闭、不采用全recipe。validity98.7%非全过、ER仍超界、D4RL反退、100采样步/全模型及线上7天/360CPU/+6ms权限保留。作者94必要Source6/Ch79差额与原94.1已root78通过并授精确位，原段真实保存后root80一次实际完整新增/两侧/本人注POST通过，整合生效释放。
+
+### [Annie: Be Careful of Your Robots](https://arxiv.org/html/2509.03383v1)
+
+任务失败/动作角度或分布偏离不等当前state的距离/速度/接触违规；原AD印式不具不变零值/有零分母问题，taxonomy只作者场景定义而非本次标准认证。九场景/白盒权限/不同模型normalization、单场对照与十次中四次真实回放不授普遍物理攻击或防御。作者95必要安全Source5/Ch26具体NC已root78实际必要域通过，无新书写。
+
+### [Generalist versus Specialist Vision Foundation Models for Ocular Disease and Oculomics](https://arxiv.org/pdf/2509.03421v1)
+
+必要方法/结果与实际Figure5–7显示预训来源、headonly/fullencoder、标签量和适配费须联合比较；10%平均通用DINOv3可高于领域RETFound，非专用始终更优。预训recipe不匹配、bootstrapSE口径/未读附表与全部生命周期费限定采用，不采临床有效或cosine因果。作者96必要Source5/Ch28差额及原96.1已root78实际必要PDF和Fig5–7通过，精确原段已保存并经root80一次实际完整新增/两侧/本人注POST通过，整合生效释放；原PDF有界恢复/strict39页和prefix相同只证本地原件，不作历史samebytes。
 
 ## 5. 缺口与下一步
 
-本轮当前普通工作：14项（精确集合/归属见作者§3）。03025已有必要Source5/Ch5最终采用的具体NC提案待root；另外十三必要Source仍普通，03131/03136由root完成提案后交Boyle一次非请求者核，其余从03047继续。当前58家族为24真实整合、27具体NC、5正式中心争议、1待审提案及旧Anthropic1仅报告，root61/62三实际POST生效释放、root60已02966具体NC、root59已03114六分争议。无待POST/书写锁；Google本日原category正确已定点核不新请求。普通工作不归外阻，不扩窗/池，进行中，无DAY。
+本轮普通获取、贡献/证据审阅、Books待写及待POST：无。70唯一家族已按32实际整合/30具体已有覆盖/7正式中心争议/旧Anthropic1仅报告归并，全部32整合以指定非writer实际POST为准，无本日写锁或未执行授权。root81完整非作者六节DAY及root82真实完成态FINAL均已实际通过，09-05本次补查接纳，累计18/132；本日无行政待办。
 
-以下“普通无/已DAY”只为20261011旧轮历史，不代本轮：
+本轮已隔离的非正面保留项：14个跨日身份03525/03526/03531/03533/03537、04508/04516/06990/06992/06994/10513/10515/2510.01197/04515，分别缺可收紧到Sep4的原始公开依据或具名先稿关系；原始字段、正常入口停止与可接受替代见作者§4/16/26及root15。19305的IJCNN具名旧事件角色仍有限保留，05359已明确窗前同正文去重；都不扩大本日或冒当窗候选。七机构本日历史缺段沿root28/作者44/77实际范围隔离，替代为对应本窗原目录/具名官方事件，不再扫描年度库存。上述项是已独核停止的本窗保留项，不是普通未读研究，不支持正面覆盖/无遗漏；正式七中心争议的精确重开条件见各证据段及作者记录，不用访问失败替代争议。
+
+以下“普通无/已DAY”、101统一缺日证及原机构段均只为20261011旧轮历史，不代本轮；本轮已经解除的日证按当前候选表/作者有效日期包，不继承旧统一Unknown：
 
 本轮普通可执行工作：无。可访问题摘、具名必要反侧、MiMo iframe日期与有限来源恢复已处理，未以日期缺口跳过全部源或普通工作；六节DAY及[完成态FINAL§14](../_sources/daily-20250905/SUP_INDEPENDENT_20261011.md#14-完成态行政差额实际final)实际通过，root已读回验收本窗安全终态，不授保留项正面权限。必要局部/三项改判见[SUP_NARROW](../_sources/daily-20250905/SUP_NARROW_20261011.md)。
 
@@ -392,11 +456,13 @@ raw-gradient范数累计只调整标量步幅，momentum仍决定polar方向，�
 
 ## 6. 复核
 
-复核者：root（本轮报告作者Boyle以外的独立复核者）
+复核者：root（非本轮报告作者Bernoulli及前任Boyle）
 
-结论：未通过
+结论：通过
 
-本轮fresh修复正在执行；root§2/日期包及作者逐批准入/非请求者校准有效。旧19/root六/导航七处置已实际独核；连root61/62真实POST计24整合，27具体NC、03312/03141/02718/02785/03114五正式中心争议及旧Anthropic1仅报告有效，争议项不作正面Evidence/Books。02966已root60必要Source6/Ch26具体NC；03113/03114已Boyle81/82真实非请求者核，root59接纳，未重复GET。03025提案待root，另外十三必要Source/独核普通继续，共14，不预普通0。七机构、两先稿及14cross精确保留不授正面Coverage/无遗漏；Google§77仅定点核原category构造实际正确、不新GET，不预日级。
+root81已实际完整审阅当前六部分、70候选及逐项证据和全部当前Source边界，本轮六节DAY通过，作者为Bernoulli（继任Boyle）。发现/导航/来源、原窗口与Sep4补窗、准入/日证/必要Source及具体owner按本日真实有效层复用，32项整合均经指定非writer实际新增/完整两侧/本人注POST生效，30具体NC、7中心争议与旧Anthropic1仅报告范围分别保留；最新03348/03421以root80为准。分层排除沿实际SCREEN、必要局部及撤回/先稿校准，不冒全部282身份的精确v1/Methods审阅；无关图像、实现、复现或全部引用文献未核。普通研究/Books/待POST均0，无写锁。七机构、14cross与19305具名先稿按有限真实恢复停止隔离，不支持正面Coverage/Evidence/Books或无遗漏；05359已窗前同正文去重。依root81授权保存完成态并澄清候选表后范围句；真实完成态FINAL尚待root，不借DAY代签FINAL或提前增加完成数。
+
+root81实际机器检查通过：V3、70行=69唯一arxiv ID+旧Anthropic1、处置32/30/7/1、全部本地引用、旧Anthropic完整候选行/日期/评分、原窗口和原连续§4均保持；限定报告/作者/独核/State的working/cached空白检查均0。2026-10-20T22:07:07+08:00作者保存完成稿后实际重跑V3退出0，70/69/32/30/7/1一致、143本地引用可解析、旧完整候选行/窗口/连续1177字符保持，限定报告及作者记录working/cached空白检查均0。机器检查只授其实际范围，不替代语义复核；本完成稿保存后的检查与root真实完成态FINAL分开，不预签FINAL。
 
 以下为20261011旧轮实际独核，不验收本轮：
 

@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content="Rspress v1.46.2">
+    <link rel="stylesheet" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/fonts/font-faces.b3ff14bbe16d.css"><script>// Inlined in <head>, so server-rendered text is protected before hydration.
+(() => {
+  const root = document.documentElement;
+  const selector = '[data-font-text]';
+  const imageSelector = '[data-font-image]';
+  const pendingSelector = '[data-font-text]:not([data-font-ready]), [data-font-image]:not([data-image-ready])';
+  const maxWait = 1500;
+  let currentPath = null;
+  let cleanup = () => {};
+
+  const isHome = (path) => /^\/(?:zh\/?)?(?:index(?:\.html)?)?$/.test(path);
+  const familyName = (name) => name.trim().replace(/^["']|["']$/g, '');
+
+  function stop() {
+    cleanup();
+    currentPath = null;
+    root.classList.remove('home-fonts-loading');
+  }
+
+  function start() {
+    const path = window.location.pathname;
+    if (!isHome(path) || !document.fonts) {
+      stop();
+      return;
+    }
+    if (currentPath === path) return;
+    stop();
+    currentPath = path;
+
+    let active = true;
+    let pending = 0;
+    let sawText = false;
+    const seen = new Set();
+    const requests = new Map();
+    const busy = new Map();
+    const imageListeners = new Set();
+    const blockedInteractions = new Set();
+    const ranges = new Map();
+
+    function syncInteractions() {
+      for (const element of document.querySelectorAll('[data-font-interactive]')) {
+        if (element.matches(pendingSelector) || element.querySelector(pendingSelector)) {
+          // Native inert also prevents keyboard focus and activation. Keep any
+          // pre-existing inert state owned by the component itself.
+          if (!element.inert) {
+            element.inert = true;
+            blockedInteractions.add(element);
+          }
+        } else if (blockedInteractions.delete(element)) {
+          element.inert = false;
+        }
+      }
+    }
+
+    function finish() {
+      if (!active) return;
+      active = false;
+      root.classList.remove('home-fonts-loading');
+      clearTimeout(timer);
+      observer.disconnect();
+      document.removeEventListener('DOMContentLoaded', scan);
+      for (const [element, readyKey] of busy) {
+        element.dataset[readyKey] = 'fallback';
+        element.removeAttribute('aria-busy');
+      }
+      for (const dispose of imageListeners) dispose();
+      for (const element of blockedInteractions) element.inert = false;
+      blockedInteractions.clear();
+      imageListeners.clear();
+      busy.clear();
+    }
+
+    function fontRanges() {
+      // Called after stylesheets are ready; keep the actual CSS unicode ranges.
+      if (ranges.size) return;
+      for (const face of document.fonts) {
+        const family = familyName(face.family);
+        const list = ranges.get(family) || [];
+        for (const part of face.unicodeRange.split(',')) {
+          const range = part.trim().replace(/^U\+/i, '').split('-');
+          const lower = parseInt(range[0].replace(/\?/g, '0'), 16);
+          const upper = parseInt((range[1] || range[0]).replace(/\?/g, 'F'), 16);
+          list.push([lower, upper]);
+        }
+        ranges.set(family, list);
+      }
+    }
+
+    function requiredFonts(element) {
+      const samples = new Map();
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.textContent.trim()) continue;
+        const style = getComputedStyle(node.parentElement);
+        const families = style.fontFamily.split(',').map(familyName);
+        for (const character of node.textContent) {
+          const point = character.codePointAt(0);
+          const family = families.find((name) => (ranges.get(name) || []).some(([a, b]) => a <= point && point <= b));
+          if (!family) continue; // System font or a character outside our fonts.
+          const spec = `${style.fontStyle} ${style.fontWeight} 16px "${family}"`;
+          if (!samples.has(spec)) samples.set(spec, new Set());
+          samples.get(spec).add(character);
+        }
+      }
+      return [...samples].map(([spec, chars]) => [spec, [...chars].join('')]);
+    }
+
+    function scan() {
+      if (!active) return;
+      if (document.readyState === 'loading') {
+        syncInteractions();
+        return;
+      }
+      fontRanges();
+      for (const image of document.querySelectorAll(imageSelector)) {
+        if (seen.has(image)) continue;
+        seen.add(image);
+        sawText = true;
+        if (image.complete) {
+          image.dataset.imageReady = image.naturalWidth ? 'cached' : 'fallback';
+          continue;
+        }
+        delete image.dataset.imageReady;
+        image.setAttribute('aria-busy', 'true');
+        busy.set(image, 'imageReady');
+        pending++;
+        const dispose = () => {
+          image.removeEventListener('load', loaded);
+          image.removeEventListener('error', failed);
+          imageListeners.delete(dispose);
+        };
+        const reveal = (status) => {
+          dispose();
+          if (!active) return;
+          release(image, status);
+        };
+        const loaded = () => {
+          if (image.decode) image.decode().then(() => reveal('loaded'), () => reveal('fallback'));
+          else reveal('loaded');
+        };
+        const failed = () => reveal('fallback');
+        imageListeners.add(dispose);
+        image.addEventListener('load', loaded, { once: true });
+        image.addEventListener('error', failed, { once: true });
+      }
+      for (const element of document.querySelectorAll(selector)) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        sawText = true;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        // Offscreen text, hidden Blog entries and the hero's back face never
+        // hold up the visible page. Their fonts still load normally through CSS.
+        if (!rect.width || !rect.height || rect.bottom <= 0 || rect.top >= window.innerHeight || style.visibility === 'hidden' || element.closest('[aria-hidden="true"], [data-font-skip]')) {
+          element.dataset.fontReady = 'offscreen';
+          continue;
+        }
+        const needed = requiredFonts(element);
+        const missing = needed.filter(([spec, text]) => !document.fonts.check(spec, text));
+        if (!missing.length) {
+          element.dataset.fontReady = 'cached';
+          continue;
+        }
+        delete element.dataset.fontReady;
+        element.setAttribute('aria-busy', 'true');
+        busy.set(element, 'fontReady');
+        pending++;
+        const promises = missing.map(([spec, text]) => {
+          const key = spec + text;
+          if (!requests.has(key)) requests.set(key, document.fonts.load(spec, text));
+          return requests.get(key);
+        });
+        Promise.all(promises).then(() => release(element, 'loaded'), () => release(element, 'fallback'));
+      }
+      syncInteractions();
+      if (sawText && pending === 0) finish();
+    }
+
+    function release(element, status) {
+      if (!active || !busy.has(element)) return;
+      element.dataset[busy.get(element)] = status;
+      element.removeAttribute('aria-busy');
+      busy.delete(element);
+      if (--pending === 0) finish();
+      else syncInteractions();
+    }
+
+    // The timer runs independently of React and font promises, including errors.
+    const timer = setTimeout(finish, maxWait);
+    const observer = new MutationObserver(scan);
+    cleanup = finish;
+    root.classList.add('home-fonts-loading');
+    document.querySelectorAll(selector).forEach((element) => delete element.dataset.fontReady);
+    observer.observe(root, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', scan, { once: true });
+    scan();
+  }
+
+  window.__mimoHomeFonts = { start, stop };
+  window.addEventListener('pageshow', (event) => { if (event.persisted) stop(); });
+  start();
+})();
+</script><script>document.documentElement.classList.toggle('coder-docs',false);document.documentElement.classList.toggle('mimo-site',true);document.documentElement.classList.toggle('legal-docs',false);</script><title data-rh="true"></title><meta data-rh="true" name="description" content="A post-mortem on repeated tool calls in MiMo-V2.6: how tool-call flooding was amplified during RL, why a stricter penalty alone was costly and generalized poorly, and how a repetition-specialized RL teacher with MOPD fixed it."/>
+  <link rel="icon" href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/mimo.ico"><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/styles.928fc8b8.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-react.a6be410a.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/lib-router.93d86b80.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/4752.2908c99e.js"></script><script defer src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/js/index.3082e2d7.js"></script><link href="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/css/styles.f0e8146a.css" rel="stylesheet"></head>
+
+  <body >
+    <div id="root"><div class="navContainer_d18b1 rspress-nav px-6  sticky_ddfa7"><div class="container_e4235 flex justify-between items-center h-full"><div class="navTitleWrapper-w9ofxD " data-font-media="logo" data-font-interactive="true"><img src="https://cdn.cnbj1.fds.api.mi-img.com/aife/mimo-blog-fe/doc_build/static/image/logo.99baaffe.png" alt="logo" class="mimoLogo-KV4r25" data-font-image="true"/></div><div class="flex flex-1 justify-end items-center"><div class="rightNav_a2fea"><div class="rspress-nav-menu menu h-14"></div><div class="flex-center flex-row"><div class="translation menu-item_b8238 flex text-sm font-bold items-center px-3 py-2"><div><div class="relative flex-center h-14"><button class="rspress-nav-menu-group-button flex-center items-center font-medium text-sm text-text-1 hover:text-text-2 transition-colors duration-200"><span class="text-sm font-medium flex break-keep" style="margin-right:2px"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="rspress-nav-menu-group-content absolute mx-0.8 transition-opacity duration-300" style="opacity:0;visibility:hidden;right:0;top:52px"><div class="p-3 pr-2 w-full h-full max-h-100vh whitespace-nowrap" style="box-shadow:var(--rp-shadow-3);z-index:100;border:1px solid var(--rp-c-divider-light);border-radius:var(--rp-radius-large);background:var(--rp-c-bg)"><div><div class="rounded-2xl my-1 flex" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><span class="text-brand">English</span></div></div><div><div class="font-medium my-1"><a href="/zh/blog/mimo-v2-6-tool-call-repetition" class="link_a7cea "><div class="rounded-2xl hover:bg-mute" style="padding:0.4rem 1.5rem 0.4rem 0.75rem"><div class="flex"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div><div class="mimo-home-nav-links" aria-label="Main navigation"><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Product<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/mimocode" role="menuitem">MiMo Code</a><a class="mimo-nav-dropdown__item" href="/go/desktop" role="menuitem">MiMo Desktop</a></div></div><div class="mimo-nav-dropdown" data-font-interactive="true"><button type="button" class="rspress-nav-menu-item mimo-nav-dropdown__trigger" data-font-text="true">Research<svg class="mimo-nav-dropdown__caret" width="1em" height="1em" viewBox="0 0 32 32" aria-hidden="true"><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div class="mimo-nav-dropdown__menu" role="menu"><a class="mimo-nav-dropdown__item" href="/#paper" role="menuitem">Paper</a><a class="mimo-nav-dropdown__item" href="/#blog" role="menuitem">Blog</a></div></div><a class="rspress-nav-menu-item" href="/#joinUs" data-font-text="true" data-font-interactive="true">Join Us</a></div><div class="mobileNavMenu_e7045"><div class="navScreen_ec30c  rspress-nav-screen" id="navScreen"><div class="container_c935d"><div class="navMenu_b887b"></div><div class="flex-center flex-col gap-2"><div class="flex text-sm font-bold justify-center"><div class="mx-1.5 my-1"><div class=" navScreenMenuGroup_e771d relative"><button class="button_ea41e"><span class="buttonSpan_f4b8f"><svg width="18" height="18" viewBox="0 0 32 32" style="width:18px;height:18px"><path fill="currentColor" d="M27.85 29H30l-6-15h-2.35l-6 15h2.15l1.6-4h6.85zm-7.65-6 2.62-6.56L25.45 23zM18 7V5h-7V2H9v3H2v2h10.74a14.7 14.7 0 0 1-3.19 6.18A13.5 13.5 0 0 1 7.26 9h-2.1a16.5 16.5 0 0 0 3 5.58A16.8 16.8 0 0 1 3 18l.75 1.86A18.5 18.5 0 0 0 9.53 16a16.9 16.9 0 0 0 5.76 3.84L16 18a14.5 14.5 0 0 1-5.12-3.37A17.64 17.64 0 0 0 14.8 7z"></path></svg></span><svg width="1em" height="1em" viewBox="0 0 32 32" class=" down_f631a "><path fill="currentColor" d="M16 22 6 12l1.4-1.4 8.6 8.6 8.6-8.6L26 12z"></path></svg></button><div><div class="items_dd149"><div><div class="p-1 text-center"><span class="text-brand">English</span></div></div><div><div class="py-1 font-medium"><a href="/zh/blog/mimo-v2-6-tool-call-repetition" class="link_a7cea "><div><div class="flex justify-center"><span>简体中文</span></div></div></a></div></div></div></div></div></div></div></div></div></div><button aria-label="mobile hamburger" class=" rspress-mobile-hamburger navHamburger_ac64c text-gray-500"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="currentColor"><circle cx="8" cy="16" r="2" fill="currentColor"></circle><circle cx="16" cy="16" r="2" fill="currentColor"></circle><circle cx="24" cy="16" r="2" fill="currentColor"></circle></svg></button></div></div></div></div><section><!--$--><style>
+/* ========================================
+   MiMo-V2.6 Tool-Call Repetition Post-Mortem
+   Clean Article Style
+   ======================================== */
+
+:root {
+    --bg-primary: #FAF7F5;
+    --bg-secondary: #F5F0EB;
+    --text-primary: #1a1a1a;
+    --text-secondary: #555;
+    --text-tertiary: #888;
+    --accent: #E1A555;
+    --border: rgba(0, 0, 0, 0.1);
+    --font-serif: &quot;PT Serif&quot;, Georgia, serif;
+    --font-title: &quot;Ubuntu&quot;, -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, &quot;SF Pro Text&quot;, &quot;Segoe UI&quot;, Roboto, sans-serif;
+    --font-mono: &quot;SF Mono&quot;, &quot;Fira Code&quot;, Consolas, monospace;
+}
+
+*::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+    overflow-x: hidden;
+}
+
+body {
+    overflow-x: hidden;
+    font-family: var(--font-serif);
+    font-weight: 450;
+    font-optical-sizing: auto;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    line-height: 1.8;
+    -webkit-font-smoothing: antialiased;
+    padding: 0;
+    margin: 0;
+}
+
+.article {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 4rem 2rem 6rem;
+}
+
+.hero-section {
+    text-align: center;
+    margin-bottom: 4rem;
+}
+
+.hero-title {
+    font-family: var(--font-title) !important;
+    font-size: 2.75rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+}
+
+.hero-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 1.5rem;
+}
+
+.hero-buttons .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-family: var(--font-title) !important;
+    font-size: 0.78rem;
+    font-weight: 500;
+    text-decoration: none;
+    padding: 0.5rem 1.25rem;
+    border-radius: 100px;
+    transition: all 0.2s;
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid #ccc;
+}
+
+.hero-buttons .btn:hover {
+    border-color: #999;
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+.hero-buttons .btn-chevron {
+    font-size: 1.1em;
+    line-height: 1;
+}
+
+.hero-buttons .btn-filled {
+    background: #1D0601;
+    color: #fff;
+    border: 1px solid #1D0601;
+}
+
+.hero-buttons .btn-filled:hover {
+    background: #3a1a10;
+    color: #fff;
+    border-color: #3a1a10;
+}
+
+.hero-buttons .btn-outline {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid #ccc;
+}
+
+.hero-buttons .btn-outline:hover {
+    border-color: #999;
+    color: var(--text-primary);
+}
+
+.hero-subtitle {
+    font-size: 1.125rem;
+    font-style: italic;
+    color: var(--text-secondary);
+    margin: 0 auto 1.5rem;
+    max-width: 640px;
+}
+
+.hero-date {
+    display: block;
+    text-align: center;
+    font-family: var(--font-title) !important;
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    margin-bottom: 2rem;
+}
+
+.section {
+    margin-bottom: 4.5rem;
+}
+
+h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    margin-bottom: 1rem;
+    margin-top: 2.5rem;
+    font-family: var(--font-title) !important;
+}
+
+h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+    margin-top: 1.75rem;
+    font-family: var(--font-title) !important;
+    color: var(--text-primary);
+}
+
+p {
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+strong {
+    font-weight: 500;
+    color: var(--text-primary);
+    font-family: var(--font-title) !important;
+}
+
+em {
+    font-style: italic;
+    color: var(--text-primary);
+}
+
+code {
+    font-family: var(--font-mono) !important;
+    font-size: 0.9em;
+    background: var(--bg-secondary);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+    color: var(--text-primary);
+}
+
+ul, ol {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+}
+
+.article ul {
+    list-style-type: disc !important;
+}
+
+li {
+    margin-bottom: 0.5rem;
+    color: var(--text-secondary);
+}
+
+li::marker {
+    color: var(--text-tertiary);
+}
+
+.lead p {
+    color: var(--text-secondary);
+}
+
+.external-link {
+    color: var(--accent);
+    text-decoration: underline;
+    font-weight: 500;
+}
+
+.external-link:hover {
+    color: #E55C00;
+    text-decoration: none;
+}
+
+/* Figures */
+figure.mopd-figure img {
+    border: 1px solid var(--border);
+}
+
+.figure-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+    align-items: start;
+}
+
+.figure-row figure.mopd-figure {
+    margin: 0 !important;
+}
+
+.figure-row figure.mopd-figure img {
+    width: 100% !important;
+    height: auto !important;
+    border: 1px solid var(--border);
+    border-radius: 11px;
+}
+
+.figure-row figure.mopd-figure figcaption {
+    font-family: var(--font-title) !important;
+    font-size: 0.8rem !important;
+    color: var(--text-tertiary) !important;
+    margin-top: 0.6rem !important;
+}
+
+/* Inline formula */
+.formula {
+    text-align: center;
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-size: 1.05rem;
+    color: var(--text-primary);
+    margin: 1rem 0 1.25rem;
+}
+
+.formula sub, .formula sup {
+    font-size: 0.7em;
+    font-style: normal;
+}
+
+/* Data tables */
+.table-caption {
+    font-family: var(--font-title) !important;
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    text-align: center;
+    margin: 1.5rem 0 0.5rem;
+}
+
+.data-table-wrap {
+    overflow-x: auto;
+    margin: 0.5rem 0 1.5rem;
+}
+
+.data-table-wrap .data-table {
+    display: table !important;
+    width: 70% !important;
+    min-width: 340px !important;
+    max-width: 720px !important;
+    margin: 0 auto !important;
+    border-collapse: collapse !important;
+    font-family: var(--font-title) !important;
+    font-size: 0.78rem !important;
+    line-height: 1.5 !important;
+    font-variant-numeric: tabular-nums;
+    background: #fff !important;
+    border: 1px solid var(--bg-secondary) !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
+}
+
+.data-table-wrap .data-table.is-wide {
+    width: 100% !important;
+    max-width: none !important;
+}
+
+.data-table-wrap .data-table tr {
+    border: none !important;
+    background: transparent !important;
+}
+
+.data-table-wrap .data-table th,
+.data-table-wrap .data-table td {
+    font-family: var(--font-title) !important;
+    padding: 0.8rem 1.25rem !important;
+    text-align: left !important;
+    border: none !important;
+    border-bottom: 1px solid var(--bg-secondary) !important;
+}
+
+.data-table-wrap .data-table th + th,
+.data-table-wrap .data-table td + td {
+    border-left: 1px solid var(--bg-secondary) !important;
+}
+
+.data-table-wrap .data-table thead th {
+    background: var(--bg-secondary) !important;
+    font-weight: 600 !important;
+    color: var(--text-primary) !important;
+    font-size: 0.68rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid #e0d9d0 !important;
+}
+
+.data-table-wrap .data-table.is-numeric th:not(:first-child),
+.data-table-wrap .data-table.is-numeric td:not(:first-child) {
+    text-align: center !important;
+}
+
+.data-table-wrap .data-table tbody tr:last-child td {
+    border-bottom: none !important;
+}
+
+.data-table-wrap .data-table tbody td {
+    color: var(--text-secondary) !important;
+}
+
+.data-table-wrap .data-table tbody td:first-child {
+    color: var(--text-primary) !important;
+    font-weight: 500 !important;
+    white-space: nowrap;
+}
+
+/* Footer */
+.footer {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid #eee;
+    text-align: center;
+    font-family: var(--font-title) !important;
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+}
+
+.footer p {
+    font-family: var(--font-title) !important;
+    color: var(--text-tertiary);
+    margin-bottom: 0;
+}
+
+@media (max-width: 600px) {
+    html {
+        font-size: 16px;
+    }
+
+    .article {
+        padding: 2rem 1rem 4rem;
+    }
+
+    h2 {
+        font-size: 1.25rem;
+    }
+
+    .hero-title {
+        font-size: 2rem;
+    }
+
+    .figure-row {
+        grid-template-columns: 1fr;
+    }
+
+    .data-table-wrap .data-table {
+        font-size: 0.72rem !important;
+    }
+
+    .data-table-wrap .data-table th,
+    .data-table-wrap .data-table td {
+        padding: 0.5rem 0.6rem !important;
+    }
+}
+
+::selection {
+    background: var(--accent);
+    color: white;
+}
+</style>
+<div class="article"><section class="hero-section"><time class="hero-date" dateTime="2026-09-27">September 27, 2026</time><h1 class="hero-title">Diagnosing and Mitigating Tool-Call Repetition in MiMo-V2.6</h1><p class="hero-subtitle">A lesson from scaling RL: the reward blind spot in optimizing for correctness</p><nav class="hero-buttons"><a href="https://huggingface.co/collections/XiaomiMiMo/mimo-v26" target="_blank" rel="noopener" class="btn btn-filled">Hugging Face <span class="btn-chevron">›</span></a><a href="https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-RL/blob/main/MiMo_V2_6_technical_report.pdf" target="_blank" rel="noopener" class="btn btn-outline">Tech Report <span class="btn-chevron">›</span></a><a href="/zh/blog/mimo-v2-6-tool-call-repetition" class="btn">中文 <span class="btn-chevron">›</span></a></nav></section><section class="section lead"><p>Following the release of MiMo-V2.6, tool-call repetition emerged as one of the most noticeable issues affecting the user experience. In MiMo Desktop, MiMo Code, OpenCode, and other agentic settings, the model would sometimes issue the same or highly similar tool calls repeatedly, consuming substantial time and context without making meaningful progress.</p><p>Our internal evaluations confirmed this pattern: the response-level repetition rate exceeded 0.05%. The table below breaks down the rates for MiMo-V2.6-Flash-RL and MiMo-V2.6-Pro-RL across different agent harnesses.</p><p class="table-caption">Tool-call repetition rates of MiMo-V2.6-Flash-RL and MiMo-V2.6-Pro-RL across agent harnesses</p><div class="data-table-wrap"><table class="data-table is-numeric"><thead><tr><th>Harness</th><th>MiMo-V2.6-Flash-RL</th><th>MiMo-V2.6-Pro-RL</th></tr></thead><tbody><tr><td>OpenCode</td><td>1.02%</td><td>0.54%</td></tr><tr><td>MiMo Desktop</td><td>0.19%</td><td>0.19%</td></tr><tr><td>Claude Code</td><td>0.27%</td><td>0.10%</td></tr><tr><td>OpenClaw</td><td>0.17%</td><td>0.08%</td></tr><tr><td>Codex</td><td>0.23%</td><td>0.07%</td></tr><tr><td>MiMo Code</td><td>0.11%</td><td>0.07%</td></tr><tr><td>DeepSeek Harness</td><td>0.17%</td><td>0.07%</td></tr><tr><td>Hermes</td><td>0.16%</td><td>0.05%</td></tr><tr><td>Zcode</td><td>0.07%</td><td>0.05%</td></tr></tbody></table></div></section><section class="section"><h2>Tracing the Source of Tool-Call Repetition</h2><p>To understand the problem, we first distinguish among normal parallel tool calling, tool-call flooding, and tool-call repetition.</p><p><strong>Parallel tool calls are a standard way to improve agent efficiency.</strong> For example, an agent may read several relevant files at once or run multiple independent queries in parallel. Even calls to the same tool are not repetitive when they serve different information needs. Tool-call flooding occurs when the model issues substantially more calls than the task requires or the execution environment can process effectively, creating execution queues and backlogs of pending tool results.</p><p><strong>Tool-call repetition, by contrast, refers to repeated actions with no reasonable justification.</strong> The model continues to generate semantically identical or highly similar calls even though neither the available information nor the environment state has materially changed and there is no legitimate reason to retry or verify the result. This may occur within a single response, across turns after tool feedback, or as a loop over the same sequence of operations. Reasonable retries after failures, necessary state polling, and rerunning tests after modifying code do not count as repetition here.</p><p><strong>Flooding and repetition can occur independently, but they may also reinforce one another.</strong> A model can issue many duplicate calls in one response and continue the same behavior in later turns, compounding wasted computation and context usage while making little progress. From the user&#x27;s perspective, tools keep running but the agent stalls, leading to longer waits, an unresponsive experience, or even task failure.</p><p>The description above defines repetition behaviorally. Because semantic equivalence is difficult to detect reliably at scale, we use a narrower but reproducible metric in this post: <strong>exact within-turn repetition</strong>. We treat the batch of calls emitted in one assistant turn before any tool feedback as a single unit. Two calls count as duplicates when they invoke the same tool and their arguments are identical after JSON canonicalization. If a turn contains <em>N</em> calls and <em>U</em> unique calls, its exact within-turn repetition rate is:</p><p class="formula">(<em>N</em> − <em>U</em>) / <em>N</em></p><p>This metric has two advantages. First, because no tool feedback arrives between calls in the same turn, duplicates generally cannot be explained as result-driven retries. Second, the judgment can be replayed and reproduced directly from a single turn. However, it is only a <strong>lower bound on observable repetition</strong>, not a complete repetition rate or a measure of flooding. It excludes three important cases: cross-turn repetition after tool feedback; near-duplicates whose arguments differ slightly despite serving the same information need; and calls made inside code-mode harnesses, where the model exposes only an <code>exec</code> call while the underlying tool invocations remain embedded in its script.</p><p>To determine when the problem emerged, we replayed a fixed set of internal examples that had exhibited repetition against checkpoints from different stages of RL training (steps 0, 5, 10, 15, and 20). Evaluating the same examples at every checkpoint allowed us to track how the behavior evolved during training.</p><p>For MiMo-V2.6-Flash-RL, the share of replayed examples that still exhibited flooding (more than ten tool calls in a single turn) was already 11.1% at RL step 0, and the flooding rate rose to 24.6% by step 20. The trend was especially pronounced under MiMo Code, where the flooding share was already 30.6% at the start and grew to 41.7% late in training.</p><div class="data-table-wrap"><table class="data-table is-wide is-numeric"><thead><tr><th rowspan="2">RL step</th><th colSpan="6">Share of replayed examples with ≥10 tool calls in a single turn</th></tr><tr><th>MiMo Desktop</th><th>MiMo Code</th><th>OpenCode</th><th>Codex</th><th>Claude Code</th><th>All harnesses</th></tr></thead><tbody><tr><td>0</td><td>11.1%</td><td>30.6%</td><td>5.6%</td><td>5.6%</td><td>8.3%</td><td>11.1%</td></tr><tr><td>5</td><td>16.7%</td><td>22.2%</td><td>0%</td><td>5.6%</td><td>8.3%</td><td>8.7%</td></tr><tr><td>10</td><td>25.0%</td><td>44.4%</td><td>0%</td><td>11.1%</td><td>5.6%</td><td>16.7%</td></tr><tr><td>15</td><td>33.3%</td><td>38.9%</td><td>25.0%</td><td>8.3%</td><td>2.8%</td><td>22.5%</td></tr><tr><td>20</td><td>33.3%</td><td>41.7%</td><td>27.8%</td><td>16.7%</td><td>5.6%</td><td>24.6%</td></tr></tbody></table></div><p>This increase occurred despite an existing tool-call flooding penalty in our RL pipeline. During rollout, if the model issued more than 32 tool calls in a single turn, we stopped the rollout early and set its reward to zero. During the subsequent gradient update, preceding turns were masked out and the penalty was applied only to the turn that triggered the rule. Every token in that turn, including chain-of-thought tokens, was included in the penalty.</p><p>We then examined the corresponding training metrics. The model almost never triggered the flooding penalty early in training. Starting at approximately step 15, however, the number of examples with more than 32 tool calls in a single turn began to rise noticeably and continued increasing as training progressed.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/flooding-in-training-log.png" alt="tool_call_flood context hit count and hit rate over training steps in the MixRL training log; both the Flash and Pro runs rise sharply after roughly step 15" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">Samples triggering the tool-call flooding penalty (more than 32 calls in a turn) in the MixRL training log, as a count and as a rate. The Flash and Pro runs use the same per-turn cap and are directly comparable</figcaption></figure><p>Further analysis suggested that the threshold was too permissive. Using MiMo-V2.6-Flash training traces from the <code>general/dataset-epqd</code> data source, we measured the share of examples containing more than eight tool calls in a single turn. A small fraction already showed high-volume tool calling at RL step 0. Because behavior below the threshold of 32 was not penalized, it was gradually amplified during training and eventually developed into severe flooding that crossed the threshold. Some flooding traces also contained repeated or highly similar calls, but our analysis here focuses on abnormal call volume and does not equate flooding with repetition.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/flooding-and-redundancy-flash.png" alt="Three line charts for the MiMo-V2.6-Flash MixRL run on general/dataset-epqd: the share of turns with more than eight tool calls trends upward, while the share of flooding turns containing duplicate calls and their mean redundancy spike intermittently" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">MiMo-V2.6-Flash training traces (general/dataset-epqd): share of turns with more than eight tool calls (left), share of those turns containing duplicate calls (middle), and mean redundancy (right). Duplicates are exact matches on tool name and JSON-normalized arguments</figcaption></figure></section><section class="section"><h2>A Costly Fix with Limited Generalization</h2><p>The most direct solution was to lower the flooding-penalty threshold. In a separate experiment on a small, isolated <code>general/dataset-epqd</code> data source, we lowered the threshold from 32 calls to eight and resumed training from the step-28 checkpoint of MiMo-V2.6-Flash. The number of turns containing more than eight calls dropped substantially, showing that the stricter penalty effectively suppressed flooding without a noticeable loss in overall reward.</p><p>The drawback was that the effect emerged only after approximately 20 training steps. Applying this fix at full scale would therefore require restarting 20 steps of MixRL, at an estimated cost of $2.31 million.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/cap-8-experiment.png" alt="Six panels for the experiment forked at step 28 with the per-turn cap lowered from 32 to 8: avg@n pass rate stays flat, tool_call_flood hit count and hit rate fall steadily, and the flooding-turn rate, share of flooding turns with duplicate calls, and mean redundancy all drop to zero after roughly step 37" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">Capping tool calls at 8 per turn, resumed from the MiMo-V2.6-Flash step-28 checkpoint (dashed line marks the fork). Top row: training-log metrics; bottom row: offline trace statistics on general/dataset-epqd</figcaption></figure><p>The environment-level penalty also generalized poorly to the full internal evaluation set. Replaying the repetition cases with the resulting checkpoint reduced the repetition rate from 13.45% to 3.83%, but did not eliminate the problem.</p><p class="table-caption">Replay repetition rate of the stricter-penalty checkpoints. History N means the visible history of the replayed request already contains N turns with ≥10 tool calls</p><div class="data-table-wrap"><table class="data-table is-wide is-numeric"><thead><tr><th>Checkpoint</th><th>Internal test set 1 · history 0</th><th>Internal test set 1 · history 1</th><th>Internal test set 2 · history 0</th><th>Internal test set 2 · history 1</th></tr></thead><tbody><tr><td>flash-ga-grpo-s30</td><td>2.27% (1/44)</td><td>28.57% (4/14)</td><td>13.45% (30/223)</td><td>25.00% (13/52)</td></tr><tr><td>flash-ga-grpo-s35</td><td>9.30% (4/43)</td><td>33.33% (5/15)</td><td>7.86% (18/229)</td><td>17.65% (9/51)</td></tr><tr><td>flash-ga-grpo-s40</td><td>11.11% (5/45)</td><td>33.33% (5/15)</td><td>4.58% (11/240)</td><td>17.86% (10/56)</td></tr><tr><td>flash-ga-grpo-s45</td><td>0% (0/45)</td><td>28.57% (4/14)</td><td>4.40% (11/250)</td><td>11.67% (7/60)</td></tr><tr><td>flash-ga-grpo-s50</td><td>0% (0/43)</td><td>28.57% (4/14)</td><td>3.83% (9/235)</td><td>16.98% (9/53)</td></tr></tbody></table></div></section><section class="section"><h2>A More Efficient and Generalizable Solution</h2><p>We therefore needed a solution that was both efficient to train and robust in real-world scenarios beyond the training distribution. We ultimately adopted an MOPD-based approach (Multi-teacher On-Policy Distillation).</p><p>We first used internally collected repetition examples to train a specialized, single-turn RL teacher. A rollout received a reward of 0 when repetition occurred and a reward of 1 only when it contained neither repetition nor erroneous tool use. We also applied a KL loss to keep the teacher close to the original RL policy. After only 12 training steps, comprising approximately 7,000 examples, the teacher reduced replay repetition to zero on both the training and held-out sets.</p><p>To understand the mechanism at a finer level, we examined one trajectory sampled from the RL traces. Before the fix, the model issued 59 tool calls. At every <code>&lt;tool_call&gt;</code> token position, we compared the probability assigned to <code>&lt;|im_end|&gt;</code>, the end-of-turn token, by the models before and after the fix.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/case-schematic.png" alt="Schematic of the example trajectory&#x27;s token sequence: after the thinking block, 59 consecutive tool_call blocks before the end-of-turn token. The 12th tool_call position is highlighted; before the fix the model predicts tool_call with 94.56% and the end token with 5.43%, after the fix 7.83% and 92.17% respectively" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">Schematic of the example trajectory. At the 12th tool-call position, the model before the fix continues with another tool call with 94.56% probability, while the fixed model emits the end-of-turn token with 92.17% probability</figcaption></figure><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/case-end-probability.png" alt="Probability of predicting the end-of-turn token at each tool-call position, before (dashed) and after (solid) the fix: after the fix it repeatedly approaches 100% from the 4th call onward, while before the fix it stays near zero almost throughout" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">Probability of predicting the end-of-turn token &lt;|im_end|&gt; at each tool-call position in the example trajectory, before vs. after the fix</figcaption></figure><p>We also computed the cumulative stopping probability at position <em>k</em>:</p><p class="formula">F<sub>k</sub> = 1 − ∏<sub>i=1</sub><sup>k</sup> (1 − p<sub>i</sub>)</p><p>where <em>F<sub>k</sub></em> is the probability that the model stops by the <em>k</em>-th tool call.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/case-cumulative-end-probability.png" alt="Cumulative termination probability over tool-call positions: after the fix it reaches 99.87% by the 8th call; before the fix it is only 0.32% at the 8th call and 53.72% at the 59th" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">Cumulative termination probability F_k, before vs. after the fix</figcaption></figure><p>On this example, the repaired model had a 99.87% probability of stopping within eight tool calls and showed a strong tendency to stop at every position from five through 20. Before the fix, the cumulative probability of stopping was still only about 50% even after 59 calls.</p><p>The top-four token probabilities at the 12th tool-call position make the change especially clear. Before the fix, the model had a 94.56% probability of continuing with another tool call. After RL training, it assigned a 92.17% probability to ending the turn. The specialized teacher had learned when to stop; the remaining challenge was to merge this behavior into the main model through MOPD.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/case-top4-position-12.png" alt="Top-4 token probability distribution at the 12th tool-call position: before the fix, tool_call 94.56% and end-of-turn 5.43%; after the fix, end-of-turn 92.17% and tool_call 7.83%" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">Top-4 token distribution at the 12th tool-call position, before vs. after the fix</figcaption></figure><p>Specifically, we rolled the final MOPD run back by five steps, introduced the repetition-specialized RL teacher, and continued training with teacher-prefix OPD. Additional details are provided in Section 5.6 of the <a href="https://huggingface.co/XiaomiMiMo/MiMo-V2.6-Pro-RL/blob/main/MiMo_V2_6_technical_report.pdf" target="_blank" rel="noopener" class="external-link">technical report</a>. During training, the repetition-specific <code>flood_opd_loss</code> decreased steadily while the overall <code>opd_loss</code> remained stable.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/mopd-training-dynamics.png" alt="Four panels of MOPD training dynamics: (a) overall OPD loss stays flat; (b) OPD loss on flood-prone data decreases steadily; (c) overall training entropy stays flat; (d) tool-call flood rate on flood-prone data drops to zero within a few steps. Flash and Pro follow the same trend" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">MOPD training dynamics: (a) overall OPD loss; (b) OPD loss on flood-prone data; (c) overall training entropy; (d) tool-call flood rate on flood-prone data</figcaption></figure><p>The final comparison is shown below. After MOPD, repetition rates for both MiMo-V2.6-Pro and MiMo-V2.6-Flash dropped substantially across context lengths and agent harnesses, while performance on the broader benchmark suite held steady. The complete training run cost approximately $90,000, only 4% of the estimated cost of the MixRL alternative.</p><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/pro-harness-heatmap-en.png" alt="Heatmaps of MiMo-V2.6-Pro repetition rate by agent harness and input-length bucket, before MOPD (left) and after MOPD (right)" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">MiMo-V2.6-Pro repetition rate (%) by harness and input length, before and after MOPD. Light-gray cells without values indicate ≤0.001% or no observations</figcaption></figure><figure class="mopd-figure" style="margin:1.5rem 0;text-align:center"><img src="/mimo-v2-6-tool-call-repetition/flash-harness-heatmap-en.png" alt="Heatmaps of MiMo-V2.6-Flash repetition rate by agent harness and input-length bucket, before MOPD (left) and after MOPD (right)" style="display:block;width:100%;height:auto;border-radius:8px;cursor:zoom-in;transition:transform 0.2s ease" loading="lazy"/><figcaption style="font-family:var(--font-title, &quot;PT Serif&quot;, Georgia, serif);font-size:0.8125rem;color:#888;margin-top:0.75rem">MiMo-V2.6-Flash repetition rate (%) by harness and input length, before and after MOPD. Light-gray cells without values indicate ≤0.001% or no observations</figcaption></figure></section><section class="section"><h2>New Checkpoints Released and MiMo Desktop Quota Reset</h2><p>We have open-sourced the latest MOPD checkpoints that address tool-call repetition in the <a href="https://huggingface.co/collections/XiaomiMiMo/mimo-v26" target="_blank" rel="noopener" class="external-link">MiMo-V2.6 collection on Hugging Face</a>. The corresponding model names carry the <code>MOPD</code> suffix.</p><p>As an apology to our users, we will reset the remaining quota in the current usage window for all <a href="/go/desktop" target="_blank" rel="noopener" class="external-link">MiMo Desktop</a> users.</p><p>The updated models have been available on our API platform since September 25 at 06:00 (UTC+8). The model names remain unchanged: <code>mimo-v2.6-pro</code> and <code>mimo-v2.6-flash</code>.</p><p>We hope this post offers useful lessons for diagnosing and addressing behaviors that emerge during RL: issues that may appear minor and evade standard metrics, yet materially affect the model&#x27;s real-world performance across diverse scenarios.</p></section><footer class="footer"><p>Xiaomi MiMo Team · 2026</p></footer></div><!--/$--></section></div>
+    <div id="search-container"></div>
+  </body>
+</html>

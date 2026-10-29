@@ -1,0 +1,740 @@
+Source: https://arxiv.org/html/2605.28292v1
+Main text extraction; fulltext_chars=76766
+
+arXiv:2605.28292v1 [cs.CL] 27 May 2026 
+ 
+ 
+ CIRF: Tokenizing Chain-of-Thoughts into Reusable Functional Units 
+ for Efficient Latent Reasoning in Large Language Models 
+
+ 
+ 
+ 
+ Yukyung Lee  
+ Yumeng Shen  
+ Jinhyeong Park  
+ Hyein Yang  
+ Jun-Hyung Park 
+ 
+ Email:  {yumengshen1023, asdjj, yhi, jhp}@hufs.ac.kr 
+ 
+ Affiliation:  Boston University
+ 
+ Affiliation:  Hankuk University of Foreign Studies
+ 
+ Email:  ylee5@bu.edu 
+ 
+
+ Abstract 
+    
+ Implicit Chain-of-Thought (CoT) reduces the inference cost of large language models by internalizing the explicit rationales. However, existing approaches typically lack alignment with explicit rationales and adaptivity to example complexity. In this work, we propose CIRF ( C hain-of-thoughts  I nto  R eusable  F unctional units ), an implicit CoT framework that performs reasoning as a dynamic sequence of discrete functional tokens. CIRF assigns a functional token to each semantically coherent reasoning unit in explicit CoT traces. The model is then fine-tuned to autoregressively generate functional tokens and their optional results, followed by the final answer. This design aligns latent reasoning with a sequence of functional units, facilitating parallel training, explicit rationale alignment, and adaptive reasoning. Extensive experiments on mathematical, symbolic, and commonsense reasoning benchmarks show that CIRF provides a favorable accuracy-latency trade-off compared with state-of-the-art implicit CoT methods. Further analyses demonstrate that CIRF constructs distinct, interpretable functional tokens, leading to consistent performance improvements. 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ Figure 1:  Overview of CIRF. Each functional unit in a CoT rationale is encoded using a sentence embedding model, mean-centered to reduce question-specific situational bias, and quantized into a discrete functional token. The target LLM is then fine-tuned to generate a compact sequence consisting of functional tokens, optional result tokens, and the final answer tokens. CIRF enables efficient latent reasoning through discrete functional tokens. 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Chain-of-thought (CoT) reasoning  Wei et al. (2022) ;  Wang et al. (2023)  has become a widely used strategy for eliciting multi-step reasoning in large language models (LLMs). By prompting or training a model to generate intermediate rationales before producing the final answer, CoT has substantially improved performance on mathematical and symbolic reasoning tasks. Recent analysis  Sprague et al. (2025)  suggests that the gains from CoT are strongest in domains that require symbolic or multi-step computation, further highlighting the importance of traceable intermediate steps for solving complex problems. 
+
+ 
+ 
+ 
+ Despite its effectiveness, the latency and memory costs incurred by long reasoning traces have motivated research on implicit CoT  Deng et al. (2024) ;  Hao et al. (2025) . Instead of generating full rationales in natural language, these studies aim to internalize, compress, or replace explicit reasoning traces using hidden states or special tokens. They have shown that CoT can be performed implicitly within models, thereby reducing the cost of generating additional natural language tokens. 
+
+ 
+ 
+ 
+ A key requirement for successful internalization is to align the LLM states during implicit CoT with those induced by explicit CoT. Typical implicit CoT methods utilize repeated placeholder tokens  Goyal et al. (2024) ;  Xu et al. (2025b)  for alignment. However, these methods require the model to organize long, dynamic reasoning traces over a sequence whose surface form is largely homogeneous, whereas typical autoregressive LLMs are trained to reason conditioned on growing, changing textual prefixes. Whether such identical carriers provide an effective substrate for multi-step reasoning remains underexplored. 
+
+ 
+ 
+ 
+ To address this issue, several methods  Hao et al. (2025) ;  Shen et al. (2025)  autoregressively feed output hidden representations as the next token embeddings, thereby reflecting changes in input token states as reasoning proceeds. However, training with recursively fed hidden representations incurs substantial training cost and instability, particularly in modeling multiple implicit tokens. In their formulations, input representations at each step need to be sequentially generated in training, because they are unknown until the model finishes computation at the previous step. Furthermore, their training procedures typically follow long curriculum stages or require a teacher model. The difficulty in scaling the number of implicit tokens may limit performance, considering that recent work  Hassid et al. (2025)  increasingly shows that the number of reasoning tokens is important: too few tokens can lead to underthinking, while too many can cause overthinking, instability, or wasted computation. 
+
+ 
+ 
+ 
+ We propose a new implicit CoT framework, called CIRF ( C hain-of-thoughts  I nto  R eusable  F unctional units ), which represents reasoning as an autoregressively generated sequence of discrete functional tokens. The key idea is to tokenize explicit CoT traces into functional units. Consequently, each rationale is converted into a short, dynamic sequence of function-bearing tokens, enabling parallel training over sequences whose lengths adapt to the complexity of the reasoning process. We then fine-tune a single universal LLM to generate these implicit functional tokens, followed by optional results and the final answer for alignment, across diverse reasoning datasets. This design addresses the above issues by utilizing semantically grounded and adaptively allocated functional tokens. 
+
+ 
+ 
+ 
+ Through extensive experiments, we empirically verify that CIRF is more efficient than state-of-the-art implicit CoT methods across diverse reasoning benchmarks. We evaluate CIRF in terms of accuracy-latency trade-off with diverse configurations partially mixing implicit and explicit tokens. The results show that CIRF achieves the accuracy–latency frontier. In-depth analyses further reveal that CIRF provides interpretable functional token assignment and adaptive token sequences, leading to substantial performance improvements. 
+
+ 
+ 
+ 
+ 
+ 2  Related Work 
+
+ 
+
+ 
+ 2.1  Explicit CoT 
+
+ 
+
+ 
+ It has been observed that LLMs can generate intermediate reasoning steps that improve the accuracy of final answers  Wei et al. (2022) . Zero-shot CoT  Kojima et al. (2022)  has shown that simple verbal triggers can elicit step-by-step reasoning without manually designed exemplars. While these findings highlight the importance of traceable intermediate steps for solving complex problems, many studies  Hassid et al. (2025) ;  Wu et al. (2026)  have also reported an inverted-U relationship between CoT length and accuracy: reasoning traces that are either too short or too long can hurt performance. Several studies  Xu et al. (2025a) ;  Xia et al. (2025)  have proposed methods for identifying shorter rationales that can match or exceed verbose CoT sequences. These studies are related to CIRF in that they show both the efficacy of generating intermediate reasoning steps and the importance of reasoning length for accuracy and efficiency. 
+
+ 
+ 
+ 
+ 
+ 2.2  Implicit CoT 
+
+ 
+
+ 
+ Implicit CoT approaches aim to internalize reasoning into model hidden states. Early approaches have trained the hidden states associated with answer tokens to mimic the hidden states of explicit CoT  Deng et al. (2024) . Placeholder tokens  Goyal et al. (2024) ;  Pfau et al. (2024)  have also been used as learnable thinking symbols. However, these methods may limit the reasoning capabilities of LLMs due to the lack of semantically grounded tokens. Another line of work has conducted reasoning through recursively fed output hidden states  Hao et al. (2025) ;  Shen et al. (2025) . However, these approaches have introduced substantial complexity in training and offered limited adaptivity in reasoning length. A further subgroup of research has used auxiliary models to generate compact reasoning surrogates  Xu et al. (2025b) ;  He et al. (2025) ;  Wei et al. (2025) , causing additional cost from the auxiliary models. Compared with these methods, CIRF provides a more efficient, straightforward strategy via a sequence of discrete functional tokens: facilitating single stage training with teacher forcing, realizing fine-grained reasoning functions and inducing adaptive reasoning behavior in a single unified model. 
+
+ 
+ 
+ 
+ 
+ 2.3  Tokenization of Latent Representations 
+
+ 
+
+ 
+ Wang et al. (2024)  have explicitly inferred planning variables using clustering over step representations, and its probing analysis has used pre-trained sentence encoders to study whether the induced planning categories are learnable and distinct. It has clustered reasoning steps to create auxiliary labels that precede explicit CoT.  Su et al. (2025)  have used generated latent discrete tokens to randomly replace the initial portion of reasoning traces, showing that a discrete latent vocabulary can be learned. Compared with these methods, CIRF fully segments explicit CoT into semantically grounded units and introduces a carefully designed alignment method, leading to substantial improvements in reasoning efficiency. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Methodology 
+
+ 
+
+ 
+ The proposed CIRF framework converts an explicit CoT rationale into a short sequence of discrete functional tokens and then fine-tunes a language model to autoregressively generate three components: discrete functional tokens, their corresponding results, and the final answer. In this section, we formulate the problem, and describe functional token assignment, alignment, and compression. 
+
+ 
+ 
+ 
+ 3.1  Problem Formulation 
+
+ 
+
+ 
+ We define a functional unit in CoT reasoning. Given a question  x i x_{i} , a typical LLM can generate an answer  y i y_{i}  together with a rationale  r i r_{i}  as follows: 
+
+ 
+ 
+
+ 
+ 
+ ( r i , y i ) = G ⁡ ( x i , p ) , (r_{i},y_{i})=G(x_{i};p), 
+ 
+ (1) 
+ 
+
+ 
+ where  p p  is a prompt that elicits rationale generation. In standard CoT prompting,  r i r_{i}  is a reasoning trace composed of multiple textual reasoning steps. This trace can be represented as 
+
+ 
+ 
+
+ 
+ 
+ r i = ( s i , 1 , s i , 2 , … , s i , m i ) , r_{i}=(s_{i,1},s_{i,2},\ldots,s_{i,m_{i}}), 
+ 
+ (2) 
+ 
+
+ 
+ where  s i , j s_{i,j}  denotes the textual description of the  j j -th reasoning step for question  x i x_{i} , and  m i m_{i}  is the total number of reasoning steps. We regard  s i , j s_{i,j}  as a description of a function that produces a new result  u i , j u_{i,j} , given contextual information including the question, prompt, and previous results  ( x i , p , u i , < j ) (x_{i},p,u_{i,<j})  as inputs. We then convert the textual output of explicit CoT into a sequence of functional tokens  f i , j f_{i,j}  and their corresponding result tokens  u i , j u_{i,j}  as follows: 
+
+ 
+ 
+
+ 
+ 
+ ( r i , y i ) → ( f i , 1 , u i , 1 , f i , 2 , u i , 2 , … , f i , m i , y i ) . (r_{i},y_{i})\rightarrow(f_{i,1},u_{i,1},f_{i,2},u_{i,2},\ldots,f_{i,m_{i}},y_{i}). 
+ 
+ (3) 
+ 
+
+ 
+ Our abstract formulation allows variable numbers of functional and result tokens for each reasoning step. We assign new tokens to the functions while using existing textual tokens for the results. Our goal is to construct a set of functional tokens whose latent representations are reusable across a wide range of questions, enabling an LLM to accurately induce the results through implicit reasoning. 
+
+ 
+ 
+ 
+ 
+ 3.2  Functional Token Assignment 
+
+ 
+
+ 
+ We first segment  r i r_{i}  into semantically coherent reasoning units. In our preprocessing pipeline, segmentation is primarily delimiter-based: we detect explicit ordinal markers such as “Step  k k ,” “ k . k. ,” or equivalent numbered boundaries. We treat the text span between two consecutive boundaries as one segment. For each reasoning segment  s i , j s_{i,j} , we compute a semantic representation using a pre-trained sentence embedding model  G sent G_{\mathrm{sent}} : 
+
+ 
+ 
+
+ 
+ 
+ z i , j = G sent ​ ( s i , j ) ∈ ℝ d s . z_{i,j}=G_{\mathrm{sent}}(s_{i,j})\in\mathbb{R}^{d_{s}}. 
+ 
+ (4) 
+ 
+
+ 
+ We use a sentence embedding model because such models are typically trained to produce semantically meaningful text representations suitable for similarity comparison, retrieval, and clustering. However, these representations are often biased toward the theme or situation of a given question, which makes it difficult to directly identify their functional types. Since the reasoning segments of a single question typically share a common situational bias, we reduce this bias by mean-centering the segment representations for each question: 
+
+ 
+ 
+
+ 
+ 
+ z i , j ′ = z i , j − 1 m i ​ ∑ k = 1 m i z i , k . z^{\prime}_{i,j}=z_{i,j}-\frac{1}{m_{i}}\sum^{m_{i}}_{k=1}z_{i,k}. 
+ 
+ (5) 
+ 
+
+ 
+ We empirically observe that this straightforward method effectively reduces situational bias while preserving functional information. We use the centered segment embeddings as the functional representations of reasoning segments. 
+
+ 
+ 
+ 
+ We use VQ-VAE  van den Oord et al. (2017)  to assign functional tokens to the segments. Let  𝒵 = { x n } n = 1 M \mathcal{Z}=\{x_{n}\}_{n=1}^{M}  denote the collection of all encoded functional representations in the training split, where  x n = F enc ​ ( z i , j ′ ) ∈ ℝ d e x_{n}=F_{\mathrm{enc}}(z^{\prime}_{i,j})\in\mathbb{R}^{d_{e}}  and  M = ∑ i m i M=\sum_{i}m_{i} . Note that we set  d e d_{e}  to the target LLM embedding dimension and use a two-layer feedforward network with  tanh  activation for  F enc ​ ( ⋅ ) F_{\mathrm{enc}}(\cdot) . We then initialize the codebook for vector quantization using a balanced clustering procedure based on the Sinkhorn-Knopp algorithm  Knight (2008) . Specifically, we first choose  K K  provisional anchors  { e ~ k } k = 1 K \{\tilde{e}_{k}\}_{k=1}^{K}  from  𝒵 \mathcal{Z} , and construct a positive affinity matrix: 
+
+ 
+ 
+
+ 
+ 
+ A ∈ ℝ > 0 M × K , A n , k = exp ⁡ ( − ∥ x n − e ~ k ∥ 2 2 λ ) , A\in\mathbb{R}_{>0}^{M\times K},A_{n,k}=\exp\!\left(-\frac{\lVert x_{n}-\tilde{e}_{k}\rVert_{2}^{2}}{\lambda}\right), 
+ 
+ (6) 
+ 
+
+ 
+ where  λ > 0 \lambda>0  is a temperature parameter that controls the sharpness of the affinity distribution. We then alternately rescale the rows and columns of  𝐀 \mathbf{A}  until the resulting matrix  𝐐 ∈ ℝ > 0 M × K \mathbf{Q}\in\mathbb{R}_{>0}^{M\times K}  lies on the doubly stochastic polytope: 
+
+ 
+ 
+
+ 
+ 
+ ∑ k Q n , k = 1 , ∑ n Q n , k = M / K . \textstyle\sum_{k}Q_{n,k}=1,\qquad\sum_{n}Q_{n,k}=M/K. 
+ 
+ (7) 
+ 
+
+ 
+ This procedure ensures that each anchor receives an equal share of assignment mass by construction. After obtaining the balanced soft assignment matrix, we convert it into a hard code assignment: 
+
+ 
+ 
+
+ 
+ 
+ a n = arg ⁡ max k ∈ { 1 , … , K } ⁡ Q n , k . a_{n}=\arg\max_{k\in\{1,\ldots,K\}}Q_{n,k}. 
+ 
+ (8) 
+ 
+
+ 
+ Equivalently, for each segment  s i , j s_{i,j} , we write 
+
+ 
+ 
+
+ 
+ 
+ a i , j = arg ⁡ max k ∈ { 1 , … , K } ⁡ Q ( i , j ) , k , a_{i,j}=\arg\max_{k\in\{1,\ldots,K\}}Q_{(i,j),k}, 
+ 
+ (9) 
+ 
+
+ 
+ where  Q ( i , j ) , k Q_{(i,j),k}  denotes the assignment probability of segment  s i , j s_{i,j}  to code  k k . Let  q i , j = e a i , j q_{i,j}=e_{a_{i,j}}  denote the selected code vector for segment  s i , j s_{i,j} . The codebook is then learned using the VQ-VAE objective: 
+
+ 
+ 
+
+ 
+ 
+ ℒ vq = 1 ∑ i m i ∑ i = 1 N ∑ j = 1 m i [ ∥ F dec ( q i , j ) − z i , j ′ ∥ 2 2 + \mathcal{L}_{\mathrm{vq}}=\frac{1}{\sum_{i}m_{i}}\sum_{i=1}^{N}\sum_{j=1}^{m_{i}}\Big[\|F_{\mathrm{dec}}(q_{i,j})-z^{\prime}_{i,j}\|_{2}^{2}+\qquad 
+ 
+ 
+
+ 
+ 
+
+ 
+ 
+ ∥ sg [ x i , j ] − q i , j ∥ 2 2 + β ∥ x i , j − sg [ q i , j ] ∥ 2 2 ] , \qquad\|\operatorname{sg}[x_{i,j}]-q_{i,j}\|_{2}^{2}+\beta\|x_{i,j}-\operatorname{sg}[q_{i,j}]\|_{2}^{2}\Big], 
+ 
+ (10) 
+ 
+
+ 
+ where  F dec F_{\mathrm{dec}}  is another feedforward network,  sg ⁡ [ ⋅ ] \operatorname{sg}[\cdot]  is the stop-gradient operator, and  β \beta  is the commitment coefficient. We use the same architecture for  F enc F_{\mathrm{enc}}  and  F dec F_{\mathrm{dec}} . The first term is a reconstruction error, which optimizes  F dec F_{\mathrm{dec}}  to reconstruct the original centered representations from the functional code vectors. The second term updates the codebook vectors toward their assigned encoded representations, while the third term updates  F enc F_{\mathrm{enc}}  to encourage the encoded representations to remain close to their quantized code vectors. We iteratively update the codebook vectors and reassign the codes according to the procedures described above. 
+
+ 
+ 
+ 
+ After quantization, each segment  s i , j s_{i,j}  is replaced by a discrete functional token  τ a i , j \tau_{a_{i,j}} . Thus, a rationale  r i r_{i}  can be converted into a functional token sequence  ( τ a i , 1 , τ a i , 2 , … , τ a i , m i ) (\tau_{a_{i,1}},\tau_{a_{i,2}},\ldots,\tau_{a_{i,m_{i}}}) .
+To integrate these codes into the target LLM, we extend its vocabulary with  K K  new special tokens  { τ 1 , … , τ K } \{\tau_{1},\ldots,\tau_{K}\} , together with dedicated tokens indicating the start and end of the reasoning span  τ s , τ e \tau_{\mathrm{s}},\tau_{\mathrm{e}} . 
+
+ 
+ 
+ 
+ Finally, we initialize the new token embeddings using the rescaled codebook vectors to transfer their semantic and geometry structure: 
+
+ 
+ 
+
+ 
+ 
+ e k ← α ⋅ e k ∥ e k ∥ 2 , e_{k}\leftarrow\alpha\cdot\frac{e_{k}}{\lVert e_{k}\rVert_{2}}, 
+ 
+ (11) 
+ 
+
+ 
+ where  e k e_{k}  denotes a codebook vector and  α \alpha  is a scaling parameter fixed to 0.01. This initialization allows the language model to exploit geometric relationships among functional codes from the beginning of training, leading to a better initial understanding of their functional roles. 
+
+ 
+ 
+ 
+ 
+ 3.3  Result Collection and Alignment 
+
+ 
+
+ 
+ We introduce optional result tokens in latent reasoning, which denote the output of functional operations. The purpose of these result tokens is to provide the model with a minimal textual bridge between latent reasoning and answer generation. For each training example, we construct a result target  u i u_{i}  by prompting an LLM under three constraints: (1) the model should generate the result of a reasoning segment, rather than its intermediate derivation; (2) the model should generate only the result used in subsequent reasoning steps; and (3) the model should describe the result as concisely as possible. We denote this process as 
+
+ 
+ 
+
+ 
+ 
+ u i = G ⁡ ( x i , r i , y i , p result ) , u_{i}=G(x_{i},r_{i},y_{i};p_{\mathrm{result}}), 
+ 
+ (12) 
+ 
+
+ 
+ where  p result p_{\mathrm{result}}  is a prompt that instructs the model to produce the results. The result  u i u_{i}  can be decomposed into step result  ( u i , 1 , u i , 2 , … , u i , m i ) (u_{i,1},u_{i,2},\ldots,u_{i,m_{i}})  and empty step results are allowed. 
+
+ 
+ 
+ 
+ We aim to minimize textual tokens used for the results for two reasons. First, these tokens incur additional generation cost, which degrades inference efficiency. Second, we observe that exposing models to natural language reasoning traces can cause the latent token representations to collapse, as the models tend to favor reasoning in natural language over reasoning with unseen functional tokens. 
+
+ 
+ 
+ 
+ For each example, the final supervision target is a token sequence: 
+
+ 
+ 
+
+ 
+ 
+ T i = [ τ sof ] ⊕ ℋ ⁡ ( F i , 1 , … , F i , m i ) ⊕ [ τ eof , y i ] T_{i}=[\tau_{\mathrm{sof}}]\oplus\mathcal{H}(F_{i,1},...,F_{i,m_{i}})\oplus[\tau_{\mathrm{eof}},y_{i}] 
+ 
+ 
+
+ 
+ 
+
+ 
+ 
+ s . t . F i , j = ( τ a i , j , u i , j ) s.t.\quad F_{i,j}=(\tau_{a_{i,j}},u_{i,j}) 
+ 
+ (13) 
+ 
+
+ 
+ Here,  ⊕ \oplus  denotes concatenation and  ℋ \mathcal{H}  is a token sequence construction function. The target LLM  M θ M_{\theta}  is then fine-tuned using the standard autoregressive language modeling objective: 
+
+ 
+ 
+
+ 
+ 
+ ℒ LM = − ∑ i = 1 N ∑ t = 1 | T i | log p θ ( T i , t ∣ x i , T i , < t ) . \mathcal{L}_{\mathrm{LM}}=-\sum_{i=1}^{N}\sum_{t=1}^{|T_{i}|}\log p_{\theta}(T_{i,t}\mid x_{i},T_{i,<t}). 
+ 
+ (14) 
+ 
+
+ 
+ 
+ 
+ At inference time, CIRF requires only the fine-tuned target model  M θ M_{\theta} . Given a question, the model generates the functional tokens and their optional result tokens, and subsequently predicts the final answer. 
+
+ 
+ 
+ 
+ 
+ 3.4  Result Compression 
+
+ 
+
+ 
+ In many examples (>70%), we observe that functional token sequences alone are sufficient to generate correct answers. We therefore introduce a result compression procedure that retains only loss-reducing result units. Given the full set of result units  U i U_{i} , we construct a compressed result set  C i C_{i}  through iterative pruning. Starting from  C i ( 0 ) = U i C_{i}^{(0)}=U_{i} , we use a trained CIRF model as a scoring model to estimate the usefulness of each candidate. 
+
+ 
+ 
+ 
+ Given  C i ( r ) C_{i}^{(r)}  at iteration  r r , we greedily identify the candidate unit whose removal results in the smallest increase in loss. If the best candidate increases the loss by more than a predefined threshold  γ \gamma , we terminate the search. This greedy pruning strategy provides an explicit mechanism for controlling the accuracy-latency trade-off through the threshold  γ \gamma : a larger  γ \gamma  yields shorter tokens with lower decoding cost, whereas a smaller  γ \gamma  retains more result units when they improve answer likelihood. 
+
+ 
+ 
+ 
+ Figure 2:  
+Accuracy-latency trade-off across in-domain and out-of-domain benchmarks. Each point reports the mean accuracy and mean inference time of a reasoning method. Task-wise full results are reported in Appendix  B .
+ 
+ 
+ 
+ 
+ 
+ 4  Experiments 
+
+ 
+
+ 
+ In this section, we evaluate and compare CIRF with state-of-the-art efficient reasoning methods to demonstrate that it achieves an optimal accuracy-latency trade-off in latent reasoning. 
+
+ 
+ 
+ 
+ 4.1  Experimental Setup 
+
+ 
+
+ 
+ Tasks and datasets. 
+
+ 
+
+ 
+ We evaluate CIRF on mathematical, symbolic, logical, and textual reasoning benchmarks. The mathematical benchmarks include GSM8K  Cobbe et al. (2021) , SVAMP  Patel et al. (2021) , MultiArith  Roy and Roth (2015) , and MATH-500  Hendrycks et al. (2021) . The symbolic and logical benchmarks include Coin Flip  Wei et al. (2022)  and BIG-Bench Hard  Suzgun et al. (2023) . The textual reasoning benchmarks include CommonsenseQA  Talmor et al. (2019) , StrategyQA  Geva et al. (2021) , and ScienceQA  Lu et al. (2022) . GSM8K, SVAMP, MultiArith, Coin Flip, and CommonsenseQA are used as in-domain tasks for supervised fine-tuning and evaluation, whereas MATH-500, BIG-Bench Hard, StrategyQA, and ScienceQA are used as out-of-domain benchmarks. We provide further details on the evaluation protocol in Appendix  A.1 . 
+
+ 
+ 
+ 
+ 
+ Baselines. 
+
+ 
+
+ 
+ We compare CIRF with four categories of baselines. First, Direct Answer prompts the model to generate only the final answer, whereas SFT-CoT fine-tunes the model to generate the full explicit rationale followed by the answer. Second, the compressed explicit CoT baseline, i.e., Pause Tokens  Goyal et al. (2024) , reduces visible reasoning cost while remaining in natural language or repeated token space. Third, implicit CoT baselines, including iCoT-SI  Deng et al. (2024) , Coconut  Hao et al. (2025) , CODI  Shen et al. (2025) , and SIM-CoT  Wei et al. (2025) , internalize reasoning through hidden states, continuous thought representations, or step-level latent supervision. Finally, soft token baselines, including SoftCoT  Xu et al. (2025b)  and SemCoT  He et al. (2025) , generate compact reasoning surrogates using additional modules. We implement, train, and evaluate all baselines under controlled settings. The baseline settings are described in Appendix  A.3 . 
+
+ 
+ 
+ 
+ 
+ 
+ 4.2  Main Results 
+
+ 
+
+ 
+ Figure  2  compares accuracy and inference time across in-domain and out-of-domain settings. CIRF consistently lies in a favorable region of the Pareto frontier. CIRF Full {}_{\textrm{Full}}  achieves the highest accuracy among the CIRF variants, while CIRF Fast {}_{\textrm{Fast}}  and CIRF Faster {}_{\textrm{Faster}}  substantially reduce inference time by compressing result units. 
+
+ 
+ 
+ 
+ Specifically, with Qwen3-8B, all CIRF variants outperform the state-of-the-art baseline CODI in terms of accuracy. With a small additional latency, CIRF Full {}_{\textrm{Full}}  achieves higher accuracy than CODI, with a gap of up to 45.7%p in GSM8K (CIRF Full {}_{\textrm{Full}}  71.2% vs. CODI 25.5%). CIRF Fast {}_{\textrm{Fast}}  and CIRF Faster {}_{\textrm{Faster}}  exhibit better accuracy and latency than CODI, while CIRF Faster {}_{\textrm{Faster}}  provides stronger acceleration than CIRF Fast {}_{\textrm{Fast}}  at the cost of accuracy. In our experiments, compressing result units causes the largest accuracy degradation on Coin Flip (-20.9%p for CIRF Fast {}_{\textrm{Fast}}  and -20.7%p for CIRF Faster {}_{\textrm{Faster}} ) and GSM8K (-6.5%p for CIRF Fast {}_{\textrm{Fast}}  and -16.5%p for CIRF Faster {}_{\textrm{Faster}} ), which inherently require multiple reasoning steps and intermediate state tracking. Other baselines, such as Pause Tokens and soft token methods, show worse accuracy-latency trade-offs, possibly due to the limited reasoning capacity of a single placeholder token and the additional latency incurred by inference with multiple models. 
+
+ 
+ 
+ 
+ We extend the Qwen3-8B experiments to out-of-domain tasks. CIRF achieves the most favorable accuracy-latency trade-offs, followed by CODI. CIRF consistently exhibits stable reasoning behavior, whereas most baselines produce degenerate results and long latencies on MATH-500, Big-Bench Hard, and StrategyQA, which also require multi-hop reasoning and state tracking. We further conduct experiments with another model, Llama3.1-8B, and observe consistent trends. CIRF achieves the Pareto frontier, with faster inferences at slightly lower accuracy. A notable difference in this experiment is the improvement of Pause Tokens, which suggests that Llama3.1-8B may better utilize placeholder tokens for latent reasoning. These results demonstrate the generalizability of CIRF across out-of-domain tasks and multiple models. 
+
+ 
+ 
+ 
+ An interesting pattern is that all in-domain CIRF results except for CIRF Faster {}_{\textrm{Faster}}  with Llama3.1-8B form a linear trend in the accuracy-latency plot. Based on this trend, we hypothesize that a scaling law may exist for latent reasoning with implicit tokens. We leave a more detailed examination of this pattern to future work. 
+
+ 
+ 
+ 
+ Figure 3:  
+Effect of codebook size on downstream accuracy and post-training code utilization. The solid line reports average accuracy across benchmarks, the task-specific curves show per-dataset accuracy, and the gray bars indicate the count of the least used code on a logarithmic scale. Delta accuracy comparisons are reported in Appendix  B .
+ 
+ 
+ 
+ Figure 4:  
+Relationship between generated functional token length and instance difficulty. Examples are grouped by the number of generated functional tokens, and the error rate is reported for each group.
+ 
+ 
+ 
+ 
+ 
+ 
+ Code 
+ Frequency 
+ Operation 
+ Assigned CoT Segments 
+ 
+ 
+ 
+ 25 
+ 3,528 
+ Choose answer 
+ … the best answer is (E) use television. This is because the use of a remote … 
+ 
+ 
+ 
+ 
+ … Based on the analysis, the most logical and relevant answer is (C) suffering pain, … 
+ 
+ 
+ 
+ 
+ … the best option is (C) dribble, as it accurately describes what happens to … 
+ 
+ 18 
+ 3,335 
+ Commonsense 
+ … an attic is typically above the main living space of a house … 
+ 
+ 
+ 
+ 
+ … A beach is an outdoor location, often very bright due to the sun. … 
+ 
+ 
+ 
+ 
+ … Army captains might participate in recreational activities such as basketball, … 
+ 
+ 23 
+ 3,051 
+ Mul/Div 
+ 4 bananas * $1/banana = $4 
+ 
+ 
+ 
+ 
+ … She adds twice that amount: 3 statues * 2 = 6 statues. … 
+ 
+ 
+ 
+ 
+ … so she tried on 16 * 2 = 32 pairs. 
+ 
+ 16 
+ 2,745 
+ Addition 
+ … $40 (coat) + $30 (shoes) = $70 
+ 
+ 
+ 
+ 
+ … Her total savings are $50 + $15 + $30 = $95. 
+ 
+ 
+ 
+ 
+ … Each basket has 4 red peaches + 6 green peaches = 10 peaches. 
+ 
+ 3 
+ 2,635 
+ Subtraction 
+ … The wallet costs $100, and Betty has $95. She needs $100 - $95 = $5 more … 
+ 
+ 
+ 
+ 
+ … Amount for insurance: $5200 - $4940 = $260 … 
+ 
+ 
+ 
+ 
+ … 28 - 15 = 13 
+ 
+ 
+
+ 
+ Table 1:  
+Qualitative examples of learned functional token assignments. For each code, we report its frequency, the interpreted operation type, and three CoT segments assigned to the code.
+ 
+ 
+ 
+ 
+ 4.3  Analyses 
+
+ 
+
+ 
+ We conduct in-depth analyses to better understand the performance improvements. Unless otherwise specified, we use CIRF Full {}_{\textrm{Full}}  with Qwen3-8B. 
+
+ 
+ 
+ 
+ Codebook size. 
+
+ 
+
+ 
+ In Figure  3 , we vary the number of functional tokens  K K  to study the granularity of the functional vocabulary. A very small codebook may merge distinct reasoning operations, whereas a very large codebook may fragment semantically similar operations and reduce token reuse. The codebook size ablation shows that moderate values of  K K  provide the best performance. Average performance gradually improves as the number of functional tokens increases, until it reaches an optimal value. Performance then decreases when the codebook becomes too large, suggesting that the functional vocabulary should be sized considering both the diversity and token frequency. 
+
+ 
+ 
+ 
+ 
+ Adaptive reasoning. 
+
+ 
+
+ 
+ CIRF generates a variable-length sequence of functional tokens. As shown in Figure  4 , we analyze whether this length reflects reasoning difficulty by grouping examples according to the number of generated functional tokens and measuring the corresponding error rate under direct answering. The results show a positive trend: examples requiring longer functional token sequences tend to have higher direct answering error rates. This trend indicates that CIRF performs latent reasoning adaptively with respect to instance difficulty and complexity, dynamically adjusting its reasoning length through the number of generated functional tokens. 
+
+ 
+ 
+ 
+ 
+ Functional token interpretability. 
+
+ 
+
+ 
+ To examine whether functional tokens correspond to reusable reasoning operations, we retrieve reasoning segments assigned to frequent codes and inspect their shared semantics in Table  1 . The assigned segments reveal coherent operation types, such as answer selection, commonsense reasoning, addition, subtraction, and multiplication/division. This qualitative evidence suggests that the learned codes are neither arbitrary identifiers nor surface-level syntactic patterns, but instead capture reusable functional operations that recur across examples and datasets in an interpretable manner. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Methods 
+ Bias  ↓ \downarrow 
+ Avg Cos.  ↓ \downarrow 
+ Max Cos.  ↓ \downarrow 
+ 
+ Representation 
+ 
+ random 
+ 0.128 
+ 0.000 
+ 0.109 
+ 
+ raw 
+ 0.405 
+ 0.164 
+ 0.955 
+ 
+ q-cent. 
+ 0.497 
+ 0.246 
+ 0.974 
+ 
+ mean-cent. 
+ 0.124 
+ 0.009 
+ 0.756 
+ 
+ Codebook construction 
+ 
+ K-means 
+ 0.131 
+ 0.011 
+ 0.869 
+ 
+ Sinkhorn 
+ 0.124 
+ 0.009 
+ 0.756 
+ 
+ Codebook size 
+ 
+ K = 32 K=32 
+ 0.124 
+ 0.009 
+ 0.756 
+ 
+ K = 128 K=128 
+ 0.131 
+ 0.010 
+ 0.842 
+ 
+ K = 512 K=512 
+ 0.110 
+ 0.010 
+ 0.919 
+ 
+ K = 2048 K=2048 
+ 0.085 
+ 0.007 
+ 0.939 
+ 
+ 
+
+ 
+ Table 2:  
+Functional token geometry under various settings. Bias denotes the bias share, defined as  ‖ μ ‖ / 𝔼 ⁡ [ ‖ w ‖ ] \|\mu\|/\mathbb{E}[\|w\|] , where  μ \mu  is the mean vector of the LLM functional token embeddings and  w w  is an individual token vector. Max/Avg Cos. denotes the maximum/average pairwise cosine similarity.
+ 
+ 
+ 
+ 
+ Functional token geometry. 
+
+ 
+
+ 
+ We further analyze the geometry of the functional token embeddings. This analysis examines whether the learned functional embeddings are geometrically diverse rather than collapsed into a single vector. Table  2  shows four main observations. First, raw segment embeddings and question-centered embeddings exhibit large bias shares and high maximum cosine similarities in the final language model embedding space. This indicates that their token vectors are strongly affected by shared contextual offsets, which can reduce the separability of reusable functional operations. Second, the proposed Sinkhorn-initialized functional codebook maintains a low bias share, suggesting that balanced clustering effectively prevents collapse into a shared direction. Third, randomly initialized embeddings can appear geometrically well spread, as indicated by low cosine similarity and a low bias share, but such geometry is insufficient for functional reasoning because it does not preserve the semantic structure extracted from CoT segments. Finally, as the codebook size increases, the maximum cosine similarity also increases, indicating that overly large codebooks may introduce redundant functional tokens. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 5  Conclusion 
+
+ 
+
+ 
+ We presented CIRF, an implicit chain-of-thought framework that converts explicit reasoning traces into reusable discrete functional tokens. Through carefully designed functional token construction methods, CIRF generates dynamic sequences of functional tokens using a single autoregressive language model. Experiments across in-domain and out-of-domain reasoning benchmarks show that CIRF achieves a favorable accuracy-latency trade-off compared with state-of-the-art latent reasoning baselines, benefiting from its preservation of functional operational structure. We believe that CIRF offers a promising direction for building language models that reason more efficiently across a wide range of complex tasks. 
+
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ While we have demonstrated the frontier-level efficiency of CIRF, some limitations open promising avenues for future research. First, the quality of functional token supervision may depend on the quality and structure of the explicit CoT traces. We currently rely on explicit ordinal markers to segment rationales into reasoning units. More robust segmentation methods could further improve the reliability of the functional unit extraction process. In addition, the result token alignment and compression procedure introduces an additional design trade-off. An optimization method for this procedure may help identify a better accuracy-latency balance. Finally, as our experiments mainly focus on 8B-scale models and several tasks, the behavior of CIRF on differently sized models and additional tasks like long-context and tool-augmented reasoning would be explored in the future. 
+
+ 
+ 
+ 
+ 
+ Ethics Statements 
+
+ 
+
+ 
+ CIRF is a general purpose framework for improving the efficiency of chain-of-thought reasoning in large language models. The method does not introduce new specific capabilities for harmful domains, nor does it rely on private, sensitive, or user-identifying data. The primary potential risk is indirect: because CIRF performs part of the reasoning process through discrete functional tokens rather than fully explicit natural-language rationales, it may reduce the human interpretability of individual reasoning steps compared with fully explicit CoT. However, CIRF partially mitigates this concern by constructing functional tokens from explicit CoT segments and by providing analyses showing that the learned tokens correspond to interpretable reasoning operations. 
+
+ 
+ 
+ 
+ 
+ 

@@ -1,0 +1,1505 @@
+Adaptive Stochastic Coefficients for Accelerating Diffusion Sampling
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+3 Preliminaries
+3.1 Diffusion Models with Differential Equations
+4 Analysis of ODE and SDE
+4.1 Trade-offs Between ODE and SDE Solvers
+4.2 Error Propagation in Deterministic and Stochastic Sampling
+4.3 Synthetic Validation
+5 Methodology
+5.1 Sampling Trajectory Geometry
+5.2 Fast SDE-based Sampling
+6 Experiments
+6.1 Experiment Setup
+6.2 Main Results
+6.3 Ablation Studies
+7 Conclusion and Limitation
+References
+A Notation and Symbols for the Proof
+A.1 Common Terms
+A.2 AdaSDE Terms
+A.3 Lipschitz and Error Bounds
+A.4 Special Operators
+A.5 Key Process Terms
+A.6 Error Dynamics
+B Proofs of Main Theoretical Results
+B.1 Proof of Theorem
+B.2 Proof of Theorem
+B.3 Proof of Theorem
+C More on AdaSDE
+C.1 Experiment details.
+C.2 Time uniform scheme
+C.3 Supplementary experimental results
+License: CC BY 4.0
+arXiv:2510.23285v1 [cs.CV] 27 Oct 2025
+Adaptive Stochastic Coefficients for Accelerating Diffusion Sampling
+Ruoyu Wang
+Email: wangruoyu71@westlake.edu.cn
+Beier Zhu
+Affiliation: AGI Lab, Westlake University
+Email: chizhang@westlake.edu.cn
+Junzhi Li
+Affiliation: University of Chinese Academy of Sciences
+Affiliation: Institute of Software, Chinese Academy of Sciences
+Email: beier.zhu@ntu.edu.sg
+Liangyu Yuan
+Affiliation: Tongji University
+Email: lijunzhi25@mails.ucas.ac.cn
+Chi Zhang
+Email: liangyuy001@gmail.com
+Affiliation: Nanyang Technological University
+Abstract
+Diffusion-based generative processes, formulated as differential equation solving, frequently balance computational speed with sample quality. Our theoretical investigation of ODE- and SDE-based solvers reveals complementary weaknesses: ODE solvers accumulate irreducible gradient error along deterministic trajectories, while SDE methods suffer from amplified discretization errors when the step budget is limited. Building upon this insight, we introduce AdaSDE, a novel single-step SDE solver that aims to unify the efficiency of ODEs with the error resilience of SDEs. Specifically, we introduce a single per-step learnable coefficient, estimated via lightweight distillation, which dynamically regulates the error correction strength to accelerate diffusion sampling. Notably, our framework can be integrated with existing solvers to enhance their capabilities. Extensive experiments demonstrate state-of-the-art performance: at 5 NFE, AdaSDE achieves FID scores of 4.184.18 on CIFAR-10, 8.058.05 on FFHQ and 6.966.96 on LSUN Bedroom. Codes are available in https://github.com/WLU-wry02/AdaSDE.
+$\star$$\star$footnotetext: Equal contribution. †Corresponding author.
+1 Introduction
+Diffusion Models (DMs) [1, 2, 3, 4, 5] have revolutionized generative modeling, achieving state-of-the-art performance across a broad range of applications [6, 7, 8, 9, 10, 11, 12, 13, 14]. Rooted in non-equilibrium thermodynamics, DMs learn to reverse a diffusion process: data are first gradually corrupted by Gaussian noise in a forward phase, and then reconstructed from pure noise through a learned reverse dynamics. This principled design offers stable training and exact likelihood modeling [15], resolving long-standing challenges in earlier approaches, e.g., GANs [16] and VAEs [17].
+Recent advances in diffusion models have highlighted the role of differential-equation solvers in balancing sampling speed and generation quality. We first develop a unified error analysis that decomposes the total approximation error into two orthogonal components: (1) gradient error, the discrepancy between the learned score function and the ground-truth score; and (2) discretization error, introduced by time discretization during sampling. Viewed through this lens, existing solvers exhibit complementary behaviors. Ordinary differential equation (ODE) based methods offer deterministic trajectories with modest discretization error for low number of function evaluations (NFEs), but their performance is fundamentally constrained by the irreversible accumulation of gradient error [18, 19, 20, 21]. In contrast, stochastic differential equation (SDE) based methods inject stochasticity that can mitigate gradient error and enhance sample diversity; however, effectively suppressing gradient error in practice usually requires large step counts (e.g., 100–1,000 NFEs) [2, 22]. Hybrid strategies such as restart sampling[23] alternate forward noise injection with backward ODE integration to combine these advantages, yet they still operate in high-NFE regimes.
+Building on the above analysis, we introduce AdaSDE, a novel single-step SDE solver that unifies the computational efficiency of ODEs with the error resilience of SDEs under low-NFE budgets. Unlike traditional SDE solvers [24, 2] that inject fixed noise based on a predetermined time schedule, AdaSDE employs an adaptive noise injection mechanism controlled by a learnable stochastic coefficient γi\gamma_{i} at each denoising step ii.
+To effectively optimize γi{\gamma_{i}}, we further develop a process-supervision optimization framework that provides fine-grained guidance at each intermediate step rather than only supervising the final reconstruction. This design is inspired by the observation that diffusion trajectories exhibit consistent low-dimensional geometric structures across solvers and datasets [25, 26]. By aligning the geometry of the trajectories using γi\gamma_{i}, AdaSDE reduces gradient error through adaptive stochastic injection, while preserving deterministic efficiency of ODE solvers.
+Extensive experiments on both pixel-space and latent-space DMs demonstrate the superiority of AdaSDE. Remarkably, with only 5 NFE, AdaSDE achieves FID scores of 4.184.18 on CIFAR-10 [27] and 8.058.05 on FFHQ 64×\times64 [28], surpassing the leading AMED-Solver [20] by 1.8×\times. Our contributions are threefold:
+•
+We conduct a theoretical comparison of SDE and ODE error dynamics, demonstrating that SDEs offer more robust gradient error control.
+•
+We introduce AdaSDE, the first single-step SDE solver that achieves efficient sampling (<<10 NFEs) by optimizing adaptive γ\gamma-coefficients. Moreover, AdaSDE serves as a universal plug-in module that can enhance existing single-step solvers.
+•
+Extensive evaluations on multiple generative benchmarks show that our AdaSDE achieves state-of-the-art performance with significant FID gains over existing solvers.
+2 Related Work
+Recent advancements in accelerating DMs primarily progress along two directions: improved numerical solvers and training-based distillation.
+Improved numerical solvers.
+Early studies [2, 24] accelerated sampling by improving noise-schedule design, and DDIM [29] later introduced a non-Markovian formulation that enabled deterministic and much faster sampling.
+The establishment of the probability-flow ODE view [15] further unified diffusion formulations and paved the way for higher-order numerical schemes and practical preconditioning strategies, exemplified by EDM [30]. Following this insight, a series of ODE/SDE integrators have emerged to push the accuracy–speed frontier.
+For instance, DEIS [31], DPM-Solver [21], and DPM-Solver++[22] exploit exponential integration, Taylor expansion, and data-prediction parameterization to achieve robust few-step sampling. Linear multistep variants, including iPNDM [32, 31] and UniPC [33], further enable efficient DMs sampling with ∼\sim10 NFE.
+Hybrid and stochastic extensions extend beyond deterministic solvers: Restart Sampling [23] alternates ODE trajectories with SDE-style noise injection; SA-Solver [34] introduces a training-free stochastic Adams multi-step scheme with variance-controlled noise.
+Training-based distillation.
+Two main paradigms dominate this research direction.
+The first is trajectory approximation, which uses compact student networks to approximate trajectories generated by teacher models, reducing computational steps. This can be achieved offline: by curating datasets from pre-generated samples [35], or online through progressive distillation that gradually decreases the number of sampling steps [36, 18].
+The second paradigm is temporal alignment, which enforces coherence across sampling trajectories by aligning intermediate predictions between adjacent timesteps [37, 38], or by minimizing distributional gaps between real and synthesized data [39, 40].
+While these methods improve generation quality and efficiency, they typically require substantial computational resources and complex training protocols, limiting their practicality.
+Recent distillation-based solvers—such as AMED [20], EPD [41], and D-ODE [37]—achieve few-step sampling through lightweight tuning rather than full retraining. Complementary efforts on time schedule optimization, including LD3 [42], DMN [43], and GITS [26], further improve efficiency. While most few-step samplers are rooted in ODE formulations, our approach introduces few-step SDE-driven generation by learning stochastic coefficients under a computationally lightweight objective.
+3 Preliminaries
+3.1 Diffusion Models with Differential Equations
+DMs define a forward process that perturbs data into a noise distribution, followed by a learned reverse process that inverts this perturbation to generate samples. The forward process is designed as a stochastic trajectory governed by a predefined noise schedule, which can be described by:
+d​𝐱=s˙​(t)s⁡(t)​𝐱+s⁡(t)​2​σ​(t)​σ˙​(t)​d​𝐰\mathrm{d}\mathbf{x}=\tfrac{\dot{s}(t)}{s(t)}\mathbf{x}+s(t)\sqrt{2\sigma(t)\dot{\sigma}(t)}\mathrm{d}\mathbf{w}
+(1)
+where σ⁡(t)\sigma(t) is the monotonically increasing noise schedule, and 𝐰\mathbf{w} denotes a standard Wiener process. This formulation ensures that the marginal distribution pt​(𝐱)p_{t}(\mathbf{x}) at time tt corresponds to the convolution of the data distribution p0=pdata p_{0}=p_{\text{data }} with a Gaussian kernel of variance σ2​(t)\sigma^{2}(t). By selecting a sufficiently large terminal time T,pTT,p_{T} converges to an isotropic Gaussian 𝒩​(𝟎,σ2​(T)​𝐈)\mathcal{N}(\mathbf{0},\sigma^{2}(T)\mathbf{I}), serving as the prior.
+Sampling is performed by reversing the forward dynamics through either a reverse-time SDE in Eq. (1) or an ODE [15]:
+d​𝐱=−σ⁡(t)​σ˙​(t)​∇𝐱​log⁡pt​(𝐱)​d​t.\quad\mathrm{d}\mathbf{x}=-\sigma(t)\dot{\sigma}(t)\nabla_{\mathbf{x}}\log p_{t}(\mathbf{x})\mathrm{d}t.
+(2)
+Here, the score function ∇𝐱​log​pt​(𝐱)\nabla_{\mathbf{x}}\log p_{t}(\mathbf{x}) is the drift term that guides samples toward high density regions of p0p_{0}. Following common practice [19], the noise schedule is simplified to σ⁡(t)=t\sigma(t)=t, reducing σ⁡(t)​σ˙​(t)\sigma(t)\dot{\sigma}(t) to tt.
+A neural network sθ​(𝐱,t)s_{\theta}(\mathbf{x},t) is optimized through denoising score matching [15] to estimate the score function. The training objective minimizes the weighted expectation:
+𝔼t,𝐱0,𝐱t​[λ⁡(t)​‖sθ​(𝐱t,t)−∇𝐱t​log​pt​(𝐱t∣𝐱0)‖2]\mathbb{E}_{t,\mathbf{x}_{0},\mathbf{x}_{t}}\left[\lambda(t)\left\|s_{\theta}(\mathbf{x}_{t},t)-\nabla_{\mathbf{x}_{t}}\log p_{t}(\mathbf{x}_{t}\mid\mathbf{x}_{0})\right\|^{2}\right]
+(3)
+where λ⁡(t)\lambda(t) specifies the loss weighting schedule and pt​(𝐱t∣𝐱0)p_{t}\left(\mathbf{x}_{t}\mid\mathbf{x}_{0}\right) denotes the Gaussian transition kernel of the forward process. During sampling, sθ​(𝐱,t)s_{\theta}(\mathbf{x},t) serves as a surrogate for the true score in the reverse-time dynamics, reducing the general SDE in Eq. (2) to the deterministic gradient flow:
+d​𝐱=sθ​(𝐱t,t)​d​t\mathrm{d}\mathbf{x}=s_{\theta}(\mathbf{x}_{t},t)\mathrm{d}t
+(4)
+4 Analysis of ODE and SDE
+4.1 Trade-offs Between ODE and SDE Solvers
+The choice between ODE and SDE solvers in DMs entails trade-offs among sampling speed, quality, and error dynamics.
+ODE solvers, characterized by deterministic trajectories, offer computational efficiency and stability through compatibility with compatibility with higher-order numerical methods, e.g., iPNDM [32, 31].
+Such solvers reduce local discretization errors and achieve competitive sample quality with as few as 10–50 steps [21, 19].
+However, their deterministic nature limits their ability to correct errors from imperfect score function approximations, leading to performance plateaus as step count increases [23].
+Furthermore, the absence of stochasticity may suppress fine-grained variations, potentially reducing sample diversity compared to SDE-based methods [2].
+In contrast, SDE solvers leverage stochasticity to counteract accumulated discretization and gradient errors over time, enabling superior sample fidelity in high-step regimes [23]. The injected noise further encourages exploration of the data manifold, improving diversity [2]. However, these benefits come at the cost of significantly larger step counts (typically 100–1,000) required to suppress errors that scale as O⁡(δ3/2)O(\delta^{3/2}), compared to O⁡(δ2)O(\delta^{2}) for ODEs [23, 44]. Moreover, SDE trajectories are highly sensitive to suboptimal noise schedules, particularly in low-step settings [24].
+While reverse-time SDEs theoretically guarantee convergence to the true data distribution under ideal conditions [45], their computational cost often renders them impractical for real-time applications.
+Recent hybrid approaches, such as Restart sampling [23], reconcile these trade-offs by alternating deterministic steps with stochastic resampling, leveraging ODE efficiency for coarse trajectory simulation while resetting errors via SDE-like noise injection. This strategy highlights the complementary strengths of both methods, positioning hybrid frameworks at the forefront of quality-speed Pareto frontiers in diffusion-based generation.
+However, Restart sampling still performs under high-step regimes (>>50 steps).
+4.2 Error Propagation in Deterministic and Stochastic Sampling
+The trade-offs discussed in Section 4.1 raise a key question:
+Can SDE-based approaches achieve efficient sampling with substantially fewer steps?
+To answer this, we build on the theoretical frameworks of [23, 44] to analyze the total sampling error of ODE and SDE formulations under the Wasserstein-1 metric.
+We begin with the discretized ODE system 𝖮𝖣𝖤θ\mathsf{ODE}_{\theta}, governed by the learned drift field sθs_{\theta}, and examine its approximation behavior over the interval [t,t+Δ​t]⊂[0,T]\left[t,t+\Delta t\right]\subset[0,T].
+Theorem 1 formalizes this analysis and establishes an upper bound on the Wasserstein-1 distance between the generated and true data distributions (proof in Appendix B.1).
+Theorem 1.
+(ODE Error Bound [23])
+Let Δ​t>0\Delta t>0 denote the discretization step size.
+Over the interval [t,t+Δ​t][t,t+\Delta t], the trajectory 𝐱t=𝖮𝖣𝖤θ(𝐱t+Δ​t,t+Δt→t)\mathbf{x}_{t}=\mathsf{ODE}_{\theta}\left(\mathbf{x}_{t+\Delta t},t+\Delta t\rightarrow t\right) is generated by the learned drift sθs_{\theta}, and the induced distribution is denoted by pt𝖮𝖣𝖤θp_{t}^{\mathsf{ODE}_{\theta}}. We make the following assumptions:
+A1. Lipschitz and bounded drift: t​sθ​(𝐱,t)ts_{\theta}(\mathbf{x},t) is L2L_{2}-Lipschitz in 𝐱\mathbf{x}, L0L_{0}-Lipschitz in tt and uniformly bounded by L1L_{1}.
+A2: The learned drift satisfies a uniform supremum bound:
+sup𝐱,t‖tsθ(𝐱,t)−t∇logpt(𝐱)‖≤ϵt.\sup_{\mathbf{x},t}\left\|ts_{\theta}(\mathbf{x},t)-t\nabla\log p_{t}(\mathbf{x})\right\|\leq\epsilon_{t}.
+A3. Bounded trajectories: ‖𝐱t‖≤B/2\left\|\mathbf{x}_{t}\right\|\leq B/2 for all t∈[t,t+Δ​t]t\in\left[t,t+\Delta t\right].
+The Wasserstein-1 distance between pt𝖮𝖣𝖤θp_{t}^{\mathsf{ODE}_{\theta}} and the true distribution ptp_{t} satisfies:
+W1​(pt𝖮𝖣𝖤θ,pt)⏟total error≤B⋅𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t)⏟➀ gradient error bound+eL2​Δ​t​(Δ​t​(L2​L1+L0)+ϵt)​Δ​t⏟➁ discretization error bound\underbrace{W_{1}\left(p_{t}^{\mathsf{ODE}_{\theta}},p_{t}\right)}_{\text{total error}}\leq\underbrace{B\cdot\mathsf{TV}\left(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},p_{t+\Delta t}\right)}_{\text{➀ gradient error bound}}+\underbrace{e^{L_{2}\Delta t}\left(\Delta t(L_{2}L_{1}+L_{0})+\epsilon_{t}\right)\Delta t}_{\text{➁ discretization error bound}}
+(5)
+where 𝖳𝖵⁡(⋅,⋅)\mathsf{TV}(\cdot,\cdot) denotes the total variation distance.
+The bound in Eq. 5 consists of two term distinct interpretations.
+The first term ➀ is the gradient error bound which reflects the discrepancy between the learned score function and the ground-truth one at the start time t+Δ​tt+\Delta t. It also captures the propagation of errors accumulated from earlier time steps.
+The second term ➁ is the discretization error bound, which represents the newly introduced errors within the current interval [t,t+Δ​t][t,t+\Delta t].
+Since the ODE process is deterministic, any discrepancy between the generated and true distributions at t+Δ​tt+\Delta t is directly carried forward to time tt, without stochastic mechanisms to dissipate it.
+Next, we introduce our AdaSDE update over the interval [t,t+Δ​t][t,t+\Delta t], defined as:
+𝐱t=𝖠𝖽𝖺𝖲𝖣𝖤θ(𝐱t+Δ​t,t+Δt→t,γ),\mathbf{x}_{t}=\mathsf{AdaSDE}_{\theta}\!\left(\mathbf{x}_{t+\Delta t},\,t+\Delta t\!\rightarrow\!t,\,\gamma\right),
+which inserts a stochastic forward perturbation followed by a deterministic backward process.
+𝐱t+Δ​tγ=𝐱t+(1+γ)​Δ​t=𝐱t+Δ​t+εt+Δ​t→t+(1+γ)​Δ​t,\displaystyle\mathbf{x}_{t+\Delta t}^{\gamma}=\mathbf{x}_{t+(1+\gamma)\Delta t}=\mathbf{x}_{t+\Delta t}+\varepsilon_{t+\Delta t\rightarrow\,t+(1+\gamma)\Delta t},
+(Forward process)
+𝐱t=𝖮𝖣𝖤θ(𝐱t+Δ​tγ,t+(1+γ)Δt→t),\displaystyle\mathbf{x}_{t}=\mathsf{ODE}_{\theta}\!\left(\mathbf{x}_{t+\Delta t}^{\gamma},\,t+(1+\gamma)\Delta t\rightarrow t\right),
+(Backward process)
+where
+εt+Δ​t→t+(1+γ)​Δ​t∼𝒩⁡(𝟎,((t+(1+γ)​Δ​t)2−(t+Δ​t)2)​𝐈).\varepsilon_{t+\Delta t\rightarrow\,t+(1+\gamma)\Delta t}~\sim~\mathcal{N}\!\left(\mathbf{0},\left((t+(1+\gamma)\Delta t)^{2}-(t+\Delta t)^{2}\right)\mathbf{I}\right).
+Here, γ∈(0,1)\gamma\in(0,1) is a tunable coefficient with its optimization deferred in Section 5.
+Different from deterministic ODE, AdaSDE introduces controlled noise injection to mitigate error accumulation.
+Theorem 2 establishes an error bound between the generated and the true data distribution for our AdaSDE (proof in Appendix B.2).
+Theorem 2.
+Under the same assumptions in Theorem 1. Let pt𝖠𝖽𝖺𝖲𝖣𝖤θp_{t}^{\mathsf{AdaSDE}_{\theta}} denote the distribution after AdaSDE update over the interval [t,t+Δ​t][t,t+\Delta t]. Then
+W1​(pt𝖠𝖽𝖺𝖲𝖣𝖤θ,pt)≤B⋅(1−λ⁡(γ))​𝖳𝖵​(pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤,ptt+(1+γ)​Δ​t)⏟gradient error bound\displaystyle W_{1}\left(p_{t}^{\mathsf{AdaSDE}_{\theta}},p_{t}\right)\leq\underbrace{B\cdot(1-\lambda(\gamma))\mathsf{TV}\left(p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}},p_{t_{t+(1+\gamma)\Delta t}}\right)}_{\text{gradient error bound}}
+(6)
++e(1+γ)​L2​Δ​t​(1+γ)​((1+γ)​Δ​t​(L2​L1+L0)+ϵt)​Δ​t⏟ discretization error bound\displaystyle+\underbrace{e^{(1+\gamma)L_{2}\Delta t}(1+\gamma)\left((1+\gamma)\Delta t\left(L_{2}L_{1}+L_{0}\right)+\epsilon_{t}\right)\Delta t}_{\text{ discretization error bound}}
+(7)
+where λ⁡(γ)=2​Q​(B2​(t+(1+γ)​Δ​t)2−t2)\lambda(\gamma)=2\,Q\bigl(\dfrac{B}{2\,\sqrt{(t+(1+\gamma)\,\Delta t)^{2}-t^{2}}}\bigr), Q⁡(r)=Pr⁡(a≥r)Q(r)=\mathrm{Pr}(a\geq r) for a∼𝒩⁡(0,1)a\sim\mathcal{N}(0,1).
+As shown in Theorem 2, the decoupled formulation tightens the Wasserstein-1 error bound through a reduced coefficient B⁡(1−λ⁡(γ))B(1-\lambda(\gamma)).
+We next formalize this improvement by comparing the gradient-error terms of ODE and AdaSDE formulations in Theorem 3.
+Theorem 3.
+Under the same assumptions as in Theorem 1 and Theorem 2, we denote:
+ℰ𝗀𝗋𝖺𝖽𝖮𝖣𝖤=B⋅𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t),\displaystyle\mathcal{E}_{\mathsf{grad}}^{\mathsf{ODE}}=B\cdot\mathsf{TV}\Bigl(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},\,p_{t+\Delta t}\Bigr),
+(ODE gradient error)
+ℰ𝗀𝗋𝖺𝖽𝖠𝖽𝖺𝖲𝖣𝖤=B⋅(1−λ⁡(γ))​𝖳𝖵​(pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤,pt+(1+γ)​Δ​t).\displaystyle\mathcal{E}_{\mathsf{grad}}^{\mathsf{AdaSDE}}=B\cdot\bigl(1-\lambda(\gamma)\bigr)\,\mathsf{TV}\Bigl(p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}},\,p_{t+(1+\gamma)\Delta t}\Bigr).
+(SDE gradient error)
+Then we have ℰ𝗀𝗋𝖺𝖽𝖠𝖽𝖺𝖲𝖣𝖤≤ℰ𝗀𝗋𝖺𝖽𝖮𝖣𝖤\mathcal{E}_{\mathsf{grad}}^{\mathsf{AdaSDE}}\leq\mathcal{E}_{\mathsf{grad}}^{\mathsf{ODE}}, where the inequality is strict when γ>0\gamma>0.
+Proof sketch.
+(full proof in Appendix B.3)
+For the ODE update, ℰ𝗀𝗋𝖺𝖽𝖮𝖣𝖤\mathcal{E}_{\mathsf{grad}}^{\mathsf{ODE}} depends on the total-variation distance between the distributions at time t+Δ​tt+\Delta t. For AdaSDE update, ℰ𝖠𝖽𝖺𝖲𝖣𝖤\mathcal{E}_{\mathsf{AdaSDE}} includes a contraction factor (1−λ⁡(γ))(1-\lambda(\gamma)) and is evaluated at the higher noise level t+(1+γ)​Δ​tt+(1+\gamma)\Delta t.
+Define the Gaussian kernel
+ϕγ(z)=(2πσγ2)−d/2exp(−‖z‖22​σγ2),σγ2=(t+(1+γ)Δt)2−(t+Δt)2.\phi_{\gamma}(z)=(2\pi\sigma_{\gamma}^{2})^{-d/2}\exp\!\left(-\frac{\|z\|^{2}}{2\sigma_{\gamma}^{2}}\right),\qquad\sigma_{\gamma}^{2}=\bigl(t+(1+\gamma)\Delta t\bigr)^{2}-\bigl(t+\Delta t\bigr)^{2}.
+The distributions after the noise injection satisfy
+pt+(1+γ)​Δ​t=pt+Δ​t∗ϕγ,qt+(1+γ)​Δ​t=qt+Δ​t∗ϕγ.p_{t+(1+\gamma)\Delta t}=p_{t+\Delta t}\ast\phi_{\gamma},\qquad q_{t+(1+\gamma)\Delta t}=q_{t+\Delta t}\ast\phi_{\gamma}.
+By Lemma 6 in Appendix, convolution with the same Gaussian kernel does not increase total variation distance:
+𝖳𝖵⁡(pt+Δ​t∗ϕγ,qt+Δ​t∗ϕγ)≤𝖳𝖵⁡(pt+Δ​t,qt+Δ​t).\mathsf{TV}\!\left(p_{t+\Delta t}\!\ast\!\phi_{\gamma},\;q_{t+\Delta t}\!\ast\!\phi_{\gamma}\right)\leq\mathsf{TV}\!\left(p_{t+\Delta t},\,q_{t+\Delta t}\right).
+Consequently,
+ℰ𝗀𝗋𝖺𝖽𝖠𝖽𝖺𝖲𝖣𝖤≤(1−λ⁡(γ))​ℰ𝗀𝗋𝖺𝖽𝖮𝖣𝖤,\mathcal{E}_{\mathsf{grad}}^{\mathsf{AdaSDE}}\;\leq\;(1-\lambda(\gamma))\,\mathcal{E}_{\mathsf{grad}}^{\mathsf{ODE}},
+with a strictly smaller bound whenever γ>0\gamma>0.
+∎
+Although the gradient error term of AdaSDE enjoys a tighter bound through B⁡(1−λ⁡(γ))B(1-\lambda(\gamma)),
+its discretization error grows rapidly under large time steps (Δ​t)(\Delta t) with noise schedules scaling as γ⁡(t)∝Δ​t\gamma(t)\!\propto\!\Delta t.
+Specifically, the exponential growth factor e(1+γ)​L2​Δ​te^{(1+\gamma)L_{2}\Delta t} combined with the quadratic Δ​t\Delta t-dependence in (1+γ)2​Δ​t2​(L2​L1+L0)(1+\gamma)^{2}\Delta t^{2}\left(L_{2}L_{1}+L_{0}\right) creates error amplification that scales asymptotically as O⁡(Δ​t​eC​Δ​t)O(\Delta te^{C\Delta t}) when γ∼O⁡(Δ​t)\gamma\sim O(\Delta t). This dominates the improved gradient error control, particularly during critical initial denoising steps where the product (1+γ)​Δ​t(1+\gamma)\Delta t violates discretization stability conditions. This amplification offsets the benefit of gradient-error contraction,
+causing total error accumulation along the trajectory and explaining the degraded few-step performance of SDE-based sampling in practice.
+4.3 Synthetic Validation
+Figure 1: Gradient error, Discretization error and Total error on synthetic dataset across various steps (measured in 1-Wasserstein Distance). γ=0\gamma=0 indicates adding no stochasticity (ODE), γ>0\gamma>0 indicates SDE variants, figures are plotted in Pareto Frontier.
+To verify the error-mitigation capability of stochastic updates in AdaSDE, we conduct experiments on a 2D double-circle synthetic dataset, comparing the total, gradient, and discretization errors.
+Figure 2: Illustration of the 2D double-circles: two concentric rings with radii 0.80.8 (outer, blue) and 0.60.6 (inner, green). We uniformly sample 20,00020{,}000 points and add isotropic Gaussian noise (σ=0.1\sigma=0.1).
+Setup. As illustrated in Figure 2, we use a 2D double-circle dataset consisting of 20,00020,000 samples uniformly distributed along two concentric circles with radii of 0.80.8 (outer) and 0.60.6 (inner), each perturbed by Gaussian noise with a standard deviation of 0.10.1.
+We follow the training and sampling procedures of EDM [30] to model the data distribution, employing the second-order Heun method for SDE integration.
+The stochastic coefficient γ\gamma is varied over {0,0.001,0.005,0.01}\{0,0.001,0.005,0.01\}, where γ=0\gamma=0 corresponds to the deterministic ODE sampler.
+To quantify different types of errors, we measure the 2D Wasserstein-1 distance between corresponding distributions.
+The total error is computed as the distance between the ground-truth data distribution and the generated distribution.
+To estimate gradient and discretization errors, we first construct an intermediate regenerated distribution.
+Specifically, given the dataset of 20,00020,000 samples, we perturb each point by Gaussian noise according to 𝐱tmid=𝐱0+tmid​σ\mathbf{\mathbf{x}}_{t_{\text{mid}}}=\mathbf{\mathbf{x}}_{0}+t_{\text{mid}}\sigma, where tmid=0.8t_{\text{mid}}=0.8 and perform one-third of a denoising step to obtain the regenerated samples.
+The gradient error is defined as the distance between the regenerated distribution and the model-generated distribution at T=80.0T=80.0,
+while the discretization error is defined as the distance between the regenerated distribution and the ground-truth distribution.
+Result. The gradient error, discretization error, and total error over the steps range t∈[15,40]t\in[15,40] are illustrated in Figure 1. It is observed that the discretization error of ODEs is less than that of SDE variants (in Figure 1 (b)), corresponding to the derived result that the upper bound for ODE sampling error (stated in Theorem 1) is less than that for SDEs (stated in Theorem 2) by a multiplication factor. However, the gradient error (i.e., error caused by network approximation) of SDEs (γ>0\gamma>0) drops compared to ODE counterparts (in Figure 1 (a)), validating the Wasserstein-1 distance bound in Theorem 3. The stochastic step is effective in alleviating the gradient error made by network approximation. Consequently, as shown in Figure 1 (c), the total error accumulated throughout the sampling process decreases due to the reduction of gradient error brought by stochasticity, confirming the effectiveness of our approach in improving sampling accuracy.
+Given the above theoretical analysis and synthetic validation on Wasserstein-1 distance, we present the following remark.
+Remark 1.
+Let ℰ𝗍𝗈𝗍𝖺𝗅​(N,γ)\mathcal{E}_{\mathsf{total}}(N,\gamma) represent the accumulated sampling error for a discretization of NN steps with parameter γ\gamma. Then for ∀N∈ℤ+\forall N\in\mathbb{Z}^{+}, ∃γ∈(0,1)\exists~\gamma\in(0,1) such that:
+ℰ𝗍𝗈𝗍𝖺𝗅​(N,γ)≤ℰ𝗍𝗈𝗍𝖺𝗅​(N,0)\mathcal{E}_{\mathsf{total}}(N,\gamma)\leq\mathcal{E}_{\mathsf{total}}(N,0)
+5 Methodology
+Building on the above theoretical and empirical validation, we introduce AdaSDE, a single-step SDE solver that parameterizes the stochastic coefficient γ\gamma as learnable variable.
+This design unleashes the potential of SDE-based solvers under low-NFE regimes.
+5.1 Sampling Trajectory Geometry
+The trajectories generated by Eq. (4) exhibit low complexity geometric features with implicit connections to annealed mean displacement, as established in previous work [26, 25]. Each sample initialized from the noise distribution progressively approaches the data manifold through smooth, quasi-linear trajectories characterized by monotonic likelihood improvement. In addition, under identical dataset and time schedule, all sampling trajectories demonstrate geometric consistency across different sampling methods. This geometric insight motivates a discrete-time distillation framework. By strategically inserting intermediate temporal steps within student trajectories, we construct high-fidelity reference trajectories. This enables process-supervised optimization that rigorously determines the governing γ\gamma parameters for trajectory segments. Specifically, given a student time schedule 𝒯stu ={t0,t1,…,tN}\mathcal{T}_{\text{stu }}=\left\{t_{0},t_{1},\ldots,t_{N}\right\} with NN steps, we insert MM intermediate steps between tnt_{n} and tn+1t_{n+1} (denoted as 𝒯tea ={t0,t0(1),…,t0(M),t1,…,tN}\mathcal{T}_{\text{tea }}=\{t_{0},t_{0}^{(1)},\ldots,t_{0}^{(M)},t_{1},\ldots,t_{N}\} ) to generate refined teacher trajectories. Notably, our interpolation scheme employs a flexible strategy that allows for selecting different time schedules based on various solvers. This adaptability enhances the fidelity of teacher trajectories.
+Figure 3: The proposed AdaSDE framework. AdaSDE diverges from traditional heuristic noise injection methods used in DDPM [2] and EDM-SDE [19]. Instead, we use intermediary supervision from a teacher sampling path to learn and optimize the noise injection process.
+Algorithm 1 Optimizing Θ1:N\Theta_{1:N}
+1:
+Given: time schedules 𝒯𝗌𝗍𝗎\mathcal{T}_{\mathsf{stu}} and 𝒯𝗍𝖾𝖺\mathcal{T}_{\mathsf{tea}}
+2:
+Repeat until convergence
+3:
+Sample 𝐱tN=𝐲tN∼𝒩⁡(𝟎,tN2​𝐈){\mathbf{x}}_{t_{N}}={\mathbf{y}}_{t_{N}}\sim\mathcal{N}(\mathbf{0},t^{2}_{N}\mathbf{I})
+4:
+for n=Nn=N to 11 do
+5:
+Sample ϵn∼𝒩⁡(𝟎,𝐈)\bm{\epsilon}_{n}\sim\mathcal{N}(\mathbf{0},\mathbf{I})
+6:
+{γ,ξ,λ,μ}n←Θn{\{\gamma,\xi,\lambda,\mu\}_{n}}\leftarrow\Theta_{n}
+7:
+t^n←tn+γn​tn\hat{t}_{n}\leftarrow t_{n}+\gamma_{n}t_{n}
+8:
+𝐱tn←𝐱tn+t^n2−tn2​ϵn\mathbf{x}_{t_{n}}\leftarrow\mathbf{x}_{t_{n}}+\sqrt{\hat{t}_{n}^{2}-t_{n}^{2}}\bm{\epsilon}_{n}
+9:
+Compute 𝐱tn−1{\mathbf{x}}_{t_{n-1}} using Eq. (9)
+10:
+Update Θn\Theta_{n} via Eq. (10)
+11:
+end for
+Algorithm 2 AdaSDE sampling
+1:
+Given: parameters Θ1:N\Theta_{1:N}, student time schedule 𝒯𝗌𝗍𝗎\mathcal{T}_{\mathsf{stu}}
+2:
+Initialize 𝐱tN∼𝒩⁡(𝟎,tN2​𝐈){\mathbf{x}}_{t_{N}}\sim\mathcal{N}(\mathbf{0},t^{2}_{N}\mathbf{I})
+3:
+for n=Nn=N to 11 do
+4:
+Sample ϵn∼𝒩⁡(𝟎,𝐈)\bm{\epsilon}_{n}\sim\mathcal{N}(\mathbf{0},\mathbf{I})
+5:
+{γ,ξ,λ,μ}n←Θn{\{\gamma,\xi,\lambda,\mu\}_{n}}\leftarrow\Theta_{n}
+6:
+t^n←tn+γn​tn\hat{t}_{n}\leftarrow t_{n}+\gamma_{n}t_{n}
+7:
+𝐱tn←𝐱tn+t^n2−tn2​ϵn\mathbf{x}_{t_{n}}\leftarrow\mathbf{x}_{t_{n}}+\sqrt{\hat{t}_{n}^{2}-t_{n}^{2}}\bm{\epsilon}_{n}
+8:
+Compute 𝐱tn−1{\mathbf{x}}_{t_{n-1}} using Eq. (9)
+9:
+end for
+10:
+Return: 𝐱t0{\mathbf{x}}_{t_{0}}
+5.2 Fast SDE-based Sampling
+We extend the midpoint-based correction mechanisms Eq. (8) from AMED-Solver [20] to SDEs, proposing a sampling framework that strategically aligns stochastic perturbations with learned trajectory geometry.
+𝐱tn≈𝐱tn+1+(tn−tn+1)​sθ​(𝐱ξn,ξn)⏟midpoint gradient,ξn∈[tn+1,tn]\mathbf{x}_{t_{n}}\approx\mathbf{x}_{t_{n+1}}+(t_{n}-t_{n+1})\underbrace{s_{\theta}\left(\mathbf{x}_{\xi_{n}},\xi_{n}\right)}_{\text{midpoint gradient}},{\xi_{n}}\in[t_{n+1},t_{n}]
+(8)
+The parameterization adopts the design from DPM-Solver’s intermediate time step construction, formally defined as ξn=tn​tn+1\xi_{n}=\sqrt{t_{n}t_{n+1}}. This square-root formulation guarantees smooth geometric interpolation between adjacent time steps in the noise scheduling process. Building on insights from [46, 47] showing network scaling mitigates input mismatches, we propose learnable parameters {λn,μn}\left\{\lambda_{n},\mu_{n}\right\} to adaptively adjust both exposure bias and timestep scales.
+The parameters Θn={γn,ξn,λn,μn}n=1N\Theta_{n}=\left\{\gamma_{n},\xi_{n},\lambda_{n},\mu_{n}\right\}_{n=1}^{N} are optimized through our discrete-time distillation framework described in Section 5.1. Consequently, Eq. (8) can be reformulated in the following form:
+𝐱tn≈𝐱tn+1+(1+λn)​(tn−tn+1)​sθ​(𝐱ξn,ξn+μn)\mathbf{x}_{t_{n}}\approx\mathbf{x}_{t_{n+1}}+(1+\lambda_{n})\left(t_{n}-t_{n+1}\right)s_{\theta}\left(\mathbf{x}_{\xi_{n}},\xi_{n}+\mu_{n}\right)
+(9)
+Let {𝐲tn}n=1N\left\{\mathbf{y}_{t_{n}}\right\}_{n=1}^{N} denote the reference states of teacher trajectories. Starting from the identical initial noise 𝐲t0\mathbf{y}_{t_{0}}, we generate student trajectories by optimizing the parameter sequence {Θn}n=1N\left\{\Theta_{n}\right\}_{n=1}^{N}, resulting in student states {𝐱tn}n=1N\left\{\mathbf{x}_{t_{n}}\right\}_{n=1}^{N} that align with the teacher trajectories under a predefined metric d⁡(⋅,⋅)d(\cdot,\cdot).
+Crucially, since 𝐱tn\mathbf{x}_{t_{n}} depends on all preceding parameters {Θn}n=1N\left\{\Theta_{n}\right\}_{n=1}^{N} through the iterative sampling process, we implement stagewise optimization by minimizing the cumulative alignment loss at each timestep tnt_{n} :
+ℒtn​(Θn)=d⁡(𝐱tn,𝐲tn)\mathcal{L}_{t_{n}}({\Theta_{n}})=d\left(\mathbf{x}_{t_{n}},\mathbf{y}_{t_{n}}\right)
+(10)
+In each training loop, we perform backpropagation
+NN times. The comparison with existing SDE solvers are presented in Figure 3. The complete training algorithm is detailed in Algorithm 1, while the inference procedure is outlined in Algorithm 2. AdaSDE serves as a plug-and-play module for existing solvers. To implement this, we train the AdaSDE predictor Algorithm 1 by replacing the mean update in Equation 8 with the target solver’s formulation.
+6 Experiments
+6.1 Experiment Setup
+Models and datasets.
+We apply AdaSDE and DPM-Plugin to five pre-trained diffusion models across diverse domains. For pixel-space models, we include CIFAR10 (32 × 32) [27], FFHQ (64 × 64) [48], and ImageNet (64 × 64) [49]. For latent-space models, we evaluate LSUN Bedroom (256 × 256) [50] with a guidance scale of 1.0. Additionally, we consider text-to-image high-resolution generation models, including Stable Diffusion v1.5 [5] at 512 × 512 resolution with a guidance scale of 7.5.
+Table 1:
+Image generation results across different datasets.
+(a) CIFAR10 [35] (unconditional),
+(b) FFHQ [28] (unconditional),
+(c) ImageNet [49] (conditional),
+(d) LSUN Bedroom [50] (unconditional).
+We compared AdaSDE-Solver and the training-required method AMED-Solver [20], as well as other training-free methods. AdaSDE achieves superior performance across all datasets.
+Method
+NFE
+3
+5
+7
+9
+Multi-Step Solvers
+DPM-Solver++(3M) [22]
+110.0
+24.97
+6.74
+3.42
+UniPC [33]
+109.6
+23.98
+5.83
+3.21
+iPNDM [32, 31]
+47.98
+13.59
+5.08
+3.17
+Single-Step Solvers
+DDIM [29]
+93.36
+49.66
+27.93
+18.43
+Heun [19]
+306.2
+97.67
+37.28
+15.76
+DPM-Solver-2 [21]
+153.6
+43.27
+16.69
+8.65
+DPM-Plugin (ours)
+39.57
+13.75
+9.19
+7.21
+AMED-Solver [20]
+18.49
+7.59
+4.36
+3.67
+AdaSDE (ours)
+12.62
+4.18
+2.88
+2.56
+(a)
+Method
+NFE
+3
+5
+7
+9
+Multi-Step Solvers
+DPM-Solver++(3M) [22]
+86.45
+22.51
+8.44
+4.77
+UniPC [33]
+86.43
+21.40
+7.44
+4.47
+iPNDM [32, 31]
+45.98
+17.17
+7.79
+4.58
+Single-Step Solvers
+DDIM [29]
+78.21
+43.93
+28.86
+21.01
+Heun [19]
+356.5
+116.7
+54.51
+28.86
+DPM-Solver-2 [21]
+215.7
+74.68
+36.09
+16.89
+DPM-Plugin (ours)
+66.31
+20.80
+14.51
+10.48
+AMED-Solver [20]
+47.31
+14.80
+8.82
+6.31
+AdaSDE (ours)
+23.80
+8.05
+5.11
+4.19
+(b)
+Method
+NFE
+3
+5
+7
+9
+Multi-Step Solvers
+DPM-Solver++(3M) [22]
+91.52
+25.49
+10.14
+6.48
+UniPC [33]
+91.38
+24.36
+9.57
+6.34
+iPNDM [32, 31]
+58.53
+18.99
+9.17
+5.91
+Single-Step Solvers
+DDIM [29]
+82.96
+43.81
+27.46
+19.27
+Heun [19]
+249.4
+89.63
+37.65
+16.76
+DPM-Solver-2 [21]
+140.2
+59.47
+22.02
+11.31
+DPM-Plugin (ours)
+108.9
+17.03
+11.69
+8.06
+AMED-Solver [20]
+38.10
+10.74
+6.66
+5.44
+AdaSDE (ours)
+18.51
+6.90
+5.26
+4.59
+(c)
+Method
+NFE
+3
+5
+7
+9
+Multi-Step Solvers
+DPM-Solver++(3M) [22]
+111.9
+23.15
+8.87
+6.45
+UniPC [33]
+112.3
+23.34
+8.73
+6.61
+iPNDM [32, 31]
+80.99
+26.65
+13.80
+8.38
+Single-Step Solvers
+DDIM [29]
+86.13
+34.34
+19.50
+13.26
+Heun [19]
+291.5
+175.7
+78.66
+35.67
+DPM-Solver-2 [21]
+227.3
+47.22
+23.21
+13.80
+DPM-Plugin (ours)
+97.13
+21.02
+13.68
+10.89
+AMED-Solver [20]
+58.21
+13.20
+7.10
+5.65
+AdaSDE (ours)
+18.03
+6.96
+5.69
+5.16
+(d)
+Solvers and time schedules.
+We compare AdaSDE against state-of-the-art single-step and multi-step ODE solvers. The single-step baselines include training-free methods—DDIM [29], EDM [19], and DPM-Solver-2 [21], as well as the lightweight-tuning approach AMED-Solver [20]. For multi-step methods, we evaluate DPM-Solver++ (3M) [22], UniPC [33], and iPNDM [31, 32]. To further demonstrate the effectiveness of our method, we also conduct a head-to-head comparison between DPM-Plugin and DPM-Solver-2 [21].
+Table 2: FID results on Stable Diffusion v1.5 [5] with a classifier-free guidance weight w=7.5w=7.5.
+Method
+NFE
+4
+6
+8
+10
+MSCOCO 512×512
+DPM-Solver++(2M) [22]
+21.33
+15.99
+14.84
+14.58
+AMED-Plugin [20]
+18.92
+14.84
+13.96
+13.24
+DPM-Solver-v3 [51]
+-
+16.41
+15.41
+15.32
+AdaSDE (ours)
+30.89
+13.99
+13.39
+12.68
+Table 3: Ablation study of time schedules on CIFAR-10 [27].
+Time schedule
+NFE
+3
+5
+7
+9
+CIFAR-10 32×32
+Time Uniform [2]
+12.62
+4.18
+2.88
+2.56
+Time Polynomial [19]
+11.61
+10.05
+5.14
+3.35
+Time LogSNR [21]
+23.38
+10.42
+7.96
+4.84
+To ensure an equitable and consistent comparison, our study faithfully adheres to the time scheduling strategies as recommended in the related work [19, 22, 33]. Specifically, we implement the logarithmic signal-to-noise ratio (logSNR) scheduling for DPM-Solver{-2, ++(3M)} and UniPC algorithms. For other baseline algorithms, EDM time schedule with ρ\rho set to 7 has been employed. For AdaSDE and DPM-Plugin, we implement time-uniform schedule.
+Learned perceptual image patch similarity
+While some search-based frameworks employ LPIPS as their distance metric [52], we observed that using LPIPS during the intermediate steps of our method provided no significant performance gains and substantially increased training duration. Consequently, to balance efficiency and final quality, our approach utilizes Mean Squared Error (MSE) for optimizing intermediate steps, while applying the LPIPS metric in the final stage to enhance the overall training outcome.
+Training details.
+Our AdaSDE is assessed at low NFE settings (NFE∈{3,5,7,9}\text{NFE}\in\{3,5,7,9\}) with AFS [53] implemented. Sample quality is gauged using the Fréchet Inception Distance (FID) [54] over 50k images. For Stable-Diffusion, We evaluate FID as [54], using 30k samples from fixed prompts based on the MS-COCO [28] validation set. The random seed was fixed to 0 to ensure consistent reproducibility of the experimental results.
+6.2 Main Results
+In table 1, we benchmark AdaSDE against single- and multi-step baseline solvers on CIFAR-10, FFHQ, ImageNet 64×\times64, and LSUN Bedroom across varying NFE. We observe consistent and substantial improvements in the low-step regime (3–9 NFE). For example, at NFE=9 we obtain FIDs of 4.59 (ImageNet) and 5.16 (LSUN Bedroom), while the second-best single-step baseline (AMED-Solver) reaches 5.44 and 5.65, respectively, indicating clear gains. In an even more challenging few-step setting (NFE=3 on LSUN Bedroom), AdaSDE achieves 18.03 FID, markedly outperforming AMED-Solver’s 58.21. On CIFAR-10, NFE=5 yields 4.18 FID (vs. AMED-Solver’s 7.59); on FFHQ, NFE=5 yields 8.05, substantially better than DPM-Plugin’s 20.80 and DPM-Solver-2’s 74.68. Overall, AdaSDE maintains—and often widens—its advantage as the number of steps decreases.
+We further evaluate AdaSDE on Stable Diffusion v1.5 with classifier-free guidance set to 7.57.5, reporting FID on the MS-COCO validation set (see table 3). At NFE=8/10, AdaSDE attains 13.39/12.68, surpassing DPM-Solver++(2M) at 14.84/14.58 and AMED-Plugin at 13.96/13.24, while remaining competitive with DPM-Solver-v3 across multiple step counts. These results indicate that our adaptive stochastic coefficient not only improves pixel-space diffusion models but also transfers robustly to high-resolution text-to-image generation in latent space. Additional quantitative results are provided in Figures 5, 6 and 7.
+6.3 Ablation Studies
+Effect of the stochastic coefficient.
+We quantify the contribution of the learned stochastic coefficient by comparing AdaSDE with and without γn\gamma_{n} on CIFAR-10, FFHQ, and Stable Diffusion v1.5 (MS-COCO); see tables 5 and 5. Removing γn\gamma_{n} consistently degrades FID, with the effect most pronounced in the few-step regime. On CIFAR-10, FID rises from 12.62 to 13.32 at NFE=3 and from 4.18 to 4.36 at NFE=5. On FFHQ 64×6464\times 64, we observe similar trends: FID increases from 23.80 to 25.85 at NFE=3 and from 8.04 to 8.11 at NFE=5. The benefit is especially clear on SD v1.5 (MS-COCO 512×512512\times 512): when γn\gamma_{n} is removed, FID rises from 30.89 to 37.23 at NFE=4 and from 13.79 to 16.34 at NFE=6, while the gap narrows as steps increase (12.68 with γn\gamma_{n} versus 12.82 without at NFE=10). These results support that injecting learned stochasticity stabilizes few-step trajectories and mitigates error accumulation in low-NFE sampling.
+Table 4: Ablation of γn\gamma_{n} on CIFAR-10 [27] and FFHQ [28].
+Training configuration
+NFE
+3
+5
+7
+9
+CIFAR-10 32×32
+AdaSDE
+12.62
+4.18
+2.88
+2.56
+w.o. γn\gamma_{n}
+13.32
+4.36
+2.91
+2.63
+FFHQ 64×64
+AdaSDE
+23.80
+8.04
+5.11
+4.19
+w.o. γn\gamma_{n}
+25.85
+8.11
+5.12
+4.27
+Table 5: Ablation of γn\gamma_{n} on Stable Diffusion v1.5 [5].
+Training configuration
+NFE
+4
+6
+8
+10
+MSCOCO 512×512
+AdaSDE
+30.89
+13.79
+13.39
+12.68
+w.o. γn\gamma_{n}
+37.23
+16.34
+14.18
+12.82
+Effect of time schedule.
+We further compare common time schedules on CIFAR-10—LogSNR, EDM (polynomial), and time-uniform—summarized in table 3. The time-uniform schedule is the most reliable once NFE is at least 5, achieving FID scores of 4.18, 2.88, and 2.56 at NFE=5, 7, and 9, respectively, clearly outperforming the polynomial (10.05, 5.14, 3.35) and LogSNR (10.42, 7.96, 4.84) schedules. At the extreme NFE=3 setting, the polynomial schedule attains a marginally lower FID than the uniform schedule (11.61 versus 12.62), but its performance degrades rapidly as NFE increases. Overall, we adopt the time-uniform schedule as the default for few-step experiments due to its robustness across moderate step counts.
+7 Conclusion and Limitation
+Conclusion. In this work, we present AdaSDE, a novel framework using adaptive stochastic coefficient optimization to fundamentally address the efficiency-quality trade-off in diffusion sampling. It achieves new state-of-the-art results, such as a 4.18 FID on CIFAR-10 with only 5 NFE (a 1.8x improvement over prior SOTA). AdaSDE acts as a lightweight plugin, compatible with existing single-step solvers and requiring only 8-40 parameters for tuning, enabling practical deployment without full model retraining.
+Limitation. When the step size is large and stronger stochastic injection is used (higher γ\gamma), local errors can amplify across steps and dominate the total sampling error, leading to instability. In practice, the admissible range of γ\gamma is constrained by both the dataset and the step schedule, often necessitating conservative time discretization or γ\gamma clipping.
+Our method’s per-step distribution resets and geometric alignment break the linear recurrence assumptions underlying multistep (e.g., iPNDM [31, 32], UniPC [33]) and predictor–corrector frameworks.
+References
+[1]
+Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli.
+Deep unsupervised learning using nonequilibrium thermodynamics.
+In ICML, 2015.
+[2]
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+Denoising diffusion probabilistic models.
+In NeurIPS, 2020.
+[3]
+Prafulla Dhariwal and Alexander Nichol.
+Diffusion models beat gans on image synthesis.
+In NeurIPS, 2021.
+[4]
+Chitwan Saharia, William Chan, Saurabh Saxena, Lala Li, Jay Whang, Emily L Denton, Kamyar Ghasemipour, Raphael Gontijo Lopes, Burcu Karagol Ayan, Tim Salimans, Jonathan Ho, David J Fleet, and Mohammad Norouzi.
+Photorealistic text-to-image diffusion models with deep language understanding.
+In NeurIPS, 2022.
+[5]
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Björn Ommer.
+High-resolution image synthesis with latent diffusion models.
+In CVPR, 2022.
+[6]
+Kesen Zhao, Jiaxin Shi, Beier Zhu, Junbao Zhou, Xiaolong Shen, Yuan Zhou, Qianru Sun, and Hanwang Zhang.
+Real-time motion-controllable autoregressive video diffusion, 2025.
+[7]
+Lifeng Chen, Jiner Wang, Zihao Pan, Beier Zhu, Xiaofeng Yang, and Chi Zhang.
+Detail++: Training-free detail enhancer for text-to-image diffusion models, 2025.
+[8]
+Zhanxin Gao, Beier Zhu, Liang Yao, Jian Yang, and Ying Tai.
+Subject-consistent and pose-diverse text-to-image generation, 2025.
+[9]
+Mingkun Lei, Xue Song, Beier Zhu, Hao Wang, and Chi Zhang.
+Stylestudio: Text-driven style transfer with selective control of style elements.
+In CVPR, 2025.
+[10]
+Xin Jin, Yichuan Zhong, and Yapeng Tian.
+TP-blend: Textual-prompt attention pairing for precise object-style blending in diffusion models.
+TMLR, 2025.
+[11]
+Chenxi Song, Yanming Yang, Tong Zhao, Ruibo Li, and Chi Zhang.
+Worldforge: Unlocking emergent 3d/4d generation in video diffusion model via training-free guidance, 2025.
+[12]
+Xiangdong Zhang, Jiaqi Liao, Shaofeng Zhang, Fanqing Meng, Xiangpeng Wan, Junchi Yan, and Yu Cheng.
+Videorepa: Learning physics for video generation through relational alignment with foundation models, 2025.
+[13]
+Wenyu Mao, Zhengyi Yang, Jiancan Wu, Haozhe Liu, Yancheng Yuan, Xiang Wang, and Xiangnan He.
+Addressing missing data issue for diffusion-based recommendation.
+In SIGIR, pages 2152–2161. ACM, 2025a.
+[14]
+Wenyu Mao, Shuchang Liu, Haoyang Liu, Haozhe Liu, Xiang Li, and Lantao Hu.
+Distinguished quantized guidance for diffusion-based sequence recommendation.
+In WWW, pages 425–435. ACM, 2025b.
+[15]
+Yang Song, Jascha Sohl-Dickstein, Diederik P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+Score-based generative modeling through stochastic differential equations.
+In ICLR, 2021a.
+[16]
+Ian J Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair, Aaron Courville, and Yoshua Bengio.
+Generative adversarial nets.
+In NeurIPS, 2014.
+[17]
+Diederik P Kingma and Max Welling.
+Auto-encoding variational bayes, 2022.
+[18]
+Chenlin Meng, Robin Rombach, Ruiqi Gao, Diederik Kingma, Stefano Ermon, Jonathan Ho, and Tim Salimans.
+On distillation of guided diffusion models.
+In CVPR, 2023.
+[19]
+Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine.
+Elucidating the design space of diffusion-based generative models.
+In NeurIPS, 2022a.
+[20]
+Zhenyu Zhou, Defang Chen, Can Wang, and Chun Chen.
+Fast ode-based sampling for diffusion models in around 5 steps.
+In CVPR, 2024a.
+[21]
+Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu.
+Dpm-solver: A fast ode solver for diffusion probabilistic model sampling in around 10 steps.
+In NeurIPS, 2022a.
+[22]
+Cheng Lu, Yuhao Zhou, Fan Bao, Jianfei Chen, Chongxuan Li, and Jun Zhu.
+Dpm-solver++: Fast solver for guided sampling of diffusion probabilistic models.
+arXiv preprint arXiv:2211.01095, 2022b.
+[23]
+Yilun Xu, Mingyang Deng, Xiang Cheng, Yonglong Tian, Ziming Liu, and Tommi Jaakkola.
+Restart sampling for improving generative processes.
+In NeurIPS, 2023.
+[24]
+Alexander Quinn Nichol and Prafulla Dhariwal.
+Improved denoising diffusion probabilistic models.
+In ICML, 2021.
+[25]
+Defang Chen, Zhenyu Zhou, Jian-Ping Mei, Chunhua Shen, Chun Chen, and Can Wang.
+A geometric perspective on diffusion models.
+arXiv, 2024a.
+[26]
+Defang Chen, Zhenyu Zhou, Can Wang, Chunhua Shen, and Siwei Lyu.
+On the trajectory regularity of ode-based diffusion sampling.
+In ICML, 2024b.
+[27]
+Alex Krizhevsky, Geoffrey Hinton, et al.
+Learning multiple layers of features from tiny images.
+Technical Report, 2009.
+[28]
+Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Dollár, and C Lawrence Zitnick.
+Microsoft coco: Common objects in context.
+In ECCV. Springer, 2014.
+[29]
+Jiaming Song, Chenlin Meng, and Stefano Ermon.
+Denoising diffusion implicit models.
+In ICLR, 2021b.
+[30]
+Tero Karras, Miika Aittala, Timo Aila, and Samuli Laine.
+Elucidating the design space of diffusion-based generative models.
+In NeurIPS, 2022b.
+[31]
+Qinsheng Zhang and Yongxin Chen.
+Fast sampling of diffusion models with exponential integrator.
+In ICLR, 2023.
+[32]
+Luping Liu, Yi Ren, Zhijie Lin, and Zhou Zhao.
+Pseudo numerical methods for diffusion models on manifolds.
+In ICLR, 2022a.
+[33]
+Wenliang Zhao, Lujia Bai, Yongming Rao, Jie Zhou, and Jiwen Lu.
+Unipc: A unified predictor-corrector framework for fast sampling of diffusion models.
+In NeurIPS, 2024.
+[34]
+Shuchen Xue, Mingyang Yi, Weijian Luo, Shifeng Zhang, Jiacheng Sun, Zhenguo Li, and Zhi-Ming Ma.
+Sa-solver: Stochastic adams solver for fast sampling of diffusion models.
+In NeurIPS, 2024a.
+[35]
+Xingchao Liu, Chengyue Gong, and Qiang Liu.
+Flow straight and fast: Learning to generate and transfer data with rectified flow.
+In NeurIPS 2022 Workshop on Score-Based Methods, 2022b.
+[36]
+David Berthelot, Arnaud Autef, Jierui Lin, Dian Ang Yap, Shuangfei Zhai, Siyuan Hu, Daniel Zheng, Walter Talbott, and Eric Gu.
+Tract: Denoising diffusion models with transitive closure time-distillation.
+arXiv preprint arXiv:2303.04248, 2023.
+[37]
+Dongjun Kim, Chieh-Hsin Lai, Wei-Hsiang Liao, Naoki Murata, Yuhta Takida, Toshimitsu Uesaka, Yutong He, Yuki Mitsufuji, and Stefano Ermon.
+Consistency trajectory models: Learning probability flow ode trajectory of diffusion.
+In ICLR, 2024.
+[38]
+Simian Luo, Yiqin Tan, Longbo Huang, Jian Li, and Hang Zhao.
+Latent consistency models: Synthesizing high-resolution images with few-step inference.
+arXiv preprint arXiv:2310.04378, 2023.
+[39]
+Axel Sauer, Dominik Lorenz, Andreas Blattmann, and Robin Rombach.
+Adversarial diffusion distillation.
+In ECCV, 2024.
+[40]
+Zhengyi Wang, Cheng Lu, Yikai Wang, Fan Bao, Chongxuan Li, Hang Su, and Jun Zhu.
+Prolificdreamer: High-fidelity and diverse text-to-3d generation with variational score distillation.
+In NeurIPS, 2023.
+[41]
+Beier Zhu, Ruoyu Wang, Tong Zhao, Hanwang Zhang, and Chi Zhang.
+Distilling parallel gradients for fast ode solvers of diffusion models.
+arXiv preprint arXiv:2507.14797, 2025.
+[42]
+Vinh Tong, Dung Trung Hoang, Anji Liu, Guy Van den Broeck, and Mathias Niepert.
+Learning to discretize denoising diffusion ODEs.
+In ICLR, 2025.
+[43]
+Shuchen Xue, Zhaoqiang Liu, Fei Chen, Shifeng Zhang, Tianyang Hu, Enze Xie, and Zhenguo Li.
+Accelerating diffusion sampling with optimized time steps.
+In CVPR, 2024b.
+[44]
+Arnak S. Dalalyan and Avetik Karagulyan.
+User-friendly guarantees for the langevin monte carlo with inaccurate gradient.
+Stochastic Processes and their Applications, 129(12):5278–5311, 2019.
+[45]
+Brian D.O. Anderson.
+Reverse-time diffusion equation models.
+Stochastic Processes and their Applications, 12(3):313–326, 1982.
+[46]
+Mang Ning, Mingxiao Li, Jianlin Su, Albert Ali Salah, and Itir Onal Ertugrul.
+Elucidating the exposure bias in diffusion models.
+In ICLR, 2024.
+[47]
+Mingxiao Li, Tingyu Qu, Ruicong Yao, Wei Sun, and Marie-Francine Moens.
+Alleviating exposure bias in diffusion models through sampling with shifted time steps.
+In ICLR, 2024.
+[48]
+Tero Karras, Samuli Laine, and Timo Aila.
+A style-based generator architecture for generative adversarial networks.
+In CVPR, 2019.
+[49]
+Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, et al.
+Imagenet large scale visual recognition challenge.
+IJCV, 115:211–252, 2015.
+[50]
+Fisher Yu, Ari Seff, Yinda Zhang, Shuran Song, Thomas Funkhouser, and Jianxiong Xiao.
+Lsun: Construction of a large-scale image dataset using deep learning with humans in the loop.
+arXiv preprint arXiv:1506.03365, 2015.
+[51]
+Kaiwen Zheng, Cheng Lu, Jianfei Chen, and Jun Zhu.
+Dpm-solver-v3: Improved diffusion ode solver with empirical model statistics.
+In NeurIPS, 2023.
+[52]
+Zhenyu Zhou, Defang Chen, Can Wang, Chun Chen, and Siwei Lyu.
+Simple and fast distillation of diffusion models.
+In NeurIPS, 2024b.
+[53]
+Tim Dockhorn, Arash Vahdat, and Karsten Kreis.
+Genie: Higher-order denoising diffusion solvers.
+In NeurIPS, 2022.
+[54]
+Aditya Ramesh, Mikhail Pavlov, Gabriel Goh, Scott Gray, Chelsea Voss, Alec Radford, Mark Chen, and Ilya Sutskever.
+Zero-shot text-to-image generation.
+In ICML, 2021.
+Appendix
+Appendix A Notation and Symbols for the Proof
+This subsection provides a comprehensive list of notations and symbols specific to the theoretical proof. The definitions align with the conventions in stochastic calculus and diffusion model analysis.
+We build on the notations of [23].
+A.1 Common Terms
+•
+𝖮𝖣𝖤θ​(⋅)\mathsf{ODE}_{\theta}(\cdot) : Approximate ODE trajectory using the learned score sθ​(𝐱,t)s_{\theta}(\mathbf{x},t).
+•
+ptp_{t} : True data distribution at noise level tt.
+•
+pt𝖮𝖣𝖤θp_{t}^{\mathsf{ODE}_{\theta}} : Distribution generated by simulating 𝖮𝖣𝖤θ\mathsf{ODE}_{\theta}.
+•
+BB : Norm upper bound for trajectories, satisfying ∀t,‖𝐱t‖<B/2\forall t,\left\|\mathbf{x}_{t}\right\|<B/2.
+•
+𝐱t∼pt\mathbf{x}_{t}\sim p_{t} : 𝐱t\mathbf{x}_{t} is sampled from distribution ptp_{t}.
+A.2 AdaSDE Terms
+•
+Δ​t\Delta t : ODE discretization step size.
+•
+γ\gamma : Hyperparameter controlling the noise injection ratio in the AdaSDE process.
+•
+𝐱t+Δ​tγ\mathbf{x}_{t+\Delta t}^{\gamma} : AdaSDE forward process: 𝐱t+Δ​t+εt+Δ​t→t+(1+γ)​Δ​t\mathbf{x}_{t+\Delta t}+\varepsilon_{t+\Delta t\rightarrow t+(1+\gamma)\Delta t}.
+•
+ε\varepsilon: Gaussian noise ∼𝒩⁡(0,I)\sim\mathcal{N}(0,I).
+•
+𝐱tγ\mathbf{x}_{t}^{\gamma} : AdaSDE backward process: 𝖮𝖣𝖤θ(𝐱t+Δ​tγ,t+(1+γ)Δt→t)\mathsf{ODE}_{\theta}\left(\mathbf{x}_{t+\Delta t}^{\gamma},t+(1+\gamma)\Delta t\rightarrow t\right).
+•
+𝖠𝖽𝖺𝖲𝖣𝖤θ​(𝐱,γ)\mathsf{AdaSDE}_{\theta}(\mathbf{x},\gamma) : Applies the AdaSDE operation with parameter γ\gamma to state 𝐱\mathbf{x}.
+•
+𝐱¯t\bar{\mathbf{x}}_{t}: The solution to
+d​𝐱¯t=−t​sθ​(𝐱t+Δ​t,t+Δ​t)​d​t,d\bar{\mathbf{x}}_{t}=-ts_{\theta}\left(\mathbf{x}_{t+\Delta t},t+\Delta t\right)dt,
+A.3 Lipschitz and Error Bounds
+•
+L0L_{0} : Temporal Lipschitz constant:‖t​sθ​(𝐱,t)−t​sθ​(𝐱,s)‖≤L0​|t−s|\left\|ts_{\theta}(\mathbf{x},t)-ts_{\theta}(\mathbf{x},s)\right\|\leq L_{0}|t-s|
+•
+L1L_{1} : Boundedness of the learned score: ‖t​sθ​(𝐱,t)‖≤L1\left\|ts_{\theta}(\mathbf{x},t)\right\|\leq L_{1}.
+•
+L2L_{2} : Spatial Lipschitz constant:‖t​sθ​(𝐱,t)−t​sθ​(𝐲,t)‖≤L2​‖𝐱−𝐲‖\left\|ts_{\theta}(\mathbf{x},t)-ts_{\theta}(\mathbf{y},t)\right\|\leq L_{2}\|\mathbf{x}-\mathbf{y}\|
+•
+ϵt\epsilon_{t} : Score matching error:‖t​∇𝐱​log⁡pt​(𝐱)−t​sθ​(𝐱,t)‖\left\|t\nabla_{\mathbf{x}}\log p_{t}(\mathbf{x})-ts_{\theta}(\mathbf{x},t)\right\|
+A.4 Special Operators
+•
+𝖮𝖣𝖤(𝐱,t1→t2):\mathsf{ODE}\left(\mathbf{x},t_{1}\rightarrow t_{2}\right): Ground Truth backward ODE evolution under the exact score from t1t_{1} to t2t_{2}.
+•
+𝖮𝖣𝖤θ(𝐱,t1→t2)\mathsf{ODE}_{\theta}\left(\mathbf{x},t_{1}\rightarrow t_{2}\right) : Approximate ODE evolution using the learned score sθs_{\theta}.
+•
+∗*: Convolution operator between distributions, e.g., P∗RP*R denotes the convolution of PP and RR.
+•
+←\leftarrow : Time-reversal marker, e.g., 𝐱t←\mathbf{x}_{t}^{\leftarrow}.
+A.5 Key Process Terms
+•
+pt𝐱,γp_{t}^{\mathbf{x},\gamma} : Distribution at noise level tt after applying the AdaSDE process starting from state 𝐱\mathbf{x}.
+•
+pt𝖠𝖽𝖺𝖲𝖣𝖤θp_{t}^{\mathsf{AdaSDE}_{\theta}} : Distribution generated by the AdaSDE algorithm.
+•
+ξx,ξy\xi_{x},\xi_{y} : i.i.d Gaussian noise: ξx∼𝒩⁡(0,σ2​Id)\xi_{x}\sim\mathcal{N}\left(0,\sigma^{2}I_{d}\right), ξy∼𝒩⁡(0,σ2​Id)\xi_{y}\sim\mathcal{N}\left(0,\sigma^{2}I_{d}\right).
+A.6 Error Dynamics
+•
+e⁡(t):=‖𝐱t←−𝐱¯t←‖:e(t):=\left\|\mathbf{x}_{t}^{\leftarrow}-\bar{\mathbf{x}}_{t}^{\leftarrow}\right\|: Error dynamics in the time-reversed coordinate system in tt.
+•
+λ⁡(γ)\lambda(\gamma) : Noise merging probability:2​Q​(B2​(t+(1+γ)​Δ​t)2−t2)2Q\left(\frac{B}{2\sqrt{(t+(1+\gamma)\Delta t)^{2}-t^{2}}}\right), where Q⁡(r)=Pr⁡(a≥r)Q(r)=\operatorname{Pr}(a\geq r) for a∼𝒩⁡(0,1)a\sim\mathcal{N}(0,1).
+•
+W1​(⋅,⋅)W_{1}(\cdot,\cdot) : Wasserstein-1 distance.
+•
+𝖳𝖵\mathsf{TV} (⋅,⋅)(\cdot,\cdot) : Total Variation (TV) distance.
+Where εt+Δ​t→t+(1+γ)​Δ​t∼𝒩⁡(𝟎,((t+(1+γ)​Δ​t)2−(t+Δ​t)2)​𝑰)\varepsilon_{t+\Delta t\rightarrow t+(1+\gamma)\Delta t}\sim\mathcal{N}\left(\mathbf{0},\left((t+(1+\gamma)\Delta t)^{2}-(t+\Delta t)^{2}\right)\bm{I}\right). For the sake of simplifying symbolic representation and facilitating comprehension, in the following proof, we use 𝖠𝖽𝖺𝖲𝖣𝖤θ​(𝐱,γ)\mathsf{AdaSDE}_{\theta}(\mathbf{x},\gamma) to denote 𝐱tγ\mathbf{x}_{t}^{\gamma} in the above processes. In various theorems, we will refer to a function Q⁡(r):ℝ+→Q(r):\mathbb{R}^{+}\rightarrow [0,1/2)[0,1/2), defined as the Gaussian tail probability Q⁡(r)=Pr⁡(a≥r)Q(r)=\operatorname{Pr}(a\geq r) for a∼𝒩⁡(0,1)a\sim\mathcal{N}(0,1).
+Appendix B Proofs of Main Theoretical Results
+Lemma 1 (Upper Bound on ODE Discretization Error).
+[23]
+Let 𝐱t=𝖮𝖣𝖤(𝐱t+Δ​t,t+Δt→t)\mathbf{x}_{t}=\mathsf{ODE}\left(\mathbf{x}_{t+\Delta t},t+\Delta t\rightarrow t\right) denote the solution of the backward ODE under the exact score field,
+and 𝐱¯t=𝖮𝖣𝖤θ(𝐱¯t+Δ​t,t+Δt→t)\bar{\mathbf{x}}_{t}=\mathsf{ODE}_{\theta}\left(\bar{\mathbf{x}}_{t+\Delta t},t+\Delta t\rightarrow t\right) denote the discretized ODE solution using the learned field sθs_{\theta}.
+Assume sθs_{\theta} satisfies:
+1. Temporal Lipschitz Continuity:
+‖t​sθ​(𝐱,t)−t​sθ​(𝐱,s)‖≤L0​|t−s|∀𝐱,t,s\left\|ts_{\theta}(\mathbf{x},t)-ts_{\theta}(\mathbf{x},s)\right\|\leq L_{0}|t-s|\quad\forall\mathbf{x},t,s
+2. Boundedness:
+‖t​sθ​(𝐱,t)‖≤L1∀𝐱,t\left\|ts_{\theta}(\mathbf{x},t)\right\|\leq L_{1}\quad\forall\mathbf{x},t
+3. Spatial Lipschitz Continuity:
+‖t​sθ​(𝐱,t)−t​sθ​(𝐲,t)‖≤L2​‖𝐱−𝐲‖∀𝐱,𝐲,t\left\|ts_{\theta}(\mathbf{x},t)-ts_{\theta}(\mathbf{y},t)\right\|\leq L_{2}\|\mathbf{x}-\mathbf{y}\|\quad\forall\mathbf{x},\mathbf{y},t
+Then the discretization error satisfies:
+‖𝐱t−𝐱¯t‖≤eL2​Δ​t​(‖𝐱t+Δ​t−𝐱¯t+Δ​t‖+(Δ​t​(L2​L1+L0)+ϵt)​Δ​t)\left\|\mathbf{x}_{t}-\bar{\mathbf{x}}_{t}\right\|\leq e^{L_{2}\Delta t}\left(\left\|\mathbf{x}_{t+\Delta t}-\bar{\mathbf{x}}_{t+\Delta t}\right\|+\left(\Delta t\left(L_{2}L_{1}+L_{0}\right)+\epsilon_{t}\right)\Delta t\right)
+Proof.
+Step 1: Definition of Time-Reversed Processes
+Introduce time-reversed variables 𝐱t←\mathbf{x}_{t}^{\leftarrow} and 𝐱¯t←\bar{\mathbf{x}}_{t}^{\leftarrow} governed by:
+where kk is the integer satisfying t∈[t′,t′+Δt)t\in[t^{\prime},t^{\prime}+\Delta t), corresponding to discrete timesteps.
+Step 2: Error Dynamics
+Define the error e⁡(t):=‖𝐱t←−𝐱¯t←‖e(t):=\left\|\mathbf{x}_{t}^{\leftarrow}-\bar{\mathbf{x}}_{t}^{\leftarrow}\right\|. Its derivative satisfies:
+dd​te(t)≤‖t∇logpt(𝐱t←)−tsθ(𝐱¯t′+Δ​t←,t′+Δt)‖.\frac{d}{dt}e(t)\leq\left\|t\nabla\log p_{t}\left(\mathbf{x}_{t}^{\leftarrow}\right)-ts_{\theta}\left(\bar{\mathbf{x}}_{t^{\prime}+\Delta t}^{\leftarrow},t^{\prime}+\Delta t\right)\right\|.
+Decompose the right-hand side:
+≤‖t∇logpt(𝐱t←)−tsθ(𝐱t←,t)‖⏟Approximation Error ​ϵt\displaystyle\leq\underbrace{\left\|t\nabla\log p_{t}\left(\mathbf{x}_{t}^{\leftarrow}\right)-ts_{\theta}\left(\mathbf{x}_{t}^{\leftarrow},t\right)\right\|}_{\text{Approximation Error }\epsilon_{t}}
++‖t​sθ​(𝐱t←,t)−t​sθ​(𝐱¯t←,t)‖⏟L2​‖𝐱t←−𝐱¯t←‖\displaystyle+\underbrace{\left\|ts_{\theta}\left(\mathbf{x}_{t}^{\leftarrow},t\right)-ts_{\theta}\left(\bar{\mathbf{x}}_{t}^{\leftarrow},t\right)\right\|}_{L_{2}\left\|\mathbf{x}_{t}^{\leftarrow}-\bar{\mathbf{x}}_{t}^{\leftarrow}\right\|}
++‖t​sθ​(𝐱¯t←,t)−t​sθ​(𝐱¯t′+Δ​t←,t​’+Δ​t)‖⏟Temporal Discretization Error .\displaystyle+\underbrace{\left\|ts_{\theta}\left(\bar{\mathbf{x}}_{t}^{\leftarrow},t\right)-ts_{\theta}\left(\bar{\mathbf{x}}_{t^{\prime}+\Delta t}^{\leftarrow},t\textquoteright+\Delta t\right)\right\|}_{\text{Temporal Discretization Error }}.
+Step 3: Temporal Discretization Error Bound
+Further decompose the temporal discretization error:
+≤‖t​sθ​(𝐱¯t←,t)−t​sθ​(𝐱¯t′+Δ​t←,t)‖+‖t​sθ​(𝐱¯t′+Δ​t←,t)−t​sθ​(𝐱¯t′+Δ​t←,t′+Δ​t)‖\displaystyle\leq\left\|ts_{\theta}\left(\bar{\mathbf{x}}_{t}^{\leftarrow},t\right)-ts_{\theta}\left(\bar{\mathbf{x}}_{t^{\prime}+\Delta t}^{\leftarrow},t\right)\right\|+\left\|ts_{\theta}\left(\bar{\mathbf{x}}_{t^{\prime}+\Delta t}^{\leftarrow},t\right)-ts_{\theta}\left(\bar{\mathbf{x}}_{t^{\prime}+\Delta t}^{\leftarrow},t^{\prime}+\Delta t\right)\right\|
+≤L0|t′+Δ​t−t′|+L2​‖𝐱¯t←−𝐱¯t′+Δt←‖ (Lipschitz continuity)\displaystyle\leq L_{0}|t^{\prime}+\Delta t-t^{\prime}|+L_{2}\|\bar{\mathbf{x}}_{t}^{\leftarrow}-\bar{\mathbf{x}}_{t^{\prime}+\Delta_{t}}^{\leftarrow}\|\quad\text{ (Lipschitz continuity) }
+≤L0​Δ​t+L2​(‖𝐱¯t←−𝐱¯t′+Δ​t←‖).\displaystyle\leq L_{0}\Delta t+L_{2}\left(\left\|\bar{\mathbf{x}}_{t}^{\leftarrow}-\bar{\mathbf{x}}_{t^{\prime}+\Delta t}^{\leftarrow}\right\|\right).
+Using the boundedness condition ‖d​𝐱¯t←/d​t‖≤L1\left\|d\bar{\mathbf{x}}_{t}^{\leftarrow}/dt\right\|\leq L_{1}, we have:
+‖𝐱¯t←−𝐱¯t′+Δ​t←‖≤∫tt′+Δ​t‖d​𝐱¯s←‖​𝑑s≤L1​Δ​t\left\|\bar{\mathbf{x}}_{t}^{\leftarrow}-\bar{\mathbf{x}}_{t^{\prime}+\Delta t}^{\leftarrow}\right\|\leq\int_{t}^{t^{\prime}+\Delta t}\left\|d\bar{\mathbf{x}}_{s}^{\leftarrow}\right\|ds\leq L_{1}\Delta t
+Step 4: Composite Differential Inequality
+Combining all terms, the error dynamics satisfy:
+dd​t​e​(t)≤L2​e​(t)+(ϵt+L0​Δ​t+L2​L1​Δ​t)\frac{d}{dt}e(t)\leq L_{2}e(t)+\left(\epsilon_{t}+L_{0}\Delta t+L_{2}L_{1}\Delta t\right)
+Step 5: Gronwall’s Inequality Application
+Integrate over t∈[t,t+Δ​t]t\in\left[t,t+\Delta t\right] and apply Gronwall’s inequality:
+e⁡(t)≤eL2​Δ​t​(e⁡(t+Δ​t)+(ϵt+Δ​t​(L0+L2​L1))​Δ​t)e\left(t\right)\leq e^{L_{2}\Delta t}\left(e\left(t+\Delta t\right)+\left(\epsilon_{t}+\Delta t\left(L_{0}+L_{2}L_{1}\right)\right)\Delta t\right)
+∎
+Lemma 2 (TV Distance Between Gaussian Perturbations).
+Let ξx∼𝒩⁡(0,σ2​Id)\xi_{x}\sim\mathcal{N}(0,\sigma^{2}I_{d}) and ξy∼𝒩⁡(0,σ2​Id)\xi_{y}\sim\mathcal{N}(0,\sigma^{2}I_{d}) be independent noise vectors. For 𝐱′=𝐱+ξx\mathbf{x}^{\prime}=\mathbf{x}+\xi_{x} and 𝐲′=𝐲+ξy\mathbf{y}^{\prime}=\mathbf{y}+\xi_{y}, their total variation distance satisfies:
+𝖳𝖵⁡(𝐱′,𝐲′)=1−2​Q​(‖𝐱−𝐲‖2​σ)\mathsf{TV}(\mathbf{x}^{\prime},\mathbf{y}^{\prime})=1-2Q\left(\frac{\|\mathbf{x}-\mathbf{y}\|}{2\sigma}\right)
+where Q⁡(r)=Pra∼𝒩⁡(0,1)⁡(a≥r)Q(r)=\Pr_{a\sim\mathcal{N}(0,1)}(a\geq r).
+Proof.
+Let δ=𝐱−𝐲\delta=\mathbf{x}-\mathbf{y}. The TV distance is:
+𝖳𝖵⁡(𝐱′,𝐲′)\displaystyle\mathsf{TV}(\mathbf{x}^{\prime},\mathbf{y}^{\prime})
+=12​∫ℝd|𝒩⁡(𝐳,𝐱,σ2​Id)−𝒩⁡(𝐳,𝐲,σ2​Id)|​𝑑z\displaystyle=\frac{1}{2}\int_{\mathbb{R}^{d}}|\mathcal{N}(\mathbf{z};\mathbf{x},\sigma^{2}I_{d})-\mathcal{N}(\mathbf{z};\mathbf{y},\sigma^{2}I_{d})|dz
+=12​∫ℝd|𝒩⁡(𝐳−δ,𝟎,σ2​Id)−𝒩⁡(𝐳,𝟎,σ2​Id)|​𝑑z\displaystyle=\frac{1}{2}\int_{\mathbb{R}^{d}}\left|\mathcal{N}(\mathbf{z}-\delta;\mathbf{0},\sigma^{2}I_{d})-\mathcal{N}(\mathbf{z};\mathbf{0},\sigma^{2}I_{d})\right|dz
+Through orthogonal transformation UU aligning δ\delta with the first axis:
+U​δ=(‖δ‖,0,…,0)⊤U\delta=(\|\delta\|,0,...,0)^{\top}
+By rotational invariance of Gaussians:
+𝖳𝖵⁡(𝐱′,𝐲′)=𝖳𝖵⁡(𝒩⁡(‖δ‖,σ2),𝒩⁡(0,σ2))\mathsf{TV}(\mathbf{x}^{\prime},\mathbf{y}^{\prime})=\mathsf{TV}\left(\mathcal{N}(\|\delta\|,\sigma^{2}),\mathcal{N}(0,\sigma^{2})\right)
+For 1D Gaussians 𝒩⁡(μ,σ2)\mathcal{N}(\mu,\sigma^{2}) and 𝒩⁡(0,σ2)\mathcal{N}(0,\sigma^{2}):
+𝖳𝖵\displaystyle\mathsf{TV}
+=12​∫−∞∞|ϕ⁡(𝐳−μσ)−ϕ⁡(𝐳σ)|​𝑑z\displaystyle=\frac{1}{2}\int_{-\infty}^{\infty}\left|\phi\left(\frac{\mathbf{z}-\mu}{\sigma}\right)-\phi\left(\frac{\mathbf{z}}{\sigma}\right)\right|dz
+=Φ(−μ2​σ)−Φ(μ2​σ)(By symmetry)\displaystyle=\Phi\left(-\frac{\mu}{2\sigma}\right)-\Phi\left(\frac{\mu}{2\sigma}\right)\quad\text{(By symmetry)}
+=1−2​Φ​(μ2​σ)=2​Q​(μ2​σ)\displaystyle=1-2\Phi\left(\frac{\mu}{2\sigma}\right)=2Q\left(\frac{\mu}{2\sigma}\right)
+where μ=‖𝐱−𝐲‖\mu=\|\mathbf{x}-\mathbf{y}\|.
+then:
+𝖳𝖵⁡(𝐱′,𝐲′)=1−2​Q​(‖δ‖2​σ)=1−2​Q​(‖𝐱−𝐲‖2​σ).\mathsf{TV}(\mathbf{x}^{\prime},\mathbf{y}^{\prime})=1-2Q\left(\frac{\|\delta\|}{2\sigma}\right)=1-2Q\left(\frac{\|\mathbf{x}-\mathbf{y}\|}{2\sigma}\right).
+∎
+Lemma 3.
+Let pt𝐱,γp_{t}^{\mathbf{x},\gamma} and pt𝐲,γp_{t}^{\mathbf{y},\gamma} denote the densities of 𝐱tγ\mathbf{x}_{t}^{\gamma} and 𝐲tγ\mathbf{y}_{t}^{\gamma} respectively. After applying AdaSDE with noise injection from tt to t+(1+γ)​Δ​tt+(1+\gamma)\Delta t followed by backward ODE evolution, we have:
+𝖳𝖵⁡(pt𝐱,γ,pt𝐲,γ)≤(1−λ⁡(γ))​𝖳𝖵​(pt𝐱,pt𝐲)\mathsf{TV}\left(p_{t}^{\mathbf{x},\gamma},p_{t}^{\mathbf{y},\gamma}\right)\leq(1-\lambda(\gamma))\mathsf{TV}\left(p_{t}^{\mathbf{x}},p_{t}^{\mathbf{y}}\right)
+where λ⁡(γ)=2​Q​(B2​(t+(1+γ)​Δ​t)2−t2)\lambda(\gamma)=2Q\left(\dfrac{B}{2\sqrt{(t+(1+\gamma)\Delta t)^{2}-t^{2}}}\right).
+Proof.
+Consider states 𝐱t\mathbf{x}_{t} and 𝐲t\mathbf{y}_{t} at noise level tt with ‖𝐱t−𝐲t‖≤B\|\mathbf{x}_{t}-\mathbf{y}_{t}\|\leq B. The AdaSDE process first perturbs both states to noise level t+(1+γ)​Δ​tt+(1+\gamma)\Delta t through Gaussian noise injection:
+𝐱t+(1+γ)​Δ​t\displaystyle\mathbf{x}_{t+(1+\gamma)\Delta t}
+=𝐱t+ξx,ξx∼𝒩⁡(0,[(t+(1+γ)​Δ​t)2−t2]​I)\displaystyle=\mathbf{x}_{t}+\xi_{x},\ \xi_{x}\sim\mathcal{N}(0,[(t+(1+\gamma)\Delta t)^{2}-t^{2}]I)
+𝐲t+(1+γ)​Δ​t\displaystyle\mathbf{y}_{t+(1+\gamma)\Delta t}
+=𝐲t+ξy,ξy∼𝒩⁡(0,[(t+(1+γ)​Δ​t)2−t2]​I)\displaystyle=\mathbf{y}_{t}+\xi_{y},\ \xi_{y}\sim\mathcal{N}(0,[(t+(1+\gamma)\Delta t)^{2}-t^{2}]I)
+We construct a coupling between the noise injections: when 𝐱t=𝐲t\mathbf{x}_{t}=\mathbf{y}_{t}, set ξx=ξy\xi_{x}=\xi_{y}; otherwise use reflection coupling. By Lemma 2, the merging probability satisfies:
+λ⁡(γ)=2​Q​(‖𝐱t−𝐲t‖2​σt​(γ))≥2​Q​(B2​σt​(γ))(since ​‖𝐱t−𝐲t‖≤B)\displaystyle\lambda(\gamma)=2Q\left(\frac{\|\mathbf{x}_{t}-\mathbf{y}_{t}\|}{2\sigma_{t}(\gamma)}\right)\geq 2Q\left(\frac{B}{2\sigma_{t}(\gamma)}\right)\quad(\text{since }\|\mathbf{x}_{t}-\mathbf{y}_{t}\|\leq B)
+where Q⁡(r)=Pra∼𝒩⁡(0,1)⁡(a≥r)Q(r)=\Pr_{a\sim\mathcal{N}(0,1)}(a\geq r).
+This implies:
+ℙ⁡(𝐱t+(1+γ)​Δ​t≠𝐲t+(1+γ)​Δ​t∣𝐱t≠𝐲t)≤1−λ⁡(γ)\mathbb{P}(\mathbf{x}_{t+(1+\gamma)\Delta t}\neq\mathbf{y}_{t+(1+\gamma)\Delta t}\mid\mathbf{x}_{t}\neq\mathbf{y}_{t})\leq 1-\lambda(\gamma)
+where λ⁡(γ)\lambda(\gamma) quantifies the minimum merging probability between the Gaussian perturbations.
+The subsequent backward ODE evolution preserves this coupling relationship because both trajectories are driven by the same learned score sθs_{\theta}. Therefore:
+ℙ⁡(𝐱tγ≠𝐲tγ)≤(1−λ⁡(γ))​ℙ​(𝐱t≠𝐲t)\mathbb{P}(\mathbf{x}_{t}^{\gamma}\neq\mathbf{y}_{t}^{\gamma})\leq(1-\lambda(\gamma))\mathbb{P}(\mathbf{x}_{t}\neq\mathbf{y}_{t})
+Through the coupling characterization of total variation distance, we conclude:
+𝖳𝖵⁡(pt𝐱,γ,pt𝐲,γ)≤(1−λ⁡(γ))​𝖳𝖵​(pt𝐱,pt𝐲)∎\mathsf{TV}(p_{t}^{\mathbf{x},\gamma},p_{t}^{\mathbf{y},\gamma})\leq(1-\lambda(\gamma))\mathsf{TV}(p_{t}^{\mathbf{x}},p_{t}^{\mathbf{y}})\qed
+Lemma 4 (AdaSDE Error Propagation).
+Let 𝐱t+Δ​t∈ℝd\mathbf{x}_{t+\Delta t}\in\mathbb{R}^{d} be an initial point. Define exact and approximate ODE solutions:
+𝐱t\displaystyle\mathbf{x}_{t}
+=𝖮𝖣𝖤(𝐱t+(1+γ)​Δ​t,t+(1+γ)Δt→t),\displaystyle=\mathsf{ODE}\bigl(\mathbf{x}_{t+(1+\gamma)\Delta t},\,t+(1+\gamma)\Delta t\!\to t\bigr),
+𝐱^t\displaystyle\hat{\mathbf{x}}_{t}
+=𝖮𝖣𝖤θ(𝐱^t+(1+γ)​Δ​t,t+(1+γ)Δt→t).\displaystyle=\mathsf{ODE}_{\theta}\bigl(\hat{\mathbf{x}}_{t+(1+\gamma)\Delta t},\,t+(1+\gamma)\Delta t\!\to t\bigr).
+Under AdaSDE with noise injection t+Δ​t→t+(1+γ)​Δ​tt+\Delta t\to t+(1+\gamma)\Delta t and ‖𝐱t−𝐱^t‖≤B\|\mathbf{x}_{t}-\hat{\mathbf{x}}_{t}\|\leq B, there exists a coupling such that:
+‖𝐱t+(1+γ)​Δ​t−𝐱^t+(1+γ)​Δ​t‖\displaystyle\bigl\|\,\mathbf{x}_{t+(1+\gamma)\Delta t}-\,\hat{\mathbf{x}}_{t+(1+\gamma)\Delta t}\bigr\|
+≤eL2​(1+γ)​Δ​t​(1+γ)​[Δ​t​(L2​L1+L0)+ϵt]​Δ​t,\displaystyle\leq e^{L_{2}(1+\gamma)\Delta t}(1+\gamma)\left[\Delta t(L_{2}L_{1}+L_{0})+\epsilon_{t}\right]\Delta t,
+where L0,L1,L2,ϵtL_{0},L_{1},L_{2},\epsilon_{t} are the Lipschitz/boundedness/approximation constants for sθs_{\theta} and discretization errors.
+Proof.
+By Lemma 1 (ODE Discretization Error), the local truncation error satisfies:
+‖𝐱t−𝐱^t‖\displaystyle\|\mathbf{x}_{t}-\hat{\mathbf{x}}_{t}\|
+≤eL2​(1+γ)​Δ​t[∥𝐱t+(1+γ)​Δ​t−𝐱^t+(1+γ)​Δ​t∥\displaystyle\leq e^{L_{2}(1+\gamma)\Delta t}\Big[\|\mathbf{x}_{t+(1+\gamma)\Delta t}-\hat{\mathbf{x}}_{t+(1+\gamma)\Delta t}\|
++((1+γ)​Δ​t​(L2​L1+L0)+ϵt)​(1+γ)​Δ​t⏟Local discretization error].\displaystyle\quad+\underbrace{\big((1+\gamma)\Delta t(L_{2}L_{1}+L_{0})+\epsilon_{t}\big)(1+\gamma)\Delta t}_{\text{Local discretization error}}\Big].
+Applying AdaSDE’s noise injection with variance σ2=(t+(1+γ)​Δ​t)2−t2\sigma^{2}=(t+(1+\gamma)\Delta t)^{2}-t^{2}, Lemma 2 gives:
+𝔼​‖𝐱t+(1+γ)​Δ​t−𝐱^t+(1+γ)​Δ​t‖\displaystyle\mathbb{E}\|\mathbf{x}_{t+(1+\gamma)\Delta t}-\hat{\mathbf{x}}_{t+(1+\gamma)\Delta t}\|
+≤(1−λ⁡(γ))​‖𝐱t−𝐱^t‖,\displaystyle\leq(1-\lambda(\gamma))\|\mathbf{x}_{t}-\hat{\mathbf{x}}_{t}\|,
+where the merging probability λ⁡(γ)=2​Q​(B2​(t+(1+γ)​Δ​t)2−t2)\lambda(\gamma)=2\,Q\bigl(\dfrac{B}{2\,\sqrt{(t+(1+\gamma)\,\Delta t)^{2}-t^{2}}}\bigr) dominates the coupling effectiveness.
+Multiplying by (1−λ⁡(γ))(1-\lambda(\gamma)) from partial revert and adding the local ODE approximation error leads to the stated bound:
+‖𝐱t+(1+γ​Δ​t)−𝐱^t+(1+γ​Δ​t)‖≤\displaystyle\bigl\|\,\mathbf{x}_{t+(1+\gamma\Delta t)}-\,\hat{\mathbf{x}}_{t+(1+\gamma\Delta t)}\bigr\|\;\;\leq
+(1−λ⁡(γ))​‖𝐱t−𝐱^t‖\displaystyle\;\;\bigl(1-\lambda(\gamma)\bigr)\,\bigl\|\,\mathbf{x}_{t}-\hat{\mathbf{x}}_{t}\bigr\|\;
++eL2​(1+γ)​Δ​t​(1+γ)​[(1+γ)​Δ​t​(L2​L1+L0)+ϵt]​Δ​t\displaystyle+\;e^{L_{2}\,(1+\gamma)\Delta t}\,(1+\gamma)\bigl[(1+\gamma)\Delta t(\,L_{2}L_{1}+L_{0})\;+\;\epsilon_{t}\bigr]\,\Delta t
+=eL2​(1+γ)​Δ​t​(1+γ)​[Δ​t​(L2​L1+L0)+ϵt]​Δ​t\displaystyle=e^{L_{2}\,(1+\gamma)\Delta t}\,(1+\gamma)\bigl[\Delta t(\,L_{2}L_{1}+L_{0})\;+\;\epsilon_{t}\bigr]\,\Delta t
+∎
+Lemma 5 (Connection of Wasserstein-1 distance and Norm).
+Let p1p_{1} and p2p_{2} be two probability distributions over a space 𝒳⊆ℝd\mathcal{X}\subseteq\mathbb{R}^{d}, and let Γ⁡(p1,p2)\Gamma(p_{1},p_{2}) denote the set of all joint distributions with marginals p1p_{1} and p2p_{2}. The Wasserstein-1 distance between p1p_{1} and p2p_{2} satisfies:
+W1​(p1,p2)=infψ∈Γ⁡(p1,p2)𝔼(𝐱1,𝐱2)∼ψ​[‖𝐱1−𝐱2‖],W_{1}(p_{1},p_{2})=\inf_{\psi\in\Gamma(p_{1},p_{2})}\mathbb{E}_{(\mathbf{x}_{1},\mathbf{x}_{2})\sim\psi}\left[\|\mathbf{x}_{1}-\mathbf{x}_{2}\|\right],
+where ∥⋅∥1\|\cdot\|_{1} is the L1 norm. Furthermore, for independent samples 𝐱1∼p1\mathbf{x}_{1}\sim p_{1} and 𝐱2∼p2\mathbf{x}_{2}\sim p_{2}, we have:
+W1​(p1,p2)≤𝔼⁡[‖𝐱1−𝐱2‖],W_{1}(p_{1},p_{2})\leq\mathbb{E}\left[\|\mathbf{x}_{1}-\mathbf{x}_{2}\|\right],
+with equality if and only if the coupling ψ\psi is optimal.
+Lemma 6.
+𝖳𝖵⁡(P∗R,Q∗R)≤𝖳𝖵⁡(P,Q)\mathsf{TV}(P*R,Q*R)\leq\mathsf{TV}(P,Q) for independent distributions P,QP,Q, and RR.The inequality 𝖳𝖵⁡(P∗R,Q∗R)=𝖳𝖵⁡(P,Q)\mathsf{TV}(P*R,Q*R)=\mathsf{TV}(P,Q) holds if and only if RR is a degenerate distribution.
+Proof.
+1. Total Variation Distance Definition
+The total variation distance between two distributions PP and QQ is defined as:
+𝖳𝖵⁡(P,Q)=12​∫−∞∞|p⁡(𝐱)−q⁡(𝐱)|​𝑑𝐱\mathsf{TV}(P,Q)=\frac{1}{2}\int_{-\infty}^{\infty}|p(\mathbf{x})-q(\mathbf{x})|d\mathbf{x}
+where p⁡(𝐱)p(\mathbf{x}) and q⁡(𝐱)q(\mathbf{x}) are the probability density functions of PP and QQ, respectively.
+2. Convolution Definition
+The convolution of two distributions PP and RR is defined as:
+(P∗R)​(𝐱)=∫−∞∞p⁡(𝐱−𝐲)​r​(𝐲)​𝑑𝐲(P*R)(\mathbf{x})=\int_{-\infty}^{\infty}p(\mathbf{x}-\mathbf{y})r(\mathbf{y})d\mathbf{y}
+Similarly, for QQ and RR :
+(Q∗R)​(𝐱)=∫−∞∞q⁡(𝐱−𝐲)​r​(𝐲)​𝑑𝐲(Q*R)(\mathbf{x})=\int_{-\infty}^{\infty}q(\mathbf{x}-\mathbf{y})r(\mathbf{y})d\mathbf{y}
+3. TV Distance for Convolved Distributions
+We want to compute 𝖳𝖵⁡(P∗R,Q∗R)\mathsf{TV}(P*R,Q*R), which is:
+𝖳𝖵⁡(P∗R,Q∗R)\displaystyle\mathsf{TV}(P*R,Q*R)
+=12​∫−∞∞|(P∗R)​(𝐱)−(Q∗R)​(𝐱)|​𝑑x\displaystyle=\frac{1}{2}\int_{-\infty}^{\infty}\left|(P*R)(\mathbf{x})-(Q*R)(\mathbf{x})\right|dx
+=12​∫−∞∞|∫−∞∞(p⁡(𝐱−𝐲)−q⁡(𝐱−𝐲))​r​(𝐲)​𝑑y|​𝑑x\displaystyle=\frac{1}{2}\int_{-\infty}^{\infty}\left|\int_{-\infty}^{\infty}(p(\mathbf{x}-\mathbf{y})-q(\mathbf{x}-\mathbf{y}))r(\mathbf{y})dy\right|dx
+Applying triangle inequality, we obtain:
+𝖳𝖵⁡(P∗R,Q∗R)≤12​∫−∞∞(∫−∞∞|p⁡(𝐱−𝐲)−q⁡(𝐱−𝐲)|​r​(𝐲)​𝑑𝐲)​𝑑𝐱\mathsf{TV}(P*R,Q*R)\leq\frac{1}{2}\int_{-\infty}^{\infty}\left(\int_{-\infty}^{\infty}|p(\mathbf{x}-\mathbf{y})-q(\mathbf{x}-\mathbf{y})|r(\mathbf{y})d\mathbf{y}\right)d\mathbf{x}
+Using Fubini’s theorem, we can swap the order of integration:
+𝖳𝖵⁡(P∗R,Q∗R)≤12​∫−∞∞(∫−∞∞|p⁡(𝐱−𝐲)−q⁡(𝐱−𝐲)|​𝑑𝐱)​r​(𝐲)​𝑑𝐲\mathsf{TV}(P*R,Q*R)\leq\frac{1}{2}\int_{-\infty}^{\infty}\left(\int_{-\infty}^{\infty}|p(\mathbf{x}-\mathbf{y})-q(\mathbf{x}-\mathbf{y})|d\mathbf{x}\right)r(\mathbf{y})d\mathbf{y}
+For fixed 𝐲\mathbf{y}, the inner integral is:
+∫−∞∞|p⁡(𝐱−𝐲)−q⁡(𝐱−𝐲)|𝑑𝐱=∫−∞∞|p⁡(𝐱)−q⁡(𝐱)|​𝑑𝐱\int_{-\infty}^{\infty}|p(\mathbf{x}-\mathbf{y})-q(\mathbf{x}-\mathbf{y})|d\mathbf{x}=\int_{-\infty}^{\infty}|p(\mathbf{x})-q(\mathbf{x})|d\mathbf{x}
+Thus, we obtain:
+𝖳𝖵⁡(P∗R,Q∗R)≤12​∫−∞∞(∫−∞∞|p⁡(𝐱)−q⁡(𝐱)|​𝑑𝐱)​r​(𝐲)​𝑑𝐲\mathsf{TV}(P*R,Q*R)\leq\frac{1}{2}\int_{-\infty}^{\infty}\left(\int_{-\infty}^{\infty}|p(\mathbf{x})-q(\mathbf{x})|d\mathbf{x}\right)r(\mathbf{y})d\mathbf{y}
+𝖳𝖵⁡(P∗R,Q∗R)≤𝖳𝖵⁡(P,Q)\mathsf{TV}(P*R,Q*R)\leq\mathsf{TV}(P,Q)
+The inequality 𝖳𝖵⁡(P∗R,Q∗R)=𝖳𝖵⁡(P,Q)\mathsf{TV}(P*R,Q*R)=\mathsf{TV}(P,Q) holds if and only if RR is a degenerate distribution.
+∎
+B.1 Proof of Theorem 1
+Theorem 1.
+Let t+Δ​tt+\Delta t be the initial noise level. Let 𝐱t=𝖮𝖣𝖤θ(𝐱t+Δ​t,t+Δt→t)\mathbf{x}_{t}=\mathsf{ODE}_{\theta}\left(\mathbf{x}_{t+\Delta t},t+\Delta t\rightarrow t\right) and pt𝖮𝖣𝖤θp_{t}^{\mathsf{ODE}_{\theta}} denote the distribution induced by simulating the ODE with learned drift sθs_{\theta}. Assume:
+1. The learned drift t​sθ​(𝐱,t)ts_{\theta}(\mathbf{x},t) is L2L_{2}-Lipschitz in 𝐱\mathbf{x}, bounded by L1L_{1}, and L0L_{0}-Lipschitz in tt.
+2. The approximation error ‖tsθ(𝐱,t)−t∇logpt(𝐱)‖≤ϵt\left\|ts_{\theta}(\mathbf{x},t)-t\nabla\log p_{t}(\mathbf{x})\right\|\leq\epsilon_{t}.
+3. All trajectories are bounded by B/2B/2.
+Then, the Wasserstein-1 distance between the generated distribution pt𝖮𝖣𝖤θp_{t}^{\mathsf{ODE}_{\theta}} and the true distribution ptp_{t} is bounded by:
+W1​(pt𝖮𝖣𝖤θ,pt)≤B⋅𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t)+eL2​Δ​t⋅(Δ​t​(L2​L1+L0)+ϵt)​Δ​t\displaystyle W_{1}\left(p_{t}^{\mathsf{ODE}_{\theta}},p_{t}\right)\leq B\cdot\mathsf{TV}\left(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},p_{t+\Delta t}\right)+e^{L_{2}\Delta t}\cdot\left(\Delta t\left(L_{2}L_{1}+L_{0}\right)+\epsilon_{t}\right)\Delta t
+where Δ​t\Delta t is the step size
+Proof.
+Let 𝐱^t=𝖮𝖣𝖤θ(𝐱t+Δ​t,t+Δt→t)\hat{\mathbf{x}}_{t}=\mathsf{ODE}_{\theta}\left(\mathbf{x}_{t+\Delta t},t+\Delta t\rightarrow t\right) with the corresponding distribution p^t\hat{p}_{t} and 𝐱t=𝖮𝖣𝖤(𝐱t+Δ​t,t+Δt→t)\mathbf{x}_{t}=\mathsf{ODE}\left(\mathbf{x}_{t+\Delta t},t+\Delta t\rightarrow t\right) (simulated under the true score).
+The proof bounds W1​(pt𝖮𝖣𝖤θ,pt)W_{1}\left(p_{t}^{\mathsf{ODE}_{\theta}},p_{t}\right) via triangular inequality:
+W1​(pt𝖮𝖣𝖤θ,pt)≤W1​(pt𝖮𝖣𝖤θ,p^t)+W1​(p^t,pt)W_{1}\left(p_{t}^{\mathsf{ODE}_{\theta}},p_{t}\right)\leq W_{1}\left(p_{t}^{\mathsf{ODE}_{\theta}},\hat{p}_{t}\right)+W_{1}\left(\hat{p}_{t},p_{t}\right)
+(11)
+Then we can bound two terms seperately.
+1. gradient error: By bounded-diameter inequality,
+W1​(pt𝖮𝖣𝖤θ,p^t)≤B⋅𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t)W_{1}\left(p_{t}^{\mathsf{ODE}_{\theta}},\hat{p}_{t}\right)\leq B\cdot\mathsf{TV}\left(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},p_{t+\Delta t}\right)
+2. discretization error: Using Lemma 1 (discretization bound), given 𝐱t∼pt,𝐱^t∼p^t\mathbf{x}_{t}\sim p_{t},\hat{\mathbf{x}}_{t}\sim\hat{p}_{t}
+‖𝐱^t−𝐱t‖≤eL2​Δ​t⋅(Δ​t​(L2​L1+L0)+ϵt)​Δ​t\left\|\hat{\mathbf{x}}_{t}-\mathbf{x}_{t}\right\|\leq e^{L_{2}\Delta t}\cdot\left(\Delta t\left(L_{2}L_{1}+L_{0}\right)+\epsilon_{t}\right)\Delta t
+where the exponential factor arises from Gronwall’s inequality applied to the Lipschitz drift. According to Lemma 5, we can
+combine terms via triangular inequality:
+W1​(pt𝖮𝖣𝖤θ,pt)≤B⋅𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t)⏟gradient error +eL2​Δ​t⋅(Δ​t​(L2​L1+L0)+ϵt)​Δ​t⏟discretization error W_{1}\left(p_{t}^{\mathsf{ODE}_{\theta}},p_{t}\right)\leq\underbrace{B\cdot\mathsf{TV}\left(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},p_{t+\Delta t}\right)}_{\text{gradient error }}+\underbrace{e^{L_{2}\Delta t}\cdot\left(\Delta t\left(L_{2}L_{1}+L_{0}\right)+\epsilon_{t}\right)\Delta t}_{\text{discretization error }}
+∎
+B.2 Proof of Theorem 2
+Theorem 2 (AdaSDE Error Decomposition).
+Consider the same setting as Theorem 1. Let pt𝖠𝖽𝖺𝖲𝖣𝖤θp_{t}^{\mathsf{AdaSDE}_{\theta}} denote the distribution after AdaSDE iteration. Then
+W1​(pt𝖠𝖽𝖺𝖲𝖣𝖤θ,pt)≤\displaystyle W_{1}\left(p_{t}^{\mathsf{AdaSDE}_{\theta}},p_{t}\right)\leq
+B⋅(1−λ⁡(γ))​𝖳𝖵​(pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤,pt+(1+γ)​Δ​t)⏟gradient error\displaystyle\underbrace{B\cdot(1-\lambda(\gamma))\mathsf{TV}\left(p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}},p_{t+(1+\gamma)\Delta t}\right)}_{\text{gradient error}}
++e(1+γ)​L2​Δ​t​(1+γ)​((1+γ)​Δ​t​(L2​L1+L0)+ϵt)​Δ​t⏟discretization error\displaystyle+\underbrace{e^{(1+\gamma)L_{2}\Delta t}(1+\gamma)\left((1+\gamma)\Delta t\left(L_{2}L_{1}+L_{0}\right)+\epsilon_{t}\right)\Delta t}_{\text{discretization error}}
+where λ⁡(γ)=2​Q​(B2​(t+(1+γ)​Δ​t)2−t2)\lambda(\gamma)=2Q\left(\dfrac{B}{2\sqrt{(t+(1+\gamma)\Delta t)^{2}-t^{2}}}\right).
+Proof.
+Let 𝐱t+(1+γ)​Δ​t∼pt+(1+γ)​Δ​t\mathbf{x}_{t+(1+\gamma)\Delta t}\sim p_{t+(1+\gamma)\Delta t} and 𝐱^t+(1+γ)​Δ​t∼pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤\hat{\mathbf{x}}_{t+(1+\gamma)\Delta t}\sim p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}}. denote exact and generated distributions respectively. And 𝐱¯t+(1+γ)​Δ​t∼pt+(1+γ)​Δ​tθ\bar{\mathbf{x}}_{t+(1+\gamma)\Delta t}\sim p_{t+(1+\gamma)\Delta t}^{\mathrm{\theta}}. The proof contains three key components:
+By Lemma 3, the AdaSDE process contracts the TV distance:
+‖𝐱¯t−𝐱^t‖\displaystyle\|\bar{\mathbf{x}}_{t}-\hat{\mathbf{x}}_{t}\|
+≤(1−λ⁡(γ))​‖𝐱¯t+(1+γ)​Δ​t−𝐱^t+(1+γ)​Δ​t‖\displaystyle\leq(1-\lambda(\gamma))\|\bar{\mathbf{x}}_{t+(1+\gamma)\Delta t}-\hat{\mathbf{x}}_{t+(1+\gamma)\Delta t}\|
+=(1−λ⁡(γ))​‖𝐱¯t+(1+γ)​Δ​t−𝐱t+(1+γ)​Δ​t‖\displaystyle=(1-\lambda(\gamma))\|\bar{\mathbf{x}}_{t+(1+\gamma)\Delta t}-\mathbf{x}_{t+(1+\gamma)\Delta t}\|
+Since 𝐱¯t∼ptθ\bar{\mathbf{x}}_{t}\sim p^{\theta}_{t} and 𝐱^t∼pt𝖠𝖽𝖺𝖲𝖣𝖤θ\hat{\mathbf{x}}_{t}\sim p_{t}^{\mathsf{AdaSDE}_{\theta}}, we obtain:
+𝖳𝖵⁡(p¯t,pt𝖠𝖽𝖺𝖲𝖣𝖤θ)\displaystyle\mathsf{TV}\left(\bar{p}_{t},p_{t}^{\mathsf{AdaSDE}_{\theta}}\right)
+≤(1−λ⁡(γ))​𝖳𝖵​(p¯t+(1+γ)​Δ​t,p^t+(1+γ)​Δ​t)\displaystyle\leq(1-\lambda(\gamma))\mathsf{TV}\left(\bar{p}_{t+(1+\gamma)\Delta t},\hat{p}_{t+(1+\gamma)\Delta t}\right)
+=(1−λ⁡(γ))​𝖳𝖵​(p¯t+(1+γ)​Δ​t,pt+(1+γ)​Δ​t)\displaystyle=(1-\lambda(\gamma))\mathsf{TV}\left(\bar{p}_{t+(1+\gamma)\Delta t},p_{t+(1+\gamma)\Delta t}\right)
+Using the bounded trajectory assumption ‖𝐱‖≤B/2\|\mathbf{x}\|\leq B/2, we convert TV to Wasserstein-1:
+W1​(p¯t,pt𝖠𝖽𝖺𝖲𝖣𝖤θ)≤B⋅𝖳𝖵⁡(p¯t,pt𝖠𝖽𝖺𝖲𝖣𝖤θ)≤B⁡(1−λ⁡(γ))​𝖳𝖵​(p¯t+(1+γ)​Δ​t,pt+(1+γ)​Δ​t)W_{1}\left(\bar{p}_{t},p_{t}^{\mathsf{AdaSDE}_{\theta}}\right)\leq B\cdot\mathsf{TV}\left(\bar{p}_{t},p_{t}^{\mathsf{AdaSDE}_{\theta}}\right)\leq B(1-\lambda(\gamma))\mathsf{TV}\left(\bar{p}_{t+(1+\gamma)\Delta t},p_{t+(1+\gamma)\Delta t}\right)
+From Lemma 3, the local ODE error satisfies:
+‖𝐱tγ−𝐱¯tγ‖≤e(1+γ)​L2​Δ​t​(1+γ)​[(1+γ)​Δ​t​(L2​L1+L0)+ϵt]​Δ​t\|\mathbf{x}_{t}^{\gamma}-\bar{\mathbf{x}}_{t}^{\gamma}\|\leq e^{(1+\gamma)L_{2}\Delta t}(1+\gamma)\left[(1+\gamma)\Delta t(L_{2}L_{1}+L_{0})+\epsilon_{t}\right]\Delta t
+According to Lemma 5 and Apply triangle inequality to Wasserstein distances:
+W1​(pt𝖠𝖽𝖺𝖲𝖣𝖤θ,pt)\displaystyle W_{1}\left(p_{t}^{\mathsf{AdaSDE}_{\theta}},p_{t}\right)
+≤W1​(p¯t,pt𝖠𝖽𝖺𝖲𝖣𝖤θ)+W1​(p¯t,pt)\displaystyle\leq W_{1}\left(\bar{p}_{t},p_{t}^{\mathsf{AdaSDE_{\theta}}}\right)+W_{1}\left(\bar{p}_{t},p_{t}\right)
+≤B⁡(1−λ⁡(γ))​𝖳𝖵​(pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤,pt+(1+γ)​Δ​t)\displaystyle\leq B(1-\lambda(\gamma))\mathsf{TV}\left(p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}},p_{t+(1+\gamma)\Delta t}\right)
++e(1+γ)​L2​Δ​t​(1+γ)​[(1+γ)​Δ​t​(L2​L1+L0)+ϵt]​Δ​t\displaystyle\quad+e^{(1+\gamma)L_{2}\Delta t}(1+\gamma)\left[(1+\gamma)\Delta t(L_{2}L_{1}+L_{0})+\epsilon_{t}\right]\Delta t
+This completes the error decomposition. ∎
+B.3 Proof of Theorem 3
+Theorem 3 (TV comparison: AdaSDE vs. ODE).
+Assume the same conditions as in Theorem 1 and Theorem 2,
+and in particular that there exists a compact K⊂ℝdK\subset\mathbb{R}^{d} with d​i​a​m​(K)≤Bdiam(K)\leq B such that the relevant one-step distributions are supported in KK.
+Define
+(i) ODE gradient:\displaystyle\text{\emph{(i) ODE gradient:}}
+ℰ𝗀𝗋𝖺𝖽𝖮𝖣𝖤:=B⋅𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t),\displaystyle\mathcal{E}^{\mathsf{ODE}}_{\mathsf{grad}}:=B\cdot\mathsf{TV}\!\Bigl(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},\,p_{t+\Delta t}\Bigr),
+(ii) AdaSDE gradient:\displaystyle\text{\emph{(ii) AdaSDE gradient:}}
+ℰ𝗀𝗋𝖺𝖽𝖠𝖽𝖺𝖲𝖣𝖤:=B⁡(1−λ⁡(γ))​𝖳𝖵​(pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤,pt+(1+γ)​Δ​t).\displaystyle\mathcal{E}^{\mathsf{AdaSDE}}_{\mathsf{grad}}:=B\,\bigl(1-\lambda(\gamma)\bigr)\,\mathsf{TV}\!\Bigl(p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}},\,p_{t+(1+\gamma)\Delta t}\Bigr).
+where λ⁡(γ)=2​Q​(B2​(t+(1+γ)​Δ​t)2−t2)∈(0,1)\lambda(\gamma)=2\,Q\!\Bigl(\dfrac{B}{2\,\sqrt{(t+(1+\gamma)\,\Delta t)^{2}-t^{2}}}\Bigr)\in(0,1) and B>0B>0 is the diameter bound.
+Then
+ℰ𝗀𝗋𝖺𝖽𝖠𝖽𝖺𝖲𝖣𝖤≤ℰ𝗀𝗋𝖺𝖽𝖮𝖣𝖤.\mathcal{E}^{\mathsf{AdaSDE}}_{\mathsf{grad}}\;\leq\;\mathcal{E}^{\mathsf{ODE}}_{\mathsf{grad}}.
+Proof.
+By Theorem 1,
+ℰ𝗀𝗋𝖺𝖽𝖮𝖣𝖤=B⋅𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t).\mathcal{E}^{\mathsf{ODE}}_{\mathsf{grad}}=B\cdot\mathsf{TV}\!\Bigl(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},\,p_{t+\Delta t}\Bigr).
+By Theorem 2,
+ℰ𝗀𝗋𝖺𝖽𝖠𝖽𝖺𝖲𝖣𝖤=B⁡(1−λ⁡(γ))​𝖳𝖵​(pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤,pt+(1+γ)​Δ​t).\mathcal{E}^{\mathsf{AdaSDE}}_{\mathsf{grad}}=B\,\bigl(1-\lambda(\gamma)\bigr)\,\mathsf{TV}\!\Bigl(p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}},\,p_{t+(1+\gamma)\Delta t}\Bigr).
+From t+Δ​tt+\Delta t to t+(1+γ)​Δ​tt+(1+\gamma)\Delta t, AdaSDE injects Gaussian noise (a common Markov kernel) into both branches.
+By Lemma 6 (convolution/pushforward is nonexpansive in TV),
+𝖳𝖵⁡(pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤,pt+(1+γ)​Δ​t)≤𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t).\mathsf{TV}\!\Bigl(p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}},\,p_{t+(1+\gamma)\Delta t}\Bigr)\;\leq\;\mathsf{TV}\!\Bigl(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},\,p_{t+\Delta t}\Bigr).
+Since 0<(1−λ⁡(γ))<10<(1-\lambda(\gamma))<1, we get
+ℰ𝗀𝗋𝖺𝖽𝖠𝖽𝖺𝖲𝖣𝖤=B⁡(1−λ⁡(γ))​𝖳𝖵​(pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤,pt+(1+γ)​Δ​t)≤B⋅𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t)=ℰ𝗀𝗋𝖺𝖽𝖮𝖣𝖤.\mathcal{E}^{\mathsf{AdaSDE}}_{\mathsf{grad}}=B\,\bigl(1-\lambda(\gamma)\bigr)\,\mathsf{TV}\!\Bigl(p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}},\,p_{t+(1+\gamma)\Delta t}\Bigr)\;\leq\;B\cdot\mathsf{TV}\!\Bigl(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},\,p_{t+\Delta t}\Bigr)=\mathcal{E}^{\mathsf{ODE}}_{\mathsf{grad}}.
+∎
+Remark 2 (When the inequality is strict).
+If γ>0\gamma>0, the Gaussian kernel is nondegenerate, and
+𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t)>0\mathsf{TV}\!\bigl(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},\,p_{t+\Delta t}\bigr)>0
+(equivalently, the two pre-smoothing distributions are not a.e. equal and admit L1L^{1} densities), then
+𝖳𝖵⁡(pt+(1+γ)​Δ​t𝖠𝖽𝖺𝖲𝖣𝖤,pt+(1+γ)​Δ​t)<𝖳𝖵⁡(pt+Δ​t𝖮𝖣𝖤θ,pt+Δ​t),\mathsf{TV}\!\Bigl(p_{t+(1+\gamma)\Delta t}^{\mathsf{AdaSDE}},\,p_{t+(1+\gamma)\Delta t}\Bigr)\;<\;\mathsf{TV}\!\Bigl(p_{t+\Delta t}^{\mathsf{ODE}_{\theta}},\,p_{t+\Delta t}\Bigr),
+and hence ℰ𝗀𝗋𝖺𝖽𝖠𝖽𝖺𝖲𝖣𝖤<ℰ𝗀𝗋𝖺𝖽𝖮𝖣𝖤\mathcal{E}^{\mathsf{AdaSDE}}_{\mathsf{grad}}<\mathcal{E}^{\mathsf{ODE}}_{\mathsf{grad}}.
+Appendix C More on AdaSDE
+C.1 Experiment details.
+Experiment detail in main result
+Since AdaSDE has fewer than 40 parameters, its training incurs minimal computational cost. We train Θ\Theta for 10K images, which only takes 5-10 minutes on CIFAR10 with a single 4090 GPU and about 20 minutes on LSUN Bedroom with four 4090 GPUs. For generating reference teacher trajectories, we use DPM-Solver-2 with M=3. For tuning across all datasets, we employed a learning rate of 0.2 along with a cosine learning rate schedule (coslr). The random seed was fixed to 0 to ensure consistent reproducibility of the experimental results. To ensure the robustness of our experimental results, we conducted ten independent runs for each NFE (Number of Function Evaluations) setting on the CIFAR10 dataset. Across these runs, the FID (Fréchet Inception Distance) scores consistently varied by no more than 0.1.
+C.2 Time uniform scheme
+[2] proposes a discretization scheme for diffusion sampling given the starting σmax\sigma_{\max}, end time σmin\sigma_{\min} and ϵs\epsilon_{s}. Denote the number of steps as NN, then the time uniform discretization scheme is:
+σ⁡(t)\displaystyle\sigma(t)
+=(e0.5​βd​t2+βmin​t−1)0.5\displaystyle=\left(e^{0.5\,\beta_{d}\,t^{2}+\beta_{\min}\,t}-1\right)^{0.5}
+σ−1​(σ)\displaystyle\sigma^{-1}(\sigma)
+=βmin2+2​βd​ln⁡(σ2+1)−βminβd\displaystyle=\frac{\sqrt{\beta_{\min}^{2}+2\,\beta_{d}\,\ln\!\left(\sigma^{2}+1\right)}-\beta_{\min}}{\beta_{d}}
+βd\displaystyle\beta_{d}
+=2​(ln⁡(σmin2+1)/ϵs−ln⁡(σmax2+1))ϵs−1\displaystyle=\frac{2\left(\ln\!\left(\sigma_{\min}^{2}+1\right)/\epsilon_{s}-\ln\!\left(\sigma_{\max}^{2}+1\right)\right)}{\epsilon_{s}-1}
+βmin\displaystyle\beta_{\min}
+=ln⁡(σmax2+1)−0.5​βd\displaystyle=\ln\!\left(\sigma_{\max}^{2}+1\right)-0.5\,\beta_{d}
+ttemp\displaystyle t_{\text{temp}}
+=(1+iN−1​(ϵs1/ρ−1))ρ\displaystyle=\left(1+\frac{i}{N-1}\left(\epsilon_{s}^{1/\rho}-1\right)\right)^{\rho}
+ti\displaystyle t_{i}
+=σ⁡(ttemp)\displaystyle=\sigma\!\left(t_{\text{temp}}\right)
+We set σmax=80.0\sigma_{\max}=80.0, σmin=0.002\sigma_{\min}=0.002, ρ=1\rho=1 and ϵs=10−3\epsilon_{s}=10^{-3} across all datasets in our experiments.
+C.3 Supplementary experimental results
+Table 6: Evaluation on MSCOCO 512×\times512 (Flux.1-dev).
+Model
+NFE
+Sampler/Method
+FID ↓\downarrow
+CLIP (%) ↑\uparrow
+Flux.1-dev 512×\times512
+6
+DPM-Solver-2
+54.0954.09
+28.4928.49
+AdaSDE
+35.3235.32
+29.9429.94
+8
+DPM-Solver-2
+30.1730.17
+29.7529.75
+AdaSDE
+26.5126.51
+30.5130.51
+10
+DPM-Solver-2
+26.3226.32
+30.3230.32
+AdaSDE
+23.5423.54
+30.7730.77
+Figure 4: Comparison of image synthesis quality under identical NFE constraints using AdaSDE (ours) and DPM-Solver++ (2M). Both methods generate images with Stable Diffusion v1.5 [5] and classifier-free guidance (scale = 7.5) for the prompt “A photo of some flowers in a ceramic vase".
+Table 7: Unconditional generation results on CIFAR10 32×32.
+Method
+AFS
+NFE
+3
+4
+5
+6
+7
+8
+9
+10
+DPM-Solver-v3
+×\times
+-
+-
+15.10
+11.39
+-
+8.96
+-
+8.27
+UniPC
+×\times
+109.6
+45.20
+23.98
+11.14
+5.83
+3.99
+3.21
+2.89
+✓\checkmark
+54.36
+20.55
+9.01
+5.75
+4.11
+3.26
+2.93
+2.65
+DPM-Solver++(3M)
+×\times
+110.0
+46.52
+24.97
+11.99
+6.74
+4.54
+3.42
+3.00
+✓\checkmark
+55.74
+22.40
+9.94
+5.97
+4.29
+3.37
+2.99
+2.71
+iPNDM
+×\times
+47.98
+24.82
+13.59
+7.05
+5.08
+3.69
+3.17
+2.77
+✓\checkmark
+24.54
+13.92
+7.76
+5.07
+4.04
+3.22
+2.83
+2.56
+DDIM
+×\times
+93.36
+66.76
+49.66
+35.62
+27.93
+22.32
+18.43
+15.69
+✓\checkmark
+67.26
+49.96
+35.78
+28.00
+22.37
+18.48
+15.69
+13.47
+DPM-Solver-2
+×\times
+-
+205.41
+-
+45.32
+-
+12.93
+-
+10.65
+✓\checkmark
+227.32
+-
+47.22
+-
+13.68
+-
+10.89
+AMED-Solver
+×\times
+-
+17.18
+-
+7.04
+-
+5.56
+-
+4.14
+✓\checkmark
+18.49
+-
+7.59
+-
+4.36
+-
+3.67
+-
+AdaSDE (ours)
+×\times
+-
+10.16
+-
+4.67
+-
+3.18
+-
+2.65
+✓\checkmark
+12.62
+-
+4.18
+-
+2.88
+-
+2.56
+-
+Table 8: Unconditional generation results on ImageNet 64×64.
+Method
+AFS
+NFE
+3
+4
+5
+6
+7
+8
+9
+10
+UniPC
+×\times
+91.38
+55.63
+54.36
+14.30
+9.57
+7.52
+6.34
+5.53
+✓\checkmark
+64.54
+29.59
+16.17
+11.03
+8.51
+6.98
+6.04
+5.26
+DPM-Solver++(3M)
+×\times
+91.52
+56.34
+25.49
+15.06
+10.14
+7.84
+6.48
+5.67
+✓\checkmark
+65.20
+30.56
+16.87
+11.38
+8.68
+7.12
+6.25
+5.58
+iPNDM
+×\times
+58.53
+33.79
+18.99
+12.92
+9.17
+7.20
+5.91
+5.11
+✓\checkmark
+34.81
+21.31
+15.53
+10.27
+8.64
+6.60
+5.64
+4.97
+DDIM
+×\times
+82.96
+58.43
+43.81
+34.03
+27.46
+22.59
+19.27
+16.72
+✓\checkmark
+62.42
+46.06
+35.48
+28.50
+23.31
+19.82
+17.14
+15.02
+DPM-Solver-2
+×\times
+-
+140.20
+-
+59.47
+-
+22.02
+-
+11.31
+✓\checkmark
+163.21
+-
+62.32
+-
+23.68
+-
+11.89
+AMED-Solver
+×\times
+-
+32.69
+-
+10.63
+-
+7.71
+-
+6.06
+✓\checkmark
+38.10
+-
+10.74
+-
+6.66
+-
+5.44
+-
+AdaSDE (ours)
+×\times
+-
+18.53
+-
+7.01
+-
+5.36
+-
+4.63
+✓\checkmark
+18.51
+-
+6.90
+-
+5.26
+-
+4.59
+-
+(a) DPM-Solver-2. NFE=5, FID = 43.27
+(b) DPM-Solver-2. NFE=9, FID = 8.65
+(c) AdaSDE. NFE=5, FID = 4.18
+(d) AdaSDE. NFE=9, FID = 2.56
+Figure 5: Qualitative result on CIFAR10 32×\times32 (5 and 9 NFEs)
+(a) DPM-Solver-2. NFE=5, FID = 74.68
+(b) DPM-Solver-2. NFE=9, FID = 16.89
+(c) AdaSDE. NFE=5, FID = 8.05
+(d) AdaSDE. NFE=9, FID = 4.19
+Figure 6: Qualitative result on FFHQ 64×\times64 (5 and 9 NFEs)
+(a) DPM-Solver-2. NFE=5, FID = 59.47
+(b) DPM-Solver-2. NFE=9, FID = 11.31
+(c) AdaSDE. NFE=5, FID = 6.90
+(d) AdaSDE. NFE=9, FID = 4.59
+Figure 7: Qualitative result on ImageNet 64×\times64 (5 and 9 NFEs)
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

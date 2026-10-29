@@ -1,0 +1,1454 @@
+# 第30章 LoRA
+
+**Knowledge Tree:** Part IV Training System：模型能力如何产生
+**Stable Knowledge Node ID:** `TRAIN-LORA`
+**Legacy Chapter:** Ch26
+**Status:** Draft
+
+**Roadmap Intent:** 为什么低秩适配可以高效改变模型行为，而不必全量更新参数。
+
+## 本章要回答的问题
+
+第 29 章已经定义 SFT objective，一个预训练模型适配新任务时是否必须更新全部参数？LoRA 为什么把权重更新限制在低秩子空间，能够减少可训练参数、gradient、optimizer state 和模型变体存储？这种节省为什么不会让基座模型的前向与 activation 成本消失？
+
+本章的核心判断是：**LoRA 冻结基座权重，只学习一个低秩增量；它改变的是参数更新的表示方式，而不是 SFT、preference optimization 或模型 forward 的基本目标。**低成本来自更小的 trainable state 与 adapter artifact，而不是模型容量被免费删除。
+
+本章使用 `W_0` 表示冻结的基座权重，`Delta W` 表示任务更新，`d_in`、`d_out` 表示线性层输入输出维度，`r` 表示 LoRA rank，`alpha` 表示缩放系数。
+
+## 从 Full fine-tuning 的重复状态开始
+
+设一个线性层为：
+
+```text
+y = W_0 x
+W_0 in R^(d_out x d_in)
+```
+
+Full fine-tuning 学习同样 shape 的更新：
+
+```text
+y = (W_0 + Delta W) x
+Delta W in R^(d_out x d_in)
+```
+
+当模型有数十亿参数时，每个任务都可能需要：
+
+- 全量 trainable gradients。
+- Adam 一阶、二阶 optimizer states。
+- 完整更新后的模型权重。
+- 分布式训练中的对应通信与 checkpoint。
+
+但下游适配通常不是从零学习整个世界。LoRA 提出一个可训练假设：有用的任务更新可以落在较低 intrinsic rank 的子空间中。
+
+## 低秩增量怎样进入线性层
+
+LoRA 参数化：
+
+```text
+Delta W = (alpha / r) B A
+
+A in R^(r x d_in)
+B in R^(d_out x r)
+r << min(d_in, d_out)
+```
+
+前向计算变成：
+
+```text
+y = W_0 x + (alpha / r) B A x
+```
+
+`W_0` 保持冻结，只训练 `A` 和 `B`。Trainable parameter count 从：
+
+```text
+d_out * d_in
+```
+
+变成：
+
+```text
+r * (d_in + d_out)
+```
+
+LoRA 借用低秩分解思想，但通常不是先训练完整 `Delta W`，再对它做 SVD 截断。`A`、`B` 从训练开始就作为参数被直接优化。
+
+低秩增量还可以进入权重的归一化，而不直接作为加法输出：对每一列先令`v=W0+BA`，再写成`w=m v/(||v||+tau)`，其中幅值`m`和正offset `tau`一同学习。纯方向归一化会消掉沿自身方向的缩放变化，正offset使这一径向响应不再必然为零；它改变的是参数到有效权重的映射，不是自动得到更稳定的optimizer。[这一受限参数化](https://arxiv.org/html/2510.04331v1#S3)也用固定learned embeddings和小网络生成因子，同一block的Q/V与heads可共享embedding/首层，但不是按当前token生成adapter或所有深度共用一份网络。零增量并不自动保持原函数，初始`m`、列范数与`tau`必须相容；很大offset在固定幅值下还会压小权重，不能不加标尺条件就称回到普通LoRA。应共同保存列/模块布局、幅值与offset、因子生成和共享身份，再分别验目标质量、旧能力及数值窗口；局部Gaussian回归的可识别条件不认证一般LM的收敛或样本复杂度。生成网络、权重物化/归一化、全部训练与选参和独立回归均计费，固定产物可离线物化但不因此免费；共享失配、初始化或任务回归不足时，保留普通LoRA/已验权重分解与独立adapter，不由少参数、正offset或平均收益批准普遍稳定和净速。
+
+<!-- source-family:SF-2025-ARXIV-2510-04331 -->
+
+也可以保留少量低秩因子，却对它们生成的权重增量逐元素作非线性变换，令ΔW=f(BA)；这改变的是可达权重族，不是在线对每个输入计算f(BAx)，较高矩阵rank也不等任意dense更新都可由这些坐标表示。固定因子与函数后，增量仍可物化并加回基座，但训练中的dense乘积、非线性求值与梯度工作状态不能按可训练参数量免单。一个[既有方法的受限扩展对照](https://arxiv.org/html/2509.21870v1)进一步比较不同函数和任务：专门周期形式并非每项质量最好，稳定性读数也未一致改善，因此须分验实际任务、读数定义与数值/训练稳定窗口，不能从小幅值或“结构化”名称推全域梯度有界。原公式作用对象、因子/缩放、函数及幅频配置应随产物保存；全部重构、搜索、适配、合并和独立质量/稳定性回归都计费。更新支持、数值或净预算不合时，保留普通LoRA、较宽参数化或full update，不以零增参、可合并或较高rank签发免费训练和通用能力保证。
+
+<!-- source-family:SF-2025-ARXIV-2509-21870 -->
+
+低成本适配也可以改变非线性函数，而不是继续压缩线性权重更新：把若干channel的activation写成共享的有理函数，只训练其分子/分母系数，冻结原权重；它与LoRA是适配面的替代或互补，不是可直接并入基座矩阵的同一种`Delta W`。[受限系数适配对照](https://arxiv.org/html/2509.13240v1#S3)中，零新增系数只保持有理近似初值，不保证全域等于原GELU/SiLU；系数因子产出一个向量，也不证明更大的内部因子宽度就是更高矩阵rank。近似误差、分母数值、channel分组与新算子成本都进入artifact身份及独立回归；少可训参数仍可伴更多FLOPs与更长延迟。原activation已够用、数值条件不明或质量/总费退步时，保留原函数、普通LoRA或完整微调，不由局部均分签发全输入稳定或普遍更快。
+<!-- source-family:SF-2025-ARXIV-2509-13240 -->
+
+参数少还可以来自固定更新方向，而不一定来自低秩增量：先把原权重分解为$W=U\operatorname{diag}(s)V^\top$，冻结两侧basis，只训练完整谱幅$s$，则变化限于这些配对方向，不能像自由$BA$那样另选输入输出子空间；这也不同于截断整个模型的rank。[一个受限双encoder适配分支](https://arxiv.org/html/2509.03740v1)在两路attention/MLP采用这种参数化，不证明保持了原模型函数或语义。即使basis不动，谱幅变零、变号与QK/非线性消费仍会改变表示；应独立验旧任务、目标任务和合并后读出，不由几何方向固定签零遗忘。分解、basis存储、重构、完整前反向和搜索均计费，少trainable参数不等整训练或推理免费，有限few-shot平均优势也不消除分项反退。固定方向容量不足、旧能力或净费用不合格时，保留普通LoRA、较宽可训子空间或full update，并分别记录base/basis及更新产物身份。
+<!-- source-family:SF-2025-ARXIV-2509-03740 -->
+
+低秩增量与永久低秩模型还应分开：LoRA保留完整W₀，只限制ΔW；若直接以`U diag(s) Vᵀ`替代W，rank上限就约束模型本身的容量。通过QR让因子回到Stiefel约束后继续优化，得到的是该参数化的精确梯度，不是dense W的完整梯度，也未免反向计算。[有限compact-training证据](https://arxiv.org/html/2604.00733v1)中的“70B-class”只是无softmax/mask的简化attention shape单step，不能当作完整70B语言模型已训成；实际1.7B只替MLP，PPL明显退步且学习率与dense不同，不能将损失全归因某一设置或证明容量足够。QR还占较大step费用，低参数/optimizer存储不等整训练便宜。可学习质量、rank或执行预算不合格时，保留完整基座加LoRA、更高rank或full fine-tuning，分别验shape feasibility、完整模型quality和所有状态/重traction成本，不由能运行一个矩阵批准训练成功。<!-- source-family:SF-2026-ARXIV-2604-00733 -->
+
+低秩因子本身仍可能占较多可训练状态，因而还可以压缩因子的参数化，而不是取消 `BA`。一个受限分支把 `d_in=d_1*d_2`，用两个带 bond dimension `χ` 的可训练 core 收缩并恢复 `A_MPS`，仍令 `Delta W=(alpha/r) B A_MPS`；`B` 保持普通矩阵。Tensorization 顺序、core shape、bond 与重建规则共同定义 adapter 身份，不能只保存 rank。[必要结构与对照](https://arxiv.org/html/2601.06788v1#S9)的 `d_in=d_out=4096、r=256、χ=32、d_1=d_2=64` 配置把总参数由2,097,152减至1,574,912，只说明 trainable state/存储账，不说明 forward、activation 或时间免费；core 收缩、重建、梯度和独立调参仍付费。对训练完成的更新做 post-hoc MPS/entropy profiling 是另一条诊断路径，不是训练已使用MPS参数化，也不证明量子能力或 entropy 导致性能。Llama3.2-1B、Tulu3子集5000/5%test、WQ/WV的 token-CE 对照中，Fig19最佳 test loss未明显低于LoRA，最优步长区域变化需按参数化重验，不能升级为质量、速度或全网节省保证。压缩损失、计算代价或新任务回归时，保留普通 `A/B`、较宽参数化与匹配预算搜索；低秩存储假设不替能力验收。<!-- source-family:SF-2026-ARXIV-2601-06788 -->
+
+减少adapter参数也不必继续把更新写成低秩`BA`：可用交错的diagonal与circulant因子表示增量，让elementwise乘法和FFT直接作用于activation，训练时不先展开完整ΔW；合并回基座则另行构造dense更新。这里改变的是更新参数化与求值路径，不是取消原模型forward或保证固定少量因子能表达任意dense矩阵。[CDVFT的受限对照](https://arxiv.org/html/2505.00580v1)支持这条分支，但分块、padding/裁切、因子数和FFT约定仍须绑定，不能拼接原文不齐的m标记作为统一recipe；容量更大也不保证每项质量更高。参数、分支FLOPs与完整训练费用分别验收，部分任务/配置弱于LoRA或其他adapter，不由对某个基线的优势宣布普遍更省。Base/head、FFT workspace、反向、搜索及dense合并均付费；结构支持、数值或净预算不合格时，保留普通LoRA、较宽参数化与逐任务回归，不从理论求值复杂度签发端到端速度或无损质量。<!-- source-family:SF-2025-ARXIV-2505-00580 -->
+
+低维更新不一定还要经过低秩乘积：可按固定seed把选定权重坐标分成互不重叠的组，每组用同一个可训练坐标、按组大小平方根归一化，直接写成`Δw=Pθ`。此时`PᵀP=I`，梯度按`Pᵀ`汇聚；[全局partition的受限证据](https://arxiv.org/html/2605.14841v1)只保证固定更新子空间内的Euclidean等距，不保证覆盖任意全量更新、loss更平或质量无损。它与`BA`是替代参数化，不改变训练objective；base/head、seed及PRNG/参数次序仍属恢复身份，索引、重构、dense执行和调参也不消失。部分任务仍退步，不规则访问还可比低秩对照更慢；等距或紧凑adapter不签发总显存、墙钟或能力保证，任务与总费不合时保留普通LoRA、更宽空间或全量微调。<!-- source-family:SF-2026-ARXIV-2605-14841 -->
+
+可训练状态的预算还可以限制每一步的活动坐标，而不限制整段适配最终累积的更新：直接更新原权重的一小组row/column，每隔若干steps移动mask，过去离开活动面的增量仍留在模型中继续前向。[SliceFine的受限分支](https://arxiv.org/html/2510.08513v1#S3)因此不同于固定低秩adapter或将其余权重剪成零；单步切片的秩/参数数也不约束全部已访问坐标之和的rank。应共同保存基座、已累积dense权重、活动mask/顺序/切换时钟与optimizer状态迁移规则，不能只交付最后一片；重访坐标的momentum和weight decay是否更新未闭时，不补可执行recipe。权重谱能量相近不保证各片有非零任务梯度，表示PCA也不等全部可训参数的NTK，不能由此授任何slice必胜或匹配full fine-tuning。较频繁切换、过大rank和部分任务可反退，选择更多位置仍增加覆盖/调参压力。全部dense前向/输入反向、mask操作、状态切换、训练与独立新旧任务回归均费，少活动optimizer状态不等整层O(dr)执行。支集、状态恢复或质量/净费不合时，保固定更新面、普通LoRA或完整微调，不由零新增参数和局部低秩批准无损、全局最优或净加速。
+
+<!-- source-family:SF-2025-ARXIV-2510-08513 -->
+
+## 一个参数量小例子
+
+假设线性层：
+
+```text
+d_in = d_out = 4096
+r = 8
+```
+
+Full update 参数量：
+
+```text
+4096 * 4096 = 16,777,216
+```
+
+LoRA 参数量：
+
+```text
+8 * (4096 + 4096) = 65,536
+```
+
+该层 trainable parameters 约为 full update 的 `0.39%`。这个比例只描述该目标矩阵；整模型比例还取决于哪些 modules 插入 LoRA、是否训练 bias、embedding 或其他参数。
+
+Rank还决定可选择预算的步长，而不只是总容量：一个m×n矩阵的LoRA每增一rank便多存m+n个标量。把更新tensorize后，以多条受限Kronecker方向的CP分量求和，可把每步增量变细；[受限OPT对照](https://arxiv.org/html/2606.00428v1#S4)中2048²投影的一步由4096变为193个存储标量，但细网格来自方向结构受限，不保证同预算表达力或质量更强。应同时看原始质量曲线、相近预算点及声明cap内的tested可行集；更多容量点上的事后最大值不是独立选型证据。局部实验有早饱和、逐步改善和持续弱于LoRA三种情形，adapter optimizer-state少也不等总训练内存或时间少；全部tensor重构、搜索与留出确认都付费。任务、结构或净预算不合时，保留普通LoRA较粗rank网格、更宽方向或full update，不由预算步更细批准替换。<!-- source-family:SF-2026-ARXIV-2606-00428 -->
+
+常见初始化让一个 factor 随机、另一个为零，使训练开始时：
+
+```text
+Delta W = 0
+y = W_0 x
+```
+
+模型先精确继承基座行为，再逐步学习 adapter update。具体初始化和 scaling 必须以实现与 checkpoint metadata 为准。
+
+也可以用校准 activation 的二阶矩差额提出非零低秩初始化，把目标方向放入 `B₀A₀`；但若要求初始整体仍等于原 `W₀`，就必须同时冻结扣除这项的残余基座。以实际缩放 `s` 记，保存 `W_res=W₀−sB₀A₀` 后运行 `W_res+sBA`，才在初始点恢复 `W₀`；训练后的真实增量则是 `s(BA−B₀A₀)`，不是单独的 `sBA`。校准人口、因子初始化、残余权重和缩放共同定义新 artifact，不能只替换两个 adapter 文件。<!-- source-family:SF-2026-ARXIV-2604-17396 -->
+
+对最终 `B` 加正交 soft penalty，只约束这个分支的某种坐标读数，不保证整个净更新在保留输入上为零；`B→cB、A→A/c` 保持 `BA` 却可改变单因子 penalty，也须单独检查。[必要初始化与遗忘对照](https://arxiv.org/html/2604.17396v1)只支持有限 forget/retain 取舍，其谱最优推导限定于相应投影类，不能扩成任意低秩更新的全局最优或真实删除证明。二阶矩估计、分解、forget/retain forward 与超参搜索都计费；缩放未闭、校准不足或保留能力退化时，保留原 checkpoint、普通零增量初始化和独立遗忘/能力评价，不以 aggregate utility 或 MCQ 跌分批准知识已不可提取。<!-- source-family:SF-2026-ARXIV-2604-17396 -->
+
+选哪一端谱方向，也可以按目标矩阵的角色提出不同先验，而不要求所有adapter共用同一种初始化：一条[受限非对称分支](https://arxiv.org/html/2510.08034v1)以Q的主奇异方向和V的小奇异方向分别初始化可训低秩因子，同时保留相应冻结残余资产。这只改变起点，不把训练后的更新硬限制在原奇异子空间，更不让主谱、小谱分别取得任务语义、通用知识或安全的真值身份。应在相同placement、rank、缩放与调参预算下分别验选谱和目标矩阵，再按新任务、原能力及具体consumer回归；更像full-update的子空间、较小更新范数或单一输出分布proxy都不能代行为保留，换模块同时换initializer的消融也不能唯一归因矩阵角色。完整SVD、残余驻留、全部前反向和搜索回归均付费，局部任务仍有退步；角色假说、初始继承或净质量不合时，保留普通零增量LoRA、统一选谱与独立初始化搜索，不由较快epoch收敛批准普遍遗忘控制或端到端净速。
+
+<!-- source-family:SF-2025-ARXIV-2510-08034 -->
+
+若非零初始化同时带输入相关 expert routing，扣除一份平均增量就不再保证每个样本都继承原函数。一条受限分支用主奇异方向初始化 always-on shared expert、其余不重叠方向初始化 routed experts，再从基座扣除 shared 与专家平均贡献；只有初始化 routing 对称等条件下才保持平均 weight，输入相关的 weight 与输入相乘后也不能直接推出输出期待相等。[VLA-GSE 的有限适配对照](https://arxiv.org/html/2605.06175v1)还按奇异值规模调整专家 scale，但相同 routing 二阶矩不足以将 routing 与 gradient 的乘积期待拆开，不能据此移植精确等梯度定理。参数预算包含全训 action head，LoRA式保留与机器人控制收益须分别验收；expert路由比同骨干 FFT 更慢，SVD、scale搜索、训练与部署均付费。初始/旧能力或净质量不成立时，保留普通零增量 LoRA、静态专家或经独立回归的 FFT，不把少 trainable 参数与期待补偿当无损控制保证。 <!-- source-family:SF-2026-ARXIV-2605-06175 -->
+
+初始化继承也不能解释持续适配后的全部保留收益。比较 LoRA 与 full fine-tuning 时，同时改变了低秩参数化、更新支集与基座冻结；若要把较少遗忘归给低秩本身，还需 classifier-only、浅层 adapter 和逐步解冻的控制，而不只看两者总分。在有限序列 encoder 实验中，强冻结的非标准 LoRA 分支也接近标准 LoRA 的保留效果，这削弱了低秩结构是唯一原因的解释，却不证明冻结比例拥有跨模型的安全阈值。
+
+`arXiv:2603.27707v1` §3–6 的主五 seed、全验证四任务结果与冻结/表征探索分开：较少遗忘伴随最终新旧任务平均精度下降，扩到六任务后低平均仍掩盖一个旧任务的大幅退步。Centroid similarity 和冻结参数比例不是行为保留证书；任务顺序、训练/调参预算、target modules 与各任务质量都须保存。更多冻结减少可塑性，也可能无法学好新任务；新旧能力/费用不合适时，保留 fuller update、独立 adapter/replay 或较短适配序列并重新回归，不让低 rank、冻结基座或较高表征相似度代替验收。<!-- source-family:SF-2026-ARXIV-2603-27707 -->
+
+持续适配还可以把更新面的选择细化到同一子层的“特征激活端”和“写回端”，而不只比较整层LoRA与全量微调：固定词表读出、embedding及Norm，分别试验仅训attention projections，或仅训MLP的gate/up而冻结down，再以同一任务序列验新任务和旧消费者。[受限多模态对照](https://arxiv.org/html/2510.08564v1#S3)支持这种可塑性/保留的替代分支，不把冻结down解释为冻结输出函数；attention改变后续MLP输入，gate/up变化也会经原down写回。数字token代理只是在指定人口与生成prefix上的输出偏好读数，后任务恢复亦不证明概念从未改变；层增量投到logit后的范数不能独自认证知识位置或唯一遗忘因果。应保存实际trainable mask、固定读出、任务顺序/数据和每阶段新旧逐任务结果，区分单任务收益、后续遗忘和最终平均；有限骨干仍有明显held-out回退，更保守冻结也会学得更少。全部子层前反向、选择/诊断、可选蒸馏及原消费者回归均费，少trainable参数和无需replay不等净省费或通用保持。更新面、旧行为或净质量不合时，保原checkpoint、独立adapter、可信replay/正则或较宽更新，不由固定写回矩阵、局部bias曲线和平均恢复批准零遗忘、完整因果分解与部署安全。
+
+<!-- source-family:SF-2025-ARXIV-2510-08564 -->
+
+低秩适配双塔表示时，还要把“保留了什么”绑定到具体读出：原文本编码器与提示下的 zero-shot、新任务训练的分类 head，以及在冻结适配后特征上重新训练的 linear probe，是三个不同消费者。图像编码器改变而文本编码器冻结，既可能改变视觉特征的可分性，也可能使原图文坐标失配；重训 probe 能利用新坐标，却不证明旧图文关系已恢复，zero-shot 下降也不独证视觉知识被擦除。[有限 CLIP 特化对照](https://arxiv.org/html/2509.14921v1#S5)中，同一 CIFAR-10 的原提示与新 probe 均相对各自 base 回退，但幅度不同；域内更高分、较低 rank 或冻结基座都不能替代这三路验收。任务 head、类别/标签人口、损失、数据与模型 patch/容量同时变化时，不把回退唯一归因于类别数或低秩参数化，部分大模型连本域任务也退步。适配、head/probe 重训、提示选择与 target/retain 回归全部计费；原读出或新任务不合格时，保留原 encoder/独立 adapter、可信 replay 或更窄更新，不以一次重训分类器的高分签发通用能力、隐私或部署安全。
+
+<!-- source-family:SF-2025-ARXIV-2509-14921 -->
+
+行为保留还可以在监督位置上约束输出形状，而不只限制更新方向：对冻结基座与适配模型，都移除真实target token并按剩余概率质量重归一，再把基座到适配模型的条件KL加入原CE。它避免直接惩罚target概率上升，但共享参数仍会耦合其它位置；普通全KL分解还含`1−p_base(target)`权重，去掉该权重已经改变目标，不能把收益唯一归因于mask本身。[受限单阶段适配对照](https://arxiv.org/html/2605.29498v1#S3)支持这种可塑性/保留分账，目标任务也有反退，保留语料PPL不证明全部旧能力无损或连续学习不遗忘。基座把target质量推近1时，剩余归一不稳，须保存排除阈值与实际人口；参考模型、监督mask、KL方向、lambda及基座/adapter精度共同定义训练身份。完整基座前向、双模型驻留和搜索都付费，少adapter参数不消除这些费用。数值、目标质量或保留回归不合时，保留原CE、经校准的全KL/独立adapter与原checkpoint，不以更低retain-PPL批准部署。<!-- source-family:SF-2026-ARXIV-2605-29498 -->
+
+继承也会保留不希望保留的行为：如果基座已被投毒，干净下游数据上的高准确率与低秩更新，都不能证明触发器已经被遗忘。此时应把更新的强度和方向，与 rank 分开审计，并分别验收 clean utility 与触发条件下的 attack success。[受限的 RoRA 分类实验](https://arxiv.org/html/2601.06305v1)尝试用基座 dropout、谱方向的 soft penalty 与层级缩放增强干净任务更新；它不是已知 trigger subspace 的 oracle，也不能由预训练谱或一个缩放阈值保证去除后门。谱分解、参数搜索和额外训练有成本，过大缩放还会破坏 clean utility；只有在两类人口及实际配置上重新验证后才能采用。未可信的基座不能靠换一个 adapter 自动变可信，可信基座适配或全量微调仍应作为需要独立重测的对照，而不是被宣布安全的回退路径；这些有限分类结果也不授予通用聊天模型的遗忘或安全保证。<!-- source-family:SF-2026-ARXIV-2601-06305 -->
+
+更新面还可以由受限行为probe提出，而不只按rank或层名选择。对FFN中间坐标，分别从带refusal的有害输入与良性输入，由平均activation与down-projection列共同构成重要性代理，取有害top-K与良性top-K的差集，再用row mask约束up/gate的LoRA增量。这把“在哪里更新”与低秩因子分责；所选坐标只是该probe人口的候选支持，不是已识别独立的安全语义，也不保证删除了所有通用能力干扰。<!-- source-family:SF-2026-ARXIV-2604-08881 -->
+
+[PreciseShield的必要多语/多模态对照](https://arxiv.org/html/2604.08881v1)只支持该受限适配分支，跨语言/模态transfer仍部分且不对称；neuron数量或重叠与ASR相关不能独归语言相似性或唯一safety机制。MM-Vet/MGSM存在退步，单judge与有限human核也不授无bias；原masked-update公式与伪码forward不完全一致，不发布唯一训练recipe。probe、refusal标签、mask身份、适配、完整forward/backward与utility回归均付费，少量trainable参数不等总训练省费。人口、模型坐标或utility失配时，重新probe并回归原LoRA/完整适配与独立policy检查，不让adapter或activation放大替代第72章外部权限/安全gate。
+
+更新支集也可以由少量有标签任务的梯度提出，再约束辅助监督对原参数的写入，而不只由activation或低秩rank决定：先在同一checkpoint上汇聚目标QA的有符号梯度，再取绝对值，在各线性矩阵row内选择若干参数，联合QA与伪caption训练时只更新这些坐标。[受限多模态适配分支](https://arxiv.org/html/2510.03232v1)因此需要区分绝对均值与均值绝对值、逐row参数与整个neuron；梯度相消和标签人口会改变选集，不证明这些坐标只拥有QA知识或已保留通用能力。Caption teacher、生成器及重新初始化后消费合成QA的最终模型是三个身份，伪caption与自产QA都不能自行取得真值；打印目标符号未闭时不补成逐式训练配方。部分切片加mask反退、缺少等稀疏随机支集对照，少标签或少更新参数不等低总费；teacher、梯度选取、两阶段训练、QA生成和独立旧/新任务回归均计入。标签、支集或retain质量不合时，保留可信真实QA、普通固定更新面或完整适配及原checkpoint，不由一项下游总分批准知识已无损转移。<!-- source-family:SF-2025-ARXIV-2510-03232 -->
+
+持续写入新概念时，更新支集还应与保持支集分开：先从概念样本的caption特征和cross-attention参数幅度提出候选mask，排除有限校准prompt共同选中的参数，再只更新当前概念mask与对应special token；对当前mask和历史概念mask并集的交集，分别向上一阶段权重与原基座施加软范数惩罚。[受限概念适配分支](https://arxiv.org/html/2510.02296v1#S4.SS3)把历史碰撞位置显式留下，而不是将少量更新或不保存独立LoRA当作自动零遗忘。有限校准交集不识别独立通用/概念功能，冻结其余参数也不冻结新token和共享计算后的行为；重叠处两个reference可能互相牵制，较低正则值不能替所有旧概念和zero-shot任务验收。有限组合对照有收益，但CLIP平均与挑选代表样本不证明逐对象身份/绑定或全部顺序保持，单概念图像对齐亦有反退。历史mask、token、旧/原reference、校准caption、prior图像与全部适配/采样回归都计费；融合前额外memory/time为零不等训练和驻留零费，单concept更新比例也不承诺无限历史常数存储。mask、校准人口或retain质量失配时，保留独立adapter/原checkpoint、较窄更新或可信replay并重测，不由参数少、fusion-free或旧参数未动批准功能无损和净加速。
+
+<!-- source-family:SF-2025-ARXIV-2510-02296 -->
+
+跨语言更新面还可先分别以safe/unsafe activation差与方差提出候选，再取各语言top集合的交集，并用数量/module匹配的随机抑制及跨语言状态注入检查其行为关联；交集本身不证明共享安全机制。[Safety Kernel的有限分支](https://arxiv.org/html/2610.24614v1#S3.SS3)将LoRA增量限制在这些FFN输出坐标，基座权重冻结却不使后层行为独立不变。所测安全收益与效用仍有取舍，未参与discovery的语言改善也不等所有阶段未见、全语言或新攻击安全。候选/标签、全部干预和适配及独立policy/utility回归均付费；坐标、模型或行为支持不合时重新probe、保普通LoRA/完整适配并独立验收，不让神经元交集或adapter替外部权限与安全gate签字。
+<!-- source-family:SF-2026-ARXIV-2610-24614 -->
+
+若关联probe不足以决定更新面，还可先比较目标任务与counterfactual prompt的activation差，只替换候选子空间的分量、保留其余activation，再按任务输出受损选择attention/MLP组件。这样用干预敏感性提出更新支集，而不把activation差直接认作因果能力；SAE feature可帮助解释，实际训练的组件范围仍须单独声明。[TITAN的受限翻译对照](https://arxiv.org/html/2610.21456v1)还在未按该支集训练的模型中做knockout，减少“先选再训再证实”的循环，但多属性counterfactual、阈值与单基座仍不识别唯一完整circuit，不同语对也各自重新发现。部分TER退步，同trainable参数预算不等匹配发现、SAE、SFT/DPO及搜索总费；不能据低参数比例或跨语对结果承诺无损迁移。干预、坐标或retain回归不可信时，保留普通LoRA、完整适配与独立任务验证，不把解释mask直接当发布许可。<!-- source-family:SF-2026-ARXIV-2610-21456 -->
+
+先用解释器选择原模型的更新支集，仍不同于把可干预的功能单元直接放进适配器。另一分支在低维瓶颈中先做ReLU、逐token保留top-k激活，再经B写回；A的行提出输入条件，B的列给出被注入方向，以任务loss而非重构loss训练。[TopKLoRA的受限扩展](https://arxiv.org/html/2610.32866v1#S3)由此把参数高效适配连接到功能归因，但输入相关的选择不能静态合并成一份固定ΔW，各层单元也会经基座计算相互影响，不因稀疏就获得独立语义或完整因果标签。
+
+验证可把候选单元移除与只保留候选分开：在top-k之后置零、不让别的单元补位，再从原基座路径重新计算，分别测目标行为消失和保留程度。排名只提出候选，有限prefix扫描通过也不证明唯一最小电路或总体零泄漏；指定梯度路由的planted set只给定位参照，整个集合甚至可不充分而其中子集充分。已知tag触发、小模型及有限能力judge限制外推，单层与多层的非目标损害也不同。完整训练、发现、所有干预与独立新旧能力回归均付费；无已知配对、定位或保留证据时保留普通LoRA/完整适配与更窄干预，不由少latent或局部去后门批准生产安全。
+<!-- source-family:SF-2026-ARXIV-2610-32866 -->
+
+解释器还可以只帮助选“在哪里更新”，而不直接过滤“应注入什么更新”。例如先用目标域相对其他域的SAE特征活跃度提出层集合，再仅在这些层加入经适配得到的raw task vector；activation字典提供的方向并不自动成为weight增量的合法投影坐标。[SAE-guided layer selection的受限对照](https://arxiv.org/html/2605.28649v1#S5.SS4)中，raw增量优于作者所测feature-filtered分支，但这不证明所有SAE干预失败或一般几何不相容；原投影符号缺少回到矩阵的明确lift，不能照录成通用recipe，norm ratio也不能直接叫平方能量。单基座、单主域、各自scale搜索与有限题集限制其归因，raw更新仍需可信适配来源及独立retain回归。SAE准备、probe、适配、层/scale搜索和验证都付费；坐标映射或质量不可靠时，保留普通LoRA/完整适配与较窄受控更新，不让可解释的feature替更新正确性签字。<!-- source-family:SF-2026-ARXIV-2605-28649 -->
+
+比较不同低秩参数化时，相同 learning rate 并不自动构成公平对照：初始化与因子尺度可以改变合适的步长和稳定窗口，同一数值可能让一种方法接近峰值，却让另一种方法处于尚未有效更新或已经不稳定的区域。应在匹配的搜索预算下，为各方法分别选择 learning rate，同时报告最佳质量与可用窗口，而不是只凭某个固定步长的排名归因于结构；搜索本身的训练与评价成本也要计入。Rank、batch、target modules、scaling、schedule、adapter/base 精度与数据切片仍须绑定，不能把“统一设置”默认为各方法已经充分调优。受限的≤7B数学/代码对照在充分搜索后出现相近峰值，却仍保留部分方法的高步长稳定性和低rank收益；初始化Hessian只支持局部解释，不证明全部训练轨迹或遗忘差异都由它决定。原LoRA、不同初始化和更复杂的变体因此仍可按质量、稳定性与搜索成本共存，换任务或配置后需重新验收，不能由局部峰值接近宣布其他设计没有价值。<!-- source-family:SF-2026-ARXIV-2602-04998 -->
+
+零增量初始化与后续更新稳定性是两件事。令B₀=0可以使初始sB₀A₀为零，但B开始学习后仍会乘上随机A₀；在非对称学习率下，这部分初始化投影可能随更新放大。一个[受限signal/noise分析](https://arxiv.org/html/2610.32142v1#S3)因而在保留零B的同时，进一步缩小随机A的方差；它改变的是后续信号与初始化噪声的相对尺度，不是改变初始模型输出，也不等于只调一个总learning rate。宽度n下从Θ(1/n)到Θ(1/n²)的方差选择，只在相应对齐、rank与时间条件下多压低一阶noise平方规模，不能外推为总更新缩小同一倍数或任意训练自动稳定。
+
+验证时要连同rank、有效multiplier s、两个factor的学习率和训练horizon一起比较，既看输出增量也看内部低秩activation；随机交叉项、minibatch对齐与长期累计可能改变预测。有限Llama8B对照支持较小初始化扩大部分非对称LR的可用窗口，但仍有大步长失稳、rank相关最优与未联合搜索的边界，零B理论也不直接覆盖非零B初始化。所有初始化/学习率搜索、适配和旧能力回归仍付费；局部近似、稳定窗口或质量不合时，保留普通零增量LoRA与匹配预算搜索，而不把宽度渐近式作为全模型固定ratio或免调参处方。
+<!-- source-family:SF-2026-ARXIV-2610-32142 -->
+
+结构性参数绑定还会改变梯度如何汇聚，而不只是减少参数数：若一个block以circulant向量定义多个矩阵位置，共享坐标的链式梯度是这些位置贡献之和，不是每个dense位置各自更新。贡献同向时可放大，异号时也可抵消，因此不能只由block宽度p推出梯度必然p倍、更不能据此承诺把learning rate除以p就稳定收敛。[BCA的受限对照](https://arxiv.org/html/2505.00582v1)只支持相应配置的缩步长heuristic，原一般证明不足，不写成任意optimizer的迁移规则。Block划分、绑定/FFT约定、初始化、有效scale、optimizer与搜索预算须共同保存；训练可在结构向量上求值，合并仍另付dense构造费用。更强绑定节省状态却限制容量，部分GLUE/GSM8K配置仍退步或比LoRA付更多分支计算；base/head、workspace、调参和独立回归不可删除。梯度、质量或总费失配时，保留较弱绑定、普通LoRA/独立更新与匹配预算搜索，不由少参数或单条loss曲线批准全模型稳定与速度。<!-- source-family:SF-2025-ARXIV-2505-00582 -->
+
+可训练坐标少，也不必使最终更新矩阵保持低rank：先将同一权重更新fold成多轴tensor，以固定共享的随机core和factor为scaffold，只训练各轴上的小对角向量，再unfold回原矩阵。[TeRA的受限分支](https://arxiv.org/html/2509.03234v1)把矩阵rank与可达更新族的自由度分开；较高rank不等任意dense更新都能由这些坐标表达，rank上界也不保证每个初始化或任务达到满秩。本次不采用未闭合的最优近似界或完整mode-product配方。Fold轴顺序、core/factor与seed、对角初始化、scaling和基座版本须共同保存，不能只交付小向量；只令一轴为零以继承基座，与所有轴同时为零是不同梯度条件。冻结大scaffold、临时重建/合并、完整前向反传与超参搜索仍付费，更多tensor轴或更高rank也可能损质量。更新支持、质量或总预算失配时，保留普通LoRA、较弱参数绑定或fullupdate与匹配搜索，不由少trainable参数和高rank读数签发表达充分、免费推理或通用最优。
+<!-- source-family:SF-2025-ARXIV-2509-03234 -->
+
+搜索还可以由参数化条件约束，而不是对所有 rank 复用一个步长。写增量为 `αBA` 时，`α` 是有效 multiplier；普通 PEFT 的 `lora_alpha/r` 才对应它，不能把两者同名混用。受限单层、固定有限步数、forward/backward 信号有界及无 momentum 的 SignSGD 代理下，随机初始化 A、令 B 为零时，固定 `α=1` 的稳定更新尺度给出 `η∝n^(-1/2)r^(-1/2)`；改用 `α=1/r` 后 rank 依赖消失。随机初始化 B、令 A 为零且 `α=1` 时，则为 `η∝n^(-1)`。这里 `n` 是宽度；初始化分布和 scale 一起改变训练分支，不是单独将 rank 调大后的无条件规律。[原始证据](https://arxiv.org/html/2602.06204v1)的 Gaussian/独立性简化也不涵盖任意已训练 factor 或完整 AdamW 轨迹。
+
+后一种配置与全量微调的步长**同阶**，只满足迁移所需的必要条件，不保证有限模型的最优常数相等或直接免调参。作者 AdamW、单 seed42 与 log2 粗网格的受测趋势可帮助提出候选搜索区间；RoBERTa 全量微调偏好稍小步长，额外分类 head 即使固定步长仍可能耦合，有限 rank 和任务变化也会偏离渐近预测。实际配置应保存零 factor、初始化方差、有效 scale 与框架实现身份，再用匹配预算的独立 sweep 验收；趋势失配时回到原搜索，而不凭同阶关系迁移一个未经验证的数值或承诺训练降本。<!-- source-family:SF-2026-ARXIV-2602-06204 -->
+
+缩放与步长还要分清各自作用在哪里。令有效增量为 `ΔW=sBA`、`s=alpha/r`，一次因子更新导致的精确变化为 `s(BδA+δBA+δBδA)`；改变 alpha 会改变 forward 映射及因子梯度的尺度，改变学习率则通过 optimizer 改变 δA、δB。特定初始化或局部一阶近似可以匹配某一步，却不能据此认定一个学习率倍率复现全部双线性项、历史状态与训练轨迹。
+
+[受限 LoRA 缩放对照](https://arxiv.org/html/2606.12883v1#S4)支持把 alpha 与 rank、零因子、初始化方差、学习率及 optimizer 状态联合识别，而非采用通用的固定大 alpha。默认分支仍有任务反退，充分调学习率也可更好；初始化 Hessian 的期望 trace 不控制最大特征值，Adam 的局部尺度近似不扩成 vanilla SGD 或完整训练保证。全部网格、训练与旧新任务回归都计费，免部署额外参数不等免调参；质量、稳定性或搜索净费不合时，保留原 LoRA、匹配预算的 alpha/LR 搜索与 full fine-tuning，不由单一拟合律批准普遍替换。
+<!-- source-family:SF-2026-ARXIV-2606-12883 -->
+
+步长之外，factor 的 optimizer 几何也会改变 product 的谱，不能把分别变换两因子的 update 视为直接变换 `BA`。一个受限连续模型对单矩阵平方误差做两因子分解，用平滑 spectral operator 分别正交化梯度；在小 Gaussian 初始化、平滑参数足够小且模式仍远离目标的活跃区间，product 的近对角谱代理之**平方根**以近似相同步速增长，较小目标模式因而先到。这里使用 identity-Hessian 简化、单矩阵和有限区间条件，不是原奇异值恒定增速，也不是实际 LLM 中离散 Newton–Schulz、momentum Muon 的收敛证明。<!-- source-family:SF-2026-ARXIV-2602-06385 -->
+
+同步生长也可能让超过有效任务 rank 的不需要方向一起增长，因而需要把谱形状与 held-out 泛化分开验收。[必要连续分析](https://arxiv.org/html/2602.06385v1)的未正则化结论仍允许 factor norms 发散；有界性是额外条件，局部收敛率还要求目标谱互异和已经趋向全局解，加入 L2 又改变了目标。有限 LoRA 微调中的谱观察只能帮助提出 optimizer/rank 对照，不能证明 quality、遗忘或总成本更优；这些条件失配时保留原 optimizer、匹配搜索与独立能力回归，而不按“更均匀”自动增大 rank。
+
+低维训练方向也可以从任务相关的初始化几何提出，而不是一律随机选择。一个受限分析在 whitened 输入、小输出维度 `K<d/2`、平滑激活、小 semi-orthogonal 初始化的两层网络中，固定第二层并以平方误差 GD 训练；还须假设梯度衰减、谱间隙和残差有界。由初始化权重与初始梯度构造的坐标块之外，每步更新受梯度子空间偏转和尾部谱共同约束。结论不是权重本身恒为 rank `2K`，也不是任何激活、optimizer 或 Transformer 都能由一次 SVD 获得完整训练子空间。<!-- source-family:SF-2026-ARXIV-2602-06208 -->
+
+在这类条件提供可检验候选时，可从一次初始 forward/backward 估计任务相关子空间，构造更窄 MLP 的首尾 basis；这些 basis 随后仍训练，不是冻结预训练基座上的 LoRA。[受限 MLP/分类 head 对照](https://arxiv.org/html/2602.06208v1)中，随机或偏离任务方向较大的初始化失败，只有 head 可训练时还保留质量缺口，增加宽度也未消除全部差额。初始梯度、分解、更多训练步和独立超参搜索均有成本；同超参下轨迹接近只支持该局部构造，不证明充分调优后普遍等效。任务输出较大、特征随训练漂移或窄空间质量回归时，保留 full-parameter training、原 LoRA 或更宽参数化，并重新验收目标质量与能力回归，不按分类数直接宣布通用最小 rank。
+
+任务相关 basis 也可以在校准后冻结，只让另一侧 factor 学习：从少量带标签任务样本估计输入二阶矩与权重梯度敏感度，用权重乘该二阶矩的右奇异向量初始化输入侧 A，保持 B 为零；再用同一敏感度共同分配各 module 的 rank 和有效 scaling。[TLoRA 的有限对照](https://arxiv.org/html/2604.18124v1)支持这条初始化、预算与更新支集联合选择，而不是证明由原权重便能恢复未知最优任务更新。固定 A 将净更新限制在所选 rowspace，节省其梯度与 optimizer 状态，却仍保存 A 并执行投影；总 rank 相等也不保证宽度不同的 modules 有相同可训参数数。二阶矩、SVD、标签梯度、CPU offload 和独立调参均有费用，预计算加训练未必更快，冻结与 rank/scale 分配也不在所有切片单调有益。任务方向漂移、窄空间质量或总预算回退时，保留可训练双 factor、随机/其他初始化、更宽 rank 或 full update，不将局部质量接近当作动态子空间普遍冗余。<!-- source-family:SF-2026-ARXIV-2604-18124 -->
+
+一次checkpoint上的低秩梯度，也不等整段适配都落在同一张“任务平面”：冻结一次估计的basis时，应同时检查它是否仍覆盖后续恢复所需方向，而不只检查当时的谱能量。[受限synthetic Transformer对照](https://arxiv.org/html/2606.10929v1#S5)中，每步都投回同一旧plane明显弱于自由恢复，同固定rank的plane方向也随步漂移；GPT-2 LoRA的短轨迹span较好覆盖最终位移，但其受约束恢复中local plane也可接近自由更新，不能把最终位移投影率直接当约束训练上限。这不否定低秩更新，而是区分局部rank、固定更新支集与跨步轨迹。轨迹span必须先支付真实恢复与梯度观测，不是免费知道最终方向的算法；固定Hessian的Krylov解释也不覆盖任意非线性训练。大模型有限batch得到的低rank还可能与随机采样control无法区分，不能据小模型比例直接选部署rank。Basis准备、恢复、统计和独立新旧任务回归都计费；方向稳定且质量已验时，冻结basis仍更省状态，漂移或恢复不足时则重估、更宽/可训练basis、普通LoRA或full update，而不以单点低rank保证不遗忘。<!-- source-family:SF-2026-ARXIV-2606-10929 -->
+
+### 冻结随机基座是另一种训练假设
+
+继承预训练行为是下游适配的重要前提，却不是低秩参数化的数学要求。可以把基座改为由固定随机 seed 生成的 scaffold，并同时训练低秩因子、每层 scaffold 幅度及必要的 embedding/head；此时 adapter 不是微调已有知识，而是在固定投影中从零形成任务函数。部署身份也不再只是 base checkpoint：seed、PRNG/框架版本、架构、初始化分布、幅度与 adapter 必须一起恢复，否则相同低秩因子会连接到不同函数。
+
+这一分支不能用很少的可训练参数证明无需预训练或计算更少。固定基座仍执行 forward 和输入梯度，activation 成本不会消失；[随机 scaffold 的受限比较](https://arxiv.org/html/2604.08749v1)在 WikiText-103 的同架构、同样本预算下均未追平全量训练，H200 上较大模型的实测训练吞吐也未提高。稳定 scaffold 与反复重采样的差异支持固定坐标有作用，但不证明 rank 就是任务本质维度。已有通用能力、语言质量或延迟更重要时，预训练 LoRA 与全量训练仍是必要对照，而不是被这个替代分支淘汰。<!-- source-family:SF-2026-ARXIV-2604-08749 -->
+
+## 为什么会节省训练显存
+
+冻结的 base parameters 不需要保存 trainable gradients 和对应 optimizer states。主要节省来自：
+
+- Trainable parameter 数量下降。
+- 对应 gradients 和 optimizer states 下降。
+- 每个任务只保存 adapter，而不是完整模型副本。
+
+但 `W_0` 仍参与 forward。为了把梯度传给更早的 trainable adapters，backward 仍可能经过基座算子并计算 activation gradients。Activation、temporary buffers 和大部分基座矩阵执行不会按 trainable parameter 比例同时下降。
+
+因此：
+
+```text
+trainable parameters = 0.39% of a target matrix
+!= training FLOPs = 0.39%
+!= GPU memory = 0.39%
+```
+
+精确收益必须拆分 weights、gradients、optimizer states、activations 和 workspace。
+
+内存能放下还不等于执行高效。固定形状、分层内存的设备上，可将 forward、backward 与 optimizer update 表达成完整静态图，联合考虑 tensor 生存期、kernel tile 和搬运，而不只压缩可训练权重。低秩因子仍是实际矩阵运算；这条编译分支增加图构造、调度和平台适配成本，动态形状或更新策略改变后需重新验证。<!-- source-family:SF-2026-ARXIV-2603-09511 -->
+
+[端侧模拟对照](https://arxiv.org/html/2603.09511v1#S6)显示：小矩阵利用率和额外搬运可使加速后的 LoRA 略慢于同层全量微调。该结果限于小型视觉 Transformer，不证明 LLM 或真实硅片的收益；质量实验与单步性能实验的 batch 也不同。因而容量、端到端 step 时间与质量分别验收；调度不适配或费用不能摊销时，保留普通运行时及经验证的全量/低秩训练选择，不用参数比例代替实测。<!-- source-family:SF-2026-ARXIV-2603-09511 -->
+
+真实手机还会把单步可行性变成持续热与电量预算：冻结低位基座仍要计算 input gradient，forward格式可用不保证反向 tile、bounds 与实际 dispatch 正确；[单台 iPhone 的持续训练测量](https://arxiv.org/html/2610.06325v1)将冷启动、完整训练与热状态分账，冷步166 token/s不代表长run的83–89，所试 pause/burst反而减少每小时更新。能耗来自电量档位减idle估算，满电987 records仍未完成，不授任意history一电池训练。七任务多在server评价，手机仅复核movie-tagging，近平均分与7.8%逐题不同并存，非输出等价。Runtime正确性、持续训练、充电/前台资源与手机质量均计费；热、完整预算或任务未过时保留检索、较浅adapter或普通runtime，不由能运行与单步峰值批准端侧训练收益或隐私保证。<!-- source-family:SF-2026-ARXIV-2610-06325 -->
+
+持续预算之外，还要问推理用的 resident 权重能否被反向正确复用。[手机 NPU 的一阶 LoRA 分支](https://arxiv.org/html/2610.24816v1#S4)由 CPU 持有 autograd、adapter 与 optimizer，NPU 只接冻结 projection 的 forward 和 input-gradient 乘法；量化路径用同一 forward dequantizer 恢复 resident tiles，再通过交换矩阵乘操作数的端口和结果转置实现反向，不另量化一份转置权重。因此它与后文双布局再量化的近似反向是不同选择；同一 effective weight 仍不等于高精度梯度或质量无损。作者按梯度敏感度将受测 hybrid 的整类 recurrent 投影保 FP16，较小不支持路径回浮点 CPU；row-range 缩放与有界重试只覆盖所测数值范围，不能用 finite 输出代替正确性。CPU 的 adapter 梯度与 NPU 结果合流，全部 microbatch 结束且无请求在途后才提交 update，未提交工作才可重做。Kernel/planner、shape 和 precision 验证、共享内存/同步、重试与 CPU 融合均计费，trainer 内存与 resident service 分账；无 cooler 的 paced 实测只有 46 steps，不是完整 nightly 保证，9B 只验证驻留也不等完成训练。热、电量、梯度或完整质量未过时，回浮点 CPU、原 GPU/BF16 或检索/较短适配，不由推理 backend 能运行批准端侧训练、安全或隐私收益。<!-- source-family:SF-2026-ARXIV-2610-24816 -->
+
+在保持原 LoRA 函数 `y=xW0+s·xAB` 时，也可用重算换驻留：反向从同一 checkpoint 输入重新形成 `h=xA`，再计算因子和输入梯度，不必跨层保存全部低秩中间态。冻结 W0 仍须向上游传 `gW0ᵀ`；必须先用该 forward 的旧 A/B 完成 dA、dB 和 dx，再提交参数更新，否则逐层立即 step 会改变上游所见梯度。[MeSP 的受限机制](https://arxiv.org/html/2602.13069v1)还要求重放的 RNG、dropout、量化与参数版本匹配，手工公式不能认证任意框架/optimizer 等价。MLX/Apple Silicon 的进程 footprint 与 GPU allocator 峰值分开，store-vs-recompute 对照同时增加时间，完整 cache clear、同步与反向重放照计；重放身份无法保持或墙钟预算更紧时，保留普通 autograd checkpoint、存 h 或已验收 LoRA，不把少驻留写成免费反向。 <!-- source-family:SF-2026-ARXIV-2602-13069 -->
+
+若单靠重算仍放不下冻结基座和反向checkpoint，还可把两者的驻留分别移到存储层：[一种容量优先分支](https://arxiv.org/html/2510.03425v1#S3)将压缩的冻结base按块映射、计算前懒加载/解压，前向checkpoint也文件映射，反向再按块消费compiled VJP，LoRA因子与梯度仍驻留。这保留input-gradient路径，既不是零阶估计，也不自动等于未量化原模型的梯度；前向输入、checkpoint和参数版本须与反向绑定，原算法输入/输出索引说明未合处不能补成已验配方。Mmap不使页缓存、文件量、临时解压或反向工作消失，一般放置/同步仍见第39章。量化/编译、取页/读写、重算、optimizer及质量验证都付费；手机单步可运行、每步时间和到目标质量的总费须分验，不能把服务器收敛步数乘手机计时，或把局部进程footprint当全设备上界。存储带宽、数值/质量或持续资源不合时，保留resident基座、普通checkpoint/已验重算或较短适配，不由更小working set批准净加速与后台训练。<!-- source-family:SF-2025-ARXIV-2510-03425 -->
+
+若设备首先撞上随序列长度增长的 adapter 激活，而非 trainable weights，降低 rank 仍可能保留每层 `[B,S,R]` 的 token-parallel 中间态。一个条件分支先把 `[B,S,H]` 输入沿序列汇聚为 `[B,H]`，再在低秩空间做可训练调制，最后把残差接回原路径；梯度密集的 adapter 中间态因而从 `O(BSRL)` 指向 `O(BRL)`。这改变的是 adapter 的更新接口与激活形状，不是让冻结基座的 `O(BSHL)` 激活、前向计算或整次训练峰值摆脱长度 `S`。<!-- source-family:SF-2026-ARXIV-2604-22783 -->
+
+汇聚本身也成为选择：固定的均值加末 token 路径较省状态，按内容加权的路径支付额外参数和计算；两者都可能失去需逐 token 更新的词面细节。作者受测最高 8B 模型、GPU/CPU/树莓派的内存结果只支持其配置下的 adapter 活化预算，并有更大可训练参数与部分质量退步，不能把摘要平均节省率写成任意长度的总训练显存上界。若任务依赖精确位置/词面适配，或 pooling 与 base activation 共同使峰值不降，普通 LoRA、checkpointing 或缩短但语义完整的样本仍更合理；此分支与上段的显存分项计量共存，而不替代它。
+
+若目标是减少大批量继续预训练的执行量，仅冻结参数还不够；另一条受限分支把原模型首尾层连同 embedding/head 摘出，组成独立浅训练函数，训后替换回原深模型，再以全模型微调完成兼容性 alignment。摘除中间层改变了上下文计算函数，因此装回不等于恢复可用行为，也不说明首尾层天然拥有某种语言知识；[必要方法与反侧](https://arxiv.org/html/2601.03648v1)中不做 alignment 会退步。bulk-stage 的较少 forward、额外 alignment、chat-vector/SFT、整条流程峰值显存与最终质量必须分别计量，按9+1GB分阶段也不保证跨 tokenizer 的 token/compute 严格相同。重接或质量不稳定、完整 alignment 吞掉预算时，继续使用原模型 LoRA 或全量微调，不把阶段速度宣称为无损的全流程收益。<!-- source-family:SF-2026-ARXIV-2601-03648 -->
+
+### 低秩更新与轮流更新原参数层是不同的预算分支
+
+低秩参数化让每一步都在小增量空间更新，adapter 也容易独立存储；如果任务需要更自由的原参数更新，另一条路线是每个周期只选择少数原模型层、暂时冻结其余层。选择还可以随训练变化：先用不提交参数更新的 probing 收集每层 gradient RMS，再按其温度化概率抽样，周期性用已激活层的新统计刷新概率。它改变的是每段训练的可更新层集合，而不是给所有层设置动态 learning rate，也不保证有限训练访问到完整全量更新轨迹。冻结层的统计会陈旧，gradient norm 又只是局部优化代理；探索概率、采样周期和层间梯度耦合因此仍须与目标质量共同验收。<!-- source-family:SF-2026-ARXIV-2604-07808 -->
+
+轮换不让全模型可能用到的 optimizer 历史消失：一种实现把这些状态留在 CPU，仅让当前正在提交更新的层状态驻留 GPU，逐层预取和搬回。它减少 GPU working set，却支付 host memory、传输、probing 与控制状态成本；第 39 章继续负责实际 offload 生命周期。[GRASS 的受限比较](https://arxiv.org/html/2604.07808v1)支持这一组合在 1B～7B、算术及常识微调中的可行性，不能推出普遍优于全量微调。其 overlap 的 1.08 倍只相对自身未重叠版本、LLaMA2-7B/batch4/长度1024；不是对全量训练的统一加速。任务增量可由低秩空间表达、独立 adapter 发布重要或抽样统计不稳时，LoRA 仍更清晰；容量与质量允许时，全量更新也仍是必要对照。
+
+周期性轮换与单向冻结是两种更新生命周期：另一条[受限梯度早停分支](https://arxiv.org/html/2509.01842v1)先保留warmup，再按每个projection，或其对应LoRA因子对的联合梯度L1量与阈值决定是否停止该块更新，冻结的路径仍须把输入梯度传回上游。小梯度只是当前batch/尺度下的proxy，其他块继续变化后它可以重新变大，不能把冻结时刻的低值签成永久收敛；减小learning rate也不使真实梯度必然消失。没有patience或解冻的静态退出会放大早冻风险，LoRA因子换基与矩阵尺寸还会改变绝对阈值，须独立验最终任务与能力回归。少更新不等省掉全部反传或验证，有限配置还有比原LoRA更慢的结果；梯度监控、阈值搜索、optimizer状态与所有训练/评价均计费。proxy、预算或质量不稳时，保留周期重评/重新激活、常规validation early stopping或固定更新集合，不让冻结统计替真实停止与发布许可。
+
+<!-- source-family:SF-2025-ARXIV-2509-01842 -->
+
+## LoRA 没有改变 SFT objective
+
+第 29 章的 masked token loss 保持不变：
+
+```text
+L_SFT(theta_adapter)
+= - sum_t m_t log p_(theta_base, theta_adapter)(y_t | prefix_t)
+```
+
+变化的是可更新参数集合：
+
+```text
+grad(theta_base)    disabled
+grad(A), grad(B)    enabled
+```
+
+同样，LoRA 也可以承载 DPO 或其他 objective。把 “LoRA model” 当作一种独立训练目标，会混淆 supervision、optimization algorithm 与 parameterization。
+
+## Rank 与 target modules 决定更新空间
+
+更高 rank 提供更大的更新子空间，也增加 trainable state、compute 和 overfitting 风险。更低 rank 更便宜，却可能限制复杂适配。
+
+训练容量也可以与部署容量分开决定，而不从第一步就固定最终 rank。一个替代分支先以较高 rank 学习 task delta，再截断并重建标准低秩因子；为避免物化完整权重更新，可分别对两个因子作 QR，在 `r_src × r_src` 的 interaction core 上做 SVD，再借两侧正交基恢复 target-rank 因子。精确分解保留源 delta 的奇异谱，截断只针对这一矩阵近似；Randomized SVD 还有近似和随机误差，最小 Frobenius 误差也不保证任务质量无损。压缩可离线进行，或在训练中逐阶段降 rank，必要时继续 target-rank refinement。<!-- source-family:SF-2026-ARXIV-2602-10993 -->
+
+这条路径以更大训练空间和分解成本换取固定部署 shape，并不免费提高小 adapter 容量。[LoRA-Squeeze 的受限对照](https://arxiv.org/html/2602.10993v1)中，极端 source→target 差会使任务表现崩塌，额外 refinement 或逐阶段退火可局部恢复；同更新步数并不等同同训练 FLOPs，学习率搜索、分解与后续训练都应计入预算。转换后的 rank、因子尺度、`alpha`、target modules 与训练状态处理须保持明确 identity，不能把旧缩放或 optimizer history 默默接到新 shape。spectral retention 失准、转换或总成本不合算时，直接训练 target rank、原 adapter 与逐任务回归仍是合理对照，不据平均提升选定普遍 rank schedule。
+
+训练中降低rank也不一定按delta的奇异值截断：另一条分支同步删除B的一列与A的对应行，在非驻点保留一阶gradient项，再以gradient Gram近似局部二阶metric，按该代理选择rank坐标并补偿留下的参数，之后继续训练。[PrunedLoRA的受限机制](https://arxiv.org/html/2510.00192v1#S3)因此改变的是“删哪一对坐标、删后怎样接着更新”，而非恢复更多部署rank。给定正定可逆metric和mask的局部二次解，不等原LLM损失或mask搜索全局最优；Gram只保证半正定，两因子分别近似也没有恢复交叉Hessian。统计人口、逆的处理、成对mask、当前rank/alpha缩放和optimizer交接未闭时，不把打印公式当完整执行配方。高rank阶段、gradient/Gram、求逆与选择补偿、继续训练和超参/任务回归都计费，相同末rank不等相同峰值内存或总训练量；局部低rank与GLUE仍有反退，近Full FT平均也不保证全部能力。代理、数值或总预算不合时，保留固定rank LoRA、已验谱截断/分配或可负担的full update，不由最终小adapter签发全程省费与Serving加速。<!-- source-family:SF-2025-ARXIV-2510-00192 -->
+
+多个模块共享压缩预算时，还可以把各完整delta的奇异值放入同一候选池，以统一谱阈值决定不同模块保留多少rank；这不同于每层都截成相同rank，也不改变小core分解的数学身份。预算首先应声明单位：一个rank在不同shape模块中占用的因子参数为`d_in+d_out`，因此总rank名额不等总参数、bytes或执行时间，未加权的谱排序也不是这些预算下的通用最优分配。[PARA的受限对照](https://arxiv.org/html/2604.27796v1)支持跨层分配这一替代分支，不把谱能量等同任务重要性；缩放、重根与阈值ties还须保确定的重建及名额规则。高rank训练、分解、预算搜索和加载后的逐任务回归都计费，真实runtime若不支持异质rank，或内容保留/总费不通过，应保留原adapter、已验证的uniform target-rank与较宽预算，不从较少rank签发多租户吞吐或无损能力。<!-- source-family:SF-2026-ARXIV-2604-27796 -->
+
+部署存储预算还可以与低秩因子的直接表示解耦，而不再把更新本身截成更低 rank。一条训练后分支先以基座权重的奇异方向构造带可重复随机扰动的候选 basis，再对已训练的因子求近似系数，按预算保留部分 basis，用系数、索引和 seed 重构更新。它改变的是传输产物，不是原训练 objective；base revision、basis 构造和重构规则须共同绑定。[受限 post-hoc 对照](https://arxiv.org/html/2604.08368v1)中的 least-squares 后 top-k 是近似选择，并非最优稀疏重建保证，部分模型的 MMLU 与更低系数精度仍退步；理论又依赖特定初始化、数据与谱衰减条件。SVD、basis 求值、压缩与加载重构都需付费，少参数或少 bytes 不证明推理更快。基座不匹配、重构误差或实际任务回归时，保留原 A/B、较宽传输预算和逐任务验收，不用权重空间近似替代行为检查。<!-- source-family:SF-2026-ARXIV-2604-08368 -->
+
+还没有任务更新或校准输入时，也可从基座权重的谱提出容量先验，而不是先训练高rank再压缩delta：一条[受限适配分支](https://arxiv.org/html/2507.00327v1)用各目标矩阵的stable-rank分配不同LoRA容量。这个量描述原权重谱的集中程度，不是任务所需更新的rank、目标重要性或最优预算证明；非整数proxy如何取整、不同shape的参数/bytes成本、target modules与基座版本都应明确，再由真实任务验证。参数化rank只是上限，零初始化和优化过程都可让实际更新rank更低，不能把基座rank的数学下界移给学习增量。它节省一部分逐任务搜索，却仍支付谱扫描、异质rank训练/加载、可选随机prefix更新和validation回归费用，暂时少激活因子也不等释放全部训练状态。先验与任务失配、质量或完整预算不成立时，保留均匀rank、任务校准或独立rank sweep，不由更多方向、相关谱图或平均分签发泛化、低开销或全域适配保证。
+<!-- source-family:SF-2025-ARXIV-2507-00327 -->
+
+容量预算也可以先决定 adapter 放在哪些层，而不改每层 rank 或轮换原参数。一个静态 proposal 用校准输入测相邻层 representation 的 CKA 差异，将变化较大的层列为有限 adapter placement；encoder CLS 与 decoder last-token 是不同测量人口，变化并不证明该层对目标任务更重要，也未识别层间组合效果。[LayerLoRA exact-v1](https://arxiv.org/html/2602.05988v1)仅在所测 encoder/decoder/VLM 设置支持这条 allocation 分支：减少 adapter 参数与把节省预算重新加到 rank 是两个实验，后者仍有任务退步，ScienceQA 半参数结果也略低于全层。Representation extraction、校准样本与任务回归都有成本，trainable count 不代表总峰值内存或时间；校准失配、组合不稳或任务收益不足时，应保留全层 LoRA、已验证静态 target modules 或独立质量 sweep，不能把 proxy 排名直接发布为容量真值。<!-- source-family:SF-2026-ARXIV-2602-05988 -->
+
+Placement也可在训练中保持连续，而不先把层集合选死：固定backbone，为各层adapter的残差贡献学习任务相关的soft gate，并以gate幅度的正则限制候选结构。[受限结构学习分支](https://arxiv.org/pdf/2509.03057v1)支持把可微搜索与离散部署分成两个决定，但有限sigmoid通常不会精确为零，gate之和不是实际被删除的模块数，更不等FLOPs、驻留状态或可执行skip；task-specific常量也不是逐输入router。若要据此部署更稀疏结构，还须另行定义裁除规则并在裁后重新验质量与真实runtime，不能由soft权重小自动省掉分支。原局部NLU对照缺充分配置/不确定性，不授普遍鲁棒或压缩收益；基座前反向、全部候选adapter、搜索/选择和独立回归均付费。裁后行为、任务支持或净预算失配时，保留原soft组合、已验固定placement/rank或普通adapter，不以参数比例签发实际加速或能力保持。
+<!-- source-family:SF-2025-ARXIV-2509-03057 -->
+
+层选择还可服务输入相关的adapter混合，而不把task常量soft gate当逐token判别器：[相对原MoGU的受限扩展](https://arxiv.org/html/2509.06807v1#S4)先以有标签末位置表示的可分类性提出后半层router，再在router训练时为上游Q/K加入低秩适配，使路由器与其hidden-state生产路径共同变化；这不是全量更新，也不由probe分数证明安全信息只存在于所选层。应共同保存探层人口/阶段、两路adapter、Q/K增量、router和部署token窗口，联合训练后重新验实际路由与行为，不能把适配前的probe排序当永久保证。只在前五个生成token干预、随后交回base，还须另核缓存/状态和参数启停的交接；较少router不等整段函数不变，首句拒答也不等完整输出安全。原局部对照仍有安全与合法任务反退，参数减少不签端到端加速；数据构造、探层、全部分支/联合训练、前向交接及独立完整输出回归均付费。探层、组合或净质量失配时，保留已验固定placement、普通adapter/原checkpoint与独立输出policy，不由低rank或短干预窗口批准能力保持和真实effect。
+<!-- source-family:SF-2025-ARXIV-2509-06807 -->
+
+静态 placement 在任务与预算稳定时便于固定训练接口；若同一批样本在不同层产生不同更新方向，还可以选择“哪条样本梯度写入哪层”，而不先改变 rank 或部署时的 router。一个受限分支将每层 adapter 的逐样本梯度，与小支持批次的该层梯度作内积，再在批内归一化并随机选择部分样本，只聚合被选梯度更新这一层。各层因此可以消费不同样本，基座仍冻结，forward/backward 不会因更新稀疏自动消失。[必要机制](https://arxiv.org/html/2603.09865v1#S3.SS2)的支持集合默认来自训练集，不是独立验证集；对齐只是当前训练目标的 proxy，不能把一阶方向分数当成有限步必优或泛化证明。支持集合、抽样与选择规则应随 adapter 和训练配置保留，这是由该接口推得的验收要求。<!-- source-family:SF-2026-ARXIV-2603-09865 -->
+
+这条选择支付逐样本梯度与支持梯度的费用：缓存再聚合可少做一轮反传，却增加梯度存储；先算分数并释放，再按选择重算则增加 forward/backward。[有限对照与直接反侧](https://arxiv.org/html/2603.09865v1#A2.SS3)中，两种实现的峰值内存和训练时间都高于普通 LoRA，确定性 Top-k 选择还明显差于随机选择，部分任务也退步。少更新一些样本—层对因而不等于免费加速，平均质量提高也不替代逐任务回归；更大梯度投影没有控制二阶项，不能发布最快下降保证。支持代理失配、样本噪声或资源预算不合算时，保留普通 LoRA、已验证静态 target modules 或单独的数据选择，不把本分支覆盖成统一稀疏训练规则。<!-- source-family:SF-2026-ARXIV-2603-09865 -->
+
+谱测量还应先声明对象是原权重 `W` 还是训练增量 `ΔW`，并固定rank定义、阈值、精度与base ancestry；按奇异值归一化的effective rank与平方谱能量并非同量。[受限post-training诊断](https://arxiv.org/html/2610.22438v1)中，增量比同shape Gaussian集中，也可由匹配的非alignment训练产生；同Frobenius随机更新又能几乎不改变 `W` 的effective rank，却严重改变行为。因此低秩不能认证alignment特异性，`W` 秩少变也不能判定行为只发生“浅层”变化，反向结论同样不成立。舍入噪声与不同基座相减还会污染 `ΔW` 身份。谱形只能提出压缩候选，须另验真实任务/安全及完整分解、搜索、回归成本；条件或收益不成立时，保留原adapter与直接rank sweep，不让一张谱图替容量或行为签证。<!-- source-family:SF-2026-ARXIV-2610-22438 -->
+
+无论采用哪种样本与层选择，nominal rank 仍只是参数化上限，optimizer 如何同时更新两个低秩因子会决定实际可用的 effective rank。若 A/B 的几何与初始化让更新方向长期退化，提高 rank 也不一定扩大有效子空间；反过来，耦合的谱更新可更接近目标 weight-space direction，却增加优化器假设、阻尼和稳定性成本。Adapter capacity 因而应同时记录 rank、初始化、optimizer transform 与实际更新谱，而不是只用 `r` 解释结果。
+
+<!-- source-family:SF-2026-ARXIV-2609-12123 -->
+
+还可以把低秩约束限定在每一段训练，而不永久限定累计更新：阶段结束将增量并入当前基座，再重新初始化因子、继续下一段。多段增量之和的rank可以超过单段r，却也可能重叠或抵消；能合并不等于已经恢复全量训练的更新轨迹。每次fold都会改变基座身份，因子重置后的optimizer状态、restart周期、重新升温及是否先做full-rank训练须一同保存和验收，不能把它当作普通checkpoint续跑。[低算力从头训练的受限反侧](https://arxiv.org/html/2509.12960v1)省略full-rank起步，并共同改变学习率与状态处理；其局部质量退步不证明所有重启方案失败，谱熵或高条件数也不能替质量/实际数值误差判决。保留dense权重、完整前反向、fold/reset、调参与回归的全部费用，GPU-hours减少与更长墙钟分开验收；起步协议、质量或总预算不成立时，保留充分调优的全量训练、原有适配或含明确warm-start的独立对照，不由累计rank可能增大签发表达充分或免费预训练。
+
+<!-- source-family:SF-2025-ARXIV-2509-12960 -->
+
+更接近 weight-space direction 还可以改变梯度接口，而不先生成完整更新矩阵。对同一 linear batch，缓存输入 X 与输出梯度 S 后，完整梯度可按 SᵀX 的乘积接口求值；把当前低秩增量的完整一步近似投影回 rank-r 时，warm-start 的 proximal alternating update 可在变化后的因子上重新计算所需乘积，避免物化 dense G 和每步全矩阵 SVD。它不同于普通 autograd 只给旧因子的梯度，因而需要保存 X/S 并执行内循环；结构化对角预条件还只是完整 curvature 的近似。[必要机制与反侧](https://arxiv.org/html/2602.16456v1)的投影收敛定理只针对无 proximal 项、初子空间非零重叠及谱间隙条件，不认证实际阻尼或 stochastic 更新；更多内迭代也可能更差，额外缓存与乘积不能按参数量宣称免费。内存、噪声或任务收益不合算时，普通因子优化、原有受控谱更新和离线 rank 压缩继续成立，不把局部近似升级成全部 LoRA 训练的稳定性或速度保证。<!-- source-family:SF-2026-ARXIV-2602-16456 -->
+
+同一低秩增量 BA 可以由 BR 与 R⁻¹A 表示；因此有效rank之外，optimizer还会面对不改变权重却把一个因子放大、另一个缩小的自由度。一个替代分支约束A的行正交，让B承载幅度：A的adaptive方向投影到切空间后retract，B仍用普通更新。这样把固定权重的非紧尺度自由度收束为紧的正交旋转，针对的是因子失衡而非删除低秩表达空间。
+
+紧fiber不等整个训练轨迹稳定，也不让entrywiseAdam对剩余旋转不变；真实任务的weight变化、学习率、目标和retraction仍需验收。受限理论另要求凸性、有界量及特定moment规则，不能认证一般LoRA/AdamW收敛。约束更新支付projection/retraction，某些retraction及任务切片仍退步；原LoRA已稳定或几何预算不足时保留普通因子训练、受控缩放和实际质量回归，不从局部可用学习率推出全模型安全。 [必要机制与反证](https://arxiv.org/html/2609.21039v1)。<!-- source-family:SF-2026-ARXIV-2609-21039 -->
+
+同一权重的多种因子表示，还会影响训练后怎样比较adapter，而不只影响优化。一个[受限weight-to-token分支](https://arxiv.org/html/2603.15990v1)先从低秩因子恢复更新的奇异方向与幅度，再将每个位置的方向和幅度编码成token，经rank与layer/module两层聚合，用checkpoint级监督学习属性、质量或检索表示。小core分解保留的是更新矩阵的谱；非零奇异值互异且符号固定时，可避开raw因子的坐标自由度，但重根的子空间旋转、零方向与数值约定不能只靠排序和符号消除，未锁定这些条件时不批准唯一canonical token。表示相同也不等于换基座后行为相同，实际base、缩放、target modules与特征版本仍须绑定。有限质量预测只覆盖所测checkpoint人口，按task identity检索也不证明选中了能力最佳或安全的adapter；离线adapter/标签构建、encoder训练、分解、索引与独立行为回归均计费。谱条件、域外校准或检索质量不稳时，应保留普通LoRA、来源明确的固定adapter及加载后的直接评价，而不是让weight embedding替代发布验收。<!-- source-family:SF-2026-ARXIV-2603-15990 -->
+
+分解身份也会进入融合路径，而不只进入adapter的索引表示：分别对低rank的B/A做SVD，再在两端U、Σ、V之间插值后重构，与直接插值完整Δ不是同一操作。[AgeBooth的受限反侧](https://arxiv.org/html/2510.05715v1#S3)只在固定所选端点factor下得到对系数的连续性；同一标量矩阵1既可取U=V=1，也可取U=V=−1，两种合法端点半插值却使U/V归零，说明连续不等gauge或符号选择不变。LoRA换基、SVD符号/重根旋转和跨端点对齐须与基座/模块/缩放一起保存，不能由多项式连续推语义线性、信息无损或最优融合。联动文本embedding又改变另一条件，不把全部控制收益归给权重路径。两端adapter/标注资产制备训练、分解对齐、条件搜索与完整采样/独立内容回归均计费；basis、控制或质量不合时，保固定已验adapter、完整Δ的受控线性组合或普通prompt，不由局部平滑样例批准身份恒定、真实物理变化或精确控制。
+
+<!-- source-family:SF-2025-ARXIV-2510-05715 -->
+
+正交约束也改变怎样表达 adapter 的不确定性，而不只怎样稳定一个点估计。若直接在因子的欧氏坐标中加入 Gaussian 扰动，再投影回正交集合，投影会改变原有扰动分布；一条受限替代分支在已训练的 MAP 点附近建立切空间的局部后验，用近似 curvature 决定扰动，再经 QR retraction 回到约束集合，并对多个 posterior sample 的预测取平均。[原版本的机制与对照](https://arxiv.org/html/2602.17809v1#S3.SS2)支持区别于点式正交 LoRA、欧氏 Laplace 与先扰动后投影的局部校准选择，但二阶近似要求后验集中在 MAP 附近，不认证全域 Bayesian posterior 或所有分布外任务。Curvature 估计、状态存储和采样都额外计费；训练开销与推理多次 forward 必须分账，蒸馏后的单模型也不能被默认为保留原不确定性分解。局部曲率失配、任务校准退步或推理预算不足时，保留点式 LoRA、普通正交适配与独立 held-out 校准，不把几何合法性当成预测可靠性的证明。<!-- source-family:SF-2026-ARXIV-2602-17809 -->
+
+不确定性也可只放在线性读出，而让 LoRA 仍是确定性的特征适配。一条[受限 surrogate 分支](https://arxiv.org/html/2510.01471v1#S3)联合调整特征与 variational head，再在特征固定期间用新标签递归更新 Gaussian head，并以预测 likelihood 更新多份适配器的 ensemble 权重。较慢特征重训与较快条件更新因此是两个时钟：LoRA、rank、tokenizer/template 或读出 context 改变后，历史 feature cache 和旧 head posterior 不能原样沿用，须重算重拟或给出可核坐标迁移。Gaussian 参数化不使 ELBO 自动等于 model evidence，latent variance 也不含 observation noise；likelihood density 的绝对触发阈值还依赖目标单位。原噪声归一与配置映射未闭，不补成 exact Bayes 或已校准 recipe，也不从少 trainable 参数推净省费。各成员的特征编码、缓存重建、协方差/分解、候选选择、初始化重训与独立校准都计费；表示漂移、校准或总预算不合时，保留固定特征 head、可信重拟或普通点式 LoRA，不由一个递归公式批准跨版本后验有效或全局最优。
+
+<!-- source-family:SF-2025-ARXIV-2510-01471 -->
+
+多个 target modules 的容量还可以分成“共享更新方向”和“模块自己的组合系数”。普通 LoRA 为每个投影学习独立的左右因子，模块数增加时 trainable state 近似随模块数线性增长；若这些投影确实需要部分共同方向，一个替代分支让 m 个同形模块共享 p 对 d×r、r×d 的基，模块 j 只学习各自 r×r 的系数 Q_h^j，更新为 ΔW_j=Σ_h D_h Q_h^j U_h。忽略共同的其他参数，独立因子约需 2drm 个参数，共享分支约需 p(2dr+mr²)；只有 r 相对 d 足够小、共享基数量受控时才有节省，表达 rank 上界也受 pr 约束，不能把共享解释为免费保留所有独立模块容量。
+
+这一选择仍改变 parameterization，而不改变 objective 或引入按输入选择专家的 router；训练完成后的固定线性增量可以 merge。共享全部因子与保留模块系数是不同约束，前者过强时会损害适配；用权重的 Frobenius 项代理不同基输出的 decorrelation，也不等于在真实输入分布上已正交，且正则计算有额外成本。受限 ViT/VTAB 对照支持这种共享与容量的取舍，但部分 baseline 来自不同配置或原报告，正则项计算下降不等端到端加速。模块需求异质、基共享不稳或原独立 LoRA 已满足发布预算时，保留独立因子与逐任务回归，不从较少 trainable parameters 推出统一质量或训练速度保证。<!-- source-family:SF-2026-ARXIV-2512-24603 -->
+
+多任务共享也可以发生在基座的训练更新，而不只发生在adapter的basis：让同一encoder同时接收两个任务族的loss，各任务的低秩分支只接收本任务loss，再共同交付这份新基座与对应分支。这不是普通LoRA冻结原基座的同一种省训练状态方案；任务分支还可以在下游作为可继续适配的初始化，或保持固定只训练读出，两种消费者必须分别验收。[一项受限encoder研究](https://arxiv.org/html/2510.07566v1#S6)中，给更多层加入任务分支虽降低预适配loss，却未使NER下游持续变好，因而不能用预适配loss认证交付资格；部分分类切片仍退步。应共同保存基座版本、任务到loss的更新归属、分支位置与下游冻结/继续训练规则，不能将这些adapter任意挂回旧基座。教师伪标签、共享基座的完整反向与状态、两任务预适配和选层/选参及独立回归均计费；任务冲突、消费者质量或总预算不合时，保留独立任务模型、冻结基座的普通LoRA或更窄任务组合，不由单基座与少量分支批准全任务无损、免费训练或移动端净加速。
+
+<!-- source-family:SF-2025-ARXIV-2510-07566 -->
+
+共享参数还可以先形成生成adapter的seed，而不只把同一组basis交给不同模块组合。一个受限分支由两组低秩因子形成共同矩阵，按目标配置取前缀，再用不同kernel与stride的转置卷积重建同shape的expert增量，最后由input-dependent gate选择和加权。此时可调对象包括seed、重建算子与router，seed的rank不自动成为物化权重的rank证明；kernel尺度也不拥有任务难度或语言语义真值。两因子随机而重建kernel零初始化能保持初始增量为零，却不自行保证router已经分化。<!-- source-family:SF-2026-ARXIV-2603-12577 -->
+
+[EPT的有限对照](https://arxiv.org/html/2603.12577v1)支持这个参数共享/生成接口分支，不证明每项任务都更好、尺度独立因果或逐维更新频率已被精确补偿；本文不采用其未闭合的任务embedding注入与完整优化recipe。共享seed和轻kernel的trainable count应与重建/物化、路由、任务监督及模型选择总成本分账，input gate仍不能静态merge为一个固定增量。shape、共享方向或训练/部署质量不合算时，应保留静态共basis、独立LoRA experts、固定adapter及逐任务回归，而不是用少参数量批准普遍稳定或免费推理。<!-- source-family:SF-2026-ARXIV-2603-12577 -->
+
+共享方向还可以沿训练阶段累积，而不预设同一组 basis 永久覆盖任务。一个受限的视觉—语言 prompt 适配分支，将各层低秩 projector 增量分成归一化矩阵方向和 scalar 幅度；每个阶段冻结此前方向，只重新学习旧幅度并加入新方向，晚期新项还可使用更低 rank。这固定了旧方向的坐标，却没有固定其作用：旧幅度变小甚至为零仍可改变预测，累计方向存储也不会因晚期 rank 下降自动恒定。[有限 CLIP 对照](https://arxiv.org/html/2603.09493v1)还联合原模型输出正则，部分任务反退，不证明无遗忘或把收益唯一归因这条更新规则。历史保存与累加、prompt 投影、参考前向和调参都付费；旧任务回归、方向失配或累计预算不合算时，应保留普通静态 LoRA、独立 prompt 适配与逐任务保留验收，而不是用冻结基座替代行为检查。<!-- source-family:SF-2026-ARXIV-2603-09493 -->
+
+持续阶段的低秩更新还可把“保留旧方向”改成“禁止新更新进入旧方向”：从既有参数增量提取声明的列空间，构造固定的正交补投影，并把它放进新低秩分支的 forward，使训练梯度也受同一可行子空间约束；先自由训练、最后才投影是另一个优化问题。这里限制的是参数方向，不是原输入或旧行为的无损保留，累计方向须保持有效秩与正交条件，不能把相减的矩阵一律当成投影。[有限冻结分类头对照](https://arxiv.org/html/2604.12526v1)支持比较这两条路径与保留／遗忘取舍，却不由可行梯度推出真实局部极小、零干扰或法律删除；反向融合后的忘记类仍可被识别。随着阶段增加，可用补空间会耗尽，SVD、投影状态与全部适配／回归都付费；空间饱和、原行为退步或投影资格未过时，保留独立 adapter、增加可验容量、replay 或普通更新，不让静态 merge 代替旧任务和新任务的共同验收。<!-- source-family:SF-2026-ARXIV-2604-12526 -->
+
+把约束放在梯度上时，还须验最终参数步，而不是只验送入 optimizer 的方向。若先把 task gradient 投到某个 calibration 子空间的正交补，再由 AdamW 作逐坐标预条件、momentum 和 decay，实际 step 一般不再留在该补空间；例如方向 (1,−1) 原与 (1,1) 正交，不同坐标缩放后即可失去正交。因而若设计依赖硬约束，须另核最终 step/optimizer state 或参数化可行域，而不能把 raw-gradient projection 当成已实施的零干扰证明。[SafeAnchor v1 的有限安全适配](https://arxiv.org/html/2604.17691v1)还用样本 empirical Fisher、软回注、参考 KL 与重复 probe/repair，它们只定义该人口上的保护代理，不认证完整安全语义或独立 holdout 泛化。方向估计、投影/SVD、参考前向、probe与repair都付费；新旧任务或攻击回归不足时，保留原 checkpoint、独立 adapter/replay及行为门禁，不由保留比率或原probe恢复签生产安全。<!-- source-family:SF-2026-ARXIV-2604-17691 -->
+
+共享方向还可以跨时间，而不只跨同一checkpoint中的模块：让共同左右basis保持固定，把小core写成时间的函数，再用它提出尚未观测时段的低秩增量。这里时间是预测器的输入，未来域的质量仍是待验收对象；每个时刻的独立更新都低秩，不代表它们联合的行列支持仍落在同一个小basis内。采用这条分支须分别验证共享支持、时间预测horizon与突变切片，不能从已见时间的拟合推出任意未来漂移可外推。Matrix-exponential、RNN或MLP core各自增加模型与历史状态计算，固定basis参数较少也不等于完整训练/运行内存恒定或更快；[受限时序分类对照](https://arxiv.org/html/2602.11965v1)中训练与测试时间仍可高于普通适配。支持失配、突变或外推质量退步时，停止发布预测增量，保留最近已验收adapter、逐域独立LoRA或增量微调。<!-- source-family:SF-2026-ARXIV-2602-11965 -->
+
+跨训练时间的低秩预测也可以读取实际优化轨迹，而不只以时间索引生成未来域的 adapter。一条受限 RLVR 分支先把各 checkpoint 的 LoRA 更新 merge 到同一基座坐标，分别形成相对基座的 global delta、相对前一 checkpoint 的 local delta，以及已观测的未来 checkpoint target；对每个矩阵 delta 保留 rank-one SVD，再训练非线性 predictor 预测未来增量并放大后加回当前权重。较大 rank-one 能量仅说明所测轨迹的一种近似，不证明完整更新只有一个方向；各时刻 SVD 坐标/符号、预测 horizon、零输出及外推幅度仍须定义，不能把因子的拟合当作唯一参数轨迹。<!-- source-family:SF-2026-ARXIV-2604-11446 -->
+
+预测权重只是一份新参数 proposal，不重建跳过阶段的 optimizer state、采样人口或训练历史；外推后继续 RLVR 是再次真实训练，不能由“预测未来”获得同一训练过程的资格。[NExt v1 的有限数学对照](https://arxiv.org/html/2604.11446v1)在较少真实 steps 后仍有任务/模型反退，支持的是带后续训练的候选路径而非无损跳步；SVD、历史 checkpoint、predictor 训练及独立评价均付费，步骤数和ICER不是总服务费用。低秩近似、坐标对齐、外推后的行为或完整预算不成立时，保留最近已验收 adapter、原真实更新与较短预测 horizon，不用局部 rank-one 趋势签发普遍加速或自动发布。<!-- source-family:SF-2026-ARXIV-2604-11446 -->
+
+共享也可沿被选中的 FFN 行组织，而不为整个投影学习自由的两组低秩因子：冻结基座，用 harmful/benign activation 的线性 probe 提出 gate/up 的候选行，将其分组，再让同组行共享一个可训练线性增量；训练后把增量加回这些行，推理不再保留额外 adapter 分支。这改变的是更新支集与 tied parameterization，probe 权重只给关联性 proposal，不认证因果“安全神经元”。[受限安全适配对照](https://arxiv.org/html/2602.16835v1)对 activation 归一化及聚类上限的描述有冲突，因此不把其写成确定 recipe；对照数据/训练预算亦非全部匹配，部分通用能力退步，未测 white-box 攻击。行选择、分组、校准与训练成本仍须计入，固定增量可 fold 不意味着总训练免费或所有攻击被阻止；选定行遗漏、分组不稳或安全/效用回归时，保留普通 LoRA、全量适配与独立行为验收，而非凭小参数量发布安全保证。<!-- source-family:SF-2026-ARXIV-2602-16835 -->
+
+还必须选择 target modules，例如：
+
+- Attention 的 Q/K/V/O projections。
+- MLP 的 up/gate/down projections。
+- 其他模型特有 linear layers。
+
+只适配 Q/V 与覆盖全部 Attention/MLP 会得到不同容量和 artifact shape。最优 rank 与位置依赖任务、数据、基座和预算，不能从 LoRA 名称推出。
+
+Rank 也不等于任务“本质维度”的直接测量。训练成功只说明该配置足以形成某个有用 update，不证明所有任务更新都严格低秩。
+
+少量标签也不能单独决定 adapter 必须更窄：冻结基座与下游任务之间仍可能需要较宽的更新空间。可先分开固定 target modules 的 rank 对照，以及固定 rank 的 module 对照，而不是把两者一起增加后的收益全部归给 rank。[有限 DINOv3 分类对照](https://arxiv.org/html/2603.17782v1)中，QLoRA 在相同 all-linear 集合内提高 rank 后测试质量改善，但 DoRA 的 q_proj 小档并不随 rank 单调改善；较宽容量只能保留为待验候选，不能由标签数或这一局部排序签发通用欠拟合诊断。<!-- source-family:SF-2026-ARXIV-2603-17782 -->
+
+容量验收还要绑定评价人口：人工筛清的 validation 与未筛的原始 test，即使后者数量远大于训练集，也不能由两者差距诊断训练过拟合或证明独立泛化。此处测试含不由单图决定的标签和类别不均衡，rank 小档另有 dropout 差异；target modules、标注与数据来源、独立动物/视频/时间切分、训练/搜索预算须分开核对。更宽 adapter、量化基座与更多可训练方向也不保证实际推理更快，整批时间除样本数不替请求延迟。质量切片、独立划分或完整成本未通过时，保留原固定配置、frozen features 与匹配预算的容量搜索，不用 aggregate accuracy 或参数比例批准新 adapter。<!-- source-family:SF-2026-ARXIV-2603-17782 -->
+
+位置选择还应区分“写入目标任务”与“保留从上下文学习的机制”。在 iid Gaussian 线性回归与单层 linear attention 的受限模型中，冻结预训练的 query-key 矩阵、只更新 value，可以保留用于消费 demonstrations 的路径，却牺牲 zero-shot 的不可约最优；zero-shot loss 也没有唯一决定全部 value 自由度。用最小更新或额外 few-shot loss 选择剩余自由度是不同分支，后者更好适配目标任务时仍可损伤其他任务。[原条件分析与 Qwen2.5-3B 的 illustrative 对照](https://arxiv.org/html/2602.23197v1)不能推出所有 softmax Transformer 的 value-only 定理；不同 target modules 的参数量和学习率/辅助权重搜索预算亦不完全相同，三次 inference 重复不等训练 seed 稳定性。训练、teacher rationale 和搜索费用都应结算，并共同检查 old-task、zero-shot 与不同 shot 数的回归；冻结 Q/K 限制适配或跨任务质量退步时，保留普通 LoRA/全模块更新及独立 ICL 验收，不因单个 zero-shot 最优 checkpoint 取得能力保留保证。<!-- source-family:SF-2026-ARXIV-2602-23197 -->
+
+当 supervision 本身存在分歧时，rank 验收还要区分“能否拟合一个多数标签”与“怎样对待一个有多种合理判断的样本”。保留每个 item 的标注分布、歧义切片与训练 loss 轨迹，才能观察更新容量是否选择性地降低明确样本的 loss，却提高争议样本对既定标签的 loss。这里 annotation entropy 是外部诊断，rank 是参数化配置，逐样本 loss 是对当前 objective 的测量：三者不能合并成“高 entropy 就是错误数据”或“提高 rank 必然恢复不确定性”。在四个 encoder、两个 decoder 和 NLI 的受限证据中，争议样本确有这种轨迹，但 FullFT 对照只覆盖 encoder；最多 100 个标注者给出的分布也不是所有部署任务的真值。
+
+因此，增大 rank、改用 soft labels 或换 PEFT 只能成为待验的 proposal，不能由该相关性直接升级为修复。原实验中 soft-label 条件仍可出现 loss 上升，跨数据集关系变弱，noise injection 也未给出 rank 唯一因果。验收应同时保留逐 item 的目标、歧义与 held-out 行为；多数标签 loss 上升不单独证明模型功能退化。标签清楚、固定 shape 或现有行为已达标时，静态 rank 与原 SFT objective 仍然合理，监督分布的解释责任继续交给第 29 章与 Evaluation，而不是让 adapter 替标注者决定真值。
+
+<!-- source-family:SF-2026-ARXIV-2604-16332 -->
+
+静态 rank 在任务同质、kernel 依赖固定 shape 时最容易复现；输入难度差异很大时，它要么为简单样本持续支付最大容量，要么让复杂样本受限。条件容量分支可以让 router 从版本化 input feature 提出允许 rank，并在所有目标层一致截取 adapter 的前 `r` 个方向；但训练和推理必须复用同一 router、difficulty-label rule、rank set、alpha 与 target modules，不能训练时动态、部署时再凭经验固定。
+
+rank policy 因而成为 adapter artifact identity 的一部分，也新增 router 误判、标签循环、dynamic-shape batching 碎片和更大发布矩阵。任务分布漂移、router 不稳定、延迟收益未证或静态 kernel 更重要时，固定 rank 仍是首选回退。`arXiv:2605.01959v1` 只在作者 Llama 3.2/Whisper 与 QA、数学、语音任务中验证质量和参数量；它没有披露生产 batch、硬件、端到端 latency 或 SLO，trainable parameters 减少不等于 serving cost 已下降。
+
+<!-- source-family:SF-2026-ARXIV-2605-01959 -->
+
+条件容量还有不复制 expert、也不训练新 router 的分支：将同一 block 已有不同 projection 的 LoRA 增量作为 implicit experts，冻结基座路径仍全部执行，只对 adapter contribution 施加输入相关 gate。由冻结表示的 k-means 初始化中心，再用非梯度 EMA 更新中心 buffer；每个 token 与全部中心的 cosine/temperature logits 先做 softmax，再把非 Top-k 权重置零，选中的权重不重新归一。这里选择的是“哪个既有 projection 的增量起作用”，不是生成新权重或为所有层截取同一个 rank；没有 assignment 的中心保持原值。<!-- source-family:SF-2026-ARXIV-2601-06356 -->
+
+省去 trainable router 并未省去路由状态与计算：中心的 O(Ed) buffer、初始化 forward、逐 token 的相似度/选择均须结算，输入相关 gate 也不能静态 merge 为一个固定权重增量。由这一接口推得，发布身份应绑定中心 snapshot、初始化/更新规则、temperature、k、共享 projection 和 base/adapter，而不是只发布 LoRA 因子。[受限原证](https://arxiv.org/html/2601.06356v1)的 7/8B 质量五次运行与 0.5B、rank2、H100、batch8/accumulation2 的效率测量属于不同人口，不能拼成统一 serving SLO；固定 expert 数、聚类适配及超参敏感性仍在。此处不采用最后 token 的互信息最优或 sequencewise 执行保证，也不把不同 shape projection 当作同一空间的无条件和。聚类漂移、质量回归或动态成本不合算时，静态 LoRA、固定 rank 与独立行为验收继续成立。<!-- source-family:SF-2026-ARXIV-2601-06356 -->
+
+从已有adapter库复用能力时，还可以先按整段输入选候选adapter及其容量，再在每个token内选择成对的rank-one分量，而不训练一套新router或总是启用完整模块。[一条受限两级检索分支](https://arxiv.org/html/2510.12266v1)以序列表示的Gaussian匹配提出库内候选，随后按token响应细选分量；选库、分配rank和实际激活是不同决策，某一候选相关性界不证明token输出正确，也不允许分别打乱配对因子的列/行身份。应共同保存base/adapter库、序列encoder与统计人口、成对分量索引、缩放及两级选择规则；未闭合的Top-k取整不补成执行配方。离线统计、全投影/打分与动态batch组织均付费，原吞吐也有反退，training-free不等净加速。库支持、路由或完整质量/费用不合时，保留显式任务选择、完整adapter或静态rank，不由少激活分量批准无损适配。
+
+<!-- source-family:SF-2025-ARXIV-2510-12266 -->
+
+在比较路由器之前，还应先确认专家之间究竟共享什么。多个低秩分支的输入因子看起来相似，可能只是沿用了相同初始化，而不是学到了同一份知识；应分别比较同任务不同seed、不同任务相同seed，以及实际更新和逐任务行为，再决定是否绑定参数。共同训练时，共享输入因子可复用输入投影，却限制各专家选择输入方向；反过来共享输出因子、保留各自输入投影，是另一种受约束的参数化，并不是把任意现有adapter无损变成共同矩阵。[受限多任务对照](https://arxiv.org/html/2509.25414v1#S3)支持认真比较这两条分支，不证明某一因子普遍拥有“知识”或所有任务都更好；因子的子空间相似也不认证完整增量相等。独立初始化控制、相同参数预算、router与多投影执行、全部训练及新旧任务回归都应计费；输入相关混合不能直接静态merge，任务支持或净收益不足时保留独立因子、明确任务选择与普通LoRA，再分别评估下面共享前提下的路由优化。
+
+<!-- source-family:SF-2025-ARXIV-2509-25414 -->
+
+共享因子的成本还须分开训练参数化与最终有效算子：若同组各层共享多份A、每层保留自己的B，而各A只线性求和，则令A_eff=ΣA_i便有ΔW_l=B_lA_eff，单层rank仍不超过r；更多A可以改变优化状态与跨层耦合，却没有仅凭相加扩大固定rank函数族。[MASA的受限分支](https://arxiv.org/html/2510.06005v1)因此提供共享人口/质量取舍及容量解释的反侧，不是“更多专家突破信息上限”的保证。确定性连续投影也不能直接套用带噪channel的有限logdet互信息式，同输入各A的协方差含交叉项；特征分群/CKA不证明独立知识或因果专化。应保A/B共享组、初始化、scaling与optimizer身份，另做相同有效更新/预算的质量回归；离线可折叠是代数性质，不等部署已测零费。全部因子/state、训练和配置搜索、合并与独立新旧任务验收均费；共享支持、质量或容量解释失配时，保普通共享A、独立LoRA及匹配预算对照，不以训练参数量或局部均分批准更高有效rank与净加速。
+
+<!-- source-family:SF-2025-ARXIV-2510-06005 -->
+
+不训练新router还可依赖adapter本身的响应范数，而不是另存聚类中心。若候选在训练时已经共享同一冻结输入因子A，可离线将各输出因子分解为Bᵢ=QᵢRᵢ，在Qᵢ列正交、输入与缩放相同的实数条件下，用小矩阵响应||RᵢAx||精确保留该adapter的||BᵢAx||，选中后再执行对应Qᵢ路径。[受限QR路由分支](https://arxiv.org/pdf/2509.18093v1#page=4)由此改变筛选所读的状态与计算量，不改变被选adapter的数学增量；旧库若各用不同A，不能只做QR就免费满足共享前提。每个adapter再以自身均值/标准差校准，会改变跨adapter的排序目标，保范数的恒等式不再证明总选原始范数最大，更不证明选中了任务最优或正确身份。发布时应绑定共享A、逐层Q/R、缩放、校准人口/统计与聚合规则，分别验收代数保持、路由质量及完整费用；QR制备、全库驻留/筛选、Ax、被选Q执行与基座计算均不能省账。小秩routing FLOPs下降不等端到端同倍提速，私有权重不可读也只是访问控制前提，不由QR获得隐私保证；前提、校准或净收益不合时，保留原adapter、显式任务路由或已验完整范数路径。
+
+<!-- source-family:SF-2025-ARXIV-2509-18093 -->
+
+条件专家还可以共享同一个PEFT输出映射，只让每个expert学习逐维modulator，而不复制整份adapter：先计算冻结输出与一次共享增量，再由两者的已有feature切片提出归一化routing weights，把被选modulator加权后逐维乘到增量上。这样从每expert一份PEFT参数，改成一份共享映射加每expert一个输出维向量；选择的是如何重标同一增量，表达空间因此受共享约束，不等于任意独立adapter的免费等价。一个[受限轻量专家分支](https://arxiv.org/html/2604.02338v1#S3)也按相对routing分数自适应选expert；没有新增learnedrouter参数仍要计算feature归一化、选择和混合，不能把input-dependent gate静态merge。<!-- source-family:SF-2026-ARXIV-2604-02338 -->
+
+这增加modulator、routing切片与阈值的发布身份。原有限多任务对照中，expert太多、过强负载平衡或过严选择都可损害质量；低trainable count也未显著减少冻结backbone占主导的内存。约894M模型上的单H100效率测量不与7B多模态五seed质量比较拼成统一服务保证，信息量定理与最佳窗口位置也不授任意任务成立。共享方向不能支持任务、gate漂移或完整成本回归时，保留独立LoRA experts、固定adapter与逐任务验收。
+
+若基座本来就是MoE，还须区分在整个模块旁加一条bypass、在各expert外加分支，以及更新expert内部gate/up/down权重；这不是仅换一个rank数。Native权重上的低秩变化会经过已有非线性feature与路由，故局部矩阵rank不限制整层响应只能沿同样少的方向。[受限MoE适配对照](https://arxiv.org/html/2610.26370v1#S4)据此比较适配位置，但更好目标拟合可伴更差旧能力，回到native weights也可用下游质量换保持，不能宣统一Pareto最优。辅助负载平衡还会约束窄域专门化，作者未找到优于零系数的共同取舍，不意味着部署可以忽略容量或热点。参数预算、router是否更新、LR选择和总训练费须分别配平，probe rank不证明唯一原因；任务、保持或负载失配时，保留原attention/共享adapter、经验证的balance与独立双侧回归。<!-- source-family:SF-2026-ARXIV-2610-26370 -->
+
+条件适配还可以改变权重本身，而不只截取固定 adapter 的 rank。静态 adapter 便于 merge、缓存和固定 shape 执行；若不同输入需要不同模型与不同增量，一个分支先由 router 选择基座，再用共享该 router 特征的 hypernetwork，按同一输入生成所选基座的 LoRA 权重。此时输入相同的 routing prompt 同时决定 architecture 和参数 proposal，不能把它解释为只选 rank 的容量策略；router、基座、hypernetwork 和生成 adapter 应共同定义执行身份，这是由接口推得的验收要求。按基座分 bucket 后的批量矩阵乘可以组织这些不同增量，却仍支付路由、权重生成、packing 和 batch 碎片成本。[受限两组件实验](https://arxiv.org/html/2601.05903v1)支持这种联合选择，但价格模型是模拟而非生产账单，也不证明全局最优；新输入、生成权重或成本回归未通过时，保留固定 adapter、已有模型路由或静态 rank。
+<!-- source-family:SF-2026-ARXIV-2601-05903 -->
+
+条件生成器还可以直接读取指令的 token 结构，而不先将整句压成一个全局向量：为每个 layer/module 放置查询，与原指令共同经过双向 Transformer，再由各模块读出头生成低秩因子。[一组受限音频任务对照](https://arxiv.org/html/2610.34413v1#S3)用冻结骨干与输入 embedding、只训生成器，比较新组合任务中的 token 级条件、句向量生成与固定 adapter；扩大静态 rank 未自动恢复组合能力，部分原子任务或域内分数仍可反退。这里按指令生成的是整份 adapter，不是逐输出 token 的在线更新；生成器的条件也不替代模型实际读取音频。训练覆盖由特定语料的自动审计限定，单 seed 与候选集归一分数不证明任意未见任务泛化。完整生成器、权重物化、训练和双侧回归仍计费；指令与消费端不一致、支持或净收益不足时，保留静态 adapter、全局条件与原任务路径，不由较小目标 rank 或谱形变化批准更低总成本与可靠组合推理。<!-- source-family:SF-2026-ARXIV-2610-34413 -->
+
+条件增量也可以只生成低秩空间里的中间映射，而不重建全部 adapter 因子。一条[受限双 encoder 分支](https://arxiv.org/html/2604.03314v1#S3.SS2)保留本模态的静态 LoRA，另让配对模态的 pooled/CLS features 经 hypernetwork 生成 r×r 矩阵 Φ，形成独立的 BΦA 增量；两流在 attention、output 与 FFN 的对应 stage 更新并交换当前特征。这样分别约束本模态适配和跨模态消费，但 pooled cue、层数配对与 feature revision 成为新接口，不保证两条路径免干扰。静态增量仍可 merge，依赖另一输入的 Φ 则须运行时计算，不能因低秩而热合入固定基座。有限 rank/参数匹配对照支持此分支，未证明所有模态、层或任务更好；hypernetwork、双流激活和同步增加内存、训练与推理费用。另一模态缺失、配对或质量失配时，保留独立 LoRA、固定融合与完整回归，不由少 trainable parameters 批准低延迟。<!-- source-family:SF-2026-ARXIV-2604-03314 -->
+
+若backbone的能力还依赖递推状态，适配目标不必只选输出投影。一条[受限3D点云Mamba分支](https://arxiv.org/html/2605.03438v1)由当前token、上一hidden与序列化order生成经稀疏门控的`u_t`，用`U diag(u_t) V`调制A/B/C/Δ，再进入离散递推；它改变的是状态转移和读写算子，不是冻结Transformer外再加一个Mamba adapter。输入/状态条件使增量不能静态merge，低rank也不控制算子范数；其hidden偏差界另要求冻结转移收缩、扰动及输入/hidden已满足有界条件，不能反过来证明自动稳定。双序列化一致性只是软正则，不授任意排列不变。分类约5%可训参数不推广到分割，S3DIS泛化仍有退步，Zigzag的GFLOPs也由3.1增至4.5；门控、双视图训练和原递推前向均计费。状态/顺序、稳定性或总预算不合适时，保留普通projection适配、固定adapter或充分回归的全量更新，不由少参数量批准预训练动力学已保真。<!-- source-family:SF-2026-ARXIV-2605-03438 -->
+
+条件执行也可以不生成新权重，而在两个已训练 adapter 间选择：若 subject/style 的权重幅度不能代表当前输入下的作用，可在每个 layer 与 denoising step 比较两分支相对基座的 feature 扰动，再硬择其中一个，而不是始终按静态幅度 merge。[受限生成对照](https://arxiv.org/html/2602.15539v1#S4)支持这一输入相关分支，但所谓 KL 的概率归一化未定义，不能把它解释为严格信息损失；双 adapter 的准备、参考 feature 计算以及另外的 CLIP/DINO 采样 guidance 都有费用，training-free fusion 不等于无需训练 adapter 或免费推理。Subject 与 style 的指标有冲突，单模块可优于联合配置，不能由综合偏好承诺普遍质量；需绑定基座、两 adapter、feature 比较规则与采样配置并分别验收两目标和总成本。输入扰动不稳定、质量回归或动态执行成本不合算时，保留固定 merge、静态 adapter 或有预算的直接比较。<!-- source-family:SF-2026-ARXIV-2602-15539 -->
+
+### Episode Geometry 可以选择适配程序，但必须保留 Default
+
+条件容量router选择的是部署时激活多少adapter方向；若新episode的监督目标、难度和probe特征各不相同，需要选择的可能是整个**适配程序**。固定LoRA设置省去了搜索，在任务同质时合理；逐episode穷举rank、目标层和更新配方则昂贵。一个离线amortization分支先在候选程序上执行完整适配，学习从冻结的episode特征预测多维adaptation geometry，再依声明utility选择允许程序。受测候选是早/中/晚深度层段的rank-16 LoRA，或全层rank-4 LoRA；深度区域不是训练时间阶段，full-stack也不是full-rank更新。它不生成任意优化器代码，也不是自然语言specification生成serving adapter。
+
+这只是将未来选择成本前移，训练compiler时的穷举适配没有消失。Feature extractor、程序集合、目标utility、base revision与预测器必须共同版本化；域外family或换backbone后预测误差可能使其不如静态default。Adaptation compiler的[§3–11](https://arxiv.org/html/2609.37371v1)中Llama测试mean收益虽有正paired区间，leave-one-family-out低于global default，重新训练Gemma版也未优于global/objective defaults；episode-only模型已接近完整probe，不证明梯度特征普遍必要。Confidence-aware abstention是后续设计建议，而非已实现能力。新family、utility漂移或校准未过时，应回退经验证的静态程序或有预算的直接搜索，不把选择器升级为无条件跨模型compiler。<!-- source-family:SF-2026-ARXIV-2609-37371 -->
+
+### Rank Threshold 必须绑定 Loss 与可证明假设
+
+把某个实验中的最小可用 rank 写成通用 recipe，隐含假设不同 objective 共享同一优化几何。平方损失下可以在明确的
+随机特征、NTK 与谱条件中给出充分 rank 阈值；换成 cross-entropy 后，同样的有限阈值一般不自动成立，只有再加入
+PL 等条件才能恢复受限结论。经验最优 rank 还受样本量、类别数、层位置和 bias–variance 影响。
+
+所以 rank 选择应沿 `loss + base revision + target modules + feature assumptions + evaluation slices` 出账，而不是
+只记一个整数。理论阈值可缩小搜索范围，却不能取代行为验收；假设无法验证或 loss 改变时，应回到 rank sweep、
+higher-rank LoRA 或 full fine-tuning。现有证据限于 Gaussian-iid/NTK 条件及少量 BERT/RoBERTa 分类实验，不支持
+“任意任务 rank one 足够”之类的普遍结论。
+
+<!-- source-family:SF-2026-ARXIV-2605-03724 -->
+
+### 参数个数之外，还要区分统计上可见的更新方向
+
+名义rank适合核算因子参数与训练状态，却不等于适配问题的统计复杂度。即使同样的低秩更新放在不同层，进入该层的activation与后续网络的敏感度也可能只让一部分方向影响输出。在单层冻结基座、标量输出、线性化视作精确、可实现的Gaussian回归模型中，令前向输入与反向敏感度的外积为特征，其总体二阶矩为C；模型KL只取决于更新差在C可见子空间内的投影。C本身不是A/B因子参数的Fisher：因子还存在保持BA不变的gauge自由度，统计不可见方向则可以进一步扩大同分布参数集合。不能把经验C的小特征值或少量校准样本的rank直接当成真实网络没有这些能力。
+
+[这一受限几何分析](https://arxiv.org/html/2610.32854v1)把局部复杂度分成“可观测一阶方向数的一半”与剩余非线性奇异项，而不是只数参数或Jacobian的rank；同为满因子rank，残余项也可能不为零。反过来，C在环境空间奇异也不必使经典低秩回归结论失效：若其kernel不包含可由候选更新差产生的非零低rank方向，投影仍保留有关信息。还须区分拟合点的局部系数与整个允许参数域的学习系数；在相应解析/正prior与区域内部条件下，要比较同分布零集上不同rank strata，不能用当前点的局部曲率代替全域结论。这里的系数描述特定统计模型的渐近学习复杂度，不是有限步优化速度、任务正确率或最佳部署rank。
+
+原文的合成冻结特征实验与RoBERTa句对回归都保留了线性化/Gaussian设定，后者逐次只适配一个projection；它们不证明真实多层语言模型的cross-entropy也满足同样公式。总体特征估计、二阶统计与多温度采样本身付费，Monte Carlo误差与温度模型误差也须分开，较低系数并未给出有效的层选择器或更好泛化保证。因而应把该分析用于说明“同rank为什么仍可能是不同学习问题”，保留loss、数据、层位置和可观测方向条件；若线性化、可实现性或统计估计不可靠，仍用独立rank/placement sweep与真实行为回归，不由理论系数签发更省训练或更强能力。<!-- source-family:SF-2026-ARXIV-2610-32854 -->
+
+### 多 Expert LoRA 的 Zero-init 可能冻结 Router 分化
+
+普通 LoRA 让一个因子以零初始化，能在开始时保持基座 forward 不变；当同一 adapter 再复制成多个 experts 时，
+所有分支同时为零会产生置换对称：router 看到相同输出和梯度，无法形成 expert identity。此时“增加 experts”只增加
+名义容量，没有增加可训练的条件分支。
+
+一个充分而非唯一的 symmetry-breaking 构造，是把不同 expert 的更新限制在互不重叠的基座奇异子空间，使初始
+forward 仍近似不变，但 router gradient 已可区分。收益是解除 cold-start deadlock，代价是预计算分解、expert
+subspace identity 与可能错过最优更新方向；平衡损失和 routing warmup 也仍需单独验收。单 adapter、不需要条件路由
+或子空间约束损害质量时，普通初始化、随机扰动或更简单的 LoRA 仍更合适。
+
+<!-- source-family:SF-2026-ARXIV-2605-03252 -->
+
+### 静态子空间分离之后，还要处理训练中的梯度重新耦合
+
+用互不重叠的奇异子空间初始化多个 LoRA experts，只能解决 cold start 时的置换对称。多任务训练继续推进后，
+不同 rank-1 component 的梯度方向仍可能重新靠拢，使静态 expert identity 逐渐失去意义。一个条件演进分支按当前
+梯度方向动态重组 components：expert 间尽量保持近似正交，expert 内则聚合相近方向，并把 grouping revision、
+所用梯度窗口和 clustering 配置纳入 adapter artifact，而不是把分组当作不可见的训练临时量。
+
+它把一次性 initialization heuristic 演进为训练期 controller，却增加额外梯度统计、CPU clustering 或整数优化、
+约 22% 的作者设置训练开销，以及 group identity 抖动和 checkpoint 恢复复杂度。梯度夹角也只是 interference 的
+代理，不是能力因果定义；现有结果限于作者的 SuperNI、六个 LLM 与 LoRA-expert 配置。任务同质、静态子空间已经
+稳定或 regrouping 成本超过收益时，普通 LoRA、固定 experts 或 full fine-tuning 仍是更可预测的回退。
+
+<!-- source-family:SF-2026-ARXIV-2605-05676 -->
+
+多模态持续适配还可以按任务的输入与输出责任分组，而不只按任务标签划分 experts：只按 image/text 输入拆两路，可能把“读图后生成文本”和“读文后生成图像”的更新混在一起；一条受限分支分别维护 image/text understanding 与 image/text generation 四类 LoRA，只更新当前输入/输出对应的两路，其余冻结。[同 total rank 的原版本对照](https://arxiv.org/html/2602.18055v1#S4.SS1)支持这种更新 mask 的局部抗遗忘取舍，不证明四路已经具有独立语义或适应未见模态。冻结仅限制训练更新，不表示 adapter 不参与 forward：原求和式仍包含四路，原文另称 frozen 不影响输出与此冲突，不能据此授推理免费或旧行为精确保留；额外 adapter 状态、任务顺序校准与随模态增长的容量/计算仍须计费。证据限 SEED-X 的已见图像/文本与有限六任务，生成质量或新任务学习仍需单独验收；责任划分无收益、成本过高或新增模态接口未证时，普通 LoRA、独立 adapter/replay 与 full fine-tuning 继续保留。<!-- source-family:SF-2026-ARXIV-2602-18055 -->
+
+Polarized routing 也不等于 task 参数隔离：多个任务仍会更新同一 expert 内相冲突的方向，冻结 router 只冻结流量分配。一个持续联邦分支按 expert 累积 routing-weighted gradient covariance，在 server 汇总旧 basis 与 client 低秩统计，再把同一保护 basis 发回各 client；只有它们针对共同 projector 处理更新，线性 FedAvg 才保留相应正交条件，独立 local projector 不能继承这一结论。双边 LoRA 投影还须区分对受保护输入/输出分量的残差约束与整个算子不变，不能据此宣布零遗忘。[PRISM 的有限对照](https://arxiv.org/html/2605.01061v1)支持共同 basis 与 per-expert 粒度，未证明任意任务隔离；截断丢方向、warmup、统计/SVD/通信及空域耗尽均付费。共同 basis 不可信、新任务容量不足或完整质量回退时，保留独立 adapters/replay、较宽预算或普通更新。
+<!-- source-family:SF-2026-ARXIV-2605-01061 -->
+
+### 固定 Rank 下，压缩距离还要回到行为影响
+
+只最小化 adapter 的 weight-space reconstruction error，在轨迹同质、参考行为不足或部署只关心参数近似时最直接；Agent 数据同时来自不同任务和决策路径后，两个参数距离接近的更新可能对动作分布产生完全不同的影响。此时“可合并或可压缩”不能只由矩阵距离决定：应在版本化 reference histories 上比较候选更新引起的 decision-distribution change，把行为效果近似相同的方向视为冗余，再将平衡后的更新投影回固定 rank 的 tangent space，同时约束 effective-weight error 与 decision distortion。
+
+Reference-history builder 与 evaluator 拥有被观察的行为几何，compressor 只能提出低秩投影；held-out acquisition、transfer、原能力与安全回归通过后，release gate 才能提交新 adapter。其 identity 至少绑定 base checkpoint、原 adapter/update、reference histories、behavior metric/evaluator、projection revision 与 rank；否则同一个 `r` 不能表示同一种行为容量。
+
+这种行为感知压缩用 reference selection、Jacobian/局部几何估计和校准成本换取固定 rank 下更少的行为冲突，但局部线性近似与 reference coverage 都可能失效，稀有关键行为还可能被误判为冗余。历史不足、任务稳定或 weight approximation 已足够时，应回退标准 LoRA 投影、提高 rank 或 full fine-tuning。exact-v1 结果只覆盖作者使用的两个模型规模与两个 Agent benchmark，不证明该几何可跨任务迁移，也没有排除安全和基础能力退化。
+
+<!-- source-family:SF-2026-ARXIV-2609-12896 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07850:start -->
+为每个预算单独训练 LoRA 最清楚，却会产生多个不可共享的 adapter revision。若部署需要动态 rank，可让同一 adapter 的 ordered factors 形成 nested sub-ranks，并把训练目标和 artifact identity 绑定到可用 rank set；验收同时报告关键 rank 的单点质量与 rank–accuracy curve/AURAC，不能让平均曲线掩盖低 rank collapse。该路径减少多 checkpoint 成本，却依赖方向 ordering、任务分布和 kernel 支持；固定预算或某一关键 rank 不合格时，回退普通固定-rank LoRA。 [受限证据：arXiv:2605.07850v1]
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07850:end -->
+
+部署时的条件容量还可以细到同一 adapter 内的向量，而不必在完整 LoRA experts 间选路：保留共享的宽因子 bank，让逐层 router 从当前输入为每个 rank-one 分量提出权重，再按累计 score²选出 active set。选择器、因子 bank 与截断规则共同定义这个不可静态 merge 的接口；更少 active vectors 不自动减少已分配参数或训练状态。只有因子确为相应正交奇异向量、score为真实奇异值时，谱尾才提供标准矩阵截断误差界；自由训练的因子和 router 权重不因“SVD-style”命名继承它。[LoRA-SP 的受限机器人对照](https://arxiv.org/html/2603.07404v1)支持继续比较逐输入容量，仍有任务弱于 full fine-tuning，扩大阈值也非质量单调。Router、排序/选集、宽 bank训练与实际执行成本均须计价，并分别验收任务、稀有输入与总费用；选择或质量不稳时，恢复完整bank、固定-rank LoRA、独立adapter或full fine-tuning，不由score能量签发任务保留保证。<!-- source-family:SF-2026-ARXIV-2603-07404 -->
+
+可用 rank 不只随部署预算变化，也可能在训练中重新分配。对 base MoE 的每个 expert 都挂同样 rank 的 adapter，能冻结容量预算并保持对照简单，却未必匹配当前数据实际激活的专家。一条相反于先大后裁的分支先启用小 rank，再按 routing-weight EMA 与 gradient–weight rank importance 的乘积、除以现有容量惩罚，逐层提出 rank 增长；router 先 warmup 冻结、后与 adapter 联合更新。该统计是当前训练人口上的容量需求提案，不是 expert 能力的因果标签，也不同于前文把多个 LoRA 自身组织成 experts。
+
+增长 mask 必须与分配的存储、优化器状态和总预算分别核对：预先配置 `r_max` 的 A/B，再启用其中部分方向，只减少 active rank，不自动减少 allocated memory；每次向上取整的 quota 也不能在缺少剩余预算约束时自签精确终态容量。routing 同时变化、删除完整 expert 的消融，都限制“收益仅来自 rank 分配”的归因。DR-LoRA 在 OLMoE/Phi 的受限训练中有任务收益，但部分知识/选择题指标退步，4×L40S 下完整训练墙钟比普通 LoRA 更长；统计、growth schedule 和状态恢复都要计费。异构容量收益不稳或调度/存储成本无法摊销时，固定-rank LoRA、已有的先大后裁路径与 full fine-tuning 仍是独立选择，而非被增长策略淘汰。<!-- source-family:SF-2026-ARXIV-2601-04823 -->
+
+### Adapter Placement 也在控制知识获得与泛化边界
+
+固定在所有 target modules 使用同一 LoRA 配置，最容易复现，却假设不同层对 acquisition、transfer 和 boundedness
+承担相同责任。按 early / middle / late / full-stack 进行受控干预，可以把 placement 作为实验变量，判断某类更新
+更依赖表征入口、组合层还是输出附近；但这些层位偏好是 checkpoint 与 objective 的经验属性，不是跨架构固定语义。
+
+局部放置减少 trainable state 并可能限制副作用，却也可能漏掉跨层协同、在 distribution shift 后失效，或把局部
+相关性误当成因果 owner。上线前应在 acquisition、held-out transfer、原能力回归和安全边界上联合重验；收益不稳时
+回退 full-stack LoRA、重新选层或 full fine-tuning。Placement 必须进入 adapter identity，不能只记录 rank 和 alpha。
+
+<!-- source-family:SF-2026-ARXIV-2607-25663; daily-trace:papers/2026/07/29/README.md -->
+
+层位之外，hybrid language model 还要选组件类型：同一层中的 recurrent/linear-attention 与 softmax-attention 路径，可能以串行或并行拓扑参与前向。因而 target-module identity 应同时记录层位、组件和真实挂载路径；先固定 rank 并验证 adapter 确实落在预定模块，再比较 recurrent-only、attention-only 和组合更新的任务获得、迁移与原能力回归。组件参数更多并不保证适配更有效。<!-- source-family:SF-2026-ARXIV-2604-22127 -->
+
+这增加模块发现、候选训练、adapter 版本与部署路径成本；同 rank 不等于同可训练参数或同执行预算。受限的两种 sub-1B hybrid 模型在不同任务上给出方向不一致的结果，部分配对置信区间跨零，不能据此认定拓扑是唯一原因或宣布 attention-only 跨架构最优。下一轮应以同预算、held-out 迁移和执行成本共同验收；收益不稳或无法精确挂载时，保留已校准的普通 attention/full-stack LoRA 或 full fine-tuning。
+
+### 初始梯度只能提出 Adapter Placement
+
+全层部署 LoRA 是信息不足时的稳健基线，但它也把训练与部署成本平均花在贡献不同的模块上。一个更便宜的 proposal sensor 是用少量样本估计候选 adapter 的初始 projected-gradient energy，据此提出 placement；受限实验观察到能量会集中在与架构有关、对任务相对稳定的浅层 FFN down-projection。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06183 -->
+
+初始局部梯度不是最终能力的因果证明，也不能看到跨层协同。现有证据只覆盖两个 8B 模型家族和四类任务，不包含 MoE、VLM 或长期训练漂移。因此 placement proposal 必须经过 held-out regression 和部署成本 Gate；probe 不稳定或回归失败时，回退 full-stack LoRA、重新选层或 full fine-tuning。
+
+### Adapter 内的条件容量不能使用全局统一裁剪规则
+
+当 LoRA adapter 自身引入多个 experts 时，固定保留全部 experts 最容易复现，也避免错误删除稀有能力；随着 module 数量增长，统一 mask 又会忽略不同层的 routing concentration 与 drift。受限的演进路径是先完成 exploratory training，再按 module 分别读取 Gini、routing entropy 与 drift asymmetry，提出各自的 expert pruning mask：
+
+```text
+exploratory adapter training
+-> per-module routing and drift evidence
+-> module-specific pruning proposal
+-> quality / coverage replay
+-> commit reversible mask or restore experts
+```
+
+这条可回滚路径改变的是 adapter 内条件容量的部署状态，不是 base MoE routing，也不证明高 rank 或更多 experts 必然有用。探索阶段本身有成本，统计噪声或长尾样本不足会错误删除必要 expert。每个 module 因此要保留最小 expert floor、mask provenance 与 rollback artifact；drift 或 quality Gate 失败时恢复原 adapter experts。作者结果只覆盖其模型与任务，不能外推到任意 base MoE、adapter 或 Serving workload。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-26340:start -->
+若可回滚 mask 已经验证专家冗余，却仍保留被遮住的参数、Adam 一二阶矩和 gate 输出维度，训练实际成本不会按 mask 比例下降。更激进的分支是在固定探索期后，按各 module 的 Top-k 硬路由计数提出 survivor set，并至少留下可执行 Top-k 所需的 expert 数；随后一次性切除其余 expert 权重及对应 optimizer state，重排 gate 输出坐标，继续在异构结构上训练。后阶段再关闭辅助 load-balancing loss，让 task loss 决定剩余 experts 的专化。这里改变了训练 artifact 与 optimizer 身份，不只是推理时跳过某条分支；一次性物理裁除也不能冒充前述 mask 的无损回滚。
+
+这条路径把探索和结构重建成本换成后续训练的较小状态与计算量，适合多阶段训练能摊销切换成本、且逐 module 利用率证据稳定的场景。原算法印刷为固定一个 warm-up epoch 后裁一次，不是漂移达到阈值即自动在线裁剪；Table I 的吞吐比较只覆盖后阶段，ScienceQA 上也有低于对称 MoE 的切片。若任务/长尾能力、optimizer 续训或恢复要求尚未通过独立回归验收，应保留完整探索 checkpoint 和旧可回滚 mask，必要时不裁；保留 checkpoint 是平台的恢复要求，并非作者已验证任意切除可逆。
+<!-- semantic-body-binding:SF-2026-ARXIV-2604-26340:end -->
+
+Update subspace 也可以从训练前静态选择，演进为由当前 activation 动态选择。以 attention Q/K feature magnitude
+生成 transient row mask，可以让 optimizer 只更新当步被选中的 rows，而不改变 inference graph：
+
+```text
+current batch activations
+→ per-head feature statistic
+→ transient row selection
+→ masked gradient update
+→ discard mask after the step
+```
+
+这不是 LoRA：base parameters 仍可能被直接更新，也不意味着整模型 backward、activation 或 optimizer state
+按 mask 比例下降。Runtime 必须决定未激活 rows 的 momentum/variance 如何演进、恢复训练是否重建相同 mask，
+并监控 mask churn 与 saliency drift。LongAct 的作者实验只支持其 Qwen3-4B/8B、长上下文 RL 和 8×H800
+合同下的 empirical utility；magnitude 并非稳定因果 attribution。Full update 在容量和简单性优先时仍成立，
+固定 LoRA/row mask 在 artifact 小、可复现和可部署变体优先时更合适。
+
+### High-rank Adapter 的瓶颈可能来自 Intermediate，而不是参数本身
+
+低 rank 时，直接物化 `B @ A` 简单且兼容成熟 autograd；rank 提高、target modules 增多并叠加 gradient
+checkpoint recompute 后，反复产生 dense temporary 可能先成为 memory traffic 与峰值显存瓶颈。此时优化
+不是改变 LoRA/DoRA 的学习目标，而是利用数学等价式把 weight norm 展开为 base、cross 与 Gram terms，
+只保留随 `d_out * r + r^2` 增长的 intermediate，再融合 compose、norm assembly 与 backward。
+
+Runtime 需要按 training mode、shape crossover、precision、backend capability 与 compatibility guard 选择
+fused backward、fused forward 或 eager fallback。这个 dispatch 是 checkpoint/runtime contract 的一部分，
+不能隐藏成“同一个 kernel 在所有形状都更快”。Fused path 会带来数值非 bitwise identical、backend
+portability、FSDP/DTensor full-weight assumption 与 embedding compatibility 等新边界；小 tensor 或非 CUDA
+环境仍应保留 eager 实现。高 rank 的可执行性改善，也不证明高 rank 对所有任务更优。
+
+### Parametric Recall 可能由少量顽固 Token 决定
+
+LoRA 的 rank、target modules 和总 loss 只能描述更新空间，不能说明一条 sequence 为什么仍无法被精确复现。
+在 exact-token recall 任务中，平均 token probability 可能持续改善，而整条序列成功率在少量 stubborn tokens
+越过决策边界后才突然变化。由此可把 uniform token update 精化为：
+
+```text
+measure token-level recall margin
+→ freeze or down-weight already-stable tokens
+→ preserve gradient on stubborn tokens
+→ re-evaluate sequence-level exactness and forgetting
+```
+
+它解决的是 easy tokens 反复占用梯度、甚至被过度强化的问题，却新增 threshold、mask churn 与局部记忆过拟合。
+普通 instruction tuning、语义等价输出或开放式生成不应追求 exact-token recall；uniform objective 在没有可靠
+token attribution 时仍更稳。How LoRA Remembers? 的作者实验只覆盖单一 8B 模型与 greedy decoding，所观察到的
+约 `0.5` probability boundary 不能外推为跨 scale、sampling 和任务的普适定律，parametric recall 也不等于
+reasoning 或 generalization。
+
+## QLoRA 进一步减少冻结权重存储
+
+LoRA 仍需加载 base weights。QLoRA 将冻结基座以 4-bit quantized representation 存储，并让梯度通过反量化计算路径流向 LoRA adapters。
+
+基座量化还可以提前考虑后续adapter能修哪些误差，而不只最小化总重构量：在校准activation空间把误差分成低rank可补部分与其正交残差，交替选择子空间和量化权重，再以covariance-aware低rank补偿初始化adapter。[ProjQ的受限机制](https://arxiv.org/html/2606.00494v1#S5)只在taskshift低rank、容量充足及误差谱假设下给出分离策略的上界比较，不证明实际LoRA塑性严格更大或任意训练单调；部分数学任务和额外迭代仍反退。投影rank、adapterrank、校准X与量化布局须共同保存，SVD/量化迭代、全部适配与驻留均计费；容量/分布或质量失配时，保普通PTQ/QLoRA、更高精度或较宽adapter，不由较小残差批准能力保持。<!-- source-family:SF-2026-ARXIV-2606-00494 -->
+
+两者解决连续但不同的问题：
+
+```text
+LoRA   reduce trainable model states
+QLoRA  additionally reduce frozen base storage
+```
+
+QLoRA 论文还讨论 NF4、double quantization 和 paged optimizers 等设计。它们分别处理 quantization representation、量化常数开销与显存峰值，不应全部简化成“4-bit training”。
+
+Quantized base 不代表所有计算都以 4-bit 执行，也不代表 adapter、optimizer 或 activation 使用相同精度。Compute dtype 与量化误差需要单独记录和评估。
+
+量化基座还可能同时改变rollout探索，而不只是压低存储：冻结低位base并训练LoRA时，静态量化误差是一份固定扰动；另在RMSNorm scale注入随阶段变化的噪声，才形成动态行为分布。[QeRL的受限方法](https://arxiv.org/html/2510.11696v1#S3)中的噪声通过共享输入产生相关的乘性权重扰动，不是各矩阵独立加Gaussian，也不由entropy升高证明唯一探索因果或无偏策略更新。Base量化布局、adapter、noise law/时钟和真实rollout概率应共同绑定；这是消费资格要求，原文层名与附录映射未闭处不补成全层recipe。部分任务加噪会反退，单H100短程小batch计时不能拼成长回答或全部8卡训练的净加速，NVFP4名称也不认证H100原生FP4算术。校准、全部rollout/噪声求值、LoRA更新与独立质量回归均费；数值、探索或净预算失配时，保留无动态噪声的QLoRA、较高精度与原已验采样，不由低位存储批准免费探索和全尺度稳定。
+
+<!-- source-family:SF-2025-ARXIV-2510-11696 -->
+
+若希望进一步压低激活驻留，就要区分“计算时用什么精度”“跨反向保存什么”“如何重建”。[一条受限的低位 LoRA 训练分支](https://arxiv.org/html/2610.25048v1#S3)让冻结 projection 的 forward/input-gradient 使用 NVFP4 操作数，adapter 仍用 BF16；RMSNorm 保存量化输出及高精度 inverse-RMS，在 norm scale 逐元素非零时，反向近似重建所需输入，gate/up 非线性则先以较高精度计算、只为反向保存低位副本。省下的不是所有激活，更不是无损地把整个 step 变成 4-bit。forward 与 backward 沿不同 reduction 维分组，需从反量化权重转置、再量化并缓存另一布局；两次重建可不同，因而反向还有独立的近似误差，不能只登记一个 storage dtype。校准人口、双布局/scales、kernel 融合、adapter 及高精度残留均计费；有限任务中有质量反退，文本校准也不能默认代表图像条件。所测 BF16 加 checkpointing 甚至可比不用 checkpointing 的本分支更省峰值而较慢，两者还可组合；原文 step 时间未含离线校准/评价。硬件、数值或目标人口不合时，保留原 QLoRA/BF16、checkpointing 或其已验组合，以完整质量—峰值—时间比较，而非由低位名字批准净收益。<!-- source-family:SF-2026-ARXIV-2610-25048 -->
+
+### Private PEFT 的 Selector 应在最终私有更新前冻结
+
+在每一步 private training 中重新按带噪梯度选择样本或模块，会让 selection 与隐私状态反复耦合；完全随机选择更容易核算，却可能把有限预算花在低价值样本上。一个条件分支先由 private data 通过差分隐私机制产生 synthetic artifact，这一步已经消耗 `(ε_syn, δ_syn)`；selector 只读取该 DP synthetic artifact，并在最终 private LoRA/PEFT update 前冻结。对已发布 DP artifact 的 selection 是 post-processing，本身不额外消耗隐私预算，但后续私有微调仍消耗 `(ε_ft, δ_ft)`，总账必须组合两阶段的 `ε/δ`，不能把 selection 的零增量误写成整个流程免费。
+
+这条路径用 synthetic-to-private transfer 假设换更定向的预算分配。selector 可能编码合成数据偏差，在最坏噪声下失稳，或过滤掉稀有私有行为；两阶段 `ε/δ`、邻接定义、合成机制与 selector revision 任何一项缺失都使 privacy claim 不可复算。transfer 或 robustness Gate 失败时，应回退随机/公开 selector、更保守的 DP-SGD，或不进行私有适配。现有证据只支持作者设置，不能证明任何冻结 selector 都保持效用或隐私实现正确。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-17432:start -->
+Private LoRA 的 selector 可以在最终 private update 前冻结；只读取已消耗 `(ε_syn, δ_syn)` 产生的 DP synthetic artifact 时，selection 属于 post-processing，但完整流程仍需组合 synthetic generation 与 fine-tuning 的 `ε/δ` 隐私预算。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-17432:end -->
+
+## Merge 与动态 Adapter 是两种资产策略
+
+部署的shared adapter也可以由多次局部适配来训练，而不在运行时路由多个任务adapter：每轮从shared状态复制task adapter，在support上更新，再用不重叠query估计梯度，以first-order跨任务平均更新shared状态，最终只部署后者。[MeTA-LoRA的受限分支](https://arxiv.org/html/2510.11598v1#S3)因此分开临时任务参数、query评价与最终合并资产；detach内循环不等完整二阶元梯度，任务内适配过也不保证shared参数消除负迁移。独特样本少可能伴随千轮重复前反向，更多样本或更大模型也非逐任务单调更好；复制/局部更新、query求值、跨任务训练与最终回归全计费。Support/query泄漏、任务分布或净质量失配时，保留普通joint LoRA、目标任务adapter与独立held-out验证，不由few-shot或一个shared发布物批准零额外训练和通用迁移。
+
+<!-- source-family:SF-2025-ARXIV-2510-11598 -->
+
+若 adapter 先在 base 上训练、最终却并入同 lineage 的 instruct 模型，训练目标还可提前读最终 target 的偏好：离线用冻结 target 对 reference tokens 评分，以其概率直接加权 base 上的 CE，再将得到的 LoRA delta 加到 target，而不是只在末端做无引导合并。这里保存的是 target-conditioned 权重 artifact，不是完整分布蒸馏或 token 正确性标签；低概率也可能是值得学习的新知识。[GIFT 的有限数学/指令对照](https://arxiv.org/html/2605.01256v1)支持此分支，却不保证任意 base/instruct 配对或所有指令保留。Base/target revision、tokenizer、prefix、confidence 与 merge scale 须共同绑定，一次离线标注和后续回归照计；lineage 失配、低置信新知识被压制或保留能力退步时，保留普通 LoRA、直接目标适配与独立 adapter。
+<!-- source-family:SF-2026-ARXIV-2605-01256 -->
+
+合并也不必是适配链的终点：一条顺序分支先训练并合并低秩权重增量，再冻结这份新基座，在指定层和token位置学习hidden-state干预。前一步改变后一步读取的表示分布，因而发布单位应绑定原base、已合并delta、干预位置/参数与读出配置；不能把针对新base学得的干预无验收装回原checkpoint，也不能由LoRA可merge推断后续干预的运行期开销消失。[有限BoolQ对照](https://arxiv.org/html/2509.09801v1)支持检验这种weight-space与representation-space串接，但只测一个顺序/单任务，3+3阶段训练与单路线20轮不是匹配预算或协同因果证明，较大模型zero-shot成绩也不是相同适配条件。两阶段完整前反向、合并、干预执行与新旧任务回归都计费；位置/基座不兼容、质量反退或净费用不合时，保留独立LoRA、单一干预或原已验checkpoint，不把粗到细叙述当普遍最优课程。
+
+<!-- source-family:SF-2025-ARXIV-2509-09801 -->
+
+量化存储中的原位学习会产生第三种资产边界：对外仍是整数 cell/served artifact，内部却通过累积 delta、scale 或校正状态改变实际函数。同一编码字节或同一基础 checkpoint 因此不再保证同行为；registry 必须绑定更新状态、写入规则、校准和回滚点。它减少独立 adapter 的数据移动，却增加硬件特化、可复现与耐久性风险；更新频繁或审计优先时，显式 LoRA/adapter 仍更清晰。<!-- semantic-body-binding:SF-2026-ARXIV-2608-20873 -->
+
+显式 adapter 同样需要区分“冻结更新”和“身份一致”。把 teacher adapter 冻结，只限制训练更新；各 rank 从本地副本读取时，即使全部加载成功，也可能读到不同 tensor 内容，使共享训练目标混入不同 teacher。只捕获加载异常的 fail-fast controller 看不到这种无异常差异。一个构造期检查先按稳定的 key、dtype、shape 与 bytes 计算内容摘要，再交换 adapter name→hash；不一致就拒绝继续构造，而不是等待 loss 暴露漂移。
+
+[UniRL 的受限修复](https://github.com/Tencent-Hunyuan/UniRL/pull/575)检查的是已读 CPU tensor，实际 materialize 后的载入仍稍后执行且不由 rank0 广播；摘要不包含 adapter 配置，因此相同 hash 不认证完整 teacher 函数、缩放规则或最终 GPU 状态。这增加读取、hash 与小 collective 的成本，CPU/Gloo 双进程 synthetic 负例也不是完整 GPU 训练验收。共享不可变副本仍可使用简单加载基线；下载或挂载停滞没有抛错时，还须另有超时与失败传播，不能用内容一致性检查承诺无 hang。<!-- source-family:SF-2026-GITHUB-UNIRL-PR575 -->
+
+低秩约束也可以作用于深层输入 prompt，而不是权重差额：视觉与文本 prompt 各分解为 `P=UV`，匹配 prompt 位置时共享 `U`，但分别保留适配不同 embedding 维度的 `V`。共享的是 token 位置系数，不是两模态已经处于同一坐标系；输入侧 prompt 仍占序列与 activation，不能像可合并的权重 LoRA 一样消去运行期开销。以 frozen zero-shot feature/logit 锚定，再减去类别 residual 的共同均值，可约束少样本 prompt 的漂移，但类别人口和锚定费用也是部署契约。有限消融中低秩单独反而略降，叠加 anchor/共享后的 harmonic mean 改善仍伴随部分 base accuracy 回落，rank 1 也不普遍最优；因此把低秩、锚定与 drift correction 分开核费，保留原 CLIP、完整 prompt 与权重适配的选择。<!-- source-family:SF-2026-ARXIV-2602-21397 -->
+
+显式输入侧适配也不必新增soft tokens：还可以冻结视觉与语言主干，只学习一份共享的像素padding、局部patch或整图overlay，在视觉编码之前与每张输入图组合，再让既定任务读出提供监督。[受限视觉prompt对照](https://arxiv.org/html/2509.03494v1)展示这一分支；不更新基座权重仍须让梯度通过冻结路径回到像素，较少可训练参数也不免主干、activation和反向费用。它改变了输入而不是产生可并入权重的LoRA增量，resize/crop、prompt区域/分辨率、clip与normalization顺序、文本模板和最终读出须随资产共同保存；局部logit比或人类分数拟合不认证像素细节无损、全任务偏好或校准概率。原图与加prompt输入、不同失真/数据来源及旧能力应分别验收，prompt制备、完整前反向、标签/调参和回归都计费；输入接口、细节质量或净费用失配时，保留原图/原读出、显式特征prompt、普通adapter或full update，不由一个小像素资产批准通用免费适配。
+<!-- source-family:SF-2025-ARXIV-2509-03494 -->
+
+不改权重的适配还可以把每层 attention 的虚拟 K/V 作为可训练资产：固定虚拟 keys/value 参数，由当前 query 读取它们，替代每次请求都带入真实示例的部分上下文作用。给定这一层的 Q/K/V，原 query self-attention 与示例读取可按各自 softmax 归一化质量拆开，但不能据此认定所有层或任务都等价；学习的低秩虚拟 K/V 仍增加 attention 读取和归一化开销，不能像权重 LoRA 一样直接 merge 消失。尤其把新增 value 初始化为零，只消除了新增 value 项；虚拟 keys 已改变分母，原 attention 项仍可能被缩放，因此零 value 不是整个层的 no-op。基座、head/layout、虚拟 K/V、初始化与归一化规则须共同绑定适配版本，并分别验收初始输出及训练后的任务质量。有限对照中幻觉子指标也会反退，较少可训练参数不等于总训练或在线成本更低；质量、布局或请求预算不适配时，真实示例、显式 prompt 与可 merge 的权重 delta 仍是不同的合理分支。<!-- source-family:SF-2026-ARXIV-2603-12760 -->
+
+虚拟K/V还可从一条已知source轨迹构造，而不只梯度训练：先白盒运行能产生目标输出的source，按head收集attention目标，再允许key/value prefix解耦，将value系数写成共享设计矩阵的线性系统，并以重复prefix增加其归一化质量。[受限attention-matching分支](https://arxiv.org/html/2610.24123v1#S3)要求目标可达、逐head矩阵可解及residual/位置兼容，不是自然文本prompt对任意输出或整份数据集的无条件控制。理论构造与数值key选择不同，attention任意近也不能省略greedy margin/tie验收；GQA共KV的堆叠系统和QKnorm又未自动继承原headwise定理。有限控制成功不代表新知识、跨query泛化或权限成立，较长目标/病态系统仍可失败。source生成/内态读取、逐head求解、重复KV/attention及质量回归都计费；rank、数值、context或目标保持失配时，保原prefix、可靠示例与已验LoRA/fullupdate，不从存在性或一次强制输出签发通用任务适配。<!-- source-family:SF-2026-ARXIV-2610-24123 -->
+
+虚拟 prefix 的权重还可以不被 softmax 强制填满：保留原 self-attention 路径，另从当前输入为 prefix 生成 sigmoid 分数，仅在总分超过预算时归一，并用受校准统计条件的门丢掉不适用项；另一低秩 adapter 消费未归一原分数之和超过基准的正部，以分开记忆检索与任务适配两种消费者。[DPW 的有限持续分类对照](https://arxiv.org/html/2604.18075v1)支持这种受限双路接口，但 prefix 总权重不超过一，不等于另一 consumer 或整层/整网增量都有同样硬界。冻结共享 adapter basis 可限制跨任务被改写的资产，SVD 初始化和 Gaussian 路由仍只是候选，不证明新子空间、校准 task posterior 或无遗忘；有 task ID 与无 task ID 协议也须分验。统计、prefix 池、额外 attention、basis/SVD、adapter 与选择费用都在，零权重不自动使 dense FLOPs 消失；任务路由、共享 basis 或旧能力回归时，保留原 CLIP/固定 prefix、普通 adapter 和逐任务独立验收，不由局部 drift bound 批准任意持续适配。<!-- source-family:SF-2026-ARXIV-2604-18075 -->
+
+### Recurrent Launch State：权重与 Prompt 之外的第三个适配面
+
+LoRA 改变 weight delta，prefix/prompt 改变显式输入；带 recurrent state 的模型还可能允许冻结权重，仅学习每层
+初始 state `S0`，在每次 request/sequence 启动时注入。它避免逐 token adapter matmul，却把适配资产变成与
+recurrent layout 强绑定的 launch state：
+
+```text
+base model revision + recurrent-state schema
+→ task-specific S0 + scaling/config
+→ initialize recurrent layers
+→ ordinary token recurrence
+```
+
+Trainer 拥有 S0 tensor、base identity、layer mapping 与训练数据；serving runtime 拥有加载、tenant routing、
+batch compatibility、reset 和 eviction。Model revision 或 state layout 变化会让旧 S0 静默失效；跨 tenant 混用
+则是状态污染。LoRA 在通用 Transformer、需要更大 function update 或需 merge 成独立 checkpoint 时仍然合理；
+prompt/prefix 在可解释、无需训练和快速切换时仍成立。
+
+S0 Tuning 为这一 adaptation surface 提供 Experimental 证据，但 paper/model-card 的层数、hardware 与 base identity
+存在冲突，因此只沉淀接口和 lifecycle，不保留性能外推。
+
+固定的 request 初始 `S0` 不是所有状态化适配的上限：另一条 attached 路径让 shadow state 沿基座层深演进。进入第 `l` 层时，先以该层输入的 base hidden `h^(l-1)` 与已有 shadow state `s^(l-1)` 构造差分，经该层瓶颈注入 base layer 得到 `h^l`；随后再利用新的 base hidden 更新 `s^l`，供下一层使用。训练学到的不仅是一个可加载的初态，还包括 shadow 权重、逐层耦合接口和更新规则；这些资产须绑定 base revision、层映射与 state schema，并由 Serving 定义 request reset 和隔离。它不是可直接并入固定 `ΔW` 的普通 LoRA，也不意味着 shadow 的所有投影、门控和更新权重在各层共享。
+
+这条路径以逐层 shadow 执行、状态驻留和耦合版本管理换取另一种适配容量；把 shadow detach 成独立预测器是另一份模型资产，不会自动复现读取 base hidden 的 attached 函数。受测 detach 质量明显退步，attached 也并非所有任务胜过 LoRA/DoRA；较少的可训练参数不能推出较低总训练或在线成本。状态 layout、base hidden 接口或质量回归不成立时，固定 `S0`、显式 LoRA/adapter 与可 merge 的权重 delta 仍各有合理位置，不能因为名字都叫“轻量适配”而混同发布与回滚合同。
+
+<!-- source-family:SF-2026-ARXIV-2604-19254 -->
+
+训练后可以把 adapter merge 进基座：
+
+```text
+W_merged = W_0 + (alpha / r) B A
+```
+
+Merge 的优势是 runtime 执行路径接近普通权重；代价是每个变体重新形成完整 weight artifact，且必须保留 base/adapter lineage 才能追踪来源。
+
+但训练时采用低秩更新，与训练完成后压缩一个 dense delta，是两种不同资产策略。如果 FullFT 已经产生 `ΔW = W_finetuned - W_base`，可以先以均值绝对值作 scale 保存其 one-bit sign，再对量化残差作截断 SVD，把重建写成 `W_base + Δ_quant + R_lowrank`。低秩项此时校正的是量化残差，不是训练期间的可更新子空间；它不能退还 FullFT 已支付的梯度、optimizer 与 activation 成本，也不能据最后文件小就称这次训练等价于 LoRA。
+
+这一分支以离线分解、sign/scale 与残差因子的存储、加载及重建代价换取多个变体共享基座；截断 rank、因子 dtype、scale 与 sign packing 要共同结算，名义 compression ratio 不自动给出统一 byte cap 或端到端时延。作者的五类 LLM 与有限任务表中，压缩后仍有质量退步，增大残差 rank 也不是所有 slice 单调改善。需要精确恢复、构建预算不足或实现没有目标算术路径时，应保留完整变体、显式训练 LoRA 或已核的简单 delta 格式。Registry 负责 base revision 与压缩 schema 身份，Serving 再负责其实际执行，不能让资产压缩越权承诺训练效率。
+
+<!-- source-family:SF-2026-ARXIV-2604-16940 -->
+
+Dense delta不必只压成每次都加载的固定变体，还可以保留base与较慢推理checkpoint之间的低秩差额，让独立difficulty classifier按请求硬切换是否应用该分支。这里选择的是权重变体与消费路径，不是删除基座参数，也不由差额的奇异方向识别出可独立摘除的“过度思考语义”；谱近似误差与任务推理质量要分别验收。
+
+[Gold-Switch的受限对照](https://arxiv.org/html/2510.06750v1#S3)显示always-on低秩分支可能显著损害难题，soft插值也可能加长输出，因此rank、缩放与分类阈值须在独立人口校准，分类不确定时保原slow路径。原rank选择式的范数/尾项口径未闭，不拼成可执行recipe；SVD、heldout搜索、classifier、分支存储/切换及全部质量回归都计费。router占TTFT的局部比例和分支相对存储不等总延迟/显存或并发SLO；质量、分类或净预算失配时保完整checkpoint或已验静态adapter，不由training-free批准免费切换与普遍兼容。<!-- source-family:SF-2025-ARXIV-2510-06750 -->
+
+另一种训练后消费不是选择应用差额与否，而是编辑最终累计delta的谱：保留所选奇异子空间，等化其中奇异值，再按独立scale加回同一base。它改变的是已经训练出的更新，不等逐step施加Muon式投影，也不能退还原optimizer历史或由矩阵约束推出新loss更低。
+
+[POME的受限后编辑](https://arxiv.org/html/2510.06627v1#S3)须连同层/rank、scale及heldout选择保存，原归一化标量与附录矩阵口径未闭时不补唯一实现。部分模型/任务仍退步，“无额外训练”也不等无数据或零制备：checkpoint差额、分解/选参、完整新旧能力回归与产物重建均付费。谱编辑或尺度验收不合时，保原fine-tuned checkpoint/base及未编辑delta，不由局部平均改善批准普遍兼容、Muon轨迹等价或无损压缩。<!-- source-family:SF-2025-ARXIV-2510-06627 -->
+
+量化基座还多一层问题：训练时使用的更新，导出后是否仍由同一组数值表示。先在高精度中相加再重新量化，可能改变甚至抹去小更新；一种受限分支是固定量化 codes，只学习 scale，并在训练 forward 就使用目标格式的 scale grid。只有导出沿用相同 grid、clamp 和 layout，才能保持训练与部署所表示的权重一致。这里保持的是表示身份，不是高精度 LoRA 的表达空间或质量：scale-only 更新受固定 codes 约束；需要更自由的权重更新时，显式 runtime adapter 或不同精度仍可更合适。
+
+另一种方式是在 runtime 动态加载 adapter：
+
+```text
+shared base model
++ selected adapter per request
+```
+
+它提高基座复用，却引入：
+
+- Adapter cache、加载与 eviction。
+- Batch 内 adapter compatibility。
+- Base/adapter version matching。
+- Tenant isolation 与访问控制。
+- 不同 rank/target module 的 kernel layout。
+
+所以 LoRA 从训练技巧自然延伸为 Model Registry 和 Serving 的模型组合协议。
+
+### 多租户 Fine-tuning：从共享权重转向复用 Backbone 执行
+
+每个租户独立运行 LoRA job，隔离清楚、失败域小，且在租户数量少或数据到达稳定时仍最容易复算；但当大量小任务
+同时微调同一 base model 时，系统会反复加载相同冻结权重、执行相似 backbone 路径，并让短 job 的空隙碎片化 GPU。
+只共享模型副本可以减少 weight memory，却没有自动消除不同 step、shape 与 adapter state 带来的执行空洞。
+
+更进一步的 multiplexing 同时利用空间与时间两个维度：空间上让兼容任务共享一次 backbone execution、只在
+tenant-specific adapter/update path 分叉；时间上根据各任务 ready state 和资源空隙交错推进。Runtime 因而需要显式
+拥有以下身份与状态：
+
+```text
+base revision + optimizer / precision contract
+tenant adapter and optimizer state
+batch / step compatibility
+spatial sharing group + temporal schedule epoch
+failure and cancellation boundary
+```
+
+空间 batching 也有饱和转折：小任务连接成较大 BaseOp 能提高利用率，但越过饱和点后只会拉长 stage，重新放大 pipeline bubble。冻结 backbone 没有 weight-gradient 路径，不能直接套用 full training 拆 backward 来填空的调度。[MuxTune 的受限分支](https://arxiv.org/html/2603.02885v1#S3)以 hTask 内空间 batching、hTask 间时间 interleave 分开这两个选择，再按延迟和显存模型组织 bucket、依赖 subgraph 与通信 overlap。异长数据另须结算 inter-task padding：先按任务 packing，再切成等长 chunk，并保留跨 chunk 的 causal KV 依赖；chunk 太小会增加 KV 访问和降低利用率，太大又增加无效 token 与 stage latency。因而目标是兼容任务的有效吞吐，不是共享任务数越多越好；用户定义的 task loss、adapter update 与 optimizer step 仍保持独立。
+
+这条路线获得更高 backbone 复用和更少显存重复，却把简单 job isolation 换成跨租户耦合：一个 straggler、OOM 或
+numerical mismatch 可能拖累 sharing group，调度也不能静默改变每个任务的 effective batch、sample order 或 optimizer
+step。数据、gradient 和 adapter state 必须保持租户隔离，不能因为共享 forward 就共享 authority。负载低、任务异构、
+需要强故障隔离或 sharing overhead 超过重复计算时，独立 job 仍更合理。MuxTune 的结果只属于作者模型、GPU、任务组合
+与实现，不构成多租户训练的通用吞吐结论。
+
+<!-- source-family:SF-2026-ARXIV-2603-02885 -->
+
+执行复用还应区分大base GEMM与低秩adapter路径。兼容任务的输入可以连接成较大base GEMM，adapter forward/backward则只计算各自任务的grouped GEMM，而不是把所有adapter拼成有大量无效非对角块的统一乘法。多GPU时，冻结base仍可用FSDP all-gather，adapter及optimizer/loss tracker留在各自rank；省掉adapter梯度跨rank同步，并不等于零通信，也不改变各任务的effective batch或优化器step。
+
+这样的executor可配合job结束后的backfill，但warmup早停是独立选择策略，可能误杀late bloomer；并发兼容性、缓存中间量和共享base同步也新增耦合。[ALTO的受限实验](https://arxiv.org/html/2604.05426v1)覆盖1/2/4 H100、7–70B模型、rank16–128及1024–2048序列，不证明任意任务组合都比独立job快。输入不兼容、隔离优先或共享开销超过节省时，独立LoRA训练仍成立；平台负责admission，不能靠grouped kernel决定任务优先级。<!-- source-family:SF-2026-ARXIV-2604-05426 -->
+
+混合adapter执行还要决定在哪个中间态切开kernel图，而不是把整条LoRA分支尽量融合。对`S=dropout(X)A`，rank维度较小使显式写回/重读S仍可能比重复计算或block间同步更便宜；围绕共享的大activation融合读写，同时让冻结base GEMM保留合适tile与寄存器预算。[LoRAFusion的受限分支](https://arxiv.org/html/2510.00206v1#S5)把adapter ID、rank、scale和dropout随tile映射到前向与反向，不能让混合输入的梯度流向另一job，也不表示不同adapter的hidden可直接复用。
+
+这种图切分可与长度分组/packing共同使用，但同一adapter下一globalbatch仍要等前批所需backward和step边界；填空来自其他独立job，不是静默改样本更新次序。原实验重点是有限模型、摘要任务和H100/L40S的吞吐，作者按等价设计省略质量试验，不能据此自签完整收敛、bitwise或RNG等价。小job数、stage不均衡和CPU求解都可能抵消收益；统计采集、MILP/greedyfallback、临时S、映射与全部同步计费，净费或隔离未过时保原kernel、独立job或已验multiplexing，而非把全图融合和共享任务数当优化目标。<!-- source-family:SF-2025-ARXIV-2510-00206 -->
+
+### Repository-conditioned Adapter 是派生索引，不是代码真值
+
+稳定 repository 可以直接检索相关文件或为每个 repo 训练 adapter；前者保留可引用证据但增加每请求 Context，
+后者降低在线 token 却会随 commit 变旧。当 repository 数量和 revision stream 同时增长，还可以从 snapshot/diff
+生成 adapter：
+
+```text
+immutable repository snapshot + ordered diffs
+→ versioned repository representation / recurrent update state
+→ generated adapter bound to base revision
+→ task evaluation and promotion
+→ invalidate or regenerate after source revision
+```
+
+Repository 与 diff 始终拥有事实 authority；representation、recurrent state 和 adapter 都是可重建的派生状态。
+它把 per-repo training 移到 hypernetwork/adapter compiler，却新增 source deletion、diff reorder、压缩遗失、
+generator/base compatibility 和大规模 artifact refresh。RAG 在 source 频繁变化、需要引用或高风险审计时仍更合理；
+固定人工训练 adapter 在少量稳定 repositories 上更易验证。Code2LoRA 的作者实验只覆盖其 1.5B Python
+assertion-completion 合同，不能证明生成 adapter 能替代 source review 或跨语言迁移。
+
+### 从 Specification 编译 Neural Program：把每次推理前移为版本化资产
+
+Repository-conditioned adapter 仍以变化中的 source snapshot 为事实 authority；另一条分支面对的是相对稳定、
+但很难用精确代码写出的自然语言 specification。每次请求都把 specification 和 input 交给大模型，能保留通用
+解释能力，却把相同规则的解析成本、provider drift、privacy 与在线延迟重复支付。若规则的变化频率远低于调用
+频率，可以把解析从 request path 前移到受治理的 compilation path：
+
+```text
+versioned natural-language specification
+→ compiler produces pseudo-program / adapter or prefix artifact
+→ behavioral evaluation under a pinned interpreter and base revision
+→ sign, publish, cache and serve
+→ revoke, recompile or roll back after specification / base change
+```
+
+这不是把 neural artifact 宣称为 deterministic code。它可能在模糊输入上比 regex 更有容错性，也可能静默偏离
+原 specification；离线编译降低 per-call 成本，却新增 compiler drift、behavioral inspection、supply-chain identity
+和不可解释 failure。可部署身份至少要绑定 specification、compiler、pseudo-program、base/interpreter、adapter、
+quantization 和 runtime revision，并保存代表性输入、边界条件与拒绝行为形成的 behavioral signature。高风险规则、
+频繁变化的 policy 或必须逐条解释的约束仍应保留显式程序与在线 evidence gate；远端模型调用在任务长尾且无法
+预先冻结规则时也仍然合理。Program-as-Weights 的作者实验只证明其 FuzzyBench、指定 interpreter 与生成 artifact
+合同中的可行性，不证明 neural program 具有代码等价性或跨任务普遍优于显式实现。
+
+### Route 晚于 Prefill 时，兼容性必须由训练定义
+
+按请求选择 reasoning adapter 可以避免简单请求承担完整推理成本。若 switcher 只有读完 prompt 才能判断，
+最直接的方法是 route 后重跑 prefill；它语义清楚，却抵消端侧或长 prompt 的收益。复用 base-only prefill
+并在 decode 才启用 adapter，则产生新的 checkpoint contract：adapter 必须在训练时就学会消费没有经过
+adapter 的 prompt KV，例如显式对 prompt positions 关闭 adapter、只在 response positions 开启。
+
+```text
+base-only prefill
+→ route decision
+→ adapter-on decode consumes base KV
+```
+
+这不是任意 LoRA 都具备的运行时技巧。需要 prompt-side specialization 的 adapter 与这份 KV 不兼容；
+false-negative routing 会丢失质量，false-positive 会增加 token、KV 和功耗。Checkpoint 因而要绑定 base、
+adapter、switcher、mask policy、quantization 与 KV compatibility；runtime 还要记录 route decision 和回退。
+always-on adapter 或 route 后重算在分布漂移、高风险决策或 cache 复用很小时仍更可靠。
+
+在 DP federated LoRA 中，A/B component 的激活选择不能固定为全层同一模式或预设交替表；它是逐层、逐轮演化的训练控制状态。Selector 只能消费已经纳入 DP accounting 的 curvature/statistics，server 保存 selection revision、privacy accountant 与 aggregation identity；选择漂移或预算不足时回退固定 component schedule、同构 adapter 或 dense-delta aggregation。
+
+结果覆盖 GLUE、SQuAD、CIFAR-100、Tiny-ImageNet、严格 DP/non-IID 设置与作者比较组；不证明恶意客户端、任意 privacy definition 或所有 backbone 下无额外隐私成本。 PLATFORM-SECURITY 拥有 privacy threat/accounting；TRAIN-LORA 拥有 component-selection mechanism。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-05769 -->
+
+## 多个 Adapter 能否直接相加
+
+同基座adapter直接相加若仍相互干扰，可把各down-projection纵向stack、up-projection横向concat，在这份Kr维空间内按各任务校准特征累积Gram与taskblockguide，再求固定线性router并吸收进up-projection。[受限二阶路由分支](https://arxiv.org/html/2606.10617v1#S3)在Gram可逆时可匹配该校准人口的线性output最小二乘，却不由层内MSE最小推出全生成任务无冲突。相关token很多不保证Gram良态、独立有效样本或单prompt/单timestep全域充分，原文逐block伪逆选择等式亦不能一般沿用；需保存任务/层、校准prompt与时间、统计精度、条件数和真实合并资产。流式统计省rawfeature驻留，不免每层平方统计、求解、原LoRA训练和多任务回归，Kr资产未fold时也不同于单r部署。校准支持、数值或质量不合时，保留分离adapter、原相加/可信选择与更多校准，不由training-free或router可fold批准无损、零全费或普遍最优。<!-- source-family:SF-2026-ARXIV-2606-10617 -->
+
+### 开放 Adapter 池需要 Composition Admission
+
+预先批准的少量 adapter 可以由人工验证组合；开放仓库检索后，相关性不再等于可合并性。一个更强的控制面先检索候选，再以层级稀疏残差组合，并用多视图一致性检查决定 accept、reject 或 fallback。Registry 保存 backbone、layer coverage、训练来源与评测身份，composer 只提出组合，admission gate 才能发布合并 artifact。
+
+这种路径增加检索误召回、视图相关错误和组合时延，且一致性不能证明安全或正确。租户固定、adapter 数量少或离线验证充分时，静态配置仍更稳健；证据不足时应回退单 adapter 或基座模型。现有 exact-v1 只支持作者的池、任务与审计器。<!-- semantic-body-binding:SF-2026-ARXIV-2605-01429 -->
+
+组合规则也可以先在source tasks上训练，再让目标接口manual决定一份静态部署产物，而不是逐token路由或在目标域求梯度。[WebMix的受限分工](https://arxiv.org/html/2610.22539v1)先训练source adapter bank与manual→simplex router，部署时组合完整`ΔW`；分别平均A/B会引入cross terms，精确拼接又改变rank/scale。版本迁移的manual可来自task-free crawl，domain迁移却读attempt intent和去final answer的reference procedure并附动作，不能合称无target示范。manual、encoder、base、bank与router须共同版本化，新bank成员还要重训router；source训练、scout、重组/加载与新旧任务回归全部计费。示范token上的anchor不等full KL，更多scouting也非单调受益；接口失配或组合反退时，保留固定adapter、可引用manual或RAG，不由target无梯度推系统免训练或普遍迁移。
+<!-- source-family:SF-2026-ARXIV-2610-22539 -->
+
+目标域样本已经可读而gold标签不足时，还可以先选专家、再生成少量静态合并产物，而不在每个token上运行router。一条[受限NER分支](https://arxiv.org/html/2506.22813v1)分别按目标文本的平均embedding相似度，以及expert池对少量目标文本的自投票伪标签表现，选择两个子集并各自合并；默认让两份模型分别预测后取结果union，经济分支则先把两份选择压成一个子集/产物。两者是不同的消费与费用合同，不能由后者一次forward倒填前者成本；自投票标签也不提供独立正确性，域相似和单expert表现都不能替代合并后验收。应绑定base/adapter坐标、目标采样、encoder与伪标签池、选择和merge规则及最终输出组合，并用独立gold检查precision/recall、格式与原任务；源域更多、目标划分更细或union更大并非单调收益。expert训练、采样预测、embedding、物化与一或两次完整生成均付费，支持不足、组合反退或净费用不合算时，保留原静态配置、已验单expert与独立adapter，不由无目标gold或免重训签发免费/可靠迁移。
+<!-- source-family:SF-2025-ARXIV-2506-22813 -->
+
+候选模型的索引还可以来自同一组probe上的内部读出，而不只比较训练域文本：固定base与读出位置，对每个已适配模型减去base的activation，再把这些配对差聚合为模型侧向量；目标少样本适配也可映到同一接口，供后续候选排序。[受限同基座对照](https://arxiv.org/html/2509.04442v1)支持这种候选表示，不证明向量是完整能力、训练来源或唯一领域语义。相同shape不自动使不同base共享功能坐标，近似activation加性也不推出合并后功能加性；相似成员可能冗余或相互干扰，原局部LoraHub切片中按相似度取前20项组成的集合还弱于随机选择。Probe、base、层/位置、聚合与候选适配身份须共同冻结，额外目标训练、全部模型前向、提取/驻留、搜索和合并后的独立新旧任务回归全计费；读出、人口或净质量失配时，保留随机/较多候选、已验单expert及不合并的独立adapter，不从聚类分离或一次batch forward签发正确且免费的组合。
+<!-- source-family:SF-2025-ARXIV-2509-04442 -->
+
+### 跨 Backbone 合并前先检查谱兼容性
+
+权重增量在同一 backbone 和坐标系中才有直接相加的语义；跨蒸馏版本或 video-diffusion 变体时，低秩方向可能代表不同功能。无目标数据的受限分支可以用更新的谱结构与刚性度聚类，先判断哪些 LoRA 可能共享子空间，再限制 routing 或 merge 范围。谱 gate 只拥有兼容性筛选权，不拥有下游质量证明。
+
+它避免盲目合并，却可能把功能相近但谱不同的 adapter 拒绝，也无法观察真实数据上的交互。若有代表性目标数据，应优先做组合后评测；若坐标身份不明，回退独立加载。现有 exact-v1 仅覆盖作者的模型变体，不能给出通用兼容阈值。<!-- semantic-body-binding:SF-2026-ARXIV-2605-01929 -->
+
+如果两侧宽度或层数本来不同，仅检查更新谱还没有建立可相加的坐标。可以先在同一 stimulus 上抽取两模型的 activation，以 channel 相关性形成代价并求 balanced transport，再由各层之间的代价求 layer transport，最后把源线性权重的输入/输出轴映到目标坐标后提出融合。这是用观察到的激活对应构建迁移 proposal，不是从相关性推出函数保持；线性坐标变换成立也不保证整网功能、bias、tokenizer 或目标分布兼容。校准前向、跨层对 Sinkhorn 和融合后验证有成本，作者有限实验中更大源模型或更大混合系数也可能退步；replacement 与 residual 叙述不相容处不转成精确配方。无法建立代表性对应或任务保留失败时，独立 adapter、蒸馏或不合并继续是合理分支，而不是强行把异构权重对齐为同一功能。<!-- source-family:SF-2026-ARXIV-2602-05495 -->
+
+建立对应后，也不必继续搬运源参数。可在同一校准输入上分别读取source base、source fine-tuned与target base的状态，用base之间的Procrustes对应，把source适配造成的activation差额表达在target坐标，再回归目标组件自己的weight/bias增量。[Ariadne的受限分支](https://arxiv.org/html/2610.32581v1#S3)由此保留target原有基底，只编译所需的局部功能变化；它不要求两个base函数等价，也不因用了activation就取得跨任意架构或任务的语义同一性。相对深度配对、token-grid插值、bridge和calibration人口仍是迁移假设。
+
+固定target-base输入时，线性组件的增量输出可以精确写出，但各层独立拟合后一起装回网络，上游改变的输入不会自动保持原回归等式。Ridge、带bias/无bias的中心化约定与组装后行为须分别验收；activation对齐可不读标签，最终增量或merge系数的validation选择仍可能需要监督。有限相关模型家族中有迁移与组合收益，也有单任务退步，先合并再拟合不等多次拟合后合并，拒答移除能被传递更不代表安全改善。三个checkpoint、校准/可选梯度、分解求解、系数搜索与新旧任务回归都付费；对应、表示支持或组合质量不合时，保独立adapter、显式蒸馏或不迁移，不把closed form与training-free标签当无成本、精确整网保持或发布许可。
+<!-- source-family:SF-2026-ARXIV-2610-32581 -->
+
+两个 adapters 的增量可以在权重空间相加或按系数组合，但数学上可相加不代表行为无冲突：
+
+```text
+W = W_0 + lambda_1 Delta W_1 + lambda_2 Delta W_2
+```
+
+不同 adapters 可能修改同一表示方向，组合后分布也可能超出各自训练范围。Adapter composition、merge 和 routing 都需要重新 Evaluation，不能把独立任务得分当作组合行为证明。
+
+即使完整增量已处于同一基座坐标，谱能量也不能直接决定哪些方向值得合并：RL更新的leading head可能携带行为却更易冲突，低能残差也可能保留可聚合信号。一条分支先把完整task matrix拆成head与residual，以归一化残差的球面共识构造backbone，再按head间正agreement、以残差范数限定回补预算；非矩阵参数仍走原task arithmetic。[受限消融](https://arxiv.org/html/2606.02252v1#S5.SS3)中，直接平均residual并不优于head，取消回补gate还会退步，故不能把“低谱更好”升级为功能真值或普遍合并律。SVD、完整增量驻留、rank/预算选择与逐域新旧能力回归均付费；共识失配、任务损失或净成本不合时，保留目标数据校准、普通完整增量组合或独立专家。<!-- source-family:SF-2026-ARXIV-2606-02252 -->
+
+不兼容的任务也不必被迫压成同一份更新；可在同基座、同模块坐标中，按低秩输出子空间的几何先分成K组，再在每组的rank预算内合并，形成介于一个全局artifact与全部独立adapter之间的部署分支。[GRAM的受限对照](https://arxiv.org/html/2610.29110v1#S4)用子空间距离提出分组、奇异能量提出组内rank分配；它们只近似局部重构，不保证整网任务保留，理想最优basis的理论也不等实际合并algorithm最优。请求仍须有可信task身份或另行验收的router，少样本路由结果不能外推开放任务；分解、聚类、重建、K份资产驻留及组合后回归全部付费，更多组也未必单调改善。坐标、请求归属或任务回归不合格时，保留独立adapter、单组静态合并与代表性数据校准，不把data-free merge解释为无需验证或免费部署。<!-- source-family:SF-2026-ARXIV-2610-29110 -->
+
+若希望多个域的adapter能组合，训练时也可显式约束更新的输入支集，而不只在合并后观察冲突：目标域拟合所需的局部表示变化，非目标域则重构base的原表示，使该adapter在这些输入上的增量接近零。[一条受限安全适配分支](https://arxiv.org/html/2605.24154v1)由此提出组合条件；但固定线性层、相同输入下的局部近似neutral，不证明前层改变输入后整网仍无干扰，更不证明缺失的相关负域也保持不变。参数组合只是模型行为提案，不执行真实用户授权；负域采样、困难例挖掘、每域训练和组合后的完整安全与效用回归仍付费。域边界重叠、覆盖不足或旧行为退化时，保留独立adapter、较窄作用域或不组合，再由外部权限与发布gate验收。<!-- source-family:SF-2026-ARXIV-2605-24154 -->
+
+组合的更新面也可以是输入侧 soft prompt，而不是权重 delta。若主任务与已知混杂变量共享训练输入，直接相加两个非线性 prompt 更新，不满足不相交任务支持的解耦前提。一条受限分支先冻结 backbone/head，以非线性 prompt tuning 得到任务锚点 `P_t`，再仅在 `P_t` 的一阶模型中学习混杂方向 `τ_c^lin`，最终把 `P_t+λτ_c^lin` 作为 prompt 送回原非线性模型。这样分开任务表达力与局部编辑方向，不是正交投影，也不由加法自动证明混杂信息已被删除。
+
+[HyPA的有限二元任务/混杂对照](https://arxiv.org/html/2605.03096v1)需要训练时已知两类标签，λ仍由同分布验证集的worst-group表现选择；GPT-2/MIMIC的一项OOD结果反低于全线性分支，probe也不能唯一识别信息减少还是readout影响降低。因此锚点、线性化范围与λ须共同保存，分别验收任务拟合和相关性变化下的行为；两阶段训练、验证搜索和虚拟prompt的序列/activation成本并不随基座冻结消失。局部近似失配、ID/shift取舍或总费不合适时，保留普通prompt、全线性编辑、独立adapter与不组合，不把这条分支授为因果去混杂或普遍公平保证。<!-- source-family:SF-2026-ARXIV-2605-03096 -->
+
+组合还可以作用于每层activation，而不先合成一个权重增量。[一条受限跨域分支](https://arxiv.org/html/2504.20859v1)冻结已有source adapters，用各分支的已适配输出共同生成输入相关的有符号系数，再把其它分支与差分项加入本分支状态，逐层传给后续计算，最后才汇成任务读出。这样改变的是本次运行的hidden与消费者条件，不是source权重被更新或几个独立模型末层投票；负权重/残差也不保证消除了域冲突或保留全部旧能力。基座/坐标、source训练、交互层、系数/目标监督与读出须共同绑定，分别验目标任务和原域回归。较少目标新增参数不免多个source的准备、activation驻留、并行前向/反向、路由与评估费用，有限候选评分也不等全catalog/生成能力；域支持、状态兼容或净预算失配时，保留单adapter、独立已验模型与静态组合，不由冻结资产或少量目标数据签发全能力保持与总成本下降。
+<!-- source-family:SF-2025-ARXIV-2504-20859 -->
+
+同基座、同架构与 tokenizer 的任务模型还可提出更局部的组合：在共同答案 tokens 上比较 donor 与 target 的平均绝对 activation，由差异排名提出各 donor 的输出 channel/参数 row mask；多个能力命中同一 donor row 时先取 union，再只在这些 rows 上加入缩放后的 donor-target task vector。这里的差分是受校准样本、尺度与坐标影响的选择 proxy，不是该 row 独占某种能力的证明；模型、模块映射、答案 token、校准集、mask、混合系数与融合版本必须一起保存。其后可选的全参数 SFT 会继续改变未选 rows，不能把最终结果全部归因于局部 transfer。<!-- source-family:SF-2026-ARXIV-2601-09398 -->
+
+这种 activation-conditioned merge 用更细的 proposal 换来多模型前向 capture、mask/系数搜索、融合验证及可选 SFT 成本。[受限同坐标多语/能力对照](https://arxiv.org/html/2601.09398v1)中，任务保留仍有退步；某个模型需要选择约九成 channels，也不能概括为总能找到很小的能力子集。仅 transfer 与追加 SFT 的实验还采用不同 mask 比例和系数，无法隔离后者收益；相关性、合并后的分数与因果能力归属继续分账。坐标或校准分布不可信、目标能力收益不足或原有任务回归时，应保留已验证的单模型、独立 adapter 或原静态组合，而不是让 channel 排名直接拥有发布权。
+
+若全体答案tokens的activation排名仍掩盖多轮Agent的局部格式责任，可在同基座、同架构与tokenizer的候选合并模型中，按parser标定的tool-call、action或final-output片段分别取MLP绝对activation均值，比较每层TopK集合与对应expert的重合度来选择backbone；再用held-out开发集定位弱benchmark，只从其donor的TopK中移植不在其他benchmark保护集合union内的神经元。移植单位是输入投影的row/bias及输出投影的column，gated MLP须保持gate/up/down同索引；保护集合来自初始选中backbone的固定校准统计，不随每次移植自动刷新。这里的role是输出片段类型而非对话身份，集合不相交也不证明能力因果disjoint或整网无干扰。[受限role-conditioned移植](https://arxiv.org/html/2601.07309v1#S3)仍有个别benchmark退步，需支付多模型校准前向、backbone/dev/TopK搜索和完整任务回归；校准分布、parser或坐标失配时保留独立adapter、单模型或已验证静态merge，不把训练免梯度当作免费组合或能力保持证明。<!-- source-family:SF-2026-ARXIV-2601-07309 -->
+
+若多个任务模型确实来自同一初始化、架构和参数坐标，合并还可以从“平均权重”转向“尽量保持各任务输入上的层输出”。对线性层，最小化各任务的 `E[||Wz - W_t z||²]`，会得到由输入二阶矩 `C_t = E[zzᵀ]` 加权的合并规则；这里是未中心化二阶矩，不是仅比较更新方向或对 LoRA 的 `A/B` 因子求平均。通常需要任务数据来估计 `C_t`；一个受限的无数据分支则用完整权重增量的 `ΔW_tᵀΔW_t` 近似它的形状，把任务曾经激活哪些输入方向的信息作为合并依据。[受限证据：ACT-Mat §3](https://arxiv.org/html/2604.01329v1#S3)
+
+这个代理成立有条件：简化的固定步长、全批量梯度下降分析依赖跨步项、输入与梯度关联、训练中表示漂移足够小，任务间比例尺度也不能任意忽略；减少层输出干扰仍不保证整网多任务行为无冲突。作者的 ViT、T5 与同基座 OLMo RL checkpoint 实验不证明任意 Adam 训练、异构基座或低秩因子都满足这些条件。无数据合并省去校准前向，却增加矩阵估计与求逆成本，也失去直接观察目标分布的机会；有代表性数据时优先核实实际输入统计，合并后仍须独立评测，条件不明则回退单模型或已验证的静态组合。“Data-free”不等于“validation-free”。
+<!-- source-family:SF-2026-ARXIV-2604-01329; daily-trace:papers/2026/04/03/README.md -->
+
+实际输入二阶矩的校准人口还可以由各specialist自己的长rollout提供，而不只用固定语料；这是teacher-generated统计，不是严格student on-policy。每层收集未中心化Gram后求解输出保持的闭式合并，仍只对固定teacher输入上的线性目标成立，合并模型的上游表示漂移与非线性模块不因此精确保真。[Training-Free OPD的有限对照](https://arxiv.org/html/2610.22236v1)显示，少量重复loop可因token数主导Gram，去loop比一味只留correct答案更重要；再筛correct并未普遍改善，部分较易任务反退。过滤规则、domain/token权重、off-diagonal regularization、FP64求解、存储与运行精度都属于artifact身份，不能把BF16 specialist与FP16融合的差异全归合并机制，或把高token agreement当长推理保持。Rollout、统计forward、矩阵求解和独立评测仍付费；同基座/坐标不成立、统计失真或任务回归时，保留代表性数据重校准、独立specialist或普通蒸馏，不以“training-free”宣布通用整网免训练合并。<!-- source-family:SF-2026-ARXIV-2610-22236 -->
+
+为减少上游合并引入的输入漂移，还可沿部分已合并模型的真实执行路径，逐个用当前中间 activation 对齐原任务模型的局部算子，再按预算 rank 分解回合法参数；对适配后的模型先形成完整有效权重，不独立平均任意 LoRA 因子。这让校准状态随合并路径改变，但闭式局部回归和 greedy 顺序不保证整网联合最优。[SLOA 的受限算子对照](https://arxiv.org/html/2610.06415v1#S3)允许在适用的 attention 结构中合成 QK/VO，含 RoPE 的 LLaMA 实验却只合成 VO、Q/K 分别合并，不能跨结构搬用完整 QK 公式。原 rank 已有局部收益，可选扩 rank 仍增加参数、推理内存/计算且 HumanEval 有退步；仅合成一类算子也可退步。统计前向、局部求解、factorization 和回归均计费，初始化/坐标、校准路径或任务支持不符时保留独立模型、data-free 静态合并或原 adapter，而不由 training-free 标签授予通用能力保持。<!-- source-family:SF-2026-ARXIV-2610-06415 -->
+
+若只需保留一种生成结构，也可把输出保持目标缩到声明的 token 接口：在共同基座的 reasoning/instruction task vector 合并前，捕获校准输入在 `<think></think>` 特殊 token 处的 features，把各线性模块更新投影到这些 features 的 nullspace，再用 attention alignment/leakage 代理选择模块缩放。[这条局部合并分支](https://arxiv.org/html/2602.22538v1)保护的是有限校准位置的线性响应，不是所有 thought 内容或整网非线性 function；上游表示变化、更新平方余项与未见模板仍会破坏解释。第二阶段的 gradient/diagonal-curvature proxy 也不是真实 task-loss Hessian，格式标签闭合不认证语义、安全或 reasoning 完整。捕获、投影、FP64 合并后存储、系数搜索和回归均有费用；增加校准可更保 reasoning 却抑制 instruction transfer，较大缩放与个别代码指标还有退步。模型坐标、特殊 token/template、校准人口与缩放版本须共同验收；局部保持不迁移或净收益不足时，保留独立 adapter、原模型或已验证静态 merge，不凭 nullspace 名称授无损组合。<!-- source-family:SF-2026-ARXIV-2602-22538 -->
+
+输出保持还可以在后续任务训练时充当 regularizer，而不只决定一次 merge。若各任务共享初始化，线性化为 `f(θ₀+τ)≈f(θ₀)+J₀τ`，其他任务输出的平方变化对应 `τᵀJ₀ᵀJ₀τ`；先消费任务数据估计初始化 Jacobian Gram 的逐层 Kronecker factors，之后可只保留这些统计量来约束新 task vector。它把原数据访问移到预计算阶段，并不等于数据从未被访问，更不是 DP 或隐私证明。[TAK v1 Eq3/7/8 与 §4](https://arxiv.org/html/2602.17385v1)再把逐任务 Kronecker 项之和近似为两个聚合 factor 的乘积；其中含交叉项，是 heuristic，不是精确的和。聚合后存储对任务数 O(1)，不代表对 layer width 或全生命周期费用 O(1)：两个 factor 的边长平方存储、Jacobian 估计与正则计算仍需付费，非线性训练偏离初始化也会破坏线性化解释。T5-base 六个 NLI 任务中，直接保留原数据的输出 regularizer 为81.3，聚合近似为78.7，不能声称摆脱数据总是更优；训练 recipe 的差异也不构成等预算胜利。原数据可用时优先验收真实输出变化，统计不可靠或任务回归失败时回退数据校准、独立 adapter 或已验证静态组合。<!-- source-family:SF-2026-ARXIV-2602-17385 -->
+
+还有一条更窄的 pre-merge 分支，不估计任务输入分布，而在同基座、同模块与固定因子表示下，把各任务的输出因子 `B` 拼接后作 SVD；由归一化奇异能量提出哪些集中方向应缩小，再将校准后的 `B A` 交给原 merge rule，最后恢复合并 delta 的总体范数。它试图减少少数方向主导组合，而不是取代上面的输出保持目标；一次 SVD 仍有构建成本，范数恢复也不保证被抑制方向对应的任务能力得以保持。
+
+尤其不能把 `B` 的谱能量当成真实共享能力或参数化不变的证据：`B R` 与 `R⁻¹ A` 可保持同一 `ΔW`，却改变因子侧统计。这个 heuristic 因而依赖已保存的因子坐标与训练配置，不能自动继承下面 gauge-invariant 聚合的身份。作者 Llama-3.1-8B、四域及有限 rank 设置中，部分 finance slice 退步，范数恢复也并非所有 slice 更优；最终仍需核组合行为、任务保留和规模代价。参数化不同或现有静态组合已可靠时，应回退完整 delta 上的比较、目标数据校准或独立 adapter，而不是先把“共享方向”当作待删除冲突。
+
+<!-- source-family:SF-2026-ARXIV-2604-16826 -->
+
+与压低某些方向不同，公共坐标还可先承担无损表示，再承接具体合并规则：对同基座、同模块的各个低秩更新，取所有输出因子列空间和输入因子行空间的联合正交基U、V，把每份更新写成小矩阵M_t=UᵀB_tA_tV，最后以UM_tVᵀ恢复。只要基完整包含两侧支持、未截掉非零分量，这个投影重建可以保持原增量；它没有证明合并后的任务行为不变。[受限core-space分支](https://arxiv.org/html/2509.17786v1#S4)把合并计算移入这些共同坐标，标量加权和可与重建交换，逐元素裁剪、符号选择等非线性操作却一般依赖所选basis，不能由表示可逆推出与原空间操作同义。截断联合支持又是另一项近似，按因子能量选方向也不自动成为任务保持最优。多份rank-r更新的联合维度可随任务数增长，重建产物并不仍是rank-r；应共同保存base、支持basis、阈值及merge规则，分别验数值重建和各任务行为。SVD、全部投影、搜索、小矩阵合并与dense重建/驻留都付费，局部合并更快不替部署净收益。支持、任务回归或总预算不合时，保留完整增量比较、已验静态合并或独立adapter，不把公共坐标当成无干扰保证。
+
+<!-- source-family:SF-2025-ARXIV-2509-17786 -->
+
+因子坐标不可靠时，合并不一定要退到直接平均完整增量，也可先明确“哪些表示属于同一个更新”。在同基座、同模块、固定满列秩的条件下，把低秩增量写成正交左右因子与正定中间因子的乘积；共同正交旋转不改变这份增量，因此先按这一等价关系对齐，再在所选度量下迭代求使各更新距离平方和较小的Fréchet平均。对齐、距离和平均操作必须一起尊重该等价关系；仅换一个看似几何化的距离，再照旧平均任意因子，仍可能得到依赖坐标的结果。<!-- source-family:SF-2026-ARXIV-2604-27155 -->
+
+这条分支保留指定rank，却新增极分解、对齐、Exp/Log数值求解与迭代停止成本；固定rank还限制了能保留的任务方向，退化因子和远离局部可解区域时不能照搬局部几何结论。[受限LoRA合并对照](https://arxiv.org/html/2604.27155v1#S6)只有同一Llama3-8B的六个NLI专家，基线未附加其常用TIES/DARE-TIES，归一化任务分数也并非逐项都提升；较低有效rank不等同比例的端到端服务节省。参数化不变只排除一种坐标歧义，不保证组合能力无冲突或找到全局最优。条件或回归不满足时，保留完整delta组合、目标数据校准与独立adapter；下面的联邦分支则另外处理参与者与异构rank，不与一次固定rank合并混同。
+
+联邦训练还引入了坐标身份问题：同一个低秩权重增量可以由多组 `A/B` 因子表示，直接平均客户端因子会把任意坐标选择误当成更新语义。一个受限分支让客户端用 projector 描述更新子空间，服务端只在共识子空间与共享参考坐标中聚合，再从同一 server state 读出各客户端所需 rank；聚合 owner 持有的是 gauge-invariant update identity，而不是任一客户端的因子坐标。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06733 -->
+
+它避免恢复 dense delta，却增加子空间估计、参考坐标漂移、稀疏参与和异构 rank 的误差。共识不足、非 IID 行为回归失败或参与者可信边界不成立时，应回退 dense-delta aggregation、同构 rank 或不聚合的独立 adapter。exact-v1 的 GLUE、SuperNI、稀疏参与和异构 rank 实验只支持作者设置，不证明恶意参与、隐私约束或任意任务下都优于 FedAvg。
+
+通信紧张时，因子交换还可以与服务端的聚合空间分开：客户端只上传部分因子增量，server先分别重建各客户端的`BA`再求平均，随后截成低秩表示，交替只广播一个因子的稀疏变化。[这一受限联邦分支](https://arxiv.org/html/2510.04601v1#S3)避免直接平均A/B引入的交叉项，却把dense物化、SVD与本地基线同步留给聚合端；它不保证非IID目标无冲突。元素幅值乘另一因子的相关范数只是局部importance，剪掉多项后的相消、任务loss与留存能力仍须另验。固定一个因子后用伪逆求另一因子只得到其列/行空间内的投影，两个目标各低秩也不使这一步能精确恢复任意新目标；不能把交替单因子更新当作无损全rank广播。因而需共同保存聚合前后基线、参与者/稀疏mask、截rank与发送相位，分别核重建误差、各端任务和真实wire。FP32值加bitmap的载荷不按BF16计算精度折价，少字节也不保证更快：本地训练、dense重构、SVD/伪逆、同步与网络全计费。带宽收益不足、子空间失配或质量退步时，保完整delta/全因子交换、较低稀疏度与独立adapter，不由原数据留本地批准隐私或全部client无遗忘。
+
+<!-- source-family:SF-2025-ARXIV-2510-04601 -->
+
+异构 rank 还可用另一种分支分开“继承完整函数”与“本轮能训练多少参数”：把全局 `BA` 展开为 `R` 个秩一项，客户端只选择 `r_i` 项训练，其余项临时 fold 到冻结的本地基座。因此在本轮更新前，冻结项与可训练项相加仍恢复完整全局增量；减少的是可训练支集，不是把初始有效函数截断到 `r_i`。这个代数分解没有增加普通 LoRA 的函数类，也不等于因子坐标不变或训练后函数保持。[Fed-PLoRA v1 §3.2–3.5](https://arxiv.org/html/2602.16936v1)的服务端按每个秩实际参与的客户端分别平均 `A/B`，仍留下乘积协方差和参与人口差异，不能继承上面的 gauge-invariant 聚合或零聚合误差。原文把协方差范数界为两个偏差范数之和的式子也不能作保证：单秩标量两客户端取 `A=B=±3`，协方差为9而所写上界为6。只保留初始化完整函数／子集训练接口，不采用该错误界；质量仍需按任务、参与集与 rank 验收，原文配置表和描述的 rank/模型身份冲突不转成确定 recipe 或全场景优势。它保留较小 uplink，却要广播完整 `R`、维护临时 buffer 并付出 dense fold 计算；不分享原始数据也不提供隐私证书。带宽或临时内存不允许、坐标不可靠或回归失败时，截断/同构 rank、完整 delta 聚合和独立 adapter 仍是合理选择。<!-- source-family:SF-2026-ARXIV-2602-16936 -->
+
+参与者也不一定每轮回到同一份全局模型：可以让各client保留自己的上轮聚合base，本地训练后只取相对该base的本轮增量，再按与peer增量的相似性为每个接收者分别组合。[受限个性化对照](https://arxiv.org/html/2509.12697v1)支持这种历史保留与本轮共享的分工，不证明各自变化后的base仍有相同功能坐标，也不使LoRA因子差天然gauge-invariant；直接cosine除以行和还可能遇到负权重、零和或零向量，未明确guard时不能作为可靠聚合recipe。它增加逐client状态、两两比较和server聚合成本，有限全员同步实验也不认证异步、掉线或隐私；应分别验收每个域的收益/退步、更新坐标、参与人口和完整通信/驻留费用。权重定义、任务回归或净预算不合时，保留已验全局聚合、完整delta或独立adapter，不以数据未出端和平均分较高批准全部client。
+<!-- source-family:SF-2025-ARXIV-2509-12697 -->
+
+个性化联邦适配还要分开“本端允许训练哪个expert”与“前向可以读取哪些expert”：若每端只更新被分配的一份LoRA，却从全池自由Top-k选择，指定expert可能根本没有进入支持集；允许更新不等于本次前向实际使用，更不保证非零梯度。一条受限分支保留全M份expert的读取，将router扩为2M−1个槽，其中M槽映射到本端指定expert、其余M−1槽各映射另一expert，再取Top-M；只要映射正确且槽互异，选择不可能全避开指定expert，合并重复贡献后实际使用的独立expert数仍可在1…M之间变化。这是支持集约束，不是复制出M份参数、必有有效梯度或执行量自动下降；executor仍需明确重复expert是否只计算一次。原文的[有限机制与对照](https://arxiv.org/html/2509.15087v1#S4)只支持静态客户端和固定分配，router上传/聚合的正文与伪码交接未完全一致，任务分数也有持平和反退，不能把平均收益唯一归于可变expert数。全部expert广播/驻留、router与选择、实际kernel、初始适配/聚类、本地训练与通信均付费，少量trainable参数不代总成本或隐私。映射、路由state、任务回归或预算不合时，保留显式固定支持、普通Top-k、独立router或单expert，不由本地更新权限批准任意异步参与与全局收敛。
+
+<!-- source-family:SF-2025-ARXIV-2509-15087 -->
+
+任务依次加入同一基座时，坐标对齐还可以服务于方向受限的组合，而不只服务于平均更新。先对 `B` 和 `Aᵀ` 作薄 QR，再对小型中间矩阵作 SVD，能在保持 `BA` 的前提下取得 balanced factor 表示；重根子空间仍可能留下旋转自由度，不能称为唯一的能力坐标。把这些因子堆叠后，耦合矩阵的旧 block 保持冻结，新技能只训练自己的 read row 与 diagonal，旧输出对新输入的 write column 保持零。这样明确了谁可以读取已有输入方向、谁不可以改写已有参数贡献项；它与独立 adapter 是不同的组合分支，也可以在验收后折叠为单个增量。[受限机制：READ Eq1–3／Algorithm 1](https://arxiv.org/html/2609.31600v1)
+
+权限限制不等于旧任务函数严格不变：新输出因子仍能把读到的旧输入方向贡献到总输出。即使旧 block 完全冻结，取同方向的秩一旧／新因子，并令新 diagonal 为零、新 read coefficient 非零，总 projection 也会增加一个非零项。因此必须分别验收“旧参数项没有被写入”和“组合后的旧任务行为保持”，不能继承原文的广泛精确保留保证。该训练仍消费阶段任务的联合数据；作者有限分类配置存在旧任务退步，开放式生成和更大技能 bank 未验证。Canonicalization、耦合矩阵的平方存储增长、未折叠执行和组合评测都有成本，fold 的数值接近也不是 bitwise 等价；旧任务回归失败时，独立 adapter、已验证静态组合或目标数据重新校准仍应保留。
+<!-- source-family:SF-2026-ARXIV-2609-31600 -->
+
+## Checkpoint 与可复现性
+
+Adapter artifact 至少需要绑定：
+
+- Base model identity 和 exact revision。
+- Target module names 与 tensor shapes。
+- Rank `r`、`alpha`、dropout 和 initialization。
+- Tokenizer、chat template 与 training objective。
+- Adapter weights 和可选 optimizer state。
+- Merge state、quantization config 与 compute dtype。
+
+只保存 `A`、`B` tensor 而不保存 base identity，可能得到 shape 可加载但语义错误的模型组合。
+
+随着 adapter 从单一 low-rank delta 演进到 block-granular、跨层共享、data-routed 或 orthogonal update space，
+artifact contract 还要保存 method/schema revision、router/projection state、weight-tying、TP layout、conversion
+history 与 backend compatibility。一个库“支持某方法”只证明 implementation 已进入对应 release，不证明各方法
+在同一 model/data/hardware/precision/SLO 下可互换。PEFT 0.19.0 的 release family 说明生态正在扩大这种选择面，
+同时也暴露 lossy conversion、schema proliferation 与 patch-level identity；成熟 LoRA 在 portability、审计和
+mixed deployment 上仍是合理默认。
+
+## 与 Distillation 的边界
+
+Distillation 让 student model 学习 teacher 的输出或中间行为，通常改变模型本体或架构。LoRA 则在同一基座上参数化增量。
+
+二者可以组合：例如先用 teacher 生成 demonstrations，再通过 LoRA 训练 student/base adapter。但它们解决的问题不同：
+
+```text
+LoRA          cheaper parameter update and model variants
+Distillation  capability transfer into a student
+```
+
+跨基座时，还可以不寻找可相加的权重坐标，而把源adapter相对源base增加的输出倾向转成监督选择：让源模型生成问答，在同一前缀下比较两条路径的`log p_adapted-log p_base`，先按响应均值选样本，再选各响应内的部分token，在目标基座新训LoRA。[这一受限行为迁移](https://arxiv.org/html/2510.04682v1#S3)传递的是筛过的示范，不是源A/B参数或完整功能。高概率比也可能来自base极低概率，不能替答案正确、知识新颖或因果贡献签字；源自己制题、标答和筛选仍可能共错。跨tokenizer需按文本span映射监督位置；对binary mask作复制/均值再重取topk，不等词表logits或语义概率质量对齐，短答案的零mask、ties和归一也须明定义。少loss位置不免整段forward/backward，移除额外discriminator亦不免源双路打分、候选池生成、分词映射及目标完整训练。应保存两源路径与目标的revision、前缀、样本/token选择和监督mask，分别验原能力与迁移任务；比例更小或局部均值更高不保证每任务更好。支持、映射或净质量不足时，保原adapter/base、可靠原数据适配或普通全token蒸馏，不把名字中的知识移植当作无损跨基座兼容。
+
+<!-- source-family:SF-2025-ARXIV-2510-04682 -->
+
+### 从持续改写共享权重到可检索的临时参数更新
+
+持续 post-training 最直接的做法，是让每批新文档继续更新同一份模型权重。它在知识规模有限、更新经过统一验收且允许周期性发布新 checkpoint 时最简单；当文档持续到达、不同请求需要不同知识或必须撤销单份材料时，所有更新累积在共享参数里，会把遗忘、冲突与回滚边界混在一起。RAG 把知识留在模型外，避免累计 weight drift，却不能获得参数适配对下游行为的全部影响。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-15734:start -->
+一种中间分支把每份文档产生的低秩 gradient/update 预先计算为带 `base model、document、objective、optimizer 与 revision` 身份的 artifact，存入索引；请求到来时只检索相关更新，在隔离的模型视图中临时应用，响应结束后丢弃或回滚。这样把共享 checkpoint 的发布权留给训练控制面，把 query-specific adaptation 降为可撤销的运行时派生状态。若原始 language-modeling gradient 只擅长重构文档，还需要用独立 query/task contract 训练检索与更新映射；命中相关文档并不自动证明更新方向对当前任务有用。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-15734:end -->
+
+该路径用 gradient bank 容量、检索误配、临时权重物化、并发隔离和供应链审计换取可撤销适配。错误 update 可能污染一个请求，多个 update 的组合也没有天然交换律；因此 runtime 必须限制 rank、norm、作用层和生命周期，并在质量或安全 gate 失败时回退 base model、RAG 或经完整训练验收的持久 adapter。知识稳定、请求共享度高或每次临时更新成本过大时，定期训练并发布普通 LoRA 仍然更合理。
+
+<!-- source-family:SF-2026-ARXIV-2602-09719 -->
+预先存储更新适合可复用的文档知识；若适配信号来自当前请求自身，则可以另走临时在线分支：每个 query 初始化独立的 Q/V LoRA，用 prompt 的 next-token NLL 做少量梯度步，响应后丢弃，基座权重保持冻结。更新幅度也不必是统一常数：用冻结基座首、末层的 pooled hidden 与当前步号，预测每层 Q/V 的非负 learning-rate scale，再控制本请求的低秩更新。这个控制器离线通过“适配后答案损失”学习，因此训练需要 gold answer；部署只读取 prompt，不能把训练监督误写为请求时已知正确答案。具体实现用一阶元梯度忽略 Hessian 项，学到的是受测任务中的更新策略，不是 prompt NLL 下降必然改善条件答案的证明。
+
+<!-- source-family:SF-2026-ARXIV-2602-09719 -->
+这条分支把检索预计算更新的成本换成请求内 forward/backward、optimizer 状态与控制器求值，还增加控制器训练、版本匹配和输入信任边界。非负 scale 只限制步长符号，不认证梯度方向正确；受测 Natural Questions 条件已有生成质量反退，且固定步长与动态方案的基准 learning rate 不同，不能宣布所有层控制普遍优于充分调参的统一更新。因而临时 adapter 必须有明确的初始化、并发隔离、步数与 norm 预算以及 discard/rollback 边界；若请求成本、质量或安全 gate 不满足，应退回冻结基座、RAG 或已验收的持久 LoRA，而不把在线适配发布为共享能力。
+
+### 条件化机制分支与共存边界
+
+主线之外仍存在若干只在特定前提下成立的设计分支。下面按状态与控制权的变化说明它们解决的问题、新增代价及回退边界；来源身份和实验限制统一留在章末 Review notes。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28479:start -->
+用 matched-update controls 分离 DP guarantee、pseudonymization 与 optimizer-step memorization effect。
+<!-- semantic-body-binding:SF-2026-ARXIV-2606-28479:end -->
+
+### 训练便宜不等于部署便宜
+
+LoRA 降低的是适配参数与训练成本；若上线时仍把 adapter 合并进完整 dense 模型，推理 FLOPs、内存访问和 kernel 形态未必下降。面向部署预算的 distillation 需要进一步决定保留哪些 rank、层或结构，把训练出的能力编译成真正满足 latency/memory budget 的 student。收益是把 PEFT 与 serving cost 连起来，代价是额外 teacher run、结构搜索和能力损失；多租户需要快速切换 adapter 时，保留 LoRA runtime 反而可能比生成多个 student 更合适。[受限证据：arXiv:2605.04341v1]
+
+<!-- source-family:SF-2026-ARXIV-2605-04341 -->
+
+### Procedural knowledge 可能超出低秩更新的容量边界
+
+LoRA 对局部风格、格式或低维行为偏移高效，是因为目标更新近似落在低秩子空间；多步条件程序同时包含分支、状态转移和终态约束时，提高 rank 也未必恢复整条过程。此时“对话看似完成”与 terminal success 必须分开验收，否则局部步骤拟合会掩盖程序失败。
+
+有限模型、任务和 rank 的实验只反证“继续加 rank 必然解决”，SVD 能量也不等于因果必需维度。若程序可外置，workflow/tool 加 verifier 往往比把控制逻辑全部压进 adapter 更可审计；若能力必须进入参数且低秩 gate 失败，应升级 full fine-tuning。LoRA 仍适合更新子空间稳定、验证充分的任务，而不是被后发方案静默替代。
+
+<!-- source-family:SF-2026-ARXIV-2607-21612 -->
+
+## 本章在知识树中的位置
+
+```text
+pretrained base
+-> SFT or preference objective
+-> low-rank parameter update
+-> LoRA / QLoRA adapter checkpoint
+-> merge or dynamic adapter serving
+-> Model Registry / runtime policy
+```
+
+本章承接第 29 章的 objective，改变训练状态与模型资产成本。第 35 章继续处理 adapter checkpoint 的恢复和 lineage；Part V 处理动态 adapter 的执行，Part VI 处理其资产治理。
+
+## 从机制演进到系统设计
+
+LoRA 从一次低成本微调演进到多租户、持续变化的 adapter lifecycle 后，低秩矩阵不再只是训练参数，而是带 base revision、objective、contributor、priority 与撤销语义的独立 artifact。去中心化或边缘场景还要求系统明确谁拥有 contribution、怎样合并、参与者退出时如何 unlearn，以及何时需要重训。
+
+细粒度 adapter 提高复用和个性化，却增加组合冲突、base 漂移、merge 顺序和 provenance 成本。校正或 unlearning 只有在目标 contribution 可定位、效果可验证时才可提交；否则保留旧 adapter、隔离租户或回退完整微调。参数更少不等于 runtime、registry 和安全状态更简单。
+
+## 自检问题
+
+1. LoRA 为什么不等于对原权重直接做 SVD？
+2. `A`、`B` 的 shape 怎样保证 `BA` 与 `W_0` 对齐？
+3. 参数量小例子为什么不能直接推出整模型显存比例？
+4. 冻结 base weights 后，哪些计算和 activation 仍然存在？
+5. LoRA 与 SFT objective 分别位于哪个层次？
+6. Rank 与 target modules 分别控制什么？
+7. QLoRA 比 LoRA 额外减少了哪类状态？
+8. Merge 与动态 adapter Serving 各有什么系统代价？
+9. 多个 adapters 数学可组合为什么不保证行为兼容？
+10. Adapter checkpoint 为什么必须绑定 exact base revision？
+
+### 从学习适配器到生成适配器：只有低维且可复用时才成立
+
+LoRA 通常把适配器视为需要通过梯度学习得到的模型状态；另一条分支是由模型直接生成任务专用适配器。后者省掉逐任务优化循环，但把误差来源从“训练是否收敛”改成“生成出的高维参数是否足够精确”。因此它只在适配状态维度较低、能够跨多个样本复用、生成与校验成本低于一次优化时更有吸引力；高维或长序列适配仍更适合常规训练。系统不应按方法名称选择，而应比较适配器维度、复用次数、生成误差预算和回退训练成本。
+<!-- source-family: arxiv:2608.21386v1; semantic-body-binding: emitted-specialist-operating-regime -->
+
+当适配对象是临时给定的 context 而非固定任务时，参数生成还需要说明如何把跨层表征变成 adapter。一条分支先用冻结基座和独立的 memory adapter 提取各层 memory tokens，再让参数生成器交替沿 token 与 layer 轴混合，把输出 reshape 成各目标层的低秩因子；生成 adapter 随后用于问题作答。这里省掉的是每份 context 的 test-time optimizer 循环，不是省掉 context 提取和参数生成两阶段，也不是与反向传播等价。context 仍是有来源与权限边界的输入，生成的 adapter 必须绑定 exact base、生成器版本与 context identity，不能自动升格为可信长期模型状态。<!-- source-family:SF-2026-ARXIV-2602-06358 -->
+
+两阶段把 online 成本转到 memory 提取、参数生成、adapter 装载与后续复用，并依赖先前的生成器训练和合成 QA 数据；参数量或 FLOPs 估算不能替代实际 latency/SLO。受限 Qwen3-8B 实验中，ICL 的 QA F1 仍高于生成 adapter，多轮历史增长与长文也会退步，因此“无 test-time training”不是无成本或无质量损失。只有 context 与生成状态可校验、复用次数足够且 held-out 质量达标时才选择这条分支；否则保留 ICL/RAG、普通 SFT 或逐任务 LoRA，不将压缩 memory 视为 context 的无损替代。
+
+Context adapter还可把一次document编码与每query写入分开：先冻结全长document KV，再让当前query和少量memory后缀读取它，由训练过的encoding LoRA及generator产生本题的answering LoRA；decoder不再读原文，却不等全文cache已经消失。[受限query-conditioned分支](https://arxiv.org/html/2610.24107v1#S4)将fact区分、target保留和回答形式分别校验，同文错query的update仍可比不用它更差，故adapter还须绑定query。多style监督、retention与writer共同付费，较紧凑参数state既不保证旧行为完全保留，也不普遍优于同bytes learnedKV；后者在普通独立作答反更准，长干扰下的优劣又受位置处理影响。全部teacher/训练、全cache、后缀attention、参数生成/加载及回归均计费，batchdecode吞吐优不替单请求prefill/latency或部署总peak。文档/问题变动、干扰或复用摊销不合时，保原文/ICL、可信KV与原adapter，不把移出decoder context签成无损或持续记忆治理。<!-- source-family:SF-2026-ARXIV-2610-24107 -->
+
+生成的 context adapter 也可能先调使用强度，而不立即重训参数生成器。一条受限分支按各层低秩因子的范数乘积选择少量层并放大其中一因子；另一分支先用原模型短回答的词面不确定性决定本题是否增强。[必要 top/random/bottom 与强度对照](https://arxiv.org/html/2604.23750v1)只支持有限 parametric recall 的选择分支：范数大不认证知识正确，放大线性 LoRA 输出也不使整个网络 logit 随系数线性，原文 margin 恒等式不能证明只有幅度而无表示缺陷。层数/强度在本 benchmark 调节，组合事实、反直觉问题、多文档和改写仍可退步；query probe 增加约束外调用，不能当每文档一次摊销。Context 提取、参数生成、载入、probe 与回归全计费；内容来源、任务或强度失配时，保留未增强 adapter、ICL/RAG 或普通训练，不由 recall 提升批准事实或通用推理。<!-- source-family:SF-2026-ARXIV-2604-23750 -->
+
+逐材料训练adapter时，写入位置也可由该材料的受限干预选择，而不固定覆盖全部层：冻结base，比较video与question-only条件下对齐问题token的hidden差，将这份差额逐层注入question-only计算，以已知校准答案的增益提出top-K写入层；再让text-only LoRA的表示变化对齐video-induced变化，并与合成QA/描述目标共同训练。这是视频特定的写入proposal，不是定位唯一知识层；cosine监督只保方向，teacher错误、层间作用和未覆盖细节仍可丢失。[有限对照](https://arxiv.org/html/2610.26910v1)支持位置/监督选择，但整体video-free问答仍有direct-video反退，不能称无损内化。视频读取、合成监督、干预扫描、teacher缓存、每video优化与adapter装载均计费，query无visual KV不等零长期状态或完整费用下降；材料变化、held-out质量或复用摊销不成立时，保原视频/可信摘要、ICL/RAG、固定位置LoRA与base回退，而不让参数记忆自行成为原始证据。<!-- source-family:SF-2026-ARXIV-2610-26910 -->
+
+## 小结
+
+LoRA 用 `BA` 低秩因子表示任务更新，显著减少 trainable parameters、gradients、optimizer states 和每任务 artifact。它保留基座模型的大部分计算，并以受限更新空间换取成本与资产复用。
+
+QLoRA 继续压缩冻结基座存储，merge 与动态加载则把训练选择传播到 Serving。LoRA 的完整系统价值不只在“参数少”，而在 base、adapter、objective、checkpoint 和 runtime 之间形成可管理契约。
+
+### Continual LoRA 需要把 Program Memory 与共享权重分开
+
+连续把新任务写入同一 LoRA 会产生干扰，而为每个任务永久保存完整 adapter 又让检索和存储线性增长。Program memory 可以把可复用的参数更新单元作为有身份的程序保存，在新任务到来时检索、组合并再适配；共享 backbone 保持稳定，memory owner 管理程序来源、兼容性与淘汰。<!-- semantic-body-binding:SF-2026-ARXIV-2605-13162 -->
+
+检索错误、组合冲突和 memory 膨胀会把遗忘转化为路由故障。现有 continual-learning 结果只支持所测任务序列；兼容性或 held-out performance 下降时，应回退独立 adapter、rehearsal 或重新训练，不把未知程序自动写入长期资产。
+
+按记忆保存 adapter 时，还可让 query 决定整份参数混合，而不先把原文检索进 context。一条[受限参数记忆分支](https://arxiv.org/html/2504.21239v1#S3.SS3)为每条材料分别训练 LoRA 并保存 base 表示 key，以 base 近末层的 query 表示匹配这些 keys，得到全层共用的 softmax gate，再对各完整低秩增量作加权和。这个 gate 不是逐 token 任务真值，参数隔离也不阻止 query 检索干扰；尤其 gate 依赖 base 前向的后部表示，而消费者使用修改后的各层权重，原文没有闭合 gate 取得后对原 prefill states/KV 的复用时序，不能据“复用已有表示”推定没有额外开销的单次前向，也不替作者补双 pass 实现。应把 base/key/adapter、query 特征取得、gate→adapted forward 及 KV 状态身份分别保存并实测费用；每记忆一 adapter 的容量、训练、混合以及先生成记忆再答题的 iRAG 都付费。单模型小数据与有限 MMLU 切片不授全部旧能力保持、组合必成或真实脑机制；匹配/时序或质量成本不合适时，保留固定 adapter、可核原文的 RAG、独立参数 bank 与 base 回退，不把生成出的记忆当独立事实证据。
+<!-- source-family:SF-2025-ARXIV-2504-21239 -->
+
+另一条不保存任务 bank 的分支，把保护对象放回完整权重增量，而不是分别惩罚 LoRA 因子：当前任务训练 `ΔW=AB` 时，以此前累积的 empirical diagonal Fisher 约束 `vec(ΔW)`；任务结束后在当前模型上用 full-weight gradient 的平方估计本任务统计，按声明 decay 累积，再将 `AB` merge 到基座，下轮重新初始化低秩因子。[受限实现接口](https://arxiv.org/html/2602.17559v1#A2.SS1)因此只保留更新后的 dense 权重与同坐标 Fisher，不是前面的初始化 `J₀` Gram，也不保留可独立撤回的旧 adapter。状态数量对任务数恒定，不等总内存或计算恒定：full-space gradient、dense diagonal、正则与 merge 都有费；CIFAR-100 同侧估计对照中该分支额外6GB、最终87.91%，分别估计因子 Fisher 为4GB/86.41%，无 Fisher 的塑性98.86高于该分支97.99，不能称零遗忘或免费保护。ViT-B/16、B128/r10/20epochs之外的完整硬件、precision与生命周期费用未披露，有限分类序列不授开放式生成保证；长序列 Fisher 退化、数据复杂度与低秩容量不足仍会损害塑性。应共同版本化基座、增量坐标、估计人口、decay和任务序列，分别验收保留与新任务学习；统计漂移或预算/行为回归时，独立 adapter、rehearsal校准或原共享更新仍是合理回退。<!-- source-family:SF-2026-ARXIV-2602-17559 -->
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07494:start -->
+Continual VLM 不应把固定 MoE adapter pool 当作永久能力目录。训练面要独立拥有 expert evolution：何时复用、扩展、冻结或淘汰 expert；推理面只根据版本化 task prototype 提出 sparse selection，并保留 frozen base 的 zero-shot fallback。分权能限制遗忘和无关 adapter 干扰，却会造成 pool growth、prototype drift、错误 task identification 与额外路由成本；识别或预算不可靠时回退固定 adapter、共享 LoRA、rehearsal 或 frozen base。 [受限证据：arXiv:2605.07494v1]
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-07494:end -->
+
+有当前任务数据时，expert扩张还可先问新更新在已有pool之外需要多少方向，而不为每个任务固定同一rank。一条[受限MCIT分支](https://arxiv.org/html/2606.02502v1#S4)先在临时LoRA上warm-up，对更新作SVD，再同时按谱值和对历史LoRA输入子空间的残余筛选新增rank；文本语义先提出group，组内视觉centroid另决定expert混合。几何残余只是容量proposal，不等未掌握能力；冻结旧expert/centroid也不冻结加入新expert后的归一竞争，soft正交罚项不提供无遗忘保证。不同插入模块/预算、格式转换的信息差异与部分任务反退限制其比较，全部warm-up、SVD/QR、编码/路由、pool驻留和新旧任务回归均计费。方向筛选、路由或总预算失配时，保留固定rank、独立adapter、可信rehearsal与base回退，而不让参数更少替协议或能力保持签字。<!-- source-family:SF-2026-ARXIV-2606-02502 -->
+
+语义prototype还可能把需要不同响应协议的任务放进同一组，因而格式信号的取得方式也属于路由合同。[ProtoAda的受限分支](https://arxiv.org/html/2606.02576v1#S4.SS1)用训练target的长度、token分布和模板统计构造格式码，部署时不读target，而由输入侧描述预测此码，再与图文表示共同提出group。必须分开验oracle格式码、预测码误差与实际group/协议结果：code cosine高不保证正确路由，task均值训练也不自动覆盖单query或新格式；token-id统计更要绑定tokenizer。按group投影保shared增量、另存低秩residual只是参数组织，Frobenius最近点不等语义兼容或无遗忘，周期合并/删残余仍须行为回归。有限任务/预算与表内人口不一致不授普遍优越，全部target统计、编码器、预测器、检索/组合、存储维护和新旧任务验收均付费；格式不可预测、prototype漂移或维护不合时，保留显式协议分组、独立adapter与可信rehearsal，不由语义相近自动批准共享。<!-- source-family:SF-2026-ARXIV-2606-02576 -->
+
+task prototype 适合仍有任务样本可校准路由的条件；若持续接入的是同一基座的任务模型而非可重训 router 的数据，扩张每任务 expert 会浪费容量，直接合并又可能抹掉差异。一个更窄的选择是先把各模块的任务权重增量截断为低秩子空间：输入/输出子空间的投影重叠只负责提出“合并已有 expert 还是新建”的候选；推理时再以当前中间特征对 expert 输入子空间的投影匹配提出路由，并用跨模块的共同任务来源约束可连通路径。这样把 expert 演化、输入时选择和跨层一致性拆成三个状态，而不是让参数化 gate 在缺少任务数据时继续假装已经校准。<!-- source-family:SF-2026-ARXIV-2604-22464 -->
+
+子空间相近只是参数几何代理，不保证功能、标签或安全语义相同；输入投影匹配也不是任务真值。截断 rank、合并阈值和每层候选扫描会改变容量与推理代价，任务来源约束还能错误剪去跨任务有用路径。受限证据只来自连续到达的 CLIP-ViT 图像分类任务模型与 accuracy/backward-transfer 比较，没有生成式 MoE、真实流量路由延迟或长期漂移验收。若有可信任务样本，原 task-prototype/learned gate 可以直接用 held-out 行为校准；若没有，则这种无额外路由训练的分支仍须以功能回归、容量和延迟作为提交门槛，失败时回退独立 adapter 或 frozen base。
+
+task prototype 之外，路由资产还可以按输入重建误差组织，而不要求每个新任务都对应一份新 adapter。一个受限分支在每层保存 reconstruction discriminator 与 adapter 的映射：先训练本阶段需要扩张的残差 adapter，再冻结这些 adapter、用稳定后的中间特征训练本阶段 discriminator；即使某层复用旧 adapter，也新增 discriminator，以记录上游变化后的特征分布。于是多个 discriminator 可以指向同一 adapter，路由银行的增长与参数容量增长是两件事；这里的 ReLU down/up 残差 adapter 也不能直接当作可合并的 LoRA 乘积。<!-- source-family:SF-2026-ARXIV-2601-09512 -->
+
+这种分工只把重建误差当作输入分布的代理。训练时用误差的均值、标准差归一化后判断是否扩张，推理时却以各 discriminator 的原始重建误差选最小者；校准人口、上游特征版本与 discriminator→adapter 映射必须一起管理，不能把两种比较当成相同 gate。冻结旧权重不会阻止新 discriminator 抢走旧任务的路由，银行仍随阶段线性增长，每层和每个迭代步的扫描、训练与存储都要计费。有限模拟 VLA 的容量/质量切片并不支持所有任务零遗忘、encoder-only 普遍最优或实际 20 Hz 控制 deadline；路由回归、预算或校准不通过时，原 task-prototype/固定 adapter、rehearsal 或 frozen base 仍是退路，动作执行与物理安全由 Ch26 的控制闭环另行验证。
+
+### Adaptation Support 与 Support 内变换应分开
+
+普通 PEFT 往往在一个参数化里同时决定“哪些方向能更新”和“这些方向如何变化”。更清晰的分工让 support selector 根据 downstream gradient 提出可更新子空间，再让 orthogonal transform 只在其中改变方向；任务 loss 与 held-out gate 保留选择真值。它能提高有限 rank 的利用率，却增加梯度估计、子空间更新和 optimizer coupling，错误 support 会永久冻结所需方向。信号弱、任务多变或选择不稳定时，应回退固定 principal/coordinate support、普通 LoRA 或 full tuning，并按行为而非矩阵距离验收。exact-v1 只支持 matched-budget 的受测任务，不证明跨模型最优 support 或 orthogonality 自动防遗忘。
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-11872 -->
+
+### 低秩更新还可以避开 Skill-critical Subspace，但 Probe 不是能力真值
+
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24549:start -->
+普通 LoRA 让任务梯度在选定低秩空间内自由更新，目标兼容且回归充分时最简单；当知识注入开始损害既有 reasoning
+skill，约束才从“rank 是否足够”变成“更新是否穿过能力关键方向”。一种条件分支先冻结模型，用 singular-vector
+feature probe 标记 skill-critical subspace，再约束 LoRA 增量在其外部或低干扰方向中学习。probe 只提出保护区域，
+最终能力保留仍由独立回归集拥有验收权。
+
+两阶段投影增加 probe 数据、谱分解和训练成本；分布失配或表征旋转会保护错误子空间，也可能压掉新任务真正需要的
+方向。exact-v1 只支持作者模型、任务和消融中的 PALoRA 分支，不证明 reasoning 能被固定线性子空间完整表示。probe
+稳定性、知识获得或 held-out retention 不通过时，应回退普通 LoRA 加全量回归，必要时停止注入或选择更可隔离的
+adapter/全量训练方案。
+<!-- semantic-body-binding:SF-2026-ARXIV-2605-24549:end -->
+<!-- source-family:SF-2026-ARXIV-2605-24549 -->
+
+## Review notes
+
+- `SF-2026-ARXIV-2610-34413` — Daily2026-10-28；[exact-v1](https://arxiv.org/html/2610.34413v1) Method/Data/Results/coverage audits、training/capacity/mismatched/spectra/judge必要，2+1+2=5，仅instruction-token→layer/module query→whole-adapter条件生成。保generator30M与r4adapter1.3M、one seed42/4A800、SIFT自动coverage非basepretrain审计、RPS依候选/原子反退、judgeagreement非truth、p^k非界与谱形非因果；不授逐decode更新、参数净省、全链净速、任意audio组合或实现复现。root仅授此候选Ch30窄位，sole必要/actualowner/完整稿PRE通过，实际SAVE/POST见本日ARXIV_MULTI/REVIEW。
+
+- `SF-2026-ARXIV-2610-32854`，Daily2026-10-27；exact-v1 §3.1–3.3/4.1–4.2及2.2 splitting全部声明/证明、5.1/5.2全域条件/证明与7限制首次必要；6.1估计定义、prior/sampler/误差口径、6.3/6.5关键线性化实验，未读全部4.2 slice/残余显式构造、6.4任务/完整估计器比较或图像素/代码。R163 2+1+3=6，仅本篇LoRA可观测投影/regular+residual与local/global条件作为认知基础深入，不把经典RLCT/低rank原则再计新。保单层标量精确线性化/realizableGaussian、C非因子Fisher、残余非Jacobianrank、全域interior条件、NLP仍线性化/未验证多层CE/selector、MCMC/模型误差及费用；未复现或授部署收益。PRE/SAVE/fullselfread/solePOST仅后到真实层。
+
+- `SF-2025-ARXIV-2510-04601` — Arendt，Daily2025-10-08补Oct07；原2+2+2=6，直接采用root R486唯一exact-v1 S3–5/Eq1–13/T1–7/A1/Alg1/D/F/G必要，不第二Methods。仅稀疏因子交换→每端BA重建后dense平均/SVD→单因子广播的责任与费用；保伪逆受限投影非任意rank-r精确解、B0表达支持、importance/kurtosis/ties与时标/同步未闭。Wire为FP32值+bitmap、每client每round非全部客户端总量，full版T7 7.92/13.50min弱FedAvg1.92/3.06，全部本地训练/dense/SVD/网络/回归费保。不采完整recipe、DP隐私或无遗忘/全Pareto；未核B/C/E/H全说明/图像素/代码或复现，PRE/SAVE/fullselfread/solePOST仅本日canonical真实后到层，不以本注预签。
+
+- `SF-2025-ARXIV-2510-04682` — Arendt，Daily2025-10-08补Oct07；原2+2+2=6，直接采用root R491唯一exact-v1 S3/Alg1/Eq1–7/S4/T1–3/S5/A1/A3/A5–7/T6–7必要，不第二Methods。仅source adapted/base logp excess选样本/token、跨tokenizer监督mask再训target LoRA；保非A/B参数搬移/真知识，低base概率/自制自判共错、floor短答案0/ties、span平均binary非logits对齐和选择比例不守恒。2M生成池/源双路评分/全部目标训练及新旧能力回归计费，MMLU .475低KD .479等反退保，不采零overhead或完整知识保持；未核全部数据说明/prompts/图像素/代码或复现，PRE/SAVE/fullselfread/solePOST仅本日canonical真实后到层，不以本注预签。
+
+- `SF-2025-ARXIV-2510-04331` — Arendt，Daily2025-10-08补Oct07；原7，直接采用root R463唯一exact-v1 S2–5/T1–3/B1/B2/B4/C1及C2已读假设/C3必要，精确v1 PDF与HTML身份已核，不第二Methods。仅列归一化正offset的径向响应/初始化和静态生成式参数共享差额；tau为learnable offset非随机noise，v1本有同block Q/V与heads共享首层，不推广全depth或逐token动态。保m/tau尺度、BA0非原函数、因子gauge/LeakyReLU反例与条件回归非LM/SGD普遍样本率、同曝光非同unique支持、参数.49%/.40%及任务反退和全费，不采完整稳定/最优recipe。未核全部C2展开/VTAB表/曲线像素、代码或训练复现；PRE/SAVE/fullselfread/solePOST仅本日canonical真实后到层，不以本注预签。
+
+- `SF-2025-ARXIV-2510-06750` — Daily2025-10-10补Oct09BJT；[exact-v1](https://arxiv.org/html/2510.06750v1)，2+1+2=5，Jason R20唯一必要§3–4/Eq2–7/T4/8/9/限制/B，actualowner由初拟28校30。只checkpoint-delta条件分支；保rank式范数/尾index/阈值张力、AIME与hardGPQA反退、soft长度与router资格，0.04TTFT/11%分支非总费；全SVD/选参/路由/存储/回归费，不采完整recipe/语义删除/净SLO，未核实现复现；PRE/SAVE/自读/solePOST仅实际后到。 Jason R33整体PRE、A26真实SAVE/完整自读/QA、R35唯一actualPOST已通过，本精确窄位释放；仅同步既成态。
+
+- `SF-2025-ARXIV-2510-06627` — Daily2025-10-10补Oct09BJT；[exact-v1](https://arxiv.org/html/2510.06627v1)，2+1+2=5，Jason R20首次必要§3–4/Eq10–11/T6–7/A1–4及核心谱范数证明直接复用，owner校TRAIN-LORA。只最终delta谱编辑与scale/heldout资格，非逐stepMuon；保scalar/matrix未闭、heldout alpha/训练beta/层rank费用与72B/7B/T7反退，不授loss/泛化/全兼容/零费。未核实现或复现；PRE/SAVE/自读/solePOST据实际后到，不预签。 Jason R33整体PRE、A26真实SAVE/完整自读/QA、R35唯一actualPOST已通过，本精确窄位释放；仅同步既成态。
+
+- `SF-2025-ARXIV-2510-06005` — Cicero，Daily2025-10-09补Oct08BJT；[MASA exact-v1](https://arxiv.org/html/2510.06005v1)A178首次必要完整方法/定理/Eq2–4/T1直接反侧/T3–6/AppA证明与B聚合/C配置/T9/D专化文字，2+2+2=6，仅共享人口/线性可折叠算子与容量解释反侧深入。保deterministic MI反例/同x交叉项、CKA非因果、rank/budget/优化混杂、Law反退和全费，不采原ceiling/专化保证或净速。未核全主榜/附表/图像素/代码或训练复现；PRE/SAVE/selfread/solePOST仅本日canonical，不以本注预签。
+
+- `SF-2025-ARXIV-2510-05715` — Cicero，Daily2025-10-09补Oct08BJT；[AgeBooth exact-v1](https://arxiv.org/html/2510.05715v1)R282唯一首次必要§3/Eq1–12/§4决定域/T1–3/限制/A–C含连续性证明/I设置一次采用，2+1+2=5，仅factorSVD插值/文本条件路径与gauge反侧深入。保固定分解连续非唯一/语义线性、同1符号半插值0条件反例、估计器共享/ID取舍与全费，不采生物年龄/身份保真、无损或精确recipe。未核人脸样例/像素/全表/代码或生成复现；PRE/SAVE/selfread/solePOST仅本日canonical，不以本注预签。
+
+- `SF-2025-ARXIV-2510-03425` — Arendt，Daily2025-10-08补Oct07；原2+2+2=6，A73/root R74 exact-v1 S3真实Alg1/S4全部setup/results/T1–3/S5/Limit必要足，存储/VJP生命周期具体差额深入。只冻结压缩base/activation checkpoint按块映射与一阶反向消费者；保Alg1 input/output索引未合、quantized非FP梯度、容量/step/time-to-quality人口分责、1029.49MB与每步反退、页缓存/I/O及全部制备适配费。未核Swift/kernel/图像素或复现，不授完整recipe、统一1GB、生产净速/热电SLO；root R77实际owner/整体PRE已成并直接窄授，作者A79真实SAVE/fullselfread后root R78唯一actualPOST通过，指定窄位即时释放；仅同步既成末态，不预DAY。
+
+- `SF-2025-ARXIV-2510-03232` — Meitner，Daily2025-10-07补Oct06；[LEAML exact-v1](https://arxiv.org/html/2510.03232v1)R60互斥首次必要Method/Experiments/Conclusion/式1–6/T1–4与直接消融实际采用，2+1+2=5，有标签梯度支集约束辅助监督的更新接口差额深入。保abs(mean signed grads)/逐row参数、NLL符号张力、teacher/生成器/重初始化consumer、QA-pair划分与MC支持、mask局部反退/无等稀疏random及全费；不采临床结论、纯QA坐标/原能力保持或精确recipe。未核全部定性图/附件/代码或复现；PRE/SAVE/POST只按本日canonical真实层。
+
+- `SF-2025-ARXIV-2510-00192`：Daily2025-10-03补Oct02；[PrunedLoRA exact-v1](https://arxiv.org/html/2510.00192v1#S3)，2+1+3=6/梯度剪切补偿具体gap深入。直接采用root R56唯一首次必要，仅高→低rank成对坐标删除/非驻点gradient与Gram代理/保留参数补偿；保给定metric-mask局部权限、PSD逆/交叉Hessian/shape与alpha未闭、r128/GLUE反侧和全部高rank/统计/逆/搜索/训练回归费，不授完整recipe/全局最优/实机Serving。未核全B1/D/像素/代码或复现，作者不第二Methods。R35原分/日门复用；root R59 actualowner/整体PRE与窄授通过，R56必要直接采用，真实SAVE/fullselfread后root R62唯一实际POST通过，指定窄位生效释放；仅行政同步既成，不预DAY。
+
+- `SF-2026-ARXIV-2606-12883` — Daily2026-06-13补Jun12；2+2+2=6；[exact-v1](https://arxiv.org/html/2606.12883v1) §2–5/A/D1/H3/G4由root§15唯一必要首备，作者直接采用；只α映射与η参数步非一般全程等价，保局部匹配/Adam近似/trace非λmax、default反退/单run与搜索费，不采256√r通用最优/免调参或严格indefinite，未核实现/复现。root§17 actualowner/逐字两段PRE通过后按所授精确窄位实际保存，§20唯一实际POST通过、窄位释放；仅行政同步既成，不预日级。
+
+- `SF-2025-ARXIV-2510-00206`：Daily2025-10-03补Oct02；[LoRAFusion exact-v1](https://arxiv.org/html/2510.00206v1#S5)，2+2+3=7。只采rank-sized S显式物化/图切分、adapter tile映射与逐job globalbatch依赖；保sharedbase非hidden复用、无质量实测/bitwise/RNG认证、重实现baseline/未测TP/扩globalbatch、少job和CPU MILP/fallback全费。不授普遍吞吐或完整收敛，未核代码/kernel或复现。Kuhn R8日期/R14必要、actualowner及整体PRE通过，真实SAVE/fullselfread，Kuhn R16唯一actualPOST通过，窄位释放，不预DAY。
+
+- `SF-2026-ARXIV-2606-10617` — Daily2026-06-11补Jun10；[exact-v1](https://arxiv.org/html/2606.10617v1)§3–4/G/H必要，2+1+3=6。只taskcalibrationGram/guide固定层路由/可fold，保Eq6非一般成立而直接BQ关系可核、Gram/统计支持/相关token/单步限制、rank与全费，不授全生成无冲突/单步全域充分。未核实现/复现；reader§85必要/actualowner/唯一PRE通过并依root委托窄授后已真实保存，reader§88唯一实际完整新增/两侧/本人注POST通过，指定窄位生效释放，不预DAY。
+
+- `SF-2026-ARXIV-2606-10929` — Daily2026-06-11补Jun10；[exact-v1](https://arxiv.org/html/2606.10929v1)§3/4.3/5.1–5.3/6，2+1+3=6。只局部task plane≠跨步恢复支集，保synthetic固定r漂移、GPT2 local受约束恢复接近Full、真实trajectory准备费用与Qwen7B sampling-control反侧，不采全局线性、免标签/免代价恢复或泛化遗忘比例。未核代码/复现；jun11_review实际必要/actualowner/修后唯一PRE通过、root窄授后作者真实保存，reader§21唯一实际POST通过、窄位释放；不预签日级。
+
+- `SF-2025-ARXIV-2509-21870` — Aristotle，Daily2025-09-30补Sep29BJT；[exact-v1](https://arxiv.org/html/2509.21870v1)III/IV-A–E/T1–9/V及2024官方ACL旧稿p1–5/p8–10直接对照，作者38→Einstein38一次实际采用。2025重要扩展事件不重复评分，原拟2+1+2=5历史保留；ΔW=f(BA)/Sinter与旧主要实验/费用已2024公开，非本窗机制first。只权重乘积非线性与activation适配/静态materialize分责、新增函数/任务/稳定性控制；保T4/T2配置人口差、Tanh分类反优、T7performance/loss读数不闭及方差反退、MRPC表文冲突/非通用bound、dense工作状态/全部费，不授全rank能力/全域稳定/净速，未核实现/复现。作者42原三项经Einstein41整体PRE通过，root本轮明确新窄授后已按原技术稿真实保存；已完整自读新增、完整直接两侧及本人注；Einstein53唯一actualPOST已通过，整合生效且本次指定窄位释放。本尾仅同步既成事实，不第三Source/PRE/POST或授DAY。
+
+- `SF-2025-ARXIV-2509-25414` — Daily2025-10-02补Oct01；[ALoRA exact-v1](https://arxiv.org/html/2509.25414v1)§3–5/B.1/C.3，2+1+2=5。root首次必要→Helmholtz R5实际采用；仅共同初始化的相似混杂与共享A/B训练选择，不授B.1错误维度/同子空间即等函数、异rank跨轮累加recipe或任意旧adapter无损共享。保逐任务反退/Δm非离散度、动态gate与训练/通信全费，未核代码/复现；R8当前owner与原稿通过，root按指定窄位真实保存并完整自读；Helmholtz R11唯一非writer实际写后复核通过，整合生效、指定位释放。本尾仅同步既成事实，不授日级完成。
+
+- `SF-2026-ARXIV-2606-02576` — Daily2026-06-03补Jun02；supp_jun03_close。6分；训练target格式teacher与部署输入预测码分开验oracle/真实routing，token-id统计绑定tokenizer。投影非语义保证；保T1均值46.928不采印47.23、预算/顺序反侧及global/group/residual全费用。必要原证见本日SUP_CLOSE_BATCH7_20261025.md；同研究线非独立复制，R189必要/actualowner/原literal经root授权后真实保存，作者已完整自读实际新增/完整直接两侧与本人注，非writer唯一实际POST R190通过，整合生效/本窄位释放；未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2606-02502` — Daily2026-06-03补Jun02；supp_jun03_close。6分；warm-up增量SVD×历史LoRA输入子空间筛新rank，另校准centroid混合竞争；保几何非能力、冻结旧centroid不冻结归一路由、soft penalty非硬正交及格式/预算混杂反侧。必要原证见本日SUP_CLOSE_BATCH7_20261025.md；同研究线非独立复制，R189必要/actualowner/原literal经root授权后真实保存，作者已完整自读实际新增/完整直接两侧与本人注，非writer唯一实际POST R190通过，整合生效/本窄位释放；未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2606-00428` — Daily2026-06-03补Jun02；supp_jun03_close。5分；CP tensorization改变预算grid步长而限制方向，193为stored scalars非intrinsic DOF；tested cap事后max非独立选型。保OPT任务反侧、搜索/重构/总训练费与普通LoRA退路。必要原证见本日SUP_CLOSE_BATCH2_20261025.md；root授权采用，R180必要/actualowner/原literal通过后已真实保存，作者已完整自读实际新增/完整直接两侧与本人注，非writer唯一实际POST R184通过，整合生效/本窄位释放；未核实现/复现，不授DAY。
+
+- `SF-2025-ARXIV-2509-17786` — Socrates，Daily2025-09-24补Sep23；exact-v1 S3–6/A1/A2及仅必要C1–2/D1–4，R135首次准备→作者122唯一另一角色actual采用，原2+1+2=5。只完整联合支持内公共core表示/具体合并分责；保Alg1印式与正文维度冲突、A1证明缺口、非线性换基反例非完整TIES复现、输出Tr/并集容量、SNLI/TSV反退及制备/搜索/dense重建全费。不采任意merge无损、原r/无遗忘或607.5×端到端；未核图像素/源码/权重或复现。作者123原三项/Helmholtz R141整体纯PRE通过，root本轮fresh明确新窄授后已真实保存，完整自读记录见本日日志；Helmholtz R182唯一actualPOST已实际通过，I21生效且指定正文/本人注窄位释放；本尾仅同步既成行政事实，不第三Source/PRE/POST或授DAY。
+
+- `SF-2025-ARXIV-2509-18093` — Socrates，Daily2025-09-24补Sep23；精确v1 PDF pp2–9/14–15必要及公式视觉，原2+1+2=5，作者100→Helmholtz115一次必要采用。只共享冻结A下thinQR保持每adapter同一rawnorm/增量、校准目标与制备/筛选分责；保独立zscore反序构造、ARROW有限反例、relative分数非绝对准确率、HellaSwag反退、QR/统计/全库驻留/base/选中Q与安全访问全费。未核权重/代码或复现，不采总rawnormmax/任务正确或QR隐私证书、任意旧A无损转换或FLOPs同倍wall。作者112经115唯一URL修正/Helmholtz R129及R131整体纯PRE通过，root本轮fresh明确新窄授后已真实保存，完整自读记录见本日日志；Helmholtz R179唯一actualPOST已实际通过，I18生效且指定正文/本人注窄位释放；本尾仅同步既成行政事实，不第三Source/PRE/POST或授DAY。
+
+- `SF-2026-ARXIV-2606-00494`：2+2+2=6；exact-v1 §3–6/Eq8–16必要，activation误差子空间与有限adapter容量；Th5.2仅abundant-rank separable上界，保局部/迭代反退及完整量化适配费。 未核代码或复现。独立必要Source/逐字PRE通过，root已真实保存；非writer `jun03_next_reader` 已真实读取完整新增、完整直接两侧与本人注，唯一actualPOST通过（本日SUP_NEXT_REVIEW_20261024，末项R20）；本句只同步既成结果，不授完整DAY。
+
+- `SF-2026-ARXIV-2606-02252`：2+1+2=5，exact-v1 §4–5/Eq6–16必要；head/residual与agreement门控分责，保naive残差/ungated反退、逐域回归与SVD全费，不授几何功能真值。 未核实现或复现。独立必要Source/逐字PRE通过，root实际保存；非writer `jun03_next_reader` 已真实读取完整新增、完整直接两侧与本人注，唯一actualPOST通过（本日SUP_NEXT_REVIEW_20261024，末项R20）；本句只同步既成结果，不授完整DAY。
+
+- `SF-2025-ARXIV-2509-15087` — Aristotle，Daily2025-09-20补Sep19；[exact-v1](https://arxiv.org/html/2509.15087v1)§4/Eq2–5/Alg1、§5整T1–3/A/C2整T4–8/D/E1声明必要由作者175首备、Einstein175一次实际采用通过，原2+2+2=6。只拟采用本端训练权限与全池读取分开、重复槽Top-M指定支持的有限构造，不承诺非零梯度/去重kernel、动态参与或隐私/真实非凸收敛。B距离gauge与因子平均反侧、router正文/Alg交接、分项退步/非同预算控制及广播/驻留/初始化/聚类/路由/训练/通信全费留报告近文；未核图全部坐标/代码或复现。Einstein176原三项纯PRE通过；root本轮actualfresh独立新窄授12697完整marker后/READ首段前及真正H2notes首14921前。本次按177原技术稿真实保存，完整新增/直接两侧及本人注和notes两侧已实际selfread、限定diffcheck通过；Einstein183唯一actualPOST已通过，本指定正文/本人注位即时生效释放，I27；本尾仅同步既成行政状态，不第三Source/PRE/POST、不授DAY。
+
+- `SF-2025-ARXIV-2509-14921` — Aristotle，Daily2025-09-20补Sep19；[exact-v1](https://arxiv.org/html/2509.14921v1)§3–6/整T1–5必要由作者103首备、Einstein107一次实际采用，原2+1+2=5，三读出消费者具体gap局部深入。只原图文zero-shot/新head/重训probe分验；保十四/十三任务不同人口、GELO非遗忘率、FoundPAD-L本域反退、B16/L14与head/loss/data混杂及全费用，不授类别数/容量唯一因果、原知识擦除或全部能力恢复。未核全图/代码/复现；Einstein114原三项纯PRE通过，root本轮actualfresh仅授27707完整第二段后/29498前与真正H2notes首12960前的原段/独立marker/本人注；本次按原稿真实保存并完整selfread新增/两侧/本人注，Einstein121唯一actualPOST通过，指定窄位立即生效释放；本注仅同步既成行政状态，不第三Source/PRE/POST、不授DAY。
+
+- `SF-2025-ARXIV-2509-12960` — Socrates，Daily2025-09-18补Sep17；exact-v1 §2–6/Limitations/E1–6/T1–6及A–C必要配置由Helmholtz110一次采用，原2+1+2=5。仅每段低秩/累计fold与base/factor/optimizer重启身份分责，保两tiny规模单run、无full-rank起步与LR/状态混杂、PER非质量、CN非实测数值误差、4/16卡及墙钟/GPUh反侧和全部费用；不授全rank轨迹、普遍失败或免费预训练。未核图全像素/实现或复现；原三项按root独立fresh窄授真实保存并完整自读，Helmholtz127唯一actual完整新增/完整两侧及binding/本人注POST已通过，I18生效且指定位已释放；本尾仅同步既成行政事实，不第三正文/Source/PRE/POST或授DAY。
+
+- `SF-2025-ARXIV-2509-12697` — Socrates，Daily2025-09-18补Sep17；[exact-v1](https://arxiv.org/html/2509.12697v1)Motivation/Method/Experiment/Conclusion、式2–6/Alg1/T1–5必要，2+1+2=5，聚合定义反侧深入；reader50必要Source通过。仅每client历史base与本轮peer-delta的分工；保signed-cosine/零分母、LoRA因子gauge、分任务退步/全员同步和server/通信/驻留全费，不授通用精确recipe、坐标自动兼容或隐私。未核代码/复现；原三项按root独立fresh窄授真实保存并完整自读，Helmholtz69唯一actual完整新增/完整两侧及binding/本人注POST已通过，I9生效且指定位已释放；本尾仅同步既成行政事实，不第三正文/Source/PRE/POST或授DAY。
+
+- `SF-2025-ARXIV-2509-13240` — author18，Daily2025-09-18补Sep17；[NoRA exact-v1](https://arxiv.org/html/2509.13240v1)§3–5/T1–8/C/D.1/A.2/B必要，2+1+2=5，非线性系数适配面/数值与执行反侧深入。保d×r乘r×1向量、近似初值非原函数、compact/polefree条件、NoRA++混改weight、head外参数账与FLOPs/latency反向及分项反退；不采rank维度强定理/普遍稳定更快，硬件/dtype/seedCI未闭，未核图全部点/代码或复现。
+
+- `SF-2026-ARXIV-2610-29110` — Daily2026-10-23，Oct22公开；SOURCE_AGENT3.md G8必要exact-v1/actual owner及逐字PRE经独立oct23_live_arxiv通过，沿原5分。root仅按准许窄位保存，保关键反侧/适用边界/全部费用和原有效正文；未核完整artifact或复现，独立oct23_live_arxiv已完整核新增、直接两侧及本人注，实际写后通过，不授DAY。
+
+- `SF-2026-ARXIV-2610-24614` — Daily2026-10-21窗Oct20；exact-v1 §3–5必要，2+1+2=5；只跨语言候选交集/抑制与状态transfer验证及FFN输出增量mask，保关联非唯一安全机制、效用损失、discovery-unseen非全部未见与全费。未核代码/复现。root ROOT-C17-PRE必要Source/actualowner/完整PRE原样通过，root既授PreciseShield完整第二段后/TITAN前原单段+本人注；作者已保存批准稿，待完整邻接自读与唯一非writer actualPOST，不预生效/DAY。 截至本轮，唯一非writer ROOT-C17-POST 已实际核完整新增/完整直接两侧/本人注并通过actualPOST，本指定窄位已生效释放；前述待POST为历史过程，本句仅行政同步既成事实，不第三核或授DAY。
+
+- `SF-2026-ARXIV-2610-26370` — Daily2026-10-21；exact-v1 §3–6/B/C/H必要域，保持C2 3+1+2=6。只native expert非线性内/外granularity、适配/保持及balance取舍，保LR选择、非等compute、probe非因果及全部费用；不授统一Pareto或生产SLO，未核artifact/复现。root R-A28与独立R156必要Source/actualowner/完整PRE通过，root已原样保存并完整自读直接两侧/本人注，待一次非writer actualPOST，不预日级。
+
+- `SF-2026-ARXIV-2610-26910` — Daily2026-10-22，[MIT3 exact-v1](https://arxiv.org/html/2610.26910v1)必要干预选层/delta监督、对照和构建/质量反侧，2+1+2=5。只采用逐材料LoRA写入接口；保方向不等无损、容量混杂、direct-video反退与训练/驻留全费，不授参数记忆事实权威。作者K3/reader R138必要Source/唯一owner/PRE通过；真实写后核验见当日REVIEW，未核实现或复现。
+
+- `SF-2026-ARXIV-2610-25048` — Daily2026-10-21；exact-v1 §3.1–3.3/§4/T2–5、Limitations及B–E相关反侧；2+2+2=6，compute/save/reconstruct与双布局近似差额深入。保非零norm scale条件、近似反向、校准人口/全部费用和checkpointing反侧。未核实现或复现，不采用普遍速度/内存倍率。reader必要Source/当前owner与收窄逐字稿通过；R33实际新增、完整两侧与本人注写后通过，不授日级。
+- `SF-2026-ARXIV-2610-24816` — Daily2026-10-21；exact-v1 §2/§4–7/T1–9与A/C/D/F必要域；2+2+2=6，resident-tile反向数值身份及CPU-NPU合流差额深入。保同dequantizer不等FP32、全GDN高精度、row guard/有限重试及热/驻留反侧；不采用异协议GPU倍率，未核实现或复现。reader必要Source/当前owner与完整稿通过；R33实际新增、完整两侧与本人注写后通过，不授日级。
+
+- `SF-2026-ARXIV-2605-29498` — Daily2026-05-30补May29，2+1+3=6；精确v1 §3–4/T1–2/Limit/AppB.10–13与§3.2/E.4必要Source，具体conditional-KL objective差额深入。保丢权重/有效lambda混杂、近1数值人口、目标反退和完整base前向；T1为seed1 representative非三seed均值，不授零遗忘/连续学习/部署速度。未核代码/复现；reader R12日期/R19必要Source/owner/逐字PRE通过，root授本单段及本人注，作者保存后唯一非writer reader R20已实际读完整新增/完整直接两侧/本人注，真实POST通过，窄位释放；仅行政同步，不预DAY。
+
+- `SF-2026-ARXIV-2605-24154` — Daily2026-05-27补May26，exact-v1 §3–5/AppC，2+2+2=6，安全必要域及具体neutral构造差额深入。只采用目标变化/非目标base重构的输入支集与局部线性组合界，非整网无干扰或真实授权保证；相关负域遗漏、近似neutral及组合全费保留。root R13必要Source与A15逐字PRE/当前组合链/相邻章已实际通过并授唯一一段＋本人注窄位；作者按稿保存，root R18已实际完整新增/直接两侧/本人注非writer POST通过，指定窄位生效释放；本句仅同步既成事实。未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2610-22539` — Daily2026-10-20窗Oct19；[exact-v1](https://arxiv.org/html/2610.22539v1) §2–4/A1–5必要bank/router/anchor/scout协议，2+2+2=6。systems实际非笔记作者原域/当前owner B6独核通过，root授单段/本人note；只采source-bank组合规则训练与manual决定静态部署的成本前移。保version/domain示范可见性差、完整Δ混合非平均因子、rank/scale、bank扩员router重训、anchor非fullKL和全费/固定adapter退路，不授无demo或免全部训练。作者实际保存并完整顺读新增/直接两侧/本人注；root随后实际完整读新增/直接两侧/本人注，非writer POST通过，本人注行政同步并释放。未核代码或复现，不授DAY。
+
+- `SF-2026-ARXIV-2610-22438` — Daily2026-10-20窗Oct19；[exact-v1](https://arxiv.org/html/2610.22438v1) §2–5.2定义/匹配控制/precision与限制；非作者校准3+1+2=6。systems实际必要原域与Ch30具体owner独核通过，root授单段/本人注。只采W/Δ身份、谱定义与matched random/non-alignment控制；不授post-training必深、uniform scaling普优或跨harness性能反驳。作者实际保存并完整顺读新增/直接两侧/本人注，root已实际非writer完整新增/直接两侧/本人注POST通过，末注同步，本窄位释放，未核代码或复现，不授DAY。
+
+- `SF-2026-ARXIV-2605-14841` — Daily2026-05-16补May15；[exactv1](https://arxiv.org/html/2605.14841v1)§3–6/Eq5–12/Prop1/T1–3/§5.4/E/T6–8，2+1+2=5。仅固定正交partition替代BA；保等距限image(P)、非loss/质量保证、分项退步/基线预算来源差异、H100不规则访存慢约10%、base/head/PRNG/索引与全费。必要Source、日期、具体owner及本文段经独立复核；未核实现/复现。
+
+- Daily2026-05-09补May08：2605.06175v1§3–5/B必要Eq19→21/25/D.4，5分Source R19通过；只采SVD共享/路由专家及期待补偿边界，保乘积期待可分缺假设、actionhead预算/retention与部署反侧；未核代码/图像素/复现。唯一TRAIN-LORA。
+
+- `SF-2026-ARXIV-2610-21456` — Daily2026-10-17窗10-16；[TITAN exact-v1](https://arxiv.org/html/2610.21456v1) §3–9/必要knockout与配置，2+1+2=5。仅干预敏感性提出更新组件；保counterfactual混杂、各语对重发现、TER反退与发现/训练全费，不采完整唯一circuit或English-pivot排除。root必要Source/actual owner最小PRE独核后授单段及本注窄写；作者已保存并读回，live1017_org_a已实际新正文、完整直接两侧及本注非writer POST通过（ORG_A十二项POST），作者仅行政同步既成事实，不授DAY。未核实现/复现。
+
+- `SF-2026-ARXIV-2610-22236` — Daily2026-10-17窗10-16；[Training-Free OPD exact-v1](https://arxiv.org/html/2610.22236v1) §3–5/AppA/B/C必要层，2+1+2=5。仅teacher-rollout Gram的人口/loop tokenmass与融合精度接口；保fixed-input layer目标非整网保真、correctfilter反侧、matched precision及全部费用。root必要Source/actual owner最小PRE独核后授单段及本注窄写；作者已保存并读回，live1017_org_a已实际新正文、完整直接两侧及本注非writer POST通过（ORG_A十二项POST），作者仅行政同步既成事实，不授DAY。未核代码/复现。
+
+- `SF-2026-ARXIV-2605-01256` — Daily2026-05-06补May05；[exact-v1](https://arxiv.org/html/2605.01256v1)，2+1+2=5。必要方法/条件、直接对照与反侧见本日SUP A6；只采A7指定受限命题，不授普遍能力/稳定/性能保证，全部测量与准备费用保留。root实际必要Source/具体owner及逐字PRE通过，授本单段及本人注窄位；作者已保存并实际self-read；root非writer实际完整正文/两侧/本人注POST通过，指定窄lease释放；仅同步既成事实，不授DAY；未核代码、全部附件或复现。
+
+- `SF-2026-ARXIV-2605-01061` — Daily2026-05-06补May05；[exact-v1](https://arxiv.org/html/2605.01061v1)，3+2+2=7。必要方法/条件、直接对照与反侧见本日SUP A6；只采A7指定受限命题，不授普遍能力/稳定/性能保证，全部测量与准备费用保留。root实际必要Source/具体owner及逐字PRE通过，授本单段及本人注窄位；作者已保存并实际self-read；root非writer实际完整正文/两侧/本人注POST通过，指定窄lease释放；仅同步既成事实，不授DAY；未核代码、全部附件或复现。
+
+- `SF-2026-ARXIV-2604-27796` — Daily2026-05-02补May1；v1Methodology/Experiments/T1–5必要层，2+1+2=5，global谱池分配与rank/parameter/bytes分责差额深入；QR-smallcore旧机制具体复用。保ties/shape/scale、有限对照/全费，不授EYM唯一性、任务无损/实际serving速度或Fisher等价；未核artifact/复现。R54非writer必要Source/actual owner/逐字PRE及root窄lease后真实保存；R55非writer actualPOST已核正文、完整邻接与本人注通过，仅行政同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2604-27155` — Daily2026-05-02补May1；v1§2/3、T1、§6/7及R22，2+1+3=6，具体quotient mean缺口深入。只采固定rank/polar gauge与平均共同不变的接口；保task反退、rank r/6r与非完整KnOTS pipeline、数值费用/退化边界。未核实现/复现，不授DAY。非writer `may02_resume_reader` 的R26必要Source/owner/PRE及R28保存后正文、完整邻接与本人注POST通过；root接纳，仅同步本注。
+
+- `SF-2026-ARXIV-2604-23750` — Daily2026-04-29补Apr28自然日；[exact-v1](https://arxiv.org/html/2604.23750v1)§4.1/5/7.1/8.1/9.9/10.3；2+1+2=5。只固定contextadapter幅度/层选择与queryprobe替代，margin定义重排不证纯幅度瓶颈或全网logit线性；反退/调参/全部费用近文。root必要Source/actual owner/逐字PRE通过并授本单段+本人注窄lease；root非writer实际新增正文、完整上下邻接与本人注POST通过，窄lease释放，作者仅同步已发生行政状态，未核实现/复现，不授DAY。
+
+- `SF-2026-GITHUB-UNIRL-PR575` — Daily2026-10-14；[精确 merge 的 lora.py](https://github.com/Tencent-Hunyuan/UniRL/blob/6c828f5ed81649153315d996f0f597e8808ff144/unirl/train/lora.py)，必要 frozen adapter load/inject/hash 路径及作者 CPU/Gloo 负例。仅 tensor 内容一致性，不含配置/最终 GPU checksum；未本地运行或复现。
+
+- `SF-2026-ARXIV-2604-08368` — [SOLAR exact-v1](https://arxiv.org/html/2604.08368v1) §2.1–2.2、§3/Table3–5、A1–A4；仅post-hoc base谱basis/系数/索引/seed传输表示分支。Eq3/4矩阵朝向与basis切片、正文模型名含糊，不认证可执行逐字recipe、稀疏最优或普遍误差界；保MMLU/低precision退步、重构/校验全费及原A/B退路，未核artifact/复现。
+
+- 2026-04-08补充 / `SF-2026-ARXIV-2604-03314` / [exact-v1](https://arxiv.org/html/2604.03314v1)：5分，具体配对模态增量差额深入采用；另一模态生成r²中间映射、两path与stage消费，dynamic分支不可staticmerge，不授无干扰或普遍低latency。 Source/日门/逐字PRE/实际正文及完整局部邻接已由非writer `supp_apr08_reader` 读核；本条仅同步采用边界，不宣布整日报完成或实验复现。
+
+- `SF-2026-ARXIV-2603-12577` — Daily `2026-03-17`补03/16自然日；[exact-v1](https://arxiv.org/html/2603.12577v1) §3.1–3.3/Eq1–8、§4.1–4.6/Tables2–5/Limitations/Appendix B–D。2+1+2=5，shared seed经空间重建算子生成expert增量具体接口差额深入。resume_mar17必要Source/实际Ch30差额与两段逐字PRE经resume_review17_18独核通过，root授本两段/本人注窄锁后落实；seed rank非物化rank保证、zero kernel非router分化、task embedding/ALP完整recipe不采用，任务反退/总费用与静态共basis/独立expert回退近文。D明确best evaluation checkpoint，全部搜索总费用ND；非writer resume_review17_18实际207–248完整sharedbasis→EPT→阶段方向邻接及815–830本人824/邻注回对已核PRE/Source，局部POST通过；更新本人注后最终定点回读待核，不授DAY、普遍稳定/无代价、artifact核验或复现。
+
+- `SF-2026-ARXIV-2603-09493` — Daily `2026-03-12`补查；[EvoPrompt exact-v1](https://arxiv.org/html/2603.09493v1) §3–5/Eq5–14/Tables1–4。2+1+2=5，历史方向与可学习幅度分责gap深入；不采forgetting-free、covariance去相关/独立保证或最少参数/最快。有限CLIP人口、原输出正则混杂、任务退步与历史/参考费用保留。未核图像点位、实现或复现；Source/PRE经mar12_independent_continue独立复核通过，root非作者已实际顺读正文/完整邻接及逐字PRE，actualPOST通过，窄锁释放；未授DAY。
+
+- `SF-2026-ARXIV-2603-07404` — Daily `2026-03-11` 补遗漏；[LoRA-SP exact-v1](https://arxiv.org/html/2603.07404v1) §III–V、TableI/III/IV必要反侧；TableII仅局部rank对照。2+1+2=5，逐输入vector selection/allocated-vs-active差额深入；自由因子/router score不是相应SVD谱，不继承矩阵硬界或任务保证，任务反退/η非单调/全费用与full-bank或fixed-rank回退近文。review_mar11_continue actual necessary Source、Ch30逐字PRE和root窄锁通过；supplement_20260311 窄写一段，review_mar11_continue 非写入者实际正文280–329/342–379、新312段及本人814注回对必要v1；末注证据范围修正后定点实读通过，最终POST通过，窄锁释放，不授DAY；未核artifact或复现。
+
+- `SF-2026-ARXIV-2603-09511` — Daily `2026-03-12`补查；[exact-v1](https://arxiv.org/html/2603.09511v1) §II-B/IV–VI。2+2+2=6，完整训练图调度与低秩执行差额深入。采用静态生命周期/tiling接口和小矩阵反侧；GVSoC模拟、CCT-2、FP32、性能batch1与质量batch8分账，未核真实硅片或artifact。非报告作者root已实际必要原证、Ch30完整相关论点与Ch29/31交接PRE后窄写；非写入者supplement_20260312实际顺读新正文、128–185完整局部邻接及本注，并回对已读原证，POST通过，窄锁释放；不授日级完成。
+
+- `SF-2026-ARXIV-2601-06356` — Daily `2026-01-14` 增量；[Monkey Jump exact-v1](https://arxiv.org/html/2601.06356v1) §3.1–3.4、§5.1–5.3、§8，2+1+2=5，跨既有 projection 的非梯度中心/adapter-only gate 差额深入。全部 E softmax 后 mask，不重归一；base 全执行、EMA 空 assignment 不更新。理论/sequencewise 配方不采用，质量与效率人口/成本/回退近文。peer 必要原证/actual owner PRE 通过，root 授本段及自身末注窄锁；作者已完整局部顺读，root 非写者已实际独读新正文、完整局部邻接及自身末注，actual POST 通过，窄锁释放。未核实现/复现，非 DAY。
+
+- `SF-2026-ARXIV-2601-04823`（Experimental）：Daily `2026-01-10`补查；[exact-v1](https://arxiv.org/html/2601.04823v1) §3.2–3.3/Eq5–12/Alg1、§4.1、§5.1–5.3及必要A.1–A.3。采用base-MoE专家按saliency增长active rank与allocated/active预算分责；router共同更新与whole-expert消融归因限制、ceil quota/event数及expert/module计数口径不明，不授精确等终态预算或省显存。4 L40S48GB/ZeRO2/bf16/1epoch/3runs、OLMoE MMLU与Phi ARC反侧、43.2/32.7h长于LoRA39.7/30.2h保留，不采用medical训练split泛化保证。日作者必要源/actual owner PRE，root实际方法、关键对照与完整nested-rank邻接核后写两段；非写入者实际顺读278–346的两段、完整邻接与末注，POST通过，未核实现/复现，非日级完成。
+
+- `SF-2026-ARXIV-2602-21397`：[v1 §3 / Table IV 与 rank 对照](https://arxiv.org/html/2602.21397v1)。只采用深层低秩 prompt、共享位置系数与 frozen-feature drift 约束；不称权重 LoRA merge。低秩单独 77.51→77.06 及 base/novel 取舍保留。非原 packet 作者必要原证/actual owner PRE 与窄写完成；root已实际顺读正文、完整邻接与自身末注，POST通过，未复现。
+
+- `SF-2026-ARXIV-2602-22538` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.22538v1)，special-token校准nullspace/模块scale proxy与整网非线性边界。2+1+2=5，具体owner差额深入；限制、反侧、完整费用与原分支回退近正文。root实际必要原源/owner PRE通过并授单段窄lease；作者正文/完整邻接/自身末注已顺读，root非作者实际正文/完整邻接/自身末注POST通过。未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-18055` — Daily `2026-02-24`；[MAGE exact-v1](https://arxiv.org/html/2602.18055v1) §4.1/Eq1/Fig3–4、§5.1/5.6/5.7/§7。2+1+2=5，input/output四update责任的具体gap深入；同totalrank与onlyseenimage/text边界，freeze不等关闭forward的原文冲突近正文，不采用未清晰定义的PEMA公式或通用遗忘/新模态保证。8H100六任务约一周仅作者设置，专家成本随模态增长。root 必要原源/actual owner PRE通过授一段窄锁；作者实际正文与完整邻接写后顺读，root 非作者实际正文/完整邻接/自身末注 POST 通过，窄锁释放。未核实现或复现，非日级 Gate。
+
+- `SF-2026-ARXIV-2602-10993` — Daily `2026-02-13`；[LoRA-Squeeze exact-v1](https://arxiv.org/html/2602.10993v1) §3/Alg2、§4–5/Table1及D小核推导。2+1+2=5，训练/部署rank差额深入；小核精确谱重参数化不授RSVD完全最优或任务无损，极端压缩退步、refinement/annealing与真实搜索/训练成本就近保留。alpha/shape与训练状态identity为接口验收推导，不冒称原文已实现迁移。root实际必要原源/current owner PRE通过授Ch30窄锁；实际两段正文、前后邻接与末注已由root非作者POST通过，窄锁释放，日级未授；未核代码或复现。
+
+- `SF-2026-ARXIV-2602-06208` — Daily `2026-02-10`；[Emergent Low-Rank Training Dynamics exact-v1](https://arxiv.org/html/2602.06208v1) Ass3.2–3.4/Theorem3.5、§4–5及AppF1–2。2+1+2=5，task-conditioned初始化具体缺口定点深入，不重读无关全proof；保留固定W2/smooth/whitened/gradient decay与gap，小block更新不授权重恒rank/任意LLM。A100、FashionMNIST full-batch1500epoch五trial与VGG16缩pool/CE/SGD250epoch，head-only/角度/宽度反侧保留，precision及总成本未披露，未核实现/复现。root必要源与owner写前通过并授窄锁，实际POST待非作者核；日级Gate未授。
+
+- `SF-2026-ARXIV-2602-06385` — Daily 2026-02-10；[Muon/LoRA exact-v1](https://arxiv.org/html/2602.06385v1) §3–6/Thm5.7/6.2/Prop6.7、§7与§8限制。2+2+2=6，factor正交化到product谱的具体gap深入；仅采用smallinit/active sqrt(di)同步与boundedfactor条件，不授离散Muon或全LLM收敛，L2另目标与多余mode泛化压力保留。RoBERTa/SST2与LLaMA3.2-1B/Alpaca rank8仅谱观察、toy60×70/r5，不采性能数字；硬件/precision/seed/SLO未披露，无复现。root必要原源/owner写前通过，实际POST待核。
+
+- `SF-2026-ARXIV-2602-06358` — Daily 2026-02-10；[SHINE exact-v1](https://arxiv.org/html/2602.06358v1) §3.1–3.4、§4、§5.1–5.4、AppA/B2/B5–6。2+2+2=6，跨layer/token memory到generated-adapter接口gap深入；区分MetaLoRA与生成LoRA及两阶段前向，不采用反传等价、zero-cost或lossless压缩。Qwen3-8B/Meta128/generated8/M148、8A100与作者合成QA设置，ICL69.4高于55.6及长文/多轮反侧保留；precision/batch/concurrency/seed未披露，未复现。root必要源与owner写前通过，root非作者实际正文/邻接与末注POST通过。
+
+- `SF-2026-ARXIV-2602-06204` — Daily `2026-02-10`；[exact-v1](https://arxiv.org/html/2602.06204v1) §3–4、§5.1–5.4关键评价、§6、A.2–3/A.6、B.1–3/B.6–8必要配置。5=2+1+2，具体 owner gap 定点深入，root 必要原源/owner 写前通过。只采用 effective multiplier/初始化的受限 scaling 与 FFT 必要非充分迁移；finite-T/single-sample/SignSGD、Gaussian简化、RoBERTa/head、单seed42/grid反侧保留，不授完整AdamW理论或A6000实测。4H200/BF16有限作者实验，未核代码/复现；root实际正文/邻接及末注非作者POST通过，日级Gate未授。
+
+- `SF-2026-ARXIV-2602-05495` — Daily `2026-02-07`；[Transport and Merge exact-v1](https://arxiv.org/html/2602.05495v1) §4.1–4.3、有限结果与A3/A5/A6/B1/D。2+2+2=6，具体异构channel/layer coordinate transport缺口深入；不采相关性=功能保持或Eq14/15残差recipe，2Kstimulus/k128及校准/求解成本、更大source反侧保留。root实际必要源/owner写前通过，正文/邻接及末注root实际非作者POST通过；未复现。
+
+- Daily 2026-09-30，Experimental：[adaptation compiler exact-v1](https://arxiv.org/html/2609.37371v1) §3–11支持有限四程序的offline geometry预测与utility择程序；保留LOFO、Gemma低于default和offline穷举成本，不采用任意program synthesis、零样本跨base迁移或已实现confidence fallback。sep30_evidence_check必要来源审阅与写入，未复现实验；实际正文/邻接待root非作者写后复核。
+
+- `SF-2026-ARXIV-2604-22783`（Status: Experimental）：[Activation-rank PEFT exact-v1](https://arxiv.org/html/2604.22783v1) §2.1/§3.1–3.2、§4/Table 2、§7；Daily 2026-04-28。只采用 adapter-specific `[B,S,R]`→汇聚后 `[B,R]` 的可训练中间态分支，base activation、workspace 和整体峰值仍分别计量；固定/可学习汇聚、额外参数、词面质量与最高 8B 受测边界保留。root 已独立完成 source→owner，并实际顺读新增正文、邻接与本 note，写后通过；未复现实验，不代表当日日级 Gate。
+
+- `SF-2026-ARXIV-2604-22464`（Status: Experimental）：[MADE-IT exact-v1](https://arxiv.org/html/2604.22464v1) §3.1–3.2、§4/Table 1–2 与 Appendix B；Daily 2026-04-27。只采用同基座任务模型流的低秩 expert 子空间相似度、无额外路由训练的输入投影匹配与跨模块 task-origin 一致性作为 task-prototype 之外的条件分支。训练免费仅指不训练额外 router，完整模型适配、SVD、合并和推理扫描仍有成本；CLIP-ViT 图像分类结果不证明生成式 MoE、端到端时延或生产持续学习。root 已完成必要源→owner 并写入实际正文，待 apr01 对实际正文及前后衔接做非作者写后核；未复现实验，非整日报 Gate。
+
+- `SF-2026-ARXIV-2604-22127`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.22127v1) §3.1–3.3/Table 1、§4.2–4.6/Table 3、§7；Daily 2026-04-27。只吸收 hybrid 组件类型与串/并行拓扑成为 LoRA placement identity 的受限条件。两模型均为 sub-1B、单训练 seed、固定 rank 但 trainable 参数量不同；同预算和多 seed 仍是待验证条件，不把作者的 attention-only 排名外推。未复现实验，待独立写后与整日 Gate。
+
+- `SF-2026-ARXIV-2604-19254`（Experimental）：[ShadowPEFT exact-v1](https://arxiv.org/html/2604.19254v1) §3.1–3.4/Eqs1–9、§4.1–4.7/Tables1–2；采用随层深和 base hidden 演进的 attached shadow state 与固定 launch state、mergeable delta 的资产责任分支。Table1 detached 36.09/62.11 对应 attached 76.92/77.11 只说明受测配置不等价，SQuAD/20News 退步、额外 shadow 执行、预训练预算不匹配及尾延迟/SLO 未证均保留。root 必要 source→Ch30 写前与[修正后实际正文写后非作者复核](../../papers/2026/04/_sources/daily-20260422/V3_ROOT_19254_WRITE_AFTER.md)均通过，未复现实验。
+
+- `SF-2026-ARXIV-2604-16332`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.16332v1) §3–5/Limitations 与必要 soft-label/encoder–decoder 对照。采用 annotation-disagreement×逐 item loss 的 rank 验收分账，不推 rank 唯一因果、争议数据应删或 soft labels 已修复；四 encoder/two decoder/NLI/最多100标注者范围。root source→owner 已实际独立通过；实际正文及相邻衔接写后非作者复核通过（root）。实验未复现。
+- `SF-2026-ARXIV-2604-16826`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.16826v1) §4.1–4.2/§5.1–5.4/Table1–3。采用 B-concat SVD/energy shrink 与有效 delta norm 恢复的 pre-merge proposal，明确 gauge-sensitive proxy、finance 退步与无数据不等无验证；不推普遍最优。root source→owner 已实际独立通过；实际正文及相邻衔接写后非作者复核通过（root）。实验未复现。
+- `SF-2026-ARXIV-2604-16940`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.16940v1) §3.3/§5–6。采用 FullFT 后 sign/mean-scale 与 quantization-residual SVD 的资产压缩分支，不称训练 LoRA、统一 byte cap、原质量无损或通用时延节省；预算与质量反例保留。root source→owner 已实际独立通过；实际正文及相邻衔接写后非作者复核通过（root）。实验未复现。
+
+- GRASS（Status: Experimental，SF-2026-ARXIV-2604-07808）：[exact-v1](https://arxiv.org/html/2604.07808v1) §3.1–3.3、§4.3–4.4/Table2–8、Appendix A。采用原参数层抽样与全层 CPU optimizer 历史/当前 GPU working set 的差别；冻结层保留陈旧 MGN，norm 不等于无偏重要性或质量保证。作者 2×H10080GB、TinyLlama/Gemma2B/LLaMA2-7B、三次 accuracy runs；memory 表 batch1/长度1024，throughput batch4/长度1024，precision、部署concurrency/SLO未披露。作者侧必要证据和真实正文已核，待 root 非作者写后复核；未运行实现或复现实验。
+
+- `SF-2026-ARXIV-2604-08749`，Experimental：[exact-v1](https://arxiv.org/html/2604.08749v1) §3/§5.1–5.3/§5.6/§6/§8。固定随机 scaffold、可训练幅度与低秩因子是从零训练分支；3M～900M WikiText-103 同架构单 epoch 的 loss 均高于全量训练，900M 3.950 vs 3.156。Table 9 H200/bf16/batch32/128-token blocks 的大模型吞吐比为1.00，不能由内部可训练参数占比推出 wall-clock 加速；部署 seed/PRNG 身份不保证跨框架任意实现一致，ASIC效率只是展望。root 已完成必要原文与实际正文/相邻链路的写后独立复核，通过，本地实验未复现。
+
+- [2604.05426v1](https://arxiv.org/html/2604.05426v1)，Experimental；§5–8。采用base/adapter执行解耦、grouped forward/backward及rank-local adapter；base FSDP all-gather仍存在。Loss-based exit、runtime backfill与最终模型质量分别验收，最大吞吐倍数不外推。
+
+- `SF-2026-ARXIV-2605-06733`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2605.06733v1) 支持以共识子空间与共享参考坐标聚合异构 rank LoRA；证据限作者 GLUE、SuperNI、稀疏参与和客户端设置，不覆盖恶意参与者、通用隐私保证或任意非 IID 任务。
+
+- [Scale-QLoRA v1](https://arxiv.org/html/2609.04526v1)，2026-09-07 Daily：§3目标 scale grid 下的训练/导出权重身份、§4–6有限任务与表达边界。正文不采用通用质量/速度优势；exact merge 以 codes、grid、clamp、layout 一致为条件，不等于高精度 LoRA。未独立复现 artifact。
+
+- `SF-2026-ARXIV-2604-26340`（Status: Experimental）：[exact-v1](https://arxiv.org/html/2604.26340v1) §III-C–F/Algorithm 1、Table I–II 支持固定探索期后的逐 module 硬路由计数、一次性 expert/optimizer-state 物理裁除、gate 重排及后阶段关闭平衡损失；不是在线漂移阈值自动触发，后阶段吞吐不含探索/重建，ScienceQA 有低于对称 MoE 的切片。可回滚 mask、完整 checkpoint 与质量回归是本文工程边界，不冒称原文验证任意裁除可逆；本轮实际正文与相邻衔接已经非作者写后复核通过（root），未复现实验。
+
+- Code2LoRA（repository-conditioned generated adapter；Status: Experimental）:
+  https://arxiv.org/abs/2606.06492
+
+- Program-as-Weights（specification-to-neural-program compilation；Status: Experimental）:
+  https://arxiv.org/abs/2607.02512
+
+- How LoRA Remembers?（stubborn-token exact recall；Status: Experimental）:
+  https://arxiv.org/abs/2605.30260
+
+- S0 Tuning（recurrent launch-state adaptation；Status: Experimental / Artifact Identity Inconsistent）:
+  https://arxiv.org/abs/2604.01168
+
+本轮 Review 保留低秩增量、QLoRA 和动态 Serving 主线，补齐参数 shape、数值例子、initial state、SFT objective 接口、activation 边界、adapter composition 与 checkpoint metadata。Preference optimization 仍属于第 31～34 章。
+
+Primary-source 校验入口：
+
+- Edward J. Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models", 2021: https://arxiv.org/abs/2106.09685
+- Tim Dettmers et al., "QLoRA: Efficient Finetuning of Quantized LLMs", 2023: https://arxiv.org/abs/2305.14314
+- Efficient Reasoning on the Edge（post-prefill routing 与 training-defined KV compatibility；
+  Status: Experimental）: https://arxiv.org/abs/2603.16867
+- Scaling DoRA（Status: Experimental；factored norm、fused kernel 与 compatibility dispatch）:
+  https://arxiv.org/abs/2603.22276
+
+### Daily integration evidence trace
+
+- `SF-2026-ARXIV-2603-02885`：[exact-v1](https://arxiv.org/html/2603.02885v1) §2.2–2.4、§3.2–3.5/Algorithm1、§4、§5.1–5.4/§6。采用 hTask 的空间饱和/时间 overlap 取舍、冻结 base 无 weight-gradient 的调度边界及 chunk alignment 的 padding/KV 代价。作者测 2.7B/7B/13B/30B、A40/H100、64/128/256 序列及三类 PEFT；与 HF-PEFT、NeMo、SL-PEFT 分别搜索支持的 parallelism。低负载禁用 task fusion/operator orchestration/data alignment 分别降低吞吐 36.1%/30.3%/22.5%，重负载 task fusion 仅 6.25%；宣传中的 2.33× throughput 与 5.29× memory 不是同一指标，H100 的 5.29× throughput 另有评价条件。128-GPU Philly trace 是模拟，不是实际多租户生产部署；精确 dtype、重复运行不确定性及生产 SLO 未完整披露。作者必要正文审阅完成；root 已核必要原文与实际段落及邻接，非作者 POST 通过，未本地复现。
+
+#### Source-specific exact-v1 Review notes
+
+- SF-2026-ARXIV-2606-28479 — primary arXiv:2606.28479v1; exact-v1 URL=https://arxiv.org/html/2606.28479v1; Method=https://arxiv.org/html/2606.28479v1 — §III Threat Model and Methodology; Evaluation=https://arxiv.org/html/2606.28479v1 — §VI Utility Evaluation; Non-proof=https://arxiv.org/html/2606.28479v1 — §III Threat Model and Methodology; III-A Threat Model; VII Discussion。
+
+#### Source-specific exact-v1 Review notes
+
+- `SF-2026-ARXIV-2606-22878` — primary `arXiv:2606.22878v1`; Method=`arXiv:2606.22878v1 — §Priority-Aware Learning-Unlearning Correction for Dynamic Decentralized LoRA Fine-Tuning Thanks: N. Yang, Y. He, S. Wang, and C. Yin are with the Beijing Laboratory of Advanced Information Network, and the Beijing Key Laboratory of Network System Architecture and Convergence, Beijing University of Posts and Telecommunications, Beijing 100876, China (emails: {yangnuocheng, heyechen, sihuawang, ccyin}@bupt.edu.cn). Thanks: Z. Chen and T. Q. S. Quek are with the Information Systems Technology and Design Pillar, Singapore University of Technology and Design, 487372, Singapore (emails: zihan_chen@mymail.sutd.edu.sg, tonyquek@sutd.edu.sg).; §III System Model and Problem Formulation; §III-A Dynamic Decentralized LoRA System`; Evaluation=`arXiv:2606.22878v1 — §IV Problem Analysis and Proposed Method; §IV-B Correction Gap Analysis under DGD; §V-C Ablation Study`; non-proof=`arXiv:2606.22878v1 — §VI Conclusion`; fallback=该 family 的 failure pressure 是：However, the dynamic nature of practical decentralized edge networks, where devices may dynamically join or leave the collaborative training process, requires the system to continuously adapt to new data while selectively removing prior contributions. 披露的 evaluation signal 是：To address this challenge, we propose a priority-aware learning-unlearning correction framework based on orthogonal LoRA that can enhance the knowledge evaluation through topology adjustment. 证据只支持 exact-v1 在披露 workload/model/hardware 范围内的机制与结果，不证明生产尾部、未测分布或形式安全；前提、identity 或预算越界时停止新路径，回退到该 owner 已验证的旧路径并保留失败回执。旧路径在其原约束成立时继续共存。
+
+### Daily Books delta trace（2026-06—08）
+
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15734:start -->
+- `SF-2026-ARXIV-2606-15734` — Daily `2026-06-15`；primary `arXiv:2606.15734v1`；Books review `books-review:SF-2026-ARXIV-2606-15734`。
+
+  **已吸收的语义增量：** continual post-training可把document-specific gradient变成indexed retrievable artifact，在query时临时apply并在请求后rollback，避免shared-weight cumulative drift
+<!-- daily-books-trace:SF-2026-ARXIV-2606-15734:end -->
+
+- `SF-2026-ARXIV-2601-03648` — Daily `2026-01-09`；[ELO exact-v1](https://arxiv.org/html/2601.03648v1) §3.1–3.3、§5/7、Appendix B。原2+2+2=6，detach浅函数→重接→全模型alignment是执行graph而非仅更新集合的具体缺口；bulk/重接/后训练预算与质量、peak分账，zero-alignment反侧与非matched token/compute保留，不授首尾天然owner/无损或全流程headline。未复现；jan01_v3实际必要原源/owner写前核通过并授窄锁，jan01_v3已实际正文/前后邻接/源注POST通过，日级Gate未验。
+
+- `SF-2026-ARXIV-2512-24603` — Daily `2026-01-02`；[CLoRA exact-v1](https://arxiv.org/html/2512.24603v1) §IV-A–D、§V-A/B/D。5分针对共享 basis/module coefficient 的具体知识缺口深入受影响机制，只采用参数与容量分账、固定 merge 和 SADE 代理边界。ViT-B/16 ImageNet21k、VTAB19/rank8，部分 baseline 引用原配置，hardware/precision/seed 未披露；93.9%只涉及正则项 GFLOPs，未核端到端加速。未复现实验；root必要原源与owner写前核通过，root实际正文/前后邻接及末注写后非作者复核通过。
+
+- `SF-2026-ARXIV-2602-04998` — Daily `2026-02-07`；[Learning Rate Matters exact-v1](https://arxiv.org/html/2602.04998v1) §4.2–4.3/§5、Appendix B/H。原3+1+2=6，设计反证深入，仅采用方法特定LR搜索/peak与稳定窗口的比较契约；三个decoder、数学/代码、rank/batch只部分组合，Qwen/Gemma三runs与Llama例外不合并，FP32adapter/bf16base配置保留。PiSSA稳定范围/DoRA低rank反侧仍有效，不采用全部初始化Hessian因果、所有变体无价值或遗忘优势已否定。未运行实现或复现；root实际必要源/owner写前通过，root实际107正文/98–119邻接及810末注非作者POST通过；日级Gate未验。
+
+- `SF-2026-ARXIV-2601-06305` — Daily `2026-01-14`；[Why LoRA Fails to Forget exact-v1](https://arxiv.org/html/2601.06305v1) §3/4.2/5、Appendix A.1/A.2。2+2+2=6，仅采用基座继承风险、强度/方向分账及有限 dropout/谱正则/缩放尝试，不采用 trigger subspace oracle 或 Prop4.2 阈值保证：A1 的负 margin 上界在证明 Eq16 被换成下界，有限反例满足原假设但缩放后 margin 仍负。Eq10 未明确 U/V 截断维度，Fig2 top32 是分析对象，不能补造 top-k 实现；完整正交基会使该 penalty 退为 factor norm。RTX5060Ti16GB/309024GB、BERT/RoBERTa/Llama、BadNet/InSent、SST2/CR/CoLA、rank8/16，部分 baseline 引旧结果，其他取 best-of-runs，非等预算均值；精度、完整运行与成本未披露。未运行代码/复现；root 必要原源与实际 owner 写前通过，root 已实际顺读正文/前后邻接/末注，非作者 POST 通过，日级 Gate 待验。
+
+- `SF-2026-ARXIV-2601-05903` — Daily `2026-01-13`；[HAPS exact-v1](https://arxiv.org/html/2601.05903v1) §3.2–3.4/§4.7。原评分保持，具体owner差额深入；仅采用输入生成LoRA、joint architecture/parameter identity与bucket/BMM成本；pricing模拟非生产账单，不授通用性能/安全保证。未运行代码或复现实验；root实际必要原源/现owner写前核通过并授窄锁；root实际正文/前后邻接及末注非作者POST通过。
+
+- `SF-2026-ARXIV-2601-09398` — Daily `2026-01-16`；[ACT exact-v1](https://arxiv.org/html/2601.09398v1) §4.1–4.3/Table3/Appendix A/B。2+2+2=6，同坐标 answer activation 差→per-donor union row-mask→taskvector 的具体 gap 深入；optional 全参SFT分账，不授exclusive ability/无损能力保留、90%选择亦非全域稀疏。capture/search与训练成本、不同SFT配置/partial retention反侧相邻。未核实现或复现；root必要原源/owner写前核通过并授仅两段窄锁，实际正文L589/591、L581–599邻接及末注非作者POST通过，锁释放；日级未授。
+
+- `SF-2026-ARXIV-2601-09512` — Daily `2026-01-16`；[CLARE exact-v1](https://arxiv.org/html/2601.09512v1) IV-C/D、Algorithm2与TablesI–III。2+2+2=6，按阶段增长的 discriminator 银行与 adapter 容量分离、两阶段冻结和 many-to-one 映射是具体差额；z-score 扩张与 raw-error 推理不合并成同一已校准 gate。LIBERO 模拟、冻结 DINOv2/CLIP、10 continual tasks/每任务50 demos、20K adapter+2K discriminator steps、三 seeds，γ/容量与 encoder-only 反侧保留；不授旧路由不被抢、零遗忘、sublinear 总存储或真实 20 Hz deadline，hardware/precision/端到端延迟未披露，未核实现或复现。root实际必要源/owner写前通过并授窄锁，root已实际顺读L733–750及本末注，非作者POST通过，窄锁释放；日级未授。
+
+- `SF-2026-ARXIV-2602-09719` — Daily `2026-02-12`；[ScaleNet TTA exact-v1](https://arxiv.org/html/2602.09719v1) §3.1–3.3/Eq3–19、§4.1–4.4/Table2。2+2+2=6，具体在线更新/控制器与 reset 差额深入；采用 per-query Q/V rank4 LoRA、prompt NLL、gold 监督元训练的 layer/step learning-rate scale 与一阶近似，不采用 Eq2 Bayes 桥接、单调生成质量或无成本。BF16、每任务30K训练/300测试，动态 base LR .01 与固定 .05 分账，NQ 反退和 prompt 信任/rollback 保留；hardware、seed、端到端 adaptation latency 未披露，未核实现或复现。root 必要原源/owner 写前通过；root 已实际核两段、前后邻接与末注，非作者 POST 通过，本项窄锁释放；日级 Gate 未授。
+
+- `SF-2026-ARXIV-2602-15539` — Daily `2026-02-19`；[exact-v1](https://arxiv.org/html/2602.15539v1) §4–5/Eq13/Tables3–5；2+1+2=5，输入×layer×step已训adapter硬择具体差额深入，feature KL归一不明、双分支/guidance成本及subject/style反侧保留，不授免费或普遍质量。 root必要源/actual owner PRE通过授一段窄锁，作者正文/完整邻接已顺读、root非作者实际正文/完整邻接/末注POST通过，窄锁释放；未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-13069` — Daily `2026-02-17`；[exact-v1](https://arxiv.org/html/2602.13069v1) 必要方法、关键对照/直接限制；2+1+2=5，具体 owner 差额深入。原函数factor重算与old-state梯度/更新顺序；Apple/MLX进程预算非任意device免费等价。root PRE通过授窄锁，作者完整邻接已顺读，root非作者实际正文/完整邻接/末注POST通过，窄锁释放；未运行artifact或复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-16835` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.16835v1) §3.3–4.3/6–8/defense说明。2+1+2=5，selected-row tiedΔW具体差额深入；probe仅association、recipe冲突与utility/预算/whitebox边界保留。root必要原源/actual owner PRE通过并授窄锁，作者实际正文/完整邻接/末注已顺读，root非作者实际正文/完整邻接/末注POST通过，窄锁释放；未核实现或复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-16936` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.16936v1) §3.2–3.5/4/C.2；2+2+2=6，Select-N-Fold 初始化函数与训练支集差额深入。错误 covariance 界、因子平均/人口差异、rank/模型配置冲突及 broadcast/buffer/fold 成本近正文，不授零聚合或隐私保证。root 必要原源/actual owner PRE通过并授窄锁；作者正文/完整邻接及末注已写后顺读，root非作者实际正文/完整邻接及末注POST通过，窄锁释放；未核实现/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-16456` — Daily `2026-02-20`；[LoRSum exact-v1](https://arxiv.org/html/2602.16456v1) §3.1–3.3/Theorem3.1/4.1/5–6。2+1+2=5，固定batch X/S与变factor隐式full-step投影差额深入；ρ0理论/实用prox、diagonal近似、stochastic更多K反侧与缓存/内循环费用近正文。root必要原源/actual owner PRE通过并授一段窄锁；作者正文/完整邻接已顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放；未核代码/复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-17809` — Daily `2026-02-24`；[SBA exact-v1](https://arxiv.org/html/2602.17809v1) §3.2–3.3/Theorem1、§5.1、Limitations、Appendix F。2+1+2=5，正交 adapter 的局部切空间 posterior/QR 回流具体差额深入；集中 MAP 与二阶近似、curvature 成本、多次 forward 和蒸馏不保留完整不确定性边界近正文。root 必要原源/actual owner PRE通过并授窄锁；作者写后正文/完整邻接与末注已实际顺读，root 非作者实际正文/完整邻接与自身末注 POST通过，窄锁释放。未核实现或复现，非日级验收。
+
+- `SF-2026-ARXIV-2602-17385` — Daily `2026-02-21`；[TAK exact-v1](https://arxiv.org/html/2602.17385v1) Eq3/7/8、§4、Appendix B/E。2+1+2=5，具体owner差额深入；初始化JGram预计算→后续regularizer；聚合heuristic非精确sum、O(1)仅任务数、二次factor费用/原数据更准/linearization近正文。root必要原源/actual owner PRE通过并授窄锁；作者实际正文/完整邻接已顺读，root非作者实际正文/完整邻接/自身末注POST通过，锁释放。未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-17559` — Daily `2026-02-21`；[exact-v1](https://arxiv.org/html/2602.17559v1) §3.2–3.3/Table1、§4.2/5、A.2.1–2。2+1+2=5，full-ΔW empiricaldiagF与task-end merge/reinit具体差额深入；O(1)仅taskcount、6GB估计/塑性反侧/长序列漂移及回退近正文，不授零忘或普遍低成本。root必要原源/actual owner PRE通过并授窄锁；作者正文/完整邻接/自身末注实际顺读，root非作者实际正文/完整邻接/自身末注POST通过，窄锁释放。未核实现/复现，非日级Gate。
+
+- `SF-2026-ARXIV-2602-23197` — Daily `2026-02-28`；[exact-v1](https://arxiv.org/html/2602.23197v1)，必要原段/对照与局部反侧见当日core/owner packet。fresh非旧packet作者独核具体原证与actual owner差额，获root该owner窄ownership后写一段；作者正文及完整邻接实际顺读，root非写入者实际正文、完整邻接与自身末注POST通过，窄锁释放。采用正文窄命题，局部错误不授理论/全系统保证，未核实现或复现，不授日级Gate。
+
+- `SF-2026-ARXIV-2601-06788` — Daily `2026-01-14`增量；[Artificial Entanglement exact-v1](https://arxiv.org/html/2601.06788v1) §III/IV、II Default Experimental Setups/Fig19与IX Eq84，2+1+2=5，A内部tensorized参数化差额必要深入。只采用DeltaW仍BA_MPS、core/bond/tensorization/重建与状态成本；posthoc entropy非训练结构/能力因果，不采no-hair普遍定律、VIII全证明、整体速度或参数节省⇒质量。Fig19最优loss无明显降低、打印2×10²不修、独立LR与完整contraction/forward费用保留；硬件/precision/完整seed搜索预算未披露。root必要source/actualCh30 PRE通过并授最小一段及自身note窄锁；作者实际40–111完整写后邻接与本注顺读、限定diff-check通过，root非writer实际40–111完整邻接/新正文75及自身note925–932 POST PASS，Ch30锁释放。未核artifact/复现，非DAY。
+
+- `SF-2026-ARXIV-2601-07309` — Daily `2026-01-14`增量；[ARM exact-v1](https://arxiv.org/html/2601.07309v1) §3.1–3.3/Eq1–8/Algorithm1、§4.1–4.3/Tables1–3和AppendixC。2+1+2=5，role-span校准→backbone选择→固定其他benchmark保护集相减→donor神经元局部移植差额必要深入；不授saliency因果/无损能力保持、跨架构/tokenizer或完整最优recipe。Qwen3-8B/Qwen2.5-7B、699tasks/1240校准轨迹与suite平均绑定；个别任务退步、多模型前向/候选与dev搜索/校准状态及回归全费近正文。root必要源/actual owner PRE PASS并授本段/自身note窄锁；作者已顺读实际完整邻接与本注，root非writer实际完整608–634邻接/正文619及自身933注POST PASS，窄锁释放；root未额外重读作者Table3/AppC范围，不冒授该额外范围独核。current官方abs v1无已有明确withdraw/correction，Jan13公告与真实注册上界落BJTJan13；未核artifact或复现，非DAY。
+
+- `SF-2026-ARXIV-2602-11965` — Daily `2026-02-14`补查；[MaT-LoRA exact-v1](https://arxiv.org/html/2602.11965v1) §3–7/Eq4–7/13/F2/T1–2，2+2+2=6。仅采用共同basis与未观测时间core的预测proposal/共享支持验收；不采diffeomorphism/任意同rank联合支持/稳定保证，实测训练与测试更慢反侧及状态费用/回退近正文。非作者必要Source与actual逐字PRE通过；作者写后顺读，reviewer非writer实际190–230完整邻接/新209与自身937末注POST通过，root释放Ch30窄锁，不授DAY。未核artifact/复现。 本轮补查事件的首次公开日期未证，必要Source/PRE/实际POST研究仍有效，但不计本日已确认新增成果；归属只按[本日日报§5](../../papers/2026/02/14/README.md#5-缺口与下一步)的57日期请求定点重开，不撤正文或补造公开日。
+
+- `SF-2026-ARXIV-2603-09865` — Daily `2026-03-12`补查；[exact-v1](https://arxiv.org/html/2603.09865v1) §3、§4.1–4.4及Appendix A.3/B.2–B.4，2+1+2=5，联合data×layer梯度聚合与静态placement的具体差额深入。train-support proxy不是独立泛化；不采用逐步必优，stochastic选择不等于所有正内积集合，Top-k反退、单任务回归及两种实现的额外资源近正文。Table4/Appendix Table7的random结果及Table6/文字的LoRA时长冲突，不采精确ratio或全matched保证；precision/seed/CI Not Disclosed，未核实现或复现。root必要Source与逐字PRE通过并写入；非writer supplement_20260312 实际顺读新正文、完整邻接及自身末注并回对必要原证，POST通过，锁释放；不授日级验收。
+
+- `SF-2026-ARXIV-2603-12760` — Daily `2026-03-17`补查；[HiFICL exact-v1](https://arxiv.org/html/2603.12760v1) §3.1–3.4/Eq1–4、§4/5/Tables1–3与直接消融，2+1+2=5。虚拟K/V的归一化质量与零value非整体no-op差额采用；给定单head的分解不是全模型ICL等价，固定LoRA资产也有输入相关activation。CHAIR子指标反退及低参数不等低总费近正文；具体设备、precision、完整搜索与服务SLO未完整绑定。必要原证与唯一owner/PRE经独立复核，未核代码或复现，不采用全任务等价或普遍幻觉减少。
+
+- `SF-2026-ARXIV-2603-15990` — [exact-v1](https://arxiv.org/html/2603.15990v1)§3–5/Eq1–7/Tables1–5、A.1–2/B.1–3/Tables6/8/Alg1与C.2/Table9；官方main只定点canonical helper，不冒实验commit或完整实现。仅训练后checkpoint-token consumer及简单谱/监督人口边界，不采重根唯一方向、普遍能力/安全或端到端速度保证；未核artifact执行或复现。
+
+- `SF-2026-ARXIV-2603-17782` — [exact-v1](https://arxiv.org/html/2603.17782v1)必要§2–4/T2–8及S1配置反侧。仅少标签容量选择与curated-validation/uncurated-test人口的受限分账；保DoRA非单调、dropout/module混杂、标签歧义/类别切片及计时/全费用边界，不采underfit唯一因果、rank64通用最优、无重叠/跨farm保证或部署加速。未核代码、数据实例或复现。
+
+- `SF-2026-ARXIV-2603-27707` — [LoRA/freezing attribution exact-v1](https://arxiv.org/html/2603.27707v1) §3.1–3.5、§4.1/§5.3/T5/§6/T6/§7/8；仅冻结控制削弱低rank独占归因。主5seed BERT四任务与secondary/exploratory架构probe分开，保finalaccuracy/六任务MRPC反退、95%非通用阈值与训练评价全费；不授唯一因果、无遗忘或decoder/长期CL保证，未核repo/复现。
+
+- `SF-2026-ARXIV-2604-00733` — Daily2026-04-03；[exact-v1](https://arxiv.org/html/2604.00733v1)§3/Alg1/4.1–4.4/5，2+1+2=5，纠错深入仅permanent rank参数化/真实模型学习/shape单step分账；保简化attention、1.7B质量/LR未匹配、QR/全部费用，不授8GB完整70B训练或dense capacity，未核实现/复现。
+
+- `SF-2026-ARXIV-2604-02338` — 04-07补04-06自然日；LiME exact-v1 S3/Eq1–5、S4/T2/F4–5、J/K。2+1+2=5，具体owner差额必要深入，仅共享PEFT输出/逐维expert调制与既有表示routing成本身份；不采信息量/风险等价/最佳窗口定理、任意PEFT保证或894M效率拼7B服务收益。root非作者必要Source、实际owner和逐字PRE通过后授两body＋本人note窄锁；root实际新body、完整邻接/marker及本人note非writer POST通过；作者同步本注并实际读回后释放窄锁。未核artifact/复现，不授DAY。
+
+- `SF-2026-ARXIV-2604-08881` — Daily2026-04-14补Apr13，supp_apr14_author；[exact-v1](https://arxiv.org/html/2604.08881v1)§3.1–3.3/Eq5–12/Alg1/4.1–4.4与必要C/D，2+2+2=6安全深入；只采probe→FFN row-masked LoRA接口，不采true safety子空间、全部utility保持、<.03%等总费或唯一实现。保Llama MMVet55.2→54/53.9、MGSM67.7→66.1、1280human>92%无双评/CI披露、Qwen TR争议数值不采、partial transfer与全部费。reader必要Source/逐字PRE及实际正文/完整邻接/本人注POST通过，作者仅同步此注并实读回；未核实现/复现。
+
+- `SF-2026-ARXIV-2604-11446` — Apr15补Apr14；[NExt exact-v1](https://arxiv.org/html/2604.11446v1) §3.1–3.3/4.1–4.3 Eq4–11/Alg1、§5T2–6/F5与MMLU直接反側。2+1+2=5具体merged global/local delta→rank1 predictor缺口深入；仅parameterproposal，非optimizer/采样历史恢复，保SVD gauge/zero未披露、FP/LoRA LR/steps/test-repeat差异与任务回退，4A800局部server时间不外推全费用/通用加速。 root必要Source/date/currentowner/逐字PRE通过授两段+本人注窄锁，root实际正文/完整上下邻/本人注非writer POST通过，作者仅同步本注并实读回，窄锁释放，不授DAY。未核实现/复现。
+
+- `SF-2026-ARXIV-2604-12526` — Daily2026-04-16补Apr15，supp_apr16_author；[exact-v1](https://arxiv.org/html/2604.12526v1)III-A～B/Eqs1～3/Lemma1/IV-A～D/T1/F2～3，2+1+2=5，forward参数正交补/后投影及有限容量差额受影响深入。R79必要Source/R64date通过；不授retain输入无损、true minima、zero interference或删除/完整recipe；SVD/投影与全费、有限head/饱和反側保留，未核实现/复现。reader R109逐字PRE/R110实际单段、完整邻接及本人注POST通过；作者仅同步此注并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-17396` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17396v1) §2–4/Eq1–2/T1–6、AppA/B必要/C Alg1/D1–5，2+1+2=5安全受影响深入。只非零init/residual/netupdate与soft单因子约束边界，不补PEFT scaling未披露实现，不采unrestrictedrankopt/零干扰/删除认证。TOFU/WMDP slice反侧/选择门槛/初始化小时非总费保报告。fresh actualSource完成；root逐字PRE通过并授本局部与本人note窄lease，作者已保存并顺读完整邻接；root实际非writer正文/完整两侧/本人注POST通过，lease释放，作者仅行政同步并实读回；不授代码/复现或DAY。
+
+- `SF-2026-ARXIV-2604-17691` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.17691v1) §3–4/Eq1–8/Alg1/T1–4与A/C/D/F必要，2+1+2=5，安全受影响投影/AdamW step差额深入。Fisher/probe只样本代理、软回注与KL/重复repair非硬安全，retention比率非风险概率，真实step/optimizerstate分责及全费近文。fresh实际必要Source与root actual owner/A52逐字PRE通过并授窄lease，作者保存并顺读邻接；root实际非writer正文/完整邻接/本人注POST通过，窄lease释放，作者仅行政同步并实际读回，未核artifact/复现或DAY。
+
+- `SF-2026-ARXIV-2604-18124` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18124v1)必要Source/fresh实际层与本日SUP有效，原分5不改，具体差额必要深入。仅采用上述受限接口，保直接反侧与完整费用，不授整体质量、真实bytes相等、训练加速或一般最优；未核实现/复现。root实际owner/逐字PRE通过授本窄lease，作者已实际写入并顺读完整邻接；root实际非writer新段/完整前后/本人注POST通过，窄lease释放；作者仅行政同步并实际读回，不授DAY。
+
+- `SF-2026-ARXIV-2604-18075` — Daily2026-04-22补Apr21；[exact-v1](https://arxiv.org/html/2604.18075v1)必要Source与本日SUP有效，2+1+2=5，具体接口差额必要深入。采用上述受限机制，不授完整概率路径等价、语义真值、全任务质量或服务SLO；支持、反侧与全费近正文。root实际owner/逐字PRE、保存正文完整两侧及本人注POST均通过，窄lease释放；作者仅行政同步并实际读回。未核实现/复现，不授DAY。
+
+- `SF-2025-ARXIV-2504-21239` — Daily2025-05-02补May1；[exact-v1](https://arxiv.org/html/2504.21239v1)§3.2–3.5/4.3–4.5/5/T1–2，2+1+2=5，具体owner接口差额必要深入。Boyle仅采逐记忆LoRA/query全局gate及base→adapted forward/KV时序分责；不照录免费推理，不补已实现单/双pass，不授全能力保持或脑机制。root REPAIR_REVIEW§7已实际通过受限Source/评分，随后实际owner/PRE通过并授本单段/marker/本人注窄锁；作者已按许可自然措辞及中英空格整理后实际保存并顺读完整邻接/本人注，root §9实际完整新段/两侧/本人注非writer POST通过、接纳本项整合并释放窄锁；仅同步既成行政事实，不授DAY、实现或复现。
+
+- `SF-2025-ARXIV-2504-20859` — Daily2025-05-01补Apr30；[exact-v1](https://arxiv.org/html/2504.20859v1)§3–5/Eqs1–8/Tables1–4与current必要域，2+1+2=5，逐层activation交互差额深入。保目标label/encoder候选人口、signed非无冲突/原域保持、额外参数非全费、有限反退/网格阈值与全费用，不授推荐福利/LLM普效或精确执行recipe；未核代码/图像/复现。Newton§72必要Source/实际owner/逐字PRE通过，root已核当前完整两侧/本人注并授本单段窄位；Godel已保存并顺读完整新增/两侧/本人注，Newton§77一次非writer实际完整新增/两侧/本人注POST通过，root已消费接纳并释放指定窄位；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2505-00580` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00580v1)§3/4/Tables1–3/A/B必要，2+1+2=5。Ohm71/86日证/窗后发表角色、92受限Source与105具体owner/原稿有效；作者采用activation结构求值与另dense merge具体差额，保m冲突/固定因子非全表达、逐任务反退/全费。不采全模型速度/普遍quality保证，未看像素、核FFT/数值梯度或复现；root已实际读Ohm105稿/当前完整邻接与本人注并授指定单段/本人注；作者已实际保存并完整self-read，Ohm114实际完整新增/两侧/本人注非writerPOST通过，root已实际消费接纳并释放该指定窄位；非日级DAY。
+
+- `SF-2025-ARXIV-2505-00582` — Noether，Daily2025-05-03补May2；[exact-v1](https://arxiv.org/html/2505.00582v1)§3–5/三命题/Corollary/Table1–2/A必要，2+1+2=5。Ohm71/86日证/窗后角色、93 Source/反例与105具体owner/原稿有效；作者仅采绑定梯度求和及结构求值/容量接口，保相消、非无条件p倍/1除p稳定、反退/全费。不采未闭定理/配置拼接或wallclock保证，未读B全部输出、看像素/核实现或复现；root已实际读Ohm105稿/当前完整邻接与本人注并授指定单段/本人注；作者已实际保存并完整self-read，Ohm114实际完整新增/两侧/本人注非writerPOST通过，root已实际消费接纳并释放该指定窄位；非日级DAY。
+
+- `SF-2026-ARXIV-2605-03096` — Daily2026-05-07补May06；[HyPA exact-v1](https://arxiv.org/html/2605.03096v1) §2–7/9/Table1、A/B.1/B.3/D/E必要层。2+1+2=5，仅任务锚点后的prompt切空间编辑；保已知二元confounder、ID worst-group选λ、MIMIC/扩展反侧及两阶段/序列全费。不采正交投影、因果删除/公平保证；未核代码/复现。
+
+- `SF-2026-ARXIV-2605-03438` — Daily2026-05-07补May06；[Mantis exact-v1](https://arxiv.org/html/2605.03438v1) §3/Eq6–11、§4/Table1–4、A2、B1–3/Table5–8必要层。2+2+2=6，仅状态/输入/order条件低秩算子调制；保rank非范数/稳定性保证、双序列化非全排列不变、分割及S3DIS反退与全部费用，不授静态merge、全面超FT或5%通用比例。复用B组与root实际必要Source，未核实现/复现。
+
+- `SF-2025-ARXIV-2506-22813` — Godel，Daily2025-07-02补Jul1；[exact-v1](https://arxiv.org/html/2506.22813v1)§3/4/Limitations/A–C必要域，2+1+2=5。Newton49实际Source/评分/当前Ch30差额通过，作者复用其补到Tables9–15反侧；仅采两种target-conditioned预选择/静态合并与输出consumer分责，不把池自投票当gold。保单切片/更多域/过细划分反退、正文/附表口径冲突、双模型与经济单artifact不同费用；不采普效/无损或全部训练同费。未看像素/核代码/复现；版本绑定/独立验收与退路为项目推断。Newton§80已实际完成本新增全文、完整两侧及本人注的非writer POST，通过即生效并释放指定单段；未作整日DAY。
+
+- `SF-2025-ARXIV-2507-00327` — Boyle，Daily2025-07-03补Jul2；[exact-v1](https://arxiv.org/html/2507.00327v1)§3–5/T1–5必要实际读，2+1+2=5，Ch30基座谱容量proxy小gap深入。只采prior/任务更新分责，保非整数/actualrank、SPUprefix/容量混杂、分项反退和全费；不采最优、完整SPUrecipe或医学效能。未核图像素/代码/原权重或复现；root92已实际必要Source/当前owner/91.1逐字PRE通过并授指定单段/marker/本人注，作者按批准稿真实保存；作者已实际完整顺读新增/完整直接两侧和本人注，root95已实际完整新增/两侧/本人注POST及限定两层diff检查通过，接纳第27实际整合并释放指定窄位；本注只同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2509-01842` — Noether，Daily2025-09-04补Sep3；[exact-v1](https://arxiv.org/html/2509.01842v1) §3–7/Table2/B必要证明，2+1+2=5。仅单向matrix/联合LoRA因子对L1退出且保dx，与GRASS重采样分开；不采B非增/有限stationarity，保绝对阈值/alpha口径/quantizedFP、.6B LoRA907>892反侧及全费/重评退路，未核实现/复现。Ohm§3/12/14实际日期/Source/评分/具体owner/PRE通过，root仅协调GRASS完整第二段后/SFT objective标题前本单段/独立marker/本人注；已实际保存并完整自读；Ohm§27一次真实非writer完整新增/完整直接两侧/本人注POST通过，依root精确协调本指定窄位已生效释放；仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2509-03740` — Godel，Daily2025-09-06补Sep5；[exact-v1](https://arxiv.org/html/2509.03740v1)完整§3–6/AppendixI位于本日部分HTTP200前缀，curl28尾截AppendixJ，不冒全稿下载成功。2+1+2=5，固定双边basis/全谱幅与普通BA差额深入；保非函数/语义保持、任务反退、医学解释未验证及全费用，不采SOTA/全费倍率/无overhead。未核完整J尾表、图像素/代码或复现；Newton必要Source/具体owner/逐字PRE已通过，root已协调本指定一段/独立marker/本人注窄位；已按批准稿实际保存，Newton17一次实际完整新增/完整直接两侧/本人注非writer POST通过，按已协调规则本指定窄位生效释放；不代整日DAY。
+
+- `SF-2025-ARXIV-2509-03494` — Boyle，Daily2025-09-05补Sep4；[exact-v1](https://arxiv.org/html/2509.03494v1)§3–5/Eq1–7/T1–3必要，2+1+2=5。仅视觉tokenization前共享像素适配/冻结梯度与资产消费分责；保读出/logit非全概率、normalization顺序、表间差/质量反退、预算与源图拆分权限和全费，不授普遍IQA、无损/免费或完整recipe。未核图像/实现/profile或复现；root26实际必要Source/当前owner/50.1逐字PRE通过并授本精确位，作者按批准稿实际写入本一段/独立marker/本人注，root29已一次真实非writer完整新增/完整两侧/本人注及限定两层QA通过，本精确位生效释放；本注仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2509-04442` — Godel，Daily2025-09-06补Sep5；[exact-v1](https://arxiv.org/html/2509.04442v1)Newton73实际§2.1–2.4/3.1–3.3/5/Limitations/A.1–A.5/B.2–B.3必要域直接复用，2+1+2=5，作者未第三Source。仅同base/同probe配对activation差→候选表示，保位置/lr反侧、fewshot需训练、LoraHub30.3vs34.3反退、不同坐标/加性非功能保证与全费；A.5 inverse-perplexity符号冲突不采用/不补recipe。未核代码/像素/真实模型池或复现；作者当前完整owner两侧已读，Newton78逐字PRE通过，root已协调本指定精确位；本批准一自然段/独立marker/本人注已真实保存，Newton81一次真实非writer完整新增/直接完整两侧/本人注POST通过，本指定窄位已生效释放，不预整日DAY。
+
+- `SF-2025-ARXIV-2509-03057` — Boyle，Daily2025-09-05补Sep4；root分担[exact-v1 PDF](https://arxiv.org/pdf/2509.03057v1)pp1–5必要式/表/图caption已实际非请求者核，2+1+2=5。只连续placement搜索与真实裁除/skip分责；保Eq4 identity歧义、任务常量非内容路由、有限配置/质量反退及全费，不授完整多task配方/普遍压缩。未核像素/code/复现；root52实际原PRE/当前完整两侧通过并授本位，Boyle依稿真实保存并完整self-read；root54已一次真实非writer完整新增/两侧/本人注及限定两层检查POST通过，本精确位即时生效释放。仅同步既成事实，不授DAY。
+
+- `SF-2025-ARXIV-2509-03234` — Boyle，Daily2025-09-05补Sep4；root分担exact-v1必要Prelim/Method/Experiments/Eq1–10/三定理陈述/T1–4已实际非请求者核，2+1+2=5。只tensorfold固定scaffold/对角向量→高rank与自由度分责；保初始化/轴/seed身份、未闭Theorem3、双轴/任务反退和全部重建/搜索费用，不签任意最优或零成本。未读缺失technicalappendix证明/核code/复现；root71必要Source/具体owner/原PRE与本精确位通过，本一段/独立marker/本人注已真实保存并自读完整两侧；root73实际非writer完整新增/两侧/本人注POST通过，生效释放。Bernoulli继任仅同步既成POST事实，不重读机制正文，不授DAY。
+
+- `SF-2026-ARXIV-2610-06415` — Daily2026-10-07 Oct6；exact-v1 §2–4/6/E2.3/F4–8必要；partial-merged真实activation顺序算子对齐再factorize，保RoPE/VO-only、greedy局部目标、扩rank质量反退及求解/运行全费，2+2+2=6。未核artifact/复现；oct11_missing必要Source/date/owner及修订后逐字PRE通过，root总窄授权，作者已保存并自读；实际非作者POST另记，不预整日验收。
+
+- `SF-2026-ARXIV-2610-06325` — [exact-v1](https://arxiv.org/html/2610.06325v1)，Daily2026-10-07/Oct6窗，2+2+2=6；§2–7/9持续热/电量/phone质量，MLX PR4051八月已公开不重计kernel；reader1 §17必要Source/date/owner通过，literal PRE/实际POST另记，未核代码/复现。
+- `SF-2026-ARXIV-2605-28649` — Daily2026-05-29补May28；必要精确v1与实际owner差额见SUP_SOURCES A13，root实际独核通过并授本指定一段＋本人注。作者真实保存并顺读完整新增/直接两侧，root已实际完整新增/直接两侧/本人注唯一POST通过，窄位释放，不预DAY；仅采正文限定接口/对照，未核无关附录、代码或复现。
+- `SF-2026-ARXIV-2610-24123` — Daily2026-10-21/Oct20；C03必要原源/actual owner/完整最小PRE已由独立复核者R205通过，依root精确窄授保存原批准单段。采用边界与反侧/全部费用保正文，不授通用保证或实现/复现。作者已自读实际完整新增/完整直接两侧/本注；独立复核者R213一次actualPOST通过，窄位生效释放，仅行政同步不第三读，不授DAY。
+- `SF-2026-ARXIV-2610-24107` — Daily2026-10-21/Oct20；C05必要原源/actual owner/完整最小PRE已由独立复核者R208通过，依root精确窄授保存原批准单段。采用边界与反侧/全部费用保正文，不授通用保证或实现/复现。作者已自读实际完整新增/完整直接两侧/本注；独立复核者R213一次actualPOST通过，窄位生效释放，仅行政同步不第三读，不授DAY。
+- `SF-2025-ARXIV-2509-06807` — Darwin，Daily2025-09-10补Sep9；exact-v1 III–VIII/TI–VIII、IX/XV与其后静态必要表，拟2+2+2=6/唯一Ch30。仅相对旧MoGU的后半层router/QK联合适配与prefix交接；保probe非因果、数据措辞/运行交接未闭、ASR/US/math反退与全费，不采普遍Pareto/安全/精确recipe或净加速；未核像素/实现/模型运行复现，Source/PRE/root fresh位/actualPOST仅按后到事实。
+
+- `SF-2025-ARXIV-2509-09801` — Carson，Daily2025-09-16补Sep15BJT；[HEFT exact-v1](https://arxiv.org/html/2509.09801v1) §3–6/Table1–2与AppendixA必要文字，2+1+2=5。仅merge后新base接hidden-state干预的顺序/资产分责；保3+3不等3总轮、未配对预算/反序、单BoolQ/无CI、示例loss/读出/Hub复用条件及全费，不采协同因果/普遍净省费/大模型能力等价。未执行代码、核外部repo或复现；Zeno27必要采用/逐字PRE已通过，root本轮fresh授本精确三项，Carson已实际保存；Zeno34唯一完整nonwriter actualPOST已通过，I2生效/窄位释放，仅同步既成事实，不授日级完成。
+
+- `SF-2025-ARXIV-2510-01471` — Hilbert，Daily2025-10-04补Oct03；原2+1+2=5，Lagrange R190互斥首次exact-v1模型/通用接口必要由作者另一角色采用，不第二Methods/科学应用。只确定性LoRA/条件Gaussian head/ensemble与featurecache生命周期gap；保feature-revision数值反侧、ELBO非自动evidence、noise归一/绝对density单位、配置rank混淆及全部成员/重训/缓存/校准费，不采完整recipe、净78%/runtime、全局最优或开放域校准。未核图像素/代码/复现或采用分子应用，PRE/POST只据唯一reader真实层。
+
+- `SF-2026-ARXIV-2610-32866` — Daily2026-10-27，current-v1 §3–7必要，2+1+2=5；2025 coretopk旧事实不重算，本次ReLU/条件功能单元/CLCD差额。保postTopK不补位、验证选prefix/有限2SE与零count非总体、planted非唯一、已知trigger/≤7B/placement和clean反侧及全费；不采全部语义独立/全对称定理/无损后门清除，未核实现或复现。实际独核/POST见本日REVIEW。
+
+- `SF-2026-ARXIV-2610-32142` — Daily2026-10-27，exact-v1 §3/4.2/4.3/5必要，2+1+2=5，仅零输出后随机A噪声与非对称LR窗口差额。保单token/minibatch、rank/时间/带符号交叉项、内部activation、受限seed与固定ηA sweep、非零B不继承理论及全费；不授总能量同比或普适LRratio/稳定，未核全附件/代码或复现。实际独核/POST见本日REVIEW。
+
+- `SF-2026-ARXIV-2610-32581` — Daily2026-10-27，exact-v1 §3–5必要叙述/直接反侧，2+1+2=5；仅source activation变化经bridge→targetnative固定H回归，非parametertransport。保blockmap/grid/bias、独立baseinput与组装非等价、validation系数/梯度标签、拒答移除非安全、均分反退及全费；未核全部表/实现/复现，不授任意架构或E2E速度。
+
+- `SF-2025-ARXIV-2510-02296` — Hilbert，Daily2025-10-04补Oct03BJT；CNS原2+2+2=6，A474唯一首必要/R498指定key闭合。仅concept参数mask排除有限general交集、current与历史mask重叠的Wprev/W0软保持支集；保E6 AND/OR笔误、E3broadcast与20/100校准不闭、非因果功能/零遗忘、T1单概念图像反退/T2组合与50best评价、fusion-only0费/单concept.13%及完整历史/reference/训练费用，不补recipe或免存储。未核全regioncontrol/图像素/代码或复现，整体PRE/真实SAVE/fullselfread/solePOST只本日canonical真实后到层，本注不预签。
+
+- `SF-2025-ARXIV-2510-07566` — Aquinas，Daily2025-10-11补Oct10；exact-v1 §3–6/T1–3、AppA/B与必要分项T7–10/Limits，2+1+2=5，shared-base双loss与task-primary分支/consumer交付边界深入。保NER继续训练与TC固定probe不同人口、loss与downstream反转、分项退步/舍入及下游选参和全部费用；不采任意adapter/base兼容、全任务无损、生成LLM普适或移动端净速，硬件/precision/服务SLO等ND。未核artifact/代码或复现。独立PRE与真实保存/POST仅据本日canonical实际结果，不预签。
+
+- `SF-2025-ARXIV-2510-08034` — Aquinas，Daily2025-10-11补Oct10；首次必要由Godel R26实际精确v1 Sx3–5/Eq2–6/T1–6/checklist供本人整体消费，不第二Methods。2+1+2=5，仅Q/V角色选不同谱端初始化gap深入；保残余/scaling资产、right-factor索引式未闭不照配方、训练不锁原谱方向、placement×initializer混杂、局部反退与全部费用，不采语义角色因果/通用知识保留或净速。本人实际owner/完整两侧已读，未核图像素/仓库/运行复现；PRE/SAVE/完整自读/唯一POST只本日canonical真实层。
+
+- `SF-2025-ARXIV-2510-08513` — Aquinas，Daily2025-10-11补Oct10；exact-v1 HTML HTTP200/exit28/814905 of1179953B partial，必要§2–4/T1–4/A/B/D决定域/E1–2/E4/H/I已读闭合，不冒全部J或K/L。2+1+3=6，仅移动活动原权重切片/过去增量保留与单步状态对最终artifact分责差额深入；保谱非方向、梯度相消/小步常数界、featureGram非全NTK、state迁移未闭与质量/配置反侧/全费，不采universal winning theorem或整训练O(dr)/普速。未核全部曲线/实现/复现；整体PRE/真实SAVE/完整自读/solePOST只本日canonical后到真实层。
+
+- `SF-2025-ARXIV-2510-08564` — Aquinas，Daily2025-10-11补Oct10；exact-v1 HTML HTTP200/exit0/638779B；§3–6/式1–7/T1–2、A任务/序列、B完整配置/probe/tokenlist、C发现顺序、E1完整T5、F全部组合/残差诊断、G比较方法必要。2+2+2=6，仅冻结读出/按子层激活端与写回端选择更新面及逐阶段新旧消费者分责；保NTB非数词总质量/同prefix因果、norm非唯一贡献、NeXT held-out−7.7及GateUp反退/任务顺序/全费，不采概念未变、零遗忘、MoE精确初始化或通用净速。未核E2/H全部逐任务表/图像素、外部代码或复现；整体PRE/真实SAVE/完整自读/solePOST只本日canonical真实层。
+
+- `SF-2025-ARXIV-2510-12266` — Herschel，Daily2025-10-16补Oct15；[exact-v1](https://arxiv.org/html/2510.12266v1) §2–3.4/§4.1–4.3/§5，由Cicero R5首必要交付，2+1+2=5，具体接口差额深入。仅序列选库/容量与token成对ROC激活分责；保Gaussian前提、Top-k取整未闭与吞吐反退/全费，不采普遍质量和净速。local HTML partial与web实际必要层分账，未核代码/复现；整体PRE、真实SAVE/自读与sole actualPOST以本日canonical实际后到层为准。
+
+- `SF-2025-ARXIV-2510-11598`：Popper，Daily2025-10-15补Oct14；整体消费Epicurus R10首次必要§3/Alg1/Eq2–6/§4/T1–6/A2T7，2+1+2=5。只临时task/query/shared部署三状态；保first-order近似、任务/样本反退及重复训练全费，未第二Methods/代码/复现。PRE/SAVE/fullselfread/solePOST仅本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-11696`：Popper，Daily2025-10-15补Oct14；整体消费Epicurus R12首次必要§3/Eq3–10/§4/T1–3/AppG/K，2+2+2=6。仅quantbase/adapter/关联动态noise的训练身份；保层名张力、AQN反退/短程计时与全费，不授独立加噪/精确PG/普遍速度。未第二Methods/代码/复现；PRE/SAVE/自读/solePOST只本日canonical真实层。

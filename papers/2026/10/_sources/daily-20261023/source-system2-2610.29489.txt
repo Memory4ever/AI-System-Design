@@ -1,0 +1,926 @@
+https://arxiv.org/html/2610.29489v1
+Reorienting the Vector Axis: Restructuring FlashAttention for Long-Vector Processors
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+I Introduction
+II Background
+II-A Attention and FlashAttention tiling
+II-B Long-vector processors
+III Characterising the Stock Kernel
+III-A Where the cycles go
+III-B Wide vectors, strided operands: the score product
+III-C Contiguous operands, short vectors: the value product
+IV A Long-Vector Softmax
+IV-A How the exponential is computed
+IV-B The constants were vectors
+IV-C A fused traversal removes what remains
+IV-D The ceiling
+V Reorienting the Vector Axis
+V-A The transposed formulation
+V-B Softmax becomes vertical
+V-C When the transpose wins
+VI Methodology
+VI-A Target platform
+VI-B Measurement targets and instrumentation
+VI-C Region attribution
+VII Evaluation
+VII-A End-to-end performance
+VII-B The two targets rank the changes identically
+VII-C Where the gain comes from
+VII-D How the gain varies
+VIII Discussion
+IX Related Work
+X Conclusion
+References
+License: CC BY 4.0
+arXiv:2610.29489v1 [cs.AR] 21 Oct 2026
+Reorienting the Vector Axis: Restructuring FlashAttention for Long-Vector Processors
+Emmanuel Irabor
+Affiliation: Barcelona Supercomputing Center
+Barcelona, Spain
+emmanuel.onyekachukwu@bsc.es
+Marc Casas
+Affiliation: Barcelona Supercomputing Center
+Universitat Politècnica de Catalunya (UPC)
+Barcelona, Spain
+marc.casas@bsc.es
+Abstract
+A Transformer is built around attention, and because every token attends to every other, the cost of that one operation grows with the square of the sequence length and comes to dominate the layer on long sequences. FlashAttention made that cost manageable by working through the attention matrix in tiles and updating the softmax as it goes. Almost all the work since has targeted GPUs.
+Vector processors efficiently run High-Performance Computing (HPC) workloads. Modern commercial vector architectures feature large physical vector register files with hundreds of kilobytes of storage capacity. Because a single register holds up to 512 single-precision numbers, one instruction can execute 512 element operations, significantly reducing loop bookkeeping per result. These savings are proportional to how much of the register an instruction actually utilizes, making the choice of which loop to vectorize a first-order decision rather than a tuning detail. We port PyTorch’s CPU FlashAttention kernel to a RISC-V CPU with 2KB vector registers and find that it achieves 5.17 of the 32 peak floating-point operations per cycle the core can issue (16.2% of peak). The kernel walks each tile one query row at a time, leaving suboptimal dimensions to dictate vector instruction lengths. The product against 𝐕 \mathbf{V} is vectorized along the head dimension—64 elements here, compared to the 512 elements a register holds. In the softmax, each query row requires a maximum and a sum: two reductions that collapse a full register to a single scalar once per tile. Additionally, because the hardware lacks a native exponential instruction, the softmax computes exponents via a polynomial whose coefficients compete with tile data for vector registers and cause spilling.
+We propose two techniques. The first transposes the two matrices the kernel builds, the tile of scores and the running output, so that queries lie along the contiguous axis. This leaves the algorithm and its values unchanged but puts the vector length of every part of the kernel under one controllable parameter, the number of queries in a tile, so it can be chosen to match the machine’s vector length. It also makes the maximum and the sum run along the query axis, which removes both reductions. The second moves the polynomial’s coefficients into scalar registers, which stops the spilling and cuts the softmax region’s vector memory instructions by 78.7%.
+On silicon the two together cut whole-kernel cycles by 1.84 1.84 to 2.08 × 2.08\times at a head dimension of 64, raising floating-point utilisation from 16.2% to 29.7% of peak. An FPGA of the same design ranks the changes identically and scores them higher, at 2.71 × 2.71\times , so the silicon figure is the conservative one.
+I Introduction
+Vector processors utilizing Single Instruction Multiple Data (SIMD) paradigms offer superior throughput for High-Performance Computing (HPC) tasks. By executing a single instruction across multiple data streams simultaneously, SIMD reduces instruction-fetch overhead in the processor front-end while conveying extensive semantic context directly to the underlying hardware. These inherent efficiencies drove the dominance of early vector designs from the 1970s through the 1990s, highlighted by systems such as the CDC STAR-100 [ 1 ] and Cray-1 [ 2 ] . Even as the 1990s saw the rise of massively parallel supercomputers containing thousands of nodes, vector-based execution retained its utility [ 3 , 4 ] , prompting chip manufacturers to integrate SIMD extensions into mainstream general-purpose microprocessors [ 5 , 6 ] . Today, as conventional performance scaling hits diminishing returns alongside skyrocketing demand for floating-point acceleration in modern workloads, vector processing is undergoing a major revival across both industry [ 7 ] and academia [ 8 , 9 , 10 ] .
+This resurgence has propelled out-of-order (OoO) vector machines into mainstream commercial production, with NEC’s SX-Aurora TSUBASA standing as a prime real-world implementation [ 11 , 12 ] . To maximize SIMD data-parallelism, vector registers now span a wide range, from the 512 bits of Arm’s SVE in Fugaku [ 13 , 14 ] to the 16 384 16\,384 bits of NEC’s SX-Aurora [ 15 ] and of RISC-V designs [ 16 , 17 ] .
+Despite the relevance of vector architectures, FlashAttention [ 18 , 19 ] , the standard implementation of attention, and almost all of the engineering that followed it, target GPUs [ 20 , 21 ] . This paper proposes several novel techniques to efficiently run FlashAttention on vector architectures featuring long register widths. What changes at this width is which architectural decisions matter. On a 128-bit unit, any loop with a handful of iterations fills the datapath, making the choice of which loop to vectorize a mere tuning detail. On a register holding 512 elements, however, a loop over a head dimension of 64 utilizes only an eighth of its capacity, and no instruction scheduler can recover the remaining throughput. PyTorch’s CPU FlashAttention walks each score tile one query row at a time—a traversal that forces the key block to dictate the vector length of the score product and softmax, while leaving the head dimension to set the vector length for the value product. Recent RISC-V kernels retain one of these axes [ 22 ] or pack multiple heads into a single register once capacity exceeds the head dimension [ 23 ] ; neither approach alters the underlying traversal.
+This paper reorients the recurrence. We transpose the score tile and the running output, an outer-loop vectorisation [ 24 ] of the query loop, so that the query axis becomes the contiguous axis of both. One tile parameter then sets the vector length of every region and can be set to the register width, and the per-query maximum and sum become vectors instead of reductions. The paper contributes:
+•
+a region-level characterisation, on silicon, of FlashAttention-2 on a 16 384 16\,384 -bit RISC-V processor that separates each region’s vector-length limit from its access-pattern limit (Section III );
+•
+a software exponential whose polynomial coefficients are held in scalar rather than vector registers, which removes spill traffic that a 32-register file otherwise makes unavoidable (Section IV );
+•
+reorientation of the recurrence, with an instruction-count model of when it wins (Section V );
+•
+an evaluation on the EPAC chip and an FPGA that separates orientation
+from the softmax work: reorientation alone is worth 1.43 × 1.43\times in
+cycles (Section VII ).
+None of this is a comparison against a GPU or a short-vector CPU, and none is needed for the claim, which is conditional: given a long-vector machine and a query block longer than the head dimension, the orientation in which the recurrence is evaluated decides the vector length of every region, and with a query block as long as the register it removes about 30% of the kernel’s cycles at no change in the arithmetic performed.
+II Background
+II-A Attention and FlashAttention tiling
+Let 𝐐 , 𝐊 , 𝐕 ∈ ℝ N × d \mathbf{Q},\mathbf{K},\mathbf{V}\in\mathbb{R}^{N\times d} be the query, key and value sequences of a single attention head, where N N is the sequence length and d d the head dimension. The attention output 𝐎 ∈ ℝ N × d \mathbf{O}\in\mathbb{R}^{N\times d} is [ 25 ]
+𝐒 \displaystyle\mathbf{S}
+= α ​ 𝐐𝐊 ⊤ ∈ ℝ N × N , \displaystyle=\alpha\,\mathbf{Q}\mathbf{K}^{\!\top}\in\mathbb{R}^{N\times N},
+𝐏 \displaystyle\mathbf{P}
+= softmax ⁡ ( 𝐒 ) ∈ ℝ N × N , \displaystyle=\mathrm{softmax}(\mathbf{S})\in\mathbb{R}^{N\times N},
+𝐎 \displaystyle\mathbf{O}
+= 𝐏𝐕 ∈ ℝ N × d . \displaystyle=\mathbf{P}\mathbf{V}\in\mathbb{R}^{N\times d}.
+(1)
+The softmax normalises each query against every key, so it runs along the second axis of 𝐒 \mathbf{S} , after subtracting each row’s maximum to keep the argument in range. The scale α \alpha is a constant of the model, 1 / d 1/\sqrt{d} here. It is applied as one multiply per score in every arm, so its numerical value affects no measurement below. Heads are independent, and FlashAttention runs them in parallel [ 19 ] , which makes a single head the unit of work. What follows measures one head on one core, the level at which vector behaviour is visible. Of the two matrix products one writes an N × N N\times N result and the other an N × d N\times d result, and Section III shows that the difference is what decides their vector length.
+Forming 𝐒 \mathbf{S} explicitly costs Θ ⁡ ( N 2 ) \Theta(N^{2}) memory. FlashAttention [ 18 ] avoids it by tiling both operands, processing queries in blocks of B q B_{q} rows and keys in blocks of B k ​ v B_{kv} , and carrying the normalisation of each query block as a running maximum and sum that are rescaled whenever a new tile moves the maximum [ 26 ] . The tile shape ( B q , B k ​ v ) (B_{q},B_{kv}) is a parameter of the implementation, not of the mathematics.
+II-B Long-vector processors
+A vector instruction applies one operation to many elements. Short-vector SIMD units fix that number in the encoding, at four or eight elements, so a loop of a handful of iterations already fills the datapath. Vector processors instead carry the number in a register, set at run time, and recent designs have made it large: one register now holds several hundred values. The gain is that a single instruction stands for all of that arithmetic, so the instruction stream is short relative to the work it represents. The cost is that the gain is proportional to how much of the register an instruction actually uses.
+The RISC-V vector extension is length-agnostic [ 27 ] . Throughout, vlmax is the largest number of elements a register holds, 512 in FP32 here, and v ​ l vl the active length of an issued instruction. With registers this long the scalar core must supply addresses, loop bookkeeping and configuration changes fast enough to keep a very wide back end busy. Decoupled vector architectures [ 28 , 29 ] let it run ahead, but the supply problem returns whenever v ​ l vl is low, because each instruction then buys less work.
+The processor studied here, EPAC [ 17 ] , has registers of 16 384 16\,384 bits. That is 32 × 32\times the register of current commercial RVV silicon [ 30 ] and of A64FX [ 14 ] , at the long end of open RVV designs [ 31 , 32 , 33 ] , and equal to the 256 × 64 256\times 64 -bit registers of NEC’s SX-Aurora [ 15 ] . Section VI-A describes it.
+III Characterising the Stock Kernel
+This section measures where the stock kernel’s cycles go on the chip, region by region, and separates two limits that a whole-kernel number does not distinguish. The score product runs at the full register width and is held back by its access pattern. The value product has no access-pattern problem and is held back by its vector length. Each calls for a different remedy, and the two that follow are the subjects of Sections IV and V .
+Our starting point, the stock kernel , is the FlashAttention-2 [ 19 ] forward pass of PyTorch’s CPU backend [ 34 ] : its blocking, loop order, data layout and online-softmax recurrence, unchanged. We start from FlashAttention-2 because the versions after it are specific to GPUs: FlashAttention-3 [ 20 ] is built on warp specialisation and asynchronous copy engines, and FlashAttention-4 [ 21 ] on tensor cores whose throughput has outgrown their exponential units. Neither mechanism exists on a vector unit. PyTorch has no vector backend for RVV, so we ported the kernel by implementing the vector primitives it calls with RISC-V vector intrinsics, keeping their structure: FP32 inner kernels, a polynomial approximation of the exponential because the hardware has none, and the row maximum and row sum as vector reductions. Algorithm 1 gives the traversal.
+Algorithm 1 Natural orientation (FlashAttention-2 forward).
+1:
+𝐒 i ​ j \mathbf{S}_{ij} is B q × B k ​ v B_{q}\times B_{kv} ;
+𝐦 i , ℓ i \mathbf{m}_{i},\boldsymbol{\ell}_{i} hold one scalar per query row
+2:
+for each query block i i do
+3:
+𝐎 ~ i ← 0 \tilde{\mathbf{O}}_{i}\leftarrow 0 ;
+𝐦 i ← − ∞ \mathbf{m}_{i}\leftarrow-\infty ;
+ℓ i ← 0 \boldsymbol{\ell}_{i}\leftarrow 0
+4:
+for each key block j j do
+5:
+𝐒 i ​ j ← 𝐐 i ​ 𝐊 j ⊤ \mathbf{S}_{ij}\leftarrow\mathbf{Q}_{i}\mathbf{K}_{j}^{\!\top}
+⊳ \triangleright v ​ l = B k ​ v vl=B_{kv}
+6:
+𝐦 ′ ← max ⁡ ( 𝐦 i , rowmax ⁡ ( α ​ 𝐒 i ​ j ) ) \mathbf{m}^{\prime}\leftarrow\max\bigl(\mathbf{m}_{i},\mathrm{rowmax}(\alpha\mathbf{S}_{ij})\bigr)
+⊳ \triangleright B q B_{q} reductions
+7:
+𝝆 i ← exp ⁡ ( 𝐦 i − 𝐦 ′ ) \boldsymbol{\rho}_{i}\leftarrow\exp(\mathbf{m}_{i}-\mathbf{m}^{\prime}) ;
+𝐦 i ← 𝐦 ′ \mathbf{m}_{i}\leftarrow\mathbf{m}^{\prime}
+⊳ \triangleright B q B_{q} scalar exp \exp
+8:
+𝐒 i ​ j ← exp ⁡ ( α ​ 𝐒 i ​ j − 𝐦 i ) \mathbf{S}_{ij}\leftarrow\exp(\alpha\mathbf{S}_{ij}-\mathbf{m}_{i})
+⊳ \triangleright v ​ l = B k ​ v vl=B_{kv}
+9:
+ℓ i ← 𝝆 i ​ ℓ i + rowsum ⁡ ( 𝐒 i ​ j ) \boldsymbol{\ell}_{i}\leftarrow\boldsymbol{\rho}_{i}\boldsymbol{\ell}_{i}+\mathrm{rowsum}(\mathbf{S}_{ij})
+⊳ \triangleright B q B_{q} reductions
+10:
+𝐎 ~ i ← 𝝆 i ​ 𝐎 ~ i + 𝐒 i ​ j ​ 𝐕 j \tilde{\mathbf{O}}_{i}\leftarrow\boldsymbol{\rho}_{i}\tilde{\mathbf{O}}_{i}+\mathbf{S}_{ij}\mathbf{V}_{j}
+⊳ \triangleright v ​ l = d vl=d
+11:
+𝐎 i ← 𝐎 ~ i / ℓ i \mathbf{O}_{i}\leftarrow\tilde{\mathbf{O}}_{i}/\boldsymbol{\ell}_{i}
+⊳ \triangleright v ​ l = d vl=d
+III-A Where the cycles go
+Figure 1 gives the stock kernel’s cycle budget at N = 1024 N=1024 , d = 64 d=64 , in FP32 on one core of the EPAC chip, with the methodology of Section VI . The first bar is the kernel at its own fastest tile, B q = 128 B_{q}=128 , B k ​ v = 512 B_{kv}=512 . No single region owns it: the softmax takes 38%, the value product 36% and the score product 21%. Whole-kernel throughput is 5.17 FLOP/cycle against a peak of 32.
+The second bar holds B q = 128 B_{q}=128 and shortens the key block to B k ​ v = 64 B_{kv}=64 . Whole-kernel cycles rise by a factor of 3.32, and softmax accounts for 93% of the increase. A region that grows more than sixfold when a block size shrinks, beside one that moves by a few percent, is not doing more work. It is issuing the same work at a shorter vector length, and the two subsections below separate that from the access-pattern effect.
+Fig. 1: Cycle budget of the stock kernel by region, on the EPAC chip at
+N = 1024 N=1024 , d = 64 d=64 , B q = 128 B_{q}=128 .
+The two matrix-product regions are limited by different things and call for distinct remedies: gemm_qk forms 𝐐 i ​ 𝐊 j ⊤ \mathbf{Q}_{i}\mathbf{K}_{j}^{\!\top} and reads one operand in transposed orientation [ 35 ] , while gemm_pv forms 𝐏 ~ i ​ j ​ 𝐕 j \tilde{\mathbf{P}}_{ij}\mathbf{V}_{j} , an untransposed product that vectorises along d d .
+III-B Wide vectors, strided operands: the score product
+gemm_qk sweeps the key axis, so B k ​ v B_{kv} and not d d sets its vector length. At B q = 128 B_{q}=128 , B k ​ v = 512 B_{kv}=512 the measured average v ​ l vl is 512, the full architectural width, so vector length is not what limits this region. The access pattern is. Computing 𝐐 i ​ 𝐊 j ⊤ \mathbf{Q}_{i}\mathbf{K}_{j}^{\!\top} needs 𝐊 j \mathbf{K}_{j} transposed, and 𝐊 \mathbf{K} is stored with d d contiguous, so walking the contraction axis steps by the row pitch, 256 bytes at d = 64 d=64 , a separate cache line per element. Read in place, without packing, 88.9% of the region’s vector memory instructions are strided. A strided access costs 128–512 cycles at full length where a unit-stride one costs 32–128 (Table IV ), so the region pays for the class of its instructions, not their count.
+Packing solves the strided case. Copying the key block into a contiguous buffer before the product leaves the arithmetic and the vector length untouched and replaces almost every strided load with a unit-stride one. It makes gemm_qk 2.38 × 2.38\times faster. Packing is performed by the matrix-multiplication routine the kernel calls, in every arm, so every result below includes it; it is long-established [ 35 , 36 ] and not the subject of this paper.
+III-C Contiguous operands, short vectors: the value product
+gemm_pv has no access-pattern problem. Its first operand was written by the kernel moments earlier and is unit-stride by construction; its second, 𝐕 j \mathbf{V}_{j} , is read along the contiguous head dimension. Both operands are already contiguous along the axis the product sweeps, so packing has nothing to offer here. What limits the region is that the product is untransposed, which makes d d its vector axis: its instructions request 64 elements from registers that hold 512, so the region runs at an eighth of the architectural width whatever the block size, and no block size changes d d . Against gemm_qk at the same tile this is the cleanest contrast available: two dense products over the same tile, differing in which axis each sweeps. The width is fixed by the loop shape, so the remedy is a different axis, which Section V supplies.
+IV A Long-Vector Softmax
+This section leaves the traversal of Section III alone and works on the softmax. The region evaluates an exponential in software, and its cost on this machine turns out to be the polynomial’s coefficients rather than its instructions. Two changes follow: the coefficients move into scalar registers, and the three passes over a score row fold into one. Section IV-D gives what they are worth together and the limit they run into.
+IV-A How the exponential is computed
+The processor has no floating-point exponential, so the softmax evaluates one in software, per element. The standard construction splits the argument into a part that is exact in binary and a part small enough for a short polynomial [ 37 ] . Writing
+x = k ​ ln ⁡ 2 + r , k = ⌊ x / ln ⁡ 2 ⌉ ∈ ℤ , | r | ≤ ln ⁡ 2 2 , x=k\ln 2+r,\qquad k=\left\lfloor x/\ln 2\right\rceil\in\mathbb{Z},\qquad\lvert r\rvert\leq\tfrac{\ln 2}{2},
+(2)
+gives e x = 2 k ​ e r e^{x}=2^{k}e^{r} . The first factor is free: 2 k 2^{k} is an FP32 number whose mantissa is zero, so it is built by adding the exponent bias to k k and shifting it into the exponent field, which is integer work. Over that interval a degree-6 polynomial approximates the second to single precision, and Horner’s rule [ 38 , 39 ] evaluates it as a chain of multiply–adds,
+p ← p r + c j , j = 5 , 4 , … , 0 , p\leftarrow p\,r+c_{j},\qquad j=5,4,\ldots,0,
+(3)
+starting from p = c 6 p=c_{6} . Algorithm 2 gives the whole routine for one vector of v ​ l vl scores, its lines 1–3 the range reduction, 4–6 the Horner chain and 7–8 the 2 k 2^{k} rebuild; bold is a vector register throughout and italic a scalar. Counting the multiply–add that forms r r , an exponential is seven multiply–adds, six of them a dependent chain. Every arm below uses this same degree-6 polynomial, so every comparison is at equal accuracy. On this machine the seven coefficients , not the seven instructions, turn out to be the expensive part.
+Algorithm 2 The software exponential.
+1:
+𝐱 ∈ ℝ v ​ l \mathbf{x}\in\mathbb{R}^{vl} , coefficients c 0 ​ … ​ c 6 c_{0}\ldots c_{6}
+2:
+𝐱 ← max ⁡ ( 𝐱 , − 87 ) \mathbf{x}\leftarrow\max(\mathbf{x},-87)
+⊳ \triangleright keeps 2 k 2^{k} in exponent range
+3:
+𝐤 ← round ⁡ ( 𝐱 ​ log 2 ​ e ) \mathbf{k}\leftarrow\mathrm{round}(\mathbf{x}\log_{2}e)
+⊳ \triangleright to integer
+4:
+𝐫 ← 𝐱 − 𝐤 ​ ln ⁡ 2 \mathbf{r}\leftarrow\mathbf{x}-\mathbf{k}\ln 2
+⊳ \triangleright one multiply–add
+5:
+𝐩 ← c 6 \mathbf{p}\leftarrow c_{6}
+6:
+for j = 5 j=5 down to 0 0 do
+7:
+𝐩 ← 𝐩 ​ 𝐫 + c j \mathbf{p}\leftarrow\mathbf{p}\,\mathbf{r}+c_{j}
+⊳ \triangleright Equation ( 3 )
+8:
+𝐞 ← reinterpret ⁡ ( ( 𝐤 + 127 ) ≪ 23 ) \mathbf{e}\leftarrow\mathrm{reinterpret}\bigl((\mathbf{k}+127)\ll 23\bigr) ⊳ \triangleright 2 k 2^{k} , integer
+9:
+return 𝐩 ​ 𝐞 \mathbf{p}\,\mathbf{e}
+IV-B The constants were vectors
+The softmax region reads each score row to find its maximum, again to exponentiate and again to sum, then writes it back. The trace nevertheless counted 62 416 62\,416 vector memory instructions for the region and 126.1 MB moved, against 13 264 13\,264 and 25.4 MB once the coefficients were moved into scalar registers and nothing else changed. The difference is 24 memory instructions on every one of the 2,048 calls, and it was spill traffic.
+Line 6 of Algorithm 2 reads as a multiply–add, and on a three-operand vector ISA the obvious encoding is the fused form, which takes all three operands in vector registers:
+fused:
+𝐩 ← vfmadd.vv ​ ( 𝐩 , 𝐫 , 𝐜 j ) \displaystyle\mathbf{p}\leftarrow\texttt{vfmadd.vv}(\mathbf{p},\,\mathbf{r},\,\mathbf{c}_{j})
+(4)
+split:
+𝐩 ← vfadd.vf ​ ( vfmul.vv ​ ( 𝐩 , 𝐫 ) , c j ) \displaystyle\mathbf{p}\leftarrow\texttt{vfadd.vf}\bigl(\texttt{vfmul.vv}(\mathbf{p},\,\mathbf{r}),\,c_{j}\bigr)
+(5)
+Equation ( 4 ) is one instruction against two, and with abundant vector registers it is the better encoding. Here it is not: the seven coefficients held that way are seven registers live across the whole polynomial, competing with the tile data and the running state for the 32 the compiler allocates, and the allocator spills [ 40 ] . The spilled constants are reloaded on every call, which is the excess the trace had found. No single instruction can take the coefficient from a scalar register instead, because the scalar operand of every .vf multiply–add ( vfmacc , vfmadd and their negated forms) is a multiplicand, while Horner’s rule needs c j c_{j} as the addend. Equation ( 5 ) therefore pays one extra instruction per step to keep every coefficient in the scalar file, which is separately managed and not under pressure.
+A shorter polynomial could relieve the pressure. Degree 4 holds five coefficients rather than seven and may fit, but it pays in accuracy and leaves the mechanism in place, since each remaining c j c_{j} is still a live vector register. Equation ( 5 ) leaves the accuracy alone and holds none of them, at one extra instruction per step.
+TABLE I: The softmax region across the measured changes, at
+B q = 128 B_{q}=128 , B k ​ v = 512 B_{kv}=512 , N = 1024 N=1024 , d = 64 d=64 .
+Stock
+Scalar
+Fused
+kernel
+coeffs.
+traversal
+Vector memory inst.
+62,416
+13,264
+9,168
+Vector arithmetic inst.
+45,544
+59,880
+41,448
+Other vector inst.
+41,448
+37,352
+16,872
+Total vector inst.
+149,408
+110,496
+67,488
+Moved bytes (MB)
+126.1
+25.4
+17.0
+Region cycles (M)
+19.92
+12.96
+8.00
+Table I records the outcome. From the stock kernel to scalar coefficients, vector memory instructions fall by 78.7% and moved bytes by a factor of five, while vector arithmetic rises and the region runs 1.54 × 1.54\times faster in cycles.
+IV-C A fused traversal removes what remains
+With the spills gone, the region’s remaining traffic is its own structure: it reads each row of the score tile to find its maximum, again to exponentiate, and again to sum. Holding the row in a vector register across all three passes is possible only because a row of B k ​ v ≤ vlmax B_{kv}\leq\textup{{vlmax}} elements fits in a single register, so the maximum, the exponential and the sum all see it without a reload. Memory instructions fall by a further 30.9%, the two loads per call the algorithm predicts, and moved bytes by a third. Arithmetic falls by 9 instructions per call and the other classes by 10, almost all of them moves and configuration changes (Table I ). The region’s cycles fall by 1.62 × 1.62\times .
+IV-D The ceiling
+Together the two changes reduce the softmax region’s cycles by 2.49 × 2.49\times and the whole kernel’s by 1.27 × 1.27\times . The softmax is then a fifth of the budget, so removing it entirely would buy at most 1.24 × 1.24\times . Further work inside the softmax is not where the remaining time is.
+The fused traversal also carries a precondition. Folding three passes into one keeps a row of the score tile in a register between them, so it requires B k ​ v ≤ vlmax B_{kv}\leq\textup{{vlmax}} and the saving disappears above that. The natural layout’s best key block is 512, exactly vlmax on this machine, so the optimisation applies at the measured optimum and not beyond it. The transposed form of Section V has no such precondition: its vector length is B q B_{q} , it accumulates down the key rows, and no row of the tile is ever held resident.
+Fig. 2: One tile of the forward pass in each orientation, each at its own
+best tile. Grey lines mark the contiguous axis in memory; blue
+arrows mark a full-length vector instruction, orange a short one,
+and red the direction the softmax combines. The bar under each
+output shows how much of the register its instructions fill. Sizes
+are to a compressed scale.
+V Reorienting the Vector Axis
+This section transposes every term of the recurrence. Section V-A gives the transposed form and what changes in each region. Section V-B treats the softmax, where the change is structural rather than a matter of width: two classes of instruction leave the region. Section V-C gives an instruction-count model of when the transpose wins.
+V-A The transposed formulation
+At the natural layout’s own best tile, B k ​ v = 512 B_{kv}=512 , gemm_qk and the softmax already run at the register width (Table II ). gemm_pv cannot: it takes its length from d d (Section III-C ), and its average v ​ l vl stays near 64 at every tile in Table II .
+What decides which axis each region sweeps is the order in which the kernel walks the tile, and Algorithm 1 never says what that order must be. So we transpose the two matrices the kernel builds:
+𝐒 i ​ j ⊤ = α ​ 𝐊 j ​ 𝐐 i ⊤ , 𝐎 ~ i ⊤ = 𝐕 j ⊤ ​ 𝐏 ~ i ​ j ⊤ . \mathbf{S}^{\!\top}_{ij}=\alpha\,\mathbf{K}_{j}\mathbf{Q}_{i}^{\!\top},\qquad\tilde{\mathbf{O}}^{\!\top}_{i}=\mathbf{V}_{j}^{\!\top}\tilde{\mathbf{P}}^{\!\top}_{ij}.
+(6)
+The algorithm is unchanged: every product accumulates in the same order, and the softmax computes the same maximum and sum, now vertically, down the key rows of the tile (Section V-B ). Figure 2 shows one tile in each orientation. The new shapes change four things.
+The score tile is now B k ​ v × B q B_{kv}\times B_{q} , so a row of it holds queries instead of keys. That is where the vector length now comes from.
+𝐊 j \mathbf{K}_{j} is now read in the orientation it is stored in, and 𝐐 i \mathbf{Q}_{i} is the block read across the stride. So 𝐐 i \mathbf{Q}_{i} is what the matrix-multiplication routine packs, on every call as it packed 𝐊 j \mathbf{K}_{j} before, and the strided loads of packing now scale with B q B_{q} instead of B k ​ v B_{kv} .
+We never build 𝐕 j ⊤ \mathbf{V}_{j}^{\!\top} . Transposing a product swaps which operand supplies the vector axis, and neither operand has to move for that, so the value product reads 𝐕 j \mathbf{V}_{j} where it already sits and sweeps B q B_{q} .
+The output comes out transposed, and putting it back is almost free. The kernel already walks the output once to divide by ℓ i \boldsymbol{\ell}_{i} , so that pass now reads unit-stride and writes strided instead. It adds 9 to 13% to the normalisation region, which is under half a percent of the kernel.
+This change is outer-loop vectorisation [ 24 ] : the query loop carries the softmax state, and making it the vector loop turns that state into a vector. With 512 elements in a register, carrying it as a vector is exactly what removes the reductions. Algorithms 1 and 3 are the same kernel in the two orientations. One parameter, B q B_{q} , now sets the vector length of every region, replacing B k ​ v B_{kv} and d d . The two reduction lines of the first become the two elementwise lines of the second. Table II shows this and measures it.
+The bottom half of Table II matters as much as the top. At B q = 128 B_{q}=128 the reoriented kernel runs every region at 128, which is worse than the 512 the natural layout reaches in two of its three regions. Reorientation does not make the kernel faster at every tile. It puts the vector length of every region under one parameter, B q B_{q} , and everything then depends on setting that parameter to the register width. At B q = 128 B_{q}=128 the reoriented kernel is slower than the fused one; at B q = 512 B_{q}=512 , the register width, it is 1.43 × 1.43\times faster.
+Algorithm 3 Reoriented (transposed) FlashAttention-2 forward.
+1:
+𝐒 i ​ j ⊤ \mathbf{S}^{\!\top}_{ij} is B k ​ v × B q B_{kv}\times B_{q} ;
+𝐦 i , ℓ i \mathbf{m}_{i},\boldsymbol{\ell}_{i} are vectors over the query block
+2:
+for each query block i i do
+3:
+𝐎 ~ i ⊤ ← 0 \tilde{\mathbf{O}}^{\!\top}_{i}\leftarrow 0 ;
+𝐦 i ← − ∞ \mathbf{m}_{i}\leftarrow-\infty ;
+ℓ i ← 0 \boldsymbol{\ell}_{i}\leftarrow 0
+4:
+for each key block j j do
+5:
+𝐒 i ​ j ⊤ ← 𝐊 j ​ 𝐐 i ⊤ \mathbf{S}^{\!\top}_{ij}\leftarrow\mathbf{K}_{j}\mathbf{Q}_{i}^{\!\top}
+⊳ \triangleright v ​ l = B q vl=B_{q}
+6:
+𝐦 ′ ← max ( 𝐦 i , max r α 𝐒 i ​ j ⊤ [ r , : ] ) \mathbf{m}^{\prime}\leftarrow\max\bigl(\mathbf{m}_{i},\max_{r}\alpha\mathbf{S}^{\!\top}_{ij}[r,:]\bigr)
+⊳ \triangleright elementwise
+7:
+𝝆 i ← exp ⁡ ( 𝐦 i − 𝐦 ′ ) \boldsymbol{\rho}_{i}\leftarrow\exp(\mathbf{m}_{i}-\mathbf{m}^{\prime}) ;
+𝐦 i ← 𝐦 ′ \mathbf{m}_{i}\leftarrow\mathbf{m}^{\prime}
+⊳ \triangleright one vector exp \exp
+8:
+𝐒 i ​ j ⊤ ← exp ⁡ ( α ​ 𝐒 i ​ j ⊤ − 𝐦 i ) \mathbf{S}^{\!\top}_{ij}\leftarrow\exp(\alpha\mathbf{S}^{\!\top}_{ij}-\mathbf{m}_{i})
+⊳ \triangleright v ​ l = B q vl=B_{q}
+9:
+ℓ i ← 𝝆 i ℓ i + ∑ r 𝐒 i ​ j ⊤ [ r , : ] \boldsymbol{\ell}_{i}\leftarrow\boldsymbol{\rho}_{i}\boldsymbol{\ell}_{i}+\textstyle\sum_{r}\mathbf{S}^{\!\top}_{ij}[r,:]
+⊳ \triangleright elementwise
+10:
+𝐎 ~ i ⊤ ← 𝝆 i ⊙ 𝐎 ~ i ⊤ + 𝐕 j ⊤ ​ 𝐒 i ​ j ⊤ \tilde{\mathbf{O}}^{\!\top}_{i}\leftarrow\boldsymbol{\rho}_{i}\odot\tilde{\mathbf{O}}^{\!\top}_{i}+\mathbf{V}_{j}^{\!\top}\mathbf{S}^{\!\top}_{ij}
+⊳ \triangleright v ​ l = B q vl=B_{q}
+11:
+𝐎 i ← ( 𝐎 ~ i ⊤ / ℓ i ) ⊤ \mathbf{O}_{i}\leftarrow(\tilde{\mathbf{O}}^{\!\top}_{i}/\boldsymbol{\ell}_{i})^{\!\top}
+⊳ \triangleright transpose folded in
+TABLE II: Vector axis of each region and its average v ​ l vl , under emulation at
+d = 64 d=64 . Averages are over every vector instruction in the region,
+so the few issued at another length move them slightly off the
+axis length.
+Vector axis
+Average v ​ l vl
+Region
+Natural
+Reor.
+Natural
+Reor.
+B q = 512 B_{q}=512 , B k ​ v = 128 B_{kv}=128
+gemm_qk
+B k ​ v B_{kv}
+B q B_{q}
+132.5
+512.0
+softmax
+B k ​ v B_{kv}
+B q B_{q}
+132.0
+512.0
+gemm_pv
+d d
+B q B_{q}
+66.7
+512.0
+B q = 128 B_{q}=128 , B k ​ v = 512 B_{kv}=512
+gemm_qk
+B k ​ v B_{kv}
+B q B_{q}
+512.0
+132.5
+softmax
+B k ​ v B_{kv}
+B q B_{q}
+505.5
+128.1
+gemm_pv
+d d
+B q B_{q}
+64.7
+128.6
+V-B Softmax becomes vertical
+The softmax is where the change is structural rather than merely wider: two classes of instruction leave the region altogether. In the natural orientation a query row occupies B k ​ v B_{kv} contiguous elements, so rowmax \mathrm{rowmax} and rowsum \mathrm{rowsum} are reductions along a vector register and the running state 𝐦 i , ℓ i \mathbf{m}_{i},\boldsymbol{\ell}_{i} is a pair of scalars per row. Transposed, a key row occupies B q B_{q} contiguous elements and the same two quantities are indexed by the query axis, so they become vector registers and the reductions become elementwise accumulations down the key rows. The reoriented softmax makes two passes over the tile,
+𝐦 ′ ← max ( 𝐦 ′ , α 𝐒 i ​ j ⊤ [ r , : ] ) , 𝐬 ← 𝐬 + exp ( α 𝐒 i ​ j ⊤ [ r , : ] − 𝐦 ′ ) , \mathbf{m}^{\prime}\leftarrow\max\!\left(\mathbf{m}^{\prime},\,\alpha\mathbf{S}^{\!\top}_{ij}[r,:]\right),\quad\mathbf{s}\leftarrow\mathbf{s}+\exp\!\left(\alpha\mathbf{S}^{\!\top}_{ij}[r,:]-\mathbf{m}^{\prime}\right),
+(7)
+the first for r = 0 , … , B k ​ v − 1 r=0,\ldots,B_{kv}-1 starting from 𝐦 ′ = 𝐦 i \mathbf{m}^{\prime}=\mathbf{m}_{i} , the second over the same rows starting from 𝐬 = 0 \mathbf{s}=0 and storing each exponentiated row, after which ℓ i ← 𝝆 i ​ ℓ i + 𝐬 \boldsymbol{\ell}_{i}\leftarrow\boldsymbol{\rho}_{i}\boldsymbol{\ell}_{i}+\mathbf{s} . Every operation is elementwise over the B q B_{q} elements of a row, one vsetvli configures the whole tile, and 𝐦 i \mathbf{m}_{i} and ℓ i \boldsymbol{\ell}_{i} stay in vector registers across all B k ​ v B_{kv} rows. Figure 2 shows the two directions.
+Two costs disappear and a third shrinks. The two reductions per query row per key block are gone and so is the move that pulled each reduction’s result into a scalar register. The third is 𝝆 i \boldsymbol{\rho}_{i} . Both forms compute it once per query row per key block, but the natural orientation holds the running maximum as one scalar per row and evaluates each 𝝆 i \boldsymbol{\rho}_{i} as a separate scalar exponential, while the transposed form holds it as a vector and covers a whole query block with one vector exponential.
+One cost is added. The two passes read each score twice where the fused traversal read it once, which at each arm’s own best tile is 10% more memory instructions in the region.
+V-C When the transpose wins
+The transpose changes no arithmetic. It changes how many vector instructions carry it. For a block no longer than vlmax a row is one vector, so a region’s instruction count is the number of rows it walks times what it issues per row. Each region then compares in its own way, natural over reoriented.
+Value product. Both forms issue the same instructions per row, but the natural form’s rows are d d long and the reoriented form’s B q B_{q} , so the ratio is
+B q d . \frac{B_{q}}{d}.
+(8)
+This is the only place the head dimension enters. The transpose wins here whenever B q > d B_{q}>d , and the gain falls as d d grows.
+Score product. Again the instructions per row are the same; the rows are B k ​ v B_{kv} long in one form and B q B_{q} in the other, so the ratio is B q / B k ​ v B_{q}/B_{kv} . It is a trade of one block length for the other and is even when the two are equal.
+Softmax. The natural form walks N 2 / B k ​ v N^{2}/B_{kv} query rows of B k ​ v B_{kv} elements, the reoriented form N 2 / B q N^{2}/B_{q} key rows of B q B_{q} . Per row both do the same elementwise work E E : scale, maximum, subtract, exponential, accumulate and store. Both rescale the accumulator, which is the value product ratio again and is counted there. Both compute 𝝆 i \boldsymbol{\rho}_{i} once per row, in scalar code in one form and as one vector exponential per tile in the other, and neither is counted here.
+What differs is the price of the maximum and the sum. In the natural orientation a row is one vector, so both are reductions, one vfredmax and one vfredusum , each followed by a move to a scalar register. Transposed, a row holds different queries, so the maximum is a vfmax and the sum a vfadd down the key rows, and nothing leaves the vector registers. The transpose pays two extra memory instructions per row instead, because it reads the score tile a second time and writes the scaled scores back before it:
+E + 2 ​ R + 2 ​ M ⏟ natural against E + 2 ​ U ⏟ reoriented , \underbrace{E+2R+2M}_{\text{natural}}\qquad\text{against}\qquad\underbrace{E+2U}_{\text{reoriented}},
+(9)
+with R R a reduction, M M a vector to scalar move and U U a unit-stride access.
+The transpose wins the row whenever 2 ​ U < 2 ​ R + 2 ​ M 2U<2R+2M . Table IV prices a reduction at 160 cycles and a unit-stride access at 32 to 128, so the row gives up at most 256 cycles and saves at least 320. That margin assumes the second read hits in cache. The tile was written by the pass immediately before, but nothing guarantees it survives. Over the whole kernel the natural form issues 2 ​ N 2 / B k ​ v 2N^{2}/B_{kv} reductions and the reoriented form none. No timing in this paper is derived from the model.
+VI Methodology
+VI-A Target platform
+EPAC [ 17 ] was developed within the European Processor Initiative: an in-order RISC-V scalar core driving a decoupled vector unit whose registers hold 16 384 16\,384 bits. Table III lists the parameters the kernel design depends on, and four of them shape everything below.
+Addressing is at cache-line granularity . A unit-stride access uses every element of each 64-byte line it brings in. An access whose stride is larger than a line uses one element per line, so it brings in sixteen times more data than it consumes. There is no operand chaining , so a dependent instruction waits until its producer has retired every element and the cost of a sequence tracks its dependence depth, at the latencies of Table IV . The register file is small in registers and large in bytes : the compiler allocates 32 architectural registers and 40 physical registers, so a kernel holding too many live values spills [ 40 ] , and one spilled register at full length is 2 KB of traffic. There is no hardware exponential , so the softmax evaluates a software polynomial whose cost is its instruction count and dependence structure, both under the kernel’s control.
+The vector unit implements RVV 0.7.1 [ 41 ] , the draft current when it was designed; a successor implements the ratified 1.0 [ 17 ] . Nothing below depends on the difference: every instruction the kernels use has a 1.0 counterpart, and the limits Section III identifies come from loop lengths, which no 1.0 feature changes.
+TABLE III: EPAC parameters the kernel design depends on.
+Parameter
+Value
+ISA, vector extension
+RV64GCV, RVV 0.7.1
+Scalar core
+In-order, dual-issue, 4 ports
+Vector unit
+Decoupled, no operand chaining
+Lanes
+8, one FMA each, 2 FP64 FLOP/cycle
+Peak throughput
+32 FP32 FLOP/cycle
+Element widths
+64 and 32 b; no 16 b
+Maximum vector length
+16 384 16\,384 b, 512 FP32
+Vector registers
+32 architectural, 40 physical
+Lane to memory
+64 b/cycle each
+L1 D-cache
+32 KB, 64 B line
+L2 cache
+1 MB, 4 banks, 8-way, inclusive
+Hardware FP exponential
+None
+Clock
+chip 1 GHz; FPGA 50 MHz
+Sustained memory bandwidth
+chip 6–7 B/cycle; FPGA 32 B/cycle
+Interconnect ceiling
+64 B/cycle
+TABLE IV: Vector instruction latency, as documented by the vendor at
+v ​ l = 512 vl=512 FP32 elements and at no other length.
+Class
+Instructions
+Cycles
+Strided memory
+vlse , vsse
+128–512
+FP reduction
+vfredsum , vfredmax
+160
+Unit-stride memory
+vle , vse
+32–128
+Moves
+vmv.v.x , vmv.v.v
+50
+Arithmetic
+vfadd , vfmadd
+35
+VI-B Measurement targets and instrumentation
+Cycle counts come from two targets of the same design, the EPAC chip at 1 GHz and an FPGA implementation of the same design at 50 MHz (Table III ). Both implement the same processor revision, so a change that helps on one is expected to help on the other; they differ in clock and in sustained memory bandwidth per cycle. The 64 B/cycle ceiling is fixed by the cache-line interconnect; the FPGA sustains about half of it, while on the chip the SerDes link to the DDR4 bank limits at 1 GHz and sustains roughly a tenth. The chip therefore charges far more for memory traffic relative to arithmetic than the FPGA does, which Section VII-B measures directly. No result below is averaged across the targets and no table mixes them; results lead with the chip. Every arm is vectorised, so no figure below is a speed-up over scalar code. The absolute reference is the machine’s peak of 32 FP32 FLOP/cycle, against which the stock kernel reaches 16.2%. All measurements are FP32, on one core and one attention head, at d = 64 d=64 and N = 1024 N=1024 unless stated.
+Instruction-level data comes from the RAVE QEMU plugin [ 42 ] , which reports per-region instruction mixes, effective vector lengths and moved bytes. It models register width only: no caches, no pipeline, no latencies. Its role is to establish which instruction stream the compiler and the intrinsics emit, which the hardware counters cannot show. Cycles and retired instructions are read per region through a tracing interface [ 43 ] , each reported against total cycles for the same region, because an absolute instruction count can move opposite to performance when a kernel does less work in a denser issue stream.
+VI-C Region attribution
+Counters and cycles are attributed to named regions rather than to the kernel as a whole, because the regions have different bottlenecks and a whole-kernel number cannot separate them.Four are instrumented:
+•
+gemm_qk , the score product 𝐐 i ​ 𝐊 j ⊤ \mathbf{Q}_{i}\mathbf{K}_{j}^{\!\top} ;
+•
+softmax , which applies α \alpha , updates 𝐦 i \mathbf{m}_{i} ,
+exponentiates, sums the rows and forms 𝝆 i \boldsymbol{\rho}_{i} ;
+•
+gemm_pv , the value product 𝐏 ~ i ​ j ​ 𝐕 j \tilde{\mathbf{P}}_{ij}\mathbf{V}_{j} ;
+•
+output_scaling , the normalisation
+𝐎 ~ i / ℓ i \tilde{\mathbf{O}}_{i}/\boldsymbol{\ell}_{i} .
+The first three run once per ( i , j ) (i,j) tile and the last once per query block, so each carries an execution count and per-tile costs follow by division. The scale α \alpha is applied inside softmax , so gemm_qk is an unscaled product. Cycles outside the four appear as other and are under 1% in every arm. Boundaries sit inside the kernel and are identical in every arm, independent of which matrix-multiplication routine a region calls. All measurements are FP32, the narrowest type the vector unit computes in, on one core, at d = 64 d=64 and N = 1024 N=1024 unless stated.
+VII Evaluation
+VII-A End-to-end performance
+Figure 3 gives every arm at each of the eight tile shapes measured, as a speed-up over the stock kernel at its own fastest tile, so a bar reads as what replacing a tuned stock kernel buys. The reoriented kernel is fastest at B q = 512 B_{q}=512 , B k ​ v = 128 B_{kv}=128 , and the stock and scalar-coefficient kernels at B q = 128 B_{q}=128 , B k ​ v = 512 B_{kv}=512 . The fused kernel is nearly flat across the two, 40.23 Mcyc at B q = 256 B_{q}=256 , B k ​ v = 256 B_{kv}=256 against 40.88 at B q = 128 B_{q}=128 , B k ​ v = 512 B_{kv}=512 . The arms branch rather than stack: the fused and reoriented kernels both build on scalar coefficients, and reorientation replaces the fused traversal instead of adding to it. Quoting each arm where it is fastest (Table V ), scalar coefficients are worth 1.13 × 1.13\times , adding the fused traversal 1.29 × 1.29\times , and adding reorientation instead 1.84 × 1.84\times . Against the fused kernel the reoriented one is 1.43 × 1.43\times faster, 40.23 against 28.22 Mcyc. Floating-point utilisation rises from 16.2% to 29.7% of peak.
+Fig. 3: Speed-up over the stock kernel at its own fastest tile, EPAC chip,
+N = 1024 N=1024 , d = 64 d=64 . Shades darken from the stock to the reoriented
+kernel; the fused and reoriented arms each build on scalar
+coefficients. A triangle marks each arm’s own fastest tile.
+TABLE V: Each arm at its own fastest tile on each target, N = 1024 N=1024 ,
+d = 64 d=64 . The fused and reoriented arms each build on scalar
+coefficients. The two targets run at different clocks, so the factors
+compare and the cycles do not.
+EPAC chip
+FPGA
+Arm
+Mcyc
+factor
+Mcyc
+factor
+stock
+51.94
+1.00 × 1.00\times
+39.37
+1.00 × 1.00\times
+scalar consts
+45.83
+1.13 × 1.13\times
+30.18
+1.30 × 1.30\times
+fused
+40.23
+1.29 × 1.29\times
+25.38
+1.55 × 1.55\times
+reoriented
+28.22
+1.84 × 1.84\times
+14.55
+2.71 × 2.71\times
+% of peak
+16.2 to 29.7
+21.3 to 57.7
+VII-B The two targets rank the changes identically
+Table V puts the FPGA beside the chip, each arm at its own fastest tile on each. Every step is larger on the FPGA, uniformly and by a growing margin, while the ordering and the winner are the same on both.
+The cause is in the measurement rather than inferred. Table VI divides chip cycles by FPGA cycles for the same arm, tile and region, which says how much more each kind of work costs on silicon. Two regions bracket the rest. gemm_qk is almost all arithmetic and costs about 1.6 × 1.6\times more on the chip, for all four arms. The normalisation pass is almost all memory traffic and costs about 3.7 × 3.7\times more, likewise for all four.
+The softmax walks across that bracket as it is optimised, from 1.17 × 1.17\times for the stock kernel to 2.98 × 2.98\times reoriented. Each change removes vector instructions and spill traffic that both machines charge for, and what is left behind is a read and a write of the score tile, which the chip charges three times as much for. The better the kernel, the more of its remaining cost is memory and the more the two targets diverge. That is why the FPGA scores every step higher and why the chip figure is the one to quote.
+TABLE VI: Chip cycles per FPGA cycle, same arm, same region, both at
+B q = 256 B_{q}=256 , B k ​ v = 512 B_{kv}=512 . Arithmetic and memory traffic bracket
+the rest.
+Region
+stock
+scalar
+fused
+reor.
+gemm_qk
+1.62
+1.60
+1.58
+1.56
+softmax
+1.17
+1.57
+2.33
+2.98
+gemm_pv
+1.46
+1.45
+1.42
+2.64
+output_scaling
+3.75
+3.65
+3.65
+3.84
+VII-C Where the gain comes from
+Fig. 4: Cycles by region on the EPAC chip, N = 1024 N=1024 , d = 64 d=64 . The first
+four bars share B q = 128 B_{q}=128 , B k ​ v = 512 B_{kv}=512 , the fastest tile of all
+three natural-layout arms; the fifth is the reoriented kernel at
+its own fastest tile. Each region is limited by a different bottleneck: the value product by vector length, the softmax by its
+instruction classes, the score product by neither.
+Figure 4 breaks the arms down by region. The first four bars share B q = 128 B_{q}=128 , B k ​ v = 512 B_{kv}=512 , the fastest tile of all three natural-layout arms, so for those three the comparison is at a common block size and at each one’s own optimum at once. At that tile the reoriented kernel runs at a quarter of the register width and is not competitive; the fifth bar is the same kernel at its own tile. The gain has a different source in each region.
+Value product: vector length. gemm_pv takes its length from d d in the natural form and from B q B_{q} in the reoriented one, so the ratio is B q / d B_{q}/d (Equation ( 8 )). Against the fused kernel, each at its own best tile, the region is 2.01 × 2.01\times faster reoriented. This is the only region whose ratio contains the head dimension, and the one that carries most of the whole-kernel gain.
+Softmax. At each arm’s own best tile the region is 1.37 × 1.37\times faster reoriented. The reoriented form issues no reductions and no vector-to-scalar moves, and it computes 𝝆 i \boldsymbol{\rho}_{i} as one vector exponential per tile instead of one scalar exponential per query row.
+Score product: neither. gemm_qk issues the same instructions per row in both orientations, so it follows B q / B k ​ v B_{q}/B_{kv} and is within 1% of even at the optima, where both block lengths are 512.
+Sensitivity to tiling. The worst-to-best ratio over the eight measured tiles is 3.42 × 3.42\times for the stock kernel and 2.42 × 2.42\times for the reoriented one. Reorientation makes the kernel about 1.4 × 1.4\times less sensitive to the tile, but that was not its purpose. What it changes is which parameter the kernel is sensitive to: the natural layout takes its vector length from B k ​ v B_{kv} and is slowest where the key block is short, while the reoriented one takes it from B q B_{q} and is fastest there. The inversion is visible straight across Figure 3 .
+VII-D How the gain varies
+TABLE VII: How the gain varies, EPAC chip, each arm at its own best tile.
+cycles per score
+Setting
+stock
+reor.
+speed-up
+Sequence length, d = 64 d=64
+N = 1024 N=1024
+49.5
+26.9
+1.84 × 1.84\times
+N = 2048 N=2048
+47.7
+23.6
+2.02 × 2.02\times
+N = 4096 N=4096
+46.8
+22.5
+2.08 × 2.08\times
+Table VII varies, one at a time, the quantities the gain depends on.
+Sequence length. Attention is the part of a layer whose cost is quadratic in N N , so what decides whether the result matters is whether it survives at long context. The speed-up does not decay: it is 1.84 1.84 to 2.08 × 2.08\times over the measured range, and the two kernels keep the same optimal tiles, as Equation ( 8 ) predicts, since neither ratio contains N N .
+Head dimension. The head dimension enters one region, gemm_pv , through the ratio B q / d B_{q}/d of Equation ( 8 ). At d = 128 d=128 the reoriented kernel’s advantage in that region falls from 2.01 × 2.01\times to 1.26 × 1.26\times .
+VIII Discussion
+What the result is conditional on. Equations ( 8 ) and ( 9 ) state the condition: the reoriented form wins in the value product whenever the query block is longer than the head dimension, in the score product once it is also longer than the key block. The width is what makes the orientation a first-order choice. On a short register every block spans many vector instructions, so the length ratios tend to one and the reductions are a small share of the instruction stream. The result therefore scales with register width: it is largest on the longest machines, and those are the machines on which attention is now expected to run. The result also assumes a long query block. It concerns prefill and training, where B q B_{q} can be set to vlmax , and not autoregressive decode, where a query block holds one row or one query group and the natural orientation is the right one.
+Where the remaining headroom is. The reoriented kernel reaches 29.7% of peak, so a factor of three is unclaimed, and the regions do not share it evenly. gemm_pv is at 46.4% of peak and gemm_qk is now the largest single region at 35% of the budget, while the softmax is a quarter of it and removing it entirely would buy at most 1.33 × 1.33\times . The score product is the next target. It is a dense product whose operands are already packed, so what it leaves on the table is in the matrix-multiplication routine itself: register blocking and an inner kernel tuned for a decoupled unit without chaining. That work applies to both orientations alike and so cannot flatter either.
+IX Related Work
+Attention kernels. FlashAttention [ 18 ] removes the quadratic memory cost by tiling both operands and carrying the normalisation as an online recurrence [ 26 ] ; later versions improve parallelism on GPUs [ 19 ] and exploit asynchrony and low precision [ 20 ] . FlashAttention-4 [ 21 ] meets the problem of Section IV on GPUs whose matrix units have outgrown their exponential units, computing part of the exponentials as a polynomial on the FMA pipes and skipping most rescalings of the running maximum. That line of work treats the traversal as fixed. CPU implementations target short-vector SIMD [ 44 , 45 ] and vectorise along the head dimension, where any axis fills a register.
+Attention on RISC-V vector processors. Titopoulos et al. [ 22 ] vectorise FlashAttention for RVV along the key axis, with the maximum and sum as vector reductions and a bit-level approximation of the exponential, and evaluate registers of 32 to 128 elements in simulation. FlashAttention-V [ 23 ] meets the mismatch this paper addresses from the other side: once the register outgrows the head dimension it packs several heads into one register, keeping the reductions, and so extends to decode, where a query block is a single row, at the cost of needing vlmax / d \textup{{vlmax}}/d heads; it is evaluated in simulation up to 8192 bits and on a 256-bit board. Reorienting along queries needs no extra heads and removes the reductions but needs a long query block, so the two apply to different cases. VEXP [ 46 ] adds an exponential instruction to a RISC-V core rather than computing it in software.
+Long-vector architectures. RISC-V vector implementations span a wide range of register widths [ 47 , 31 , 32 , 33 , 16 , 30 ] . SX-Aurora [ 15 ] and the processor studied here [ 17 ] sit at the long end of that range.
+Restructuring kernels for long vectors. Sparse matrix products on long-vector machines needed a different blocking and accumulation structure rather than a better-tuned loop [ 48 ] ; there the vector length was too short because the data was sparse, here because the implementation chose the wrong axis of a tile that is large in both.
+X Conclusion
+The FlashAttention recurrence fixes which values a kernel computes. It does not fix the orientation in which they are computed, and on a processor whose registers hold 512 single-precision elements that freedom is worth 1.43 × 1.43\times over a fused natural-orientation kernel sharing the same exponential and the same matrix-multiplication routine. Transposing the score tile and the running output puts every region under one parameter, the number of queries in a tile, and turns the softmax’s per-row reductions into elementwise accumulations. With the exponential’s coefficients moved out of the vector registers where they spilled, the kernel is 1.84 × 1.84\times - 2.08 × 2.08\times faster on EPAC silicon; an FPGA of the same design ranks every change identically.
+References
+[1]
+P. B. Schneck (1987)
+The cdc star-100 .
+In Supercomputer Architecture ,
+Boston, MA , pp. 99–117 .
+External Links: ISBN 978-1-4615-7957-1 ,
+Link
+Cited by: §I .
+[2]
+R. M. Russell (1978)
+The cray-1 computer system .
+Communications of the ACM 21 ( 1 ), pp. 63–72 .
+External Links: Document ,
+Link
+Cited by: §I .
+[3]
+C. Kozyrakis and D. Patterson (2003)
+Overcoming the limitations of conventional vector processors .
+In Proceedings of the 30th annual international symposium on Computer architecture ,
+ISCA ’03 , pp. 399–409 .
+External Links: Document ,
+Link
+Cited by: §I .
+[4]
+R. Krashinsky, C. Batten, M. Hampton, S. Gerding, B. Pharris, J. Casper, and K. Asanović (2004)
+The vector-thread architecture .
+In Proceedings of the 31st Annual International Symposium on Computer Architecture ,
+ISCA ’04 , pp. 52–63 .
+External Links: Document ,
+Link
+Cited by: §I .
+[5]
+K. Diefendorff (1999)
+Pentium iii = pentium ii + sse: internet sse architecture boosts multimedia performance .
+Microprocessor Report 13 ( 3 ), pp. 1–6 .
+Cited by: §I .
+[6]
+S. F. Oberman, G. Favor, and F. Weber (1999)
+AMD 3DNow! technology: architecture and implementations .
+IEEE Micro 19 ( 2 ), pp. 37–48 .
+External Links: Document ,
+Link
+Cited by: §I .
+[7]
+A. Rico, J. A. Joao, C. Adeniyi-Jones, and E. Van Hensbergen (2017)
+ARM hpc ecosystem and the reemergence of vectors .
+In Proceedings of the Computing Frontiers Conference (CF ’17) ,
+New York, NY, USA , pp. 329–334 .
+External Links: Document
+Cited by: §I .
+[8]
+A. Naithani, S. Ainsworth, T. M. Jones, and L. Eeckhout (2021)
+Vector runahead .
+In Proceedings of the 48th Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 905–918 .
+External Links: Document
+Cited by: §I .
+[9]
+P. Sun, G. Gabrielli, and T. M. Jones (2021)
+Speculative vectorisation with selective replay .
+In Proceedings of the 48th Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 223–236 .
+External Links: Document
+Cited by: §I .
+[10]
+J. M. Domingos, N. Neves, N. Roma, and P. Tomás (2021)
+Unlimited vector extension with data streaming support .
+In Proceedings of the 48th Annual International Symposium on Computer Architecture (ISCA) ,
+pp. 209–222 .
+External Links: Document
+Cited by: §I .
+[11]
+Y. Yamada and S. Momose (2018)
+Vector engine processor of nec’s brand-new supercomputer sx-aurora tsubasa .
+In Proceedings of Hot Chips 30: A Symposium on High Performance Chips (HC30) ,
+Note: https://old.hotchips.org/hc30/2conf/2.14_NEC_vector_NEC_SXAurora_TSUBASA_HotChips30_finalb.pdf
+Cited by: §I .
+[12]
+K. Takahashi, T. Araki, R. Egawa, Y. Isobe, K. Komatsu, A. Musa, and H. Takizawa (2023)
+Performance evaluation of a next-generation sx-aurora tsubasa vector supercomputer .
+In High Performance Computing. ISC High Performance 2023 Research Papers ,
+Lecture Notes in Computer Science , Vol. 13948 , pp. 361–378 .
+External Links: Document
+Cited by: §I .
+[13]
+N. Stephens, S. Biles, M. Boettcher, J. Eapen, M. Eyole, G. Gabrielli, M. Horsnell, G. Magklis, A. Martinez, N. Premillieu, A. Reid, A. Rico, and P. Walker (2017)
+The ARM scalable vector extension .
+IEEE Micro 37 ( 2 ), pp. 26–39 .
+Note: https://doi.org/10.1109/MM.2017.35
+External Links: Document
+Cited by: §I .
+[14]
+M. Sato, Y. Ishikawa, H. Tomita, Y. Kodama, T. Odajima, M. Tsuji, H. Yashiro, M. Aoki, N. Shida, I. Miyoshi, K. Hirai, A. Furuya, A. Asato, K. Morita, and T. Shimizu (2020)
+Co-design for A64FX manycore processor and “Fugaku” .
+In Proc. International Conference for High Performance Computing,
+Networking, Storage and Analysis (SC) ,
+Note: https://doi.org/10.1109/SC41405.2020.00051
+External Links: Document
+Cited by: §I ,
+§II-B .
+[15]
+K. Komatsu, S. Momose, Y. Isobe, O. Watanabe, A. Musa, M. Yokokawa, T. Aoyama, M. Sato, and H. Kobayashi (2018)
+Performance evaluation of a vector supercomputer SX-Aurora TSUBASA .
+In Proc. International Conference for High Performance Computing,
+Networking, Storage and Analysis (SC) ,
+pp. 685–696 .
+Note: https://doi.org/10.1109/SC.2018.00057
+External Links: Document
+Cited by: §I ,
+§II-B ,
+§IX .
+[16]
+F. Minervini, O. Palomar, O. Unsal, E. Reggiani, J. Quiroga, J. Marimon, C. Rojas, R. Figueras, A. Ruiz, A. Gonzalez, J. Mendoza, I. Vargas, C. Hernandez, J. Cabre, L. Khoirunisya, M. Bouhali, J. Pavon, F. Moll, M. Olivieri, M. Kovac, M. Kovac, L. Dragic, M. Valero, and A. Cristal (2023)
+Vitruvius+: an area-efficient RISC-V decoupled vector coprocessor for high performance computing applications .
+ACM Transactions on Architecture and Code Optimization 20 ( 2 ), pp. 28:1–28:25 .
+Note: https://doi.org/10.1145/3575861
+External Links: Document
+Cited by: §I ,
+§IX .
+[17]
+F. Mantovani, F. Banchelli, P. Vizcaino, R. Ferrer, O. Palomar, F. Minervini, J. Labarta, M. Olivieri, S. Pomata, P. Marcuello, J. Cortina, A. Moreno, J. Sans, R. Espasa, V. Papaefstathiou, N. Dimou, G. Ieronymakis, A. Psathakis, M. Giaourtas, I. Mastorakis, M. Marazakis, E. Guthmuller, A. Bocco, J. Fereyre, C. Fuguet, M. Kovač, M. Kovač, L. Mrković, J. Ramljak, L. Bertaccini, T. Fischer, F. K. Gürkaynak, P. Scheffler, L. Benini, B. Goel, M. Manivannan, T. Rocha, N. Neves, and J. Krüger (2026)
+EPAC: the last dance .
+In Companion Proceedings of the ACM International Conference on
+Computing Frontiers (CF Companion) ,
+Note: Invited paper. https://arxiv.org/abs/2604.12715
+Cited by: §I ,
+§II-B ,
+§VI-A ,
+§VI-A ,
+§IX .
+[18]
+T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré (2022)
+FlashAttention: fast and memory-efficient exact attention with IO-awareness .
+In Advances in Neural Information Processing Systems (NeurIPS) ,
+Note: https://arxiv.org/abs/2205.14135
+Cited by: §I ,
+§II-A ,
+§IX .
+[19]
+T. Dao (2024)
+FlashAttention-2: faster attention with better parallelism and work partitioning .
+In International Conference on Learning Representations (ICLR) ,
+Note: https://arxiv.org/abs/2307.08691
+Cited by: §I ,
+§II-A ,
+§III ,
+§IX .
+[20]
+J. Shah, G. Bikshandi, Y. Zhang, V. Thakkar, P. Ramani, and T. Dao (2024)
+FlashAttention-3: fast and accurate attention with asynchrony and low-precision .
+In Advances in Neural Information Processing Systems (NeurIPS) ,
+Note: https://arxiv.org/abs/2407.08608
+Cited by: §I ,
+§III ,
+§IX .
+[21]
+T. Zadouri, M. Hoehnerbach, J. Shah, T. Liu, V. Thakkar, and T. Dao (2026)
+FlashAttention-4: algorithm and kernel pipelining co-design for asymmetric hardware scaling .
+In Conference on Machine Learning and Systems (MLSys) ,
+Note: https://arxiv.org/abs/2603.05451
+Cited by: §I ,
+§III ,
+§IX .
+[22]
+V. Titopoulos, K. Alexandridis, and G. Dimitrakopoulos (2026)
+Vectorized FlashAttention with low-cost exponential computation in RISC-V vector processors .
+The Journal of Supercomputing 82 ( 4 ), pp. 189 .
+Note: https://doi.org/10.1007/s11227-026-08322-x
+External Links: Document
+Cited by: §I ,
+§IX .
+[23]
+S. R. Gupta, N. Papadopoulou, and M. Pericàs (2026)
+FlashAttention for scalable vector architectures .
+Note: arXiv:2608.18656 https://arxiv.org/abs/2608.18656
+Cited by: §I ,
+§IX .
+[24]
+D. Nuzman and A. Zaks (2008)
+Outer-loop vectorization: revisited for short SIMD architectures .
+In Proc. 17th International Conference on Parallel Architectures
+and Compilation Techniques (PACT) ,
+pp. 2–11 .
+Note: https://doi.org/10.1145/1454115.1454119
+External Links: Document
+Cited by: §I ,
+§V-A .
+[25]
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, Ł. Kaiser, and I. Polosukhin (2017)
+Attention is all you need .
+In Advances in Neural Information Processing Systems (NeurIPS) ,
+Note: https://arxiv.org/abs/1706.03762
+Cited by: §II-A .
+[26]
+M. Milakov and N. Gimelshein (2018)
+Online normalizer calculation for softmax .
+Note: arXiv:1805.02867 https://arxiv.org/abs/1805.02867
+Cited by: §II-A ,
+§IX .
+[27]
+RISC-V International (2021)
+RISC-V “V” vector extension, version 1.0 .
+Note: Specification https://github.com/riscv/riscv-v-spec/releases/tag/v1.0
+Cited by: §II-B .
+[28]
+R. Espasa and M. Valero (1996)
+Decoupled vector architectures .
+In Proc. 2nd IEEE International Symposium on High-Performance
+Computer Architecture (HPCA) ,
+pp. 281–290 .
+Note: https://doi.org/10.1109/HPCA.1996.501193
+External Links: Document
+Cited by: §II-B .
+[29]
+K. Asanović (1998)
+Vector microprocessors .
+Ph.D. Thesis , University of California, Berkeley .
+Note: https://people.eecs.berkeley.edu/~krste/thesis.pdf
+Cited by: §II-B .
+[30]
+SiFive (2022)
+SiFive Intelligence X280 processor .
+Note: Product brief https://www.sifive.com/cores/intelligence-x280
+Cited by: §II-B ,
+§IX .
+[31]
+M. Cavalcante, F. Schuiki, F. Zaruba, M. Schaffner, and L. Benini (2020)
+Ara: a 1-GHz+ scalable and energy-efficient RISC-V vector processor with multiprecision floating-point support in 22-nm FD-SOI .
+IEEE Transactions on Very Large Scale Integration (VLSI) Systems 28 ( 2 ), pp. 530–543 .
+Note: https://doi.org/10.1109/TVLSI.2019.2950087
+External Links: Document
+Cited by: §II-B ,
+§IX .
+[32]
+M. Perotti, M. Cavalcante, N. Wistoff, R. Andri, L. Cavigelli, and L. Benini (2022)
+A “new Ara” for vector computing: an open source highly efficient RISC-V V 1.0 vector processor design .
+In Proc. 33rd IEEE International Conference on Application-specific
+Systems, Architectures and Processors (ASAP) ,
+Note: https://doi.org/10.1109/ASAP54787.2022.00017
+External Links: Document
+Cited by: §II-B ,
+§IX .
+[33]
+M. Cavalcante, D. Wüthrich, M. Perotti, S. Riedel, and L. Benini (2022)
+Spatz: a compact vector processing unit for high-performance and energy-efficient shared-L1 clusters .
+In Proc. 41st IEEE/ACM International Conference on Computer-Aided
+Design (ICCAD) ,
+Note: https://doi.org/10.1145/3508352.3549367
+External Links: Document
+Cited by: §II-B ,
+§IX .
+[34]
+A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga, A. Desmaison, A. Köpf, E. Yang, Z. DeVito, M. Raison, A. Tejani, S. Chilamkurthy, B. Steiner, L. Fang, J. Bai, and S. Chintala (2019)
+PyTorch: an imperative style, high-performance deep learning library .
+In Advances in Neural Information Processing Systems (NeurIPS) ,
+Note: https://arxiv.org/abs/1912.01703
+Cited by: §III .
+[35]
+K. Goto and R. A. van de Geijn (2008)
+Anatomy of high-performance matrix multiplication .
+ACM Transactions on Mathematical Software 34 ( 3 ), pp. 12:1–12:25 .
+Note: https://doi.org/10.1145/1356052.1356053
+External Links: Document
+Cited by: §III-A ,
+§III-B .
+[36]
+F. G. Van Zee and R. A. van de Geijn (2015)
+BLIS: a framework for rapidly instantiating BLAS functionality .
+ACM Transactions on Mathematical Software 41 ( 3 ), pp. 14:1–14:33 .
+Note: https://doi.org/10.1145/2764454
+External Links: Document
+Cited by: §III-B .
+[37]
+J. Muller (2016)
+Elementary functions: algorithms and implementation .
+3rd edition , Birkhäuser .
+Note: https://doi.org/10.1007/978-1-4899-7983-4
+External Links: Document
+Cited by: §IV-A .
+[38]
+D. E. Knuth (1997)
+The art of computer programming, volume 2: seminumerical algorithms .
+3rd edition , Addison-Wesley .
+Note: https://www-cs-faculty.stanford.edu/~knuth/taocp.html
+Cited by: §IV-A .
+[39]
+N. J. Higham (2002)
+Accuracy and stability of numerical algorithms .
+2nd edition , SIAM .
+Note: https://doi.org/10.1137/1.9780898718027
+External Links: Document
+Cited by: §IV-A .
+[40]
+G. J. Chaitin (1982)
+Register allocation and spilling via graph coloring .
+In Proc. SIGPLAN Symposium on Compiler Construction ,
+pp. 98–105 .
+Note: https://doi.org/10.1145/800230.806984
+External Links: Document
+Cited by: §IV-B ,
+§VI-A .
+[41]
+RISC-V International (2019)
+RISC-V “V” vector extension, version 0.7.1 .
+Note: Specification https://github.com/riscv/riscv-v-spec/releases/tag/0.7.1
+Cited by: §VI-A .
+[42]
+P. Vizcaíno, F. Mantovani, J. Labarta, and R. Ferrer (2025)
+RAVE: RISC-V analyzer of vector executions, a QEMU tracing plugin .
+In Lecture Notes in Computer Science ,
+pp. 3–16 .
+Note: https://doi.org/10.1007/978-3-031-85700-3_1
+External Links: Document
+Cited by: §VI-B .
+[43]
+V. Pillet, J. Labarta, T. Cortes, and S. Girona (1995)
+PARAVER: a tool to visualize and analyze parallel code .
+In Proc. WoTUG-18: Transputer and Occam Developments ,
+Note: https://tools.bsc.es/paraver
+Cited by: §VI-B .
+[44]
+H. Shen, H. Chang, B. Dong, Y. Luo, and H. Meng (2023)
+Efficient LLM inference on CPUs .
+Note: arXiv:2311.00502 https://arxiv.org/abs/2311.00502
+Cited by: §IX .
+[45]
+X. Fu, W. Yang, D. Dong, and X. Su (2024)
+Optimizing attention by exploiting data reuse on ARM multi-core CPUs .
+In Proc. 38th ACM International Conference on Supercomputing (ICS) ,
+pp. 137–149 .
+Note: https://doi.org/10.1145/3650200.3656620
+External Links: Document
+Cited by: §IX .
+[46]
+R. Wang, G. İslamoğlu, A. Belano, V. Potocnik, F. Conti, A. Garofalo, and L. Benini (2025)
+VEXP: a low-cost RISC-V ISA extension for accelerated softmax computation in transformers .
+In Proc. 32nd IEEE Symposium on Computer Arithmetic (ARITH) ,
+pp. 37–44 .
+Note: https://doi.org/10.1109/ARITH64983.2025.00016
+External Links: Document
+Cited by: §IX .
+[47]
+Y. Lee, C. Schmidt, A. Ou, A. Waterman, and K. Asanović (2015)
+The Hwacha vector-fetch architecture manual, version 3.8.1 .
+Technical report
+Technical Report UCB/EECS-2015-262 , EECS Department, University of California, Berkeley .
+Note: https://www2.eecs.berkeley.edu/Pubs/TechRpts/2015/EECS-2015-262.html
+Cited by: §IX .
+[48]
+V. Le Fèvre and M. Casas (2023)
+Efficient execution of SpGEMM on long vector architectures .
+In Proc. 32nd International Symposium on High-Performance Parallel
+and Distributed Computing (HPDC) ,
+pp. 101–113 .
+Note: https://doi.org/10.1145/3588195.3593000
+External Links: Document
+Cited by: §IX .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

@@ -1,0 +1,857 @@
+Source: https://arxiv.org/html/2605.28070v1
+Main text extraction; fulltext_chars=100416
+
+arXiv:2605.28070v1 [cs.AI] 27 May 2026 
+ 
+ 
+  Bridging the Detection-to-Abstention Gap in Reasoning Models under Insufficient Information 
+
+ 
+ 
+ 
+ Renjie Gu
+ † † thanks:  Work done during an internship at Ant Group. 
+ Affiliation:  Ant Group
+ 
+    
+ Jiaxu Li
+ 
+ Affiliation:  Tsinghua University
+ 
+    
+ Yihao Wang
+ 
+ Affiliation:  Ant Group
+ 
+ Affiliation:  Zhejiang University
+ 
+    
+ Yun Yue
+ 
+ Affiliation:  Ant Group
+ 
+    
+ Hansong Xiao
+ 
+ Affiliation:  Ant Group
+ 
+    
+ Yefei Chen
+ 
+ Affiliation:  Ant Group
+ 
+    
+ Yuan Wang
+ 
+ Affiliation:  Ant Group
+ 
+    
+ Chunxiao Guo
+ 
+ Affiliation:  Ant Group
+ 
+    
+ Pei Wei
+ 
+ Affiliation:  Ant Group
+ 
+    
+ Jinjie Gu
+ 
+ Affiliation:  Ant Group
+ 
+    
+ Yixin Cao
+ 
+    
+ [1ex]
+Fudan University
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+  Code and Dataset:  AQ-MedAI/Judge-Then-Solve 
+
+ 
+ 
+ 
+ 
+ Abstract 
+ We highlight a failure mode of large reasoning models on questions with insufficient information: models may recognize that a problem is under-specified, yet still continue reasoning and produce unsupported final answers instead of abstaining. We formalize this mismatch as the detection-to-abstention gap, where detected insufficiency fails to translate into final abstention. This gap is particularly concerning in high-risk domains such as medical AI, where answering under incomplete evidence can be more harmful than refusing to answer.
+To close this gap, we propose Judge-Then-Solve (JTS), a trajectory-level reasoning-control framework that trains models to make an explicit answerability commitment before solution generation.
+Rather than treating abstention as a final-answer style, JTS casts it as a control decision over the reasoning trajectory: the model either proceeds to solve or terminates early with abstention based on its answerability judgment. We instantiate this policy through supervised warm-up and missing-premise reinforcement learning with consistency and length-shaping rewards.
+Experiments on both dense and MoE reasoning models show that JTS substantially improves reliable abstention on several datasets. In particular, JTS pushes Abstention@Detection (A@D) to near-saturation levels, indicating that models not only detect missing information but also reliably act on that detection. By terminating unanswerable trajectories immediately after the answerability judgment, JTS also reduces unnecessary reasoning and improves inference efficiency on cases where continued deliberation would only amplify unsupported assumptions. As an auxiliary observation, we further find that missing-premise training can alter the reasoning behavior of models on difficult but answerable problems, reducing unproductive self-reflection. These results suggest that abstention under insufficient information is a key form of reasoning control for deploying reasoning models safely and efficiently in high-risk settings. 
+ 
+ 
+ 
+ Introduction 
+
+ 
+
+ 
+ Reasoning language models are increasingly being considered for high-stakes settings, where unsupported answers can cause real harm [ 17 ] . This is especially critical in medical AI, where user questions often omit key symptoms, lab results, diagnoses, or medication history, yet still seek concrete recommendations [ 28 ] . In such cases, a trustworthy model should recognize insufficient information and abstain instead of fabricating missing premises. Recent work shows that reasoning models struggle on missing-premise and unanswerable questions  [ 8 ,  17 ] . More importantly, this failure is not always due to a lack of awareness: models may express uncertainty or identify missing information during intermediate reasoning, but still produce definitive final answers. This exposes a more specific failure mode: recognized insufficiency is not reliably translated into final abstention. 
+
+ 
+ 
+ 
+ In this work, we formalize this mismatch as the  detection-to-abstention gap : the gap between recognizing that a question lacks sufficient information and actually abstaining in the final answer, as illustrated in Figure  1 .
+This distinction matters because aggregate abstention metrics alone cannot reveal whether a model fails to detect insufficiency in the first place, or detects it during reasoning but fails to act on that recognition.
+To make this behavior explicit, we separate  detection  from  abstention .
+Specifically, we use an LLM-as-a-judge protocol, validated by human annotation, to examine the model’s intermediate reasoning traces and determine whether the model has recognized missing or insufficient information.
+We then measure post-detection abstention, which evaluates whether the model abstains once insufficiency has already been detected.
+This decomposition allows us to identify a more fine-grained failure mode: reasoning models may possess partial awareness of the problem, yet still fail to translate that awareness into a reliable final refusal. 
+
+ 
+ 
+ 
+ Figure 1:  
+ Overview of the detection-to-abstention gap and Judge-Then-Solve (JTS). 
+ (A)  A base or plain-RL model may recognize that a key premise is missing, yet continue reasoning by making unsupported assumptions and outputting a fabricated answer, illustrating the  detection-to-abstention gap .
+ (B)  JTS explicitly judges answerability before solving; once the question is deemed  Unanswerable , it terminates reasoning early and abstains.
+ (C)  Training on missing-premise data, especially JTS with length shaping, shifts behavior from unsupported answering toward reliable abstention and reduces the “detected but not abstained” failure mode.
+ 
+ 
+ 
+ We propose Judge-Then-Solve (JTS), a trajectory-level reasoning-control framework for converting detected insufficiency into reliable abstention.
+Rather than treating abstention as a final-response preference, JTS makes answerability an explicit control decision inside the reasoning trajectory: the model first commits to whether the question is answerable, and then either proceeds to solve or terminates early with abstention based on that commitment.
+We instantiate this policy through supervised warm-up on judgment-conditioned trajectories and reinforcement learning with a structured reward that aligns the answerability judgment, continuation or termination behavior, and final response.
+We further introduce conditional length shaping, which discourages continued deliberation after failed abstention on under-specified questions while preserving sufficient reasoning on answerable questions.
+Together, these components target the failure behind the gap: models may recognize missing information but fail to control the subsequent reasoning trajectory accordingly. 
+
+ 
+ 
+ 
+ We evaluate our approach on missing-premise evaluation sets and on four subsets of AbstentionBench  [ 17 ] , including MedIQ  [ 20 ] , a medical diagnosis benchmark. Experiments on both dense and moe reasoning models  [ 45 ]  show that JTS with length shaping substantially improves abstention reliability, especially Abstention@Detection (A@D), pushing post-detection abstention to near-saturation levels. Token-level entropy analysis further suggests that JTS preserves uncertainty around missing premises rather than inducing repetitive self-doubt with low uncertainty. These gains are particularly meaningful in medical and other safety-critical applications, where abstaining under insufficient information may be preferable to providing unsupported guidance. As a secondary finding, we also observe that training on missing-premise data changes reasoning style on some difficult answerable problems, leading to less ineffective self-reflection and reduced hesitation. We present this as an auxiliary behavioral observation rather than the central claim of the paper. 
+
+ 
+ 
+ 
+ Our contributions are as follows:  (1)  We formalize the detection-to-abstention gap, a failure mode in which reasoning models recognize insufficient information but fail to abstain in the final response.  (2)  We propose Judge-Then-Solve, a trajectory-level reasoning-control framework with conditional length shaping, which trains models to make early answerability commitments and condition subsequent continuation or termination on those commitments.  (3) 
+The method shows strong improvements on missing-premise evaluation sets and AbstentionBench, with especially large gains in post-detection abstention to nearly 100%. As a secondary analysis, we show that missing-premise training can also alter reasoning style, leading to less ineffective self-reflection on some difficult answerable problems and weak improvement on pass@8 of Omnimath benchmark. 
+
+ 
+ 
+ 
+ 
+ Related Work 
+
+ 
+
+ 
+ Large Reasoning Models (LRMs) 
+
+ 
+
+ 
+ Large Reasoning Models (LRMs), characterized by their ability to generate explicit intermediate thoughts, have redefined the state-of-the-art across complex reasoning benchmarks  [ 14 ,  47 ,  32 ] . Current literature primarily focuses on improving correctness in objectively verifiable domains, such as mathematics and programming, where the reasoning process can be directly optimized via reward-based frameworks like Reinforcement Learning from Continuous Feedback (RLCF), process supervision, or Outcome-based Reward Models (ORM)  [ 26 ,  4 ,  25 ] . However, this optimization objective often assumes the existence of a valid solution, potentially overlooking the model’s behavior when the underlying premises are flawed or insufficient. 
+
+ 
+ 
+ 
+ 
+ Failures in Abstention and the “Overthinking" Phenomenon 
+
+ 
+
+ 
+ Abstention has long been studied in selective prediction and classification with a reject option, where models trade coverage for lower risk  [ 3 ,  7 ,  12 ] , and is closely tied to calibration for confidence-based refusal  [ 13 ] .
+For LLMs, abstention has emerged as a broad reliability challenge across unanswerable questions, underspecification, false premises, temporal uncertainty, and safety-sensitive settings  [ 44 ,  29 ,  51 ,  17 ] , building on earlier QA work on unanswerable, unsupported, ambiguous, and context-dependent questions  [ 36 ,  19 ,  30 ,  48 ]  and recent self-knowledge or known-unknown benchmarks  [ 46 ,  1 ] .
+For LRMs, this issue is more acute: they often hallucinate instead of abstaining on under-specified or unanswerable queries, and intensive reasoning fine-tuning can even degrade abstention ability  [ 17 ] .
+This behavior is related to the “hallucination tax" of reinforcement fine-tuning, where rewarding extended reasoning may suppress refusal  [ 40 ] , and to missing-premise or premise-artifact studies showing that LRMs tend to “overthink" unsolvable problems rather than evaluate premise sufficiency  [ 8 ,  34 ,  2 ] .
+Existing remedies include solvability detection training, inference-time intervention, and uncertainty modeling  [ 10 ,  24 ,  33 ,  38 ,  16 ,  23 ,  18 ,  5 ] , with reliable abstention becoming especially important in medical and other high-stakes domains  [ 27 ,  6 ,  50 ,  28 ] .
+Yet integrating solvability assessment directly into the reasoning process remains under-explored. 
+
+ 
+ 
+ 
+ 
+ Evolution of Structured Inference Paradigms 
+
+ 
+
+ 
+ Reasoning performance is significantly bolstered when explicit structures are imposed on the inference process  [ 49 ,  43 ] . Beyond the sequential nature of standard Chain-of-Thought (CoT), sophisticated paradigms have introduced staged inference: Self-Ask utilizes query decomposition  [ 35 ] , Least-to-Most prompting addresses incremental complexity  [ 49 ] , and Plan-and-Solve decouples strategic planning from execution  [ 41 ,  21 ] .
+The frontier of this field is shifting from heuristic prompting toward the algorithmic internalization of these structures. Recent work has demonstrated that models can be trained to internalize divide-and-conquer policies  [ 22 ]  or mental modeling for spatial tasks  [ 42 ,  11 ] . However, these structured paradigms still largely operate under the "solve-only" bias, lacking a formal internal mechanism to audit the contextual integrity of a problem before solving it. 
+
+ 
+ 
+ 
+ 
+ 
+ Preliminary and Problem Statement 
+
+ 
+
+ 
+ Figure 2:  
+ Plain RL Narrows but Does Not Close the Detection-to-Abstention Gap. 
+ (a)  Frontier models achieve high correctness on solvable questions but abstain poorly on under-specified ones.
+ (b)  Plain RL improves both detection rate (DR) and overall abstention rate (OAR), yet OAR remains insufficiently high and a clear DR–OAR gap persists, indicating that detecting missing information does not reliably translate into final abstention.
+ 
+ 
+ 
+ Preliminaries on Abstention for Under-specified Questions 
+
+ 
+
+ 
+ We consider questions whose provided information is insufficient to support a unique valid answer. Following prior work on abstention and missing-premise problems, such questions are referred to as  under-specified  questions: the model should answer when the available premises are sufficient, and abstain otherwise  [ 8 ,  17 ] .
+Let  x = ( q , c ) x=(q,c)  denote a question  q q  together with its provided context  c c , and let  𝒴 \mathcal{Y}  be the answer space. We use  ⊥ \bot  to denote abstention. A query is answerable if the context determines a unique valid answer, i.e.,  | ℱ ⁡ ( c , q ) | = 1 |\mathcal{F}(c,q)|=1 ; otherwise, it is under-specified, i.e.,  | ℱ ⁡ ( c , q ) | ≠ 1 |\mathcal{F}(c,q)|\neq 1 , where  ℱ ⁡ ( c , q ) \mathcal{F}(c,q)  denotes the set of answers supported by  c c  for question  q q .
+Accordingly, the desired behavior of a model is to produce a valid answer when the question is answerable, and to abstain when the question is under-specified. In this work, abstention refers to responses that explicitly avoid committing to an unsupported answer, such as stating that the information is insufficient or that additional premises are required  [ 8 ,  17 ] . 
+
+ 
+ 
+ 
+ 
+ The Detection-to-Abstention Gap: Motivation and Problem of Interest 
+
+ 
+
+ 
+ Current frontier language models still struggle to abstain reliably on under-specified questions. As shown in Figure  2 (a), both closed-source and open-source models  [ 45 ,  14 ] achieve high correctness on solvable questions, while their abstention rates on under-specified questions remain much lower, ranging from only 18.6% to 41.4%. This suggests that strong reasoning ability on well-specified problems does not automatically imply reliable abstention when essential information is missing. 
+
+ 
+ 
+ 
+ A natural question is whether simple post-training can close this gap. To examine this, we apply plain GRPO training to two open-source models: Qwen3-30B-A3B-Thinking and DeepSeek-R1-Distill-Qwen-14B, which we refer to as  Qwen3-Thinking  and  DeepSeek-R1-Distill , respectively  [ 14 ,  45 ] . As shown in Figure  2 (b), plain RL improves both detection rate (DR) and overall abstention rate (OAR): for  Qwen3-Thinking , OAR increases from 21.1% to 63.6%, and for  DeepSeek-R1-Distill , from 18.6% to 52.7%. Nevertheless, the resulting abstention performance is still not fully satisfactory, since OAR remains far below 100% and leaves many under-specified questions handled incorrectly, i.e., by producing unsupported answers instead of abstaining. 
+
+ 
+ 
+ 
+ More importantly, a clear gap remains between DR and OAR even after training. For  Qwen3-Thinking , DR is 77.8% while OAR is only 63.6%; for  DeepSeek-R1-Distill , DR reaches 64.7% but OAR remains at 52.7%. These results indicate that detecting missing information is not sufficient by itself: models may recognize that a question is under-specified, yet still continue reasoning and produce a definitive final answer rather than abstaining. This persistent gap between detection and final abstention is exactly the challenge we target in this work. The problem of interest, therefore, is not merely whether a model can recognize that a question is under-specified, but whether it can reliably translate such recognition into the final decision to abstain. In particular, we ask: how can we train reasoning models so that, once insufficient information is recognized, they stop unnecessary deliberation and abstain instead of continuing to produce unsupported answers? 
+
+ 
+ 
+ 
+ 
+ 
+ Methodology 
+
+ 
+
+ 
+ Judge-Then-Solve for Early Abstention Commitment 
+
+ 
+
+ 
+ A central challenge in reasoning under insufficient information is the  detection-to-abstention gap : even when a model recognizes that a question is under-specified, it may still continue reasoning and eventually produce an unsupported answer instead of abstaining. In practice, this failure is often accompanied by extended post-detection deliberation, where the model repeatedly revisits missing premises, entertains speculative completions, or hesitates between abstaining and answering. To address this issue, we seek to make the model commit to abstention as early as possible once insufficient information has been identified, rather than allowing it to continue an unstable reasoning process after detection. To this end, we introduce  Judge-Then-Solve (JTS) , a structured reasoning paradigm that explicitly places  answerability judgment  at the beginning of the reasoning trajectory. Under JTS, the model is required to first examine whether the provided context contains sufficient information to support a uniquely grounded answer. This judgment is expressed in a fixed  <answerability_judge>  block before any solution-oriented reasoning is generated. The judgment itself consists of three parts: (1) a  Contextual Audit , (2) an  Integrity Check , and (3) a binary  Conclusion . 
+
+ 
+ 
+ 
+ This judgment stage serves as an explicit gate for subsequent reasoning. If the model concludes that the input is  UNANSWERABLE , it is required to terminate reasoning immediately and directly produce an abstaining final answer. Compared with unconstrained reasoning, JTS has two intended effects. First, it shortens the path from detecting insufficient information to producing abstention, thereby directly targeting the detection-to-abstention gap. Second, by requiring explicit contextual auditing before solution generation, JTS may also improve answerability detection itself. 
+
+ 
+ 
+ 
+ Formally, given an input  x = ( q , c ) x=(q,c) , JTS decomposes inference into: 
+
+ 
+ 
+
+ 
+ 
+ z = f θ judge ​ ( x ) , z ∈ { Answerable , Unanswerable } , z=f_{\theta}^{\mathrm{judge}}(x),\qquad z\in\{\textsc{Answerable},\textsc{Unanswerable}\}, 
+ 
+ (1) 
+ 
+
+ 
+ 
+
+ 
+ 
+ y = { ⊥ , if  ​ z = Unanswerable , f θ solve ​ ( x ) , if  ​ z = Answerable . y=\begin{cases}\bot,&\text{if }z=\textsc{Unanswerable},\\
+f_{\theta}^{\mathrm{solve}}(x),&\text{if }z=\textsc{Answerable}.\end{cases} 
+ 
+ (2) 
+ 
+
+ 
+ 
+ 
+ 
+ Supervised Warm-up for Judge-Then-Solve 
+
+ 
+
+ 
+ Before reinforcement learning, we perform a lightweight supervised fine-tuning stage to initialize the model with the Judge-Then-Solve response format.
+For under-specified questions, the target response contains an explicit  <answerability_judge>  block that identifies the question as  UNANSWERABLE , followed by an abstaining final answer.
+For well-defined questions, the target response first marks the question as  ANSWERABLE  and then continues with standard solution reasoning.
+This stage is intended to teach the structural prior of JTS rather than directly optimize abstention, while the final abstention behavior is further improved by GRPO with the structured reward described below. 
+
+ 
+ 
+ 
+ 
+ Reinforcement Learning with Structured Reward for Abstention 
+
+ 
+
+ 
+ To operationalize the Judge-Then-Solve (JTS) paradigm, we optimize the model with Group Relative Policy Optimization (GRPO)  [ 39 ] , a reinforcement learning algorithm that estimates relative advantages within a group of sampled responses without requiring a separate value model. Specifically, we design a structured reward that explicitly aligns the reasoning trajectory, the answerability judgment, and the final output behavior, encouraging the model to first assess whether the problem is answerable and then either solve it or abstain accordingly. The reward is designed to enforce three progressively stronger requirements: (i) structural validity of the reasoning trace, (ii) consistency between the judgment and the final behavior, and (iii) task-level correctness or appropriate abstention. 
+
+ 
+ 
+ 
+ Formally, given a sampled response  y y  for an input  x x , the overall reward is defined as: 
+
+ 
+ 
+
+ 
+ 
+ R ⁡ ( y ) = R format ​ ( y ) + R consistency ​ ( y ) + R task ​ ( y ) + R length ​ ( y ) . R(y)=R_{\text{format}}(y)+R_{\text{consistency}}(y)+R_{\text{task}}(y)+R_{\text{length}}(y). 
+ 
+ (3) 
+ 
+
+ 
+ 
+ 
+ Format Reward. 
+
+ 
+ The binary format reward  R format R_{\text{format}}  enforces that the model adheres to the JTS reasoning structure. Specifically, the response must contain a valid  <think>  block, a well-formed  <answerability_judge>  segment, and a properly formatted conclusion ( ANSWERABLE  or  UNANSWERABLE ). In addition, structural constraints are imposed on the reasoning flow:
+(i) for  UNANSWERABLE  cases, the model must terminate reasoning immediately after the judgment;
+(ii) for  ANSWERABLE  cases, the model must continue non-trivial reasoning before producing a final answer;
+(iii) the final answer must contain sufficient content after  </think> . 
+
+ 
+ 
+ 
+ 
+ Consistency Reward. 
+
+ 
+ The consistency reward  R consistency R_{\text{consistency}}  ensures that the model’s answerability judgment aligns with its final behavior.
+We employ an external LLM-based evaluator to assess whether the model abstains or provides an answer.
+Let  z ∈ { Answerable , Unanswerable } z\in\{\textsc{Answerable},\textsc{Unanswerable}\}  denote the predicted judgment, and let  e ^ \hat{e}  denote the evaluator result, where  e ^ = 0 \hat{e}=0  indicates an abstention response,  e ^ = 1 \hat{e}=1  indicates a correct substantive answer, and  e ^ = 2 \hat{e}=2  indicates an incorrect substantive answer.
+The consistency reward is defined as: 
+
+ 
+ 
+
+ 
+ 
+ R consistency = { 1 , if  ​ z = Unanswerable  and  ​ e ^ = 0 , 1 , if  ​ z = Answerable  and  ​ e ^ ∈ { 1 , 2 } , 0 , otherwise . R_{\text{consistency}}=\begin{cases}1,&\text{if }z=\textsc{Unanswerable}\text{ and }\hat{e}=0,\\
+1,&\text{if }z=\textsc{Answerable}\text{ and }\hat{e}\in\{1,2\},\\
+0,&\text{otherwise}.\end{cases} 
+ 
+ (4) 
+ 
+
+ 
+ This term explicitly penalizes contradictions between the judgment stage and the final output. 
+
+ 
+ 
+ 
+ 
+ Task Reward. 
+
+ 
+ The task reward  R task R_{\text{task}}  evaluates the correctness of the model’s behavior conditioned on both format and consistency being satisfied. For under-specified questions, correct abstention receives a reward of  + 1 +1 , while answering receives  0 0 . For well-defined questions, correct answers receive  + 1 +1 , incorrect abstentions receive  − 1 -1 , and incorrect answers receive  0 0 : 
+
+ 
+ 
+
+ 
+ 
+ R task = { 1 , insufficient and abstain , 0 , insufficient and answer , 1 , well-defined and correct , − 1 , well-defined and abstain , 0 , well-defined and incorrect . R_{\text{task}}=\begin{cases}1,&\text{insufficient and abstain},\\
+0,&\text{insufficient and answer},\\
+1,&\text{well-defined and correct},\\
+-1,&\text{well-defined and abstain},\\
+0,&\text{well-defined and incorrect}.\end{cases} 
+ 
+ (5) 
+ 
+
+ 
+ 
+ 
+ 
+ Length-based Reward Shaping. 
+
+ 
+ To better regulate reasoning after answerability detection, we introduce a conditional length-based reward shaping term for failure cases.
+This design is motivated by an observation from plain missing-premise RL: training substantially reduces the average reasoning length, suggesting that the model partially associates shorter trajectories with successful abstention.
+However, this implicit bias is insufficient, as the model may still detect insufficient information but continue unnecessary reasoning, thereby producing the detection-to-abstention gap.
+We therefore use length as an explicit shaping signal only when the model’s behavior is unsuccessful. 
+
+ 
+ 
+ 
+ For under-specified questions, the length reward is applied only when the model fails to abstain; shorter trajectories are favored to encourage immediate termination after detecting insufficiency.
+For well-defined questions, the length reward is applied only when the model fails to answer correctly; longer trajectories are mildly favored to encourage more complete reasoning before finalizing the answer. 
+
+ 
+ 
+ 
+ Concretely, for each sampled response  y i y_{i} , let  L i L_{i}  denote its response length in tokens.
+We define two eligible failure groups within a rollout batch: 
+
+ 
+ 
+
+ 
+ 
+ 𝒢 short = { i : x i ​  is under-specified and  ​ y i ​  does not abstain } , \mathcal{G}_{\text{short}}=\{i:x_{i}\text{ is under-specified and }y_{i}\text{ does not abstain}\}, 
+ 
+ (6) 
+ 
+
+ 
+ and 
+
+ 
+ 
+
+ 
+ 
+ 𝒢 long = { i : x i ​  is well-defined and  ​ y i ​  is not correct } . \mathcal{G}_{\text{long}}=\{i:x_{i}\text{ is well-defined and }y_{i}\text{ is not correct}\}. 
+ 
+ (7) 
+ 
+
+ 
+ Length normalization is performed separately within each eligible group.
+For a group  𝒢 \mathcal{G} , if  | 𝒢 | ≤ 1 |\mathcal{G}|\leq 1  or all responses in  𝒢 \mathcal{G}  have the same length, we set the length reward of all samples in that group to zero.
+Otherwise, for each  i ∈ 𝒢 i\in\mathcal{G} , we compute the min-max normalized length as 
+
+ 
+ 
+
+ 
+ 
+ L ~ i = L i − min j ∈ 𝒢 ⁡ L j max j ∈ 𝒢 ⁡ L j − min j ∈ 𝒢 ⁡ L j . \widetilde{L}_{i}=\frac{L_{i}-\min_{j\in\mathcal{G}}L_{j}}{\max_{j\in\mathcal{G}}L_{j}-\min_{j\in\mathcal{G}}L_{j}}. 
+ 
+ (8) 
+ 
+
+ 
+ The length reward is then defined as 
+
+ 
+ 
+
+ 
+ 
+ R length ​ ( y i ) = { 0.2 ​ ( 0.5 − L ~ i ) , i ∈ 𝒢 short , 0.2 ​ ( L ~ i − 0.5 ) , i ∈ 𝒢 long , 0 , otherwise . R_{\text{length}}(y_{i})=\begin{cases}0.2(0.5-\widetilde{L}_{i}),&i\in\mathcal{G}_{\text{short}},\\[3.0pt]
+0.2(\widetilde{L}_{i}-0.5),&i\in\mathcal{G}_{\text{long}},\\[3.0pt]
+0,&\text{otherwise}.\end{cases} 
+ 
+ (9) 
+ 
+
+ 
+ Therefore, the shaping term is bounded by 
+
+ 
+ 
+
+ 
+ 
+ R length ∈ [ − 0.1 , 0.1 ] . R_{\text{length}}\in[-0.1,0.1]. 
+ 
+ (10) 
+ 
+
+ 
+ For correctly abstained under-specified questions and correctly answered well-defined questions, we set  R length = 0 R_{\text{length}}=0 , preventing the length signal from perturbing already successful behaviors. 
+
+ 
+ 
+ 
+ For correctly abstained under-specified questions and correctly answered well-defined questions, we set  R length = 0 R_{\text{length}}=0 , preventing the length signal from perturbing already successful behaviors. The policy is optimized with Group Relative Policy Optimization (GRPO)  [ 39 ] , using the clipped surrogate objective 
+
+ 
+ 
+
+ 
+ 
+ ℒ GRPO = − 𝔼 x ∼ 𝒟 , { y i } i = 1 G ∼ π θ old ( ⋅ | x ) [ 1 G ∑ i = 1 G 1 | y i | ∑ t = 1 | y i | min ( ρ i , t ( θ ) A ^ i , clip ( ρ i , t ( θ ) , 1 − ϵ , 1 + ϵ ) A ^ i ) ] . \mathcal{L}_{\text{GRPO}}=-\mathbb{E}_{x\sim\mathcal{D},\,\{y_{i}\}_{i=1}^{G}\sim\pi_{\theta_{\text{old}}}(\cdot|x)}\left[\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|y_{i}|}\sum_{t=1}^{|y_{i}|}\min\left(\rho_{i,t}(\theta)\hat{A}_{i},\operatorname{clip}(\rho_{i,t}(\theta),1-\epsilon,1+\epsilon)\hat{A}_{i}\right)\right]. 
+ 
+ (11) 
+ 
+
+ 
+ Here,  ρ i , t ​ ( θ ) = π θ ​ ( y i , t ∣ x , y i , < t ) π θ old ​ ( y i , t ∣ x , y i , < t ) \rho_{i,t}(\theta)=\frac{\pi_{\theta}(y_{i,t}\mid x,y_{i,<t})}{\pi_{\theta_{\text{old}}}(y_{i,t}\mid x,y_{i,<t})}  denotes the policy ratio, and  A ^ i \hat{A}_{i}  is the group-normalized advantage computed from the sampled rewards.
+Overall, this reward design combines the aspects mentioned before.
+By encouraging early termination in  UNANSWERABLE  cases while preserving sufficient reasoning for answerable questions, it targets to close the detection-to-abstention gap. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Experiments 
+
+ 
+
+ 
+ Experimental Setup 
+
+ 
+
+ 
+ Baselines & Reasoning Models. 
+
+ 
+ We compare our method against two baselines: (1) a prompting-based strategy designed to elicit the model’s critical reasoning ability  [ 34 ] , and (2) a plain RL approach without structured intervention.
+The prompting baseline explicitly instructs the model to first verify whether all necessary information is available before proceeding with reasoning. If key information is missing or ambiguous, the model is required to state this explicitly; otherwise, it should provide an answer using the minimum number of tokens.
+We conduct experiments on two representative large reasoning models (LRMs):
+ Qwen3-30B-A3B-Thinking-2507   [ 45 ] , a Mixture-of-Experts (MoE) model, and
+ DeepSeek-R1-Distill-Qwen-14B   [ 39 ] , a dense model.
+This selection allows us to evaluate the effectiveness of our method across both dense and MoE [ 31 ]  architectural paradigms. 
+
+ 
+ 
+ 
+ 
+ Training Methods & Dataset. 
+
+ 
+ Both plain RL and our Judge-Then-Solve (JTS) method are trained on the Missing-Premise (MIP) dataset  [ 8 ] , which comprises four subsets, including Math-500  [ 25 ]  and GSM8K  [ 4 ] .
+The dataset contains both under-specified and well-defined questions.
+The plain RL method also adopts GRPO, where the reward function is defined as  R task R_{\text{task}} , as described in Section  4.3 . 
+
+ 
+ 
+ 
+ 
+ Evaluation Metrics. 
+
+ 
+ We evaluate models on both under-specified and well-defined questions.
+For under-specified questions, we report Detection Rate (DR), Overall Abstention Rate (OAR), and Abstention-at-Detection (A@D). DR measures whether the reasoning trace explicitly recognizes missing or ambiguous conditions, OAR measures final-answer abstention, and A@D measures abstention conditioned on detection: 
+
+ 
+ 
+
+ 
+ 
+ A @ D = | { i : Detect ⁡ ( y i ) = 1 ∧ Abstain ⁡ ( y i ) = 1 } | | { i : Detect ⁡ ( y i ) = 1 } | . \mathrm{A@D}=\frac{\left|\{i:\mathrm{Detect}(y_{i})=1\land\mathrm{Abstain}(y_{i})=1\}\right|}{\left|\{i:\mathrm{Detect}(y_{i})=1\}\right|}. 
+ 
+ 
+
+ 
+ In the main tables, we report the aggregate estimate  OAR / DR \mathrm{OAR}/\mathrm{DR} , since a manual audit of 200 randomly sampled abstaining responses by five annotators finds that all audited abstentions explicitly detect the missing condition. Thus, on our evaluated outputs, abstention is empirically a subset of detection up to annotation noise.
+For well-defined questions, we report Answer Rate and Correct Rate to measure whether normal task-solving ability is preserved. Answer Rate measures the proportion of responses that provide a substantive answer rather than abstaining, while Correct Rate measures answer correctness judged by an LLM-based judge conditioned on the reference answer. The reliability of this judge is further validated by a manual sanity check in Appendix  C.4 , which shows high consistency with human experts. We evaluate on the MIP test set and four AbstentionBench subsets  [ 17 ] : MMLU-History and MMLU-Math from MMLU  [ 15 ] , GPQA-Diamond  [ 37 ] , and MedIQ  [ 20 ] . Since the MIP training set is mainly mathematical, these AbstentionBench subsets provide out-of-domain evaluation across substantially different domains. Both benchmarks contain under-specified and well-defined questions, allowing us to measure abstention behavior and answer-preserving ability under the same protocol. When aggregating across subsets, we use sample-size-weighted averages to avoid over-emphasizing smaller subsets. 
+
+ 
+ 
+ 
+ 
+ Implementation Details. 
+
+ 
+ We use full-parameter fine-tuning for both the supervised warm-up and RL stages, without LoRA or parameter freezing. For methods with SFT, we first train on 1,091 LLM-generated JTS-formatted trajectories covering both well-defined and under-specified questions. This stage initializes the answerability-judgment structure, while the subsequent RL stage optimizes abstention reliability and task behavior.
+For SFT, we use ms-swift on 8 GPUs with bfloat16 precision, maximum sequence length 4,096, per-device batch size 1, gradient accumulation steps 8, learning rate  1 × 10 − 5 1\times 10^{-5} , and DeepSpeed ZeRO-3. For RL, we use GRPO with the slime Megatron backend on a single node with 8 NVIDIA H200 GPUs. Each rollout step samples 8 prompts with 8 responses per prompt, yielding 64 generated samples and one optimizer update. We use AdamW-style optimization with learning rate  1 × 10 − 6 1\times 10^{-6} , a constant learning-rate schedule, weight decay 0.1, and bfloat16 precision. DeepSeek-R1-Distill-Qwen-14B is trained for 300 rollout steps, and Qwen3-30B-A3B-Thinking-2507 for 400 rollout steps. During rollout and evaluation, we use temperature 0.7 and top- p = 1.0 p=1.0 . The maximum completion length is 8,192 tokens for JTS runs and 16,384 tokens for the DeepSeek plain RL run. Each training configuration is run once. For evaluation, we repeat decoding with three random seeds and report averaged results, and we report the averaged results. Additional details on SFT data construction, batching, rollout settings, and judge configuration are provided in Appendix  B.5 . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Method 
+ DeepSeek-R1-Distill-Qwen-14B 
+ Qwen3-30B-A3B-Thinking 
+ 
+ DR ↑ \uparrow 
+ OAR ↑ \uparrow 
+ A@D ↑ \uparrow 
+ Avg. Len ↓ \downarrow 
+ DR ↑ \uparrow 
+ OAR ↑ \uparrow 
+ A@D ↑ \uparrow 
+ Avg. Len ↓ \downarrow 
+ 
+ Base 
+ 45.3 
+ 18.6 
+ 41.1 
+ 2605.9 
+ 52.9 
+ 21.1 
+ 40.0 
+ 2839.4 
+ 
+ Plain RL 
+ 64.7 
+ 52.7 
+ 81.4 
+ 1765.1 
+ 69.4 
+ 63.6 
+ 91.7 
+ 1200.0 
+ 
+ Prompting 
+ 56.5 
+ 52.7 
+ 93.3 
+ 714.6 
+ 72.8 
+ 65.8 
+ 90.4 
+ 959.9 
+ 
+ Ours: JTS 
+ 88.7 
+ 88.5 
+ 99.8 
+ 349.0 
+ 72.9 
+ 72.4 
+ 99.3 
+ 342.9 
+ 
+ 
+
+ 
+ 
+ Table 1:  
+Main results on insufficient-information questions.
+DR measures whether the model detects missing information, OAR measures final abstention, and A@D measures abstention conditioned on detection.
+Avg. Len is the sample-size-weighted average response length over the insufficient-information subsets of MIP and AbstentionBench.
+JTS substantially improves A@D while producing much shorter responses, indicating that it effectively closes the detection-to-abstention gap.
+ 
+ 
+ 
+ 
+ 
+ Experimental Results 
+
+ 
+
+ 
+ JTS Closes the Detection-to-Abstention Gap 
+
+ 
+ Table  1  reports the main results on insufficient-information questions.
+To keep the main comparison focused, we only include the base model, plain RL, the prompting baseline, and our final method, JTS, in the main table.
+Additional variants and ablations are reported in Appendix  D .
+Across both model families, the base models exhibit a clear detection-to-abstention gap: they can identify missing information in a non-trivial fraction of cases, but often fail to translate this recognition into final abstention.
+For example, DeepSeek obtains a DR of  45.3 % 45.3\%  but only an OAR of  18.6 % 18.6\% , and Qwen obtains a DR of  52.9 % 52.9\%  but only an OAR of  21.1 % 21.1\% .
+Plain RL improves both detection and abstention, suggesting that direct reinforcement learning on under-specified questions can partially mitigate unsupported answering.
+However, the gap remains, as the model may still continue reasoning after recognizing insufficiency.
+Prompting provides an important comparison: although it improves abstention once insufficiency is detected, it remains less effective than trained JTS in reliable overall abstention.
+In contrast, JTS substantially improves the alignment between answerability judgment and final response behavior.
+On DeepSeek, JTS increases OAR to  88.5 % 88.5\%  and A@D to  99.8 % 99.8\% .
+On Qwen, JTS reaches an OAR of  72.4 % 72.4\%  and an A@D of  99.3 % 99.3\% .
+These results indicate that explicitly structuring the model to first judge answerability and then solve or abstain is more effective than either prompting or plain RL alone. 
+
+ 
+ 
+ 
+ JTS also substantially shortens responses on insufficient-information questions.
+The base models produce very long responses, with average lengths of  2605.9 2605.9  and  2839.4 2839.4  tokens for DeepSeek and Qwen, respectively.
+JTS reduces these lengths to  349.0 349.0  and  342.9 342.9  tokens, respectively.
+This reduction is closely related to the role of length-based reward shaping.
+For insufficient-information questions, once the model has identified that necessary premises are missing, continued long-form reasoning is not only unnecessary but can also increase the risk of fabricating assumptions.
+The length reward therefore encourages the model to terminate with a concise abstention after detection, rather than drifting into overthinking or unsupported problem solving. 
+
+ 
+ 
+ 
+ Table  2  further evaluates performance on well-defined questions.
+JTS shows a mild conservativeness trade-off: its answer rate and correctness are slightly lower than those of the base models and plain RL.
+However, in safety-critical or reliability-sensitive scenarios, where unsupported answers under missing information can be more harmful than a small increase in false abstention, the improvement in abstention ability is more important than a minor loss on answerable questions.
+Moreover, this trade-off should be interpreted together with response length.
+JTS substantially reduces the average response length on well-defined questions, from  1687.3 1687.3  to  844.7 844.7  tokens for DeepSeek and from  2658.5 2658.5  to  810.4 810.4  tokens for Qwen.
+As a result, the normalized efficiency metric  Corr . / 1 KTok \mathrm{Corr.}/1\mathrm{KTok}  improves from  0.544 0.544  to  1.028 1.028  on DeepSeek and from  0.367 0.367  to  1.152 1.152  on Qwen.
+Thus, although JTS slightly lowers raw answer rate and correctness, it produces more concise answers and improves correctness per generated token, suggesting better inference efficiency rather than a simple performance degradation. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Method 
+ DeepSeek-R1-Distill-Qwen-14B 
+ Qwen3-30B-A3B-Thinking 
+ 
+ Ans. ↑ \uparrow 
+ Corr. ↑ \uparrow 
+ Len ↓ \downarrow 
+ Corr./1K ↑ \uparrow 
+ Ans. ↑ \uparrow 
+ Corr. ↑ \uparrow 
+ Len ↓ \downarrow 
+ Corr./1K ↑ \uparrow 
+ 
+ Base 
+ 100.0 
+ 91.8 
+ 1687.3 
+ 0.544 
+ 100.0 
+ 97.5 
+ 2658.5 
+ 0.367 
+ 
+ Plain RL 
+ 99.4 
+ 90.3 
+ 1769.7 
+ 0.510 
+ 99.0 
+ 96.1 
+ 1694.1 
+ 0.567 
+ 
+ Prompting 
+ 99.6 
+ 89.1 
+ 1046.5 
+ 0.851 
+ 98.8 
+ 94.0 
+ 1440.1 
+ 0.653 
+ 
+ Ours: JTS 
+ 92.4 
+ 86.8 
+ 844.7 
+ 1.028 
+ 94.7 
+ 93.4 
+ 810.4 
+ 1.152 
+ 
+ 
+
+ 
+ Table 2:  
+Performance on well-defined questions.
+Results are sample-size-weighted averages over well-defined subsets.
+Corr./1K is computed as correctness divided by average response length and multiplied by  1000 1000 .
+Although JTS introduces a trade-off in raw answer rate and correctness, it substantially reduces response length and improves correctness per generated token.
+ 
+ 
+ 
+ 
+ JTS Preserves Uncertainty to Enable Abstention. 
+
+ 
+ We further analyze token-level predictive entropy to examine how models behave under under-specification, with full details in Appendix  E.3 .
+On under-specified examples from AbstentionBench and MIP, JTS achieves higher token-weighted entropy than the base model and plain RL, increasing the overall entropy from 0.3594 and 0.3886 to 0.6251.
+As visualized in Figures  4 ,  5 ,  6  and  7 , this entropy is concentrated around tokens related to missing premises or ambiguous specifications.
+This suggests that the base model often remains overly confident under missing conditions, while JTS preserves uncertainty over unsupported assumptions and uses this uncertainty to trigger early abstention. 
+
+ 
+ 
+ 
+ 
+ Plain Missing-premise RL Changes Reasoning Behavior on Hard Math 
+
+ 
+ Beyond abstention, we examine whether training on missing-premise questions alters reasoning on answerable yet challenging problems.
+Although plain RL is not our final solution to the detection-to-abstention gap, it offers insight into how exposure to insufficient-information queries reshapes reasoning style.
+We evaluate plain RL models on Omni-Math  [ 9 ] , reporting pass@8 across difficulty levels.
+In total, we sample 450 problems (50 from each of nine difficulty ranges) and perform trajectory-level analysis using one sampled solution per problem. 
+
+ 
+ 
+ 
+ As shown in Table  3 , plain missing-premise RL does not degrade hard-math reasoning.
+Instead, both model families obtain mild improvements in several medium-to-hard difficulty ranges.
+For DeepSeek, the largest gains appear in the 5–6 and 6–7 difficulty ranges, where pass@8 improves by  4.0 4.0  points.
+For Qwen, the strongest improvement appears in the 6–7 range, where pass@8 increases from  80.0 % 80.0\%  to  86.0 % 86.0\% .
+Figure  3  in the Appendix further shows pass@8 gains across difficulty ranges, suggesting that missing-premise training not only teaches refusal on under-specified questions but also improves reasoning regulation on answerable problems requiring sustained, selective exploration. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Model 
+ Pass@8 
+ Length 
+ Trajectory 
+ 
+ Base 
+ RL 
+ Base 
+ RL 
+ Hes.  ↓ \downarrow 
+ Comp.  ↑ \uparrow 
+ 
+ 
+ 
+ Qwen3 
+ 86.44 
+ 86.89 
+ 44.0k 
+ 34.8k 
+ -40.0% 
+ +12.7% 
+ 
+ DeepSeek 
+ 76.67 
+ 77.78 
+ 25.3k 
+ 24.4k 
+ -27.8% 
+ +13.8% 
+ 
+ 
+
+ 
+ Table 3:  
+Omni-Math behavior before and after plain missing-premise RL.
+Pass@8 denotes the fraction of problems solved correctly within eight sampled responses.
+Length denotes the average response length in tokens.
+Hes. denotes the relative change in ineffective hesitation counts, and Comp. denotes the relative change in trajectory completeness scores.
+Plain missing-premise RL slightly improves pass@8 while reducing response length and ineffective hesitation.
+ 
+ 
+ 
+ To better understand this effect, we analyze sampled solution trajectories using an LLM-based evaluator.
+The evaluator measures ineffective metacognitive hesitation, trajectory completeness, and trajectory executability.
+Detailed prompt and definition can be found at Appendix  E.2 .
+As shown in Table  3 , plain missing-premise RL substantially reduces ineffective hesitation for both models.
+For Qwen3, the average hesitation count decreases by 40.0%, while the average response length drops from 44.0k to 34.8k tokens.
+For DeepSeek, hesitation decreases by 27.8%, and the average response length decreases from 25.3k to 24.4k tokens.
+At the same time, pass@8 slightly improves for both models, increasing from 86.44% to 86.89% for Qwen3 and from 76.67% to 77.78% for DeepSeek.
+These results suggest that missing-premise RL changes more than final abstention behavior: it also makes answerable-problem reasoning more concise and less prone to unproductive self-reflection. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Conclusion 
+
+ 
+
+ 
+ In this work, we study the detection-to-abstention gap in large reasoning models under insufficient information. We show that reasoning models may already recognize missing or ambiguous premises in their intermediate reasoning, yet fail to convert this recognition into final abstention. This failure mode is especially problematic in safety-critical domains such as medical AI, where an unsupported answer can be more harmful than a clear refusal. To address this problem, we propose Judge-Then-Solve (JTS), a trajectory-level reasoning-control framework that explicitly separates answerability judgment from solution generation. Instead of treating abstention as only a final-answer style, JTS requires the model to first make an answerability commitment and then either proceed to solve the problem or terminate early with abstention. We instantiate JTS through supervised warm-up and reinforcement learning with structured rewards, including format, consistency, task-level, and conditional length-shaping rewards. The length-shaping component further discourages unnecessary post-detection deliberation on under-specified questions while preserving sufficient reasoning on answerable ones. Experiments on both dense and MoE reasoning models demonstrate that JTS substantially improves reliable abstention on MIP and AbstentionBench, including the medical MedIQ subset. In particular, JTS pushes Abstention@Detection to near-saturation levels, suggesting that models not only detect insufficiency but also act on that detection more consistently. Our analysis also suggests that missing-premise training can influence reasoning behavior beyond abstention. On difficult but answerable problems, it can reduce ineffective self-reflection and make reasoning trajectories more concise. Overall, these results indicate that reliable abstention should be viewed as an important form of reasoning control. 
+
+ 
+ 
+ 
+ 
+ 
+ 

@@ -1,0 +1,418 @@
+https://arxiv.org/html/2610.29820v1
+1Introduction
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Background and Motivation
+2.1 Background
+2.1.1 Sparse Attention and KV History
+2.1.2 Attention Parallelism and KV Placement
+2.1.3 CPU Storage for KV Cache
+2.2 Motivation
+2.2.1 KV Storage and Decode Concurrency
+2.2.2 Fixed Per-Request Cache Quotas
+3 System Overview
+4 Unified KV Storage and Access
+4.1 Unified Logical Address Space
+4.2 KV Allocation and Access
+4.3 Local GPU Buffer
+4.4 Distributed Indexer
+5 CPU Memory Expansion and PB-LRU
+5.1 Parallel Bucketed LRU
+5.2 KV Exchange and Mapping Updates
+6 Evaluation
+6.1 Experimental Setup
+6.2 Latency under Low Concurrency
+6.3 Throughput Scaling
+6.4 KV Allocation and Capacity
+6.5 Scheduler Ablation
+7 Related Work
+KV addressing and reuse.
+Hierarchical caching and decode capacity.
+Distributed storage and parallelism.
+Hierarchical sparse-attention serving.
+8 Conclusion
+References
+License: CC BY 4.0
+arXiv:2610.29820v1 [cs.DC] 21 Oct 2026
+marginparsep has been altered.
+topmargin has been altered.
+marginparwidth has been altered.
+marginparpush has been altered.
+The page layout violates the ICML style.
+Please do not change the page layout, or include packages like geometry,
+savetrees, or fullpage, which change it for you.
+We’re not able to reliably undo arbitrary changes to the style. Please remove
+the offending package(s), or layout-changing commands and try again.
+UlaCache: Unified Logical Addressing
+for Sparse LLM Serving
+Isaac Zhu
+isaac@scitix.ai
+Hugh Yin
+hugh@scitix.ai
+Orion Wang
+orion.wang@scitix.ai
+Alan Cao
+sage@scitix.ai
+Rocky Wang
+rocky@scitix.ai
+Hscos Zhang
+cos120@scitix.ai
+Jack Li
+jack@scitix.ai
+Jason Zhao *
+jason@scitix.ai
+Scitix.AI
+1 1 footnotetext: Corresponding author.
+Abstract
+Long contexts increase the memory cost of the key-value (KV) cache in large language model (LLM) inference. Sparse attention reduces attention computation and memory traffic by selecting historical tokens, but the retained KV cache must remain available for later decoding steps. We present UlaCache, a KV cache management system built around a unified logical address space spanning GPU KV pools and optional CPU memory. Stable logical references let the inference engine allocate and select KV independently of physical placement. Common allocation and sparse-access interfaces support data-parallel (DP) and tensor-parallel (TP) attention. For distributed storage, local GPU buffers retain selected KV across decoding steps, so only missing entries require transfers. When CPU storage is enabled, Parallel Bucketed LRU (PB-LRU) manages a GPU pool shared across requests. It updates recency metadata and selects eviction victims in parallel. UlaCache transfers KV and then updates the address mappings. With speculative decoding enabled under matched CPU and GPU memory budgets, UlaCache achieves peak decoding throughput speedups of 1.16 × 1.16\times (DP) and 1.70 × 1.70\times (TP) on 8 × 8\times H200, and 1.73 × 1.73\times (DP) and 2.51 × 2.51\times (TP) on 8 × 8\times B300, compared with the state-of-the-art baseline.
+1 Introduction
+Figure 1: TP on 8 × 8\times H200 and DP on 8 × 8\times B300. Normalized per panel; latency axis: 0.6–1.0, others: 0–1.
+Efficient serving of long-context large language models (LLMs) requires enough memory to keep many requests active. Batching amortizes model execution across requests and raises decoding throughput, but every active request needs a key-value (KV) cache to retain its history Kwon et al. (2023) ; Agrawal et al. (2024) . The memory occupied by model weights is independent of batch size, whereas KV storage grows with the number and length of active contexts. As context length and concurrency grow, this cache can exhaust GPU memory and prevent larger decode batches. Increasing the amount of useful history that fits in a fixed memory budget is therefore central to throughput scaling.
+Sparse attention reduces the KV data read by each decoding step, selecting a subset of historical tokens or blocks for attention DeepSeek-AI and others (2025) . Models including DeepSeek-V4.1-Flash DeepSeek-AI and others (2026) , the GLM-5 family GLM-5-Team and others (2026) , Qwen3.8-Flash-Next Qiu et al. (2026) , Hy4 Preview Tencent Hy Team (2026) , and Step 5 Preview StepFun Team (2026) adopt this approach to reduce long-context attention cost. In index-based sparse attention, the selected set can change across steps, so unselected history must remain available for future queries DeepSeek-AI and others (2025) ; Xie et al. (2026) . Reading less KV data per step therefore leaves a storage problem: the retained history still grows with context length and the number of active requests, limiting the number of requests that can decode concurrently under a fixed memory budget.
+CPU memory can extend KV storage, but its effect on decode concurrency depends on how it is used. In the prefix-reuse paths of HiCache and LMCache, cached KV is loaded into the inference engine’s GPU slots to avoid prefill computation Xie (2025) ; Liu et al. (2025) . This improves serving efficiency, while the active decode batch remains bounded by the GPU KV allocation. HiSparse instead keeps complete histories of active requests in CPU memory and fetches selected KV into GPU caches Xie et al. (2026) . This supports decoding beyond GPU memory capacity, but GPU slots hold copies of CPU-resident KV and do not add capacity for distinct history.
+We present UlaCache, a KV cache management system built around a unified logical address space for GPU and CPU memory. The inference engine allocates and selects KV using stable logical references; UlaCache resolves physical locations, transfers the required data, and updates mappings as KV moves. Common allocation and sparse-access interfaces support data-parallel (DP) attention with rank-local storage and tensor-parallel (TP) attention with history distributed across GPUs. Implementing this abstraction efficiently poses two challenges.
+Challenge 1: Unified KV addressing and storage organization. Aggregating GPU and CPU memory requires a unified KV address space that keeps logical references stable as KV data moves between physical locations. The KV required by attention may reside on the computing GPU, a peer GPU, or in CPU memory. The organization of local and remote storage determines how much KV history is replicated and how much data must be transferred for attention. The challenge is to organize local KV access and distributed history storage under a common logical address space, reducing storage redundancy and the overhead of accessing and migrating KV across devices.
+Challenge 2: Efficient LRU replacement and mapping management. Historical tokens selected by sparse attention exhibit strong temporal locality across consecutive decoding steps. This temporal locality allows GPU caching to reduce redundant KV transfers. Least Recently Used (LRU) replacement determines which KV entries remain cached when capacity is limited. Each sparse access requires hit detection and recency updates; cache misses additionally require slot assignment for incoming KV, victim selection when capacity is full, and mapping updates after migration. These operations recur across requests and layers at every decoding step. Processing them serially adds management overhead to the decoding critical path. The challenge is to execute LRU replacement and the associated mapping updates efficiently, reducing the management overhead of local eviction and remote KV fetch planning.
+We make three contributions:
+•
+Unified KV addressing and storage organization. We provide a unified logical address space for KV stored in GPU and CPU memory, decoupling the references used by the inference engine from physical data placement. Common allocation and sparse-access interfaces support rank-local storage in DP and distributed storage across GPUs in TP. UlaCache resolves selected addresses, performs the required KV transfers, and commits mapping updates while keeping logical references stable. The storage organization also reduces GPU–CPU history duplication and, for Multi-head Latent Attention (MLA), replication across TP ranks. In TP mode, computing ranks cache previously fetched KV in local GPU buffers and transfer only missing entries, reducing redundant data movement. For layers sharing sparse selections, UlaCache prefetches the selected KV for later layers while the current layer executes.
+•
+Parallel bucketed LRU and address mapping updates. We design Parallel Bucketed LRU (PB-LRU) to make replacement and mapping management efficient over GPU capacity shared across requests. PB-LRU approximates LRU by grouping GPU slots into recency buckets and processing address translation, hit detection, and recency updates in parallel. For incoming KV, hierarchical bitmaps locate replacement candidates and assign destination slots while protecting entries needed by the current attention computation. Transfer plans record the locations of incoming and outgoing KV; mappings are updated after the data transfers complete so subsequent accesses resolve to ready data. For layers sharing sparse selections, UlaCache reuses access plans to avoid repeated address lookup, deduplication, and slot assignment, reducing LRU and mapping management overhead.
+•
+System implementation and evaluation. We implement UlaCache in SGLang and evaluate DP and TP modes with and without speculative decoding. With speculative decoding enabled under matched CPU and GPU memory budgets, UlaCache achieves peak decoding throughput speedups of 1.16 × 1.16\times (DP) and 1.70 × 1.70\times (TP) on 8 × 8\times H200, and 1.73 × 1.73\times (DP) and 2.51 × 2.51\times (TP) on 8 × 8\times B300, compared with HiSparse.
+Figure 1 summarizes latency, peak output throughput, and unique KV history capacity for TP on 8 × 8\times H200 and DP on 8 × 8\times B300.
+2 Background and Motivation
+2.1 Background
+2.1.1 Sparse Attention and KV History
+LLM inference consists of prefill and decoding. Prefill computes KV states for the input sequence. Each decoding step adds new states and uses the history to generate subsequent tokens. The cache avoids recomputing the earlier states, but must remain available while the request is active. Longer histories and larger batches therefore increase the storage requirement even though model weights are shared across requests Kwon et al. (2023) .
+In index-based sparse attention, an indexer selects historical token or block positions, and the attention operator reads the corresponding KV data DeepSeek-AI and others (2025) ; GLM-5-Team and others (2026) . For a history of L L positions and a selection of k k positions, the main attention operation reads only the selected k k entries, while storage must keep the remaining history available. The indexer maintains compact selection state separately from the KV records consumed by attention. Because selections change with the query, an entry outside the current working set can be needed at a later step Xie et al. (2026) .
+2.1.2 Attention Parallelism and KV Placement
+Attention parallelism determines which GPUs compute a request and store its history. Under TP, ranks split attention heads; KV heads are partitioned where possible and replicated when too few are available. Multi-head Latent Attention (MLA) compresses KV into a representation shared across heads. Partitioning query-head computation therefore does not partition this shared representation: conventional head-partitioned TP keeps a copy on each participating rank DeepSeek-AI and others (2024) ; Bhatia et al. (2025) . The GPUs perform different attention computation while retaining the same token history.
+Under DP, each rank processes separate requests and stores their histories locally. This avoids storing the same history on every rank, but makes the capacity available to a request depend on its assigned rank. Free slots on another rank are not directly usable by that request without an additional placement and access mechanism. The DP and TP labels here describe attention parallelism; other model components can use separate partitioning strategies Bhatia et al. (2025) .
+2.1.3 CPU Storage for KV Cache
+CPU memory can retain KV for reuse across requests or back the history of active requests. Hierarchical prefix caches such as HiCache and LMCache keep KV in CPU memory and external storage. A prefix hit restores cached KV into the inference engine’s GPU allocation, avoiding repeated prefill computation and improving request-serving efficiency. Transfers can be pipelined with layer execution to reduce exposed loading latency Xie (2025) ; Liu et al. (2025) . The backing cache stores reusable contexts, while the inference engine manages the GPU slots required for execution.
+Sparse KV offloading uses CPU memory during the lifetime of an active request. It keeps history outside GPU memory and brings selected entries to GPUs for attention Lee et al. (2024) ; Xie et al. (2026) . A selected entry missing from the GPU requires a host-to-device transfer before it can be consumed. A GPU cache retains entries across steps so that repeated selections can hit locally, reducing these transfers Xie et al. (2026) . The amount of history retained and the amount resident on GPUs can consequently differ.
+2.2 Motivation
+Figure 2: GLM-5.3 KV allocation on 8 × 8\times B300 (Spec. off).
+2.2.1 KV Storage and Decode Concurrency
+Each active request must retain its KV history throughout decoding, so storage capacity limits how many requests can decode concurrently. CPU memory provides additional KV storage, but whether it supports larger decode batches depends on how that history is used during execution. Prefix reuse and storage for active request histories are two common uses of CPU memory, with different implications for decode concurrency.
+One approach uses CPU memory to cache reusable KV and avoid repeated computation across requests. In the prefix-reuse paths of HiCache and LMCache, a cache hit loads existing KV into the inference engine’s GPU slots, avoiding the corresponding prefill computation Xie (2025) ; Liu et al. (2025) . Increasing CPU capacity retains more reusable contexts, but these contexts still occupy GPU history slots during execution. Adding CPU prefix storage therefore does not reduce the GPU storage required for the active histories. Once GPU KV slots limit the decode batch, additional CPU prefix storage improves reuse but does not directly admit more concurrently decoding requests.
+Another approach uses CPU memory to retain the histories of requests that are decoding. HiSparse stores complete histories in CPU memory, fetches selected KV to GPUs at each step, and caches some of that data for subsequent accesses Xie et al. (2026) . Since complete histories no longer need to fit in GPU slots, this approach supports decode batches beyond GPU history capacity. However, each GPU-cached entry also remains in CPU memory. GPU cache space accelerates access without storing additional history positions. In Figure 2 (b), HiSparse allocates 30.0 30.0 million CPU slots for complete history and 23.3 23.3 million GPU slots for cached copies. Its 53.3 53.3 million physical slots therefore hold only 30.0 30.0 million unique history positions. CPU storage expands decode capacity, but GPU and CPU capacity are not jointly used to retain more history.
+For models using MLA, conventional head-partitioned TP introduces an additional source of replication across GPUs. Ranks compute different attention heads while storing the same shared KV representation for each request DeepSeek-AI and others (2024) ; Bhatia et al. (2025) . Figure 2 (a) shows that under eight-rank TP, only 12.5 % 12.5\% of the SGLang and HiSparse history allocation stores unique history; the remaining 87.5 % 87.5\% holds replicas. This replication further reduces the space available for additional request histories.
+Increasing decode concurrency therefore calls for CPU memory to store active request histories and for less duplication between GPU and CPU memory and across GPUs. While retaining the cached copies needed to reduce access overhead, more of the available space should store distinct KV history, allowing the expanded storage to accommodate larger decode batches.
+2.2.2 Fixed Per-Request Cache Quotas
+GPU caches reduce repeated CPU-to-GPU transfers by retaining selected KV across decoding steps. Limiting each request to a fixed cache quota bounds its GPU memory footprint and leaves room for other requests. As the number of active requests falls, however, the remaining requests keep the same quotas and cannot use the capacity left idle by absent requests.
+This restriction can cause KV misses even when the complete active history fits in the available GPU KV capacity. If an individual history exceeds its request’s quota, some entries remain outside that request’s GPU cache. Whenever sparse attention selects one of these entries, it must be fetched from CPU memory. The transfer occurs despite there being enough GPU space to retain the data.
+HiSparse provides a concrete example through its fixed per-request GPU buffers Xie et al. (2026) . In our 8 × 8\times B300 DP configuration with speculative decoding enabled, the available GPU KV capacity can hold all active history at BS1, but the per-request buffer still retains only its configured quota. HiSparse has 23.5 % 23.5\% higher TPOT than GPU-resident SGLang (Figure 6 ). This allocation constraint motivates allowing cache allocations to grow as the number of active requests decreases, so spare GPU capacity can retain KV that would otherwise be evicted and fetched again.
+3 System Overview
+UlaCache decouples the logical KV references used by the inference engine from physical placement. Common allocation and sparse-access interfaces cover rank-local and distributed storage, while UlaCache coordinates caching, KV transfers, and mapping updates. Figure 3 shows the system modules and their organization for DP and TP attention.
+Figure 3: UlaCache architecture and KV access in DP and TP modes.
+Unified logical address space. UlaCache combines GPU KV pools and optional CPU pools into a logical address space. The address mapping associates each logical KV address with its current GPU or CPU physical slot. When KV cache moves, UlaCache updates this mapping without changing the logical addresses used by the inference engine. The address space covers a rank’s own pools in DP mode or aggregates the pools of a GPU group in TP mode. GPU KV pools retain history; in TP mode, each computing rank also maintains a local GPU buffer of selected copies. Buffer hits reuse local data without changing the history’s mapped storage location.
+KV allocation and access. The inference engine allocates logical KV slots for a request, and UlaCache assigns their physical storage. Prefill writes the computed KV cache to these slots, and decoding extends the allocation as new tokens are generated. After sparse selection, UlaCache reuses local GPU buffer hits where available and resolves the remaining logical addresses through the address mapping. Selected CPU data is first moved into its storage GPU pool. The selected KV cache is then read directly from the GPU pool or fetched into a local GPU buffer for attention.
+GPU–CPU scheduling with PB-LRU. When CPU storage is enabled, UlaCache uses Parallel Bucketed LRU (PB-LRU) to schedule transfers over a GPU KV pool shared by requests. PB-LRU groups GPU slots into recency buckets, updates accessed slots in parallel, and uses hierarchical bitmaps to select replacement slots. Its transfer plan promotes selected CPU data and moves replaced GPU data to CPU memory; UlaCache updates the address mapping after the exchange completes.
+4 Unified KV Storage and Access
+UlaCache uses stable logical KV addresses for sparse attention in both DP and TP modes. In DP mode, each rank manages its own GPU pool and optional CPU pool. In TP mode, the ranks’ GPU pools and optional CPU pools form a distributed address space. In both modes, UlaCache resolves selected logical addresses to the current physical locations of KV.
+Figure 4: TP mode: GPU KV capacity aggregation and local GPU buffer access.
+4.1 Unified Logical Address Space
+Each storage rank r r contributes a GPU KV pool with G r G_{r} slots and an optional CPU pool with C r C_{r} slots. Logical KV addresses identify retained token history independently of its current physical location. In DP mode, each rank constructs an independent address space over its own pools, with KV capacity G r + C r G_{r}+C_{r} . A request allocates its history within the rank responsible for its attention computation.
+In TP mode, the pools of P P ranks form a distributed address space accessible to all computing ranks in the group. Each GPU pool stores a distinct portion of the retained history, giving an aggregate GPU KV capacity of ∑ r = 0 P − 1 G r \sum_{r=0}^{P-1}G_{r} . Optional CPU pools extend the retained history beyond this GPU capacity. Each slot stores the complete KV representation for a token, including its compressed latent vector when the model uses MLA. Figure 4 illustrates this aggregation and the cached copies used by a computing rank.
+In TP mode, the ordinary MLA layout maps logical address t t to storage rank t mod P t\bmod P and rank-local logical position ⌊ t / P ⌋ \lfloor t/P\rfloor . Without CPU storage, this rule directly identifies the GPU slot. With CPU storage, the address mapping resolves the rank-local logical position to its current GPU or CPU slot. Migration updates the address mapping while preserving the logical address. The address-space scope differs between DP and TP, while allocation, writes, and sparse selection use the same logical addressing interface.
+GPU pool capacities are determined after accounting for model weights, local GPU buffers, Index storage, management metadata, and workspace. Cached copies in local GPU buffers do not contribute additional capacity for unique retained history.
+Figure 5: PB-LRU lookup, bucket rotation, and CPU promotion.
+4.2 KV Allocation and Access
+Allocation and writes. The inference engine allocates logical KV slots and records them in its request-to-token mapping. UlaCache binds these slots to physical storage within the request’s rank in DP mode or across the storage ranks in TP mode. Prefill writes the computed KV cache to the assigned locations; decoding allocates additional logical slots for newly generated tokens. Both phases use the same address mapping, and existing tokens retain their logical addresses as their KV cache moves between GPU and CPU memory.
+Sparse access. Sparse selection returns logical KV addresses. In DP mode, the rank resolves these addresses to physical slots, promotes any selected CPU data into its GPU pool, and supplies attention directly from that pool. In TP mode, the computing rank reuses local GPU buffer hits and resolves the remaining addresses to their storage ranks and physical locations. Selected CPU data is first promoted into the corresponding storage GPU pool, then missing KV cache is fetched from local or peer GPU pools into the computing rank’s buffer. Attention waits until the selected data is available. Section 5 describes GPU–CPU data exchange and the corresponding address mapping updates.
+4.3 Local GPU Buffer
+Each computing rank in TP mode maintains a local GPU buffer that caches copies of KV cache selected from the distributed pools and supplies them to the attention backend. Its capacity is independent of the retained history length. Cached copies remain available across decoding steps, reducing repeated transfers when sparse selections overlap. Replacing a buffer copy leaves the retained KV cache in the storage pools available for future selections. DP mode accesses its GPU pool directly without allocating this buffer.
+Lookup and transfer. After sparse selection, UlaCache checks which logical KV addresses are present in the buffer. A tag associated with each buffer slot identifies its cached KV cache data. Hits are retained for the current attention computation; missing addresses are deduplicated across queries and assigned buffer slots. The resulting transfer plan specifies the missing data and its destination slots. GPU kernels fetch this data from local or peer GPU pools, using CUDA IPC for peer access. The buffer uses the layout required by the attention backend.
+Only buffer misses require fetching from the global pool. In Figure 4 , GPU 0 selects addresses { 2 , 4 , 5 } \{2,4,5\} : address 2 is a buffer hit, address 4 is fetched from GPU 0’s pool, and address 5 is fetched from GPU 1’s pool.
+Plan reuse and prefetching. For layers that share sparse selection results, UlaCache performs address lookup, miss deduplication, and buffer allocation once and reuses the resulting access plan across the layer group. Each layer still fetches its own KV cache data. A separate CUDA stream prefetches the required data to overlap transfers with computation. Stream dependencies and CUDA events order source writes, prefetching, and attention reads, and prevent buffer slots from being reused before attention completes.
+4.4 Distributed Indexer
+In TP mode, Index keys follow the same logical token allocation and GPU partition as the KV cache. Each GPU scores only its local keys, and an all-gather combines the scores for the model’s TopK selection. This partitioning reduces Index key replication and redundant scoring across TP ranks. Selected positions identify logical KV addresses and enter the KV access path described above. The score all-gather introduces communication and synchronization overhead, particularly at low concurrency. In DP mode, each rank stores and scores the Index keys of its local requests without this cross-rank score exchange.
+5 CPU Memory Expansion and PB-LRU
+For each sparse access, PB-LRU identifies KV cache that must be fetched from CPU memory and assigns GPU slots to it. Recently accessed KV cache remains in a GPU pool shared by requests, while replaced KV cache moves to CPU memory. The scheduler determines which KV entries to move and their destination slots. UlaCache moves the data, then updates the address mappings.
+5.1 Parallel Bucketed LRU
+Sparse selections exhibit temporal locality across decoding steps Xie et al. (2026) . PB-LRU approximates LRU by grouping GPU slots according to when they were last accessed. Slots accessed in the same scheduling round share a recency bucket, avoiding the need to order individual accesses. Figure 5 illustrates parallel lookup, recency updates, and replacement.
+Parallel access processing. GPU threads resolve the supplied logical KV addresses in parallel using the address mapping. GPU-resident KV cache remains in place, and its slots move to the current recency bucket. CPU-resident addresses are deduplicated into a list of KV cache to fetch. Repeated references to the same GPU slot produce one effective recency update; repeated references to the same CPU address require one transfer.
+Recency buckets. Each layer group maintains a ring of B B recent buckets and one cold bucket. The current bucket advances once per scheduling round. Before a bucket is reused as the current bucket, its remaining members move to the cold bucket. This operation changes recency metadata only: the KV cache in these slots remains on the GPU. The cold bucket therefore contains GPU slots whose data has not been accessed within the recent window.
+Each bucket is represented by a bitmap with one bit per GPU physical slot. A set bit indicates membership in that bucket. A bucket identifier stored for each slot lets an access clear its previous membership and set its bit in the current bucket. Access updates touch the referenced slots rather than scanning the GPU pool. Bucket rotation additionally processes the expiring bucket’s members, which can include the entire pool in the worst case. CPU slots do not belong to these bitmaps.
+GPU slot selection. PB-LRU assigns free GPU slots to incoming CPU data first. If more slots are needed, it selects replacements from the cold bucket, followed by recent buckets from oldest to newest. The current bucket is excluded, protecting GPU data required by the current access. Hierarchical summary bitmaps guide selection: each summary bit indicates whether a region of the bitmap below contains any set bits, allowing selection to skip empty regions. The chosen destination slots join the current bucket. Figure 5 uses four recent buckets and 16 GPU slots, with compact summaries below the cold bucket.
+5.2 KV Exchange and Mapping Updates
+For each CPU-to-GPU transfer, the plan records the logical KV address, source CPU slot, destination GPU slot, and the logical address of any KV cache being replaced. Planning changes bucket membership without modifying KV data or the address mapping.
+GPU kernels exchange the data after prior readers of the affected slots complete. When the destination GPU slot is occupied, its KV cache moves into the source CPU slot as the incoming data moves to the GPU. Reusing this CPU slot avoids allocating additional CPU space for the replaced data. For an empty GPU destination, only a CPU-to-GPU copy is required; the source CPU slot is released after the mapping update.
+After all data transfers complete, UlaCache updates the address mapping to reflect the new GPU and CPU locations, then signals completion. Attention and local GPU buffer fetches wait for this signal before using the new GPU locations. The logical KV addresses remain unchanged throughout the exchange.
+6 Evaluation
+Figure 6: TPOT under low concurrency.
+Figure 7: Decoding throughput across batch sizes.
+6.1 Experimental Setup
+Platforms and baselines. We evaluate our SGLang integration using GLM-5.3 on 8 × 8\times H200 and 8 × 8\times B300 GPUs, with FP8 weights and KV cache and BF16 activations. Our baselines are SGLang Zheng et al. (2024) with GPU-resident KV cache and HiSparse Xie et al. (2026) with CPU-backed KV cache. For HiSparse with speculative decoding, we use the latest official SGLang implementation. Each system is evaluated with DP and TP attention, with and without speculative decoding. We use multi-token prediction (MTP) with two draft steps for speculative decoding. GPU memory allocations are matched across systems; CPU budgets are 128 GB per H200 GPU and 192 GB per B300 GPU. B300 uses a 272 GB persistent GPU model/cache budget per GPU.
+Workload. We use Multi-LexSum requests Shen et al. (2022) with input lengths of 64K–128K tokens. H200 uses 256 requests (98,125 input tokens on average); B300 extends the frozen request order to reach each configuration’s admitted concurrency, up to 578 requests. Each request generates 2,048 tokens using greedy decoding.
+Metrics. We complete prefill for all requests in a batch before starting decoding. We report output token throughput (tokens/s) and time per output token (TPOT, ms). Throughput comparisons use each method’s observed peak over all measured batch sizes, independently of its admission limit. We skip batch sizes for which the system cannot accommodate all requests concurrently.
+6.2 Latency under Low Concurrency
+Figure 6 compares TPOT under low concurrency. At BS1, UlaCache is faster than HiSparse and slower than SGLang in all eight configurations. UlaCache’s shared GPU pool can retain the KV cache of active requests at these loads, reducing the need to fetch history from CPU memory. HiSparse limits retained GPU history through fixed per-request buffers even when other GPU capacity is idle. Additional lookup, scheduling, and TP communication are consistent with the small overhead relative to SGLang.
+6.3 Throughput Scaling
+Figure 7 shows output throughput across batch sizes; crosses indicate configurations exceeding their admission limits. UlaCache’s larger KV capacity keeps more requests active, extending throughput scaling beyond the baselines’ admission limits. On 8 × 8\times B300, its peak throughput in TP mode without speculative decoding is 3.51 × 3.51\times SGLang’s peak. The larger admissible batch lets more outputs share each batched model execution. With speculative decoding enabled, UlaCache achieves peak throughput speedups over HiSparse of 1.16 × 1.16\times (DP) and 1.70 × 1.70\times (TP) on 8 × 8\times H200, and 1.73 × 1.73\times (DP) and 2.51 × 2.51\times (TP) on 8 × 8\times B300. Figure 8 relates this concurrency advantage to effective KV capacity.
+Effect of speculative decoding. Speculative decoding raises output throughput at shared batch sizes because each target verification can accept multiple output tokens. It also changes memory allocation for the draft model and verification state, so throughput and maximum admitted concurrency need not increase together. The curves include these allocations and use naturally accepted outputs. Peak throughput thus reflects both decoding efficiency and the concurrency supported by each complete configuration.
+6.4 KV Allocation and Capacity
+Figure 8: Effective KV capacity and admitted concurrency.
+Figure 8 compares effective KV capacity and admitted concurrency under matched memory budgets. The stacked capacity bars separate GPU and CPU storage, excluding replicas and buffers.
+In DP mode, UlaCache stores request histories across both GPU and CPU memory. HiSparse keeps full histories in CPU memory and uses GPU buffers to cache copies, so these buffers do not increase its history capacity. In TP mode, UlaCache also stores different portions of each history on different ranks. The additional capacity allows more requests to decode concurrently, as shown by the admission bars.
+6.5 Scheduler Ablation
+We compare PB-LRU with GPU timestamp-based naive LRU under DP on 8 × 8\times H200, with and without speculative decoding. Both policies replay the same sparse access traces with identical GPU and CPU cache capacities.
+Figure 9: DP GPU scheduling time on 8 × 8\times H200.
+Figure 10: DP GPU hit rate on 8 × 8\times H200.
+Figure 9 reports GPU scheduling time, excluding KV data transfers. Under replacement pressure, PB-LRU groups recency updates and selects slots through bucket bitmaps, reducing the work of naive LRU’s pool-wide scan. Its scheduling is approximately 1.5 1.5 – 2.3 × 2.3\times faster at the larger measured batch sizes. When little replacement is needed, naive LRU is faster because PB-LRU still maintains bucket metadata.
+Figure 10 shows GPU hit rates from the paired policy replay and HiSparse’s native execution. PB-LRU and naive LRU differ by less than 0.10 0.10 percentage points, indicating that the bucket approximation preserves comparable reuse. HiSparse’s fixed per-request GPU buffer quotas prevent requests from using idle capacity outside their buffers. UlaCache lets active requests share the entire GPU pool, retaining more KV cache and achieving higher hit rates. At low concurrency, all active KV cache remains on GPUs; hit rates decrease as concurrency grows and requests compete for the shared capacity.
+7 Related Work
+KV addressing and reuse.
+PagedAttention maps logical KV blocks to physical GPU blocks to reduce fragmentation and enable sharing Kwon et al. (2023) . vAttention preserves contiguous virtual addresses with dynamic physical allocation Prabhu et al. (2025) . SGLang reuses prefixes Zheng et al. (2024) ; Mooncake extends reuse through distributed storage Qin et al. (2025) . UlaCache preserves logical references to active sparse-attention history as KV migrates across GPU and CPU pools.
+Hierarchical caching and decode capacity.
+HiCache and LMCache restore reusable prefixes from CPU memory or external storage into the inference engine’s GPU allocation Xie (2025) ; Liu et al. (2025) . This reduces prefill work while active histories still occupy GPU slots. UlaCache pools distinct GPU and CPU history slots for concurrently decoding requests.
+Distributed storage and parallelism.
+LoongServe pools KV for elastic sequence parallelism Wu et al. (2024) . Helix shards KV and attention computation across GPUs Bhatia et al. (2025) . UlaCache’s TP mode also distributes history across GPUs, but computing ranks fetch only the selected KV into local buffers. Its logical addressing and replacement mechanisms manage these sparse accesses and GPU–CPU migration.
+Hierarchical sparse-attention serving.
+HiSparse stores complete KV histories of active requests in CPU memory and fetches selected KV into fixed per-request GPU caches, fusing hit detection, LRU replacement, and transfers Xie et al. (2026) . ECHO overlaps KV transfers with indexer computation Liu et al. (2026) . Spin provides partitions, elastic per-request buffers, GPU bucketed LRU, and hierarchical metadata Zhao et al. (2026) . PB-LRU also groups slots by recency, using GPU-slot bitmaps and hierarchical summaries for parallel victim selection from a pool shared across requests. UlaCache integrates this replacement with KV migration and mapping updates in rank-local and distributed storage.
+FlexGen aggregates GPU, CPU, and disk resources Sheng et al. (2023) . InfiniGen predicts KV for prefetching Lee et al. (2024) ; RetrievalAttention combines GPU caching with CPU vector retrieval Liu et al. (2024) . OasisKV approximates dense attention through draft-guided block selection and pipelined prefetching Xiao et al. (2026) . Its complete history resides in CPU or remote memory; GPU buffers hold copies and add no independent history capacity. UlaCache uses the model’s existing sparse selections to drive KV access and migration.
+SeKV uses learned routing over GPU span summaries and approximately reconstructs selected spans from CPU low-rank factors Abaskohi et al. (2026) . UlaCache retains historical KV without adding semantic compression.
+SparseEngine integrates sparse methods through lifecycle hooks, method-owned cache managers, and attention views, with Chain Cache for cross-turn reuse Hao et al. (2026) . Its abstraction governs method execution; UlaCache manages KV placement and access under stable logical references.
+8 Conclusion
+UlaCache provides unified logical KV addressing for sparse attention across GPU and optional CPU storage. Stable references support rank-local and distributed history placement, while local GPU buffers reuse selected KV in TP mode. PB-LRU schedules replacement and migration, and UlaCache updates mappings after transfers complete. With speculative decoding enabled under matched CPU and GPU memory budgets, UlaCache achieves peak decoding throughput speedups of 1.16 × 1.16\times (DP) and 1.70 × 1.70\times (TP) on 8 × 8\times H200, and 1.73 × 1.73\times (DP) and 2.51 × 2.51\times (TP) on 8 × 8\times B300, compared with the state-of-the-art baseline.
+References
+Abaskohi et al. (2026)
+A. Abaskohi, G. Carenini, P. West, and Y. He
+SeKV: resolution-adaptive KV cache with hierarchical semantic memory for long-context LLM inference .
+arXiv preprint arXiv:2606.31145 .
+External Links: Link
+Cited by: §7 .
+Agrawal et al. (2024)
+A. Agrawal, N. Kedia, A. Panwar, J. Mohan, N. Kwatra, B. Gulavani, A. Tumanov, and R. Ramjee
+Taming throughput-latency tradeoff in LLM inference with Sarathi-Serve .
+In 18th USENIX Symposium on Operating Systems Design and Implementation ,
+pp. 117–134 .
+External Links: Link
+Cited by: §1 .
+Bhatia et al. (2025)
+N. Bhatia, A. More, R. Borkar, T. Mitra, R. Matas, R. Zhao, M. Golub, D. Mudigere, B. Pharris, and B. Darvish Rouhani
+Helix parallelism: rethinking sharding strategies for interactive multi-million-token LLM decoding .
+arXiv preprint arXiv:2507.07120 .
+External Links: Link
+Cited by: §2.1.2 ,
+§2.1.2 ,
+§2.2.1 ,
+§7 .
+DeepSeek-AI et al. (2024)
+DeepSeek-AI et al.
+DeepSeek-V2: a strong, economical, and efficient mixture-of-experts language model .
+arXiv preprint arXiv:2405.04434 .
+External Links: Link
+Cited by: §2.1.2 ,
+§2.2.1 .
+DeepSeek-AI et al. (2025)
+DeepSeek-AI et al.
+DeepSeek-V3.2: pushing the frontier of open large language models .
+arXiv preprint arXiv:2512.02556 .
+External Links: Link
+Cited by: §1 ,
+§2.1.1 .
+DeepSeek-AI et al. (2026)
+DeepSeek-AI et al.
+DeepSeek-V4.1-Flash: Pushing the Limits of KV Cache Compression .
+arXiv preprint arXiv:2609.19969 .
+External Links: Link
+Cited by: §1 .
+GLM-5-Team et al. (2026)
+GLM-5-Team et al.
+GLM-5: from Vibe Coding to Agentic Engineering .
+arXiv preprint arXiv:2602.15763 .
+External Links: Link
+Cited by: §1 ,
+§2.1.1 .
+Hao et al. (2026)
+J. Hao, Q. Gu, Q. Huang, and J. Yu
+SparseEngine: sparse-first inference engine .
+arXiv preprint arXiv:2609.39068 .
+External Links: Link
+Cited by: §7 .
+Kwon et al. (2023)
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica
+Efficient memory management for large language model serving with PagedAttention .
+In Proceedings of the 29th Symposium on Operating Systems Principles ,
+pp. 611–626 .
+External Links: Link ,
+Document
+Cited by: §1 ,
+§2.1.1 ,
+§7 .
+Lee et al. (2024)
+W. Lee, J. Lee, J. Seo, and J. Sim
+InfiniGen: efficient generative inference of large language models with dynamic KV cache management .
+In 18th USENIX Symposium on Operating Systems Design and Implementation ,
+pp. 155–172 .
+External Links: Link
+Cited by: §2.1.3 ,
+§7 .
+Liu et al. (2024)
+D. Liu, M. Chen, B. Lu, H. Jiang, Z. Han, Q. Zhang, Q. Chen, C. Zhang, B. Ding, K. Zhang, C. Chen, F. Yang, Y. Yang, and L. Qiu
+RetrievalAttention: Accelerating Long-Context LLM Inference via Vector Retrieval .
+arXiv preprint arXiv:2409.10516 .
+External Links: Link
+Cited by: §7 .
+Liu et al. (2026)
+G. Liu, W. Chen, C. Li, Z. Ning, J. Lin, Y. Yao, Q. Chen, S. Sun, J. Zhao, and M. Guo
+ECHO: efficient KV cache offloading with lossless prefetching for serving native sparse attention LLMs .
+In 20th USENIX Symposium on Operating Systems Design and Implementation ,
+pp. 17–37 .
+External Links: Link
+Cited by: §7 .
+Liu et al. (2025)
+Y. Liu, Y. Cheng, J. Yao, Y. An, X. Chen, S. Feng, Y. Huang, S. Shen, R. Zhang, K. Du, and J. Jiang
+LMCache: an efficient KV cache layer for enterprise-scale LLM inference .
+arXiv preprint arXiv:2510.09665 .
+External Links: Link
+Cited by: §1 ,
+§2.1.3 ,
+§2.2.1 ,
+§7 .
+Prabhu et al. (2025)
+R. Prabhu, A. Nayak, J. Mohan, R. Ramjee, and A. Panwar
+vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention .
+In Proceedings of the 30th ACM International Conference on Architectural Support for Programming Languages and Operating Systems ,
+External Links: Link
+Cited by: §7 .
+Qin et al. (2025)
+R. Qin, Z. Li, W. He, J. Cui, F. Ren, M. Zhang, Y. Wu, W. Zheng, and X. Xu
+Mooncake: trading more storage for less computation—a KVCache-centric architecture for serving LLM chatbot .
+In 23rd USENIX Conference on File and Storage Technologies ,
+pp. 155–170 .
+External Links: Link
+Cited by: §7 .
+Qiu et al. (2026)
+Z. Qiu, Z. Wang, X. Li, et al.
+On the Design of Qwen3.8-Next Architecture: Evaluation, Efficiency, and Training Stability .
+arXiv preprint arXiv:2608.30320 .
+External Links: Link
+Cited by: §1 .
+Shen et al. (2022)
+Z. Shen, K. Lo, L. Yu, N. Dahlberg, M. Schlanger, and D. Downey
+Multi-LexSum: real-world summaries of civil rights lawsuits at multiple granularities .
+In Advances in Neural Information Processing Systems ,
+Vol. 35 , pp. 13158–13173 .
+External Links: Link
+Cited by: §6.1 .
+Sheng et al. (2023)
+Y. Sheng, L. Zheng, B. Yuan, Z. Li, M. Ryabinin, B. Chen, P. Liang, C. Re, I. Stoica, and C. Zhang
+FlexGen: high-throughput generative inference of large language models with a single GPU .
+In Proceedings of the 40th International Conference on Machine Learning ,
+Vol. 202 , pp. 31094–31116 .
+External Links: Link
+Cited by: §7 .
+StepFun Team (2026)
+StepFun Team
+Inside Step 5 Preview: architecture and training for agentic work .
+Note: StepFun technical blog
+External Links: Link
+Cited by: §1 .
+Tencent Hy Team (2026)
+Tencent Hy Team
+Hy4 Preview .
+Note: Official model release
+External Links: Link
+Cited by: §1 .
+Wu et al. (2024)
+B. Wu, S. Liu, Y. Zhong, P. Sun, X. Liu, and X. Jin
+LoongServe: efficiently serving long-context large language models with elastic sequence parallelism .
+In Proceedings of the 30th ACM Symposium on Operating Systems Principles ,
+External Links: Document ,
+Link
+Cited by: §7 .
+Xiao et al. (2026)
+C. Xiao, S. Cho, J. We, Z. Niu, J. Cheng, Y. Zhao, Y. Kwon, Y. Xiong, R. Ma, and J. Liu
+OasisKV: scaling in-decode KV cache beyond HBM with lookahead sparse prefetching .
+arXiv preprint arXiv:2608.08097 .
+External Links: Link
+Cited by: §7 .
+Xie et al. (2026)
+Z. Xie, Z. Huang, T. Huang, Z. Xu, R. Ma, and C. Kozyrakis
+HiSparse: scaling sparse-attention decoding with hierarchical KV cache management .
+arXiv preprint arXiv:2608.07009 .
+External Links: Link
+Cited by: §1 ,
+§1 ,
+§2.1.1 ,
+§2.1.3 ,
+§2.2.1 ,
+§2.2.2 ,
+§5.1 ,
+§6.1 ,
+§7 .
+Xie (2025)
+Z. Xie
+SGLang HiCache: fast hierarchical KV caching with your favorite storage backends .
+Note: LMSYS Org
+External Links: Link
+Cited by: §1 ,
+§2.1.3 ,
+§2.2.1 ,
+§7 .
+Zhao et al. (2026)
+Z. Zhao, B. Lu, S. Lin, Y. Chen, J. Liu, Y. Zhang, Z. Miao, M. Yang, H. Shen, Q. Chen, and F. Yang
+Unifying sparse attention with hierarchical memory for scalable long-context LLM serving .
+arXiv preprint arXiv:2604.26837 .
+External Links: Link
+Cited by: §7 .
+Zheng et al. (2024)
+L. Zheng, L. Yin, Z. Xie, C. Sun, J. Huang, C. H. Yu, S. Cao, C. Kozyrakis, I. Stoica, J. E. Gonzalez, C. Barrett, and Y. Sheng
+SGLang: efficient execution of structured language model programs .
+In Advances in Neural Information Processing Systems ,
+Vol. 37 , pp. 62557–62583 .
+External Links: Link
+Cited by: §6.1 ,
+§7 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

@@ -1,0 +1,640 @@
+Source: https://arxiv.org/html/2605.27835v1
+Main text extraction; fulltext_chars=34579
+
+arXiv:2605.27835v1 [cs.LG] 27 May 2026 
+ 
+ 
+ CAREF: Calibration-Aware Regularization for Explanation Faithfulness Without Rationale Supervision 
+
+ 
+ 
+ 
+ Naphat Nithisopa
+ 
+ Affiliation:  Chulalongkorn University
+ 
+ Email:  naphat.nit@marssolution.io 
+ 
+    
+ Teerapong Panboonyuen
+ † † thanks:   Corresponding author: Teerapong Panboonyuen. He conceived, designed, and led all major aspects of this work, including the research direction, methodology, implementation, experiments, analysis, and manuscript preparation. His contributions were central to the scientific rigor, technical innovation, and successful completion of the study. MARSAIL (Motor AI Recognition Solution Artificial Intelligence Laboratory) develops advanced AI solutions for the automotive and insurance industries. Project page available at:  https://kaopanboonyuen.github.io/CAREF 
+ Affiliation:  Chulalongkorn University
+ 
+ Affiliation:  MARSAIL
+ 
+ Email:  teerapong.pa@chula.ac.thhttps://kaopanboonyuen.github.io/CAREFhttps://kaopanboonyuen.github.io/CAREF 
+ 
+
+ Abstract 
+    
+ We introduce  CAREF , a parameter-efficient fine-tuning framework that jointly optimizes predictive accuracy and explanation faithfulness via  calibration-aware regularization . At its core,  CAREF  couples entropy-based calibration with token-level sparsity control through a single unified loss—the  Calibration-Aware Regularization for Explanation Faithfulness  ( ℒ SCED \mathcal{L}_{\text{SCED}} )—without requiring rationale supervision. Evaluated on four NLE benchmarks (COS-E, ECQA, ComVE, e-SNLI) with Flan-T5, our lightweight  CAREF -AQ variant attains the best average accuracy (89.04) and explanation alignment (81.00 nBERT) using only  6.43%  of trainable parameters, outperforming LoRA and AdaLoRA. To our knowledge,  CAREF  is the first method to unify entropy and sparsity regularization in a single training objective for interpretable LLM fine-tuning. 
+
+ 
+  
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Large pre-trained language models excel at natural language understanding, yet generating predictions accompanied by  faithful  explanations—ones that causally reflect the model’s decision process—remains unsolved  ( Brown et al., 2020 ;  Chowdhery et al., 2022 ) . Natural Language Explanations (NLEs) improve transparency and user trust  ( Wiegreffe and Marasovic, 2021 ) , but are often merely  plausible  rather than faithful  ( Camburu et al., 2021 ) . 
+
+ 
+ 
+ 
+ Existing remedies require expensive rationale annotations or full-model fine-tuning, and explanation quality is typically measured with surface metrics, conflating calibration gains with genuine faithfulness improvements. We ask:  can calibration-aware and sparsity-inducing objectives encourage explanations more tightly coupled with model decisions—without rationale supervision? 
+
+ 
+ 
+ 
+ We answer affirmatively with  CAREF  ( C alibration- A ware  R egularization for  E xplanation  F aithfulness), a PEFT framework built on a unified loss that jointly regulates predictive entropy and token-level sparsity. The intuition: explanations become decision-relevant when predictions rely on a smaller, stable subset of tokens rather than diffuse or arbitrarily overconfident distributions. 
+
+ 
+ 
+ 
+ Contributions. 
+
+ 
+
+ 
+ 
+ (i)   We propose  ℒ SCED \mathcal{L}_{\text{SCED}} , the first loss to unify entropy calibration and sparsity in one term.
+ 
+ (ii)   CAREF -AQ achieves state-of-the-art accuracy  and  explanation quality at 6.43% trainable parameters.
+ 
+ (iii)   We provide ablations, PEFT comparisons, and human evaluations across four NLE benchmarks.
+ 
+ 
+ 
+ 
+ 
+ Overview Figure. 
+
+ 
+
+ 
+ Figure  1  consolidates our key empirical stories: accuracy vs. parameter budget, explanation quality, human evaluation, and the effect of  ℒ SCED \mathcal{L}_{\text{SCED}}  hyperparameters. 
+
+ 
+ 
+ 
+ Figure 1:  
+ CAREF at a glance. 
+ (a)  Accuracy vs. trainable parameter budget across variants.
+ (b)  nBERT explanation quality per dataset (w/ vs. w/o CAREF).
+ (c)  Human evaluation scores across datasets.
+ (d)  Sensitivity of nBERT to  α \alpha  and  β \beta  on e-SNLI.
+ 
+ 
+ 
+ 
+ 
+ 2  Method:  CAREF 
+
+ 
+
+ 
+ 2.1  Motivation and Design Philosophy 
+
+ 
+
+ 
+ A central tension in explanation-oriented fine-tuning is that standard training objectives—cross-entropy minimization—are agnostic to  how  a model allocates probability mass across its vocabulary. A model can achieve high accuracy while simultaneously producing predictions that are overconfident on spurious tokens, or conversely, diffuse across the vocabulary in ways that render explanations incoherent and unfaithful to the decision process. This disconnect between predictive performance and explanation quality is not merely a measurement artifact: it reflects a structural gap in how most fine-tuning pipelines are designed. 
+
+ 
+ 
+ 
+ Existing approaches to bridging this gap fall into two families.  Rationale-supervised methods   ( Wiegreffe and Marasovic, 2021 )  require costly token-level annotations and couple explanation quality to the availability of labeled rationales—a luxury rarely available in low-resource NLE settings.  Post-hoc attribution methods  (e.g., attention rollout, integrated gradients) operate after training and cannot influence the representations that give rise to explanations in the first place. Neither family addresses the root cause: the training objective itself. 
+
+ 
+ 
+ 
+ We take a different path. Our key insight is that  faithful explanations emerge when model predictions are grounded in a small, stable, and causally relevant subset of tokens —not when predictions are merely accurate. This motivates a training objective that simultaneously regulates the  entropy structure  (preventing overconfidence and diffusion) and  token-level sparsity  (concentrating probability mass on decision-relevant vocabulary) of the output distribution, without requiring any external supervision signal beyond task labels. 
+
+ 
+ 
+ 
+ 
+ 2.2  Unified Objective 
+
+ 
+
+ 
+ The  CAREF  training loss integrates three complementary terms: 
+
+ 
+ 
+
+ 
+ 
+ ℒ CAREF = ℒ CE + λ SCED ⋅ ℒ SCED + λ KL ⋅ ℒ KL , \mathcal{L}_{\text{CAREF}}=\mathcal{L}_{\text{CE}}+\lambda_{\text{SCED}}\cdot\mathcal{L}_{\text{SCED}}+\lambda_{\text{KL}}\cdot\mathcal{L}_{\text{KL}}, 
+ 
+ (1) 
+ 
+
+ 
+ where  ℒ CE \mathcal{L}_{\text{CE}}  is the standard cross-entropy loss that preserves task-accuracy gradients. The KL term, 
+
+ 
+ 
+
+ 
+ 
+ ℒ KL = ∑ t ∑ v P t , v ​ log ⁡ P t , v U v , \mathcal{L}_{\text{KL}}=\sum_{t}\sum_{v}P_{t,v}\log\frac{P_{t,v}}{U_{v}}, 
+ 
+ 
+
+ 
+ provides  global  calibration pressure by penalizing divergence from a uniform prior  U v = 1 / | 𝒱 | U_{v}=1/|\mathcal{V}| , discouraging pathological concentration on any single token across the full decoding horizon. The central and novel contribution is  ℒ SCED \mathcal{L}_{\text{SCED}} , which provides  local, adaptive  regularization—operating on the joint structure of entropy and sparsity in a way no prior loss has achieved. 
+
+ 
+ 
+ 
+ 
+ 2.3  Sparsity-Calibrated Entropic Divergence ( ℒ SCED \mathcal{L}_{\text{SCED}} ) 
+
+ 
+
+ 
+ The  Sparsity-Calibrated Entropic Divergence  is defined as: 
+
+ 
+ 
+
+ 
+ 
+ ℒ SCED = ∑ t ∑ v = 1 | 𝒱 | | P t , v ​ log ⁡ P t , v U v | α ⋅ ( 1 − P t , v ) β , \mathcal{L}_{\text{SCED}}=\sum_{t}\sum_{v=1}^{|\mathcal{V}|}\!\left|P_{t,v}\log\frac{P_{t,v}}{U_{v}}\right|^{\!\alpha}\cdot(1-P_{t,v})^{\beta}, 
+ 
+ (2) 
+ 
+
+ 
+ where  P t , v = P θ ​ ( y t = v ∣ y < t , 𝐱 ) P_{t,v}=P_{\theta}(y_{t}{=}v\mid y_{<t},\mathbf{x})  is the model’s predicted probability for token  v v  at decoding step  t t . 
+
+ 
+ 
+ 
+ Interpretation of each factor. 
+
+ 
+
+ 
+ The term  | P t , v ​ log ⁡ P t , v / U v | α \left|P_{t,v}\log P_{t,v}/U_{v}\right|^{\alpha}  is a  power-law entropic divergence : when  α = 1 \alpha{=}1  it reduces to the standard KL contribution per token-vocabulary pair; for  α > 1 \alpha{>}1 , larger deviations from uniform incur superlinearly increasing penalties, shaping the curvature of the entropic landscape. The multiplicative factor  ( 1 − P t , v ) β (1-P_{t,v})^{\beta}  acts as an  adaptive sparsity weight : it attenuates the penalty for high-probability tokens (those already assigned large mass by the model), while amplifying it for low-probability tokens that contribute to spurious vocabulary-wide diffusion. Crucially, the two factors interact  within a single term —not as additive components—so that the strength of entropic regularization is modulated token-by-token as a function of current probability mass. 
+
+ 
+ 
+ 
+ 
+ Special cases and generalization. 
+
+ 
+
+ 
+ ℒ SCED \mathcal{L}_{\text{SCED}}  subsumes several classical regularizers as limit cases: 
+
+ 
+ 
+ 
+ 
+ 
+ Parameters 
+ 
+ 
+ Behavior 
+ 
+ 
+ α = 1 , β = 0 \alpha{=}1,\,\beta{=}0 
+ 
+ 
+ Recovers per-token KL divergence from uniform 
+ 
+ 
+ α > 1 , β = 0 \alpha{>}1,\,\beta{=}0 
+ 
+ 
+ Power-law entropic penalty; emphasizes large deviations 
+ 
+ 
+ α = 1 , β > 0 \alpha{=}1,\,\beta{>}0 
+ 
+ 
+ Sparsity-weighted KL; down-weights high- P P  tokens 
+ 
+ 
+ α > 1 , β > 0 \alpha{>}1,\,\beta{>}0 
+ 
+ 
+ Full  CAREF  regime:  adaptive sparsity + nonlinear curvature 
+ 
+ 
+
+ 
+ 
+ 
+ This nested generalization means  CAREF  strictly extends the expressiveness of its predecessors. To our knowledge, no prior work has unified these two axes—entropic curvature and adaptive sparsity—within a single differentiable training term. 
+
+ 
+ 
+ 
+ 
+ 
+ 2.4  Architecture Agnosticism and PEFT Compatibility 
+
+ 
+
+ 
+ ℒ SCED \mathcal{L}_{\text{SCED}}  operates solely on the predictive distribution  P θ P_{\theta} —the softmax output of any autoregressive or encoder-decoder decoder—requiring no architectural changes, no auxiliary modules, and no access to internal activations or attention maps. It is therefore compatible with any fine-tuning paradigm: full fine-tuning, LoRA  ( Hu et al., 2022 ) , adapters, prefix tuning, or attention-only updates. This plug-in property is a deliberate design choice: we argue that regularization at the  distributional level  is more principled than regularization at the  architectural level , because it directly shapes the quantity that determines both task predictions and generated explanations. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Experiments 
+
+ 
+
+ 
+ Datasets. 
+
+ 
+
+ 
+ We follow the FEB protocol  ( Marasovic et al., 2022 ) : COS-E, ECQA  ( Aggarwal et al., 2021 ) , ComVE  ( Wang et al., 2019 ) , and e-SNLI  ( Camburu et al., 2018 ) , with 60 splits of 48 train / 350 validation examples each. 
+
+ 
+ 
+ 
+ 
+ Model & Baselines. 
+
+ 
+
+ 
+ All experiments use Flan-T5  ( Raffel et al., 2020 )  via Hugging Face PEFT  ( Mangrulkar et al., 2022 ) . Baselines: full fine-tuning (BASE), LoRA R=4/128  ( Hu et al., 2022 ) , AdaLoRA  ( Zhang et al., 2023 ) , (IA) 3   ( Liu et al., 2022 ) . Metrics: task accuracy and BERTScore-normalized accuracy (nBERT) for explanation alignment. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Results & Analysis 
+
+ 
+
+ 
+ Ablation: which module benefits most? (RQ1) 
+
+ 
+
+ 
+ Table  1  (top) shows that  CAREF -AQ, updating only query projections (6.43%), matches or exceeds full fine-tuning ( CAREF -BASE, 100%) on both accuracy and nBERT. The gain over CAREF-BASE is +1.53 nBERT on average, confirming that selective attention adaptation with calibrated sparsity is more explanation-efficient than wholesale parameter updates. 
+
+ 
+ 
+ 
+ 
+ With vs. without regularization (RQ2) 
+
+ 
+
+ 
+ Table  1  (middle) shows that adding  CAREF  consistently improves nBERT across all datasets and fine-tuning regimes, with particularly strong gains at low parameter budgets. 
+
+ 
+ 
+ 
+ 
+ Comparison with PEFT baselines (RQ3) 
+
+ 
+
+ 
+ Table  1  (bottom) shows  CAREF -AQ achieves the best average accuracy (89.04) and nBERT (81.00) while using fewer parameters than LoRA R=128 (15.74%). AdaLoRA collapses on explanation-centric tasks, demonstrating that parameter efficiency alone does not guarantee explanation robustness. 
+
+ 
+ 
+ 
+ 
+ Human evaluation (RQ4) 
+
+ 
+
+ 
+ ECQA achieves the highest mean score (0.69), followed by e-SNLI (0.58), SenseMaking (0.53), COS-E (0.47). CAREF-trained models yield more  Strong Yes  labels—44 on ECQA—without explicit explanation supervision. See Appendix  B  and Figure  2 . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Section 
+ Model 
+ M 
+ COS-E 
+ ECQA 
+ ComVE 
+ e-SNLI 
+ Avg 
+ Param 
+ 
+ 
+ 
+ RQ1 
+ 
+ CAREF-BASE 
+ A 
+ 85.19 ± \pm 0.68 
+ 86.29 ± \pm 2.32 
+ 94.76 ± \pm 0.68 
+ 88.32 ± \pm 1.22 
+ 88.64 
+ 100.0% 
+ 
+ 
+ E 
+ 74.00 ± \pm 0.66 
+ 77.51 ± \pm 2.11 
+ 86.60 ± \pm 0.62 
+ 79.76 ± \pm 1.20 
+ 79.47 
+ 
+ 
+ CAREF-DEC 
+ A 
+ 81.56 ± \pm 1.71 
+ 85.76 ± \pm 2.72 
+ 94.73 ± \pm 0.96 
+ 74.73 ± \pm 4.78 
+ 84.19 
+ 52.23% 
+ 
+ 
+ E 
+ 71.53 ± \pm 1.45 
+ 77.40 ± \pm 2.51 
+ 87.54 ± \pm 0.92 
+ 67.89 ± \pm 4.39 
+ 76.09 
+ 
+ 
+ CAREF-AQKV 
+ A 
+ 84.30 ± \pm 1.35 
+ 88.51 ± \pm 1.73 
+ 94.37 ± \pm 0.74 
+ 88.26 ± \pm 2.00 
+ 88.86 
+ 19.28% 
+ 
+ 
+ E 
+ 73.43 ± \pm 1.35 
+ 79.29 ± \pm 1.62 
+ 86.73 ± \pm 0.87 
+ 81.80 ± \pm 1.84 
+ 80.31 
+ 
+ 
+ CAREF-LAQ 
+ A 
+ 84.73 ± \pm 1.61 
+ 88.93 ± \pm 1.67 
+ 94.23 ± \pm 0.84 
+ 88.07 ± \pm 1.42 
+ 88.99 
+ 6.44% 
+ 
+ 
+ E 
+ 74.57 ± \pm 1.42 
+ 79.96 ± \pm 1.68 
+ 86.57 ± \pm 1.00 
+ 80.96 ± \pm 1.37 
+ 80.52 
+ 
+ 
+ CAREF-AQ 
+ A 
+ 84.59 ± \pm 1.54 
+ 88.93 ± \pm 2.13 
+ 94.16 ± \pm 0.85 
+ 88.48 ± \pm 1.97 
+ 89.04 
+ 6.43% 
+ 
+ 
+ E 
+ 74.42 ± \pm 1.37 
+ 80.31 ± \pm 1.93 
+ 87.29 ± \pm 0.82 
+ 81.97 ± \pm 1.80 
+ 81.00 
+ 
+ 
+ 
+ 
+ RQ2 
+ 
+ BASE (w/o) 
+ A 
+ 84.20 ± \pm 1.55 
+ 89.41 ± \pm 1.76 
+ 93.86 ± \pm 1.13 
+ 86.23 ± \pm 2.82 
+ 88.43 
+ 100% 
+ 
+ 
+ E 
+ 73.04 ± \pm 1.37 
+ 80.16 ± \pm 1.58 
+ 85.71 ± \pm 1.00 
+ 78.05 ± \pm 2.63 
+ 79.24 
+ 
+ 
+ CAREF-BASE (w/) 
+ A 
+ 85.19 ± \pm 0.68 
+ 86.29 ± \pm 2.32 
+ 94.76 ± \pm 0.68 
+ 88.32 ± \pm 1.22 
+ 88.64 
+ 100% 
+ 
+ 
+ E 
+ 74.00 ± \pm 0.66 
+ 77.51 ± \pm 2.11 
+ 86.60 ± \pm 0.62 
+ 79.76 ± \pm 1.20 
+ 79.47 
+ 
+ 
+ AQ (w/o) 
+ A 
+ 84.52 ± \pm 1.41 
+ 90.28 ± \pm 1.55 
+ 93.90 ± \pm 0.94 
+ 87.05 ± \pm 2.40 
+ 88.94 
+ 6.43% 
+ 
+ 
+ E 
+ 73.43 ± \pm 1.21 
+ 80.87 ± \pm 1.43 
+ 85.82 ± \pm 0.80 
+ 79.79 ± \pm 2.26 
+ 79.98 
+ 
+ 
+ CAREF-AQ (w/) 
+ A 
+ 84.59 ± \pm 1.54 
+ 88.93 ± \pm 2.13 
+ 94.16 ± \pm 0.85 
+ 88.48 ± \pm 1.97 
+ 89.04 
+ 6.43% 
+ 
+ 
+ E 
+ 74.42 ± \pm 1.37 
+ 80.31 ± \pm 1.93 
+ 87.29 ± \pm 0.82 
+ 81.97 ± \pm 1.80 
+ 81.00 
+ 
+ 
+ 
+ 
+ RQ3 
+ 
+ AdaLoRA (4.46%) 
+ A 
+ 43.32 ± \pm 2.27 
+ 15.16 ± \pm 3.02 
+ 35.32 ± \pm 6.58 
+ 0.56 ± \pm 0.42 
+ 23.59 
+ 4.46% 
+ 
+ 
+ E 
+ 35.48 ± \pm 1.87 
+ 12.33 ± \pm 2.47 
+ 30.74 ± \pm 5.78 
+ 0.47 ± \pm 0.35 
+ 19.75 
+ 
+ 
+ LoRA R=128 
+ A 
+ 84.58 ± \pm 1.29 
+ 91.77 ± \pm 1.35 
+ 94.57 ± \pm 0.98 
+ 83.37 ± \pm 3.33 
+ 88.57 
+ 15.74% 
+ 
+ 
+ E 
+ 74.52 ± \pm 1.15 
+ 82.89 ± \pm 1.23 
+ 87.73 ± \pm 0.89 
+ 77.17 ± \pm 3.13 
+ 80.58 
+ 
+ 
+ LoRA R=4 
+ A 
+ 84.56 ± \pm 1.46 
+ 91.83 ± \pm 1.44 
+ 94.60 ± \pm 0.94 
+ 84.69 ± \pm 3.13 
+ 88.92 
+ 0.58% 
+ 
+ 
+ E 
+ 74.50 ± \pm 1.29 
+ 82.94 ± \pm 1.32 
+ 87.78 ± \pm 0.86 
+ 78.43 ± \pm 2.96 
+ 80.91 
+ 
+ 
+ CAREF-AQ 
+ A 
+ 84.59 ± \pm 1.54 
+ 88.93 ± \pm 2.13 
+ 94.16 ± \pm 0.85 
+ 88.48 ± \pm 1.97 
+ 89.04 
+ 6.43% 
+ 
+ 
+ E 
+ 74.42 ± \pm 1.37 
+ 80.31 ± \pm 1.93 
+ 87.29 ± \pm 0.82 
+ 81.97 ± \pm 1.80 
+ 81.00 
+ 
+ 
+
+ 
+ 
+ Table 1:  
+Unified experimental results across all research questions.
+A = Accuracy, E = nBERT.
+Results are averaged over 60 random splits.
+ 
+ 
+ 
+ 
+ Why this design matters. 
+
+ 
+
+ 
+ Prior regularization strategies fail in at least one of three ways: (i)  entropy penalties  flatten the output distribution indiscriminately, harming both confident correct predictions and model interpretability; (ii)  label smoothing  redistributes mass uniformly and has been shown to hurt explanation coherence; (iii)  sparsemax/entmax  objectives introduce hard sparsity that creates discontinuous gradients and is difficult to integrate into standard seq2seq decoders.  ℒ SCED \mathcal{L}_{\text{SCED}}  avoids all three failure modes: it is fully differentiable, its behavior is continuously tunable via  α \alpha  and  β \beta , it does not enforce hard thresholds, and it targets  decision-relevant  tokens rather than applying uniform pressure. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Conclusion 
+
+ 
+
+ 
+ We presented  CAREF , a calibration-aware fine-tuning framework that integrates entropy regulation and token-level sparsity in a single unified loss. Without rationale supervision,  CAREF  consistently improves both task accuracy and explanation faithfulness across four NLE benchmarks—using as few as 6.43% of trainable parameters. Our results suggest that sparsity-aware calibration is a principled and underexplored direction for explanation-oriented LLM fine-tuning in low-resource settings. 
+
+ 
+ 
+ 
+ Limitations. 
+
+ 
+
+ 
+ Our experiments primarily focus on Flan-T5 to enable controlled and reproducible evaluation of parameter-efficient reasoning adaptation. We intentionally avoid relying on extremely large proprietary LLMs, as their scale can obscure whether improvements arise from the proposed method or from raw model capacity itself. While BERTScore-based metrics capture semantic alignment, they do not fully measure causal faithfulness or logical consistency. Additionally, sparsity hyperparameters currently require validation-based tuning and may vary across tasks and model scales. 
+
+ 
+ 
+ 
+ 
+ 
+ 

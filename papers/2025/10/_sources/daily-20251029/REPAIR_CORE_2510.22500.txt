@@ -1,0 +1,1024 @@
+Scalable Oversightvia Partitioned Human Supervision
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Methodology
+Setup and Notations
+2.1 Estimator from Complementary Labels
+2.2 Combining Ordinary and Complementary Labels
+Inverse Variance Weighted Estimator (IVW)
+Closed-Form Maximum-Likelihood Estimator (ML)
+2.3 Theoretical analysis
+2.3.1 Hoeffding and empirical Bernstein bounds for A^comp\widehat{A}_{\mathrm{comp}}
+2.3.2 Mixture estimator bounds via union bound
+3 Experiments
+3.1 Experiment Setup
+3.2 Statistical Validation of Complementary and Mixed Estimators
+Ablation Study on IVW.
+3.3 Benchmark Evaluation in Real-World Tasks
+Results
+3.4 Agent Search with Estimator Feedback
+4 Related Work
+Scalable oversight
+Weak supervision
+Agentic systems
+5 Conclusion
+References
+A Connection between the complementary-label estimator and complementary loss
+Notation.
+Specialization to 00-11 loss.
+Risk under complementary labels.
+Equivalence to our estimator.
+B Data Labeling and Estimation Protocol
+C One-step Newton Update and IVW Equivalence
+D Proof of Theorem
+E Practical plug-in forms of the Bernstein bound
+F Estimator Configurations
+Notes on datasets.
+G Implementation details on ADAS and AFlow
+ADAS.
+AFlow.
+H Estimator Variance Analysis
+License: CC BY 4.0
+arXiv:2510.22500v1 [cs.LG] 26 Oct 2025
+Scalable Oversight
+via Partitioned Human Supervision
+Ren Yin
+Affiliation: The University of Tokyo
+Affiliation: RIKEN
+Takashi Ishida
+Affiliation: The University of Tokyo
+Affiliation: RIKEN
+Masashi Sugiyama
+Affiliation: The University of Tokyo
+Affiliation: RIKEN
+Abstract
+As artificial intelligence (AI) systems approach and surpass expert human performance across a broad range of tasks, obtaining high-quality human supervision for evaluation and training becomes increasingly challenging.
+Our focus is on tasks that require deep knowledge and skills of multiple domains. Unfortunately, even the best human experts are knowledgeable only in a single narrow area, and will not be able to evaluate the correctness of advanced AI systems on such superhuman tasks.
+However, based on their narrow expertise, humans may provide a weak signal, i.e., a complementary label indicating an option that is incorrect. For example, a cardiologist could state that “this is not related to cardiology,” even if they cannot identify the true disease.
+Based on this weak signal, we propose a scalable oversight framework that enables us to evaluate frontier AI systems without the need to prepare the ground truth.
+We derive an unbiased estimator of top-1 accuracy from complementary labels and quantify how many complementary labels are needed to match the variance of ordinary labels. We further introduce two estimators to combine scarce ordinary labels with abundant complementary labels.
+We provide finite-sample deviation guarantees for both complementary-only and the mixed estimators.
+Empirically, we show that we can evaluate the output of large language models without the ground truth, if we have complementary labels.
+We further show that we can train an AI system with such weak signals: we show how we can design an agentic AI system automatically that can perform better with this partitioned human supervision. Our code is available at https://github.com/R-Yin-217/Scalable-Oversight-via-Human-Partitioned-Supervision.
+1 Introduction
+As foundation models and artificial intelligence (AI) systems (OpenAI, 2025a; Anthropic, 2025; DeepSeek, 2025; DeepMind, 2025) approach and in some areas surpass expert human performance, supervision itself becomes a key bottleneck. Current alignment pipelines such as supervised fine-tuning (SFT), reinforcement learning from human feedback (RLHF; Ziegler et al. (2019); Stiennon et al. (2020); Ouyang et al. (2022)), or reinforcement learning from verifiable rewards (RLVR; Shao et al. (2024); Yu et al. (2025); Lambert et al. (2025)) presuppose that humans can reliably provide supervision or design verifiers for training and evaluation.
+Yet for the superalignment regime (Bowman et al., 2022), future models will tackle problems whose solutions are too technical or too cross-disciplinary for any single human to verify comprehensively. When we cannot produce ground truth or prepare automated verifiers, how should we evaluate and train such systems?
+We begin from an observation about the expertise in high-skill domains in the human society (Wuchty et al., 2007).
+As tasks grow in difficulty, human experts specialize ever more narrowly: cardiology vs. oncology in medicine, sector-specific analysts in finance, or sub-subfields in science. Specialists can often make local determinations with high precision, e.g., a cardiologist might say, “this is not a cardiology case,” while an oncologist might point out, “this pattern is never seen in the field of oncology.” While such judgments may fail to positively certify correctness, they readily certify that certain options are wrong. In other words, even when positive ground truth is out of reach, human experts can often provide reliable complementary labels (Ishida et al., 2017; Yu et al., 2018; Wang et al., 2024a; Wang et al., 2025): labels indicating one or more options that are definitely the incorrect.
+This paper develops a scalable oversight (Amodei et al., 2016) framework that treats such partitioned human supervision as a first-class supervision primitive. Our starting point is a multi-choice evaluation setting where ordinary (true) labels may be scarce or unavailable, but complementary labels arise naturally from partitioned expertise and are abundant.
+We show that one can utilize these complementary labels to propose an unbiased estimator of top-1 accuracy for any system under test, and further combine them with scarce ordinary labels for further refinement of the estimator.
+The resulting estimators allow us to (i) evaluate frontier models without preparing any ground truth, and (ii) use these evaluations as learning signals to design agentic systems on tasks beyond expert human abilities.
+Figure 1: Proposed framework.
+Tasks beyond human capabilities are routed to a randomly selected domain expert indicates whether the query belongs to their field.
+A “no” response yields a complementary label, which is then used to evaluate or train an AI system.
+Our work complements many other active lines of research on scalable oversight.
+For example, weak-to-strong generalization (Burns et al., 2024) studies whether strong models trained on weak (noisy) supervisors can exceed those supervisors, possibly by eliciting knowledge that the strong model already possesses.
+Easy-to-hard generalization (Sun et al., 2024) trains evaluators on easier problems and applies them to supervise harder ones, by leveraging the assumption that evaluation is easier than generation.
+Debate (Khan et al., 2024) elicits truth via adversarial arguments that a judge selects among.
+Reinforcement learning from AI feedback or Constitutional AI (Bai et al., 2022) replaces human preferences with AI‑generated feedback.
+Recursive task decomposition (Wu et al., 2021) breaks the problem into leaf subtasks that humans can directly label or compare, for tasks that are easily decomposable.
+We address a new, orthogonal axis: when human experts cannot supply correct answers for hard, cross-domain instances, can we use their partitioned “this option is wrong” judgments to obtain performance estimates and useful training signals?
+We formalize a labeling protocol in which each instance is routed to a randomly chosen domain specialist responsible for exactly one option (class). The specialist either confirms that option (yielding an ordinary label) or confidently rejects it (yielding a complementary label). Under this uniform wrong-index design, we derive an unbiased estimator of accuracy from complementary labels alone via a simple linear correction, and characterize its variance. We then introduce two mixture estimators that combine ordinary and complementary labels: (i) an inverse-variance–weighted (IVW) estimator with a practical plug-in form, and (ii) a closed-form maximum-likelihood estimator (ML).
+We empirically validate the framework in three settings. First, we perform statistical validation on many popular large language model (LLM) benchmarks, which confirms that we do not need the ground truth to evaluate the performance of AI systems experimentally, such as LLMs.
+We focus on real-world evaluation on tasks that cannot be solved by a single expert human with only narrow expertise.
+As a proof-of-concept, we use finance and medical benchmarks to demonstrate that partitioned feedback from sector analysts or highly-specialized doctors enable accurate model evaluation without the ability to solve the task alone.
+Finally, we show that this weak signal can be used as a training signal for an AI system.
+More specifically, we use complementary labels for agentic training: we replace ordinary accuracy with our estimator as the fitness signal inside agent search pipelines, and show that this improves downstream performance, demonstrating a pathway to training when only complementary feedback is available.
+Our main contributions are as follows:
+1) We introduce scalable oversight via partitioned human supervision, a protocol that exploits real-world specialization to collect complementary labels at scale for superhuman tasks.
+2) We derive an unbiased complementary-label estimator for top-1 accuracy, analyze its variance, and show how many complementary labels are needed to match the variance of the estimator obtained from ordinary labels.
+We further propose two mixture estimators together with finite-sample bounds and practical plug-in implementations.
+3) We demonstrate empirically that these estimators enable both evaluation and training without the full ground truth.
+2 Methodology
+In this section, we explain our problem setup and notations and explain our proposed method.
+Setup and Notations
+We consider a multiple-choice evaluation task with KK options per item (e.g., K=4K=4 for choices A, B, C, and D).
+Formally, each item is represented by an input x∈𝒳x\in\mathcal{X}, where 𝒳\mathcal{X} denotes the input domain (e.g., the space of question texts).
+Each item has a correct label y∈{1,…,K}y\in\{1,\ldots,K\}, representing the index of the correct option after any shuffling. We call this the ordinary label. Let (x,y)(x,y) denote a random pair drawn from an identical joint distribution 𝒟\mathcal{D} over 𝒳×{1,…,K}\mathcal{X}\times\{1,\ldots,K\}.
+Equivalently, we can regard to first sample item xx, and then a human expert provides label yy based on the underlying conditional distribution p⁡(y|x)p(y|x).
+An AI system (e.g., a machine learning classifier, a single LLM, or an LLM agent/workflow) produces a prediction y^=f⁡(x)∈{1,…,K}\hat{y}=f(x)\in\{1,\ldots,K\}.
+For an item with an ordinary label yy, define the indicator
+Z=𝕀{y^=y}∈{0,1}Z=\mathbb{I}\{\hat{y}=y\}\in\{0,1\}.
+The (population) top-1 accuracy is then
+A=Pr⁡(Z=1)=Pr⁡(f⁡(x)=y)A=\Pr(Z=1)=\Pr(f(x)=y), where Pr⁡(⋅)\Pr(\cdot) denotes probability with respect to the joint distribution 𝒟\mathcal{D}.
+We assume the complementary label is drawn uniformly at random among the non-yy classes (Ishida et al., 2017):
+p⁡(y¯=k∣y)=1K−1,∀k≠y.p(\bar{y}=k\mid y)=\frac{1}{K-1},\quad\forall k\neq y.
+(1)
+That is, for each item, the revealed wrong index is sampled uniformly from the K−1K-1 non-yy classes.
+For an item with a complementary label y¯≠y\bar{y}\neq y, define
+W=𝕀{y^≠y¯}∈{0,1}W=\mathbb{I}\{\hat{y}\neq\bar{y}\}\in\{0,1\}.
+The assumption in Eq. 1 is enforced by the following data collection protocol.
+We assume that we have a set of questions {xi}i=1N\{x_{i}\}^{N}_{i=1} and KK annotators, where each annotator is a human expert in the field of one of the classes. For each question xix_{i}, choose an annotator uniformly at random (let’s say an annotator in charge of the kk-th class is chosen), and ask “Is the answer of question xix_{i} class kk?”.
+If the answer is yes, we save this in the ordinary-label set as an item with (ordinary) class kk label.
+If the answer is no, we save this in the complementary-label set as an item with (complementary) class kk label.
+Finally, we will have two disjoint evaluation sets, drawn from the same distribution and evaluated by the same system:
+1) An ordinary-label set of size non_{\mathrm{o}}, yielding indicators Z1,…,ZnoZ_{1},\ldots,Z_{n_{\mathrm{o}}} and total correct count So=∑j=1noZjS_{\mathrm{o}}=\sum_{j=1}^{n_{\mathrm{o}}}Z_{j}.
+2) complementary-label set of size ncn_{\mathrm{c}}, yielding indicators W1,…,WncW_{1},\ldots,W_{n_{\mathrm{c}}} and total ‘‘weakly-correct’’11
+1
+Here “weakly-correct” means that the model prediction is not equal to the complementary label.
+For example, when K=4K=4, avoiding the complementary label still leaves a 23\tfrac{2}{3} chance of being wrong.
+count Sc=∑i=1ncWiS_{\mathrm{c}}=\sum_{i=1}^{n_{\mathrm{c}}}W_{i}.
+The total number of samples is N=no+ncN=n_{\mathrm{o}}+n_{\mathrm{c}}.
+2.1 Estimator from Complementary Labels
+It is straightforward to estimate the system accuracy AA by using ordinary labels as
+A^ord=Sono\widehat{A}_{\mathrm{ord}}=\frac{S_{\mathrm{o}}}{n_{\mathrm{o}}}.
+If we want to use complementary labels to estimate AA, a naive approach would be to count the proportion of “avoiding the complementary label,” i.e., q^=1nc​∑i=1ncWi\hat{q}=\tfrac{1}{n_{\mathrm{c}}}\sum_{i=1}^{n_{\mathrm{c}}}W_{i}. However, q^\hat{q} is not an unbiased estimator of the accuracy.
+Thus, we propose the following complementary-label estimator:
+Corollary 1.
+Under the assumption in Eq. (1), the estimator
+A^comp=(K−1)​q^−(K−2)\widehat{A}_{\mathrm{comp}}=(K-1)\hat{q}-(K-2)
+(2)
+is unbiased for AA, where K≥3K\geq 3 is the number of choices.
+Proof.
+For a single item, under Eq. (1),
+𝔼⁡[W]\displaystyle\mathbb{E}[W]
+=Pr⁡(y^=y)​Pr​(W=1∣y^=y)+Pr⁡(y^≠y)​Pr​(W=1∣y^≠y)\displaystyle=\Pr(\hat{y}=y)\Pr(W=1\mid\hat{y}=y)+\Pr(\hat{y}\neq y)\Pr(W=1\mid\hat{y}\neq y)
+=Pr⁡(y^=y)⋅1+Pr⁡(y^≠y)⋅(1−1K−1)=A+K−2K−1,\displaystyle=\Pr(\hat{y}=y)\cdot 1+\Pr(\hat{y}\neq y)\cdot\Big(1-\tfrac{1}{K-1}\Big)=\frac{A+K-2}{K-1},
+where 𝔼⁡[⋅]\mathbb{E}[\cdot] denote expectation.
+If we consider q^=1nc​∑i=1ncWi\hat{q}=\tfrac{1}{n_{\mathrm{c}}}\sum_{i=1}^{n_{\mathrm{c}}}W_{i}, an empirical version of 𝔼⁡[W]\mathbb{E}[W], this q^\hat{q} is an unbiased estimator of 𝔼⁡[W]\mathbb{E}[W]. Hence, A^comp=(K−1)​q^−(K−2)\widehat{A}_{\mathrm{comp}}=(K-1)\hat{q}-(K-2) is an unbiased estimator of AA.
+∎
+This linear correction is precisely the 00–11 loss specialization of the
+risk-rewrite identity of Eqs. (8) and (10) in Ishida et al. (2019);
+replacing expectations by sample means yields our unbiased estimator.
+A full derivation is provided in Appendix A.
+Even if we have an unbiased estimator with only complementary labels, the variance is expected to become larger compared with the case when we use the same number of ordinary labels.This is because complementary labels are “weaker” than ordinary labels in the sense that K−1K-1 different complementary labels is equivalent to 1 ordinary label.
+We first confirm this as follows.
+Since WW is Bernoulli with mean q=A+K−2K−1q=\tfrac{A+K-2}{K-1}, we obtain
+Var⁡(A^comp)=(K−1)2​Var​(1nc​∑i=1ncWi)=(K−1)2nc​q​(1−q)=(A+K−2)​(1−A)nc,\displaystyle\mathrm{Var}(\widehat{A}_{\mathrm{comp}})=(K-1)^{2}\,\mathrm{Var}\!\left(\tfrac{1}{n_{\mathrm{c}}}\sum_{i=1}^{n_{\mathrm{c}}}W_{i}\right)=\frac{(K-1)^{2}}{n_{\mathrm{c}}}\,q(1-q)=\frac{(A+K-2)(1-A)}{n_{\mathrm{c}}},
+(3)
+where Var⁡(⋅)\mathrm{Var}(\cdot) denote variance.
+This expression depends on the unknown AA. In practice, a plug-in estimator is used.
+For the ordinary-label dataset, the number of correct predictions satisfies
+So∼Bin⁡(no,A)S_{\mathrm{o}}\sim\mathrm{Bin}(n_{\mathrm{o}},A), where Bin⁡(n,p)\mathrm{Bin}(n,p) denotes the binomial distribution with
+parameters nn (number of independent trials) and pp (success probability in each trial).
+Thus,
+𝔼⁡[So/no]=A\mathbb{E}\!\left[{S_{\mathrm{o}}}/{n_{\mathrm{o}}}\right]=A, and
+Var⁡(So/no)=A⁡(1−A)/no\mathrm{Var}\!\left({S_{\mathrm{o}}}/{n_{\mathrm{o}}}\right)={A(1-A)}/{n_{\mathrm{o}}}, taken with respect to the underlying population distribution 𝒟\mathcal{D} over (x,y)(x,y).
+Comparing this with Eq. (3), the variance ratio is
+Var⁡(A^comp)Var⁡(So/no)=(A+K−2)​noA​nc.\frac{\mathrm{Var}(\widehat{A}_{\mathrm{comp}})}{\mathrm{Var}(S_{\mathrm{o}}/n_{\mathrm{o}})}=\frac{(A+K-2)\,n_{\mathrm{o}}}{A\,n_{\mathrm{c}}}.
+(4)
+Hence, when nc=non_{\mathrm{c}}=n_{\mathrm{o}}, the complementary estimator has larger variance for all K≥3K\geq 3, as expected.
+Next, it would be interesting to derive how much more complementary labels we will need to prepare to have the same amount of variance as the ordinary label case.
+To match the variance of the ordinary estimator, the size of the complementary dataset must be
+nc=(1+K−2A)​no.n_{\mathrm{c}}=\left(1+\frac{K-2}{A}\right)n_{\mathrm{o}}.
+(5)
+That is, the larger AA is, the fewer additional complementary labels are needed.
+Since AA is unknown, one can use a small ordinary-labeled set to bound AA and infer the required ncn_{\mathrm{c}}, motivating the combined estimator in § 2.2.
+2.2 Combining Ordinary and Complementary Labels
+We now combine information from both datasets. Recall
+A^ord=Sono\widehat{A}_{\mathrm{ord}}=\tfrac{S_{\mathrm{o}}}{n_{\mathrm{o}}} and
+A^comp=(K−1)​Scnc−(K−2)\widehat{A}_{\mathrm{comp}}=(K-1)\tfrac{S_{\mathrm{c}}}{n_{\mathrm{c}}}-(K-2) are both unbiased under the independent and identically distributed (i.i.d.) sampling assumption.
+Inverse Variance Weighted Estimator (IVW)
+Consider the linear combination
+A^mix=w​A^ord+(1−w)​A^comp\widehat{A}_{\mathrm{mix}}=w\,\widehat{A}_{\mathrm{ord}}+(1-w)\,\widehat{A}_{\mathrm{comp}} where w∈[0,1]w\in[0,1].
+Because the two components are independent and unbiased (disjoint samples), A^mix\widehat{A}_{\mathrm{mix}} is unbiased with variance
+Var⁡(A^mix)=w2​A⁡(1−A)no+(1−w)2​(K−1)2nc​q​(1−q),q=A+K−2K−1.\mathrm{Var}(\widehat{A}_{\mathrm{mix}})=w^{2}\tfrac{A(1-A)}{n_{\mathrm{o}}}+(1-w)^{2}\tfrac{(K-1)^{2}}{n_{\mathrm{c}}}\,q(1-q),\quad q=\tfrac{A+K-2}{K-1}.
+Minimizing it w.r.t. ww yields
+w⋆=(K−1)2nc​q​(1−q)A⁡(1−A)no+(K−1)2nc​q​(1−q).w^{\star}=\frac{\tfrac{(K-1)^{2}}{n_{\mathrm{c}}}q(1-q)}{\tfrac{A(1-A)}{n_{\mathrm{o}}}+\tfrac{(K-1)^{2}}{n_{\mathrm{c}}}q(1-q)}.
+(6)
+The corresponding minimum variance equals
+Varmin​(A^mix)=A⁡(1−A)no⋅(K−1)2nc​q​(1−q)A⁡(1−A)no+(K−1)2nc​q​(1−q).\mathrm{Var}_{\min}(\widehat{A}_{\mathrm{mix}})=\frac{\tfrac{A(1-A)}{n_{\mathrm{o}}}\cdot\tfrac{(K-1)^{2}}{n_{\mathrm{c}}}q(1-q)}{\tfrac{A(1-A)}{n_{\mathrm{o}}}+\tfrac{(K-1)^{2}}{n_{\mathrm{c}}}q(1-q)}.
+Since AA is unknown, we use plug-in estimators:
+Var^​(A^ord)=A^ord​(1−A^ord)no\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{ord}})=\tfrac{\widehat{A}_{\mathrm{ord}}(1-\widehat{A}_{\mathrm{ord}})}{n_{\mathrm{o}}}, and
+Var^​(A^comp)=(K−1)2nc​q^​(1−q^),q^=Scnc.\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{comp}})=\tfrac{(K-1)^{2}}{n_{\mathrm{c}}}\,\hat{q}(1-\hat{q}),\ \hat{q}=\tfrac{S_{\mathrm{c}}}{n_{\mathrm{c}}}.
+Then
+w^=Var^​(A^comp)Var^​(A^ord)+Var^​(A^comp),where​A^IVW=w^​A^ord+(1−w^)​A^comp.\widehat{w}=\frac{\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{comp}})}{\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{ord}})+\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{comp}})},\text{where}~\widehat{A}_{\mathrm{IVW}}=\widehat{w}\,\widehat{A}_{\mathrm{ord}}+(1-\widehat{w})\,\widehat{A}_{\mathrm{comp}}.
+(7)
+Its (plug-in) variance is the harmonic mean:
+Var^​(A^IVW)=Var^​(A^ord)​Var^​(A^comp)/(Var^​(A^ord)+Var^​(A^comp))\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{IVW}})=\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{ord}})\,\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{comp}})/(\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{ord}})+\widehat{\mathrm{Var}}(\widehat{A}_{\mathrm{comp}})).
+Substituting q=A+K−2K−1q=\tfrac{A+K-2}{K-1} into Eq. (6) gives
+w⋆=(A+K−2)​noA​nc+(A+K−2)​no,w^{\star}=\frac{(A+K-2)\,n_{\mathrm{o}}}{A\,n_{\mathrm{c}}+(A+K-2)\,n_{\mathrm{o}}},
+(8)
+and replacing AA by a pilot A~\tilde{A} (e.g. A~=A^ord\tilde{A}=\widehat{A}_{\mathrm{ord}}), yields a closed-form estimator of w∗w^{*}.
+If we prepare a separate set other than nc+non_{\mathrm{c}}+n_{\mathrm{o}} samples to estimate the weight, we can maintain the unbiasedness of A^mix\hat{A}_{\mathrm{mix}}; if not (as in our experiments), we will show in § 2.3 that we have a consistent estimator.
+Closed-Form Maximum-Likelihood Estimator (ML)
+The ordinary set induces a likelihood term in AA given by So∼Bin⁡(no,A)S_{\mathrm{o}}\sim\mathrm{Bin}(n_{\mathrm{o}},A).
+The complementary set induces a likelihood term Sc∼Bin⁡(nc,q)S_{\mathrm{c}}\sim\mathrm{Bin}(n_{\mathrm{c}},q) with q=A+K−2K−1q=\frac{A+K-2}{K-1}. Assuming independence between the two datasets, the joint log-likelihood is
+ℓ⁡(A)=So​log​A+(no−So)​log⁡(1−A)+Sc​log​q+(nc−Sc)​log⁡(1−q).\ell(A)=S_{\mathrm{o}}\log A+(n_{\mathrm{o}}-S_{\mathrm{o}})\log(1-A)+S_{\mathrm{c}}\log q+(n_{\mathrm{c}}-S_{\mathrm{c}})\log(1-q).
+Setting ∂ℓ/∂A=0\partial\ell/\partial A=0 yields the score equation
+SoA−no−So1−A+ScA+K−2−nc−Sc1−A= 0,\frac{S_{\mathrm{o}}}{A}-\frac{n_{\mathrm{o}}-S_{\mathrm{o}}}{1-A}+\frac{S_{\mathrm{c}}}{A+K-2}-\frac{n_{\mathrm{c}}-S_{\mathrm{c}}}{1-A}\;=\;0,
+which simplifies to a quadratic form in AA. Let
+To=no−SoT_{\mathrm{o}}=n_{\mathrm{o}}-S_{\mathrm{o}}, Tc=nc−ScT_{\mathrm{c}}=n_{\mathrm{c}}-S_{\mathrm{c}}, α=N\alpha=N, β=(K−2)​(To+Tc)+(K−3)​So−Sc\beta=(K-2)(T_{\mathrm{o}}+T_{\mathrm{c}})+(K-3)S_{\mathrm{o}}-S_{\mathrm{c}}, γ=−(K−2)​So\gamma=-(K-2)S_{\mathrm{o}}.
+Then the ML is the unique root in [0,1][0,1]:
+A^ML=−β+β2−4​α​γ2​α.\widehat{A}_{\mathrm{ML}}\;=\;\frac{-\beta+\sqrt{\beta^{2}-4\alpha\gamma}}{2\alpha}.
+(9)
+A large-sample standard error is
+se(A^ML)≈[noA^ML​(1−A^ML)+nc(K−1)2​q^​(1−q^)]−1/2,\mathrm{se}(\widehat{A}_{\mathrm{ML}})\approx\left[\frac{n_{\mathrm{o}}}{\widehat{A}_{\mathrm{ML}}(1-\widehat{A}_{\mathrm{ML}})}+\frac{n_{\mathrm{c}}}{(K-1)^{2}\,\hat{q}(1-\hat{q})}\right]^{-1/2},
+based on observed or expected information.
+If nc=0n_{\mathrm{c}}=0, Eq. (9) reduces to A^ord\widehat{A}_{\mathrm{ord}}.
+If no=0n_{\mathrm{o}}=0, it reduces to A^comp\widehat{A}_{\mathrm{comp}}.
+For K=4K=4, one always has q^∈[23,1]\hat{q}\in[\tfrac{2}{3},1] when A∈[0,1]A\in[0,1], which bounds the complementary-component variance.
+Moreover, a one-step Newton update around the truth shows that the IVW estimator with optimal fixed weights coincides with the ML estimator up to the first order22
+2
+A detailed proof is provided in Appendix C., and both are statistically efficient.
+2.3 Theoretical analysis
+We analyze the deviation of the complementary-label estimator A^comp\widehat{A}_{\mathrm{comp}} under the uniform wrong-index assumption Eq. (1). Although A^comp\widehat{A}_{\mathrm{comp}} is unbiased, its variance can be non-negligible at small sample sizes. We present two finite-sample deviation bounds: a distribution-free Hoeffding bound (Boucheron et al., 2003) and a data-dependent Bernstein bound (Maurer & Pontil, 2009) leveraging empirical variance. We then extend these to a fixed-weight mixture estimator.
+2.3.1 Hoeffding and empirical Bernstein bounds for A^comp\widehat{A}_{\mathrm{comp}}
+We derive a unified bound for A^comp\widehat{A}_{\mathrm{comp}}
+by taking the minimum of the Hoeffding and empirical Bernstein inequalities.
+This formulation is both variance-free (via Hoeffding)
+and variance-adaptive (via Bernstein).
+Theorem 2.
+With probability at least 1−δ1-\delta,
+|A^comp−A|≤(K−1)​min⁡{log⁡(2/δ)2​nc,2​q^​(1−q^)nc−1​log⁡4δ+7​log⁡(4/δ)3​(nc−1)}.\bigl|\widehat{A}_{\mathrm{comp}}-A\bigr|\;\leq\;(K-1)\,\min~\!\left\{\sqrt{\tfrac{\log(2/\delta)}{2\,n_{\mathrm{c}}}},\;\sqrt{\tfrac{2\,\hat{q}(1-\hat{q})}{n_{\mathrm{c}}-1}\,\log\tfrac{4}{\delta}}+\tfrac{7\,\log(4/\delta)}{3\,(n_{\mathrm{c}}-1)}\right\}.
+Proof.
+Hoeffding part.
+For i.i.d. Wi∈[0,1]W_{i}\!\in\![0,1], Hoeffding gives
+Pr⁡(|q^−𝔼​q^|≥ϵ)≤2​exp⁡(−2​nc​ϵ2).\Pr\!\big(|\hat{q}-\mathbb{E}\hat{q}|\geq\epsilon\big)\leq 2\exp(-2n_{\mathrm{c}}\epsilon^{2}).
+Since A^comp=(K−1)​q^−(K−2)\widehat{A}_{\mathrm{comp}}=(K-1)\hat{q}-(K-2) and
+A=(K−1)​𝔼​q^−(K−2)A=(K-1)\mathbb{E}\hat{q}-(K-2), we have
+|A^comp−A|=(K−1)​|q^−𝔼​q^|.|\widehat{A}_{\mathrm{comp}}-A|=(K-1)\,|\hat{q}-\mathbb{E}\hat{q}|.
+Empirical Bernstein part.
+Apply the two-sided empirical Bernstein inequality (Maurer & Pontil, 2009)
+to q^=1nc​∑i=1ncWi\hat{q}=\tfrac{1}{n_{\mathrm{c}}}\sum_{i=1}^{n_{\mathrm{c}}}W_{i} with Wi∈[0,1]W_{i}\in[0,1]:
+|q^−𝔼​q^|≤2​q^​(1−q^)​log⁡(4/δ)nc+7​log⁡(4/δ)3​(nc−1).\bigl|\hat{q}-\mathbb{E}\hat{q}\bigr|\;\leq\;\sqrt{\frac{2\,\hat{q}(1-\hat{q})\,\log(4/\delta)}{n_{\mathrm{c}}}}\;+\;\frac{7\,\log(4/\delta)}{3\,(n_{\mathrm{c}}-1)}.
+Multiplying both sides by (K−1)(K-1) and using
+A^comp−(A)=(K−1)​(q^−𝔼​q^)\widehat{A}_{\mathrm{comp}}-(A)=(K-1)\bigl(\hat{q}-\mathbb{E}\hat{q}\bigr)
+yields the second branch in Theorem 2.
+∎
+The first branch (Hoeffding) is simple and variance-free but conservative. The second branch (empirical Bernstein) adapts to the empirical variance q^​(1−q^)\hat{q}(1-\hat{q}) and is typically tighter when q^\hat{q} is close to 00 or 11.
+Both bounds require only i.i.d. sampling of {Wi}\{W_{i}\} under Eq. (1),
+and hold for any ncn_{\mathrm{c}}.
+2.3.2 Mixture estimator bounds via union bound
+Consider the mixture estimator with a (possibly data-dependent) weight w∈[0,1]w\in[0,1]:
+A^mix=w​A^ord+(1−w)​A^comp\widehat{A}_{\mathrm{mix}}=w\,\widehat{A}_{\mathrm{ord}}+(1-w)\,\widehat{A}_{\mathrm{comp}} where
+A^ord=1no​∑j=1noZj\widehat{A}_{\mathrm{ord}}=\tfrac{1}{n_{\mathrm{o}}}\sum_{j=1}^{n_{\mathrm{o}}}Z_{j}, and Zj∈{0,1}Z_{j}\in\{0,1\}.
+Since the ordinary and complementary sets are disjoint, we have
+A^mix−A=w⁡(A^ord−A)+(1−w)​(A^comp−A)\widehat{A}_{\mathrm{mix}}-A=w(\widehat{A}_{\mathrm{ord}}-A)+(1-w)(\widehat{A}_{\mathrm{comp}}-A).
+With a union bound and Hoeffding inequality, we can derive the following proposition.
+Proposition 3.
+For any split δ=δo+δc\delta=\delta_{\mathrm{o}}+\delta_{\mathrm{c}}, with δo,δc>0\delta_{\mathrm{o}},\delta_{\mathrm{c}}>0, with probability at least 1−δ1-\delta,
+|A^mix−A|≤min⁡{w​log⁡(2/δo)2​no+(1−w)​(K−1)​log⁡(2/δc)2​nc,w⁡(2​A^ord​(1−A^ord)no−1​log⁡4δo+7​log⁡(4/δo)3​(no−1))+(1−w)​(2​(K−1)2​q^​(1−q^)nc−1​log⁡4δc+7​(K−1)​log⁡(4/δc)3​(nc−1))}.\bigl|\widehat{A}_{\mathrm{mix}}-A\bigr|\;\leq\;\min~\!\left\{\begin{aligned} &w\,\sqrt{\tfrac{\log(2/\delta_{\mathrm{o}})}{2\,n_{\mathrm{o}}}}+(1-w)(K-1)\,\sqrt{\tfrac{\log(2/\delta_{\mathrm{c}})}{2\,n_{\mathrm{c}}}},\\[6.0pt]
+&w\!\left(\sqrt{\tfrac{2\,\widehat{A}_{\mathrm{ord}}(1-\widehat{A}_{\mathrm{ord}})}{n_{\mathrm{o}}-1}\,\log\tfrac{4}{\delta_{\mathrm{o}}}}+\tfrac{7\,\log(4/\delta_{\mathrm{o}})}{3\,(n_{\mathrm{o}}-1)}\right)\\
+&\quad+(1-w)\!\left(\sqrt{\tfrac{2\,(K-1)^{2}\,\hat{q}(1-\hat{q})}{n_{\mathrm{c}}-1}\,\log\tfrac{4}{\delta_{\mathrm{c}}}}+\tfrac{7\,(K-1)\,\log(4/\delta_{\mathrm{c}})}{3\,(n_{\mathrm{c}}-1)}\right)\end{aligned}\right\}.
+A symmetric choice δo=δc=δ/2\delta_{\mathrm{o}}=\delta_{\mathrm{c}}=\delta/2 yields the simpler logs log⁡(4/δ)\log(4/\delta) and log⁡(8/δ)\log(8/\delta) respectively.
+The union-bound approach provides guarantees that hold for any weight w∈[0,1]w\in[0,1],
+including data-dependent plug-in choices such as w^IVW\widehat{w}_{\mathrm{IVW}}.
+This makes it directly applicable in practice, although the constants are typically looser
+than those obtained from the moment generating function based Bernstein bound (See Theorem 4).
+We now state a Bernstein-type bound for the mixed estimator that
+complements the union-bound inequalities established in
+Proposition 3; its proof is deferred to
+Appendix D.
+Theorem 4.
+With probability at least 1−δ1-\delta, the following holds for A^mix\widehat{A}_{\mathrm{mix}}:
+|A^mix−A|≤ 2​v​log⁡2δ+c​log⁡2δ,\bigl|\widehat{A}_{\mathrm{mix}}-A\bigr|\;\leq\;\sqrt{\,2v\,\log\tfrac{2}{\delta}\,}\;+\;c\,\log\tfrac{2}{\delta},
+(10)
+where v=w2​A⁡(1−A)no+(1−w)2​(K−1)2​q​(1−q)ncv=w^{2}\tfrac{A(1-A)}{n_{\mathrm{o}}}+(1-w)^{2}\tfrac{(K-1)^{2}\,q(1-q)}{n_{\mathrm{c}}}, and c=max⁡{wno,(1−w)​(K−1)nc}.c=\max~\!\Bigl\{\tfrac{w}{n_{\mathrm{o}}},\ \tfrac{(1-w)(K-1)}{n_{\mathrm{c}}}\Bigr\}.
+This bound tightens Hoeffding’s inequality by incorporating both the variance term vv and the (range-driven) linear term cc. For practical plug-in forms and further discussion, see Appendix E.
+Formally, Eq. (10) is valid for any fixed choice of the weight w∈[0,1]w\in[0,1]
+(e.g., a constant choice or an estimate obtained from an independent pilot split). If instead ww is chosen adaptively from the same evaluation data
+(e.g., the plug-in w^IVW\widehat{w}_{\mathrm{IVW}}), the fixed-weight assumption is violated
+and the bound is no longer guaranteed.
+In such cases one can (i) revert to the union-bound inequalities (Proposition 3),
+which hold for arbitrary (possibly data-dependent) ww via a triangle inequality;
+(ii) restore the fixed-ww condition through sample splitting or cross-fitting
+(Chernozhukov et al., 2018; Wager & Athey, 2018); or (iii) restrict ww to a finite grid G⊂[0,1]G\subset[0,1] and apply a union bound
+with δ\delta adjusted by |G||G| (Boucheron et al., 2013; Shalev-Shwartz & Ben-David, 2014).
+3 Experiments
+In this section, we explain our experiments. We use OpenAI API Platform for all of our experiments.
+3.1 Experiment Setup
+We evaluate our unbiased and mixed estimators in three settings:
+(I) Statistical validation on standard multiple-choice benchmarks, where we verify unbiasedness and variance properties (see Eqs. (2), (4), (16));
+(II) Practical evaluation on two real-world classification benchmarks:
+the Japanese financial dataset EDINET-Bench (Sugiura et al., 2025),
+where each option corresponds to a professional industry domain and annotators provide weak complementary feedback;
+and the English Medical Abstracts dataset (Schopf et al., 2023),
+which covers multiple disease categories with natural clinical text.
+(III) Agentic training in agent-based workflows, where we replace ordinary accuracy with our proposed estimator as the fitness function and examine the resulting agent performance.
+For agent scaffolding, we use ADAS (Hu et al., 2025) and AFlow (Zhang et al., 2025c).
+For details of the labeling protocol, please refer to Appendix B.
+From MMLU-Pro (Wang et al., 2024b), we select only the 10-option questions, yielding 9,795 examples.
+MedQA-USMLE (Jin et al., 2021) and GPQA (Rein et al., 2024) are both four-option multiple-choice benchmarks; for GPQA we adopt the extended version for broader coverage.
+For MATH-MC, following the candidate-generation protocol of Zhang et al. (2024), we construct five-option questions from the original MATH dataset (Hendrycks et al., 2021), discarding problems with fewer than four distractors, which yields 11,751 examples.
+All duplicates are removed to ensure consistency.
+3.2 Statistical Validation of Complementary and Mixed Estimators
+Statistical validation is conducted on four benchmarks. Since oracle labels are available,
+complementary labels are synthetically constructed following Appendix B.
+We report three types of evaluation metrics.
+(A) Unbiasedness and variance are examined by subsampling 300 ordinary and 300 complementary labels
+(120 for GPQA due to dataset size). Accuracy is estimated using Eq. (2),
+and variability is quantified through standard deviations, reported as
+A^±σ^\widehat{A}\pm\widehat{\sigma} with σ^\widehat{\sigma} denoting the estimated standard deviation.
+(B) The relative efficiency of complementary labels is assessed by computing the number of
+complementary samples required to achieve the same variance as non_{\mathrm{o}} ordinary labels,
+according to Eq. (4), where the full ordinary dataset is used to approximate the
+ground-truth accuracy AA.
+(C) To mimic practical annotation protocols (Appendix B),
+we assume that each ordinary label can be replaced by (K−1)(K-1) complementary labels,
+where KK is the number of answer options. This setting is used to evaluate the mixed estimators
+in Eq. (7) and Eq. (9).
+Each dataset is evaluated on all five metrics using gpt-5-nano (OpenAI, 2025b), with three independent runs averaged; aggregated outcomes are summarized in Table 1. For the MATH-MC benchmark, we use GPT-4.1-nano instead of GPT-5-nano.
+This choice is due to (i) output-format constraints in GPT-5-nano that conflict with our
+final-answer extraction protocol, and (ii) the need to avoid ceiling effects: in our pilot runs,
+GPT-5-nano attains near-ceiling accuracy on MATH-MC, which compresses the observable
+gaps among estimators.
+Table 1: Performance of estimators across benchmarks.
+Values are reported as mean accuracy ±\pm standard deviation across three random seeds;
+the average of per-run standard deviations is additionally shown in parentheses.
+Detailed estimator setups and confidence-interval analyses are provided in
+Appendix F.
+The last column reports the macro-average across datasets (counting Math and Math-COT separately).
+For each benchmark, the estimator whose mean accuracy is closest to the Ord-Eval reference is highlighted in bold.
+Estimator
+MMLU-Pro
+MedQA-USMLE
+GPQA
+MATH†\dagger
+MATH(CoT)‡\ddagger
+Average
+Ord
+78.33 ±\pm 1.73 ( ±\pm2.38)
+92.89 ±\pm 1.35 ( ±\pm1.48)
+64.17 ±\pm 1.67 ( ±\pm4.39)
+47.56 ±\pm 3.91 ( ±\pm2.88)
+84.89 ±\pm 0.77 ( ±\pm2.07)
+73.57
+Comp-no\text{n}_{\text{o}}
+77.00 ±\pm 12.49 ( ±\pm7.95)
+92.67 ±\pm 1.53 ( ±\pm2.67)
+59.17 ±\pm 3.82 ( ±\pm9.42)
+48.44 ±\pm 10.78 ( ±\pm7.72)
+80.44 ±\pm 2.78 ( ±\pm4.98)
+71.54
+Comp-Var
+75.67 ±\pm 2.15 ( ±\pm2.51)
+90.61 ±\pm 1.43 ( ±\pm1.69)
+63.67 ±\pm 5.01 ( ±\pm4.28)
+41.10 ±\pm 3.17 ( ±\pm2.93)
+81.35 ±\pm 0.29 ( ±\pm2.28)
+70.48
+IVW-0.5
+77.89 ±\pm 1.58 ( ±\pm1.80)
+91.61 ±\pm 1.11 ( ±\pm1.15)
+65.28 ±\pm 1.34 ( ±\pm3.33)
+43.44 ±\pm 3.95 ( ±\pm2.52)
+83.56 ±\pm 1.17 ( ±\pm1.58)
+72.36
+IVW
+77.97 ±\pm 1.58 ( ±\pm1.79)
+91.86 ±\pm 1.11 ( ±\pm1.13)
+65.14 ±\pm 1.38 ( ±\pm3.30)
+44.87 ±\pm 3.82 ( ±\pm2.37)
+83.86 ±\pm 0.83 ( ±\pm1.56)
+72.74
+ML
+77.94 ±\pm 1.58 ( ±\pm1.79)
+91.65 ±\pm 1.08 ( ±\pm1.18)
+65.11 ±\pm 1.38 ( ±\pm3.28)
+44.75 ±\pm 3.79 ( ±\pm2.36)
+83.65 ±\pm 1.04 ( ±\pm1.59)
+72.62
+Ord-Eval
+77.97
+92.66
+59.52
+44.21
+83.89
+–
+Table 1 summarizes the results across benchmarks,
+together with a reference evaluation using all available ordinary labels (Ord-Eval).
+Importantly, higher accuracy in isolation does not imply a better estimator;
+the desideratum is to approximate the Ord-Eval reference as closely and reliably as possible under scarce supervision.
+With finite ordinary labels and (K−1)(K-1)-times complementary labels (where KK is the number of choices),
+Ord and Comp-non_{\mathrm{o}} can occasionally yield point estimates that are numerically closer to Ord-Eval
+(as seen in MedQA and GPQA).
+However, their standard errors are substantially wider,
+indicating poor reliability and limited reproducibility.
+For Comp-Var, increasing the number of complementary labels reduces variance,
+consistent with Eq. (3) and Eq. (4).
+We report both across-seed variability and the average within-run standard deviation,
+the latter more directly reflecting estimator variance.
+Ord-Eval itself should not be regarded as the ground-truth accuracy—especially on GPQA,
+where dataset size is small and uncertainty remains substantial—but rather as an empirical reference.
+Among mixture estimators, IVW consistently improves over the equal-weighted baseline in within-run standard deviation (IVW-0.5),
+confirming that inverse-variance weighting provides the optimal linear combination of ordinary and complementary labels.
+ML further achieves narrower intervals owing to its joint likelihood formulation.
+However, ML requires more precise pilot estimates of accuracy and may thus be less robust in practice,
+whereas IVW remains stable by directly incorporating variance estimates.
+This distinction is supported by the within-run standard deviations,
+which indicate that IVW achieves competitive efficiency with simpler computation.
+Overall, while Comp-non_{\mathrm{o}} may occasionally appear closest to Ord-Eval in mean accuracy,
+its instability makes it unreliable for reproducible evaluation.
+IVW and ML instead strike the best balance between bias and variance,
+yielding stable and reproducible estimates close to the Ord-Eval reference across datasets.
+The empirical closeness of the two methods further validates our theoretical analysis,
+suggesting that mixture estimators can serve as a practical foundation for scalable oversight
+in settings where ground-truth labels are scarce or infeasible.
+Ablation Study on IVW.
+Recall that the optimal coefficient for IVW is given in Eq. (8).
+When setting nc=(K−1)​non_{\mathrm{c}}=(K-1)n_{\mathrm{o}} (where KK denotes the number of choices), the expression simplifies to
+A+K−2A​K+K−2=1K​(1+(K−1)​(K−2)A​K+K−2).\frac{A+K-2}{AK+K-2}=\frac{1}{K}\left(1+\frac{(K-1)(K-2)}{AK+K-2}\right).
+Since 0≤A≤10\leq A\leq 1, the coefficient lies in the range
+12≤1K​(1+(K−1)​(K−2)A​K+K−2)≤ 1.\tfrac{1}{2}\;\leq\;\tfrac{1}{K}\Big(1+\tfrac{(K-1)(K-2)}{AK+K-2}\Big)\;\leq\;1.
+In particular, when AA is close to 11—as suggested by the Ord-Eval reference—the optimal weight approaches 12\frac{1}{2}, explaining why in Table 1 the IVW estimator often performs similarly to the ordinary baseline.
+(a) Optimal ww as a function of the number of samples (normalized by 300).
+(b) Corresponding variance to the given ww on a log scale.
+Figure 2:
+Comparison of optimal weighting and baseline (w=0.5w=0.5).
+Optimal weighting consistently achieves lower variance compared to the equal-weighted baseline,
+demonstrating more reliable estimation with limited samples.
+To further examine whether the closed-form coefficient yields the optimal trade-off,
+we conduct an ablation on MedQA-USMLE by varying the number of complementary labels
+from nc=non_{\mathrm{c}}=n_{\mathrm{o}} to nc=20​non_{\mathrm{c}}=20n_{\mathrm{o}} (with no=300n_{\mathrm{o}}=300).
+Results are averaged over three random seeds.
+As shown in Figure 2, when nc≈3​non_{\mathrm{c}}\approx 3n_{\mathrm{o}}—the setting used in
+Table 1—the optimal weight is close to the fixed baseline w=0.5w=0.5.
+However, for nc<non_{\mathrm{c}}<n_{\mathrm{o}} or nc>6​non_{\mathrm{c}}>6n_{\mathrm{o}}, the optimal variance is consistently lower than the baseline.
+This behavior is intuitive: once the number of complementary labels exceeds the variance-matching
+threshold in Eq. (4), the complementary estimator alone has smaller variance,
+and the closed-form IVW solution naturally shifts weight away from ordinary labels.
+By contrast, the fixed baseline cannot adapt, leading to consistently higher variance.
+3.3 Benchmark Evaluation in Real-World Tasks
+To demonstrate the practicality of our method in real-world scenarios,
+we conduct proof-of-concept experiments for estimation and learning under partitioned human supervision,
+as directly collecting superhuman tasks would be prohibitively costly.
+Following the data collection protocol in Algorithm 1,
+for each domain we randomly select an expert and ask whether a given object belongs to their field.
+Applied to the benchmarks, complementary labels are generated from the oracle labels by splitting each instance into 11 ordinary label and K−1K-1 complementary labels, corresponding to the KK candidate classes.
+We evaluate on two benchmarks.
+First, we use EDINET-Bench (Sugiura et al., 2025), a Japanese financial report classification dataset, where each industry corresponds to a professional domain, and we adopt the prompting setup of Sugiura et al. (2025).
+Since the original dataset contains only 496 samples (comparable to GPQA), we extend it following their released code, resulting in 3,269 samples; we refer to this as EDINET-Bench Extended.
+To our knowledge, there are no public medical benchmarks in which each class explicitly corresponds to a medical specialization.
+We therefore adopt the Medical Abstracts dataset (Schopf et al., 2023), which consists of paper abstracts labeled by disease categories, simulating the task of narrow domain experts classifying diseases.
+Both EDINET-Bench Extended and Medical Abstracts are imbalanced across classes.
+Nevertheless, our assumption in Eq. (1) is that complementary labels are sampled uniformly at random, independent of the original label distribution.
+We follow this procedure and empirically verify that class imbalance does not affect the validity of our estimator.
+Estimator
+EDINET
+EDINET (Extended)
+Medical Abstract
+Ord
+19.35 ±\pm 5.59 (±\pm7.13)
+21.67 ±\pm 2.46 (±\pm2.89)
+70.38 ±\pm 0.62 (±\pm0.96)
+Comp-(K-1)
+10.75 ±\pm 8.12 (±\pm16.46)
+26.60 ±\pm 3.45 (±\pm5.86)
+68.79 ±\pm 0.71 (±\pm1.13)
+IVW-0.5
+15.05 ±\pm 5.18 (±\pm8.98)
+24.14 ±\pm 2.26 (±\pm3.27)
+69.58 ±\pm 0.57 (±\pm0.74)
+IVW
+17.95 ±\pm 4.88 (±\pm6.53)
+22.64 ±\pm 2.27 (±\pm2.59)
+69.71 ±\pm 0.56 (±\pm0.73)
+ML
+17.93 ±\pm 4.87 (±\pm6.29)
+22.61 ±\pm 2.28 (±\pm2.26)
+69.70 ±\pm 0.56 (±\pm0.74)
+Table 2:
+Mean acc. ±\pm standard deviation across 3 seeds,
+w/ the average of per-run standard deviations.
+Bold: Lowest variance across 3 runs.
+See Appendix. F for details.
+Results
+As shown in Table 2, both IVW and ML consistently achieve the lowest
+average per-run standard deviation, confirming the variance reduction effect observed in
+§ 3.2. In contrast, the Comp-(K-1) estimator exhibits much larger variance
+on EDINET-Bench, which aligns with Eq. (4): with K=16K=16 industries and relatively
+low accuracy, the variance is amplified.
+Comparing EDINET-Bench and its extended version, we observe that increasing the number of samples
+substantially reduces the fluctuations of the estimators, supporting our earlier finding in
+§ 3.2 that small-scale benchmarks such as GPQA can lead to unstable estimates.
+Finally, on the Medical Abstracts dataset, IVW and ML again achieve the most stable performance,
+demonstrating that the complementary-label estimators generalize across domains and languages.
+3.4 Agent Search with Estimator Feedback
+Finally, we show that weak human supervision can be leveraged not only for evaluation but also as training signal for AI systems.
+We evaluate agentic flows under complementary-label signals on three benchmarks.
+GPQA serves as the most challenging setting in our study (Table 1);
+Math-MC focuses on reasoning ability;
+and Medical Abstracts best captures our practical scenario.
+Following Hu et al. (2025), we include CoT (Wei et al., 2022), CoT-SC (Wang et al., 2023), Self-Refine (Madaan et al., 2023), LLM Debate (Du et al., 2024), Step-back Abstraction (Zheng et al., 2024), Quality-Diversity (Lu et al., 2025), and Role Assignment (Xu et al., 2025) as manually designed baselines, and compare against ADAS (Hu et al., 2025) and AFlow (Zhang et al., 2025c).
+We define the accuracy computed by qq as complementary accuracy and apply Eq. (2) to obtain the transformed complementary accuracy.
+For ADAS and AFlow, we follow the original protocol (see Appendix G), computing both complementary and transformed complementary accuracy on the validation set and reporting the better-performing variant.
+Figure 3: Accuracy across different benchmarks.
+Across GPQA, Math-MC, and Medical Abstract, agentic systems guided by weak complementary signals (ADAS and AFlow) consistently outperform manually designed baselines.
+Figure 3 compares ADAS and AFlow against strong baselines on GPQA, Math-MC, and Medical Abstracts.
+Both agentic systems consistently outperform manually designed workflows once weak complementary-label signals are incorporated, demonstrating that weak human feedback can provide learning signal.
+While the choice of estimator (raw vs. transformed complementary accuracy) leads to different outcomes depending on task difficulty, the overall pattern remains robust: weak signals suffice to improve performance beyond established baselines, with additional variance analysis provided in Appendix H.
+These findings reinforce the central theme of our study: humans’ weak labels can provide a reliable and scalable supervisory channel for steering agentic AI systems.
+4 Related Work
+Scalable oversight
+In superhuman regimes where AI systems surpass human abilities, humans can no longer provide reliable supervision to evaluate and train them.
+Recent scalable-oversight work explores strategies that let limited (human) supervisors steer stronger models.
+Among the many scalable oversight protocols (such as weak-to-strong generalization (Burns et al., 2024),
+easy-to-hard generalization (Sun et al., 2024),
+debate (Khan et al., 2024), and
+RLAIF (Bai et al., 2022)), our approach may seem similar to iterated amplification/IDA (Christiano et al., 2018) and recursive task decomposition (Wu et al., 2021) at a glance.
+The difference is that our approach can be used for tasks that are not easily decomposable, as we are not decomposing the task, but rather relying on expertise-wise partitioned human supervision to enable the usage of complementary labels.
+Weak supervision
+Weakly-supervised learning (Sugiyama et al., 2022) studies learning with weaker form of supervision instead of ground-truth labels.
+Complementary labels (Ishida et al., 2017; Ishida et al., 2019; Yu et al., 2018; Wang et al., 2024a; Wang et al., 2025), in particular, provide “not-this-class” information, with the traditional motivation of reducing annotation cost.
+Our perspective differs: we leverage weak supervision not merely for cheaper labeling, but as a principled route to scalable oversight in the superhuman regime, where no single human expert can provide verification end-to-end.
+Agentic systems
+LLMs have inspired a wide range of system architectures (Wei et al., 2022; Wang et al., 2023; Madaan et al., 2023; Shinn et al., 2023b; Shinn et al., 2023a), in particular by incorporating multiple LLMs into collaborative frameworks (Du et al., 2024; Liu et al., 2024; Chen et al., 2024; Wu et al., 2024; Wang et al., 2024c).
+Early studies relied on manually designed agentic workflows, which demanded substantial manual design and domain expertise.
+More recent work has shifted toward automated agent discovery, in which LLMs themselves are used to generate, refine, and optimize workflow structures (Hu et al., 2025; Zhang et al., 2025a; Zhang et al., 2025b; Zhang et al., 2025c), but required ground-truth supervision to construct a fitness score.
+We investigate whether automated agentic system design can proceed even with weaker training signals, i.e., complementary labels.
+5 Conclusion
+We introduced scalable oversight via partitioned human supervision, a protocol that utilizes the weak human supervision for tasks beyond any single expert’s ability.
+We derived an unbiased estimator of performance metric from complementary labels, analyzed its variance, and provided finite‑sample guarantees. We further proposed two practical mixture estimators that combine scarce ordinary labels with abundant complementary labels.
+Empirically, we show that these estimators allow us to estimate the performance of AI systems without requiring full ground truth.
+They also serve as effective training signals which we demonstrate with automatically designing agentic workflows.
+References
+Amodei et al. (2016)
+Dario Amodei, Chris Olah, Jacob Steinhardt, Paul Christiano, John Schulman, and Dan Mané.
+Concrete problems in AI safety.
+arXiv preprint arXiv:1606.06565, 2016.
+Anthropic (2025)
+Anthropic.
+Introducing Claude 4: Claude Opus 4 and Claude Sonnet 4.
+Blog post on the Anthropic website, May 22 2025.
+URL https://www.anthropic.com/news/claude-4.
+Accessed 2025-09-24.
+Bai et al. (2022)
+Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, Carol Chen, Catherine Olsson, Christopher Olah, Danny Hernandez, Dawn Drain, Deep Ganguli, Dustin Li, Eli Tran-Johnson, Ethan Perez, Jamie Kerr, Jared Mueller, Jeffrey Ladish, Joshua Landau, Kamal Ndousse, Kamile Lukosuite, Liane Lovitt, Michael Sellitto, Nelson Elhage, Nicholas Schiefer, Noemi Mercado, Nova DasSarma, Robert Lasenby, Robin Larson, Sam Ringer, Scott Johnston, Shauna Kravec, Sheer El Showk, Stanislav Fort, Tamera Lanham, Timothy Telleen-Lawton, Tom Conerly, Tom Henighan, Tristan Hume, Samuel R. Bowman, Zac Hatfield-Dodds, Ben Mann, Dario Amodei, Nicholas Joseph, Sam McCandlish, Tom Brown, and Jared Kaplan.
+Constitutional AI: Harmlessness from AI feedback.
+arXiv preprint arXiv:2212.08073, 2022.
+Boucheron et al. (2003)
+Stéphane Boucheron, Gábor Lugosi, and Olivier Bousquet.
+Concentration inequalities.
+In Summer school on machine learning, pp. 208–240. Springer, 2003.
+Boucheron et al. (2013)
+Stéphane Boucheron, Gábor Lugosi, and Pascal Massart.
+Concentration Inequalities - A Nonasymptotic Theory of Independence.
+Oxford University Press, 2013.
+Bowman et al. (2022)
+Samuel R. Bowman, Jeeyoon Hyun, Ethan Perez, Edwin Chen, Craig Pettit, Scott Heiner, Kamilė Lukošiūtė, Amanda Askell, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, Christopher Olah, Daniela Amodei, Dario Amodei, Dawn Drain, Dustin Li, Eli Tran-Johnson, Jackson Kernion, Jamie Kerr, Jared Mueller, Jeffrey Ladish, Joshua Landau, Kamal Ndousse, Liane Lovitt, Nelson Elhage, Nicholas Schiefer, Nicholas Joseph, Noemí Mercado, Nova DasSarma, Robin Larson, Sam McCandlish, Sandipan Kundu, Scott Johnston, Shauna Kravec, Sheer El Showk, Stanislav Fort, Timothy Telleen-Lawton, Tom Brown, Tom Henighan, Tristan Hume, Yuntao Bai, Zac Hatfield-Dodds, Ben Mann, and Jared Kaplan.
+Measuring progress on scalable oversight for large language models.
+arXiv preprint arXiv:2211.03540, 2022.
+Burns et al. (2024)
+Collin Burns, Pavel Izmailov, Jan Hendrik Kirchner, Bowen Baker, Leo Gao, Leopold Aschenbrenner, Yining Chen, Adrien Ecoffet, Manas Joglekar, Jan Leike, Ilya Sutskever, and Jeffrey Wu.
+Weak-to-Strong Generalization: Eliciting Strong Capabilities With Weak Supervision.
+In Proceedings of the 41st International Conference on Machine Learning, 2024.
+Chen et al. (2024)
+Weize Chen, Yusheng Su, Jingwei Zuo, Cheng Yang, Chenfei Yuan, Chi-Min Chan, Heyang Yu, Yaxi Lu, Yi-Hsin Hung, Chen Qian, Yujia Qin, Xin Cong, Ruobing Xie, Zhiyuan Liu, Maosong Sun, and Jie Zhou.
+Agentverse: Facilitating multi-agent collaboration and exploring emergent behaviors.
+In Proceedings of the Twelfth International Conference on Learning Representations, 2024.
+Chernozhukov et al. (2018)
+Victor Chernozhukov, Denis Chetverikov, Mert Demirer, Esther Duflo, Christian Hansen, Whitney Newey, and James Robins.
+Double/debiased machine learning for treatment and structural parameters.
+The Econometrics Journal, 21(1):C1–C68, 2018.
+Christiano et al. (2018)
+Paul Christiano, Buck Shlegeris, and Dario Amodei.
+Supervising strong learners by amplifying weak experts.
+arXiv preprint arXiv:1810.08575, 2018.
+DeepMind (2025)
+Google DeepMind.
+Introducing gemini 2.5 pro and gemini 2.5 flash.
+Blog post on the Google DeepMind website, May 14 2025.
+URL https://deepmind.google/technologies/gemini/.
+Accessed 2025-09-24.
+DeepSeek (2025)
+DeepSeek.
+Deepseek r1 updates: Build r1-0528.
+Model release notes on the DeepSeek platform, May 28 2025.
+URL https://platform.deepseek.com.
+Accessed 2025-09-24.
+Du et al. (2024)
+Yilun Du, Shuang Li, Antonio Torralba, Joshua B. Tenenbaum, and Igor Mordatch.
+Improving Factuality and Reasoning in Language Models through Multiagent Debate.
+In Proceedings of the 41st International Conference on Machine Learning, 2024.
+Hendrycks et al. (2021)
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt.
+Measuring mathematical problem solving with the math dataset.
+In Advances in Neural Information Processing Systems, 2021.
+Hu et al. (2025)
+Shengran Hu, Cong Lu, and Jeff Clune.
+Automated design of agentic systems.
+In Proceedings of the Thirteenth International Conference on Learning Representations, 2025.
+Ishida et al. (2017)
+Takashi Ishida, Gang Niu, Weihua Hu, and Masashi Sugiyama.
+Learning from complementary labels.
+In Advances in Neural Information Processing Systems, 2017.
+Ishida et al. (2019)
+Takashi Ishida, Gang Niu, Aditya Menon, and Masashi Sugiyama.
+Complementary-label learning for arbitrary losses and models.
+In Proceedings of the 36th International Conference on Machine Learning, 2019.
+Jin et al. (2021)
+Di Jin, Eileen Pan, Nassim Oufattole, Wei-Hung Weng, Hanyi Fang, and Peter Szolovits.
+What disease does this patient have? a large-scale open domain question answering dataset from medical exams.
+Applied Sciences, 11(14), 2021.
+Khan et al. (2024)
+Akbir Khan, John Hughes, Dan Valentine, Laura Ruis, Kshitij Sachan, Ansh Radhakrishnan, Edward Grefenstette, Samuel R. Bowman, Tim Rocktäschel, and Ethan Perez.
+Debating with More Persuasive LLMs Leads to More Truthful Answers.
+In Proceedings of the 41st International Conference on Machine Learning, 2024.
+Lambert et al. (2025)
+Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, Faeze Brahman, Lester James Validad Miranda, Alisa Liu, Nouha Dziri, Xinxi Lyu, Yuling Gu, Saumya Malik, Victoria Graf, Jena D. Hwang, Jiangjiang Yang, Ronan Le Bras, Oyvind Tafjord, Christopher Wilhelm, Luca Soldaini, Noah A. Smith, Yizhong Wang, Pradeep Dasigi, and Hannaneh Hajishirzi.
+Tulu 3: Pushing frontiers in open language model post-training.
+In Proceedings of the Second Conference on Language Modeling, 2025.
+Liu et al. (2024)
+Zijun Liu, Yanzhe Zhang, Peng Li, Yang Liu, and Diyi Yang.
+A dynamic LLM-powered agent network for task-oriented agent collaboration.
+In Proceedings of the First Conference on Language Modeling, 2024.
+Lu et al. (2025)
+Cong Lu, Shengran Hu, and Jeff Clune.
+Intelligent go-explore: Standing on the shoulders of giant foundation models.
+In Proceedings of the Thirteenth International Conference on Learning Representations, 2025.
+Madaan et al. (2023)
+Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, Shashank Gupta, Bodhisattwa Prasad Majumder, Katherine Hermann, Sean Welleck, Amir Yazdanbakhsh, and Peter Clark.
+Self-refine: Iterative refinement with self-feedback.
+In Advances in Neural Information Processing Systems, 2023.
+Maurer & Pontil (2009)
+Andreas Maurer and Massimiliano Pontil.
+Empirical bernstein bounds and sample-variance penalization.
+In Proceedings of the 22nd Conference on Learning Theory, 2009.
+OpenAI (2025a)
+OpenAI.
+Introducing GPT-5.
+Blog post on the OpenAI website, August 7 2025a.
+URL https://openai.com/index/introducing-gpt-5/.
+Accessed 2025-09-24.
+OpenAI (2025b)
+OpenAI.
+Introducing GPT-5 for developers: GPT-5, GPT-5-mini, and GPT-5-nano.
+OpenAI Blog / API documentation, August 7 2025b.
+URL https://openai.com/index/introducing-gpt-5-for-developers.
+Includes the GPT-5 nano model; developer API pricing and performance trade-offs.
+Ouyang et al. (2022)
+Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul Christiano, Jan Leike, and Ryan Lowe.
+Training language models to follow instructions with human feedback.
+In Advances in Neural Information Processing Systems, 2022.
+Rein et al. (2024)
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R. Bowman.
+GPQA: A graduate-level Google-proof Q&A benchmark.
+In Proceedings of the First Conference on Language Modeling, 2024.
+Schopf et al. (2023)
+Tim Schopf, Daniel Braun, and Florian Matthes.
+Evaluating unsupervised text classification: Zero-shot and similarity-based approaches.
+In Proceedings of the 6th International Conference on Natural Language Processing and Information Retrieval, 2023.
+Shalev-Shwartz & Ben-David (2014)
+Shai Shalev-Shwartz and Shai Ben-David.
+Understanding machine learning: From theory to algorithms.
+Cambridge university press, 2014.
+Shao et al. (2024)
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Mingchuan Zhang, Y.K. Li, Y. Wu, and Daya Guo.
+DeepSeekMath: Pushing the limits of mathematical reasoning in open language models, 2024.
+Shinn et al. (2023a)
+Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao.
+Reflexion: language agents with verbal reinforcement learning.
+In Advances in Neural Information Processing Systems, 2023a.
+Shinn et al. (2023b)
+Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik R Narasimhan, and Shunyu Yao.
+Reflexion: language agents with verbal reinforcement learning.
+In Advances in Neural Information Processing Systems, 2023b.
+Stiennon et al. (2020)
+Nisan Stiennon, Long Ouyang, Jeffrey Wu, Daniel Ziegler, Ryan Lowe, Chelsea Voss, Alec Radford, Dario Amodei, and Paul F. Christiano.
+Learning to summarize with human feedback.
+In Advances in Neural Information Processing Systems, 2020.
+Sugiura et al. (2025)
+Issa Sugiura, Takashi Ishida, Taro Makino, Chieko Tazuke, Takanori Nakagawa, Kosuke Nakago, and David Ha.
+Edinet-bench: Evaluating LLMs on complex financial tasks using Japanese financial statements, 2025.
+Sugiyama et al. (2022)
+Masashi Sugiyama, Han Bao, Takashi Ishida, Nan Lu, and Tomoya Sakai.
+Machine learning from weak supervision: An empirical risk minimization approach.
+MIT Press, 2022.
+Sun et al. (2024)
+Zhiqing Sun, Longhui Yu, Yikang Shen, Weiyang Liu, Yiming Yang, Sean Welleck, and Chuang Gan.
+Easy-to-hard generalization: Scalable alignment beyond human supervision.
+Advances in Neural Information Processing Systems, 2024.
+Wager & Athey (2018)
+Stefan Wager and Susan Athey.
+Estimation and inference of heterogeneous treatment effects using random forests.
+Journal of the American Statistical Association, 113(523):1228–1242, 2018.
+Wang et al. (2025)
+Hsiu-Hsuan Wang, Mai Tan Ha, Nai-Xuan Ye, Wei-I Lin, and Hsuan-Tien Lin.
+CLImage: Human-annotated datasets for complementary-label learning.
+Transactions on Machine Learning Research, 2025.
+Wang et al. (2024a)
+Wei Wang, Takashi Ishida, Yu-Jie Zhang, Gang Niu, and Masashi Sugiyama.
+Learning with complementary labels revisited: The selected-completely-at-random setting is more practical.
+In Proceedings of the 41st International Conference on Machine Learning, 2024a.
+Wang et al. (2023)
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V Le, Ed H. Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou.
+Self-consistency improves chain of thought reasoning in language models.
+In Proceedings of the Eleventh International Conference on Learning Representations, 2023.
+Wang et al. (2024b)
+Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, Tianle Li, Max Ku, Kai Wang, Alex Zhuang, Rongqi Fan, Xiang Yue, and Wenhu Chen.
+MMLU-Pro: A more robust and challenging multi-task language understanding benchmark.
+In Advances in Neural Information Processing Systems, 2024b.
+Wang et al. (2024c)
+Zhenhailong Wang, Shaoguang Mao, Wenshan Wu, Tao Ge, Furu Wei, and Heng Ji.
+Unleashing the emergent cognitive synergy in large language models: A task-solving agent through multi-persona self-collaboration.
+In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, 2024c.
+Wei et al. (2022)
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, brian ichter, Fei Xia, Ed Chi, Quoc V Le, and Denny Zhou.
+Chain-of-thought prompting elicits reasoning in large language models.
+In Advances in Neural Information Processing Systems, 2022.
+Wu et al. (2021)
+Jeff Wu, Long Ouyang, Daniel M Ziegler, Nisan Stiennon, Ryan Lowe, Jan Leike, and Paul Christiano.
+Recursively summarizing books with human feedback.
+arXiv preprint arXiv:2109.10862, 2021.
+Wu et al. (2024)
+Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun Zhang, Shaokun Zhang, Jiale Liu, Ahmed Hassan Awadallah, Ryen W White, Doug Burger, and Chi Wang.
+Autogen: Enabling next-gen LLM applications via multi-agent conversations.
+In Proceedings of the First Conference on Language Modeling, 2024.
+Wuchty et al. (2007)
+Stefan Wuchty, Benjamin F Jones, and Brian Uzzi.
+The increasing dominance of teams in production of knowledge.
+Science, 316(5827):1036–1039, 2007.
+Xu et al. (2025)
+Benfeng Xu, An Yang, Junyang Lin, Quan Wang, Chang Zhou, Yongdong Zhang, and Zhendong Mao.
+Expertprompting: Instructing large language models to be distinguished experts.
+arXiv preprint arXiv:2305.14688, 2025.
+Yu et al. (2025)
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin, Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan Tong, Chi Zhang, Mofan Zhang, Wang Zhang, Hang Zhu, Jinhua Zhu, Jiaze Chen, Jiangjie Chen, Chengyi Wang, Hongli Yu, Yuxuan Song, Xiangpeng Wei, Hao Zhou, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Lin Yan, Mu Qiao, Yonghui Wu, and Mingxuan Wang.
+DAPO: An open-source llm reinforcement learning system at scale, 2025.
+Yu et al. (2018)
+Xiyu Yu, Tongliang Liu, Mingming Gong, and Dacheng Tao.
+Learning with biased complementary labels.
+In Proceedings of the European conference on computer vision, 2018.
+Zhang et al. (2025a)
+Guibin Zhang, Luyang Niu, Junfeng Fang, Kun Wang, LEI BAI, and Xiang Wang.
+Multi-agent architecture search via agentic supernet.
+In Proceedings of the 42nd International Conference on Machine Learning, 2025a.
+Zhang et al. (2025b)
+Jenny Zhang, Shengran Hu, Cong Lu, Robert Lange, and Jeff Clune.
+Darwin Gödel machine: Open-ended evolution of self-improving agents.
+arXiv preprint arXiv:2505.22954, 2025b.
+Zhang et al. (2025c)
+Jiayi Zhang, Jinyu Xiang, Zhaoyang Yu, Fengwei Teng, Xiong-Hui Chen, Jiaqi Chen, Mingchen Zhuge, Xin Cheng, Sirui Hong, Jinlin Wang, Bingnan Zheng, Bang Liu, Yuyu Luo, and Chenglin Wu.
+AFlow: Automating agentic workflow generation.
+In Proceedings of the Thirteenth International Conference on Learning Representations, 2025c.
+Zhang et al. (2024)
+Ziyin Zhang, Lizhen Xu, Zhaokun Jiang, Hongkun Hao, and Rui Wang.
+Multiple-choice questions are efficient and robust LLM evaluators.
+arXiv preprint arXiv:2405.11966, 2024.
+Zheng et al. (2024)
+Huaixiu Steven Zheng, Swaroop Mishra, Xinyun Chen, Heng-Tze Cheng, Ed H. Chi, Quoc V Le, and Denny Zhou.
+Take a step back: Evoking reasoning via abstraction in large language models.
+In Proceedings of the Twelfth International Conference on Learning Representations, 2024.
+Ziegler et al. (2019)
+Daniel M. Ziegler, Nisan Stiennon, Jeffrey Wu, Tom B. Brown, Alec Radford, Dario Amodei, Paul Christiano, and Geoffrey Irving.
+Fine-tuning language models from human preferences.
+arXiv preprint arXiv:1909.08593, 2019.
+Appendix A Connection between the complementary-label estimator and complementary loss
+Notation.
+Let (x,y)∼𝒟(x,y)\sim\mathcal{D} with y∈[K]={1,…,K}y\in[K]=\{1,\dots,K\}.
+Given a model gg, denote its prediction by y^=g⁡(x)\hat{y}=g(x).
+For any class k∈[K]k\in[K], the loss is ℓ⁡(k,y^)\ell(k,\hat{y}).
+In complementary-label learning Ishida et al. (2019), one observes
+y¯≠y\bar{y}\neq y sampled uniformly from [K]∖{y}[K]\setminus\{y\}.
+The complementary loss is defined (Eq. (10) in Ishida et al. (2019)) as
+ℓ¯​(k,y^)=−(K−1)​ℓ​(k,y^)+∑j=1Kℓ⁡(j,y^).\bar{\ell}(k,\hat{y})\;=\;-(K-1)\,\ell(k,\hat{y})\;+\;\sum_{j=1}^{K}\ell(j,\hat{y}).
+Specialization to 00-11 loss.
+For the 00–11 loss ℓ(k,y^)=𝕀{y^≠k}\ell(k,\hat{y})=\mathbb{I}\{\hat{y}\neq k\}, we compute
+ℓ¯​(k,y^)\displaystyle\bar{\ell}(k,\hat{y})
+=−(K−1)𝕀{y^≠k}+∑j=1K𝕀{y^≠j}\displaystyle=-(K-1)\,\mathbb{I}\{\hat{y}\neq k\}+\sum_{j=1}^{K}\mathbb{I}\{\hat{y}\neq j\}
+=−(K−1)𝕀{y^≠k}+(K−1)\displaystyle=-(K-1)\,\mathbb{I}\{\hat{y}\neq k\}+(K-1)
+=(K−1)𝕀{y^=k}.\displaystyle=(K-1)\,\mathbb{I}\{\hat{y}=k\}.
+(11)
+Risk under complementary labels.
+The standard risk is
+R=𝔼(x,y)​[ℓ⁡(y,y^)]=Pr⁡(y^≠y)=1−A,R=\mathbb{E}_{(x,y)}[\ell(y,\hat{y})]=\Pr(\hat{y}\neq y)=1-A,
+where A=Pr⁡(y^=y)A=\Pr(\hat{y}=y) is the accuracy.
+By the risk-rewrite identity of Ishida et al. (2019) (Eq. (8)), we also have
+R=𝔼(x,y¯)​[ℓ¯​(y¯,y^)]=(K−1)​Pr⁡(y^=y¯).R=\mathbb{E}_{(x,\bar{y})}[\bar{\ell}(\bar{y},\hat{y})]=(K-1)\,\Pr(\hat{y}=\bar{y}).
+Equivalence to our estimator.
+Let W=𝕀{y^≠y¯}W=\mathbb{I}\{\hat{y}\neq\bar{y}\}. Then Pr⁡(y^=y¯)=1−𝔼⁡[W]\Pr(\hat{y}=\bar{y})=1-\mathbb{E}[W], so
+1−A=(K−1)​(1−𝔼⁡[W]).1-A=(K-1)\,(1-\mathbb{E}[W]).
+Rearranging yields
+A=(K−1)​𝔼​[W]−(K−2).A=(K-1)\,\mathbb{E}[W]-(K-2).
+This is exactly the linear correction in Eq. (2).
+Replacing 𝔼⁡[W]\mathbb{E}[W] by its empirical mean
+q^=1nc​∑i=1ncWi\hat{q}=\tfrac{1}{n_{\mathrm{c}}}\sum_{i=1}^{n_{\mathrm{c}}}W_{i}
+gives the unbiased estimator
+A^comp=(K−1)​q^−(K−2)\widehat{A}_{\mathrm{comp}}=(K-1)\hat{q}-(K-2)
+of Theorem 1.
+Appendix B Data Labeling and Estimation Protocol
+In multiple-choice evaluation, the effective “class” is the index position of an option rather than its textual content. To satisfy the uniformity condition in Eq. (1), the labeling process proceeds as follows. For each item, all options are first shuffled uniformly at random. After shuffling, the correct index yy is recorded. A complementary label is then created by sampling a wrong index y¯\bar{y} uniformly from the K−1K-1 remaining positions. The final published datum is (x,shuffled options,y¯)(x,\text{shuffled options},\bar{y}). When the ground truth is known, this procedure can be automated: yy is only used internally for generating y¯\bar{y}, and the released dataset never exposes yy. When labels are collected from human raters, the annotation interface can enforce the same randomization in the backend to guarantee uniformity. Any deviation, such as asking raters to pick the ‘most plausible wrong option,’ would violate the assumption behind Eq. (1).
+Exploring how to deal with alternative data or label collection mechanisms is left for future work.
+The same protocol can be extended to cases where the ground truth is not available in advance. A complementary label is first generated in the same way, and then the annotator is asked to verify whether it happens to be correct. This verification yields a mixture of ordinary and complementary labels, which forms the mixed dataset studied in § 2.2.
+The end-to-end evaluation pipeline, including both ordinary and complementary sets and the associated estimators, is summarized in Algorithm 1. Two estimation strategies are supported: a closed-form maximum-likelihood estimator and an inverse-variance weighted (IVW) estimator.
+Algorithm 1 Collecting complementary labels and estimating accuracy (fixed KK)
+1:
+Input: MCQ items; evaluation model ff; sizes no,ncn_{\mathrm{o}},n_{\mathrm{c}}.
+2:
+for each item do
+3:
+Shuffle options uniformly; record correct index yy.
+4:
+if item ∈\in ordinary set then
+5:
+Evaluate ff to obtain prediction y^\hat{y}; record Z=𝕀{y^=y}Z=\mathbb{I}\{\hat{y}=y\}.
+6:
+else⊳\triangleright complementary set
+7:
+Sample y¯\bar{y} uniformly from {1,…,K}∖{y}\{1,\ldots,K\}\setminus\{y\}; publish (x,options,y¯)(x,\text{options},\bar{y}).
+8:
+Evaluate ff to obtain prediction y^\hat{y}; record W=𝕀{y^≠y¯}W=\mathbb{I}\{\hat{y}\neq\bar{y}\}.
+9:
+end if
+10:
+end for
+11:
+Compute So=∑ZS_{\mathrm{o}}=\sum Z, Sc=∑WS_{\mathrm{c}}=\sum W.
+12:
+Option A (ML): return A^ML\widehat{A}_{\mathrm{ML}} via Eq. (9) and a confidence interval from observed information.
+13:
+Option B (IVW): compute A^ord\widehat{A}_{\mathrm{ord}}, A^comp\widehat{A}_{\mathrm{comp}}, and w^\widehat{w}, then return A^IVW\widehat{A}_{\mathrm{IVW}} with plug-in confidence interval.
+Two assumptions are critical for the validity of these estimators. First, the wrong index in each complementary label must be sampled uniformly; systematic biases, such as consistently preferring hard negatives, lead to biased estimates of A^comp\widehat{A}_{\mathrm{comp}}. Second, the ordinary and complementary sets must be drawn from the same distribution of items. If domain shift or subject imbalance exists, the combined estimator reflects accuracy on a mixture distribution. In such cases, stratified or subject-wise weighting may be preferable.
+Appendix C One-step Newton Update and IVW Equivalence
+Let A∈(0,1)A\in(0,1) denote the (unknown) accuracy for a KK-way multiple-choice task (K≥3K\geq 3).
+We observe two independent samples:
+(i) ordinary labels So∼Bin⁡(no,A)S_{\mathrm{o}}\sim\mathrm{Bin}(n_{\mathrm{o}},A) with empirical accuracy A^ord=So/no\widehat{A}_{\mathrm{ord}}=S_{\mathrm{o}}/n_{\mathrm{o}};
+(ii) complementary labels obtained by uniformly sampling a wrong option per item, so that
+Sc∼Bin⁡(nc,q)S_{\mathrm{c}}\sim\mathrm{Bin}(n_{\mathrm{c}},q) with
+q⁡(A)=A+K−2K−1,q^=Sc/nc,A^comp=(K−1)​q^−(K−2).q(A)=\frac{A+K-2}{K-1},\qquad\widehat{q}=S_{\mathrm{c}}/n_{\mathrm{c}},\qquad\widehat{A}_{\mathrm{comp}}=(K-1)\widehat{q}-(K-2).
+We consider a pilot A0A_{0} (e.g. A^ord\widehat{A}_{\mathrm{ord}} or A^comp\widehat{A}_{\mathrm{comp}}) and write q0=q⁡(A0)q_{0}=q(A_{0}).
+The joint log-likelihood is
+ℓ⁡(A)=So​log​A+(no−So)​log⁡(1−A)+Sc​log​q+(nc−Sc)​log⁡(1−q).\ell(A)=S_{\mathrm{o}}\log A+(n_{\mathrm{o}}-S_{\mathrm{o}})\log(1-A)+S_{\mathrm{c}}\log q+(n_{\mathrm{c}}-S_{\mathrm{c}})\log(1-q).
+Differentiating gives the score functions
+Uo​(A)=no​(A^ord−A)A⁡(1−A),Uc​(A)=nc​(A^comp−A)(K−1)2​q​(1−q).U_{\mathrm{o}}(A)=\frac{n_{\mathrm{o}}(\widehat{A}_{\mathrm{ord}}-A)}{A(1-A)},\qquad U_{\mathrm{c}}(A)=\frac{n_{\mathrm{c}}(\widehat{A}_{\mathrm{comp}}-A)}{(K-1)^{2}\,q(1-q)}.
+The observed information terms are
+ℐoobs​(A)=SoA2+no−So(1−A)2,ℐcobs​(A)=1(K−1)2​(Scq2+nc−Sc(1−q)2).\mathcal{I}_{\mathrm{o}}^{\mathrm{obs}}(A)=\frac{S_{\mathrm{o}}}{A^{2}}+\frac{n_{\mathrm{o}}-S_{\mathrm{o}}}{(1-A)^{2}},\qquad\mathcal{I}_{\mathrm{c}}^{\mathrm{obs}}(A)=\frac{1}{(K-1)^{2}}\!\left(\frac{S_{\mathrm{c}}}{q^{2}}+\frac{n_{\mathrm{c}}-S_{\mathrm{c}}}{(1-q)^{2}}\right).
+A one-step Newton update around A0A_{0} is
+A1=A0−U⁡(A0)U′​(A0)=A0+Uo​(A0)+Uc​(A0)ℐoobs​(A0)+ℐcobs​(A0).A_{1}=A_{0}-\frac{U(A_{0})}{U^{\prime}(A_{0})}=A_{0}+\frac{U_{\mathrm{o}}(A_{0})+U_{\mathrm{c}}(A_{0})}{\mathcal{I}_{\mathrm{o}}^{\mathrm{obs}}(A_{0})+\mathcal{I}_{\mathrm{c}}^{\mathrm{obs}}(A_{0})}.
+When we set A0=A^ordA_{0}=\widehat{A}_{\mathrm{ord}}, the ordinary part simplifies exactly:
+since So=no​A0S_{\mathrm{o}}=n_{\mathrm{o}}A_{0}, we have Uo​(A0)=0U_{\mathrm{o}}(A_{0})=0 and ℐoobs​(A0)=no/[A0​(1−A0)]=Io​(A0)\mathcal{I}_{\mathrm{o}}^{\mathrm{obs}}(A_{0})=n_{\mathrm{o}}/[A_{0}(1-A_{0})]=I_{\mathrm{o}}(A_{0}), the Fisher information.
+For the complementary part, we plug in q=q^q=\widehat{q} so that Sc=nc​q^S_{\mathrm{c}}=n_{\mathrm{c}}\widehat{q} holds identically.
+This yields
+ℐcobs​(A0)|q=q^=nc(K−1)2​q^​(1−q^)=Ic​(q^),Uc​(A0)|q=q^=Ic​(q^)​(A^comp−A0).\mathcal{I}_{\mathrm{c}}^{\mathrm{obs}}(A_{0})\big|_{q=\widehat{q}}=\frac{n_{\mathrm{c}}}{(K-1)^{2}\,\widehat{q}(1-\widehat{q})}=I_{\mathrm{c}}(\widehat{q}),\qquad U_{\mathrm{c}}(A_{0})\big|_{q=\widehat{q}}=I_{\mathrm{c}}(\widehat{q})\,(\widehat{A}_{\mathrm{comp}}-A_{0}).
+Substituting back into the Newton update gives
+A1≈A0+Ic​(q^)​(A^comp−A0)Io​(A0)+Ic​(q^).A_{1}\approx A_{0}+\frac{I_{\mathrm{c}}(\widehat{q})(\widehat{A}_{\mathrm{comp}}-A_{0})}{I_{\mathrm{o}}(A_{0})+I_{\mathrm{c}}(\widehat{q})}.
+Rearranging shows that the practical one-step update is a convex combination of the two empirical estimators:
+A^IVW≈Io​(A^ord)​A^ord+Ic​(q^)​A^compIo​(A^ord)+Ic​(q^).\widehat{A}_{\mathrm{IVW}}\;\approx\;\frac{I_{\mathrm{o}}(\widehat{A}_{\mathrm{ord}})\,\widehat{A}_{\mathrm{ord}}+I_{\mathrm{c}}(\widehat{q})\,\widehat{A}_{\mathrm{comp}}}{I_{\mathrm{o}}(\widehat{A}_{\mathrm{ord}})+I_{\mathrm{c}}(\widehat{q})}.
+For the two constituent estimators, the variance–information identities are
+Var⁡(A^ord)=1Io,Var⁡(A^comp)=1Ic,\mathrm{Var}(\widehat{A}_{\mathrm{ord}})=\frac{1}{I_{\mathrm{o}}},\qquad\mathrm{Var}(\widehat{A}_{\mathrm{comp}})=\frac{1}{I_{\mathrm{c}}},
+with the plug-in Fisher information
+Io​(A^ord)=noA^ord​(1−A^ord),Ic​(q^)=nc(K−1)2​q^​(1−q^).I_{\mathrm{o}}(\widehat{A}_{\mathrm{ord}})=\frac{n_{\mathrm{o}}}{\widehat{A}_{\mathrm{ord}}(1-\widehat{A}_{\mathrm{ord}})},\qquad I_{\mathrm{c}}(\widehat{q})=\frac{n_{\mathrm{c}}}{(K-1)^{2}\,\widehat{q}(1-\widehat{q})}.
+Therefore the IVW weight can be written either in information form,
+w⋆=IoIo+Ic,w^{\star}=\frac{I_{\mathrm{o}}}{I_{\mathrm{o}}+I_{\mathrm{c}}},
+or, equivalently, in variance form (using I∙=1/Var⁡(A^∙)I_{\bullet}=1/\mathrm{Var}(\widehat{A}_{\bullet})),
+w⋆=IoIo+Ic=Var⁡(A^comp)Var⁡(A^ord)+Var⁡(A^comp).w^{\star}=\frac{I_{\mathrm{o}}}{I_{\mathrm{o}}+I_{\mathrm{c}}}=\frac{\mathrm{Var}(\widehat{A}_{\mathrm{comp}})}{\mathrm{Var}(\widehat{A}_{\mathrm{ord}})+\mathrm{Var}(\widehat{A}_{\mathrm{comp}})}.
+Plugging these into the convex combination yields exactly results in §2.2:
+A^IVW=w⋆​A^ord+(1−w⋆)​A^comp.\widehat{A}_{\mathrm{IVW}}=\;w^{\star}\,\widehat{A}_{\mathrm{ord}}+(1-w^{\star})\,\widehat{A}_{\mathrm{comp}}.
+In summary, the IVW estimator is a one-step Newton approximation to the joint ML:
+it is first-order equivalent and asymptotically efficient, but may differ in finite samples
+because the weights are fixed by plug-in information rather than optimized jointly.
+While the ML is theoretically optimal, the IVW rule is a simple linear combination that
+often delivers practically comparable performance and is easier to apply in practice.
+Appendix D Proof of Theorem 4
+Proof.
+Recall Zj=𝕀{y^j=yj}Z_{j}=\mathbb{I}\{\hat{y}_{j}=y_{j}\}, j=1,…,noj=1,\dots,n_{\mathrm{o}}, are i.i.d. Bernoulli(AA) with 𝔼⁡[Zj]=A\mathbb{E}[Z_{j}]=A; and
+Wi=𝕀{y^i≠y¯i}W_{i}=\mathbb{I}\{\hat{y}_{i}\neq\bar{y}_{i}\}, i=1,…,nci=1,\dots,n_{\mathrm{c}}, are i.i.d. Bernoulli(qq) with q=(A+K−2)/(K−1)q=(A+K-2)/(K-1) under Eq. (1). The two groups are independent.
+Define the rescaled variables
+Xj(o):=wno​Zj,Xi(c):=(1−w)​(K−1)nc​Wi,X^{(o)}_{j}:=\tfrac{w}{n_{\mathrm{o}}}Z_{j},\qquad X^{(c)}_{i}:=\tfrac{(1-w)(K-1)}{n_{\mathrm{c}}}W_{i},
+and collect them as X1,…,XnX_{1},\ldots,X_{n} with n=no+ncn=n_{\mathrm{o}}+n_{\mathrm{c}}.
+Then the centered sum
+S:=∑j=1no(Xj(o)−𝔼​Xj(o))+∑i=1nc(Xi(c)−𝔼​Xi(c))=A^mix−A.S:=\sum_{j=1}^{n_{\mathrm{o}}}\!\bigl(X^{(o)}_{j}-\mathbb{E}X^{(o)}_{j}\bigr)\;+\;\sum_{i=1}^{n_{\mathrm{c}}}\!\bigl(X^{(c)}_{i}-\mathbb{E}X^{(c)}_{i}\bigr)\;=\;\widehat{A}_{\mathrm{mix}}-A.
+(12)
+We verify the conditions of Theorem 2.10 in Boucheron et al. (2003):
+(i) Independence) holds by construction.
+(ii) Boundedness). For all j,ij,i,
+|Xj(o)−𝔼​Xj(o)|≤wno,|Xi(c)−𝔼​Xi(c)|≤(1−w)​(K−1)nc.\bigl|X^{(o)}_{j}-\mathbb{E}X^{(o)}_{j}\bigr|\leq\tfrac{w}{n_{\mathrm{o}}},\qquad\bigl|X^{(c)}_{i}-\mathbb{E}X^{(c)}_{i}\bigr|\leq\tfrac{(1-w)(K-1)}{n_{\mathrm{c}}}.
+Set
+c:=max⁡{wno,(1−w)​(K−1)nc}.c:=\max~\!\Bigl\{\tfrac{w}{n_{\mathrm{o}}},\ \tfrac{(1-w)(K-1)}{n_{\mathrm{c}}}\Bigr\}.
+(13)
+(iii) Second moment). Summing variances,
+v:=∑j=1noVar⁡(Xj(o))+∑i=1ncVar⁡(Xi(c))=w2​A⁡(1−A)no+(1−w)2​(K−1)2​q​(1−q)nc.v:=\sum_{j=1}^{n_{\mathrm{o}}}\!\mathrm{Var}(X^{(o)}_{j})+\sum_{i=1}^{n_{\mathrm{c}}}\!\mathrm{Var}(X^{(c)}_{i})=w^{2}\tfrac{A(1-A)}{n_{\mathrm{o}}}+(1-w)^{2}\tfrac{(K-1)^{2}\,q(1-q)}{n_{\mathrm{c}}}.
+(14)
+(iv) Higher moments). Since |Xi−𝔼​Xi|≤c\lvert X_{i}-\mathbb{E}X_{i}\rvert\leq c, for all integers q≥3q\geq 3,
+(Xi−𝔼​Xi)+q≤cq−2​(Xi−𝔼​Xi)2(X_{i}-\mathbb{E}X_{i})_{+}^{q}\leq c^{\,q-2}(X_{i}-\mathbb{E}X_{i})^{2}; summing and taking expectations yields
+∑i𝔼⁡[(Xi)+q]≤v​cq−2\sum_{i}\mathbb{E}[(X_{i})_{+}^{q}]\leq v\,c^{\,q-2}, which is dominated by the requirement
+q!2​v​cq−2\tfrac{q!}{2}\,v\,c^{\,q-2} in (Boucheron et al., 2003, Thm. 2.10).
+Therefore, Theorem 2.10 applies to SS in Eq. (12) and (using the symmetric lower tail plus a union bound) gives
+Pr{|S|≥2​v​t+ct}≤2e−t\Pr\{\,|S|\geq\sqrt{2vt}+ct\,\}\leq 2e^{-t}. Setting t=log⁡(2/δ)t=\log(2/\delta) yields Eq. (10).
+∎
+Appendix E Practical plug-in forms of the Bernstein bound
+The quantities AA and qq are unknown; replace them by their empirical counterparts. Define
+v^o=A^ord​(1−A^ord)no,v^c=(K−1)2​q^​(1−q^)nc,v^mix=w2​v^o+(1−w)2​v^c,\hat{v}_{\mathrm{o}}=\tfrac{\hat{A}_{\mathrm{ord}}(1-\hat{A}_{\mathrm{ord}})}{n_{\mathrm{o}}},\qquad\hat{v}_{\mathrm{c}}=\tfrac{(K-1)^{2}\,\hat{q}(1-\hat{q})}{n_{\mathrm{c}}},\qquad\hat{v}_{\mathrm{mix}}=w^{2}\hat{v}_{\mathrm{o}}+(1-w)^{2}\hat{v}_{\mathrm{c}},
+with q^=Sc/nc\hat{q}=S_{\mathrm{c}}/n_{\mathrm{c}}. Substituting into Eq. (10) yields the computable bound
+|A^mix−A|≤ 2​v^mix​log⁡2δ+c​log⁡2δ,\bigl|\hat{A}_{\mathrm{mix}}-A\bigr|\;\leq\;\sqrt{\,2\,\hat{v}_{\mathrm{mix}}\,\log\tfrac{2}{\delta}\,}\;+\;c\,\log\tfrac{2}{\delta},
+where cc is as in Eq. (13). For clarity, an equivalent compact statement is
+|A^mix−A|≤ 2​log⁡2δ​[w2​v^o+(1−w)2​v^c]+log⁡2δ​max⁡(wno,(1−w)​(K−1)nc).\;|\hat{A}_{\mathrm{mix}}-A|\;\leq\;\sqrt{\,2\log\tfrac{2}{\delta}\;\bigl[w^{2}\hat{v}_{\mathrm{o}}+(1-w)^{2}\hat{v}_{\mathrm{c}}\bigr]\,}\;+\;\log\tfrac{2}{\delta}\;\max~\!\Bigl(\tfrac{w}{n_{\mathrm{o}}},\ \tfrac{(1-w)(K-1)}{n_{\mathrm{c}}}\Bigr).
+(15)
+The variance component is minimized at
+w⋆=vcvo+vcw^{\star}=\frac{v_{\mathrm{c}}}{v_{\mathrm{o}}+v_{\mathrm{c}}}, a practical ww is defined as
+w^IVW=v^cv^o+v^c,\hat{w}_{\mathrm{IVW}}=\frac{\hat{v}_{\mathrm{c}}}{\hat{v}_{\mathrm{o}}+\hat{v}_{\mathrm{c}}},
+coinciding with the IVW weight in Eq. (7). At this choice, the dominant (variance) term equals
+2​log⁡2δ⋅vo​vcvo+vc.\sqrt{\,2\log\tfrac{2}{\delta}\cdot\frac{v_{\mathrm{o}}v_{\mathrm{c}}}{v_{\mathrm{o}}+v_{\mathrm{c}}}\,}.
+Defining h^min:=v^o​v^cv^o+v^c\widehat{h}_{\mathrm{min}}:=\tfrac{\hat{v}_{\mathrm{o}}\,\hat{v}_{\mathrm{c}}}{\hat{v}_{\mathrm{o}}+\hat{v}_{\mathrm{c}}},
+using the fully plug-in version gives
+|A^mix−A|≤ 2​log⁡2δ​h^min+log⁡2δ​max⁡(w^IVWno,(1−w^IVW)​(K−1)nc),|\hat{A}_{\mathrm{mix}}-A|\;\leq\;\sqrt{\,2\log\tfrac{2}{\delta}\;\widehat{h}_{\mathrm{min}}\,}\;+\;\log\tfrac{2}{\delta}\;\max~\!\Bigl(\tfrac{\hat{w}_{\mathrm{IVW}}}{n_{\mathrm{o}}},\ \tfrac{(1-\hat{w}_{\mathrm{IVW}})(K-1)}{n_{\mathrm{c}}}\Bigr),
+(16)
+Conceptually, the mgf-based Bernstein bound (Eq. (10))
+tightens Hoeffding’s inequality by adding both a variance term vv and a range-driven linear term cc.
+As non_{\mathrm{o}} or ncn_{\mathrm{c}} grows, the right-hand side vanishes: the variance part decays as O⁡(1/no)+O⁡(1/nc)O(1/n_{\mathrm{o}})+O(1/n_{\mathrm{c}}),
+while the linear term scales as O⁡(max⁡{w/no,(1−w)​(K−1)/nc})O\!\big(\max~\{w/n_{\mathrm{o}},\,(1-w)(K-1)/n_{\mathrm{c}}\}\big).
+The plug-in IVW weight w^IVW=v^cv^o+v^c\widehat{w}_{\mathrm{IVW}}=\tfrac{\hat{v}_{\mathrm{c}}}{\hat{v}_{\mathrm{o}}+\hat{v}_{\mathrm{c}}}
+converges to w⋆=vcvo+vcw^{\star}=\tfrac{v_{\mathrm{c}}}{v_{\mathrm{o}}+v_{\mathrm{c}}}; in particular, w⋆→0w^{\star}\!\to 0 when nc→∞n_{\mathrm{c}}\!\to\!\infty
+with non_{\mathrm{o}} fixed (the complementary arm dominates), and w⋆→1w^{\star}\!\to 1 when no→∞n_{\mathrm{o}}\!\to\!\infty
+with ncn_{\mathrm{c}} fixed (the ordinary arm dominates).
+Appendix F Estimator Configurations
+For completeness, we summarize the exact configurations of all estimators used in
+Table 1.
+Ord
+Ordinary-label estimator based on no=300n_{\mathrm{o}}=300 samples per dataset
+(no=120n_{\mathrm{o}}=120 for GPQA due to dataset size). Accuracy is computed directly from the proportion of correct ordinary labels.
+Comp-non_{\mathrm{o}}
+Complementary-label estimator with the same number of samples as the ordinary case, i.e. nc=non_{\mathrm{c}}=n_{\mathrm{o}} (nc=120n_{\mathrm{c}}=120 for GPQA). This setting highlights the loss of efficiency when only complementary labels are available.
+Comp-(K-1)
+Complementary-label estimator with sample size fixed at (K−1)(K-1) times the ordinary case, i.e. nc=(K−1)​non_{\mathrm{c}}=(K-1)n_{\mathrm{o}}.
+Following the protocol in Appendix B, each instance with oracle label yy is converted into (K−1)(K-1) complementary “No” labels {y¯∈𝒴∖{y}}\{\bar{y}\in\mathcal{Y}\setminus\{y\}\}, and the ordinary label is discarded; thus no ordinary labels are present in this setting.
+Comp-Var
+Complementary-label estimator with sample size ncn_{\mathrm{c}} chosen such that its variance matches that of non_{\mathrm{o}} ordinary labels, following Eq. (4). This represents the idealized regime where complementary labels are sufficiently abundant to offset their lower per-sample information.
+IVW-0.5
+A baseline inverse-variance weighted estimator with a fixed equal weight w=0.5w=0.5 between ordinary and complementary accuracies. This serves as a naïve combination strategy without using variance information.
+IVW
+Inverse-variance weighted estimator with closed-form plug-in weights (Eq. (6)), combining ordinary and complementary estimates optimally under the variance–information identities.
+ML
+Maximum-likelihood estimator obtained by solving the joint likelihood equation using both ordinary and complementary samples. Asymptotically equivalent to IVW but involving a nonlinear update (Appendix C).
+Ord-Eval
+Oracle reference: accuracy evaluated directly on the entire dataset using ordinary labels. This is shown only for comparison and is excluded from macro-averages.
+Notes on datasets.
+†\dagger Math denotes Math-MC evaluated with GPT-4.1-nano instead of GPT-5-nano, due to reasoning-output constraints.
+‡\ddagger Math (CoT) denotes the same Math-MC dataset evaluated under chain-of-thought prompting (applied only to Math; model=GPT-4.1-nano).
+Appendix G Implementation details on ADAS and AFlow
+To ensure a fair comparison, we constructed validation and test splits for each benchmark,
+following the numbers and ratios used in Hu et al. (2025).
+Specifically, we sampled 120 validation and 800 test examples for Math-MC and Medical Abstract,
+and 88 validation and 458 test examples for GPQA.
+For AFlow, we set the number of validation runs to 3 and used the same validation set as ADAS, rather than the separate validation subset reported in Zhang et al. (2025c).
+For code and prompts, we largely follow the official implementations of Hu et al. (2025) and Zhang et al. (2025c), with two minor modifications for reproducibility in our setting.
+ADAS.
+The set of experts was adapted to better align with our benchmarks (e.g., replacing domain-specific experts in LLM Debate with ones relevant to GPQA and Medical Abstract).
+All other prompt components remain unchanged.
+We uploaded the full text of the adapted prompts and scripts in the supplementary material.
+AFlow.
+Since the original AFlow does not directly correspond to the multiple-choice format,
+we modified the answer extraction and normalization functions, and used the following prompt:
+⬇
+Answer the following multiple choice question.
+{problem[’Question’]}
+(A) {problem[’A’]}
+(B) {problem[’B’]}
+(C) {problem[’C’]}
+(D) {problem[’D’]}
+At the very end, output the final answer in the format:
+### X
+Where X is exactly one of A, B, C, or D.
+Do not add anything after this line. The last line of your output must
+only contain ’### X’. If you write anything after the line ’### X’, your
+answer will be marked as incorrect.
+Appendix H Estimator Variance Analysis
+Figure 4: Estimator sensitivity under weak signals.
+Detailed comparison of raw complementary accuracy (qq) and its linear transform (trans) across GPQA, Math-MC, and Medical Abstract.
+The figure illustrates how the two estimators behave differently depending on task difficulty, with variance amplification explaining when the transform helps or hurts.
+Figure 4 reports ADAS and AFlow under the two estimators—raw complementary accuracy (qq) and its linear transform (trans)—each selected at the iteration that maximizes validation accuracy.
+The results show clear regime dependence: on GPQA (the hardest benchmark), qq is more reliable (e.g., ADAS drops from 47.2 with qq to 42.4 with trans, while AFlow remains unchanged at 47.2).
+On Math-MC, ADAS still prefers qq (88.1 vs. 84.2), whereas AFlow shows only a slight gain with trans (86.8 vs. 86.5).
+On Medical Abstract, where complementary accuracy is relatively high, the transform becomes beneficial: ADAS improves from 61.6 to 67.8, and AFlow from 68.5 to 68.9.
+This behavior is explained by variance amplification: according to Eq. (3), the variance of the transformed estimator scales by (K−1)2(K\!-\!1)^{2} compared to qq.
+When signals are weak (e.g., GPQA), variance amplification exacerbates noise and harms performance.
+In settings with stronger signals (Math-MC, Medical Abstract), the effect is less detrimental, and the transformed estimator occasionally yields modest gains.
+A systematic study of this trade-off is left for future work.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

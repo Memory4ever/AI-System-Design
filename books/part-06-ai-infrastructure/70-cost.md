@@ -118,6 +118,11 @@ cost_per_good_request
 
 只看 output token 会忽略 Prefill；只看 request 会忽略长度。应同时保留 prompt/output lengths、cache hit、model/quantization、hardware、concurrency 与 SLO。
 
+输出表示也会改变生成过程本身：把自由代码换成由固定runtime解释的短声明，省掉的是可见artifact，不保证省掉生成它之前的reasoning。应在相同任务与可观察语义条件下，分别核answer/reasoning/总token、首可见回答与完整生成时间，以及invalid后的全部validation/repair；可运行也不等内容正确。[受限动画格式对照](https://arxiv.org/html/2610.32129v1)中，部分模型为短声明多作推理，另一模型没有复现这种shift但推理原已占主导；关闭thinking虽快，质量却退步，不能把更短的invalid产物当等质量省费。陌生DSL、范例和表达能力仍是共同变化，未隔离唯一原因，也未验证训练熟悉后、streaming或缓存路径。文档/固定runtime维护、prompt处理、推理、回答、渲染和失败重试都进入成本；格式、质量或净收益不合时，保留熟悉的自由代码、已验runtime接口和原生成配置，不由短artifact、schema或一次valid签发更低成本与可靠性。
+<!-- source-family:SF-2026-ARXIV-2610-32129 -->
+
+[固定配置的局部decode能耗模型](https://arxiv.org/html/2610.28576v1#S3)还需把共享权重与私有历史分开计量：在dense、full-history前提下，令`T`为副本实际输出数、`S`为迭代数，则有效batch为`T/S`，而不是初始并发数；每输出的逻辑weight需求为`M_w/(T/S)`，KV需求为`K_KV×(按输出token加权的平均历史长度+1)`，其中`M_w`为权重逻辑bytes、`K_KV`为每历史token的KV逻辑bytes。两者与实际decode秒数/`T`可共同拟合GPU-board的局部能量响应，但logical bytes不是HBM实测量，拟合时间系数也不是独立测得的idle power。请求逐步离开时，应更新实际batch与token权重历史；跨model、precision、graph policy或topology要重验系数，MoE也不能把activated参数直接除以全batch。该模型不包含prefill、host或设施，采用已观察时间的局部预测不能冒充未执行配置的能耗、全服务节能或SLO保证；校准失效时仍回到同步实测与较粗资源分账。<!-- source-family:SF-2026-ARXIV-2610-28576 -->
+
 把文字提示渲染进图像，会同时改变计费单位与输入表示，不能用省去的text tokens单独认证省费。应比较被删除的文字费用、增加的image tokens/面积或tile费用、真实output差额与渲染开销，再按相同quality/SLO人口计算有效成本；只有固定output与匹配价模型下，输入两项才可直接相减。[受限视觉提示实验](https://arxiv.org/html/2604.02492v1#S3)在部分schema任务获益，却在另一些模型增加费用，字符敏感代码、空间与非英语切片也退步；选择后的最佳font/color配置不成为通用recipe。价模型、rendering与图像预处理、decoder、失败/重试均须随cost point记录；低账单不等较低物理计算或内容无损。可读性、总费用或任务质量回归时，保留原text+image接口与完整计费，而不是由少输入tokens批准迁移。<!-- source-family:SF-2026-ARXIV-2604-02492 -->
 
 长度成本实验还必须记录输出上限：设潜在完成长度为 L、cap 为 C，实际统计通常只见到 min(L,C)。大量回答触及 cap，说明该配置下的资源压力，却不能识别 cap 以外的完整尾分布或未截断分位数；这是对测量条件的工程解释，不是由固定 5k-token 实验取得的无限尾部结论。Native token accounting、开放模型采样温度与闭源默认配置也要分别保留，不能把不同 decoder 的计数直接合成统一长度策略。<!-- source-family:SF-2026-ARXIV-2601-08490 -->
@@ -152,6 +157,10 @@ Per-token/per-request 适合单轮、边界明确的调用；Agent 为同一目�
 [Wattchmen 的有限 GPU 对照](https://arxiv.org/html/2603.26435v1)支持这个归因接口，但全 SM/全 lane 的稳态校准不保证低占用或短 kernel，同一平均误差也不能批准每条指令准确。ISA/compiler、设备、cooling、activity与profile版本应绑定；NVML采样精度、未知指令和低利用率可改变误差，单GPU模型还不含host或跨GPU通信。反复微基准、冷却、SASS/cache profiling及重校准都付费；条件漂移、测量粒度不足或归因不可靠时，保留直接device/整机测量与较粗费用分账，不让instruction table替代完整服务/成功goal能耗。<!-- source-family:SF-2026-ARXIV-2603-26435 -->
 
 测量边界明确后，缩短输出也不能直接等同于节能。按代码边界暂停、编译并运行测试的早停器，会新增validation时间、CPU工作和等待期间的GPU驻留能耗；只有被省去的decode成本超过这些开销，且任务质量仍满足合同，才达到break-even。校验频率因此是决策量，失败、超时和没有可截断尾部的请求也必须计入。短而正确的基线继续生成可能比频繁检查更便宜。[代码早停实验](https://arxiv.org/html/2604.06755v1)确有少量token减少而GPU总能量增加的配置；其A10、10Hz NVML仅测device，CPU验证能耗未实测，不能把该局部反证换成全服务节能保证。<!-- source-family:SF-2026-ARXIV-2604-06755 -->
+
+生成结果还可以把一部分持久存储费移到未来读取时支付：若系统保留了生成后的model-native latent，就不必对每份冷结果长期保留完整像素，也无需每次从噪声重新去噪，只在读取时消费原decoder恢复图像。这里把latent设为持久对象、把像素设为可重建缓存，前提是latent、decoder权重/配置与解码环境的对应关系仍可取得；这份长期资产绑定是工程要求，不是仅保存tensor便已验证可恢复。Lossless压缩latent不等于跨GPU/compiler的像素逐bit不变，归档或下游要求原像素身份时，仍须保留原图或已验的精确解码路径。
+
+读取成本又决定缓存不宜只选一种表示：热门图以像素命中可跳过GPU，较冷对象以更小latent扩大覆盖，却把decode/排队放回读路径；在线可用两层hit/miss与实测fetch/decode费用提出容量分配，不能由压缩率直接决定最优比例。[LatentBox的受限对照](https://arxiv.org/html/2605.19385v1)支持这种生成后存储—读取分支；hash固定cacheowner、过载时只转移decode并回填owner，可在局部负载下兼顾复用与排队，但不是故障恢复或全局最优证明。模拟的自适应收益、固定模型的trace重放与长期价格投影须分账，latent读取也可能慢于像素命中；保存decoder族、压缩/解压、网络、GPU与像素编码、cache统计和迁移均计费。解码支持失效、原像素要求不符或读放大不合SLO时，保留像素对象、固定分层或传统冷热存储，不由更小对象批准长期TCO与尾延迟保证。<!-- source-family:SF-2026-ARXIV-2605-19385 -->
 
 ### Agent 的持久化 Footprint 也是成本
 
@@ -414,6 +423,10 @@ marginal per-request serving cost 仍是合法的共存基线。现有证据限�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2610-32129` — `live1027_china`，Daily2026-10-27补Oct26；[exact-v1](https://arxiv.org/html/2610.32129v1)§3/4/5.1–5.4/6/7必要，R81前评分2+1+2=5。仅format对完整generation/repair成本与有效质量的条件反证；保内部冻结/20task配对、runtime swallowing纠正、Qwen shift未复现与无thinking低质量、同family参考/DSL熟悉度混杂，不采所有格式无效/净费SLO或视觉教学效用。未核全附件/外部实现或执行复现；必要/actualowner/原三件PRE/SAVE/selfread/solePOST仅本日实际后到，不预签。
+
+- `SF-2026-ARXIV-2610-28576` — Daily2026-10-22，[exact-v1](https://arxiv.org/html/2610.28576v1)§3–6/Eq3–9/Table2/5/6/8，2+2+2=6，weight/KV/time局部能耗坐标差额深入。保dense/BF16/full-history固定stratum、board-only/observed-time、本地校准与MoE/多节点不适用，其他简化拟合也达部分阈值，不采普遍误差界或全服务节能。作者B3与reader R20 Source/owner/PRE通过，实际写后另见当日REVIEW；未核实现或复现。
+
 - `SF-2026-ARXIV-2605-10556` — Daily2026-05-13补May12；exact-v1 III-A/IV/V-A/V-B1–3/V-C1/2/4/5/VI必要Source，2+2+2=6。只phase/TPPP结构代理+refit+heldoutregret，不采真实phasecausal、未核power/硬件归因、固定power对照普优或在线控制；保image/video反退、交互/计量/质量SLO与全费。未核代码/复现；逐字PRE/窄写许可已通过，正文/marker/本人注真实保存并作者完整局部顺读；root R13非作者实际POST通过，窄位释放。 本次仅同步已成事实，不重写机制或认证实现/复现、全覆盖或整日Gate。
 
 - `SF-2026-ARXIV-2605-01158` — Daily2026-05-06补May05；[exact-v1](https://arxiv.org/html/2605.01158v1)，2+2+3=7。必要方法/条件、直接对照与反侧见本日SUP A6；只采A7指定受限命题，不授普遍能力/稳定/性能保证，全部测量与准备费用保留。root实际必要Source/具体owner及逐字PRE通过，授本单段及本人注窄位；作者已保存并实际self-read；root非writer实际完整正文/两侧/本人注POST通过，指定窄lease释放；仅同步既成事实，不授DAY；未核代码、全部附件或复现。
@@ -479,3 +492,5 @@ Primary-source 与实践入口：
 - `SF-2026-ARXIV-2604-02492` — 04-07补04-06自然日；IPPg exact-v1 S3/Eq1–5、T2–4/5.2–5.3。2+1+2=5，只表示改变后的text/image/output/render完整计费与质量人口；保费用/字符/空间/非英语反退和后验best局限，不采通用省费、当前产品价或架构因果。root必要Source、实际唯一Ch70 owner/逐字PRE通过并授一body＋本人note窄锁；root实际新body、完整邻接/marker及本人note非writer POST通过；作者同步本注并实际读回后释放窄锁。未核artifact/复现，不授DAY。
 
 - `SF-2026-ARXIV-2604-06056` — Daily2026-04-09补Apr08自然日；[AMD计量 exact-v1](https://arxiv.org/html/2604.06056v1)II-A/III-A1–2/Eq1、IV-A/V-A1–3/VI，1+2+2=5。只采sensor/driver/poll cadence、无短稳态窗口时粗总量和区间平均功率；保APU共享rail、配置/人口歧义与全费用，不授瞬时恢复、可迁固定offset、LLM节能或完整SLO。root实际必要Source/日期/owner与逐字PRE通过授一段及本人注窄锁；作者已实际写入并顺读完整局部邻接及本人注，root非writer actual完整邻接与本人注POST通过；作者同步注后最终实际读回，窄锁释放。未核代码/复现，不授DAY。
+
+- `SF-2026-ARXIV-2605-19385` — Daily2026-05-21补May20；[exact-v1](https://arxiv.org/html/2605.19385v1)§3–6/8必要，2+2+2=6。仅latent持久对象/读时decode与双格式cache成本接口；保model/decoder依赖是工程责任、跨栈像素非bitexact、固定模型trace重放/P50反退/局部tuning非全局保证及所有存储读取费用，2050只是投影。root R29必要Source/日期/Ch70完整owner及A23逐字PRE通过并授此两段/本人注，作者已实际保存并完整自读，root R30实际完整两新增/两侧/本人注非writerPOST通过并释放；仅同步既成事实，未核artifact/复现，不授DAY。

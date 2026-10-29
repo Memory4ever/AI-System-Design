@@ -1,0 +1,1140 @@
+https://arxiv.org/html/2605.28142v1
+
+arXiv:2605.28142v1 [cs.LG] 27 May 2026 
+ 
+ 
+ Self-Consistency via Marginal Sharpening 
+
+ 
+ 
+ 
+ Aleksei Arzhantsev
+ † † thanks:  Equal contribution. 
+ Affiliation:  Criteo AI Lab, CREST IP Paris
+ 
+ Email:  a.arzhantsev@criteo.com 
+ 
+    
+ Otmane Sakhi 1 1 footnotemark:  
+           1 
+          
+          
+          
+          
+          
+          
+          
+         
+ 
+ Affiliation:  Criteo AI Lab
+ 
+ Email:  o.sakhi@criteo.com 
+ 
+    
+ Nicolas Chopin
+ 
+ Affiliation:  ENSAE, Institut Polytechnique de Paris
+ 
+ Email:  nicolas.chopin@cnrs.math.fr 
+ 
+
+ Abstract 
+    
+ Inference-time sampling can elicit strong reasoning abilities from language models without additional training. Existing power-sampling methods do so by sharpening the distribution over full generated outputs, favoring completions that are individually likely under the model. We argue that this is the wrong object to target for reasoning: a completion entangles a reasoning trace with a final answer, whereas what matters is whether an answer is supported by many plausible reasoning paths. We therefore shift the target from the full-output distribution to the sharpened answer marginal, making self-consistency an inference-time objective rather than a post-hoc voting criterion. Surprisingly, this marginal target admits an efficient approximation: we propose a simple, purely autoregressive parallel sampling algorithm that approximately samples from the sharpened answer marginal, eliciting stronger performance than standard power sampling on mathematics and coding benchmarks while being orders of magnitude faster. 
+
+ 
+  
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Modern language models increasingly solve difficult tasks by allocating
+generation to intermediate computation before producing a final response.
+This behavior can be elicited at inference time with
+chain-of-thought prompting  [ 1 ,  2 ] ,
+improved through rationale bootstrapping and process supervision
+ [ 3 ,  4 ] , and further shaped by
+reinforcement learning on verifiable domains such as mathematics and code
+ [ 5 ,  6 ] . As a result, many current
+models do not simply map a prompt directly to a short answer. They generate a
+latent trajectory, be it a derivation, program sketch, proof outline, or search
+process, and only then emit the object that is evaluated. 
+
+ 
+ 
+ 
+ This suggests a latent-variable view of reasoning models. For a given prompt,
+there are many possible reasoning traces the model might follow, and each trace
+induces a distribution over possible answers. A single sampled completion shows
+only one such trace. It does not reveal the total support an answer receives
+from the many alternative traces the model could have generated. From this
+perspective, the relevant uncertainty is not just uncertainty over complete
+outputs, but uncertainty over answers after aggregating across latent reasoning
+paths. 
+
+ 
+ 
+ 
+ A standard way to exploit this structure is to spend more computation at test
+time. Search and sampling methods explore multiple continuations before
+committing to a response, including beam-search variants for chain-of-thought
+reasoning  [ 7 ] , tree search  [ 8 ] , Monte Carlo
+tree search  [ 9 ] , repeated sampling for code generation
+ [ 10 ] , and compute-scaling strategies for inference
+ [ 11 ] . The simplest and most widely used method is
+self-consistency: sample several reasoning traces and return the answer that
+appears most often  [ 12 ] . In the latent-variable view,
+self-consistency works because it uses repeated samples to estimate which
+answers are supported by many plausible reasoning paths. 
+
+ 
+ 
+ 
+ However, majority voting is only a coarse way to use this idea. It works best
+when answers are short, discrete, and easy to canonicalize. In more structured
+domains, the same underlying solution can appear in many different forms. Two
+programs may implement the same algorithm with different control flow, names,
+or helper functions; two proofs may establish the same claim through different
+lemmas; two derivations may reach the same result through different
+intermediate steps. Exact voting over strings can fragment support across these
+different realizations, even when they reflect the same answer-level belief.
+This limitation has motivated heuristics that extend self-consistency beyond exact
+string matching  [ 13 ,  14 ] . 
+
+ 
+ 
+ 
+ Recent power-sampling methods take a different approach. They sharpen the
+distribution over complete generations, favoring outputs that are already
+likely under the model as full sequences  [ 15 ,  16 ,  17 ] . For reasoning models, this means sharpening
+a joint object: the reasoning trace together with the final answer. We argue
+that this is the wrong level of abstraction for reasoning. The trace is a
+latent computation, and many distinct traces may lead to the same answer. Sequence-level sharpening therefore treats alternative derivations,
+implementations, or presentations as competitors, even when they support the
+same answer-level belief. It concentrates probability on likely complete
+transcripts rather than on answers with broad support across latent reasoning
+paths. 
+
+ 
+ 
+ 
+ We propose  marginal sharpening , a soft answer-level analogue of
+self-consistency  [ 12 ] . Rather than sharpening complete trajectories, marginal
+sharpening sharpens the answer distribution obtained by aggregating over latent
+reasoning traces. In simple discrete settings, this has the same intuition as
+majority voting: answers reached by many plausible chains of thought should be
+amplified. The difference is that marginal sharpening is an inference target,
+not a post-hoc string-counting procedure. It does not require exact agreement
+between sampled outputs, a small answer space, or an external canonicalizer.
+This makes it suitable for code, proofs, and other structured generations,
+where support for the same underlying solution may be spread across many
+surface forms. 
+
+ 
+ 
+ 
+ We study the resulting sharpened answer distribution and show that it admits a
+useful decomposition, leading to a practical approximation with standard
+autoregressive models. Our algorithm first samples multiple latent reasoning
+traces, then decodes a single answer whose tokens are supported across those
+traces. In this way, additional test-time compute is used to approximate the
+sharpened answer marginal, rather than to search over complete trajectories or
+vote over completed strings. We evaluate the approach on mathematical reasoning
+and code-generation benchmarks, showing that marginal sharpening improves
+final-answer performance from the same base models. 
+
+ 
+ 
+ 
+ Contributions. 
+
+ 
+
+ 
+ 
+ •  
+ 
+ We formulate  marginal sharpening , an answer-level inference-time
+objective for reasoning models that treats reasoning traces as latent
+variables and sharpens the induced answer distribution. 
+
+ 
+ 
+ •  
+ 
+ We show that, for integer sharpening strengths, the sharpened answer
+marginal admits a useful multi-trace decomposition, connecting
+self-consistency to sampling from an answer-level target distribution. 
+
+ 
+ 
+ •  
+ 
+ We propose a lightweight parallel autoregressive decoding algorithm
+that approximately samples from this sharpened distribution, and discuss an
+optional sequential importance sampling variant. 
+
+ 
+ 
+ •  
+ 
+ Marginal sharpening substantially improves over
+power sampling on mathematics and coding benchmarks while running up to  38 × 38\times  faster on
+long-reasoning problems. It achieves the best results on code generation
+benchmarks and remains close to majority voting on mathematical reasoning,
+where exact answer aggregation is a particularly strong baseline. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ Outline. 
+
+ 
+
+ 
+ Section  2  presents the framework used throughout the paper. We describe the
+autoregressive model, decompose each completion into a latent reasoning trace
+and a final answer segment, define the induced answer marginal, and contrast
+this object with sequence-level sharpening. Section  3  introduces marginal
+sharpening. We define the answer-level target, derive the integer-strength
+multi-trace representation, and turn this representation into practical
+autoregressive decoding algorithms, including the lightweight parallel decoder
+used in our main experiments. Section  5 
+evaluates the method on mathematical reasoning and code-generation benchmarks,
+including comparisons to temperature sampling, majority voting, and power sampling,
+as well as ablations over runtime, sharpening strength, approximations and fixed compute allocation.
+Section  6  concludes. Appendix  B  reports the
+full results table, and Appendix  C  describes and evaluates the
+optional sequential importance sampling correction. 
+
+ 
+ 
+ 
+ 
+ 
+ 2  Framework 
+
+ 
+
+ 
+ Autoregressive language models. 
+
+ 
+
+ 
+ For a prompt  x ∈ 𝒳 x\in\mathcal{X} , an autoregressive language model defines a
+distribution over complete token sequences  y = ( y 1 , … , y T ) ∈ 𝒴 y=(y_{1},\ldots,y_{T})\in\mathcal{Y} 
+by factorizing the probability of each sequence token by token: 
+
+ 
+ 
+
+ 
+ 
+ π ⁡ ( y ∣ x ) = ∏ t = 1 T π ⁡ ( y t ∣ x , y < t ) . \pi(y\mid x)=\prod_{t=1}^{T}\pi(y_{t}\mid x,y_{<t}). 
+ 
+ (1) 
+ 
+
+ 
+ We include  EOS , the end-of-sequence token in  y y , so the length  T T  is itself part
+of the sampled sequence and may vary across samples. 
+
+ 
+ 
+ 
+ Figure 1 :  For a prompt  x x , the reasoning-model completion decomposes into the reasoning trace  z z , and final answer segment  a a . Everything inside the
+ <think>  and  </think>  tokens is considered a thinking trace, and everything that comes after the  </think>  token is considered as the final answer. 
+ 
+ 
+ 
+ Reasoning traces and answer segments. 
+
+ 
+
+ 
+ Reasoning-model completions naturally separate into two parts. A prefix
+contains intermediate computation, such as scratch work, a derivation, a proof
+outline, or a program sketch, while the suffix contains the final response
+produced from that computation. We write the parsed completion as  y = ( z , a ) y=(z,a) ,
+where  z z  denotes the reasoning trace and  a a  denotes the final answer
+segment. This decomposition is only a parsing convention: the model still
+assigns probability to the full sequence, and  π ⁡ ( z , a ∣ x ) \pi(z,a\mid x)  denotes the
+probability of the sequence whose parsed components are  ( z , a ) (z,a) . 
+
+ 
+ 
+ 
+ In modern reasoning models  [ 18 ,  19 ] , this split can often be
+identified by a delimiter such as  </think> 1 1 
+                 1 
+                
+                
+                
+                
+                
+                
+                
+               More generally,
+the framework only requires a way to identify the answer segment. .
+Figure  1  illustrates the decomposition with an
+example. The answer segment  a a  may itself be a long structured sequence,
+such as a program, a proof, or a natural-language final response. 
+
+ 
+ 
+ 
+ With this distinction, the model induces a natural answer marginal by summing over all reasoning traces that lead
+to the same answer string: 
+
+ 
+ 
+
+ 
+ 
+ m ⁡ ( a ∣ x ) = ∑ z ∈ 𝒵 π ⁡ ( z , a ∣ x ) = ∑ z ∈ 𝒵 π ⁡ ( z ∣ x ) ​ π ​ ( a ∣ x , z ) . m(a\mid x)=\sum_{z\in\mathcal{Z}}\pi(z,a\mid x)=\sum_{z\in\mathcal{Z}}\pi(z\mid x)\pi(a\mid x,z). 
+ 
+ (2) 
+ 
+
+ 
+ 
+ 
+ 
+ Power sampling. 
+
+ 
+
+ 
+ Power sampling  [ 15 ]  is a recent inference-time sharpening principle: instead of
+sampling directly from the model distribution, it samples from a powered
+version that amplifies high-probability generations. This gives the joint sharpening target 
+
+ 
+ 
+
+ 
+ 
+ p α joint ​ ( z , a ∣ x ) = π ​ ( z , a ∣ x ) α ∑ z ′ , a ′ π ​ ( z ′ , a ′ ∣ x ) α . p^{\mathrm{joint}}_{\alpha}(z,a\mid x)=\frac{\pi(z,a\mid x)^{\alpha}}{\sum_{z^{\prime},a^{\prime}}\pi(z^{\prime},a^{\prime}\mid x)^{\alpha}}. 
+ 
+ (3) 
+ 
+
+ 
+ For  α > 1 \alpha>1 , this distribution concentrates mass on complete trajectories
+that are already likely under the base model. However, a complete trajectory contains
+both a reasoning trace and the answer produced from it. Sequence-level power
+sampling therefore sharpens the joint object  ( z , a ) (z,a) : it favors reasoning and answers that are likely together. Reasoning traces are best viewed as a latent computation that should be
+aggregated over  [ 12 ] . The same answer may be supported by many different
+derivations, implementations, or proof strategies. Joint sharpening treats
+these alternatives as competing complete sequences, rather than as shared
+support for a common answer-level belief. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Marginal Sharpening 
+
+ 
+
+ 
+ Treating reasoning as a latent process, we introduce  Marginal sharpeningt , that defines a power distribution over the answer marginal. For
+sharpening strength  α > 1 \alpha>1 , the target is 
+
+ 
+ 
+
+ 
+ 
+ p α marg ​ ( a ∣ x ) = m ​ ( a ∣ x ) α Z α ​ ( x ) , Z α ​ ( x ) = ∑ a ′ ∈ 𝒜 m ​ ( a ′ ∣ x ) α . p^{\mathrm{marg}}_{\alpha}(a\mid x)=\frac{m(a\mid x)^{\alpha}}{Z_{\alpha}(x)},\qquad Z_{\alpha}(x)=\sum_{a^{\prime}\in\mathcal{A}}m(a^{\prime}\mid x)^{\alpha}. 
+ 
+ (4) 
+ 
+
+ 
+ The effect is to amplify answers with large total support across latent
+reasoning traces. An answer can therefore receive high probability because it
+is supported collectively by many plausible traces, even if no single complete
+trajectory dominates. This is the answer-level analogue of power sampling:
+the powered object is the marginal answer distribution, not the joint
+distribution over traces and answers. 
+
+ 
+ 
+ 
+ In the large-sharpening limit, the distribution concentrates on the most
+supported answer: 
+
+ 
+ 
+
+ 
+ 
+ a ∼ p α marg ( ⋅ ∣ x ) → α → ∞ arg ⁡ max a ′ m ( a ′ ∣ x ) . a\sim p^{\mathrm{marg}}_{\alpha}(\cdot\mid x)\xrightarrow[\alpha\rightarrow\infty]{}\argmax_{a^{\prime}}m(a^{\prime}\mid x). 
+ 
+ (5) 
+ 
+
+ 
+ Thus, marginal sharpening is a soft version of self-consistency  [ 12 ] : finite
+ α \alpha  samples from a sharpened answer distribution, while the limit
+recovers the answer with maximum marginal support. 
+
+ 
+ 
+ 
+ Integer-power trace representation. 
+
+ 
+
+ 
+ When the sharpening strength is an integer,  α = K ∈ ℕ \alpha=K\in\mathbb{N} , the powered
+answer marginal has an exact representation using  K K  copies of the reasoning
+trace variable. Let  π z ( ⋅ ∣ x ) \pi_{z}(\cdot\mid x)  denote the distribution over reasoning
+traces induced by the base model: operationally, we sample from  π ( ⋅ ∣ x ) \pi(\cdot\mid x) 
+but stop when the answer-boundary delimiter  </think>  is emitted. After a trace  z z  is fixed,
+ π ⁡ ( a ∣ x , z ) \pi(a\mid x,z)  is the model probability of generating answer segment  a a  as
+the continuation. Expanding the  K K th power gives 
+
+ 
+ 
+
+ 
+ 
+ m ​ ( a ∣ x ) K \displaystyle m(a\mid x)^{K} 
+ = ( ∑ z π z ​ ( z ∣ x ) ​ π ​ ( a ∣ x , z ) ) K \displaystyle=\left(\sum_{z}\pi_{z}(z\mid x)\pi(a\mid x,z)\right)^{K} 
+ 
+ (6) 
+ 
+ 
+ 
+ = ∑ z 1 : K ∏ i = 1 K π z ( z i ∣ x ) π ( a ∣ x , z i ) . \displaystyle=\sum_{z_{1:K}}\prod_{i=1}^{K}\pi_{z}(z_{i}\mid x)\pi(a\mid x,z_{i}). 
+ 
+ (7) 
+ 
+
+ 
+ We rewrite it as expectation over  K K  independently sampled  z i z_{i} . 
+
+ 
+ 
+
+ 
+ 
+ m ( a ∣ x ) K = ∑ z 1 : K ∏ i = 1 K π z ( z i ∣ x ) π ( a ∣ x , z i ) = 𝔼 z 1 : K ∼ π z ⊗ K ( ⋅ ∣ x ) [ ∏ i = 1 K π ( a ′ ∣ x , z i ) ] . \displaystyle m(a\mid x)^{K}=\sum_{z_{1:K}}\prod_{i=1}^{K}\pi_{z}(z_{i}\mid x)\pi(a\mid x,z_{i})=\mathbb{E}_{z_{1:K}\sim\pi_{z}^{\otimes K}(\cdot\mid x)}\left[\prod_{i=1}^{K}\pi(a^{\prime}\mid x,z_{i})\right]. 
+ 
+ (8) 
+ 
+
+ 
+ After normalization the final expression for the sharpened answer distribution becomes 
+
+ 
+ 
+
+ 
+ 
+ p K marg ​ ( a ∣ x ) \displaystyle p^{\mathrm{marg}}_{K}(a\mid x) 
+ = 𝔼 z 1 : K ∼ π z ⊗ K ( ⋅ ∣ x ) [ ∏ i = 1 K π ( a ∣ x , z i ) ] ∑ a ′ ∈ 𝒜 𝔼 z 1 : K ∼ π z ⊗ K ( ⋅ ∣ x ) [ ∏ i = 1 K π ( a ′ ∣ x , z i ) ] . \displaystyle=\frac{\mathbb{E}_{z_{1:K}\sim\pi_{z}^{\otimes K}(\cdot\mid x)}\left[\prod_{i=1}^{K}\pi(a\mid x,z_{i})\right]}{\sum_{a^{\prime}\in\mathcal{A}}\mathbb{E}_{z_{1:K}\sim\pi_{z}^{\otimes K}(\cdot\mid x)}\left[\prod_{i=1}^{K}\pi(a^{\prime}\mid x,z_{i})\right]}. 
+ 
+ (9) 
+ 
+
+ 
+ 
+ 
+ Equation ( 9 ) gives the target in terms of trace samples:
+for each candidate answer, we average its joint support across  K K  independently
+sampled reasoning traces and then normalize across answers. This identity is the
+theoretical object our algorithms approximate. Using this would require
+computing probabilities of complete answer sequences under each
+ π ⁡ ( a ∣ x , z i ) \pi(a\mid x,z_{i}) . We therefore approximate this sequence-level conditional by
+sampling autoregressively from a natural token-level distribution. 
+
+ 
+ 
+ 
+ 
+ Trace-sample and token-level approximation. 
+
+ 
+
+ 
+ Equation ( 9 ) expresses the sharpened answer marginal as an
+expectation over  K K  independently sampled reasoning traces. We approximate this
+expectation by drawing  S S  independent  K K -trace groups
+ z 1 : K ( s ) ∼ π z ⊗ K ( ⋅ ∣ x ) z^{(s)}_{1:K}\sim\pi_{z}^{\otimes K}(\cdot\mid x) . For complete answer strings,
+the corresponding empirical approximation is 
+
+ 
+ 
+
+ 
+ 
+ p ^ K ( S ) ​ ( a ∣ x ) = ∑ s = 1 S ∏ i = 1 K π ⁡ ( a ∣ x , z i ( s ) ) ∑ a ′ ∈ 𝒜 ∑ s = 1 S ∏ i = 1 K π ⁡ ( a ′ ∣ x , z i ( s ) ) . \widehat{p}^{(S)}_{K}(a\mid x)=\frac{\sum_{s=1}^{S}\prod_{i=1}^{K}\pi(a\mid x,z_{i}^{(s)})}{\sum_{a^{\prime}\in\mathcal{A}}\sum_{s=1}^{S}\prod_{i=1}^{K}\pi(a^{\prime}\mid x,z_{i}^{(s)})}. 
+ 
+ (10) 
+ 
+
+ 
+ 
+ 
+ Directly sampling from Equation ( 10 ) is still impractical because
+ π ⁡ ( a ∣ x , z i ( s ) ) \pi(a\mid x,z_{i}^{(s)})  is the probability of a complete answer sequence. To
+see what an exact autoregressive sampler for Equation ( 10 ) would
+require, fix the current answer prefix  c = a < t = a ≤ t − 1 c=a_{<t}=a_{\leq t-1} . The exact
+next-token conditional is obtained by summing the sequence-level mass of all
+complete answers that extend  c c  with token  v v : 
+
+ 
+ 
+
+ 
+ 
+ p ^ K ( S ) ( a t = v ∣ x , c ) = ∑ s = 1 S ∑ r : c ​ v ​ r ∈ 𝒜 ∏ i = 1 K π ( c v r ∣ x , z i ( s ) ) ∑ u ∈ 𝒱 ∑ s = 1 S ∑ r : c ​ u ​ r ∈ 𝒜 ∏ i = 1 K π ( c u r ∣ x , z i ( s ) ) . \widehat{p}^{(S)}_{K}(a_{t}=v\mid x,c)=\frac{\sum_{s=1}^{S}\sum_{r:\,cvr\in\mathcal{A}}\prod_{i=1}^{K}\pi(cvr\mid x,z_{i}^{(s)})}{\sum_{u\in\mathcal{V}}\sum_{s=1}^{S}\sum_{r:\,cur\in\mathcal{A}}\prod_{i=1}^{K}\pi(cur\mid x,z_{i}^{(s)})}. 
+ 
+ (11) 
+ 
+
+ 
+ Writing a complete answer as  c , v , r c,v,r , where  r r  denotes the remaining
+continuation after token  v v , the auto-regressive factorization gives 
+
+ 
+ 
+
+ 
+ 
+ ∏ i = 1 K π ⁡ ( c ​ v ​ r ∣ x , z i ( s ) ) = ∏ i = 1 K π ⁡ ( c ∣ x , z i ( s ) ) ⏟ prefix likelihood ​ ∏ i = 1 K π ⁡ ( v ∣ x , z i ( s ) , c ) ⏟ current-token score ​ ∏ i = 1 K π ⁡ ( r ∣ x , z i ( s ) , c ​ v ) ⏟ continuation score . \prod_{i=1}^{K}\pi(cvr\mid x,z_{i}^{(s)})=\underbrace{\prod_{i=1}^{K}\pi(c\mid x,z_{i}^{(s)})}_{\text{prefix likelihood}}\underbrace{\prod_{i=1}^{K}\pi(v\mid x,z_{i}^{(s)},c)}_{\text{current-token score}}\underbrace{\prod_{i=1}^{K}\pi(r\mid x,z_{i}^{(s)},cv)}_{\text{continuation score}}. 
+ 
+ 
+
+ 
+ Therefore the exact conditional can be written as 
+
+ 
+ 
+
+ 
+ 
+ p ^ K ( S ) ​ ( a t = v ∣ x , c ) = ∑ s = 1 S W s ​ ( c ) ​ ∏ i = 1 K π ⁡ ( v ∣ x , z i ( s ) , c ) ​ C s ​ ( c ​ v ) ∑ u ∈ 𝒱 ∑ s = 1 S W s ​ ( c ) ​ ∏ i = 1 K π ⁡ ( u ∣ x , z i ( s ) , c ) ​ C s ​ ( c ​ u ) , \widehat{p}^{(S)}_{K}(a_{t}=v\mid x,c)=\frac{\sum_{s=1}^{S}W_{s}(c)\prod_{i=1}^{K}\pi(v\mid x,z_{i}^{(s)},c)C_{s}(cv)}{\sum_{u\in\mathcal{V}}\sum_{s=1}^{S}W_{s}(c)\prod_{i=1}^{K}\pi(u\mid x,z_{i}^{(s)},c)C_{s}(cu)}, 
+ 
+ (12) 
+ 
+
+ 
+ where 
+
+ 
+ 
+
+ 
+ 
+ W s ​ ( c ) = ∏ i = 1 K π ⁡ ( c ∣ x , z i ( s ) ) = ∏ τ < t ∏ i = 1 K π ⁡ ( a τ ∣ x , z i ( s ) , a < τ ) W_{s}(c)=\prod_{i=1}^{K}\pi(c\mid x,z_{i}^{(s)})=\prod_{\tau<t}\prod_{i=1}^{K}\pi(a_{\tau}\mid x,z_{i}^{(s)},a_{<\tau}) 
+ 
+ 
+
+ 
+ is the likelihood assigned to the already generated prefix by trace group  s s , and 
+
+ 
+ 
+
+ 
+ 
+ C s ( c v ) = ∑ r : c ​ v ​ r ∈ 𝒜 ∏ i = 1 K π ( r ∣ x , z i ( s ) , c v ) C_{s}(cv)=\sum_{r:\,cvr\in\mathcal{A}}\prod_{i=1}^{K}\pi(r\mid x,z_{i}^{(s)},cv) 
+ 
+ 
+
+ 
+ is the continuation normalizer after choosing token  v v . 
+
+ 
+ 
+ 
+ The continuation normalizers  C s ​ ( c ​ v ) C_{s}(cv)  require summing over complete future
+answers, which would defeat the goal of a lightweight decoder. We therefore use a
+local approximation that ignores the dependence of  C s ​ ( c ​ u ) C_{s}(cu)  on the candidate
+token  u u  and trace group  s s , treating it as a common prefix-dependent factor.
+This common factor cancels in the local normalization. In contrast, the prefix
+likelihood  W s ​ ( c ) W_{s}(c)  is already determined by the tokens generated so far and can
+be maintained online. We retain this term as a weight over sampled trace groups. For numerical stability, define the log-prefix weight 
+
+ 
+ 
+
+ 
+ 
+ ℓ s ​ ( a < t ) = ∑ τ < t ∑ i = 1 K log ⁡ π ⁡ ( a τ ∣ x , z i ( s ) , a < τ ) , \ell_{s}(a_{<t})=\sum_{\tau<t}\sum_{i=1}^{K}\log\pi(a_{\tau}\mid x,z_{i}^{(s)},a_{<\tau}), 
+ 
+ 
+
+ 
+ and the normalized prefix weight 
+
+ 
+ 
+
+ 
+ 
+ w s ​ ( a < t ) = exp ⁡ ( ℓ s ​ ( a < t ) ) ∑ s ′ = 1 S exp ⁡ ( ℓ s ′ ​ ( a < t ) ) . w_{s}(a_{<t})=\frac{\exp(\ell_{s}(a_{<t}))}{\sum_{s^{\prime}=1}^{S}\exp(\ell_{s^{\prime}}(a_{<t}))}. 
+ 
+ 
+
+ 
+ At  t = 1 t=1 , the prefix is empty, so  ℓ s ​ ( ∅ ) = 0 \ell_{s}(\emptyset)=0  and
+ w s ​ ( ∅ ) = 1 / S w_{s}(\emptyset)=1/S . The resulting prefix-weighted token-level decoder is 
+
+ 
+ 
+
+ 
+ 
+ q t ( S ) ​ ( v ∣ x , a < t ) = ∑ s = 1 S w s ​ ( a < t ) ​ exp ⁡ ( ∑ i = 1 K log ⁡ π ⁡ ( v ∣ x , z i ( s ) , a < t ) ) ∑ u ∈ 𝒱 ∑ s = 1 S w s ​ ( a < t ) ​ exp ⁡ ( ∑ i = 1 K log ⁡ π ⁡ ( u ∣ x , z i ( s ) , a < t ) ) . q_{t}^{(S)}(v\mid x,a_{<t})=\frac{\sum_{s=1}^{S}w_{s}(a_{<t})\exp\left(\sum_{i=1}^{K}\log\pi(v\mid x,z_{i}^{(s)},a_{<t})\right)}{\sum_{u\in\mathcal{V}}\sum_{s=1}^{S}w_{s}(a_{<t})\exp\left(\sum_{i=1}^{K}\log\pi(u\mid x,z_{i}^{(s)},a_{<t})\right)}. 
+ 
+ (13) 
+ 
+
+ 
+ After sampling  a t ∼ q t ( S ) ( ⋅ ∣ x , a < t ) a_{t}\sim q_{t}^{(S)}(\cdot\mid x,a_{<t}) , the log-prefix weights
+are updated by 
+
+ 
+ 
+
+ 
+ 
+ ℓ s ​ ( a ≤ t ) = ℓ s ​ ( a < t ) + ∑ i = 1 K log ⁡ π ⁡ ( a t ∣ x , z i ( s ) , a < t ) . \ell_{s}(a_{\leq t})=\ell_{s}(a_{<t})+\sum_{i=1}^{K}\log\pi(a_{t}\mid x,z_{i}^{(s)},a_{<t}). 
+ 
+ 
+
+ 
+ The decoder then appends  a t a_{t}  to the shared answer prefix and repeats until the
+answer terminates or reaches the length budget. This rule favors tokens that are
+likely under several independently sampled reasoning traces, while giving greater
+influence to trace groups that have remained consistent with the answer prefix
+generated so far. It avoids enumerating complete answer strings and replaces the
+intractable continuation normalizers by a local approximation. With this token level proposal, we define Marginal Sharpening in Algorithm  1 . 
+
+ 
+ 
+ 
+ The local rule in Equation ( 13 ) can be of obviously improved. A more accurate sampler could spend additional compute on full-sequence corrections, for example by applying Metropolis–Hastings updates as in power sampling  [ 15 ] , or by using SMC-style importance corrections and resampling as in Power-SMC  [ 16 ] . These approaches can better account for the missing continuation normalizers, but require multiple proposed continuations or repeated resampling steps. We keep the lightweight token-level decoder as the main algorithm and discuss heavier corrections in Appendix  C . 
+
+ 
+ 
+ 
+ 
+ Cost and implementation notes. 
+
+ 
+
+ 
+ The algorithm has two knobs. The sharpening strength  K K  controls how
+strongly the answer distribution is concentrated, while the sample count  S S 
+controls the quality of the token-level approximation. Generating each answer
+token requires  𝒪 ⁡ ( K ​ S ) \mathcal{O}(KS)  model evaluations, but these evaluations are
+parallel across trace groups, batched in practice, and reuse cached states.
+When fewer than two usable reasoning traces are available, we fall back to the
+corresponding base completion rather than applying the multi-trace decoder. 
+
+ 
+ 
+ 
+ Algorithm 1    Marginal Sharpening 
+ 
+ 
+               1: 
+              
+              
+            Prompt  x x , sharpening strength  K K , trace groups  S S , maximum
+output length  L L 
+
+ 
+ 
+               2: 
+              
+              
+            Generate  M = K ⋅ S M=K\cdot S  reasoning traces for  x x , i.e. for all
+ m ∈ [ M ] m\in[M] ,  z m ∼ π z ( ⋅ ∣ x ) z_{m}\sim\pi_{z}(\cdot\mid x) .
+
+ 
+ 
+               3: 
+              
+              
+            Form  S S  groups  z ( s ) 1 : K z^{(s)}_{1:K} , each containing  K K  traces.
+
+ 
+ 
+               4: 
+              
+              
+            Initialize the answer  a ≤ 0 ← ∅ a_{\leq 0}\leftarrow\emptyset  and prefix log-weights
+ ℓ s ← 0 \ell_{s}\leftarrow 0  for all  s ∈ [ S ] s\in[S] .
+
+ 
+ 
+               5: 
+              
+              
+            Compute remaining budget  T ← L − ∑ s , k | z k ( s ) | / M . T\leftarrow L-\sum_{s,k}|z_{k}^{(s)}|/M. 
+
+ 
+ 
+               6: 
+              
+              
+             for   t = 1 , … , T t=1,\ldots,T   do 
+
+ 
+ 
+               7: 
+              
+              
+              Compute the prefix-weighted next-token distribution
+
+ 
+ 
+               8: 
+              
+              
+            
+ 
+
+ 
+ 
+ q t ( S ) ​ ( v ∣ x , a ≤ t − 1 ) = ∑ s = 1 S exp ⁡ ( ℓ s + ∑ i = 1 K log ⁡ π ⁡ ( v ∣ x , z i ( s ) , a ≤ t − 1 ) ) ∑ u ∈ 𝒱 ∑ s = 1 S exp ⁡ ( ℓ s + ∑ i = 1 K log ⁡ π ⁡ ( u ∣ x , z i ( s ) , a ≤ t − 1 ) ) . q_{t}^{(S)}(v\mid x,a_{\leq t-1})=\frac{\sum_{s=1}^{S}\exp\left(\ell_{s}+\sum_{i=1}^{K}\log\pi(v\mid x,z_{i}^{(s)},a_{\leq t-1})\right)}{\sum_{u\in\mathcal{V}}\sum_{s=1}^{S}\exp\left(\ell_{s}+\sum_{i=1}^{K}\log\pi(u\mid x,z_{i}^{(s)},a_{\leq t-1})\right)}. 
+ 
+ 
+
+ 
+ 
+ 
+               9: 
+              
+              
+              Sample  a t ∼ q t ( S ) ( ⋅ ∣ x , a ≤ t − 1 ) a_{t}\sim q_{t}^{(S)}(\cdot\mid x,a_{\leq t-1}) .
+
+ 
+ 
+               10: 
+              
+              
+              Update prefix log-weights for all  s ∈ [ S ] s\in[S] :
+
+ 
+
+ 
+ 
+ ℓ s ← ℓ s + ∑ i = 1 K log ⁡ π ⁡ ( a t ∣ x , z i ( s ) , a ≤ t − 1 ) . \ell_{s}\leftarrow\ell_{s}+\sum_{i=1}^{K}\log\pi(a_{t}\mid x,z_{i}^{(s)},a_{\leq t-1}). 
+ 
+ 
+
+ 
+ 
+ 
+               11: 
+              
+              
+              Append the new token to the answer  a ≤ t ← ( a ≤ t − 1 , a t ) a_{\leq t}\leftarrow(a_{\leq t-1},a_{t}) .
+
+ 
+ 
+               12: 
+              
+              
+               If   a t = EOS a_{t}=\texttt{EOS}   then   break  .
+
+ 
+ 
+               13: 
+              
+              
+             end   for 
+ 
+ 
+               14: 
+              
+              
+             return  reasoning traces  { z m } m ∈ [ M ] \{z_{m}\}_{m\in[M]}  and decoded answer  a ≤ t a_{\leq t} .
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 4  Related Work 
+
+ 
+
+ 
+ Chain-of-thought and reasoning models. 
+Chain-of-thought prompting showed that language models can improve on
+multi-step tasks by generating intermediate reasoning before the final answer
+ [ 1 ] , and similar behavior can be elicited with simple
+zero-shot prompts  [ 2 ] . Recent reasoning models make this
+trace–answer structure central, often using post-training or reinforcement
+learning to produce longer reasoning traces for mathematics and code
+ [ 5 ,  20 ] . Our framework uses this structure
+directly, while remaining agnostic to how the traces are produced. 
+
+ 
+ 
+ 
+ Self-consistency. 
+Self-consistency uses repeated sampling to estimate answer-level support:
+sample multiple reasoning paths, extract their final answers, and return the
+answer with the largest vote count  [ 12 ] . This works
+well when answers can be exactly matched or canonicalized, but becomes brittle
+when the same solution has many surface forms. Universal self-consistency and
+integrative decoding address this limitation with model-based aggregation or
+implicit self-consistency  [ 13 ,  14 ] .
+Marginal sharpening takes a different route: it makes the answer marginal
+itself the inference target. Under this view, self-consistency is a limiting
+case, while finite sharpening gives a soft answer-level sampler. 
+
+ 
+ 
+ 
+ Inference-time sharpening. 
+Power-sampling methods sharpen model distributions at inference time without
+additional training. Reasoning with Sampling uses Metropolis–Hastings updates
+to sample from sequence-level power distributions
+ [ 15 ] ; Scalable Power Sampling uses an autoregressive
+proposal with future-continuation corrections  [ 17 ] ; and
+Power-SMC uses sequential importance corrections and resampling for the same
+trajectory-level target  [ 16 ] . These methods sharpen
+complete generations. Marginal sharpening instead changes the object of
+sharpening: it sharpens the answer marginal induced by latent reasoning traces. 
+
+ 
+ 
+ 
+ 
+ 5  Experiments 
+
+ 
+
+ 
+ Datasets. 
+We evaluate on three answer-focused reasoning settings. MATH-500 is a subset of the
+MATH benchmark for competition-style mathematical problem solving  [ 21 ] ; answers are
+extracted from boxed final expressions and checked symbolically with the Math-Verify
+library  [ 22 ] . HumanEval evaluates Python function synthesis from
+natural-language docstrings using unit tests  [ 23 ] ; we use
+HumanEval+, which adds stronger tests for the same problems  [ 24 ] .
+LiveCodeBench v6 is a more challenging contest-style code generation benchmark built
+from recent programming problems and evaluated with the official runner
+ [ 25 ] . 
+
+ 
+ 
+ 
+ Models. 
+We use the 1.7B, 4B and 8B version of the Qwen family  [ 18 ]  in our experiments. These models emit an explicit reasoning segment before
+the final answer. In our implementation, the reasoning trace is the generated prefix
+ending at  </think> ; the continuation after this delimiter is treated as the
+answer segment. Unless stated otherwise, all sampling uses temperature 1.0. 
+
+ 
+ 
+ 
+ Main experiment.  We present the main results of our experiment in Table  1 . All results in this table use a maximum generation length of  L = 8192 L=8192 . Power Sampling  [ 15 ]  is used with its default parameters ( α = 4 , B = 16 , N = 10 \alpha=4,B=16,N=10 ). For Qwen3-8B, power sampling was too slow ( > 4 >4  hours a prompt) and did not finish . For each model and dataset, the best result is shown in bold and the second-best result is underlined. Marginal sampling gives the best results on both coding benchmarks, where many different programs can implement the same solution and direct voting over final strings is less effective. On MATH-500, marginal sampling is second best, while majority voting performs best. This is expected: mathematical answers have a much smaller effective answer space, and equivalent expressions can be compared symbolically, making majority voting a strong baseline. 
+
+ 
+ 
+ 
+ Table 1:  Accuracy across 3 benchmarks. Best results are bolded; second best are underlined. 
+ 
+ 
+ Model 
+ Method 
+ MATH-500 
+ HumanEval+ 
+ LiveCodeBench 
+ 
+ Qwen3-1.7B 
+ Temperature Sampling 
+ 0.806 
+ 0.722 
+ 0.227 
+ 
+ 
+ Power Sampling 
+ 0.762 
+ 0.713 
+ 0.234 
+ 
+ 
+ Majority Voting ( k = 32 k=32 ) 
+ 0.920 
+ 0.756 
+ 0.229 
+ 
+ 
+ Marginal Sharpening  ( K = 4 , S = 8 ) (K=4,S=8) 
+ 0.904 
+ 0.762 
+ 0.269 
+ 
+ 
+ Marginal Sharpening  ( K = 32 , S = 1 ) (K=32,S=1) 
+ 0.908 
+ 0.756 
+ 0.280 
+ 
+ Qwen3-4B 
+ Temperature Sampling 
+ 0.709 
+ 0.843 
+ 0.266 
+ 
+ 
+ Power Sampling 
+ 0.694 
+ 0.890 
+ 0.303 
+ 
+ 
+ Majority Voting ( k = 32 k=32 ) 
+ 0.848 
+ 0.884 
+ 0.274 
+ 
+ 
+ Marginal Sharpening  ( K = 4 , S = 8 ) (K=4,S=8) 
+ 0.842 
+ 0.915 
+ 0.309 
+ 
+ 
+ Marginal Sharpening  ( K = 32 , S = 1 ) (K=32,S=1) 
+ 0.840 
+ 0.927 
+ 0.303 
+ 
+ Qwen3-8B 
+ Temperature Sampling 
+ 0.845 
+ 0.840 
+ 0.296 
+ 
+ 
+ Power Sampling 
+ - 
+ - 
+ - 
+ 
+ 
+ Majority Voting ( k = 32 k=32 ) 
+ 0.932 
+ 0.854 
+ 0.309 
+ 
+ 
+ Marginal Sharpening  ( K = 4 , S = 8 ) (K=4,S=8) 
+ 0.928 
+ 0.860 
+ 0.349 
+ 
+ 
+ Marginal Sharpening  ( K = 32 , S = 1 ) (K=32,S=1) 
+ 0.924 
+ 0.878 
+ 0.343 
+ 
+
+ 
+ 
+ 
+ Comparison to power sampling.  Marginal sharpening is better suited to long generations than power sampling in the regime we consider. Power sampling repeatedly resamples parts of the same output sequence to approximate the sequence-level power distribution. With maximum generation length  L L , this requires  O ⁡ ( L 2 ) O(L^{2})  generated tokens per problem. In contrast, for fixed  K K  and  S S , marginal sharpening decodes autoregressively and requires  O ⁡ ( L ) O(L)  generated tokens per problem. The reasoning traces used by marginal sharpening are also sampled independently, so trace generation can be parallelized directly. 
+
+ 
+ 
+ 
+ Figure  2  compares runtime and accuracy for Qwen3-4B on HumanEval+ as  L L  varies. Running both methods on  1 1  H100 GPU, Marginal sharpening takes about 45 seconds, 1.31 minutes, and 3 minutes per problem for  L = 2048 , 4096 , 8192 L=2048,4096,8192 , respectively, compared with 9, 33, and 115 minutes for power sampling. This is roughly a  12 × 12\times ,  25 × 25\times , and  38 × 38\times  reduction in runtime. Despite this difference, marginal sharpening obtains better accuracy, showing that answer-level sharpening captures much of the useful effect of power sampling at a substantially lower computational cost. 
+
+ 
+ 
+ 
+ Figure 2 :  Runtime and accuracy comparison for Qwen3-4B on HumanEval+ as the maximum generation length changes. 
+ 
+ 
+ Effect of the sharpening strength.  We next study the effect of the integer sharpening strength  K K . In our
+integer-power representation,  K K  is both the exponent of the sharpened answer
+marginal and the number of sampled reasoning traces used by the decoder.
+Figure  3  shows Qwen3-8B results across all three
+datasets for several values of  K K . The leftmost bar, temperature sampling, draws directly from the base model and can
+be viewed as the unsharpened  K = 1 K=1  case. Increasing  K K 
+generally improves performance, and  K = 32 K=32  gives the best results in this sweep.
+This is consistent with the role of  K K : larger values put more weight on answers
+that are supported by several traces, making the answer distribution sharper. This
+can improve accuracy when the model assigns substantial marginal mass to the correct
+answer. However, larger  K K  also requires more computation and can reduce diversity,
+so smaller values may be preferable when optimizing the quality–compute tradeoff. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Figure 3 :  Qwen3-8B results on MATH-500, HumanEval+, and
+LiveCodeBench for different sharpening strengths  K K . 
+ 
+ 
+ Table 2 :  Qwen3-4B: Comparison of marginal sharpening varying  S S . 
+ 
+ 
+ L L 
+ S S 
+ MATH-500 
+ HumanEval+ 
+ LCB v6 
+ 
+ 2048 
+ 1 
+ 0.410 
+ 0.317 
+ 0.114 
+ 
+ 2048 
+ 8 
+ 0.522 
+ 0.512 
+ 0.131 
+ 
+ 4096 
+ 1 
+ 0.560 
+ 0.695 
+ 0.189 
+ 
+ 4096 
+ 8 
+ 0.702 
+ 0.829 
+ 0.200 
+ 
+ 8192 
+ 1 
+ 0.778 
+ 0.915 
+ 0.303 
+ 
+ 8192 
+ 8 
+ 0.842 
+ 0.915 
+ 0.309 
+ 
+
+ 
+ 
+ 
+ 
+ Effect of Monte Carlo Samples  S S .  Table  2  compares two values of  S S , while keeping the model,  K K , and length budget fixed. Increasing  S S  gives consistently stronger results for Qwen3-4B:
+ S = 8 S=8  improves over  S = 1 S=1  on MATH-500 and LiveCodeBench v6 for every length
+budget, and improves or matches it on HumanEval+. The gains are especially visible
+at smaller budgets, suggesting that a more accurate approximation can partly
+compensate for limited generation length. 
+
+ 
+ 
+ 
+ Fixed-budget allocation between  K K  and  S S .  We also compare different ways to allocate the same budget of 32 generated traces.
+Figure  4  shows all configurations with  K ⋅ S = 32 K\cdot S=32 . This
+comparison separates two uses of compute within the same sampling family. Larger
+ K K  sharpens the answer distribution,
+while larger  S S  spends more computation on approximating the conditional
+distribution for a fixed trace set. The results show that no single allocation
+dominates across all settings. Instead, the configurations are mostly close to each
+other across datasets, length budgets, and model sizes. This suggests that, at
+fixed total compute, the two effects largely cancel out: increasing  K K  sharpens
+the target more aggressively, while increasing  S S  gives a better local
+approximation to that target. 
+
+ 
+ 
+ 
+ Figure 4 :  Comparison of marginal sharpening configurations with the same total
+generation budget  K ⋅ S = 32 K\cdot S=32 . Rows correspond to length budgets and columns to
+Qwen3 model sizes. 
+ 
+ 
+ Summary.  The experiments support marginal sharpening as a strong test-time inference
+method and reinforce the central intuition behind self-consistency: for
+reasoning models, it is often better to sharpen the answer distribution induced
+by latent traces than to sharpen the distribution over complete trajectories.
+This distinction is especially important for code generation, where many
+syntactically different programs can implement the same solution and exact
+majority voting becomes brittle. Marginal sharpening avoids requiring a
+canonical final string while still using multiple reasoning traces to
+concentrate probability on answers that are jointly supported by the model. 
+
+ 
+ 
+ 
+ The ablations suggest that the main gains come from the answer-level target and
+from using multiple traces, rather than from exactly correcting every
+sequence-level conditional. Increasing  K K  and  S S  generally improves
+performance, but under a fixed generation budget, different allocations between
+sharpening strength and sample count are often close. This suggests that both
+stronger sharpening and better approximation quality are useful, with no single
+allocation dominating across all settings. 
+
+ 
+ 
+ 
+ 
+ 6  Conclusion 
+
+ 
+
+ 
+ We introduced  marginal sharpening , an inference-time method that treats
+reasoning traces as latent variables and sharpens the answer marginal they
+induce, rather than the probability of complete trajectories. For integer
+sharpening strengths, this target admits a multi-trace representation, yielding
+a simple autoregressive decoder that samples several traces and produces one
+answer supported across them. Empirically, marginal sharpening improves over
+temperature sampling, outperforms sequence-level power sampling in the
+long-generation regime while running up to  38 × 38\times  faster, and is
+especially strong on code-generation benchmarks where exact string agreement is
+too restrictive. These results show that self-consistency can be understood
+as an answer-level inference principle than as a voting heuristic, and that
+test-time compute is more effectively spent on the answer belief induced by
+latent reasoning than on selecting the most likely transcript. Marginal sharpening is only one approximation to this principle:
+developing better samplers for the sharpened answer marginal, with tighter
+corrections for the token-level approximation are promising
+directions for future work. 
+
+ 
+ 
+ 
+ 
+ 7  Acknowledgment 
+
+ 
+
+ 
+ This project was provided with computational AI and storage
+resources by GENCI at IDRIS thanks to the grant 2025-A0191016862 on the supercomputer Jean Zay
+(V100/A100/H100 partitions). 
+
+ 
+ 
+ 
+ 
+ 

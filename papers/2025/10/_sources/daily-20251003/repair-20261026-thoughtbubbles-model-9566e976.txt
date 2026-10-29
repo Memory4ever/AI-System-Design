@@ -1,0 +1,1032 @@
+"""
+Full definition of a GPT Language Model, all of it in this single file.
+References:
+1) the official GPT-2 TensorFlow implementation released by OpenAI:
+https://github.com/openai/gpt-2/blob/master/src/model.py
+2) huggingface/transformers PyTorch implementation:
+https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
+"""
+
+# common standard library utilities
+import os
+import sys
+import time
+import json
+import math
+import random
+from random import Random
+
+from pathlib import Path
+from argparse import Namespace
+
+# machine learning and data utilities
+import numpy as np
+import pandas as pd
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import SequentialLR, LinearLR
+
+from torch_scatter import scatter_max, scatter_add
+
+# huggingface
+from transformers import AutoConfig, AutoModel, AutoTokenizer
+
+# MLOps
+import wandb
+from accelerate import Accelerator
+
+# logging
+from loguru import logger
+
+import math
+import inspect
+from dataclasses import dataclass, field
+
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+
+from utils import plot
+
+import torch
+from typing import Tuple, Optional, List
+
+class RotaryPosEncoding(torch.nn.Module):
+    """RoPE implementation by Róbert Csordás"""
+    def __init__(self, d_model: int, base=10000, seq_dim: int = 1):
+        super().__init__()
+
+        if d_model % 2 != 0:
+            raise ValueError("RoPE can only be used with an even number of dimensions")
+
+        inv_freq = 1.0 / (base ** (torch.arange(0, d_model, 2).float() / d_model))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.seq_len_cached = 0
+        self.cos_cached = None
+        self.sin_cached = None
+        self.seq_dim = seq_dim
+
+    def rotate_half(self, x: torch.Tensor) -> torch.Tensor:
+        x1, x2 = x[..., : x.shape[-1] // 2], x[..., x.shape[-1] // 2 :]
+        return torch.cat(
+            (-x2, x1), dim=x1.ndim - 1
+        )  # dim=-1 triggers a bug in torch < 1.8.0
+
+    def apply_rot(self, x: torch.Tensor, sinp: torch.Tensor, cosp: torch.Tensor, seq_dim: int, offset: int) -> torch.Tensor:
+        sin = sinp.narrow(seq_dim, offset, x.shape[seq_dim])
+        cos = cosp.narrow(seq_dim, offset, x.shape[seq_dim])
+        return (x * cos) + (self.rotate_half(x) * sin)
+
+    def apply_rotary_pos_emb(self, q: torch.Tensor, k: torch.Tensor, sin: torch.Tensor, cos: torch.Tensor,
+                             seq_dim: int, offset: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.apply_rot(q, sin, cos, seq_dim, offset), self.apply_rot(k, sin, cos, seq_dim, 0)
+
+    def get(self, x: torch.Tensor, t: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        seq_len = x.shape[self.seq_dim]
+        enable_cache = t is None
+
+        if (not enable_cache) or (seq_len > self.seq_len_cached):
+            self.seq_len_cached = seq_len
+            if t is None:
+                t = torch.arange(x.shape[self.seq_dim], device=x.device)
+
+            t = t.type_as(self.inv_freq)
+
+            freqs = torch.einsum("...i,j->...ij", t, self.inv_freq)
+            emb = torch.cat((freqs, freqs), dim=-1).to(x.device)
+
+            tgt_shape = [1] * x.ndim
+            tgt_shape[self.seq_dim] = seq_len
+            tgt_shape[-1] = x.shape[-1]
+
+            # support batch.
+            tgt_shape[0] = -1
+
+            cos = emb.cos().view(*tgt_shape)
+            sin = emb.sin().view(*tgt_shape)
+
+            if enable_cache:
+                self.cos_cached = cos
+                self.sin_cached = sin
+            else:
+                return sin, cos
+
+        return self.sin_cached, self.cos_cached
+
+    def forward(self, q: torch.Tensor, k: torch.Tensor,
+                pos_offset: int=0,
+                t: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
+        sin, cos = self.get(k, t)
+        return self.apply_rotary_pos_emb(q, k, sin, cos, self.seq_dim, pos_offset)
+
+class LayerNorm(nn.Module):
+    """LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False"""
+
+    def __init__(self, ndim, bias):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(ndim))
+        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
+
+    def forward(self, input):
+        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
+
+
+class CausalSelfAttention(nn.Module):
+
+    def __init__(self, config, layer_num=None):
+        super().__init__()
+        self.layer_num = layer_num
+        assert config.n_embd % config.n_head == 0
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        # output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        # regularization
+        self.attn_dropout = nn.Dropout(config.dropout)
+        self.resid_dropout = nn.Dropout(config.dropout)
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.dropout = config.dropout
+
+        self.config = config
+        if config.pos_embeds == "rope":
+            self.rope = RotaryPosEncoding(config.n_embd//config.n_head, seq_dim = -2)
+
+        k = self.config.block_size + self.config.max_thought_budget
+
+        # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
+        # self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        # ...but it breaks all of our stuff since we need the bias buffer registered
+        # causal mask to ensure that attention is only applied to the left in the input sequence
+        self.register_buffer(
+            "bias",
+            torch.tril(torch.ones(k,k)).view(
+                1, 1, k, k
+            ),
+        )
+
+    # def proj(x):
+    def proj(self, x):
+        B, T, C = (
+            x.size()
+        )  # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
+
+        return q,k,v
+    # self.proj = proj
+
+    def forward(self, x):
+        # x = torch.rand(12, 20, config.n_embd)
+        B, T, C = (x.size())
+        q, k, v = self.proj(x)
+
+        # rope, if it pleases the config
+        if self.config.pos_embeds == "rope":
+            q,k = self.rope(q,k)
+
+        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        # disable flash attention
+        if False:
+            # efficient attention using Flash Attention CUDA kernels
+            y = torch.nn.functional.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=None,
+                dropout_p=self.dropout if self.training else 0,
+                is_causal=True,
+            )
+        else:
+            # manual implementation of attention
+            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+
+            masked_att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
+            att_norm = F.softmax(masked_att, dim=-1)
+            plot("attention",
+                 preweight=att.detach(),
+                 postweight=att.detach(),
+                 key=self.layer_num)
+            att = att_norm
+            att = self.attn_dropout(att)
+            y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = (
+            y.transpose(1, 2).contiguous().view(B, T, C)
+        )  # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+class PartiallyMaskedAttention(CausalSelfAttention):
+    def __init__(self, config, layer_num=None):
+        super().__init__(config)
+
+        self.layer_num = layer_num
+
+    def forward(self, x, cum_scores, token_index, padding_mask=None):
+        B, T, C = (x.size())
+        q, k, v = self.proj(x)
+
+        if self.config.openrightmost:
+            cum_scores = torch.where(
+                (torch.roll(token_index, -1) != token_index),
+                torch.zeros_like(cum_scores),
+                cum_scores
+            )
+
+        # compute if stuff is fork
+        is_fork = ~(torch.roll(token_index, -1) != token_index)
+        token_counts = scatter_add(torch.ones_like(token_index), token_index, -1)
+
+        # rope, if it pleases the config
+        if self.config.pos_embeds == "rope":
+            if self.config.rope_type == "hard":
+                q,k = self.rope(q,k,t=token_index)
+            elif self.config.rope_type == "soft":
+                # number of forks for each token, ^-1 of which is the
+                # "moves" that each fork will contribute from 0
+                partial_rotations = torch.cumsum(torch.gather((1/token_counts),
+                                                              -1, token_index), dim=-1)
+                q,k = self.rope(q,k,t=partial_rotations)
+            else:
+                raise ValueError(f"Invalid rope_type: {self.config.rope_type}")
+
+        # manual implementation of attention
+        att_preweight = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+
+        att_postweight = att_preweight + cum_scores.unsqueeze(-2).unsqueeze(-2)
+
+        att = att_postweight.masked_fill(self.bias[:, :, :q.size(-2), :k.size(-2)] == 0, float("-inf"))
+
+        # if padding mask, prevent padding to attend to stuff and stuff to
+        # attend to padding
+        if padding_mask is not None:
+            padding_mask = padding_mask.gather(1, token_index)
+            padding_mask_fl = (~padding_mask).float()
+            padding_mask_outer = padding_mask_fl.unsqueeze(-1) @ padding_mask_fl.unsqueeze(-2)
+            padding_mask_outer = padding_mask_outer.unsqueeze(-3).repeat(1, self.n_head, 1,1)
+            att = att.masked_fill(~padding_mask_outer.bool(), float("-inf"))
+
+        att = F.softmax(att, dim=-1)
+
+        if padding_mask is not None:
+            att = att.masked_fill(~padding_mask_outer.bool(), 0.0)
+
+        plot("attention",
+             preweight=att_preweight.detach(),
+             postweight=att.detach(),
+             key=self.layer_num)
+
+        att = self.attn_dropout(att)
+        v = torch.einsum("bnlh,bl -> bnlh", v, cum_scores.exp()) # apply scores which is BT to (B, nh, T, hs)
+        y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+
+        y = (
+            y.transpose(1, 2).contiguous().view(B, q.size(-2), C)
+        )  # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+class MLP(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc = nn.Linear(config.n_embd, config.upproj_size * config.n_embd, bias=config.bias)
+        self.gelu = nn.GELU()
+        self.c_proj = nn.Linear(config.upproj_size * config.n_embd, config.n_embd, bias=config.bias)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x):
+        x = self.c_fc(x)
+        x = self.gelu(x)
+        x = self.c_proj(x)
+        x = self.dropout(x)
+        return x
+
+
+class Block(nn.Module):
+
+    def __init__(self, config, layer_num=None):
+        super().__init__()
+        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+        self.attn = PartiallyMaskedAttention(config, layer_num)
+        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        self.mlp = MLP(config)
+
+    def forward(self, x, cum_scores, token_index, padding_mask=None):
+        exponentiated_scores = cum_scores.exp()
+        x = x + torch.einsum("bl,blh -> blh", exponentiated_scores, self.attn(
+            self.ln_1(x), cum_scores, token_index, padding_mask=padding_mask
+        ))
+        x = x + torch.einsum("bl,blh -> blh", exponentiated_scores, self.mlp(self.ln_2(x)))
+        return x
+
+def binned_logsumexp(x, token_index, dim=-2):
+    """gives us the logits of the sum of the probabilities given by logits x
+
+    Arguments
+    ----------
+        x : torch.Tensor
+            (batch_size, seq_len, hidden)
+        token_index : torch.Tensor
+            ids of each of the tokens
+            (batch_size, seq_len)
+        dim : int
+            the dimension to sum over
+
+    Return
+    ------
+        torch.Tensor
+            (batch_size, true_seq_length, hidden)
+    """
+
+    # Max for each group (result: (batch_size, original length, vocab_size))
+    max_score, _ = scatter_max(x, token_index, dim=dim)
+
+    # boradcast the max for each element of the group
+    max_score_broadcasted = max_score.gather(
+        dim, 
+        token_index
+    )
+
+    # Subtract and exp
+    logits = (x - max_score_broadcasted).exp()
+
+    # Sum over the group and log
+    logits = torch.zeros_like(max_score).scatter_add(dim, token_index, logits).log()
+
+    # Add back the max
+    return (max_score + logits)
+
+
+def binned_renorm(config, new_cumulative_scores, new_token_indicies):
+    """Binned renormalization of cumulative scores
+
+    Arguments
+    ----------
+        new_cumulative_scores : torch.Tensor
+            (batch_size, seq_len)
+        new_token_indicies : torch.Tensor
+            (batch_size, seq_len)
+
+    Return
+    ------
+        torch.Tensor
+        ( batch_size, seq_len )
+    """
+    cum_score_normalizing_factors = binned_logsumexp(
+        new_cumulative_scores,
+        new_token_indicies,
+        dim=-1
+    )
+
+    cum_score_normalizing_factors = cum_score_normalizing_factors.clamp(max=0)
+
+    new_cumulative_scores = (
+        new_cumulative_scores -
+        cum_score_normalizing_factors.gather(-1, new_token_indicies)
+    )
+
+    return new_cumulative_scores
+
+class ForkingBlock(Block):
+    def __init__(self, config, layer_num=None, k=1):
+        super().__init__(config)
+        self.layer_num = layer_num
+        # hidden state -> forking score
+        self.forking_ln = LayerNorm(config.n_embd, bias=config.bias)
+
+        self.forking_score = nn.Linear(config.n_embd, 2, bias=False)
+        if config.fork_map == "rotation":
+            self.fork_embedding = nn.utils.parametrizations.orthogonal(
+                nn.Identity(config.n_embd, bias=False)
+            )
+        elif config.fork_map == "score" or config.fork_map == "score_all":
+            self.fork_embedding = nn.Linear(1, config.n_embd)
+        else:
+            self.fork_embedding = nn.Parameter(torch.rand(config.n_embd)*
+                                            (1/math.sqrt(config.n_embd)))
+        self.attn = PartiallyMaskedAttention(config, layer_num)
+        self.config = config
+
+        # k is the number of times to call forking; usually we do it once
+        self.k = k
+
+    @staticmethod
+    def gumbel_sigmoid_noise(logits: torch.Tensor) -> torch.Tensor:
+        eps = 3e-4 if logits.dtype == torch.float16 else 1e-10
+        uniform = logits.new_empty([2] + list(logits.shape)).uniform_(eps, 1 - eps)
+
+        noise = -(uniform[1].log() / uniform[0].log() + eps).log()
+        return noise
+    # self.gumbel_sigmoid_noise = gumbel_sigmoid_noise
+
+    @staticmethod
+    def clipped_logsigmoid(x, min_val=-20.0):
+        logsigmoid = -F.softplus(-x)
+        return torch.clamp(logsigmoid, min=min_val)
+    # self.clipped_logsigmoid = clipped_logsigmoid
+
+    def fork(self, x, cumulative_scores, token_index, fork_only_at_indicies=None, padding_mask=None, force_thought_budget=None):
+        """
+        Args:
+            x: (batch_size, seq_len, n_embd)
+            cumulative_scores: (batch_size, seq_len)
+        Outputs:
+            new_x: (batch_size, seq_len, n_embd)
+            new_cumulative_scores: (batch_size, seq_len)
+        """
+        
+        # now add the forking logic
+        batch_size = len(cumulative_scores)
+        # (batch_size, seq_len, 2)
+        curr_layer_forking_score = self.forking_score(self.forking_ln(x)) # + 1
+
+        # comute "real" forking scores to be propergate
+        if self.config.detach_scores:
+            forking_scores_cum = (self.clipped_logsigmoid(curr_layer_forking_score)).view(batch_size, -1)
+        else:
+            forking_scores_cum = (
+                self.clipped_logsigmoid(curr_layer_forking_score) + cumulative_scores.unsqueeze(-1)
+            ).view(batch_size, -1)
+
+        # pre-gumbel "true" ps for forking, etc.
+        # we are computing this twice because you have the noise the *pre-logsigmoid* scores
+
+        if self.training:
+            noised_forking_scores_cum = (
+                (self.clipped_logsigmoid(self.gumbel_sigmoid_noise(curr_layer_forking_score) + curr_layer_forking_score) +
+                cumulative_scores.unsqueeze(-1))
+            ).view(batch_size, -1)
+        else:
+            # we just copy the scores, since we do in place write into it
+            noised_forking_scores_cum = (
+                self.clipped_logsigmoid(curr_layer_forking_score) + cumulative_scores.unsqueeze(-1)
+            ).view(batch_size, -1)
+
+        # we want to preserve at least one token each, so we keep
+        # the right most (the original) token 
+        forked_token_index = (token_index
+                              .unsqueeze(-1)
+                              .repeat(*([1]*token_index.ndim),2)
+                              .flatten(-2,-1))
+        noised_forking_scores_cum[
+            torch.roll(forked_token_index, -1) != forked_token_index
+        ] = float("+inf")
+
+        # do the top-k to choose the best scores
+        if force_thought_budget is not None:
+            k = min(force_thought_budget, noised_forking_scores_cum.size(-1))
+        else:
+            k = min(self.config.max_thought_budget + self.config.block_size,
+                    noised_forking_scores_cum.size(-1))
+
+        if isinstance(fork_only_at_indicies, torch.Tensor) and fork_only_at_indicies.size(0):
+            forking_scores_mask = torch.zeros_like(noised_forking_scores_cum).bool()
+            forking_scores_mask[fork_only_at_indicies[:,0], fork_only_at_indicies[:,1]*2] = 1
+            # if the entire row has no special selections, we allow it to fork normally
+            forking_scores_mask[~forking_scores_mask.sum(dim=-1).bool()] = True
+            forking_scores_mask[:, (torch.arange(
+                noised_forking_scores_cum.size(-1)/2
+            )*2+1).to(
+                noised_forking_scores_cum.device
+            ).int()] = True
+            noised_forking_scores_cum[~forking_scores_mask] = float("-inf")
+        
+        _, top_k_indices = torch.topk(noised_forking_scores_cum, k, dim=-1, sorted=True)  # (batch_size, k)
+        top_k_indices = top_k_indices.sort().values # TODO this is probably quite slow
+
+        orig_indices = top_k_indices // 2  # (batch_size, k)
+        is_fork = (top_k_indices % 2) == 0  # (0: orig, 1: fork)
+
+        x_to_consider = torch.gather(
+            x, -2, orig_indices.unsqueeze(-1).expand(-1, -1, x.size(-1))
+        )  # (batch_size, k, n_embd)
+
+        # this is the same gather as the one above, but for new scores
+        if self.config.gather_by_orig:
+            new_cumulative_scores = torch.gather(forking_scores_cum, -1, orig_indices)
+        else:
+            new_cumulative_scores =  torch.gather(forking_scores_cum, -1, top_k_indices)
+        new_token_indicies = token_index.gather(-1, orig_indices)
+        if self.config.fork_map == "rotation":
+            # gather the elements which are fork and project them through fork embedding
+            mapped_fork_embds = self.fork_embedding(x_to_consider[is_fork])
+            # scatter them back to the right places
+            # IndexPutBackwards is apparently legal
+            x_to_consider[is_fork] = mapped_fork_embds
+        elif self.config.fork_map == "score":
+            # we add a value based on the amount of forking into the embeddings of the forks
+            x_to_consider = x_to_consider + (is_fork.unsqueeze(-1).to(self.fork_embedding.weight.dtype) *
+                                             self.fork_embedding(new_cumulative_scores.exp().unsqueeze(-1)))
+        elif self.config.fork_map == "score_all":
+            # we add a value based on the amount of forking into the embeddings of the forks
+            x_to_consider = x_to_consider + self.fork_embedding(new_cumulative_scores.exp().unsqueeze(-1))
+        else:
+            x_to_consider = x_to_consider + (is_fork.unsqueeze(-1).to(self.fork_embedding.dtype) *
+                                            self.fork_embedding)
+
+        if "score" in self.config.fork_map:
+            plot(
+                "fork_embedding",
+                embeddings=lambda : self.fork_embedding(
+                    (torch.arange(100, dtype=torch.float32, device=x_to_consider.device)/100).unsqueeze(1)
+                ),
+                key=self.layer_num
+            )
+
+        # x=x_to_consider; cum_scores=new_cumulative_scores; token_index=new_token_indicies
+        return (x_to_consider, new_cumulative_scores, new_token_indicies)
+    
+    def forward(self, x, cumulative_scores, token_index, fork_only_at_indicies=None, padding_mask=None, force_thought_budget=None):
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            # forking!
+            for _ in range(self.k):
+                x, cumulative_scores, token_index = self.fork(
+                    x.float(), 
+                    cumulative_scores.float(), token_index,
+                    fork_only_at_indicies=fork_only_at_indicies,
+                    padding_mask=padding_mask,
+                    force_thought_budget=force_thought_budget
+                )
+
+
+        # we attenuate the residual update based on how much a token exists
+        residual_update_attn = self.attn(self.ln_1(x), cumulative_scores, token_index, padding_mask=padding_mask)
+
+        if self.config.openrightmost:
+            exponentiated_scores = torch.where(
+                (torch.roll(token_index, -1) != token_index),
+                torch.zeros_like(cumulative_scores),
+                cumulative_scores
+            ).exp()
+        else:
+            exponentiated_scores = cumulative_scores.exp()
+
+        # cross attention: query for the forks, and kv for everything else 
+        # write the attention 
+        # x[fork] = x[fork] + cross_attend(x, x[fork])
+        # x[fork] = x[fork] + mlp(x[fork])
+
+        x = x + torch.einsum("bl,blh -> blh", exponentiated_scores, residual_update_attn)
+        x = x + torch.einsum("bl,blh -> blh", exponentiated_scores, self.mlp(self.ln_2(x)))
+
+
+        plot("forking",
+             cumulative_scores=cumulative_scores.detach(),
+             token_index=token_index.detach(),
+             key=self.layer_num)
+
+        return x, cumulative_scores, token_index
+
+class ExpandBlock(ForkingBlock):
+    def __init__(self, config, layer_num=None):
+        super().__init__(config, layer_num)
+
+        self.forking_score = nn.Linear(config.n_embd, 1, bias=False)
+        self.fork_embedding = nn.Parameter(torch.rand(config.n_embd)* (1/math.sqrt(config.n_embd)))
+        self.attn = PartiallyMaskedAttention(config, layer_num)
+
+    # def expand(x, token_index):
+    def expand(self, x, token_index):
+        batch_size = len(x)
+        config = self.config
+        # compute a dynamic expansion budget
+        # which is (block_size + thinking_size) - what we have
+        # i.e. whether its from forking or otherwise
+        expansion_budget = (config.block_size + config.max_thought_budget) - x.size(-2)
+        k = min(expansion_budget // config.expand_size, x.size(-2))
+        # compute forking scores; which we *don't* propegate for other layers
+        curr_layer_forking_score = self.forking_score(self.forking_ln(x))
+        # add some noise for exploration
+        if self.training:
+            curr_layer_forking_score = self.clipped_logsigmoid(self.gumbel_sigmoid_noise(curr_layer_forking_score) +
+                                                               curr_layer_forking_score).view(batch_size, -1)
+        else:
+            # we just copy the scores, since we do in place write into it
+            curr_layer_forking_score = self.clipped_logsigmoid(curr_layer_forking_score).view(batch_size, -1)
+
+        top_k_values, top_k_indices = torch.topk(curr_layer_forking_score, k, dim=-1, sorted=False)  # (batch_size, k)
+        top_k_indices = top_k_indices.sort().values # TODO this is probably quite slow
+
+        # compute which tokens we actually would need repeated
+        repeat_counts = torch.ones_like(token_index, device=x.device)
+        repeat_counts.scatter_(1, top_k_indices, value=config.expand_size)
+        # do the repetition: we have to flatten across all batches, do
+        # the repeat, and reshape it back
+        xs_repeated = torch.repeat_interleave(
+            x.view(-1, x.size(-1)),
+            repeat_counts.view(-1), dim=0
+        ).view(x.size(-3), -1, x.size(-1))
+        new_token_index = torch.repeat_interleave(
+            token_index.view(-1),
+            repeat_counts.view(-1), dim=0
+        ).view(token_index.size(-2), -1)
+        new_scores = torch.repeat_interleave(
+            curr_layer_forking_score.view(-1),
+            repeat_counts.view(-1), dim=0
+        ).view(curr_layer_forking_score.size(-2), -1)
+
+        is_og = torch.roll(new_token_index, -1) != new_token_index
+        is_fork = ~is_og
+
+        # add fork embedding
+        xs_repeated = (xs_repeated +
+                       (is_fork.unsqueeze(-1).to(self.fork_embedding.dtype) * self.fork_embedding))
+
+        plot("expansion",
+             cumulative_scores=new_scores.detach(), # this is not "cumulative" but we share the same plot
+             token_index=new_token_index.detach(),
+             top_k=top_k_values.detach(),
+             key=self.layer_num)
+
+        # TODO is this really a good way to get gradients though?
+        # we will loose gradients on everything we just set to
+        # e^0 = 1.
+        new_scores = torch.where(
+            is_og,
+            torch.zeros_like(new_scores),
+            new_scores
+        )
+
+        return xs_repeated, new_scores, new_token_index
+    # self.expand = expand
+
+    def forward(self, x, token_index):
+        # forking!
+        x, scores, token_index = self.expand(x, token_index)
+        # we attenuate the residual update based on how much a token exists
+        exponentiated_scores = scores.exp()
+        x = x + torch.einsum("bl,blh -> blh", exponentiated_scores, self.attn(
+            self.ln_1(x), scores, token_index
+        ))
+        x = x + torch.einsum("bl,blh -> blh", exponentiated_scores, self.mlp(self.ln_2(x)))
+
+        return x, scores, token_index
+
+@dataclass
+class GPTConfig:
+    block_size: int = 1024
+    vocab_size: int = (
+        50304  # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    )
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
+    dropout: float = 0.0
+    upproj_size: int = 4
+    bias: bool = (
+        True  # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    )
+    pos_embeds: str = "learn" # what position embeddings to use
+
+@dataclass
+class ThoughtGPTConfig(GPTConfig):
+    # top-k sampling
+    # max with of a block is
+    # block_size + max_thought_budget
+    max_thought_budget: int = 1000
+    layer_plan: str = field(default_factory=lambda: ["fork" for _ in range(12)])
+    fork_map: str = "static" # use rotation for thinking embeddings instead of just adding? or use dynamic based on the cumulative score
+    gather_by_orig: bool = False
+    detach_scores: bool = False
+    rope_type: str = "soft" # should we use fractional RoPE rotations?
+    expand_size: int = 4 # for manual expansion, how many tokens to explode each token into
+    openrightmost: bool = False # do we force at least one token's attention weighting to always be 1? does nothing for expansion-based approaches
+
+class GPT(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        assert config.vocab_size is not None
+        assert config.block_size is not None
+        self.config = config
+
+        self.transformer = nn.ModuleDict(
+            dict(
+                wte=nn.Embedding(config.vocab_size, config.n_embd),
+                wpe=nn.Embedding(config.block_size, config.n_embd),
+                drop=nn.Dropout(config.dropout),
+                h=nn.ModuleList([Block(config, i) for i in range(config.n_layer)]),
+                ln_f=LayerNorm(config.n_embd, bias=config.bias),
+            )
+        )
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # with weight tying when using torch.compile() some warnings get generated:
+        # "UserWarning: functional_call was passed multiple values for tied weights.
+        # This behavior is deprecated and will be an error in future versions"
+        # not 100% sure what this is, so far seems to be harmless. TODO investigate
+        self.transformer.wte.weight = (
+            self.lm_head.weight
+        )  # https://paperswithcode.com/method/weight-tying
+
+        # init all weights
+        self.apply(self._init_weights)
+        # apply special scaled init to the residual projections, per GPT-2 paper
+        for pn, p in self.named_parameters():
+            if pn.endswith("c_proj.weight"):
+                torch.nn.init.normal_(
+                    p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer)
+                )
+
+        # report number of parameters
+        print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
+
+    def get_num_params(self, non_embedding=True):
+        """
+        Return the number of parameters in the model.
+        For non-embedding count (default), the position embeddings get subtracted.
+        The token embeddings would too, except due to the parameter sharing these
+        params are actually used as weights in the final layer, so we include them.
+        """
+        n_params = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n_params -= self.transformer.wpe.weight.numel()
+        return n_params
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        device = idx.device
+        b, t = idx.size()
+        assert (
+            t <= self.config.block_size
+        ), f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+        pos = torch.arange(0, t, dtype=torch.long, device=device)  # shape (t)
+
+        # forward the GPT model itself
+        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
+        if self.config.pos_embeds == "learn":
+            pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (t, n_embd)
+            x = self.transformer.drop(tok_emb + pos_emb)
+        else:
+            x = self.transformer.drop(tok_emb)
+
+        cumulative_scores = torch.zeros_like(idx, dtype=x.dtype).to(x.device)
+        token_index = pos.repeat(b, 1)
+        for block in self.transformer.h:
+            x = block(x, cumulative_scores, token_index)
+        x = self.transformer.ln_f(x)
+
+        if targets is not None:
+            # if we are given some desired targets also calculate the loss
+            logits = self.lm_head(x)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=(
+                    self.config.ignore_idx if self.config.ignore_idx else -1
+                )
+            )
+        else:
+            # inference-time mini-optimization: only forward the lm_head on the very last position
+            logits = self.lm_head(
+                x[:, [-1], :]
+            )  # note: using list [-1] to preserve the time dim
+            loss = None
+
+        return logits, loss
+
+    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+        # start with all of the candidate parameters
+        param_dict = {pn: p for pn, p in self.named_parameters()}
+        # filter out those that do not require grad
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(
+            f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters"
+        )
+        print(
+            f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters"
+        )
+        # Create AdamW optimizer and use the fused version if it is available
+        fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and device_type == "cuda"
+        extra_args = dict(fused=True) if use_fused else dict()
+        optimizer = torch.optim.AdamW(
+            optim_groups, lr=learning_rate, betas=betas, **extra_args
+        )
+        print(f"using fused AdamW: {use_fused}")
+
+        return optimizer
+
+    def estimate_mfu(self, fwdbwd_per_iter, dt):
+        """estimate model flops utilization (MFU) in units of A100 bfloat16 peak FLOPS"""
+        # first estimate the number of flops we do per iteration.
+        # see PaLM paper Appendix B as ref: https://arxiv.org/abs/2204.02311
+        N = self.get_num_params()
+        cfg = self.config
+        L, H, Q, T = cfg.n_layer, cfg.n_head, cfg.n_embd // cfg.n_head, cfg.block_size
+        flops_per_token = 6 * N + 12 * L * H * Q * T
+        flops_per_fwdbwd = flops_per_token * T
+        flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
+        # express our flops throughput as ratio of A100 bfloat16 peak flops
+        flops_achieved = flops_per_iter * (1.0 / dt)  # per second
+        flops_promised = 312e12  # A100 GPU bfloat16 peak flops is 312 TFLOPS
+        mfu = flops_achieved / flops_promised
+        return mfu
+
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+        """
+        Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
+        the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+        """
+        for _ in range(max_new_tokens):
+            # if the sequence context is growing too long we must crop it at block_size
+            idx_cond = (
+                idx
+                if idx.size(1) <= self.config.block_size
+                else idx[:, -self.config.block_size :]
+            )
+            # forward the model to get the logits for the index in the sequence
+            logits, _ = self(idx_cond)
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :] / temperature
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float("Inf")
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # sample from the distribution
+            idx_next = torch.multinomial(probs, num_samples=1)
+            # append sampled index to the running sequence and continue
+            idx = torch.cat((idx, idx_next), dim=1)
+
+        return idx
+
+class ThoughtbubbleGPT(GPT):
+    def __init__(self, config):
+        super().__init__(config)
+
+        assert len(config.layer_plan) == config.n_layer, f"The layer plan supplied doesn't have the same amount of layers as n_layer."
+        assert not ("expand" in config.layer_plan and "fork" in config.layer_plan), f"Forking layers and expanding layers can't be simultaneously used."
+
+        def get_block(type, config, indx):
+            if type == "fork":
+                return ForkingBlock(config, indx)
+            elif type == "expand":
+                return ExpandBlock(config, indx)
+            elif type == "regular":
+                return Block(config, indx)
+            else:
+                raise ValueError(f"Unknown layer type found in plan: {type}")
+
+        self.transformer.update(
+            dict(
+                h=nn.ModuleList([get_block(i, config, indx) for indx, i in enumerate(config.layer_plan)]),
+            )
+        )
+        self.plan = config.layer_plan
+
+    def logit_average(self, logits: torch.Tensor, cumulative_scores: torch.Tensor, token_index: torch.Tensor):
+        # logits: (batch_size, len, vocab_size)
+        # token_index (batch_size, len)
+        # cumulative_scores: (batch_size, len)
+
+        # Scaled logits shape: (batch_size, len, vocab_size)
+        scaled_logits = F.log_softmax(logits, dim=-1) + cumulative_scores.unsqueeze(-1)
+
+        # Broadcast indices such that it works with scatter and gather
+        token_index = token_index.unsqueeze(-1).repeat(*([1]*token_index.ndim), logits.size(-1))
+        # The rest is just a logsumexp over the groups
+        return binned_logsumexp(scaled_logits, token_index, dim=-2)
+
+    def forward(self, idx, targets=None, expanded_targets=None, return_perlayer_embd=False, fork_only_at_indicies=None, args=Namespace(), dont_merge=False, padding_mask=None, return_unmerged_logits=False, force_thought_budget=None):
+        # if there are an "expanded target", we want to modulate
+        # the thought budget for this forward pass to fit
+        if expanded_targets is not None and force_thought_budget is None:
+            force_thought_budget = expanded_targets.size(-1)
+
+        device = idx.device
+        b, t = idx.size()
+        assert (
+            t <= self.config.block_size
+        ), f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+        pos = torch.arange(0, t, dtype=torch.long, device=device)  # shape (t)
+
+        perlayer_embd = []
+
+        # forward the GPT model itself
+        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
+        if self.config.pos_embeds == "learn":
+            pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (t, n_embd)
+            x = self.transformer.drop(tok_emb + pos_emb)
+        else:
+            x = self.transformer.drop(tok_emb)
+
+        # initialize the scores (all zeros) and token indicies (incrementally increasing)
+        # for forking block; we will pass them though over each layer
+        cumulative_scores = torch.zeros_like(idx, dtype=x.dtype).to(x.device)
+        token_index = pos.repeat(b, 1)
+
+        def shrink(x, token_index, orig_x=None):
+            return (x[torch.roll(token_index, -1) != token_index]
+                .view(x.size(-3), -1, x.size(-1)))
+       
+        if return_perlayer_embd:
+            all_embds = [(x.detach(), token_index.detach())]
+        orig_x = x
+        for layer_type, block in zip(self.plan, self.transformer.h):
+            if layer_type == "fork" or layer_type == "double_compute_fork" or layer_type == "extra_fork":
+                x, cumulative_scores, token_index = block(
+                    x, cumulative_scores, token_index,
+                    fork_only_at_indicies, padding_mask=padding_mask,
+                    force_thought_budget=force_thought_budget)
+            elif layer_type == "expand" or layer_type == "expand_moe":
+                # shrink
+                x = shrink(x, token_index, orig_x)
+                orig_x = x
+                token_index = pos.repeat(b, 1)
+                # expand
+                x, cumulative_scores, token_index = block(x, token_index)
+            elif layer_type == "shrink_regular" or layer_type == "shrink_pos_moe":
+                # shrink
+                x = shrink(x, token_index, orig_x)
+                orig_x = x
+                # regular
+                cumulative_scores = torch.zeros_like(idx, dtype=x.dtype).to(x.device)
+                token_index = pos.repeat(b, 1)
+                x = block(x, cumulative_scores, token_index, padding_mask=padding_mask)
+            else:
+                x = block(x, cumulative_scores, token_index, padding_mask=padding_mask)
+            if return_perlayer_embd:
+                all_embds.append((x.detach(), token_index.detach()))
+
+        # shrink one last time, if we have expanded
+        if "expand" in self.plan or "expand_moe" in self.plan:
+            plot("expansion", labels=idx, key="head", charbased=("mathematics" in vars(args).get("data_dir", "") or
+                                                                 "match3" in vars(args).get("data_dir", "")))
+            x = shrink(x, token_index, orig_x)
+            token_index = pos.repeat(b, 1)
+
+        x = self.transformer.ln_f(x)
+
+
+        unmerged_logits = None
+        # if we are given some desired targets also calculate the loss
+        if "fork" in self.plan or "double_compute_fork" in self.plan or "extra_fork" in self.plan:
+            if "memorize" not in vars(args).get("data_dir", ""):
+                plot("forking", labels=idx, key="head", charbased=("mathematics" in vars(args).get("data_dir", "") or
+                    "match3" in vars(args).get("data_dir", "")))
+            if dont_merge:
+                unmerged_logits = self.lm_head(x)
+                if return_unmerged_logits:
+                    logits = unmerged_logits
+            if not return_unmerged_logits:
+                logits = self.logit_average(self.lm_head(x), cumulative_scores, token_index)
+        else:
+            logits = self.lm_head(x)
+
+            
+
+        loss = 0.0
+
+        if targets is not None:
+            loss += F.cross_entropy(
+                logits.reshape(-1, logits.size(-1)), targets.reshape(-1), ignore_index=-1
+            )
+
+        if unmerged_logits is not None and expanded_targets is not None:
+            loss += F.cross_entropy(
+                unmerged_logits.reshape(-1, unmerged_logits.size(-1)),
+                expanded_targets.reshape(-1),
+                ignore_index=-1
+            )
+
+        if return_perlayer_embd:
+            return logits, loss, all_embds
+        else:
+            return logits, loss

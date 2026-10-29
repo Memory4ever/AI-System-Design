@@ -1,0 +1,579 @@
+# Primary exact-v1 main-text extraction, https://arxiv.org/html/2610.30117v1
+# Math alttext retained; storage does not imply every appendix independently reviewed.
+Abstract
+Force-sensitive manipulation requires contact and load information that is not provided explicitly by
+visual observations.
+We present CW-WAM, a world action model that jointly predicts video, motion, and contact
+wrench. Inspired by hybrid motion–force control, it contains a unified
+interaction module that treats both motion and contact wrench as modeling targets and predicts time-aligned
+motion–wrench chunks as control references.
+A pair-causal attention mechanism structures the motion–wrench dependencies, while a long fixed-length
+wrench memory retains past interaction information. The predicted wrench chunk acts as a
+force reference for a 20-Hz outer-loop admittance controller within a slow–fast control system
+that maintains force feedback and smooth motion between model queries. CW-WAM improves contact
+prediction and increases the insertion success rate from 25% to 70% for square pegs with 1-mm clearance per side
+and from 40% to 95% for power adapters, compared with WAM without wrench input.
+It also improves lifting-height accuracy across different loads.
+Our framework with an admittance controller reduces force-reference RMSE
+from 4.8 to 2.7 N for peg insertion and from 2.0 to 1.3 N for wiping, respectively,
+with smaller force fluctuations during successful execution.
+Project website: cw-wam-project.github.io .
+Index Terms:
+world action models, force-sensitive manipulation, force–torque sensing, admittance control
+ † † aftertitle:
+ Fig. 1: CW-WAM helps robots use contact forces to guide their
+movements. It learns from past motions and wrist force measurements
+to predict both how to move and the forces expected during contact.
+These predictions guide motion corrections during execution.
+Peg insertion success increases from 25% with WAM to 70% with CW-WAM;
+adding force feedback to CW-WAM reduces force-tracking error
+from 4.8 to 2.7 N.
+ Fig. 2: CW-WAM jointly predicts video, motion, and wrench from visual observations,
+language, robot state, and interaction history. Paired motion–wrench tokens
+capture recent interactions, while long-term wrench memory retains earlier
+contact information. Pair-causal attention links each future wrench to its paired action
+and earlier pairs. The model jointly denoises the three streams using separate prediction heads.
+Predicted motion and wrench trajectories provide paired references for robot control.
+ I Introduction
+World action models (WAMs) jointly predict future visual observations and actions,
+providing coherent motion plans for manipulation  [ 1 ] .
+Yet a square peg jammed during insertion may appear fully seated, and
+visually similar objects may differ substantially in weight. Such force-sensitive
+tasks require physical interaction information that wrist force–torque sensing can provide.
+Force feedback improves contact-rich manipulation by complementing visual
+observations  [ 2 , 3 ] and enabling rapid motion correction  [ 4 ] .
+Joint action–wrench prediction extends these benefits: predicted forces guide
+learned feedback correction  [ 5 ] or help evaluate contact
+outcomes  [ 6 ] . These advances motivate WAMs that predict the wrench associated with
+each action and use it to guide execution.
+Contact depends on commanded motion, prior interaction, and the environment.
+To capture these dependencies, we design an interaction module inspired
+by hybrid motion–force control.
+The module pairs past commands with measured wrenches
+(Fig.  ) and predicts future motion and wrench
+using separate tokens, prediction heads, and training losses.
+High-rate wrench encoding captures contact changes within motion intervals, while
+longer memory retains earlier wrench measurements.
+CW-WAM integrates this module into a DreamZero-style video–action
+backbone  [ 1 ] .
+During execution, paired predictions provide nominal motion and
+an expected wrench reference for admittance feedback.
+A slow–fast system applies corrections and tracks continuous motion between model
+queries. During contact, this keeps force feedback active while the model
+computes the next motion–wrench chunk.
+Our work makes three contributions:
+ •
+ Structured action–wrench modeling. We introduce a unified
+interaction module with paired motion–wrench history,
+separate future output streams and modality-specific losses.
+Across four real-robot tasks, CW-WAM achieves the strongest overall
+performance among the evaluated methods.
+It improves insertion and release success, tracks force more accurately
+in peg insertion and wiping, and adapts motion to sensed load.
+ •
+ Predicted wrench references for feedback. We use the predicted
+wrench trajectory to guide admittance corrections without requiring a separately
+trained corrective policy. During successful trials, this feedback reduces
+the error between predicted and measured forces and lowers contact-force variation.
+ •
+ A slow–fast execution system. We combine low-rate CW-WAM inference
+with faster admittance feedback and continuous trajectory tracking.
+The admittance controller computes pose corrections at 20 Hz.
+The corrected motion waypoints
+are then interpolated into smooth trajectories for a 1-kHz robot controller.
+We demonstrate this interface on four real-robot tasks.
+ II Related Work
+Visuomotor policies and WAMs
+Visuomotor policies generate actions from visual or language-conditioned
+observations  [ 7 , 8 , 9 , 10 ] .
+Alongside direct action generation, world models support policy learning
+from imagined trajectories  [ 11 ] .
+Video-based approaches recover actions
+from generated videos  [ 12 , 13 , 14 ] , while world action
+models such as DreamZero jointly model video and actions  [ 1 ] .
+Cosmos Policy uses predicted states and values for planning  [ 15 ] ,
+and Fast-WAM omits future-video generation at inference  [ 16 ] .
+Building on this foundation, CW-WAM incorporates interaction history
+and wrench prediction.
+Contact-aware policies and action–wrench prediction
+Contact-rich manipulation requires interaction signals that vision
+does not explicitly provide.
+Prior work incorporates tactile feedback for reactive correction  [ 4 ]
+or visual–tactile–action modeling  [ 17 , 18 , 19 ] .
+ForceVLA and ManipForce condition actions on F/T
+observations  [ 20 , 3 ] , while FoAR modulates force feedback using
+predicted contact  [ 2 ] . Gripper-force feedback also supports
+learning delicate grasping  [ 21 ] .
+Beyond using force as input, FAWAM and Facet-0 jointly predict actions and wrenches.
+They use the predicted wrenches in a learned residual corrector and
+an action–wrench critic, respectively  [ 5 , 6 ] .
+CW-WAM pairs past motion commands with measured wrenches and retains
+longer wrench histories to capture prior contact.
+It predicts future motion and wrench using separate tokens, prediction
+heads, and losses. The predicted wrenches then serve as references
+for admittance feedback control, without a learned corrective policy.
+Slow–fast execution and contact feedback
+Contact can change within an action chunk, requiring a fast response.
+To respond between planning updates, slow planners can guide learned
+residual or reflex policies  [ 22 , 23 ] , while learned motion
+targets and compliance parameters guide high-rate force
+control  [ 24 , 25 ] .
+Force Policy combines global visual planning with fast local force
+control  [ 26 ] .
+In CW-WAM, predicted wrench trajectories guide online admittance correction
+between model queries.
+ III Structured Contact-Wrench World Action Modeling
+ III-A Problem formulation and shared backbone
+CW-WAM jointly predicts future video, motion, and contact wrench for
+motion–force control. At observation time t , it models
+ p_{\theta}(Z_{t}^{+},A_{t},W_{t}\mid V_{t},s_{t},\ell,\mathcal{H}_{t}^{AW},\mathcal{H}_{t}^{W}).
+ (1)
+Here V_{t} , s_{t} , and \ell denote RGB observations, robot state, and
+the language instruction, respectively; \mathcal{H}_{t}^{AW} and \mathcal{H}_{t}^{W} provide recent
+action–wrench history and longer wrench memory. Outputs are video
+latents Z_{t}^{+} , motion targets A_{t}=(a_{t,i})_{i=1}^{H} , and wrenches
+ W_{t}=(w_{t,i})_{i=1}^{H} , with hats denoting predictions.
+Training pairs each motion target with the compensated wrench at
+the same timestamp.
+Each action a_{t,i}\in\mathbb{R}^{10} contains position,
+continuous 6-D rotation  [ 27 ] , and gripper position.
+Position and rotation specify a delta from the tool center point (TCP)
+pose at observation time t , converted to an absolute base-frame pose.
+Each predicted wrench \hat{w}_{t,i}\in\mathbb{R}^{6} represents
+bias-corrected, tool-gravity-compensated force and torque
+in the TCP frame defined by its paired predicted pose,
+with torque referenced to the TCP origin.
+CW-WAM extends DreamZero  [ 1 ] using a Wan2.2-TI2V-5B
+DiT  [ 28 ] . A VAE encodes three RGB views as a 160\times 320
+composite; an MLP encodes robot state. Video, state, history, and
+future action–wrench tokens share self-attention, conditioned on
+OpenCLIP image and UMT5 language features through cross-attention.
+ III-B Interaction history and paired prediction
+The interaction module pairs past motion commands with measured
+wrenches from the same time interval. Recent history spans H_{s} intervals at rate
+ f_{h} , with boundaries b_{i}=t-(H_{s}-i)/f_{h} . Each interval (b_{i-1},b_{i}] associates up to
+ K_{w} high-rate wrench samples with a motion-target token.
+A temporal wrench encoder processes each sample’s 6-D value, relative
+sampling time, and inter-sample interval. Validity masks exclude padding
+from attention and pooling. The action encoder produces a separate token,
+and both tokens receive the same history-interval encoding:
+ \mathcal{H}_{t}^{AW}=[A_{1}^{-},W_{1}^{-},\ldots,A_{H_{s}}^{-},W_{H_{s}}^{-}].
+ (2)
+Long-term wrench memory (LTM) extends history to H_{\ell} wrench-only
+intervals using the same encoder with additional window-time and history
+embeddings. It retains preceding payload tension or sustained resistance.
+Both histories overlap and end at the current observation.
+Future motion and wrench tokens share the Transformer but use separate
+encoders, prediction heads, and losses. Pair-causal (PC) attention uses a
+lower-triangular mask over [A_{1}^{+},W_{1}^{+},\ldots,A_{H}^{+},W_{H}^{+}] .
+Thus, W_{i}^{+} attends to A_{i}^{+} , but not conversely; both attend to earlier
+pairs. All future tokens update jointly at each denoising step.
+ III-C Training and inference
+Training uses flow matching with normalized action and wrench targets.
+For each modality m\in\{V,A,W\} , target x^{m} is mixed with independent
+noise \epsilon^{m}\sim\mathcal{N}(0,I) at a shared noise
+level \sigma within each block:
+ \displaystyle x_{\sigma}^{m}
+ \displaystyle=(1-\sigma)x^{m}+\sigma\epsilon^{m},\qquad u^{m}=\epsilon^{m}-x^{m},
+ (3)
+ \displaystyle\mathcal{L}
+ \displaystyle=\sum_{m\in\{V,A,W\}}\lambda_{m}\mathbb{E}\!\left[\omega(\sigma)\operatorname{MSE}_{M_{m}}(v_{\theta}^{m},u^{m})\right].
+ (4)
+Here v_{\theta}^{m} predicts flow velocity, \omega(\sigma) weights
+noise levels, and M_{m} masks padded targets. Valid-channel normalization
+averages motion and wrench losses over their 10 and 6 valid channels,
+respectively, with \lambda_{m}=1 for all modalities.
+Teacher forcing supplies clean preceding video context to noisy current
+blocks  [ 1 ] .
+We train the DiT and modality projectors for 50k steps with task-balanced
+sampling, keeping VAE, OpenCLIP, and UMT5 frozen. We use H=H_{s}=24 ,
+ H_{\ell}=150 , f_{h}=15 Hz, and K_{w}=16 : 1.6 s of recent history and
+10 s of wrench memory.
+At inference, four Euler steps jointly generate two video latent
+frames and 24 action–wrench pairs spanning 1.6 s, while observed
+latents remain fixed. Control uses the paired predictions without
+decoding video to RGB.
+ Fig. 3: Slow–fast motion–force control. Admittance corrects nominal
+base-frame poses before IK. Joint-trajectory updates preserve C^{2}
+continuity. Wrench feedback is compensated; TCP-pose feedback optionally aligns
+wrench progress to measured TCP pose.
+ IV Slow–Fast Motion–Force Control
+We apply task-weighted admittance corrections to nominal motion
+at 20 Hz, with joint-impedance tracking at 1 kHz.
+ IV-A Admittance control using predicted wrenches
+We use the predicted wrench as a feedback reference to maintain
+the interaction expected along the jointly predicted motion.
+Predicted motion provides the nominal TCP pose
+ (p^{\mathrm{nom}},R^{\mathrm{nom}}) in the robot base frame.
+We express the selected predicted wrench and the measured wrench
+in this nominal TCP frame, with moments about its origin,
+and compute the admittance correction in the same frame  [ 29 , 30 ] :
+ \displaystyle e_{w}
+ \displaystyle=\hat{w}(\phi^{w})-w^{\mathrm{meas}},
+ (5)
+ \displaystyle M\Delta\ddot{x}+C\Delta\dot{x}+K_{a}\Delta x
+ \displaystyle=-S(e_{w}+k_{I}\eta),
+ (6)
+ \displaystyle\dot{\eta}
+ \displaystyle=e_{w}-\lambda\eta.
+ (7)
+Here \phi^{w} selects the progress-aligned predicted wrench as described in the next subsection.
+ \Delta x=[\Delta p^{\top},\Delta\theta^{\top}]^{\top} contains translation and rotation offsets.
+ M , C , and K_{a} specify virtual inertia, damping, and restoring stiffness.
+The diagonal feedback-weighting matrix S weights the wrench-error components.
+ \eta accumulates wrench error with decay rate \lambda , and
+ k_{I} controls its contribution.
+Integral accumulation pauses when correction is inactive or
+would increase a saturated offset.
+At 20 Hz, semi-implicit Euler integration updates velocity
+first and then the offset, subject to acceleration, velocity, and displacement limits.
+The corrected base-frame pose is:
+ \displaystyle p^{\mathrm{cmd}}
+ \displaystyle=p^{\mathrm{nom}}+R^{\mathrm{nom}}\Delta p,
+ (8)
+ \displaystyle R^{\mathrm{cmd}}
+ \displaystyle=R^{\mathrm{nom}}\exp([\Delta\theta]_{\times}).
+ (9)
+Inverse kinematics then maps this corrected absolute pose to joint-position commands.
+The feedback-weighting matrix S reflects each task’s contact constraints
+(Table  I ). For peg insertion, smaller F_{z} and \tau_{z} weights
+favor lateral and tilt corrections while reducing changes to nominal insertion motion.
+Adapter insertion uses larger axial-force and torque weights. Wiping enables only F_{z}
+feedback, leaving tangential motion and orientation to the nominal trajectory.
+ TABLE I: Selected Admittance Gains
+ Task
+ Feedback weights
+ M
+ C
+ K_{a}
+ k_{I}
+ \lambda
+ Peg insertion
+ s_{T}=\operatorname{diag}(1,1,0.05)
+ 5
+ 75
+ 200
+ 0.5
+ 0.5
+ s_{R}=\operatorname{diag}(1,1,0.2)
+ 0.1
+ 1.5
+ 4
+ 0.5
+ 0.5
+ Adapter insertion
+ s_{T}=\operatorname{diag}(1,1,0.5)
+ 5
+ 75
+ 200
+ 0.1
+ 1
+ s_{R}=\operatorname{diag}(1,1,1)
+ 0.1
+ 1.5
+ 4
+ 0.1
+ 1
+ Whiteboard wiping
+ s_{T}=\operatorname{diag}(0,0,1)
+ 3
+ 34.64
+ 100
+ 0.1
+ 1
+ s_{R}=\operatorname{diag}(0,0,0)
+ –
+ –
+ –
+ –
+ –
+ S=\operatorname{blkdiag}(s_{T},s_{R}) ; s_{T} and s_{R} weight translational and rotational feedback, respectively. k_{I} and \lambda are in \mathrm{s}^{-1} .
+ IV-B Continuous action-chunk execution
+On a single NVIDIA RTX 5090, four-step model queries typically take
+0.5–0.6 s, including observation processing, inference, and postprocessing,
+but excluding network communication. Chunks execute sequentially
+(Fig.  3 ). While awaiting the next prediction, the robot
+holds the final nominal pose with admittance active during contact.
+An adaptive-duration C^{2} bridge joins each new chunk to the current
+commanded pose, matching velocity and acceleration.
+At 20 Hz, we interpolate nominal poses with C^{2} continuity and
+predicted wrenches linearly. All experiments select the wrench reference
+by matching the measured TCP pose to the planned motion trajectory.
+Matched progress \phi^{w} cannot move backward or exceed scheduled
+progress \phi , accommodating execution lag while preserving reference order.
+Every 50 ms, we replan a 0.5-s piecewise-quintic joint trajectory,
+matching the active trajectory’s position, velocity, and acceleration for
+ C^{2} continuity. A 1-kHz joint-impedance controller tracks it with gravity
+and friction compensation.
+ V Experiments
+We evaluate prediction accuracy through open-loop ablations,
+force-sensitive manipulation through real-robot tasks, and execution
+quality with and without predicted-wrench admittance.
+ V-A Tasks and data collection
+We select four tasks to test contact-guided alignment, precise seating, force regulation,
+and adaptation to payload (Fig.  , left).
+ Square peg insertion. The robot inserts a 38-mm square peg into a 40-mm hole
+with 1-mm clearance per side and an insertion depth of about 50 mm. The tight clearance and
+long engagement make misalignment and jamming challenging. Demonstrations include smooth
+first-attempt insertion, failed attempts followed by recovery, and light
+jamming followed by alignment. Insertion success requires full seating;
+release success additionally requires the peg to remain seated after gripper opening.
+ Power-adapter insertion. The robot grasps a loosely placed adapter and seats it
+in another socket. This tests precise positioning and insertion with contact.
+Compared with the long peg, the adapter is less prone to jamming once insertion begins.
+Demonstrations therefore emphasize successful first-attempt insertion with minimal lateral
+adjustment. The success criteria are the same as for peg insertion.
+ Whiteboard wiping. The robot picks up an eraser and removes a marker trace
+through sustained surface contact. The traces vary in orientation and curvature,
+requiring both spatial coverage and sustained force regulation. Success requires complete marker
+removal after automatic eraser pickup. We also quantify ink removal in additional
+patterned-wiping recordings and evaluate contact-force accuracy separately.
+ Spring-scale transport. The robot grasps a spring scale attached to a box
+and transfers the box between bins. The boxes weigh either 30 g or 830 g but look identical. The heavier box stretches
+the spring farther, requiring a higher lift to clear the rim. This tests whether contact
+and load information guide motion beyond visual appearance. Success requires rim clearance,
+transport, and placement in the destination bin.
+Training uses task-specific language instructions and 450 demonstrations:
+213 peg insertions, 97 adapter insertions, 64 whiteboard wipes,
+and 76 spring-scale transports.
+Data are collected by bilateral teleoperation with two 7-DoF Franka arms.
+Leader joint positions command the follower, whose external-joint-torque estimates
+provide force feedback to the operator. A wrist-mounted LinkTouch six-axis F/T sensor
+records wrench at 150 Hz. We remove sensor bias and calibrated tool gravity, transform
+the wrench to the TCP frame with moment about the TCP origin, and apply a causal
+second-order Butterworth low-pass filter with a 10-Hz cutoff. The resulting wrench
+represents external contact and grasped-payload loads. Two RealSense D405 cameras and
+one D455 provide three RGB views. Motion commands, robot state, and images are recorded
+at 15 Hz and aligned with the wrench stream by timestamps.
+Training uses eight NVIDIA H20 GPUs and AdamW with a global
+batch size of 8, a peak learning rate of 10^{-5} , and weight
+decay of 10^{-5} . We use 5% linear warmup followed by cosine decay.
+ V-B Model variants
+ WAM has no wrench input or output. WAM + Wrench encodes pooled
+wrench history and predicts concatenated 16-D action–wrench vectors.
+It uses the current robot state without explicit past motion-command tokens.
+ CW-WAM w/o LTM introduces the interaction module: explicit paired command
+and wrench history, separate future streams, and PC attention.
+Its recent history pairs 24 motion commands with wrench intervals over 1.6 s.
+Full CW-WAM adds LTM.
+ CW-WAM w/o LTM and PC replaces only PC with bidirectional
+attention, isolating attention structure within the no-LTM module.
+All variants share training data, backbone initialization, and a 50k-step
+schedule with task-balanced sampling. WAM omits wrench loss.
+WAM + Wrench uses either padded-width normalization, dividing masked
+squared-error sums by 32, or CW-WAM’s valid-channel normalization
+(Sec.  III-C ), with architecture and other settings unchanged.
+The latter tests the interaction module under the same loss normalization.
+PC and LTM ablations retain the CW-WAM objective: PC is tested without
+LTM, and LTM with PC retained.
+ Fig. 4: Task outcomes and execution quality. Top: insertion or marker-removal
+success out of 20 trials; hatched bars show successful release. Quality rows
+compare all 20 trials (light, hatched) with successful subsets
+(dark bars); these groups coincide for wiping. A dash indicates no wrench prediction.
+ V-C Contact-phase prediction and ablations
+ TABLE II: Open-loop prediction across four tasks.
+Padded and valid denote padded-width and valid-channel loss normalization.
+Bold: lowest error; –: no wrench output
+ Model
+ e_{p}
+ [mm]
+ e_{R}
+ [ ∘ ]
+ e_{F}
+ [N]
+ e_{I}
+ [N s]
+ WAM
+ 26.97
+ 2.85
+ –
+ –
+ WAM + Wrench (padded)
+ 26.32
+ 2.76
+ 3.15
+ 2.33
+ WAM + Wrench (valid)
+ 25.50
+ 2.80
+ 3.03
+ 2.21
+ CW-WAM w/o LTM and PC
+ 22.88
+ 2.25
+ 2.92
+ 2.11
+ CW-WAM w/o LTM
+ 19.92
+ 2.02
+ 2.84
+ 2.17
+ CW-WAM
+ 20.69
+ 2.07
+ 2.79
+ 2.01
+Table  II evaluates 50k-step checkpoints on 373
+24-step windows from 22 test episodes, using four denoising steps and seed 42.
+Windows use stride 24 plus a final tail window. Contact means
+ \|F\|_{2}\geq 5 N; dynamic windows contain contact and satisfy
+ \max_{i,j}\|F_{i}-F_{j}\|_{2}\geq 2 N. We average windows within episodes,
+then episodes within tasks, weighting tasks equally.
+Contact-position error e_{p} is the mean Euclidean distance,
+and contact-orientation error e_{R} is the mean SO(3) geodesic angle between
+predicted and recorded motion targets at contact samples.
+Dynamic force-vector RMSE e_{F} measures
+ \sqrt{\operatorname{mean}_{i}\|\hat{F}_{i}-F_{i}^{\mathrm{meas}}\|_{2}^{2}}
+at recorded timestamps, without temporal shifting.
+All models use the same 20-step interior of each selected window,
+retaining approach, loading, and release samples.
+Force-magnitude integral error e_{I} is the absolute difference
+between the trapezoidal integrals of predicted and measured force
+magnitudes over all 24 steps, complementing pointwise RMSE with
+cumulative force-magnitude agreement.
+Valid-channel normalization lowers WAM + Wrench errors from 26.32 to
+25.50 mm and from 3.15 to 3.03 N.
+Under the same normalization,
+CW-WAM without LTM achieves 19.92 mm and 2.84 N: paired reductions
+of 5.58 mm (95% CI [3.65, 7.84]) and 0.19 N (95% CI [0.04, 0.33]).
+Orientation error also decreases
+from 2.80 ∘ to 2.02 ∘ , and dynamic torque-vector RMSE from 0.0908 to 0.0837 N m.
+These gains support structured interaction modeling beyond loss normalization.
+CIs use 10,000 paired episode bootstrap resamples, stratified
+by task, with trained models held fixed.
+PC reduces no-LTM contact-position and orientation errors
+by 2.96 mm (95% CI [2.05, 3.89]) and
+0.23 ∘ (95% CI [0.12, 0.35]), respectively. Full CW-WAM achieves the lowest dynamic
+force-vector RMSE (2.79 N) and force-magnitude integral error (2.01 N s).
+The no-LTM variant retains slightly lower position and orientation errors.
+Real-robot tests evaluate how these gains translate into interaction
+and task completion.
+ V-D Real-robot evaluation and metrics
+Real-robot tests evaluate WAM, WAM + Wrench (padded), CW-WAM w/o LTM,
+and CW-WAM, then add admittance to full CW-WAM.
+Loss normalization and PC are compared in open-loop tests; real-robot
+tests focus on the interaction module, LTM, and admittance feedback.
+All tests use 50k-step checkpoints. Before each trial, we reset the arm and
+gripper and randomly place objects near their demonstration locations,
+within the demonstration distribution.
+For peg insertion and wiping, we compare force accuracy and variation
+under demonstration-median and CW-WAM-predicted force references.
+The demonstration reference is the componentwise median of phase-aligned
+training force profiles.
+An operator verifies outcomes from video using the task criteria.
+Each method uses 20 trials per contact task and 10 per load
+(Sec.  V-F ). Fig.  4 reports
+success rates and quality metrics for all 20 trials and successful
+subsets, which coincide for wiping.
+Across real-robot analyses, continuous-valued metrics are
+summarized by medians and interquartile ranges (IQRs).
+Aggregate curves show pointwise medians with shaded IQR bands.
+Position-tracking RMSE compares commanded and measured TCP positions;
+force-reference RMSE is \sqrt{\operatorname{mean}\|F^{\mathrm{ref}}-F^{\mathrm{meas}}\|_{2}^{2}} ,
+where F^{\mathrm{ref}} is the selected force reference.
+Predicted–demonstration RMSE compares predicted force magnitudes with the
+phase-aligned demonstration median (Fig.  4 ).
+Force and torque variations are the duration-weighted means
+of local standard deviations of their respective magnitudes,
+using centered 5-s windows over contact periods.
+Fig.  5 compares measured and demonstration
+force magnitudes over contact phases identified from video and force,
+with low-force intervals compressed.
+Fig.  6 shows phase-aligned lifting heights.
+For the feedback comparison (Fig.  7 ), contact intervals
+are detected from measured force, with gripper state and robot motion
+used to exclude pickup and free motion.
+ V-E Task completion and contact behavior
+The interaction module improves insertion and release (Fig.  4 ). Relative
+to WAM + Wrench, CW-WAM w/o LTM raises adapter insertion from 9/20 to 16/20 and release from
+0/20 to 13/20. Peg release improves from 1/20 to 6/20, with insertion at 7/20 versus 8/20.
+ Fig. 5: Contact-force curves across tasks. Colored curves show measured
+force magnitudes across successful trials. Thick blue and green curves show CW-WAM
+without and with admittance, respectively. The black curve and gray band show the
+demonstration reference. Curves are aligned by contact phase, with low-force
+intervals compressed.
+Adapter unloading includes only trials with successful release.
+Longer wrench memory improves both insertion tasks: peg insertion rises from 7/20 to 14/20 and
+release from 6/20 to 11/20; adapter insertion rises from 16/20 to 19/20 and release from 13/20
+to 16/20. It also lowers force-reference error in adapter insertion and wiping, demonstrating
+the task value of longer interaction context (Fig.  4 ).
+In successful peg trials, CW-WAM reduces position-tracking RMSE from 12.5 to 2.8 mm and
+force-reference RMSE from 15.2 to 4.8 N relative to WAM + Wrench (Fig.  4 ).
+Force profiles also show less variation during search and seating
+(Fig.  5 (b)).
+For adapter insertion, CW-WAM improves completion and reduces position-tracking RMSE from 25.3 to 8.8 mm.
+Its higher force-reference RMSE and contact-force variation relative to WAM + Wrench (Figs.  4 and 5 (c))
+are consistent with the observation that most successful WAM + Wrench trials rely on precise, one-shot alignment without
+adjustment, followed by full insertion. In contrast, CW-WAM’s learned search and firm insertion
+behavior improves insertion success while producing higher contact forces.
+In the whiteboard-wiping task, all methods remove the ink in 20/20 trials with simple patterns. For more complicated
+patterns, such as circles and letters, the average removal rate is 85.9% across the six selected trace patterns.
+For contact-force quality, force-reference RMSE and contact-force variation both decrease from WAM + Wrench to CW-WAM with admittance,
+showing more accurate force tracking and smoother contact (Figs.  4 and 5 (a)).
+ V-F Load-dependent lifting
+CW-WAM reproduces load-dependent lifting heights more accurately than the other models,
+even when the boxes look identical.
+Its median peak heights are 423.6 and 481.8 mm for light and
+heavy loads, respectively,
+close to the demonstration medians of 420.9 and 492.7 mm (Fig.  6 ). CW-WAM w/o LTM shows similar lifting behavior
+(not plotted). WAM reaches 464.4 and 447.3 mm, showing no higher
+lift for heavier loads. WAM + Wrench gives an intermediate response at 431.3 and
+467.9 mm: its absolute differences from the demonstration medians are 10.4 and
+24.8 mm, compared with 2.7 and 10.9 mm for CW-WAM.
+ Fig. 6: Load-dependent lifting under light and heavy payloads.
+Curves show representative end-effector height trajectories.
+Dashed lines indicate approximate heights needed
+to clear the bin rim.
+The lower panels show
+peak heights from all ten trials per method and load.
+Diamonds mark the trials shown in the trajectories. Gray lines and bands show
+demonstration references.
+ V-G Predicted-wrench feedback
+Admittance further reduces force-reference RMSE and measured-force
+variation compared with CW-WAM alone (Fig.  4 ).
+Peg RMSE decreases from 4.8 to 2.7 N and wiping RMSE from 2.0 to
+1.3 N, while insertion and wiping success rates remain unchanged.
+Fig.  7 compares no wrench tracking,
+demonstration-median wrench tracking, and predicted-wrench tracking.
+For the representative trials in Fig.  7 ,
+force-reference RMSEs are 3.88 and 2.41 N without feedback
+(a, b), and 2.69 and 1.20 N with predicted-wrench tracking (e, f).
+Predicted-wrench tracking also yields the lowest median contact-force
+variation, which decreases from 1.86 to 1.39 to 0.94 N for peg
+insertion and from 1.11 to 0.92 to 0.85 N for wiping. The larger
+reduction in peg insertion, where contact changes during search
+and seating, highlights the value of predicted wrench references
+for smoother contact.
+Torque errors and variations are generally small across tasks.
+ Fig. 7: Force and torque tracking for peg insertion (left) and
+whiteboard wiping (right). (a–f) Measured and reference magnitudes,
+with three-axis force RMSE labels. Each example is selected from the trial whose
+force variation is closest to the group median. (g,h) Force variation (solid bars, left axis) and
+torque variation (hatched bars, right axis). Aggregate bars summarize 10 trials per condition.
+ VI Conclusion and Discussion
+In this work, we presented CW-WAM, a world action model that jointly
+predicts video, motion, and contact wrench. The interaction module
+combines paired action–wrench history, separate prediction streams,
+and longer wrench memory. Across four real-robot tasks, CW-WAM
+improves insertion and release success rates and adapts the lifting
+height to different loads. Compared with the WAM baseline without
+wrench input, the peg insertion success rate increases from 25%
+to 70%, and the adapter insertion success rate increases from
+40% to 95%.
+The slow–fast execution system uses predicted wrenches as references
+for admittance feedback control between model queries. During
+successful execution, this feedback mechanism reduces force-reference RMSE
+from 4.8 N to 2.7 N for peg insertion and from 2.0 N to 1.3 N for
+wiping, while also reducing contact-force variation.
+Our evaluation covers four tasks within the demonstration
+distribution, using manually tuned feedback gains and predefined
+compliant directions. Future work will examine how controller
+settings affect performance and explore learning additional contact
+parameters such as the feedback-weighting matrix and contact frame,
+alongside motion and wrench prediction for end-to-end
+closed-loop control. We will also evaluate generalization to new
+objects and tasks.
+Acknowledgments
+Under the authors’ guidance, OpenAI Codex assisted with polishing
+the Abstract and Sections I–VI, code development, and plotting scripts
+supporting Figs. 1, 4–7.

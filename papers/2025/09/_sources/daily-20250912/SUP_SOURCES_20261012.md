@@ -1,6 +1,6 @@
 # Sep12本轮有界来源与停止
 
-作者Meitner，实际2026-10-12执行；补Sep11完整BJT自然日。独立重读AGENTS/三合同/Prompt/Daily Sources/arXiv主题/ROADMAP/本日README及三旧停点。原有效层见[baseline](SUP_BASELINE_README_20261012.md)，只作为本日去重/有效细节复用，不拿旧完成标签替新增验收。不扫Weekly/别日/2026研究；当前2026目录只界定历史能否恢复，不进入材料队列。Raw/request真实状态不等于语义读完或历史无遗漏。
+作者Meitner，实际2026-10-12执行；补Sep11完整BJT自然日。下表与末段是原执行时点，2026-10-20/21由Carson继任续跑的实际发现/日期与普通差额见文末及当前README，不沿原“普通0/日期全Unknown”。独立重读AGENTS/三合同/Prompt/Daily Sources/arXiv主题/ROADMAP/本日README及三旧停点。原有效层见[baseline](SUP_BASELINE_README_20261012.md)，只作为本日去重/有效细节复用，不拿旧完成标签替新增验收。不扫Weekly/别日/2026研究；当前2026目录只界定历史能否恢复，不进入材料队列。Raw/request真实状态不等于语义读完或历史无遗漏。
 
 | 来源 | 本轮实际读取/有限停止 | 结果与边界 |
 | --- | --- | --- |
@@ -24,3 +24,11 @@
 Qwen官方正文tokenLinks是单篇必要证据；arXiv exact/current/core是实际准入歧义与安全反侧触发，不扫全仓/全部dataset附件。原PLAS代码/HF有效反证本日冻复用，不将其旧trigger取消，也不追普通PR。没有Weekly/会议全站常规扫描。
 
 本轮研究普通扫描/筛选/必要core/准备单篇Evidence/具体Books待办0；仍需作者六部分整合/校验和Cicero实际DAY/FINAL，不自授完成。外部保留：新16及原84 public-date未证明；Hunyuan2025、ZAIResearch2025、MiMo datedblog、MiniMax历史/Agent目录。每项不授正面Evidence/Books/0事件/无遗漏，原件替代到达仅定点重开。Seed本轮可读有限切片不是全历史完备，保留实际pagination/pin限制而非称API失败。旧Vault Sep12只冻结原层hold，补窗Sep11不拟采用，不再以未知时分秒建立新hold。
+
+## 2026-10-20/21 Carson接续差额
+
+本日有效旧机构层复用；Google原错误papers过滤已由Zeno14实际JS恢复category=2025与四主题LM37/agent37/inference11/multimodal14，3/3及单页有限停止，99未去重出现不是当窗候选或全部历史。ArXiv原100日期潜力经原字段联合界为14本窗/84晚窗/2cross，不能沿上段全未知或普通0。新增registered十次有界发现/alias有220出现120唯一导航、107同Sep11/13cross条件日门，76相关完整AB经十N必要决定域校准为45P/31C；另28明确title退出与13原P/3原C复用，所有有限查询/分页/正控和原字段在[作者续记](SUP_SCREEN_20261012.md)及[Zeno10–11/14/18–29/48](SUP_INDEPENDENT_20261011.md)。不catchup，不扫Weekly，不把120转全文队列。
+
+原两cross08867/18122与新08000/08008/08016/08022已33/58有限恢复后隔离；08184/08222旧事件已69/58去重，不重旧Source。其余按实际就绪逐项必要Source/Books推进，后到采用与写入/POST、六节归并/独核仍普通，见当前README§5，不以P数或成功GET预签。四机构历史缺段/具名早稿与中心争议继续限定保留，84晚窗只分arxiv-v1责任；不授全球首次、无遗漏、零发布或全部Coverage/Evidence通过。
+
+截至2026-10-21本日实际完成态：54家族逐项必要Source/正式采用已通过，19指定窄段均真实nonwriter POST生效释放，普通扫描/筛选/必要Source/书稿待写/待POST0；Zeno132已实际完整六节DAY通过，Carson已保存12:33:41完成态，Zeno133完成态差额FINAL已实际通过。上段“仍普通”仅为此前接续时点，不覆盖本段；四机构/六cross/具名早稿与18中心争议保留限制不变，均不用于正面Coverage/Evidence或无遗漏声明。

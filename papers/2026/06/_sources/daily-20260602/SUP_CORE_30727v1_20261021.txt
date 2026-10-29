@@ -1,0 +1,171 @@
+SOURCE 30727 S3->S8
+3 Defining Privacy Leakage
+Previous work has defined ‘privacy’ in a variety of ways, but often focuses on sharing personal information or attributes like gender (Shao et al., 2024). We instead focus on enterprise understandings of privacy, where documents contain information about the business that should not be shared with the outside world.
+To this end, we create a Private QA Set: a list of question-answer pairs each representing a piece of private information the company would not want leaked. This set is generated from the internal company documents of each of the 100 unique DRBench tasks, giving us a unique set of private information for each task. We generate this Private QA Set with StepFun-3.5-Flash. Examples are in Table 2, and prompts are in Appendix D.
+As shown in Figure 1, we position an adversary to have access to just the accumulated web-queries of the agent. We focus on three kinds of privacy leakage, in increasing levels of concern:
+•
+Intent Leakage - can the adversary predict the questions the agent is researching? This is the weakest form of leakage, but may be important to keep private for business-critical questions.
+•
+Answer Leakage - can the adversary answer private questions about the enterprise documents when prompted with the question? This implies private information has been leaked, but slightly overestimates leakage as the questions guide the adversary toward relevant connections it may not have identified independently.
+•
+Full Information Leakage - can the adversary produce true factual claims about the enterprise documents without being prompted with questions? This is the strongest form of leakage, as the adversary must independently identify what private information was exposed and articulate it as concrete assertions.
+An example of each is presented in Figure 1. During evaluation we measure privacy leakage for each of these categories using the StepFun-3.5-Flash model as both an adversary and as a judge.
+For Intent Leakage the adversary sees the web queries and predicts a list of research questions, the judge sees the true multi-hop question and the predicted question list and gives a score. The adversary is allowed to predict 2×# hops2\times\text{\# hops} questions.
+For Answer Leakage the adversary
+sees the web queries and each question from the Private QA Set for the retrieved documents, and tries to predict the answer to each question. The judge sees the questions and predicted answers, and judges the answers for accuracy. For Full-Information Leakage the adversary sees the web queries and predicts declarative statements about the company and internal documents. The adversary is allowed to predict 2×# hops2\times\text{\# hops} claims. The judge sees the statements and the Private QA Set, and marks if any of the statements are verifiably correct based on the private information. Using the QA set avoids counting leakage for generic non-private information.
+Prompts for evaluation are available in Appendix D.
+4 MosaicLeaks
+Question
+Answer
+What was Lee’s Market’s 2020 traffic growth?
+15%
+What was the number of new job applications received by Lee’s Market in Q2 2025?
+500
+What was the training expenses amount for MediConn Solutions in Q3 2024?
+$300,000
+What percentage of Elexion Automotive’s production timeline was committed to ACC II regulations from Q2 2024 to Q2 2026?
+40%
+Table 2: Sample private question-answer pairs in our Private QA Set. Answer Leakage and Full Information Leakage evaluations are based on these questions. The prompt used to generate these pairs from documents is in Appendix D.
+4.1 Task Design
+Our goal is to create tasks with a high likelihood of inducing privacy leakage from enterprise documents, but that can be solved without leaking.
+We build on the DRBench (Abaskohi et al., 2026) dataset for our local enterprise documents. We find this dataset useful due to its high document-quality and diversity: it contains 100 unique tasks, and many document types like excel, emails, reports, etc. However, we found that existing DRBench tasks have little external-local information dependencies because the web and local parts of the tasks can be solved entirely in parallel. This artificially decreases the risk of privacy leakage, which would be more likely in situations where external calls are based on local information.
+For example, the question: ‘How can Lee’s Market leverage FSMA 204 regulations to enhance food safety and customer trust?’ does not require models to use local information to inform web queries.
+We instead take inspiration from the WebShaper (Tao et al., 2026) area of research and construct our task as a multi-hop conversation where sub-questions about local (enterprise) and external (web) documents are interleaved. Each datapoint contains multiple sub-questions, and each sub-question relies on at least one of the previous to fill in an entity critical to answering the question.
+In order to answer each sub-question, agents must search for relevant documents, identify the useful ones, read them to extract useful information, and synthesize results into a final answer. Each of these steps represents an LLM call/tool in our agentic framework, and this loop can be repeated to attempt answering each sub-question multiple times. The answer to the sub-question is then used as part of the next question, creating a dependency link.
+See Figure 1 for an example. Queries 1 and 2 are based on a question about a local document, but (3) is attempting to find an external document. Even though searching the web with these queries individually wouldn’t cause leakage, the combination may be understandable by an adversary and leak the 2020 traffic growth at Lee’s Market.
+4.2 Collecting Multi-Hop Questions
+Our approach is inspired by prior work of InfoSeek (Lee et al., 2025) and WebShaper Tao et al. (2026), which build a graph structure over entities to create complex deep research questions that require multiple hops.
+We place local information as nodes on this graph, requiring models to retrieve local information in order to determine the next web query. We hypothesize that such questions will induce greater leakage, as research agents are incentivized to include private information in their web queries.
+We use DRBench (Abaskohi et al., 2026) tasks’ company documents as the ‘local’ sources of information, and combine the web-urls with BrowseComp-Plus (Chen et al., 2025) as the ‘external’ sources of information. We use BrowseComp-Plus to ensure consistency between the documents retrieved during dataset creation and at test-time, and lower the cost of training.
+MosaicLeaks Data Generation Pipeline
+A datapoint in MosaicLeaks is constructed given a company CC, local documents DlD_{l}, web documents DwD_{w}, a dataset of secret (i.e. private) question-answer pairs SS, and a pattern PP over {L,W}\{L,W\} (e.g. L​W​LLW\!L), where LL and WW stand for local and web, respectively. The pattern specifies the source and order of the documents, and length of the document chain. For example, the pattern L​W​LLW\!L starts with a local document, bridges to a web document, and then bridges back to a local document.
+The generation process has three high-level steps that are repeated until we achieve the desired pattern: bridge-finding, question-generation, and validation. Each iteration in the middle of the chain connects the answer of the previous question to a new document via a bridge entity.
+For example, if the previous question was ‘What was Lee’s Market’s 2020 traffic growth?’ and the answer entity was ‘15%’, we look for a new related document that contains 15%. We then find another entity in the new document closeby to the reference to 15%, and create a new question that requires knowing the previous ‘15%’ to answer. For example, ‘What year was Instagram’s content share 15%?’.
+Validation ensures the question is answerable given the document, the previous entity is a critical part of the question, and other quality checks.
+See Algorithm 1 for an overview of the chain generation process, and Appendix A for details.
+Finally, we perform model-assisted human validation on our chains: given the true document, we test whether Qwen3-4B-Instruct can answer each question and adjust the questions for answerability and accuracy.
+We also test retrievability of questions to ensure that a reasonable research agent would be able to find the correct document.
+Our final MosaicLeaks dataset consists of 1001 chains composed of 3,403 hops, further statistics are in Table 3.
+4.3 MosaicLeaks Multi-Hop QA Agent
+We adapted the original DRBench agent to our chain tasks to replace its default report-writing style with a structured question-answering format: the agent produces a short (1–5 word) answer and justification for each sub-question. This allows us to evaluate each hop individually via normalized substring matching.
+The simplified agent harness has 4 steps per iteration, and is allowed 2 ×\times # Hops iterations to attempt to solve the question:
+•
+Plan: The model plans the next round of local and web queries, returning a tool call list which is then executed and returns a list of documents with titles and snippets to indicate their contents
+•
+Choose: The model sees the document list and chooses n=5n=5 documents to read in parallel
+•
+Read: The model attempts to answer the current question given each document, and returns a potential answer, justification, and confidence score. This is performed in parallel for efficiency
+•
+Resolve: The model decides either to return one of the found answers, or if it needs to Read other already retrieved documents or Plan to make another search. If the model returns an answer, we either move to the next sub-question automatically or end the rollout if there are no more sub-questions
+Prompts for each part of the harness are available in Appendix D, and an example rollout is shown in Figure 5.
+5 Privacy Aware Reinforcement Learning for Deep Research
+Many recent papers have shown success applying reinforcement learning policy gradient algorithms to improve LLM performance at verifiable tasks, a method defined by Lambert et al. (2025) as Reinforcement Learning via Verifiable Rewards (RLVR). We take this approach to training Qwen3-4B-Instruct based on recent work like Search-R1 (Jin et al., 2025), but introduce situational rewards to ensure more efficient training and dense credit assignment.
+As our goal is a task-performant and privacy aware agent, we design rewards for both objectives.
+5.1 Rewarding Task-Performance Situationally
+Due to the extremely long nature of our trajectories (often containing over 30 LLM-calls each), we find it essential to provide dense credit assignment to guide performance.
+Figure 2: Visual example of how standard outcome-based group-advantage estimation differs from our situational RL training and our Privacy Aware Deep-Research (PA-DR) training. Note that we still do not need to train a value model or align llm step-indices, relying only on verifiable situation-based rewards to provide deeper credit assignment. For example, we filter (F) out Choose stages where the gold document was not present in the context, as the intended behaviour of selecting it is not possible.
+Although we initially experimented with purely outcome-based rewards we found unstable training progress. We hypothesize this was caused by advantages being evenly given to each token, even those that did not contribute to finding the correct solution. Instead, we define narrow, situational, rewards for each stage and compute advantages within LLM-calls of the same hop+situation combination. Situations are designed to provide a clearer signal to the model, defining intended behaviour based on the input at the given stage. For example, if the input makes the desired behaviour impossible downweighting this response is not meaningful and adds noise to the training process.
+Planning stages are rewarded for a) searching the correct document source for the current hop’s question and b) retrieving the document that contains the answer. In the situation where the document was already retrieved from a previous planning stage, the reward instead receives maximum reward for not searching at all.
+For the Choose stage, agents are rewarded for selecting the gold document when it is presented in the retrieved documents. We filter out all situations where the gold document is not visible, as the training signal would be poorly defined.
+In this work we focus on training only the Plan and Choose stages of our harness, which respectively choose which search queries to make and which documents to read. This leaves document reading and answer selection untrained; future work could investigate training these stages as well but we found destabilizing effects. Reward formulas are presented in Appendix B, and more analysis comparing outcome-based rewards and situational rewards is presented in Appendix C.
+5.2 Rewarding Privacy-Preservation
+Accurate privacy evaluation is very expensive: it isn’t feasible during training to compare every web query against all local documents, or to use a large model like StepFun-3.5-Flash. We would rather use a lightweight reward model that can give us a ‘leakage’ score given only the web-queries, but initial experiments show poor prompting-only performance (Table 6).
+To this end, we collect a dataset of privacy leakage judgments using StepFun-3.5-Flash as an adversary and privacy judge. For simplicity we convert these judgments to a binary score (0 for leaking and 1 for not-leaking) based on whether either Answer Leakage or Full Information Leakage was found. This covers the most severe form of leakage, where the adversary is able to predict information about the local documents given the web-queries.
+We construct these scores on a per-planning-step basis; each Plan step appends a chunk of web-queries to a list, and we evaluate the list at each step for privacy leakage. After collecting a large dataset of 24,522 agent attempts from six models, we randomly sample a small set of subsets of the web-query lists to evaluate for privacy leakage. This will allows us to better evaluate partial agent trajectories for leakage, giving us a more robust training signal.
+We train Qwen3-4B-Instruct on the final dataset of 26,734 datapoints, predicting a binary label given a list of web queries and the Private QA Set for the local documents the agent retrieved prior to making the web queries. More details and results are in Appendix B and Table 6. Our Privacy Leakage reward is then the maximum of two terms, based on the classifier’s predicted likelihood of leakage given a batch of web-queries, P⁡(wi)P(w_{i}).
+Direct Leakage measures how much leaking the current web-batch is, P⁡(wi)P(w_{i}). Mosaic Leakage measures how much the current web-batch contributes to the overall leakage of this and the previous hop. We calculate costs cdirectc_{\text{direct}} and cm​o​s​a​i​cc_{mosaic} respectively, and define our reward:
+rprivacy=−max⁡(cdirect,cmosaic)r_{\text{privacy}}=-\max(c_{\text{direct}},c_{\text{mosaic}})
+This privacy reward is added to the Plan stage’s situational rewards. More details are presented in Appendix B. A visual representation of how our situational reward and PA-DR training differ from standard outcome-based training is shown in Figure 2.
+6 Evaluation Results
+Using StepFun-3.5-Flash as the adversary and judge, we evaluate six open source models on our MosaicLeaks task as the research agent: Qwen3-4B-Instruct, Qwen3-8B, StepFun-3.5-Flash, GPT-OSS-20B, Chroma Context-1, and Gemma4-31B-IT.
+We evaluate model performance on MosaicLeaks tasks in two ways: Hop-Level Accuracy (what proportion of sub-questions did the model get correct? # correct hops# hops\frac{\text{\# correct hops}}{\text{\# hops}}) and Strict Chain Success (did the model solve the entire task? 𝕀[# correct hops == # hops]\mathbb{I}[\text{\# correct hops == \# hops]}).
+We evaluate privacy leakage on the three axes previously defined: Intent Leakage, Answer Leakage, and Full Information Leakage. For the purposes of having a single metric to represent privacy leakage like in Figure 3, we define a rollout as having Privacy Leakage if it exhibits either Answer Leakage or Full Information Leakage. We provide more detailed tables in Appendix C.
+Naive Prompting Techniques Do Not Fix Privacy Leakage.
+Figure 3: Strict Chain Success (top) and Privacy Leakage (bottom), with and without a prompt discouraging web-queries that may leak local information. We find that the prompt does decrease leakage slightly, but significant leakage remains across models.
+Prior work has argued for prompting-based methods to reduce privacy leakage
+(Shao et al., 2024; Zharmagambetov et al., 2026; Roh et al., 2026; Patil et al., 2025; Qiao et al., 2025). We test a privacy-leakage-aware prompt (Figure 13) in the Plan stages of the agent harness that describes the potential leakage, and evaluate its effect on performance, leakage, and model behaviour. Our results show the privacy aware prompt has inconsistent effects on performance, but only slightly reduces privacy leakage. On Qwen3-4B-Instruct for example, Answer Leakage or Full Information Leakage still occur in 25.5% of samples. The primary effect of the prompt seems to be a decrease in web-query usage, not a change in text of the web-queries themselves. Figure 3 shows the prompt’s effect across models, more analysis is in Appendix C.
+Training for Task Performance Worsens Leakage.
+We train Qwen3-4B-Instruct (see Figure 4), initial results show training for performance also worsens privacy leakage. Our situational reward approach increases strict chain success to 59.3% (from 48.7%), nearly the best of all models tested, but also increases privacy leakage to 51.7% (from 34.0%), the highest found. Figure 10 shows this task-performance trained model outputs more web queries and local searches on average, indicating that some of the improvement in performance came from outputing more queries. This has the side-effect of providing more queries and more information to the adversary, worsening leakage.
+Privacy Aware RL Pushes Pareto Frontier.
+Figure 4: Effect of MosaicLeaks RL training on chain success (all hops correct) and privacy leakage (either Answer Leakage or Full Information Leakage). We train two models, one only rewarding Task performance, and one with our Privacy-Aware Deep-Research (PA-DR) method that rewards both task success and privacy preservation. Both are trained with the baseline prompt, but we evaluate with both the baseline prompt and the privacy prompt, marked with ‘+ prompt’. In both settings we find that the trained models are more accurate than the base model, but our PA-DR model reduces privacy leakage and performs best.
+We show that training models with our joint performance and privacy objective learns a more optimal policy for MosaicLeaks, maintaining high performance while significantly decreasing leakage. We train Qwen3-4B-Instruct using PA-DR and achieve 58.7%58.7\% chain accuracy, with only 9.9%9.9\% Answer or Full-Information Leakage. Using the privacy aware prompt has an additional positive effect, increasing accuracy to 59.3%59.3\% and further decreasing privacy leakage to 7.6%7.6\%. More details are in Table 8.
+What does PA-DR actual teach the model?
+Figure 10 shows the effect of training on query behaviour. In contrast to the prompting-only approach that appears to reduce leakage by simply making fewer queries, we find that our PA-DR model actually makes even more web-queries than the base model. This indicates that the text of the web-queries themselves are leaking less information than before.
+Table 10shows example web-queries made by Qwen3-4B-Instruct, our task-performance trained model, and our PA-DR model. We see evidence that the privacy- ware web-queries retain much of their original specificity but reduce references to 1) specific metrics from answers (e.g. 2024, 15%) and 2) answer type from questions (e.g. report year). This allows the model to retrieve similar documents as before, while making it much harder for the adversary to semantically link different web-queries together.
+7 Conclusion
+We introduce MosaicLeaks to address the lack of existing resources to study mosaic privacy leakage of enterprise information in deep research settings. We construct a multi-hop deep research dataset with strong inter-document dependencies across local and web documents, and analyse the privacy leakage of a variety of different models. As part of our analysis we show that the commonly proposed prompting-based intervention has limited effect and that training an agent exclusively for task-performance worsens privacy leakage. We instead propose a Privacy-Aware Deep-Research (PA-DR) paradigm of RL training, where a reward model is used to provide dense credit assignment on leaking decisions. We show that this training method produces a significantly more privacy aware model, while not sacrificing task performance.
+SOURCE 30727 S8->bib
+8 Limitations
+Although we design the creation pipeline of MosaicLeaks with automatic generation in mind, we find significant human effort to still be required to ensure high-quality datapoints. As a result, we are limited in the size of the dataset we are able to create. Similarly, by only testing on the three unique company contexts provided by DRBench, we are restricted in the domains of questions we evaluate and the kind of leakage we test.
+This dataset also does not test privacy leakage across multiple kinds of deep research task, focusing only on multi-hop question answering instead of long-form research reporting writing for example. We focus on this kind of question-answering task as it provides us with clearly verifiable answers and is feasible to incorporate into RL experiments, but the multi-hop questions themselves are unlikely to be asked directly by answer user. For that reason we frame MosaicLeaks as similar to an iterative conversation, where the user asks another related question having received the answer for the previous. We also only perform experiments with our agent harness, which may not reflect downstream users’ diverse ways of calling their research agents.
+SOURCE 30727 A2->A3
+Appendix B Training Details
+Figure 2shows how our situational reward setup and Privacy Aware-Deep Research differs from standard outcome-based training. Our method uses our knowledge of the ideal actions to take at each step to ensure more accurate and dense credit assignment, without requiring an additional value or process-reward model.
+Reward Definitions
+Reward function for Plan agent stages:
+rplan={1.25gold doc. not yet retrieved, andthis retrieves it1.00gold doc. already retrieved, andthis stops searching0.25searches correct source type, butthis does not retrieve gold−1unparseable output0otherwiser_{\mathrm{plan}}=\begin{cases}1.25&\text{gold doc. not yet retrieved, and}\\
+&\text{this retrieves it}\\
+1.00&\text{gold doc. already retrieved, and}\\
+&\text{this stops searching}\\
+0.25&\text{searches correct source type, but}\\
+&\text{this does not retrieve gold}\\
+-1&\text{unparseable output}\\
+0&\text{otherwise}\end{cases}
+Reward function for Choose agent stages (for the situation where the gold-document is visible; if the gold-document is not visible we do not train):
+rchoose={1.00gold doc. is visible, andthis selects it0gold doc. is visible, butthis selects another doc.−1unparseable outputr_{\mathrm{choose}}=\begin{cases}1.00&\text{gold doc. is visible, and}\\
+&\text{this selects it}\\
+0&\text{gold doc. is visible, but}\\
+&\text{this selects another doc.}\\
+-1&\text{unparseable output}\\
+\end{cases}
+Privacy Leakage Reward: For each Plan stage that outputs a batch of web-queries, our classifier estimates the probability that these web-queries leak privacy information, defined here as P⁡(wi)P(w_{i}).
+Our goal is to accurately estimate the privacy leakage cost, cc, associated with this web-query batch, both individually and in the context of the agent’s trajectory. Remember that a web-batch can contain multiple web-queries.
+To this end for a given batch wiw_{i} we estimate the following costs, subtracting a hyperparameter τ=0.5\tau=0.5 to threshold the leakage while still penalizing worse leakage more:
+Direct Leakage: How leaking is this web-batch wiw_{i} on its own?
+cdirect=max⁡(0,P⁡(wi)−τ)c_{\text{direct}}=\max(0,P(w_{i})-\tau)
+Mosaic Leakage: How much does this web-batch wiw_{i} contribute to the overall leakage so far? We introduce a ‘context’ window 𝒲i\mathcal{W}_{i}, including all previous web-batches from the previous hop and all from the current hop up to wiw_{i}.
+cmosaic=max⁡(0,P⁡(𝒲i)−max⁡(P⁡(𝒲i∖wi),τ))c_{\text{mosaic}}=\max(0,P(\mathcal{W}_{i})-\max(P(\mathcal{W}_{i}\setminus w_{i}),\tau))
+or alternatively:
+cmosaic=max⁡(0,min⁡(P⁡(𝒲i)−P⁡(𝒲i∖wi),P⁡(𝒲𝓉)−τ))c_{\text{mosaic}}=\max(0,\min(P(\mathcal{W}_{i})-P(\mathcal{W}_{i}\setminus w_{i}),P(\mathcal{W_{t}})-\tau))
+We combine these to create our final Privacy Leakage reward.
+rprivacy=−max⁡(cdirect,cmosaic)r_{\text{privacy}}=-\max(c_{\text{direct}},c_{\text{mosaic}})
+Reward Model: Binary Classifier
+Table 5contains summary statistics for the binary-reward classifier’s dataset. Of the total 26,734 examples, 24,522 were full-agent rollouts (containing all web queries) and 2,182 were partial web-query lists. On average datapoints contain 4.68 web-queries, 8.10 Private QA Set facts, and 2.01 local-hop facts.
+Split
+# Examples
+# Positive
+% Positive
+Train
+20,958
+5,957
+28.4%
+Val
+2,632
+826
+31.4%
+Test
+3,144
+910
+28.9%
+Total
+26,734
+7,693
+28.8%
+Table 5: Privacy reward model dataset. ‘Positive’ means StepFun-3.5-Flash judged the web-queries as either Answer Leakage or Full-Information Leakage.
+Figure 5: Example MosaicLeaks Agent rollout. Each row shows one hop in a dependent multi-hop chain, labeled by source document type, web (W) or local (L), and the accepted answer. The coloured blocks indicate the wall-clock duration of each stage: planning retrieval queries, executing retrieval, choosing documents, reading selected documents in parallel, and resolving whether to answer or continue. The timeline highlights that MosaicLeaks trajectories require repeated tool-mediated decisions across local and web sources, rather than a single retrieval step.
+Training Hyperparameters
+Reinforcement Learning: Our RL training uses Qwen/Qwen3-4B-Instruct-2507 with PipelineRL on our standard MosaicLeaks split, containing 559 train, 98 validation, and 344 test chains. The test-dataset consists of the tasks for a held-out company to reduce contamination and reward hacking to avoid specific company names. We use PipelineRL’s GSPO implementation with constant learning rate 1e-6, clipping epsilon_low=0.03 and epsilon_high=0.04, 16k sequence length, and 4096-token generation caps. The agent uses up to 5 parallel document reads, 10,000-character reader windows, and reciprocal-rank fusion (RRF) over BM25 and dense retrieval with Qwen3-Embedding-4B.
+Reward Model: We train Qwen3-4B-Instruct-2507 using LoRA and TRL’s SFT on the previously described binary prediction task. Each example contains visible web queries plus the private-fact context for the relevant task; the target is Yes when StepFun labels the example as answer leakage or full-information leakage, and No otherwise. We train for 2 epochs, learning rate 2e-4, cosine scheduler, 3% warmup, per-device batch size 4, gradient accumulation 8, max sequence length 5,120, positive-example upsampling factor of 4, LoRA rank 16, alpha 32, and dropout 0.05. On the held-out test split it reaches ROC AUC 0.878, precision 62.5%, recall 76.3%, and F1 68.7% at the default 0.5 threshold. Results are shown in Table 6.
+Model
+AUC (↑\uparrow)
+Prec. (↑\uparrow)
+Rec. (↑\uparrow)
+Qwen3-4B-Instruct
+0.541
+29.3%
+100.0%
+Trained
+0.878
+62.5%
+76.3%
+Table 6: Privacy reward-model classification ROC-AUC, Precision, and Recall on the test-set. The base model overpredicts the positive label, having very high recall but low precision. Our trained reward model increases the AUC and has a more balanced distribution. Metrics use a 0.5 threshold.

@@ -135,6 +135,9 @@ Gateway 日志与 trace 需要记录解析后的 immutable model/service revisio
 
 一旦流式输出已开始，透明 retry 通常无法保持同一 token trajectory。Agent tool call 更可能产生外部副作用，第 78～81 章还会扩展这一边界。
 
+若请求确实允许复用同一完整回答，Gateway 还可在固定空间里缓存 response，而不是复用 engine KV 或透明重做已交付请求。响应大小不同时，命中次数不足以表达价值：一个受限在线分支估计 query 频率与 miss 的期望生成费用，再按 byte 预算求推荐集合；但推荐的新回答尚未存在，实体 cache 只能保留已有交集，等真实 miss 取得结果后再填充，不能把离线最优集合当作已经物化的状态。[Cache Bandit 的有限模型](https://arxiv.org/html/2509.15515v1)假定有限 query、固定问答大小和稳定到达分布，hit 成本为零，miss 才观测费用，并以 miss 数或时间触发再求解；其累计 inference-cost 对照没有支付完整求解、存取和校验开销，不证明净服务 SLO 改善。从系统设计上，复用还应先满足 caller/data、model/adapter、生成与 policy 的响应身份资格，不能让较高缓存价值越过授权或内容时效。在线估计、推荐集合、真实填充和失效处理都付费；分布、回答资格或净收益不合时，回到固定/简单替换策略或直接调用，保留原幂等与独立质量检查，不从命中率批准语义等价。
+<!-- source-family:SF-2025-ARXIV-2509-15515 -->
+
 ### Response Trace Watermark 是受限序列化通道
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-21865:start -->
@@ -182,6 +185,12 @@ schema 过宽会把未知值误当作可比较事实。单 provider、单指标�
 
 [TRouter的有限冷启动对照](https://arxiv.org/html/2604.09377v1)只支持该经验预测接口，类型单标签不是真实posterior，task/model条件独立也须按人口检验。正文reverse-KL与one-hot CE方向、marginal-mean MSE与期望conditional likelihood未闭，不采用“实际训练已实现同ELBO/校准保证”；更细taxonomy也非处处更优。合成QA、全部候选回答/判分、训练与真实holdout回归全计费，造数报价不是总预算，LR五runs不能推广到主表。Domain、candidate价格/身份或质量代理漂移时，补真实calibration、退回静态/已核router或保留Unknown，不从synthetic低费推出通用路由收益、latency或安全。
 
+路由训练的标签也可能只是一次随机回答，而非该query/model的稳定能力。可在离线对保义改写和重复解码采样，分别估计质量、费用及整体波动，再按声明的risk权重形成回归/分类监督；线上仍只用原query选择一个合资格模型，不获得test-time oracle。[受限同router对照](https://arxiv.org/html/2606.06924v1)支持这种替换，但更多观测与risk项并非处处改善，改写的结构相同也不保证语义同一。全部改写、候选回答、评分与重训都计费，token-price效用不等延迟或尾部SLO；语义、候选版本、价格或收益失配时，保留单shot原始分布、已验固定route与独立回归，不把更稳label签成正确性或权限。<!-- source-family:SF-2026-ARXIV-2606-06924 -->
+
+路由训练还要说明费用在哪个人口进入目标，而不能只看reward里出现了cost：若目标写为success乘以“固定收益减费用”，期望优化的是成功率与成功样本内费用的组合，失败调用虽真实花钱，却不进入该费用项。[受限语言router分支](https://arxiv.org/html/2510.08439v1#S4)还允许自答、外调后合成或直接采用某返回，这些只是选择动作，engine仍负责实际调用、重试、资格与完整记账。两次失败不论费用都可同reward，成功过贵甚至可比失败更低，故权重不是硬预算，也不是正确性严格优先；必须另存失败/重试、router本身和外调/合成的全账，并以独立质量底线验收。候选描述、价格与pool变化属于训练输入和人口，不把路由模式变化认证为自知能力；扩池也可同时增质增费，部分任务弱于强单模型。全部制样/难度调用、训练rollout、catalog扰动与真实请求回归均付费。成功判据、费用或候选资格失配时，保已核固定route、较小合资格池与外层cap，不由高accuracy/cost比或success gate批准失败免费、全域净省费和生产SLO。
+
+<!-- source-family:SF-2025-ARXIV-2510-08439 -->
+
 Learned router 只能在**已满足硬资格**的候选中提供 utility 排序：Context 容量、tool/modality 支持、region、
 privacy、safety 与 data-residency 先形成 eligible set，预测质量、成本、延迟与 cache reuse 再参与选择；高 utility
 不能补偿不合资格。多轮分类还可把 request history 的 decoder KV 作为 session-owned persistent state，只将当前
@@ -194,6 +203,10 @@ posterior、hybrid、cascade、portfolio 与 planner-worker 都仍是未完成�
 problem-solving F1 只有 `.127`，端到端比较又使用预先筛出存在正 routing gain 的 1,000/1,500 tasks，缺少 CI、
 重复 seeds 与冻结 endpoint revision。因此这里只吸收状态归属与 hard-filter-first 边界，不把它写成生产路由收益、
 streaming latency 或 agentic routing 已成立。
+
+若请求目标只是有限标签分类，路由还可从一次选模型变成顺序购买测量：先由带标签请求和各候选的历史输出拟合标签及测量概率，再按当前已问结果比较“停止并预测”与“再付费问哪个候选”，用有限池动态规划提出下一步。最优仅相对所给概率模型、独立性口径和费用，不证明学到的 posterior 正确；跨请求共同犯错与同一请求下的采样依赖也不能混为一谈。Pool 扩大同时增加联合估计压力与指数求解成本，零查询仍支付 embedding、预测器和规划，不是零计算。受限分类对照的 token-price 费用及无限独立重复下的渐近律，都不能替代真实延迟、共错与分布漂移验收。应保标签/候选版本、观测 state、校准人口和全部离线调用费用；概率失准、候选不合硬资格或净收益不足时，保固定 route、较小可信池与独立最终判据，不由 DP 最优签发一般生成或动作安全。 [受限机制与证据](https://arxiv.org/html/2610.30076v1)。<!-- source-family:SF-2026-ARXIV-2610-30076 -->
+
+对一般生成候选，查询API常只取得output和cost，并未取得该候选的真实reward；只有被选部署的输出才有后续反馈。因此可把“还要付费问谁”的reservation index与“已有哪个输出更值”的reward evaluator分开学习，前者消费queried样本，后者只消费selected反馈，不能把未选候选补作已观察奖励。在独立请求、条件独立候选、同request–output共享效用及可识别参数模型下，乐观估计可据当前最好输出与剩余index决定继续或停止；理论还要求特征/阈值有足够支持，不由一个拟合分数自动满足。累计期望regret相对所给oracle，不授每请求正确或严格latency；每API每期一次也不覆盖多次采样、并行ensemble与合成。所有查询、探索、拟合和独立outcome计费，反馈迟缺、来源效应或支持漂移时保固定合资格cascade、原router与Unknown，不让learned utility越过硬资格和最终验收。 [受限原件](https://arxiv.org/html/2606.07392v1)。<!-- source-family:SF-2026-ARXIV-2606-07392 -->
 
 一个请求的 utility 还可能定义在有限输出集合，而不是单条回答上：先固定 generation budget、语义去重规则和质量 evaluator，再让 router 选择预期能产生更多高质量 unique answers 的候选模型。通过 suite 内的 offline sampling 得到每个 query 的集合分数及 route label，只提供该预算和 evaluator 下的训练目标；贪心去重的顺序、阈值和 judge revision 都会改变 label，不能把“多样”当真值、无限覆盖或绕过前述 hard eligibility 的理由。<!-- source-family:SF-2026-ARXIV-2604-02319 -->
 
@@ -257,6 +270,14 @@ Gateway 将外部流量转化为带身份、协议、配额和可观测上下文
 
 ## Review notes
 
+- `SF-2026-ARXIV-2606-07392` — supp_jun09，Daily2026-06-09补Jun08；[exact-v1](https://arxiv.org/html/2606.07392v1)必要核心/直接反侧及actual owner见本日SUPPLEMENT“后六必要/actual owner”，6分。root独立§40已实际核必要域、完整目标邻接与唯一稿并授此单段窄位；仅按该稿保存，保近文适用条件、代价和反证，不授未测因果/隐私/安全/线上保证，未核完整artifact或复现。root§42唯一非writer实际POST已通过，窄位释放；本注仅同步既成、不授DAY。
+
+- `SF-2026-ARXIV-2606-06924` — Daily2026-06-09补Jun08；[exact-v1](https://arxiv.org/html/2606.06924v1) §3.3/4/5.1–5.3及rewrite validity/单shot方差；只重复观测形成质量/费/整体risk监督，保同结构/100single-shot-v-1DARS、语义sanity非保证、局部反退和全采样费。2+2+2=6、具体gap深入，未核实现/复现；root SUP_REVIEW §16实际必要/actual owner/完整两侧与literal已核并授本单段+注，作者已真实保存并完整自读新增、直接完整两侧及自身H2注；root SUP_REVIEW §17唯一非writer实际POST已通过，指定窄位已释放，不预DAY。
+
+- `SF-2025-ARXIV-2509-15515` — Singer，Daily2025-09-23补Sep22；Cache Bandit exact-v1§3–7必要域，2+1+2=5。只异大小完整response推荐/实体填充分离与有限miss-feedback条件，非engine KV/语义近似命中；保稳定分布/固定问答、offline更强权限和求解/存取/校验未全计净SLO的限制。R8日门/5分、R10必要Source有效；caller/model/policy资格是系统推断，不称作者已实现。未核代码/复现；R22具体owner/原稿纯PRE通过，root本轮fresh窄授后原单段/独立marker及本人注已保存，Sartre R26 sole actual POST通过，指定窄位生效释放，不授DAY。
+
+- `SF-2026-ARXIV-2610-30076` — Daily2026-10-23，Oct22公开；SOURCE_MODEL5.md Q7必要exact-v1/actual owner及逐字PRE经独立oct23_live_org通过，沿原6分。root仅按准许窄位保存，保关键反侧/适用边界/全部费用和原有效正文；未核完整artifact或复现，独立oct23_live_org已完整核新增、直接两侧及本人注，实际写后通过，不授DAY。
+
 - `SF-2026-ARXIV-2604-02319` — Daily2026-04-04补Apr3；[diversity router exact-v1](https://arxiv.org/html/2604.02319v1)必要§2–6/C/D/E/F/G/H1，2+1+3=6。reader actualSource/Ch62逐字PRE/61–63交接通过，root授两body/本人注窄锁，作者实写顺读；只quality-weighted unique集合utility与offline label身份，保OOD/prompt/平均质量反退和prefill/judging/慢路径费用，不授truth/无限覆盖或净SLO。supp_apr04_reader实际正文/完整局部邻接/本人注nonwriterPOST通过，本人注同步后作者实际读回；未核代码/复现，不授DAY。
 
 - `SF-2025-OPENAI-AGE-POLICY`：[Building towards age prediction](https://openai.com/index/building-towards-age-prediction/) 与 [Teen safety, freedom, and privacy](https://openai.com/index/teen-safety-freedom-and-privacy/)，2025-09-16 官方计划。采用年龄推定与可信身份分离的政策约束及隐私/误判代价；预测算法、阈值、误差与部署成效未披露，不作安全保证。正文 policy 分离是明确的系统推断。
@@ -319,3 +340,5 @@ Gateway 将外部流量转化为带身份、协议、配额和可观测上下文
 - `SF-2026-ARXIV-2604-09377` — Apr14补Apr13，exact-v1§3–4及必要synthesis-cost/假设反侧，2+2+2=6具体cold-start支持域gap深入；仅taxonomy synth→allcandidate quality/cost标签与type-mixture预测分责，不采Eq6→7/9实际ELBO或trueposterior/校准。保4×2000/7:1:2、17880/15200 QA与不同judge协议、domain .5402优于difficulty .5274、LR五runs非全主表、造数14.34/10.03非总费及hardware/runtime/SLO ND。reader必要Source有效，有限date/light与reader finalPRE实际通过；supp_apr14_reader实际正文/完整上下邻及本人末注POST通过，作者已实读回；未核实现/复现。
 
 - `SF-2026-OPENAI-WEBRTC-RELAY` — May05补May04，[官方工程披露](https://openai.com/index/delivering-low-latency-voice-ai-at-scale/)Architecture/Routing/Global Relay/Implementation/Results，2+2+2=6具体入口分责gap深入；仅采用ufrag首包路由、薄relay soft map与transceiver hard-state分责。未核公开artifact、真实部署、负载/尾部性能或hard-session无损恢复；不以SO_REUSEPORT/thread pinning推任意flow亲和保证。root必要Source、逐字PRE及实际正文/完整邻接/本人note POST已在May05唯一SUP R2通过，作者行政同步并实读回。
+
+- `SF-2025-ARXIV-2510-08439` — Aquinas，Daily2025-10-11补Oct10；Godel R116 exact-v1 §3–7/T1–2/全部5.3首次必要完整消费，HTML333865B；reader PDF2981412/9753722B partial不冒完整。2+2+2=6，仅success-gated成本目标的实际人口与语言router选择/engine全账分责差额深入；保Y(K−λC)非总费用/硬质量优先、候选/失败与重试全费、task/pool反侧及未闭配置，不采80%统一省费或SLO。未核全像素/code/训练线上复现；整体PRE/真实SAVE/完整自读/solePOST只本日canonical后到真实层。

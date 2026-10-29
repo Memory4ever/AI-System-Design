@@ -1,0 +1,1049 @@
+Official exact-v1 HTML text: https://arxiv.org/html/2610.28814v1
+Downloaded main text; actual necessary reading scope is recorded separately in SOURCE_MULTIMODAL3.md. Preservation does not assert all included appendices were reviewed.
+Abstract
+In contact-rich manipulation, contact conditions can change before a visual policy updates its action plan.
+Recomputing the plan through the visual policy adds latency, while tactile feedback alone does not specify how the ongoing motion should be revised for the task.
+We introduce T-WLA, a world–language–action architecture that uses shared visual memory to guide both action generation and tactile correction.
+At each visual update, the visual branch integrates the current image, task instruction, and retrieved history into a visual memory that conditions base-action generation.
+The same memory is cached for a lightweight tactile editor, which combines it with the active action chunk and incoming touch to predict residual corrections to unexecuted actions without rerunning the visual branch.
+Future-image and future-pressure prediction provide training-only supervision, encouraging the visual memory and tactile features to capture interaction dynamics relevant to action generation and correction.
+We evaluate T-WLA on tactile-conditioned hand-motion prediction using EgoTouch and Tachin, and on four real-world dexterous manipulation tasks.
+T-WLA reduces finger-joint MPJPE by 30% relative to the strongest reported baseline and achieves an average success rate of approximately 50.0% across real-robot manipulation tasks.
+Videos and codes are available at the project website .
+ Keywords: Robot foundation models; Vision–language–action models (VLA); World-action models (WAM); Visuotactile Manipulation; Residual Action Correction.
+ Figure 1: 
+ Tactile World–Language–Action (T-WLA). 
+The visual branch uses current and past visual information to produce an action chunk and visual memory.
+Between visual updates, the tactile editor uses this cached visual memory and recent touch to correct the action chunk.
+During training, predicting future images and pressure helps the model learn features useful for control.
+ 1 Introduction
+Contact-rich manipulation refers to tasks whose success depends on precisely managing physical contact with objects or the surrounding environment  ( Hogan, 2022 ; Lee et al., 2019 ) .
+Tactile feedback complements vision by revealing local contact conditions that are difficult to infer from images alone ( Niu et al., 2026 ; Song et al., 2025 ; Xue et al., 2025 ; Zhou et al., 2026b ) .
+For example, when inserting a plug into a socket, vision guides alignment and approach, while touch provides feedback on contact and insertion resistance.
+Because these conditions can change between visual updates, tactile feedback supports rapid corrections to the ongoing motion.
+Despite the importance of tactile feedback in contact-rich manipulation, many general-purpose robot policies rely primarily on vision.
+Vision–language–action (VLA) models adapt pretrained vision–language backbones to predict robot actions from visual observations and language instructions ( Kim et al., 2024 ; Physical Intelligence et al., 2025 ) .
+World–action models further integrate future-state prediction with action generation, linking control decisions to the anticipated evolution of the environment ( Zhang et al., 2026b ; Yuan et al., 2026 ) .
+Without tactile feedback, these models must infer local contact conditions from visual cues, which may limit their response to visually subtle contact changes during precise manipulation.
+Recent work incorporates tactile feedback into robot control through variable-rate expert architectures ( Niu et al., 2026 ) , residual adaptation ( Wang et al., 2026 ) , and inference-time policy steering ( Wu et al., 2026b ) . We investigate a complementary question: how can fast tactile feedback correct a slow visual policy between visual updates? Our central idea is to generate asynchronous tactile corrections conditioned on persistent visual memory. The visual branch processes RGB observations at 39.7 Hz, producing a base action chunk and a history-aware visual memory at each update. The tactile branch processes touch at 119.1 Hz, combining recent tactile context with the cached visual memory and the active action chunk to predict residual corrections to its remaining, unexecuted actions. This allows contact feedback to refine ongoing motion without waiting for the next visual update or rerunning the visual branch.
+We instantiate this idea in T-WLA, a multi-rate architecture for asynchronous visual–tactile control
+(Fig.  1 ).
+The visual branch generates an action chunk and a history-aware visual representation, which is cached until the next visual update.
+Between these updates, a lightweight tactile editor combines the cached representation with recent tactile observations to produce high-frequency residual corrections to the ongoing action chunk.
+This separation allows the controller to respond to changing contact conditions without repeatedly running the visual branch.
+During training, future-image and future-pressure prediction regularize the control representations, encouraging them to capture information relevant to subsequent interactions.
+Our contributions are summarized as follows:
+ • 
+ Memory-guided asynchronous control. 
+We propose T-WLA, which uses the same history-aware visual memory to guide base-action generation and tactile correction.
+A lightweight tactile editor uses this memory and the active action chunk to correct unexecuted actions between visual updates, without rerunning the visual branch.
+ • 
+ Predictive supervision for control. 
+We regularize the visual memory through future-image prediction and the tactile features through both future-image and future-pressure prediction.
+These auxiliary objectives complement action supervision, and their prediction heads are removed at inference.
+ • 
+ Evaluation across hand-motion prediction and robot manipulation. 
+Experiments on EgoTouch and Tachin show improved finger-joint prediction accuracy, while real-robot tests show that T-WLA increases mean task success from 17.0% to 50.0%. Ablations examine the contributions of tactile input, visual history, and predictive supervision.
+ 2 Related work
+ 2.1 Memory and Action Chunk Execution
+A single observation may not provide enough information to determine the next
+action. Memory-based policies address this limitation by retaining information
+from earlier observations; for example, MemoryVLA stores consolidated perceptual
+and cognitive entries that can be queried over long horizons
+ ( Shi et al., 2026 ) . A complementary line of work predicts temporally
+extended action sequences. ACT introduced transformer-based action chunking to
+reduce the effective decision horizon ( Zhao et al., 2023 ) , while generative
+policies such as Diffusion Policy, RDT-1B, and \pi_{0} generate multi-step
+actions with diffusion or flow-based objectives
+ ( Chi et al., 2025 ; Liu et al., 2025a ; Black et al., 2024a ) . Such temporal coherence can
+reduce responsiveness when new observations arrive during execution
+ ( Liu et al., 2025b ; Zeng et al., 2026 ) . Bidirectional Decoding improves
+closed-loop adaptation by selecting among candidate chunks
+ ( Liu et al., 2025b ) , while Consistency Policy and Streaming Diffusion
+Policy accelerate generative action synthesis
+ ( Prasad et al., 2024 ; Høeg et al., 2025 ) . Real-time chunking instead
+explicitly accounts for inference latency when transitioning between successive
+chunks ( Black et al., 2025 ) . T-WLA addresses a complementary setting: it
+retains visual history across policy updates and uses high-rate tactile feedback
+to revise the unexecuted portion of an active action chunk.
+ 2.2 Tactile Foundation Models
+Tactile representation learning aims to produce features that transfer across sensors and tasks ( Bi et al., 2026a ; Tao et al., 2026 ; Heng et al., 2025 ; Zhang et al., 2026c ; Huang et al., 2025 ) .
+Heterogeneous Tactile Transformer learns a shared model across sensor types ( Bi et al., 2026b ) , while FG-CLTP aligns tactile features with visual and language representations ( Ma et al., 2026 ) .
+Other work explores transferring representations learned from human tactile recordings to dexterous robots ( Zhang et al., 2026a ) and scaling pretraining through tactile foundation models ( Team et al., 2026 ; Zhou et al., 2026b ) .
+Our tactile encoder follows this direction through contrastive pretraining on synchronized tactile and hand-pose histories.
+Building on tactile representations, several systems study how to incorporate touch into manipulation policies.
+Multi-rate architectures allow tactile feedback to influence control between visual updates.
+T-Rex assigns vision and touch to experts operating at different rates ( Niu et al., 2026 ) , while Reactive Diffusion Policy combines a slow visual diffusion policy with a fast latent tactile controller ( Xue et al., 2025 ) .
+FA-RDP adapts this division to task demand ( Zhuo et al., 2026 ) , and DSWAM organizes world–action modeling into cooperating slow and fast systems ( Zhu et al., 2026 ) .
+Residual adaptation provides another mechanism for incorporating touch into existing policies.
+ViTaR attaches a lightweight visuotactile residual branch to a frozen backbone ( Wang et al., 2026 ) , while ResTacVLA applies residual adaptation in feature space ( Zhang et al., 2026d ) .
+Tactile feedback can also guide action execution through inference-time adaptation.
+FBFM introduces asynchronous feedback during flow-matching execution without additional training ( Li et al., 2026 ) , while inference-time policy steering adjusts a fixed policy using vision and touch ( Wu et al., 2026b ) .
+Complementary approaches use touch as training supervision without requiring tactile input at deployment ( Gubernatorov et al., 2026 ; Cheng et al., 2026 ) .
+These approaches enable tactile feedback to influence action generation and execution. In T-WLA, a cached, history-aware visual representation connects a slow visual policy to a fast tactile editor, which combines visual memory with recent touch to refine the ongoing action chunk. Predictive supervision encourages these representations to capture evolving interaction dynamics, while auxiliary predictors are used only during training and add no inference cost.
+ 3 Methodology
+ 3.1 Overview
+During contact-rich manipulation, high frequency changes in contact pressure or location may require the robot to adjust its motion before the next visual update.
+Tactile feedback captures these local changes, but deciding how to respond also depends on the task instruction and visual information about the ongoing interaction.
+To retain this information between visual updates, T-WLA shares a history-aware visual memory between a visual policy and a lightweight tactile editor.
+The editor combines this cached memory with recent tactile observations to asynchronously correct the remaining actions planned by the visual policy, avoiding the computational cost of rerunning the visual branch.
+ Figure 2: 
+ Shared memory connects slow visual planning with fast tactile correction. 
+Each visual update generates a base action chunk and visual memory.
+Between updates, the tactile editor reads this cached pair and revises unexecuted actions without rerunning the visual branch.
+As shown in Fig.  2 , T-WLA processes RGB observations I_{t} and higher-frequency tactile observations T_{t,\tau} , where t indexes visual updates and \tau indexes tactile updates between them.
+At each visual update, the visual branch produces memory M_{\mathrm{V}}^{t} and an H -step base action chunk A_{t}^{\mathrm{base}}=f_{\mathrm{act}}(M_{\mathrm{V}}^{t}) .
+Both are cached while the tactile editor updates the remaining actions:
+ \widehat{A}_{t,\tau}=\mathchoice{\hbox to62.31pt{\vbox to8.89pt{\pgfpicture\makeatletter\hbox{\hskip 31.15302pt\lower-1.94444pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-31.15302pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -43.11 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to62.31pt{\vbox to8.89pt{\pgfpicture\makeatletter\hbox{\hskip 31.15302pt\lower-1.94444pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-31.15302pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -43.11 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to38.79pt{\vbox to6.22pt{\pgfpicture\makeatletter\hbox{\hskip 19.39241pt\lower-1.3611pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-19.39241pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -26.83 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to29.6pt{\vbox to4.44pt{\pgfpicture\makeatletter\hbox{\hskip 14.8021pt\lower-0.97221pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-14.8021pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -20.48 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\!\left(\mathchoice{\hbox to60.54pt{\vbox to10.11pt{\pgfpicture\makeatletter\hbox{\hskip 30.2682pt\lower-1.67657pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-30.2682pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -41.88 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to60.54pt{\vbox to10.11pt{\pgfpicture\makeatletter\hbox{\hskip 30.2682pt\lower-1.67657pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-30.2682pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -41.88 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to40.42pt{\vbox to7.72pt{\pgfpicture\makeatletter\hbox{\hskip 20.2089pt\lower-1.18611pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-20.2089pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -27.96 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to31.41pt{\vbox to5.06pt{\pgfpicture\makeatletter\hbox{\hskip 15.7028pt\lower-0.84721pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-15.7028pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -21.73 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\right)+\mathchoice{\hbox to23.49pt{\vbox to6.83pt{\pgfpicture\makeatletter\hbox{\hskip 11.7431pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-11.7431pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -16.25 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to23.49pt{\vbox to6.83pt{\pgfpicture\makeatletter\hbox{\hskip 11.7431pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-11.7431pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -16.25 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to16.47pt{\vbox to4.78pt{\pgfpicture\makeatletter\hbox{\hskip 8.23334pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-8.23334pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -11.39 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to13.08pt{\vbox to3.4pt{\pgfpicture\makeatletter\hbox{\hskip 6.54172pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-6.54172pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -9.05 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\!\left(\mathchoice{\hbox to60.54pt{\vbox to10.11pt{\pgfpicture\makeatletter\hbox{\hskip 30.2682pt\lower-1.67657pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-30.2682pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -41.88 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to60.54pt{\vbox to10.11pt{\pgfpicture\makeatletter\hbox{\hskip 30.2682pt\lower-1.67657pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-30.2682pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -41.88 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to40.42pt{\vbox to7.72pt{\pgfpicture\makeatletter\hbox{\hskip 20.2089pt\lower-1.18611pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-20.2089pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -27.96 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to31.41pt{\vbox to5.06pt{\pgfpicture\makeatletter\hbox{\hskip 15.7028pt\lower-0.84721pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-15.7028pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -21.73 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}},\mathchoice{\hbox to84.35pt{\vbox to10.49pt{\pgfpicture\makeatletter\hbox{\hskip 42.17532pt\lower-1.5pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-42.17532pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -58.36 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to84.35pt{\vbox to10.49pt{\pgfpicture\makeatletter\hbox{\hskip 42.17532pt\lower-1.5pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-42.17532pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -58.36 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to52.16pt{\vbox to7.92pt{\pgfpicture\makeatletter\hbox{\hskip 26.07724pt\lower-1.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-26.07724pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -36.08 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to39.6pt{\vbox to5.25pt{\pgfpicture\makeatletter\hbox{\hskip 19.79727pt\lower-0.75pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-19.79727pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -27.39 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}},\mathchoice{\hbox to62.5pt{\vbox to9.69pt{\pgfpicture\makeatletter\hbox{\hskip 31.2518pt\lower-2.86108pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-31.2518pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -43.24 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to62.5pt{\vbox to9.69pt{\pgfpicture\makeatletter\hbox{\hskip 31.2518pt\lower-2.86108pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-31.2518pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -43.24 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to38.29pt{\vbox to6.74pt{\pgfpicture\makeatletter\hbox{\hskip 19.1451pt\lower-1.95277pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-19.1451pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -26.49 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to29.55pt{\vbox to4.85pt{\pgfpicture\makeatletter\hbox{\hskip 14.77432pt\lower-1.43054pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-14.77432pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -20.44 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}},\mathchoice{\hbox to78.21pt{\vbox to9.69pt{\pgfpicture\makeatletter\hbox{\hskip 39.10477pt\lower-2.86108pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-39.10477pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -54.11 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to78.21pt{\vbox to9.69pt{\pgfpicture\makeatletter\hbox{\hskip 39.10477pt\lower-2.86108pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-39.10477pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -54.11 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to49.29pt{\vbox to6.74pt{\pgfpicture\makeatletter\hbox{\hskip 24.6457pt\lower-1.95277pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-24.6457pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -34.1 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to38.69pt{\vbox to4.83pt{\pgfpicture\makeatletter\hbox{\hskip 19.34407pt\lower-1.43054pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-19.34407pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -26.77 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\right).       ​ (       \displaystyle\mathstrut M_{\mathrm{V}}^{t}       ) +       \displaystyle\mathstrut\mathcal{E}       ​ (       \displaystyle\mathstrut M_{\mathrm{V}}^{t}       ,       \displaystyle\mathstrut A_{t}^{\mathrm{base}}       ,       \displaystyle\mathstrut Z_{t,\tau}       ,       \displaystyle\mathstrut\Delta t_{t,\tau}       ) . \widehat{A}_{t,\tau}=\mathchoice{\hbox to62.31pt{\vbox to8.89pt{\pgfpicture\makeatletter\hbox{\hskip 31.15302pt\lower-1.94444pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-31.15302pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -43.11 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to62.31pt{\vbox to8.89pt{\pgfpicture\makeatletter\hbox{\hskip 31.15302pt\lower-1.94444pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-31.15302pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -43.11 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to38.79pt{\vbox to6.22pt{\pgfpicture\makeatletter\hbox{\hskip 19.39241pt\lower-1.3611pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-19.39241pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -26.83 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to29.6pt{\vbox to4.44pt{\pgfpicture\makeatletter\hbox{\hskip 14.8021pt\lower-0.97221pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-14.8021pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -20.48 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\!\left(\mathchoice{\hbox to60.54pt{\vbox to10.11pt{\pgfpicture\makeatletter\hbox{\hskip 30.2682pt\lower-1.67657pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-30.2682pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -41.88 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to60.54pt{\vbox to10.11pt{\pgfpicture\makeatletter\hbox{\hskip 30.2682pt\lower-1.67657pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-30.2682pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -41.88 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to40.42pt{\vbox to7.72pt{\pgfpicture\makeatletter\hbox{\hskip 20.2089pt\lower-1.18611pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-20.2089pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -27.96 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to31.41pt{\vbox to5.06pt{\pgfpicture\makeatletter\hbox{\hskip 15.7028pt\lower-0.84721pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-15.7028pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -21.73 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\right)+\mathchoice{\hbox to23.49pt{\vbox to6.83pt{\pgfpicture\makeatletter\hbox{\hskip 11.7431pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-11.7431pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -16.25 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to23.49pt{\vbox to6.83pt{\pgfpicture\makeatletter\hbox{\hskip 11.7431pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-11.7431pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -16.25 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to16.47pt{\vbox to4.78pt{\pgfpicture\makeatletter\hbox{\hskip 8.23334pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-8.23334pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -11.39 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to13.08pt{\vbox to3.4pt{\pgfpicture\makeatletter\hbox{\hskip 6.54172pt\lower 0.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-6.54172pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -9.05 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\!\left(\mathchoice{\hbox to60.54pt{\vbox to10.11pt{\pgfpicture\makeatletter\hbox{\hskip 30.2682pt\lower-1.67657pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-30.2682pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -41.88 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to60.54pt{\vbox to10.11pt{\pgfpicture\makeatletter\hbox{\hskip 30.2682pt\lower-1.67657pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-30.2682pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -41.88 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to40.42pt{\vbox to7.72pt{\pgfpicture\makeatletter\hbox{\hskip 20.2089pt\lower-1.18611pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-20.2089pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -27.96 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to31.41pt{\vbox to5.06pt{\pgfpicture\makeatletter\hbox{\hskip 15.7028pt\lower-0.84721pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-15.7028pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -21.73 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}},\mathchoice{\hbox to84.35pt{\vbox to10.49pt{\pgfpicture\makeatletter\hbox{\hskip 42.17532pt\lower-1.5pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-42.17532pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -58.36 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to84.35pt{\vbox to10.49pt{\pgfpicture\makeatletter\hbox{\hskip 42.17532pt\lower-1.5pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-42.17532pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -58.36 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to52.16pt{\vbox to7.92pt{\pgfpicture\makeatletter\hbox{\hskip 26.07724pt\lower-1.0pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-26.07724pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -36.08 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to39.6pt{\vbox to5.25pt{\pgfpicture\makeatletter\hbox{\hskip 19.79727pt\lower-0.75pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-19.79727pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -27.39 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}},\mathchoice{\hbox to62.5pt{\vbox to9.69pt{\pgfpicture\makeatletter\hbox{\hskip 31.2518pt\lower-2.86108pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-31.2518pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -43.24 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to62.5pt{\vbox to9.69pt{\pgfpicture\makeatletter\hbox{\hskip 31.2518pt\lower-2.86108pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-31.2518pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -43.24 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to38.29pt{\vbox to6.74pt{\pgfpicture\makeatletter\hbox{\hskip 19.1451pt\lower-1.95277pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-19.1451pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -26.49 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to29.55pt{\vbox to4.85pt{\pgfpicture\makeatletter\hbox{\hskip 14.77432pt\lower-1.43054pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-14.77432pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -20.44 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}},\mathchoice{\hbox to78.21pt{\vbox to9.69pt{\pgfpicture\makeatletter\hbox{\hskip 39.10477pt\lower-2.86108pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-39.10477pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -54.11 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to78.21pt{\vbox to9.69pt{\pgfpicture\makeatletter\hbox{\hskip 39.10477pt\lower-2.86108pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-39.10477pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -54.11 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to49.29pt{\vbox to6.74pt{\pgfpicture\makeatletter\hbox{\hskip 24.6457pt\lower-1.95277pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-24.6457pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -34.1 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}{\hbox to38.69pt{\vbox to4.83pt{\pgfpicture\makeatletter\hbox{\hskip 19.34407pt\lower-1.43054pt\hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} \lxSVG@begingroup@{stroke=#000000} \lxSVG@begingroup@{fill=#000000} \lxSVG@setlinewidth{\the\pgflinewidth}\lxSVG@begingroup@{stroke-width=0.4pt} \lx@inpgf@ignorespaces\nullfont\lxSVG@begingroup@{_scopebegin=1} \lxSVG@closescope \hbox to0.0pt{\lxSVG@begingroup@{_scopebegin=1} {}{
+{{}}\lx@inpgf@ignorespaces\hbox{\hbox{{\lxSVG@begingroup@{_scopebegin=1} {{}{}{{
+{}{}}}{
+{}{}}
+{{}{{\lx@inpgf@ignorespaces}}}{{}{\lx@inpgf@ignorespaces}}{}{{}{\lx@inpgf@ignorespaces}}
+{\lx@inpgf@ignorespaces
+}{{{{\lx@inpgf@ignorespaces}}\lxSVG@begingroup@{_scopebegin=1} \lxSVG@transformcm{1.0}{0.0}{0.0}{1.0}{-19.34407pt}{0.0pt}\lxSVG@begingroup@{transform=matrix(1.0 0.0 0.0 1.0 -26.77 0)} \pgfsys@hbox{60}\lxSVG@closescope }}}
+\lxSVG@closescope }}}
+}
+\lxSVG@closescope \hbox to0.0pt{}{{
+{}{}{}}}{\lx@inpgf@ignorespaces}{\lx@inpgf@ignorespaces}\hss}\lxSVG@discardpath\lxSVG@closescope \hss}}\lxSVG@closescope\endpgfpicture}}}\right). 
+ (1) 
+ Shared visual memory 
+ Base-action generation 
+ Tactile editor 
+ Cached base action chunk 
+ Tactile context Elapsed time 
+Here, Z_{t,\tau} summarizes recent tactile history, \Delta t_{t,\tau} is the elapsed time since current active chunk started, and \mathcal{E} returns an effective residual \Delta A_{t,\tau} for valid, unexecuted actions.
+The base chunk is sampled once per visual update; each correction is recomputed relative to this cached action chunk.
+ 3.2 History-Aware Visual Memory
+A current image may obscure information that was visible earlier or leave the recent approach to contact ambiguous  ( Wang et al., 2025 ; Zhou et al., 2026c ; Zhou et al., 2023 ) .
+We retain a compact visual history so that both planning and correction can use earlier observations without repeatedly encoding the full image sequence.
+As illustrated in Fig.  3 (a), learned queries Q_{\mathrm{V}} retrieve input memory from a bank \mathcal{B}_{\mathrm{V}}^{t-1} containing the last K sets of visual output-memory tokens:
+ M_{\mathrm{V},\mathrm{in}}^{t}=\mathcal{M}_{\mathrm{V}}\!\left(\mathcal{B}_{\mathrm{V}}^{t-1},Q_{\mathrm{V}}\right). 
+ (2) 
+The visual backbone then combines this history with current image tokens E_{t} , instruction tokens L_{\ell} , field-of-view tokens c_{t} , and state tokens S_{t} :
+ M_{\mathrm{V}}^{t}=f_{\mathrm{V}}\!\left(E_{t},L_{\ell},c_{t},S_{t},M_{\mathrm{V},\mathrm{in}}^{t}\right). 
+ (3) 
+The updated visual memory M_{\mathrm{V}}^{t} conditions the action expert f_{\mathrm{act}} in Eq.  1 .
+The bank update \mathcal{B}_{\mathrm{V}}^{t}=\operatorname{Append}_{K}(\mathcal{B}_{\mathrm{V}}^{t-1},M_{\mathrm{V}}^{t}) appends the new memory while retaining at most the K most recent memory sets.
+The tactile editor uses the updated visual memory M_{\mathrm{V}}^{t} , which combines visual history with the current observation and task instruction. The visual branch is trained to predict demonstrated action chunks using conditional flow matching  ( Lipman et al., 2022 ) , with future-image prediction providing auxiliary supervision in Section  3.4 . Details are specified in Appendix  B.1 and   C.1 .
+ Figure 3: 
+ The memory-to-editor interface. 
+(a) Retrieved history is combined with the current observation and instruction.
+(b) Observed tactile history is encoded relative to a fixed reference.
+(c) Touch modulates action features conditioned on the cached visual memory, base chunk, and elapsed time.
+Module details are in Appendices  B.1 – B.3 .
+ 3.3 Asynchronous Tactile Correction
+The editor asynchronously refines an active plan through residual corrections rather than generating a new action plan from touch alone.
+Visual memory supplies retained task and scene information; the base action chunk specifies what is being executed; and elapsed time identifies the remaining action positions as in Eq.  1 .
+Between visual updates, M_{\mathrm{V}}^{t} and A_{t}^{\mathrm{base}} remain fixed, while each tactile update \tau runs only the lightweight tactile encoder and residual editor, enabling efficient corrections without rerunning the visual branch.
+This formulation assumes that the base plan remains a useful reference between visual updates.
+ Tactile context. 
+We encode recent causally available tactile frames \mathcal{H}_{t,\tau} as Z_{t,\tau}=\operatorname{Enc}_{\mathrm{T}}(\mathcal{H}_{t,\tau}) .
+A temporal window exposes contact evolution that a single pressure map cannot resolve.
+Figure  3 (b) shows the shared encoder and reference subtraction; more information are detailed in Appendix  B.2 .
+ Plan-conditioned correction. 
+As illustrated in Fig.  3 (c), a small Transformer combines the cached visual memory, base action chunk, and elapsed time to produce action features at each tactile update.
+FiLM  ( Perez et al., 2018 ) uses the tactile context to scale and shift these features, which a residual head converts into action corrections.
+After masking, the corrections \Delta A_{t,\tau} affect only valid, unexecuted actions; a hand with missing tactile input receives zero correction.
+The residual is added to the original cached base action chunk, yielding \widehat{A}_{t,\tau}=A_{t}^{\mathrm{base}}+\Delta A_{t,\tau} as in Eq.  1 , rather than accumulated on previously corrected actions.
+More structure details are provided in Appendix  B.3 .
+With the visual branch frozen, we supervise the corrected actions using a group-balanced Smooth L1 loss against demonstrations and regularize the predicted residuals with a magnitude penalty.
+These objectives train the tactile encoder and residual editor to correct action errors while discouraging unnecessarily large corrections. Definitions of objectives are provided in Appendix  C.1 .
+ 3.4 Predictive Supervision and Training
+Action supervision specifies the demonstrated command, but may not distinguish states with different subsequent visual or contact outcomes.
+We add future-image and future-pressure prediction to supervise information about these outcomes in the representations used for control.
+Both prediction heads are training-only auxiliaries, not inference-time planners.
+ Complementary prediction targets. 
+The image predictor conditions on current image tokens and output visual memory to predict future latents supplied by a frozen image encoder.
+During editor training, tactile context also conditions this predictor through a learned adapter.
+The adapter changes only the auxiliary prediction path, leaving the cached memory used for control unchanged.
+Future-pressure prediction instead supervises subsequent contact, conditioned on visual memory, tactile context, and upcoming edited actions.
+This action condition links tactile features to how contact may evolve under the active plan.
+Predictor conditions, gradient routes, and normalization are specified in Appendix  C.2 ; future targets never enter the controller.
+ Staged optimization. 
+The visual action expert and predictive heads use conditional flow matching  ( Lipman et al., 2022 ) .
+We first train the visual branch with action and image-prediction supervision, and separately pretrain the tactile encoder through contrastive learning on synchronized tactile and hand-pose histories from EgoTouch.
+We then freeze the visual branch and use its cached visual memory and base action chunks to train the tactile encoder and residual editor with a group-balanced Smooth L1 action loss, a residual-magnitude penalty, and the two predictive objectives.
+The visual predictor remains frozen, while its tactile conditioning adapter and the pressure predictor are trained.
+Objective definitions and custom reductions are provided in Appendices  C.1 and  C.2 .
+Stage-specific training details and a proposed joint fine-tuning extension are described in Appendix  C.3 .
+Both prediction heads are removed at inference.
+ Table 1: Tactile-conditioned future hand-motion prediction.
+EgoTouch is reported across five native environments and as a macro-average;
+Tachin is evaluated on its held-out test split.
+Metrics use the same prediction horizon and are averaged per sequence
+before aggregation.
+Lower prediction error is better.
+Gray highlights T-WLA.
+ Bold / underline indicate the best/second-best
+distinct reported errors within each metric and column, including ties.
+Tactile Freq. denotes the effective tactile-correction rate under our multi-rate protocol. Frequency is reported in Hz and is not ranked.
+ EgoTouch 
+ Tachin 
+ Method 
+ Home 
+ Workb. 
+ Office 
+ Retail 
+ Outdoor 
+ Avg. 
+ Overall 
+ Tactile Freq. 
+ Wrist translation error (cm, \downarrow ) 
+ VITRA + tactile 
+ 4.54 
+ 3.71 
+ 2.84 
+ 3.98 
+ 5.34 
+ 4.08 
+ 1.48 
+ 58.2 
+ SmolVLA + tactile 
+ 4.55 
+ 3.74 
+ 2.88 
+ 3.98 
+ 5.33 
+ 4.10 
+ 1.50 
+ 69.0 
+ MemoryVLA + tactile 
+ 4.65 
+ 3.78 
+ 2.96 
+ 4.08 
+ 5.41 
+ 4.18 
+ 1.55 
+ 15.0 
+ T-Rex 
+ 4.63 
+ 3.76 
+ 2.95 
+ 4.05 
+ 5.41 
+ 4.16 
+ 1.54 
+ 17.16 
+ T-WLA 
+ 4.36 
+ 3.63 
+ 2.73 
+ 3.82 
+ 5.24 
+ 3.96 
+ 1.39 
+ 119.1 
+ Wrist rotation geodesic error (degrees, \downarrow ) 
+ VITRA + tactile 
+ 6.29 
+ 6.22 
+ 4.81 
+ 6.86 
+ 7.15 
+ 6.27 
+ 4.55 
+ 58.2 
+ SmolVLA + tactile 
+ 6.29 
+ 6.22 
+ 4.87 
+ 6.85 
+ 7.16 
+ 6.28 
+ 4.20 
+ 69.0 
+ MemoryVLA + tactile 
+ 6.34 
+ 6.39 
+ 4.88 
+ 6.89 
+ 7.20 
+ 6.34 
+ 4.39 
+ 15.0 
+ T-Rex 
+ 6.29 
+ 6.29 
+ 4.84 
+ 6.87 
+ 7.17 
+ 6.29 
+ 4.25 
+ 17.16 
+ T-WLA 
+ 6.18 
+ 5.83 
+ 4.79 
+ 6.66 
+ 7.03 
+ 6.10 
+ 4.17 
+ 119.1 
+ Wrist-relative finger-joint MPJPE (cm, \downarrow ) 
+ VITRA + tactile 
+ 0.51 
+ 0.51 
+ 0.45 
+ 0.51 
+ 0.53 
+ 0.50 
+ 0.63 
+ 58.2 
+ SmolVLA + tactile 
+ 0.51 
+ 0.50 
+ 0.46 
+ 0.50 
+ 0.53 
+ 0.50 
+ 1.28 
+ 69.0 
+ MemoryVLA + tactile 
+ 1.37 
+ 1.37 
+ 1.17 
+ 1.34 
+ 1.46 
+ 1.34 
+ 1.87 
+ 15.0 
+ T-Rex 
+ 1.17 
+ 1.13 
+ 1.07 
+ 1.17 
+ 1.18 
+ 1.14 
+ 1.08 
+ 17.16 
+ T-WLA 
+ 0.36 
+ 0.33 
+ 0.31 
+ 0.36 
+ 0.40 
+ 0.35 
+ 0.46 
+ 119.1 
+ Figure 4: 
+ Qualitative comparison on EgoTouch and Tachin. 
+VITRA, SmolVLA, MemoryVLA, and T-Rex denote the tactile-augmented variants used in
+Table  1 . For each dataset, we show the source RGB frame at t_{0} , ground truth, and predictions from each of the models at t_{0}+100\,\mathrm{ms} .
+RGB overlays depict ground-truth hand poses in green and predictions in orange.
+Fingertip-detail views show wrist-aligned hands rendered from a +60^{\circ} visualization view, with ground-truth hand mesh in green and predicted fingertips in orange crosses.
+MPJPE is reported in centimeters ( \downarrow : lower is better).
+T-WLA obtains the lowest MPJPE on both displayed examples.
+ 4 Experiments
+We organize our experiments around four questions. First, does combining visual memory with high-rate tactile feedback improve future hand-motion prediction on human-interaction datasets (Section  4.2 )? Second, does the tactile branch improve closed-loop success on real contact-rich robot tasks under a matched visual backbone and training budget (Section  4.3 )? Third, which components—tactile input, recurrent memory, memory capacity, and predictive supervision—account for the improvement (Section  4.4 )? Finally, does the visual branch remain a strong standalone predictor when tactile observations are unavailable (Appendix  E )?
+ 4.1 Experimental Setup
+ Datasets and tasks. 
+For tactile-conditioned future hand-motion prediction, we evaluate on EgoTouch from TouchAnything  ( Zhou et al., 2026a ) and the Tachin glove dataset  ( Tachintech, 2026 ) . EgoTouch is evaluated in its five native environments—Home, Workbench, Office, Retail, and Outdoor—whereas Tachin is reported over its complete held-out test set. For visual-only prediction, we use GigaHands  ( Fu et al., 2025 ) , OakInk2  ( Zhan et al., 2024 ) , and TACO  ( Liu et al., 2024 ) . GigaHands is reported over its five official activity families, while OakInk2 and TACO are each evaluated over their complete held-out test sets. Our real-robot benchmark contains four contact-rich tasks: egg handling, single-sheet pickup, paper-cup nesting, and paper-bag opening.
+ Baselines and controlled comparison. 
+For tactile-conditioned prediction, we compare with VITRA  ( Li et al., 2025 ) , SmolVLA  ( Shukor et al., 2025 ) , MemoryVLA  ( Shi et al., 2026 ) , and T-Rex  ( Niu et al., 2026 ) . When a baseline does not natively accept touch, its “+ tactile” variant receives the same synchronized tactile stream and uses the same task-specific tactile encoder, prediction head, and optimization budget as the other adapted baselines. T-Rex and T-WLA retain their native multi-rate interfaces. Appendix  D specifies the action representation, temporal alignment, metric definitions, evaluation masks, and aggregation procedure.
+ 4.2 Tactile- and Vision-Conditioned Action Prediction
+ Tactile-conditioned hand-motion prediction. 
+Table  1 shows that T-WLA achieves the lowest reported errors across all three metrics in every EgoTouch environment and on Tachin.
+The clearest advantage, however, is in finger articulation: wrist-relative MPJPE decreases by approximately 30.0\% on EgoTouch and 27.0\% on Tachin relative to the strongest reported baseline for each dataset.
+Because this metric measures joint positions relative to the wrist, the improvement is not simply a consequence of predicting the global wrist position more accurately.
+Wrist translation and rotation also improve, but more modestly.
+This contrast is consistent with the intended role of the tactile editor: refining fine-grained hand motion within an ongoing visual plan, rather than replacing the plan altogether.
+The same pattern across both datasets, together with lower errors in all five EgoTouch environments, indicates that the benefit is not confined to a single environment.
+The accuracy improvements also coexist with a higher effective tactile-correction rate.
+Under our multi-rate protocol, T-WLA reaches 119.1  Hz, compared with 69.0  Hz for the fastest reported baseline.
+Thus, the lightweight correction pathway combines more frequent tactile updates with lower prediction errors, rather than requiring a lower update rate to obtain better predictions.
+This accuracy–update-rate combination is particularly relevant to asynchronous visuotactile control, where contact-driven corrections are needed between slower visual updates.
+ Table 2: Closed-loop success rates (%, \uparrow ) on four contact-rich
+robot tasks after adaptation with 30 teleoperated demonstrations per task.
+Avg. denotes the unweighted mean across tasks.
+ Bold / underline indicate the best/second-best
+distinct results in each column, including ties.
+Gray highlights tactile-enabled T-WLA.
+ Controller 
+ Egg 
+ Transfer 
+ Single-Sheet 
+ Pickup 
+ Paper-Cup 
+ Nesting 
+ Paper-Bag 
+ Dragging 
+ Avg. 
+ SmolVLA 
+ 0 
+ 28 
+ 0 
+ 39 
+ 16.75 
+ SmolVLA + Tactile 
+ 0 
+ 30 
+ 1 
+ 37 
+ 17.0 
+ T-ReX 
+ 4 
+ 3 
+ 22 
+ 63 
+ 23.0 
+ T-WLA w/o tactile 
+ 18 
+ 72 
+ 17 
+ 82 
+ 47.25 
+ T-WLA 
+ 21 
+ 78 
+ 17 
+ 84 
+ 50.0 
+ Figure 5: Representative real-robot trials for cup stack and egg transfer. Each column shows the start, contact, and goal frames of one episode; the left column of each task is a successful T-WLA trial and the right column is a failed baseline trial.
+ 4.3 Real-Robot Evaluation
+Next, we test whether the prediction improvements translate into closed-loop manipulation on four tasks: egg transfer, single-sheet pickup, paper-cup nesting, and paper-bag dragging.
+These tasks are contact-sensitive: egg transfer involves small in-hand slip that is difficult to observe visually; sheet pickup and cup nesting require a secure grip without crumpling or crushing the object; and bag dragging requires maintaining a grasp on the loaded bag’s rim under changing fingertip loads.
+Together, they test whether tactile feedback can refine visually guided actions using contact information that images alone may not resolve.
+As shown in Table  2 , T-WLA with tactile input achieves a mean success rate of 50.0\% with only 30 teleoperated demonstrations per task.
+Before robot adaptation, T-WLA, including its tactile editor, is trained only on human-hand data.
+Even without tactile input, T-WLA reaches 47.25\% mean success, compared with 16.75\% for SmolVLA, which shares components with our visual branch.
+VITRA and MemoryVLA achieve no successful trials under the same demonstration budget.
+These closed-loop results complement the finger-motion prediction improvements in Table  1 .
+The benefit of tactile input varies across tasks, with the largest gain in single-sheet pickup (6 percentage points).
+A thin sheet requires a precise pinch with enough force to prevent slipping but not enough to crumple it, so this improvement is consistent with tactile feedback helping regulate a delicate grasp.
+The smaller gains in egg transfer and bag dragging may similarly reflect the value of sensing changes in grasp stability and fingertip load.
+Cup nesting, however, remains at 17\% : maintaining a secure grasp without crushing the cup addresses only part of the task, which also requires correct alignment and placement.
+Grip-related corrections may be insufficient if failures occur during these other stages, although the aggregate success rate does not identify the limiting stage.
+In observed SmolVLA failures, the hand often closes away from the target, leaving little contact feedback to guide a correction.
+This may explain its smaller tactile gain when the base action fails to establish contact.
+ 4.4 Ablation Studies
+Table  3 isolates the effects of tactile input, recurrent
+history, memory capacity, and predictive supervision under matched settings.
+Removing tactile input produces the largest increase in finger-joint error
+on both datasets: 22.9\% on EgoTouch and 8.7\% on Tachin. Translation
+and rotation errors also increase by 1.3\% and 1.6\% on EgoTouch, and
+by 4.3\% and 5.5\% on Tachin. Removing recurrent memory has a larger
+effect on wrist prediction, particularly on Tachin, where translation and
+rotation errors increase by 21.6\% and 9.4\% . Shortening memory from
+ K=8 to K_{\mathrm{short}}=4 increases error by 2.3\% on average across
+the six metrics, while removing both world-prediction objectives increases
+it by 1.0\% on the same basis. The full T-WLA achieves the lowest
+error in five of six metrics and ties for the lowest Tachin joint error.
+ Table 3: Ablation of tactile input, memory, and predictive
+supervision. World-prediction ablations remove auxiliary objectives
+during editor training, not backbone pretraining. Lower is better
+for every metric. Bold / underline indicate the
+best/second-best distinct results in each column.
+ EgoTouch 
+ Tachin 
+ Variant 
+ Trans. (cm) 
+ Rot. ( ∘ ) 
+ Joint (cm) 
+ Trans. (cm) 
+ Rot. ( ∘ ) 
+ Joint (cm) 
+ Without tactile input 
+ 4.010 
+ 6.200 
+ 0.430 
+ 1.450 
+ 4.400 
+ 0.500 
+ Without recurrent memory 
+ 4.070 
+ 6.280 
+ 0.370 
+ 1.690 
+ 4.560 
+ 0.490 
+ Shorter memory ( K_{\mathrm{short}}<K ) 
+ 3.980 
+ 6.150 
+ 0.360 
+ 1.480 
+ 4.310 
+ 0.460 
+ Without world prediction (T+V) 
+ 3.963 
+ 6.113 
+ 0.353 
+ 1.413 
+ 4.283 
+ 0.463 
+ Without world prediction (T) 
+ 3.962 
+ 6.112 
+ 0.352 
+ 1.412 
+ 4.263 
+ 0.462 
+ Without world prediction (V) 
+ 3.963 
+ 6.113 
+ 0.353 
+ 1.423 
+ 4.273 
+ 0.463 
+ T-WLA 
+ 3.960 
+ 6.100 
+ 0.350 
+ 1.390 
+ 4.170 
+ 0.460 
+ 5 Conclusion
+We presented T-WLA, a multi-rate visuotactile architecture that caches history-aware visual memory to guide high-frequency tactile corrections.
+A slow visual policy generates base action chunks, while a lightweight tactile editor reuses the cached visual memory to refine ongoing actions at a higher frequency.
+Future-image and future-pressure prediction regularize the control representations during training, complementing action supervision with interaction dynamics.
+Extensive results show that joint visual-tactile modeling and predictive supervision improve contact-rich manipulation.

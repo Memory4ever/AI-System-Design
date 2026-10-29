@@ -1,0 +1,582 @@
+URL: https://arxiv.org/html/2603.26435v1
+Scope: core before References, max50000chars; core chars=67623
+
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Background
+2.1 Vendor-based Tools for Energy Profiling
+2.2 GPU Instructions
+2.3 Alternative Energy Profiling Approaches
+2.3.1 AccelWattch
+3 Design
+3.1 Deriving Energy Per Instruction
+3.2 Microbenchmark Design
+3.3 Ensuring Consistent and Stable Measurements
+3.3.1 Isolating Static & Constant Power
+3.4 Improving Coverage for Low Usage Instructions
+3.5 Putting It All Together: Energy Prediction & Attribution
+4 Methodology
+4.1 Evaluated Systems
+4.2 Applications
+4.3 Configurations
+5 Evaluation
+5.1 Comparison With State-of-the-Art
+5.2 Generalization to Cooling and Later Architectures
+5.2.1 Water-cooled V100
+5.2.2 A100
+5.2.3 H100
+5.3 Case Studies
+5.3.1 Case Study: Backprop
+5.3.2 Case Study: QMCPACK
+6 Discussion
+7 Related Work
+8 Conclusion
+Acknowledgements
+References
+License: CC BY 4.0
+arXiv:2603.26435v1 [cs.AR] 27 Mar 2026
+Wattchmen: Watching the Wattchers – High Fidelity, Flexible GPU Energy Modeling
+Conference: 2026 International Conference on Supercomputing; July 06–09, 2026; Belfast, United Kingdom2026 International Conference on Supercomputing (ICS ’26), July 06–09, 2026, Belfast, United KingdomDOI: 10.1145/3797905.3800514ISBN: 979-8-4007-2522-7/2026/07CCS: Hardware Power estimation and optimizationCCS: Computing methodologies Parallel computing methodologies
+Brandon Tran
+Affiliation: University of Wisconsin-Madison, Madison, WI, USA
+email: bqtran2@wisc.edu
+,
+Matthias Maiterth
+Note: This work was done while this author was at Oak Ridge National Lab.
+Affiliation: NVIDIA, Santa Clara, CA, USA
+email: mmaiterth@nvidia.com
+,
+Woong Shin
+Affiliation: Oak Ridge National Lab, Oak Ridge, TN, USA
+email: shinw@ornl.gov
+,
+Matthew D. Sinclair
+Affiliation: University of Wisconsin-Madison, Madison, WI, USA
+email: sinclair@cs.wisc.edu
+and
+Shivaram Venkataraman
+Affiliation: University of Wisconsin-Madison, Madison, WI, USA
+email: shivaram@cs.wisc.edu
+© usgovmixed
+Abstract.
+Modern GPU-rich HPC systems are increasingly becoming energy-constrained.
+Thus, understanding an application’s energy consumption becomes essential. Unfortunately, current GPU energy attribution techniques are either inaccurate, inflexible, or outdated.
+Therefore, we propose Wattchmen, a flexible methodology for measuring, attributing, and predicting GPU energy consumption.
+We construct a per-instruction energy model using a diverse set of microbenchmarks to systematically quantify the energy consumption of GPU instructions, enabling finer-grain prediction and energy consumption breakdowns for applications.
+Compared with the state-of-the-art systems like AccelWattch (32%) and Guser (25%), across 16 popular GPGPU, graph analytics, HPC, and ML workloads, Wattchmen reduces the mean absolute percent error (MAPE) to 14% on V100 GPUs.
+Furthermore, we show that Wattchmen provides similar MAPEs for water-cooled V100s (15%) and extends to later architectures, including air-cooled A100 (11%) and H100 (12%) GPUs.
+Finally, to further demonstrate Wattchmen’s value, we apply it to applications such as Backprop and QMCPACK, where Wattchmen’s insights enable energy reductions of up to 35%.
+Keywords: GPU architecture, energy modeling, power attribution
+1. Introduction
+The slowing of Moore’s Law introduced significant challenges for realizing exascale supercomputing (Bergman et al., 2008; Shalf et al., 2011).
+In turn, exascale class systems (Dongarra et al., 2024) were realized by heavily relying on GPUs (Atchley et al., 2023).
+This trend continues: new high performance computing (HPC) systems use an ever larger number of modern GPUs. For example, the US Department of Energy’s (DOE’s) Aurora, El Capitan, and Frontier supercomputers have 37000-64000 GPUs. Although such systems are a major achievement,
+recent studies have shown that compute systems at all levels — including full systems (Atchley et al., 2023; Kodama et al., 2020), individual nodes, and GPUs (Choi et al., 2014; Esmaeilzadeh et al., 2011; Sun et al., 2020; Tschand et al., 2025) — are power limited (Maiterth et al., 2017; Solórzano et al., 2024).
+Thus, moving forward, the HPC community will repeatedly hit the power wall, bound by the fundamental laws of technology scaling (Naffziger et al., 2005; Shehabi et al., 2024). To overcome this barrier, researchers have identified four pillars to improve energy efficiency for HPC: site infrastructure, system hardware, system software, and applications (Torsten Wilde et al., 2014).
+While recent work has made significant progress in improving the first three pillars (Ljungdahl et al., 2022; Ferdaus et al., 2025; Wilson et al., 2023),
+we focus on the role of HPC applications in this paper.
+Historically,
+HPC developers focused on optimizing their workloads for performance – e.g., reaching exascale performance.
+However, in modern systems, an application’s compute performance is limited by its power draw.
+Thus, developers must understand where this power budget is spent
+to increase compute efficiency (Ang et al., 2022; Mudge, 2001; Shin et al., 2024).
+To perform these informed optimizations, developers require credible tools that can accurately break down an application’s energy consumption and attribute it to finer-grained components.
+Traditionally, developers rely on modeling and simulation (ModSim) techniques to model and prototype energy consumption (Li et al., 2013; Wilton and Jouppi, 1996).
+Unfortunately, existing frameworks are severely lacking in helping developers and system designers analyze and break down the energy use of applications (discussed further in Section 2).
+Figure 1. Comparing AccelWattch’s energy predictions to measurements from air-cooled Tesla V100 GPUs across various benchmarks, which leads to a 32% MAPE. The blue line indicates perfect prediction.Comparing AccelWattch's energy predictions to measurements from air-cooled Tesla V100 GPUs across various benchmarks, which leads to a 32\% MAPE.
+Table 1. Comparing Wattchmen to recent GPU energy modeling approaches.
+Feature
+Arafa, et al.(Arafa et al., 2020)
+Guser(Shan, Yalong and Yang, Yongkui and Qian, Xuehai and Yu, Zhibin, 2024)
+Delestrac, et al.(Delestrac et al., 2024)
+ML Power Models(Alavani et al., 2023; Wu et al., 2015)
+AccelWattch(Kandiah et al., 2021)
+Wattchmen
+Portable across vendor architecture
+✓
+✓
+✓
+✓
+X
+✓
+Adapts to different cooling policies
+X
+✓
+✓
+✓
+X
+✓
+Models Compute Energy
+✓
+✓
+X
+X
+✓
+✓
+Models Control Flow Energy
+X
+X
+X
+X
+✓
+✓
+Models Memory Hierarchy Energy
+X
+✓
+✓
+X
+✓
+✓
+Fine-Grained Energy Breakdown
+✓
+X
+✓
+X
+✓
+✓
+Comprehensive Energy Measurements
+X
+✓
+X
+X
+✓
+✓
+For example, several modeling-based approaches have been developed to attribute energy use.
+Arafa et al. and Delestrac et al. break down energy consumption at a finer granularity, e.g., individual GPU instructions (Arafa et al., 2020; Delestrac et al., 2024).
+However, these works each examine only a subset of the instruction set, either compute instructions or the memory hierarchy.
+Since these tools targeted only a subset of GPU instructions, they ignored any contributions from other components during their measurements.
+An alternative is to employ ML-based models to predict an application’s energy consumption (Wu et al., 2015; Alavani et al., 2023).
+However, this work lacks explainability when attributing the energy consumption to application kernels: while its kernel-level energy breakdown is helpful, it limits the user’s ability to explain the impact of optimizations.
+Alternatively, AccelWattch (Kandiah et al., 2021), the state-of-the-art GPU power modeling framework, categorizes an application’s energy consumption into architectural components (discussed further in Section 2.3.1).
+However, AccelWattch’s predictions are brittle and only work well if applied to the same validated GPU in the same environment.
+In Figure 1, we used AccelWattch to predict energy consumption for popular applications (Che et al., 2009; Che et al., 2010; Narang, 2016; Narang and Diamos, 2017) on an NVIDIA V100 GPU in NSF’s CloudLab cluster (Duplyakin et al., 2019).
+Although AccelWattch was validated for V100 GPUs, since CloudLab’s environment was different, AccelWattch has a mean absolute percent error (MAPE) of 32% – twice AccelWattch’s self-reported error.
+In Section 2.3.1 we discuss these experiments further, including why tuning AccelWattch was insufficient.
+To address these issues, we propose Wattchmen, a GPU energy modeling tool and methodology that provides high-fidelity, fine-grained energy profiling of the GPU core compute, control flow, and memory hierarchy.
+Moreover, Wattchmen adapts to configuration differences (e.g., air- and water-cooling) and vendor architecture variations (e.g., NVIDIA’s Volta V100, Ampere A100, and Hopper H100 GPUs).
+To create this model, we use an extensive suite of microbenchmarks designed to isolate the energy consumption of compute, control flow, and memory hierarchy instructions.
+Second, we leverage modern profiling capabilities to gain a complete understanding of all the instructions executed on the GPU.
+Key to our design is the construction of a system of energy equations that can be solved to determine instruction-level energies.
+By solving the system of equations, we not only solve for instructions that are difficult to isolate on their own but also account for the impact of instructions that are part of the overhead when running other microbenchmarks.
+Using this information, we develop a model that predicts instruction-level GPU energy consumption for any given application, thereby providing finer-grained energy information.
+Overall, across 16 popular GPGPU, graph analytics, HPC, and ML workloads,
+Wattchmen reduces the mean absolute percent error (MAPE) to 13% versus 32% for the state-of-the-art AccelWattch and 25% for Guser.
+Moreover, unlike AccelWattch, Wattchmen adapts and accurately predicts energy on systems with different cooling mechanisms: providing 15% MAPE on the Summit supercomputer’s water-cooled V100 GPUs.
+Furthermore, Wattchmen generalizes to more modern GPUs, yielding MAPEs of 11% for A100 GPUs and 12% for H100 GPUs.
+Finally, we present two case studies on Backprop and QMCPack that demonstrate how Wattchmen can be used to improve energy efficiency (up to 35%) on existing systems.
+In these case studies, we show how Wattchmen’s energy breakdown enables developers to improve the energy consumption of their workloads.
+Thus, Wattchmen provides high-fidelity and fine-grained insights into a GPU application’s energy consumption.
+We plan to open-source Wattchmen to help reproduction and extension, allowing the community to co-optimize their workloads.
+2. Background
+2.1. Vendor-based Tools for Energy Profiling
+GPU vendors have provided tools such as the NVIDIA Management Library (NVML) (NVIDIA, 2025a; NVIDIA, 2025c) or AMD’s rocm-smi (AMD, 2025b; AMD, 2025c) to measure the energy consumption of their devices.
+These tools provide measurements for the entire GPU and are exposed at system-level by the system integrator (DMTF, 2025; HPE, 2025; Thaler et al., 2020; Williams, 2015) or community driven unified interfaces (Grant et al., 2025; Variorum, 2025).
+Measurement data streams from these interfaces are plumbed through various data collection tools and data management systems (Agelastos et al., 2014; Bartolini et al., 2019; Borghesi et al., 2023; Eastep et al., 2017; Netti et al., 2020) and have been used for application power management (Etinski et al., 2012; Krzywaniak and Czarnul, 2020; Patki et al., 2019; Rountree et al., 2012; Yue et al., 2023), power-aware job scheduling (Maiterth et al., 2018), data center level power management (Wilson et al., 2023), HPC power signatures (Shin et al., 2021; Govind et al., 2023), and the race to exascale (Bergman et al., 2008; Dongarra et al., 2019; Kothe et al., 2019).
+However, these focus on addressing the overall system energy efficiency.
+Prior work has also explored the relationship between application performance and energy consumption (Choi et al., 2013; Choi and Vuduc, 2013; Ghane et al., 2018).
+However, such ideas, methods, and techniques have not made it into major vendor profiling tools (NVIDIA, 2025b; NVIDIA, 2025f) or are limited in capabilities (Cray, 2025) due to the lack of suitable granularity in both time and space.
+With microsecond-level GPU kernel activities happening in increasingly large, heterogeneous GPUs, fine-grained energy consumption attribution is exceedingly difficult.
+Thus, while vendor-provided tools provide some valuable details, they currently do not provide detailed, instruction-level granularity information on GPU energy consumption. Thus, recent work (and Wattchmen) instead seeks alternatives that provide developers’ more fine-grained information.
+2.2. GPU Instructions
+Modern GPU energy modeling frameworks frequently utilize microbenchmarks to isolate the energy behavior of specific instructions (Section 2.3).
+For example, to estimate the energy consumption of a GPU vector addition, these frameworks use microbenchmarks that perform a large number of vector additions. To reduce the number of non-vector addition instructions in the program, these microbenchmarks typically use inlined assembly and other optimizations, such as loop unrolling.
+Thus, the resultant microbenchmark often contains a large number of the assembly instructions in question, enabling the frameworks to isolate their energy consumption.
+For NVIDIA GPUs, this assembly-level programming is typically done in CUDA’s PTX virtual ISA (NVIDIA, 2025e), which acts as an intermediate ISA across all NVIDIA GPUs.
+Subsequently, the assembler optimizes the PTX instructions into SASS.
+Since SASS assembly instructions are specific to a given NVIDIA GPU, they are often not portable.
+This two-stage compilation process allows NVIDIA to generate highly optimized code for a given GPU without guaranteeing backwards ISA compatibility.
+However, it also makes it difficult to isolate the behavior of specific SASS instructions, since the assembler may generate different SASS instructions.
+In Sections 3.1 and 3.4 we discuss how Wattchmen overcomes this challenge.
+2.3. Alternative Energy Profiling Approaches
+Building on Section 1, Table 1 compares Wattchmen to a number of other recent works that provide alternative approaches to measure GPU energy consumption.
+To effectively co-optimize GPU applications for performance and energy on HPC systems, an energy model must (i) be generalizable – including across GPU architectures within the same hardware generation, across different generations, or adapting to deployment changes such as different cooling configurations; (ii) provide fine-grained energy information about compute (e.g., vector adds and multiplies), control flow (e.g., move, set predicates) and memory hierarchy (e.g., memory accesses to specialized memories like scratchpads and constant memory, as well as the data caches and main memory); and (iii) provide comprehensive energy breakdowns.
+Existing works fall short in one or more dimensions.
+There are also several energy-aware GPU approaches (discussed further in Section 7).
+However, for existing HPC systems where hardware changes are not possible, the most popular approaches either project empirical GPU energy measurements on existing systems (Arafa et al., 2020; Delestrac et al., 2024; Kandiah et al., 2021) or use machine learning (ML) models to predict energy consumption (Wu et al., 2015).
+Collectively, these works significantly improved the state-of-the-art in GPU energy modeling, which previously relied either on hand-rolled, non-validated power models or on validated but increasingly out-of-date power models (Leng et al., 2013).
+Arafa et al.’s GPU energy model (Arafa et al., 2020) uses PTX assembly instructions to derive per-instruction energy.
+Since their model is based on PTX instructions, it can adapt to different NVIDIA GPU architectures and provide fine-grained energy information.
+However, because their model is based on PTX instructions, changes to compiler flags can affect what the GPU executes (Gutierrez et al., 2018; Khairy et al., 2020).
+This constrains the model’s ability to accurately predict for applications that use different compiler flags.
+Moreover, the model only captures GPU compute instructions.
+On the other hand, Delestrac et al. focus on the GPU memory hierarchy’s energy (Delestrac et al., 2024).
+Similar to Arafa et al., they use microbenchmarks but combine them with performance counter and sensor data to improve accuracy.
+This approach provides fine-grained energy information about the memory hierarchy.
+However, for workloads that are not memory-bound, the lack of information about compute instructions means that certain bottlenecks are not accounted for.
+Combining these works to form a complete model is challenging.
+First, since they were designed on different architecture generations, combining their results directly does not produce an accurate model.
+Moreover, while combining them improves completeness, neither attributes energy to control-flow instructions, which are standard in complex applications.
+Thus, these works, whether in isolation or in combination, are insufficient for energy attribution.
+Conversely, Guser generates and analyzes the power behavior of individual GPU PTX instructions.
+Specifically, Guser focuses on the max power per instruction (Shan, Yalong and Yang, Yongkui and Qian, Xuehai and Yu, Zhibin, 2024).
+Unlike Arafa et al. and Delestrac et al., Guser includes both compute and memory instructions.
+Although Guser’s primary focus is max power per instruction,
+it also models GPU energy consumption as part of its tests.
+However, like the previous works, Guser has similar limitations from its PTX-based methodologies.
+Furthermore, while Guser includes both compute and memory instructions, it does not attribute energy to control-flow instructions, which are standard in complex applications.
+Finally, other work uses ML to estimate the energy consumption of GPU workloads given trained estimates from other workloads (Alavani et al., 2023; Wu et al., 2015).
+By leveraging a large training corpus of GPU performance-counter data, it is robust across different cooling sources and vendor architectures.
+However, it only provides kernel-level information about the overall behavior of a given application.
+Thus, while ML models can achieve high accuracy, these models do not provide the fine-grained information needed to optimize energy consumption.
+As none of these approaches provides a comprehensive picture of GPU energy consumption, we do not directly compare with them.
+2.3.1. AccelWattch
+AccelWattch is the state-of-the-art in modeling GPU power consumption, frequently providing higher accuracy and robustness than the other approaches in Table 1.
+Unlike prior approaches, AccelWattch estimates power for all instructions.
+To do this, AccelWattch uses a series of microbenchmarks, in combination with quadratic programming and sensor measurements. Notably, because AccelWattch models power consumption, it must model energy via “windows” of time over which it integrates. Although AccelWattch purports to provide generalizable energy predictions over different GPU architectures, as shown in Section 1 and Figure 1, this support is fragile, even for its modeled V100 GPU.
+This fragility largely stems from AccelWattch
+not being flexible enough to handle variations in architecture and operational conditions.
+These differences include the GPUs having a different TDP (300W on CloudLab’s V100 GPU versus 250W for AccelWattch’s V100), different maximum frequencies (1417 MHz on AccelWattch’s V100, 1530 MHz on CloudLab’s V100), and available memory (32 GB on AccelWattch’s V100, 16GB on CloudLab’s V100).
+To address this issue, we attempted to reproduce the temperature-aware calibration of AccelWattch on this water-cooled system.
+However, AccelWattch’s iterative quadratic solver-based procedure did not converge and reported zero power for data caches – similar to prior AccelWattch reports (Xiaolong, 2024; Moiralex, 2024).
+Consequently, we were also unable to create a calibrated model for this system.
+Thus, while AccelWattch significantly improves on the state-of-the-art, it has shortcomings that make it difficult to
+use in practice.
+3. Design
+Figure 2. Wattchmen design overview.\DESIGN{} design overview.
+To overcome the inefficiencies of prior work, we exploit two key insights.
+First, we observe that measuring steady-state energy consumption over long periods yields robust measurements that readily adapt to architectural and system changes, such as cooling.
+Second, we solve for instruction energies as a system of equations, as ancillary instructions for one microbenchmark may be the primary instruction for another.
+Figure 2 shows Wattchmen’s overall design.
+Overall, Wattchmen has two phases: a training phase (top) and a prediction phase (bottom).
+The training phase uses a series of microbenchmarks (Section 3.2), profiler information, and our steady state energy measurement approach (Section 3.3) to isolate and create a table of per-instruction energies.
+This includes hard to isolate instructions which are handled by the use of a non-negative linear solver (Section 3.1.
+In the prediction phase, Wattchmen uses these per-instruction energies, in combination with additional optimizations to increase instruction coverage (Section 3.4), to predict the energy of GPU applications (Section 3.5).
+3.1. Deriving Energy Per Instruction
+A direct way to derive an energy per instruction would be to design a specific microbenchmark for each instruction; then one can measure the energy of that benchmark and amortize it across number of times the instruction was executed.
+However, each microbenchmark typically requires ancillary instructions, such as load instructions, before its vector ALU or tensor operations.
+Likewise, when designing tests to access various levels of the memory hierarchy, the program cannot simply load or store in isolation – there must also be additional instruction(s) for calculating addresses and/or obtaining data values.
+Since these additional instructions contribute to the overall energy, simply solving for energy based on the primary instruction can lead to over prediction.
+Our key insight is that the “extra” instructions in one microbenchmark may be the primary instructions in another microbenchmark.
+Thus, by holistically considering all microbenchmarks, we can appropriately attribute each instruction’s energy contribution.
+Figure 3. Subset of the full system of equations used to solve for instructions for the air-cooled V100 GPU. Each row represents one microbenchmark, and each column represents the frequency of a target instruction occurring in the benchmark (selection). The full table for the V100 GPU includes 90 microbenchmarks covering 90 instructions.Subset of microbenchmark suite with their target instruction. Each row represents one microbenchmark, and each column represents the frequency with which the target instruction occurred in the benchmark (selection).
+To illustrate this, Figure 3 shows a subset of our microbenchmarks with the fraction of instructions in each microbenchmark.
+For example, the IMAD_IADD_bench has 58% IMAD.IADD instructions, 40% IADD3 instructions, and < 1% MOV, IMAD, and BRA each.
+Thus IMAD_IADD_bench by itself would be a poor choice for calculating the energy consumed by IMAD.IADD.
+However, by considering INT_ADD_bench, we can derive an energy value for IMAD.IADD.
+Furthermore, with the other microbenchmarks can cover the instructions such as MOV, IMAD, and BRA.
+Hence, by solving for energies not in isolation, but as a system of equations, we can gain a more accurate estimation for the energy per instruction.
+To ensure we obtain real energy per instruction values, we use a non-negative solver to enforce the non-negativity constraint.
+We also maintain a square system of equations, introducing a new benchmark(s) when incorporating a new instruction(s).
+We monitor the residual throughout this iterative process and observe that it remains zero, supporting our claim of a linear model for energy contributions.
+We next discuss how we design our microbenchmarks and ensure stable energy measurements.
+3.2. Microbenchmark Design
+Listing 1: Code Snapshot of Microbenchmark.
+⬇
+1
+__global__ void shfl_kernel(unsigned* A,
+2
+unsigned* B,
+3
+unsigned long long N){
+4
+int i = blockDim.x * blockIdx.x + threadIdx.x;
+5
+unsigned sink = A[uid];
+6
+#pragma unroll 100
+7
+for(unsigned long long i=0; i<N; i++){
+8
+sink += __shfl_sync(0xffffffff, sink, 0);
+9
+}
+10
+B[uid] = sink;
+11
+}
+Like prior work (Section 2.3), we design a large number of hand-tuned microbenchmarks largely using inlined assembly.
+However, we focus on constructing microbenchmarks that emit target SASS instructions.
+Doing so allows us to focus on what is actually being executed on the hardware and bypass any changes that may arise due to setting compiler flags.
+Furthermore, we found that prior microbenchmarks (Kandiah et al., 2021) did not provide sufficient, fine-grained coverage.
+For example, Listing 1 shows a microbenchmark that we added to target the SHFL instruction.
+We also added new tests for
+various data widths and levels of the GPU memory hierarchy.
+Specifically, we create microbenchmarks that isolate the energy of memory accesses of different precisions (e.g., 8-, 16-, 32-, 64-, and 128-bits per thread), as well as each level of the memory hierarchy (L1, L2, DRAM), and utilize hit and miss profiling information, among other things, to determine a given application’s energy prediction (Section 3.5).
+To help each microbenchmark reach a stable phase, we execute the desired instruction(s) in a loop with a user-defined number of iterations.
+Moreover, we unroll this loop to increase the proportion of the target instruction.
+Additionally, to ensure no interference, we run each microbenchmark in isolation on the GPU and saturate the thread blocks for each microbenchmark.
+This ensures the microbenchmark runs across all of the GPU’s SMs and helps us distinguish the energy consumed by executing instructions from the energy attributable to shared resources.
+3.3. Ensuring Consistent and Stable Measurements
+Unlike prior approaches (Section 2.3), we run workloads long enough to identify their steady-state dynamic power.
+This also ensures they have a very stable power usage during their runs.
+We also observe that they reach a stable temperature as the heat dissipation levels off.
+Thus, our approach is agnostic towards cooling and other effects that affect the system’s temperature.
+line graph showing power samples
+Figure 4. Power trace sampled with NVML from running a double precision addition microbenchmark on an air-cooled Tesla V100 GPU, including GPU utilization (red) and GPU power (blue).line graph showing power samples
+Figure 4 shows an example of our steady state approach, which tracks the utilization (red) and power (blue) of the microbenchmark.
+During our energy profiling, we also take power samples using NVML.
+In general, we found that using an approximate integration over the power samples only differs from the values reported by the NVML energy measurement counter by less than 1%.
+Notably, after a brief startup period, Figure 4’s microbenchmark remains steady at \sim150W.
+This makes it easy to calculate a microbenchmark’s total energy by summing the area under its power curve and multiplying by its execution time.
+In turn, given a specific number of instances of those instructions (e.g., directly counting or from the profiler), we can accurately estimate the average energy consumption per instruction instance.
+However, this energy value needs to be further subdivided into static, constant (idle), and dynamic components to correctly identify a given instruction’s dynamic energy contribution.
+3.3.1. Isolating Static & Constant Power
+Broadly, GPU energy can be broken into constant, static, and dynamic energy (Equation 1).
+(1)
+E_{total}=E_{const}+E_{static}+E_{dynamic}
+Constant energy is the amount of energy a GPU consumes in its lowest power state.
+This energy is a fixed constant cost, even if no work is issued to the GPU.
+Thus, constant energy can be easily calculated as the product of the constant power and the application’s execution time.
+The GPU’s shared resources also consume static energy.
+For example, for any GPU instruction, various components must be powered, such as the caches.
+Even if the instruction does not interact with the memory system, the caches are still powered.
+The amount of energy attributed to these shared resources varies with the number of active SMs and threads in a warp.
+When all threads and all SMs are active, the static power is fixed to some set value, which can be multiplied by execution time to get the total energy:
+(2)
+E_{total}=[(P_{const}+P_{static})\times T_{exec}]+E_{dynamic}
+To isolate the static and constant energy from the dynamic energy, we also gather
+power samples before any application runs.
+Since we control what the GPU runs, it must be idle during this period.
+Thus, we can determine the GPU’s constant power, convert it to energy, and subtract this energy from the energy consumed by a given microbenchmark.
+Although GPU temperature fluctuates (e.g., due to prior programs), allowing the device to cool down between training experiments and taking the median across multiple runs reduces measurement variability.
+Thus, we can obtain the GPU’s constant power and subtract the corresponding energy.
+Furthermore, Oles, et al. (Oles et al., 2024) observed that when a Volta-class V100 GPU is active but not doing work, it consumes \sim80W on the Summit supercomputer.
+We verified that this was also true when running a NANOSLEEP kernel on the Volta-, Ampere-, and Hopper-class clusters we use for evaluation (Section 4.1).
+Based on this, we separate the static energy from the dynamic energy.
+Finally, after accounting for static and constant energy, we categorize the remaining energy as dynamic energy.
+Simple microbenchmark that loops two different instructions. Base: 2mul and 2add; Additional Mul: 4mul and 4add; 2x Base: 4mul + 4add.
+Figure 5. Simple microbenchmark that loops two different instructions. Base: 2mul and 2add; Additional Mul: 4mul and 4add; 2x Base: 4mul + 4add.Simple microbenchmark that loops two different instructions. Base: 2mul and 2add; Additional Mul: 4mul and 4add; 2x Base: 4mul + 4add.
+Solving for Energy: We use dynamic energy as the right-hand side of our system of equations.
+For example, in Figure 5 we begin with a simple microbenchmark (labeled Base) that executes two add instructions and two multiply instructions in a loop.
+Next, we introduce two additional multiply instructions in the loop (labeled Additional Mul).
+Lastly, we introduce two additional add instructions into the loop, resulting in twice as many instructions as the base microbenchmark (labeled 2\times Base).
+As the machine executes more instructions, its runtime increases, thereby increasing the constant and static energy (Equation 2).
+We observe that the remaining dynamic energy increases linearly with the instruction count.
+Given this observation, we use a linear model for calculating dynamic energy (Equation 3) across all n instructions that comprise a microbenchmark:
+(3)
+E_{dynamic}=\sum^{n}_{i}count_{i}\times energy_{i}
+After calculating this for all our microbenchmarks, we next develop a system of linear equations.
+By solving all equations simultaneously, we can assign energy values to each instruction and account for ancillary instructions (e.g., for-loop constructs or accesses to different memory hierarchy levels).
+3.4. Improving Coverage for Low Usage Instructions
+Collectively, the instructions we identified energy values for (Section 3.3) and those our solver identified (Section 3.1) enable Wattchmen to directly predict many GPU instruction’s energies.
+However, given the significant number of GPU instructions and modifiers to those instructions, it is difficult to measure all of them – especially seldom-used instructions – directly.
+For these instructions, we introduce three mechanisms to predict energy values and increase coverage: scaling, grouping, and bucketing.
+Scaling: Memory operations can perform the same operation but utilize different data widths or access different levels of the cache hierarchy.
+Although we design unique microbenchmarks to measure the energy of many of these instruction variants directly, we also perform scaling when microbenchmarks are unavailable. We describe how scaling is used in Section 3.5.
+Grouping: GPU ISAs frequently append several modifiers to instructions to indicate subtle differences in behavior.
+For example, some memory operations will add modifiers indicating whether this address should be first for eviction, such as STG.E.EF.64, which is treated the same as STG.E.64.
+Likewise, instructions that set predicate values for control flow use slightly different operations (e.g., AND, OR), such as ISETP.GE.OR, ISETP.LE.AND, ISETP.LE.OR are treated the same as ISETP.GE.AND.
+This information is vital to the underlying architecture, but does not significantly affect the instruction’s energy.
+Thus, instead of directly writing additional tests for these instructions, we group them by accumulating their instruction counts and assuming that all instructions in the group consume the same amount of dynamic energy per instruction, where reasonable.
+We also group instruction sequences.
+For example, HMMA instructions on V100 GPUs are broken into four steps, denoted with a .STEP modifier.
+In such cases, we report the energy for the four instruction sequence as if it were one singular HMMA instruction.
+Bucketing: Prior work, like AccelWattch, categorizes GPU instructions according to microarchitectural components.
+We also leverage this to predict energy for instructions that are difficult to predict directly and where other methods fail.
+We first categorize the known instructions into the buckets.
+For each bucket, we average all of the known energies.
+Thus, for any unknown instruction i that is categorized into the bucket, we assume that i consumes the bucket’s average energy.
+For example, the R2UR instruction is bucketed with other typical integer ALU instructions such as MOV and LOP3.LUT.
+Thus, we approximate R2UR’s energy as the average of the bucket’s known instruction energies.
+3.5. Putting It All Together: Energy Prediction & Attribution
+After the profiling phase, Wattchmen generates a constant power value, a static power value, and a table of direct per-instruction energies.
+The direct per-instruction energies are categorized into groups, and then a bucket average is derived from the known energies within the bucket.
+In the prediction phase, Wattchmen uses this data to create fine-grained energy predictions for full-sized applications.
+To generate a prediction, the application is profiled to gather the application execution time, the number of instructions executed, and caching behavior.
+First, the execution time is multiplied by the constant and static power values to calculate the related energy contribution.
+Next, we use the profiled instruction counts to assign energies to them.
+Instructions are grouped together and then checked with the per-instruction energies table, such as ISETP.GE.OR.
+For cases where an instruction is not explicitly in the table, we use the bucket’s average value for the bucket associated with that instruction, like R2UR.
+For memory instructions, we additionally examine the cache hit rates.
+For example, if the instruction is a global load like LDG.E, we check the profiled global load hit rate.
+This allows us to incorporate the effects of instructions accessing different parts of the memory hierarchy, which are not exposed by the instruction or its modifiers.
+For example, if we have an L1 Hit rate of 90% and 100 LDG.E instructions, we say that 90 of them hit in the L1 and the remaining 10 missing in the L1.
+Next, we compute the per-instruction energy for the instruction at the specified level of the memory hierarchy.
+If the per-instruction energy at a particular level of the hierarchy is not in our table, we apply a scaling factor derived from comparing the relative energies of another instruction with known energies at the different levels of the memory hierarchy.
+Similar to the compute instructions, we multiply the instruction counts by the energies and accumulate.
+Thus, our result includes a prediction of total energy consumption as well as fine-grained energy attribution details.
+4. Methodology
+4.1. Evaluated Systems
+Table 2. Summary of studied GPUs and HPC clusters.
+Cluster
+GPU
+Cooling
+CloudLab (Duplyakin et al., 2019)
+V100
+air
+Summit (ORNL, 2022)
+V100
+water
+Lonestar6 (TACC, 2024)
+A100
+air
+Lonestar6 (TACC, 2024)
+H100
+air
+Table 3. Summary of studied workloads.
+Application
+Input
+Backprop_k1 (Che et al., 2009; Che et al., 2010)
+64K
+Backprop_k2 (Che et al., 2009; Che et al., 2010)
+64K
+Hotspot (Che et al., 2009; Che et al., 2010)
+1024 2 20 temp_1024 power_1024
+KMeans (Che et al., 2009; Che et al., 2010)
+819200
+SRAD_v1 (Che et al., 2009; Che et al., 2010)
+100, 0.5, 502, 458
+GEMM_c1 (Double, Float, Half) (Narang, 2016; Narang and Diamos, 2017)
+1760x128x1760
+GEMM_c2 (Double, Float, Half) (Narang, 2016; Narang and Diamos, 2017)
+3072x128x1024
+RNN Training (Double, Float) (Narang, 2016; Narang and Diamos, 2017)
+Vanilla, 1760 hidden layers,
+16 batch size, 50 steps
+RNN Inference (Double, Float, Half) (Narang, 2016; Narang and Diamos, 2017)
+Vanilla, 1760 hidden layers,
+16 batch size, 50 steps
+PageRank (Page et al., 1999)
+659033\times 659033
+QMCPack (Godoy et al., 2025; Kim et al., 2018; Kent et al., 2020)
+NiO S64 (256 atoms, 3072 edges)
+To ensure our results were representative across a variety of GPU clusters and systems, we ran our experiments across clusters with different sizes, generations, and cooling approaches.
+Table 2 summarizes the four HPC clusters we studied.
+We use TACC’s modern Lonestar6 cluster, which includes 252 air-cooled NVIDIA A100 and eight air-cooled H100 GPUs (TACC, 2024).
+To demonstrate Wattchmen’s generalizability, we studied ORNL’s Summit supercomputer, a large, water-cooled cluster with 27648 NVIDIA V100 GPUs.
+CloudLab is a smaller, air-cooled cluster with 12 NVIDIA V100 GPUs (Duplyakin et al., 2019).
+For our V100 study, we also provide energy estimates from AccelWattch, as it has validated power models for these GPUs.
+4.2. Applications
+We evaluate Wattchmen across 90 microbenchmarks and 16 traditional GPGPU (Che et al., 2009; Che et al., 2010), graph analytics (Page et al., 1999), ML (Narang, 2016; Narang and Diamos, 2017), and HPC (Kim et al., 2018; Kent et al., 2020; Godoy et al., 2025), workloads with diverse behavior.
+This mix is representative of how modern systems are used and stresses a variety of GPU components, including ALUs, specialized memories, TensorCores, and various levels of the memory hierarchy.
+Table 3 summarizes these workloads.
+Microbenchmarks:
+We use a suite of 90 microbenchmarks, 51 of which we wrote to augment AccelWattch’s existing microbenchmarks.
+Each microbenchmark uses inlined assembly to isolate the behavior of specific GPU components, including shared memory, cache levels, main memory, TensorCores, and various ALU and control flow operations.
+The microbenchmark saturates the GPU’s SMs and, within a thread block, saturates all SIMT lanes per SM.
+We do not show results for the microbenchmarks in Section 5 as they are inputs for Wattchmen’s predictions (Section 3.5).
+Normalized energy predictions on air-cooled GPUs in CloudLab. Columns per workload: A) AccelWattch; G) Guser; B) \DESIGN{}-Direct; C) \DESIGN{}-Pred; D)~measured energy.
+Figure 6. Normalized energy predictions on air-cooled GPUs in CloudLab. Columns per workload: A) AccelWattch; G) Guser; B) Wattchmen-Direct; C) Wattchmen-Pred; D) measured energy.
+Air-cooled V100 energy estimation MAPE (\%).
+Model
+MAPE (%)
+AccelWattch
+32
+Guser
+25
+Wattchmen-Direct
+19
+Wattchmen-Predict
+14
+Table 4. Air-cooled V100 energy estimation MAPE (%).
+Benchmarks:
+To compare (Section 4.3) against AccelWattch’s average kernel power values, we alter Rodinia’s GPGPU benchmarks to repeat a particular target kernel multiple times.
+This enables the particular kernel to dominate the energy consumption and ensure a fair comparison.
+For the graph analytics, HPC, and ML benchmarks, we keep the benchmarks as they were originally written.
+For each GEMM, we study both half and full precision; for the RNNs, we study half, float, and double precisions for training and half and float precisions for inference.
+For PageRank, we use the common Sparse-matrix-Vector (SPMV) algorithm (Che et al., 2013; Page et al., 1999).
+In particular, we use pre2 as the input graph to demonstrate Wattchmen for a workload that is memory-bandwidth-bound (Collection, 2001).
+Finally, QMCPACK is an open-source software for ab initio electronic structure calculations using real-space quantum Monte Carlo methods for solids, molecules, atoms, and model systems (Kim et al., 2018; Kent et al., 2020).
+This application is important for the DOE’s materials science, nanoscience, and quantum information science by enabling highly accurate simulations of materials and electronic structure.
+Thus, QMCPACK is included in many of DOE’s application readiness efforts, such as CORAL2 (Lawrence Livermore National Labs, 2020), Exascale Computing Project (ECP) (Kent, 2025), and OLCF6 (Oak Ridge National Laboratories, 2025).
+This benchmark is sensitive to floating point computation, memory bandwidth, and memory latency.
+For all experiments, we run the workloads on a single GPU to perform a direct comparison with AccelWattch.
+However, our approach is also useful more broadly for clusters, because optimizing energy within a GPU also improves the overall energy consumption (Tschand et al., 2025), as node-level performance optimization is the primary step towards efficient and scalable applications.
+Compilation:
+For all experiments across V100 GPUs, we use CUDA 11.0.
+When working with A100 and H100 GPUs, we use CUDA 12.0. To determine the SASS instruction breakdown for each workload, we use NSight Compute’s SASS opcode count.
+For these breakdowns, we
+retain all modifier information as these modifiers impact how the opcode is executed on the GPU.
+For example, the datatype conversion instruction F2F (Floating Point To Floating Point Conversion) can have different modifiers depending on the conversions performed, such as F2F.F16.F32 and F2F.F32.F16.
+4.3. Configurations
+We evaluate the following configurations (labels in parentheses are used in the figures in Section 5):
+AccelWattch (A): The state-of-the-art GPU power model (Section 2.3). We used AccelWattch’s publicly available V100 model
+to predict energy for the workloads in Section 5.
+Since AccelWattch predicts power, we converted its predictions to energy by multiplying the reported average power of a given kernel by the observed execution time.
+Guser (G) (Shan, Yalong and Yang, Yongkui and Qian, Xuehai and Yu, Zhibin, 2024):
+Since the Guser model is not publicly available, we used our microbenchmark suite and apply Guser’s methodology.
+In particular, we take the maximum power and multiply it by the execution time, rather than integrating a steady-state power trace.
+We also amortize the total energy.
+Wattchmen-Direct (B): Our Wattchmen model (Section 3) which predicts energy from directly identified instructions.
+Wattchmen-Pred (C): The extended version of Wattchmen with increased instruction coverage (Section 3.4).
+Real GPU (D): The actual measured energy for a given GPU kernel, as reported by NVML.
+5. Evaluation
+Figure 7. Applying Wattchmen to water-cooled V100 GPUs. Columns per workload: A) AccelWattch ; B) Wattchmen-Direct ; C) Wattchmen-Pred ; D) measured energy.Applying \DESIGN{} to water-cooled V100 GPUs. Columns per workload: A) AccelWattch ; B) \DESIGN{}-Direct ; C) \DESIGN{}-Pred ; D)~measured energy.
+Table 5. Water-cooled V100 energy estimation MAPE (%).
+Model
+MAPE (%)
+AccelWattch
+17
+Wattchmen-Direct
+15
+Wattchmen-Predict
+14
+Overall, our experiments show that Wattchmen reduces prediction error compared to AccelWattch on V100 GPUs: from 32% to 19% with Wattchmen-Direct and 14% with Wattchmen-Pred.
+Wattchmen also provides better MAPE than Guser (25%), further demonstrating the value in Wattchmen’s approach.
+For water-cooled V100 GPUs (15%), air-cooled A100 GPUs (11%), and air-cooled H100 GPUs (12%), Wattchmen’s MAPE remains similar (Section 5.2) – demonstrating its generalizability.
+Finally, our case studies show how applying Wattchmen to HPC systems improves both Backprop’s (16%) and QMCPACK’s (35%) energy efficiency (Section 5.3).
+5.1. Comparison With State-of-the-Art
+Since AccelWattch was validated on air-cooled V100 GPUs, we compare Wattchmen on the same GPUs.
+Figure 6 shows that AccelWattch provides a MAPE of 32% (higher than AccelWattch’s reported V100 MAPE, as discussed in Section 2.3.1).
+Both Wattchmen-Direct (19% MAPE) and Wattchmen-Pred (14% MAPE) improve on AccelWattch.
+In particular, AccelWattch struggles when predicting the energy of GEMM workloads.
+This is in part due to AccelWattch’s low predictions for the respective matrix and memory operations.
+Conversely, Wattchmen-Direct properly attributes energy use of the matrix operations, and Wattchmen-Pred fills the gap for memory operations that were not explicitly measured. However, because the memory instruction’s predictions rely on scaling factors rather than explicit measurements, they can overpredict, as happens with half-precision GEMMs.
+The half-precision RNNs show another overprediction source. Compared with other workloads, RNNs have a much higher proportion of static and constant energy (\approx80%), whereas in the other workloads, static and constant energy account for only \approx40% of the total.
+This happens because RNNs do not utilize GPUs efficiently (Pati et al., 2022; Shoeybi et al., 2019; Zadeh et al., 2019), causing the GPU to run at lower power.
+When this happens, Wattchmen is more prone to error since the static and constant energy consume larger fractions of total energy.
+Nonetheless, compared with the state-of-the-art AccelWattch, Wattchmen achieves higher accuracy in attributing energy consumption.
+Guser Comparison:
+Figure 6 shows that Guser provides 25% MAPE – worse than Wattchmen (14%) but outperforming AccelWattch (32%).
+Broadly, Guser works well for tests that maximize the GPU’s power consumption (one of Guser’s original goals). However, there are several factors that make it ill-suited for generating a fine-grained energy breakdown.
+First, since Guser focused on max power, it ignores constant and static energy consumption.
+Consequently, those costs are amortized into instruction-level values – and causing overpredictions.
+Furthermore, Guser does not factor in the energy consumption from ancillary instructions, as the impact remains consistent across its microbenchmarks.
+Leaving out their impact can skew the overall energy.
+Lastly, Guser is primarily focused on compute instructions.
+Although Guser incorporates memory instructions in its construction, the focus on compute instructions reduces prediction accuracy for memory-intensive applications.
+Overall, this demonstrates how Wattchmen also significantly outperforms Guser.
+5.2. Generalization to Cooling and Later Architectures
+Normalized energy breakdown and instruction coverage across an A100 GPU
+Normalized energy breakdown and instruction coverage across an A100 GPU
+Figure 8. Normalized energy breakdown and instruction coverage across an A100 GPU
+Air-cooled A100 energy estimation MAPE (\%).
+Model
+MAPE (%)
+Wattchmen-Direct
+13
+Wattchmen-Predict
+11
+Table 6. Air-cooled A100 energy estimation MAPE (%).
+5.2.1. Water-cooled V100
+Next, we evaluate Wattchmen on the Summit supercomputer’s water-cooled V100 GPUs.
+Our experiments found that across the five Rodinia benchmarks, the water-cooled V100 GPUs had an average 12% lower energy consumption than air-cooled V100 GPUs.
+Interestingly, Figure 7 shows that AccelWattch has a 17% MAPE, lower than AccelWattch’s error in the air-cooled V100 system.
+Upon closer inspection, we found that this was because AccelWattch, unaware of the cooling mechanism, predicted the same energy for both systems.
+However, the ground-truth energies were lower on the water-cooled Summit GPUs, which serendipitously reduces their MAPE.
+Despite this, Wattchmen-Direct and Wattchmen-Pred still provides small improvements (15%, 14% MAPE).
+This highlights one of Wattchmen’s key benefits over alternatives such as AccelWattch, which struggles to account for factors such as different cooling environments.
+Thus, even with different cooling, Wattchmen again improves on AccelWattch.
+Normalized energy breakdown and instruction coverage across an H100 GPU
+Normalized energy breakdown and instruction coverage across an H100 GPU
+Figure 9. Normalized energy breakdown and instruction coverage across an H100 GPU
+Air-cooled H100 energy estimation MAPE (\%).
+Model
+MAPE (%)
+Wattchmen-Direct
+16
+Wattchmen-Predict
+12
+Table 7. Air-cooled H100 energy estimation MAPE (%).
+5.2.2. A100
+For our A100 experiments, we follow our methodology and retrain the model.
+As CUDA 12.0 deprecated textures, we omit results for kmeans_k1.
+To compensate we introduce results for PageRank.
+Wattchmen works well for PageRank, demonstrating its ability to accurately predict energy for not only compute-bound jobs like GEMMs, but also irregular, memory-bound workloads.
+Overall, Figure 8 shows that Wattchmen-Direct has a 13% MAPE across all benchmarks on A100 GPUs.
+Part of Wattchmen-Direct’s error is due to low coverage for instructions not explicitly covered in Wattch

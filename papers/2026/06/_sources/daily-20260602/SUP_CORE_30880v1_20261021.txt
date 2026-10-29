@@ -1,0 +1,768 @@
+3 Task Formulation
+We model each environment as a POMDP
+(𝒮,𝒜,𝒯,Ω,𝒪)(\mathcal{S},\mathcal{A},\mathcal{T},\Omega,\mathcal{O}) with latent
+states sts_{t}, text actions ata_{t}, observations oto_{t}, transition kernel
+𝒯⁡(st+1∣st,at)\mathcal{T}(s_{t+1}\!\mid\!s_{t},a_{t}), and emission Ω⁡(ot∣st)\Omega(o_{t}\!\mid\!s_{t}).
+The learner sees neither sts_{t} nor 𝒯\mathcal{T}, only offline trajectories
+ℋ={(o0,a0,…,aT−1,oT)}\mathcal{H}=\{(o_{0},a_{0},\ldots,a_{T-1},o_{T})\} and an optional
+description EE.
+Goal.
+Induce executable Python cc that approximates dynamics through a symbolic
+belief s^t∈𝒮^\hat{s}_{t}\in\hat{\mathcal{S}} and a predict and correct cycle. The
+program implements fcf_{c} (predict), ρc\rho_{c} (readout), and gcg_{c}
+(correct). Let ⊥\bot denote the blank belief returned by
+init_belief; correct_belief then populates it from the
+initial observation:
+s^0\displaystyle\hat{s}_{0}
+=gc​(⊥,o0),\displaystyle=g_{c}(\bot,\,o_{0}),
+(1)
+s~t+1\displaystyle\tilde{s}_{t+1}
+=fc​(s^t,at),\displaystyle=f_{c}(\hat{s}_{t},\,a_{t}),
+(2)
+o^t+1\displaystyle\hat{o}_{t+1}
+=ρc​(s~t+1,at),\displaystyle=\rho_{c}(\tilde{s}_{t+1},\,a_{t}),
+(3)
+s^t+1\displaystyle\hat{s}_{t+1}
+=gc​(s~t+1,ot+1).\displaystyle=g_{c}(\tilde{s}_{t+1},\,o_{t+1}).
+(4)
+The induction objective is to minimize replay loss
+minc⁡𝔼(ot,at,ot+1)∼ℋ​[ℓ⁡(o^t+1,ot+1)],\min_{c}\;\mathbb{E}_{(o_{t},a_{t},o_{t+1})\sim\mathcal{H}}\bigl[\ell(\hat{o}_{t+1},\,o_{t+1})\bigr],
+(5)
+where ℓ\ell is a text loss over predicted and observed next observations and
+s^t\hat{s}_{t} comes from running
+(1)–(4) along the prefix. Since cc
+is discrete, we optimize by search
+(Section 4); the output is an inspectable program whose
+beliefs, rules, and render logic can be locally patched.
+The formulation also allows cc to contain a constrained residual readout
+memory for high-confidence surface details, while preserving the
+predict and correct interface; the constraints act as an inductive bias
+analogous to weight decay, shaping the search toward simpler explanations
+(Section 4.4).
+Feasibility and identification.
+Three observations motivate the inductive bias in
+Section 4. (1) Existence: if ℋ\mathcal{H} has
+no contradictory history and action pairs, zero loss on
+Eq. (5) is achievable by a lookup table over
+prefix-action keys, feasible but non-generalizing.
+(2) Non-identifiability: perfect replay does not imply correct
+latent structure; multiple compact programs can agree on logged transitions
+yet diverge on unseen prefix-action combinations (Kaelbling et al., 1998).
+(3) Inductive bias: PatchWorld biases search via the LLM’s code
+prior, counterexample-guided repair that rewards consistency across diverse
+contrastive patterns, and explicit constraints on any residual memory; empirically
+defensible biases that discourage lookup-table replay while permitting
+limited memorization of reliable renderer details.
+Why fidelity and utility can diverge.
+Eq. (5) optimizes textual reconstruction of
+ot+1o_{t+1}, but a planner only needs the model to discriminate among
+candidate actions: a⋆=arg⁡maxa​Q⋆​(s,a)a^{\star}=\arg\max_{a}Q^{\star}(s,a). Let
+Δc​(s,a,a′)=ρc​(fc​(s,a),a)−ρc​(fc​(s,a′),a′)\Delta_{c}(s,a,a^{\prime})=\rho_{c}(f_{c}(s,a),a)-\rho_{c}(f_{c}(s,a^{\prime}),a^{\prime}) denote the
+action-contrastive readout signal. Two models can attain identical replay
+loss while differing arbitrarily in Δc\Delta_{c}: any aspect of ρc\rho_{c}
+constant across (a,a′)(a,a^{\prime}) (template phrasing, identifiers, list orderings)
+costs reconstruction but does not affect Δc\Delta_{c}, and vice versa. This
+is the partial-observation analogue of the value-equivalence principle of
+Grimm et al. (2020): models can be planning-equivalent yet diverge on
+observation likelihood. We therefore expect, and empirically observe (§5.4,
+Appendix K), a Pareto frontier between
+fidelity and utility rather than a single optimum.
+Figure 1: Overall framework of PatchWorld for generative optimization of
+executable world models and their subsequent repair and evaluation.
+Table 1: Environment regimes for deterministic code-based prediction.
+Regime
+Envs.
+Character
+Deterministic structure
+Maze, BabyAI, TextCraft
+Fixed hidden map/grid/recipe; exploration collapses belief, exact prediction possible.
+Irreducibly stochastic
+Wordle, WebShop
+Latent choices stay ambiguous; exact text impossible deterministically.
+Deterministic dynamics, complex rendering
+AlfWorld, SciWorld
+Learnable dynamics, but simulator-specific wording hurts exact match.
+⬇
+class BaseWorldModel:
+# Parse text into facts.
+def parse_observation(self, obs: str) -> dict: ...
+# Initialize latent belief.
+def init_belief(self, obs_0: str) -> State: ...
+# Update belief from text.
+def correct_belief(self, state, obs: str) -> State: ...
+# Apply action dynamics.
+def predict_belief(self, state, action: str) -> State: ...
+# Render next observation.
+def readout_observation(self, state, action: str) -> str: ...
+# Expose valid action forms.
+def extract_valid_action_forms(self) -> list[str]: ...
+Figure 2: Core executable interface implemented by each induced program,
+separating parsing, belief correction, dynamics, and readout.
+4 Methodology
+PatchWorld induces standalone Python world models through
+execution-grounded search (Figure 1): select
+contrastive trajectory evidence, prompt an LLM to synthesize a complete
+BaseWorldModel, replay the module to expose counterexamples, and
+accept only repairs that improve full replay validation. The resulting
+program maintains belief state, supports planning, and predicts next
+observations without further LLM calls. Induction uses train; repair uses
+validation when available, else train; test is held out.
+4.1 Executable World-Model Interface
+Each generated module implements the predict and correct interface from
+Section 3 and Figure 2.
+Replay corrects belief with the logged observation before each transition;
+rollout conditions on predicted observations to expose compounding errors.
+The prompt fixes the environment type but leaves the state representation
+to the LLM, yielding graph-like beliefs for spatial tasks and record-like
+state for API-style tasks.
+4.2 Evidence Selection via Contrastive Mining
+Since prompt space is limited, PatchWorld selects transitions exposing
+distinct behaviors. Each transition τ=(o,a,o′)\tau=(o,a,o^{\prime}) is grouped by an action
+signature α⁡(a)\alpha(a) that abstracts instances into typed forms (e.g. take mug 1 from shelf 2 →\to take OBJ from RECEPTACLE) and
+an outcome signature ω⁡(o′)\omega(o^{\prime}) distinguishing successful changes, no-op or
+invalid messages, terminals, and informational responses. Retaining both
+success-like and failure-like continuations per action type pushes the
+synthesized program toward conditional rules over memorized strings.
+Algorithm 2 keeps at most kk examples per
+(α,ω)(\alpha,\omega) and round-robins across signatures up to mm total.
+Validation still runs on the full replay set. Pseudocode is given in
+Appendix B.
+4.3 Counterexample-Guided Repair
+The initial prompt contains TT, the environment description, the interface
+contract, and guidance to emit a complete executable module.
+The repair loop treats induction as program search with LLM generation as
+proposal and replay as fitness. Given current program cc and replay set BB,
+o^t+1(c)=\displaystyle\hat{o}^{(c)}_{t+1}\!=
+ρc​(fc​(s^t,at),at),\displaystyle\!\rho_{c}(f_{c}(\hat{s}_{t},a_{t}),a_{t}),
+ℒ⁡(c,B)=\displaystyle\mathcal{L}(c;B)\!=
+1|B|​∑(ot,at,ot+1)∈Bℓrep​(o^t+1(c),ot+1),\displaystyle\!\tfrac{1}{|B|}\sum_{(o_{t},a_{t},o_{t+1})\in B}\!\!\ell_{\mathrm{rep}}(\hat{o}^{(c)}_{t+1},o_{t+1}),
+(6)
+where ℓrep\ell_{\mathrm{rep}} is the repair-time replay loss: normalized edit
+distance for textual readouts, plus task-specific parsed-state checks when
+available. This is distinct from held-out evaluation, which reports Token F1,
+BLEU-4, and episode success. Validation records typed counterexamples
+ℰ⁡(c,B)\mathcal{E}(c;B), grouping failures by execution, parsing, state update,
+readout structure, or content value; Appendix N gives
+the full taxonomy. Two helpers operate on ℰ\mathcal{E}:
+Diagnose(ℰ\mathcal{E}) summarizes recurring patterns as a compact
+natural-language brief (e.g., “move predictions drop the
+walls_visible field whenever the action is blocked”), giving the
+LLM higher-level guidance than raw cases alone;
+Prioritize(ℰ\mathcal{E}) ranks counterexamples by severity
+(execution and parsing errors before semantic mismatches), then by frequency
+of the underlying signature, so that the 16 examples shown in the prompt
+cover the most-impactful and most-representative failures rather than the
+first 16 in iteration order. Each repair prompt contains the current
+program, the diagnostic, the top-16 counterexamples (input, expected,
+actual), and the fixed interface guidance; the LLM emits a complete
+replacement module. We sample CC independently decoded candidates per
+round and accept at most one: the candidate that improves the lexicographic
+replay score Score⁡(c,B)\mathrm{Score}(c;B), which orders programs by aggregate failure
+severity, number of counterexamples, then replay loss. This hill-climbing
+gate rejects patches that fix displayed counterexamples but regress on
+broader replay.
+Refinement stops when ℰ=∅\mathcal{E}=\emptyset, the budget is exhausted, or
+no candidate improves the score; the accepted program is saved as a Python
+module (Algorithm 1, Appendix A;
+a Maze example is in Appendix O).
+Replay may inspect lightweight parser outputs δt=πc​(ot)\delta_{t}=\pi_{c}(o_{t}) for
+consistency, but next-observation prediction always uses the persistent
+belief through predict_belief →\to readout_observation;
+inference is interface-only, with no neural renderer.
+4.4 Inductive Bias for Fidelity
+PatchWorld-Simple relies only on the induced symbolic program. Its explicit
+action updates support planning, but compact rules often miss renderer details
+such as identifiers, product lists, templates, or long API payloads.
+PatchWorld-Residual treats these recurring textual details as part of a
+human-specified belief-state bias rather than as an unconstrained cache. Compact
+dynamics remain symbolic, while exact and unambiguous textual state signatures
+may be tracked empirically. The symbolic path remains primary:
+s~t+1sym=fc​(s^t,at)\tilde{s}^{\mathrm{sym}}_{t+1}=f_{c}(\hat{s}_{t},a_{t}),
+o^t+1sym=ρc​(s~t+1sym,at)\hat{o}^{\mathrm{sym}}_{t+1}=\rho_{c}(\tilde{s}^{\mathrm{sym}}_{t+1},a_{t}).
+The residual memory 𝒦\mathcal{K} is built only from training transitions,
+keyed by normalized signatures qi=q⁡(oi,ai)q_{i}=q(o_{i},a_{i}). The signature normalizes
+whitespace, lower-cases, and substitutes instance-specific entity
+mentions with their typed forms. For example, in AlfWorld it collapses
+(‘‘You arrive at safe 1. The safe is closed.’’, open
+safe 1) and (‘‘You arrive at safe 2.…’’, open
+safe 2) to a single key when both license the same outcome
+template, so the cache stores rules over receptacle types rather than
+instance strings. A key is retained only when its majority next
+observation has confidence
+maxo′⁡pℋtrain​(o′∣q)≥τ\max_{o^{\prime}}p_{\mathcal{H}_{\mathrm{train}}}(o^{\prime}\mid q)\geq\tau. Prediction
+returns Retrieve𝒦​(q⁡(ot,at))\mathrm{Retrieve}_{\mathcal{K}}(q(o_{t},a_{t})) on a cache hit and
+o^t+1sym\hat{o}^{\mathrm{sym}}_{t+1} otherwise; state still flows through
+predict_belief and correct_belief, so the residual
+participates in belief tracking rather than patching over it. Two
+safeguards prevent leakage: the memory is train-only, and conflicting keys
+are rejected by default (τ=1\tau=1), avoiding hidden-state aliases such as
+identical Wordle observations with different target words. For WebShop, a
+deterministic browser fallback handles local navigation when no exact key
+matches; Appendix F isolates the train-key
+component.
+Table 2: One-step next-observation prediction on the held-out test set, with
+Token F1 (F1) and BLEU-4 (BL); Avg. is the unweighted mean. “Infer. LLM?”
+indicates whether test-time prediction needs LLM calls after fitting. Bold
+marks the best code-based score per column.
+Method
+Backbone
+LLM Usage
+Infer. LLM?
+AlfWorld
+BabyAI
+Maze
+SciWorld
+TextCraft
+WebShop
+Wordle
+Avg.
+F1
+BL
+F1
+BL
+F1
+BL
+F1
+BL
+F1
+BL
+F1
+BL
+F1
+BL
+F1
+BL
+LLM-based Neural World Models
+Word2World
+Qwen3.5-4B
+SFT
+Yes
+0.89
+0.66
+0.93
+0.75
+0.97
+0.89
+0.96
+0.95
+0.94
+0.68
+0.63
+0.42
+0.60
+0.37
+0.85
+0.67
+LLM-Direct
+Qwen3-Coder-480B
+ICL
+Yes
+0.53
+0.35
+0.73
+0.44
+0.83
+0.75
+0.48
+0.30
+0.76
+0.51
+0.56
+0.34
+0.60
+0.21
+0.64
+0.41
+Mimo-v2.5
+ICL
+Yes
+0.55
+0.33
+0.81
+0.54
+0.83
+0.75
+0.45
+0.25
+0.76
+0.50
+0.52
+0.25
+0.51
+0.24
+0.63
+0.41
+DeepSeek-V4-Flash
+ICL
+Yes
+0.55
+0.34
+0.81
+0.56
+0.83
+0.73
+0.52
+0.34
+0.78
+0.51
+0.58
+0.36
+0.53
+0.19
+0.66
+0.43
+Program-based World Models (No LLMs at Inference)
+WorldCoder
+Qwen3-Coder-480B
+CodeGen
+No
+0.63
+0.42
+0.78
+0.61
+0.83
+0.76
+0.40
+0.36
+0.88
+0.61
+0.58
+0.45
+0.31
+0.11
+0.63
+0.48
+Mimo-v2.5
+CodeGen
+No
+0.59
+0.35
+0.77
+0.61
+0.88
+0.78
+0.37
+0.33
+0.88
+0.61
+0.53
+0.37
+0.35
+0.13
+0.63
+0.46
+DeepSeek-V4-Flash
+CodeGen
+No
+0.40
+0.21
+0.70
+0.54
+0.73
+0.61
+0.41
+0.33
+0.60
+0.35
+0.58
+0.45
+0.55
+0.22
+0.57
+0.39
+PoE-World
+Qwen3-Coder-480B
+CodeGen
+No
+0.62
+0.40
+0.78
+0.62
+0.83
+0.77
+0.39
+0.34
+0.78
+0.55
+0.58
+0.44
+0.43
+0.17
+0.63
+0.47
+Mimo-v2.5
+CodeGen
+No
+0.62
+0.40
+0.78
+0.62
+0.86
+0.78
+0.41
+0.36
+0.88
+0.61
+0.60
+0.47
+0.40
+0.16
+0.65
+0.49
+DeepSeek-V4-Flash
+CodeGen
+No
+0.37
+0.14
+0.73
+0.54
+0.76
+0.61
+0.21
+0.21
+0.50
+0.41
+0.47
+0.33
+0.55
+0.22
+0.51
+0.35
+PatchWorld-Simple (ours)
+Qwen3-Coder-480B
+CodeGen
+No
+0.36
+0.10
+0.85
+0.58
+0.80
+0.69
+0.57
+0.39
+0.28
+0.10
+0.53
+0.30
+0.58
+0.20
+0.57
+0.34
+Mimo-v2.5
+CodeGen
+No
+0.73
+0.47
+0.41
+0.19
+0.88
+0.75
+0.48
+0.30
+0.93
+0.67
+0.28
+0.12
+0.47
+0.16
+0.60
+0.38
+DeepSeek-V4-Flash
+CodeGen
+No
+0.48
+0.21
+0.77
+0.51
+0.90
+0.80
+0.22
+0.04
+0.84
+0.61
+0.28
+0.10
+0.69
+0.40
+0.60
+0.38
+PatchWorld-Residual (ours)
+Qwen3-Coder-480B
+CodeGen
+No
+0.70
+0.47
+0.69
+0.47
+0.97
+0.91
+0.56
+0.48
+0.71
+0.48
+0.50
+0.26
+0.72
+0.44
+0.69
+0.50
+Mimo-v2.5
+CodeGen
+No
+0.77
+0.50
+0.49
+0.28
+0.87
+0.82
+0.69
+0.56
+0.95
+0.68
+0.50
+0.26
+0.63
+0.35
+0.70
+0.49
+DeepSeek-V4-Flash
+CodeGen
+No
+0.57
+0.29
+0.80
+0.56
+0.98
+0.93
+0.56
+0.46
+0.91
+0.66
+0.50
+0.26
+0.60
+0.34
+0.70
+0.50
+5 Experiments
+We evaluate PatchWorld on observation fidelity and planning utility. One-step
+and rollout prediction test future-observation match, while live one-step
+lookahead tests action choice. The two evaluations favor different variants.
+PatchWorld-Residual is the best code-based predictor, while PatchWorld-Simple is
+the best code-based planner.
+5.1 Setup
+Environments and data.
+We evaluate on seven AgentGym tasks (Xi et al., 2025) from interactive
+language-game benchmarks (Chevalier-Boisvert et al., 2019; Prasad et al., 2024; Abdulhai et al., 2025),
+including Maze, BabyAI, TextCraft, Wordle, WebShop, AlfWorld, and SciWorld. These tasks cover
+navigation, hidden or stochastic state, crafting, shopping, and long-horizon
+manipulation. Trajectories are collected with a Qwen3-Coder-480B-A35B-Instruct
+ReAct agent11
+1
+https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct.
+and split 60/20/20 by instance ID, keeping all rollouts from an instance in the
+same train, validation, or test split. Train is used for induction and
+Word2World fine-tuning, validation for hyperparameters and repair feedback, and
+test only for reporting. For each environment and backbone, we induce one model
+with fixed repair hyperparameters; the PatchWorld-Residual index is train-only.
+Per-split counts are in Appendix C.
+Baselines.
+LLM-Direct predicts with k=3k{=}3 in-context transitions;
+Word2World (Li et al., 2025) fine-tunes an implicit
+predictor; WorldCoder (Tang et al., 2024) and
+PoE-World (Piriyakulkij et al., 2025) are program-induction
+baselines; and ReAct (Yao et al., 2023) is used only in planning.
+In live planning, Word2World is queried as a learned next-observation model;
+unlike the code-based methods, it remains a neural predictor at inference time.
+All code-induction methods share the same splits, backbone per row, and
+per-environment LLM budget caps; PatchWorld uses contrastive caps
+k=5,m=60k{=}5,m{=}60.
+We report Token F1 and BLEU-4 for prediction, and Episode Success Rate for live
+planning. All LLM calls use Qwen3-Coder-480B unless noted. Additional backbones
+follow their model cards: Qwen3.5-4B for
+Word2World,22
+2
+https://huggingface.co/Qwen/Qwen3.5-4B.
+Mimo-v2.5,33
+3
+https://huggingface.co/XiaomiMiMo/MiMo-V2.5.
+and DeepSeek-V4-Flash.44
+4
+https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash.
+5.2 Fidelity frontier favors PatchWorld-Residual for observation prediction
+For each (ot,at,ot+1)∈ℋtest(o_{t},a_{t},o_{t+1})\in\mathcal{H}_{\text{test}}, PatchWorld
+initializes its belief from the prefix and predicts
+o^t+1=ρc​(fc​(s^t,at),at)\hat{o}_{t+1}=\rho_{c}(f_{c}(\hat{s}_{t},a_{t}),a_{t}); baselines use their fitted
+predictors with no per-instance adaptation.
+Analysis.
+PatchWorld-Simple learns useful state updates, but its rendered text is often
+noncanonical. With Qwen3-Coder-480B, it reaches 0.57 macro Token F1, below the
+0.63 of WorldCoder and PoE-World; the largest gaps are AlfWorld and TextCraft,
+where exact simulator templates matter. Validator analysis
+(Appendix N) confirms that these are mostly readout
+mismatches, not transition failures.
+PatchWorld-Residual fixes this surface-form bottleneck. Across all three
+backbones, it is the best program-based predictor on macro Token F1
+(0.69–0.70) and BLEU-4 (0.49–0.50), about 6 points above WorldCoder and
+PoE-World. A five-seed check with Qwen3-Coder-480B gives
+0.6942±0.01920.6942\pm 0.0192 Token F1 and 0.4991±0.02310.4991\pm 0.0231 BLEU-4
+(Appendix D), making the gap larger than the observed
+induction variance. Appendix F reports a cache
+coverage diagnostic: exact train-key residuals cover 33% of held-out
+transitions on average, and a retrieval-only predictor reaches 0.32 macro
+Token F1 when uncovered transitions count as zero.
+5.3 Belief state reduces rollout drift
+We initialize from ground-truth o0o_{0} and roll out using ground-truth actions
+but the model’s own predicted observations:
+s^t+1←gc​(fc​(s^t,at),o^t+1)\hat{s}_{t+1}\!\leftarrow\!g_{c}(f_{c}(\hat{s}_{t},a_{t}),\hat{o}_{t+1}),
+with H=min⁡(Tepisode,5)H{=}\min(T_{\text{episode}},5). Token F1 at t=1t{=}1 is computed under
+episode-level filtering and is not directly comparable to
+Section 5.2.
+Table 3: Macro-average rollout Token F1, unweighted over the seven
+environments. Bold marks the best code-based score. Per-environment results
+are in Appendix G.
+Method
+t=1t{=}1
+t=2t{=}2
+t=3t{=}3
+t=5t{=}5
+LLM-Direct
+0.64
+0.63
+0.60
+0.59
+WorldCoder
+0.63
+0.60
+0.58
+0.57
+PoE-World
+0.63
+0.57
+0.53
+0.51
+PatchWorld-Simple (ours)
+0.56
+0.50
+0.43
+0.40
+PatchWorld-Residual (ours)
+0.69
+0.64
+0.60
+0.58
+Analysis.
+Rollout stresses error propagation, because each step conditions on the model’s own
+previous output. PatchWorld reduces this drift by mapping text back into
+structured belief state before the next transition. As a result,
+PatchWorld-Residual has the best code-based macro score at every horizon, and
+PatchWorld-Simple remains competitive despite weaker surface text. This pattern
+supports the mechanism claim that executable belief state matters because it
+constrains how errors propagate, not only because it improves one-step
+prediction.
+5.4 Planning frontier favors PatchWorld-Simple for code-based utility
+We place each world model inside the same one-step lookahead planner. The
+planner compares the ReAct default action with up to four diverse candidates,
+rolls out each candidate with the world model, and reranks them with a shared
+Qwen selector. Thus the planning agent still uses LLMs for candidate proposal
+and selection; the isolated comparison is whether the lookahead
+next-observation predictor is an LLM call, a fine-tuned neural model, or a
+deterministic executable program. We evaluate up to 200 held-out episodes per
+environment with a 30-step cap; full protocol details and per-environment
+values are in Appendix H and I.
+Figure 3: Fidelity–utility Pareto frontier.
+Points compare one-step Token F1 (Table 2) with live
+lookahead success (Table 11).
+PatchWorld-Simple gives the best utility, while PatchWorld-Residual gives the best
+code-based fidelity. Word2World is more faithful but less useful for planning;
+WorldCoder and PoE-World are dominated. The ReAct line is the no-predictor
+baseline. All methods use Qwen3-Coder-480B except Word2World (Qwen3.5-4B SFT).
+Analysis.
+PatchWorld-Simple gives the highest code-based planning result in our evaluation,
+with 76.4% macro success. It is ahead of PoE-World (69.3%) and WorldCoder (64.4%) by 7.1 and
+12.0 pp. It is also competitive with the LLM-based planners
+ReAct (74.4%) and LLM-Direct (75.8%), showing that a local symbolic
+transition program can provide useful action-selection signal at zero
+lookahead-prediction LLM calls (vs. 63,897 tokens/task for LLM-Direct,
+Table 4). The largest gains are WebShop
+(+2.5 over ReAct, +12.5 over PoE-World) and TextCraft (+2.0, +25.1),
+where symbolic updates help the selector avoid infeasible actions.
+Word2World provides a useful counterpoint. It has the highest one-step
+fidelity (0.85 F1) but only 63.5% macro success, showing that high surface
+fidelity does not necessarily translate to action-contrastive signal.
+Fidelity is not utility.
+PatchWorld-Residual improves macro Token F1 (0.69 vs. 0.57) but lowers
+planning success (72.9 vs. 76.4), because the planner needs action-relevant
+contrast about what becomes reachable or feasible.
+Appendix K rules out identical retrieved text
+as the explanation; AlfWorld remains the main negative case, suggesting
+one-step lookahead helps only once receptacle-state fidelity crosses a
+task-dependent threshold. Induced programs are in
+Appendix P.
+Table 4: Planning-time prediction efficiency. Both rows share the candidate
+generator, Qwen reranker, and 30-step cap; only the lookahead predictor
+differs. Tokens count lookahead prediction.
+Method
+Pred. tokens/task
+Macro success
+LLM-Direct
+63,897
+75.8
+PatchWorld-Simple
+0
+76.4
+5.5 Ablation and repair diagnostics
+Table 5 removes one component at a time from the full
+PatchWorld-Residual pipeline (split, backbone, and compute budget fixed). The
+largest dependency is contrastive mining (−0.20-0.20 F1 under uniform
+sampling): without it the LLM sees redundant successful transitions and
+under-samples failure-disambiguating ones, so the first program already
+misses the conditional rules that repair would otherwise patch. Repair
+and residual memory each cost about 0.090.09 F1 but are non-redundant: the
+former fixes a brittle initial program, the latter is a fidelity add-on
+that more repair rounds cannot recover. The validation gate adds only
+0.0060.006 F1 on average yet keeps search grounded in executable replay,
+preventing candidates that fix shown counterexamples while regressing on
+the rest. Variant definitions are in
+Appendix L.
+Table 5: Component ablation. Avg. F1 is validation Token F1 averaged over
+the seven environments; failed runs count as 0.
+Variant
+Avg. F1
+Δ\Delta
+Full
+0.7262
++0.0000
+−-Residual memory
+0.6310
+−-0.0953
+−-Repair loop
+0.6340
+−-0.0922
+−-Validation gate
+0.7204
+−-0.0058
+−-Contrastive mining
+0.5287
+−-0.1976
+PatchWorld shifts cost from inference to offline induction:
+validation and repair average 17–28 LLM calls per environment, reducing
+replay error by 12–79% (Appendix M).
+When does each variant win?
+Cross-referencing per-environment fidelity (Table 2)
+with the residual-coverage diagnostic
+(Appendix F), PatchWorld-Residual beats
+PatchWorld-Simple by the largest margin exactly where the train-key cache
+is dense and the renderer is templated: AlfWorld (+0.34),
+TextCraft (+0.43), Wordle (+0.14). The gap collapses on Maze and BabyAI
+(symbolic transition already covers surface variation) and turns
+slightly negative on WebShop (low coverage, browser fallback carries
+the load). Coverage thus acts as a cheap pre-deployment predictor of
+which variant to prefer.
+What repair leaves on the table.
+Typing post-repair counterexamples
+(Appendix N) shows readout/rendering causing
+53% of residual errors on average, dominant on AlfWorld,
+SciWorld, and Wordle, exactly where PatchWorld-Residual closes the
+gap, while compound transition rules (recipes, multi-attribute
+filters) drive the residual on TextCraft and WebShop.

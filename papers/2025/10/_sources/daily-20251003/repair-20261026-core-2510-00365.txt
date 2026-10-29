@@ -1,0 +1,2851 @@
+
+
+
+Continual Learning with Query-Only Attention
+
+
+
+
+
+
+
+
+
+
+
+
+
+Skip to main content
+
+  
+    
+      Report GitHub Issue
+      ×
+    
+
+    
+      Title:
+      
+
+      
+Content selection saved. Describe the issue below:
+
+
+      Description:
+      
+    
+
+    
+      Submit without GitHub
+      Submit in GitHub
+    
+  
+
+
+
+
+
+  
+  
+    
+  
+  
+    
+      
+    
+  
+    Why HTML?
+    
+      Report Issue
+        
+      Back to Abstract
+    
+    
+      Download PDF
+        
+      Contents
+    
+    
+      Reading mode
+    
+    
+      Colour theme
+    
+
+
+
+
+
+Abstract
+
+
+1 Introduction
+
+
+2 Related work
+
+
+3 Background and preliminaries
+
+
+3.1 Attention mechanism
+
+
+3.2 Meta-learning
+
+
+Model-agnostic meta-learning
+
+
+
+
+3.3 kkk-Nearest neighbors (KNN)
+
+
+3.4 In-context learning
+
+
+
+
+4 Problem statement
+
+
+5 Method
+
+
+5.1 Query only model with replay buffer
+
+
+5.2 MAML with replay buffer
+
+
+Note.
+
+
+
+
+
+
+6 Theoretical discussion
+
+
+6.1 Global vs local solution
+
+
+6.2 Model agnostic meta-learning for continual learning
+
+
+6.3 Relationship to attention network
+
+
+6.4 Hessian rank analysis
+
+
+
+
+7 Experiments
+
+
+Baselines and support sizes.
+
+
+Observations on Permuted MNIST.
+
+
+Observations on SCR.
+
+
+Result analysis.
+
+
+7.1 Effective rank
+
+
+
+
+8 Conclusion
+
+
+References
+
+
+A Technical Appendices and Supplementary Material
+
+
+A.1 Broader impacts
+
+
+A.2 Limitations
+
+
+A.3 Permuted MNIST Setup
+
+
+A.4 Slowly changing regression (SCR)
+
+
+
+
+
+
+
+  
+    License: arXiv.org perpetual non-exclusive license
+  
+  
+arXiv:2510.00365v1 [cs.LG] 01 Oct 2025
+
+
+
+Continual Learning with Query-Only Attention
+
+
+
+Gautham Bekal
+
+Affiliation: Mitchell, Enlyte
+
+Email: gauthambekal93@gmail.com
+
+  
+Ashish Pujari
+
+Affiliation: Department of Mechanical Engineering
+
+Affiliation: University of North Carolina at Charlotte
+
+Email: apujari1@uncc.edu
+
+  
+Scott David Kelly
+
+Affiliation: Department of Mechanical Engineering
+
+Affiliation: University of North Carolina at Charlotte
+
+Email: skelly52@charlotte.edu
+
+
+Abstract
+    
+
+Continual learning involves learning from a stream of data without repetition of data points, a scenario that is inherently complex due to distributional shift across tasks.
+We propose a query-only attention mechanism that discards keys and values, yet preserves the core inductive bias of transformer architectures. In continual learning scenarios, this simplified mechanism significantly mitigates both loss of plasticity and catastrophic forgetting, outperforming baselines such as selective re-initialization. We establish a conceptual link between query-only attention, full transformer attention, and model agnostic meta-learning, framing them as instances of meta-learning. We further provide intuition for why query-based models and attention networks help preserve plasticity in continual settings. Finally, through preliminary Hessian spectrum analysis, we observe that models maintaining higher curvature rank across tasks tend to retain plasticity. Our findings suggest that full attention may not be essential for capturing the benefits of meta-learning in continual learning.
+
+  
+
+
+
+
+1 Introduction
+
+
+
+
+Continual learning remains a fundamental challenge in deep learning,[25] where models must learn from non-stationary data streams without succumbing to catastrophic forgetting [10] or loss of plasticity [3] . While many existing approaches mitigate forgetting using replay buffers [28], regularization, or selective re-initialization, preserving plasticity—the capacity to adapt to new tasks—remains significantly more elusive.
+
+
+
+
+Recent work has shown that attention network [22] in transformer architectures, originally developed for sequence modeling, exhibit strong performance in continual learning . Notably, attention networks tend to retain plasticity across tasks more effectively than traditional MLPs or CNNs [24]. Motivated by this observation, we ask: Can the core mechanism of transformers—attention—be further simplified while retaining its continual learning benefits?
+
+
+
+
+To this end, we propose a query-only attention mechanism that removes keys and values from the attention layer. Surprisingly, this minimalist design not only retains the benefits of full attention in continual learning but often surpasses it. Our experiments show that query-only attention significantly reduces both catastrophic forgetting and plasticity loss, without relying on task boundaries or selective re initialization.
+
+
+
+
+Moreover, we show a deeper relationship between query-only attention, full attention network and Model-Agnostic Meta-Learning (MAML) [6]. Through empirical comparisons and Hessian-based curvature analysis, we demonstrate that both our model and MAML maintain stable near constant hessian ranks throughout training—a hallmark of models that preserve plasticity and enable rapid adaptation.
+
+
+
+
+While much of continual learning research has focused on catastrophic forgetting, we emphasize that our primary goal is mitigating loss of plasticity—the declining ability of models to acquire new knowledge. In our framework, reduced forgetting emerges as a natural byproduct of improved plasticity, rather than the central objective.
+
+
+
+
+Our key findings are:
+
+
+
+• 
+
+
+We provide a conceptual explanation of why the query-based model mitigates both loss of plasticity and catastrophic forgetting by converging to a global solution, rather than task-specific local solutions.
+
+
+
+
+• 
+
+
+We show how the query-based model relates to the full attention mechanism used in transformers.
+
+
+
+
+• 
+
+
+We establish a connection between our approach and meta-learning algorithms [7], in particular showing how it adapts ideas from MAML [6] to continual learning.
+
+
+
+
+• 
+
+
+We analyze Hessian spectra and effective rank [13], demonstrating that if rank decreases across tasks correlates with loss of plasticity.
+
+
+
+
+• 
+
+
+We demonstrate superior performance over multiple baselines in mitigating loss of plasticity.
+
+
+
+
+• 
+
+
+Our results further show that catastrophic forgetting is reduced naturally by the query-based model, although eliminating forgetting is not the primary focus of this work.
+
+
+
+
+
+
+
+
+
+
+2 Related work
+
+
+
+
+Deep neural networks have shown remarkable generalization capabilities on unseen tasks. However, they typically operate under the assumption that the training data is stationary and that all samples are available simultaneously during training. In contrast, online learning assumes that data arrives sequentially in a stream and each data point is observed only once, eliminating the concept of epochs.
+In such a setting, the model must continuously update its parameters to adapt to incoming data. From the model’s perspective, the data distribution is inherently non-stationary, since not all samples are available at the same time. This leads to two major challenges: catastrophic forgetting and loss of plasticity.
+Catastrophic forgetting — the degradation of performance on previously learned tasks after training on new ones — has been extensively studied in the literature [15], [9], [18].
+A more fundamental and less studied issue is loss of plasticity, the gradual reduction in a model’s ability to learn new tasks altogether [3], [16]
+
+
+
+
+Hence, continual learning faces challenge on two fronts, forward performance / mitigating loss of plasticity and backward performance / mitigating catastrophic forgetting. [2] showed that
+there exists a tradeoff between the two. We show an alternative view that query_based_cl and related architectures attain a global solution which mitigates both loss of plasticity and catastrophic forgetting simultaneously.
+
+
+
+
+Most papers, analyze one of the two of above challenges, however very few papers tackle both challenges simultaneously.
+Regularization-based continual learning methods such as Elastic Weight Consolidation (EWC) [10], [27], and Learning without Forgetting [14] were designed primarily to mitigate catastrophic forgetting, i.e., the degradation of previously learned tasks. However, these approaches do not directly address the complementary challenge of loss of plasticity, where the model fails to acquire new tasks altogether. Our focus in this work is specifically on loss of plasticity, where forgetting is a downstream consequence rather than the central phenomenon. For this reason, we compare against baselines that are explicitly targeted at plasticity, including [3] and recent attention-based approaches [24], rather than against EWC-style methods that operate in an orthogonal regime.
+
+
+
+
+One such paper is [5] which uses utility based methodology for handling both catastrophic forgetting and loss of plasticity. Here, the authors are working with unknown task boundaries. However, obtaining the utility is expensive especially in the era of large and very
+large models. Controlling gradient updates based on weight utility leads to reduced ability to retain old tasks as their number increases. Most importantly, this method is ad-hoc solution for continual learning problem and not a more global solution which can scale to very large number of tasks.
+Our method contrasts in that it obtains a global solution and thus has no reduction in performance irrespective number of tasks.
+
+
+
+
+The core algorithm we developed is most closely related to the paper [24] which utilizes attention network and replay buffer to handle this challenge. However, attention network has O(n**2) in compute which can be challenging in continual learning setting where data will come rapidly. Here, n is the size of replay buffer.
+We draw our inspiration from this paper on using replay buffer but make a novel hypothesis that query matrix is all thats needed for continual learning. Our method achieves similar or superior performance compare to full attention and can also do the compute in O(n).
+The other aspect being [24] does not explain the intriguing phenomenon.
+Here we carry out a detailed empirical and theoretical analysis on why query only attention works.
+
+
+
+
+Our work reveals deep connection between attention network, in-context learning [4], [26], [1] model agnostic meta learning [6], and metric based meta learning [23], [11], [20] under the paradigm of continual learning.
+
+
+
+
+To understand the mechanism of loss of plasticity in continual learning, we utilize a robust metric of calculating effective rank of hessian matrix as shown in [13], [19].
+They show that maintaining plasticity requires the effective rank to remain high rather than decreasing.
+In our study we pair it with our algorithm of query only attention to justify its efficiency in mitigating loss of plasticity by maintaining a non decreasing effective rank across continual learning setting.
+
+
+
+
+
+
+
+3 Background and preliminaries
+
+
+
+
+Our theoretical analysis builds on several standard components: attention networks,
+meta-learning (in particular MAML), and kkk-nearest neighbors (KNN).
+We briefly review each here to fix notation and highlight the connections
+that will be used in Section 6.
+
+
+
+
+
+3.1 Attention mechanism
+
+
+
+
+In the standard attention network [22], each query vector q_{i}qiq_{i} produces a weighted combination of value vectors V=\{v_{1},\dots,v_{n}\}V={v1,…,vn}V=\{v_{1},\dots,v_{n}\}:
+
+
+
+
+
+
+
+
+\text{Attn}(q_{i},K,V)\;=\;\sum_{j=1}^{n}\alpha_{ij}\,v_{j},Attn​(qi,K,V)=∑j=1nαi​j​vj,\text{Attn}(q_{i},K,V)\;=\;\sum_{j=1}^{n}\alpha_{ij}\,v_{j},
+
+(1)
+
+
+
+
+
+where the weights \alpha_{ij}αi​j\alpha_{ij} are obtained from a softmax over query–key dot products:
+
+
+
+
+
+
+
+
+\alpha_{ij}\;=\;\frac{\exp\big(q_{i}^{\top}k_{j}/\sqrt{d}\big)}{\sum\limits_{j^{\prime}=1}^{n}\exp\big(q_{i}^{\top}k_{j^{\prime}}/\sqrt{d}\big)}.αi​j=exp⁡(qi⊤​kj/d)∑j′=1nexp⁡(qi⊤​kj′/d).\alpha_{ij}\;=\;\frac{\exp\big(q_{i}^{\top}k_{j}/\sqrt{d}\big)}{\sum\limits_{j^{\prime}=1}^{n}\exp\big(q_{i}^{\top}k_{j^{\prime}}/\sqrt{d}\big)}.
+
+(2)
+
+
+
+
+
+Here K=\{k_{1},\dots,k_{n}\}K={k1,…,kn}K=\{k_{1},\dots,k_{n}\} are key vectors and ddd is the feature dimension.
+This requires computing all pairwise dot products q_{i}^{\top}k_{j}qi⊤​kjq_{i}^{\top}k_{j}, which scales as \mathcal{O}(n^{2})𝒪⁡(n2)\mathcal{O}(n^{2}) in sequence length nnn.
+In contrast, our query-only model removes KKK and VVV, learning task-specific weights \theta^{\prime}θ′\theta^{\prime} directly, while still preserving the interpretation of predictions as weighted combinations over context points.
+
+
+
+
+
+
+
+3.2 Meta-learning
+
+
+
+
+Meta-learning aims to enable rapid adaptation to new tasks from a few support examples [6].
+Traditional meta-learning assumes task boundaries and episodic training, and is thus non-continual.
+Recent work [8] , [21] explores meta-learning for continual learning.
+Our approach draws inspiration from meta-learning while operating fully online.
+
+
+
+
+Model-agnostic meta-learning
+
+
+
+MAML [6] optimizes model parameters through inner- and outer-loop updates:
+
+
+
+
+
+
+
+
+\Theta^{\prime}_{i}=\Theta-\alpha\nabla_{\Theta}\mathcal{L}_{\Theta}(\text{support}_{i})Θi′=Θ−α​∇ΘℒΘ​(supporti)\Theta^{\prime}_{i}=\Theta-\alpha\nabla_{\Theta}\mathcal{L}_{\Theta}(\text{support}_{i})
+
+(3)
+
+
+
+
+
+
+
+
+
+\Theta\leftarrow\Theta-\beta\sum_{i=1}^{m}\nabla_{\Theta}\mathcal{L}_{\Theta^{\prime}_{i}}(\text{query}_{i}).Θ←Θ−β​∑i=1m∇ΘℒΘi′​(queryi).\Theta\leftarrow\Theta-\beta\sum_{i=1}^{m}\nabla_{\Theta}\mathcal{L}_{\Theta^{\prime}_{i}}(\text{query}_{i}).
+
+(4)
+
+
+
+
+
+
+
+
+
+
+3.3 kkk-Nearest neighbors (KNN)
+
+
+
+
+In kkk-nearest neighbors regression, prediction is based on the kkk closest
+points in a support set \mathcal{S}=\{(x_{i},y_{i})\}_{i=1}^{N}𝒮={(xi,yi)}i=1N\mathcal{S}=\{(x_{i},y_{i})\}_{i=1}^{N} under a distance
+metric d(\cdot,\cdot)d⁡(⋅,⋅)d(\cdot,\cdot) (e.g., Euclidean).
+
+
+
+
+Given a query input xxx, let \mathcal{N}_{k}(x)𝒩k​(x)\mathcal{N}_{k}(x) denote the indices of the kkk
+nearest neighbors. The kNN prediction is the local average:
+
+
+
+
+
+
+\hat{y}(x)=\frac{1}{k}\sum_{i\in\mathcal{N}_{k}(x)}y_{i}.y^​(x)=1k​∑i∈𝒩k​(x)yi.\hat{y}(x)=\frac{1}{k}\sum_{i\in\mathcal{N}_{k}(x)}y_{i}.
+
+(5)
+
+
+
+
+
+Thus, kNN regression is a non-parametric, memory-based method where predictions
+adapt directly from nearby support examples.
+
+
+
+
+
+
+
+3.4 In-context learning
+
+
+
+
+In-context learning has recently been interpreted as an implicit kkk-nearest-neighbors mechanism that emerges in the forward pass of transformers [17].
+This perspective provides a key motivation for our work: by modifying attention, we aim to enable continual adaptation without requiring explicit task identifiers.
+
+
+
+
+
+
+
+
+
+4 Problem statement
+
+
+
+
+We study the continual learning (CL) setting, where a model receives a continuous stream of data. Each data point is observed once during training, without repetition or epochs.
+
+
+
+
+Formally, the stream is generated from a sequence of tasks
+\{T_{1},T_{2},\dots,T_{n}\}{T1,T2,…,Tn}\{T_{1},T_{2},\dots,T_{n}\}. Each task T_{i}TiT_{i} is associated with a (potentially non-stationary) distribution \mathcal{D}_{i}(x,y)𝒟i​(x,y)\mathcal{D}_{i}(x,y) over input–label pairs (x,y)(x,y)(x,y).
+
+
+
+
+During training:
+
+
+
+• 
+
+
+The model does not observe task boundaries or task identities.
+
+
+
+
+• 
+
+
+Samples arrive sequentially, drawn from the evolving distribution.
+
+
+
+
+• 
+
+
+The objective is to update the model online while retaining performance across all tasks.
+
+
+
+
+• 
+
+
+Based on the task at hand, the model may update on a single data point or a batch of data-points.
+
+
+
+
+
+
+
+During inference, when the model is at data point mmm of task ttt, the goal is to predict the next nnn points \{m+1,\dots,m+n\}{m+1,…,m+n}\{m+1,\dots,m+n\} from the same task ttt.
+The accuracy (or loss) on these future points defines the forward performance.
+A degradation in forward performance over time is taken as evidence of loss of plasticity.
+
+
+
+
+For backward performance, after the model has been trained up to task ttt,
+we evaluate it on a previous task t-jt−jt-j by sampling nnn data points from task t-jt−jt-j.
+The degradation in accuracy (or increase in loss) on these past tasks quantifies the extent of catastrophic forgetting.
+
+
+
+
+
+• 
+
+
+Forward testing (plasticity): The model is evaluated using support examples already present in the replay buffer. No task identifiers are needed, since the buffer itself provides sufficient context for adaptation.
+
+
+
+
+• 
+
+
+Backward testing (forgetting): The model is evaluated on a small held-out set of examples from past tasks. Here task identities are assumed to be known, so that performance on specific earlier tasks can be measured.
+
+
+
+
+
+
+
+During testing:
+
+
+
+• 
+
+
+Forward testing (plasticity):
+When the model is at data point mmm of task ttt, it is evaluated on the next nnn points
+\{m+1,\dots,m+n\}{m+1,…,m+n}\{m+1,\dots,m+n\} from the same task ttt.
+Task identities are not available in this evaluation, so the model must rely only on the
+stream itself.
+Degradation in this metric across tasks indicates loss of plasticity.
+
+
+
+
+• 
+
+
+Backward testing (forgetting):
+After the model has been trained up to task ttt, it is evaluated on a previous task t-jt−jt-j
+by sampling nnn data points from \mathcal{D}_{t-j}𝒟t−j\mathcal{D}_{t-j}.
+Here we assume access to a small buffer of examples from past tasks, and thus task identifiers
+are known at evaluation time.
+Degradation in performance on these past tasks quantifies catastrophic forgetting.
+
+
+
+
+
+
+
+
+
+
+5 Method
+
+
+
+
+
+5.1 Query only model with replay buffer
+
+
+
+
+Drawing the connection from attention networks, meta-learning, KNN and replay buffer we design an architecture which obtains an optimal solution for continual learning task, leading to mitigation
+of both loss of plasticity and catastrophic forgetting simultaneously.
+A sample data point is d=(x,y)\in\mathcal{D}d=(x,y)∈𝒟d=(x,y)\in\mathcal{D}.
+Let, x\in\mathbb{R}^{a}x∈ℝax\in\mathbb{R}^{a} and y\in\mathbb{R}^{b}y∈ℝby\in\mathbb{R}^{b}
+We define a buffer \mathcal{B}ℬ\mathcal{B} containing nnn data-points.
+Every time step we construct a support set \mathcal{S}𝒮\mathcal{S} of size mmm sampled from \mathcal{B}ℬ\mathcal{B} such that m<=nm<=nm<=n depending on the problem at hand.
+
+Hence, S\in\mathbb{R}^{m*(a+b)}S∈ℝm∗(a+b)S\in\mathbb{R}^{m*(a+b)}
+
+
+
+
+
+
+
+
+S=\begin{bmatrix}x_{s1}&y_{s1}\\
+x_{s2}&y_{s2}\\
+\vdots&\vdots\\
+x_{sm}&y_{sm}\end{bmatrix}=\begin{bmatrix}s_{1}\\
+s_{2}\\
+\vdots\\
+s_{m}\end{bmatrix}S=[xs​1ys​1xs​2ys​2xs​mys​m]=[s1s2sm]S=\begin{bmatrix}x_{s1}&y_{s1}\\
+x_{s2}&y_{s2}\\
+\vdots&\vdots\\
+x_{sm}&y_{sm}\end{bmatrix}=\begin{bmatrix}s_{1}\\
+s_{2}\\
+\vdots\\
+s_{m}\end{bmatrix}
+
+
+
+
+
+Let, the data-point on which we want to make prediction be query q_{i}qiq_{i}, such that q_{i}=x_{i}qi=xiq_{i}=x_{i}.
+The neural-net model is a single query-matrix \mathcal{Q_{\theta}}\in\mathbb{R}^{(2a+b)*b}𝒬θ∈ℝ(2​a+b)∗b\mathcal{Q_{\theta}}\in\mathbb{R}^{(2a+b)*b}, for illustration purpose and can have multiple layers.
+
+
+
+Algorithm 1  Query-Only Attention with Replay Buffer
+
+
+              1:
+              
+              
+            Stream of tasks \{T_{1},T_{2},\ldots\}{T1,T2,…}\{T_{1},T_{2},\ldots\}; replay buffer \mathcal{B}ℬ\mathcal{B} of size nnn; support size mmm; query-only model Q_{\theta}QθQ_{\theta}; learning rate \etaη\eta
+
+
+
+              2:
+              
+              
+            Updated parameters \thetaθ\theta
+
+
+
+              3:
+              
+              
+            Initialize \thetaθ\theta, \mathcal{B}\leftarrow\emptysetℬ←∅\mathcal{B}\leftarrow\emptyset
+
+
+
+              4:
+              
+              
+            for each incoming sample (x_{t},y_{t})(xt,yt)(x_{t},y_{t}) do
+
+
+
+              5:
+              
+              
+              Insert (x_{t},y_{t})(xt,yt)(x_{t},y_{t}) into buffer \mathcal{B}ℬ\mathcal{B}; evict oldest if |\mathcal{B}|>n|ℬ|>n|\mathcal{B}|>n
+
+
+
+              6:
+              
+              
+              Sample support set \mathcal{S}=\{(x_{j},y_{j})\}_{j=1}^{m}\subset\mathcal{B}𝒮={(xj,yj)}j=1m⊂ℬ\mathcal{S}=\{(x_{j},y_{j})\}_{j=1}^{m}\subset\mathcal{B}
+
+
+
+              7:
+              
+              
+              Compute scores d_{j}\leftarrow Q_{\theta}(x_{t},x_{j},y_{j})dj←Qθ​(xt,xj,yj)d_{j}\leftarrow Q_{\theta}(x_{t},x_{j},y_{j})
+
+
+
+              8:
+              
+              
+              Prediction \hat{y}_{t}\leftarrow\sum_{j=1}^{m}d_{j}\,y_{j}y^t←∑j=1mdj​yj\hat{y}_{t}\leftarrow\sum_{j=1}^{m}d_{j}\,y_{j}
+
+
+
+              9:
+              
+              
+              Loss \mathcal{L}_{t}\leftarrow\ell(\hat{y}_{t},y_{t})ℒt←ℓ⁡(y^t,yt)\mathcal{L}_{t}\leftarrow\ell(\hat{y}_{t},y_{t})
+
+
+
+              10:
+              
+              
+              Update \theta\leftarrow\theta-\eta\nabla_{\theta}\mathcal{L}_{t}θ←θ−η​∇θℒt\theta\leftarrow\theta-\eta\nabla_{\theta}\mathcal{L}_{t}
+
+
+
+              11:
+              
+              
+            end for
+
+
+
+
+
+We can thus write the predictive model as,
+
+
+
+
+
+
+\hat{y_{t}}(x)={\sum\limits_{x_{i},y_{i}\in B}Q_{\theta}(x_{t},x_{i},y_{i})*y_{i}}yt^​(x)=∑xi,yi∈BQθ​(xt,xi,yi)∗yi\hat{y_{t}}(x)={\sum\limits_{x_{i},y_{i}\in B}Q_{\theta}(x_{t},x_{i},y_{i})*y_{i}}
+
+(6)
+
+
+
+Here, x_{t}xtx_{t} is the query point, x_{i}xix_{i} is a support input, and y_{i}yiy_{i} is support label.
+Q_{\theta}(x_{t},x_{i},y_{i})Qθ​(xt,xi,yi)Q_{\theta}(x_{t},x_{i},y_{i}) denotes a learned similarity (or distance) function.
+Unlike standard metrics such as dot products or Euclidean distance—which require vectors to be in the same feature space—Q_{\theta}QθQ_{\theta} learns a representation where query–support pairs become directly comparable, allowing flexible weighting even when raw dimensions differ.
+
+
+
+
+
+
+
+5.2 MAML with replay buffer
+
+
+
+
+Note.
+
+
+
+The adaptation of MAML with replay buffer is still work in progress.
+We include it here to illustrate a potential direction for combining meta-learning with large
+buffers in continual learning, but do not claim it as a finalized or fully validated algorithm.
+That said, our preliminary results are promising for one of the experiments, and suggest this variant may provide
+a complementary approach to attention-based or query-only models.
+
+
+
+
+We adapt MAML to the continual learning setting by introducing a large replay buffer.
+To minimize interference across tasks, the buffer is evenly partitioned into ttt sub-buffers,
+one per sampled task. Without such partitioning, the sampled support and query examples
+from different tasks would overlap excessively, leading to degraded task separation
+and unstable meta-updates. Each task provides a small support set (sss) and query set (qqq),
+which is sufficient for the MAML inner/outer loops.
+
+
+
+
+An important property of this setup is that the support/query sizes remain much smaller
+than those required by attention-based or query-only models. This makes MAML particularly
+well-suited for backward evaluation (catastrophic forgetting), since only a small set of
+examples per task is needed to adapt. Standard MAML inner-loop adaptation and outer-loop
+meta-updates are then applied on these partitioned tasks.
+
+
+
+Algorithm 2  MAML with Replay Buffer (work in progress)
+
+
+                1:
+                
+                
+              Stream (x_{t},y_{t})(xt,yt)(x_{t},y_{t}); replay buffer \mathcal{B}ℬ\mathcal{B} of size NNN;
+tasks ttt; support sss; query qqq; learning rates \alpha,\betaα,β\alpha,\beta
+
+
+
+                2:
+                
+                
+              Initialize \thetaθ\theta, \mathcal{B}\leftarrow\emptysetℬ←∅\mathcal{B}\leftarrow\emptyset
+
+
+
+                3:
+                
+                
+              for each incoming (x_{t},y_{t})(xt,yt)(x_{t},y_{t}) do
+
+
+
+                4:
+                
+                
+                Insert (x_{t},y_{t})(xt,yt)(x_{t},y_{t}) into \mathcal{B}ℬ\mathcal{B}; evict oldest if |\mathcal{B}|>N|ℬ|>N|\mathcal{B}|>N
+
+
+
+                5:
+                
+                
+                Partition \mathcal{B}ℬ\mathcal{B} into ttt equal sub-buffers
+
+
+
+                6:
+                
+                
+                for each task i=1\dots ti=1​…​ti=1\dots t do
+
+
+
+                7:
+                
+                
+                 Sample sss support and qqq queries from sub-buffer iii
+
+
+
+                8:
+                
+                
+                 Inner update on support with step size \alphaα\alpha
+
+
+
+                9:
+                
+                
+                 Outer update on queries with step size \betaβ\beta
+
+
+
+                10:
+                
+                
+                end for
+
+
+                11:
+                
+                
+              end for
+
+
+
+
+
+
+
+
+
+
+
+
+6 Theoretical discussion
+
+
+
+
+
+6.1 Global vs local solution
+
+
+
+
+To understand why our algorithm overcomes loss of plasticity and catastrophic forgetting, we
+first define weighted kkk-nearest neighbors
+
+
+
+
+
+
+
+
+\hat{y}(x)=\frac{\sum\limits_{i\in N_{k}(x)}w(x,x_{i})\,y_{i}}{\sum\limits_{i\in N_{k}(x)}w(x,x_{i})},y^​(x)=∑i∈Nk​(x)w⁡(x,xi)​yi∑i∈Nk​(x)w⁡(x,xi),\hat{y}(x)=\frac{\sum\limits_{i\in N_{k}(x)}w(x,x_{i})\,y_{i}}{\sum\limits_{i\in N_{k}(x)}w(x,x_{i})},
+
+(7)
+
+
+
+
+
+where w(x,x_{i})w⁡(x,xi)w(x,x_{i}) is a weight function that decreases as the distance d(x,x_{i})d⁡(x,xi)d(x,x_{i}) increases.
+Common choices include:
+
+
+
+
+
+
+
+
+\displaystyle w(x,x_{i})w⁡(x,xi)\displaystyle w(x,x_{i})
+\displaystyle=\frac{1}{d(x,x_{i})},=1d⁡(x,xi),\displaystyle=\frac{1}{d(x,x_{i})},
+
+(8)
+
+
+
+
+\displaystyle w(x,x_{i})w⁡(x,xi)\displaystyle w(x,x_{i})
+\displaystyle=e^{-\alpha\,d(x,x_{i})}.=e−α​d​(x,xi).\displaystyle=e^{-\alpha\,d(x,x_{i})}.
+
+(9)
+
+
+
+
+
+In Equation 7, predictions depend only on neighboring data points and not on any learnable parameters.
+Thus, weighted kkkNN avoids loss of plasticity (no parameters to get stuck in low-rank regions) and catastrophic forgetting (no parameters to overwrite).
+Performance is fully determined by the support set and chosen distance metric.
+
+
+
+
+Comparing Equation 7 with Equation 6, the difference lies in how the distance metric is obtained: in kkkNN it is fixed manually, while in the query-based model it is learned as \thetaθ\theta.
+Once \thetaθ\theta is learned, predictions depend primarily on the support set, so continual adaptation occurs in-context rather than through constant parameter updates.
+This makes the learning global in nature and independent of any single task which is different from vanilla backpropagation or continual backpropagation algorithm where the model updates its parameters continuously local for each task.
+
+
+
+
+
+
+
+
+6.2 Model agnostic meta-learning for continual learning
+
+
+
+
+We can rewrite equation 6 as,
+
+
+
+
+
+
+
+
+\hat{y}_{t}(x)=\sum_{x_{i},y_{i}\in B}\theta^{\prime}_{t,i}\,y_{i},y^t​(x)=∑xi,yi∈Bθt,i′​yi,\hat{y}_{t}(x)=\sum_{x_{i},y_{i}\in B}\theta^{\prime}_{t,i}\,y_{i},
+
+(10)
+
+
+
+
+
+From Equation 10, predictions depend on task-specific parameters \theta^{\prime}θ′\theta^{\prime} generated at inference time.
+This parallels the task-specific adaptation in MAML’s inner/outer-loop updates (Equations 3, 4).
+However, unlike query-based models, MAML was originally designed with task IDs and distributions known, an assumption that breaks in continual learning.
+In our experiments, we find that using a large replay buffer stabilizes MAML training despite this limitation.
+Even more interestingly, MAML requires a much smaller support set than query-based or attention networks, which could make it a promising direction for mitigating catastrophic forgetting in future continual learning work where memory efficiency is crucial.
+
+
+
+
+
+
+
+6.3 Relationship to attention network
+
+
+
+
+From Equation 1, the prediction is a linear combination of value vectors, which are themselves transformed representations of the input.
+Comparing this with Equation 10, we see a strong similarity: both aggregate information from a support set using learned weights.
+The main difference is that in attention (Equation 2), task specific weights are derived from query–key dot products, whereas in the query-only model they come from a learned distance metric \theta^{\prime}θ′\theta^{\prime}.
+
+
+
+
+This equivalence suggests that attention networks can also mitigate loss of plasticity, much like the query-only model.
+However, computing attention weights requires all pairwise query–key dot products, leading to \mathcal{O}(n^{2})𝒪⁡(n2)\mathcal{O}(n^{2}) complexity for a support set of size nnn.
+In contrast, our query-only model only compares the current query with the support set, reducing the complexity to \mathcal{O}(n)𝒪⁡(n)\mathcal{O}(n).
+This efficiency allows us to scale to larger support sets in continual learning, improving performance without incurring the prohibitive cost of full attention.
+
+
+
+
+
+
+
+6.4 Hessian rank analysis
+
+
+
+
+To study plasticity, we analyze the effective rank of the Hessian [13],[19],
+defined as
+
+
+
+
+
+
+\mathrm{erank}(H)=\exp\!\Big(-\sum_{i=1}^{n}p_{i}\log p_{i}\Big),\quad p_{i}=\frac{\lambda_{i}}{\sum_{j}\lambda_{j}},erank(H)=exp(−∑i=1npilogpi),pi=λi∑jλj,\mathrm{erank}(H)=\exp\!\Big(-\sum_{i=1}^{n}p_{i}\log p_{i}\Big),\quad p_{i}=\frac{\lambda_{i}}{\sum_{j}\lambda_{j}},
+
+(11)
+
+
+
+where \{\lambda_{i}\}{λi}\{\lambda_{i}\} are the eigenvalues of the Hessian.
+A stable effective non-decreasing effective rank indicates models that preserve plasticity across tasks.
+
+
+
+
+
+
+
+
+
+7 Experiments
+
+
+
+
+
+
+(a) Forward accuracy (permuted MNIST).
+
+
+(b) Backward accuracy (permuted MNIST).
+
+Figure 1: Permuted MNIST results (mean over 3 seeds; shaded regions indicate \pm 1±1\pm 1 standard deviation across seeds).
+
+
+
+
+
+(a) Forward MSE (SCR).
+
+
+(b) Backward MSE (SCR).
+
+Figure 2: SCR results (mean over 3 seeds; shaded regions indicate \pm 1±1\pm 1 standard deviation across seeds).
+
+
+
+We evaluate forward (plasticity) and backward (forgetting) performance on two benchmarks:
+Permuted MNIST (abrupt distribution shifts) and
+Slowly Changing Regression (SCR) (gradual drift).
+All results are averaged over 3 seeds; shaded regions show \pm±\pm1 std.
+Higher accuracy (classification) / lower MSE (regression) is better.
+
+
+
+
+Baselines and support sizes.
+
+
+
+We compare our query-based model to vanilla backpropagation (BP), continual backpropagation (CBP), and attention network.
+On Permuted MNIST, we report two query-based variants:
+V1 with support size 100010001000 and V2 with support size 200200200.
+The transformer uses support size 100100100; larger sets are prohibitive due to its \mathcal{O}(n^{2})𝒪⁡(n2)\mathcal{O}(n^{2}) attention, whereas our query-only method is \mathcal{O}(n)𝒪⁡(n)\mathcal{O}(n).
+We also include a MAML-style model with a large replay buffer and a small support set of 101010 (trained on 100100100 tasks for cost).
+On SCR, we use a single query-based model with support size 100100100, matching the transformer (both 100100100) to isolate algorithmic effects under equal memory/compute.
+
+
+
+
+
+
+Observations on Permuted MNIST.
+
+
+
+Query-based (V1/V2) achieves the highest forward accuracy and the lowest forgetting, and converges faster than the transformer.
+The transformer reaches comparable final accuracy but is slower due to quadratic cost.
+BP shows gradual loss of plasticity; CBP improves stability but still lags.
+MAML converges quickly with strong accuracy despite being trained on only 100100100 tasks.
+
+
+
+
+
+
+Observations on SCR.
+
+
+
+With equal support (100100100) for query-based and transformer, both sustain low MSE in forward testing.
+BP gradually loses plasticity, and CBP does not learn well on this benchmark.
+In backward testing, BP/CBP exhibit severe catastrophic forgetting, while query-based and MAML retain performance.
+
+
+
+
+Note that here, including y_{i}yiy_{i} in Q_{\theta}(x_{t},x_{i},y_{i})Qθ​(xt,xi,yi)Q_{\theta}(x_{t},x_{i},y_{i}) did not significantly improve performance, so we used only (x_{t},x_{i})(xt,xi)(x_{t},x_{i}) to reduce computation. In contrast, for Permuted-MNIST the inclusion of labels y_{i}yiy_{i} in Q_{\theta}QθQ_{\theta} yielded consistently better performance, and was therefore retained.
+
+
+
+
+
+
+Result analysis.
+
+
+
+Across both benchmarks, query-based and full attention behave similarly, but query-based converges faster and often performs better because it leverages larger support in \mathcal{O}(n)𝒪⁡(n)\mathcal{O}(n) time (Permuted MNIST), and remains competitive even under equal support (SCR).
+This highlights practical advantages for continual learning where compute and memory are tight.
+
+
+
+
+
+
+
+7.1 Effective rank
+
+
+
+Figure 3: Permuted-MNIST. Mean \pm±\pm std over 3 seeds.
+Effective rank co-varies with forward performance; dips align with reduced plasticity.
+
+
+
+The effective rank serves as a proxy for plasticity.
+We measure it at the start of each task using the Hessian of the final layer only, since full-Hessian computation is infeasible.
+On Permuted-MNIST, vanilla backpropagation shows a steady drop in effective rank, aligning with loss of plasticity. Other models maintain more stable ranks, indicating preserved plasticity.
+Note that absolute rank values differ across models due to variation in the size of their final layers, which is the only layer we analyze.
+Due to computational constraints, this analysis was not extended to SCR.
+
+
+
+
+
+
+
+
+
+8 Conclusion
+
+
+
+
+We introduced a query-only attention mechanism for continual learning, showing that it mitigates both loss of plasticity and catastrophic forgetting while reducing computational cost compared to full attention. Our analysis connects query-only models to MAML and full attention through the lens of global vs. local solutions, and further relates them to kkk-nearest neighbors. Hessian rank experiments support the role of curvature in sustaining plasticity. While our evaluation is limited to permuted MNIST and regression benchmarks, the results are promising.
+
+
+
+
+A key limitation is the reliance on a support set, which complicates mitigation of catastrophic forgetting. Future work will extend to larger and more diverse benchmarks, more rigorous theoretical analysis and minimize the reliance on explicit support for the task at hand. These findings highlight that meta-learning principles, even in simplified architectures, can provide a path toward scalable continual learning.
+
+
+
+
+
+
+
+
+References
+
+
+
+      
+
+[1]
+
+Kwangjun Ahn, Xiang Cheng, Hadi Daneshmand, and Suvrit Sra.
+
+
+Transformers learn to implement preconditioned gradient descent for in-context learning.
+
+
+In Advances in Neural Information Processing Systems (NeurIPS), volume 36, 2023.
+
+
+URL https://proceedings.neurips.cc/paper/2023/file/8ed3d610ea4b68e7afb30ea7d01422c6-Paper-Conference.pdf.
+
+
+
+      
+
+[2]
+
+Qi Chen, Changjian Shui, Ligong Han, and Mario Marchand.
+
+
+On the stability-plasticity dilemma in continual meta-learning: Theory and algorithm.
+
+
+In Advances in Neural Information Processing Systems (NeurIPS), 2023.
+
+
+URL https://proceedings.neurips.cc/paper_files/paper/2023/file/57587d8d6a7ede0e5302fc22d0878c53-Paper-Conference.pdf.
+
+
+
+      
+
+[3]
+
+Shibhansh Dohare, J. Fernando Hernandez-Garcia, Qingfeng Lan, Parash Rahman, A. Rupam Mahmood, and Richard S. Sutton.
+
+
+Loss of plasticity in deep continual learning.
+
+
+Nature, 2024.
+
+
+doi: 10.1038/s41586-024-07711-7.
+
+
+
+      
+
+[4]
+
+Qingxiu Dong, Lei Li, Damai Dai, Ce Zheng, Jingyuan Ma, Rui Li, Heming Xia, Jingjing Xu, Zhiyong Wu, Baobao Chang, Xu Sun, Lei Li, and Zhifang Sui.
+
+
+A survey on in-context learning.
+
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing (EMNLP), 2024.
+
+
+URL https://aclanthology.org/2024.emnlp-main.64/.
+
+
+
+      
+
+[5]
+
+Mohamed Elsayed and A. Rupam Mahmood.
+
+
+Addressing loss of plasticity and catastrophic forgetting in continual learning.
+
+
+In Proceedings of the Twelfth International Conference on Learning Representations (ICLR), 2024.
+
+
+URL https://proceedings.iclr.cc/paper_files/paper/2024/file/8e5f0591943d8dae5702af12dcdcd2f6-Paper-Conference.pdf.
+
+
+
+      
+
+[6]
+
+Chelsea Finn, Pieter Abbeel, and Sergey Levine.
+
+
+Model-agnostic meta-learning for fast adaptation of deep networks.
+
+
+In Proceedings of the 34th International Conference on Machine Learning, volume 70 of Proceedings of Machine Learning Research, pages 1126–1135. PMLR, 2017.
+
+
+URL https://proceedings.mlr.press/v70/finn17a.html.
+
+
+
+      
+
+[7]
+
+Timothy Hospedales, Antreas Antoniou, Paul Micaelli, and Amos Storkey.
+
+
+Meta-learning in neural networks: A survey.
+
+
+IEEE Transactions on Pattern Analysis and Machine Intelligence, 44(9):5149–5169, 2022.
+
+
+doi: 10.1109/TPAMI.2021.3079209.
+
+
+URL https://ieeexplore.ieee.org/document/9428530.
+
+
+
+      
+
+[8]
+
+Khurram Javed and Martha White.
+
+
+Meta-learning representations for continual learning.
+
+
+In Advances in Neural Information Processing Systems (NeurIPS), volume 32, 2019.
+
+
+URL https://papers.nips.cc/paper/2019/file/f4dd765c12f2ef67f98f3558c282a9cd-Paper.pdf.
+
+
+
+      
+
+[9]
+
+Ronald Kemker, Marc McClure, Angelina Abitino, Tyler L. Hayes, and Christopher Kanan.
+
+
+Measuring catastrophic forgetting in neural networks.
+
+
+In Proceedings of the Thirty-Second AAAI Conference on Artificial Intelligence, pages 3390–3397. AAAI Press, 2018.
+
+
+URL https://dl.acm.org/doi/10.5555/3504035.3504450.
+
+
+
+      
+
+[10]
+
+James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A. Rusu, Kieran Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-Barwinska, Demis Hassabis, Claudia Clopath, Dharshan Kumaran, and Raia Hadsell.
+
+
+Overcoming catastrophic forgetting in neural networks.
+
+
+Proceedings of the National Academy of Sciences, 114(13):3521–3526, 2017.
+
+
+doi: 10.1073/pnas.1611835114.
+
+
+URL https://www.pnas.org/doi/10.1073/pnas.1611835114.
+
+
+
+      
+
+[11]
+
+Gregory Koch, Richard Zemel, and Ruslan Salakhutdinov.
+
+
+Siamese neural networks for one-shot image recognition.
+
+
+In Proceedings of the ICML Deep Learning Workshop, 2015.
+
+
+URL https://www.cs.utoronto.ca/~rsalakhu/papers/oneshot1.pdf.
+
+
+
+      
+
+[12]
+
+Yann LeCun, Léon Bottou, Yoshua Bengio, and Patrick Haffner.
+
+
+Gradient-based learning applied to document recognition.
+
+
+Proceedings of the IEEE, 86(11):2278–2324, 1998.
+
+
+
+      
+
+[13]
+
+Alex Lewandowski, Haruto Tanaka, Dale Schuurmans, and Marlos C. Machado.
+
+
+Directions of curvature as an explanation for loss of plasticity.
+
+
+arXiv preprint arXiv:2312.00246, 2023.
+
+
+doi: 10.48550/arXiv.2312.00246.
+
+
+URL https://arxiv.org/abs/2312.00246.
+
+
+
+      
+
+[14]
+
+Zhizhong Li and Derek Hoiem.
+
+
+Learning without forgetting.
+
+
+In Proceedings of the European Conference on Computer Vision (ECCV), pages 614–629. Springer, 2016.
+
+
+doi: 10.1007/978-3-319-46493-0_37.
+
+
+URL https://link.springer.com/chapter/10.1007/978-3-319-46493-0_37.
+
+
+
+      
+
+[15]
+
+Michael McCloskey and Neal J. Cohen.
+
+
+Catastrophic interference in connectionist networks: The sequential learning problem.
+
+
+In Psychology of Learning and Motivation, volume 24, pages 109–165. Academic Press, 1989.
+
+
+doi: 10.1016/S0079-7421(08)60536-8.
+
+
+
+      
+
+[16]
+
+Seyed Iman Mirzadeh, Mehrdad Farajtabar, Dilan Gorur, Razvan Pascanu, and Hassan Ghasemzadeh.
+
+
+Understanding the role of training regimes in continual learning.
+
+
+In Advances in Neural Information Processing Systems (NeurIPS), volume 33, pages 7308–7320, 2020.
+
+
+URL https://papers.neurips.cc/paper_files/paper/2020/file/518a38cc9a0173d0b2dc088166981cf8-Paper.pdf.
+
+
+
+      
+
+[17]
+
+Catherine Olsson, Nelson Elhage, Neel Nanda, Nicholas Joseph, Nova DasSarma, Tom Henighan, Ben Mann, et al.
+
+
+In-context learning and induction heads.
+
+
+arXiv preprint arXiv:2209.11895, 2022.
+
+
+URL https://arxiv.org/pdf/2209.11895.
+
+
+
+      
+
+[18]
+
+Vinay Venkatesh Ramasesh, Ethan Dyer, and Maithra Raghu.
+
+
+Anatomy of catastrophic forgetting: Hidden representations and task semantics.
+
+
+In Proceedings of the 9th International Conference on Learning Representations (ICLR), 2021.
+
+
+URL https://openreview.net/forum?id=LhY8QdUGSuw.
+
+
+
+      
+
+[19]
+
+Olivier Roy and Martin Vetterli.
+
+
+The effective rank: A measure of effective dimensionality.
+
+
+In Proceedings of the European Signal Processing Conference (EUSIPCO), 2007.
+
+
+URL https://www.eurasip.org/Proceedings/Eusipco/Eusipco2007/Papers/a5p-h05.pdf.
+
+
+
+      
+
+[20]
+
+Jake Snell, Kevin Swersky, and Richard S. Zemel.
+
+
+Prototypical networks for few-shot learning.
+
+
+In Advances in Neural Information Processing Systems (NeurIPS), volume 30, 2017.
+
+
+URL https://papers.nips.cc/paper/2017/file/cb8da6767461f2812ae4290eac7cbc42-Paper.pdf.
+
+
+
+      
+
+[21]
+
+Jaehyeon Son, Soochan Lee, and Gunhee Kim.
+
+
+When meta-learning meets online and continual learning: A survey.
+
+
+IEEE Transactions on Pattern Analysis and Machine Intelligence (TPAMI), 2023.
+
+
+doi: 10.1109/TPAMI.2023.3327373.
+
+
+URL https://ieeexplore.ieee.org/document/10684017.
+
+
+
+      
+
+[22]
+
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin.
+
+
+Attention is all you need.
+
+
+In Advances in Neural Information Processing Systems, volume 30, 2017.
+
+
+URL https://proceedings.neurips.cc/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf.
+
+
+
+      
+
+[23]
+
+Oriol Vinyals, Charles Blundell, Timothy Lillicrap, Koray Kavukcuoglu, and Daan Wierstra.
+
+
+Matching networks for one shot learning.
+
+
+In Advances in Neural Information Processing Systems (NeurIPS), volume 29, 2016.
+
+
+URL https://proceedings.neurips.cc/paper/2016/file/90e1357833654983612fb05e3ec9148c-Paper.pdf.
+
+
+
+      
+
+[24]
+
+Jiuqi Wang, Rohan Chandra, and Shangtong Zhang.
+
+
+Experience replay addresses loss of plasticity in continual learning.
+
+
+In Advances in Neural Information Processing Systems (NeurIPS), 2025.
+
+
+URL https://arxiv.org/abs/2503.20018.
+
+
+
+      
+
+[25]
+
+Liyuan Wang, Xingxing Zhang, Hang Su, and Jun Zhu.
+
+
+A comprehensive survey of continual learning: Theory, method and application.
+
+
+IEEE Transactions on Pattern Analysis and Machine Intelligence, 2024.
+
+
+doi: 10.1109/TPAMI.2024.3367329.
+
+
+URL https://doi.org/10.1109/TPAMI.2024.3367329.
+
+
+
+      
+
+[26]
+
+Shiguang Wu, Yaqing Wang, and Quanming Yao.
+
+
+Why in-context learning models are good few-shot learners?
+
+
+In Proceedings of the Thirteenth International Conference on Learning Representations (ICLR), 2025.
+
+
+URL https://openreview.net/pdf?id=iLUcsecZJp.
+
+
+
+      
+
+[27]
+
+Friedemann Zenke, Ben Poole, and Surya Ganguli.
+
+
+Continual learning through synaptic intelligence.
+
+
+In Proceedings of the 34th International Conference on Machine Learning (ICML), volume 70 of Proceedings of Machine Learning Research (PMLR), pages 3987–3995, 2017.
+
+
+URL https://proceedings.mlr.press/v70/zenke17a.html.
+
+
+
+      
+
+[28]
+
+Jianshu Zhang, Yankai Fu, Ziheng Peng, Dongyu Yao, and Kun He.
+
+
+Core: Mitigating catastrophic forgetting in continual learning through cognitive replay.
+
+
+arXiv preprint arXiv:2402.01348, 2024.
+
+
+doi: 10.48550/arXiv.2402.01348.
+
+
+URL https://arxiv.org/abs/2402.01348.
+
+
+
+    
+
+
+
+
+
+
+Appendix A Technical Appendices and Supplementary Material
+
+
+
+
+
+A.1 Broader impacts
+
+
+
+
+This work is primarily foundational research in continual learning.
+The proposed query-only attention mechanism and accompanying analysis aim to improve the
+understanding of plasticity and forgetting in neural networks.
+Potential positive impacts include enabling more efficient and adaptive AI systems,
+which could reduce retraining costs, improve energy efficiency, and support applications
+such as robotics, healthcare monitoring, and lifelong personal assistants.
+
+
+
+
+At the same time, continual learning technologies can be misused in domains such as
+surveillance or profiling, where adaptive models might amplify privacy concerns or biases.
+While the present work is not directly deployable, these risks highlight the need for
+responsible use and safeguards in future applications.
+
+
+
+
+Overall, this research contributes theoretical and empirical insights into the foundations
+of continual learning, with the aim of advancing the field in a transparent and beneficial direction.
+
+
+
+
+
+
+
+A.2 Limitations
+
+
+
+
+Our work has a few important limitations.
+First, the query-only attention model relies on a support set, which can be restrictive for mitigating catastrophic forgetting in practical continual learning scenarios.
+Second, our evaluation is limited to two benchmarks (Permuted MNIST and Slowly Changing Regression); broader validation on more complex datasets is needed to confirm generality.
+Third, while we provide theoretical analysis and intuition linking query-only attention to MAML and kkkNN, we do not include formal proofs.
+We acknowledge these as areas for future work, particularly in extending the experimental scope and strengthening the theoretical foundation.
+
+
+
+
+
+
+
+A.3 Permuted MNIST Setup
+
+
+
+
+The MNIST dataset [12] consists of 60,000 training and 10,000 test images of hand-written digits (000–999), each represented as a 28\times 2828×2828\times 28 grayscale image.
+To adapt this dataset for continual learning, we make the following modifications:
+
+
+
+
+
+• 
+
+
+Train/test split. For each task, we use the entire 60,000 original training images. These are further divided into 58,000 images for training and 2,000 images for evaluation within the task. The global MNIST test set is not used directly; instead, we re-sample 2,000 held-out examples per task to serve as test data. This ensures consistency across tasks and keeps evaluation lightweight.
+
+
+
+
+• 
+
+
+Downsampling. To reduce computational cost, all images are downsampled from 28\times 2828×2828\times 28 to 7\times 77×77\times 7, giving 49 input features per image.
+
+
+
+
+• 
+
+
+Task generation. Each task corresponds to a new random permutation of the 49 input pixels. The same permutation is applied consistently to all 60,000 images within a task. Labels remain unchanged.
+
+
+
+
+• 
+
+
+Continual stream. The learner observes tasks sequentially. After completing all 58,000 training pairs of a given permutation, the learner encounters remaining 2000 data-points for testing, following which it encounters the next task (with a new permutation). In total, 7,000 such tasks are generated in the continual stream.
+
+
+
+
+
+
+
+This setup forces the continual learner to adapt to a new input representation (permutation) at the start of each task, while retaining performance on past permutations. It is a widely used benchmark for evaluating both plasticity (ability to adapt to new tasks) and stability (ability to avoid catastrophic forgetting).
+
+
+
+Table 1: Permuted MNIST configuration: Query-based CL (V1).
+
+
+
+
+Setting
+Value
+
+
+
+
+
+Support size (|B||B||B|)
+1000
+
+
+
+Replay buffer size
+1000
+
+
+
+Distance metric
+Learned Q_{\theta}QθQ_{\theta} (query-only)
+
+
+
+Optimizer
+Adam
+
+
+
+Learning rate
+1e-4
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+(batch size =400=400=400)
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+7000
+
+
+
+Steps per task
+150
+
+
+
+(Input size, Hidden Size, Output Size, Hidden Layers)
+( 108, 100, 1, 9 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+6.5 hours/run
+
+
+
+
+
+Table 2: Permuted MNIST configuration: Query-based CL (V2).
+
+
+
+
+Setting
+Value
+
+
+
+
+
+Support size (|B||B||B|)
+200
+
+
+
+Replay buffer size
+200
+
+
+
+Distance metric
+Learned Q_{\theta}QθQ_{\theta} (query-only)
+
+
+
+Optimizer
+Adam
+
+
+
+Learning rate
+1e-4
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+batch size =400=400=400
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+7000
+
+
+
+Steps per task
+150
+
+
+
+(Input size, Hidden Size, Output Size, Hidden Layers)
+( 108, 100, 1, 9 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+4 hours/run
+
+
+
+
+
+Table 3: Permuted MNIST configuration: MAML.
+
+
+
+
+Setting
+Value
+
+
+
+(Support size, query size, tasks per iteration) (|B||B||B|)
+(10, 10, 5)
+
+
+
+Replay buffer size
+50000
+
+
+
+Optimizer
+Adam
+
+
+
+Outer Learning rate
+1e-4
+
+
+
+Inner Learning rate
+1e-2
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+batch size =400=400=400
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+7000
+
+
+
+Steps per task
+150
+
+
+
+(Input size, Hidden Size, Output Size, Hidden Layers) :
+( 49, 100, 10, 3 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+0.5 hours (ran only first 100 tasks)
+
+
+
+
+
+
+
+The attention network for continual learning is directly adapted from [24], which contains the comprehensive details.
+
+
+
+Table 4: Permuted MNIST configuration: Attention Network baseline.
+
+
+
+
+Setting
+Value
+
+
+
+
+
+Support size (|B||B||B|)
+100
+
+
+
+Attention
+Full self-attention (\mathcal{O}(n^{2})𝒪⁡(n2)\mathcal{O}(n^{2}))
+
+
+
+Replay buffer size
+100
+
+
+
+Optimizer
+Adam
+
+
+
+Learning rate
+5e-4
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+batch size =400=400=400
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+7000
+
+
+
+Steps per task
+150
+
+
+
+Architecture
+10 layers, 1 head, d_model=59
+
+
+
+(Attention Layers, Attention Heads, Dimension) :
+( 10, 1, 59 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+10 hours/run
+
+
+
+
+
+
+The vanilla backpropagation and continual backpropagation algorithm is from paper [3], which contains more details.
+
+
+
+Table 5: Permuted MNIST configuration: Vanilla Backpropagation.
+
+
+
+
+Setting
+Value
+
+
+
+Support size
+N/A
+
+
+
+Replay buffer size
+0 (no replay)
+
+
+
+Optimizer
+Adam
+
+
+
+Learning rate
+1e-4
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+Online (batch size =1=1=1)
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+7000
+
+
+
+Steps per task
+150
+
+
+
+(Input size, Hidden Size, Output Size, Hidden Layers) :
+( 49, 200, 10, 3 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+5.0 hours/run
+
+
+
+
+
+Table 6: Permuted MNIST configuration: Continuous Backpropagation.
+
+
+
+
+Setting
+Value
+
+
+
+Support size
+N/A
+
+
+
+Replay buffer size
+0 (no replay)
+
+
+
+Optimizer
+Adam
+
+
+
+Learning rate
+1e-4
+
+
+
+Weight decay
+0
+
+
+
+Batching
+Online (batch size =1=1=1)
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+7000
+
+
+
+Steps per task
+150
+
+
+
+(Input size, Hidden Size, Output Size, Hidden Layers) :
+( 49, 200, 10, 3 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+7.0 hours/run
+
+
+
+
+
+
+
+
+
+
+A.4 Slowly changing regression (SCR)
+
+
+
+
+We adopt the Slowly changing regression (SCR) benchmark introduced by Dohare et al. [3],
+which was designed to study loss of plasticity in continual learning.
+In this task, regression targets evolve gradually over time according to smoothly drifting functions,
+creating a non-stationary data stream.
+We use the same setup and data-generation procedure as in the original paper, ensuring comparability of results.
+For full details, we refer readers to the experimental protocol in [3].
+
+
+
+Table 7: Slowly changing regression task: Query-based CL.
+
+
+
+
+Setting
+Value
+
+
+
+
+
+Support size (|B||B||B|)
+100
+
+
+
+Replay buffer size
+100
+
+
+
+Distance metric
+Learned Q_{\theta}QθQ_{\theta} (query-only)
+
+
+
+Optimizer
+Adam
+
+
+
+Learning rate
+1e-4
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+batch size =1=1=1
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+1000
+
+
+
+Steps per task
+10000
+
+
+
+(Input size, Hidden Size, Output Size, Hidden Layers) :
+( 40, 20, 1, 1 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+7 hours/run
+
+
+
+
+
+Table 8: Slowly changing regression task: MAML.
+
+
+
+
+Setting
+Value
+
+
+
+(Support size, query size, tasks per iteration) (|B||B||B|)
+(10, 10, 5)
+
+
+
+Replay buffer size
+20000
+
+
+
+Optimizer
+Adam
+
+
+
+Inner Learning rate
+1e-2
+
+
+
+Outer Learning rate
+1e-4
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+batch size =1=1=1
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+1000
+
+
+
+Steps per task
+10000
+
+
+
+(Input size, Hidden Size, Output Size, Hidden Layers) :
+( 20, 40, 1, 1 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+1 hour to run 100 tasks
+
+
+
+
+
+Table 9: Slowly changing regression task: Attention Network.
+
+
+
+
+Setting
+Value
+
+
+
+
+
+Support size (|B||B||B|)
+100
+
+
+
+Replay buffer size
+100
+
+
+
+Distance metric
+Learned Q_{\theta}QθQ_{\theta} (query-only)
+
+
+
+Optimizer
+Adam
+
+
+
+Learning rate
+1e-4
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+batch size =1=1=1
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+1000
+
+
+
+Steps per task
+10000
+
+
+
+(Attention Layers, Attention Heads, Dimension) :
+( 1, 1, 21 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+14 hours/run
+
+
+
+
+
+Table 10: Slowly changing regression task: Vanilla Backpropagation
+
+
+
+
+Setting
+Value
+
+
+
+Optimizer
+Adam
+
+
+
+Learning rate
+1e-4
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+batch size =1=1=1
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+1000
+
+
+
+Steps per task
+10000
+
+
+
+(Input size, Hidden Size, Output Size, Hidden Layers) :
+( 20, 40, 1, 1 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+8 hours/run
+
+
+
+
+
+Table 11: Slowly changing regression task: Continuous Backpropagation
+
+
+
+
+Setting
+Value
+
+
+
+Optimizer
+Adam
+
+
+
+Learning rate
+1e-4
+
+
+
+Weight decay
+0.0
+
+
+
+Batching
+batch size =1=1=1
+
+
+
+Seeds
+20, 30, 40 (report mean \pm±\pm std)
+
+
+
+Tasks
+1000
+
+
+
+Steps per task
+10000
+
+
+
+(Input size, Hidden Size, Output Size, Hidden Layers) :
+( 20, 40, 1, 1 )
+
+
+
+Init
+Xavier uniform (weights), Zeros (biases)
+
+
+
+Hardware
+1\times×\times RTX 3090 24GB, CUDA 11.8
+
+
+
+Wall-clock
+11 hours/run
+
+
+
+
+
+
+
+
+
+
+
+
+  
+    Experimental support, please
+    view the build logs
+    for errors. Generated by
+    
+      
+        L
+        A
+        T
+        E
+      
+      xml
+      
+    .
+  
+  
+    
+Instructions for reporting errors
+
+    
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+
+    
+      
+Click the "Report Issue" (
+            
+          ) button, located in the page header.
+
+    
+    
+Tip: You can select the relevant text first, to include it in your report.
+
+    
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+
+    
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+  
+
+  
+    
+      
+        We gratefully acknowledge support from our major funders,
+        member institutions, ,
+        and all contributors.
+      
+      
+        About ·
+        Help ·
+        Contact ·
+        Subscribe ·
+        Copyright ·
+        Privacy ·
+        Accessibility ·
+        Operational Status (opens in new tab)
+      
+    
+  
+
+  
+    
+      
+    
+  
+
+

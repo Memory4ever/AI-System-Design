@@ -1,0 +1,3654 @@
+WalkGPT: Grounded Vision–Language Conversation with Depth-Aware Segmentation for Pedestrian Navigation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Works
+3
+Methods
+3.1
+WalkGPT: The Architecture
+3.2
+PAVE: The VQA Dataset
+3.3
+The Training Recipe
+4
+Experiments
+4.1
+Implementation Details
+4.2
+Baselines
+4.3
+Results
+5
+Conclusion
+References
+6
+Implementation Details
+6.1
+Hyperparameter Settings.
+6.2
+Computational Statistics.
+6.3
+Structured Token Design
+6.4
+Depth Estimation Metrics.
+7
+Additional Qualitative Results
+8
+Dataset Details
+8.1
+PAVE Dataset
+8.2
+Prompt to Generate PAVE
+9
+Rationale for Autoregressive Depth Learning
+License: CC BY 4.0
+arXiv:2603.10703v1 [cs.CV] 11 Mar 2026
+WalkGPT: Grounded Vision–Language Conversation with Depth-Aware Segmentation for Pedestrian Navigation
+Rafi Ibn Sultan
+Affiliation:
+Department of Computer Science, Wayne State University
+Hui Zhu
+Affiliation:
+Department of Computer Science, Wayne State University
+Xiangyu Zhou
+Affiliation:
+Department of Computer Science, Wayne State University
+Chengyin Li
+Affiliation:
+Department of Radiation Oncology, Henry Ford Health
+Prashant Khanduri
+Affiliation:
+Department of Computer Science, Wayne State University
+Marco Brocanelli
+Affiliation:
+Department of Electrical and Computer Engineering, The Ohio State University
+Dongxiao Zhu
+Affiliation:
+Department of Computer Science, Wayne State University
+Affiliation:
+Institute for AI and Data Science, Wayne State University
+Abstract
+Ensuring accessible pedestrian navigation requires reasoning about both semantic and spatial aspects of complex urban scenes, a challenge that existing Large Vision–Language Models (LVLMs) struggle to meet. Although these models can describe visual content, their lack of explicit grounding leads to object hallucinations and unreliable depth reasoning, limiting their usefulness for accessibility guidance. We introduce
+WalkGPT
+, a pixel-grounded LVLM for the new task of
+Grounded Navigation Guide
+, unifying language reasoning and segmentation within a single architecture for depth-aware accessibility guidance. Given a pedestrian-view image and a navigation query, WalkGPT generates a conversational response with segmentation masks that delineate accessible and harmful features, along with relative depth estimation. The model incorporates a Multi-Scale Query Projector (MSQP) that shapes the final image tokens by aggregating them along text tokens across spatial hierarchies, and a Calibrated Text Projector (CTP), guided by a proposed Region Alignment Loss, that maps language embeddings into segmentation-aware representations. These components enable fine-grained grounding and depth inference without user-provided cues or anchor points, allowing the model to generate complete and realistic navigation guidance. We also introduce
+PAVE
+, a large-scale benchmark of 41k pedestrian-view images paired with accessibility-aware questions and depth-grounded answers. Experiments show that WalkGPT achieves strong grounded reasoning and segmentation performance. The source code and dataset are available on the
+project website
+.
+1
+Introduction
+Safe and accessible pedestrian navigation is essential for independent mobility in diverse environments. However, pedestrian routes often contain static and dynamic barriers such as stairs, uneven terrain, parked vehicles, and temporary obstructions
+[
+43
+,
+15
+,
+28
+]
+, posing significant risks for individuals with mobility challenges
+[
+51
+]
+. While most automated navigation systems are designed for vehicles
+[
+20
+,
+61
+]
+, pedestrian-level navigation remains largely underexplored. Addressing this gap requires systems that understand the environment from a first-person view and reason about geometry, depth, and accessibility to navigate complex urban scenes.
+Figure 1
+:
+Overview of WalkGPT for
+accessibility-aware
+grounded navigation guide.
+The model grounds language on segmentation masks enriched with depth information,
+providing holistic spatial understanding that captures both object shapes and depth cues
+for interpretable
+accessibility analysis
+.
+Recent advances in Large Vision–Language Models (LVLMs)
+[
+31
+,
+30
+,
+12
+,
+27
+]
+demonstrate strong visual understanding and language reasoning capabilities, suggesting potential for conversational guidance in pedestrian navigation. However, existing LVLMs lack explicit spatial reasoning
+[
+6
+,
+3
+,
+9
+]
+needed to infer geometric structure and depth relationships in real-world scenes. Recent spatial-aware approaches
+[
+5
+,
+6
+,
+11
+]
+attempt to address this but often rely on
+user-provided visual cues
+to estimate object depth, which is impractical for pedestrian navigation because users cannot manually supply such inputs. LVLMs also tend to hallucinate, describing objects not present in the scene
+[
+58
+]
+, which can lead to hazardous guidance.
+Grounded LVLMs
+[
+38
+,
+25
+,
+56
+,
+57
+,
+39
+]
+extend conventional LVLMs by aligning textual references with corresponding image regions, improving spatial consistency and reducing hallucinations
+[
+58
+]
+. Their segmentation masks provide explicit shape cues, making them promising for pedestrian navigation. However, these masks are 2D and lack the depth information required for spatial reasoning. Consequently, grounded LVLMs remain limited in understanding relative distances and spatial hierarchy, which are critical for safe, accessibility-aware navigation. Thus, existing grounded LVLMs have not been adapted for pedestrian navigation, a domain challenged by complex urban scenes and the absence of large-scale pedestrian-view datasets with joint question–answering and grounding annotations. These limitations motivate the research question:
+Can we develop a grounded LVLM capable of providing depth-aware navigation guidance for pedestrians?
+To address these limitations, we propose
+WalkGPT
+, a grounded LVLM with spatial reasoning for the task of
+Grounded Navigation Guide
+. As illustrated in
+Figure
+1
+, given a pedestrian-view image and a user query about the path ahead, WalkGPT generates a grounded response integrating free-form reasoning with depth-aware segmentation masks for fine-grained accessibility guidance. Unlike prior spatial reasoning approaches
+[
+11
+,
+5
+]
+, it operates without requiring user-provided visual cues or anchor points. By grounding accessible and harmful elements along with their segmentation masks and relative distances, WalkGPT provides comprehensive navigation feedback that supports safe movement, including for individuals with disabilities.
+WalkGPT, a unified architecture (illustrated in
+Figure
+2
+), enables grounded conversations by reasoning over spatial cues from text and segmentation for navigation understanding. It introduces two novel modules: the Multi-Scale Query Projector (MSQP), which aggregates multi-scale visual context, and the Calibrated Text Projector (CTP), guided by a proposed Region Alignment Loss to refine language-to-vision grounding. Using structured tokens such as
+<p>
+,
+<assessment>
+,
+<SEG>
+, and
+<distance>
+, WalkGPT structures its outputs to explicitly link language with segmentation and distance cues, enabling automated depth-aware navigation guidance without user-provided inputs. As no existing dataset addressed this problem, we introduce
+PAVE
+, a large-scale VQA dataset of 41k pedestrian-view images with accessibility-aware questions and answers containing embedded depth information.
+Our main contributions are summarized as follows:
+•
+We introduce
+WalkGPT
+, the first-of-its-kind LVLM for pedestrian accessibility via grounded spatial reasoning.
+•
+We propose a streamlined architecture aligning visual and language representations to enhance pixel-level grounding using the novel MSQP and CTP with structured token supervision.
+•
+We curate
+PAVE
+, a large-scale VQA dataset with depth annotations for accessibility and spatial understanding.
+•
+WalkGPT achieves state-of-the-art performance on grounded navigation guidance and sets a benchmark for accessibility-aware AI in pedestrian environments.
+2
+Related Works
+Grounded Large Vision–Language Models (LVLMs).
+LVLMs
+[
+2
+,
+27
+,
+31
+,
+12
+,
+4
+]
+have advanced multimodal understanding by integrating large language models (LLMs) with visual encoders through large-scale pretraining and instruction tuning. In particular, pixel-grounded LVLMs enable region-level understanding where textual descriptions are explicitly linked to image pixels. Early works performed coarse grounding via bounding boxes
+[
+52
+,
+8
+,
+37
+,
+49
+,
+7
+,
+24
+,
+33
+,
+55
+]
+. More fine-grained grounding using integrated segmentation encoder–decoder architectures has followed two directions: reasoning segmentation
+[
+25
+,
+39
+,
+57
+,
+45
+,
+53
+]
+and visually grounded conversation
+[
+56
+,
+38
+,
+48
+,
+47
+]
+, both aiming to unify semantic reasoning with pixel-level grounding. Beyond these general-domain efforts, domain-specific studies have adapted visually grounded models to medical
+[
+10
+]
+and remote-sensing imagery
+[
+42
+]
+. However, grounded LVLMs have not yet been explored for accessibility-aware pedestrian navigation, which requires spatial reasoning in complex real-world environments.
+Spatial Reasoning LVLMs.
+LVLMs
+[
+11
+,
+6
+,
+5
+,
+16
+]
+designed for spatial reasoning typically use depth maps or visual anchors to capture spatial relations between objects, whereas others
+[
+34
+]
+handle spatial reasoning without performing depth estimation. Although effective for general spatial understanding, these models often depend on user-provided visual cues or anchor points and, in some cases, omit depth prediction, which limits their suitability for navigation-oriented scenarios.
+Figure 2
+:
+Overview of
+WalkGPT
+for grounded navigation guidance.
+(a) Overall framework.
+(b) The
+Multi-Scale Query Projector (MSQP)
+, which aggregates multi-level visual features into spatially aligned image tokens for language reasoning.
+(c) The
+Calibrated Text Projector (CTP)
+, guided by the proposed
+Region Alignment Loss
+, maps
+<SEG>
+tokens into the visual space.
+Structured tokens (
+<SEG>
+,
+<distance>
+,
+<assessment>
+,
+<p>
+) link language generation with segmentation and depth reasoning.
+Accessibility-Aware Pedestrian Navigation.
+Basic pedestrian navigation studies
+[
+1
+,
+41
+,
+21
+,
+18
+,
+60
+]
+focus on static object detection or scene labeling with limited insight into route accessibility. More recent LVLM-based or multimodal systems
+[
+15
+,
+28
+,
+51
+,
+54
+]
+address this gap, but rely on synthetic or metadata-heavy inputs and still lack the fine-grained grounding needed for real-world guidance. Consequently, grounded LVLMs have yet to be explored for accessibility-aware navigation, which requires both pixel-level grounding and depth reasoning in complex urban environments.
+3
+Methods
+3.1
+WalkGPT: The Architecture
+Figure
+2
+illustrates WalkGPT, a grounded conversational model that generates navigation-aware responses linked to segmentation masks. Text tokens are concatenated with image tokens from a shared SAM-based pixel encoder
+[
+23
+]
+and processed by the LLM to produce the output sequence. Any
+<SEG>
+tokens in the response are passed to the SAM pixel decoder to obtain spatially aligned masks. WalkGPT introduces two architectural components, MSQP and CTP, enabling a shared encoder to support both conversation generation and segmentation.
+Multi-Scale Query Projector (MSQP).
+The MSQP maps pixel encoder embeddings into semantically aligned image tokens in the language space for LLM input (
+Figure
+2
+b). Unlike standard MLP projectors, MSQP aggregates visual features across multiple spatial levels, preserving both local detail and global structure and producing more spatially informative representations.
+Given encoder embeddings
+𝐙
+∈
+ℝ
+B
+×
+L
+×
+C
+\mathbf{Z}\in\mathbb{R}^{B\times L\times C}
+from the pixel encoder, where
+B
+B
+is the batch size,
+L
+=
+H
+×
+W
+L=H\!\times\!W
+flattened image tokens, and
+C
+C
+the feature dimension, we apply a linear projection
+𝐖
+proj
+∈
+ℝ
+C
+×
+d
+proj
+\mathbf{W}_{\text{proj}}\in\mathbb{R}^{C\times d_{\text{proj}}}
+to obtain
+𝐅
+=
+𝐙𝐖
+proj
+∈
+ℝ
+B
+×
+L
+×
+d
+proj
+\mathbf{F}=\mathbf{Z}\mathbf{W}_{\text{proj}}\in\mathbb{R}^{B\times L\times d_{\text{proj}}}
+, with
+d
+proj
+=
+1024
+d_{\text{proj}}=1024
+as the working dimension. Then
+𝐅
+\mathbf{F}
+is reshaped into a grid and average-pooled at multiple scales, generating token banks
+{
+𝐱
+1
+,
+𝐱
+2
+,
+𝐱
+4
+,
+𝐱
+g
+}
+\{\mathbf{x}^{1},\mathbf{x}^{2},\mathbf{x}^{4},\mathbf{x}^{g}\}
+corresponding to native, pooled-by-2, pooled-by-4, and global-mean resolutions. Each scale-specific feature bank is modulated by a segmentation-aware gating function
+g
+⁡
+(
+⋅
+)
+g(\cdot)
+that highlights structure- and edge-rich regions before attention.
+For each scale
+s
+s
+, a small set of learnable query embeddings
+𝐐
+s
+∈
+ℝ
+Q
+s
+×
+d
+proj
+\mathbf{Q}^{s}\in\mathbb{R}^{Q_{s}\times d_{\text{proj}}}
+interacts with the gated tokens
+𝐱
+s
+\mathbf{x}^{s}
+through two layers of cross-attention, producing refined outputs
+𝐎
+s
+∈
+ℝ
+B
+×
+Q
+s
+×
+d
+proj
+\mathbf{O}^{s}\in\mathbb{R}^{B\times Q_{s}\times d_{\text{proj}}}
+.
+Each output token
+𝐨
+i
+s
+\mathbf{o}^{s}_{i}
+is computed as a content-weighted mixture
+𝐨
+i
+s
+=
+∑
+j
+α
+i
+​
+j
+​
+𝐱
+j
+s
+\mathbf{o}^{s}_{i}=\sum_{j}\alpha_{ij}\mathbf{x}^{s}_{j}
+, where attention weights
+α
+i
+​
+j
+\alpha_{ij}
+are obtained by softmax normalization over query-key similarities. The outputs from all scales are first concatenated and padded to a fixed length
+Q
+=
+∑
+s
+Q
+s
++
+4
+=
+36
+Q=\sum_{s}Q_{s}+4=36
+to ensure consistency across scales. The padded sequence is then linearly projected to the LLM hidden dimension
+H
+H
+, producing the final image tokens
+𝐕
+proj
+∈
+ℝ
+B
+×
+Q
+×
+H
+\mathbf{V}_{\text{proj}}\in\mathbb{R}^{B\times Q\times H}
+. By attending across multiple spatial hierarchies, MSQP condenses fine-grained details and global scene context into a compact set of tokens
+𝐕
+proj
+\mathbf{V}_{\text{proj}}
+.
+Calibrated Text Projector (CTP).
+In our framework, the grounded
+<SEG>
+tokens in the generated response (see
+Figure
+2
+a) act as textual prompts that guide the pixel decoder for mask prediction, linking language reasoning with pixel-level segmentation. Unlike prior methods that use a linear projection into the segmentation space, CTP expands each token into structured sub-embeddings, preserving fine-grained semantics. These calibrated embeddings improve spatial correspondence, supporting segmentation-aware mask generation.
+Given the hidden states of the
+<SEG>
+tokens
+𝐓
+∈
+ℝ
+B
+×
+M
+×
+H
+\mathbf{T}\in\mathbb{R}^{B\times M\times H}
+from the LLM, where
+M
+M
+is the number of
+<SEG>
+tokens, we apply a linear projection
+𝐖
+vis
+∈
+ℝ
+H
+×
+d
+vis
+\mathbf{W}_{\text{vis}}\in\mathbb{R}^{H\times d_{\text{vis}}}
+to transform them, yielding
+𝐔
+=
+𝐓𝐖
+vis
+∈
+ℝ
+B
+×
+M
+×
+d
+vis
+\mathbf{U}=\mathbf{T}\mathbf{W}_{\text{vis}}\in\mathbb{R}^{B\times M\times d_{\text{vis}}}
+, where
+d
+vis
+=
+256
+d_{\text{vis}}{=}256
+matches the visual backbone dimension. As illustrated in
+Figure
+2
+c, to prevent loss of token diversity, each reduced vector
+𝐮
+i
+\mathbf{u}_{i}
+is expanded into a small set of
+K
+bank
+K_{\text{bank}}
+calibrated embeddings through a bias-augmented transformation
+𝐄
+i
+=
+MLP
+​
+(
+𝐮
+i
+)
++
+𝐁
+\mathbf{E}_{i}=\text{MLP}(\mathbf{u}_{i})+\mathbf{B}
+, where
+𝐄
+i
+∈
+ℝ
+K
+bank
+×
+d
+vis
+\mathbf{E}_{i}\in\mathbb{R}^{K_{\text{bank}}\times d_{\text{vis}}}
+and
+𝐁
+∈
+ℝ
+K
+bank
+×
+d
+vis
+\mathbf{B}\in\mathbb{R}^{K_{\text{bank}}\times d_{\text{vis}}}
+contains learnable biases that encode modality-specific priors such as objectness and boundary structure. This expansion allows each token to generate multiple complementary sub-embeddings that capture different aspects of its semantics. The resulting calibrated bank
+𝐄
+∈
+ℝ
+B
+×
+M
+×
+K
+bank
+×
+d
+vis
+\mathbf{E}\in\mathbb{R}^{B\times M\times K_{\text{bank}}\times d_{\text{vis}}}
+is reshaped to
+ℝ
+B
+×
+(
+M
+​
+K
+bank
+)
+×
+d
+vis
+\mathbb{R}^{B\times(MK_{\text{bank}})\times d_{\text{vis}}}
+and concatenated along the token dimension to serve as the text prompt for the pixel decoder.
+Region Alignment Loss.
+Since CTP maps the rich
+H
+H
+-dimensional LLM embeddings (4096) into the lower
+d
+vis
+d_{\text{vis}}
+-dimensional visual space (256), substantial information loss may occur. To preserve semantic detail, we introduce
+Region Alignment Loss
+, a contrastive regularization that enforces consistency between text embeddings and their corresponding visual regions. For each
+<SEG>
+token, the method aligns its projected embedding with the visual features of the target region while pushing it away from unrelated areas, encouraging a semantically faithful
+H
+→
+d
+vis
+H{\to}d_{\text{vis}}
+mapping. With the pixel encoder frozen, this regularization improves projection fidelity and language–region alignment.
+For each sample
+b
+∈
+{
+1
+,
+…
+,
+B
+}
+b\in\{1,\ldots,B\}
+in the batch, we take the pre-projection
+<SEG>
+token embeddings
+𝐓
+b
+∈
+ℝ
+M
+×
+H
+\mathbf{T}_{b}\in\mathbb{R}^{M\times H}
+(from the LLM hidden states) and the flattened pixel-encoder embeddings
+𝐙
+b
+∈
+ℝ
+L
+×
+C
+\mathbf{Z}_{b}\in\mathbb{R}^{L\times C}
+. Since the
+<SEG>
+tokens interact with specific image regions during generation, they are used to cross-attend and retrieve the most relevant spatial areas. The attended regions act as pseudo-targets to supervise their projected counterparts from CTP, establishing fine-grained region–token correspondence through cross-attention between the original
+<SEG>
+tokens and the visual embeddings. Specifically, we compute
+𝐪
+\displaystyle\mathbf{q}
+=
+𝐭
+b
+,
+m
+𝐖
+q
+,
+𝐊
+b
+=
+𝐙
+b
+𝐖
+k
+,
+𝐕
+b
+=
+𝐙
+b
+𝐖
+v
+,
+\displaystyle=\mathbf{t}_{b,m}\mathbf{W}_{q},\quad\mathbf{K}_{b}=\mathbf{Z}_{b}\mathbf{W}_{k},\quad\mathbf{V}_{b}=\mathbf{Z}_{b}\mathbf{W}_{v},
+(1)
+𝝅
+\displaystyle\boldsymbol{\pi}
+=
+softmax
+⁡
+(
+𝐊
+b
+​
+𝐪
+⊤
+d
+k
+)
+∈
+ℝ
+L
+,
+\displaystyle=\mathrm{softmax}\!\left(\frac{\mathbf{K}_{b}\mathbf{q}^{\top}}{\sqrt{d_{k}}}\right)\in\mathbb{R}^{L},
+where
+𝐭
+b
+,
+m
+\mathbf{t}_{b,m}
+is the
+m
+m
+-th
+<SEG>
+token in batch
+b
+b
+and
+d
+k
+=
+d
+vis
+d_{k}{=}d_{\text{vis}}
+is the shared query–key projection dimension.
+To focus alignment on salient object regions and suppress background noise, we emphasize the top-
+K
+K
+image tokens with the highest attention weights. The selected indices are
+ℐ
+K
+=
+TopK
+⁡
+(
+𝝅
+,
+K
+)
+\mathcal{I}_{K}=\mathrm{TopK}(\boldsymbol{\pi},K)
+, and the normalized weights are
+α
+i
+=
+π
+i
+/
+∑
+j
+∈
+ℐ
+K
+π
+j
+\alpha_{i}=\pi_{i}/\sum_{j\in\mathcal{I}_{K}}\pi_{j}
+. The positive region embedding is then computed as
+𝐳
+b
+,
+m
++
+=
+𝐖
+o
+​
+(
+∑
+i
+∈
+ℐ
+K
+α
+i
+​
+𝐯
+b
+,
+i
+)
+∈
+ℝ
+d
+vis
+,
+\mathbf{z}^{+}_{b,m}=\mathbf{W}_{o}\!\left(\sum_{i\in\mathcal{I}_{K}}\alpha_{i}\,\mathbf{v}_{b,i}\right)\in\mathbb{R}^{d_{\text{vis}}},
+(2)
+where
+𝐯
+b
+,
+i
+\mathbf{v}_{b,i}
+denotes the
+i
+i
+-th value vector from
+𝐕
+b
+\mathbf{V}_{b}
+and full attention is used when
+K
+=
+L
+K=L
+, i.e.,
+ℐ
+K
+\mathcal{I}_{K}
+contains all tokens.
+The mapped tokens from CTP,
+𝐄
+b
+=
+[
+𝐞
+b
+,
+1
+,
+…
+,
+𝐞
+b
+,
+M
+]
+⊤
+∈
+ℝ
+M
+×
+d
+vis
+\mathbf{E}_{b}=[\mathbf{e}_{b,1},\ldots,\mathbf{e}_{b,M}]^{\top}\in\mathbb{R}^{M\times d_{\text{vis}}}
+, are aligned with their corresponding positive regions using an InfoNCE loss
+[
+35
+]
+. For each
+<SEG>
+token, the paired region embedding
+𝐳
+b
+,
+m
++
+\mathbf{z}^{+}_{b,m}
+serves as a positive example, while image tokens from other images (and non-attended regions) act as negatives. With
+L
+2
+L_{2}
+-normalized vectors
+𝐞
+^
+b
+,
+m
+\hat{\mathbf{e}}_{b,m}
+and
+𝐳
+^
+b
+,
+m
++
+\hat{\mathbf{z}}^{+}_{b,m}
+, the positive logit is
+s
+b
+,
+m
++
+=
+⟨
+𝐞
+^
+b
+,
+m
+,
+𝐳
+^
+b
+,
+m
++
+⟩
+s^{+}_{b,m}=\langle\hat{\mathbf{e}}_{b,m},\,\hat{\mathbf{z}}^{+}_{b,m}\rangle
+. The loss is defined as
+ℒ
+NCE
+=
+−
+1
+B
+​
+M
+∑
+b
+,
+m
+log
+exp
+⁡
+(
+a
+b
+,
+m
+)
+exp
+⁡
+(
+a
+b
+,
+m
+)
++
+∑
+k
+∈
+𝒦
+−
+exp
+⁡
+(
+r
+b
+,
+m
+​
+k
+)
+,
+\mathcal{L}_{\mathrm{NCE}}=-\frac{1}{BM}\sum_{b,m}\log\frac{\exp(a_{b,m})}{\exp(a_{b,m})+\sum_{k\in\mathcal{K}^{-}}\exp(r_{b,mk})},
+(3)
+where
+a
+b
+,
+m
+=
+s
+b
+,
+m
++
+/
+τ
+a_{b,m}=s^{+}_{b,m}/\tau
+,
+r
+b
+,
+m
+​
+k
+=
+⟨
+𝐞
+^
+b
+,
+m
+,
+𝐳
+^
+k
+−
+⟩
+/
+τ
+r_{b,mk}=\langle\hat{\mathbf{e}}_{b,m},\,\hat{\mathbf{z}}^{-}_{k}\rangle/\tau
+, and
+τ
+\tau
+is the temperature parameter.
+3.2
+PAVE: The VQA Dataset
+Dataset Summary.
+We introduce
+PAVE
+(
+P
+edestrian
+A
+ccessibility and
+V
+isual-grounded
+E
+valuation), a spatially grounded VQA dataset for accessibility reasoning in complex pedestrian environments. It captures diverse real-world scenes with occlusions, reflections, motion blur, and dense object layouts typical of urban navigation. PAVE is built from the real-image subset of SANPO
+[
+44
+]
+, which provides head-mounted pedestrian-view frames with human-annotated semantic and instance masks and corresponding depth maps. We focus exclusively on real images to preserve natural visual artifacts present in pedestrian scenes and therefore exclude synthetic data
+[
+44
+,
+51
+]
+. SANPO’s panoptic labels are converted into unified semantic maps, while depth information is used separately to compute object-level distances for each feature. The dataset contains 41k image–question–answer triplets, each consisting of an RGB frame, a question about path accessibility, and a free-form answer describing accessible features, harmful features, their distances from the camera, and an overall accessibility assessment. Additional details are provided in the Appendix.
+Figure 3
+:
+Pipeline for generating accessibility-aware VQA pairs in the PAVE dataset. The LLM receives the system prompt, detected features, their distance values, and the accessibility of the features, and generates structured outputs containing
+<assessment>
+,
+<distance>
+,
+<SEG>
+, and
+<p>
+tokens.
+Dataset Curation Pipeline.
+Each question–answer pair in PAVE is generated from a SANPO frame containing (1) the RGB image, (2) segmentation masks identifying visible objects/features, (3) depth information for each feature, and (4) accessibility labels (e.g.,
+sidewalk
+as accessible,
+vehicle
+or
+stair
+as harmful). For each feature mask, we compute the minimum pixel depth to represent its closest visible distance from the pedestrian viewpoint, providing object-level distance information for the final annotations. As shown in
+Figure
+3
+, these structured scene attributes are then provided to GPT-5-nano
+[
+36
+]
+to generate accessibility-aware VQA pairs. A system prompt instructs the model to act as a navigation assistant, with a one-shot example guiding the output format. GPT-5-nano produces both the natural-language question and a structured answer containing four elements: a concise
+<assessment>
+of overall accessibility, a
+<distance>
+tag listing object-level distances in text form, and
+<p>
+and
+<SEG>
+tokens that spatially ground the conversation. Additional details on prompt design and formatting are provided in the Appendix.
+Verification Pipeline.
+To ensure annotation reliability at scale, we combine automated validation with selective human review. Programmatic checks verify object references,
+<SEG>
+token associations, and consistency with sensor-derived depth across all samples. Manual inspection is then applied to the experimental subset to confirm structural correctness, including formatting and token usage.
+Figure 4
+:
+Qualitative results of WalkGPT on the PAVE validation set. Given a scene image, WalkGPT generates grounded conversations together with segmentation masks and depth-aware distance estimates, reflecting its understanding of accessibility and spatial context. Additional examples are provided in the Appendix.
+3.3
+The Training Recipe
+Conversation Generation.
+The causal language model is trained autoregressively with teacher forcing, predicting each output token conditioned on preceding tokens. Let
+x
+x
+denote the concatenated textual input (system prompt, question, and prior outputs), and let
+𝐕
+proj
+\mathbf{V}_{\text{proj}}
+denote the projected image tokens produced by the MSQP from the frozen pixel encoder (see Section
+3.1
+). The model generates the answer sequence
+y
+1
+:
+S
+y_{1:S}
+by jointly attending to textual and visual embeddings through cross-attention. The training objective is the standard cross-entropy loss,
+ℒ
+CE
+=
+−
+1
+S
+∑
+s
+=
+1
+S
+log
+P
+(
+y
+s
+∣
+y
+<
+s
+,
+x
+,
+𝐕
+proj
+)
+,
+\mathcal{L}_{\mathrm{CE}}=-\frac{1}{S}\sum_{s=1}^{S}\log P\!\left(y_{s}\mid y_{<s},\,x,\,\mathbf{V}_{\text{proj}}\right),
+(4)
+where
+S
+S
+denotes the number of answer tokens. Tokens from the prompt and question contribute to the conditioning context but are excluded from loss computation. Structured tokens provide task-specific control over the generated output:
+<assessment>
+produces an accessibility judgment,
+<p>
+grounds referenced objects within the dialogue,
+<SEG>
+provides the segmentation prompt for the pixel decoder, and
+<distance>
+expresses object-level depth in text form. Representing these outputs as language tokens allows WalkGPT to unify conversational reasoning, spatial grounding, segmentation prompting, and depth description within a single next-token prediction process.
+Segmentation Mask Prediction.
+As illustrated in
+Figure
+2
+a,
+<SEG>
+tokens generated within the textual response serve as spatial prompts for the pixel decoder, enabling segmentation grounded in the language output. Each
+<SEG>
+token corresponds to a semantic entity mentioned in the answer and is associated with an image region. The hidden state of each
+<SEG>
+token is mapped by the CTP into the visual space and used by the decoder together with the projected visual embeddings
+𝐕
+proj
+\mathbf{V}_{\text{proj}}
+to predict one mask per token, following
+[
+38
+]
+. Segmentation supervision combines Dice and cross-entropy losses,
+ℒ
+seg
+=
+ℒ
+Dice
++
+ℒ
+CE
+s
+​
+e
+​
+g
+\mathcal{L}_{\text{seg}}=\mathcal{L}_{\text{Dice}}+\mathcal{L}_{\text{CE}_{seg}}
+,
+encouraging accurate mask prediction and alignment between linguistic entities and visual regions.
+Depth Estimation.
+WalkGPT predicts object-level depth as part of the same autoregressive sequence used for grounded conversation. Distance information is expressed through the
+<distance>
+…
+</distance>
+span of the generated answer, where objects referenced in the response are associated with textual distance descriptions. During training, sensor-derived depth maps are used to compute the minimum visible distance for each segmented object, which is inserted into the ground-truth answers as discretized natural-language distance expressions (
+Figure
+3
+). These tokens are learned through the same cross-entropy objective used for conversation generation. Because the referenced objects are already grounded through
+<SEG>
+tokens, the model learns to associate segmentation-aligned visual regions with their corresponding distance descriptions. Repeated supervision of these distance statements encourages attention to visual cues correlated with relative depth, allowing depth estimation to emerge through language prediction without dense depth supervision or dedicated depth heads.
+Overall Training Objective.
+The final objective integrates three complementary components: (1) cross-entropy loss
+ℒ
+CE
+\mathcal{L}_{\mathrm{CE}}
+for grounded conversation generation, (2) segmentation loss
+ℒ
+seg
+\mathcal{L}_{\mathrm{seg}}
+for mask prediction, and (3) contrastive alignment loss
+ℒ
+NCE
+\mathcal{L}_{\mathrm{NCE}}
+for visual–textual correspondence. The total loss is expressed as
+ℒ
+total
+=
+α
+1
+​
+ℒ
+CE
++
+α
+2
+​
+ℒ
+seg
++
+α
+3
+​
+ℒ
+NCE
+,
+\mathcal{L}_{\text{total}}=\alpha_{1}\,\mathcal{L}_{\mathrm{CE}}+\alpha_{2}\,\mathcal{L}_{\mathrm{seg}}+\alpha_{3}\,\mathcal{L}_{\mathrm{NCE}},
+(5)
+where
+α
+1
+\alpha_{1}
+,
+α
+2
+\alpha_{2}
+, and
+α
+3
+\alpha_{3}
+are scalar weights controlling each component’s contribution to jointly optimize conversation generation, spatial grounding, and cross-modal alignment.
+4
+Experiments
+4.1
+Implementation Details
+WalkGPT uses a single SAM ViT-H pixel encoder
+[
+23
+]
+shared across all components, providing consistent visual grounding for both text generation and mask prediction. The language model is initialized with pretrained checkpoints from
+[
+39
+]
+for the 13B version and
+[
+38
+]
+for the 7B version. We apply LoRA
+[
+14
+]
+to fine-tune the language model parameters in a lightweight and efficient manner. All experiments are run on a single NVIDIA H100 GPU (80 GB) with Python 3.10.8 and CUDA 12.1. The PAVE dataset contains 91 pedestrian-view video sessions recorded at high frame rates. Because frames are sequential, consecutive images often change very little, which can create strong temporal redundancy that can encourage memorization during training. To obtain a more balanced representation of each scene, we uniformly sample 100 frames per session. This reduces redundancy while preserving scene-level diversity. We use 85 sessions for training (about 8.5k frames) and hold out 6 sessions (around 600 frames) for evaluation.
+Training proceeds in two stages. In the pretraining stage, only the MSQP module is optimized while all other components remain frozen, allowing MSQP to learn stable visual tokenization across heterogeneous datasets. We use ADE20K
+[
+59
+]
+and the RefCOCO family
+[
+22
+]
+for this stage. The fine-tuning stage jointly trains MSQP, CTP, the pixel decoder, and the LoRA parameters on the PAVE dataset. All models share the same optimization settings for fair comparison. Additional hyperparameter details and ablations are provided in the Appendix.
+Table 1:
+Performance comparison on grounded navigation conversation generation.
+Models marked with
+†
+are zero-shot; “-FT” indicates fine-tuned on PAVE.
+Depth metrics for zero-shot models are listed as N/A because they fail to produce any depth estimations. Best results are
+bold-faced.
+Model
+Text Generation
+Segmentation Performance
+Depth Estimation
+CIDEr
+↑
+\uparrow
+METEOR
+↑
+\uparrow
+AP50
+↑
+\uparrow
+mIoU
+↑
+\uparrow
+Recall
+↑
+\uparrow
+Depth Acc.
+↑
+\uparrow
+AbsRel
+↓
+\downarrow
+GLAMM
+†
+[
+38
+]
+1.32
+21.98
+1.23
+2.01
+2.24
+N/A
+N/A
+GLAMM-FT
+[
+38
+]
+37.96
+39.12
+15.21
+18.23
+25.01
+38.95
+77.05
+LISA
+†
+[
+25
+]
+0.97
+17.75
+1.02
+1.50
+1.84
+N/A
+N/A
+LISA-FT
+[
+25
+]
+35.14
+36.17
+13.71
+15.07
+24.11
+35.46
+81.22
+PixelLM
+†
+[
+39
+]
+1.08
+21.87
+1.22
+1.59
+2.39
+N/A
+N/A
+PixelLM-FT
+[
+39
+]
+37.49
+38.02
+15.97
+18.10
+28.92
+39.00
+74.61
+GSVA
+†
+[
+48
+]
+0.78
+20.74
+1.78
+1.87
+2.54
+N/A
+N/A
+GSVA-FT
+[
+48
+]
+35.78
+38.15
+14.67
+17.34
+29.71
+36.55
+78.19
+OMG-LLaVA
+†
+[
+56
+]
+0.97
+19.99
+2.05
+3.21
+2.02
+N/A
+N/A
+OMG-LLaVA-FT
+[
+56
+]
+38.01
+38.96
+15.74
+18.02
+28.05
+39.02
+75.01
+Sa2VA
+†
+[
+53
+]
+1.28
+21.02
+2.71
+3.14
+1.78
+N/A
+N/A
+Sa2VA-FT
+[
+53
+]
+38.82
+39.66
+18.72
+16.10
+29.20
+40.54
+73.82
+WalkGPT (7B)
+41.97
+42.36
+16.66
+19.95
+31.55
+41.97
+67.88
+WalkGPT (13B)
+41.17
+43.01
+17.26
+20.16
+32.71
+48.95
+70.66
+4.2
+Baselines
+We compare WalkGPT with leading grounded vision-language models, including GLAMM
+[
+38
+]
+, LISA
+[
+25
+]
+, PixelLM
+[
+39
+]
+, GSVA
+[
+48
+]
+, OMG-LLaVA
+[
+56
+]
+, and Sa2VA
+[
+53
+]
+, using the validation split of the PAVE dataset. Each model is evaluated in both zero-shot and fine-tuned settings and adapted to our task by extending its tokenizer with our four structured token types (
+<SEG>
+,
+<distance>
+,
+<p>
+,
+<assessment>
+), ensuring all baselines operate under the same multimodal interface. We evaluate three aspects of grounded navigation: text generation, segmentation, and depth estimation. CIDEr and METEOR measure text quality, while AP50, mIoU, and Recall assess segmentation of objects of interest. Depth Accuracy and Absolute Relative Error (AbsRel) quantify depth estimation. Depth Accuracy measures the proportion of estimations within
+[
+0.5
+×
+,
+2
+×
+]
+[0.5\times,2\times]
+of ground truth, and AbsRel computes the mean absolute difference normalized by ground-truth depth. Additional metric details are provided in the Appendix. To assess generalization beyond navigation, we also evaluate Referring Expression Segmentation (RES) on RefCOCO, RefCOCO+, and RefCOCOg datasets. Following standard protocols
+[
+25
+,
+39
+]
+, we report precision at multiple IoU thresholds and mean IoU, and compare against baselines including MCN
+[
+32
+]
+, VLT
+[
+13
+]
+, CRIS
+[
+46
+]
+, LAVT
+[
+50
+]
+, ReLA
+[
+29
+]
+, LISA
+[
+25
+]
+, and PixelLM
+[
+39
+]
+.
+4.3
+Results
+Table 2:
+Performance comparison on the referring expression segmentation (RES) benchmark. Best results are
+bold-faced.
+Method
+refCOCO
+refCOCO+
+refCOCOg
+val
+testA
+testB
+val
+testA
+testB
+val(U)
+test(U)
+MCN
+[
+32
+]
+62.4
+64.2
+59.7
+50.6
+55.0
+44.7
+49.2
+49.4
+VLT
+[
+13
+]
+67.5
+70.5
+65.2
+56.3
+61.0
+50.1
+55.0
+57.7
+CRIS
+[
+46
+]
+70.5
+73.2
+66.1
+62.3
+68.1
+53.7
+59.9
+60.4
+LAVT
+[
+50
+]
+72.7
+75.8
+68.8
+62.8
+68.4
+55.1
+61.2
+62.1
+ReLA
+[
+29
+]
+73.8
+76.5
+70.2
+66.0
+71.0
+57.7
+65.5
+66.0
+LISA
+[
+25
+]
+74.1
+76.5
+71.1
+62.4
+67.4
+56.5
+66.4
+68.5
+PixelLM
+[
+39
+]
+73.0
+76.5
+68.2
+66.3
+71.7
+58.3
+69.3
+70.5
+WalkGPT (Ours)
+76.2
+78.5
+68.3
+70.0
+71.1
+60.5
+72.6
+71.6
+Grounded Navigation Conversation Generation.
+Figure
+4
+shows qualitative examples of WalkGPT generating grounded navigation conversations from single pedestrian-view images. The model provides an overall assessment and segments
+accessible
+and
+harmful
+features, including their distances from the user, helping pedestrians understand what to avoid and how far potential obstacles are. These examples span visually distinct scenes and illustrate that WalkGPT maintains consistent spatial grounding across different layouts.
+Table
+1
+summarizes performance on text generation, segmentation, and depth estimation. Zero-shot baselines fail across all metrics and cannot predict depth even with added
+<distance>
+tokens, highlighting the difficulty of this real-world task. Fine-tuning improves results but remains inadequate. WalkGPT achieves substantial gains over strong fine-tuned baselines such as PixelLM-FT and OMG-LLaVA-FT: the 13B model improves mIoU by more than 10% (20.16 vs. 18.10) and raises depth accuracy by over 25% (48.95 vs. 39.00), while the 7B variant surpasses prior best text-generation scores by over 10% in CIDEr. These improvements stem from WalkGPT’s unified pixel encoder together with MSQP and CTP, where MSQP provides fine-grained multi-scale visual tokens and CTP, guided by region alignment, maintains consistent grounding between visual regions and structured outputs. Together, they support robust multimodal grounding across model sizes.
+Referring Expression Segmentation (RES).
+RES requires segmenting target regions in an image given a natural-language referring expression. Standard RES models
+[
+32
+,
+13
+,
+46
+,
+50
+,
+29
+,
+25
+,
+39
+,
+62
+,
+63
+]
+take the expression directly as input. For WalkGPT and the grounded LVLMs in
+Table
+2
+, we place the expression into a short instruction template and prompt the model to generate a response containing a
+<SEG>
+token, whose embedding is decoded by the pixel decoder to produce the mask. Following the setup in
+Section
+4.2
+, we evaluate WalkGPT on public RES benchmarks. Although not designed specifically for RES, WalkGPT shows strong generalization as a grounded vision–language model. As shown in
+Table
+2
+, it achieves 76.2% on refCOCO-val and 72.6% on refCOCOg-val, outperforming LISA and PixelLM by up to about 3–4%. These gains reflect stronger visual–language grounding, enabling more precise localization of the referred region without RES-specific training.
+Table 3:
+Segmentation performance on PAVE compared with representative vision-only segmentation benchmarks.
+Model
+mIoU
+↑
+\uparrow
+Recall
+↑
+\uparrow
+U-Net
+[
+40
+]
+16.85
+28.34
+nnU-Net
+[
+19
+]
+18.55
+28.41
+Swin-UNETR
+[
+17
+]
+20.60
+30.65
+WalkGPT (Ours)
+20.16
+32.71
+Challenges and Failure Analysis.
+To contextualize segmentation performance on PAVE, we compare WalkGPT with strong vision-only benchmarks, including U-Net
+[
+40
+]
+, nnU-Net
+[
+19
+]
+, and Swin-UNETR
+[
+17
+]
+. Although specialized for segmentation, these models achieve under 21% mIoU, reflecting the difficulty of PAVE’s dense pedestrian-view scenes characterized by heavy occlusions, small regions of interest, and severe class imbalance. WalkGPT attains a comparable mIoU (20.16) without segmentation-specific fine-tuning, indicating that even expert models struggle under these conditions. These results underscore the inherent difficulty of PAVE’s real-world scenes for grounded segmentation in navigation settings.
+Figure
+5
+provides a representative example: strong road reflections on the building façade resemble physical obstacles, causing WalkGPT to segment them as real objects and generate flawed accessibility guidance. This misinterpretation propagates to the associated segmentation output, further degrading mask quality. Such failures are particularly common in single-view images, where reflective surfaces distort visual depth cues and make it difficult to distinguish true geometry from appearance. Similar issues arise from motion blur, noisy surfaces, and significant class imbalance (see Appendix), all of which blur the boundary between true structures and incidental visual artifacts.
+Figure 5
+:
+Failure case study on PAVE. WalkGPT misinterprets strong road reflections on the building façade as physical obstacles, producing
+incorrect guidance
+even though the path itself is fully accessible. Part of the image is blurred for privacy.
+Table 4:
+Comparison of hallucination (
+C
+​
+H
+​
+A
+​
+I
+​
+R
+i
+CHAIR_{i}
+) and object coverage (Cover) scores across LVLMs on the PAVE dataset.
+Model
+C
+​
+H
+​
+A
+​
+I
+​
+R
+i
+CHAIR_{i}
+↓
+\downarrow
+Cover
+↑
+\uparrow
+LLaVA-1.5
+[
+30
+]
+22.16
+33.04
+LLaVA 1.6 Mistral
+[
+26
+]
+23.56
+38.83
+Qwen-VL-Chat
+[
+4
+]
+26.78
+31.42
+WalkGPT (Ours)
+18.49
+83.66
+Grounded LVLM for Hallucination Mitigation.
+Table
+4
+reports hallucination performance against non-grounded LVLMs. LLaVA-1.5
+[
+30
+]
+, LLaVA 1.6 Mistral
+[
+26
+]
+, and Qwen-VL-Chat
+[
+4
+]
+show high hallucination rates and limited coverage of visible objects, reflecting their lack of explicit grounding mechanisms. WalkGPT incorporates pixel-level grounding by linking text generation to segmentation-informed visual features. This connection reduces unsupported object mentions and improves recognition of image regions that are actually present, leading to substantially lower
+C
+​
+H
+​
+A
+​
+I
+​
+R
+i
+CHAIR_{i}
+and higher Cover scores. Constraining language to visual evidence allows WalkGPT to produce scene descriptions that remain faithful to the underlying image.
+Table 5:
+Ablation study examining the impact of different design choices in WalkGPT.
+Variant
+METEOR
+↑
+\uparrow
+mIoU
+↑
+\uparrow
+Depth Acc.
+↑
+\uparrow
+WalkGPT (Full)
+43.01
+20.16
+48.95
+w/o MSQP
+→
+\rightarrow
+MLP
+39.50
+17.40
+43.39
+w/o MSQP multi-scale
+41.60
+19.30
+44.70
+MSQP queries
+Q
+=
+8
+Q{=}8
+38.10
+16.20
+45.33
+CTP
+→
+\rightarrow
+Linear
+40.70
+18.60
+47.98
+w/o
+L
+NCE
+L_{\text{NCE}}
+41.00
+18.90
+47.00
+w/o LoRA (LLM frozen)
+35.20
+17.80
+40.21
+w/o
+<distance>
+41.22
+20.01
+38.77
+Ablation Study.
+We evaluate several design variations of WalkGPT to assess their impact on grounded navigation.
+Table
+5
+shows that replacing MSQP with a simple MLP leads to a clear drop in performance (43.01→39.50 METEOR, 20.16→17.40 mIoU, 48.95→43.39 Depth Acc.), highlighting MSQP as a key component. Removing its multi-scale aggregation also reduces performance (41.60 METEOR, 19.30 mIoU, 44.70 Depth Acc.), confirming that multi-resolution features are important for capturing spatial structure and depth cues. Reducing the number of MSQP queries to
+Q
+=
+8
+Q{=}8
+(from
+Q
+=
+32
+Q{=}32
+) yields a further decline (38.10 METEOR, 16.20 mIoU, 45.33 Depth Acc.), indicating that query diversity supports robust grounding and distance reasoning. Substituting CTP with a linear mapping (40.70 METEOR, 18.60 mIoU, 47.98 Depth Acc.) or removing the contrastive loss
+L
+NCE
+L_{\text{NCE}}
+(41.00 METEOR, 18.90 mIoU, 47.00 Depth Acc.) mainly affects language and segmentation while leaving depth largely unchanged. Freezing the LLM reduces performance across metrics (35.20 METEOR, 17.80 mIoU, 40.21 Depth Acc.), suggesting that lightweight language adaptation also supports distance-aware guidance. Finally, removing the
+<distance>
+token primarily harms depth prediction (48.95→38.77) while leaving segmentation nearly unchanged (20.16→20.01 mIoU), confirming the importance of explicit distance supervision. Overall, these results confirm that WalkGPT’s performance arises from the joint contribution of MSQP, CTP-based alignment, and structured distance tokens.
+5
+Conclusion
+WalkGPT advances grounded multimodal reasoning by reframing pedestrian navigation as an interpretable, accessibility-aware dialogue grounded in pixels and depth. By jointly modeling conversational guidance, segmentation, and distance estimation, and introducing the PAVE dataset, it establishes a benchmark for accessibility-aware reasoning and opens new directions for trustworthy assistive navigation systems. Beyond this task, our framework highlights the importance of tightly coupling language reasoning with spatial grounding for real-world multimodal AI.
+Limitations and Future Work.
+WalkGPT may still be affected by dataset artifacts that introduce ambiguity. Future work will explore improved depth estimation and evaluate cross-domain generalization on additional navigation and grounding datasets.
+Acknowledgments
+This work was supported by the National Institutes of Health (NIH), National Eye Institute (NEI), under Grant R61EY037504.
+References
+[1]
+A. Abbott, A. Deshowitz, D. Murray, and E. C. Larson
+(2018)
+WalkNet: a deep learning approach to improving sidewalk quality and accessibility
+.
+SMU Data Science Review
+1
+(
+1
+),
+pp. 7
+.
+Cited by:
+§2
+.
+[2]
+J. Alayrac, J. Donahue, P. Luc, A. Miech, I. Barr, Y. Hasson, K. Lenc, A. Mensch, K. Millican, M. Reynolds,
+et al.
+(2022)
+Flamingo: a visual language model for few-shot learning
+.
+Advances in neural information processing systems
+35
+,
+pp. 23716–23736
+.
+Cited by:
+§2
+.
+[3]
+Anonymous
+(2025)
+SpatiaLab: can vision–language models perform spatial reasoning in the wild?
+.
+In
+Submitted to The Fourteenth International Conference on Learning Representations
+,
+Note:
+under review
+External Links:
+Link
+Cited by:
+§1
+.
+[4]
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang,
+et al.
+(2023)
+Qwen technical report
+.
+arXiv preprint arXiv:2309.16609
+.
+Cited by:
+§2
+,
+§4.3
+,
+Table 4
+.
+[5]
+Z. Cai, C. Yeh, H. Xu, Z. Liu, G. P. Meyer, X. Lei, C. Zhao, S. Li, V. Chandra, and Y. Shi
+(2026)
+DepthLM: metric depth from vision language models
+.
+In
+The Fourteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§1
+,
+§2
+.
+[6]
+B. Chen, Z. Xu, S. Kirmani, B. Ichter, D. Sadigh, L. Guibas, and F. Xia
+(2024)
+Spatialvlm: endowing vision-language models with spatial reasoning capabilities
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 14455–14465
+.
+Cited by:
+§1
+,
+§2
+,
+§9
+.
+[7]
+G. Chen, L. Shen, R. Shao, X. Deng, and L. Nie
+(2024)
+Lion: empowering multimodal large language model with dual-level visual knowledge
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 26540–26550
+.
+Cited by:
+§2
+.
+[8]
+K. Chen, Z. Zhang, W. Zeng, R. Zhang, F. Zhu, and R. Zhao
+(2023)
+Shikra: unleashing multimodal llm’s referential dialogue magic
+.
+arXiv preprint arXiv:2306.15195
+.
+Cited by:
+§2
+.
+[9]
+S. Chen, T. Zhu, R. Zhou, J. Zhang, S. Gao, J. C. Niebles, M. Geva, J. He, J. Wu, and M. Li
+(2025)
+Why is spatial reasoning hard for VLMs? an attention mechanism perspective on focus areas
+.
+In
+Forty-second International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+§1
+.
+[10]
+Y. Chen, D. Xu, Y. Huang, S. Zhan, H. Wang, D. Chen, X. Wang, M. Qiu, and H. Li
+(2025)
+MIMO: a medical vision language model with visual referring multimodal input and pixel grounding multimodal output
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 24732–24741
+.
+Cited by:
+§2
+.
+[11]
+A. Cheng, H. Yin, Y. Fu, Q. Guo, R. Yang, J. Kautz, X. Wang, and S. Liu
+(2024)
+Spatialrgpt: grounded spatial reasoning in vision-language models
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 135062–135093
+.
+Cited by:
+§1
+,
+§1
+,
+§2
+.
+[12]
+W. Dai, J. Li, D. Li, A. Tiong, J. Zhao, W. Wang, B. Li, P. N. Fung, and S. Hoi
+(2023)
+Instructblip: towards general-purpose vision-language models with instruction tuning
+.
+Advances in neural information processing systems
+36
+,
+pp. 49250–49267
+.
+Cited by:
+§1
+,
+§2
+.
+[13]
+H. Ding, C. Liu, S. Wang, and X. Jiang
+(2021)
+Vision-language transformer and query generation for referring segmentation
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 16321–16330
+.
+Cited by:
+§4.2
+,
+§4.3
+,
+Table 2
+.
+[14]
+N. Ding, Y. Qin, G. Yang, F. Wei, Z. Yang, Y. Su, S. Hu, Y. Chen, C. Chan, W. Chen,
+et al.
+(2023)
+Parameter-efficient fine-tuning of large-scale pre-trained language models
+.
+Nature Machine Intelligence
+5
+(
+3
+),
+pp. 220–235
+.
+Cited by:
+§4.1
+.
+[15]
+J. E. Froehlich, A. J. Fiannaca, N. M. Jaber, V. Tsaran, and S. K. Kane
+(2025)
+Streetviewai: making street view accessible using context-aware multimodal ai
+.
+In
+Proceedings of the 38th Annual ACM Symposium on User Interface Software and Technology
+,
+pp. 1–22
+.
+Cited by:
+§1
+,
+§2
+.
+[16]
+M. Gholami, A. Rezaei, Z. Weimin, S. Mao, S. Zhou, Y. Zhang, and M. Akbari
+(2026)
+Spatial reasoning with vision-language models in ego-centric multi-view scenes
+.
+In
+The Fourteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§2
+.
+[17]
+A. Hatamizadeh, V. Nath, Y. Tang, D. Yang, H. R. Roth, and D. Xu
+(2021)
+Swin unetr: swin transformers for semantic segmentation of brain tumors in mri images
+.
+In
+International MICCAI Brainlesion Workshop
+,
+pp. 272–284
+.
+Cited by:
+§4.3
+,
+Table 3
+.
+[18]
+H. Hwang, S. Kwon, Y. Kim, and D. Kim
+(2024)
+Is it safe to cross? interpretable risk assessment with gpt-4v for safety-aware street crossing
+.
+In
+2024 21st International Conference on Ubiquitous Robots (UR)
+,
+pp. 281–288
+.
+Cited by:
+§2
+.
+[19]
+F. Isensee, P. F. Jaeger, S. A. Kohl, J. Petersen, and K. H. Maier-Hein
+(2021)
+NnU-net: a self-configuring method for deep learning-based biomedical image segmentation
+.
+Nature methods
+18
+(
+2
+),
+pp. 203–211
+.
+Cited by:
+§4.3
+,
+Table 3
+.
+[20]
+S. Jiang, Z. Huang, K. Qian, Z. Luo, T. Zhu, Y. Zhong, Y. Tang, M. Kong, Y. Wang, S. Jiao,
+et al.
+(2025)
+A survey on vision-language-action models for autonomous driving
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 4524–4536
+.
+Cited by:
+§1
+.
+[21]
+Y. Jiang, S. Han, D. Li, Y. Bai, and M. Wang
+(2022)
+Automatic concrete sidewalk deficiency detection and mapping with deep learning
+.
+Expert Systems with Applications
+207
+,
+pp. 117980
+.
+Cited by:
+§2
+.
+[22]
+S. Kazemzadeh, V. Ordonez, M. Matten, and T. Berg
+(2014)
+Referitgame: referring to objects in photographs of natural scenes
+.
+In
+Proceedings of the 2014 conference on empirical methods in natural language processing (EMNLP)
+,
+pp. 787–798
+.
+Cited by:
+§4.1
+.
+[23]
+A. Kirillov, E. Mintun, N. Ravi, H. Mao, C. Rolland, L. Gustafson, T. Xiao, S. Whitehead, A. C. Berg, W. Lo,
+et al.
+(2023)
+Segment anything
+.
+In
+Proceedings of the IEEE/CVF international conference on computer vision
+,
+pp. 4015–4026
+.
+Cited by:
+§3.1
+,
+§4.1
+.
+[24]
+K. Kuckreja, M. S. Danish, M. Naseer, A. Das, S. Khan, and F. S. Khan
+(2024)
+Geochat: grounded large vision-language model for remote sensing
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 27831–27840
+.
+Cited by:
+§2
+.
+[25]
+X. Lai, Z. Tian, Y. Chen, Y. Li, Y. Yuan, S. Liu, and J. Jia
+(2024)
+Lisa: reasoning segmentation via large language model
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 9579–9589
+.
+Cited by:
+§1
+,
+§2
+,
+§4.2
+,
+§4.3
+,
+Table 1
+,
+Table 1
+,
+Table 2
+.
+[26]
+F. Li, R. Zhang, H. Zhang, Y. Zhang, B. Li, W. Li, Z. MA, and C. Li
+(2025)
+LLaVA-neXT-interleave: tackling multi-image, video, and 3d in large multimodal models
+.
+In
+The Thirteenth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§4.3
+,
+Table 4
+.
+[27]
+J. Li, D. Li, S. Savarese, and S. Hoi
+(2023)
+Blip-2: bootstrapping language-image pre-training with frozen image encoders and large language models
+.
+In
+International conference on machine learning
+,
+pp. 19730–19742
+.
+Cited by:
+§1
+,
+§2
+.
+[28]
+Z. Li, J. Xu, S. Wang, Y. Wu, and H. Li
+(2024)
+StreetviewLLM: extracting geographic information using a chain-of-thought multimodal large language model
+.
+arXiv preprint arXiv:2411.14476
+.
+Cited by:
+§1
+,
+§2
+.
+[29]
+C. Liu, H. Ding, and X. Jiang
+(2023)
+Gres: generalized referring expression segmentation
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 23592–23601
+.
+Cited by:
+§4.2
+,
+§4.3
+,
+Table 2
+.
+[30]
+H. Liu, C. Li, Y. Li, and Y. J. Lee
+(2024)
+Improved baselines with visual instruction tuning
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 26296–26306
+.
+Cited by:
+§1
+,
+§4.3
+,
+Table 4
+.
+[31]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+(2023)
+Visual instruction tuning
+.
+Advances in neural information processing systems
+36
+,
+pp. 34892–34916
+.
+Cited by:
+§1
+,
+§2
+.
+[32]
+G. Luo, Y. Zhou, X. Sun, L. Cao, C. Wu, C. Deng, and R. Ji
+(2020)
+Multi-task collaborative network for joint referring expression comprehension and segmentation
+.
+In
+Proceedings of the IEEE/CVF Conference on computer vision and pattern recognition
+,
+pp. 10034–10043
+.
+Cited by:
+§4.2
+,
+§4.3
+,
+Table 2
+.
+[33]
+C. Ma, Y. Jiang, J. Wu, Z. Yuan, and X. Qi
+(2024)
+Groma: localized visual tokenization for grounding multimodal large language models
+.
+In
+European Conference on Computer Vision
+,
+pp. 417–435
+.
+Cited by:
+§2
+.
+[34]
+Z. Ning, Z. Tian, S. Shi, G. Lu, D. He, W. Pei, and L. Jiang
+(2025)
+Enhancing spatial reasoning in multimodal large language models through reasoning-based segmentation
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 7851–7860
+.
+Cited by:
+§2
+.
+[35]
+A. v. d. Oord, Y. Li, and O. Vinyals
+(2018)
+Representation learning with contrastive predictive coding
+.
+arXiv preprint arXiv:1807.03748
+.
+Cited by:
+§3.1
+.
+[36]
+OpenAI
+(2025)
+GPT-5 system card
+.
+Note:
+Model family including GPT-5, GPT-5-mini, and GPT-5-nano variants
+https://cdn.openai.com/gpt-5-system-card.pdf
+Cited by:
+§3.2
+.
+[37]
+Z. Peng, W. Wang, L. Dong, Y. Hao, S. Huang, S. Ma, Q. Ye, and F. Wei
+(2024)
+Grounding multimodal large language models to the world
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+Cited by:
+§2
+.
+[38]
+H. Rasheed, M. Maaz, S. Shaji, A. Shaker, S. Khan, H. Cholakkal, R. M. Anwer, E. Xing, M. Yang, and F. S. Khan
+(2024)
+Glamm: pixel grounding large multimodal model
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 13009–13018
+.
+Cited by:
+§1
+,
+§2
+,
+§3.3
+,
+§4.1
+,
+§4.2
+,
+Table 1
+,
+Table 1
+.
+[39]
+Z. Ren, Z. Huang, Y. Wei, Y. Zhao, D. Fu, J. Feng, and X. Jin
+(2024)
+Pixellm: pixel reasoning with large multimodal model
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 26374–26383
+.
+Cited by:
+§1
+,
+§2
+,
+§4.1
+,
+§4.2
+,
+§4.3
+,
+Table 1
+,
+Table 1
+,
+Table 2
+.
+[40]
+O. Ronneberger, P. Fischer, and T. Brox
+(2015)
+U-net: convolutional networks for biomedical image segmentation
+.
+In
+Medical Image Computing and Computer-Assisted Intervention–MICCAI 2015
+,
+pp. 234–241
+.
+Cited by:
+§4.3
+,
+Table 3
+.
+[41]
+M. Saha, M. Saugstad, H. T. Maddali, A. Zeng, R. Holland, S. Bower, A. Dash, S. Chen, A. Li, K. Hara,
+et al.
+(2019)
+Project sidewalk: a web-based crowdsourcing tool for collecting sidewalk accessibility data at scale
+.
+In
+Proceedings of the 2019 CHI Conference on Human Factors in Computing Systems
+,
+pp. 1–14
+.
+Cited by:
+§2
+.
+[42]
+A. Shabbir, M. Zumri, M. Bennamoun, F. S. Khan, and S. Khan
+(2025)
+GeoPixel: pixel grounding large multimodal model in remote sensing
+.
+In
+Forty-second International Conference on Machine Learning
+,
+External Links:
+Link
+Cited by:
+§2
+.
+[43]
+R. I. Sultan, C. Li, H. Zhu, P. Khanduri, M. Brocanelli, and D. Zhu
+(2025)
+GeoSAM: fine-tuning sam with multi-modal prompts for mobility infrastructure segmentation
+.
+In
+Proceedings of the 28th European Conference on Artificial Intelligence (ECAI 2025)
+,
+Frontiers in Artificial Intelligence and Applications
+, Vol.
+413
+,
+pp. 501–508
+.
+External Links:
+Document
+Cited by:
+§1
+.
+[44]
+S. M. Waghmare, K. Wilber, D. Hawkey, X. Yang, M. Wilson, S. Debats, C. Nuengsigkapian, A. Sharma, L. Pandikow, H. Wang,
+et al.
+(2025)
+Sanpo: a scene understanding, accessibility and human navigation dataset
+.
+In
+2025 IEEE/CVF Winter Conference on Applications of Computer Vision (WACV)
+,
+pp. 7866–7875
+.
+Cited by:
+§3.2
+,
+§8.1
+.
+[45]
+J. Wang and L. Ke
+(2024)
+Llm-seg: bridging image segmentation and large language model reasoning
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 1765–1774
+.
+Cited by:
+§2
+.
+[46]
+Z. Wang, Y. Lu, Q. Li, X. Tao, Y. Guo, M. Gong, and T. Liu
+(2022)
+Cris: clip-driven referring image segmentation
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 11686–11695
+.
+Cited by:
+§4.2
+,
+§4.3
+,
+Table 2
+.
+[47]
+S. Wu, S. Jin, W. Zhang, L. Xu, W. Liu, W. Li, and C. C. Loy
+(2025)
+F-lmm: grounding frozen large multimodal models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 24710–24721
+.
+Cited by:
+§2
+.
+[48]
+Z. Xia, D. Han, Y. Han, X. Pan, S. Song, and G. Huang
+(2024)
+Gsva: generalized segmentation via multimodal large language models
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 3858–3869
+.
+Cited by:
+§2
+,
+§4.2
+,
+Table 1
+,
+Table 1
+.
+[49]
+S. Xuan, Q. Guo, M. Yang, and S. Zhang
+(2024)
+Pink: unveiling the power of referential comprehension for multi-modal llms
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 13838–13848
+.
+Cited by:
+§2
+.
+[50]
+Z. Yang, J. Wang, Y. Tang, K. Chen, H. Zhao, and P. H. Torr
+(2022)
+Lavt: language-aware vision transformer for referring image segmentation
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 18155–18165
+.
+Cited by:
+§4.2
+,
+§4.3
+,
+Table 2
+.
+[51]
+K. Ying, R. Liu, C. Chen, M. Tao, H. Shi, K. Yang, J. Zhang, and R. Stiefelhagen
+(2025)
+MmWalk: towards multi-modal multi-view walking assistance
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track
+,
+External Links:
+Link
+Cited by:
+§1
+,
+§2
+,
+§3.2
+.
+[52]
+H. You, H. Zhang, Z. Gan, X. Du, B. Zhang, Z. Wang, L. Cao, S. Chang, and Y. Yang
+(2024)
+Ferret: refer and ground anything anywhere at any granularity
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§2
+.
+[53]
+H. Yuan, X. Li, T. Zhang, Y. Sun, Z. Huang, S. Xu, S. Ji, Y. Tong, L. Qi, J. Feng,
+et al.
+(2025)
+Sa2va: marrying sam2 with llava for dense grounded understanding of images and videos
+.
+arXiv preprint arXiv:2501.04001
+.
+Cited by:
+§2
+,
+§4.2
+,
+Table 1
+,
+Table 1
+.
+[54]
+Z. Yuan, T. Zhang, Y. Zhu, J. Zhang, Y. Deng, Z. Jia, P. Luo, X. Duan, J. Zhou, and J. Zhang
+(2025)
+WalkVLM: aid visually impaired people walking by vision language model
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 9845–9854
+.
+Cited by:
+§2
+.
+[55]
+H. Zhang, H. Li, F. Li, T. Ren, X. Zou, S. Liu, S. Huang, J. Gao, Leizhang, C. Li,
+et al.
+(2024)
+Llava-grounding: grounded visual chat with large multimodal models
+.
+In
+European Conference on Computer Vision
+,
+pp. 19–35
+.
+Cited by:
+§2
+.
+[56]
+T. Zhang, X. Li, H. Fei, H. Yuan, S. Wu, S. Ji, C. C. Loy, and S. Yan
+(2024)
+Omg-llava: bridging image-level, object-level, pixel-level reasoning and understanding
+.
+Advances in neural information processing systems
+37
+,
+pp. 71737–71767
+.
+Cited by:
+§1
+,
+§2
+,
+§4.2
+,
+Table 1
+,
+Table 1
+.
+[57]
+Z. Zhang, Y. Ma, E. Zhang, and X. Bai
+(2024)
+Psalm: pixelwise segmentation with large multi-modal model
+.
+In
+European Conference on Computer Vision
+,
+pp. 74–91
+.
+Cited by:
+§1
+,
+§2
+.
+[58]
+L. Zhao, Y. Deng, W. Zhang, and Q. Gu
+(2025)
+Mitigating object hallucination in large vision-language models via image-grounded guidance
+.
+In
+Forty-second International Conference on Machine Learning
+,
+Cited by:
+§1
+,
+§1
+.
+[59]
+B. Zhou, H. Zhao, X. Puig, T. Xiao, S. Fidler, A. Barriuso, and A. Torralba
+(2019)
+Semantic understanding of scenes through the ade20k dataset
+.
+International Journal of Computer Vision
+127
+(
+3
+),
+pp. 302–321
+.
+Cited by:
+§4.1
+.
+[60]
+G. Zhou, Y. Hong, and Q. Wu
+(2024)
+Navgpt: explicit reasoning in vision-and-language navigation with large language models
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+38
+,
+pp. 7641–7649
+.
+Cited by:
+§2
+.
+[61]
+Z. Zhou, T. Cai, S. Z. Zhao, Y. Zhang, Z. Huang, B. Zhou, and J. Ma
+(2025)
+AutoVLA: a vision-language-action model for end-to-end autonomous driving with adaptive reasoning and reinforcement fine-tuning
+.
+In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems
+,
+External Links:
+Link
+Cited by:
+§1
+.
+[62]
+X. Zou, Z. Dou, J. Yang, Z. Gan, L. Li, C. Li, X. Dai, H. Behl, J. Wang, L. Yuan,
+et al.
+(2023)
+Generalized decoding for pixel, image, and language
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 15116–15127
+.
+Cited by:
+§4.3
+.
+[63]
+X. Zou, J. Yang, H. Zhang, F. Li, L. Li, J. Wang, L. Wang, J. Gao, and Y. J. Lee
+(2023)
+Segment everything everywhere all at once
+.
+Advances in neural information processing systems
+36
+,
+pp. 19769–19782
+.
+Cited by:
+§4.3
+.
+Supplementary Material
+6
+Implementation Details
+6.1
+Hyperparameter Settings.
+Training configuration.
+WalkGPT is trained for 10 epochs with a batch size of 16 and a gradient accumulation factor of 10, resulting in an effective batch size of 160 samples. The optimizer is AdamW with a learning rate of
+2
+×
+10
+−
+4
+2\times 10^{-4}
+. All experiments use
+bf16
+precision and a maximum sequence length of 2048 tokens. Images are resized to a resolution of
+448
+×
+448
+448\times 448
+before being processed by the vision encoder. Each epoch consists of 54 optimization steps, corresponding to the SANPO training split used in our setup.
+Segmentation and alignment objectives.
+The segmentation branch optimizes a combination of Dice and BCE losses over the predicted masks. In addition, WalkGPT employs a contrastive alignment objective that pairs text-side
+<SEG>
+token embeddings with local SAM features. SAM produces 256-dimensional visual tokens, which are flattened and projected into the LLM hidden space using the Multi-Scale Query Projector (MSQP), configured with a
+6
+×
+6
+6\times 6
+target token grid.
+Loss weighting and contrastive settings.
+The overall objective follows the formulation described in the main paper, with loss weights
+α
+1
+=
+0.1
+\alpha_{1}=0.1
+for the CE loss,
+α
+2
+=
+0.05
+\alpha_{2}=0.05
+and
+0.35
+0.35
+for the Dice and BCE segmentation losses respectively, and
+α
+3
+=
+0.3
+\alpha_{3}=0.3
+for the InfoNCE alignment term. The InfoNCE loss uses a temperature of
+0.07
+0.07
+and top-
+8
+8
+hard negative selection when computing contrastive similarities.
+Query and projection modules.
+MSQP operates in a 1024-dimensional hidden space and uses two cross-attention layers per scale (8 attention heads), with a total of 32 queries allocated as 12/8/8/4 across
+1
+×
+1\times
+,
+2
+×
+2\times
+,
+4
+×
+4\times
+, and global scales. The resulting tokens are padded to a
+6
+×
+6
+6\times 6
+grid before projection into the LLM embedding space. CTP is implemented as a calibrated MLP projector with widen factor 2 and LayerNorm, and applies a learned temperature (logit scale) to normalized text embeddings.
+6.2
+Computational Statistics.
+We report the computational characteristics of WalkGPT to provide transparency regarding training and inference costs. All statistics correspond to the final configuration used in our experiments and are not intended as comparative benchmarks. The model contains approximately 14.1B parameters in total. Training was performed for 10 epochs on the 8.5k-sample SANPO training split, requiring approximately 6 hours on 8 GPUs. Inference throughput was measured independently, with 1k queries processed in approximately 1 hour under the same hardware configuration.
+6.3
+Structured Token Design
+We introduce four categories of structured tokens to extend the language model vocabulary and enable multimodal grounding and spatial reasoning for the navigation task.
+•
+<assessment>
+and
+</assessment>
+Tokens:
+These tags enclose a concise qualitative summary of scene accessibility, encouraging the model to generate natural language evaluations of how walkable or obstructed the environment appears.
+•
+<SEG>
+Tokens:
+These tokens indicate objects referenced in the response that correspond to pixel-level segmentation regions. During training, each
+<SEG>
+token is aligned with its ground-truth mask to provide spatial grounding and interpretable visual–text associations.
+•
+<p>
+and
+</p>
+Tokens:
+These tags wrap short descriptive phrases associated with specific visual elements, enabling phrase-level grounding by linking textual mentions to the corresponding regions in the image.
+•
+<distance>
+and
+</distance>
+Tokens:
+These tags encode relative distances derived from SANPO depth maps, allowing the model to associate textual references with spatial proximity and improving depth-aware reasoning.
+Figure 6
+:
+Additional qualitative results of WalkGPT on the PAVE validation set for off-road scenes. Examples illustrate the model’s ability to handle unstructured outdoor environments with uneven terrain,
+dense vegetation, and limited walkable surfaces.
+6.4
+Depth Estimation Metrics.
+To evaluate the numerical depth predictions produced during conversation, we introduce two complementary metrics:
+Depth Accuracy (Depth Acc.)
+and
+Absolute Relative Error (AbsRel)
+. Let
+d
+i
+pred
+d_{i}^{\text{pred}}
+and
+d
+i
+gt
+d_{i}^{\text{gt}}
+denote the predicted and ground-truth depths for object
+i
+i
+, respectively, and let
+N
+N
+be the total number of evaluated objects.
+Depth Acc. measures the proportion of predictions that fall within a multiplicative tolerance of the ground-truth depth. Specifically, a prediction is considered correct if
+0.5
+×
+d
+i
+gt
+≤
+d
+i
+pred
+≤
+2
+×
+d
+i
+gt
+.
+0.5\times d_{i}^{\text{gt}}\;\leq\;d_{i}^{\text{pred}}\;\leq\;2\times d_{i}^{\text{gt}}.
+(6)
+The metric is computed as
+Depth Acc.
+=
+1
+N
+​
+∑
+i
+=
+1
+N
+(
+0.5
+​
+d
+i
+gt
+≤
+d
+i
+pred
+≤
+2
+​
+d
+i
+gt
+)
+,
+\text{Depth Acc.}=\frac{1}{N}\sum_{i=1}^{N}\mathbf{1}\!\left(0.5\,d_{i}^{\text{gt}}\leq d_{i}^{\text{pred}}\leq 2\,d_{i}^{\text{gt}}\right),
+(7)
+where
+𝟏
+​
+(
+⋅
+)
+\mathbf{1}(\cdot)
+denotes the indicator function.
+Absolute Relative Error (AbsRel) provides a scale-normalized measure of depth discrepancy and is defined as
+AbsRel
+=
+1
+N
+​
+∑
+i
+=
+1
+N
+|
+d
+i
+pred
+−
+d
+i
+gt
+|
+d
+i
+gt
+.
+\text{AbsRel}=\frac{1}{N}\sum_{i=1}^{N}\frac{\left|d_{i}^{\text{pred}}-d_{i}^{\text{gt}}\right|}{d_{i}^{\text{gt}}}.
+(8)
+Together, Depth Acc. captures coarse correctness within a reasonable interval, while AbsRel measures the relative magnitude of depth error with respect to the ground-truth value.
+Figure 7
+:
+Another failure case on PAVE. WalkGPT incorrectly infers that the fenced area provides an open and accessible path, misled by the transparency of the fence and the clear view of the space behind it.
+7
+Additional Qualitative Results
+Figure
+6
+presents additional qualitative examples from the PAVE dataset, highlighting diverse off-road scenes and their corresponding accessibility annotations.
+Figure
+7
+shows a representative failure case where WalkGPT misinterprets a fenced boundary as an open, walkable passage due to the fence’s transparency.
+8
+Dataset Details
+8.1
+PAVE Dataset
+SANPO: Summary.
+The source imagery dataset, SANPO
+[
+44
+]
+, provides large-scale egocentric video captured from eye-level and chest-level viewpoints using stereo cameras mounted on real volunteer runners. Each session contains synchronized left–right video streams, associated camera poses, and both sparse depth (from the ZED sensor) and dense depth estimated with CREstereo. SANPO also includes temporally consistent panoptic segmentation for a subset of frames, high-level session attributes (e.g., environment type, visibility, motion), and hardware/IMU metadata. In addition to real captures, the dataset provides 113K synthetic frames generated under similar conditions, enabling controlled comparisons between real and simulated environments. All recordings follow strict privacy and legal guidelines, including participant review and automatic blurring of personally identifiable information.
+Figure 8
+:
+Qualitative examples illustrating varied capture conditions in SANPO. (a) Motion blur and imaging artifacts. (b) Diverse outdoor environments spanning urban streets, parks, and natural trails.
+SANPO: Geographic and environmental coverage.
+SANPO-Real consists of 701 real-world egocentric recording sessions collected across four geographically distinct locations in the United States: San Francisco (CA), Mountain View (CA), Boulder (CO), and New York City (NY). These regions were selected to capture a diverse mix of urban cores, suburban neighborhoods, public parks, road junctions, and open pedestrian spaces. Recordings span a wide range of environmental conditions, including sunny, cloudy, rainy, and snowy weather, as well as variations in visibility, elevation change (flat, uphill, downhill, stairs), ground appearance (e.g., asphalt, pavers, gravel, terrain), and pedestrian and vehicular traffic density. Sessions also vary in time of day and motion patterns, covering walking, jogging, and running with different levels of motion blur. Figure
+Figure
+8
+illustrates representative scenes across urban streets, park pathways, and narrow dirt trails in vegetation-dense environments.
+Figure 9
+:
+Per-class sample occurrence counts across all semantic categories (including background class 0). The x-axis denotes class IDs and the y-axis indicates the number of samples containing each class.
+Labels.
+SANPO defines 30 categories spanning both semantic and panoptic annotation types, including
+road
+(1, semantic),
+curb
+(2, semantic),
+sidewalk
+(3, semantic),
+crosswalk
+(5, panoptic),
+building
+(7, semantic),
+pedestrian
+(12, panoptic),
+vehicle
+(21, panoptic),
+tree
+(28, panoptic), and additional walkability-relevant classes such as
+stairs
+(15, panoptic),
+obstacle
+(20, panoptic), and
+other walkable surface
+(17, semantic).
+Figure
+9
+shows the per-class sample occurrence counts, highlighting strong class imbalance across labels. Many walkability-critical classes appear far less frequently than dominant background and surface categories, making dense segmentation particularly challenging.
+Processing.
+We use only SANPO-Real frames that include human-annotated masks, covering both semantic-only and panoptic-encoded categories. For classes annotated in panoptic format, we convert the 3-channel PNG masks into single-channel semantic masks by extracting the semantic ID from the first channel and ignoring instance identifiers. Semantic-only masks are retained as provided. When resizing is required, we apply nearest-neighbor interpolation to preserve label integrity and clamp values to the valid ID range
+{
+0
+,
+…
+,
+30
+}
+\{0,\dots,30\}
+. This yields a unified semantic representation suited for accessibility reasoning, which relies on class-level occupancy rather than instance differentiation.
+Depth Estimation.
+For each SANPO-Real frame, we use the corresponding dense depth map to compute a per-class distance from the camera and store it as ground truth for dataset construction. Because each semantic region may contain many scattered pixels, we derive a single representative depth value by taking the minimum depth among all pixels belonging to that class. This choice emphasizes the closest visible surface of each object, which is most relevant for accessibility reasoning and near-field obstacle assessment.
+8.2
+Prompt to Generate PAVE
+To construct consistent natural-language annotations for pedestrian accessibility, we employ a large language model (LLM) to generate both the user-facing question and the structured answer associated with each scene. The generation pipeline operates in two stages. In the first stage, the LLM receives the RGB image (encoded in base64 format) through the vision-enabled GPT-5-nano API, together with a system prompt and a single formatted example. The model generates (i) a natural conversational question a pedestrian might ask about the environment and (ii) a short answer whose first block is a qualitative
+<assessment>
+describing overall walkability based solely on visual cues. All internal metadata (class labels, IDs, and distances) are explicitly withheld from the LLM. The JSON output is automatically validated, and malformed responses trigger a regeneration attempt.
+In the second stage, the automatically generated assessment is augmented using ground-truth semantic and geometric information. Each object present in the frame is assigned to either the supportive (accessible) or harmful (non-accessible) category according to a fixed label-to-type mapping defined by the PAVE ontology. Depth values are derived from SANPO-Real dense depth maps; for each object, a representative distance is computed as the minimum depth across its pixels, corresponding to the closest visible surface and reducing occlusion bias. These elements are inserted into a fixed template to produce the final question–answer pair.
+Prompt Specification for Accessibility Question-Answer Generation.
+The LLM is instructed to behave as a navigation assistant that generates a natural question and a structured answer in a predefined format. The question must reference helpful and harmful scene elements in general terms, remain user-facing and conversational, and avoid any internal metadata. The answer must follow a strict structure beginning with a concise
+<assessment>
+tag. The exact prompt used during generation is shown below.
+⬇
+You
+are
+a
+navigation
+assistant
+that
+generates
+VQA
+-
+style
+accessibility
+question
+-
+answer
+pairs
+.
+Task
+:
+Write
+ONE
+natural
+-
+language
+question
+a
+pedestrian
+might
+ask
+about
+the
+accessibility
+of
+the
+scene
+.
+The
+question
+must
+:
+-
+refer
+to
+both
+helpful
+and
+harmful
+scene
+elements
+,
+-
+be
+conversational
+and
+user
+-
+facing
+,
+-
+NOT
+mention
+lists
+,
+ids
+,
+distances
+,
+or
+metadata
+,
+-
+vary
+in
+tone
+and
+structure
+across
+samples
+.
+Write
+ONE
+structured
+answer
+beginning
+with
+a
+short
+<
+assessment
+>
+block
+using
+the
+following
+fixed
+format
+.
+Output
+:
+Return
+ONLY
+a
+valid
+JSON
+object
+:
+{
+"
+question
+":
+"...",
+"
+answer
+":
+"..."
+}
+Inputs
+provided
+at
+runtime
+:
+-
+The
+RGB
+image
+(
+base64
+-
+encoded
+)
+After the qualitative
+<assessment>
+is produced by the LLM, we incorporate ground-truth semantic and geometric information to complete the structured answer. Each supportive and harmful feature is listed, followed by per-class distances computed from metric depth. The fixed template used for augmentation is shown below.
+⬇
+<
+assessment
+>
+...
+your
+1-2
+sentence
+qualitative
+assessment
+...
+</
+assessment
+>
+Accessible
+features
+are
+here
+:
+<
+p
+>
+OBJECT_A
+</
+p
+><
+SEG
+><
+p
+>
+OBJECT_B
+</
+p
+><
+SEG
+>
+...
+Non
+-
+accessible
+features
+are
+here
+:
+<
+p
+>
+OBJECT_C
+</
+p
+><
+SEG
+><
+p
+>
+OBJECT_D
+</
+p
+><
+SEG
+>
+...
+<
+distance
+>
+Distance
+from
+the
+user
+to
+OBJECT_A
+:
+D_A
+m
+;
+to
+OBJECT_B
+:
+D_B
+m
+;
+to
+OBJECT_C
+:
+D_C
+m
+;
+to
+OBJECT_D
+:
+D_D
+m
+;
+...
+</
+distance
+>
+9
+Rationale for Autoregressive Depth Learning
+Although WalkGPT does not use an explicit depth regression head or a dedicated metric-depth loss, it can still learn object-level depth reasoning through the autoregressive next-token objective over structured language tokens. Depth information is provided through target
+<distance>
+tokens derived from sensor-based depth maps, but supervision occurs only at the level of object-level language tokens rather than dense depth regression. The model therefore learns to predict depth-related information jointly with grounded segmentation-aware text.
+Autoregressive Factorization Couples Grounding and Depth.
+Let the model generate a token sequence
+𝐲
+=
+(
+y
+1
+,
+…
+,
+y
+T
+)
+,
+\mathbf{y}=(y_{1},\ldots,y_{T}),
+where some tokens correspond to grounded visual entities (
+<SEG>
+tokens) and others encode their associated natural-language distance expressions (
+<distance>
+tokens). Under the standard next-token objective, the conditional probability factorizes as
+p
+⁡
+(
+𝐲
+∣
+𝐕
+proj
+)
+=
+∏
+t
+=
+1
+T
+p
+⁡
+(
+y
+t
+∣
+y
+<
+t
+,
+𝐕
+proj
+)
+,
+p(\mathbf{y}\mid\mathbf{V}_{\text{proj}})=\prod_{t=1}^{T}p(y_{t}\mid y_{<t},\mathbf{V}_{\text{proj}}),
+(9)
+where
+𝐕
+proj
+\mathbf{V}_{\text{proj}}
+denotes the MSQP-projected image tokens. Because depth tokens are generated in the same sequence as grounded region references and navigation-related text, the model is trained to maintain compatibility between segmentation structure, contextual language, and depth expressions.
+Local Geometry Provides a Useful Inductive Signal.
+MSQP produces
+𝐕
+proj
+∈
+ℝ
+B
+×
+Q
+×
+H
+,
+\mathbf{V}_{\text{proj}}\in\mathbb{R}^{B\times Q\times H},
+which preserves multi-scale spatial information. These embeddings encode cues such as object extent, occlusion patterns, boundary layout, and relative scale, all of which correlate with ordinal or relative depth. Prior work has shown that vision-language models can exploit such cues for spatial reasoning even without direct metric-depth regression
+[
+6
+]
+. WalkGPT leverages the same inductive signal while grounding responses through structured tokens.
+Structured Tokens Link Regions and Depth Expressions.
+When the model predicts a depth token for a region referenced by a preceding
+<SEG>
+token, the prediction is conditioned on the grounded context established earlier in the sequence. For example,
+<SEG>
+A
+→
+<distance>
+A
+,
+\texttt{<SEG>}_{A}\rightarrow\texttt{<distance>}_{A},
+requires the model to associate the referenced region
+A
+A
+with a natural-language distance expression that is compatible with both the visual evidence and the surrounding generated text. Through self-attention over the partially generated sequence, depth prediction is therefore coupled to region identity, scene context, and previously mentioned objects.
+Depth Learning Emerges as Part of the Cross-Entropy Objective.
+Let
+z
+A
+⋆
+z_{A}^{\star}
+denote the target
+<distance>
+token sequence associated with object
+A
+A
+. The contribution of these positions to the autoregressive training objective can be written as
+ℒ
+dist
+=
+−
+∑
+t
+∈
+𝒯
+A
+log
+p
+(
+y
+t
+⋆
+∣
+y
+<
+t
+⋆
+,
+𝐕
+proj
+)
+,
+\mathcal{L}_{\text{dist}}=-\sum_{t\in\mathcal{T}_{A}}\log p(y_{t}^{\star}\mid y_{<t}^{\star},\mathbf{V}_{\text{proj}}),
+(10)
+where
+𝒯
+A
+\mathcal{T}_{A}
+indexes the token positions corresponding to the distance expression for object
+A
+A
+. Since these tokens are embedded in longer grounded responses, incorrect depth predictions may also weaken consistency for subsequent grounded tokens through autoregressive conditioning. Consequently, the cross-entropy objective encourages the model to generate distance expressions that are not only locally correct but also coherent with the overall grounded description of the scene.
+The overall training objective minimizes the expectation of the autoregressive loss over the dataset,
+ℒ
+=
+𝔼
+(
+𝐕
+proj
+,
+𝐲
+⋆
+)
+[
+−
+∑
+t
+=
+1
+T
+log
+p
+(
+y
+t
+⋆
+∣
+y
+<
+t
+⋆
+,
+𝐕
+proj
+)
+]
+,
+\mathcal{L}=\mathbb{E}_{(\mathbf{V}_{\text{proj}},\mathbf{y}^{\star})}\left[-\sum_{t=1}^{T}\log p(y_{t}^{\star}\mid y_{<t}^{\star},\mathbf{V}_{\text{proj}})\right],
+(11)
+of which
+ℒ
+dist
+\mathcal{L}_{\text{dist}}
+represents the subset of terms corresponding to depth expressions.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

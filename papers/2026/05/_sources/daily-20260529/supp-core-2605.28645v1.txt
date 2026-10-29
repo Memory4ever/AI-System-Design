@@ -1,0 +1,683 @@
+Source: https://arxiv.org/html/2605.28645v1
+Main text extraction; fulltext_chars=68912
+
+arXiv:2605.28645v1 [cs.CR] 27 May 2026 
+ 
+ 
+ GraphSteal: Structural Knowledge Stealing from Graph RAG via Traversal Reconstruction 
+
+ 
+ 
+ 
+ Jinze Gu
+ † † thanks:  Equal contribution. 
+    
+ Qinghua Mao 1 1 footnotemark:  
+           1 
+          
+          
+          
+         
+ 
+    
+ Xi Lin
+ † † thanks:  Corresponding author. 
+    
+ Jun Wu
+ 
+ Affiliation:  School of Computer Science, Shanghai Jiao Tong University
+ 
+ Affiliation:  {p0sttt, mmmm2018, linxi234}@sjtu.edu.cn 
+ 
+
+ Abstract 
+    
+ Retrieval-Augmented Generation (RAG) enhances LLMs by grounding generation in query-relevant external evidence. Beyond unstructured text corpora, Graph RAG integrates knowledge graphs into the retrieval pipeline, enabling LLMs to access entities, relations, and multi-hop dependencies encoded in structured knowledge. However, the same structured knowledge that empowers Graph RAG also creates a new privacy attack surface. We demonstrate that Graph RAG systems can be turned into structural oracles: through adaptive black-box interactions, an adversary can elicit sufficient relational evidence to reconstruct substantial portions of the hidden knowledge graph. We propose a structure-oriented reconstruction framework that recovers targeted graphs from both local and global perspectives. Specifically, Depth-Wise Heuristic Search extracts fine-grained node attributes by recursively expanding entity-centered evidence, while Breadth-Wise Diffusion Search infers graph topology by propagating across relation-induced neighborhoods. Experiments on generic and healthcare scenarios demonstrate that our method can recover over 90% of the original knowledge graph from representative Graph RAG systems, revealing sensitive entities, relations, and structural dependencies with high fidelity. Existing guradrails provide limited defense against our attack, highlighting the inherent difficulty of safeguarding structural privacy in Graph RAG pipelines. 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ Figure 1:  Adversarial queries exploit the retriever–LLM pipeline to expose sensitive node and edge information, which can be iteratively expanded to reconstruct the underlying private graph. 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Large language models (LLMs) have demonstrated remarkable capabilities across numerous natural language processing tasks. However, they still face substantial limitations in scenarios that necessitate domain-specific knowledge and complex reasoning, often prone to providing hallucinatory or obsolete responses. To mitigate these issues, Retrieval-Augmented Generation (RAG) enhances factuality and explainability by incorporating external knowledge sources, such as Knowledge Graphs (KGs). As structured, editable, and explicit knowledge repositories, KGs offer a promising solution to mitigate LLM hallucinations  Shuster et al. (2021) . Recent advances  Jiang et al. (2023) ;  Guo et al. (2025) ;  Luo et al. (2024) ;  Sun et al. (2024) ;  Wang et al. (2024b) ;  Xu et al. (2024) ;  Nguyen et al. (2024) ;  Wen et al. (2024)  have explored KG-augmented reasoning, roughly categorized into two paradigms:  retrieval-based approaches , which directly inject factual evidence into prompts  Wen et al. (2024) ;  Wang et al. (2024b) , and  agent-based approaches , which allow LLMs to interactively explore entities and relations for step-by-step reasoning  Luo et al. (2024) ;  Sun et al. (2024) . 
+
+ 
+ 
+ 
+ Despite these advancements, the privacy implications of KG-augmented LLMs remain critically under-investigated. Intuitively, RAG systems appear to offer a privacy shield, as users receive generated responses without direct access to the backend database. However, recent studies demonstrate that adversaries can extract private information via sophisticated queries. For instance,  Qi et al. (2024)  exploit instruction-following capabilities to extract text data verbatim. Similarly,  Zeng et al. (2024)  propose structured prompting attacks to target specific private information, while  Jiang et al. (2024)  introduce  RAG-Thief , an agent-based framework that progressively extracts private knowledge pieces via self-improving queries. 
+
+ 
+ 
+ 
+ While these studies reveal significant risks in general RAG systems, their efficacy on structured knowledge bases remains questionable. Unlike vanilla RAG, Graph RAG relies on complex reasoning over entities and relationships connected by logical associations rather than mere semantic similarity. This distinction severely limits the effectiveness of existing text-centric approaches  Qi et al. (2024) ;  Jiang et al. (2024) . Compared to continuous document segments, graph data is discontinuous and exhibits complex domain-specific topological patterns  Pan et al. (2024) , making it challenging to traverse nodes in a linear sequence. While  Liu et al. (2025)  recently extended privacy analysis to Graph RAG, their investigation is primarily confined to point-level leakage (e.g., entities or PII) under simple querying setups. Crucially, they overlook the complexity of topological reconstruction, leaving it an open question whether an adversary can systematically reverse-engineer the underlying graph structure—a critical gap we address in this work. 
+
+ 
+ 
+ 
+ In this work, we introduce a novel privacy extraction attack against graph RAG, which induces LLMs to progressively recover the entire knowledge graph by injecting structure-aware adversarial instructions. We leverage our attack strategy to systematically investigate the vulnerability of existing graph RAG systems, including retrieval-based and agent-based RAG paradigms. Specifically, we design two attack strategies tailored to these systems, including targeted attack which aims to extract specific knowledge from the knowledge graph, and untargeted attack which seeks to recover as much of the graph as possible. For targeted attack, we propose a Heuristic Deep Search to accelerate the exploration of the target entity by prioritizing high-potential branches. For untargeted attack, we utilize a Breadth-Wise Structural Diffusion strategy, which systematically explores the graph from anchor entities outwards, thereby guaranteeing the fidelity of the global reconstruction. We conduct comprehensive experiments to evaluate the efficacy of privacy extraction attack in generic and healthcare scenarios. Our attack strategy can reconstruct over 90% of knowledge graph from representative graph RAG systems, indicating the critical risk of privacy leakage induced by such an attack. Moreover, we evaluate the effect of potential defense solutions, including protective system prompt and output window restriction. We analyze the limitation of these approaches and discuss significant challenges of safeguarding privacy of graph RAG systems. Our contribution are presented as follows: 
+
+ 
+ 
+ •  
+ 
+ We provide the first in-depth analysis of structural privacy risks unique to Graph RAG systems, showing that their graph-based retrieval pipeline can systematically expose structual entity–relationship through iterative queries. 
+
+ 
+ 
+ •  
+ 
+ We propose a query-based attack method to efficiently reconstruct knowledge graph with sensitive information extracted by breadth-first and depth-first traversal strategies. 
+
+ 
+ 
+ •  
+ 
+ We analyze the impact of retrieval paradigms, knowledge graph sizes and traversal methods on attack performance, and discuss the limitation of existing defense approaches. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 2  Related Work 
+
+ 
+
+ 
+ 2.1  KG-augmented LLM Reasoning. 
+
+ 
+
+ 
+ To mitigate LLM hallucinations, recent works incorporate Knowledge Graphs (KGs) to enhance reasoning with structured knowledge. These approaches generally fall into two paradigms:  retrieval-based  and  agent-based . Retrieval-based methods  Wang et al. (2024b) ;  Zhang et al. (2024) ;  Wang et al. (2024a)  directly inject logical associations or structured evidence from KGs into prompts to ground LLM generation. Conversely, agent-based methods  Sun et al. (2024) ;  Luo et al. (2024) ;  Chen et al. (2024)  empower LLMs to iteratively explore reasoning paths or formulate plans over the KG. While these studies significantly improve faithfulness and explainability, the security implications of such deep KG integration remain severely under-explored. This work addresses this gap by investigating the privacy leakage risks in KG-grounded RAG systems. 
+
+ 
+ 
+ 
+ 
+ 2.2  Privacy Risk of Large Language Models. 
+
+ 
+
+ 
+ A plethora of studies  Carlini et al. (2021) ;  Lee et al. (2023) ;  Biderman et al. (2023) ;  Zeng et al. (2023)  have indicated that LLMs are prone to memorizing and revealing information from their pre-training and fine-tuning data. When external knowledge is integrated to formulate LLM responses, keeping the datastore private becomes critical, yet recent works show this introduces new vulnerabilities.  Huang et al. (2023)  first demonstrated that private datastores induce higher privacy risks in retrieval-based language models. Subsequently,  Qi et al. (2024)  leveraged prompt injection to extract verbatim text from RAG datastores, though success rates drop significantly without background knowledge.  Zeng et al. (2024)  further exposed the vulnerability of RAG systems to structured adversarial prompts for extracting specific private data items. More recently,  RAG-Thief   Jiang et al. (2024)  introduced an agent-based automated attack to extract scalable amounts of document segments. 
+
+ 
+ 
+ 
+ While these methods effectively target unstructured text, the privacy implications of  graph-structured  retrieval remain largely unexplored. A concurrent study by  Liu et al. (2025)  is among the first to extend this analysis to Graph RAG. They reveal a critical trade-off: while graph-based systems may reduce raw text leakage, they are significantly more vulnerable to leaking structured entities and relationships compared to vector-based systems. However, their work primarily focuses on assessing the  risk of leakage  (e.g., how many entities are exposed) rather than systematically  reconstructing  the underlying graph topology. Consequently, few works have investigated the feasibility of utilizing traversal-based attacks to steal the complete structural knowledge of the graph, which is the primary focus of this paper. 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Method 
+
+ 
+
+ 
+ Figure 2:  The attacker begins with an adversarial prompt to retrieve the neighborhood of an anchor node (node 1). The LLM responds with connected nodes and relations, from which node and edge information is extracted and incrementally added to the reconstructed graph. A history buffer tracks past interactions, while a frontier queue manages unexplored nodes. This iterative process continues with query generation for the next round, gradually expanding the recovered graph layer by layer. 
+ 
+ 
+ 3.1  Problem Definition 
+
+ 
+
+ 
+ Graph RAG Systems. 
+We define a Graph RAG (Retrieval-Augmented Generation) system as a pipeline where a user-issued natural language query  q q  is processed to retrieve relevant subgraphs from a structured knowledge graph  𝒢 \mathcal{G} . These subgraphs—typically centered around an  anchor node —are then passed to a large language model (LLM) to generate an answer. Depending on the implementation, retrieval can be based on vector similarity (e.g., via dense embedding search) or symbolic reasoning (e.g., agent-based traversal). Despite architectural differences, these systems share a common structure: graph-based retrieval followed by LLM-based generation. 
+
+ 
+ 
+ 
+ Threat Model. 
+We adopt a  black-box  threat model in which the attacker has no access to the internal architecture, training data, or parameters of the system. The attacker can only interact with the system through public interfaces (e.g., APIs), issuing a series of crafted queries  q 1 , q 2 , … , q T q_{1},q_{2},\dots,q_{T}  and observing the corresponding responses. The goal is to extract sensitive information from the underlying knowledge graph  𝒢 \mathcal{G} , either by reconstructing large portions of its structure (untargeted attack) or by acquiring specific facts about a target node (targeted attack). 
+
+ 
+ 
+ 
+ 
+ 3.2  Knowledge Extraction Methodology 
+
+ 
+
+ 
+ Graph RAG systems typically follow a pipeline that retrieves an  anchor node  based on an initial query before exploring the surrounding structure. Our attack exploits this mechanism by treating the retrieval process as an oracle for graph traversal. We propose two distinct strategies tailored to different adversarial goals: Untargeted Attack (maximizing coverage) and Targeted Attack (specific node extraction). 
+
+ 
+ 
+ 
+ Untargeted Attack. 
+In this setting, the adversary aims to reconstruct the graph structure  𝒢 \mathcal{G}  blindly. To maximize the topological coverage, we adopt a  Breadth-First Search (BFS)  strategy. The attack is initialized by issuing a seed query  q q  to identify an anchor node  v 0 v_{0} . 
+
+ 
+ 
+ 
+ Subsequently, we iteratively query the system to enumerate all immediate neighbors of the current frontier. Formally, for a given node  v v , the attack prompts the system to return the 1-hop neighborhood: 
+
+ 
+ 
+
+ 
+ 
+ 𝒩 ⁡ ( v ) = { ( v ′ , r ) ∣ ( v , r , v ′ ) ∈ 𝒢 } \mathcal{N}(v)=\{(v^{\prime},r)\mid(v,r,v^{\prime})\in\mathcal{G}\} 
+ 
+ (1) 
+ 
+
+ 
+ where  v ′ v^{\prime}  denotes a neighbor connected by relation  r r .
+To reconstruct the graph layer-by-layer, we maintain a frontier set  F t F_{t} . At each iteration  t t , the frontier expands to unexplored nodes: 
+
+ 
+ 
+
+ 
+ 
+ F t + 1 = ⋃ v ∈ F t ( 𝒩 ⁡ ( v ) ∖ 𝒱 visited ) F_{t+1}=\bigcup_{v\in F_{t}}\left(\mathcal{N}(v)\setminus\mathcal{V}_{\text{visited}}\right) 
+ 
+ (2) 
+ 
+
+ 
+ where  𝒱 visited \mathcal{V}_{\text{visited}}  tracks recovered nodes to prevent cycles. This systematic expansion ensures that the subgraph is recovered radially from the anchor. 
+
+ 
+ 
+ 
+ Targeted Attack. 
+The goal here is to extract sensitive attributes of a specific target node  v ∗ v^{*} . Instead of broad coverage, we prioritize efficient pathfinding using a  Depth-First Search (DFS)  strategy. 
+
+ 
+ 
+ 
+ The attack initiates with a semantically crafted query intended to anchor the retrieval at a node  v 0 v_{0}  related to the target. The adversary then issues a sequence of follow-up prompts, selecting the most relevant neighbor at each step to form a directed traversal path: 
+
+ 
+ 
+
+ 
+ 
+ Path ​ ( v 0 → v ∗ ) = { v 0 , v 1 , … , v ∗ } , where  ​ ( v i , r i , v i + 1 ) ∈ 𝒢 \begin{split}\text{Path}(v_{0}\rightarrow v^{*})&=\{v_{0},v_{1},\dots,v^{*}\},\\
+&\quad\text{where }(v_{i},r_{i},v_{i+1})\in\mathcal{G}\end{split} 
+ 
+ (3) 
+ 
+
+ 
+ This semantic guidance exploits the logical associations in the graph (e.g.,  Person   → \rightarrow   Diagnosis   → \rightarrow   Treatment ) to drill down toward the target. 
+
+ 
+ 
+ 
+ Upon reaching  v ∗ v^{*} , a final extraction query is executed to retrieve all private attributes and incident edges associated with the target: 
+
+ 
+ 
+
+ 
+ 
+ Info ​ ( v ∗ ) = { ( r , v ′ ) ∣ ( v ∗ , r , v ′ ) ∈ 𝒢 } \text{Info}(v^{*})=\{(r,v^{\prime})\mid(v^{*},r,v^{\prime})\in\mathcal{G}\} 
+ 
+ (4) 
+ 
+
+ 
+ By minimizing the search space, the targeted attack effectively bypasses retrieval noise and focuses on high-value information extraction. 
+
+ 
+ 
+ 
+ 
+ 3.3  Adversarial Query Construction 
+
+ 
+
+ 
+ To ensure query efficiency, we divide each adversarial prompt sequence into two parts: an initial query and one or more follow-up queries. The initial query is designed to include an anchor node—a key concept or entity that helps the Graph RAG system localize the relevant region of the knowledge graph.
+
+ The anchor node serves as the semantic starting point for traversal. It may either be the direct target of the attack or a strategically chosen entity based on the attacker’s background knowledge of the underlying knowledge base. By anchoring the retrieval in a specific area of the graph, the attacker can guide the system toward sensitive or targeted information in subsequent prompts.
+
+ For untargeted attack , to simulate a Breadth-First Search (BFS) traversal, we design context-eliciting prompts that encourage the LLM to describe the comprehensive correlations and background profile surrounding the frontier entity. This approach induces the system’s retriever to fetch the target’s topological neighborhood.
+
+ For targeted attack , follow-up prompts are crafted as a semantically guided sequence, where each query incrementally narrows the focus toward a specific node and its associated information. This mirrors a Depth-First Search (DFS) traversal, where the attacker probes deeper into the graph by conditioning each step on the system’s previous output. An illustrative example is shown below: 
+
+ 
+ 
+ 
+ 
+ "Can you tell me about patients who received coronary artery bypass grafts?" 
+
+ 
+ "Among them, who developed atrial fibrillation afterward?" 
+
+ 
+ "What treatments were prescribed for those patients?" 
+
+ 
+ "Give more details about their medication schedules." 
+
+ 
+ 
+ This prompt chain demonstrates how the attacker begins with a general anchor query, then gradually constrains the context based on medical conditions and treatment timelines. Each prompt refines the query space, driving the system closer to the intended target node and eventually extracting sensitive information associated with it. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Experiment 
+
+ 
+
+ 
+ Table 1:  Untargeted attack performance against retrieval-based and agent-based graph RAG system on MIMIC and FreeBase datasets. Evaluation are conducted on three LLMs with three structural metrics. 
+ 
+ 
+ 
+ 
+ 
+ Retrieval-based 
+ Agent-based 
+ 
+ Dataset 
+ Model 
+ GED ↓ \downarrow 
+ MCS ↑ \uparrow 
+ NRR ↑ \uparrow 
+ Dataset 
+ Model 
+ GED ↓ \downarrow 
+ MCS ↑ \uparrow 
+ NRR ↑ \uparrow 
+ 
+ MIMIC 
+ GPT 
+ 0.0952 
+ 0.9226 
+ 0.9290 
+ MIMIC 
+ GPT 
+ 0.0940 
+ 0.9236 
+ 0.9185 
+ 
+ Deepseek 
+ 0.0546 
+ 0.9694 
+ 0.9634 
+ Deepseek 
+ 0.0984 
+ 0.9279 
+ 0.9054 
+ 
+ Llama 
+ 0.0917 
+ 0.9278 
+ 0.9392 
+ Llama 
+ 0.0804 
+ 0.9308 
+ 0.9180 
+ 
+ FreeBase 
+ GPT 
+ 0.1213 
+ 0.8823 
+ 0.9250 
+ FreeBase 
+ GPT 
+ 0.1021 
+ 0.9011 
+ 0.8905 
+ 
+ Deepseek 
+ 0.1312 
+ 0.8735 
+ 0.9139 
+ Deepseek 
+ 0.0982 
+ 0.9193 
+ 0.9089 
+ 
+ Llama 
+ 0.1370 
+ 0.8832 
+ 0.9094 
+ Llama 
+ 0.1132 
+ 0.8821 
+ 0.8974 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 4.1  Experiment Setup 
+
+ 
+
+ 
+ Dataset.  We evaluate our attack across two representative domains: healthcare and general knowledge. For healthcare, we employ  MIMIC-IV   Johnson et al. (2020) , which contains structured clinical data (e.g., diagnoses, medications) from de-identified electronic health records. For general knowledge, we utilize  FreeBase   Bollacker et al. (2008) , a large-scale open-domain knowledge graph spanning diverse topics such as people and events. To facilitate controlled evaluation, we partition these large-scale graphs into smaller, recoverable subgraphs that preserve the original structural integrity. Detailed partitioning protocols are provided in Appendix  B .
+
+ Evaluation Metrics. 
+We employ three standard metrics to evaluate untargeted attacks.
+ Graph Edit Distance (GED)   Gao et al. (2010)  measures topological dissimilarity by calculating the minimum cost of edit operations (insertion, deletion, substitution) required to transform the recovered graph  G r ​ e ​ c G_{rec}  into the ground truth  G g ​ t G_{gt} : 
+
+ 
+ 
+
+ 
+ 
+ GED ⁡ ( G r ​ e ​ c , G g ​ t ) = min ⁡ ∑ o ​ p ∈ π π ∈ Π ⁡ c ⁡ ( o ​ p ) \mathrm{GED}(G_{rec},G_{gt})=\min_{\pi\in\Pi}\sum_{op\in\pi}c(op) 
+ 
+ (5) 
+ 
+
+ 
+ where  Π \Pi  denotes the set of all valid edit paths and  c ⁡ ( o ​ p ) c(op)  is the cost of operation  o ​ p op . A lower GED indicates higher structural fidelity. 
+
+ 
+ 
+ 
+ Maximum Common Subgraph (MCS)   Raymond et al. (2002)  quantifies the size of the largest isomorphic substructure shared by the two graphs: 
+
+ 
+ 
+
+ 
+ 
+ MCS ⁡ ( G r ​ e ​ c , G g ​ t ) = max G ′ ⊆ G r ​ e ​ c , G ′ ⊆ G g ​ t ⁡ | V ⁡ ( G ′ ) | \mathrm{MCS}(G_{rec},G_{gt})=\max_{G^{\prime}\subseteq G_{rec},G^{\prime}\subseteq G_{gt}}|V(G^{\prime})| 
+ 
+ (6) 
+ 
+
+ 
+ where  | V ⁡ ( G ′ ) | |V(G^{\prime})|  represents the vertex count of the common subgraph. 
+
+ 
+ 
+ 
+ Node Recovery Rate (NRR)  measures the proportion of ground truth entities successfully retrieved: 
+
+ 
+ 
+
+ 
+ 
+ NRR = | V G r ​ e ​ c ∩ V G g ​ t | | V G g ​ t | \mathrm{NRR}=\frac{|V_{G_{rec}}\cap V_{G_{gt}}|}{|V_{G_{gt}}|} 
+ 
+ (7) 
+ 
+
+ 
+ Higher MCS and NRR values indicate better reconstruction performance. 
+
+ 
+ 
+ 
+ For targeted attacks, we utilize the  F1 Score  to balance the precision and recall of extracting specific target attributes. Further implementation details are provided in Appendix  B . 
+
+ 
+ 
+ 
+ Models.  We evaluate our method on three commonly used and safety-aligned models, including LLaMA3-8B, DeepSeek-V3, and ChatGPT-4o. These models are selected to represent a range of model scales and architectures. By testing across different parameter sizes and alignment strategies, we aim to demonstrate the generality and robustness of our attack method. 
+
+ 
+ 
+ 
+ 
+ 4.2  Results of Untargeted Attack 
+
+ 
+
+ 
+ We evaluate untargeted attacks on vector-based (LightRAG) and agent-based (ToG) systems using MIMIC-IV and Freebase datasets. Table  1  summarizes the performance across GED, MCS, and NRR metrics. 
+
+ 
+ 
+ 
+ Overall Attack Effectiveness.  Our method achieves high-fidelity reconstruction across all settings. High MCS/NRR and low GED scores confirm that black-box adversarial queries effectively recover both node attributes and topological relations. 
+
+ 
+ 
+ 
+ Consistency Across LLMs.  The attack remains robust across different models, indicating that the vulnerability is intrinsic to the graph retrieval mechanism rather than dependent on specific LLM architectures. 
+
+ 
+ 
+ 
+ Impact of Retrieval System Type.  Vector-based systems (LightRAG) prove more vulnerable than agent-based architectures (ToG). LightRAG exposes broader graph segments per retrieval, yielding higher MCS and NRR. In contrast, ToG’s iterative, step-by-step traversal inherently limits per-query leakage, offering slightly stronger resistance. 
+
+ 
+ 
+ 
+ Dataset Sensitivity.  Reconstruction is more precise on MIMIC-IV than FreeBase. The specialized nature of clinical data forces LLMs to rely strictly on retrieved context, yielding cleaner structures. Conversely, FreeBase’s overlap with pre-training data induces “knowledge blending” will introduce hallucinations, which reduces recovery fidelity. 
+
+ 
+ 
+ 
+ These findings highlight a systemic privacy risk: graph-structured knowledge is reliably extractable across diverse domains and retrieval paradigms. 
+
+ 
+ 
+ 
+ Table 2:  Targeted attack performance against retrieval-based and agent-based Graph RAG systems on MIMIC dataset. 
+ 
+ 
+ 
+ 
+ 
+ Graph RAG system 
+ Model 
+ Precision ↑ \uparrow 
+ Recall ↑ \uparrow 
+ F1 ↑ \uparrow 
+ 
+ 
+ 
+ Retrieval-based 
+ GPT 
+ 0.9117 
+ 0.8845 
+ 0.8981 
+ 
+ Deepseek 
+ 0.8751 
+ 0.8659 
+ 0.8703 
+ 
+ Llama 
+ 0.8901 
+ 0.8798 
+ 0.8842 
+ 
+ Agent-based 
+ GPT 
+ 0.9251 
+ 0.9097 
+ 0.9172 
+ 
+ Deepseek 
+ 0.8802 
+ 0.8652 
+ 0.8721 
+ 
+ Llama 
+ 0.8952 
+ 0.8897 
+ 0.8924 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Figure 3:  Attack efficiency across traversal strategies (BFS, DFS, RW) on MIMIC and FreeBase. 
+ 
+ 
+ 
+ 4.3  Results of Targeted Attack 
+
+ 
+
+ 
+ Table  2  presents the performance of our targeted attack on both retrieval-based and agent-based Graph RAG systems using the MIMIC dataset. Overall, the attack demonstrates strong effectiveness across all system-model combinations, with F1 scores consistently above 0.86. 
+
+ 
+ 
+ 
+ Among the tested models, GPT achieves the highest F1 scores in both system settings (0.898 in retrieval-based and 0.9172 in agent-based), suggesting that its output tends to be more consistent and complete when answering entity-specific queries. Llama also performs reliably, though with slightly lower recall. Deepseek shows modestly lower performance, especially in the retrieval-based setting, potentially due to stricter generation behavior or more conservative coverage. 
+
+ 
+ 
+ 
+ We further analyze the resilience mechanism of agent-based systems. The observed performance drop stems from the agent’s intermediate reasoning steps (e.g., summarization and synthesis), which act as a passive information filter. Unlike retrieval-based systems that directly expose raw context chunks, agents prioritize semantic coherence over structural completeness, inadvertently obfuscating specific topological edges during the natural language generation process. 
+
+ 
+ 
+ 
+ These results confirm that even without direct access to the graph structure, an attacker can extract accurate and detailed information about a target node through iterative prompting. This highlights the need for fine-grained access control and prompt-aware mitigation mechanisms in systems using LLMs over structured data. 
+
+ 
+ 
+ 
+ 
+ 4.4  Ablation Study 
+
+ 
+
+ 
+ Traversal Method. 
+The BFS approach demonstrates superior structural robustness and reconstruction fidelity compared to baseline strategies. To validate this, we conducted a systematic evaluation comparing our BFS approach against Depth-First Search (DFS) and Random Walk (RW) under identical query budget constraints. As illustrated in Figure  3 , BFS consistently dominates baselines across all metrics. We attribute this performance divergence to the fundamental topological mechanics of each strategy. First, BFS capitalizes on structural redundancy. By exploring the graph layer-by-layer, it leverages the high clustering coefficient typical of knowledge graphs, where multiple paths often point to the same node. This "multi-path validation" makes BFS resilient: even if one retrieval fails, alternative paths in the same layer often rediscover the missed entity. Conversely, DFS is plagued by sequential error propagation. It relies on a deep, linear dependency chain. A single hallucinated edge or node at an early depth acts as a single point of failure, steering the entire subsequent search trajectory off-manifold and invalidating all downstream queries. Finally, Random Walk performs worst due to stochastic fragmentation. Lacking a systematic coverage memory, it wastes budget on redundant revisits and fails to map complete local neighborhoods,resulting in a reconstructed graph that consists of disconnected components rather than a coherent topology.. 
+
+ 
+ 
+ 
+ Figure 4:  Attack efficiency across graphs of different scales. The first two metrics (NRR and MCS) indicate better recovery with higher values, while the third metric (GED) reflects better performance with lower values. 
+ 
+ 
+ Scale of the Graphs. 
+Graph scale imposes a substantial penalty on reconstruction efficacy, revealing a distinct inverse correlation between target size and attack success. To rigorously evaluate this scalability barrier, we conducted a granular analysis by stratifying subgraphs into four groups based on node count:  tiny  (100–500),  small  (501–2000),  medium  (2001–5000), and  large  ( > > 5000). As illustrated in Figure  4 , we observe a consistent performance degradation across all metrics as the graph scale expands. On the MIMIC dataset, NRR drops significantly from  0.923  on tiny graphs to  0.639  on large graphs, with a parallel trend evident in FreeBase (0.913 to 0.626). Structural metrics mirror this decline, where MCS falls from 0.905 to 0.591 on MIMIC, while GED rises sharply to 0.421.We attribute this degradation to two converging mechanisms. First, the  context window constraint  creates a physical information bottleneck. Large-scale graphs inevitably contain high-degree “supernodes” whose extensive connectivity descriptions exceed the LLM’s fixed token limit. Consequently, the model is forced to perform  involuntary truncation  on retrieved contexts, leading to the systematic omission of peripheral neighbors and fragmented local topology. Second,  cumulative error propagation  becomes exponentially more severe as traversal depth increases. Since our iterative attack uses the output of step  t t  as the anchor for step  t + 1 t+1 , minor hallucinations or omissions in early iterations cascade downstream, causing the reconstructed graph to deviate progressively from the ground truth. 
+
+ 
+ 
+ 
+ Figure 5:  Impact of graph connectivity on reconstruction fidelity. The metrics (NRR, MCS, GED) reveal a non-monotonic trend: performance peaks at moderate connectivity before degrading significantly due to context window saturation in dense graphs. 
+ 
+ 
+ 
+ 
+ 
+ (a)  Effectiveness of output window restriction against untargeted attacks. 
+ 
+ 
+ (b)  Effectiveness of protective system prompt against untargeted attacks. 
+ 
+ Figure 6:  Overall effectiveness of the proposed methods. 
+ 
+ 
+ Density of the Graphs. 
+We further investigate the sensitivity of our attack to graph connectivity by varying the Average Degree of the target subgraphs. As illustrated in Figure  5 , we observe an interesting non-monotonic trend.
+Initially, the reconstruction fidelity improves slightly as the average degree increases from 2 to 5, with NRR peaking at 0.924 and GED reaching its optimum at 0.106. This suggests that in moderately connected graphs, the increased  structural redundancy  provides alternative paths for the BFS algorithm to discover nodes, compensating for occasional retrieval failures.
+However, a critical turning point is observed as the average degree exceeds 8. Beyond this threshold, the “Context Saturation Effect” begins to dominate. Notably, a significant divergence emerges between node recovery and structural fidelity in denser graphs. As the average degree rises to 20—simulating “supernode” scenarios— NRR (0.673) remains noticeably higher than MCS (0.602) . This discrepancy highlights a critical nuance: while high connectivity provides redundant paths that allow our BFS algorithm to successfully discover nodes (high NRR) even when direct edges are truncated, the  structural integrity  suffers severely. This confirms that while redundancy aids in “finding who exists” ,it cannot fully compensate for the information retrieval bottleneck that hinders “knowing how they connect”. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Potential Mitigation Strategy 
+
+ 
+
+ 
+ In this section, we propose and evaluate several potential defenses to protect Graph RAG systems against privacy leakage attacks. 
+
+ 
+ 
+ 
+ 5.1  Protective System Prompt 
+
+ 
+
+ 
+ One simple yet intuitive mitigation is to prepend a  Protective Instruction  at the system prompt level. For example, instructing the LLM with constraints such as  "Do not directly share content retrieved from the knowledge base"  aims to discourage verbatim extraction and reduce privacy leakage. When used with safety-aligned models, this approach can help suppress sensitive completions to some extent. 
+
+ 
+ 
+ 
+ However, our experiments suggest that such defenses are fragile in practice. Specifically, we observe that carefully crafted adversarial prompts can effectively override the system prompt, allowing attackers to bypass the restriction. This vulnerability is related to prompt injection, where user-specified instructions compete with or dilute the authority of the original system instruction. In addition, when long retrieved content is appended, the protective rule may suffer from the well-known  lost-in-the-middle  effect, further reducing its influence in steering the model’s output. 
+
+ 
+ 
+ 
+ 
+ 5.2  Output Window Restriction 
+
+ 
+
+ 
+ We evaluate  Output Window Restriction  as a lightweight mitigation that caps the token count of LLM responses. This strategy directly counters untargeted attacks by truncating the neighbor lists returned in a single query, forcing adversaries to incur higher query costs for reconstruction. 
+
+ 
+ 
+ 
+ Our experiments show that reducing the output limit from 200 to 100 tokens causes notable drops in NRR and MCS, particularly in large graphs with high-degree nodes where neighborhood information is dense. However, this defense is not a silver bullet. It is less effective on small graphs where short responses suffice to expose the full structure. Furthermore, aggressive truncation degrades the utility for legitimate users and can be circumvented by attackers using query chaining or continuation prompts. Thus, while output restriction raises the attack barrier, it must be paired with other mechanisms for robust protection. 
+
+ 
+ 
+ 
+ 
+ 5.3  Toward Stronger Defenses 
+
+ 
+
+ 
+ Current defenses like system prompts are fragile against structure-aware attacks. Stronger protection requires moving beyond static restrictions toward Differential Privacy, ensuring that retrieval outputs do not statistically reveal specific edges. Complementing this, Stateful Traversal Detection serves as a dynamic countermeasure, identifying and blocking sequential query patterns characteristic of BFS/DFS algorithms. Furthermore, Structural Perturbation—such as selective edge rewiring—can fundamentally increase the hardness of graph reconstruction without significantly degrading retrieval accuracy. We advocate for a multi-layered defense strategy that unifies these algorithmic, dynamic, and structural mechanisms. 
+
+ 
+ 
+ 
+ 
+ 
+ 6  Conclusion 
+
+ 
+
+ 
+ In this paper, we propose a query-based attack method that effectively reconstructs the underlying structured knowledge from existing graph RAG systems, including untargeted knowledge graph reconstruction and targeted sensitive knowledge extraction. Through systematic evaluation and analysis, we demonstrate that Graph RAG systems are vulnerable to privacy leakage, even under black-box settings. Our results highlight the critical privacy risks posed by seemingly innocuous queries and underscore the need for more comprehensive defense mechanisms in graph RAG systems. 
+
+ 
+ 
+ 
+ 
+ 7  Limitations 
+
+ 
+
+ 
+ Despite the demonstrated efficacy of our attack strategy, two primary limitations remain regarding scalability and retrieval boundaries.First, our current framework struggles with "Supernode" Contextual Truncation. For high-degree entities where the neighborhood size exceeds the LLM’s context window, the RAG system involuntarily truncates the input context. Since our method relies on single-turn extraction, this leads to systematic structural loss for dense hubs.Second, the attack is constrained by the Top- K K  Retrieval Bottleneck. Valid neighbors ranked below the system’s fixed  K K  threshold are masked during retrieval. Our current strategy lacks adaptive mechanisms to manipulate relevance scores and "surface" these hidden, lower-ranked edges.In future work, we plan to address these bottlenecks by exploiting LLM Memory and Multi-turn Reasoning. We aim to develop a "sequential paging" mechanism that queries a single node across multiple interaction turns. By instructing the model to retrieve distinct subsets of neighbors in each turn and utilizing its internal memory to track previously revealed entities, we can aggregate partial outputs into a unified representation. This would effectively bypass context window and Top- K K  constraints, enabling the complete reconstruction of supernodes through cumulative inference. 
+
+ 
+ 
+ 
+ 
+ 

@@ -96,6 +96,8 @@ low e r </w>
 
 来源支持不是质量或语义价值的真值：把阈值推得过高会剪掉真实的专用单位，甚至耗尽可合并分支、无法填满目标词表，也会增加构词时的跳过与统计成本。受限代码实验中更高的未见仓库覆盖、较少的低概率重复失败 token，只说明这套正则在所测统计与小模型上有效；相同训练 token 预算不是相同原文曝光，重复 token 的概率探针也不证明下游代码、安全或幻觉收益。应分别验收来源切片、最终 emission 分布、压缩率、模型行为与生命周期成本；支持统计不可得、专用语义回退失败或收益不能摊销时，普通频率 BPE 与数据治理仍合理，不能为了覆盖数字改变已部署的 token 身份。
 
+目标merge数也可改为统计选择，而不是事先固定：沿已有BPE顺序，比较接受当前merge前后的unigram拟合与复杂度代价，只在局部准则下降时保留。拒绝父单位会同时使依赖它的后续merge不可形成，因此[这类选择](https://arxiv.org/html/2610.26225v1#S3.SS3)是顺序相关的greedy过滤，不是全局最优词表；后接低效单位refinement、用生成续文补稀疏pair统计，也不使估计分布或语义价值成为真值。较小merge集合可能降低词表压力，却增长序列并明显损害部分阅读任务；低资源切片接近原表现不能推广到高资源或其他workload。应同时验固定token-ID/checkpoint映射、原文覆盖、语言×任务质量与真实训练/服务成本，生成数据、统计、refinement和全部回归均付费；准则欠拟合、罕见单位丢失或净收益不足时，保留原固定预算BPE/Unigram与原artifact，不从较少merge或较高压缩率批准无损热替换。<!-- source-family:SF-2026-ARXIV-2610-26225 -->
+
 编码新文本时，必须使用固定 vocabulary 和 merge rules，不能根据单个请求重新训练。否则同一模型权重会面对不稳定 id 语义。
 
 固定词表与 merge identity，并不要求训练中每次都走同一条切分路径：BPE dropout 可以在既有 merge graph 内随机跳过合并，让同一原文出现多个合法 subword 序列，而不重建词表或重分配整数 ID。应把这种随机性作为训练阶段的输入分布选择，分别验预训练与下游微调是否采用它；[受限低资源对照](https://arxiv.org/html/2605.13436v1)中，两阶段都用的组合通常更强，仅微调时加入反而可能弱于确定切分。部署仍可保确定编码，不能把训练时的多种分段当热换 tokenizer 的授权。固定 token 预算与长度截断下，切分改变也改变原文曝光；较高形态边界 F1、外部形态词表替换与下游质量是不同证据，不能唯一归因“更符合 morphology”。随机编码、预训练、微调重复与回归均付费，部分语言/任务仍反退；阶段、原文覆盖或消费者质量失配时，保留确定 BPE、较弱训练随机性及原 checkpoint，不由某个 dropout 比率批准通用大模型 recipe。<!-- source-family:SF-2026-ARXIV-2605-13436 -->
@@ -105,6 +107,10 @@ low e r </w>
 ## Unigram 与 SentencePiece 的另一条路线
 
 BPE 从小单元开始不断合并；Unigram Language Model 常从较大的候选 subword 集合开始，估计各 token 的概率，再逐步删除贡献较低的候选。对同一字符串，它可能存在多种切分，算法根据整体概率选择路径。
+
+编码器选出一条路径，也不让语言模型在该路径上的likelihood自动等于可见字符串的全部概率。应先固定checkpoint、前缀、词表/解码映射与输出边界、允许长度，再区分单一canonical编码的质量和同一字符串事件下不同合法token路径的聚合；不能把Unigram分词器的路径分数当成语言模型的概率。一条[受限的decoding-free分支](https://arxiv.org/html/2510.20208v1#S4)在有限长度lattice中，围绕canonical路径枚举并批量评分不同token序列：只累加不重复路径时得到所覆盖质量的下界，增加尝试数只有在累计集合包含旧集合时才保证不减，不是无放回采样自动产生无偏marginal估计。长度截断、候选耗尽和重复处理仍会漏质量；完整字符串事件、边界或路径资格未闭时，只报告已评分集合，不补成归一或完整求和保证。构建lattice、全部路径forward和后续候选生成/重排均计费，有限QA中canonical仍常更好，快于另一估计器不等快于普通编码或真实生成。跨切分比较确有需求时才使用这种显式有限聚合；净质量、事件定义或预算不合时，保留固定canonical编码及其明确的tokenlikelihood，不把更大的下界签成更好答案、语义真值或Serving加速。
+
+<!-- source-family:SF-2025-ARXIV-2510-20208 -->
 
 SentencePiece 的系统意义不只是实现某种算法。它可以直接从 raw sentences 训练，不要求先依赖特定语言的空格分词，从而使相同 pipeline 更容易覆盖中文、日文及混合语言。
 
@@ -135,6 +141,9 @@ Unicode text -> encoded bytes -> tokenizer symbols -> token ids
 
 字符数、byte 数和 token 数不是同一单位。API 计费、context limit 和 KV Cache 容量通常按 token，而不是用户界面里的字符数。
 
+Tokenizer覆盖还不能只按低fertility或零UNK验收：整词压成UNK会制造很短却不可逆的序列，byte fallback又可在没有UNK时大幅增加长度。[受限script审计](https://arxiv.org/html/2610.24818v1#S5)因此联合报告实际UNK/byte发射比例、tokens/word与覆盖/回读，而不是用一个压缩指标排名；Unicode script也不等语言人口。相同token上限下的可见原文会改变，但由fertility推算的context/KV负担不是已测服务时延或下游精度。文本/normalization、编码、回读与真实任务回归均付费；覆盖或信息保留不足时保byte/subword、原checkpoint与已验语言路径，必要扩词表须连embedding/训练一起重验，不由换tokenizer或更短序列签发免费修复。
+<!-- source-family:SF-2026-ARXIV-2610-24818 -->
+
 编码可逆也不等于有限 lookahead 下的边界可辨识。若相同左上下文和当前可见的编码前缀，对应两种需要相反切分的后续内容，确定性边界策略就无法同时正确；合法的 scalar/grapheme 边界目标，也不保证模型已看见足够信息或学会遵守它。[有限编码对照](https://arxiv.org/html/2610.22071v1)用部分 BMP 字符的 UTF-16 低位优先接口改变首符号的可见信息，却仍有跨编码页碰撞；增加 UTF-8 lookahead 也是有效对照，不能据此宣布某种编码普遍更优。比较应固定原文与边界目标，另核删除不合法切点造成的 patch 预算变化；编码、符号表、teacher 与局部 decoder 的重对齐和训练均付费。完整新模型与端到端收益未验时，保留稳定 UTF-8、更多 lookahead 和独立编码合法性检查，不把接口变换当 checkpoint 热替换。<!-- source-family:SF-2026-ARXIV-2610-22071 -->
 
 训练表示与部署输出还可以走另一条分支：同一模型在带 sentinel、互不重叠的符号空间中交替学习压缩代理序列与原始 UTF-8 bytes，先用配对样本建立两种表示的关系，再继续混合 next-symbol 训练；部署只保留 byte 路径，压缩代理不必成为线上 tokenizer。于是训练 symbol 数不能直接当作原始语料曝光量，codec、符号映射、sentinel、混合策略与 checkpoint 共同定义这份训练接口；给定 gold compressed 输入的恢复结果，也不等于正常 byte generation 能力。代理格式制作与配对训练需要准备成本，byte 输出仍可能带来更长 Decode；受限对照中小模型或其他压缩格式有反收益，神经代理恢复也不是无损编码保证。采用前应分别验收 raw exposure、生成质量、编码有效性与端到端成本；代理不合适或 byte 生成代价过高时，纯 byte 训练与 subword 路径仍然合理。<!-- source-family:SF-2026-ARXIV-2602-04289 -->
@@ -162,6 +171,10 @@ decode(encode(text)) == text
 多文字系统共享词表也可先改变文本表示：保留 native script，或先 romanize 再训练相同规模 encoder。转写可能扩大共享 subword support、减少词表压力，却会抹掉同音字符或书写差异；全转 ASCII 与保留 diacritic 的窄转写不是同一 fidelity 接口。不能从更短编码或共享率提高推出所有任务更好；任务所需差异能否恢复，要与 fertility、词表容量及 mono/multilingual 数据控制一起验收。<!-- source-family:SF-2026-ARXIV-2601-05776 -->
 
 [同文档、固定计算的受限比较](https://arxiv.org/html/2601.05776v1)从头训练149M ModernBERT，分开 native/romanized 和 mono/multilingual，在六种文字语言、五任务与五次种子中观察到收益依任务变化。Chinese/Japanese 的 NER 等 script-sensitive 任务退步，保真转写可部分缓解却不消除所有损失；这不是 decoder-only LLM、原词表热替换或无损编码证据。转写、重训与语言×任务回归付费；碰撞不能消歧、fidelity或质量不足时，保留 native script、语言专用路径和 byte/subword fallback，不只为共享率改变 checkpoint 输入协议。
+
+共享词表还可以共享索引而不强迫各语言使用同一套切分：先各自训练分词器，把可信翻译对应项放在相同ID，再以language identity选择分词器，并为全部位置加入语言embedding。[Parallel Tokenizers的受限分支](https://arxiv.org/html/2510.06128v1#S3)把跨语言对应和本地切分分开；只有部分词项对齐，其余同ID仍依赖语言条件消歧，不能把索引相同当上下文词义必然相同，也不能说不同ID必然阻止共享表示。翻译错误、多义碰撞和去重后的ID对应须与词表、语言选择器及checkpoint共同验收，不能热换词表。Fertility或bitext读数改善不保证所有任务收益，原不同学习率与CPT反退也限制唯一归因。全部翻译/回译、词表校验、语言判定/驻留、预训或embedding迁移及逐语言任务回归均付费；对应、语境或净质量不合时，保原共享/语言专用词表与byte/subword fallback，不为更高共享率批准完整语义对齐或无损迁移。
+
+<!-- source-family:SF-2025-ARXIV-2510-06128 -->
 
 词表大小、context positions 与保留的信息也不是同一预算。对音节结构较强的语言，一个替代 codec 把 onset、rime 与 tone 放在同一 position，以三个成分 embedding 的拼接投影形成输入，并用独立 heads 预测完整 tuple；它不是把一个音节扩为三个串行 tokens。训练时同时 mask 完整 tuple，可避免已见成分直接泄露待预测成分，缩小各 head 的词表也不代表缩短了同样比例的语义路径。
 
@@ -339,6 +352,10 @@ BPE 只能在 pre-tokenizer 允许合并的边界内学习；如果字符、附�
 
 这改变的是**离线词表构建**，不是每个请求自行造词；相同词表集合和merge关系也不保证相同整数ID顺序。切换实现必须核对完整token→ID映射及模型embedding/checkpoint兼容性，不能只比词表大小。[Faster Superword的实验](https://arxiv.org/html/2604.05192v1)限MiniPile及131072词表的CPU训练计时，不证明LLM端到端推理加速。边界稳定、词表已部署或新统计成本无法摊销时，原BPE仍是合理选择。<!-- source-family:SF-2026-ARXIV-2604-05192 -->
 
+允许跨pre-tokenizer边界以后，仍要决定有限词表优先收哪些长组合。统一频率排序在常用短片段上简单合理；若目标是给较少出现的形式结构更多预算，一条条件分支按pattern类型和长度改变merge门槛：一般文本用空格数加一，LaTeX/字母数字结构用字符数的log2作为指数，将基本频率阈值乘以相应的`theta^指数`，其中`0<theta<1`。每轮重编码、重新统计support后再合并，使长结构在较低频率下也可准入；regex分类不是语法正确性验证，新增单位也不自动获得完整语义。这是离线构词的预算选择，不是增加原始语料或允许请求在线改写token身份。
+
+[混合自然语言/LaTeX的受限对照](https://arxiv.org/html/2610.32921v1)在相同10GB语料、近似而非严格匹配的词表（200k与204601）下缩短了LaTeX编码，但SQuAD/DROP相对SuperBPE反而略长；更激进门槛还可把词表推到百万级。压缩配置与下游小decoder使用的配置不同，不能拼成同一个控制实验；后者数学accuracy处于地板，只见BPB改善，BoolQ/CSQA的BPB又变差，不支持数学推理提升或全面无损。应共同保存分类/长度规则、每轮support分母、最终词表/ID与checkpoint，计入构词、较大embedding/output head、重训和真实任务回归；编码长度或CPU tokenization计时不替端到端训练/服务费用。结构比例漂移、词表膨胀或下游质量不合时，保留普通BPE、原superword门槛与稳定artifact，不只为更高supertoken占比迁移模型。<!-- source-family:SF-2026-ARXIV-2610-32921 -->
+
 ### 从局部启发式到可审计的全局目标
 
 BPE 与 Unigram 的局部或迭代选择易实现、稳定且兼容成熟 checkpoint，因此仍是生产基线。但当团队要回答“这个 vocabulary 距离指定 compression objective 的最优值还有多远”时，只比较最终 token 数并不够：vocabulary 的优劣始终相对于一套确定的 inference procedure，而不是孤立的词表集合。
@@ -375,6 +392,9 @@ BPE 与 Unigram 的局部或迭代选择易实现、稳定且兼容成熟 checkp
 
 这是一种高效初始化而非 training-free transfer。目标词表明显缩小时会丢失旧参数承载的信息，长尾或领域 token 也受对齐语料覆盖限制；现有证据仍需约千步适配且只覆盖所测模型。对齐质量不足时，应回退更长的 continued pretraining、保留旧 vocabulary，或为关键 token 使用显式兼容映射。
 
+映射新embedding之后，还可在共同文本segment上蒸馏后层交互，而不要求两个tokenizer给出相同token数：按两套切分都不跨越的边界合段，以各段末token作为query，再汇总指向每段的attention-weighted value贡献。[受限迁移实验](https://arxiv.org/html/2510.21954v1#S3)冻结主体与重叠embedding，只适配新增输入行；tied输出可复用它，untied则仍有独立LM-head接口。这里匹配的是模型内通信代理，不认证知识已完整迁移；更深或所有层同时对齐也未必更好。共同分段、teacher/student层位、输入输出参数和适配语料需一起版本化，付出teacher前向、蒸馏与新增词表成本；压缩率提高仍可能伴翻译质量退步，不能直接换算为端到端加速。层间对齐、原支持语言或真实费用回归时，保留简单初始化、原词表或更长continued pretraining。
+<!-- source-family:SF-2025-ARXIV-2510-21954 -->
+
 新增 item 的选择也应与初始化一起验收，而非先扩词表、再随意平均旧 embedding。一个受限分支用既有模型在词尾位置的中间表示读出来估计词/affix 的可组合性，再将这些 contextualized representations 经映射与汇总构造新增参数初始化，最后通过 embedding-only 的语言适配训练恢复行为。这类读出只提出哪些 item 适合迁移的线索，不证明模型内部已经保存固定词义；item 集合、hidden-state 层/位置、映射与 reduction、输入输出参数和适配数据共同定义迁移资产。<!-- source-family:SF-2026-ARXIV-2604-16656 -->
 
 更长 item 不必然缩短实际序列：HF added-item 优先匹配可能先吃掉一个短片段，破坏原本更好的合并，使某些输入的 token 数反而增加。因此选择阶段要跑真实 tokenizer 执行路径，而不是只比较候选字符串长度；初始化也要连同 BPB、held-out 任务和原支持语言的回归验收。原文有限模型/语言中，FVT 在部分 Latin 切片更好，原先不支持语言及其他质量切片也有退步；表示探针、embedding 适配与额外词表参数均有成本，不能从 fertility 改善推出端到端推理收益。旧 vocabulary、简单组合初始化或更长 continued pretraining 在映射不稳或收益不足时仍合理。<!-- source-family:SF-2026-ARXIV-2604-16656 -->
@@ -398,6 +418,8 @@ BPE 与 Unigram 的局部或迭代选择易实现、稳定且兼容成熟 checkp
 [受限证据](https://arxiv.org/html/2605.08044v1)覆盖作者的 architecture、dynamic patch、block generation 与 greedy verification 实验；正文未单列完整 limitations，且没有证明任意 sampling、硬 streaming 或生产 latency/SLO 下都获益。
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-08044 -->
+
+动态边界还可以通过训练日程控制，不必始终使用固定压缩目标：让hierarchical byte模型从较低target N起步，warmup后逐渐提高，再以一段平均loss的阈值触发调整。[ATDC的受限机制](https://arxiv.org/html/2605.30080v1#SIV)修改的是路由balancing loss中的软目标；真实Bytes-Per-Innermost-Chunk要另测，既不是N硬上界，也不是由BPIC反馈自动闭环。目标更大仍可能得到更多inner chunks，因而不能由日程终点推算节省FLOPs、吞吐或稳定性保证。阈值来自额外static基线、日程与模型必须一同版本化，byte全长encode/decode、路由/dechunk和实测latent计算全计费；同参数不等同算力，固定byte/token换算也不代表任意语料口径。质量或实际负载反退时保固定N、较小patch与稳定subword路径，不由更低BPB替运行预算签字。<!-- source-family:SF-2026-ARXIV-2605-30080 -->
 
 预测下一 byte 的高熵是 patcher 的困难，不必等于全局计算最值得花的位置。另一条受限路径用离线重复匹配构造新颖性监督，再让只读已见前缀的因果 proxy 提议边界；未来字符串可用于训练 target，不能进入运行时边界决定。[小模型的必要对照](https://arxiv.org/html/2610.22100v1)中，数学答案跨度的 teacher-forced 准确率可以提高而 BPB 变差，code/trace 又未稳定胜过 entropy，不能把跨度恢复当端到端解题能力。边界与模型需联合验收，直接换规则还可能损伤另一答案位置；训练目标 patch 率也不等实际运行预算。Proxy 构建、重训和局部/全局计算均计费，收益须对齐真实 patch 数、任务与成本；新颖性失配或质量回退时，原 entropy、较小固定 patch 与稳定 subword 路径继续合理。<!-- source-family:SF-2026-ARXIV-2610-22100 -->
 
@@ -468,6 +490,14 @@ Tokenizer 在无限文本空间和有限模型词表之间建立可复现映射�
 
 ## Review notes
 
+- `SF-2026-ARXIV-2610-32921` — Daily2026-10-27；exact-v1 §2–7/Table1–5/App.F必要由B唯一首备，2+1+2=5，类型/长度merge门槛的具体预算差额。保约匹配词表、两配置不可拼、数学accuracy地板/通用BPB退步、词表膨胀与全费，不授语义完整、数学推理或端到端加速。未核代码/复现；必要/actualowner/整体PRE与真实SAVE/selfread/solePOST仅据本日唯一reader实际记录，不由本注预签。 R38必要/整体PRE、作者实际SAVE/完整自读与R39唯一actual POST通过，本指定窄位已释放；仅同步既成结果，不重必要/POST或预DAY。
+
+- `SF-2025-ARXIV-2510-06128` — Cicero，Daily2025-10-09补Oct08BJT；[Parallel Tokenizers exact-v1](https://arxiv.org/html/2510.06128v1)A104首次必要§3–4/5.2–5.6决定域/T3/T5/Limitations/Ethics/AppH，2+1+2=5，仅各语言切分/共享ID/语言条件消歧接口深入。保MT61%非全对齐、索引/多义资格、LR混杂/CPT与低资源反退和全费，不采不同ID阻止共享/全语义或无损迁移。未核全追加表/图像素/外部实现或复现，PRE/SAVE/selfread/solePOST仅本日canonical，不以本注预签。
+
+- `SF-2026-ARXIV-2610-24818` — Daily2026-10-21/Oct20；C10必要exact-v1 Source/actual owner/完整PRE由root ROOT-C10-PRE具名通过，按root既授精确窄位保存原单段/唯一marker。保原稿受限人口、直接反侧及全部费用，未核实现/复现；作者完整新增/直接完整两侧及本注自读后待唯一非writer actualPOST，不预生效/DAY。 截至本轮，唯一非writer ROOT-C8/9/10/11-POST actualPOST已实际通过并生效；上述待POST只保历史过程，不再表示当前未完。仅行政同步，不第三核正文/Source。
+
+- `SF-2026-ARXIV-2610-26225` — Daily2026-10-21窗Oct20；exact-v1 §3–6/Limitations/A4–5必要，2+1+2=5。只采local criterion与父子依赖，保budget口径/明显RC退步/迁移runtime缺口及全费；不采公式最优/无损/实测模型缩小，未核代码/复现。core B-R1必要Source/actualowner/完整PRE原样通过，root已授完整source-support成本退路后/固定artifact前原单段及本人注；作者已真实保存并完整自读新增/完整直接两侧及本人注，core B-R4唯一非writer actualPOST已通过，窄位生效释放；仅行政同步既成事实，不第三核。未核代码/复现，不授DAY。
+
 - `SF-2026-ARXIV-2610-22071` — Daily2026-10-17窗10-16；[exact-v1](https://arxiv.org/html/2610.22071v1) §2–5.2/5.6/7必要，2+2+2=6。仅采用可逆合法编码与有限lookahead可辨识性分责，保目标/实际预测区别、跨页碰撞、更多UTF8 lookahead与重对齐全费，不授全模型能力/热兼容。root已核必要Source/PRE并授此单段与本人注窄写；作者已保存并自读，root实际正文/完整直接两侧/本人注POST通过。未核实现/复现，不授DAY。
 - `SF-2026-ARXIV-2610-22100` — Daily2026-10-17窗10-16；[exact-v1](https://arxiv.org/html/2610.22100v1) §3–8/五张主表与局限，2+2+2=6。仅采用entropy与compute价值代理分离、离线future目标/在线causal proxy及联合训练边界；保BPB、teacher-forced跨度、code/trace反侧和实际patch预算/费用。root已核必要Source/PRE并授此单段与本人注窄写；作者已保存并自读，root实际正文/完整直接两侧/本人注POST通过。未核实现/复现，不授DAY。
 
@@ -516,3 +546,9 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2605-18597` — Daily2026-05-20补May19；[exact-v1](https://arxiv.org/html/2605.18597v1) 6分；必要§3–5及A2–4/A10–11/A14/T8；只轨迹ngram词表/teacher恢复，不授外部动作等价或普遍加速。 来源/具体owner/PRE由may20_supp_reader独核，正文仅限A4批准稿；未核代码/运行复现。实际两新段、完整直接邻接及本人note已由非writer R11写后通过，窄位生效释放；非整日验收。
 
 - `SF-2026-ARXIV-2610-04951` — [exact-v1](https://arxiv.org/html/2610.04951v1)，Daily2026-10-07/Oct6窗，2+2+2=6；§IV–VI array-linked-list/merge与block边界必要层；lossless bytes非tokenID等价，merge微基准非全CPU/IO/transfer路径。root R10必要Source/date通过，literal PRE/实际POST另记，未核实现/复现，不授DAY。
+
+- `SF-2026-ARXIV-2605-30080` — Daily2026-05-30补May29；精确Mayv1必要Source、具体owner与逐字PRE见本日SUP A54、reader R91/R95，首次2+1+3=6保持。只采正文限定机制，保反侧/费用与旧路径；未核实现/复现，不授一般安全/真值或性能保证。root已协调授本原单段+本人note精确窄位，作者实际保存，唯一reader R98已实际读完整新增/直接两侧/本人注POST通过并释放，不预日级。
+
+- `SF-2025-ARXIV-2510-20208` — Copernicus，Daily2025-10-25补Oct24BJT；exact-v1 §4/7/8/Limitations，原2+1+3=6，字符串事件/单路径质量具体gap深入。只采用有限lattice不重复路径质量下界与累计集合包含才单调；不授无偏/完整marginal、完整采样recipe、canonical普遍较差或净生成加速。保输出边界/长度/候选耗尽、H100/250QA/150translation/1000路径及全部评分/候选费，未核实现/复现。整体PRE/真实SAVE/全新增与完整邻接/本注自读/sole实际POST仅同日canonical后到真实层，本注不预签。
+
+- `SF-2025-ARXIV-2510-21954`：Daily 2025-10-29补窗；精确v1必要支持/直接反侧已读，未运行代码或复现。新差额是共同segment上attention-weighted V贡献蒸馏，区别已有token参数映射/teacher最终分布；保tied/untied与层深反侧，不授无损热换。

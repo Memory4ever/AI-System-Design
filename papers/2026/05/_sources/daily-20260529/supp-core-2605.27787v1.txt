@@ -1,0 +1,1305 @@
+Source: https://arxiv.org/html/2605.27787v1
+Main text extraction; fulltext_chars=99895
+
+arXiv:2605.27787v1 [cs.MA] 27 May 2026 
+ 
+ 
+ Long Live the Librarian! A Persistent Search Sub-Agent 
+ for Energy-Efficient Multi-Agent Software Engineering Systems 
+
+ 
+ 
+ 
+ Seunghyuk Cho
+ 
+ Affiliation:  Graduate School of Artificial Intelligence, POSTECH
+ 
+ Email:  shhj1998@postech.ac.kr 
+ 
+    
+ Sunghyun Choi
+ 
+ Affiliation:  Graduate School of Artificial Intelligence, POSTECH
+ 
+ Email:  sunghyunchoi@postech.ac.kr 
+ 
+    
+ Jaeseung Heo
+ 
+ Affiliation:  Graduate School of Artificial Intelligence, POSTECH
+ 
+ Email:  jsheo12304@postech.ac.kr 
+ 
+    
+ Youngbin Choi
+ 
+ Affiliation:  Graduate School of Artificial Intelligence, POSTECH
+ 
+ Email:  choi.youngbin@postech.ac.kr 
+ 
+    
+ Saemi Moon
+ 
+ Affiliation:  Department of Computer Science and Engineering, POSTECH
+ 
+ Email:  saemi@postech.ac.kr 
+ 
+    
+ MoonJeong Park
+ 
+ Affiliation:  Graduate School of Artificial Intelligence, POSTECH
+ 
+ Email:  mjeongp@postech.ac.kr 
+ 
+    
+ Dongwoo Kim
+ 
+ Affiliation:  Graduate School of Artificial Intelligence, POSTECH
+ 
+ Affiliation:  Department of Computer Science and Engineering, POSTECH
+ 
+ Email:  dongwoo.kim@postech.ac.kr 
+ 
+
+ Abstract 
+    
+ Multi-agent systems (MAS) have substantially advanced autonomous software engineering (SWE), but their growing inference energy demands raise sustainability concerns.
+In this paper, we demonstrate that this cost is concentrated in an overlooked source: redundant output tokens generated across agents.
+Two empirical findings ground this claim.
+First, our per-token energy attribution for MAS reveals a sharp asymmetry: an output token consumes 30 to 1,000 times more energy than an input or cached token.
+Second, MAS inflate per-episode output because agents repeatedly re-explore overlapping repository regions.
+To address this inefficiency, we propose Librarian, a persistent search sub-agent that tracks repository-search history and suppresses redundant exploration actions across agents.
+By returning short references to file regions instead of full file excerpts, Librarian further reduces output-token volume.
+On SWE-Bench Verified, Librarian reduces per-episode GPU energy consumption of existing multi-agent SWE systems by up to 25% while preserving task performance. 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ The rapid deployment of large language models (LLMs) has driven a sharp rise in the electricity demand of large-scale computing and is projected to drive further growth in the coming years  ( de Vries, 2023 ;  International Energy Agency, 2026 ;  Fernandez et al., 2025 ;  Morrison et al., 2025 ) . This consumption translates into a substantial environmental footprint, ranging from carbon emissions  ( Luccioni et al., 2024 )  to freshwater drawn by host data centers  ( Li et al., 2025 ) .
+These concerns have motivated recent work on measuring LLM inference energy  ( Fernandez et al., 2025 ;  Niu et al., 2026 )  and improving efficiency through system- and hardware-aware optimizations  ( Patel et al., 2024b ;  Stojkovic et al., 2025 ) . 
+
+ 
+ 
+ 
+ However, most existing analyses focus on the per-call setting and offer limited insight into agentic deployments where a single task spans many LLM calls. This limitation is sharpest in multi-agent systems (MAS) for software engineering (SWE)  ( Tao et al., 2024 ;  Hong et al., 2024 ;  Wadhwa et al., 2024 ;  Qian et al., 2024 ;  Phan et al., 2024 ;  Xu et al., 2026 ) , where bug fixing  ( Jimenez et al., 2024 ;  Zhang et al., 2025 )  and feature implementation  ( Hong et al., 2024 ;  Qian et al., 2024 )  are split across specialized sub-agents. MAS are increasingly adopted in SWE for the performance gains of role specialization, yet no energy analysis exists for this setting. SWEnergy  ( Tripathy et al., 2025 )  takes a first step but is restricted to single-agent runs, leaving MAS deployments uncharacterized. 
+
+ 
+ 
+ 
+ In this work, we measure the GPU energy of multi-agent SWE systems and find a counterintuitive pattern: MAS consume more GPU energy than their single-agent counterparts even at lower aggregate token counts. To explain this gap, we conduct turn-level attribution that decomposes each episode’s GPU energy into the input, output, and cached tokens of every LLM call. The attribution traces the gap to two compounding effects: MAS produce more output tokens per episode, and each output token incurs much higher energy than its input or cached counterpart. Thus, aggregate token counts and API-pricing-based proxies can underestimate actual GPU energy and obscure the category-level effects that drive agentic energy consumption. 
+
+ 
+ 
+ 
+ We trace the excessive output to redundant file exploration across sub-agent invocations. In existing MAS designs, no sub-agent preserves an exploration history across invocations, so each lookup begins from scratch. As a result, when the orchestrator issues different queries, sub-agents repeatedly traverse overlapping files and regenerate long file excerpts, amplifying the most energy-intensive token category. 
+
+ 
+ 
+ 
+ To break this re-exploration cycle, we propose the Librarian, a MAS-agnostic code-lookup sub-agent that returns the relevant region for each orchestrator query. We instantiate it with three design choices. First, to eliminate redundant exploration, its session persists across all invocations within an episode, so prior searches are reused. Second, to keep the session consistent with the current repository state, each invocation is supplied with the files and line ranges edited since the previous call, prompting the Librarian to re-traverse those regions. Third, to minimize output tokens, each answer is returned as a short view command rather than the inlined file excerpt itself.
+To integrate Librarian into an existing MAS, we provide a guideline that replaces the MAS’s code-navigation sub-agent with Librarian and routes all exploration through it. 
+
+ 
+ 
+ 
+ We apply the Librarian on SWE-Bench Verified  ( Jimenez et al., 2024 )  to BOAD  ( Xu et al., 2026 )  and HyperAgent  ( Phan et al., 2024 )  with two open-weight LLMs from the Qwen3.6 family, 35B-A3B  ( Qwen Team, 2026b )  and 27B  ( Qwen Team, 2026a ) . Across both MAS and both backbones, the Librarian variants preserve or improve the underlying MAS’s pass rate while reducing the GPU energy consumed per episode by up to 25%. Ablations confirm that this energy reduction stems from Librarian invocations eliminating the duplicate output tokens diagnosed above. 
+
+ 
+ 
+ 
+ We summarize the contributions as follows: we confirm that output tokens dominate resource use in agentic settings (§ 3 ); we diagnose the energy overhead of existing MAS designs as a consequence of duplicate lookups across the debugging cycle that no existing sub-agent recognizes (§ 3.3 ); we propose the Librarian, a persistent search sub-agent that integrates into existing MAS designs to supply this missing role (§ 4 ); and we show on SWE-Bench Verified that it minimizes hardware energy at matched pass rate (§ 5 ). 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Token Count 
+ 
+ 
+ Method 
+ Uncached 
+ Cached 
+ Out 
+ Total 
+ Energy 
+ 
+ 
+ (M) 
+ (M) 
+ (K) 
+ (M) 
+ (kJ) 
+ 
+ [0pt][0pt]    Qwen3.6-35B-A3B 
+ 
+ Vanilla 
+ 0.11 
+ 2.69 
+ 16.8 
+ 2.81 
+ 10.31 
+ 
+ HyperAgent 
+ 0.26 
+ 2.16 
+ 48.5 
+ 2.47 
+ 25.64 
+ 
+ BOAD 
+ 0.19 
+ 3.71 
+ 28.5 
+ 3.93 
+ 17.45 
+ 
+ [0pt][0pt]    Qwen3.6-27B 
+ 
+ Vanilla 
+ 0.10 
+ 2.59 
+ 15.4 
+ 2.71 
+ 57.45 
+ 
+ HyperAgent 
+ 0.21 
+ 1.35 
+ 35.4 
+ 1.59 
+ 121.84 
+ 
+ BOAD 
+ 0.21 
+ 3.07 
+ 24.3 
+ 3.30 
+ 88.96 
+ 
+ 
+
+ 
+ 
+ Table 1:  Token usage and energy consumption across SWE Agents. We report token usage by category, uncached input, cached input, and output, alongside per-episode mean energy consumption for a single-agent SWE system denoted as Vanilla and two multi-agent SWE systems, HyperAgent and BOAD. HyperAgent shows the smallest cached and total token counts yet the largest energy consumption. 
+ 
+ 
+ 2  Related Work 
+
+ 
+
+ 
+ 2.1  Energy footprint of LLM inference 
+
+ 
+
+ 
+ LLM inference energy is conventionally quantified at the GPU level, since GPU consumption dominates per-server serving power  ( Patel et al., 2024a ) .
+Within this scope,  Luccioni et al. (2024)  benchmark per-inference energy across model and task configurations, and  Fernandez et al. (2025)  further model per-query GPU duration and energy as a function of inference-optimization choices and workload geometry.
+At a finer granularity,  Niu et al. (2026)  decompose per-request power into the prefill and decode stages, yielding per-token energy estimates per stage that inform energy-aware serving designs  ( Patel et al., 2024b ;  Stojkovic et al., 2025 ) .
+While these works yield hardware-grounded per-call energy characterizations, all are defined per inference call, not over multi-turn agentic trajectories.
+SWEnergy  ( Tripathy et al., 2025 )  extends per-call energy measurement to SWE-agent frameworks, but its analysis is restricted to small LLMs with near-zero task resolution.
+Moreover, its per-category attribution uses univariate correlation, which gives each category’s per-token energy scaled by how much its count varies across turns, not the per-token energy itself. 
+
+ 
+ 
+ 
+ 
+ 2.2  Multi-agent software engineering systems 
+
+ 
+
+ 
+ Multi-agent SWE systems organize execution around specialized roles such as planner, navigator, coder, and reviewer that collaborate to resolve a single task. Two paradigms for stitching these roles recur. Pipeline-based MAS hardcode the role sequence at design time, so each role advances the task one predetermined phase and hands off to the next role  ( Qian et al., 2024 ;  Hong et al., 2024 ;  Wadhwa et al., 2024 ) . In SWE, however, execution order is not fixed in advance and coordination evolves as the task unfolds  ( Xu et al., 2026 ) . Orchestrator-driven MAS instead route through a central orchestrator that picks the next sub-agent at each step, so the workflow emerges at runtime  ( Tao et al., 2024 ;  Phan et al., 2024 ;  Xu et al., 2026 ) . Such designs form sub-agent teams at runtime to fit each issue  ( Tao et al., 2024 ) . 
+
+ 
+ 
+ 
+ 
+ 2.3  Context management of LLMs 
+
+ 
+
+ 
+ Context management for LLMs extracts query-relevant content from model history or external sources. Retrieval-based methods rank documents or prior turns by similarity to the current query and prepend the top results to one LLM call  ( Lewis et al., 2020 ;  Zhang et al., 2023 ;  Shrivastava et al., 2023 ) . Compression-based methods remove or summarize non-essential tokens from an oversized prompt to keep query-aligned content  ( Jiang et al., 2023 ;  Jiang et al., 2024 ;  Chevalier et al., 2023 ;  Li et al., 2023 ) . Agentic memory persists state across many calls of a single agent through structured memory stores or reflective summaries  ( Packer et al., 2024 ;  Shinn et al., 2023 ;  Park et al., 2023 ;  Xu et al., 2025 ) . Their target, however, is a single agent interacting with a user or environment, rather than an orchestrator-invoked sub-agent within MAS. 
+
+ 
+ 
+ 
+ 3  An Energy Profile of SWE Agents 
+
+ 
+
+ 
+ In this section, we identify where the GPU energy of SWE agents is spent.
+We first describe how we measure per-turn token counts and GPU energy.
+We then decompose per-turn energy into the contributions of three
+token categories and show that output tokens dominate. Finally, we
+trace the excess output of MAS to repeated file
+lookups across sub-agent invocations. 
+
+ 
+ 
+ 
+ 3.1  Measuring per-turn energy and tokens 
+
+ 
+
+ 
+ We treat each SWE-agent turn as a sequence of an LLM call, action extraction, and action execution. A SWE-agent’s episode is a
+sequence of turns, and per-episode cost sums over turns. This applies
+to single-agent systems and MAS alike; the two architectures differ
+only in how each turn’s context is assembled. 
+
+ 
+ 
+ 
+ For each turn  t t  we record two quantities. The first is a triple of
+token counts: the input tokens processed by prefill,  x t u x^{u}_{t} ; the
+input tokens served from the key-value cache,  x t c x^{c}_{t} ; and the output
+tokens generated by decoding,  x t o x^{o}_{t} . The second is the GPU energy
+drawn during the call,  E t E_{t} , obtained by reading NVIDIA’s hardware
+energy counter and subtracting the
+idle baseline. 1 1 
+                       1 
+                      
+                      
+                      
+                    NVML exposes this counter on the A100-80GB
+and B200 SXM GPUs used in this study.  Appendix  A.1 
+states the measurement formally. 
+
+ 
+ 
+ 
+ 
+ 3.2  Token-level energy attribution 
+
+ 
+
+ 
+ We first ask whether aggregate token count predicts energy.
+Table  1  shows that it does not: one of the systems achieves the smallest total token count yet draws the most energy. We
+therefore need a finer-grained attribution. 
+
+ 
+ 
+ 
+ To isolate each token category’s contribution, we fit a multiple
+linear regression of per-turn energy on the three token counts: 
+
+ 
+ 
+
+ 
+ 
+ E t = α + β u ​ x t u + β c ​ x t c + β o ​ x t o + ϵ t , E_{t}=\alpha+\beta_{u}x^{u}_{t}+\beta_{c}x^{c}_{t}+\beta_{o}x^{o}_{t}+\epsilon_{t}, 
+ 
+ (1) 
+ 
+
+ 
+ where  α \alpha  absorbs fixed per-turn overhead,  β i \beta_{i}  is the
+marginal energy per token of category  i i , and  ϵ t \epsilon_{t}  is the
+residual. We fit this regression on per-turn records collected from
+Vanilla, BOAD  ( Xu et al., 2026 ) , and HyperAgent  ( Phan et al., 2024 ) 
+runs on SWE-Bench Verified  ( Jimenez et al., 2024 ) , across two
+backbones, Qwen3.6-35B-A3B  ( Qwen Team, 2026b )  and
+Qwen3.6-27B  ( Qwen Team, 2026a ) , and two GPUs, A100 and B200. Full
+fit details appear in
+Appendix  A.2 . 
+
+ 
+ 
+ 
+ Table  2  reports the fitted coefficients, and Table  8  reports the variance-inflation factors (VIFs), which diagnose coefficient reliability. Output tokens cost 30 to 1,000 times more energy per token than either input category, and all VIFs satisfy  VIF ≤ 1.05 \mathrm{VIF}\leq 1.05 , indicating nearly orthogonal regressors and thus reliable coefficient estimates. The same ordering appears at the episode level: in Table  1 , per-episode energy across systems tracks output token counts rather than total or input counts. Output volume is therefore the dominant lever for reducing per-episode energy. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Per-token energy (mJ/tok) 
+ 
+ 
+ Setting 
+ β u \beta_{u} 
+ β c \beta_{c} 
+ β o \beta_{o} 
+ R 2 R^{2} 
+ 
+ A3B / 
+ A100 
+ 30.50 30.50   ± \pm 
+ 1.95 1.95 
+ 1.36 1.36   ± \pm 
+ 0.11 0.11 
+ 𝟗𝟔𝟕 \mathbf{967}   ± \pm 
+ 𝟐𝟎 \mathbf{20} 
+ 0.979 0.979 
+ 
+ A3B / 
+ B200 
+ 6.43 6.43   ± \pm 
+ 1.56 1.56 
+ 0.54 0.54   ± \pm 
+ 0.02 0.02 
+ 𝟔𝟔𝟎 \mathbf{660}   ± \pm 
+ 𝟖 \phantom{0}\mathbf{8} 
+ 0.987 0.987 
+ 
+ 27B / 
+ B200 
+ 33.97 33.97   ± \pm 
+ 1.04 1.04 
+ 2.04 2.04   ± \pm 
+ 0.06 0.06 
+ 3,512 \mathbf{3,512}   ± \pm 
+ 𝟐𝟑 \mathbf{23} 
+ 0.992 0.992 
+ 
+ 
+
+ 
+ 
+ Table 2:  Estimated per-token energy by token category.
+We fit a linear regression of total per-request energy on the number of uncached input ( u u ), cached input ( c c ), and output tokens ( o o );  β u \beta_{u} ,  β c \beta_{c} ,  β o \beta_{o}  are the resulting per-token coefficients and  R 2 R^{2}  is the regression fit.
+Output tokens
+show a 30 to 1,000 × \times  gap relative to the other categories. 
+ 
+ 
+ 
+ 3.3  Sources of excess MAS output 
+
+ 
+
+ 
+ § 3.2  shows that BOAD and
+HyperAgent emit more output per episode than the
+single-agent Vanilla. To localize this excess, we examine how
+per-turn output relates to the agent’s file-access pattern. A large
+share of MAS output is emitted on turns whose file read repeats a
+region the sub-agent has already inspected earlier in the episode. 
+
+ 
+ 
+ 
+ The mechanism is straightforward. The file read itself is an
+external observation, not output. The output arrives when the
+sub-agent then re-emits the located region, quoted or paraphrased,
+in the answer it returns to the orchestrator. A region inspected
+multiple times across the episode is therefore rewritten multiple
+times. 
+
+ 
+ 
+ 
+ Measuring duplicate rewrites. 
+
+ 
+ We flag a turn whose action is a file read as a duplicate read if the returned observation overlaps, in file-line range, an earlier read within the same episode; any intervening write to the file resets this history. The output tokens emitted on such turns are counted as duplicate output. We further split duplicate reads into same-agent overlap, where the prior read came from the same sub-agent invocation, and cross-agent overlap, where it came from a different invocation. Two invocations of the same sub-agent role count as cross-agent, because read history is scoped to an invocation rather than to a role. 
+
+ 
+ 
+ 
+ Table  3  decomposes the ratio of duplicate output tokens to read output tokens for BOAD and HyperAgent, aggregated across both backbones.  R 1 R_{1} ,  R 2 R_{2} , and  R 3 R_{3}  denote the code navigator, issue analyzer, and orchestrator for BOAD, and the navigator, editor, and executor for HyperAgent. HyperAgent’s orchestrator is excluded since it does not read files.
+Both systems show frequent within-invocation re-exploration, and HyperAgent additionally shows across-invocation re-exploration even within the same role. Together, these indicate that re-exploration accounts for a non-trivial portion of the MAS baselines’ excess output. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Across invocations (%) 
+ 
+ 
+ Within 
+ invocation 
+ (%) 
+ 
+ 
+ 
+ 
+ Source 
+ 
+ System 
+ Current 
+ R 1 R_{1} 
+ R 2 R_{2} 
+ R 3 R_{3} 
+ 
+ BOAD 
+ R 1 R_{1} 
+ 0.0 
+ 8.1 
+ 0.1 
+ 9.1 
+ 
+ R 2 R_{2} 
+ 0.1 
+ 0.0 
+ 0.1 
+ 18.6 
+ 
+ R 3 R_{3} 
+ 9.9 
+ 3.7 
+ 0.0 
+ 22.7 
+ 
+ HyperAgent 
+ R 1 R_{1} 
+ 12.1 
+ 0.3 
+ 0.9 
+ 9.8 
+ 
+ R 2 R_{2} 
+ 1.9 
+ 0.4 
+ 0.3 
+ 0.7 
+ 
+ R 3 R_{3} 
+ 1.8 
+ 0.3 
+ 26.8 
+ 34.4 
+ 
+ 
+
+ 
+ 
+ Table 3:  Output duplication in BOAD and HyperAgent. Each cell shows the fraction of file-read output tokens that are duplicated.  R 1 R_{1} ,  R 2 R_{2} , and  R 3 R_{3}  denote different roles of each MAS. The  Within invocation  column tracks duplication by the same sub-agent during a single invocation, while the  Across invocations  block tracks the fraction of duplicated content from earlier calls (rows: current sub-agent, columns: source sub-agent). 
+ 
+ 
+ 4  Method: The Librarian Sub-Agent 
+
+ 
+
+ 
+ 4.1  Overview 
+
+ 
+
+ 
+ We propose the Librarian, a persistent sub-agent that handles
+every code lookup an episode requires through a single long-lived
+session, eliminating the within-episode re-exploration diagnosed in
+§ 3.3 . Three properties define it.
+ Persistent session:  one session spans the whole episode, so
+every query starts from the full history of prior searches.
+ Pointer-only answers:  each answer to the orchestrator is a
+list of view-command pointers rather than inlined file content,
+keeping output tokens small in the response.  Retrieval-only scope:  the role
+is restricted to file and code lookup, excluding the analytical and
+editing work that MAS navigators typically conflate with
+it  ( Xu et al., 2026 ) . 
+
+ 
+ 
+ 
+ § 4.2  walks through a single invocation and
+shows how each property takes effect. § 4.3  provides
+a MAS-agnostic recipe for integration. Figure  1 
+visualizes the architecture, and the implementation details appear in
+Appendix  B . 
+
+ 
+ 
+ 
+ 
+ 4.2  Anatomy of an invocation 
+
+ 
+
+ 
+ An invocation proceeds in three stages, each realizing one of the
+properties defined in § 4.1 . 
+
+ 
+ 
+ 
+ Context assembly. 
+
+ 
+ The Librarian’s context retains its full trajectory from earlier
+invocations in the episode, so prior searches and answers are on
+hand. To keep this history aligned with the repository’s current
+state, each invocation prepends a  freshness report  listing
+the files and line ranges modified since the previous call, and
+instructs the Librarian to re-traverse those regions before reusing
+cached excerpts. Invocations that issued no file reads are dropped
+from the persisted history. The implementation details of pruning the invocation history and freshness report appear in Appendix  B.1  and Appendix  B.2 .
+For context management, we also try retrieval instead of history accumulation, comparing sparse and dense top- k k  variants over the same prior history in § 5.3 . 
+
+ 
+ 
+ 
+ 
+ Scoped search. 
+
+ 
+ The Librarian then resolves the query by running search commands
+such as  grep  and  find  and by viewing matching
+files, under two scope guards. The system prompt declares editing,
+test execution, and analytical reasoning out of scope, confining
+shell use to repository navigation. The tool layer pairs the
+ bash  shell with OpenHands’s file view tool  ( Wang et al., 2025 ) 
+and requires every file read to go through it, so each read is
+recorded at an explicit file-line range. 
+
+ 
+ 
+ 
+ 
+ Pointer-only submission. 
+
+ 
+ The invocation closes with a call to a  submit  tool. Its
+argument is a list of view commands referring to the located code,
+plus a natural-language explanation; the commands cannot inline the
+code itself. The tool executes the commands on the Librarian’s
+behalf and forwards the excerpts to the orchestrator. The
+orchestrator therefore receives the actual snippets, while the
+Librarian’s output stays a short pointer list.
+An example of a submission and the orchestrator message it produces appears in Appendix  B.3 . 
+
+ 
+ 
+ 
+ Figure 1:  Illustration of the overall process of multi-agent SWE systems resolving a SWE task.
+The orchestrator calls a sub-agent via  invoke  action, which navigates the repository through  bash  and file view/edit tools and returns its answer via a  submit  call; the content of this call becomes the observation for the orchestrator’s invocation.
+On a subsequent invocation of the same role, prior MAS (top right) start from a fresh context, discarding all history, and returns the full file excerpt.
+In contrast, the Librarian (bottom right) appends the new task given by the invocation to its existing trajectory and continues from there, reusing the accumulated repository knowledge, and only generates the file pointer for response, which is converted to file excerpt later.
+ 
+ 
+ 
+ 
+ 
+ 4.3  Integration into an existing MAS 
+
+ 
+
+ 
+ An existing orchestrator’s system prompt typically comprises three
+blocks: a SWE context describing the operating environment, the
+per-task user query, and a  solve plan  laying out the
+step-by-step procedure. Adding the Librarian touches only the
+solve plan; the SWE context, the user query, and every
+non-navigation step of the plan stay untouched. 
+
+ 
+ 
+ 
+ Tool swap and plan rewrite. 
+
+ 
+ We replace the orchestrator’s existing navigator-delegation tool
+with a Librarian-delegation tool, then rewrite each navigation step
+of the solve plan to phrase its action as a natural-language lookup
+query. Any navigator responsibility beyond file and code lookup,
+such as cross-module analysis, is redirected to other steps in the
+plan. The rewrite is formalized as a prompt-level guideline in
+Appendix  B.6 , and the resulting BOAD
+and HyperAgent plans appear in Appendix  B.7 . 
+
+ 
+ 
+ 
+ 
+ Tool-selection policy. 
+
+ 
+ We prepend a short policy to the solve plan to keep the Librarian invoked only for lookup. The policy directs the orchestrator to
+call the Librarian for unknown-location queries and to keep
+analytical tasks such as bug diagnosis outside the Librarian’s
+scope. It is identical across MAS and appears in
+Appendix  B.5 . 
+
+ 
+ 
+ 
+ 5  Experiments 
+
+ 
+
+ 
+ In this section, we empirically validate the Librarian’s ability to reduce per-episode energy consumption. We also confirm that the saving stems from lower output tokens, the primary mechanism that the Librarian’s design targets. 
+
+ 
+ 
+ 
+ 5.1  Experimental setup 
+
+ 
+
+ 
+ We describe the experimental setup used to compare the Librarian against prior systems on the SWE task, covering the benchmark, implementation details, and baselines. 
+
+ 
+ 
+ 
+ 5.1.1  Benchmark 
+
+ 
+
+ 
+ We evaluate every method on the 500 tasks of SWE-Bench Verified  ( Jimenez et al., 2024 ) , a benchmark of real GitHub issues drawn from open-source Python repositories. For each task, the SWE-agent receives the issue description and the repository at the buggy commit, and must produce a patch that passes the maintainer’s test suite for the issue. 
+
+ 
+ 
+ 
+ 
+ 5.1.2  Implementation details 
+
+ 
+
+ 
+ We explain the two main components to run a SWE-agent: i) the LLM driving it and ii) the scaffold mediating its repository interaction. 
+
+ 
+ 
+ 
+ LLM serving. 
+
+ 
+ For the LLM, we evaluate two Qwen3.6 variants: the sparse mixture-of-experts 35B-A3B  ( Qwen Team, 2026b )  with  3 3 B active parameters and the dense 27B  ( Qwen Team, 2026a ) . Both backbones run in FP8 on a single NVIDIA B200 SXM GPU, served by vLLM  ( Kwon et al., 2023 ) . We enable prefix caching so that each sub-agent reuses its prior prefix across successive invocations within a session. We size the KV cache to avoid eviction in every episode. The serving configuration and the sampling hyper-parameters are held fixed across all episodes as listed in Appendix  C.1 . 
+
+ 
+ 
+ 
+ 
+ Agent interface. 
+
+ 
+ For the interface which allows the SWE-agent to interact with the code repository, we provide a base tool set comprising a  bash  shell, the  str_replace_editor  file editor from OpenHands  ( Wang et al., 2025 )  that takes a view or edit mode along with a file path and a line range, and a  submit  tool that marks the agent’s solution as final.
+Each agent role draws on whichever subset of this set it needs and may additionally define role-specific tools such as sub-agent delegation. To keep long-trajectory runs stable, we adopt three safeguards from the OpenHands runtime, a wall-clock timeout on each shell command, loop detection on agent outputs, and truncation of tool observations. We describe how each mechanism is implemented in Appendix  C.1 . 
+
+ 
+ 
+ 
+ 
+ 
+ 5.1.3  Baselines 
+
+ 
+
+ 
+ We confirm the Librarian’s effectiveness by applying it to two orchestrator-delegation multi-agent SWE systems. We additionally compare against token-efficiency methods that can be combined with any SWE-agent. 
+
+ 
+ 
+ 
+ Multi-agent systems. 
+
+ 
+ We consider two MAS designs that delegate the SWE workflow across specialized sub-agents: BOAD  ( Xu et al., 2026 )  and HyperAgent  ( Phan et al., 2024 ) .
+BOAD’s orchestrator first delegates code localization for the issue to one sub-agent, then bug-cause navigation to a second sub-agent, and finally produces a patch by aggregating the outputs of both sub-agents.
+HyperAgent’s orchestrator manages three sub-agents: a navigator for code exploration, an editor for file modification, and an executor for test execution. The orchestrator itself holds only the sub-agent delegation and submit tools.
+Following a pre-defined plan detailed in Appendix  B.7 , the orchestrator iterates this navigate-edit-execute cycle until it submits a patch.
+While BOAD imposes no tool restrictions on its sub-agents, HyperAgent restricts each sub-agent’s tool set by role, such as confining the navigator to file viewing and the editor to file edits. 
+
+ 
+ 
+ 
+ 
+ Token-efficiency methods. 
+
+ 
+ We consider two token-efficiency techniques: caveman prompting  ( Brussee, 2026 ;  Hakim, 2026 )  and LastNObservation  ( Yang et al., 2024 )  that we apply across every role of the MAS to reduce token consumption.
+Caveman prompting appends a fixed style directive, given in Appendix  C.2 , to the system prompts of every sub-agent and the orchestrator, inducing simpler answer text while leaving the thinking trace intact.
+LastNObservation is a SWE-agent  ( Yang et al., 2024 )  scaffold feature that truncates all but the most recent  N N  tool observations in each role’s context, replacing each truncated observation with a short placeholder while preserving the thinking traces and action calls. We set  N = 5 N=5  in all subsequent experiments. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 5.2  Results and analysis 
+
+ 
+
+ 
+ We first report the main results of attaching the Librarian to existing MAS baselines on SWE-Bench Verified, then analyze the observed energy reduction from three angles: robustness across task difficulty, localization to the replaced role, and the reuse of accumulated history across invocations. 
+
+ 
+ 
+ 
+ Results. 
+
+ 
+ Table  4  reports results on SWE-Bench Verified for BOAD and HyperAgent across four configurations: bare MAS, MAS with a token-efficiency technique, Librarian-augmented MAS, and Librarian-augmented MAS with caveman prompting.
+We report pass rate, per-episode output tokens, and GPU energy, denoted as Pass, Out tok, and Energy respectively.
+The Librarian matches or improves the pass rate in most of the settings, while substantially reducing energy.
+LastNObservation truncates recent observations to reduce per-turn input tokens, but per-episode GPU energy increases across all settings: sub-agents are forced to re-explore lost context, inflating output tokens in three of four settings. Pass rate also degrades in every setting. Caveman prompting alone reduces energy but degrades pass rate in three of four settings.
+Across all settings, the Librarian with caveman prompting attains the lowest energy consumption. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Method 
+ Pass 
+ Out tok 
+ Energy 
+ 
+ 
+ (%) 
+ (K) 
+ (kJ) 
+ 
+ Qwen3.6-35B-A3B 
+ 
+ HyperAgent 
+ 66.0 
+ 48.5 
+ 25.64 
+ 
+ + +  Librarian 
+ 67.2 
+ 42.2 
+ 22.73 
+ 
+ + +  LastNObservation 
+ 56.8 
+ 53.3 
+ 34.79 
+ 
+ + +  Caveman 
+ 66.2 
+ 37.7 
+ 19.99 
+ 
+ + +  Caveman  + +  Librarian 
+ 66.2 
+ 34.7 
+ 18.63 
+ 
+ BOAD 
+ 69.8 
+ 28.5 
+ 17.45 
+ 
+ + +  Librarian 
+ 71.6 
+ 24.6 
+ 14.66 
+ 
+ + +  LastNObservation 
+ 63.2 
+ 33.5 
+ 26.87 
+ 
+ + +  Caveman 
+ 68.4 
+ 24.7 
+ 14.79 
+ 
+ + +  Caveman  + +  Librarian 
+ 70.4 
+ 20.6 
+ 12.37 
+ 
+ Qwen3.6-27B 
+ 
+ HyperAgent 
+ 69.8 
+ 35.4 
+ 121.84 
+ 
+ + +  Librarian 
+ 72.0 
+ 26.3 
+ 91.45 
+ 
+ + +  LastNObservation 
+ 64.8 
+ 34.0 
+ 135.84 
+ 
+ + +  Caveman 
+ 68.0 
+ 21.9 
+ 79.40 
+ 
+ + +  Caveman  + +  Librarian 
+ 67.6 
+ 18.0 
+ 66.05 
+ 
+ BOAD 
+ 71.8 
+ 24.3 
+ 88.96 
+ 
+ + +  Librarian 
+ 71.8 
+ 19.7 
+ 71.76 
+ 
+ + +  LastNObservation 
+ 70.2 
+ 26.2 
+ 122.91 
+ 
+ + +  Caveman 
+ 70.2 
+ 17.5 
+ 66.20 
+ 
+ + +  Caveman  + +  Librarian 
+ 71.4 
+ 13.5 
+ 51.21 
+ 
+ 
+
+ 
+ 
+ Table 4:  Results on  SWE-Bench Verified . We report the overall pass rate alongside the per-episode means for output tokens and energy consumption for each SWE agent. The Librarian improves output token efficiency and energy consumption across all settings while preserving the pass rate. 
+ 
+ 
+ 
+ Robustness across task difficulty. 
+
+ 
+ We examine whether this trend holds across difficulty levels.
+We define each task’s difficulty as the max input tokens observed on a reference single-agent run.
+Table  5  stratifies per-episode energy by difficulty, and the reduction holds across all bins and is largest on the harder tasks, with the Librarian variants attaining the lowest energy in nearly every cell.
+The sole exception is the most difficult bin of HyperAgent on 27B, where LastNObservation achieves lower energy.
+However, Table  12  shows that its pass rate in this bin drops to roughly half of the baseline.
+The Librarian instead preserves the pass rate, and the energy reduction persists even as it is invoked more often on harder tasks, as shown in Figure  2 . 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Reference max-input tokens (K) 
+ 
+ Method 
+ 0–32K 
+ 32–64K 
+ 64–96K 
+ >96K 
+ 
+ (n=36) 
+ (n=312) 
+ (n=130) 
+ (n=22) 
+ 
+ Qwen3.6-35B-A3B 
+ 
+ HyperAgent 
+ 10.36 
+ 17.61 
+ 40.46 
+ 76.87 
+ 
+ + +  Librarian 
+ 5.83 
+ 16.20 
+ 36.84 
+ 59.65 
+ 
+ + +  LastNObservation 
+ 7.90 
+ 26.25 
+ 56.29 
+ 72.69 
+ 
+ + +  Caveman 
+ 4.33 
+ 12.92 
+ 33.11 
+ 68.30 
+ 
+ + +  Caveman  + +  Librarian 
+ 4.88 
+ 12.42 
+ 31.00 
+ 56.10 
+ 
+ BOAD 
+ 7.22 
+ 12.50 
+ 26.99 
+ 47.97 
+ 
+ + +  Librarian 
+ 5.12 
+ 11.03 
+ 20.98 
+ 44.41 
+ 
+ + +  LastNObservation 
+ 7.69 
+ 19.82 
+ 43.28 
+ 60.83 
+ 
+ + +  Caveman 
+ 4.31 
+ 10.28 
+ 23.64 
+ 43.64 
+ 
+ + +  Caveman  + +  Librarian 
+ 3.92 
+ 8.82 
+ 19.04 
+ 36.97 
+ 
+ Qwen3.6-27B 
+ 
+ HyperAgent 
+ 32.61 
+ 79.36 
+ 208.19 
+ 359.95 
+ 
+ + +  Librarian 
+ 25.31 
+ 64.40 
+ 142.91 
+ 279.35 
+ 
+ + +  LastNObservation 
+ 37.35 
+ 106.47 
+ 217.76 
+ 229.48 
+ 
+ + +  Caveman 
+ 25.93 
+ 54.11 
+ 129.45 
+ 231.94 
+ 
+ + +  Caveman  + +  Librarian 
+ 19.05 
+ 41.17 
+ 110.24 
+ 234.59 
+ 
+ BOAD 
+ 40.68 
+ 69.77 
+ 127.81 
+ 210.46 
+ 
+ + +  Librarian 
+ 34.78 
+ 56.26 
+ 104.22 
+ 160.26 
+ 
+ + +  LastNObservation 
+ 52.24 
+ 101.43 
+ 174.50 
+ 238.36 
+ 
+ + +  Caveman 
+ 26.20 
+ 48.93 
+ 100.29 
+ 175.19 
+ 
+ + +  Caveman  + +  Librarian 
+ 20.10 
+ 37.43 
+ 80.67 
+ 123.42 
+ 
+ 
+
+ 
+ 
+ Table 5:  Per-episode GPU energy (kJ) of the SWE-agents with respect to the task difficulty. We report the per-episode GPU energy of the SWE-agents across difficulty classes. The addition of the Librarian reduces the energy consumption in almost all settings. 
+ 
+ 
+ Figure 2:  Mean Librarian invocations per episode across task difficulty. We plot the per-episode mean Librarian invocation count for the Librarian-augmented MAS variants run with Qwen3.6-27B against the reference max-input-token bin. The invocation frequency grows monotonically with task difficulty. The plot for 35B-A3B is in Figure  3 . 
+ 
+ 
+ 
+ Energy reduction at the lookup role. 
+
+ 
+ We investigate the source of the energy reduction, focusing on the role that the Librarian replaces.
+For each MAS baseline, we identify the role the Librarian substitutes for: BOAD’s code navigator and HyperAgent’s navigator.
+Table  6  reports that the Librarian outputs fewer tokens and consumes less energy than its counterpart.
+Tables  10  and  11  further show that this reduction does not inflate the token usage or energy consumption of other roles. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Replaced role 
+ 
+ + +  Librarian 
+ 
+ Model 
+ Method 
+ Out (K) 
+ E (kJ) 
+ 
+ Out (K) 
+ E (kJ) 
+ 
+ 
+ 
+ A3B 
+ HyperAgent 
+ 13.92 
+ 7.54 
+ 
+ 6.02 
+ 3.57 
+ 
+ HyperAgent  + +  Caveman 
+ 10.51 
+ 5.69 
+ 
+ 4.67 
+ 2.66 
+ 
+ BOAD 
+ 13.81 
+ 8.54 
+ 
+ 1.93 
+ 1.08 
+ 
+ BOAD  + +  Caveman 
+ 11.08 
+ 6.62 
+ 
+ 1.70 
+ 0.94 
+ 
+ 27B 
+ HyperAgent 
+ 10.50 
+ 36.63 
+ 
+ 4.70 
+ 16.92 
+ 
+ HyperAgent  + +  Caveman 
+ 6.99 
+ 25.74 
+ 
+ 3.38 
+ 12.65 
+ 
+ BOAD 
+ 5.63 
+ 20.79 
+ 
+ 1.82 
+ 6.56 
+ 
+ BOAD  + +  Caveman 
+ 5.10 
+ 19.32 
+ 
+ 1.44 
+ 5.43 
+ 
+ 
+
+ 
+ 
+ Table 6:  Per-episode comparison on the role that the Librarian replaces. We report the per-episode means of output tokens and GPU energy at the replaced role. The Librarian reduces energy at the replaced role across all settings. The full per-role breakdown is in Appendix  D . 
+ 
+ 
+ 
+ History reuse across invocations. 
+
+ 
+ We track the number of LLM turns the Librarian takes to answer the orchestrator’s  k k -th call, averaged over episodes that reach the  k k -th call. Figure  3  plots the average number of turns against  k k . The number of turns decreases in most configurations over  k k , confirming that the Librarian reuses its accumulated history to resolve later queries with fewer turns. 
+
+ 
+ 
+ 
+ Figure 3:  Visualization of the mean LLM turns to answer per Librarian invocation. We report the mean number of turns each Librarian variant takes to emit an output at the  k k -th invocation. All cases except BOAD on 35B-A3B show a decreasing trend as  k k  grows. 
+ 
+ 
+ 
+ 
+ 5.3  Comparison with retrieval baselines 
+
+ 
+
+ 
+ We compare the Librarian against two retrieval-based variants that replace the persistent history with retrieved context. The variants use BM25  ( Robertson and Zaragoza, 2009 )  for sparse scoring and SFR-Embedding-Code-2B_R  ( Liu et al., 2024 )  for dense scoring.
+At each invocation, the scoring method ranks prior file-read command-observation pairs by similarity to the orchestrator’s query, and the top- k k  form the context.
+Table  7  reports pass rate, output tokens, and per-episode energy across the four variants on a shared random sample of 100 tasks per backbone with  k = 5 k=5 .
+The Librarian achieves a higher pass rate and lower energy than both retrieval variants in almost all settings, indicating that the orchestrator’s queries need active context management and reasoning, not lookup alone. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Method 
+ Pass (%) 
+ Out tok (K) 
+ Energy (kJ) 
+ 
+ Qwen3.6-35B-A3B 
+ 
+ HyperAgent 
+ 71.0 
+ 44.9 
+ 23.77 
+ 
+ + +  Sparse retrieval 
+ 72.0 
+ 44.4 
+ 23.65 
+ 
+ + +  Dense retrieval 
+ 69.0 
+ 47.0 
+ 25.05 
+ 
+ + +  Librarian 
+ 72.0 
+ 39.5 
+ 19.75 
+ 
+ BOAD 
+ 77.0 
+ 28.6 
+ 17.47 
+ 
+ + +  Sparse retrieval 
+ 76.0 
+ 22.3 
+ 12.93 
+ 
+ + +  Dense retrieval 
+ 77.0 
+ 21.4 
+ 12.42 
+ 
+ + +  Librarian 
+ 74.0 
+ 22.8 
+ 13.61 
+ 
+ Qwen3.6-27B 
+ 
+ HyperAgent 
+ 73.0 
+ 33.1 
+ 114.86 
+ 
+ + +  Sparse retrieval 
+ 70.0 
+ 28.0 
+ 97.95 
+ 
+ + +  Dense retrieval 
+ 69.0 
+ 30.4 
+ 107.11 
+ 
+ + +  Librarian 
+ 70.0 
+ 23.6 
+ 82.42 
+ 
+ BOAD 
+ 76.0 
+ 23.0 
+ 84.25 
+ 
+ + +  Sparse retrieval 
+ 68.0 
+ 20.0 
+ 72.86 
+ 
+ + +  Dense retrieval 
+ 74.0 
+ 20.1 
+ 73.36 
+ 
+ + +  Librarian 
+ 74.0 
+ 19.4 
+ 71.08 
+ 
+ 
+
+ 
+ 
+ Table 7:  Comparison between the Librarian and the retrieval-based context management baselines. We compare the Librarian against two baselines that swap the Librarian sub-agent’s persistent-history context for one constructed by retrieval. We report the per-episode means on 100 randomly sampled tasks per backbone. The Librarian shows better performance and energy efficiency than the retrieval counterparts almost all settings. 
+ 
+ 
+ 6  Conclusion 
+
+ 
+
+ 
+ In this work, we identify and eliminate a major source of energy waste in multi-agent SWE systems. We first analyze per-turn energy across token categories and find that output tokens dominate. Tracing the excess output, we then identify re-exploration of the same files across invocations as the primary source. We finally address this with the Librarian, a sub-agent that retains its exploration history across invocations. Integrating the Librarian into existing MAS reduces per-episode GPU energy while preserving task performance. 
+
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ In this work, we propose a sub-agent which reduces the energy of the existing multi-agent SWE systems.
+We acknowledge two limitations of our current study.
+First, the solution is limited to code navigation.
+The executor sub-agent in HyperAgent, which reproduces the issue and runs tests, also produces duplicate outputs across invocations. Extending the Librarian’s core design to such execution-oriented roles is a promising next step toward system-wide energy reduction.
+Second, the scale of the open LLMs we evaluate is limited. Our experiments cover backbones in the active-parameter range of roughly 3B to 27B, and it remains open whether the observed reductions in output tokens and energy carry over to substantially larger open models over 500B inference parameters. 
+
+ 
+ 
+ 
+ 

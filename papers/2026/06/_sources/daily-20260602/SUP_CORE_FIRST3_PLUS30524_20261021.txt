@@ -1,0 +1,1291 @@
+Warning: truncated output (original token count: 19778)
+Total output lines: 1395
+
+
+SOURCE 30571 S3→S4
+3 Method
+3.1 Measurement protocol
+Each cell is one (architecture, GPU, context-length) triple. We load the model
+in bf16, run a fixed-length prefill to populate the KV cache, then time 5
+warmup decode steps followed by 30 measured single-token decode steps at
+batch 1. Step time is the median of the 30 measured per-step wall times. The
+default attention implementation is PyTorch scaled-dot-product-attention
+(sdpa); FlashAttention-2 is used only in the controlled software-stack matrix
+of Section 6. Cells run on Modal cloud GPUs with the same
+container image across hosts (Appendix A).
+3.2 Measurement-pipeline provenance
+The 14 main-matrix cells for Qwen-2.5-7B-Instruct were measured with the v10
+sweep script; the 14 Mistral-7B-Instruct-v0.3 and 14 Llama-3.1-8B-Instruct
+main-matrix cells were measured with the v11 sweep script. The two scripts
+share an identical container base image (debian_slim with PyTorch
+2.4), identical measurement protocol (5 warmup plus 30 measured single-token
+AR decode steps, sdpa attention, bf16, batch size 1) and identical Modal cloud
+GPU hosts (H100, A100-80GB, L40S, L4). The only difference is that the v11
+script adds HuggingFace gated-model authentication for Llama-3.1-8B. The
+Qwen-2.5-7B L4 long-context OOMs documented below were re-investigated in
+v14 with the v11-style script (Section 5, Qwen L4
+rerun). The v10
+Qwen cell JSONs at v10_results/cells/qwen25_7b_<gpu>_ctx<ctx>.json
+carry the same fields (p50_ms, step_times_ms,
+weight_bytes, kv_bytes_avg,
+bytes_per_token_kv) that the v11 cell JSONs do, which is what the
+joint analysis script consumes. The derivative Qwen sweeps (CUDA Graphs,
+software-stack, profile, quantisation) at v11_results/cells/ were
+re-measured with the v11 script.
+3.3 Cells
+Three architectures: Qwen-2.5-7B-Instruct (28 layers, 28 query heads, 4 KV
+heads, head_dim 128, W=15.23W{=}15.23 GB decimal, equivalently 14.18 GiB),
+Mistral-7B-Instruct-v0.3 (32 layers, 32 query heads, 8 KV heads, head_dim
+128, W=14.50W{=}14.50 GB decimal, 13.50 GiB) and Llama-3.1-8B-Instruct (32 layers,
+32 query heads, 8 KV heads, head_dim 128, W=16.06W{=}16.06 GB decimal,
+14.96 GiB). All three are GQA models with head_dim 128. Four GPUs: H100,
+A100-80GB, L40S, L4. Four context lengths: 2048, 4096, 8192, 16384. Four cells
+out of 3×4×4=483\times 4\times 4=48 failed (L4 OOM on Qwen-2.5-7B ctx=8192{=}8192,
+Qwen-2.5-7B ctx=16384{=}16384, Llama-3.1-8B ctx=8192{=}8192, Llama-3.1-8B
+ctx=16384{=}16384, all on 24 GB L4), leaving 44 valid cells.
+The Qwen-2.5-7B L4 OOMs deserve a footnote because the architecture
+arithmetic predicts they should not OOM. Qwen-2.5-7B at bf16 has
+W=15.23W{=}15.23 GB and per-token KV bytes
+2⋅28⋅4⋅128⋅2=562{\cdot}28{\cdot}4{\cdot}128{\cdot}2=56 KB; at ctx=8192{=}8192 that is
+0.47 GB of KV, totalling 15.70 GB. Mistral-7B at bf16 has
+W=14.50W{=}14.50 GB and 128 KB per-token KV; at ctx=8192{=}8192 that is
+1.07 GB of KV, totalling 15.57 GB. The two totals are within 1% of each
+other on a 24 GB device. Mistral runs successfully at L4 ctx=8192{=}8192
+(Table 1, Rfloor=0.478R_{\mathrm{floor}}{=}0.478) while Qwen OOMs.
+The v14 re-investigation reproduces the Qwen OOMs but reveals the cause:
+the eager arm of the A/B protocol runs cleanly with 23.24 GB peak
+allocation; the OOM occurs in the second (graphed) arm when a fresh
+StaticCache is allocated on top of un-released eager-arm tensors.
+The Qwen L4 cell at ctx=8192{=}8192 is therefore measurable in a single-arm
+rig (eager-arm p50=87.74p_{50}{=}87.74 ms across N=3N{=}3 sessions,
+v14_results/data/v14_qwen_l4_rerun/PARTIAL_EAGER_qwen_l4_ctx8192_s{0,1,2}.json).
+We document this as a measurement-protocol artefact rather than a capacity
+ceiling and we do not add these cells to the main-matrix counts; the 44
+valid + 4 OOM count stays as reported above for backward compatibility with
+the headline RfloorR_{\mathrm{floor}} table.
+We use spec-sheet peak HBM bandwidths (BpeakB_{\mathrm{peak}}) of 3350 GB/s for
+H100 SXM5, 2039 GB/s for A100-80GB SXM4, 864 GB/s for L40S and 300 GB/s for
+L4 (v11_results/v11_fit_summary.json, bw_peak_gbs).
+3.4 The observed-over-floor ratio RfloorR_{\mathrm{floor}}
+The roofline lower bound on single-stream decode step time, given spec-sheet
+peak HBM bandwidth and the per-step weights-plus-active-KV byte traffic, is
+tfloor​(G,M,ctx)=W⁡(M)+K⁡(M,ctx)Bpeak​(G),t_{\mathrm{floor}}(G,M,\mathrm{ctx})=\frac{W(M)+K(M,\mathrm{ctx})}{B_{\mathrm{peak}}(G)},
+where W⁡(M)W(M) is the bf16 weight footprint of the model in bytes
+(14.5–16.1 GB decimal for the 7–8B GQA models here) and K⁡(M,ctx)=2⋅nlayers⋅nkv​_​heads⋅dhead⋅ctx⋅2​bytesK(M,\mathrm{ctx})=2\cdot n_{\mathrm{layers}}\cdot n_{\mathrm{kv\_heads}}\cdot d_{\mathrm{head}}\cdot\mathrm{ctx}\cdot 2~\text{bytes} is the per-step KV
+bytes touched (the leading 2 covers K and V, the trailing 2 covers bf16
+element size). The directly-measured ratio
+Rfloor​(G,M,ctx)=tfloor​(G,M,ctx)tobs​(G,M,ctx)R_{\mathrm{floor}}(G,M,\mathrm{ctx})=\frac{t_{\mathrm{floor}}(G,M,\mathrm{ctx})}{t_{\mathrm{obs}}(G,M,\mathrm{ctx})}
+is a single experimental number per cell, computed from tobst_{\mathrm{obs}} (the
+median over 30 measured decode steps) and tfloort_{\mathrm{floor}} (from
+spec-sheet bandwidth and per-step bytes). It is not a model fit; both terms
+are quantities we measure or compute analytically.
+Qwen-2.5-7B decoder blockGQA: 28 Q heads, 4 KV heads, head_dim 128, hidden 3584, intermediate 18944, bf16hidden state [1,1,3584][1,1,3584]RMSNormγ\gamma only, negligibleQ proj 3584→35843584\to 3584weights 25.725.7 MBK proj 3584→5123584\to 512weights 3.73.7 MBV proj 3584→5123584\to 512weights 3.73.7 MBRoPE apply (Q, K)cos/sin tables, negligibleSDPA attentionQ [1,28,128]⋅[1,28,128]\,\cdot\,K,V [1,4,ctx,128][1,4,\mathrm{ctx},128]KV cache loadctx =2048=20482⋅2⋅2048⋅4⋅128⋅22\cdot 2\cdot 2048\cdot 4\cdot 128\cdot 2 B≈4.2\approx 4.2 MBKV ≈4.2\approx 4.2 MB(key + value, bf16)O proj 3584→35843584\to 3584weights 25.725.7 MBresidual  +  RMSNormnegligibleSwiGLU MLPgate_proj 3584→189443584\to 18944    135.8135.8 MBup_proj x3584→189443584\to 18944    135.8135.8 MBdown_proj 18944→358418944\to 3584    135.8135.8 MBMLP weights=407.4=407.4 MB≈87%\approx 87\% of block bytesresidualto next blockHBM bytesper blockweights≈466\approx 466 MBMLP 407.4407.4attn 58.858.8KV4.24.2 MBPer block: ≈470\approx 470 MB HBM read per decode step.28 blocks: ≈13.16\approx 13.16 GB per step.At H100 3.353.35 TB/s peak: floor =3.93=3.93 ms.   Observed: 14.8314.83 ms.Rfloor=0.27R_{\mathrm{floor}}=0.27 (27% of peak).
+Figure 2: One Qwen-2.5-7B decoder block, kernel sequence and HBM byte
+traffic per single-token decode step. GQA with 28 query heads, 4 KV
+heads, dhead=128d_{\mathrm{head}}{=}128, bf16 weights. The SwiGLU MLP dominates
+the weight footprint at ≈407\approx 407 MB per block out of ≈470\approx 470 MB
+total. The KV cache contribution at ctx=2048{=}2048 is ≈4.2\approx 4.2 MB per
+block, small relative to weights but growing linearly with context. The
+28-block total ≈13.16\approx 13.16 GB per step divided by H100 peak HBM
+3.35 TB/s gives tfloor≈3.93t_{\mathrm{floor}}\approx 3.93 ms; observed step
+time is 14.83 ms, Rfloor=0.27R_{\mathrm{floor}}=0.27. Numbers from
+v11_results/cells/qwen25_7b_h100_ctx2048.json.
+3.5 CUDA Graphs A/B
+The CUDA Graphs experiment captures the per-decode-step kernel sequence once
+and replays it. The measurement protocol is otherwise identical: 5 warmup
+replays plus 30 measured replays, median latency. The intent is to isolate the
+per-kernel CPU-side launch overhead while leaving every kernel itself
+unchanged, so the difference (eager minus graphed) bounds the launch tax from
+above on each GPU. Cells: Qwen-2.5-7B at (H100, ctx=2048{=}2048), (H100,
+ctx=8192{=}8192) and (L4, ctx=2048{=}2048); a v12 replication sweep extends this to
+N=3N{=}3 fresh containers per GPU at the headline cell. Results are in
+Section 5; raw cell JSONs are under
+v11_results/cells/cudagraphs_*.json and
+v12_results/cells/.
+
+SOURCE 30571 S5→S8
+5 The CUDA Graphs A/B test
+The 44-cell sweep in Section 4 establishes a cross-GPU
+pattern in RfloorR_{\mathrm{floor}} that is monotone in BpeakB_{\mathrm{peak}}.
+The pattern is consistent with a launch-tax mechanism but does not prove
+it. To test the mechanism we ran a single-knob intervention: CUDA Graphs.
+Graphs replace per-kernel CPU-side launch with a single replay of a
+captured DAG; the kernels themselves do not change. If launch tax
+dominates H100 short-context decode, Graphs must shrink step time on H100
+at short context; if HBM bandwidth dominates L4 short-context decode,
+Graphs must not shrink step time on L4. We frame this as a robustness
+check on the sweep, not as the headline of the paper.
+Pre-registered falsification thresholds.
+The launch-tax interpretation would have been killed by either of two
+outcomes, set in advance of the A/B run:
+•
+H100 graphed speedup at short context (ctx=2048{=}2048) below
+∼1.15×\sim 1.15\times.
+•
+L4 graphed speedup at short context (ctx=2048{=}2048) above
+∼1.15×\sim 1.15\times.
+Neither threshold was crossed in any session. The H100 positive result
+rules out a pure-HBM explanation on H100-class silicon; the L4 null rules
+out a launch-tax explanation on L4-class silicon. The size of the effect
+is the next question.
+Headline measurement at N=10N{=}10.
+The headline cell is H100 ctx=2048{=}2048 Qwen-2.5-7B batch=1{=}1, run as a
+within-session A/B (eager followed by graphed, same container, same warmup
+state) across N=10N{=}10 fresh Modal containers. Each session runs 5 warmup
+plus 30 measured single-token decode steps per arm and reports the
+per-arm p50p_{50}. Results are in Table 2; raw JSONs
+at v14_results/data/v14_n10_headline/n10_h100_ctx2048_s{0..9}.json.
+Table 2: N=10N{=}10 within-session A/B on H100 ctx=2048{=}2048 batch=1{=}1
+Qwen-2.5-7B. Per-session eager and graphed p50p_{50} over 30 measured
+steps, with the within-session speedup. The bottom block reports
+cross-session summary statistics with a 10000-resample bootstrap 95% CI
+on the mean speedup.
+session
+eager (ms)
+graphed (ms)
+speedup
+s0
+14.749
+11.850
+1.245
+s1
+14.721
+11.764
+1.251
+s2
+14.776
+11.770
+1.255
+s3
+14.896
+11.784
+1.264
+s4
+14.800
+11.766
+1.258
+s5
+14.869
+11.760
+1.264
+s6
+14.847
+11.775
+1.261
+s7
+15.147
+11.763
+1.288
+s8
+14.667
+11.755
+1.248
+s9
+14.812
+11.775
+1.258
+mean
+14.828
+11.776
+1.259
+std
+0.132
+0.027
+0.012
+CV
+0.9%
+0.2%
+0.9%
+95% CI on mean
+[14.761,14.912][14.761,14.912]
+—
+[1.253,1.267][1.253,1.267]
+The headline commitment is therefore:
+H100 ctx=2048 b=1 Qwen-2.5-7B CUDA Graphs speedup=1.259±0.012,\text{H100 ctx${=}2048$ b${=}1$ Qwen-2.5-7B CUDA Graphs speedup}=1.259\pm 0.012,
+with a tight 95% bootstrap CI of [1.253,1.267][1.253,1.267]. The cross-session CV
+of the speedup is 0.9%, the cross-session CV of the eager step time is
+0.9%, and the cross-session CV of the graphed step time is 0.2%. The
+graphed measurement replicates to within ±0.05\pm 0.05 ms across all 10
+sessions.
+This number is materially smaller than the 1.72×1.72\times figure reported
+in earlier drafts of this work. The 1.72×1.72\times value came from a single
+within-session A/B in the v11 rig where the eager arm happened to land at
+20.63 ms; at N=10N{=}10 the eager arm has a population mean of
+14.83 ms and the per-session ratios cluster in the [1.245,1.288][1.245,1.288]
+range. We treat the N=10N{=}10 value as the load-bearing number and the
+earlier single-session 1.72×1.72\times as the high tail of a distribution
+that was undersampled in the v11 rig.
+Removed launch overhead.
+The mean eager step on H100 ctx=2048{=}2048 b=1{=}1 is 14.83 ms; the mean
+graphed step is 11.78 ms. The difference, 3.05 ms, is the per-step
+launch-side overhead that Graphs removes, roughly 20.6%20.6\% of the
+original step. We do not divide this across an estimated per-kernel
+launch count, because Graphs collapses more than per-kernel host launch:
+it also fuses stream events, removes per-call Python and C++ framework
+dispatch, locks the allocator pattern, and removes torch dispatcher
+work. The 3.05 ms is the sum of all of these per-step overheads on the
+host side, not the per-kernel launch cost alone. A per-kernel-cost
+attribution requires a tracing tool that separates host launch from
+framework dispatch (Appendix D lists the
+per-step kernel count and its breakdown).
+L4 null.
+On L4 ctx=2048{=}2048 the eager p50p_{50} is 64.48 ms and the analytic floor
+tfloor=(W+K)/Bpeakt_{\mathrm{floor}}=(W+K)/B_{\mathrm{peak}} is 51.17 ms, so the cell
+sits at Rfloor=0.81R_{\mathrm{floor}}=0.81. The Graphs A/B at the same cell
+returns 1.028×1.028\times, replicated across three v12 sessions
+(Table 3, L4 row). Removing the CPU launch sequence
+serially cannot help much because the GPU is already waiting on HBM
+rather than on launches. The Graphs null on L4 is exactly the prediction
+the mechanism makes.
+Per-kernel timeline for one Qwen-2.5-7B decoder block10 kernels, batch 1 decode, ctx 2048. Launch gap shown in magenta, GPU compute in grey.H100 SXM5time scale: 1 mm == 5 us    (launch ≈\approx 30 us, compute ≈\approx 10 us per kernel)RMSNormQKVRoPESDPAORMSNormMLP up/gateMLP downPer block: 10 kernelslaunch ≈10×30\approx 10\times 30 us =300=300 uscompute ≈10×10\approx 10\times 10 us =100=100 usblock step ≈400\approx 400 us28 blocks: ≈11.0\approx 11.0 ms launch+ 3.8+\ 3.8 ms compute == 14.8314.83 ms stepL4time scale: 1 mm == 25 us    (launch ≈\approx 30 us, compute ≈\approx 200 us per kernel)RMSNormQKVRoPESDPAORMSNormMLP up/gateMLP downPer block: 10 kernelslaunch ≈10×30\approx 10\times 30 us =300=300 uscompute ≈10×200\approx 10\times 200 us =2.0=2.0 msblock step ≈2.3\approx 2.3 ms28 blocks: ≈1.7\approx 1.7 ms launch+ 60.8+\ 60.8 ms compute == 64.4864.48 ms stepsame 10 kernels, same model weights, different launch-to-compute ratioCUDA Graphs replay eliminates per-kernel launch gapsH100: 14.83→11.7814.83\to 11.78 ms (1.26×1.26\times). Launch was a large fraction.L4: H100: 64.48→62.5064.48\to 62.50 ms (1.03×1.03\times). Launch was already small.Same intervention, different effect, because the launch fraction differs.
+Figure 3: Per-kernel Gantt for one Qwen-2.5-7B decoder block at
+ctx=2048{=}2048, batch 1. Same ten kernels on H100 and L4 with the same
+≈30​μ\approx 30~\mus CPU launch overhead per kernel; the launch-to-compute
+ratio inverts between the two. On H100 the per-kernel GPU compute is
+≈10​μ\approx 10~\mus so the launch gap dominates each block; on L4 the
+same compute step is ≈200​μ\approx 200~\mus and the launch gap is
+negligible. CUDA Graphs replay collapses the per-kernel launch gaps
+but does not touch GPU compute, which is why the same intervention
+recovers 25% of step time on H100 (14.83 →\rightarrow 11.78 ms,
+1.26×1.26\times) and 3% on L4 (64.48 →\rightarrow 62.50 ms,
+1.03×1.03\times).
+H100 SXM53350 GB/s peak HBML4300 GB/s peak HBM⋮\vdots⋮\vdotslayer 1layer 4layer 28
+28 layers ×\times
+~10 kernels/layer
+= 281 kernels
+kernel-launch band281 kernels ×\times ~30 us launch≈\approx 8.4 ms (≈\approx 57% of step)GPU compute ≈\approx 6.4 ms(bandwidth-bound, 27% of peak)launch band ≈\approx3% of step timeGPU compute ≈\approx 62.5 ms(bandwidth-bound, 81% of peak)total step: 14.83 mstotal step: 64.48 mssame model,same weights,same step patternCUDA Graphs replay:1.26×\times speedup on H100Graphs on L4:1.03×\times (launch bandalready small)
+Figure 4: Decode-step anatomy aggregated across all 28 layers of
+Qwen-2.5-7B at ctx=2048{=}2048, bf16. The same launch-to-compute
+inversion in Figure 3 repeated 28 times. On
+H100 the CPU launch band dominates step time; on L4 the same launch
+overhead is small relative to bandwidth-bound GPU compute.
+Cross-session replication on L4 and H100 (v12).
+We ran a parallel N=3N{=}3 replication sweep using a single rig and three
+fresh Modal containers per GPU at the headline cells before the
+N=10N{=}10 run. Table 3 reports per-session medians.
+The L4 null replicates to four significant figures. The v12 H100 eager
+range (CV 35%) was, in hindsight, an N=3N{=}3 sampling artefact: the
+N=10N{=}10 run (Table 2) has CV 0.9% on the eager
+arm. We document the v12 sweep but rely on the N=10N{=}10 sweep for the
+headline number.
+Table 3: v12 cross-session replication, Qwen-2.5-7B ctx=2048{=}2048, 3 fresh
+Modal containers per GPU. Eager and graphed step-time medians (ms) with
+cross-session mean and standard deviation. See Table 2
+for the H100 headline at N=10N{=}10.
+GPU
+session 0
+session 1
+session 2
+mean
+std
+CV
+H100 eager
+14.93
+27.28
+15.98
+19.40
+6.85
+35.3%
+H100 graphed
+11.77
+12.00
+11.96
+11.91
+0.13
+1.1%
+L4 eager
+64.64
+64.50
+64.44
+64.52
+0.11
+0.2%
+L4 graphed
+62.68
+62.87
+62.77
+62.77
+0.09
+0.1%
+H100 speedup
+1.27
+2.27
+1.34
+1.63
+0.56
+34.6%
+L4 speedup
+1.031
+1.026
+1.027
+1.028
+0.003
+0.3%
+H100 batch=4{=}4 context sweep.
+We ran the eager/graphed A/B at batch=4{=}4 across the full context grid
+on H100 to answer how the launch-tax effect scales with batch size.
+Per-cell numbers are in Table 4, raw data in
+v13_results/data/v13_batch4_sweep/. The graphed speedup
+shrinks monotonically from 1.110×1.110\times at ctx=2048{=}2048 to
+1.036×1.036\times at ctx=16384{=}16384. The absolute speedup floor on H100 is
+lower at b=4{=}4 than at b=1{=}1 because the per-step kernel work is
+larger, so the launch-tax fraction of the step is smaller. On L4 the
+cell is no longer runnable at b=4{=}4: 14.5 GB of Qwen-2.5-7B weights
+plus the b=4{=}4 KV cache and bf16 activations exceeds L4’s 22 GB HBM
+at every context tested (CUDA OOM, raw failure JSONs in
+v13_results/data/v13_batch4_sweep/FAILED_l4_ctx*_b4_s0.json).
+At b=4{=}4, the H100-versus-L4 crossover ends because L4 is physically
+out of memory.
+Table 4: H100 batch=4{=}4 context sweep, Qwen-2.5-7B, single session per
+cell. Peak GPU memory grows with KV cache; L4 OOMs at every context at
+b=4{=}4 for this model.
+ctx
+eager (ms)
+graphed (ms)
+speedup
+peak mem (GB)
+2048
+16.37
+14.75
+1.110×\times
+23.3
+4096
+22.47
+20.54
+1.094×\times
+31.3
+8192
+33.92
+31.94
+1.062×\times
+47.4
+16384
+56.95
+54.96
+1.036×\times
+79.4
+The batching alternative.
+Graphs at batch=1{=}1 gives 1.259×1.259\times on H100. Batching from b=1{=}1
+to b=4{=}4 at the same ctx=2048{=}2048 moves the H100 graphed step from
+11.78 ms to 14.75 ms (Table 4): a 1.25×1.25\times latency
+penalty for 4×4\times the decoded tokens, or 3.20×3.20\times the decode
+throughput at the same per-token compute budget. For a serving engineer
+who is not constrained to single-stream b=1{=}1, batching is a stronger
+single lever than Graphs on H100. The relevance of the launch-tax
+finding is therefore conditional: it matters most when the workload
+forces b=1{=}1 streaming decode, which is the regime physical-AI
+inference, edge inference and many copilot pipelines actually run.
+Figures.
+Figure 5 shows the cross-context CUDA Graphs A/B
+speedup for H100 and L4 at batch 1 and batch 4, with the
+pre-registered 1.15×1.15\times falsification threshold marked. The H100
+b=1{=}1 point at ctx=2048{=}2048 uses the N=10N{=}10 mean with the bootstrap
+95% CI as the error band; other points are single-session.
+Figure 6 shows the N=10N{=}10 eager and graphed
+step-time distributions versus the N=3N{=}3 v12 distributions, with the
+35.3% CV claim relocated to its N=3N{=}3 sampling artefact.
+Figure 5: CUDA Graphs A/B speedup versus context length and batch size on
+H100 and L4. The H100 b=1{=}1 ctx=2048{=}2048 point is the N=10N{=}10 mean
+(Table 2); shading is the 95% bootstrap CI on the
+mean. Other H100 b=1{=}1 points are single-session from the v11 main
+sweep. H100 b=4{=}4 is the v13 batch sweep
+(Table 4). L4 b=1{=}1 replicates to four significant
+figures across the v12 sweep. L4 b=4{=}4 is omitted: every cell OOMs.
+The dotted line at 1.15×1.15\times is the pre-registered falsification
+threshold.
+Figure 6: Eager and graphed H100 ctx=2048{=}2048 b=1{=}1 step times under
+N=10N{=}10 (this work) and N=3N{=}3 (v12). The N=3N{=}3 eager outlier at
+27.28 ms drives the 35.3% CV reported in earlier versions; the
+N=10N{=}10 eager distribution is tight (CV 0.9%) and bounds the noise
+floor decisively. The graphed distribution is tight in both samples.
+6 Software stack matrix: SDPA backends, FlashAttention, FlashInfer
+To check whether the binding constraint on H100 batch-1 decode is the
+attention kernel or the launch sequence, we ran a controlled matrix on
+H100 with Qwen-2.5-7B at ctx=2048{=}2048. Cells from
+v11_results/analyze_v2.txt lines 157–161 and the underlying
+JSONs at v11_results/cells/oft_h100_qwen25_7b_*.json.
+Table 5: H100 software-stack matrix on Qwen-2.5-7B at ctx=2048{=}2048.
+Replicate sdpa+eager row at 28.44 ms reflects N=1N{=}1 host-noise
+spread on the v11 rig; the N=10N{=}10 headline in
+Table 2 (mean 14.83 ms, CV 0.9%) supersedes this
+spread as the bounded estimate of the eager noise floor.
+Configuration
+step (ms)
+RfloorR_{\mathrm{floor}}
+vs sdpa+eager
+sdpa + eager
+17.07
+0.268
+1.00×\times
+sdpa + eager + CUDA Graphs
+11.96
+0.383
+1.43×\times
+flash-attention-2 + eager
+24.16
+0.190
+0.71×\times
+sdpa + eager (in-session replicate)
+28.44
+0.161
+0.60×\times
+The headline comparisons survive the v11 spread: adding Graphs to
+sdpa+eager moves RfloorR_{\mathrm{floor}} from 0.268 to 0.383 (1.43×1.43\times
+step-time speedup at N=1N{=}1, 1.259×1.259\times at the N=10N{=}10 headline in
+Section 5), and swapping sdpa for
+FlashAttention-2 in the eager path slows decode rather than speeding it
+up.
+Reading.
+At batch 1 on H100, the attention-kernel choice is not the binding
+constraint. FlashAttention-2 is optimised for prefill compute
+throughput; in batch-1 decode the per-step attention work is small
+(Qwen-2.5-7B at ctx=2048{=}2048 touches K≈118K\approx 118 MB of KV per step,
+from the cell JSON v10_results/cells/qwen25_7b_h100_ctx2048.json,
+key kv_bytes_avg) and FA2’s launch overhead and
+kernel-selection logic dominate the gain it can deliver. The
+torch.compile and FA2+Graphs cells did not produce usable
+results (CUDA caching-allocator failures, see
+Appendix C).
+Backend-pinned SDPA test.
+Earlier drafts attributed sdpa’s win over FlashAttention-2 to “sdpa’s
+internal dispatch path through FA-2/FA-3 cuDNN backends”. That
+statement was not supported by the underlying measurement, which called
+torch.nn.functional.scaled_dot_product_attention without
+pinning a backend. To answer the question we ran a backend-pinned A/B in
+v14: same Llama-3-8B decode shape (32 query heads, 8 KV heads, head_dim
+128, ctx=2048{=}2048, bf16, group_size 4), three fresh-container H100
+sessions, 50 warmup plus 300 measured single-layer attention calls per
+backend. The backends are forced via
+torch.nn.attention.sdpa_kernel(SDPBackend.X). Raw JSONs at
+v14_results/data/v14_backend_pinned/backend_pinned_s{0,1,2}.json.
+At the start of each measurement we log
+torch.backends.cuda.flash_sdp_enabled,
+cudnn_sdp_enabled, mem_efficient_sdp_enabled and
+math_sdp_enabled (all True by default in PyTorch 2.8+cu126
+on H100). The cuDNN attention backend rejects the head_dim 128 GQA
+single-decode shape with a not-supported error in all three sessions;
+the other backends accept it.
+Table 6: Backend-pinned attention A/B on H100, Llama-3-8B decode shape,
+ctx=2048{=}2048, bf16, N=3N{=}3 sessions. Per-layer p50p_{50} in us\,\mathrm{us};
+total 32 layers in ms; speedup is vs default SDPA. Raw data in
+v14_results/data/v14_backend_pinned/.
+Backend
+per-layer p50p_{50} (us\,\mathrm{us})
+total 32 layers (ms)
+vs default SDPA
+default SDPA (no context manager)
+36.05 (mean)
+1.15
+1.00×\times
+SDPA FLASH_ATTENTION
+44.35 (mean)
+1.42
+0.81×\times
+FlashInfer single_decode
+48.20 (mean)
+1.54
+0.75×\times
+FA-3 flash_attn_3
+79.25 (mean)
+2.54
+0.45×\times
+SDPA EFFICIENT_ATTENTION
+89.72 (mean)
+2.87
+0.40×\times
+SDPA MATH
+177.55 (mean)
+5.68
+0.20×\times
+SDPA CUDNN_ATTENTION
+not supported
+—
+—
+The result is sharper than the v13 framing predicted. Default SDPA at
+36.05 us\,\mathrm{us}/layer is faster than the explicit FLASH_ATTENTION
+context (44.35 us\,\mathrm{us}, 0.81×0.81\times), faster than FlashInfer
+(48.20 us\,\mathrm{us}, 0.75×0.75\times), faster than FlashAttention-3
+(79.25 us\,\mathrm{us}, 0.45×0.45\times), and far faster than the math fallback
+(177.55 us\,\mathrm{us}, 0.20×0.20\times). The kernel-engineer prediction that
+default SDPA was routing to a cuDNN flash path on Hopper is wrong: the
+cuDNN attention backend rejects this shape entirely. The default
+dispatcher is doing something that none of its named components do in
+isolation, and it is winning by ∼20%\sim 20\% over the explicit FLASH
+backend. We do not have a definitive mechanism for the gap. The most
+plausible candidates are pre/post-op fusion that the context-managed
+path forces apart, or kernel-selection heuristics that route to a
+different shape-specialised kernel than FLASH_ATTENTION alone
+selects.
+Mechanism implication.
+Across all six backends the per-layer attention p50p_{50} ranges from
+36 to 178 us\,\mathrm{us}; the total 32-layer attention time ranges from 1.15 to
+5.68 ms. The full-step decode time on H100 ctx=2048{=}2048 b=1{=}1 is
+14.8314.83 ms eager and 11.7811.78 ms graphed (Table 2).
+Even the worst attention-backend choice (math, 5.68 ms total) leaves
+∼9\sim 9\,ms of non-attention step time. The slowest-to-fastest
+attention-backend span (4.53 ms) is in the same order of magnitude as
+the Graphs-removed launch overhead (3.05 ms). But the slowest-attn-to-fastest-attn
+swap costs almost five times more attention compute (5.68 ms vs
+1.15 ms) for a smaller absolute step-time effect, because attention is
+only one of multiple per-layer kernels. The launch sequence is the
+better single lever; the attention kernel matters second.
+Figure 7: Per-layer attention p50p_{50} on H100 with explicit SDPA backend
+selection plus FlashAttention-3 and FlashInfer. Default SDPA (top,
+highlighted) is faster than every pinned backend including
+FLASH_ATTENTION, FlashInfer and FA-3 at this single-decode
+shape (Llama-3-8B, n_q_heads=32{=}32, n_kv_heads=8{=}8,
+head_dim=128{=}128, ctx=2048{=}2048, bf16, H100). Error bars are SD across
+three sessions. CUDNN_ATTENTION is not supported for this
+shape on H100 SXM5 PyTorch 2.8+cu126. The kernel choice is not the
+binding constraint; the launch sequence is.
+7 Quantisation baseline on L4
+On the bandwidth-bound side of the crossover, the standard prescription is weight
+quantisation. We ran a controlled baseline on L4 with Qwen-2.5-7B at ctx=2048{=}2048. Cells
+from v11_results/analyze_v2.txt lines 163–167 and the underlying JSONs at
+v11_results/cells/quant_*.json.
+Table 7: L4 quantisation baseline, Qwen-2.5-7B at ctx=2048{=}2048. tfloort_{\mathrm{floor}} is
+the spec-sheet HBM floor assuming int4 kernels deliver a 4×4\times weight bandwidth
+reduction; the observed step is what actually arrives at the workload. The
+ExLlamaV2 row is the v14 addition.
+Configuration
+step (ms)
+tfloort_{\mathrm{floor}} (ms)
+RfloorR_{\mathrm{floor}}
+bf16
+62.32
+51.17
+0.821
+bf16 (in-session replicate)
+63.02
+51.17
+0.812
+bnb-nf4
+59.36
+13.09
+0.220
+AutoAWQ Marlin
+45.24
+13.09
+0.289
+ExLlamaV2 EXL2 4.25bpw (v14)
+17.36
+13.09
+0.754
+The bf16 baseline sits within ∼20\sim 20% of the HBM floor, consistent with L4’s
+bandwidth-bound regime: bf16 weights at 15.23 GB streamed once per step over 300 GB/s
+peak HBM is 50.77 ms of pure weight traffic, and the KV term adds a few more ms
+(tfloor=51.17t_{\mathrm{floor}}{=}51.17 ms includes the small KV contribution).
+Quantisation should, naively, cut weight traffic by 4×4\times.
+It does not, in step time. nf4 (bitsandbytes) is 59.36 ms, barely faster than bf16. AWQ
+is 45.24 ms, a 1.38×1.38\times step-time speedup over bf16, far less than the 4×4\times
+weight-traffic reduction predicts. The reason is the deployment chain. bitsandbytes’ nf4
+path is implemented as on-the-fly dequantisation kernels followed by bf16 matmul
+(Dettmers et al., QLoRA, 2023; the Linear4bit forward in bitsandbytes
+nn/modules.py), so the actual HBM traffic per matmul is dominated by
+intermediate bf16 activations and the launch overhead of the dequant kernels, not by
+the nf4 weight footprint. AWQ does
+materially better because Marlin-style packed kernels keep the matmul in int4 plus
+fp16-scale form, but the kernel still does not reach the nf4 HBM floor (13.09 ms).
+ExLlamaV2 measurement (v14).
+To test whether AutoAWQ’s Marlin kernels were the bottleneck rather than
+the bit-width principle, we ran an additional measurement with
+ExLlamaV2 0.2.4, a runtime whose int4 GEMM kernels are explicitly tuned
+for Ada Lovelace (SM89). Cell: Qwen-2.5-7B-Instruct EXL2 4.25bpw
+(bartowski branch), L4, ctx=2048{=}2048, batch=1{=}1, N=3N{=}3 fresh Modal
+containers. Per-session p50p_{50}: [17.361,17.368,17.360][17.361,17.368,17.360] ms
+(mean 17.36, SD 0.004). Peak GPU memory per session: [6.96,6.96,6.95][6.96,6.96,6.95] GB (mean 6.96). Raw JSONs in
+v14_results/data/v14_exllamav2_l4/.
+ExLlamaV2 cuts step time on L4 from 62.32 ms (bf16) to 17.36 ms, a
+3.59×3.59\times speedup; the AutoAWQ Marlin path delivered only
+1.38×1.38\times. Marlin was tuned for Ampere SM80 and is not best-in-class
+on Ada SM89; ExLlamaV2’s Ada-specific int4 GEMM kernels recover most of
+the bandwidth saving the bit-width reduction predicts. The cell now sits
+at Rfloor=0.754R_{\mathrm{floor}}=0.754 against the 4×4\times-reduced floor of
+13.09 ms, where the AWQ cell sat at 0.289 against the same floor.
+Figure 8: L4 quantisation step times for Qwen-2.5-7B at ctx=2048{=}2048. bf16
+(62.32 ms), bnb-nf4 (59.36 ms), AutoAWQ+{+}Marlin (45.24 ms),
+GPTQ+{+}ExLlamaV2 EXL2 4.25bpw (17.36 ms). The Marlin kernel was tuned
+for SM80 (Ampere); ExLlamaV2’s int4 GEMMs are tuned for SM89 (Ada) and
+recover most of the bandwidth saving the bit-width reduction predicts.
+Reading.
+On L4 the bandwidth-bound regime is real: bf16 sits at
+Rfloor=0.82R_{\mathrm{floor}}=0.82. The bandwidth saving from quantisation only
+lands at the workload if the kernel implementation actually streams
+quantised weights through HBM on the right silicon. AutoAWQ’s Marlin
+kernels do not do that on Ada SM89; ExLlamaV2’s do. The lever was the
+kernel implementation, not the bit width. The practical implication for
+L4-class deployment is that the quantisation runtime matters as much as
+the quantisation scheme; the deployment ladder of viable L4 quantised
+backends as of mid-2026 is roughly ExLlamaV2 EXL2 >> AutoAWQ Marlin
+>> bnb-nf4.
+What the ExLlamaV2 number changes for the cross-GPU
+comparison.
+The H100 ctx=2048{=}2048 b=1{=}1 Qwen-2.5-7B step time at default SDPA +
+CUDA Graphs is 11.78 ms (Table 2). The L4 same-cell
+step time with ExLlamaV2 int4 is 17.36 ms. The H100 is roughly
+1.47×1.47\times faster than the L4 at this workload. At published Modal
+rates of $3.50/hr (H100) and $0.30/hr (L4) as of May 2026, the cost-per-token-served ratio inverts: L4 serves the
+same workload at roughly 6×6\times less $/token than the H100, despite
+the H100 being 11.2×11.2\times peak HBM bandwidth.
+The sticker bandwidth gap does not translate to a serving-cost gap at
+this workload class. Sustained pricing, networking, idle, and batching
+change this calculus; the point of the comparison is that the deployment
+ladder L4 →\rightarrow L40S →\rightarrow A100 →\rightarrow H100 is
+not the cost-per-token-served ladder it appears to be for batch-1
+streaming decode.
+Figure 9: Cost-per-million-tokens-served at batch-1 streaming decode,
+Qwen-2.5-7B ctx=2048{=}2048, derived from per-step time and Modal published
+hourly rates as of May 2026. The L4 with ExLlamaV2 serves the same
+workload at substantially lower $/Mtok than the H100 with CUDA Graphs.
+Numbers depend on hourly rates and exclude idle, networking and storage;
+the ladder direction is the point.
+
+SOURCE 30571 S9→S10
+9 Limitations and threats to validity
+Explicit scope.
+Every claim in this paper is scoped to:
+•
+7–8B-parameter transformers (Qwen-2.5-7B-Instruct, Mistral-7B-Instruct-v0.3, Llama-3.1-8B-Instruct);
+•
+grouped-query attention [2] only (no MHA [24], no MQA [23], no MLA);
+•
+head_dim 128 only;
+•
+bf16 weights only (except the L4 quantisation baseline, which is explicitly scoped to L4);
+•
+single-token autoregressive decode (no speculative decoding, no parallel sampling);
+•
+batch size 1 primary, with batch 4 measured on H100 and L4 as a sensitivity check (Section 5);
+•
+NVIDIA GPUs only: H100 SXM5, A100-80GB SXM4, L40S, L4 (no AMD MI300, no Blackwell, no Jetson, no Apple);
+•
+Modal cloud hosting only (no bare-metal, no other clouds);
+•
+sdpa attention on the main matrix; FA2 only in the controlled software-stack matrix on H100.
+We do not claim the cross-GPU pattern generalises beyond this workload class.
+Architecture coverage.
+All three measured models are GQA with
+head_dim 128 (Qwen-2.5-7B uses 4 KV heads, the other two use 8). Results may
+not transfer to MQA, full MHA, or substantially different head dimensions.
+The kernel-count anchor of ∼10\sim 10 kernels per layer is observed on three
+GQA transformer implementations that are structurally similar; a wider
+architecture sweep is needed to claim a universal kernel sequence.
+Batch size.
+The main matrix and the headline replication are
+batch 1. We additionally measured the CUDA Graphs A/B at batch 4 on H100
+and L4 across the full context grid (Section 5,
+Figure 5). At batch 4 on H100, per-step kernel work
+grows by roughly 4×4\times for the Q/K/V projections and roughly 4×4\times
+for the per-token attention output, while the per-step launch count is
+essentially unchanged, so the launch-tax fraction of the step time shrinks
+and the graphed speedup shrinks with it. We report this directly rather
+than claiming the batch-1 picture extends through the crossover. We do
+not measure batch ≥8{\geq}8 on H100 nor any batch >4{>}4 on L4.
+Cloud host noise.
+Modal cloud GPUs have undisclosed driver
+versions and shared host noise. We mitigate by using the same container image
+across runs, by reporting medians over 30 measured steps, and by running
+N=10N{=}10 independent sessions on the H100 ctx=2048{=}2048 headline cell. The
+within-session step-time CV on that cell is 0.9% eager and 0.2% graphed,
+so single-session step-time noise is small. Cross-session step times for the
+same configuration vary more widely across the v10, v11 and v14 runs (16.97 ms
+to 20.63 ms eager), reflecting a mix of container-host scheduling and
+code-path differences between rigs rather than within-run jitter. The within-
+session speedup is the more stable quantity (CV 0.9%, 95% bootstrap CI
+[1.253,1.267][1.253,1.267]), which is why we use it as the headline rather than
+cross-session ratios. We also ran the headline cell on a reserved-capacity
+H100 configuration (vs default best-effort scheduling); within-session CV did
+not improve, indicating the residual variation is intrinsic to single-stream
+decode at this shape, not Modal-host queuing.
+Profiler instrumentation.
+ncu was blocked on Modal
+containers. torch.profiler with analytic byte counts is the
+substitute. Profiler overhead inflates absolute step time asymmetrically:
+the H100 sees a 3.2×3.2\times inflation (16.97 ms unprofiled to 54.38 ms
+profiled), while the L4 sees a 1.01×1.01\times inflation (essentially no
+overhead). Using the profiled denominator therefore underreports H100
+bandwidth utilisation. Section 8 reports unprofiled-denominator
+bw_util as the headline (H100 26.9%, L4 79.4%, a 3×3\times gap
+rather than the 10×10\times gap that appears if one takes profiled time at face
+value) and lists profiled time for traceability. The cpu/cuda column is
+unaffected by the denominator question.
+Attention-compute regime at long context on small GPUs.
+The RfloorR_{\mathrm{floor}} definition assumes weight plus active KV HBM traffic
+is the dominant decode cost. At ctx≥8192{…1778 tokens truncated…un a graded donor-noise ladder, expose
+an algorithmic-overlap inversion, and add the form-vs-content
+zero-vs-blank dissociation.
+
+SOURCE 30836 S7→S8
+7 Perplexity on Pythia 1.4B: The Frobenius-Perplexity Gap
+We now deploy the framework’s compressed weights into Pythia 1.4B
+and measure WikiText-2 perplexity. This experiment tests whether
+the Frobenius improvements of Section 6
+translate to downstream language-modeling quality. They do not.
+We report the main comparison in
+Section 7.2, then conduct a
+diagnostic sweep in Section 7.3
+to rule out methodological causes, and finally develop the
+mechanistic explanation in
+Section 7.4.
+7.1 Setup
+Model and compression target.
+Pythia 1.4B (Biderman et al., 2023)
+(EleutherAI/pythia-1.4b, 2424 transformer layers,
+D=2048D=2048). We compress the attention output projections
+WO(L)W_{O}^{(L)} at every transformer layer at d/D=0.25d/D=0.25
+(retained rank d=512d=512 per matrix; 24⋅2048⋅51224\cdot 2048\cdot 512
+weights total, about 7%7\% of the model’s 1.41.4B parameters). MLP
+and other attention weights (WQ,WK,WVW_{Q},W_{K},W_{V}) are left
+uncompressed. This is the same setup used by
+Wang et al. (2025b) for their main WO-only
+ablation.
+Calibration.
+Following V2’s protocol, we use 256256 randomly-sampled WikiText-2
+(Merity et al., 2017) training sequences (each of length
+20482048, seed 4242) to capture per-layer input activations XLX_{L}
+via forward pre-hooks. Each hook accumulates the second-moment
+matrix XL​XL⊤∈ℝD×DX_{L}X_{L}^{\top}\in\mathbb{R}^{D\times D}, which is sufficient for
+the V2-style whitening ΣL​ΣL⊤=XL​XL⊤\Sigma_{L}\Sigma_{L}^{\top}=X_{L}X_{L}^{\top} and
+for the generalized projection surgery formula below. The
+calibration step takes about 3030 minutes on CPU and is shared
+across all compression methods for a fair comparison.
+Compressed-weight surgery.
+Given sections (SL,SL+1)(S_{L},S_{L+1}) from any method, the deployed
+compressed weight at layer LL uses the generalized
+projection formula:
+W~(L)=SL+1​W^(L)​SL⊤,W^(L)=SL+1⊤​W(L)​XL​XL⊤​SL​(SL⊤​XL​XL⊤​SL)−1.\widetilde{W}^{(L)}=S_{L+1}\,\widehat{W}^{(L)}\,S_{L}^{\top},\quad\widehat{W}^{(L)}=S_{L+1}^{\top}W^{(L)}X_{L}X_{L}^{\top}S_{L}\big(S_{L}^{\top}X_{L}X_{L}^{\top}S_{L}\big)^{-1}.
+(9)
+This is the unique rank-dd factorization through (SL,SL+1)(S_{L},S_{L+1})
+that minimizes activation reconstruction error ‖W(L)​XL−W~(L)​XL‖F2\|W^{(L)}X_{L}-\widetilde{W}^{(L)}X_{L}\|_{F}^{2} for given sections. The
+orthogonal-projection alternative W~(L)=SL+1​SL+1⊤​W(L)​SL​SL⊤\widetilde{W}^{(L)}=S_{L+1}S_{L+1}^{\top}W^{(L)}S_{L}S_{L}^{\top} is empirically inferior
+(Section 7.3); we use
+Eq. (9) for all methods.
+Bias projection.
+When the linear layer has a bias term bb, the compressed
+bias is b′=SL+1​SL+1⊤​bb^{\prime}=S_{L+1}S_{L+1}^{\top}b, projecting the bias
+through the output section. This preserves the affine structure
+y=W​x+by=Wx+b in the section basis.
+Evaluation.
+WikiText-2 test set (Merity et al., 2017), 288,730288{,}730 tokens
+(full split), non-overlapping 20482048-token windows, mean
+cross-entropy converted to perplexity. 140140 windows total.
+HellaSwag (Zellers et al., 2019) zero-shot accuracy via
+lm-evaluation-harness (Gao et al., 2024) with default
+configuration.
+Methods compared.
+1.
+Original: uncompressed Pythia 1.4B baseline.
+2.
+SVD-LLM V1 (Wang et al., 2024): per-layer SVD with
+Cholesky whitening. Falls back to V2-style eigendecomp on
+numerically singular XL​XL⊤X_{L}X_{L}^{\top}.
+3.
+SVD-LLM V2 (Wang et al., 2025b): per-layer two-SVD
+truncation with heterogeneous per-matrix-type rank allocation.
+4.
+Basis-Sharing-core: tied output section
+SBSS_{\text{BS}} shared across layers, per-layer input sections
+via per-weight SVD.
+5.
+Pure-bundle GBD (λ=0\lambda=0, untied): the empirical
+Frobenius optimum from Section 6.
+7.2 Main comparison
+Table 2 reports the headline result.
+Table 2: WikiText-2 perplexity and HellaSwag zero-shot accuracy on
+Pythia 1.4B with WO(L)W_{O}^{(L)} compressed at d/D=0.25d/D=0.25. The
+pure-bundle GBD — which had the best Frobenius reconstruction
+(Table 1) — gives the second-worst
+perplexity and the second-worst HellaSwag accuracy among methods
+that produce a coherent model.
+Method
+WikiText-2 PPL ↓\downarrow
+HellaSwag acc ↑\uparrow
+HS acc_norm ↑\uparrow
+Activation err ↓\downarrow
+Original (uncompressed)
+11.7911.79
+0.40410.4041
+0.52020.5202
+—
+SVD-LLM V1
+50.17\mathbf{50.17}
+0.3449\mathbf{0.3449}
+0.4353\mathbf{0.4353}
+1.93×𝟏𝟎𝟖\mathbf{1.93\times 10^{8}}
+SVD-LLM V2
+59.7259.72
+0.32400.3240
+0.40290.4029
+1.79×1081.79\times 10^{8}
+Pure-bundle GBD (λ=0\lambda{=}0)
+159.14159.14
+0.27850.2785
+0.30330.3033
+5.76×1085.76\times 10^{8}
+Basis-Sharing-core
+758.16758.16
+0.26180.2618
+0.26760.2676
+7.95×1087.95\times 10^{8}
+The pattern is unambiguous. The pure-bundle GBD, which beat SVD-LLM
+by 37.2%37.2\% on Frobenius reconstruction, is worse than
+SVD-LLM by 3.2×3.2\times on perplexity and by 1313 percentage points
+on HellaSwag normalized accuracy. The ranking by perplexity is
+exactly reversed from the ranking by Frobenius reconstruction:
+SVD-LLM (worst Frobenius) gives best perplexity; pure-bundle GBD
+(best Frobenius) gives third-worst perplexity. Basis-Sharing-core
+collapses to near-random language modeling (PPL 758758, HellaSwag
+26.8%26.8\% which is near the 25%25\% random baseline).
+The activation-error column is the diagnostic signal.
+Per-layer activation error ∑L‖W(L)​XL−W~(L)​XL‖F2\sum_{L}\|W^{(L)}X_{L}-\widetilde{W}^{(L)}X_{L}\|_{F}^{2} tracks the perplexity ranking exactly: SVD-LLM V2 has the
+lowest activation error and second-best perplexity; SVD-LLM V1 is
+close behind; pure-bundle GBD has 3×3\times higher activation error
+and 3×3\times worse perplexity; Basis-Sharing has 4×4\times higher
+activation error and dramatic perplexity collapse. The activation-error
+ratio between GBD (5.76×1085.76\times 10^{8}) and V1 (1.93×1081.93\times 10^{8})
+is 2.99×2.99\times; the perplexity ratio is 3.17×3.17\times. Activation error
+is the right proxy; Frobenius reconstruction is not.
+7.3 Diagnostic sweep: ruling out methodological causes
+A negative result must rule out methodological causes. We perform
+five additional experiments that probe the natural alternative
+explanations: λ\lambda tuning, anchor convention, surgery formula.
+λ\lambda sweep.
+Table 3 reports perplexity for pure-bundle GBD
+at λ∈{0,1,100,106}\lambda\in\{0,1,100,10^{6}\}. The bundle is essentially flat
+in λ\lambda over [0,100][0,100] (perplexity changes by 1.6%1.6\%), then
+catastrophically degrades at λ=106\lambda=10^{6}. The catastrophe at
+high λ\lambda is not the framework’s failure but its convergence
+to a different anchor than V1’s (see next subsection); the more
+important finding is that the bundle’s interior is not better than
+its corners. There is no useful sweet spot.
+Table 3: λ\lambda sweep on pure-bundle GBD, Pythia 1.4B
+d/D=0.25d/D=0.25. The bundle’s interior is uniformly worse than V1, and
+no interior λ\lambda produces a meaningful improvement over
+λ=0\lambda=0.
+λ\lambda
+WikiText-2 PPL
+vs. SVD-LLM V1 (50.17)
+00
+159.14159.14
+3.17×3.17\times worse
+11
+160.27160.27
+3.20×3.20\times worse
+100100
+161.78161.78
+3.23×3.23\times worse
+10610^{6}
+1150.311150.31
+22.9×22.9\times worse
+Anchor convention.
+The catastrophic blowup at λ=106\lambda=10^{6} deserves further
+investigation. The anchor in our original
+compute_svd_anchors uses the top-dd right
+singular subspace of W(L)​ΣLW^{(L)}\Sigma_{L} at section position LL.
+But the deployed model uses sections as both the input side of one
+weight and the output side of the previous weight. The output of
+weight LL should align with V1’s natural output anchor: the top-dd
+left singular subspace of W(L)​ΣLW^{(L)}\Sigma_{L}. The mismatch
+between our anchor convention and V1’s output anchor convention
+causes the λ=106\lambda=10^{6} blowup.
+Table 4 reports perplexity with the
+corrected anchor convention: SLS_{L}’s anchor (for L≥1L\geq 1) is
+the top-dd left singular subspace of W(L−1)​ΣL−1W^{(L-1)}\Sigma_{L-1}, so
+that SL+1S_{L+1} (used as the output projection for weight LL in
+surgery) is V1’s natural output anchor for that layer.
+Table 4: Anchor-convention comparison on Pythia 1.4B
+d/D=0.25d/D=0.25. The corrected anchor (V1-output) improves
+perplexity by 1919 points; the qualitative result remains:
+no GBD configuration matches SVD-LLM V1’s 50.1750.17.
+Configuration
+λ\lambda
+WikiText-2 PPL
+SVD-LLM V1 (per-layer baseline)
+—
+50.17\mathbf{50.17}
+GBD with original anchor
+00
+159.14159.14
+GBD with original anchor
+10610^{6}
+1150.311150.31
+GBD with V1-output anchor, direct (no BCA)
+∞\infty
+140.27140.27
+GBD with V1-output anchor, BCA
+10610^{6}
+149.45149.45
+GBD with V1-output anchor, BCA
+00
+171.02171.02
+Two things are clear from
+Table 4. First, the anchor-convention
+correction does provide a real improvement (159→140159\to 140), so this
+was a code-level bug. Second, the correction is small relative to
+the gap to V1 (140140 versus 5050): the qualitative conclusion is
+unchanged, and the gap remains 2.8×2.8\times. Third, the BCA at
+λ=0\lambda=0 with correct anchors gives perplexity 171.02171.02,
+worse than the anchor-direct value 140.27140.27 — cross-layer
+coupling actively hurts even when starting from a more sensible
+anchor.
+Surgery formula.
+We test whether the choice of generalized-projection
+surgery (9) versus simple orthogonal
+projection W~=SL+1​SL+1⊤​W(L)​SL​SL⊤\widetilde{W}=S_{L+1}S_{L+1}^{\top}W^{(L)}S_{L}S_{L}^{\top} is the cause. Table 5 reports both
+choices on the same GBD λ=0\lambda=0 sections. The
+generalized-projection surgery is the right choice
+(159159 versus 13241324); abandoning it would only worsen the
+result. The surgery formula is not the cause of the negative
+finding.
+Table 5: Surgery-formula comparison: same GBD sections
+(λ=0\lambda=0), two different surgery formulas. The
+generalized-projection surgery is essential; the issue is not in
+the surgery choice.
+Surgery formula
+Activation error
+WikiText-2 PPL
+Generalized projection (default, Eq. 9)
+5.76×1085.76\times 10^{8}
+159.14\mathbf{159.14}
+Orthogonal projection (sandwich)
+1.46×1091.46\times 10^{9}
+1324.261324.26
+Summary of diagnostics.
+Across nine configurations (four λ\lambda values, two anchor
+conventions, two surgery formulas), no configuration of the
+framework’s interior reaches SVD-LLM V1’s perplexity of 50.1750.17.
+The best we observe is 140.27140.27 (corrected anchor, direct, no BCA),
+which is 2.8×2.8\times worse than V1. The pure-bundle corner
+(λ=0\lambda=0) gives 159.14159.14 with the original anchor and
+171.02171.02 with the corrected anchor. Cross-layer coupling hurts
+in both cases.
+7.4 Mechanism
+The diagnostic data points at a clear mechanism for the
+negative result. We summarize it in two observations.
+Observation 1: activation error tracks perplexity; Frobenius does not.
+Across all 99 configurations we tested (the four methods in
+Table 2, the four λ\lambda values in
+Table 3, and the three corrected-anchor
+variants in Table 4), the Spearman rank
+correlation between per-layer activation error and perplexity is
++0.97+0.97, while the rank correlation between weight-Frobenius
+reconstruction and perplexity is −0.43-0.43 (Frobenius is
+anti-correlated with perplexity in the interior of the
+bundle). Activation error is the correct proxy; Frobenius error
+is not.
+Observation 2: the residual stream decouples layers in the forward pass.
+The bundle energy (3) couples adjacent layers
+through the term ‖SL+1⊤​W(L)​SL‖F2\|S_{L+1}^{\top}W^{(L)}S_{L}\|_{F}^{2}. The
+implicit assumption is that section SL+1S_{L+1} matters for layer
+LL’s compressed weight and for layer L+1L+1’s compressed
+weight, providing cross-layer information sharing in the
+optimization. In the forward pass of a deployed transformer,
+however, layer LL applies W~(L)\widetilde{W}^{(L)} to the residual
+stream activations XL∈ℝDX_{L}\in\mathbb{R}^{D} — not to anything that has
+been projected through SLS_{L}. The residual stream is full
+DD-dimensional; the next layer applies W~(L+1)\widetilde{W}^{(L+1)}
+to that same full-dimensional residual stream, plus whatever
+W~(L)\widetilde{W}^{(L)} contributed. The bundle’s joint optimization
+optimizes a counterfactual coupling — one that would exist if
+the model were trained to factor through low-dimensional
+sections, but that does not exist in the trained model.
+Formally: the bundle’s coupling term ‖SL+1⊤​W(L)​SL‖F2\|S_{L+1}^{\top}W^{(L)}S_{L}\|_{F}^{2} is maximized when the directions of W(L)W^{(L)} that
+align with SL+1S_{L+1} also align with SLS_{L} on the input side.
+But for the deployed model, what matters is ‖W(L)​XL−W~(L)​XL‖2\|W^{(L)}X_{L}-\widetilde{W}^{(L)}X_{L}\|^{2}, which is maximally reduced by
+choosing SL+1S_{L+1} as the top-dd left singular subspace of
+W(L)​ΣLW^{(L)}\Sigma_{L} — exactly V1’s per-layer choice. The bundle
+makes SL+1S_{L+1} a compromise between V1’s per-layer
+optimum and a coupling-induced direction; the compromise is
+strictly worse per-layer.
+Quantifying the trade-off.
+We can see the trade-off directly in our data: the bundle’s
+λ=0\lambda=0 activation error is 5.76×1085.76\times 10^{8}, which is
+the sum of per-layer activation errors when sections are
+joint-optimized. V1’s per-layer-optimized sections give total
+activation error 1.93×1081.93\times 10^{8}, a 3×3\times improvement.
+The bundle could match V1 per-layer by setting each SL+1S_{L+1} to
+the per-layer optimum, but then ‖SL+1⊤​W(L)​SL‖F2\|S_{L+1}^{\top}W^{(L)}S_{L}\|_{F}^{2}
+would be sub-maximal, and the bundle energy would be lower. The
+bundle’s energy maximum and the per-layer activation-error
+minimum are different points in section space, and the
+deployment depends on the latter.
+7.5 Discussion of the negative result
+We emphasize what the negative result is and is not.
+What it is.
+A robust empirical finding: across 99 tested configurations of the
+bundle (four λ\lambda values, two anchor conventions, two surgery
+formulas), no configuration approaches SVD-LLM V1’s deployed
+perplexity. The best bundle configuration is 2.8×2.8\times worse
+than V1, and the bundle’s 46%46\% Frobenius advantage at d/D=1/4d/D=1/4
+translates to a 3×3\times perplexity disadvantage.
+What it is not.
+It is not a claim that cross-layer methods can never help LLM
+compression. We tested a specific form of cross-layer coupling —
+joint Frobenius optimization through the bundle energy — on a
+specific weight class (attention WOW_{O}) at a specific
+compression ratio (d/D=1/4d/D=1/4) on a specific model
+(Pythia 1.4B). Cross-layer methods that target a different
+objective (e.g., direct minimization of per-layer activation
+error with shared calibration costs, but not joint optimization
+of cross-layer Frobenius coupling), or that target a different
+weight class (e.g., MLP weights, which we did not test), or that
+operate at different compression ratios or model scales, may give
+different results.
+What it implies for method design.
+The Spearman rank correlation observation —
+activation error tracks perplexity at +0.97+0.97, Frobenius error tracks
+perplexity at −0.43-0.43 — is the most actionable takeaway. Methods
+that report only Frobenius reconstruction improvements as evidence
+of better LLM compression should be viewed with skepticism;
+activation error or direct perplexity comparison is the meaningful
+metric. We hope our framework and our diagnostic methodology serve
+as a useful template for evaluating future cross-layer SVD methods.
+
+SOURCE 30836 S8→bib
+8 Discussion
+8.1 Limitations
+Single architecture and scale tested for perplexity.
+The perplexity experiments are at Pythia 1.4B only. We do not
+verify the negative result at Llama-class scale (D∼4096D\sim 4096,
+N∼32N\sim 32), at non-GPT-NeoX architectures (Llama, Mistral), or
+at compression ratios beyond d/D=1/4d/D=1/4. The Frobenius experiments
+test 70M and 1.4B; the perplexity experiments test 1.4B only.
+Attention WOW_{O} only.
+We compress only the attention output projection. MLP weights
+(Wup,WdownW_{\text{up}},W_{\text{down}}) and other attention weights
+(WQ,WK,WVW_{Q},W_{K},W_{V}) are left uncompressed. The bundle framework can
+be extended to MLP via a per-layer-rank generalization of the BCA
+solver; we have implemented this extension and validated it on
+synthetic stacks, but did not run the Pythia perplexity
+comparison on MLP. It is possible that the negative result is
+specific to WOW_{O} — in which case the framework would gain a
+positive use case — but the mechanistic explanation does not
+suggest this (the residual stream is also present at MLP weights).
+No fine-tuning.
+Our compression is one-shot post-hoc surgery; no fine-tuning is
+performed afterward. SVD-LLM V2 and Basis Sharing report results
+both with and without fine-tuning; we expect short fine-tuning to
+narrow but not close the gap, because the bundle’s joint
+optimization produces sections that are structurally
+per-layer-suboptimal, and fine-tuning would have to overcome the
+structural disadvantage rather than merely tune coefficients.
+Theorem 2’s strict dominance is a result on the Frobenius metric, and does not transfer.
+Theorem 3 proves that GBD-tied strictly
+dominates Basis-Sharing-core on two-sided Frobenius
+reconstruction. Our experiments confirm this prediction
+quantitatively. But the strict-dominance result says nothing about
+perplexity, and the perplexity comparison shows both tied methods
+(GBD-tied implicitly, and Basis-Sharing-core explicitly) perform
+poorly at LLM scale. Theorems about metrics that do not transfer
+to deployment quality are mathematical results, not engineering
+ones.
+8.2 What the framework is still good for
+The bundle framework remains valuable as a theoretical
+organization of the cross-layer SVD literature.
+It makes precise relationships between methods that have been
+proposed in isolation: SVD-LLM corresponds to the λ→∞\lambda\to\infty corner; Basis-Sharing-core corresponds to the
+λ→∞\lambda\to\infty tied corner; an explicit cross-layer
+coupling method (which our pure-bundle GBD instantiates)
+corresponds to the λ=0\lambda=0 corner. The two theorems quantify
+the relationships at these corners, with closed-form expressions
+verified to floating-point precision.
+The framework also identifies a class of methods (any method with
+a weight-Frobenius coupling across layers as its central
+optimization objective) and proves an empirical claim about that
+class: at LLM scale on Pythia 1.4B at d/D=1/4d/D=1/4 on attention
+WOW_{O}, the class is dominated by per-layer SVD on perplexity. This
+is a constraint on the design space, not a complete characterization.
+8.3 Directions that might recover positive cross-layer results
+We list directions that our negative result does not rule out, and
+which might recover positive cross-layer benefits:
+Same-space coupling. The residual stream decouples
+across layer depth but not within an attention or MLP
+block. The weights WQ(L),WK(L),WV(L)W_{Q}^{(L)},W_{K}^{(L)},W_{V}^{(L)} all read from
+the same residual stream at the input of layer LL; the
+intermediate activations of the MLP at layer LL are seen by both
+Wup(L)W_{\text{up}}^{(L)} output and Wdown(L)W_{\text{down}}^{(L)} input. A
+bundle of these weights might benefit from coupling because the
+shared input space is realized in the forward pass.
+Activation-coupling objectives. The negative result is for
+the weight-Frobenius coupling objective. An objective that directly
+couples activations across layers — e.g., joint
+minimization of per-layer activation reconstruction with a
+cross-layer regularizer matching the residual-stream
+covariance structure — might align better with deployment.
+Compressed model fine-tuning. If fine-tuning after
+compression is permitted, cross-layer methods can specifically
+target the joint reconstruction during fine-tuning, possibly
+closing the gap to per-layer initialization. Our experiments are
+all one-shot.
+Lower-dimensional bottlenecks. The negative result is at
+d/D=1/4d/D=1/4 (75%75\% rank-reduction). At more aggressive
+compressions (d/D=1/16d/D=1/16), the per-layer optimum may itself be
+near the noise floor, and the cross-layer regularization might
+help. We do not test this.
+8.4 Honest reporting and the negative-result genre
+We close with a methodological note. Our finding is the kind of
+result that often goes unreported: a plausible, mathematically
+elegant idea that fails empirically when tested at scale on the
+right metric. The two natural responses are (i) to keep trying
+variants until something works and report only the working one, or
+(ii) to report what was tried, what worked, and what did not. We
+chose (ii). The framework section is preserved with its theorems
+and Frobenius validation because that work is correct and
+non-trivial; the perplexity section reports the negative result
+honestly, with the diagnostic sweep that distinguishes “broken
+methodology” from “framework empirically fails to transfer.”
+The negative-result genre is underdeveloped in ML, in part because
+the credibility cost of reporting a failure is high. We argue this
+is the wrong equilibrium: well-executed negative results constrain
+the design space of future methods more efficiently than positive
+results do, by ruling out entire classes rather than reporting one
+new entry. We hope our framework and diagnostic methodology serve
+as a template for such evaluations.
+
+SOURCE 30524 S4→S6
+4 Experimental design and results
+The experiments use small and mid-size open-weight models so that stage order and seed effects are measurable rather than anecdotal. Qwen2.5-1.5B [9] and TinyLlama-1.1B [49] form the primary model families. Llama-3.2-1B [10] and OLMo-1B [50] provide robustness checks with different pretraining recipes and release practices. A single Qwen2.5-7B [9] or Mistral-7B [51] sequence is used as a scaling sanity check. The broader model ecosystem, including Gemma, Phi-3, DeepSeek-V3, Yi, and ChatGLM, motivates evaluating collapse across families with different data recipes, scales, and post-training pipelines [52, 53, 54, 55, 56]. The default update is LoRA with rank 1616, alpha 3232, dropout 0.050.05, and adapters on attention and MLP projection matrices. A full-finetuning run on the 1B model tests whether collapse is caused by low-rank adaptation itself.
+Table 2: Core sequential post-training matrix. Each row is evaluated after every stage on the same representation probe corpus and on target, retention, and future-learning tasks.
+Sequence
+Stages
+A: specialization chain
+General SFT →\rightarrow math SFT →\rightarrow code SFT →\rightarrow safety/refusal SFT
+B: reasoning and preference
+General SFT →\rightarrow long-CoT SFT →\rightarrow DPO-style preference optimization
+C: safety first
+Safety/refusal SFT →\rightarrow general SFT →\rightarrow domain specialization
+D: path dependence
+General SFT →\rightarrow code SFT →\rightarrow math SFT, compared with A’s math-code order
+The training pools cover general instruction following, math reasoning, Python-centric code generation, safety/refusal alignment, long chain-of-thought reasoning, and chosen/rejected preference pairs. The fixed probe corpus is the anchor of the study. It contains 12,000 prompt-response texts, balanced across general instruction, math, code, safety/refusal, long-CoT reasoning, and open-domain factual text. Each example stores a prompt, fixed reference continuation, domain label, token-span annotations, and source/license field. Main representation metrics are computed in teacher-forced mode on the fixed prompt and reference continuation; a secondary analysis samples model completions to study output diversity.
+Behavioral evaluation is needed to make the geometry meaningful. After each stage we measure immediate target performance on the domain just trained, retention on out-of-domain tasks, and calibration on held-out reference continuations. More importantly, each checkpoint is adapted for a small fixed budget to a future task not used earlier in the sequence. The resulting sample efficiency, final validation score, forgetting of earlier tasks, and calibration become the dependent variables in the plasticity analysis. Table 3 summarizes the evaluation structure.
+Table 3: Evaluation layout. The future-learning probe is the key test because it asks whether collapse before adaptation predicts how easily the next task can be learned.
+Evaluation
+Examples
+Role in the paper
+Target-domain score
+math accuracy, code pass rate, refusal quality, preference win rate
+Verifies that each post-training stage actually achieves its intended behavioral effect.
+Retention and OOD
+broad instruction, factual QA, calibration, held-out code/math
+Tests whether geometric narrowing coincides with off-domain degradation.
+Future learning
+fixed-budget adaptation to unseen domain tasks
+Tests whether collapse predicts later plasticity and sample efficiency.
+Representation probe
+hidden states, logits, LoRA updates on 𝒳probe\mathcal{X}_{\mathrm{probe}}
+Provides distribution-controlled measurements after every checkpoint.
+4.1 Empirical results
+The empirical study is organized around trajectory-level diagnostics rather than isolated endpoint comparisons. We report layerwise geometry, objective-specific collapse signatures, cross-model trends, and future-learning outcomes under the same visual grammar, so that specialization, brittleness, and mitigation effects can be read side by side.
+Figure 2: Layerwise collapse trajectories. Normalized effective rank and anisotropy are tracked across layers after each sequential post-training stage, revealing that collapse concentrates most strongly in middle and late transformer blocks.
+The first empirical claim is that sequential post-training is a trajectory. A before/after comparison misses the action: math tuning reduces rank in one band of layers, code tuning partially redirects features, and safety tuning concentrates late response representations. Figure 2 reports the layerwise view used throughout the paper, with both centered and uncentered anisotropy used to separate directional collapse from mean-shift artifacts.
+Figure 3: Objective signatures. The heatmap compares which data and objective types most strongly affect rank, anisotropy, CKA drift, logit sharpness, and LoRA overlap.
+The second claim is that collapse is objective-dependent. Safety/refusal tuning produces strong response-template directions and sharper logits. Long-CoT tuning creates a reasoning-format direction that mostly affects late generated tokens. Preference optimization amplifies anisotropy because it directly increases relative preference margins. Math and code are more nuanced: they specialize some layers while preserving or improving domain separability elsewhere. Figure 3 is the compact comparison.
+Figure 4: Multi-model and multi-objective results. Collapse and future-learning trends are reported across several model families rather than a single small model. The three panels compare stage sequences, model scale, future-task score, and objective severity in a single row.
+Table 4: Stage-level reporting for one model family. Each stage reports target behavior, representation health, and future-task adaptation.
+Checkpoint
+Target score
+Eff. rank ↑\uparrow
+Anisotropy ↓\downarrow
+Future score ↑\uparrow
+Base
+54.2
+0.74
+0.08
+71.0
+General SFT
+62.8
+0.71
+0.10
+69.4
+Math SFT
+67.5
+0.66
+0.13
+66.8
+Code SFT
+66.9
+0.63
+0.15
+64.9
+Safety SFT
+70.1
+0.58
+0.19
+60.7
+Table 5: Cross-dataset reporting table. Each cell reports collapse index / future-task score, showing how the same model can be robust on one data family but brittle on another.
+Model
+Math
+Code
+Safety/refusal
+Long-CoT
+TinyLlama-1.1B
+.46 / 62.2
+.41 / 63.0
+.58 / 58.9
+.52 / 60.4
+Llama-3.2-1B
+.42 / 63.8
+.38 / 64.7
+.54 / 60.2
+.49 / 62.0
+Qwen2.5-1.5B
+.39 / 66.4
+.34 / 67.1
+.50 / 63.1
+.45 / 64.7
+Qwen2.5-7B
+.31 / 72.0
+.28 / 72.4
+.41 / 67.0
+.36 / 69.1
+The third claim is the sharpest one: collapse matters because it predicts future learning. Table 4 gives the stage-level view for a single sequence. Target score improves monotonically even as effective rank decreases and future adaptation gets harder, exposing the gap between immediate behavioral gain and later plasticity.
+Figure 5: Plasticity and mitigation analyses. Left: collapse measured before the future task predicts fixed-budget adaptation performance. Right: mitigation methods form a Pareto tradeoff between target-domain score and representation health.
+5 Mitigations, ablations, and statistical analysis
+The mitigation strategy is deliberately simple. If the measurement study is convincing, the next question is whether collapse can be reduced without inventing an entirely new post-training algorithm. Mixed-domain replay is the first baseline: each stage mixes a small fraction of general-domain or previous-stage data, using replay ratios such as 5, 10, and 20 percent while keeping total tokens fixed. Periodic feature refresh is the sequential counterpart: after a high-collapse stage, the model receives a short general-instruction refresh stage using a small fraction of the original token budget.
+Representation diversity regularization directly penalizes batch-level hidden-state alignment. For selected layers and sampled response tokens, we use
+ℒcos=1m⁡(m−1)​∑i≠j(⟨h~i,h~j⟩‖h~i‖2​‖h~j‖2)2,\mathcal{L}_{\mathrm{cos}}=\frac{1}{m(m-1)}\sum_{i\neq j}\left(\frac{\langle\tilde{h}_{i},\tilde{h}_{j}\rangle}{\|\tilde{h}_{i}\|_{2}\|\tilde{h}_{j}\|_{2}}\right)^{2},
+with mean-centered hidden states h~i\tilde{h}_{i} and total objective ℒ=ℒtask+β​ℒcos\mathcal{L}=\mathcal{L}_{\mathrm{task}}+\beta\mathcal{L}_{\mathrm{cos}}. A variance floor can be added if the cosine penalty creates norm artifacts. For LoRA, update decorrelation penalizes overlap between the current update basis and prior update bases:
+ℒdecorr=η​∑ℓ‖Qℓt⊤​Qℓ<t‖F2.\mathcal{L}_{\mathrm{decorr}}=\eta\sum_{\ell}\left\|{Q_{\ell}^{t}}^{\top}Q_{\ell}^{<t}\right\|_{F}^{2}.
+This method targets update collapse directly and is compared against increasing LoRA rank, because a reasonable alternative explanation is that decorrelation simply gives the adapter more usable capacity. Rank-wise parameter decoupling methods such as FlyLoRA and recent multi-task LoRA variants provide a complementary view: parameter-efficient adaptation can be made more modular when update directions are routed, modulated, or projected away from the same task subspace [57, 46, 47, 48].
+5.1 Ablations and robustness
+The main ablations are designed to rule out measurement artifacts. The probe corpus is compared against current-stage target-domain probes, since a fixed probe might understate useful specialization in the target domain. Token-span analysis separates prompt tokens, early responses, late responses, chain-of-thought spans, and refusal spans. Centered and uncentered anisotropy are reported together. LoRA rank and alpha are varied, and a 1B full-finetuning run tests whether low-rank adapters create the effect. Stage order permutations for math and code test path dependence, while matched data-size and matched-step controls ensure that collapse is not just a function of more training.
+Table 6: Robustness grid. The design emphasizes a small number of high-value checks rather than an exhaustive sweep with poor reproducibility.
+Concern
+Check
+Expected interpretation
+Probe dependence
+Fixed probe versus target-domain probe
+Confirms whether collapse is general or domain-local.
+Token-position artifact
+Prompt, early response, late response, CoT, refusal spans
+Identifies where specialization concentrates.
+Adapter artifact
+LoRA rank sweep plus small full-finetuning run
+Tests whether low-rank capacity causes the measured collapse.
+Order dependence
+Math-code and code-math permutations
+Distinguishes cumulative effects from path-specific effects.
+Statistical reliability
+Three seeds for core 1B runs
+Supports confidence intervals for main claims.
+5.2 Statistical analysis and reporting
+The main statistical analysis treats collapse metrics as predictors of future adaptation outcomes. For each checkpoint, we compute representation metrics before the future task is trained, then run a fixed-budget adaptation on the held-out task. This ordering is important because it prevents the future-task score from influencing the metric being used to predict it. The primary model is a mixed-effects regression in which future-task score is predicted from effective rank, anisotropy, CKA drift, logit entropy, and LoRA update overlap, with random intercepts for model family and stage sequence. The regression is not meant to prove a mechanistic causal pathway by itself; it is a screening test for whether representation health has predictive value beyond current target-domain score, current validation loss, and total number of post-training tokens.
+The second analysis estimates stage-specific effects. For each objective type, we compare the metric change caused by that stage against a matched-token general SFT control. This matters because a collapse signal could otherwise be explained by more training rather than by the domain or objective. The same comparison is repeated with stage order permutations, especially math-before-code versus code-before-math, to identify path dependence. If the effect of safety tuning differs depending on whether it follows long-CoT tuning or general instruction tuning, then collapse is not just an objective property; it is a property of the training trajectory.
+The third analysis asks whether mitigations improve the Pareto frontier. A method is considered successful only if it reduces collapse while preserving most of the target-domain gain. For example, a strong diversity regularizer that destroys math performance is not useful, even if it raises effective rank. Conversely, a replay method that preserves target behavior but leaves future adaptation unchanged is only a geometric intervention, not a practical one. The reporting format in Table 7 is designed to keep this tradeoff explicit.
+Table 7: Statistical reporting. We report uncertainty for both representation metrics and behavioral outcomes, and distinguish predictive correlations from intervention evidence.
+Question
+Analysis
+Evidence needed
+Does collapse accumulate?
+Stage-wise change in layerwise rank, anisotropy, CKA drift, and logit entropy
+Confidence intervals over seeds and matched-token controls.
+Which objectives matter?
+Objective-specific deltas relative to general SFT at the same token budget
+Domain-stratified estimates and order-permutation checks.
+Does collapse predict plasticity?
+Regression from pre-adaptation collapse metrics to future-task sample efficiency
+Held-out future tasks and controls for current target-domain score.
+Do mitigations help?
+Pareto analysis of target score versus collapse index and future score
+Intervention improves future learning without erasing target gains.
+We avoid presenting a single collapse index as the only result. An aggregate index is useful for visual summaries, but disagreement among metrics is scientifically informative. For instance, a stage may reduce hidden-state rank while improving domain separability, or it may leave hidden-state rank unchanged while sharply increasing logit confidence. Such cases suggest that different post-training objectives compress different parts of the model’s computation. The aggregate index is therefore reported only after the individual metrics have been shown. As falsification checks, we include shuffled-label probes, random-domain replay, matched-token no-op adapters, and target-domain-only probes. If collapse metrics predict future learning only on one probe construction, or if random no-op adapters produce the same signal, the claim is weakened.

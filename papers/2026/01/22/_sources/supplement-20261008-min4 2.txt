@@ -1,0 +1,1193 @@
+
+SOURCE https://arxiv.org/html/2601.12594v1
+Abstract
+Contrastive language-audio pretraining (CLAP) has achieved notable success in learning semantically rich audio representations and is widely adopted for various audio-related tasks. However, current CLAP models face several key limitations. First, they are typically trained on relatively small datasets, often comprising a few million audio samples. Second, existing CLAP models are restricted to short and fixed duration, which constrains their usage in real-world scenarios with variable-duration audio. Third, the standard contrastive training objective operates on global representations, which may hinder the learning of dense, fine-grained audio features. To address these challenges, we introduce Scalable Language-Audio Pretraining (SLAP), which scales language-audio pretraining to 109 million audio-text pairs with variable audio durations and incorporates multiple training objectives. SLAP unifies contrastive loss with additional self-supervised and captioning losses in a single-stage training, facilitating the learning of richer dense audio representations. The proposed SLAP model achieves new state-of-the-art performance on audio-text retrieval and zero-shot audio classification tasks, demonstrating its effectiveness across diverse benchmarks.
+Index Terms:
+Multimodal learning, CLAP, self-supervised learning, contrastive learning, multi-objective learning
+††address: Meta
+1 Introduction
+Contrastive language-audio pretraining (CLAP) [1, 2] has recently emerged as a powerful paradigm for learning semantically rich and transferable audio representations from paired audio-text data, inspired by the success of CLIP [3] in the vision domain. CLAP models have demonstrated strong performance across a variety of audio-related tasks, including zero-shot audio classification [1], audio captioning [4], and audio separation and generation [5, 6]. Despite these advances, current CLAP models face several critical limitations that hinder their effectiveness and scalability in real-world scenarios.
+First, existing CLAP models are typically trained on relatively small datasets, often containing only a few million audio samples. In contrast, CLIP models benefit from billion-scale datasets, enabling them to learn more robust and generalizable features. Although recent efforts have leveraged large language models (LLMs) to generate captions for unlabeled audio [7, 8], the scarcity of large-scale, high-quality audio-text pairs remains a significant bottleneck. As a consequence, most CLAP models initialize their audio encoders with weights from models pretrained on AudioSet [9], rather than training from scratch like CLIP models.
+Second, most CLAP models with Transformer-based audio encoder are trained with short and fixed-duration audio clips, typically no longer than 10 seconds. In practice, shorter segments are padded to a predefined length, while longer segments are truncated, leading to inefficient computation and potential information loss. This duration limitation mainly arises from the reliance on audio encoders pretrained on AudioSet [9] as well as the computational challenges associated with handling long and variable-length inputs. Although some recent approaches have attempted to extend CLAP models to longer and variable-length audio [2, 10], these methods have not fully addressed this challenge.
+Third, the contrastive training objective in CLAP focuses on aligning global representations of audio and text pairs. While this approach is effective for learning high-level semantic correspondences, it may limit the model’s ability to capture dense, fine-grained audio features that generalize well to downstream audio understanding tasks. Although multi-objective training with self-supervised and captioning objectives have been explored [11, 12], they often introduce additional complexity with complex multi-stage training design.
+To address these challenges, we propose Scalable Language-Audio Pretraining (SLAP), a new framework that improves contrastive language-audio pretraining along three dimensions. First, SLAP scales pretraining to 109 million audio-text pairs, significantly surpassing the scale of previous work. Second, SLAP natively supports variable audio durations by redesigning the Transformer-based audio encoder and training the encoder from scratch. Third, SLAP unifies contrastive, self-supervised and captioning losses into a single-stage training pipeline, facilitating the learning of richer and denser audio representations. SLAP achieves new state-of-the-art (SOTA) results on multiple audio-language benchmarks, highlighting the importance of large-scale, flexible, and multi-objective pretraining for audio representation learning.
+In summary, our main contributions are:
+•
+We scale contrastive language-audio pretraining to 109 million audio-text pairs, an order of magnitude larger than previous work.
+•
+We introduce a redesigned Transformer-based audio encoder that natively supports variable audio durations up to 30 seconds and is trained from scratch.
+•
+We propose a unified, single-stage multi-objective training pipeline that combines contrastive, self-supervised, and captioning losses, enabling the learning of richer and denser audio representations.
+•
+We achieve new state-of-the-art results on multiple audio-language benchmarks, demonstrating the effectiveness of our approach.
+2 Methods
+Our proposed method introduces a redesigned audio Transformer encoder and the SLAP training framework. Section 2.1 details the architecture and design choices of the audio encoder, while Section 2.2 presents the overall training pipeline.
+Figure 1: Overview of SLAP training framework, where the flow for self-supervised learning is annotated in red.
+2.1 Audio Encoder
+The proposed audio encoder builds upon the Vision Transformer (ViT) architecture [13], but departs from prior work [2] that directly transfers architectures and weights from pretrained vision models. Instead, we redesign the Transformer to better capture audio-specific characteristics and to natively support variable-length inputs.
+2.1.1 Modernized Transformer
+To enhance the standard ViT, we incorporate recent advancements from large language models [14, 15]. Specifically, we employ 2D Rotary Positional Embedding (RoPE) to effectively model temporal and spectral relationships in the spectrograms. We adopt pre-normalization with RMSNorm and utilize the SwiGLU activation function to stabilize training [15]. Additionally, following [14], we remove bias terms from all linear layers.
+Processing long audio sequences poses significant computational challenges, as attention scales quadratically with sequence length. To address this, we introduce an alternating attention mechanism that interleaves local sliding window attention with global attention. In local attention blocks, each patch token attends only to its neighbors within a small window, substantially reducing computational cost. Global attention blocks, in contrast, allow each token to attend to all others, enabling the modeling of long-range dependencies and global context. This hybrid design maintains efficiency for long audio inputs while preserving the encoder’s capacity to capture both fine-grained local patterns and global structures.
+2.1.2 Handling Variable Duration with Sequence Packing
+To efficiently support variable-duration audio clips during both training and inference, we adopt a sequence packing strategy. Each mel-spectrogram is first divided into non-overlapping patches, arranged in time \rightarrow frequency order. Although batching still requires padding waveforms to the maximum duration within a batch, our patch extraction ensures that all padded regions are grouped at the end of each sample. We then flatten and concatenate the patches from all audio clips in the batch, removing any padded patches, to form a single 1D packed sequence. This packed sequence is processed by the Transformer as a single long input with a batch size of one. To efficiently support this approach, we leverage Flash Attention [16], which natively handles attention over variable-length packed sequences and supports local sliding window attention. Compared to alternative methods [10], our approach simplifies the packing process and minimizes padding at the sample level, thereby enhancing computational efficiency and flexibility.
+2.2 Training Framework
+Given a collection of audio-text pairs \{A_{i},T_{i}\} , where A_{i} denotes an audio clip and T_{i} its corresponding caption, our main objective is to develop a CLAP model that learns generalizable audio representations, suitable for a variety of single-modal and multimodal audio tasks. The proposed SLAP model consists of an audio encoder f , as described above, and a text encoder g . The audio encoder is trained from scratch, while the text encoder is initialized with weights from a pretrained ModernBERT [14]. We adopt a unified, single-stage training framework that combines the standard CLAP loss with both a self-supervised learning loss and a captioning loss. An overview of the training framework is illustrated in Figure 1. The details of each objective are described below.
+2.2.1 Contrastive Loss
+The contrastive training objective is a standard CLAP loss, which encourages embeddings of paired audio and text samples to be close, while pushing apart the embeddings of unpaired audio-text samples. To obtain global representations for both modalities, we use multi-head attention pooling (MAP) [17] instead of conventional class token. Mathematically, this can be formulated as:
+E_{i}^{a}=\mathrm{MAP}_{\mathrm{audio}}(f(A_{i}))
+(1)
+E_{i}^{t}=\mathrm{MAP}_{\mathrm{text}}(g(T_{i}))
+(2)
+where E_{i}^{a} is the global audio embedding and E_{i}^{t} is the global text embedding, both with a dimension of D . The CLAP loss is then defined as:
+\mathcal{L}_{\mathrm{CLAP}}=\frac{1}{2B}\sum_{i=1}^{B}\!\left(\log\frac{\exp(E_{i}^{a}\cdot E_{i}^{t}/\tau)}{\sum_{j=1}^{B}\exp(E_{i}^{a}\cdot E_{j}^{t}/\tau)}+\log\frac{\exp(E_{i}^{t}\cdot E_{i}^{a}/\tau)}{\sum_{j=1}^{B}\exp(E_{i}^{t}\cdot E_{j}^{a}/\tau)}\right)
+(3)
+where B is the batch size, and \tau is a learnable temperature parameter.
+Table 1: Experimental results of audio-text retrieval on test sets of AudioCaps and Clotho. Higher score means better performance.
+Method
+AudioCaps
+Clotho
+Text-to-Audio
+Audio-to-Text
+Text-to-Audio
+Audio-to-Text
+\boldsymbol{R@1}
+\boldsymbol{R@5}
+\boldsymbol{R@10}
+\boldsymbol{R@1}
+\boldsymbol{R@5}
+\boldsymbol{R@10}
+\boldsymbol{R@1}
+\boldsymbol{R@5}
+\boldsymbol{R@10}
+\boldsymbol{R@1}
+\boldsymbol{R@5}
+\boldsymbol{R@10}
+Zero-Shot
+M2D2 [11]
+27.3
+58.1
+71.5
+36.1
+65.3
+77.4
+15.9
+37.8
+49.2
+18.1
+39.9
+52.5
+WavCaps [7]
+28.6
+61.1
+75.8
+40.2
+69.4
+80.3
+16.5
+38.8
+50.9
+20.0
+43.3
+56.6
+SLAP (ours)
+35.1
+65.8
+76.4
+44.8
+73.9
+84.4
+18.9
+41.7
+54.3
+23.5
+46.6
+59.0
+Supervised
+LAION-CLAP [2]
+36.2
+70.3
+82.5
+45.0
+76.7
+88.0
+17.2
+42.9
+55.4
+24.2
+51.1
+66.9
+WavCaps [7]
+42.2
+76.5
+87.1
+54.6
+85.2
+92.4
+19.7
+45.7
+59.4
+26.9
+52.6
+64.9
+Cacophony [12]
+41.0
+75.3
+86.4
+55.3
+83.6
+92.4
+20.2
+45.9
+58.8
+26.5
+54.1
+67.3
+M2D2 [11]
+41.9
+77.0
+88.5
+59.2
+84.7
+92.7
+20.0
+45.9
+59.4
+24.9
+51.6
+64.5
+CED-LE [18]
+45.6
+81.3
+90.2
+60.7
+86.9
+94.8
+25.0
+53.7
+66.6
+30.9
+57.5
+70.2
+SLAP (ours)
+47.5
+79.8
+89.2
+63.4
+87.8
+94.1
+27.2
+55.9
+68.3
+36.8
+61.3
+73.2
+2.2.2 Self-Supervised Learning Loss
+While the contrastive objective operates at the global embedding level, it does not directly encourage the learning of informative dense audio patch features. To address this, we introduce a masked audio modeling loss [19]. Specifically, we build a teacher audio encoder f_{t} whose weights are updated through exponential moving average (EMA) of the main (student) audio encoder f . Before feeding patches into the Transformer blocks, a subset of patches is randomly replaced with a mask token m according to a predefined masking ratio. The masked sequence is processed by the student encoder, while the unmasked sequence is processed by the teacher encoder. The encoded masked representations from the student encoder and their corresponding unmasked representations from the teacher encoder are projected onto prototype scores through a separate MLP head. Finally, a cross-entropy loss is computed between the softmax-normalized prototype scores of the student and teacher outputs. Formally, the self-supervised learning loss is defined as:
+\mathcal{L}_{\mathrm{SSL}}=-\sum_{i=1}^{B}\sum_{j}{Q_{t}}^{ij}\log{Q_{s}^{ij}}
+(4)
+where i is the sample index in a batch, j are patch indices for masked tokens, Q_{t} and Q_{s} are teacher and student softmax-normalized prototype scores, respectively.
+2.2.3 Captioning Loss
+To further enrich the semantic content of the learned patch features, we incorporate a captioning loss. A shallow Transformer decoder is attached to generate captions conditioned on dense audio features before applying MAP head. The caption decoder is trained from scratch and optimized using standard teach-forcing training strategy, which can be formulated as:
+\mathcal{L}_{\mathrm{CAP}}=-\sum_{i=1}^{B}\sum_{z}P(T_{z}^{i}|T_{<z}^{i},f(A_{i}))
+(5)
+where z denotes the index of a text token, T_{z}^{i} is the z -th token in the i -th caption in a batch.
+The overall training objective is a weighted combination of the three loss terms:
+\mathcal{L}=\alpha\mathcal{L}_{\mathrm{CLAP}}+\beta\mathcal{L}_{\mathrm{SSL}}+\gamma\mathcal{L}_{\mathrm{CAP}}
+(6)
+where \alpha , \beta , and \gamma are the weights for the respective loss terms.
+3 Experiments
+3.1 Datasets and Evaluation Tasks
+We use the MovieGen Audio pretraining dataset [20] as our primary training corpus. This dataset contains approximately 109 million audio clips of varying durations, with captions generated by a general audio captioning model. Although the dataset itself is not publicly available, its curation pipeline can be readily applied to large-scale, unlabeled audio corpora.
+To comprehensively assess our model’s performance, we conduct evaluations across a diverse set of tasks on main audio-text benchmarks, including audio-text retrieval, zero-shot audio classification, audio captioning, and audio tagging. This evaluation protocol ensures a robust assessment of the model’s generalization and transfer capabilities.
+3.2 Implementation Details
+Our audio encoder contains 12 Transformer layers, each with 12 attention heads, a hidden size of 768, and an intermediate dimension of 3072. We use an alternating attention mechanism, applying two sliding window attention blocks (window size of 24 frames) followed by a full attention block, enabling efficient modeling of both local and global dependencies. The teacher audio encoder is initialized from the student encoder and updated via exponential moving average at each training step. For text encoding, we initialize the encoder with a ModernBERT-base [14] model containing 22 Transformer layers, each with 12 attention heads and a hidden size of 768. The text decoder is trained from scratch and consists of 8 Transformer layers, each with 8 attention heads and a hidden size of 512.
+Input waveforms are resampled to 16 kHz, and mel-spectrograms are computed using a 25 ms Hanning window, a 10 ms hop size, and 64 mel bins. The resulting spectrograms are partitioned into non-overlapping patches of size 16\times 16 . We train the SLAP model on the MovieGen Audio dataset for 2 epochs with a batch size of 2048. The learning rate is linearly warmed up to 1\times 10^{-4} over 2000 steps. SpecAugment is applied during training to improve robustness [21]. The mask ratio is set to 0.5. The EMA momentum is warmed up from 0.994 to 1.0 using a cosine schedule. The loss weights \alpha , \beta , and \gamma are empirically set to 1.0, 1.0, and 0.5, respectively.
+Table 2: Results of the top-1 accuracy on zero-shot audio classification.
+Method
+ESC
+US8K
+CRD
+RAD
+GTZAN
+GLAP [22]
+88.8
+78.9
+20.5
+-
+69.6
+MS-CLAP [1]
+93.9
+82.3
+30.0
+31.5
+58.4
+WavCaps [7]
+94.8
+80.6
+-
+-
+-
+MGA-CLAP [23]
+94.9
+83.7
+-
+-
+-
+AudioSetCaps [8]
+88.0
+76.6
+28.5
+25.7
+70.5
+M2D2 [11]
+94.3
+82.9
+28.6
+-
+79.3
+SLAP (ours)
+88.6
+81.6
+28.1
+26.4
+56.8
+SLAP {}_{\textrm{Wavcaps}} (ours)
+95.5
+83.5
+32.2
+29.8
+80.5
+3.3 Results
+Audio-Text Retrieval We evaluate audio-text retrieval performance on the AudioCaps [24] and Clotho [25] datasets. AudioCaps consists of 10-second audio clips, while Clotho contains clips ranging from 15 to 30 seconds. We report both zero-shot and fine-tuned results. In the zero-shot setting, our SLAP model is evaluated directly on the target dataset without additional training. For fine-tuning, the model is further trained on each target dataset, retaining all three loss terms during this stage. Performance is measured using recall@ k , and the main results are summarized in Table 1.
+In the zero-shot setting, SLAP achieves strong performance, approaching that of some supervised methods. Notably, although the captions in the MovieGen Audio pretraining dataset are generated by an audio captioning model, our results demonstrate the effectiveness of scaling up training data, even with noisy annotations. When fine-tuned on AudioCaps and Clotho, SLAP achieves state-of-the-art results, with recall@1 scores of 47.2% and 63.4% on AudioCaps, and 27.2% and 36.8% on Clotho, respectively, significantly outperforming previous approaches. We attribute these improvements not only to the increased scale of training data, but also to SLAP’s ability to process audio clips of variable duration, as evidenced by the results on Clotho. In contrast, prior methods require cropping audio to a fixed, short duration, which can lead to information loss.
+Table 3: Audio captioning results on the test sets of AudioCaps and Clotho. A higher score means better performance.
+Dataset
+Method
+METEOR
+CIDEr
+SPICE
+Clotho
+SLAM-AAC [26]
+19.7
+51.5
+14.8
+BLAT [27]
+17.8
+41.5
+12.6
+M2D2 [11]
+17.8
+43.5
+12.4
+Cacophony [12]
+15.3
+41.5
+10.6
+SLAP (ours)
+18.1
+43.7
+13.1
+AudioCaps
+AudioSetCaps [8]
+26.2
+83.9
+18.6
+BLAT [27]
+24.7
+73.3
+18.4
+M2D2 [11]
+24.3
+72.4
+17.6
+Cacophony [12]
+23.6
+72.8
+16.8
+SLAP (ours)
+24.9
+75.1
+18.1
+Zero-Shot Audio Classification We evaluate zero-shot audio classification performance on five datasets spanning general sound (ESC-50 [28], UrbanSound8K [29]), speech (CREMA-D [30], RAVDESS [31]), and music (GTZAN [32]). In this setting, both input audio samples and class labels are encoded as audio and text embeddings, respectively. For each query, we compute the cosine similarity between the audio embedding and each class label embedding, assigning the class with the highest similarity as the predicted label. Since the MovieGen Audio captions are generated by an audio captioning model, they may introduce noise, hallucination and fail to cover the full diversity of sound events. To address this, we further fine-tune the SLAP model on the WavCaps [7] dataset, which provides broader coverage of real-world sound events. We report results for both pretraining and fine-tuning settings. Table 2 presents the top-1 accuracy for each dataset. Our SLAP model, when fine-tuned on WavCaps, achieves new state-of-the-art results on ESC-50 (95.5%), CREMA-D (32.2%), and GTZAN (80.5%), and remains competitive on UrbanSound8K and RAVDESS. The performance gains from fine-tuning suggest that supplementing generated captions with additional weakly-labeled data helps improve the model’s ability to generalize across diverse audio domains. These results highlight the effectiveness of SLAP and the importance of scaling up training data.
+Audio Captioning We evaluate audio captioning performance on the AudioCaps and Clotho datasets. For these experiments, we use the same fine-tuned checkpoints as in the audio-text retrieval task, retaining all three loss terms. Notably, the captioning loss is assigned a lower weight and serves primarily as an auxiliary objective. We report results using METEOR, CIDEr, and SPICE, as shown in Table 3. For fair comparison, we primarily benchmark against other CLAP-based methods. SLAM-AAC [26] and AudioSetCaps [8], shown in gray, represent SOTA models on Clotho and AudioCaps, respectively. Despite using the captioning loss only as an auxiliary objective, our model outperforms M2D2 [11] and Cacophony [12] on both AudioCaps and Clotho. Both M2D2 and Cacophony employ multi-stage training frameworks that combine CLAP and self-supervised objectives, with Cacophony also incorporating a captioning loss. These results demonstrate the effectiveness of our unified training pipeline, which significantly simplifies the process compared to multi-stage approaches. Compared to SOTA captioning models, which typically leverage powerful pretrained large language models as text decoders [26], SLAP uses a shallow text decoder trained from scratch. This difference, along with the lower weight assigned to the captioning loss, may contribute to the performance gap between SLAP and the best-performing captioning methods.
+Audio Tagging To further evaluate the effectiveness of our audio encoder, we conduct audio tagging experiments on several benchmark datasets, including AudioSet, ESC-50, and Speech Commands V2 (SPC-2) [11]. Specifically, we attach a linear classification layer to the audio encoder of the pretrained SLAP model and fine-tune the entire audio encoder on each target dataset. For AudioSet, we follow the fine-tuning protocol from AudioMAE [33], incorporating balanced sampling, mixup, and cyclic rolling augmentation. Table 4 reports mean average precision (mAP) on AudioSet and classification accuracy on the other datasets. We compare our approach against other CLAP-based methods, while current SOTA (non-CLAP-based) results are also included for reference. The results show that SLAP outperforms BLAT [27] but falls short of M2D2 [11] on AudioSet. This performance gap may be due to M2D2 did self-supervised training on AudioSet, whereas we only apply direct audio tagging fine-tuning. On SPC-2, SLAP achieves the highest score, and on ESC-50, it shows competitive results compared to M2D2. These findings highlight the effectiveness and generalizability of our audio encoder and training pipeline.
+Table 4: Results of audio tagging among CLAP-based methods.
+Model
+Audioset
+ESC-50
+SPC-2
+SOTA
+50.0 [34]
+98.1 [35]
+98.7 [36]
+BLAT [27]
+44.0
+95.8
+-
+MS-CLAP [1]
+-
+96.7
+96.8
+M2D2 [11]
+49.0
+98.5
+98.4
+SLAP (ours)
+47.8
+98.2
+98.5
+Table 5: Ablation results of audio-text retrieval on AudioCaps.
+Method
+Text-to-Audio
+Audio-to-Text
+\boldsymbol{R@1}
+\boldsymbol{R@5}
+\boldsymbol{R@10}
+\boldsymbol{R@1}
+\boldsymbol{R@5}
+\boldsymbol{R@10}
+SLAP
+35.1
+65.8
+79.4
+44.8
+73.9
+84.4
+w/o \mathcal{L}_{\mathrm{SSL}}
+32.8
+64.4
+77.4
+42.4
+72.4
+82.2
+w/o \mathcal{L}_{\mathrm{CAP}}
+34.7
+65.2
+78.5
+43.0
+73.4
+83.7
+w/o \mathcal{L}_{\mathrm{SSL}} & \mathcal{L}_{\mathrm{CAP}}
+32.6
+63.0
+75.9
+41.7
+73.3
+83.5
+w/o local attn
+34.2
+65.4
+78.0
+43.4
+73.4
+84.1
+3.4 Ablation Study
+We perform ablation studies to evaluate the contributions of individual loss terms and the impact of local window attention. Pretrained models are assessed on the AudioCaps dataset in the zero-shot audio-text retrieval setting. Table 5 presents the results. The results indicate that both the self-supervised learning loss and the captioning loss contribute to performance improvements, with the self-supervised learning loss having a more substantial impact and the captioning loss providing a modest benefit. Furthermore, incorporating local window attention leads to better results than using full attention alone.
+4 Conclusion
+In this work, we propose scalable language-audio pretraining (SLAP), a novel framework that addresses key limitations of existing CLAP models by scaling pretraining to 109 million audio-text pairs, supporting variable-length audio inputs, and unifying multiple training objectives in a single-stage pipeline. Extensive experiments demonstrate that SLAP achieves state-of-the-art performance across multiple audio-language benchmarks.
+STOP 23888 23888
+
+SOURCE https://arxiv.org/html/2601.12680v1
+Abstract
+Tool learning is increasingly important for large language models (LLMs) to effectively coordinate and utilize a diverse set of tools in order to solve complex real-world tasks. By selecting and integrating appropriate tools, LLMs extend their capabilities beyond pure language understanding to perform specialized functions. However, existing methods for tool selection often focus on limited tool sets and struggle to generalize to novel tools encountered in practical deployments. To address these challenges, we introduce a comprehensive dataset spanning 7 domains, containing 155 tools and 9,377 question-answer pairs, which simulates realistic integration scenarios. Additionally, we propose MetaToolAgent (MTA), a meta-learning approach designed to improve cross-tool generalization. Experimental results show that MTA significantly outperforms baseline methods on unseen tools, demonstrating its promise for building flexible and scalable systems that require dynamic tool coordination.
+Index Terms: Large Language Model, Meta-learning, Tool Learning, LLM Agent, Cross-Tool Generalization
+††address:
+1 College of Informatics, Huazhong Agricultural University, Wuhan, Hubei, China, 430070
+2 Industrial AI Research Centre, University of South Australia, Adelaide, Australia, 5000
+3 School of Computer Science, Wuhan University, Wuhan, Hubei, China, 430072
+1 Introduction
+The rapid emergence of large language model (LLM) agents has placed them at the forefront of research in the LLM domain, driving extensive investigation into their capabilities and applications. These agents go beyond conventional linguistic tasks by interacting with external tools[8][2], accessing APIs, and executing complex functions. Tooleyes[21] suggest that the tool learning process in LLMs encompasses five dimensions: format alignment, intent comprehension, behavior planning, tool selection, and answer organization. Among these, tool selection is particularly crucial, as it requires the model to effectively retrieve and apply the optimal tool to satisfy the user’s request. Although current LLMs leveraging prompt engineering can handle most tool-related tasks successfully, real-world scenarios still occasionally result in incorrect tool choices.
+To reconcile LLM with tool ecosystems, researchers have developed two distinct methodological paradigms:
+Supervised Fine-Tuning (SFT) uses annotated tool interaction datasets to train models for structured tool selection via direct parameter updates [10, 12]. While effective, it requires large amounts of high-quality labeled data, leading to high resource demands and often achieving limited performance in low-resource settings [23]. Toolformer [12] addresses the lack of data by generating labels automatically but remains limited in tool diversity and computationally expensive.
+In-Context Learning (ICL) avoids parameter updates by instead using few-shot examples and instructional prompts to implicitly guide models in tool invocation [21, 13, 9]. However, ICL’s non-parametric nature limits task-specific knowledge incorporation [6], and makes prompt optimization costly due to functional similarity among tools [10, 23].
+Moreover, despite recent progress in tool-learning datasets, existing resources remain limited. In real-world vertical applications, we more often encounter two types of tool-invocation scenarios: (1) tools that need to be called across a wide range of scenarios for general-purpose LLMs, and (2) tools with subtle differences within the same domain, invoked by industry-specific LLMs. Most existing datasets do not categorize tools by usage scenario. For example, ToolAlpaca [21] covers over 400 tools but focuses on usage processes rather than tool selection. To address this gap, we compared several open-source datasets and constructed a dataset categorizing tools by usage scenario.
+Motivated by these challenges—low-resource scenarios, fine-grained tool differentiation, and limited datasets—we propose MetaToolAgent (MTA), a bi-level meta-learning framework [3] that decomposes tool optimization into hierarchical objectives. Unlike traditional single-level optimization approaches based on fine-tuning or in-context learning, MTA solves an optimistic bi-level optimization (BLO) problem [7] where the outer-level generalization objective minimizes expected loss over unseen tasks:
+\min_{\phi}\mathbb{E}_{T_{\text{test}}\sim\mathcal{T}}\left[\mathcal{L}_{T_{\text{test}}}(\theta^{*}(\phi),x,y)\right]
+(1)
+with meta-parameters \phi capturing cross-tool patterns across task distribution \mathcal{T} . The inner-level tool-specific objective refines policies for known tools:
+\theta^{*}(\phi)=\arg\min_{\theta}\mathcal{L}_{T}(\theta,x,y)
+(2)
+The inner-level solutions \theta^{*}(\phi) bound the outer generalization space while meta-gradients \nabla_{\phi} refine \phi through alternating updates ( \phi_{k+1}=\phi_{k}-\alpha\nabla_{\phi}\mathcal{L}_{T_{\text{test}}} ). By simulating dynamic tool ecosystems via this recursive BLO structure, MTA enhances semantic inference [5] and alignment capabilities, enabling robust orchestration without static prompts or task-specific fine-tuning through transfer optimization principles [15].
+The main contributions of our work are summarized as follows:
+•
+We construct a dataset comprising 155 tools across 7 scenarios and 9,377 user requests to evaluate LLMs’ performance in tool selection.
+•
+We propose MTA, a meta-learning framework that enhances LLMs’ ability to select appropriate tools when encountering previously unseen tools.
+•
+We evaluate multiple open-source LLMs of different scales and compare MTA with prompt engineering and fine-tuning approaches.
+2 Method
+2.1 Dataset Construction
+We construct our dataset via a systematic five-stage workflow, designed to ensure interpretability and effective training of tool-augmented LLMs:
+Scenario Definition: We define seven real-world scenarios—office (Office), operating systems (OS), software development (SD), education (Edu), daily life (DL), Internet of Things (IoT), and mobile applications (App)—to guide tool creation and simulate diverse human-tool interactions.
+Tool Development: We manually design 155 scenario-specific tools spanning the above domains, as summarized in Table 1.
+Tool Documentation: Each tool is documented with its name, functionality, and input parameters, closely mirroring real-world API specifications.
+Query Generation: Natural language queries that require tool calls are first generated by GPT-4 and then manually reviewed and refined to ensure clarity, correctness, and alignment with tool functionalities.
+Data Synthesis: We synthesize structured data by parsing tool parameters from natural language queries, identifying candidate tools, and conducting tool selection analysis to determine the most appropriate tool for each query.
+Table 1: Statistics of Tool Quantity and Data Quantity
+Office
+OS
+SD
+Edu
+DL
+IoT
+App
+Total
+Tool
+20
+21
+24
+26
+20
+22
+22
+155
+Data
+1178
+1288
+1456
+1548
+1262
+1276
+1369
+9377
+2.2 MetaToolAgent Algorithm
+Our algorithm addresses the tool selection problem defined as follows: given a dataset D=(Q,T) , where Q is a set of user queries reflecting various task requirements and T is a collection of tools with their descriptions, the goal is to first sample a subset of tools S\subseteq T , and then select the correct tool t\in S that matches a given query q\in Q .
+To tackle this problem, our method fine-tunes the LLM using gradient descent. Unlike conventional gradient descent, which optimizes for a single objective per update, our approach structures each training iteration around a meta-task M , composed of multiple zero-shot tasks \tau_{i} . Each task \tau_{i} is constructed using a fixed prompt template, together with the user query q_{i} and descriptions of tools from S , the descriptions include definitions and usage information, and the task concludes with a fixed-format response that specifies the correct tool t_{i} . Model parameters are updated only after optimal performance is achieved on query q_{i} within the meta-task framework, which distinguishes our approach from conventional fine-tuning methods.This design enables the model to learn generalizable features and strategies across varied tasks and tools.
+Algorithm 1 Fine-tuning LLM Based on Meta-Learning
+0:
+Query dataset \mathcal{Q} , tool dataset \mathcal{T} , LLM parameters \Theta
+0:
+Updated model parameters \Theta^{*}
+1:
+for iteration = 1, 2, … do
+2:
+Randomly sample a user query q_{i} from query dataset \mathcal{Q}
+3:
+Find the correct tool t_{i} corresponding to q_{i} in the tool dataset \mathcal{T} .
+4:
+for k-step do
+5:
+From the tool dataset \mathcal{T} , randomly sample a tool set S=\{s_{1},s_{2},\ldots,s_{j}\} and insert the correct tool t_{i} to form the new tool set S=\{s_{1},s_{2},\ldots,t_{i},\ldots,s_{j}\} .
+6:
+Construct the task \tau_{k} by integrating the user query q_{i} with the tool set S
+7:
+end for
+8:
+Combine tasks \{\tau_{1},\tau_{2},\ldots,\tau_{k}\} to form a meta-task M
+9:
+Perform gradient descent on meta task M
+10:
+When optimal performance is achieved on user query q_{i} , Update the model parameters as \Theta^{i}\leftarrow\Theta .
+11:
+end for
+2.3 Analysis of Generalization Capability in MetaToolAgent
+In this subsection, we analyze the generalization capability of MTA using the meta-learning framework of generalization error bounds[14]. The theoretical bound is formulated as:
+R_{(}\hat{h})-R_{(}h^{*})\lesssim\tilde{\mathcal{O}}\left(\sqrt{\frac{C(\mathcal{H})}{\sum_{t=1}^{T}n_{t}}}+\frac{1}{T}\sum_{t=1}^{T}\sqrt{\frac{C(\mathcal{F})}{m_{t}}}+D_{\mathcal{F}}\right)
+(3)
+In the formula 3, R(\hat{h}) represents the expected meta-generalization error of the learned meta-learner \hat{h} , while R(h^{*}) denotes the expected error of the optimal meta-learner h^{*} within the hypothesis space \mathcal{H} . The generalization error bound in meta-learning typically consists of three principal components. The first is the meta-learner complexity term, expressed as \sqrt{C(\mathcal{H})/\sum_{t=1}^{T}n_{t}} , where C(\mathcal{H}) denotes the complexity of the hypothesis space \mathcal{H} associated with the meta-learner, and n_{t} represents the number of query examples in the t -th training task. The second component is the task-specific learner complexity term, given by \frac{1}{T}\sum_{t=1}^{T}\sqrt{C(\mathcal{F})/m_{t}} , where C(\mathcal{F}) corresponds to the complexity of the hypothesis space \mathcal{F} for task-specific learners, and m_{t} denotes the number of support examples in the t -th task. The third component is the distribution discrepancy term, denoted D_{\mathcal{F}} , which quantifies the distributional divergence between the support and query sets across tasks, evaluated under the hypothesis space \mathcal{F} .
+In MTA, we design different problem scenarios to optimize the query sets for each task, ensuring that each task has a sufficient number of query samples n_{t} . This approach directly reduces the complexity term \sqrt{C(\mathcal{H})/\sum_{t=1}^{T}n_{t}} of the meta-learner, helping to alleviate the impact of hypothesis space complexity, especially when the number of training tasks is limited. Furthermore, by introducing task-specific parameter adaptation mechanisms, we effectively leverage the rich prior knowledge embedded in pre-trained LLMs, thereby reducing the complexity C(\mathcal{F}) of task-specific learners. This, in turn, mitigates the risk of overfitting when the support set has a limited number of samples (i.e., when m_{t} is small). As a result, the task-specific learner complexity term \frac{1}{T}\sum_{t=1}^{T}\sqrt{C(\mathcal{F})/m_{t}} is better managed, enhancing the robustness and generalization ability of task transfer.
+3 Experiments
+We conduct extensive experiments to verify the effectiveness of our framework and to answer the following research questions: RQ1: Is MTA universal across different models? RQ2: How does model size affect the baseline and MTA? RQ3: What are the advantages of MTA, and how does it differ from other methods?
+3.1 Experimental and Dataset Setup
+To evaluate the tool selection capabilities of MTA, we compare our approach with four baseline methods. (1) Baseline (Base) selects tools directly from prompts without additional reasoning guidance. (2) Chain of Thought (CoT) [17] encourages the model to generate an explicit reasoning process before providing an answer. (3) ReAct [20] extends CoT by integrating reasoning with explicit instructions to query external information and incorporate feedback. (4) Fine-tuning (FT) employs the same prompt template as the Baseline but is trained via LoRA [4].
+We evaluate four open-source LLMs covering diverse architectures and training backgrounds: ChatGLM3 [22], Chinese-Alpaca-2 [1], Qwen1.5 [19], and Baichuan2 [18].
+To simulate practical tool selection scenarios, we use a proprietary tool dataset with two sampling strategies: single-domain (SD) and cross-domain (CD). The SD dataset contains tools exclusively from one domain, for example, if the test category is “office”, all sampled tools belong strictly to that category. The CD dataset spans seven distinct domains, allowing tools from multiple categories to appear even when the target category is fixed—for instance, “office” tests may include tools from programming or mobile applications. In addition, we incorporate two public benchmark datasets, ToolAlpaca [16] and API-Bench [11], to evaluate the generalizability and robustness of our method across diverse tool-use scenarios.
+During experiments, the output format for tool selection is explicitly defined. Model performance is evaluated based on both the correctness of the selected tools and adherence to the specified output structure. A response is considered correct only if it satisfies both criteria.
+3.2 Comparison Across Different LLMs
+For RQ1, we compare the tool selection capabilities of several different models using various methods. The results are in the table 2.
+Comparing sampling strategies, we find that SD demands more model reasoning capability because distinguishing similar tools is harder, which causes much lower performance than CD under the same settings. ICL methods like CoT and ReAct give only small improvements over baseline prompting, especially for weaker models such as Chinese-Alpaca-2-7B and Baichuan2-7B-Chat. In contrast, FT uses more resources but achieve better performance. Notably, MTA consistently improves tool selection capabilities across datasets, outperforming FT by a modest yet stable margin. On API-Bench, tool differences are subtle because scenarios are not clearly defined. Even Base or CoT achieves competitive results, and MFT gives further improvements. However, for ChatGLM3 and Baichuan2, MTA slightly underperforms FT because meta-task sampling increases the risk of overfitting when tool scenarios are not clearly distinct.
+Table 2: Scores of different methods evaluated on various models.
+Model
+Dataset
+Base
+CoT
+ReAct
+FT
+MTA
+ChatGLM3
+(6B)
+CD
+40.57
+42.29
+51.15
+89.13
+93.94
+SD
+35.35
+36.27
+40.68
+78.68
+83.68
+API-Bench
+50.23
+55.12
+65.34
+83.12
+82.45
+ToolAlpaca
+53.89
+58.45
+68.21
+83.56
+84.02
+Chinese-Alpaca-2
+(7B)
+CD
+29.86
+26.41
+25.82
+92.57
+91.46
+SD
+28.70
+21.06
+21.11
+81.98
+87.92
+API-Bench
+34.67
+38.91
+39.12
+88.34
+93.80
+ToolAlpaca
+36.23
+40.88
+44.39
+90.12
+91.03
+Qwen1.5-Chat (7B)
+CD
+40.82
+44.34
+57.55
+96.39
+97.16
+SD
+37.74
+36.82
+46.82
+92.31
+94.04
+API-Bench
+45.02
+59.10
+70.33
+95.11
+96.30
+ToolAlpaca
+47.66
+51.89
+62.11
+96.88
+97.42
+Baichuan2-Chat (7B)
+CD
+39.17
+34.48
+46.20
+96.89
+97.33
+SD
+34.20
+27.19
+37.36
+88.49
+92.00
+API-Bench
+42.48
+46.34
+51.79
+94.77
+93.30
+ToolAlpaca
+44.23
+48.45
+53.45
+95.12
+95.70
+Figure 1: Accuracy of the Qwen model across different scales (0.5B, 1.8B, 4B, 7B, 14B) on CD (cross-domain) and SD (single-domain) datasets using MTA and FT (Fine-Tuning).
+3.3 Comparison on LLMs with Different Scales
+For RQ2, to evaluate the applicability of our method across different model scales, we selected two models with varying sizes. Specifically, the Chinese-Alpaca-2 model offers only 7B and 13B parameter versions as open-source models, while Qwen1.5 provides 0.5B, 1.8B, 4B, 7B, and 14B parameter versions.
+Figure 1 shows that MTA consistently improves model performance over FT. For the Qwen series, the performance gap between MTA and FT narrows in the CD setting as model size increases, reflecting LLMs’ enhanced capacity to transfer knowledge across domains. In contrast, under the SD setting, the gap widens with larger model size, indicating that meta-learning becomes more effective at distinguishing between similar tools as model parameters grow.
+Figure 2: Average Token Distribution per Instance across Methods on ChatGLM3-6B
+3.4 Analysis of the Advantages and Limitations of Different Methods
+For RQ3, we tested ChatGLM3-6B in a practical scenario and conducted an analysis of all the methods, with the results shown in Figure 2.
+CoT and ReAct tend to generate longer outputs with a higher proportion of reasoning tokens due to their step-by-step prompting design. In contrast, FT and MTA produce more concise responses, using fewer reasoning tokens while still maintaining task relevance. Qualitative analysis shows that the Base method often struggles to follow instructions or produce the required output format. While CoT and ReAct improve response structure, their verbosity reduces tool selection efficiency. FT generates cleaner, well-formatted answers with shorter prompts, demonstrating stronger alignment with task requirements. However, although FT is effective at identifying correct answers, it has difficulty distinguishing subtle differences between tools. MTA addresses this issue by enabling the model to more accurately recognize specific tool capabilities.
+4 Conclusion
+This work introduced MetaToolAgent (MTA), a meta-learning framework for LLM tool learning, and constructed a dataset spanning 7 scenarios and 155 tools. Through extensive experiments, we compared MTA against in-context learning and fine-tuning baselines. The results demonstrate that meta-learning offers substantial benefits. Specifically, MTA not only achieves higher accuracy but also exhibits stronger generalization to unseen tools, underscoring its capability to enhance adaptability and robustness of LLMs. These findings highlight the promise of meta-learning as a principled approach to advancing tool-use proficiency in LLMs, paving the way for more reliable and versatile deployment in real-world applications.
+STOP 18526 18526
+
+SOURCE https://arxiv.org/html/2601.12901v1
+Abstract
+Diffusion-based planners have emerged as a promising approach for human-like trajectory generation in autonomous driving. Recent works incorporate reinforcement fine-tuning to enhance the robustness of diffusion planners through reward-oriented optimization in a generation–evaluation loop. However, they struggle to generate multi-modal, scenario-adaptive trajectories, hindering the exploitation efficiency of informative rewards during fine-tuning. To resolve this, we propose PlannerRFT, a sample-efficient reinforcement fine-tuning framework for diffusion-based planners. PlannerRFT adopts a dual-branch optimization that simultaneously refines the trajectory distribution and adaptively guides the denoising process toward more promising exploration, without altering the original inference pipeline. To support parallel learning at scale, we develop nuMax, an optimized simulator that achieves 10 times faster rollout compared to native nuPlan. Extensive experiments shows that PlannerRFT yields state-of-the-art performance with distinct behaviors emerging during the learning process.
+††
+{}^{~\textrm{\Letter}} Equal co-advising.
+Primary contact lihongchen@tongji.edu.cn
+1 Introduction
+Diffusion-based planners
+have recently emerged as a powerful probabilistic paradigm for generating human-like and socially compatible driving trajectories in
+dynamic environments [5, 56, 32].
+Such planners acquire driving skills from large-scale human demonstrations via imitation learning (IL).
+Despite the capability of modeling dexterous behaviors, these methods suffer from distributional shift and objective misalignment, limiting their robustness and reliability in real-world deployment [39, 10, 41, 33].
+Figure 1:
+Comparison to Denoising Strategies across various
+diffusion planning paradigms.
+(a) Vanilla diffusion planners suffer from mode collapse, offering limited exploration.
+(b) Anchor-based methods
+are oriented towards scenario-agnostic actions, leading to noisy interactions.
+(c) Our policy-guided denoising enables both multi-modal and scenario-adaptive sampling, yielding stable and efficient exploration for optimization.
+Reinforcement learning (RL) offers a potential alternative.
+Through simulator-assisted exploration and reward-oriented optimization, RL-based planners can scale with large-scale simulated data and simple rewards [17, 55, 7].
+Recent generation-evaluation reinforcement fine-tuning (RFT) paradigms [23, 16, 52, 25] demonstrate the balance between training efficiency and improvements in closed-loop planning performance. In this paradigm, a trajectory generator serves as an actor to produce diverse candidate trajectories, which are then evaluated in simulation and iteratively refined through group-wise reinforcement fine-tuning[44].
+The overall performance of this paradigm primarily depends on the generator’s exploration capability, that is, the distribution of candidate trajectories. This drives two key requirements:
+(i) Multi-modality, the ability to generate diverse maneuver hypotheses under the same situation; and
+(ii) Adaptivity, the capacity to self-adjust exploration distribution toward more promising behaviors, such as AlphaGo [45] used Monte Carlo Tree Search (MCTS) [6] for adaptive exploration.
+However, vanilla diffusion-based planners suffer from modality collapse [32], where trajectories generated from different noise inputs converge to nearly identical results throughout denoising process22
+2
+To avoid confusion with the terminology “trajectory sampling” in reinforcement learning, we refer to the diffusion sampling process as “trajectory denoising” in this paper., as illustrated in Fig. 1 (a). This collapse limits the exploration capability, leaving reinforcement fine-tuning without an effective optimization signal.
+To mitigate this issue, anchor-based diffusion planners [32, 51] initialize the denoising process from anchor-centered Gaussian distributions rather than pure Gaussian noise, enabling
+the generation of
+diverse and maneuver-consistent trajectories.
+Nevertheless, these fixed, scenario-agnostic anchors are suboptimal for reward-oriented optimization.
+As shown in Fig. 1(b), a part of anchors yield scene-compatible maneuvers, while many others produce context-conflicting motions, which introduce noisy gradients and hinder stable reinforcement optimization.
+Overall, exploration effectiveness requires not only diverse but also scene-consistent maneuvers, which, in turn, facilitate efficient reinforcement fine-tuning.
+To this end, we propose PlannerRFT, a closed-loop and sample-efficient framework for diffusion-based Planner Reinforcement Fine-tuning.
+As shown in Fig. 1 (c), PlannerRFT performs policy-guided denoising to achieve multi-modality and scenario-adaptive trajectory sampling, providing group-wise trajectory optimization with more stable and efficient exploration.
+For scalable closed-loop training, we develop a GPU-accelerated simulator, nuMax, which supports high-throughput parallel rollouts.
+For multi-modality, PlannerRFT introduces an energy-based classifier guidance [37] that injects residual offsets into the denoising process, enabling the model to generate diverse maneuver trajectories.
+For adaptivity, a dedicated Exploration Policy learns an adaptive guidance scale to modulate exploration according to scenario context, achieving scenario-aware trajectory generation.
+The Exploration Policy is optimized through closed-loop interaction with the simulator using Proximal Policy Optimization (PPO) [43], guiding the planner toward temporally consistent, safe, and efficient behaviors during reinforcement fine-tuning.
+For trajectory optimization, we adopt Group Relative Policy Optimization (GRPO) [44] to fine-tune the diffusion planner denoising process. To stabilize optimization in challenging scenarios, we introduce a survival reward formulation that accumulates non-terminal trajectory rewards, encouraging the planner to delay failure and improve long-horizon viability.
+To enhance the scalability and efficiency of online rollouts, we develop nuMax, a GPU-parallel simulator built upon Waymax [12] and calibrated for the large-scale nuPlan benchmark [24], achieving up to 10× faster simulation speed than the native nuPlan simulator.
+Extensive evaluations on the nuPlan benchmark demonstrate that PlannerRFT achieves state-of-the-art performance.
+Compared with the IL-pretrained baseline, PlannerRFT demonstrates notable gains in handling failure scenarios such as collisions and off-road events, leading to improved driving safety.
+Furthermore, PlannerRFT exhibits distinct, human-like driving behaviors, with safer and more efficient maneuvers, thereby highlighting the effectiveness of our reinforcement fine-tuning framework.
+We summarize our contributions as follows:
+•
+We present PlannerRFT, a closed-loop reinforcement fine-tuning framework for diffusion-based planners that enhances the RL sampling efficiency through policy-guided denoising.
+•
+We design an exploration policy that adaptively modulates trajectory sampling across scenarios and cooperates with group-wise reinforcement optimization for stable fine-tuning. To support large-scale online training, we further develop nuMax, a GPU-parallel simulator calibrated for the nuPlan benchmark.
+•
+Extensive experiments on nuPlan demonstrate that PlannerRFT achieves state-of-the-art performance, while notably enhancing safety and robustness in challenging driving scenarios.
+2 Related Work
+Diffusion Planners for Autonomous Driving.
+Recently, diffusion models have been widely applied to decision-making and planning tasks in autonomous driving, including motion planning [56, 47, 50], traffic simulation [57, 20, 22], and end-to-end driving policy learning [29, 19, 11, 36, 32].
+Representative works include Diffusion Planner [56], which jointly models surrounding agents’ trajectories and ego-vehicle planning; Nexus [57], which introduces flexible noise scheduling to balance reactivity and goal orientation for the traffic scenario simulation; DiffusionDrive [32], which generates multimodal trajectories via a truncated diffusion process for end-to-end driving; and RecogDrive [29], which incorporates vision-language tokens followed by a diffusion head for trajectory generation.
+Beyond modeling complex distributions, diffusion planners offer strong flexibility through guidance-based denoising [56, 47, 50] that enables controllable trajectory generation.
+However, rule-based guidance strategies introduce competing gradient signals (e.g., between collision avoidance and ride comfort) and impose a fixed guidance strength [47]. These limitations lead to substantial performance variability across diverse driving scenarios.
+Figure 2:
+Overview of PlannerRFT.
+We enhance multi-modality during RL sampling through Guided Denoising, with guidance scales modulated by the Exploration Policy to generate scenario-adaptive trajectories (Sec. 4.2).
+The planner gathers on-policy interaction data through Closed-Loop Rollout in simulation (Sec. 4.3).
+A dual-branch optimization framework performs Trajectory Optimization and Exploration Optimization to steer the denoising process (Sec. 4.4).
+Reinforcement Fine-tuning for Driving Planners.
+Reinforcement learning leverages probabilistic modeling to enable sampling-based exploration and policy optimization. Recent studies on reinforcement fine-tuning for driving planners generally follow three paradigms.
+The first discretizes trajectories into a vocabulary of motion tokens [26, 30, 31], optimizing the selection probability of each token under different driving scenarios [35, 58, 13], similar to RFT in LLMs.
+Yet, such discretization inherently constrains planner expressiveness, as a larger token set better captures trajectory diversity but also increases computational complexity and optimization dimensionality.
+Another paradigm models each trajectory step as a continuous distribution via auto-regressive generation [54, 48, 27], which inherently suffers from error accumulation and temporal instability across sequential decisions.
+Diffusion models exhibit an inherent advantage, as their denoising process operates in a probabilistic manner to generate actions, making them well-suited for reinforcement learning in continuous action spaces and temporally consistent decision processes. However, diffusion-based planners in autonomous driving tend to exhibit modality collapse, which restricts exploration during RFT and consequently hinders effective policy adaptation.
+3 Preliminary
+Task Definition.
+Motion planning aims to generate safe and feasible trajectories for the ego vehicle in dynamic driving environments [34, 53, 18].
+This work focuses on enhancing the closed-loop performance of IL-pretrained diffusion planners via reinforcement fine-tuning, yielding improved safety, comfort, and efficiency in motion planning.
+Planner Architecture.
+We adopt a
+pretrained diffusion planner following the commonly used architecture, consisting of a shared scene encoder and a Diffusion Transformer (DiT) [40] decoder.
+The scene encoder fuses scene inputs, including surrounding agents, map features, and static obstacles, into the environment representation F_{\text{scene}} .
+The navigation command is encoded as F_{\text{navi}} .
+Given the noisy trajectory samples \mathbf{x}^{k} and diffusion timestep k , the DiT decoder iteratively denoises the latent samples, conditioned on both the scene and navigation embeddings, mathematically:
+\hat{\mathbf{x}}_{0}^{k}=\text{DiT}_{\theta}\left(\text{MLP}(\mathbf{x}^{k});F_{\text{scene}};F_{\text{navi}};t\right).
+(1)
+4 Method
+In this section, we begin with an overview of our PlannerRFT in Section 4.1. We then delve into policy-guided denoising in Section 4.2, followed by the closed-loop rollout process in Section 4.3 and the policy optimization in Section 4.4. Finally, we summarize best practices for PlannerRFT in Section 4.5.
+4.1 Overview of PlannerRFT
+As illustrated in Fig. 2, given an IL-pretrained diffusion planner, PlannerRFT aims to enhance its closed-loop planning performance by adopting the generation–evaluation paradigm with GRPO.
+During RFT, the IL-pretrained planner is duplicated and frozen as a global reference.
+We introduce policy-guided denoising to improve the multi-modality and adaptivity of the trajectory sampling. To achieve this, we plug in an Exploration Policy on the original model architecture and use closed-loop rollout and PPO to optimize the policy.
+4.2 Policy-guided Denoising
+Guided Denoising.
+Vanilla diffusion planners generate single-pass trajectories and tend to modality collapse, leading to limited trajectory diversity for RL sampling.
+To alleviate this limitation and promote exploration, we adopt the energy-based classifier guidance [9, 37] that injects residual offsets into the denoising process.
+This enables the planner to generate diverse trajectories in the vicinity of the reference trajectory.
+Specifically, we decompose the injected guidance into lateral and longitudinal components.
+At each timestep \tau , given the current planner’s predicted waypoints \mathbf{x} and the reference waypoints \mathbf{x}^{\text{ref}} , the lateral guidance energy function \Psi_{\text{lat.}} is formulated as:
+\Psi_{\text{lat.}}=\frac{1}{T}\sum_{\tau=1}^{T}\left(\mathbf{n}_{\tau}^{\perp}\left(\mathbf{x}_{\tau}-\mathbf{x}_{\tau}^{\text{ref}}\right)-\lambda_{\text{lat.}}\eta_{\text{lat.}}\right)^{2},\eta_{\text{lat.}}\in[-1,1],
+(2)
+where \mathbf{n}_{\tau}^{\perp} is the unit normal vector, \lambda_{\text{lat.}} is the maximum lateral offset (meters), and \eta_{\text{lat.}} is the lateral guidance scale.
+The longitudinal guidance modulates the deviation of the planned velocity \mathbf{v} with the reference velocity \mathbf{v}^{\text{ref}} , as:
+\Psi_{\text{lon.}}=\frac{1}{T}\sum_{\tau=1}^{T}\left(\mathbf{n}_{\tau}^{\parallel}\!\big(\mathbf{v}_{\tau}-\lambda_{\text{lon.}}\eta_{\text{lon.}}\mathbf{v}_{\tau}^{\text{ref}}\big)\right)^{2},\eta_{\text{lon.}}\in[-1,1],
+(3)
+where \mathbf{n}_{\tau}^{\parallel} is the unit tangent vector, \lambda_{\text{lon.}} is a constant maximum relative speed deviation (percentage), and \eta_{\text{lon.}} is the longitudinal guidance scale.
+These two energy functions yield decoupled and orthogonal gradients, enabling multi-modal trajectory generation through different combinations of (\eta_{\text{lat.}},\eta_{\text{lon.}}) .
+No explicit map- or vehicle-level collision constraints are imposed; this simplified guidance formulation allows infeasible samples to act as negative feedback for RL optimization.
+Design of Exploration Policy.
+We introduce the Exploration Policy module, which learns to modulate the guidance scales (\eta_{\text{lat.}},\eta_{\text{lon.}}) conditioned on driving contexts \mathbf{s} and reference waypoints.
+This learnable exploration enables the planner to generate context-aware maneuvers, thereby improving exploration effectiveness during RL sampling.
+Formulated as:
+\bm{\eta}\sim\pi_{\phi}(\cdot\mid\mathbf{s},\mathbf{x}^{\text{ref}}).
+(4)
+Concretely, we use the reference trajectory as a frozen prior to provide PlannerRFT with a stable and well-trained imitation-learning distribution. The reference trajectory is encoded through an MLP-Mixer into a compact token and fused with the scene embedding via a cross-attention module, capturing the interaction between the reference motion and the surrounding environment. Based on this fused representation, the Guidance Head predicts the parameters of two Beta distributions governing the lateral and longitudinal guidance scales.
+In parallel, the Value Head V_{\psi} estimates the state-value V(s_{t}) to assist policy optimization.
+Figure 3:
+Illustration of nuMax.
+(a) Scenario cache: nuPlan scenarios are preprocessed and cached for fast loading during large-scale RL rollouts;
+(b) LQR tracker and scorer: vehicle kinematics and reward computation are calibrated to match nuPlan; and
+(c) Distributed RL training pipeline: enables communication between PyTorch DistributedDataParallel (DDP) workers and the JAX-based simulator.
+Trajectory Sampling.
+During RFT, we repeatedly sample the guidance scales
+(\eta_{\text{lat.}}^{(k)},\eta_{\text{lon.}}^{(k)})
+from the Beta distributions learned by the Exploration Policy.
+Each sampled pair specifies a distinct driving modality and modulates the guided denoising process toward a corresponding trajectory \hat{\mathbf{x}}^{(k)} .
+Repeating this process K times yields a diverse set of trajectories
+\mathcal{X}=\{\hat{\mathbf{x}}^{(k)},(\eta_{\text{lat.}}^{(k)},\eta_{\text{lon.}}^{(k)})\}_{k=1}^{K} .
+Formally, the Exploration Policy dynamically modulates the classifier-guided denoising gradients as:
+\nabla_{\mathbf{x}}\log p(\mathbf{\eta}|\mathbf{x})\approx-\nabla_{\mathbf{x}}\big[\Psi_{\text{lat.}}(\mathbf{x};\eta_{\text{lat.}})+\Psi_{\text{lon.}}(\mathbf{x};\eta_{\text{lon.}})\big],
+(5)
+thereby enabling the Fine-tuned DiT to produce adaptive and human-like trajectories across scenarios.
+4.3 Closed-loop Rollout
+The nuMax Simulator.
+Unlike IL methods trained on pre-collected offline datasets, RL is trained on simulated data that is collected during the training process.
+Therefore, enhancing simulation throughput is essential for accelerating model iteration and achieving scalable training, given limited computational resources.
+To this end, we develop nuMax, a GPU-parallel simulator that enables 10 times faster rollout speed compared with the native nuPlan simulator.
+Our implementation builds upon Waymax [12] and V-Max [2], with further implementation details provided in the supplementary material.
+Rollout Planning.
+At each simulation step, the fine-tuned planner generates a set of K candidate trajectories \mathbf{\mathcal{X}} under different guidance scales.
+To provide diverse training experiences for reinforcement learning, one trajectory \mathbf{x}^{{}^{\prime}} and its corresponding guidance scales
+(\eta_{\text{lat.}}^{\prime},\eta_{\text{lon.}}^{\prime})
+are randomly selected from the candidate set.
+Only the first action of the selected trajectory is executed in the closed-loop simulator to update the environment state from s_{t} to s_{t+1} and obtain the immediate reward r_{t} . The current state s_{t} , the selected guidance scales (\eta_{\text{lat.}}^{\prime},\eta_{\text{lon.}}^{\prime}) , and the received reward r_{t+1} are stored in the replay buffer \mathcal{B} for subsequent policy updates (s_{t},\eta_{\text{lat.}}^{{}^{\prime}},\eta_{\text{lon.}}^{\prime},r_{t+1},V(s_{t})) .
+4.4 Policy Optimization
+Exploration Policy Optimization.
+The Exploration Policy \pi_{\phi} is optimized following the PPO framework. Specifically, the goal of this optimization is to provide temporally consistent, efficient, safe, and comfortable exploration directions during closed-loop planning.
+Future rewards are propagated backward through Generalized Advantage Estimation (GAE), allowing the policy to refine its current exploratory decisions based on the long-term trajectory performance observed in closed-loop rollouts.
+Through iterative rollouts and updates, the Exploration Policy learns Beta-distribution parameters that adaptively set (\eta_{\text{lat}},\eta_{\text{lon}}) to the driving context, improving exploration effectiveness.
+Trajectory Optimization.
+The Fine-tuned DiT focuses on long-horizon planning conditioned on the current scenario.
+We evaluate the trajectory based on the Predictive Driver Model Score (PDMS) over a prediction horizon T_{r} in an open-loop manner.
+However, direct use of the terminal reward (collision and off-road) leads to optimization stagnation in hard scenarios, as all candidate trajectories collapse to zero reward once a failure occurs, resulting in no optimization gradient within the group.
+To alleviate this issue, we introduce a survival reward formulation that accumulates trajectory-level rewards only over valid, non-terminal segments.
+Formally, given a per-step termination reward sequence {R^{\text{term}}}_{\tau=1}^{T_{r}} , the survival reward is defined as:
+R_{\text{surv}}=\frac{1}{T_{r}}\sum_{\tau=1}^{T_{r}}R_{\tau}^{\text{term}}\prod_{j=1}^{\tau}\mathbb{I}[R_{j}^{\text{term}}\neq 0].
+(6)
+This formulation encourages the planner to optimize toward trajectories that delay the failure event, improving exploration in hard scenarios.
+We fine-tune the planner’s trajectory distribution via the GRPO framework. Following DPPO [42] and ReCogDrive [29], the diffusion denoising process is formulated as a Markov Decision Process, where each denoising step represents a Gaussian transition. By updating the Gaussian parameters during RFT, the planner better aligns with reward-oriented objectives, improving closed-loop stability and planning performance.
+4.5 Best Practices for PlannerRFT
+We summarize the best practices for effectively fine-tuning diffusion-based planners with PlannerRFT as follows.
+Fine-tune DDIM Denoising.
+We adopt a 5-step DDIM [46] denoising scheme.
+Compared with ODE-based denoising, DDIM introduces stochasticity that enhances exploration, while requiring far fewer steps than DDPM [14] to maintain high training efficiency.
+Zero-initialization of Exploration Policy.
+The Exploration Policy is initialized to produce zero-mean lateral and longitudinal guidance scales.
+This initialization ensures unbiased exploration around the reference trajectory and mitigates performance drops at the early stage of fine-tuning.
+Plug-and-play Fine-tuning.
+During RFT, the Reference DiT and Exploration Policy are integrated to guide the denoising process, facilitating exploration and policy refinement.
+At deployment, these modules are removed, enabling the planner to retain its original diffusion structure while delivering improved trajectory performance.
+Hard-case Fine-tuning.
+Incorporating a moderate proportion of challenging scenarios significantly improves the planner’s robustness, while an excessively hard training set may degrade overall performance. Further analysis of fine-tuning data selection is provided in the Section 5.3.
+Figure 4:
+Qualitative Comparison of Pretrained Planner and RFT Planner.
+In each frame shot, the simulation position and planning trajectory are marked as orange, the ground-truth position and ground-truth trajectory recorded in the driving log are marked as gray and blue, respectively.
+5 Experiments
+This section aims to explore the following research questions:
+1) Can PlannerRFT improve the closed-loop planning performance of diffusion-based planners through reinforcement fine-tuning?
+2) Does the Exploration Policy enhance sample efficiency through the policy guided denoising?
+3) Will the fine-tuned planner exhibit distinct behavioral patterns from imitation learning?
+4) What are the key factors that influence the effectiveness of RFT training?
+5.1 Setup and Protocals
+Benchmarks and Baselines.
+We evaluate PlannerRFT on the large-scale nuPlan benchmark [24].
+The Val14 benchmark [8] is used to assess model performance under general driving scenarios, while the Test14-hard benchmark [4] includes more complex and challenging situations, reflecting the model’s robustness in hardcore scenarios.
+All evaluations are performed within the nuPlan closed-loop simulator, which supports both non-reactive and reactive background traffic settings. In the non-reactive setting, surrounding vehicles follow pre-recorded trajectories; in contrast, the reactive setting employs an Intelligent Driver Model (IDM) [49] that dynamically adjusts surrounding vehicles’ behaviors according to the ego vehicle’s actions, providing a more realistic simulation of real-world interactions. We compare PlannerRFT against a wide range of baseline methods, including rule-based planners (IDM [49], PDM-Closed [8]), learning-based planners (PlanTF [4], GameFormer [15], PLUTO [3]), and recent generative planning approaches (Diffusion Planner [56], Flow Planner [47]).
+The final evaluation score is computed as the average across all scenarios, ranging from 0 to 100, where a higher score indicates better planning performance.
+Table 1:
+Closed-loop Planning Results on nuPlan Dataset.
+The highest and the second-best results of each benchmark are denoted by bold and underline.
+Type
+Planner
+Val14
+Test14-hard
+NR
+R
+NR
+R
+Expert
+Log-replay
+93.53
+80.32
+85.96
+68.80
+Rule
+IDM
+75.60
+77.33
+56.15
+62.26
+PDM-Closed
+92.84
+92.12
+65.08
+75.19
+Learning
+PDM-Open
+53.53
+54.24
+33.51
+35.83
+GameFormer
+13.32
+8.69
+7.08
+6.69
+PlanTF
+84.27
+76.95
+69.70
+61.61
+PLUTO
+88.89
+78.11
+70.03
+59.74
+Diffusion Planner
+89.87
+82.80
+75.99
+69.22
+Flow Planner
+90.43
+83.31
+76.47
+70.42
+PlannerRFT(Ours)
+89.96
+84.46
+77.16
+72.21
+Pretrain.
+We adopt the Diffusion Planner [56] as our IL-pretrained planner, which is trained on 1 million clips from the nuPlan dataset.
+We replace the ODE-based DPM-solver [38] denoising with a 5-step DDIM sampler. Compared with the ODE sampler, the DDIM sampler achieves nearly the same performance while introducing stochasticity that enhances exploration, and its reduced number of denoising steps further improves the efficiency of RL training.
+Fine-tune Dataset.
+For reinforcement fine-tuning, we collect 144,494 non-overlapping scenarios from nuPlan at 10 Hz sampling rate.
+Each scenario contains 20 frames of history, one current frame, and 150 frames of future trajectory, totaling 171 frames.
+We evaluate all scenes using the pretrained planner and construct three datasets according to performance scores:
+(1) Fail, including 10,417 collision or off-road cases;
+(2) Lt90, including all low-score (less than 90) cases, totaling 24,691 scenes;
+and (3) All, which includes all available scenes.
+RFT Details.
+All experiments are conducted on 8 NVIDIA H100 GPUs. The fine-tuning process runs for 40M environment steps. Hyperparameters for PPO and GRPO optimization are provided in the supplementary material.
+Table 2:
+Ablation on Exploration Policy.
+\text{IL Pretrain}_{\texttt{DDIM}} denotes the pretrained Diffusion Planner with 5 steps of DDIM denoising. All planners use the same 5-step DDIM denoising setup.
+\mathcal{D} denotes the modality of the sampled trajectory group, consistent with the definition in DiffusionDrive [32], \bar{r} and s_{r} denote the mean and standard deviation of the corresponding rewards, respectively.
+Exploration Type
+R-score \uparrow
+Collisions
+TTC
+Drivable
+Comfort
+Progress
+Speed
+NR-score \uparrow
+\mathcal{D}~(\%)
+\bar{r}\uparrow
+s_{r}
+\text{IL Pretrain}_{\texttt{DDIM}}
+68.18
+86.58
+79.05
+94.48
+86.03
+76.99
+97.20
+76.01
+-
+-
+-
+w/o Guidance
+68.83(+0.65)
+86.03
+79.41
+94.48
+87.87
+77.12
+97.35
+76.34(+0.33)
+5.65
+69.06
+0.02
+w/ Uniform Dist.
+65.82(-2.36)
+84.37
+75.74
+93.01
+80.88
+76.19
+97.59
+75.19(-0.82)
+39.78
+60.44
+0.12
+w/ Fixed Beta Dist.
+70.65(+2.47)
+87.68
+80.88
+94.85
+84.56
+77.34
+97.71
+76.61(+0.60)
+27.73
+71.50
+0.07
+PlannerRFT(Ours)
+72.21(+4.03)
+88.97(+2.39)
+84.93(+5.34)
+95.59(+1.11)
+85.66
+77.17
+98.03
+77.16(+1.15)
+25.34
+73.88
+0.06
+5.2 Main Results
+Comparison with SOTAs.
+Tab. 1 presents the planning results under both challenging (Test14-hard) and general (Val14) test settings.
+Compared with the pretrained Diffusion Planner, our PlannerRFT improves closed-loop planning performance across all four benchmarks.
+Notably, in reactive traffic settings, PlannerRFT achieves substantial gains, with improvements of +1.66 points on the Val14 benchmark and +2.99 points on the Test14-hard benchmark.
+This suggests that closed-loop rollouts expose the planner to a broader range of interaction patterns, mitigating distribution shift, while the iterative feedback during rollouts enables the model to continuously refine and improve its trajectories.
+Compared with other SOTA planners, PlannerRFT achieves the best overall performance in three out of four benchmarks. However, in non-reactive regular scenarios (Val14-NR), the performance improvement remains marginal.
+This may stem from the inherent distributional bias of non-reactive environments.
+Notably, PlannerRFT yields a +2.99 points improvement on the Test14-
+STOP 28000 35925
+
+SOURCE https://arxiv.org/html/2601.12925v1
+Abstract
+Diffusion strategies have advanced visual motor control by progressively denoising high-dimensional action sequences, providing a promising method for robot manipulation. However, as task complexity increases, the success rate of existing baseline models decreases considerably. Analysis indicates that current diffusion strategies are confronted with two limitations. First, these strategies only rely on short-term observations as conditions. Second, the training objective remains limited to a single denoising loss, which leads to error accumulation and causes grasping deviations. To address these limitations, this paper proposes Foresight-Conditioned Diffusion (ForeDiffusion), by injecting the predicted future view representation into the diffusion process. As a result, the policy is guided to be forward-looking, enabling it to correct trajectory deviations. Following this design, ForeDiffusion employs a dual loss mechanism, combining the traditional denoising loss and the consistency loss of future observations, to achieve the unified optimization. Extensive evaluation on the Adroit suite and the MetaWorld benchmark demonstrates that ForeDiffusion achieves an average success rate of 80% for the overall task, significantly outperforming the existing mainstream diffusion methods by 23% in complex tasks, while maintaining more stable performance across the entire tasks.
+1College of Computer Science and Software Engineering, Shenzhen University, China
+2Guangdong Laboratory of Artificial Intelligence and Digital Economy (SZ), Shenzhen, China
+3School of Information Technology, Carleton University, Canada
+{2410105060, 2410103031}@mails.szu.edu.cn, heying@szu.edu.cn, wangleilei@gml.ac.cn,
+2300271042@email.szu.edu.cn, zhaozheyi@gml.ac.cn, chenyangwang@ieee.org
+Code — https://github.com/xwz-z/ForeDiffusion
+Figure 1: Overview of ForeDiffusion.
+(a) Diagram of future view-guided action generation; (b) ForeDiffusion achieves the highest average success rate across all task types; (c) ForeDiffusion shifts task counts toward the higher success rate bins across all tasks (Chi et al. 2023; Ze et al. 2024; Lu et al. 2025; Jia et al. 2024).
+Introduction
+Imitation learning from expert demonstrations offers a data-efficient supervised pathway to acquire diverse, task-conditioned manipulation competencies in embodied intelligence (Rahmatizadeh et al. 2018; Xie et al. 2020; Zhao et al. 2024). Building on this paradigm, diffusion-based models have become expressive visual motion strategies for robotic tasks (Urain et al. 2024). In robotic manipulation, diffusion policies have been applied in increasingly rich perceptual settings to generate action sequences with feedback control (Carvalho et al. 2023; Wu et al. 2024). Early methods conditioned on RGB inputs have achieved reliable performance from monocular observations (Chi et al. 2023). The 3D Diffusion Policy shows that compact point cloud representations significantly enhance spatial understanding across multi-task benchmarks (Ze et al. 2024). Building on these advances, diffusion-based approaches have made substantial progress in multimodal conditioning by incorporating geometric, tactile, and proprioceptive signals (Dou et al. 2024; Heng et al. 2025; Cao et al. 2024; Zhao et al. 2025).
+However, current diffusion-based visuomotor policies still face significant limitations when applied to more complex manipulation tasks (Wolf et al. 2025; Xue et al. 2025).
+As shown in Fig. 1b, mainstream diffusion models show significant performance degradation on complex tasks, which share the common characteristic of requiring sequential and contact-intensive interactions. (Yu et al. 2020; Lu et al. 2025). Even small control inaccuracies can accumulate over time, resulting in task failure during later stages of execution (Tsuji et al. 2025; Stepputtis et al. 2022).
+We identify two primary factors causing this gap. First, current formulations typically condition diffusion on short observation sequences and assume approximate Markov sufficiency during rollout, without explicitly modeling how future scenes may evolve (Reuss et al. 2023). This limitation is especially problematic in tasks that span longer time horizons (Kim et al. 2024). Second, most policies are trained with low-level losses like denoising or single step consistency, which focus on local accuracy but provide little guidance for completing full tasks (Song et al. 2025; Fan et al. 2025). As a result, most fail with issues as misalignment, unstable grasps, or poor transitions (Ma et al. 2024).
+In this paper, we address limitations stemming from statically conditioned observation horizons and single training objectives. To overcome the challenges of existing diffusion-based methods in long-horizon, complex manipulation tasks, we propose ForeDiffusion, a foresight-conditioned diffusion policy. ForeDiffusion tackles these challenges by constructing a compact representation of future view and injecting it into the diffusion denoising process to guide policy rollout (Fig. 1a). ForeDiffusion enables the model to reason beyond the immediate observation and mitigate cascading errors across multi-stage interactions. To support this mechanism, we introduce dual loss objective that combines standard denoising accuracy with a foresight‑consistency defined over the predicted horizon. Through this design, ForeDiffusion enhances planning capabilities while ensuring stability. The proposed method surpasses recent diffusion‑based baselines in overall tasks and high‑success task coverage across Adroit and MetaWorld (Fig. 1b–c).
+Our contributions are summarized as follows:
+•
+We introduce ForeDiffusion, which injects a future view constructed based on current observations into each denoising step, endowing diffusion policies with foresight, thus better addressing long-horizon tasks.
+•
+We build on foresight-conditioned diffusion by formulating dual loss objective that combines standard denoising fidelity with prediction‑consistency, thereby curbing error accumulation in complex, contact‑rich manipulation.
+•
+Compared with mainstream baselines, ForeDiffusion maintains superior overall performance and significantly improves the success rate by 23% in complex manipulation tasks, where other models perform poorly.
+Related Work
+Visuomotor Control via Diffusion Models
+Diffusion models have emerged as a powerful paradigm for generating action sequences in robotic manipulation, leveraging iterative denoising processes inspired by their success in image and video synthesis (Ho et al. 2020; Ho et al. 2022). Early works like Diffusion Policy are conditioned on RGB observations to achieve reliable performance in single-arm manipulation tasks, outperforming traditional behavior cloning methods (Chi et al. 2023). Recent advances incorporate richer perceptual inputs, such as 3D Diffusion Policy (DP3), which uses point cloud representations to enhance spatial reasoning and data efficiency on multi-task benchmarks like MetaWorld (Ze et al. 2024). Other innovations include FlowPolicy, which employs manifold-aligned denoising to capture low-dimensional action structures (Zhang et al. 2025a), ManiCM integrates multimodal inputs into a consistency-driven 3D diffusion framework for real-time inference (Lu et al. 2025), and SDM Policy, which uses teacher-student distillation to enable single-step generation, improving task success rates (Jia et al. 2024). Recent surveys further categorize diffusion policies in grasp learning, trajectory planning, and skill acquisition (Zhang et al. 2025b; Ma et al. 2024). However, these approaches typically rely on static conditioning based primarily on initial proprioceptive inputs, without modeling temporal evolution, which limits foresight and leads to degraded performance in dynamic or complex tasks (Lv et al. 2025; Reuss et al. 2023).
+Foresight-Driven Control with Dual Loss Training
+A parallel line of research studies predictive world models that forecast future observations, giving the agent foresight beyond its current sensory window (Hafner et al. 2019). Latent video predictor DreamerV3 rolls out imagined trajectories in a learned latent space to evaluate long-horizon returns (Hafner et al. 2023). MoDem-V2 integrates RGB-based perception with learned visuo-motor models to perform contact-rich manipulation in uninstrumented, real-world environments (Lancaster et al. 2024). Hierarchical Diffusion Policy (HDP) and Causal Diffusion Policy (CDP) split prediction across coarse and fine temporal scales, allowing long range forecasts to steer fine-grained actions (Ma et al. 2024; Ma et al. 2025). Evidence from other fields confirms the benefit of explicit foresight.
+SceneDiffuser and MotionDiffuser add cost or safety terms to diffusion based trajectory forecasts, lowering collision rates on Waymo and nuScenes (Jiang et al. 2023; Jiang et al. 2024). DiffuseLoco stabilizes quadruped gaits by penalizing high energy latent rollouts, while MVDiffusion and Percept-Diff pair pixel denoising with perceptual to keep long videos semantically coherent (Huang et al. 2025; Shi et al. 2023; Borno et al. 2024).
+Figure 2: Architecture of ForeDiffusion. The perception module fuses RGB-D and proprioceptive inputs into 3D latent representations; an observation encoder outputs a global condition G and a future condition \hat{G} . These condition guide a K -step reverse-diffusion process that denoises a noise-perturbed action trajectory into an executable sequence A_{0} , with joint construction and behavioral losses enforcing accurate future prediction and expert-level control.
+To stabilize training and reduce exposure bias, many works add task level consistency losses to the basic reconstruction or denoising objective (Li et al. 2024). Representative examples include the self predictive loss in TD-MPC2 (Hansen et al. 2023), horizon wise KL regularization in Trajectory Transformer++ (Janner et al. 2021), and the score plus value distillation in SDMP (Jia et al. 2024). Collectively, prior work shows that combining explicit future prediction with joint local and global supervision leads to more reliable control on complex, long‑horizon tasks (Chen et al. 2024).
+Building on 3D Diffusion Policy, to tackle the performance decline of complex tasks caused by limited perception and weak task supervision, we propose ForeDiffusion, a modular, foresight‑aware visuomotor policy. By conditioning each diffusion step on a compact, predicted future view and optimizing with a dual loss objective that balances construction fidelity and long‑horizon consistency, ForeDiffusion delivers more stable and anticipatory control. Experiments show that while it matches mainstream methods on basic tasks, it consistently surpasses them on complex, contact‑rich manipulation tasks, achieving markedly higher success rates under increasing task complexity.
+Method
+In this section, we first describe how to construct a future view from observations to approximate the future perception. Then, we develop how the current and future views are combined as conditions to guide the denoising process and generate trajectories that align with expert intent. Finally, we introduce a dual loss mechanism that jointly supervises both the future view construction and the denoising objectives.
+Future View Construction
+To enable the model to reason about future outcomes while relying on present information at inference, we introduce a future view construction mechanism that predicts a forward-looking representation from near-term observations.
+At each time step t , we define the current observation as a pair of temporally adjacent frames, O^{cur.}_{t}=(O_{t-1},O_{t}) , where each O_{t}=(P_{t},R_{t}) consists of a 3D point cloud P_{t} and proprioceptive robot state R_{t} (Janner et al. 2022). We encode this pair using a shared observation encoder Enc(\cdot) to obtain the current observation F^{cur.}_{t} , defined as:
+F^{cur.}_{t}=Enc\left((P_{t-1},R_{t-1}),(P_{t},R_{t})\right)
+(1)
+The ground-truth future view F^{gt.}_{t} is constructed by the observation at time t+1 . Based on the current observation feature F^{cur.}_{t} , we construct a predictive future view F^{cons.}_{t} using a multilayer perceptron (MLP). The MLP learns to map the current observation to a future scene representation, enabling the model to predict future view based on near-term observations.
+Figure 3: Architecture of Foresight-Diffusion. A ResNet encoder–decoder injects 384 / 512-dimensional context vectors G and \hat{G} across all sampling stages to denoise the action token A_{k}^{t} into \hat{A}_{k}^{t} , with anticipated future observations.
+Foresight-Conditioned Denoising
+The global condition \mathbf{G} and the future condition \mathbf{\hat{G}} denote separately the temporally-aware representations constructed by concatenating F^{cur.}_{t} and F^{cons.}_{t} with a timestamp encoding and enables the model to incorporate timing information into both the current and predicted future view. Our diffusion model generates actions by reversing a learned conditional diffusion process (Ho et al. 2020). Starting from an initial Gaussian noise \mathbf{a}^{T}\sim\mathcal{N}(0,I) , the model iteratively refines the noisy action over T denoising steps (see Fig. 3). Each step is performed as follows:
+\mathbf{a}^{t-1}=\text{Denoise}(\alpha_{t},\sigma_{t},\mathbf{a}^{t},t,\mathbf{G}),\\
+=\alpha_{t}\left(\mathbf{a}^{t}-\frac{1-\alpha_{t}}{\sqrt{1-\bar{\alpha}_{t}}}\cdot\epsilon_{\theta}(\mathbf{a}^{t},t,\mathbf{G},\hat{\mathbf{G}})\right)\\
++\sigma_{t}\cdot\mathbf{z},\quad z\sim\mathcal{N}(0,I),\quad t=T,\dots,1.
+(2)
+where \epsilon_{\theta} denotes a conditional denoising network that predicts the noise added to the action \mathbf{a}^{t} , given the timestep t , global condition \mathbf{G} , and future condition \hat{\mathbf{G}} . The denoising process is modulated by a variance schedule \{\alpha_{t},\bar{\alpha}_{t},\sigma_{t}\} , and the final output \mathbf{a}^{0} serves as the predicted action.
+This iterative procedure can be interpreted as a gradient-based update within an implicit energy field over the action space. Specifically, the denoising step resembles a descent in a learned energy field E(x) , yielding a simplified rule:
+\mathbf{a^{\prime}}=\mathbf{a}-\gamma_{t}\cdot\nabla E(x)
+(3)
+where \gamma_{t} controls the step size and \nabla E(x) represents the direction for refining the noisy action. While this abstraction omits scheduling details, it offers an intuitive view on how the diffusion model guide actions toward more optimal regions in the behavior space, shaped by current observations and predicted future view.
+Dual Diffusion Loss
+To ensure that this constructed feature captures forward-looking information, we supervise it using a mean squared error loss against the encoded ground-truth future view:
+\mathcal{L}_{Construction}=\left\|F^{cons.}_{t}-F^{gt.}_{t}\right\|_{2}^{2}
+(4)
+In parallel, the diffusion model is trained to reverse the noise process with a denoising objective:
+\mathcal{L}_{Diffusion}=E_{x_{t},t}\left[\left\|\epsilon_{\theta}(\mathbf{a}^{t},t,\cdot)-\epsilon\right\|_{2}^{2}\right]
+(5)
+The total training objective is a weighted sum of the diffusion and structure alignment losses:
+\mathcal{L}_{ForeDiffusion}=\mathcal{L}_{Diff.}+\beta\cdot\mathcal{L}_{Cons.}
+(6)
+where \beta controls the influence of the prediction alignment.
+\mathbf{a}^{t-1}=\mathbf{a}^{t}-\gamma_{t}\cdot\left(\epsilon_{\theta}^{Diff.}(\cdot)+\beta\cdot\epsilon_{\theta}^{Cons.}(\cdot)\right)
+(7)
+This design enables the model to construct and utilize a structured predictive future view based solely on near-term observations, providing a form of implicit foresight that generalizes to inference without requiring access to future data.
+In summary, at each time step t , ForeDiffusion extracts the current observation and predicts the future representation to form the diffusion conditions (\mathbf{G},\hat{\mathbf{G}}) that guide each denoising step (see Fig. 4). Given expert trajectories, the goal is to learn a policy \epsilon(a^{t}|O_{1:t}) that mimics expert behavior. The training is supervised by a dual loss objective, combining the standard diffusion loss \mathcal{L}_{Diff.} with an structure loss \mathcal{L}_{Cons.} to improve both stability and fidelity.
+Intropy Analysis of ForeDiffusion
+The Intropy framework can be used to quantify intelligence as d\mathcal{L}=\frac{\delta S}{R},
+where d\mathcal{L} (Intropy) denotes the incremental intelligence gain, \delta S represents newly absorbed information, and R reflects the system’s internal state, such as complexity or uncertainty (Ren et al. 2025).
+Under this view, ForeDiffusion maximizes intropy efficiency by increasing information gain ( \delta S ) while reducing structural resistance ( R ). Its foresight-conditioned denoising, guided by predicted future views F^{\text{cons}}_{t} , injects anticipatory information that amplifies long-horizon learning signals. The dual loss \mathcal{L}=\mathcal{L}_{\text{Diff}}+\beta\cdot\mathcal{L}_{\text{Cons}},
+further stabilizes representation and reduces uncertainty. Through the Intropy lens, ForeDiffusion achieves greater d\mathcal{L} —transforming predictive entropy into structured foresight—yielding robust, intelligent visuomotor control with an average success rate of 80.6% on long-horizon, contact-rich manipulation tasks.
+Figure 4: Schematic of Future View Injection. Normal denoising performs the standard early‑phase diffusion, whereas foresight conditioning injects future‑view information, allowing the model to anticipate consecutive outcomes and generate more stable, goal‑aligned action sequences.
+Methods
+Adroit Benchmark
+MetaWorld Benchmark
+Average
+Hammer
+Pen
+Door
+Easy
+Medium
+Hard
+Very Hard
+DP (Chi et al. 2023)
+45 \pm{5}
+13 \pm{2}
+37 \pm{2}
+82 \pm{26}
+31 \pm{24}
+11 \pm{13}
+37 \pm{27}
+56.64 \pm{37.61}
+FlowPolicy (Zhang et al. 2025a)
+100 \pm{0}
+53 \pm{12}
+58 \pm{5}
+80 \pm{34}
+62 \pm{32}
+49 \pm{40}
+36 \pm{7}
+62.57 \pm{21.00}
+ManiCM (Lu et al. 2025)
+100 \pm{0}
+48 \pm{3}
+75 \pm{\textbf{3}}
+86 \pm{23}
+58 \pm{25}
+40 \pm{32}
+67 \pm{26}
+71.83 \pm{30.37}
+SDM Policy (Jia et al. 2024)
+100 \pm{0}
+49 \pm{4}
+68 \pm{1}
+89 \pm{19}
+66 \pm{28}
+43 \pm{37}
+52 \pm{32}
+74.81 \pm{30.18}
+DP3 (Ze et al. 2024)
+100 \pm{0}
+43 \pm{6}
+62 \pm{4}
+91 \pm{\textbf{19}}
+61 \pm{32}
+44 \pm{41}
+49 \pm{33}
+72.35 \pm{32.77}
+ForeDiffusion (Ours)
+100 \pm{\textbf{0}}
+59 \pm{\textbf{12}}
+68 \pm{1}
+89 \pm{16}
+73 \pm{\textbf{26}}
+59 \pm{\textbf{29}}
+75 \pm{\textbf{28}}
+80.56 \pm{\textbf{22.93}} ( \uparrow 5.75%)
+Table 1: Average success rates (%) of ForeDiffusion and baselines on the Adroit and MetaWorld benchmarks. ForeDiffusion achieves the top average success rate (80.56%), matching or surpassing all baselines on every Adroit task and dominating the Medium, Hard, and Very Hard tiers of MetaWorld by margins of 6–26%. Its consistently superior scores across the most challenging settings underscore the benefit of foresight-conditioned diffusion for robust grasping and long-horizon planning.
+Experiments
+In this section, we conduct the experiments that focus on six research questions: (RQ1) Does the ForeDiffusion outperform baselines in task success rate? (RQ2) Is it effective for improving the learning efficiency across different tasks? (RQ3) As task complexity increases, does the performance remain consistently robust? (RQ4) Is foresight injection position essential for performance enhancement? (RQ5) How sensitive is the weighting of the dual loss during training? (RQ6) How does the scale of demonstrations influence performance and scalability?
+Experiment Setups
+Simulation Benchmark
+To evaluate our method, we adopt two representative simulation platforms as benchmarks: Adroit (Rajeswaran et al. 2017) and MetaWorld (Yu et al. 2020). Adroit offers high-DoF dexterous hand manipulation with complex motor control; MetaWorld is implemented using the MuJoCo physics simulator (Todorov et al. 2012). It provides more robot operation tasks and serves as a standard benchmark for evaluating policy generalization and task transferability. Furthermore, as the length and complexity of the task time series increase, they are often categorized as Easy/Medium/Hard/Very Hard (McLean et al. 2025; Seo et al. 2023). These benchmarks cover the entire process from low-level control to high-level perceptual reasoning. To unify evaluation metrics, based on the MetaWorld classification criteria, we further termed the Medium, Hard, and Very Hard tiers of MetaWorld as complex tasks (Hu et al. 2023).
+Expert Demonstrations
+For expert demonstrations, we adopt domain-specific strategies to ensure high-quality and consistent supervision across tasks. In MetaWorld, expert trajectories are generated using built-in scripted policies. For other domains, expert data is collected from reinforcement learning agents trained to solve the tasks (Nguyen and La 2019; Schulman et al. 2017). Specifically, for Adroit, we employ VRL3 (Wang et al. 2022) to obtain successful trajectories. We ensure that all imitation learning algorithms are trained with the same set of expert trajectories.
+Baselines
+We compare against five representative diffusion based baselines. Diffusion Policy (Chi et al. 2023) formulates single-stage conditional action generation. DP3 (Ze et al. 2024) extends this with 3D-conditioned modeling for visuomotor control. FlowPolicy (Zhang et al. 2025a) enforces trajectory coherence via implicit temporal modeling. ManiCM (Lu et al. 2025) integrates multimodal inputs into a consistency-driven 3D diffusion framework.
+SDM Policy (Jia et al. 2024) adopts teacher–student distillation for accelerated inference. These baselines span a spectrum of design philosophies from flat to structured diffusion, and from explicit to implicit behavior modeling.
+Implementation Details
+We implement our method built upon a conditional U-Net backbone. FiLM-style (Perez et al. 2018) conditional modulation is applied throughout the network, with asymmetric conditioning dimensions: 384 for the downsampling and 512 for the upsampling. Point clouds are encoded via a PointNet-style encoder (Qi et al. 2017) with 3 input channels and 64 output dimensions. We train the policy using AdamW with a learning rate of 1e-4, cosine learning rate schedule, and 500 warm-up steps. The model is trained for 3000 epochs with a batch size of 128. Diffusion is implemented with the DDIM scheduler (Song et al. 2020), and EMA is applied to stabilize training. All experiments are performed on a single NVIDIA RTX 3080 GPU.
+Evaluation Metrics
+Based on the evaluation protocol of DP3, each experiment is conducted with 3 random seeds (0, 1, 2). Throughout training, the policy is evaluated every 200 epochs using 15 rollouts over a total of 3,000 episodes. For each seed, we compute the average of the top 5 success rates across all evaluations, and report the final performance as the mean and standard deviation over the 3 seeds.
+Comparison with State-of-the-art Methods
+Methods
+Medium
+Hard
+Very Hard
+Average
+B
+BP
+H
+PW
+HI
+POH
+P
+D
+PPW
+SPe
+SPl
+SPh
+Diffusion Policy (DP)
+85
+15
+15
+20
+9
+0
+30
+43
+5
+11
+11
+63
+26
+3D Diffusion Policy (DP3)
+98
+34
+76
+49
+14
+14
+51
+69
+35
+17
+27
+97
+48
+ForeDiffusion (Ours)
+100
+39
+97
+99
+20
+53
+75
+94
+92
+39
+49
+100
+71 ( \uparrow 23%)
+Table 2: Success rates (%) of different policies on challenging metaworld tasks. ForeDiffusion delivers the highest score on every one of the complex tasks in MetaWorld, raising the overall mean success to 71%, a gain of 23% over DP3 and 45% over the Diffusion Policy. The advantages are most evident on the Very Hard tasks, up to 92% on PPW and 100% on SPh. These results confirm that ForeDiffusion markedly improves robustness under increasing task complexity.
+Figure 5: Learning efficiency. Compared to DP3, ForeDiffusion shows higher stability, learning efficiency, and success rates.
+Success Rate (RQ1)
+We compare the success rates of our method with state-of-the-art baselines on Adroit suits and MetaWorld benchmark. Our method consistently achieves competitive performance, particularly excelling in complex, dexterous and multi-task settings. Table 1 compares policy performance across the Adroit and MetaWorld benchmarks. On the Adroit tasks, ours achieves 100% on Hammer, and also surpasses prior methods on Pen and Door. In MetaWorld, ForeDiffusion maintains strong results as task complexity increases. On Medium, Hard and Very Hard subsets, it reaches 73%, 59% and 75% success rates, respectively, with standard deviations of 26, 29 and 28. These results represent gains of up to 26% points over the best-performing baseline, and are particularly significant on Hard and Very Hard tasks where most baselines degrade sharply. FlowPolicy drops to 36% on Very Hard, while DP3 achieves only 44% on Hard. Overall, ForeDiffusion delivers an average success rate of 80.6% with a standard deviation of 22.9 across all tasks, outperforming the strongest baseline SDM Policy (74.8%). Overall, the results underline ForeDiffusion’s superior success rates and its robust, steady performance on the most demanding manipulation tasks.
+Figure 6: Basketball task on different method. ForeDiffusion consistently scores, whereas FlowPolicy misses, demonstrating superior grasp stability, trajectory planning.
+Learning Efficiency (RQ2)
+To evaluate learning efficiency, we compare the success rate curves of different methods across tasks of varying complexity (see Fig. 5). Our method consistently outperforms DP3 under low-data regimes. On Disassemble, we achieve 95% success with only 10 demonstrations, while DP3 reaches just 40%. For harder tasks like Shelf Place, we reach 55% with 10 demonstrations, whereas DP3 remains at 25%. Even in tasks where DP3 eventually catches up (e.g. Stick Push), our method converges faster (100% at 10 demos vs. 90% for DP3 at 20). Overall, our policy achieves over 90% success on 4 out of 5 tasks within 20 demonstrations, while DP3 requires 50 demonstrations to reach comparable performance.
+Figure 7: Qualitative comparison of efficient scaling with demonstrations. To evaluate the impact of demonstration quantity on policy performance, we conduct experiments on four Very Hard tasks from the MetaWorld. We compare ForeDiffusion and DP3 by progressively increasing the number of expert demonstrations during training. Results show that ForeDiffusion consistently achieves higher success rates than DP3 under low-data regimes, demonstrating strong sample efficiency.
+Prospective Learning Ability (RQ3)
+To evaluate the model adaptability and reasoning across rising task complexity, we evaluate Foresight‑Conditioned Diffusion on 12 MetaWorld tasks spanning the Medium, Hard, and Very Hard tasks in the MetaWorld benchmark: Basketball (B), Bin Picking (BP), Hammer (H), Push Wall (PW), Hand Insert (HI), Pick Out of Hole (POH), Push (P), Disasemble (D), Pick Place Wall (PPW), Shelf Place (SPe), Stick Pull (SPl), Stick Push (SPh). As shown in Table 2, ours consistently surpasses all baselines, with the margin widening at complex tasks. This demonstrates the foresight module allows the policy to exploit future information, anticipate long‑horizon outcomes, and make more robust decisions capabilities that standard diffusion policies lose under high uncertainty or long temporal dependencies. Fig. 6 compares FlowPolicy with our method on the same simulated task, confirming that ForeDiffusion excels on challenges demanding long‑term reasoning and planning.
+Ablations
+Foresight-Conditioned Diffusion (RQ4)
+To evaluate the effectiveness of our method, we conduct ablation studies focusing on the point at which future view is injected into the diffusion process. In the baseline, future view is entirely removed, and the model relies solely on current view, allowing us to assess the contribution of foresight-conditioned diffusion itself. In the early-stage, future view are fused at the input stage of the U-Net alongside global conditioning, influencing the entire diff
+STOP 28000 32885

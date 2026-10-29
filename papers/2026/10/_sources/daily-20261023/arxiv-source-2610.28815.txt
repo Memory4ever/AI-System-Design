@@ -1,0 +1,1437 @@
+Warning: truncated output (original token count: 27521)
+Total output lines: 1480
+
+https://arxiv.org/html/2610.28815v1
+Forging More Tasks into Better Harnesses:Agentic Harness Evolution via Successive Scale Racing
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+2.1 Agent Harness Engineering
+2.2 Self-Evolving Agents and Harnesses
+3 Preliminary Study
+3.1 Effect of Task-Pool Size
+Observation 1.
+3.2 Effect of Evidence Configuration
+Observation 2.
+4 Successive Scale Racing
+Notation.
+4.1 Representative Evidence Ranking
+Experience characterization.
+Coverage with diminishing returns.
+4.2 Multiscale Candidate Generation
+4.3 Candidate Performance Racing
+Shared evaluation batches.
+Elimination and selection.
+4.4 Recursive Evolution
+5 Theoretical Analysis
+Proposition (RER prefixes).
+Theorem (Single-round racing).
+6 Experiments
+6.1 Experimental Setup
+Benchmarks and models.
+Baseline methods.
+Experimental control.
+Evaluation protocol.
+6.2 Overall Performance
+6.3 Effects of Task Experience and Search Resources
+Scaling task pools.
+Scaling search resources.
+6.4 Effects of Evidence Selection Strategies
+Comparison with fixed evidence strategies.
+RER ordering ablation.
+6.5 Racing Cost–Quality Audit
+7 Conclusion
+References
+A Proofs and Technical Conditions
+A.1 Formal Guarantees
+Coverage across evidence scales.
+Selection under mixed evaluation.
+A.2 Proof of the RER Prefix Guarantee
+A.3 Single-Round Probability Model
+Conditioning and target.
+Sampling conditions.
+Selection conditions.
+A.4 Uniform Error for Mixed Evaluation
+Validation-task sampling.
+Rollout noise under adaptive task choices.
+Combining the components.
+A.5 From Stage Errors to Selection Loss
+A.6 Interpretation and Limits
+A sufficient gap condition.
+Why the discrepancy term is necessary.
+Relation to the audit and to generalization.
+More available evidence.
+B SSR Implementation Details
+Evaluation-task construction.
+Integer quotas and ties.
+Budget boundaries and stopping.
+Judge and optimizer interface.
+C Experimental Configuration
+Evidence and repetitions.
+D Variability of the Main Results
+E Evidence Scale across Parents and Evolution Rounds
+Scale and parent state.
+Winning scales across rounds.
+F More Related Work
+Racing and successive halving.
+G Evolved Harnesses
+G.1 SWE-Pro-V Harness
+Readme.md .
+workflow.md .
+template.md .
+solve-verify.sh .
+G.2 DeepSWE Harness
+Readme.md .
+template.md .
+solve-verify.sh .
+License: CC BY 4.0
+arXiv:2610.28815v1 [cs.AI] 20 Oct 2026
+Forging More Tasks into Better Harnesses:
+Agentic Harness Evolution via Successive Scale Racing
+Jingzhe Liu
+Affiliation: Michigan State University
+Jiliang Tang
+Affiliation: Michigan State University
+Tong Zhao
+Affiliation: Snap Inc.
+Neil Shah
+Affiliation: Snap Inc.
+Clark Mingxuan Ju
+Affiliation: Snap Inc.
+Abstract
+Agentic harness evolution optimizes an agent’s instructions, tools, and control flow by using its task execution experiences as evolving evidence.
+While more evolution tasks should intuitively improve performance, our preliminary study reveals a paradoxical failure mode: the performance of existing methods degrades as the task pool expands. Our further analysis demonstrates that this degradation stems from suboptimal evidence selection during optimization, as different evidence combinations lead to substantially different evolution outcomes. To address this issue, we propose Successive Scale Racing (SSR) , a framework that adaptively searches for optimal evidence combinations in each evolution round. SSR constructs diverse evidence combinations based on the corresponding task quality and coverage, and efficiently races the resulting candidate harnesses under a small compute budget. Empirically, across three distinct benchmarks, SSR achieves state-of-the-art results in all six configurations. Notably, as the task pool grows from 40 to 200, SSR steadily improves the pass rate from 64.3% to 68.3%, while the baselines’ performances all drop. Furthermore, its racing mechanism identifies near-optimal candidates while reducing validation executions by 60%.
+1 Introduction
+An agent harness governs a language model’s interaction with its environment through instructions, tool interfaces, context management, and control flow ( Ning et al., 2026 ; Pan et al., 2026a ) . By determining what the model observes, remembers, and can do ( Packer et al., 2023 ) , it shapes how model capabilities are used on real-world tasks. Harness engineering has relied heavily on human design and implementation, such as manually refined interfaces ( Yang et al., 2024 ) and coordination protocols ( Hong et al., 2023 ; Qian et al., 2023 ) . Recent work automates this process, evolving agent designs and workflows from execution experience while keeping model weights fixed ( Hu et al., 2024 ; Zhang et al., 2024a ; Zhang et al., 2026 ) .
+Current frameworks for agentic harness evolution commonly follow an execution–reflection–optimization paradigm ( Lee et al., 2026 ; Lin et al., 2026 ; Wang et al., 2026 ; Liu et al., 2026 ) . The agent first solves assigned tasks, producing execution trajectories. An agent acting as the optimizer then distills lessons, which we refer to as evidence, from these trajectories, and uses them to guide improvements to the harness. This process repeats until a stopping criterion is met or the execution budget is exhausted.
+Figure 1: Many existing methods evolve on large, fixed task pools, which can induce noisy or redundant signals. SSR searches over ordered evidence groups.
+In machine learning, expanding training task pools generally improves generalization and system capabilities ( Kaplan et al., 2020 ; Hoffmann et al., 2022 ) . However, whether agentic harness evolution similarly benefits from larger task pools remains underexplored.
+To address this gap, we first evaluate existing state-of-the-art methods ( Lin et al., 2026 ; Wang et al., 2026 ; Liu et al., 2026 ; Pan et al., 2026b ) by enlarging the set of training tasks used for evolution. Surprisingly, our preliminary study in Section 3 shows that larger task pools do not consistently yield better harnesses with existing methods. AHE ( Lin et al., 2026 ) , for example, initially improves but drops from 63.0% at 80 tasks to 57.7% at 200 tasks. Based on this observation, we pose our core research question:
+How can we leverage experience from more tasks to evolve better harnesses?
+To provide further insights into this problem, we investigate how different trajectory selections impact harness updates. We find that a set of
+tasks selected by a simple LLM judge can generate better harnesses than either an equally sized alternative subset or the much larger full task pool.
+This reveals a key insight: more task experiences, while providing more information, might also introduce noise or redundant signals . Feeding all trajectories into the optimizer could blur the focus of individual modifications. Thus, harness performance depends not on the total volume of available evidence, but on selecting the appropriate combinations of evidence for each evolution step.
+However, searching for effective evidence combinations presents two key challenges: (1) The space of possible trajectory combinations is combinatorial. Generating every candidate harness and thoroughly evaluating each on validation tasks is computationally prohibitive. (2) The ideal evidence scale is not static; it shifts as the parent harness evolves and handles tasks differently across iterations.
+To address these challenges, we propose Successive Scale Racing (SSR) (Figure 1 ), a framework that adaptively searches over evidence combinations under a fixed execution budget. SSR addresses the two challenges in the following ways: (1) Instead of enumerating combinatorial subsets, SSR introduces Representative Evidence Ranking (RER) to order task evidence by quality and coverage. It generates candidates from a selected set of evidence combinations based on the rankings. To minimize validation costs, SSR employs a cumulative performance racing mechanism that evaluates candidates on shared task batches and progressively prunes weaker candidates early. (2) In every evolution round, SSR refreshes execution trajectories based on the incumbent harness and dynamically re-ranks evidence subsets, allowing the winning evidence combination to adaptively shift as the harness evolves.
+We evaluate SSR on SWE-Bench Pro Verified, DeepSWE, and GAIA-2 ( Zheng et al., 2026 ; Huang et al., 2026 ; Froger et al., 2026 ) across two execution setups. SSR achieves top performance and exhibits positive scaling, raising accuracy from 64.3% to 68.3% as the task pool expands from 40 to 200 tasks.
+Our main contributions are threefold: (1) We identify noisy and redundant evidence signals as a primary cause of performance degradation when scaling task pools in harness evolution. (2) We propose SSR, which effectively searches over evidence scales using quality-coverage ranking and performance racing. (3) Across three benchmarks under two execution setups, SSR leads in all six settings and benefits from larger task pools, achieving higher efficiency and performance.
+2 Related Work
+2.1 Agent Harness Engineering
+Harness design encompasses reasoning–action loops ( Yao et al., 2022 ) , multi-agent conversation ( Wu et al., 2023 ) , sandboxed execution ( Wang et al., 2024 ) , and prescribed repair workflows ( Xia et al., 2024 ) . Automated optimization spans instruction search ( Zhou et al., 2023 ; Yang et al., 2023 ) , feedback-guided prompt revision ( Pryzant et al., 2023 ; Agrawal et al., 2025 ) , pipeline compilation ( Khattab et al., 2023 ) , and textual feedback propagation ( Yuksekgonul et al., 2024 ) . Beyond prompts, GPTSwarm optimizes computational graphs ( Zhuge et al., 2024 ) , AgentSquare evolves and recombines modules ( Shang et al., 2024 ) , and AgentOptimizer updates tool functions ( Zhang et al., 2024b ) .
+Figure 2: Existing methods’ performance change with more evolution tasks. Larger task pools do not consistently improve final harness performance.
+Figure 3: Comparisons of harness performance on different task pools. A smaller, selected task pool tends to induce better harnesses than a large, random task pool.
+2.2 Self-Evolving Agents and Harnesses
+Experience can improve outputs through self-feedback ( Madaan et al., 2023 ) , later attempts through verbal reflection ( Shinn et al., 2023 ) , and future tasks through reusable skills ( Wang et al., 2023 ) , extracted insights ( Zhao et al., 2023 ) , contextual guidelines ( Fu et al., 2024 ) , instruction manuals ( Chen et al., 2024 ) , reasoning memory ( Ouyang et al., 2025 ) , or evolving playbooks ( Zhang et al., 2025 ) . Code-level evolution includes SICA’s self-edits ( Robeyns et al., 2025 ) , DGM’s archive ( Zhang et al., 2026 ) , HGM’s descendant-based search ( Wang et al., 2026 ) , and MGM’s cross-task and cross-lineage comparisons ( Liu et al., 2026 ) . AHE structures trajectory evidence ( Lin et al., 2026 ) , while Meta-Harness exposes historical code, scores, and traces ( Lee et al., 2026 ) . Retro selects a challenging, diverse coreset and uses self-preference for retrospective optimization ( Pan et al., 2026b ) .
+3 Preliminary Study
+In this preliminary study, we investigate how task-pool size and evidence use affect harness evolution. To start with, we conduct experiments on SWE-Pro-V with the Codex setting, as in the analyses of Section 6 . We report final Avg Pass@1 (%) averaged over three independent runs. Section 6.4 extends the evidence comparison to DeepSWE.
+3.1 Effect of Task-Pool Size
+We vary the training task pool from 40 to 200 tasks across Retro, AHE, HGM, and MGM. Contrary to intuition, none of these methods consistently benefits from larger pools (Figure 3 ). For instance, AHE peaks at 63.0% accuracy with 80 tasks, but degrades to 57.7% with 200 tasks.
+Observation 1.
+Expanding the task pool does not necessarily produce a better harness under existing evolution strategies, and can even degrade performance.
+3.2 Effect of Evidence Configuration
+To understand this degradation, we analyze how different evidence selections impact optimization starting from the same harness (Figure 3 ). An LLM judge ranks experience records from the 160-task pool into Top 40 and Bottom 40 subsets. Top 40 outperforms All 160 by 3.4% and Bottom 40 by 5.4%, showing that evidence quality and scale matter significantly. Conversely, a randomly sampled 40-record subset from the 80-task pool trails All 80 by 1.3%, confirming that unguided scale reduction is unhelpful.
+Observation 2.
+Evolution outcomes depend on the evidence combinations (from task trajectories) the optimizer uses; a well-selected subset can outperform full-pool evidence.
+Figure 4: Overview of Successive Scale Racing (SSR).
+(a) RER ranks training trajectories of the parent H t H_{t} by quality and marginal coverage gain.
+(b) Nested evidence prefixes of different scales independently modify H t H_{t} to generate candidate harnesses.
+(c) Candidates race against the protected parent H t H_{t} over shared task batches, progressively eliminating weaker harnesses by cumulative score and updating the incumbent to H t + 1 H_{t+1} for the next evolution round.
+4 Successive Scale Racing
+In this section, we introduce Successive Scale Racing (SSR) . As illustrated in Figure 4 , our framework operates in four key stages: (1) Representative Evidence Ranking (RER), which orders experience records by quality and coverage; (2) Multiscale Candidate Generation, which independently modifies a shared parent harness using nested evidence prefixes generated from the ranking; (3) Candidate Performance Racing, which progressively prunes weaker candidates using cumulative scores on shared validation batches; and (4) Recursive Evolution, which updates the parent harness and refreshes execution evidence for subsequent rounds.
+Notation.
+Let H t H_{t} denote the incumbent harness at round t t , and let 𝒯 \mathcal{T} and 𝒱 \mathcal{V} be disjoint training and validation task sets. Training tasks supply optimization evidence; validation tasks are held out from that evidence and contribute to candidate selection. N = | 𝒯 | N=|\mathcal{T}| denotes the available evidence-pool size, k k the number of task records supplied to one candidate, and M M the number of candidates in a round.
+4.1 Representative Evidence Ranking
+An effective evidence set must offer actionable and transferable insights without overwhelming the optimizer with redundant or low-value execution logs. To achieve this balance, Representative Evidence Ranking (RER) establishes a global ordering of experience records that jointly optimizes individual evidence quality and collective pool coverage.
+Experience characterization.
+For a given parent harness H t H_{t} , we execute it on each training task i ∈ { 1 , … , N } i\in\{1,\ldots,N\} to collect one execution trajectory τ i \tau_{i} . An LLM judge distills each trajectory τ i \tau_{i} along with its feedback into a structured experience record e i e_{i} , which comprises an executive summary and concrete harness improvement suggestions.
+Formally, for each record e i e_{i} , the judge outputs three normalized metrics in [ 0 , 1 ] [0,1] : experience importance w i w_{i} , actionability a i a_{i} , and confidence u i u_{i} . Here, w i w_{i} quantifies the generalizability of the experience beyond its originating task; a i a_{i} measures the concreteness of the proposed harness modifications; and u i u_{i} reflects the judge’s assessment reliability. We define the intrinsic record quality as q i = a i ​ u i q_{i}=a_{i}u_{i} , ensuring a high score only when a concrete modification is proposed with high confidence. The importance weight w i w_{i} is utilized separately to parameterize coverage over the evidence pool (Eq. 2 ).
+Because trajectories from different tasks can reveal overlapping failure modes or identical improvement directions, we explicitly model pairwise evidence redundancy. Specifically, each record e i e_{i} is mapped to a feature embedding z i z_{i} by encoding its summary and extracted insights. We quantify the nonnegative pairwise similarity between records e i e_{i} and e j e_{j} as:
+s i ​ j = max ⁡ { 0 , cos ⁡ ( z i , z j ) } . s_{ij}=\max\{0,\cos(z_{i},z_{j})\}.
+(1)
+This similarity metric s i ​ j s_{ij} directly feeds into the coverage objective to measure the extent to which a selected evidence subset represents the complete trajectory pool.
+Coverage with diminishing returns.
+For a selected set Y ⊆ { 1 , … , N } Y\subseteq\{1,\ldots,N\} and each record j j in the pool, let C j ​ ( Y ) C_{j}(Y) be the quality-weighted similarity of the selected records to e j e_{j} , that is, how well Y Y covers it. The objective F ⁡ ( Y ) F(Y) sums the log-coverage of all records, weighted by importance:
+C j ​ ( Y ) \displaystyle C_{j}(Y)
+= ∑ i ∈ Y q i ​ s i ​ j , \displaystyle=\sum_{i\in Y}q_{i}s_{ij},
+F ⁡ ( Y ) \displaystyle F(Y)
+= ∑ j = 1 N w j ​ log ⁡ ( 1 + C j ​ ( Y ) ) . \displaystyle=\sum_{j=1}^{N}w_{j}\log\bigl(1+C_{j}(Y)\bigr).
+(2)
+The logarithm gives diminishing returns: a record similar to already-covered ones raises F F by less, leaving room for other important experiences. F F is monotone and submodular (Proposition 1 ), which the greedy ordering below exploits.
+Starting from Y 0 = ∅ Y_{0}=\varnothing , RER repeatedly selects the record with the largest marginal coverage gain:
+π r \displaystyle\pi_{r}
+∈ arg ⁡ max i ∉ Y r − 1 ⁡ [ F ⁡ ( Y r − 1 ∪ { i } ) − F ⁡ ( Y r − 1 ) ] , \displaystyle\in\arg\max_{i\notin Y_{r-1}}\bigl[F(Y_{r-1}\cup\{i\})-F(Y_{r-1})\bigr],
+Y r \displaystyle Y_{r}
+= Y r − 1 ∪ { π r } . \displaystyle=Y_{r-1}\cup\{\pi_{r}\}.
+(3)
+The resulting permutation π = ( π 1 , … , π N ) \pi=(\pi_{1},\ldots,\pi_{N}) defines every evidence prefix. Marginal gains are recomputed after each selection; this is not a static sort by individual quality.
+4.2 Multiscale Candidate Generation
+Because the optimal evidence scale is unknown a priori and shifts as evolution proceeds (Appendix E ), SSR treats evidence scale as a per-round search variable. Given a set of predefined scale budgets 𝒮 = { k 1 , … , k M } \mathcal{S}=\{k_{1},\ldots,k_{M}\} ( 1 ≤ k 1 < ⋯ < k M = N 1\leq k_{1}<\cdots<k_{M}=N ), we construct nested evidence prefixes from the ranking π \pi :
+D t , k = { e π 1 , … , e π k } , k ∈ 𝒮 . D_{t,k}=\{e_{\pi_{1}},\ldots,e_{\pi_{k}}\},\qquad k\in\mathcal{S}.
+(4)
+Using nested prefixes rather than disjoint subsets offers distinct advantages. First, every prefix D t , k D_{t,k} provides near-optimal coverage at its length, guaranteeing a ( 1 − 1 / e ) (1-1/e) approximation factor (Proposition 1 ; Feige, 1998 ). Second, nested structures isolate scale as the sole variable across candidates, preventing confounding between subset composition and evidence volume (Section 6.4 ). Third, the shared evidence core facilitates effective validation batching during performance racing (Section 4.3 ).
+For each scale k ∈ 𝒮 k\in\mathcal{S} , the optimizer independently applies edits to the same frozen parent harness H t H_{t} :
+H t ( k ) = Optimize ⁡ ( H t , D t , k ) . H_{t}^{(k)}=\operatorname{Optimize}(H_{t},D_{t,k}).
+(5)
+The optimizer receives structured experience summaries and improvement suggestions from D t , k D_{t,k} , with optional access to raw trajectories. All candidate harnesses H t ( k ) H_{t}^{(k)} are generated under identical optimizer prompts and permissions, serving as temporary hypotheses to be evaluated in the subsequent racing phase.
+4.3 Candidate Performance Racing
+Evaluating every proposed harness on every task would spend substantial execution budget on weak candidates. This is a fixed-budget best-arm identification problem ( Audibert et al., 2010 ; Karnin et al., 2013 ) : each harness is an arm, each task execution is a pull, and the goal is to return the best harness within the budget. SSR follows the successive-halving schedule ( Karnin et al., 2013 ; Jamieson and Talwalkar, 2016 ) with a constant elimination quota, and protects the parent as an incumbent. SSR introduces new tasks over K K stages and directs later evaluations to surviving candidates. The parent remains active throughout as a common reference and is never included in the child-elimination quota. Evaluation continues across stages even when only one child remains.
+Shared evaluation batches.
+At stage r r , every surviving child and the parent execute the same new batch
+B r = B r val ∪ B r succ ∪ B r fail . B_{r}=B_{r}^{\mathrm{val}}\cup B_{r}^{\mathrm{succ}}\cup B_{r}^{\mathrm{fail}}.
+(6)
+The validation component is sampled randomly without replacement from 𝒱 \mathcal{V} . The other components contain training tasks on which the parent succeeded or failed, respectively, with these labels fixed within the round. They favor high-ranked tasks shared by the surviving candidates’ evidence prefixes, supplementing validation with checks of retained behavior and repair on familiar tasks. The prescribed numbers of new tasks from each source are constant across stages, subject to task availability; detailed sampling rules are deferred to Appendix B .
+Let P r = ⋃ s = 1 r B s P_{r}=\bigcup_{s=1}^{r}B_{s} be the cumulative task set. Only new tasks are executed at each stage; earlier scores remain cached. With R R executions per harness–task pair and reward y h , x , ℓ ∈ [ 0 , 1 ] y_{h,x,\ell}\in[0,1] , the cumulative score is
+μ ^ h , r = 1 | P r | ​ ∑ x ∈ P r ( 1 R ​ ∑ ℓ = 1 R y h , x , ℓ ) . \widehat{\mu}_{h,r}=\frac{1}{|P_{r}|}\sum_{x\in P_{r}}\left(\frac{1}{R}\sum_{\ell=1}^{R}y_{h,x,\ell}\right).
+(7)
+Tasks from all three sources receive equal weight. The selection score therefore measures performance on this mixed evaluation set; it is not a validation-only estimate. All surviving harnesses have results on the same cumulative tasks, enabling direct parent–child and child–child comparisons.
+Elimination and selection.
+After each intermediate stage, SSR ranks surviving children by μ ^ h , r \widehat{\mu}_{h,r} and removes a predetermined number of the lowest-scoring candidates. The quota is based on the initial number M M , approximately M / K M/K per stage, rather than a fraction of the current survivor count. Integer quotas retain at least one child for final selection. Eliminated candidates receive no further executions. Ties favor the candidate with fewer added and deleted lines relative to H t H_{t} .
+Let r ⋆ r_{\star} be the last completed stage and h ⋆ h^{\star} the highest-scoring surviving child, using the same tie-break rule. SSR updates the incumbent only for a strict empirical improvement:
+H t + 1 = { h ⋆ , μ ^ h ⋆ , r ⋆ > μ ^ H t , r ⋆ , H t , otherwise . H_{t+1}=\begin{cases}h^{\star},&\widehat{\mu}_{h^{\star},r_{\star}}>\widehat{\mu}_{H_{t},r_{\star}},\\
+H_{t},&\text{otherwise}.\end{cases}
+(8)
+4.4 Recursive Evolution
+After an accepted update, SSR reruns the new parent on all training tasks and rebuilds the experience records, outcome labels, and RER ordering. If the parent is retained, it reuses these records and the ordering while generating fresh candidates. Racing scores are accumulated within each round. Training-trajectory acquisition and all parent and child evaluation executions count toward the execution budget B B . Evolution ends when the execution budget is exhausted or no strict improvement has occurred for P P consecutive rounds, and returns the current incumbent. This maintains a single evolving harness while repeatedly exploring alternative evidence combinations.
+5 Theoretical Analysis
+We give single-round guarantees for evidence coverage and candidate selection; full statements and proofs are in Appendix A .
+Proposition 1 (RER prefixes).
+For a fixed evidence pool with nonnegative weights and similarities, F F is normalized, monotone, and submodular. Every length- k k prefix D k D_{k} of its exact greedy ordering satisfies
+F ⁡ ( D k ) ≥ ( 1 − 1 / e ) ​ max | D | ≤ k ⁡ F ⁡ ( D ) . F(D_{k})\geq(1-1/e)\max_{|D|\leq k}F(D).
+One ranking thus provides coverage guarantees at every candidate scale ( Nemhauser et al., 1978 ) , supporting comparisons between focused and broad evidence. The guarantee concerns F F , not execution reward.
+Theorem 1 (Single-round racing).
+Fix the parent and its children, forming 𝒞 \mathcal{C} , and let μ ⁡ ( h ) \mu(h) be the expected reward over the finite validation pool. Assume a fresh uniform validation permutation, fixed stage sizes, predictable training-task choices, and fresh rollouts in [ 0 , 1 ] [0,1] with stationary conditional means. With probability at least 1 − δ 1-\delta , at every completed stopping stage ν ≤ K \nu\leq K ,
+max h ∈ 𝒞 ⁡ μ ⁡ ( h ) − μ ⁡ ( H ^ ) \displaystyle\max_{h\in\mathcal{C}}\mu(h)-\mu(\widehat{H})
+≤ 2 ​ ∑ r = 1 ν ε r , \displaystyle\leq 2\sum_{r=1}^{\nu}\varepsilon_{r},
+μ ⁡ ( H t ) − μ ⁡ ( H ^ ) \displaystyle\mu(H_{t})-\mu(\widehat{H})
+≤ 2 ​ ε ν . \displaystyle\leq 2\varepsilon_{\nu}.
+Here ε r \varepsilon_{r} is the mixed-score error radius in Eq. ( A2 ). Its three components are rollout noise, validation-task sampling error, and training–validation discrepancy weighted by the training fraction.
+The first bound limits the cost of choosing among evidence scales, even if the best child is eliminated: each elimination can lose at most 2 ​ ε r 2\varepsilon_{r} on the joint error-control event. The second bounds regression relative to the protected parent using only the final-stage error. More rollouts reduce execution noise but cannot remove training–validation discrepancy. These are conditional, single-round guarantees on a finite pool; they establish neither population generalization nor monotonic improvement across evolution rounds.
+Codex: GPT 5.5 high
+Claude Code: Opus 4.8 high
+Method
+SWE-Pro-V
+DeepSWE
+GAIA-2
+SWE-Pro-V
+DeepSWE
+GAIA-2
+Initial harness
+57.7
+59.3
+29.0
+56.3
+56.7
+26.0
+Meta-Harness
+59.7
+60.7
+31.7
+60.0
+58.0
+29.3
+HGM
+58.7
+62.7
+32.3
+60.3
+58.7
+29.3
+MGM
+60.0
+63.3
+32.3
+61.0
+60.7
+29.7
+AHE
+60.7
+65.3
+36.0
+62.0
+63.3
+33.7
+Retro
+62.7
+66.7
+36.3
+61.3
+64.0
+34.3
+SSR (ours)
+65.7
+68.0
+38.0
+63.3
+65.3
+36.0
+Table 1: Final harness performance (Avg Pass@1, %). SWE-Pro-V denotes SWE-Bench Pro Verified. Each entry is the mean over three independent evolution runs; standard deviations are in Appendix D . Bold marks the best score; underlining marks the strongest baseline.
+6 Experiments
+We conduct extensive experiments on SSR to answer the following questions:
+Q1.
+How does SSR compare with existing harness evolution methods (Section 6.2 )?
+Q2.
+Does SSR benefit from more task experience and search resources (Section 6.3 )?
+Q3.
+How do evidence selection strategies affect performance (Section 6.4 )?
+Q4.
+How does racing trade validation cost for selection quality (Section 6.5 )?
+6.1 Experimental Setup
+Benchmarks and models.
+We use SWE-Bench Pro Verified (SWE-Pro-V; Zheng et al., 2026 ), DeepSWE ( Huang et al., 2026 ) , and GAIA-2 ( Froger et al., 2026 ) , with disjoint train/validation/test splits of 80/20/100, 50/13/50, and 80/20/100 tasks. Training trajectories supply evidence for candidate generation, validation tasks support selection, and test tasks assess the resulting harness. For GAIA-2, we adopt Retro’s 200-scenario mini configuration from the official validation split, its four-message-per-turn cap, and no optional judge relaxations ( Pan et al., 2026b ) . Our execution settings are Codex with GPT 5.5 high and Claude Code with Opus 4.8 high. The optimizer matches the executor’s model and reasoning configuration.
+Baseline methods.
+We compare SSR with the initial harness, Meta-Harness ( Lee et al., 2026 ) , HGM ( Wang et al., 2026 ) , MGM ( Liu et al., 2026 ) , AHE ( Lin et al., 2026 ) , and Retro ( Pan et al., 2026b ) . Within each platform, methods start with the same empty additional harness while retaining the platform’s default tools and runtime. Baselines follow their original evolution procedures. SSR generates one candidate from each RER prefix of 25%, 50%, 75%, and 100%, using a common parent.
+Experimental control.
+All subsequent analytical experiments are conducted using Codex and Claude Code. When isolating specific components (e.g., fixed-strategy vs. ordering variants), we keep the candidate count, optimizer, racing mechanism, and execution cap identical to ensure fair comparison.
+Evaluation protocol.
+For our main results (Table 1 ), each end-to-end condition is evolved across three independent runs. We evaluate the resulting final harness on test tasks using Average Pass@1 across three trials, reporting the mean performance over the three runs (with standard deviations detailed in Appendix D ). Ablation studies and controlled analyses use a single evolution run per condition under the same evaluation protocol, whereas the racing audit relies on three selection replays over a fixed trajectory matrix. All reported performance differences represent absolute percentage point changes. Full experimental configurations are provided in Appendix C .
+6.2 Overall Performance
+As reported in Table 1 , SSR achieves state-of-the-art performance across all six benchmark–execution configurations. Under Codex (GPT 5.5 high), SSR outperforms the strongest baselines by 3.0%, 1.3%, and 1.7% on SWE-Bench Pro Verified (65.7%), DeepSWE (68.0%), and GAIA-2 (38.0%), respectively. Under Claude Code (Opus 4.8 high), SSR maintains consistent superiority, exceeding the top-performing baselines by 1.3% on SWE-Bench Pro Verified (63.3%), 1.3% on DeepSWE (65.3%), and 1.7% on GAIA-2 (36.0%). These results confirm that SSR provides robust performance gains across diverse task domains and models.
+Figure 5: Scalability of harness evolution on SWE-Bench Pro Verified.
+(a) Task-pool growth: Evaluation performance when expanding available tasks from 40 to 200 with proportionally scaled execution caps.
+(b) Search-resource growth: Performance trajectory when increasing total execution caps under a fixed task pool.
+Figure 6: Ablation studies on evidence strategies and ordering mechanisms.
+(a) Fixed evidence strategies: Performance comparison of SSR against fixed-evidence baselines under identical candidate counts and racing protocols.
+(b) Evidence ordering: Performance comparison of RER against Random and Quality-only ordering under the same nested scale construction.
+6.3 Effects of Task Experience and Search Resources
+Scaling task pools.
+We first evaluate how harness evolution scales as the available task pool expands from 40 to 200 tasks, with execution budgets scaled proportionally. As shown in Figure 6 a, SSR exhibits monotonic performance gains, steadily raising accuracy from 64.3% to 68.3%. In stark contrast, AHE suffers from severe degradation when task volume grows, peaking at 63.0% at 80 tasks before plummeting to 57.7% at 200 tasks. This confirms that SSR successfully converts larger task pools into continuous harness improvements.
+Scaling search resources.
+Next, holding the task pool fixed, we scale the total execution budget from 800 to 4,000 while expanding candidate-generation caps (from 15 to 35 for SSR, and from 55 to 145 for MGM). As illustrated in Figure 6 b, increased compute budget consistently benefits both methods, with SSR improving from 66.3% to 71.0% and maintaining a decisive lead over MGM (51.0% to 60.3%) at every checkpoint. These results demonstrate that SSR can effectively leverage additional compute to explore and identify superior harnesses.
+6.4 Effects of Evidence Selection Strategies
+Comparison with fixed evidence strategies.
+To isolate the benefit of multiscale evidence, we compare SSR against fixed-evidence variants across four candidate generators: Top K Fixed (supplying the same top 25% of the evidence), Top K Resampling (independent 25% subsets), and Fixed N (full evidence set). As shown in Figure 6 a, relying on repeated sampling from identical evidence ( Top K Fixed ) or feeding full evidence ( Fixed N ) yields suboptimal performance on both benchmarks. While varying evidence composition ( Top K Resampling ) improves outcomes, SSR’s multiscale strategy provides a further gain of 1.4% on SWE-Pro-V (65.7% vs. 64.3%) and 1.3% on DeepSWE (68.0% vs. 66.7%), demonstrating the distinct necessity of searching across evidence scales.
+RER ordering ablation.
+We evaluate the necessity of RER by comparing it with Random ordering and a Quality only baseline under the same nested-prefix construction. As illustrated in Figure 6 b, ordering evidence by quality alone improves over random ranking on both benchmarks. Incorporating representative coverage via RER yields an additional performance boost of 1.0% on SWE-Pro-V (65.7% vs. 64.7%) and 0.7% on DeepSWE (68.0% vs. 67.3%), confirming that joint optimization of quality and coverage provides superior evidence guidance.
+Figure 7: Racing quality versus validation cost, averaged over three task-order replays of a fixed pool. Racing uses 40% of the full-evaluation cost to achieve a score within 0.4% of the best full-evaluation score.
+6.5 Racing Cost–Quality Audit
+To evaluate the efficiency of our selection mechanism, we isolate 12 candidate harnesses (three per evidence scale) generated from a single parent. We construct a 160-task audit matrix, disjoint from candidate-generation and test sets, and compare Racing against a Uniform Subset baseline that distributes evaluation budgets equally across all candidates.
+As shown in Figure 7 , Racing consistently outperforms uniform allocation across all validation budget levels (20%–60%). Notably, at just 40% of the full validation cost, Racing achieves a 65.3% score—within 0.4% of the full-matrix upper bound (65.7%)—while saving 60% of validation executions. Increasing the budget to 60% yields no further performance gains. These results confirm that SSR’s adaptive racing mechanism achieves near-optimal candidate selection with a substantially reduced evaluation budget.
+7 Conclusion
+We propose Successive Scale Racing (SSR) to address performance degradation when scaling task pools in harness evolution. SSR ranks task experience by quality and coverage, generates multiscale candidate harnesses, and efficiently races them under a fixed compute budget. Across three benchmarks and two execution setups, SSR achieves top performance in all six settings and enables positive task-pool scaling. Furthermore, its racing mechanism identifies near-optimal candidates while cutting validation executions by 60%, confirming that evidence-driven candidate diversity and execution-based selection provide a robust paradigm for agent self-improvement.
+Limitations
+While Successive Scale Racing (SSR) demonstrates promising results in scaling agentic harness evolution, several limitations warrant further investigation. First, the performance degradation observed when expanding training task pools is a multifaceted phenomenon. While our study focuses on noisy, conflicting, and redundant evidence as a primary underlying driver, other systemic factors may also contribute to this failure mode. Second, searching over evidence scales via SSR represents an initial step toward mitigating this scaling bottleneck. Alternative paradigms, such as adaptive evidence filtering via dynamic context pruning, fine-grained trajectory credit assignment, or reinforcement learning-based optimizer tuning, remain promising unexplored avenues for addressing noisy feedback during evolution. Third, our empirical evaluation, though conducted across multiple benchmarks and execution setups, is bounded by the specific choice of foundation models used as task agents and optimizers. Further validation is needed to determine how well these findings generalize to a broader spectrum of model architectures, such as open-weight models of varying scales or domain-specialized language models.
+Ethical Considerations
+Improving agent harnesses can increase both the benefits of automated task completion and the potential harms of erroneous or misused tool actions. Our benchmark evaluations do not establish safety in unrestricted deployment. Practical use should retain execution isolation, restricted tool permissions, and human oversight for consequential actions. Task experience may also contain sensitive information or biases that can propagate into evolved harnesses; trajectories and generated artifacts should therefore be reviewed before sharing or deployment. The use and redistribution of third-party datasets, models, and code should respect their respective licenses and terms.
+References
+Agrawal et al. (2025)
+Lakshya A. Agrawal, Shangyin Tan, Dilara Soylu, Noah Ziems, Rishi Khare, Krista
+Opsahl-Ong, Arnav Singhvi, Herumb Shandilya, Michael J. Ryan, Meng Jiang,
+Christopher Potts, Koushik Sen, Alexandros G. Dimakis, Ion Stoica, Dan Klein,
+Matei Zaharia, and Omar Khattab. 2025.
+GEPA: Reflective prompt evolution can outperform reinforcement
+learning.
+arXiv preprint arXiv:2507.19457 .
+Audibert et al. (2010)
+Jean-Yves Audibert, Sébastien Bubeck, and Rémi Munos. 2010.
+Best Arm Identification in Multi-Armed Bandits.
+In Proceedings of the 23rd Conference on Learning Theory
+(COLT) .
+Bardenet and Maillard (2015)
+Rémi Bardenet and Odalric-Ambrym Maillard. 2015.
+Concentration inequalities
+for sampling without replacement .
+Bernoulli , 21(3):1361–1385.
+Birattari et al. (2002)
+Mauro Birattari, Thomas Stützle, Luís Paquete, and Klaus Varrentrapp.
+2002.
+A Racing Algorithm for Configuring Metaheuristics.
+In Proceedings of the Genetic and Evolutionary Computation
+Conference (GECCO) .
+Chen et al. (2024)
+Minghao Chen, Yihang Li, Yanting Yang, Shiyu Yu, Binbin Lin, and Xiaofei He.
+2024.
+AutoManual: Constructing
+Instruction Manuals by LLM Agents via Interactive Environmental Learning .
+arXiv preprint arXiv:2405.16247 .
+Even-Dar et al. (2006)
+Eyal Even-Dar, Shie Mannor, and Yishay Mansour. 2006.
+Action Elimination and Stopping Conditions for the Multi-Armed
+Bandit and Reinforcement Learning Problems.
+Journal of Machine Learning Research , 7:1079–1105.
+Feige (1998)
+Uriel Feige. 1998.
+A Threshold of ln ⁡ n \ln n for Approximating Set Cover.
+Journal of the ACM , 45(4):634–652.
+Froger et al. (2026)
+Romain Froger, Pierre Andrews, Matteo Bettini, Amar Budhiraja, Ricardo Silveira
+Cabral, Virginie Do, Emilien Garreau, Jean-Baptiste Gaya, Hugo Laurençon,
+Maxime Lecanu, Kunal Malkan, Dheeraj Mekala, Pierre Ménard, Gerard
+Moreno-Torres Bertran, Ulyana Piterbarg, Mikhail Plekhanov, Mathieu Rita,
+Andrey Rusakov, Vladislav Vorotilov, and 5 others. 2026.
+Gaia2: Benchmarking LLM
+agents on dynamic and asynchronous environments .
+arXiv preprint arXiv:2602.11964 .
+Fu et al. (2024)
+Yao Fu, Dong-Ki Kim, Jaekyeom Kim, Sungryull Sohn, Lajanugen Logeswaran,
+Kyunghoon Bae, and Honglak Lee. 2024.
+AutoGuide: Automated
+Generation and Selection of Context-Aware Guidelines for Large Language Model
+Agents .
+arXiv preprint arXiv:2403.08978 .
+Hoffmann et al. (2022)
+Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor
+Cai, Eliza Rutherford, Diego de Las Casas, Lisa Anne Hendricks, Johannes
+Welbl, Aidan Clark, Tom Hennigan, Eric Noland, Katie Millican, George van den
+Driessche, Bogdan Damoc, Aurelia Guy, Simon Osindero, Karen Simonyan, Erich
+Elsen, and 3 others. 2022.
+Training compute-optimal
+large language models .
+arXiv preprint arXiv:2203.15556 .
+Hong et al. (2023)
+Sirui Hong, Mingchen Zhuge, Jiaqi Chen, Xiawu Zheng, Yuheng Cheng, Ceyao Zhang,
+Jinlin Wang, Zili Wang, Steven Ka Shing Yau, Zijuan Lin, Liyang Zhou, Chenyu
+Ran, Lingfeng Xiao, Chenglin Wu, and Jürgen Schmidhuber. 2023.
+MetaGPT: Meta Programming
+for a Multi-Agent Collaborative Framework .
+arXiv preprint arXiv:2308.00352 .
+Hu et al. (2024)
+Shengran Hu, Cong Lu, and Jeff Clune. 2024.
+Automated design of agentic systems.
+arXiv preprint arXiv:2408.08435 .
+Huang et al. (2026)
+Wenqi Huang, Charley Lee, Leonard Tng, and Serena Ge. 2026.
+Deepswe: Measuring frontier coding agents on original, long-horizon
+engineering tasks.
+arXiv preprint arXiv:2607.07946 .
+Hutter et al. (2011)
+Frank Hutter, Holger H. Hoos, and Kevin Leyton-Brown. 2011.
+Sequential Model-Based Optimization for General Algorithm
+Configuration.
+In Learning and Intelligent Optimization (LION 5) .
+Hutter et al. (2009)
+Frank Hutter, Holger H. Hoos, Kevin Leyton-Brown, and Thomas Stützle. 2009.
+ParamILS: An Automatic Algorithm Configuration Framework.
+Journal of Artificial Intelligence Research , 36:267–306.
+Jamieson and Talwalkar (2016)
+Kevin Jamieson and Ameet Talwalkar. 2016.
+Non-stochastic Best Arm Identification and Hyperparameter
+Optimization.
+In Proceedings of the 19th International Conference on
+Artificial Intelligence and Statistics (AISTATS) .
+Kaplan et al. (2020)
+Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B. Brown, Benjamin Chess, Rewon
+Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. 2020.
+Scaling laws for neural
+language models .
+arXiv preprint arXiv:2001.08361 .
+Karnin et al. (2013)
+Zohar Karnin, Tomer Koren, and Oren Somekh. 2013.
+Almost Optimal Exploration in Multi-Armed Bandits.
+In Proceedings of the 30th International Conference on Machine
+Learning (ICML) .
+Khattab et al. (2023)
+Omar Khattab, Arnav Singhvi, Paridhi Maheshwari, Zhiyuan Zhang, Keshav
+Santhanam, Sri Vardhamanan, Saiful Haq, Ashutosh Sharma, Thomas T. Joshi,
+Hanna Moazam, Heather Miller, Matei Zaharia, and Christopher Potts. 2023.
+DSPy: Compiling declarative language model calls into
+self-improving pipelines.
+arXiv preprint arXiv:2310.03714 .
+Lee et al. (2026)
+Yoonho Lee, Roshen Nair, Qizheng Zhang, Kangwook Lee, Omar Khattab, and Chelsea
+Finn. 2026.
+Meta-Harness: End-to-end optimization of model harnesses.
+arXiv preprint arXiv:2603.28052 .
+Li et al. (2018)
+Lisha Li, Kevin Jamieson, Giulia DeSalvo, Afshin Rostamizadeh, and Ameet
+Talwalkar. 2018.
+Hyperband: A Novel Bandit-Based Approach to Hyperparameter
+Optimization.
+Journal of Machine Learning Research , 18(185):1–52.
+Lin et al. (2026)
+Jiahang Lin, Shichun Liu, Chengjun Pan, Lizhi Lin, Shihan Dou, Zhiheng Xi,
+Xuanjing Huang, Hang Yan, Zhenhua Han, Tao Gui, and Yu-Gang Jiang. 2026.
+Agentic harness engineering: Observability-driven automatic evolution
+of coding-agent harnesses.
+arXiv preprint arXiv:2604.25850 .
+Liu et al. (2026)
+Changzhi Liu, Yilun Liu, Sikuan Yan, Volker Tresp, and Yunpu Ma. 2026.
+Mendel Gödel Machine: Recursive self-improving coding agents
+via comparative evolution.
+arXiv preprint arXiv:2608.07645 .
+López-Ibáñez et al. (2016)
+Manuel López-Ibáñez, Jérémie Dubois-Lacoste, Leslie
+Pérez Cáceres, Mauro Birattari, and Thomas Stützle. 2016.
+The irace Package: Iterated Racing for Automatic Algorithm
+Configuration.
+Operations Research Perspectives , 3:43–58.
+Madaan et al. (2023)
+Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah
+Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, Shashank
+Gupta, Bodhisattwa Prasad Majumder, Katherine Hermann, Sean Welleck, Amir
+Yazdanbakhsh, and Peter Clark. 2023.
+Self-Refine: Iterative
+Refinement with Self-Feedback .
+arXiv preprint arXiv:2303.17651 .
+Maron and Moore (1994)
+Oded Maron and Andrew W. Moore. 1994.
+Hoeffding Races: Accelerating Model Selection Search for
+Classification and Function Approximation.
+In Advances in Neural Information Processing Systems 6 .
+Nemhauser et al. (1978)
+George L. Nemhauser, Laurence A. Wolsey, and Marshall L. Fisher. 1978.
+An analysis of
+approximations for maximizing submodular set functions—I .
+Mathematical Programming , 14:265–294.
+Ning et al. (2026)
+Xuying Ning, Katherine Tieu, Dongqi Fu, Tianxin Wei, Zihao Li, Yuanchen Bei,
+Jiaru Zou, Mengting Ai, Zhining Liu, Ting-Wei Li, Lingjie Chen, Yanjun Zhao,
+Ke Yang, Bingxuan Li, Cheng Qian, Gaotang Li, Xiao Lin, Zhichen Zeng,
+Ruizhong Qiu, and 23 others. 2026.
+Code as Agent Harness:
+Toward Executable, Verifiable, and Stateful Agent Systems .
+arXiv preprint arXiv:2605.18747 .
+Ouyang et al. (2025)
+Siru Ouyang, Jun Yan, I-Hung Hsu, Yanfei Chen, Ke Jiang, Zifeng Wang, Rujun
+Han, Long T. Le, Samira Daruki, Xiangru Tang, Vishy Tirumalashetty, George
+Lee, Mahsan Rofouei, Hangfei Lin, Jiawei Han, Chen-Yu Lee, and Tomas Pfister.
+2025.
+ReasoningBank: Scaling agent self-evolving with reasoning memory.
+arXiv preprint arXiv:2509.25140 .
+Packer et al. (2023)
+Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G. Patil, Ion
+Stoica, and Joseph E. Gonzalez. 2023.
+MemGPT: Towards LLMs as operating systems.
+arXiv preprint arXiv:2310.08560 .
+Pan et al. (2026a)
+Linyue Pan, Lexiao Zou, Shuo Guo, Jingchen Ni, and Hai-Tao Zheng.
+2026a.
+Natural-Language Agent
+Harnesses .
+arXiv preprint arXiv:2603.25723 .
+Pan et al. (2026b)
+Wenbo Pan, Shujie Liu, Chin-Yew Lin, Jingying Zeng, Xianfeng Tang, Xiangyang
+Zhou, Yan Lu, and Xiaohua Jia. 2026b.
+Evolving agents in the dark: Retrospective harness optimization via
+self-preference.
+arXiv preprint arXiv:2606.05922 .
+Pryzant et al. (2023)
+Reid Pryzant, Dan Iter, Jerry Li, Yin Tat Lee, Chenguang Zhu, and Michael Zeng.
+2023.
+Automatic Prompt
+Optimization with “Gradient Descent” and Beam Search .
+arXiv preprint arXiv:2305.03495 .
+Qian et al. (2023)
+Chen Qian, Wei Liu, Hongzhang Liu, Nuo Chen, Yufan Dang, Jiahao Li, Cheng Yang,
+Weize Chen, Yusheng Su, Xin Cong, Juyuan Xu, Dahai Li, Zhiyuan Liu, and
+Maosong Sun. 2023.
+ChatDev: Communicative
+Agents for Software Development .
+arXiv preprint arXiv:2307.07924 .
+Robeyns et al. (2025)
+Maxime Robeyns, Martin Szummer, and Laurence Aitchison. 2025.
+A Self-Improving Coding
+Agent .
+arXiv preprint arXiv:2504.15228 .
+Shang et al. (2024)
+Yu Shang, Yu Li, Keyu Zhao, Likai Ma, Jiahe Liu, Fengli Xu, and Yong Li. 2024.
+AgentSquare: Automatic LLM
+Agent Search in Modular Design Space .
+arXiv preprint arXiv:2410.06153 .
+Shi et al. (2024)
+Chengshuai Shi, Kun Yang, Zihan Chen, Jundong Li, Jing Yang, and Cong Shen.
+2024.
+Efficient Prompt Optimization Through the Lens of Best Arm
+Identification.
+In Advances in Neural Information Processing Systems 37 .
+Shinn et al. (2023)
+Noah Shinn, Federico Cassano, Edward Berman, Ashwin Gopinath, Karthik
+Narasimhan, and Shunyu Yao. 2023.
+Reflexion: Language Agents
+with Verbal Reinforcement Learning .
+arXiv preprint arXiv:2303.11366 .
+Wang et al. (2023)
+Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu,
+Linxi Fan, and Anima Anandkumar. 2023.
+Voyager: An open-ended embodied agent with large language models.
+arXiv preprint arXiv:2305.16291 .
+Wang et al. (2026)
+Wenyi Wang, Piotr Piękos, Li Nanbo, Firas Laakom, Yimeng Chen, Mateusz
+Ostaszewski, Mingchen Zhuge, and Jürgen Schmidhuber. 2026.
+Huxley-Gödel Machine: Human-level coding agent development by
+an approximation of the optimal self-improving machine.
+In International Conference on Learning Representations .
+Wang et al. (2024)
+Xingyao Wang, Boxuan Li, Yufan Song, Frank F. Xu, Xiangru Tang, Mingchen Zhuge,
+Jiayi Pan, Yueqi Song, Bowen Li, Jaskirat Singh, Hoang H. Tran, Fuqiang Li,
+Ren Ma, Mingzhang Zheng, Bill Qian, Yanjun Shao, Niklas Muennighoff, Yizhe
+Zhang, Binyuan Hui, and 5 others. 2024.
+OpenHands: An Open
+Platform for AI Software Developers as Generalist Agents .
+arXiv preprint arXiv:2407.16741 .
+Wu et al. (2023)
+Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu,
+Li Jiang, Xiaoyun Zhang, Shaokun Zhang, Jiale Liu, Ahmed Hassan Awadallah,
+Ryen W. White, Doug Burger, and Chi Wang. 2023.
+AutoGen: Enabling Next-Gen
+LLM Applications via Multi-Agent Conversation .
+arXiv preprint arXiv:2308.08155 .
+Xia et al. (2024)
+Chunqiu Steven Xia, Yinlin Deng, Soren Dunn, and Lingming Zhang. 2024.
+Agentless: Demystifying
+LLM-based Software Engineering Agents .
+arXiv preprint arXiv:2407.01489 .
+Yang et al. (2023)
+Chengrun Yang, Xuezhi Wang, Yifeng Lu, Hanxiao Liu, Quoc V. Le, Denny Zhou, and
+Xinyun Chen. 2023.
+Large language models as optimizers.
+arXiv preprint arXiv:2309.03409 .
+Yang et al. (2024)
+John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao,
+Karthik Narasimhan, and Ofir Press. 2024.
+SWE-agent: Agent-Computer
+Interfaces Enable Automated Software Engineering .
+arXiv preprint arXiv:2405.15793 .
+Yao et al. (2022)
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan,
+and Yuan Cao. 2022.
+ReAct: Synergizing
+Reasoning and Acting in Language Models .
+arXiv preprint arXiv:2210.03629 .
+Yuksekgonul et al. (2024)
+Mert Yuksekgonul, Federico Bianchi, Joseph Boen, Sheng Liu, Zhi Huang, Carlos
+Guestrin, and James Zou. 2024.
+TextGrad: Automatic “differentiation” via text.
+arXiv preprint arXiv:2406.07496 .
+Zhang et al. (2026)
+Jenny Zhang, Shengran Hu, Cong Lu, Robert Lange, and Jeff Clune. 2026.
+Darwin Gödel Machine: Open-ended evolution of self-improving
+agents.
+In International Conference on Learning Representations .
+Zhang et al. (2024a)
+Jiayi Zhang, Jinyu Xiang, Zhaoyang Yu, Fengwei Teng, Xionghui Chen, Jiaqi Chen,
+Mingchen Zhuge, Xin Cheng, Sirui Hong, Jinlin Wang, Bingnan Zheng, Bang Liu,
+Yuyu Luo, and Chenglin Wu. 2024a.
+AFlow: Automating Agentic
+Workflow Generation .
+arXiv preprint arXiv:2410.10762 .
+Zhang et al. (2025)
+Qizheng Zhang, Changran Hu, Shubhangi Upasani, Boyuan Ma, Fenglu Hong,
+Vamsidhar Kamanuru, Jay Rainton, Chen Wu, Mengmeng Ji, Hanchen Li, Urmish
+Thakker, James Zou, and Kunle Olukotun. 2025.
+Agentic Context
+Engineering: Evolving Contexts for Self-Improving Language Models .
+arXiv preprint arXiv:2510.04618 .
+Zhang et al. (2024b)
+Shaokun Zhang, Jieyu Zhang, Jiale Liu, Linxin Song, Chi Wang, Ranjay Krishna,
+and Qingyun Wu. 2024b.
+Offline Training of
+Language Model Agents with Functions as Learnable Weights .
+arXiv preprint arXiv:2402.11359 .
+Zhao et al. (2023)
+Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao
+Huang. 2023.
+ExpeL: LLM Agents Are
+Experiential Learners .
+arXiv preprint arXiv:2308.10144 .
+Zheng et al. (2026)
+Pujun Zheng, Zixin Shang, Shufan Jiang, Wenhui Tian, Dongsheng Zhu, Zerun Ma,
+Dingbo Yuan, and Qi Zhang. 2026.
+SWE-Bench Pro Verified: A
+reliable benchmark for software engineering agents .
+arXiv preprint arXiv:2609.08149 .
+Zhou et al. (2023)
+Yongchao Zhou, Andrei Ioan Muresanu, Ziwen Han, Keiran Paster, Silviu Pitis,
+Harris Chan, and Jimmy Ba. 2023.
+Large Language Models Are
+Human-Level Prompt Engineers .
+arXiv preprint arXiv:2211.01910 .
+Zhuge et al. (2024)
+Mingchen Zhuge, Wenyi Wang, Louis Kirsch, Francesco Faccio, Dmitrii Khizbullin,
+and Jürgen Schmidhuber. 2024.
+GPTSwarm: Language Agents
+as Optimizable Graphs .
+arXiv preprint arXiv:2402.16823 .
+Appendix A Proofs and Technical Conditions
+This appendix proves Proposition 1 and Theorem 1 for the confirmed SSR procedure. The racing proof uses ranking-based fixed quotas, mixed equal-task-weight scores, a protected parent, and selection after a fully completed stage. No confidence threshold is added to the algorithm.
+A.1 Formal Guarantees
+Coverage across evidence scales.
+Fix one evidence pool and its nonnegative w j , q i , s i ​ j w_{j},q_{i},s_{ij} .
+Proposition 1 (RER prefixes) .
+The RER objective F F is normalized, monotone, and submodular. Every length- k k prefix D k D_{k} of its exact marginal-gain greedy ordering satisfies
+F ⁡ ( D k ) ≥ ( 1 − 1 / e ) ​ max | D | ≤ k ⁡ F ⁡ ( D ) . F(D_{k})\geq(1-1/e)\max_{|D|\leq k}F(D).
+(A1)
+This applies the classical greedy guarantee of Nemhauser et al. (1978) . One ordering therefore supplies nested inputs with a coverage guarantee at every scale. The guarantee concerns F F , not execution reward.
+Selection under mixed evaluation.
+Condition on a fixed parent and its M M generated children, forming 𝒞 \mathcal{C} with L = M + 1 L=M+1 members. Let μ ⁡ ( h ) \mu(h) be the expected reward averaged over the finite validation pool …1521 tokens truncated…sitions are not used to select current training tasks.
+2.
+For each prospective stage r ≤ K r\leq K , the cumulative counts v r = | V r | v_{r}=|V_{r}| and n r = | P r | n_{r}=|P_{r}| are fixed conditional on the pre-race information, with 1 ≤ v r ≤ n r 1\leq v_{r}\leq n_{r} . Fixed class quotas, each capped by remaining class availability, satisfy this condition. Stopping before a stage is allowed; changing its size in response to rewards requires additional uniform control over counts.
+3.
+Training tasks in stage r r are chosen using pre-race information and completed earlier stages, before any outcomes on the new batch. RER priorities and intersections of surviving candidates’ evidence prefixes are allowed. Tasks are not repeated within the race.
+4.
+For every new rollout Y Y of a fixed harness h h on a task x x , 0 ≤ Y ≤ 1 0\leq Y\leq 1 and 𝔼 [ Y ∣ ℱ past , h , x ] = m ( h , x ) \mathbb{E}[Y\mid\mathcal{F}_{\rm past},h,x]=m(h,x) , where the past includes all information revealed before that rollout. Each active harness executes each new task R R times.
+The last condition is a stationary conditional-mean assumption, not merely marginal unbiasedness. Independent fresh execution randomness is a sufficient implementation. Arbitrary correlations that change the conditional mean, or a drifting environment, are not covered. Repeated rollouts do not create additional independent task draws.
+Selection conditions.
+At intermediate stages, children are sorted by their cumulative equal-task-weight empirical scores and a prescribed number of bottom-ranked children is removed. The quota is based on the initial M M and at least one child remains. The parent is never removed. Ties can use diff size and then candidate index: every retained child has a score no lower than every removed child. At the last completed stage, the best surviving child replaces the parent exactly when its score is strictly higher. Consequently, the output maximizes the last-stage empirical score over the surviving children and the parent, with the parent winning ties involving itself.
+A.4 Uniform Error for Mixed Evaluation
+Write T r = P r ∖ V r T_{r}=P_{r}\setminus V_{r} and t r = | T r | = n r − v r t_{r}=|T_{r}|=n_{r}-v_{r} . Define
+m ¯ V r ​ ( h ) \displaystyle\overline{m}_{V_{r}}(h)
+= 1 v r ​ ∑ x ∈ V r m ⁡ ( h , x ) , \displaystyle=\frac{1}{v_{r}}\sum_{x\in V_{r}}m(h,x),
+m ¯ T r ​ ( h ) \displaystyle\overline{m}_{T_{r}}(h)
+= 1 t r ∑ x ∈ T r m ( h , x ) ( t r > 0 ) , \displaystyle=\frac{1}{t_{r}}\sum_{x\in T_{r}}m(h,x)\quad(t_{r}>0),
+β r \displaystyle\beta_{r}
+= max h ∈ 𝒞 | m ¯ T r ( h ) − μ ( h ) | ( t r > 0 ) . \displaystyle=\max_{h\in\mathcal{C}}|\overline{m}_{T_{r}}(h)-\mu(h)|\quad(t_{r}>0).
+(A10)
+Set β r = 0 \beta_{r}=0 when t r = 0 t_{r}=0 . The selected training set and β r \beta_{r} can be random and adaptive. The bound does not assume that these training tasks are fresh samples from the validation population. In particular, 0 ≤ β r ≤ 1 0\leq\beta_{r}\leq 1 , but no small value is guaranteed from the sampling rule alone.
+Validation-task sampling.
+For each fixed harness, { m ⁡ ( h , x ) : x ∈ 𝒱 } \{m(h,x):x\in\mathcal{V}\} is a fixed finite population in [ 0 , 1 ] [0,1] . Hoeffding’s without-replacement bound gives, for s > 0 s>0 ,
+Pr ⁡ ( | m ¯ V r ​ ( h ) − μ ⁡ ( h ) | > s ) ≤ 2 ​ e − 2 ​ v r ​ s 2 . \Pr\!\left(|\overline{m}_{V_{r}}(h)-\mu(h)|>s\right)\leq 2e^{-2v_{r}s^{2}}.
+(A11)
+See Proposition 1.2 of Bardenet and Maillard (2015) . It applies to the random validation prefix, not to RER-selected training tasks. Using s r = c δ / ( 2 ​ v r ) s_{r}=\sqrt{c_{\delta}/(2v_{r})} and a union bound over at most L ​ K LK harness–stage pairs controls all validation deviations with failure probability at most δ / 2 \delta/2 . If v r = | 𝒱 | v_{r}=|\mathcal{V}| , the deviation is exactly zero, so s r s_{r} may be replaced by zero at that stage.
+Rollout noise under adaptive task choices.
+For a fixed h h , consider its R ​ n r Rn_{r} centered rewards through stage r r ,
+Z a = Y a − m ⁡ ( h , x a ) . Z_{a}=Y_{a}-m(h,x_{a}).
+Condition 4 makes these martingale differences even though later training tasks depend on earlier outcomes. Each conditional support has length one. The conditional bounded-variable moment-generating-function inequality is
+𝔼 ⁡ [ e λ ​ Z a ∣ ℱ a − 1 ] ≤ e λ 2 / 8 . \mathbb{E}[e^{\lambda Z_{a}}\mid\mathcal{F}_{a-1}]\leq e^{\lambda^{2}/8}.
+For completeness, if g ⁡ ( λ ) = log ⁡ 𝔼 ⁡ [ e λ ​ Z a ∣ ℱ a − 1 ] g(\lambda)=\log\mathbb{E}[e^{\lambda Z_{a}}\mid\mathcal{F}_{a-1}] , then g ⁡ ( 0 ) = g ′ ​ ( 0 ) = 0 g(0)=g^{\prime}(0)=0 and g ′′ ​ ( λ ) g^{\prime\prime}(\lambda) is the variance under exponential tilting. A variable with support length one has variance at most 1 / 4 1/4 , so integrating twice gives g ⁡ ( λ ) ≤ λ 2 / 8 g(\lambda)\leq\lambda^{2}/8 . Iterated conditioning and the exponential Markov inequality, optimized at λ = 4 ​ a / ( R ​ n r ) \lambda=4a/(Rn_{r}) for a sum deviation a a , yield
+Pr ⁡ ( | 1 R ​ n r ​ ∑ a = 1 R ​ n r Z a | > u ) ≤ 2 ​ e − 2 ​ R ​ n r ​ u 2 . \Pr\left(\left|\frac{1}{Rn_{r}}\sum_{a=1}^{Rn_{r}}Z_{a}\right|>u\right)\leq 2e^{-2Rn_{r}u^{2}}.
+(A12)
+To make the union bound independent of survival, one may couple the process to unobserved fresh rewards for eliminated candidates on later selected tasks. These auxiliary rewards do not influence any decision and require no actual executions. They satisfy the same conditional-mean condition. A surviving harness’s auxiliary score equals its observed score. Likewise, continue task selection hypothetically beyond an early budget stop using the same predictable rules. This defines all K K prospective stages; the theorem will only use stages actually completed. Such a continuation is possible up to the predetermined task-availability horizon.
+Taking u r = c δ / ( 2 ​ R ​ n r ) u_{r}=\sqrt{c_{\delta}/(2Rn_{r})} and union-bounding over L ​ K LK pairs controls rollout noise with failure probability at most δ / 2 \delta/2 . No independence between candidates is used by the union bound; the stated conditional-mean requirement still applies to their observed rewards.
+Combining the components.
+For every harness still active at stage r r , the score decomposes exactly as
+μ ^ h , r − μ ⁡ ( h ) \displaystyle\widehat{\mu}_{h,r}-\mu(h)
+= [ μ ^ h , r − 1 n r ​ ∑ x ∈ P r m ⁡ ( h , x ) ] \displaystyle=\left[\widehat{\mu}_{h,r}-\frac{1}{n_{r}}\sum_{x\in P_{r}}m(h,x)\right]
++ α r ​ [ m ¯ V r ​ ( h ) − μ ⁡ ( h ) ] \displaystyle\quad+\alpha_{r}[\overline{m}_{V_{r}}(h)-\mu(h)]
++ ( 1 − α r ) ​ [ m ¯ T r ​ ( h ) − μ ⁡ ( h ) ] . \displaystyle\quad+(1-\alpha_{r})[\overline{m}_{T_{r}}(h)-\mu(h)].
+(A13)
+The last term is zero if T r T_{r} is empty. The first bracket is centered rollout noise; the random selected-task average inside it is a predictable reward average, not necessarily a conditional expectation given the final selected set. Conditioning on that final adaptive set would generally invalidate a naive independence argument.
+Combining the two concentration events proves that with probability at least 1 − δ 1-\delta ,
+| μ ^ h , r − μ ⁡ ( h ) | ≤ u r + α r ​ s r + ( 1 − α r ) ​ β r = ε r |\widehat{\mu}_{h,r}-\mu(h)|\leq u_{r}+\alpha_{r}s_{r}+(1-\alpha_{r})\beta_{r}=\varepsilon_{r}
+(A14)
+for every completed stage and every harness evaluated there. Because β r \beta_{r} can be random, this is a pathwise, discrepancy-dependent bound. Any deterministic upper bounds β ¯ r \overline{\beta}_{r} valid for all reachable training prefixes give a deterministic version by substitution; the unconditional choice β ¯ r = 1 \overline{\beta}_{r}=1 can be loose. The algorithm need not calculate these radii or use them as elimination thresholds.
+A.5 From Stage Errors to Selection Loss
+Work on the simultaneous event in Eq. ( A14 ). Let 𝒮 0 = 𝒞 \mathcal{S}_{0}=\mathcal{C} and 𝒮 r \mathcal{S}_{r} contain the protected parent and children remaining after stage- r r elimination. Set
+G r = max h ∈ 𝒮 r ⁡ μ ⁡ ( h ) . G_{r}=\max_{h\in\mathcal{S}_{r}}\mu(h).
+At an intermediate stage, let b b maximize true reward over 𝒮 r − 1 \mathcal{S}_{r-1} . If b b survives, G r = G r − 1 G_{r}=G_{r-1} . If it is removed, it must be a child. Any retained child a a has empirical score at least that of b b , so
+μ ⁡ ( b ) − μ ⁡ ( a ) \displaystyle\mu(b)-\mu(a)
+≤ [ μ ⁡ ( b ) − μ ^ b , r ] + [ μ ^ a , r − μ ⁡ ( a ) ] \displaystyle\leq[\mu(b)-\widehat{\mu}_{b,r}]+[\widehat{\mu}_{a,r}-\mu(a)]
+≤ 2 ​ ε r . \displaystyle\leq 2\varepsilon_{r}.
+(A15)
+Therefore G r − 1 − G r ≤ 2 ​ ε r G_{r-1}-G_{r}\leq 2\varepsilon_{r} . This explicitly permits the best child to be eliminated. It does not invoke the best-arm-preservation property of confidence-bound elimination ( Even-Dar et al., 2006 ) or assume a halving schedule ( Karnin et al., 2013 ) .
+Let ν ≥ 1 \nu\geq 1 be any last completed stage and let
+ℰ ν = { r < ν : at least one child is removed at ​ r } . \mathcal{E}_{\nu}=\{r<\nu:\text{at least one child is removed at }r\}.
+Telescoping only the earlier elimination stages gives
+G 0 − max h ∈ 𝒮 ν − 1 ⁡ μ ⁡ ( h ) ≤ 2 ​ ∑ r ∈ ℰ ν ε r . G_{0}-\max_{h\in\mathcal{S}_{\nu-1}}\mu(h)\leq 2\sum_{r\in\mathcal{E}_{\nu}}\varepsilon_{r}.
+(A16)
+If elimination also occurs at stage ν \nu before a budget stop, a top-scoring child is still retained. The eventual parent–child comparison thus attains the empirical maximum over 𝒮 ν − 1 \mathcal{S}_{\nu-1} . For a true maximizer b b in that set,
+μ ⁡ ( b ) − μ ⁡ ( H ^ ) \displaystyle\mu(b)-\mu(\widehat{H})
+≤ [ μ ⁡ ( b ) − μ ^ b , ν ] \displaystyle\leq[\mu(b)-\widehat{\mu}_{b,\nu}]
++ [ μ ^ H ^ , ν − μ ⁡ ( H ^ ) ] \displaystyle\quad+[\widehat{\mu}_{\widehat{H},\nu}-\mu(\widehat{H})]
+≤ 2 ​ ε ν . \displaystyle\leq 2\varepsilon_{\nu}.
+(A17)
+Combining the last two inequalities proves the sharper form
+max h ∈ 𝒞 ⁡ μ ⁡ ( h ) − μ ⁡ ( H ^ ) ≤ 2 ​ ( ∑ r ∈ ℰ ν ε r + ε ν ) , \max_{h\in\mathcal{C}}\mu(h)-\mu(\widehat{H})\leq 2\left(\sum_{r\in\mathcal{E}_{\nu}}\varepsilon_{r}+\varepsilon_{\nu}\right),
+(A18)
+which implies Eq. ( A3 ). No final-stage error is counted twice. Since μ ^ H ^ , ν ≥ μ ^ H t , ν \widehat{\mu}_{\widehat{H},\nu}\geq\widehat{\mu}_{H_{t},\nu} and the parent remains active, the same two-error comparison gives Eq. ( A4 ). If the parent is returned, its regression is exactly zero. The event is simultaneous over stages, so the result holds at the observed early stopping stage without applying a fixed-time bound after selection. If no stage completes, the method returns the parent; there is then no nontrivial selection guarantee relative to unevaluated children. □ \square
+A.6 Interpretation and Limits
+A sufficient gap condition.
+Suppose h ⋆ h^{\star} is the unique maximizer in 𝒞 \mathcal{C} and
+Δ min = min h ≠ h ⋆ ⁡ [ μ ⁡ ( h ⋆ ) − μ ⁡ ( h ) ] > 0 . \Delta_{\min}=\min_{h\neq h^{\star}}[\mu(h^{\star})-\mu(h)]>0.
+On the uniform event, if 2 ​ ε r < Δ min 2\varepsilon_{r}<\Delta_{\min} at every completed stage, then h ⋆ h^{\star} strictly outranks every competing active harness empirically. It cannot be removed if it is a child, and is protected if it is the parent. Final selection returns h ⋆ h^{\star} . Replacing ε r \varepsilon_{r} with deterministic upper bounds turns this into a sufficient 1 − δ 1-\delta exact-selection condition. This is a conservative condition, not a claim of optimal sample complexity.
+Why the discrepancy term is necessary.
+The training tasks can be directly involved in candidate generation and are selected preferentially. Their ranking need not agree with validation ranking even if rollout noise vanishes. For example, consider two children with validation gap μ ⁡ ( a ) − μ ⁡ ( b ) = d > 0 \mu(a)-\mu(b)=d>0 and training mean difference m ¯ T ​ ( a ) − m ¯ T ​ ( b ) = − 1 \overline{m}_{T}(a)-\overline{m}_{T}(b)=-1 . At validation weight α ∈ ( 0 , 1 ) \alpha\in(0,1) , their expected mixed-score difference is α ​ d − ( 1 − α ) \alpha d-(1-\alpha) . It is negative whenever d < ( 1 − α ) / α d<(1-\alpha)/\alpha . The children can therefore be misranked even with exact expected scores. This is a mathematical illustration, not experimental data. A vanishing validation-target selection bound requires a discrepancy assumption or a change to the selection objective; the proof does not silently make either change.
+Relation to the audit and to generalization.
+The theorem compares expected rewards on a fixed finite validation pool. The racing audit instead measures a score gap against a realized full evaluation matrix; that is a related empirical diagnostic, not the same estimand. Within-round random task ordering and fresh executions justify the conditional finite-pool result even after conditioning on prior history. They do not make repeatedly reused validation tasks independent of the evolved harness for population generalization. We consequently make no multi-round or test-distribution claim from this theorem. Candidate-generation quality is also outside the selection bound.
+More available evidence.
+For a fixed parent, optimizer mechanism, and evidence cap k max k_{\max} , define the best attainable expected reward over all eligible subsets as
+g ⁡ ( D ) \displaystyle g(D)
+= 𝔼 ξ ​ [ μ ⁡ ( Optimize ⁡ ( H t , D , ξ ) ) ] , \displaystyle=\mathbb{E}_{\xi}[\mu(\operatorname{Optimize}(H_{t},D;\xi))],
+V ⁡ ( E ) \displaystyle V(E)
+= max D ⊆ E , | D | ≤ k max ⁡ g ⁡ ( D ) . \displaystyle=\max_{D\subseteq E,\,|D|\leq k_{\max}}g(D).
+If E ⊆ E ′ E\subseteq E^{\prime} and old configurations remain available, then V ⁡ ( E ′ ) ≥ V ⁡ ( E ) V(E^{\prime})\geq V(E) by feasible-set inclusion. SSR explores only selected greedy prefixes, whose composition can change as the pool grows. This opportunity-set observation therefore does not establish monotonic performance for SSR, an interior optimal scale, or dominance over other evolution methods.
+Appendix B SSR Implementation Details
+Evaluation-task construction.
+At the start of an evolution round, training tasks are partitioned into successful and failed tasks according to the current parent’s collected training trajectories. These labels and the RER ordering remain fixed throughout that round. For prescribed batch sizes b v , b s , b f b_{v},b_{s},b_{f} , sample b v b_{v} previously unused validation tasks uniformly without replacement. For each training class, first select previously unused tasks from the intersection of the surviving candidates’ evidence prefixes, following the RER order. If the intersection cannot supply the class quota, continue through tasks outside the intersection in RER order. Because evidence prefixes are nested, their intersection is the shortest surviving prefix. The parent is not included in this intersection.
+Exclude every task already evaluated in the current round. If a training class has fewer remaining tasks than its quota, use all remaining tasks in that class, without repetition or substitution from the other class. Likewise, the validation component is bounded by its remaining tasks. The union is shared by the parent and all active children. Equation 7 weights actual tasks equally, so the effective mixture weights follow the realized task counts. Original training trajectories provide candidate-generation evidence and outcome labels; parent–child racing comparisons use the corresponding executions within the current race. Validation trajectories are not exposed to the optimizer as evidence, and the test set is never used in these decisions.
+Integer quotas and ties.
+One deterministic integer implementation retains
+n r = max ⁡ { 1 , M − ⌊ r ​ M / K ⌋ } , r = 1 , … , K − 1 , \begin{gathered}n_{r}=\max\{1,M-\lfloor rM/K\rfloor\},\\
+r=1,\ldots,K-1,\end{gathered}
+children after each intermediate stage, with n 0 = M n_{0}=M . Thus stage r r eliminates n r − 1 − n r n_{r-1}-n_{r} children. The quotas are fixed before racing and approximate a constant quota of M / K M/K removals per stage. After the final completed stage, select the best survivor. Rank children first by cumulative score, then by ascending diff size (total added plus deleted lines relative to the parent across editable harness files), and finally by fixed candidate index. Equal RER marginal gains can likewise be resolved by fixed record index. A child tied with the parent never replaces it. These are empirical comparisons without a confidence threshold.
+Budget boundaries and stopping.
+With active child set 𝒜 \mathcal{A} and proposed new batch B r B_{r} , start the stage only if the remaining execution budget covers R ⁡ ( | 𝒜 | + 1 ) ​ | B r | R(|\mathcal{A}|+1)|B_{r}| executions. Otherwise end the race and select using its last fully completed stage. If no stage was completed, retain the parent. A full evidence refresh requires execution budget for all N N training executions; if that refresh cannot be completed, terminate and return the incumbent. No partial stage enters the cumulative comparison. Stop after P P consecutive rounds without a strict improvement, resetting the counter after an accepted update. If the parent is unchanged, reuse the collected trajectories, judge records, scores, embeddings, and ranking, but generate fresh candidates. Within-race task scores do not automatically carry into a new race.
+Judge and optimizer interface.
+The judge is prompted to output w i , a i , u i ∈ [ 0 , 1 ] w_{i},a_{i},u_{i}\in[0,1] directly; there is no additional score normalization. It applies the same transferability criteria to successful and failed trajectories. Similarities use embeddings of the judge’s trajectory summaries and extracted experience, with negative cosine values clipped to zero. The optimizer initially receives the selected experience summaries and improvement suggestions plus the parent harness. It can retrieve original trajectories for those selected records on demand, and can modify instructions, tool-related code, context management, and execution flow. Concrete model identifiers, scale choices, task quotas, repetitions, and stopping settings are reported in Appendix C .
+Appendix C Experimental Configuration
+Table 2 lists SSR configurations. The main experiments use Codex with GPT 5.5 high and Claude Code with Opus 4.8 high; all analyses use the Codex setting. Within each setting, the executor, optimizer, and experience judge use the same model and reasoning effort. Following Retro, the embedding model is BAAI/bge-large-en-v1.5 , with 1,024-dimensional outputs ( Pan et al., 2026b ) . The final SSR harnesses for SWE-Pro-V and DeepSWE under Codex are reproduced in Appendix G .
+Parameter
+Main
+Task-pool growth
+Resource growth
+Fixed strategies
+Racing audit
+Scale dynamics
+Benchmarks
+S / D / G
+S
+S
+S / D
+S
+S
+Train / validation / test
+S,G: 80/20/100
+D: 50/13/50
+0.8 ​ T 0.8T / 0.2 ​ T 0.2T / 100
+80/20/100
+S: 80/20/100
+D: 50/13/50
+Separate 160-task audit set
+(a) 160/20/100
+(b) 80/20/100
+Candidate generation
+Children M M
+4
+4
+4
+4
+12
+(a) 6
+(b) 4
+Evidence scales
+25 / 50 / 25/50/
+75 / 100 % 75/100\%
+Main
+Main
+25% or 100%
+(see text)
+Main; three children per scale
+(a) 10 / 20 / 40 / 10/20/40/
+80 / 120 / 160 80/120/160
+(b) Main
+Raw-trajectory access
+On demand, for records selected as candidate-generation evidence.
+Cumulative candidate cap
+None
+None
+15 / 20 / 25
+30 / 35
+None
+—
+(b) None
+Racing and selection
+Stages K K
+2
+2
+2
+2
+2
+(b) 2
+Validation quota b v b_{v}
+S,G: 10 / 10
+D: 7 / 6
+4 / 8 / 12
+16 / 20
+10
+S: 10 / 10
+D: 7 / 6
+—
+(b) 10
+Parent-success quota b s b_{s}
+S,G: 5
+D: 3
+2 / 4 / 6
+8 / 10
+5
+S: 5
+D: 3
+—
+(b) 5
+Parent-failure quota b f b_{f}
+S,G: 5
+D: 3
+2 / 4 / 6
+8 / 10
+5
+S: 5
+D: 3
+—
+(b) 5
+Rollouts per pair R R
+2
+2
+2
+2
+2
+(b) 2
+Child quotas n 0 / n 1 n_{0}/n_{1}
+4 / 2
+4 / 2
+4 / 2
+4 / 2
+12 / 6
+(b) 4 / 2
+Evolution budget and stopping
+Execution budget B B
+S,G: 500
+D: 300
+200/400/600
+800/1,000
+800/1,600
+2,400/3,200
+4,000
+S: 500
+D: 300
+Fixed-matrix analysis
+(b) 500
+Patience P P (rounds)
+2
+2
+2
+2
+—
+(b) 2
+Reading the table. T ∈ { 40 , 80 , 120 , 160 , 200 } T\in\{40,80,120,160,200\} is the total training-plus-validation pool in the task-pool analysis. Its listed batch quotas apply to each of the two stages at the corresponding T T ; main and fixed-strategy b v b_{v} entries explicitly give stage 1 / stage 2. Child quotas exclude the parent. “Main” denotes inherited settings. “None” means no additional cumulative candidate-generation cap, beyond execution-budget and stopping limits. Racing and stopping entries in the last column apply only to (b); (a) directly tests individual candidates. A dash denotes a setting not tabulated for the audit. Resource-growth candidate caps are cumulative over the entire run; the corresponding MGM caps are 55 / 84 / 96 / 127 / 145 55/84/96/127/145 .
+Table 2: Experimental configurations. S, D, and G denote SWE-Pro-V, DeepSWE, and GAIA-2. In the scale-dynamics column, (a) denotes the parent–scale probes and (b) the final-winner scale analysis. Lists in the task-pool and resource columns follow increasing task-pool size and execution budget, respectively.
+Evidence and repetitions.
+Percentage scales round up, k = ⌈ α ​ N ⌉ k=\lceil\alpha N\rceil : 20 / 40 / 60 / 80 20/40/60/80 tasks for S/G and 13 / 25 / 38 / 50 13/25/38/50 for D. Top K Fixed uses the same RER top 25% for all four candidates; Top K Resampling draws an independent uniform 25% subset for each; Fixed N uses 100%. Budgets include training-trajectory collection and parent/child racing executions. Training evidence uses one rollout per task, refreshed after an accepted update; final testing uses three, outside the execution budget. The audit averages three task-order replays of a fixed 13 × 160 × 2 = 4,160 13\times 160\times 2=4{,}160 -execution matrix. Scale probes test six candidates per parent, one per scale; winner frequencies aggregate 20 independent five-round runs. Stop at execution-budget exhaustion or P = 2 P=2 consecutive rounds without strict improvement.
+Appendix D Variability of the Main Results
+Every entry of Table 1 is the mean over three independent evolution runs of the same condition, each followed by the standard test protocol of three evaluations per test task. Table 3 repeats these means with the standard deviation of the three run-level scores. Variances range from 0.07 to 0.96% 2 , so standard deviations range from 0.27 to 0.98%. SSR’s standard deviations lie between 0.27 and 0.54%, and its differences from the strongest baseline in Table 1 range from 1.3% to 3.0%. With three runs per condition, we report this variability descriptively and do not attach significance tests to individual comparisons.
+Codex: GPT 5.5 high
+Claude Code: Opus 4.8 high
+Method
+SWE-Pro-V
+DeepSWE
+GAIA-2
+SWE-Pro-V
+DeepSWE
+GAIA-2
+Initial harness
+57.7 ± \pm 0.72
+59.3 ± \pm 0.54
+29.0 ± \pm 0.98
+56.3 ± \pm 0.98
+56.7 ± \pm 0.54
+26.0 ± \pm 0.54
+Meta-Harness
+59.7 ± \pm 0.82
+60.7 ± \pm 0.54
+31.7 ± \pm 0.94
+60.0 ± \pm 0.47
+58.0 ± \pm 0.94
+29.3 ± \pm 0.82
+HGM
+58.7 ± \pm 0.98
+62.7 ± \pm 0.94
+32.3 ± \pm 0.94
+60.3 ± \pm 0.72
+58.7 ± \pm 0.94
+29.3 ± \pm 0.82
+MGM
+60.0 ± \pm 0.94
+63.3 ± \pm 0.54
+32.3 ± \pm 0.72
+61.0 ± \pm 0.47
+60.7 ± \pm 0.94
+29.7 ± \pm 0.54
+AHE
+60.7 ± \pm 0.54
+65.3 ± \pm 0.54
+36.0 ± \pm 0.82
+62.0 ± \pm 0.98
+63.3 ± \pm 0.54
+33.7 ± \pm 0.47
+Retro
+62.7 ± \pm 0.47
+66.7 ± \pm 0.94
+36.3 ± \pm 0.98
+61.3 ± \pm 0.54
+64.0 ± \pm 0.98
+34.3 ± \pm 0.72
+SSR (ours)
+65.7 ± \pm 0.54
+68.0 ± \pm 0.54
+38.0 ± \pm 0.27
+63.3 ± \pm 0.47
+65.3 ± \pm 0.54
+36.0 ± \pm 0.47
+Table 3: Final harness performance as mean ± \pm standard deviation (Avg Pass@1, %) over three independent evolution runs. Means are those of Table 1 ; bold marks the best mean in each setting.
+Appendix E Evidence Scale across Parents and Evolution Rounds
+Figure 8: Evidence scales across parents and rounds. (a) Single-candidate gains (one per scale, no intervals) for parents from different independent runs. (b) Final-winner scale shares over 20 runs; each column sums to 100%. These are winner frequencies, not survival probabilities.
+Scale and parent state.
+We randomly sample A/B/C from rounds 1/2/3 of different independent evolution runs. With an expanded training pool, each parent generates one candidate per RER prefix at k ∈ { 10 , 20 , 40 , 80 , 120 , 160 } k\in\{10,20,40,80,120,160\} . All 18 candidates and their parents use the main test protocol.
+The largest observed gains occur at k = 40 k=40 for A, k = 80 k=80 or 120 120 for B, and k = 120 k=120 for C (Figure 8 a). No scale maximizes all three curves. These single candidates illustrate variation across snapshots, rather than estimating mean optimal scales or establishing an evolution-stage effect.
+Winning scales across rounds.
+Across 20 runs of five rounds, small-scale winners decline from 75% to 20%, while large-scale winners rise from 5% to 40% (Figure 8 b). The best scale thus varies across parents, and later rounds more often select winners generated from broader evidence.
+Appendix F More Related Work
+Racing and successive halving.
+Selecting among costly-to-evaluate candidates under a fixed budget is a classical problem. Racing algorithms evaluate all survivors on a shared, growing set of instances and eliminate candidates by statistical tests ( Maron and Moore, 1994 ; Birattari et al., 2002 ; López-Ibáñez et al., 2016 ) . Successive halving and Hyperband instead remove a fixed fraction of candidates at each stage ( Karnin et al., 2013 ; Jamieson and Talwalkar, 2016 ; Li et al., 2018 ) , and best-arm identification analyses bound the resulting selection error ( Even-Dar et al., 2006 ; Audibert et al., 2010 ) . Incumbent-based intensification in algorithm configuration compares challengers with the current best on common instances and replaces it only on strict improvement ( Hutter et al., 2009 ; Hutter et al., 2011 ) . TRIPLE applies successive halving to select among a fixed pool of prompts ( Shi et al., 2024 ) . SSR’s candidate racing combines fixed-quota elimination with a protected parent. It differs in what is raced and on what: the candidates are generated from nested evidence prefixes of one parent, evaluation batches mix held-out validation tasks with training tasks chosen from the survivors’ evidence, and the pool is regenerated as the parent evolves.
+Appendix G Evolved Harnesses
+This appendix reproduces the final harnesses evolved by SSR in the Codex setting for SWE-Pro-V and DeepSWE, the harnesses behind the SSR entries of 65.7% and 68.0% in Table 1 . Each harness consists of Markdown instruction files and one shell script, which SSR added to the platform’s default tools and runtime (Section 6.1 ). Files are listed verbatim under their file names; wrapped lines are marked with ↪ \hookrightarrow . The instruction files refer to the template and the script by the paths under which the harness is mounted, which are noted with each file.
+G.1 SWE-Pro-V Harness
+Readme.md .
+Entry instructions.
+⬇
+# Solver Harness
+Use this harness as a small operating procedure , not as a replacement for reading the repository . The recurring failures in prior runs came from incomplete surface coverage , weak contract tests , unfinished verification , missed toolchains , and unsafe temporary files .
+Start with [ workflows / contract - driven - solve . md ]( workflows / contract - driven - solve . md ). Keep a short matrix from [ templates / contract - matrix . md ]( templates / contract - matrix . md ) for broad tasks .
+## Default Workflow
+1. Convert the prompt into concrete contracts : public interfaces , behavior , edge cases , defaults , persistence shape , error text , exit codes , and compatibility notes .
+2. Search for every affected surface before editing : direct callers , old field / type users , alternate constructors , proxy / non - interactive paths , tests , serialization , config , CLI flags , and hidden fallback paths .
+3. Implement through the repository ’ s existing abstractions . Avoid adding evaluator - only helpers or test shims unless the prompt explicitly requires production code .
+4. Add focused regression coverage for the contract , especially boundary states and exact serialized / request payloads .
+5. Finish only after verification commands have exited and their status is known . Use ‘ harness / bin / solve - verify ‘ to discover tools , run focused checks , and flag unsafe ‘/ tmp ‘ additions .
+## Runtime Contract
+- Persistent solve state belongs under ‘ $RHO_SCRATCH_DIR ‘, which points at ‘ task /. harness - state /‘.
+- Do not write matrices , ledgers , reports , build outputs , or notes to a fixed ‘/ tmp /...‘ path .
+- Disposable temporary files must use ‘ mktemp ‘ with a unique path and must be removed by the creating process .
+- Reading shared tools or using concurrency - safe tool - managed caches under ‘/ tmp ‘ is allowed .
+## Useful Commands
+From a task repository root :
+‘‘‘ bash
+harness / bin / solve - verify
+harness / bin / solve - verify -- go test ./ changed / package
+harness / bin / solve - verify -- yarn lint : types
+‘‘‘
+The helper also looks for Go tools in common locations such as ‘/ usr / local / go / bin ‘ when they are not on ‘ PATH ‘.
+workflow.md .
+Referred to from Readme.md as workflows/contract-driven-solve.md .
+⬇
+# Contract - Driven Solve Workflow
+Use this for tasks with many requirements , shared interfaces , parsers , CLIs , persistence , async behavior , or UI state .
+## 1. Build the Contract Matrix
+Before editing , copy ‘ templates / contract - matrix . md ‘ into ‘ $RHO_SCRATCH_DIR ‘ or keep the same information in your notes . For each requirement , record :
+- the exact public interface or behavior requested
+- the implementation files and call paths that must change
+- the edge cases that would prove it
+- the command or test that verifies it
+Do not treat a compile check or a smoke run as enough when the prompt specifies serialized payloads , exact defaults , filtering , status transitions , boundary UI behavior , or error text .
+## 2. Search the Whole Affected Surface
+After identifying the main change , search for bypass paths :
+- old type / field / function names and direct calls to the old behavior
+- alternate constructors and config defaulting paths
+- CLI flags , config parsers , web / API entry points , non - interactive flows , proxy / recording paths , and background workers
+- interface implementations , mocks , wrappers , generated clients , and tests
+- persistence keys , secondary indexes , request payload builders , and response hydration helpers
+When semantics change from boolean to enum , sync to async , static address to runtime address , literal parsing to structured parsing , or derived state to persisted state , every old direct path is suspect until searched .
+## 3. Write Acceptance - Style Regressions
+Prefer small tests that pin the public contract over large broad tests that only compile . Good regression targets from prior failures :
+- parser / adapter tasks : historical and current input shapes , nil versus empty slices , deterministic ordering , identifier preference , exact output JSON / request body , filtering and exit - code behavior
+- CLI / testability tasks : option injection , no process exit on parser or handler errors , error preservation , and dynamic ‘:0‘ listener address propagation
+- async / event tasks : non - blocking overflow , backoff / drop counters , close behavior , all emission paths routed through the new abstraction
+- state - transition tasks : no resources , one resource , newest resource removed while older remain , final resource removed , monotonic timestamps in UTC
+- UI / control tasks : initial zero state , start , middle , exact end , out - of - range / invalid input , state and position observers staying in sync
+- import / packaging tasks : end - to - end payload contents , redirects , missing package ‘ __init__ . py ‘, relative imports from package initializers , and precise error messages
+- storage lifecycle tasks : create , list order , get single / array / empty , update preserving unrelated fields , delete cleanup from every index , null last - seen values
+For ambiguous prompt text , obey explicit local compatibility or repair notes over generic requirements . Do not add helper packages , ‘ export_test . go ‘ shims , or fake test environments that the prompt says hidden tests will supply .
+## 4. Verify Deliberately
+Find available tools before giving up . In Go repositories , check both ‘ go ‘ on ‘ PATH ‘ and ‘/ usr / local / go / bin / go ‘ plus ‘/ usr / local / go / bin / gofmt ‘.
+Run the smallest tests that prove the changed contract , then run adjacent package checks when interfaces or shared behavior changed . Record every command ’ s exit status ; if a command is still running , failed , or was skipped , say so in the final answer .
+Before finishing , run :
+‘‘‘ bash
+harness / bin / solve - verify
+‘‘‘
+It reports common tool locations and scans the current diff for added fixed ‘/ tmp ‘ paths .
+template.md .
+Referred to as templates/contract-matrix.md .
+⬇
+# Contract Matrix
+Store task - specific copies under ‘ $RHO_SCRATCH_DIR ‘, not under ‘ harness /‘ and not at a fixed ‘/ tmp ‘ path .
+| Requirement / edge case | Implementation surface | Bypass paths searched | Regression or command | Result |
+| --- | --- | --- | --- | --- |
+| | | | | |
+solve-verify.sh .
+Invoked as harness/bin/solve-verify .
+⬇
+#!/ usr / bin / env bash
+set - euo pipefail
+usage () {
+cat <<’ EOF ’
+Usage :
+harness / bin / solve - verify
+harness / bin / solve - verify -- < verification command > [ args ...]
+With no command , prints discovered tool paths and scans the current git diff for
+added fixed / tmp paths . With a command , also runs it and records the exit status .
+Persistent logs are written only under $RHO_SCRATCH_DIR when it is set .
+EOF
+}
+find_tool () {
+local name =" $1 "
+local path
+if path =" $ ( command - v " $name " 2>/ dev / null )"; then
+printf ’% s =% s \ n ’ " $name " " $path "
+return 0
+fi
+for path in \
+"/ usr / local / go / bin / $name " \
+"/ usr / local / bin / $name " \
+"/ opt / homebrew / bin / $name " \
+"/ usr / bin / $name " \
+"/ bin / $name "; do
+if [[ - x " $path " ]]; then
+printf ’% s =% s \ n ’ " $name " " $path "
+return 0
+fi
+done
+printf ’% s =< not found >\ n ’ " $name "
+return 1
+}
+print_tools () {
+local name
+for name in rg go gofmt node npm yarn python python3 pytest ; do
+find_tool " $name " || true
+done
+}
+make_temp_dir () {
+mktemp - d " $ { TMPDIR :-/ tmp }/ rho - solve - verify . XXXXXX "
+}
+scan_fixed_tmp_diff () {
+if ! git - c safe . directory =’*’ rev - parse -- show - toplevel >/ dev / null 2>&1; then
+echo " git_diff_tmp_scan = skipped ( not a git worktree )"
+return 0
+fi
+local tmpdir diff_file
+tmpdir =" $ ( make_temp_dir )"
+trap ’ rm - rf " $tmpdir "’ RETURN
+diff_file =" $tmpdir / diff . patch "
+if ! git - c safe . directory =’*’ diff -- . ’:( exclude ) harness /**’ >" $diff_file " 2>/ dev / null ; then
+echo " git_diff_tmp_scan = skipped ( git diff failed )"
+return 0
+fi
+if grep - E ’^\+[^+].*/ tmp /[ A - Za - z0 -9. _ -]+’ " $diff_file " >/ dev / null ; then
+echo " git_diff_tmp_scan = warning "
+echo " Added lines mention fixed / tmp paths . Use \ $RHO_SCRATCH_DIR for persistent state or mktemp plus cleanup for disposable files :"
+grep - n - E ’^\+[^+].*/ tmp /[ A - Za - z0 -9. _ -]+’ " $diff_file " | sed - n ’1,20 p ’
+else
+echo " git_diff_tmp_scan = ok "
+fi
+}
+run_command () {
+local log_dir log_file status
+if [[ - n " $ { RHO_SCRATCH_DIR :-}" ]]; then
+mkdir - p " $RHO_SCRATCH_DIR "
+log_dir =" $RHO_SCRATCH_DIR "
+else
+log_dir =" $ ( make_temp_dir )"
+trap ’ rm - rf " $log_dir "’ EXIT
+echo " RHO_SCRATCH_DIR is not set ; command log will be disposable ."
+fi
+log_file =" $log_dir / verify - $ ( date - u +% Y % m % dT % H % M % SZ )- $$ . log "
+echo " verify_log = $log_file "
+echo " verify_command = $ *" | tee " $log_file "
+set + e
+" $@ " 2>&1 | tee - a " $log_file "
+status = $ { PIPESTATUS [0]}
+set - e
+echo " verify_exit_status = $status " | tee - a " $log_file "
+return " $status "
+}
+if [[ " $ {1:-}" == "- h " || " $ {1:-}" == "-- help " ]]; then
+usage
+exit 0
+fi
+print_tools
+scan_fixed_tmp_diff
+if [[ " $ {1:-}" == "--" ]]; then
+shift
+if [[ " $ #" - eq 0 ]]; then
+usage >&2
+exit 2
+fi
+run_command " $@ "
+fi
+G.2 DeepSWE Harness
+Readme.md .
+Entry instructions.
+⬇
+# DeepSWE solve harness
+Use this harness to turn a task prompt into observable acceptance checks before
+the implementation starts . A green pre - existing suite is regression evidence ;
+it is not evidence that a new feature satisfies its contract .
+## Non - negotiable runtime rules
+- Multiple workers may share the host ‘/ tmp ‘. Never keep task - specific mutable
+state at a fixed global ‘/ tmp /...‘ path .
+- Put matrices , notes , logs , patches , reports , and other persistent solve state
+under ‘ $RHO_SCRATCH_DIR ‘ ( the runner creates ‘ task /. harness - state /‘ and exports
+its absolute path ).
+- A truly disposable file or directory may be made with ‘ mktemp ‘; the process
+that creates it must remove it .
+- Reading shared tools or using concurrency - safe tool - managed caches under
+‘/ tmp ‘ is fine .
+- In container tasks , repository changes and commits belong in ‘/ app ‘, not in
+the host workspace . Treat ‘/ host - ws ‘ and ‘ $RHO_SCRATCH_DIR ‘ as staging and
+evidence locations only .
+Initialize the acceptance ledger without overwriting an existing one :
+‘‘‘ sh
+harness / bin / init - acceptance - matrix
+‘‘‘
+If the harness is mounted elsewhere , invoke that script by its discovered
+absolute path . It writes only to ‘ $RHO_SCRATCH_DIR ‘.
+For a container repository that cannot be edited directly , keep a candidate
+patch in ‘ $RHO_SCRATCH_DIR / change . patch ‘, check it before mutation , then apply
+the same bytes :
+‘‘‘ sh
+docker exec - i " $container " sh - lc ’ cd / app && git apply -- check -’ \
+<" $RHO_SCRATCH_DIR / change . patch "
+docker exec - i " $container " sh - lc ’ cd / app && git apply -’ \
+<" $RHO_SCRATCH_DIR / change . patch "
+‘‘‘
+Prefer several small checked patches over one large shell - quoted rewrite .
+## The solve loop
+### 1. Establish the real repository contract
+Before editing :
+1. Read repository instructions and the prompt completely .
+2. Confirm the repository root , current revision , available toolchain , and
+test / build conventions . Inspect nearby implementation and tests .
+3. If requested , create a branch from ‘ main ‘ before changes . Configure Git
+identity repository - locally only if a commit requires it .
+4. Record prohibited tooling , offline constraints , exact public names , exact
+errors , submission / commit requirements , and supported modes in the ledger .
+Do not download a generator or replace checked - in generated artifacts when the
+task requires the checkout ’ s existing toolchain . Do not broaden the task with
+unrelated cleanup , completion , documentation , or sorting changes .
+### 2. Derive acceptance rows from prose
+Create one row for every independently observable clause . Pay special attention
+to words such as ** all **, ** every **, ** only **, ** never **, ** exactly **, ** same **,
+** before **, ** after **, ** until **, ** even on failure **, ** default **, and ** must **.
+Classify each row :
+- ‘ P ‘ positive behavior
+- ‘ N ‘ rejection , error , or prohibited behavior
+- ‘ B ‘ boundary or unrestricted input domain
+- ‘ X ‘ exact API , schema , representation , ordering , or message
+- ‘ C ‘ composition with another feature , mode , or existing API
+- ‘ L ‘ lifecycle , state transition , concurrency , or cleanup
+- ‘ R ‘ backward compatibility and unchanged behavior
+For each row write the public entrypoint , setup , action , exact observable
+result , and oracle . A helper - level assertion is insufficient when the contract
+is visible through a CLI , transport , renderer , compiler , serializer , or other
+public path .
+### 3. Build the smallest high - risk interaction matrix
+Do not blindly test a full Cartesian product . Use pairwise cases plus cases at
+representation and lifecycle boundaries . At minimum cover :
+- every explicitly accepted syntax / value / API variant , including alternate
+grammar branches and aliases ;
+- every execution mode / backend / public access path named by the prompt ;
+- every state - changing builder operation followed by every terminal mode it
+can affect ;
+- empty , zero , nil / null , missing , duplicate , maximum / exact - limit ,
+just - over - limit , whitespace , Unicode , special property names , and invalid
+values where legal ;
+- first use , repeated use , reset / reuse , removal , failure , and use after
+serialization or reconstruction ;
+- operation - order reversals : configure before / after registration , abort before
+start / during pending work / after completion , and callbacks on every exit path ;
+- disjoint concurrent inputs , out - of - order completion , one stalled worker ,
+cleanup races , and bounded - retention pressure when concurrency is required ;
+- a new feature composed with the closest existing API , rather than only used
+alone ;
+- processing exactly once versus repeated processing , especially pipelines
+that coalesce , render , merge , or replay in multiple stages .
+Turn a category definition into both qualifying and non - qualifying cases . Turn
+an unconditional statement into an empty - input case . Turn an ordering statement
+into multiple items whose insertion , lexical , priority , and completion orders
+differ .
+### 4. Choose semantic , implementation - independent oracles
+Test what the caller observes , not the trigger or representation chosen by the
+implementation .
+- Serialization / output : assert exact keys and types , empty arrays versus null ,
+ordering , section counts , comments , whitespace , and final newlines . Then parse
+or decode and assert semantics .
+- Transformations / optimizers : compare before / after behavior over the supported
+domain . Include a preservation case and a locality counterexample proving
+unrelated input still changes when allowed .
+- Parsers : cover every syntax container , contextual fallback , exact diagnostic ,
+malformed delimiter / quote case , and compatibility when the feature is off .
+- Stateful systems : assert the transition , current snapshot , side effects ,
+cleanup , and subsequent operation --- not merely stored fields .
+- Caches / concurrency : vary worker inputs . Assert preserved union and actual reuse
+or work counts , not merely valid files / checksums .
+- Resource bounds : instrument every queue , collector , formatter , and replay
+stage . Compare default - concurrency output byte - for - byte with the baseline .
+- Async / UI : drive real event paths and passive state changes . Do not inject an
+implementation - specific event merely to make the test pass .
+- Binary formats : decode and assert every requested field with known nonzero
+values ; structural validity alone is too weak .
+- Type - level APIs : add compile - pass and compile - fail checks as well as runtime
+tests .
+Keep focused acceptance tests in the repository when its conventions allow .
+Never weaken , narrow , or delete a regression just because it exposes an
+architectural problem .
+### 5. Trace the complete data and state flow
+Before settling on an architecture , trace the feature from public input to the
+final consumer . List every parsing , normalization , caching , persistence ,
+rendering , reconstruction , and cleanup stage . This catches repeated processing
+and metadata lost at boundaries .
+Check these questions explicitly :
+- What is the true identity key ? If behavior depends on variables , candidate ,
+target , path , scope , or generation , a name - only cache is probably too coarse .
+- Who owns mutable state , and who clears it on removal , reset , close , error , or
+global - state replacement ?
+- Does the implementation need to distinguish absence from a legal zero / empty
+value ? Use an explicit presence bit rather than a value sentinel .
+- Does a reused legacy helper implement the prompt ’ s exact category boundary ?
+- Is an immutable API ’ s returned value retained ?
+- Can callbacks , timing , metrics , or cleanup be skipped by an early return ?
+- Does stored metadata survive every persistence / reconstruction route ?
+- Can shared source input be mutated and leak into siblings or later passes ?
+### 6. Validate in a cost - aware ladder
+Run checks in this order and record the command and exit status in the ledger :
+1. smallest compile / type / format check for touched code ;
+2. focused acceptance tests , including negative and interaction rows ;
+3. affected package / module tests ;
+4. public CLI / API / transport smoke test using the built artifact ;
+5. broader regression suite , lint , vet , race , or build as appropriate ;
+6. final diff , exact API / exports / docs / generated - file audit , and commit checks .
+When a broad command is blocked by an offline dependency or unrelated fixture ,
+run the narrow suites that exercise the changed code and report the blocker
+precisely . Do not claim later commands in a shell chain ran if an earlier command
+failed . A failure found by a strong lifecycle test must be fixed or explicitly
+reported , never replaced with a weaker scenario .
+Avoid waste : inspect before patching , use small verified patches , stop repeating
+unchanged failing commands , and do not install unavailable tools merely to make
+one optional check green .
+### 7. Submission gate
+Before the final answer :
+- Re - read every prompt clause and mark each ledger row ‘ pass ‘, ‘ blocked ‘, or
+‘ unresolved ‘, with evidence .
+- Run ‘ git diff -- check ‘ and inspect the final diff for accidental or generated
+changes .
+- Confirm focused tests are included when appropriate .
+- Commit every intended repository change if the task grades committed work .
+- Confirm the branch / base requirement and inspect ‘ git status -- short ‘ and the
+final commit . Do not call a dirty or partially committed tree clean .
+- State exactly what passed , what was blocked , and any remaining contract risk .
+template.md .
+Referred to as templates/acceptance-matrix.md ; copied into the scratch directory by the script below.
+⬇
+# Acceptance matrix
+Task :
+Repository / revision :
+Branch requirement :
+Toolchain and offline constraints :
+Exact submission requirement :
+## Public contract inventory
+List exact names , signatures , exports , errors , schemas , ordering , formatting ,
+defaults , feature gates , and behavior that must remain unchanged .
+| ID | Kind | Prompt clause | Public path | Setup and action | Exact observable / oracle | Test | Status |
+|---|---|---|---|---|---|---|---|
+| A01 | P | | | | | | todo |
+| A02 | N | | | | | | todo |
+| A03 | X | | | | | | todo |
+Kinds : ‘ P ‘ positive , ‘ N ‘ negative , ‘ B ‘ boundary , ‘ X ‘ exact contract ,
+‘ C ‘ composition , ‘ L ‘ lifecycle / concurrency , ‘ R ‘ compatibility .
+## Dimension inventory
+Fill only relevant dimensions , but enumerate every explicit variant .
+| Dimension | Values required by the prompt | High - risk boundary / contrast |
+|---|---|---|
+| public execution path | | |
+| mode / backend / feature gate | | |
+| syntax or value category | | |
+| structure / nesting / representation | | |
+| state / lifecycle phase | | |
+| failure / cancellation phase | | |
+| concurrency / ordering | | |
+| empty / zero / nil / missing | | |
+| exact output / schema / types | | |
+| existing API composition | | |
+## High - risk pairwise cases
+Record deliberate combinations . Avoid a full Cartesian product unless the
+state space is small .
+| Case | Dimensions crossed | Why this boundary is risky | Expected observation | Test / status |
+|---|---|---|---|---|
+| C01 | | | | todo |
+## State and ownership model
+True identity key :
+State owner :
+Presence versus zero / empty representation :
+Reset / removal / close / error cleanup :
+Persistence / reconstruction boundaries :
+Repeated - processing or idempotence risk :
+| From state | Operation / event | Failure or ordering variant | To state | Side effects and cleanup |
+|---|---|---|---|---|
+| | | | | |
+## End - to - end data flow
+Public input -> parsing -> normalization -> core operation -> persistence / cache
+-> reconstruction / rendering -> public output
+At each arrow note metadata that must survive and whether the stage can run more
+than once .
+## Validation evidence
+Record commands separately so one failure cannot mask whether another ran .
+| Command | Revision | Scope / acceptance IDs | Exit status | Notes / blocker |
+|---|---|---|---|---|
+| | | | | |
+## Final gate
+- [ ] Every prompt clause maps to an acceptance row .
+- [ ] Positive , negative , boundary , exact - contract , composition , and lifecycle
+cases relevant to this task are covered .
+- [ ] Public entrypoints and semantic outcomes are tested , not only helpers .
+- [ ] Exact schemas / types / order / whitespace / errors are asserted where specified .
+- [ ] Focused tests remain in the repository when appropriate .
+- [ ] No failing regression was weakened or discarded .
+- [ ] Broad validation blockers are recorded precisely .
+- [ ] Final diff and ‘ git diff -- check ‘ inspected .
+- [ ] Intended changes committed when required ; final status inspected .
+- [ ] Persistent state is under ‘ $RHO_SCRATCH_DIR ‘; disposable ‘ mktemp ‘ paths
+were cleaned .
+solve-verify.sh .
+Invoked as harness/bin/init-acceptance-matrix .
+⬇
+#!/ bin / sh
+set - eu
+if [ - z " $ { RHO_SCRATCH_DIR :-}" ]; then
+echo ’ RHO_SCRATCH_DIR is required ; the runner must provide task /. harness - state ’ >&2
+exit 2
+fi
+case " $RHO_SCRATCH_DIR " in
+/*) ;;
+*)
+echo ’ RHO_SCRATCH_DIR must be an absolute path ’ >&2
+exit 2
+;;
+esac
+script_dir = $ ( CDPATH = cd -- " $ ( dirname -- " $0 ")" && pwd )
+template =" $script_dir /../ templates / acceptance - matrix . md "
+destination =" $RHO_SCRATCH_DIR / acceptance - matrix . md "
+mkdir - p -- " $RHO_SCRATCH_DIR "
+if [ - e " $destination " ]; then
+printf ’% s \ n ’ " $destination "
+exit 0
+fi
+cp -- " $template " " $destination "
+printf ’% s \ n ’ " $destination "
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

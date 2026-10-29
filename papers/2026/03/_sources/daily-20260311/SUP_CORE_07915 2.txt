@@ -1,0 +1,1133 @@
+Ares: Adaptive Reasoning Effort Selection for Efficient LLM Agents
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Related Work
+LLM Routing.
+Efficient and adaptive LLM reasoning.
+3 Method
+3.1 Problem Formulation
+3.2 Supervised Fine-tuning Pipeline
+Phase 1: Trajectory Collection.
+Phase 2: Reasoning Effort Annotation.
+Phase 3: Rationale Generation.
+Supervised Fine-tuning.
+3.3 Reinforcement Learning
+Router Rollout.
+Reward Design.
+RL Data Filtering.
+4 Experiments
+4.1 Experimental Setup
+Environments.
+Implementation.
+Training.
+Evaluation.
+Baselines.
+4.2 SFT Results
+Tool Use.
+Deep Research.
+Web Navigation.
+4.3 RL Results
+4.4 Analysis of Reasoning Effort Selection
+4.5 Ablation Studies
+Effect of Supervised Fine-tuning.
+Effect of Reasoning Rationale.
+Reward Design.
+4.6 Generalization Evaluation
+5 Conclusion
+References
+A Prompts.
+B Training Example.
+C Dataset Statistics
+License: CC BY 4.0
+arXiv:2603.07915v1 [cs.AI] 09 Mar 2026
+Ares: Adaptive Reasoning Effort Selection for Efficient LLM Agents
+Jingbo Yang
+Affiliation: Department of Computer Science, University of California, Santa Barbara
+Correspondence to: jingbo@ucsb.edu
+Bairu Hou
+Affiliation: Department of Computer Science, University of California, Santa Barbara
+Wei Wei
+Affiliation: Center for Advanced AI, Accenture
+Yujia Bao
+Affiliation: Center for Advanced AI, Accenture
+Shiyu Chang
+Affiliation: Department of Computer Science, University of California, Santa Barbara
+Correspondence to: chang87@ucsb.edu
+Abstract
+Modern agents powered by thinking LLMs achieve high accuracy through long chain-of-thought reasoning but incur substantial inference costs. While many LLMs now support configurable reasoning levels (e.g., high/medium/low), static strategies are often ineffective: using low-effort modes at every step leads to significant performance degradation, while random selection fails to preserve accuracy or provide meaningful cost reduction.
+However, agents should reserve high reasoning effort for difficult steps like navigating complex website structures, while using lower-effort modes for simpler steps like opening a target URL.
+In this paper, we propose Ares, a framework for per-step dynamic reasoning effort selection tailored for multi-step agent tasks. Ares employs a lightweight router to predict the lowest appropriate reasoning level for each step based on the interaction history. To train this router, we develop a data generation pipeline that identifies the minimum reasoning effort required for successful step completion. We then fine-tune the router to predict these levels, enabling plug-and-play integration for any LLM agents. We evaluate Ares on a diverse set of agent tasks, including TAU-Bench for tool use agents, BrowseComp-Plus for deep-research agents, and WebArena for web agents.
+Experimental results show that Ares reduces reasoning token usage by up to 52.7% compared to fixed high-effort reasoning, while introducing minimal degradation in task success rates.
+Keywords: Machine Learning, ICML
+††affiliationnotice: Equal contribution
+1 Introduction
+Figure 1:
+Overview of the Adaptive Reasoning Effort Selection (ARES) Framework.
+Left: Traditional Model Routing which often incurs extra inference costs without KV cache reuse.
+Middle: Our proposed Ares framework, dynamically allocates reasoning effort at each step.
+Right: Ares (red star) achieves the optimal balance between performance and cost compared to baselines.
+Recent advancements in reasoning large language models (LLMs) (Team et al., 2025; Guo et al., 2025; Comanici et al., 2025) have significantly boosted the capabilities of autonomous agents (Jin et al., 2025; Sun et al., 2025; Liu et al., 2025b; Yang et al., 2025) in complex, multi-step decision-making tasks. By leveraging extended chain-of-thought (CoT) reasoning, these agents can perform deeper environment analysis and more rigorous planning before executing actions. However, this improved performance comes at a substantial inference cost, as a large number of reasoning tokens are accumulated at each step along the multi-step trajectories. To control these costs, a straightforward approach is to leverage the configurable “thinking levels” (or reasoning efforts) now supported by various state-of-the-art LLMs (Singh et al., 2025). These models (e.g., the GPT-5 or Gemini-3) allow users to manually select from thinking modes, such as high/medium/low or thinking/fast modes,
+to balance performance and budget. With these options, users can configure LLM agents to always reason at lower levels at each step to reduce the cost.
+However, such a uniform approach is often suboptimal because not all steps in a task require the same level of thinking. While some steps are simple, others demand intensive reasoning to avoid errors. Consequently, a fixed, static strategy often fails to balance performance and cost effectively. For example, a naive approach that consistently applies a low reasoning effort to minimize costs leads to severe performance degradation. As illustrated in Figure 1, the agent powered by gpt-oss-20b suffers a nearly 20%20\% drop after switching the reasoning effort from “high” to “low” at every decision step. This performance gap suggests that a coarse-grained reduction in thinking effort is insufficient for maintaining agent effectiveness in complex environments.
+To address these challenges, we propose a framework for dynamic reasoning effort allocation tailored for LLM agents. The core idea is to move beyond static configurations by adaptively determining the most suited reasoning effort for each individual step, reducing reasoning costs while preserving performance. While adaptive thinking has been explored in single-step tasks such as mathematical reasoning and competitive programming (Shen et al., 2025; Cui et al., 2025), its application to LLM agents remains non-trivial. A slight reasoning deficit in an early step can lead to error propagation, making the balance between efficiency and long-term success far more complex. Furthermore, our approach distinguishes itself from existing model routing strategies (Su et al., 2025; Zhang et al., 2025a; Amayuelas et al., 2025), where user inputs and tasks are routed to models with different sizes and capabilities. The trade-off between performance and cost is not always predictable or monotonic. In contrast, by leveraging the intra-model thinking levels (e.g., switching between a model’s own high and low reasoning modes), we can ensure a more well-defined and consistent performance-cost frontier. This allows for a more granular control over the agent’s behavior without the integration overhead of maintaining multiple heterogeneous models. In addition, this paradigm allows the agent to preserve and reuse the KV cache across different reasoning effort levels. This avoids the significant latency or computational costs associated with re-encoding context for a different model, thereby maximizing the token-saving benefits of our adaptive framework.
+Under this setting, we propose Ares, a method that introduces a small-scale LM as a reasoning-effort router to work alongside the LLM agent. Specifically, the router takes the current interaction history as input and directly predicts the lowest appropriate reasoning-effort level for the next step. The agent then uses the predicted reasoning level to perform the next step. This design is model-agnostic and can be seamlessly integrated into any existing agent architecture.
+During training, we develop a multi-phase automated data generation pipeline that identifies and labels the minimum reasoning effort required for each step within a trajectory. Specifically, we break down the multi-step reasoning effort labeling task as a combination of single-turn classification problems. We start with collecting high-quality trajectory data to obtain the ground truth agent actions. After that, we annotate the lowest reasoning effort which produces the correct action stably. Conditioned on the effort prediction, we induce a rationale for analyzing the environment and predicting the effort.
+We then fine-tune a lightweight router (e.g., Qwen3-1.7B) to predict these effort levels by minimizing the next-token prediction loss.
+We validate Ares through comprehensive experiments across diverse agent tasks, including tool-use agents, deep-research agents, and web agents. Specifically, we fine-tune a lightweight Qwen3-1.7B model as the reasoning-effort router in Ares. Compared to consistently using high reasoning effort, Ares substantially reduces token usage while maintaining task performance. For example, on TAU-Bench, Ares achieves an 52.7% reduction in reasoning cost and even slightly improves performance relative to always using high reasoning effort.
+2 Related Work
+In this section, we provide an overview of prior works which closely relate to or partially motivated our work, including LLM routing, efficient reasoning.
+LLM Routing.
+Routing across models of varying scales or architectures is a well-established technique for balancing performance and cost. Early methods (Srivatsa et al., 2024; Ong et al., 2024; Feng et al., 2024) trained routers—often using human preference data (Chiang et al., 2024)—to select the optimal model per task. Other approaches employ clustering-based routing, such as Avengers (Zhang et al., 2025c), BESTRoute (Ding et al., 2025), and related frameworks (Jitkrittum et al., 2025). However, these primarily target single-turn tasks (e.g., math), reducing routing to an independent classification problem. In contrast, Ares addresses the more complex multi-turn decision-making setting where steps are inherently interdependent.
+Recent research has extended model routing to multi-turn agent tasks. ToolOrchestra (Su et al., 2025) utilizes an orchestrator LLM for joint planning and routing, though it relies on subjective natural language descriptions of model capabilities. Router-R1 (Zhang et al., 2025a) frames multi-turn routing as a sequential process but focuses on simple QA tasks (e.g., NQ (Kwiatkowski et al., 2019), TriviaQA (Joshi et al., 2017)) that often collapse into single-turn RAG problems. More recently, EvoRoute (Zhang et al., 2026) proposed an experience-driven self-routing framework. While these multi-model paradigms show promise, they remain constrained by non-monotonic cost-performance relationships and inefficiencies from redundant context encoding, as detailed in Section 1. In contrast, our setting is a better defined optimization problem, and reuses the KV cache to avoid additional inference cost.
+Efficient and adaptive LLM reasoning.
+Our method is also related to recent approaches for adaptive thinking of LLMs, which aim to teach models to reason adaptively according to the input difficulty (Liu et al., 2025a; Yu et al., 2025; Wu et al., 2025; Zhang et al., 2025b) or a user-specified thinking budget (Huang et al., 2025; Alomrani et al., 2025; Hou et al., 2025).
+Similar to other works on model routing, these approaches primarily focus on controlling reasoning in a single-turn setting, by dynamically adjusting the length of reasoning traces or truncating intermediate thoughts under a given budget.
+In contrast, our approach models reasoning effort as a sequential decision-making process, making it applicable to more complex, multi-turn agent tasks.
+3 Method
+In this section, we present Ares, a framework that dynamically allocates most efficient but effective reasoning effort across decision steps. We first provide the problem formulation of optimizing router model, and then elaborate how we train an effective reasoning effort router using both supervised fine-tuning (SFT) as well as reinforcement learning (RL).
+3.1 Problem Formulation
+To formalize the decision-making process of the router, we first define the agent’s task and interaction environment. An agent task is characterized by a goal or user query x∈𝒳x\in\mathcal{X}. The interaction proceeds over discrete turns t=1,…,Tt=1,\dots,T. At each turn tt, the environment provides an observation ot∈𝒪o_{t}\in\mathcal{O} (e.g., external tool outputs or web page content). The LLM agent ℳagent\mathcal{M}_{\text{agent}} with parameter ϕ\phi first performs chain-of-thought reasoning and then predicts the next action ata_{t}.
+Notably, the reasoning level ete_{t} of the LLM is configurable and can be selected from a fixed set, such as high/medium/low supported by gpt-oss-20b.
+Let ht=(x,o1,a1,…,ot−1,at−1)h_{t}=(x,o_{1},a_{1},\dots,o_{t-1},a_{t-1}) denote the interaction history up to turn tt, the agent model ℳagent\mathcal{M}_{\text{agent}} with parameters ϕ\phi predicts the next action ata_{t}:
+at∼Pϕ​(at∣ht,ot,et)a_{t}\sim P_{\phi}(a_{t}\mid h_{t},o_{t},e_{t})
+(1)
+The agent’s objective is to produce a sequence of actions such that the complete trajectory τ=(x,o1,a1,…,oT,aT)\tau=(x,o_{1},a_{1},\dots,o_{T},a_{T}) satisfies the task success criterion, denoted by a verification function 𝒱⁡(τ)∈{0,1}\mathcal{V}(\tau)\in\{0,1\}.
+The router is a lightweight LLM ℳrouter\mathcal{M}_{\text{router}} with parameters θ\theta. At each turn tt, the router receives the same input context as the agent—the task, history, and current observation—and predicts the optimal reasoning effort level ete_{t} from a discrete space ℰ={elow,emid,ehigh}\mathcal{E}=\{e_{\text{low}},e_{\text{mid}},e_{\text{high}}\}:
+et=ℳrouter​(ht,ot,θ)e_{t}=\mathcal{M}_{\text{router}}(h_{t},o_{t};\theta).
+The selected ete_{t} represents the reasoning strategy that ℳagent\mathcal{M}_{\text{agent}} will employ for that specific turn.
+The objective of the router is to minimize the cumulative inference cost across the trajectory while ensuring that the task remains successful.
+We quantify the cost of each step, cost⁡(et)\mathrm{cost}(e_{t}), as the total number of tokens generated by the agent at turn tt, which includes both the internal reasoning (thinking) tokens and the tokens for the final action.
+Formally, the optimization goal is to find a selection policy that maximizes the task success rate while minimizing the cumulative computational cost:
+maxθ⁡𝔼x∼𝒳,τ∼𝒯⁡(θ,ϕ)​[𝒱⁡(τ,x)−λ​∑t=1Tcost​(et)]\max_{\theta}\mathbb{E}_{x\sim\mathcal{X},\tau\sim\mathcal{T}(\theta,\phi)}\left[\mathcal{V}(\tau,x)-\lambda\sum_{t=1}^{T}\text{cost}(e_{t})\right]
+(2)
+where τ∼𝒯⁡(θ,ϕ)\tau\sim\mathcal{T}(\theta,\phi) is the trajectory distribution on task xx induced by the LLM agent parametrized by ϕ\phi and the router parameterized by θ\theta. 𝒱⁡(τ,x)\mathcal{V}(\tau,x) measures whether the task success of trajectory τ\tau on task xx. By solving this optimization problem, the router learns to dynamically allocate minimal reasoning resources at each step while preserving the final task utility.
+Figure 2: Overview of the Ares training pipeline.
+(1) Trajectory Collection: Optimal ground-truth paths are defined by filtering successful trajectories with minimal steps.
+(2) Effort Annotation: The minimum sufficient reasoning effort for each step is identified via sampling and LLM verification.
+(3) Rationale Generation: A teacher LLM generates semantic justifications based on task observations and complexity.
+(4) Supervised Fine-tuning: The Ares router is fine-tuned to jointly predict rationales and effort labels.
+(5) Reinforcement Learning: The fine-tuned Ares router will be further trained using GRPO with outcome, reasoning cost, and format reward.
+3.2 Supervised Fine-tuning Pipeline
+The primary challenge in training a reasoning effort router lies in label acquisition. Unlike standard classification tasks, the optimal reasoning effort for a specific step cannot be directly observed. Obtaining this label through naive trial-and-error is computationally prohibitive due to the |ℰ|T|\mathcal{E}|^{T} search space. Moreover, a suboptimal effort allocation in early steps can lead to error propagation, making it difficult to directly optimize for efficiency across a trajectory.
+To resolve this, our core idea is to decouple the reasoning effort selection from the task-solving trajectory. Instead of searching for everything at once, we first find a successful trajectory and then test each step one by one to find the minimum thinking effort needed to get that specific step right. This allow us to identify the lowest sufficient reasoning effort required to reproduce a correct action without the noise of error propagation.
+Phase 1: Trajectory Collection.
+Rather than searching for efficiency across arbitrary action sequences, we anchor our analysis on high-quality, successful trajectories. For each training task xx, we sample NN successful trajectories using the agent ℳagent\mathcal{M}_{\text{agent}} under the maximum effort level ehighe_{\text{high}}. From these successful trials, we select the most concise trajectory τ∗=(o1,a1∗,…,oT,aT∗)\tau^{*}=(o_{1},a^{*}_{1},\dots,o_{T},a^{*}_{T}) to serve as the reference path. The rationale for this selection is two-fold. First, trajectories with more steps inflate the total reasoning cost and make it harder to identify the true minimum effort required for the core task. In contrast, concise trajectories provide a cleaner signal of the essential reasoning needed. Second, by fixing a high-quality action sequence, we transform the long-horizon optimization problem into a series of independent step-wise labeling tasks. This allows us to precisely measure how different reasoning levels affect the execution of each ground-truth action at∗a^{*}_{t} in isolation.
+We also note that the Ares framework is also compatible with external data sources. The router can be trained using existing open-source agent datasets, even if those trajectories were generated by a different LLM. This flexibility allows Ares to leverage high-quality interaction data without always requiring expensive self-sampling. As demonstrated in our experiments (Section 4), the router generalizes effectively across different interaction styles and model sources.
+Phase 2: Reasoning Effort Annotation.
+With the optimal trajectory τ∗=(o1,a1∗,…,oT,aT∗)\tau^{*}=(o_{1},a^{*}_{1},\dots,o_{T},a^{*}_{T}) as a reference, we decompose it into individual decision steps to identify the minimum required reasoning effort for each action. For each step tt, we treat the action at∗a^{*}_{t} as the ground truth. Our goal is to find the lowest effort level e∈ℰe\in\mathcal{E} that can reliably reproduce at∗a^{*}_{t} given the history hth_{t} and observation oto_{t}.
+To account for the inherent stochasticity of LLMs, we employ a multi-trial verification process. For each effort level e∈{elow,emid,ehigh}e\in\{e_{\mathrm{low}},e_{\mathrm{mid}},e_{\mathrm{high}}\}, we sample the agent’s response KK times (K=3K=3 in our experiments) and compare the predicted actions {a^t,k(e)}k=1K\{\hat{a}_{t,k}^{(e)}\}_{k=1}^{K} against the ground truth at∗a^{*}_{t}.
+An effort level ee is considered sufficient for step tt if it reliably reproduces the correct action in a majority of trials. Specifically, we define a verification function 𝒱⁡(a^,at∗)\mathcal{V}(\hat{a},a^{*}_{t}) that returns 1 if the predicted action is functionally equivalent to the ground truth and 0 otherwise. We require the action to be correct in at least MM out of KK trials. The candidate set of sufficient levels 𝒞t\mathcal{C}_{t} is then defined as:
+𝒞t={e∈ℰ∣∑k=1K𝒱⁡(a^t,k(e),at∗)≥M}\mathcal{C}_{t}=\left\{e\in\mathcal{E}\mid\sum_{k=1}^{K}\mathcal{V}(\hat{a}_{t,k}^{(e)},a^{*}_{t})\geq M\right\}
+(3)
+To ensure the verification process 𝒱\mathcal{V} is both rigorous and practical, we tailor the evaluation criteria to diverse agent domains. Specifically, two actions are considered functionally equivalent if they produce the same effect on the environment.
+For tool-use agents, an action is valid if the predicted tool name matches at∗a^{*}_{t} and the key parameters are identical.
+For web agents, an action is considered correct if it interacts with the environment in exactly the same manner as at∗a^{*}_{t} (e.g., clicking a specific element such as click[1316]).
+For deep research agents, where the primary action involves searching, we utilize an LLM judge to determine if two search queries are semantically equivalent.
+Across all three agent types, when the agent outputs natural language messages (e.g., soliciting user information or providing a final answer), we also employ an LLM judge to verify that the messages are semantically consistent.
+Finally, we assign the label yty_{t} by picking the lowest-cost sufficient level. For example, if both elowe_{\mathrm{low}} and emide_{\mathrm{mid}} are sufficient, we label the step as elowe_{\mathrm{low}} to maximize efficiency. If no level passes the robustness check, the step is discarded to maintain data quality. This exhaustive labeling process creates a high-quality supervision signal that defines the computational lower bound for the task.
+Phase 3: Rationale Generation.
+To enhance the router’s predictive accuracy, we train it to generate a brief reasoning rationale before outputting the final effort label. This approach allows the lightweight router to analyze the current state explicitly rather than performing a direct mapping from context to label. We compare this design against a baseline that performs direct label classification in Section 4.5 to evaluate the empirical benefits of rationale generation.
+To synthesize high-quality training data for this process, we employ a powerful teacher model to perform post-hoc analysis on the labeled trajectories. For each step tt, the teacher model is provided with the interaction history, the current observation, and the ground-truth label yty_{t} derived from Stage 2. It is then tasked with justifying why yty_{t} is the most appropriate level for the upcoming action. The generated rationale integrates several key factors: it assesses the complexity of the latest observation, evaluates the current progress of the overall task, and estimates the inherent difficulty of the required sub-task. To ensure that the router’s own reasoning does not introduce significant latency, we impose a strict length constraint on the teacher model, limiting the rationale to a concise summary of 3–5 sentences.
+This ensures that the router remains lightweight and fast, providing a favorable trade-off between its own token overhead and the substantial token savings it enables for the agent.
+Supervised Fine-tuning.
+Finally, we fine-tune a lightweight model to serve as the reasoning router using the augmented dataset 𝒟={(ht,ot,rt,yt)}\mathcal{D}=\{(h_{t},o_{t},r_{t},y_{t})\}. The model is trained with a standard next-token prediction objective, where it learns to generate the reasoning rationale rtr_{t} followed by the discrete effort label yty_{t} given the interaction context.
+3.3 Reinforcement Learning
+While SFT trains the Ares router to maximize the probability of selecting the minimum sufficient reasoning effort at each step, the SFT data synthesis pipeline reduces the multi-turn routing process to a series of single-step decisions with a greedy objective. This approach may fail to capture the complex multi-turn dynamics of the routing process. Specifically, the greedy nature of SFT introduces two primary shortcomings: ❶ single-step selection assumes that all previous effort levels were optimal, leaving the router without training signals on how to recover from sub-optimal selections made in prior turns; ❷ the current SFT data provides only one step-wise optimal selection per query, lacking the contrastive signals necessary to optimize the total query-wise reasoning effort across different selection sequences. To address these challenges and fully realize the potential of the Ares router, we further explore training via reinforcement learning (RL).
+Router Rollout.
+Following the formulation in Section 3.1, at each agent decision turn tt, the Ares router takes the trajectory history hth_{t} and the current observation oto_{t} as input to produce: (1) a rationale rtr_{t} (chain-of-thought), where the router analyzes the current task progress and the difficulty of the next sub-task; and (2) a reasoning effort prediction ete_{t}. This selected effort level is then provided as part of the input to the downstream agent to generate the subsequent action ateta^{e_{t}}_{t}, as is shown in Figure 2. The rollout continues until the task is successfully completed or the agent reaches the maximum number of allowed steps.
+Reward Design.
+To guide the router toward balancing task success with computational efficiency, we define a composite reward function R⁡(τ)R(\tau) for a trajectory τ\tau of length TT, and employ Group Relative Policy Optimization (GRPO) (Shao et al., 2024) for training. The total reward is the sum of three components:
+R⁡(τ)={Rout+Rcost+Rformif task is successfulRout+RformotherwiseR(\tau)=\begin{cases}R_{\text{out}}+R_{\text{cost}}+R_{\text{form}}&\text{if task is successful}\\
+R_{\text{out}}+R_{\text{form}}&\text{otherwise}\end{cases}
+(4)
+❶Outcome Reward (RoutR_{\text{out}}): Upon completion of the rollout, we verify the final environment state to determine task success. To ensure that the router prioritizes task completion, we assign a high-magnitude reward:
+Rout={+5.0if task is successful0.0otherwiseR_{\text{out}}=\begin{cases}+5.0&\text{if task is successful}\\
+0.0&\text{otherwise}\end{cases}
+(5)
+❷Reasoning Cost Reward (RcostR_{\text{cost}}): At each turn tt, choosing a specific effort level ete_{t} incurs a penalty c⁡(et)c(e_{t}) to discourage redundant computation. We define the turn-wise cost as:
+c⁡(et)={−0.2if ​et=elow−0.5if ​et=emid−1.0if ​et=ehighc(e_{t})=\begin{cases}-0.2&\text{if }e_{t}=e_{\text{low}}\\
+-0.5&\text{if }e_{t}=e_{\text{mid}}\\
+-1.0&\text{if }e_{t}=e_{\text{high}}\end{cases}
+(6)
+The total cost reward is normalized as the trajectory-average: Rcost=1T​∑t=1Tc⁡(et)R_{\text{cost}}=\frac{1}{T}\sum_{t=1}^{T}c(e_{t}). The reasoning cost penalty is exclusively applied to successful trajectories. This prevents the router from learning a degenerate policy where it deliberately selects low-effort actions to fail difficult tasks quickly, merely to minimize accumulated step-wise penalties.
+❸Format Reward (RformR_{\text{form}}): To ensure the router follows the prescribed reasoning template (e.g., encapsulating rationales within <think> tags), we apply a penalty of Rform=−1.0R_{\text{form}}=-1.0 if the output format is violated. In such cases, the rollout is immediately terminated and marked as a failure, as we empirically found routing a format mistake to a fixed reasoning effort will make the training unstable.
+This structured reward encourages the router to first prioritize the dominant outcome signal (RoutR_{\text{out}}) to ensure correctness, before optimizing the efficiency-accuracy trade-off via the cost penalty.
+RL Data Filtering.
+To ensure the Ares router learns an effective reasoning effort selection strategy, the quality of the training signals is paramount. We implement a targeted data processing pipeline to filter the initial prompt pool and highlight the most informative prompts for optimization.
+For each prompt in our training set, we perform NN rollouts (e.g., NN=8) using the SFT-initialized router to observe the variance in agent performance and computational cost. We then apply the following two-stage filtering process:
+❶Zero-Success Filtering: We calculate the success rate (SR) for each prompt across all NN rollouts. We discard any prompt where SR=0, as these tasks likely exceed the fundamental capabilities of the underlying agent LLM regardless of the reasoning effort applied. Including these “unsolvable” samples would introduce significant noise into the training signal, as the router might incorrectly attribute the inherent failures of the agent to its own effort selection.
+❷Variance-Based Efficiency Selection: For the remaining prompts where the agent achieves a perfect success rate (SR=100%), we calculate the total reward for each rollout and determine the variance across the N samples of each prompt. We retain only those prompts whose reward variance falls within the top 30%. The rationale is that high-variance rewards on successful prompts indicate that multiple reasoning strategies achieve the same outcome but with vastly different costs. These samples provide the strongest signal for the router to learn how to minimize reasoning tokens without sacrificing task accuracy.
+By curating the data in this manner, we ensure the reinforcement learning process focuses on prompts where the reasoning effort selection is the primary driver of the efficiency-accuracy trade-off.
+4 Experiments
+4.1 Experimental Setup
+Table 1: Main evaluation results in TAU-Bench, BrowserComp-Plus, and WebArena, using gpt-oss-20b as the backbone LLM. Arrows (↑/↓\uparrow/\downarrow) indicating an increase or decrease in absolute value.
+Orange and blue indicate beneficial and detrimental changes.
+Performance
+Efficiency (Token Consumption)
+Method
+Acc. (%)
+ΔAcc\Delta_{\mathrm{Acc}}
+SS
+TtotalT_{\text{total}}
+Δtoken\Delta_{\mathrm{token}}
+TtaskT_{\text{task}}
+Δtoken\Delta_{\mathrm{token}}
+TstepT_{\text{step}}
+Δtoken\Delta_{\mathrm{token}}
+TAU-Bench Retail
+Rule
+-based
+Low
+35.0
+↑19.8{\color[rgb]{1,0.23,0.13}\uparrow 19.8}
+13.5
+25k
+↑627​k{\color[rgb]{0.15,1,0.67}\uparrow 627k}
+223
+↑5454{\color[rgb]{0.15,1,0.67}\uparrow 5454}
+15
+↑373{\color[rgb]{0.15,1,0.67}\uparrow 373}
+Medium
+47.3
+↑7.5{\color[rgb]{1,0.23,0.13}\uparrow 7.5}
+14.5
+137k
+↑515​k{\color[rgb]{0.15,1,0.67}\uparrow 515k}
+1198
+↑4479{\color[rgb]{0.15,1,0.67}\uparrow 4479}
+82
+↑306{\color[rgb]{0.15,1,0.67}\uparrow 306}
+High
+54.8
+↓0.0{\color[rgb]{0.15,1,0.67}\downarrow 0.0}
+13.8
+1007k
+↓355​k{\color[rgb]{1,0.23,0.13}\downarrow 355k}
+8756
+↓3079{\color[rgb]{1,0.23,0.13}\downarrow 3079}
+634
+↓246{\color[rgb]{1,0.23,0.13}\downarrow 246}
+Random
+43.5
+↑11.3{\color[rgb]{1,0.23,0.13}\uparrow 11.3}
+14.5
+359k
+↑293​k{\color[rgb]{0.15,1,0.67}\uparrow 293k}
+3126
+↑2550{\color[rgb]{0.15,1,0.67}\uparrow 2550}
+215
+↑172{\color[rgb]{0.15,1,0.67}\uparrow 172}
+Prompting
+-based
+GPT 5
+40.0
+↑14.8{\color[rgb]{1,0.23,0.13}\uparrow 14.8}
+14.0
+132k
+↑520​k{\color[rgb]{0.15,1,0.67}\uparrow 520k}
+1148
+↑4529{\color[rgb]{0.15,1,0.67}\uparrow 4529}
+81
+↑307{\color[rgb]{0.15,1,0.67}\uparrow 307}
+Gemini 3 Pro
+46.1
+↑8.7{\color[rgb]{1,0.23,0.13}\uparrow 8.7}
+14.7
+128k
+↑524​k{\color[rgb]{0.15,1,0.67}\uparrow 524k}
+1115
+↑4562{\color[rgb]{0.15,1,0.67}\uparrow 4562}
+76
+↑312{\color[rgb]{0.15,1,0.67}\uparrow 312}
+Ares
+54.8
+–
+14.6
+652k
+–
+5677
+–
+388
+–
+TAU-Bench Airline
+Rule
+-based
+Low
+32.0
+↑4.0{\color[rgb]{1,0.23,0.13}\uparrow 4.0}
+10.8
+12k
+↑666​k{\color[rgb]{0.15,1,0.67}\uparrow 666k}
+250
+↑13327{\color[rgb]{0.15,1,0.67}\uparrow 13327}
+23
+↑1077{\color[rgb]{0.15,1,0.67}\uparrow 1077}
+Medium
+42.0
+↓6.0{\color[rgb]{0.15,1,0.67}\downarrow 6.0}
+13.2
+98k
+↑580​k{\color[rgb]{0.15,1,0.67}\uparrow 580k}
+1961
+↑11616{\color[rgb]{0.15,1,0.67}\uparrow 11616}
+148
+↑952{\color[rgb]{0.15,1,0.67}\uparrow 952}
+High
+38.0
+↓2.0{\color[rgb]{0.15,1,0.67}\downarrow 2.0}
+10.6
+873k
+↓195​k{\color[rgb]{1,0.23,0.13}\downarrow 195k}
+17472
+↓3895{\color[rgb]{1,0.23,0.13}\downarrow 3895}
+1654
+↓554{\color[rgb]{1,0.23,0.13}\downarrow 554}
+Random
+34.0
+↑2.0{\color[rgb]{1,0.23,0.13}\uparrow 2.0}
+13.5
+521k
+↑157​k{\color[rgb]{0.15,1,0.67}\uparrow 157k}
+10437
+↑3140{\color[rgb]{0.15,1,0.67}\uparrow 3140}
+770
+↑330{\color[rgb]{0.15,1,0.67}\uparrow 330}
+Prompting
+-based
+GPT 5
+34.0
+↑2.0{\color[rgb]{1,0.23,0.13}\uparrow 2.0}
+12.4
+396k
+↑282​k{\color[rgb]{0.15,1,0.67}\uparrow 282k}
+7927
+↑5650{\color[rgb]{0.15,1,0.67}\uparrow 5650}
+641
+↑459{\color[rgb]{0.15,1,0.67}\uparrow 459}
+Gemini 3 Pro
+36.0
+↑0.0{\color[rgb]{1,0.23,0.13}\uparrow 0.0}
+12.6
+239k
+↑439​k{\color[rgb]{0.15,1,0.67}\uparrow 439k}
+4779
+↑8798{\color[rgb]{0.15,1,0.67}\uparrow 8798}
+379
+↑721{\color[rgb]{0.15,1,0.67}\uparrow 721}
+Ares
+36.0
+–
+12.3
+678k
+–
+13577
+–
+1100
+–
+BrowseComp-Plus
+Rule
+-based
+Low
+8.00
+↑33.3{\color[rgb]{1,0.23,0.13}\uparrow 33.3}
+4.6
+5k
+↑1066​k{\color[rgb]{0.15,1,0.67}\uparrow 1066k}
+332
+↑6449{\color[rgb]{0.15,1,0.67}\uparrow 6449}
+72
+↑113{\color[rgb]{0.15,1,0.67}\uparrow 113}
+Medium
+34.0
+↑7.3{\color[rgb]{1,0.23,0.13}\uparrow 7.3}
+26.2
+538k
+↑533​k{\color[rgb]{0.15,1,0.67}\uparrow 533k}
+3590
+↑3191{\color[rgb]{0.15,1,0.67}\uparrow 3191}
+137
+↑48{\color[rgb]{0.15,1,0.67}\uparrow 48}
+High
+42.7
+↓1.4{\color[rgb]{0.15,1,0.67}\downarrow 1.4}
+55.4
+1841k
+↓770​k{\color[rgb]{1,0.23,0.13}\downarrow 770k}
+12276
+↓5495{\color[rgb]{1,0.23,0.13}\downarrow 5495}
+220
+↓35{\color[rgb]{1,0.23,0.13}\downarrow 35}
+Random
+30.7
+↑10.6{\color[rgb]{1,0.23,0.13}\uparrow 10.6}
+18.0
+392k
+↑679​k{\color[rgb]{0.15,1,0.67}\uparrow 679k}
+2616
+↑4165{\color[rgb]{0.15,1,0.67}\uparrow 4165}
+145
+↑40{\color[rgb]{0.15,1,0.67}\uparrow 40}
+Prompting
+-based
+GPT 5
+38.7
+↑2.6{\color[rgb]{1,0.23,0.13}\uparrow 2.6}
+45.1
+1398k
+↓327​k{\color[rgb]{1,0.23,0.13}\downarrow 327k}
+9321
+↓2540{\color[rgb]{1,0.23,0.13}\downarrow 2540}
+206
+↓21{\color[rgb]{1,0.23,0.13}\downarrow 21}
+Gemini 3 Pro
+37.3
+↑4.0{\color[rgb]{1,0.23,0.13}\uparrow 4.0}
+41.6
+1144k
+↓73​k{\color[rgb]{1,0.23,0.13}\downarrow 73k}
+7628
+↓847{\color[rgb]{1,0.23,0.13}\downarrow 847}
+183
+↑2{\color[rgb]{0.15,1,0.67}\uparrow 2}
+Ares
+41.3
+–
+36.5
+1071k
+–
+6781
+–
+185
+–
+WebArena
+Rule
+-based
+Low
+37.4
+↑9.1{\color[rgb]{1,0.23,0.13}\uparrow 9.1}
+8.9
+67k
+↑1445​k{\color[rgb]{0.15,1,0.67}\uparrow 1445k}
+520
+↑11203{\color[rgb]{0.15,1,0.67}\uparrow 11203}
+58
+↑1266{\color[rgb]{0.15,1,0.67}\uparrow 1266}
+Medium
+42.6
+↑3.9{\color[rgb]{1,0.23,0.13}\uparrow 3.9}
+9.9
+538k
+↑974​k{\color[rgb]{0.15,1,0.67}\uparrow 974k}
+4170
+↑7553{\color[rgb]{0.15,1,0.67}\uparrow 7553}
+420
+↑904{\color[rgb]{0.15,1,0.67}\uparrow 904}
+High
+45.0
+↑1.5{\color[rgb]{1,0.23,0.13}\uparrow 1.5}
+10.0
+2763k
+↓1251​k{\color[rgb]{1,0.23,0.13}\downarrow 1251k}
+21424
+↓9701{\color[rgb]{1,0.23,0.13}\downarrow 9701}
+2154
+↓830{\color[rgb]{1,0.23,0.13}\downarrow 830}
+Random
+40.3
+↑6.2{\color[rgb]{1,0.23,0.13}\uparrow 6.2}
+8.0
+857k
+↑655{\color[rgb]{0.15,1,0.67}\uparrow 655}
+6643
+↑5080{\color[rgb]{0.15,1,0.67}\uparrow 5080}
+830
+↑494{\color[rgb]{0.15,1,0.67}\uparrow 494}
+Prompting
+-based
+GPT 5
+41.1
+↑5.4{\color[rgb]{1,0.23,0.13}\uparrow 5.4}
+9.0
+1159k
+↑353​k{\color[rgb]{0.15,1,0.67}\uparrow 353k}
+8990
+↑2733{\color[rgb]{0.15,1,0.67}\uparrow 2733}
+1001
+↑323{\color[rgb]{0.15,1,0.67}\uparrow 323}
+Gemini 3 Pro
+41.9
+↑4.6{\color[rgb]{1,0.23,0.13}\uparrow 4.6}
+9.1
+1164k
+↑348​k{\color[rgb]{0.15,1,0.67}\uparrow 348k}
+9023
+↑2670{\color[rgb]{0.15,1,0.67}\uparrow 2670}
+995
+↑329{\color[rgb]{0.15,1,0.67}\uparrow 329}
+Ares
+46.5
+–
+8.9
+1512k
+–
+11723
+–
+1324
+–
+Environments.
+We evaluate Ares across three diverse agent environments to demonstrate its effectiveness and generalizability in real-world settings: ❶ TAU-Bench (Yao et al., 2024) for tool-use agents, ❷ BrowseComp-Plus (Chen et al., 2025) for deep-research agents, and ❸ WebArena (Zhou et al., 2023) for web agents.
+TAU-Bench evaluates agent tool-use within task-oriented dialogues across retail and airline domains. Each sample involves an interaction between a user simulator and an LLM agent, where the agent must execute database tool calls to resolve queries or complete tasks (e.g., flight bookings). Success is measured by the correctness of the final database state or the provided information. We apply Ares after every user message and tool observation.
+BrowseComp-Plus, a controlled derivative of BrowseComp (Wei et al., 2025), ensures experiment reproducibility by replacing open-web search with a fixed corpus and incorporating human verification. The benchmark evaluates agents in a multi-step setting involving interleaved reasoning and retrieval. At each step, the agent generates a reasoning sequence followed by a search action or final answer. Ares is invoked prior to each reasoning and action step.
+WebArena provides functional websites across domains such as e-commerce, social forums, and software development. Agents receive webpage observations (e.g., accessibility trees) and perform human-like actions (e.g., click, scroll, type) to fulfill queries requiring information seeking, navigation, or configuration. Ares is integrated before every agent inference step.
+Implementation.
+In our experiments, we use the gpt-oss-20b model as the backbone LLM for agents in each task and employ GPT-4o as the user simulator model in TAU-Bench, following the original implementation. For the deep-research agent, we use BM25 as the retriever and utilize the original gpt-oss web search and browsing tools. For web agents, we adopt AgentOccam as the baseline agent implementation. (Yang et al., 2024)
+Table 2: RL results in TAU-Bench using gpt-oss-20b as the backbone LLM. Arrows (↑/↓\uparrow/\downarrow) indicating an increase or decrease in absolute value.
+Orange and blue indicate beneficial and detrimental changes.
+Performance
+Efficiency (Token Consumption)
+Method
+Acc. (%)
+ΔAcc\Delta_{\mathrm{Acc}}
+SS
+TtotalT_{\text{total}}
+Δtoken\Delta_{\mathrm{token}}
+TtaskT_{\text{task}}
+Δtoken\Delta_{\mathrm{token}}
+TstepT_{\text{step}}
+Δtoken\Delta_{\mathrm{token}}
+TAU-Bench Retail
+Rule
+-based
+Low
+35.0
+↑23.5{\color[rgb]{1,0.23,0.13}\uparrow 23.5}
+13.5
+25k
+↑451​k{\color[rgb]{0.15,1,0.67}\uparrow 451k}
+223
+↑3918{\color[rgb]{0.15,1,0.67}\uparrow 3918}
+15
+↑271{\color[rgb]{0.15,1,0.67}\uparrow 271}
+Medium
+47.3
+↑11.2{\color[rgb]{1,0.23,0.13}\uparrow 11.2}
+14.5
+137k
+↑339​k{\color[rgb]{0.15,1,0.67}\uparrow 339k}
+1198
+↑2943{\color[rgb]{0.15,1,0.67}\uparrow 2943}
+82
+↑204{\color[rgb]{0.15,1,0.67}\uparrow 204}
+High
+54.8
+↑3.7{\color[rgb]{1,0.23,0.13}\uparrow 3.7}
+13.8
+1007k
+↓531​k{\color[rgb]{1,0.23,0.13}\downarrow 531k}
+8756
+↓4615{\color[rgb]{1,0.23,0.13}\downarrow 4615}
+634
+↓348{\color[rgb]{1,0.23,0.13}\downarrow 348}
+Random
+43.5
+↑15.0{\color[rgb]{1,0.23,0.13}\uparrow 15.0}
+14.5
+359k
+↑117​k{\color[rgb]{0.15,1,0.67}\uparrow 117k}
+3126
+↑1015{\color[rgb]{0.15,1,0.67}\uparrow 1015}
+215
+↑71{\color[rgb]{0.15,1,0.67}\uparrow 71}
+SFT
+54.8
+↑3.7{\color[rgb]{1,0.23,0.13}\uparrow 3.7}
+14.6
+652k
+↓176​k{\color[rgb]{1,0.23,0.13}\downarrow 176k}
+5677
+↓1536{\color[rgb]{1,0.23,0.13}\downarrow 1536}
+388
+↓102{\color[rgb]{1,0.23,0.13}\downarrow 102}
+Ares
+RL
+58.5
+–
+14.4
+476k
+–
+4141
+–
+286
+–
+TAU-Bench Airline
+Rule
+-based
+Low
+32.0
+↑10.0{\color[rgb]{1,0.23,0.13}\uparrow 10.0}
+10.8
+12k
+↑121​k{\color[rgb]{0.15,1,0.67}\uparrow 121k}
+250
+↑2403{\color[rgb]{0.15,1,0.67}\uparrow 2403}
+23
+↑208{\color[rgb]{0.15,1,0.67}\uparrow 208}
+Medium
+42.0
+↓0.0{\color[rgb]{0.15,1,0.67}\downarrow 0.0}
+13.2
+98k
+↑35​k{\color[rgb]{0.15,1,0.67}\uparrow 35k}
+1961
+↑692{\color[rgb]{0.15,1,0.67}\uparrow 692}
+148
+↑83{\color[rgb]{0.15,1,0.67}\uparrow 83}
+High
+38.0
+↑4.0{\color[rgb]{1,0.23,0.13}\uparrow 4.0}
+10.6
+873k
+↓740​k{\color[rgb]{1,0.23,0.13}\downarrow 740k}
+17472
+↓14819{\color[rgb]{1,0.23,0.13}\downarrow 14819}
+1654
+↓1423{\color[rgb]{1,0.23,0.13}\downarrow 1423}
+Random
+34.0
+↑8.0{\color[rgb]{1,0.23,0.13}\uparrow 8.0}
+13.5
+521k
+↓388​k{\color[rgb]{1,0.23,0.13}\downarrow 388k}
+10437
+↓7784{\color[rgb]{1,0.23,0.13}\downarrow 7784}
+770
+↓539{\color[rgb]{1,0.23,0.13}\downarrow 539}
+SFT
+36.0
+↑6.0{\color[rgb]{1,0.23,0.13}\uparrow 6.0}
+12.3
+678k
+↓545​k{\color[rgb]{1,0.23,0.13}\downarrow 545k}
+13577
+↓10924{\color[rgb]{1,0.23,0.13}\downarrow 10924}
+1100
+↓869{\color[rgb]{1,0.23,0.13}\downarrow 869}
+Ares
+RL
+42.0
+–
+11.5
+133k
+–
+2653
+–
+231
+–
+Training.
+To collect initial training trajectories, we utilize both publicly released agent trajectory data and trajectories collected according to the method described in Section 3.2. Specifically, we use APIGen-MT (Prabhakar et al., 2025) for tool-use agent training, as it provides conversational trajectories with ground truth action at every step. For BrowseComp-Plus, we collect trajectories using rejection sampling within our pipeline. The WebArena training trajectories are obtained from successful trajectories released by AgentOccam. For both BrowseComp-Plus and WebArena, we adopt the train-test splits following prior work (Sun et al., 2025; Qi et al., 2024; Yang et al., 2024).
+For robustness filtering in reasoning effort annotation, we test each reasoning effort level three times and use GPT-4o as the LLM judge, retaining only the reasoning effort that generates the correct action in all three trials. For rationale generation, we employ GPT-5 as the rationale generator. If no reasoning effort level yields correct results across all three trials, we retain the lowest reasoning effort level with the highest accuracy.
+Regarding SFT hyperparameters, we train the Ares router for three epochs with a learning rate of 5e-6, a global batch size of 64, a warmup ratio of 0.1, and 0.01 weight decay. For RL training, the base model is initialized from the SFT fine-tuned model. For each prompt, we generate G=16G=16 outputs to compute the group-wise advantage. We set the maximum prompt and response lengths to 4,096 and 512 tokens, respectively. During training, we use the Adam optimizer with a constant learning rate of 1.5×10−61.5\times 10^{-6}. The KL divergence coefficient is set to 0.01 to prevent the policy from deviating too far from the reference model. The total training process spans 5 epochs with a global batch size of 32.
+Evaluation.
+For task performance, we report the average reward for TAU-Bench, accuracy for BrowseComp-Plus, and task success rate for WebArena. Accuracy in BrowseComp-Plus is evaluated using GPT-4o as a judge. To measure reasoning costs, we report three metrics: the total reasoning tokens generated for the entire evaluation (TtotalT_{\text{total}}), the average reasoning tokens generated per task (TtaskT_{\text{task}}), and the average tokens per inference step (TstepT_{\text{step}}).
+Baselines.
+We adopt three types of baselines: ❶ fixed-effort policies that consistently adopt either low or high reasoning effort, approximating the lower and upper bounds of task performance, ❷ a random policy that uniformly samples from the three reasoning effort levels at each step, and ❸ a prompting-based strategy using a large-scale reasoning LLM (e.g., GPT-5) to analyze the current state and select the appropriate reasoning effort. While using these proprietary LLMs introduces significantly higher inference costs on the router side compared to Ares, it provides insight into the effectiveness of prompting-based effort selection.
+Figure 3: Selection of reasoning effort by Ares on the WebArena benchmark.
+Left: Percentage distribution of low, medium, and high effort levels across task step indices.
+Right: Distribution of effort levels categorized by specific action types.
+4.2 SFT Results
+In this section, we report the performance and computational efficiency of Ares router after SFT, across diverse agent environments.
+Our main results, summarized in Table 1, demonstrate that Ares consistently achieves performance on par with or superior to the fixed high effort baseline while substantially reducing computational overhead. Across all benchmarks, Ares maintains high task success rates while delivering significant reasoning token reductions: approximately 35.2% on TAU-Bench (Retail), 41.8% on BrowseComp-Plus, and 45.3% on WebArena in total reasoning token consumption (TtotalT_{\text{total}}). These findings underscore that Ares can achieve ”high-effort” results at a fraction of the cost, effectively bridging the gap between resource constraints and the performance requirements of complex agentic tasks.
+We provide further analysis for each specific domain below:
+Tool Use.
+The evaluation on TAU-Bench demonstrates Ares’s robust domain adaptation. In the Retail domain, Ares achieves a success rate of 54.8%, matching the High effort baseline and significantly outperforming the GPT-5 router by 14.8%.
+In the more constrained Airline domain, we observe a unique non-monotonic relationship where the medium strategy surpasses the high strategy, signaling an “overthinking” risk where excessive reasoning leads to logic drift. While the absolute performance is constrained by the backbone’s capability ceiling, Ares effectively navigates this landscape. While Ares achieves parity with general-purpose routers such as GPT-5 and Gemini-3-Pro. Crucially, it incurs significantly lower routing overhead compared to these larger proprietary models.
+Deep Research.
+On the BrowseComp-Plus benchmark, we observe a significant performance gap between the low (8.00%) and high (42.7%) effort baselines compared to other tasks. This disparity underscores that deep-research tasks are very sensitive to the reasoning effort applied. In such long-horizon tasks, a single suboptimal selection, such as choosing low effort for a complex retrieval step, can result in poorly formulated search queries. This often leads to a failure in capturing critical information, which subsequently triggers detrimental error propagation throughout the remainder of the task. Consequently, maintaining high performance requires the router to be extremely precise in identifying specific steps where reduced reasoning effort is feasible without compromising accuracy. Despite these challenges, Ares achieves a success rate of 41.3%, nearly matching the high effort ceiling while successfully reducing token consumption by 41.8%. This demonstrates that Ares effectively identifies critical reasoning nodes, ensuring task reliability while maximizing computational efficiency.
+Web Navigation.
+Notably, Ares surpasses the high effort baseline (46.5% vs. 45.0%) on WebArena, suggesting that increased reasoning effort does not consistently yield better outcomes in web navigation. We observe that excessive reasoning can lead to ”overthinking,” where the agent’s process becomes overly divergent, resulting in practical failures such as incorrect action formats or loss of task focus. By dynamically modulating reasoning depth, Ares effectively mitigates these pitfalls. While Ares utilizes more tokens than the static configurations of GPT-5 or Gemini-3-Pro, Ares only introduces very trivial router cost compared to them, and the significant gain in success rate highlights its superior ability to handle the dynamic nature of web environments.
+4.3 RL Results
+To evaluate the impact of our reinforcement learning phase, we compare the performance and efficiency of Ares trained solely with SFT against Ares further optimized with RL. We conduct this evaluation on both the TAU-Bench Retail and Airline domains.
+As shown in Table 2, the RL optimization consistently improves both task accuracy and token efficiency. In the Retail domain, RL training increases the success rate from 54.8% to 58.5% while simultaneously reducing total token consumption by 176k compared to the SFT baseline. This dual improvement is even more pronounced in the Airline domain, where the RL-optimized router achieves a 6.0% absolute increase in accuracy (from 36.0% to 42.0%) and drastically cuts total token usage by nearly 80% (from 678k to 133k).
+Furthermore, compared to the static high effort rule-based strategy, Ares (RL) achieves superior accuracy across both domains while consuming less than half the total reasoning tokens (476k vs. 1007k in Retail; 133k vs. 873k in Airline). These findings confirm that the RL phase effectively pushes the Pareto frontier, enabling the router to discover optimal, context-aware reasoning effort selections that the greedy SFT objective fails to capture.
+Figure 4: Evolution of Ares reasoning effort prediction during GRPO training (TAU-Bench Airline).
+To further understand the RL optimization, we analyze the training dynamics in the TAU-Bench Airline domain, where the agent exhibits a counter-intuitive “overthinking” phenomenon: the high reasoning effort yields a lower accuracy (38.0%) than the medium setting (42.0%). Figure 4 illustrates how GRPO training effectively corrects this bias. While the SFT-initialized router initially selects high effort for over 50% of the steps, the RL process rapidly suppresses this detrimental over-deliberation, dropping its usage to under 20%. Simultaneously, the router learns to confidently rely on more efficient strategies, with the low effort ratio climbing to approximately 70%. By autonomously curbing unnecessary computation, the RL-optimized Ares avoids the overthinking trap and maximizes both task success and token efficiency.
+4.4 Analysis of Reasoning Effort Selection
+To further investigate the decision-making logic of the router, we analyze the distribution of reasoning effort across two dimensions: temporal progression and action categories. Figure 3 (left) illustrates the effort selection ratio relative to the task step index on WebArena. In the early stages of a task (e.g., steps 0–2), the router predominantly selects low reasoning effort. Our observations indicate that this is because initial navigation steps often involve low-complexity environments, such as accessing a specific forum or landing page, where the mapping from observation to action is relatively straightforward. However, as the task progresses, the frequency of high reasoning effort increases significantly.
+This shift is driven by the escalating perceptual complexity of the web observations and the expanding context window, both of which impose higher cognitive demands on the agent to maintain task coherence and accuracy.
+Furthermore, we evaluate how reasoning effort correlates with different action types, as shown in Figure 3 (right). The results reveal that critical decision steps—specifically go_back and branch—require the highest proportion of high reasoning effort. In our framework, a go_back action typically signifies a strategic recovery from an incorrect navigation path, while a branch action indicates a substantive modification of the existing navigation plan. The high concentration of intensive reasoning at these actions suggests that Ares identifies these actions as high-stakes error correction or plan refinement steps. This capability demonstrates that high reasoning effort is essential for sophisticated ”self-correction” mechanisms, allowing the agent to effectively navigate out of suboptimal states and re-align with the global task objective.
+4.5 Ablation Studies
+We conduct an ablation study to analyze the effects of generated rationale, SFT, and RL reward design in Ares.
+Table 3: Ablation results on Ares components. Performance is reported on TAU-Bench Retail.
+Setting
+Acc. (%)
+ΔAcc\Delta_{\mathrm{Acc}}
+TtotalT_{\text{total}}
+TtaskT_{\text{task}}
+TstepT_{\text{step}}
+Low
+35.0
+↑19.8{\color[rgb]{1,0.23,0.13}\uparrow 19.8}
+25k
+223
+15
+Medium
+47.3
+↑7.5{\color[rgb]{1,0.23,0.13}\uparrow 7.5}
+137k
+1198
+82
+High
+54.8
+↓0.0{\color[rgb]{0.15,1,0.67}\downarrow 0.0}
+1007k
+8756
+634
+– SFT
+41.7
+↑13.1{\color[rgb]{1,0.23,0.13}\uparrow 13.1}
+128k
+1113
+74
+– Rationale
+51.3
+↑3.5{\color[rgb]{1,0.23,0.13}\uparrow 3.5}
+474k
+4128
+285
+Ares(SFT)
+54.8
+-
+652k
+5677
+388
+Effect of Supervised Fine-tuning.
+As shown in the “- SFT” setting in Table 3, removing fine-tuning and using Qwen3-1.7B out-of-the-box leads to the most significant degradation, with accuracy dropping from 54.8% to 41.7%. Although this setting has the lowest token consumption, the low accuracy indicates that without task-specific tuning, the base model lacks the judgment to allocate sufficient reasoning effort, often defaulting to overly simplistic strategies.
+Effect of Reasoning Rationale.
+We evaluate Phase 3 by training a router that predicts effort labels directly without rationales (“- Rationale”), resulting in a 3.5% accuracy drop. This confirms that, by forcing the router to explicitly analyze task difficulty before deciding, the internal thinking process acts as a necessary cognitive bridge that significantly improves the accuracy of effort selection.
+Reward Design.
+We further conduct an ablation study to analyze our RL reward design. Since a key component of the Ares training objective is the reasoning cost penalty, RcostR_{\text{cost}}, we evaluate a variant that uses an accumulated step-wise cost without normalization, defined as Rcost=∑t=1Tc⁡(et)R_{\text{cost}}=\sum_{t=1}^{T}c(e_{t}). To ensure that successful trajectories still yield a net positive total reward, we proportionally scale down the step-wise penalties in this unnormalized setting to c⁡(et)=−0.02,−0.06,c(e_{t})=-0.02,-0.06, and −0.12-0.12 for low, medium, and high reasoning efforts, respectively.
+Figure 5:
+Comparison of medium-effort (left) and high-effort (right) ratios between whether to use normalized reasoning cost reward during training.
+Figure 5 illustrates the training dynamics on the TAU-Bench Airline domain. As shown in the right panel, applying normalization to the cost reward leads to a much more aggressive and effective compression of high effort usage, driving its selection ratio down to approximately 15%, compared to 30% in the unnormalized setting. Furthermore, since medium effort is the optimal reasoning strategy for the Airline domain, the normalized reward correctly incentivizes the router to progressively increase its reliance on this optimal effort level, as seen in the left panel. Conversely, without normalization, the usage of medium effort declines after 80 training steps.
+Table 4: Ablation results on Ares components. Performance is reported on TAU-Bench Airline.
+Setting
+Acc. (%)
+ΔAcc\Delta_{\mathrm{Acc}}
+TtotalT_{\text{total}}
+TtaskT_{\text{task}}
+TstepT_{\text{step}}
+Low
+32.0
+↑10.0{\color[rgb]{1,0.23,0.13}\uparrow 10.0}
+12k
+250
+23
+Medium
+42.0
+↓0.0{\color[rgb]{0.15,1,0.67}\downarrow 0.0}
+98k
+1961
+148
+High
+36.0
+↑6.0{\color[rgb]{1,0.23,0.13}\uparrow 6.0}
+873k
+17472
+1654
+w/o normalization
+41.3
+↑0.7{\color[rgb]{1,0.23,0.13}\uparrow 0.7}
+157k
+3140
+312
+normalization
+42.0
+–
+133k
+2653
+231
+These training dynamics are directly reflected in the final evaluation results presented in Table 4. By utilizing the normalized reward, the router not only achieves a higher task accuracy but also further reduces the reasoning cost, consuming approximately 15% fewer total tokens (133k vs. 157k).
+This indicates that an unnormalized, accumulated penalty fails to properly balance the step-wise costs against the final outcome, causing the router to struggle in converging toward the most efficient and effective effort allocation.
+4.6 Generalization Evaluation
+To assess cross-scale generalization, we evaluate Ares on TAU-Bench Retail using a gpt-oss-120b backbone. Since the router was trained solely on the significantly smaller gpt-oss-20b, this experiment tests the framework’s robustness to shifts in the underlying agent’s capabilities.
+Table 5: Results in TAU-Bench Retail, using gpt-oss-120b as the backbone LLM.
+Setting
+Acc. (%)
+ΔAcc\Delta_{\mathrm{Acc}}
+TtotalT_{\text{total}}
+TtaskT_{\text{task}}
+TstepT_{\text{step}}
+Low
+49.4
+↑15.8{\color[rgb]{1,0.23,0.13}\uparrow 15.8}
+26k
+231
+17
+Medium
+62.0
+↑3.2{\color[rgb]{1,0.23,0.13}\uparrow 3.2}
+111k
+972
+74
+High
+67.8
+↓2.6{\color[rgb]{0.15,1,0.67}\downarrow 2.6}
+558k
+4856
+380
+Ares
+65.2
+-
+428k
+3729
+293
+As shown in Table 5, Ares demonstrates strong cross-scale generalization. Despite the backbone being six times larger than the training source, the router achieves 65.2% accuracy, significantly outperforming Low and Medium effort baselines. Notably, Ares recovers the majority of the High effort performance (67.8%) while reducing token consumption by approximately 23%. These results suggest that the reasoning rationales and effort-selection cues learned by Ares are scale-invariant, enabling effective efficiency-accuracy trade-offs even for much more capable agents.
+5 Conclusion
+We introduced Ares, a framework that optimizes LLM agent efficiency by dynamically selecting appropriate reasoning effort levels based on task complexity. Experimental results on benchmarks like BrowseComp-Plus and TAU-Bench demonstrate that Ares achieves performance parity with high-effort strategies while significantly reducing reasoning token consumption. Furthermore, our evaluation confirms that the learned reasoning patterns generalize effectively across different model scales and data sources. Future work will extend Ares to more diverse deployment settings, such as multi-modal inputs, to further improve inference efficiency.
+Acknowledgement
+The work of Jingbo Yang, Bairu Hou and Shiyu Chang was partially supported by National Science Foundation (NSF) Grant IIS-2338252, and NSF Grant IIS-2302730.
+Impact Statement
+This paper presents Ares, a framework designed to advance the field of Machine Learning by optimizing the efficiency and performance of large language model agents. By dynamically selecting appropriate reasoning effort levels, our work contributes to reducing the overall computational cost and energy consumption associated with deploying complex AI agents in real-world environments. While there are many potential societal consequences of advancing autonomous agents, we believe these implications are consistent with broader developments in the field and do not require specific highlighting here beyond standard ethical considerations.
+References
+Alomrani et al. (2025)
+M. A. Alomrani, Y. Zhang, D. Li, Q. Sun, S. Pal, Z. Zhang, Y. Hu, R. D. Ajwani, A. Valkanas, R. Karimi, et al.
+Reasoning on a budget: a survey of adaptive and controllable test-time compute in llms.
+arXiv preprint arXiv:2507.02076.
+Cited by: §2.
+Amayuelas et al. (2025)
+A. Amayuelas, J. Yang, S. Agashe, A. Nagarajan, A. Antoniades, X. E. Wang, and W. Wang
+Self-resource allocation in multi-agent llm systems.
+arXiv preprint arXiv:2504.02051.
+Cited by: §1.
+Chen et al. (2025)
+Z. Chen, X. Ma, S. Zhuang, P. Nie, K. Zou, A. Liu, J. Green, K. Patel, R. Meng, M. Su, et al.
+Browsecomp-plus: a more fair and transparent evaluation benchmark of deep-research agent.
+arXiv preprint arXiv:2508.06600.
+Cited by: §4.1.
+Chiang et al. (2024)
+W. Chiang, L. Zheng, Y. Sheng, A. N. Angelopoulos, T. Li, D. Li, B. Zhu, H. Zhang, M. Jordan, J. E. Gonzalez, et al.
+Chatbot arena: an open platform for evaluating llms by human preference.
+In Forty-first International Conference on Machine Learning,
+Cited by: §2.
+Comanici et al. (2025)
+G. Comanici, E. Bieber, M. Schaekermann, I. Pasupat, N. Sachdeva, I. Dhillon, M. Blistein, O. Ram, D. Zhang, E. Rosen, et al.
+Gemini 2.5: pushing the frontier with advanced reasoning, multimodality, long context, and next generation agentic capabilities.
+arXiv preprint arXiv:2507.06261.
+Cited by: §1.
+Cui et al. (2025)
+Y. Cui, Z. Dai, P. He, B. He, H. Liu, X. Tang, J. Zeng, S. Wang, Y. Xing, J. Tang, et al.
+Adaptive test-time reasoning via reward-guided dual-phase search.
+arXiv preprint arXiv:2509.25420.
+Cited by: §1.
+Ding et al. (2025)
+D. Ding, A. Mallick, S. Zhang, C. Wang, D. Madrigal, M. D. C. H. Garcia, M. Xia, L. V. Lakshmanan, Q. Wu, and V. Rühle
+BEST-route: adaptive llm routing with test-time optimal compute.
+arXiv preprint arXiv:2506.22716.
+Cited by: §2.
+Feng et al. (2024)
+T. Feng, Y. Shen, and J. You
+Graphrouter: a graph-based router for llm selections.
+arXiv preprint arXiv:2410.03834.
+Cited by: §2.
+Guo et al. (2025)
+D. Guo, D. Yang, H. Zhang, J. Song, R. Zhang, R. Xu, Q. Zhu, S. Ma, P. Wang, X. Bi, et al.
+Deepseek-r1: incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948.
+Cited by: §1.
+Hou et al. (2025)
+B. Hou, Y. Zhang, J. Ji, Y. Liu, K. Qian, J. Andreas, and S. Chang
+Thinkprune: pruning long chain-of-thought of llms via reinforcement learning.
+arXiv preprint arXiv:2504.01296.
+Cited by: §2.
+Huang et al. (2025)
+S. Huang, H. Wang, W. Zhong, Z. Su, J. Feng, B. Cao, and Y. R. Fung
+AdaCtrl: towards adaptive and controllable reasoning via difficulty-aware budgeting.
+arXiv preprint arXiv:2505.18822.
+Cited by: §2.
+Jin et al. (2025)
+B. Jin, H. Zeng, Z. Yue, J. Yoon, S. Arik, D. Wang, H. Zamani, and J. Han
+Search-r1: training llms to reason and leverage search engines with reinforcement learning.
+arXiv preprint arXiv:2503.09516.
+Cited by: §1.
+Jitkrittum et al. (2025)
+W. Jitkrittum, H. Narasimhan, A. S. Rawat, J. Juneja, C. Wang, Z. Wang, A. Go, C. Lee, P. Shenoy, R. Panigrahy, et al.
+Universal model routing for efficient llm inference.
+arXiv preprint arXiv:2502.08773.
+Cited by: §2.
+Joshi et al. (2017)
+M. Joshi, E. Choi, D. S. Weld, and L. Zettlemoyer
+Triviaqa: a large scale distantly supervised challenge dataset for reading comprehension.
+arXiv preprint arXiv:1705.03551.
+Cited by: §2.
+Kwiatkowski et al. (2019)
+T. Kwiatkowski, J. Palomaki, O. Redfield, M. Collins, A. Parikh, C. Alberti, D. Epstein, I. Polosukhin, J. Devlin, K. Lee, et al.
+Natural questions: a benchmark for question answering research.
+Transactions of the Association for Computational Linguistics 7, pp. 453–466.
+Cited by: §2.
+Liu et al. (2025a)
+X. Liu, X. Hu, X. Chu, and E. Choi
+DiffAdapt: difficulty-adaptive reasoning for token-efficient llm inference.
+arXiv preprint arXiv:2510.19669.
+Cited by: §2.
+Liu et al. (2025b)
+Y. Liu, Z. Wang, H. Chen, X. Sun, X. Yu, J. Wu, J. Liu, E. Barsoum, Z. Liu, and S. Chang
+Learning from online videos at inference time for computer-use agents.
+arXiv preprint arXiv:2511.04137.
+Cited by: §1.
+Ong et al. (2024)
+I. Ong, A. Almahairi, V. Wu, W. Chiang, T. Wu, J. E. Gonzalez, M. W. Kadous, and I. Stoica
+Routellm: learning to route llms with preference data.
+arXiv preprint arXiv:2406.18665.
+Cited by: §2.
+Prabhakar et al. (2025)
+A. Prabhakar, Z. Liu, M. Zhu, J. Zhang, T. Awalgaonkar, S. Wang, Z. Liu, H. Chen, T. Hoang, J. C. Niebles, et al.
+Apigen-mt: agentic pipeline for multi-turn data generation via simulated agent-human interplay.
+arXiv preprint arXiv:2504.03601.
+Cited by: §4.1.
+Qi et al. (2024)
+Z. Qi, X. Liu, I. L. Iong, H. Lai, X. Sun, W. Zhao, Y. Yang, X. Yang, J. Sun, S. Yao, et al.
+Webrl: training llm web agents via self-evolving online curriculum reinforcement learning.
+arXiv preprint arXiv:2411.02337.
+Cited by: §4.1.
+Shao et al. (2024)
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al.
+Deepseekmath: pushing the limits of mathematical reasoning in open language models.
+arXiv preprint arXiv:2402.03300.
+Cited by: §3.3.
+Shen et al. (2025)
+Y. Shen, J. Zhang, J. Huang, S. Shi, W. Zhang, J. Yan, N. Wang, K. Wang, Z. Liu, and S. Lian
+Dast: difficulty-adaptive slow-thinking for large reasoning models.
+arXiv preprint arXiv:2503.04472.
+Cited by: §1.
+Singh et al. (2025)
+A. Singh, A. Fry, A. Perelman, A. Tart, A. Ganesh, A. El-Kishky, A. McLaughlin, A. Low, A. Ostrow, A. Ananthram, et al.
+Openai gpt-5 system card.
+arXiv preprint arXiv:2601.03267.
+Cited by: §1.
+Srivatsa et al. (2024)
+K. A. Srivatsa, K. Maurya, and E. Kochmar
+Harnessing the power of multiple minds: lessons learned from llm routing.
+In Proceedings of the Fifth Workshop on Insights from Negative Results in NLP,
+pp. 124–134.
+Cited by: §2.
+Su et al. (2025)
+H. Su, S. Diao, X. Lu, M. Liu, J. Xu, X. Dong, Y. Fu, P. Belcak, H. Ye, H. Yin, et al.
+Toolorchestra: elevating intelligence via efficient model and tool orchestration.
+arXiv preprint arXiv:2511.21689.
+Cited by: §1,
+§2.
+Sun et al. (2025)
+W. Sun, M. Lu, Z. Ling, K. Liu, X. Yao, Y. Yang, and J. Chen
+Scaling long-horizon llm agent via context-folding.
+arXiv preprint arXiv:2510.11967.
+Cited by: §1,
+§4.1.
+Team et al. (2025)
+K. Team, A. Du, B. Gao, B. Xing, C. Jiang, C. Chen, C. Li, C. Xiao, C. Du, C. Liao, et al.
+Kimi k1. 5: scaling reinforcement learning with llms.
+arXiv preprint arXiv:2501.12599.
+Cited by: §1.
+Wei et al. (2025)
+J. Wei, Z. Sun, S. Papay, S. McKinney, J. Han, I. Fulford, H. W. Chung, A. T. Passos, W. Fedus, and A. Glaese
+Browsecomp: a simple yet challenging benchmark for browsing agents.
+arXiv preprint arXiv:2504.12516.
+Cited by: §4.1.
+Wu et al. (2025)
+C. Wu, B. Li, M. Gao, and Z. Wang
+From efficiency to adaptivity: a deeper look at adaptive reasoning in large language models.
+arXiv preprint arXiv:2511.10788.
+Cited by: §2.
+Yang et al. (2024)
+K. Yang, Y. Liu, S. Chaudhary, R. Fakoor, P. Chaudhari, G. Karypis, and H. Rangwala
+Agentoccam: a simple yet strong baseline for llm-based web agents.
+arXiv preprint arXiv:2410.13825.
+Cited by: §4.1,
+§4.1.
+Yang et al. (2025)
+Y. Yang, Z. Yang, Z. Dou, A. Nguyen, K. You, O. Attia, A. Szot, M. Feng, R. Ramrakhya, A. Toshev, et al.
+Ultracua: a foundation model for computer use agents with hybrid action.
+arXiv preprint arXiv:2510.17790.
+Cited by: §1.
+Yao et al. (2024)
+S. Yao, N. Shinn, P. Razavi, and K. Narasimhan
+t​a​utau-Bench: a benchmark for tool-agent-user interaction in real-world domains.
+arXiv preprint arXiv:2406.12045.
+Cited by: §4.1.
+Yu et al. (2025)
+Z. Yu, T. Xu, D. Jin, K. A. Sankararaman, Y. He, W. Zhou, Z. Zeng, E. Helenowski, C. Zhu, S. Wang, et al.
+Think smarter not harder: adaptive reasoning with inference aware optimization.
+arXiv preprint arXiv:2501.17974.
+Cited by: §2.
+Zhang et al. (2026)
+G. Zhang, H. Yu, K. Yang, B. Wu, F. Huang, Y. Li, and S. Yan
+EvoRoute: experience-driven self-routing llm agent systems.
+arXiv preprint arXiv:2601.02695.
+Cited by: §2.
+Zhang et al. (2025a)
+H. Zhang, T. Feng, and J. You
+Router-r1: teaching llms multi-round routing and aggregation via reinforcement learning.
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+Cited by: §1,
+§2.
+Zhang et al. (2025b)
+R. Zhang, B. Xia, Z. Cheng, C. Jian, M. Yang, N. Wong, and Y. Cheng
+DART: difficulty-adaptive reasoning truncation for efficient large language models.
+arXiv preprint arXiv:2511.01170.
+Cited by: §2.
+Zhang et al. (2025c)
+Y. Zhang, H. Li, C. Wang, L. Chen, Q. Zhang, P. Ye, S. Feng, D. Wang, Z. Wang, X. Wang, et al.
+The avengers: a simple recipe for uniting smaller language models to challenge proprietary giants.
+arXiv preprint arXiv:2505.19797.
+Cited by: §2.
+Zhou et al. (2023)
+S. Zhou, F. F. Xu, H. Zhu, X. Zhou, R. Lo, A. Sridhar, X. Cheng, T. Ou, Y. Bisk, D. Fried, et al.
+Webarena: a realistic web environment for building autonomous agents.
+arXiv preprint arXiv:2307.13854.
+Cited by: §4.1.
+Appendix A Prompts.
+In this section, we display the prompts used for the router, reasoning effort annotator, and rationale generator in Ares. We include the prompt used in WebArena as an example.
+Router
+You are a router that selects the reasoning_effort (low, medium, or high) for the OSS model’s next response.
+Context: The input is the current query of an OSS-model-based web agent completing the objective, including the objective, web page observation, previous interaction history, etc. The OSS model needs to decide the action for the next step and eventually complete the objective. The OSS model incurs higher cost and latency at higher reasoning levels.
+- Choose HIGH if the next step likely needs careful reasoning, or complex tool sequencing.
+- Choose MEDIUM if the next step is moderately complex.
+- Choose LOW if the next step is straightforward and the risk is low.
+Produce exactly one word: low, medium, or high.
+Reasoning Effort Annotator
+You are a strict evaluator of web navigation actions.
+Two actions match if and only if they are exactly identical after
+trimming leading and trailing whitespace and collapsing consecutive
+whitespace characters into a single space.
+You must enforce exact equivalence. Do NOT allow any differences in:
+- action type or name,
+- arguments or argument values,
+- URLs, selectors, or identifiers.
+If any difference exists, the actions must be judged as NOT matching.
+Rationale Generator
+You are annotating router training data for a web-navigation agent.
+Background: The router selects the reasoning_effort (low, medium, high) for an OSS model’s next action. Higher effort means more careful reasoning and higher cost/latency. The context includes the user’s objective and the agent’s interaction history leading up to the next action.
+Task: Given the context, the chosen label, as well as OSS model response from different efforts, write up to five concise sentences
+explaining why this label is appropriate. Ground your explanation in the
+objective and interaction history in the given context. Reveal chain-of-thought
+or step-by-step reasoning for why you choose the corresponding reasoning effort through analyzing current task states and predicting the difficulty of next sub-task.
+Appendix B Training Example.
+In this section, we provide a training example used for SFT.
+Training Example
+System Prompt:
+You are a router that selects the reasoning_effort (low, medium, or high) for the OSS model’s next action.
+Context: One web agent interacting with web elements to complete objectives. The OSS model charges more cost and latency at higher reasoning levels.
+- Choose HIGH if the next step likely needs careful reasoning, or the current observation contains complex patterns.
+- Choose MEDIUM if the next step is moderately complex.
+- Choose LOW if the next step is straightforward and the risk is low.
+Produce exactly one word: low, medium, or high.
+User Prompt:
+OBJECTIVE:
+Where is the nearest In-N-Out to Upitts, and what is the walking distance to it?
+INTERACTION HISTORY:
+Step 0:
+REASON: To proceed with finding the nearest In-N-Out to Upitts, the first logical step is to use the search function provided by OpenStreetMap. By entering the query for the nearest In-N-Out to Upitts in the search textbox and submitting it, we can potentially gather information on the nearest location. This will help in identifying the location before proceeding to calculate the walking distance.
+ACTION: type [35] [In-N-Out near University of Pittsburgh] [1]
+OBSERVATION: RootWebArea [1] ‘OpenStreetMap’
+heading ‘OpenStreetMap logo OpenStreetMap’
+link [41] ‘OpenStreetMap logo OpenStreetMap’
+link [402] ‘Edit’
+button [403]
+link [373] ‘History’
+link [374] ‘Export’
+link [407] ‘GPS Traces’
+link [408] ‘User Diaries’
+link [409] ‘Communities’
+link [410] ‘Copyright’
+link [411] ‘Help’
+link [412] ‘About’
+link [382] ‘Log In’
+link [383] ‘Sign Up’
+link [515] ‘Where is this?’
+textbox [35] ‘Search’
+button [516] ‘Go’
+link [503] ‘Find directions between two points’
+heading ‘Welcome to OpenStreetMap!’
+button [469] ‘Close’
+text ‘OpenStreetMap is a map of the world, created by people like you and free to use under an open license.’
+Label: High
+Rationale:
+The objective requires finding the nearest In-N-Out relative to the University of Pittsburgh and computing a walking distance, which likely involves interpreting search results, verifying the correct location, and using the directions tool. The current page exposes multiple relevant actions, such as search and route planning, that require careful selection. Since In-N-Out locations are uncommon near Pittsburgh, identifying the correct nearest location is nontrivial and demands careful reasoning. Therefore, a high reasoning effort is appropriate.
+Appendix C Dataset Statistics
+In the Table 6, we provide the training data statistics.
+Table 6: Dataset statistics of reasoning-effort labels across benchmarks.
+Dataset
+Total
+High
+Medium
+Low
+TAU-Bench
+43,358
+12,261
+6,222
+24,875
+BrowseComp-Plus
+12,366
+6,184
+3,091
+3,091
+WebArena
+1,718
+1,095
+72
+551
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

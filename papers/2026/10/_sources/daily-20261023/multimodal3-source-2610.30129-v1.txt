@@ -1,0 +1,360 @@
+Official exact-v1 HTML: https://arxiv.org/html/2610.30129v1
+Preserved necessary primary text; actual adopted reading and excluded scope are listed in SOURCE_MULTIMODAL3.md.
+Abstract
+Video world models predict future frames from past frames and actions. They serve as simulators in which agents train, plan or are evaluated, and that
+humans can control interactively. They generate in the latent space
+of a video autoencoder, whose compression sets their cost per frame and how long each
+action waits to take effect. Yet world models often reuse the autoencoders of text-to-video
+generators, built for offline generation with no agent waiting and, without their training data
+and code, not retrainable at another compression. We therefore ask how, where and how much a world model
+should compress. We build CADRE, an open family of causal diffusion representation
+autoencoders spanning multiple spatio-temporal compressions. Its members differ only in a small bottleneck on
+frozen features and share a diffusion decoder self-distilled to one or a few steps.
+We train the same world model on each autoencoder in two
+domains, manipulation and navigation, with two environments each. CADRE forms most of the latency-quality frontier, especially with a moving camera. Our study also leads to four findings. At strong
+compression, a diffusion decoder is sharper than perceptual regression. In robot manipulation, temporal compression is more effective in the autoencoder than in the world model. Manipulation and navigation call for opposite compressions:
+temporal compression costs little when the camera is still, and spatial compression when it moves. Surprisingly,
+with a still camera, coarser spatial tokens hurt motion far more than image quality.
+Code, models and a live demo are at https://kyutai.org/blog/2026-10-22-cadre .
+ 1 Introduction
+ Figure 1: The right video autoencoder lets interactive world models react fast with high image and
+motion quality. On CADRE, world models run at 20 fps on one H100 and react in under 230 ms, below noticeable action
+lag  ( Shimada et al., 2009 , top left;) , and form most of the latency-quality frontier in
+motion fidelity (FVD) and action following (ARR; bottom left). Right: rollouts given actions,
+where action lag makes acting hard (juggling, folding) or dangerous (driving).
+A world model is a learned simulator of an environment  ( Ha & Schmidhuber, 2018 ) . Given past frames and an agent’s actions, a video world model generates the next frames, and can be used to train agents  ( Hafner et al., 2025 ; Alonso et al., 2024 ) , evaluate robot policies  ( Yang et al., 2024 ) , plan the outcome of actions  ( Bar et al., 2025 ) , or simply play a game  ( Bruce et al., 2024 ; Valevski et al., 2025 ; Hu et al., 2026 ) .
+To enable all these applications, two different aspects have to be optimized: the throughput that measures the number of frames generated per second, and the latency that measures the delay between the action and its effect on the output.
+Throughput limits how fast a simulation can happen, whereas latency limits how reactive and faithful a simulation can be.
+Most video world models operate in the latent space of a video autoencoder  ( Bruce et al., 2024 ; Valevski et al., 2025 ) .
+To avoid designing an ad hoc autoencoder, many methods  ( He et al., 2025 ; Li et al., 2025a ; Zhu et al., 2026a ) reuse the autoencoder of a text-to-video generator such as LTX-2  ( HaCohen et al., 2026 ) , Wan 2.2  ( Wan et al., 2025 ) or HunyuanVideo  ( Kong et al., 2024 ) .
+They thus inherit the throughput and latency that come with it.
+Yet, such autoencoders were not designed with the throughput-latency trade-off of world models in mind, and often perform massive temporal compression since it has low impact on visual quality.
+A typical 8{\times} temporal compression delays every action by at least 400 ms at 20 frames per second. Humans
+notice when their own movement appears more than about 230 ms late  ( Shimada et al., 2009 ) ,
+and interaction feels immediate only below 100 ms  ( Miller, 1968 ; Claypool & Claypool, 2006 ) .
+This raises the question of how other throughput-latency trade-offs affect rollout quality and action following.
+To address this question, we propose CADRE,
+an open family of ca usal d iffusion re presentation autoencoders built for interactive world models. Its members differ only in a small bottleneck on frozen features, which sets the compression,
+and share a causal diffusion decoder that needs one or a few steps. To study compression across settings, we train the same world model, a causal diffusion transformer following
+MIRA  ( Hu et al., 2026 ) , on each autoencoder, in two domains: manipulation (by a robot and by human hands) and navigation (driving and
+indoor). We compare CADRE with the autoencoders of Wan 2.2, Cosmos  ( NVIDIA et al., 2025 ) 
+and LTX-2, the image autoencoder DC-AE  ( Chen et al., 2025b ) and the MIRA autoencoder
+retrained on our data. CADRE forms most of the latency-quality frontier, especially with a moving camera (Figure  1 ).
+Interestingly, our study points to four findings. (1) At strong compression, a diffusion decoder is sharper than perceptual regression, and a few-step flow model trained by progressive self-distillation is a good fit. (2) In robot manipulation, temporal compression is more effective in the
+autoencoder than in the world model: patching inside the world model loses detail,
+and at eight frames also action following. (3) Manipulation and navigation call for opposite compressions. In manipulation the camera is still, so
+temporal compression costs little while spatial compression is costly. In navigation the camera moves and the balance
+reverses, so it pays to keep frames and compress spatially, the low-latency choice. (4) Surprisingly, with a still camera, coarser spatial tokens hurt motion far more than image quality, and, in robot manipulation, action following too.
+ Contributions. 
+ • 
+ What compression controls in an interactive world model. We make explicit how an autoencoder’s spatial and temporal compression set a world model’s
+throughput and action latency, and we separate how much to compress from where to
+compress (Section  2 ).
+ • 
+ CADRE, causal diffusion representation autoencoders for interactive world models. Open models at seven
+spatio-temporal compressions, whose decoder learns one- or few-step decoding by progressive self-distillation, in a single stage and without an
+adversarial loss (Section  3 ).
+ • 
+ Where, and how much, to compress video for a world model. A controlled study in four environments, judged by rollouts and action
+following (Sections  4 and  5 ).
+ 2 What Compression Controls in an Interactive World Model
+Before studying how to compress, we make explicit what compression controls. An interactive world model generates
+in the latent space of an autoencoder that compresses a clip by \tau temporally and s spatially, written \tau{\times}s{\times}s : 2{\times}32{\times}32 compresses 2\times temporally
+and 32\times spatially. These two factors set the world model’s cost, action latency and throughput. The
+compression itself can happen in the autoencoder or in the world model (Section  5.1 ).
+ Compression sets the world model’s cost. The world model we study is a causal, space-time-factorized diffusion transformer that predicts the next latent
+frame from the previous ones and the current action or action chunk (Section  4 , Appendix  D ). Its cost grows with the number
+of tokens it processes, which only the spatial and temporal compression set: a clip of T frames of size H{\times}W 
+becomes N=(T/\tau)(H/s)(W/s) latent tokens for the world model.
+ 0 ms 200 ms 400 ms 600 ms 800 ms WORLD MODEL CALLS AN ACTION SHOWS AFTER \boldsymbol{\tau}  = 1 16 50 ms 1 frame \boldsymbol{\tau}  = 2 8 100 ms 2 frames \boldsymbol{\tau}  = 8 2 400 ms 8 frames action, one per frame first frame showing its effect one latent frame ( \tau frames) world model call 
+ Figure 2: Every frame registers an action, whose effect appears \tau frames later. A latent frame is predicted
+only once all its \tau actions are in, so a larger \tau saves world model calls but delays actions.
+ A latent frame waits for all its actions. Every frame registers one action. A latent frame spans \tau frames, so the world model can predict it only once
+all \tau conditioning actions are known. It therefore consumes actions in chunks, and the actions of one chunk shape the next
+(Figure  2 ). The agent thus commits to \tau actions before seeing their effect, as action-chunking policies do  ( Zhao et al., 2023 ; Chi et al., 2024 ; Black et al., 2025 ) . Causality holds between chunks. Within a chunk, the \tau frames
+decode from the same latent, and their order is learned from real video.
+ Temporal compression delays every action. The first action of a chunk waits \tau/f for the chunk to close, where f is the
+frame rate, then t_{\text{gen}} for the world model to generate the latent frame and t_{\text{dec}} for the autoencoder to decode
+it into \tau frames, which sets the throughput:
+ \text{latency}=\underbrace{\tau/f}_{\text{chunk closes}}+\underbrace{t_{\text{gen}}+t_{\text{dec}}}_{\text{generate and decode}},\qquad\text{throughput}=\frac{\tau}{t_{\text{gen}}+t_{\text{dec}}}. 
+ (1) 
+No speed-up shortens the first term, which at \tau=8 and 20 frames per second is 400 ms, beyond the 230 ms lag humans
+notice in their own movement  ( Shimada et al., 2009 ) . In exchange, a larger \tau raises the
+throughput and, at a fixed spatial factor, cuts the token count N .
+ 3 CADRE: Causal Diffusion Representation Autoencoders
+Studying compression means training the autoencoder at many compression points. The autoencoders of
+text-to-video generators release their weights but not their training data or code, so they cannot be retrained. We instead design an open family of autoencoders for world models, one per
+compression point (Figure  3 ). Its members share one recipe, differ only in their
+compression and are each trained from scratch, so the world models trained on them differ by compression alone.
+ Patchify \downarrow\tau{\times}q{\times}q DiT blocks time-causal on T/\tau{\times}H/q{\times}W/q Split frames \uparrow\tau{\times}1{\times}1 DiT blocks time-causal on T{\times}H/q{\times}W/q Unpatchify + conv, \uparrow 1{\times}q{\times}q Lift \uparrow 1{\times}s/q{\times}s/q noisy clip x_{t} output \hat{x} Bottleneck 3D conv, \downarrow\tau{\times}s^{\prime}{\times}s^{\prime} Feature extractor frozen, \downarrow 1{\times}p{\times}p clip x latent z Encoder Spatial AdaLN i ii iii flow time t , jump d zero-init skip Decoder self-distillation perceptual + wavelet flow matching Objective 
+ Figure 3: CADRE. A frozen feature extractor (blue; DINOv3) and a
+trained bottleneck compress the clip by \tau{\times}s{\times}s . A causal diffusion decoder denoises it, conditioned
+on the latent in three places (i–iii, Section  3.1 ). Only the bottleneck, lift and temporal patch size depend on \tau{\times}s{\times}s .
+ 3.1 Architecture
+ Frozen features and one trained layer encode the clip. As in MIRA  ( Hu et al., 2026 ) , the encoder is that of a representation
+autoencoder  ( Zheng et al., 2026 ) . A frozen DINOv3
+extractor  ( Siméoni et al., 2026 ) encodes each frame into one feature per p{\times}p patch, aggregating several
+layers as in RAEv2  ( Singh et al., 2026 ) . One trained 3D convolution with
+kernel (\tau,k,k) and stride (\tau,s^{\prime},s^{\prime}) compresses \tau frames of s^{\prime 2} patches into a deterministic
+latent, with s=p\,s^{\prime} (Appendix  B ).
+ A causal diffusion decoder keeps textures sharp. A strongly compressed latent keeps a scene’s layout and semantics but little texture, so a perceptual regression decoder
+averages the textures consistent with it into a blur  ( Xu et al., 2026 ) . We therefore use a diffusion
+decoder  ( Preechakul et al., 2022 ; Pernías et al., 2024 ; Chen et al., 2025d ) ,
+which samples the clip conditioned on the latent. It is a space-time-factorized
+transformer  ( Bertasius et al., 2021 ; Arnab et al., 2021 ) on a q{\times}q 
+patch grid, whose blocks attend over space, then causally over time. Most blocks process one token per latent frame, that is,
+per \tau video frames. A linear map then splits each token into \tau tokens, one per frame, so the last blocks
+resolve motion within a latent frame. The latent conditions the diffusion decoder in three places: (i) lifted by a transposed convolution and summed with the patchified noisy clip, (ii) through
+a spatial AdaLN  ( Park et al., 2019 ; Zhu et al., 2020 ; Dufour et al., 2022 ; Yu et al., 2026 ) in every block, which also receives the flow time
+ t and the jump length d , the size of the denoising step the decoder takes (Section  3.2 , Appendix  B ), and (iii) through a zero-initialized skip into a light
+convolutional head. The decoder is time-causal, so it streams chunk by chunk.
+ 3.2 Training
+ The decoder learns by flow matching and perceptual losses. The decoder g_{\theta} uses the x -prediction, x -loss form of flow
+matching  ( Li & He, 2026 ) . It predicts the clean clip x from the latent z and a
+noisy clip x_{t}=t\,x+(1-t)\,\epsilon , with \epsilon\sim\mathcal{N}(0,I) and t=0 pure noise. As in diffusion
+forcing  ( Chen et al., 2024a ) , each chunk of \tau frames draws its own
+ t\sim\mathcal{U}(0,1) . The loss is
+ \mathcal{L}_{\text{fm}}\;=\;\mathrm{E}_{x,\epsilon,t}\;\ell_{\text{rec}}\big(g_{\theta}(z,\,x_{t},\,t,\,0),\;x\big), 
+ (2) 
+where the last argument, the jump length d , is zero here. The term \ell_{\text{rec}} sums a mean absolute error,
+two perceptual distances (LPIPS  ( Zhang et al., 2018 ) and its analog in DINO
+feature space) and a 3D wavelet term as in LTX-Video  ( HaCohen et al., 2024 ) , weighted by
+gradient balancing. CADRE trains on a 76k-hour mixture of web, robot, driving and camera video (Appendix  C ).
+ Self-distillation makes one or two decoding steps enough. Flow-matching trajectories curve, so following them takes many steps, while an interactive world model needs single-
+or few-step decoding. Shortcut models  ( Frans et al., 2025 ) and self-distilled flow
+maps  ( Boffi et al., 2025 ) condition the network on its step size and train one large
+step to agree with two smaller ones. Following them, g_{\theta}(z,x_{r},r,d) predicts where a jump from r to r{+}d 
+lands, through x_{r+d}=x_{r}+\tfrac{d}{1-r}(\hat{x}-x_{r}) with implied velocity v_{\theta}=(\hat{x}-x_{r})/(1-r) . One
+jump from r to t is trained to land where two half jumps through u=(r+t)/2 do (dropping z from the notation),
+ \mathcal{L}_{\text{psd}}\;=\;\mathrm{E}\,\Big\|(1-r)\Big(v_{\theta}(x_{r},r,t{-}r)-\operatorname{sg}\big[\tfrac{1}{2}\big(v_{\theta}(x_{r},r,u{-}r)+v_{\theta}(\hat{x}_{u},u,t{-}u)\big)\big]\Big)\Big\|_{2}^{2}, 
+ (3) 
+where \operatorname{sg} stops the gradient and \hat{x}_{u} is the point reached by the first half jump. Unlike the
+consistency decoder  ( OpenAI, 2023 ) and SSDD  ( Vallaeys et al., 2026 ) ,
+which distill a decoder in a second stage, the CADRE decoder is its own teacher and learns one- or few-jump decoding in one stage.
+ 4 Judging an Autoencoder by Its World Model
+An autoencoder is trained to reconstruct its input, yet in latent generation, reconstruction and generation
+trade off  ( Yao et al., 2025 ; Hansen-Estruch et al., 2025 ) , and a
+line of work shapes the latent for the generator
+instead  ( Leng et al., 2025 ; Kouzelis et al., 2025 ; Zheng et al., 2026 ; Xie et al., 2026 ; Ramanana Rahary et al., 2026b ) .
+We therefore score rollouts instead of reconstructions (Appendix  F ). As in MIRA  ( Hu et al., 2026 ) ,
+we judge each autoencoder by the rollouts of a world model trained on its latents; the world model, clips
+and actions are shared, so only the latent varies.
+ Four environments span manipulation and navigation. We train world models in four environments, two of manipulation and two of navigation (Table  1 ), so
+that no conclusion rests on a single environment. In manipulation the view is static for the robot and nearly static for the head-mounted camera of the
+human, so mainly the arms or hands and the objects they handle move. In navigation the view itself moves, so the whole frame changes; we
+separate driving, a dynamic scene where other road users move on their own, from indoor navigation in static scenes.
+Action complexity ranges from 2 dimensions for driving to 102 for two hands. All videos are resampled to 20 frames per second at
+ 288{\times}512 . Evaluation uses held-out episodes, and the official split for driving.
+ Table 1: Environments. One world model is trained per environment and per autoencoder.
+ Environment 
+ Dataset 
+ Camera 
+ Action 
+ DoF 
+ Manipulation 
+ Robot 
+ ABC  ( Allshire et al., 2026 ) 
+ static 
+ joint deltas 
+ 14 
+ Human 
+ EgoDex  ( Hoque et al., 2026 ) 
+ nearly static 
+ hand-pose deltas 
+ 102 
+ Navigation 
+ Driving 
+ Physical AI AV  ( NVIDIA, 2025 ) 
+ moving 
+ speed, curvature 
+ 2 
+ Indoor 
+ RealEstate10K  ( Zhou et al., 2018 ) 
+ moving 
+ camera twist 
+ 6 
+ One world model recipe serves every autoencoder. The world model is a 1.2B-parameter causal diffusion
+transformer conditioned on the \tau actions of each latent frame and trained with diffusion
+forcing  ( Chen et al., 2024a ) (Appendix  D ). Every autoencoder,
+CADRE included, uses the same recipe from MIRA  ( Hu et al., 2026 ) , with its latents
+standardized by their own statistics. Following SD3  ( Esser et al., 2024 ) and
+RAE  ( Zheng et al., 2026 ) , our tuning includes shifting the noise schedule with
+each autoencoder’s latent size and token count.
+ Rollouts are scored on image and motion quality, and on action following. Each world model receives 40 real frames (2 s) with their actions and generates the next 96 (4.8 s) under the
+recorded actions, on 2048 held-out samples per environment shared across autoencoders. We score the last 16
+decoded frames. FID  ( Heusel et al., 2017 ) measures image quality and
+FVD  ( Unterthiner et al., 2019 ) also penalizes implausible motion and temporal seams. PSNR and
+LPIPS  ( Zhang et al., 2018 ) measure closeness to the recorded future; PSNR should always be accompanied by distributional metrics, as it rewards
+blur. Action following is measured by the action recoverability ratio (ARR), which extends the inverse dynamics evaluation of
+MIRA  ( Hu et al., 2026 ) : a frozen probe reads the actions back from the rollout, and
+their coefficient of determination ( R^{2} ) is normalized by the probe’s R^{2} on real video, so an ARR of one means real-video recoverability
+(Appendix  E ).
+ We compare seven CADRE autoencoders with five recent ones. The seven differ only in their compression \tau{\times}s{\times}s , and we name each CADRE- \tau{\times}s{\times}s (Figure  12 , Appendix  G ). Of the others, four are off the shelf and used at their native compression:
+Wan 2.2  ( Wan et al., 2025 ) ( 4{\times}16{\times}16 ),
+Cosmos  ( NVIDIA et al., 2025 ) ( 8{\times}8{\times}8 ),
+LTX-2  ( HaCohen et al., 2026 ) ( 8{\times}32{\times}32 ) and the image
+autoencoder DC-AE  ( Chen et al., 2025b ) ( 1{\times}32{\times}32 ). The fifth retrains the MIRA recipe  ( Hu et al., 2026 ) on our data at
+ 2{\times}32{\times}32 . The LTX-2 decoder reads future latents, so we decode each prefix and keep its newest
+frames, as a streaming system would. The generators they come from train on far more video, such as 20M curated hours for Cosmos, likely
+including many datasets used here.
+ (a)
+ (b)
+ Figure 4: (a) Diffusion against perceptual regression decoding at 2{\times}32{\times}32 : MIRA has the worst FVD
+but the best PSNR, a sign of blur (all metrics: Figure  13 ). (b) Rollout quality
+against action latency in robot manipulation: CADRE forms most of the frontier (all environments:
+Figure  14 ).
+ 4.1 Should the decoder use perceptual regression or diffusion?
+A decoder can regress one video from the latent or sample one by diffusion. MIRA  ( Hu et al., 2026 ) 
+takes the first route: it replaces the adversarial losses used since VQGAN  ( Esser et al., 2021 ) 
+with perceptual losses (LPIPS and DINO) and works well on Rocket League. It is also the only autoencoder besides CADRE that runs at 20 frames per second within the 230 ms lag humans notice (Figure  1 ). To test this route beyond
+games, we retrain the MIRA recipe on our mixture (Appendix  C ) at 2{\times}32{\times}32 with
+our extractor and budget (Figure  4 a). Against the CADRE decoder, it gives higher PSNR but worse FID and FVD in every environment. In one step, the CADRE decoder lowers FVD by 1.4 to 2.5 \times with similar
+action following. A second step lowers FID by up to 23%.
+ Should the decoder use perceptual regression or diffusion? 
+ Decode a compressed latent by diffusion. Such a latent fits many videos. Perceptual regression outputs
+their blurry average, while diffusion outputs one sharp video. Self-distilled, it decodes in one step as fast as
+regression with 1.4 to 2.5 \times lower FVD and similar action following; a second step improves it further. 
+ 4.2 How do the autoencoders trade quality for latency?
+To compare the autoencoders on both axes at once, we plot rollout quality against action latency
+(Figure  4 b for robot manipulation, Figure  1 for driving, Figure  14 for all); an autoencoder lies on the Pareto frontier when no other is both
+faster and better. CADRE autoencoders form most of this frontier in every environment. In 42 of the 48 comparisons
+with MIRA, Wan 2.2, Cosmos and LTX-2 (four environments; FID, FVD and ARR), a CADRE autoencoder is at least as fast
+and better by more than 2%; DC-AE , faster than all, is compared below. With two decoding
+steps, the best FID of every environment belongs to CADRE, most often to CADRE- 4{\times}16{\times}16 , and so does the
+best FVD, except in robot manipulation, where CADRE and Cosmos tie. The gap widens with a moving camera: in navigation, all CADRE autoencoders but one beat
+every other on FID and FVD, while Wan 2.2’s FVD grows from 53 in robot manipulation to 600 or more in navigation and LTX-2’s ARR falls
+to 0.04 indoors. CADRE also drifts least in 64 s robot manipulation rollouts (Appendix  H ).
+At the fast end, CADRE- 1{\times}48{\times}48 reacts about as fast as DC-AE and beats it in navigation; DC-AE wins in manipulation. Few autoencoders are both fluid and responsive: streaming on one H100 with eight denoising steps, only
+CADRE- 2{\times}32{\times}32 , CADRE- 2{\times}16{\times}16 and MIRA run at 20 frames per second under the 230 ms lag humans
+notice  ( Shimada et al., 2009 ) (Figure  1 ). The world models of
+Figure  5 run fluidly, at 29 to 58 frames per second (Appendix  D ), and,
+from the same context, follow actions never recorded with it, such as holding
+still or turning the other way (Figure  22 ).
+ Figure 5: Real-time rollouts following recorded actions. From 2 s of real video (left) and its actions, CADRE world
+models generate all other frames, with contact in robot manipulation, cloth dynamics in human manipulation,
+plausible futures in driving and 3D-consistent indoor scenes.
+ 5 How to Compress for Interactive World Models
+We now ask three questions: which component should compress temporally, how many frames one latent
+should span, and what coarser spatial tokens trade for their speed. Comparisons follow the protocol of
+Section  4 , so arms differ only in how the video is compressed.
+ 5.1 Should the autoencoder or the world model compress temporally?
+ Figure 6: Temporal compression in the autoencoder or in the world model , at the same token grid in robot
+manipulation. The autoencoder gives sharper frames, closer to the recorded future, and more plausible motion at all but
+ 2{\times}32{\times}32 . Action following barely changes, except at 8 frames.
+Temporal compression can happen in the autoencoder or in the world model. The alternative to CADRE is an image autoencoder that leaves frames
+temporally uncompressed, with the world model patching its latent temporally. Both
+routes give the same token grid, but a different model learns the compression. In robot manipulation, we reach
+each grid a second time by patching the latent of CADRE- 1{\times}16{\times}16 inside the world model
+(Figure  6 ). Only the compression changes. Actions and noise levels stay per frame, and a patched token
+receives the actions of every frame it covers.
+ Temporal compression in the autoencoder gives better frames than in the world model. Compressing in the autoencoder gives better FID, FVD, PSNR and LPIPS at every temporal grid, except FVD at 2{\times}32{\times}32 , where space is compressed too. The FVD
+gap grows with the factor, from 9 points when compressing 2 frames to 28 when compressing 8. Decoder capacity does not
+explain it, since the patched arm decodes with CADRE- 1{\times}16{\times}16 , the best reconstruction among them
+(Table  6 ). We attribute this to the training objectives. The autoencoder is trained to reconstruct pixels, so its compression keeps appearance. The world model is trained to
+predict latents, so its compression keeps only what helps that prediction. This matches image and video generation,
+where compressing in the autoencoder beats patching  ( Chen et al., 2025b ; Gupta et al., 2024 ) .
+ Where temporal compression happens barely changes action following. The exception is 8 frames, where patching drops
+ARR from 0.72 to 0.56. Action following depends on the motion the actions cause, which the world
+model’s compression is trained to keep.
+ Should the autoencoder or the world model compress temporally? 
+ Let the autoencoder compress temporally. At the same number of tokens, its compressed frames look sharper and
+move more realistically, with similar action following. It learns its compression to reconstruct pixels, while the world
+model keeps only what helps it predict. 
+ 5.2 How many frames should one latent span?
+ Figure 7: Temporal compression and spatial tokens. Green raises \tau at a fixed token size; orange
+at a fixed token budget, so its grid coarsens (spatial factor s ). A static view fits eight frames in one latent
+at no cost; a moving view loses quality with more frames. Full results in Figure  15 .
+To separate temporal compression from the cost of coarser tokens, we vary \tau in two sweeps (Figure  7 ). The first holds s=16 and isolates temporal compression.
+The second holds about 1100 tokens per 16-frame clip, so at a given \tau its gap to the first measures the cost of coarser spatial
+tokens. All world models are matched in training steps and total training frames.
+ Latents should span many redundant frames in manipulation and few in navigation. In manipulation,
+the camera is mostly still, so consecutive frames are redundant and one latent can span many of them at no cost
+(green curve in Figure  7 ). In navigation, the camera moves and the view shifts by more than a token
+within one long latent (Appendix  I ), so long latents degrade motion, raising FVD by up to 64% over two-frame latents. Action
+following changes less (Appendix  G ). Camera motion is our leading explanation, though the domains
+also differ in actions and scenes.
+In 64 s robot manipulation rollouts, long latents do not make errors accumulate: CADRE- 8{\times}16{\times}16 is
+best from about 13 s on and ends with the lowest FVD (Appendix  H ). Long latents do leave seams, visible jumps
+between chunks. A boundary excess compares the frame-to-frame
+change across chunk boundaries with the change within chunks, relative to real video (Appendix  K ). It
+grows with \tau in all four environments, to 1.6–1.8 at \tau=8 (Table  10 ). With a moving view, the seams
+also show in FVD, which grows 1.6 to 2.1 \times more at \tau=8 than at \tau=2 .
+ At a fixed token budget, navigation favors few frames per latent and manipulation many. Along the
+orange curve of Figure  7 , autoencoders give about 1100 tokens per 16-frame clip. In navigation, the low-latency
+CADRE- 2{\times}32{\times}32 is best, with two frames and coarser tokens. In manipulation,
+CADRE- 8{\times}16{\times}16 gives the most plausible motion, with eight frames and fine tokens.
+ How many frames should one latent span? 
+ Manipulation and navigation call for opposite compressions. In manipulation the camera is still, so
+each token sees temporally redundant content: temporal compression costs little, but spatial compression loses
+the small objects being handled. In navigation the camera moves, so each token sees new content: temporal compression
+shows seams, but spatial compression costs little because the whole view shifts. 
+ 5.3 What do coarser spatial tokens trade for their speed?
+At a given \tau , coarser spatial tokens cut the world model’s cost, and the gap between the two sweeps isolates what they lose in quality and action following.
+ Fine spatial tokens matter most when the action is small and stays in view. In robot manipulation,
+the action shows in a small region that stays in view. At \tau=2 , coarser spatial tokens multiply FVD by 2.4 and
+lower action following, with almost no change in FID (orange against green in Figure  7 ). In
+navigation, the action moves the whole frame, which coarse tokens already capture, and the gap nearly vanishes
+(Appendix  G ). FID may miss errors confined to small regions, but ARR, which reads the motion itself, drops
+too (Appendix  G ).
+ What do coarser spatial tokens trade for their speed? 
+ Surprisingly, coarser tokens hurt motion and action following far more than image quality, above all in manipulation. 
+In manipulation, per-frame quality barely changes, but motion degrades, and so does action following in robot manipulation. In navigation, where the
+whole view shifts, they cost little. 
+ 6 Related Work
+ World models and their autoencoders. Video world models serve
+driving  ( Russell et al., 2025 ) , robotics  ( Yang et al., 2024 ) and open
+scenes  ( Bruce et al., 2024 ) . Interactive ones stream in real
+time  ( Valevski et al., 2025 ; Alonso et al., 2024 ) , often by distilling a text-to-video generator whose
+autoencoder they inherit  ( He et al., 2025 ; Li et al., 2025a ) . Few study that autoencoder.
+SANA-WM  ( Zhu et al., 2026a ) swaps two of them offline, and
+MIRA  ( Hu et al., 2026 ) judges its own through the world model, but only on a single game.
+We compare twelve autoencoders of varied compression through world models in four environments.
+ Latent structure and compression. Generation quality depends on the structure of the
+latent  ( Rombach et al., 2022 ; Yao et al., 2025 ) .
+Representation autoencoders generate in the space of a frozen self-supervised
+encoder  ( Zheng et al., 2026 ; Xie et al., 2026 ) ,
+at one compression rate. Video autoencoders mostly compress 8{\times} in space and 4{\times} in
+time  ( Wan et al., 2025 ; Kong et al., 2024 ) , some far
+more  ( HaCohen et al., 2024 ; HaCohen et al., 2026 ; Chen et al., 2025b ) . A
+generator can also compress through its patch
+size  ( Peebles & Xie, 2023 ; Gupta et al., 2024 ) . For
+images, DC-AE  ( Chen et al., 2025b ) finds that compressing in the autoencoder beats patching. We test this for video world models and
+build representation autoencoders that span seven spatio-temporal compressions.
+ Few-step diffusion decoders. Diffusion decoders avoid adversarial
+losses  ( Preechakul et al., 2022 ; Chen et al., 2025d ) 
+but need many steps, or a second stage to reach one  ( OpenAI, 2023 ; Vallaeys et al., 2026 ) . Shortcut
+models and flow maps learn few-step generation in one stage from their own
+predictions  ( Frans et al., 2025 ; Boffi et al., 2025 ) . Our causal video decoder learns one- or two-step
+decoding this way, with no adversarial loss or second stage. Appendix  L extends this section.
+ 7 Conclusion
+An interactive world model inherits its cost per frame, its action latency and much of its quality from its
+autoencoder, so its compression is a design choice. To study this choice, we build
+CADRE, an open family spanning seven compressions, and train the same world model on each in
+manipulation and navigation. CADRE forms most of the latency-quality frontier, especially with a moving camera, and our study points to four findings. At strong compression, a
+diffusion decoder is sharper than perceptual regression, even in one or two steps. In robot manipulation, temporal compression is more effective in the autoencoder
+than in the world model. Manipulation and navigation call for opposite compressions: temporal compression costs
+little when the camera is still, and spatial compression when it moves. Surprisingly, with a still camera, coarser spatial tokens hurt
+motion far more than image quality, and, in robot manipulation, action following too.
+Our world models each cover one environment; whether these findings carry over to a generalist one, and to policy
+training and planning, remains open. Our manipulation data use still or nearly still cameras; wrist-mounted cameras move, so our account predicts they favor the compression of navigation. We hope open autoencoders will let practitioners fit a world model’s compression
+to its scenes and to the latency and throughput its users need.
+Reproducibility statement
+Section  3 and Appendix  B describe the autoencoder architecture, losses and training recipe,
+and Table  3 lists the hyperparameters of both the autoencoders and the world models. Appendix  C 
+lists every source of the autoencoder training mixture with its sampling weight, size and preprocessing.
+Appendix  D gives the world model architecture, conditioning, objective, training recipe and inference
+protocol, and Appendix  E specifies the inverse dynamics probes behind action recoverability.
+Section  4 fixes the evaluation protocol shared by every autoencoder, and Table  7 
+reports every number behind the figures.
+We release the code and the checkpoints .
+Ethics statement
+All training and evaluation data come from published datasets, used under their licenses. Some show people, such as
+the hands in human manipulation and the faces in talking-head and action videos; we use them only to learn video
+representations and do not identify anyone. Generated video can be misused to fabricate footage. Our world models are
+specialized to manipulation and navigation, run at 288{\times}512 and follow low-level actions, which limits such
+use.
+AI use statement
+We used generative AI tools to implement and debug code, including the training, evaluation and plotting scripts; to
+draft and edit parts of the paper for readability; to create and edit figures; and to search for and format
+references. We reviewed all AI-assisted work and take responsibility for the final content of this work,
+including text, claims or artifacts produced with the aid of generative AI.

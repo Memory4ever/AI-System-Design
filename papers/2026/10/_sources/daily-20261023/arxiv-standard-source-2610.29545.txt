@@ -1,0 +1,1515 @@
+https://arxiv.org/html/2610.29545v1
+PACE: Periodic and Channel-Aligned Encodingof Four-Bit Recurrent States
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Background and Related Work
+2.1 Gated Delta Rule
+2.2 Chunk-wise Kernels
+2.3 Decode Buffers
+2.4 State Quantization
+Quantizing the recurrent state.
+Error propagation.
+KV-cache quantization.
+3 Rounding Period and Error Propagation
+3.1 The Rounding Period
+3.2 Error Propagation
+4 Channel Structure of the Recurrent State
+4.1 Column Structure of the State
+4.2 Channel Identity of the Delta Value
+5 Method
+5.1 Periodic Rounding with a Decode Buffer (\scriptsizeA⃝\scriptsizeB⃝)
+5.2 Channel-Aligned Scale Groups (\scriptsizeC⃝)
+Scale groups.
+5.3 Head-Level Precision Allocation (\scriptsizeD⃝)
+6 Experimental Setup
+Models.
+Benchmarks.
+Baselines.
+Protocol.
+7 Results
+7.1 Effect of the Decode Period
+7.2 Main Results
+7.3 Ablations
+7.4 State Drift under Periodic Rounding
+7.5 Throughput
+8 Conclusion
+References
+A Per-Benchmark Scores across Widths and Periods
+B State Drift
+C State Statistics along the Two Axes
+D Separate Key and Value Buffer Widths
+E Integer Zero Point
+F Throughput Measurement and Memory
+License: CC BY 4.0
+arXiv:2610.29545v1 [cs.CL] 21 Oct 2026
+PACE: Periodic and Channel-Aligned Encoding
+of Four-Bit Recurrent States
+Patrick Haller
+Filipe Laitenberger
+Alan Akbik
+Abstract
+Linear-attention language models keep their context in a recurrent state of fixed size, where an inference system stores one copy of this state for every sequence it decodes at the same time. Storing the state at lower precision therefore lets more sequences share an accelerator. Existing state quantizers round the state after every generated token and report that four bits lose accuracy unless the bit width is raised or the model is fine-tuned.
+We introduce PACE, a post-hoc four-bit state quantizer. PACE rounds the state only once every few generated tokens, as chunked kernels already do once per chunk during prefill, and keeps the tokens generated in between in a small buffer. Rounding less often reduces the error that accumulates in the state. Additionally, we find that the large entries of the gated-delta state gather in columns, because some channels of the update written at each token remain large across many tokens. PACE therefore shares each quantization scale within one column. It also keeps the heads that retain rounding error longest at eight bits. On four hybrid models from 4B to 35B parameters, PACE with mixed four- and eight-bit heads is competitive with eight-bit DAMP on the three larger models at about two thirds of its memory, PACE with four-bit heads throughout scores higher than Q-Mamba at equal memory, and rounding every few tokens preserves the decoding speedup of the buffer.
+Figure 1: Mean performance of MMLU-Pro, IFEval and RULER-32k against resident bits per value on Qwen3.5-9B.
+Arrows join per-token and d ​ P = 8 dP{=}8 rounding variants.
+1 Introduction
+Linear-attention language models replace the key–value cache of a Transformer with a recurrent
+state of fixed size and have become competitive with Transformers [ 32 , 31 ] .
+Every recurrent layer holds one state matrix per head, and a server stores one copy for every
+sequence it decodes at the same time. At 64 concurrent sequences, the fp32 states take between 10
+and 41 % of the memory that weights and states occupy together. Storing the state at lower
+precision lets more sequences fit on the same accelerator.
+Existing state quantizers [ 5 , 4 , 33 , 21 ]
+differ in how they scale and round the state, and all of them round it after every generated token.
+With per-token rounding, the methods that evaluate a four-bit state report a loss in accuracy (Figure 1 ). The published remedies either
+raise the bit width to eight bits or fine-tune part of the model weights. NVIDIA et al. [20] round the state less often, but only with eight or more bits per value.
+During prefill, chunked kernels process 64 64 to 1,024 1{,}024 tokens at a time
+and write the state only at the end of each chunk, so every published quantizer already rounds the
+prefill state once per chunk. During decoding the kernel is called once per generated token, so the
+state is written, and rounded, after every token (Figure 2 a).
+In this work, we introduce PACE (Periodic And Channel-aligned state Encoding), a post-hoc four-bit
+state quantizer that requires no training (Figure 2 ). During decoding, PACE
+rounds the state once every d ​ P dP generated tokens (the decode period) instead of after every token (\scriptsizeA⃝). The tokens
+generated in between are held in a decode buffer, a small store of recent keys and values from which
+the state is advanced in one step. Recent serving work uses such buffers to speed up decoding
+[ 36 , 16 , 15 ] . The buffer occupies memory, and
+every memory total we report counts it together with the state (\scriptsizeB⃝).
+The gated-delta state has one row per key dimension and one column per channel of the delta value,
+the vector the recurrence writes into the state at each token. Channels that stay large across many
+tokens produce columns of large entries, and when the channels are permuted at every token, the large
+entries no longer form columns (Section 4 ). PACE therefore forms each scale group
+from the entries of one column, that is, along the key axis (\scriptsizeC⃝). PACE has two variants:
+PACE-4 keeps all heads at four bits, and PACE-4/8 keeps the quarter of heads in each layer that retain
+rounding error longest at eight bits (\scriptsizeD⃝).
+Our contributions are:
+•
+A bound on the rounding error a head retains as a function of the rounding period and the
+head’s decay (Section 3 ), together with a memory accounting that includes the decode
+buffer (Section 5.1 ). On four backbones, rounding every eight generated tokens
+reduces the accuracy loss at every bit width below eight (Section 7.1 ).
+•
+The observation that the large entries of the gated-delta state form columns, explained by
+channels of the delta value that stay large across tokens and confirmed by permuting those channels (Section 4 ).
+•
+PACE, a four-bit state quantizer with channel-aligned scale groups and head-level precision
+allocation (Section 5 ), compared with DAMP and Q-Mamba on four hybrid models from 4B to
+35B parameters (Section 7.2 ).
+•
+Triton kernels for periodic decoding with a packed four-bit state, with which we show that
+rounding every few tokens keeps the decoding speedup of the decode buffer (Section 7.5 ).
+Figure 2: Overview of PACE. (a) Prior state quantizers round the recurrent state after every generated
+token; PACE rounds it once every d ​ P dP tokens (\scriptsizeA⃝), as prefill already does at each kernel chunk
+boundary. (b) At each flush, the packed state is dequantized, advanced over the tokens held in the
+decode buffer (\scriptsizeB⃝), and requantized in channel-aligned scale groups (\scriptsizeC⃝). PACE-4/8 also holds a quarter of the heads
+in each layer at eight bits, selected once per checkpoint (\scriptsizeD⃝).
+2 Background and Related Work
+2.1 Gated Delta Rule
+Linear attention [ 12 , 26 ] removes the softmax, so that attention
+becomes a recurrence over a state S t ∈ ℝ d k × d v S_{t}\in\mathbb{R}^{d_{k}\times d_{v}} per head,
+S t = S t − 1 + k t ​ v t ⊤ , o t = S t ⊤ ​ q t . S_{t}=S_{t-1}+k_{t}v_{t}^{\top},\qquad o_{t}=S_{t}^{\top}q_{t}.
+(1)
+The state replaces the key–value cache. It holds the whole past, does not grow with context, and is read
+and written at every step.
+Variants differ in how S t − 1 S_{t-1} is modified before the new token is written
+[ 28 , 23 , 32 , 2 ] . We work with the gated delta rule
+[ 31 ] , which applies a data-dependent decay a t ∈ ( 0 , 1 ) a_{t}\in(0,1) and removes the
+component of the state along the current key before writing,
+S t = a t ​ ( I − β t ​ k t ​ k t ⊤ ) ​ S t − 1 + β t ​ k t ​ v t ⊤ , S_{t}=a_{t}\left(I-\beta_{t}k_{t}k_{t}^{\top}\right)S_{t-1}+\beta_{t}k_{t}v_{t}^{\top},
+(2)
+with write strength β t \beta_{t} . The read-out is unchanged. Expanding Eq. 2 , every write is an
+outer product,
+S t = a t ​ S t − 1 + k t ​ u t ⊤ , u t = β t ​ ( v t − a t ​ S t − 1 ⊤ ​ k t ) , S_{t}=a_{t}S_{t-1}+k_{t}u_{t}^{\top},\;\;u_{t}=\beta_{t}(v_{t}-a_{t}S_{t-1}^{\top}k_{t}),
+(3)
+where we call u t u_{t} the delta value , the part of v t v_{t} that the decayed state does not already
+return for k t k_{t} , scaled by β t \beta_{t} .
+2.2 Chunk-wise Kernels
+Evaluating Eq. 2 token by token is sequential and memory-bound. Chunk-wise kernels
+[ 32 , 31 ] split the sequence into chunks of length C C and process each
+chunk from the state at its start. Writing α i = ∏ j ≤ i a j \alpha_{i}=\prod_{j\leq i}a_{j} for the cumulative decay
+within a chunk, the state after C C tokens is
+S C = α C ​ S 0 + ∑ i = 1 C α C α i ​ k i ​ u i ⊤ , S_{C}=\alpha_{C}S_{0}+\sum_{i=1}^{C}\frac{\alpha_{C}}{\alpha_{i}}\,k_{i}u_{i}^{\top},
+(4)
+and the outputs follow from S 0 S_{0} and the chunk’s own tokens by matrix multiplication. The delta values
+u i u_{i} of Eq. 3 are obtained from a triangular solve over the chunk, so Eq. 4 is evaluated
+with dense arithmetic rather than a loop. Only S 0 S_{0} and S C S_{C} are formed as tensors. The states at
+positions inside the chunk are never written.
+Figure 3: Large entries of the recurrent state form columns indexed by the value coordinate.
+(a) | S | |S| of one head of Qwen3.5-9B on a shared logarithmic scale, in the original model and with the channels of
+the delta value u t u_{t} permuted at every token; the head is the median head of the median layer by the
+value-to-key ratio. (b) Within-group max/RMS against group width, for groups along the key axis
+(solid) and the value axis (dashed). (c) Ratio of the value-axis to
+the key-axis statistic at g = 128 g{=}128 , in the original model and with u t u_{t} or k t k_{t} permuted at every token.
+2.3 Decode Buffers
+Decoding calls the kernel once per token, so the state is written every step and the chunk structure is
+lost. Recent serving work recovers it with a decode buffer. Recent keys and values are held, and the state is
+advanced once per flush, the step at which the buffered tokens are applied, instead of once per token.
+This removes the per-token write of the state from memory traffic.
+KVBuffer [ 36 ] derives an optimal buffer of about 23 23 tokens and reports its best
+latency at 32 32 , ReplaySSM [ 16 ] uses 16 16 for Qwen3.5, and DeltaLog
+[ 15 ] merges every 8 8 tokens for Gated DeltaNet. None of them quantizes the state.
+2.4 State Quantization
+Quantizing the recurrent state.
+Quamba2 [ 5 ] stores cached states at eight bits with static scales. Q-Mamba
+[ 4 ] reaches four bits by scaling the state with one vector per axis and fine-tuning
+about 2% of the weights. MambaQuant [ 30 ] rotates weights and activations before
+rounding and leaves the state unquantized. DAMP [ 33 ] ranks key channels by quantization error times decay persistence, keeps the riskiest in fp16 and reports 9.9 9.9 bits per
+value; it rounds once per chunk in prefill and after every token in decoding. The Nemotron report
+[ 21 ] keeps the state in fp16 with stochastic rounding, and NVIDIA et al. [20]
+store the state every eight decoding steps at eight bits and above, in emulation. Kozyrev and Maiboroda [13]
+quantize the weights and activations of the recurrent layers and leave the state unquantized.
+None of them varies the rounding period below eight bits or counts the buffer it requires.
+Error propagation.
+Rounding a recurrence is the fixed-point filter problem [ 11 , 22 ] , in which rounding
+noise of variance σ 2 \sigma^{2} , injected at every step of a recurrence with decay a a , accumulates to
+σ 2 / ( 1 − a 2 ) \sigma^{2}/(1-a^{2}) . Zhang et al. [33] rederive the
+accumulated error for the gated delta rule and reduce the error per rounding; we reduce the number of
+roundings (Eq. 5 ). Kozyrev and Maiboroda [13] find that whole-state error stays flat from token 256 256 on. Zhao et al. [34] clip the state during quantization-aware training and
+Siegel et al. [27] quantize an S4D state through its convolutional form.
+KV-cache quantization.
+KIVI [ 18 ] and KVQuant [ 9 ] reach two to four bits on a cache whose
+entries are written once and only read, and rotation methods [ 3 , 1 , 17 ] redistribute magnitude before rounding. A recurrent state is instead re-rounded at
+every write.
+3 Rounding Period and Error Propagation
+3.1 The Rounding Period
+A quantizer can round the state only where the kernel writes it, which gives three regimes under Eq. 4
+(Figure 2 a). In prefill the chunked kernel forms S 0 S_{0} as the initial state and S C S_{C} , so the state is rounded once per chunk without an additional kernel call. In unbuffered decoding each call carries one token,
+S t S_{t} is formed at every step, and the period is one. Under a decode buffer the state is advanced once per flush, and the period is the number of tokens the buffer holds.
+We call one choice of bit width, scale groups, buffer precision and rounding periods for the
+quantized state a configuration . Each configuration carries two periods. We write P P for the prefill period, which equals the kernel chunk
+length C C and which we fix at 256 256 tokens in all benchmark evaluations, and d ​ P dP for the decode period, which is the variable under study.
+3.2 Error Propagation
+Each rounding adds an error to the state, and the recurrence carries it forward. Between two
+roundings the error is multiplied at every token by a t ​ ( I − β t ​ k t ​ k t ⊤ ) a_{t}(I-\beta_{t}k_{t}k_{t}^{\top})
+(Eq. 2 ), whose norm is at most a t a_{t} for a unit-norm key. With a h a_{h} the mean decay of head
+h h , an error of energy e h e_{h} injected at one rounding retains at most a h 2 ​ d ​ P a_{h}^{2\,dP} of its energy at
+the next, and independent errors from successive roundings accumulate to at most
+E h = e h 1 − a h 2 ​ d ​ P . E_{h}=\frac{e_{h}}{1-a_{h}^{2\,dP}}.
+(5)
+A longer period lowers E h E_{h} , because more decay separates two roundings. In the gated delta rule the decay is one scalar per head, so
+E h E_{h} is a per-head quantity.
+Finding 1. The rounding error a head retains falls with the rounding period and
+rises with the head’s decay
+4 Channel Structure of the Recurrent State
+A group-wise quantizer divides the state of each head into scale groups of g g consecutive entries
+and rounds all entries of a group with one shared step size, which is proportional to the largest
+absolute entry of the group. A group runs either along the key axis, within one column of the state,
+or along the value axis, within one row. When a group contains one large entry, its small entries are
+rounded with a coarse step, so the error at four bits depends on which entries share a group.
+Section 4.1 measures along which axis the large entries of the state cluster,
+and Section 4.2 traces this structure to the delta value.
+4.1 Column Structure of the State
+We compute the state over 2,048 2{,}048 -token WikiText-103 sequences on all four backbones. In a representative head the large entries form columns, that is, they occur at the same value index for every key index (Figure 3 a). We quantify this with the ratio of the largest absolute entry of a group to the root mean square of its entries (max/RMS). The larger the ratio, the fewer quantization levels a typical entry of the group receives. Groups along
+the value axis, which cross columns, have the larger ratio at every group width, and the difference
+grows with the width (Figure 3 b).
+Finding 2. The large entries of the recurrent state concentrate in columns.
+4.2 Channel Identity of the Delta Value
+At each token, the recurrence adds the outer product k t ​ u t ⊤ k_{t}u_{t}^{\top} to the decayed state (Eq. 3 ). A value channel that
+is large across many tokens therefore accumulates in one column, and a key coordinate that is large
+across many tokens accumulates in one row. Either factor could therefore produce the columns of Section 4.1 . To separate them, we recompute the state from the recurrence inputs with the channels of u t u_{t} permuted at
+every token, which keeps the values of u t u_{t} but assigns them to a different channel at each token, and separately
+with the entries of k t k_{t} permuted. With u t u_{t} permuted, key-axis groups have the larger max/RMS ratio on all four backbones, and with k t k_{t} permuted the difference between the two axes widens (Figure 3 c).
+Finding 3. The columns of large entries in the state come from channels of the delta
+value u t u_{t} that stay large across tokens.
+5 Method
+PACE has four components (Figure 2 ): periodic rounding \scriptsizeA⃝ with a
+decode buffer \scriptsizeB⃝ (Section 5.1 ), which follow from Section 3 ;
+channel-aligned scale groups \scriptsizeC⃝ (Section 5.2 ), from Findings 2 and 3; and
+head-level precision allocation \scriptsizeD⃝ (Section 5.3 ), from Finding 1. PACE-4 uses
+\scriptsizeA⃝–\scriptsizeC⃝; PACE-4/8 adds \scriptsizeD⃝.
+5.1 Periodic Rounding with a Decode Buffer (\scriptsizeA⃝\scriptsizeB⃝)
+Rounding every d ​ P dP tokens requires holding the tokens generated since the last rounding in the
+decode buffer, which adds to the memory of each configuration. Prior work reports only the stored
+state, that is, the b b -bit payload and its group scales [ 33 ] ; with one fp16 scale
+per g g values, this gives b + 16 / g b+16/g bits per value. We define resident bits per value as the
+bits of the stored state and the buffer together, divided by the number of state values. The buffer holds
+( a t , k t , v t ) (a_{t},k_{t},v_{t}) per token, the key once per key head and the value once per value head, so with keys
+at b k b_{k} and values at b v b_{v} bits it adds per state value
+c ​ d ​ P , c = b k ​ d k / γ + b v ​ d v + 32 d k ​ d v , c\,dP,\qquad c=\frac{b_{k}\,d_{k}/\gamma+b_{v}\,d_{v}+32}{d_{k}d_{v}},
+(6)
+where γ \gamma is the number of value heads sharing a key head. At d ​ P = 1 dP=1 the buffer holds only the current token. Resident bits in Figure 4 and Appendix A include the buffer;
+Table 6 does not. In uniform configurations, which hold every head at the same bit width, the buffer holds keys and
+values at eight bits. In the mixed configuration of PACE-4/8, which holds a quarter of the heads at
+eight bits, it holds the keys at four bits and the values in bf16, since
+rounding the buffered values below eight bits reduces accuracy more than rounding the keys
+(Appendix D ).
+5.2 Channel-Aligned Scale Groups (\scriptsizeC⃝)
+We store the state at four bits in channel-aligned scale groups and keep the per-token decay and the
+group scales at higher precision.
+Scale groups.
+We divide each head’s state S ∈ ℝ d k × d v S\in\mathbb{R}^{d_{k}\times d_{v}} into groups of g g consecutive entries
+along the key axis, so that each group holds g g entries of one column, and store one fp16 scale per
+group (Figure 2 , \scriptsizeC⃝). Uniform configurations round symmetrically with a step size proportional to the absolute maximum of the group at b + 16 / g b+16/g bits per value; the mixed configuration uses an affine
+grid per group whose zero point is stored as a b b -bit code, at b + ( 16 + b ) / 32 b+(16+b)/32 bits per value (Appendix E ). Prior work groups along the value axis
+[ 33 ] . We call our groups channel-aligned because each takes its entries from one
+channel of the delta value (Finding 3), whereas a group along the value axis spans columns of different
+magnitude, and its step size follows the largest of them. We round to nearest throughout.
+Figure 4: Mean score over GSM8K, IFEval and RULER-32k against resident bits per value for uniform
+value-axis states of four to eight bits on the three Qwen3.5 backbones (Qwen3.6-35B-A3B in
+Appendix A ). Each line is one width, with d ​ P = 1 , 8 , 32 dP=1,8,32 from left to
+right; dotted: full precision; shaded: above the 9.9 9.9 bits of DAMP INT8. Right: resident bits per value
+against d ​ P dP (Eq. 6 ).
+5.3 Head-Level Precision Allocation (\scriptsizeD⃝)
+We hold the heads that retain rounding error longest at eight bits and the rest at four, applying the allocation criterion of Zhang et al. [33] per head instead of per channel
+(Finding 1). For each head h h , we measure the energy e h e_{h} of the error that one rounding adds and
+assign eight bits to the heads with the largest retained error E h E_{h} (Eq. 5 ). The ranking is computed once per checkpoint on eight
+held-out windows of 2,048 2{,}048 tokens. With a quarter of the heads per layer at 8 8 bits, the payload is
+0.75 ⋅ 4.625 + 0.25 ⋅ 8.75 = 5.66 0.75\cdot 4.625+0.25\cdot 8.75=5.66 bits per value, the same as DAMP INT4.
+We evaluate two variants: PACE-4, a uniform four-bit state with symmetric key-axis groups of 64 64 and
+an int8 buffer, and PACE-4/8, which adds head allocation, uses key-axis groups of 32 32 with an integer
+zero point (Appendix E ), and holds the buffered keys at four bits and the values in bf16.
+6 Experimental Setup
+Models.
+We evaluate Qwen3.5-4B, 9B and 27B and Qwen3.6-35B-A3B [ 24 , 25 ] , hybrids that
+interleave gated-delta layers with full-attention layers. The gated-delta layers run on the fla kernels.
+Benchmarks.
+We evaluate on GSM8K [ 6 ] , MMLU-Pro [ 29 ] on a subset of 40 40 questions per subject ( n = 560 n{=}560 ), IFEval [ 35 ] ( n = 541 n{=}541 ), RULER variable tracking [ 10 ] at 32,768 32{,}768 tokens, and MATH-500
+[ 8 , 14 ] . Perplexity is measured on WikiText-103 [ 19 ] .
+All generative tasks
+are zero-shot with the chat template and thinking disabled.
+Baselines.
+We compare against the full-precision state, against DAMP [ 33 ] and against the
+decoupled scale quantization (DSQ) of Q-Mamba [ 4 ] , which we reimplement. DAMP INT8 follows the published
+configuration: value-axis groups of 32 32 at eight bits, and the 16 16 of 128 128 key channels per head with the
+highest error–persistence score held in fp16. It rounds the state after every generated token and
+serves as our reference for resident memory; we list it at its published 9.9 9.9 bits per value. DAMP INT4 applies the same construction at a four-bit base, with 32 32 key channels per head held
+at eight bits. Q-Mamba DSQ scales the state by one fp16 vector per axis, computed at each rounding; we
+implement the quantizer without the fine-tuning step of the published method.
+Protocol.
+All benchmarks run in the LM Evaluation Harness [ 7 ] with greedy decoding. Generation
+is capped at 1,024 1{,}024 tokens for GSM8K and MATH-500 and 8,192 8{,}192 for MMLU-Pro. We report GSM8K (flexible-extract filter) and MATH-500 as exact match, IFEval as prompt-level strict
+accuracy, and RULER as variable-tracking accuracy. Unless stated otherwise, every quantized configuration uses a four-bit base
+width and an int8 decode buffer at d ​ P = 8 dP{=}8 . Tables 1 and 2 and Appendix A come from separate evaluation runs, each with its own full-precision row.
+7 Results
+We first isolate the decode period (Section 7.1 ), then compare PACE with DAMP and
+Q-Mamba (Section 7.2 ), test its
+components one at a time (Section 7.3 ), and measure state drift
+(Section 7.4 ) and decoding throughput (Section 7.5 ).
+7.1 Effect of the Decode Period
+To isolate the period, we use the quantizer of prior work, uniform round-to-nearest with value-axis
+groups of 32 32 , at four to eight bits and d ​ P ∈ { 1 , 8 , 32 } dP\in\{1,8,32\} (Figure 4 ; per-benchmark scores in Appendix A ). Per-token rounding loses more accuracy as the width falls, and rounding every eight tokens scores above
+per-token rounding at every width below eight bits on all four backbones.
+The default period of eight closes most of the gap that a period of 32 32 closes, with a quarter of
+the buffer memory, and matches the flush interval of DeltaLog [ 15 ] . On the three larger backbones a gap to full
+precision remains at every width, concentrated in IFEval and RULER-32k. The RULER-32k gap is similar at all three decode periods, which suggests that this part of the gap arises in prefill.
+7.2 Main Results
+Table 1 compares PACE with DAMP and Q-Mamba DSQ on four backbones. On the three larger backbones PACE-4/8 scores below DAMP INT8 on
+IFEval and close to it on average, and the other benchmarks differ in both directions. On Qwen3.5-4B its
+average is lower, with lower scores on GSM8K, MMLU-Pro and IFEval.
+state
+bits/value
+GSM8K
+MMLU-Pro
+IFEval
+RULER- 32 32 k
+MATH-500
+avg
+Qwen3.5 4B
+full precision state
+32.00 32.00
+89.2
+72.3
+83.3
+100.0
+59.0
+80.8
+DAMP INT8, per token
+9.90 9.90
+89.1
+73.4
+82.8
+100.0
+59.0
+80.9
+DAMP INT4
+6.44 6.44
+89.0
+71.8
+80.6
+100.0
+58.2
+79.9
+Q-Mamba DSQ
+5.03 5.03
+88.0
+63.2
+74.9
+97.3
+52.4
+75.2
+PACE-4/8, int8 buffer
+6.44 6.44
+88.7
+71.1
+81.5
+100.0
+62.6
+80.8
+PACE-4/8
+6.82 6.82
+86.5
+70.4
+78.2
+100.0
+60.4
+79.1
+PACE-4
+5.03 5.03
+88.6
+71.2
+80.6
+99.3
+58.4
+79.6
+Qwen3.5 9B
+full precision state
+32.00 32.00
+94.2
+74.8
+84.5
+100.0
+68.8
+84.5
+DAMP INT8, per token
+9.90 9.90
+94.1
+71.8
+83.4
+100.0
+69.4
+83.7
+DAMP INT4
+6.44 6.44
+91.5
+70.5
+78.0
+93.3
+65.2
+79.7
+Q-Mamba DSQ
+5.03 5.03
+90.4
+63.6
+70.6
+88.0
+51.6
+72.8
+PACE-4/8, int8 buffer
+6.44 6.44
+91.3
+70.4
+78.6
+98.7
+68.0
+81.4
+PACE-4/8
+6.82 6.82
+92.2
+77.0
+81.3
+100.0
+68.0
+83.7
+PACE-4
+5.03 5.03
+91.0
+70.2
+76.5
+98.3
+63.8
+80.0
+Qwen3.5 27B
+full precision state
+32.00 32.00
+96.4
+83.8
+86.9
+100.0
+70.2
+87.5
+DAMP INT8, per token
+9.90 9.90
+96.4
+83.8
+88.0
+100.0
+69.0
+87.4
+DAMP INT4
+6.44 6.44
+96.1
+81.1
+79.1
+92.7
+70.2
+83.8
+Q-Mamba DSQ
+5.03 5.03
+96.0
+78.0
+73.2
+87.3
+59.8
+78.9
+PACE-4/8, int8 buffer
+6.44 6.44
+96.4
+81.6
+79.9
+95.0
+69.8
+84.5
+PACE-4/8
+6.82 6.82
+96.5
+82.5
+86.1
+100.0
+71.6
+87.3
+PACE-4
+5.03 5.03
+95.9
+81.2
+79.3
+96.0
+68.8
+84.2
+Qwen3.6 35B-A3B
+full precision state
+32.00 32.00
+96.3
+82.1
+83.7
+100.0
+70.6
+86.5
+DAMP INT8, per token
+9.90 9.90
+96.1
+83.4
+83.0
+100.0
+69.2
+86.3
+DAMP INT4
+6.44 6.44
+93.9
+66.6
+69.9
+71.0
+43.8
+69.0
+Q-Mamba DSQ
+5.03 5.03
+93.6
+72.5
+63.2
+66.7
+59.8
+71.2
+PACE-4/8, int8 buffer
+6.44 6.44
+95.5
+77.7
+74.1
+84.3
+60.0
+78.3
+PACE-4/8
+6.82 6.82
+95.3
+80.5
+81.0
+100.0
+68.4
+85.0
+PACE-4
+5.03 5.03
+95.0
+77.0
+72.6
+83.0
+58.8
+77.3
+Table 1: PACE-4/8 and PACE-4 (shaded) hold 0.69 0.69 and 0.51 0.51 of the resident bits of DAMP INT8. Bits per value are resident bits (Eq. 6 ); all configurations except DAMP INT8 round the state every eight generated tokens ( d ​ P = 8 dP{=}8 ). The average is the mean over all benchmarks.
+At the resident bits of DAMP INT4, PACE-4/8 with an int8 buffer scores above DAMP INT4 on every
+backbone, with the largest difference on Qwen3.6-35B-A3B. With its mixed buffer, PACE-4/8 scores
+higher than this variant on the three larger backbones and lower on Qwen3.5-4B. PACE-4 holds the
+same resident bits as Q-Mamba DSQ and scores higher on every backbone.
+7.3 Ablations
+We compare state quantizers on Qwen3.5-4B and 27B, changing one component at a time, and report
+IFEval with a 95 % 95\% interval on the paired difference to the full-precision state and perplexity on
+WikiText-103 at 32,768 32{,}768 tokens (Table 2 ).
+Groups along the key axis yield a lower perplexity than groups along the value axis at the
+same width, with and without head allocation, and a higher IFEval score without it. Q-Mamba DSQ yields a higher perplexity than key-axis
+groups at the same resident bits per value.
+At equal resident bits, head-level allocation yields a lower perplexity than DAMP INT4.
+configuration
+bits
+IFEval 4B
+IFEval 27B
+ppl 4B
+full precision
+32.00 32.00
+82.26 82.26
+86.69 86.69
+7.713 7.713
+Scale structure
+value axis, g = 32 g{=}32
+5.28 5.28
+73.75 ± 3.29 73.75_{\pm 3.29}
+75.05 ± 3.24 75.05_{\pm 3.24}
+8.158 8.158
+Q-Mamba DSQ [ 4 ]
+5.03 5.03
+74.86 ± 3.22 74.86_{\pm 3.22}
+73.94 ± 3.33 73.94_{\pm 3.33}
+8.320 8.320
+key axis, g = 32 g{=}32
+5.28 5.28
+80.59 ± 2.53 80.59_{\pm 2.53}
+78.37 ± 2.84 78.37_{\pm 2.84}
+7.719 7.719
+key axis, g = 64 g{=}64
+5.03 5.03
+80.59 ± 2.73 80.59_{\pm 2.73}
+78.93 ± 2.78 78.93_{\pm 2.78}
+7.734 7.734
+Precision allocation
+channel protection, value axis (DAMP INT4)
+6.44 6.44
+79.48 ± 2.68 79.48_{\pm 2.68}
+79.85 ± 2.91 \mathbf{79.85}_{\pm 2.91}
+8.003 8.003
+head allocation, value axis
+6.44 6.44
+80.41 ± 2.76 80.41_{\pm 2.76}
+77.63 ± 2.96 77.63_{\pm 2.96}
+7.776 7.776
+head allocation, key axis
+6.44 6.44
+81.52 ± 2.51 \mathbf{81.52}_{\pm 2.51}
+78.00 ± 2.88 78.00_{\pm 2.88}
+7.687 \mathbf{7.687}
+Table 2: Scaling the four-bit state along the key axis and allocating eight bits per head reduce the loss of the uniform value-axis quantizer. Bits are resident bits per value at d ​ P = 8 dP{=}8 with an int8 decode buffer.
+7.4 State Drift under Periodic Rounding
+To measure the effect of the rounding period on the state itself, we compare the quantized state with
+the full-precision state at the same token. We run Qwen3.5-4B on the first 512 tokens of the
+WikiText-103 test set [ 19 ] , round the state every d ​ P dP tokens over the whole sequence, for d ​ P dP from 1 to 64, and report the median over recurrent layers of the relative error ‖ S q − S ‖ F / ‖ S ‖ F \|S_{q}-S\|_{F}/\|S\|_{F} , which
+we call drift. We compare three four-bit
+quantizers: uniform INT4 with value-axis groups, DAMP INT4, and the state
+quantizer of PACE-4/8 (Figure 5 ).
+Figure 5: Relative state error against token position on Qwen3.5-4B, one curve per period d ​ P dP . The DAMP panel (right) keeps 16 16
+key channels per head in fp16.
+For all three quantizers, drift decreases as d ​ P dP grows at every token position, and the
+same ordering holds on Qwen3.6-35B-A3B (Appendix B ). Drift grows more
+slowly than the number of roundings, which is consistent with a decaying recurrence that removes old
+rounding error while each rounding adds new error (Section 3.2 ).
+7.5 Throughput
+We measure decoding cost on Qwen3.5-4B on one H100 PCIe GPU at a 512 512 -token context and batch sizes
+from 1 1 to 128 128 . We compare per-token decoding with a bf16 state, the decode buffer with a bf16 state
+[ 36 ] , and periodic decoding at d ​ P = 8 dP{=}8 with a uniform INT4 state and an int8
+buffer, for which we implement Triton kernels that apply the buffered tokens to the packed state. We
+report time per output token (TPOT) and the latency of the state update (Figure 6 , Appendix F ).
+Periodic rounding lets a four-bit state keep the speedup of the decode buffer. Periodic INT4 decoding
+has a lower TPOT than per-token bf16 decoding from batch 16 upward, and the difference grows with batch
+size, as reading and writing the per-sequence state take a growing share of each decoding step. The decode
+buffer with a bf16 state accounts for most of this reduction, and the INT4 state reduces TPOT slightly
+further.
+The memory each configuration holds per sequence, measured in the same run, agrees with the resident bits of Eq. 6 (Appendix F ).
+Figure 6: Decoding cost on Qwen3.5-4B (H100 PCIe, 512-token context) against batch size. Left:
+latency of the recurrent-state update. Right: time per output token. The shading marks the gap to bf16. Labels give the ratio to bf16 (left) and the relative change in
+TPOT (right) at the ends of each curve.
+8 Conclusion
+We introduced PACE, a post-hoc four-bit state quantizer for gated-delta models that rounds the state
+once every few generated tokens and holds the tokens in between in a decode buffer. For uniform
+configurations, a period of eight tokens reduces the accuracy loss at every width below eight bits on
+four backbones. This is consistent with the bound of Section 3 , under which more decay
+between two roundings leaves less of each rounding error in the state. The large entries of the state
+gather in columns that follow the channels of the delta value, and PACE forms each scale group from
+the entries of one such column. PACE-4/8 comes close to the accuracy of DAMP INT8 on the three larger
+backbones at about two thirds of its resident memory, and PACE-4 scores higher than Q-Mamba DSQ at
+equal resident bits. Periodic rounding also keeps the decoding speedup of the decode buffer.
+Limitations
+We evaluate four hybrid models from the Qwen3.5 and Qwen3.6 families, all of which use the gated delta rule.
+Periodic rounding applies to any linear-attention layer whose state can be advanced over several tokens
+at once, which includes the chunked forms of gated linear attention, Mamba-2 and DeltaNet variants.
+The head decays that enter the error bound, the column structure that motivates key-axis scale groups,
+and the head ranking are measured only on these models. None of them is shown to carry over to
+other model families, to models whose layers are all recurrent, or to token mixers with a different
+update or decay.
+Periodic rounding changes when the state is rounded and leaves the choice of quantizer open. Besides PACE, we evaluate DAMP INT4 and Q-Mamba DSQ under the same period. We do not test quantizers
+with static scales, stochastic rounding or rotations of the state under periodic rounding.
+The configuration space of periodic state quantization is large. It spans the prefill and decode
+periods, the bit widths of the state and of the buffered keys and values, the axis and width of the
+scale groups, and the fraction of heads held at eight bits, and we explore only part of it. The
+prefill period in particular is fixed at the 256 256 -token chunk of the kernel in all benchmark evaluations, so
+the effect of rounding the state more or less often during prefill is not measured.
+Throughput is timed only for a uniform four-bit state; the key-axis groups and head allocation of PACE
+are not timed.
+Acknowledgments
+Alan Akbik and Patrick Haller are
+supported by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) under Emmy Noether grant “Eidetic Representations of Natural Language” (project number
+448414230). Alan Akbik is furthermore supported under Germany’s Excellence Strategy “Science of Intelligence” (EXC 2002/1, project number
+390523135).
+The authors gratefully acknowledge the scientific support and HPC resources provided by the Erlangen National High Performance Computing Center (NHR@FAU) of the Friedrich-Alexander-Universität Erlangen-Nürnberg (FAU) under the NHR project “Pre-Training SLMs via Knowledge Distillation”. NHR funding is provided by federal and Bavarian state authorities.
+References
+[1]
+S. Ashkboos, A. Mohtashami, M. L. Croci, B. Li, P. Cameron, M. Jaggi, D. Alistarh, T. Hoefler, and J. Hensman (2024)
+QuaRot: outlier-free 4-bit inference in rotated LLMs .
+In Advances in Neural Information Processing Systems (NeurIPS) ,
+Vol. 37 , pp. 100213–100240 .
+External Links: Document
+Cited by: §2.4 .
+[2]
+M. Beck, K. Pöppel, M. Spanring, A. Auer, O. Prudnikova, M. Kopp, G. Klambauer, J. Brandstetter, and S. Hochreiter (2024)
+XLSTM: extended long short-term memory .
+In Advances in Neural Information Processing Systems (NeurIPS) ,
+Vol. 37 .
+External Links: Document
+Cited by: §2.1 .
+[3]
+J. Chee, Y. Cai, V. Kuleshov, and C. De Sa (2023)
+QuIP: 2-bit quantization of large language models with guarantees .
+In Advances in Neural Information Processing Systems (NeurIPS) ,
+Vol. 36 .
+External Links: Document
+Cited by: §2.4 .
+[4]
+T. Chen, Y. Chen, P. Wang, W. Xu, Z. Zhu, and J. Cheng (2025)
+Q-Mamba: towards more efficient Mamba models via post-training quantization .
+In Findings of the Association for Computational Linguistics: ACL 2025 ,
+pp. 10594–10610 .
+External Links: Document
+Cited by: §1 ,
+§2.4 ,
+§6 ,
+Table 2 .
+[5]
+H. Chiang, C. Chang, N. Frumkin, K. Wu, M. S. Abdelfattah, and D. Marculescu (2025)
+Quamba2: a robust and scalable post-training quantization framework for selective state space models .
+In Proceedings of the 42nd International Conference on Machine Learning (ICML) ,
+Proceedings of Machine Learning Research , Vol. 267 , pp. 10411–10427 .
+Cited by: §1 ,
+§2.4 .
+[6]
+K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. Schulman (2021)
+Training verifiers to solve math word problems .
+arXiv preprint arXiv:2110.14168 .
+Cited by: §6 .
+[7]
+L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h, H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron, L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou (2024)
+The language model evaluation harness .
+Note: Zenodo, https://doi.org/10.5281/zenodo.12608602
+Cited by: §6 .
+[8]
+D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt (2021)
+Measuring mathematical problem solving with the MATH dataset .
+In Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track ,
+Vol. 1 .
+Cited by: §6 .
+[9]
+C. Hooper, S. Kim, H. Mohammadzadeh, M. W. Mahoney, Y. S. Shao, K. Keutzer, and A. Gholami (2024)
+KVQuant: towards 10 million context length LLM inference with KV cache quantization .
+In Advances in Neural Information Processing Systems (NeurIPS) ,
+Vol. 37 , pp. 1270–1303 .
+External Links: Document
+Cited by: §2.4 .
+[10]
+C. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, Y. Zhang, and B. Ginsburg (2024)
+RULER: what’s the real context size of your long-context language models? .
+In Conference on Language Modeling (COLM) ,
+Cited by: §6 .
+[11]
+L. B. Jackson (1970)
+Roundoff-noise analysis for fixed-point digital filters realized in cascade or parallel form .
+IEEE Transactions on Audio and Electroacoustics 18 ( 2 ), pp. 107–122 .
+External Links: Document
+Cited by: §2.4 .
+[12]
+A. Katharopoulos, A. Vyas, N. Pappas, and F. Fleuret (2020)
+Transformers are RNNs: fast autoregressive transformers with linear attention .
+In Proceedings of the 37th International Conference on Machine Learning (ICML) ,
+Proceedings of Machine Learning Research , Vol. 119 , pp. 5156–5165 .
+Cited by: §2.1 .
+[13]
+S. Kozyrev and D. Maiboroda (2026)
+Why gated DeltaNet survives 4-bit quantization: NVFP4 W4A4 for the recurrent half of a hybrid 27B LLM .
+arXiv preprint arXiv:2609.04098 .
+Cited by: §2.4 ,
+§2.4 .
+[14]
+H. Lightman, V. Kosaraju, Y. Burda, H. Edwards, B. Baker, T. Lee, J. Leike, J. Schulman, I. Sutskever, and K. Cobbe (2024)
+Let’s verify step by step .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §6 .
+[15]
+J. Lin, J. Sun, and G. Sun (2026)
+DeltaLog: deferred materialization of recurrent states for linear attention decoding .
+arXiv preprint arXiv:2608.15533 .
+Cited by: §1 ,
+§2.3 ,
+§7.1 .
+[16]
+Z. Liou and T. Dao (2026)
+ReplaySSM: cache SSM inputs, not state .
+Note: Blog post, https://tridao.me/blog/2026/replayssm/
+Cited by: §1 ,
+§2.3 .
+[17]
+Z. Liu, C. Zhao, I. Fedorov, B. Soran, D. Choudhary, R. Krishnamoorthi, V. Chandra, Y. Tian, and T. Blankevoort (2025)
+SpinQuant: LLM quantization with learned rotations .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §2.4 .
+[18]
+Z. Liu, J. Yuan, H. Jin, S. Zhong, Z. Xu, V. Braverman, B. Chen, and X. Hu (2024)
+KIVI: a tuning-free asymmetric 2bit quantization for KV cache .
+In Proceedings of the 41st International Conference on Machine Learning (ICML) ,
+Proceedings of Machine Learning Research , Vol. 235 , pp. 32332–32344 .
+Cited by: §2.4 .
+[19]
+S. Merity, C. Xiong, J. Bradbury, and R. Socher (2017)
+Pointer sentinel mixture models .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §6 ,
+§7.4 .
+[20]
+NVIDIA, A. Blakeman, A. Thomas, A. Jhunjhunwala, et al. (2026)
+Nemotron 3 Ultra: open, efficient mixture-of-experts hybrid Mamba-transformer model for agentic reasoning .
+arXiv preprint arXiv:2606.15007 .
+Cited by: §1 ,
+§2.4 .
+[21]
+NVIDIA, A. Chandiramani, A. Blakeman, A. Olaoye, et al. (2026)
+Nemotron 3 Super: open, efficient mixture-of-experts hybrid Mamba-transformer model for agentic reasoning .
+arXiv preprint arXiv:2604.12374 .
+Cited by: §1 ,
+§2.4 .
+[22]
+A. V. Oppenheim and C. J. Weinstein (1972)
+Effects of finite register length in digital filtering and the fast Fourier transform .
+Proceedings of the IEEE 60 ( 8 ), pp. 957–976 .
+External Links: Document
+Cited by: §2.4 .
+[23]
+B. Peng, E. Alcaide, Q. Anthony, A. Albalak, S. Arcadinho, S. Biderman, H. Cao, X. Cheng, M. Chung, L. Derczynski, X. Du, M. Grella, K. Gv, X. He, H. Hou, P. Kazienko, J. Kocon, J. Kong, B. Koptyra, H. Lau, J. Lin, K. S. I. Mantri, F. Mom, A. Saito, G. Song, X. Tang, J. Wind, S. Woźniak, Z. Zhang, Q. Zhou, J. Zhu, and R. Zhu (2023)
+RWKV: reinventing RNNs for the transformer era .
+In Findings of the Association for Computational Linguistics: EMNLP 2023 ,
+pp. 14048–14077 .
+External Links: Document
+Cited by: §2.1 .
+[24]
+Qwen Team (2026)
+Qwen3.5: towards native multimodal agents .
+Note: https://qwen.ai/blog?id=qwen3.5
+Cited by: §6 .
+[25]
+Qwen Team (2026)
+Qwen3.6-35B-A3B: agentic coding power, now open to all .
+Note: https://qwen.ai/blog?id=qwen3.6-35b-a3b
+Cited by: §6 .
+[26]
+I. Schlag, K. Irie, and J. Schmidhuber (2021)
+Linear transformers are secretly fast weight programmers .
+In Proceedings of the 38th International Conference on Machine Learning (ICML) ,
+Proceedings of Machine Learning Research , Vol. 139 , pp. 9355–9366 .
+Cited by: §2.1 .
+[27]
+S. Siegel, M. Yang, Y. Bouhadjar, M. Fabre, E. Neftci, and J. P. Strachan (2026)
+QS4D: quantization-aware training for efficient hardware deployment of structured state-space sequential models .
+Advanced Intelligent Systems 8 ( 4 ), pp. e202501019 .
+External Links: Document
+Cited by: §2.4 .
+[28]
+Y. Sun, L. Dong, S. Huang, S. Ma, Y. Xia, J. Xue, J. Wang, and F. Wei (2023)
+Retentive network: a successor to transformer for large language models .
+arXiv preprint arXiv:2307.08621 .
+Cited by: §2.1 .
+[29]
+Y. Wang, X. Ma, G. Zhang, Y. Ni, A. Chandra, S. Guo, W. Ren, A. Arulraj, X. He, Z. Jiang, T. Li, M. Ku, K. Wang, A. Zhuang, R. Fan, X. Yue, and W. Chen (2024)
+MMLU-Pro: a more robust and challenging multi-task language understanding benchmark .
+In Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track ,
+Vol. 37 .
+External Links: Document
+Cited by: §6 .
+[30]
+Z. Xu, Y. Yue, X. Hu, Z. Yuan, Z. Jiang, Z. Chen, J. Yu, C. Xu, S. Zhou, and D. Yang (2025)
+MambaQuant: quantizing the Mamba family with variance aligned rotation methods .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §2.4 .
+[31]
+S. Yang, J. Kautz, and A. Hatamizadeh (2025)
+Gated delta networks: improving Mamba2 with delta rule .
+In International Conference on Learning Representations (ICLR) ,
+Cited by: §1 ,
+§2.1 ,
+§2.2 .
+[32]
+S. Yang, B. Wang, Y. Shen, R. Panda, and Y. Kim (2024)
+Gated linear attention transformers with hardware-efficient training .
+In Proceedings of the 41st International Conference on Machine Learning (ICML) ,
+Proceedings of Machine Learning Research , Vol. 235 , pp. 56501–56523 .
+Cited by: §1 ,
+§2.1 ,
+§2.2 .
+[33]
+T. Zhang, J. Tan, P. Sun, Y. Yu, Z. Su, Z. Jiang, Y. Xie, X. Cai, and Z. Zeng (2026)
+DAMP: decay-aware mixed-precision recurrent-state quantization .
+arXiv preprint arXiv:2608.27513v1 .
+Cited by: §1 ,
+§2.4 ,
+§2.4 ,
+§5.1 ,
+§5.2 ,
+§5.3 ,
+§6 .
+[34]
+L. Zhao, T. Torchet, M. Payvand, L. Kriener, and F. Moro (2025)
+Quantizing small-scale state-space models for edge AI .
+In 2025 International Conference on Neuromorphic Systems (ICONS) ,
+pp. 158–165 .
+External Links: Document
+Cited by: §2.4 .
+[35]
+J. Zhou, T. Lu, S. Mishra, S. Brahma, S. Basu, Y. Luan, D. Zhou, and L. Hou (2023)
+Instruction-following evaluation for large language models .
+arXiv preprint arXiv:2311.07911 .
+Cited by: §6 .
+[36]
+L. Zou and L. Zhong (2026)
+KVBuffer: IO-aware serving for linear attention .
+arXiv preprint arXiv:2605.19049 .
+Cited by: §1 ,
+§2.3 ,
+§7.5 .
+Appendix A Per-Benchmark Scores across Widths and Periods
+Table 3 gives the per-benchmark scores behind Figure 4 .
+(a) Qwen3.5-4B
+state
+resident
+GSM8K
+IFEval
+RULER- 32 32 k
+avg
+full precision
+32.00 32.00
+82.7
+83.3
+100.0
+88.7
+INT8, d ​ P = 1 dP{=}1
+8.60 8.60
+84.3
+81.1
+100.0
+88.5
+INT8, d ​ P = 8 dP{=}8
+9.28 9.28
+84.8
+80.0
+100.0
+88.3
+INT8, d ​ P = 32 dP{=}32
+11.64 11.64
+84.2
+81.7
+100.0
+88.6
+INT7, d ​ P = 1 dP{=}1
+7.60 7.60
+84.2
+79.1
+100.0
+87.8
+INT7, d ​ P = 8 dP{=}8
+8.28 8.28
+83.6
+80.4
+100.0
+88.0
+INT7, d ​ P = 32 dP{=}32
+10.64 10.64
+83.8
+80.8
+100.0
+88.2
+INT6, d ​ P = 1 dP{=}1
+6.60 6.60
+82.4
+78.0
+100.0
+86.8
+INT6, d ​ P = 8 dP{=}8
+7.28 7.28
+83.5
+80.6
+99.7
+87.9
+INT6, d ​ P = 32 dP{=}32
+9.64 9.64
+84.0
+81.3
+99.7
+88.3
+INT5, d ​ P = 1 dP{=}1
+5.60 5.60
+80.6
+70.6
+100.0
+83.7
+INT5, d ​ P = 8 dP{=}8
+6.28 6.28
+83.2
+77.1
+99.7
+86.7
+INT5, d ​ P = 32 dP{=}32
+8.64 8.64
+83.8
+79.3
+99.7
+87.6
+INT4, d ​ P = 1 dP{=}1
+4.60 4.60
+69.3
+61.4
+99.3
+76.7
+INT4, d ​ P = 8 dP{=}8
+5.28 5.28
+80.2
+73.0
+99.0
+84.1
+INT4, d ​ P = 32 dP{=}32
+7.64 7.64
+82.0
+77.1
+99.0
+86.0
+(b) Qwen3.5-9B
+state
+resident
+GSM8K
+IFEval
+RULER- 32 32 k
+avg
+full precision
+32.00 32.00
+88.4
+84.5
+100.0
+91.0
+INT8, d ​ P = 1 dP{=}1
+8.60 8.60
+88.4
+78.2
+97.7
+88.1
+INT8, d ​ P = 8 dP{=}8
+9.28 9.28
+89.0
+78.9
+97.7
+88.5
+INT8, d ​ P = 32 dP{=}32
+11.64 11.64
+89.2
+79.1
+98.0
+88.8
+INT7, d ​ P = 1 dP{=}1
+7.60 7.60
+88.5
+75.8
+96.3
+86.9
+INT7, d ​ P = 8 dP{=}8
+8.28 8.28
+88.6
+77.6
+95.7
+87.3
+INT7, d ​ P = 32 dP{=}32
+10.64 10.64
+88.9
+76.0
+96.0
+86.9
+INT6, d ​ P = 1 dP{=}1
+6.60 6.60
+87.3
+73.4
+95.0
+85.2
+INT6, d ​ P = 8 dP{=}8
+7.28 7.28
+87.7
+76.0
+95.3
+86.3
+INT6, d ​ P = 32 dP{=}32
+9.64 9.64
+87.6
+76.9
+95.3
+86.6
+INT5, d ​ P = 1 dP{=}1
+5.60 5.60
+86.1
+68.4
+93.3
+82.6
+INT5, d ​ P = 8 dP{=}8
+6.28 6.28
+87.5
+74.5
+93.0
+85.0
+INT5, d ​ P = 32 dP{=}32
+8.64 8.64
+88.6
+77.4
+94.0
+86.7
+INT4, d ​ P = 1 dP{=}1
+4.60 4.60
+82.6
+61.4
+90.3
+78.1
+INT4, d ​ P = 8 dP{=}8
+5.28 5.28
+87.3
+71.3
+90.0
+82.9
+INT4, d ​ P = 32 dP{=}32
+7.64 7.64
+88.1
+76.9
+91.7
+85.6
+(c) Qwen3.5-27B
+state
+resident
+GSM8K
+IFEval
+RULER- 32 32 k
+avg
+full precision
+32.00 32.00
+90.8
+86.9
+100.0
+92.6
+INT8, d ​ P = 1 dP{=}1
+8.60 8.60
+90.8
+80.2
+95.3
+88.8
+INT8, d ​ P = 8 dP{=}8
+9.28 9.28
+91.3
+80.8
+95.3
+89.1
+INT8, d ​ P = 32 dP{=}32
+11.64 11.64
+91.6
+78.9
+95.3
+88.6
+INT7, d ​ P = 1 dP{=}1
+7.60 7.60
+91.1
+77.8
+94.0
+87.6
+INT7, d ​ P = 8 dP{=}8
+8.28 8.28
+91.2
+79.3
+94.3
+88.3
+INT7, d ​ P = 32 dP{=}32
+10.64 10.64
+90.6
+79.5
+94.3
+88.1
+INT6, d ​ P = 1 dP{=}1
+6.60 6.60
+91.5
+75.8
+94.0
+87.1
+INT6, d ​ P = 8 dP{=}8
+7.28 7.28
+91.8
+76.5
+95.0
+87.8
+INT6, d ​ P = 32 dP{=}32
+9.64 9.64
+92.0
+79.5
+93.7
+88.4
+INT5, d ​ P = 1 dP{=}1
+5.60 5.60
+91.4
+74.7
+90.7
+85.6
+INT5, d ​ P = 8 dP{=}8
+6.28 6.28
+90.8
+76.7
+90.7
+86.0
+INT5, d ​ P = 32 dP{=}32
+8.64 8.64
+91.4
+78.6
+91.0
+87.0
+INT4, d ​ P = 1 dP{=}1
+4.60 4.60
+88.5
+69.5
+90.3
+82.8
+INT4, d ​ P = 8 dP{=}8
+5.28 5.28
+89.9
+75.8
+91.7
+85.8
+INT4, d ​ P = 32 dP{=}32
+7.64 7.64
+91.2
+78.7
+91.7
+87.2
+(d) Qwen3.6-35B-A3B
+state
+resident
+GSM8K
+IFEval
+RULER- 32 32 k
+avg
+full precision
+32.00 32.00
+92.8
+83.7
+100.0
+92.2
+INT8, d ​ P = 1 dP{=}1
+8.60 8.60
+90.5
+69.3
+83.0
+80.9
+INT8, d ​ P = 8 dP{=}8
+9.28 9.28
+90.4
+72.3
+83.7
+82.1
+INT8, d ​ P = 32 dP{=}32
+11.64 11.64
+90.4
+72.1
+84.0
+82.2
+INT7, d ​ P = 1 dP{=}1
+7.60 7.60
+90.5
+69.7
+83.0
+81.1
+INT7, d ​ P = 8 dP{=}8
+8.28 8.28
+89.8
+71.2
+83.0
+81.3
+INT7, d ​ P = 32 dP{=}32
+10.64 10.64
+90.1
+70.8
+81.7
+80.8
+INT6, d ​ P = 1 dP{=}1
+6.60 6.60
+88.9
+65.6
+83.0
+79.2
+INT6, d ​ P = 8 dP{=}8
+7.28 7.28
+90.4
+71.5
+84.0
+82.0
+INT6, d ​ P = 32 dP{=}32
+9.64 9.64
+90.4
+70.8
+83.3
+81.5
+INT5, d ​ P = 1 dP{=}1
+5.60 5.60
+88.4
+61.6
+82.3
+77.4
+INT5, d ​ P = 8 dP{=}8
+6.28 6.28
+89.8
+70.4
+82.3
+80.9
+INT5, d ​ P = 32 dP{=}32
+8.64 8.64
+90.1
+72.6
+83.7
+82.1
+INT4, d ​ P = 1 dP{=}1
+4.60 4.60
+80.0
+54.7
+77.3
+70.7
+INT4, d ​ P = 8 dP{=}8
+5.28 5.28
+89.3
+66.2
+76.3
+77.3
+INT4, d ​ P = 32 dP{=}32
+7.64 7.64
+90.9
+68.8
+75.7
+78.4
+Table 3: Results on post-hoc state quantization on four backbones: (a) Qwen3.5-4B, (b) Qwen3.5-9B, (c) Qwen3.5-27B and (d) Qwen3.6-35B-A3B. Every row rounds the state to nearest in value-axis groups of 32 32 . The prefill period is P = 256 P{=}256 throughout, so d ​ P dP changes only decoding. resident gives resident bits per value (Eq. 6 ), including the decode buffer at 0.098 0.098 bits per value per token of the period. avg is the unweighted mean of GSM8K, IFEval and RULER- 32 32 k.
+Appendix B State Drift
+Figure 7: State drift on Qwen3.6-35B-A3B, measured as in Figure 5 .
+Appendix C State Statistics along the Two Axes
+A two-way additive decomposition of log ⁡ | S | \log|S| within each head assigns more variance to the row
+(key-index) effect than to the column effect on all four backbones, so this bulk statistic ranks the
+two axes opposite to the max/RMS ratio. The step size of a group follows its largest entry, which the tail statistics in
+Figure 3 and Table 4 measure.
+value/key max/RMS, g = 128 g{=}128
+outlier mass on columns
+condition
+4B
+9B
+27B
+35B-A3B
+4B
+9B
+27B
+35B-A3B
+original
+1.588 1.588
+1.555 1.555
+1.601 1.601
+1.871 1.871
+82.6 82.6
+78.6 78.6
+83.9 83.9
+87.8 87.8
+u t u_{t} channels permuted per token
+0.776 0.776
+0.760 0.760
+0.808 0.808
+0.963 0.963
+35.5 35.5
+34.5 34.5
+37.1 37.1
+45.4 45.4
+k k entries permuted per token
+2.265 2.265
+2.220 2.220
+2.261 2.261
+2.580 2.580
+93.1 93.1
+92.3 92.3
+93.9 93.9
+92.7 92.7
+Table 4: Permuting the channels of the delta value at every token gives key-axis groups the larger max/RMS; permuting the key entries widens the difference. Left: ratio of the value-axis to the key-axis max/RMS at g = 128 g{=}128 . Right: share of large entries that fall in the heaviest 5 % 5\% of columns, in percent.
+Appendix D Separate Key and Value Buffer Widths
+To locate which buffered tensor limits the buffer width, we round only the keys or only the values to
+four bits and keep the other in bf16, with the state quantizer of PACE-4/8 at d ​ P = 8 dP{=}8 . Rounding the
+values reduces accuracy more than rounding the keys (Table 5 ). The rank-one form of the
+update predicts the opposite order, since a key error misaddresses both the read and the write, while a
+value error affects only the write. Rounding either tensor to four
+bits gives a similar relative input error, but the kernel L2-normalizes the buffered keys after
+rounding, so only the direction of a key error reaches the state, while a value error enters it
+unchanged.
+IFEval
+RULER- 32 32 k
+k k / v v
+bits
+4B
+9B
+27B
+35B
+9B
+27B
+35B
+full precision
+32.00 32.00
+83.2
+84.5
+86.9
+83.4
+100.0
+100.0
+100.0
+key axis
+int 8 8 / int 8 8
+6.44 6.44
+81.5
+78.2
+79.9
+72.8
+98.3
+95.0
+84.3
+int 4 4 / bf 16 16
+6.82 6.82
+78.2
+82.4
+86.5
+80.4
+100.0
+100.0
+100.0
+bf 16 16 / int 4 4
+6.44 6.44
+13.9
+22.7
+37.0
+12.2
+1.7
+34.3
+0.0
+value axis
+int 8 8 / int 8 8
+6.44 6.44
+80.4
+76.7
+78.7
+71.5
+97.0
+94.0
+82.7
+int 4 4 / bf 16 16
+6.82 6.82
+77.1
+81.1
+84.8
+80.8
+100.0
+96.3
+99.7
+bf 16 16 / int 4 4
+6.44 6.44
+14.0
+22.7
+37.5
+11.3
+4.3
+32.3
+0.0
+Table 5: Rounding the buffered values to four bits reduces accuracy more than rounding the buffered keys. PACE-4/8 state quantizer at d ​ P = 8 dP{=}8 ; k k / v v gives the widths of the buffered keys and values; bits are resident bits per value.
+Appendix E Integer Zero Point
+The affine grid needs a zero point, and storing it as a float means an entry that has decayed to zero
+is rounded to a nonzero value at every rounding. We snap the zero point onto the payload grid and store it
+as a b b -bit code, so the side information is ( 16 + b ) / 32 (16+b)/32 bits per value and a decayed entry rounds
+to zero by construction. An affine 4 4 -bit group takes 4.625 4.625 bits per value and an 8 8 -bit group
+8.75 8.75 .
+Appendix F Throughput Measurement and Memory
+The state-update latency is the TPOT minus the TPOT of the same model with the recurrent operator
+replaced by a constant. All timings use CUDA graphs and the median over 15 15 timing blocks.
+configuration
+state
+buffer
+other
+bits/value
+Eq. 6
+per-token, bf16 state
+24.00 24.00
+–
+–
+16.00 16.00
+16.00 16.00
+decode buffer, bf16 state
+24.75 24.75
+1.14 1.14
+0.08 0.08
+17.32 17.32
+17.28 17.28
+periodic INT4, d ​ P = 8 dP{=}8
+6.75 6.75
+1.14 1.14
+0.08 0.08
+5.32 5.32
+5.28 5.28
+Table 6: Recurrent-state memory per sequence on Qwen3.5-4B in MiB, measured in the run of
+Figure 6 , and the bits per state value it implies, next to the resident bits of
+Eq. 6 . other holds the buffered decays and kernel scratch space.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

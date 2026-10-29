@@ -1,0 +1,133 @@
+2 Standard Monitors Cannot Identify Distributed Agent Attacks
+In distributed agent attacks, a single harmful objective is decomposed into subtasks. These subtasks are executed across separate agent contexts in different user accounts, so that while each local subtask transcript appears benign, the aggregate task is harmful.
+While distributed misuse has featured prominently in recent threat disclosures (GTIG, 2025; OpenAI, 2025; Anthropic, 2025a), distributed agent attacks have not yet been studied in the academic literature.
+To our knowledge, we implement the first such attack, evaluate it, and find that standard monitors are highly susceptible to it (Figure 3).
+In later sections, we use this attack to evaluate our online stateful monitor.
+Distributed agent attack.
+Our distributed agent attack effectively evades standard monitors (Figure 3),
+by distributing misuse subtasks across many agent contexts, using a multi-agent system for difficult cybersecurity tasks.
+This attack generalizes two lines of prior work; the first breaks up harmful tasks in simple question-answer settings (Glukhov et al., 2024; Jones et al., 2025; Brown et al., 2025), the second performs decomposition attacks in a single model context (Li et al., 2024; Yueh-Han et al., 2025) (‘sequential decomposition attack’ in Figure 3).
+Our agent distributes misuse across different user accounts, instead of just a single agent context, make it more difficult to monitor.
+We build our distributed agent attack from a multi-agent scaffold, ARTEMIS (Lin et al., 2025).
+Our scaffold completes cybersecurity tasks using an agent orchestrator which receives the full task objective, and then delegates subagents.
+The subagents receive a narrow task description, which our orchestrator frames as a non-cybersecurity, ordinary engineering task, thereby concealing the full harmful objective.
+When the subagents complete tasks, their outputs are stored in a database so the orchestrator can combine partial results.
+A verifier tool periodically checks if the cyber task is solved.
+Figure 3: Our distributed agent attack evades standard monitoring. The distributed agent takes longer to detect (left) and is much harder to catch (right) than prior agent scaffolds or attacks.
+Distributed attacks perform well on cybersecurity tasks.
+An attack that merely hides the harmful task, but cannot complete the task itself, would not be a meaningful monitoring benchmark.
+We therefore evaluate our scaffold on a difficult Cybench subset (Zhang et al., 2024); gpt-oss-120b (Agarwal et al., 2025) solves 0%0\% directly with a standard agent scaffold (Yao et al., 2023), but 36.736.7–40.0%40.0\% in our scaffold, where it supervises gpt-5.2 subagents who do not have the full task context. Thus, models too weak to solve the full task can still coordinate stronger agents to solve the full task, while hiding the misuse objective. Full results are in Appendix C.
+Monitors struggle to detect distributed attacks.
+Distributed agent attacks can accomplish significantly more harm than other attacks before being caught by a standard monitor.
+In Figure 3, we find that our distributed agent attack can typically accomplish 22 times (or more) actions towards an objective, and cause monitors to have 30%–80% worse recall, relative to other attacks.
+We use the same subset of difficult Cybench cybersecurity tasks, and measure how well gpt-4.1-mini as the monitor can detect whether an agent is attempting a cybersecurity task or a software task.
+We keep the monitor and prompt fixed, and compare our distributed attack to three baselines: directly prompting gpt-5.2 to complete the cybersecurity task, a baseline ARTEMIS scaffold, and a sequential decomposition attack.
+Existing sequential decomposition attacks (attacks that implement a decomposition attack in a single context (Li et al., 2024; Yueh-Han et al., 2025)) were designed for non-agent coding tasks, so we create a new performant agent decomposition attack.
+Distributed agent attacks can take more than twice as many actions before detection (Figure 3), leading to substantially more harmful outcomes.
+For example, sequential decomposition attacks are on average caught while just obtaining access, whereas distributed agent attacks can essentially perform the entire exploit (we label attack stages based on (Al-Sada et al., 2024); see Section 4 for methodology).
+At modest false-positive rates, the monitor essentially always catches sequential decomposition attacks, but catches distributed agent attacks only 20%20\% of the time.
+3 Online Stateful Monitoring
+Consider a defender who deploys language model agents to tens of thousands of users.
+The defender receives a large stream of new requests from users querying the agents, and also monitors that agent’s actions and outputs.
+The defender classifies every new query and agent action as either benign (and allowed to continue) or harmful (and flagged).
+An attacker, attempting to misuse the agent to complete a harmful cybersecurity task, can create arbitrary new accounts.
+Because there are many more benign prompts and actions than harmful ones, the attacker attempts to perform the distributed misuse attack defined in Section 2, where each account separately prompts an agent to perform a subtask that appears benign in isolation, but together implement a cybersecurity misuse task.
+A standard monitor is a language model judge that uses the current agent context when classifying an interaction as benign or harmful (Inan et al., 2023; Sharma et al., 2025).
+Let xtx_{t} denote the incoming user request, together with the model context so far.
+For each request, the local monitor scores xtx_{t} for suspiciousness on a 0–1 scale.
+As discussed in Section 2, monitors generally perform well at identifying misuse in a single agent context; for example, our standard monitor is able to identify essentially all attacks occurring in a context at false positive rates of 0.050.05 per session.
+However, our results demonstrate that standard monitors perform poorly against distributed agent attacks, which hide evidence of misuse among many user accounts.
+The harmful objective becomes identifiable only after several related contexts are collected, which is not possible for standard monitors.
+Our stateful online monitor is designed to solve the problem of identifying distributed attacks, by collecting evidence of a misuse attempt from among many different user accounts and agent contexts in real-time.
+At a high-level, for every new user prompt, our monitor retrieves related prior agent contexts to judge whether the current request is a part of a distributed agent attack.
+As shown in Figure 2, each request is embedded and clustered with all previous agent contexts from all other users.
+Finally, another monitor judges across contexts if the request, along with semantically related requests in the same cluster, constitute a distributed agent attack. See Algorithm 1 for the full procedure.
+Algorithm 1 Online stateful monitoring for request xtx_{t}. Stages 2 to 4 of Figure 2.
+1:
+st←StandardMonitor​(xt)s_{t}\leftarrow\textsc{StandardMonitor}(x_{t}) ⊳\triangleright step 2
+2:
+et←Embed​(xt)e_{t}\leftarrow\textsc{Embed}(x_{t})
+3:
+j⋆←arg⁡max1≤j≤Mt​⟨et,cj⟩j^{\star}\leftarrow\arg\max_{1\leq j\leq M_{t}}\langle e_{t},c_{j}\rangle ⊳\triangleright step 3
+4:
+if ⟨et,cj⋆⟩<τroute\langle e_{t},c_{j^{\star}}\rangle<\tau_{\mathrm{route}} then
+5:
+open new cluster j⋆←Mt+1j^{\star}\leftarrow M_{t}+1 with centroid ete_{t} and buffer Bj⋆←∅B_{j^{\star}}\leftarrow\emptyset
+6:
+else
+7:
+update centroid cj⋆c_{j^{\star}} online
+8:
+end if
+9:
+insert (xt,st)(x_{t},s_{t}) into Bj⋆B_{j^{\star}} (deduplicated)
+10:
+if sts_{t} exceeds a standard monitor threshold or Bj⋆B_{j^{\star}} has accumulated cross-session evidence then
+11:
+assemble attack evidence from xtx_{t} and top-kk prior entries of Bj⋆B_{j^{\star}}
+12:
+at←CrossContextMonitor​(attack evidence)a_{t}\leftarrow\textsc{CrossContextMonitor}(\text{attack evidence}) ⊳\triangleright step 4
+13:
+return ata_{t} ⊳\triangleright allow or refuse xtx_{t}
+14:
+end if
+15:
+return allow
+Retrieving related contexts with online clustering.
+Instead of only classifying misuse on a single agent context, for each new request our monitor first retrieves prior agent contexts from other user accounts, and then classifies this collection of transcripts as part of a (potential) aggregate misuse attempt.
+But how are the most relevant transcripts retrieved, in real-time, out of tens of thousands of options?
+One approach for retrieving potential clusters of misuse would be to periodically embed and cluster all prior transcripts (Tamkin et al., 2024). But this is both too slow and too expensive for live monitoring. If there are NtN_{t} prior agent transcripts at time tt, then re-clustering for a new request costs O⁡(d​Nt2)O(dN_{t}^{2}), where dd is the embedding dimension.
+Even a top-kk retrieval requires comparing the current request against NtN_{t} prior transcripts costs O⁡(d​Nt)O(dN_{t}).
+This is too costly at our problem scale, where there are rare misuse attempts hidden in a background of thou of benign agent actions.
+We instead compare new prompts to a smaller number of summary clusters, computed online (Aggarwal et al., 2003; Cao et al., 2006; Hahsler and Bolaños, 2016) and storing semantically related prior transcripts. For every user message, a standard monitor first provides a suspiciousness score. We compute an embedding (in most experiments, with (Voyage AI, 2026)) of the current agent context, ete_{t}, and compare it to the centroids of our clusters,
+j⋆=arg⁡max1≤j≤Mt​⟨et,cj⟩,j^{\star}=\arg\max_{1\leq j\leq M_{t}}\langle e_{t},c_{j}\rangle,
+where MtM_{t} is the number of clusters and cjc_{j} is the centroid of cluster jj. Let rt=⟨et,cj⋆⟩r_{t}=\langle e_{t},c_{j^{\star}}\rangle. If rt<τrouter_{t}<\tau_{\mathrm{route}}, the window starts a new cluster initialized with most recent embedding; otherwise, the nearest cluster centroid and buffer is updated online.
+We merge clusters when agent contexts are repeatedly assigned to the same clusters (Hahsler and Bolaños, 2016); we tune both τroute\tau_{\mathrm{route}} and this merging threshold during our experiments. For the current request, the suspicious examples are eligible to be shown to the cross-context monitor.
+This is significantly cheaper than comparing every context against the full set of transcripts.
+The per-request cost is
+Tt=O⁡(1)+O⁡(d​Mt+Mt​log⁡Mt)+qt​Ccc,T_{t}=O(1)+O(dM_{t}+M_{t}\log M_{t})+q_{t}C_{\mathrm{cc}},
+where O⁡(1)O(1) is the standard monitor, d​MtdM_{t} the centroid dot product, Mt​log⁡MtM_{t}\log M_{t} sorts the centroid scores, and CccC_{\mathrm{cc}} is the cost for the cross-context monitor, where qt∈{0,1}q_{t}\in\{0,1\} indicates whether a request is sent to the monitor. Only a small fraction of requests pay the cost of the language-model reasoning over retrieved evidence. Figure 4 shows that for the 99%99\% majority of queries, the request latency stays close to the standard monitor, with improved detection performance (Section 4).
+Figure 4: Per-request latency of the online stateful monitor versus a standard monitor baseline. The online stateful monitor improves our performance metrics (recall and TTD90), while maintaining low latency for hte majority of users, except for the P99 tail.
+Monitoring across many contexts.
+We cluster prior conversations, and show the most relevant clusters to the cross-context monitor to label xtx_{t} as harmful.
+After the standard monitor scores the current request xtx_{t} and is assigned to a set of clusters GtG_{t}, a cross-context monitor is called in two cases (see Algorithm 1).
+In the first case, the current request receives a high suspiciousness score, but not sufficiently high to be refused outright.
+In the other case, the other sessions in GtG_{t}, from different user accounts, repeatedly receive new contexts. The cluster stores a buffer of prior suspicious contexts, which are deduplicated via hash, sorted by suspiciousness score.
+To flag a cluster, the largest kk scores are summed and exceed a threshold calibrated on held-out data. We also require ≥m\geq m prior contexts above a certain score. This lets several moderate signals trigger review.
+During our experiments, we use held-out data to tune these thresholds.
+4 Experiments
+Our real-time defense stores new requests with semantically related prior traffic, and in rare cases sends suspicious transcripts to a cross-context monitor, which judges if there is a coordinated distributed attack occurring.
+In this section, we evaluate three questions: (i) whether state improves campaign detection at realistic false positive rates, (ii) whether it catches campaigns earlier in the attack trajectory, i.e. before the attacker can do significant harm, and (iii) whether these gains preserve low latency for ordinary traffic.
+Attack. Harmful transcripts come from the distributed attack in Section 2, where a gpt-oss-120b supervisor receives a cybersecurity task (Zhang et al., 2024; Zhang et al., 2025) and delegates to gpt-5.2 subagents with fresh conversation context; the monitor sees only the context from the gpt-5.2 subagents.
+Policy and judge. We use a refusal policy that treats exploit tasks used in CTF benchmarks as disallowed, while allowing ordinary software engineering and defensive security work. This is not a claim that CTF tasks should be refused, but this policy allows us to evaluate realistic cybersecurity tasks. All monitor judgments use the same cyber safety prompt with gpt-4.1-mini-2025-04-14.
+Traffic. We construct streams by sampling a distributed attack, and randomly inserting it into benign agent traffic from coding-agent and web-chat traces (Jimenez et al., 2024; Trofimova et al., 2025; Yang et al., 2024; Merrill et al., 2026; Barres et al., 2025; Lù et al., 2024), where the benign traces are sampled 10​x10x or 100​x100x more than the agent conversations (e.g. for 272 harmful conversations, there are 27200 benign conversations sampled without replacement). For our results, we sample and re-evaluate our monitor on 50 distributed attack tasks with new benign background samples 55 times.
+Baselines and metrics. We compare standard and stateful monitors, both using gpt-4.1-mini-2025-04-14. For the standard monitor, we use both the discrete yes/no decision and also the operating curves over the reported harmfulness scores. For the stateful monitor, every point on the operating curve in Figures 4, 5 and 6 is a separate replay with fixed thresholds for monitor hyperparameters (the clustering thresholds discuss in Section 3). A campaign is recalled when any harmful request is denied, and FPR the fraction of benign conversations with a refusal.
+Time-to-detect (TTD) measures the number of attacker turns before a harmful turn is flagged; if the first harmful turn is denied, TTD is zero. For missed campaigns, we score TTD with the agent trajectory length. A defense that achieves low TTD both catches campaigns and catches them early.
+Figure 5: State creates better precision–recall tradeoffs on distributed cyber attacks. Local-monitor baselines are threshold sweeps over stored monitor scores; stateful points are empirical operating points from the online monitor.
+Stateful monitoring improves misuse detection.
+Figure 5 shows that the operating points from our stateful monitor Pareto dominate the standard monitor. With 10​x10x more benign than attack conversations, the stateful moniter reaches 81.1–87.2% campaign recall at 2.35–3.09% benign conversation FPR, compared with 75.0% recall at 2.72% FPR for the standard monitor. At 100​x100x, the the stateful monitor reaches 65.8% recall at 1.47% FPR; at the same FPR, the best standard monitor achieves only 55% recall. Thus, adding statefulness enables substantially better recall.
+Figure 6: Our defense quickly and precisely catches cyberattacks. Lower is better on both axes: fewer benign conversations are refused, and fewer harmful attacker turns occur before detection.
+Stateful monitoring catches misuse earlier.
+Figure 6 shows that state improves not only whether campaigns are caught but also when they are caught. At 100​x100x benign background, the stateful monitor reaches 85.0% recall and reduces TTD99 to 25.4 harmful steps, compared to 68.3% recall with TTD99=37.2{}_{99}=37.2 for the standard monitor, at a substantially lower This stateful setting uses 4.30% benign conversation FPR; by contrast, standard monitor requires 9.01% FPR to reach the same recall. The stateful frontier therefore moves down and left relative to the local frontier: fewer benign conversations are disrupted, and detected campaigns are stopped after fewer harmful worker turns.
+State preserves low latency for most traffic.
+Figure 4 shows that the common path remains close to local monitoring. The stateful monitor does not call the cross-context judge on every request: most traffic pays only for local scoring and online routing, while cross-context review appears mainly in the tail. This matters because the gains in Figures 5 and 6 would be less useful if they required expensive cross-context reasoning for every benign conversation.
+Overall, stateful monitoring helps to catch but does not solve distributed cyber misuse. It helps when attack fragments leave enough repeated, semantically related evidence for clustering, and when the defender can filter traffic so that the number of harmful conversations is not overwhelming (e.g. the stateful monitor still helps at 100​x100x background, but performs much better at 10​x10x). In our simulated datacenter traffic, at relatively large scales, the stateful monitor outperforms the standard monitor at identifying attacks more frequently and earlier.
+5 Adaptive Redteaming
+We redteamed the stateful monitor to investigate two questions: (i) does sustained whitebox redteaming find new failure modes which we can use to improve the defense, and (ii) does stateful monitoring improve detection of attacks other than the distributed cyber attacks of Section 4?
+Scale. Six redteamers attacked successive versions of our monitor over two months, producing >100,000>100,000 attacks across 2,985 sessions and 1,159 user IDs.
+Affordances. Redteamers had whitebox access to the safeguard, had access to the cluster assignments and suspiciousness scores, and could reset the clusters or open new sessions.
+We deployed the monitor as an AWS service, where redteamers could create fresh isolated namespaces for new attempts, and could reset their own monitor state without effecting the shared deployment.
+We also provided a browser UI, shown in Figure 11, that displayed parallel sessions alongside safeguard metadata such as suspiciousness scores and cluster assignments.
+Targets. Participants attempted to perform exploit tasks from BountyBench (Zhang et al., 2025) and CyBench (Zhang et al., 2024) chosen so that GPT-5.2 could solve them but weaker attack models (gpt-oss-120b (Agarwal et al., 2025)) generally could not, so we could isolate the uplift enabled by stronger models. Attack families. Four strategies (Figure 7) emerged in post-exercise discussion: monitor-context poisoning (faking classifier outputs and approvals to prompt inject the cross-context monitor), sequential decomposition inside one conversation (Li et al., 2024; Yueh-Han et al., 2025), distributed agent attacks across sessions and accounts, and semantic-cover jailbreaks, i.e. standard jailbreaking by framing the attempt as ordinary code review or debugging.
+Figure 7: Redteaming strategies in embedding space. Small points are individual requests, and large outlined points are clusters with >>80% purity for transcripts in each attack family.
+Redteaming exposed two stateful monitor failure modes.
+The first failure mode was that renaming files or file paths, or using different vocabulary to refer to tasks, could allow an attacker to fool the embedding model and split a distributed attack across nearby clusters, and thereby delay review; the second was that ambiguous suspicious examples could persist too long in cluster memory and cause a high false positive rate.
+These failures informed the development of the final algorithm for our defense, in Section 3.
+To reduce splitting the attack across nearby clusters, the monitor assigns the current request to a set of related clusters GtG_{t}, rather than treating a single centroid as the only summary for a given attack.
+To reduce false positives, the contexts Bj⋆B_{j^{\star}} in each cluster are deduplicated, sorted by suspiciousness, and used to assemble the top-kk evidence for the cross-context monitor in Algorithm 1.
+Figure 8: The stateful monitor flags harmful requests more often as related activity accumulates across sessions (left), but not as concentrated activity grows within one conversation (right). The pattern holds for both distributed agent attacks and standard jailbreaks, which is why state helps beyond the distributed-cyber setting it was designed for.
+State helps beyond distributed attacks, because attackers leave traces across sessions.
+A surprise from the exercise was that our monitor, designed to identify distributed agent attacks, also helps to catch repeated jailbreak attempts (Figure 8). Adaptive jailbreakers reuse variants of attacks across sessions, even when the attacker switches user IDs, so the cross-context monitor sees several variants rather than one isolated request. The defense caught monitor-context poisoning in 528/644 sessions (82%) and sequential decomposition in 29/29.
+Figure 8 separates two different kinds of additional attack context.
+The left panel measures tokens in outside the current session, and finds that additional state helps flag both distributed agent attacks and semantic-cover jailbreaks.
+The right panel measures prior tokens inside the current conversation, where the flagging rate rises early, between 0–2k and 2k–8k tokens, but does not keep increasing as the conversation grows.

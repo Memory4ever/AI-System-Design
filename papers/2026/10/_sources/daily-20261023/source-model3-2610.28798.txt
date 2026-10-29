@@ -1,0 +1,490 @@
+https://arxiv.org/html/2610.28798v1
+An Explicit Feedback Contract for Iterative ML-Agent Harnesses
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+2.1 Agentic ML systems and their evaluation interfaces
+2.2 Mechanisms for adaptive reuse
+3 Problem Formulation
+Setting.
+Adaptivity.
+Objective.
+4 The Feedback Contract: Thresholded Best-So-Far Release
+4.1 The contract: five clauses
+4.2 A parameter-free release rule
+4.3 Adaptive validity of the released transcript
+5 Results
+5.1 Experimental Setup
+Datasets.
+Conditions.
+Metrics.
+5.2 Feedback interfaces compared
+The budget stops Exact; the mechanism stops Ours.
+Under exact feedback the public score reports progress that does not exist.
+On real data the effect is real but modest.
+5.3 Sensitivity to public-validation size
+5.4 Fixed margins versus the paired standard error
+5.5 Sensitivity to the agent backbone
+6 Discussion and Limitations
+7 Conclusion
+References
+License: CC BY-NC-ND 4.0
+arXiv:2610.28798v1 [cs.LG] 20 Oct 2026
+An Explicit Feedback Contract for Iterative ML-Agent Harnesses
+Kehui Yao, Chuanbo Hu, Jiao Chen,
+Ramin Giahi, Reza Yousefi Maragheh, Lalitesh Morishetti,
+Ziwei Hong, Yiyun Su, Jianpeng Xu,
+Evren Korpeoglu, Kannan Achan
+Walmart Global Tech
+Lehigh University
+Rutgers University
+October 20, 2026
+Abstract
+Iterative ML agents develop models by editing code, running experiments, reading a validation score, and choosing what to try next. In current harnesses this loop is served by an exact validation score returned after every attempt, which leaves the validation split open to adaptive selection.
+In this work, we introduce an explicit feedback contract for ML-agent harnesses, which specifies what an agent may observe, when iteration should stop, and when the test split may be touched. The contract releases a validation score only when a submission clears a noise threshold computed from the paired standard error, so no margin has to be tuned.
+We ran experiments on click-through-rate prediction, learning to rank, and a control task with no signal to find. The control is the sharpest case, because the true gain there is zero by construction: an agent reading exact scores ended by reporting a gain of 0.0157 0.0157 , while under the contract it reported 0.0033 0.0033 . On both real tasks the contract narrows the validation–test gap, and test performance is slightly higher rather than lower. The largest difference is in when the agents stop. Exact feedback used its entire budget of thirty submissions on two of the three tasks, including the one where nothing can be learned, while the contract halted after four to twelve. A run that exhausts its budget is usually read as diligence. It is better read as a symptom: when the feedback channel is unbounded, noise keeps supplying improvements to chase.
+1 Introduction
+Language-model agents are no longer only writing code. They now run experiments: editing code, launching training runs, reading a validation score, and choosing the next edit. A growing body of systems and benchmarks evaluate this loop ( Romera-Paredes et al., 2024 ; Jiang et al., 2025 ; Lu et al., 2024 ; Wang et al., 2026 ; Chan et al., 2024 ; Huang et al., 2024 ; Pinchuk, 2026 ) . They differ in what the agent proposes but not in what it observes: an exact validation score after every attempt.
+The feedback interface matters more than it appears. Each validation score is an ordinary held-out estimate, but the sequence produced by iteratively keeping score-improving edits is not ( Dwork et al., 2015b ) . Validation scores are computed on a finite sample and carry noise. From inside the loop, a real improvement and a fluctuation of the same size look identical, and the agent keeps the edit in both cases. After enough rounds, the score it reports describes one particular split rather than the population. Figure 1 shows the effect on data where the truth is known.
+Figure 1: An agent iterating against a validation split whose labels have been permuted: nothing can beat the base rate, so the true gain is zero and a flat line is correct. Plotted is the gain the agent is shown after each submission, over five seeds with standard-error bands. An exact score after every attempt, as current harnesses give, produces the red curve; the contract produces the blue one. Dashed lines mark the one-shot final test gain, never visible during iteration, and dotted lines mark the mean stopping round. The blue trajectory and its final-test marker end at the mean stopping round, 10.4 ± 4.4 10.4\pm 4.4 , whereas Exact continues to the 30.0 ± 0.0 30.0\pm 0.0 submission cap.
+This is not a hypothetical worry. Held-out accuracy inflates measurably when a benchmark is reused across a research community ( Recht et al., 2019 ) . A meta-analysis of Kaggle competitions finds adaptive overfitting where submission counts are large relative to holdout size ( Roelofs et al., 2019 ) . Agents change that ratio. A competition may collect a few thousand submissions from hundreds of teams over several months. A single agent can issue as many against one validation split in an afternoon. There is no rate limit, and no one is watching for the moment the gains stop being real.
+The statistical problem is well understood. Adaptive data analysis shows that a holdout can be reused when the released answers are stable, and differential privacy is one way to achieve this ( Dwork et al., 2015b ; Dwork et al., 2015a ; Dwork et al., 2015c ) . There is also a matching hardness result: no efficient estimator can answer every adaptively chosen query accurately ( Hardt and Ullman, 2014 ) . Practical mechanisms therefore aim at something weaker. For leaderboards, Blum and Hardt (2015) aim at the best score so far, and reach it with a simple rule. Release a new score only when a submission beats the previous best by a margin. Otherwise repeat the old score.
+An agent is different from a competition submitter in three ways that a threshold alone does not address. First, an agent can retrain and inspect intermediate files, so a contract must say which files are readable. Second, there is no closing date, so the protocol needs a stopping rule. Third, the agent works inside the repository, so anything the harness does not actively withhold—including validation predictions—can leak. These three gaps turn a single-mechanism question into a protocol-design problem.
+We propose an explicit feedback contract for iterative ML-agent harnesses, and make three contributions. (1) Agent iteration is identified as a case of adaptive overfitting, and given a precise form. (2) The contract specifies what an agent may see, when it should stop, and when the test set may be used. It needs no parameter tuning, and its stopping rule is guaranteed to fire: the agent halts because no further improvement can be certified, not because a budget ran out. (3) On two real tasks and one control task, an ordinary coding agent overfits the validation data without trying to. The contract narrows the gap at no cost to final performance, and stops after a fraction of the submissions an unbounded interface uses.
+2 Related Work
+2.1 Agentic ML systems and their evaluation interfaces
+An ML-agent harness settles three things before a run: data splits, budget, and what the agent is told after each attempt. Benchmarks settle the first two with care. Splits are fixed, budgets are capped, and a private portion is held back until the end ( Chan et al., 2024 ; Huang et al., 2024 ; Pinchuk, 2026 ) . The third is left implicit. An agent receives the metric it asked for, at full precision, as often as it asks. That was inherited rather than chosen. In single-shot evaluation, reporting a validation score exactly is the right thing to do. The systems that placed an agent inside the loop ( Romera-Paredes et al., 2024 ; Jiang et al., 2025 ; Lu et al., 2024 ; Wang et al., 2026 ; Zhang et al., 2026 ) kept the interface and replaced the submitter with one that queries it hundreds of times.
+2.2 Mechanisms for adaptive reuse
+Two routes exist for reusing a holdout under adaptive queries: perturbing the released answers with a privacy budget ( Dwork et al., 2015b ; Dwork et al., 2015c ) , and thresholding the release so that only scores that clear a margin are reported Blum and Hardt (2015) . Both assume that the submitter cannot access the raw data—an assumption that breaks when the submitter is an agent with file-system access. Table 1 shows the gap on the agent side. What it cannot show is why agentic ML systems never restricted their feedback channel, even though mechanisms for doing so already existed in adaptive data analysis.
+Line of work
+Iterative
+Bounded
+Held-out
+agent
+feedback
+reporting
+Agentic ML systems
+FunSearch Romera-Paredes et al. (2024)
+✓
+—
+—
+AIDE Jiang et al. (2025)
+✓
+—
+—
+AI Scientist Lu et al. (2024)
+✓
+—
+—
+Agentic recommenders Wang et al. (2026) ; Zhang et al. (2026)
+✓
+—
+—
+ML-agent benchmarks
+MLE-bench Chan et al. (2024)
+✓
+—
+∘ \circ
+MLAgentBench Huang et al. (2024)
+✓
+—
+∘ \circ
+TML-Bench Pinchuk (2026)
+✓
+—
+∘ \circ
+Ours
+✓
+✓
+✓
+Table 1: Positioning of this work. Iterative agent : an agent revises code and experiments in response to feedback. Bounded feedback : the information released per submission is restricted, with a stated guarantee. Held-out reporting : reported numbers come from a split never queried during development. ∘ \circ marks partial coverage.
+Figure 2: The feedback contract as a sealed harness. Each round it submits one candidate f t f_{t} and receives only the pair ( u t , R t ) (u_{t},R_{t}) . Inside the harness, top to bottom in execution order: hidden validation losses, threshold rule, champion state, and audit transcript H t H_{t} . After p p consecutive no-updates the loop halts and the final champion c k c_{k} is evaluated once on the test split H H .
+3 Problem Formulation
+Setting.
+An agent develops a model over k k rounds against a harness. The harness holds three disjoint splits 𝒯 \mathcal{T} , 𝒱 \mathcal{V} , and ℋ \mathcal{H} . The agent uses 𝒯 \mathcal{T} freely. It can reach 𝒱 \mathcal{V} only through the harness, which keeps the labels. It does not touch ℋ \mathcal{H} until it has stopped.
+Each round has three steps. The agent submits one candidate, written f t f_{t} . The harness scores that candidate on 𝒱 \mathcal{V} and keeps the score to itself. The harness then releases a single pair ( u t , R t ) (u_{t},R_{t}) : whether the released score changed, and what it now stands at. Nothing else comes back. The transcript H t H_{t} of pairs released up to round t t is everything that leaves the harness. What rule decides ( u t , R t ) (u_{t},R_{t}) is the subject of Section 4 .
+Adaptivity.
+The agent writes f t f_{t} after reading H t − 1 H_{t-1} .
+Definition 1 (Admissible sequence) .
+A sequence f 1 , … , f k f_{1},\ldots,f_{k} is admissible if f t f_{t} depends only on 𝒯 \mathcal{T} , the repository state, earlier edits, and H t − 1 H_{t-1} , and not on the labels or per-example losses of 𝒱 \mathcal{V} , on validation prediction files, or on any feedback from ℋ \mathcal{H} .
+To see why this matters, let ℓ ⁡ ( f , z ) ∈ [ 0 , 1 ] \ell(f,z)\in[0,1] be a bounded loss
+on an example z z , and let
+ℛ ⁡ ( f ) = 𝔼 z ∼ P ​ [ ℓ ⁡ ( f , z ) ] \mathcal{R}(f)=\mathbb{E}_{z\sim P}\bigl[\ell(f,z)\bigr]
+be the risk of f f under the unknown distribution P P the data comes
+from. This is the quantity of interest, and nobody can observe it.
+What the harness computes instead is the average loss over the n n
+examples of 𝒱 \mathcal{V} ,
+ℛ ^ 𝒱 ​ ( f ) = 1 n ​ ∑ i = 1 n ℓ ⁡ ( f , z i ) . \widehat{\mathcal{R}}_{\mathcal{V}}(f)=\frac{1}{n}\sum_{i=1}^{n}\ell(f,z_{i}).
+For a model fixed in advance, the second estimates the first without bias. Here the model is not fixed in advance. Candidate and sample are dependent, so the guarantee lapses, and the number an agent reports at the end is the smallest score it happened to meet along an adaptively chosen path.
+Objective.
+A harness cannot promise that every released score is close to the risk of the candidate that produced it, since that is unachievable under adaptivity ( Hardt and Ullman, 2014 ) . It can promise something weaker and still useful: that the released score stays close to the risk of the best candidate submitted so far.
+Definition 2 (Public score error) .
+For an admissible sequence with releases R 1 , … , R k R_{1},\ldots,R_{k} ,
+pverr ⁡ ( R 1 , … , R k ) = max t ≤ k ⁡ | min i ≤ t ⁡ ℛ ⁡ ( f i ) − R t | . \mathrm{pverr}(R_{1},\ldots,R_{k})=\max_{t\leq k}\Bigl|\min_{i\leq t}\mathcal{R}(f_{i})-R_{t}\Bigr|.
+A release rule should keep pverr \mathrm{pverr} small for every admissible sequence, while leaving H k H_{k} informative enough that the agent can still choose among its own candidates. The two requirements pull against each other, and Section 4 settles where to stand between them.
+4 The Feedback Contract: Thresholded Best-So-Far Release
+4.1 The contract: five clauses
+A harness has to decide five things before a run starts; deciding them during one would itself be information. Figure 2 shows the arrangement.
+(C1) Splits.
+𝒯 \mathcal{T} is open. 𝒱 \mathcal{V} is reachable only by submitting a candidate; its labels, per-example losses, and prediction files stay inside the harness. ℋ \mathcal{H} is unreachable while the agent iterates.
+(C2) Released feedback.
+Each round takes one submission and returns one pair ( u t , R t ) (u_{t},R_{t}) . Nothing else leaves. A rejected submission is not told by how much it missed, so the agent cannot steer by the size of its failures.
+(C3) Stopping.
+A budget T max T_{\max} and a patience p p are fixed in advance. Iteration halts at the budget or after p p consecutive non-updates. Patience counts updates, not score changes: an update has cleared a threshold, whereas a score change need not have.
+(C4) Test quarantine.
+A final model is named before any test feedback exists, by default the champion c k c_{k} . ℋ \mathcal{H} is then evaluated once, and only aggregate metrics are released.
+(C5) Recorded artifacts.
+The harness stores the configuration, hidden loss vectors, transcript, seeds, agent identifiers, and final metrics, in enough detail to replay the transcript without rerunning the agent.
+4.2 A parameter-free release rule
+C2 says a score is released only when a submission is good enough, and an algorithm has to say how good. Fixing a margin η \eta in advance does not work: too high discards real gains, too low releases almost every round, and the right value depends on task noise that is unknown beforehand. The rule below computes the margin from the data instead.
+The harness remembers three things between rounds: the score currently on release, the candidate that earned it, which we call the champion , and that candidate’s loss on each of the n n validation examples. Algorithm 1 scores a new candidate on the same examples, compares row by row against the champion, and releases a new score only if the improvement exceeds the noise in that comparison.
+Algorithm 1 Parameter-free thresholded release
+1:
+splits 𝒯 \mathcal{T} , 𝒱 = { z i } i = 1 n \mathcal{V}=\{z_{i}\}_{i=1}^{n} , ℋ \mathcal{H} ; agent
+policy π \pi ; budget T max T_{\max} ; patience p p
+2:
+R 0 ← ∞ R_{0}\leftarrow\infty , c 0 ← ∅ c_{0}\leftarrow\emptyset , L 0 ⋆ ← ( 0 , … , 0 ) L^{\star}_{0}\leftarrow(0,\ldots,0) , H 0 ← ∅ H_{0}\leftarrow\emptyset
+3:
+for t = 1 , … , T max t=1,\ldots,T_{\max} do
+4:
+agent proposes f t f_{t} from 𝒯 \mathcal{T} , repository state, and H t − 1 H_{t-1}
+5:
+L t ← ( ℓ ⁡ ( f t , z i ) ) i = 1 n L_{t}\leftarrow(\ell(f_{t},z_{i}))_{i=1}^{n} ⊳ \triangleright hidden
+6:
+r t ← n − 1 ​ ∑ i L t , i r_{t}\leftarrow n^{-1}\sum_{i}L_{t,i} , s t ← std ⁡ ( L t − L t − 1 ⋆ ) s_{t}\leftarrow\mathrm{std}(L_{t}-L^{\star}_{t-1})
+7:
+if r t < R t − 1 − s t / n r_{t}<R_{t-1}-s_{t}/\sqrt{n} then
+8:
+R t ← [ r t ] 1 / n R_{t}\leftarrow[r_{t}]_{1/n} , c t ← f t c_{t}\leftarrow f_{t} , L t ⋆ ← L t L^{\star}_{t}\leftarrow L_{t} , u t ← update u_{t}\leftarrow\texttt{update}
+9:
+else
+10:
+R t ← R t − 1 R_{t}\leftarrow R_{t-1} , c t ← c t − 1 c_{t}\leftarrow c_{t-1} , L t ⋆ ← L t − 1 ⋆ L^{\star}_{t}\leftarrow L^{\star}_{t-1} , u t ← no_update u_{t}\leftarrow\texttt{no\_update}
+11:
+end if
+12:
+H t ← H t − 1 | ( u t , R t ) H_{t}\leftarrow H_{t-1}\,\|\,(u_{t},R_{t}) ; release ( u t , R t ) (u_{t},R_{t})
+13:
+break if the last p p events were all no_update
+14:
+end for
+15:
+evaluate the precommitted final model once on ℋ \mathcal{H} ; release aggregate metrics
+The quantity s t / n s_{t}/\sqrt{n} on line 6 is the standard error of the average difference in loss between candidate and champion on the same n n examples. A candidate must win by at least one standard error of that difference, so on a noisy task the bar rises by itself and on a clean one it falls. An accepted score is released rounded to a multiple of 1 / n 1/n , written [ ⋅ ] 1 / n [\cdot]_{1/n} .
+4.3 Adaptive validity of the released transcript
+A threshold makes the interaction countable. If the score only moves down by at least η \eta and is reported in multiples of η \eta , it can move at most 1 / η 1/\eta times and take at most 1 / η 1/\eta values, so few transcripts are possible, and a bound that holds for one model fixed
+in advance can be applied to each and combined. Proposition 1 carries that argument out, bounding pverr \mathrm{pverr} (Definition 2 ): the gap between the released score and the risk of the best candidate submitted so far.
+Proposition 1 (Best-so-far accuracy) .
+Fix η \eta and consider the variant of Algorithm 1
+that updates when ℛ ^ 𝒱 ​ ( f t ) < R t − 1 − η \widehat{\mathcal{R}}_{\mathcal{V}}(f_{t})<R_{t-1}-\eta and releases
+[ ℛ ^ 𝒱 ​ ( f t ) ] η [\widehat{\mathcal{R}}_{\mathcal{V}}(f_{t})]_{\eta} . For every admissible sequence
+(Definition 1 ) of length k k , setting
+η = O ( n − 1 / 3 log 1 / 3 ( k n ) ) \eta=O(n^{-1/3}\log^{1/3}(kn)) gives
+pverr = O ( n − 1 / 3 log 1 / 3 ( k n ) ) \mathrm{pverr}=O(n^{-1/3}\log^{1/3}(kn)) with high probability
+( Blum and Hardt, 2015 ) .
+The dependence on k k is logarithmic: submitting more often does not move the released score. The same counting bounds how long a run can last, which a competition had no use for but a development loop does.
+Proposition 2 (Termination) .
+Under the fixed-margin variant a work batch contains at most
+⌈ 1 / η ⌉ + 1 \lceil 1/\eta\rceil+1 accepted updates, so a run governed by C3
+halts at round
+T stop ≤ min ⁡ { T max , p ⁡ ( ⌈ 1 / η ⌉ + 2 ) } T_{\mathrm{stop}}\leq\min\{T_{\max},\,p\,(\lceil 1/\eta\rceil+2)\} .
+Proof.
+The first accepted update sets R t R_{t} to a finite value in [ 0 , 1 ] [0,1] , and each subsequent one lowers it by more than η \eta , so at most ⌈ 1 / η ⌉ \lceil 1/\eta\rceil can follow. Suppose the run has not halted by round t t . Then no p p consecutive rounds are free of updates, so the U U update rounds cut 1 , … , t 1,\ldots,t into at most U + 1 U+1 stretches of non-updates, each shorter than p p , giving t < p ⁡ ( U + 1 ) t<p(U+1) .
+∎
+Stopping is thus part of the protocol rather than a heuristic placed on top of it. Without a margin the same rule never fires: an adaptive submitter reading exact scores can drive the observed loss to 1 2 − Ω ⁡ ( k / n ) \tfrac{1}{2}-\Omega(\sqrt{k/n}) on data with no signal ( Blum and Hardt, 2015 , Thm. 5.1) . Section 5 reports the stopping behaviour of both interfaces.
+Both propositions are stated for a fixed margin. Algorithm 1 uses max ⁡ { s t / n , η min } \max\{s_{t}/\sqrt{n},\,\eta_{\min}\} with η min = c n − 1 / 3 log 1 / 3 ( k n ) \eta_{\min}=c\,n^{-1/3}\log^{1/3}(kn) fixed before the run from n n and T max T_{\max} , so both apply with η = η min \eta=\eta_{\min} : the floor is what keeps the number of reachable transcripts finite, while above it the margin remains data-dependent and untuned.
+5 Results
+5.1 Experimental Setup
+Datasets.
+Criteo-style click-through-rate prediction is binary classification on a processed dataset with 100,000 100{,}000 training examples, 25,000 25{,}000 validation examples, and an independent 50,000 50{,}000 -example test set; we report AUC. MSLR-WEB10K uses the official Fold1 split, with 6,000 6{,}000 training, 2,000 2{,}000 validation, and 2,000 2{,}000 test queries. Query groups remain intact; the base ranker is a HistGradientBoostingRegressor fitted on 150,000 150{,}000 rows from the training split, and we report macro NDCG@10. Because NDCG decomposes per query rather than per row, the sample size entering Proposition 1 is the number of validation queries, roughly 2,000 2{,}000 , so the guarantee is weaker here than the row count suggests. A third
+dataset is a no-signal control, obtained by permuting labels before
+splitting and matched in dimension to Criteo: the base rate is population-optimal, so any apparent gain is selection noise by construction.
+Conditions.
+Exact returns ℛ ^ 𝒱 ​ ( f t ) \widehat{\mathcal{R}}_{\mathcal{V}}(f_{t}) after
+every submission, as current harnesses do. Ours is
+Algorithm 1 . Patience applies to both, but only
+Ours can count it on accepted updates; Exact has no update events and falls back on observed improvement. We run three independent attack seeds for Criteo and MSLR and five for the no-signal control.
+Metrics.
+We report the stopping round, test performance of the precommitted model, and the validation–test gap, defined as validation minus test. A positive gap means the selection signal was optimistic; a negative one means the reverse.
+5.2 Feedback interfaces compared
+Task (metric)
+Method
+Stop iter. ↓ \downarrow
+Test ↑ \uparrow
+Val.–test gap ↓ \downarrow
+Criteo (AUC)
+Exact
+30.0 ± \pm 0.0
+0.7820 ± \pm 0.0001
+0.0060 ± \pm 0.0001
+Ours
+12.3 ± \pm 4.4
+0.7823 ± \pm 0.0000
+0.0055 ± \pm 0.0000
+MSLR (NDCG@10)
+Exact
+27.0 ± \pm 0.0
+0.4446 ± \pm 0.0003
+0.0134 ± \pm 0.0003
+Ours
+4.3 ± \pm 0.7
+0.4451 ± \pm 0.0001
+0.0123 ± \pm 0.0001
+No-signal (Gain)
+Exact
+30.0 ± \pm 0.0
+− 0.0006 -0.0006 ± \pm 0.0018
+0.0163 ± \pm 0.0026
+Ours
+10.4 ± \pm 4.4
+0.0033 ± \pm 0.0020
+0.0000 ± \pm 0.0025
+Table 2: Results under a maximum of 30 submissions, reported as mean
+± \pm standard error across independent seeds. Validation and test metrics
+are not comparable across tasks. The validation–test gap is validation
+minus test, so a larger positive value indicates more optimistic public
+leaderboard selection. For the no-signal control, gain is measured relative
+to the base-rate predictor, whose population-optimal gain is zero.
+Table 2 reports both interfaces on the three
+datasets.
+The budget stops Exact; the mechanism stops Ours.
+Exact runs to the cap on Criteo and the control, and to round 27 on MSLR. Ours halts at a third of the budget or less on all three. This is the behaviour anticipated in Section 4.3 : without a margin observed improvements keep arriving, so a rule watching them has little reason to fire. Stopping is not equally decisive everywhere. The stopping round differs by several submissions across seeds on Criteo and the control, and is tightest on the ranking dataset.
+Under exact feedback the public score reports progress that does not exist.
+On the control the true gain is zero, so any reported gain is an artefact of selection. Exact ends with a reported gain of 0.0157 0.0157 that its test score does not support, leaving a gap of 0.0163 0.0163 . The contract also ends reporting a gain, but one its test score matches, leaving no gap at all. Neither agent was gaming anything: both kept whichever edit appeared to help. The difference lies entirely in what they were told after each attempt.
+On real data the effect is real but modest.
+The
+validation–test gap narrows under the contract by roughly a tenth on both real datasets, and test performance is slightly higher rather than lower. The differences are small in absolute terms, and the claim they support is narrower than a better model: the reported score becomes more trustworthy, and nothing is paid for it.
+5.3 Sensitivity to public-validation size
+A larger public set is the obvious alternative remedy, so Table 3 asks whether it substitutes for governing the channel on Criteo. It does not, at least over this range. Ours has the smaller signed gap and the higher mean test AUC at every public size. Both advantages are largest at 2,000 2{,}000 examples and shrink as the public set grows, which is what a margin scaled to sampling error should do; at 20,000 20{,}000 examples both methods recover the main-table test AUC, since the training split is fixed across sizes.
+Task
+Val. size
+Test ↑ \uparrow
+Val.–test gap ↓ \downarrow
+Exact
+Ours
+Exact
+Ours
+Criteo
+2,000
+0.7782 ± \pm 0.0007
+0.7816 ± \pm 0.0003
+0.0117 ± \pm 0.0047
+0.0051 ± \pm 0.0044
+5,000
+0.7805 ± 0.0004 0.7805\pm 0.0004
+0.7816 ± \pm 0.0003
+0.0101 ± \pm 0.0030
+0.0081 ± \pm 0.0032
+10,000
+0.7813 ± 0.0001 0.7813\pm 0.0001
+0.7817 ± \pm 0.0002
+0.0086 ± \pm 0.0009
+0.0075 ± \pm 0.0009
+20,000
+0.7818 ± 0.0002 0.7818\pm 0.0002
+0.7821 ± \pm 0.0001
+0.0055 ± \pm 0.0011
+0.0048 ± \pm 0.0009
+Table 3: Public-validation size, mean ± \pm standard error over five seeds. For Criteo, public sets are nested subsets of the original 25k validation split, and the complete 100k training split is fixed across public sizes. Criteo uses the strong hashed logistic-regression configuration from Table 2 and Signed Boosting with at most 30 30 matched submissions. Attack strength is selected separately for each seed, public size, and method using validation only.
+5.4 Fixed margins versus the paired standard error
+Task
+Update margin
+Stop iter. ↓ \downarrow
+Test ↑ \uparrow
+Gap ↓ \downarrow
+Criteo CTR
+fixed η = 0.001 \eta=0.001
+14.6 ± 1.9 14.6\pm 1.9
+0.7831 ± 0.0013 0.7831\pm 0.0013
+0.0060 ± 0.0006 0.0060\pm 0.0006
+fixed η = 0.005 \eta=0.005
+9.8 ± 1.1 9.8\pm 1.1
+0.7684 ± 0.0090 0.7684\pm 0.0090
+0.0066 ± 0.0012 0.0066\pm 0.0012
+fixed η = 0.010 \eta=0.010
+7.8 ± \pm 0.4
+0.7727 ± 0.0025 0.7727\pm 0.0025
+0.0054 ± 0.0003 0.0054\pm 0.0003
+paired SE (ours)
+14.2 ± 2.4 14.2\pm 2.4
+0.7840 ± 0.0003 \mathbf{0.7840\pm 0.0003}
+0.0053 ± 0.0003 \mathbf{0.0053\pm 0.0003}
+Table 4: Fixed margin versus the paired standard error. Rows share the harness, prompt, split, budget, and patience, and differ only in the update margin. Proposition 1 is stated for a fixed η \eta , whereas the deployed rule computes one.
+Table 4 replaces the computed margin with a fixed one on Criteo, asking whether the deployed rule behaves like a well-chosen fixed margin without one having to be chosen. It does: the paired rule achieves both the smallest gap and the highest test AUC on the grid, and it runs as long as any fixed setting, so the advantage is not that it stops sooner.
+5.5 Sensitivity to the agent backbone
+Agent backbone
+Method
+Stop iter. ↓ \downarrow
+Test ↑ \uparrow
+Val.–test gap ↓ \downarrow
+GPT-5.6-Sol (Codex)
+Exact
+30.0 ± 0.0 30.0\pm 0.0
+0.7820 ± 0.0001 0.7820\pm 0.0001
+0.0060 ± 0.0001 0.0060\pm 0.0001
+Ours
+12.3 ± \pm 4.4
+0.7823 ± \pm 0.0000
+0.0055 ± 0.0000 \mathbf{0.0055\pm 0.0000}
+Claude Sonnet 4.6
+Exact
+23.4 ± 3.4 23.4\pm 3.4
+0.7831 ± 0.0015 0.7831\pm 0.0015
+0.0058 ± 0.0001 0.0058\pm 0.0001
+Ours
+22.6 ± \pm 1.9
+0.7835 ± 0.0015 \mathbf{0.7835\pm 0.0015}
+0.0053 ± 0.0003 \mathbf{0.0053\pm 0.0003}
+Table 5: Sensitivity to the agent backbone on Criteo CTR, mean ± \pm standard error over three seeds for Codex; Claude rows retain their separately reported runs. Within each backbone, rows share the same repository, task prompt, split, and outer budget, and differ only in the backbone model and the validation feedback interface.
+Table 5 repeats the Criteo condition on a second backbone. Under Codex the contract cuts the mean stopping round from the cap to twelve while slightly improving test AUC and reducing the gap; those rows match the main-table result and follow the same protocol. Under Claude the two interfaces stop at nearly the same round and both run short of the cap, and the gap narrows by about as much as it does under Codex. Those runs have not been rerun under the current protocol and should be read separately.
+6 Discussion and Limitations
+The no-signal control provides the sharpest evidence. On data where nothing can be learned, an agent given an ordinary prompt and an exact score after every attempt reports an improvement anyway, accumulated slowly enough that no single round looks wrong. This needed no adversary and no unusual agent, only a channel that answers every question. The second finding, which we did not expect, is that exact feedback ran to the budget on every dataset including the one with no signal: an interface that always has something new to report is always worth querying again.
+The guarantee is narrow, deliberately. It concerns the released transcript rather than the final test score, so the contract makes the reported number trustworthy, not better. It covers a fixed margin, whereas the deployed rule computes one from paired standard errors and is a heuristic. And a thresholded interface returns a selection signal and nothing else, so error analysis has to run on training data or a separately labelled sample. The empirical claim is correspondingly modest: the gap narrows on both real datasets and test performance is slightly higher rather than lower, but the differences are small in absolute terms, three seeds on the real datasets cannot separate a small effect from none, and both datasets are tabular.
+7 Conclusion
+An agent that reads an exact validation score after every attempt is running a selection procedure against a fixed sample, and the score it reports at the end is not what a held-out estimate measures. This is a property of the harness, not of the agent. We proposed a contract that fixes what an agent may see on each split, when its loop should end, and when the test data may be touched, with a release rule that reports a new score only when a submission beats the current best by more than the noise in that comparison. On data with nothing to learn, the contract reports nothing learned while exact feedback reports progress; on real data the gap narrows at no cost; and runs end when improvements run out rather than when the budget does. Harnesses today specify what an agent must produce far more carefully than what it may observe while producing it, and the second question only gets harder as loops grow longer.
+References
+Blum and Hardt (2015)
+Avrim Blum and Moritz Hardt.
+The ladder: A reliable leaderboard for machine learning competitions.
+In Proceedings of the 32nd International Conference on Machine
+Learning , volume 37 of Proceedings of Machine Learning Research ,
+pages 1006–1014. PMLR, 2015.
+URL https://proceedings.mlr.press/v37/blum15.html .
+Chan et al. (2024)
+Jun Shern Chan, Neil Chowdhury, Oliver Jaffe, James Aung, Dane Sherburn, Evan
+Mays, Giulio Starace, Kevin Liu, Leon Maksin, Tejal Patwardhan, Lilian Weng,
+and Aleksander Madry.
+MLE-bench: Evaluating machine learning agents on machine learning
+engineering.
+arXiv preprint arXiv:2410.07095 , 2024.
+URL https://arxiv.org/abs/2410.07095 .
+Dwork et al. (2015a)
+Cynthia Dwork, Vitaly Feldman, Moritz Hardt, Toniann Pitassi, Omer Reingold,
+and Aaron Roth.
+Generalization in adaptive data analysis and holdout reuse.
+In Advances in Neural Information Processing Systems ,
+volume 28, 2015a.
+URL
+https://papers.nips.cc/paper/5993-generalization-in-adaptive-data-analysis-and-holdout-reuse .
+Dwork et al. (2015b)
+Cynthia Dwork, Vitaly Feldman, Moritz Hardt, Toniann Pitassi, Omer Reingold,
+and Aaron Roth.
+Preserving statistical validity in adaptive data analysis.
+In Proceedings of the 47th Annual ACM Symposium on Theory of
+Computing , pages 117–126. ACM, 2015b.
+doi: 10.1145/2746539.2746580 .
+Dwork et al. (2015c)
+Cynthia Dwork, Vitaly Feldman, Moritz Hardt, Toniann Pitassi, Omer Reingold,
+and Aaron Roth.
+The reusable holdout: Preserving validity in adaptive data analysis.
+Science , 349(6248):636–638,
+2015c.
+doi: 10.1126/science.aaa9375 .
+Hardt and Ullman (2014)
+Moritz Hardt and Jonathan Ullman.
+Preventing false discovery in interactive data analysis is hard.
+In 2014 IEEE 55th annual symposium on foundations of computer
+science , pages 454–463. IEEE, 2014.
+Huang et al. (2024)
+Qian Huang, Jian Vora, Percy Liang, and Jure Leskovec.
+MLAgentBench: Evaluating language agents on machine learning
+experimentation.
+In Proceedings of the 41st International Conference on Machine
+Learning , volume 235 of Proceedings of Machine Learning Research ,
+pages 20271–20309. PMLR, 2024.
+URL https://proceedings.mlr.press/v235/huang24y.html .
+Jiang et al. (2025)
+Zhengyao Jiang, Dominik Schmidt, Dhruv Srikanth, Dixing Xu, Ian Kaplan, Deniss
+Jacenko, and Yuxiang Wu.
+Aide: Ai-driven exploration in the space of code.
+arXiv preprint arXiv:2502.13138 , 2025.
+Lu et al. (2024)
+Chris Lu, Cong Lu, Robert Tjarko Lange, Jakob Foerster, Jeff Clune, and David
+Ha.
+The AI scientist: Towards fully automated open-ended scientific
+discovery.
+arXiv preprint arXiv:2408.06292 , 2024.
+URL https://arxiv.org/abs/2408.06292 .
+Pinchuk (2026)
+Mykola Pinchuk.
+TML-Bench: Benchmark for data science agents on tabular ml tasks.
+arXiv preprint arXiv:2603.05764 , 2026.
+URL https://arxiv.org/abs/2603.05764 .
+Recht et al. (2019)
+Benjamin Recht, Rebecca Roelofs, Ludwig Schmidt, and Vaishaal Shankar.
+Do imagenet classifiers generalize to imagenet?
+In International conference on machine learning , pages
+5389–5400. PMLR, 2019.
+Roelofs et al. (2019)
+Rebecca Roelofs, Vaishaal Shankar, Benjamin Recht, Sara Fridovich-Keil, Moritz
+Hardt, John Miller, and Ludwig Schmidt.
+A meta-analysis of overfitting in machine learning.
+Advances in neural information processing systems , 32, 2019.
+Romera-Paredes et al. (2024)
+Bernardino Romera-Paredes, Mohammadamin Barekatain, Alexander Novikov, Matej
+Balog, M. Pawan Kumar, Emilien Dupont, Francisco J. R. Ruiz, Jordan
+Ellenberg, Pengming Wang, Omar Fawzi, Pushmeet Kohli, and Alhussein Fawzi.
+Mathematical discoveries from program search with large language
+models.
+Nature , 625:468–475, 2024.
+doi: 10.1038/s41586-023-06924-6 .
+URL https://www.nature.com/articles/s41586-023-06924-6 .
+Wang et al. (2026)
+Haochen Wang, Yi Wu, Daryl Chang, Li Wei, and Lukasz Heldt.
+Self-evolving recommendation system: End-to-end autonomous model
+optimization with llm agents.
+arXiv preprint arXiv:2602.10226 , 2026.
+Zhang et al. (2026)
+H. Zhang et al.
+AgenticRS-architecture: System design for agentic recommender
+systems.
+arXiv preprint arXiv:2603.26085 , 2026.
+URL https://arxiv.org/abs/2603.26085 .
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

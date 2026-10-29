@@ -1,0 +1,3953 @@
+Frequency-Modulated Visual Restoration for Matryoshka Large Multimodal Models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related work
+3
+Method
+3.1
+Preliminaries
+3.2
+FMVR driven Matryoshka Visual Tokens
+3.3
+FMVR for visual semantic restoration
+4
+Experiments
+4.1
+Experimental Setup
+4.2
+FMVR for Image Understanding
+4.3
+FMVR for high-Resolution Understanding
+4.4
+FMVR for video Understanding
+4.5
+Efficiency analysis
+4.6
+Ablation Study
+4.7
+Case Study and Visualization Analysis
+5
+Conclusion
+References
+A
+Details of Experimental Setup
+A.1
+Model Architectures
+A.2
+Evaluation Benchmarks
+A.2.1
+General Image Benchmarks
+A.2.2
+Text-oriented benchmarks
+A.2.3
+Video benchmarks
+B
+Additional Experimental Results
+B.1
+FMVR for advanced open-source LMM
+B.2
+FMVR for larger language model
+B.3
+Ablation study on other Matryoshka visual token sampling methods
+B.4
+Additional case results
+B.5
+Baseline results of token numbers
+License: CC BY 4.0
+arXiv:2603.11220v1 [cs.CV] 11 Mar 2026
+Frequency-Modulated Visual Restoration for Matryoshka Large Multimodal Models
+Qingtao Pan
+Affiliation:
+Case Western Reserve University
+Zhihao Dou
+Affiliation:
+Case Western Reserve University
+Shuo Li
+†
+†
+thanks:
+Corresponding author: shuo.li11@case.edu
+Affiliation:
+Case Western Reserve University
+Abstract
+Large Multimodal Models (LMMs) struggle to adapt varying computational budgets due to numerous visual tokens. Previous methods attempted to reduce the number of visual tokens before or within LLMs. However, these strategies inevitably result in the loss of visual semantic. To address these issues, we introduce
+FMVR
+, a plug-and-play and extremely simple
+F
+requency-
+M
+odulated
+V
+isual
+R
+estoration strategy to boost the reasoning ability of LMMs under visual token reduction. Specifically, FMVR disentangles the visual representation of fewer visual tokens into low- and high-frequency components through AvgPool and MaxPool. The derived frequencies are subsequently modulated using lightweight learnable parameters. The high-frequency from AvgPool acts as a saliency filter to enhance saliency visual semantics, while the low-frequency from MaxPool acts as an anti-saliency filter to strengthen weak visual semantics. It enables the preservation of visual semantics dominated by few visual tokens and the restoration of diluted visual semantics. Additionally, we inject FMVR into Matryoshka Representation Learning to learn coarse-to-fine visual token sets, thus enabling to elastically adjust the number of visual tokens during inference while maintaining comparable performance. Experiments across 10 image-based and 4 video-based bench marks demonstrate that FMVR-LLaVA reduce the FLOPs of LLaVA-1.5-7B by 89%, while maintaining almost 100% of the original accuracy. The code will be open.
+1
+Introduction
+Empowered by the linguistic reasoning capacity of large language models (LLMs)
+[
+66
+,
+3
+,
+71
+,
+7
+]
+, Large Multimodal Models (LMMs)
+[
+48
+,
+35
+,
+67
+,
+14
+]
+extend the reasoning capabilities of LLMs to the visual domain, achieving joint understanding across visual and linguistic modalities. These LMMs typically utilize a visual encoder to transform images into discrete visual tokens, which are subsequently fused with textual tokens and processed by a large language model backbone.
+Figure 1
+:
+Our FMVR (b) can restore the visual semantics from compressed tokens, alleviating the loss of visual contents in previous token compression methods (a).
+In practice, the token budget available to different applications can vary considerably depending on computational constraints and real-time performance requirements. In resource-limited scenarios, a smaller token capacity is often mandated to maintain processing efficiency. Nevertheless, most LMMs employ relatively high visual token count per image. Given that both computational time and memory consumption increase quadratically with the input sequence length
+[
+16
+,
+21
+,
+30
+,
+65
+,
+86
+]
+, using a large number of visual tokens can significantly exacerbate the computational overhead of LMMs. Moreover, in video
+[
+78
+,
+42
+,
+84
+]
+or high-resolution scenarios
+[
+47
+,
+53
+,
+24
+]
+, the number of required visual tokens can increase dramatically. Consequently, excessive tokenization not only slows inference but also, due to the lack of adaptive visual token allocation at deployment time, restricts the scalability and flexibility of LMMs in practical applications
+[
+73
+]
+.
+To alleviate this issue, prior studies
+[
+8
+,
+12
+,
+60
+,
+75
+]
+have turned to visual token compression, aiming to discard redundant visual tokens while preserving essential semantic information. Despite their effectiveness, these methods inherently yield outputs with a fixed sequence length, without flexibility to adjust the number of visual tokens. Such rigidity hinders the ability to dynamically balance the trade-off between visual tokens and computational cost, which is particularly crucial for computational limitations. Inspired by Matryoshka Representation Learning
+[
+34
+]
+, several studies
+[
+6
+,
+26
+]
+have investigated training a unified model capable of processing variable numbers of visual tokens (Fig.
+1
+(a)), enabling it to adapt dynamically to different input granularities and computational budgets. However, these methods lead to semantic loss for detailed images, which hampers the model’s ability to capture subtle visual content, leading to poor image understanding performance.
+Figure 2
+:
+Grad-CAM visualization (576 and 36 visual tokens) shows that the reduction of visual tokens leads to a noticeable degradation in visual focus.
+To further substantiate this, we performed a preliminary experiment analyzing the impact of reduced visual tokens on imaging understanding. As shown in Fig.
+2
+, the Grad-CAM reveals a noticeable degradation in visual contents when the number of visual tokens is reduced (576→36). In contrast, a full set of visual tokens (576) exhibits dense visual attention, focusing on nuanced visual regions. This observation highlights the importance of preserving detailed visual contents under token reduction.
+Motivated by the above observation, we seek to tackle a pivotal issue:
+How to enhance LMM’s reasoning capability under limited visual token budgets.
+To achieve this, inspired by the frequency components in feature restoration
+[
+18
+]
+, we propose FMVR, a
+F
+requency-
+M
+odulated
+V
+isual
+R
+estoration strategy that recovers visual semantics from compressed visual tokens. Concretely, FMVR can disentangle the visual representation into distinct low- and high-frequency components through AvgPool and MaxPool. These frequency components are then refined through lightweight and learnable modulation parameters, The high-frequency from AvgPool acts as a saliency filter to enhance saliency visual semantics, while the low-frequency from MaxPool act as an anti-saliency filter to strengthen weak visual semantics. Subsequently, we inject FMVR into Matryoshka Representation Learning (MRL) to construct nested visual tokens for LMM training, enabling LMM to elastically adjust visual tokens according to computational constraints while retaining effective reasoning ability. We summarize our contributions as follows:
+•
+We conduct an analysis of the phenomenon where visual token reduction impairs the model’s ability to focus nuanced visual semantics.
+•
+The idea of visual restoration in token compressed LMM is first formulated to alleviate visual semantic degradation induced by token sparsity.
+•
+FMVR, a plug-and-play and extremely simple visual token semantic restoration method, is proposed to highlight diluted visual semantics by disentangling and modulating the frequency components derived from limited visual tokens, thus enriching visual representations.
+•
+Combining FMVR and Matryoshka Representation Learning, it achieves elastically and efficient visual reasoning across varying computational budgets.
+•
+FMVR-LLaVA consistently outperforms prior state-of-the-art methods in various image and video understanding benchmarks, while exploring the trade-off between the accuracy and the number of visual tokens.
+2
+Related work
+Figure 3
+:
+Illustration of FMVR-LLaVA.
+The FMVR is injected into MRL to construct nested visual tokens, where FMVR is used to enhance the visual semantics of each visual token set, thus forming a set of reinforced nested visual tokens for LLM training.
+Large Multimodal Models.
+The advancements in Large Language Models (LLMs)
+[
+66
+,
+29
+,
+3
+,
+71
+,
+7
+,
+85
+]
+have catalyzed a paradigm shift in artificial intelligence, inspiring researchers to extend linguistic reasoning to the multimodal domain, including image understanding
+[
+61
+,
+36
+,
+51
+]
+and medical imaging
+[
+56
+,
+57
+]
+. In such models, visual inputs are discretized into token representations to fully leverage the inference capabilities of LLMs. However, visual token representations are dense and spatially redundant, resulting in a significant token expansion. For instance, LLaVA-1.5
+[
+48
+]
+transforms a 336×336 image into 576 tokens. Therefore, improving inference efficiency has emerged as a pivotal factor for the scalability and practical deployment of LMMs.
+Visual Token Reduction.
+To achieve compact visual representations, a variety of approaches have been proposed to reduce the number of visual tokens while retaining essential semantic information. Early studies
+[
+20
+,
+22
+,
+38
+,
+79
+,
+87
+]
+primarily relied on the Q-Former
+[
+38
+]
+, which transforms visual embeddings into a set of fixed-length learnable queries. Although these approaches help alleviate performance degradation induced by token compression, they remain constrained by a prespecified pruning threshold. Recent methods
+[
+6
+,
+26
+]
+, inspired by Matryoshka Representation Learning
+[
+34
+]
+, introduce a hierarchical nesting mechanism for visual tokens, enabling models to represent visual information at multiple granularities. However, these methods inevitably cause information degradation, thereby impairing the model’s capacity to preserve fine-grained visual semantics when operating with a limited number of visual tokens. The proposed FMVR can alleviate visual information degradation caused by token reduction by decomposing visual representations into low- and high-frequency components, enabling the visual semantic restoration.
+3
+Method
+The FMVR-LLaVA, as illustrated in Fig.
+3
+, proposes a novel visual semantics restoration mechanism, FMVR, to recover nuanced visual contents under compressed visual tokens. By combining the idea of Matryoshka Representation Learning
+[
+34
+]
+, FMVR-LLaVA can support elastically visual token scaling in inference, achieving a favorable balance between computational efficiency and reasoning performance. To be specific, instead of leveraging raw compressed visual tokens, FMVR decomposes the compressed visual representations into low- and high-frequency components to highlight diluted visual semantics.
+3.1
+Preliminaries
+Problem Formulation.
+Typically, LMMs comprise three core components: vision encoder
+f
+V
+f_{V}
+, modality projector
+f
+M
+f_{M}
+, and LLM
+f
+L
+​
+L
+​
+M
+f_{LLM}
+. For simplicity, we define that visual features
+H
+V
+=
+f
+M
+​
+(
+f
+V
+​
+(
+X
+V
+)
+)
+∈
+ℝ
+M
+×
+d
+H^{V}=f_{M}(f_{V}(X^{V}))\in\mathbb{R}^{M\times d}
+, where
+X
+V
+X^{V}
+is the input image,
+M
+M
+denotes the length of vision tokens, and
+d
+d
+is the hidden dimension size; textual features
+H
+T
+∈
+R
+N
+×
+d
+H^{T}\in{R}^{N\times d}
+where
+N
+N
+denotes length of text tokens. In practice,
+M
+M
+is generally much larger than
+N
+N
+. The LLM utilizes the visual and textual features to generate output responses
+X
+R
+X^{R}
+. However, the excessive number of visual tokens significantly increases computational cost, resulting in inefficient inference
+[
+12
+]
+. Hence, vision token compression can effectively reduces
+M
+M
+could ameliorate this inefficiency.
+Matryoshka Representation Learning (MRL).
+MRL is designed to jointly optimize embeddings across multiple dimensional scales. Let
+E
+E
+denote the set of target embedding dimensions. MRL introduces a learnable model for each subset
+v
+1
+:
+e
+∈
+ℝ
+e
+v_{1:e}\in\mathbb{R}^{e}
+, where
+e
+∈
+E
+e\in E
+. This strategy allows each truncated representation to be independently optimized under the shared objective. The formal objective function of MRL is defined as:
+ℒ
+MRL
+=
+∑
+e
+∈
+E
+c
+e
+ℒ
+(
+𝑾
+(
+e
+)
+⋅
+f
+(
+x
+;
+θ
+f
+)
+1
+:
+e
+;
+y
+)
+,
+\mathcal{L}_{\mathrm{MRL}}=\sum_{e\in E}c_{e}\mathcal{L}\left(\boldsymbol{W}^{(e)}\cdot f(x;\theta_{f})_{1:e};y\right),
+(1)
+where
+ℒ
+\mathcal{L}
+refers to the objective loss and
+y
+y
+the ground-truth label. During optimization, MRL simultaneously performs forward and backward updates across all
+E
+E
+submodels. Once trained, it enables inference with any embedding size
+d
+≤
+E
+d\leq E
+, achieving scalable deployment depending on resource constraints. Building on this concept, we aim to extend it to LMMs that can dynamically adjust visual tokens for elastic multimodal reasoning.
+3.2
+FMVR driven Matryoshka Visual Tokens
+Matryoshka-style nested visual tokens is constructed by progressively performing 2×2 pooling with a stride of 2. To be specific, the CLIP visual encoder
+[
+58
+]
+processes an input image
+X
+V
+X^{V}
+as 24×24 visual tokens. Such 24×24 visual tokens are gradually pooled into 12×12, 6×6, 3×3, and 1×1 visual tokens, thus constructing
+S
+S
+nested visual tokens (i.e.,
+S
+i
+∈
+{
+1
+,
+9
+,
+36
+,
+144
+,
+576
+}
+S_{i}\in\{1,9,36,144,576\}
+), where fewer tokens are obtained by progressively compressing denser tokens. To enhance the visual semantics of each visual token set, we propose FMVR and inject it into each 2×2 pooling operation.
+3.3
+FMVR for visual semantic restoration
+Visual token compression in LMMs tends to the loss of visual information, which is essential for visual understanding. To mitigate this, we introduce FMVR, which highlights subtle visual semantics by disentangling and modulating the frequency components derived reduced visual tokens. As shown in Fig.
+3
+, FMVR contains two distinct pooling units (AvgPool or MaxPool). The AvgPool unit extracts high-frequency to emphasize salient visual semantics. The MaxPool unit acts as an anti-saliency filter to recover weak visual semantics, avoiding strong salient semantics dominating.
+AvgPool Unit for Saliency Semantics Enhancement.
+To mitigate semantic dilution caused by 2×2 pooling operation in matryoshka visual token construction, we apply AvgPool
+[
+17
+]
+to extract the low-frequency component
+X
+A
+l
+X^{l}_{A}
+(captures the global semantic) of each matryoshka visual token set
+X
+∈
+ℝ
+C
+×
+H
+×
+W
+X\in\mathbb{R}^{C\times H\times W}
+. Then we compute the residual between
+X
+X
+and
+X
+A
+l
+X^{l}_{A}
+to obtain the high-frequency component
+X
+A
+h
+X^{h}_{A}
+, which acts as a saliency filter to highlight saliency visual semantics, calculate as follows:
+X
+A
+h
+=
+X
+−
+X
+A
+l
+,
+X
+A
+l
+=
+AP
+⁡
+(
+X
+)
+X^{h}_{A}=X-X^{l}_{A},\quad X^{l}_{A}=\mathrm{AP}(X)
+(2)
+where
+AP
+⁡
+(
+⋅
+)
+\mathrm{AP}(\cdot)
+is AvgPool operation. The high-frequency component
+X
+A
+h
+X^{h}_{A}
+is then modulated by learnable parameters,
+X
+^
+A
+h
+=
+W
+A
+h
+⋅
+X
+A
+h
+,
+\hat{X}^{h}_{A}=W_{A}^{h}\cdot X^{h}_{A},
+(3)
+where
+W
+A
+h
+W_{A}^{h}
+denotes learnable channel-wise parameters that are optimized by backpropagation to select useful frequency subbands. Additionally, the high-frequency is repurposed as attention maps, which are applied multiplicatively to the original input features to boost the activation of visually significant areas. Finally, the high-frequency component and attention weighted features are summed to produce the final representation:
+X
+^
+A
+=
+X
+^
+A
+h
++
+X
+A
+h
+⋅
+X
+\hat{X}_{A}=\hat{X}^{h}_{A}+X^{h}_{A}\cdot X
+(4)
+However, when a strongly salient semantic dominates the visual representation, weaker semantics are likely to remain overshadowed.
+MaxPool Unit for Anti-saliency Semantics Enhancement.
+To address the dominance of over-salient semantics, the MaxPool is utilized for weaker visual semantics (i.e., anti-saliency Semantics) enhancement. Specifically, we first extract high-frequency component
+X
+M
+h
+X^{h}_{M}
+that represents relatively significant semantics through MaxPool. Then we compute the residual between
+X
+X
+and
+X
+M
+h
+X^{h}_{M}
+to capture the differences between non-salient and salient semantics. Intuitively, this residual denotes the low-frequency
+X
+M
+l
+X^{l}_{M}
+, which acts as an anti-saliency filter that suppresses the dominant sementics and explicitly enhances the latent weak semantics.
+X
+M
+l
+=
+X
+−
+X
+M
+h
+,
+X
+M
+h
+=
+MP
+⁡
+(
+X
+)
+,
+X^{l}_{M}=X-X^{h}_{M},\quad X^{h}_{M}=\mathrm{MP}(X),
+(5)
+where
+MP
+⁡
+(
+⋅
+)
+\mathrm{MP}(\cdot)
+is MaxPool operation. Similarity, the low-frequency
+X
+M
+l
+X^{l}_{M}
+is also modulated using learnable parameters:
+X
+^
+M
+l
+=
+W
+M
+l
+⋅
+X
+M
+l
+,
+\hat{X}^{l}_{M}=W_{M}^{l}\cdot X^{l}_{M},
+(6)
+where
+W
+M
+l
+W_{M}^{l}
+is learnable modulation parameters. The low-frequency is employed as attention maps to reactivate suppressed semantics.The output of MaxPool Unit is,
+X
+^
+M
+=
+X
+^
+M
+l
++
+X
+M
+l
+⋅
+X
+\hat{X}_{M}=\hat{X}^{l}_{M}+X^{l}_{M}\cdot X
+(7)
+The final restored token set is the sum of
+X
+^
+A
+\hat{X}_{A}
+and
+X
+^
+M
+\hat{X}_{M}
+.
+4
+Experiments
+4.1
+Experimental Setup
+Table 1
+:
+Performance comparison on LLaVA-1.5-7B across 10 image-based benchmarks. ‘#VisionTokens’ is the number of vision tokens.
+Δ
+\Delta
+rows show the change vs. LLaVA baseline.
+Methods
+#Vision
+Tokens
+VQAv2
+GQA
+VisWiz
+SQA
+IMG
+VQA
+Text
+POPE
+MME
+MMB
+EN
+MMB
+CN
+MMVet
+Avg.
+(%)
+BLIP-2
+[
+37
+]
+32
+65.0
+41.0
+19.6
+61.0
+42.5
+85.3
+1293.8
+31.2
+–
+22.4
+–
+InstructBLIP
+[
+19
+]
+32
+72.4
+49.2
+34.5
+60.5
+50.1
+86.1
+1391.4
+36.0
+23.7
+26.2
+50.8
+IDEFICS-9B
+[
+28
+]
+64
+50.9
+38.4
+35.5
+53.5
+25.9
+81.9
+1177.3
+48.2
+–
+30.0
+–
+IDEFICS-80B
+[
+28
+]
+64
+60.0
+45.2
+36.0
+61.8
+30.9
+66.0
+1518.2
+54.5
+–
+39.7
+–
+Qwen-VL
+[
+4
+]
+256
+78.8
+59.3
+35.2
+67.1
+63.8
+70.0
+1487.6
+38.2
+7.4
+13.0
+50.7
+Qwen-VL-Chat
+[
+4
+]
+256
+78.2
+57.5
+38.9
+68.2
+60.7
+74.9
+1487.5
+60.6
+–
+47.3
+–
+SPHINX
+[
+44
+]
+289
+78.1
+62.6
+39.9
+69.3
+51.6
+80.7
+1476.1
+66.9
+–
+36.0
+–
+mPLUG-OwL2
+[
+74
+]
+1024
+79.4
+56.1
+54.5
+68.7
+54.3
+84.6
+1450.2
+64.5
+–
+36.2
+–
+LLaVA-v1.5
+[
+48
+]
+576
+78.5
+62.0
+50.0
+66.8
+58.2
+85.9
+1510.7
+64.3
+58.3
+30.5
+63.0
+LLMs with vision token reduction methods
+FastV
+[
+11
+]
+192
+67.1
+52.7
+46.7
+65.2
+52.5
+64.8
+1312.4
+61.2
+55.4
+27.7
+55.9
+PyramidDrop
+[
+69
+]
+192
+76.1
+57.1
+51.3
+70.2
+56.1
+82.3
+1462.3
+63.2
+56.3
+30.5
+61.6
+SparseVLM
+[
+83
+]
+192
+75.6
+57.6
+51.6
+67.2
+56.1
+83.6
+1382.8
+62.5
+56.7
+31.5
+61.2
+Prumerge+
+[
+60
+]
+144
+76.8
+59.3
+49.8
+68.3
+57.1
+84.0
+1462.4
+64.9
+53.2
+30.1
+61.7
+TRIM
+[
+63
+]
+128
+75.4
+58.4
+51.6
+68.6
+52.2
+85.3
+1413.4
+63.0
+52.3
+29.9
+60.7
+VisionZip
+[
+72
+]
+192
+76.8
+59.3
+51.2
+68.9
+57.3
+85.3
+1469.3
+63.0
+57.0
+31.7
+62.4
+DART
+[
+68
+]
+128
+74.7
+57.9
+52.8
+69.1
+56.3
+80.4
+1408.7
+60.7
+57.3
+30.9
+61.1
+DivPrune
+[
+1
+]
+128
+76.0
+59.4
+52.8
+68.6
+55.9
+87.0
+1405.1
+61.5
+54.8
+30.6
+61.7
+CDPruner
+[
+81
+]
+128
+76.6
+59.9
+52.8
+69.0
+56.2
+87.7
+1431.4
+63.1
+55.0
+32.8
+62.5
+VisPruner
+[
+80
+]
+128
+75.8
+58.2
+52.7
+69.1
+57.0
+84.6
+1461.4
+62.7
+57.3
+33.7
+62.4
+MQT-LLaVA
+[
+26
+]
+144
+76.4
+61.4
+52.0
+67.5
+53.4
+83.9
+1446.4
+64.4
+57.2
+29.9
+61.8
+M3
+[
+6
+]
+144
+78.5
+61.3
+53.1
+65.2
+54.8
+87.0
+1451.5
+66.4
+56.3
+30.2
+62.5
+Ours
+1
+68.3
+55.2
+49.7
+68.6
+49.2
+81.1
+1284.8
+60.7
+53.4
+26.4
+57.7
+9
+74.5
+59.1
+50.7
+69.9
+50.8
+84.1
+1415.0
+64.2
+57.5
+29.0
+61.1
+FMVR-LLaVA
+36
+76.5
+60.9
+52.9
+69.5
+55.3
+85.9
+1452.5
+65.2
+58.3
+32.2
+62.9
+144
+78.6
+62.3
+55.1
+69.7
+55.5
+86.4
+1473.9
+65.8
+57.6
+33.4
+63.8
+576
+79.2
+63.0
+56.5
+68.9
+57.8
+87.5
+1510.1
+65.9
+58.0
+34.3
+64.7
+Δ
+\Delta
+vs. LLaVA-v1.5
+144
++0.1
++0.3
++5.1
++2.9
+-2.7
++0.5
+-36.8
++1.5
+-0.7
++2.9
++0.8
+Table 2
+:
+Ablation study of applying different pooling unit in FMVR.
+Method
+VQAv2
+GQA
+VisWiz
+SQA
+IMG
+VQA
+Text
+POPE
+MME
+MMB
+EN
+MMB
+CN
+MMVet
+Avg.(%)
+M3 (Baseline)
+78.5
+61.3
+53.1
+65.2
+54.8
+87.0
+1451.5
+66.4
+56.3
+30.2
+62.5
+FMVR (Ours)
+78.6
+62.3
+55.1
+69.7
+55.5
+86.4
+1473.9
+65.8
+57.6
+33.4
+63.8
+FMVR w/o AvgPool
+77.9
+62.0
+54.6
+68.1
+54.3
+85.7
+1459.6
+65.4
+56.7
+32.5
+63.0
+FMVR w/o MaxPool
+78.3
+62.6
+53.3
+68.4
+55.0
+86.9
+1463.7
+65.8
+57.1
+32.6
+63.3
+Table 3
+:
+Efficiency analysis of different numbers of vision tokens on LLaVA-1.5-7B.
+Methods
+Tokens
+FLOPs
+(TB)
+Prefill
+Time (ms)
+Total
+Memory (GB)
+Avg
+(%)
+LLaVA-v1.5
+576
+8.0
+58.1
+21.6
+63.0
+FMVR
+144
+2.2
+(×3.6)
+19.5
+(×3.0)
+15.0
+(×1.4)
+63.8
+36
+0.9
+(×8.9)
+18.0
+(×3.2)
+13.8
+(×1.6)
+62.9
+9
+0.5
+(×16)
+17.7
+(×3.3)
+13.6
+(×1.6)
+61.1
+1
+0.4
+(×20)
+17.6
+(×3.3)
+13.5
+(×1.6)
+57.7
+Table 4
+:
+FLOPs of each component in FMVR-LLaVA.
+Methods
+Vision
+Encoder
+Projection
+FMVR
+LLM
+Total
+LLaVA-v1.5
+0.349
+0.024
+-
+8.0
+8.37
+FMVR
+576
+0.349
+0.024
+6.4e-5
+8.0
+8.37
+Table 5
+:
+Efficiency analysis of different pruning methods on LLaVA-1.5-7B.
+Methods
+Tokens
+FLOPs
+(TB)
+Prefill
+Time (ms)
+Avg
+(%)
+FastV
+192
+2.1
+34.1
+55.9
+PDrop
+192
+2.0
+36.7
+61.6
+SparseVLM
+192
+2.1
+36.5
+61.2
+FMVR
+36
+0.9
+18.0
+62.9
+Table 6
+:
+Performance comparison on LLaVA-NeXT-7B across 10 image-based benchmarks. ‘#VisionTokens’ is the number of vision tokens.
+Δ
+\Delta
+rows show the change vs. LLaVA-NeXT-7B baseline.
+Methods
+#Vision
+Tokens
+VQAv2
+GQA
+VisWiz
+SQA
+IMG
+VQA
+Text
+POPE
+MME
+MMB
+EN
+MMB
+CN
+MMVet
+Avg.
+(%)
+LLaVA-NeXT-7B
+[
+46
+]
+2880
+81.3
+62.5
+55.2
+67.5
+60.3
+86.8
+1511.8
+65.8
+57.3
+40.0
+65.2
+FastV
+[
+11
+]
+320
+61.5
+49.8
+51.3
+66.6
+52.2
+49.5
+1099.0
+53.4
+42.5
+20.0
+50.2
+PyramidDrop
+[
+69
+]
+320
+66.8
+50.4
+49.7
+66.7
+49.0
+60.8
+1171.5
+55.5
+44.7
+24.0
+52.6
+SparseVLM
+[
+83
+]
+320
+74.6
+57.9
+54.2
+67.2
+56.5
+76.9
+1386.1
+63.1
+56.7
+32.8
+60.9
+Prumerge+
+[
+60
+]
+320
+75.3
+58.8
+57.7
+68.1
+54.0
+79.5
+1444.3
+63.0
+55.6
+31.4
+61.6
+TRIM
+[
+63
+]
+320
+74.9
+59.9
+53.5
+66.2
+50.2
+86.5
+1443.8
+63.5
+51.0
+32.7
+61.1
+VisionZip
+[
+72
+]
+320
+76.2
+58.9
+56.2
+67.5
+58.8
+82.3
+1397.1
+63.3
+55.6
+35.8
+62.4
+DART
+[
+68
+]
+320
+75.7
+59.5
+56.8
+67.5
+57.6
+81.0
+1419.5
+64.2
+55.7
+35.7
+62.5
+DivPrune
+[
+1
+]
+320
+77.2
+61.1
+55.6
+67.7
+56.2
+84.7
+1423.3
+63.9
+55.7
+34.8
+62.8
+CDPruner
+[
+81
+]
+320
+78.4
+61.6
+55.8
+67.8
+57.4
+87.2
+1453.0
+65.5
+55.7
+37.9
+64.0
+VisPruner
+[
+80
+]
+320
+75.7
+58.4
+–
+–
+57.6
+80.4
+1370.1
+–
+–
+–
+–
+M3
+[
+6
+]
+180
+–
+–
+–
+72.1
+58.7
+87.3
+–
+68.6
+–
+–
+–
+Ours
+5
+71.4
+54.3
+49.7
+64.6
+53.2
+81.7
+1365.4
+62.3
+52.8
+29.4
+58.8
+45
+74.1
+57.3
+52.4
+66.8
+56.4
+84.6
+1422.5
+61.9
+53.1
+34.0
+61.2
+FMVR-LLaVA
+180
+78.2
+61.4
+55.3
+68.6
+58.3
+87.6
+1456.8
+65.9
+56.3
+37.5
+64.2
+720
+79.4
+62.5
+57.4
+70.3
+58.0
+87.3
+1487.6
+66.5
+57.1
+36.9
+65.0
+2880
+82.4
+62.1
+56.3
+70.6
+59.2
+88.0
+1526.7
+67.1
+56.9
+38.2
+65.7
+Table 7
+:
+Performance comparison on LLaVA-NeXT-7B across 4 video-based benchmarks. ‘#VisionTokens’ is the number of vision tokens.
+Δ
+\Delta
+rows show the change vs. LLaVA-NeXT-7B baseline.
+Methods
+#Vision
+Tokens
+Video-based Question-Answer
+Video-based Generative Performance
+MSVD
+MSRVTT
+ActivityNet
+Avg.
+Correct.
+Detail
+Context.
+Temp.
+Consist.
+Avg.
+LLaMA Adapter
+[
+82
+]
+1280
+54.9
+43.8
+34.2
+44.3
+2.03
+2.32
+2.30
+1.98
+2.15
+2.16
+VideoChat
+[
+39
+]
+512
+56.3
+45.0
+26.5
+42.6
+2.23
+2.50
+2.53
+1.94
+2.24
+2.29
+Video-LLAMA
+[
+77
+]
+1024
+51.6
+29.6
+12.4
+31.2
+1.96
+2.18
+2.16
+1.82
+1.79
+1.98
+Video-ChatGPT
+[
+39
+]
+∼
+\sim
+360
+64.9
+49.3
+35.2
+49.8
+2.40
+2.52
+2.62
+1.98
+2.37
+2.38
+BT-Adapter
+[
+49
+]
+∼
+\sim
+260
+67.5
+57.0
+45.7
+56.7
+2.68
+2.69
+3.27
+2.34
+2.46
+2.69
+MovieChat
+[
+64
+]
+65536
+75.2
+52.7
+45.7
+57.9
+2.76
+2.93
+3.01
+2.24
+2.42
+2.67
+LLaMA-VID
+[
+40
+]
+1fps×2
+69.7
+57.7
+47.4
+58.3
+2.96
+3.00
+3.53
+2.46
+2.51
+2.89
+Video-LLAVA
+[
+42
+]
+2048
+70.7
+59.2
+45.3
+58.4
+2.87
+2.94
+3.44
+2.45
+2.51
+2.84
+FastV
+[
+11
+]
+198
+38.0
+19.3
+30.6
+29.3
+–
+–
+–
+–
+–
+–
+SparseVLM
+[
+83
+]
+198
+68.2
+31.0
+42.6
+47.3
+–
+–
+–
+–
+–
+–
+VisionZip
+[
+72
+]
+136
+63.5
+52.1
+43.0
+52.9
+–
+–
+–
+–
+–
+–
+VisPruner
+[
+80
+]
+227
+69.3
+55.6
+–
+–
+–
+–
+–
+–
+–
+–
+Ours
+5
+68.7
+52.4
+45.1
+55.4
+2.54
+2.77
+2.83
+2.34
+2.41
+2.58
+45
+74.2
+58.3
+49.6
+60.7
+2.91
+2.88
+3.23
+2.41
+2.46
+2.78
+FMVR-LLaVA
+180
+76.9
+62.5
+51.1
+63.5
+3.30
+3.55
+3.72
+2.84
+3.10
+3.30
+720
+78.7
+64.8
+53.5
+65.7
+3.45
+3.62
+3.77
+3.05
+3.21
+3.42
+2880
+79.1
+65.2
+53.4
+65.9
+3.49
+3.71
+3.85
+3.14
+3.44
+3.53
+Δ
+\Delta
+vs. Video-LLaVA
+180
++6.2
++3.3
++5.8
++5.1
++0.43
++0.61
++0.28
++0.39
++0.59
++0.46
+Figure 4
+:
+Comparison under different numbers of vision tokens. Our method achieves higher accuracy than M3 and MQT-LLaVA.
+Figure 5
+:
+Grad-CAM visualization and response comparison between w/o FMVR and w FMVR under 36 visual tokens. From Grad-CAM visualization, the reduction of visual tokens leads to a noticeable degradation in visual semantics, which leads to hallucinations of certain objects in the response.
+Implementation Details.
+We implement our models based on LLaVA-1.5
+[
+45
+]
+and LLaVA-NeXT
+[
+47
+]
+. They leveraging Vicuna-7B as base language model. Following
+[
+45
+]
+, we employ a two-stage training paradigm. In the first-stage, we train only the FMVR on LLaVA-558K for one epoch with a batch size of 256 and a learning rate of 1e-3. In the second-stage, for LLaVA-1.5, we finetune FMVR and LLM using LLaVA-665K with a learning rate of LLM of 2e-5 for LLM; for LLaVA-NeXT, we finetune FMVR and LLM using LLaVA-1M
+[
+13
+]
+with a learning rate of LLM of 1e-5. For both models, the visual encoder is optimized with a learning rate of 2e-5. Both models are trained for one epoch on 4 NVIDIA H100 GPUs.
+Evaluation benchmarks.
+We evaluate our method across 10 image-based benchmarks, including VQAv2
+[
+23
+]
+, GQA
+[
+27
+]
+, VizWiz
+[
+25
+]
+, ScienceQA-IMG
+[
+52
+]
+, POPE
+[
+41
+]
+, MME
+[
+9
+]
+, MMBench
+[
+50
+]
+, MMBench-CN
+[
+50
+]
+, MMVet
+[
+76
+]
+, and TextVQA
+[
+62
+]
+. We also conduct experiments on 4 video understanding benchmarks, including MSVD-QA
+[
+10
+]
+, MSRVTT-QA
+[
+70
+]
+, ActivityNet-QA
+[
+5
+]
+, and video-based generative performance benchmark
+[
+54
+]
+.
+4.2
+FMVR for Image Understanding
+Our FMVR-LLaVA achieves comparable results on 10 mainstream multimodal understanding and reasoning benchmarks. Table
+1
+presents the performance of different LMMs and token pruning methods. Among the average performance of 10 benchmarks, FMVR-LLaVA with only 144 visual tokens outperforms LLaVA-1.5 with 576 visual tokens by 0.8%. Additionally, when retaining only 36 visual tokens, our method surpasses all the LLMs with vision token reduction methods in Table
+1
+. Notably, when drastically drop to only 1 token, our method still outperform FastV, InstructBLIP, and Qwen-VL by 1.8%, 6.9%, and 7.0%, respectively. Our method also consistently outperforms MRL based methods, as shown in Fig.
+4
+, under different numbers of visual tokens, our method exceeds both M3 and MQT-LLaVA on MMVet, SQA, GQA, and POPE. This means that our method can effectively improve visual semantics in the case of reduced visual tokens.
+4.3
+FMVR for high-Resolution Understanding
+Increasing the resolution of input images generally enhances the reasoning capacity of LLMs. However, this gain comes at the cost of significantly higher computational complexity. For a fair comparison, we standardize the input resolution to 672×672, corresponding to 2,880 visual tokens. Table
+6
+shows the performance comparison on LLaVA-NeXT-7B across 10 image-based benchmarks. Our FMVR-LLaVA (720 visual tokens) achieves comparable performance compared to LLaVA-NeXT-7B (2880 visual tokens), i.e., 65.0% vs. 65.2%. Even under only 180 visual tokens, FMVR-LLaVA outperforms all the visual token reduction methods, respectively. Notably, FMVR-LLaVA with only 5 visual tokens significantly exceeds FastV and PyramidDrop by 8.6% and 6.2%, respectively. These findings demonstrate FMVR-LLaVA’s remarkable efficiency in high-resolution multimodal reasoning scenarios.
+Figure 6
+:
+Case of image understanding on different VQA prompts. Our method yields basically correct answers under different numbers of visual tokens.
+4.4
+FMVR for video Understanding
+We compare FMVR-LLaVA against state-of-the-art video LLMs across 4 video benchmarks. Following IG-VLM
+[
+32
+]
+, LLaVA-NeXT-7B based FMVR-LLaVA is directly used for video reasoning. For our method, 5 frames are uniformly sampled over the entire video. As shown in Table
+7
+, with only 180 visual tokens, our method outperforms Video-LLaVA by 5.1% on Video-based Question-Answer and 0.46% on Video-based Generative Performance, respectively. These results further demonstrate the effectiveness of FMVR-LLaVA in video understanding.
+4.5
+Efficiency analysis
+To demonstrate the efficiency of FMVR-LLaVA, we conduct efficiency analysis of different numbers of vision tokens on LLaVA-1.5-7B, FLOPs of each component in FMVR-LLaVA, and efficiency analysis of different pruning methods on LLaVA-1.5-7B. As shown in Table
+3
+, our method with 36 visual tokens achieves a ×8.9 FLOPs reduction compared to LLaVA-v1.5 while maintaining almost same performance. To further study computational load of each component, we compute the FLOPs of each module (Table
+4
+). The computational cost (with only 6.4e-5) of the proposed FMVR is negligible. The comparative analysis against other pruning methods showns that our method gains the best efficiency while maintaining the highest performance. Compared to FastV, our method achieves nearly a ×2.3 reduction in FLOPs and a ×1.9 reduction in Prefill time, while outperforming FastV by 7.0%.
+4.6
+Ablation Study
+We further conduct an ablation on the design of FMVR-LLaVA. For simplicity, we evaluate all the models with 144 visual tokens. As shown in Table
+2
+, FMVR without MaxPool unit results in performance degradation by 0.5% due to the loss of edge feature enhancement. Similarity, the absence of AvgPool unit also lead to a 0.8% performance degradation. In addition, compared to the baseline M3, both AvgPool and MaxPool bring performance improvements, demonstrating their importance of restoring visual semantics with reduced visual tokens.
+4.7
+Case Study and Visualization Analysis
+Fig.
+6
+presents examples of FMVR-LLaVA in image understanding tasks. Despite using only one visual token, our method can provide the correct answer. However, for slightly complex images, such as the third case, the answer using only one visual token is incorrect. Fortunately, increasing the number of visual tokens slightly (i.e., 9 visual tokens) can provide the correct answer. To further explore the effectiveness of FMVR, we utilize Grad-CAM
+[
+59
+]
+to visualize the focus of visual information using 36 visual tokens. From Grad-CAM visualization results, we can see that the reduction of visual tokens leads to a noticeable degradation in visual semantics, which leads to hallucinations of certain objects in the response. On the contrary, when applying FMVR, the focus on visual semantics increases, leading to more accurate responses.
+5
+Conclusion
+In this paper, we propose FMVR, a novel visual token semantic restoration method, to enhance the efficiency of LLMs under token reduction. By disentangling visual representations into low- and high-frequency components, FMVR enables the preservation of visual semantics dominated by few visual tokens and the restoration of diluted visual semantics. By integrating FMVR into MRL, it can dynamically adjust
+the number of visual tokens during inference while maintaining comparable performance. Extensive experiments across 10 image and 4 video benchmarks validate the effectiveness of FMVR under token reduction.
+References
+[1]
+S. R. Alvar, G. Singh, M. Akbari, and Y. Zhang
+(2025)
+Divprune: diversity-based visual token pruning for large multimodal models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 9392–9401
+.
+Cited by:
+Table 9
+,
+Table 1
+,
+Table 6
+.
+[2]
+S. Antol, A. Agrawal, J. Lu, M. Mitchell, D. Batra, C. L. Zitnick, and D. Parikh
+(2015)
+Vqa: visual question answering
+.
+In
+Proceedings of the IEEE international conference on computer vision
+,
+pp. 2425–2433
+.
+Cited by:
+§A.2.1
+.
+[3]
+J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang,
+et al.
+(2023)
+Qwen technical report
+.
+arXiv preprint arXiv:2309.16609
+.
+Cited by:
+§A.1
+,
+§1
+,
+§2
+.
+[4]
+J. Bai, S. Bai, S. Yang, S. Wang, S. Tan, P. Wang, J. Lin, C. Zhou, and J. Zhou
+(2023)
+Qwen-vl: a frontier large vision-language model with versatile abilities
+.
+arXiv preprint arXiv:2308.12966
+.
+Cited by:
+Table 1
+,
+Table 1
+.
+[5]
+F. Caba Heilbron, V. Escorcia, B. Ghanem, and J. Carlos Niebles
+(2015)
+Activitynet: a large-scale video benchmark for human activity understanding
+.
+In
+Proceedings of the ieee conference on computer vision and pattern recognition
+,
+pp. 961–970
+.
+Cited by:
+§A.2.3
+,
+§4.1
+.
+[6]
+M. Cai, J. Yang, J. Gao, and Y. J. Lee
+(2024)
+Matryoshka multimodal models
+.
+arXiv preprint arXiv:2405.17430
+.
+Cited by:
+Table 9
+,
+§1
+,
+§2
+,
+Table 1
+,
+Table 6
+.
+[7]
+Z. Cai, M. Cao, H. Chen, K. Chen, K. Chen, X. Chen, X. Chen, Z. Chen, Z. Chen, P. Chu,
+et al.
+(2024)
+Internlm2 technical report
+.
+arXiv preprint arXiv:2403.17297
+.
+Cited by:
+§1
+,
+§2
+.
+[8]
+J. Cha, W. Kang, J. Mun, and B. Roh
+(2024)
+Honeybee: locality-enhanced projector for multimodal llm
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 13817–13827
+.
+Cited by:
+§1
+.
+[9]
+F. Chaoyou, C. Peixian, S. Yunhang, Q. Yulei, Z. Mengdan, L. Xu, Y. Jinrui, Z. Xiawu, L. Ke, S. Xing,
+et al.
+(2023)
+Mme: a comprehensive evaluation benchmark for multimodal large language models
+.
+arXiv preprint arXiv:2306.13394
+.
+Cited by:
+§A.2.1
+,
+§4.1
+.
+[10]
+D. Chen and W. B. Dolan
+(2011)
+Collecting highly parallel data for paraphrase evaluation
+.
+In
+Proceedings of the 49th annual meeting of the association for computational linguistics: human language technologies
+,
+pp. 190–200
+.
+Cited by:
+§A.2.3
+,
+§4.1
+.
+[11]
+L. Chen, H. Zhao, T. Liu, S. Bai, J. Lin, C. Zhou, and B. Chang
+(2024)
+An image is worth 1/2 tokens after layer 2: plug-and-play inference acceleration for large vision-language models
+.
+In
+European Conference on Computer Vision
+,
+pp. 19–35
+.
+Cited by:
+Table 9
+,
+Table 1
+,
+Table 6
+,
+Table 7
+.
+[12]
+L. Chen, H. Zhao, T. Liu, S. Bai, J. Lin, C. Zhou, and B. Chang
+(2024)
+An image is worth 1/2 tokens after layer 2: plug-and-play inference acceleration for large vision-language models
+.
+In
+European Conference on Computer Vision
+,
+pp. 19–35
+.
+Cited by:
+§1
+,
+§3.1
+.
+[13]
+L. Chen and L. Xing
+(2024)
+Open-llava-next: an open-source implementation of llava-next series for facilitating the large multi-modal model community.
+.
+Note:
+https://github.com/xiaoachen98/Open-LLaVA-NeXT
+External Links:
+Document
+Cited by:
+§4.1
+.
+[14]
+Z. Chen, J. Wu, W. Wang, W. Su, G. Chen, S. Xing, M. Zhong, Q. Zhang, X. Zhu, L. Lu,
+et al.
+(2024)
+Internvl: scaling up vision foundation models and aligning for generic visual-linguistic tasks
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 24185–24198
+.
+Cited by:
+§1
+.
+[15]
+W. Chiang, Z. Li, Z. Lin, Y. Sheng, Z. Wu, H. Zhang, L. Zheng, S. Zhuang, Y. Zhuang, J. E. Gonzalez,
+et al.
+(2023)
+Vicuna: an open-source chatbot impressing gpt-4 with 90%* chatgpt quality
+.
+See https://vicuna. lmsys. org (accessed 14 April 2023)
+2
+(
+3
+),
+pp. 6
+.
+Cited by:
+§A.1
+.
+[16]
+K. Choromanski, V. Likhosherstov, D. Dohan, X. Song, A. Gane, T. Sarlos, P. Hawkins, J. Davis, A. Mohiuddin, L. Kaiser,
+et al.
+(2020)
+Rethinking attention with performers
+.
+arXiv preprint arXiv:2009.14794
+.
+Cited by:
+§1
+.
+[17]
+Y. Cui, Y. Tao, Z. Bing, W. Ren, X. Gao, X. Cao, K. Huang, and A. Knoll
+Selective frequency network for image restoration
+.
+In
+The eleventh international conference on learning representations
+,
+Cited by:
+§3.3
+.
+[18]
+Y. Cui, Y. Tao, Z. Bing, W. Ren, X. Gao, X. Cao, K. Huang, and A. Knoll
+(2023)
+Selective frequency network for image restoration
+.
+In
+The eleventh international conference on learning representations
+,
+Cited by:
+§1
+.
+[19]
+W. Dai, J. Li, D. Li, A. Tiong, J. Zhao, W. Wang, B. Li, P. N. Fung, and S. Hoi
+(2023)
+Instructblip: towards general-purpose vision-language models with instruction tuning
+.
+Advances in neural information processing systems
+36
+,
+pp. 49250–49267
+.
+Cited by:
+Table 1
+.
+[20]
+W. Dai, J. Li, D. Li, A. Tiong, J. Zhao, W. Wang, B. Li, P. N. Fung, and S. Hoi
+(2023)
+Instructblip: towards general-purpose vision-language models with instruction tuning
+.
+Advances in neural information processing systems
+36
+,
+pp. 49250–49267
+.
+Cited by:
+§2
+.
+[21]
+T. Dao, D. Fu, S. Ermon, A. Rudra, and C. Ré
+(2022)
+Flashattention: fast and memory-efficient exact attention with io-awareness
+.
+Advances in neural information processing systems
+35
+,
+pp. 16344–16359
+.
+Cited by:
+§1
+.
+[22]
+Z. Du, Y. Qian, X. Liu, M. Ding, J. Qiu, Z. Yang, and J. Tang
+(2022)
+GLM: general language model pretraining with autoregressive blank infilling
+.
+In
+Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+pp. 320–335
+.
+Cited by:
+§2
+.
+[23]
+Y. Goyal, T. Khot, D. Summers-Stay, D. Batra, and D. Parikh
+(2017)
+Making the v in vqa matter: elevating the role of image understanding in visual question answering
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 6904–6913
+.
+Cited by:
+§A.2.1
+,
+§4.1
+.
+[24]
+Z. Guo, R. Xu, Y. Yao, J. Cui, Z. Ni, C. Ge, T. Chua, Z. Liu, and G. Huang
+(2024)
+Llava-uhd: an lmm perceiving any aspect ratio and high-resolution images
+.
+In
+European Conference on Computer Vision
+,
+pp. 390–406
+.
+Cited by:
+§1
+.
+[25]
+D. Gurari, Q. Li, A. J. Stangl, A. Guo, C. Lin, K. Grauman, J. Luo, and J. P. Bigham
+(2018)
+Vizwiz grand challenge: answering visual questions from blind people
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 3608–3617
+.
+Cited by:
+§A.2.1
+,
+§A.2.1
+,
+§4.1
+.
+[26]
+W. Hu, Z. Dou, L. Li, A. Kamath, N. Peng, and K. Chang
+(2024)
+Matryoshka query transformer for large vision-language models
+.
+Advances in Neural Information Processing Systems
+37
+,
+pp. 50168–50188
+.
+Cited by:
+Table 9
+,
+§1
+,
+§2
+,
+Table 1
+.
+[27]
+D. A. Hudson and C. D. Manning
+(2019)
+Gqa: a new dataset for real-world visual reasoning and compositional question answering
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 6700–6709
+.
+Cited by:
+§A.2.1
+,
+§4.1
+.
+[28]
+I. IDEFICS
+(2023)
+An open reproduction of state-of-the-art visual language model
+.
+Cited by:
+Table 1
+,
+Table 1
+.
+[29]
+A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de Las Casas, F. Bressand, G. Lengyel, G. Lample, L. Saulnier, L. R. Lavaud, M. Lachaux, P. Stock, T. L. Scao, T. Lavril, T. Wang, T. Lacroix, and W. E. Sayed
+(2023)
+Mistral 7b
+.
+arXiv preprint arXiv:2310.06825
+.
+Cited by:
+§2
+.
+[30]
+A. Katharopoulos, A. Vyas, N. Pappas, and F. Fleuret
+(2020)
+Transformers are rnns: fast autoregressive transformers with linear attention
+.
+In
+International conference on machine learning
+,
+pp. 5156–5165
+.
+Cited by:
+§1
+.
+[31]
+A. Kembhavi, M. Salvato, E. Kolve, M. Seo, H. Hajishirzi, and A. Farhadi
+(2016)
+A diagram is worth a dozen images
+.
+In
+European conference on computer vision
+,
+pp. 235–251
+.
+Cited by:
+§A.2.2
+.
+[32]
+W. Kim, C. Choi, W. Lee, and W. Rhee
+(2024)
+An image grid can be worth a video: zero-shot video question answering using a vlm
+.
+arXiv preprint arXiv:2403.18406
+.
+Cited by:
+§4.4
+.
+[33]
+I. Krasin, T. Duerig, N. Alldrin, V. Ferrari, S. Abu-El-Haija, A. Kuznetsova, H. Rom, J. Uijlings, S. Popov, A. Veit,
+et al.
+(2017)
+Openimages: a public dataset for large-scale multi-label and multi-class image classification
+.
+Dataset available from https://github. com/openimages
+2
+(
+3
+),
+pp. 18
+.
+Cited by:
+§A.2.2
+.
+[34]
+A. Kusupati, G. Bhatt, A. Rege, M. Wallingford, A. Sinha, V. Ramanujan, W. Howard-Snyder, K. Chen, S. Kakade, P. Jain,
+et al.
+(2022)
+Matryoshka representation learning
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 30233–30249
+.
+Cited by:
+§1
+,
+§2
+,
+§3
+.
+[35]
+B. Li, Y. Zhang, D. Guo, R. Zhang, F. Li, H. Zhang, K. Zhang, P. Zhang, Y. Li, Z. Liu,
+et al.
+(2024)
+Llava-onevision: easy visual task transfer
+.
+arXiv preprint arXiv:2408.03326
+.
+Cited by:
+§1
+.
+[36]
+B. Li, Y. Shen, Y. Liu, Y. Xu, J. Liu, X. Li, Z. Li, J. Zhu, Y. Zhong, F. Lan,
+et al.
+(2026)
+Toward cognitive supersensing in multimodal large language model
+.
+arXiv preprint arXiv:2602.01541
+.
+Cited by:
+§2
+.
+[37]
+J. Li, D. Li, S. Savarese, and S. Hoi
+(2023)
+Blip-2: bootstrapping language-image pre-training with frozen image encoders and large language models
+.
+In
+International conference on machine learning
+,
+pp. 19730–19742
+.
+Cited by:
+Table 1
+.
+[38]
+J. Li, D. Li, S. Savarese, and S. Hoi
+(2023)
+Blip-2: bootstrapping language-image pre-training with frozen image encoders and large language models
+.
+In
+International conference on machine learning
+,
+pp. 19730–19742
+.
+Cited by:
+§2
+.
+[39]
+K. Li, Y. He, Y. Wang, Y. Li, W. Wang, P. Luo, Y. Wang, L. Wang, and Y. Qiao
+(2023)
+Videochat: chat-centric video understanding
+.
+arXiv preprint arXiv:2305.06355
+.
+Cited by:
+Table 7
+,
+Table 7
+.
+[40]
+Y. Li, C. Wang, and J. Jia
+(2024)
+Llama-vid: an image is worth 2 tokens in large language models
+.
+In
+European Conference on Computer Vision
+,
+pp. 323–340
+.
+Cited by:
+Table 7
+.
+[41]
+Y. Li, Y. Du, K. Zhou, J. Wang, W. X. Zhao, and J. Wen
+(2023)
+Evaluating object hallucination in large vision-language models
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 292–305
+.
+Cited by:
+§A.2.1
+,
+§4.1
+.
+[42]
+B. Lin, Y. Ye, B. Zhu, J. Cui, M. Ning, P. Jin, and L. Yuan
+(2024)
+Video-llava: learning united visual representation by alignment before projection
+.
+In
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing
+,
+pp. 5971–5984
+.
+Cited by:
+§1
+,
+Table 7
+.
+[43]
+T. Lin, M. Maire, S. Belongie, J. Hays, P. Perona, D. Ramanan, P. Dollár, and C. L. Zitnick
+(2014)
+Microsoft coco: common objects in context
+.
+In
+European conference on computer vision
+,
+pp. 740–755
+.
+Cited by:
+§A.2.1
+,
+§A.2.1
+.
+[44]
+Z. Lin, C. Liu, R. Zhang, P. Gao, L. Qiu, H. Xiao, H. Qiu, C. Lin, W. Shao, K. Chen,
+et al.
+(2023)
+Sphinx: the joint mixing of weights, tasks, and visual embeddings for multi-modal large language models
+.
+arXiv preprint arXiv:2311.07575
+.
+Cited by:
+Table 1
+.
+[45]
+H. Liu, C. Li, Y. Li, and Y. J. Lee
+(2024)
+Improved baselines with visual instruction tuning
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 26296–26306
+.
+Cited by:
+§4.1
+.
+[46]
+H. Liu, C. Li, Y. Li, B. Li, Y. Zhang, S. Shen, and Y. J. Lee
+(2024)
+Llava-next: improved reasoning, ocr, and world knowledge, january 2024
+.
+URL https://llava-vl. github. io/blog/2024-01-30-llava-next
+.
+Cited by:
+§A.1
+,
+Table 6
+.
+[47]
+H. Liu, C. Li, Y. Li, B. Li, Y. Zhang, S. Shen, and Y. J. Lee
+(2024)
+Llava-next: improved reasoning, ocr, and world knowledge, january 2024
+.
+URL https://llava-vl. github. io/blog/2024-01-30-llava-next
+1
+(
+8
+).
+Cited by:
+§1
+,
+§4.1
+.
+[48]
+H. Liu, C. Li, Q. Wu, and Y. J. Lee
+(2023)
+Visual instruction tuning
+.
+Advances in neural information processing systems
+36
+,
+pp. 34892–34916
+.
+Cited by:
+§A.1
+,
+Table 9
+,
+§1
+,
+§2
+,
+Table 1
+.
+[49]
+R. Liu, C. Li, Y. Ge, T. H. Li, Y. Shan, and G. Li
+(2024)
+Bt-adapter: video conversation is feasible without video instruction tuning
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 13658–13667
+.
+Cited by:
+Table 7
+.
+[50]
+Y. Liu, H. Duan, Y. Zhang, B. Li, S. Zhang, W. Zhao, Y. Yuan, J. Wang, C. He, Z. Liu,
+et al.
+(2024)
+Mmbench: is your multi-modal model an all-around player?
+.
+In
+European conference on computer vision
+,
+pp. 216–233
+.
+Cited by:
+§A.2.1
+,
+§4.1
+.
+[51]
+Y. Liu, J. Zhu, Y. Mo, G. Li, X. Cao, J. Jin, Y. Shen, Z. Li, T. Yu, W. Yuan,
+et al.
+(2026)
+PALM: progress-aware policy learning via affordance reasoning for long-horizon robotic manipulation
+.
+arXiv preprint arXiv:2601.07060
+.
+Cited by:
+§2
+.
+[52]
+P. Lu, S. Mishra, T. Xia, L. Qiu, K. Chang, S. Zhu, O. Tafjord, P. Clark, and A. Kalyan
+(2022)
+Learn to explain: multimodal reasoning via thought chains for science question answering
+.
+Advances in Neural Information Processing Systems
+35
+,
+pp. 2507–2521
+.
+Cited by:
+§A.2.1
+,
+§4.1
+.
+[53]
+G. Luo, Y. Zhou, Y. Zhang, X. Zheng, X. Sun, and R. Ji
+(2024)
+Feast your eyes: mixture-of-resolution adaptation for multimodal large language models
+.
+arXiv preprint arXiv:2403.03003
+.
+Cited by:
+§1
+.
+[54]
+M. Maaz, H. Rasheed, S. Khan, and F. Khan
+(2024)
+Video-chatgpt: towards detailed video understanding via large vision and language models
+.
+In
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+pp. 12585–12602
+.
+Cited by:
+§A.2.3
+,
+§4.1
+.
+[55]
+A. Masry, X. L. Do, J. Q. Tan, S. Joty, and E. Hoque
+(2022)
+Chartqa: a benchmark for question answering about charts with visual and logical reasoning
+.
+In
+Findings of the association for computational linguistics: ACL 2022
+,
+pp. 2263–2279
+.
+Cited by:
+§A.2.2
+.
+[56]
+Q. Pan, Z. Li, G. Yang, Q. Yang, and B. Ji
+(2025)
+EviVLM: when evidential learning meets vision language model for medical image segmentation
+.
+IEEE Transactions on Medical Imaging
+.
+Cited by:
+§2
+.
+[57]
+Q. Pan, W. Qiao, J. Lou, B. Ji, and S. Li
+(2025)
+Dusss: dual semantic similarity-supervised vision-language model for semi-supervised medical image segmentation
+.
+In
+Proceedings of the AAAI Conference on Artificial Intelligence
+,
+Vol.
+39
+,
+pp. 6299–6307
+.
+Cited by:
+§2
+.
+[58]
+A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark,
+et al.
+(2021)
+Learning transferable visual models from natural language supervision
+.
+In
+International conference on machine learning
+,
+pp. 8748–8763
+.
+Cited by:
+§A.1
+,
+§3.2
+.
+[59]
+R. R. Selvaraju, M. Cogswell, A. Das, R. Vedantam, D. Parikh, and D. Batra
+(2017)
+Grad-cam: visual explanations from deep networks via gradient-based localization
+.
+In
+Proceedings of the IEEE international conference on computer vision
+,
+pp. 618–626
+.
+Cited by:
+§4.7
+.
+[60]
+Y. Shang, M. Cai, B. Xu, Y. J. Lee, and Y. Yan
+(2025)
+Llava-prumerge: adaptive token reduction for efficient large multimodal models
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 22857–22867
+.
+Cited by:
+Table 9
+,
+§1
+,
+Table 1
+,
+Table 6
+.
+[61]
+Y. Shen, Y. Liu, J. Zhu, X. Cao, X. Zhang, Y. He, W. Ye, J. M. Rehg, and I. Lourentzou
+(2025)
+Fine-grained preference optimization improves spatial reasoning in vlms
+.
+arXiv preprint arXiv:2506.21656
+.
+Cited by:
+§2
+.
+[62]
+A. Singh, V. Natarajan, M. Shah, Y. Jiang, X. Chen, D. Batra, D. Parikh, and M. Rohrbach
+(2019)
+Towards vqa models that can read
+.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+,
+pp. 8317–8326
+.
+Cited by:
+§A.2.2
+,
+§4.1
+.
+[63]
+D. Song, W. Wang, S. Chen, X. Wang, M. X. Guan, and B. Wang
+(2025)
+Less is more: a simple yet effective token reduction method for efficient multi-modal llms
+.
+In
+Proceedings of the 31st International Conference on Computational Linguistics
+,
+pp. 7614–7623
+.
+Cited by:
+Table 9
+,
+Table 1
+,
+Table 6
+.
+[64]
+E. Song, W. Chai, G. Wang, Y. Zhang, H. Zhou, F. Wu, H. Chi, X. Guo, T. Ye, Y. Zhang,
+et al.
+(2024)
+Moviechat: from dense token to sparse memory for long video understanding
+.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+,
+pp. 18221–18232
+.
+Cited by:
+Table 7
+.
+[65]
+S. Sukhbaatar, É. Grave, P. Bojanowski, and A. Joulin
+(2019)
+Adaptive attention span in transformers
+.
+In
+Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics
+,
+pp. 331–335
+.
+Cited by:
+§1
+.
+[66]
+H. Touvron, T. Lavril, G. Izacard, X. Martinet, M. Lachaux, T. Lacroix, B. Rozière, N. Goyal, E. Hambro, F. Azhar,
+et al.
+(2023)
+Llama: open and efficient foundation language models
+.
+arXiv preprint arXiv:2302.13971
+.
+Cited by:
+§1
+,
+§2
+.
+[67]
+P. Wang, S. Bai, S. Tan, S. Wang, Z. Fan, J. Bai, K. Chen, X. Liu, J. Wang, W. Ge,
+et al.
+(2024)
+Qwen2-vl: enhancing vision-language model’s perception of the world at any resolution
+.
+arXiv preprint arXiv:2409.12191
+.
+Cited by:
+§1
+.
+[68]
+Z. Wen, Y. Gao, S. Wang, J. Zhang, Q. Zhang, W. Li, C. He, and L. Zhang
+(2025)
+Stop looking for important tokens in multimodal language models: duplication matters more
+.
+arXiv preprint arXiv:2502.11494
+.
+Cited by:
+Table 9
+,
+Table 1
+,
+Table 6
+.
+[69]
+L. Xing, Q. Huang, X. Dong, J. Lu, P. Zhang, Y. Zang, Y. Cao, C. He, J. Wang, F. Wu,
+et al.
+(2024)
+Pyramiddrop: accelerating your large vision-language models via pyramid visual redundancy reduction
+.
+arXiv preprint arXiv:2410.17247
+.
+Cited by:
+Table 9
+,
+Table 1
+,
+Table 6
+.
+[70]
+J. Xu, T. Mei, T. Yao, and Y. Rui
+(2016)
+Msr-vtt: a large video description dataset for bridging video and language
+.
+In
+Proceedings of the IEEE conference on computer vision and pattern recognition
+,
+pp. 5288–5296
+.
+Cited by:
+§A.2.3
+,
+§4.1
+.
+[71]
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv,
+et al.
+(2025)
+Qwen3 technical report
+.
+arXiv preprint arXiv:2505.09388
+.
+Cited by:
+§1
+,
+§2
+.
+[72]
+S. Yang, Y. Chen, Z. Tian, C. Wang, J. Li, B. Yu, and J. Jia
+(2025)
+Visionzip: longer is better but not necessary in vision language models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 19792–19802
+.
+Cited by:
+Table 9
+,
+Table 1
+,
+Table 6
+,
+Table 7
+.
+[73]
+Y. Yao, T. Yu, A. Zhang, C. Wang, J. Cui, H. Zhu, T. Cai, H. Li, W. Zhao, Z. He,
+et al.
+(2024)
+Minicpm-v: a gpt-4v level mllm on your phone
+.
+arXiv preprint arXiv:2408.01800
+.
+Cited by:
+§1
+.
+[74]
+J. Ye, A. Hu, H. Xu, Q. Ye, M. Yan, Y. Dan, C. Zhao, G. Xu, C. Li, J. Tian,
+et al.
+(2023)
+Mplug-docowl: modularized multimodal large language model for document understanding
+.
+arXiv preprint arXiv:2307.02499
+.
+Cited by:
+Table 1
+.
+[75]
+X. Ye, Y. Gan, X. Huang, Y. Ge, and Y. Tang
+(2025)
+Voco-llama: towards vision compression with large language models
+.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+,
+pp. 29836–29846
+.
+Cited by:
+§1
+.
+[76]
+W. Yu, Z. Yang, L. Li, J. Wang, K. Lin, Z. Liu, X. Wang, and L. Wang
+(2024)
+MM-vet: evaluating large multimodal models for integrated capabilities
+.
+In
+Proceedings of the 41st International Conference on Machine Learning
+,
+pp. 57730–57754
+.
+Cited by:
+§A.2.1
+,
+§4.1
+.
+[77]
+H. Zhang, X. Li, and L. Bing
+(2023)
+Video-llama: an instruction-tuned audio-visual language model for video understanding
+.
+In
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing: System Demonstrations
+,
+pp. 543–553
+.
+Cited by:
+Table 7
+.
+[78]
+H. Zhang, X. Li, and L. Bing
+(2023)
+Video-llama: an instruction-tuned audio-visual language model for video understanding
+.
+arXiv preprint arXiv:2306.02858
+.
+Cited by:
+§1
+.
+[79]
+P. Zhang, X. Dong, B. Wang, Y. Cao, C. Xu, L. Ouyang, Z. Zhao, H. Duan, S. Zhang, S. Ding,
+et al.
+(2023)
+Internlm-xcomposer: a vision-language large model for advanced text-image comprehension and composition
+.
+arXiv preprint arXiv:2309.15112
+.
+Cited by:
+§2
+.
+[80]
+Q. Zhang, A. Cheng, M. Lu, R. Zhang, Z. Zhuo, J. Cao, S. Guo, Q. She, and S. Zhang
+(2025)
+Beyond text-visual attention: exploiting visual cues for effective token pruning in vlms
+.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+,
+pp. 20857–20867
+.
+Cited by:
+Table 9
+,
+Table 1
+,
+Table 6
+,
+Table 7
+.
+[81]
+Q. Zhang, M. Liu, L. Li, M. Lu, Y. Zhang, J. Pan, Q. She, and S. Zhang
+(2025)
+Beyond attention or similarity: maximizing conditional diversity for token pruning in mllms
+.
+arXiv preprint arXiv:2506.10967
+.
+Cited by:
+Table 9
+,
+Table 1
+,
+Table 6
+.
+[82]
+R. Zhang, J. Han, C. Liu, P. Gao, A. Zhou, X. Hu, S. Yan, P. Lu, H. Li, and Y. Qiao
+(2023)
+Llama-adapter: efficient fine-tuning of language models with zero-init attention
+.
+arXiv preprint arXiv:2303.16199
+.
+Cited by:
+Table 7
+.
+[83]
+Y. Zhang, C. Fan, J. Ma, W. Zheng, T. Huang, K. Cheng, D. Gudovskiy, T. Okuno, Y. Nakata, K. Keutzer,
+et al.
+(2024)
+Sparsevlm: visual token sparsification for efficient vision-language model inference
+.
+arXiv preprint arXiv:2410.04417
+.
+Cited by:
+Table 9
+,
+Table 1
+,
+Table 6
+,
+Table 7
+.
+[84]
+Y. Zhang, J. Wu, W. Li, B. Li, Z. Ma, Z. Liu, and C. Li
+(2024)
+Video instruction tuning with synthetic data
+.
+arXiv preprint arXiv:2410.02713
+.
+Cited by:
+§1
+.
+[85]
+Y. Zhou, Y. Li, D. Cheng, H. Fan, and Y. Cheng
+(2026)
+Look inward to explore outward: learning temperature policy from llm internal states via hierarchical rl
+.
+arXiv preprint arXiv:2602.13035
+.
+Cited by:
+§2
+.
+[86]
+Y. Zhou, Z. Zhao, D. Cheng, Z. Wu, J. Gui, Y. Yang, F. Wu, Y. Cheng, and H. Fan
+(2025)
+Dropping experts, recombining neurons: retraining-free pruning for sparse mixture-of-experts llms
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2025
+,
+pp. 15169–15186
+.
+Cited by:
+§1
+.
+[87]
+D. Zhu, J. Chen, X. Shen, X. Li, and M. Elhoseiny
+(2023)
+Minigpt-4: enhancing vision-language understanding with advanced large language models
+.
+arXiv preprint arXiv:2304.10592
+.
+Cited by:
+§2
+.
+Frequency-Modulated Visual Restoration for Matryoshka Large Multimodal Models
+Supplementary Material
+This supplementary material contains several sections that provide additional details related to our work. Specifically, it will cover the following topics:
+•
+In Appendix
+A
+, we provide details of the experimental setup, including model architectures and evaluation benchmarks.
+•
+In Appendix
+B
+, we provide addition experiments, including FMVR for advanced open-source LMM, FMVR for larger language model, Ablation study on other Matryoshka visual token sampling methods, and case results.
+Appendix A
+Details of Experimental Setup
+A.1
+Model Architectures
+LLaVA-1.5
+[
+48
+]
+. As a representative line of open-source multimodal large language models, the LLaVA family is widely adopted for its efficiency and strong capability. It mainly has three components, where CLIP
+[
+58
+]
+is used to extract visual representations, Vicuna
+[
+15
+]
+serves as the language backbone, and a lightweight projection module maps visual features into the LLM’s embedding space. With visual instruction tuning, this basic setup enables the model to perform a wide range of image–text tasks. LLaVA-1.5 significantly enhance multimodal reasoning ability. At the common resolution of 336×336, the model outputs 576 visual tokens for each image.
+LLaVA-Next
+[
+46
+]
+. LLaVA-NeXT (also referred to as LLaVA-1.6) pushes the LLaVA architecture further by introducing a dynamic-resolution strategy aimed at strengthening the model’s visual understanding. Instead of relying on a fixed input size, it adjusts the aspect ratio according to the native dimensions of the image and allows the effective resolution to scale by up to four times. Importantly, the visual encoder itself remains unchanged. The high-resolution input is partitioned into multiple tiles, each matching the original input size, and every tile is processed independently before their visual features are concatenated and passed to the language model. This tiling-based high-resolution pipeline substantially boosts performance on tasks requiring fine-grained perception, such as OCR, detailed reasoning, and factual recognition. For consistency in our evaluations, we standardize the resolution to 672×672—four times the original—yielding a total of 2,880 visual tokens.
+Qwen2.5-VL
+[
+3
+]
+. Qwen2.5-VL represents a member of Qwen-VL family. Its visual backbone has been thoroughly redesigned, adopting a revised Vision Transformer that incorporates windowed attention, SwiGLU activations, and RMSNorm, following the architectural paradigm of the Qwen2.5 language model. Beyond static image understanding, it embraces a dynamic visual processing pipeline, supporting flexible input resolutions and adaptive frame rate handling. Thanks to these advantages, Qwen2.5-VL achieves comparable performance in detailed visual perception tasks such as detection, OCR, layout and document parsing, as well as structured information extraction.
+A.2
+Evaluation Benchmarks
+A.2.1
+General Image Benchmarks
+VQAv2
+[
+23
+]
+. It is the version of the VQA benchmark
+[
+2
+]
+, constructed to assess a model’s integrated understanding of visual content, natural language, and commonsense reasoning. The dataset contains 265,016 images drawn from COCO
+[
+43
+]
+as well as synthetic abstract scenes, with each image paired with an average of 5.4 questions. Every question is further provided with 10 reference answers and 3 additional plausible distractor responses. Following common practice, we adopt the test-dev split for evaluation.
+GQA
+[
+27
+]
+. It is a large-scale VQA dataset constructed from real-world images sourced from the Visual Genome corpus
+[
+25
+]
+, aimed at evaluating the model’s capacity for compositional reasoning and fine-grained visual comprehension. It contains more than 22 million question–answer pairs, and every image is accompanied by a richly annotated scene graph that captures object categories, attributes, and inter-object relationships. For our experiments, we report results on the test-dev balanced split.
+VizWiz
+[
+25
+]
+. This benchmark targets visual question answering in a real-world accessibility scenarios: blind or low-vision users take photos in everyday environments and verbally pose questions about them. Each visual question is accompanied by ten answers, offering diverse perspectives on noisy and incomplete visual information. The dataset defines two core tasks—providing answers to the visual questions and detecting when a question cannot be answered from the image alone—thereby emphasizing real-world challenges such as low-quality imagery, occlusion, and ambiguous scene content. We evaluate our model on the official test split.
+ScienceQA
+[
+52
+]
+. This dataset is a large-scale multimodal multiple-choice QA benchmark that covers a broad spectrum of scientific disciplines. It comprises 21,208 questions drawn from natural sciences, language sciences, and social sciences, which are further organized into 26 topics, 127 fine-grained categories, and 379 skill types. The questions vary in modality: 48.7% provide visual content, 48.2% include textual context, and 30.8% offer both forms of information. For evaluation, we follow prior works and adopt the test split that contains image-based questions (ScienceQA-IMG).
+POPE
+[
+41
+]
+. This benchmark targets the evaluation of object hallucination in large vision–language models. It is constructed using images from COCO
+[
+43
+]
+, enabling the measurement of hallucinated predictions. The performance is summarized using precision, recall, and F1 scores. Following prior works, we report results on the test split.
+MME
+[
+9
+]
+. It evaluates both the perceptual and cognitive abilities of multimodal large language models across 14 subtasks. The perception tasks cover coarse- and fine-grained recognition as well as OCR, ranging from basic object presence, count, and attributes to identifying specific scenes, landmarks, and artworks. The cognition tasks assess commonsense reasoning, numerical calculation, translation, and code understanding.
+MMBench
+[
+50
+]
+. This benchmark provides a broad evaluation of vision–language abilities across diverse tasks. It offers a larger varied set of questions and skills than prior benchmarks. MMBench also proposes a CircularEval protocol, which uses ChatGPT to convert open-ended outputs into structured choices for more stable and consistent scoring.
+MM-Vet
+[
+76
+]
+. It examines the integration of multiple multimodal abilities. It covers six core capabilities—recognition, OCR, knowledge, language generation, spatial reasoning, and mathematics—through 218 challenging examples. Evaluation is conducted using a ChatGPT-based assessor, which provides unified metrics for answers of different formats.
+A.2.2
+Text-oriented benchmarks
+TextVQA
+[
+62
+]
+. This benchmark examines the model’s capacity to recognize and reason over textual content embedded in images. The visual data, largely drawn from Open Images v3
+[
+33
+]
+, contains real-world settings such as signs, advertisements, and product labels, all featuring substantial scene text. As a result, the benchmark provides an assessment of OCR integration and text-sensitive visual reasoning. We evaluate on the validation split.
+ChartQA
+[
+55
+]
+. It is a large benchmark for chart-based question answering, emphasizing visual understanding and logical or complex reasoning. It contains 9.6K human-written questions and 23.1K questions generated from chart summaries. Unlike earlier template-driven datasets, ChartQA requires multi-step reasoning over both chart visuals and their underlying data. We use the test split for evaluation.
+AI2D
+[
+31
+]
+. AI2D is a diagram-based question answering benchmark containing over 5,000 grade-school science diagrams, annotated with more than 150,000 structured labels and syntactic parses. It also provides over 15,000 multiple-choice questions paired with the diagrams, supporting research on visual reasoning and scientific diagram understanding. We use the masked test split for evaluation.
+Table 8
+:
+Performance comparison of different pruning methods on Qwen2.5-VL-7B.
+Methods
+#Vision
+Tokens
+TextVQA
+ChartQA
+AI2D
+MMB
+EN
+Avg.
+(%)
+Qwen2.5-VL
+1296
+84.8
+86.1
+80.4
+82.8
+83.5
+FastV
+128
+73.8
+52.2
+71.4
+72.9
+67.6
+DivPrune
+128
+67.0
+50.4
+72.1
+77.8
+66.8
+CDPruner
+128
+77.8
+59.2
+74.0
+76.2
+71.8
+FMVR (Ours)
+81
+76.3
+62.2
+77.5
+79.6
+73.9
+Table 9
+:
+Performance comparison on LLaVA-1.5-13B across 10 image-based benchmarks. ‘#VisionTokens’ is the number of vision tokens.
+Δ
+\Delta
+rows show the change vs. LLaVA-v1.5-13B.
+Methods
+#Vision
+Tokens
+VQAv2
+GQA
+VisWiz
+SQA
+IMG
+VQA
+Text
+POPE
+MME
+MMB
+EN
+MMB
+CN
+MMVet
+Avg.
+(%)
+LLaVA-1.5-13B
+[
+48
+]
+576
+80.0
+63.3
+53.6
+72.8
+61.2
+86.0
+1531.2
+68.5
+63.5
+36.2
+66.2
+FastV
+[
+11
+]
+128
+75.3
+58.3
+54.6
+74.2
+58.6
+75.5
+1460.6
+66.1
+62.3
+32.8
+63.1
+PyramidDrop
+[
+69
+]
+128
+78.2
+61.0
+53.8
+73.3
+60.2
+83.6
+1489.5
+67.5
+62.8
+32.1
+64.7
+SparseVLM
+[
+83
+]
+128
+77.6
+59.6
+51.4
+74.3
+59.3
+85.0
+1487.9
+68.4
+62.6
+35.2
+64.8
+Prumerge+
+[
+60
+]
+128
+76.2
+58.3
+52.8
+73.3
+56.1
+82.7
+1445.9
+66.3
+61.2
+33.6
+63.3
+TRIM
+[
+63
+]
+128
+76.4
+59.4
+49.7
+72.4
+55.0
+86.8
+1426.9
+67.1
+58.4
+35.1
+63.2
+VisionZip
+[
+72
+]
+128
+76.8
+57.9
+52.3
+73.8
+58.9
+82.7
+1449.2
+67.4
+62.5
+36.0
+64.1
+DART
+[
+68
+]
+128
+75.7
+57.7
+53.0
+74.2
+58.7
+80.4
+1395.0
+65.4
+62.2
+34.8
+63.2
+DivPrune
+[
+1
+]
+128
+77.1
+59.2
+53.5
+72.8
+58.0
+86.8
+1457.7
+66.3
+60.7
+34.4
+64.2
+CDPruner
+[
+81
+]
+128
+77.7
+59.7
+52.9
+73.2
+58.4
+87.3
+1478.0
+67.5
+61.5
+36.2
+64.8
+VisPruner
+[
+80
+]
+128
+76.1
+58.8
+53.4
+72.8
+57.9
+86.0
+1452.2
+66.4
+61.3
+36.1
+64.1
+MQT-LLaVA
+[
+26
+]
+144
+77.9
+59.4
+54.1
+73.6
+60.2
+86.1
+1471.3
+66.5
+61.0
+31.4
+64.4
+M3
+[
+6
+]
+144
+79.2
+60.6
+53.5
+72.9
+60.4
+87.7
+1478.3
+67.2
+59.8
+32.3
+64.8
+Ours
+1
+72.2
+57.6
+50.3
+69.4
+53.9
+82.5
+1384.7
+62.2
+55.8
+27.8
+60.1
+9
+76.3
+60.2
+51.8
+70.9
+58.4
+84.7
+1470.5
+65.1
+60.4
+30.7
+63.2
+FMVR-LLaVA
+36
+78.4
+61.2
+53.4
+71.5
+60.5
+86.6
+1477.8
+66.3
+62.5
+32.7
+64.7
+144
+79.7
+63.6
+56.7
+72.0
+61.3
+87.2
+1489.4
+68.3
+63.8
+34.2
+66.1
+576
+80.7
+64.2
+57.2
+72.4
+60.7
+88.1
+1528.9
+69.5
+65.1
+35.4
+67.0
+Δ
+\Delta
+vs. LLaVA-v1.5-13B
+144
+-0.3
++0.3
++3.1
+-0.8
++0.1
++1.2
+-41.8
+-0.2
++0.3
+-2.0
+-0.1
+Table 10
+:
+Ablation study on Matryoshka visual token sampling, including average pooling, sequential sampling, spatial sampling, and max pooling.
+Num of Vis Tokens
+TextVQA
+MMBench
+Avg Pooling
+Sequential
+Spatial
+Max Pooling
+Avg Pooling
+Sequential
+Spatial
+Max Pooling
+1
+49.2
+46.3
+45.9
+47.1
+60.7
+57.9
+58.6
+59.8
+9
+50.8
+46.7
+46.4
+48.2
+64.2
+60.4
+61.5
+63.9
+36
+55.3
+51.2
+49.0
+52.8
+65.2
+61.8
+63.1
+64.5
+144
+55.5
+53.7
+50.6
+53.3
+65.8
+64.2
+63.7
+64.9
+576
+57.8
+55.6
+52.6
+54.7
+65.9
+64.7
+64.0
+65.3
+Table 11
+:
+Baseline results of token numbers on LLaVA-1.5-7B.
+Tokens
+Method
+VQAv2
+GQA
+VisWiz
+SQA
+IMG
+VQA
+Text
+POPE
+MME
+MMB
+EN
+MMB
+CN
+MMVet
+576
+baseline
+78.5
+62.0
+50.0
+66.8
+58.2
+85.9
+1510.7
+64.3
+58.3
+30.5
+Ours
+79.2
+63.0
+56.5
+68.9
+57.8
+87.5
+1510.1
+65.9
+58.0
+34.3
+144
+baseline
+77.8
+61.1
+48.3
+67.5
+57.3
+85.0
+1480.4
+65.1
+57.1
+30.2
+Ours
+78.6
+62.3
+55.1
+69.7
+55.5
+86.4
+1473.9
+65.8
+57.6
+33.4
+36
+baseline
+76.1
+58.4
+46.8
+67.0
+56.7
+85.2
+1448.3
+64.5
+57.7
+29.4
+Ours
+76.5
+60.9
+52.9
+69.5
+55.3
+85.9
+1452.5
+65.2
+58.3
+32.2
+9
+baseline
+73.4
+56.3
+46.0
+67.3
+52.2
+83.6
+1422.9
+63.7
+56.8
+28.5
+Ours
+74.5
+59.1
+50.7
+69.9
+50.8
+84.1
+1415.0
+64.2
+57.5
+29.0
+1
+baseline
+67.4
+54.2
+45.5
+66.4
+49.6
+79.5
+1291.0
+58.2
+53.9
+26.2
+Ours
+68.3
+55.2
+49.7
+68.6
+49.2
+81.1
+1284.8
+60.7
+53.4
+26.4
+Figure 7
+:
+Example demonstrating FMVR’s image understanding capability on more challenging OCR task. Response marked in red indicates errors.
+A.2.3
+Video benchmarks
+MSVD
+[
+10
+]
+. MSVD is a video question answering benchmark, containing roughly 2k short video clips and about 50k question–answer pairs. It evaluates a model’s ability to understand visual content over time, including actions, events, and temporal relationships, as well as its capacity to ground and answer natural language queries about the video.
+MSRVTT
+[
+70
+]
+. It is a large-scale video captioning and video understanding dataset consisting of 10k video clips collected from real-world web videos. Each video is paired with 20 captions, covering a broad range of everyday events, activities, and scenes. The dataset is widely used for video-language tasks such as video captioning, video retrieval, and video question answering, serving as a standard benchmark for evaluating multimodal temporal understanding.
+ActivityNet
+[
+5
+]
+. It is a large-scale benchmark for human activity understanding in untrimmed videos. It contains around 20k videos spanning 200 activity categories, covering a wide range of daily human actions. Designed for tasks such as action recognition, temporal action localization, and temporal segmentation, ActivityNet provides diverse and long-duration videos that evaluate both visual perception and temporal reasoning capabilities of multimodal models.
+Video-based Generative Performance Benchmark
+[
+54
+]
+. It contains five dimensions: correctness, detail orientation, contextual understanding, temporal understanding, and consistency. The evaluation pipelines for both the open-ended question-answering and the generative performance benchmarks adhere to Video ChatGPT
+[
+54
+]
+.
+Appendix B
+Additional Experimental Results
+B.1
+FMVR for advanced open-source LMM
+In addition to LLaVA, we further apply FMVR to one of the most advanced open-source LMM, i.e., Qwen2.5-VL. The input image is resized to 1008×1008 and the visual encoder produces a total of 1,296 tokens. We directly insert the trained FMVR into the back of the Qwen2.5-VL’s visual encoder. We compare our FMVR with FastV DivPrune, and CDPruner. As shown in Table
+8
+, FMVR consistently achieves the best results across on four benchmarks. FMVR with 81 visual tokens outperforms the next-best method, CDPruner with 128 visual tokens, by 2.1% in average. It demonstrates the strong generalizability of FMVR on advanced LLM architectures.
+B.2
+FMVR for larger language model
+To further examine whether our approach scales to stronger language backbones, we conduct experiments on LLaVA-1.5-13B. As shown in Table
+9
+, Increasing the size of LLM yields substantial performance gains. Across all token pruning methods with 128 visual tokens except for SparseVLM, CDPruner, and M3, FMVR with only 36 visual tokens consistently achieves the highest performance 64.7%. It is worth noting that our FMVR with 144 visual tokens achieved comparable performance to LLaVA-1.5-13B with 576 visual tokens, i.e., 66.1% vs. 66.2%, demonstrating its effectiveness on larger language models.
+B.3
+Ablation study on other Matryoshka visual token sampling methods
+We evaluate four strategies for selecting visual tokens in Matryoshka visual token construction, including average pooling, spatial sampling, sequential sampling, and max pooling. As illustrated in Table
+10
+, average pooling consistently outperforms the other three approaches because it preserves the complete local semantic information by aggregating all tokens within each spatial region. In contrast, spatial sampling and sequential sampling select only one token from each region or sequence, which discards important information and disrupts spatial consistency. Max pooling keeps only the strongest activation, ignoring other semantic information. As a result, average pooling provides the most informative representation, leading to superior performance.
+B.4
+Additional case results
+Fig.
+7
+presents an example that highlights FMVR’s strength on a challenging OCR task. The text in the image varies in size and is somewhat obscured, which typically degrades recognition performance in LLMs. Despite this difficulty, our FMVR correctly read all the text using only 144 visual tokens. In contrast, M3 misidentify key words, such as mistakenly identifying ’autographs’ as’auto power’ and introduce an incorrect ”s’. Furthermore, LLaVA-v1.5 fails to recognize ’autographs’. These results demonstrate that FMVR possesses more detailed visual perception capabilities.
+B.5
+Baseline results of token numbers
+Table
+11
+reports the baseline and our method under different token budgets on LLaVA-1.5-7B. As token numbers decrease from 576 to 1, performance gradually drops. However, our method consistently outperforms the baseline on most benchmarks, demonstrating stronger robustness and effectiveness under aggressive token reduction.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

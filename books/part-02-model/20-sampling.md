@@ -51,6 +51,10 @@ p_i = exp(z_i-z_max) / sum_j exp(z_j-z_max)
 
 这是一条以离线簇索引、候选读取与近似误差换资源的分支，不是 top-k/top-p 的等价实现。[受限词表头实验](https://arxiv.org/html/2603.14591v1)只在已披露模型、batch1 RTX3500Ada 条件下显示任务均值与端到端延迟取舍；head 加速不能代替完整模型收益，概率任务的 Monte-Carlo 估计与零概率修补也不是精确 likelihood。需要原分布、严格复现、罕见 token 覆盖或大 batch 吞吐时，应保留 dense 路径，或另作分布误差与实际成本验收。
 
+抽样结果若不是精确onehot，而是若干相邻坐标的混合，词表顺序也会进入下一步的语义载荷：可按embedding邻近性重新排坐标，再以低阶多项式压低残余混合，最后仍由对应embedding表消费。[受限近似采样分支](https://arxiv.org/html/2510.12343v1#S3)要求采样坐标、token ID映射与表行一起绑定，不能只改一个数组顺序。其实际实验为plaintext，不是密文执行、隐私部署或HE净速证明；honest-but-curious也不覆盖恶意参与方。邻近cosine不是所有语义的metric保证，未闭多项式/误差式不补完整recipe，额外LoRA改变分布亦须分账。全词表两两比较/重排、适配、后处理及加密执行的独立验证都计费；映射、质量或实际加密费用不合时保精确onehot/普通采样及可信映射，不由较低邻居误差批准原分布不变、内容保真或机密性。
+
+<!-- source-family:SF-2025-ARXIV-2510-12343 -->
+
 ### 一个固定 logits 例子
 
 假设 vocabulary 只有三个候选，logits 为：
@@ -146,6 +150,13 @@ Top-p 的候选数会随分布变化：模型确定时集合小，不确定时�
 
 <!-- source-family:SF-2025-ARXIV-2509-02510 -->
 
+候选集合还可由离线参考token的统计来收窄，而不把高不确定性一律解释为应多探索：在固定模型、温度与logit处理下，按最大概率bin和rank统计teacher-forcing参考匹配率，再供动态rank上限或概率cutoff消费；低confidence处直接greedy是另一条不依赖该校准表的策略。[Correctness-first的受限对照](https://arxiv.org/html/2510.05987v1#S3)支持比较这些截断分支，却不让单一参考措辞的匹配率变成语义正确概率，gold-prefix统计也不自动迁移到自身错误prefix。Bin内均值乘积、稀疏零值与最大合格rank的处理须独立核对，不能由较好拟合宣布每个保留token安全；固定正斜率映射本质仍是概率阈值，不是在线语义verifier。闭答案多数票的收益与代码pass@k/创意质量不同，局部也有反退。参考/teacher制备、校准与阈值搜索、全vocab处理、全部样本/投票及独立答案核验均费；参考支持、温度或任务目标失配时，保原top-k/top-p、greedy或更宽独立候选，不由低confidence强制选择认证正确、安全和净降费。
+
+<!-- source-family:SF-2025-ARXIV-2510-05987 -->
+
+下一token也可由同一prefix下的多份条件logits合成，而不只过滤单一分布。例如给同一模型不同persona及neutral条件，按各路径confidence重权后再softmax；这增加的是条件前向，不等独立agent已有不同观察。尤其max-probability接近不代表token分布一致：两路径都以0.9押不同token，标量confidence仍相同；logit求和还改变有效temperature，权重可能为负时更不能叫凸共识。[CHOIR的有限对照](https://arxiv.org/html/2510.22475v1)支持局部多条件解码选择，未证互补知识或公平性根因。所有路径/KV、权重和采样顺序都计费，条件改变语义或质量/预算不合时保neutral单路径与已验采样，不让标量一致性认证答案正确。
+<!-- source-family:SF-2025-ARXIV-2510-22475 -->
+
 ## Logit penalties 与约束的边界
 
 Top-k 与 top-p 依据当前分数删减候选；如果任务还要求减少已出现内容的重复，或只允许合法格式，就需要把历史与任务约束也带入这一步。
@@ -153,6 +164,12 @@ Top-k 与 top-p 依据当前分数删减候选；如果任务还要求减少已�
 Repetition、frequency、presence penalties 会根据已生成 tokens 修改 logits；grammar-constrained decoding 会屏蔽不符合语法的候选。
 
 它们都发生在 token selection 层，却解决不同问题：penalty 是启发式偏好，grammar mask 是硬候选约束。它们可能改善格式或减少重复，也可能屏蔽正确 token。
+
+候选删减也可能由学得的语言线索触发，而不来自确定grammar：冻结base，先用norm调整后的候选自蒸馏文字系统标签，再让hidden-state gate按当前分数与历史标签提议mask。[LCG的受限分支](https://arxiv.org/html/2510.17555v1)把软诊断接到硬支持集删除，因此gate错一次就可能让原本合法token不可达；script family不等语言，更不等当前语义应使用哪种语言。Symbols、低资源与低置信例外、合法code-switch及与top-k/top-p的处理顺序须明确，不能把norm当作全部混淆原因。Gate训练、逐token读取/候选处理及所有语言、代码和切换场景回归均计费，冻结base不保原输出law或任务分数；局部干预也确实会压低自然切换并损害代码成功。分类、支持或效用失配时，关闭gate、保更宽候选与原processor配置，不让较少语言混淆签发保义、全语言覆盖或安全解码。
+<!-- source-family:SF-2025-ARXIV-2510-17555 -->
+
+重复惩罚还须检查它能否跨过sampler的锁定门槛：声明的top-p规则在π>1/2且loop token概率q≥π时只留该token，后加temperature已不能打开出口；有界penalty只抬高这一门槛。DRY的breaker既截match又免罚自身，因而带短breaker-free片段的循环可让本应增长的惩罚封顶；[受限DRY-C分支](https://arxiv.org/html/2610.24715v1#S6)另按跨breaker recurrence计数，却仍被有限lookback封顶。未锁也不等预算内逃离，理论只解释verbatim loop已开始后的持续，不解释起因或near-loop。窗口/顺序、全采样与任务回归都收费，跨breaker惩罚也会伤合法复述、JSON或覆盖；需求允许重复或副作用不合时保较弱惩罚、显式长度预算与独立任务检查，不由少循环批准内容正确或无条件终止。
+<!-- source-family:SF-2026-ARXIV-2610-24715 -->
 
 循环也可先作内部诊断，而不直接修改 logits：将逐句 last-layer hidden 汇聚后交给线性 probe，再以正常样本校准的 CUSUM 阈值和 persistence 检查持续异常。反复的高 entropy reflection 可能早于可见文本重复，但 sensor 只提议风险；它不是 repetition penalty、已验缓解器或生产输出门禁，相关 hidden 特征也不证明真实吸引子因果。<!-- source-family:SF-2026-ARXIV-2601-05693 -->
 
@@ -198,6 +215,10 @@ raw logits
 - 模型、tokenizer、prompt 或 adapter 不同。
 
 所以 `seed` 是生成配置的一部分，不是跨系统字节级复现保证。
+
+Token采样随机也不保证语义选项均匀：可先生成中间字符串，再以显式hash或sum-mod映射为离散选项，把语义分布接口从原token概率中分离。[SSoT的受限构造](https://arxiv.org/html/2510.21150v1#S3)需要条件字符概率界/实际随机选取的通用hash，或sum-mod所需的独立源与谱条件；任意LLM自选hash不能继承保证，T0字符串的压缩复杂度也不是真随机熵。有限选项与模型对照不授密码随机或普遍语义公平，额外字符串/推理tokens、映射及分布校准均付费。随机源、映射或目标分布不可靠时，保外部PRNG、受控sampler和固定选项接口，不由一个较均匀直方图批准跨任务的独立随机性。
+
+<!-- source-family:SF-2025-ARXIV-2510-21150 -->
 
 ## EOS、停止条件和最大长度
 
@@ -256,6 +277,10 @@ top-k、top-p 或 temperature 假设 token 概率的相对顺序和形状足以�
 
 逐步选择会改变后续前缀，因此长度不只是输出统计，也是一项可控制的计算预算。先从不修改模型的停止策略开始，再区分对轨迹内部状态的干预和对答案提交顺序的调整；它们优化的对象并不相同。
 
+预算决策还可以放在长推理之前：先生成直接答案，再由评分器估计当前答案是否需要升级到CoT；这与在一条已开始的轨迹中提前停止不同。[Confidence-gated CoT的受限对照](https://arxiv.org/html/2510.21007v1#S3)把直接答、评分和升级后重答分成三个调用，阈值依验证人口与模型校准，不能把口述confidence当正确概率。局部质量/平均token取舍不保证尾延迟、最坏预算或换域后相同漏放率；不升级的错误也须单独计入。完整账包括首次直接生成、评分、被升级样本的完整推理及独立校准，而非只算最后留下的答案。分数、人口或预算失配时，保固定受控预算、可信verifier或明确拒答，不由较少CoT调用批准答案正确或省掉评分成本。
+
+<!-- source-family:SF-2025-ARXIV-2510-21007 -->
+
 ### Test-time Budget 是 Runtime Policy，不是免费能力
 
 Reasoning model 让停止条件进一步变成 compute policy：runtime 可以在达到上限时硬性停止生成，也可以注入结束标记，尝试把 thinking 通道切到 answer；后者不保证后续不再出现 reasoning-like 续写，阻止结束标记再次出现也不等于停止这种行为。反过来，模型过早结束时，可以抑制 delimiter、追加 continuation cue，再给它更多 token。
@@ -268,6 +293,10 @@ Reasoning model 让停止条件进一步变成 compute policy：runtime 可以�
 `reasoning budget + stopping policy + model/runtime version` 绑定到同一 evaluation subject。
 
 名义上限相同，也不意味着模型实际使用了相同推理预算：同一道题加入无关长前缀、换成第二轮或嵌入子任务，可能改变模型自主结束thinking的行为。因此还应把context条件、turn位置、子题分摊规则与实际生成/验证行为写入评价身份，分别检查最终质量和完整Prefill/Decode费用。[受限context对照](https://arxiv.org/html/2604.01161v1)观察到verification文本与生成长度变化，同prefix末段重采样支持有限stop差额，却不证明质量变化全由少验证造成；个别模型/条件也生成更长，子题token除二不是同单题budget。无关前缀本身增加Prefill，较短trace不自动节省总成本，外层cap和deadline仍保留；条件变化或质量退步时应回到原单题/turn人口与独立答案验收，不把compaction或继续生成视为已经验证的修复。<!-- source-family:SF-2026-ARXIV-2604-01161 -->
+
+长度控制还可以在多轮候选之间进行，而不直接干预正在生成的轨迹：在prompt中给出软步数上限，每轮采样后选一个答案，只对给出该答案的候选统计长度；将跨轮答案一致性与条件长度统计对约束的响应共同用作下一轮收紧或放松约束的proposal。[受限跨约束搜索](https://arxiv.org/html/2509.06174v1)用最短值、下四分位和中位数的组合及有限patience容忍偶然不一致，但它们描述的是被选答案人口，不认证答案真值或找到了最短正确链；稳定错误多数也能持续一致，软步数也不是外层硬token cap。约束变化未有单调正确性保证，原history、边界与跨轮置信保存未闭，不补成可执行最优二分配方。应绑定每轮prompt/约束、候选、答案规范化、样本分配和停止规则，另验最终质量；最终或正确人口的链长不等全部搜索费用，所有轮次的prefill、失败候选、串行等待、聚合与独立核验均计入，有限数学反退不由较短输出抹去。信号不稳、错误一致或全费不合算时，保留较松候选、固定self-consistency/BoN和独立verifier或Unknown，外层deadline仍约束整个搜索，不由patience耗尽自动批准正确提交。
+
+<!-- source-family:SF-2025-ARXIV-2509-06174 -->
 
 逐 token 的长度预测还可以采用与答案效用分开的监督目标。对固定生成 policy 采得的长度为 $L$ 的轨迹，在位置 $t$ 为每个非终止步赋负成本 $-(1-\gamma)$，可直接构造 $G_t=-(1-\gamma^{L-t})$，再用带标量 head 的预测器回归其条件均值。它无需额外人工长度标注，却仍要支付完整 rollout 与预测器训练；实现的 $G_t$ 越接近零，表示该样本剩余步数越少，不能把长度 value 解释为答案正确率或任务价值。折扣将不同长度压到有界区间，也会压缩长尾分辨率；未来结果相关的重加权还会改变所学条件目标。<!-- source-family:SF-2026-ARXIV-2604-27039 -->
 
@@ -300,13 +329,29 @@ tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter re
 不证明它能普遍提升线上 capacity。无法取得 hidden/logprob、高风险任务需要可解释 verifier，或控制 artifact 尚未校准时，
 固定 budget、普通 EOS 和外部 early exit 继续成立。
 
+轨迹内控制还可以切换一份已训练adapter的强度，而不是只改停止条件或当前hidden：先学会较简短的回答模式，再由局部token entropy和双阈值提出详细模式，回滚到窗口起点重生成，随后切回简短模式。[这条受限分支](https://arxiv.org/html/2510.06052v1#S3)改变的是生成历史与参数路径，不把高熵当错误真值，也不保证窗口只覆盖必要推理。缓存必须随路径说明：保留旧模式prefix状态再补新span可以定义一种混合执行，但不等于用当前固定强度重算整条历史；仅让LoRA作用于MLP，也不能由K/V投影权重未变推出后层输入与KV不变，复用验收仍按[缓存身份合同](../part-05-inference-system/45-why-kv-cache-speeds-up.md)。局部数学对照仍有质量反退，较短最终trace不等总时延更低；adapter训练、entropy读取、废弃生成、重Prefill和阈值搜索均计费。信号失准、状态不兼容或独立质量/总费用不合格时，保留固定adapter/原模型、重算、普通EOS与外层硬预算，不由更少token批准无损推理或服务SLO。
+<!-- source-family:SF-2025-ARXIV-2510-06052 -->
+
+内部控制也可以在本次生成中临时求解，而不预训一份固定vector：以近期token entropy的相对尖峰提议干预，冻结主干和LM head，仅优化一份加到hidden的δ，用已生成历史token的teacher-forced CE约束偏移，同时降低当前输出entropy；随后只在当前finalhidden采样并丢弃δ。[受限self-reflective生成](https://arxiv.org/html/2510.02919v1)在这一步相当于给logits加Wδ，不是获得新观察或真实错误标签；历史自标可保住旧错，低熵自信错误也可能完全不触发。丢弃δ不撤回已生成token，新的prefix仍会改变后续分布；全局代理最优的条件结论不批准几步梯度已满足语义保持或正确trace不退。监测窗口、raw/tempered概率、历史hidden与detach、CE长度尺度、内循环步数和当前采样须共同绑定，未闭的温度/自适应权重规则不补成通用配方。全部head/历史状态制备驻留、entropy、内循环梯度、改后完整输出与独立质量回归均付费，局部额外时间不是长度无关上界；信号、代理或预算失配时，保留原解码、固定控制/外部verifier与硬预算，不由更确定或更像自身prefix批准答案正确。<!-- source-family:SF-2025-ARXIV-2510-02919 -->
+
+隐藏状态的临时控制也可以追求一个目标值，而不只降低entropy或沿固定属性方向增强：先以外部reward训练value预测器，再在生成时用其梯度调整hidden，使预测接近请求的目标。[受限目标值控制分支](https://arxiv.org/html/2510.12121v1#S3)把reward定义、value近似和实际输出分开；TD读出不是目标事实，编辑后状态漂移也可能让原预测器失准，多属性各自可达更不保证联合目标可达。目标/容差、reward与value版本、层位、内循环预算及原decoder须共同保存，另验目标达到、语义/多样性和旧任务。只在base未达标样本上计算的成功率不能冒全请求控制率，SelfBLEU也不认证全部质量；Pareto候选仅支持给定采样人口。Value训练/外部reward、各步梯度、候选与独立输出回归全付费；预测、目标冲突或净质量失配时，保原解码、较保守目标/固定控制与外部结果检验，不由接近预测target批准真实属性、全局frontier和无损控制。
+
+<!-- source-family:SF-2025-ARXIV-2510-12121 -->
+
 ### Semantic Steering 可以从单向 Vector 扩展为受限 Subspace
 
-前一分支围绕是否继续探索调节轨迹；若目标变成引导特定语义行为，控制对象就从时长转向 hidden-state 方向。两者都干预生成过程，但语义 steering 不能充当停止策略或正确性验证。
+前面的轨迹控制既可调整是否继续探索，也可用外部reward的value近似追求给定目标；后一种已在改变行为，不再只控制时长。下面转向另一条语义控制分支：从activation估计固定方向或子空间，再校准注入位置与强度，而不要求每个目标都训练一份TD value并在生成中求解目标距离。两路都干预hidden，但控制参照、训练成本和失配方式不同；方向、预测值或更确定的输出均不能充当停止策略、实际属性或正确性的验证。
+
+白盒steering的层位还决定它可能改动什么，而不只决定同一概念的强弱：末层残差注入紧邻最终归一化与读出，可能主要改变少数起始token的相对偏好；更早注入则还会经过后续attention、归一化和MLP。[受限RL向量诊断](https://arxiv.org/html/2509.06608v1)用显式起始prefix、跳过子模块与局部patching比较这些路径，局部正确率改善不自动表示新增了通用推理算法。若只对某head每个可见位置的Value加入同一常量、QK与归一化权重不变，行权重和为一会使其成为固定写入项；不能把这个条件等式外推到同时改QK、经过LayerNorm的完整残差干预。应绑定checkpoint/tokenizer、注入位置和向量、prefix、采样温度与核验人口，分别保留原模型同解码、简单prefix和完整steering对照；更低entropy或相似总体分数不识别唯一内部机制。独立训练的向量也可能互相干扰，双向量接近全层的局部例不保证跨模型可组合。向量训练、所有rollout/层位与组合搜索、额外前向及独立答案/旧能力回归全部计费，参数少不等完整训练或服务免费；层位、任务或预算失配时，保普通提示、原采样与已验checkpoint，降低或关闭注入，不让更偏好的起始词替答案正确性签字。
+<!-- source-family:SF-2025-ARXIV-2509-06608 -->
 
 单个 steering vector 适合近似一维、方向稳定的概念；当概念在 hidden state 中占据多个相关方向时，固定向量会漏掉模式，过强插值又可能破坏流畅性。Conceptor 一类分支用 contrastive activations 估计概念子空间，再通过 interpolation 或 replacement 控制投影强度；layer quota 只用于发现可能有效的 intervention point，不能作为 correctness 或安全真值。
 
 子空间扩大 coverage，也会因 overlap、有限 pairs、layer drift 与 Boolean composition 产生非预期耦合，replacement 过强还可能生成退化输出。概念近似线性、简单向量已经稳定时保留旧方案；校准不足或外部行为 verifier 不通过时，应降低强度、关闭 steering 或回退提示/微调。exact-v1 只测试三种较小 instruction model、三个英文概念、单层 intervention 与自动 classifier，不证明生产行为正确或安全。
+
+Steering还可在参考activation的统计区域内限制编辑，而不只沿方向无限移动：在PCA子空间拟合均值与协方差，用Mahalanobis椭球规定候选区域，再沿期望方向求与边界相容的步长。[IDS的受限构造](https://arxiv.org/html/2510.13285v1)把控制强度接到参考人口，却不使Gaussian近似或95%阈值成为真实语义流形/正确概率。直线无实交点时取最近点的fallback仍可能在椭球外，零方向、奇异协方差与坐标回投也需明确退路；不能据投影名称批准总是in-distribution。应共同保存拟合人口、PCA比例、协方差/阈值、方向与注入层，独立验约束实际满足、目标属性和原内容。F1或较低PPL并不认证事实/安全，拒答、负向属性与MMLU仍有取舍；拟合与选择若复用同人口也非独立泛化校准。全部activation采集、拟合/方向搜索、边界求解与新旧行为回归计费；域条件、真实约束或质量失配时，关闭/减小编辑、保原hidden或已验固定向量与外部核验，不由椭球内分数批准无损语义、任意属性可达和安全输出。
+
+<!-- source-family:SF-2025-ARXIV-2510-13285 -->
 
 另一条分支先用固定 SAE 把原 activation `h` 编码为 latent code，只在该坐标中施加偏好向量，再 decode，并把原重建残差 `h−Dec(Enc(h))` 加回。它把“修改哪些 latent 坐标”与“保留字典未重建部分”分开，但残差保留不认证原行为不变，ReLU 非负也不证明概念独立或真正稀疏；[受限偏好 steering 对照](https://arxiv.org/html/2601.08441v1)的语言/任务反侧要求另验 utility 与目标行为。SAE、layer、dictionary 和模型 revision 必须共同绑定，latent 维数还可能大于 dense hidden；reference-free 不免同 frozen 模型的 unsteered likelihood 比照。字典训练、activation patching、数据合成/judge、baseline forward 与 latent 优化都计完整成本，不能把少量向量参数当总费用；字典失配、过强干预或行为退步时，降低强度、关闭注入，保留 dense vector 或普通提示。<!-- source-family:SF-2026-ARXIV-2601-08441 -->
 
@@ -319,6 +364,15 @@ tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter re
 语义控制也可以只作用于 logits，而不要求访问或修改 hidden state。普通 system prompt 在已能表达目标行为时最省计算；若需要连续调节其相对默认助手条件的强度，可以让同一 checkpoint 在同一 user message 和已生成 prefix 上，分别计算 custom 与 default system prompt 的 logits，再以 `softmax(z_custom + α(z_custom − z_default))` 选择下一个 token。`α=0` 回到 custom prompt 的普通解码，不是回到 default prompt；两条分支消费同一个已提交文本前缀，也不是各自生成两份答案后再选择。这里增加的是条件参照与强度旋钮，不能把 logit 差解释为已识别的独立能力或事实真值。<!-- source-family:SF-2026-ARXIV-2601-06403 -->
 
 [受限 system-prompt 对照](https://arxiv.org/html/2601.06403v1#S3)需要两次条件前向，作者报告约两倍 FLOPs，KV sharing 仍是未来优化，不能由同一模型或同一文本 prefix 推出缓存可直接共享。强度加大也会损伤严格指令准确率和域内可答性；Qwen2.5-7B/14B 等有限任务反侧要求把 target/default prompt、模型、强度与评价人口一起校准，而不是采用通用安全默认值。额外算量不合预算、无法取得两份 logits 或行为回归时，保留普通提示、已验证的 vector 控制或关闭对比分支；外部 verifier、权限和停止预算仍独立约束最终输出。
+
+条件对比的选集还可以随当前生成步骤变化，而不永久对比同一份system prompt：先把问题组织成带当前计划与推理的结构，再将原问题和当前plan对应的token作为本步anchor，比较原条件与遮住这些token的条件logits。[受限逐步锚定分支](https://arxiv.org/html/2510.03223v1)新增的是自动选集，借用的logit运算并不等于直接修改attention heads，也不证明模型已关注正确依据。Plan边界、选中span、共享prefix、遮挡方式与强度规则须绑定，计划和token概率都只是可错提案；打印状态式与强度映射不足时，不据其补成通用执行配方。结构生成、双条件前向和独立答案回归均付费，绝对tokens/s差小也可能是显著相对吞吐损失，不能由无训练或短篇演示签替代RL与服务SLO。选集错误、强度或净质量失配时，保留原prompt、固定条件对比或普通采样，外部verifier和停止预算不由anchor接管。<!-- source-family:SF-2025-ARXIV-2510-03223 -->
+
+多个专家的分布也可以在解码时组合，而不先合并参数。以共同背景分布 `p_b` 为参照，在同一 prompt、词表和已提交 prefix 上计算 `p_b ∏ᵢ(p_i/p_b)` 再逐 token 归一；它表达各专家相对背景的乘积修正，不是 logits 平均或网络权重相加。一个[条件性组合结果](https://arxiv.org/html/2605.28304v1#S3)要求共同支持、预先固定且互不相交的 token-position masks、背景按这些 masks 分解，并且每个专家在自己 mask 外与背景相同。在这些强条件下，非活跃专家的 ratio 消去，各自指定部分的 marginal 才保持；不能从这个足够条件推出任意数学、代码或其他技能天然互不干扰，也不沿用未经核验的任意 feature 变换推广。
+
+组合因而增加每 token 多个模型的前向、状态和归一成本，还要处理支持过小、条件交互与共同终止。受限 Gemma2-2B 数学/代码专家实验中，组合的数学表现低于数学专家，更多专家在 EOS 附近还可能失稳；这不是无损通用技能合并或强 weight-merging 对照胜出的证据。专家、背景、mask 或终止协议不满足条件，或多路成本不合算时，保留单一专家、普通条件提示与已校准的固定对比，不由分布乘积签发能力保留或答案正确性。<!-- source-family:SF-2026-ARXIV-2605-28304 -->
+
+组合分布还须先声明“让成员受益”测的是什么，而不只选平均概率或相加logits。固定同一有限输出空间、严格正概率与当前前缀，若把成员的效用**定义**为其自身的 `log p_i`，则 `Δ_i=E_p[log p_i]−E_pi[log p_i]` 只衡量改用组合分布后的自评期望，不是对外界真值的proper-score改进。[一个受限理论结果](https://arxiv.org/html/2509.06701v1)表明，所有成员正权的线性混合不能让成员全部不损且至少一个严格改善；两个不同二元分布的正权log-pool也不能做到。另一方面，对n个成员、n+1个结果可构造严格全受益的log-pool，这只是存在性，不保证任意给定模型、权重或固定三结果空间都能获益。它把组合算子与效用定义分开，不把数学分解的witness当已识别的神经persona，更不推出提升一种行为必然增强相反行为或某种抑制策略安全。多分布前向、权重选择、归一、状态对齐与独立任务回归均有费；共同事件、效用或实测结果失配时，保留单一模型、原概率混合与独立verifier，不由log-welfare一致性批准答案正确或真实协作收益。
+<!-- source-family:SF-2025-ARXIV-2509-06701 -->
 
 条件参照还可随反馈轮次更新，而不始终对照一份固定 prompt：冻结模型，让 judge 的 critique 提出下一轮 context，再在同一已生成 prefix 上分别读取新 context 的概率 `P_new` 与上一轮 context 的 `P_old`。一条受限分支先取 `r=log(P_new/P_old)`，再用 softmax Jacobian 将它投影为 `delta(v)=P_new(v)[r(v)−E_P_new(r)]`，调节当前 logits；这不是普通的两份 logit 相减，正方向表示相对平均值更大的概率比，也不表示该 token 已正确。两条条件流仍有独立 KV；低置信支集的有限惩罚又改变实际 steering 方向。<!-- source-family:SF-2026-ARXIV-2610-22160 -->
 
@@ -359,6 +413,8 @@ tokenizer、注入 layer、control vector、window、阈值和 prompt/adapter re
 
 最大概率仍是模型内confidence代理，错误答案也可能高置信；soft表示的接口、聚合与validation选点均付费，较短输出不自动证明完整服务更快或所有任务Pareto占优。[ThinkRouter exact-v1](https://arxiv.org/html/2602.11683v1)的受限对照里Random在一个coding设置更高，另一数学设置离散baseline更高，故要联验任务、真实decode成本与质量，而不按confidence授正确性。接口不可见、阈值漂移或质量回归时，保留离散单轨迹、固定soft分支及独立verifier/明确停止预算。<!-- source-family:SF-2026-ARXIV-2602-11683 -->
 
+压缩连续状态还可改变“一步消费多少个相邻位置”，而不只把同一位置的多个候选混成一个向量：先将已选的两个相邻token embedding压成一份输入，由主干预测下一个奇数位，再用轻量MTP分支在该奇数位条件下预测偶数位，训练仍为两处离散token保留监督。若MTP信心不足，就拒绝该候选，下一轮只把已选奇数位送回主干重预测偶数位；这是需匹配蒸馏/联合训练的有损状态接口，不是保持原模型分布的speculative验收。[受限pair-state对照](https://arxiv.org/html/2606.13862v1#S3)中，强制每步压双token明显损伤数学精度，回退恢复部分质量但仍有任务反退，而且adaptive与非adaptive训练损失权重不同，不能把差异全归于线上阈值。平均正确轨迹的压缩步数、还原出的文字长度、全部请求计算和墙钟应分账；MTP、压缩、回退、数据制备及训练均付费，少forward不认证服务吞吐或SLO。监督、embedding接口、阈值校准或完整预算不合时，保留普通离散单轨迹与独立答案验收，不由高置信或两token一步批准无损推理。<!-- source-family:SF-2026-ARXIV-2606-13862 -->
+
 ## Parallel Sampling：先分开 Coverage 与 Selection
 
 延长一条轨迹是在纵向增加 sequential compute；并行采样则在横向生成多条候选，再决定接受哪一条：
@@ -375,6 +431,26 @@ prompt + decoding policy
 问系统能否从已有候选中识别它。`pass@N` 只能给出前者的上界，不能证明 self-verifier 能达到这个
 上界。扩大 `N` 可能提高覆盖率，也会带来更多近似答案、相关错误和选择成本；若 selector 的辨别力
 没有同步提高，更多样本甚至可能让最终选择更不稳定。
+
+缺少可投票的规范答案时，selector还可用候选长度作廉价代理，而不另训judge。[Shortest-answer selection的受限实验](https://arxiv.org/html/2510.21067v1#S3)在代码等任务比较先生成多答再取最短，支持长度与部分错误模式的局部关联，不证明短答更真或所有任务单调受益；代码仍须执行测试，长度也依tokenizer、格式和截断规则。全部候选已经生成，最终输出短不能抹去其余生成费；只有实际并发、生成速率与终止契约满足时，先完成即可停止其他分支的运行策略才可能减少等待，不能从离线最短选择自动继承。长度/质量关联消失、正确候选被截断或测试不充分时，保原selector、完整候选预算与独立任务verifier，不由低长度代替正确性判断。
+
+<!-- source-family:SF-2025-ARXIV-2510-21067 -->
+
+多条候选也不必等到完整生成后才比较，可以在每步共同管理仍存活的prefix：从这些prefix各扩展下一token，按累计序列概率排序，以相对当前留存扩展集的概率质量阈值决定保留多少条，再用硬cap约束宽度。[LTM的受限分支](https://arxiv.org/html/2509.07676v1)因此把固定beam宽度换成受质量阈值约束的中途支持选择，而不是单条prefix上的nucleus抽样；这里的“质量”是模型概率质量，不是答案质量，已剪去的正确路径也不能由后续选择补回。完成后按PPL选答仍须独立verifier，长度/EOS与概率来源不同不得直接混排，原下标/边界未闭时不补完整实现配方。外部负反馈可只触发按原问题重生，但gold触发与有误报/漏报的模型代理不是同一权限，不保证原正确答案均被保留或新答不会更差。全部proxy判断、prefix/KV驻留、扩展排序剪枝、重生与独立回归均计费，同输出token数不等同算力或净延迟，部分实测还慢于普通双轮。支持不足、概率接口不可得或预算/质量不合时，保留原答、普通nucleus/固定beam与独立验收，不由累计概率或低PPL批准事实正确、全树最优或停止搜索。
+<!-- source-family:SF-2025-ARXIV-2509-07676 -->
+
+外部评分若定义在完整对象而生成器逐token剪枝，还可以先把两个空间对齐，而不是等候选完成后再融合。对固定semantic-ID目录，先取判别模型Top-R cutoff以上的正margin，再把这些item的margin沿各自prefix–token边聚合；每次beam扩展在native累计log-score上加该边的有界强度修正，然后才保留global top-B。相同边可同时支持目录中多条后代路径，因此最终输出不必落在判别Top-R内，但未共享的后续边仍要由生成器完成。这是改变搜索路径分数，不是更新模型参数、重标定native token概率或认证对象真值；同一code路径、目录和判别score尺度必须共同绑定。
+
+[受限生成式推荐对照](https://arxiv.org/html/2610.32098v1)以full-catalog softmax最大值作相对confidence gate，并非校准正确率；gate降低强度不等关闭干预，margin的加法平移不变也不使任意score缩放无影响。前缀存活条件要求目标已经在本轮frontier，且修正优势足以压过竞争者的native差额、每层都成立，不能当线上已知正确路径或全程保留证书。离线用gold移除target-path修正只说明已命中人口的依赖，失去Top-K hit多数未发生实际beam丢路径；原本存活的前缀也可被干预挤掉。同beam宽度仍多付判别全目录打分、Top-R/聚合和融合费用，较窄beam的局部质量—时延取舍不授通用加速或SLO。支持、校准或预算失配时，保留native beam、普通post-hoc融合与独立验收，不由共享前缀或有限存活定理批准正确交付。<!-- source-family:SF-2026-ARXIV-2610-32098 -->
+
+多候选搜索还可改变“谁为每个prefix计算下一步”，而不减少beam或改目录。[Deco的受限SID分支](https://arxiv.org/html/2610.32980v2)先把每个历史item的多个code融合成一个输入，重backbone只读一次历史、输出固定数目的concept vectors；轻量causal decoder只读这份condition与已生成prefix，以自己的KV完成整棵受trie约束的AR beam，不再逐步调用或让重模型验收。相同SID、trie与因子分解不保原heavy概率或全局top-B，因此这是需联合训练/有限KD的替代分布，不是exact speculative decoding；沿gold prefix的teacher约束也不保证离轨prefix一致。Constant-size只指generator condition，不含beamcache、目录/trie或全部历史信息；重复消费需要另保history SID、权重和gate的O(T) copy支路，混合prefix概率在正mass时才可相除，不自行补零分母配方。有限比较须拆开fusion、decoder委派与KD：部分dataset仍低FlatGR，小backbone比decoder还轻时反而更慢，长历史prefill仍增长。单H100/bf16的50ms p95只约束已扫batch的GPU prefill加beam，排队、网络、数据加载、ID映射与编译预热未计，不授请求级服务SLO。全部SID构造/版本碰撞、teacher和student训练、concept刷新、trie/top-B/copy与端到端回归均付费；预计算condition还须绑定历史、producer及consumer版本，这是缓存资格要求而非原文已验的生命周期协议。目录、重复率、质量或预算不合时，保原full-backbone beam、明确历史与独立排名评价，不由更小condition、更多候选或局部吞吐批准无损压缩、事实检索正确和全负载净省。
+<!-- source-family:SF-2026-ARXIV-2610-32980 -->
+
+生成中选择也可以以固定上限的 token chunk 为单位：小模型提出若干续写，大模型只计算它们的条件 log-probability，再按大模型分数或两模型分差选一段继续；EOS 仍可提前结束，所以边界例外需保留。这与事后选整条链、按自然步骤评分及保持 target 分布的 speculative verification 都不同。[受限 chunk 对照](https://arxiv.org/html/2606.01682v1#S4)中，长度归一仍未消除自然步骤的长度偏好，较短固定 chunk 改变了干预时点，但 likelihood 不是逻辑正确性。相近干预次数不等相同打分算量或延迟，较短最终轨迹也未结清全部废弃候选和双模型驻留。生成、评分、缓存及每轮串行提交均计费；概率接口、质量或完整预算不合时，保留普通单路、整条候选加独立 verifier 或已验 PRM，不从无需新训练批准免费推理或原分布不变。<!-- source-family:SF-2026-ARXIV-2606-01682 -->
+
+自然步骤的候选评分还可先扣掉“不见原问题时也容易生成”的部分，而不只比较某模型的绝对likelihood：在同一已提交步骤prefix上，分别计算评分器有、无原问题时对新步骤的logprob，累计其差，再用来保留有限搜索前沿。[这条受限问题条件分支](https://arxiv.org/html/2510.03632v1#S3)衡量的是该模型/模板下的相对依赖，不自动等于由共同joint分布积分得到的PMI，更不是逻辑正确或步骤的真实因果效用；照抄题目、很低的无题概率及生成器/评分器共错都可能抬高代理。步骤数归一不消除token长度和切步规则的影响，按下一token entropy经验分位分配扩展量也只提出预算，不识别错误概率。已剪正确prefix不能靠终局投票补回；分数若可为负，乘答案出现频率甚至会让更常见答案更负，不能把任何“加权共识”都当正确性保证。应共同绑定原题、两条件模板及独立KV、评分器、步骤/答案parser、分数符号/归一、全树与停止预算，另用可靠答案或执行verifier验收；全部候选/废弃前沿、双条件求值、entropy/排序、重试与选参都付费，相同最终链数不等同总节点或净墙钟。概率接口、任务相关性或净质量/预算不合时，保普通单路、固定预算CoT/SC与可信verifier，不由更高比值、更宽beam或少look-ahead批准原分布无损和最优推理。
+
+<!-- source-family:SF-2025-ARXIV-2510-03632 -->
 
 候选已经生成后，选择器还可分别读取整条链和链后答案，而不只按多数票或单个answer score排序。一条[受限组合评分](https://arxiv.org/html/2508.21787v1#S2)先累加生成链的token logprob，再在完整链后追加明确取答案的提示，对已抽取答案计算条件logprob，将两项相加；链项按长度归一则改变长短轨迹的选择压力。这是候选ranking heuristic，不是同一原始joint分布的直接MAP，更不使高likelihood认证每步推理或最终事实正确。Tokenizer、prompt/答案边界、概率来自raw还是过滤后分布、评分模型及长度规则须共同固定，不同evaluator的分数也不能自行共用概率尺度。更多采样或加入链分数仍可能退步，已知正确样本定义的回看“高峰”不能作为部署阈值；全候选生成、追加取答案、重评分/缓存与驻留费均计入，不从少几条候选批准净提速。接口不提供所需概率、目标域排序不稳或独立质量未过时，保留原候选、普通多数/已验selector与外部verifier或拒答，不让组合分数取得答案真值或提前停止权。
 <!-- source-family:SF-2025-ARXIV-2508-21787 -->
@@ -405,6 +481,14 @@ entropy 只测当前模型分布，生成后较低的熵也不是正确性验收
 
 候选数量固定时，仍可决定是否额外调用裁决器：每步先生成 N 个动作，按语义等价聚类得到投票分布，再用 entropy 或前两名 margin 提议是否再投入一次选择；不调用裁决器时保留多数票。这把生成预算与 selection 预算分开，但分歧只能描述本次采样和聚类，低熵也可能一致错，裁决器与生成器使用同一模型也不形成独立真值。[有限 Agent 动作对照](https://arxiv.org/html/2602.12276v1)支持这一条件分支，不支持冲突表格中的统一节省比例或全服务延迟保证。N 次生成、语义去重、阈值校准和裁决均计费，误合并动作或误覆盖共识还会损害结果；信号漂移、成本不合算时保留固定多数票与独立 verifier，实际动作仍接受原 tool/controller 验收。<!-- source-family:SF-2026-ARXIV-2602-12276 -->
 
+若目标是已生成回答中最高的reward减去追加采样费，停止对象又不同于多数票是否稳定：在固定prompt、同一生成分布与相同单次成本下，可根据已见reward估计继续抽样的价值，最高reward达到fair-cap阈值才停。未知分布时，一条[受限自适应分支](https://arxiv.org/html/2510.01394v1#S4)先拟合exp(reward)的右尾，以该prompt的高分位benchmark把reward变成有界效用，再估计停止阈值；这让不同prompt的数值尺度不再直接共用一个绝对分数，但尾部分布族、最小样本、benchmark与成本比都成为策略身份。所谓acceptance rate仍是reward启发的proxy，不是实测用户接受或正确率；理论需要有效的anytime上界，不能从经验tail fit与不断重估benchmark直接继承任意分布保证。缓存回答重排中的较少调用也不证明在线时延或完整预算降低；预采、所有生成/RM评分、尾部估计与阈值求解均计费，回答长度变化还会破坏固定单次成本假设。tail失配、代理质量或净费用不合时，保留已验固定N、原选择器与独立verifier，不让停止阈值取得答案验收权。
+
+<!-- source-family:SF-2025-ARXIV-2510-01394 -->
+
+追加候选的停止建议也可以只读取已经得到的答案计数，而不训练内部状态分类器：先固定答案规范化和同一生成分布，用带未见类别质量的后验近似估计当前众数能否保持领先，再在证据阈值或外层预算处停止。[Best-of-infinity的受限分支](https://arxiv.org/html/2509.21091v1)把状态从一个票差扩成已见类别计数、未见支持先验及停止规则，但估稳分布众数不等找到真答案，近似Bayes factor阈值也不是未经校准的有限样本错误率。若每次先随机选择生成模型，混合权重、各模型采样/答案映射和驻留成本都属于同一策略；用带gold的离线回答池估概率、优化权重，不能冒充未知新题上无标签最优，重复池内抽样也不增加独立人口。应分开验众数恢复、独立答案正确性与全部费用，并保留不可解析/未见答案、tie、后验Monte Carlo误差和低票差未停的情况；删掉失败解析后更省样本不代表原请求收益。全部预采/标签、权重求解、多模型加载与切换、追加生成/后验计算和独立核验均计费；错误众数、接口或人口漂移、预算用尽时，保固定小N、可信verifier及Unknown，不由更强答案一致性批准事实或服务SLO。
+
+<!-- source-family:SF-2025-ARXIV-2509-21091 -->
+
 并行采样前还可从同一prompt的内部activation预测是否值得继续追加候选，而不先支付大量probe回答；这种classifier把困难度标签的生成与阈值校准移到离线。[ACT-SC的受限数学对照](https://arxiv.org/html/2602.09438v1)仍需新dataset的阈值和通过率标签，不是无校准停止保证；不同adaptive方法采用不同停止标准和采样预算，AIME等切片还能退步。须分别核最终选中正确率、调用数与误停，并计入白盒读取、标签采样、训练和迁移校准；局部秒数不授端到端SLO。内部接口不可得或错误停止成本过高时，保留固定SC预算、普通EOS与外部verifier。 <!-- source-family:SF-2026-ARXIV-2602-09438 -->
 
 追加多少候选还可以等首条轨迹完成后再决定。先付一次完整 greedy 推理与答案，再从各句的选项条件概率、熵、变化量和词汇统计形成序列，由单独训练的判别器估计这条答案的可靠性；分数越过阈值时保留原答案，否则才追加多路径生成与聚合。[completed-trace 的受限机制](https://arxiv.org/html/2603.08999v1#S3)以每个基座模型自己的判别器支持这一分支。它改变的是后续采样预算，不缩短已经完成的首条轨迹，也不使概率趋势或文字风格成为正确性真值；全轨迹统计与非因果 attention 不能直接充当生成中的提前停止器。
@@ -422,6 +506,10 @@ entropy 只测当前模型分布，生成后较低的熵也不是正确性验收
 逐 token 温度与完整 sequence 的 power 分布也不是同一个对象。将每个 prefix 的条件概率局部取幂并归一化，会引入随 prefix 变化的归一常数；它不能单独产生按完整路径概率取幂的目标。一个有限粒子分支仍以局部 powered proposal 生成 token，再用增量 importance weight 修正路径，按 ESS 触发祖先重采样。该 proposal 可消除当前 token 选择带来的增量权重方差，却不能消除不同 prefix 路径之间的退化。<!-- source-family:SF-2026-ARXIV-2602-10273 -->
 
 重采样必须同时重排 prefix、KV、weight 与完成状态；EOS 吸收规则和最大长度截断也定义实际支持。[Power-SMC 的有限对照](https://arxiv.org/html/2602.10273v1)不授有限粒子为精确、独立的全目标样本，较高 batch 利用率也不是总 token-evaluations 减少。粒子复制、缓存驻留、ancestor identity 与评价都要计费；权重退化、资源不足或 support 不合适时，普通低温/Top-P、较小候选集合与外部 verifier 仍合理。
+
+若多条reasoning trajectory可导向同一答案，目标还应明确是完整路径还是答案边缘分布。设m(a)=Σ_z p(z,a)，先求和再取m(a)^K，与Σ_z p(z,a)^K不相同：前者允许多个中等概率的路径共同支撑答案，后者分别强化每条路径。整数K可用独立latent traces扩张来表示这一目标，但这只是目标分布的恒等式，不使有限组轨迹或局部decoder自动成为精确采样器；这里的a也是规定的answer string，不是经oracle认证的全部语义等价答案。
+
+[Marginal Sharpening的受限近似](https://arxiv.org/html/2605.28142v1#S3)保留各组的prefix weights，却在下一token的局部评分中把未来continuation normalizer当共同因子丢弃，因而不能把目标恒等与实际解码等同。多组trace的KV、每token多次forward、EOS与长度截断都付费；有限数学/代码对照中majority仍可更好，特定power baseline的超时差不授总成本普适优势。目标、支持或近似误差不合适时，保留原采样、固定预算的self-consistency与独立verifier，不用分布变尖替代任务正确性验收。<!-- source-family:SF-2026-ARXIV-2605-28142 -->
 
 Sequence power 目标也可由有限步 MH 逼近；此时每次 accept/reject 确定下一状态，天然形成串行依赖。若后续 suffix proposal 所需 prefix 已经确定，可先批量生成若干未来决策分支，再沿原 MH 规则走实际路径；未满足 prefix 条件的请求延后，保留其随机输入而非重抽，未走到的分支只消耗资源。这种预取改变执行顺序，不改变每个已提交 transition 的 proposal 和 acceptance；预测可分配预取预算，却不能删除可能结果或替代精确接受规则。[PreSTO 的受限单 GPU/固定长度实验](https://arxiv.org/html/2610.13171v1)只测 model-call 时间，有限 MH 仍不等已经达到 power 目标；废分支、KV 和更大 batch 成本必须另计，收益不足时保留串行 MH 或普通采样。<!-- source-family:SF-2026-ARXIV-2610-13171 -->
 
@@ -473,9 +561,19 @@ candidate set and normalized answers
 
 若分布单峰、样本太少、component 交换，或 temperature、模型和任务发生变化，局部 mixture 会退化；同一个模型产生轨迹又报告 confidence 时，两者还共享校准盲点。因此 majority vote 在答案可规范化且错误较分散时仍然有效，pointwise/pairwise selector 在绝对簇结构不稳定时仍合理，独立 executable verifier 才能把 selection evidence 提升为 acceptance evidence。
 
+候选频率也可先成为reward排序的支持门，而不直接决定多数答案：从同一生成分布取得候选，按已声明的答案身份计频，先丢掉经验频率过低者，再由RM选至多k个不同项组成提交集合。[受限筛后集合选择](https://arxiv.org/html/2510.03199v1)把support与偏好排序分开，不把高频当真值，也不等交付单一最佳答案；全空或不足k时须保明确的回退/拒答，而非补造固定集合。理论所需原分布RM误差、最优答案正支持与覆盖量不由这份样本自证，依赖未知最优频率的阈值和联合渐近结论也不批准有限N逐次不退。文本等价分组、同答案各轨迹的reward均值与固定答案评分是不同人口，应共同保存规范化、阈值、N/k、generator/RM和实际判分范围，独立验最终交付的正确性。全部候选生成、逐轨迹评分、聚组/去重、选参和后续消费均付费，不能由筛后项少宣称省去了已做判分；支持、RM或预算失配时，保原多数/已验selector、可信verifier或拒答，不以更大采样数和集合中最高代理分签发可靠答案。<!-- source-family:SF-2025-ARXIV-2510-03199 -->
+
 候选若先产生视觉 cues、再消费 cues 推理，还可把两阶段的文本 uncertainty 分开：以各段高 entropy tokens 提议局部过滤，再按两段读数及其相对变化聚合答案，而不是用整条 trace 的单一 confidence 覆盖 producer 和 consumer。这里读取的是文字生成概率，不是视觉 grounding 真值；阶段边界、warmup population、阈值与停止规则都需绑定，删掉 cue 可能让后续答案看似更自信却失去依据。[受限两阶段 selector](https://arxiv.org/html/2602.12916v1)的比较还预生成完整 traces，保留 token 数下降不能直接等同实际少做了 producer 计算或改善 tail latency；在线节省必须连同 warmup、工具、已完成与已取消生成一起计账。信号失配、视觉证据冲突或预算不足时，保留完整候选、普通 voting 或外部 verifier，不让阶段 proxy 替代 acceptance。<!-- source-family:SF-2026-ARXIV-2602-12916 -->
 
 候选聚合还可以产生新的 trace，而不只给已有答案投票或选出一条：先从各轨迹抽取 object keys，由独立视觉 detector 标注其对象支持，再将候选子集合送给 synthesis consumer，生成下一轮候选并重新核验。[受限多模态对照](https://arxiv.org/html/2601.08010v1)支持这条 object-sensor→subset synthesis→再核验的循环接口；detector 的对象存在判断不证明关系、每一步逻辑或总体 factuality，新 trace 也不能继承旧候选的验收。应保存原输入、候选/子集合、detector 版本与阈值、迭代轮次和新旧 trace identity；共享检测误差可能被多轮聚合强化。所有初始与迭代生成、detector forward、训练 teacher 和取消的候选均计费，增加人口或轮次有边际收益、退步与额外延迟，bootstrap 置信区间不替代全训练/生成重复。视觉支持冲突、合成后质量回归或剩余预算不足时，保留原候选、普通 voting/selector 与独立 acceptance verifier，不让聚合后的叙述一致性替代外部证据。<!-- source-family:SF-2026-ARXIV-2601-08010 -->
+
+训练这种综合器时，还要按它实际消费的候选集合定义训练人口，而不能只给原问题贴一个固定难度标签。固定生成器、候选数量与采样规则后，同题不同集合的众数答案可能有不同正确性；一条[受限数学聚合分支](https://arxiv.org/html/2509.06870v1)用已知gold将“众数错”的集合保留，再混入一部分“众数对”的集合，以兼顾从少数正确线索恢复与较密的可验证reward。这个标签来自离线答案验证，不是线上票数或聚合器自己的confidence；生成器、集合和consumer改变后，原人口资格不能直接继承。只收hard与不滤easy在局部对照中都较弱，但各配比的曝光并未完全等预算，不能把某个比例或reward密度认作唯一原因。候选生成、过滤/答案验证、综合器训练、全部候选prefill与新增输出均付费；同题多组和多次输出不增加独立题目，较短单次聚合输出也不等完整流程更便宜。新的综合答案仍需独立验收；离线训练标签无法核验、集合迁移或质量/费用失配时，保留原候选、普通投票/已验selector与外部verifier，不让离线标签或稳定多数批准真值。
+
+<!-- source-family:SF-2025-ARXIV-2509-06870 -->
+
+聚合单位还可从整条候选缩小到对齐片段：先按word顺序寻找多份回答的公共anchor，在anchor间对局部替代表述作语义归组，以节点/边的出现频率保存一份partial-order图，再让解码器按阈值选片段、拼接并润色，或定位分歧后核查和重新生成。[这条受限共识图分支](https://arxiv.org/html/2510.03527v1#S3)改变的是候选到交付文本的中间表示，不是比较整条回答的pairwise图；频率只来自当前同模型样本池，不是独立证据或事实概率。把subset视为等价、以最长路径代表一组表述，可能把少数候选才有的事实带入共同段落；有序对齐也不认证指代和跨片段逻辑保持，局部核查更可能漏掉共同错。最终重新生成的答案须作为新产物验收，不能继承原候选的通过标签，也不再受“只从原候选挑一条”的pass上界约束。原候选、对齐/归组与代表规则、选择阈值、局部检查和新旧文本身份应共同保留；初始多样本、两两比较、构图、润色/重生成及独立事实与完整性核验都计费，少一部分判分token不等全链省费。归组、连贯或证据支持不可靠时，保留原回答、普通vote/selector与外部验证或拒答，不由更高局部共识批准真实知识覆盖和可靠解释。
+
+<!-- source-family:SF-2025-ARXIV-2510-03527 -->
 
 ### Selector 也要先证明“正确性信号可读”
 
@@ -529,6 +627,23 @@ Parallel sampling 的预算也不能只写“调用次数”。完整 contract �
 风险和 selector 不可靠时仍更合理；majority 在可规范化且错误相对独立时仍很有效；pairwise graph 是
 当绝对评分困难、又无法承受全量两两比较时出现的中间设计，而不是它们的单向替代。
 
+多候选也不一定需要逐条重做相同概率前向：对非自回归语音分支，可共享一次CTC逐frame概率，采样并collapse成候选，再经mask/CMLM修订与多轮采样，以候选互作pseudo-reference的平均负WER选expected utility最大者。[受限NAR-MBR对照](https://arxiv.org/html/2606.17537v1#S3)共享的是概率生产，不是候选修订、抽样/缓存或二次pair评分，pseudo-reference也不是真实转录。裁共同prefix/suffix可保edit distance，但WER仍用原reference长度，不能把裁短后的分母混入。更多轮或样本并非总改善选择，encoder与decoder架构差异也未被同参数量消除。全部编码、CMLM/样本状态、CPU效用与完整转录回归均付费，固定局部测时不授服务并发/SLO；噪声、候选支持或总预算失配时，保留greedy/单样本、较小固定池与可信参考核验，不由并行概率或更多自洽候选批准正确率与普遍加速。<!-- source-family:SF-2026-ARXIV-2606-17537 -->
+
+决定把下一批候选给谁，还要把“总共可能获得多少收益”与“当前池再扩一次还能获得多少收益”拆开。固定生成器、selector和评价量尺，令Q(n)为大小n候选池下选出答案的平均评价质量，可用多次嵌套候选子集估计 `Q(n+b)−Q(n)`，而不是只按原问题的entropy分配；起始不确定性较高可能对应较大总潜力，却不告诉系统当前是否已接近这份有限池的饱和。候选已出现后，语义多样性或最优selector分数随扩池的变化，是另一组依赖当前集合的诊断输入，不与起始entropy互换。
+
+[受限翻译搜索诊断](https://arxiv.org/html/2610.32679v1)中，这些信号随MBR、reranking及效用/评价模型组合改变：在同一COMET量尺上显得好，不保证换量尺仍相同；用多次嵌套重采样平均后得到的相关性，也不是单次在线池的校准精度。对有限预生成池定义的95%饱和不能当无限搜索上界，按预测排序给一部分请求扩池的对照也未证明在同总预算下优于统一分配。所有候选生成、MBR两两评分或reranker、信号计算、校准和最终核验均计费；信号/selector迁移或净预算无收益时，保留已验固定N、均匀分配与可信verifier，不把离线潜力诊断升级为最优停机、普遍省算或真实答案验收。<!-- source-family:SF-2026-ARXIV-2610-32679 -->
+
+预算也可用于先选生成策略，而不只在一种策略内增加候选数：把多数票、不同打分的best-of-N与逐轮同步的beam及其参数列成有限菜单，用query特征和菜单项预测成功率，再减去token与执行时间的软惩罚选一项。[受限双成本分支](https://arxiv.org/html/2509.09864v1)的两项成本只是训练人口上每个策略的均值，并非当前请求的精确用量或延迟；同样的token量可有不同串行等待结构，而估计效用最大的菜单项也不是全局最优、硬deadline或部署SLO保证。成功率probe依赖离线gold重复采样与校准，不能取得答案真值、未知任务可靠性或在线准入权限；候选menu、生成器/打分器、输入支持、代价口径与偏好权重应共同保存。制备标签、所有候选与逐轮评分、query编码/probe、校准搜索、模型驻留及外层服务全部计费，warm组件均值不抹去冷启动、排队和尾部；oracle差距与部分低预算质量退步仍需独立回归。任务支持、费用预测或真实质量失配时，保留固定已验预算/单路、普通多数或可信verifier路径，不由软utility为自身签发正确性或时限承诺。
+<!-- source-family:SF-2025-ARXIV-2509-09864 -->
+
+候选来源也可以先在训练期分工，而不为每个新请求在线辨认难度：用固定基座的有限成功率为训练题分桶，让多份轻量prefix分别在偏向不同桶的混合人口上独立优化，部署再把采样calls均分给这些条件生成器。[受限形式证明对照](https://arxiv.org/html/2509.12603v1)还先以偏好训练选择直接证明或显式推理的倾向；模式选择与prefix多样性是两项制备，不是同一个在线router，也不因多head就成为MoE。分桶依赖原模型、采样和checker，词面覆盖不认证独立解法或更高成功率；最终checker只认证给定形式statement与环境，不能代签原问题翻译。分桶rollouts、偏好与各prefix训练、全部候选prefill/生成、驻留和检查均付费，少输出tokens不等更低总时延。条件支持、候选质量或净预算失配时，保留固定CoT/直接生成、原policy采样与独立checker，不从一次通过或平均token减少批准通用推理能力。
+
+<!-- source-family:SF-2025-ARXIV-2509-12603 -->
+
+候选池也不必先生成一批样例，再要求下一批避开它们：可以先让planner提出少量语义方向，把有限generation slots均分到各方向，各worker只读原任务与自己的方向，保持后续生成无peer样例依赖。[Anchorless Diversification的有限创意对照](https://arxiv.org/html/2605.30150v1#S3)支持这种分层分配分支，不是对原答案分布的无偏恢复；planner漏掉的方向、分层重叠及等额分配都会改变支持和频率。embedding距离、regionentropy与自动质量proxy不能替人类有用性或事实正确性，已生成池的rarefaction也不证明可在线自适应早停。必须把planning、seedpool、embedding/选anchor、再生成和最终selection全计，而不能只比较返回的第二池；token倍率只在同provider与口径内解释，不等美元或墙钟收益。任务、方向质量或净预算不合时，保独立采样/简单diverge指令与可靠selector，不由更分散的pool签发新能力或所有创意任务的最优方法。<!-- source-family:SF-2026-ARXIV-2605-30150 -->
+
+另一条候选接口让模型在同一次调用中写出多个回答及其口述概率，再由外部规则均匀选择或按这些数值重新加权；[Verbalized Sampling的有限对照](https://arxiv.org/html/2510.01171v1#S4)支持比较这种提示与直接/列表提示，但没有证明口述数等于token logprob、正确率或基座分布。候选共享生成前缀，遗漏、重复与格式错误会改变最终law，低口述概率指令也不是token截尾。须分别绑定候选数、parser/去重与归一、均匀或加权消费者，并同时验覆盖、质量和安全；同返回N不等同tokens或时延，部分模型质量与拒答率仍退。候选/概率文本、CoT、多轮history和选择全计费；小模型、校准或预算不合时，保留普通独立采样、简单列表及可信selector，不把更分散的文本或与语料proxy更接近当成原分布恢复与安全证书。<!-- source-family:SF-2025-ARXIV-2510-01171 -->
+
 ## 约束输出：合法前缀、完整序列与内容正确
 
 前面的 penalty 与 grammar mask 已足以定义单步选择，但更强的输出要求会暴露三个不同缺口：前缀是否合法、能否在预算内完成，以及完成后的内容是否正确。下面先处理可形式化的输出空间，再检查格式条件怎样改变内容，最后划清风险控制与接受证据的边界。这些条件分支不要求同时启用。
@@ -558,6 +673,16 @@ Rejection sampling 或生成后 repair 在约束稀疏、状态难形式化时�
 <!-- source-family: arxiv:2608.08282v1; daily-trace: papers/2026/08/11/README.md; semantic-body-binding: finite-state-exact-conditioning-product-cost -->
 
 约束语法简单，也不意味着全局条件概率容易计算。对一类描述长度有限、每步 next-token 概率可在多项式时间精确计算的自回归模型，即使约束只是“固定长度后以 eos 结束”，合法序列的总概率质量也可编码满足赋值计数，因而其精确计算是 #P-hard。困难在未来所有 suffix 的模型概率，而不只在 validator 有多少状态。有限状态 Markov 模型配合有限状态约束仍可用动态规划；一般 prefix-dependent 模型则需要另证模型状态汇总与 continuation mass 的可计算性。这个计数复杂性反例不证明每个具体模型都很难，也不证明任何可能的 exact sampler 都必须显式计算归一化常数；它限制的是通用、可高效的全局条件化保证。<!-- source-family:SF-2026-ARXIV-2604-07855 -->
+
+全局未来质量难算时，还可另训较小的概率代理，而不声称已压缩原模型的全部prefix状态：从模型回答蒸馏HMM，将它与模板DFA做递推，估计候选token之后最终满足格式的概率，再把原next-token概率乘以这份估计的幂并重归一。[这一受限软条件分支](https://arxiv.org/html/2510.03595v1#S3)把解题主干、格式语言和未来合规估计器分开；只有估计恰为同一原模型、同一任务条件下的真实未来接受概率且幂为1，才对应原模型在合法完整串上的条件分布。只蒸馏continuation而不喂原instruction的HMM拟合的是任务回答混合分布，不是当前问题的完整条件；稀疏剪枝、额外调强和greedy选择还会继续改变law。有限模板/trie的可达与接受状态、输出长度及tokenization必须独立核验，软分数不能替任意schema的硬合法性，更不能批准抽取span、角色或答案正确；平均保留高概率质量也不保稀有合法分支的相对误差。须共同保存原任务/prefix、两模型与分词器、模板/终止、剪枝和幂参数，分别回归格式、内容与分布目标；全部教师采样、代理训练、状态表驻留、每token递推/重权和独立内容验证均付费，局部FLOPs不等完整解码净速。代理失配、内容退步或预算不合时，保原模型、已验grammar mask/普通拒绝采样和独立语义校验，不由样本格式全对批准精确原law或更可靠推理。
+
+<!-- source-family:SF-2025-ARXIV-2510-03595 -->
+
+无法求全体合法后缀的概率，也不必每次拒绝后忘掉已经证明无效的分支。若前缀检查器能可靠证明某个前缀没有任何合法延伸，可把这些前缀保存在排除树中，只计算这份已知无效集合的概率质量；下一次从原模型避开该集合后重新归一化的分布提议，再检验完整输出。设剩余质量为 `Z_W`、合法集合为 `L`，固定历史下提议有效串 `w` 的概率是 `P(w)/Z_W`，接受概率是 `P(L)/Z_W`，因此给定接受后的分布仍为 `P(w)/P(L)`。这不要求预先知道 `P(L)`，却要求它为正、模型几乎必终止、排除质量算准且不删任何有效串。
+
+[自适应拒绝采样的有限分析](https://arxiv.org/html/2510.01902v1#S3)把提议效率与接受后的分布分开：新增有正质量的无效分支才能提高接受率，重复或零质量发现只持平，极稀少的合法输出仍可耗尽预算。原prompt、模型/tokenizer、温度与截断、约束和树必须共同绑定；经验失败、timeout或不可靠judge不能批准永久剪枝，误删合法分支便改变目标分布。前缀合法不保任务语义或完整计划成功，有限SQL对照也有超时。树/全词表检查、概率回传、状态内存及全部重试都付费，完整序列尝试数不是token前向数或净墙钟；检查器、数值或预算不可靠时，保留普通拒绝采样、已验grammar与后置核验，不由非减接受率批准通用高效或安全。
+
+<!-- source-family:SF-2025-ARXIV-2510-01902 -->
 
 ### 格式损失要先定位在 Prompt，还是 Decoder
 
@@ -675,6 +800,52 @@ Sampling 将模型给出的条件分布变成一条实际 token 轨迹。Greedy 
 
 ## Review notes
 
+- `SF-2025-ARXIV-2510-22475` - Daily2025-10-29补Oct28；[exact-v1](https://arxiv.org/html/2510.22475v1)，必要方法/支持/直接反侧见本日EVIDENCE或sole reader记录。新增同prefix条件logit聚合与标量confidence反例；不把persona当独立证据，也不照录其权重公式为概率混合。 未核实现或复现；PRE/真实SAVE/自读/actualPOST仅本日canonical后到记录，不由本注预签。
+
+- `SF-2025-ARXIV-2510-13285` — Banach，Daily2025-10-17补Oct16；writer exact-v1 §3–5及Hegel R25必要复用，2+1+2=5，仅参考activation椭球/方向编辑与真实支持分责差额深入。保PCA40%/Mahalanobis95%、负判别式最近点仍可在外/a=0与奇异协方差未闭、SPI负向/MMLU拒答反退、同人口F1/PPL非事实及全费；不采always-ID/完整配方或实现复现，完整PRE/SAVE/自读/solePOST据canonical。
+
+- `SF-2025-ARXIV-2510-12343` — Herschel，Daily2025-10-16补Oct15；消费Cicero R32 exact-v1 §1.2/2.1–2.2/3.1–3.3/4.1–4.4首次必要，2+2+2=6，仅近似onehot混合/坐标排序与embedding consumer差额。保plaintext非HE、诚实但好奇非恶意安全、TSP/PP式和cosmetric未闭、LoRA混杂及O(V²)/训练/加密全费，不授隐私部署或精确误差定理。未第二Methods/代码/复现；PRE/SAVE/selfread/solePOST只canonical实际层。
+
+- `SF-2026-ARXIV-2610-32980` — finish3，Daily2026-10-27补Oct26；N42采用exact-v2§3/4关键及C计时，R294 v1→v2受影响有限比较复用，首次拟2+2+2=6，不另增家族/不改旧日期。仅onebackbone concept/lightdecoder全ARbeam与generatorstate边界；保非exactheavy/非spec、goldprefixKD/τ1条件、copy O(T)/正mass、低Flat分项/小backbone反慢与全费。H10080GB/bf16/compile/CUDAgraph/beamshared，50ms是GPUbatch非requestSLO，未核代码/像素/服务复现/完整GPUh；不授全域排名、无损或净部署收益，PRE/SAVE/POST只后到。
+
+- `SF-2026-ARXIV-2610-32098`，Daily2026-10-27；exact-v1 §3–4/A.1–A.2必要条件、§5.1/5.4–5.6/T1/3、B.2/C.1直接归因与成本首次必要，2+2+2=6，仅fullitem-score到prefixedge的pre-prune接口深入。保native概率未改/非真值、target已在frontier/每depth充分条件、gate未校准/score尺度、gold仅离线hit条件人口且多数hitloss非beam、原survivor displacement、同B更慢/低B fusion反侧和batch32warm测量边界。未核其余附录/图像素/代码或复现，不授通用推荐/LLM质量、训练seed等价或服务SLO；PRE/SAVE/完整自读/sole POST仅后到真实层。
+
+- `SF-2026-ARXIV-2610-32679`，Daily2026-10-27；exact-v1 §3–5/F/G与资源披露首次必要复用，2+2+2=6，仅总潜力/剩余marginal与selector/量尺依赖的有限诊断深入。保1024有限池/20重采样平均非在线单池、Comet目标对齐、AppF跨量尺变化、选择扩池非同总预算uniform比较及无E2E时延/CI；不采最优controller/免费信号或人类质量保证。未核代码/推理复现；PRE、SAVE、自读与sole POST仅据后到真实记录，不由本注预签。
+
+- `SF-2025-ARXIV-2510-05987` — Cicero，Daily2025-10-09补Oct08BJT；[Sample Smart exact-v1](https://arxiv.org/html/2510.05987v1)A178首次必要§2–5/Eq1–11/T1/3/§7/A1/2决定域/A5/6全T5/A9，2+2+2=6，仅参考匹配统计producer与候选截断consumer差额深入。保gold/rollout人口差、Eq6均值乘积与稀疏/非单调rank未闭、固定cutoff、代码/AIME反退与全费，不采语义oracle、epistemic唯一因果/全任务保证。未核T2/全部附表/图像素/代码或推理复现；PRE/SAVE/selfread/solePOST仅本日canonical，不以本注预签。
+
+- `SF-2025-ARXIV-2510-03632` — Arendt，Daily2025-10-08补Oct07；原6，直接采用root R276唯一exact-v1 S3–4/T1–6/A/B/S6必要，不第二Methods。仅question-on/off步骤分数到搜索/终局consumer的差额；保BOS非真边际、step/token归一、entropy分位/tie与负分乘frequency、共prefix依赖、Qwen/StrategyQA反退及全部节点/双评分/KV费用。不采逻辑真值、完整动态recipe/最优time-accuracy或精确原law，未核全部case/像素/代码或复现；PRE/SAVE/fullselfread/solePOST仅本日canonical真实后到层，不以本注预签。
+
+- `SF-2025-ARXIV-2510-03595` — Arendt，Daily2025-10-08补Oct07；原7，直接采用root R266唯一exact-v1 S2–5/A–E/H及F/G必要，不第二Methods。仅HMM未来合规proxy/模板资格/原law与内容消费者分责；保continuation-only/空初始prefix非this-query条件、gamma2/prune/greedy非exact、top200均值97.8%非稀有分支保证、T1/T2/T3反退及全部56GPUh教师采样/代理训练/DP驻留费。不采通用schema、语义真值/精确原模型条件采样或端到端近零开销，未核全图像素/全部prompt/代码或复现；PRE/SAVE/fullselfread/solePOST仅本日canonical真实后到层，不以本注预签。
+
+- `SF-2025-ARXIV-2510-03527` — Arendt，Daily2025-10-08补Oct07；原6，直接采用root R251唯一exact-v1 S2–4/B/C真Alg1/E真Alg2–5/F/G/I必要，不第二Methods。仅word-anchor/局部语义partial-order图到选择、核查及重生成的消费者差额；保subset等价/最长代表加事实与非传递、频率非独立真值、GSV新生成非原候选Pass@m界、F25传记样本非全事实/支持覆盖、阈值/人口/小切片反退与全采样构图编辑费。不采开放truth/全部可靠拒答或全链82%净节省，未核全部表/像素/代码或复现；PRE/SAVE/fullselfread/solePOST仅本日canonical实际后到层，不以本注预签。
+
+- `SF-2025-ARXIV-2510-06052` — Cicero，Daily2025-10-09补Oct08BJT；[MixReasoning exact-v1](https://arxiv.org/html/2510.06052v1)§3/4.1–4.4/T1、Fig3–5caption与A.1–2必要，2+2+2=6，具体adapter模式/windowrollback与cache路径差额深入。保fixed-alpha重算非混合状态、MLPonly不证KV不变、阈值文字方向冲突、localentropy非正确/因果、质量反退及全费，不采fullreuse/唯一MLP定位、固定长度或E2ESLO。未核图像素/代码/复现，PRE/SAVE/selfread/solePOST按本日canonical，不以本注预签。
+
+- `SF-2025-ARXIV-2510-02919` — Meitner，Daily2025-10-07补Oct06；[SRGen exact-v1](https://arxiv.org/html/2510.02919v1)Boole R121唯一首次必要§2–6/B1–2/CAlg1/D/F–H必要，2+1+2=5，作者仅actualowner/当前hidden瞬态inner loop与self-prefix监督差额深入。保confidence错漏/旧错自标、global非fewstep、温度/λ建议未闭、表文/flip人口及prefix-head费用，不采语义无损/通用50%上界/净速；未核全像素/代码/复现。PRE/SAVE/POST仅本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-03199` — Meitner，Daily2025-10-07补Oct06；[BoM exact-v1](https://arxiv.org/html/2510.03199v1)Boole R94唯一首次必要§3–8/Alg1–3/式3.1–5.1/A/B1–4，2+1+2=5，作者仅actualowner/频率support与RM集合分责差额深入。保未知C*/空集合、联合渐近非逐N单调、阈值/union印式与gap可行域、轨迹评分/答案聚组人口及全费，不采全域minimax、正确性或省RM调用。未核曲线像素/代码/复现；PRE/SAVE/POST仅本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-03223` — Meitner，Daily2025-10-07补Oct06；[Self-Anchor exact-v1](https://arxiv.org/html/2510.03223v1)§2.1/3.1–2/3.4–8/T3–4及B/D/E必要，2+1+2=5，自动plan-selector与条件logit差额深入。R45必要实际独核复用；保Eq3/ω映射不足、概率非正确attention、位置/格式与成功链人口、约23%局部吞吐降幅及全部双forward/结构/验证费，不采head干预、通用RL替代或SLO。未核代码/图像素/复现；PRE/SAVE/POST按本日canonical实际状态。
+
+- `SF-2025-ARXIV-2510-01171`：Daily2025-10-03补Oct02；[Verbalized Sampling exact-v1](https://arxiv.org/html/2510.01171v1#S4)，2+1+3=6/具体候选消费者gap深入。只联合候选+口述权重与外部uniform/weighted选择分责；保非logprob/校准/原law、E.4构造非学会/完整支持、RedPajama proxy、质量与Qwen/拒答反退、同N非全费。不采RLHF唯一因果/普遍多样性无损或安全，未核全部synthetic附件/像素/代码或复现。R21原分/日门复用；root R46必要/actualowner/整体PRE与本次窄授通过，已真实SAVE/fullselfread；root R49本项唯一实际POST通过，指定窄位释放。仅行政同步既成，不预DAY。
+
+- `SF-2025-ARXIV-2510-01394` — Hilbert，Daily2025-10-04补Oct03；Optimal Stopping exact-v1 §2/3.1/4–6/Alg1必要，2+1+2=5，prompt-local reward-tail效用与追加回答停止差额深入。保iid/固定单次费、分布族/anytime上界、good-event理论与实用fit分责、LCB/UCB变体差别和960缓存/100回放全费；不授任意分布最优、用户真实acceptance、无reward hacking或生产SLO。未核Appendix全部证明/代码/图像素或复现；实际PRE/POST只按唯一reader已发生记录同步。
+
+- `SF-2025-ARXIV-2509-21091` — Socrates，Daily2025-09-27补Sep26；[Best-of-infinity exact-v1](https://arxiv.org/html/2509.21091v1) S2–5/Alg1/E1–13/Theorem1/直接Lemmas、A2/A3/A6.4–5必要，2+1+2=5。作者77→Helmholtz R71一次必要实际采用；仅计数/未见类别后验停止与有标签离线混合权重分责，不授有限δ、mode正确/严格MILP tie等价或全预算最优。保DP/Dirichlet与prior近似、MC/不可解析删除/池内重复、跨年59未达与selector反退、截断judge/无E2E全费，不授实现复现/SLO。未核全部曲线/图像素/代码。本原三项已Helmholtz R79整体纯PRE通过，root本轮fresh明确独立新窄授；按原技术稿真实保存，writer已完整自读新增/完整两侧及本人注，Helmholtz R81唯一actualPOST通过，I15生效且指定正文/本人注窄位释放；本尾仅同步既成行政事实，不第三Source/PRE/POST或授DAY。
+
+- `SF-2026-ARXIV-2606-01682` — Daily2026-06-03补Jun02；exact-v1 §3/Eq1–4、§4.1–4.8/Table1–5及Limitations，2+1+2=5；仅chunk内likelihood选择/长度偏好边界，不授true target-law、逻辑正确或免费/净速度，保EOS短段、matched interventions非matched FLOPs、同family/math/PRM与小greedy反侧及全费。必要Source/actual owner/精确PRE经独核R22–24，root已实际保存最小段，非writer jun03_next_reader已真实完整新增/直接两侧/本人注唯一actualPOST通过(R25)，生效释放；本句仅同步既成事实；未核代码/复现，不授完整DAY。
+
+- `SF-2025-ARXIV-2509-12603` — Socrates，Daily2025-09-18补Sep17；[exact-v1](https://arxiv.org/html/2509.12603v1)§2–4/6、式1/表1–4及必要图注，2+2+2=6，reader65必要Source通过。仅原模型成功率桶→独立prefix训练→均分calls与模式偏好训练分责；保PDC非语义独立、Goedel/ProofNet反退、表2费用比例/IR口径冲突、checker形式身份与全制备/执行费用，不授全榜无损/总墙钟收益或新PPO算法。未核实现/复现；原三项按root独立fresh窄授真实保存并完整自读，Helmholtz88唯一actual完整新增/完整两侧及binding/本人注POST已通过，I16生效且指定位已释放；本尾仅同步既成行政事实，不第三正文/Source/PRE/POST或授DAY。
+
+- SF-2025-ARXIV-2509-07676 — Darwin，Daily2025-09-11补Sep10；exact-v1 §2–5/式1–5/T1–2、Limitations及A2/A3/T3–6必要域，Bacon201首包→Darwin129一次缓存必要采用，正式2+1+2=5。只跨prefix累计概率质量与cap控制中途宽度；gold/proxy分责、剪枝支持/非truth、PPL/长度边界及完整费用/慢侧保留。不读图像素/代码或复现；唯一MODEL-SAMPLING Ch20窄gap，Bacon210纯PRE与root本次fresh窄授已过，Darwin按130原稿真实保存，Bacon215唯一actual完整POST已通过，本轮I8生效且窄位释放；仅同步既成状态，不预DAY。
+
+- `SF-2026-ARXIV-2610-24715` — Daily2026-10-21/Oct20；C14必要exact-v1 Source/actual owner/完整PRE由reader R224具名通过，按root既授精确窄位保存核准单段/唯一marker，保受限理论/直接反侧和全部费用；未核实现/复现。作者完整新增/直接完整两侧/本人注自读后待唯一非writer actualPOST，不预生效/DAY。 截至本轮，唯一非writer R226 actualPOST已实际通过并生效；上述待POST只保历史过程，不再表示当前未完。仅行政同步，不第三核正文/Source。
+
+- `SF-2026-ARXIV-2605-30150` — Daily2026-05-30补May29，2+1+3=6；exact-v1 §3–6/A必要域见A47/R84，仅无seed方向planning→有限slots分层candidatepool。保方向漏/重叠非原分布恢复、embedding/自动quality非人类有用、rarefaction非online早停与完整pipeline费用，不采跨provider美元/墙钟或AIfS展望。未核实现/复现。reader R84 Source/当前owner/原PRE通过，root授本单段+本人note，已真实保存，唯一reader R87实际完整新增/直接两侧/本人注POST通过并释放。
+
+- `SF-2025-ARXIV-2509-06701` — Darwin继任Godel，Daily2025-09-10补Sep9；Bacon210/作者164最小P/day、Bacon214首理论稿/作者166一次非准备者必要采用，正式2+1+2=5，唯一Ch20小gap。实际必要域v1共同有限正概率空间/§2–3定义、C/D/E全部相关证明；仅采自定义log-welfare、正权linear与two-binary边界及n+1构造存在性。不授任意固定三结果/任意给定belief与weight、真值proper-score或神经persona/安全控制保证；partial1192451B中必要域均闭合，不冒整稿或缺尾I/J已读。多模型/权重/归一/状态与真实结果验收费保，未核实现/复现。Bacon216原三项/完整邻接PRE通过，root本次fresh精确授后已真实保存；仅待Bacon一次实际完整nonwriter POST，不预整合或DAY。
+
 - `SF-2026-ARXIV-2605-08083` — Daily2026-05-12补May11；[exact-v1](https://arxiv.org/html/2605.08083v1)必要§2–5/T1–3/§7沿reader实际Source复用，2+2+2=6，为frozen replay搜索controller与真实运行分责差额深入。保有限128预采/64池复用、unrevealed probe隔离、AIME24选择非heldout、质量反退及全部预采/在线费用，不采AppD完整recipe、全Pareto或SLO，未核实现/复现。reader实际owner/逐字PRE通过，root已授指定一段/本人注，现已保存待非writer实际POST；不授DAY。 截至本轮后续有效结论：本项独立reader已实际完整新增/直接两侧/本人注非writer POST通过，root已接纳并释放指定窄位；此前“待”仅过程时态，本次纯行政同步、不重Source/正文、不预授DAY。
 
 - `SF-2026-ARXIV-2610-22160` — Daily2026-10-17窗10-16；[EMO exact-v1](https://arxiv.org/html/2610.22160v1) §3–4/Alg1/必要B.3，2+1+2=5。只采相邻context同prefix双stream与Jacobian投影接口；保masked alignment条件、judge选择缺口、11/40相对context-only退步与judge/rewrite完整费用，不授单调accuracy或matched-compute。root已独核必要Source/最小PRE语义并授本两段及本注窄写；作者已保存并顺读；root已实际新两段、完整局部邻接及本人注非writer POST PASS，作者仅行政同步既成事实，不预签DAY。未核代码/复现。
@@ -785,3 +956,30 @@ https://arxiv.org/html/2604.03616v1 — §3–7、Table 5、Appendix G/I。六�
 - `SF-2025-ARXIV-2509-02510` — Noether，Daily2025-09-04补Sep3；[exact-v1](https://arxiv.org/html/2509.02510v1) §4–7/Alg1/Table1–3、A1/A3、C2/T5/C4/T9与E所印示例必要，2+1+2=5。仅conditional entropy预算/prefix截断接口，保严格正支持条件、greedy非全局最优、top100/实际温度/CPU同步不同实现角色、质量/人评反退与全费；不采NP-hard未审归约、准确runtime recipe或普遍SLO/真值，未核仓库/图像/复现。Ohm102实际必要Source/评分/具体gap/逐字PRE通过，root已协调本指定一自然段/独立marker/本人注；按原批准稿真实保存，Ohm105一次真实非writer完整新增/完整直接两侧/本人注POST通过，本指定窄位即时生效释放；不预整日DAY。
 
 - `SF-2025-ARXIV-2509-03113` — Boyle，Daily2025-09-05补Sep4；root分担[exact-v1](https://arxiv.org/html/2509.03113v1)必要S3–S5/A/B/K–N/R/U与T1–5/14/18/19已实际非请求者核，2+1+2=5。只inputgradient sensor→noun条件mask→logit控制；保范数/链式项不闭、白盒权限、召回/终止人口及全费，不授精确对齐/无幻觉。未核其余附录全图/code/复现；root59实际消费81/82并通过本原逐字PRE和精确位，本一段/独立marker/本人注已真实保存并自读完整两侧，root62一次实际完整新增/完整两侧/本人注非writer POST通过，精确位即时生效释放；本注仅同步既成事实，不预DAY。
+
+- `SF-2025-ARXIV-2509-06870` — Darwin继任Godel，Daily2025-09-10补Sep9；[AggLM exact-v1](https://arxiv.org/html/2509.06870v1) §3–7/Tables1–7必要域，2+2+2=6。仅generator候选集合的gold众数标签与consumer训练人口分责；保hard/easy曝光混杂、相对hard配比、16组/64组未配对/同题重复及候选prefill/训练/输出全费，不授gold线上可得、少数必胜或端到端节费。未核图像像素、代码/Math-Verify或复现；Bacon§10受限Source/正式评分/唯一Ch20窄gap、§12修窄逐字PRE已通过，root已新授本一段/独立marker/本人note窄位；已按原稿真实保存，Bacon§17一次真实非writer完整新增/完整两侧/本人注POST通过，本指定窄位即时生效释放；本注仅同步既成事实，不等root第三核，不预日级。
+
+- `SF-2026-ARXIV-2605-28304` — Daily2026-05-29补May28自然日；精确v1必要方法、关键对照及直接限制见本日SUP_SOURCES A5。root已实际必要Source与具体owner比较通过并授本两段＋本人注窄位；作者实际保存，root已实际完整新增、完整直接两侧与本人注唯一非writer POST通过，窄位释放；不预DAY。仅采用正文限定命题，未核无关附件、实现或复现实验。
+- `SF-2026-ARXIV-2605-28142` — Daily2026-05-29补May28；精确v1必要Source及实际owner差额见SUP_SOURCES A9，root已实际通过并授Power-SMC后/PreSTO前两段＋本人注。作者实际保存并顺读完整新增/直接两侧，root已实际完整新增/直接两侧/本人注唯一POST通过，窄位释放，不预DAY；只采marginal目标与local近似分账，未核无关附件、代码或复现。
+
+- `SF-2025-ARXIV-2509-06174` — Darwin，Daily2025-09-10补Sep9；exact-v1 §3/Eq1–4/Alg1、§4/T2–4、Limitations/A1/T5必要域，2+1+2=5；Bacon266首必要/作者214一次采用。仅跨软长度prompt的答案一致与条件长度统计controller，保错误多数/非单调、伪码与统计人口未闭、T2/T4反侧和所有候选/串行/校准全费，不采最短正确/完整recipe/净效率，未核图像像素/代码或复现。
+
+- `SF-2025-ARXIV-2509-06608` — Darwin，Daily2025-09-10补Sep9；exact-v1 §2–5、B–I全部必要文字/式及J两配对数值表，拟2+1+2=5。仅steering层位/起始token偏置、固定QK下Value常量写入与完整残差干预分责，保LN条件/前缀与decode对照、组合反退及全费，不授唯一推理算法/全域entropy因果/可组合或净效率；未核曲线像素、原训练实现/完整rollout或复现。
+
+- `SF-2025-ARXIV-2509-09864` — Carson，Daily2025-09-16补Sep15BJT；Zeno229首必要exact-v1，126明确未读单让/本轮root接受后，root29一次不同角色必要采用通过，正式2+1+2=5/唯一Ch20；root实际正文/A1–5与四页PNG，Carson只151归并/当前owner拟稿、不第三Source。只有限策略菜单、成功率probe与每策略人口均值双成本软效用，保oracle/低预算反退、同步/全费和固定策略/可信验证退路；不采逐query精准成本、硬deadline/全局最优或普遍净省，未核实现/复现。152原三项与完整两侧经Zeno287纯PRE/root本轮fresh窄位通过；本人已按原稿真实保存，Zeno290唯一actual完整nonwriter POST通过，本日实际I35生效/窄位释放；仅同步既成事实，不第三Source/书段或授DAY。
+
+- `SF-2026-ARXIV-2606-13862` — Daily2026-06-16补Jun15；[exact-v1](https://arxiv.org/html/2606.13862v1)§3–5/T1–2/A1–2必要，2+1+2=5，仅相邻pair状态/双离散监督/回退重预测分责。保lambda不同混杂、任务反退、正确人口steps非完整tokens及净成本、硬件/服务配置未披露；不采普遍speculation无效、scale因果或SLO。作者唯一首备，唯一reader§19必要/actualowner/逐字PRE通过并窄授，作者真实SAVE/完整两侧自读后，reader§20一次soleactualPOST已过、本指定窄位释放；此处仅行政同步既成状态，未核代码/复现，不预DAY。
+
+- `SF-2025-ARXIV-2510-01902` — Hilbert，Daily2025-10-04补Oct03BJT；[CARS exact-v1](https://arxiv.org/html/2510.01902v1)§2–3/Alg1/Th1与proof、4.1/4.3/T2/B–D/E1–6/T3–7必要由Lagrange R297首次准备、作者一次另一角色采用，2+2+2=6。仅sound invalid-prefix排除质量/自适应proposal与接受后条件分布；保正支持/固定分布/准确质量、非减非严格提升、checker误删反侧、grammar非任务语义、SQL超时/局部反退、KL对象与完整序列/全费口径。不采通用高效、安全或代码精确实现，未核图像素/代码/复现；整体PRE/真实SAVE/selfread/唯一POST只据本日canonical实际层，不由本注预签。
+
+- `SF-2025-ARXIV-2510-12121` — Herschel，Daily2025-10-16补Oct15；消费Cicero R19 exact-v1 §3.1–3.2/4.1–4.3/A首次必要，2+1+2=5，仅TD value/外部reward与test hidden目标距离控制差额深入。actual生成控制owner Ch20，不复写初始embedding；保目标冲突/编辑分布漂移、base未达标条件成功6.60–30.68%非全请求、SelfBLEU局限与全训练/梯度费，不授全局Pareto/通用精确控制。未第二Methods/代码/复现；PRE/SAVE/fullselfread/solePOST只本日canonical实际层。
+
+- `SF-2026-ARXIV-2606-17537` — Daily06-18补Jun17，2+1+2=5，消费root§65首次必要§3–5/T1–2，仅CTC概率producer共享-v-CMLM/MBR效用consumer分责。保pseudo-reference非真值、原WER长度、迭代/样本反侧、architecture/loss不同及八Xeon核/RTX6000Ada局部测时排加载和未披precision/concurrency/SLO/全费。未核Rust实现或复现；sole整体PRE§75通过，作者已窄SAVE；实际POST待后到记录。
+
+- SF-2025-ARXIV-2510-17555 — Socrates，Daily2025-10-22补Oct21；Tesla R17 exact-v1 3.2/3.3/4/5.1/5.2及5.3指定域必要与R49差额；script诊断→硬候选mask深入。保四family非语言真值、Symbols/LowRes例外、code-switch和Pass反退/全费，不采无损语言控制；未核实现/复现，整体PRE/真实SAVE/全自读/solePOST按同日实际层。
+
+- `SF-2025-ARXIV-2510-21007`：Daily2025-10-28补Oct27；exact-v1必要层、2+1+2=5，R14受限Evidence通过。仅前置升级选择与轨迹内停止分责，保校准人口、漏放、三调用全费；未核实现/复现，PRE/SAVE/全自读/solePOST据本日实际层。
+
+- `SF-2025-ARXIV-2510-21067`：Daily2025-10-28补Oct27；exact-v1必要层、2+1+2=5，R14通过。仅无规范投票答案时的长度代理与全部候选费用，非短即真或实测净延迟；未核实现/复现，完整PRE/SAVE/自读/solePOST按本日实际层。
+
+- `SF-2025-ARXIV-2510-21150`：Daily2025-10-28补Oct27；R18必要/R25实际gap，2+1+2=5。仅字符串到语义选项的分布接口，保hash/独立性/T0条件和token全费；未核实现/复现，完整PRE/SAVE/自读/solePOST据本日实际层。

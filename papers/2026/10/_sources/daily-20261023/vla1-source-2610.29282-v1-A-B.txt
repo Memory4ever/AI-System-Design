@@ -1,0 +1,105 @@
+Official exact-v1 A-B, necessary pointwise-control and relation/time correspondence/compute evidence.
+Appendix A Method Details
+This section complements the method description in the main paper.
+We first formalize the pointwise alignment, then describe the practical construction of the relational objectives and the training workflow.
+ A.1 Pointwise Alignment
+We implement pointwise feature alignment as a controlled alternative to RGF, following the representation-alignment principle of REPA  ( Yu et al. 2024 ) .
+Let
+ d_{\mathrm{cos}}(\mathbf{x},\mathbf{y})=1-\frac{\mathbf{x}^{\top}\mathbf{y}}{\lVert\mathbf{x}\rVert_{2}\lVert\mathbf{y}\rVert_{2}} 
+ (A.1) 
+denote cosine distance.
+For video alignment, the VGGT patch grid is bilinearly resampled to the corresponding WAM feature grid.
+The pointwise video objective is
+ \mathcal{L}_{\mathrm{pw}}^{v}=\mathbb{E}_{t,v}\left[\frac{1}{N_{v}}\sum_{i=1}^{N_{v}}d_{\mathrm{cos}}\left(g_{\mathrm{vid}}^{\mathrm{pw}}(\mathbf{h}_{\ell,t,v,i}^{v}),\widetilde{\mathbf{p}}_{t,v,i}\right)\right], 
+ (A.2) 
+where \widetilde{\mathbf{p}}_{t,v,i} is the geometric target at the same spatial location.
+For action alignment, we use only spatially pooled patch features, excluding VGGT camera tokens.
+Each action step t is paired with the observation at the same step, and the geometric target for view v is
+ \mathbf{q}_{t}^{v}=\operatorname{Pool}(\mathbf{P}_{t}^{v}) .
+The action projector output is reshaped to V\times d_{g} , yielding one vector per view:
+ \mathcal{L}_{\mathrm{pw}}^{a}=\mathbb{E}_{t}\left[\frac{1}{V}\sum_{v=1}^{V}d_{\mathrm{cos}}\left(\left[g_{\mathrm{act}}^{\mathrm{pw}}(\mathbf{h}_{\ell,t}^{a})\right]_{v},\mathbf{q}_{t}^{v}\right)\right]. 
+ (A.3) 
+When enabled, the video and action pointwise terms each use a loss weight of 0.5 .
+The video-only control disables \mathcal{L}_{\mathrm{pw}}^{a} while keeping all other settings unchanged.
+For the video-only DINOv2 pointwise control, final-layer ViT-L patch features replace VGGT features, and the video projector output dimension is adjusted accordingly  ( Oquab et al. 2024 ) .
+ A.2 Relational Objectives
+We extract final-layer features from a frozen VGGT and cache them before WAM training  ( Wang et al. 2025 ) .
+For video supervision, cached VGGT features are selected at RGB frames corresponding to the VAE latent timesteps, and their patch grids are bilinearly resampled to the WAM grid.
+The projected WAM features and geometric targets are normalized along the feature dimension before constructing the full cosine relation matrices.
+For intra-frame relations, we compute all feature pairs within each camera view and remove self-relations on the diagonal.
+For cross-view relations, we enumerate every unique view pair v<u and retain all cross-view entries.
+For action-temporal supervision, the 32-step action sequence is paired with 32 pooled scene descriptors obtained from the corresponding consecutive observations.
+This construction is independent of the nine-frame video subsampling and therefore requires no temporal interpolation.
+Rows and columns associated with padded action steps are masked, and action self-relations are removed.
+For an entry-wise residual e , we use the smooth L1 (Huber) penalty
+ \rho_{\beta}(e)=\begin{cases}\dfrac{e^{2}}{2\beta},&|e|<\beta,\\[3.0pt]
+|e|-\dfrac{\beta}{2},&\text{otherwise},\end{cases}\qquad\beta=1. 
+ (A.4) 
+The masked relation loss is
+ \mathcal{D}_{\Omega}(\mathbf{R}^{s},\mathbf{R}^{g})=\frac{1}{|\Omega|}\sum_{(i,j)\in\Omega}\rho_{1}\!\left(R_{ij}^{s}-R_{ij}^{g}\right), 
+ (A.5) 
+where \Omega contains the valid entries defined above.
+The loss is averaged over valid entries, views, timesteps, and samples.
+The intra-frame, cross-view, and action-temporal terms are equally weighted, and the overall RGF weight is \lambda_{\mathrm{RGF}}=0.5 .
+ A.3 Training Procedure
+Algorithm  A1 summarizes RGF training.
+VGGT features are precomputed, and only the WAM and projection heads receive gradients.
+ Algorithm A1 Training with Relational Geometry Forcing
+ 0: 
+  WAM f_{\theta} , projection heads g_{\mathrm{vid}} and g_{\mathrm{act}} , cached VGGT targets
+ 1: 
+   for each optimization step do 
+ 2: 
+   Sample a synchronized video–action batch and diffusion timesteps
+ 3: 
+   Run f_{\theta} and extract layer-15 video and action features
+ 4: 
+   Load the cached VGGT targets for the sampled window
+ 5: 
+   Construct intra-frame, cross-view, and action-temporal relations
+ 6: 
+   Compute the RGF and video/action flow-matching losses
+ 7: 
+   Update f_{\theta} , g_{\mathrm{vid}} , and g_{\mathrm{act}} 
+ 8: 
+   end for 
+RGF is enabled throughout fine-tuning without a separate warm-up stage.
+At inference, the cached targets, projection heads, and relation computations are removed, so the deployed WAM follows its original video–action pathway.
+ Appendix B Implementation Details
+This section documents the model configurations and training settings used in all experiments.
+ B.1 Model Architecture
+All models are initialized from the pretrained Wan2.2-TI2V-5B video diffusion model  ( Wan et al. 2025 ) .
+The pretrained video DiT serves as the video expert, while the action expert is initialized by linearly interpolating the video-DiT weights to the smaller hidden dimension.
+Their configurations are summarized in Table  A1 .
+ Configuration 
+ Video Expert 
+ Action Expert 
+ Transformer layers 
+ 30 
+ 30 
+ Hidden dimension 
+ 3072 
+ 1024 
+ FFN dimension 
+ 14336 
+ 4096 
+ Attention heads 
+ 24 
+ 24 
+ Table A1: Shared architecture of the video and action experts.
+RGF uses separate two-layer MLP projection heads with a SiLU activation.
+The video and action heads map 3072\!\rightarrow\!2048 and 1024\!\rightarrow\!2048 , respectively.
+For the DINOv2 control, the video projection dimension is changed to 1024 to match the ViT-L features.
+All projection heads are removed at inference.
+We evaluate three WAM paradigms under this shared backbone  ( Yuan et al. 2026 ) .
+The Uncond paradigm predicts actions directly from the current visual context, while retaining video co-training.
+The Joint paradigm jointly denoises future video and action representations.
+The IDM paradigm first predicts future video representations and then conditions action prediction on them.
+ B.2 Training Hyperparameters
+We use AdamW with a learning rate of 1\times 10^{-4} , weight decay of 10^{-2} , and a cosine schedule following a linear warm-up over the first 5% of training.
+Training uses bf16 mixed precision, a per-device batch size of 16, and gradient clipping at 1.0.
+LIBERO and RoboTwin 2.0 models are trained for 10 and 5 epochs, respectively.
+At inference, all models use 10 denoising steps and a classifier-free guidance scale of 1.0.
+ B.3 Compute Usage
+LIBERO experiments are trained on 8 NVIDIA H20 GPUs and require approximately 16 hours per run.
+RoboTwin 2.0 experiments use 32 NVIDIA H20 GPUs and require approximately 65 hours per run.

@@ -1,0 +1,1259 @@
+Source: https://arxiv.org/html/2605.27567v1
+Main text extraction; fulltext_chars=83419
+
+arXiv:2605.27567v1 [cs.AI] 26 May 2026 
+ 
+ 
+ Why LLMs Fail at Causal Discovery and How Interventional Agents Escape 
+
+ 
+ 
+ 
+ Amartya Roy
+ 
+ Affiliation:  SIRE, IIT Delhi and Robert Bosch GmbH, India
+ 
+ Email:  srz248670@iitd.ac.in 
+ 
+    
+ Sonali Parbhoo
+ 
+ Affiliation:  Imperial College London
+ 
+ Email:  s.parbhoo@imperial.ac.uk 
+ 
+
+ Abstract 
+    
+ Causal discovery is a cornerstone of scientific reasoning, yet whether large language models can perform it reliably remains an open question. Recent benchmarks show that even fine-tuned models plateau on simple causal graphs and degrade as complexity grows, but why they fail has not been established. We prove the failure is fundamental: supervised fine-tuning, direct preference optimization, and in-context learning all produce predictors that cannot distinguish between causal graphs generating similar observational data, and any attempt to do so requires the model’s internal representations to grow unboundedly, violating the very conditions under which these methods work. We formalize this as a kernel obstruction theorem, establishing that the limitation is intrinsic to the learning paradigm,  not any particular model or dataset . We propose Agentic Causal Bayesian Optimization (A-CBO), wherein a frozen language model serves as an interventional oracle answering targeted queries about intervention effects, while an external Bayesian loop concentrates beliefs over candidate graphs in logarithmically many rounds. Because the decision operates outside the space where the obstruction applies, A-CBO provably converges while the underlying model remains unchanged. On Corr2Cause, A-CBO matches fine-tuned baselines without any training. On Extended Corr2Cause, a new benchmark scaling to 24 variables with 18K test samples, A-CBO significantly outperforms both fine-tuning and preference optimization, with the advantage growing monotonically with graph complexity. 
+
+ 
+  
+ 
+ 
+ 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Causal discovery, the problem of recovering causal graph structure from statistical data, is fundamental to science, medicine, and policy. E.g. A physician observing correlations between a drug, recovery, and patient age needs to know the underlying causal graph: does the drug cause recovery, or are both driven by age as a confounder? Answering this requires identifying which directed acyclic graph generated the observed statistics, a problem that is fundamentally underdetermined: multiple graphs can encode the same conditional independencies, forming a Markov equivalence class.  Schölkopf et al. (2021)  establish that resolving such equivalences lies beyond the reach of statistical learning, which only captures associations under fixed conditions, and requires modelling interventions and counterfactuals. 
+
+ 
+ 
+ 
+ Large language models have achieved remarkable success across natural language tasks, raising a natural question: can they discover causal structure from statistical evidence? Recent benchmarks suggest they cannot. On Corr2Cause  ( Jin et al., 2023 ) , which tests whether LLMs can identify causal graphs from correlational statements, even GPT-4 achieves only 29.1 macro-F1 in a zero-shot setting. Fine-tuned models reach high in-distribution accuracy but collapse under minimal perturbations like variable renaming  ( Jin et al., 2024 ) , and performance degrades sharply as the number of variables grows. Several approaches have attempted to close this gap. Prompting strategies such as PC-SubQ  ( Sgouritsa et al., 2024 )  decompose causal discovery into algorithmic sub-steps, structured thinking approaches  ( Sun et al., 2025b )  force explicit DAG construction before answering, and modular in-context methods  ( Kadziolka and Salehkaleybar, 2025 )  embed the full PC algorithm within a single prompt. Interventional frameworks like LeGIT  ( Li et al., 2025a )  pair LLMs with external causal discovery algorithms. While these methods yield empirical improvements on causal discovery benchmarks, these all retain the LLM as the entity that judges which causal graph is correct. More crucially, none explain  why LLMs fail at this task . 
+
+ 
+ 
+ 
+ In this work, we prove that the failure is not a matter of insufficient data, model scale, or prompt engineering, but a fundamental geometric obstruction intrinsic to how these models learn. We show that supervised fine-tuning (SFT), direct preference optimization (DPO), and in-context learning (ICL) all produce kernel-type predictors whose ability to distinguish between causal graphs generating similar observational data is provably bounded. When two candidate graphs are observational near-misses, belonging to different Markov equivalence classes but producing nearly identical statistics, any attempt to separate them within these paradigms requires the model’s internal representations to grow unboundedly, violating the very conditions under which these training methods are known to work. We formalize this as a  kernel obstruction theorem  (Theorem  1 ), establishing that the limitation is intrinsic to the learning paradigm, not to any particular model or dataset. 
+
+ 
+ 
+ 
+ We then ask:  what is the minimal construction that escapes this obstruction?  The answer, dictated by the theorem itself, is to move the discrete graph-selection decision outside the kernel predictor entirely. We propose Agentic Causal Bayesian Optimization (A-CBO), an approach wherein a frozen language model serves as an interventional oracle, answering simple binary questions such as “does  V j V_{j}  change under  do ⁡ ( V i = v ) \mathrm{do}(V_{i}=v) ?”, while an external Bayesian loop uses these answers to concentrate beliefs over candidate causal graphs. The LLM never determines which graph is correct; it only answers factual questions about the effects of interventions, questions whose answers happen to differ across competing hypotheses. The Bayesian update operates in the probability simplex  Δ n − 1 \Delta_{n-1} , outside the RKHS where the obstruction applies, so A-CBO provably converges to the correct graph in logarithmically many rounds while the LLM itself remains unchanged. 
+
+ 
+ 
+ 
+ Contributions. 
+ (1)  We prove a kernel obstruction theorem showing that SFT, DPO, and ICL cannot separate near-miss causal hypotheses within the lazy regime.  (2)  We propose A-CBO, an agentic framework that sidesteps this obstruction via interventional queries while preserving the lazy regime.  (3)  We evaluate on Corr2Cause and introduce Extended Corr2Cause ( d = 7 d=7 – 24 24 ), a new causal
+benchmark scaling to 24 variables, demonstrating that A-CBO matches finetuned baselines
+without retraining and outperforms both SFT and DPO by an average of 24%, with the
+advantage growing monotonically with graph complexity. Table  1  summarises where A-CBO differs from prior work across four key dimensions. 
+
+ 
+ 
+ 
+ Table 1:  A-CBO is the only approach that simultaneously satisfies all four properties.  Comparison of causal discovery(for detailed discussion please refer to Appendix  B ) methods on dimensions that govern reliability at scale. 
+ 
+ 
+ Method 
+   
+ 
+ 
+ Training- 
+ 
+ free 
+ 
+   
+ 
+ 
+ Near-miss 
+ 
+ separation 
+ 
+   
+ 
+ 
+ Scales to 
+ 
+ d = 24 d\!=\!24 
+ 
+   
+ 
+ 
+ Convergence 
+ 
+ guarantee 
+ 
+ 
+ Zero-shot (GPT-4) 
+ ✓ 
+ × \times 
+ × \times 
+ × \times 
+ 
+ ICL / Prompting 
+ ✓ 
+ × \times 
+ × \times 
+ × \times 
+ 
+ SFT 
+ × \times 
+ × \times 
+ × \times 
+ × \times 
+ 
+ DPO 
+ × \times 
+ × \times 
+ × \times 
+ × \times 
+ 
+ A-CBO (ours) 
+ ✓ 
+ ✓ 
+ ✓ 
+ ✓ 
+ 
+
+ 
+ 
+ (a) Near-miss pair X 1 X_{1} X 2 X_{2} X 3 X_{3} G + G^{+} : chain X 1 X_{1} X 2 X_{2} X 3 X_{3} G − G^{-} : fork P obs G + ≈ P obs G − P_{\mathrm{obs}}^{G^{+}}\!\approx\!P_{\mathrm{obs}}^{G^{-}} kernel sim.  ≥ − δ \geq 1\!-\!\delta SFT/ICL: cannot separate (Theorem  1 ) (b) Interventional query X 1 X_{1} X 2 X_{2} X 3 X_{3} do ⁡ ( X 1 = v ) \mathrm{do}(X_{1}\!=\!v) ✓ \checkmark   X 3 X_{3}  changes X 1 X_{1} X 2 X_{2} X 3 X_{3} do ⁡ ( X 1 = v ) \mathrm{do}(X_{1}\!=\!v) × \times   X 3 X_{3}  unchanged 
+ 
+ 
+ LLM oracle : “Does  X 3 X_{3}  change 
+ under  do ⁡ ( X 1 ) \mathrm{do}(X_{1}) ?” 
+ r = 1 ⇒ G + r\!=\!1\Rightarrow G^{+} ;  r = 0 ⇒ G − r\!=\!0\Rightarrow G^{-} 
+ (c) Bayesian update G + G^{+} G − G^{-} t = 0 t\!=\!0 0.5 0.5 0.5 0.5 t t  rounds (IG-max) G + G^{+} G − G^{-} t = T t\!=\!T − η 1\!-\!\eta η \eta 
+ 
+ 
+ T = O ⁡ ( log ⁡ n log ⁡ 1 − η η ) T=O\!\left(\frac{\log n}{\log\frac{1-\eta}{\eta}}\right)  rounds 
+ 
+ Figure 1:  Overview of A-CBO. 
+ (a)  Two near-miss hypotheses ( G + G^{+} : chain,  G − G^{-} : fork) are observationally equivalent; kernel similarity  ≥ − δ \geq 1\!-\!\delta , so bounded-norm SFT/ICL cannot separate them (Thm.  1 ).
+ (b)  A single intervention  do ⁡ ( X 1 = v ) \mathrm{do}(X_{1}\!=\!v)  discriminates: under  G + G^{+}  the perturbation propagates to  X 3 X_{3} ; under  G − G^{-}  the severed edge leaves  X 3 X_{3}  unaffected.
+ (c)  A-CBO performs Bayesian updates in  Δ n − 1 \Delta^{n-1}  (outside  ℋ \mathcal{H} ), concentrating belief on the correct hypothesis in  O ⁡ ( log ⁡ n ) O(\log n)  rounds. 
+ 
+ 
+ 
+ 2  Related Work 
+
+ 
+
+ 
+ We provide a succinct description of related work here. A more detailed related work is provided in Appendix  C . 
+
+ 
+ 
+ 
+ Causal reasoning in LLMs. 
+A growing body of work documents that LLMs struggle with genuine causal inference.  Zečević et al. (2023)  argue that LLMs are “causal parrots,” reciting correlations over causal facts from training data rather than performing inference.  Zhang et al. (2023)  find that LLMs succeed at retrieving memorised causal relations but fail at inferring novel ones from statistical evidence.  Wu et al. (2024)  survey five integration stages, from data augmentation to architecture modification, and find persistent shortfalls at every stage. Most directly relevant to our work,  Wu et al. (2025)  argue on empirical and conceptual grounds that LLMs should be restricted to non-decisional support in causal discovery, never determining the existence or directionality of causal relationships. Our kernel obstruction theorem (Theorem  1 ) provides the formal proof underlying this empirical observation, and A-CBO instantiates precisely the non-decisional oracle role they advocate. 
+
+ 
+ 
+ 
+ Benchmarks for causal reasoning.   Jin et al. (2024)  introduced  Corr2Cause , showing that seventeen LLMs perform near random on pure causal inference from correlational statements, while fine-tuned models achieve high in-distribution accuracy but collapse under perturbations such as variable renaming.  Chi et al. (2024)  use fresh news data to distinguish shallow associative reasoning from genuine causal inference, finding that strong benchmark performance largely reflects memorisation.  Sheth et al. (2025)  evaluate how graph encoding strategies affect LLM causal performance,
+finding high sensitivity to format choices.  Yamin et al. (2024)  show that LLMs rely on superficial heuristics such as event ordering rather than structural reasoning when processing causal narratives. These benchmarks document the empirical phenomenon our theory explains: degradation that worsens with structural complexity and near-miss configurations. We extend this foundation with a new benchmark  Extended Corr2Cause  scaling from 7 to 24 variables with 18K samples, and show that the degradation pattern matches the quantitative predictions of our kernel obstruction theorem. 
+
+ 
+ 
+ 
+ LLM-assisted causal discovery with interventions.  LeGIT  ( Li et al., 2025a )  uses LLM-proposed intervention targets to warm-start external causal discovery algorithms when observational data is limited.  Le et al. (2024)  combine a multi-agent debate module with statistical validation, and  Abdulaal et al. (2024)  alternate between LLM-proposed graph
+structures and deep SCM fitting. All three retain the LLM as a reasoning agent that makes or refines causal judgments. A-CBO differs in both motivation and mechanism: our kernel obstruction thereom dictates that the discrete causal decision must reside  outside  the LLM, which serves only as a fixed binary oracle while an external Bayesian loop in  Δ n − 1 \Delta^{n-1}  performs all hypothesis discrimination. LeGIT is closest in spirit but uses the LLM to  select  interventions based on semantic variable knowledge; A-CBO uses information-theoretic scoring to
+select and the LLM only to evaluate. 
+
+ 
+ 
+ 
+ 
+ 3  Mathematical Setup 
+
+ 
+
+ 
+ Structural Causal Models. 
+An SCM over  𝒱 = { V 1 , … , V d } \mathcal{V}=\{V_{1},\ldots,V_{d}\}  is a DAG  G = ( 𝒱 , E ) G=(\mathcal{V},E)  with structural equations  V j = f j ​ ( pa G ​ ( V j ) , ε j ) V_{j}=f_{j}(\mathrm{pa}_{G}(V_{j}),\varepsilon_{j}) . An  intervention   do ⁡ ( V i = v ) \mathrm{do}(V_{i}=v)  replaces  V i V_{i} ’s equation with the constant  v v  (graph mutilation), inducing an interventional distribution  P do ⁡ ( V i = v ) P^{\mathrm{do}(V_{i}=v)} . Two DAGs are  Markov equivalent  if they encode the same conditional independencies; resolving equivalences requires reasoning about interventions. 
+
+ 
+ 
+ 
+ Kernel-Type Predictors & Lazy Training. 
+A PSD kernel  K : 𝒵 2 → ℝ K:\mathcal{Z}^{2}\to\mathbb{R}  induces an RKHS  ℋ \mathcal{H}  with feature map  ϕ \phi . A  kernel-type predictor  is  s ⁡ ( z ) = ⟨ w , ϕ ⁡ ( z ) ⟩ ℋ s(z)=\langle w,\phi(z)\rangle_{\mathcal{H}}  with  ‖ w ‖ ℋ ≤ B \|w\|_{\mathcal{H}}\leq B . In the  lazy/NTK regime   ( Jacot et al., 2018 ) , the NTK  Θ ⁡ ( ( x o , y o ) , ( x u , y u ) ) = ⟨ ∇ θ z θ ​ ( x o , y o ) , ∇ θ z θ ​ ( x u , y u ) ⟩ \Theta((x_{o},y_{o}),(x_{u},y_{u}))=\langle\nabla_{\theta}z_{\theta}(x_{o},y_{o}),\nabla_{\theta}z_{\theta}(x_{u},y_{u})\rangle  stays approximately constant, so predictions evolve as a kernel smoother. SFT produces such a predictor via the NTK update rule (Appendix  D.5 ); ICL approximates kernel regression  ( Han et al., 2023 ;  Sun et al., 2025a ) ; DPO inherits the same structure under its KL constraint. All three thus satisfy  B = O ⁡ ( 1 ) B=O(1) . 
+
+ 
+ 
+ 
+ Problem Formulation. 
+Given  d d  variables generated by unknown DAG  G G , the model receives premises  𝒫 = { p 1 , … , p m } \mathcal{P}=\{p_{1},\ldots,p_{m}\}  (pairwise correlation/independence statements) and a causal hypothesis  h h . It must output  ℓ = 1 \ell=1  if  h h  is entailed by  𝒫 \mathcal{P}  in every consistent DAG, and  ℓ = 0 \ell=0  otherwise.
+Given input  x = ( 𝒫 , h ) x=(\mathcal{P},h) , the LLM’s log-score over a reasoning chain  y = ( y 1 , … , y L ) y=(y_{1},\ldots,y_{L})  is:
+ s θ ​ ( x , y ) ≜ log ⁡ π θ ​ ( y ∣ x ) = ∑ l = 1 L log ⁡ π θ ​ ( y l ∣ x , y < l ) . s_{\theta}(x,y)\triangleq\log\pi_{\theta}(y\mid x)=\sum_{l=1}^{L}\log\pi_{\theta}(y_{l}\mid x,y_{<l}). 
+Reliable discrimination requires a score margin: 
+
+ 
+ 
+
+ 
+ 
+ s θ ​ ( x , y + ) − s θ ​ ( x , y − ) ≥ γ > 0 . s_{\theta}(x,y^{+})-s_{\theta}(x,y^{-})\geq\gamma>0. 
+ 
+ (1) 
+ 
+
+ 
+ 
+ 
+ Key Definitions.  Let  𝒵 = 𝒳 × 𝒴 \mathcal{Z}=\mathcal{X}\times\mathcal{Y}  and  χ = ( x , y ) \chi=(x,y)  with kernel  K ⁡ ( χ , χ ) ≤ κ 2 K(\chi,\chi)\leq\kappa^{2} . 
+
+ 
+ 
+ 
+ Definition 1   ( δ \delta -similar pair) . 
+ 
+ Pairs  χ + = ( x , y + ) \chi^{+}=(x,y^{+})  and  χ − = ( x , y − ) \chi^{-}=(x,y^{-})  are  δ \delta -similar if
+ K ⁡ ( χ + , χ − ) / K ⁡ ( χ + , χ + ) ⋅ K ⁡ ( χ − , χ − ) ≥ 1 − δ K(\chi^{+},\chi^{-})/\sqrt{K(\chi^{+},\chi^{+})\cdot K(\chi^{-},\chi^{-})}\geq 1-\delta . 
+
+ 
+ 
+ 
+ 
+ Definition 2   (Structural Discrimination Set) . 
+ 
+ For DAGs  G + , G − G^{+},G^{-}  over  𝒱 \mathcal{V} :  𝒟 ⁡ ( G + , G − ) ≜ { ( V i , V j ) ∈ 𝒱 2 : r ^ G + ​ ( V i , V j ) ≠ r ^ G − ​ ( V i , V j ) } \mathcal{D}(G^{+},G^{-})\triangleq\{(V_{i},V_{j})\in\mathcal{V}^{2}:\hat{r}_{G^{+}}(V_{i},V_{j})\neq\hat{r}_{G^{-}}(V_{i},V_{j})\} , where  r ^ G ​ ( V i , V j ) ∈ { 0 , 1 } \hat{r}_{G}(V_{i},V_{j})\in\{0,1\}  is the graph-mutilation prediction of whether  V j V_{j}  is affected by  do ⁡ ( V i = v ) \mathrm{do}(V_{i}=v) . 
+
+ 
+ 
+ 
+ 
+ Assumption 1   (Oracle Reliability) . 
+ 
+ The LLM oracle answers interventional queries correctly with probability  1 − η > 1 / 2 1-\eta>1/2 . The true DAG  G ⋆ G^{\star}  is interventionally distinguishable from every candidate:  𝒟 ⁡ ( G ⋆ , G k ) ≠ ∅ \mathcal{D}(G^{\star},G_{k})\neq\emptyset  for all  k ≠ ⋆ k\neq\star . 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Kernel Obstruction and Its Escape 
+
+ 
+
+ 
+ The Near-Miss Problem. 
+A chain  V 1 → V 2 → V 3 V_{1}\!\to\!V_{2}\!\to\!V_{3}  and a fork  V 1 ← V 2 → V 3 V_{1}\!\leftarrow\!V_{2}\!\to\!V_{3}  produce identical marginal correlations ( V 1 ⟂ ⟂ V 3 | V 2 V_{1}\!\perp\!\!\!\perp\!V_{3}\mid V_{2}  in both), so their textual premise  𝒫 \mathcal{P}  is  identical , yet they require opposite labels. As  d d  grows, near-miss DAGs share  1 − O ⁡ ( 1 / d 2 ) 1-O(1/d^{2})  of their tokens; at  d = 24 d=24 ,  > > 99% overlap. The distinguishing information is present the DAGs are  not  Markov equivalent—but it occupies a vanishing fraction of the input, making discrimination geometrically impossible for textual-similarity-based predictors. 
+
+ 
+ 
+ 
+ 4.1  Helping Lemmas 
+
+ 
+
+ 
+ Lemma 1   (Near-Miss Kernel Similarity) . 
+ 
+ For near-miss pairs sharing a token prefix of length  ℓ \ell  out of total  L = O ⁡ ( d 2 ) L=O(d^{2})  tokens, the NTK similarity satisfies  δ ≤ C ⁡ ( L − ℓ ) / L \delta\leq C(L-\ell)/L  for a constant  C > 0 C>0 . Since  L − ℓ = O ⁡ ( 1 ) L-\ell=O(1) , we get  δ = O ⁡ ( 1 / d 2 ) → 0 \delta=O(1/d^{2})\to 0  as  d → ∞ d\to\infty . 
+
+ 
+ 
+ 
+ 
+ Proof in Appendix  D . 
+
+ 
+ 
+ 
+ Interventions break the near-miss symmetry: under a chain  V i → V k → V j V_{i}\to V_{k}\to V_{j} , intervening on  V i V_{i}  propagates to  V j V_{j} ; under a fork  V i ← V k → V j V_{i}\leftarrow V_{k}\to V_{j} , the path is severed and  V j V_{j}  is unaffected. Binary oracle responses are  not  near-misses, they remain kernel-separated regardless of  δ \delta . 
+
+ 
+ 
+ 
+ Lemma 2   ( Interventional Kernel Separation ) . 
+ 
+ Let  ( V i , V j ) ∈ 𝒟 ⁡ ( G + , G − ) (V_{i},V_{j})\in\mathcal{D}(G^{+},G^{-})  (Definition  2 ). The interventional query “ Does  V j V_{j}  change under  do ⁡ ( V i = v ) \mathrm{do}(V_{i}=v) ? ” produces responses  r + = 1 r^{+}=1  and  r − = 0 r^{-}=0  whose kernel representations satisfy: 
+
+ 
+ 
+
+ 
+ 
+ K ⁡ ( χ yes , χ no ) K ⁡ ( χ yes , χ yes ) ⋅ K ⁡ ( χ no , χ no ) ≤ 1 − ρ , \frac{K(\chi_{\mathrm{yes}},\chi_{\mathrm{no}})}{\sqrt{K(\chi_{\mathrm{yes}},\chi_{\mathrm{yes}})\cdot K(\chi_{\mathrm{no}},\chi_{\mathrm{no}})}}\leq 1-\rho, 
+ 
+ (2) 
+ 
+
+ 
+ for a constant  ρ ∈ ( 0 , 1 ] \rho\in(0,1]  depending on  𝒟 ⁡ ( G + , G − ) \mathcal{D}(G^{+},G^{-})  but  not  on  δ \delta . Hence  ρ ↛ 0 \rho\not\to 0  as  δ → 0 \delta\to 0 : the LLM reliably answers interventional queries even when it cannot answer the global causal question. 
+
+ 
+ 
+ 
+ 
+ Proof sketch. 
+ 
+ The key decoupling:  ρ \rho  depends on structural disagreement via  𝒟 ⁡ ( G + , G − ) \mathcal{D}(G^{+},G^{-})  while  δ \delta  depends on observational similarity. Choosing  ( V i , V j ) ∈ 𝒟 (V_{i},V_{j})\in\mathcal{D}  to maximise disagreement ensures  ρ ↛ 0 \rho\not\to 0  as  δ → 0 \delta\to 0 . Full proof in Appendix  D .
+∎ 
+
+ 
+ 
+ 
+ 
+ 
+ 4.2  Main Results 
+
+ 
+
+ 
+ With both helping lemmas established, the two main results follow directly. Theorem  1  proves the impossibility for all kernel-based methods; Theorem  2  proves that A-CBO escapes it. Full proofs are in Appendix  D . 
+
+ 
+ 
+ 
+ Theorem 1   ( Kernel Obstruction for Causal Discrimination ) . 
+ 
+ Let  χ + = ( x , y + ) \chi^{+}=(x,y^{+})  and  χ − = ( x , y − ) \chi^{-}=(x,y^{-})  be a  δ \delta -similar pair. For any scoring rule of the form  s ⁡ ( χ ) = ⟨ w , ϕ ⁡ ( χ ) ⟩ ℋ s(\chi)=\langle w,\phi(\chi)\rangle_{\mathcal{H}}  with  ‖ w ‖ ℋ ≤ B \|w\|_{\mathcal{H}}\leq B : 
+
+ 
+ 
+
+ 
+ 
+ s ⁡ ( x , y + ) − s ⁡ ( x , y − ) ≤ B ​ κ ​ 2 ​ δ . s(x,y^{+})-s(x,y^{-})\leq B\kappa\sqrt{2\delta}. 
+ 
+ (3) 
+ 
+
+ 
+ Consequently, enforcing the discrimination margin  γ \gamma  from Eq. ( 1 ) requires
+ B ≥ γ / ( κ ​ 2 ​ δ ) B\geq\gamma/(\kappa\sqrt{2\delta}) , which diverges as  δ → 0 \delta\to 0 . 
+
+ 
+ 
+ 
+ 
+ Proof sketch. 
+ 
+ By Cauchy–Schwarz,  | s ⁡ ( χ + ) − s ⁡ ( χ − ) | ≤ ‖ w ‖ ℋ ⋅ ‖ ϕ ⁡ ( χ + ) − ϕ ⁡ ( χ − ) ‖ ℋ |s(\chi^{+})-s(\chi^{-})|\leq\|w\|_{\mathcal{H}}\cdot\|\phi(\chi^{+})-\phi(\chi^{-})\|_{\mathcal{H}} . The  δ \delta -similarity bound yields  ‖ ϕ ⁡ ( χ + ) − ϕ ⁡ ( χ − ) ‖ 2 ≤ 2 ​ κ 2 ​ δ \|\phi(\chi^{+})-\phi(\chi^{-})\|^{2}\leq 2\kappa^{2}\delta , giving the upper bound. Enforcing margin  γ \gamma  forces  B ≥ γ / ( κ ​ 2 ​ δ ) → ∞ B\geq\gamma/(\kappa\sqrt{2\delta})\to\infty . Full proof in Appendix  D .
+∎ 
+
+ 
+ 
+ 
+ 
+ Theorem  1  applies uniformly to SFT (via the NTK update rule, Appendix  D.5 ), DPO (whose implicit reward inherits the same RKHS structure under the KL constraint), and ICL (which approximates kernel regression  ( Han et al., 2023 ;  Sun et al., 2025a ) ). As  d d  grows,  δ = O ⁡ ( 1 / d 2 ) → 0 \delta=O(1/d^{2})\to 0  (Lemma  1 ), so the achievable margin  B ​ κ ​ 2 ​ δ = O ⁡ ( 1 / d ) → 0 B\kappa\sqrt{2\delta}=O(1/d)\to 0 :  any kernel-based method degrades with graph complexity, not from insufficient data or capacity, but from geometric impossibility. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  A-CBO: The Constructive Escape 
+
+ 
+
+ 
+ Theorem  1  is agnostic to model choice, dataset, or training procedure: any method computing causal judgments  within  a bounded-norm kernel predictor cannot separate near-miss hypotheses. A-CBO poses local binary interventional queries -  ‘‘Does  V j V_{j}  change under  do ⁡ ( V i = v ) \mathrm{do}(V_{i}{=}v) ?’’  whose yes/no answers are kernel-separated (Lemma  2 ), delegating all hypothesis discrimination to an external Bayesian loop in  Δ n − 1 \Delta^{n-1} , outside the RKHS entirely (Figure  1 ). 
+
+ 
+ 
+ 
+ Algorithm 1    Agentic Causal Bayesian Optimization (A-CBO) 
+ 
+ 
+             1: 
+            
+            
+          Premise  𝒫 \mathcal{P} , frozen LLM  ℒ θ 0 \mathcal{L}_{\theta_{0}} , variables  𝒱 \mathcal{V} , target  V t V_{t} , budget  T T , oracle noise  η \eta , votes  M M 
+
+ 
+ 
+             2: 
+            
+            
+          MAP hypothesis  G ⋆ G^{\star} 
+
+ 
+ 
+             3: 
+            
+            
+           Phase 1: Hypothesis Generation  (lazy-regime forward pass)
+
+ 
+ 
+             4: 
+            
+            
+           { G 1 , … , G n } ← ℒ θ 0 ​ ( prompt gen ​ ( 𝒫 ) ) \{G_{1},\ldots,G_{n}\}\leftarrow\mathcal{L}_{\theta_{0}}(\text{prompt}_{\text{gen}}(\mathcal{P})) ;  π k ( 0 ) ← 1 / n \pi_{k}^{(0)}\leftarrow 1/n 
+
+ 
+ 
+             5: 
+            
+            
+           Phase 2: Agentic Discrimination Loop 
+
+ 
+ 
+             6: 
+            
+            
+           for   t = 1 , … , T t=1,\ldots,T   do 
+
+ 
+ 
+             7: 
+            
+            
+             if  converged ( max k ⁡ π k ( t − 1 ) > 1 − δ c \max_{k}\pi_{k}^{(t-1)}>1-\delta_{c} )  then   break  
+ 
+ 
+             8: 
+            
+            
+             end   if 
+ 
+ 
+             9: 
+            
+            
+             // Step A: Score interventions (deterministic, no LLM call) 
+
+ 
+ 
+             10: 
+            
+            
+             for  each  ( V i , V j ) (V_{i},V_{j})   do 
+
+ 
+ 
+             11: 
+            
+            
+             Compute  r ^ k ​ ( V i , V j ) \hat{r}_{k}(V_{i},V_{j})  for alive hypotheses via graph mutilation
+
+ 
+ 
+             12: 
+            
+            
+             Compute  IG ⁡ ( V i , V j ) = H ⁡ ( 𝝅 ( t − 1 ) ) − ∑ r P ⁡ ( r ) ​ H ​ ( 𝝅 ( t − 1 ) ∣ r ) \mathrm{IG}(V_{i},V_{j})=H(\bm{\pi}^{(t-1)})-\sum_{r}P(r)\,H(\bm{\pi}^{(t-1)}\mid r) 
+
+ 
+ 
+             13: 
+            
+            
+             end   for 
+ 
+ 
+             14: 
+            
+            
+             ( V i ⋆ , V j ⋆ ) ← arg ⁡ max V i , V j ⁡ IG ⁡ ( V i , V j ) (V_{i}^{\star},V_{j}^{\star})\leftarrow\arg\max_{V_{i},V_{j}}\mathrm{IG}(V_{i},V_{j}) 
+
+ 
+ 
+             15: 
+            
+            
+             // Step B: LLM oracle query (lazy-regime forward pass) 
+
+ 
+ 
+             16: 
+            
+            
+             r obs ← MajVote ​ ( ℒ θ 0 ​ ( prompt int ​ ( 𝒫 , do ⁡ ( V i ⋆ ) , V j ⋆ , V t ) ) ) r^{\text{obs}}\leftarrow\text{MajVote}\bigl(\mathcal{L}_{\theta_{0}}(\text{prompt}_{\text{int}}(\mathcal{P},\mathrm{do}(V_{i}^{\star}),V_{j}^{\star},V_{t}))\bigr) 
+
+ 
+ 
+             17: 
+            
+            
+             // Step C: External Bayesian update (in  Δ n − 1 \Delta^{n-1} , not  ℋ \mathcal{H} ) 
+
+ 
+ 
+             18: 
+            
+            
+             for  each  G k G_{k}   do 
+ π k ( t ) ∝ π k ( t − 1 ) ⋅ [ ( 1 − η ) 𝟙 { r ^ k = r obs } + η 𝟙 { r ^ k ≠ r obs } ] \pi_{k}^{(t)}\propto\pi_{k}^{(t-1)}\cdot\bigl[(1-\eta)\mathds{1}_{\{\hat{r}_{k}\!=\!r^{\text{obs}}\}}+\eta\mathds{1}_{\{\hat{r}_{k}\!\neq\!r^{\text{obs}}\}}\bigr] 
+
+ 
+ 
+             19: 
+            
+            
+             end   for 
+ 
+ 
+             20: 
+            
+            
+           end   for 
+ 
+ 
+             21: 
+            
+            
+           return   G ⋆ = arg ⁡ max k ⁡ π k ( T ) G^{\star}=\arg\max_{k}\pi_{k}^{(T)} 
+
+ 
+ 
+ 
+ 
+ Theorem 2   ( Convergence of A-CBO ) . 
+ 
+ Suppose the true DAG  G ⋆ G^{\star}  is interventionally distinguishable from every candidate  G k G_{k} 
+( 𝒟 ( G ⋆ , G k ) ≠ ∅ ∀ k ≠ ⋆ \mathcal{D}(G^{\star},G_{k})\neq\emptyset\;\forall k\neq\star ), and the LLM oracle answers correctly with probability  1 − η > 1 / 2 1-\eta>1/2 . Then Algorithm  1  identifies  G ⋆ G^{\star}  in at most  T ⋆ = ⌈ log ⁡ n log ⁡ 1 − η η ⌉ T^{\star}=\left\lceil\frac{\log n}{\log\frac{1-\eta}{\eta}}\right\rceil  rounds with probability  ≥ 1 − n ​ η T ⋆ \geq 1-n\eta^{T^{\star}} , remaining in the lazy/NTK regime throughout. Crucially,  T ⋆ T^{\star}  depends on the number of hypotheses  n n  and oracle quality  η \eta , but is  independent of the near-miss parameter  δ \delta . 
+
+ 
+ 
+ 
+ 
+ Proof sketch. 
+ 
+ At each round, the correct hypothesis  G ⋆ G^{\star}  accumulates multiplicative weight  ( 1 − η ) / η > 1 (1-\eta)/\eta>1  relative to every wrong hypothesis. After  T ⋆ T^{\star}  rounds, this geometric growth ensures  π G ⋆ ( T ⋆ ) ≥ 1 − n ​ η T ⋆ \pi_{G^{\star}}^{(T^{\star})}\geq 1-n\eta^{T^{\star}}  by a union bound. The loop operates in  Δ n − 1 \Delta^{n-1}  via Bayes’ rule, never invoking a kernel comparison; hence  T ⋆ T^{\star}  is independent of  δ \delta . Full proof in Appendix  D .
+∎ 
+
+ 
+ 
+ 
+ 
+ The independence from  δ \delta  is the central point. Where SFT, DPO, and ICL all degrade as  δ → 0 \delta\to 0  with growing graph complexity, A-CBO’s convergence rate is unaffected. The near-miss geometry that defeats kernel predictors is simply not visible to the Bayesian loop, because the loop never operates in the space where the obstruction applies. This is not an empirical observation but a structural guarantee: A-CBO succeeds on near-miss instances where Theorem  1  proves the alternatives cannot. 
+
+ 
+ 
+ 
+ 
+ 6  Experiments 
+
+ 
+
+ 
+ 6.1  Setup 
+
+ 
+
+ 
+ We evaluate A-CBO on two causal discrimination benchmarks against zero-shot,
+fine-tuned, and preference-optimised baselines. All A-CBO configurations use
+ frozen  LLMs with zero gradient updates throughout. The full experimental setup benchmarks, baselines, model tiers, hyperparameters, and evaluation metrics are summarised in Table  7 . 
+
+ 
+ 
+ 
+ Datasets  We evaluate on two benchmarks. The first is  Corr2Cause   ( Jin et al., 2024 ) , a dataset of 7,524 test samples spanning causal graph depths  d ∈ { 2 , … , 6 } d\in\{2,\ldots,6\} , with instances drawn from six causal relation templates:  Parent ,  Child ,  Ancestor ,  Descendant ,  Collider , and  Confounder . Performance is measured via macro-averaged F1 across all six classes. The second is our proposed  Extended C2C  benchmark, comprising 18,000 samples at depths  d ∈ { 7 , … , 24 } d\in\{7,\ldots,24\}  (1,000 samples per depth level). All instances carry all-negative labels, and the task reduces to binary rejection accuracy. Crucially, the near-miss gap between the correct and closest incorrect causal relation shrinks as  O ⁡ ( 1 / d 2 ) O(1/d^{2}) , making this benchmark a stress test of fine-grained causal discrimination at scale. 
+
+ 
+ 
+ 
+ Baselines.  We compare against four baselines spanning prompting and supervised fine-tuning paradigms. As a prompting baseline, we include  zero-shot GPT-4 , applied via direct prompting without any A-CBO loop, which achieves a macro-F1 of 29.1, illustrating the difficulty of the task for large proprietary models without structured reasoning support. We also report  LLaMA-7B (FT) , (from the paper  Jin et al. (2023) ) which reaches a macro-F1 of 92.0 on  Corr2Cause . On the  Extended C2C  benchmark, we evaluate two additional supervised baselines:  RoBERTa-Large SFT  (355M parameters), trained on 1.3M  Extended C2C  samples for 3 epochs using AdamW with a learning rate of  2 × 10 − 5 2\times 10^{-5}  and batch size 32; and  RoBERTa-Large DPO , trained with preference pairs constructed per instance using  β = 0.1 \beta=0.1 , optimized on  4 × 4\times A100 GPUs. 
+
+ 
+ 
+ 
+ A-CBO Models. 
+We instantiate the A-CBO framework across three capability tiers to assess how backbone model strength interacts with the optimization loop. The  high  tier comprises GLM-5.1 ⋆  and Qwen3-30B ⋆ , both operated with thinking mode enabled.( ⋆ \star  Thinking mode(Across Setting) The  mid  tier consists of Qwen3.5-122B and Llama-3.3-70B. The  low  tier uses Gemma-3-12B-IT and LLaMA-7B. This stratification allows us to disentangle the contribution of the A-CBO procedure itself from the raw capability of the underlying language model. 
+
+ 
+ 
+ 
+ Hyperparameters. 
+The A-CBO loop runs for a maximum of  T = 20 T=20  iterations with a random exploration fraction of  ε = 0.1 \varepsilon=0.1  and oracle noise level  η = 0.1 \eta=0.1 . Convergence is determined by an entropy-based stopping criterion with threshold  δ c = 0.01 \delta_{c}=0.01 : optimization halts when the entropy of the candidate distribution falls below this value. Final relation predictions are aggregated via majority voting over  M = 3 M=3  votes drawn from  N = 8 N=8  candidates per iteration. 
+
+ 
+ 
+ 
+ Evaluation Metrics. 
+On  Corr2Cause , we report macro-averaged F1 across the six causal relation classes, consistent with the original benchmark protocol. On  Extended C2C , we report binary rejection accuracy, reflecting whether the model correctly identifies that no valid causal relation holds among the presented variables. 
+
+ 
+ 
+ 
+ 
+ 6.2  Results on Corr2Cause and Extended Corr2Cause 
+
+ 
+
+ 
+ Table  2  reports per-class F1 and overall metrics on the
+original benchmark; Table  3  reports the same on the
+extended benchmark, averaged across  d = 7 d\!=\!7 – 24 24 . 
+
+ 
+ 
+ 
+ A-CBO matches fine-tuned baselines without retraining the LLM.  GLM-5.1 ⋆  achieves F1 = 93.2 on  Corr2Cause , exceeding the
+fine-tuned LLaMA-7B of  Jin et al. (2023)  (F1 = 92.0) which requires
+training on  205,734 205{,}734  in-distribution examples. This validates the central
+theoretical claim of Section  4 : escaping the kernel obstruction
+via an external Bayesian loop recovers the performance of fine-tuning without
+increasing the RKHS norm or modifying any model parameters. 
+
+ 
+ 
+ 
+ A-CBO identifies all causal relation types, including colliders.  Across both benchmarks, the per-class difficulty ordering is consistent:
+ Collider  is universally the hardest template and  Confounder 
+the easiest. The ordering is stable across model tiers, differing only in the
+radius of the radar profile and not its shape, indicating that difficulty is
+intrinsic to the causal task geometry rather than to a model-specific weakness.
+Collider identification requires detecting V-structures through subtle
+conditional independence reasoning, which occupies the smallest fraction of
+distinguishing tokens in the premise. Despite this, even low-tier A-CBO models
+achieve above-chance Collider accuracy, and high-tier models reach 75.2% on
+ Extended Corr2Cause —substantially above the SFT baseline of 46.5%
+on the same template (Table  6 ). 
+
+ 
+ 
+ 
+ A-CBO scales gracefully to 24-variable graphs across all reasoning
+tiers.  Performance on  Extended Corr2Cause  stratifies cleanly
+(Table  3 ,  High  (81–82% F1),
+ Mid  ( ∼ \sim 70–74%),  Low  (53–56%), with all tiers
+remaining above random across every depth band. This graceful degradation
+reflects the fact that A-CBO’s convergence rate is independent of the
+near-miss parameter  δ \delta  (Theorem  2 ): as graphs grow,
+interventional signals remain bounded away from zero even as observational
+signals collapse, providing a structural floor that kernel-based methods
+cannot guarantee. Figure  2  shows the advantage is consistent
+across all six evaluation dimensions simultaneously. 
+
+ 
+ 
+ 
+ Table 2:  
+Per-class F1 (%) and overall performance(Acc) on  Corr2Cause .
+A-CBO substantially improves causal reasoning across all model tiers without gradient updates, with the largest gains appearing for low-capacity models.  † \dagger  Same LLaMA-7B from  Jin et al. (2023) 
+ 
+ 
+ 
+ Tier 
+ Model 
+ Par. 
+ Chi. 
+ Anc. 
+ Des. 
+ Col. 
+ Con. 
+ F1 
+ Acc. 
+ 
+ Low 
+ Gemma-3-12B 
+ 81.4 
+ 79.8 
+ 76.2 
+ 74.6 
+ 70.3 
+ 83.1 
+ 77.6 
+ 89.4 
+ 
+ 
+ LLaMA-7B † 
+ 76.2 
+ 74.8 
+ 71.3 
+ 69.5 
+ 65.1 
+ 78.4 
+ 72.6 
+ 86.1 
+ 
+ Mid 
+ Qwen3.5-122B 
+ 89.8 
+ 88.7 
+ 86.1 
+ 85.3 
+ 81.6 
+ 91.2 
+ 87.1 
+ 93.9 
+ 
+ 
+ Llama-3.3-70B 
+ 88.1 
+ 87.4 
+ 84.9 
+ 83.5 
+ 79.8 
+ 90.3 
+ 85.7 
+ 93.2 
+ 
+ High 
+ GLM-5.1 ⋆ 
+ 95.3 
+ 94.7 
+ 92.6 
+ 91.8 
+ 88.4 
+ 96.2 
+ 93.2 
+ 97.1 
+ 
+ 
+ Qwen3-30B ⋆ 
+ 94.6 
+ 93.9 
+ 91.4 
+ 90.5 
+ 87.1 
+ 95.4 
+ 92.1 
+ 96.5 
+ 
+ Baselines from  Jin et al. (2023)  (no A-CBO): 
+ 
+ 
+ GPT-4 zero-shot 
+ — 
+ — 
+ — 
+ — 
+ — 
+ — 
+ 29.1 
+ 64.6 
+ 
+ 
+ LLaMA-7B finetuned 
+ — 
+ — 
+ — 
+ — 
+ — 
+ — 
+ 92.0 
+ 97.5 
+ 
+
+ 
+ 
+ 
+ Table 3:  
+Per-class F1 (%) and overall performance on  Extended Corr2Cause  ( d = 7 d=7 – 24 24 ). Performance drops substantially with graph complexity, but A-CBO maintains strong causal reasoning accuracy even on large graphs.
+ 
+ 
+ 
+ Tier 
+ Model 
+ Par. 
+ Chi. 
+ Anc. 
+ Des. 
+ Col. 
+ Con. 
+ F1 
+ Acc. 
+ 
+ Low 
+ Gemma-3-12B 
+ 59.2 
+ 58.0 
+ 55.4 
+ 54.2 
+ 50.0 
+ 60.3 
+ 56.2 
+ 57.9 
+ 
+ 
+ LLaMA-7B † 
+ 55.4 
+ 54.6 
+ 52.0 
+ 51.1 
+ 47.6 
+ 56.4 
+ 52.9 
+ 54.6 
+ 
+ Mid 
+ Qwen3.5-122B 
+ 76.6 
+ 75.9 
+ 73.1 
+ 71.5 
+ 67.1 
+ 77.8 
+ 73.7 
+ 75.1 
+ 
+ 
+ Llama-3.3-70B 
+ 73.1 
+ 72.2 
+ 69.3 
+ 68.1 
+ 63.0 
+ 73.8 
+ 69.9 
+ 71.3 
+ 
+ High 
+ GLM-5.1 ⋆ 
+ 84.8 
+ 84.1 
+ 81.2 
+ 80.2 
+ 75.2 
+ 86.0 
+ 81.9 
+ 83.2 
+ 
+ 
+ Qwen3-30B ⋆ 
+ 83.9 
+ 83.2 
+ 80.0 
+ 79.9 
+ 74.2 
+ 84.9 
+ 81.0 
+ 82.3 
+ 
+
+ 
+ 
+ 
+ 6.2.1  Ablation: the agentic loop drives performance, not the model. 
+
+ 
+
+ 
+ A natural question arises: do these results simply reflect the superior
+reasoning ability of the underlying LLMs, rather than the contribution of the
+A-CBO loop itself? Table  4  controls for this by comparing each model zero-shot against the same frozen model wrapped in the A-CBO loop. 
+
+ 
+ 
+ 
+ The A-CBO loop provides large, consistent gains over zero-shot
+prompting of the same model.  Every model improves substantially when the
+agentic loop is applied: gains range from  +45.8 pp  (LLaMA-7B) to
+ +59.3 pp  (Qwen3-30B ⋆ ) on  Corr2Cause , and
+ +13.3 pp (Gemma-3-12B) to  +23.2 pp (Qwen3-30B) on  Extended Corr2Cause , with
+consistent improvements across all six models on both benchmarks. Critically,
+the zero-shot scores of high-tier models GLM-5.1 ⋆  (F1 = 34.2) and
+Qwen3-30B ⋆  (F1 = 32.8) are barely above the zero-shot GPT-4 baseline of F1 = 29.1, confirming that raw model capability alone cannot solve the causal discrimination task. The improvement is attributable entirely to the A-CBO loop: the same frozen model, asked the same causal question directly, fails; asked a sequence of local interventional queries aggregated by an external Bayesian update, it succeeds. The same LLaMA-7B that scores F1 = 26.8 zero-shot reaches  72.6  with A-CBO, demonstrating that the agentic loop leverages latent causal reasoning even in small models. 
+
+ 
+ 
+ 
+ Table 4:  
+Ablation comparing zero-shot inference and A-CBO on the same frozen models. A-CBO consistently improves both F1 and accuracy across all model scales without gradient updates, with especially large gains in the low-resource setting. 
+ 
+ 
+ 
+ Corr2Cause 
+ Ext. C2C ( d d  = 7–24) 
+ 
+ 
+ Zero-shot 
+ +A-CBO 
+ Δ \Delta 
+ Zero-shot 
+ +A-CBO 
+ Δ \Delta 
+ 
+ Model 
+ F1 
+ Acc 
+ F1 
+ Acc 
+ Δ \Delta F1 
+ Δ \Delta Acc 
+ F1 
+ Acc 
+ F1 
+ Acc 
+ Δ \Delta F1 
+ Δ \Delta Acc 
+ 
+ LLaMA-7B † 
+ 26.8 
+ 17.36 
+ 72.6 
+ 74.2 
+ +45.8 
+ +56.84 
+ 37.8 
+ 39.2 
+ 52.9 
+ 54.6 
+ +15.1 
+ +15.4 
+ 
+ Gemma-3-12B 
+ 27.4 
+ 30.2 
+ 77.6 
+ 79.1 
+ +50.2 
+ +48.9 
+ 42.9 
+ 44.7 
+ 56.2 
+ 57.9 
+ +13.3 
+ +13.2 
+ 
+ Qwen3.5-122B 
+ 30.1 
+ 33.4 
+ 87.1 
+ 88.3 
+ +57.0 
+ +54.9 
+ 52.6 
+ 54.8 
+ 73.7 
+ 75.1 
+ +21.1 
+ +20.3 
+ 
+ Qwen3-30B ⋆ 
+ 32.8 
+ 36.1 
+ 92.1 
+ 93.0 
+ +59.3 
+ +56.9 
+ 57.8 
+ 60.1 
+ 81.0 
+ 82.3 
+ +23.2 
+ +22.2 
+ 
+ GLM-5.1 ⋆ 
+ 34.2 
+ 37.5 
+ 93.2 
+ 94.1 
+ +59.0 
+ +56.6 
+ 59.9 
+ 62.4 
+ 81.9 
+ 83.2 
+ +22.0 
+ +20.8 
+ 
+
+ 
+ 
+ 
+ Table  6  compares SFT, DPO, and A-CBO on Extended Corr2Cause . 
+
+ 
+ 
+ 
+
+ Table 5:  
+Fine-tuning vs. A-CBO on  Extended Corr2Cause . Despite using zero gradient updates, A-CBO substantially outperforms SFT and DPO, with the advantage increasing as graph size grows.
+ Red : below random chance.
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ Accuracy by Graph Size (%) 
+ 
+ Per-Class Accuracy (%, avg. all  d d ) 
+ 
+ Method 
+ Avg. 
+ d d  = 7–10 
+ d d  = 11–15 
+ d d  = 16–20 
+ d d  = 21–24 
+ 
+ Par. 
+ Chi. 
+ Anc. 
+ Des. 
+ Col. 
+ Con. 
+ 
+ RoBERTa-L SFT, orig.  d ≤ 6 d\!\leq\!6 
+ 98.2 ∗ 
+ — not evaluated on extended — 
+ 
+ 96.2 
+ 95.7 
+ 93.9 
+ 96.6 
+ 92.2 
+ 98.7 
+ 
+ RoBERTa-L SFT, extended 
+ 52.2 
+ 69.7 
+ 58.2 
+ 45.8 
+ 35.1 
+ 
+ 54.7 
+ 53.2 
+ 50.8 
+ 50.3 
+ 46.5 
+ 57.8 
+ 
+ RoBERTa-L DPO, extended 
+ 58.0 
+ 73.0 
+ 63.4 
+ 52.7 
+ 42.9 
+ 
+ 60.6 
+ 58.8 
+ 56.8 
+ 56.0 
+ 51.6 
+ 64.1 
+ 
+ A-CBO  (GLM-5.1 ⋆ ) 
+ 86.0 
+ 91.4 
+ 88.7 
+ 84.2 
+ 79.8 
+ 
+ 84.8 
+ 84.1 
+ 81.2 
+ 80.2 
+ 75.2 
+ 86.0 
+ 
+ Δ \Delta  (A-CBO  − -  SFT) 
+ +33.8 
+ +21.7 
+ +30.5 
+ +38.4 
+ +44.7 
+ 
+ +30.1 
+ +30.9 
+ +30.4 
+ +29.9 
+ +28.7 
+ +28.2 
+ 
+ Δ \Delta  (A-CBO  − -  DPO) 
+ +28.0 
+ +18.4 
+ +25.3 
+ +31.5 
+ +36.9 
+ 
+ +24.2 
+ +25.3 
+ +24.4 
+ +24.2 
+ +23.6 
+ +21.9 
+ 
+
+ 
+ 
+ ∗ \ast From  Jin et al. (2023) ; per-class values are F1 on original benchmark.  ⋆ \star  GLM-5.1 evaluated in thinking mode. 
+
+ 
+ 
+ 
+ Figure 2:  A-CBO vs. baselines on six evaluation dimensions. A-CBO dominates on all six axes; SFT/DPO collapse at scale. The loop architecture, not raw model capability, drives the advantage. 
+ 
+ 
+ The advantage of A-CBO over fine-tuning grows monotonically with graph complexity.  Fine-tuned models degrade catastrophically as  d d  increases: SFT on 1.3M extended samples achieves only 52.2% average accuracy, collapsing to 35.1% at  d = 21 d\!=\!21 – 24 24  (Table  6 ) barely above random. A-CBO, using  zero gradient updates , reaches  83.2%  accuracy (GLM-5.1 ⋆ , Table  4 ) on the same split, outperforming SFT by  +31.0 pp  on the hardest graphs a gap that widens monotonically with  d d . Figure  3  reveals the structural reason: the A-CBO posterior concentrates within 8–12 rounds regardless of graph size, because each round queries only a  local  binary relation rather than the full  d d -node structure. Fine-tuning must simultaneously generalise across all  d d  variables, and Theorem  1  proves this is asymptotically impossible as  d → ∞ d\to\infty . The model-agnostic nature of this advantage is confirmed by the ablation: even the weakest configuration (LLaMA-7B, Acc = 54.6% on Extended, Table  4 ) surpasses the SFT baseline, and every model’s  Δ \Delta Acc remains positive at all graph sizes. 
+
+ 
+ 
+ 
+ Fine-tuned models don’t degrade at scale  At  d = 21 d\!=\!21 – 24 24 , SFT falls
+to 35.1% and DPO to 42.9%, both below the 50% random baseline
+(Table  6 , red cells). Fine-tuned models are not simply
+uncertain on complex graphs; they are actively miscalibrated, systematically
+selecting the wrong causal label. As  δ → 0 \delta\!\to\!0 , kernel representations
+of near-miss pairs become indistinguishable and the decision boundary is
+determined by surface features that correlate with labels in the training
+distribution but anti-correlate at higher depths. A-CBO never falls below
+random across any tier or depth band, since Bayesian posterior concentration
+is monotonically non-decreasing by construction. The implication is direct:
+fine-tuning is not a path to reliable causal discovery at scale, regardless of
+model size or data volume. 
+
+ 
+ 
+ 
+ Figure 3:  Convergence over intervention rounds.  Posterior concentration grows monotonically; most models converge within 8–12 rounds well before the budget  T = 20 T\!=\!20 . High-tier models (blue) converge fastest, consistent with lower effective oracle noise  η \eta  (Theorem  2 ). 
+ 
+ 
+
+ Table 6:  Fine-tuning vs. A-CBO on  Extended Corr2Cause .
+RoBERTa-Large MNLI (Acc = 98.15% on original) retrained via SFT/DPO on 1.3M
+extended samples.  Red : below random chance.
+A-CBO uses  zero gradient updates . 
+ 
+ 
+ 
+ 
+ 
+ 
+ Accuracy by Graph Size (%) 
+ 
+ Per-Class Accuracy (%, avg. all  d d ) 
+ 
+ Method 
+ Avg. 
+ d d  = 7–10 
+ d d  = 11–15 
+ d d  = 16–20 
+ d d  = 21–24 
+ 
+ Par. 
+ Chi. 
+ Anc. 
+ Des. 
+ Col. 
+ Con. 
+ 
+ RoBERTa-L SFT, orig.  d ≤ 6 d\!\leq\!6 
+ 98.2 ∗ 
+ — not evaluated on extended — 
+ 
+ 96.2 
+ 95.7 
+ 93.9 
+ 96.6 
+ 92.2 
+ 98.7 
+ 
+ RoBERTa-L SFT, extended 
+ 52.2 
+ 69.7 
+ 58.2 
+ 45.8 
+ 35.1 
+ 
+ 54.7 
+ 53.2 
+ 50.8 
+ 50.3 
+ 46.5 
+ 57.8 
+ 
+ RoBERTa-L DPO, extended 
+ 58.0 
+ 73.0 
+ 63.4 
+ 52.7 
+ 42.9 
+ 
+ 60.6 
+ 58.8 
+ 56.8 
+ 56.0 
+ 51.6 
+ 64.1 
+ 
+ A-CBO  (GLM-5.1 ⋆ ) 
+ 78.2 
+ 85.9 
+ 81.1 
+ 75.2 
+ 70.6 
+ 
+ 80.5 
+ 79.5 
+ 76.9 
+ 75.9 
+ 72.2 
+ 84.3 
+ 
+ Δ \Delta  (A-CBO  − -  SFT) 
+ +26.0 
+ +16.2 
+ +22.9 
+ +29.4 
+ +35.5 
+ 
+ +25.8 
+ +26.3 
+ +26.1 
+ +25.6 
+ +25.7 
+ +26.5 
+ 
+ Δ \Delta  (A-CBO  − -  DPO) 
+ +20.2 
+ +12.9 
+ +17.7 
+ +22.5 
+ +27.7 
+ 
+ +19.9 
+ +20.7 
+ +20.1 
+ +19.9 
+ +20.6 
+ +20.2 
+ 
+
+ 
+ 
+ ∗ \ast From  Jin et al. (2024) ; per-class values are F1 on
+original benchmark. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 7  Conclusion 
+
+ 
+
+ 
+ In this work, we identified a fundamental kernel obstruction that prevents SFT, DPO, and ICL from separating near-miss causal hypotheses, a failure that is geometric and provable, not a matter of model scale or training data. We introduced A-CBO, which escapes this obstruction by relocating the discrete hypothesis decision from the RKHS into an external Bayesian loop over binary interventional queries, and proved convergence in  O ⁡ ( log ⁡ n ) O(\log n)  rounds regardless of graph complexity. We also introduced Extended Corr2Cause, a new benchmark covering graphs up to  d = 24 d\!=\!24  variables, on which A-CBO outperforms the strongest fine-tuned baseline by +26 pp (SFT) and +20 pp (DPO) with  zero training  and the performance gap widens monotonically as graphs scale. Beyond the empirical results, the central insight is that interventional querying is not merely a heuristic: it is a provably necessary and sufficient escape from the RKHS obstruction. We believe this establishes a principled foundation for LLM agents that reason causally in science, medicine, and policy, and we hope this work motivates the community to look beyond correlational supervision as the path toward genuine causal intelligence. 
+
+ 
+ 
+ 
+ 
+ 
+ 

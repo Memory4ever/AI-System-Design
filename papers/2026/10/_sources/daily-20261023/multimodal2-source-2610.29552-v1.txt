@@ -1,0 +1,2005 @@
+Official exact-v1 HTML text extraction: https://arxiv.org/html/2610.29552v1
+Original retrieval 2026-10-23 BJT. Preservation is not a review-completion claim. Reviewed necessary scope is SOURCE_MULTIMODAL2.md.
+Abstract
+Fine-grained multimodal intelligence requires a model not only to understand a designated region, but also to localize that region from language. Existing methods learn these two directions with separate objectives and task-specific annotations. We present Generalized CycleGRPO , the first unified reinforcement learning framework that couples region understanding and localization across spatial, temporal, and spatio-temporal domains. Given a region, the multimodal large language model first generates candidate descriptions and then localizes each description to reconstruct the input region. The overlap between the input and reconstructed regions provides a geometrically verifiable reward for description quality, while rewards for individual localization trajectories improve localization. We represent regions in a common space equipped with an overlap measure. This allows the same learning principle to apply to image masks or boxes, video intervals, and timestamped spatial evidence, without caption annotations or an external language-model judge during reinforcement learning. For videos, this cycle further rewards descriptions that distinguish a target event from semantically similar recurrences. Accordingly, we introduce DOVE (Distinctive Occurrence-level Video-caption Evaluation), which evaluates this fine-grained distinctiveness through contrastive groups of target intervals and same-query recurrences. Across image benchmarks, CycleGRPO raises SAMTok’s overall gIoU from 57.5% to 68.2% on GroundingSuite and its average gIoU from 71.2% to 78.7% on GRES. In the temporal setting, it reaches 51.9% tIoU on Charades and 33.3% Temporal Evidence Coverage (TEC) on DOVE, compared with 45.6% and 14.8% for its Qwen3-VL initialization. In the joint spatio-temporal setting, it raises V-STaR mAM from 34.6% to 36.2% and mLGM from 47.2% to 49.8%. These results establish region–text cycle consistency as a general self-evaluation principle for jointly advancing multimodal understanding and localization. Models, code, and the DOVE benchmark are available at https://devinxzhang.github.io/Generalized-CycleGRPO-Page/ .
+ Figure 1 : From spatial CycleGRPO to Generalized CycleGRPO.
+(A) Region-captioning reinforcement learning relies on an extra critic to
+score generated descriptions. (B) Referring-localization reinforcement
+learning receives a rule-based geometric reward but optimizes only the
+localization direction. (C) Our spatial CycleGRPO closes the
+region–caption–localization loop and uses the overlap of the recovered
+spatial region as a verifiable reward. (D) This work generalizes the same
+cycle over spatial, temporal, and spatio-temporal regions, unifying
+captioning and localization for images and videos without an external
+critic. 
+ 1 Introduction
+Large language models are being explored for scientific discovery and hypothesis generation [ 1 , 2 ] , while multimodal large language models (MLLMs) have rapidly
+progressed from holistic image description to open-ended visual reasoning and
+video understanding [ 3 , 4 , 5 , 6 , 7 ] . Yet many
+questions are not about an entire image or video: they concern a particular
+object, spatial region, temporal event, or tracked entity across space and time [ 8 , 9 , 10 , 11 , 12 , 13 , 14 , 15 , 16 , 17 , 18 , 19 , 20 , 21 , 22 , 23 , 24 , 25 , 26 , 27 , 28 , 29 ] .
+Answering them requires two complementary capabilities.
+A model must understand a designated region well enough to describe its content, and must also localize that content by mapping language back to a spatial or temporal
+extent.
+As illustrated in Fig. 1 (A)–(B), existing reinforcement
+learning formulations typically optimize these two directions separately.
+Although recent MLLMs support masks, boxes, and timestamps as inputs or outputs [ 30 , 31 , 32 , 33 , 34 , 35 ] , this separation remains common.
+This separation creates an avoidable supervision bottleneck. Region understanding is commonly trained against expensive textual annotations, whereas localization is trained against geometric targets.
+The two forms of supervision describe the same underlying correspondence but do not constrain one another: a fluent caption need not uniquely identify its source region, and a strong localizer provides no direct signal to improve the captions it consumes.
+This is particularly limiting at fine granularity, where distinguishing objects, actions, and their interactions requires more than coarse category recognition [ 36 , 37 ] . A useful description must state the details that distinguish one occurrence from its confounders, not merely remain plausible in isolation.
+Our ECCV paper introduced CycleGRPO for image regions and
+showed that this duality can replace textual supervision during reinforcement
+learning [ 38 ] .
+As shown in Fig. 1 (C), spatial CycleGRPO couples the two
+directions through a closed region–caption–localization loop.
+Starting from a mask or box, the model generates a caption and subsequently
+uses that caption to localize the region in the image.
+Reconstruction IoU serves as a verifiable reward: descriptions are preferred when they recover the original region, while the localization rollouts are themselves optimized against the known region.
+This spatial formulation substantially improves both region understanding and referring localization.
+This leaves an open question: can the same cycle extend beyond two-dimensional images to other region spaces?
+In this work, we address this question with Generalized CycleGRPO , a geometry-agnostic framework spanning spatial , temporal , and spatio-temporal region spaces.
+As illustrated in Fig. 1 (D), we represent a region abstractly as \mathcal{R}\in\Omega and optimize the cycle \mathcal{R}\rightarrow\mathcal{C}\rightarrow\widehat{\mathcal{R}} using an overlap operator defined over \Omega .
+Defining \Omega as a space of image masks or bounding boxes recovers spatial CycleGRPO. Temporal intervals yield temporal captioning and localization, while timestamped boxes, masks, or region tubes support joint when-and-where localization.
+The same policy plays both roles: it acts on a provided region to sample candidate descriptions, then acts as its own critic by localizing those descriptions.
+Group-relative optimization ranks the descriptions by reconstruction quality and trains each localization trajectory from its geometric overlap.
+Consequently, the reinforcement learning stage requires region annotations alone—no reference captions, external reward model, or external LLM judge.
+Extending the cycle from images to videos is not a mechanical replacement of
+spatial IoU with temporal IoU.
+First, an event may recur several times in a video, so a generic but factually correct caption can ground to multiple intervals and fail to define a one-to-one correspondence. This makes temporal distinctiveness —stating the context unique to the target
+occurrence—central to cycle consistency.
+Second, visual evidence has two coupled coordinates: the model must identify when an event occurs and where its supporting objects appear.
+Open-o3-Video [ 39 ] , for example, learns from spatio-temporal reasoning traces and produces timestamps and boxes as explicit evidence.
+For the first challenge, the temporal instantiation rewards a description only
+when it reconstructs the designated interval rather than a similar recurrence,
+thereby favoring occurrence-specific state, order, and outcome cues.
+For the second, the spatio-temporal instantiation represents a region as timestamped
+spatial evidence and evaluates spatial overlap only at aligned timestamps.
+Thus, neither a similar object at the wrong time nor the correct time without
+the relevant spatial evidence can satisfy the cycle.
+These video settings also expose an evaluation gap.
+Conventional captioning metrics reward similarity to a single reference, while temporal-grounding benchmarks evaluate only the inverse direction.
+Neither determines whether a caption identifies its own occurrence rather than a semantically similar segment elsewhere in the same video. We therefore introduce DOVE (Distinctive Occurrence-level Video-caption Evaluation), constructed from videos containing multiple occurrences of a shared query.
+Its contrastive protocol measures whether a caption is faithful to its target and whether its specific facts exclude neighboring occurrences.
+We summarize its coverage of order, state, and outcome evidence using Temporal Evidence Coverage (TEC), which macro-averages coverage over these three probe types.
+DOVE complements standard grounding evaluation and directly tests the one-to-one region–text correspondence.
+ Figure 2 : Improvements over the corresponding base models on spatial
+(left), temporal (middle), and spatio-temporal (right) benchmarks.
+Within each benchmark, bar lengths show gains in percentage points and
+labels give the base and CycleGRPO scores. 
+We evaluate the framework across all three region spaces.
+In the spatial setting, CycleGRPO raises SAMTok’s overall gIoU from
+57.5% to 68.2% on GroundingSuite and its average gIoU from 71.2% to 78.7%
+on GRES; DLC-Bench accuracy also improves from 61.9% to 67.8%.
+Starting from the task-specialized OMTG-4B temporal model, Generalized CycleGRPO raises
+tIoU from 50.5% to 51.8% on Charades, from 46.8% to 49.0% on ActivityNet,
+and from 62.2% to 64.5% on QVHighlights.
+In the joint spatio-temporal
+setting, it improves Open-o3-Video-4B’s V-STaR mLGM from 47.2% to 49.8% and
+TVGBench mIoU from 21.1% to 28.5%, while also raising VideoMME accuracy from
+61.0% to 62.3%.
+Together, these results show that localization is not merely a critic for language generation:
+both directions can be bootstrapped within one verifiable cycle, with
+domain-dependent gains and without reference captions in the cycle branches
+during reinforcement learning.
+Fig. 2 summarizes these gains against the
+task-specific matched base in each region space.
+This paper extends our ECCV version in four ways:
+ • 
+We extend CycleGRPO beyond the spatial masks and boxes studied in the ECCV
+version to a generalized region–text cycle over spatial masks/boxes,
+temporal intervals, and spatio-temporal trajectories, unified through
+region-specific serializers and consistency functions.
+ • 
+We introduce temporal and spatio-temporal training instantiations in
+which one shared policy learns segment description, interval localization,
+and temporally aligned spatial evidence from region annotations alone,
+without reference captions or an external judge during reinforcement
+learning.
+ • 
+We introduce DOVE, a human-verified contrastive benchmark for
+distinctive occurrence-level video-caption evaluation.
+For the first time, it measures whether segment captions distinguish their target from same-query recurrences.
+ • 
+We provide comprehensive validation across the three region spaces,
+including single-task and reward-side ablations, backbone comparisons,
+and analyses of temporal distinctiveness and failure modes across more than ten benchmarks.
+ 2 Related Work
+ Image Region Understanding and Grounding. 
+Fine-grained image understanding and localization involve two inverse mappings. Region
+understanding conditions a description or answer on a designated
+region [ 40 , 41 , 42 , 43 , 44 , 45 ] ,
+as in GLaMM [ 30 ] , DAM [ 46 ] , and GAR [ 47 ] .
+Referring localization maps free-form language to a box or
+mask [ 48 , 49 , 35 , 50 ] , via unified architectures such as
+OMG-LLaVA [ 51 ] and Sa2VA [ 34 ] or discrete mask
+sequences [ 52 , 31 ] . Our implementation builds on
+SAMTok [ 31 ] , which represents a mask with two region tokens so
+that one MLLM can both consume and emit spatial regions.
+Supporting both directions in one architecture does not couple their learning
+signals: descriptions and grounded masks are optimized with different
+objectives or annotation sources.
+Our conference work [ 38 ] connects them through the cycle region \rightarrow text \rightarrow region; the present work treats this as one
+instance of a geometry-independent principle and extends it to temporal and spatio-temporal regions.
+ Temporal and Spatio-Temporal Understanding and Grounding. 
+Early video MLLMs emphasize holistic description and question
+answering [ 53 , 54 , 55 , 56 ] ,
+with recent backbones supporting long videos and timestamp
+conditioning [ 4 ] . At temporal granularity, language-conditioned
+grounding localizes an event interval [ 57 , 58 , 59 , 60 , 61 , 62 ] ,
+while the inverse task describes a designated
+interval [ 63 , 64 , 32 ] .
+These approaches demonstrate useful interaction between localization and captioning, but learn
+it from paired timestamp–caption supervision in a forward prediction objective rather than from a closed, self-reconstructive region–text cycle.
+Spatio-temporal grounding further asks when a referred entity occurs and
+ where it appears.
+Prior methods [ 65 , 66 , 32 , 34 ] map language to tubes, decode frame-level boxes, or predict mask sequences.
+Moving to evidence-centered reasoning, Open-o3-Video emits timestamps and boxes
+alongside its answer and optimizes answer, temporal, and spatial
+rewards [ 39 ] .
+These works predominantly optimize the language \rightarrow region direction using paired evidence or reasoning annotations.
+Our framework additionally learns the inverse region \rightarrow language direction and couples the two through reconstruction in the same region space.
+In videos, repeated occurrences make this coupling nontrivial: a generic description may match several intervals, making temporal distinctiveness essential for faithful reconstruction.
+ Verifiable Reinforcement Learning and Cycle Consistency. 
+Outcome-level feedback trains language models through preference and
+group-relative policy optimization [ 67 , 68 , 69 ] . Multimodal extensions use several forms of feedback: IoU-style rewards for detection, referring, and
+segmentation [ 70 , 71 , 72 , 73 , 74 ] ; caption rewards from
+a separate vision-free answerer [ 75 , 76 ] ; and video
+self-evolution from temporal perturbation, discovered evidence, or internal
+confidence [ 77 , 78 , 79 ] .
+None, however, uses language-to-region reconstruction by the same policy to train the inverse
+region-to-language mapping.
+Reducing reliance on paired targets has also been explored through
+teacher-based video restoration [ 80 ] and cycle
+consistency [ 81 , 82 ] . CycleGRPO
+instantiates the latter within one multimodal policy: the model describes a region,
+then localizes that description back as its own critic.
+Reconstruction overlap rewards understanding, and each localization rollout is rewarded against the
+known region, optimizing both directions without reference captions or an external judge during RL.
+ Benchmarking Fine-Grained Region–Text Correspondence. 
+Existing video benchmarks evaluate either holistic understanding [ 83 , 84 , 85 , 86 ] 
+or one direction of fine-grained correspondence: temporal-grounding
+benchmarks [ 87 , 88 , 89 , 90 ] ,
+including TimeLens [ 33 ] , score localization alone, while
+captioning is scored by similarity to references.
+DLC-Bench [ 46 ] moves beyond reference matching by checking atomic facts in region captions, while CrossHOI-Bench [ 91 ] uses curated multiple-choice questions to evaluate human–object interaction recognition across VLMs and specialized methods.
+None of these protocols tests what a temporal region–text cycle requires:
+whether a caption is faithful to its own interval and discriminative against similar recurrences in the same video.
+Our DOVE benchmark fills this gap with human-verified repeated-occurrence
+groups and private Order, State, and Outcome probes.
+A fixed text-only judge determines whether each target-conditioned caption supports the correct answer, supports a wrong answer, or provides insufficient evidence. This yields a probe-level assessment without reference matching or holistic grading.
+ 3 Generalized CycleGRPO
+We first formulate region captioning and localization over a generic region
+space, and then present the nested rollout and joint optimization used by
+Generalized CycleGRPO.
+Our formulation separates the learning principle from the representation of a region: masks, boxes, temporal intervals, and spatio-temporal tubes may use different serializations and consistency
+functions, but they enter the same region–text–region cycle, as summarized in
+Fig. 3 .
+ Figure 3 : Overview of Generalized CycleGRPO. Given a visual input X and
+a target region \mathcal{R} in a unified region space, the captioning
+rollout samples N candidate descriptions C_{i} . Each candidate then
+conditions K localization rollouts that reconstruct regions
+ \widehat{\mathcal{R}}_{i,k} ; their agreement with the target provides
+the cycle-consistency signal.
+Spatial masks or boxes, temporal intervals, and spatio-temporal timestamped boxes differ only in their region serialization and consistency function, allowing the same
+region–text–region optimization to operate across image and video tasks. 
+ 3.1 Region–Text Duality over Measurable Spaces
+Let X denote a visual input, either an image or a video, and let
+ \Omega_{X} denote its admissible region space.
+A target region is written as \mathcal{R}\in\Omega_{X} . Depending on the task, \mathcal{R} may be a two-dimensional mask or box, a subset of the video timeline, or spatial support that varies over time. We assume that \Omega_{X} provides (i) a
+serialization through which a multimodal large language model can consume and
+emit a region, and (ii) a bounded consistency function
+ S_{\Omega}(\mathcal{R},\widehat{\mathcal{R}})\in[0,1],\qquad S_{\Omega}(\mathcal{R},\mathcal{R})=1, 
+ (1) 
+which measures how well a predicted region \widehat{\mathcal{R}} recovers
+ \mathcal{R} .
+This score is a geometric overlap whenever the representation
+supports direct decoding; compact region tokens may instead use a
+token-consistency surrogate during training.
+Region captioning and localization are inverse conditional mappings over this
+space. Given X and \mathcal{R} , region understanding generates a natural
+language description C ; given X and C , localization reconstructs a region
+ \widehat{\mathcal{R}} :
+ (X,\mathcal{R})\xrightarrow{\;f_{\theta}\;}C,\qquad(X,C)\xrightarrow{\;g_{\theta}\;}\widehat{\mathcal{R}}. 
+ (2) 
+Both mappings are implemented by the same autoregressive policy
+ \pi_{\theta} , with task-specific instruction templates.
+Region outputs are decoded by the serializer associated with \Omega_{X} ; no task-specific critic
+or reward model is introduced.
+The central premise is that a useful region description should be sufficiently faithful and discriminative to recover its source:
+ \mathcal{R}\rightarrow C\rightarrow\widehat{\mathcal{R}},\qquad\widehat{\mathcal{R}}\simeq\mathcal{R}. 
+ (3) 
+Our conference formulation instantiates this premise for image
+regions [ 38 ] .
+Generalized CycleGRPO makes the region space explicit and applies the same learning rule wherever Eq. 1 applies.
+The claim of annotation efficiency applies to the reinforcement
+learning stage.
+Starting from a multimodal policy with the two required output interfaces, each CycleGRPO example contains only (X,\mathcal{R}) ; it does not contain a reference description.
+The target region therefore supervises both directions through the cycle, without a ground-truth caption, an external LLM judge, or a learned reward model.
+ 3.2 Nested Region–Text–Region Rollouts
+For a training pair (X,\mathcal{R}) , we construct a region-understanding
+prompt q_{\mathrm{cap}}(X,\mathcal{R}) and sample N candidate
+descriptions from the rollout policy:
+ C_{i}\sim\pi_{\theta_{\mathrm{old}}}\bigl(\cdot\mid q_{\mathrm{cap}}(X,\mathcal{R})\bigr),\qquad i=1,\ldots,N. 
+ (4) 
+These candidates are semantic hypotheses about the same target region. They
+need not resemble a particular reference sentence; their quality is determined
+by whether the policy can use them to recover the target.
+Each candidate then conditions a group of inner localization rollouts.
+We build q_{\mathrm{loc}}(X,C_{i}) and independently sample K region predictions:
+ \widehat{\mathcal{R}}_{i,k}\sim\pi_{\theta_{\mathrm{old}}}\bigl(\cdot\mid q_{\mathrm{loc}}(X,C_{i})\bigr),\qquad k=1,\ldots,K. 
+ (5) 
+The model thus acts first as a description policy and then as its own
+critic through localization. For every inner trajectory, we compute
+ s_{i,k}=S_{\Omega}\bigl(\mathcal{R},\widehat{\mathcal{R}}_{i,k}\bigr),\qquad\bar{s}_{i}=\frac{1}{K}\sum_{k=1}^{K}s_{i,k}. 
+ (6) 
+Multiple inner rollouts are important because a single autoregressive decoding
+may select one of several plausible modes.
+Averaging over these rollouts estimates how reliably C_{i} identifies the source region.
+This construction uses region reconstruction to evaluate generated descriptions.
+A hallucinated description tends to reconstruct an unrelated region, while an overly generic description can be compatible with multiple objects or moments and therefore cannot reliably return to the designated one.
+This latter case is especially common in videos containing repeated instances of the same action. Maximizing \bar{s}_{i} consequently places implicit pressure on descriptions to mention the context that distinguishes the target occurrence.
+To prevent direct coordinate copying from becoming a shortcut, we impose representation-specific anti-leakage constraints.
+In the temporal instantiation, for example, we penalize explicit timestamps in the caption and remove them before constructing the localization prompt.
+ Figure 4 : Construction and evaluation of DOVE. Candidate
+intervals are pre-labeled, human-reviewed, and converted into private
+temporal probes. A text-only judge then evaluates captions for specified
+intervals using Order, State, and Outcome probes. 
+ 3.3 Cycle Rewards and Joint GRPO Optimization
+The same consistency measurements provide rewards for both stages. We
+define the caption reward as
+ r_{i}^{\mathrm{cap}}=\alpha\bar{s}_{i}+\Phi_{\mathrm{cap}}(C_{i}), 
+ (7) 
+where \alpha controls the scale of the cycle signal and
+ \Phi_{\mathrm{cap}} contains only reference-free validity terms, such as
+anti-leakage and repetition checks. Each localization trajectory receives
+ r_{i,k}^{\mathrm{loc}}=\alpha s_{i,k}+\Phi_{\mathrm{loc}}(\widehat{\mathcal{R}}_{i,k}), 
+ (8) 
+where \Phi_{\mathrm{loc}} checks whether the predicted region follows the
+required serialization. Localization advantages are normalized within the
+ K rollouts conditioned on a fixed parent caption, so these samples compete
+on their own consistency with the target under the same linguistic description.
+Cross-caption credit is supplied by Eq. 7 .
+In the temporal implementation, an additional multiplicative gate downweights the
+overlap term when the number of predicted intervals is invalid.
+None of these auxiliary terms requires reference text.
+We use group-relative advantages separately for the two nested levels. The
+ N descriptions of one target form a caption group, giving
+ A_{i}^{\mathrm{cap}}=\frac{r_{i}^{\mathrm{cap}}-\mu_{\mathrm{cap}}}{\sigma_{\mathrm{cap}}+\delta}, 
+ (9) 
+where \mu_{\mathrm{cap}} and \sigma_{\mathrm{cap}} are computed over
+ \{r_{j}^{\mathrm{cap}}\}_{j=1}^{N} . For localization, the K trajectories
+conditioned on the same parent caption form their own group:
+ A_{i,k}^{\mathrm{loc}}=\frac{r_{i,k}^{\mathrm{loc}}-\mu_{i,\mathrm{loc}}}{\sigma_{i,\mathrm{loc}}+\delta}, 
+ (10) 
+with statistics taken over k=1,\ldots,K . This grouping preserves the
+semantics of both comparisons: descriptions compete on their ability to close
+the cycle, whereas localization samples compete on localization accuracy under a
+fixed description.
+For either task d\in\{\mathrm{cap},\mathrm{loc}\} , let y denote a sampled
+response and A_{y}^{d} its group-relative advantage. For the task-specific input
+ q , the token-level importance ratio is
+ \rho_{y,t}=\frac{\pi_{\theta}(y_{t}\mid q,y_{<t})}{\pi_{\theta_{\mathrm{old}}}(y_{t}\mid q,y_{<t})}. 
+ (11) 
+The same response-level advantage is used for every token in y .
+We optimize the clipped GRPO objective [ 69 ] over valid response tokens:
+ \displaystyle\mathcal{J}_{d}(\theta) 
+ \displaystyle=\mathbb{E}\!\left[\frac{\sum_{y\in\mathcal{G}_{d}}\sum_{t=1}^{|y|}\ell_{d}(y,t)}{\sum_{y\in\mathcal{G}_{d}}|y|}-\beta\mathcal{D}_{\mathrm{KL}}\right], 
+ (12) 
+ \displaystyle\ell_{d}(y,t) 
+ \displaystyle=\min\!\left\{\rho_{y,t}A_{y}^{d},\operatorname{clip}(\rho_{y,t},1-\epsilon_{l},1+\epsilon_{h})A_{y}^{d}\right\}. 
+Here, |y| counts valid response tokens, excluding prompt and padding tokens.
+The KL regularizer against \pi_{\mathrm{ref}} is estimated at token level
+and averaged over the same valid tokens.
+For the temporal and spatio-temporal experiments, we additionally use dual
+clipping: when A_{y}^{d}<0 , \ell_{d}(y,t) in
+Eq. 12 is replaced by
+ \max\{\ell_{d}(y,t),cA_{y}^{d}\} , where c>1 .
+The clipping parameters are provided in the appendix.
+The captioning and localization batches share model parameters. Their gradients are
+accumulated before one optimizer step, using
+ \mathcal{J}_{\mathrm{CycleGRPO}}=\lambda_{\mathrm{cap}}\mathcal{J}_{\mathrm{cap}}+\lambda_{\mathrm{loc}}\mathcal{J}_{\mathrm{loc}}. 
+ (13) 
+We use equal task weights unless stated otherwise. Thus localization is not merely
+a frozen scoring module: its sampled trajectories are also optimized against
+the known region. Their aggregate accuracy, in turn, supplies a reference-free reward for region understanding.
+ 3.4 Instantiations across Region Spaces
+Generalized CycleGRPO changes only the region interface and consistency
+function across domains; Eqs. 4 – 13 
+remain unchanged.
+ Spatial regions. 
+For an H\times W image, \mathcal{R}\in\{0,1\}^{H\times W} is a mask or
+ \mathcal{R}\in[0,1]^{4} a normalized box.
+Our mask-based implementation uses SAMTok [ 31 ] to quantize a
+mask into a compact sequence in the MLLM vocabulary, allowing the same policy
+to consume and emit masks without an external segmentation head.
+Mask-token agreement provides an efficient training-time consistency surrogate; decoded
+mask IoU or box IoU can be used when the representation exposes geometry
+directly.
+This recovers the spatial CycleGRPO formulation of our conference
+work [ 38 ] .
+ Temporal regions. 
+For a video of duration T , \mathcal{R}\in[0,T]^{L\times 2} stacks L 
+intervals (t_{\ell}^{\mathrm{s}},t_{\ell}^{\mathrm{e}}) .
+The model consumes and emits timestamp strings, and consistency is temporal IoU:
+ S_{\mathrm{T}}(\mathcal{R},\widehat{\mathcal{R}})=\frac{\left|\mathcal{R}\cap\widehat{\mathcal{R}}\right|}{\left|\mathcal{R}\cup\widehat{\mathcal{R}}\right|}, 
+ (14) 
+where |\cdot| denotes temporal duration and overlapping intervals are merged
+before measurement.
+The outer mapping describes the content of a designated interval; the inner mapping searches the full video for that description.
+The cycle therefore couples temporal captioning and temporal localization without
+using a reference caption during reinforcement learning.
+ Spatio-temporal regions. 
+Our video experiments represent sparse evidence as
+ \mathcal{R}=\{(t_{a},S_{a})\}_{a=1}^{A} and
+ \widehat{\mathcal{R}}=\{(\widehat{t}_{b},\widehat{S}_{b})\}_{b=1}^{B} , where
+each S is a normalized box, giving tensor shapes A\times 5 and B\times 5 .
+Let \mathcal{M}^{*} be the maximum-weight one-to-one matching between predicted and target anchors, where the pair weight is |S_{a}\cap\widehat{S}_{b}| and is set to zero whenever |t_{a}-\widehat{t}_{b}|>\tau .
+We compute the joint support overlap as
+ \displaystyle I_{\mathrm{ST}} 
+ \displaystyle=\sum_{(a,b)\in\mathcal{M}^{*}}|S_{a}\cap\widehat{S}_{b}|, 
+ (15) 
+ \displaystyle S_{\mathrm{ST}}(\mathcal{R},\widehat{\mathcal{R}}) 
+ \displaystyle=\frac{I_{\mathrm{ST}}}{\sum_{a}|S_{a}|+\sum_{b}|\widehat{S}_{b}|-I_{\mathrm{ST}}}. 
+We use \tau=3 seconds. The one-to-one constraint prevents duplicate
+predictions from reusing the same annotated evidence, while unmatched or extra
+anchors remain in the union.
+Consequently, a visually similar object at the
+wrong moment contributes no intersection, and a temporally aligned anchor with
+an inaccurate box is also penalized.
+This instantiation closes the cycle over explicit when-and-where evidence and requires structured spatio-temporal regions, but no paired textual descriptions, during
+reinforcement learning.
+ 4 DOVE
+ Table 1: Results on two inverse spatial tasks. Left: mask-to-text accuracy on
+DLC-Bench [ 46 ] . Right: text-to-mask gIoU on
+GroundingSuite [ 31 ] . All values are percentages.
+ † denotes training on the in-domain DAM-1.5M data.
+ Method 
+ Size 
+ Pos. 
+ Neg. 
+ Avg. 
+ GPT-4o [ 92 ] 
+ – 
+ 43.4 
+ 79.6 
+ 61.5 
+ Gemini 2.5 Pro [ 93 ] 
+ – 
+ 36.5 
+ 75.2 
+ 55.8 
+ VP-SPHINX [ 94 ] 
+ 13B 
+ 26.3 
+ 71.6 
+ 49.0 
+ DAM † [ 46 ] 
+ 3B 
+ 52.3 
+ 82.2 
+ 67.3 
+ SAMTok [ 31 ] 
+ 4B 
+ 43.5 
+ 80.4 
+ 61.9 
+ + Ours 
+ 4B 
+ 52.4 
+ 83.2 
+ 67.8 
+ \Delta vs. SAMTok 
+ +8.9 
+ +2.8 
+ +5.9 
+ Method 
+ Size 
+ Stuff 
+ Part 
+ Multi 
+ Single 
+ All 
+ LISA [ 49 ] 
+ 7B 
+ 85.2 
+ 21.2 
+ 71.5 
+ 42.8 
+ 57.6 
+ GLaMM [ 30 ] 
+ 7B 
+ 86.9 
+ 16.5 
+ 70.4 
+ 42.1 
+ 57.2 
+ EVF-SAM [ 95 ] 
+ 1B 
+ 85.1 
+ 23.1 
+ 72.1 
+ 54.5 
+ 62.6 
+ InstructSeg [ 96 ] 
+ 3B 
+ 56.2 
+ 24.2 
+ 66.8 
+ 51.3 
+ 52.5 
+ SAMTok [ 31 ] 
+ 4B 
+ 80.9 
+ 12.4 
+ 62.0 
+ 52.9 
+ 57.5 
+ + Ours 
+ 4B 
+ 90.5 
+ 21.2 
+ 78.3 
+ 62.3 
+ 68.2 
+ \Delta vs. SAMTok 
+ +9.6 
+ +8.8 
+ +16.3 
+ +9.4 
+ +10.7 
+ Table 2: Results on GAR-Bench-VQA [ 47 ] . We report accuracy
+(%) for fine-grained regional perception and reasoning. † denotes
+thinking mode.
+ Method 
+ Size 
+ Overall 
+ Perception 
+ Reasoning 
+ Color 
+ Shape 
+ Texture 
+ Material 
+ Position 
+ Non-Entity 
+ Relation 
+ GPT-4o [ 92 ] 
+ – 
+ 53.5 
+ 34.8 
+ 65.3 
+ 48.3 
+ 52.8 
+ 57.8 
+ 60.2 
+ 61.4 
+ o3 † [ 97 ] 
+ – 
+ 61.3 
+ 58.0 
+ 70.3 
+ 55.2 
+ 63.9 
+ 54.7 
+ 49.2 
+ 71.3 
+ Gemini-2.5-Pro † [ 93 ] 
+ – 
+ 64.2 
+ 62.3 
+ 68.8 
+ 58.6 
+ 66.7 
+ 64.1 
+ 64.9 
+ 70.3 
+ Qwen2.5-VL [ 4 ] 
+ 3B 
+ 34.4 
+ 29.0 
+ 25.0 
+ 34.5 
+ 30.6 
+ 43.8 
+ 26.2 
+ 44.6 
+ Qwen2.5-VL [ 4 ] 
+ 7B 
+ 41.7 
+ 39.1 
+ 40.6 
+ 44.8 
+ 27.8 
+ 59.4 
+ 36.1 
+ 40.6 
+ Qwen2.5-VL [ 4 ] 
+ 32B 
+ 50.9 
+ 46.4 
+ 53.1 
+ 41.4 
+ 30.6 
+ 71.9 
+ 36.1 
+ 58.4 
+ InternVL3 [ 98 ] 
+ 2B 
+ 35.1 
+ 30.4 
+ 21.9 
+ 48.3 
+ 38.9 
+ 48.4 
+ 26.2 
+ 38.6 
+ InternVL3 [ 98 ] 
+ 8B 
+ 38.9 
+ 36.2 
+ 37.5 
+ 58.6 
+ 41.7 
+ 51.6 
+ 27.9 
+ 33.6 
+ InternVL3 [ 98 ] 
+ 32B 
+ 46.5 
+ 39.1 
+ 40.6 
+ 51.7 
+ 55.6 
+ 60.9 
+ 36.1 
+ 47.5 
+ Sa2VA [ 34 ] 
+ 8B 
+ 34.3 
+ 39.1 
+ 45.3 
+ 29.6 
+ 30.6 
+ 54.7 
+ 21.3 
+ 21.8 
+ VP-SPHINX [ 94 ] 
+ 13B 
+ 37.5 
+ 33.3 
+ 25.0 
+ 44.8 
+ 38.9 
+ 60.9 
+ 34.3 
+ 32.7 
+ DAM [ 46 ] 
+ 3B 
+ 38.2 
+ 55.1 
+ 39.1 
+ 41.4 
+ 36.1 
+ 31.3 
+ 36.1 
+ 31.7 
+ GAR [ 47 ] 
+ 1B 
+ 50.6 
+ 55.1 
+ 46.9 
+ 69.0 
+ 47.2 
+ 21.9 
+ 62.3 
+ 56.4 
+ GAR [ 47 ] 
+ 8B 
+ 59.9 
+ 59.4 
+ 54.7 
+ 75.9 
+ 52.8 
+ 48.4 
+ 60.7 
+ 68.3 
+ SAMTok [ 31 ] 
+ 4B 
+ 64.2 
+ 58.0 
+ 48.4 
+ 48.3 
+ 58.3 
+ 76.6 
+ 54.1 
+ 83.2 
+ + Ours 
+ 4B 
+ 64.9 
+ 60.9 
+ 50.0 
+ 48.3 
+ 61.1 
+ 73.4 
+ 54.1 
+ 84.2 
+ \Delta vs. SAMTok 
+ +0.7 
+ +2.9 
+ +1.6 
+ +0.0 
+ +2.8 
+ -3.2 
+ +0.0 
+ +1.0 
+ 4.1 Task Definition
+Existing temporal-captioning benchmarks typically compare a generated caption
+with one or more references. This can reward a generally plausible description
+that fails to identify the designated moment, especially when the same person,
+action, or scene recurs in a long video. DOVE (Distinctive Occurrence-level
+Video-caption Evaluation) instead
+asks whether a caption preserves the temporal evidence that identifies one
+specified occurrence among visually similar events. Each benchmark group is a
+tuple \mathcal{G}=(V,q,\{S_{i}\}_{i=1}^{K}) , where V is a source video, q 
+is a shared natural-language query, and the K non-overlapping intervals are
+distinct occurrences of q . For every target S_{i} , the remaining intervals
+are same-video, same-query sibling distractors. DOVE is method-agnostic and
+complements one-to-many temporal grounding [ 99 ] : grounding finds
+the occurrences, whereas DOVE tests whether a description preserves what makes
+one occurrence different from the others.
+ 4.2 Benchmark Construction
+ Source collection and structural filtering. 
+We draw candidate groups in approximately equal proportions from Cosmos-Cap,
+Moment-10M [ 59 ] , and VTimeLLM [ 57 ] . We
+remove source videos appearing in our training or existing test sets before
+annotation. A candidate must contain two to five valid intervals for the same
+query. We discard malformed and duplicate intervals, intervals covering more
+than half of the video, and near-duplicate pairs whose temporal IoU exceeds
+ 0.5 or for which either interval is more than 80\% contained in the other.
+We retain one query per video, selecting the query with the largest number of valid
+occurrences and breaking ties by total annotated duration. This produces a
+balanced pool of 800 candidate groups (2,267 intervals), with 267/267/266
+groups from the three sources.
+ Gemini pre-labeling and human review. 
+We use Gemini 3 Pro [ 100 ] to propose, but not certify, per-interval
+annotations. It receives timestamped frames sampled inside every candidate
+interval together with sparse context frames from the full video, the shared
+query, and all interval boundaries. For each interval, it predicts whether the
+queried event occurs, proposes positive facts tagged as shared or
+ specific , and generates plausible-but-absent negatives. Providing all
+intervals jointly is essential because specificity is defined within a group.
+Human verification involves multiple
+rounds of review and correction: reviewers first verify the occurrences,
+interval distinctness, facts, tags, and negatives, and then re-examine each
+retained group jointly to resolve cross-interval inconsistencies, revise
+shared/specific assignments, and remove ambiguous or unsupported items. Cases
+flagged during subsequent probe construction are returned for further
+group-level review and correction. A group is retained only when at least two fully
+reviewed intervals remain after these iterations.
+ Temporal probe construction. 
+For each retained interval, we construct private multiple-choice probes along
+three axes. Order asks what happens before or after an anchor action;
+ State asks how an actor or object changes; and Outcome asks for
+the visible result that identifies the occurrence. Each probe must require
+evidence from multiple frames, have one unambiguous answer, and avoid
+audio-dependent or purely static cues. The probes and answers undergo an
+additional round of human verification and correction, including checks
+against both the target interval and its sibling distractors, and are frozen
+before we inspect captions from the evaluated models.
+ Benchmark statistics. 
+The human-reviewed benchmark contains 180 source-video/query groups and 530
+target intervals; every group comes from a distinct source video. It comprises
+82 groups from Cosmos-Cap, 36 from Moment-10M, and 62 from VTimeLLM. It includes 91/41/15/33 groups with two/three/four/five repeated
+occurrences, respectively. After cleaning, the annotations contain 2,602 positive
+facts (1,178 shared and 1,424 specific) and 2,056 plausible negatives. The
+final evaluation set contains 1,223 human-verified temporal probes: 469 Order,
+420 State, and 334 Outcome questions. These probes cover 529 of the 530 target
+intervals; the remaining interval has no retained probe and is excluded from
+the reported metrics. Additional duration, semantic-domain, and structural
+difficulty statistics are provided in Appendix 12 .
+ 4.3 Evaluation Protocol
+Each model receives frames sampled across the full video and a prompt
+specifying the target interval S_{i} . Sibling annotations,
+private probes, and answers are never exposed. The model produces a free-form
+caption C_{i} . A fixed text-only judge, Qwen2.5-72B-Instruct, then reads C_{i} with each private probe
+and determines whether the caption supports the correct choice, supports a
+wrong choice, or does not contain enough information; the judge never sees the
+video. We report temporal coverage (Temp-Cov), the fraction of probes whose correct answers are supported
+by the caption; clip completeness (Clip-Complete), the fraction of intervals
+for which the correct answers to all probes are supported; and separate Order, State, and Outcome
+coverage, together with the not-mentioned rate (N/M). Our primary aggregate
+metric is Temporal Evidence Coverage (TEC), defined as the macro-average
+of Order, State, and Outcome coverage. All methods use the same public prompt,
+frozen probes, judge, and decoding protocol.
+ Statistical comparison. 
+Because clips and probes within a group share one source video and same-query
+distractors, we compute paired 95% percentile bootstrap intervals by resampling
+whole source-video/query groups (20,000 replicates), never individual clips or
+probes. For the primary comparison against the shared Qwen3-VL initialization,
+CycleGRPO improves TEC by 18.5 percentage points (95% CI: 15.8–21.3), Temp-Cov by 18.7
+points (15.9–21.5), and Clip-Complete by 9.1 points (6.4–11.9).
+ Table 3: Results on interleaved text-mask generation on
+GCG [ 30 ] (left) and generalized referring expression segmentation on
+GRES [ 48 ] (right). GCG entries are Val / Test. For GRES, split entries
+are Val / Test A / Test B and averages are reported separately; N-acc denotes
+no-target accuracy.
+ Method 
+ Size 
+ METEOR 
+ CIDEr 
+ AP 50 
+ mIoU 
+ Recall 
+ Val / Test 
+ Val / Test 
+ Val / Test 
+ Val / Test 
+ Val / Test 
+ LISA [ 49 ] 
+ 7B 
+ 13.0 / 12.9 
+ 33.9 / 32.2 
+ 25.2 / 24.8 
+ 62.0 / 61.7 
+ 36.3 / 35.5 
+ GLaMM [ 30 ] 
+ 7B 
+ 16.2 / 15.8 
+ 47.2 / 43.5 
+ 30.8 / 29.2 
+ 66.3 / 65.6 
+ 41.8 / 40.8 
+ OMG-LLaVA [ 51 ] 
+ 7B 
+ 14.9 / 14.5 
+ 41.2 / 38.5 
+ 29.9 / 28.6 
+ 65.6 / 64.7 
+ – / – 
+ Sa2VA [ 34 ] 
+ 8B 
+ 16.4 / 16.2 
+ 49.5 / 49.0 
+ 33.2 / 32.2 
+ 67.7 / 66.8 
+ 45.1 / 44.5 
+ SAMTok [ 31 ] 
+ 4B 
+ 16.1 / 16.4 
+ 48.2 / 51.4 
+ 34.7 / 34.4 
+ 69.4 / 68.4 
+ 46.6 / 48.3 
+ + Ours 
+ 4B 
+ 17.3 / 17.2 
+ 54.3 / 53.7 
+ 36.8 / 35.0 
+ 70.2 / 69.2 
+ 50.2 / 49.8 
+ \Delta vs. SAMTok 
+ +1.2 / +0.8 
+ +6.1 / +2.3 
+ +2.1 / +0.6 
+ +0.8 / +0.8 
+ +3.6 / +1.5 
+ Method 
+ Size 
+ Val / Test A / Test B 
+ Avg. 
+ gIoU 
+ cIoU 
+ N-acc 
+ gIoU 
+ cIoU 
+ N-acc 
+ LISA [ 49 ] 
+ 7B 
+ 61.6 / 66.3 / 58.8 
+ 61.8 / 68.5 / 60.6 
+ 54.7 / 50.0 / 51.9 
+ 62.2 
+ 63.6 
+ 52.2 
+ SAM4MLLM [ 101 ] 
+ 8B 
+ 71.9 / 74.2 / 65.3 
+ 67.8 / 72.2 / 63.4 
+ 66.1 / 63.9 / 60.0 
+ 70.5 
+ 67.8 
+ 63.3 
+ MLLMSeg [ 102 ] 
+ 8B 
+ 75.1 / 77.0 / 69.7 
+ 71.6 / 76.9 / 68.5 
+ 73.2 / 72.4 / 65.5 
+ 73.9 
+ 72.3 
+ 70.4 
+ HiMTok [ 52 ] 
+ 8B 
+ 72.1 / 73.5 / 71.7 
+ 70.4 / 74.9 / 72.0 
+ – / – / – 
+ 72.4 
+ 72.4 
+ – 
+ ARGenSeg [ 103 ] 
+ 8B 
+ 74.7 / 73.7 / 72.4 
+ 72.2 / 73.6 / 70.4 
+ – / – / – 
+ 73.6 
+ 72.1 
+ – 
+ SAMTok [ 31 ] 
+ 4B 
+ 71.3 / 75.3 / 66.9 
+ 69.2 / 75.4 / 66.0 
+ 61.4 / 59.0 / 55.6 
+ 71.2 
+ 70.2 
+ 58.7 
+ + Ours 
+ 4B 
+ 82.2 / 80.3 / 73.5 
+ 74.8 / 78.2 / 70.2 
+ 94.7 / 93.0 / 89.9 
+ 78.7 
+ 74.4 
+ 92.5 
+ \Delta vs. SAMTok 
+ +10.9 / +5.0 / +6.6 
+ +5.6 / +2.8 / +4.2 
+ +33.3 / +34.0 / +34.3 
+ +7.5 
+ +4.2 
+ +33.8 
+ Table 4: One-to-one temporal grounding results on
+Charades-STA [ 87 ] , ActivityNet
+Captions [ 88 ] , and
+QVHighlights [ 89 ] . We report Recall@1 at temporal IoU thresholds of
+ 0.3 , 0.5 , and 0.7 , together with temporal IoU (tIoU), averaged over examples.
+ Model 
+ Size 
+ Charades 
+ ActivityNet 
+ QVHighlights 
+ R1@0.3 
+ R1@0.5 
+ R1@0.7 
+ tIoU 
+ R1@0.3 
+ R1@0.5 
+ R1@0.7 
+ tIoU 
+ R1@0.3 
+ R1@0.5 
+ R1@0.7 
+ tIoU 
+ GPT-4o [ 92 ] 
+ – 
+ 60.6 
+ 44.5 
+ 23.5 
+ 41.8 
+ 55.2 
+ 41.4 
+ 25.8 
+ 40.4 
+ 69.0 
+ 54.8 
+ 38.5 
+ 52.1 
+ GPT-5 [ 104 ] 
+ – 
+ 59.3 
+ 42.0 
+ 22.0 
+ 40.5 
+ 57.4 
+ 44.9 
+ 30.4 
+ 42.9 
+ 72.4 
+ 60.4 
+ 46.4 
+ 56.8 
+ Gemini-2.5-Pro [ 105 ] 
+ – 
+ 74.1 
+ 61.1 
+ 34.0 
+ 52.8 
+ 72.3 
+ 64.2 
+ 47.1 
+ 58.1 
+ 84.1 
+ 75.9 
+ 61.1 
+ 70.4 
+ VideoChat-Flash [ 106 ] 
+ 7B 
+ 60.2 
+ 37.9 
+ 17.8 
+ 39.7 
+ 35.5 
+ 21.8 
+ 10.5 
+ 24.8 
+ 45.2 
+ 30.6 
+ 16.7 
+ 32.7 
+ VideoChat-R1 [ 107 ] 
+ 7B 
+ 51.9 
+ 30.8 
+ 11.7 
+ 33.7 
+ 35.0 
+ 23.9 
+ 11.3 
+ 25.0 
+ 29.3 
+ 19.1 
+ 9.4 
+ 21.5 
+ Time-R1 [ 108 ] 
+ 7B 
+ 57.9 
+ 32.0 
+ 16.9 
+ 36.6 
+ 44.8 
+ 31.0 
+ 19.0 
+ 33.1 
+ 65.8 
+ 51.5 
+ 36.1 
+ 49.2 
+ Qwen2.5-VL [ 4 ] 
+ 7B 
+ 59.7 
+ 37.8 
+ 16.6 
+ 39.3 
+ 44.1 
+ 31.0 
+ 16.1 
+ 31.4 
+ 41.5 
+ 27.8 
+ 15.2 
+ 31.6 
+ TimeLens [ 33 ] 
+ 7B 
+ 70.5 
+ 55.6 
+ 28.4 
+ 48.8 
+ 62.8 
+ 51.0 
+ 32.6 
+ 46.2 
+ 74.1 
+ 62.7 
+ 43.1 
+ 56.0 
+ Qwen3-VL [ 5 ] 
+ 8B 
+ 69.2 
+ 53.4 
+ 27.5 
+ 48.3 
+ 62.1 
+ 51.2 
+ 34.4 
+ 46.8 
+ 74.2 
+ 64.6 
+ 49.3 
+ 59.4 
+ Qwen3-VL [ 5 ] 
+ 4B 
+ 67.1 
+ 47.5 
+ 24.1 
+ 45.6 
+ 62.9 
+ 51.0 
+ 34.3 
+ 47.2 
+ 77.6 
+ 66.0 
+ 50.9 
+ 61.7 
+ + Ours 
+ 4B 
+ 74.8 
+ 58.6 
+ 30.7 
+ 51.9 
+ 63.5 
+ 54.1 
+ 36.8 
+ 49.2 
+ 75.4 
+ 65.9 
+ 51.0 
+ 61.8 
+ \Delta vs. Qwen3-VL 
+ +7.7 
+ +11.1 
+ +6.6 
+ +6.3 
+ +0.6 
+ +3.1 
+ +2.5 
+ +2.0 
+ -2.2 
+ -0.1 
+ +0.1 
+ +0.1 
+ OMTG [ 99 ] 
+ 4B 
+ 72.0 
+ 58.3 
+ 32.0 
+ 50.5 
+ 64.7 
+ 54.6 
+ 37.0 
+ 46.8 
+ 80.9 
+ 70.4 
+ 53.5 
+ 62.2 
+ + Ours 
+ 4B 
+ 72.9 
+ 60.2 
+ 32.7 
+ 51.8 
+ 65.4 
+ 55.5 
+ 37.6 
+ 49.0 
+ 80.4 
+ 70.9 
+ 53.7 
+ 64.5 
+ \Delta vs. OMTG 
+ +0.9 
+ +1.9 
+ +0.7 
+ +1.3 
+ +0.7 
+ +0.9 
+ +0.6 
+ +2.2 
+ -0.5 
+ +0.5 
+ +0.2 
+ +2.3 
+ Table 5: Temporal captioning results on DOVE. Temp-Cov is the percentage of probes whose correct answers are supported by the caption;
+Clip-Complete is the percentage of intervals with all answers supported; and
+Order, State, and Outcome report type-specific coverage. N/M denotes
+unmentioned probes, while Temporal Evidence Coverage (TEC) is the macro-average
+of Order, State, and Outcome coverage. All values are percentages.
+ Model 
+ Size 
+ Temp-Cov \uparrow 
+ Clip-Complete \uparrow 
+ Order \uparrow 
+ State \uparrow 
+ Outcome \uparrow 
+ N/M \downarrow 
+ TEC \uparrow 
+ GPT-5.6-sol 
+ – 
+ 17.3 
+ 5.9 
+ 16.4 
+ 17.9 
+ 17.7 
+ 71.1 
+ 17.3 
+ TRACE-Uni 
+ – 
+ 2.0 
+ 0.6 
+ 1.3 
+ 1.9 
+ 3.0 
+ 95.7 
+ 2.1 
+ Sa2VA [ 34 ] 
+ 8B 
+ 0.0 
+ 0.0 
+ 0.0 
+ 0.0 
+ 0.0 
+ 99.9 
+ 0.0 
+ VideoChat2-HD [ 109 ] 
+ 7B 
+ 1.8 
+ 0.4 
+ 1.7 
+ 1.7 
+ 2.1 
+ 93.5 
+ 1.8 
+ OMTG [ 99 ] 
+ 4B 
+ 0.7 
+ 0.2 
+ 0.6 
+ 1.0 
+ 0.6 
+ 98.8 
+ 0.7 
+ VideoChat-R1 [ 107 ] 
+ 7B 
+ 3.2 
+ 0.4 
+ 2.8 
+ 2.9 
+ 4.2 
+ 93.9 
+ 3.3 
+ Time-R1 [ 108 ] 
+ 7B 
+ 2.6 
+ 0.6 
+ 2.3 
+ 2.9 
+ 2.7 
+ 94.8 
+ 2.6 
+ TimeLens [ 33 ] 
+ 7B 
+ 4.4 
+ 0.9 
+ 3.8 
+ 4.3 
+ 5.4 
+ 90.8 
+ 4.5 
+ LLaVA-Video [ 110 ] 
+ 7B 
+ 8.3 
+ 2.5 
+ 8.3 
+ 8.3 
+ 8.1 
+ 81.1 
+ 8.2 
+ Video-LLaMA3 [ 111 ] 
+ 7B 
+ 1.0 
+ 0.6 
+ 0.4 
+ 1.2 
+ 1.5 
+ 97.5 
+ 1.0 
+ InternVL3 [ 98 ] 
+ 8B 
+ 2.4 
+ 0.6 
+ 3.0 
+ 1.4 
+ 2.7 
+ 94.1 
+ 2.4 
+ Open-o3-Video [ 39 ] 
+ 4B 
+ 13.5 
+ 4.7 
+ 11.5 
+ 14.8 
+ 14.7 
+ 76.2 
+ 13.6 
+ Qwen3-VL [ 5 ] 
+ 4B 
+ 14.7 
+ 5.5 
+ 12.6 
+ 17.1 
+ 14.7 
+ 75.1 
+ 14.8 
+ + Ours 
+ 4B 
+ 33.4 
+ 14.6 
+ 31.8 
+ 37.4 
+ 30.8 
+ 50.7 
+ 33.3 
+ \Delta vs. Qwen3-VL 
+ +18.7 
+ +9.1 
+ +19.2 
+ +20.3 
+ +16.1 
+ -24.4 
+ +18.5 
+ 5 Experiments
+ Experimental setup. 
+We evaluate the same region–text–region principle in three spaces: spatial masks, temporal intervals, and sparse spatio-temporal trajectories.
+Spatial experiments retain the published ECCV setup [ 38 ] and start from Qwen3-VL-4B-SAMTok [ 31 ] .
+Temporal experiments compare captioning-only GRPO, localization-only GRPO, and Generalized CycleGRPO from one shared Qwen3-VL-4B co-SFT initialization, using identical RL videos and budgets.
+Temporal training data are drawn from OMTG [ 99 ] .
+For the main spatio-temporal experiments, we initialize from Open-o3-Video-4B
+(RL) after one epoch of inverse-caption and video-QA co-SFT.
+The training data for these experiments are drawn from Open-o3-Video [ 39 ] .
+Following the multi-task training strategy of Open-o3-Video [ 39 ] ,
+we mix spatial, temporal, and spatio-temporal region tasks with general video
+QA. The region tasks use Generalized CycleGRPO; the auxiliary QA task retains
+answer-based rewards. The data composition and training settings are given in
+Tab. 15 .
+We apply early stopping based on training-reward convergence.
+We report complete configurations in the appendix.
+ Datasets and benchmarks. 
+Spatial evaluation uses DLC-Bench [ 46 ] ,
+GroundingSuite [ 31 ] , GAR-Bench-VQA [ 47 ] , GCG [ 30 ] , and GRES [ 48 ] , following their official metrics.
+Temporal localization is evaluated on TimeLens [ 33 ] and TVGBench [ 108 ] ; joint temporal–spatial reasoning is evaluated
+on V-STaR [ 112 ] ; and interval-conditioned captioning is evaluated on DOVE (Sec. 4 ).
+Besides general-purpose MLLMs and the ECCV spatial baselines, we include OMTG [ 99 ] and Open-o3-Video [ 39 ] as specialized temporal and spatio-temporal comparisons, respectively.
+ Implementation details. 
+Our training runs use bfloat16 and gradient checkpointing with a frozen visual encoder.
+We train GRPO variants with our extended verl codebase and FSDP.
+The appendix provides per-setting data, optimization, rollout, and input configurations.
+ Table conventions. Blue rows identify our variants, and rows labeled \Delta report signed changes relative to the indicated base.
+ 5.1 Main Results
+ Mask-to-text on DLC-Bench. 
+Tab. 1 evaluates whether a model can describe the content of
+a designated mask. CycleGRPO obtains 67.8% average accuracy, up from 61.9%
+for the SAMTok initialization. It also slightly exceeds DAM (67.3%),
+although DAM uses the in-domain DAM-1.5M training set. The main gain occurs on
+positive probes: CycleGRPO reaches 52.4%, compared with 43.5% for SAMTok,
+while also improving negative-probe accuracy from 80.4% to 83.2%. The larger
+gain on positive probes suggests that closing the cycle strengthens recognition of content inside the queried mask.
+ Text-to-mask on GroundingSuite. 
+Tab. 1 tests the inverse mapping from a referring
+expression to a mask. CycleGRPO raises overall gIoU from 57.5% to 68.2%. The gains cover every subset and are largest on multi-object expressions, indicating that the cycle is particularly helpful when grounding requires resolving object identity or grouping, where
+an underspecified description is most likely to reconstruct the wrong mask.
+ Fine-grained regional understanding on GAR-Bench-VQA. 
+As shown in Tab. 2 , CycleGRPO achieves the highest overall
+accuracy of 64.9%, compared with 64.2% for both SAMTok and Gemini-2.5-Pro.
+The overall gain is modest and not uniform across categories. Relative to SAMTok,
+CycleGRPO improves color, shape, and material recognition from
+58.0/48.4/58.3% to 60.9/50.0/61.1%, and achieves the highest listed relation accuracy of
+84.2%, but position accuracy decreases from 76.6% to 73.4% and non-entity
+accuracy remains 54.1%. These results suggest that the cycle improves target-specific appearance and relation understanding, but does not improve every aspect of spatial reasoning.
+ Interleaved generation and localization on GCG. 
+Tab. 3 evaluates language generation and mask prediction in
+the same output. CycleGRPO improves all ten reported validation/test metrics
+over SAMTok. Validation CIDEr/mIoU/Recall increase from 48.2/69.4/46.6 to
+54.3/70.2/50.2, and test CIDEr/mIoU/Recall increase from 51.4/68.4/48.3 to
+53.7/69.2/49.8. AP 50 also rises from 34.7/34.4 to 36.8/35.0 on the two
+splits. The simultaneous gains show that language quality and mask localization improve together.
+ Generalized referring segmentation on GRES. 
+Tab. 3 further tests localization with single, multiple, and
+absent targets. CycleGRPO improves average gIoU/cIoU from 71.2/70.2% for
+SAMTok to 78.7/74.4%. Its gIoU is consistently higher on validation, Test A, and Test
+B, showing that the average gain is not driven by a single split. No-target
+accuracy also rises from 58.7% to 92.5% on average. The
+complete cycle therefore improves both rejection of absent targets and
+localization of targets that are present.
+ Generalization to continuous bounding boxes. 
+The spatial instantiation is not tied to discrete mask tokens. We replace the
+mask representation with continuous bounding-box coordinates and apply the
+same region–text–region objective to three MLLM backbones.
+Tab. 6 shows consistent improvements on DLC-Bench and
+GroundingSuite across model families and scales.
+In particular, the overall
+GroundingSuite accuracy increases from 69.0% to 69.9% for Qwen2.5-VL-3B and
+from 71.4% to 74.1% for both Qwen3-VL-4B and Qwen3-VL-8B.
+ Method 
+ DLC-Bench 
+ GroundingSuite (Acc@0.5) 
+ Pos. 
+ Neg. 
+ Avg. 
+ Single 
+ Stuff 
+ Multi 
+ Part 
+ All 
+ Qwen2.5-VL-3B (bbox) 
+ 19.4 
+ 44.8 
+ 32.1 
+ 93.7 
+ 32.8 
+ 63.2 
+ 66.3 
+ 69.0 
+ + Ours 
+ 23.3 
+ 46.6 
+ 35.0 
+ 94.1 
+ 34.1 
+ 64.1 
+ 67.3 
+ 69.9 
+ Qwen3-VL-4B (bbox) 
+ 39.6 
+ 62.4 
+ 51.0 
+ 95.2 
+ 24.2 
+ 76.7 
+ 67.0 
+ 71.4 
+ + Ours 
+ 43.2 
+ 65.4 
+ 54.3 
+ 94.9 
+ 33.9 
+ 76.3 
+ 71.1 
+ 74.1 
+ Qwen3-VL-8B (bbox) 
+ 41.0 
+ 65.4 
+ 53.2 
+ 94.9 
+ 31.2 
+ 71.8 
+ 67.4 
+ 71.4 
+ + Ours 
+ 49.4 
+ 65.0 
+ 57.2 
+ 95.9 
+ 37.6 
+ 74.4 
+ 70.4 
+ 74.1 
+ Table 6: Ablation on spatial localization formats using continuous
+bounding-box coordinates. Results are reported on DLC-Bench [ 46 ] and
+GroundingSuite [ 31 ] ; all values are percentages.
+ Temporal grounding on TimeLens. 
+Tab. 4 reveals that the effect of CycleGRPO depends on
+the temporal initialization. Starting from Qwen3-VL-4B-Instruct, CycleGRPO
+improves all four Charades metrics: R1@ 0.3/0.5/0.7 rises from
+67.1/47.5/24.1% to 74.8/58.6/30.7%, and tIoU from 45.6% to 51.9%. All four
+ActivityNet metrics also improve, including tIoU from 47.2% to 49.2%. On
+QVHighlights, performance is largely preserved: R1@ 0.3/0.5 changes from
+77.6/66.0% to 75.4/65.9%, while R1@ 0.7 and tIoU increase slightly from
+50.9/61.7% to 51.0/61.8%. Overall, the Qwen-initialized policy improves 10 of 12
+entries, with its largest gains on Charades.
+With the specialized OMTG-4B (RL) initialization, the gains are
+more consistent across datasets. CycleGRPO improves 11 of the 12 entries: tIoU increases from
+50.5% to 51.8% on Charades, 46.8% to 49.0% on ActivityNet, and 62.2% to
+64.5% on QVHighlights. On QVHighlights, R1@ 0.5 and R1@ 0.7 rise from
+70.4/53.5% to 70.9/53.7%, while R1@ 0.3 is the only regression (80.9% to 80.4%).
+Together, the two initialization settings show that the cyclic objective
+improves temporal grounding broadly, while the magnitude and dataset balance
+of the gains still depend on the initial policy.
+ Region-conditioned captioning on DOVE. 
+Tab. 5 evaluates whether a description
+is specific enough to identify its designated occurrence among similar clips.
+The CycleGRPO model, also evaluated in Tab. 10 , improves over its Qwen3-VL-4B-Instruct initialization from 14.8% to 33.3% TEC, from 14.7% to 33.4% in temporal coverage, and from 5.5% to 14.6% in clip completeness.
+It also outperforms Open-o3-Video-4B (RL), which reaches 13.6% TEC, with large gains in Order (31.8% versus 11.5%) and Outcome (30.8% versus 14.7%), and exceeds GPT-5.6-sol’s 17.3% TEC.
+Relative to the Qwen initialization, N/M decreases from 75.1% to 50.7%, showing that the generated captions convey substantially more target-specific evidence.
+These results show improved coverage of target-specific temporal evidence across all three probe types.
+ Table 7: Results on V-STaR [ 112 ] . What measures answer
+accuracy, When measures temporal IoU, and Where measures visual IoU.
+Chain1 denotes what–when–where and Chain2 denotes what–where–when; mAM and mLGM
+are the aggregate metrics.
+ Model 
+ Size 
+ What 
+ When (Temporal IoU) 
+ Where (Visual IoU) 
+ Overall 
+ Acc 
+ Chain1 
+ Chain2 
+ Chain1 
+ Chain2 
+ mAM 
+ mLGM 
+ GPT-4o [ 92 ] 
+ – 
+ 60.8 
+ 16.7 
+ 12.8 
+ 6.5 
+ 3.0 
+ 26.8 
+ 38.2 
+ Gemini-2-Flash [ 100 ] 
+ – 
+ 53.0 
+ 24.5 
+ 23.8 
+ 4.6 
+ 2.2 
+ 26.9 
+ 35.6 
+ Video-LLaMA3 [ 111 ] 
+ 7B 
+ 41.9 
+ 23.0 
+ 23.1 
+ 0.9 
+ 0.2 
+ 21.7 
+ 27.0 
+ LLaVA-Video [ 110 ] 
+ 7B 
+ 49.5 
+ 10.5 
+ 12.2 
+ 1.9 
+ 1.3 
+ 20.8 
+ 27.3 
+ VideoChat2 [ 109 ] 
+ 7B 
+ 36.2 
+ 13.7 
+ 12.5 
+ 2.5 
+ 1.0 
+ 17.0 
+ 20.3 
+ Oryx-1.5 [ 113 ] 
+ 7B 
+ 20.5 
+ 13.5 
+ 14.8 
+ 10.1 
+ 3.5 
+ 15.1 
+ 13.8 
+ InternVL-2.5 [ 114 ] 
+ 8B 
+ 44.2 
+ 8.7 
+ 7.8 
+ 0.7 
+ 0.1 
+ 17.6 
+ 24.9 
+ Qwen2.5-VL (base) [ 4 ] 
+ 7B 
+ 33.5 
+ 15.4 
+ 13.8 
+ 17.0 
+ 2.5 
+ 19.3 
+ 22.4 
+ TRACE [ 62 ] 
+ 7B 
+ 17.6 
+ 19.1 
+ 17.1 
+ 0.0 
+ 0.0 
+ 12.0 
+ 13.3 
+ Sa2VA [ 34 ] 
+ 8B 
+ 16.4 
+ 0.1 
+ 0.0 
+ 32.3 
+ 37.5 
+ 17.1 
+ 20.3 
+ Open-o3-Video [ 39 ] 
+ 7B 
+ 61.0 
+ 24.5 
+ 24.0 
+ 25.4 
+ 6.0 
+ 33.7 
+ 46.6 
+ Open-o3-Video [ 39 ] 
+ 4B 
+ 59.5 
+ 25.2 
+ 23.7 
+ 31.5 
+ 8.2 
+ 34.6 
+ 47.2 
+     + Ours 
+ 4B 
+ 60.7 
+ 26.2 
+ 25.8 
+ 33.2 
+ 10.5 
+ 36.2 
+ 49.8 
+ \Delta vs. Open-o3-Video 
+ +1.2 
+ +1.0 
+ +2.1 
+ +1.7 
+ +2.3 
+ +1.6 
+ +2.6 
+ Joint when-and-where reasoning on V-STaR. 
+Tab. 7 shows coordinated gains across all components of
+spatio-temporal grounding. Relative to the Open-o3-Video-4B (RL) checkpoint,
+Generalized CycleGRPO increases answer accuracy from 59.5% to 60.7%; temporal IoU from
+25.2/23.7% to 26.2/25.8% for the two reasoning chains; and visual IoU from
+31.5/8.2% to 33.2/10.5%. Consequently, mAM and mLGM improve from 34.6/47.2%
+to 36.2/49.8%. Generalized CycleGRPO also exceeds the reported Open-o3-Video-7B model in
+both aggregate metrics (33.7/46.6%), despite using a 4B policy. The simultaneous
+improvement in answer, temporal, and spatial measures supports optimizing the
+joint trajectory rather than either of its projections alone.
+ Table 8: Results across general video understanding, reasoning, and temporal
+grounding. VideoMME [ 84 ] ,
+WorldSense [ 115 ] , and
+VideoMMMU [ 116 ] report accuracy, while
+TVGBench [ 108 ] reports mIoU. Avg. is the mean over the reported
+columns.
+ Model 
+ Size 
+ VideoMME 
+ WorldSense 
+ VideoMMMU 
+ TVGBench 
+ Avg. 
+ Overall 
+ Long 
+ Overall 
+ Recognition 
+ Overall 
+ Perception 
+ mIoU 
+ GPT-4o [ 92 ] 
+ – 
+ 71.9 
+ – 
+ 42.6 
+ – 
+ 61.2 
+ 66.0 
+ – 
+ – 
+ Video-LLaMA3 [ 111 ] 
+ 7B 
+ 60.6 
+ 48.7 
+ 37.3 
+ 38.1 
+ 46.5 
+ 59.7 
+ 22.2 
+ 44.7 
+ InternVL-2.5 [ 114 ] 
+ 8B 
+ 62.3 
+ 51.2 
+ 39.6 
+ 38.5 
+ 42.4 
+ 57.0 
+ 6.3 
+ 42.5 
+ Qwen2.5-VL (base) [ 4 ] 
+ 7B 
+ 62.4 
+ 50.8 
+ 36.1 
+ 33.7 
+ 51.2 
+ 64.7 
+ 16.3 
+ 45.0 
+ VideoRFT [ 117 ] 
+ 7B 
+ 59.8 
+ 50.7 
+ 38.2 
+ 36.6 
+ 51.1 
+ 66.0 
+ 14.3 
+ 45.2 
+ VideoR1 [ 118 ] 
+ 7B 
+ 61.4 
+ 50.6 
+ 35.5 
+ 32.8 
+ 52.4 
+ 65.3 
+ 9.6 
+ 43.9 
+ Open-o3-Video [ 39 ] 
+ 4B 
+ 61.0 
+ 50.2 
+ 39.3 
+ 38.1 
+ 58.0 
+ 76.0 
+ 21.1 
+ 49.1 
+ + Ours 
+ 4B 
+ 62.3 
+ 52.1 
+ 40.2 
+ 39.3 
+ 59.7 
+ 75.7 
+ 28.5 
+ 51.1 
+ \Delta vs. Open-o3-Video 
+ +1.3 
+ +1.9 
+ +0.9 
+ +1.2 
+ +1.7 
+ -0.3 
+ +7.4 
+ +2.0 
+ General video capabilities and temporal grounding. 
+Tab. 8 checks whether the V-STaR gains are obtained
+at the expense of broader video understanding. Generalized CycleGRPO improves the local
+Open-o3-Video-4B (RL) checkpoint on VideoMME Overall/Long from 61.0/50.2% to
+62.3/52.1%, WorldSense Overall/Recognition from 39.3/38.1% to 40.2/39.3%, and
+VideoMMMU Overall from 58.0% to 59.7%. The largest gain is on TVGBench, where
+mIoU rises from 21.1% to 28.5%, exceeding all listed open-source
+baselines. VideoMMMU Perception is the only regression (76.0% to 75.7%). Averaged
+over the reported columns, the score increases from 49.1% to 51.1%. Thus, the
+trajectory-level cycle improves temporal grounding while preserving the
+initial policy’s broader video understanding capabilities.
+ Figure 5 : Region-conditioned captioning across spatial, temporal, and
+spatio-temporal regions. Blue marks targets, red marks errors or omissions,
+and green marks target-specific evidence from Generalized CycleGRPO. 
+ 5.2 Ablation Study and Analysis
+ Table 9: Reward-side ablation for temporal grounding on
+Charades-STA [ 87 ] with OMTG [ 99 ] , and
+temporal captioning on DOVE with Qwen3-VL [ 5 ] .
+All values are percentages.
+ Model 
+ Caption 
+ Reward 
+ Localization 
+ Reward 
+ Charades 
+ DOVE 
+ R1@0.3 
+ R1@0.5 
+ R1@0.7 
+ tIoU 
+ TEC \uparrow 
+ Temp-Cov \uparrow 
+ Clip-Complete \uparrow 
+ Order \uparrow 
+ State \uparrow 
+ Outcome \uparrow 
+ N/M \downarrow 
+ Baseline 
+ – 
+ – 
+ 72.0 
+ 58.3 
+ 32.0 
+ 50.5 
+ 14.8 
+ 14.7 
+ 5.5 
+ 12.6 
+ 17.1 
+ 14.7 
+ 75.1 
+ + Caption reward only 
+ ✓ 
+ ✗ 
+ 73.0 
+ 59.6 
+ 32.3 
+ 51.4 
+ 30.1 
+ 30.0 
+ 13.4 
+ 26.9 
+ 33.8 
+ 29.6 
+ 53.0 
+ + Localization reward only 
+ ✗ 
+ ✓ 
+ 71.5 
+ 58.5 
+ 32.4 
+ 51.0 
+ 29.6 
+ 29.7 
+ 13.8 
+ 29.0 
+ 32.1 
+ 27.5 
+ 52.9 
+ + Ours 
+ ✓ 
+ ✓ 
+ 72.9 
+ 60.2 
+ 32.7 
+ 51.8 
+ 33.3 
+ 33.4 
+ 14.6 
+ 31.8 
+ 37.4 
+ 30.8 
+ 50.7 
+ Why optimize both reward sides? 
+Tab. 9 compares caption-only, localization-only,
+and joint rewards while retaining the region–text–region rollout. The
+Charades and DOVE comparisons use the OMTG and Qwen3-VL co-SFT
+initializations, respectively. Caption-only
+optimization produces the highest Charades R1@ 0.3 (73.0%, versus 72.9% for
+the full objective), but remains lower at the stricter thresholds and in tIoU.
+On DOVE, caption-only and localization-only optimization achieve TEC scores
+of 30.1% and 29.6%, respectively. In contrast, the full Generalized CycleGRPO
+objective performs best on Charades R1@ 0.5/0.7 and tIoU, and raises DOVE TEC
+to 33.3% and clip completeness to 14.6%. Its N/M further decreases to 50.7%,
+compared with 53.0% and 52.9% for the two single-reward variants. At the
+evaluated training points, the joint objective achieves higher temporal
+coverage and clip completeness than either single-reward variant.
+ Table 10: Training-objective ablation with Qwen3-VL [ 5 ] for
+temporal grounding on Charades-STA [ 87 ] and temporal
+captioning on DOVE. All values are percentages.
+ Model 
+ Charades 
+ DOVE 
+ R1@0.3 
+ R1@0.5 
+ R1@0.7 
+ tIoU 
+ TEC \uparrow 
+ Temp-Cov \uparrow 
+ Clip-Complete \uparrow 
+ Order \uparrow 
+ State \uparrow 
+ Outcome \uparrow 
+ N/M \downarrow 
+ Qwen3-VL [ 5 ] 
+ 67.1 
+ 47.5 
+ 24.1 
+ 45.6 
+ 14.8 
+ 14.7 
+ 5.5 
+ 12.6 
+ 17.1 
+ 14.7 
+ 75.1 
+ + Captioning-only GRPO 
+ 69.9 
+ 54.2 
+ 28.6 
+ 49.0 
+ 17.0 
+ 17.0 
+ 6.6 
+ 13.4 
+ 22.9 
+ 14.7 
+ 74.9 
+ + Localization-only GRPO 
+ 74.4 
+ 58.0 
+ 29.8 
+ 51.2 
+ 29.4 
+ 29.3 
+ 13.6 
+ 25.8 
+ 33.3 
+ 29.0 
+ 52.9 
+ + Ours 
+ 74.8 
+ 58.6 
+ 30.7 
+ 51.9 
+ 33.3 
+ 33.4 
+ 14.6 
+ 31.8 
+ 37.4 
+ 30.8 
+ 50.7 
+ Why optimize the complete cycle? 
+Tab. 10 controls the initialization and RL
+videos while changing only the optimized mapping and reward.
+Both one-directional baselines require externally provided captions during RL: captioning-only GRPO
+uses them as reference targets for a language-based reward, whereas
+localization-only GRPO uses them as localization prompts.
+In contrast, CycleGRPO generates its intermediate descriptions from the annotated regions
+and requires neither reference captions nor an external language judge during
+RL. Captioning-only GRPO raises Charades R1@ 0.3/0.5/0.7 from 67.1/47.5/24.1% to
+69.9/54.2/28.6% and tIoU from 45.6% to 49.0%. On DOVE, it modestly raises
+TEC from 14.8% to 17.0%, but clip completeness remains low at 6.6%.
+Optimizing captioning against a reference-based judge thus improves localization as well, but yields only modest gains in distinguishing the target occurrence from same-query distractors.
+Localization-only GRPO provides a stronger localization signal: it reaches 51.2%
+Charades tIoU and 29.4% TEC on DOVE, against 45.6% and 14.8% for the
+initialization.
+However, it never directly optimizes whether a region-conditioned description can be localized back to its source interval.
+CycleGRPO explicitly optimizes this reconstruction and achieves the best joint result:
+51.9% Charades tIoU and 33.3% TEC on DOVE.
+Relative to localization-only GRPO, it raises R1@ 0.3/0.5/0.7 from 74.4/58.0/29.8% to 74.8/58.6/30.7%
+and tIoU from 51.2% to 51.9%.
+On DOVE, temporal coverage rises from 29.3% to 33.4%, clip completeness from 13.6% to 14.6%, and Order/State/Outcome coverage from 25.8/33.3/29.0% to 31.8/37.4/30.8%, while N/M decreases from
+52.9% to 50.7%.
+The complete cycle therefore achieves the best results on both temporal localization and target-specific captioning in this comparison.
+ Table 11: Training-objective ablation with Open-o3-Video-4B [ 39 ] 
+for spatio-temporal grounding on V-STaR [ 112 ] , video
+understanding on VideoMME [ 84 ] , WorldSense [ 115 ] ,
+and VideoMMMU [ 116 ] , and temporal grounding on
+TVGBench [ 108 ] . All values are percentages.
+ Model 
+ V-STaR 
+ VideoMME 
+ WorldSense 
+ VideoMMMU 
+ TVGBench 
+ mLGM 
+ Acc. 
+ Acc. 
+ Acc. 
+ mIoU 
+ Open-o3-Video [ 39 ] 
+ 47.2 
+ 61.0 
+ 39.3 
+ 58.0 
+ 21.1 
+ + Captioning-only GRPO 
+ 47.9 
+ 61.8 
+ 39.1 
+ 58.4 
+ 23.7 
+ + Localization-only GRPO 
+ 47.3 
+ 61.9 
+ 39.6 
+ 58.1 
+ 24.9 
+ + Ours 
+ 49.8 
+ 62.3 
+ 40.2 
+ 59.7 
+ 28.5 
+ Controlled objectives on Open-o3-Video. 
+Tab. 11 further isolates the RL objective in
+the spatio-temporal setting.
+Captioning-only and localization-only GRPO improve TVGBench mIoU from 21.1% to 23.7% and 24.9%, respectively, but their gains are less consistent across the five benchmarks.
+The complete cycle performs best on every reported aggregate: it reaches
+49.8% V-STaR mLGM, 62.3% VideoMME accuracy, 40.2% WorldSense accuracy,
+59.7% VideoMMMU accuracy, and 28.5% TVGBench mIoU.
+These controlled results show that optimizing either direction alone does not recover the joint gains from coupling captioning and localization.
+ Table 12: Spatio-temporal grounding and general video understanding results
+with Open-o3-Video [ 39 ] based on Qwen2.5-VL-7B.
+V-STaR [ 112 ] reports mAM and
+mLGM; VideoMME [ 84 ] and
+WorldSense [ 115 ] report overall accuracy. All values are
+percentages.
+ Model 
+ V-STaR 
+ VideoMME 
+ WorldSense 
+ mAM 
+ mLGM 
+ Overall 
+ Overall 
+ Open-o3-Video [ 39 ] 
+ 33.4 
+ 45.7 
+ 63.0 
+ 39.0 
+ + Ours 
+ 34.4 
+ 47.5 
+ 63.4 
+ 40.0 
+ Controlled Qwen2.5-VL-7B comparison. 
+Tab. 12 re-evaluates the Open-o3-Video
+initialization and CycleGRPO under the same protocol.
+CycleGRPO improves V-STaR mAM/mLGM from 33.4/45.7% to 34.4/47.5%, VideoMME Overall from 63.0% to 63.4%, and WorldSense Overall from 39.0% to 40.0%.
+The consistent gains show that the cycle is not tied to the 4B policy used in
+the main spatio-temporal experiments: it transfers to a Qwen2.5-VL-7B backbone
+and improves both joint grounding and general video understanding under a
+controlled evaluation protocol.
+ What generalizes, and what remains distribution-dependent? 
+Across the three region spaces, the results support joint improvements in understanding and localization: caption quality and mask localization improve in the spatial setting (Tab. 3 ); Charades localization and DOVE coverage improve in the temporal setting (Tab. 10 ); and V-STaR shows gains in joint temporal–spatial localization (Tab. 7 ).
+At the same time, the Qwen-initialized temporal-grounding results in Tab. 4 show that cycle consistency is not a substitute for broad coverage of target video domains.
+We therefore report results for each dataset and threshold to make the QVHighlights trade-offs explicit.
+ 5.3 Visual Analysis
+ Captioning across region spaces. 
+In Fig. 5 , the first row shows that the spatial benefit is not
+limited to identifying an object category.
+For the masked spoon, Qwen3-VL describes only the handle and omits the bowl, whereas Generalized CycleGRPO captures both components and their appearance.
+For the price tag, it also recovers visible color and text details more faithfully, rather than introducing unsupported readings.
+The second row of Fig. 5 presents temporal examples that require the caption to isolate the designated interval from the surrounding video.
+The baselines either remain generic or introduce events outside the target, such as an extended pool background, an exaggerated limb motion, overturned vehicles, or a drifting white van.
+Generalized CycleGRPO instead retains interval-specific evidence: the swimmer’s floral
+bikini and cap together with the induced ripples, and two dark vehicles only
+partially submerged in the floodwater.
+The last row of Fig. 5 presents spatio-temporal cases in which the description must track an entity across timestamps.
+Generalized CycleGRPO associates the target rider with the rocky forest trail and uneven terrain, and identifies the blue rally car, dusty hillside road, and roadside spectators without hallucinating cheering, a fence, or loss of traction.
+Together, these examples illustrate region-conditioned captioning across masks, intervals, and trajectories, with descriptions that retain target-specific visual evidence.
+Additional spatial, temporal, and spatio-temporal examples, including failure
+cases, are provided in Appendices 9 ,
+ 10 , and 11 .
+ 6 Limitations and Future Work
+ Limitations. 
+Generalized CycleGRPO uses region reconstruction as a verifiable proxy for
+caption quality. Reconstructability, however, does not guarantee that a
+caption is complete, fluent, or free of every unsupported detail. Our
+reference-free validity rules discourage obvious shortcuts, such as leaking
+coordinates or timestamps, but cannot enumerate all implicit shortcuts. The
+closed loop also assumes that the initial policy can perform both mappings
+reasonably well; when its localization is unreliable, the captioning side
+receives a noisy learning signal. This dependence helps explain why gains can
+vary across initializations and target domains. In addition, the nested
+ N\!\times\!K rollouts are more expensive than one-directional GRPO. Finally,
+DOVE evaluates visually distinguishable events within supplied temporal
+intervals. It does not yet cover audio-dependent evidence or require a model
+to discover event boundaries.
+ Future work. 
+Future work could complement geometric consistency with
+reference-free signals for semantic coverage, factuality, and uncertainty,
+while preserving the framework’s self-evaluating nature. Adaptive
+rollout allocation, trajectory reuse, and distillation could reduce the cost
+of the nested cycle as training scales. Beyond the region
+spaces studied here, the same principle may extend to audio-visual events,
+3D regions, and embodied trajectories. Extending DOVE to these settings and
+to joint captioning and boundary discovery would provide a broader test of
+whether cycle-trained descriptions remain discriminative in open-world
+videos.
+ 7 Conclusion
+Generalized CycleGRPO extends our ECCV CycleGRPO formulation from image masks
+to video intervals and spatio-temporal trajectories.
+A single policy learns captioning and localization through reciprocal rollouts, using reconstruction quality as supervision without reference captions or a separate critic.
+Across all three settings, the method improves its matched base policies.
+We also introduce DOVE, which tests whether a caption can distinguish one event from repeated
+same-query occurrences in a long video.
+Our results show that cycle reconstruction provides a practical, verifiable
+training signal whenever a model must both describe and localize visual
+content.
+ Contributors: 
+Xin Zhang 1 ,
+Haochen Wang 2 ,
+Beibei Lin 1 ,
+Zhaoxiang Zhang 2 ,
+Robby T. Tan 1 ,
+Jason Li 3 , and
+Dacheng Tao 3 ,
+ 1 National University of Singapore;
+ 2 University of Chinese Academy of Sciences;
+ 3 Nanyang Technological University. 
+

@@ -1,0 +1,753 @@
+Saber: An Efficient Sampling with Adaptive Acceleration and Backtracking Enhanced Remasking for Diffusion Language Model
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Motivation
+Insight 1: Difficulty Decreases over DLM Generation Process.
+Insight 2: Dynamic Context of DLM Generated Tokens.
+Summary.
+3 Related Work
+3.1 Diffusion Language Models for Code
+3.2 Efficient DLM Sampling Methods
+4 Saber
+4.1 Preliminaries
+4.2 Adaptive Acceleration via Dynamic Unmasking
+4.3 Backtracking-Enhanced Remasking Mechanism
+4.4 Overall
+5 Experiment Setup
+5.1 Datasets
+5.2 Baselines
+5.3 Metric
+5.4 Implementation Details
+6 Experimental Results
+6.1 Main Results
+6.2 Generalizability Across Different DLMs
+6.3 Ablation Study
+6.4 Qualitative Analysis
+7 Conclusion
+References
+A Case Study
+B Detailed Experimental Setup
+B.1 Datasets
+B.2 Baselines
+B.3 Metric
+B.4 Implementation Details
+C Limitation
+D More Related Works
+D.1 Code Generation
+D.2 Promising Architecture for Language Modeling
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.18165v1 [cs.AI] 20 Oct 2025
+Saber: An Efficient Sampling with Adaptive Acceleration and Backtracking Enhanced Remasking for Diffusion Language Model
+Yihong Dong
+Affiliation:  School of Computer Science, Peking University
+Affiliation:  Tongyi Lab, Alibaba Group
+Email: dongyh@stu.pku.edu.cn
+Zhaoyu Ma
+Affiliation:  School of Computer Science, Peking University
+Email: mazhaoyu@stu.pku.edu.cn
+Xue Jiang
+Affiliation:  School of Computer Science, Peking University
+Affiliation:  Tongyi Lab, Alibaba Group
+Email: lige@pku.edu.cn
+Zhiyuan Fan
+Affiliation:  School of Computer Science, Peking University
+Jiaru Qian
+Affiliation:  School of Computer Science, Peking University
+Yongmin Li
+Affiliation:  School of Computer Science, Peking University
+Jianha Xiao
+Affiliation:  School of Computer Science, Peking University
+Zhi Jin
+Affiliation:  School of Computer Science, Peking University
+Rongyu Cao
+Affiliation:  Tongyi Lab, Alibaba Group
+Binhua Li
+Affiliation:  Tongyi Lab, Alibaba Group
+Fei Huang
+Affiliation:  Tongyi Lab, Alibaba Group
+Yongbin Li
+Affiliation:  Tongyi Lab, Alibaba Group
+Ge Li
+Affiliation:  School of Computer Science, Peking University
+Abstract
+Diffusion language models (DLMs) are emerging as a powerful and promising alternative to the dominant autoregressive paradigm, offering inherent advantages in parallel generation and bidirectional context modeling. However, the performance of DLMs on code generation tasks, which have stronger structural constraints, is significantly hampered by the critical trade-off between inference speed and output quality. We observed that accelerating the code generation process by reducing the number of sampling steps usually leads to a catastrophic collapse in performance. In this paper, we introduce efficient Sampling with Adaptive acceleration and Backtracking Enhanced Remasking (i.e., Saber), a novel training-free sampling algorithm for DLMs to achieve better inference speed and output quality in code generation. Specifically, Saber is motivated by two key insights in the DLM generation process: 1) it can be adaptively accelerated as more of the code context is established; 2) it requires a backtracking mechanism to reverse the generated tokens.
+Extensive experiments on multiple mainstream code generation benchmarks show that Saber boosts Pass@1 accuracy by an average improvement of 1.9% over mainstream DLM sampling methods, meanwhile achieving an average 251.4% inference speedup. By leveraging the inherent advantages of DLMs, our work significantly narrows the performance gap with autoregressive models in code generation.11
+1
+Our code is available at https://github.com/zhaoyMa/Saber.
+1 Introduction
+Diffusion language models (DLMs) have emerged as a promising non-autoregressive alternative in natural language processing (NLP) fields, with inherent advantages in parallel decoding and bidirectional context modeling through iterative denoising processes (Austin et al., 2021a, Ou et al., 2025, Nie et al., 2025, Ye et al., 2025b). Unlike existing autoregressive models (ARMs) that generate text left-to-right (Radford & Narasimhan, 2018, Radford et al., 2019, Brown et al., 2020, Touvron et al., 2023), DLMs can simultaneously refine multiple token positions by progressively unmasking the generation sequence, enabling global planning and iterative refinement (Ye et al., 2025a, Gong et al., 2025). This paradigm is especially compelling for the structured generation tasks like code generation.
+Figure 1: Left: Illustration of DLM Sampling. Right: The trade-off of DLM Sampling between inference speed and output quality on HumanEval benchmark.
+Despite these potential advantages, DLMs still lag behind ARMs in practical performance, especially for code generation tasks. The fundamental bottleneck lies in the crucial speed-quality trade-off. As shown in Figure 1, in code generation tasks, the mainstream DLM sampling strategy can lead to a sharp drop in Pass@1 accuracy (even exceeding 60%), once it increases parallelism to reduce the sampling steps, making the DLMs nearly unusable. This severe trade-off prevents DLMs from realizing their inherent parallel generation advantages in practice, as the computational savings from fewer steps are offset by a significant drop in quality.
+We argue that the root cause of this severe trade-off stems from two fundamental challenges inherent to the standard DLM sampling process: 1) This process exhibits non-uniform difficulty. The complexity of correctly predicting a token varies significantly across the task, generation context, and token position. Therefore, static acceleration strategies per step (such as using a fixed token number or confidence threshold) are suboptimal. They are often overly conservative in simple stages, sacrificing speed, while being overly aggressive in complex stages, significantly degrading quality.
+2) This process can easily be susceptible to error propagation. Unlike ARMs, which only decide what the next token is, DLMs must decide both where and what token to generate. An incorrect choice made early in the process, when the contextual information is sparse, becomes permanently ”locked in” and cannot be revised. This initial error corrupts the context of all subsequent steps, leading to a cascade of failures from which the model cannot recover.
+In this paper, we propose Saber, namely efficient Sampling with Adaptive acceleration and Backtracking Enhanced Remasking, a novel training-free sampling algorithm designed to address these two fundamental challenges. Specifically, Saber is built on two key strategies: 1) To address non-uniform difficulty, Saber dynamically adjusts the number of tokens generated in parallel at each step, proceeding cautiously in early, context-poor stages and accelerating as more context is established. 2) To counter error accumulation, Saber introduces a lightweight backtracking mechanism. It allows the model to reverse tokens that are identified as likely errors based on newly available context, enabling a self-correction process that improves final output quality. By introducing these two strategies, Saber achieves substantial speedups while enhancing generation quality.
+To evaluate the superiority and generalizability of Saber, we conduct extensive experiments on multiple mainstream code generation benchmarks. We have the findings from the following main aspects: 1) Saber achieves the state-of-the-art performance for DLM sampling in code generation, boosting Pass@1 accuracy by an average improvement of 1.9% over mainstream DLM sampling methods while achieving an average inference speedup of 251.4%.
+2) We demonstrate that Saber is a model-agnostic training-free sampling method, which shows effectiveness on various DLMs with consistent performance gains. 3) Through a comprehensive ablation study and variants experiments, we validate that both adaptive acceleration and backtracking-enhanced remasking are integral to Saber’s success. As a result, Saber effectively mitigates the speed-quality trade-off, significantly narrowing the performance gap between DLMs and ARMs for code generation.
+Figure 2: Motivation Example. Left: (a) Average confidence per step of DLM sampling. RightL (b) An example of the confidence drop for incorrect tokens of DLM sampling, where gray token means the token generated in the future step.
+2 Motivation
+Saber is motivated by two key insights from detailed analyses of the DLM sampling process, as shown in Figure 2.
+Insight 1: Difficulty Decreases over DLM Generation Process.
+The task of generating a masked token is not uniformly difficult throughout the DLM Generation process. In the initial steps, the context is sparse, consisting mostly of ‘[MASK]’ tokens and the initial prompt. In this low-information setting, DLMs are highly uncertain and challenging to generate tokens. However, as more tokens are generated in subsequent steps, the contextual information available to DLMs increases substantially. This richer context progressively reduces DLMs’ uncertainty and simplifies the generation of remaining tokens.
+As shown in Figure 2(a), the DLMs’ average prediction confidence steadily increases as more of the sequence is generated. This observation strongly motivates the need for an adaptive acceleration strategy. An idea DLM sampler should be cautious when the context is limited and become progressively more aggressive as DLMs’ confidence grows. This allows for a more principled approach to acceleration that maximizes speed without prematurely committing to low-confidence tokens.
+Insight 2: Dynamic Context of DLM Generated Tokens.
+A significant difference between DLMs and ARMs is the context of generated tokens. In ARMs, the prefix context for any generated token is fixed. However, in DLMs, the context of generated tokens evolves as ‘[MASK]’ tokens are filled in. Therefore, the DLM’s predicted confidence of generated tokens can dramatically change as new information becomes available. For example, a token might be predicted with high confidence based on sparse local context, only to be revealed as a likely error once a more complete global context is established, as depicted in Figure 2(b).
+However, traditional DLM sampling methods are irreversible, i.e., once a token is unmasked, the decision is final and cannot be reversed. This makes them highly susceptible to error propagation, where an overconfident early error corrupts the context for all subsequent steps, leading to a cascade of failures. This issue is a primary driver of the ”catastrophic collapse” when attempting parallel decoding, which highlights the necessity of a backtracking remasking mechanism. By allowing DLMs to revise their own predictions, we can mitigate the risk of early error propagation and enable more robust and aggressive parallel generation.
+Summary.
+These two insights reveal a fundamental limitation of current samplers: their static and irreversible design fails to account for the dynamic nature of both generation difficulty and contextual certainty during the DLM sampling process. Therefore, in this paper, we argue that an effective DLM sampler must address these limitations by both adapting its generation speed to the evolving context and being able to revise its own past decisions to mitigate error propagation.
+3 Related Work
+In this section, we outline the two most relevant directions and associated papers of this work.
+3.1 Diffusion Language Models for Code
+The current landscape of language models is dominated by the autoregressive paradigm (Radford & Narasimhan, 2018, Brown et al., 2020, Touvron et al., 2023, Dubey et al., 2024, Guo et al., 2025). However, their strict left-to-right and token-by-token generation process creates a major bottleneck for inference efficiency and inherently limits parallelism (Li et al., 2025). Therefore, a growing body of research for DLMs has emerged (Li et al., 2022a, Austin et al., 2021a, He et al., 2022), which operate through parallel generation and bidirectional context modeling to address the aforementioned constraints. Recently, large-scale DLMs, such as Dream (Ye et al., 2025b), DiffuLLaMA (Gong et al., 2024), and LLaDA (Nie et al., 2025) have demonstrated performance comparable to similar-scale ARMs, making them a highly promising alternative.
+The inherent capabilities of DLMs in global planning and iterative optimization make them naturally suited for code generation (Gong et al., 2025, Li et al., 2025). Therefore, the application of DLMs to this domain has become a significant focus of research (DeepMind, 2025, Gong et al., 2025, Xie et al., 2025, Khanna et al., 2025). However, these works mainly focus on the training process of DLM, while Saber is a training-free DLM sampling method and is orthogonal to them.
+3.2 Efficient DLM Sampling Methods
+The efficiency of DLMs stems from their ability to generate multiple tokens in parallel (Luxembourg et al., 2025, Yu et al., 2025, Hong et al., 2025, Huang et al., 2025). Some work accelerates this process by setting a fixed threshold, such as Fast-dLLM (Wu et al., 2025), WINO (Hong et al., 2025), and EB-Sampler (Ben-Hamu et al., 2025).
+However, attempting to unmask multiple tokens in each step degrades the final output quality (Li et al., 2025, Zhang et al., 2025, Wu et al., 2025). Moreover, ReMDM (Wang et al., 2025) proposes a phased sampler that can remask the generated tokens during one of the generation phases. However, the aforementioned methods do not perform well on code generation tasks.
+To the best of our knowledge, we are the first to combine adaptive acceleration and backtracking enhanced remasking to achieve improvement for both inference speed and output quality in DLM sampling.
+4 Saber
+In this section, we first provide the preliminaries for DLM sampling (§​4.1\lx@sectionsign~\ref{Preliminaries}), and then detailly introduce the two key components of Saber: Adaptive Acceleration via Dynamic Unmasking (§​4.2\lx@sectionsign~\ref{AADU}) and Backtracking-Enhanced Remasking Mechanism (§​4.3\lx@sectionsign~\ref{BERM}).
+Finally, we provide the overview of Saber (§​4.4\lx@sectionsign~\ref{overallSaber}) in DLM sampling, which is also illustrated in Figure 3.
+4.1 Preliminaries
+Let a token sequence of length LL be denoted by x=(x1,…,xL)x=(x_{1},\dots,x_{L}), where each token xix_{i} belongs to a vocabulary 𝒱\mathcal{V}. In the diffusion process, we use a special token [MASK]. At any denoising step tt, the sequence xtx_{t} consists of a set of unmasked tokens at indices 𝒰t\mathcal{U}_{t} and a set of masked tokens at indices ℳt\mathcal{M}_{t}. The DLM pθp_{\theta}, parameterized by θ\theta, takes the partially masked sequence xtx_{t} as input and outputs a probability distribution over the vocabulary for each masked position i∈ℳti\in\mathcal{M}_{t}. We define the model’s confidence in its top prediction for a masked token ii as cic_{i}:
+ci:=maxv∈𝒱⁡pθ​(xi=v∣xt),c_{i}:=\max_{v\in\mathcal{V}}p_{\theta}(x_{i}=v\mid x_{t}),
+(1)
+where the mainstream DLM sampling method is to greedily unmask the single token with the highest confidence at each step. Saber improves upon this by the following two key components.
+Figure 3: An Overview of Saber in DLM sampling, which consists of two key components, i.e., Adaptive Acceleration via Dynamic Unmasking (AADU) and Backtracking-Enhanced Remasking Mechanism (BERM), during each iterative sampling process.
+4.2 Adaptive Acceleration via Dynamic Unmasking
+The first component of Saber aims to accelerate inference by unmasking multiple tokens in parallel. Motivated by our observation that the model’s prediction difficulty is non-uniform, we introduce a dynamic and adaptive threshold τt\tau_{t} to determine which tokens to unmask. This threshold is calculated as the average confidence of all previously unmasked tokens:
+τt={1|𝒰t−1|​∑j∈𝒰t−1cjunmaskif ​t>0,cm​a​xotherwise,\tau_{t}=\begin{cases}\frac{1}{|\mathcal{U}_{t-1}|}\sum_{j\in\mathcal{U}_{t-1}}c_{j}^{\text{unmask}}&\text{if }t>0,\\
+c_{max}&\text{otherwise,}\end{cases}
+(2)
+where cjunmaskc_{j}^{\text{unmask}} is the confidence score of token jj at the step it was unmasked, and we initialize τ0\tau_{0} to cm​a​xc_{max} for the initial step.
+This dynamic threshold naturally encourages a cautious-to-aggressive decoding trajectory. In early steps, when the context is sparse and average confidence is low, τt\tau_{t} is low, allowing only the most certain tokens to be unmasked. As more high-confidence tokens are generated, τt\tau_{t} rises, permitting more aggressive parallel unmasking in later, more context-rich stages. Using the threshold τt\tau_{t}, we identify a set of candidate tokens to be drafted, 𝒟t\mathcal{D}_{t}, which includes all masked tokens whose current confidence exceeds τt\tau_{t}:
+𝒟t={i∈ℳt−1∣ci≥τt},\mathcal{D}_{t}=\{i\in\mathcal{M}_{t-1}\mid c_{i}\geq\tau_{t}\},
+(3)
+where the tokens are provisionally unmasked with their most likely prediction.
+Algorithm 1  Pseudocode of Saber in each step.
+1:
+Input: Sequence xt−1x_{t-1}, DLM pθp_{\theta}, unmasked indices 𝒰t−1\mathcal{U}_{t-1}, unmasked confidences cunmaskc^{\text{unmask}}
+2:
+Output: Updated sequence xtx_{t}
+3:
+// S1: Adaptive Acceleration
+4:
+Compute confidences cic_{i} for all i∈ℳt−1i\in\mathcal{M}_{t-1} using pθ(⋅∣xt−1)p_{\theta}(\cdot\mid x_{t-1}).
+5:
+if t>0t>0 then
+6:
+τt←1|𝒰t−1|​∑j∈𝒰t−1cjunmask\tau_{t}\leftarrow\frac{1}{|\mathcal{U}_{t-1}|}\sum_{j\in\mathcal{U}_{t-1}}c_{j}^{\text{unmask}}.
+7:
+else
+8:
+τt←cm​a​x\tau_{t}\leftarrow c_{max}.
+9:
+end if
+10:
+𝒟t←{i∈ℳt−1∣ci>τt}\mathcal{D}_{t}\leftarrow\{i\in\mathcal{M}_{t-1}\mid c_{i}>\tau_{t}\}.
+11:
+Create candidate sequence xt′x_{t}^{\prime} by unmasking tokens in 𝒟t\mathcal{D}_{t}.
+12:
+// S2: Backtracking-Enhanced Remasking
+13:
+μt←max⁡(1,⌊|𝒟t|/μ⌋)\mu_{t}\leftarrow\max(1,\lfloor|\mathcal{D}_{t}|/\mu\rfloor).
+14:
+Re-evaluate confidences cjtc_{j}^{t} for all j∈𝒰t−1j\in\mathcal{U}_{t-1} using the new context pθ(⋅∣xt′)p_{\theta}(\cdot\mid x_{t}^{\prime}).
+15:
+Initialize an empty set for confidence drops Δ\Delta.
+16:
+for each token j∈𝒰t−1j\in\mathcal{U}_{t-1} do
+17:
+Δj←cjt−1−cjt\Delta_{j}\leftarrow c_{j}^{t-1}-c_{j}^{t}. ⊳\triangleright Calculate drop
+18:
+Add (j,Δj)(j,\Delta_{j}) to Δ\Delta.
+19:
+end for
+20:
+ℛt←\mathcal{R}_{t}\leftarrow indices of the μt\mu_{t} tokens from Δ\Delta with the largest drop.
+21:
+Create final sequence xtx_{t} by re-masking tokens at indices ℛt\mathcal{R}_{t} in xt′x_{t}^{\prime}.
+22:
+Update cunmaskc^{\text{unmask}} by removing confidences for j∈ℛtj\in\mathcal{R}_{t} and adding confidences for i∈𝒟ti\in\mathcal{D}_{t}.
+23:
+𝒰t←(𝒰t−1∪𝒟t)∖ℛt\mathcal{U}_{t}\leftarrow(\mathcal{U}_{t-1}\cup\mathcal{D}_{t})\setminus\mathcal{R}_{t}.
+24:
+return xtx_{t}, 𝒰t\mathcal{U}_{t}, cunmaskc^{\text{unmask}}.
+4.3 Backtracking-Enhanced Remasking Mechanism
+The second component of Saber introduces a lightweight backtracking mechanism to correct for potential errors made during the aggressive generation in the previous stage. This step is crucial for preventing the error propagation that causes performance collapse.
+Unlike methods that may use a fixed threshold, Saber’s backtracking mechanism first determines the number of tokens to revise, μt\mu_{t}, based on how aggressively it generated tokens in the current step:
+μt=max⁡(1,⌊|𝒟t|/μ⌋),\mu_{t}=\max(1,\lfloor|{\mathcal{D}}_{t}|/\mu\rfloor),
+(4)
+where |𝒟t||{\mathcal{D}}_{t}| is the size of the newly unmasked set and μ\mu is a hyperparameter. This ensures that we revise at least one token while limiting the revision to a small fraction of the current step’s output to maintain speed.
+Then, we identify which tokens to revise by focusing on those previously unmasked tokens that are most inconsistent with the newly available context. For each existing token j∈𝒰t−1j\in{\mathcal{U}}_{t-1}, we compute its confidence drop, Δj\Delta_{j}, defined as the difference between the unmasked confidences of (t-1)-th time cjt−1c_{j}^{t-1}, and its re-evaluated confidence at the current step cjtc_{j}^{t}:
+Δj=cjt−1−cjt,\Delta_{j}=c_{j}^{t-1}-c_{j}^{t},
+(5)
+where a large Δj\Delta_{j} indicates that the model’s belief in its earlier prediction has significantly weakened. We then identify the set of tokens to be reversed, ℛt⊆𝒰t−1{\mathcal{R}}_{t}\subseteq{\mathcal{U}}_{t-1}, by selecting the μt\mu_{t} tokens that exhibit the largest confidence drop. These are the tokens the model has the most ”regret” about, and they are reverted to [MASK] to be reconsidered in future steps with a richer context.
+4.4 Overall
+At the conclusion of each step tt, the final set of unmasked tokens is updated by integrating the outcomes of both the adaptive acceleration and backtracking stages:
+𝒰t=(𝒰t−1∪𝒟t)∖ℛt.\mathcal{U}_{t}=(\mathcal{U}_{t-1}\cup\mathcal{D}_{t})\setminus\mathcal{R}_{t}.
+(6)
+By combining adaptive acceleration with an efficient backtracking mechanism, Saber can decode aggressively while pruning the most probable errors, thus achieving a superior balance between inference speed and generation quality. The pseudocode of Saber in each DLM sampling step is summarized in Algorithm 1.
+5 Experiment Setup
+In this section, we will provide the setups of our experiments below. The detailed description of experiment setups can be found in Appendix B.
+5.1 Datasets
+We conduct extensive experiments on five mainstream code generation datasets to demonstrate the effectiveness of Saber, including HumanEval (Chen et al., 2021b): a widely used code generation benchmark consists of 176 Python functions tasks from docstrings, MBPP (Austin et al., 2021b): includs a range of Python programming tasks designed to test basic algorithmic reasoning, HumanEval-ET and MBPP-ET (Dong et al., 2023a): the extended versions of HumanEval and MBPP with 100+ additional test cases, and LiveCodeBench (Jain et al., 2024): a contamination-free benchmark (Dong et al., 2024b) that continuously collects new programming problems from contest platforms (LeetCode, AtCoder, Codeforces).
+5.2 Baselines
+We conducted a comprehensive evaluation of Saber against existing DLM sampling methods, consisting of: 1) Standard DLM Sampling (Default): In this mode, DLM generates responses by continuously decoding over a predetermined full output length, including confidence-based, entropy-based, and random-based methods. 2) Efficient DLM sampling Methods: Parallelism Increase (p), Semi-autoregressive (SAR) (Nie et al., 2025), WINO (Hong et al., 2025), Fast-dLLM (Wu et al., 2025), and ReMDM (Wang et al., 2025) are recently proposed efficient DLM sampling methods.
+5.3 Metric
+Our evaluation employs Pass@1 as the primary performance metric, which is calculated as the percentage of problems for which the generated code passes all test cases with a single attempt. The formula is as follows:
+Pass​@​1=1|N|​∑i=1|N|𝕀⁡(Passed​(Generationi))\text{Pass}@1=\frac{1}{|N|}\sum_{i=1}^{|N|}\mathbb{I}(\text{Passed}(\text{Generation}_{i}))
+where |N||N| is the total number of problems, and the indicator function 𝕀⁡(⋅)\mathbb{I}(\cdot) is 1 if the single generation for a given problem passes all its test cases, and 0 otherwise.
+In addition to performance, we also measure the Step (i.e., average generation steps per sample) and Time (i.e., total generation time).
+5.4 Implementation Details
+In this paper, all experiments are conducted on an A6000 GPU (48GB). We employed the LLaDA-8B-Instruct (Nie et al., 2025) as the base model. In the fixed-length scenario, we set the generation length to 256 tokens. For the semi-autoregressive, the block length was configured to 128. All other efficient DLM sampling methods followed the same configuration as their original paper. The default temperature for all baselines is set at 0. To mitigate the instability of the model sampling, we report the average results of five trials in the experiments.
+6 Experimental Results
+In this section, we present a comprehensive empirical evaluation of Saber. We first compare its performance and efficiency against a wide range of existing DLM sampling methods on multiple code generation benchmarks (§6.1). Next, we demonstrate the model-agnostic nature of Saber by applying it to various state-of-the-art DLMs (§6.2). Finally, we conduct a detailed ablation study to dissect the individual contributions of our proposed components (§6.3) and provide the disscussion of Saber (§6.4).
+6.1 Main Results
+Table 1 presents the main results of our comparison on the HumanEval, MBPP, HumanEval-ET and MBPP-ET, and LiveCodeBench datasets. The findings clearly demonstrate that Saber sets a new state-of-the-art for DLM sampling in code generation, achieving the highest Pass@1 scores across all benchmarks while simultaneously delivering substantial improvements in inference speed.
+Table 1: Comparison of Saber and the existing DLM sampling methods, where the bold indicates the best performance in this column while the underline indicates the second-best performance, and ET means the Pass@1 performance on its extended test case version.
+Method
+HumanEval
+MBPP
+LiveCodeBench
+Pass@1 ↑\uparrow
+ET ↑\uparrow
+Step ↓\downarrow
+Time ↓\downarrow
+Pass@1 ↑\uparrow
+ET ↑\uparrow
+Step ↓\downarrow
+Time ↓\downarrow
+Pass@1 ↑\uparrow
+Step ↓\downarrow
+Time ↓\downarrow
+Standard DLM Sampling
+Random
+0.1463
+0.128
+256
+1:29:40
+0.2295
+0.1826
+256
+2:51:28
+0
+256
+4:09:49
+Entropy
+0.4146
+0.3415
+256
+1:30:22
+0.4215
+0.3114
+256
+2:56:42
+0.04
+256
+4:30:31
+Confidence
+0.4329
+0.3579
+256
+2:11:52
+0.4286
+0.3138
+256
+3:12:08
+0.0975
+256
+5:59:07
+Efficient DLM Sampling
+Confidence (p=2)
+0.3476
+0.2866
+128
+51:13
+0.4075
+0.2857
+128
+1:35:13
+0.0925
+128
+2:57:16
+SAR (p=2)
+0.3598
+0.2927
+128
+1:33:00
+0.4005
+0.2786
+128
+1:36:05
+0.095
+128
+2:57:17
+Fast-dLLM
+0.3963
+0.3415
+256
+59:40
+0.4403
+0.3044
+256
+2:30:24
+0.0875
+256
+2:33:29
+Fast-dLLM (+parallel)
+0.3963
+0.3354
+96.24
+25:25
+0.3934
+0.2763
+73.13
+43:18
+0.023
+96.28
+43:22
+ReMDM
+0.2073
+18.29
+128
+1:26:50
+0.3162
+0.2248
+128
+1:28:51
+0.033
+128
+2:50:23
+WINO
+0.4024
+0.3171
+100.12
+57:10
+0.4309
+0.3138
+88.49
+1:44:51
+0.0925
+77.43
+2:40:30
+Saber
+0.4512
+0.3598
+118.92
+41:55
+0.4473
+0.3302
+110.96
+1:33:33
+0.11
+122.47
+2:33:17
+Saber Effectively Mitigates the Speed-Quality Trade-off. Compared to standard DLM sampling strategies (Random, Entropy, Confidence), Saber delivers vastly superior performance. For instance, on HumanEval, Saber improves the Pass@1 score from 43.3% (Confidence) to 45.1% while reducing the inference time by nearly 70% (from over 2 hours to just 41 minutes). This result directly refutes the notion that acceleration must come at the cost of quality. While naively increasing parallelism by generating more tokens per step (e.g., Confidence p=2) leads to a significant performance drop (from 43.3% to 34.8%), Saber’s intelligent sampling process successfully avoids this collapse.
+Saber Outperforms SOTA Efficient DLM Sampling Methods. When compared to recent efficient sampling methods, Saber establishes a new Pareto frontier for the speed-quality trade-off. WINO, a strong baseline, achieves impressive speed by minimizing decoding steps. However, Saber is even faster in terms of time on most benchmarks, indicating a more efficient computation per step. For example, on HumanEval, Saber is over 25% faster than WINO while also achieving a ∼\sim5% higher Pass@1 score. This superior performance is attributed to our lightweight backtracking mechanism, which provides a safety net for the adaptive acceleration, allowing for aggressive parallelization without sacrificing accuracy. Similarly, while Fast-dLLM shows competitive results on MBPP, Saber matches its quality while being nearly 40% faster. On LiveCodeBench, a benchmark designed to be robust against contamination, Saber also achieves the state-of-the-art performance, demonstrating its strong generalization capabilities.
+Overall, these results confirm that Saber successfully breaks the existing speed-quality compromise in DLM sampling for code generation.
+6.2 Generalizability Across Different DLMs
+To validate the “model-agnostic” claim of Saber, we applied it to three distinct open-source DLMs: LLaDA-8B-Instruct (Nie et al., 2025), Dream-v0-Instruct-7B (Ye et al., 2025b), and DiffuCoder-7B-cpGRPO (Gong et al., 2025). We compare the performance of Saber against the standard confidence-based sampler for each DLM on the HumanEval benchmark.
+Table 2: Effectiveness of Saber compared to the mainstream DLM sampling method based on different DLMs.
+Pass@1 ↑\uparrow
+Steps ↓\downarrow
+Time ↓\downarrow
+LLaDA-8B-Instruct
+Confidence (p=1)
+0.4329
+256
+2:11:52
+Saber
+0.4512
+118.92
+41:55
+Dream-v0-Instruct-7B
+Confidence (p=1)
+0.2805
+256
+1:16:15
+Saber
+0.2927
+156.68
+46:39
+DiffuCoder-7B-cpGRPO
+Confidence (p=1)
+0.5671
+256
+1:12:47
+Saber
+0.5732
+140.34
+37:08
+As shown in Table 2, Saber consistently improves both accuracy and efficiency across all tested models, demonstrating that its benefits are not tied to a specific architecture or training process. For each model, Saber delivers a higher Pass@1 score while simultaneously reducing the number of decoding steps and the total inference time. For instance, on Dream-v0-Instruct-7B, Saber boosts Pass@1 and cuts inference time by nearly 40%. On DiffuCoder-7B, a model specifically optimized for code, Saber further enhances its performance while halving the inference time. This robust performance across different model families validates that Saber addresses fundamental challenges in the DLM sampling process itself, making it a truly general, plug-and-play enhancement.
+6.3 Ablation Study
+To understand the individual contributions of the two core components of Saber, i.e., Adaptive Acceleration via Dynamic Unmasking and Backtracking-Enhanced Remasking Mechanism, we conducted a thorough ablation study on the HumanEval dataset. The results are presented in Table 3.
+Adaptive Acceleration is the Primary Driver of Efficiency. When we remove Adaptive Acceleration via Dynamic Unmasking, the sampler relies only on the backtracking mechanism. While the Pass@1 score remains high at 44.5%, the number of decoding steps reverts to the baseline 256, and the inference time increases dramatically to over 90 minutes. This clearly demonstrates that the adaptive acceleration component is the main source of Saber’s speedup.
+Table 3: Ablation study of different components in Saber.
+Method
+Pass@1 ↑\uparrow
+Steps ↓\downarrow
+Time ↓\downarrow
+Ours
+0.4512
+118.92
+41:55
+w/o Adaptive Accelerate
+0.4451
+256
+1:32:33
+w/o Backtracking Remask
+0.3523
+65.67
+28:30
+w/o both
+0.3476
+128
+51:13
+Δ\Delta confidence from init.
+0.4207
+121.46
+42:32
+Backtracking is Essential for High Quality. Conversely, when we remove Backtracking-Enhanced Remasking Mechanism, the sampler becomes a purely aggressive adaptive accelerator. This variant is extremely fast, finishing in under 30 minutes with only 65.67 steps on average. However, this speed comes at a steep price: the Pass@1 score drops significantly from 45.1% to 35.23%. This result highlights that aggressive parallelization without a corrective mechanism is prone to error propagation, confirming that the backtracking stage is crucial for maintaining high generation quality.
+Synergy of Components. Saber achieves the best of both worlds, i.e., a high Pass@1 score of 45.1% and a fast inference time of ∼\sim41 minutes, which also shows that the two components are synergistic. The adaptive acceleration allows for aggressive sampling, while the backtracking mechanism provides the necessary safety net to prune errors, enabling a combination of speed and accuracy that neither component can achieve alone. We also validated our dynamic thresholding strategy by replacing it with the average threshold of init generation of tokens (Δ\Delta confidence from init.). This resulted in a lower Pass@1 score of 42.1%, confirming the benefits of an adaptive approach that adjusts to the evolving context.
+6.4 Qualitative Analysis
+Figure 4 presents a side-by-side comparison of code generated by the default LLaDA sampler and Saber on two problems from the HumanEval benchmark. These examples highlight how Saber’s ability to self-correct prevents the kind of logical failures that plague standard irreversible samplers.
+In Problem 1, the default sampler produces code, which is syntactically plausible but logically nonsensical. In contrast, Saber generates the correct, standard nested loop structure. This suggests that the iterative refinement process, guided by backtracking, helps enforce logical and structural coherence, which is paramount in code generation. In Problem 2, the default sampler fundamentally misunderstands the problem’s constraints. Saber, however, correctly decomposes the problem into its core logical components: checking the array’s length and verifying the occurrence count of the maximum element. This ability to correctly construct multi-step, constraint-based logic is a direct benefit of the backtracking mechanism. We hypothesize that the model may initially draft a simpler, incorrect solution, which is then revised in subsequent steps as the evolving context makes the error more apparent, leading to the robust final code.
+7 Conclusion
+In this paper, we addressed the critical speed-quality trade-off for DLM sampling in code generation and introduced Saber, a novel, training-free sampling algorithm for DLM sampling that combines both adaptive acceleration and backtracking-enhanced remasking mechanism. Our extensive experiments indicate that Saber substantially outperforms existing DLM sampling methods, significantly narrowing the performance gap with autoregressive models in code generation.
+References
+Austin et al. (2021a)
+Jacob Austin, Daniel D. Johnson, Jonathan Ho, Daniel Tarlow, and Rianne van den Berg.
+Structured denoising diffusion models in discrete state-spaces.
+ArXiv, abs/2107.03006, 2021a.
+URL https://api.semanticscholar.org/CorpusID:235755106.
+Austin et al. (2021b)
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al.
+Program synthesis with large language models.
+arXiv preprint arXiv:2108.07732, 2021b.
+Ben-Hamu et al. (2025)
+Heli Ben-Hamu, Itai Gat, Daniel Severo, Niklas Nolte, and Brian Karrer.
+Accelerated sampling from masked diffusion models via entropy bounded unmasking.
+ArXiv, abs/2505.24857, 2025.
+URL https://api.semanticscholar.org/CorpusID:279070422.
+Brown et al. (2020)
+Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, T. J. Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeff Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Ma teusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei.
+Language models are few-shot learners.
+ArXiv, abs/2005.14165, 2020.
+URL https://api.semanticscholar.org/CorpusID:218971783.
+Chen et al. (2021a)
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Pondé de Oliveira Pinto, Jared Kaplan, Harrison Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings, Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain, William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Joshua Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech Zaremba.
+Evaluating large language models trained on code.
+CoRR, 2021a.
+URL https://arxiv.org/abs/2107.03374.
+Chen et al. (2021b)
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al.
+Evaluating large language models trained on code.
+arXiv preprint arXiv:2107.03374, 2021b.
+DeepMind (2025)
+DeepMind.
+Gemini diffusion, 2025.
+URL https://deepmind.google/models/gemini-diffusion/.
+Dong et al. (2023a)
+Yihong Dong, Jiazheng Ding, Xue Jiang, Ge Li, Zhuo Li, and Zhi Jin.
+Codescore: Evaluating code generation by learning code execution.
+CoRR, abs/2301.09043, 2023a.
+Dong et al. (2023b)
+Yihong Dong, Ge Li, and Zhi Jin.
+CODEP: grammatical seq2seq model for general-purpose code generation.
+In ISSTA, pp.  188–198. ACM, 2023b.
+Dong et al. (2024a)
+Yihong Dong, Xue Jiang, Zhi Jin, and Ge Li.
+Self-collaboration code generation via chatgpt.
+ACM Trans. Softw. Eng. Methodol., 33(7):189:1–189:38, 2024a.
+Dong et al. (2024b)
+Yihong Dong, Xue Jiang, Huanyu Liu, Zhi Jin, Bin Gu, Mengfei Yang, and Ge Li.
+Generalization or memorization: Data contamination and trustworthy evaluation for large language models.
+In ACL (Findings), pp.  12039–12050. Association for Computational Linguistics, 2024b.
+Dong et al. (2024c)
+Yihong Dong, Ge Li, Yongding Tao, Xue Jiang, Kechi Zhang, Jia Li, Jing Su, Jun Zhang, and Jingjing Xu.
+FAN: fourier analysis networks.
+CoRR, abs/2410.02675, 2024c.
+Dong et al. (2025a)
+Yihong Dong, Xue Jiang, Jiaru Qian, Tian Wang, Kechi Zhang, Zhi Jin, and Ge Li.
+A survey on code generation with llm-based agents.
+CoRR, abs/2508.00083, 2025a.
+Dong et al. (2025b)
+Yihong Dong, Xue Jiang, Yongding Tao, Huanyu Liu, Kechi Zhang, Lili Mou, Rongyu Cao, Yingwei Ma, Jue Chen, Binhua Li, Zhi Jin, Fei Huang, Yongbin Li, and Ge Li.
+RL-PLUS: countering capability boundary collapse of llms in reinforcement learning with hybrid-policy optimization.
+CoRR, abs/2508.00222, 2025b.
+Dong et al. (2025c)
+Yihong Dong, Ge Li, Xue Jiang, Yongding Tao, Kechi Zhang, Hao Zhu, Huanyu Liu, Jiazheng Ding, Jia Li, Jinliang Deng, and Hong Mei.
+Fanformer: Improving large language models through effective periodicity modeling.
+CoRR, abs/2502.21309, 2025c.
+Dong et al. (2025d)
+Yihong Dong, Yuchen Liu, Xue Jiang, Bin Gu, Zhi Jin, and Ge Li.
+Rethinking repetition problems of llms in code generation.
+In ACL (1), pp.  965–985. Association for Computational Linguistics, 2025d.
+Dubey et al. (2024)
+Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Amy Yang, Angela Fan, Anirudh Goyal, Anthony S. Hartshorn, Aobo Yang, and et al.
+The llama 3 herd of models.
+ArXiv, abs/2407.21783, 2024.
+URL https://api.semanticscholar.org/CorpusID:271571434.
+Gong et al. (2024)
+Shansan Gong, Shivam Agarwal, Yizhe Zhang, Jiacheng Ye, Lin Zheng, Mukai Li, Chenxin An, Peilin Zhao, Wei Bi, Jiawei Han, Hao Peng, and Lingpeng Kong.
+Scaling diffusion language models via adaptation from autoregressive models.
+ArXiv, abs/2410.17891, 2024.
+URL https://api.semanticscholar.org/CorpusID:273532521.
+Gong et al. (2025)
+Shansan Gong, Ruixiang Zhang, Huangjie Zheng, Jiatao Gu, Navdeep Jaitly, Lingpeng Kong, and Yizhe Zhang.
+Diffucoder: Understanding and improving masked diffusion models for code generation.
+ArXiv, abs/2506.20639, 2025.
+URL https://api.semanticscholar.org/CorpusID:280012040.
+Gu & Dao (2023)
+Albert Gu and Tri Dao.
+Mamba: Linear-time sequence modeling with selective state spaces.
+arXiv preprint arXiv:2312.00752, 2023.
+Gu et al. (2021)
+Albert Gu, Karan Goel, and Christopher Ré.
+Efficiently modeling long sequences with structured state spaces.
+In International Conference on Learning Representations, 2021.
+Gulwani et al. (2017)
+Sumit Gulwani, Oleksandr Polozov, Rishabh Singh, et al.
+Program synthesis.
+Foundations and Trends® in Programming Languages, 4(1-2):1–119, 2017.
+Guo et al. (2022)
+Daya Guo, Shuai Lu, Nan Duan, Yanlin Wang, Ming Zhou, and Jian Yin.
+Unixcoder: Unified cross-modal pre-training for code representation.
+In ACL (1), pp.  7212–7225. Association for Computational Linguistics, 2022.
+Guo et al. (2024)
+Daya Guo, Qihao Zhu, Dejian Yang, Zhenda Xie, Kai Dong, Wentao Zhang, Guanting Chen, Xiao Bi, Y. Wu, Y. K. Li, Fuli Luo, Yingfei Xiong, and Wenfeng Liang.
+Deepseek-coder: When the large language model meets programming - the rise of code intelligence.
+CoRR, abs/2401.14196, 2024.
+Guo et al. (2025)
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning.
+arXiv preprint arXiv:2501.12948, 2025.
+He et al. (2022)
+Zhengfu He, Tianxiang Sun, Kuan Wang, Xuanjing Huang, and Xipeng Qiu.
+Diffusionbert: Improving generative masked language models with diffusion models.
+In Annual Meeting of the Association for Computational Linguistics, 2022.
+URL https://api.semanticscholar.org/CorpusID:254044147.
+Hong et al. (2025)
+Feng Hong, Geng Yu, Yushi Ye, Haicheng Huang, Huangjie Zheng, Ya Zhang, Yanfeng Wang, and Jiangchao Yao.
+Wide-in, narrow-out: Revokable decoding for efficient and effective dllms.
+arXiv preprint arXiv:2507.18578, 2025.
+Huang et al. (2025)
+Pengcheng Huang, Shuhao Liu, Zhenghao Liu, Yukun Yan, Shuo Wang, Zulong Chen, and Tong Xiao.
+Pc-sampler: Position-aware calibration of decoding bias in masked diffusion models.
+arXiv preprint arXiv:2508.13021, 2025.
+Jain et al. (2024)
+Naman Jain, King Han, Alex Gu, Wen-Ding Li, Fanjia Yan, Tianjun Zhang, Sida Wang, Armando Solar-Lezama, Koushik Sen, and Ion Stoica.
+Livecodebench: Holistic and contamination free evaluation of large language models for code.
+arXiv preprint arXiv:2403.07974, 2024.
+Jiang et al. (2024a)
+Xue Jiang, Yihong Dong, Zhi Jin, and Ge Li.
+SEED: customize large language models with sample-efficient adaptation for code generation.
+CoRR, abs/2403.00046, 2024a.
+Jiang et al. (2024b)
+Xue Jiang, Yihong Dong, Lecheng Wang, Zheng Fang, Qiwei Shang, Ge Li, Zhi Jin, and Wenpin Jiao.
+Self-planning code generation with large language models.
+ACM Trans. Softw. Eng. Methodol., 33(7):182:1–182:30, 2024b.
+Jiang et al. (2025)
+Xue Jiang, Yihong Dong, Yongding Tao, Huanyu Liu, Zhi Jin, and Ge Li.
+ROCODE: integrating backtracking mechanism and program analysis in large language models for code generation.
+In ICSE, pp.  334–346. IEEE, 2025.
+Khanna et al. (2025)
+Samar Khanna, Siddhant Kharbanda, Shufan Li, Harshit Varma, Eric Wang, Sawyer Birnbaum, Ziyang Luo, Yanis Miraoui, Akash Palrecha, Stefano Ermon, Aditya Grover, and Volodymyr Kuleshov.
+Mercury: Ultra-fast language models based on diffusion.
+ArXiv, abs/2506.17298, 2025.
+URL https://api.semanticscholar.org/CorpusID:280000358.
+Li et al. (2023)
+Raymond Li, Loubna Ben Allal, Yangtian Zi, Niklas Muennighoff, Denis Kocetkov, Chenghao Mou, Marc Marone, Christopher Akiki, Jia Li, Jenny Chim, Qian Liu, Evgenii Zheltonozhskii, Terry Yue Zhuo, Thomas Wang, Olivier Dehaene, Mishig Davaadorj, Joel Lamy-Poirier, João Monteiro, Oleh Shliazhko, Nicolas Gontier, Nicholas Meade, Armel Zebaze, Ming-Ho Yee, Logesh Kumar Umapathi, Jian Zhu, Benjamin Lipkin, Muhtasham Oblokulov, Zhiruo Wang, Rudra Murthy V, Jason Stillerman, Siva Sankalp Patel, Dmitry Abulkhanov, Marco Zocca, Manan Dey, Zhihan Zhang, Nour Moustafa-Fahmy, Urvashi Bhattacharyya, Wenhao Yu, Swayam Singh, Sasha Luccioni, Paulo Villegas, Maxim Kunakov, Fedor Zhdanov, Manuel Romero, Tony Lee, Nadav Timor, Jennifer Ding, Claire Schlesinger, Hailey Schoelkopf, Jan Ebert, Tri Dao, Mayank Mishra, Alex Gu, Jennifer Robinson, Carolyn Jane Anderson, Brendan Dolan-Gavitt, Danish Contractor, Siva Reddy, Daniel Fried, Dzmitry Bahdanau, Yacine Jernite, Carlos Muñoz Ferrandis, Sean Hughes, Thomas
+Wolf, Arjun Guha, Leandro von Werra, and Harm de Vries.
+Starcoder: may the source be with you!
+CoRR, abs/2305.06161, 2023.
+Li et al. (2025)
+Tianyi Li, Mingda Chen, Bowei Guo, and Zhiqiang Shen.
+A survey on diffusion language models.
+ArXiv, abs/2508.10875, 2025.
+URL https://api.semanticscholar.org/CorpusID:280650266.
+Li et al. (2022a)
+Xiang Lisa Li, John Thickstun, Ishaan Gulrajani, Percy Liang, and Tatsunori Hashimoto.
+Diffusion-lm improves controllable text generation.
+ArXiv, abs/2205.14217, 2022a.
+URL https://api.semanticscholar.org/CorpusID:249192356.
+Li et al. (2022b)
+Yujia Li, David Choi, Junyoung Chung, Nate Kushman, Julian Schrittwieser, Rémi Leblond, Tom Eccles, James Keeling, Felix Gimeno, Agustin Dal Lago, et al.
+Competition-level code generation with alphacode.
+Science, 378(6624):1092–1097, 2022b.
+Ling et al. (2016)
+Wang Ling, Phil Blunsom, Edward Grefenstette, Karl Moritz Hermann, Tomás Kociský, Fumin Wang, and Andrew W. Senior.
+Latent predictor networks for code generation.
+In ACL (1). The Association for Computer Linguistics, 2016.
+Luxembourg et al. (2025)
+Omer Luxembourg, Haim H. Permuter, and Eliya Nachmani.
+Plan for speed - dilated scheduling for masked diffusion language models.
+ArXiv, abs/2506.19037, 2025.
+URL https://api.semanticscholar.org/CorpusID:280046263.
+Nie et al. (2025)
+Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li.
+Large language diffusion models.
+ArXiv, abs/2502.09992, 2025.
+URL https://api.semanticscholar.org/CorpusID:276395038.
+Ou et al. (2025)
+Jingyang Ou, Shen Nie, Kaiwen Xue, Fengqi Zhu, Jiacheng Sun, Zhenguo Li, and Chongxuan Li.
+Your absorbing discrete diffusion secretly models the conditional distributions of clean data.
+In The Thirteenth International Conference on Learning Representations, 2025.
+URL https://openreview.net/forum?id=sMyXP8Tanm.
+Radford & Narasimhan (2018)
+Alec Radford and Karthik Narasimhan.
+Improving language understanding by generative pre-training.
+2018.
+URL https://api.semanticscholar.org/CorpusID:49313245.
+Radford et al. (2019)
+Alec Radford, Jeff Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever.
+Language models are unsupervised multitask learners.
+2019.
+URL https://api.semanticscholar.org/CorpusID:160025533.
+Raychev et al. (2014)
+Veselin Raychev, Martin T. Vechev, and Eran Yahav.
+Code completion with statistical language models.
+In PLDI, pp.  419–428. ACM, 2014.
+Rozière et al. (2023)
+Baptiste Rozière, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiaoqing Ellen Tan, Yossi Adi, Jingyu Liu, Tal Remez, Jérémy Rapin, Artyom Kozhevnikov, Ivan Evtimov, Joanna Bitton, Manish Bhatt, Cristian Canton-Ferrer, Aaron Grattafiori, Wenhan Xiong, Alexandre Défossez, Jade Copet, Faisal Azhar, Hugo Touvron, Louis Martin, Nicolas Usunier, Thomas Scialom, and Gabriel Synnaeve.
+Code llama: Open foundation models for code.
+CoRR, abs/2308.12950, 2023.
+Touvron et al. (2023)
+Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, Aur’elien Rodriguez, Armand Joulin, Edouard Grave, and Guillaume Lample.
+Llama: Open and efficient foundation language models.
+ArXiv, abs/2302.13971, 2023.
+URL https://api.semanticscholar.org/CorpusID:257219404.
+Vaswani et al. (2017)
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin.
+Attention is all you need.
+In Advances in neural information processing systems, pp.  5998–6008, 2017.
+Wang et al. (2025)
+Guanghan Wang, Yair Schiff, Subham Sekhar Sahoo, and Volodymyr Kuleshov.
+Remasking discrete diffusion models with inference-time scaling.
+ArXiv, abs/2503.00307, 2025.
+URL https://api.semanticscholar.org/CorpusID:276742581.
+Wang et al. (2021)
+Yue Wang, Weishi Wang, Shafiq R. Joty, and teven C. H. Hoi.
+Codet5: Identifier-aware unified pre-trained encoder-decoder models for code understanding and generation.
+In EMNLP (1), pp.  8696–8708, 2021.
+Wu et al. (2025)
+Chengyue Wu, Hao Zhang, Shuchen Xue, Zhijian Liu, Shizhe Diao, Ligeng Zhu, Ping Luo, Song Han, and Enze Xie.
+Fast-dllm: Training-free acceleration of diffusion llm by enabling kv cache and parallel decoding.
+ArXiv, abs/2505.22618, 2025.
+URL https://api.semanticscholar.org/CorpusID:278959508.
+Xie et al. (2025)
+Zhihui Xie, Jiacheng Ye, Lin Zheng, Jiahui Gao, Jingwei Dong, Zirui Wu, Xueliang Zhao, Shansan Gong, Xin Jiang, Zhenguo Li, and Lingpeng Kong.
+Dream-coder 7b: An open diffusion language model for code.
+2025.
+URL https://api.semanticscholar.org/CorpusID:281080906.
+Ye et al. (2025a)
+Jiacheng Ye, Jiahui Gao, Shansan Gong, Lin Zheng, Xin Jiang, Zhenguo Li, and Lingpeng Kong.
+Beyond autoregression: Discrete diffusion for complex reasoning and planning.
+In The Thirteenth International Conference on Learning Representations, 2025a.
+URL https://openreview.net/forum?id=NRYgUzSPZz.
+Ye et al. (2025b)
+Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong.
+Dream 7b: Diffusion large language models.
+ArXiv, abs/2508.15487, 2025b.
+URL https://api.semanticscholar.org/CorpusID:280700361.
+Yu et al. (2025)
+Runpeng Yu, Xinyin Ma, and Xinchao Wang.
+Dimple: Discrete diffusion multimodal large language model with parallel decoding.
+ArXiv, abs/2505.16990, 2025.
+URL https://api.semanticscholar.org/CorpusID:278789456.
+Zhang et al. (2025)
+Lingzhe Zhang, Liancheng Fang, Chiming Duan, Minghua He, Leyi Pan, Pei Xiao, Shiyu Huang, Yunpeng Zhai, Xuming Hu, Philip S. Yu, and Aiwei Liu.
+A survey on parallel text generation: From parallel decoding to diffusion language models.
+ArXiv, abs/2508.08712, 2025.
+URL https://api.semanticscholar.org/CorpusID:280634995.
+Appendix A Case Study
+Figure 4: Case Study.
+Appendix B Detailed Experimental Setup
+B.1 Datasets
+We conduct experiments on five code generation datasets to demonstrate the effectiveness of Saber, including HumanEval (Chen et al., 2021b), MBPP (Austin et al., 2021b), HumanEval-ET and MBPP-ET (Dong et al., 2023a), and LiveCodeBench (Jain et al., 2024). For all datasets, tasks are presented in a zero-shot format.
+•
+HumanEval is a widely used benchmark for evaluating LLMs’ ability to generate correct Python functions from docstrings.
+•
+MBPP (Mostly Basic Python Problems) consists of small-to-medium Python programming tasks designed to test basic algorithmic reasoning.
+•
+LiveCodeBench is a contamination-free benchmark that continuously collects new programming problems from contest platforms (LeetCode, AtCoder, Codeforces) and focuses beyond simple code generation to broader code reasoning capabilities.
+•
+HumanEval-ET and MBPP-ET are extended versions of the original HumanEval and MBPP. They augment each task with over 100 additional test cases and include edge-case tests, which enhances the reliability of the evaluation.
+B.2 Baselines
+We conducted a comprehensive evaluation of Saber against established baseline decoding methods for DLMs. The results confirm that Saber achieves superior performance, effectively validating its effectiveness.
+•
+Fixed-length (Default): In this mode, DLM generates responses by continuously decoding over a predetermined full output length. The decoding methods include confidence-based, entropy-based, and random approaches.
+•
+Semi-autoregressive (SAR): This strategy decodes in blocks from left to right. It thus combines aspects of autoregressive order with diffusion’s simultaneous updates. Within each block, tokens are decoded based on confidence.
+•
+Parallelism Increase (p), WINO (Hong et al., 2025), Fast-dLLM (Wu et al., 2025), and ReMDM (Wang et al., 2025) are recently proposed efficient DLM sampling methods.
+B.3 Metric
+Our evaluation employs pass@1 as the primary metric. It is calculated as the percentage of problems for which the generated code passes all test cases with a single attempt. The formula is as follows:
+pass​@​1=1|N|​∑i=1|N|𝕀⁡(Passed​(Generationi))\text{pass}@1=\frac{1}{|N|}\sum_{i=1}^{|N|}\mathbb{I}(\text{Passed}(\text{Generation}_{i}))
+where |N||N| is the total number of problems, and the indicator function 𝕀⁡(⋅)\mathbb{I}(\cdot) is 1 if the single generation for a given problem passes all its test cases, and 0 otherwise.
+In addition to pass@1, we also measure the average decoding steps per sample and the total generation time of each method.
+B.4 Implementation Details
+In this paper, all experiments were conducted on a workstation equipped with 8 NVIDIA A6000 GPUs (48GB each) and 1TB RAM. We employed the LLaDA-8B-Instruct (Nie et al., 2025) as the base model. In the fixed-length scenario, we set the generation length to 256 tokens. For the semi-autoregressive, the block length was configured to 128. All other efficient DLM sampling methods followed the same configuration as their original paper. The default temperature for all baselines is set at 0. To mitigate the instability of the model sampling, we report the average results of five trials in the experiments.
+Appendix C Limitation
+Our work has the following two main limitations. First, Saber demands slightly more computational resources than direct sampling in a DLM sampling step. However, compared to the enormous computational overhead of DLMs and our smaller total number of steps, it is marginal and acceptable. Second, we only explore the choice of hyperparameters within reasonable ranges, considering the trade-off between performance and speed, in the right of Figure 1. There is still room for further adjustment of hyperparameters.
+Appendix D More Related Works
+D.1 Code Generation
+Since the advent of artificial intelligence in the 1950s, code generation has been considered the Holy Grail of computer science research (Gulwani et al., 2017). With the rapid expansion of codebases and the increasing capacity of deep learning models, using deep learning for program generation has shown great potential and practicality (Raychev et al., 2014, Ling et al., 2016, Dong et al., 2024a, Dong et al., 2025a, Jiang et al., 2024b, Jiang et al., 2025). In recent years, the rise of pre-training techniques has brought new momentum to the field of code generation. For example, studies like CodeT5 (Wang et al., 2021) and UniXcoder (Guo et al., 2022) pre-train models for code generation tasks. With the continual increase in model parameters, researchers have discovered emergent phenomena in LLMs, leading to new breakthroughs . Against this backdrop, LLMs such as AlphaCode (Li et al., 2022b), Codex (Chen et al., 2021a), Starcoder (Li et al., 2023), CodeLlama (Rozière et al., 2023), and DeepSeek Coder (Guo et al., 2024) have emerged.
+D.2 Promising Architecture for Language Modeling
+While the Transformer has been the foundational architecture for modern language models (Vaswani et al., 2017), the field is experiencing a significant shift with the rise of new paradigms (Dong et al., 2024c, Dong et al., 2025b). Mamba (Gu & Dao, 2023), leveraging a selective State Space Model, presents a compelling alternative that scales linearly with sequence length, effectively overcoming the quadratic complexity bottleneck of Transformers in long-context scenarios (Gu et al., 2021). Simultaneously, a fundamentally different approach is being explored with Diffusion models, which move away from traditional autoregressive generation (Li et al., 2022a). By learning to denoise a sequence from a random state, these models offer a unique framework for highly controllable and iterative text synthesis, signaling a potential new direction for generative AI.
+9, 30, 16GorM15
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

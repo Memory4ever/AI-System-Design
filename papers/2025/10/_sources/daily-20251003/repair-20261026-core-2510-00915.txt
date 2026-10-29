@@ -1,0 +1,3057 @@
+
+
+
+Reinforcement Learning with Verifiable yet Noisy Rewards under Imperfect Verifiers
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+    
+      Report GitHub Issue
+      ×
+    
+
+    
+      Title:
+      
+
+      
+Content selection saved. Describe the issue below:
+
+
+      Description:
+      
+    
+
+    
+      Submit without GitHub
+      Submit in GitHub
+    
+  
+
+    
+    arXiv is now an independent nonprofit!
+    Learn more
+    ×
+  
+
+
+  
+    
+      Back to arXiv
+    
+  
+  
+  
+    Why HTML?
+    
+      
+        
+      
+      Report Issue
+    
+    
+      
+        
+        
+      
+      Back to Abstract
+    
+    
+    
+      
+        
+      
+      Download PDF
+    
+    
+      
+        
+        
+      
+    
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+          
+          
+        
+      
+      
+        
+          
+          
+        
+      
+      
+        
+          
+          
+        
+      
+    
+  
+
+
+
+
+Abstract
+
+
+1 Introduction
+
+
+2 Related Works
+
+
+Reasoning with LLMs.
+
+
+RLVR and verifier reliability.
+
+
+Learning with noisy labels.
+
+
+
+
+3 Problem Setup and Algorithms
+
+
+3.1 Noisy Policy Gradient with Backward Correction (PGBC)
+
+
+3.2 Noisy Policy Gradient with Forward Correction (PGFC)
+
+
+
+
+4 Experiments
+
+
+4.1 Experimental Setup
+
+
+4.2 Synthetic Noise
+
+
+4.3 Real-World Noise
+
+
+4.4 Robustness to Noise Mis-Specification
+
+
+4.5 Case Studies
+
+
+
+
+5 Conclusion
+
+
+References
+
+
+A More Experimental Results
+
+
+B Implementation Details
+
+
+Notation (shared).
+
+
+Practical notes.
+
+
+
+
+C Proofs and Derivations
+
+
+C.1 Proof of Proposition 
+
+
+C.2 Proof of Theorem 
+
+
+C.3 Proof of Proposition 
+
+
+Part 1: Proof of \mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]=0𝔼⁡[wR~∣R∗=1]=0\mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]=0
+
+
+Part 2: Proof of \mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]=-(1-\rho_{0}-\rho_{1})𝔼⁡[wR~∣R∗=0]=−(1−ρ0−ρ1)\mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]=-(1-\rho_{0}-\rho_{1})
+
+
+
+
+C.4 Proof of Theorem 
+
+
+
+
+D Prompt Templates and Training/Evaluation Details
+
+
+D.1 Prompt Templates
+
+
+Training (generation) prompt.
+
+
+Evaluation (validation/test) prompt.
+
+
+Verifier I/O.
+
+
+
+
+D.2 Data Preprocessing
+
+
+D.3 Training Configuration
+
+
+Model/backbone.
+
+
+
+
+D.4 Datasets
+
+
+Training.
+
+
+Evaluation.
+
+
+
+
+
+
+E False Positive (FP) and False Negative (FN) Examples
+
+
+FP
+
+
+FN
+
+
+
+
+
+
+
+  
+    License: arXiv.org perpetual non-exclusive license
+  
+  
+arXiv:2510.00915v1 [cs.LG] 01 Oct 2025
+
+
+
+Reinforcement Learning with Verifiable yet Noisy Rewards under Imperfect Verifiers
+
+
+
+
+
+
+
+Xin-Qiang Cai1  Wei Wang2,1
+
+Feng Liu3  Tongliang liu4  Gang Niu1  Masashi Sugiyama1,2
+
+
+ 
+1RIKEN AIP, Tokyo, Japan  2The University of Tokyo, Tokyo, Japan 
+3The University of Melbourne, Melbourne, Australia 
+4The University of Sydney, Sydney, Australia
+
+
+Abstract
+    
+
+Reinforcement Learning with Verifiable Rewards (RLVR) trains policies against automated verifiers to avoid costly human labeling. To reduce vulnerability to verifier hacking, many RLVR systems collapse rewards to binary \{0,1\}{0,1}\{0,1\} during training. This choice carries a cost: it introduces false negatives (rejecting correct answers, FNs) and false positives (accepting incorrect ones, FPs). For instance, a rule-based checker may mark the correct fraction \tfrac{12}{36}1236\tfrac{12}{36} as wrong when compared against the canonical \tfrac{1}{3}13\tfrac{1}{3} due to brittle parsing/equivalence rules (FN), while a large language model (LLM) judges can be gamed by superficial cues or even a single adversarial token, yielding inflated correctness for wrong solutions (FP). We formalize verifier unreliability by modeling the verifier as a stochastic reward channel with asymmetric noise rates. From this abstraction, we derive two correction algorithms for verifier errors. The first is a backward correction that de-biases the observed binary reward to recover an unbiased estimator of the clean policy gradient. The second is a forward correction that reweights score-function terms so that the expected update direction aligns with the clean gradient; notably, it requires only the FN rate. We implement both as lightweight hooks in a group relative policy optimization (GRPO)-based RLVR pipeline and evaluate them on math-reasoning models and benchmarks. Across models and datasets, both corrections improve over uncorrected training; the forward variant converges faster and remains stable under heavier noise. Finally, we show a practical appeal mechanism in which a lightweight LLM verifier estimates the FN rate online by rechecking rule-based negatives, obtaining outperformance compared with other state-of-the-art contenders.
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1 Introduction
+
+
+
+
+Reinforcement Learning with Verifiable Rewards (RLVR) offers a scalable paradigm for improving the reasoning abilities of Large Language Models (LLMs) by replacing expensive human annotation with automated feedback (Wen et al., 2025). In this problem, a policy is trained using rewards from a verifier that automatically checks the correctness of a model’s output (Shao et al., 2024b). The efficacy of this approach, however, heavily depends on the verifier’s reliability. Emerging evidence reveals that verifiers are systematically fallible in two critical and opposing ways: they can accept incorrect solutions (false positives; FPs) or reject correct ones (false negatives; FNs) (Xu et al., 2025; Zhao et al., 2025).
+
+
+
+
+FPs have been widely documented as a vulnerability of LLM-based verifiers. Recent studies showed that LLM judges can be swayed by superficial cues—e.g., popular specialized verifiers, such as GPT-4o, give 35 % - 66.8% FP rate when the answer starts with Let’s solve this problem step by step (Zhao et al., 2025; Shi et al., 2025; Shi et al., 2024a; Chen et al., 2024). Conversely, FNs are common with rule-based verifiers. These checkers, while highly precise, are often brittle; they may reject valid solutions that are formatted differently, expressed in an algebraically equivalent form, or embedded in explanatory text (Hugging Face, 2025). A recent analysis of a math-RL dataset found that over 38% of responses flagged as incorrect by a rule-based system were in fact correct, a gap that a lightweight LLM verifier could partially close (Xu et al., 2025). Both FPs and FNs materially degrade RLVR training: FNs deprive the agent of informative gradients and slow convergence, while FPs reward hackable patterns and inflate returns during policy optimization (Xu et al., 2025; Huang et al., 2025; Yan et al., 2025).
+
+
+
+Figure 1: Verifier-noise flow in RLVR. An AI agent produces candidate solutions that are scored by automated verifiers. While verifiers would yield false negatives (\frac{12}{36}1236\frac{12}{36} vs. \frac{1}{3}13\frac{1}{3}, reaching 38\%38%38\% rates (Xu et al., 2025)) and false positives (mislead by “Let’s solve it step by step…”, reaching 35\%-68\%35%−68%35\%-68\% rates (Zhao et al., 2025)), confusing the agent; applying our backward/forward corrections restores correct learning signals.
+
+
+
+Motivated by this asymmetry, we address these challenges by explicitly treating verifier errors as noise in the reward signal. We model the verifier as a stochastic reward channel that corrupts the true, latent reward with verifier-conditional probabilities—\rho_{0}ρ0\rho_{0} and \rho_{1}ρ1\rho_{1}. Building on this formulation, we derive two estimators to counteract this noise. Our first method, noisy Policy Gradient with Backward Correction (PGBC), inverts the noise process to compute an unbiased estimator of the true reward, which can be used as a drop-in replacement in any advantage-estimation in RL. Our second method, noisy Policy Gradient with Forward Correction (PGFC), directly reweights the terms of the policy gradient to ensure its expected direction aligns with the clean gradient. This approach requires only an estimate of \rho_{1}ρ1\rho_{1} to achieve directional correctness, making it suitable for the often harder-to-estimate FP rate (Xu et al., 2025). The pipeline is illustrated in Figure 1.
+
+
+
+
+We integrate these corrections into a group relative policy optimization (GRPO)-based RLVR pipeline and demonstrate their effectiveness on competitive math reasoning benchmarks (Shao et al., 2024a). Both methods consistently outperform uncorrected training and achieve performance nearly equivalent to that of noise-free scenarios, with the forward correction offering the fastest and most stable convergence. We also propose a practical online estimation scheme for \rho_{1}ρ1\rho_{1}: a querying mechanism where a low-cost LLM verifier like TinyV (Xu et al., 2025) re-evaluates outputs rejected by a primary rule-based checker. This hybrid approach provides a reliable estimate of the FN rate with minimal computational overhead, recovering near-oracle performance. Our contributions are: (i) a formal verifier-channel model for RLVR that captures the prevalent FP and FN errors; (ii) backward and forward corrections derived from RL principles to calibrate policy learning; and (iii) a practical implementation for online noise estimation that makes these corrections viable in real-world systems.
+
+
+
+
+
+
+
+2 Related Works
+
+
+
+
+Reasoning with LLMs.
+
+
+
+A large body of work improves LLM reasoning through prompting and search at inference time. Chain-of-Thought (CoT) prompting elicits step-by-step rationales and boosts arithmetic and commonsense reasoning (Wei et al., 2022), while self-consistency aggregates diverse reasoning paths to further improve robustness (Wang et al., 2022). Decomposition-based prompting, such as Least-to-Most, solves complex problems via ordered sub-problems (Zhou et al., 2022); search-based schemes like Tree-of-Thoughts explicitly explore and evaluate alternative reasoning branches (Yao et al., 2023). Orthogonally, training-time verifier signals can be used to re-rank candidate solutions, as in Cobbe et al. (2021). Our work is complementary: rather than proposing a new inference-time strategy or re-ranking scheme, we address how to perform policy optimization when the reward itself—supplied by a verifier—is noisy.
+
+
+
+
+
+
+RLVR and verifier reliability.
+
+
+
+Recent math-RL pipelines combine on-policy RL (e.g., GRPO) with programmatic or LLM-based verifiers to yield verifiable rewards (Mroueh, 2025). However, LLM-as-a-judge is prone to systematic biases, including position bias and prompt-based attacks, producing false positives (accepting incorrect solutions) (Gu et al., 2024b; Thakur et al., 2024; Shi et al., 2024b; Goyal et al., 2025; Zeng et al., 2024). Conversely, exact-match or brittle parsers in rule-based checkers can miss algebraic equivalences and text-formatted answers, leading to widespread false negatives (Li et al., 2025a; Li et al., 2025b). A recent study shows that over 38% of model responses labeled incorrect by a rule-based pipeline were in fact correct, and introduces a lightweight verifier (TinyV) that recovers many such cases with minimal overhead (Xu et al., 2025). Prior efforts therefore improve the verifier (e.g., better judges or appeals) or evaluation suites; in contrast, we treat verifier errors as verifier-conditional noise and directly correct the policy gradient so that learning remains aligned with the clean objective even when the verifier is imperfect.
+
+
+
+
+
+
+Learning with noisy labels.
+
+
+
+While our method is derived from RL principles, it shares intuition with the literature on learning with label noise. Wang et al. (2020) model reward corruption via a class-conditional confusion matrix and derive an unbiased surrogate reward for Q-learning algorithms to solve control tasks. In supervised learning, a central thread is to make empirical-risk minimization robust either by correcting the loss given a noise-transition model or by avoiding or down-weighting suspected noisy examples (Song et al., 2020; Li et al., 2021). The former includes the unbiased-risk estimators of Natarajan et al. (2013) and the now-standard loss corrections of Patrini et al. (2017). A second family avoids the noise explicitly by relying on the “small-loss first” memorization dynamics of deep nets: curriculum/mentor methods (MentorNet) learn a weighting network that feeds cleaner samples to the student, and Co-teaching trains two peers that exchange their selected small-loss examples; semi-supervised hybrids such as DivideMix split data into clean/noisy partitions via mixture modeling and co-train with consistency regularization (Jiang et al., 2018; Han et al., 2018; Li et al., 2020). Unlike these approaches, we target the policy gradient estimator in RLVR: we instantiate both backward and forward corrections inside the policy gradient estimator to stabilize and align RL under verifier noise.
+
+
+
+
+
+
+
+
+
+3 Problem Setup and Algorithms
+
+
+
+
+We consider the standard RLVR setting where a stochastic policy \pi_{\theta}πθ\pi_{\theta} generates a response yyy for a given prompt xxx. The goal is to maximize an objective based on the true, or clean, reward R^{*}(x,y)\in\{0,1\}R∗​(x,y)∈{0,1}R^{*}(x,y)\in\{0,1\}, which indicates whether the response yyy is genuinely correct. This objective is typically regularized by a KL-divergence term to a reference policy \pi_{\mathrm{ref}}πref\pi_{\mathrm{ref}} to maintain stability:
+
+
+
+
+
+
+\max_{\theta}\;J_{\beta}(\theta)\;=\;\mathbb{E}_{x}\,\mathbb{E}_{y\sim\pi_{\theta}(\cdot\mid x)}\!\Big[\,R^{*}(x,y)\;-\;\beta\,\mathrm{KL}(\pi_{\theta}(\cdot\mid x)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid x))\,\Big],maxθJβ(θ)=𝔼x𝔼y∼πθ(⋅∣x)[R∗(x,y)−βKL(πθ(⋅∣x)∥πref(⋅∣x))],\max_{\theta}\;J_{\beta}(\theta)\;=\;\mathbb{E}_{x}\,\mathbb{E}_{y\sim\pi_{\theta}(\cdot\mid x)}\!\Big[\,R^{*}(x,y)\;-\;\beta\,\mathrm{KL}(\pi_{\theta}(\cdot\mid x)\,\|\,\pi_{\mathrm{ref}}(\cdot\mid x))\,\Big],
+
+
+
+
+in which \mathrm{KL}KL\mathrm{KL} denotes the KL-divergence. The policy gradient with respect to the unregularized reward is given by the REINFORCE estimator, \nabla_{\theta}J(\theta)=\mathbb{E}[R^{*}(x,y)\,\sum_{t}G_{t}]∇θJ​(θ)=𝔼⁡[R∗​(x,y)​∑tGt]\nabla_{\theta}J(\theta)=\mathbb{E}[R^{*}(x,y)\,\sum_{t}G_{t}], where G_{t}=\nabla_{\!\theta}\log\pi_{\theta}(y_{t}\mid x,y_{<t})Gt=∇θ​log​πθ​(yt∣x,y<t)G_{t}=\nabla_{\!\theta}\log\pi_{\theta}(y_{t}\mid x,y_{<t}) is the score function for the token at step ttt. In the follows we will replace R(x,y)R⁡(x,y)R(x,y) with RRR for brevity.
+
+
+
+
+In practice, the clean reward R^{*}R∗R^{*} is unavailable. Instead, the agent receives a noisy reward \tilde{R}(x,y)\in\{0,1\}R~​(x,y)∈{0,1}\tilde{R}(x,y)\in\{0,1\} from an automated verifier. We model this verifier as a stochastic reward channel that flips the latent clean reward to an observed noisy one. This channel is characterized by asymmetric, verifier-conditional noise rates.
+
+
+
+Definition 1 (Verifier Reward Channel).
+
+
+The observed verifier reward \tilde{R}R~\tilde{R} is generated from the latent clean reward R^{*}R∗R^{*} according to the following conditional probabilities, which define:
+
+
+
+
+
+
+\displaystyle\mathbb{P}\bigl(\tilde{R}=1\mid R^{*}=0\bigr)ℙ⁡(R~=1∣R∗=0)\displaystyle\mathbb{P}\bigl(\tilde{R}=1\mid R^{*}=0\bigr)
+\displaystyle=\rho_{0},=ρ0,\displaystyle=\rho_{0},
+
+
+
+
+
+\displaystyle\mathbb{P}\bigl(\tilde{R}=0\mid R^{*}=1\bigr)ℙ⁡(R~=0∣R∗=1)\displaystyle\mathbb{P}\bigl(\tilde{R}=0\mid R^{*}=1\bigr)
+\displaystyle=\rho_{1},=ρ1,\displaystyle=\rho_{1},
+
+
+
+
+where \rho_{0},\rho_{1}\in[0,0.5)ρ0,ρ1∈[0,0.5)\rho_{0},\rho_{1}\in[0,0.5).
+
+
+
+
+
+Based on this noise model, we establish a linear relationship between the expected noisy reward and the clean reward, which is presented in Proposition 1.
+
+
+
+Proposition 1 (Connection between Corrupted Rewards and True Rewards).
+
+
+Under the Verifier Reward Channel model, the expectation of the noisy reward \tilde{R}R~\tilde{R} conditioned on the clean reward R^{*}R∗R^{*} is an affine transformation of R^{*}R∗R^{*}:
+
+
+
+
+
+
+\mathbb{E}[\tilde{R}\mid R^{*}]\;=\;(1-\rho_{0}-\rho_{1})\,R^{*}+\rho_{0}.𝔼⁡[R~∣R∗]=(1−ρ0−ρ1)​R∗+ρ0.\mathbb{E}[\tilde{R}\mid R^{*}]\;=\;(1-\rho_{0}-\rho_{1})\,R^{*}+\rho_{0}.
+
+
+
+
+
+
+
+The proof is provided in Appendix C.1. The central challenge of RLVR is that naively optimizing with the noisy reward \tilde{R}R~\tilde{R} leads to a biased policy gradient, causing the policy to learn from mistakes of the verifier. Our goal is to develop policy gradient estimators that use only the observable noisy reward \tilde{R}R~\tilde{R} but the expectation is either identical or parallel to the true policy gradient \nabla_{\theta}J(\theta)∇θJ​(θ)\nabla_{\theta}J(\theta). We integrate these estimators within REINFORCE-style policy gradient algorithms widely used for reasoning tasks that compute normalized advantages over a group of sampled trajectories (Shao et al., 2024b).
+
+
+
+
+
+3.1 Noisy Policy Gradient with Backward Correction (PGBC)
+
+
+
+
+Our first proposed approach aims to construct an unbiased estimator of the true reward R^{*}R∗R^{*} by “inverting” the noise process. Since the expected noisy reward \mathbb{E}[\tilde{R}\mid R^{*}]𝔼⁡[R~∣R∗]\mathbb{E}[\tilde{R}\mid R^{*}] is an affine transformation of the clean reward R^{*}R∗R^{*} in Proposition 1, we can solve for R^{*}R∗R^{*} to derive a corrected reward estimator, \widehat{R}R^\widehat{R}, that is unbiased in expectation.
+
+
+
+Theorem 1 (Unbiased Reward Estimator).
+
+
+Given the verifier channel with known noise rates \rho_{0}ρ0\rho_{0} and \rho_{1}ρ1\rho_{1} with \rho_{0},\rho_{1}\in[0,0.5)ρ0,ρ1∈[0,0.5)\rho_{0},\rho_{1}\in[0,0.5), the estimator
+
+
+
+
+
+
+\widehat{R}=\frac{\tilde{R}-\rho_{0}}{\,1-\rho_{0}-\rho_{1}\,}R^=R~−ρ0 1−ρ0−ρ1\widehat{R}=\frac{\tilde{R}-\rho_{0}}{\,1-\rho_{0}-\rho_{1}\,}
+
+
+
+
+is an unbiased estimator of the true reward R^{*}(x,y)R∗​(x,y)R^{*}(x,y), i.e., \mathbb{E}[\widehat{R}]=R^{*}𝔼⁡[R^]=R∗\mathbb{E}[\widehat{R}]=R^{*}.
+
+
+
+
+
+The proof is provided in Appendix C.2. Theorem 1 shows that, by replacing the noisy reward \tilde{R}R~\tilde{R} with \widehat{R}R^\widehat{R} in any standard policy gradient formulation, we obtain an unbiased estimate of the true policy gradient. The expected update direction is not merely aligned with the clean gradient; it is identical. This allows \widehat{R}R^\widehat{R} to serve as a drop-in replacement for the reward signal in complex RL algorithms like GRPO, seamlessly integrating with advantage estimation and other machinery. The details of the backward correction algorithm are summarized in Algorithm 1. After rolling out a set of trajectories and obtaining their rewards, we use the corrected rewards to compute the policy gradients for model update.
+
+
+
+Algorithm 1  Noisy Policy Gradient with Backward Correction (PGBC)
+
+
+              1:
+              
+              
+            Input: Initial policy \theta_{0}θ0\theta_{0}; learning rate \etaη\eta; batch size MMM; estimates of noise rates, (\hat{\rho}_{0},\hat{\rho}_{1})(ρ^0,ρ^1)(\hat{\rho}_{0},\hat{\rho}_{1}).
+
+
+
+              2:
+              
+              
+            loop
+
+
+              3:
+              
+              
+              Roll out MMM trajectories \{(x_{i},y_{i})\}_{i=1}^{M}{(xi,yi)}i=1M\{(x_{i},y_{i})\}_{i=1}^{M}, obtaining observed rewards \{\tilde{R}_{i}\}_{i=1}^{M}{R~i}i=1M\{\tilde{R}_{i}\}_{i=1}^{M}.
+
+
+
+              4:
+              
+              
+              For each trajectory iii, compute the unbiased reward estimate:
+
+
+
+
+
+
+\widehat{R}_{i}\leftarrow\frac{\tilde{R}_{i}-\hat{\rho}_{0}}{1-\hat{\rho}_{0}-\hat{\rho}_{1}}.R^i←R~i−ρ^01−ρ^0−ρ^1.\widehat{R}_{i}\leftarrow\frac{\tilde{R}_{i}-\hat{\rho}_{0}}{1-\hat{\rho}_{0}-\hat{\rho}_{1}}.
+
+
+
+
+
+              5:
+              
+              
+              Compute the policy gradient using the corrected rewards \{\widehat{R}_{i}\}_{i=1}^{M}{R^i}i=1M\{\widehat{R}_{i}\}_{i=1}^{M}.
+
+
+
+              6:
+              
+              
+              Update parameters: \theta\leftarrow\theta+\eta\,\Delta\thetaθ←θ+η​Δ​θ\theta\leftarrow\theta+\eta\,\Delta\theta.
+
+
+
+              7:
+              
+              
+            end loop
+
+
+
+
+
+
+
+
+3.2 Noisy Policy Gradient with Forward Correction (PGFC)
+
+
+
+
+While PGBC provides an elegant unbiased estimator, it faces two practical challenges. First, the denominator (1-\rho_{0}-\rho_{1})(1−ρ0−ρ1)(1-\rho_{0}-\rho_{1}) can be small if the total noise rate is high, leading to high variance in the reward estimate \widehat{R}R^\widehat{R} and potentially unstable training. Second, it requires accurate estimation of both the false positive rate \rho_{0}ρ0\rho_{0} and the false negative rate \rho_{1}ρ1\rho_{1}, which are usually difficult to obtain in practice. The PGFC approach is introduced to mitigate these issues.
+
+
+
+
+Instead of correcting the reward itself, this method directly modifies the policy gradient estimator to ensure its expectation is correctly aligned. The core idea is to reweight the score function G_{t}GtG_{t} under the ttt-th token based on the observed noisy reward \tilde{R}R~\tilde{R}. We define an update term h_{t}=w_{\tilde{R}}G_{t}ht=wR~​Gth_{t}=w_{\tilde{R}}G_{t} and choose the forward weights w_{0}w0w_{0} (for \tilde{R}=0R~=0\tilde{R}=0) and w_{1}w1w_{1} (for \tilde{R}=1R~=1\tilde{R}=1) such that the expected update \mathbb{E}[h_{t}]𝔼⁡[ht]\mathbb{E}[h_{t}] is parallel to the clean gradient \nabla_{\theta}J(\theta)∇θJ​(θ)\nabla_{\theta}J(\theta). The key insight is to choose the forward weights so that the conditional expectations given the true reward R^{*}R∗R^{*} have a specific structure.
+
+
+
+Proposition 2 (Conditional Expectation of Forward Weights).
+
+
+Let the forward weights be defined as w_{0}=\rho_{1}-1w0=ρ1−1w_{0}=\rho_{1}-1 and w_{1}=\rho_{1}w1=ρ1w_{1}=\rho_{1}. Under the Verifier Reward Channel model, the conditional expectations of the corresponding weight w_{\tilde{R}}wR~w_{\tilde{R}} given the true reward R^{*}R∗R^{*} are:
+
+
+
+1. 
+
+
+\mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]\;=\;0𝔼⁡[wR~∣R∗=1]= 0\mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]\;=\;0.
+
+
+
+
+2. 
+
+
+\mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]\;=\;-(1-\rho_{0}-\rho_{1})𝔼⁡[wR~∣R∗=0]=−(1−ρ0−ρ1)\mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]\;=\;-(1-\rho_{0}-\rho_{1}).
+
+
+
+
+
+
+
+
+The proof can be found in Appendix C.3. Proposition 2 reveals that, in expectation, the forward weights are chosen so that their conditional expectation vanishes when R^{*}=1R∗=1R^{*}=1, i.e., truly positive cases do not require correction. Consequently, the explicit contribution to the correction term arises from samples with R^{*}=0R∗=0R^{*}=0. This structure allows us to recover the correct gradient direction, as shown in the following theorem.
+
+
+
+Theorem 2 (Policy Gradient Correction with Only \rho_{1}ρ1\rho_{1}).
+
+
+Let the gradient-update term be \Delta\theta=\frac{1}{M}\sum w_{\tilde{R}}\,G_{t}Δ​θ=1M​∑wR~​Gt\Delta\theta=\frac{1}{M}\sum w_{\tilde{R}}\,G_{t}, where w_{0}=\rho_{1}-1w0=ρ1−1w_{0}=\rho_{1}-1 and w_{1}=\rho_{1}w1=ρ1w_{1}=\rho_{1}. Under the Verifier Reward Channel model, the expected update is parallel to the clean policy gradient:
+
+
+
+
+
+
+\mathbb{E}[\Delta\theta]\;=\;c\,\nabla_{\theta}J(\theta),𝔼⁡[Δ​θ]=c​∇θJ​(θ),\mathbb{E}[\Delta\theta]\;=\;c\,\nabla_{\theta}J(\theta),
+
+
+
+
+in which c=(1-\rho_{0}-\rho_{1})c=(1−ρ0−ρ1)c=(1-\rho_{0}-\rho_{1}).
+
+
+
+
+
+The proof is given in Appendix C.4. Since 1-\rho_{0}-\rho_{1}>01−ρ0−ρ1>01-\rho_{0}-\rho_{1}>0, Theorem 2 guarantees that the expected update of the policy points in the same direction as the true gradient; meanwhile, the positive scaling factor (1-\rho_{0}-\rho_{1})(1−ρ0−ρ1)(1-\rho_{0}-\rho_{1}) can be absorbed into the learning rate. By avoiding the inverse operation of PGBC, PGFC circumvents the variance-inflation problem. Furthermore, its reliance solely on \rho_{1}ρ1\rho_{1} makes it more practical, as the false negative rate is often the more dominant and easily estimable error source in RLVR with rule-based verifiers.
+
+
+
+Algorithm 2  Noisy Policy Gradient with Forward Correction (PGFC)
+
+
+              1:
+              
+              
+            Input: Initial policy \theta_{0}θ0\theta_{0}; learning rate \etaη\eta; batch size MMM; an estimate of the false negative rate, \hat{\rho}_{1}ρ^1\hat{\rho}_{1}.
+
+
+
+              2:
+              
+              
+            loop
+
+
+              3:
+              
+              
+              Roll out MMM trajectories and observe rewards \{\tilde{R}_{i}\}_{i=1}^{M}{R~i}i=1M\{\tilde{R}_{i}\}_{i=1}^{M}.
+
+
+
+              4:
+              
+              
+              For each trajectory iii, define the weight based on the observed reward \tilde{R}_{i}R~i\tilde{R}_{i}:
+
+
+
+
+
+
+w_{\tilde{R}_{i}}\;\leftarrow\;\begin{cases}\hat{\rho}_{1}-1,&\text{if }\tilde{R}_{i}=0,\\
+\hat{\rho}_{1},&\text{if }\tilde{R}_{i}=1.\end{cases}wR~i←{ρ^1−1,if ​R~i=0,ρ^1,if ​R~i=1.w_{\tilde{R}_{i}}\;\leftarrow\;\begin{cases}\hat{\rho}_{1}-1,&\text{if }\tilde{R}_{i}=0,\\
+\hat{\rho}_{1},&\text{if }\tilde{R}_{i}=1.\end{cases}
+
+
+
+
+
+              5:
+              
+              
+              For each trajectory iii, compute the score-function term G_{i}GiG_{i} and the weighted term h_{i}\leftarrow w_{\tilde{R}_{i}}\,G_{i}hi←wR~i​Gih_{i}\leftarrow w_{\tilde{R}_{i}}\,G_{i}.
+
+
+
+              6:
+              
+              
+              Form the policy gradient estimate: \hat{g}\leftarrow\frac{1}{M}\sum_{i=1}^{M}h_{i}g^←1M​∑i=1Mhi\hat{g}\leftarrow\frac{1}{M}\sum_{i=1}^{M}h_{i}.
+
+
+
+              7:
+              
+              
+              Update parameters: \theta\leftarrow\theta+\eta\,\hat{g}θ←θ+η​g^\theta\leftarrow\theta+\eta\,\hat{g}.
+
+
+
+              8:
+              
+              
+            end loop
+
+
+
+
+
+In practice, we estimate \hat{\rho}_{1}ρ^1\hat{\rho}_{1} during training by appealing a small, uniformly random subset of rule-based negatives to a lightweight LLM verifier (e.g., TinyV (Xu et al., 2025)) and then smoothing the empirical flip rate. Concretely, at step ttt, let \mathcal{N}_{\mathrm{R}}^{(t)}𝒩R(t)\mathcal{N}_{\mathrm{R}}^{(t)} be items labeled negative by the rule-based verifier, \mathcal{P}_{\mathrm{R}}^{(t)}𝒫R(t)\mathcal{P}_{\mathrm{R}}^{(t)} the rule-based positives, and sample a fraction q\in(0,1]q∈(0,1]q\in(0,1] of \mathcal{N}_{\mathrm{R}}^{(t)}𝒩R(t)\mathcal{N}_{\mathrm{R}}^{(t)} for appeal; denote by \mathcal{P}_{\mathrm{L}}^{(t)}𝒫L(t)\mathcal{P}_{\mathrm{L}}^{(t)} those appealed items that the LLM flips to positive (i.e., rule-negative & LLM-positive). Using a Horvitz–Thompson correction (Karwa & Airoldi, 2023), we estimate FN as |\mathcal{P}_{\mathrm{L}}^{(t)}|/q|𝒫L(t)|/q|\mathcal{P}_{\mathrm{L}}^{(t)}|/q and TP as |\mathcal{P}_{\mathrm{R}}^{(t)}||𝒫R(t)||\mathcal{P}_{\mathrm{R}}^{(t)}| (Since rule-based FP should be 0). We then set \hat{\rho}_{1}^{(t)}=\frac{|\mathcal{P}_{\mathrm{L}}^{(t)}|/q+\alpha}{|\mathcal{P}_{\mathrm{L}}^{(t)}|/q+|\mathcal{P}_{\mathrm{R}}^{(t)}|+\alpha+\beta}ρ^1(t)=|𝒫L(t)|/q+α|𝒫L(t)|/q+|𝒫R(t)|+α+β\hat{\rho}_{1}^{(t)}=\frac{|\mathcal{P}_{\mathrm{L}}^{(t)}|/q+\alpha}{|\mathcal{P}_{\mathrm{L}}^{(t)}|/q+|\mathcal{P}_{\mathrm{R}}^{(t)}|+\alpha+\beta} with small Beta-prior pseudocounts \alpha,\betaα,β\alpha,\beta (we use 10^{-5}10−510^{-5}), and apply EMA smoothing over a sliding window. If both \hat{\rho}_{0}ρ^0\hat{\rho}_{0} and \hat{\rho}_{1}ρ^1\hat{\rho}_{1} are available, one can use PGBC; if only \hat{\rho}_{1}ρ^1\hat{\rho}_{1} is available, use PGFC. We include implementation details in Appendix B and release code at https://anonymous.4open.science/r/noisy-RLVR-2BE9/README.md.
+
+
+
+
+
+
+
+
+
+4 Experiments
+
+
+
+
+We evaluate our approach under both synthetic and real-world verifier noise. We first spell out the experimental protocol—models, verifiers, training recipe, evaluation suites, metrics, and compute—and then present ablations and main results. Unless otherwise noted, sampling hyperparameters and KL regularization are held fixed across conditions.
+
+
+
+
+
+4.1 Experimental Setup
+
+
+
+
+We train on two small backbones, Qwen2.5-Math-1.5B and DeepSeek-R1-Distill-Qwen-1.5B, and probe scale with Qwen2.5-Math-7B. Rewards come from either (i) a rule-based checker that extracts the final \boxed{\cdot} answer and tests numeric/rational equivalence or (ii) a lightweight LLM verifier (TinyV 1.5B) used for appeals/estimation; prior work motivates explicit noise modeling due to systematic FP/FN behavior in these verifiers. Unless stated otherwise, we follow the DeepScaleR corpus and a GRPO-style on-policy recipe with BoN sampling, implementing our backward and forward corrections as drop-in hooks at the advantage-construction stage within VERL. Evaluation uses six verifiable math suites—AIME-2024, AIME-2025, AMC-2023, MATH500, Minerva MATH, and OlympiadBench—reporting Pass@1 with 16 samples (Pass@8 appears in the appendix). Compute is 8\times×\timesA100 (40GB) GPUs servers; unless noted, KL schedules, sampling temperatures, and other rollout settings are kept identical across compared conditions.
+
+
+
+
+
+
+(a) Qwen2.5-Math-1.5B
+
+
+(b) DeepSeek-R1-Distill-Qwen-1.5B
+
+
+(c) Qwen2.5-Math-7B
+
+Figure 2: Synthetic-Noise Results on Qwen2.5-Math-1.5B, DeepSeek-R1-Distill-Qwen-1.5B, and Qwen2.5-Math-7B. Base: baseline without RL; Oracle: Training with clean rewards; Noise: Training with noisy verifier rewards; Noise_BC: Training with noise under backward correction; Noise_FC: Training with noise under forward correction.
+
+
+
+
+
+
+4.2 Synthetic Noise
+
+
+
+
+To disentangle optimization effects from verifier unreliability, we inject verifier-conditional noise into the binary reward stream during training. Concretely, when the latent clean reward is R^{*}\!\in\{0,1\}R∗∈{0,1}R^{*}\!\in\{0,1\}, the observed reward \tilde{R}R~\tilde{R} is drawn from a reward channel with \Pr(\tilde{R}{=}1\!\mid\!R^{*}{=}0)=\rho_{0}Pr⁡(R~=∣R∗=0)=ρ0\Pr(\tilde{R}{=}1\!\mid\!R^{*}{=}0)=\rho_{0} and \Pr(\tilde{R}{=}0\!\mid\!R^{*}{=}1)=\rho_{1}Pr⁡(R~=∣R∗=1)=ρ1\Pr(\tilde{R}{=}0\!\mid\!R^{*}{=}1)=\rho_{1}; unless stated otherwise we use \rho_{0}{=}0.1ρ0=0.1\rho_{0}{=}0.1 and \rho_{1}{=}0.2ρ1=0.2\rho_{1}{=}0.2. We train GRPO on DeepScaleR with identical sampling and KL settings across conditions, and evaluate Pass@1 (16 samples) on AIME-2024/2025, AMC-2023, Math500, Minerva MATH, and OlympiadBench. We compare five variants: Base (no RL), Oracle (clean rewards), Noise (uncorrected), and our two corrections—PGBC (backward correction using \widehat{R}=\frac{\tilde{R}-\rho_{0}}{1-\rho_{0}-\rho_{1}}R^=R~−ρ01−ρ0−ρ1\widehat{R}=\frac{\tilde{R}-\rho_{0}}{1-\rho_{0}-\rho_{1}}) and PGFC (forward correction that rescales the gradient using \rho_{1}ρ1\rho_{1} only).
+
+
+
+
+As illustrated in Figure 2, across models and benchmarks, the injected noise degrades uncorrected GRPO substantially, while both corrections recover most of the gap to the oracle. On DeepSeek-R1-Distill-Qwen-1.5B, uncorrected training under noise underperforms the oracle across all tasks (e.g., a noticeably lower Average), whereas PGBC and PGFC nearly match oracle performance; PGFC is consistently as good as or slightly better than PGBC, echoing its variance advantages from avoiding division by (1-\rho_{0}-\rho_{1})(1−ρ0−ρ1)(1-\rho_{0}-\rho_{1}). From Qwen2.5-Math-1.5B and DeepSeek-R1-Distill-Qwen-1.5B, as well as the up-scale model Qwen2.5-Math-7B, we observe the same pattern: noise hurts, PGBC/PGFC close the gap compared with Oracle.
+
+
+
+
+
+
+
+4.3 Real-World Noise
+
+
+
+
+As discussed above, automated verifiers exhibit both false positives (LLM judges over-crediting incorrect solutions) and false negatives (rule-based checkers rejecting correct ones) (Gu et al., 2024a; Xu et al., 2025; Li et al., 2025b; Li et al., 2025a). In math RL pipelines, the latter is particularly prevalent: brittle exact-match or limited equivalence rules lead to many valid answers being scored as incorrect, depriving the agent of learning signal. Motivated by this, in this subsection we specifically investigate whether denoising false negatives—i.e., estimating \hat{\rho}_{1}ρ^1\hat{\rho}_{1} as in Section 3.2—can measurably improve policy optimization. Concretely, we keep a fast rule-based checker as the primary reward source and, whenever it returns \tilde{R}{=}0R~=0\tilde{R}{=}0, trigger an appeals pass with a lightweight LLM verifier (TinyV) (Xu et al., 2025). From disagreements on negatives we maintain an online estimate \hat{\rho}_{1}ρ^1\hat{\rho}_{1} (EMA over a sliding window to track policy drift).
+
+
+
+
+Results in Table 1 show a consistent pattern across backbones and benchmarks. Using a lightweight LLM as the reward (LV) underperforms the rule-based pipeline, corroborating prior observations that LLM judges are bias-prone and gameable (Gu et al., 2024a; Shi et al., 2024b). Employing the LLM as adds-on to recheck rule-based negatives (Adds on) reduces FN and yields a modest but reliable lift, yet the benefit remains indirect because the primary gradient is still driven by noisy binary rewards. In contrast, our forward correction (FCO) directly applies the FN correction to the policy gradient via weights w_{\tilde{R}}\!\in\!\{\hat{\rho}_{1}-1,\hat{\rho}_{1}\}wR~∈{ρ^1−1,ρ^1}w_{\tilde{R}}\!\in\!\{\hat{\rho}_{1}-1,\hat{\rho}_{1}\}, and it delivers the strongest and stable improvements.
+
+
+
+
+Table 1: Real-world noise with appeals on negative samples and forward correction results. Rule: rule-based rewards; LV: direct LLM-judge rewards; Adds on: rule-based reward plus LLM appeals on negative samples (no gradient correction); FCO: forward correction using online \hat{\rho}_{1}ρ^1\hat{\rho}_{1}.
+
+
+
+
+
+
+
+Dataset
+AIME2024
+AIME2025
+AMC2023
+Math500
+Minerva MATH
+Olympiad Bench
+Average
+
+
+
+
+
+Base
+6.0
+4.0
+34.2
+47.5
+5.1
+25.1
+20.3
+
+
+
+Rule
+15.0
+5.6
+50.3
+69.4
+17.8
+31.6
+31.6
+
+
+
+LV
+10.9
+4.7
+42.1
+63.0
+15.9
+25.3
+27.0
+
+
+
+Adds on
+11.9
+5.8
+47.8
+68.3
+16.7
+29.8
+30.1
+
+
+
+PGFC (Ours)
+20.3
+10.7
+53.3
+68.6
+16.5
+32.9
+33.7
+
+
+
+
+(a) Qwen2.5-Math-1.5B
+
+
+
+
+
+
+
+Dataset
+AIME2024
+AIME2025
+AMC2023
+Math500
+Minerva MATH
+Olympiad Bench
+Average
+
+
+
+
+
+Base
+9.0
+9.4
+41.4
+61.1
+10.5
+22.9
+25.7
+
+
+
+Rule
+19.0
+17.5
+65.6
+77.6
+19.9
+38.5
+39.7
+
+
+
+LV
+11.9
+12.7
+52.3
+69.8
+14.2
+31.9
+32.1
+
+
+
+Adds on
+21.7
+17.3
+66.2
+77.4
+20.0
+37.9
+40.1
+
+
+
+PGFC (Ours)
+23.2
+22.5
+70.7
+78.2
+19.4
+41.0
+42.5
+
+
+
+
+(b) DeepSeek-R1-Distill-Qwen-1.5B
+
+
+
+
+
+
+
+Dataset
+AIME2024
+AIME2025
+AMC2023
+Math500
+Minerva MATH
+Olympiad Bench
+Average
+
+
+
+
+
+Base
+12.7
+5.8
+44.4
+52.0
+9.8
+26.4
+25.2
+
+
+
+Rule
+29.2
+13.5
+62.8
+78.9
+24.2
+37.8
+41.1
+
+
+
+LV
+16.8
+6.8
+50.2
+62.5
+10.1
+31.0
+29.6
+
+
+
+Adds on
+27.4
+11.8
+63.7
+74.9
+20.6
+37.6
+39.3
+
+
+
+PGFC (Ours)
+31.0
+14.6
+65.7
+81.6
+26.2
+39.3
+43.1
+
+
+
+
+(c) Qwen2.5-Math-7B
+
+
+
+
+
+
+
+4.4 Robustness to Noise Mis-Specification
+
+
+
+
+There now exist practical procedures to estimate verifier false positive/false negative rates—our \rho_{0}ρ0\rho_{0} and \rho_{1}ρ1\rho_{1}—via rule-based equivalence checkers (e.g., Math-Verify), lightweight appeals/judges such as TinyV, and meta-evaluation suites that quantify verifier reliability (Hugging Face, 2025; Xu et al., 2025; Li et al., 2025a; Li et al., 2025b; Gu et al., 2024a). In real deployments, however, these estimates can be imperfect. We therefore test how backward and forward corrections behave under mis-specified noise rates. We follow the synthetic-noise setting from Section 4.2 with Qwen2.5-math-1.5B: rewards are corrupted at data-time with \rho_{0}{=}0.1,\ \rho_{1}{=}0.2ρ0=0.1,ρ1=0.2\rho_{0}{=}0.1,\ \rho_{1}{=}0.2. During training, we intentionally feed each algorithm mis-specified rates from a grid \hat{\rho}_{0}\in[0.0,0.2]ρ^0∈[0.0,0.2]\hat{\rho}_{0}\in[0.0,0.2], \hat{\rho}_{1}\in[0.1,0.3]ρ^1∈[0.1,0.3]\hat{\rho}_{1}\in[0.1,0.3], and report the Average Pass@1 (16 samples) across our six benchmarks. Because the forward method only requires the false negative rate, we vary \hat{\rho}_{1}ρ^1\hat{\rho}_{1} for forward correction while keeping \hat{\rho}_{0}ρ^0\hat{\rho}_{0} unused. Heatmaps summarizing the sweep are shown in Fig. 3.
+
+
+
+
+
+
+
+
+(a) BC: \hat{\rho}_{0}{=}0.1ρ^0=0.1\hat{\rho}_{0}{=}0.1, \hat{\rho}_{1}\!\in\![0.1,0.3]ρ^1∈[0.1,0.3]\hat{\rho}_{1}\!\in\![0.1,0.3]
+
+
+
+
+(b) BC: \hat{\rho}_{1}{=}0.2ρ^1=0.2\hat{\rho}_{1}{=}0.2, \hat{\rho}_{0}\!\in\![0.0,0.2]ρ^0∈[0.0,0.2]\hat{\rho}_{0}\!\in\![0.0,0.2]
+
+
+
+
+(c) FC: \hat{\rho}_{0}{=}0.1ρ^0=0.1\hat{\rho}_{0}{=}0.1, \hat{\rho}_{1}\!\in\![0.1,0.3]ρ^1∈[0.1,0.3]\hat{\rho}_{1}\!\in\![0.1,0.3]
+
+Figure 3: Robustness results. (a) Backward correction (BC) with \hat{\rho}_{0}ρ^0\hat{\rho}_{0} fixed and sweeping \hat{\rho}_{1}ρ^1\hat{\rho}_{1}; (b) Backward correction (BC) with \hat{\rho}_{1}ρ^1\hat{\rho}_{1} fixed and sweeping \hat{\rho}_{0}ρ^0\hat{\rho}_{0}; (c) Forward correction (FC) with \hat{\rho}_{0}ρ^0\hat{\rho}_{0} fixed and sweeping \hat{\rho}_{1}ρ^1\hat{\rho}_{1}. Replace each placeholder with your heatmap later.
+
+
+
+Backward correction remains strong when the total noise is underestimated, but performance degrades as we overestimate the rates (i.e., as 1-\hat{\rho}_{0}-\hat{\rho}_{1}1−ρ^0−ρ^11-\hat{\rho}_{0}-\hat{\rho}_{1} shrinks). Intuitively, the unbiased de-biasing,
+\widehat{R}=\frac{\tilde{R}-\hat{\rho}_{0}}{1-\hat{\rho}_{0}-\hat{\rho}_{1}}R^=R~−ρ^01−ρ^0−ρ^1\widehat{R}=\frac{\tilde{R}-\hat{\rho}_{0}}{1-\hat{\rho}_{0}-\hat{\rho}_{1}},
+involves an inverse factor that amplifies reward variance and accentuates estimation error when the effective denominator becomes small; this sensitivity to mis-specified transition models aligns with the loss-correction literature for noisy labels. In contrast, forward correction exhibits a notably flat response curve around the true \rho_{1}ρ1\rho_{1}; perturbing \hat{\rho}_{1}ρ^1\hat{\rho}_{1} changes only the per-sample weights and avoids any inverse operation, yielding lower-variance policy gradient estimates.
+
+
+
+
+
+
+
+4.5 Case Studies
+
+
+
+
+We also provide typical failure modes observed during math RL with automated verifiers on Qwen2.5-Math-7B under MATH500 dataset. For rule-based verifier: 0 FN and 52 FPs out of 500 items (marginal rates 0% and 10.4%); for LLM verifier: 168 FNs and 81 FPs out of 500 items (marginal rates 33.6% and 16.2%). The FP case shows an LLM judge over-crediting a malformed solution, while the FN case shows a rule-based checker rejecting a numerically correct answer due to formatting. The raw context can be found in Appendix E.
+
+
+False Positive (FP). 
+Problem. Compute: 1-2+3-4+\dots+99-1001−2+3−4+⋯+99−1001-2+3-4+\dots+99-100. 
+Ground truth. \boxed{-50}−50\boxed{-50} 
+
+Model response (excerpt).
+⬇
+Compute: $1+2-3-4+5+6-7-8+\dots+97+98-99-100$.
+
+\boxed{ } \boxed{ } \boxed{ } \dots
+
+
+Verifier signals. Rule-based checker: ✗ (incorrect); LLM judge: ✓ (incorrectly accepts)  \Rightarrow⇒\Rightarrow FP.
+
+
+
+
+False Negative (FN). 
+Problem. Each of seven islands independently has treasure with probability \tfrac{1}{5}15\tfrac{1}{5}. What is the probability that exactly four islands have treasure? 
+Correct answer. \displaystyle\boxed{\frac{448}{15625}}44815625\displaystyle\boxed{\frac{448}{15625}} (equals 0.0286720.0286720.028672). 
+
+Model answer. \boxed{0.028672}0.028672\boxed{0.028672} 
+Verifier signals. Rule-based exact-match: ✗ (expects a fraction); numeric equivalence check: ✓ (values match)  \Rightarrow⇒\Rightarrow FN.
+
+
+
+
+
+
+
+
+
+5 Conclusion
+
+
+
+
+Reinforcement Learning with Verifiable Rewards (RLVR) has emerged as a practical and increasingly popular paradigm for training reasoning-focused LLMs. Yet binarized rewards inevitably suffer from false positives (FP) and false negatives (FN). Prior efforts largely mitigate these errors from the verifier side—e.g., debiasing LLM judges or strengthening equivalence checking—to reduce the downstream impact on learning (Gu et al., 2024a; Li et al., 2025a; Li et al., 2025b; Hugging Face, 2025). In contrast, we model verifier unreliability as a verifier-conditional noise channel with rates (\rho_{0},\rho_{1})(ρ0,ρ1)(\rho_{0},\rho_{1}) and introduce two theory-driven corrections that act directly at the policy-learning interface. The backward correction de-biases the observed reward to yield an unbiased gradient estimator; it requires estimates (\hat{\rho}_{0},\hat{\rho}_{1})(ρ^0,ρ^1)(\hat{\rho}_{0},\hat{\rho}_{1}) but is agnostic to the choice of policy-optimization algorithm and can thus be used beyond policy gradient methods (Natarajan et al., 2013; Patrini et al., 2017). The forward correction rescales score-function terms so that the expected update is aligned with the clean gradient; notably, it needs only \hat{\rho}_{1}ρ^1\hat{\rho}_{1}, which is often the dominant—and more readily estimable—source of real-world noise due to rule-based FNs (Li et al., 2025b; Hugging Face, 2025; Xu et al., 2025).
+
+
+
+
+While we instantiated appeals with a lightweight LLM verifier for efficiency, the same backward/forward correction mechanisms should also gains from stronger verifiers or richer equivalence checkers (Xu et al., 2025). Meanwhile, currently using the constant noise rate, the proposed models already show clear advantages. This means that the constant noise rate \rho_{0}ρ0\rho_{0} and \rho_{1}ρ1\rho_{1} approximate the real-world noise rate well. However, real-world noise can be very complex, e.g., depending both on the contents and verifiers \rho_{0}(x,y)ρ0​(x,y)\rho_{0}(x,y) and \rho_{1}(x,y)ρ1​(x,y)\rho_{1}(x,y), leaving interesting future directions.
+
+
+
+
+
+
+
+Reproducibility Statement
+
+
+
+
+All experimental details required to fully reproduce our results—including datasets, prompts, hyperparameters, training/evaluation protocols, and compute settings—are specified in Section 4.1 and the Appendix (notably Appendix B and Appendix D); furthermore, we publish an anonymous code repository link at the end of Section 3.2, ensuring complete reproducibility while preserving author anonymity.
+
+
+
+
+
+
+
+Ethics Statement
+
+
+
+
+There is no ethics concerns in this work. Our anonymized code release (see Appendix D) provides end-to-end training pipelines; all models and datasets used are publicly available under their respective licenses, and users reproducing or extending this work should obtain and comply with those licenses—no additional restrictions are imposed beyond the originals.
+
+
+
+
+
+
+
+References
+
+
+
+      
+
+Chen et al. (2024)
+
+Guiming Hardy Chen, Shunian Chen, Ziche Liu, Feng Jiang, and Benyou Wang.
+
+
+Humans or llms as the judge? a study on judgement bias.
+
+
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pp.  8301–8327, Miami, Florida, USA, 2024. Association for Computational Linguistics.
+
+
+doi: 10.18653/v1/2024.emnlp-main.474.
+
+
+URL https://aclanthology.org/2024.emnlp-main.474/.
+
+
+
+      
+
+Cobbe et al. (2021)
+
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman.
+
+
+Training verifiers to solve math word problems.
+
+
+arXiv preprint arXiv:2110.14168, 2021.
+
+
+
+      
+
+Goyal et al. (2025)
+
+Nishant Goyal, Ruibo Liu, Sean Yang, Karthik Narasimhan, and Danqi Chen.
+
+
+One token to fool LLM-as-a-judge.
+
+
+arXiv preprint arXiv:2506.08662, 2025.
+
+
+
+      
+
+Gu et al. (2024a)
+
+Jiawei Gu, Xuhui Jiang, Zhichao Shi, Hexiang Tan, Xuehao Zhai, Chengjin Xu, Wei Li, Yinghan Shen, Shengjie Ma, Honghao Liu, Saizhuo Wang, Kun Zhang, Yuanzhuo Wang, Wen Gao, Lionel Ni, and Jian Guo.
+
+
+A survey on llm-as-a-judge.
+
+
+arXiv preprint arXiv:2411.15594, 2024a.
+
+
+URL https://arxiv.org/abs/2411.15594.
+
+
+
+      
+
+Gu et al. (2024b)
+
+Jinlan Gu, Jiarui Wang, Wenkai Lei, Ziyang Wang, Xiang Yue, Xiangyu Zhao, Yangqiu Song, and Jie Fu.
+
+
+LLM-as-a-judge: A survey.
+
+
+arXiv preprint arXiv:2411.15594, 2024b.
+
+
+
+      
+
+Han et al. (2018)
+
+Bo Han, Quanming Yao, Xingrui Yu, Gang Niu, Miao Xu, Weihua Hu, Ivor Tsang, and Masashi Sugiyama.
+
+
+Co-teaching: Robust training of deep neural networks with extremely noisy labels.
+
+
+In Advances in Neural Information Processing Systems (NeurIPS), volume 31, pp.  8535–8545, 2018.
+
+
+
+      
+
+He et al. (2024)
+
+Chaoqun He, Renjie Luo, Yuzhuo Bai, Shengding Hu, Zhen Thai, Junhao Shen, Jinyi Hu, Xu Han, Yujie Huang, Yuxiang Zhang, et al.
+
+
+Olympiadbench: A challenging benchmark for promoting agi with olympiad-level bilingual multimodal scientific problems.
+
+
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pp.  3828–3850, 2024.
+
+
+
+      
+
+Huang et al. (2025)
+
+Yuzhen Huang, Weihao Zeng, Xingshan Zeng, Qi Zhu, and Junxian He.
+
+
+Pitfalls of rule- and model-based verifiers – a case study on mathematical reasoning.
+
+
+arXiv preprint arXiv:2505.22203, 2025.
+
+
+doi: 10.48550/arXiv.2505.22203.
+
+
+URL https://arxiv.org/abs/2505.22203.
+
+
+
+      
+
+Hugging Face (2025)
+
+Hugging Face.
+
+
+Math-Verify: A robust mathematical expression evaluator for llm outputs.
+
+
+GitHub repository, 2025.
+
+
+URL https://github.com/huggingface/Math-Verify.
+
+
+
+      
+
+HuggingFaceH4 (2024)
+
+HuggingFaceH4.
+
+
+Aime 2024 (dataset card).
+
+
+Hugging Face, 2024.
+
+
+URL https://huggingface.co/datasets/HuggingFaceH4/aime_2024.
+
+
+
+      
+
+Jiang et al. (2018)
+
+Lu Jiang, Zhengyuan Zhou, Thomas Leung, Li-Jia Li, and Li Fei-Fei.
+
+
+Mentornet: Learning data-driven curriculum for very deep neural networks on corrupted labels.
+
+
+In Proceedings of the 35th International Conference on Machine Learning (ICML), volume 80 of Proceedings of Machine Learning Research, pp.  2309–2318. PMLR, 2018.
+
+
+
+      
+
+Karwa & Airoldi (2023)
+
+Vishesh Karwa and Edoardo M Airoldi.
+
+
+On the admissibility of horvitz-thompson estimator for estimating causal effects under network interference.
+
+
+arXiv preprint arXiv:2312.01234, 2023.
+
+
+
+      
+
+Lewkowycz et al. (2022)
+
+Aitor Lewkowycz, Anders Andreassen, David Dohan, Ethan Dyer, Henryk Michalewski, Vinay Ramasesh, Ambrose Slone, Cem Anil, Imanol Schlag, Theo Gutman-Solo, et al.
+
+
+Solving quantitative reasoning problems with language models.
+
+
+volume 35, pp.  3843–3857, 2022.
+
+
+
+      
+
+Li et al. (2020)
+
+Junnan Li, Richard Socher, and Steven C. H. Hoi.
+
+
+Dividemix: Learning with noisy labels as semi-supervised learning.
+
+
+In International Conference on Learning Representations (ICLR), 2020.
+
+
+URL https://openreview.net/forum?id=HJgExaVtwr.
+
+
+
+      
+
+Li et al. (2021)
+
+X. Li, T. Liu, B. Han, G. Niu, and M. Sugiyama.
+
+
+Provably end-to-end label-noise learning without anchor points.
+
+
+In Proceedings of 38th International Conference on Machine Learning (ICML2021), pp.  6403–6413, online, Jul. 18–24 2021.
+
+
+
+      
+
+Li et al. (2025a)
+
+Yanran Li, Jiaqing Liang, Hanzheng Wang, Xiaonan Li, Xun Wang, Fei Mi, and Shafiq Joty.
+
+
+VerifyBench: A unified benchmark and toolkit for verifiers of LLM reasoning.
+
+
+arXiv preprint arXiv:2507.09884, 2025a.
+
+
+
+      
+
+Li et al. (2025b)
+
+Yuxuan Li, Shuyan Zhou, Yicheng Li, Jiaqing Liang, and Shafiq Joty.
+
+
+Pitfalls of rule- and model-based verifiers: Toward accurate reward modeling for reasoning.
+
+
+arXiv preprint arXiv:2505.22203, 2025b.
+
+
+
+      
+
+Lightman et al. (2023)
+
+Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe.
+
+
+Let’s verify step by step.
+
+
+In The Twelfth International Conference on Learning Representations, 2023.
+
+
+
+      
+
+Luo et al. (2025)
+
+Michael Luo, Sijun Tan, Justin Wong, Xiaoxiang Shi, William Tang, Manan Roongta, Colin Cai, Jeffrey Luo, Tianjun Zhang, Erran Li, Raluca Ada Popa, and Ion Stoica.
+
+
+Deepscaler: Surpassing o1-preview with a 1.5b model by scaling rl.
+
+
+https://pretty-radio-b75.notion.site/DeepScaleR-Surpassing-O1-Preview-with-a-1-5B-Model-by-Scaling-RL-19681902c1468005bed8ca303013a4e2, 2025.
+
+
+Notion Blog.
+
+
+
+      
+
+math-ai (2025)
+
+math-ai.
+
+
+Amc 2023 (dataset card).
+
+
+Hugging Face, 2025.
+
+
+URL https://huggingface.co/datasets/math-ai/amc23.
+
+
+
+      
+
+Mroueh (2025)
+
+Youssef Mroueh.
+
+
+Reinforcement learning with verifiable rewards: Grpo’s effective loss, dynamics, and success amplification.
+
+
+arXiv:2503.06639, 2025.
+
+
+
+      
+
+Natarajan et al. (2013)
+
+Nagarajan Natarajan, Inderjit S. Dhillon, Pradeep K. Ravikumar, and Ambuj Tewari.
+
+
+Learning with noisy labels.
+
+
+In Advances in Neural Information Processing Systems (NeurIPS), volume 26, pp.  1196–1204, 2013.
+
+
+
+      
+
+OpenCompass (2025)
+
+OpenCompass.
+
+
+Aime 2025 (dataset card).
+
+
+Hugging Face, 2025.
+
+
+URL https://huggingface.co/datasets/opencompass/AIME2025.
+
+
+
+      
+
+Patrini et al. (2017)
+
+Giorgio Patrini, Alessandro Rozza, Aditya Krishna Menon, Richard Nock, and Lizhen Qu.
+
+
+Making deep neural networks robust to label noise: A loss correction approach.
+
+
+In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR), 2017.
+
+
+doi: 10.1109/CVPR.2017.240.
+
+
+
+      
+
+Shao et al. (2024a)
+
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo.
+
+
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+
+
+arXiv preprint arXiv:2402.03300, 2024a.
+
+
+doi: 10.48550/arXiv.2402.03300.
+
+
+
+      
+
+Shao et al. (2024b)
+
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y.K. Li, Y. Wu, and Daya Guo.
+
+
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models.
+
+
+arXiv preprint arXiv:2402.03300, 2024b.
+
+
+URL https://arxiv.org/abs/2402.03300.
+
+
+
+      
+
+Shi et al. (2024a)
+
+Jiawen Shi, Zenghui Yuan, Yinuo Liu, Yue Huang, Pan Zhou, Lichao Sun, and Neil Zhenqiang Gong.
+
+
+Optimization-based prompt injection attack to llm-as-a-judge.
+
+
+In Proceedings of the 2024 ACM SIGSAC Conference on Computer and Communications Security (CCS), 2024a.
+
+
+doi: 10.48550/arXiv.2403.17710.
+
+
+URL https://arxiv.org/abs/2403.17710.
+
+
+
+      
+
+Shi et al. (2025)
+
+Lin Shi, Chiyu Ma, Wenhua Liang, Xingjian Diao, Weicheng Ma, and Soroush Vosoughi.
+
+
+Judging the judges: A systematic study of position bias in llm-as-a-judge.
+
+
+arXiv preprint arXiv:2406.07791, 2025.
+
+
+doi: 10.48550/arXiv.2406.07791.
+
+
+URL https://arxiv.org/abs/2406.07791.
+
+
+v8, 2025-04 revision.
+
+
+
+      
+
+Shi et al. (2024b)
+
+Shen Shi, Shuyang Cao, Xiaochuang Han, Chris Callison-Burch, Mohit Bansal, and He He.
+
+
+Position bias in LLM-as-a-judge.
+
+
+arXiv preprint arXiv:2410.02825, 2024b.
+
+
+
+      
+
+Song et al. (2020)
+
+Hwanjun Song, Minseok Kim, Dongmin Park, Yooju Shin, and Jae-Gil Lee.
+
+
+Learning from noisy labels with deep neural networks: A survey.
+
+
+arXiv preprint arXiv:2007.08199, 2020.
+
+
+doi: 10.48550/arXiv.2007.08199.
+
+
+
+      
+
+Sutton et al. (1999)
+
+Richard S Sutton, David McAllester, Satinder Singh, and Yishay Mansour.
+
+
+Policy gradient methods for reinforcement learning with function approximation.
+
+
+Advances in neural information processing systems, 12, 1999.
+
+
+
+      
+
+Thakur et al. (2024)
+
+Anurag Thakur, Hao Tang, Ryan Cotterell, and Mrinmaya Sachan.
+
+
+Judging the judges: Evaluating alignment and vulnerabilities of LLM-as-a-judge.
+
+
+arXiv preprint arXiv:2406.12624, 2024.
+
+
+
+      
+
+Wang et al. (2020)
+
+Jingkang Wang, Yang Liu, and Bo Li.
+
+
+Reinforcement learning with perturbed rewards.
+
+
+In Proceedings of the 34th AAAI conference on artificial intelligence, pp.  6202–6209, 2020.
+
+
+
+      
+
+Wang et al. (2022)
+
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V. Le, Ed H. Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou.
+
+
+Self-consistency improves chain of thought reasoning in language models.
+
+
+arXiv preprint arXiv:2203.11171, 2022.
+
+
+
+      
+
+Wei et al. (2022)
+
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed Chi, Quoc Le, and Denny Zhou.
+
+
+Chain-of-thought prompting elicits reasoning in large language models.
+
+
+In NeurIPS, 2022.
+
+
+
+      
+
+Wen et al. (2025)
+
+Xumeng Wen, Zihan Liu, Shun Zheng, Zhijian Xu, Shengyu Ye, Zhirong Wu, Xiao Liang, Yang Wang, Junjie Li, Ziming Miao, et al.
+
+
+Reinforcement learning with verifiable rewards implicitly incentivizes correct reasoning in base llms.
+
+
+arXiv preprint arXiv:2506.14245, 2025.
+
+
+
+      
+
+Williams (1992)
+
+Ronald J. Williams.
+
+
+Simple statistical gradient-following algorithms for connectionist reinforcement learning.
+
+
+Machine Learning, 8(3-4):229–256, 1992.
+
+
+
+      
+
+Xu et al. (2025)
+
+Zhangchen Xu, Yuetai Li, Fengqing Jiang, Bhaskar Ramasubramanian, Luyao Niu, Bill Yuchen Lin, and Radha Poovendran.
+
+
+Tinyv: Reducing false negatives in verification improves rl for llm reasoning.
+
+
+arXiv preprint arXiv:2505.14625, 2025.
+
+
+
+      
+
+Yan et al. (2025)
+
+Yuchen Yan, Jin Jiang, Zhenbang Ren, Yijun Li, Xudong Cai, Yang Liu, Xin Xu, Mengdi Zhang, Jian Shao, Yongliang Shen, Jun Xiao, and Yueting Zhuang.
+
+
+Verifybench: Benchmarking reference-based reward systems for large language models.
+
+
+arXiv preprint arXiv:2505.15801, 2025.
+
+
+URL https://arxiv.org/abs/2505.15801.
+
+
+
+      
+
+Yao et al. (2023)
+
+Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Thomas L. Griffiths, Yuan Cao, and Karthik Narasimhan.
+
+
+Tree of thoughts: Deliberate problem solving with large language models.
+
+
+arXiv preprint arXiv:2305.10601, 2023.
+
+
+
+      
+
+Zeng et al. (2024)
+
+Xiaokang Zeng, Shibo Hao, Lichang Chen, Furong Huang, Heng Huang, Tom Goldstein, and Tianyi Zhou.
+
+
+JudgeDeceiver: Optimization-based prompt injection attack to LLM-as-a-judge.
+
+
+arXiv preprint arXiv:2403.17710, 2024.
+
+
+
+      
+
+Zhao et al. (2025)
+
+Yulai Zhao, Haolin Liu, Dian Yu, S. Y. Kung, Haitao Mi, and Dong Yu.
+
+
+One token to fool llm-as-a-judge.
+
+
+arXiv preprint arXiv:2507.08794, 2025.
+
+
+doi: 10.48550/arXiv.2507.08794.
+
+
+URL https://arxiv.org/abs/2507.08794.
+
+
+
+      
+
+Zhou et al. (2022)
+
+Denny Zhou, Nathanael Schärli, Le Hou, Jason Wei, Nathan Scales, Xuezhi Wang, Dale Schuurmans, Claire Cui, Olivier Bousquet, Quoc Le, and Ed H. Chi.
+
+
+Least-to-most prompting enables complex reasoning in large language models.
+
+
+arXiv preprint arXiv:2205.10625, 2022.
+
+
+
+    
+
+
+
+
+
+
+
+LLM Usage Disclosure
+
+
+
+
+Large Language Models were used solely for English language polishing (grammar and minor wording); all technical contributions—including algorithms, proofs, code, experiments, and analyses—were conceived and validated by the authors.
+
+
+
+
+
+
+
+Appendix A More Experimental Results
+
+
+
+
+In this section, we also report the average Pass@8 results on Qwen2.5-Math-7B to investigate whether our algorithms can still achieve better performance under more relaxed metrics with up-scale models. The experiment setups align that of Section 4.2 and 4.3.
+
+
+
+Figure 4: Synthetic-Noise Results on Qwen2.5-Math-7B. Base: baseline without RL; Oracle: Training with clean rewards; Noise: Training with noisy verifier rewards; PGBC: Training with noise under backward correction; PGFC: Training with noise under forward correction.
+
+
+Table 2: Real-world noise with appeals on negative samples and forward correction on Qwen2.5-Math-7B. Rule: rule-based rewards; LV: direct LLM-judge rewards; Adds on: rule-based reward plus LLM appeals on negative samples (no gradient correction); FCO: forward correction using online \hat{\rho}_{1}ρ^1\hat{\rho}_{1}.
+
+
+
+
+
+Dataset
+AIME2024
+AIME2025
+AMC2023
+Math500
+Minerva MATH
+Olympiad Bench
+Average
+
+
+
+
+
+Base
+36.2
+23.3
+81.9
+66.6
+11.8
+33.9
+42.3
+
+
+
+Oracle
+50.0
+28.7
+83.4
+82.8
+29.0
+45.8
+53.3
+
+
+
+LV
+41.7
+22.1
+81.9
+69.0
+13.2
+39.4
+44.6
+
+
+
+Adds on
+47.1
+30.4
+84.4
+80.8
+23.5
+45.6
+52.0
+
+
+
+PGFC (Ours)
+54.6
+30.4
+82.8
+83.2
+29.0
+47.6
+54.6
+
+
+
+
+
+
+
+As shown in Figure 4 and Table 2, the conclusion in the main paper remains the same: our method can still obtain the best results with both synthetic and real-world noise.
+
+
+
+
+
+
+
+Appendix B Implementation Details
+
+
+
+
+We describe how to integrate Algorithm 1 (backward, unbiased reward de-biasing) and Algorithm 2 (forward, gradient-scaled) into Group Relative Policy Optimization (GRPO) under both outcome and process supervision. GRPO samples, for each prompt xxx, a group of KKK responses \{y_{i}\}_{i=1}^{K}{yi}i=1K\{y_{i}\}_{i=1}^{K} from the behavior policy, computes a group-normalized advantage for each sample (or step), and then applies a PPO-style clipped surrogate with a separate KL regularizer to a reference policy; no value network is used. Our modifications are confined to the advantage-construction stage, leaving ratio clipping and KL loss unchanged (details of GRPO in (Shao et al., 2024b) and open-source implementations).
+
+
+
+
+Notation (shared).
+
+
+
+Let \pi_{\theta}πθ\pi_{\theta} be the current policy and \pi_{\mathrm{old}}πold\pi_{\mathrm{old}} the behavior policy. Define token-level ratios r_{i,t}=\tfrac{\pi_{\theta}(y_{i,t}\!\mid x,y_{i,<t})}{\pi_{\mathrm{old}}(y_{i,t}\!\mid x,y_{i,<t})}ri,t=πθ​(yi,t∣x,yi,<t)πold​(yi,t∣x,yi,<t)r_{i,t}=\tfrac{\pi_{\theta}(y_{i,t}\!\mid x,y_{i,<t})}{\pi_{\mathrm{old}}(y_{i,t}\!\mid x,y_{i,<t})}. GRPO’s PPO-style surrogate at token ttt uses an advantage A_{i,t}Ai,tA_{i,t}:
+
+
+
+
+
+
+\mathcal{L}_{\mathrm{grpo}}(\theta)=\frac{1}{K}\sum_{i=1}^{K}\frac{1}{|y_{i}|}\sum_{t=1}^{|y_{i}|}\min\!\big(r_{i,t}\,A_{i,t},\ \mathrm{clip}(r_{i,t},1\!\pm\!\varepsilon)\,A_{i,t}\big)\ -\ \beta\,\mathrm{KL}(\pi_{\theta}\|\pi_{\mathrm{ref}}),ℒgrpo(θ)=1K∑i=1K1|yi|∑t=1|yi|min(ri,tAi,t,clip(ri,t,±ε)Ai,t)−βKL(πθ∥πref),\mathcal{L}_{\mathrm{grpo}}(\theta)=\frac{1}{K}\sum_{i=1}^{K}\frac{1}{|y_{i}|}\sum_{t=1}^{|y_{i}|}\min\!\big(r_{i,t}\,A_{i,t},\ \mathrm{clip}(r_{i,t},1\!\pm\!\varepsilon)\,A_{i,t}\big)\ -\ \beta\,\mathrm{KL}(\pi_{\theta}\|\pi_{\mathrm{ref}}),
+
+
+
+
+where the KL term is added to the loss rather than folded into the reward. Our corrections only change how A_{i,t}Ai,tA_{i,t} is formed.
+
+
+
+
+
+
+Outcome Supervision (one scalar reward per response)
+
+
+
+For each iii, we observe a binary verifier reward \tilde{r}_{i}\in\{0,1\}r~i∈{0,1}\tilde{r}_{i}\in\{0,1\}.
+
+
+
+
+Algo 1 (Backward) in GRPO. First construct an unbiased per-sample reward
+
+
+
+
+
+
+\widehat{r}_{i}\;=\;\frac{\tilde{r}_{i}-\hat{\rho}_{0}}{\,1-\hat{\rho}_{0}-\hat{\rho}_{1}\,}.r^i=r~i−ρ^0 1−ρ^0−ρ^1.\widehat{r}_{i}\;=\;\frac{\tilde{r}_{i}-\hat{\rho}_{0}}{\,1-\hat{\rho}_{0}-\hat{\rho}_{1}\,}.
+
+
+
+
+Compute group statistics on \{\widehat{r}_{i}\}_{i=1}^{K}{r^i}i=1K\{\widehat{r}_{i}\}_{i=1}^{K}:
+
+
+
+
+
+
+\bar{r}\;=\;\frac{1}{K}\sum_{i=1}^{K}\widehat{r}_{i},\qquad s\;=\;\sqrt{\tfrac{1}{K}\sum_{i=1}^{K}(\widehat{r}_{i}-\bar{r})^{2}}\,.r¯=1K​∑i=1Kr^i,s=1K​∑i=1K(r^i−r¯)2.\bar{r}\;=\;\frac{1}{K}\sum_{i=1}^{K}\widehat{r}_{i},\qquad s\;=\;\sqrt{\tfrac{1}{K}\sum_{i=1}^{K}(\widehat{r}_{i}-\bar{r})^{2}}\,.
+
+
+
+
+Define the group-normalized advantage constant across tokens of the same response,
+
+
+
+
+
+
+a_{i}^{\text{(back)}}\;=\;\frac{\widehat{r}_{i}-\bar{r}}{\,s+\varepsilon\,},\qquad A_{i,t}\;\equiv\;a_{i}^{\text{(back)}},\ \forall t.ai(back)=r^i−r¯s+ε,Ai,t≡ai(back),∀t.a_{i}^{\text{(back)}}\;=\;\frac{\widehat{r}_{i}-\bar{r}}{\,s+\varepsilon\,},\qquad A_{i,t}\;\equiv\;a_{i}^{\text{(back)}},\ \forall t.
+
+
+
+
+This is a drop-in replacement for the usual GRPO outcome-advantage, with the sole change being that the group mean/variance are computed over de-noised rewards \widehat{r}_{i}r^i\widehat{r}_{i} rather than raw \tilde{r}_{i}r~i\tilde{r}_{i}.
+
+
+
+
+Algo 2 (Forward) in GRPO. First form the standard GRPO outcome-advantage from the observed rewards:
+
+
+
+
+
+
+a_{i}\;=\;\frac{\tilde{r}_{i}-\overline{\tilde{r}}}{\,\mathrm{std}(\{\tilde{r}_{j}\})+\varepsilon\,},\qquad A_{i,t}\;\equiv\;a_{i},\ \forall t.ai=r~i−r~¯std⁡({r~j})+ε,Ai,t≡ai,∀t.a_{i}\;=\;\frac{\tilde{r}_{i}-\overline{\tilde{r}}}{\,\mathrm{std}(\{\tilde{r}_{j}\})+\varepsilon\,},\qquad A_{i,t}\;\equiv\;a_{i},\ \forall t.
+
+
+
+
+Then apply the forward weight determined only by \hat{\rho}_{1}ρ^1\hat{\rho}_{1}:
+
+
+
+
+
+
+w_{i}\;=\;\begin{cases}\hat{\rho}_{1}-1,&\tilde{r}_{i}=0,\\
+\hat{\rho}_{1},&\tilde{r}_{i}=1,\end{cases}\qquad A_{i,t}\ \leftarrow\ w_{i}\cdot A_{i,t}\,.wi={ρ^1−1,r~i=0,ρ^1,r~i=1,Ai,t←wi⋅Ai,t.w_{i}\;=\;\begin{cases}\hat{\rho}_{1}-1,&\tilde{r}_{i}=0,\\
+\hat{\rho}_{1},&\tilde{r}_{i}=1,\end{cases}\qquad A_{i,t}\ \leftarrow\ w_{i}\cdot A_{i,t}\,.
+
+
+
+
+Intuitively, the group-normalization is a positive scaling of each sample’s (token-shared) factor, so multiplying by w_{i}wiw_{i} implements the same gradient scaling as in REINFORCE, but expressed at the advantage level that GRPO’s surrogate consumes. The rest of GRPO (ratio clipping, KL loss) is unchanged.
+
+
+
+
+
+
+Process Supervision (step-wise rewards)
+
+
+
+Suppose each response y_{i}yiy_{i} has step indices \mathrm{index}_{i}(1)<\cdots<\mathrm{index}_{i}(K_{i})indexi​(1)<⋯<indexi​(Ki)\mathrm{index}_{i}(1)<\cdots<\mathrm{index}_{i}(K_{i}) with step-level observed rewards \tilde{r}_{i}^{(j)}r~i(j)\tilde{r}_{i}^{(j)} attached at those indices. GRPO forms step-normalized rewards and turns them into token advantages by backward accumulation over steps.
+
+
+
+
+Algo 1 (Backward) in GRPO-Process. De-noise each step reward:
+
+
+
+
+
+
+\widehat{r}_{i}^{(j)}\;=\;\frac{\tilde{r}_{i}^{(j)}-\hat{\rho}_{0}}{\,1-\hat{\rho}_{0}-\hat{\rho}_{1}\,}.r^i(j)=r~i(j)−ρ^0 1−ρ^0−ρ^1.\widehat{r}_{i}^{(j)}\;=\;\frac{\tilde{r}_{i}^{(j)}-\hat{\rho}_{0}}{\,1-\hat{\rho}_{0}-\hat{\rho}_{1}\,}.
+
+
+
+
+Normalize across the group and steps in the current batch following GRPO’s process recipe:
+
+
+
+
+
+
+\widetilde{r}_{i}^{(j)}\;=\;\frac{\widehat{r}_{i}^{(j)}-\mathrm{mean}(\{\widehat{r}_{\ell}^{(m)}\})}{\,\mathrm{std}(\{\widehat{r}_{\ell}^{(m)}\})+\varepsilon\,}.r~i(j)=r^i(j)−mean⁡({r^ℓ(m)})std⁡({r^ℓ(m)})+ε.\widetilde{r}_{i}^{(j)}\;=\;\frac{\widehat{r}_{i}^{(j)}-\mathrm{mean}(\{\widehat{r}_{\ell}^{(m)}\})}{\,\mathrm{std}(\{\widehat{r}_{\ell}^{(m)}\})+\varepsilon\,}.
+
+
+
+
+Accumulate into token-level advantages (for all tokens ttt at or before the jjj-th step boundary):
+
+
+
+
+
+
+A_{i,t}\;=\;\sum_{\mathrm{index}_{i}(j)\geq t}\ \widetilde{r}_{i}^{(j)}\,.Ai,t=∑indexi​(j)≥tr~i(j).A_{i,t}\;=\;\sum_{\mathrm{index}_{i}(j)\geq t}\ \widetilde{r}_{i}^{(j)}\,.
+
+
+
+
+This mirrors the standard GRPO-Process pipeline, but with \tilde{r}r~\tilde{r} replaced by \widehat{r}r^\widehat{r}.
+
+
+
+
+Algo 2 (Forward) in GRPO-Process. First follow the standard GRPO-Process normalization to obtain \widetilde{r}_{i}^{(j)}r~i(j)\widetilde{r}_{i}^{(j)} from the observed \tilde{r}_{i}^{(j)}r~i(j)\tilde{r}_{i}^{(j)}, then accumulate the token advantages
+
+
+
+
+
+
+A_{i,t}\;=\;\sum_{\mathrm{index}_{i}(j)\geq t}\ \widetilde{r}_{i}^{(j)}\,,Ai,t=∑indexi​(j)≥tr~i(j),A_{i,t}\;=\;\sum_{\mathrm{index}_{i}(j)\geq t}\ \widetilde{r}_{i}^{(j)}\,,
+
+
+
+
+and finally apply forward weights. If the verifier outputs are binary per step, use
+
+
+
+
+
+
+w_{i}^{(j)}\;=\;\begin{cases}\hat{\rho}_{1}-1,&\tilde{r}_{i}^{(j)}=0,\\
+\hat{\rho}_{1},&\tilde{r}_{i}^{(j)}=1,\end{cases}\qquad A_{i,t}\ \leftarrow\ \sum_{\mathrm{index}_{i}(j)\geq t}\ \big(w_{i}^{(j)}\,\widetilde{r}_{i}^{(j)}\big).wi(j)={ρ^1−1,r~i(j)=0,ρ^1,r~i(j)=1,Ai,t←∑indexi​(j)≥t(wi(j)​r~i(j)).w_{i}^{(j)}\;=\;\begin{cases}\hat{\rho}_{1}-1,&\tilde{r}_{i}^{(j)}=0,\\
+\hat{\rho}_{1},&\tilde{r}_{i}^{(j)}=1,\end{cases}\qquad A_{i,t}\ \leftarrow\ \sum_{\mathrm{index}_{i}(j)\geq t}\ \big(w_{i}^{(j)}\,\widetilde{r}_{i}^{(j)}\big).
+
+
+
+
+If only a final binary reward is available, use a single sample-level weight w_{i}wiw_{i} for all steps of y_{i}yiy_{i} (as in outcome supervision) after the standard process accumulation.
+
+
+
+
+Practical notes.
+
+
+
+(i) Where to hook. Implement the corrections exactly at the interface where GRPO converts rewards to (group-)normalized advantages; no change to sampling, clipping, optimizer, or KL regularization. (ii) Stability. Backward correction can inflate variance when 1-\hat{\rho}_{0}-\hat{\rho}_{1}1−ρ^0−ρ^11-\hat{\rho}_{0}-\hat{\rho}_{1} is small; GRPO’s group normalization mitigates scale but not variance—use \varepsilonε\varepsilon and EMA’d statistics as in practice. (iii) Forward variant. Because group normalization is a positive rescaling, post-normalization multiplication by www preserves the intended gradient-direction property from the REINFORCE analysis while keeping the rest of GRPO intact. Open-source GRPO implementations follow this decomposition (reward\rightarrow→\rightarrowadvantage, then PPO-style surrogate + KL loss).
+
+
+
+
+
+
+
+
+
+
+
+Appendix C Proofs and Derivations
+
+
+
+
+
+C.1 Proof of Proposition 1
+
+
+
+Proof.
+
+
+We compute the expectation of the noisy reward \tilde{R}R~\tilde{R} conditioned on the clean reward R^{*}R∗R^{*}, which is a binary variable. By the definition of expectation:
+
+
+
+
+
+
+\displaystyle\mathbb{E}[\tilde{R}]𝔼⁡[R~]\displaystyle\mathbb{E}[\tilde{R}]
+\displaystyle=1\cdot\mathbb{P}(\tilde{R}=1\mid R^{*})+0\cdot\mathbb{P}(\tilde{R}=0\mid R^{*})=1⋅ℙ⁡(R~=1∣R∗)+0⋅ℙ⁡(R~=0∣R∗)\displaystyle=1\cdot\mathbb{P}(\tilde{R}=1\mid R^{*})+0\cdot\mathbb{P}(\tilde{R}=0\mid R^{*})
+
+
+
+
+
+
+\displaystyle=\mathbb{P}(\tilde{R}=1\mid R^{*}).=ℙ⁡(R~=1∣R∗).\displaystyle=\mathbb{P}(\tilde{R}=1\mid R^{*}).
+
+
+
+
+We can expand this using the law of total probability, conditioning on the value of R^{*}\in\{0,1\}R∗∈{0,1}R^{*}\in\{0,1\}:
+
+
+
+
+
+
+\displaystyle\mathbb{E}[\tilde{R}\mid R^{*}]𝔼⁡[R~∣R∗]\displaystyle\mathbb{E}[\tilde{R}\mid R^{*}]
+\displaystyle=R^{*}\cdot\mathbb{P}(\tilde{R}=1\mid R^{*}=1)+(1-R^{*})\cdot\mathbb{P}(\tilde{R}=1\mid R^{*}=0).=R∗⋅ℙ⁡(R~=1∣R∗=1)+(1−R∗)⋅ℙ⁡(R~=1∣R∗=0).\displaystyle=R^{*}\cdot\mathbb{P}(\tilde{R}=1\mid R^{*}=1)+(1-R^{*})\cdot\mathbb{P}(\tilde{R}=1\mid R^{*}=0).
+
+
+
+
+From Definition 1, we have \mathbb{P}(\tilde{R}=1\mid R^{*}=0)=\rho_{0}ℙ⁡(R~=1∣R∗=0)=ρ0\mathbb{P}(\tilde{R}=1\mid R^{*}=0)=\rho_{0} and \mathbb{P}(\tilde{R}=0\mid R^{*}=1)=\rho_{1}ℙ⁡(R~=0∣R∗=1)=ρ1\mathbb{P}(\tilde{R}=0\mid R^{*}=1)=\rho_{1}, which implies \mathbb{P}(\tilde{R}=1\mid R^{*}=1)=1-\rho_{1}ℙ⁡(R~=1∣R∗=1)=1−ρ1\mathbb{P}(\tilde{R}=1\mid R^{*}=1)=1-\rho_{1}. Substituting these values:
+
+
+
+
+
+
+\displaystyle\mathbb{E}[\tilde{R}\mid R^{*}]𝔼⁡[R~∣R∗]\displaystyle\mathbb{E}[\tilde{R}\mid R^{*}]
+\displaystyle=R^{*}(1-\rho_{1})+(1-R^{*})\rho_{0}=R∗​(1−ρ1)+(1−R∗)​ρ0\displaystyle=R^{*}(1-\rho_{1})+(1-R^{*})\rho_{0}
+
+
+
+
+
+
+\displaystyle=R^{*}-\rho_{1}R^{*}+\rho_{0}-\rho_{0}R^{*}=R∗−ρ1​R∗+ρ0−ρ0​R∗\displaystyle=R^{*}-\rho_{1}R^{*}+\rho_{0}-\rho_{0}R^{*}
+
+
+
+
+
+
+\displaystyle=(1-\rho_{0}-\rho_{1})R^{*}+\rho_{0}.=(1−ρ0−ρ1)​R∗+ρ0.\displaystyle=(1-\rho_{0}-\rho_{1})R^{*}+\rho_{0}.
+
+
+
+
+This completes the proof.
+∎
+
+
+
+
+
+
+
+
+C.2 Proof of Theorem 1
+
+
+
+Proof.
+
+
+From proposition 1, we have:
+
+
+
+
+
+
+\displaystyle\mathbb{E}[\tilde{R}\mid R^{*}]𝔼⁡[R~∣R∗]\displaystyle\mathbb{E}[\tilde{R}\mid R^{*}]
+\displaystyle=(1-\rho_{0}-\rho_{1})R^{*}+\rho_{0}\,.=(1−ρ0−ρ1)​R∗+ρ0.\displaystyle=(1-\rho_{0}-\rho_{1})R^{*}+\rho_{0}\,.
+
+
+
+
+Taking the full expectation of \widehat{R}R^\widehat{R}:
+
+
+
+
+
+
+\mathbb{E}[\widehat{R}]=\frac{\mathbb{E}[\tilde{R}\mid R^{*}]-\rho_{0}}{\,1-\rho_{0}-\rho_{1}\,}=\frac{((1-\rho_{0}-\rho_{1})R^{*}+\rho_{0})-\rho_{0}}{\,1-\rho_{0}-\rho_{1}\,}=R^{*}\,,𝔼⁡[R^]=𝔼⁡[R~∣R∗]−ρ0 1−ρ0−ρ1=((1−ρ0−ρ1)​R∗+ρ0)−ρ0 1−ρ0−ρ1=R∗,\mathbb{E}[\widehat{R}]=\frac{\mathbb{E}[\tilde{R}\mid R^{*}]-\rho_{0}}{\,1-\rho_{0}-\rho_{1}\,}=\frac{((1-\rho_{0}-\rho_{1})R^{*}+\rho_{0})-\rho_{0}}{\,1-\rho_{0}-\rho_{1}\,}=R^{*}\,,
+
+
+
+
+showing unbiasedness.
+∎
+
+
+
+
+
+
+
+
+C.3 Proof of Proposition 2
+
+
+
+Proof.
+
+
+The proposition states two claims about the conditional expectation of the forward weights. The weights are defined as:
+
+
+
+
+
+
+w_{\tilde{R}}\;=\;\begin{cases}w_{0}=\rho_{1}-1&\text{if }\tilde{R}=0,\\
+w_{1}=\rho_{1}&\text{if }\tilde{R}=1.\end{cases}wR~={w0=ρ1−1if ​R~=0,w1=ρ1if ​R~=1.w_{\tilde{R}}\;=\;\begin{cases}w_{0}=\rho_{1}-1&\text{if }\tilde{R}=0,\\
+w_{1}=\rho_{1}&\text{if }\tilde{R}=1.\end{cases}
+
+
+
+
+The noise model provides the conditional probabilities:
+
+
+
+
+
+
+\displaystyle\Pr(\tilde{R}=0\mid R^{*}=1)Pr⁡(R~=0∣R∗=1)\displaystyle\Pr(\tilde{R}=0\mid R^{*}=1)
+\displaystyle=\rho_{1},\qquad\Pr(\tilde{R}=1\mid R^{*}=1)=1-\rho_{1}=ρ1,Pr⁡(R~=1∣R∗=1)=1−ρ1\displaystyle=\rho_{1},\qquad\Pr(\tilde{R}=1\mid R^{*}=1)=1-\rho_{1}
+
+
+
+
+
+\displaystyle\Pr(\tilde{R}=1\mid R^{*}=0)Pr⁡(R~=1∣R∗=0)\displaystyle\Pr(\tilde{R}=1\mid R^{*}=0)
+\displaystyle=\rho_{0},\qquad\Pr(\tilde{R}=0\mid R^{*}=0)=1-\rho_{0}=ρ0,Pr⁡(R~=0∣R∗=0)=1−ρ0\displaystyle=\rho_{0},\qquad\Pr(\tilde{R}=0\mid R^{*}=0)=1-\rho_{0}
+
+
+
+
+
+
+
+Part 1: Proof of \mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]=0𝔼⁡[wR~∣R∗=1]=0\mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]=0
+
+
+
+We compute the expectation of w_{\tilde{R}}wR~w_{\tilde{R}} conditioned on the true reward being positive (R^{*}=1R∗=1R^{*}=1):
+
+
+
+
+
+
+\displaystyle\mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]𝔼⁡[wR~∣R∗=1]\displaystyle\mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]
+\displaystyle=\sum_{k\in\{0,1\}}w_{k}\cdot\Pr(\tilde{R}=k\mid R^{*}=1)=∑k∈{0,1}wk⋅Pr⁡(R~=k∣R∗=1)\displaystyle=\sum_{k\in\{0,1\}}w_{k}\cdot\Pr(\tilde{R}=k\mid R^{*}=1)
+
+
+
+
+
+
+\displaystyle=w_{0}\cdot\Pr(\tilde{R}=0\mid R^{*}=1)+w_{1}\cdot\Pr(\tilde{R}=1\mid R^{*}=1)=w0⋅Pr⁡(R~=0∣R∗=1)+w1⋅Pr⁡(R~=1∣R∗=1)\displaystyle=w_{0}\cdot\Pr(\tilde{R}=0\mid R^{*}=1)+w_{1}\cdot\Pr(\tilde{R}=1\mid R^{*}=1)
+
+
+
+
+
+
+\displaystyle=(\rho_{1}-1)\cdot(\rho_{1})+(\rho_{1})\cdot(1-\rho_{1})=(ρ1−1)⋅(ρ1)+(ρ1)⋅(1−ρ1)\displaystyle=(\rho_{1}-1)\cdot(\rho_{1})+(\rho_{1})\cdot(1-\rho_{1})
+
+
+
+
+
+
+\displaystyle=(\rho_{1}^{2}-\rho_{1})+(\rho_{1}-\rho_{1}^{2})=(ρ12−ρ1)+(ρ1−ρ12)\displaystyle=(\rho_{1}^{2}-\rho_{1})+(\rho_{1}-\rho_{1}^{2})
+
+
+
+
+
+
+\displaystyle=0.=0.\displaystyle=0.
+
+
+
+
+
+
+
+
+Part 2: Proof of \mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]=-(1-\rho_{0}-\rho_{1})𝔼⁡[wR~∣R∗=0]=−(1−ρ0−ρ1)\mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]=-(1-\rho_{0}-\rho_{1})
+
+
+
+Next, we compute the expectation of w_{\tilde{R}}wR~w_{\tilde{R}} conditioned on the true reward being negative (R^{*}=0R∗=0R^{*}=0):
+
+
+
+
+
+
+\displaystyle\mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]𝔼⁡[wR~∣R∗=0]\displaystyle\mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]
+\displaystyle=\sum_{k\in\{0,1\}}w_{k}\cdot\Pr(\tilde{R}=k\mid R^{*}=0)=∑k∈{0,1}wk⋅Pr⁡(R~=k∣R∗=0)\displaystyle=\sum_{k\in\{0,1\}}w_{k}\cdot\Pr(\tilde{R}=k\mid R^{*}=0)
+
+
+
+
+
+
+\displaystyle=w_{0}\cdot\Pr(\tilde{R}=0\mid R^{*}=0)+w_{1}\cdot\Pr(\tilde{R}=1\mid R^{*}=0)=w0⋅Pr⁡(R~=0∣R∗=0)+w1⋅Pr⁡(R~=1∣R∗=0)\displaystyle=w_{0}\cdot\Pr(\tilde{R}=0\mid R^{*}=0)+w_{1}\cdot\Pr(\tilde{R}=1\mid R^{*}=0)
+
+
+
+
+
+
+\displaystyle=(\rho_{1}-1)\cdot(1-\rho_{0})+(\rho_{1})\cdot(\rho_{0})=(ρ1−1)⋅(1−ρ0)+(ρ1)⋅(ρ0)\displaystyle=(\rho_{1}-1)\cdot(1-\rho_{0})+(\rho_{1})\cdot(\rho_{0})
+
+
+
+
+
+
+\displaystyle=(\rho_{1}-\rho_{0}\rho_{1}-1+\rho_{0})+\rho_{0}\rho_{1}=(ρ1−ρ0​ρ1−1+ρ0)+ρ0​ρ1\displaystyle=(\rho_{1}-\rho_{0}\rho_{1}-1+\rho_{0})+\rho_{0}\rho_{1}
+
+
+
+
+
+
+\displaystyle=\rho_{1}+\rho_{0}-1=ρ1+ρ0−1\displaystyle=\rho_{1}+\rho_{0}-1
+
+
+
+
+
+
+\displaystyle=-(1-\rho_{0}-\rho_{1}).=−(1−ρ0−ρ1).\displaystyle=-(1-\rho_{0}-\rho_{1}).
+
+
+
+
+This proves both claims of the proposition.
+∎
+
+
+
+
+
+
+
+
+
+C.4 Proof of Theorem 2
+
+
+
+Proof.
+
+
+We want to show that \mathbb{E}[\Delta\theta]=(1-\rho_{0}-\rho_{1})\,\nabla_{\theta}J(\theta)𝔼⁡[Δ​θ]=(1−ρ0−ρ1)​∇θJ​(θ)\mathbb{E}[\Delta\theta]=(1-\rho_{0}-\rho_{1})\,\nabla_{\theta}J(\theta), where \Delta\theta=\frac{1}{M}\sum_{t=1}^{M}h_{t}Δ​θ=1M​∑t=1Mht\Delta\theta=\frac{1}{M}\sum_{t=1}^{M}h_{t} and h_{t}=w_{\tilde{R}}G_{t}ht=wR~​Gth_{t}=w_{\tilde{R}}G_{t}. By linearity of expectation and assuming i.i.d. samples, it suffices to show this for a single sample’s contribution, \mathbb{E}[h_{t}]𝔼⁡[ht]\mathbb{E}[h_{t}].
+
+
+
+
+We use the law of total expectation, conditioning on the latent true reward R^{*}\in\{0,1\}R∗∈{0,1}R^{*}\in\{0,1\}:
+
+
+
+
+
+
+\displaystyle\mathbb{E}[h_{t}]=\mathbb{E}[w_{\tilde{R}}G_{t}]𝔼⁡[ht]=𝔼⁡[wR~​Gt]\displaystyle\mathbb{E}[h_{t}]=\mathbb{E}[w_{\tilde{R}}G_{t}]
+\displaystyle=\mathbb{E}\left[\mathbb{E}[w_{\tilde{R}}G_{t}\mid R^{*}]\right]=𝔼⁡[𝔼⁡[wR~​Gt∣R∗]]\displaystyle=\mathbb{E}\left[\mathbb{E}[w_{\tilde{R}}G_{t}\mid R^{*}]\right]
+
+
+
+
+
+
+\displaystyle=\Pr(R^{*}=1)\,\mathbb{E}[w_{\tilde{R}}G_{t}\mid R^{*}=1]+\Pr(R^{*}=0)\,\mathbb{E}[w_{\tilde{R}}G_{t}\mid R^{*}=0].=Pr⁡(R∗=1)​𝔼​[wR~​Gt∣R∗=1]+Pr⁡(R∗=0)​𝔼​[wR~​Gt∣R∗=0].\displaystyle=\Pr(R^{*}=1)\,\mathbb{E}[w_{\tilde{R}}G_{t}\mid R^{*}=1]+\Pr(R^{*}=0)\,\mathbb{E}[w_{\tilde{R}}G_{t}\mid R^{*}=0].
+
+
+
+
+The noise process generating \tilde{R}R~\tilde{R} is independent of the policy’s action generation process (which produces G_{t}GtG_{t}), conditional on the true reward R^{*}R∗R^{*}. Thus, we can separate the expectations:
+
+
+
+
+
+
+\mathbb{E}[w_{\tilde{R}}G_{t}\mid R^{*}]=\mathbb{E}[w_{\tilde{R}}\mid R^{*}]\cdot\mathbb{E}[G_{t}\mid R^{*}].𝔼⁡[wR~​Gt∣R∗]=𝔼⁡[wR~∣R∗]⋅𝔼⁡[Gt∣R∗].\mathbb{E}[w_{\tilde{R}}G_{t}\mid R^{*}]=\mathbb{E}[w_{\tilde{R}}\mid R^{*}]\cdot\mathbb{E}[G_{t}\mid R^{*}].
+
+
+
+
+Using the results from Proposition 2:
+
+
+
+• 
+
+
+\mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]=0𝔼⁡[wR~∣R∗=1]=0\mathbb{E}[w_{\tilde{R}}\mid R^{*}=1]=0.
+
+
+
+
+• 
+
+
+\mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]=-(1-\rho_{0}-\rho_{1})𝔼⁡[wR~∣R∗=0]=−(1−ρ0−ρ1)\mathbb{E}[w_{\tilde{R}}\mid R^{*}=0]=-(1-\rho_{0}-\rho_{1}).
+
+
+
+
+
+Substituting these back into the main expectation formula:
+
+
+
+
+
+
+\displaystyle\mathbb{E}[w_{\tilde{R}}G_{t}]𝔼⁡[wR~​Gt]\displaystyle\mathbb{E}[w_{\tilde{R}}G_{t}]
+\displaystyle=\Pr(R^{*}=1)\cdot(0)\cdot\mathbb{E}[G_{t}\mid R^{*}=1]+\Pr(R^{*}=0)\cdot(-(1-\rho_{0}-\rho_{1}))\cdot\mathbb{E}[G_{t}\mid R^{*}=0]=Pr⁡(R∗=1)⋅(0)⋅𝔼⁡[Gt∣R∗=1]+Pr⁡(R∗=0)⋅(−(1−ρ0−ρ1))⋅𝔼⁡[Gt∣R∗=0]\displaystyle=\Pr(R^{*}=1)\cdot(0)\cdot\mathbb{E}[G_{t}\mid R^{*}=1]+\Pr(R^{*}=0)\cdot(-(1-\rho_{0}-\rho_{1}))\cdot\mathbb{E}[G_{t}\mid R^{*}=0]
+
+
+
+
+
+
+\displaystyle=-(1-\rho_{0}-\rho_{1})\cdot\Pr(R^{*}=0)\mathbb{E}[G_{t}\mid R^{*}=0]=−(1−ρ0−ρ1)⋅Pr(R∗=0)𝔼[Gt∣R∗=0]\displaystyle=-(1-\rho_{0}-\rho_{1})\cdot\Pr(R^{*}=0)\mathbb{E}[G_{t}\mid R^{*}=0]
+
+
+
+
+
+
+\displaystyle=-(1-\rho_{0}-\rho_{1})\cdot\mathbb{E}[\mathbf{1}_{\{R^{*}=0\}}G_{t}],=−(1−ρ0−ρ1)⋅𝔼[𝟏{R∗=0}Gt],\displaystyle=-(1-\rho_{0}-\rho_{1})\cdot\mathbb{E}[\mathbf{1}_{\{R^{*}=0\}}G_{t}],
+
+
+
+
+where \mathbf{1}_{\{\cdot\}}𝟏{⋅}\mathbf{1}_{\{\cdot\}} is the indicator function.
+From two fundamental properties of the score function:
+
+
+
+1. 
+
+
+The unconditional expectation is zero: \mathbb{E}[G_{t}]=0𝔼⁡[Gt]=0\mathbb{E}[G_{t}]=0 (Williams, 1992; Sutton et al., 1999).
+
+
+
+
+2. 
+
+
+The clean policy gradient is \nabla_{\theta}J(\theta)=\mathbb{E}[R^{*}G_{t}]∇θJ​(θ)=𝔼⁡[R∗​Gt]\nabla_{\theta}J(\theta)=\mathbb{E}[R^{*}G_{t}].
+
+
+
+
+
+From property 1, we have \mathbb{E}[G_{t}]=\mathbb{E}[(\mathbf{1}_{\{R^{*}=1\}}+\mathbf{1}_{\{R^{*}=0\}})G_{t}]=\mathbb{E}[R^{*}G_{t}]+\mathbb{E}[\mathbf{1}_{\{R^{*}=0\}}G_{t}]=0𝔼[Gt]=𝔼[(𝟏{R∗=1}+𝟏{R∗=0})Gt]=𝔼[R∗Gt]+𝔼[𝟏{R∗=0}Gt]=0\mathbb{E}[G_{t}]=\mathbb{E}[(\mathbf{1}_{\{R^{*}=1\}}+\mathbf{1}_{\{R^{*}=0\}})G_{t}]=\mathbb{E}[R^{*}G_{t}]+\mathbb{E}[\mathbf{1}_{\{R^{*}=0\}}G_{t}]=0.
+This implies that \mathbb{E}[\mathbf{1}_{\{R^{*}=0\}}G_{t}]=-\mathbb{E}[R^{*}G_{t}]=-\nabla_{\theta}J(\theta)𝔼[𝟏{R∗=0}Gt]=−𝔼[R∗Gt]=−∇θJ(θ)\mathbb{E}[\mathbf{1}_{\{R^{*}=0\}}G_{t}]=-\mathbb{E}[R^{*}G_{t}]=-\nabla_{\theta}J(\theta).
+
+
+
+
+Finally, we substitute this back into our expression for the expected update direction:
+
+
+
+
+
+
+\displaystyle\mathbb{E}[h_{t}]𝔼⁡[ht]\displaystyle\mathbb{E}[h_{t}]
+\displaystyle=\mathbb{E}[w_{\tilde{R}}G_{t}]=𝔼⁡[wR~​Gt]\displaystyle=\mathbb{E}[w_{\tilde{R}}G_{t}]
+
+
+
+
+
+
+\displaystyle=-(1-\rho_{0}-\rho_{1})\cdot\mathbb{E}[\mathbf{1}_{\{R^{*}=0\}}G_{t}]=−(1−ρ0−ρ1)⋅𝔼[𝟏{R∗=0}Gt]\displaystyle=-(1-\rho_{0}-\rho_{1})\cdot\mathbb{E}[\mathbf{1}_{\{R^{*}=0\}}G_{t}]
+
+
+
+
+
+
+\displaystyle=-(1-\rho_{0}-\rho_{1})\cdot(-\nabla_{\theta}J(\theta))=−(1−ρ0−ρ1)⋅(−∇θJ(θ))\displaystyle=-(1-\rho_{0}-\rho_{1})\cdot(-\nabla_{\theta}J(\theta))
+
+
+
+
+
+
+\displaystyle=(1-\rho_{0}-\rho_{1})\nabla_{\theta}J(\theta).=(1−ρ0−ρ1)​∇θJ​(θ).\displaystyle=(1-\rho_{0}-\rho_{1})\nabla_{\theta}J(\theta).
+
+
+
+
+Therefore, the expectation of the full update is \mathbb{E}[\Delta\theta]=\frac{1}{M}\sum\mathbb{E}[h_{t}]=(1-\rho_{0}-\rho_{1})\nabla_{\theta}J(\theta)𝔼⁡[Δ​θ]=1M​∑𝔼⁡[ht]=(1−ρ0−ρ1)​∇θJ​(θ)\mathbb{E}[\Delta\theta]=\frac{1}{M}\sum\mathbb{E}[h_{t}]=(1-\rho_{0}-\rho_{1})\nabla_{\theta}J(\theta). This completes the proof.
+∎
+
+
+
+
+
+
+
+
+
+
+Appendix D Prompt Templates and Training/Evaluation Details
+
+
+
+
+This section records the exact prompt formats and the concrete hyperparameters we used for all experiments in Reinforcement Learning with Verifiable yet Noisy Rewards under Unreliable Verifiers. We mirror the level of detail used in recent RLVR appendices and report settings sufficient for full reproducibility from our released code.
+
+
+
+
+
+D.1 Prompt Templates
+
+
+
+
+Training (generation) prompt.
+
+
+
+For each math problem xxx (a plain-text question), the user message is built by concatenating the raw question with a short instruction that elicits chain-of-thought and enforces a verifiable answer format.
+
+⬇
+<user>
+
+{QUESTION}
+
+
+
+Let’s think step by step and enclose the reasoning process within <think> and </think> tags.
+
+The final result in the answer MUST BE within \boxed{}.
+
+</user>
+
+
+
+During data preprocessing, we write chat-style JSON with a single user turn as shown above and attach the rule-based ground-truth answer for reward checking.
+
+
+
+
+
+
+Evaluation (validation/test) prompt.
+
+
+
+We use the same prompt template as training for validation and test-time generation so that the rule-based verifier can parse the boxed answer consistently.
+
+
+
+
+
+
+Verifier I/O.
+
+
+
+The rule-based checker operates on the model’s final string and extracts the last \boxed{...} expression; it then applies numeric/rational parsing and equality tests to produce a binary reward \tilde{R}\in\{0,1\}R~∈{0,1}\tilde{R}\in\{0,1\}.
+When the LLM verifier is enabled, it receives the pair (\text{problem},\text{model solution})(problem,model solution)(\text{problem},\text{model solution}) and returns a binary correctness decision used only to estimate the false negative rate \rho_{1}ρ1\rho_{1} over a sliding window. The LLM verifier does not replace the rule-based reward.
+
+
+
+
+
+
+
+
+
+D.2 Data Preprocessing
+
+
+
+
+We load the preview split of the math-reasoning corpus and map each example to a chat-style record as above, keeping the reference (ground-truth) answer for programmatic checking.
+
+
+
+
+
+
+
+D.3 Training Configuration
+
+
+
+
+Unless otherwise stated, all runs use GRPO (outcome supervision) with the following constants.
+
+
+
+
+
+
+
+Training (GRPO)
+
+
+
+
+Train batch size
+128
+
+
+
+Rollouts per question (group size)
+8
+
+
+
+Max prompt length (tokens)
+512
+
+
+
+Max response length (tokens)
+3072
+
+
+
+Sampling temperature (rollouts)
+1.0
+
+
+
+Advantage estimator
+Group-normalized (GRPO)
+
+
+
+KL regularization
+Enabled
+
+
+
+KL coefficient \betaβ\beta
+0.001
+
+
+
+Entropy coefficient
+0.0
+
+
+
+Optimizer
+AdamW
+
+
+
+Learning rate
+3e-6
+
+
+
+Total epochs
+1
+
+
+
+Table 3: Core training settings.
+
+
+
+Model/backbone.
+
+
+
+We load the base model from local cache (HuggingFace layout), enable FSDP2 for actor/ref, and use shared-memory weights with remove-padding for efficient vLLM rollouts. The KL is computed w.r.t. a frozen reference initialized from the same base.
+
+
+
+
+
+
+
+
+
+D.4 Datasets
+
+
+
+
+Training.
+
+
+
+
+• 
+
+
+DeepScaleR (Luo et al., 2025): the math-reasoning corpus used for RLVR rollouts and policy updates.
+
+
+
+
+
+
+
+
+
+Evaluation.
+
+
+
+We evaluate with the standard official/problem releases for each benchmark and apply the same rule-based programmatic checking protocol throughout.
+
+
+
+• 
+
+
+MATH500 (Lightman et al., 2023): a verifiable subset of math reasoning problems for reliable evaluation.
+
+
+
+
+• 
+
+
+AIME 2024 (HuggingFaceH4, 2024): the 2024 American Invitational Mathematics Examination set.
+
+
+
+
+• 
+
+
+AIME 2025 (OpenCompass, 2025): the 2025 AIME set.
+
+
+
+
+• 
+
+
+AMC 2023 (math-ai, 2025): problems from the 2023 American Mathematics Competitions.
+
+
+
+
+• 
+
+
+Minerva Math (Lewkowycz et al., 2022): the Minerva math evaluation suite.
+
+
+
+
+• 
+
+
+OlympiadBench (He et al., 2024): olympiad-level mathematics benchmark.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Appendix E False Positive (FP) and False Negative (FN) Examples
+
+
+
+
+We provide FP and FN examples using Qwen2.5-Math-7B base model on MATH 500.
+
+
+
+
+FP
+
+
+⬇
+{
+
+    "idx": 16,
+
+    "question": "Compute: $1-2+3-4+5- \\dots +99-100$.",
+
+    "model_prediction": "{}",
+
+    "model_response": "Compute: $1+2-3-4+5+6-7-8+ \\dots +97+98-99-100$.  \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}. \\boxed{{}}.  \\",
+
+    "ground_truth": "-50",
+
+    "rule_based": false,
+
+    "llm_verifier": true,
+
+    "llm_verifier_score": 1.0,
+
+    "llm_verifier_raw_value": "1.0",
+
+    "math_verify": false,
+
+    "math_verify_score": 0.0
+
+  },
+
+
+
+
+
+
+
+FN
+
+
+⬇
+{
+
+    "idx": 92,
+
+    "question": "A pirate searches seven islands for buried treasure. If each island has a $\\frac{1}{5}$ chance of having treasure, what is the probability that exactly 4 of the islands have treasure?",
+
+    "answer": "\\frac{448}{15625}",
+
+    "model_prediction": "0.028672",
+
+    "model_response": "To solve this problem, we can use the binomial probability formula. The probability of having exactly $k$ successes in $n$ independent Bernoulli trials (each with success probability $p$) is given by:\n\n\\[ P(X = k) = \\binom{n}{k} p^k (1-p)^{n-k} \\]\n\nHere, $n = 7$ (the number of islands), $k = 4$ (the number of islands with treasure), and $p = \\frac{1}{5}$ (the probability that a single island has treasure).\n\nThe binomial coefficient $\\binom{n}{k}$ is the number of ways to choose $k$ successes out of $n$ trials, and it is calculated as:\n\n\\[ \\binom{n}{k} = \\frac{n!}{k!(n-k)!} \\]\n\nSo, the probability that exactly 4 of the 7 islands have treasure is:\n\n\\[ P(X = 4) = \\binom{7}{4} \\left(\\frac{1}{5}\\right)^4 \\left(\\frac{4}{5}\\right)^{3} \\]\n\nLet’s calculate this using Python.\n‘‘‘python\nimport math\n\n# Number of islands\nn = 7\n# Number of islands with treasure\nk = 4\n# Probability of a single island having treasure\np = 1/5\n\n# Binomial coefficient\nbinom_coeff = math.comb(n, k)\n\n# Probability calculation\nprobability = binom_coeff * (p**k) * ((1-p)**(n-k))\nprint(probability)\n‘‘‘\n‘‘‘output\n0.02867200000000001\n‘‘‘\nThe probability that exactly 4 of the 7 islands have treasure is \\(\\boxed{0.028672}\\).",
+
+    "ground_truth": "\\frac{448}{15625}",
+
+    "rule_based": false,
+
+    "llm_verifier": false,
+
+    "llm_verifier_score": 0.0,
+
+    "llm_verifier_raw_value": "0.0",
+
+    "math_verify": true,
+
+    "math_verify_score": 1.0
+
+  }
+
+
+
+
+
+
+
+
+
+
+
+  
+    Experimental support, please
+    view the build logs
+    for errors. Generated by
+    
+      
+        L
+        A
+        T
+        E
+      
+      xml
+      
+    .
+  
+  
+    
+Instructions for reporting errors
+
+    
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+
+    
+      
+Click the "Report Issue" (
+            
+          ) button, located in the page header.
+
+    
+    
+Tip: You can select the relevant text first, to include it in your report.
+
+    
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+
+    
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+
+  
+
+  
+    
+      
+        We gratefully acknowledge support from
+        our major funders,
+        member institutions, ,
+        and all contributors.
+      
+      
+        About
+        ·
+        Help
+        ·
+        Contact
+        ·
+        Subscribe
+        ·
+        Copyright
+        ·
+        Privacy
+        ·
+        Accessibility
+        ·
+        Operational Status (opens in new tab)
+      
+    
+
+    
+      Major funding support from
+      
+        
+          
+        
+        
+          
+        
+        
+          
+        
+      
+    
+  
+
+  
+    
+      
+    
+  
+
+

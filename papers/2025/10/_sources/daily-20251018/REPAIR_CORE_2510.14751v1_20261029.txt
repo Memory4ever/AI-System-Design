@@ -1,0 +1,2017 @@
+
+
+
+Beyond Multi-Token Prediction: Pretraining LLMs with Future Summaries
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+    
+      Report GitHub Issue
+      ×
+    
+
+    
+      Title:
+      
+
+      
+Content selection saved. Describe the issue below:
+
+      Description:
+      
+    
+
+    
+      Submit without GitHub
+      Submit in GitHub
+    
+  
+
+    
+    arXiv is now an independent nonprofit!
+    Learn more
+    ×
+  
+
+
+  
+    
+      Back to arXiv
+    
+  
+  
+  
+    Why HTML?
+    
+      
+        
+      
+      Report Issue
+    
+    
+      
+        
+        
+      
+      Back to Abstract
+    
+    
+    
+      
+        
+      
+      Download PDF
+    
+    
+      
+        
+        
+      
+    
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+          
+          
+        
+      
+      
+        
+          
+          
+        
+      
+      
+        
+          
+          
+        
+      
+    
+  
+
+
+
+
+Abstract
+
+1 Introduction
+
+2 Future-Aware Pretraining
+
+
+2.1 Background on Next-Token and Multi-Token Prediction
+
+
+Next-Token Prediction (NTP).
+
+Multi-Token Prediction (MTP).
+
+
+2.2 Future Summary Prediction (FSP)
+
+
+(1) Hand-crafted future summaries.
+
+(2) Learned future summaries.
+
+Why Future Summary Prediction?
+
+
+
+3 Analyzing Future Summaries
+
+
+3.1 Long future summary is important
+
+
+Findings.
+
+
+3.2 Adaptive future summary is important
+
+
+Findings.
+
+
+
+4 Experiments
+
+
+4.1 Setup
+
+4.2 Results
+
+4.3 Analyzing MTP with different future summaries
+
+
+5 Related Work
+
+
+Pitfalls of Next-Token Prediction (NTP).
+
+Going Beyond Immediate Next Token.
+
+Bidirectional models.
+
+
+6 Conclusion
+
+References
+
+A Additional MTP Variants
+
+
+DeepSeek (DS) MTP.
+
+TRELAWNEY.
+
+
+B Experiments
+
+
+B.1 Path-Star Graph
+
+
+Experiment Setup.
+
+Experiment with multiple auxiliary heads in MTP.
+
+
+B.2 Sibling Discovery
+
+
+Experiment Setup.
+
+
+B.3 Real World Pretraining
+
+
+Pretraining dataset composition.
+
+Pretraining hyperparameters.
+
+Evaluation Metrics.
+
+Additional Experiment: Analysis of future summaries (3B).
+
+
+
+
+
+
+  
+    License: CC BY-NC-SA 4.0
+  
+  
+arXiv:2510.14751v1 [cs.LG] 16 Oct 2025
+
+
+
+Beyond Multi-Token Prediction: Pretraining LLMs with Future Summaries
+
+
+Divyat Mahajan
+
+Affiliation: FAIR at Meta
+
+Affiliation: Mila, Université de Montréal, DIRO
+
+Work done at Meta
+
+  
+Sachin Goyal
+
+Affiliation: Carnegie Mellon University
+
+Work done at Meta
+
+  
+Badr Youbi Idrissi
+
+Affiliation: FAIR at Meta
+
+  
+Mohammad Pezeshki
+
+Affiliation: FAIR at Meta
+
+  
+Ioannis Mitliagkas
+
+Affiliation: Mila, Université de Montréal, DIRO
+
+  
+David Lopez-Paz
+
+Affiliation: FAIR at Meta
+
+  
+Kartik Ahuja
+
+Affiliation: FAIR at Meta
+
+
+Abstract
+    
+
+Next-token prediction (NTP) has driven the success of large language models (LLMs), but it struggles with long-horizon reasoning, planning, and creative writing, with these limitations largely attributed to teacher-forced training. Multi-token prediction (MTP) partially mitigates these issues by predicting several future tokens at once, but it mostly captures short-range dependencies and offers limited improvement. We propose future summary prediction (FSP), which trains an auxiliary head to predict a compact representation of the long-term future, preserving information relevant for long-form generations. We explore two variants of FSP: handcrafted summaries, for example, a bag of words summary of the future of the sequence, and learned summaries, which use embeddings produced by a reverse language model trained from right to left. Large-scale pretraining experiments (3B and 8B-parameter models) demonstrate that FSP provides improvements over both NTP and MTP across math, reasoning, and coding benchmarks.
+  
+††date: August 24, 2026††correspondence: Divyat Mahajan at divyatmahajan@gmail.com
+
+
+
+1 Introduction
+
+
+
+Early progress in large language models was primarily driven by massive scaling of both data and compute (Brown et al., 2020; Kaplan et al., 2020).
+However, the returns from this vanilla scaling approach are beginning to diminish as we encounter the “data wall” (Sutskever, 2024).
+This has renewed efforts toward algorithmic advances, including new architectures and pretraining objectives, that can extract more predictive signal from a fixed amount of training data.
+
+
+
+Next-token prediction (NTP) with teacher forcing—training models by conditioning on ground-truth history when predicting the next token—is foundational to current pretraining methods. However, this approach introduces a train-inference mismatch known as exposure bias: during inference, the model must rely on its own outputs rather than the ground truth, leading to compounding errors and degraded long-range generation quality (Bengio et al., 2015).
+Moreover, teacher forcing can induce training-time shortcut learning as well, where the model exploits local cues from the ground-truth prefix instead of capturing true long-range dependencies (Bachmann and Nagarajan, 2024). These issues manifest most clearly in tasks demanding extended reasoning, narrative coherence, and open-ended creativity (Papalampidi et al., 2022; Nagarajan et al., 2025).
+
+
+
+An appealing alternative to teacher forcing is teacherless training, where the model learns from its own generations rather than relying on ground-truth histories. However, this approach is computationally intensive and challenging to parallelize. As a practical compromise, recent research has explored multi-token prediction (MTP) methods (Gloeckle et al., 2024), which train auxiliary heads to predict several future tokens simultaneously. MTP has demonstrated success in large-scale systems such as DeepSeek-V3 (Liu et al., 2024) and Qwen-3 (Yang et al., 2025). In MTP, each time step augments the standard next-token prediction (xt+1x_{t+1}) with auxiliary heads that predict additional future tokens (e.g., xt+2x_{t+2} and beyond). However, these methods typically assume independence among the predicted tokens given the prefix, resulting in poor approximations of the true joint distribution over long future spans.
+
+
+
+In this work, we propose a different approach: rather than predicting multiple future tokens individually, we train a single auxiliary head to predict a summary representation of the future sequence.
+It aims to push as much information as possible about the future into a single target vector, while filtering out information that is inherently unpredictable and would only introduce noise. At each time step tt, given the future tokens (xt+2,xt+3,…,xt+τ)(x_{t+2},x_{t+3},\dots,x_{t+\tau}), we construct a summary vector a⁡(t,τ)a(t,\tau) to provide supervision to the auxiliary head. We explore two complementary approaches for constructing future summaries: a simple token-level aggregation method, and our main contribution, a learned representation of the future sequence that captures long-range dependencies more effectively.
+
+
+
+
+• 
+
+
+Hand-crafted summary. We train the auxiliary head to predict all the future tokens that will occur in a future window, without requiring to know their exact positions. Concretely, at each step tt, we define a multi-hot vector a⁡(t,τ)a(t,\tau) over the vocabulary, akin to bag-of-words, where a​(t,τ)i=𝕀⁡(i∈{xt+2,…,xt+τ})a(t,\tau)_{i}=\mathbb{I}(i\in\{x_{t+2},\dots,x_{t+\tau}\}), and train the model with a binary cross-entropy objective.
+
+
+• 
+
+
+Learned summary. Handcrafted summaries such as the one proposed above can be noisy: not all future tokens are equally relevant, and predicting them all can dilute the signal. To address this, we propose to learn a compact summary of the future. We do this by training a reverse language model (grg_{r}) on reversed sequences, so that its hidden representation a⁡(t,τ)=gr​(x≥t+2)a(t,\tau)=g_{r}(x_{\geq t+2}) serves as a rich embedding of the future context. The auxiliary head of the forward model is then trained to match this representation with an ℓ2\ell_{2} loss.
+
+
+
+
+Figure 1: A comparison of future-aware pretraining objectives. All methods take a prefix x≤tx_{\leq t} as input. NTP: Only predicts the immediate next token. MTP: Uses multiple auxiliary heads, each predicting a specific future token. FSP-BCE: Our proposed hand-crafted summary method that predicts a multi-hot “bag-of-tokens” summary of a long future window using a single auxiliary head. FSP-RevLM: Our proposed learned summary method predicts a compact hidden representation of the future, which is generated by a reverse language model (RevLM).
+
+
+
+
+We use the lens of synthetic tasks, path-star graph and sibling discovery (Bachmann and Nagarajan, 2024; Nagarajan et al., 2025) to clarify the conceptual difference between MTP and our approach. On path-star graph, hand-crafted summaries deliver strong gains over MTP, which only predicts immediate future tokens, demonstrating the benefit of long-horizon supervision. However, in sibling discovery, where the future includes content unrelated to the current local sequence, handcrafted summaries struggle, as they treat all future tokens equally. In contrast, our learned summary vectors focus on the informative parts of the future and achieve consistent gains.
+
+
+
+We then scale our approach to real-world pretraining at the 8B parameter level, conducting a systematic evaluation across six methods, including DeepSeek-MTP and multiple handcrafted summary variants. This scale and breadth of comparison is rare in the literature due to its high computational cost. Here, the proposed future summary prediction with learned summaries yields substantial improvements over NTP and MTP baselines, with gains of up to 5% on math and coding benchmarks that demand long-horizon reasoning and planning. These results demonstrate that future summary prediction is not only effective in controlled synthetic settings but also translates into meaningful gains for large-scale LLM training.
+
+
+
+
+
+2 Future-Aware Pretraining
+
+
+
+
+2.1 Background on Next-Token and Multi-Token Prediction
+
+
+
+Let us define a sequence of tokens as X=(X1,X2,…,XT)X=(X_{1},X_{2},\dots,X_{T}) sampled from a distribution ℙX\mathbb{P}_{X}, where each token is a discrete random variable supported on {1,2,…,V}\{1,2,\dots,V\}.
+
+
+
+Next-Token Prediction (NTP).
+
+
+
+The standard next-token prediction objective is:
+
+
+
+
+
+LNTP​(X,Pθ)=−𝔼x∼ℙX​[∑t=1T−1log⁡Pθ​(xt+1|x≤t)],L_{\text{NTP}}(X,P_{\theta})=-\mathbb{E}_{x\sim\mathbb{P}_{X}}\Bigg[\sum_{t=1}^{T-1}\log P_{\theta}(x_{t+1}\,|\,x_{\leq t})\Bigg],
+
+(1)
+
+
+where PθP_{\theta} is the predictor, optimized via
+
+
+
+
+
+θ⋆=arg⁡minθ​LNTP​(X,Pθ).\theta^{\star}=\arg\min_{\theta}L_{\text{NTP}}(X,P_{\theta}).
+
+(2)
+
+
+
+
+A typical parameterization is:
+
+
+
+
+
+Pθ​(xt+1|x≤t)=softmax⁡(fu∘fh∘fs​(x≤t)),P_{\theta}(x_{t+1}\,|\,x_{\leq t})=\mathrm{softmax}\!\Big(f_{u}\circ f_{h}\circ f_{s}\big(x_{\leq t}\big)\Big),
+
+(3)
+
+
+where fsf_{s} is the transformer backbone, fhf_{h} is a processing head, and fuf_{u} is the unembedding layer (Figure 2).
+
+
+
+
+Multi-Token Prediction (MTP).
+
+
+
+MTP aims to jointly predict multiple future tokens, as follows:
+
+
+
+
+
+LMTP-Joint​(X,Pθ)=−𝔼x∼ℙX​[∑t=1T−1log⁡Pθ​(xt+1,…,xt+τ|x≤t)].L_{\text{MTP-Joint}}(X,P_{\theta})=-\mathbb{E}_{x\sim\mathbb{P}_{X}}\Bigg[\sum_{t=1}^{T-1}\log P_{\theta}(x_{t+1},\dots,x_{t+\tau}\,|\,x_{\leq t})\Bigg].
+
+(4)
+
+
+
+
+Since modeling the exact joint distribution is intractable, a common simplification is to model the marginal distribution of future tokens given the prefix (Gloeckle et al., 2024; Liu et al., 2024):
+
+
+
+
+
+LMTP(X,Pθ)=−𝔼x∼ℙX[∑t=1T−1∑k=1τ𝟏[t+k≤T]logPθ(xt+k|x≤t)].L_{\text{MTP}}(X,P_{\theta})=-\mathbb{E}_{x\sim\mathbb{P}_{X}}\Bigg[\sum_{t=1}^{T-1}\sum_{k=1}^{\tau}\mathbf{1}[t+k\leq T]\,\log P_{\theta}(x_{t+k}\,|\,x_{\leq t})\Bigg].
+
+(5)
+
+
+
+
+Following Gloeckle et al. (2024), the predictor uses separate auxiliary heads for each kk:
+
+
+
+
+
+Pθ​(xt+1|x≤t)\displaystyle P_{\theta}(x_{t+1}\,|\,x_{\leq t})
+=softmax⁡(fu∘fh∘fs​(x≤t)),\displaystyle=\mathrm{softmax}\!\Big(f_{u}\circ f_{h}\circ f_{s}\big(x_{\leq t}\big)\Big),
+
+(6)
+
+
+
+Pθ​(xt+k|x≤t)\displaystyle P_{\theta}(x_{t+k}\,|\,x_{\leq t})
+=softmax(fu∘f′hk∘fs(x≤t)),∀k>1,\displaystyle=\mathrm{softmax}\!\Big(f_{u}\circ f^{\prime}_{h_{k}}\circ f_{s}\big(x_{\leq t}\big)\Big),\quad\forall k>1,
+
+
+
+where fhk′f^{\prime}_{h_{k}} are auxiliary transformer blocks specialized for predicting future tokens xt+kx_{t+k}.
+
+
+
+This design reduces teacher forcing by predicting xt+kx_{t+k} from x≤tx_{\leq t} only, rather than conditioning on the full prefix x≤t+k−1x_{\leq t+k-1}. This is the key principle behind multi-token prediction, i.e., reduced teacher forcing by requiring the model to predict a block of future tokens at each step.
+
+
+
+We discuss other variants of MTP such as DeepSeek-MTP and random future token MTP (Thankaraj et al., 2025) in Appendix A.
+
+
+
+
+
+
+2.2 Future Summary Prediction (FSP)
+
+
+
+In MTP, we use a set of auxiliary heads to predict a block of immediate future tokens. A key limitation of this approach is that one does not know exactly where the informative signal in the future sequence lies. Informative signals in future could occur far away in the sequence and be well beyond the number of future tokens (kk) that MTP predicts. A trivial approach to overcome this could be to predict all the future tokens. However, having one auxiliary head per future token is not scalable, and limits the amount of future tokens we can utilize during training.
+
+
+
+Towards this, we propose Future Summary Prediction (FSP), that predicts a compact summary of the (long) future sequence rather than each token individually.
+
+
+Figure 2: An abstraction of the architecture that subsumes NTP, MTP, and FSP.
+
+
+
+Let a⁡(t,τ)a(t,\tau) represent a summary of future tokens (xt+2,…,xt+τ)(x_{t+2},\dots,x_{t+\tau}). The learning objective is:
+
+
+
+
+
+LFSP​(X,Pθ)=LNTP​(X,Pθ)+𝔼x∼ℙX​[la​(Aϕ​(x≤t),a⁡(t,τ))],L_{\text{FSP}}(X,P_{\theta})=L_{\text{NTP}}(X,P_{\theta})+\mathbb{E}_{x\sim\mathbb{P}_{X}}\Big[l_{a}\big(A_{\phi}(x_{\leq t}),a(t,\tau)\big)\Big],
+
+(7)
+
+
+where PθP_{\theta} is the next-token predictor, AϕA_{\phi} is the summary predictor, and lal_{a} is the loss between predicted and ground-truth summaries. The architecture is:
+
+
+
+
+
+Pθ​(xt+1|x≤t)\displaystyle P_{\theta}(x_{t+1}\,|\,x_{\leq t})
+=softmax⁡(fu∘fh∘fs​(x≤t)),\displaystyle=\mathrm{softmax}\!\Big(f_{u}\circ f_{h}\circ f_{s}\big(x_{\leq t}\big)\Big),
+
+(8)
+
+
+
+Aϕ​(x≤t)\displaystyle A_{\phi}(x_{\leq t})
+=fha′∘fs​(x≤t).\displaystyle=f^{\prime}_{h_{a}}\circ f_{s}\big(x_{\leq t}\big).
+
+
+
+
+
+Unlike MTP, FSP requires only a single auxiliary head fha′f^{\prime}_{h_{a}}, making it more scalable.
+
+
+
+The key question, then, is how to construct an effective future summary. In this work, we investigate two approaches:
+
+
+
+(1) Hand-crafted future summaries.
+
+
+
+We define a binary vector a⁡(t,τ)∈ℝVa(t,\tau)\in\mathbb{R}^{V} indicating whether token ii appears in the future window:
+
+
+
+
+
+a​(t,τ)i=𝕀⁡(i∈{xt+2,…,xt+τ}).a(t,\tau)_{i}=\mathbb{I}\!\big(i\in\{x_{t+2},\dots,x_{t+\tau}\}\big).
+
+(9)
+
+
+
+
+Given logits from Aϕ​(x≤t)A_{\phi}(x_{\leq t}), we minimize a reweighted binary cross-entropy loss:
+
+
+
+
+
+la(Aϕ(x≤t),a(t,τ))=−∑i=1Vw(i)[ailogσ(zi)+(1−ai)log(1−σ(zi))]l_{a}\big(A_{\phi}(x_{\leq t}),a(t,\tau)\big)=-\sum_{i=1}^{V}w(i)\Big[a_{i}\log\sigma(z_{i})+(1-a_{i})\log\big(1-\sigma(z_{i})\big)\Big]
+
+(10)
+
+
+where ai=𝕀⁡(i∈{xt+2,…,xt+τ})a_{i}=\mathbb{I}\!\big(i\in\{x_{t+2},\dots,x_{t+\tau}\}\big), ziz_{i} is the ii-th logit of Aϕ​(x≤t)A_{\phi}(x_{\leq t}), σ\sigma is the sigmoid, and w⁡(i)w(i) reflects the importance of token ii (e.g. term frequency-inverse document frequency, tf–idf).
+
+
+
+
+(2) Learned future summaries.
+
+
+
+Predicting every future token via hand-crafted summaries as discussed above could be noisy. For example, not all tokens in the future are informative and thus hand-crafted summaries that account for all of them can be wasteful.
+Instead of predicting all the future tokens, we therefore propose to predict a learned representation of the future tokens relevant to predicting the current token xt+1x_{t+1}. We learn this representation via a reverse language model QψQ_{\psi}, (RevLM), trained on ”right-to-left” sequences:
+
+
+
+
+
+LRevLM​(X,Qψ)=−𝔼x∼ℙX​[∑t=1T−1log⁡Qψ​(xt+1|x≥t+2)].L_{\text{RevLM}}(X,Q_{\psi})=-\mathbb{E}_{x\sim\mathbb{P}_{X}}\Bigg[\sum_{t=1}^{T-1}\log Q_{\psi}(x_{t+1}\,|\,x_{\geq t+2})\Bigg].
+
+(11)
+
+
+
+
+RevLM shares the same architecture, and we take its hidden state as the summary vector:
+
+
+
+
+
+a⁡(t,T−t)=gh∘gs​(x≥t+2).a(t,T-t)=g_{h}\circ g_{s}\big(x_{\geq t+2}\big).
+
+(12)
+
+
+We then train Aϕ​(x≤t)A_{\phi}(x_{\leq t}) to match this representation via the ℓ2\ell_{2} loss:
+
+
+
+
+
+la​(Aϕ​(x≤t),a⁡(t,T−t))=‖Aϕ​(x≤t)−gh∘gs​(x≥t+2)‖22.l_{a}\big(A_{\phi}(x_{\leq t}),a(t,T-t)\big)=\big\|A_{\phi}(x_{\leq t})-g_{h}\circ g_{s}(x_{\geq t+2})\big\|_{2}^{2}.
+
+(13)
+
+
+
+
+
+Why Future Summary Prediction?
+
+
+
+The key advantage of future summary prediction is its ability to reduce dependence on teacher forcing when modeling long future sequences. To intuitively measure teacher forcing, consider for each ground-truth token exposed to the model, how much information is the model required to predict about unseen tokens? If the model predicts more such information, then we have reduced teacher forcing. Next-token prediction (NTP) uses the highest degree of teacher forcing, since the model always conditions on ground-truth histories to predict just the next token. Multi-token prediction (MTP) partially relaxes this by asking the model to predict short blocks of future tokens, thereby reducing teacher forcing locally. However, MTP remains constrained by the short horizon of its predictions. In contrast, our proposed approach predicts summaries of long future sequences, substantially reducing teacher forcing by requiring the model to reason about rich, global properties of the target trajectory.
+
+
+
+
+
+
+
+3 Analyzing Future Summaries
+
+
+
+To better understand how FSP mitigates the challenges of long-horizon planning, we consider the graph modeling benchmarks introduced in prior works. Our analysis yields following insights:
+
+
+• 
+
+
+Long future summaries matter. On the canonical path–star task (Bachmann and Nagarajan, 2024), we find that MTP with short range future prediction fails to generalize, highlighting the need for auxiliary objectives that incorporate long-range future information.
+
+
+• 
+
+
+Adaptive future summaries matter. On a modified sibling discovery task (Nagarajan et al., 2025), we show that incorporating every future token with hand-crafted summaries is suboptimal, highlighting the need for learned summaries that retain key information.
+
+
+
+
+
+
+3.1 Long future summary is important
+
+
+Figure 3: Analysis of FSP-BCE on the path-star task, which tests long-horizon planning. Left: Accuracy (mean over 55 random seeds) of different pretraining objectives on degree 22 graphs with path lengths 66 and 88. Standard NTP generalizes poorly, and MTP’s accuracy degrades as the path length increases, while FSP-BCE achieves perfect accuracy. Right: An illustration of why NTP fails while FSP-BCE succeeds, where the input context is shown in grey and the target is in beige.
+
+
+
+
+We consider the path-star graph, a directed acyclic graph (DAG) G⁡(d,l)G(d,l) composed of dd paths, each of length ll, originating from a central start node vstartv_{\text{start}}. The model is provided with the adjacency list of the graph in the prefix, and the task is to generate the path from vstartv_{\text{start}} to a designated end node vendv_{\text{end}}.
+
+
+
+Let the target path be (vstart,v1,v2,⋯,vend)(v_{\text{start}},v_{1},v_{2},\cdots,v_{\text{end}}) and the input prefix be p=(A​d​j​(G),vstart,vend)p=(Adj(G),v_{\text{start}},v_{\text{end}}). Then NTP with teacher forcing predicts an intermediate node in the path as Pθ​(vi+1|p,v≤i)P_{\theta}(v_{i+1}|p,v_{\leq i}). As shown by Bachmann and Nagarajan (2024), NTP often learns shortcut solutions: the model can recover vi+1v_{i+1} directly from viv_{i} by scanning the adjacency list in pp, without learning the underlying long-range plan (Figure 3). This leads to gradient starvation (Pezeshki et al., 2021), where the supervision signal for the actual planning task is lost. Once the shortcut is learned, meaningful gradient information remains only for predicting the first step v1v_{1}, as it is the only difficult token.
+
+
+
+A natural remedy is to reduce teacher forcing via future prediction approaches, which require the model to predict tokens further ahead. This makes shortcuts less effective, as multiple lookups in the adjacency list would be needed to predict future tokens. Hence, we consider the MTP approach, which predicts the immediate future token, and the handcrafted summary method FSP-BCE, which compresses the information about all the future tokens from the path. By summarizing the entire future trajectory, FSP-BCE substantially reduces teacher forcing, encouraging the model to plan the full path instead of exploiting shortcuts.
+
+
+
+Findings.
+
+
+
+We conduct experiments for two graphs G⁡(2,6)G(2,6) and G⁡(2,8)G(2,8), with all the approaches pretrained from scratch using the GPT-Mini architecture (details in Section B.1). At inference, we discard the auxiliary head used in future prediction, and the task is to generate the complete path given the prefix pp. The evaluation metric checks whether the generated path exactly matches the true path. Results in Figure 3 (left) show that both NTP and MTP fail to generalize (both obtained perfect training accuracy), and the accuracy of MTP degrades further for the scenario with longer path G⁡(2,8)G(2,8). Hence, predicting just the immediate future token is not enough, and FSP-BCE tackles this by efficiently compressing all the future tokens from the path, enabling it to achieve perfect accuracy in both cases. Appendix B.1 (Table 4) shows that increasing the number of auxiliary heads in MTP can provide some improvement, but practical limits exist: even with four additional future heads MTP cannot solve the longer path graph G⁡(2,8)G(2,8).
+
+
+
+
+
+
+3.2 Adaptive future summary is important
+
+
+Figure 4: Analysis on the modified sibling discovery task which requires adaptive future summaries. Left: Convergence speed (mean (s.e.) over 33 random seeds) relative to NTP, where lower values imply faster convergence. FSP-RevLM converges faster than NTP while FSP-BCE improves only in the cases with few components. Right: Task setup illustration– given the prefix, only future tokens in the highlighted component are informative. FSP-BCE, which summarizes all future tokens, suffers from irrelevant information, whereas FSP-RevLM summarizes only the informative aspects.
+
+
+
+Long handcrafted summaries often incorporate all future tokens, even though only a subset may provide meaningful supervision signals, while the rest can introduce noise. This motivates the need for an adaptive future summary. We illustrate this with modification of the sibling discovery task. Figure 4 (right) depicts the setup, the model must generate sequences made of concatenated, independent components, where each component lists its children nodes first, followed by their parent (e.g., nodes S11,S21,S31S_{1}^{1},S_{2}^{1},S_{3}^{1} followed by parent P1P^{1}).
+
+
+
+Intuitively, the causal factorization implied by the DAG (parent followed by children) implies a goal-conditioned approach: by conditioning on the parent, the model can easily capture the sibling dependencies. Under NTP, the model estimates Pθ​(S21|S11)P_{\theta}(S_{2}^{1}|S_{1}^{1}) without the parent, making sibling relationships harder to learn and requiring more samples. Future prediction can help, when the model predicts the parent from S11S_{1}^{1}, then the representation can incorporate the parent information. This enables goal-conditioned planning, the model can predict S21S_{2}^{1} conditioned on both S11S_{1}^{1} and the parent, allowing sample efficient learning of sibling relationships (see Nagarajan et al. (2025) for details).
+
+
+
+However, not all future tokens are equally informative. As Figure 4 illustrates, future tokens from a different component do not provide relevant signal for predicting S21S_{2}^{1}. Handcrafted summaries that include all future tokens may therefore be affected by the irrelevant information, whereas learned summaries remain robust, as the reverse language model learns representation that emphasize only the predictive signals needed to infer the next token.
+
+
+
+Findings.
+
+
+
+We verify this empirically by comparing FSP-BCE and FSP-RevLM in experiments with varying number of total components. All models are pretrained from scratch with the GPT-Mini architecture (details in Section B.2), and the inference task requires generating a coherent sequence (siblings followed by parent for each component). At convergence, all models produce coherent sequences; to quantify the learning speedup over NTP, we report the ratio of steps to convergence relative to NTP, with lower values indicating faster learning. Results in figure 4 (left) shows that FSP-BCE improves over NTP only when the number of components is small, with gains disappearing for more than six components. In contrast, FSP-RevLM consistently achieves faster convergence across all component sizes, confirming the benefit of adaptive future summaries.
+
+
+
+
+
+
+
+4 Experiments
+
+
+
+
+4.1 Setup
+
+
+
+We pretrain 3B- and 8B-parameter models on corpora of 250B and 1T tokens, respectively, covering diverse domains. The majority of the data comes from DCLM-like sources and GitHub repositories, supplemented by specialized material in mathematics, programming, and related areas. Models are evaluated across a diverse set of benchmarks: ARC-Easy/Challenge (Clark et al., 2018) for general reasoning, MBPP (Austin et al., 2021) and HumanEval+ (Liu et al., 2023) for code generation, and GSM8K (Cobbe et al., 2021) and Math-500 (Hendrycks et al., 2021) for mathematical reasoning. Details of the pretraining corpus and hyperparameters are provided in Section B.3.
+
+
+
+We first benchmark our primary method, FSP-RevLM, against the baselines: next-token prediction (NTP), standard multi-token prediction (MTP) (Gloeckle et al., 2024), and DeepSeek-MTP (DS-MTP) (Liu et al., 2024). A natural way to improve MTP for longer horizons is to add multiple auxiliary heads, each predicting a token farther into the future, but this approach quickly becomes impractical. We therefore constrain both MTP and DS-MTP to a single auxiliary head predicting the immediate future token. This design choice keeps the comparison consistent and aligned with the proposed FSP, since it uses a single auxiliary head.
+
+
+
+Building on this unified single auxiliary head framework, we conduct an analysis of how MTP can be enhanced by predicting richer future targets instead of the immediate future token. In addition to predicting the learned future summary (FSP-RevLM), we compare handcrafted future summaries over short- and long-range windows. This includes the proposed multi-hot future summary (FSP-BCE) as a contributed baseline, and a random-token summary baseline (radomly sampling token from future), in line with prior works (Thankaraj et al., 2025; Gerontopoulos et al., 2025).
+
+
+
+Note. All experiments are conducted under iso-data conditions, meaning that all the methods are trained on identical datasets. For the proposed FSP-RevLM, this implies that both the forward and reverse models are trained on the same data. In line with standard practice in distillation, we do not perform iso-compute comparisons that include the teacher model’s (ReverseLM) cost in the reported compute budget. In practical scenarios, the computational cost of training the teacher model is typically amortized, hence it can be treated as a one-time overhead that is excluded from comparisons of student models (Gemma et al., 2024; Gemma et al., 2025).
+
+
+
+
+
+4.2 Results
+
+
+
+At the 8B scale (Table 1), future-summary supervision via the reverseLM (FSP-RevLM) consistently improves the performance across different evaluation tasks. On ARC-Easy, FSP-RevLM (76.6%76.6\%) provides significant improvement over NTP (71.8%71.8\%) and MTP (73.6%73.6\%), and it also leads on ARC-Challenge and MATH. For code generation, it achieves the highest score on MBPP and ties with MTP on HumanEval+, showing that the benefits of predicting future summaries generalize across both reasoning and program synthesis tasks. GSM8K is the one task where NTP (71.6%71.6\%) holds a lead, though FSP-RevLM (70.5%70.5\%) still narrows the gap relative to MTP (67.8%67.8\%).
+
+
+
+At the 3B scale (Table 2), DeepSeek-MTP is a strong baseline and obtains better performance than FSP-RevLM on most tasks, except math reasoning.
+More importantly, FSP-RevLM exhibits larger relative improvements as scale increases from 3B to 8B parameters, and becomes more favourable than DS-MTP.
+Further, note that even at the 3B scale, FSP-RevLM still beats MTP on ARC and math reasoning tasks, and performs comparably on MBPP, suggesting that even at smaller scales, learning to predict future summaries may provide more effective auxiliary signal than immediate future token prediction with MTP.
+
+
+
+
+
+
+
+
+
+Task
+NTP
+MTP
+DS-MTP
+FSP-RevLM
+
+ARC-Easy
+0.7180.718 (0.000)(0.000)
+0.7360.736 (0.000)(0.000)
+0.6170.617 (0.003)(0.003)
+0.766\bf{0.766} (0.000)\bf{(0.000)}
+
+ARC-Challenge
+0.5310.531 (0.000)(0.000)
+0.5520.552 (0.000)(0.000)
+0.4260.426 (0.002)(0.002)
+0.559\bm{0.559} (0.000)(0.000)
+
+GSM8K
+0.716\bf{0.716} (0.003)\bf{(0.003)}
+0.6780.678 (0.007)(0.007)
+0.7040.704 (0.003)(0.003)
+0.7050.705 (0.004)(0.004)
+
+MATH
+0.3420.342 (0.008)(0.008)
+0.3090.309 (0.006)(0.006)
+0.3350.335 (0.014)(0.014)
+0.351\bm{0.351} (0.017)\bm{(0.017)}
+
+MBPP
+0.6570.657 (0.004)(0.004)
+0.6720.672 (0.008)(0.008)
+0.6780.678 (0.006)(0.006)
+0.683\bm{0.683} (0.006)\bm{(0.006)}
+
+HumanEval+
+0.4780.478 (0.019)(0.019)
+0.541\bm{0.541} (0.011)\bm{(0.011)}
+0.5260.526 (0.013)(0.013)
+0.541\bm{0.541} (0.009)\bm{(0.009)}
+
+
+
+Table 1: Pretraining at 8B scale. We benchmark the proposed FSP-RevLM approach against NTP, MTP, and DS-MTP. Results (mean ±\pm s.e. over 3 seeds) report pass@16 for code/math tasks and accuracy for ARC. FSP-RevLM achieves the strongest overall performance, with large gains over the baselines on ARC tasks and MATH, and competitive results with (DS) MTP on code benchmarks.
+
+
+
+
+
+
+
+
+
+Task
+NTP
+MTP
+DS-MTP
+FSP-RevLM
+
+ARC-Easy
+0.2630.263 (0.002)(0.002)
+0.2720.272 (0.005)(0.005)
+0.293\bm{0.293} (0.000)\bm{(0.000)}
+0.2770.277 (0.000)(0.000)
+
+ARC-Challenge
+0.2630.263 (0.001)(0.001)
+0.2450.245 (0.002)(0.002)
+0.274\bm{0.274} (0.008)\bm{(0.008)}
+0.2550.255 (0.000)(0.000)
+
+GSM8K
+0.4100.410 (0.003)(0.003)
+0.4110.411 (0.001)(0.001)
+0.4170.417 (0.003)(0.003)
+0.436\mathbf{0.436} (0.003)\mathbf{(0.003)}
+
+MATH
+0.213\bm{0.213} (0.004)\bm{(0.004)}
+0.1960.196 (0.009)(0.009)
+0.2010.201 (0.004)(0.004)
+0.212\bm{0.212} (0.002)\bm{(0.002)}
+
+MBPP
+0.5210.521 (0.007)(0.007)
+0.5260.526 (0.004)(0.004)
+0.537\bm{0.537} (0.007)\bm{(0.007)}
+0.5240.524 (0.001)(0.001)
+
+HumanEval+
+0.3010.301 (0.009)(0.009)
+0.3210.321 (0.015)(0.015)
+0.348\mathbf{0.348} (0.022)\mathbf{(0.022)}
+0.3050.305 (0.006)(0.006)
+
+
+
+Table 2: Pretraining at 3B scale. We benchmark the proposed FSP-RevLM approach against NTP, MTP, and DS-MTP. Results (mean ±\pm s.e. over 3 seeds) report pass@16 for code/math tasks and accuracy for ARC. At this smaller scale, DS-MTP is a strong overall baseline, but FSP-RevLM outperforms it on math reasoning tasks, and also provides substantial gains over MTP on ARC and math reasoning tasks. Further, as we scale the approaches to 8B parameters, FSP-RevLM scales more favorably than DS-MTP, overtaking it on most tasks.
+
+
+
+
+
+
+4.3 Analyzing MTP with different future summaries
+
+
+
+Table 3 presents our analysis of different future-summary strategies as auxiliary head targets at 8B scale. We focus on the standard MTP architecture, without comparing to DS-MTP as it modifies the input to auxiliary head, to isolate the effect of different future targets on the auxiliary head.
+
+
+
+Our results show that random-token handcrafted future summaries (MTP-Skip) perform worse than standard MTP with immediate future token prediction, and performance further degrades as the future window (τ\tau) increases. In contrast, the proposed multi-hot or bag-of-words handcrafted future summaries yield meaningful improvements over MTP, especially on math reasoning tasks, with both shorter (τ=12)(\tau=12) and longer (τ=100)(\tau=100) future windows. For example, FSP-BCE with τ=12\tau=12 achieves 33.1%33.1\% on MATH (+2.2 points) and 69.9%69.9\% on GSM8K (+2.1 points), while even longer windows (τ=100\tau=100) further amplifies the performance on GSM8K (71.4%71.4\%, +3.6 points).
+
+
+
+Finally, our learned future summaries (FSP-RevLM) outperform MTP across all evaluation tasks, with especially pronounced gains on math reasoning: 35.1%35.1\% on MATH (+4.2 points) and 70.5%70.5\% on GSM8K (+3.5 points). Further analysis (Figure 5) for these math reasoning tasks shows that learned summaries promote greater output diversity across different pass@k settings, compared to vanilla MTP with immediate future token prediction.
+
+
+
+In Section B.3 (Table 5), we replicate these findings at 3B scale, where both handcrafted and learned future summaries improve over vanilla MTP, again most prominently on math reasoning tasks. Additional ablations explore the effects of omitting reweighting in FSP-BCE and predicting learned summaries from deeper layers of the reverseLM (FSP-RevLM).
+
+
+
+
+
+
+
+
+
+Method
+MBPP
+GSM8K
+MATH
+HumanEval+
+ARC-Challenge
+ARC-Easy
+
+MTP
+0.6720.672 (0.008)(0.008)
+0.6780.678 (0.007)(0.007)
+0.3090.309 (0.006)(0.006)
+0.541\bm{0.541} (0.011)(0.011)
+0.5520.552 (0.000)(0.000)
+0.7360.736 (0.000)(0.000)
+
+MTP-Skip τ\tau:4
+0.6580.658 (0.005)(0.005)
+0.6390.639 (0.004)(0.004)
+0.2770.277 (0.020)(0.020)
+0.5080.508 (0.009)(0.009)
+0.4940.494 (0.003)(0.003)
+0.7220.722 (0.000)(0.000)
+
+MTP-Skip τ\tau:12
+0.6230.623 (0.002)(0.002)
+0.6210.621 (0.005)(0.005)
+0.2870.287 (0.018)(0.018)
+0.4860.486 (0.010)(0.010)
+0.5120.512 (0.000)(0.000)
+0.7100.710 (0.003)(0.003)
+
+MTP-Skip τ\tau:32
+0.6110.611 (0.008)(0.008)
+0.5980.598 (0.007)(0.007)
+0.2710.271 (0.005)(0.005)
+0.4590.459 (0.007)(0.007)
+0.3790.379 (0.000)(0.000)
+0.5640.564 (0.000)(0.000)
+
+FSP-BCE τ\tau:12
+0.6690.669 (0.005)(0.005)
+0.6990.699 (0.006)(0.006)
+0.3310.331 (0.016)(0.016)
+0.5080.508 (0.005)(0.005)
+0.562\bm{0.562} (0.000)\bm{(0.000)}
+0.7370.737 (0.000)(0.000)
+
+FSP-BCE τ\tau:100
+0.6710.671 (0.002)(0.002)
+0.714\bm{0.714} (0.009)\bm{(0.009)}
+0.3310.331 (0.007)(0.007)
+0.5000.500 (0.019)(0.019)
+0.4590.459 (0.000)(0.000)
+0.6620.662 (0.000)(0.000)
+
+FSP-RevLM
+0.6830.683 (0.006)(0.006)
+0.7050.705 (0.004)(0.004)
+0.351\bm{0.351} (0.017)\bm{(0.017)}
+0.541\bm{0.541} (0.009)(0.009)
+0.5590.559 (0.000)(0.000)
+0.766\bm{0.766} (0.000)\bm{(0.000)}
+
+
+
+Table 3: Analysis of future-summary strategies at 8B Scale. We evaluate the effect of different future-summary prediction approaches against vanilla MTP. Results (mean ±\pm s.e. over 3 seeds) report pass@16 for code/math tasks and accuracy for ARC. Handcrafted random-token future summaries (MTP-Skip) perform worse than standard MTP. In contrast, handcrafted multi-hot summaries (FSP-BCE) improve over standard MTP, especially on math reasoning (e.g., GSM8K and MATH), while learned summaries (FSP-RevLM) provide the largest gains across math reasoning and ARC tasks.
+
+
+
+
+Figure 5: Enhanced diversity through learned future summaries. We compare standard MTP, which predicts the immediate future token, with FSP-RevLM, which enriches the auxiliary head target using learned future summaries. FSP-RevLM substantially increases output diversity compared to MTP on GSM8K and MATH benchmarks.
+
+
+
+
+
+
+5 Related Work
+
+
+
+Pitfalls of Next-Token Prediction (NTP).
+
+
+
+While next-token prediction (NTP) is the standard loss for modern LLMs, its shortcomings are increasingly evident. The main issue is the mismatch between training (teacher forcing) and inference (autoregression): during training, the model sees ground-truth tokens, which encourages learning spurious correlations or “shortcuts” rather than the true data distribution. Bachmann and Nagarajan (2024) describe this as the “Clever Hans cheat”, where the model exploits trivial cues from the prefix and fails on lookahead tasks such as their path-star graph problem. Nagarajan et al. (2025) further show that NTP is data-inefficient for tasks requiring a “leap of thought,” such as Sibling Discovery. Our approach tackles these failures by providing a more robust, long-range training signal that discourages such shortcuts.
+
+
+
+
+Going Beyond Immediate Next Token.
+
+
+
+Multi-Token Prediction (MTP) addresses limitations of Next Token Prediction (NTP) by using auxiliary heads to predict future tokens (Gloeckle et al., 2024). DeepSeek-V3 (Liu et al., 2024) modifies these auxiliary heads to allow slight teacher forcing, but the key issue with both the approaches is that scaling the auxiliary heads for long-range dependencies is impractical.
+Recent work aims to improve efficiency and capture longer dependencies. Gerontopoulos et al. (2025) introduce register tokens, predicting tokens kk steps ahead without architectural changes. Thankaraj et al. (2025) insert lookahead tokens containing future subsequences, while Liu et al. (2025) use a leap-based strategy to predict non-sequential future tokens. However, heuristically sampling random future tokens still poses the risk of missing informative long-range signals.
+Our FSP-RevLM addresses this by predicting a learned summary of the future, such that it can extract meaningful long-range information.
+
+
+
+
+Bidirectional models.
+
+
+
+Leveraging reverse, or right-to-left, order during training has shown empirical benefits across multiple learning paradigms. The Belief State Transformer (BST) (Hu et al., 2024) employs dual forward and backward encoders to predict both the next token after a prefix and the previous token before a suffix. This bidirectional training encourages the model to form a compact belief state, though it does not explicitly address teacher forcing. In contrast, our FSP-RevLM incorporates a reverse model with a different objective: mitigating dependence on teacher forcing. While trained on standard left-to-right sequences, FSP-RevLM aligns the forward model’s embeddings with those of a reverse model, effectively distilling the reverse order into the forward language model. Another related approach, Meet-in-the-Middle (MiM) (Nguyen et al., 2023), jointly trains forward and backward models with shared parameters and employs an agreement regularizer to align their output distributions. Our method differs in two key aspects: (1) we perform distillation with the reverse model rather than parameter sharing, and (2) we avoid the somewhat impractical assumption required by MiM that the forward and reverse output distributions must match exactly.
+
+
+
+
+
+
+6 Conclusion
+
+
+
+In this work, we highlighted a key limitation of existing multi-token prediction methods: the difficulty of scaling auxiliary heads for long-horizon future prediction. Towards this, we proposed Future Summary Prediction (FSP), a novel pretraining framework that shifts the auxiliary objective from predicting specific future tokens to predicting a (learned) summary of the future. Experiments on 8B models, using both hand-crafted and learned summaries, demonstrate that FSP delivers a stronger, more robust training signal, improving over NTP and MTP on challenging reasoning and coding tasks. Our findings indicate that focusing on abstract, predictable aspects of the future is a promising strategy for designing more efficient and effective pretraining objectives for next-generation large language models.
+
+
+
+
+Acknowledgments
+
+
+
+The authors thank Sachin Mehta for their suggestions regarding the real-world pretraining experimental setup. The authors also gratefully acknowledge the helpful discussions with Mathurin Videau, Sharut Gupta, Sarthak Mittal, and Andrei Nicolicioiu.
+
+
+
+
+
+
+
+
+References
+
+
+      
+
+Austin et al. (2021)
+
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al.
+
+
+Program synthesis with large language models.
+
+
+arXiv preprint arXiv:2108.07732, 2021.
+
+
+      
+
+Azerbayev et al. (2023)
+
+Zhangir Azerbayev, Hailey Schoelkopf, Keiran Paster, Marco Dos Santos, Stephen McAleer, Albert Q. Jiang, Jia Deng, Stella Biderman, and Sean Welleck.
+
+
+Llemma: An open language model for mathematics, 2023.
+
+
+      
+
+Bachmann and Nagarajan (2024)
+
+Gregor Bachmann and Vaishnavh Nagarajan.
+
+
+The pitfalls of next-token prediction.
+
+
+In International Conference on Machine Learning, pages 2296–2318. PMLR, 2024.
+
+
+      
+
+Bengio et al. (2015)
+
+Samy Bengio, Oriol Vinyals, Navdeep Jaitly, and Noam Shazeer.
+
+
+Scheduled sampling for sequence prediction with recurrent neural networks.
+
+
+Advances in neural information processing systems, 28, 2015.
+
+
+      
+
+Brown et al. (2020)
+
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel Ziegler, Jeffrey Wu, Clemens Winter, Chris Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei.
+
+
+Language models are few-shot learners.
+
+
+In H. Larochelle, M. Ranzato, R. Hadsell, M.F. Balcan, and H. Lin, editors, Advances in Neural Information Processing Systems, volume 33, pages 1877–1901. Curran Associates, Inc., 2020.
+
+
+https://proceedings.neurips.cc/paper_files/paper/2020/file/1457c0d6bfcb4967418bfb8ac142f64a-Paper.pdf.
+
+
+      
+
+Clark et al. (2018)
+
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord.
+
+
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+
+
+arXiv preprint arXiv:1803.05457, 2018.
+
+
+      
+
+Cobbe et al. (2021)
+
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al.
+
+
+Training verifiers to solve math word problems.
+
+
+arXiv preprint arXiv:2110.14168, 2021.
+
+
+      
+
+Gao et al. (2020)
+
+Leo Gao, Stella Biderman, Sid Black, Laurence Golding, Travis Hoppe, Charles Foster, Jason Phang, Horace He, Anish Thite, Noa Nabeshima, Shawn Presser, and Connor Leahy.
+
+
+The Pile: An 800gb dataset of diverse text for language modeling.
+
+
+arXiv preprint arXiv:2101.00027, 2020.
+
+
+      
+
+Gemma et al. (2024)
+
+Team Gemma, Morgane Riviere, Shreya Pathak, Pier Giuseppe Sessa, Cassidy Hardin, Surya Bhupatiraju, Léonard Hussenot, Thomas Mesnard, Bobak Shahriari, Alexandre Ramé, et al.
+
+
+Gemma 2: Improving open language models at a practical size.
+
+
+arXiv preprint arXiv:2408.00118, 2024.
+
+
+      
+
+Gemma et al. (2025)
+
+Team Gemma, Aishwarya Kamath, Johan Ferret, Shreya Pathak, Nino Vieillard, Ramona Merhej, Sarah Perrin, Tatiana Matejovicova, Alexandre Ramé, Morgane Rivière, et al.
+
+
+Gemma 3 technical report.
+
+
+arXiv preprint arXiv:2503.19786, 2025.
+
+
+      
+
+Gerontopoulos et al. (2025)
+
+Anastasios Gerontopoulos, Spyros Gidaris, and Nikos Komodakis.
+
+
+Multi-token prediction needs registers, 2025.
+
+
+https://arxiv.org/abs/2505.10518.
+
+
+      
+
+Gloeckle et al. (2024)
+
+Fabian Gloeckle, Badr Youbi Idrissi, Baptiste Rozière, David Lopez-Paz, and Gabriel Synnaeve.
+
+
+Better & faster large language models via multi-token prediction.
+
+
+In Proceedings of the 41st International Conference on Machine Learning, pages 15706–15734, 2024.
+
+
+      
+
+Hendrycks et al. (2021)
+
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt.
+
+
+Measuring mathematical problem solving with the math dataset.
+
+
+arXiv preprint arXiv:2103.03874, 2021.
+
+
+      
+
+Hu et al. (2024)
+
+Edward S Hu, Kwangjun Ahn, Qinghua Liu, Haoran Xu, Manan Tomar, Ada Langford, Dinesh Jayaraman, Alex Lamb, and John Langford.
+
+
+The belief state transformer.
+
+
+arXiv preprint arXiv:2410.23506, 2024.
+
+
+      
+
+Kaplan et al. (2020)
+
+Jared Kaplan, Sam McCandlish, T. J. Henighan, Tom B. Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeff Wu, and Dario Amodei.
+
+
+Scaling laws for neural language models.
+
+
+ArXiv, abs/2001.08361, 2020.
+
+
+https://api.semanticscholar.org/CorpusID:210861095.
+
+
+      
+
+Li et al. (2025)
+
+Jeffrey Li, Alex Fang, et al.
+
+
+Datacomp-lm: In search of the next generation of training sets for language models, 2025.
+
+
+https://arxiv.org/abs/2406.11794.
+
+
+      
+
+Ling et al. (2017)
+
+Wang Ling, Dani Yogatama, Chris Dyer, and Phil Blunsom.
+
+
+Program induction by rationale generation : Learning to solve and explain algebraic word problems, 2017.
+
+
+https://arxiv.org/abs/1705.04146.
+
+
+      
+
+Liu et al. (2024)
+
+Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al.
+
+
+Deepseek-v3 technical report.
+
+
+arXiv preprint arXiv:2412.19437, 2024.
+
+
+      
+
+Liu et al. (2023)
+
+Jiawei Liu, Chunqiu Steven Xia, Yuyao Wang, and Lingming Zhang.
+
+
+Is your code generated by chatgpt really correct? rigorous evaluation of large language models for code generation.
+
+
+Advances in Neural Information Processing Systems, 36:21558–21572, 2023.
+
+
+      
+
+Liu et al. (2025)
+
+Xiaohao Liu, Xiaobo Xia, Weixiang Zhao, Manyi Zhang, Xianzhi Yu, Xiu Su, Shuo Yang, See-Kiong Ng, and Tat-Seng Chua.
+
+
+L-mtp: Leap multi-token prediction beyond adjacent context for large language models.
+
+
+arXiv preprint arXiv:2505.17505, 2025.
+
+
+      
+
+Lozhkov et al. (2024)
+
+Anton Lozhkov, Loubna Ben Allal, Leandro von Werra, and Thomas Wolf.
+
+
+Fineweb-edu: the finest collection of educational content, 2024.
+
+
+https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu.
+
+
+      
+
+Nagarajan et al. (2025)
+
+Vaishnavh Nagarajan, Chen Henry Wu, Charles Ding, and Aditi Raghunathan.
+
+
+Roll the dice & look before you leap: Going beyond the creative limits of next-token prediction.
+
+
+In Forty-second International Conference on Machine Learning. PMLR, 2025.
+
+
+      
+
+neogithub (2022)
+
+neogithub.
+
+
+Github code dataset, 2022.
+
+
+https://huggingface.co/datasets/codeparrot/github-code.
+
+
+      
+
+Nguyen et al. (2023)
+
+Anh Nguyen, Nikos Karampatziakis, and Weizhu Chen.
+
+
+Meet in the middle: A new pre-training paradigm.
+
+
+Advances in Neural Information Processing Systems, 36:5079–5091, 2023.
+
+
+      
+
+Papalampidi et al. (2022)
+
+Pinelopi Papalampidi, Kris Cao, and Tomas Kocisky.
+
+
+Towards coherent and consistent use of entities in narrative generation.
+
+
+In International Conference on Machine Learning, pages 17278–17294. PMLR, 2022.
+
+
+      
+
+Pezeshki et al. (2021)
+
+Mohammad Pezeshki, Oumar Kaba, Yoshua Bengio, Aaron C Courville, Doina Precup, and Guillaume Lajoie.
+
+
+Gradient starvation: A learning proclivity in neural networks.
+
+
+Advances in Neural Information Processing Systems, 34:1256–1272, 2021.
+
+
+      
+
+Saxton et al. (2019)
+
+David Saxton, Edward Grefenstette, Felix Hill, and Pushmeet Kohli.
+
+
+Analysing mathematical reasoning abilities of neural models, 2019.
+
+
+https://arxiv.org/abs/1904.01557.
+
+
+      
+
+Sutskever (2024)
+
+Ilya Sutskever.
+
+
+Sequence to sequence learning with neural networks: What a decade.
+
+
+NeurIPS 2024 Test-of-Time Talk (YouTube video), 2024.
+
+
+https://www.youtube.com/watch?v=1yvBqasHLZs.
+
+
+Presented at NeurIPS 2024, Vancouver, Canada.
+
+
+      
+
+Thankaraj et al. (2025)
+
+Abitha Thankaraj, Yiding Jiang, J. Zico Kolter, and Yonatan Bisk.
+
+
+Looking beyond the next token, 2025.
+
+
+https://arxiv.org/abs/2504.11336.
+
+
+      
+
+Yang et al. (2025)
+
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al.
+
+
+Qwen3 technical report.
+
+
+arXiv preprint arXiv:2505.09388, 2025.
+
+
+      
+
+Yuan et al. (2025)
+
+Weizhe Yuan, Jane Yu, Song Jiang, Karthik Padthe, Yang Li, Dong Wang, Ilia Kulikov, Kyunghyun Cho, Yuandong Tian, Jason E Weston, and Xian Li.
+
+
+Naturalreasoning: Reasoning in the wild with 2.8m challenging questions, 2025.
+
+
+https://arxiv.org/abs/2502.13124.
+
+
+    
+
+
+
+
+
+
+
+Appendix A Additional MTP Variants
+
+
+
+In Section 2, we discussed MTP and the proposed future summary prediction to address a major limitation in MTP. We summarize other variants proposed in the literature and their limitations here.
+
+
+
+DeepSeek (DS) MTP.
+
+
+
+Another popular variant for MTP was proposed in DeepSeek (Liu et al., 2024), where we condition the auxiliary head f′hkf^{{}^{\prime}}_{h_{k}} with full prefix x≤t+k−1x_{\leq t+k-1} to predict the future tokens xt+kx_{t+k}, but with reduced teacher forcing from the ”auxiliary” tokens {xt+1,xt+2,⋯,x≤t+k−1}\{x_{t+1},x_{t+2},\cdots,x_{\leq t+k-1}\}.
+
+
+
+
+
+LDS-MTP(X,Pθ)=−𝔼x∼ℙX[∑t=1T−1∑k=1τ𝟏[t+k≤T]logPθ(xt+k|x≤t+k−1)].L_{\text{DS-MTP}}(X,P_{\theta})=-\mathbb{E}_{x\sim\mathbb{P}_{X}}\Bigg[\sum_{t=1}^{T-1}\sum_{k=1}^{\tau}\mathbf{1}[t+k\leq T]\,\log P_{\theta}(x_{t+k}\,|\,x_{\leq t+k-1})\Bigg].
+
+(14)
+
+
+
+
+The parameterization is:
+
+
+
+
+
+Pθ​(xt+1|x≤t)\displaystyle P_{\theta}(x_{t+1}\,|\,x_{\leq t})
+=softmax⁡(fu∘fh∘fs​(x≤t)),\displaystyle=\mathrm{softmax}\!\Big(f_{u}\circ f_{h}\circ f_{s}\big(x_{\leq t}\big)\Big),
+
+(15)
+
+
+
+Pθ​(xt+k|x≤t+k−1)\displaystyle P_{\theta}(x_{t+k}\,|\,x_{\leq t+k-1})
+=softmax(fu∘f′hk(fs(x≤t),xt+1,…,xt+k−1)),∀k>1.\displaystyle=\mathrm{softmax}\!\Big(f_{u}\circ f^{\prime}_{h_{k}}\Big(f_{s}\big(x_{\leq t}\big),x_{t+1},\dots,x_{t+k-1}\Big)\Big),\quad\forall k>1.
+
+
+
+Here, the auxiliary (future) tokens (xt+1,…,xt+k−1)(x_{t+1},\dots,x_{t+k-1}) are injected directly into the auxiliary heads, bypassing the backbone, which reduces teacher forcing compared to standard NTP.
+
+
+
+However, this approach suffers from the same short-horizon limitation as MTP: predicting multiple future steps would require adding separate auxiliary heads for each token, which quickly becomes impractical and limits scalability to long future sequences.
+
+
+
+
+TRELAWNEY.
+
+
+
+In this work, we emphasized that standard MTP and DS-MTP often fail to capture the most informative future tokens, as their auxiliary objectives remain limited to predicting the immediate next few future tokens. The TRELAWNEY framework of Thankaraj et al. (2025) takes a complementary, data-centric approach: rather than modifying the model architecture, it augments the input sequences by inserting a window of future tokens, delimited by special tokens, (¡T¿, ¡/T¿). For example, the input sequence (x1,⋯,xT)(x_{1},\cdots,x_{T}) is transformed into (x1,⋯,xd,<T>,z,</T>,xd+1⋯,xT)\big(x_{1},\cdots,x_{d},<T>,z,</T>,x_{d+1}\cdots,x_{T}\big) where zz denotes a block of future tokens sampled from positions beyond dd. This encourages the model to predict the sampled future block zz, thereby reducing its reliance on strict teacher forcing.
+
+
+
+In contrast to conventional MTP objectives, TRELAWNEY randomly samples subsequences from arbitrary future offsets, allowing the model to access a more richer and informative training signal than what is available in the immediate next few tokens.
+However, this heuristic of randomly sampling future blocks still risks missing the critical future tokens, limiting its robustness for long-horizon planning tasks.
+
+
+
+
+
+
+
+Appendix B Experiments
+
+
+
+
+B.1 Path-Star Graph
+
+
+
+Experiment Setup.
+
+
+
+We adopt the dataset generation procedure from the official code repository11
+                1
+                
+                
+                
+                
+                
+                
+                
+              https://github.com/gregorbachmann/Next-Token-Failures/ of Bachmann and Nagarajan (2024). Specifically, we construct a set of 5050 distinct nodes and generate multiple instances of path-star graph sequences by randomly sampling nodes from this set. The training set consists of ntrain=200,000n_{\text{train}}=200{,}000 sequences, and evaluation is performed on ntest=20,000n_{\text{test}}=20{,}000 sequences.
+
+
+
+For modeling, we employ the GPT-Mini architecture with the following configuration:
+
+
+• 
+
+
+Total Layers: 1212
+
+
+• 
+
+
+Embedding Dimension: 384384
+
+
+• 
+
+
+Total Attention Heads: 66
+
+
+• 
+
+
+MLP expansion factor: 44
+
+
+
+
+
+We summarize the other relevant hyperparameters below.
+
+
+• 
+
+
+Learning Rate: 3​e−43e-4
+
+
+• 
+
+
+Batch Size: 256256
+
+
+• 
+
+
+Weight Decay: 1​e−21e-2
+
+
+• 
+
+
+Total Epochs: 500500
+
+
+• 
+
+
+Gradient Norm Clipping: 1.01.0
+
+
+
+
+
+
+Experiment with multiple auxiliary heads in MTP.
+
+
+
+A naive approach to incorporate longer-term future dependencies in MTP is by increasing the number of auxiliary heads. Table 4 reports the results: adding more auxiliary heads improves performance on G⁡(2,6)G(2,6), due to reduced teacher forcing. However, simply scaling the number of auxiliary heads is not a practical solution for modeling long-range dependencies, as shown by the poor performance on the longer path graph G⁡(2,8)G(2,8).
+
+
+
+
+
+Method
+G(2,6)
+G(2,8)
+
+
+NTP
+0.45​(0.01)0.45\,\small{(0.01)}
+0.45​(0.03)0.45\,\small{(0.03)}
+
+
+MTP
+0.66​(0.17)0.66\,\small{(0.17)}
+0.49​(0.03)0.49\,\small{(0.03)}
+
+
+MTP (aux heads: 2)
+0.89​(0.09)0.89\,\small{(0.09)}
+0.46​(0.01)0.46\,\small{(0.01)}
+
+
+MTP (aux heads: 3)
+0.98​(0.01)0.98\,\small{(0.01)}
+0.47​(0.06)0.47\,\small{(0.06)}
+
+
+MTP (aux heads: 4)
+0.97​(0.01)0.97\,\small{(0.01)}
+0.48​(0.12)0.48\,\small{(0.12)}
+
+
+BCE
+1.00​(0.00)1.00\,\small{(0.00)}
+1.00​(0.00)1.00\,\small{(0.00)}
+
+Table 4: Analyzing the performance of MTP on path-star graphs with an increasing number of auxiliary heads. Augmenting MTP with additional auxiliary heads improves performance on G⁡(2,6)G(2,6), but practical limits exist: even with four auxiliary heads, MTP fails to solve the longer path graph G⁡(2,8)G(2,8).
+
+
+
+
+
+
+B.2 Sibling Discovery
+
+
+
+Experiment Setup.
+
+
+
+We build on the dataset generation procedure from the official code repository22
+                2
+                
+                
+                
+                
+                
+                
+                
+              https://github.com/chenwu98/algorithmic-creativity of Nagarajan et al. (2025). While the original sibling discovery task presents sequences from a single component, we modify the setup by concatenating sequences from multiple components. Each component ii is defined by a unique parent PiP^{i} and three child nodes S1i,S2i,S3iS_{1}^{i},S_{2}^{i},S_{3}^{i}. The support of each conditional distribution P⁡(Si∣Pi)P(S^{i}\mid P^{i}) is disjoint across children—i.e., each child SiS^{i} can take NN possible values, and these sets of values are non-overlapping across children. As a result, with KK components, the total number of distinct child value combinations is N3​KN^{3K}. In our experiments, we vary the number of components K∈2,4,6,8,10K\in{2,4,6,8,10} while fixing N=100N=100. For training, we randomly sample child values for each component to construct ntrain=20,000n_{\text{train}}=20{,}000 sequences, and evaluate on ntest=3,000n_{\text{test}}=3{,}000 sequences.
+
+
+
+We use the GPT-Mini architecture with the following specifications.
+
+
+• 
+
+
+Total Layers: 1212
+
+
+• 
+
+
+Embedding Dimension: 384384
+
+
+• 
+
+
+Total Attention Heads: 66
+
+
+• 
+
+
+MLP expansion factor: 44
+
+
+
+
+
+We summarize the other relevant hyperparameters below.
+
+
+• 
+
+
+Learning Rate: 3​e−43e-4
+
+
+• 
+
+
+Batch Size: 256256
+
+
+• 
+
+
+Weight Decay: 1​e−21e-2
+
+
+• 
+
+
+Total Epochs: 150150
+
+
+
+
+
+
+
+
+B.3 Real World Pretraining
+
+
+
+Pretraining dataset composition.
+
+
+
+Our pretraining corpus is constructed to cover a wide range of domains, aiming to equip models with both broad knowledge and strong reasoning ability. The bulk of the data is drawn from a DCLM-style mixture (Li et al., 2025) and large-scale code sources such as GitHub (neogithub, 2022). To strengthen performance on more specialized skills, we further supplement with mathematics and scientific data, including the DeepMind Mathematics dataset (Saxton et al., 2019), Proof Pile 2 (ArXiv, OpenWebMath, Algebraic Stack) (Azerbayev et al., 2023), and Stack Exchange from the Pile (Gao et al., 2020). Additional curated resources include FineWeb-Edu (Lozhkov et al., 2024), the Natural Reasoning Dataset (Yuan et al., 2025), and AQuA (Ling et al., 2017). Together, this mixture balances large-scale general text with carefully chosen reasoning-focused datasets.
+
+
+
+
+Pretraining hyperparameters.
+
+
+
+All the models were trained using NVIDIA H200 GPUs. We train models using a cosine learning rate scheduler, with an initial learning rate of 3×10−33\times 10^{-3} for 3B models and 3×10−43\times 10^{-4} for 8B models. We provide details regarding the other hyperparameters below.
+
+
+• 
+
+
+3B Models
+
+
+– 
+
+
+Batch Size (per GPU): 16
+
+
+– 
+
+
+Total GPUs: 128
+
+
+– 
+
+
+Sequence Length: 2048
+
+
+– 
+
+
+Total Steps: 60k
+
+
+
+
+• 
+
+
+8B Models
+
+
+– 
+
+
+Batch Size (per GPU): 2
+
+
+– 
+
+
+Total GPUs: 256
+
+
+– 
+
+
+Sequence Length: 8192
+
+
+– 
+
+
+Total Steps: 240k
+
+
+
+
+
+
+
+
+Evaluation Metrics.
+
+
+
+We report accuracy for ARC and pass@k for code and math reasoning tasks, with mean and standard error computed over 33 random seeds. For pass@k, we evaluate each method across a range of temperature values (0,0.1,0.2,…,0.9,1.0)(0,0.1,0.2,\dots,0.9,1.0) and report the results corresponding to the temperature that yields the best performance for each method and task. Note that, in all cases, the auxiliary head is used only during training, and methods are evaluated via their next-token prediction heads at test time.
+
+
+
+
+
+Additional Experiment: Analysis of future summaries (3B).
+
+
+
+Table 5 presents our analysis of different future-summary strategies as auxiliary head targets at the 3B scale. Similar to the 8B case, we focus on the standard MTP architecture, without comparing to DS-MTP since it modifies the input to the auxiliary head, allowing us to isolate the effect of different future targets. Our findings are similar: random-skip handcrafted summaries underperform relative to MTP, while the proposed multi-hot/bag-of-words approaches perform well. In our experiments, we observed consistent improvement over MTP with the proposed handcrafted summaries (FSP-BCE) on both Math and GSM8k tasks, across the 3B and 8B model scales. For the 3B ablation, we tested removing tf-idf reweighting as well and found that, in most cases, it did not provide benefits, which led us to keep the tf-idf reweighting for our 8B experiments. The only exceptions where no tf-idf reweighting performed better were GSM8k at τ=12\tau=12 and HumanEval+ at τ=10\tau=10. Additionally, we experimented with using deeper layers at the 3B scale and found that the last layer performed better on ARC Challenge and ARC Easy, though it was slightly worse on MBPP and Math. Based on these findings, we chose to use the last layer for our 8B-scale experiments.
+
+
+
+
+
+
+
+
+
+Method
+MBPP
+GSM8K
+MATH
+HumanEval+
+ARC-Challenge
+ARC-Easy
+
+MTP
+0.5260.526 (0.004)(0.004)
+0.4110.411 (0.001)(0.001)
+0.1960.196 (0.009)(0.009)
+0.321\bf{0.321} (0.015)(0.015)
+0.2450.245 (0.002)(0.002)
+0.2720.272 (0.005)(0.005)
+
+MTP-Skip τ\tau:4
+0.5190.519 (0.004)(0.004)
+0.3680.368 (0.007)(0.007)
+0.1810.181 (0.005)(0.005)
+0.3090.309 (0.004)(0.004)
+0.2410.241 (0.000)(0.000)
+0.2820.282 (0.000)(0.000)
+
+MTP-Skip τ\tau:12
+0.4850.485 (0.011)(0.011)
+0.3540.354 (0.005)(0.005)
+0.1770.177 (0.006)(0.006)
+0.2870.287 (0.009)(0.009)
+0.2640.264 (0.008)(0.008)
+0.2620.262 (0.000)(0.000)
+
+MTP-Skip τ\tau: 32
+0.4670.467 (0.007)(0.007)
+0.3540.354 (0.003)(0.003)
+0.1890.189 (0.004)(0.004)
+0.2780.278 (0.017)(0.017)
+0.2430.243 (0.000)(0.000)
+0.2400.240 (0.003)(0.003)
+
+FSP-BCE τ\tau:12, no tf-idf
+0.5180.518 (0.006)(0.006)
+0.4310.431 (0.004)(0.004)
+0.2010.201 (0.009)(0.009)
+0.3010.301 (0.009)(0.009)
+0.2500.250 (0.000)(0.000)
+0.2510.251 (0.000)(0.000)
+
+FSP-BCE τ\tau:12
+0.5210.521 (0.005)(0.005)
+0.4190.419 (0.003)(0.003)
+0.2040.204 (0.002)(0.002)
+0.3050.305 (0.012)(0.012)
+0.2540.254 (0.000)(0.000)
+0.2620.262 (0.004)(0.004)
+
+FSP-BCE τ\tau:100, no tf-idf
+0.5120.512 (0.007)(0.007)
+0.4160.416 (0.005)(0.005)
+0.2030.203 (0.008)(0.008)
+0.3090.309 (0.004)(0.004)
+0.2280.228 (0.003)(0.003)
+0.2380.238 (0.000)(0.000)
+
+FSP-BCE τ\tau:100
+0.5240.524 (0.004)(0.004)
+0.4170.417 (0.004)(0.004)
+0.2090.209 (0.003)(0.003)
+0.2930.293 (0.012)(0.012)
+0.2540.254 (0.006)(0.006)
+0.2620.262 (0.000)(0.000)
+
+FSP-RevLM depth: 2
+0.528\bm{0.528} (0.004)\bm{(0.004)}
+0.4280.428 (0.003)(0.003)
+0.217\bm{0.217} (0.006)\bm{(0.006)}
+0.3050.305 (0.013)(0.013)
+0.2430.243 (0.007)(0.007)
+0.2650.265 (0.000)(0.000)
+
+FSP-RevLM
+0.5240.524 (0.001)(0.001)
+0.436\bm{0.436} (0.003)\bm{(0.003)}
+0.2120.212 (0.002)(0.002)
+0.3050.305 (0.006)(0.006)
+0.255\bm{0.255} (0.000)(0.000)
+0.2770.277 (0.000)(0.000)
+
+
+
+Table 5: Analysis of future summaries at 3B Scale. We evaluate the effect of different future-summary prediction approaches against vanilla MTP. Results (mean ±\pm s.e. over 3 seeds) report pass@16 for code/math tasks and accuracy for ARC. Handcrafted multi-hot summaries (FSP-BCE) improve over standard MTP, especially on math reasoning (e.g., GSM8K and MATH), while learned summaries (FSP-RevLM) provide the largest gains across math reasoning and ARC tasks.
+
+
+
+
+
+
+
+
+  
+    Experimental support, please
+    view the build logs
+    for errors. Generated by
+    
+      
+        L
+        A
+        T
+        E
+      
+      xml
+      
+    .
+  
+  
+    
+Instructions for reporting errors
+    
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+    
+      
+Click the "Report Issue" (
+            
+          ) button, located in the page header.
+    
+    
+Tip: You can select the relevant text first, to include it in your report.
+    
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+    
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+  
+
+  
+    
+      
+        We gratefully acknowledge support from
+        our major funders,
+        member institutions, ,
+        and all contributors.
+      
+      
+        About
+        ·
+        Help
+        ·
+        Contact
+        ·
+        Subscribe
+        ·
+        Copyright
+        ·
+        Privacy
+        ·
+        Accessibility
+        ·
+        Operational Status (opens in new tab)
+      
+    
+
+    
+      Major funding support from
+      
+        
+          
+        
+        
+          
+        
+        
+          
+        
+      
+    
+  
+
+  
+    
+      
+    
+  
+
+

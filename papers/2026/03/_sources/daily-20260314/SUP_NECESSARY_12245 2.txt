@@ -1,0 +1,3510 @@
+One Model, Many Budgets: Elastic Latent Interfaces for Diffusion Transformers
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+2
+Related Work
+3
+Method
+3.1
+Preliminaries: Flow Matching
+3.2
+Uniform Spatial Computation in DiTs
+3.3
+Elastic Latent Interface Transformer
+3.4
+Elastic Computation with ELIT
+4
+Experiments
+4.1
+Experimental setup
+4.2
+Comparison to baselines
+4.3
+Elastic Inference Capabilities
+4.4
+Large Scale Multi-Budget Model
+4.5
+Ablations
+5
+Discussion
+References
+Appendix
+A
+Appendix
+B
+Baseline Details
+C
+Method Details
+D
+Compute-quality Tradeoff Efficiency
+E
+Ablations on Read/Write Strategies.
+F
+Compatibility with Distillation Methods.
+G
+Budget scheduling Across Noise Levels.
+H
+Joint vs. Independent Budget Training.
+I
+Latent Token Importance Visualization.
+J
+Comparison with Token Merging Methods.
+K
+Compute Analysis of ELIT
+L
+Additional Results
+M
+Failed Experiments
+License: CC BY 4.0
+arXiv:2603.12245v1 [cs.CV] 12 Mar 2026
+One Model, Many Budgets: Elastic Latent Interfaces for Diffusion Transformers
+Moayed Haji-Ali
+Willi Menapace
+Ivan Skorokhodov
+Dogyun Park
+Anil Kag
+Affiliation:
+Rice University
+Snap Inc.
+Project Webpage:
+https://snap-research.github.io/elit
+Michael Vasilkovsky
+Sergey Tulyakov
+Vicente Ordonez
+Aliaksandr Siarohin
+Affiliation:
+Rice University
+Snap Inc.
+Project Webpage:
+https://snap-research.github.io/elit
+Abstract
+$\dagger$
+$\dagger$
+footnotetext:
+Work partially done during an internship at Snap Inc.
+Diffusion transformers (DiTs) achieve high generative quality but lock FLOPs to image resolution, limiting principled latency-quality trade-offs, and allocate computation uniformly across input spatial tokens, wasting resource allocation to unimportant regions. We introduce Elastic Latent Interface Transformer (ELIT), a drop-in, DiT-compatible mechanism that decouples input image size from compute. Our approach inserts a latent interface, a learnable variable-length token sequence on which standard transformer blocks can operate. Lightweight Read and Write cross-attention layers move information between spatial tokens and latents and prioritize important input regions. By training with random dropping of tail latents, ELIT learns to produce importance-ordered representations with earlier latents capturing global structure while later ones contain information to refine details. At inference, the number of latents can be dynamically adjusted to match compute constraints. ELIT is deliberately minimal, adding two cross-attention layers while leaving the rectified flow objective and the DiT stack unchanged. Across datasets and architectures (DiT, U-ViT, HDiT, MM-DiT), ELIT delivers consistent gains. On ImageNet-1K 512px, ELIT delivers an average gain of
+35.3
+%
+35.3\%
+and
+39.6
+%
+39.6\%
+in FID and FDD scores.
+Figure 1
+:
+Flexible compute allocation with ELIT.
+Starting from a vanilla DiT, we add a variable-length set of latent tokens—the
+latent interface
+—and two lightweight cross-attention layers, Read and Write. At inference, the number of latent tokens is a user-controlled knob that yields a smooth quality–FLOPs trade-off across DiT, U-ViT, HDiT, and MM-DiT backbones.
+1
+Introduction
+Recent years have seen dramatic progress in image and video generation. Owing to the simplicity of their design, architectures centered on Diffusion Transformers (DiTs)
+[
+45
+]
+have scaled reliably and delivered state-of-the-art fidelity
+[
+56
+,
+54
+,
+19
+]
+.
+Compute has been the primary determinant of generation quality, but continued scaling has inflated training and inference costs. This raises a central question: do DiTs utilize available computation effectively? We argue that such costs are amplified by the
+rigidity
+in the DiT design. First, a DiT typically commits to a per-step computational cost that is a fixed function of the input resolution, without accounting for latency and compute constraints. Second, we found that DiT allocates computation uniformly across image regions. In a controlled experiment, we probe the ability of a DiT to use extra compute to improve generation quality. As expected, quality improves on standard images when we increase the number of tokens by reducing the patchification size. However, when we increase the number of tokens by padding encoded image patches with zero-valued patches, we find that DiT fails to leverage the extra computation
+to improve generation quality. These observations suggest that compute is spent
+uniformly
+across image tokens. This is suboptimal since visual information in images is uneven: some regions are easy, others require more work. In this context,
+learning
+how to allocate computation across tokens through a flexible architecture holds the potential to dynamically reduce unnecessary computation.
+Figure 2
+:
+Adaptive computation.
+We test whether DiT and ELIT-DiT can reallocate compute across image regions by training on synthetic inputs formed by zero-padding real images, artificially increasing the token count (◆). We compare its performance to baselines trained on real data using patch size
+×
+2
+2\!\times\!2
+and patch size
+×
+1
+1\!\times\!1
+(★).
+Vanilla DiT does not improve: attention in zeroed regions targets other zeroed regions (see “DiT Attention”), so extra tokens raise cost without benefits. In contrast, ELIT-DiT uses the Read layer to pull informative spatial tokens into the latent interface (see “Read Attention”), effectively filtering out zeroed areas (see “ELIT-DiT Attention”). Consequently, it leverages the larger token budget and matches the real-data baseline at equal FLOPs.
+Important previous work has sought forms of flexibility to make generative models more efficient. Adaptive generators allow a
+single
+model to operate at different budgets, but still spread computation uniformly across tokens
+[
+1
+,
+62
+]
+or suffer from high complexity
+[
+64
+]
+.
+Masking-based methods improve training speed by skipping tokens. Yet, dropping is disabled for inference to avoid unrecoverable information loss
+[
+17
+,
+33
+]
+, making inference compute unchanged. On the other hand, some training-free acceleration approaches reduce the computation for the least informative tokens during inference, leaving the training efficacy the same
+[
+41
+,
+59
+,
+28
+]
+.
+A complementary thread moves flexibility in the autoencoder by learning variable-length representations but stops short of endowing a
+generative
+model with an internal flexible representation
+[
+2
+,
+36
+]
+. Finally, RINs
+[
+26
+,
+12
+]
+learn to distribute computation non-uniformly across input tokens through a set of latent tokens, but keep inference budget fixed and depart significantly from the DiT architecture, hindering adoption.
+Building on the previous observations, we propose Elastic Latent Interface Transformer (ELIT) (see
+Figure
+1
+), a minimal, DiT-compatible mechanism for representation-and-compute adaptivity. We introduce two lightweight cross-attention layers,
+Read
+and
+Write
+, that equip DiT-like architectures with a set of latent tokens we refer to as
+latent interface
+. These latent tokens act as a variable-size surface onto which to distribute input information in a flexible and learnable manner based on the difficulty of each region.
+Read
+pulls information from input tokens, which we will refer to as
+spatial
+, into the latent interface, prioritizing challenging regions.
+Write
+broadcasts updated latents back to the spatial tokens. Importantly, the number of latent tokens is user-controlled, directly setting the per-step compute budget.
+No changes to the training objective are necessary.
+We provide a thorough analysis of ELIT, showing that it successfully redistributes compute non-uniformly across input tokens across varying base architectures. Our latent interface consistently improves over a fixed-grid model with ImageNet-1k 512px FDD (Fréchet Distance on DINOv2
+[
+44
+]
+features), improving 58.0% for DiT, 34.0% for U-ViT, 37.4% for HDiT. ELIT also allows for graceful compute-quality tradeoffs by selecting the number of latent tokens at inference time, regularly achieving better tradeoffs than sampling steps reduction while being compatible with training-free acceleration techniques
+[
+39
+]
+. Additionally, variable compute enables  autoguidance
+[
+30
+]
+out of the box, which reduces inference cost by
+≈
+33
+%
+\approx 33\%
+without affecting the generation quality.
+In summary, this simple addition
+yields a framework capable of: (I)
+Adaptive computation.
+Compute is concentrated where it matters rather than spread uniformly across input regions. (II)
+Variable test-time compute.
+A single set of weights serves a spectrum of latency-quality points by selecting the number of latent tokens. (III)
+Improved sampling.
+Variable compute enables autoguidance
+[
+30
+]
+out of the box. (IV)
+Drop-in training.
+We keep the design simple, retaining the vanilla rectified-flow objective and showing our method’s applicability to DiT, U-ViT, HDiT, and MMDiT. Implementation amounts to only adding the Read and Write layers and latent tokens sampling during training.
+2
+Related Work
+Adaptive generators for inference budget control.
+Supernetwork trains a single set of weights to support many sub-networks, allowing test-time accuracy–efficiency trade-offs
+[
+62
+,
+5
+]
+. Other works train transformers with multiple patchification sizes for variable compute budgets
+[
+1
+,
+38
+]
+.
+[
+64
+]
+uses learnable routers to adjust network width and drop tokens in MLPs.
+These methods differ in
+where
+adaptivity lives but share the goal of a
+single
+model that gracefully scales compute at inference time.
+Our method adopts a simple variable-length latent interface, improving model convergence and enabling control over the inference budget.
+Token dropping for training speedup.
+Another direction accelerates model training by skipping tokens. MaskDiT
+[
+65
+]
+restructures DiTs as an encoder-decoder model and randomly drops encoder input while using an auxiliary reconstruction objective. MDTv2
+[
+17
+]
+similarly leverages masked latent modeling to train on partial inputs. TREAD
+[
+33
+]
+randomly selects a set of tokens that skip computation of all blocks from a predefined start to an end DiT block index.
+However, due to the destructive nature of token dropping, such methods typically rely on auxiliary losses
+[
+65
+]
+, full-token post-training
+[
+65
+,
+33
+]
+, and adopt full-token inference
+[
+65
+,
+17
+,
+33
+]
+, limiting acceleration during inference.
+Our method speeds up convergence while enabling control over inference budget by selecting variable amounts of tokens, without applying auxiliary losses.
+Latent interfaces.
+Latent tokens have been used as compact representations in several architectures. Neural Turing Machines
+[
+18
+]
+employed them as memory, while Perceiver
+[
+27
+]
+used cross-attention to condense high-dimensional inputs. In generative models, RINs
+[
+26
+]
+and FITs
+[
+12
+]
+introduced interleaved read/write operations for efficient high-dimensional synthesis, which was later scaled to video generation
+[
+43
+]
+. Despite their efficiency, such designs diverge from DiTs and often require specialized optimizers (e.g., LAMB
+[
+61
+]
+). Similarly, TiTok
+[
+63
+]
+applied latent tokens as bottlenecks in autoencoders, and recent work extends this to variable-length token sets via tail dropping
+[
+32
+,
+2
+,
+36
+,
+58
+]
+. Our work brings variable-length latent interfaces to generative models, integrating seamlessly into DiTs with only lightweight Read and Write layers.
+3
+Method
+Figure 3
+:
+Architecture of ELIT.
+We extend a DiT-like generator with a variable-length set of latent tokens—the
+latent interface
+—and lightweight Read/Write cross-attention layers. A short spatial DiT head processes patchified inputs; Read pulls information into the latent domain where core blocks operate. Write broadcasts updated latents back to spatial tokens, and a small spatial tail produce output.
+Spatial tokens and latents are partitioned into corresponding groups, with cross-attention operate only within groups.
+During training, we randomly drop tail latents, yielding an importance-ordered interface. At inference, the number of latents serves as a user-controlled compute knob.
+We propose Elastic Latent Interface Transformer (ELIT) (see
+Figure
+3
+), a novel approach that enables flexible compute allocation in DiT-like transformers. The core component is a variable-length set of latent tokens—the
+latent interface
+—where most transformer blocks operate. Two lightweight cross-attention layers, Read and Write, pass information between domains: Read pulls content from spatial tokens into the latent interface, prioritizing harder regions, while Write broadcasts the updated latent state back to the spatial domain. Unlike the spatial domain, where model FLOPs are a fixed function of input resolution, the latent interface is trained with random tail token dropping, making it resizable. The length of this latent interface during inference directly adjusts FLOPs for each model call.
+Section
+3.1
+reviews Flow Matching,
+Section
+3.2
+presents a motivating experiment,
+Section
+3.3
+details the architecture, and
+Section
+3.4
+describes training and sampling.
+3.1
+Preliminaries: Flow Matching
+We train our generators with the Rectified Flow (RF) variant of flow matching
+[
+40
+,
+37
+]
+, which learns a deterministic velocity field connecting a noise distribution
+p
+n
+p_{n}
+to the data distribution
+p
+d
+p_{d}
+. Let
+𝐗
+1
+∼
+p
+d
+\mathbf{X}_{1}\sim p_{d}
+and
+𝐗
+0
+∼
+p
+n
+=
+𝒩
+⁡
+(
+0
+,
+𝐈
+)
+\mathbf{X}_{0}\sim p_{n}=\mathcal{N}(0,\mathbf{I})
+. A linear path is defined as
+𝐗
+t
+=
+(
+1
+−
+t
+)
+​
+𝐗
+0
++
+t
+​
+𝐗
+1
+,
+t
+∈
+[
+0
+,
+1
+]
+,
+\mathbf{X}_{t}\;=\;(1-t)\,\mathbf{X}_{0}+t\,\mathbf{X}_{1},t\in[0,1],
+whose ground‑truth velocity is constant along the path:
+v
+t
+=
+d
+​
+𝐗
+t
+d
+​
+t
+=
+𝐗
+1
+−
+𝐗
+0
+{v}_{t}\!=\!\frac{d\mathbf{X}_{t}}{dt}\!=\!\mathbf{X}_{1}-\mathbf{X}_{0}
+.
+A neural network
+𝒢
+⁡
+(
+⋅
+)
+\mathcal{G}(\cdot)
+predicts the velocity from a noised input and time and is optimized as:
+ℒ
+RF
+=
+𝔼
+t
+∼
+p
+t
+,
+𝐗
+1
+∼
+p
+d
+,
+𝐗
+0
+∼
+p
+n
+​
+‖
+𝒢
+⁡
+(
+𝐗
+t
+,
+t
+)
+−
+(
+𝐗
+1
+−
+𝐗
+0
+)
+‖
+2
+2
+,
+\mathcal{L}_{\text{RF}}=\mathbb{E}_{t\sim p_{t},\;\mathbf{X}_{1}\sim p_{d},\;\mathbf{X}_{0}\sim p_{n}}\big\|\,\mathcal{G}(\mathbf{X}_{t},\,t)-(\mathbf{X}_{1}-\mathbf{X}_{0})\,\big\|_{2}^{2},
+(1)
+where
+p
+t
+p_{t}
+is a logit‑normal
+[
+15
+]
+training distribution over
+t
+t
+. At inference, samples are obtained by integrating the learned ODE from
+𝐗
+0
+\mathbf{X}_{0}
+to
+𝐗
+1
+\mathbf{X}_{1}
+with a standard solver.
+3.2
+Uniform Spatial Computation in DiTs
+Standard DiTs operate in the spatial domain where an input
+𝐗
+t
+\mathbf{X}_{t}
+at time
+t
+t
+is patchified by a linear projection layer into
+N
+N
+tokens and processed by
+B
+{B}
+transformer blocks. Each block output is connected to the previous block through a
+residual connection
+at the same spatial location,
+maintaining a fixed mapping between tokens
+s
+{s}
+in intermediate blocks and corresponding spatial location of
+𝐗
+t
+\mathbf{X}_{t}
+. This results in a uniform compute distribution across spatial locations in
+𝐗
+t
+\mathbf{X}_{t}
+.
+We probe this behavior through an experiment presented in
+Figure
+2
+. We train DiT-B/2 (i.e.,
+×
+2
+2\!\times\!2
+patchification) and a corresponding DiT-B/1 (i.e.,
+×
+1
+1\!\times\!1
+patchification) on ImageNet-1k. As expected, performance improves in DiT-B/1 due to the fourfold amount of tokens. We then introduce a synthetic ImageNet-1k version by padding encoded images with zeros, yielding four times more tokens. We train a DiT-B/2, named DiT-B/2-Synth, without loss on padded regions.
+We also use absolute learnable positional encodings to avoid bias toward zero patches.
+For evaluation, we remove padded regions before decoding to recover real image content. DiT-B/2-Synth matches the number of tokens and FLOPs of DiT-B/1. Thus, if compute were used effectively, it should match DiT-B/1 performance. Instead, as shown in
+Figure
+2
+, DiT-B/2-Synth matches DiT-B/2 in FID, indicating no benefit from the added compute.
+Attention maps in
+Figure
+2
+reveal that in DiT-B/2-Synth, zeroed tokens primarily attend to each other instead of important image regions, wasting compute.
+We conclude that DiT cannot reallocate computation from easy to hard regions.
+Such inefficiency likely also arises in natural images, where spatial regions vary in difficulty (lower or higher losses) and would benefit from compute redistribution.
+3.3
+Elastic Latent Interface Transformer
+From spatial tokens to a variable latent interface.
+To allow flexible distribution of computation in DiTs, we introduce a minimal change that eliminates the fixed mapping between tokens and image patches, as shown in
+Figure
+3
+. We create a latent domain by instantiating a
+latent interface
+of
+K
+{K}
+tokens.
+To map the original spatial domain to the new latent domain, we use a lightweight
+Read
+cross‑attention layer, following
+[
+12
+]
+, which enables the model to select the number of latent tokens adaptively for each spatial region of
+𝐗
+t
+\mathbf{X}_{t}
+, based on their difficulty. This forms a compact latent domain on which most transformer blocks operate.
+Finally, a lightweight
+Write
+cross-attention layer maps the latent updates back to the spatial grid, allowing the model to write predictions back to their locations and retain input details.
+Architecture.
+Earlier work has shown that early and late transformer blocks in diffusion models exhibit different specializations compared to the intermediate blocks
+[
+10
+,
+11
+,
+55
+]
+. Therefore, we split transformer blocks into three segments:
+Model
+Params
+ImageNet 256
+×
+{\times}
+256
+ImageNet 512
+×
+{\times}
+512
+TF
+FID
+50
+​
+K
+↓
+\text{FID}_{50\text{K}}\downarrow
+FDD
+50
+​
+K
+↓
+\text{FDD}_{50\text{K}}\downarrow
+IS
+↑
+\uparrow
+TF
+FID
+50
+​
+K
+↓
+\text{FID}_{50\text{K}}\downarrow
+FDD
+50
+​
+K
+↓
+\text{FDD}_{50\text{K}}\downarrow
+IS
+↑
+\uparrow
+@256
+–G
++G
+–G
++G
+–G
++G
+@512
+–G
++G
+–G
++G
+–G
++G
+DiT-XL
+675M
+182
+13.0
+5.7
+346.3
+232.9
+66.2
+115.3
+806
+18.8
+9.5
+339.2
+233.6
+53.0
+86.4
+⌞
+\llcorner
+ELIT
+698M
+188
+8.2
+3.8
+200.2
+124.5
+93.0
+160.1
+831
+11.1
+4.9
+175.6
+106.1
+80.0
+134.1
+⌞
+\llcorner
+MB
+698M
+190
+7.8
+-40%
+3.8
+-33%
+203.7
+-41%
+128.6
+-45%
+99.0
++50%
+167.6
++45%
+804
+10.1
+-46%
+4.5
+-53%
+164.1
+-52%
+98.2
+-58%
+88.8
++68%
+147.0
++70%
+UViT-XL
+707M
+196
+8.3
+3.8
+220.2
+138.0
+84.4
+145.1
+861
+11.6
+5.3
+202.7
+125.9
+72.5
+117.2
+⌞
+\llcorner
+ELIT
+730M
+202
+7.5
+3.8
+203.8
+130.0
+95.2
+159.7
+886
+8.9
+4.2
+155.3
+94.9
+85.8
+141.0
+⌞
+\llcorner
+MB
+730M
+204
+7.1
+-14%
+3.7
+-3%
+203.2
+-8%
+130.6
+-5%
+100.3
++19%
+168.2
++16%
+858
+7.7
+-34%
+3.8
+-28%
+135.8
+-33%
+83.1
+-34%
+98.0
++35%
+159.3
++36%
+HDiT-XL
+1.4B
+182
+12.8
+5.6
+361.6
+247.0
+68.7
+119.7
+776
+13.0
+6.0
+260.3
+170.5
+69.4
+114.2
+⌞
+\llcorner
+ELIT
+1.4B
+188
+9.4
+4.6
+272.2
+184.4
+89.5
+150.2
+801
+10.1
+4.6
+164.1
+112.0
+88.8
+141.0
+⌞
+\llcorner
+MB
+1.4B
+191
+9.4
+-27%
+4.6
+-18%
+271.8
+-25%
+185.0
+-25%
+92.3
++34%
+155.7
++30%
+791
+9.6
+-26%
+4.6
+-23%
+171.2
+-34%
+106.8
+-37%
+94.7
++36%
+154.6
++35%
+Table 1:
+Comparative performance on ImageNet-1K at 256px and 512px resolutions.
+We evaluate FID
+↓
+\downarrow
+, FDD
+↓
+\downarrow
+, and IS
+↑
+\uparrow
+without (–G) and with 0.25 CFG (+G).
+TFLOPs (TF) indicate single training iteration TFLOPs. Superscripts show percentage of improvement
+of ELIT MultiBudget (MB) relative to the baseline.
+1.
+Short spatial head
+(
+B
+in
+{B}_{\mathrm{in}}
+blocks). Processes input tokens
+s
+∈
+ℝ
+N
+×
+d
+{s}\!\in\!\mathbb{R}^{N\times d}
+to produce a refined spatial representation which is transferred to the latent interface. This avoids reading from raw noisy patches.
+2.
+Latent core
+(
+B
+core
+{B}_{\mathrm{core}}
+blocks). Variable‑length latent sequence
+l
+∈
+ℝ
+K
+×
+d
+{l}\in\mathbb{R}^{{K}\times d}
+drives most computation. We insert a Read layer
+ℛ
+\mathcal{R}
+that pulls information from spatial tokens into
+l
+{l}
+, then process
+l
+{l}
+with standard transformer blocks in the latent domain, and finally insert a Write layer
+𝒲
+\mathcal{W}
+that broadcasts updated latent information back to the spatial domain.
+3.
+Short spatial tail
+(
+B
+out
+{B}_{\mathrm{out}}
+blocks). A few blocks complete processing the written features and project them to the output velocity. This head restores fine spatial detail, noise information, and aligns features to the prediction space of
+v
+^
+{\hat{v}}
+.
+Read and Write layers.
+Let
+s
+∈
+ℝ
+N
+×
+d
+{s}\in\mathbb{R}^{N\times d}
+be the current spatial tokens after the spatial head and
+l
+∈
+ℝ
+K
+×
+d
+{l}\in\mathbb{R}^{{K}\times d}
+a learnable set of initial latent tokens. The Read layer updates the latent interface via cross‑attention from spatial tokens, producing output latents
+l
+O
+∈
+ℝ
+K
+×
+d
+{l}_{O}\in\mathbb{R}^{{K}\times d}
+as follows:
+l
+C
+​
+A
+\displaystyle{l}_{CA}
+=
+l
++
+CA
+⁡
+(
+Queries
+=
+l
+,
+Keys
+,
+Values
+=
+s
+)
+,
+\displaystyle={l}+\mathrm{CA}\!\bigl(\mathrm{Queries}={l};\,\mathrm{Keys,Values}={s}\bigr),
+(2)
+l
+O
+\displaystyle{l}_{O}
+=
+l
+C
+​
+A
++
+MLP
+⁡
+(
+l
+C
+​
+A
+)
+.
+\displaystyle={l}_{CA}+\mathrm{MLP}({l}_{CA}).
+Conversely, the Write layer updates the spatial representation with the results of latent computations, producing updated spatial tokens
+s
+O
+∈
+ℝ
+N
+×
+d
+{s}_{O}\in\mathbb{R}^{N\times d}
+and is fully symmetric. We adopt pre‑norm, and use adaLN-Zero
+[
+45
+]
+modulation for Read to keep the interface timestep‑aware. To improve stability, we apply
+Q
+​
+K
+QK
+normalization inside cross‑attention operations. No hidden dimensionality expansion is applied to the MLP blocks to reduce the computational overhead.
+Grouped cross‑attention.
+To reduce the cost of Read and Write operations, we partition spatial tokens into
+G
+{G}
+non‑overlapping groups (e.g., a regular 2D/3D grid for images/videos), and latents are partitioned accordingly in groups of
+J
+=
+K
+/
+G
+{J}={K}/{G}
+latent tokens each. Latents are initialized from a set of learnable positional embeddings, which is reused across groups and encodes positional information
+within
+each group.
+This removes any dependency on a fixed input resolution: increasing spatial resolution modifies
+G
+{G}
+and
+N
+N
+, but not the number of learnable latents
+J
+{J}
+.
+Cross attention operations attend
+within
+corresponding groups only. This turns the cross‑attention cost from
+𝒪
+⁡
+(
+N
+​
+K
+)
+\mathcal{O}(N{K})
+into
+𝒪
+⁡
+(
+N
+​
+K
+/
+G
+)
+\mathcal{O}(N{K}/{G})
+[
+12
+]
+.
+3.4
+Elastic Computation with ELIT
+Spatial compute redistribution.
+When integrated with DiT (ELIT-DiT), our architecture enables spatial compute redistribution. In the synthetic dataset experiment described in
+Section
+3.2
+, ELIT-DiT-B/2-Synth repurposes the compute from zeroed regions to enhance generation in real regions, matching the quality of the baseline trained only on the original ImageNet-1k with equivalent compute(ELIT-DiT-B/1) (see
+Figure
+2
+). Attention maps of the read operations averaged over all latent tokens confirm this behavior, showing that ELIT-DiT builds its latent representation by focusing on the most informative spatial regions with the highest flow-matching loss.
+Figure 4
+:
+Training convergence.
+ELIT-DiT significantly accelerates convergence, achieving
+3.3
+×
+3.3\times
+speedup on ImageNet-1K 256px and
+4.0
+×
+4.0\times
+on ImageNet-1K 512px.
+Multi-budget elastic latent interface.
+We aim to build a multi-budget model that supports variable inference budgets. Since each latent token summarizes its group information via the read operation, a subset of tokens can still predict for the entire group, enabling budget-adaptive inference. Thus, we train an importance-ordered latent interface, where earlier tokens within each group capture globally useful information and later tokens refine details, so that any prefix of
+J
+~
+<=
+J
+{\tilde{J}}\!<=\!{J}
+tokens of the group tokens yields a valid interface associated with reduced computation (see
+Appendix
+Appendix
+K
+). We enforce this with a simple random prefix‑keeping scheme as in
+[
+48
+]
+. At training time, we randomly sample
+J
+~
+∼
+Uniform
+⁡
+{
+J
+min
+,
+…
+,
+J
+max
+}
+{\tilde{J}}\!\sim\!\mathrm{Uniform}\{{J_{\mathrm{min}}},\ldots,{J_{\mathrm{max}}}\}
+once per training iteration, defining the training budget for the current iteration. The same value of
+J
+~
+{\tilde{J}}
+is used across all groups. In every Read/Write and latent‑core block, we keep only the first
+J
+~
+{\tilde{J}}
+latents of each group and drop the subsequent tail. This process creates a consistent hierarchy where head latents are seen (and trained on) more often, forcing the model into storing the most important information in earlier latents. The generator is trained end‑to‑end only with the standard RF loss in
+Equation
+1
+.
+Asymmetric compute for improved guidance.
+Classifier-free guidance (CFG)
+[
+22
+]
+is a cornerstone technique in diffusion model sampling. Given a conditioning signal
+c
+{c}
+and guidance scale
+λ
+\lambda
+, CFG redefines the velocity prediction
+v
+^
+CFG
+=
+(
+λ
++
+1
+)
+​
+𝒢
+​
+(
+𝐗
+t
+∣
+c
+)
+−
+λ
+​
+𝒢
+​
+(
+𝐗
+t
+∣
+∅
+)
+​
+.
+{\hat{v}}_{\text{CFG}}=(\lambda\!+\!1)\mathcal{G}(\mathbf{X}_{t}\mid{c})\!-\!\lambda\mathcal{G}(\mathbf{X}_{t}\mid\emptyset)\text{.}
+While improving the quality, this comes at the cost of duplicating the number of model invocations. Recently, AutoGuidance (AG)
+[
+30
+]
+was proposed to improve guidance by replacing the unconditional model with a weak version of itself.
+While producing consistent improvements, it relies on the availability of a weaker model version, ideally producing artifacts that are similar to the main model
+[
+9
+]
+. Weak models are separately trained or obtained through handcrafted model corruptions
+[
+9
+,
+23
+,
+25
+]
+. However, in our multi-budget framework, such model is natively available by varying the inference budget defined by
+J
+~
+{\tilde{J}}
+.
+Thus, we evaluate the main term with budget
+J
+~
+{\tilde{J}}
+and the guidance term with a smaller budget
+J
+~
+w
+≤
+J
+~
+\tilde{J}_{\mathrm{w}}\!\leq\!{\tilde{J}}
+. We find, however, that AG degrades metrics that reward class alignment, such as Inception Score. We thus opt to drop the class condition from the guidance term, combining the power of AG and CFG, and name the resulting guidance mechanism cheap classifier-free guidance (CCFG). The guidance mechanisms are defined as:
+v
+^
+AG
+\displaystyle{\hat{v}}_{\text{AG}}
+=
+(
+λ
++
+1
+)
+​
+𝒢
+​
+(
+𝐗
+t
+∣
+c
+;
+J
+~
+)
+−
+λ
+​
+𝒢
+​
+(
+𝐗
+t
+∣
+c
+;
+J
+~
+w
+)
+,
+\displaystyle=(\lambda+1)\,\mathcal{G}\Bigl(\mathbf{X}_{t}\mid{c};\,{\tilde{J}}\Bigr)-\lambda\,\mathcal{G}\Bigl(\mathbf{X}_{t}\mid{c};\,\tilde{J}_{\mathrm{w}}\Bigr),
+(3)
+v
+^
+CCFG
+\displaystyle{\hat{v}}_{\text{CCFG}}
+=
+(
+λ
++
+1
+)
+​
+𝒢
+​
+(
+𝐗
+t
+∣
+c
+;
+J
+~
+)
+−
+λ
+​
+𝒢
+​
+(
+𝐗
+t
+∣
+∅
+;
+J
+~
+w
+)
+.
+\displaystyle=(\lambda+1)\,\mathcal{G}\Bigl(\mathbf{X}_{t}\mid{c};\,{\tilde{J}}\Bigr)-\lambda\,\mathcal{G}\Bigl(\mathbf{X}_{t}\mid\emptyset;\,\tilde{J}_{\mathrm{w}}\Bigr).
+This results in both improved quality and a reduced cost without any retraining or handcrafted model corruptions.
+4
+Experiments
+4.1
+Experimental setup
+We demonstrate ELIT’s broad applicability by evaluating it on several popular diffusion backbones: DiT
+[
+45
+]
+, U-ViT
+[
+3
+]
+, and HDiT
+[
+13
+]
+. To ensure a fair comparison and evaluate architectural advantages in isolation, all baselines are built with the
+same base transformer blocks
+, adopt the same RF framework, and have similar train compute. Furthermore, we integrate several improvements across all baselines, including RoPE
+[
+51
+]
+, and QK normalization
+[
+15
+]
+.
+Training details.
+We perform conditional image and video generation on ImageNet-1k
+[
+14
+]
+and Kinetics-700
+[
+6
+]
+, respectively. We train on 256px and 512px resolutions for ImageNet-1k experiments and use 29 frames, at 24 fps and 256px resolution for Kinetics-700. We use the FLUX
+[
+34
+]
+autoencoder for images and the CogVideo
+[
+60
+]
+autoencoder for videos. Main experiments are based on DiT-XL/2, while ablation studies use a DiT-B/2 model. Unless noted, we use a batch size of 256, learning rate
+1
+×
+10
+−
+4
+1\times 10^{-4}
+with 10k warmup steps, gradient clipping at 1.0, Adam
+[
+31
+]
+, and EMA with
+β
+=
+0.9999
+\beta=0.9999
+. Image experiments are trained for 500k steps, while video experiments are trained for 200k steps.
+Evaluation metrics and protocol.
+We follow the evaluation protocol of
+[
+20
+]
+. For images, we report FID
+[
+21
+]
+, FDD (Fréchet Distance on DINOv2
+[
+44
+]
+features), and Inception Score (IS)
+[
+50
+]
+. For video, we report FID, FDD, and FVD
+[
+52
+]
+. Statistics are computed over 50k samples for main image experiments, while 10k samples are used for all other experiments. We use an Euler sampler with 40 steps unless otherwise noted. We use FLOPs to measure the amount of computation in all experiments and show in
+Appendix
+the relationship between FLOPs and forward time.
+4.2
+Comparison to baselines
+Figure 5
+:
+Guidance strategies.
+ELIT enables autoguidance out of the box by providing a well-aligned weaker model that runs at
+≈
+35
+%
+\approx 35\%
+of the cost for the unconditional path. When paired with classifier-free guidance (CFG), denoted as cheap CFG (CCFG), it reduces overall generation cost by
+≈
+33
+%
+\approx 33\%
+while improving quality. Compared to DiT, ELIT-DiT achieves a
+19
+%
+19\%
+better best FID.
+Figure 6
+:
+Qualitative assessment of ELIT on ImageNet-1K 512px.
+We compare DiT against ELIT-DiT and ablate over different guidance settings and number of latent tokens. ELIT improves structural details while allowing per-step selection of inference budget through token dropping and giving access to autoguidance (AG) and cheap classifier free guidance (CFG) for improved sampling quality and cost. See results in
+Appendix
+Appendix
+L
+.
+Baseline selection and details.
+We use DiT
+[
+45
+]
+as a base architecture for our experiments and consider two variants: U-ViT and HDiT. U-ViT
+[
+3
+]
+adds long skip connections akin to U-Net
+[
+49
+]
+. We add ELIT read/write operations while keeping the U-ViT design untouched to obtain ELIT-U-ViT. HDiT
+[
+13
+]
+reduces tokens in intermediate blocks via PixelUnshuffle/PixelShuffle. We use a single
+2
+×
+2
+2{\times}2
+down-/up-sampling operation at blocks 8 and 20, respectively and double the bottleneck hidden dimensionality to match vanilla DiT FLOPs at the cost of an increased parameter count. We apply ELIT read/write operations and apply group-wise downsampling in the latent space to obtain ELIT-HDiT. More details are in
+Appendix
+Appendix
+B
+.
+Image generation.
+To disentangle the effect of dynamic compute redistribution from multi-budget training, we evaluate two variants for each baseline: ELIT, trained with a single budget matching the baselines configurations, and ELIT-MB, trained in a multi-budget setup following the tail-token dropping strategy from
+Section
+3.4
+. This yields 60 budgets at
+512
+​
+px
+512\mathrm{px}
+and 16 budgets at
+256
+​
+px
+256\mathrm{px}
+. To account for the compute saved at shorter token lengths, we increase the batch size to 384, keeping training FLOPs comparable. We report per-iteration FLOPs for all baselines.
+As shown in
+Table
+1
+, ELIT, despite its simplicity, improves over all baselines under similar training FLOPs. In the multi-budget setting, ELIT-MB delivers further gains, achieving sizable improvements over DiT, U-ViT, and HDiT across all metrics, with FID reductions of
+40
+%
+40\%
+,
+14
+%
+14\%
+, and
+27
+%
+27\%
+, respectively. We attribute these extra gains to the importance ordering, which leads to better token semantics while benefiting from the larger effective batch size. The improvements are even more pronounced at
+512
+​
+px
+512\mathrm{px}
+, where FID decreases by
+53
+%
+53\%
+,
+28
+%
+28\%
+, and
+23
+%
+23\%
+for DiT, U-ViT, and HDiT, respectively, suggesting that our method scales favorably with higher resolution, where pixel redundancy is greater and dynamic compute redistribution is more beneficial. We report in
+Figure
+4
+the convergence speed of ELIT-DiT relative to DiT at both resolutions, showing faster convergence.
+Figure
+5
+compares performance across CFG values and confirms the advantage of our method under the optimal CFG scale. Finally,
+Figure
+6
+shows qualitatively the improvements of our method over DiT. More qualitative examples are provided in
+Appendix
+Appendix
+L
+.
+Figure 7
+:
+ELIT improves over DiT across model sizes.
+Video generation.
+We validate the performance of ELIT in class-conditional video generation and report the results in
+Table
+2
+where we apply grouping of spatial and latent tokens in the
+frame and temporal dimension
+. ELIT-DiT shows favorable results over DiT across all metrics.
+Scaling across model sizes.
+We evaluate ELIT across model sizes from DiT-S/4 to DiT-XL/2 in
+Figure
+7
+. ELIT outperforms DiT at every scale. Gains are larger for bigger models, while the relative overhead decreases, suggesting that ELIT is particularly well-suited for large-scale models.
+Figure 8
+:
+Compute-quality tradeoff.
+Varying inference budget in ELIT-DiT give better quality–compute tradeoff than reducing sampling steps.
+Figure 9
+:
+TeaCache.
+ELIT benefits from TeaCache similarly to DiT, yielding comparable improvements at different inference FLOPs.
+4.3
+Elastic Inference Capabilities
+We analyze the ability of the model to perform inference at varied budgets using the number of retained latent tokens per group
+J
+~
+{\tilde{J}}
+after dropping as a knob to control the budget.
+Sampling steps trade-off.
+We compare our approach for controlling inference compute against naively lowering the sampling steps. As shown in
+Figure
+8
+, our method delivers a superior compute–quality trade-off to varying the step count. Notably, for each FLOP target, the optimal combination of number of steps and tokens count varies, underscoring the value of models that support a continuum of inference budgets. We also demonstrate compatibility with TeaCache
+[
+39
+]
+in
+Figure
+9
+, where our method attains gains comparable to the baseline when TeaCache is applied.
+Efficient model guidance.
+In
+Figure
+5
+, we compare classifier-free guidance (CFG) with autoguidance (AG) and cheap classifier-free guidance (CCFG).
+Figure
+6
+and
+Appendix
+Appendix
+L
+, show qualitative examples of such guidance strategies. AG achieves comparable performance to CFG while using
+≈
+33
+%
+\approx 33\%
+fewer FLOPs. Combining AG with CFG by dropping the class condition in the guidance term (
+i.e.
+CCFG) gives the best results in all metrics and delivers the same
+≈
+33
+%
+\approx 33\%
+inference speedup.
+Baseline
+FDD
+10
+​
+K
+↓
+\text{FDD}_{10\text{K}}\downarrow
+FID
+10
+​
+K
+↓
+\text{FID}_{10\text{K}}\downarrow
+FVD
+10
+​
+K
+↓
+\text{FVD}_{10\text{K}}\downarrow
+–G
++G
+–G
++G
+–G
++G
+DiT-XL
+371.5
+309.1
+14.0
+11.3
+135.9
+100.5
+⌞
+\llcorner
+ELIT
+277.4
+222.0
+13.3
+10.7
+116.5
+90.5
+Table 2:
+Comparative performance on Kinetics-700 256px.
+We report metrics without (–G) and with 0.25 CFG (+G).
+Model
+Tokens
+FLOPs
+Entity
+Relation
+Attribute
+Other
+Global
+Avg.
+Qwen-Image
+1
+×
+1\times
+90.51
+92.21
+91.03
+91.34
+91.70
+91.27
+ELIT-Qwen-Image:
+⌞
+\llcorner
+100% Tokens
+4096
+0.688
+×
+0.688\times
+90.30
+92.18
+88.97
+90.34
+89.18
+90.45
+⌞
+\llcorner
+50% Tokens
+2048
+0.494
+×
+0.494\times
+90.15
+89.94
+89.05
+90.09
+89.06
+89.81
+⌞
+\llcorner
+25% Tokens
+1024
+0.409
+×
+0.409\times
+89.31
+91.87
+89.71
+88.28
+84.79
+89.79
+⌞
+\llcorner
+12.5% Tokens
+512
+0.369
+×
+0.369\times
+91.20
+90.35
+88.77
+89.94
+79.84
+88.02
+Table 3
+:
+Qwen-Image evaluation on DPG-Bench. Results are reported with different inference budgets.
+(a) Group Size Ablation
+Group Size
+Groups
+FID
+10
+​
+K
+\text{FID}_{10\text{K}}
+↓
+\downarrow
+FDD
+10
+​
+K
+\text{FDD}_{10\text{K}}
+↓
+\downarrow
+IS
+↑
+\uparrow
+ImageNet-1K 256px (16
+×
+\mathbf{\times}
+16 tokens)
+1
+×
+\times
+1
+256
+29.94
+638.8
+38.39
+2
+×
+\times
+2
+64
+25.48
+546.8
+45.66
+4
+×
+\times
+4
+16
+26.53
+531.8
+45.95
+8
+×
+\times
+8
+4
+27.73
+552.5
+44.64
+16
+×
+\times
+16
+1
+30.03
+599.1
+43.44
+Group Size
+Groups
+FID
+10
+​
+K
+\text{FID}_{10\text{K}}
+↓
+\downarrow
+FDD
+10
+​
+K
+\text{FDD}_{10\text{K}}
+↓
+\downarrow
+IS
+↑
+\uparrow
+ImageNet-1K 512px (32
+×
+\mathbf{\times}
+32 tokens)
+1
+×
+\times
+1
+1024
+41.67
+701.6
+27.23
+2
+×
+\times
+2
+256
+34.50
+604.0
+33.99
+4
+×
+\times
+4
+64
+31.60
+540.1
+37.85
+8
+×
+\times
+8
+16
+30.86
+524.6
+39.48
+16
+×
+\times
+16
+4
+31.93
+545.7
+38.24
+(b) Blocks Allocation Ablation
+Block Alloc.
+FID
+10
+​
+K
+\text{FID}_{10\text{K}}
+↓
+\downarrow
+FDD
+10
+​
+K
+\text{FDD}_{10\text{K}}
+↓
+\downarrow
+IS
+↑
+\uparrow
+DiT-B/2
+0-12-0
+33.84
+706.4
+34.49
+1-10-1
+28.55
+557.5
+41.82
+2-8-2
+26.53
+531.8
+45.95
+3-6-3
+25.37
+531.0
+46.19
+4-4-4
+25.34
+560.1
+46.40
+5-2-5
+26.95
+612.1
+43.15
+DiT-XL/2
+0-28-0
+13.53
+333.2
+76.07
+2-24-2
+12.33
+239.9
+86.87
+4-20-4
+11.14
+229.6
+93.20
+6-16-6
+10.84
+234.8
+93.59
+8-12-8
+10.44
+237.3
+95.16
+10-8-10
+10.80
+250.1
+90.11
+(c) Variable Budget Strategy
+Model
+FID
+10
+​
+K
+\text{FID}_{10\text{K}}
+↓
+\downarrow
+FDD
+10
+​
+K
+\text{FDD}_{10\text{K}}
+↓
+\downarrow
+IS
+↑
+\uparrow
+DiT
+39.0
+779.3
+29.2
+⌞
+\llcorner
+DiT + var. patch size
+57.36
+991.2
+20.34
+⌞
+\llcorner
+25% Tokens
+85.25
+1181.9
+13.06
+ELIT-DiT + rand. drop
+27.0
+540.1
+46.3
+⌞
+\llcorner
+25% Tokens
+38.6
+718.0
+34.5
+ELIT-DiT + tail drop
+26.6
+536.8
+47.2
+⌞
+\llcorner
+25% Tokens
+36.3
+682.1
+36.4
+(d) Batching Strategy
+Model
+FID
+10
+​
+K
+\text{FID}_{10\text{K}}
+↓
+\downarrow
+FDD
+10
+​
+K
+\text{FDD}_{10\text{K}}
+↓
+\downarrow
+IS
+↑
+\uparrow
+(i) variable batch size
+26.15
+537.07
+48.45
+(ii) constant batch size
+26.65
+536.83
+47.18
+Table 4
+:
+Ablations.
+(a) Read/Write group size. (b) Blocks allocation to head-latent core-tail blocks. (c) Strategies for achieving variable budget inference. (d) Batching strategy for multibudget training.
+4.4
+Large Scale Multi-Budget Model
+We evaluate the applicability of ELIT to large-scale generative models by applying it on top of Qwen-Image
+[
+56
+]
+, which is based on a 20B MM-DiT backbone. We insert the Read and Write layers respectively after block 8 and 52. Due to the asymmetric nature of MM-DiTs and small number of text tokens (
+≈
+\approx
+300 on average) versus 4096 image tokens at 1024px, we apply ELIT to the large image tokens stream only. Rather than outperforming the original model, a task which would require access to large-scale curated image datasets and post-training procedures matching the original ones
+[
+56
+]
+, the experiment aims to demonstrate that ELIT enables stable training and multi-budget inference for large-scale MM-DiT at high resolution. Therefore, we fine-tune from Qwen-Image in a distillation setting. Specifically, we fine-tune for 60k steps at
+512
+​
+px
+512\mathrm{px}
+resolution, using a combination of RF loss and a distillation loss scaled to a similar magnitude.
+We then fine-tune for an additional 60k steps at
+1024
+​
+px
+1024\mathrm{px}
+. We train on real images and synthetic ones generated from FLUX.1-Schnell
+[
+34
+]
+and SDXL
+[
+47
+]
+.
+We perform inference using the Euler sampler with 40 steps and CFG of
+5.0
+5.0
+for the original method, while we use the faster CCFG with same weight for ELIT-Qwen-Image. Additional details are reported in
+Appendix
+Appendix
+L
+.
+Figure
+1
+and
+Appendix
+Figure
+19
+show qualitative results, where ELIT-Qwen-Image cuts sampling FLOPs by up to
+63
+%
+63\%
+, achieving
+≈
+2.7
+×
+\approx 2.7\times
+speedup while gracefully trading off speed for quality. On DPG-Bench
+[
+24
+]
+, it maintains strong performance across different inference budgets, with the average score ranging from
+90.45
+90.45
+to
+88.02
+88.02
+at the lowest budget. We include original Qwen-Image results using the same sampling parameters for completeness. With respect to the original Qwen-Image, we observe an initial score gap of
+0.82
+0.82
+average score points in our model.
+4.5
+Ablations
+Group sizes.
+The latent group size controls how flexibly the interface can attend over spatial tokens, with larger groups enabling more opportunities for non-uniform compute. As shown in
+Table
+4
+(a), dividing the image into 16 groups performs best across 256px and 512px resolutions. Groups of
+1
+×
+1
+1{\times}1
+force a rigid one-to-one, spatially aligned mapping, while
+16
+×
+16
+16{\times}16
+spans the full
+256
+256
+px image and underperforms. We hypothesize that using
+>
+1
+>\!1
+groups provides useful coarse spatial regularization, while still permitting intra-group compute redistribution.
+Blocks allocation.
+We vary
+(
+B
+in
+,
+B
+core
+,
+B
+out
+)
+({B}_{\mathrm{in}},{B}_{\mathrm{core}},{B}_{\mathrm{out}})
+for DiT-B/2 and DiT-XL/2 in
+Table
+4
+(b) (i.e., the head, latent core, and tail blocks count). Optimal results occur when
+≈
+67
+%
+\approx\!67\%
+and
+≈
+71
+%
+\approx\!71\%
+of blocks are in the latent core, respectively for DiT-B and DiT-XL, with the rest split between head and tail. We use
+−
+−
+4
+4\!-\!20\!-\!4
+for main experiments on DiT-XL.
+Alternative variable-budget strategies.
+We evaluate other approaches for variable-budget inference in
+Table
+4
+(c). Following
+Anagnostidis et al. [1]
+,
+Liu et al. [38]
+, we train a DiT with two patchification layers (
+2
+×
+2
+2{\times}2
+and
+4
+×
+4
+4{\times}4
+) sampled uniformly during training, and set the batch size to 48 to match the baseline’s training FLOPs. In our experiments, this multi-patchification setup underperforms the standard DiT. We also replace tail-dropping strategy with random token dropping and observe a consistent performance drop.
+Training Strategy.
+At each training step, we sample a compute budget by choosing the number of latent tokens per group, yielding variable FLOPs, which is lower on average than the baseline. To match baseline compute, we compare two strategies: (i) variable batch size scaled with lower budget, (ii) a constant batch size chosen to match baseline compute in expectation. As shown in
+Table
+4
+(d), both behave similarly, so we use the simpler constant batch size option.
+5
+Discussion
+ELIT introduces a minimal framework that improves compute allocation in DiTs via lightweight Read/Write layers, enabling flexible compute budgets. It consistently improves image and video generation quality across architectures (DiT, U-ViT, HDiT) and resolutions, while enabling efficient compute–quality trade-offs. However, large-scale, from-scratch training benefits remain unverified. Moreover, the proposed CCFG tends to saturate images faster than CFG. Future work can explore training and inference budget schedulers that allocate different budgets across sampling steps, following prior evidence that early sampling steps require less compute
+[
+29
+,
+1
+]
+.
+Acknowledgments.
+V.O. was partially funded by a gift from Snap Research, funding from the Ken Kennedy Institute at Rice University and NSF Award #2201710.
+References
+[1]
+Sotiris Anagnostidis, Gregor Bachmann, Yeongmin Kim, Jonas Kohler, Markos Georgopoulos, Artsiom Sanakoyeu, Yuming Du, Albert Pumarola, Ali Thabet, and Edgar Schönfeld.
+Flexidit: Your diffusion transformer can easily generate high-quality samples with less compute.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference (CVPR)
+, 2025.
+[2]
+Roman Bachmann, Jesse Allardice, David Mizrahi, Enrico Fini, Oğuzhan Fatih Kar, Elmira Amirloo, Alaaeldin El-Nouby, Amir Zamir, and Afshin Dehghan.
+Flextok: Resampling images into 1d token sequences of flexible length.
+In
+International Conference on Machine Learning (ICML)
+, 2025.
+[3]
+Fan Bao, Shen Nie, Kaiwen Xue, Yue Cao, Chongxuan Li, Hang Su, and Jun Zhu.
+All Are Worth Words: A ViT Backbone for Diffusion Models.
+In
+Conference on Computer Vision and Pattern Recognition (CVPR)
+, 2023.
+[4]
+Daniel Bolya and Judy Hoffman.
+Token merging for fast stable diffusion.
+In
+Proceedings of the IEEE/CVF conference on computer vision and pattern recognition
+, pages 4599–4603, 2023.
+[5]
+Han Cai, Chuang Gan, Tianzhe Wang, Zhekai Zhang, and Song Han.
+Once-for-All: Train One Network and Specialize it for Efficient Deployment.
+In
+International Conference on Learning Representations (ICLR)
+, 2020.
+[6]
+Joao Carreira, Eric Noland, Chloe Hillier, and Andrew Zisserman.
+A Short Note on the Kinetics-700 Human Action Dataset.
+arXiv
+, 2019.
+[7]
+Keshigeyan Chandrasegaran, Michael Poli, Daniel Y Fu, Dongjun Kim, Lea M Hadzic, Manling Li, Agrim Gupta, Stefano Massaroli, Azalia Mirhoseini, Juan Carlos Niebles, et al.
+Exploring diffusion transformer designs via grafting.
+arXiv preprint arXiv:2506.05340
+, 2025.
+[8]
+Shuning Chang, Pichao Wang, Jiasheng Tang, Fan Wang, and Yi Yang.
+Sparsedit: Token sparsification for efficient diffusion transformer.
+arXiv preprint arXiv:2412.06028
+, 2024.
+[9]
+Chubin Chen, Jiashu Zhu, Xiaokun Feng, Nisha Huang, Meiqi Wu, Fangyuan Mao, Jiahong Wu, Xiangxiang Chu, and Xiu Li.
+s
+2
+s^{2}
+-guidance: Stochastic self guidance for training-free enhancement of diffusion models.
+arXiv preprint arXiv:2508.12880
+, 2025.
+[10]
+Guanjie Chen, Xinyu Zhao, Yucheng Zhou, Tianlong Chen, and Cheng Yu.
+Accelerating vision diffusion transformers with skip branches.
+arXiv e-prints
+, pages arXiv–2411, 2024a.
+[11]
+Pengtao Chen, Mingzhu Shen, Peng Ye, Jianjian Cao, Chongjun Tu, Christos-Savvas Bouganis, Yiren Zhao, and Tao Chen.
+Delta-dit: A training-free acceleration method tailored for diffusion transformers.
+arXiv preprint arXiv:2406.01125
+, 2024b.
+[12]
+Ting Chen and Lala Li.
+FIT: Far-reaching Interleaved Transformers.
+arXiv:2305.12689
+, 2023.
+[13]
+Katherine Crowson, Stefan Andreas Baumann, Alex Birch, Tanishq Mathew Abraham, Daniel Z. Kaplan, and Enrico Shippole.
+Scalable high-resolution pixel-space image synthesis with hourglass diffusion transformers.
+In
+International Conference on Machine Learning (ICML)
+, 2024.
+[14]
+Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li Fei-Fei.
+Imagenet: A Large-scale Hierarchical Image Database.
+In
+Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)
+, 2009.
+[15]
+Patrick Esser, Sumith Kulal, Andreas Blattmann, Rahim Entezari, Jonas Müller, Harry Saini, Yam Levi, Dominik Lorenz, Axel Sauer, Frederic Boesel, Dustin Podell, Tim Dockhorn, Zion English, and Robin Rombach.
+Scaling Rectified Flow Transformers for High-Resolution Image Synthesis.
+In
+Proceedings of the 41st International Conference on Machine Learning
+, pages 12606–12633. PMLR, 2024.
+[16]
+Haipeng Fang, Sheng Tang, Juan Cao, Enshuo Zhang, Fan Tang, and Tong-Yee Lee.
+Attend to not attended: Structure-then-detail token merging for post-training dit acceleration.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+, pages 18083–18092, 2025.
+[17]
+Shanghua Gao, Pan Zhou, Ming-Ming Cheng, and Shuicheng Yan.
+Masked Diffusion Transformer is a Strong Image Synthesizer.
+In
+International Conference on Computer Vision (ICCV)
+, 2023.
+[18]
+Alex Graves, Greg Wayne, and Ivo Danihelka.
+Neural turing machines.
+arXiv preprint arXiv:1410.5401
+, 2014.
+[19]
+Moayed Haji-Ali, Willi Menapace, Aliaksandr Siarohin, Ivan Skorokhodov, Alper Canberk, Kwot Sin Lee, Vicente Ordonez, and Sergey Tulyakov.
+Av-link: Temporally-aligned diffusion features for cross-modal audio-video generation.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 19373–19385, 2025a.
+[20]
+Moayed Haji-Ali, Willi Menapace, Ivan Skorokhodov, Arpit Sahni, Sergey Tulyakov, Vicente Ordonez, and Aliaksandr Siarohin.
+Improving progressive generation with decomposable flow matching.
+arXiv preprint arXiv:2506.19839
+, 2025b.
+[21]
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter.
+Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+In
+NIPS
+, 2017.
+[22]
+Jonathan Ho and Tim Salimans.
+Classifier-Free Diffusion Guidance.
+In
+NeurIPS 2021 Workshop on Deep Generative Models and Downstream Applications
+, 2021.
+[23]
+Susung Hong.
+Smoothed Energy Guidance: Guiding Diffusion Models with Reduced Energy Curvature of Attention.
+In
+Neural Information Processing Systems (NeurIPS)
+, 2024.
+[24]
+Xiwei Hu, Rui Wang, Yixiao Fang, Bin Fu, Pei Cheng, and Gang Yu.
+Ella: Equip diffusion models with llm for enhanced semantic alignment.
+arXiv preprint arXiv:2403.05135
+, 2024.
+[25]
+Junha Hyung, Kinam Kim, Susung Hong, Min-Jung Kim, and Jaegul Choo.
+Spatiotemporal Skip Guidance for Enhanced Video Diffusion Sampling.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference (CVPR)
+, 2025.
+[26]
+Allan Jabri, David J. Fleet, and Ting Chen.
+Scalable Adaptive Computation for Iterative Generation.
+In
+Proceedings of the 40th International Conference on Machine Learning
+, pages 14569–14589. PMLR, 2023.
+[27]
+Andrew Jaegle, Felix Gimeno, Andy Brock, Oriol Vinyals, Andrew Zisserman, and Joao Carreira.
+Perceiver: General Perception with Iterative Attention.
+In
+International Conference on Machine Learning (ICML)
+, 2021.
+[28]
+Wongi Jeong, Kyungryeol Lee, Hoigi Seo, and Se Young Chun.
+Upsample what matters: Region-adaptive latent sampling for accelerated diffusion transformers.
+arXiv preprint arXiv:2507.08422
+, 2025.
+[29]
+Yang Jin, Zhicheng Sun, Ningyuan Li, Kun Xu, Hao Jiang, Nan Zhuang, Quzhe Huang, Yang Song, Yadong Mu, and Zhouchen Lin.
+Pyramidal flow matching for efficient video generative modeling.
+arXiv preprint arXiv:2410.05954
+, 2024.
+[30]
+Tero Karras, Miika Aittala, Tuomas Kynkäänniemi, Jaakko Lehtinen, Timo Aila, and Samuli Laine.
+Guiding a Diffusion Model with a Bad Version of Itself.
+In
+Neural Information Processing Systems (NIPS)
+, 2024.
+[31]
+Diederik P. Kingma and Jimmy Ba.
+Adam: A Method for Stochastic Optimization.
+International Conference on Learning Representations (ICLR)
+, 2015.
+[32]
+Toshiaki Koike-Akino and Ye Wang.
+Stochastic Bottleneck: Rateless Auto-Encoder for Flexible Dimensionality Reduction.
+In
+2020 IEEE International Symposium on Information Theory (ISIT)
+, pages 2735–2740, 2020.
+[33]
+Felix Krause, Timy Phan, Ming Gui, Stefan Andreas Baumann, Vincent Tao Hu, and Björn Ommer.
+Tread: Token routing for efficient architecture-agnostic diffusion training.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 15703–15713, 2025.
+[34]
+Black Forest Labs.
+Flux, 2024.
+[35]
+Junnan Li, Dongxu Li, Silvio Savarese, and Steven C. H. Hoi.
+Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large language models.
+In
+ICML
+, 2023.
+[36]
+Yan Li, Changyao Tian, Renqiu Xia, Ning Liao, Weiwei Guo, Junchi Yan, Hongsheng Li, Jifeng Dai, Hao Li, and Xue Yang.
+Learning adaptive and temporally causal video tokenization in a 1d latent space.
+arXiv preprint arXiv:2505.17011
+, 2025.
+[37]
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matthew Le.
+Flow Matching for Generative Modeling.
+In
+The Eleventh International Conference on Learning Representations (ICLR)
+, 2023.
+[38]
+Dongyang Liu, Shicheng Li, Yutong Liu, Zhen Li, Kai Wang, Xinyue Li, Qi Qin, Yufei Liu, Yi Xin, Zhongyu Li, et al.
+Lumina-video: Efficient and flexible video generation with multi-scale next-dit.
+arXiv preprint arXiv:2502.06782
+, 2025a.
+[39]
+Feng Liu, Shiwei Zhang, Xiaofeng Wang, Yujie Wei, Haonan Qiu, Yuzhong Zhao, Yingya Zhang, Qixiang Ye, and Fang Wan.
+Timestep Embedding Tells: It’s Time to Cache for Video Diffusion Model.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+, pages 7353–7363, 2025b.
+[40]
+Xingchao Liu, Chengyue Gong, and qiang liu.
+Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow.
+In
+The Eleventh International Conference on Learning Representations (ICLR)
+, 2023.
+[41]
+Ziming Liu, Yifan Yang, Chengruidong Zhang, Yiqi Zhang, Lili Qiu, Yang You, and Yuqing Yang.
+Region-adaptive sampling for diffusion transformers.
+arXiv preprint arXiv:2502.10389
+, 2025c.
+[42]
+Wenbo Lu, Shaoyi Zheng, Yuxuan Xia, and Shengjie Wang.
+Toma: Token merge with attention for diffusion models.
+arXiv preprint arXiv:2509.10918
+, 2025.
+[43]
+Willi Menapace, Aliaksandr Siarohin, Ivan Skorokhodov, Ekaterina Deyneka, Tsai-Shien Chen, Anil Kag, Yuwei Fang, Aleksei Stoliar, Elisa Ricci, Jian Ren, and Sergey Tulyakov.
+Snap Video: Scaled Spatiotemporal Transformers for Text-to-Video Synthesis.
+In
+Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)
+, pages 7038–7048, 2024.
+[44]
+Maxime Oquab, Timothée Darcet, Théo Moutakanni, Huy V. Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, Mido Assran, Nicolas Ballas, Wojciech Galuba, Russell Howes, Po-Yao Huang, Shang-Wen Li, Ishan Misra, Michael Rabbat, Vasu Sharma, Gabriel Synnaeve, Hu Xu, Herve Jegou, Julien Mairal, Patrick Labatut, Armand Joulin, and Piotr Bojanowski.
+DINOv2: Learning Robust Visual Features without Supervision.
+Transactions on Machine Learning Research
+, 2024.
+[45]
+William Peebles and Saining Xie.
+Scalable Diffusion Models with Transformers.
+In
+International Conference on Computer Vision (ICCV)
+, 2023.
+[46]
+Elia Peruzzo, Adil Karjauv, Nicu Sebe, Amir Ghodrati, and Amir Habibian.
+Adaptor: Adaptive token reduction for video diffusion transformers.
+In
+Proceedings of the Computer Vision and Pattern Recognition Conference
+, pages 6365–6371, 2025.
+[47]
+Dustin Podell, Zion English, Kyle Lacey, Andreas Blattmann, Tim Dockhorn, Jonas Müller, Joe Penna, and Robin Rombach.
+Sdxl: Improving latent diffusion models for high-resolution image synthesis.
+arXiv preprint arXiv:2307.01952
+, 2023.
+[48]
+Oren Rippel, Michael Gelbart, and Ryan Adams.
+Learning Ordered Representations with Nested Dropout.
+In
+Proceedings of the 31st International Conference on Machine Learning
+, pages 1746–1754, Bejing, China, 2014. PMLR.
+[49]
+Olaf Ronneberger, Philipp Fischer, and Thomas Brox.
+U-Net: Convolutional Networks for Biomedical Image Segmentation.
+In
+Medical Image Computing and Computer-Assisted Intervention – MICCAI 2015
+, pages 234–241, Cham, 2015. Springer International Publishing.
+[50]
+Tim Salimans, Ian Goodfellow, Wojciech Zaremba, Vicki Cheung, Alec Radford, and Xi Chen.
+Improved techniques for training gans.
+In
+NeurIPS
+, 2016.
+[51]
+Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu.
+RoFormer: Enhanced transformer with Rotary Position Embedding.
+Neurocomputing
+, 568:127063, 2024.
+[52]
+Thomas Unterthiner, Sjoerd Van Steenkiste, Karol Kurach, Raphaël Marinier, Marcin Michalski, and Sylvain Gelly.
+Fvd: A new metric for video generation.
+2019.
+[53]
+Mahtab Alizadeh Vandchali, Anastasios Kyrillidis, et al.
+One rank at a time: Cascading error dynamics in sequential learning.
+arXiv preprint arXiv:2505.22602
+, 2025.
+[54]
+Ang Wang, Baole Ai, Bin Wen, Chaojie Mao, Chen-Wei Xie, Di Chen, Feiwu Yu, Haiming Zhao, Jianxiao Yang, Jianyuan Zeng, et al.
+Wan: Open and advanced large-scale video generative models.
+arXiv preprint arXiv:2503.20314
+, 3(4):6, 2025a.
+[55]
+Shuai Wang, Zhi Tian, Weilin Huang, and Limin Wang.
+DDT: Decoupled Diffusion Transformer.
+arXiv preprint arXiv:2504.05741
+, 2025b.
+[56]
+Chenfei Wu, Jiahao Li, Jingren Zhou, Junyang Lin, Kaiyuan Gao, Kun Yan, Sheng-ming Yin, Shuai Bai, Xiao Xu, Yilei Chen, et al.
+Qwen-image technical report.
+arXiv preprint arXiv:2508.02324
+, 2025a.
+[57]
+Haoyu Wu, Jingyi Xu, Hieu Le, and Dimitris Samaras.
+Importance-based token merging for efficient image and video generation.
+In
+Proceedings of the IEEE/CVF International Conference on Computer Vision
+, pages 4983–4995, 2025b.
+[58]
+Wilson Yan, Volodymyr Mnih, Aleksandra Faust, Matei Zaharia, Pieter Abbeel, and Hao Liu.
+ElasticTok: Adaptive Tokenization for Image and Video.
+In
+International Conference on Learning Representations (ICLR)
+, 2025.
+[59]
+Shuo Yang, Haocheng Xi, Yilong Zhao, Muyang Li, Jintao Zhang, Han Cai, Yujun Lin, Xiuyu Li, Chenfeng Xu, Kelly Peng, et al.
+Sparse videogen2: Accelerate video generation with sparse attention via semantic-aware permutation.
+arXiv preprint arXiv:2505.18875
+, 2025.
+[60]
+Zhuoyi Yang, Jiayan Teng, Wendi Zheng, Ming Ding, Shiyu Huang, Jiazheng Xu, Yuanming Yang, Wenyi Hong, Xiaohan Zhang, Guanyu Feng, et al.
+Cogvideox: Text-to-video diffusion models with an expert transformer.
+arXiv preprint arXiv:2408.06072
+, 2024.
+[61]
+Yang You, Jing Li, Sashank Reddi, Jonathan Hseu, Sanjiv Kumar, Srinadh Bhojanapalli, Xiaodan Song, James Demmel, Kurt Keutzer, and Cho-Jui Hsieh.
+Large Batch Optimization for Deep Learning: Training BERT in 76 minutes.
+In
+International Conference on Learning Representations (ICLR)
+, 2020.
+[62]
+Jiahui Yu, Linjie Yang, Ning Xu, Jianchao Yang, and Thomas Huang.
+Slimmable Neural Networks.
+In
+International Conference on Learning Representations (ICLR)
+, 2019.
+[63]
+Qihang Yu, Mark Weber, Xueqing Deng, Xiaohui Shen, Daniel Cremers, and Liang-Chieh Chen.
+An Image is Worth 32 Tokens for Reconstruction and Generation.
+In
+Advances in Neural Information Processing Systems
+, pages 128940–128966. Curran Associates, Inc., 2024.
+[64]
+Wangbo Zhao, Yizeng Han, Jiasheng Tang, Kai Wang, Hao Luo, Yibing Song, Gao Huang, Fan Wang, and Yang You.
+Dydit++: Dynamic diffusion transformers for efficient visual generation.
+arXiv preprint arXiv:2504.06803
+, 2025.
+[65]
+Hongkai Zheng, Weili Nie, Arash Vahdat, and Anima Anandkumar.
+Fast Training of Diffusion Models with Masked Transformers.
+Transactions on Machine Learning Research (TMLR)
+, 2024.
+Appendix
+Appendix Contents
+Appendix A
+Appendix
+Appendix B
+Baseline Details
+DiT setup.
+We follow the standard DiT block design and incorporate recent improvements including QK normalization and rotary position embeddings (RoPE). Training hyperparameters match those of
+Peebles and Xie [45]
+: batch size
+=
+256
+=256
+,
+12
+12
+transformer blocks for DiT-B and
+28
+28
+for DiT-XL. We use patch size of
+2
+×
+2
+2{\times}2
+for all experiments. We train all baseline using rectified flow matching objective and use logit-normal distribution for sampling the timesteps.
+U-ViT setup.
+U-ViT mirrors DiT but adds U-Net–style residual (skip) connections. To isolate architectural effects, we use the same transformer blocks and training hyperparameters as DiT, differing only in the inclusion of these residual connections.
+HDiT setup.
+HDiT follows DiT but applies PixelShuffle/PixelUnshuffle to reduce the token count while increasing channel dimensionality. We adopt this token–channel trade-off on the same transformer blocks as baselines. We use a single downsampling/upsampling operation after blocks 6 and 22. We also exclude local attention and instead use full self-attention. We train with the same hyperparameters as the other baselines.
+Qwen-Image setup.
+We add ELIT
+Read/Write
+layers at blocks 8 and 52 of the 60-layer Qwen-Image backbone. Training uses a weighted sum of RF and distillation losses. The distillation term is scaled by
+20
+×
+20\times
+to match the magnitude of the RF loss. We train for 60k steps at
+512
+512
+px with a global batch size of
+1536
+1536
+, followed by 60k steps at
+1024
+1024
+px with a global batch of
+384
+384
+. We sample timesteps from a logit-normal distribution and use time shifting of
+2.22
+2.22
+during training and
+2.0
+2.0
+during inference, following
+[
+56
+]
+. We do not apply any timestep-aware loss re-weighting. The
+training dataset is a combination of internal real images with synthetic samples generated by FLUX.1-Schnell and Stable Diffusion-XL (with 50/50 ratio). We found that the model converges quickly, but we observe a style bias toward the synthetic data (reduced detail and more saturation relative to original Qwen-Image). For sampling, we use the Euler ODE sampler with 40 steps and use CFG value of
+6.0
+6.0
+TeaCache setup.
+TeaCache proposes two strategies for deciding when to reuse (cache) the previous step’s prediction:
+(1) using
+timestep-modulated tensor relative error
+between current and previous step to predict the accumulative error of caching the current step.
+(2) using
+timestep-embedding relative error
+, which measures the relative change of the timestep embedding itself across steps.
+The original paper reports that strategy (1) generally works better. In text-to-image models (e.g., FLUX
+[
+34
+]
+), input tensors are modulated by the timestep embedding, providing access to the timestep-modulated input tensor. In our class-conditional image and video setting, those tensors are additionally modulated by the class signal, preventing access to timestep-modulated tensor. Empirically, on DiT for class-conditional ImageNet, we found that using class-timestep modulated input tensor following strategy (1) does not provide good estimate for the caching error and leads to degraded quality, underperforming the second strategy. Consequently, we adopt the timestep-embedding relative error (strategy 2) for all TeaCache experiments in this work.
+Spat. Blocks
+Lat. Blocks
+Read
+Write
+Attn. Proj.
+8
+​
+N
+​
+d
+2
+8N{d}^{2}
+8
+​
+J
+​
+G
+​
+d
+2
+8{J}{G}{d}^{2}
+d
+2
+​
+(
+4
+​
+N
++
+4
+​
+J
+​
+G
+)
+{d}^{2}(4N\!+\!4{J}{G})
+d
+2
+​
+(
+4
+​
+N
++
+4
+​
+J
+​
+G
+)
+{d}^{2}(4N\!+\!4{J}{G})
+Attn. Mat.
+2
+​
+N
+2
+​
+d
+2N^{2}{d}
+2
+​
+J
+2
+​
+G
+2
+​
+d
+2{J}^{2}{G}^{2}{d}
+2
+​
+J
+​
+N
+​
+d
+2{J}N{d}
+2
+​
+J
+​
+N
+​
+d
+2{J}N{d}
+FF
+16
+​
+N
+​
+d
+2
+16N{d}^{2}
+16
+​
+J
+​
+G
+​
+d
+2
+16{J}{G}{d}^{2}
+4
+​
+J
+​
+G
+​
+d
+2
+4{J}{G}{d}^{2}
+4
+​
+N
+​
+d
+2
+4N{d}^{2}
+Figure 10
+:
+(left) FLOPs for spatial blocks, latent blocks, and Read/Write layers as a function of input tokens
+N
+N
+, groups count
+G
+{G}
+, latent tokens per group
+J
+{J}
+, and hidden size
+d
+{d}
+.
+(right) Relationship between latent tokens per group and model FLOPs for a DiT-XL with 8 spatial blocks, 20 latent core blocks, and
+N
+/
+64
+N/64
+groups, varying input tokens
+N
+N
+and latent tokens per group
+J
+~
+{\tilde{J}}
+. FLOPs are shown relative to 64 tokens per group.
+Appendix C
+Method Details
+Adapting ELIT to baselines.
+Aside from adding the Read/Write operations, we leave each baseline’s architecture and training unchanged. Unless noted, we place the
+Read
+at block 4 and the
+Write
+at block 24 for XL-size models across all baseliness (DiT, U-ViT, HDiT), as motivated by our ablations in
+Table
+4
+.
+Multi-budget training setup.
+We use 16 spatial groups per image in all main experiments. On ImageNet-1K, each group contains 16 latent tokens at
+256
+256
+px and 64 at
+512
+512
+px. Unless otherwise noted, during training we set
+J
+max
+{J_{\mathrm{max}}}
+to the per-group maximum (64 at
+512
+512
+px; 16 at
+256
+256
+px) and
+J
+min
+{J_{\mathrm{min}}}
+to
+1
+1
+for
+256
+256
+px and
+4
+4
+for
+512
+512
+px, yielding 16 distinct inference budgets at
+256
+256
+px and 60 at
+512
+512
+px. At each training iteration,
+J
+~
+{\tilde{J}}
+is sampled once and broadcast to all GPUs, ensuring synchronized compute with no added overhead. To account for the reduced compute, we increase the batch size from 256 (baselines) to 384 to match training FLOPs.
+Kinetics-700 setup.
+We train at
+256
+256
+px on 29 frames sampled at 24 fps. The encoder produces
+8
+8
+latent frames of shape
+8
+×
+32
+×
+32
+8{\times}32{\times}32
+. We use a patch size of
+1
+×
+2
+×
+2
+1{\times}2{\times}2
+, this yields 2,048 tokens. We use a group size of
+2
+×
+4
+×
+4
+2{\times}4{\times}4
+, giving 64 groups per video. Kinetics-700 is trained with a single compute budget without multi-budget training.
+Inference setup.
+We use the Euler ODE sampler with 40 steps for all experiments. Image experiments are evaluated on the ImageNet-1K validation split, and video experiments on the Kinetics-700 validation split.
+Table 5:
+Compute-quality tradeoff efficiency of baselines on ImageNet-1K 512px.
+ρ
+=
+(
+Metric
+​
+Ratio
+)
+/
+(
+FLOPs
+​
+Ratio
+)
+\rho=(\mathrm{Metric~Ratio})/(\mathrm{FLOPs~Ratio})
+indicates the model degradation with respect to change in FLOPs between the low- and high-compute variants.
+Baseline
+Params
+TFLOPs
+FID
+50
+​
+K
+\text{FID}_{50\text{K}}
+↓
+\downarrow
+(
+ρ
+\rho
+↓
+\downarrow
+)
+FDD
+50
+​
+K
+\text{FDD}_{50\text{K}}
+↓
+\downarrow
+(
+ρ
+\rho
+↓
+\downarrow
+)
+IS
+↑
+\uparrow
+(
+ρ
+\rho
+↓
+\downarrow
+)
+–G
++G
+–G
++G
+–G
++G
+DiT
+675M
+806
+18.8 (1.00)
+9.5 (1.00)
+339.2 (1.00)
+233.6 (1.00)
+53.0 (1.00)
+86.4 (1.00)
+⌞
+\llcorner
+Patch size 2x4
+675M
+377
+22.5 (0.56)
+12.3 (0.61)
+434.0 (0.60)
+317.9 (0.74)
+45.7 (0.54)
+73.8 (0.55)
+HDiT
+1.4B
+776
+13.0 (1.00)
+6.0 (1.00)
+260.3 (1.00)
+170.5 (1.00)
+69.4 (1.00)
+114.2 (1.00)
+⌞
+\llcorner
+Smaller backbone
+703M
+392
+22.2 (0.85)
+11.5 (0.96)
+435.2 (0.83)
+315.4 (0.93)
+48.8 (0.71)
+80.0 (0.71)
+ELIT-DiT
+698M
+831
+11.1 (1.00)
+4.9 (1.00)
+175.6 (1.00)
+106.1 (1.00)
+80.0 (1.00)
+134.1 (1.00)
+⌞
+\llcorner
+25% Tok.
+698M
+386
+12.5 (
+0.52
+)
+5.7 (
+0.54
+)
+217.7 (
+0.57
+)
+137.8 (
+0.60
+)
+75.7 (
+0.49
+)
+124.5 (
+0.50
+)
+Appendix D
+Compute-quality Tradeoff Efficiency
+Increasing the training image resolution scales the required compute quadratically, making higher resolution training expensive. To control the compute while keeping model configuration the same, DiT proposed to increase the patch size to cut token count, while HDiT inserts a downsampling stage that reduces tokens but increases parameters count. We instead propose to cap the number of latent tokens per group during training, reducing training compute while keeping both patch size and model size constant.
+To evaluate compute–quality trade-offs, we train low/high-compute variants for each baseline: DiT (larger patch size for the low variant), HDiT (model size matching other baselines), and ELIT-DiT (fewer latent tokens). Intuitively, given a similar reduction in compute between the two versions, the architecture with least performance degradation is more desirable.
+Figure 11
+:
+Lowering inference budget by using fewer latent tokens per group yields correlated reductions in forward time and FLOPs.
+To measure this, we define a degradation metric
+ρ
+=
+(
+(
+Metric
+​
+Ratio
+)
+/
+FLOPs
+​
+Ratio
+)
+\rho=((\mathrm{Metric~Ratio})/\mathrm{FLOPs~Ratio})
+, where “Metric Ratio” represents metric degradation caused by the low-compute model and “FLOPs Ratio” represents the corresponding reduction in FLOPs. As shown in
+Table
+5
+, not only our method outperforms baselines at similar training compute, but also shows consistently lower
+ρ
+\rho
+indicating it can more efficiently make use of its comupte if constrained, a capability we attribute to the latent interface’s focus on the most important information in the input.
+Baseline
+FID
+10
+​
+K
+\text{FID}_{10\text{K}}
+↓
+\downarrow
+FDD
+10
+​
+K
+\text{FDD}_{10\text{K}}
+↓
+\downarrow
+IS
+↑
+\uparrow
+ELIT-DIT
+26.53
+531.8
+45.95
+Qformer Read
+30.49
+589.9
+41.10
+Self-Attn Read
+28.38
+602.5
+40.12
+Self-Attn Read/Write
+29.46
+631.1
+38.49
+↑
+\uparrow
+Read Capacity
+27.45
+540.7
+45.40
+↑
+\uparrow
+Write Capacity
+25.23
+516.9
+47.59
+↑
+\uparrow
+FFN Capacity
+24.80
+507.7
+48.22
+Table 6
+:
+Architectural ablations on DiT-B/2.
+Using cross-attn in Read/Write is superior to alternatives. Increasing the model capacity is only beneficial in Write and FFN.
+Appendix E
+Ablations on Read/Write Strategies.
+In
+Table
+6
+, we compare alternative Read/Write designs and find that a single cross-attention Read layer outperforms both a Q-Former–style Read layer
+[
+35
+]
+and full self-attention. Additionally, stacking two cross-attention layers in the Read yields no measurable gain, suggesting one layer suffices. However, adding a second cross-attention layer in the Write or expanding the FFN hidden dimension by
+×
+4
+\times 4
+(as in the DiT block) offers improvements at the cost of additional FLOPs. To keep overhead at a minimum, we adopt a single Read/Write layer.
+Appendix F
+Compatibility with Distillation Methods.
+We evaluate the compatibility of ELIT with the distillation technique such as grafting
+[
+7
+]
+, which distills a base model into a smaller version of itself. We apply grafting on
+100
+%
+100\%
+ELIT MLPs with expansion ratio
+r
+=
+3
+r\!=\!3
+, obtaining
+12.6
+%
+12.6\%
+degradation in FID and
+8.9
+%
+8.9\%
+in IS, consistent with the original paper’s reported degradation of
+17.2
+%
+17.2\%
+FID and
+9.4
+%
+9.4\%
+IS. This confirms that ELIT remains compatible with orthogonal efficiency methods such as network pruning and distillation.
+Table 7
+:
+Budget scheduling across noise levels. ImageNet 512px, ELIT-DiT-XL/2.
+50
+%
+​
+_
+​
+100
+%
+50\%\_100\%
+: uses
+50
+%
+50\%
+of tokens for high-noise steps (
+t
+<
+0.5
+t\!<\!0.5
+),
+100
+%
+100\%
+otherwise.
+Method
+FID
+10
+​
+K
+↓
+\textbf{FID}_{10\text{K}}\downarrow
+IS
+↑
+\uparrow
+Iter
+FLOPs
+\text{Iter}_{\text{FLOPs}}
+100
+%
+​
+_
+​
+100
+%
+100\%\_100\%
+11.60
+86.68
+188
+50
+%
+​
+_
+​
+100
+%
+50\%\_100\%
+11.98
+90.18
+154
+Appendix G
+Budget scheduling Across Noise Levels.
+We explore allocating different token budgets across noise levels. As a proof of concept, we train ELIT on ImageNet 512px (DiT-XL/2) with
+50
+%
+50\%
+of tokens for high-noise steps (
+t
+<
+0.5
+t\!<\!0.5
+) and
+100
+%
+100\%
+for the remaining steps (
+50
+%
+​
+_
+​
+100
+%
+50\%\_100\%
+). As shown in
+Table
+7
+, despite lower per-iteration compute (154 vs. 188 TFLOPs), performance remains comparable, suggesting that high-noise steps may require fewer tokens. We leave a principled study of noise-level-aware budget scheduling for training and inference as future work.
+Table 8
+:
+Joint multi-budget vs. independently trained single-budget models. When tested on ImageNet 512px, ELIT-DiT-XL/2, joint multi-budget models consistently outperform single budget models.
+Method
+FID
+10
+​
+K
+↓
+\textbf{FID}_{10\text{K}}\downarrow
+FDD
+10
+​
+K
+↓
+\textbf{FDD}_{10\text{K}}\downarrow
+IS
+↑
+\uparrow
+Indep. (100% tok.)
+13.60
+205.23
+80.90
+Joint (100% tok.)
+12.00
+189.50
+90.29
+Indep. (50% tok.)
+14.14
+222.43
+77.99
+Joint (50% tok.)
+12.95
+203.58
+85.18
+Indep. (25% tok.)
+15.36
+247.77
+74.04
+Joint (25% tok.)
+14.21
+228.08
+79.60
+Appendix H
+Joint vs. Independent Budget Training.
+We compare our joint multi-budget model against independently trained single-budget ELIT models on ImageNet 512px (DiT-XL/2). As shown in
+Table
+8
+, the joint model consistently outperforms independently trained models across all token budgets (
+100
+%
+100\%
+,
+50
+%
+50\%
+,
+25
+%
+25\%
+) and all metrics. This demonstrates that multi-budget training acts as a regularizer, and that a single ELIT model natively supporting multiple budgets eliminates the need to train separate models for each budget.
+Figure 12
+:
+Read attention masks averaged over noise levels. Early latent tokens attend to broad, semantically important image regions, while later tokens exhibit sparser attention focusing on fine-grained details.
+Appendix I
+Latent Token Importance Visualization.
+We visualize the attention mask of the Read operation, averaged over noise levels, in
+Figure
+12
+. Early latent tokens attend to broad image regions covering both background structure and the main object, whereas later tokens exhibit sparser attention patterns, often concentrating on fine-grained texture details. This confirms the importance ordering learned through tail dropping and is consistent with the observation that increasing the token count for Qwen-Image primarily improves high-frequency texture details while preserving overall structure (
+Figure
+1
+).
+Figure 13
+:
+ELIT vs. token merging methods on ImageNet 512px (DiT-XL/2). Training-free methods (ToMe, SDTM) are bounded by DiT quality, while ELIT surpasses it even at
+25
+%
+25\%
+tokens.
+Appendix J
+Comparison with Token Merging Methods.
+Token-merging methods
+[
+8
+,
+42
+,
+4
+,
+16
+,
+46
+,
+57
+]
+can provide a knob to control inference budget. They are often training-free or require lightweight finetuning
+[
+8
+,
+53
+]
+We compare ELIT against training-free token merging approaches (ToMe
+[
+4
+]
+, SDTM
+[
+16
+]
+) on ImageNet 512px (DiT-XL/2). As shown in
+Figure
+13
+, both training-free methods trade compute for quality less favorably than ELIT. ELIT improves over the base DiT even when using only
+25
+%
+25\%
+of the tokens (
+FID
+10
+​
+K
+=
+14.2
+\text{FID}_{10\text{K}}\!=\!14.2
+), while training-free methods are upper bounded by DiT quality (
+FID
+10
+​
+K
+=
+20.9
+\text{FID}_{10\text{K}}\!=\!20.9
+).
+Appendix K
+Compute Analysis of ELIT
+We analyze the theoretical computation requirement for ELIT-DiT in comparison with standard DiT design.
+Figure
+10
+(left) shows the relation between main architecture hyperparameters and FLOPs for the blocks employed by our architecture. When the number of core blocks is large with respect to spatial blocks, computation is focused on the latent core blocks and the Read and Write operations’ cost is minimal with respect to the model cost. Figure
+10
+(right) exemplifies the case of a DiT-XL/2 architecture for varying input sequence lengths. The latent interface is particularly effective at reducing FLOPs with large sequence lengths (
+e.g.
+training on higher resolutions) due to the dominant self attention cost that is quadratically reduced with
+J
+~
+{\tilde{J}}
+.
+FLOPs vs latency in ELIT.
+Figure
+11
+reports FLOPs and wall-clock forward
+time for ELIT–DiT on ImageNet-1k at
+512
+512
+px as we vary the number of latent tokens per group. Forward time drops monotonically with token count and closely follow the FLOPs reduction, showing that budget control yields real speedups. At higher budgets, the correlation weakens slightly due to fixed overheads (e.g., I/O and kernel launch), but the overall trend remains strongly aligned.
+Appendix L
+Additional Results
+Figure 14
+:
+When tested with CFG 0.25, ELIT provides better quality-compute tradeoff than reducing the number of sampling steps.
+Compute-quality tradeoff.
+To verify the advantage of our method over simply reducing the number of sampling steps, we show in
+Figure
+14
+that our multi-budget model achieves a more favorable quality–compute tradeoff compared to varying the number of sampling steps.
+Comparison to baselines.
+We show in
+Figure
+18
+additional qualitative results comparing our method to baselines on ImageNet-1K 512px. ELIT variants show less structural artifacts while allowing for per-step selection of inference budget and enabling autoguidance and cheap classifier-free guidance out of the box for cheaper and higher quality sampling.
+Varying inference budget.
+In
+Figure
+16
+, we evaluate the effects of varying the number of tokens in the latent interface for ELIT-DiT trained on ImageNet-1K 512px. As the model FLOPs decrease with the number of latent tokens, the model is able to preserve image structure while changing less noticeable details.
+Comparison of guidance methods.
+We qualitatively evaluate the effects of classifier-free guidance (CFG), autoguidance
+[
+30
+]
+, and the proposed cheap classifier-free guidance (CCFG) (see
+Figure
+17
+). We notice that AG produces results with most variation, including wider ranges of camera poses, compositions with multiple subjects and objects occlusion. By comparing results across different weights, we notice that AG remains most closely aligned with low guidance weight results, avoiding the mode collapse effect visible for CFG and CCFG that pushes samples towards more object-centric representations for the given class. We attribute this observation to the lower Inception Scores obtained by AG in
+Figure
+5
+. Both AG and CCFG produce improved results which are particularly noticeable in complex concepts such as humans. CCFG combines the object-centric behavior of CFG, while reaping improved generation of complex objects from AG.
+Figure 15
+:
+HSL saturation comparison between CFG and CCFG, across guidance scales on ImageNet 512px (DiT-XL/2). CCFG exhibits slightly higher saturation than CFG, attributed to its autoguidance component.
+CCFG saturation analysis.
+We quantitatively analyze the saturation behavior of CCFG compared to CFG and AG. As shown in
+Figure
+15
+, CCFG exhibits slightly higher HSL saturation across guidance scales, which we attribute to the stronger guiding effect contributed by its autoguidance component. The qualitative comparisons in
+Figure
+17
+shows that CCFG tends to saturate at larger guidance scales. Thus, we recommend using lower guidance scales with CCFG to mitigate this effect.
+Additional Qwen-Image Results.
+We provide in
+Figure
+19
+additional qualitative comparison for ELIT-Qwen-Image against the original model. Thanks to CCFG, our model performs sampling with 69% of the FLOPs with respect to Qwen-Image and is able to produce a smooth tradeoff between sample quality and model FLOPs by varying the amount of tokens in the latent interface. In the cheapest shown configuration, ELIT-Qwen-Image uses only 35% of the FLOPs with respect to the original model. As the number of latent tokens is decreased, the model preserves structural details, prioritizing changes in the least prominent image details.
+Additional ImageNet-1k 512px Results.
+We provide in
+Figure
+20
+,
+Figure
+21
+and
+Figure
+22
+additional qualitative comparison on ImageNet-1k 512px where we compare baseline DiT method with ELIT-DiT using CFG and CCFG. Class Ids and samples were randomly selected.
+Appendix M
+Failed Experiments
+Spatial token masking for flexible inference computation.
+We explored ideas from masked diffusion transformers
+[
+65
+,
+17
+,
+33
+]
+as a way to obtain variable inference budget by dropping tokens in the spatial domains. We found token dropping in the spatial domain not to produce satisfactory results when applied at inference time and attribute its lower performance to the unrecoverable information loss in the spatial regions corresponding to dropped tokens.
+Per group latent tokens count.
+We experiment with automatic per-group budget assignment, i.e. making
+J
+~
+{\tilde{J}}
+different for each group rather than uniform across groups, with the aim of assigning more tokens to groups with more complex content, further improving compute reallocation. To achieve this, we use the loss map to supervise an additional DiT block positioned at the beginning of the DiT which predicts importance score for every group according to the loss map. Given a desired total number of tokens, we automatically distribute latent tokens to different groups, assigning more tokens to groups with higher importance score. We find this variant to increase model and implementation complexity while matching the performance of ELIT. We hypothesize that our read operation is already tailored to read more from spatial tokens with higher loss as shown in
+Figure
+2
+.
+Figure 16
+:
+Qualitative results produced by ELIT-DiT on ImageNet-1K 512px with CCFG 4.0 for varying number of tokens in the latent interface. As the tokens and model FLOPs are reduced, the model preserves structure, while varying image details, producing gradual image changes. FLOPs are expressed relative to the model variant where no latent tokens are dropped.
+Figure 17
+:
+Qualitative comparison of classifier-free guidance (CFG), autoguidance
+[
+30
+]
+(AG), cheap classifier-free guidance (CCFG) with different weights, when applied to ELIT-DiT trained on the ImageNet-1K 512px dataset. AG produces the most varied samples, generating results with similar structure across guidance weights, as opposed to CFG and CCFG which favor object-centric generations. Both AG and CCFG produce better generations of complex concepts such as human faces.
+Figure 18
+:
+Qualitative comparison of ELIT against baselines on the ImageNet-1K 512px dataset. Results are produced using CFG with weight 4.0 for all methods.
+Figure 19
+:
+Qualitative results produced by ELIT-Qwen-Image for varying number of tokens in the latent interface. As the number of tokens is decreased and model FLOPs are reduced, our method can preserve structural details, while prioritizing changes in image details, preserving perceptual quality. Reported FLOPs are expressed relative to the original Qwen-Image and account for both the sampling FLOPs reductions brought by CCFG and the reduction in the number of tokens in the latent interface.
+Figure 20
+:
+Uncurated Qualitative samples comparing DiT with ELIT-DiT using CFG and CCFG on ImageNet-1k 512px. Results are produced using CFG with weight 4.0 for all methods.
+Figure 21
+:
+Uncurated Qualitative samples comparing DiT with ELIT-DiT using CFG and CCFG on ImageNet-1k 512px. Results are produced using CFG with weight 4.0 for all methods.
+Figure 22
+:
+Uncurated Qualitative samples comparing DiT with ELIT-DiT using CFG and CCFG on ImageNet-1k 512px. Results are produced using CFG with weight 4.0 for all methods.
+Figure
+Prompt
+Figure
+1
+“The image portrays a woman with dark skin wearing a gold headpiece adorned with a blue jewel. Her gaze is directed towards something off-camera, giving her a focused expression. The background appears to be blurred, drawing attention to her face and headpiece.”
+Figure
+1
+“The image features actor Liev Schreiber in a snowy scene from a movie or TV show. He is dressed in black tactical gear, including a vest with “ARCTIC OCEAN” written on it, and a helmet with goggles. The setting appears to be a bustling city street filled with people and vehicles, all covered in snow.”
+Figure
+1
+“The image features a woman walking down a city street at night. She is wearing a black leather jacket, a white crop top, and a short black skirt. The street is illuminated by neon signs and streetlights, creating a vibrant atmosphere. There are other people visible in the background, but they are not the main focus of the image.”
+Figure
+19
+“The image portrays a man with long black hair and red eyes, wearing a black hooded cloak. He has a red gem on his forehead and holds a red orb-like object in his hand. The background features a circular pattern with red and black colors.”
+Figure
+19
+“The image features a large, white robot-like creature with wings standing on a desert landscape. The creature has sharp claws and appears to be looking down at something. Its body structure resembles a fusion of humanoid and bird-like characteristics. The background consists of a clear blue sky and rocky terrain.”
+Figure
+19
+“The image features a man wearing a blue knit cap, looking upwards with a serious expression. The background is dark blue, creating a contrast with the man’s face and hat.”
+Figure
+19
+“The image showcases a vibrant sneaker with a red upper and blue accents. The shoe features a gold star design on the side and has red laces. The background appears to be a dark gray or black surface, providing a stark contrast to the colorful sneaker.”
+Figure
+19
+“The image captures a lively scene in a city square where people are walking around a fountain that is spraying water into the air. The square is surrounded by colorful buildings, creating a vibrant atmosphere. People are dressed in various styles of clothing, including dresses and suits, indicating a diverse crowd. Some individuals are carrying handbags, suggesting they might be tourists or shoppers. The sky above is blue”
+Figure
+19
+“The image portrays a woman dressed in full armor, holding a small picture frame with a portrait of another woman inside. The background features dramatic clouds and fire, adding intensity to the scene.”
+Figure
+19
+“The image portrays a woman inside a large, ornate heart with wings. The heart is surrounded by red roses and intricate designs, creating a fantastical and romantic atmosphere.”
+Figure
+19
+“The image portrays a woman with purple hair and tattoos on her arm. She has striking blue eyes and is wearing a black tank top and jeans. The background is a solid color, possibly pink or magenta.”
+Figure
+19
+“The image depicts a futuristic cityscape with tall buildings and domed structures illuminated by orange lights. The city is surrounded by mountains and is situated near a body of water. The sky above the city appears cloudy.”
+Figure
+19
+“The image features a woman with intricate blue tattoos on her face and neck. She has a serious expression and is adorned with gold jewelry, including earrings and a necklace. Her hair is styled in braids, and she wears a flower crown. The background is dark, which contrasts with her colorful appearance.”
+Figure
+19
+“The image features a luxurious black leather armchair with gold accents. The chair has a high backrest adorned with buttons and a footrest. It is positioned against a dark background, creating a dramatic effect.”
+Table 9
+:
+Prompts used to produce the showcased qualitative results for Qwen-Image
+[
+56
+]
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

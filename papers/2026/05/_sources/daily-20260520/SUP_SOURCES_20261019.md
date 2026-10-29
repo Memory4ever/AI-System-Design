@@ -358,3 +358,101 @@ README已保原70整行，当前主表额外呈现三旧legacy＋首16新增，�
 
 reader随后R43已实际保存并读回暂停checkpoint：HRC实际只读§3–5.3与Table2 Llama块，C3/C7及最终Source未授，P15未审；P16/P17具体owner/PRE未审、未写，无POST。17978/17187追加日期尚未独核，三个安全完整AB/Source/date均未被reader实际读取。上述author prepared层绝不改写成reader通过。保存后最小机械检查确认原70每行唯一、原小时窗与连续旧§4保持；README/本SUP限定working diff-check通过。此检查不替代最终全篇validator、语义DAY或完成态FINAL。
 
+## A16 用户明确恢复后续接（2026-10-20）
+
+root明确转达恢复，覆盖A15暂停；作者重新完整加载AGENTS、Prompt、Research/Report合同、来源使用说明/每日组/arXiv主题、ROADMAP与本日A15/R43，LS仅读283–291入口。运行前工作树干净；现只处理May19补窗，不自动换日。旧70整行/日期评分、原小时窗和连续旧§4继续冻结，575库存不是队列。当前按用户提供的章节样式与项目写作规范续写；不以检索写作样本替代项目合同。
+
+- reader R44实际owner/逐字PRE通过后，root重新授P16/P17精确窄位，作者真实保存Ch82 MasFACT后/MANTA前TopoPrior一段、Ch27 17590后/EraseClean前MDU两段与各本人注，并完整顺读新增/两侧/本人注。reader R47真实非writer POST通过、两窄位释放。
+- reader R45补完HRC必要Table2余/C3/C7并通过Source及P15实际owner/原字PRE；root授Ch31 GBPM后/Reward hacking前单段和本人注，作者真实保存并完整读回；reader R48真实非writer POST通过、窄位释放。本日新增实际整合由14增至17，不授DAY。
+- R46通过17978/17187追加有限日期（BJT May19）；17978 R34/R39具体NC与17187局部Only有效，可同步报告。Google具名安全链接由reader实际消费并有限核原安全段/v4记录，只关闭Jan旧同家族与May版本背景，不增候选、不重Jan争议。
+- 三安全均已reader实际读完整题摘/当前history并通过有限日期；17936按R49重新校准为贡献前排除：实际增量仅2019 UAT加POS/beam5/GPT2PPL与SST领域增强，GPT2为fluency评分器，未建立改变foundation-model/系统设计选择的机制或有效边界。不评分、不入候选，不因安全标签自动准入；先前4分Only仅prepared历史提案已被具体准入纠正。18549/18646具体增量准入通过，必要Source及Books仍普通待办。
+
+有限机构尾正在定点处理Omni、TPU、RL-R CHAT、Lance及Qwen/MiMo既有缺口；新原件允许集中保存SUP_TAIL_20261020.json，不另建队列或重复账本。只有已实际核到的slice/事件可授对应结论。
+
+## A17 两安全材料actualowner与逐字PRE（未获root协调不写）
+
+R49完整题摘/有限日期和R50必要Source有效。作者实际读18549 §2–3.3/Limitations，18646 §2–5/7直接反侧；其余必要配置和附录按此前A15与reader R50分层消费，不冒充当前重读完整附件。当前actualowner已读Ch72白盒节完整三段（2604.28129引入、00770两段）及右capability/breach完整段和身份marker，另实际读CoT四轴与MI/decoder局部、Ch71/73开头交接。两项均只归PLATFORM-SECURITY，不把采样sensor机制挪到evaluation owner，也不复制一般sensor≠authority原则。
+
+### P18 18549 → PLATFORM-SECURITY / Ch72，一段PRE
+
+差额：白盒节已有跨turn activation和observer权限/标签人口，缺每token多层非线性probe以cumulative-max形成轨迹、特征读出再独立校准的接口；插在28129完整marker后、`隐式多步 reasoning 还可能`之前。左右完整原段不改。
+
+> 白盒检测还可以把整条生成中的读数作为对象，而不只看某个位置的最终分数：每层先投影token hidden，沿已生成prefix逐坐标取cumulative maximum，再合并多层logit，形成可提取趋势、波动与阶段特征的轨迹。latent坐标单调不推出最终概率单调，完整轨迹可分也不等于早期已有同样信号。[有限probe轨迹对照](https://arxiv.org/html/2605.18549v1#S3)中，template标签和实际response标签属于不同监督，harmfulness与math所需轨迹长度亦不同；在evaluation split内三折拟合并择优的readout只诊断可分性，不是预先固定检测器的域外部署成绩。模型、层、pooling、标签与readout训练/校准人口应共同保存，hidden采集、多层probe、全轨迹生成与独立行为回归均付费；截断、域移或阈值失准时保留原probe、原始trace和独立output/effect gate，不由AUROC或“internal monologue”给真实意图与安全背书。<!-- source-family:SF-2026-ARXIV-2605-18549 -->
+
+本人note拟字：
+- `SF-2026-ARXIV-2605-18549` — Daily2026-05-20补May19；[exact-v1](https://arxiv.org/html/2605.18549v1) §2–3/3.3/Limitations/A1–3/G必要域，2+2+3=7。仅多层MIL/cummax轨迹及readout校准分责；保latent非probability单调、evaluation split三折/选RF诊断非fixed OOD、全轨迹非早期同保证、template/response标签与WildGuard噪声及全部hidden/probe/生成费，不采真实意图、FPR或部署安全，未核实现/复现。Source R50/date R49有效，actualowner/逐字PRE待reader，root授窄位真写后非writer POST，非DAY。
+
+### P19 18646 → PLATFORM-SECURITY / Ch72，一段PRE
+
+差额：00770已有已知标签读出与未知部署sensor分责，但未承载natural semantic axis本身不稳、阴性probe不能证明正交，以及corruption baseline改变因果恢复量且干预伤及原功能的共同审计接口。插在00770完整两段/marker之后、`安全 probe 还要区分危险能力是否存在`之前，不改左右完整段。
+
+> 内部probe的阴性还须与干预基线和正常功能一起读：自然语言对比样本训练的读出没有识别某个触发状态，只说明该decoder在这组输入上不可读；若作为参照的语义方向本身不稳定，更不能据此证明触发信号与它正交。[受限语言切换后门对照](https://arxiv.org/html/2605.18646v1#S4)中，natural axis在中后层不稳，Gaussian与neutral-word corruption的早层恢复量显著不同，约九成五的局部mitigation也不是完全去除；清掉末位置既压低目标language logit，又可能破坏正常语言能力。它支持将probe可读性、匹配corruption下的干预效果与功能保留分别验收，不认证唯一三阶段电路、任意后门不可检测或安全修复。clean/corrupt/patch全部前向、方向/读出训练和独立utility回归均付费；语义轴、baseline或正常能力未通过时，保留可信checkpoint、原监测与output/effect gate，不用内部静默或目标logit下降替代发布验收。<!-- source-family:SF-2026-ARXIV-2605-18646 -->
+
+本人note拟字：
+- `SF-2026-ARXIV-2605-18646` — Daily2026-05-20补May19；[exact-v1](https://arxiv.org/html/2605.18646v1) §3–5/7/A/D/E/F必要域，2+2+3=7。仅probe可读/匹配corruption干预/功能保留分账；保Gaperon8B/有限prompt与paired控制、natural axis16–29不稳、Gaussian/neutral早层差、95%非完全及语言utility未量化，不采唯一三段电路/正交必然/安全修复，未核实现/复现。Source R50/date R49有效，actualowner/逐字PRE待reader，root授窄位真写后非writer POST，非DAY。
+
+## A18 成熟层同步与四具名系统补漏准入
+
+P18/P19已经R53实际owner/原字PRE通过、root授精确两锚点，作者真实保存Ch72两单段/各本人注，并完整顺读新增/两侧；R54真实nonwriter POST通过释放，现本日19实际I。A17 prepared待字只保历史范围。R51 OpenAI provenance具体Ch72 NC、Google ManagedAgents具体Ch84 NC通过；R52 Omni官方产品demo未披可核新机制而贡献排除、TPU官方技术页Apr22旧事件、RL-RCHAT官方May1听力领域数据页关闭，均不新计候选。Anthropic R55轻核发现v1 AB的24/40与23%和v2/Blog的20/40与32%不一，但exact-v1正文/必要PDF已经20/40与32%，所涉评价协议/采用命题未变；不当性能提升或新贡献，不重旧Source，保metadata/body差异及不采用数字历史保证。
+
+root从May21仅定点移交四个确属May19的系统标题；完整exact-v1题摘/current history已实际读取并保存SUP_TAIL_20261020.json末项，exact DOI原字段引用相邻daily-20260521的四个SUP_DC_2605.<id>_20261020.json。本日及对方README具名去重暂无同事件。四项只是线索，先独立贡献校准，不把宽目录或四标题自动转四候选：
+
+| 精确v1身份 | 原约束 → 原文实际增量 → 待核设计选择 | 作者拟分/owner候选 |
+| --- | --- | --- |
+| [18683 EPIC: Abstraction and Polymorphism of In-Network Collectives on Ethernet](https://arxiv.org/abs/2605.18683v1) | Ethernet跨层INC难以互操作 → participant roles统一抽象、硬件能力多态实现与资源模型 → collective语义/网络实现/资源合同如何分责 | 2+2+3=7；TRAIN-DISTRIBUTED-TRAINING Ch36 |
+| [18697 PopPy: Opportunistically Exploiting Parallelism in Python Compound AI Applications](https://arxiv.org/abs/2605.18697v1) | Python动态dispatch与mutation阻碍安全并行externalcalls → AOT+runtime恢复依赖并保持顺序语义 → 显式workflow之外如何有界自动并行 | 2+2+3=7；AGENT-WORKFLOW Ch81 |
+| [18710 Mosaic: Towards Efficient Training of Multimodal Models with Spatial Resource Multiplexing](https://arxiv.org/abs/2605.18710v1) | MM modules独占GPU时利用率低 → Apollo temporal-spatial quota engine+performance model/heuristic planner → module共置与资源分配的training执行接口 | 2+2+2=6；Ch36/Ch63待实际owner，不双写 |
+| [18750 A Readiness-Driven Runtime for Pipeline-Parallel Training under Runtime Variability](https://arxiv.org/abs/2605.18750v1) | profile/adaptive schedule仍precommit执行序 → ready-set只把schedule当hint，并配asyncmessage/TP collective协调 → readiness变动时控制合法dispatch而不等不可就绪任务 | 2+2+3=7；TRAIN-PIPELINE-PARALLEL Ch38 |
+
+四唯一v1为May18 17:23:05/17:33:50/17:44:29/17:59:18Z，均18Z截止前，最早界May19 00Z；sameDOI/arxiv.content/findable registered各04:35:38/04:36:04/04:36:23/04:37:21Z，作者已组合核实全BJTMay19，reader尚待独核。PopPy DataCite当前题名Agentic Workflows/6.7×不能回填v1的Compound AI Applications/6.4×；EPIC后v2 comments也不替代v1。所有性能仅作为作者摘要待证，不预授正确性、形式证明或速度。
+
+Lance18678完整exact-v1准入后，作者实际必要§§3–4/T2–4/6/T9–10/7及局部主表，原件集中SUP_TAIL。独立R56日期与2+2+2=6窄Source通过：query-free双expert共享interleaved context、ViT/cleanVAE/noisyVAE三group仅temporal维常数offset；组内相对坐标保持不推出跨组语义对齐。abstract scratch与§3.2 initializedQwen2.5-VL冲突保留，不采从零全训练。T9增加多任务6:4使MV58.95低于8:2的59.18，T10 MaPE四局部指标改善但无重复seed/完整matchedcompute，不将排行榜因果归整个dualexpert/全部synergy。128GPU上限不是GPUh/总费；数据制备、冻结ViT/VAE、PT/CT/SFT/RL及全部采样仍计费，不采生产streaming/实时或净省费。当前具体Ch23 owner比较普通待办，不重全附件。
+
+## A19 Lance实际owner与单段逐字PRE
+
+作者实际读Ch23:837–865 EarlyFusion/MoST完整分支及1414–1468的空间身份、Qwen3VL三轴频率整段与timestamp两个消费者，Ch22/24交接已读。当前expert资格与双表示已承载sharedcontext/分责的一般选择，不重写；具体差额是同一空间时间布局中的semantic/cleancondition/noisytarget三角色在position中如何分开。唯一owner仍MULTIMODAL-REPRESENTATION Ch23，插在Qwen3VL完整`有了这些元数据...`三轴频率段及其marker后、`旋转角度又不天然等于...`之前；不改左右完整段与后续timestamp/AIPE分支。只请求该一段及本人note窄位，不以6分强制造更多正文。
+
+> 相同的三维位置还可能属于不同计算角色：语义视觉token、干净的参考latent与待生成的噪声latent，可以共享空间布局，却不应仅因坐标相同就被当成同一种条件。一个受限分支在原三轴RoPE的时间坐标上，按token group加共享常数偏移，空间两轴不变；同组token间相对时间差保持，但跨组的相对位置被主动改写，它不是新采集的时间戳，也不证明语义已对齐。[Lance的局部MaPE消融](https://arxiv.org/html/2605.18678v1#S6.SS3)支持这份角色编码选择，不能由四个局部分数或共同训练排行榜认证全部跨任务synergy、任意尺度或从零训练；原文初始化口径亦不一致。角色、offset、mask与两个消费者须共同绑定，冻结encoder/codec、数据制备、多阶段训练和采样仍付费；角色混淆、跨组质量或总预算失配时，保留原三轴编码、显式类型/可见性与分开理解生成的已验路径，不让坐标偏移代替时间同步或事实验收。<!-- source-family:SF-2026-ARXIV-2605-18678 -->
+
+本人note拟字：
+- `SF-2026-ARXIV-2605-18678` — Daily2026-05-20补May19；[exact-v1](https://arxiv.org/html/2605.18678v1) §3.2–4/T2–4/6/T9–10/7必要域，2+2+2=6，具体role-position差额深入。仅semantic/clean/noisy三group时间轴offset及组内相对坐标/跨组接口分责；保scratch/initQwen冲突、T9非单调、T10局部无seed/完整matchedcompute与全费，不采任意synergy、全部从零训练/净省费或实时交互，未核实现/复现。Source/date R56有效，actualowner/逐字PRE待reader；root协调真写后非writer POST，非DAY。
+
+## A20 四系统去重纠正与EPIC必要Source/owner提案
+
+A18的“三日报暂无同事件”检索遗漏了前日legacy正式候选。reader R57实际核定`papers/2026/05/19/README.md`原812/814/816完整候选与965/967/969 Source绑定：PopPy18697原3+3+2=8具体NC、Mosaic18710原3+3+3=9 Ch36整合、RRFP18750原3+3+3=9 Ch38整合。root明确接纳原有效层直接复用，不第三读旧原件。这三项不迁日、不重评分、不进入本日新增数；A18分数仅被纠正的prepared提案，不是正式候选。仅18683 EPIC准入及有限May19日门通过R57。
+
+Lance A19已R58实际owner/原字PRE通过，root实际确认Ch23当前窄位后授权，作者真实保存单段及本人注并顺读两侧；当前待reader一次真实POST，不预授整日。
+
+EPIC作者实际读exact-v1 §2–7与H1–4，原件SUP_TAIL末7条（其中一条445只落参考文献，不冒充新证据）；§3 IncTree端点为IP/QP，CommLib/标准RoCE/IncEngine与IncManager/Agents分责，§4三模式完整机制，§5.1具体回收反例与§6资源间接层/全取或全退，§7必要配置/关键反侧已读。仅采用由端到端重传改为逐跳ACK后，聚合完成不再给远端window完成背书、pipe按所有输出端最慢ACK推进合法PSN范围这一机制；不是新collective数学语义或任意网络活性证明。ModeII同初始PSN，非对称primitive会漂移，须单primitive subgroup或显式同步；浮点可重复性需额外buffer及确定顺序。H2实际只有Tree3-2/4clients×3packets/最多一次任意时刻loss，主文“任意network”不采。Tofino真机只ModeII，四server×2RTX3090/100GbE，GPU↔registeredbuffer拷贝；OVS/SoftRoCE互操作不作公平性能对照，packetloss仿真关拥塞控制，flowJCT/FPGA/RTL各自不能拼成完整生产实测。256B与1KB payload比较、小模型DP仅局部改善、scaleupTP改善趋小/RSAG吞吐不全面领先均保留；不采宣传最高倍数。资源分配争抢需整树全取或全部释放回退NCCL；故障重建group不能冒充训练checkpoint恢复。2+2+3=7；Source待reader独立核，不读无关附录/代码、不声称运行复现。
+
+作者实际读Ch36:205–260的hierarchical→SHARP代际/数值位宽→Core/EdgeINC→NoC→CollNet/NVLS→NICoffload/网络反馈完整链，Ch35/37交接已读。现有正文有有限resource/数值/fallback，但缺重传层次改变导致window回收失效的具体协议状态不变量；唯一owner TRAIN-DISTRIBUTED-TRAINING Ch36。拟在SHARP代际完整末段（“因此v1→v4不是…”）后、低精度payload段之前加以下一段及本人note，不改两侧；Source/PRE及root窄位授权前不写：
+
+> 卸载到Ethernet/RoCE交换机后，还要决定谁保存重传状态：完整终止连接、仅翻译header并让端点重传、增加逐跳ACK，是不同的实现分支，不是同一卸载能力的强弱标签。重传责任改变，buffer回收条件也须重验；端到端同步窗口下，一次聚合完成可能允许回收另一slot，逐跳ACK让各flow独立前进后，同样动作却会清掉较快rank仍在使用的数据。[EPIC的受限协议反例](https://arxiv.org/html/2605.18683v1#S5.SS1)以pipe的合法PSN范围和所有输出端最慢确认共同推进可写窗口，表明“已聚合”不等于“全体可回收”。其有限树/packet/loss模型检查不证明任意规模活性，真机也只实现一种模式；group、PSN、去重、数值顺序、SRAM与重传状态必须共同验收，并计入host拷贝和控制成本。整棵树资源无法原子取得、成员或状态失配时，全部释放或重建group并回退普通endpoint collective，不由网络ACK替训练step与checkpoint提交。<!-- source-family:SF-2026-ARXIV-2605-18683 -->
+
+本人note拟字：
+- `SF-2026-ARXIV-2605-18683` — Daily2026-05-20补May19；[exact-v1](https://arxiv.org/html/2605.18683v1) §2–7/H1–4必要域，2+2+3=7。仅重传责任改变后的window/PSN回收不变量；保ModeII PSN同步/确定归约额外buffer、H2有限Tree3-2×3packets/最多一次loss、Tofino仅II与host拷贝、emulation/仿真/RTL分证及非全面性能优势。不采任意规模活性、MoEAlltoAllv或生产性能/安全，未核代码/复现。准入/date R57有效；Source及actualowner/逐字PRE待reader、root协调真写后一次非writer POST，非DAY。
+
+## A21 Qwen具名恢复与当前归并
+
+reader有限fallback在官方新博客找到[Qwen3.5-LiveTranslate: From Sound to Sight, From Word to Right](https://qwen.ai/blog?id=qwen3.5-livetranslate)，作者随后实际读恢复的完整官方正文核心、架构、streaming评价与API说明，日期2026/05/19；原件SUP_TAIL末条，primarysearch展开不等第三方转述。不是Qwen3.7，也不以新博客静态空壳报零。定点查May19/20/21 README与Ch23/24未见同事件，不扩历年检索。原约束是整句等待对实时翻译delay与可读单元的取舍；实际增量是Thinker消费交错visual/audio生成译文、Talker结合译文/sourceaudio，chunk-wise streaming并由ReadableUnit tags控制合成粒度；因此准入2+1+2=5标准，而非按语言数或demo准入。tags规则/监督、lookahead、队列、完整硬件/模型/并发及tail统计未闭；本文只披露接口与均值，不能归因全部收益或签发生产SLO。动态clone不等身份授权，visual disambiguation demo不等整体事实校验；客户端API片段未运行，不预授服务行为。拟标准完成/仅报告：保该版本的公开granularity接口事实，缺少足以改变长期生成/serving机制的可核规格，不为制造diff强写Books；待reader独核。
+
+当前README归并已同步29个确定新家族（Lance/EPIC未先报完成）、14源实际切片、原17361/17393 R33 POST、§5有限待办与§6当前reader身份。原70整行/旧window/连续§4未动；三前日旧系统按R57直接去重。Lance已真实写入仅待POST记录；Qwen新项待核后再正式列。尚未最终validator/冻结/链接检查与DAY/FINAL，不能复制旧Complete。
+
+## A22 保存态六节归并及机械检查（DAY前）
+
+R59 Lance实际nonwriter POST通过，R60 Qwen完整core/日期/5分标准Only通过，R61 EPIC必要Source/actualowner/原字PRE通过后root核当前SHARP末段/低精度段窄位授权；作者真实写入Ch36 A20一段+本人注、顺读完整两侧，R63实际nonwriter POST通过并释放。本日全部新写窄位已释放；本人note仅同步既成R54/R59/R63，不重写机制。当前确定30=21I+4NC+3Only+2中心争议（17232/16651），表外16399/16430日期争议不在此数；没有以中心争议换日期隔离混数。
+
+实际消费R62：Qwen旧域迁移/新shell经精确May19 primaryfallback恢复LiveTranslate，MiMo currentHTML/servedJS17/blog路由与iframe原页/frontmatter、8paper已有限核；不可回放被删/未索引的完整历史作为具体coverage保留，不用shell报零，也不继续泛扫旧全文。16399/16430的原v1/Updated/registered复用，合法2026-05月表及all分页仅月身份、具名日门无首次公告，不把validtime参数错说成网络外部失败；最早May13/May15到May19的实际跨日区间保留。只待exact-v1日批次/早公开官方正文来收窄归属，不预列候选/正面Evidence/Books。Qwen/MiMo对应完整Coverage与两日期门未通过，仍可作为本窗隔离外部项，不授无遗漏。
+
+本日报README六节已保存稳定；root同意19775/19893/19269只在§4保原legacy May20/3+2+3=8与具体NC/实际归因修正，不在本补窗候选表重复列。这不是为了机器绿删候选：原70完整行、原日期评分/窗口与有效连续旧§4冻结；三项始终是旧家族恢复、May21已有真实owner处理层。初次validator发现这三非冻结V3行日界冲突和两个pending字段格式；未改script、合同或原件，改成准确的历史引用与合法pending后重跑通过。
+
+2026-10-20T21:29:27+08检查：V3 validator通过；原70整行各唯一/顺序保持、原小时窗完全相同，17442字符原§4完整连续；主表100=70+30，新增21整合/4具体NC/3Only/2争议；16399/16430及三旧legacy不在当前表。115本地文件链接存在，README/本SUP与本次获授6个Books文件限定working diff-check通过。实际21I有非writer POST；未运行论文artifact/复现实验、未stage/commit/push/改State。此机械结果不授DAY/保存态FINAL，已交独立reader实际全报告验收；若发现具体差额只修受影响部分。
+
+## A23 R64实际DAY后行政保存
+
+reader R64已完整实际读当前六节/100主表/全部§4与14源，复用旧有效层而未第三读全旧附件；安全/修订/反证逐项与普通排除分层抽样范围均在R64明确。发现两处Report局部文字后，作者只修新增证据开头旧16数和17938分母多余“差”为“两模型损失各自绝对值之和加epsilon”；reader定点核原Eq3与两处保存态/周边后DAY通过。另作者定点确认Ch27旧正文991本来即两项损失各自绝对值之和，不是Books新错误、无重复Source/POST。
+
+实际消费R64正式记录及root协调范围，2026-10-20T21:41:20+08仅行政同步README完成、§5无可执行研究/Books待办、§6实际R64范围/发现修复与机械结果；30家族/来源边界/全部机制未变。当前完成包含Qwen/MiMo不可回放历史、16399/16430两日期及17232/16651中心争议隔离，不给其正面Coverage/Evidence/Books。全部7条本次本人note已对应真实POST，reader实际再读无漂移；未再改Notes。保存后交同一reader一次FINAL实际回读，无root第三遍；未擅换日、未改State、未stage/commit/push。
+
+R65完成态保存后FINAL已正式通过并由作者实际消费：reader真实读完成字段/开头/§1/§5/§6及A23，明确外部终态标签已回读；100=70+30、21I/4NC/3Only/2中心争议，原70行/window/连续旧§4保持，116本地链接及V3/限定diff-check通过。作者按R65仅将§6“当前行政保存态另交一次FINAL”替为“R65完成态保存后FINAL通过”，未改候选/来源/机制或重新打开审阅。至此本日ownership释放交root接纳；不自动接下一日期，不改State或stage/commit/push。
+

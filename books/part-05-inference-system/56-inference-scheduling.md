@@ -40,6 +40,10 @@ autoscaling           未来需要多少 workers 和哪类 capacity
 
 只优化其中一层，可能把瓶颈推给下一层。例如 iteration batch 很满，但 admission 让长请求无限排队，系统吞吐看起来很好，用户 SLO 仍然失败。
 
+检验调度方案的模拟器，也必须保留这条状态反馈链，而不只把请求长度换成平均执行时间。可以按prefill、decode、attention或FFN角色连接完成与传输事件，让scheduler先决定batch，再由kernel/通信模型给出本轮代价，更新KV余量、token进度与下一轮准入。CUDA Graph既改变padding形状又移除launch开销，prefix hit改变待计算块，speculation改变验证与提交进度；若只乘一个静态加速系数，这些变化就不会反馈到排队和抢占。[受限模拟器研究](https://arxiv.org/html/2605.21312v1)将它们放回同一闭环，是为了检验某项调度选择，而不是让模拟替runtime承诺服务。
+
+校准也须跟随影响决策的变量：相同总token数可以有不同请求长度分布，相同MoE容量可以有不同专家负载，权重之外的activation、通信workspace和graph占用也会改变可用KV块数。应分别核算kernel与host开销、通信依赖、容量和整段请求结果，并披露超出profile支持的切片。小集群实测、离线标定和更大集群模拟不是同一级证据；强制acceptance或预定tool延迟也不是实际模型行为。新增profile、模拟与维护费用仍计入选择，CPU开销/后端或流量漂移时回到实机测量、保守余量和已验队列，不用平均误差给尾SLO、所有框架或大规模部署签保证。<!-- source-family:SF-2026-ARXIV-2605-21312 -->
+
 ## 目标函数不止吞吐
 
 调度器至少要平衡四个目标：
@@ -57,6 +61,10 @@ autoscaling           未来需要多少 workers 和哪类 capacity
 这些目标会冲突。为了吞吐攒 batch，会增加等待；为了低延迟小 batch，会降低利用率；为了公平打断长请求，会增加状态管理成本。
 
 多目标权重还可以变成跨 epoch 的协商状态，而不每次只求一个固定加权分数：各单目标 actor 先提出计划，critic 对混合计划给出效用 proposal，再经有限 refinement 与投影；带边界的资本状态决定各方后续影响，超过阈值的反对才把计划拉回己方提案。[MARLIN 的受限仿真](https://arxiv.org/html/2605.13496v1)支持比较这种慢时间尺度控制分支，不使资本成为公平性或真实效用，更不证明 Nash、个体理性或任意混合计划可行。Reward 方向、归一化、离散映射与 veto 后约束未闭时，不照搬完整执行 recipe；最终请求仍由实际 admission 与 runtime 资格决定。其 trace 只提供到达 pattern，能源/碳水和所谓 TTFT 来自模拟/profile；将总执行时间除输出 token 数不能替代 prefill、排队及逐请求尾延迟。不同单目标配置的收益不能拼成一次同时达标，Balanced 在延迟/碳项还可弱于对照；候选、critic、模拟、预测和迁移/装载全费也未由较高 Pareto proxy 抹去。模型、freshness、真实 SLO 或总预算不通过时，保留固定可解释权重、保守余量与原 admission，不让协商同意替用户 deadline 或物理资源验收。<!-- source-family:SF-2026-ARXIV-2605-13496 -->
+
+不改模型也可以先在请求边界选择一份已测执行模式，而不是让所有请求共用同一配置：prompt/预期输出长度、prefix 复用、memory/batch 压力提出量化、speculation、cache 或 batching 的固定组合，整个请求随后保持该模式。这里“phase-aware”只是特征描述，不是 Prefill/Decode 中途切换；更细粒度控制还需要另验 KV 与执行状态兼容。已知 benchmark 标签可以帮助原实验分类，却不应默认为未知线上流量可得的信息。
+
+[ModeSwitch 首版的有限对照](https://arxiv.org/html/2605.23057v1#S4)说明模式选择应验最终 latency/energy/quality，而不是仅最大化匹配 oracle 标签的准确率；较高分类命中可被 router 开销或越过质量约束抵消。但单A10040GB/Llama3.1-8B 的均值收益不认证生产尾部，部分量化在长输入与memory-pressure的质量代理明显退步，CPU决策时间也不等完整模式装载/切换费。应独立验证真实质量、配置驻留与全部请求成本；特征或质量证据不足时，保留固定已验配置及FP16退路，不让便宜规则或平均accuracy批准所有请求。<!-- source-family:SF-2026-ARXIV-2605-23057 -->
 
 ## SLO-aware Admission
 
@@ -133,6 +141,10 @@ tail SLO 和预测校准放进同一 workload contract。
 
 [Fuel Gauge的有限方法与评价](https://arxiv.org/html/2603.10335v1)支持这个在线长度sensor分支，但其跨全部生成步骤的平均预测误差和HF小块基线的allocation次数，不等初始时刻的尾部校准、真实碎片/OOM、并发容量或生产SLO。较大reservation可能减少重分配却挤占其他请求，hidden读取、拟合、同步与扩容也都有费用，应在同一allocator和质量/并发人口上验收预测与实况、浪费与underprediction。稿中另一个隐藏态steering分支改变生成过程，不能与被预测的原轨迹混作同一收益分母；方向/目标及联合开销尚未闭合时，保留不干预生成、普通paged增长的基线，不以独立predictor吞吐宣称端到端免费。<!-- source-family:SF-2026-ARXIV-2603-10335 -->
 
+在线长度proposal还可以改变请求所在的Decode worker，而不只扩大原地reservation：周期性读取当前hidden state预测剩余生成量，将未来token负载与已占KV、可用目标容量和迁移代价一起比较，并把“不迁移”保留为候选。[ARES的受限部署](https://arxiv.org/html/2510.13668v1)用这份反馈修正入队时无法知道的后续占用，不让预测值获得真实完工或内存释放权。预测器须按request划分训练/验证人口，绑定model、layer、采样策略和更新周期，不能将同一轨迹的不同token随机分散后称独立泛化；持续读取、判断、KV复制与stream衔接均计费，20步间隔的局部低开销不是所有硬件免费。原4×4090D/1P3D、7B W8A8的迁移与改造baseline只支持所测workload，10Gbps下TBT明显受损，8–256规模oracle模拟也非真实predictor伸缩。代理保持stream不证明故障后的exact-once；预测、网络、容量或尾时延失配时，停止迁移，保原地Decode、静态路由/保守reserve与已有抢占退路，不由更平衡token负载自签服务SLO。
+
+<!-- source-family:SF-2025-ARXIV-2510-13668 -->
+
 树式解码还会让同一请求的 branch width 在每个 iteration 改变其他请求的外部成本。调度器可以读取当前 co-batch 剩余 slack 与 latency predictor，只把能被 slack 吸收的 branches 加入本步；prefix KV 仍由 cache owner 共享，verifier 仍拥有最终提交。这样 branch width 从固定生成参数变成 per-step admission state，而不是让请求一次性占满最大搜索宽度。<!-- semantic-body-binding:SF-2026-ARXIV-2605-06914 -->
 
 动态宽度以更多搜索并行换 predictor drift、branch 相关性和尾延迟风险。预测不稳、SLO 紧张或共享前缀收益不足时，应回退固定 cap、串行 branch 或普通 decode。exact-v1 的 10 小时 trace、Qwen3-32B 和单节点实验支持作者 operating point；其 goodput 与 SLO 数字不外推其他 topology、模型或生产流量。
@@ -150,6 +162,8 @@ runtime 仍只拥有实际 page、queue 与 preemption state；hard fairness、�
 多模型 routing 若把每个模型的 latency 当常数，容易在固定部署、轻载下使用；但改变 tensor parallel placement、MPS active-thread cap 或导入流量后，同一模型会进入不同服务区间。一条联合选择分支先对每个候选 setup 测 latency–load 曲线，再按 traffic fraction w_i 读取该模型的实际输入率 λw_i，并把预测质量与负载代价共同优化。部署可行性仍须分别核 shard placement、显存和计算cap，MPS比例不是硬隔离或实测利用率；模型setup或流量人口改变后，旧profile不能自动复用。<!-- source-family:SF-2026-ARXIV-2604-10907 -->
 
 request-level average 的加权 latency 与 tail percentile 是不同约束；即使固定份额下可用 assignment dual prices 选模型，完整部署/份额/latency目标也不能因此取得全局最优或生产SLO保证。[RouterWise v1 的有限对照](https://arxiv.org/html/2604.10907v1)使用vLLM profile与RouterBench预测质量评估候选配置，不是全配置实测交付；筛除低aggregate cap配置也改变比较人口。逐setup profiling、router训练、配置搜索与迁移均付费，quality proxy、插值或共享干扰失准时，保留固定部署、保守负载路由与实际SLO门控，先重验曲线和完整费用再接纳新配置。<!-- source-family:SF-2026-ARXIV-2604-10907 -->
+
+模型选择还可以先在任务到达前构造可复用portfolio，而不对每个请求运行完整大模型或在线微调：从同一generalist分别在不同数据分区posttrain小specialists，再用目标任务的一段有标签validation窗口比较全部成员，冻结一个模型或小ensemble供后续预测。[Chroma的受限分支](https://arxiv.org/html/2510.06419v1#S3)改变可选资产与选择时点，不是逐输入可得的oracle，也不能把成员训练未见该dataset称为全流程无目标标签。必须分开基础训练、全部specialist制备/驻留、全N验证与后续选中成员的forward；只有足够重复使用且分布稳定时，选择费才可摊销，FLOPs近似更不等加载、墙钟或tail SLO。单best在部分规模/指标胜过ensemble，更多成员或参数不必单调；validation选点与合成bias分解也不证明选到了真实最小误差。制备、选择、刷新与独立未来质量回归全部计费，目标漂移、标签不足或摊销不合时，保单generalist、较小固定集合与重新校准/原推断路径，不由少active参数批准普遍scaling、免费适配和生产最优路由。<!-- source-family:SF-2025-ARXIV-2510-06419 -->
 
 ### 连续 Edge Inference 需要跨窗口携带 Violation-risk Budget
 
@@ -222,6 +236,8 @@ Online LP routing 的 v1 证据来自四张 A100 上的 Vidur simulation 与作�
 模型内部可能产生与正确性相关的 feeling-of-knowing/judgment-of-learning signal，却不会自动把它变成停止、追加计算或升级的控制动作。Metacognitive harness 把 monitor 与 reasoner 分开：monitor 提议 confidence/state，scheduler 在校准、budget 与 SLO 下选择 continue、verify、route 或 abstain。收益是把 test-time compute 投向不确定样本，代价是 monitor 误校准、额外调用和 self-assessment 共因偏差；无 held-out calibration 或高风险任务时回退固定预算加独立 verifier。
 <!-- semantic-body-binding:SF-LLMS-KNOW-WHEN-THEY-KNOW-BUT-DO-NOT-ACT-ON-IT-A-METACOGNITIVE-HARNESS-FO:end -->
 
+不用held-out阈值的停止规则，也不意味着不用成立条件。可对逐chunk signal相对慢趋势的位置和下降速度分别积累e-process，以可预测bet和非负wealth定义commit/abstain门；[受限序贯分支](https://arxiv.org/html/2610.25212v1#S3)在指定signal增量条件均值不正的null下控制曾经越界的概率，双门联合还需合并错误预算。这个界不是“提前回答会错”的概率，null也不会因监测器存在自动成立；答案一致或高signal仍可能共同错误。中间答案提取、追加suffix及probe解码须计入费用，节省很少生成时反可不如无probe路径。需要task-level可靠性时仍须独立验答案或另行校准，signal条件/净质量失配时保固定预算、保守停止与独立verifier，不把calibration-free写成无需验证或由α签发事实正确。<!-- source-family:SF-2026-ARXIV-2610-25212 -->
+
 同一检索分数在不同类别上未必代表相同可靠性，因此“低confidence才追加推理”还要说明统计来自哪里。一条受限视觉识别分支先用有标签support构建图文prototype和类别检索统计，线上同时读取top候选得分、类别支持量与候选歧义，再选择检索直答或把图像和有界候选交给VQA。可复用错误经验只是后端上下文，不是已验证事实；底座不更新也没有免除support标注、原型生成与路由统计费用。改变的是追加计算的控制输入，不是视觉表示自动取得正确性权限。<!-- source-family:SF-2026-ARXIV-2603-17729 -->
 
 [类别条件触发的有限对照](https://arxiv.org/html/2603.17729v1#S2.SS3)还要求分开检索得分、统计置信界与实际已输出子集：图文softmax再加rank-fusion不自动是概率，复用构建原型的support统计也不等独立校准。候选未含真类会限制后端，类别漂移、少量support或更多经验带来的噪声可能使门失准；困难任务几乎全部触发时，节省还可能消失。应分别验直接接受与追加路径的质量、候选覆盖及完整成本，不能由容易子集准确率认证全集或tail SLO；支持不足时保留固定路径、独立校准或人工核验，不照录未闭合的概率公式作安全门。
@@ -229,6 +245,10 @@ Online LP routing 的 v1 证据来自四张 A100 上的 Vidur simulation 与作�
 停止也可以从 reasoner 自主提议、由外部 classifier 接受，而不让生成的 stop marker 自行终止。一条受限接口先用完整答案一致性与 gold-verified 截断样本训练 mid-CoT proposal，再由 LightGBM 根据局部 answer/trace 特征判是否接受；policy 更新后重新采轨迹并刷新 classifier 的标签人口。部署不见 gold，一致性与 classifier 分数都只支持经验接受，不是正确性证书。 [必要训练/部署分界](https://arxiv.org/html/2602.10004v1)。<!-- source-family:SF-2026-ARXIV-2602-10004 -->
 
 proposal policy、截断位置、answer extractor、classifier 与阈值须作为一组校准身份，不能更新 reasoner 后沿用旧接受门。局部 answer plateau 不上界整个未来分布，未知 tail variation 也不是可在线计算的停止保证；错误轨迹修正与标签过滤会改变训练人口，额外 answer branch、刷新及判别均付费。受限阈值对照显示覆盖/质量取舍和任务反退，不能由 token 缩短推出墙钟加速；校准漂移、污染/标签支持不明或风险较高时，保留固定预算、独立 verifier 与不接受 proposal 的退路。<!-- source-family:SF-2026-ARXIV-2602-10004 -->
+
+提前结束的分支还会改变接下来把算力花在哪里：若分类器估计的是当前前缀能否稳定提取正确短答，可先终止连续高分分支并保存答案，再将空出的槽按仍活跃分支的分数抽样复制，复用相同前缀后继续生成。这不是按低分取消分支，也不是增加了等量独立证据；共享祖先会让后续回答相关，按相同答案数或已完成数退出时，必须保留完成票与活跃槽的不同人口。[受限分支编排对照](https://arxiv.org/html/2509.24957v1#S3)支持比较这一反馈环，不把离线多次强制取答的稳定正确标签当自然继续成功概率；模型、提取协议或阈值变化须重验，误早停仍可能损失原可正确的分支。标签与多条完整轨迹、隐藏态读取、分类器、额外短答、fork状态及全部失败分支均付费；较少输出token和给定队列下较低延迟不自动是总成本或难题SLO改善。分数失准、答案相关性或质量/公平不合时，保留固定self-consistency预算、独立验答与原容量调度，不用多数票自行批准正确性。
+
+<!-- source-family:SF-2025-ARXIV-2509-24957 -->
 
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-06908:start -->
 Reasoning gate 不能预设 uncertainty 或 difficulty 与追加计算价值同向。Scheduler 应把 environment、backbone、base/rollout policy、reward 与 counterfactual utility 一起写入 gate calibration：先区分“需要更多计算”与“当前状态适合通过 rollout 获益”，再学习该 slice 的方向。这样能避免 wrong-direction gate 专门挑中会被 rollout 伤害的状态，却增加探索成本、稀疏特征漂移与 reward 依赖；方向不稳、样本不足或高风险时，回退固定预算、独立 verifier 或保守不追加计算。受限证据只覆盖 `arXiv:2605.06908v1` 披露的环境、模型、reward 与实验条件，不把观察到的关联方向写成通用因果机制。
@@ -255,6 +275,10 @@ Reasoning gate 不能预设 uncertainty 或 difficulty 与追加计算价值同�
 预算之外，同一请求的 reasoning 与最终 answer 还可能具有不同的交付节奏：内部推理较慢不一定立即影响用户阅读，但答案开始后，连续可读的输出更重要。一种 phase-aware 分支将两个阶段分队列，在 answer 阶段用 Pacer 保存可交付 token 的节奏余量，利用尚可容忍的暂停选择抢占，而不是对所有 Decode 请求一视同仁；reasoning→answer 的阶段转换再按目标 worker 的 memory 状态选择放置或迁移。[Pascal 的受限机制](https://arxiv.org/html/2602.11530v1)把阶段身份、队列优先级、Pacer 与迁移联成一条调度链，不把“可以暂停”解释为用户体验无代价。
 
 这条分支新增 phase 识别、缓冲、抢占和迁移状态，必须支付 cache 移动与内存不足时的退路。作者评价主要是 profile 驱动的模拟，QoE 采用 TPOT，另列 TTFT；它不是已实现的 time-to-first-answer gate 或生产 SLO 保证，trace 与模型的匹配限制也不能省略。短答案难以摊薄阶段控制和迁移开销，Pacer 余量不足或目标 worker 无可用内存时，应保留原地执行、较保守的抢占或统一队列。阶段优先级改变了等待分配，仍需实际测量首答案等待、输出间隔与整体 goodput，不能由单一 QoE 数字宣布调度全面胜出。<!-- source-family:SF-2026-ARXIV-2602-11530 -->
+
+同一 answer 阶段内部，还可把“已生成”与“正在被消费”分开：非抢占式持续 Decode 在消费很快、负载不拥塞时简单可靠；当生成快于阅读且新请求排队，尚未消费的 token buffer 提供了一段可暂停时间。调度器可按 buffer 与客户端指定消费率估计余量，但只有余量足以覆盖 KV 移出、恢复、排队和重调度时才抢占。一个[受限文本流式分支](https://arxiv.org/html/2510.02758v1)让 KV manager 持续增量写回 host，并按下一轮计算时间分块安排传输，以减少临时抢占的集中搬运；恢复仍须比较实时 I/O 排队与重算，不能把“计划已写回”当成物理复制完成。
+
+这种协同以 CPU 副本、PCIe 带宽、监测和额外调度换较早服务新请求，消费率失准或传输争用则可能耗尽 buffer。低争用、很快的消费者、短输出或状态不可确认时，保留连续执行、较保守的抢占和原 FCFS/内存准入；总需求超出容量也不能靠延后 Decode 消除。论文 effective throughput 对过量预生成 token 降权，是特定消费效用而非任务成功或通用 SLO goodput；其单机 GPU–CPU 实验、消费率显式输入及对照重实现不支持分布式、无卡顿或全面性能保证。<!-- source-family:SF-2025-ARXIV-2510-02758 -->
 
 ### 长推理可以把跨轮状态与完整历史分开
 
@@ -400,7 +424,17 @@ serving subject
 
 每轮要在 token budget 内选择 Prefill chunks、Decode tokens 和 speculative verification。常见 policy 倾向包括 FCFS、priority/deadline、shortest-estimated-work 或 fairness-aware sharing。
 
+固定TBT约束要求每次输出间隔都短；若消费者接受的是相对到达时刻的TTFT/TPOT进度包络，提前生成的token却可以积累余量，让后到的Prefill暂借计算。[一种受限批处理分支](https://arxiv.org/html/2510.14392v1#S3)按下一token期限与当前进度计算slack，用新tokens和总context共同预测batch时间，再优先紧迫Decode、Prefill及非紧迫Decode。它改变的是SLO合同与容量单位，不是让Decode永远停顿也算公平：预算下限、预测误差和过载均可能越过期限，不能由平均误差签硬保证。上层可接收并扣减Prefill准入预算，但仍有状态延迟；拒绝请求须留在全人口分母。测量、校准、路由与控制费用都计入，消费者不能平滑输出、模型漂移或tail失准时保留严格TBT、固定chunk和保守准入，不能把两种SLO混为同质量吞吐。
+
+<!-- source-family:SF-2025-ARXIV-2510-14392 -->
+
 输出长度未知使 shortest-job policy 只能基于估计；只偏好短请求可能 starvation 长请求。Age、tenant quota 或 virtual time 可以作为公平性信号，但会牺牲部分吞吐。
+
+每轮还须区分“当前能放多少”与“跨轮怎样分配更合算”：较大的Prefill chunk虽能用满本轮Decode slack，也可能挤掉下一轮预算，使两轮都落在低效batch区间。一条[受限两轮展望分支](https://arxiv.org/html/2606.05933v1#S3)先从当前队列与各类batch的延迟预测估算当前/下一轮预算，再搜索两轮预测总成本，执行一轮后重算；它不预知未来到达，有限搜索也不是全局最优或硬截止证明。Profile/预测器版本、队列/context、预算与真实batch完成时间须共同留存，不能把当前最大可行chunk当跨轮效率最优。
+
+请求进入batch也不表示其TTFT已获保护：它仍需等整批结束。若预测整批会让部分请求超时，可逐个以风险请求作anchor，用其slack约束总容量、扣除Decode工作后强制完成anchor的剩余Prefill，再从不更早到期者选择有价值的可完成子集；这与简单按顺序填满token预算不同。预测/队列模拟、预算搜索与组合选择均有费用，均值误差不提供尾部上界，保护尚可达标者还可能恶化已超时者尾延迟。因此必须连同全部请求、KV资格、过载与公平性另验；不从较高达标数签硬SLO。预测漂移、搜索收益不抵控制成本或尾部不合时，保固定/单步chunk、保守EDF/admission与独立公平队列，不让优化器替runtime确认资源。<!-- source-family:SF-2026-ARXIV-2606-05933 -->
+
+靠近本轮时间目标，也未必让未完成Prefill有效前进：Decode优先后，过多Prefill可能各得极小chunk，反复支付调度与kernel开销。一条[受限活跃控制分支](https://arxiv.org/html/2606.09061v1#S3.SS3)先按剩余sequence slots、token预算与有效chunk粒度限制本轮活跃Prefill数，再检查单请求进展；没有活跃Prefill时另有warm-start，不能把它等同于继续缩小预测chunk。其warm-start公式并不在所有路径重验人口上限或达到最小粒度，预测时间目标也不是硬SLO。作者单GPU/Qwen3-8B、49:1短长prompt对照支持减少碎片这一局部取舍；一般负载下时间预测调度本身还可能慢于固定token预算，不能推广为普遍增益。状态采集、搜索、控制、KV/slot资格和长请求等待共同验收；人口/进展限制不合负载或预测失准时，保固定chunk、保守admission与独立公平队列，不让局部时间误差替runtime签资源安全或有界等待。<!-- source-family:SF-2026-ARXIV-2606-09061 -->
 
 预测短请求优先能改善均值，却可能长期挤压长请求；无限加大aging又会反过来拖慢短请求。一条受限折中把“等够久取得资格”和“已经欠一次晋升”分开：每完成 `k` 个短prefill admission赚取一个debt（chunk continuation不计），debt在最老eligible长请求实际admit前保持pending，不能被更多短请求冲掉；但decode、continuation与KV安全仍可延后它。因此quota限制晋升频率，不承诺任意流量下的有界墙钟等待。[QBA的trace-driven模拟](https://arxiv.org/html/2610.17795v1#S3)支持均值—尾部折中而非线上SLO保证：FCFS在部分高负载tail更强，长度误判还可能让均值改善同时两类tail恶化。计数/debt、历史分位数及分类误差需共同记录与校准，不能以M/G/n近似认证真实engine稳定；预测失准或tail优先时保留FCFS、保守fair queue与独立过载控制。<!-- source-family:SF-2026-ARXIV-2610-17795 -->
 
@@ -534,6 +568,8 @@ Routing 选择已有 endpoints，考虑 queue、KV locality、adapter 与 topolo
 
 <!-- source-family:SF-2026-ARXIV-2609-21079 -->
 
+延迟预测器若持续从在线请求学习，训练人口也会被自己的路由改变：选择影响后续 prefix 驻留与负载，只有被选 endpoint 才产生这次实测 TTFT，未选项不是反事实真值。一条受限分支将决策时请求/实例快照与观测负 TTFT 对齐，用固定大小的近期 FIFO 加按残差与表示多样性保留的 replay 联合更新共享预测器，再异步替换推断版本；这避免只留近期而遗忘旧工况，或保存全部历史却让旧分布与训练费用无限增长。独立 gateway 事先计算 heuristic，冷启动、特征越训练范围或 RPC 失败时回退，但逐特征范围不认证联合分布内、实际 cache hit 或容量可接收。[有限在线对照](https://arxiv.org/html/2606.00946v1#S5.SS5)支持这种更新分工，不保证无偏、普遍收敛或全局最优：贪心 TTFT 仍可能驱逐未来共享 KV，长 prefix 的候选收拢也需另付校准与局部拥塞代价。状态采集、推断、训练/回放、数据库与专用资源均计费；反馈陈旧、cache/工况失配或净预算不合时，保留原 prefix/load heuristic、固定池与 endpoint admission，不由学得即时奖励替代 TPOT、完整响应和 SLO 验收。<!-- source-family:SF-2026-ARXIV-2606-00946 -->
+
 ### 低带宽拓扑要联合预算 Hops、Bytes 与 Steps
 
 单数据中心、高带宽互联中，固定 pipeline placement 与局部通信优化通常足够，稳定拓扑也让故障和 tail latency 更容易解释。GPU 分散在低带宽、跨地域节点后，只看空闲显存或单跳带宽会失真：少放一个 transformer block 可能增加每个 decode step 的跨节点 hops；为了减少 hops 而 offload KV，又会引入 host-memory traffic；lossless compression 改变每跳 bytes，speculative decoding 则可能改变完成同样输出所需的串行 decode steps。
@@ -543,6 +579,10 @@ Routing 选择已有 endpoints，考虑 queue、KV locality、adapter 与 topolo
 联合优化可以在低带宽环境减少通信暴露，却把 host CPU memory、压缩/解压、dynamic-program cost、拓扑漂移和故障恢复带进 serving contract。高带宽同构集群、KV offload 反而更慢、压缩收益不足或 topology/SLO 无法准确建模时，固定 placement 与普通 pipeline 仍更可验证。论文结果只绑定其 internet-scale testbed、模型和公开配置，不证明通用去中心化服务优势。
 
 <!-- source-family:SF-2026-ARXIV-2604-21072 -->
+
+放置计划与请求路径还可以使用不同的更新尺度：先把连续layer段及其副本放到容量允许的节点，再把每个layer副本视为DAG节点，按当前计算/链路画像为新请求选一条顺序完整的路径，并在该session内固定。一条[受限去中心推理分支](https://arxiv.org/html/2509.26182v1#S3)用这种分责避免每次到达都重做全局放置；周期目录只是快照，不能认证负载永远最新。路径上的权重revision、layer坐标、精度与请求KV/position仍须相容，重新公布副本或为后续请求重选路径，不等已迁移在途KV或恢复失联session；这些一致性与恢复是执行要求，不是最短路算法自带的证明。副本驻留、画像/DHT流量、路径搜索、跨网队列和重放置都付费，snapshot代价最短也不保证突发负载下最优。目录失效、状态不相容或恢复证据不足时，保留固定同构pipeline、静态亲和及明确失败/重试边界，不把规划耗时或有限异构测试倍率当完整生成SLO。
+
+<!-- source-family:SF-2025-ARXIV-2509-26182 -->
 
 设备—边缘 split inference 的预算还可从任务级 reference 落到 packet 的实际消费：先按任务条件下的 accuracy–feature-ratio profile 给出 split、bandwidth 与 reference power，传输控制再按 queue、剩余 deadline 和 feature importance 逐步发送，server 用 interim inference/entropy predictor提出 stop。Reference 是计划，不是每个 packet 已兑现的消耗；entropy 也不是该 sample 已答对，deadline 到来可能只留下不足的 features。[受限 CNN/channel simulation](https://arxiv.org/html/2601.08135v1)不能直接套为 LLM 通信协议或长期零能耗超额保证。应把设备传输、server 重复 inference、预测器训练/读取与通信费用一起核算，并版本化 split、feature/parser 与预测 profile；信道或人口漂移、剩余 deadline 不足时回退预先验收的固定 split/完整特征路径，无法履约则 defer/reject，而不以 queue/reference 跟踪替代任务质量验收。<!-- source-family:SF-2026-ARXIV-2601-08135 -->
 
@@ -638,6 +678,8 @@ A/F 分离还有一种不依赖预测的 lookahead：attention worker 的当前 
 ### Expert Mapping 还要吸收设备速度的时间变化
 
 按平均负载固定 expert placement 在设备稳定时合理；频率、干扰和通信带宽变化后，同样 token count 会产生不同完成时间。runtime 应用 measured service rate 更新 expert-to-device mapping，并限制迁移频率；收益是降低 straggler，代价是测量噪声、迁移成本与控制震荡。变化慢时保留静态映射。<!-- source-family:SF-2026-ARXIV-2605-19945 --> exact-v1 §3–5 只支持作者设备与模型，§6 不证明所有 variability 都能在线补偿。
+
+平均速度还可能掩盖负载强度的影响：名义相同的 GPU 在接近功耗上限时可出现不同耗时曲线，应在固定 kernel 与执行条件下逐卡校准 token 负载到耗时，再结合每层 expert demand 估计最慢卡完成时间，而不只均分 token。[ViBE 的受限对照](https://arxiv.org/html/2606.00735v1#S5)支持这条放置分支，但单点速度生成的 greedy 布局不保证非线性目标最优；低负载或 Decode 中，热点同卡的内存/通信争用还可能使其反退。纯量级变化不一定改变路由向量角度，因此仅有 cosine 漂移信号不足以签发 profile 仍有效，实际耗时误差与搬迁尖峰须另验；这里不采用其尚未闭合的完整在线增量 recipe。更多 EP 设备也会减少每卡专家数和放置自由度，逐卡 profile 投影不能当大规模服务实测。采样、校准、规划、迁移与回归全计费；条件失配或净收益不足时，保留原 token-balanced/static placement 与独立 SLO 压测，不改 router 语义或授普遍加速。<!-- source-family:SF-2026-ARXIV-2606-00735 -->
 
 ### MoE 并行形态从部署配置演进为运行时状态
 
@@ -882,6 +924,10 @@ stream / request identity
 
 这提升异质阶段之间的利用率，却增加取消、partial result、队列传播和中间状态失效；离线、同质且无严格 deadline 的生成仍适合静态流水线。`arXiv:2603.05800v1` 只在 §4.7 Implementation、§5 Evaluation 与 §7 Conclusions 所披露的模型、设备和请求分布上支持这条机制，不证明跨集群、多租户或生产 SLO。<!-- source-family:SF-2026-ARXIV-2603-05800 -->
 
+同一多模态请求内部，stage就绪还须保留输入序列的前后关系。等全部图像编码后再Prefill最易维护依赖，却会让早已可用的文本前缀和前面图像等待后续编码；可以按请求维护embedding原位置与就绪状态，只把自身已就绪、且所有前序token已处理或同样可调度的连续前缀送入chunked Prefill，不能让后置文本越过未编码的图像。Encoder仍按不可拆分的模态item组批，多个请求的可调度前缀再共同消费token budget：前者决定编码效率与重叠窗口，后者决定Prefill组批，二者不是同一个粒度。已交Prefill的中间embedding可缩短驻留，但异步消费完成与释放仍须由runtime确认；更小编码批可能降低设备效率，额外encoder、传输、tracker与排队也必须计费。[受限v1证据](https://arxiv.org/html/2509.24381v1#S3)的伪码未闭合item/token阈值与部分调度细节，固定单输出token的平均TTFT对照也不证明完整Decode、严格等价或硬SLO；依赖、净收益或质量不合时，保留整批编码后Prefill、既有chunked路径或共驻部署。
+
+<!-- source-family:SF-2025-ARXIV-2509-24381 -->
+
 #### 迭代生成与流式会话需要显式 Progress State
 
 异质生成 DAG 还可以拆开“允许启动”与“允许消费某个输入”。等待所有上游张量后才启动节点最容易检查依赖，却会把模型载入、独立前序工作与 ControlNet 等并行分支串行化；deferred-input 分支只在非延迟输入就绪后启动，把实际消费延迟张量的读点作为等待边界。Runtime 仍须确保 producer 已发布、张量可见且消费者读取的是同一 request 的状态，不能把提前启动当作忽略依赖。模型调用成为独立节点后，scheduler 可按 model identity 跨 workflow 组批，再共同比较模型驻留、数据取回和推理成本；这不同于将整个 pipeline 当成只能独占加载的一个服务实例。<!-- source-family:SF-2026-ARXIV-2604-08123 -->
@@ -889,6 +935,10 @@ stream / request identity
 细化节点扩大共享与重叠空间，也引入中间张量存储、跨设备传输、ready-set 状态和重执行成本；deadline admission 依赖剩余关键路径与队列估计，拒绝新请求仍须计入所有到达请求的服务合同，不能只评价已接纳项。作者的受限扩散工作流实验说明这种粒度可以有用，却未证明生产 SLO、完整故障恢复或任意模型都获益。独立前序很少、张量传输主导或恢复语义难以验证时，完整 pipeline 与静态分配仍合理；若同时启用近似缓存或延迟加载 LoRA、从而改变早期 denoising 计算，还须单独验收输出质量，不能沿用纯调度重排的等价性假设。
 
 自回归 token scheduler 假设每轮 work 的语义相近；Diffusion Transformer、流式视频生成和边缘协同推理却携带 denoising step、partial latent、playout slack 与 per-chunk fidelity。若仍只按 request 或 token 排队，局部 batch 可能让一个 chunk 及时完成，却使后续播放断流，或让 relay/re-homing 的状态迁移吞掉剩余 slack。Scheduler 因而要把 `request phase / iteration step / chunk frontier / partial-state residency / deadline slack / quality floor` 编成同一 progress identity，再联合选择 batch、sequence parallelism、relay placement、preemption 与降级；模型 runtime 仍拥有 denoising/生成语义，发布面拥有最终质量 Gate。
+
+混分辨率图像请求还可把“给单个请求多少GPU”与“这一轮服务谁”分成两步：先按模型、分辨率与拓扑的每步profile，生成满足剩余期限且少耗GPU时间的并行度候选，再把每请求的候选作为一组，在固定时长round内联合packing。固定SP在同质负载或重配昂贵时仍简单可靠；这种细化则用round长度换取响应速度与调度开销。[受限DiT首版](https://arxiv.org/html/2510.01565v1#S4)用最快SP的剩余时长下界判断请求下一轮是否“已经必然迟到”，但未被排除只表示仍可能可行，不保证未来争用下取得最快配置或最终按时完成，也不授全局最优。常用通信组以外的首次warmup、buffer驻留、latent搬移与顺序VAE decode都应回到完整费用；原实现将latent传输排除deadline计费，不能沿用为任意拓扑下的免费假设。FLUX/H100与SD3/A40的有限负载对照中，小图固定SP可略胜，过细或过粗粒度也会退步；应按实际全部请求、质量与deadline结果验收，profile失配或转换费用吃掉slack时保留固定SP、较粗round与保守队列。
+
+<!-- source-family:SF-2025-ARXIV-2510-01565 -->
 
 当图像与视频扩散请求共置于同一 GPU 池，问题进一步从“单类请求如何抢占”变成两类 deadline 的联合分配：FCFS 会让长视频堵住短图像，永远优先图像又会饿死视频。若两套权重可驻留且每步状态可保存，调度器可在 denoising-step 边界保存视频的 latent、prompt 条件和 step index，暂停或恢复视频；同时在图像侧按截止时间组批，并在视频侧按剩余 slack 调整 sequence-parallel degree。Step-level pause 只提供可修订状态，并不保证被暂停的视频仍赶得上 deadline；某些负载里图像成功率提高的同时，视频尾延迟会恶化。因此 admission 要同时对账两类请求的 deadline attainment、state residency 与恢复成本，不能只报总体吞吐。该分支目前只由作者在单机 8×RTX PRO 6000、SD3.5 Medium/Wan2.2 T2V 及合成 100-request trace 下验证，不证明生产 tail-SLO；负载稳定或状态恢复不可靠时，固定池/静态 reservation 仍更可预测。<!-- source-family:SF-2026-ARXIV-2604-04335 -->
 
@@ -1096,6 +1146,10 @@ planner/scheduler control-loop interaction。MoE、异构 GPU、network-heavy PD
 受限机制证据，不证明其预测精度可以跨 runtime 与 workload 外推。
 <!-- source-family: arxiv:2607.29575v1; daily: 2026-08-03; semantic-body-binding: decode-saturation-aware-capacity-model -->
 
+同一延迟模型同时供引擎选择本轮batch、供路由比较目标副本，可以减少两层各算一份负担的错位，但还要检查模型中的“容量”是否真正有共同尺度。若延迟写成工作量除吞吐，再加固定开销，而工作量系数与吞吐上限一起拟合，那么将两者同时放大相同倍数，预测时间可以完全不变；拟合误差很小仍不能单独辨认绝对吞吐上限。[一个受限双层方案](https://arxiv.org/html/2509.23384v1#S4)因此只支持把共享的时延、排队工作与KV估计作为路由和batch提案，不能仅凭拟合参数大小比较异构设备的真实容量。跨副本比较还需固定工作量单位、参考测量和有效配置，并用新请求的实际完成持续校准；这些是消费模型时的额外要求，不是高拟合度已经提供的保证。共享预测仍支付测量、后台重拟合、状态上报及陈旧反馈成本，均值目标也不控制每个请求的尾延迟；尺度未定、状态过期或预测越出支持范围时，保留实测容量表、保守队列与本地admission，不让软路由分数承诺尚未释放的物理资源。
+
+<!-- source-family:SF-2025-ARXIV-2509-23384 -->
+
 固定 token cap 下，量化不仅改变权重 artifact，也会改变 halting controller 读取的 uncertainty 与 trace-stability sensor。运行时必须把 precision 写入 controller/calibration identity：由 bit-conditioned rescaling 与 post-marker confirmation horizon 共同决定是否提前终止；signal 未校准时回退固定预算或经该 precision 验收的保守阈值。这样可减少过早停止，却增加 hidden-state/logit hook、校准与确认 token 成本，并可能因模型或任务漂移而失效。
 
 证据仅覆盖 greedy 4-bit Qwen2.5-Instruct 7B/14B、GSM8K 小型子集（N=54/35）、B=512；作者报告有限统计功效，不证明其他量化方法、模型、任务或生产尾延迟。 INFER-TENSORRT-LLM 只保留 precision/artifact handoff；本节拥有在线 halting control。
@@ -1249,6 +1303,13 @@ observed inference load
 固定功率上限在 workload 稳定、供电边界严格时最可预测；Prefill、reasoning 与 answer Decode 的 compute/memory/KV 压力不同，同一 cap 会在某阶段浪费 headroom、在另一阶段破坏 SLO。Scheduler 可把瞬时 power authority 与 latency/throughput budget 共同分到各阶段，并保留 power-gating、降级或 priority shedding 的 fail-safe。在线调节用 profile drift、控制延迟与跨请求干扰换取能效，不能以平均能耗替代 instantaneous envelope。`arXiv:2608.21719v1` 的 SGLang 与 production-trace 结果只支持披露 GPU、grid 和 Flex-SLO 条件，不证明其他硬件或负载有同样收益。
 
 <!-- source-family:SF-2026-ARXIV-2608-21719 -->
+
+频率控制还会改变路由的代价曲线：同一Decode实例增加一个请求，可能跨过kernel的批边界或触发升频，因此最少请求或均匀分流未必最省能。一条受限分支按各频率校准请求数、KV长度与单轮时间，在有积压时使用高频，无积压时选择预测能满足该阶段剩余预算的候选频率；路由再模拟新增请求后的状态，允许有限不对称来避开升频边界，而不是让路由与调频各自优化。[VoltanaLLM的受限对照](https://arxiv.org/html/2509.04827v1)只对Decode执行这种路由，Prefill仍轮询，预测可行不等实际尾延迟或联合SLO保证；最低频也不天然最省总能量。Profile、状态通信、控制进程、频率切换与排队都应计费，不能只结算GPU计量的Joules；预测漂移、拥塞或频率生效延迟失配时，恢复已校准固定频率、普通负载路由与保守admission，最高频也不能替过载拒绝或容量扩展。
+<!-- source-family:SF-2025-ARXIV-2509-04827 -->
+
+频率作为控制量时，还应核实设备是否把计算时钟与内存时钟分别暴露：只把其中一项固定为最大，再扫描另一项，会漏掉二者共同决定的能量—时延可行集合。可先按设备、模型和实际可用的双频组合校准功率与服务时间，再在真实deadline下选候选；[有限端侧DNN对照](https://arxiv.org/html/2509.17970v1)支持这条画像接口，不证明由单轴拟合得到的可分离模型在整个网格成立，时间模型局部凸也不使能量乘积或离散卸载选择自动全局最优。可用频率范围很窄或deadline贴近最短服务时间时，联合选择的收益会缩小，甚至不如原policy；device传输能量更不等完整edge服务能量，返回、排队和server计算不能消失。双频画像、电源与热态测量、切换、通信及端到端质量/时限回归均计费；候选须绑定画像版本和计量边界，漂移或无可行点时保留已验固定频率/本地或edge基线与保守拒绝，不由设备平均节能签发LLM通用收益或硬SLO。
+
+<!-- source-family:SF-2025-ARXIV-2509-17970 -->
 
 ### 从静态优先级到可消费的 SLO 预算
 
@@ -1454,6 +1515,10 @@ Runtime 仍拥有真实 page、queue 与 completion state，workflow graph 只�
 
 “工具正在运行”仍不是足够的 progress state。调用前的历史均值、工具名或 self-declared duration 无法知道本次何时完成，长调用的排序甚至可能反转；若工具在 stdout、artifact 或 protocol notification 中已经暴露阶段进度，harness 应在 KV retain/offload/restore 决策点读取这一信号。工具只拥有自身 progress observation，cache manager 仍拥有真实 KV residency，scheduler 才能提交迁移计划。无流式信息、输出不可解析或人工等待时，系统必须承认 opaque state，回退保守 lease/timeout，而不是制造精确 ETA。公开证据只覆盖四个工具生态与三个 serving extension，生产收益受 signal coverage 限制。
 
+停等期间释放KV还须通过一份时间上的准入，而不只确认当前没有Decode：预计工具空隙应足以覆盖卸载、恢复以及借用这份空间的其它工作，否则搬运可能延长恢复关键路径。可先卸出未共享历史，再按预计回调时点渐进预留和预取；复制已发出、旧GPU块已能重用、恢复状态已可消费是不同事件，真实完成前不能重复分配。[TokenCake的受限实现](https://arxiv.org/html/2510.18586v1)支持这一空间—等待联合分支，但工具调用在评价中由模拟时长替代，预测误差、CPU容量和双向传输争用仍会使收益消失，混合优先级也不保证所有任务公平。时长预测、驻留副本、预留和实际搬运均计费；调用短、ETA不可靠或恢复延迟超预算时，保留原驻留、保守预留和反应式恢复，不由停等标签或平均吞吐批准生产SLO。
+
+<!-- source-family:SF-2025-ARXIV-2510-18586 -->
+
 多租户公平也不能只按长期 token share 衡量。更强的隔离合同把每个 token 在独占 fair-share 资源下的预计完成时刻作为 baseline，并要求共享执行最多增加可配置的 `δ`；scheduler 据此产生 per-token deadline，同时把 compute waiting 与 KV eviction/restore delay 一起计入。它用模型误差、保留部分 KV、可能降低 packing 效率的代价，换取 TTFT、TBT 与 TTLT 的上界；当前 SGLang 实现与 `δ=3s` 实验不证明跨 GPU、跨 workload 或任意性能模型都满足保证。估计失准或硬件缺乏细粒度隔离时，应回退静态 partition、保守 admission 或更宽的 request-level SLO。
 
 <!-- source-family:arxiv:2609.18849v1 -->
@@ -1523,11 +1588,21 @@ reasoning correctness 可能非单调：中间答案很稳定，后续仍可能�
 
 ## Agent Serving 把调度单位从单次 Query 扩展为 Conversation 与 Task DAG
 
+公平的计量单位也会随调用链改变：同样生成一个token，长prefix请求占用的KV更多；一项应用又可能连续发起多次推理，因此只计token数或某一刻的footprint，都不能代表它在整个生命周期中消耗的缓存时间。固定模型与每token存储、近似均匀token耗时的条件下，可把一次推理的逐步KV占用累加为token-time，再按应用累计；[一条受限公平队列分支](https://arxiv.org/html/2510.17015v1#S3)预测这份应用成本，以共享服务的virtual time和预测finish tag决定先后，同时让实际engine承接可运行推理。这里重排的是应用服务份额，不是由预测器生成真实执行图，也不是把每次inference随时抢占。
+
+预测成本与已经发生的占用仍须分开保存：prompt/输出长度、应用调用人口、KV布局和服务速率改变，都会使原finish tag失准；较少平均完成时间也可能以部分应用更晚完成为代价。成本预测、队列更新、cache保存/交换和完整推理都付费，理想GPS参照及其delay推导不能直接变成有预测误差、动态batch和未知后续调用的硬公平或SLO保证。成本不可校准、应用身份不稳定或公平要求更强时，保留token计量、aging/配额与保守reservation，并以全应用完成和尾部等待验收，而不由较低平均JCT宣布所有租户都获益。
+
+<!-- source-family:SF-2025-ARXIV-2510-17015 -->
+
 ### 动态 Workflow 可以先按模型需求份额分配，但统计 Pipeline 不是执行图
 
 为任意分支、循环和 fan-out 精确重建执行图，在控制流稳定时能保留 critical path；当框架多样、单次轨迹差异很大时，可先用实际 traces 估计每个模型的平均调用次数 n 和同模型平均并行度 p，再重放请求取得不同 TP/负载的性能曲线。工作流到达率 λ 给模型带来约 λn 的调用负载，其延迟贡献以 n/p 缩放，吞吐由各模型容量除以 n 后的最小值约束。这个 aggregate pipeline 只是分配预测器，不会把实际 DAG 改成串行图；控制器据此共同搜索 GPU fraction、TP 与 replica count，再由拓扑感知 placement 判断配置能否放置。
 
 这种压缩换来更小的配置搜索，却丢失跨不同模型的并行 critical path；同一模型的双峰调用人口和不可忽略的 tool time 也会使代理失准，分位延迟直接相加更不是整体 tail 保证。[Scepsy v1](https://arxiv.org/html/2604.15186v1)的16张RTX A6000、100Gb InfiniBand及两类工作流只支持受测范围，baseline的prefix cache/engine版本差异、低负载Ayo略优与128GPU搜索约70秒均限制 headline 的解释。Tracing、逐TP profiling、搜索、放置与MPS共驻干扰需要另计，实际completion/queue/KV仍由runtime拥有；统计失配时保留逐阶段trace、显式tool预算和已测保守allocation，而不向任意Agent程序承诺吞吐或SLO。<!-- source-family:SF-2026-ARXIV-2604-15186 -->
+
+如果整批问题及其候选模型调用已经确定，控制面还能使用更窄的离线分支：把每种模型的载入成本、生成成本估计、worker 放置与整数 prompt 分片共同优化，只有预计生成工作足以摊销额外载入时才增加副本。一项[受限多模型批处理](https://arxiv.org/html/2606.03014v1)让每张 GPU 一次驻留一个模型、顺序执行多个 session；它不是模型内部 MoE 的 expert routing，也不改变上游选择哪些模型。全部复制虽然减少 straggler idle，却可能使短输出模型承受重复载入与过小 batch 的吞吐损失，因此 prompt 数均衡或把所有模型平均分四份都不是充分条件。<!-- source-family:SF-2026-ARXIV-2606-03014 -->
+
+前段排程与后段减少聚合调用还须分别结账：一致答案可以作为经验旁路信号，但不是已校准正确率；保留的争议样本通常更长，跳过大部分调用也不同比例缩短聚合墙钟。该离线四卡对照的激进旁路在部分题集损失准确率，不能用近似相同平均分签发无损服务，更不能把线性成本代理的最优排程当真实 batching 或在线 tail 的最优。上游选择、校准 profiling、求解、重载、全部专家生成、答案提取/聚合和回归均计费；路由人口、长度、硬件或质量条件漂移时，重测 profile/阈值，保留完整聚合与简单已验 placement，不让共识或较低 makespan 取得答案真值和 SLO 权威。<!-- source-family:SF-2026-ARXIV-2606-03014 -->
 
 ### Ready 只表示可释放，不能自动把工作提交给 Engine
 
@@ -1554,6 +1629,8 @@ SWE workflow 数据集上支持 ordering 是主要收益、adaptive budget 另�
 固定到同一 decoder；只有容量、故障或 SLO 触发迁移，迁移失败则回到逐 turn routing 或重算。调度器拥有 placement，
 runtime/cache owner 仍拥有真实 KV 和完成状态。
 
+这条分支还依赖会话内的实际相位差，而非只把pinning周期拉长。若首次输入很长、后续只追加少量tool结果，可把首turn送到prefiller，用当前活会话KV占用选择decoder并完成一次KV交接，让后续append与decode留在该处；首输入的离线prefill曲线回答入口负载，KV占用回答长期驻留压力，等待tool的活会话也不能从后者消失。[受限ConServe回放](https://arxiv.org/html/2606.01839v1#S4)支持这一机制，但其decoder有意过配、对照的逐turn误路由是模拟设定，容量规划仍依赖decode/驻留profile，不是任意流量无需估计；全分离还可取得更低最后turn TBT。长append、驻留偏斜或prefill/decode容量失衡时，应重验split与admission，保留collocated或逐turn迁移，而不由较低会话TTFET批准所有tail指标。<!-- source-family:SF-2026-ARXIV-2606-01839 -->
+
 pinning 减少预测误差与重复搬运，却可能造成长期热点、tenant skew 和故障放大；必须用 residency、conversation age、
 queue pressure 与迁移成本联合 admission。作者实验只覆盖其 disaggregated engine、模型、网络和 agent traces，不证明对任意
 会话长度或 tail SLO 最优。
@@ -1578,14 +1655,9 @@ shadow/canary 校准，并在误差超界时回退保守 capacity、aging/FIFO �
 
 ### Token Drift 改变剩余工作时，要重算队列承诺
 
-Admission 时用预测输出长度估算 service time，在长度稳定时足以支持 SJF 或静态优先级；推理过程中真实生成长度偏离估计后，
-继续沿用旧排序会让短请求被误判成长请求、长请求持续占用设备，并把最初的预测误差放大成 tenant starvation。调度器应把
-`admission estimate / observed tokens / remaining-work estimate / queue age / SLO slack` 保存在同一 request state，按 decode
-进展更新优先级。Estimator 只提供 hint，scheduler 才拥有队列顺序与 preemption commit。
+Admission 时按预测长度给请求排序，在分布稳定时是便宜的基线；当某类请求的实际输出持续偏离估计，可以把完成后的观测长度与该类基准长度之比做平滑，更新其 bias，再供后续请求的 admission estimate 使用。[受限漂移校正实验](https://arxiv.org/html/2606.02982v1#S2.SS10)把语义类别、估计工作量与 tenant 策略分开，但这不是按当前 Decode 进度持续重排已入队请求：该在线 reclassification/reordering 仍列为未来工作。Estimator 只提交估计，scheduler 才拥有顺序；若要消费当前 request 的 remaining work，还须另验进度 sensor、重排时效与实际 runtime state。
 
-持续重排减少 token drift 带来的 head-of-line blocking，却会引入重排开销、预测震荡和对长请求的不公平；观察窗口太短时，
-还可能把正常 early variance 当成永久趋势。估计不稳定或 aging threshold 触发时，应回退带 aging 的 SJF、FIFO/EDF 或保守
-reservation。作者实验只支持其多租户 workload 与 QoS 设置，不证明某个更新频率或权重适用于任意模型和 tail SLO。
+误差变小也不能直接签发尾延迟收益：该实验的输出长度是空白分词代理而非 tokenizer-exact token，bias 开/关对照报告估计误差，SJF 与 FIFO 的延迟比较则均启用 bias，因而未隔离校正本身对尾延迟的贡献。SJF 的整体延迟改善还伴随长请求等待增加和 Premium 服务差异变弱，不能把全局平均排序等同 tenant QoS。校准流量、遥测、状态维护与队列操作均计费，模型或流量漂移时重验长度口径、误差、调度及各租户结果；证据不足或净收益不成立时，保留静态基准、带 aging 的队列、FIFO/EDF 或保守 reservation，不以收敛 bias 代替硬 SLO。
 
 <!-- semantic-body-binding:SF-DRIFTSCHED-TOKEN-DRIFT -->
 
@@ -1646,6 +1718,44 @@ Chat serving 常以 TTFT/TPOT 排除某些 pipeline-parallel 配置；Agent work
 这会增加 workload replay 和资源归因成本。两种 360B+ MoE、64×H800 的 deterministic trace 不证明 PP 普遍最优；短对话或低复用 workload 仍可能由单机/TP 路径占优。
 
 ## Review notes
+
+本人注：`SF-2025-ARXIV-2510-18586` — Locke，Daily2025-10-23补Oct22；exact-v1 §3–7.4必要，2+2+2=6。仅工具停等窗/其它可填工作与KV搬运准入深入；保工具模拟、优先级方向/公平未闭、CPU/网络全费，不授真实tool分布或生产SLO。未核实现/复现，整体PRE/真实SAVE/完整自读/sole actualPOST仅按本日canonical实际层。
+
+- `SF-2025-ARXIV-2510-13668` — Daily2025-10-17补Oct16；R3唯一必要exact-v1 S3–6，2+2+2=6，仅持续剩长proposal/不迁移选项与迁移全费差额深入。保request70/15/15、20步间隔0.38%口径、vLLM0.9.2/4×4090D/1P3D/R1DistillQwen7B W8A8/ShareGPT-Alpaca、10Gbps TBT反侧、8–256 oracle模拟和stream非exact-once；未核实现/复现，PRE/SAVE/完整自读/solePOST按实际canonical。
+
+本人注：`SF-2025-ARXIV-2510-14392` — Schrodinger采用；Galileo首次必要R3，exact-v1 §2–5/Alg1，2+2+2=6，SLO-envelope/slack与time-context容量差额深入。保budget下限非硬deadline、PAB拒绝分母、表文倍率冲突/宽SLO退步及全费；不采用理论保证/普遍90.1%收益。未核实现/复现，整体PRE/真实SAVE/全自读/solePOST以本日canonical实际层为准。
+
+- `SF-2025-ARXIV-2510-02758` — Meitner，Daily2025-10-07补Oct06；[TokenFlow exact-v1](https://arxiv.org/html/2510.02758v1)§3.2–8/Eq1–6/Table1–2及图caption文字；2+2+2=6，消费buffer/KV预换接口差额深入。保Eq3方向未闭、消费率显式输入、effective throughput权重/输出长度身份、Fig13模型不一致、Andes重实现和全费，不授headline/硬SLO/跨节点或无卡顿。未核图像点值/源码/复现；实际PRE/SAVE/POST按本日canonical各自真实结果记录。
+
+- `SF-2025-ARXIV-2510-06419` — Daily2025-10-10补Oct09BJT；[exact-v1](https://arxiv.org/html/2510.06419v1)，2+2+2=6，A51完整抵达决定域S3–5/B–F/G2/G4必要，Jason R66限定采用/反侧通过；两HTTP200/exit28/第二643703B于G5T11截断保失败，不冒整HTML成功且不再抓无关尾。仅预制portfolio/有label选择/固定未来消费与摊销；保(N+1)/(N+2.5)总费vsamort、单specialistset/换5generalist、T1选择优ensemble及显著性口径未闭、合成bias非通用underfit，A10G制备/驻留/selector全费。未核尾表/曲线像素/源码/复现，不采scalinglaw/唯一bias或SLO；整体PRE/SAVE/selfread/solePOST只实际后到，不预签。
+
+- `SF-2025-ARXIV-2510-01565` — Hilbert，Daily2025-10-04补Oct03；exact-v1 §3–6/Alg1必要文字，2+2+2=6，具体两层候选/round-survival差额深入。保LB非deadline证、cold-group/latent/VAE全费及fixed-SP小图反侧，不授NP-hard印式、全局最优、strict-quality或生产SLO；未核图像素/code/复现。必要Source/actual owner/整体PRE与实际POST只按reader真实记录同步，不预签。
+
+- `SF-2025-ARXIV-2509-24957` — Singer，Daily2025-10-01补Sep30；[DUCHESS exact-v1](https://arxiv.org/html/2509.24957v1)§3–5/T1–2/F2–6caption、A1/A2文字必要，R74原2+2+2=6/R82有限必要通过。只forced-answer稳定性代理→高分早停/空槽加权fork→完成票人口反馈，不授oracle/独立票/硬SLO；保MLP非linear、离线未来标签与线上分责、beta口径/早停质量反侧/单run与CI范围、难度prefill/公平及全部标签轨迹/训练/提取/驻留/采样费用。未核全曲线像素、代码/真实服务或复现。A96原三项经Sartre R86整体PRE通过；root本轮独立新窄授后，Singer逐字真实SAVE并完整新增/直接两侧/本人注自读，交Sartre本项唯一actualPOST；Sartre R93本项唯一actualPOST已通过，整合即时生效且指定正文/本人注窄位释放；本尾仅同步既成事实，不第三研究或授DAY。
+
+- `SF-2025-ARXIV-2509-23384` — Singer，Daily2025-10-01补Sep30；[SynergySched exact-v1](https://arxiv.org/html/2509.23384v1)§3–7/Eq1–9/Alg1/T1–2/F7–11caption文字，R41日门/2+2+2=6与R58必要通过，不回填后版NexusSched。只共享延迟模型的消费者与Pmax/Work同尺度不可辨识边界；保一般二分单调反例、mean/SLO不同、T2聚合三字段联合不合、partialFlow回放与引擎/状态对照共变、异构实例/30秒unknown非生产容灾、全部profile/refit/CPU/UDP与请求回归费用。不授原公式执行recipe、硬SLO/全局最优/高R²即容量真值；未核图像素/代码或复现。R66原三项整体PRE已过，本轮root独立新窄授后按原稿真实SAVE，Sartre R76本项soleactualPOST已通过，整合生效且指定位释放；仅同步既成行政事实，不第三研究或授DAY。
+
+- `SF-2025-ARXIV-2509-26182` — Daily2025-10-02补Oct01；[Parallax exact-v1](https://arxiv.org/html/2509.26182v1)§3–4/F1–5caption，2+2+2=6。root A9首备→Helmholtz R10有限必要采用；只连续layer放置与snapshot/session路径选择分责，保DP终态印式未闭、1–2秒DHT非强实时、配置BF16/FP8参数数/FP16冲突、7卡公网测试与256卡planner分账，全部副本/规划/搬载/恢复费；不授在途KV恢复、全局最优、净生成倍率或生产SLO，未核实现/复现。R34原稿通过后真实保存，Helmholtz R38实际写后通过，指定段与本人注已生效释放。本尾只同步既成结果，不第三审阅或授整日完成。
+
+- `SF-2025-ARXIV-2509-24381` — Singer，Daily2025-10-01补Sep30；[RServe exact-v1](https://arxiv.org/html/2509.24381v1)§2.1.2–4.4/Alg1–2/Table1与有限F12a配置。原2+2+2=6，R2日期/准入、R4有限必要有效；仅ordered ready-prefix与不可分MM item/跨请求token budget分责差额深化，不授伪码完整recipe/异步释放安全证明。保PP4vsPP4+E1额外E卡、输出1token/平均TTFT、低粒度编码反侧、传输与高load差缩及全部费用，MMMU微退不作严格质量等价。未核代码/复现；原三项R7整体PRE通过，root本轮独立fresh新窄授后A16已逐字真实保存并完整自读全部新增/完整两侧/binding及本人注；Sartre R14唯一actualPOST通过，本段整合I1生效、指定正文/本人注窄位释放，仅同步既成行政态，不第三Source/PRE/POST或授DAY。
+
+- `SF-2026-ARXIV-2606-09061` — Daily2026-06-10补Jun09；[exact-v1](https://arxiv.org/html/2606.09061v1)§3–4必要，2+2+2=6，round-local active-prefill人口/有效进展差额深入。保Eq14 warm-start不全路径重验cap/粒度、regular LPRS反退、单GPU/Qwen3-8B/APC49:1局部与全控制费，不授硬SLO/全局resident cap/有界等待。jun10_review必要/actual owner/唯一literal§25/29通过，root授05933两段后/QBA前本单段及本人注，作者已真实保存并顺读完整直接两侧，待唯一实际POST；未核代码/复现，不授DAY。
+
+- `SF-2026-ARXIV-2606-01839` — Daily2026-06-03补Jun02；supp_jun03_close。正式2+2+2=6（R186定点撤原D3，无独立纠错对象；非工作量/Books改分）。首turn相位/两观测量与一次KV交接，时序只保支持分工不签原文不齐的完整绑定协议；保decoder过配、模拟AMPD、FullPD TBT反侧及容量profile/全部费用。必要原证见本日SUP_CLOSE_BATCH5_20261025.md；R183必要/actualowner及明确收窄经root授权后真实保存，作者已完整自读实际新增/完整直接两侧与本人注，非writer唯一实际POST R187通过，整合生效/本窄位释放；未核实现/复现，不授DAY。
+
+- `SF-2025-ARXIV-2509-17970` — Socrates，Daily2025-09-24补Sep23BJT；[exact-v1](https://arxiv.org/html/2509.17970v1) II–V/式1–4/TI–II与必要caption，作者22首备→Helmholtz R27一次必要采用，原2+2+2=6。仅独立memory/core clock候选画像与deadline/计量边界；保单轴拟合不证明全网格独立、能量非自动凸/全局最优、Orin/紧deadline反侧、IV-B模型身份口径冲突与device-TX非整服务能量及全部费用。未核曲线像素/实现/trace或复现；作者29原三项/Helmholtz R34整体纯PRE通过，root本轮fresh明确新窄授后已真实保存，完整自读记录见本日日志；Helmholtz R166唯一actualPOST已实际通过，I5生效且指定正文/本人注窄位释放；本尾仅同步既成行政事实，不第三Source/PRE/POST或授DAY。
+
+- `SF-2026-ARXIV-2606-05933` — jun06_continue，Daily2026-06-06补Jun05；R19AB/date/准入复用，2+2+2=6/唯一INFER-SCHEDULING Ch56。exact-v1 §2.2–5.5/Alg1–2/式2–22/表1–5必要，只两轮预算与批整体完成/anchor subset分责。保搜索无全局保证、inner/outer目标不同、tail/过期降级、百分点/峰谷比/分位口径差额与全费；未核图像素/代码/复现，硬件predictor与端到端范围不混，不授硬SLO/公平或完整后端兼容。R25必要/正式6/actualgap/原两段PRE通过，root本轮fresh新窄授后A31真实SAVE及完整自读，R26唯一非writer actualPOST实际通过，I10生效/指定窄位释放；本尾仅同步既成，不第三必要/正文或授DAY。
+
+- `SF-2026-ARXIV-2606-00735` — Daily2026-06-03补Jun02；exact-v1 §3–5/T2与A.2/Alg1–2，2+2+2=6。R124必要/实际Ch56具体差额/原单PRE通过，root实际保存，R126唯一非writer实际POST通过，整合生效。仅负载条件逐卡耗时曲线/EP placement静态分支；保FP8单节点/阶段代理、低QPS/Decode反退、非线性greedy非最优、cosine量级盲区、动态增量表述张力、迁移尖峰/rack投影与全费，不采完整在线recipe、质量等价或普遍SLO。未核像素/代码或复现。
+
+- `SF-DRIFTSCHED-TOKEN-DRIFT`：Daily2026-06-04补Jun03，exact-v1 II–V必要域，2+1+2=5因旧samefamily attribution冲突局部深入；仅完成后类别bias→未来admission，queued reclassification/reordering仍future，不继承旧Decode-progress实测归因。保wordproxy非exacttokens、ON/OFF误差与ON调度延迟两人口、单L4/单模型/三run与长job/tenant反侧及全费。不授因果尾SLO、完整EMA recipe或实现复现；R31必要Source/actualowner/原两段PRE通过，经本轮新授真实保存，独立reader R32唯一实际POST通过，指定窄位生效释放；仅同步既成事实，不第三Source/授DAY。
+
+- `SF-2026-ARXIV-2606-03014`：2+2+2=6；exact-v1 §2–5/7/A2/A4/A5/A6，finite offline modelcall placement/count/replica与residualaggregation分账；保分片非线性、4A100/vLLM.7.1/单驻留与RR条件、MMLU激进-.62pp/表文±.1不齐、K2解释不授最优和全部profiling/load/recruit费用。未核figure像素/实现或复现。独立reader R25–26已完成唯一实际POST并通过，指定窄位生效释放；仅行政同步既成层，不第三审或预DAY。
+
+- `SF-2026-ARXIV-2610-25212` — Daily2026-10-21，exact-v1必要域与完整反侧见本日AUTHOR Resume R-A6；R85必要Source/actual owner/完整PRE通过，无代码核验/复现，实际POST见本日REVIEW。
+
+- `SF-2026-ARXIV-2605-21312`：Daily 2026-05-22遗漏补查，Frontier exact-v1 §3.1–3.4/4/5、Tables4–6及§7，2+2+3=7。仅采用角色事件、scheduler→batch→cost→KV/admission反馈与分层校准；16 H800/vLLM0.10.2 V1有限实测，MTP强制acceptance、AFD离线标定、1024 GPU仅模拟，CPU与profile外切片未获保证。§3.4最坏PP profile与§5.1代表切片漏最坏、§5.2 E2E p95与§5 makespan口径张力均隔离，不采用数值强保证。root SUP_REVIEW R6已实际必要Source/日期/owner/PRE通过；本两段保存，待一次真实非writer POST，未声称实验复现。 保存态完整新增、完整直接两侧与本人注已由root真实非writer POST通过（本日SUP_REVIEW R9），指定窄位释放；前述待POST仅历史过程时态。本次仅同步既成事实，不重开Source/正文或预授DAY。
 
 - `SF-2026-ARXIV-2610-22731` — Daily2026-10-20窗Oct19；2+2+2=6，exact-v1 §2.3–2.5/4.2–4.3/5.1.1–3/7必要原证实际独核。只采outer autoscale消费inner completion/concurrency与key sharding/backpressure条件；Eq2 key数/每秒口径未建立一般量纲，故不采用公式为通用capacity定律。保低负载group退步、Little估计非实tail、51.1%与纯GPU不同人口、Flink组合配置、startup/failover与全费。当前Ch56 518/821host/919–946双scheduler实际比较，新两段补反馈/stream-key差额，Ch63不重复写。oct20_author_resume独立Source reader兼writer，root授新位，已实际完整顺读新增/直接两侧/本人注，root已实际非writer完整读取新增、直接两侧及本人注，POST通过、窄位释放，不授DAY；未核实现/复现。
 
@@ -2105,3 +2215,11 @@ Primary-source 校验入口：
 - `SF-2026-ARXIV-2610-06597` — Daily2026-10-07 Oct6；exact-v1 §3–4/T1–6/A1–4/B4必要；harness-engine消息作用域/意图需求能力结果分责，保100%load吞吐反退、citation质量差异、开发profile冻结与全部协调费用，2+2+2=6。未核artifact/复现；oct11_missing必要Source/date/owner及修订后逐字PRE通过，root总窄授权，作者已保存并自读；实际非作者POST另记，不预整日验收。
 
 - `SF-2026-ARXIV-2610-04537` — [exact-v1](https://arxiv.org/html/2610.04537v1)，Daily2026-10-07/Oct6窗，2+2+2=6；§2–5/T1–4/A1–5，UMA phase-admission/drain双账，cap≠active/TimeGate反侧/非E2ERAG。reader2 R2-11必要Source/date/owner通过，literal PRE/实际POST另记，未核实现/复现，不授DAY。
+
+- `SF-2025-ARXIV-2509-04827` — Carson继任Noether，Daily2025-09-09补Sep8；exact-v1 §3–6/Eq4–10/T1/A–C必要域由Noether/Ohm16实际读，Source/六分/具体owner/逐字PRE复用Ohm23，2+2+2=6。仅离散freq/batch边界的Decode路由与阶段控制分责，保PrefillRR、预测非SLO/最优、T1反侧/吞吐与全费，GPU能量非设施总量；不采用Eq2/3指数recipe。未核代码/复现；root本次授本单段/独立marker/本人注，已真实保存，Zeno33一次实际完整新增/完整两侧/本人注非writer POST通过，本指定位生效释放；仅同步既成事实，不授DAY。
+
+- `SF-2026-ARXIV-2605-23057` — Daily2026-05-26补May25；[ModeSwitch-LLM exact-v1](https://arxiv.org/html/2605.23057v1) §4–6/T1–3，2+2+2=6，具体请求级mode差额深入。只采用请求边界固定模式与最终目标/路由分类分责；保known benchmark标签、质量反退、完整装载成本和固定配置/FP16退路，不倒灌后版RequestRouter。指定reader必要Source/actualowner/逐字PRE通过，root授本两段及本人注，指定reader已实际重读保存正文、完整直接两侧与本人注，唯一非writer POST通过，窄位生效释放；未核实现/复现，不预授DAY。
+
+- `SF-2026-ARXIV-2606-00946` — root，Daily2026-06-03补Jun02，exact-v1 §4–5/B必要，2+2+2=6；必要Source/actual-owner与原单段PRE经独立reader R100通过。只policy-dependent决策快照/所选反馈、有界近期/多样回放与heuristic退路；保range非OOD保证、贪心/cache反侧、tie配方边界、V100功能混杂与专用资源/全费，不采无偏/普遍收敛、完整调度recipe、全局最优或生产SLO。未核图像素/代码/复现，原单段已实际保存并完整自读，R102唯一非writer实际完整新增/直接两侧/本人注POST通过，实际I生效、窄位释放；未授DAY，不第三有效Source/PRE。
+
+- SF-2025-ARXIV-2510-17015 — Socrates，Daily2025-10-22补Oct21；exact-v1 §3–5/IV-B/C必要，2+2+2=6，仅应用KV token-time成本→virtual finish tag调度差额。保固定模型/均匀耗时、预测误差与非抢占粒度、部分JCT反退和全费；不采cmax单位/误差未闭的硬delay或公平SLO，未核代码/复现。整体PRE/真实SAVE/自读/sole actualPOST见本日canonical实际层。

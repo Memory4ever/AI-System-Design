@@ -125,6 +125,10 @@ R requests:     X [R, d] * W [d, 4d]
 
 请求 batching 之外，single-query Attention 自身也可能缺少足够并行 tiles：batch 与 KV-head 数很小时，按历史长度禁止 sequence split 的阈值可能使设备闲置，即使该历史并不长。一条[Hopper 上的局部 FA3 decode 分支](https://arxiv.org/html/2604.00028v1)在 query length=1、四个 key-block、低 tile 供给的受测形状上放宽 split，较短或已饱和形状保持原路径；它增加并行工作，同时增加分块统计与合并成本，不减少完整 Attention 的数学工作。metadata 预计算后才有清楚的 kernel 收益，将它放回完整路径后改善很小，因此历史长度、batch、KV heads、tile 预算、metadata 与合并必须共同作为 guard 和成本身份。纯 BF16 kernel 对照不授任意 short-context、完整 TPOT 或服务 SLO；实际请求无净收益、shape 越界或数值验收失败时保留原 kernel 配置。<!-- source-family:SF-2026-ARXIV-2604-00028 -->
 
+低比特还会把单请求瓶颈从读权重推向同步，而不必等到权重全部进入缓存。多NUMA CPU把权重放在读取线程所属节点后，逐算子全局barrier仍会让快线程等待慢线程及节点leader；因此“没有跨节点reduction”并不保证更快。将head与FFN中间维按节点分开，可以用少量partial-sum reduction换取更局部的数据流和较少leader串行量化，但收益不能只归因于barrier数量：等待谁、每线程工作怎样分割，以及KV放置，都属于同一decode执行计划。
+
+[同kernels的受限NUMA对照](https://arxiv.org/html/2610.28620v2#S5)通过增加global barrier和替换跨节点写入分别检查这些解释，显示barrier数只解释部分差距；等量本地rows为何仍出现晚到线程，作者尚未确定。证据限两代双socket Intel、最多四NUMA节点与指定Llama结构的单stream decode，既不包含prefill/batching，也不保证greedy逐token相同；小模型还可能主要读L3，共享机干扰影响绝对等待量。改分工、节点缓冲和归约都需计费并回归数值；多请求可充分摊薄开销、结构不兼容或净延迟无收益时，成熟runtime、较少线程和普通batching仍是合理路径。<!-- source-family:SF-2026-ARXIV-2610-28620 -->
+
 ## MoE 怎样改变 Decode 的执行形态
 
 第 21 章说明 MoE 只激活部分 experts，第 40 章说明训练时 Expert Parallel 需要
@@ -340,6 +344,8 @@ Decode 把模型推理变成持续的状态推进问题。每个请求内部必�
 <!-- semantic-body-binding:SF-2026-ARXIV-2605-23074:end -->
 
 ## Review notes
+
+- `SF-2026-ARXIV-2610-28620` — Daily2026-10-22，[exact-v2](https://arxiv.org/html/2610.28620v2)§3–7/Table2–5/Fig6–8；v2只软件名格式，不另计重要修订。2+2+2=6，具体NUMA同步与分工差额深入；保leader量化、late-thread根因未明、KV公平baseline、小模型L3/共享机干扰及greedy非bitexact，不采普遍加速。作者E1/B1.1、reader R17/19 Source/owner/PRE通过；实际写后另见当日REVIEW，未核部署或复现。
 
 - `SF-2026-ARXIV-2604-00028` — [v1](https://arxiv.org/html/2604.00028v1) §2～5/Table1，2+1+2=5，具体decode shape guard深入；LQ=1、C++nblk4/LK512、batch1/HKV1or2低tile split3，≤384与饱和保原。H100 BF16 CUDAgraph交错A/B，precomputed metadata约1.21/1.24×，全路径约1～1.05×，非通用short-context或TPOT/SLO。未核代码、合并或复现。
 

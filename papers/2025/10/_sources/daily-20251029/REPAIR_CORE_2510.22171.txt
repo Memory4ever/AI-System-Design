@@ -1,0 +1,732 @@
+HARMONY: Hidden Activation Representations and Model Output-Aware Uncertainty Estimation for Vision-Language Models
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Problem Formulation
+2.1 Uncertainty Estimation
+2.2 Selective Prediction
+3 Related Works
+4 Proposed Method
+4.1 Motivation
+4.2 HARMONY
+5 Results
+5.1 Experimental Setup
+5.2 Results
+5.2.1 UE Performance
+5.2.2 Selective Prediction Performance
+5.3 Out-of-Distribution Generalization Performance
+5.3.1 Ablation across model layers and input signals
+5.4 Effect of Calibration Data
+References
+A Motivation
+A.1 Token-Level Semantic and Visual Importance
+A.2 Biased Probabilities and Language Priors
+A.3 Internal Hidden States as a Visual Understanding Signal
+B Additional Experiments and Details
+B.1 Dataset Information
+B.2 Training Strategy
+B.3 Some Representative Examples
+License: CC BY 4.0
+arXiv:2510.22171v1 [cs.CV] 25 Oct 2025
+HARMONY: Hidden Activation Representations and Model Output-Aware Uncertainty Estimation for Vision-Language Models
+Erum Mushtaq
+Affiliation: University of Southern California
+Zalan Fabian
+Affiliation: University of Southern California
+Yavuz Faruk Bakman
+Affiliation: University of Southern California
+Anil Ramakrishna
+††thanks: This work does not relate to their position at Amazon.
+Affiliation: Amazon AGI
+Mahdi Soltanolkotabi
+Affiliation: University of Southern California
+Salman Avestimehr
+Affiliation: University of Southern California
+Abstract
+The growing deployment of Vision-Language Models (VLMs) in high-stakes applications such as autonomous driving and assistive technologies for visually impaired individuals necessitates reliable mechanisms to assess the trustworthiness of their generation. Uncertainty Estimation (UE) plays a central role in quantifying the reliability of model outputs and reducing unsafe generations via selective prediction. In this regard, most existing probability-based UE approaches rely on output probability distributions, aggregating token probabilities into a single uncertainty score using predefined functions such as length-normalization. Another line of research leverages model hidden representations and trains MLP-based models to predict uncertainty. However, these methods often fail to capture the complex multimodal relationships between semantic and textual tokens and struggle to identify biased probabilities often influenced by language priors. Motivated by these observations, we propose a novel UE framework, HARMONY, that jointly leverages fused multimodal information in model activations and the output distribution of the VLM to determine the reliability of responses. The key hypothesis of our work is that both the model’s internal belief in its visual understanding, captured by its hidden representations, and the produced token probabilities carry valuable reliability signals that can be jointly leveraged to improve UE performance, surpassing approaches that rely on only one of these components. Experimental results on three open-ended VQA benchmarks, A-OKVQA, VizWiz, and PathVQA, and three state-of-the-art VLMs, LLaVa-7b, LLaVA-13b and InstructBLIP demonstrate that our method consistently performs on par with or better than existing approaches, achieving up to 4% improvement in AUROC, and 6% in PRR, establishing new state of the art in uncertainty estimation for VLMs.
+1 Introduction
+Consider a visually impaired person querying a Vision-Language Model (VLM) with the question "What type of medicine is this?" unaware that the provided image may be blurry, unclear, occluded, or otherwise miss the information necessary to identify the drug.
+If model generates an answer without an uncertainty estimate, then the answer is not trustworthy for the person. If model generates an inaccurate answer with high confidence, or consistently outputs an incorrect answer, then acting on its generation can cause serious consequences for the person. One of the key research problems about the trustworthiness of VLMs is whether they can output reliable uncertainty estimate over the correctness of its generation or can they say ‘I don’t know’ instead of generating an incorrect answer for what they don’t know.
+(a) Learnable UE scoring functions
+(b) Challenges of the multimodal UE problem
+Figure 1: Illustration of key challenges in UE problem for VLMs and how learnable scoring functions solve them. C1: Detect greater significance tokens. C2: learn how to aggregate token-level probability scores. C3: detect vision–text alignment especially for high-significance tokens. While LARS [32] addresses the C1 and C2 using text and probability scores, and MSF [6] focuses on C3 by exploiting hidden states, our proposed method, HARMONY, jointly leverages text and probability scores to capture semantically significant tokens and token level uncertainty, and hidden representations to determine vision-text misalignment, thereby yielding a more reliable selective prediction estimate.
+The UE problem is challenging due to auto-regressive nature of generation and multimodality. As shown in Figure 2, open-ended generations have multiple questions at the output, and some tokens may carry greater significance than the others and should be weighted
+more in UE estimation [5]. In addition, estimating uncertainty also involves aggregating the probabilities of individual tokens into a single UE score. Learning the aggregation function via heuristics such as mean [28], product [23] makes UE problem challenging due to factors such as length bias (shorter or longer responses affecting confidence score) [23], semantic bias (models favoring frequent phrases) [5] etc. Further, language prior is another challenge as VLMs are known for their tendency to overlook the evidence in the image, and over-rely on the language-priors [2].
+Many works have approached this problem via black-box formulations [23, 19, 29, 28, 2]. A key attraction of black-box methods is that they do not require training, and can work for proprietary-based models. In this regard, some works show that model’s consistency on its generation can be an indicator of its confidence [18, 19]. Others argue that self-prompting the model for its own generation can provide a better UE estimate [29]. Another line of work shows that evidence collection via asking relevant sub-questions can detect unreliable generation if the underlying VLM is well-calibrated, which in itself is a difficult condition to meet [28]. The other well-known formulation is white-box approach [31, 6]. This approach requires calibration datasets to train an auxiliary function. In this regard, prior works have shown that the hidden activation representations contain a multimodality reliability signal [31, 6]. They show its effectiveness by leveraging the representations of prompt, and answer to train an MLP-based reliability scoring function. The other work shows that training a transformer-like architecture on output probabilities can yield a good reliability score [32].
+Complementing the findings of [31] and [32], we hypothesize that both model’s internal states carrying model’s internal understanding of the vision modality, and output probabilities capturing token-level uncertainty carry valuable reliability signal, and leveraging them both simultaneously can yield a better uncertainty estimate. Based on these insights, we present HARMONY (Hidden Activation Representations and Model Output-Aware Uncertainty Estimation for Vision-Language Models), a transformer architecture-based UE function that integrates generated text, their associated token probabilities, and the hidden representations of the model. Specifically, we employ VisualBERT [20], a small-scale transformer with 113M parameters, which offers a relatively simple cost compared to training the original billion parameters VLM models.Through extensive experiments on three VQA benchmarks A-OKVQA, VizWiz, and PathVQA, and three frontier vision-language models (LLaVA-7B, LLaVA-13B, and InstructBLIP) and 8 existing UE baselines, we demonstrate that our method consistently performs on par with or better than existing black-box methods and learnable baselines, achieving up to 4% improvement in AUROC, 6% improvement in PRR, and up to 2.5% gain in the effective reliability metric, establishing new state-of-the-art performance in UE for VLMs.
+2 Problem Formulation
+2.1 Uncertainty Estimation
+Given a question q, and an Image ℐ\mathcal{I}, a VLM model parameterized by θ\theta generates an output response sequence s={s1,s2,..,sk}\textbf{s}=\{s_{1},s_{2},..,s_{k}\}, where kk denotes the length of the sequence. The UE methods quantify the uncertainty for the model’s predicted sequence ss given the input context. A naive way of estimating uncertainty is to calculate the probability of a generated sequence,
+P(s|q,ℐ,θ)=∏l=1LP(sl,|s<l,q,ℐ,θ)P(\textbf{s}|\textbf{q},\mathcal{I},\theta)=\prod_{l=1}^{L}P(s_{l},|s_{<l},\textbf{q},\mathcal{I},\theta)
+(1)
+where s<l=△{s1,s2,..,sl−1}s_{<l}\overset{\triangle}{=}\{s_{1},s_{2},..,s_{l-1}\}. Though there is no universally accepted definition of UE for LLMs and vision-language-models (VLMs) [30], our work adopts a broadly accepted practical definition from previous works [14, 33, 13], that is, for a given query q, image ℐ\mathcal{I} and generated response s, an effective UE should assign a low uncertainty score (indicating higher confidence) if s is reliable in the given context. In tasks such as VQA evaluation benchmarks, reliability refers to the correctness of s with respect to the set of ground truth(s)[33]. Here, we present some of the state-of-the-art black-box UE methods.
+Length-Normalized Scoring It is easy to note that the formulation given in 1 penalizes long sequences. Therefore,
+[23] fixes the issue of length penalization in sequence probabilities by proposing the following proxy metric,
+P~​(s|q,ℐ,θ)=∏l=1LP​(sl|s<l,q,ℐ,θ)1/L.\tilde{P}(\textbf{s}|\textbf{q},\mathcal{I},\theta)=\prod_{l=1}^{L}P(s_{l}|s_{<l},\textbf{q},\mathcal{I},\theta)^{1/L}.
+(2)
+Their proposed metric essentially normalizes the log probabilities by the length of the sequence.
+Entropy [23] is another baseline that leverages Monte-Carlo approximation and beam sampling. It generates multiple beams BB, and calculates the entropy approximation as
+ℋ(θ,q,ℐ)=−1B∑b=1BlogP~(sb|q,ℐ,θ)\mathcal{H}(\theta,\textbf{q},\mathcal{I})=-\frac{1}{B}\sum_{b=1}^{B}\text{log}\tilde{P}(\textbf{s}_{b}|\textbf{q},\mathcal{I},\theta)
+(3)
+.
+Semantic Entropy (SE) is an improved version of Entropy. It clusters semantically similar generations to reduce the entropy for consistent/semantically similar generations [19, 8]. It sums the scores of all generations belonging to each cluster c as
+P~​(c|q,ℐ,θ)=∑s∈cP~​(si|q,ℐ,θ)\tilde{P}(\textbf{c}|\textbf{q},\mathcal{I},\theta)=\sum_{\textbf{s}\in c}\tilde{P}(\textbf{s}_{i}|\textbf{q},\mathcal{I},\theta)
+(4)
+and approximates entropy as
+SE(θ,q,ℐ)=−1|C|log∑i=1CP~(ci|q,ℐ,θ)SE(\theta,\textbf{q},\mathcal{I})=-\frac{1}{|C|}\text{log}\sum_{i=1}^{C}\tilde{P}(\textbf{c}_{i}|\textbf{q},\mathcal{I},\theta)
+(5)
+.
+Cluster Entropy is another variation of Entropy that counts the number of generations in a cluster and calculates the entropy over normalized counts of clusters [19]. Note that entropy and SE are computationally expensive methods that require multiple beams for a better estimation of uncertainty.
+Self Evaluation is another popular baseline that asks the model itself to evaluate its own generation and uses the confidence of the correctness token as an uncertainty estimate [29, 28].
+First Token is another baseline that addresses the probability aggregation problem by leveraging only the confidence score of first token of the generated response P(s0,|q,ℐ,θ)P(s_{0},|\textbf{q},\mathcal{I},\theta) .
+2.2 Selective Prediction
+A practical use case of uncertainty estimation methods is selective prediction task, where based on the uncertainty estimation function f(.)f(.), a decision function g(.)g(.) is used to determine whether system choose to answer the question or abstain [7]. For the generated sequence s by a VLM, selective system 𝒮VLM\mathcal{S}_{\text{VLM}} will be as follows,
+𝒮VLM​(q,ℐ)={s,if ​g​(s)=1∅,otherwise \mathcal{S}_{\text{VLM}}(\textbf{q},\mathcal{I})=\begin{cases}\textbf{s},&\text{if }g(\textbf{s})=1\\
+\emptyset,&\text{otherwise }\end{cases}
+where g(s)=𝕀{f(s)>γ}g(\textbf{s})=\mathbb{I}\{f(\textbf{s})>\gamma\} given a threshold γ\gamma, 𝕀\mathbb{I} being an indicator function. Threshold γ\gamma that provides best differentiation between the correct and incorrect generations is selected from the calibration dataset. f(.)f(.) can be any UE function, for example, length-normalized confidence P~​(s|q,ℐ,θ)\tilde{P}(\textbf{s}|\textbf{q},\mathcal{I},\theta), Entropy ℋ⁡(θ,q,ℐ)\mathcal{H}(\theta,\textbf{q},\mathcal{I}), and Semantic Entropy S​E​(θ,q,ℐ)SE(\theta,\textbf{q},\mathcal{I}) are some of the examples from the above-mentioned UE methods. A model can select to output the prediction if the UE score is above the selected threshold or abstain; output ‘I don’t know’ otherwise. In our work, we mainly focus on the use of UE methods that solely rely on the signals from the models, and evaluate them for the selective prediction task.
+3 Related Works
+The existing uncertainty estimation methods can be broadly categorized into four types: i) Self-Checking methods, ii) Output Consistency methods, iii) Internal state examination methods and iv) Token Probability methods.
+Self-Checking methods: these methods rely on the model’s ability to evaluate its own correctness via self-evaluation over its generated answer [29, 28]. These works are known for their ability to reduce surface-form competition variations reflected in the output probabilities [11], and have been explored for both large-language models (LLMs) [29] and VLMs [28]. However, it has been shown that the self-evaluated confidence of the model is insufficient to be a good estimate of uncertainty [17].
+Output Consistency methods: uncertainty for these methods is estimated via examining the consistency of the generated output over multiple question rephrasings [8, 18, 27] or examining model confidence over relevant sub-questions [28]. The question rephrasings [18] or beam sampling based methods [8] are considered expensive due to multiple forward passes required of the large VLMs. Sub-question-based approaches [28] further add to the cost by requiring additional steps such as evidence collection, sub-question formulation, and relevance verification. Additionally, these methods assume that the VLM is well-calibrated, an assumption that does not always hold in practice.
+Internal state examination methods: these works look at the model’s hidden activation representations [6]. Existing works [31, 6] exploit the representation vector of image, question and answer to predict the correctness of the response via an MLP-based learnable scoring function. While effective, these works require calibration datasets to train the function. Further, they train simple architectures such as learnable multi-layer perceptron (MLP)-based scoring functions to achieve the objective.
+Token Probability methods: these methods use token probabilities assigned by the model at the output to predict the uncertainty [23, 19]. In most cases, VLM-based UE methods frame open-ended visual question answering (VQA) tasks as multiple-choice problems [18, 31]. herefore, token probability methods remain relatively unexplored for generative VLMs. Some approaches leverage output probabilities and require calibration datasets for effective uncertainty estimation [32].
+Our proposed method, HARMONY, integrates both internal state examination and token probability methods, combining their strengths to achieve a more robust UE framework.
+4 Proposed Method
+4.1 Motivation
+Semantic Significance and Inter-Token Dependencies: A well-calibrated model should exhibit a consistent relationship between its correctness and the probabilities it assigns to its predictions. In free-form generation, VLMs produce multiple tokens in an auto-regressive manner. Estimating uncertainty in this context involves aggregating the probabilities of individual tokens into a single uncertainty estimation score using a predefined scoring function. This makes UE inherently challenging due to factors such as length bias (shorter or longer responses affecting confidence score) [23], semantic bias (models favoring frequent phrases or syntactic structures) [5] that are often implicit, but significantly impact UE. Various functions proposed in the LLM literature aim to address different aspects of this aggregation process. For example, length-normalized scoring [23] mitigates length bias, while semantic entropy [19] captures uncertainty across semantically similar responses. However, identifying an effective aggregation strategy through heuristics remains challenging due to inter-token dependencies and various inherent biases for the given vision and text context.
+Language Priors: For VLMs, assessing token-level semantic significance alone may be insufficient for reliable uncertainty estimation. That is because VLMs are known for their tendency to overlook the evidence in the image, and over-rely on the language-priors. Consider the example question for which the model responds with ‘The man is looking up’. The uncertainty associated with the token ‘up’ should ideally reflect the model’s understanding of the visual scene. However, VLMs may assign a high probability to such tokens due to increasing confidence as the generation progresses, regardless of whether the visual input supports the claim. Therefore, the output probabilities can be biased towards language priors, and may not always be sufficient to yield a good reliability estimate. To address this challenge, we leverage hidden states. We discuss it further in Appendix Section A.
+4.2 HARMONY
+Let ff be the scoring function that takes four inputs: the question q=(q1,q2,..,qK)\textbf{q}=(q_{1},q_{2},..,q_{K}), the generated response s=(s1,s2,..,sL)\textbf{s}=(s_{1},s_{2},..,s_{L}), the token probabilities p=(p1,p2,..,pL)\textbf{p}=(p_{1},p_{2},..,p_{L}), and the model’s hidden-states H=(h1,h2,..,hK,…,hK+L)\textbf{H}=({\textbf{h}_{1},\textbf{h}_{2},..,\textbf{h}_{K},...,\textbf{h}_{K+L}}) corresponding to q and s. Here, pip_{i} denotes the probability of generated sequence token ii, and each hidden state
+hi∈RN\textbf{h}_{i}\in R^{N} vector, where N represents the number of hidden units at a specific layer. It is worth-noting that the first KK vectors in H correspond to the question tokens, while the remaining LL represent the generated tokens. We use the hidden states of the tokens right after the visual tokens, as they inherently encode cross-modal interactions, capturing information transferred from visual tokens to text tokens. Note that our inputs consist of varied nature i.e, texts, probabilities which are real numbers, and hidden states which are high dimensional vectors requiring a structured approach to model their inter-dependencies in a sequential manner.
+(a) VLM Inference
+(b) Probability Token Embeddings
+(c) HARMONY
+Figure 2: An illustration of calibration data collection phase (left), probability token embedding design (middle) and the scoring function architecture (right). Subfigure 2(b) shows the orthogonal embedding vectors design of different probability quantiles. Subfigure 2(c) demonstrates how varied inputs are used to train a transformer like architecture, VisualBERT, to predict the reliability score.
+Scoring Function Given the sequential nature of input data, we leverage the pretrained VisualBERT architecture, an extension of the encoder-based BERT model. VisualBERT is by design suitable for taking text and high-dimensional visual features as inputs. It maintains two separate sets of embeddings EE and FF that correspond to text and visual features, respectively. For text data, it tokenizes the input and maps each token to a set of embeddings, e∈Ee\in E. Likewise, for the vision context, it leverages pre-computed high-dimensional visual features corresponding to different regions of the images. It takes the visual features as input and assigns them an embedding f∈Ff\in F.
+Input Mapping VisualBERT is naturally well-suited for textual input. Therefore, question and answer text tokens can be easily integrated into the input to the model. However, for hidden states, we project hidden representations to the space of model’s visual embeddings via linear projection, and use them as an input. Further, to encode probability information, we leverage a third set of embedding which is inspired by work [32]. The key idea is that the probability range [0,1] can be split into a fixed k partitions. For the given dimension dd of input embedding, if pip_{i} falls in the range of r-th partition, the vector positions between (r−1)×k​d(r-1)\times kd and r×k​dr\times kd are set to one while all other positions are set to zero. This allows representation of distinct probability ranges via orthogonal embedding vectors.
+Learnable Task At the input, we have question, followed by generated tokens and their corresponding probabilities, further followed by hidden representations of the question and the generated tokens as shown in the Figure 2(c). Given these input, the task is to predict the correctness of the generation s for which we augment the VisualBERT model at the output via linear layer that gives a single logit output, f⁡(q,s,H,p)f(\textbf{q},\textbf{s},\textbf{H},\textbf{p}). We employ binary cross-entropy loss,
+ℒ⁡(f⁡(q,s,H,p),g)=−[g​log⁡(f⁡(𝐪,𝐬,𝐇,𝐩))+(1−g)​log⁡(1−f⁡(𝐪,𝐬,𝐇,𝐩))]\mathcal{L}(f(\textbf{q},\textbf{s},\textbf{H},\textbf{p}),g)=-\left[g\log(f(\mathbf{q},\mathbf{s},\mathbf{H},\mathbf{p}))+(1-g)\log\left(1-f(\mathbf{q},\mathbf{s},\mathbf{H},\mathbf{p})\right)\right]
+(6)
+where gg is the binary ground-truth label (of accuracy for generation s as an answer to q) used here as a target. Note that both VisualBERT model and the linear projection layer are fine-tuned on this reliability score prediction task.
+5 Results
+5.1 Experimental Setup
+Datasets and Models We evaluate our work on three VQA datasets, A-OKVQA [26], VizWiz [9] and a PathVQA [10]. The A-OKVQA datasets require reasoning and common sense alongside visual information. The VizWiz dataset covers a challenging setup, where each image is taken by a blind/visually impaired individual and accompanied by spoken questions about the images. These questions are then transcribed. PathVQA is a medical imaging VQA dataset. To train the scoring function, we leverage the training splits of the corresponding datasets. We use a 80% and 20% split to construct a train and a validation split, respectively. To evaluate the performance of the scoring function, we use the validation split given with the dataset as a test split. We provide further details of datasets and training strategy/hyper-parameters in Appendix B.2. We evaluate our method on three open-sourced VLMs: LLaVA-7b [22], LLaVA-13b [21] and InstructBLIP [12]. InstructBLIP uses FlanT5-XL [25] as the LLM backbone. All these models are instruction-tuned on the VQA task.
+Evaluating UE Performance
+To assess the correctness of generated outputs, we employ LAVEGPT-3.5\text{LAVE}_{\text{GPT-3.5}} [24] as an evaluator, following the approach of prior work [28]. LAVE employs a large language model to estimate the semantic similarity of each predicted answer to the crowdsourced answers in the benchmark. We regard a score greater than 0 (one or more matches) as correct label and a score of 0 (no-matches) as incorrect. Following previous UE works on auto-regressive models [5, 32], we use AUROC (Area Under the Receiver Operating Characteristic) as our evaluation metric. It is commonly used to evaluate the performance of binary classifiers [19]. The score range for AUROC is 0.5 (random) to 1 (perfect).
+We also report the prediction rejection ratio (PRR), another widely used metric for evaluating UE in [23]. PRR quantifies the relative precision gain obtained by rejecting low-confidence predictions, measuring how much precision improves as increasingly uncertain outputs are discarded [16]. It can be defined as the gap between the area under the rejection curve (AUC) of the evaluated uncertainty scores and that of a random baseline, normalized by the gap between an oracle UE baseline and the same random baseline:
+PRR=AUCbaseline−AUCrandAUCoracle−AUCrand\text{PRR}=\frac{\text{AUC}_{\text{baseline}}-\text{AUC}_{\text{rand}}}{\text{AUC}_{\text{oracle}}-\text{AUC}_{\text{rand}}}
+(7)
+where AUCbaseline\text{AUC}_{\text{baseline}} signify the area under the precision-rejection curve for the given baseline method, AUCoracle\text{AUC}_{\text{oracle}} are the oracle scores aligning perfectly with the correctness, and AUCrand\text{AUC}_{\text{rand}} corresponds to the random rejection. The PRR ranges from 0 (random) to 1 (perfect).
+Evaluating Selective Prediction Performance
+Following the previous work [31], we also evaluate the performance of our scoring function on threshold based evaluation by computing the coverage and risk, and effective reliability (ER) metrics which are explained below.
+Coverage, Risk and ER Coverage is the portion of questions that model opted to answer. That is, given the decision function g(.)g(.) on the dataset 𝒟\mathcal{D} with input si\textbf{s}_{i}, coverage is defined as:
+𝒞⁡(g)=1|D|​∑si∈Dg⁡(si)\mathcal{C}(g)=\frac{1}{|D|}\sum_{\textbf{s}_{i}\in D}g(\textbf{s}_{i})
+(8)
+whereas risk is the error on the portion of questions covered by the model such as:
+ℛ⁡(g)=∑si∈D(1−Acc​(si)).g⁡(si)∑si∈Dg⁡(si)\mathcal{R}(g)=\frac{\sum_{\textbf{s}_{i}\in D}(1-\text{Acc}(\textbf{s}_{i})).g(\textbf{s}_{i})}{\sum_{\textbf{s}_{i}\in D}g(\textbf{s}_{i})}
+(9)
+where Acc(.) is the accuracy of the generated sequence si\textbf{s}_{i}. Note from the definition of g(.)g(.) that for lower thresholds, model covers more questions, however, risk on those questions increases. Therefore, at different risk levels, we obtain different coverages. In our evaluation, we evaluate coverage at 10%10\% and 20%20\% risk levels. An ideal UE estimate should yield low-risk and high coverage. ER calculates these two characteristics by assigning a reward of 1 to each question that is answered correctly, penalizes the questions that are answered wrong by a cost of 1, and gives zero reward to the questions that model abstains on. To calculate ER, we compute the threshold maximizing ER on the validation split of the calibration set, and use that threshold on the test set to report the performance.
+Baselines
+We include a range of black-box approaches, including length-normalized confidence [23], first-token confidence [34], and self-eval [28], Entropy, Semantic Entropy, and Cluster Entropy [8]. Semantic Entropy, which measures consistency among semantically similar answers and can be regarded as an alternative implementation of [18]. Finally, we consider supervised training-based methods, including MSF (Multimodal Selection Function) [31], which trains an MLP on hidden representations of the prompt and generated answer, and LARS [32], which trains a transformer architecture on the token probabilities predicted by the base model.
+5.2 Results
+Table 1: AUROC and PRR scores on A-OKVQA and VizWiz dataset
+LLaVA - 7b
+LLaVA - 13b
+Instruct-BLIP
+UE Method
+AUROC(%)
+PRR(%)
+AUROC(%)
+PRR(%)
+AUROC(%)
+PRR(%)
+AOKVQA
+Length-Normalized Confidence
+74.55
+61.45
+77.50
+67.04
+74.13
+56.60
+First Token Confidence
+69.39
+33.16
+72.96
+41.35
+75.09
+58.47
+Self-Eval Confidence
+71.53
+54.48
+63.04
+54.43
+76.12
+62.75
+Entropy
+61.38
+35.65
+67.57
+49.23
+54.15
+30.15
+Semantic Entropy
+78.39
+68.48
+80.83
+69.89
+73.72
+52.20
+Cluster Entropy
+69.87
+52.27
+68.90
+50.89
+71.00
+51.11
+MSF
+78.66
+67.01
+77.64
+67.07
+79.93
+67.31
+LARS
+79.90
+68.95
+81.46
+73.70
+80.07
+68.31
+HARMONY [Ours]
+83.99
+75.05
+83.72
+77.09
+81.73
+72.03
+(+4.09)
+(+6.10)
+(+2.26)
+(+3.36)
+(+1.66)
+(+3.72)
+VizWiz
+Length-Normalized Confidence
+71.94
+44.30
+75.61
+55.32
+77.57
+75.51
+First Token Confidence
+69.76
+43.06
+71.52
+46.65
+76.00
+56.48
+Self-Eval Confidence
+63.09
+30.62
+67.22
+42.06
+73.43
+52.01
+Entropy
+33.84
+15.16
+41.54
+19.32
+38.31
+28.72
+Semantic Entropy
+64.04
+21.82
+70.89
+38.21
+66.43
+27.90
+Cluster Entropy
+59.86
+18.83
+65.23
+30.25
+66.09
+30.40
+MSF
+85.66
+74.43
+86.43
+74.42
+86.62
+73.67
+LARS
+80.50
+64.13
+85.29
+73.09
+86.34
+72.14
+HARMONY [Ours]
+87.26
+76.83
+88.71
+79.68
+86.63
+73.75
+(+1.60)
+(+2.40)
+(+2.28)
+(+5.26)
+(+0.01)
+(+0.08)
+5.2.1 UE Performance
+Table 2: UE Performance on PathVQA
+LLaVA - 13b
+UE Method
+AUROC(%)
+PRR(%)
+Length-Normalized Confidence
+82.35
+55.59
+First Token Confidence
+82.27
+54.35
+Self-Eval Confidence
+63.81
+35.50
+Entropy
+70.71
+32.88
+Semantic Entropy
+64.15
+36.27
+Cluster Entropy
+64.97
+35.93
+MSF
+96.53
+93.07
+LARS
+96.89
+93.69
+HARMONY [Ours]
+97.31
+94.80
+(+0.42)
+(+1.14)
+We present the results of comparison of our method HARMONY with other UE baselines on A-OKVQA and VizWiz datasets in Table 1. Among the black-box methods, for the AOKVQA daatset, we observe that SE is a strong baseline among all the black-box methods considered in our study for LLaVa model series. However, for InstructBLIP model, self-eval performs relatively better. Note that self-eval requires two forward passes, whereas SE requires five forward passes. Therefore, they can be expensive, requiring multiple forward passes of the 7B or 13B models. On the contrary, our method, HARMONY, uses VisualBERT, consisting of 113M parameters, and requires only one forward pass to yield the reliability score. Further, for VizWiz dataset consisting of unanswerable question, LCS performs better across all models. Among trainable functions, multimodal selection function (MSF) and LARS improves upon the LNC consistently across all datasets, and all models. However, our proposed method HARMONY consistently performs on par or better than LARS and MSF achieving upto 4% increase in AUROC scores and 6% increase in the PRR scores.
+Medical imaging Dataset: We also report the UE performance on medical imaging dataset, PathVQA dataset. For this dataset, we find that the output probability based scoring functions, such as LNC, first token, self-eval, entropy, semantic entropy, and cluster entropy perform significantly lower than the learnable functions as shown in 2. Further, HARMONY achieves state-of-the-art performance indicating its ability to capture visual-language uncertainty in medical domain as well.
+5.2.2 Selective Prediction Performance
+Here, we present the evaluation of the learnable scoring UE baselines on the selective prediction task. Before we compare these methods, it is important to mention that for trainable functions, we select the best model checkpoints based on the AUROC scores. However, a user may choose a different criterion such as ER to achieve higher performance on this downstream task. The objective here is to present a practical use case, and compare the performance of the learnable UE methods.
+Table 3: Selective Prediction Performance: Coverage at risks (10% & 20%) and ER (cost=1)
+LLaVa - 7b
+LLaVa - 13b
+Instruct-BLIP
+UE Method
+ER(%)
+C@R=10%
+C@R=20%
+ER(%)
+C@R=10%
+C@R=20%
+ER(%)
+C@R=10%
+C@R=20%
+AOKVQA
+MSF
+49.17
+43.75
+80.17
+53.19
+50.56
+89.52
+38.15
+32.66
+60.08
+LARS
+49.78
+50.65
+82.53
+53.71
+61.83
+90.48
+37.73
+31.27
+61.83
+HARMONY [Ours]
+52.31
+60.61
+85.59
+55.90
+64.80
+92.23
+38.25
+36.77
+63.32
+VizWiz
+MSF
+21.30
+15.00
+34.15
+23.47
+11.90
+37.76
+13.01
+9.15
+19.84
+LARS
+15.72
+4.91
+21.53
+19.14
+8.86
+29.08
+12.82
+6.85
+17.13
+HARMONY [Ours]
+21.93
+16.37
+36.03
+24.69
+20.24
+41.11
+13.38
+9.23
+19.94
+First, we report how many questions are covered by our method at 10% and 20% risk levels. The larger the number, the better performance. We observe that our proposed method consistently achieves higher coverage across various models, and datasets. We also report ER metric, which represents a better tradeoff between coverage and risk due to a penalty on the incorrectly covered question. For the comparison, we select a threshold for each method giving best ER on the validation split of calibration set, and compute effective reliability using that threshold on the test set. For this metric, our method either performs similar or outperforms other methods achieving up to 2.5% higher score. This highlights its potential to yield higher coverage while inuring lower risks. As an example, we present some sample questions in 6 and compare the decision predictions on the trainable functions. While training on either output distributions or hidden representations alone can lead to contradictory or consistently incorrect decisions, leveraging both simultaneously results in better decision functions.
+Figure 3: Out-of-Distribution Generalization.
+5.3 Out-of-Distribution Generalization Performance
+To evaluateout-of-distribution (OOD) generalization, we test the LLaVA-13B model trained on the A-OKVQA dataset, which focuses on visual reasoning, by introducing OOD samples from the OKVQA dataset. The experimental setup, illustrated in Figure 3, progressively increases the proportion of OOD samples in the evaluation set. Specifically, the x-axis denotes the percentage of OOD data, where, for example, 33% corresponds to a test mixture containing 33% OKVQA (OOD) samples and 66% A-OKVQA (in-distribution) samples. As the proportion of OOD data increases, we observe a consistent decline in AUROC scores across all supervised baselines, including model confidence based scoring such as Length Normalized Confidence indicating a degradation in uncertainty calibration under distributional shift. In contrast, HARMONY consistently achieves higher AUROC values, demonstrating relatively better generalization to unseen data distributions.
+5.3.1 Ablation across model layers and input signals
+Table 4: AUROC (%) of HARMONY and MSF on LLaVA-7B across hidden layers.
+Layer
+HARMONY
+MSF
+32
+80.97
+75.92
+24
+81.77
+76.43
+20
+82.84
+76.61
+16
+83.99
+77.76
+12
+82.69
+78.66
+8
+80.83
+76.75
+Our hypothesis is that internal layers have a signal of multimodal reliability, however, it is not clear which layer would provide the best signal. Previous works have highlighted that inner layers (layers closer to the input) focus more on extracting lower-level information from the input, while outer layers (layers closer to the model output) are mostly focused on the next token generation [3]. Therefore, for all the models, we ablate over every fourth layer for both MSF, and our method. We report the best performing layer results in Table 1. We observe that for LLaVa-7b and 13b models, inner layers (layer 16 and layer 22) yield the best AUROC performance for our method across both datasets. Further, for InstructBLIP, we find the outer-most layer performs the best.
+Table 5: Ablation over input signals, generated tokens (text), probability associated with each token (Prob), and hidden states of the input prompt, on LLaVA-13B model and A-OKVQA dataset.
+Architecture
+Text
+Prob
+HS
+PRR (%)
+AUROC (%)
+VisualBERT
+✓
+×\times
+×\times
+23.06
+59.45
+VisualBERT
+✓
+✓
+×\times
+72.17
+80.23
+VisualBERT
+✓
+×\times
+✓
+71.98
+80.72
+VisualBERT (Ours)
+✓
+✓
+✓
+77.09
+83.72
+We conduct an ablation study on partial input signals, generated tokens (Text), token-level probabilities (Prob), and hidden states (HS), using the LLaVA-13B model on the A-OKVQA dataset. We use VisualBERT as the scoring function transformer architecture for this study. As shown in 5, we find that text (question and generated answer) without the token probabilities and hidden states yield no significant UE estimate. However, addition of token probabilities accompanying each token text helps the scoring function learn a better UE estimate. Likewise, if we use text and hidden states of the generated tokens as input signals, they yield results comparable to the text and probability baseline. However, combining all three sources of information as proposed in our workyield significantly better reliability estimates.
+Figure 4: Effect of calibration data size on the UE performance [A-OKVQA dataset].
+5.4 Effect of Calibration Data
+For learnable functions, it important to conduct an ablation study to investigate how the function’s performance scales with the amount of calibration data. For this, we vary the calibration set size with LLaVA-13b model and report AUROC. As shown in Figure 4, increasing the calibration data size consistently enhances the AUROC scores across all learnable baselines. We also observe that HARMONY requires at least 2,000 samples to achieve performance comparable to LNC, and approximately 6,000 samples to surpass existing SOTA baselines. This trend highlights that while learnable approaches benefit significantly from more calibration data, their relative advantage becomes more apparent only once sufficient data are available to capture the diversity of uncertainty patterns in multimodal settings.
+Conclusion
+This work introduces a novel uncertainty estimation method HARMONY for Vision-Language Models that effectively combines hidden activation representations with output token probabilities and generated token text. By jointly leveraging model internal states, generated tokens and output beliefs in a sequential fashion, our proposed framework provides a more holistic reliability assessment, complementing probability-based and representation-based approaches. Our extensive experiments on AOKVQA and VizWiz datasets demonstrate that our method significantly improves UE for multimodality, achieving up to 4% AUROC, 6% PRR, and 2.5% effective reliability score improvements over existing state-of-the-art UE methods.
+References
+[1]
+Estelle Aflalo, Meng Du, Shao-Yen Tseng, Yongfei Liu, Chenfei Wu, Nan Duan, and
+Vasudev Lal.
+Vl-interpret: An interactive visualization tool for interpreting
+vision-language transformers.
+In Proceedings of the IEEE/CVF Conference on computer vision and
+pattern recognition, pages 21406–21415, 2022.
+[2]
+Kiana Avestimehr, Emily Aye, Zalan Fabian, and Erum Mushtaq.
+Detecting unreliable responses in generative vision-language models
+via visual uncertainty.
+In ICLR Workshop: Quantify Uncertainty and Hallucination in
+Foundation Models: The Next Frontier in Reliable AI, 2025.
+[3]
+Amos Azaria and Tom Mitchell.
+The internal state of an llm knows when it’s lying.
+arXiv preprint arXiv:2304.13734, 2023.
+[4]
+Amos Azaria and Tom Mitchell.
+The internal state of an LLM knows when it‘s lying.
+In Houda Bouamor, Juan Pino, and Kalika Bali, editors, Findings
+of the Association for Computational Linguistics: EMNLP 2023, pages
+967–976, Singapore, December 2023. Association for Computational
+Linguistics.
+[5]
+Yavuz Faruk Bakman, Duygu Nur Yaldiz, Baturalp Buyukates, Chenyang Tao,
+Dimitrios Dimitriadis, and Salman Avestimehr.
+Mars: Meaning-aware response scoring for uncertainty estimation in
+generative llms.
+In Proceedings of the 62nd Annual Meeting of the Association for
+Computational Linguistics (Volume 1: Long Papers), pages 7752–7767, 2024.
+[6]
+Corentin Dancette, Spencer Whitehead, Rishabh Maheshwary, Ramakrishna Vedantam,
+Stefan Scherer, Xinlei Chen, Matthieu Cord, and Marcus Rohrbach.
+Improving selective visual question answering by learning from your
+peers.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, pages 24049–24059, 2023.
+[7]
+Ran El-Yaniv et al.
+On the foundations of noise-free selective classification.
+Journal of Machine Learning Research, 11(5), 2010.
+[8]
+Sebastian Farquhar, Jannik Kossen, Lorenz Kuhn, and Yarin Gal.
+Detecting hallucinations in large language models using semantic
+entropy.
+Nature, 630(8017):625–630, 2024.
+[9]
+Danna Gurari, Qing Li, Abigale J Stangl, Anhong Guo, Chi Lin, Kristen Grauman,
+Jiebo Luo, and Jeffrey P Bigham.
+Vizwiz grand challenge: Answering visual questions from blind people.
+In Proceedings of the IEEE conference on computer vision and
+pattern recognition, pages 3608–3617, 2018.
+[10]
+Xuehai He, Yichen Zhang, Luntian Mou, Eric Xing, and Pengtao Xie.
+Pathvqa: 30000+ questions for medical visual question answering.
+arXiv preprint arXiv:2003.10286, 2020.
+[11]
+Ari Holtzman, Peter West, Vered Shwartz, Yejin Choi, and Luke Zettlemoyer.
+Surface form competition: Why the highest probability answer isn’t
+always right.
+arXiv preprint arXiv:2104.08315, 2021.
+[12]
+Jiaxing Huang, Jingyi Zhang, Kai Jiang, Han Qiu, and Shijian Lu.
+Visual instruction tuning towards general-purpose multimodal model: A
+survey.
+arXiv preprint arXiv:2312.16602, 2023.
+[13]
+Xinmeng Huang and et al.
+Uncertainty in language models: Assessment through rank-calibration.
+In EMNLP, 2024.
+[14]
+Mingjian Jiang and et. al.
+Graph-based uncertainty metrics for long-form language model
+generations.
+NeurIPS, 2024.
+[15]
+Omri Kaduri and et al.
+What’s in the image? a deep-dive into the vision of vision language
+models.
+CVPR, 2025.
+[16]
+Sungmin Kang, Yavuz Faruk Bakman, Duygu Nur Yaldiz, Baturalp Buyukates, and
+Salman Avestimehr.
+Uncertainty quantification for hallucination detection in large
+language models: Foundations, methodology, and future directions, 2025.
+[17]
+Sanyam Kapoor, Nate Gruver, Manley Roberts, Katherine M. Collins, Arka Pal,
+Umang Bhatt, Adrian Weller, Samuel Dooley, Micah Goldblum, and Andrew Gordon
+Wilson.
+Large language models must be taught to know what they
+don’t know.
+In The Thirty-eighth Annual Conference on Neural Information
+Processing Systems, 2024.
+[18]
+Zaid Khan and Yun Fu.
+Consistency and uncertainty: Identifying unreliable responses from
+black-box vision-language models for selective visual question answering.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, pages 10854–10863, 2024.
+[19]
+Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar.
+Semantic uncertainty: Linguistic invariances for uncertainty
+estimation in natural language generation.
+In The Eleventh International Conference on Learning
+Representations, 2023.
+[20]
+Liunian Harold Li, Mark Yatskar, Da Yin, Cho-Jui Hsieh, and Kai-Wei Chang.
+Visualbert: A simple and performant baseline for vision and language.
+arXiv preprint arXiv:1908.03557, 2019.
+[21]
+Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee.
+Improved baselines with visual instruction tuning.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, pages 26296–26306, 2024.
+[22]
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+Visual instruction tuning.
+Advances in neural information processing systems,
+36:34892–34916, 2023.
+[23]
+Andrey Malinin and Mark Gales.
+Uncertainty estimation in autoregressive structured prediction.
+In International Conference on Learning Representations, 2021.
+[24]
+Oscar Mañas, Benno Krojer, and Aishwarya Agrawal.
+Improving automatic vqa evaluation using large language models.
+In Proceedings of the AAAI Conference on Artificial
+Intelligence, volume 38, pages 4171–4179, 2024.
+[25]
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael
+Matena, Yanqi Zhou, Wei Li, and Peter J Liu.
+Exploring the limits of transfer learning with a unified text-to-text
+transformer.
+Journal of machine learning research, 21(140):1–67, 2020.
+[26]
+Dustin Schwenk, Apoorv Khandelwal, Christopher Clark, Kenneth Marino, and
+Roozbeh Mottaghi.
+A-okvqa: A benchmark for visual question answering using world
+knowledge.
+In European conference on computer vision, pages 146–162.
+Springer, 2022.
+[27]
+Meet Shah, Xinlei Chen, Marcus Rohrbach, and Devi Parikh.
+Cycle-consistency for robust visual question answering.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition, pages 6649–6658, 2019.
+[28]
+Tejas Srinivasan, Jack Hessel, Tanmay Gupta, Bill Yuchen Lin, Yejin Choi, Jesse
+Thomason, and Khyathi Raghavi Chandu.
+Selective" selective prediction": Reducing unnecessary abstention in
+vision-language reasoning.
+CoRR, abs/2402.15610, 2024.
+[29]
+Katherine Tian, Eric Mitchell, Allan Zhou, Archit Sharma, Rafael Rafailov,
+Huaxiu Yao, Chelsea Finn, and Christopher D Manning.
+Just ask for calibration: Strategies for eliciting calibrated
+confidence scores from language models fine-tuned with human feedback.
+In The 2023 Conference on Empirical Methods in Natural Language
+Processing, 2023.
+[30]
+Roman Vashurin, et. al.
+Benchmarking uncertainty quantification methods for large language
+models with lm-polygraph.
+TACL, 13:220–248, 2025.
+[31]
+Spencer Whitehead, Suzanne Petryk, Vedaad Shakib, Joseph Gonzalez, Trevor
+Darrell, Anna Rohrbach, and Marcus Rohrbach.
+Reliable visual question answering: Abstain rather than answer
+incorrectly.
+In European Conference on Computer Vision, pages 148–166.
+Springer, 2022.
+[32]
+Duygu Nur Yaldiz, Yavuz Faruk Bakman, Baturalp Buyukates, Chenyang Tao, Anil
+Ramakrishna, Dimitrios Dimitriadis, Jieyu Zhao, and Salman Avestimehr.
+Do not design, learn: A trainable scoring function for uncertainty
+estimation in generative llms.
+CoRR, abs/2406.11278, 2024.
+[33]
+Duygu Nur Yaldiz and et. al.
+Do not design, learn: A trainable scoring function for uncertainty
+estimation in generative LLMs.
+In Luis Chiruzzo, Alan Ritter, and Lu Wang, editors, NAACL
+2025, April.
+[34]
+Qinyu Zhao, Ming Xu, Kartik Gupta, Akshay Asthana, Liang Zheng, and Stephen
+Gould.
+The first to know: How token distributions reveal hidden knowledge in
+large vision-language models?
+In European Conference on Computer Vision, pages 127–142.
+Springer, 2024.
+[35]
+Andy Zou, Long Phan, Sarah Chen, James Campbell, Phillip Guo, Richard Ren,
+Alexander Pan, Xuwang Yin, Mantas Mazeika, Ann-Kathrin Dombrowski, et al.
+Representation engineering: A top-down approach to ai transparency.
+arXiv preprint arXiv:2310.01405, 2023.
+[36]
+Andy Zou, Long Phan, Justin Wang, Derek Duenas, Maxwell Lin, Maksym
+Andriushchenko, J Zico Kolter, Matt Fredrikson, and Dan Hendrycks.
+Improving alignment and robustness with circuit breakers.
+In The Thirty-eighth Annual Conference on Neural Information
+Processing Systems, 2024.
+Appendix A Motivation
+This section further elaborates on the UE challenges presented in section 4.
+(a) Token-Level Semantics
+(b) Unanswerable vs. Answerable
+(c) Average prob. and accuracy gap
+Figure 5: Vision-language models often struggle to produce reliable confidence estimates for their generations. Figure 5(a) illustrates that certain tokens carry greater visual significance (for instance, the token “up” in this example). Figure 5(b) shows that the confidence distributions for unanswerable, visually uncertain samples can be skewed toward higher confidence regions (≥\geq 40%). Finally, Figure 5(c) compares the average predicted probabilities and accuracies for visually uncertain questions, highlighting a notable mismatch between the two.
+A.1 Token-Level Semantic and Visual Importance
+Identifying an effective aggregation strategy through heuristics is challenging problem due to inter-token dependencies and various inherent biases for the given vision and text context. This can be illustrated by the example presented in 5(a). In response to the question ‘Where is the man looking?’ for the given image, the model generates the answer ‘The man is looking up’. In this case, the token up holds more semantic significance than the other tokens such as ’the’, ’is’, and ’looking’. Further, its relevant uncertainty score should weigh more in the aggregation formulation. Hence, identifying these inter-token dependencies and the underlying token-level semantic and visual significance on-the-fly is a challenging problem.
+A.2 Biased Probabilities and Language Priors
+To show this issue of biased probability and Language priors in VLMs, we perform visual question answering inference on the VizWiz dataset, a visual question answering (VQA) benchmark comprising images collected by blind people with their spoken questions transcribed by annotators. Due to the nature of the dataset, it includes a significant portion of unanswerable questions. For such questions, we expect model response to be on the low-confidence density region to reflect visual uncertainty. However, as shown in Figure 5(b), we observe a large density of length-normalized confidence scores to be above 40% confidence region, depicting the issue of biased probabilities, and tendency of model to hallucinate wrong answers with high confidence on visually uncertain question-image pairs. We also record model’s average accuracy versus average probability scores on unanswerable and answerable questions for LLaVa-1.5-7b model, and find that for visually uncertain answers ( unanswerable questions) the gap between average probability score and average accuracy is significantly high, >30%. This highlights the issue of model hallucinating wrong answers with high confidence under visual uncertainty. Given the observation that output probabilities can be biased, it is necessary to collect more signals of reliability from the model, reflecting visual grounding.
+A.3 Internal Hidden States as a Visual Understanding Signal
+Model internal hidden states have been studied extensively to predict truthfulness [4], fairness [35], and sometimes control/steer the model response towards certain concepts such as safety [36]. They have also been studied to interpret multimodality misalignment [1]. Various works suggest that model’s attention to its visual and text tokens varies across layers. Internal or middle layers attend highest to the vision input, whereas output layers pay more attention to input text query, collect their thoughts and decide what to say/generate [15, 1]. To design supervised scoring functions, they have been leveraged to predict reliability on MLP-based functions for LLM [4] and VLMs [31]. Where these functions show great effectiveness as predictors, they overlook the query text, generated response, and the confidence scores model assigns to these generated tokens, which also contain information of vision-text alignment, and reliability.
+Given these observations, we hypothesize that the use of both hidden state representations and explicit token-level uncertainty provides a more holistic measure of reliability. Internal activations capture latent uncertainty, revealing model’s understanding of the vision context and how it aligns visual and textual information, while output probabilities track confidence shifts throughout generation, providing deeper insights into model’s uncertainty and trustworthiness.
+Appendix B Additional Experiments and Details
+B.1 Dataset Information
+A-OKVQA comprises 17.1K train and 1.1K validation samples. We use the train split as a calibration dataset. For training our scoring function, we further divide the calibration dataset between 80% train and 20% validation data partition. To evaluate our method, we use the 1.1K validation split provided with the original dataset as test set. We use similar calibration data split setup for VizWiz and PathVQA datasets. Further, for inference, for all the models, we use a prompt of <image>question, please provide a single word or short sentence answer. ASSITANT:.
+B.2 Training Strategy
+We maintain two sets of data; calibration data and test data. Calibration data is further split into 80% and 20% split into training and validation data, respectively. For each model-dataset training, and every trainable scoring method, we perform hyper-parameter tuning of learning rate over { 5e-4, 5e-5, 5e-6}. We found 5e-5 lr to be working the best for most experiments. We use AUROC metric as our best model checkpoint selection critera for the methods. For the best model checkpoint, we report PRR, AURAC, Coverage at risk 10%10\% and 20%20\%, and effective reliability. Further, for all the trainable methods, we use 20 epochs, and used early stopping; i.e, if validation auroc does not improve for 1K training steps, we stop the training. For MSF implementation, we follow the MLP architecture details from the official implementation of MSF (specifically, VisualBERT architecture experiments). We also keep other parameters such as optimizer (AdamW), learning rate scheduler (Warmup Cosine Scheduler) and batch size also the same. We use the same optimizer and learning rate for our method and LARS as well. Further, we use batch size of 32 for LARS and HARMONY. Since we are working on open-ended generations which can be of arbitrary length, therefore, we use zero padding to keep hidden representations of same length that is 128 for all the methods. For probability split in LARS, and our method, we use a bin count of 8.
+B.3 Some Representative Examples
+Figure 6: An illustration of selective prediction decisions on the A-OKVQA dataset with LLaVa-7b model. In the left-most example, the model generates an incorrect answer, yet both LARS [32] MSF [31] choose to answer based on their respective calibration thresholds. In the second example, LARS opts to answer, while MSF correctly abstains. In the right-most example, both methods abstain, whereas our approach makes the right prediction for each of these examples.
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

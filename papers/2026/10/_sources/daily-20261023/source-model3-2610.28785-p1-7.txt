@@ -1,0 +1,411 @@
+PDF text extraction; original exact-v1 PDF: https://arxiv.org/pdf/2610.28785v1 . Control characters stripped; page labels retained. Only necessary pages actually read; not a whole-document/visual/code verification.
+URL https://arxiv.org/pdf/2610.28785v1; PAGES 21
+PAGE 1
+Preprint
+MEASUREFIRST, THENALLOCATE:
+CALIBRATEDROLLOUTBUDGETS
+FORMCP AGENTS INREINFORCEMENTLEARNING
+Hieu Tran1 Zonghai Yao2 Sunjae Kwon1 Hong Yu1,2
+1University of Massachusetts Amherst 2University of Massachusetts Lowell
+hieutran@umass.edu
+ABSTRACT
+Training tool-using language models requires costly interaction, yet identical
+rewards within a rollout group provide no group-relative learning signal. We use
+reward disagreement to guide harness evaluation and the allocation of rollouts for
+policy training in Model Context Protocol (MCP) environments. We first introduce
+Discord, which tests harness edits using exact paired inference and decision-
+preserving early stopping: only disagreeing paired outcomes favor one harness over
+another. This insight motivates prospective allocation inBRACE(Bank-calibrated
+RolloutAllocation underCorrelatedEpisodes). BRACEcombines historical task
+evidence, uncertainty in task success rates, and a correlated reward model to
+forecast mixed-reward groups before allocating generation budget. Controlled
+harness experiments favorDiscord, while live MCP experiments expose a retention–
+cost trade-off. At three Qwen3-VL model scales,BRACEexceeds the strongest
+plotted baseline peaks with fewer new training rollouts; historical-bank collection
+is counted separately. It also leads the compared methods on BFCL and NESTFUL
+without further training. Ablations probe the bank, estimator, and allocation score;
+prospective evaluation checks forecast calibration. These results support forecasting
+reward contrast before generation. 1
+1 INTRODUCTION
+Language agents use tools over multiple turns before a task’s outcome can be verified (Zhou et al.,
+2024; Wang et al., 2026). The Model Context Protocol (MCP) standardizes how agent applications
+discover and invoke external tools and access resources (Hou et al., 2026; Anjum et al., 2026). An
+agent harnessis the model-external software that configures prompts and tools and mediates the
+action–observation loop (Lee et al., 2026; Yang et al., 2024). Together with the model policy, it forms
+the agent: changing prompts or tool access changes the harness, whereas training model weights
+changes the policy. Automated search can improve the harness (Hu et al., 2025; Zhang et al., 2025;
+Lee et al., 2026), but deciding whether to retain an edit requires evaluating its effect across costly
+agent trajectories. An apparent gain on a finite task set may reflect noise. When the candidate and
+incumbent run on the same tasks, agreements cannot favor either one; only disagreements reveal the
+direction of the change. This motivates DISCORD, which tests paired outcomes and stops evaluation
+when the remaining tasks cannot change the retention decision.
+A similar allocation problem arises when training that policy. Reinforcement learning with verifiable
+rewards (RLVR) uses task outcomes from complete trajectories (Guo et al., 2025; Wang et al., 2026).
+Group Relative Policy Optimization (GRPO) (Shao et al., 2024) compares several rollouts of the
+same task, but a group in which all rewards agree has zero centered reward advantage. Generating
+such groups is especially costly when each rollout may involve repeated model inference and MCP
+tool calls. DAPO discards them after generation (Yu et al., 2025); PLR prioritizes tasks by estimated
+learning potential (Jiang et al., 2021), and VIP, TRACE, and DUET allocate generation prospectively
+(Nguyen et al., 2026; Zou et al., 2026; Hu et al., 2026). For multi-turn tool-use tasks, we ask whether
+outcomes from earlier runs can predict which fixed-size groups will contain mixed rewards, despite
+1Code can be accessed at:https://anonymous.4open.science/r/brace-38DC
+1
+arXiv:2610.28785v1  [cs.LG]  20 Oct 2026
+PAGE 2
+Preprint
+(a) DISCORD: test harness edits
+incumbent
+candidate
+exact test
+atα=.05 keep incumbent concordant = no signal stop early once settled
+Discord’s insight motivates forecasting useful rollout groups
+(b) BRACE: forecast, then allocate P(degenerate) solved unsolved all-equal
+1 warm bank
+from earlier runs
+2 calibrated forecast
+models correlation
+3 weighted task selection
+chips show relative weight
+4 budget lands where
+signal is expected
+forecast
+allocate
+generate
+task 1
+task 2
+task 3
+task 4
+task 5
+task 6 excluded task
+not selected
+∇policy update
+this cycle’s outcomes
+Figure 1: Observed disagreement in DISCORDmotivates predictive allocation in BRACE.(a)Paired
+disagreements determine retention evidence. Even two additional candidate wins cannot pass the
+toy example’s α= 0.05 test, so evaluation stops.(b)BRACEuses 1 historical outcomes to 2
+forecast reward unanimity and 3 weight eligible tasks before 4 generating one fixed-size group per
+selected task. Chips show relative sampling weights. The panels depict observed reward contrast for
+harness retention and forecast reward contrast for task allocation; all-equal rollout groups supply no
+group-relative reward signal.
+uncertain task success rates and correlated rollouts. BRACEuses that forecast to allocate generation
+before the next group is sampled, forming an adaptive curriculum based on the expected availability
+of a group-relative learning signal.
+We study two complementary routes to improving tool-using agents. DISCORDuses evaluation
+compute to decide whether to retain a harness edit without changing model weights. Its focus on
+informative disagreement motivates BRACEto forecast which training tasks will produce mixed-
+reward groups and allocate rollouts accordingly. This directs training compute toward the policy
+operating within the harness (Figure 1). Our contributions are:
+• Reliable harness retention.DISCORDuses exact paired inference and decision-preserving
+stopping; controlled and live experiments measure its recovery and evaluation cost.
+• Prospective task selection.BRACEcombines bounded historical evidence, uncertainty over
+task success, and within-group dependence to forecast informative groups. We characterize
+the resulting objective and test its calibration and components.
+• Training efficiency and transfer.Across three model scales, BRACEimproves held-out
+tool-use performance and reaches the strongest plotted baseline peaks with fewer new
+rollouts. It also transfers to BFCL (Patil et al., 2025) and NESTFUL (Basu et al., 2024)
+without further training.
+2 PROBLEMFORMULATION
+2.1 GROUP DEGENERACY INRLVR
+For task i, let ri1, . . . , rik ∈ {0,1} be verifier rewards fork rollouts. The centered reward component
+of the GRPO (Shao et al., 2024) advantage is
+Aij =r ij −¯ri,¯r i = 1
+k
+kX
+j′=1
+rij′.(1)
+Any within-group normalization leaves the following degeneracy condition unchanged:
+ri1 =· · ·=r ik =⇒A ij = 0∀j.(2)
+2
+PAGE 3
+Preprint
+Algorithm 1:BRACEallocation cycle: forecast and select tasks before generation.
+Inputs:task pool T , excluded set D, counts (si, fi), bank B, group size k, task budget N≤ |T \ D| , discount
+γ, correlationˆρ, temperatureτ, exploration rateϵ.
+1. Update evidence:on the first cycle, set (si, fi) to capped counts from B. On later cycles, apply
+(si, fi)←γ(s i, fi) + (∆si,∆f i)using the preceding cycle’s outcomes exactly once.
+2. Forecast informative groups:for each i∈ T \ D , use pi ∼Beta(1 +s i,1 +f i) and ν= (1−ˆρ)/ˆρ
+to computew i = 1−E[q(p i)]−E[q(1−p i)]via Equations 9 and 10.
+3. Allocate budget:sample N−n ϵ tasks without replacement with probability ∝w 1/τ
+i , where nϵ =
+round(ϵN), and sample the remainingnϵ uniformly from unselected eligible tasks. Tasks inD receive
+no budget.
+4. Generate and update:generate one group of k rollouts for each selected task, perform the scheduled
+policy updates, and record(∆s i,∆f i)for the next cycle’s evidence update.
+0.40 0.44 0.48
+predicted (1 − P(tie))/2
+0.40
+0.44
+0.48observed admission rate
+prediction uses the tie rate alone
+MCP
+BFCL
+API-Bank
+identity
+Q G M F Q G M F Q G M F Q G M F
+−0.02
+0.00
+0.02
+observed − predicted
+MCP BFCL API-Bank
+published 49 tools
+residuals within ±0.024
+Figure 2: Inert-edit admission across AWM (Wang et al., 2026), BFCL (Patil et al., 2025), and two
+API-Bank (Li et al., 2023) tool surfaces. Left: predictions from independently measured tie rates
+versus observed admission. Right: residuals, all within±0.024(Appendix C.1).
+This condition concerns the reward-based policy-gradient term; other regularizers may still contribute
+to an update. Non-degeneracy is necessary for that term to be informative, but does not guarantee a
+beneficial update. We quantify degeneracy in a bank snapshot of482,510 rollouts on 1,493 verifier-
+scored tasks from Agent World Model (AWM) (Wang et al., 2026), a suite of SQLite-backed MCP
+environments scored against the final database state. It includes the 1,127-task training pool and
+additional tasks from the same substrate. Reconstructing original optimizer steps and retaining groups
+with at least two rollouts yields92,706groups, of which85.2%are degenerate.
+2.2 PAIRED OUTCOMES IN HARNESS EVOLUTION
+Harness evolution compares an incumbent configuration A with a candidate B by evaluating both on
+the same tasks. Pairing controls for task difficulty and allows the decision to depend directly on how
+the two configurations differ on identical inputs. For binary outcomes (Ai, Bi)∈ {0,1} 2, define the
+two discordant counts
+b= #{i:A i = 0, Bi = 1}, c= #{i:A i = 1, Bi = 0}.(3)
+The paired difference in mean reward can then be written as
+¯B− ¯A= b−c
+n ,(4)
+because pairs with (Ai, Bi) = (0,0) or (1,1) cancel exactly. Thus, only discordant pairs favor one
+harness over the other;n d =b+ccounts informative pairs.
+These identities distinguish two statistical objects. DISCORDuses paired disagreements to support
+a harness-retention decision; BRACEforecasts whether a same-task group will mix successes and
+3
+PAGE 4
+Preprint
+0.00 0.05 0.10 0.15 0.20
+Recovery, single-round gate
+0.00
+0.05
+0.10
+0.15
+0.20Recovery, Discord
+equal
+Qwen
+Granite
+Mistral
+Falcon3
+Figure 3: Harness recovery across four callers:
+18/21 paired loops favor DISCORD. The dashed
+line marks equal recovery.
+Table 1: Live AWM (Wang et al., 2026) re-
+tention and cost. Accepted edits are classified
+as good/bad by measured effect; objective and
+episode counts report realized outcomes.
+Regime Rule
+Accepted
+(good/bad)
+Final
+objective Episodes
+Shallow Deployed3(2/1)0.2656 1,760
+DISCORD0(0/0)0.2594 1,906
+Deep Deployed3(3/0)0.2812 1,920
+DISCORD2(2/0)0.2703 4,008
+Shallow and deep regimes withhold10%and40%
+of tool names. The full-surface objective is0.2813.
+failures, enabling a group-relative reward signal. The shared principle is to allocate interactions
+toward outcomes that can affect the next decision or update.
+3 DISCORD: EXACTHARNESSRETENTION
+DISCORDevaluates proposed harness edits, holding model weights fixed. It retains an edit only when
+paired outcomes provide sufficient evidence of improvement; it does not generate proposals.
+3.1 WHY A POSITIVE MEASURED GAIN IS INSUFFICIENT
+Aninert editleaves true performance unchanged. If incumbent and candidate scores are exchangeable,
+apparent improvements and regressions are equally likely:
+P(retain) =P( ¯B > ¯A) = 1
+2
+
+1−P(tie)
+
+.(5)
+When ties are rare, strict-improvement retention accepts nearly half of inert edits. Appendix C.1 gives
+the derivation and measurement protocol.
+3.2 TESTING WHETHER THE CANDIDATE WINS RELIABLY
+Under the paired null, a disagreement is equally likely to favor the candidate or the incumbent.
+Assuming independent evaluation pairs and conditioning on the observed number of disagreements
+nd =b+c , the number of candidate wins follows McNemar’s exact conditional distribution
+(McNemar, 1947):
+b|n d ∼Binomial(n d,1/2).(6)
+DISCORDretains the candidate when the upper-tail probability is at most a prespecified α. For
+example, b= 12 and c= 4 on 100 paired tasks give an 8 pp improvement and an exact one-
+sided probability of 0.0384, passing at α= 0.05 . With no disagreements, retention is rejected.
+Operationally, each paired task either increments b, increments c, or ties and changes neither count.
+Conditioning on nd removes the unknown tie rate: the test asks whether the directions of observed
+disagreements favor the candidate, independently of how often the harnesses agree. Error control
+applies to this prespecified comparison, not an unrestricted adaptive search (Appendix C.2).
+Stopping without changing the decision.The maximum number of paired tasks is fixed in advance.
+After each block,exact curtailment(Alling, 1963) checks whether all possible remaining pairs
+(candidate wins, incumbent wins, or ties) lead to the same terminal decision. If so, evaluation stops;
+otherwise it continues.
+For example, with b= 2 , c= 0 and two pairs remaining, the most favorable completion for the
+candidate is b= 4 , c= 0 . Its one-sided probability is 1/16 = 0.0625, so it still fails an α= 0.05 test;
+4
+PAGE 5
+Preprint
+0 25 50 75 100
+6
+8
+10
+12
+14
+16
+18solve rate (%)
+Qwen3-VL-2B
+3 ×
+0 25 50 75 100
+training step
+Qwen3-VL-4B
+2 ×
+0 25 50 75 100
+Qwen3-VL-8B
+3 ×
+BRACE PLR RAG-MCP DAPO TSCL TRACE VIP
+Figure 4: Observed-checkpoint comparison of new rollouts ( 160 attempts/step). For each scale,
+the horizontal dashed segment spans the earliest peak checkpoint of the strongest plotted baseline
+and BRACE’s first measured checkpoint that meets or exceeds that solve rate. Labels give the
+baseline/BRACE rollout ratio at those checkpoints; bank collection is excluded. Table 2 reports
+final-checkpoint results.
+the procedure can immediately keep the incumbent. This is different from repeatedly stopping when
+a provisional p-value happens to cross the threshold: exact curtailment always returns the decision
+that full evaluation would have returned. Ambiguous comparisons can still require the entire budget
+(Appendices C.2 and C.3).
+From observed to predicted disagreement.DISCORDidentifies when further paired outcomes
+cannot change a harness decision. This suggests a training question: which tasks are likely to yield
+mixed rewards before their rollouts are generated? BRACEforecasts that signal from historical task
+outcomes and allocates the next budget accordingly. We evaluate its forecasts and policy gains
+separately.
+4 BRACE: CORRELATION-AWAREROLLOUTALLOCATION
+BRACEselects tasks before generating their next rollout groups (Algorithm 1). It favors tasks pre-
+dicted to produce both successes and failures while retaining uniform exploration. Main experiments
+select N= 256 distinct tasks per allocation cycle, then generate one k= 5 group per task over eight
+optimizer steps of 32 tasks each. Allocation changes task selection, not group size. Thus, the score
+targets the chance of receiving a group-relative reward signal, rather than the highest expected solve
+rate; the exploration share continues to sample eligible tasks regardless of their scores. Algorithm 1
+records each selected batch and its predicted degeneracy before generation, enabling prospective
+calibration checks.
+4.1 ALLOCATIONOBJECTIVE ANDBANKEDEVIDENCE
+For task solve probability pi, an independent group is degenerate if all k rollouts succeed or all fail.
+The complementary probability of mixed rewards is
+g(pi, k) = 1−p k
+i −(1−p i)k.(7)
+Under independence, we account for uncertainty inp i by integrating over its posterior:
+wind
+i =E[g(p i, k)], p i ∼Beta(a i, bi),E[p k
+i ] =
+k−1Y
+j=0
+ai +j
+ai +b i +j .(8)
+Tasks with the same posterior mean can receive different scores when their evidence counts differ.
+5
+PAGE 6
+Preprint
+Banked evidence.We approximate uncertainty in the task mean by pi ∼Beta(1 +s i,1 +f i)
+using success and failure counts (si, fi); this is not the exact posterior under the correlated group
+likelihood. Awarm bankprovides success and failure counts from previous runs across model scales,
+capped so a large historical log cannot dominate later evidence. It is read once to initialize task-level
+evidence for allocation. Subsequently, the counts are discounted and incremented with current-run
+outcomes; the bank is not reread. Every rollout used for a policy update is generated by the current
+policy. Without bank observations, unseen tasks all start atBeta(1,1), so allocation cannot initially
+distinguish tasks that rarely solve from those that produce mixed outcomes. Bank counts make that
+distinction available before the first current-run rollout; capping limits their influence as new evidence
+arrives. Appendix D.2 gives the exact initialization and cost accounting.
+4.2 MODELINGCORRELATEDROLLOUTGROUPS
+Rollout rewards within the same task group need not be independent: shared task difficulty and
+sampling conditions can make the outcomes move together. We model this dependence with an
+exchangeable Beta–Binomial distribution with mean pi and concentration ν= (1−ρ)/ρ , where ρ
+is the within-group correlation. Equivalently, for each group we draw a latent success propensity
+θi ∼Beta(νp i, ν(1−p i)), then draw the k rewards conditionally independently given θi. This
+group-level draw is distinct from the posterior uncertainty over the task meanp i. Under this model,
+q(pi) =P(allksucceed|p i) =
+k−1Y
+j=0
+νpi +j
+ν+j ,(9)
+andq(1−p i)is the probability of unanimous failure. The allocation score is
+wi = 1−E[q(p i)]−E[q(1−p i)].(10)
+Under the Beta evidence approximation and exchangeable group model, wi is the posterior predictive
+probability that task i’s next group contains both successes and failures. For one group per selected
+task,P
+i∈S wi is the model’s expected informative-group count (Appendix D.4). This is a signal-
+availability objective, not a policy-improvement guarantee. The independent case is recovered
+as ν→ ∞ . Positive correlation raises the probability of unanimous groups; for example, at
+pi = 0.5, k= 5 , and ν= 0.285 , the mixed-reward probability is 0.23, compared with 0.94 under
+independence. The expectations in Equation 10 are evaluated exactly using Beta moments, without
+sampling (Appendix D.3).
+4.3 RANKPRESERVATION UNDERCORRELATIONCORRECTION
+Proposition 1.For k≥2 and ν >0 , let f(p) =Qk−1
+j=0 (νp+j)/(ν+j) . Then gc(p) = 1−f(p)−
+f(1−p) is strictly increasing in p(1−p) . Consequently, at fixed k and shared ν, known-probability
+scores gc(p), 1−p k −(1−p) k, and the Bernoulli variance p(1−p) induce the same task ordering.
+For the weighted sampling step, the relative weight of eligible tasksi and j is (wi/wj)1/τ . A common
+rescaling of all scores cancels, while a nonlinear transformation can change these ratios even when
+ranks agree. Posterior integration can also change rankings because evidence counts differ across
+tasks. The mechanism therefore depends on the estimated evidence and relative weights, alongside
+forecast calibration. Appendix E.2 proves the proposition; Section 5.5 connects it to sampling controls
+and training ablations. The theorem concerns fixed group sizes.
+5 EXPERIMENTS
+5.1 EXPERIMENTAL SETUP
+Models and baselines.We train Qwen3-VL-Instruct (Bai et al., 2025) at 2B, 4B, and 8B using
+GRPO (Shao et al., 2024) in verl (Sheng et al., 2025), with rank-32 LoRA. Every method generates
+160 attempts per training step ( 32 prompts, k= 5 ), counting discarded and incomplete attempts.
+The AWM (Wang et al., 2026) training pool contains1,127 verifier-scored tasks over305 live MCP
+servers under a fixed tool surface. Baselines include uniform GRPO (Shao et al., 2024), PLR (Jiang
+et al., 2021), RAG-MCP (Gan & Sun, 2025), DAPO (Yu et al., 2025), TSCL (Matiisen et al., 2020),
+6
+PAGE 7
+Preprint
+Table 2: Held-out AWM (Wang et al., 2026) results after100 training steps. Higher solve rate, lower
+invalid-call rate, and fewer turns are better. Bold marks the best trained method per metric and scale;
+evaluation uses four seeds.
+Qwen3-VL-2B Qwen3-VL-4B Qwen3-VL-8B
+Method solve invalid turns solve invalid turns solve invalid turns
+(%)↑(%)↓ ↓(%)↑(%)↓ ↓(%)↑(%)↓ ↓
+base model8.6 16.6 14.7 9.7 6.5 8.4 11.4 6.8 9.6
+BRACE12.519.3 12.114.94.6 10.016.59.0 9.0
+PLR(Jiang et al., 2021)9.8 20.07.612.7 6.9 11.3 14.0 9.1 10.2
+RAG-MCP(Gan & Sun, 2025)10.7 29.4 11.6 12.73.010.9 13.13.611.6
+DAPO(Yu et al., 2025)8.3 18.9 14.2 10.0 6.3 11.6 11.0 8.0 12.3
+TSCL(Matiisen et al., 2020)9.710.410.3 12.7 5.5 8.4 7.5 9.33.7
+TRACE(Zou et al., 2026)10.7 30.2 9.1 11.7 6.9 13.0 13.9 6.6 10.3
+VIP(Nguyen et al., 2026)10.7 14.3 13.6 11.8 5.06.77.6 6.4 11.0
+uniform GRPO(Shao et al., 2024)8.9 29.9 11.2 11.4 9.8 10.1 13.2 13.0 8.7
+TRACE (Zou et al., 2026), and VIP (Nguyen et al., 2026) (Table 2). Methods share the model,
+optimizer, current-run rollout budget, and evaluation protocol; BRACEadditionally uses historical
+bank evidence.
+Eligibility checks.We exclude 104 of 1,127 training tasks: 66 whose verifier succeeds on the
+unchanged initial state, 33 proved unreachable by an initial-state guard, and 5 flagged by a string-
+matching heuristic, reported separately from certificates. The guard never fires on the bank’s 826
+tasks solved at least once; excluded tasks produce no usable learning groups in historical data. These
+checks determine eligibility before posterior weighting: failures alone do not prove impossibility.
+BRACE configuration.Historical counts are capped at 20 successes and 40 failures per task, with
+γ= 1 . We use ν= 0.285 (ˆρ≈0.78) and τ= 0.5 at all scales; uniform exploration is ϵ= 0.05
+at 2B/4B and 0.10 at 8B. The correlation parameter is fitted once on the first two cycles of the 8B
+calibration run and then held fixed. Those cycles are excluded from forecast evaluation. Appendix D.2
+documents bank provenance and costs.
+Evaluation.We evaluate on 295 held-out AWM (Wang et al., 2026) tasks, excluded from training
+and bank initialization, using four evaluation seeds. BFCL v4 (Patil et al., 2025) and NESTFUL
+(Basu et al., 2024) supply no AWM (Wang et al., 2026) training data. Main AWM (Wang et al., 2026)
+results use step100; paired contrasts use matched task indices.
+5.2 DISCORD: HARNESSRETENTION
+Inert-edit admission.Independently measured tie rates predict inert-edit admission within ±0.024
+across AWM (Wang et al., 2026), BFCL (Patil et al., 2025), and two API-Bank (Li et al., 2023) tool
+surfaces (Figure 2). On AWM (Wang et al., 2026), strict-improvement retention accepts43.3% of
+1,440inert edits, and43.6%of the accepted edits fail to replicate (Appendices C.2 and C.1).
+Controlled recovery and harmful proposals.We compare retention rules on 200 BFCL v3
+(Patil et al., 2025) single-turn tasks, using four callers and eight rounds of three edits to advertised
+function names. Withheld names create a recoverable handicap; a full surface makes proposals
+predominantly harmful. Shared proposals and matched episode budgets isolate retention from edit
+generation (Appendix C.4). The single-round gate uses a label-permutation test on disjoint task
+halves; DISCORDuses discordant outcomes from the same tasks. DISCORDrecovers more of the
+handicap than the single-round gate in 18 of 21 paired loops (Figure 3; one-sided paired t-test,
+p= 0.00015 ). Under harmful proposals, degradation occurs in 0/17 seeds for DISCORDand 9/17
+for strict-improvement retention. The seeds are matched; a two-sided exact McNemar test gives
+p= 0.0039.
+Live MCP trade-off.On a shared proposal stream across 320 tasks and 158 AWM (Wang et al., 2026)
+servers, shallow and deep handicaps withhold 10% and 40% of tool names. DISCORDaccepts no
+harmful edits in either regime, but uses more evaluation episodes and reaches a lower final objective
+than the deployed rule (Table 1). The deployed rule overstates its final objective by32% and 47%,
+7
+

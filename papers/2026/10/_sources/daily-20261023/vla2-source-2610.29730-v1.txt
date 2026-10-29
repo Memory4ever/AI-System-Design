@@ -1,0 +1,1128 @@
+# Primary exact-v1 main-text extraction, https://arxiv.org/html/2610.29730v1
+# Math alttext retained; storage does not imply every appendix independently reviewed.
+Abstract
+Vision–language–action (VLA) policies need to recognize gaps in their training knowledge to request useful demonstrations or assistance in new situations, especially when failures are costly.
+Disagreement within an ensemble of independently trained policies can guide these decisions, but requires training and running multiple policies.
+We propose post-hoc kernel-variance heads that estimate epistemic uncertainty from the embeddings of a single policy.
+Each head computes the conditional variance of a Gaussian process conditioned on embeddings from the training demonstrations.
+Fitting requires no regression targets or gradient updates and leaves the policy unchanged.
+In experiments with SmolVLA on LIBERO-10, the kernel variance heads perform competitively with two-policy ensemble scores in task-level correlation with task success, in demonstration acquisition during active learning, and in referral to a stronger supervisor policy as a proxy for human assistance.
+For SmolVLA, the head on the vision–language backbone reduces uncertainty-scoring time by up to approximately a factor of 50 compared with ensemble scores, while also substantially reducing setup costs.
+We also show that the established evaluation protocol on LIBERO-10 primarily rewards recognition of coverage differences between tasks, while execution variability weakens assessment of within-task rankings.
+Thus, controlled perturbations provide a complementary evaluation: modality-specific heads identify unfamiliar camera, instruction, or state inputs, while fused heads can detect unfamiliar combinations of individually familiar inputs.
+With a supervisor proxy trained on the evaluated perturbation families, the decoder head improves within-task referral over ensemble disagreement.
+These findings show that useful uncertainty estimates for adaptive robot learning can be obtained from a single policy.
+Code available at https://github.com/post-hoc-vla-uncertainty/post-hoc-vla-uncertainty .
+ 1 Introduction
+Vision–language–action (VLA) models bring pre-trained visual and linguistic representations to robot control  [ 1 , 2 , 3 , 4 , 5 , 6 , 7 ] .
+After deployment, such a policy keeps encountering tasks, scenes and instructions that its training demonstrations cover only partially.
+In tasks where failures may be costly, when facing difficulties due to insufficient training knowledge, the robot should respond adaptively by deferring tasks to seek human assistance or by requesting relevant additional training demonstrations  [ 8 , 9 , 10 , 11 , 12 , 13 , 14 ] .
+Both responses are effective only if guided by the policy’s epistemic uncertainty, that is, by how poorly its training data support a situation.
+Unlike aleatoric ambiguity, epistemic uncertainty shrinks with more relevant demonstrations  [ 15 , 16 ] .
+Flow-based VLAs do not provide such an estimate by themselves.
+This motivates dedicated methods for quantifying epistemic uncertainty in these policies.
+For example, Römer et al. [14] derive velocity-field disagreement (VFD), an ensemble estimate of the divergence between flow-matching policies.
+They use VFD in SAVE, an active fine-tuning procedure that they evaluate on LIBERO  [ 17 ] , a simulation benchmark of language-instructed household manipulation tasks.
+In each round, SAVE requests a few new demonstrations, preferring situations that VFD rates as uncertain, and then fine-tunes the policy.
+In their evaluation, VFD correlates more strongly with task success than six alternative uncertainty scores, including other ensemble-based measures and entropy-based scores.
+SAVE with VFD needs at least 22% fewer demonstrations than the compared acquisition strategies.
+The price is an ensemble of at least two policies: every additional member must be pre-trained, fine-tuned alongside the deployed policy in every adaptation round, and integrated jointly with it whenever a score is computed.
+We ask whether this ensemble is necessary to obtain comparably useful estimates of epistemic uncertainty.
+Ensemble disagreement reflects differences between the predictions of independently trained policies, which can arise where the demonstrations leave their behaviour weakly constrained.
+Their disagreement can therefore serve as an indirect signal of demonstration coverage.
+This motivates assessing coverage directly in the embedding space of a single trained policy, using lightweight uncertainty estimation heads.
+Each head reads embeddings that the policy already computes and compares a queried observation with support observations from its training demonstrations (Figure  1 ).
+The approach assumes that the embeddings keep unfamiliar observations apart from familiar ones  [ 18 ] , a property that we do not enforce during training.
+Its practical usefulness further depends on whether unfamiliarity helps identify situations where the policy may fail or benefit from assistance or additional demonstrations.
+We assess these relationships empirically across our experiments.
+The measure is the posterior variance of a Gaussian process (GP) with a Gaussian kernel, conditioned on the support embeddings  [ 19 ] .
+It needs no regression targets and no gradient update and does not alter the policy’s predicted actions but can inform decisions such as when to request help or new demonstrations.
+Fitting it post hoc to a trained policy takes one feature extraction pass over the support observations and one Cholesky factorization.
+Since the heads are this cheap, several of them can be attached to different embeddings of the same policy.
+Heads on modality-specific representations, such as the camera or instruction tokens, can then indicate which part of an input is unfamiliar.
+We organize the study around five questions.
+ Q1:
+Does a single-policy kernel variance head match ensemble scores in calibration to task success and referral gain to a stronger supervisor on LIBERO-10? 1 1
+ 1
+ Here, referral means handing the most uncertain situations to a more capable supervisor policy, which serves as a proxy for human assistance.
+ Q2:
+Does active fine-tuning with the SAVE protocol guided by kernel variance scores acquire demonstrations as effectively as ensemble scores?
+ Q3:
+How much computation does the kernel variance head save compared to ensemble scores?
+ Q4:
+Which properties of an uncertainty score do the established evaluations of Q1 reward on LIBERO?
+ Q5:
+Do kernel variance heads on different context embeddings respond selectively to perturbations of the inputs they read, and do kernel variance heads support within-task referral under such perturbations?
+In addressing these questions, we make three contributions:
+ •
+Post-hoc epistemic uncertainty heads that read the embeddings of a single trained VLA policy.
+Instead of pre-training, fine-tuning and running a second policy, they require only one feature extraction pass over the support observations and one matrix factorization. In our experiments, this makes the heads up to about 44 times faster to set up per fine-tuning round and up to about 50 times faster to use.
+ •
+A comparison on the LIBERO manipulation benchmark, in which the kernel variance heads perform comparably to uncertainty scores from a two-policy ensemble in ranking tasks by their failure rate and in selecting new training demonstrations, following the setting of prior ensemble-based work  [ 14 ] .
+We additionally evaluate success gain from handing uncertain situations over to a stronger policy, where the kernel variance heads again match or exceed the ensemble.
+Our analysis shows that in this setting, the evaluations mainly test whether a score recognizes how well training demonstrations cover a task, which is useful in itself.
+However, they test the ranking of situations within a task only weakly, because relatively large execution noise obscures reproducible differences in the outcomes.
+ •
+A within-task evaluation that perturbs single input modalities and their combinations in a controlled way.
+In this evaluation, our uncertainty heads detect most perturbations at least as sensitively as the ensemble scores and match or exceed them in deciding which situations within a task to hand over to a stronger policy.
+Attached to the embeddings of separate input modalities, context-specific uncertainty heads also indicate which of them are unfamiliar.
+Section  2 places the heads among distance-aware uncertainty estimators, uncertainty scores for generative policies, and work on active data acquisition and deferral.
+Section  3 defines the kernel-variance heads on SmolVLA and their context-specific variants, the SAVE acquisition loop, the calibration and referral metrics, our matched experimental protocol and the controlled perturbations of single input modalities.
+Section  4 first compares the heads with the ensemble scores in task-level calibration, demonstration acquisition and its cost, and supervisor referral (Q1–Q3).
+It then examines which properties of a score the established evaluations reward (Q4) and evaluates the context-specific and whole-policy heads under controlled perturbations (Q5).
+Section  5 discusses the five research questions in turn, then further findings, such as why unfamiliarity does not imply failure, and the limitations of our study.
+ 2 Related Work
+VLA policies and their evaluation.
+VLAs often fine-tune vision-language backbones on large robot datasets  [ 20 ] and output actions as discrete tokens  [ 1 , 2 , 4 ] or through continuous generative heads  [ 3 , 5 , 6 , 7 ] .
+Flow-matching action experts  [ 21 ] , like diffusion policies  [ 22 ] , sample action chunks from multimodal distributions.
+On LIBERO  [ 17 ] , a widely used simulation benchmark for these models, high scores may reflect memorized layouts and instructions and do not necessarily imply robustness under changed object positions, cameras, lighting or wording  [ 23 , 24 ] .
+This motivates evaluations that vary conditions within a task (Sections  4.4 – 4.6 ).
+Epistemic uncertainty and distance awareness.
+Epistemic uncertainty reflects limited knowledge about the true function, whereas aleatoric uncertainty reflects inherent randomness in the data and cannot be reduced by collecting more  [ 15 , 16 ] .
+For expressive models, epistemic uncertainty is mainly uncertainty about which of the many functions that fit the data is correct, so it is large where data sparsity leaves predictions weakly constrained   [ 16 ] .
+For a robot policy, it concerns which actions the training demonstrations imply in a given situation, while aleatoric uncertainty arises, for example, when demonstrators solve a task in several valid ways or when contact outcomes are stochastic.
+A principled estimate may approximate the posterior over functions and measures the spread of its predictions  [ 25 ] .
+Weight-space methods such as deep ensembles  [ 26 ] , Monte Carlo dropout  [ 27 ] and Laplace approximations  [ 28 , 29 ] define the prior over functions only implicitly through the weights.
+In practice, ensemble members and weight-space particles often converge to similar functions  [ 30 , 31 , 32 ] , mean-field variational approximations can underestimate the variance between separated data regions  [ 33 ] , and the resulting spread can follow aleatoric noise more closely than data density  [ 34 , 25 ] .
+Depending on protocol, decisions such as referral and acquisition may only need a ranking, in which case an underestimated functional spread can still serve them if its ordering is right, although this is not guaranteed.
+Even single-model entropy or confidence scores can appear to capture epistemic uncertainty  [ 35 , 36 ] .
+However, by design, they cannot capture the uncertainty associated with their single function.
+Implicit biases of trained networks  [ 36 ] or aleatoric estimates that become unreliable away from the training data  [ 37 ] can nevertheless make these scores correlate with training-data coverage.
+Such agreement is indirect and does not mean that the scores represent epistemic uncertainty, either separately or as an explicit component of total uncertainty.
+By contrast, methods with explicit priors over functions allow predictive variance to grow with distance from the training data, with the predictive distribution reverting to the prior far from training support. Examples include GP output layers on spectrally normalized networks  [ 38 , 18 ] , deep GPs  [ 39 ] and functional variational Bayesian neural networks  [ 40 ] .
+Deterministic scores based on radial basis function prototypes, feature densities, Mahalanobis distance or nearest neighbours also use feature-space distances or densities, but do not generally define a posterior over predictive functions   [ 41 , 42 , 43 , 44 ] .
+In direct comparisons, such distance-aware single models match or improve upon deep ensembles in detecting unfamiliar inputs  [ 41 , 42 , 45 , 25 ] .
+Methods that score distances in learned representations depend on a feature space that keeps unfamiliar inputs apart from familiar ones, which feature collapse can prevent  [ 18 ] .
+Our uncertainty scoring head places such an explicit GP prior over functions defined on embeddings of a frozen policy, post hoc.
+Spectral normalization could make these embeddings more distance-preserving, but introducing it would modify the policy and would require further retraining.
+Instead, we leave the policy unchanged so that the head can be attached to any trained policy.
+The head’s score, the GP conditional variance  [ 19 ] , vanishes at support inputs and approaches the prior variance far from them.
+Without the ridge, its square root equals the power function of kernel interpolation, which is the worst-case interpolation error over the unit sphere of the kernel’s reproducing kernel Hilbert space  [ 46 , 47 ] .
+It therefore measures coverage in the chosen embedding geometry without requiring output targets to fit the head.
+Uncertainty for generative policies and VLAs.
+For diffusion and flow models, epistemic uncertainty has been estimated from ensemble disagreement of denoising means (DECU)  [ 48 ] , from a Gaussian approximation of the generative posterior predictive (GU)  [ 49 ] , and from velocity-field disagreement (VFD)  [ 14 ] .
+Runtime monitors for robot policies use action-chunk entropy and embedding novelty  [ 50 ] , temporal action consistency  [ 51 ] , learned density estimators  [ 52 ] or language-model embeddings  [ 53 ] .
+VLA failure detectors learn from internal features  [ 54 ] , combine last-layer Mahalanobis distance with action consistency  [ 55 ] , or measure action disagreement under hidden-activation perturbations of a single model  [ 56 ] , and VLA confidence has been calibrated with prompt ensembles and Platt scaling  [ 57 ] .
+Most of these robotics methods focus on failure detection during execution.
+Outside robotics, attribution methods explain an existing uncertainty estimate post hoc by its input features, through counterfactuals  [ 58 , 59 ] , gradients  [ 60 ] or Shapley values  [ 61 ] .
+Multimodal models estimate uncertainty per modality to weight their fusion  [ 62 , 63 ] and use disagreement between modalities for OOD detection  [ 64 ] , and a recent benchmark uses modality-specific and cross-modal perturbations to test how vision–language uncertainty scores respond to different sources of uncertainty  [ 65 ] .
+Our raw context kernel-variance heads assess unfamiliarity separately for each input modality by reading its representation before cross-modal mixing.
+To our knowledge, this is the first use of separate coverage estimates to assess unfamiliarity in the individual input modalities of a VLA policy.
+Our heads can inform decisions taken before execution, such as requesting additional training demonstrations or human assistance, and can also score observations during execution.
+Active learning and interactive imitation.
+Early work on data selection by expected information gain or variance reduction includes  MacKay [66] and  Cohn et al. [67] .
+Deep active learning uses Bayesian disagreement  [ 68 , 69 , 70 ] or representation diversity  [ 71 , 72 ] , or combines uncertainty and diversity in gradient space  [ 72 ] .
+GP methods use integrated variance reduction and mutual information  [ 73 , 74 ] , and transductive active learning targets a specified population  [ 75 ] .
+Interactive imitation learning collects expert feedback on situations encountered by the learner  [ 8 , 9 ] , with some methods using uncertainty or risk to decide when to query the expert  [ 76 , 77 , 78 , 10 ] .
+Related approaches address supervision across robot fleets [ 11 ] and learning during deployment [ 12 ] .
+Data curation selects which existing demonstrations to keep  [ 79 ] , whereas multi-task active fine-tuning selects which new demonstrations to collect  [ 13 , 14 ] .
+Of these, we build on the SAVE procedure of  Römer et al. [14] , keep its rule for choosing demonstrations and replace only its uncertainty score, VFD, with the variance of our kernel heads.
+Selective prediction and deferral.
+Selective prediction allows a model to abstain on uncertain inputs and evaluates uncertainty scores through the trade-off between coverage (the fraction of inputs retained) and risk on the retained inputs  [ 80 , 81 , 82 , 83 , 84 ] .
+This trade-off does not distinguish epistemic from aleatoric uncertainty, since rejecting inherently ambiguous inputs also lowers retained risk.
+Combined with the fact that many scores labelled epistemic remain entangled with aleatoric noise  [ 37 , 85 , 34 , 25 ] , this creates a major evaluation limitation: improved performance can reflect sensitivity to inherent ambiguity rather than the identification of missing knowledge.
+Deferral passes rejected inputs to a second decision maker, whose errors also affect combined performance.
+Some evaluations of combined performance assume that an oracle correctly labels every deferred case  [ 86 ] and therefore inherit the same limitation.
+Learning to defer formulates the delegation decision as a learning problem  [ 87 , 88 ] and has also been studied with imperfect simulated experts  [ 89 ] .
+Deferral also arises in robotics, where calibrated uncertainty guides requests for assistance  [ 90 , 91 ] .
+Our supervisor referral follows the deferral view with an imperfect expert.
+Under a fixed referral budget, we pass selected conditions to a stronger policy and evaluate each ranking by the supervisor’s actual, possibly negative, performance gain on the referred conditions.
+Where irreducible randomness affects both policies alike, referring a condition contributes no expected gain.
+This reduces, but not eliminates, the credit a score receives for detecting ambiguity alone.
+The metric primarily rewards identifying conditions for which the supervisor’s broader training coverage provides a performance advantage.
+ 3 Methods
+ 3.1 Kernel-variance heads
+Policy and embeddings.
+An observation o contains a workspace camera image, a wrist camera image, a language instruction, and the robot’s proprioceptive state.
+A condition is a starting situation from which a policy is executed.
+SmolVLA  [ 7 ] encodes the images, the instruction tokens and a projection of the state into a prefix with a vision–language backbone.
+An action expert attends to this prefix and integrates a flow-matching velocity field over ten Euler steps, from Gaussian noise to a chunk of 50 seven-dimensional actions.
+We call the policy whose uncertainty is estimated the primary.
+SAVE fine-tunes it, and referral hands the conditions in which it is most uncertain to a stronger supervisor policy.
+For a representation location b in the policy, \phi_{b}(o) denotes the embedding of o at that location.
+An uncertainty head reads such an embedding without changing the policy (Figure  1 ).
+ Workspace and wrist images,
+ instruction, state
+ Input embeddings: image tokens of
+ each camera, instruction tokens,
+ projected state
+ Vision–language transformer
+ mixes the inputs by attention
+ \to final prefix states
+ Action expert attends to the prefix
+ 10 Euler steps of the velocity field
+ Action chunk (50 steps \times 7)
+ Raw context heads, one per input: mean image tokens of the workspace or wrist camera, mean instruction token (960 values each), normalized state (8 values)
+ Fused context heads: the same four token groups in the final prefix states
+ KV-Ctx : fused means of both cameras and the instruction, plus the 8 state values \to 2,888 values
+ KV-Dec : final hidden state at flow step 9, mean over 50 action tokens \to 480 values
+ Figure 1: Uncertainty heads on a frozen SmolVLA policy. Dashed arrows read embeddings without changing the policy. The blue heads estimate the epistemic uncertainty of the whole observation. The orange context-specific heads estimate it for one input each, before the transformer mixes the inputs (raw) or after it (fused).
+Support.
+The support set \mathcal{S} contains observations from the demonstrations the policy is trained on, embedded by the same policy.
+When demonstrations are added or the policy is retrained, the support is embedded again and the head is refitted.
+No outcome of an execution, whether of the policy, of a supervisor or in evaluation, enters the fit.
+Conditional variance.
+A head reads the embedding \phi_{b}(o) after a preprocessing map P_{b} fitted on the support, so its input is z=P_{b}\phi_{b}(o) .
+Let Z=(z_{1},\ldots,z_{N}) be the preprocessed support inputs.
+With a Gaussian kernel k of bandwidth \ell and ridge \lambda , the head reports the conditional variance
+ \displaystyle k(z,z^{\prime})
+ \displaystyle=\exp\!\left(-\frac{\lVert z-z^{\prime}\rVert^{2}}{2\ell^{2}}\right),\qquad u_{\textsc{KV}}(z)=k(z,z)-k(z,Z)\,(K_{ZZ}+\lambda I)^{-1}\,k(Z,z),
+ (1)
+with K_{ZZ} the kernel matrix of the support.
+This is the posterior variance of a zero-mean GP with prior variance one after observing noisy values at the support inputs  [ 19 ] .
+Computing u_{\textsc{KV}} requires no output values.
+The variance u_{\textsc{KV}}(z) lies in (0,1] , is close to one far from all support inputs, and falls to \lambda/(1+\lambda) at an isolated support input.
+A demonstration added to the support therefore lowers the score of its own observation, and of similar observations, as soon as the head is refitted.
+The score measures coverage in the chosen geometry and is computed with a Cholesky factorization of K_{ZZ}+\lambda I .
+Exact conditioning remains affordable for the supports used here, which hold at most about 10,000 inputs.
+Geometry.
+The preprocessing map P_{b} standardizes each embedding coordinate over the support, optionally projects the result onto its leading principal components, and whitens it with the Ledoit–Wolf shrinkage covariance  [ 92 ] ,
+ \widehat{\Sigma}_{\alpha}=(1-\alpha)\widehat{\Sigma}+\alpha\,\frac{\tr\widehat{\Sigma}}{d}\,I,\qquad z=\widehat{\Sigma}_{\alpha}^{-1/2}(x-\bar{x}).
+ (2)
+Here x is the standardized and projected embedding, \bar{x} and \widehat{\Sigma} are the mean and sample covariance of its d coordinates over the support, and the shrinkage intensity \alpha is estimated from the support.
+An isotropic kernel on whitened features then uses a regularized Mahalanobis distance  [ 43 ] .
+Two observation heads.
+Both heads read late representations of the policy, which integrate all inputs and lie close to the action output, so that distances in them should reflect the information the policy uses to choose its actions.
+Appendix Table  7 summarizes the two configurations.
+ KV-Ctx reads the final normalized prefix states.
+It averages the tokens of each camera and of the instruction, and appends the eight state coordinates, giving 3\times 960+8=2{,}888 values.
+These are reduced to 512 principal components and whitened.
+Its bandwidth makes the kernel equal to 0.5 at the median distance between a support input and its k -th nearest support neighbour, with k=\lceil\sqrt{N}\,\rceil , and \lambda=10^{-3} .
+ KV-Dec reads the action expert’s final hidden state at the ninth of ten flow evaluations, from a fixed Gaussian initial chunk, and averages it over the 50 action tokens (480 values).
+It uses full-covariance whitening, the median pairwise distance as bandwidth, and \lambda=10^{-2} .
+ KV-Ctx needs one forward pass of the prefix, and KV-Dec additionally runs nine steps of the action expert.
+Context-specific heads.
+The same estimator can be attached to the token groups of a single modality, such as the pooled tokens of one camera or of the instruction, at any layer.
+Each such head has its own support embeddings, preprocessing and bandwidth, which enables independently attributing unfamiliarity to specific parts of the input.
+We use eight such heads, all with the KV-Ctx recipe (Table  7 ).
+Four raw heads read an input before the transformer mixes the inputs: the mean token embedding of the workspace camera, of the wrist camera and of the instruction (960 values each), and the eight normalized state values.
+Four fused heads read the same token groups in the final prefix states, where attention has mixed them: the two camera means and the instruction mean that KV-Ctx concatenates, and the final state at the state token.
+A fused head therefore also responds to perturbations of other inputs, and the size of this response measures how strongly the policy mixes its inputs.
+ 3.2 Demonstration acquisition with SAVE
+SAVE  [ 14 ] fine-tunes a policy over several rounds.
+In each round it scores the initial observation o_{kl} of every candidate condition l of each target task k , averages the scores into a task score U_{k} , and draws a few tasks with probability proportional to U_{k}^{\tau} .
+For each draw, it requests the demonstration that starts from the most uncertain candidate condition of the drawn task.
+The policy is then warm-started from the previous round and fine-tuned, sampling preparatory and acquired data in equal proportion.
+We keep the implementation of  Römer et al. [14] , including its eligibility rule, under which previously acquired and preparatory demonstrations remain candidates, so a query can return a demonstration the policy already has.
+We therefore count both query slots and genuinely new demonstrations.
+The only change is the score.
+Our heads use \tau=2.5 , the temperature of SAVE/VFD, without tuning. SAVE/GU keeps the temperature \tau=1 and score shift of the original study.
+Before each round’s scoring, the support, including the acquired demonstrations, is embedded with the newly trained policy and the kernel head is refitted.
+ 3.3 Evaluation metrics
+Task-level calibration.
+Following  Römer et al. [14] , we correlate each task’s mean uncertainty over its candidate conditions with the primary policy’s success rate on that task.
+We report negative Spearman ( -\rho_{\rm S} ) and Pearson ( -r_{\rm P} ) correlations, so higher is better.
+As a reference for what task-level calibration rewards, we add a score that encodes only how many training demonstrations each task has, u_{k}=1/(1+n_{k}) , where n_{k} counts the unique demonstrations of task k in the support.
+It requires task labels and says nothing about unseen tasks or perturbed scenes, so it is not a usable uncertainty estimate.
+Supervisor referral.
+The primary and the supervisor are evaluated on the same conditions i=1,\ldots,n , with success rates p_{i} and s_{i} over repeated executions.
+Referring the fraction q of conditions with the highest uncertainty, R_{q} , to the supervisor yields the combined success
+ A_{u}(q)=\frac{1}{n}\sum_{i=1}^{n}\left[p_{i}+\mathbf{1}\{i\in R_{q}\}\,(s_{i}-p_{i})\right].
+ (3)
+How much referral can gain depends on the supervisor’s advantage and on how it is spread over the conditions, which differ between checkpoints, seeds and tasks.
+To compare scores across these settings, we measure a score’s gain over random referral relative to the gain of a hindsight oracle.
+Random referral achieves A_{\rm rand}(q)=(1-q)\bar{p}+q\bar{s} in expectation.
+A hindsight oracle refers by the signed gain g_{i}=s_{i}-p_{i} , including negative gains.
+The normalized area
+ \operatorname{nAUC}(u)=\frac{\int_{0}^{1}[A_{u}(q)-A_{\rm rand}(q)]\,dq}{\int_{0}^{1}[A_{\rm oracle}(q)-A_{\rm rand}(q)]\,dq}
+ (4)
+is zero for random and one for oracle ordering. Exact score ties receive their expected value under random tie order.
+ Global referral ranks all conditions together and can exploit task identity.
+ Within-task referral applies the same fraction inside every task against the corresponding within-task random and oracle curves, so a score that is constant within each task scores zero.
+The normalized area summarizes the whole referral curve and is our main measure.
+As an intuitive example of a single operating point, we further define the automated fraction as the largest 1-q whose combined success stays within two percentage points of the all-supervisor success.
+Within-task diagnostics.
+Because referral also depends on the supervisor, we report the within-task failure AUROC of the primary, averaged over tasks with mixed outcomes, using fractional failure labels 1-p_{i} .
+We decompose the variance of single-execution outcomes into differences between tasks, reproducible differences between conditions of a task (corrected for the sampling variance of three-execution means), and differences between executions of a condition.
+As a reference for how much a single observed outcome reveals, a cross-replicate ranking orders conditions by the signed gain observed in one execution of each policy and is evaluated on the two other executions, averaged over the three choices.
+ 3.4 Experimental protocol
+We follow the setup of  Römer et al. [14] with their released code, built on LeRobot  [ 93 ] .
+We repeat the study with three seeds.
+For each seed, a primary and a second policy that only the ensemble scores use were trained for 30,000 updates (batch size 32) on 1,437 demonstrations: the 30 LIBERO-Spatial, -Object and -Goal tasks and LIBERO-10 tasks 0–2.
+The ten LIBERO-10 tasks are the target tasks, and their 379 demonstrations form the candidate pool.
+The heads’ support holds the initial observation of every unique preparatory or acquired demonstration, because acquisition and referral are decided before execution.
+With 1,437 to 1,512 support inputs, fitting a head takes well under a second on a GPU.
+Each seed also has its own supervisor with the primary’s architecture, trained on all 1,693 demonstrations of the 40 tasks for 39,993 updates, which matches the primaries’ number of passes over their data.
+Acquisition.
+For each seed we run random acquisition (named Random), which draws tasks and their candidate conditions uniformly, and SAVE/VFD, SAVE/GU, SAVE/ KV-Ctx and SAVE/ KV-Dec .
+Each arm uses 15 rounds of five queries and 4,000 updates per round, Random included.
+We evaluate the primary at rounds 0, 5, 10 and 15 with the released evaluator of  Römer et al. [14] , using 30 rollouts per task and a 520-step horizon.
+The mean success averages success over the 75 query slots, interpolating linearly between these rounds, and therefore also rewards arms that improve early.
+Scoring on common policies.
+Calibration and referral use the primaries of the Random arm at rounds 0 and 10, so all scores see identical policies, inputs and outcomes.
+Each checkpoint contributes ten tasks to the calibration.
+Each checkpoint and each supervisor is executed three times, with independent seeds, from each of the 50 standard LIBERO initial states of every task, and a condition’s success rate averages these executions.
+Primary and supervisor start from identical initial states and receive identical initial observations, which we check by hashing the paired inputs.
+The seven baselines are those of  Römer et al. [14] , computed with their code.
+VFD, GU, Action-L2 and DECU measure disagreement between the two policies.
+ACE (action-chunk entropy)  [ 50 ] , VLM token entropy  [ 94 ] and VLM perplexity  [ 95 ] use one policy and mainly reflect the spread of its own predictions, which is largely aleatoric.
+We refer to them as entropy-based scores.
+VFD uses the symmetric score for evaluation and, as in their code, the one-way score for acquisition.
+Statistics and compute.
+We report means and sample standard deviations over the three seeds.
+Confidence intervals are 95% hierarchical bootstrap intervals from 2,000 draws.
+Each draw resamples the 50 conditions within each task, keeping their three executions together, and then resamples the three seeds. The draws are shared across scores and checkpoints, so differences are paired.
+Round-averaged values weight rounds 0 and 10 equally.
+Compute times are median wall-clock times of completed single-GPU jobs (RTX 3090 or A100) in the study’s job logs.
+Context-head experiments.
+These experiments test whether the heads detect perturbations in input modalities, both in the starting observation and during execution, and whether they support referral within a task (Sections  4.5 and  4.6 ).
+For each of three seeds we train a primary and a second policy for VFD on all 379 LIBERO-10 demonstrations, with the training setup of the main study and the same number of passes over the data (about 4.68, here 14,840 updates).
+All heads are fitted post hoc on the frozen primary, once per seed, and every experiment below uses these same heads.
+Their support consists of every tenth frame of its training demonstrations, because the heads also score observations during execution.
+Kernel scores at the variance floor differ only by single-precision rounding, so scores of a head that lie within 10^{-6} of each other are treated as ties before any ranking.
+Each experiment uses part of a library of 20 perturbation families, about half of them at two levels (Appendix Table  10 ).
+To test whether the uncertainty heads detect perturbed starting observations, we score the clean starting observations of half of the standard LIBERO-10 initial states of every task and their perturbed versions, without executing the policy.
+To test whether the heads detect perturbations during execution, the primary runs from two initial states of every task once without and once with each perturbation, which starts at step 100. Both runs share the environment seed and policy noise.
+For referral, each seed also has a supervisor trained on the same demonstrations as the primary, but with each training sample perturbed with probability 0.5 in a way that leaves the demonstrated actions correct, such as a paraphrase, colour jitter or a blank wrist image (Appendix  C ).
+Primary and supervisor are each executed three times from ten initial states of every task, once clean and once with each of these perturbations, using the same environment seeds for both.
+The 95% confidence intervals are hierarchical bootstrap intervals from 2,000 draws.
+Each draw resamples the initial states within each task and then the three seeds.
+An initial state keeps all its perturbed versions, because they start from the same scene.
+For perturbations during execution, which use only two initial states per task, each draw resamples the pairs of task and initial state instead.
+The intervals are not adjusted for multiple comparisons, so comparisons for individual perturbations are interpreted as exploratory.
+ 4 Results
+We first compare our uncertainty scoring heads with ensemble scores from the literature in our reproduction of the SAVE study, in task-level calibration (Q1, Section  4.1 ), demonstration acquisition and its cost (Q2 and Q3, Section  4.2 ) and supervisor referral (Q1, Section  4.3 ).
+We then examine what these evaluations actually measure, in particular how well they test the ranking of situations within a task (Q4, Section  4.4 ).
+To evaluate this ranking directly, we create differences within a task by controlled input perturbations.
+We test whether the uncertainty scores detect these perturbations, whether uncertainty heads on single input modalities show which input was perturbed, and whether referring the most uncertain conditions of each task to the supervisor improves success over random referral (Q5, Sections  4.5 and  4.6 ).
+ 4.1 Task-level calibration
+ Table 1: Task-level calibration: negative Spearman and Pearson correlation between task-mean uncertainty and task success. All scores are evaluated on the same policies, before acquisition and after ten rounds of random acquisition (Section  3.4 ), averaged over these two checkpoints (mean \pm SD over three seeds, best learned score in bold). Policies: number of trained policies a score needs. Type E marks disagreement between two policies, A an entropy-based score of one policy (mainly aleatoric) and K a kernel variance. Reported: values of Römer et al. [14] , averaged over 15 rounds of a separate 2,000-update run, so the protocols differ. † Reference that uses task labels, not a usable score.
+ This study
+ Reported
+ Score
+ Policies
+ Type
+ -\rho_{\rm S}
+ -r_{\rm P}
+ -\rho_{\rm S}
+ -r_{\rm P}
+ VFD
+ 2
+ E
+ 0.75\pm 0.12
+ 0.64\pm 0.17
+ 0.71
+ 0.71
+ GU
+ 2
+ E
+ 0.66\pm 0.19
+ 0.68\pm 0.20
+ 0.62
+ 0.65
+ Action-L2
+ 2
+ E
+ 0.56\pm 0.07
+ 0.50\pm 0.15
+ 0.50
+ 0.48
+ ACE
+ 1
+ A
+ 0.43\pm 0.16
+ 0.44\pm 0.16
+ 0.31
+ 0.36
+ DECU
+ 2
+ E
+ 0.37\pm 0.29
+ 0.40\pm 0.08
+ 0.31
+ 0.23
+ VLM entropy
+ 1
+ A
+ -0.09\pm 0.19
+ -0.03\pm 0.10
+ 0.10
+ 0.23
+ VLM perplexity
+ 1
+ A
+ -0.14\pm 0.25
+ 0.00\pm 0.27
+ -0.04
+ 0.02
+ KV-Ctx
+ 1
+ K
+ 0.77\pm 0.08
+ 0.82\pm 0.09
+ –
+ –
+ KV-Dec
+ 1
+ K
+ 0.75\pm 0.17
+ 0.80\pm 0.14
+ –
+ –
+ Demonstration count †
+ –
+ –
+ 0.82\pm 0.18
+ 0.83\pm 0.17
+ –
+ –
+Table  1 first verifies our reproduction of the baselines.
+To save computation, we score two checkpoints of our random-acquisition run instead of all fifteen rounds of a separate calibration run as  Römer et al. [14] (Section  3.4 ).
+The seven baselines nevertheless rank in the same order as reported, where ACE and DECU were tied, and most values lie within about 0.1 of theirs.
+VFD reaches -\rho_{\rm S}=0.75\pm 0.12 , so the reported 0.71 , also from three seeds, lies well within the spread over our seeds.
+Both our single-policy heads are on par with VFD.
+ KV-Ctx reaches -\rho_{\rm S}=0.77\pm 0.08 and -r_{\rm P}=0.82\pm 0.09 .
+The paired difference to VFD is +0.02 [-0.02,0.09] in Spearman and +0.18 [0.11,0.25] in Pearson correlation.
+ KV-Dec behaves similarly (Appendix Table  9 ).
+The Pearson advantage is largest at round 0, where KV-Ctx reaches -r_{\rm P}=0.94 and VFD 0.75 (Appendix Table  8 ).
+In the SAVE LIBERO-10 protocol, before acquisition, three of the ten target tasks are already part of the training data, so the head assigns their candidate conditions low variance.
+The seven tasks without demonstrations score much higher, and this clean split between the two groups matches the success pattern almost linearly.
+The last row of Table  1 does not estimate uncertainty but counts how many demonstrations of each task the policy has been trained on.
+This reference correlates with task success at least as strongly as every learned score ( -\rho_{\rm S}=0.82 , -r_{\rm P}=0.83 ).
+We return to this observation in Section  4.4 .
+ 4.2 Demonstration acquisition and cost
+ Figure 2: SAVE learning curves on LIBERO-10. Success of the fine-tuned policy (30 evaluation rollouts per task) as demonstrations are requested, mean and \pm 1 SD band over three independent runs.
+ Table 2: Policy success and cost during demonstration acquisition (mean \pm SD over three seeds, best in bold). All arms use five queries and 4,000 updates per round. Success: after 5, 10 and 15 rounds, and the normalized area under the linearly interpolated learning curve (Mean). New: unique previously unseen demonstrations acquired after 75 queries. Overhead: median GPU-minutes per round for scoring the candidate pool. For ensemble scores, it also includes fine-tuning the second policy for 4,000 updates per round, but not the one-time pre-training of that policy (30,000 updates). The training of the acquiring policy itself (about 37 minutes per round) is common to all arms and excluded.
+ Success (%)
+ Overhead
+ Acquisition
+ Policies
+ 5
+ 10
+ 15
+ Mean
+ New
+ (min/round)
+ Random
+ 1
+ 43.0\pm 1.5
+ 50.9\pm 5.1
+ 54.7\pm 5.1
+ 44.5\pm 2.7
+ 46.3\pm 6.7
+ –
+ VFD
+ 2
+ 47.6\pm 2.8
+ 56.7\pm 2.9
+ 61.9\pm 2.5
+ 49.2\pm 0.6
+ 69.3\pm 4.5
+ 43.8
+ GU
+ 2
+ 49.6\pm 3.9
+ 59.0\pm 2.3
+ 64.4\pm 3.1
+ 51.0\pm 1.0
+ 62.7\pm 2.5
+ 44.6
+ KV-Ctx
+ 1
+ 47.4\pm 3.3
+ 60.9\pm 3.7
+ 65.7\pm 1.8
+ 51.2\pm 1.6
+ 75.0\pm 0.0
+ 1.0
+ KV-Dec
+ 1
+ 46.4\pm 5.6
+ 56.4\pm 4.4
+ 61.8\pm 1.9
+ 48.7\pm 3.2
+ 75.0\pm 0.0
+ 12.0
+Figure  2 and Table  2 compare the acquisition strategies.
+Every uncertainty-guided arm ends above Random ( 54.7\% ).
+SAVE with KV-Ctx ends at 65.7\pm 1.8\% , with a mean success of 51.2\% over the run.
+This is level with SAVE/GU ( 64.4\pm 3.1\% , mean 51.0\% ) and above SAVE/VFD ( 61.9\pm 2.5\% , mean 49.2\% ).
+These results show similar observed acquisition performance, although three seeds do not establish equivalence or a consistent performance advantage among these three arms.
+ KV-Dec ( 61.8\pm 1.9\% ) also has a similar final success rate to VFD.
+Random and GU reproduce the reported final success rates of 54.6\% and 64.0\% , whereas our VFD arm remains below the reported 67.1\%   [ 14 ] .
+The Gaussian kernel heads spend the query budget differently.
+Because an acquired observation drops to the variance floor set by the ridge regularization at the next refit, in our experiments, SAVE never requested a demonstration twice or queried the preparatory demonstrations, so all 75 queries returned unique new demonstrations, compared with an average 69.3 for VFD, 62.7 for GU and 46.3 for Random.
+The heads remove most of the computational overhead of uncertainty-guided acquisition.
+Per round, KV-Ctx needs about one GPU-minute to embed the support and candidates, refit and score, whereas VFD needs 9.0 minutes of ensemble scoring plus 34.8 minutes to fine-tune the second policy, which must also be pre-trained once for 30,000 updates (about 4 GPU-hours).
+Over 15 rounds this amounts to about 15 GPU-minutes versus 15 GPU-hours (including the one-time pre-training of the second policy).
+At deployment, once all policies are trained, scoring the 500 evaluation conditions of one checkpoint takes 0.8 GPU-minutes with KV-Ctx (2.2 GiB of GPU memory), 8.9 with KV-Dec , 13.8 with GU and 38.8 with VFD.
+ 4.3 Supervisor referral
+ Figure 3: Referral to the supervisor at round 10: combined success minus random referral, as a function of the fraction of conditions referred (mean over three seeds). The hindsight oracle refers by the observed signed gain. In the within-task panel it peaks at 14.1 percentage points, outside the plotted range.
+ Table 3: Referral from the policies of Table  1 to a stronger supervisor policy (mean \pm SD over three seeds, best learned score in bold). Global nAUC and automated fraction average acquisition rounds 0 and 10. Within-task nAUC refers to round 10. Chance level is 0. † Conditions ranked by the demonstration count of their task, a reference that uses task labels and is constant within a task (Table  1 ). ‡ Conditions ranked by the supervisor’s gain observed in one of the three executions of each condition and evaluated on the other two. It shows how much a single observed outcome reveals (Section  3.3 ).
+ Global
+ Within-task
+ Automated
+ Score
+ nAUC
+ nAUC (r10)
+ fraction
+ VFD
+ 0.48\pm 0.06
+ 0.07\pm 0.05
+ 0.21\pm 0.03
+ GU
+ 0.42\pm 0.05
+ 0.06\pm 0.03
+ 0.19\pm 0.04
+ Action-L2
+ 0.35\pm 0.01
+ 0.06\pm 0.04
+ 0.13\pm 0.03
+ ACE
+ 0.29\pm 0.06
+ 0.06\pm 0.10
+ 0.13\pm 0.03
+ DECU
+ 0.20\pm 0.11
+ 0.03\pm 0.01
+ 0.11\pm 0.01
+ VLM entropy
+ -0.06\pm 0.09
+ 0.02\pm 0.03
+ 0.05\pm 0.02
+ VLM perplexity
+ -0.13\pm 0.08
+ -0.10\pm 0.01
+ 0.04\pm 0.01
+ KV-Ctx
+ 0.50\pm 0.04
+ 0.05\pm 0.12
+ 0.26\pm 0.03
+ KV-Dec
+ 0.51\pm 0.07
+ 0.11\pm 0.03
+ 0.30\pm 0.05
+ Demonstration count †
+ 0.52\pm 0.07
+ –
+ 0.32\pm 0.03
+ Cross-replicate reference ‡
+ –
+ 0.27\pm 0.04
+ –
+On the 500 evaluation conditions (the 50 standard initial states of each of the ten target tasks), the supervisors succeed in 78–81% of the executions, the primaries in 24% at round 0 and in 47–53% at round 10.
+Globally, the kernel heads match or exceed every ensemble score in referral to the supervisor (Table  3 , Figure  3 ).
+ KV-Ctx reaches a normalized area of 0.50\pm 0.04 , KV-Dec 0.51\pm 0.07 , VFD 0.48\pm 0.06 and GU 0.42\pm 0.05 .
+In paired comparisons, the 95% intervals of both heads’ differences from VFD include zero, whereas against GU they lie above zero, which supports better referral by both heads than by GU (Appendix Table  9 ).
+For the automated fraction, the intervals likewise support both heads over GU and KV-Dec over VFD.
+The entropy-based scores (ACE, VLM entropy, VLM perplexity) refer poorly.
+Referral becomes harder after acquisition: VFD, GU and both kernel heads reach areas of 0.63 – 0.65 at round 0, but 0.38 ( KV-Ctx ), 0.39 ( KV-Dec ), 0.31 (VFD) and 0.20 (GU) at round 10 (Appendix Table  8 ).
+Within tasks, no score refers well: the best within-task nAUC at round 10 is 0.11\pm 0.03 for KV-Dec , and its interval [0.04,0.20] is the only one in Table  3 that lies above zero.
+The next section examines why.
+ 4.4 Task coverage versus within-task ranking
+ Figure 4: (a) Share of the variance of single-execution success that lies between tasks, between conditions of a task (corrected for the sampling noise of three-execution means), and between executions of a condition, averaged over three seeds. (b) Within-task failure AUROC at round 10: seed values (small dots), mean (large dot) and 95% hierarchical bootstrap interval (bar). Chance is 0.5.
+Task-level calibration mainly reflects demonstration coverage, as indicated by the demonstration count reference in Table  1 .
+Ranking conditions by this count also matches or exceeds every uncertainty score in global referral (nAUC 0.52\pm 0.07 , automated fraction 0.32\pm 0.03 , Table  3 ).
+At round 0, the primary almost always fails the seven tasks without demonstrations but succeeds in 70–88% of executions on the three preparatory tasks.
+Here, demonstration counts alone reach -\rho_{\rm S}=0.94 and -r_{\rm P}=0.997 .
+Thus, high task-level correlations need not imply useful within-task rankings.
+Task-level differences explain 71–76% of outcome variance at round 0, versus only 3–7% of reproducible within-task differences (Figure  4 a).
+After ten rounds of random acquisition, these shares become 27–37% between-task and 20–25% within-task, while the remaining 44% reflects variation between executions of the same condition.
+Within-task failure AUROC at round 10 reaches 0.61 [0.56,0.66] for KV-Dec , 0.57 [0.50,0.63] for KV-Ctx , 0.55 [0.51,0.60] for VFD and 0.54 [0.50,0.58] for GU.
+Entropy-based scores remain near or below chance (Figure  4 b).
+Execution variability also limits within-task referral.
+Ranking conditions by the supervisor’s gain in one execution and evaluating on the other two yields nAUC 0.27\pm 0.04 (Table  3 ). Relative to this reference, KV-Dec achieves 0.11 (42%), VFD 0.07 (26%), GU 0.06 (23%) and KV-Ctx 0.05 (19%).
+Kernel and ensemble scores agree on coverage between tasks but not within tasks.
+ KV-Ctx –VFD rank correlation is 0.81 globally at round 0 and 0.59 at round 10, but only 0.25 – 0.27 within tasks. Within-task agreement is stronger within families: 0.74 – 0.78 for VFD–GU and 0.67 – 0.68 between kernel heads.
+Within a task, the two families therefore single out different conditions, and the noisy outcomes cannot show which choice is more useful.
+Thus, LIBERO’s standard initial conditions, scored before execution as in SAVE, test between-task coverage well but within-task coverage only weakly, motivating the targeted evaluations below.
+ 4.5 Context-specific heads under controlled perturbations
+ Table 4: Detection of perturbed starting observations: AUROC of perturbed against clean starting observations within a task for the context and whole-policy heads of Figure  1 and VFD, mean over three seeds. Each of the LIBERO-10 tasks contributes 25 initial states, of which the more expensive VFD was evaluated on only 10. Chance level is 0.5.
+ Raw heads
+ Fused heads
+ Whole-policy
+ Perturbation
+ Workspace
+ Wrist
+ Instruction
+ State
+ Workspace
+ Wrist
+ Instruction
+ State
+ KV-Ctx
+ KV-Dec
+ VFD
+ Instruction
+ S1
+ Strongly paraphrased
+ 0.50
+ 0.50
+ 1.00
+ 0.50
+ 0.53
+ 0.55
+ 0.99
+ 0.98
+ 0.99
+ 1.00
+ 0.95
+ S2
+ All object words replaced by synonyms
+ 0.50
+ 0.50
+ 1.00
+ 0.50
+ 0.51
+ 0.52
+ 0.94
+ 0.95
+ 0.93
+ 0.99
+ 0.92
+ S3
+ One typo in a non-object word
+ 0.50
+ 0.50
+ 1.00
+ 0.50
+ 0.50
+ 0.51
+ 0.88
+ 0.85
+ 0.86
+ 0.97
+ 0.82
+ S4
+ Object nouns replaced by pronouns
+ 0.50
+ 0.50
+ 1.00
+ 0.50
+ 0.63
+ 0.65
+ 1.00
+ 1.00
+ 1.00
+ 1.00
+ 0.97
+ S5
+ Translated into German
+ 0.50
+ 0.50
+ 1.00
+ 0.50
+ 0.76
+ 0.84
+ 1.00
+ 0.99
+ 1.00
+ 1.00
+ 0.99
+ Camera images
+ S6
+ Light at 40 % intensity
+ 0.86
+ 0.96
+ 0.50
+ 0.50
+ 0.91
+ 0.96
+ 0.60
+ 0.64
+ 0.80
+ 0.84
+ 0.77
+ S7
+ Gaussian noise on both images ( \sigma=0.08 )
+ 0.67
+ 0.82
+ 0.50
+ 0.50
+ 0.68
+ 0.83
+ 0.51
+ 0.51
+ 0.58
+ 0.59
+ 0.59
+ S8
+ Workspace camera moved by 4 cm and 6 ∘
+ 0.91
+ 0.49
+ 0.50
+ 0.50
+ 0.95
+ 0.54
+ 0.67
+ 0.70
+ 0.84
+ 0.89
+ 0.79
+ S9
+ Target 75 % occluded in the workspace image
+ 0.69
+ 0.50
+ 0.50
+ 0.50
+ 0.71
+ 0.51
+ 0.59
+ 0.55
+ 0.69
+ 0.69
+ 0.60
+ S10
+ Table texture replaced
+ 0.73
+ 0.89
+ 0.50
+ 0.50
+ 0.75
+ 0.89
+ 0.60
+ 0.63
+ 0.73
+ 0.76
+ 0.73
+ S11
+ Wrist image blacked out
+ 0.50
+ 1.00
+ 0.50
+ 0.50
+ 0.66
+ 1.00
+ 0.94
+ 0.98
+ 1.00
+ 1.00
+ 1.00
+ Scene
+ S12
+ Target displaced by 10 cm
+ 0.67
+ 0.92
+ 0.50
+ 0.50
+ 0.70
+ 0.92
+ 0.66
+ 0.67
+ 0.76
+ 0.82
+ 0.69
+ S13
+ Another object moved next to the target
+ 0.74
+ 0.93
+ 0.50
+ 0.50
+ 0.73
+ 0.91
+ 0.63
+ 0.62
+ 0.75
+ 0.80
+ 0.65
+ S14
+ Target rotated by 90 ∘
+ 0.59
+ 0.71
+ 0.50
+ 0.50
+ 0.60
+ 0.70
+ 0.58
+ 0.56
+ 0.63
+ 0.66
+ 0.59
+ Robot
+ S15
+ Arm joints offset by 0.1 rad
+ 0.79
+ 0.99
+ 0.50
+ 1.00
+ 0.83
+ 0.98
+ 0.68
+ 0.94
+ 0.87
+ 0.97
+ 0.94
+ S16
+ Reported end-effector position offset by 3 cm
+ 0.50
+ 0.50
+ 0.50
+ 1.00
+ 0.50
+ 0.50
+ 0.50
+ 0.69
+ 0.50
+ 0.62
+ 0.62
+ Instruction and scene
+ S17
+ Other task’s instruction, its objects absent
+ 0.50
+ 0.50
+ 0.50
+ 0.50
+ 0.54
+ 0.56
+ 0.81
+ 0.99
+ 0.93
+ 1.00
+ 0.97
+ from the scene
+ Mean over perturbations
+ 0.81
+ 0.86
+ 0.80
+ Table 5: Detection of perturbations during execution: AUROC of the 50 steps after a perturbation against the same steps of an unperturbed run for the context and whole-policy heads of Figure  1 and VFD with the same initial state and seed, for two initial states per task and averaged over three seeds. Chance level is 0.5.
+ Raw heads
+ Fused heads
+ Whole-policy
+ Perturbation
+ Workspace
+ Wrist
+ Instruction
+ State
+ Workspace
+ Wrist
+ Instruction
+ State
+ KV-Ctx
+ KV-Dec
+ VFD
+ Instruction
+ E1
+ Strongly paraphrased
+ 0.52
+ 0.56
+ 1.00
+ 0.56
+ 0.54
+ 0.52
+ 0.98
+ 0.76
+ 0.97
+ 0.95
+ 0.90
+ E2
+ Switched to another task’s instruction
+ 0.59
+ 0.63
+ 0.50
+ 0.68
+ 0.61
+ 0.60
+ 0.79
+ 0.77
+ 0.88
+ 0.93
+ 0.92
+ E3
+ Negated (“do not …”)
+ 0.48
+ 0.48
+ 1.00
+ 0.49
+ 0.46
+ 0.46
+ 0.90
+ 0.59
+ 0.83
+ 0.78
+ 0.63
+ Camera images
+ E4
+ Light at 40 % intensity
+ 0.80
+ 0.77
+ 0.50
+ 0.46
+ 0.85
+ 0.78
+ 0.58
+ 0.51
+ 0.75
+ 0.72
+ 0.64
+ E5
+ Workspace camera bumped by 2 cm and 3 ∘
+ 0.66
+ 0.46
+ 0.50
+ 0.44
+ 0.74
+ 0.45
+ 0.52
+ 0.47
+ 0.55
+ 0.54
+ 0.58
+ E6
+ Target 75 % occluded for 60 steps
+ 0.66
+ 0.49
+ 0.50
+ 0.47
+ 0.74
+ 0.46
+ 0.63
+ 0.50
+ 0.68
+ 0.64
+ 0.61
+ E7
+ Wrist image frozen for 60 steps
+ 0.55
+ 0.48
+ 0.50
+ 0.55
+ 0.57
+ 0.46
+ 0.58
+ 0.58
+ 0.65
+ 0.67
+ 0.70
+ E8
+ Heavy noise on both images ( \sigma=0.35 )
+ 1.00
+ 1.00
+ 0.50
+ 0.60
+ 1.00
+ 1.00
+ 0.88
+ 0.62
+ 1.00
+ 0.99
+ 0.98
+ Scene
+ E9
+ Target displaced by 6 cm
+ 0.60
+ 0.79
+ 0.50
+ 0.59
+ 0.65
+ 0.77
+ 0.73
+ 0.63
+ 0.78
+ 0.78
+ 0.80
+ E10
+ Another object moved next to the target
+ 0.65
+ 0.74
+ 0.50
+ 0.51
+ 0.71
+ 0.75
+ 0.63
+ 0.57
+ 0.75
+ 0.70
+ 0.68
+ E11
+ Target removed
+ 0.72
+ 0.73
+ 0.50
+ 0.56
+ 0.79
+ 0.69
+ 0.81
+ 0.69
+ 0.88
+ 0.89
+ 0.90
+ Robot
+ E12
+ Arm pushed (joints offset by 0.1 rad)
+ 0.77
+ 0.82
+ 0.50
+ 0.82
+ 0.78
+ 0.81
+ 0.82
+ 0.67
+ 0.88
+ 0.87
+ 0.85
+ Mean over perturbations
+ 0.80
+ 0.79
+ 0.76
+Tables  4 and  5 (rows S1–S17 and E1–E12) report within-task AUROC for distinguishing perturbed from clean observations, initially and during execution, for the context heads, KV-Ctx , KV-Dec and VFD.
+We expect raw heads to detect unfamiliarity in their own input, fused heads to also detect unfamiliar combinations, and the whole-policy scores to respond across modalities.
+Scoring only initial observations (Table  4 ), raw heads remain near chance when their input is unchanged by construction.
+Unfamiliar instructions (S1–S5), workspace camera shifts (S8), wrist blackouts (S11) and reported position offsets (S16) selectively raise the corresponding raw head.
+Lighting, noise, texture and scene changes (S6, S7, S10 and S12–S14) raise both camera heads, more strongly at the wrist, while joint offsets (S15) also raise the state head.
+During execution, a change in one input modality can alter the robot’s behaviour and lead to unfamiliar observations in other modalities.
+For example, switching to another task’s instruction (E2) also raises the scores of the camera and state heads.
+Fused heads also respond to changes in other inputs: the fused instruction head responds to most visual and scene changes (S6–S14), and fused camera heads to strong instruction changes such as translation (S4 and S5).
+The instruction of another task whose objects are absent from the scene (S17) leaves all raw heads at chance, because instruction and scene are each familiar, but raises the fused instruction and state heads, KV-Ctx , KV-Dec and VFD.
+During execution, the switch to another task’s instruction (E2), which for eight of the ten tasks names objects absent from the scene, is likewise detected by KV-Ctx , KV-Dec and VFD, while the raw instruction head stays at chance.
+Both whole-policy kernel heads respond to most visual and unfamiliar instruction changes (S1–S14).
+However, KV-Ctx misses reported position offsets (S16, AUROC 0.50), which the fused state head (0.69), KV-Dec and VFD (both 0.62) partly detect.
+Across the displayed perturbations of starting observations, mean AUROC is 0.86 for KV-Dec , 0.81 for KV-Ctx and 0.80 for VFD.
+On shared initial states, the paired AUROC difference between KV-Dec and VFD has an unadjusted 95% interval entirely above zero for 12 of 17 perturbations and entirely below zero for none.
+For KV-Ctx , the corresponding interval lies entirely below zero only for the two changes to robot state (S15 and S16, Appendix Table  11 ).
+During execution, mean AUROCs are 0.79 for KV-Dec , 0.80 for KV-Ctx and 0.76 for VFD, while none of the unadjusted intervals for either kernel head’s difference from VFD lies entirely below zero.
+Across perturbations of starting observations, detection strength tracks success loss, but not fully (Figure  5 a, Spearman correlations 0.75–0.79 for KV-Dec , KV-Ctx and VFD).
+Mild image noise (S7) for example raises wrist-head scores without an observed loss of success.
+ 4.6 Referral under controlled within-task variation
+ Table 6: Within-task referral under perturbations to a supervisor trained with them, based on uncertainty scores of clean and perturbed starting observations (mean \pm SD over three seeds). Chance level is 0 for nAUC and 0.5 for AUROC. The cross-replicate reference ranks the conditions by the supervisor’s gain observed in one of the three executions of each condition and is evaluated on the other two.
+ Score
+ Within-task nAUC
+ Global nAUC
+ Automated
+ Failure AUROC
+ KV-Ctx
+ 0.40\pm 0.05
+ 0.35\pm 0.02
+ 0.65\pm 0.22
+ 0.76\pm 0.03
+ KV-Dec
+ 0.46\pm 0.03
+ 0.41\pm 0.02
+ 0.76\pm 0.13
+ 0.79\pm 0.01
+ VFD (two policies)
+ 0.40\pm 0.03
+ 0.39\pm 0.03
+ 0.73\pm 0.14
+ 0.75\pm 0.00
+ Cross-replicate reference
+ 0.21\pm 0.03
+ 0.21\pm 0.03
+ 0.53\pm 0.25
+ 0.62\pm 0.01
+ Figure 5: Task success under perturbations. (a) Detection of perturbed starting observations against the loss of success they cause. Each point is one level of a perturbation family (Appendix Table  10 ), placed by KV-Dec AUROC of perturbed against clean starting observations and by success decline relative to clean executions from the same initial states. (b) Success of the supervisor, which is trained on these perturbations, minus that of the policy whose uncertainty is estimated, for each perturbation of the referral experiment (Table  6 ), averaged over tasks and their ten initial states, with seed values (small dots), their mean (large dot) and the 95% hierarchical bootstrap interval (bar). Rows are sorted by the mean, and coloured rows have an interval above zero. Symbols give the perturbed input in both panels.
+Standard LIBERO conditions vary little within tasks and much variation in outcomes is due to execution noise (Section  4.4 ).
+We therefore introduce input perturbations to test whether the uncertainty scores identify conditions that benefit from referral within the same task.
+On ten initial states per task, we evaluate primary and supervisor on clean conditions and 12 perturbations from nine label-preserving families used in supervisor training (Appendix Table  10 ).
+The supervisor gains most under wrist blackout (50% success versus 0% for the primary), strong paraphrases (58% versus 13%) and object synonyms (68% versus 27%), while many perturbations are harmless (e.g., image noise, light at 80% intensity) or hurt both policies similarly (e.g., the moved camera) (Figure  5 b).
+For target occlusion, the supervisor even loses 9 percentage points.
+Across perturbed conditions, success averages 71% for the supervisor and 58% for the primary; on clean conditions, both reach 79%.
+Uncertainty-based referral is more effective here than on standard LIBERO conditions (Table  6 ).
+ KV-Dec reaches a within-task nAUC of 0.46\pm 0.03 , compared with 0.40\pm 0.05 for KV-Ctx and 0.40\pm 0.03 for VFD.
+Paired comparisons show that KV-Dec exceeds VFD by 0.06 [0.03,0.10] in nAUC and 0.03 [0.02,0.05] in failure AUROC, whereas KV-Ctx shows no significant difference in nAUC ( 0.00 [-0.06,0.06] , Appendix Table  11 ).
+All three exceed the cross-replicate reference (0.21), which ranks conditions by the supervisor’s gain observed in a single execution.
+The kernel heads thus support within-task referral when observable perturbations expose weaknesses that the supervisor has learned to handle.
+ 5 Discussion
+ 5.1 Calibration and referral (Q1)
+Q1 asked whether a single-policy kernel head matches ensemble scores in the LIBERO-10 evaluations, calibration to task success and referral to a stronger supervisor.
+The heads perform competitively in these evaluations (Sections  4.1 and  4.3 ), with advantages in particular metrics.
+Both correlate with task success more linearly than VFD and GU (Table  1 and Appendix Table  9 ).
+Their variance is bounded and drops to its floor for support observations by construction, so tasks with and without demonstrations form two well-separated groups.
+In referral, both heads also reach a higher automated fraction than VFD and GU, supported by the intervals for KV-Dec and, against GU, for KV-Ctx (Table  3 and Appendix Table  9 ).
+ 5.2 Demonstration acquisition (Q2)
+Q2 asked whether the active learning protocol SAVE guided by the kernel heads acquires demonstrations as effectively as SAVE with ensemble scores.
+We observe similar acquisition performance, and in our experiments every query guided by either kernel head returns a new demonstration (Figure  2 and Table  2 ).
+Conditioning on acquired observations assigns them low variance after refitting, encouraging subsequent queries elsewhere.
+Calibration and referral only test how a score ranks fixed conditions, whereas SAVE also weights tasks by the size of their scores and refits the head after every round.
+A good acquisition score must therefore also drop for what it has acquired, which exact conditioning guarantees.
+ 5.3 Computational cost (Q3)
+Q3 asked how much computation the kernel heads save.
+The heads are much faster than the ensemble scores both to set up (in our experiments about 4 to 44 times per acquisition round) and to use (about 4 to 50 times against VFD when scoring the evaluation conditions, Section  4.2 ).
+Setting up a kernel head needs no training.
+It takes one forward pass of the frozen policy over the support and one factorization of the kernel matrix, whose cost grows with the number of support inputs but not with the size of the policy.
+Ensemble scores instead train at least one further policy during pre-training and fine-tuning, so their overhead grows with the policy’s training cost.
+Online, KV-Ctx adds only a kernel evaluation to embeddings that the policy computes anyway to act, whereas ensemble scores run every member.
+ KV-Dec runs part of the action expert again, putting it in between KV-Ctx and the ensemble scores.
+SmolVLA is a small VLA.
+For larger policies, training a second model costs far more, so the absolute savings grow with the size of the policy.
+Scoring during execution requires a support that also contains later frames of the demonstrations. With every tenth frame, in our experiments the exact factorization grows to about 10,000 rows, which is still affordable on a GPU.
+For much larger supports, sparse variational GPs with inducing points  [ 96 , 97 ] reduce the cost from cubic to linear in the support size.
+Pivoted Cholesky  [ 98 , 99 ] bounds sparse variance inflation by a set tolerance at every support input, so acquired demonstrations still become certain.
+ 5.4 What the established evaluations reward (Q4)
+Q4 asked which properties of an uncertainty score the established evaluations reward on LIBERO.
+They mainly reward recognizing which tasks the demonstrations cover (Section  4.4 ).
+Ensemble disagreement captures this coverage indirectly, because two policies trained on the same data agree where data are dense.
+A kernel head measures it directly in the policy’s own embedding space, as a label-free count of nearby demonstrations.
+Both therefore rank tasks alike, which explains the parity found for Q1.
+High task-level calibration is necessary for prioritizing tasks but is a weak test.
+In the evaluation protocol of Römer et al. [14] that we reproduce, it mainly reflects how many demonstrations each task has, so a plain demonstration count reaches it as well (Table  1 ).
+Recognizing this coverage is still useful, because demonstration counts are unavailable for new tasks and scenes in deployment.
+Ranking situations within a task is a separate question, and on LIBERO’s standard initial conditions it was largely inconclusive.
+LIBERO task conditions differ little and reproducible within-task differences in outcome are small compared to outcome variations during the policy’s execution (Figure  4 a).
+We suggest that evaluations of uncertainty for adaptive robot learning report a coverage reference such as the demonstration count, separate global from within-task metrics, quantify execution noise with repeated executions, and include within-task variation that is known to matter, as in LIBERO-PRO, LIBERO-Plus  [ 23 , 24 ] and our perturbed conditions.
+ 5.5 Attributing unfamiliarity to input modalities (Q5)
+We find that raw context heads detect unfamiliar perturbations of the inputs they read (Table  4 and Table  5 ), while their insensitivity to changes confined to other inputs follows by construction.
+Several heads can share the same frozen policy, providing separate familiarity estimates that could guide targeted assistance, such as checking the wrist camera or rephrasing an instruction.
+The heads on fused embeddings detect unfamiliar combinations of individually familiar inputs. For example, an instruction naming objects absent from the scene leaves all raw heads at chance but raises the fused instruction and state heads (S17 in Table  4 ).
+During execution, changes in one modality can also alter the robot’s behaviour and produce subsequent unfamiliar observations in others, as shown by the switch to another known but unrelated instruction in E2 (Table  5 ).
+Separate context heads may also reveal confined changes that the whole-policy scores miss.
+ KV-Ctx , KV-Dec and VFD do not or only partly detect the reported position offset, whereas the raw state head responds perfectly (S16).
+ 5.6 When unfamiliarity supports within-task referral (Q5)
+We find that within-task referral is possible when meaningful variation in the task conditions exists. KV-Dec improves on VFD, whereas KV-Ctx performs comparably (Table  6 and Appendix Table  11 ).
+Referral helps where the supervisor is more likely to succeed.
+Here, the largest gains occur under wrist blackout, strong paraphrases and object synonyms, which the supervisor was successfully trained to handle (Figure  5 b).
+If both policies fail or the primary already copes, referral offers no expected benefit.
+Detecting unfamiliarity alone therefore does not ensure useful referral.
+Execution variability makes gains observed in one execution noisy predictors of later gains.
+The input-based rankings of the whole-policy scores support referral considerably more effectively than a single-execution estimate, which ranks conditions by the supervisor’s gain in one execution and evaluates on others (Table  6 ).
+ 5.7 Further findings
+Unfamiliarity is not harm.
+Our kernel heads estimate epistemic uncertainty under a GP model on the policy’s embeddings.
+Equation ( 1 ) uses no outputs and shrinks only when data are added.
+They therefore measure how well the support covers an input in the policy’s embedding space, not whether the policy will fail on it.
+If the embeddings keep unfamiliar inputs apart from familiar ones, this coverage reflects how unfamiliar the input is.
+In general, detection strength correlates quite strongly with the loss of success (Figure  5 a).
+However, some perturbations that KV-Dec detects almost perfectly cost anywhere from less than 20 points of success to complete failure, while scene changes that it detects only moderately cost about 40 points (Figure  5 a).
+Single-policy entropy can correlate with coverage.
+ACE, the action-chunk entropy of a single policy, cannot capture epistemic uncertainty by design, yet for the policies of Table  1 it correlates with training-data coverage across tasks.
+On tasks without demonstrations, the policy has to extrapolate, and if its aleatoric estimate of action spread is on average wider there, ACE follows coverage without representing epistemic uncertainty.
+Indeed, before acquisition, the policy’s sampled actions spread more widely on the seven tasks without demonstrations, so ACE ranks tasks by their demonstration count (Spearman 0.64 ).
+After ten rounds, when every task has some demonstrations, this correlation already drops to 0.21 , while VFD, for example, still reaches 0.82 .
+Across all nine scores, the correlation of a score with the demonstration count closely matches its task-level calibration (Pearson above 0.99 before and 0.94 after acquisition), which suggests that the moderate calibration of ACE in Table  1 mainly reflects its correlation with coverage.
+As discussed in Section  2 , such agreement is indirect.
+ 5.8 Limitations
+We study one policy architecture, SmolVLA, on one simulated benchmark with ten target tasks and three training seeds.
+Generalization to other architectures, actual robots, and real-world conditions remains untested. The main bootstrap intervals characterize uncertainty for the evaluated tasks rather than variation across unseen tasks.
+Three seeds estimate training variability only coarsely, and three executions per condition leave success rates and supervisor gains noisy.
+Inconclusive comparisons therefore do not establish equivalence.
+The kernel variance measures demonstration coverage under a chosen representation and GP prior.
+Its interpretation as the policy’s epistemic uncertainty depends on whether embedding distances preserve distinctions relevant to action selection.
+We do not enforce this property during training.
+Feature collapse, token averaging, or dimensionality reduction can hide relevant differences.
+Low variance at a support observation does not establish that the policy has learned to act successfully there, while unfamiliar inputs can be harmless.
+Calibration and referral in the matched study (based on Römer et al. [14] ) use only two checkpoints of the random-acquisition arm, due to computational limitations.
+Their task-level calibration measures correlation with success rather than calibrated failure probabilities.
+Our SAVE/VFD reproduction also remains below the final success reported by Römer et al. [14] . Although this may plausibly be explained by variability across training runs, this difference limits the acquisition comparison.
+Furthermore, acquisition selects from a fixed pool of recorded demonstrations, and the inherited eligibility rule permits repeated requests.
+Since the kernel heads acquire more unique demonstrations, the results do not isolate better selection among new demonstrations from avoidance of repeated queries.
+The perturbation experiments use separate policies trained on all ten target tasks and support observations sampled throughout their demonstrations.
+They therefore extend the evaluation under a different training and support regime.
+The perturbations are deliberately constructed, and the observed relationship between detection and loss of success is specific to their selection.
+The referral supervisor is trained on the same label-preserving perturbation families used in evaluation.
+Useful referral under unfamiliar failure mechanisms remains untested.
+Referral evaluates delegation before execution to an automated supervisor proxy starting independently from the same initial state.
+It does not test human assistance, handover during execution, recovery, or intervention costs.
+The execution experiments establish sensitivity to scheduled perturbations using two initial states per task and a fixed post-perturbation window.
+They do not establish warning before failure, suitable episode-level false-alarm rates, or improved outcomes from responding to an alarm.
+Context-specific heads identify unfamiliarity in individual representations, but do not establish which input caused a failure or which corrective intervention would help.
+Raw-head selectivity partly follows by construction, while fused responses depend on cross-modal mixing and subsequent behaviour.
+Targeted assistance based on these signals remains a proposed application.
+Finally, head configurations were chosen through limited exploratory studies rather than a systematic sensitivity analysis.
+Comparisons with equally inexpensive distance or density scores would help establish the contribution of exact GP conditioning.
+The reported computational savings also apply to the tested policies, hardware, and support sizes. Exact conditioning requires cubic factorization time and quadratic storage, and policy updates require extracting support embeddings again.
+Supports beyond approximately 10,000 observations remain unevaluated.
+Sparse approximations could extend this range, but their effects on ranking quality, acquisition behaviour, and computational savings remain untested.
+ 6 Conclusion
+We introduced post-hoc GP kernel-variance heads that estimate epistemic uncertainty from the embeddings of a single VLA policy.
+Fitting requires no regression targets or gradient updates and leaves the policy unchanged.
+On SmolVLA and LIBERO-10, the heads performed competitively with two-policy ensemble scores in task-level calibration, demonstration acquisition, and supervisor referral, while substantially reducing computational overhead.
+For SmolVLA, KV-Ctx reduced uncertainty-scoring time by up to approximately a factor of 50 and setup time per acquisition round by up to approximately a factor of 44 compared with ensemble scores.
+Our analysis also clarifies what these evaluations reward.
+In the evaluation protocol of Römer et al. [14] , task-level calibration and global referral primarily reflect differences in demonstration coverage between tasks.
+They provide weaker evidence about ranking situations within a task, where execution variability obscures reproducible differences in outcomes.
+Evaluating uncertainty for adaptive robot learning therefore benefits from coverage references, repeated executions, and separate reporting of global and within-task performance.
+Controlled perturbations reveal further capabilities of the kernel-variance heads.
+Context-specific heads identify unfamiliar input modalities, while fused heads can detect unfamiliar combinations of individually familiar inputs.
+Under these perturbations, our KV-Dec improves within-task referral over VFD to a supervisor trained to handle them.
+However, unfamiliarity supports useful referral only where the supervisor has a performance advantage. Detecting unfamiliarity and determining the benefit of assistance remain distinct questions.
+Future work should test these findings across other VLA architectures and physical robots, establish the contribution of GP conditioning relative to simpler distance and density scores, and evaluate whether context-specific unfamiliarity can guide effective assistance during execution. Such evaluations should assess intervention timing, task success, and assistance costs alongside detection quality.
+

@@ -1,0 +1,567 @@
+Distribution Shift Alignment Helps LLMs Simulate Survey Response Distributions
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Methodology
+2.1 Task Definition
+2.2 Phase 1: Aligning with Training Set Distributions
+2.3 Phase 2: Aligning Distribution Shifts across Backgrounds
+2.4 Fine-Tuning Method
+3 Experiment
+3.1 Experimental Setup
+3.2 Baselines
+3.3 Distribution Simulation
+3.4 Data Efficiency and Cost Reduction
+3.5 Generalization across Different Backgrounds
+3.6 Robustness across Questions
+3.7 Robustness across Training Set Size
+3.8 Consistency across Prompts
+3.9 Ablation Study
+4 Related Work
+4.1 LLM-Based Simulation
+4.2 Distributional Preference Modeling and Alignment
+5 Conclusion
+References
+A Theoretical Analysis
+B Prompt
+C Training Set Size
+License: CC BY 4.0
+arXiv:2510.21977v1 [cs.AI] 24 Oct 2025
+Distribution Shift Alignment Helps LLMs Simulate Survey Response Distributions
+Ji Huang
+Affiliation: School of Computer Science
+Affiliation: USTC
+Email: huangjustc@mail.ustc.edu.cn
+Mengfei Li
+Affiliation: School of Management
+Affiliation: Fudan University
+Email: mfli22@m.fudan.edu.cn
+Shuai Shao
+Affiliation: School of Computer Science
+Affiliation: USTC
+Email: shao10@ustc.edu.cn
+Abstract
+Large language models (LLMs) offer a promising way to simulate human survey responses, potentially reducing the cost of large-scale data collection. However, existing zero-shot methods suffer from prompt sensitivity and low accuracy, while conventional fine-tuning approaches mostly fit the training set distributions and struggle to produce results more accurate than the training set itself, which deviates from the original goal of using LLMs to simulate survey responses. Building on this observation, we introduce Distribution Shift Alignment (DSA), a two-stage fine-tuning method that aligns both the output distributions and the distribution shifts across different backgrounds. By learning how these distributions change rather than fitting training data, DSA can provide results substantially closer to the true distribution than the training data. Empirically, DSA consistently outperforms other methods on five public survey datasets. We further conduct a comprehensive comparison covering accuracy, robustness, and data savings. DSA reduces the required real data by 53.48–69.12%, demonstrating its effectiveness and efficiency in survey simulation.
+1 Introduction
+Figure 1: Overview of different approaches for simulating survey responses.
+Surveys are essential tools in social sciences, market research, and political science, providing valuable data for decision-making. However, large-scale surveys are costly and resource-intensive. Large language models (LLMs), trained on vast amounts of human text, offer a promising alternative by simulating human responses in surveys. This has led to growing research on whether LLMs can accurately replicate human preferences, potentially reducing the costs of data collection.
+One primary approach is zero-shot methods, where LLMs generate survey responses without fine-tuning on real data Kaiser et al. (2025), as shown in Figure 1. Further research includes using prompt engineering to better simulate Yang et al. (2024); Meister et al. (2025). While zero-shot methods are data-efficient, their performance is limited because results often deviate from real-world distributions. Additionally, these methods are sensitive to prompt changes, leading to varying results Wang et al. (2025a).
+Another approach is fine-tuning methods. AAE Wang et al. (2025c) proposed fine-tuning a conditional probability model to align the LLM’s output distribution with the training set. Two recent studies Suh et al. (2025); Cao et al. (2025) directly fine-tuned the LLM’s token probabilities to match the training set’s distribution. While fine-tuning produces more accurate results than zero-shot methods, its improvement mainly comes from aligning the LLM with the training set distribution, and is limited to reproducing the patterns of the training data without achieving higher accuracy, as shown in Figure 1. This raises the question of why not directly use the training set distribution as result, as these methods underutilize the LLM’s potential.
+Considering these limitations, we explore how to leverage LLMs’ capabilities to yield results closer to the true distribution than training data. We find that, although LLMs may not be able to predict the exact distribution of human preferences, they are effective at identifying the differences in preferences across different backgrounds. For example, LLMs can’t accurately predict how many people like sports cars, but it can capture the trend that younger people prefer sports cars more than middle-aged people. This ability to predict preference shifts can align the distribution from different backgrounds, and integrate information from diverse backgrounds.
+Building on this idea, we propose using the Distribution Shift Alignment (DSA) fine-tuning to help LLMs simulate human choice distributions. Our approach starts by collecting a small amount of training data and using it to fine-tune the LLM at the token level, which means adjusting the model’s token probabilities corresponding to survey options. The fine-tuning process is divided into two stages. In the first stage, we fine-tune the LLM directly using the training data, aligning its output distribution with that of the training data. This stage helps the LLM’s output better match the distribution of the training data and corrects biases. In the second stage, we train the LLM to align the distribution shifts between different backgrounds using a designed distribution shift loss. By fine-tuning the LLM to maintain the same differences between the distributions of different backgrounds, and using these differences to estimate the distribution of certain background from all other backgrounds, we can obtain a distribution closer to the real one than the training data, as shown in Figure 1. In the Appendix A, we prove that under stronger assumptions, this estimation is consistent with the true distribution.
+In experiments, we evaluated DSA on five publicly available survey datasets in different areas, and compare DSA with both zero-shot and fine-tuning methods. DSA consistently outperformed all others in accurately simulating the real distribution. Using DSA, we were able to reduce the amount of data required by 53.48%-69.12% to achieve similar accuracy, significantly cutting down the costs. In general, this paper makes the following contributions:
+•
+We propose Distribution Shift Alignment fine-tuning for simulating human survey responses with LLMs, which can generate results closer to the real distribution than the training data.
+•
+We incorporate the training set results as a baseline to compare with both zero-shot and fine-tuning methods, enabling evaluations of multiple characteristics—such as data savings—that were often ignored in previous studies.
+•
+We conducted experiments on five datasets and show that DSA provided the most accurate predictions and reduced the cost of conducting surveys by up to 53.48%-69.12%.
+2 Methodology
+Figure 2: Framework of our proposed distribution shift alignment fine-tuning method.
+2.1 Task Definition
+In a survey, respondents’ choices on core question CC are defined as a probability distribution over the options P⁡(C)=[p1,p2,…,pn]P(C)=[p_{1},p_{2},\dots,p_{n}]. In practice, surveys often focus on how people with different backgrounds (e.g., region, education level) make their choices. To capture such heterogeneity, a set of background information questions B=(B1,B2,…,Bm)B=(B_{1},B_{2},\dots,B_{m}) is included, where each background question BiB_{i} contains multiple options Bi=(bi​1,bi​2,…,bi​Ni)B_{i}=(b_{i1},b_{i2},\dots,b_{iN_{i}}), and each option bi​jb_{ij} represents a specific subgroup (e.g., people living in urban areas). Given a combination of background attributes 𝐛∈B1×⋯×Bm\mathbf{b}\in B_{1}\times\dots\times B_{m}, LLM is expected to predict the probability distribution of choices on the core survey question P⁡(C∣𝐛)​for all​𝐛∈B1×⋯×BmP(C\mid\mathbf{b})\ \text{for all}\ \mathbf{b}\in B_{1}\times\dots\times B_{m}.
+2.2 Phase 1: Aligning with Training Set Distributions
+Given a small amount of real survey data, we can compute the choice distribution of different backgrounds PTrain​(C∣𝐛)P^{\text{Train}}(C\mid\mathbf{b}), which is a sample of the true distribution. In the first stage of fine-tuning, we focus on aligning the model’s token-level outputs with these observed distributions from the training data. To achieve more precise fine-tuning, we adopt the same approach as the token-level fine-tuning Suh et al. (2025), directly fine-tuning the LLM at the token level. Specifically, we treat the background information as prompt, and then assign a label to each option cic_{i} of the core question (e.g., score from 1 to 5), asking the LLM to output the corresponding label directly, as shown in Figure 2. Then, the probability of the token tit_{i} corresponding to the option label is regarded as the predicted probability:
+PiLLM=eti∑j=1netj,P_{i}^{\text{LLM}}=\frac{e^{t_{i}}}{\sum_{j=1}^{n}e^{t_{j}}},
+We train the LLM to align its output distribution with the observed distribution in the training data using the KL divergence loss:
+ℒ=∑𝐛∈B1×⋯×BmPLLM​(C∣𝐛)​log⁡(PLLM​(C∣𝐛)PTrain​(C∣𝐛))\mathcal{L}=\sum_{\mathbf{b}\in B_{1}\times\dots\times B_{m}}P^{\text{LLM}}(C\mid\mathbf{b})\log\left(\frac{P^{\text{LLM}}(C\mid\mathbf{b})}{P^{\text{Train}}(C\mid\mathbf{b})}\right)
+This phase of fine-tuning aligns the LLM’s output distribution with the training data distribution, preventing the model’s predictions from deviating too far from the true distribution.
+2.3 Phase 2: Aligning Distribution Shifts across Backgrounds
+In the second stage of fine-tuning, we align the influence of each background question on the LLM output distributions. Specifically, assume that each background question is independent of the others. Then, when all other backgrounds are held constant, changing the choice on a particular background question (e.g., rural vs. urban) should cause the same shift in the distribution of the core question. By aligning these shifts in the LLM’s output distribution, we can obtain a better estimate of the true distribution, as shown in Figure 2.
+To mathematically model this shift, we use quantile mapping as shown in Figure 2 to describe the difference between different distributions. Specifically, we rank respondents based on the scores they give to the core question and compute the scores given by respondents at different quantiles (e.g., the score given by the top 10% of respondents in the 𝐛1\mathbf{b}_{1} background is denoted as s𝐛110%s^{10\%}_{\mathbf{b}_{1}}). We then use the differences between different backgrounds of the same quantile to represent the shift between the two distributions:
+𝐝⁡(𝐛1,𝐛2)=[dk​(𝐛1,𝐛2)]=[s𝐛1k−s𝐛2k]k=0%,10%,…\mathbf{d}(\mathbf{b}_{1},\mathbf{b}_{2})=[d_{k}(\mathbf{b}_{1},\mathbf{b}_{2})]=[s^{k}_{\mathbf{b}_{1}}-s^{k}_{\mathbf{b}_{2}}]_{k=0\%,10\%,\ \dots}
+After the first stage of fine-tuning, we compute the shift 𝐝^​(𝐛1,𝐛2)\mathbf{\hat{d}}(\mathbf{b}_{1},\mathbf{b}_{2}) caused by each single background change on the final distribution for all distance​(𝐛1,𝐛2)=1\text{distance}(\mathbf{b}_{1},\mathbf{b}_{2})=1. It is important to note that in this step, the shift calculation is based on all available backgrounds, not just a specific pair. Then, we randomly generate multiple pairs consisting of two virtual respondents with only one differing background question. We then ask the LLM to predict the distribution of the two respondents and align the shift with the previously computed d^​(𝐛1,𝐛2)\hat{d}(\mathbf{b}_{1},\mathbf{b}_{2}) using KL divergence. The loss function is as follows:
+ℒDSA=∑(𝐛1,𝐛2)ℒK​L​(𝐝LLM​(𝐛1,𝐛2),𝐝^​(𝐛1,𝐛2))\mathcal{L}_{\text{DSA}}=\sum_{(\mathbf{b}_{1},\mathbf{b}_{2})}\mathcal{L}_{KL}(\mathbf{d}_{\text{LLM}}(\mathbf{b}_{1},\mathbf{b}_{2}),\mathbf{\hat{d}}(\mathbf{b}_{1},\mathbf{b}_{2}))
+Note that the quantile mapping process interrupts gradient propagation. Therefore, when computing the DSA loss, we stop the gradient for the background with more respondents between 𝐛1\mathbf{b}_{1} and 𝐛2\mathbf{b}_{2}, and only backpropagate through the prediction of the background with fewer respondents. This choice is based on the higher sampling bias of smaller groups, allowing faster and more stable convergence.
+𝐝^​(𝐛1,𝐛2)\mathbf{\hat{d}}(\mathbf{b}_{1},\mathbf{b}_{2}) is derived from all available backgrounds, whereas 𝐝LLM​(𝐛1,𝐛2)\mathbf{d}_{\text{LLM}}(\mathbf{b}_{1},\mathbf{b}_{2}) represents the shift predicted by the LLM for a specific pair of backgrounds. Therefore, the former provides a more accurate estimate of the true distribution compared to the latter.
+2.4 Fine-Tuning Method
+Several fine-tuning strategies are available, such as full-model fine-tuning or LoRA fine-tuning. However, given that our primary objective is to fine-tune the output probability distributions of the LLM’s tokens, we opt for a more targeted approach. Specifically, we fine-tune the final transformer layer and the softmax layer of the LLM. This approach is driven by two main factors: it enables faster convergence by focusing on the output probabilities and helps prevent overfitting by limiting modifications to the output layer, rather than the entire model.
+Method
+ESS11
+ESS9
+CGSS
+WVS
+CFPS
+KLD
+JSD
+KLD
+JSD
+KLD
+JSD
+KLD
+JSD
+KLD
+JSD
+TS
+0.309
+0.012
+0.278
+0.011
+0.229
+0.008
+0.415
+0.015
+0.223
+0.014
+Qwen3-4B
+Direct
+0.850
+0.141
+0.802
+0.129
+2.696
+0.258
+1.601
+0.203
+4.478
+0.328
+PE
+0.840
+0.135
+0.789
+0.124
+2.549
+0.246
+1.715
+0.214
+3.205
+0.314
+AAE
+0.306
+0.011
+0.275
+0.011
+0.231
+0.008
+0.413
+0.015
+0.218
+0.014
+TKFT
+0.309
+0.012
+0.281
+0.011
+0.227
+0.008
+0.413
+0.015
+0.223
+0.014
+DSA
+0.057
+0.008
+0.056
+0.007
+0.055
+0.008
+0.084
+0.012
+0.115
+0.008
+Qwen3-32B
+Direct
+2.156
+0.248
+1.087
+0.161
+3.072
+0.283
+1.672
+0.204
+3.287
+0.286
+PE
+2.146
+0.237
+1.156
+0.171
+2.916
+0.270
+1.629
+0.195
+3.541
+0.297
+AAE
+0.293
+0.011
+0.270
+0.011
+0.217
+0.009
+0.407
+0.014
+0.209
+0.013
+TKFT
+0.306
+0.012
+0.281
+0.011
+0.224
+0.008
+0.411
+0.014
+0.222
+0.014
+DSA
+0.056
+0.008
+0.055
+0.007
+0.055
+0.008
+0.084
+0.011
+0.113
+0.008
+Table 1: Comparison of different methods on five survey datasets.
+3 Experiment
+3.1 Experimental Setup
+Datasets: A commonly used dataset in this field is OpinionQA Santurkar et al. (2023), which is based on data from the American Trends Panel Survey pew (2014). However, the scope of OpinionQA is limited in terms of the domains and regions it covers. To address this limitation, we adopt the same workflow used in OpinionQA but expand the range by extracting questions from five representative survey datasets that cover diverse regions, languages and domains: ESS11, ESS9 (European Social Survey) ess (2024), CGSS (Chinese General Social Survey) cgs (2003+), WVS (World Values Survey) wvs (), and CFPS (China Family Panel Studies) Xie and Hu (2014).
+For the CFPS, we selected 10 core questions to be simulated, while for the other datasets, 20 core questions were chosen. For each core question, we included 6–7 background questions that reflect respondents’ characteristics (e.g., gender, age, political orientation). A detailed example of our constructed data sample is provided in the Appendix B. We randomly sample 2,000 or 4,000 entries from the dataset as the training set to simulate the process of conducting a real survey. And the overall distribution of the dataset is regarded as the ground-truth distribution to be simulated.
+Prompts: We use the original survey questions and responses as prompts. In addition, we append an instruction at the end of each prompt, asking the LLM to directly output its choice, which constrains the LLM to generate only the tokens corresponding to the predefined options.
+LLMs: We employ two variants of the Qwen3 Yang et al. (2025) for our experiments: Qwen3-4B and Qwen3-32B. Qwen are open-source LLMs widely applied in various research areas, and are trained on large-scale corpora that include human preference.
+Metrics: Some previous studies use one-hot accuracy as a metric, which is unsuitable for evaluating simulated distributions. We instead use Kullback-Leibler Divergence (KLD) and Jensen-Shannon Divergence (JSD): KL measures the information loss when approximating the true distribution, while JSD provides a symmetric and more stable evaluation. All experimental results are averaged over ten random runs.
+3.2 Baselines
+Training Set as Result (TS): One of the key baselines is directly using the distribution of training set as the predicted result. This baseline is often ignored in previous research, but it provides a simple yet effective benchmark to assess the performance of fine-tuning methods.
+Zero-shot Methods:
+Direct: Directly prompting the LLM to generate the results without any fine-tuning or prompt engineering Santurkar et al. (2023).
+Prompt Engineering (PE): Using a designed prompt to better simulate the respondents’ personality and preferences Yang et al. (2024).
+Fine-tuning Methods:
+AAE: AAE fine-tunes a lightweight conditional probability model that maps the LLM’s output distribution to the distribution of the training set Wang et al. (2025c).
+Token-Level Fine-tuning (TKFT): TKFT directly fine-tunes the token-level output probabilities of the LLM to align with the training set Suh et al. (2025).
+3.3 Distribution Simulation
+Table 1 shows the accuracy of different methods in simulating true distributions across all datasets. DSA consistently achieves the best performance across all five datasets and both backbone LLMs, clearly outperforming all zero-shot and fine-tuning baselines. Zero-shot approaches exhibit strong distributional bias, showing that directly prompting the LLM without adaptation is inadequate for modeling human choice. Although fine-tuning-based baselines (AAE and TKFT) provide better approximations to the true distributions, their outputs remain close to or only slightly better than the training set baseline. In contrast, DSA’s distribution shift alignment fine-tuning enables it to generate distributions even closer to the true distribution, validating its advantage in estimation of real distribution.
+Comparing Qwen3-4B and Qwen3-32B further highlights the role of model capacity. The larger model shows stronger base performance and achieves lower divergence after fine-tuning, but this advantage does not extend to zero-shot settings, where it sometimes performs worse than the smaller model. This demonstrates that scaling alone cannot ensure accurate preference simulation—effective fine-tuning is essential for aligning LLM outputs with human-like choice behavior. Overall, DSA effectively combines model capacity and structured fine-tuning to achieve superior, robust performance across datasets.
+Figure 3: Comparison of required real survey data to reach a similar KL divergence across different methods, reflecting the relative data efficiency of different approaches.
+3.4 Data Efficiency and Cost Reduction
+An important indicator of whether a method can effectively simulate real survey data is how much survey data it can save, thereby reducing the cost of conducting surveys. This comparison is often ignored in previous studies. To evaluate this aspect, we compare the data efficiency of different methods by estimating how much training data can be saved while maintaining a similar accuracy. Specifically, we measure how many training samples different fine-tuning methods would need to reach similar performance, as shown in Figure 3.
+While AAE and TKFT achieve certain improvements, their data efficiency gains are limited under our experimental scale. In contrast, DSA consistently reaches comparable accuracy while saving at least 53.48% of the training data, even with an LLM with only 4B parameters. This advantage stems from the second-stage alignment of distribution shifts across backgrounds, which allows the model to generalize learned relations beyond observed samples and thus achieve more accurate distribution than the training set.
+Figure 4: JSD of different methods across backgrounds in ESS11. Backgrounds are sorted from left to right by the number of respondents, with rarer backgrounds appearing on the left.
+3.5 Generalization across Different Backgrounds
+In real-world surveys, data from certain background groups are often difficult to obtain, leading to missing populations in the training data. In some cases of our experiments, some backgrounds are even entirely absent from the training set, referred to as unseen backgrounds. To evaluate how well different methods generalize to these unseen backgrounds, we conduct experiments on two cases from the ESS11 dataset that include such unseen backgrounds. Specifically, we sort all backgrounds by the number of respondents and compute the JSD of each background.
+As shown in the Figure 4, DSA significantly reduces the JSD for backgrounds that are difficult to obtain in real surveys, demonstrating its strong generalization capability. Even for unseen backgrounds that not appear in the training set, DSA accurately predicts their choice distributions. This improvement arises from the second-stage distribution shift alignment, by learning how distributions shift rather than fitting observed samples, DSA generalizes these relations to new subgroups.
+Method
+ESS11
+ESS9
+CGSS
+WVS
+CFPS
+Direct
+7.3%
+6.9%
+9.5%
+11.7%
+6.2%
+PE
+9.2%
+8.1%
+13.4%
+12.3%
+10.5%
+AAE
+59.26%
+52.40%
+49.44%
+60.94%
+48.98%
+TKFT
+54.94%
+48.40%
+54.44%
+57.81%
+63.27%
+DSA
+98.77%
+96.40%
+96.11%
+97.27%
+93.88%
+Table 2: Proportion of backgrounds where each method produces a distribution closer to the true one than the training set.
+3.6 Robustness across Questions
+When simulating survey data, robustness across different questions is crucial, as the true underlying distribution in reality is unobservable. Assuming we have a small amount of real survey data and use a specific method to simulate additional data, we cannot directly verify whether this method actually brings the simulated distribution closer to the true underlying distribution. In addition to measuring absolute accuracy, we also evaluate the relative improvement of each method. Specifically, we calculate the proportion of background groups for which a method produces a distribution closer to the true one than the training set itself. This metric reflects how reliably each method improves upon the observed data.
+As shown in Table 2, the proposed DSA achieves improvements on more than 90% of backgrounds across all datasets, indicating that it is effective in most scenarios and carries a very low risk of performance degradation when applied to real survey data. In contrast, the zero-shot methods provide improvements on only around 10% of backgrounds, suggesting that LLM cannot be reliably applied to real survey without fine-tuning. The other two fine-tuning methods, AAE and TKFT, achieve moderate improvements, with the best reaching 63.27%. These results demonstrate that DSA not only enhances overall accuracy but also maintains strong robustness across questions, consistently improving upon the training data in nearly all background groups.
+Figure 5: KL divergence of different fine-tuning methods across different training set sizes.
+3.7 Robustness across Training Set Size
+In real-world applications, surveys vary greatly in scale, and the amount of available training data can differ significantly. Therefore, it is also important whether a fine-tuning method can consistently improve performance across different training set sizes. In this experiment, we evaluate various methods by gradually increasing the amount of real survey data used for fine-tuning and measuring their performance under each setting. As shown in Figure 5, DSA provides most stable and consistent improvements across most of the training set sizes. However, when the training set becomes sufficiently large, the improvements brought by different methods become marginal, suggesting that the primary advantage of LLM-based survey simulation lies in medium-scale surveys, where real survey data are limited but not extremely scarce.
+Method
+ESS11
+ESS9
+CGSS
+WVS
+CFPS
+Direct
+1.57
+1.07
+0.85
+1.82
+1.01
+PE
+1.13
+1.52
+1.3
+2.45
+1.14
+AAE
+0.17
+0.22
+0.13
+0.06
+0.17
+TKFT
+0.09
+0.16
+0.04
+0.11
+0.07
+DSA
+0.06
+0.11
+0.08
+0.07
+0.05
+Table 3: Average pairwise JSD×100\text{JSD}\times 100 between outputs generated from semantically equivalent but differently phrased prompts. Lower values indicate stronger consistency across prompts.
+3.8 Consistency across Prompts
+A robust simulation method should be insensitive to prompt, as changes in linguistic expression should not alter the underlying prediction. To evaluate this property, we generate four additional sets of semantically equivalent but syntactically varied prompts using GPT-5 for each dataset, and test how consistent each method’s predicted distributions remain across these prompts. Table 3 reports the average pairwise JSD among outputs from different prompts.
+As shown in the results, DSA exhibits strong consistency across most questions, indicating its robustness to prompt variation. Zero-shot methods, in contrast, are highly sensitive to prompt wording, with substantial shifts in predicted distributions when the phrasing changes. Fine-tuning methods demonstrate greater stability, as training aligns the model’s internal representations with the survey context. Among them, AAE shows slightly weaker consistency compared to TKFT and DSA, likely because it fine-tunes a lightweight conditional probability model rather than directly adjusting the LLM.
+LLM
+Fine-tuning
+KLD
+Phase
+Strategy
+4B
+1
+Full
+0.3086
+4B
+1+2
+Full
+0.0561
+4B
+1+2
+Lora
+0.0585
+4B
+1+2
+Last Layer
+0.0567
+32B
+1+2
+Last Layer
+0.0559
+Table 4: Ablation study on different fine-tuning phases, strategies, and model sizes.
+3.9 Ablation Study
+To further examine the contribution of each component and compare different fine-tuning strategies, we conduct ablation experiments under different configurations of fine-tuning phases, model sizes and fine-tuning strategies, as summarized in Table 4. The results show that performing only the first-phase fine-tuning (distribution alignment with the training set) leads to a relatively high KL divergence (0.3086), while adding the second-phase distribution shift alignment reduces the error, confirming the effectiveness of the proposed shift alignment loss. Comparing different fine-tuning strategies, updating only the last transformer layer achieves performance comparable to full-model fine-tuning, demonstrating that our method mainly improves the output distribution rather than requiring large-scale parameter updates. Furthermore, increasing the model size from 4B to 32B also brings improvement.
+4 Related Work
+4.1 LLM-Based Simulation
+Recent studies have explored whether LLMs can serve as proxies for human respondents in social or market surveys. A series of works investigate zero-shot simulation, where LLMs generate answers to survey questions directly, without fine-tuning on human data Aher et al. (2023); Wang et al. (2025b); Geng et al. (2024). For instance, Kaiser et al. (2025) shows that LLMs conditioned on demographic backgrounds can generate responses that closely match human subpopulation averages. In addition, prompt engineering has been widely adopted to improve zero-shot performance. By carefully crafting prompts with specific instructions or background context, researchers have shown that LLMs can better align with human responses across diverse survey questions Yang et al. (2024); Meister et al. (2025). However, several studies Bisbee et al. (2024); Tzachristas et al. (2025) find that these zero-shot methods are highly sensitive to prompt design and randomness. Additionally, such methods often underestimate the variance of human opinions, producing overly uniform results compared to real-world distributions Wang et al. (2025a).
+To overcome the limitations of prompt-based methods, recent research has shifted towards fine-tuning LLMs to explicitly align their outputs with survey data distributions. For example, the AAE Wang et al. (2025c) fine-tunes an additional probabilistic conditional model to map the distribution of LLM outputs to that of the training set. Other studies Suh et al. (2025); Cao et al. (2025) directly fine-tune LLMs on human survey data, aligning their token-level probabilities with the training set’s distribution. However, these fine-tuning approaches primarily adjust LLM outputs to fit the empirical training distribution, rather than fully exploiting the LLM’s potential to generalize across diverse scenarios.
+4.2 Distributional Preference Modeling and Alignment
+An emerging research direction explores aligning large language models with population-level human preferences rather than individual judgments. Recent works on pluralistic or distributional alignment Chakraborty et al. (2024); Melnyk et al. (2024); Poddar et al. (2024); Yao et al. (2024) aim to make LLMs sensitive to diverse value systems and group-level differences.
+Our work differs from previous approaches in that we focus on modeling distributional shifts rather than directly fitting observed survey distributions. Our method leverages the LLM’s ability to capture relative differences in preferences across backgrounds.
+5 Conclusion
+We proposed Distribution Shift Alignment (DSA), a fine-tuning framework that leverages LLMs’ ability to capture preference shifts across backgrounds. By aligning both distributions and their shifts, DSA produces estimates closer to the true distribution than the training data. Experiments on five survey datasets show that DSA consistently outperforms existing methods while reducing real data requirements by up to 69%.
+Limitations
+Although DSA demonstrates strong performance in simulating survey distributions, it still has several limitations.
+Dependence on independence assumptions.
+Our theoretical analysis relies on the assumption that background variables are independent. While this simplifies the estimation of distribution shifts, real-world survey variables are often correlated. Violations of this assumption may reduce the accuracy of the shift-based alignment, suggesting that future work could explore joint modeling of correlated backgrounds.
+Limited evaluation scope.
+Our experiments focus on datasets with discrete, well-structured survey questions. The method’s effectiveness in open-ended, multi-choice, or free-text survey settings remains untested. Extending DSA to more complex or less-structured survey formats would further validate its general applicability.
+A potential risk of our method is that the simulated distributions may inadvertently amplify existing biases in the training data or in the language model itself, leading to distorted representations of certain demographic groups or opinions.
+In the experiment, we use LLMs to assist in filtering and selecting survey data, enabling more efficient and targeted dataset construction for simulation and analysis.
+Acknowledgments
+This work is supported by the National Natural Science Foundation of China (grants no.724B2010).
+References
+(1)
+World values survey (wvs).
+World Values Survey Association / various waves.
+cgs (2003+)
+2003+.
+Chinese general social survey (cgss).
+Technical report, Renmin University of China / National Survey Research Center.
+National continuous social survey of China.
+pew (2014)
+2014.
+American trends panel.
+Technical report, Pew Research Center.
+Multimode probability-based U.S. panel survey.
+ess (2024)
+2024.
+Ess round 11: European social survey european research infrastructure (ess eric).
+Technical report, Sikt – Norwegian Agency for Shared Services in Education and Research.
+Aher et al. (2023)
+Gati V Aher, Rosa I. Arriaga, and Adam Tauman Kalai. 2023.
+Using large language models to simulate multiple humans and replicate human subject studies.
+In Proceedings of the 40th International Conference on Machine Learning, volume 202 of Proceedings of Machine Learning Research, pages 337–371. PMLR.
+Bisbee et al. (2024)
+James Bisbee, Joshua D. Clinton, Cassy Dorff, Brenton Kenkel, and Jennifer M. Larson. 2024.
+Synthetic replacements for human survey data? the perils of large language models.
+Political Analysis, 32(4):401–416.
+Cao et al. (2025)
+Yong Cao, Haijiang Liu, Arnav Arora, Isabelle Augenstein, Paul Röttger, and Daniel Hershcovich. 2025.
+Specializing large language models to simulate survey response distributions for global populations.
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), pages 3141–3154, Albuquerque, New Mexico. Association for Computational Linguistics.
+Chakraborty et al. (2024)
+Souradip Chakraborty, Jiahao Qiu, Hui Yuan, Alec Koppel, Dinesh Manocha, Furong Huang, Amrit Singh Bedi, and Mengdi Wang. 2024.
+Maxmin-rlhf: alignment with diverse human preferences.
+In Proceedings of the 41st International Conference on Machine Learning, ICML’24. JMLR.org.
+Geng et al. (2024)
+Mingmeng Geng, Sihong He, and Roberto Trotta. 2024.
+Are large language models chameleons? an attempt to simulate social surveys.
+Preprint, arXiv:2405.19323.
+Kaiser et al. (2025)
+Carolin Kaiser, Jakob Kaiser, Vladimir Manewitsch, Lea Rau, and Rene Schallner. 2025.
+Simulating human opinions with large language models: Opportunities and challenges for personalized survey data modeling.
+In Adjunct Proceedings of the 33rd ACM Conference on User Modeling, Adaptation and Personalization, UMAP Adjunct ’25, page 82–86, New York, NY, USA. Association for Computing Machinery.
+Meister et al. (2025)
+Nicole Meister, Carlos Guestrin, and Tatsunori Hashimoto. 2025.
+Benchmarking distributional alignment of large language models.
+In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), pages 24–49, Albuquerque, New Mexico. Association for Computational Linguistics.
+Melnyk et al. (2024)
+Igor Melnyk, Youssef Mroueh, Brian Belgodere, Mattia Rigotti, Apoorva Nitsure, Mikhail Yurochkin, Kristjan Greenewald, Jiri Navratil, and Jarret Ross. 2024.
+Distributional preference alignment of llms via optimal transport.
+In Advances in Neural Information Processing Systems, volume 37, pages 104412–104442. Curran Associates, Inc.
+Poddar et al. (2024)
+Sriyash Poddar, Yanming Wan, Hamish Ivision, Abhishek Gupta, and Natasha Jaques. 2024.
+Personalizing reinforcement learning from human feedback with variational preference learning.
+Santurkar et al. (2023)
+Shibani Santurkar, Esin Durmus, Faisal Ladhak, Cinoo Lee, Percy Liang, and Tatsunori Hashimoto. 2023.
+Whose opinions do language models reflect?
+In Proceedings of the 40th International Conference on Machine Learning, volume 202 of Proceedings of Machine Learning Research, pages 29971–30004. PMLR.
+Suh et al. (2025)
+Joseph Suh, Erfan Jahanparast, Suhong Moon, Minwoo Kang, and Serina Chang. 2025.
+Language model fine-tuning on scaled survey data for predicting distributions of public opinions.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), pages 21147–21170, Vienna, Austria. Association for Computational Linguistics.
+Tzachristas et al. (2025)
+Ioannis Tzachristas, Santhanakrishnan Narayanan, and Constantinos Antoniou. 2025.
+Guided persona-based ai surveys: Can we replicate personal mobility preferences at scale using llms?
+Preprint, arXiv:2501.13955.
+Wang et al. (2025a)
+Angelina Wang, Jamie Morgenstern, and John P Dickerson. 2025a.
+Large language models that replace human participants can harmfully misportray and flatten identity groups.
+Nature Machine Intelligence, pages 1–12.
+Wang et al. (2025b)
+Han Wang, Jacek Pawlak, and Aruna Sivakumar. 2025b.
+Can large language models simulate human responses? a case study of stated preference experiments in the context of heating-related choices.
+Preprint, arXiv:2503.10652.
+Wang et al. (2025c)
+Mengxin Wang, Dennis J. Zhang, and Heng Zhang. 2025c.
+Large language models for market research: A data-augmentation approach.
+Preprint, arXiv:2412.19363.
+Xie and Hu (2014)
+Yu Xie and J. Hu. 2014.
+An introduction to the china family panel studies (cfps).
+Chinese Sociological Review, 47:3–29.
+Yang et al. (2025)
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, and 41 others. 2025.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388.
+Yang et al. (2024)
+Kaiqi Yang, Hang Li, Hongzhi Wen, Tai-Quan Peng, Jiliang Tang, and Hui Liu. 2024.
+Are large language models (LLMs) good social predictors?
+In Findings of the Association for Computational Linguistics: EMNLP 2024, pages 2718–2730, Miami, Florida, USA. Association for Computational Linguistics.
+Yao et al. (2024)
+Binwei Yao, Zefan Cai, Yun-Shiuan Chuang, Shanglin Yang, Ming Jiang, Diyi Yang, and Junjie Hu. 2024.
+No preference left behind: Group distributional preference optimization.
+arXiv preprint arXiv:2412.20299.
+Appendix A Theoretical Analysis
+Assumption 1 (Independence of Background Questions):
+The distributions of background questions are independent with each other:
+P⁡(C∣b1​j1,b2​j2​…)=P⁡(C∣b1​j1)⋅P⁡(C∣b2​j2)​…P(C\mid b_{1}j_{1},b_{2}j_{2}\dots)\\
+=P(C\mid b_{1}j_{1})\cdot P(C\mid b_{2}j_{2})\dots
+Given the independence assumption, we aim to prove that estimating the distribution using the shifts is an unbiased estimate of the true distribution.
+Theorem 1 (Unbiased Estimation):
+Under Assumption 1, using distribution shifts to estimate the choice distribution for a specific background in an unbiased estimate of the true distribution.
+Proof:
+Assume we have the distributions for four backgrounds, denoted as:
+𝐛1\displaystyle\mathbf{b}_{1}
+=[b11,b21,…],𝐛2=[b12,b21,…],\displaystyle=[b_{11},b_{21},\dots],\mathbf{b}_{2}=[b_{12},b_{21},\dots],
+𝐛3\displaystyle\mathbf{b}_{3}
+=[b11,b22,…],𝐛4=[b12,b22,…]\displaystyle=[b_{11},b_{22},\dots],\mathbf{b}_{4}=[b_{12},b_{22},\dots]
+Where 𝐛1\mathbf{b}_{1} and 𝐛2\mathbf{b}_{2} differ in the first question, and 𝐛3\mathbf{b}_{3} and 𝐛4\mathbf{b}_{4} differ in the second question. Since the backgrounds for other questions are the same, we can ignore their influence.
+Because the first and second questions are independent, we can express their joint probability as a product of conditional probabilities:
+P⁡(C∣b11,b21)=P⁡(C∣b11)⋅P⁡(C∣b21)P(C\mid b_{11},b_{21})=P(C\mid b_{11})\cdot P(C\mid b_{21})
+And the conditional probability P⁡(b11∣b12)P(b_{11}\mid b_{12}) can be calculated using the mapping between 𝐛1\mathbf{b}_{1} and 𝐛2\mathbf{b}_{2}:
+P⁡(C∣b11)⋅P⁡(C∣b21)\displaystyle P(C\mid b_{11})\cdot P(C\mid b_{21})
+=P⁡(C∣b12)⋅P⁡(C∣b21)⋅P⁡(b11∣b12)\displaystyle=P(C\mid b_{12})\cdot P(C\mid b_{21})\cdot P(b_{11}\mid b_{12})
+Then apply this conditional probability to 𝐛3=[b11,b22,…]\mathbf{b}_{3}=[b_{11},b_{22},\dots], which leads to:
+P⁡(C∣b11,b22)⋅P⁡(b11∣b12)\displaystyle P(C\mid b_{11},b_{22})\cdot P(b_{11}\mid b_{12})
+=P⁡(C∣b11)⋅P⁡(C∣b22)⋅P⁡(b11∣b12)\displaystyle=P(C\mid b_{11})\cdot P(C\mid b_{22})\cdot P(b_{11}\mid b_{12})
+=P⁡(C∣b12)⋅P⁡(C∣b22)\displaystyle=P(C\mid b_{12})\cdot P(C\mid b_{22})
+=P⁡(C∣b12,b22)\displaystyle=P(C\mid b_{12},b_{22})
+By applying the shift between 𝐛1\mathbf{b}_{1} and 𝐛2\mathbf{b}_{2} to 𝐛3\mathbf{b}_{3}, we obtain the unbiased estimate for the distribution of 𝐛4\mathbf{b}_{4}.
+In addition, this estimation benefits from utilizing all backgrounds that include b11b_{11} or b12b_{12}. The sample size used for the estimation is larger compared to directly using 𝐛4\mathbf{b}_{4} alone, so it can provide a result that is closer to the true distribution than the training set.
+Figure 6: An example of constructed sample from ESS.
+Appendix B Prompt
+Figure 6 showcases an example of a prompt used in the simulation of survey responses from ESS11. The prompt includes a series of background questions, such as the respondent’s age, gender, location and political questions, designed to capture the respondent’s views on politics. The core question, which is the core question to be simulated, asks the respondent to rate their satisfaction with the German government on a scale from 0 to 10.
+Dataset
+Training Set Size
+ESS11
+4000
+ESS9
+4000
+CGSS
+2000
+WVS
+4000
+CFPS
+2000
+Table 5: Training set size of different dataset in our experiment.
+Appendix C Training Set Size
+Table 5 presents the training set sizes for the different datasets used in Table 1. The reduced size of the training sets for CGSS and CFPS is due to the relatively smaller volumes of data available in these datasets compared to the others.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

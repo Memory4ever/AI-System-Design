@@ -7,19 +7,21 @@
 **冻结候选日期：** [补查前原报告](../_sources/daily-20250929/baseline-before-supplement-20261013.md)
 **状态：** 完成
 **Books：** 纳入本次
-**检查时间：** 2026-10-13T17:32:35+08:00
+**检查时间：** 2026-10-25T22:20:53+08:00
 
 ## 1. 结论
 
-本轮fresh仅补Sep28完整BJT自然日，原ACP整行/日期/6分、原小时窗与连续完整旧§4保护。正式家族原ACP1＋新增EOSER/ASS/CJ-GRPO代码release1＝2：新增原作者Sep28发布事件、2+1+2=5与必要v1采样/优化反侧已Feynman§12通过；窄采用限真实masked-state/本步commit位置、行为/reference与loss身份，具体Ch33已有覆盖已§13实际比较、§14–15历史绑定/最终Source/No Change通过。精确ASS gamma、std归一/EOS截断的paper-code等价与joint-selection无偏不采用，必要两个发布函数/接口实际绑定不扩全代码验收。Books实际新写0，无锁/POST义务；不将版本配方堆入正文。
+本轮只补2025-09-28北京时间自然日，root为作者、Helmholtz独立复核。当前候选仍为已有ACP与EOSER两个唯一家族，均复用已有效的深入审阅与具体已有覆盖，Books新写0；没有为制造更新添加版本配方。EOSER采用仅限真实masked-state、本步commit位置、行为/reference与loss身份，精确ASS/std/EOS及joint-selection无偏的限制保持。旧日期、评分、小时窗和连续旧§4均不搬移。
 
-十四源本日独立33请求及后来有限出口/停止已Feynman§4–7/10通过相应层，历史缺段/undated不授全Coverage或无遗漏。四主题216出现/165身份只发现；实际38精确v1题摘＝首12P＋后24P＋2范围O，§8/11准入通过，不是165全AB/全文队列。36潜力中EOSER正式新增，Tequila原Sep26算法release窗前，其余34必要当窗公开资格的有限停止已§16实际通过；原GTO/SafeSearch两日期保留有效。具体current修订/安全/数学反侧保存于[有限题摘包](../_sources/daily-20250929/SUP_ARXIV_FIRST_20261013.md)，不回投v1。
+本轮修复了具体日期误门：36个已有精确v1的提交均在纽约周五14时之后，最早arXiv公告已晚于Sep28；GTO亦最早Sep29，SafeSearch最早Sep30。Helmholtz R3已实际核原字段和2025时区/排程；这只排各自arXiv事件，既不关闭研究贡献，也不否定更早作者稿或EOSER的Sep28代码事件。旧四主题216出现/165身份仍只导航，38题摘及具名安全/修订反侧分层复用，不重整池Methods。
 
-ACP原官方RSS明确`Mon, 29 Sep 2025 00:00:00 GMT`＝原窗尾Sep29BJT08，原必要安全域/Ch78具体已有覆盖与root旧日级复核有效复用；[原交接](../_sources/daily-20250929/CALIBRATION_HANDOFF.md)保必要位置，不重旧研究。DeepSeek官方Sep29 date-only属新增Sep28窗外，不再请求时区/尾小时，Terms原Aug28关闭不变。本轮研究普通0，Feynman真实DAY§18–19/保存完成態FINAL§20通过，root§21已实际接纳；当前55/132、77待验含本日（Sep27只Tequila新遗漏恢复，Nov04有效不撤）。[本日停点](../_sources/daily-20250929/SUP_RESUME_20261013.md)保原保存快照，不调用UI线程消息；后续fresh Sep27仅该单家族，不重本日研究。
+有界词形/别名查询出现日期/路径失配；DataCite目标登记切片及末秒补片均0，相邻日GTO正控1/同身份目标段0，不把这些当官方公开全集或零发布证明。新见EasySteer旧搜索日期经中英文原作者说明纠正为Sep29事件线索；FireRedTTS2的Sep28 BF16更新经实际核心判定贡献关闭，不重算Sep2模型创新。Helmholtz R4/R5分别通过新原发布/贡献处置与有限登记导航校准，R6完整六节日级审阅已实际通过；作者A6真实保存完成态并完整自读后，非writer R7实际保存核验也已通过。实际查询、原件和停止见[作者A2–4](../_sources/daily-20250929/REPAIR_20261025.md)。
+
+ACP原官方RSS明确`Mon, 29 Sep 2025 00:00:00 GMT`＝原窗尾Sep29BJT08，原必要安全域/Ch78具体已有覆盖与root旧日级复核有效复用；[原交接](../_sources/daily-20250929/CALIBRATION_HANDOFF.md)保必要位置，不重旧研究。DeepSeek官方Sep29 date-only属新增Sep28窗外，不再请求时区/尾小时，Terms原Aug28关闭不变。Feynman§18–20与root§21只记录2026-10-13当时的验收范围；[旧停点](../_sources/daily-20250929/SUP_RESUME_20261013.md)的年度计数和跨日路线均为历史，不在本次继续别日或重复计数。
 
 ## 2. 来源覆盖
 
-本日独立原件/真实URL、执行时间、HTTP/exit/bytes/SHA位于SUP_curl-*；旧raw/fetch日志保护。[当前十四源有限停止包](../_sources/daily-20250929/SUP_SOURCE_20261013.md)保实际窗口与出口，原有效层不代新扫描。
+2026-10-13本日独立原件/真实URL、执行时间、HTTP/exit/bytes/SHA位于SUP_curl-*；旧raw/fetch日志保护。[十四源有限停止包](../_sources/daily-20250929/SUP_SOURCE_20261013.md)保实际窗口与出口，2026-10-25仅复用其未变有效范围，不冒重新抓取全部入口。本轮新增日期/发现与两个项目的原件为REPAIR_*，具体权限见[本轮记录](../_sources/daily-20250929/REPAIR_20261025.md)。
 
 | 来源 | 检查范围与依据 | 结果 | 缺口 |
 | --- | --- | --- | --- |
@@ -36,18 +38,21 @@ ACP原官方RSS明确`Mon, 29 Sep 2025 00:00:00 GMT`＝原窗尾Sep29BJT08，原
 | SRC-BAIDU-ERNIE | 本日Blog p1/p2均200，p2Nov11/07→Oct16→Sep12→Aug14/Jun30，真实末页1/2/上一页，止邻接 | 已检查 | 限可见Blog分页，不拿导航哨兵当文章，无具名触发不全扫GitHub |
 | SRC-XIAOMI-MIMO | 本日home200/58220bytes，经真实script取index/runtime/routes及两async首页chunk，全部200；Paper8原日期Oct21→Sep19→Jun04，Blog15/More组件仅同array slice展开无分页，route metadata具名HSS Dec19/安全Dec18,2025及2026 | 已检查 | 部分Blog仍undated、历史未收录受限，不授Sep28零事件/全Coverage；只metadata/More代码语义，不读窗外研究正文 |
 | SRC-MINIMAX | 本日EN12/CN13 dated cards，EN最早Oct27/CN至Jan15夹窗止；新Agent/llms均200，当前三技术项Oct08/Sep22/Sep19均2026，无2025历史分页 | 受阻 | 不沿旧“一篇May13”；公司Blog有限片已处理，Agent2025历史仍需具名原事件，不研究2026正文 |
-| SRC-ARXIV | 本日四主题submitted UTC Sep27T16–Sep28T15:59，start0/max100实际69/25/49/73全部200，共216出现/165唯一、无尾页；38精确v1题摘36P/2O已§8/11独核，其余127仅title/current说明查漏不当排除或全文队列。真实cs.AI/2025-09 4271首1–50无日字段；本日官方常规公告排程不对应Sep28BJT，§16有限日门停止通过 | 受阻 | EOSER原作者Sep28代码事件单篇有效，不给其余日期；TequilaSep26release窗前，新34＋原两共36必要日门安全隔离，各一次具名date-only原公开请求，不授逐篇公开/全Coverage或无遗漏 |
+| SRC-ARXIV | 旧四主题submitted Sep27T16–Sep28T15:59 UTC，69/25/49/73共216出现/165身份；38精确v1题摘36P/2O有效层复用，其余127仅title/current导航。A2/R3实际核36个v1原S及GTO/SafeSearch代表：最早公告均晚于Sep28，只排各arXiv事件；官方2025排程不对应本窗常规批。月表4271首50无日字段，Advanced按月权限不冒按日0；本轮词形/别名搜索失配和登记导航另列 | 受阻 | 未恢复特殊延期公告/原作者更早正文全集，不授全Coverage或全球无遗漏。原34不再仅因“各字段单独不足”整池未知日；作者早稿/代码/修订独立分责，具体已见出口与重开条件见§5，不补无意义U/不设全池Methods配额 |
 | 表外：[ACP官方规范](https://github.com/agentic-commerce-protocol/agentic-commerce-protocol) | 冻结原ACP Blog/初版dated spec与Ch78已有覆盖有效复用；同发布不再新计，current artifact不反投2025 | 已检查 | 原dated规范未绑定历史commit/真实PSP执行仅既有限定，不为制造更新重读spec/Books |
 | 表外：[SafeSearch原作者项目](https://github.com/jianshuod/SafeSearch) | 精确v1 code link→原README/两作者页，仅2025citation/ICML2026；Sep28公开资格有限停止已Feynman§6通过 | 受阻 | 缺明确原研究公开日，原v1八作者/后九作者分责，不据Submitted/当前代码/会议或三方授日期 |
 | 表外：[GTO原作者项目](https://github.com/hsj576/GTO) | 同四作者/2509.22134原repo及Pan Zhou发表条目，仅2025citation/ICLR2026无Sep28发布字段，Feynman§6通过 | 受阻 | 原v1必要理论反侧有效，当前4090demo/代码不授日门、理论修复或性能保证 |
 | 表外：[LLaVA-OneVision原作者项目](https://github.com/EvolvingLMMs-Lab/LLaVA-OneVision-2) | 从标v1 HTML原1.5项目链接恢复同owner当前2，只1.5入口/News：Sep30 Technical Report、Dec11 RL recipe，均窗外，未研究2 | 受阻 | Sep28首次公开未定，后release不迁日；nominal-v1 abs/Atom26M与HTML22M冲突只保字段，不授统一原数据/实验 |
 | 表外：[EOSER/ASS/CJ-GRPO原代码](https://github.com/yjyddq/EOSER-ASS-RL) | 原Sep28code-release/Sep30paper/2026memory分责，§12日期/5分/必要v1与current采样反侧通过；精确commit549e094…README与两必要接口已取得/读，§14–15历史绑定/最终Source与具体NoChange通过 | 已检查 | 只必要状态/action/behavior-ref/loss身份，不授全代码审计/运行、精确ASS/std/EOS截断paper-code等价、joint-selection无偏或净加速；无Books写入 |
 | 表外：[具名作者代码日期出口](https://github.com/shijxcs/meft) | LoRAct/GRACE/PrefClean/RCD原README无日级发布字段；Tequila官方Sep26release窗前，EOSER另列；[六出口记录](../_sources/daily-20250929/SUP_DATE_20261013.md)只日期/身份有限范围 | 受阻 | 四缺日级资格，不从当前code/提交/改名推公开；不扫全repo/全网absence，具名date-only到达只家族重开 |
-| 补检：[Web主题搜索](https://www.google.com/) | 本日GTO/SafeSearch具名身份/日期与作者原出口、LLaVA具名release恢复，第三方只线索；不扫全站/月 | 检索受限 | 无命中不证明没有先稿，搜索/转载/Updated不当研究公开；具体原date-only日门到达只家族重开 |
+| 表外：[EasySteer](https://github.com/ZJU-REAL/EasySteer) | 旧中文搜索摘要称Sep28，实际GitHub Contents英文/中文News均为Sep29开源并发布2509.25175；只此具名日期/核心定位，不扫仓库或后来版本 | 已检查 | 当前原作者事件在补充窗外，保潜力但不评分/采用；不以旧索引改日期，不把0.29/V2或2026功能倒填2025。明确Sep28原发布材料到达才重日期冲突层 |
+| 表外：[FireRedTTS2](https://github.com/FireRedTeam/FireRedTTS2) | 原作者README完整核心/News：模型报告Sep2、权重代码Sep8，Sep28仅BF16支持/14GB→9GB自报；不重算旧模型创新。A3具体贡献关闭经Helmholtz R4实际校准通过 | 已检查 | 不把成熟dtype支持和孤立驻留数当已证新数值机制、质量保持或部署门槛；未跑模型/听音/核实现。非TTS领域排除，具体兼容性/正确性新证才重相应事件 |
+| 补检：[DataCite](https://api.datacite.org/dois) | 本轮arxiv.content/十二主线分类OR/registered目标段及末秒补片均0/totalPages0；相邻日具名GTO正控1、同身份目标段0，四份原响应/请求已保存，止实际页面 | 已检查 | 仅登记字段切片与具名正反控，不是公告日或所有主题召回证明，不单凭空响应授0论文；不扩全分类题摘 |
+| 补检：[Web主题搜索](https://www.google.com/) | 旧具名作者出口有效；本轮日期+四主题及显式复数/别名首片带回旧稿/路径失配，另四式仅得两个相关原项目线索并已回原页。实际完整查询与停止见A3 | 检索受限 | 日期/site限制未被严格执行，不能当官方日列表/0发布；未恢复具名Sep28延期公告。第三方汇编/教程/使用日志仅导航，不采用其日期或研究结论 |
 
 ## 3. 候选与判断
 
-原冻结ACP1＋新增EOSER代码release1＝2；新事件/5分、必要v1域/历史绑定和具体owner窄采用已实际独核，真实DAY§18–19、完成態FINAL§20与root§21接纳已发生。其余必要当窗资格与精确recipe分责见§5。
+既有ACP1＋EOSER代码release1＝2，完整行保持；其必要证据/历史绑定和具体owner窄采用按旧有效层复用。本轮有界补查无新增准入家族，两项均为具体已有覆盖/Books新写0；原资格限制及精确recipe分责见§5，不等本日零发布或全网无遗漏。
 
 | 材料 | 公开时间 | 项目贡献与评分 | 审阅结果 | Books决定 |
 | --- | --- | --- | --- | --- |
@@ -88,17 +93,27 @@ ACP初版采用显式用户确认、merchant-of-record边界、一次性allowanc
 
 ## 5. 缺口与下一步
 
-普通研究/日级独核待办0；Feynman真实DAY§18–19、保存完成態FINAL§20与root§21实际接纳完成，不重复审批。DATE新34资格/Tequila原release/常规公告日权限的有限停止已§16通过；EOSER Source/历史绑定/最终NoChange已§14–15通过，std/EOS两必要限定真实保存，§17三个窄返修已落实，已通过研究不重。以下为本窗终态保留项，不用于正面证据、Books、Coverage或无遗漏断言；仅具名原材料到达时，依对应行条件定点重开。
+无普通可执行研究、Books待写/POST或请求在途。A2日期、A3原发布/贡献处置和A4有限登记导航分别经R3/R4/R5实际通过，R6完整六节日级复核、A6真实完成保存与完整自读、非writer R7实际保存核验均已完成。以下原日期/来源限制保留身份和已读反侧，作为本窗终态保留项不支持正面证据、Books、Coverage或无遗漏断言；不把普通未做工作藏入其中。
 
 原GTO/SafeSearch各一次必要日期请求：原作者具名研究公开日或官方逐篇公告，date-only即可。[DATE§1–4](../_sources/daily-20250929/SUP_DATE_20261013.md)有限作者出口/版本分责已Feynman§6通过，均不formal/评分/Books；原GTO slack/连续离散理论争议与SafeSearch真实threat/300筛选/商用未测反侧有效复用，不因未知日排为小改进。
 
-新34具名必要当窗资格请求在[DATE§6](../_sources/daily-20250929/SUP_DATE_20261013.md)，只两已读小批36P扣EOSER/Tequila；实际官方月表无日字段/常规公告不对应Sep28BJT、四原code出口无dated News，不能当作者当日绝无自发发布。这34不正式/评分/Books、不授Coverage/完整Evidence；有原作者明确研究发布YYYY-MM-DD/具体重要release即可只本家族恢复，无globalabsence/同bytes/TZ/秒级。必要安全/理论/重要current信号不删，CCD class-token映射缺口、LLaVA nominal-v1人口冲突等由FIRST原位置限定，未知日不强读全文。宽发现165余127只title/current说明，不误称完整筛选/EX或127外部hold。
+旧34具名请求见[DATE§6](../_sources/daily-20250929/SUP_DATE_20261013.md)，只原36P扣EOSER/Tequila。本轮A2/R3已用逐ID精确v1 S和适用2025排程排除其各arXiv事件落Sep28，不再沿用“日期字段各自不足所以整池未知”。这不证明作者当日无自发发布；旧四code出口无dated News及LLaVA当前Sep30发布说明仅其真实有限权限，明确更早原研究发布/重要release材料到达才定点重开，date-only即可，不要求globalabsence/同bytes/TZ/秒级。原潜力、CCD映射、LLaVA版本人口及必要安全/理论/current反侧保留；宽165余127仅导航，不误称完整筛选/EX或127外部hold。
+
+新EasySteer线索的当前原作者中英文News为Sep29，不采用搜索摘要的Sep28；保其机制潜力和真实归属恢复线索，未正式评分/采用后版实现。FireRedTTS2本次BF16支持只有具名核心声明，缺新的正确性/兼容约束或等质完整资源对照，具体贡献关闭已R4通过；不把未复现实验视访问受阻。两项后续只按具名新增原证重开，不扩全部版本/仓库。
 
 EOSER精确ASS recipe：论文Eq7与发布代码累计衰减不同且末步均非1，不采用统一gamma/普通PPO exact或joint-selection无偏。若未来需要完整配方，以该family原作者明确Eq7/代码应采用版本及真实selection-law原证定点重开；已有masked-state/action接口与局部评价不因此无效。ACP原dated spec未绑定历史commit/PSP真实回执边界保持，只有采用当时精确schema/实现才恢复，不阻塞原Blog可支持结论。
 
 窗外线索：DeepSeek-V3.2-Exp官方Sep29 date-only直接在新增Sep28之外，不再构造额外TZ/尾小时请求；LLaVA原作者Sep30报告release/Dec11 RL、Tequila官方Sep26算法release分责，不移入本日、不接别日重跑/预增。原候选小时窗与ACP整行保持。机构历史切片/undated缺段依§2实际入口隔离，只接受具名原研究/有限历史页，不能要求全年Seed94/全Google680/全月4271；无不足的正面Coverage/Evidence或无遗漏。
 
 ## 6. 复核
+
+复核者：Helmholtz（本轮非报告作者）。
+
+结论：通过
+
+[本轮独核](../_sources/daily-20250929/REPAIR_REVIEW_20261025.md)R1/2已定位单日范围、角色交接与既有有效层；R3实际核A2精确v1提交/2025排程负界及原准入分层复用；R4实际核两新原News/贡献处置与搜索停止；R5实际核登记原响应/查询/正反控/末秒补片。R6已实际完整顺读六部分，核全部候选和具体Books处置、来源/查询/停止及真实未检查范围、明确排除的分层校准和终态隔离，本轮完整日级通过；当前2既有家族/两具体NC、新准入0/Books新写0，无普通单篇、待写/POST或在途。原38题摘与必要反侧仅按旧有效身份/范围复用，不冒本轮全文二读或全165导航验证。来源/日期、精确配方和历史artifact保留项不授正面Coverage/Evidence、全网无遗漏或性能安全保证。作者A6据R6真实保存完成态并完整自读，Helmholtz R7已实际核保存结果和行政差额通过，本轮验收闭合；此处仅同步已发生指向。下方旧Feynman/root只复用各自实际有效范围，不作为本轮完成依据。
+
+### 2026-10-13已有有效层
 
 复核者：Feynman（非报告作者，原配对）。
 

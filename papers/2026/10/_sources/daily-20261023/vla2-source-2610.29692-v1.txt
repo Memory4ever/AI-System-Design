@@ -1,0 +1,376 @@
+Official exact-v1: https://arxiv.org/html/2610.29692v1
+Preserved main primary text; actual necessary reading and adopted scope in SOURCE_VLA2.md. No appendix/code/reproduction claim.
+Abstract
+During steady pouring, images and robot pose may remain nearly unchanged while transferred mass accumulates, making the return decision ambiguous for a whole-task vision–language–action (VLA) policy. We present FlowVLA, which separates motor generation from physical-completion estimation. A shared \pi_{0.5} action expert learns approach, pour, and return with boundary-aware supervision. A target-independent estimator fuses visual, joint, wrist-wrench, and recurrent force-belief histories to maintain an estimate of transferred mass. The controller initiates return when this estimate plus predicted residual outflow reaches the requested mass. In coffee-pot/water experiments, FlowVLA achieves 13.1 g goal-balanced mean absolute error (MacroMAE), lower than all tested VLA baselines. Across all attempts, 53.7% both complete the task and finish within \pm 10\% of the requested mass. The same model interpolates to held-out 150/250-g targets without retraining. Independently trained models further evaluate the formulation in three additional container–fluid settings.
+ I Introduction 
+Vision–language–action (VLA) models connect visual and language understanding to robot control, enabling a single policy to perform diverse manipulation tasks  [ 1 , 2 , 3 ] . Quantitative pouring adds a requirement beyond executing the manipulation sequence: the transferred mass must match a requested amount. This matters in food preparation  [ 4 ] and household drink-serving tasks  [ 5 ] (Fig.  1 ). Without online electronic-scale feedback, the robot must infer how much liquid has been transferred and when to return the container upright. During steady pouring, images and robot pose can remain nearly unchanged while mass accumulates, so visually similar states may require either continued pouring or return. We call this ambiguity physical-completion aliasing . Understanding “pour 200 g” specifies the goal but does not reveal physical progress, and initiating return does not stop liquid transfer immediately.
+ \centerfigcaptionsfalse 
+ Fig. 1: Quantitative robotic pouring task. The robot performs grasping, pouring, return, and placement while targeting a requested transferred mass without online scale feedback.
+Whole-task VLA policies typically learn completion implicitly alongside motion. Policies use force or tactile feedback to guide action generation  [ 6 , 7 , 8 ] , while FM-VLA encodes force histories as memory tokens  [ 9 ] . Wrist wrench is informative about liquid transfer, but it also varies with arm motion, container pose, grasp geometry, and liquid dynamics  [ 4 ] . Force conditioning therefore does not by itself define the accumulated physical quantity needed for a stopping decision. Precision-pouring controllers make this quantity explicit by closing the loop on fill level  [ 10 , 5 ] , source-mass loss  [ 4 ] , or predicted overpour  [ 11 ] . Their feedback formulations offer a useful starting point, but generally assume prescribed grasps or constrained motions. The remaining challenge is to integrate quantitative completion into a learned whole-task policy that must also grasp, transport, pour, return, and place the container.
+Our insight is to treat physical completion as a persistent state separate from motor generation. FlowVLA couples a shared \pi_{0.5} action expert with explicit flow and mass estimation. Boundary-aware supervision distinguishes continued pouring from return at action-chunk boundaries. A recurrent force observer provides temporal belief to the action expert and a dedicated completion head, which fuses this belief with visual, joint, and wrist-wrench histories to estimate transferred mass. The physical estimators are target-independent, while the requested mass conditions the POUR prompt and completion threshold. The controller accounts for liquid transferred during return by triggering return when predicted terminal mass reaches the target. Real-robot comparisons with whole-task VLA and load-based baselines, mechanism ablations, and held-out target interpolation evaluate this formulation, alongside additional container–fluid regimes with independently trained models.
+Our contributions are summarized as follows:
+ • 
+We formulate physical-completion aliasing in quantitative pouring and introduce FlowVLA, which separates motor generation from estimation of the hidden physical progress needed for quantitative stopping.
+ • 
+We develop boundary-aware action learning that combines multirate force observations and recurrent belief with stage-specific prompts in a shared \pi_{0.5} action expert. Row-wise masking and exact-return-boundary sampling jointly supervise the transition from steady pouring to return.
+ • 
+We design a target-independent completion module that maintains flow and accumulated mass from causal multimodal histories and predicts residual outflow, enabling return decisions based on predicted terminal mass rather than current transferred mass.
+ II Related Work 
+ II-A Robotic Precision Pouring 
+Precision-pouring methods use visual feedback to estimate liquid level or volume in the receiving container and adjust the pouring trajectory  [ 10 , 12 , 5 ] . Other approaches plan with simplified fluid dynamics  [ 13 ] or acquire pouring skills through self-supervised trials  [ 14 ] . These methods explicitly control the poured quantity, but generally assume a prescribed grasp or restricted pouring motions. Sensing at the source container offers an alternative to observing the liquid surface. Pouring by Feel estimates mass loss from proprioceptive and tactile measurements and regulates pouring with proportional–integral–derivative (PID) control  [ 4 ] . RoboCAP is the closest quantity-aware reference: it accumulates capacitance-based mass estimates and predicts overpour to stop a prescribed wrist motion  [ 11 ] . Flow estimation and delayed-outflow compensation also appear in industrial ladle control  [ 15 , 16 ] . Like these methods, FlowVLA reasons in physical units. Unlike prescribed-motion controllers, it couples completion estimation to a learned sequence spanning grasping, transport, pouring, return, and placement.
+ II-B Force-Aware and Progress-Aware Robot Policies 
+Diffusion Policy learns visually conditioned action sequences through denoising diffusion  [ 17 ] . VLA models also condition actions on language. RT-2 transfers vision–language knowledge to robotic control  [ 1 ] , while \pi_{0.5} and GR00T N1 learn language-conditioned manipulation across tasks  [ 2 , 3 ] . Force-aware methods add feedback about physical interaction. Reactive Diffusion Policy (RDP) combines slower visual action generation with high-rate tactile correction  [ 8 ] . Within VLA models, ForceVLA incorporates six-axis wrench through a mixture of experts  [ 6 ] , and TA-VLA learns from torque histories with auxiliary future-torque prediction  [ 7 ] . ForceVLA2 further couples force awareness with hybrid force–position control  [ 18 ] . FM-VLA is the closest temporal-force reference: it encodes force histories as memory tokens for action generation  [ 9 ] . FlowVLA instead converts causal multimodal history into explicit flow and mass estimates and uses them in a terminal-mass rule, separating physical completion from action generation. Beyond physical feedback, progress-aware policies estimate the remaining task horizon or learn visual progress representations  [ 19 , 20 ] . These help locate the robot within an execution sequence, but normalized progress does not specify how many grams have been transferred. FlowVLA maintains flow in g/s and mass in g across perceptually similar states, then estimates whether returning now will achieve the requested quantity. For persistent state estimation, differentiable filters and KalmanNet combine learned observations or updates with explicit state evolution  [ 21 , 22 ] . Our observer integrates flow and recursively updates mass and uncertainty.
+ III Method 
+ Fig. 2: The architecture of FlowVLA. The action backbone fuses 30-Hz images and robot state with 500-Hz force history and a 20-Hz recurrent belief. The physical-completion module estimates transferred mass and return tail, whose sum determines when to return.
+ III-A Problem Formulation 
+Given target mass g\in\mathbb{R}_{+} , the robot must grasp a source container, pour into a receiver, return upright, and place the source down.
+At policy step t , I_{t}=(I_{t}^{\mathrm{head}},I_{t}^{\mathrm{wrist}}) denotes two RGB views and q_{t}\in\mathbb{R}^{13} the active right-arm and hand joints. The action expert receives these inputs, a causal base-frame force window F_{t}^{\mathrm{base}} , and belief b_{t}^{(8)} from a frozen recurrent observer. It predicts absolute joint-position chunks A_{t}\in\mathbb{R}^{50\times 13} at 30 Hz.
+Let M_{t} and f_{t} denote cumulative transferred mass and instantaneous mass flow. Neither is directly observed online. During steady pouring, two states can satisfy
+ (I_{t_{1}},q_{t_{1}})\approx(I_{t_{2}},q_{t_{2}}),\quad M_{t_{1}}\neq M_{t_{2}},\quad a_{t_{1}}^{*}\neq a_{t_{2}}^{*}. 
+ (1) 
+The relation in ( 1 ) describes physical-completion aliasing : similar observations can require continued pouring or return.
+The stage s_{t}\in\{\mathsf{A},\mathsf{P},\mathsf{R}\} denotes approach, pour, or return. The learned branches are
+ \displaystyle b_{t}^{(8)} 
+ \displaystyle=B_{\omega}(F_{\leq t}^{\mathrm{base}},q_{\leq t}), 
+ (2) 
+ \displaystyle A_{t} 
+ \displaystyle\sim\pi_{\theta}(I_{t},q_{t},F_{t}^{\mathrm{base}},b_{t}^{(8)},\ell(s_{t},g)), 
+ \displaystyle(\widehat{f}_{t}^{\mathrm{raw}},r_{t}) 
+ \displaystyle=R_{\phi}(z_{t},Q_{t},W_{t},b_{t}^{(7)},\tau_{t}), 
+ \displaystyle\widehat{T}_{t} 
+ \displaystyle=H_{\eta}(Q_{t}^{T},\dot{Q}_{t}^{T},W_{t}^{T},\widehat{F}_{t}^{T}). 
+In ( 2 ), z_{t} , Q_{t} , and W_{t} denote visual features, joint history, and sensor-frame wrench history, while b_{t}^{(7)} omits observer reliability and \tau_{t} is time since predicted onset. Superscript T identifies tail-prediction histories (Sec.  III-C ). The goal enters only the POUR prompt and comparator, never B_{\omega} , R_{\phi} , or H_{\eta} .
+For a demonstrated standard return from annotated onset t_{3} to complete flow cutoff t_{4} , the tail target is
+ T=M(t_{4})-M(t_{3})=\int_{t_{3}}^{t_{4}}f(t)\,dt. 
+ (3) 
+These relations define three design principles. Persistent physical state carries progress through visually similar observations. Boundary-aware action learning separates the motor modes needed to continue pouring and initiate return. Predictive completion accounts for liquid that will still leave the source during return. Sections  III-B and  III-C describe how we implement these principles.
+ III-B Persistent State and Boundary-Aware Action Generation 
+ Persistent physical state. 
+A current observation does not reveal how much liquid has already been transferred, so the policy needs a state that persists over time (Fig.  2 ). The recurrent observer supplies this belief at 20 Hz. A single wrist-force sample cannot reliably separate liquid flow from arm inertia and robot vibration. The observer therefore combines a fast branch, which encodes 32 force samples over 0.25 s and their derivatives, with a medium branch over 32 low-pass samples spanning 1 s. A gated recurrent unit (GRU)  [ 23 ] fuses these signals with 13-D joint position and finite-difference velocity and carries information across stages. The resulting belief is
+ b_{t}^{(8)}=[\widehat{f}_{t}^{\mathrm{bel}},\sigma_{t}^{f},\widehat{M}_{t}^{\mathrm{bel}},\sigma_{t}^{M},\beta_{t}^{f},\rho_{t},p_{t}^{\mathrm{active}},l_{t}^{\mathrm{onset}}]. 
+ (4) 
+The entries in ( 4 ) describe three aspects of the physical state. Progress is recursively integrated mass \widehat{M}_{t}^{\mathrm{bel}} . Flow state comprises corrected flow \widehat{f}_{t}^{\mathrm{bel}} , slowly updated bias \beta_{t}^{f} , flow-active probability p_{t}^{\mathrm{active}} , and onset latch l_{t}^{\mathrm{onset}} . Estimate quality comprises predicted flow standard deviation \sigma_{t}^{f} , propagated mass standard deviation \sigma_{t}^{M} , and exponentially smoothed force reliability \rho_{t} . Superscript \mathrm{bel} distinguishes observer estimates from completion-head outputs. The latch activates after three consecutive valid updates with activity-weighted flow \geq 0.3  g/s and active probability \geq 0.3 , and persists until episode reset. The observer is independently trained on teleoperated demonstrations with offline flow supervision, then frozen. In Belief-VLA , the latch is a feature, not a stage-transition trigger.
+ Boundary-aware action learning. 
+The policy must distinguish continued pouring from return rather than blend these motor modes within an action chunk. Inspired by \pi_{0.5} ’s multimodal action generation  [ 2 ] , we extend its pretrained action expert with four force tokens and one belief token in the image and text prefix. Temporal convolutions encode the causal 128\times 3 base-frame force window, and a multilayer perceptron (MLP) maps the eight-dimensional belief into one token. These tokens, the stage prompt, and discretized joint state condition 50-step arm–hand action chunks.
+Prompts specify the container–fluid domain and current stage. Only the POUR prompt includes the target mass. Let d denote the domain and \mathcal{G}_{d} its training targets:
+ \mathcal{L}_{d}=\{\ell_{\mathsf{A}}(d),\ell_{\mathsf{R}}(d)\}\cup\{\ell_{\mathsf{P}}(d,g)\mid g\in\mathcal{G}_{d}\}. 
+ (5) 
+The three stage templates in ( 5 ) yield |\mathcal{L}_{d}|=|\mathcal{G}_{d}|+2 prompt instances. In the primary coffee-pot/water domain, \mathcal{G}_{d}=\{100,200,300\}\,\mathrm{g} gives five strings.
+A standard 50-step action target may cross a stage boundary and contain incompatible motion modes. Our boundary-aware supervision combines row-wise masking with exact-return-boundary sampling. We retain each anchor but mask action rows after the next stage boundary. With valid-row mask m_{t,h}\in\{0,1\} , the flow-matching loss is
+ \mathcal{L}_{\mathrm{act}}=\frac{\sum_{h=0}^{H-1}m_{t,h}\lVert v_{\theta,t,h}-u_{t,h}\rVert_{2}^{2}}{32\sum_{h=0}^{H-1}m_{t,h}},\qquad H=50. 
+ (6) 
+The loss in ( 6 ) supervises all 32 internal coordinates: 13 normalized joint targets and 19 zero-padded coordinates. Deployment denormalizes and executes only the 13 active coordinates.
+An exact boundary anchor is the first desired return frame and retains the complete return horizon.
+ III-C Structured Physical-Completion Estimation 
+ Predictive completion. 
+Completion depends on both the mass already transferred and the residual mass that will leave the source during return. The physical-completion module combines a completion head, a hard-zero gate, temporal integration, and a tail predictor to estimate these quantities and compare their sum with the target.
+The completion head reuses visual features z_{t} , pooled to 2\times 2 from the frozen image encoder’s tokens before stage-text conditioning. Its other inputs are joint history Q_{t}\in\mathbb{R}^{8\times 13} , sensor-frame wrench history W_{t}\in\mathbb{R}^{512\times 6} , eight steps of b_{t}^{(7)} , and elapsed time \tau_{t} . This six-axis wrench path differs from the action model’s shorter three-axis base-frame force window.
+Projected visual features, temporally encoded wrench, and joint/belief summaries feed a fusion network that predicts flow (g/s) and a mass correction (g):
+ \widehat{f}_{t}^{\mathrm{raw}}=20\,\mathrm{softplus}(z_{t}^{f}),\qquad r_{t}=8\,\tanh(z_{t}^{r}). 
+ (7) 
+In ( 7 ), z_{t}^{f} and z_{t}^{r} are the fusion network’s scalar outputs.
+Integration makes even small false-flow predictions before onset or after cutoff accumulate into mass error. A hard-zero gate suppresses this drift. Four temporal gates use joint, belief, and wrench histories, sharing seeds with the completion-head ensemble. Each maps logit a_{t}^{j} to openness o_{t}^{j}=\operatorname{sigmoid}(-a_{t}^{j}) . The gate in ( 8 ) retains flow only when mean openness reaches 0.5:
+ \displaystyle\widehat{f}_{t} 
+ \displaystyle=\mathbf{1}\!\left[\tfrac{1}{4}\sum_{j}o_{t}^{j}\geq 0.5\right]\left(\tfrac{1}{4}\sum_{j}\widehat{f}_{t,j}^{\mathrm{raw}}\right), 
+ (8) 
+ \displaystyle r_{t} 
+ \displaystyle=\tfrac{1}{4}\sum_{j}r_{t,j}. 
+During APPROACH, we buffer the latest four seconds of predicted flow. When onset is latched and POUR begins, the buffered flow integral plus r_{t} initializes mass, accounting for transfer before onset detection. The gated flow estimate \widehat{f}_{t} and correction r_{t} update the integral and monotonic mass estimate in ( 9 ):
+ \displaystyle\widetilde{M}_{t} 
+ \displaystyle=\widetilde{M}_{t-1}+\tfrac{1}{2}(\widehat{f}_{t-1}+\widehat{f}_{t})\Delta t, 
+ (9) 
+ \displaystyle\widehat{M}_{t} 
+ \displaystyle=\max(\widehat{M}_{t-1},\widetilde{M}_{t}+r_{t},0). 
+Returning the container does not stop liquid transfer immediately. A causal GRU predicts the resulting residual mass \widehat{T}_{t} . It encodes 31 samples over one second of joint position, velocity, six-axis wrench, and the frozen completion head’s ungated ensemble-mean flow ( \widehat{F}_{t}^{T} in ( 2 )). An MLP with Softplus outputs a nonnegative scalar in grams. Return begins when
+ \widehat{M}_{t}+\widehat{T}_{t}\geq g. 
+ (10) 
+The criterion in ( 10 ) triggers return based on predicted terminal mass rather than current transferred mass.
+Before a full second of history is available, the controller uses \widehat{M}_{t}\geq g . If flow remains below 0.5 g/s and progress increases by less than 0.25 g for 3 s, it requests one same-stage retry. A second stall triggers a safe return and counts as a failure.
+ III-D Supervision and Execution 
+The belief observer is trained with Huber losses on flow and mass, multi-window integral and signed-bias penalties, and a Gaussian negative log-likelihood (NLL) for flow uncertainty. Binary cross-entropy (BCE) supervises activity, with positive labels during the annotated flowing interval and negative labels before onset and after cutoff. Reliability and mass-observation uncertainty are learned through the recurrent mass update without separate labels.
+The completion-head objective combines confidence-weighted flow and mass interval losses, false-flow suppression, long-horizon positive-bias penalties, and residual regularization. Interval losses use d(x,[l,u])=\max(l-x,0)+\max(x-u,0) ; mass losses use trapezoidal integration in physical units. The primary ensemble averages predictions from four separately trained completion heads and remains frozen during automatic evaluation.
+Gate training uses confidence-weighted BCE: valid pre-onset labels with |f|\leq 0.25  g/s supervise closure, and valid labels with f>1  g/s supervise opening. Other frames are excluded from classification. Auxiliary losses penalize zero-flow leakage and its accumulated mass, protect nonzero flow, and preserve the frozen completion head’s flow and mass predictions. A straight-through estimator supplies gradients through the hard decision.
+Tail supervision is extracted once per episode at the annotated return boundary using ( 3 ). Training uses a 1-g Huber loss, and validation MacroMAE selects the checkpoint.
+During execution, the controller advances from APPROACH to POUR and then to RETURN, where it remains until the episode ends. The observer’s onset latch triggers POUR; ( 10 ) or the stall branch triggers RETURN. Each transition selects a new prompt, invalidates the previous action chunk, and requests a fresh prediction.
+ IV Experiments 
+ (a) (b) 
+ (c) (d) 
+ Fig. 3: Left: views from head and wrist cameras during approach, grasp, steady pouring, return, and placement. Right: (a) coffee pot, (b) top-handle kettle, (c) soy-sauce dispenser, and (d) oil dispenser.
+ Fig. 4: Flow-labeled demonstration datasets for the four domains (1,684 episodes total). Left: episode mean flow versus duration; diamonds are task means and error bars span the central 95% episode ranges. Right: duration distributions; thick lines mark interquartile ranges.
+ IV-A Experimental Setup 
+ Platform and tasks. 
+Experiments use a DR02 upper-body robot with Revo2 hands. The single-arm policy controls seven arm joints and six active hand coordinates. Observations comprise 30-Hz head and wrist images and 500-Hz wrist wrench from a six-axis wrist force/torque sensor. Demonstrations are collected by teleoperation. A 10-Hz electronic scale beneath the receiving container, with 0.1-g specified accuracy, supplies offline supervision and final evaluation but is unavailable to the deployed policy.
+The primary comparison uses a coffee pot with water at 100/200/300 g. Targets of 150/250 g are withheld from training and tuning. Additional domains use a top-handle kettle with water, a soy-sauce dispenser with saturated brine, and an oil dispenser with cooking oil. Saturated brine is prepared near 26\,^{\circ} C and may retain slight salt sediment. Figure  3 shows the task and source containers.
+ Data and baselines. 
+The learned-policy comparison uses a common 758-episode coffee-pot/water dataset: 254, 272, and 232 episodes at 100, 200, and 300 g, respectively. The additional datasets contain 278 demonstrations for top-handle kettle/water (145/133 at 200/400 g), 202 for soy-sauce dispenser/saturated brine at 100 g, and 446 for oil dispenser/cooking oil (231/215 at 50/100 g). We train an independent FlowVLA model for each additional domain using the same target-stratified splitting rule.
+Each container–fluid domain uses its own teleoperated dataset to train the physical estimators. Within each target, validation and test sets each contain \lfloor 0.1N\rfloor episodes, with the remainder used for training. The primary domain yields a fixed 608/75/75 split shared by the completion head and tail predictor. Normalization uses training data only, and model selection uses the validation partition. Flow and mass labels are reconstructed offline from electronic-scale data.
+Primary-domain comparisons include \pi_{0.5}   [ 2 ] , its matched-compute data-scale control, ForceVLA  [ 6 ] , TA-VLA-Wrench, and Belief-VLA . Only the \pi_{0.5} data-scale control uses the additional 695 coffee-pot/water demonstrations, for 1,453 episodes in total. TA-VLA-Wrench follows TA-VLA’s torque-history interface and future-effort objective, using ten causal wrist-wrench samples on our platform  [ 7 ] . Belief-VLA is our independently trained whole-task variant without stage routing, boundary masking, or the explicit completion rule. Belief-VLA and FlowVLA each receive 20,000 action updates with global batch 32.
+ TABLE I: Primary coffee-pot/water results at 100/200/300 g. TR-LT replays held-out paths in their original layouts; learned policies use randomized initial source positions (Sec.  IV-A ).
+ Method 
+ Grasp 
+ Post-grasp 
+ success 
+ E2E 
+ N_{m} 
+ N_{\mathrm{mass}} 
+ (100/200/300) 
+ Per-goal MAE (g) 
+ Pooled 
+ Macro 
+ \leq 10\% 
+ E2E+ \pm 10\% 
+ 100/200/300 
+ Trajectory-replay controls 
+ TR-LT-ID 
+ 100.0% 
+ 100.0% 
+ 100.0% 
+ 37 
+ 37 (12/15/10) 
+ 66.86/95.48/124.33 
+ 94.0 
+ 95.6 
+ 5.4% 
+ 5.4% 
+ TR-LT-Cal 
+ 100.0% 
+ 100.0% 
+ 100.0% 
+ 38 
+ 38 (13/12/13) 
+ 13.40/21.17/25.04 
+ 19.8 
+ 19.9 
+ 57.9% 
+ 57.9% 
+ External baselines 
+ \pi_{0.5} 
+ 65.2% 
+ 33.3% 
+ 21.7% 
+ 45 
+ 15 (7/6/2) 
+ 69.34/54.97/75.40 
+ 64.4 
+ 66.6 
+ 13.3% 
+ 2.9% 
+ \pi_{0.5} , 1,453 demos 
+ 73.3% 
+ 36.4% 
+ 26.7% 
+ 33 
+ 12 (6/5/1) 
+ 72.06/66.32/80.20 
+ 70.3 
+ 72.9 
+ 8.3% 
+ 2.2% 
+ ForceVLA 
+ 64.3% 
+ 70.4% 
+ 45.2% 
+ 54 
+ 38 (12/10/16) 
+ 34.38/56.65/59.83 
+ 51.0 
+ 50.3 
+ 23.7% 
+ 10.7% 
+ TA-VLA-Wrench 
+ 63.6% 
+ 73.8% 
+ 47.0% 
+ 42 
+ 31 (11/13/7) 
+ 141.05/109.08/54.51 
+ 108.1 
+ 101.6 
+ 12.9% 
+ 6.1% 
+ Our variants 
+ Belief-VLA (whole-task) 
+ 67.0% 
+ 88.1% 
+ 59.0% 
+ 67 
+ 59 (16/17/26) 
+ 14.87/22.47/42.25 
+ 29.1 
+ 26.5 
+ 52.5% 
+ 31.0% 
+ FlowVLA 
+ 68.3% 
+ 94.0% 
+ 64.2% 
+ 84 
+ 79 (28/26/25) 
+ 6.96/13.81/18.66 
+ 12.9 
+ 13.1 
+ 83.5% 
+ 53.7% 
+ N_{m} counts successful grasps; N_{\mathrm{mass}} counts completed trials with final mass. The \leq 10\% rate uses N_{\mathrm{mass}} ; E2E+ \pm 10\% counts completed trials within \pm 10\% of the target over all attempts. MacroMAE weights goals equally. 
+ Fig. 5: Automatic 300-g trial. (a) Predicted terminal mass using fixed and learned tails, offline electronic-scale reference, and frames at onset, mid-pour, and return. (b) Reconstructed flow and completion-head prediction. (c) Return decision.
+Two Trajectory Replay + Load Threshold (TR-LT) controls replay held-out teleoperated paths in the original layouts of the source and receiving containers. They replay the recorded approach and return/placement segments, defined by joint and action changes, but replace the demonstrated POUR duration: after approach, the source holds its pouring pose until an online load threshold triggers return. VLA trials instead randomize the initial source-container position within a bounded region.
+TR-LT uses the same target-stratified 608/75/75 split. The 75 test paths (25/27/23 at 100/200/300 g) are randomly assigned to disjoint groups: 37 for TR-LT-ID and 38 for TR-LT-Cal. After the source reaches steady outflow, \mathbf{F}_{\mathrm{ref}} is the median base-frame force over 0.25–0.75 s, \mathbf{u}=\mathbf{F}_{\mathrm{ref}}/\|\mathbf{F}_{\mathrm{ref}}\| , and \mathbf{F}_{t}^{\mathrm{med}} is the median over the 0.5-s window ending 0.25 s before t . Return is triggered by
+ x_{t}=\frac{1000}{g_{0}}(\mathbf{F}_{\mathrm{ref}}-\mathbf{F}_{t}^{\mathrm{med}})^{\top}\mathbf{u},\qquad ax_{t}+b+c_{\mathrm{tail}}\geq g, 
+ (11) 
+In ( 11 ), g_{0} is gravitational acceleration and x_{t} is the mass-equivalent axial load decrease from the steady-pour reference. TR-LT-ID uses the identity mapping, a=1,b=0 . TR-LT-Cal fits x_{t} to electronic-scale cumulative mass by Huber regression on the 608 training demonstrations, yielding a=1.26319 and b=33.69355  g. Both use the training median return-to-cutoff mass, c_{\mathrm{tail}}=5.38932  g. These target-independent parameters are frozen before testing.
+ TABLE II: System-level mechanism ablations: mass accuracy and manipulation success.
+ Component 
+ Variant 
+ N_{a} 
+ N_{m} 
+ N_{\mathrm{mass}} 
+ 100/200/300 
+ Per-goal MAE (g) 
+ 100/200/300 
+ Pooled 
+ Bias 
+ Macro 
+ Grasp 
+ Post-grasp 
+ success 
+ E2E 
+ Full 
+ \widehat{M}_{t}+\widehat{T}_{t}\geq g 
+ 123 
+ 84 
+ 79 (28/26/25) 
+ 6.96/13.81/18.66 
+ 12.92 
+ +2.65 
+ 13.15 
+ 68.3% 
+ 94.0% 
+ 64.2% 
+ Action 
+ No boundary-aware supervision 
+ 59 
+ 39 
+ 33 (13/11/9) 
+ 13.39/18.57/28.84 
+ 19.33 
+ +12.16 
+ 20.27 
+ 66.1% 
+ 84.6% 
+ 55.9% 
+ State 
+ - hard-zero gate 
+ 53 
+ 37 
+ 35 (12/12/11) 
+ 12.47/13.46/24.82 
+ 16.69 
+ -5.73 
+ 16.92 
+ 69.8% 
+ 94.6% 
+ 66.0% 
+ Trigger 
+ \widehat{M}_{t}\geq g 
+ 61 
+ 40 
+ 39 (13/12/14) 
+ 10.18/20.11/26.89 
+ 19.24 
+ +6.93 
+ 19.06 
+ 65.6% 
+ 97.5% 
+ 63.9% 
+ \widehat{M}_{t}+0.2\widehat{f}_{t}\geq g 
+ 59 
+ 40 
+ 38 (12/13/13) 
+ 7.26/13.86/26.24 
+ 16.01 
+ +2.74 
+ 15.79 
+ 67.8% 
+ 95.0% 
+ 64.4% 
+ N_{a} : attempts; N_{m} : successful grasps. Mass errors are in grams and use completed trials with recorded final mass. MacroMAE weights goals equally. Success-rate definitions follow Table  I . 
+ TABLE III: FlowVLA on held-out targets and additional container–fluid tasks. Held-out targets use the unchanged primary model; additional tasks use independently trained domain-specific models.
+ Container / fluid 
+ Goals (g) 
+ N_{a} 
+ N_{m} 
+ N_{\mathrm{mass}} 
+ MAE (g) 
+ Macro Rel. 
+ Grasp 
+ Post-grasp 
+ E2E 
+ E2E+ \pm 10\% 
+ MAE 
+ success 
+ Coffee pot / water 
+ 150/250 
+ 31 
+ 22 
+ 10/10 
+ 10.94/19.71 
+ 7.6% 
+ 71.0% 
+ 90.9% 
+ 64.5% 
+ 54.8% 
+ Top-handle kettle / water 
+ 200/400 
+ 32 
+ 25 
+ 12/12 
+ 34.54/50.73 
+ 15.0% 
+ 78.1% 
+ 96.0% 
+ 75.0% 
+ 25.0% 
+ Soy-sauce dispenser / 
+ saturated brine 
+ 100 
+ 31 
+ 18 
+ 11 
+ 9.05 
+ 9.1% 
+ 58.1% 
+ 61.1% 
+ 35.5% 
+ 25.8% 
+ Oil dispenser / cooking oil 
+ 50/100 
+ 47 
+ 30 
+ 14/13 
+ 4.23/11.86 
+ 10.2% 
+ 63.8% 
+ 90.0% 
+ 57.4% 
+ 31.9% 
+ N_{a} : all attempts; N_{m} : successful grasps. N_{\mathrm{mass}} and MAE are listed in goal order. Macro Rel. MAE averages \mathrm{MAE}_{g}/g equally across goals. Success-rate definitions follow Table  I . 
+ Protocol and metrics. 
+All methods use the same success criteria, with randomized method and goal order. After grasping and flow onset, the controller must initiate return within 50 s, avoid excessive spillage and tipping of the receiver, tray, or source, and place and release the source stably. Late or incorrect return, collision, a safety stop, a second stall, or human override is an end-to-end (E2E) failure. We report manipulation completion and quantitative accuracy separately. Overall quantitative success combines both requirements over all attempts. Let N_{a} , N_{m} , and N_{\mathrm{E2E}} count attempts, successful grasps, and completed tasks. Grasp, post-grasp, and E2E success are N_{m}/N_{a} , N_{\mathrm{E2E}}/N_{m} , and N_{\mathrm{E2E}}/N_{a} , respectively.
+For completed trials with recorded final mass ( N_{\mathrm{mass}} ), we report pooled mean absolute error (MAE), computed by averaging |M_{\mathrm{final}}-g| over trials, goal-balanced \mathrm{MacroMAE}=(\mathrm{MAE}_{100}+\mathrm{MAE}_{200}+\mathrm{MAE}_{300})/3 , signed bias and the fraction within \pm 10\% . For overall quantitative success, accuracy requires final mass within \pm 10\% of the target.
+Flow MAE for the gated completion-head output is measured against reconstructed references at matched timestamps before recorded return onset, using valid flow labels. Errors are time-weighted within episodes and averaged equally across episodes.
+We compare explicit completion with whole-task policies and data scaling, test calibrated load sensing under prescribed motion, ablate the three core mechanisms, and evaluate held-out targets and additional flow regimes.
+ IV-B Main Results and Mechanism Analysis 
+Force feedback primarily improves whether the policy terminates pouring, but not necessarily whether it knows when the requested quantity has been reached. Compared with \pi_{0.5} , ForceVLA and TA-VLA-Wrench increase post-grasp success from 33.3% to 70.4% and 73.8%, respectively, but their MacroMAEs remain 50.3 and 101.6 g. Belief-VLA further provides the action expert with a recurrent physical belief containing flow and mass information, reaching 88.1% post-grasp success and 26.5 g MacroMAE. This suggests that recurrent belief improves the policy’s representation of pouring progress. With explicit completion estimation and triggering, FlowVLA further reduces MacroMAE to 13.1 g. Overall quantitative success accordingly rises from 31.0% for Belief-VLA to 53.7% for FlowVLA (Table  I ).
+With zero-flow gating, the completion head achieves a flow MAE of 0.38 g/s on the 75 held-out primary-domain validation episodes.
+More demonstrations improve grasping without resolving return timing. Under matched optimization budgets, scaling \pi_{0.5} from 758 to 1,453 demonstrations raises grasp success from 65.2% to 73.3%, but post-grasp success changes only from 33.3% to 36.4%, and MacroMAE remains high at 72.9 g.
+With prescribed motion in original layouts, TR-LT calibration reduces MacroMAE from 95.56 to 19.87 g. FlowVLA has lower error at every target while learning manipulation from randomized source positions. The remaining TR-LT error indicates that wrist-load change alone is insufficient to estimate transferred mass during dynamic pouring: container orientation, arm motion, vessel oscillation, and liquid sloshing all affect the measured wrench.
+The ablations distinguish errors in action completion from errors in quantity regulation (Table  II ). Grasp success remains comparable across variants (65.6–69.8%, versus 68.3% for the full model). Removing boundary-aware supervision raises MacroMAE from 13.15 to 20.27 g and reduces post-grasp success from 94.0% to 84.6%. Partial return followed by renewed pouring under the POUR prompt occurred in 9 of the 33 completed trials, with multiple reversals in 4.
+The gate and trigger variants retain high post-grasp success (94.6–97.5%), but their mass errors increase. The gate addresses integration drift: without it, MacroMAE reaches 16.92 g and bias shifts from +2.65 to -5.73  g, consistent with false accumulated mass prompting early return.
+Tail prediction addresses delayed transfer. With policy and mass estimator fixed, current-mass, fixed (0.2\,\mathrm{s})\widehat{f}_{t} , and learned-tail triggers yield 19.06, 15.79, and 13.15 g MacroMAE. In Fig.  5 , predicted residual mass triggers return before estimated mass reaches 300 g. The final mass is 298.60 g.
+ IV-C Held-Out Goals and Additional Domains 
+ Fig. 6: Median flow (lines) and central 95% episode ranges (shading), with time normalized from onset (0%) to cutoff (100%). Peak P95 is the 95th percentile of episode peak flow.
+Target-independent estimation supports numeric interpolation. At 150/250 g, changing only the primary model’s POUR prompt and completion threshold gives 7.6% goal-balanced relative MAE and 54.8% overall quantitative success (Table  III ).
+Each additional task uses a separately trained domain-specific model to evaluate the completion formulation across distinct flow regimes. Figures  4 and  6 show fast kettle flow and slower cooking-oil flow; cooking oil also has a longer return tail. Among the additional tasks, the top-handle kettle has the highest grasp success (78.1%) and E2E success (75.0%). Its wide opening produces the fastest observed flow profile, and its 15.0% goal-balanced relative MAE is also the highest of the three, consistent with greater sensitivity to return timing. The oil task reaches 57.4% E2E success.
+Saturated brine yields 9.05 g completed-trial MAE but 35.5% E2E success. Failures mainly involve difficult grasping and spilling from the soy-sauce dispenser’s spout.
+ V Conclusion 
+Physical-completion aliasing means nearly unchanged images and robot poses can require different actions as mass accumulates. Our experiments show that more demonstrations and force feedback do not by themselves yield precise quantitative stopping. FlowVLA couples boundary-aware action learning with persistent mass estimation and residual-outflow prediction, triggering return based on predicted terminal mass. These results support modeling completion as a persistent physical state, separately from motor generation. Target-independent estimation enables held-out target interpolation, while independently trained models cover distinct flow regimes. The approach still requires domain-specific training and offline electronic-scale supervision. Future work should learn transferable flow, mass, and residual-outflow representations to reduce retraining and dependence on instrumented demonstrations.

@@ -2,6 +2,8 @@
 
 每课都使用 `uv run --locked python run.py --lesson N`。先读对应小文件，再运行；不要把 shared runtime 当成必须先学会的框架。所有“预期”默认指锁定版本下的离线教学脚本，真实模型另行检查。
 
+完成第 6 课后，可转入 [Dapr 选修课 9～11](./DAPR.md)，理解如何把同一个 Session 协议接到 sidecar / 状态库。它有独立入口，原八课无需安装 Dapr extra。
+
 ## 第 1 课：先把 Agent、模型、Runner 拆开
 
 读 [basic.py](./lessons/basic.py)。关键只看四件事：

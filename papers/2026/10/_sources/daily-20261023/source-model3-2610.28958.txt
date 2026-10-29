@@ -1,0 +1,1542 @@
+Warning: truncated output (original token count: 35835)
+Total output lines: 1974
+
+https://arxiv.org/html/2610.28958v1
+Transformers as Generic Deep Neural Networks: Exact Compilation, the Cost of Removing Activation–Activation Products, and Multi-Agent Attention Clustering
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+Introduction
+Results
+Theory
+A generic DNN vocabulary
+Every Transformer block compiles exactly
+Strict compilation pays an unavoidable pointwise cost
+Activation–activation products remove the cost
+Attention weights cluster on a few keys
+Top- k k attention with a tail-mass estimate
+Centroids factor the selection scores
+A flocking step is one attention head
+Experiments
+The compiled models match their references
+The strict graph pays the predicted cost
+The elementwise product removes most of the strict cost
+NPUs provide the Hadamard basis
+Standard quantization applies to the compiled graph
+The tail-mass estimate beats tail drop
+Clustered queries cut the cost of the strict graph
+Discussion
+Methods
+Notation
+Compilation lemmas
+Proofs of Theorem , Propositions and and Theorem
+Proof of Theorem
+Proofs for clustered attention
+Models and data
+Tail-mass calibration
+Query-centroid routing
+Distillation and fine-tuning
+Post-training quantization
+Timing and unary counts
+Numerical conventions
+Data availability
+Code availability
+References
+S1. Tightness and scope of the bound
+S2. NPU operator support
+S3. Why the bound counts pointwise work
+S4. Where the compiled graph spends its time
+S5. Polarization and squares
+S6. Tail-mass ablation on DeiT-Tiny
+S7. Distillation loss
+S8. bf16 against fp32
+S9. Quantization with exact GELU
+S10. Tensor sizes
+License: CC BY-SA 4.0
+arXiv:2610.28958v1 [cs.LG] 20 Oct 2026
+Transformers as Generic Deep Neural Networks: Exact Compilation, the Cost of Removing Activation–Activation Products, and Multi-Agent Attention Clustering
+Sergey Salishev
+Affiliation: St. Petersburg State University, Saint Petersburg 199034, Russia
+Affiliation: Corresponding author: s.salischev@spbu.ru
+Zeev Volkovich
+Affiliation: Department of Software Engineering, Braude College of Engineering, Karmiel 2161002, Israel
+Oleg Granichin
+Affiliation: St. Petersburg State University, Saint Petersburg 199034, Russia
+Abstract
+Transformers are deployed as a special model class. Neural processing units (NPU) add dedicated operators for attention and normalization, and quantization relies on Transformer-specific algorithms. We show the computation does not force this. Every Transformer block, with attention, LayerNorm and a GELU MLP, compiles exactly into a generic deep neural network built from fixed affine maps, routing and the square, sigmoid and inverse square root, plus GELU or its sigmoid approximation. Without activation–activation products, every transform-wise compilation adds at least N 2 N^{2} scalar nonlinear evaluations per head for dense scores. Keeping that one operation type removes this cost; its elementwise form, present on every surveyed NPU, suffices with the sigmoid and inverse square root. For top- k k attention with exchangeable tail scores, we prove that exact or conditional-mean tail mass gives an unbiased, minimum-mean-square-error estimate of the attention distribution, while tail drop is conditionally biased. When queries or agents cluster, centroids choose the keys first, reducing the number of computed scores from N 2 N^{2} to N ​ k Nk per head. On DeiT-Tiny, MambaIRv2-Light and Pythia-70M the compiled models match their references with all keys, standard post-training quantization applies, and the exact tail-mass estimate beats tail dropping with half as many keys on DeiT-Tiny and, for k ≤ 8 k\leq 8 , on Pythia-70M.
+Introduction
+Transformers [ 1 ] are treated as a model class apart from the deep neural networks (DNNs) that accelerators and tools were first built for. This view has two practical consequences.
+The first is hardware. Accelerators built for convolutional networks run a fixed operator set and hand everything else to the host. The Edge TPU compiler cuts the model at the first unsupported operation and runs the rest on the CPU [ 2 ] . NVIDIA’s Jetson DLA has no matrix-multiply layer [ 3 ] . On phones, llm.npu runs the linear layers on the NPU and keeps LayerNorm and attention on the CPU or GPU [ 4 ] . Vendors answer with Transformer-specific operators and units for attention, softmax and normalization [ 5 , 6 , 7 ] .
+The second is quantization. Post-training quantization (PTQ) of Transformers relies on dedicated algorithms. Liu et al. search quantization scales with a ranking-aware objective [ 8 ] , and PTQ4ViT adds twin-uniform quantizers for the post-softmax and post-GELU activations [ 9 ] . FQ-ViT adds power-of-two factors for LayerNorm and a log-integer softmax [ 10 ] . RepQ-ViT reparameterizes quantization scales [ 11 ] , IGQ-ViT groups channels per instance [ 12 ] , I-BERT replaces the nonlinearities by integer polynomials [ 13 ] , and SmoothQuant moves activation outliers into the weights of language models [ 14 ] .
+We show that the computation does not force this split. The argument has four steps.
+Exact compilation. Every Transformer block, with LayerNorm, scaled dot-product attention, softmax and a GELU MLP, compiles exactly into a generic DNN of fixed affine maps, scalar nonlinearities and routing, with no product of two activations (Theorem 1 ). We call it the strict graph. Squares replace products, through a ​ b = 1 2 ​ [ ( a + b ) 2 − a 2 − b 2 ] ab=\tfrac{1}{2}[(a+b)^{2}-a^{2}-b^{2}] where the squares of the factors are shared and through polarization otherwise, and no exponential or logarithm is needed: squares, the sigmoid and the inverse square root suffice, with GELU or its approximation x ​ σ ​ ( 1.702 ​ x ) x\,\sigma(1.702x) as the MLP activation.
+The cost of strictness. Since the strict graph has no dedicated layers, standard DNN tools apply to it. But removing products of two activations has a price. For free arguments, any compilation without them adds at least N 2 N^{2} scalar nonlinear evaluations per head at Q ​ K ⊤ QK^{\top} and N ​ d Nd at P ​ V PV , whatever the scalar functions, depth or width (Theorem 2 ).
+One more operation type. Adding activation–activation products removes the price. Their elementwise form, the Hadamard product, is on every NPU we survey, and it suffices: with it, a block needs only the sigmoid and the inverse square root besides its MLP activation, and only softmax adds work, 2 ​ N 2 2N^{2} evaluations per head (Proposition 1 ). With the exponential and the reciprocal it adds no pointwise work (Proposition 2 ), and with matrix multiplication of two activations the extended compilation adds no work of either kind (Theorem 3 ). On a GPU, for k ≤ 64 k\leq 64 , the Hadamard and strict graphs run at 1.0 1.0 to 1.3 1.3 and 1.2 1.2 to 1.5 1.5 times the latency of this extended graph. Theorems 2 and 3 make this operation type necessary and sufficient for compilation without added pointwise work. Practice already uses this operation set. ONNX defines LayerNormalization and Softmax as functions over it [ 15 , 16 ] , current NPUs expose it [ 6 , 17 , 18 ] , and convolutional networks with squeeze-and-excitation gating already use the elementwise product [ 19 , 20 ] .
+Clustered attention. The attention weights of a query cluster on a few keys [ 21 , 22 , 23 ] when its scores have a gap (Lemma 1 ). Queries cluster too [ 24 , 25 ] , and queries close to one point share their top keys (Lemma 2 ). Top- k k attention keeps the k k largest scores of each query [ 21 , 22 ] , the topological rule of bird flocks [ 26 ] . We add an estimate of the omitted probability mass, spread uniformly over the dropped keys. For exchangeable tail scores, exact or conditional-mean tail mass gives the unbiased, minimum-mean-square-error attention-distribution estimate; tail drop is conditionally biased (Theorem 4 ). Centroids of the query clusters [ 25 ] choose the keys before the scores, so the strict graph forms only N ​ k Nk scores per head (Corollary 2 , Proposition 5 ). One step of the Motsch–Tadmor flocking model is one attention head (Proposition 6 ).
+We test the compilation on three model families: DeiT-Tiny [ 27 ] for image classification on Oxford-IIIT Pet [ 28 ] and ImageNet-1k [ 29 ] , MambaIRv2-Light [ 30 ] for super-resolution, and Pythia-70M [ 31 ] for language modeling.
+Related work. Universal approximation gives some network within each error on a compact set [ 32 , 33 ] . Forming products from squares is classical: tables of quarter-squares multiply by polarization [ 34 ] , Winograd’s inner product forms the self-terms of each row once and halves the products of a matrix multiplication [ 35 ] , and expressivity proofs for ReLU networks use a ​ b = 1 2 ​ [ ( a + b ) 2 − a 2 − b 2 ] ab=\tfrac{1}{2}[(a+b)^{2}-a^{2}-b^{2}] [ 36 ] . Compilers such as Glow map a model onto the operators a device provides [ 37 ] . Privacy-preserving inference decomposes attention, softmax and LayerNorm into primitive operations for cryptographic protocols, usually with polynomial approximations [ 38 , 39 , 40 ] . Multiplication-free training replaces every product by an approximate piecewise-affine operation and trains on that arithmetic [ 41 ] . Training-time alternatives simplify LayerNorm [ 42 ] or remove it [ 43 , 44 ] . Top- k k attention saves memory on long contexts [ 21 , 22 , 23 ] , usually by renormalizing the kept scores. Scatterbrain adds a low-rank estimate of the non-selected attention to a sparse one [ 45 ] , Combiner attends to the rest of the sequence through region summaries [ 46 ] , and MagicPIG replaces top- k k selection by sampling to avoid its bias [ 47 ] . Clustered attention chooses the kept keys by query centroids and gives the other keys the weights of the centroid [ 25 ] ; we use its key selection with calibrated centroids. Lookup tables, piecewise-linear units and integer approximations implement scalar nonlinearities in hardware [ 48 , 49 , 7 ] .
+What is new. Unlike universal approximation, the compiled graph is exact on all inputs, reuses the trained weights and has a known size. Unlike compilers and privacy-preserving decompositions, we ask which small operator set expresses a whole block exactly. New are the lower bound that prices product-free compilation and the extended construction that removes the price. Unlike multiplication-free training, we compile a trained model, keep LayerNorm, and remove only products of two activations. Our tail-mass estimate is simpler than those of Scatterbrain, Combiner and clustered attention. It is a fixed affine map for a constant mass. For clustered queries, new are the cost bounds for the selected scores and the flocking step as one attention head.
+Results
+Theory
+All proofs are in Methods.
+A generic DNN vocabulary
+We describe a DNN by the types of operations its nodes perform. Three types cover plain convolutional networks and multilayer perceptrons.
+Definition 1 (Strict basis) .
+Fix a set Φ \Phi of scalar functions. A graph over the strict basis ℬ strict ​ ( Φ ) \mathcal{B}_{\mathrm{strict}}(\Phi) is a finite acyclic graph whose nodes are of three types:
+1.
+weight–activation contraction : a fixed affine map x ↦ A ​ x + b x\mapsto Ax+b , where A A and b b are parameters of the graph and do not depend on the input;
+2.
+unary map : x ↦ ϕ ⁡ ( x ) x\mapsto\phi(x) applied entrywise, with ϕ ∈ Φ \phi\in\Phi ;
+3.
+routing : copy, reshape, permutation, concatenation, broadcast, masking, and selection of entries by comparisons of computed values (max, TopK \mathrm{TopK} , gather), with a fixed tie-breaking rule.
+No node multiplies two quantities that both depend on the input; a square is a unary map. For every Φ \Phi , we call ℬ strict ​ ( Φ ) \mathcal{B}_{\mathrm{strict}}(\Phi) a product-free basis and its graphs product-free graphs.
+Convolutions, fully connected layers, batch normalization at inference, residual sums and average pooling are fixed affine maps; max pooling is routing. ReLU, GELU and other activations are unary maps. Gating, as in squeeze-and-excitation blocks [ 19 ] , multiplies two activations and is not in this basis. The set Φ \Phi is a parameter. Shifts such as x + ε x+\varepsilon and scalings such as x / 2 x/2 belong to the preceding affine node, so a unary set needs only the shape of each function.
+Definition 2 (Strict unary set) .
+Φ strict = { ( ⋅ ) 2 , σ , ( ⋅ ) − 1 / 2 , GELU } \Phi_{\mathrm{strict}}=\{(\cdot)^{2},\ \sigma,\ (\cdot)^{-1/2},\ \mathrm{GELU}\} , with σ ⁡ ( t ) = 1 / ( 1 + e − t ) \sigma(t)=1/(1+e^{-t}) .
+Each function has one role. The square forms second moments and products: a ​ b = 1 2 ​ [ ( a + b ) 2 − a 2 − b 2 ] ab=\tfrac{1}{2}[(a+b)^{2}-a^{2}-b^{2}] where the squares of the factors are shared across products, as for the rows of Q Q , K K and V V and in LayerNorm, and polarization, a ​ b = 1 4 ​ [ ( a + b ) 2 − ( a − b ) 2 ] ab=\tfrac{1}{4}[(a+b)^{2}-(a-b)^{2}] , for an isolated product. The sigmoid gives the exponential, e t = σ ⁡ ( t ) / σ ⁡ ( − t ) e^{t}=\sigma(t)/\sigma(-t) . The inverse square root normalizes LayerNorm and, squared, gives the reciprocal, 1 / x = ( x − 1 / 2 ) 2 1/x=(x^{-1/2})^{2} for x > 0 x>0 . GELU \mathrm{GELU} is the MLP activation (Definition 3 ). The set has no exponential and no logarithm.
+Definition 3 (Transform sets) .
+The Transformer transform set is
+𝒯 Tr = { Aff , LN , Score , softmax , Mix , MLP GELU } , \mathcal{T}_{\mathrm{Tr}}=\{\mathrm{Aff},\ \mathrm{LN},\ \mathrm{Score},\ \mathrm{softmax},\ \mathrm{Mix},\ \mathrm{MLP}_{\mathrm{GELU}}\},
+where
+Aff ⁡ ( x ) \displaystyle\mathrm{Aff}(x)
+= A ​ x + b , \displaystyle=Ax+b,
+LN ⁡ ( x ) \displaystyle\mathrm{LN}(x)
+= β + γ ⊙ x − mean ⁡ ( x ) Var ⁡ ( x ) + ε , \displaystyle=\beta+\gamma\odot\frac{x-\mathrm{mean}(x)}{\sqrt{\mathrm{Var}(x)+\varepsilon}},
+Score ⁡ ( Q , K ) \displaystyle\mathrm{Score}(Q,K)
+= Q ​ K ⊤ / d , \displaystyle=QK^{\top}/\sqrt{d},
+Mix ⁡ ( P , V ) \displaystyle\mathrm{Mix}(P,V)
+= P ​ V , \displaystyle=PV,
+MLP GELU ​ ( x ) \displaystyle\mathrm{MLP}_{\mathrm{GELU}}(x)
+= A 2 ​ GELU ​ ( A 1 ​ x + b 1 ) + b 2 , \displaystyle=A_{2}\mathrm{GELU}(A_{1}x+b_{1})+b_{2},
+GELU ⁡ ( x ) \displaystyle\mathrm{GELU}(x)
+= x 2 ​ ( 1 + erf ⁡ ( x / 2 ) ) , \displaystyle=\tfrac{x}{2}\bigl(1+\operatorname{erf}(x/\sqrt{2})\bigr),
+and softmax \mathrm{softmax} acts on each row of scores. A model may use the approximation GELU ⁡ ( x ) ≈ x ​ σ ​ ( 1.702 ​ x ) \mathrm{GELU}(x)\approx x\,\sigma(1.702x) [ 50 ] instead, which changes the model. Then GELU \mathrm{GELU} is no longer a basic operation: it is omitted from every unary set, and the sigmoid is added where missing. Here Var ⁡ ( x ) = mean i ​ [ ( x i − mean ⁡ ( x ) ) 2 ] \mathrm{Var}(x)=\mathrm{mean}_{i}[(x_{i}-\mathrm{mean}(x))^{2}] , ε > 0 \varepsilon>0 and A , b , β , γ , A 1 , b 1 , A 2 , b 2 A,b,\beta,\gamma,A_{1},b_{1},A_{2},b_{2} are fixed parameters, and one attention head has N N tokens, head dimension d d , Q , K , V ∈ ℝ N × d Q,K,V\in\mathbb{R}^{N\times d} and P ∈ ℝ N × N P\in\mathbb{R}^{N\times N} .
+A compiled graph serves a fixed context capacity N N , and the construction gives one graph for each N N . Shorter inputs are padded and masked, and causal models use the causal mask. Masks are fixed routing and affine maps.
+Every Transformer block compiles exactly
+Theorem 1 (Exact compilation into the strict basis) .
+Every finite Transformer block composed of transforms in 𝒯 Tr \mathcal{T}_{\mathrm{Tr}} is computed exactly by a finite graph over ℬ strict ​ ( Φ strict ) \mathcal{B}_{\mathrm{strict}}(\Phi_{\mathrm{strict}}) .
+We call the graph of Theorem 1 the strict graph . A compilation is transform-wise when it replaces each transform of the block by its own graph that computes that transform exactly; the graphs then compose. The strict graph is transform-wise: Lemmas 3 – 6 in Methods give the graph of each transform.
+Strict compilation pays an unavoidable pointwise cost
+A multiply–accumulate (MAC) array computes products of matrices and reuses each loaded number many times. A unary map takes one number and returns one, so it runs on a separate, slower scalar, vector or lookup-table unit. We count the two kinds of work separately.
+Definition 4 (Pointwise, contraction and added work) .
+For a graph G G , the pointwise work PW ⁡ ( G ) \mathrm{PW}(G) is the number of scalar evaluations of unary maps in one forward pass; it counts evaluations, not nodes. The contraction work MAC ⁡ ( G ) \mathrm{MAC}(G) is the number of multiply–accumulate steps in its fixed affine nodes and in its products of two activations. The source graph of a transform T T is the graph of its defining formula in Definition 3 , with each product of two activations as one product node; PW ⁡ ( T ) \mathrm{PW}(T) and MAC ⁡ ( T ) \mathrm{MAC}(T) are its work. Score \mathrm{Score} is one product node with PW = 0 \mathrm{PW}=0 and MAC = N 2 ​ d \mathrm{MAC}=N^{2}d per head, LayerNorm forms its second moment with a product node and pays one inverse square root per token, and softmax pays one exponential per entry and one reciprocal per row. If a transform-wise compilation replaces T T by the graph G T G_{T} , its added work is Δ ​ PW ​ ( T ) = PW ⁡ ( G T ) − PW ⁡ ( T ) \Delta\mathrm{PW}(T)=\mathrm{PW}(G_{T})-\mathrm{PW}(T) and Δ ​ MAC ​ ( T ) = MAC ⁡ ( G T ) − MAC ⁡ ( T ) \Delta\mathrm{MAC}(T)=\mathrm{MAC}(G_{T})-\mathrm{MAC}(T) .
+Theorem 2 (Lower bound for product-free compilation) .
+Fix one attention head and any set Φ \Phi of scalar functions, and let the entries of Q Q , K K , P P and V V range freely over ℝ \mathbb{R} . Every product-free graph that computes Score = Q ​ K ⊤ / d \mathrm{Score}=QK^{\top}/\sqrt{d} exactly has PW ≥ N 2 \mathrm{PW}\geq N^{2} , and every product-free graph that computes Mix = P ​ V \mathrm{Mix}=PV exactly has PW ≥ N ​ d \mathrm{PW}\geq Nd .
+The source graphs of Score \mathrm{Score} and Mix \mathrm{Mix} make no unary evaluation, so the bounds hold for the added work Δ ​ PW \Delta\mathrm{PW} . They hold for every depth, width and choice of affine coefficients, and they count evaluations, so fusing nodes does not lower them. On inputs where its routing is fixed, a product-free graph is an affine function of its unary outputs (Methods, Lemma 9 ). It therefore needs at least as many unary evaluations as its target has coordinates that stay linearly independent modulo affine functions; for Score \mathrm{Score} these are all N 2 N^{2} entries.
+The strict graph pays N 2 ​ d + 2 ​ N ​ d N^{2}d+2Nd unary evaluations per head in Score \mathrm{Score} and N 2 ​ d + N 2 + N ​ d N^{2}d+N^{2}+Nd in Mix \mathrm{Mix} , a factor d + 2 ​ d / N d+2d/N above the bound of Theorem 2 for Score \mathrm{Score} and N + N / d + 1 N+N/d+1 above it for Mix \mathrm{Mix} . Supplementary Section S1 shows how far the bound of Theorem 2 can be raised.
+For one DeiT-Tiny block with dense attention (Table 1 ), the strict graph makes 61 61 times the unary evaluations of the source block, and 92 % 92\% of them fall in Score \mathrm{Score} and Mix \mathrm{Mix} .
+Table 1: Pointwise work per DeiT-Tiny block. Unary evaluations per instance of each transform; N = 197 N=197 tokens, h = 3 h=3 heads of dimension d = 64 d=64 , MLP width 4 ​ h ​ d 4hd . Source: the source graph (Definition 4 ), with GELU and dense attention. Bound: Theorem 2 for dense scores, Corollary 2 for the k k routed scores. Strict: Theorem 1 ; routed: Proposition 5 , with k = 16 k=16 in the DeiT-Tiny rows. Hadamard: Proposition 1 . Extended: Theorem 3 . Block totals count both LayerNorms.
+Transform
+Source
+Bound, dense / routed
+Strict
+Strict, routed
+Hadamard
+Extended
+Symbolic
+LN \mathrm{LN}
+N N
+2 ​ N ​ h ​ d + 2 ​ N 2Nhd{+}2N
+2 ​ N ​ h ​ d + 2 ​ N 2Nhd{+}2N
+N N
+N N
+softmax \mathrm{softmax}
+h ​ N 2 + h ​ N hN^{2}{+}hN
+8 ​ h ​ N 2 + 2 ​ h ​ N 8hN^{2}{+}2hN
+8 ​ h ​ N ​ k + 2 ​ h ​ N 8hNk{+}2hN
+3 ​ h ​ N 2 + h ​ N 3hN^{2}{+}hN
+h ​ N 2 + h ​ N hN^{2}{+}hN
+MLP GELU \mathrm{MLP}_{\mathrm{GELU}}
+4 ​ N ​ h ​ d 4Nhd
+4 ​ N ​ h ​ d 4Nhd
+4 ​ N ​ h ​ d 4Nhd
+4 ​ N ​ h ​ d 4Nhd
+4 ​ N ​ h ​ d 4Nhd
+Score \mathrm{Score}
+0 0
+h ​ N 2 hN^{2} / h ​ N ​ k hNk
+h ​ N 2 ​ d + 2 ​ h ​ N ​ d hN^{2}d{+}2hNd
+h ​ N ​ k ​ d + 2 ​ h ​ N ​ d hNkd{+}2hNd
+0 0
+0 0
+Mix \mathrm{Mix}
+0 0
+h ​ N ​ d hNd / h ​ N ​ d hNd
+h ​ N 2 ​ d + h ​ N 2 + h ​ N ​ d hN^{2}d{+}hN^{2}{+}hNd
+h ​ N ​ k ​ d + h ​ N ​ k + h ​ N ​ d hNkd{+}hNk{+}hNd
+0 0
+0 0
+DeiT-Tiny
+LN \mathrm{LN}
+197
+7.60 × 10 4 7.60\times 10^{4}
+7.60 × 10 4 7.60\times 10^{4}
+197
+197
+softmax \mathrm{softmax}
+1.17 × 10 5 1.17\times 10^{5}
+9.33 × 10 5 9.33\times 10^{5}
+7.68 × 10 4 7.68\times 10^{4}
+3.50 × 10 5 3.50\times 10^{5}
+1.17 × 10 5 1.17\times 10^{5}
+MLP GELU \mathrm{MLP}_{\mathrm{GELU}}
+1.51 × 10 5 1.51\times 10^{5}
+1.51 × 10 5 1.51\times 10^{5}
+1.51 × 10 5 1.51\times 10^{5}
+1.51 × 10 5 1.51\times 10^{5}
+1.51 × 10 5 1.51\times 10^{5}
+Score \mathrm{Score}
+0
+1.16 × 10 5 1.16\times 10^{5} / 9456
+7.53 × 10 6 7.53\times 10^{6}
+6.81 × 10 5 6.81\times 10^{5}
+0
+0
+Mix \mathrm{Mix}
+0
+3.78 × 10 4 3.78\times 10^{4} / 3.78 × 10 4 3.78\times 10^{4}
+7.61 × 10 6 7.61\times 10^{6}
+6.52 × 10 5 6.52\times 10^{5}
+0
+0
+Block total
+2.69 × 10 5 2.69\times 10^{5}
+1.64 × 10 7 1.64\times 10^{7}
+1.71 × 10 6 1.71\times 10^{6}
+5.02 × 10 5 5.02\times 10^{5}
+2.69 × 10 5 2.69\times 10^{5}
+Activation–activation products remove the cost
+Theorem 2 names the missing operation type: the product of two activations. Every NPU we survey provides it as an elementwise product, together with the sigmoid (Supplementary Table S1 ).
+Definition 5 (Hadamard basis) .
+The Hadamard basis ℬ ⊙ ​ ( Φ ) \mathcal{B}_{\odot}(\Phi) has the three node types of ℬ strict ​ ( Φ ) \mathcal{B}_{\mathrm{strict}}(\Phi) and a fourth, the Hadamard product a ⊙ b a\odot b of two activations with broadcasting.
+Definition 6 (Hadamard unary set) .
+Φ ⊙ = { σ , ( ⋅ ) − 1 / 2 , GELU } \Phi_{\odot}=\{\sigma,\ (\cdot)^{-1/2},\ \mathrm{GELU}\} .
+With the Hadamard product, the square is x ⊙ x x\odot x , the exponential is e t = σ ( t ) ⊙ ( σ ( − t ) − 1 / 2 ⊙ σ ( − t ) − 1 / 2 ) e^{t}=\sigma(t)\odot\bigl(\sigma(-t)^{-1/2}\odot\sigma(-t)^{-1/2}\bigr) , and the reciprocal is x − 1 / 2 ⊙ x − 1 / 2 x^{-1/2}\odot x^{-1/2} .
+Proposition 1 (Sigmoid and inverse square root suffice with the Hadamard product) .
+Every finite Transformer block over 𝒯 Tr \mathcal{T}_{\mathrm{Tr}} is computed exactly by a finite graph over ℬ ⊙ ​ ( Φ ⊙ ) \mathcal{B}_{\odot}(\Phi_{\odot}) in which softmax adds Δ ​ PW = 2 ​ N 2 \Delta\mathrm{PW}=2N^{2} per head and every other transform adds Δ ​ PW = 0 \Delta\mathrm{PW}=0 .
+We call this graph the Hadamard graph . Its products add Δ ​ MAC ≤ N 2 ​ d \Delta\mathrm{MAC}\leq N^{2}d per head to Score \mathrm{Score} and Mix \mathrm{Mix} and 2 ​ N 2 + N 2N^{2}+N to softmax. For one DeiT-Tiny block it makes 5.02 × 10 5 5.02\times 10^{5} unary evaluations, against 1.64 × 10 7 1.64\times 10^{7} for the strict graph (Table 1 ).
+The 2 ​ N 2 2N^{2} evaluations of softmax come from building the exponential from sigmoids. With the exponential and the reciprocal as unary maps they vanish.
+Definition 7 (Extended unary set) .
+Φ ext = { exp , ( ⋅ ) − 1 , ( ⋅ ) − 1 / 2 , GELU } \Phi_{\mathrm{ext}}=\{\exp,\ (\cdot)^{-1},\ (\cdot)^{-1/2},\ \mathrm{GELU}\} .
+Φ ext \Phi_{\mathrm{ext}} is the set of scalar functions in the defining formulas of 𝒯 Tr \mathcal{T}_{\mathrm{Tr}} : the exponential and the reciprocal of softmax, the inverse square root of LayerNorm and the MLP activation.
+Proposition 2 (The Hadamard product suffices) .
+Every finite Transformer block over 𝒯 Tr \mathcal{T}_{\mathrm{Tr}} is computed exactly by a finite graph over ℬ ⊙ ​ ( Φ ext ) \mathcal{B}_{\odot}(\Phi_{\mathrm{ext}}) with Δ ​ PW ​ ( T ) = 0 \Delta\mathrm{PW}(T)=0 for every transform T T . For Score \mathrm{Score} and Mix \mathrm{Mix} a separate reduction node adds Δ ​ MAC ≤ N 2 ​ d \Delta\mathrm{MAC}\leq N^{2}d per head; for every other transform Δ ​ MAC ​ ( T ) = 0 \Delta\mathrm{MAC}(T)=0 .
+Matrix multiplication of two activations keeps the N 2 ​ d N^{2}d products of Q ​ K ⊤ QK^{\top} and P ​ V PV , which a Hadamard product writes to memory, inside the MAC array (Supplementary Section S3).
+Definition 8 (Extended basis) .
+The extended basis ℬ ext ​ ( Φ ) \mathcal{B}_{\mathrm{ext}}(\Phi) adds to ℬ ⊙ ​ ( Φ ) \mathcal{B}_{\odot}(\Phi) matrix multiplication (MatMul) and batched matrix multiplication (BMM) of two activations. With ⊙ \odot they form the activation–activation products . For a common Φ \Phi , ℬ strict ​ ( Φ ) ⊂ ℬ ⊙ ​ ( Φ ) ⊂ ℬ ext ​ ( Φ ) \mathcal{B}_{\mathrm{strict}}(\Phi)\subset\mathcal{B}_{\odot}(\Phi)\subset\mathcal{B}_{\mathrm{ext}}(\Phi) .
+Theorem 3 (Exact compilation with no added work) .
+Every finite Transformer block over 𝒯 Tr \mathcal{T}_{\mathrm{Tr}} is computed exactly by a finite graph over ℬ ext ​ ( Φ ext ) \mathcal{B}_{\mathrm{ext}}(\Phi_{\mathrm{ext}}) , and this compilation has Δ ​ PW ​ ( T ) = Δ ​ MAC ​ ( T ) = 0 \Delta\mathrm{PW}(T)=\Delta\mathrm{MAC}(T)=0 for every transform T T .
+We call the graph of Theorem 3 the extended graph . It is the source graph of each transform (Definition 4 ), so it adds no work: Q ​ K ⊤ QK^{\top} and P ​ V PV stay one matrix-multiplication node each, with N 2 ​ d N^{2}d multiply–accumulate steps per head and no unary evaluation. Theorems 2 and 3 together make activation–activation products necessary and sufficient for a transform-wise compilation that adds no pointwise work.
+To turn the bound of Theorem 2 into time, let R mac R_{\mathrm{mac}} and R pw R_{\mathrm{pw}} be the throughputs of the MAC array and the pointwise unit, and κ = R mac / R pw \kappa=R_{\mathrm{mac}}/R_{\mathrm{pw}} .
+Corollary 1 (Time separation) .
+Fix an h h -head block. Assume that unary maps run only on the pointwise unit, at rate at most R pw R_{\mathrm{pw}} , and that the extended graph runs Score \mathrm{Score} and Mix \mathrm{Mix} on the MAC array at rate R mac R_{\mathrm{mac}} . In every transform-wise product-free compilation, the Score \mathrm{Score} and Mix \mathrm{Mix} subgraphs take at least h ⁡ ( N 2 + N ​ d ) / R pw h(N^{2}+Nd)/R_{\mathrm{pw}} ; in the extended graph they take 2 ​ h ​ N 2 ​ d / R mac 2hN^{2}d/R_{\mathrm{mac}} . The first time is longer whenever κ > 2 ​ N ​ d / ( N + d ) \kappa>2Nd/(N+d) , in particular whenever κ ≥ 2 ​ d \kappa\geq 2d .
+The strict graph makes more than 2 ​ h ​ N 2 ​ d 2hN^{2}d unary evaluations in Score \mathrm{Score} and Mix \mathrm{Mix} , so on them it is at least κ \kappa times slower than the extended graph. For DeiT-Tiny ( N = 197 N=197 , d = 64 d=64 ) the threshold 2 ​ N ​ d / ( N + d ) 2Nd/(N+d) is 96.6 96.6 . The extended basis maps onto a current NPU without a Transformer-specific unit; Figure 1 shows the unit that runs each node.
+Transformer block
+LN, Q ​ K ⊤ QK^{\top} ,
+softmax, P ​ V PV ,
+GELU-MLP,
+top- k k
+Strict graph
+(Theorem 1 )
+adds about 2 ​ h ​ N 2 ​ d 2hN^{2}d
+squares Q ​ K ⊤ , P ​ V QK^{\top},PV
+Hadamard graph
+(Proposition 1 )
+adds 2 ​ h ​ N 2 2hN^{2} unary
+maps in softmax
+Extended graph
+(Theorem 3 )
+adds no work
+MAC array LUT / PWL unit Routing
+fixed affine maps
+square, sigmoid,
+inverse square root,
+GELU ∗
+routing, TopK \mathrm{TopK}
+fixed affine maps,
+Hadamard ⊙ \odot
+sigmoid,
+inverse square root,
+GELU ∗
+routing, TopK \mathrm{TopK}
+fixed affine maps,
+Q ​ K ⊤ QK^{\top} , P ​ V PV ,
+Hadamard ⊙ \odot
+exponential, reciprocal,
+inverse square root,
+GELU ∗ or sigmoid
+routing, TopK \mathrm{TopK}
+Figure 1: Three exact compilations of a Transformer block. Each row lists the nodes of one graph under the NPU unit that runs them; N N tokens, h h heads of dimension d d . ∗ if used in the source graph.
+Attention weights cluster on a few keys
+Fix one query q i q_{i} , the keys k 1 , … , k N k_{1},\dots,k_{N} and the values v 1 , … , v N v_{1},\dots,v_{N} , the rows of K K and V V , and 1 ≤ k < N 1\leq k<N . Under a mask, N N counts the valid keys of the row. The scores are s j = q i ⋅ k j / d s_{j}=q_{i}\cdot k_{j}/\sqrt{d} , sorted as s ( 1 ) ≥ ⋯ ≥ s ( N ) s_{(1)}\geq\dots\geq s_{(N)} , the attention distribution is π = softmax ⁡ ( s ) \pi=\mathrm{softmax}(s) , and the attention output is o = ∑ j π j ​ v j o=\sum_{j}\pi_{j}v_{j} . Top- k k attention keeps the support I = TopK ⁡ ( s , k ) I=\mathrm{TopK}(s,k) and drops the other m = N − k m=N-k keys, the set J J . The tail mass τ = ∑ j ∈ J π j \tau=\sum_{j\in J}\pi_{j} is the attention outside I I , and Δ k = s ( k ) − s ( k + 1 ) \Delta_{k}=s_{(k)}-s_{(k+1)} is the score gap. The attention weights cluster on I I when Δ k \Delta_{k} is large. Queries cluster too.
+Lemma 1 (Score gap) .
+τ ≤ m k ​ e − Δ k \tau\leq\frac{m}{k}\,e^{-\Delta_{k}} .
+Lemma 2 (Shared support) .
+Let c ∈ ℝ d c\in\mathbb{R}^{d} and ρ ≥ 0 \rho\geq 0 . If ‖ q i − c ‖ ≤ ρ \|q_{i}-c\|\leq\rho and Δ k > 2 ​ ρ ​ max j ​ ‖ k j ‖ / d \Delta_{k}>2\rho\max_{j}\|k_{j}\|/\sqrt{d} , the scores c ⋅ k j / d c\cdot k_{j}/\sqrt{d} have the same top k k keys I I as q i q_{i} .
+By Lemma 2 , queries within ρ \rho of one point c c share their top k k keys when each meets the gap condition, and by Lemma 1 each of them puts at most m k ​ e − Δ k \frac{m}{k}e^{-\Delta_{k}} of its attention outside these keys.
+Top- k k attention with a tail-mass estimate
+The softmax over the kept scores, π ~ j = exp ⁡ ( s j ) / ∑ l ∈ I exp ⁡ ( s l ) \tilde{\pi}_{j}=\exp(s_{j})/\sum_{l\in I}\exp(s_{l}) for j ∈ I j\in I , needs only s I s_{I} . The dense distribution on I I is π j = ( 1 − τ ) ​ π ~ j \pi_{j}=(1-\tau)\tilde{\pi}_{j} . Write a = ∑ j ∈ I π ~ j ​ v j a=\sum_{j\in I}\tilde{\pi}_{j}v_{j} for the mean of the kept values under π ~ \tilde{\pi} , u ¯ = 1 m ​ ∑ j ∈ J v j \bar{u}=\frac{1}{m}\sum_{j\in J}v_{j} for the plain mean of the dropped values, and b = 1 τ ​ ∑ j ∈ J π j ​ v j b=\frac{1}{\tau}\sum_{j\in J}\pi_{j}v_{j} for their mean under π \pi ; τ > 0 \tau>0 since every softmax weight is positive. Then o = ( 1 − τ ) ​ a + τ ​ b o=(1-\tau)a+\tau b .
+Definition 9 (Tail-mass top- k k attention) .
+For a tail mass q ∈ [ 0 , 1 ] q\in[0,1] , the estimate p ^ \hat{p} of π \pi and the output o ^ \hat{o} are
+p ^ j = ( 1 − q ) ​ π ~ j ( j ∈ I ) , p ^ j = q m ( j ∈ J ) , o ^ = ( 1 − q ) ​ a + q ​ u ¯ . \hat{p}_{j}=(1-q)\,\tilde{\pi}_{j}\ \ (j\in I),\qquad\hat{p}_{j}=\frac{q}{m}\ \ (j\in J),\qquad\hat{o}=(1-q)\,a+q\,\bar{u}.
+Calibrated mode uses one constant q q per block, the mean tail mass of the reference model over calibration data. Exact mode uses q = τ q=\tau . Tail drop , the usual top- k k attention, uses q = 0 q=0 . For k = 0 k=0 , I = ∅ I=\varnothing , m = N m=N and q = 1 q=1 , so p ^ j = 1 / N \hat{p}_{j}=1/N and o ^ \hat{o} is the mean of the values; calibrated and exact mode coincide. For k ≥ N k\geq N the map is dense attention.
+The sparse transform set 𝒯 k , q \mathcal{T}_{k,q} is 𝒯 Tr \mathcal{T}_{\mathrm{Tr}} with softmax and value mixing replaced by this map. This changes the model. Its source graph, used to count work, computes o ^ \hat{o} in the all-values form
+o ^ = ∑ j ∈ I ( p ^ j − q m ) ​ v j + q m ​ ∑ j = 1 N v j , \hat{o}=\sum_{j\in I}\Bigl(\hat{p}_{j}-\frac{q}{m}\Bigr)v_{j}+\frac{q}{m}\sum_{j=1}^{N}v_{j},
+(1)
+which reads only the kept values and the sum of all values. Value mixing then costs N ​ k ​ d Nkd multiply–accumulate steps per head instead of N 2 ​ d N^{2}d , plus the sum of all values, kept as a prefix sum under a causal mask. Exact mode also forms all N 2 N^{2} scores for the dense normalizer.
+Proposition 3 (Sparse attention compiles exactly) .
+Every finite block over 𝒯 k , q \mathcal{T}_{k,q} is computed exactly by a finite graph over ℬ strict ​ ( Φ strict ) \mathcal{B}_{\mathrm{strict}}(\Phi_{\mathrm{strict}}) , and by a finite graph over ℬ ext ​ ( Φ ext ) \mathcal{B}_{\mathrm{ext}}(\Phi_{\mathrm{ext}}) with Δ ​ PW ​ ( T ) = Δ ​ MAC ​ ( T ) = 0 \Delta\mathrm{PW}(T)=\Delta\mathrm{MAC}(T)=0 for every transform T T .
+Let O = ( I , s I , V ) O=(I,s_{I},V) be what top- k k attention reads: the kept keys, their scores and the values.
+Theorem 4 (Tail-mass estimate is unbiased and optimal) .
+Let the scores s s and the values V V be random, with 𝔼 ​ ‖ v j ‖ 2 < ∞ \mathbb{E}\|v_{j}\|^{2}<\infty for every j j . Assume that the tail scores ( s j ) j ∈ J (s_{j})_{j\in J} are exchangeable given O O : their conditional law is invariant under permutations of J J .
+(i)
+With q = 𝔼 ⁡ [ τ ∣ O ] q=\mathbb{E}[\tau\mid O] , the estimate satisfies p ^ = 𝔼 ⁡ [ π ∣ O ] \hat{p}=\mathbb{E}[\pi\mid O] and o ^ = 𝔼 ⁡ [ o ∣ O ] \hat{o}=\mathbb{E}[o\mid O] . Both are unbiased, and they minimize 𝔼 ​ ‖ p ^ − π ‖ 2 \mathbb{E}\|\hat{p}-\pi\|^{2} and 𝔼 ​ ‖ o ^ − o ‖ 2 \mathbb{E}\|\hat{o}-o\|^{2} among all functions of O O . In exact mode the same holds given ( O , τ ) (O,\tau) , with q = τ q=\tau .
+(ii)
+Tail drop has conditional bias 𝔼 [ p ^ − π ∣ O ] = 𝔼 [ τ ∣ O ] ( π ~ I , − 𝟙 J / m ) \mathbb{E}[\hat{p}-\pi\mid O]=\mathbb{E}[\tau\mid O]\,(\tilde{\pi}_{I},-\mathbbm{1}_{J}/m) and 𝔼 ⁡ [ o ^ − o ∣ O ] = 𝔼 ⁡ [ τ ∣ O ] ​ ( a − u ¯ ) \mathbb{E}[\hat{o}-o\mid O]=\mathbb{E}[\tau\mid O]\,(a-\bar{u}) . Its conditional distribution bias vanishes only when 𝔼 ⁡ [ τ ∣ O ] = 0 \mathbb{E}[\tau\mid O]=0 .
+Theorem 4 concerns the attention distribution and the output of one head, not the loss of the whole model. Part (i) covers exact mode, and calibrated mode when τ \tau is mean-independent of O O . Among constant tail masses, 𝔼 ​ ( q − τ ) 2 = ( q − 𝔼 ​ τ ) 2 + Var ​ τ \mathbb{E}(q-\tau)^{2}=(q-\mathbb{E}\tau)^{2}+\mathrm{Var}\tau is minimal at q = 𝔼 ​ τ q=\mathbb{E}\tau , which the calibrated q q estimates.
+Proposition 4 (Error decomposition) .
+For every query,
+o ^ − o = τ ⁡ ( u ¯ − b ) + ( q − τ ) ​ ( u ¯ − a ) , ‖ p ^ − π ‖ 2 2 = ( q − τ ) 2 ​ w + ∑ j ∈ J ( π j − τ m ) 2 , \hat{o}-o=\tau\,(\bar{u}-b)+(q-\tau)\,(\bar{u}-a),\qquad\|\hat{p}-\pi\|_{2}^{2}=(q-\tau)^{2}\,w+\sum_{j\in J}\Bigl(\pi_{j}-\frac{\tau}{m}\Bigr)^{2},
+with w = ‖ π ~ I ‖ 2 2 + 1 m w=\|\tilde{\pi}_{I}\|_{2}^{2}+\frac{1}{m} . Tail drop has output error τ ⁡ ( a − b ) \tau\,(a-b) .
+Proposition 4 needs no assumption. The error splits into a uniform-tail term and a term from the error in the tail mass, and exact mode removes the second term, so for every query it minimizes the distribution error over q q . When the tail is uniform, π j = τ / m \pi_{j}=\tau/m on J J , so b = u ¯ b=\bar{u} and exact mode has no error, while tail drop keeps the error τ ⁡ ( a − b ) \tau(a-b) . In the expected distribution error, only 𝔼 ⁡ [ ( q − τ ) 2 ​ w ] \mathbb{E}[(q-\tau)^{2}w] depends on q q , so the best constant is q ∗ = 𝔼 ⁡ [ w ​ τ ] / 𝔼 ⁡ [ w ] q^{*}=\mathbb{E}[w\tau]/\mathbb{E}[w] , which equals 𝔼 ​ τ \mathbb{E}\tau when w w and τ \tau are uncorrelated.
+Centroids factor the selection scores
+Exact top- k k forms all N 2 N^{2} scores before it selects, so its strict graph makes at least N 2 N^{2} unary evaluations per head (Theorem 2 ). When the queries cluster, the keys can be chosen before the scores, and only the k k kept scores of each query are formed.
+Corollary 2 (Cost of selected scores) .
+Fix one head and 1 ≤ k ≤ N 1\leq k\leq N , and let each query select k k keys by a rule that is constant on some open set of inputs. Every product-free graph that computes the N ​ k Nk selected scores has PW ≥ N ​ k \mathrm{PW}\geq Nk . Given the selected key indices, a graph over ℬ strict ​ ( Φ strict ) \mathcal{B}_{\mathrm{strict}}(\Phi_{\mathrm{strict}}) computes them with PW = N ​ k ​ d + 2 ​ N ​ d \mathrm{PW}=Nkd+2Nd .
+For each head, k-means on calibration queries gives C C centroids c 1 , … , c C c_{1},\dots,c_{C} , the rows of W ∈ ℝ C × d W\in\mathbb{R}^{C\times d} . Query i i goes to its nearest centroid c r ⁡ ( i ) c_{r(i)} , the one that maximizes the affine score q i ⋅ c r − 1 2 ​ ‖ c r ‖ 2 q_{i}\cdot c_{r}-\tfrac{1}{2}\|c_{r}\|^{2} , and the assignment E ∈ { 0 , 1 } N × C E\in\{0,1\}^{N\times C} factors the queries as Q ≈ E ​ W Q\approx EW . The selection scores E ​ W ​ K ⊤ / d EWK^{\top}/\sqrt{d} , a gather of the centroid scores W ​ K ⊤ / d WK^{\top}/\sqrt{d} , replace Q ​ K ⊤ / d QK^{\top}/\sqrt{d} , and the routed support of query i i is the top k k keys of its row. It is the exact top- k k support of q i q_{i} whenever the gap condition of Lemma 2 holds for c = c r ⁡ ( i ) c=c_{r(i)} . Like TopK \mathrm{TopK} of the scores, it is constant on an open set of inputs, so Corollary 2 bounds its scores. The source graph of the routed map is the all-values form ( 1 ) on the routed support.
+Proposition 5 (Routed support) .
+For fixed centroids and an h h -head block, tail-mass attention with a constant tail mass on the routed supports is computed exactly by a graph over ℬ strict ​ ( Φ strict ) \mathcal{B}_{\mathrm{strict}}(\Phi_{\mathrm{strict}}) whose Score \mathrm{Score} and Mix \mathrm{Mix} subgraphs make h ⁡ ( 2 ​ N ​ k ​ d + N ​ k + 3 ​ N ​ d ) h(2Nkd+Nk+3Nd) unary evaluations, and by a graph over ℬ ext ​ ( Φ ext ) \mathcal{B}_{\mathrm{ext}}(\Phi_{\mathrm{ext}}) with Δ ​ PW = 0 \Delta\mathrm{PW}=0 .
+In both graphs the assignment scores and the centroid scores are fixed affine maps with 2 ​ h ​ C ​ N ​ d 2hCNd multiply–accumulate steps, and the assignment and the selection are routing, so the router adds no unary evaluation. Proposition 4 holds for every support, so the error of the routed estimate splits into the same uniform-tail and tail-mass terms.
+A flocking step is one attention head
+In the Motsch–Tadmor flocking model [ 51 ] , agent i i at position x i x_{i} with velocity v i v_{i} follows
+v ˙ i = α ⁡ ( ∑ j π i ​ j ​ v j − v i ) , π i ​ j = g ⁡ ( ‖ x i − x j ‖ ) ∑ l g ⁡ ( ‖ x i − x l ‖ ) , \dot{v}_{i}=\alpha\Bigl(\sum_{j}\pi_{ij}v_{j}-v_{i}\Bigr),\qquad\pi_{ij}=\frac{g(\|x_{i}-x_{j}\|)}{\sum_{l}g(\|x_{i}-x_{l}\|)},
+where j j and l l run over all agents and g g is a decreasing influence function.
+Proposition 6 (Flocking step) .
+For g ⁡ ( r ) = e − θ ​ r 2 g(r)=e^{-\theta r^{2}} with θ > 0 \theta>0 , π i ​ j = softmax j ​ ( 2 ​ θ ​ x i ⊤ ​ x j − θ ​ ‖ x j ‖ 2 ) \pi_{ij}=\mathrm{softmax}_{j}(2\theta\,x_{i}^{\top}x_{j}-\theta\|x_{j}\|^{2}) , so ∑ j π i ​ j ​ v j \sum_{j}\pi_{ij}v_{j} is one head of distance-based attention [ 52 ] with queries 2 ​ θ ​ x i 2\theta x_{i} , keys x j x_{j} , a bias − θ ​ ‖ x j ‖ 2 -\theta\|x_{j}\|^{2} per key and values v j v_{j} . The top k k keys of agent i i are its k k nearest agents.
+Tail-mass attention (Definition 9 ) gives the k k nearest agents of agent i i the weights ( 1 − q ) ​ π ~ j (1-q)\tilde{\pi}_{j} and each of the other m m agents the weight q / m q/m . Proposition 4 gives the error of this top- k k flocking step exactly, and Theorem 4 applies when the far positions are exchangeable given the kept scores, velocities and x i x_{i} . By the proof of Proposition 6 , Lemma 2 holds for these scores with d \sqrt{d} replaced by 1 1 , so agents close to one centroid share its routed support when the gap condition holds.
+Experiments
+The compiled models match their references
+We compile three pretrained models with the extended graph and top- k k tail-mass attention, and evaluate them before training. With all keys kept, the compiled models match their references: 91.36 % 91.36\% against 91.36 % 91.36\% on Pet, 72.01 % 72.01\% against 72.02 % 72.02\% on ImageNet, 32.51 32.51 dB against 32.51 32.51 dB on Set5, and a token negative log-likelihood (NLL) of 4.5496 4.5496 against 4.5496 4.5496 on WikiText-2. The strict and extended graphs compute the same model exactly (Theorems 1 and 3 ). Only model changes, such as top- k k attention, and rounding change accuracy.
+The strict graph pays the predicted cost
+Table 2 measures the cost of the strict graphs of Theorem 1 and Proposition 3 on a GPU. The reference calls fused attention and LayerNorm kernels. The extended graph runs at 2.5 2.5 to 5.6 5.6 times the reference latency in Tables 2 and 4 . The strict graph takes 1.2 1.2 to 2.4 2.4 times the latency and, at top- 64 64 , 2.3 2.3 times the peak memory of the extended graph. The GPU has κ ≈ 2 \kappa\approx 2 for squares (Methods), far below the threshold of Corollary 1 , so this slowdown does not come from the bound of Theorem 2 . It comes from the construction: d d times more pointwise work than the bound, and N 2 ​ d N^{2}d operands per head that the implementation writes to memory. A per-module profile puts 73 73 to 77 % 77\% of the added time in Score \mathrm{Score} and Mix \mathrm{Mix} (Supplementary Table S2 ). A merged GPU kernel avoids these writes; no transform-wise product-free graph avoids the bound of Theorem 2 .
+With the same GELU approximation, the strict graph stays within 0.6 0.6 points of the Hadamard graph and of its polarization variant with top- k k support, and within 0.4 0.4 points routed. Two runs of one strict configuration differ by up to 0.5 0.5 points with top- k k support and 1.5 1.5 points routed, since the tail mass and centroids are calibrated on augmented training images. Squares cost no accuracy beyond run-to-run variation. With top- k k support, polarization makes 1.9 1.9 times the unary evaluations and, for k ≤ 64 k\leq 64 , runs 13 13 to 14 14 times slower with 5.5 5.5 times the memory (Supplementary Section S5). In integer arithmetic both identities are exact (Methods).
+Table 2: Measured cost of the compilations. DeiT-Tiny on Pet, bf16, before distillation. Accuracy (%), and latency and peak GPU memory relative to the reference, which takes 2.20 2.20 ms per batch of 32 and 62 62 MB (Methods). Hadamard: Proposition 1 . Strict: Theorem 1 ; polarization: polarization for every product. The extended graph uses GELU, the others x ⊙ σ ⁡ ( 1.702 ​ x ) x\odot\sigma(1.702x) . Top- k k : the k k largest exact scores. Routed: k k keys chosen by 32 query centroids before the scores (Methods). At k = 197 k=197 both supports hold every key.
+Extended
+Hadamard
+Strict
+Strict, polarization
+k k
+Acc.
+Latency
+Memory
+Acc.
+Latency
+Memory
+Acc.
+Latency
+Memory
+Acc.
+Latency
+Memory
+Top- k k support
+16
+86.24
+3.28 × 3.28\times
+1.62 × 1.62\times
+83.51
+4.18 × 4.18\times
+8.72 × 8.72\times
+84.08
+5.04 × 5.04\times
+8.65 × 8.65\times
+83.95
+68.3 × 68.3\times
+47.1 × 47.1\times
+32
+89.23
+3.89 × 3.89\times
+2.32 × 2.32\times
+87.46
+4.73 × 4.73\times
+8.72 × 8.72\times
+87.98
+5.37 × 5.37\times
+8.65 × 8.65\times
+87.71
+76.1 × 76.1\times
+47.1 × 47.1\times
+64
+90.35
+4.88 × 4.88\times
+3.70 × 3.70\times
+89.59
+5.75 × 5.75\times
+8.72 × 8.72\times
+89.78
+7.14 × 7.14\times
+8.65 × 8.65\times
+89.70
+93.1 × 93.1\times
+47.1 × 47.1\times
+197
+91.36
+5.41 × 5.41\times
+2.45 × 2.45\times
+90.35
+10.5 × 10.5\times
+17.3 × 17.3\times
+90.73
+13.0 × 13.0\times
+17.2 × 17.2\times
+90.57
+132 × 132\times
+63.1 × 63.1\times
+Routed support
+16
+80.13
+3.35 × 3.35\times
+1.54 × 1.54\times
+78.60
+3.48 × 3.48\times
+2.21 × 2.21\times
+78.22
+4.73 × 4.73\times
+2.19 × 2.19\times
+78.44
+14.1 × 14.1\times
+5.90 × 5.90\times
+32
+87.14
+4.03 × 4.03\times
+2.28 × 2.28\times
+85.66
+4.10 × 4.10\times
+3.56 × 3.56\times
+85.96
+4.73 × 4.73\times
+3.55 × 3.55\times
+85.55
+22.3 × 22.3\times
+11.0 × 11.0\times
+64
+89.81
+4.37 × 4.37\times
+3.73 × 3.73\times
+88.63
+5.56 × 5.56\times
+6.27 × 6.27\times
+88.88
+6.67 × 6.67\times
+6.23 × 6.23\times
+88.99
+40.1 × 40.1\times
+21.2 × 21.2\times
+The elementwise product removes most of the strict cost
+With top- k k support and k ≤ 64 k\leq 64 , the Hadamard graph of Proposition 1 runs at 1.2 1.2 to 1.3 1.3 times the latency of the extended graph, against 1.4 1.4 to 1.5 1.5 for the strict graph, at similar memory (Table 2 ). Its measured unary counts equal Table 1 : 2.2 × 10 6 2.2\times 10^{6} per image at k = 16 k=16 , against 1.1 × 10 8 1.1\times 10^{8} for the strict graph. Its remaining cost is the N 2 ​ d N^{2}d products of Q ​ K ⊤ QK^{\top} per head, which this implementation writes to memory (Supplementary Table S2 ). With top- k k support, the approximation of GELU costs the Hadamard graph 0.7 0.7 to 2.6 2.6 and the strict graph 0.3 0.3 to 2.3 2.3 points; with GELU, the Hadamard graph stays within 0.1 0.1 points of the extended graph.
+NPUs provide the Hadamard basis
+Supplementary Table S1 shows where each graph runs on ten edge accelerators by documented operator support, with the approximation of GELU where GELU is missing. The R-Car V4H runs both graphs with its DSP. Of the other nine, the strict graph runs entirely on seven, including the Edge TPU and, in INT8, the Jetson DLA; the open-source NVDLA IP and Ethos-N78 lack the inverse square root. The extended graph runs entirely on five; the toolchains of the other four have no matrix product of two activations and place it on the host. All ten multiply two activations elementwise, so none is product-free. The Hadamard graph uses the operations of the strict graph, so it runs wherever the strict graph runs.
+Standard quantization applies to the compiled graph
+We apply the post-training quantization (PTQ) used for convolutional networks [ 53 , 54 ] : symmetric max-abs scales from calibration data, with no training or reconstruction and no Transformer-specific quantizer. The only fitted quantities are least-squares output maps (Methods).
+The strict graph in Table 3 replaces GELU by x ​ σ ​ ( 1.702 ​ x ) x\,\sigma(1.702x) , so it uses the reduced strict basis ℬ strict ( { ( ⋅ ) 2 , σ , ( ⋅ ) − 1 / 2 } ) \mathcal{B}_{\mathrm{strict}}(\{(\cdot)^{2},\sigma,(\cdot)^{-1/2}\}) . The extended graph keeps GELU and the matrix products of ℬ ext ​ ( Φ ext ) \mathcal{B}_{\mathrm{ext}}(\Phi_{\mathrm{ext}}) . Quantizers cut each graph into units with integer inputs and outputs (Methods). Weights, the logits and the inputs of linear, convolution and product nodes take 8 bits; the fixed affine nodes of the strict graph take 12-bit inputs, since these include squares and sums of squares.
+PTQ changes the accuracy of the strict graph by − 1.47 -1.47 to − 0.05 -0.05 points with per-channel weight scales, and by − 1.06 -1.06 to − 0.14 -0.14 with one scale per weight tensor. On the extended graph it changes accuracy by − 2.5 -2.5 to − 3.9 -3.9 points.
+Table 3: Standard post-training quantization of the compiled DeiT-Tiny on Pet. Top-1 accuracy (%) of the bf16 float model and after PTQ of the whole model with per-channel or per-tensor weight scales. On the calibration data the fp32 simulation holds every integer sum exactly (Methods). Nodes: quantized nodes, the output identity included. PV: k / N k/N . Strict: the reduced strict graph, before distillation. Extended: the Jeffreys-distilled extended graph.
+Per-channel
+Per-tensor
+k k
+PV
+Graph
+Nodes
+bf16
+PTQ
+Δ \Delta
+PTQ
+Δ \Delta
+16
+0.08
+strict
+380
+84.08
+82.61
+− 1.47 -1.47
+83.02
+− 1.0…11835 tokens truncated… a warm-up. Peak memory is the maximum allocated GPU memory during an eager evaluation pass over the held-out Pet test split, with only the measured model on the GPU; Supplementary Section S10 gives the tensor sizes behind it. Unary evaluations are counted with forward hooks on every unary node over one test minibatch. With all keys, the DeiT-Tiny count per image equals twelve block totals of Table 1 plus the final LayerNorm: 6.02 × 10 6 6.02\times 10^{6} for the Hadamard graph and 1.96 × 10 8 1.96\times 10^{8} for the strict graph with GELU. The implementation of the extended graph forms the squares u ⊙ u u\odot u of its 25 LayerNorms with a unary square node, so its count of 4.17 × 10 6 4.17\times 10^{6} adds 25 ​ N ​ h ​ d = 9.46 × 10 5 25Nhd=9.46\times 10^{5} to that sum. With x ⊙ σ ⁡ ( 1.702 ​ x ) x\odot\sigma(1.702x) the strict graph forms this product from two squares, 8 ​ N ​ h ​ d 8Nhd more per block.
+The GPU ratio. The RTX 4070 Ti SUPER has 66 Ada streaming multiprocessors at a boost clock of 2.61 2.61 GHz. Each multiprocessor retires 128 FP32 operations per clock on its CUDA cores and 256 dense bf16 multiply–accumulates per clock with FP32 accumulation on its tensor cores [ 63 ] . This gives R pw ≈ 22 R_{\mathrm{pw}}\approx 22 T/s, R mac ≈ 44 R_{\mathrm{mac}}\approx 44 T/s and κ ≈ 2 \kappa\approx 2 .
+Numerical conventions
+The compiled LayerNorm uses the ε \varepsilon of each reference: 10 − 6 10^{-6} for DeiT-Tiny and 10 − 5 10^{-5} for MambaIRv2-Light and Pythia-70M. Softmax normalization divides by the max-shifted partition sum Z Z . The DeiT-Tiny and MambaIRv2-Light checkpoints store their weights in bf16; Pythia-70M runs in fp32 (Supplementary Section S8). The bf16 runs evaluate the reference and every compiled graph under PyTorch CUDA autocast, which keeps means and sums in fp32; a node that adds several inputs stores its result in the precision of its first input. In float64, against the reference with its weights rounded to bf16 the same way, the extended and strict DeiT-Tiny graphs and the Hadamard graph with exact GELU, all with all keys, reproduce the reference logits on 16 Pet test images to 6 × 10 − 8 6\times 10^{-8} . The differences between the compiled and reference models in Table 2 therefore come from bf16 weights and arithmetic. The implementation of the strict graph evaluates ( x + ε ) − 1 / 2 (x+\varepsilon)^{-1/2} as a single kernel; it equals the inverse square root after a fixed affine map.
+Data availability
+All datasets are public: Oxford-IIIT Pet [ 28 ] , ImageNet-1k [ 29 ] , DIV2K [ 58 ] , Set5 [ 57 ] and WikiText-2 [ 59 ] . Pretrained weights come from timm, the MambaIRv2 release and the Hugging Face hub.
+Code availability
+The compiler, the experiment configurations and the scripts that produce every table and figure are released under the MIT license at https://github.com/iceslice0/transformer-to-dnn .
+References
+[1]
+Vaswani, A. et al.
+Attention is all you need.
+In Advances in Neural Information
+Processing Systems , vol. 30, 5998–6008
+(2017).
+URL https://proceedings.neurips.cc/paper/2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html .
+[2]
+Google Coral.
+TensorFlow models on the edge TPU.
+https://www.coral.ai/docs/edgetpu/models-intro/
+(2026).
+Accessed 2026-05-05.
+[3]
+NVIDIA.
+TensorRT documentation: DLA supported layers and
+restrictions.
+https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/dla-layer-restrictions.html
+(2026).
+Accessed 2026-10-03.
+[4]
+Xu, D. et al.
+Fast on-device LLM inference with NPUs.
+In Proceedings of the 30th ACM
+International Conference on Architectural Support for Programming Languages
+and Operating Systems (ASPLOS) (2025).
+[5]
+Park, J., Yoon, H., Ahn,
+D., Choi, J. & Kim, J.-J.
+OPTIMUS: OPTImized matrix MUltiplication
+structure for transformer neural network accelerator.
+In Proceedings of Machine Learning and
+Systems (MLSys) , vol. 2 (2020).
+URL https://proceedings.mlsys.org/paper_files/paper/2020/hash/91ba7292e5388b90b58d0b839a7f19ec-Abstract.html .
+[6]
+Seo, M. et al.
+IANUS: Integrated accelerator based on NPU-PIM
+unified memory system.
+In Proceedings of the 29th ACM
+International Conference on Architectural Support for Programming Languages
+and Operating Systems (ASPLOS) (2024).
+[7]
+Kim, J., Kim, S., Choi,
+K. & Park, I.-C.
+Hardware-efficient SoftMax architecture with
+bit-wise exponentiation and reciprocal calculation.
+IEEE Transactions on Circuits and Systems I:
+Regular Papers 71 , 4574–4585
+(2024).
+[8]
+Liu, Z. et al.
+Post-training quantization for vision transformer.
+In Advances in Neural Information
+Processing Systems (NeurIPS) , vol. 34
+(2021).
+URL https://proceedings.neurips.cc/paper/2021/hash/ec8956637a99787bd197eacd77acce5e-Abstract.html .
+[9]
+Yuan, Z., Xue, C., Chen,
+Y., Wu, Q. & Sun, G.
+PTQ4ViT: Post-training quantization for vision
+transformers with twin uniform quantization.
+In Proceedings of the European Conference
+on Computer Vision (ECCV) (2022).
+[10]
+Lin, Y., Zhang, T., Sun,
+P., Li, Z. & Zhou, S.
+FQ-ViT: Post-training quantization for fully
+quantized vision transformer.
+In Proceedings of the Thirty-First
+International Joint Conference on Artificial Intelligence (IJCAI)
+(2022).
+[11]
+Li, Z., Xiao, J., Yang,
+L. & Gu, Q.
+RepQ-ViT: Scale reparameterization for
+post-training quantization of vision transformers.
+In Proceedings of the IEEE/CVF
+International Conference on Computer Vision (ICCV) (2023).
+[12]
+Moon, J., Kim, D., Cheon,
+J. & Ham, B.
+Instance-aware group quantization for vision
+transformers.
+In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR) (2024).
+[13]
+Kim, S., Gholami, A., Yao,
+Z., Mahoney, M. W. & Keutzer, K.
+I-BERT: Integer-only BERT quantization.
+In Proceedings of the 38th International
+Conference on Machine Learning , vol. 139 of
+Proceedings of Machine Learning Research ,
+5506–5518 (PMLR,
+2021).
+URL https://proceedings.mlr.press/v139/kim21d.html .
+[14]
+Xiao, G. et al.
+SmoothQuant: Accurate and efficient post-training
+quantization for large language models.
+In Proceedings of the 40th International
+Conference on Machine Learning (ICML) , vol. 202 of
+Proceedings of Machine Learning Research ,
+38087–38099 (PMLR,
+2023).
+URL https://proceedings.mlr.press/v202/xiao23c.html .
+[15]
+ONNX.
+LayerNormalization (opset 17), function
+definition.
+https://onnx.ai/onnx/operators/onnx__LayerNormalization.html
+(2026).
+Accessed 2026-10-03.
+[16]
+ONNX.
+Softmax (opset 13), function definition.
+https://onnx.ai/onnx/operators/onnx__Softmax.html
+(2026).
+Accessed 2026-10-03.
+[17]
+AMD.
+Vitis AI ONNX operators for Ryzen AI NPUs.
+https://vitisai.docs.amd.com/projects/gen2/en/latest/docs/additional_information/operators.html
+(2026).
+Accessed 2026-10-03.
+[18]
+Arm.
+Ethos-U Vela compiler 5.2.0: Supported
+operators.
+https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela/-/blob/main/SUPPORTED_OPS.md
+(2026).
+Accessed 2026-10-03.
+[19]
+Hu, J., Shen, L. & Sun,
+G.
+Squeeze-and-excitation networks.
+In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition (CVPR) , 7132–7141
+(2018).
+[20]
+Howard, A. et al.
+Searching for MobileNetV3.
+In Proceedings of the IEEE/CVF
+International Conference on Computer Vision (ICCV) ,
+1314–1324 (2019).
+[21]
+Gupta, A., Dar, G.,
+Goodman, S., Ciprut, D. &
+Berant, J.
+Memory-efficient transformers via top- k k attention.
+In Proceedings of the Second Workshop on
+Simple and Efficient Natural Language Processing , 39–52
+(Association for Computational Linguistics,
+2021).
+URL https://aclanthology.org/2021.sustainlp-1.5/ .
+[22]
+Wang, H., Zhang, Z. &
+Han, S.
+SpAtten: Efficient sparse attention architecture
+with cascade token and head pruning.
+In 2021 IEEE International Symposium on
+High-Performance Computer Architecture (HPCA) , 97–110
+(2021).
+[23]
+Gong, P. et al.
+HATA: Trainable and hardware-efficient hash-aware
+top- k k attention for scalable large model inference.
+In Findings of the Association for
+Computational Linguistics: ACL 2025 , 24856–24871
+(2025).
+URL https://aclanthology.org/2025.findings-acl.1275/ .
+[24]
+Geshkovski, B., Letrouit, C.,
+Polyanskiy, Y. & Rigollet, P.
+A mathematical perspective on Transformers.
+Bulletin of the American Mathematical
+Society 62 , 427–479
+(2025).
+URL https://arxiv.org/abs/2312.10794 .
+[25]
+Vyas, A., Katharopoulos, A. &
+Fleuret, F.
+Fast transformers with clustered attention.
+In Advances in Neural Information
+Processing Systems , vol. 33 (2020).
+URL https://proceedings.neurips.cc/paper_files/paper/2020/file/f6a8dd1c954c8506aadc764cc32b895e-Paper.pdf .
+[26]
+Ballerini, M. et al.
+Interaction ruling animal collective behavior depends
+on topological rather than metric distance: Evidence from a field study.
+Proceedings of the National Academy of
+Sciences 105 , 1232–1237
+(2008).
+[27]
+Touvron, H. et al.
+Training data-efficient image transformers &
+distillation through attention.
+In Proceedings of the 38th International
+Conference on Machine Learning , vol. 139 of
+Proceedings of Machine Learning Research ,
+10347–10357 (PMLR,
+2021).
+URL https://proceedings.mlr.press/v139/touvron21a.html .
+[28]
+Parkhi, O. M., Vedaldi, A.,
+Zisserman, A. & Jawahar, C. V.
+Cats and dogs.
+In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition (CVPR) , 3498–3505
+(2012).
+[29]
+Deng, J. et al.
+ImageNet: A large-scale hierarchical image
+database.
+In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition (CVPR) , 248–255
+(2009).
+[30]
+Guo, H. et al.
+MambaIRv2: Attentive state space restoration.
+In Proceedings of the IEEE/CVF Conference
+on Computer Vision and Pattern Recognition (CVPR) ,
+28124–28133 (2025).
+[31]
+Biderman, S. et al.
+Pythia: A suite for analyzing large language models
+across training and scaling.
+In Proceedings of the 40th International
+Conference on Machine Learning (ICML) , vol. 202 of
+Proceedings of Machine Learning Research ,
+2397–2430 (PMLR,
+2023).
+URL https://proceedings.mlr.press/v202/biderman23a.html .
+[32]
+Cybenko, G.
+Approximation by superpositions of a sigmoidal
+function.
+Mathematics of Control, Signals and Systems
+2 , 303–314
+(1989).
+[33]
+Pinkus, A.
+Approximation theory of the MLP model in neural
+networks.
+Acta Numerica 8 ,
+143–195 (1999).
+[34]
+Laundy, S. L.
+Table of Quarter-Squares of All Integer
+Numbers, up to 100,000, by which the Product of Two Factors May Be Found by
+the Aid of Addition and Subtraction Alone (Charles and
+Edwin Layton, London, 1856).
+[35]
+Winograd, S.
+A new algorithm for inner product.
+IEEE Transactions on Computers
+C-17 , 693–694
+(1968).
+[36]
+Yarotsky, D.
+Error bounds for approximations with deep ReLU
+networks.
+Neural Networks
+94 , 103–114
+(2017).
+[37]
+Rotem, N. et al.
+Glow: Graph lowering compiler techniques for neural
+networks.
+arXiv:1805.00907 (2018).
+[38]
+Chen, T. et al.
+THE-X: Privacy-preserving transformer inference
+with homomorphic encryption.
+In Findings of the Association for
+Computational Linguistics: ACL 2022 (2022).
+[39]
+Hao, M. et al.
+Iron: Private inference on transformers.
+In Advances in Neural Information
+Processing Systems , vol. 35 (2022).
+[40]
+Pang, Q., Zhu, J.,
+Möllering, H., Zheng, W. &
+Schneider, T.
+BOLT: Privacy-preserving, accurate and efficient
+inference for transformers.
+In IEEE Symposium on Security and Privacy
+(S&P) (2024).
+[41]
+Kosson, A. & Jaggi, M.
+Multiplication-free transformer training via
+piecewise affine operations.
+In Advances in Neural Information
+Processing Systems , vol. 36 (2023).
+[42]
+Zhang, B. & Sennrich, R.
+Root mean square layer normalization.
+In Advances in Neural Information
+Processing Systems (NeurIPS) , vol. 32,
+12360–12371 (2019).
+URL https://proceedings.neurips.cc/paper/2019/hash/1e8a19426224ca89e83cef47f1e7f53b-Abstract.html .
+[43]
+Bachlechner, T., Majumder, B. P.,
+Mao, H., Cottrell, G. &
+McAuley, J.
+ReZero is all you need: Fast convergence at large
+depth.
+In Proceedings of the Thirty-Seventh
+Conference on Uncertainty in Artificial Intelligence , vol.
+161 of Proceedings of Machine
+Learning Research , 1352–1361 (PMLR,
+2021).
+URL https://proceedings.mlr.press/v161/bachlechner21a.html .
+[44]
+Zhu, J., Chen, X., He,
+K., LeCun, Y. & Liu, Z.
+Transformers without normalization.
+arXiv preprint arXiv:2503.10622
+(2025).
+[45]
+Chen, B. et al.
+Scatterbrain: Unifying sparse and low-rank attention
+approximation.
+In Advances in Neural Information
+Processing Systems , vol. 34 (2021).
+URL https://proceedings.neurips.cc/paper/2021/hash/9185f3ec501c674c7c788464a36e7fb3-Abstract.html .
+[46]
+Ren, H. et al.
+Combiner: Full attention transformer with sparse
+computation cost.
+In Advances in Neural Information
+Processing Systems , vol. 34 (2021).
+URL https://proceedings.neurips.cc/paper/2021/hash/bd4a6d0563e0604510989eb8f9ff71f5-Abstract.html .
+[47]
+Chen, Z. et al.
+MagicPIG: LSH sampling for efficient LLM
+generation.
+In International Conference on Learning
+Representations (ICLR) (2025).
+URL https://proceedings.iclr.cc/paper_files/paper/2025/hash/6d50d824ae819d5a961c1d8edc15e833-Abstract-Conference.html .
+[48]
+Yu, J. et al.
+NN-LUT: Neural approximation of non-linear
+operations for efficient transformer inference.
+In Proceedings of the 59th ACM/IEEE Design
+Automation Conference (DAC) , 577–582
+(2022).
+[49]
+Upadhyay, M., Juneja, R.,
+Wong, W.-F. & Peh, L.-S.
+NOVA: NoC-based vector unit for mapping attention
+layers on a CNN accelerator.
+In 2024 Design, Automation & Test in
+Europe Conference & Exhibition (DATE) , 1–6
+(2024).
+[50]
+Hendrycks, D. & Gimpel, K.
+Gaussian error linear units (GELUs).
+arXiv preprint arXiv:1606.08415
+(2016).
+[51]
+Motsch, S. & Tadmor, E.
+A new model for self-organized dynamics and its
+flocking behavior.
+Journal of Statistical Physics
+144 , 923–947
+(2011).
+[52]
+Kim, H., Papamakarios, G. &
+Mnih, A.
+The Lipschitz constant of self-attention.
+In Proceedings of the 38th International
+Conference on Machine Learning , vol. 139 of
+Proceedings of Machine Learning Research ,
+5562–5571 (PMLR,
+2021).
+URL https://proceedings.mlr.press/v139/kim21i.html .
+[53]
+Jacob, B. et al.
+Quantization and training of neural networks for
+efficient integer-arithmetic-only inference.
+In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition (CVPR) , 2704–2713
+(2018).
+[54]
+Nagel, M. et al.
+A white paper on neural network quantization.
+arXiv:2106.08295 (2021).
+[55]
+Hinton, G., Vinyals, O. &
+Dean, J.
+Distilling the knowledge in a neural network.
+arXiv:1503.02531 (2015).
+[56]
+Jeffreys, H.
+An invariant form for the prior probability in
+estimation problems.
+Proceedings of the Royal Society of London.
+Series A 186 , 453–461
+(1946).
+[57]
+Bevilacqua, M., Roumy, A.,
+Guillemot, C. & Alberi Morel, M.-L.
+Low-complexity single-image super-resolution based on
+nonnegative neighbor embedding.
+In Proceedings of the British Machine
+Vision Conference (BMVC) , 135.1–135.10
+(BMVA Press, 2012).
+URL https://bmva-archive.org.uk/bmvc/2012/BMVC/paper135/index.html .
+[58]
+Agustsson, E. & Timofte, R.
+NTIRE 2017 challenge on single image
+super-resolution: Dataset and study.
+In Proceedings of the IEEE Conference on
+Computer Vision and Pattern Recognition Workshops (CVPRW)
+(2017).
+[59]
+Merity, S., Xiong, C.,
+Bradbury, J. & Socher, R.
+Pointer sentinel mixture models.
+In International Conference on Learning
+Representations (ICLR) (2017).
+URL https://openreview.net/forum?id=Byj72udxe .
+[60]
+Shazeer, N.
+GLU variants improve transformer.
+arXiv:2002.05202 (2020).
+[61]
+Erofeeva, V., Granichin, O.,
+Avros, R. & Volkovich, Z.
+Multilevel modeling and control of dynamic systems.
+Scientific Reports
+14 , 27903 (2024).
+[62]
+Wightman, R.
+PyTorch image models.
+https://github.com/huggingface/pytorch-image-models
+(2019).
+[63]
+NVIDIA.
+NVIDIA Ada GPU architecture.
+Whitepaper, version 2.02,
+https://images.nvidia.com/aem-dam/Solutions/Data-Center/l4/nvidia-ada-gpu-architecture-whitepaper-V2.02.pdf
+(2023).
+[64]
+Strassen, V.
+Gaussian elimination is not optimal.
+Numerische Mathematik
+13 , 354–356
+(1969).
+[65]
+Alman, J. et al.
+More asymmetry yields faster matrix multiplication.
+In Proceedings of the 2025 Annual ACM-SIAM
+Symposium on Discrete Algorithms (SODA) , 2005–2039
+(2025).
+[66]
+Bürgisser, P., Clausen, M. &
+Shokrollahi, M. A.
+Algebraic Complexity Theory
+(Springer, 1997).
+[67]
+Mirzadeh, I. et al.
+ReLU strikes back: Exploiting activation sparsity
+in large language models.
+In International Conference on Learning
+Representations (2024).
+URL https://arxiv.org/abs/2310.04564 .
+[68]
+Arm.
+Ethos-U Vela compiler source code (regor
+backend), commit dd3f874.
+https://gitlab.arm.com/artificial-intelligence/ethos-u/ethos-u-vela
+(2026).
+Files
+ethosu/regor/tflite/tflite_supported_operators_u55.cpp ,
+_u85.cpp ,
+architecture/ethosu55/ethos_u55_register_cs_generator.cpp ,
+architecture/ethosu85/ethos_u85.cpp . Accessed 2026-10-03.
+[69]
+VeriSilicon.
+TensorFlow Lite VX delegate for VeriSilicon
+NPUs, commit b76047d.
+https://github.com/VeriSilicon/tflite-vx-delegate
+(2026).
+Operator map op_map.cc and
+op_status.md . Accessed 2026-10-03.
+[70]
+Texas Instruments.
+edgeai-tidl-tools: Supported operators, commit
+7cdef46.
+https://github.com/TexasInstruments/edgeai-tidl-tools/blob/master/docs/operators.md
+(2026).
+Accessed 2026-10-09.
+[71]
+Rockchip.
+RKNN compiler support operator list, v2.3.2.
+https://github.com/airockchip/rknn-toolkit2/tree/master/doc
+(2025).
+Accessed 2026-10-09.
+[72]
+Renesas.
+R-car hybrid compiler: Supported operators, commit
+e73e7d9.
+https://github.com/renesas-rcar/renesas-rcar-HybridCompiler
+(2025).
+Accessed 2026-10-09.
+[73]
+NVIDIA.
+NVDLA software stack, commit 79538ba.
+https://github.com/nvdla/sw
+(2019).
+Compiler layer types
+( umd/core/include/nvdla/IType.h ) and CPU softmax
+( umd/core/src/compiler/engine-ast/SoftMaxOp.cpp ). Accessed
+2026-10-03.
+[74]
+Arm.
+Arm Ethos-N driver stack, support library, commit
+6834c82.
+https://github.com/ARM-software/ethos-n-driver-stack
+(2025).
+driver/support_library/src/SupportQueries.cpp and
+SUPPORTED.md . Accessed 2026-10-03.
+[75]
+NVIDIA.
+NVDLA hardware architectural specification: LUT
+programming.
+https://nvdla.org/hw/v1/ias/lut-programming.html
+(2018).
+Accessed 2026-10-09.
+[76]
+Hong, J.-W. & Kung, H. T.
+I/O complexity: The red-blue pebble game.
+In Proceedings of the 13th Annual ACM
+Symposium on Theory of Computing (STOC) , 326–333
+(1981).
+[77]
+Brent, R. P.
+Error analysis of algorithms for matrix
+multiplication and triangular decomposition using Winograd’s identity.
+Numerische Mathematik
+16 , 145–156
+(1970).
+Supplementary Information
+S1. Tightness and scope of the bound
+Squares only. With Φ = { ( ⋅ ) 2 } \Phi=\{(\cdot)^{2}\} and one nonlinear layer, PW \mathrm{PW} is within a factor two of the bilinear rank of the matrix multiplication tensor, since polarization turns each product into two squares and each square is one product. Fast matrix multiplication [ 64 , 65 ] then gives strict graphs with PW = O ⁡ ( n 2.373 ) \mathrm{PW}=O(n^{2.373}) for n × n n\times n products, so no Ω ⁡ ( N 2 ​ d ) \Omega(N^{2}d) bound holds for this Φ \Phi , and the factor d + 2 ​ d / N d+2d/N between the strict graph of Theorem 1 and Theorem 2 is not forced. Conversely, on the set of Lemma 8 a graph over { ( ⋅ ) 2 } \{(\cdot)^{2}\} with PW \mathrm{PW} squarings is an arithmetic circuit with PW \mathrm{PW} nonscalar multiplications, and nonscalar multiplications never exceed the total arithmetic cost [ 66 ] . For d = N d=N , a lower bound of order N 2 + δ N^{2+\delta} for this Φ \Phi would therefore prove that the exponent of matrix multiplication is at least 2 + δ 2+\delta , an open problem. For fixed d d , N 2 ​ d = O ⁡ ( N 2 ) N^{2}d=O(N^{2}) and the theorem is tight in order. MAC arrays and tensor units run the classical product, and the strict graph follows it.
+Unrestricted Φ \Phi . On a bounded box, Score \mathrm{Score} is computed by a product-free graph with N 2 + 2 ​ N ​ d N^{2}+2Nd unary evaluations, so no argument that ignores the regularity of Φ \Phi can improve Theorem 2 beyond the additive 2 ​ N ​ d 2Nd . Map the n = 2 ​ N ​ d n=2Nd inputs affinely into [ 0 , 1 ) [0,1) . For p = 1 , … , n p=1,\dots,n let ψ p \psi_{p} send x ∈ [ 0 , 1 ) x\in[0,1) , written in binary with infinitely many zero digits, to the number whose digit at position r ​ n + p rn+p is the r r -th digit of x x and whose other digits are zero. The affine sum z = ∑ p ψ p ​ ( x p ) z=\sum_{p}\psi_{p}(x_{p}) interleaves the digits of all inputs, has infinitely many zero digits, and so determines every x p x_{p} . One further unary map per output, ϕ i ​ j ​ ( z ) = S i ​ j \phi_{ij}(z)=S_{ij} , decodes the score. The total is n + N 2 n+N^{2} evaluations. The construction reaches the bound by first encoding its inputs; one evaluation of a linear form alone cannot compute a product on an open set, because ϕ ⁡ ( a ⋅ x + b ) \phi(a\cdot x+b) is constant on hyperplanes.
+Transform-wise scope. Applied to a whole block as one map, the nonlinear rank is at most the number of outputs, N ​ h ​ d = 3.78 × 10 4 Nhd=3.78\times 10^{4} for DeiT-Tiny, below the pointwise work of the source block. A compilation that never forms Q ​ K ⊤ QK^{\top} is therefore outside Theorem 2 . The theorem concerns the attention contractions as transforms, which is the form in which every Transformer implementation and every NPU operator set presents them.
+S2. NPU operator support
+Table S1 answers, for ten edge accelerators and from their documented operator support, whether the dense strict, Hadamard and extended graphs run entirely on the NPU. “Whole” means the documentation lists every operation of the graph as supported on the accelerator; otherwise the cell lists the operations left to the host CPU or GPU, or, on R-Car, to the on-chip DSP. MatMul is a matrix product of two activations, as in Q ​ K ⊤ QK^{\top} and P ​ V PV , and Rsqrt is the inverse square root. Where the compiler or runtime is open source we read the placement from its code at the commit given in the reference; for the three closed toolchains, Rockchip, Jetson DLA and Edge TPU, we use the vendor documentation. A square runs as the elementwise product x ⊙ x x\odot x , which every accelerator in the table supports. A softmax counts as on the NPU when the NPU runs it as a native row-wise operator or runs both the exponential and the reciprocal. Where an accelerator lacks GELU, the MLP uses x ​ σ ​ ( 1.702 ​ x ) x\,\sigma(1.702x) , which every accelerator in the table runs with its sigmoid and its elementwise product; edge deployments also replace GELU by ReLU and fine-tune [ 67 ] . Compiling the graphs with these toolchains and running them on the devices is future work.
+Table S1: Documented NPU support of the dense compiled graphs. Whole-graph compilation on the devices is future work.
+Accelerator
+Unary maps on the NPU
+Strict graph
+Hadamard graph
+Extended graph
+Arm Ethos-U55/U65 [ 68 ]
+Exp, Log, Rsqrt, GELU, Sigmoid, Tanh
+Whole
+Whole
+Whole
+Arm Ethos-U85 [ 68 ]
+Exp, Log, Rsqrt, GELU, Sigmoid, Tanh
+Whole
+Whole
+Whole
+VeriSilicon VIP [ 69 ]
+Exp, Log, Rsqrt, GELU, Sigmoid, Tanh
+Whole
+Whole
+Whole
+TI TDA4VM, C7x with MMA [ 70 ]
+Exp, Log, Sqrt, GELU, Sigmoid, Tanh; power by a constant
+Whole
+Whole
+Whole
+Rockchip RK3588 [ 71 ]
+GELU, Sigmoid, Tanh; power with exponent ± 0.5 \pm 0.5 , 2 or 3
+Whole
+Whole
+Whole
+Renesas R-Car V4H/V4M, CNN-IP and DSP [ 72 ]
+CNN-IP: ReLU, Sigmoid, Tanh
+DSP: Rsqrt
+DSP: Rsqrt
+DSP: MatMul, softmax, LayerNorm, GELU
+NVIDIA Jetson Xavier/Orin DLA [ 3 ]
+ReLU, Sigmoid, Tanh, Abs, Sin, Cos, Atan; INT8 power and division by a constant
+Whole
+Whole
+Host: MatMul
+Google Edge TPU [ 2 ]
+ReLU, Sigmoid, Tanh, Rsqrt
+Whole
+Whole
+Host: MatMul, row-wise softmax
+Open-source NVDLA IP [ 73 ]
+ReLU, Sigmoid, Tanh
+Host: Rsqrt
+Host: Rsqrt
+Host: MatMul, softmax, LayerNorm Rsqrt
+Arm Ethos-N78 [ 74 ]
+ReLU, Sigmoid, Tanh
+Host: Rsqrt
+Host: Rsqrt
+Host: MatMul, softmax, LayerNorm Rsqrt
+The strict graph needs only squares, the sigmoid and the inverse square root, so it runs whole on seven accelerators: Ethos-U55/U65, Ethos-U85, VeriSilicon VIP, the TI TDA4VM, the Rockchip RK3588, the Edge TPU and, in INT8, the Jetson DLA. On the Jetson DLA the inverse square root runs as an INT8 power and the reciprocal as an INT8 division, each with a constant operand, and softmax runs on the NPU on Orin. The R-Car CNN-IP lacks the inverse square root and runs it on the on-chip DSP. The open-source NVDLA IP and Ethos-N78 lack the inverse square root too and leave it, with the LayerNorm and the reciprocal that need it, to the host. The extended graph runs whole on Ethos-U, VeriSilicon, the TDA4VM and the RK3588, and on R-Car with the DSP. The toolchains of the other four have no matrix product of two activations and place the MatMul on the host, on three of them also softmax, and on two also the inverse square root of LayerNorm. The Edge TPU compiler adds a limit of its own: it splits a model only once, so the first unsupported operation and everything after it run on the CPU [ 2 ] . The strict graph runs whole there, and the extended graph moves to the CPU from the first attention score on. On NVIDIA these limits come from the toolchains, not the hardware: the open-source NVDLA IP, which the Jetson DLA is based on, has a programmable lookup table with linear interpolation, two tables of 65 and 257 entries, in its activation and normalization units [ 75 ] . It can hold every function of Φ strict \Phi_{\mathrm{strict}} and Φ ext \Phi_{\mathrm{ext}} , but both NVIDIA toolchains fill it only for the functions in the table.
+Every accelerator multiplies two activations elementwise, so none is product-free in the sense of Definition 1 : a CNN-class NPU provides the Hadamard basis ℬ ⊙ \mathcal{B}_{\odot} . There, Q ​ K ⊤ QK^{\top} and P ​ V PV need no pointwise work, since a broadcast Hadamard product followed by a fixed sum computes them (Proposition 2 ). With the sigmoid and the inverse square root, the Hadamard basis also runs the rest of the block (Proposition 1 ). The Hadamard graph takes the operations of the strict graph, with the elementwise product between two activations where the strict graph multiplies an activation by itself, so it runs on the accelerators where the strict graph runs. Where the toolchain multiplies only tensors of equal shape, as on the Ethos-N78, broadcast routing expands both operands first, as the strict graph does for its polarization operands. The Ethos-U55 compiler takes this route: it turns a matrix multiplication between activations into an elementwise product into an int32 buffer followed by a sum, one output column at a time. The Ethos-U85 compiler runs the same operation on its MAC array. TopK \mathrm{TopK} runs on the TDA4VM accelerator and on the R-Car DSP. On the other accelerators top- k k attention and the routed support keep the selection on the host; Ethos-U and VeriSilicon can instead replace TopK \mathrm{TopK} by k k arg-max passes with masking.
+S3. Why the bound counts pointwise work
+Write IO L ​ ( G ) \mathrm{IO}_{L}(G) for the minimum number of words moved between a fast memory of L L words and slow memory, over all schedules of a graph G G . With bandwidth β \beta , every schedule takes time
+T ⁡ ( G ) ≥ max ⁡ ( IO L ​ ( G ) / β , MAC ⁡ ( G ) / R mac , PW ⁡ ( G ) / R pw ) . T(G)\ \geq\ \max\Bigl(\mathrm{IO}_{L}(G)/\beta,\ \mathrm{MAC}(G)/R_{\mathrm{mac}},\ \mathrm{PW}(G)/R_{\mathrm{pw}}\Bigr).
+The unfused strict graph writes the N 2 ​ d N^{2}d values q i ​ f + k j ​ f q_{if}+k_{jf} to memory (Supplementary Section S10), so this one schedule has arithmetic intensity Θ ⁡ ( 1 ) \Theta(1) and moves far more than IO L \mathrm{IO}_{L} . These writes are a property of the schedule, not of the basis. The strict expansion of Score \mathrm{Score} in Lemma 5 has the access pattern of the matrix product it replaces, so the tiling of the matrix product applies. With square output tiles of side Θ ⁡ ( L ) \Theta(\sqrt{L}) , streaming over the reduction index, and L L small compared with the operands, a fused schedule moves
+IO L = O ⁡ ( N 2 ​ d L + N 2 + N ​ d ) \mathrm{IO}_{L}=O\Bigl(\frac{N^{2}d}{\sqrt{L}}+N^{2}+Nd\Bigr)
+words per head, where the last two terms are the compulsory traffic of writing the scores and reading Q Q and K K ; for classical (non-Strassen) schedules of the native product the first term is also a lower bound in this regime [ 76 ] . A fused strict kernel therefore has the same traffic order as native Q ​ K ⊤ QK^{\top} . Fusion changes neither the number of unary evaluations nor the unit that must perform them. That is why Theorem 2 bounds PW \mathrm{PW} and Corollary 1 rests on the third term. The same tiling applies to a Hadamard product followed by a fixed reduction (Proposition 2 ): fused, it has the access pattern of the matrix product, so the Hadamard and extended bases differ only in the schedule a compiler chooses.
+S4. Where the compiled graph spends its time
+Table S2 runs each graph eagerly, times the top-level submodules of every block with CUDA events and records their working memory, for DeiT-Tiny on Pet at k = 16 k=16 (bf16, 20 test batches of 32, RTX 4070 Ti SUPER). The working memory of a module is the peak memory it allocates above what is in use when it starts; the table reports the largest value over its calls. The strict graph adds 64.8 64.8 ms per batch over the extended graph; 73.3 % 73.3\% of it falls in Score \mathrm{Score} and Mix \mathrm{Mix} , and 9.8 9.8 ms in softmax. The module totals are 117.0 117.0 and 52.2 52.2 ms per batch, a ratio of 2.2 2.2 . The profiled reference runs its attention unfused, with Q ​ K ⊤ QK^{\top} , softmax and P ​ V PV as separate kernels: it spends 9.0 9.0 ms there, against 4.1 4.1 ms and 2 2 MiB in its fused attention kernel, with a module total of 25.9 25.9 ms. At k = 32 k=32 and k = 64 k=64 the shares are 74.8 % 74.8\% and 76.5 % 76.5\% . Score \mathrm{Score} costs the same at every k k because scores are computed densely; Mix \mathrm{Mix} grows with k k . The routed graph of Table 2 forms only the selected scores: Score \mathrm{Score} falls from 50 50 to 11 11 ms per batch and its working memory from 469 469 to 77 77 MiB, and the centroid selection adds 9.6 9.6 ms.
+The Hadamard graph of Proposition 1 forms the same broadcast grid as the strict graph, with one product per term instead of a sum and a square. Its Score \mathrm{Score} takes 31.6 31.6 ms per batch, against 49.7 49.7 ms for the strict graph, and 471 471 MiB, the bf16 tensor of the N 2 ​ d N^{2}d products per head of one batch; the strict graph holds one tensor of the same size, since it squares its sums in place. Its module total is 78.2 78.2 ms. With routed support its Score \mathrm{Score} falls to 9.2 9.2 ms and 78 78 MiB, the centroid selection adds 9.7 9.7 ms, and the module total is 65.2 65.2 ms.
+The profile runs one kernel per node and synchronizes around every module, so it shows where eager time goes. Table 2 times the compiled forward pass on batches already on the GPU (Methods), where torch.compile fuses the elementwise chains of every graph. At k = 16 k=16 the compiled reference takes 2.20 2.20 ms per batch, and the extended, Hadamard and strict graphs take 7.21 7.21 , 9.18 9.18 and 11.08 11.08 ms. The strict graph thus takes 1.54 1.54 times the time of the extended graph, against 2.2 2.2 in the eager module totals. Fused kernels keep the intermediates of a chain in fp32; all accuracies come from the eager bf16 runs.
+Table S2: Per-module GPU time and working memory at k = 16 k=16 in eager execution, summed over the 12 blocks of one batch. Routed: 32 query centroids. Ext.: the extended graph, with GELU; the other graphs use x ⊙ σ ⁡ ( 1.702 ​ x ) x\odot\sigma(1.702x) . Ref.: the reference with unfused attention. Softmax: top- k k with the tail term, dense for Ref.
+Time (ms/batch)
+Working memory (MiB)
+Strict
+Hadamard
+Strict
+Hadamard
+Module
+top- k k
+routed
+top- k k
+routed
+Ext.
+Ref.
+top- k k
+routed
+top- k k
+routed
+Ext.
+Ref.
+Score \mathrm{Score} ( Q ​ K ⊤ QK^{\top} )
+49.7
+10.7
+31.6
+9.2
+4.0
+4.1
+469
+77
+471
+78
+14
+14
+Mix \mathrm{Mix} ( P ​ V PV )
+7.4
+11.8
+4.9
+7.0
+5.6
+2.8
+81
+81
+78
+78
+39
+12
+LayerNorm
+23.0
+22.2
+17.9
+17.9
+17.9
+5.5
+16
+17
+19
+19
+19
+9
+Softmax
+24.9
+24.0
+14.0
+12.7
+15.1
+2.1
+15
+18
+9
+11
+8
+28
+Centroid selection
+–
+9.6
+–
+9.7
+–
+–
+–
+4
+–
+3
+–
+–
+Linear (qkv, proj)
+3.3
+3.8
+4.2
+3.6
+4.3
+5.0
+7
+7
+9
+9
+9
+9
+MLP
+8.7
+9.4
+5.5
+5.1
+5.3
+6.3
+83
+83
+28
+28
+18
+18
+S5. Polarization and squares
+The strict graph forms each product of two activations from squares, by one of two classical identities:
+a ​ b = 1 4 ​ [ ( a + b ) 2 − ( a − b ) 2 ] , a ​ b = 1 2 ​ [ ( a + b ) 2 − a 2 − b 2 ] . ab=\tfrac{1}{4}\bigl[(a+b)^{2}-(a-b)^{2}\bigr],\qquad ab=\tfrac{1}{2}\bigl[(a+b)^{2}-a^{2}-b^{2}\bigr].
+The first, polarization, is the method of quarter-squares [ 34 ] . The second, the norm expansion, forms products in expressivity proofs for ReLU networks [ 36 ] .
+Cost. Polarization pays two squares per product. The norm expansion pays one square per product plus the squares a 2 a^{2} and b 2 b^{2} of the factors, so an isolated product costs two squares by polarization and three by the norm expansion. In a contraction each factor enters many products, and its square is formed once. Q ​ K ⊤ QK^{\top} of two N × d N\times d matrices then costs 2 ​ N 2 ​ d 2N^{2}d squares by polarization and N 2 ​ d + 2 ​ N ​ d N^{2}d+2Nd by the norm expansion, and the ratio to the bound of Theorem 2 falls from 2 ​ d 2d to d + 2 ​ d / N d+2d/N . This is Winograd’s precomputation of the self-terms of each row [ 35 ] , with squares in place of products. The strict graph uses the norm expansion where the squares of the factors are shared, in Q ​ K ⊤ QK^{\top} , P ​ V PV , LayerNorm and the exact tail term, and polarization elsewhere, in softmax and the GELU approximation.
+Exactness. Both identities are exact in real arithmetic and, without overflow or requantization, in integer arithmetic (Methods).
+Rounding. Both identities recover a small product as the difference of large squares. In the value mix the result y = ∑ k p k ​ v k y=\sum_{k}p_{k}v_{k} is a weighted mean of the values, while the squares sum to about ∑ k v k 2 \sum_{k}v_{k}^{2} ; on DeiT-Tiny this ratio is 65 65 at k = 16 k=16 and 543 543 with all keys. In bf16 the order of the operations then sets the error (Table S3 ). Rounding each partial sum before the subtraction, 1 2 ​ [ ∑ k ( p k + v k ) 2 − ∑ k p k 2 − ∑ k v k 2 ] \tfrac{1}{2}\bigl[\sum_{k}(p_{k}+v_{k})^{2}-\sum_{k}p_{k}^{2}-\sum_{k}v_{k}^{2}\bigr] , gives 57 % 57\% relative error with all keys. Subtracting the two close squares per term inside the node that sums over keys gives 14 % 14\% for either identity: 1 4 ​ ∑ k [ ( p k + v k ) 2 − ( p k − v k ) 2 ] \tfrac{1}{4}\sum_{k}\bigl[(p_{k}+v_{k})^{2}-(p_{k}-v_{k})^{2}\bigr] by polarization and 1 2 ​ [ ∑ k ( v k 2 − ( v k − p k ) 2 ) + ∑ k p k 2 ] \tfrac{1}{2}\bigl[\sum_{k}\bigl(v_{k}^{2}-(v_{k}-p_{k})^{2}\bigr)+\sum_{k}p_{k}^{2}\bigr] by the norm expansion. With this order the two identities differ in cost, not in precision. As Brent showed for Winograd’s identity [ 77 ] , scaling the operands helps further: the fixed affine maps p → λ ​ p p\to\lambda p and v → v / λ v\to v/\lambda with λ 2 = ‖ v ‖ / ‖ p ‖ \lambda^{2}=\|v\|/\|p\| cut the error to 2.7 % 2.7\% .
+Scaling and PTQ. Brent’s scaling and the PTQ scales are the same choice. PTQ gives each tensor a grid with step s = max ⁡ | x | / ( 2 b − 1 − 1 ) s=\max|x|/(2^{b-1}-1) for b b bits. The node that forms a ± b a\pm b adds two tensors, so in integers both operands sit on one grid, and with the step set by the larger operand the smaller keeps few levels: in the mix the weights p ≤ 1 p\leq 1 share the grid of values several times larger. The scaling a → λ ​ a a\to\lambda a , b → b / λ b\to b/\lambda leaves the product unchanged and gives both operands the same range, so one grid fits both. It also makes the squares as small as they can be, since λ 2 ​ a 2 + b 2 / λ 2 ≥ 2 ​ | a ​ b | \lambda^{2}a^{2}+b^{2}/\lambda^{2}\geq 2|ab| with equality at λ 2 = | b | / | a | \lambda^{2}=|b|/|a| , and the size of the squares sets the step of the node that subtracts them. PTQ calibration already measures the ranges, so λ 2 = max ⁡ | b | / max ⁡ | a | \lambda^{2}=\max|b|/\max|a| follows from the same statistics, and λ \lambda folds into the fixed affine maps that produce a a and b b and into the output maps, so it costs nothing at run time. A node that combines several inputs, as the norm expansion does, quantizes each input on its own grid and rescales it before the sum (Methods); this takes care of the subtraction, but the balance of the operands inside a ± b a\pm b still sets the number of bits. The strict graph in this paper applies no λ \lambda , and its fixed affine nodes take 12-bit input codes. Brent’s scaling can reduce this bit width.
+Table S3: bf16 error of the value mix on DeiT-Tiny/Pet , relative to float64, averaged over the 12 blocks of 16 test images. Partial sums and scaled: emulated kernels with bf16 rounding of every stored value; λ \lambda is fitted on 8 other images. The cancellation factor is ∑ k v k 2 / | y | \sum_{k}v_{k}^{2}/|y| .
+Norm expansion
+k k
+Cancellation
+Polarization, per term
+partial sums
+per term
+per term, scaled
+16
+65
+4.3%
+9.1%
+5.0%
+1.0%
+197
+543
+14.1%
+57.4%
+14.4%
+2.7%
+S6. Tail-mass ablation on DeiT-Tiny
+Table S4 compares the tail modes on Pet before training, and after Jeffreys distillation with trainable q q . A fixed small tail mass ( q = 10 − 3 q=10^{-3} ) behaves like tail drop: the omitted mass must be estimated. Table S5 compares the calibrated q q , a constant per block averaged on the training split, with the exact per-query tail mass on the held-out Pet test split, which no calibration or selection reads. Both sample 4096 queries per block from each minibatch of 32 images. The two means agree within 0.012 0.012 , and within 0.001 0.001 for k ≥ 16 k\geq 16 , while single queries spread widely around them.
+This spread leaves room between the two modes. Calibrated mode uses q = 𝔼 ​ τ q=\mathbb{E}\tau and exact mode q = τ q=\tau . Between them lies the conditional mean 𝔼 ⁡ [ τ ∣ ϕ ] \mathbb{E}[\tau\mid\phi] for any statistic ϕ \phi of what top- k k attention reads, such as the log-sum-exp of the kept scores, the k k -th score and the number m m of dropped keys. Its expected squared error is never larger than that of the constant, since Var ​ τ = 𝔼 ​ ( 𝔼 ⁡ [ τ ∣ ϕ ] − τ ) 2 + Var ​ 𝔼 ​ [ τ ∣ ϕ ] \mathrm{Var}\tau=\mathbb{E}\bigl(\mathbb{E}[\tau\mid\phi]-\tau\bigr)^{2}+\mathrm{Var}\mathbb{E}[\tau\mid\phi] . Predicting the dropped partition sum as m ​ g ​ ( ϕ ) m\,g(\phi) , instead of τ \tau itself, gives q = 0 q=0 when no key is dropped. It therefore also covers causal attention, where the tail mass grows with the position of the query and one constant per block fits poorly: on Pythia-70M at k = 16 k=16 the exact tail mass on 4 training minibatches is 0.062 ± 0.115 0.062\pm 0.115 , between 0 0 and 0.70 0.70 .
+Table S4: Tail modes on DeiT-Tiny/Pet , top-1 accuracy (%). The last column is the saved one of five Jeffreys-distilled runs with trainable q q , the run with the highest training accuracy.
+k k
+tail drop
+fixed q = 10 − 3 q=10^{-3}
+calibrated
+exact
+calibrated, distilled
+1
+2.53
+2.78
+15.73
+8.69
+41.89
+2
+3.16
+2.86
+42.95
+21.31
+64.57
+4
+2.83
+3.11
+67.10
+58.60
+78.09
+8
+5.70
+5.51
+79.50
+81.77
+84.71
+16
+39.44
+39.33
+86.24
+88.80
+88.58
+32
+81.71
+82.07
+89.23
+90.84
+90.19
+64
+89.10
+88.91
+90.35
+91.36
+90.76
+Table S5: Calibrated against exact tail mass on DeiT-Tiny/Pet. Calibrated: the per-block constant from the training split, averaged over blocks. Exact: per-query tail mass on the held-out Pet test split, mean ± \pm s.d. within a block averaged over blocks (min, max).
+k k
+calibrated mean q q , training
+exact τ \tau , test
+1
+0.7825
+0.7943 ± 0.1540 0.7943\pm 0.1540 (0.0007, 0.9925)
+2
+0.7139
+0.7229 ± 0.1703 0.7229\pm 0.1703 (0.0004, 0.9852)
+4
+0.6294
+0.6349 ± 0.1839 0.6349\pm 0.1839 (0.0004, 0.9710)
+8
+0.5278
+0.5300 ± 0.1885 0.5300\pm 0.1885 (0.0001, 0.9438)
+16
+0.4116
+0.4125 ± 0.1770 0.4125\pm 0.1770 (0.0000, 0.8915)
+32
+0.2826
+0.2831 ± 0.1475 0.2831\pm 0.1475 (0, 0.7920)
+64
+0.1511
+0.1513 ± 0.0980 0.1513\pm 0.0980 (0, 0.6052)
+96
+0.0811
+0.0814 ± 0.0607 0.0814\pm 0.0607 (0, 0.4286)
+128
+0.0394
+0.0398 ± 0.0330 0.0398\pm 0.0330 (0, 0.2627)
+197
+0
+0
+S7. Distillation loss
+Table S6 compares cross-entropy and Jeffreys distillation on Pet. For 2 ≤ k ≤ 32 2\leq k\leq 32 , Jeffreys distillation recovers 45 % 45\% to 46 % 46\% of the accuracy gap between the compiled model and the reference, and cross-entropy 36 % 36\% to 43 % 43\% . Jeffreys gains most, 1.2 1.2 to 1.5 1.5 points, at k = 2 k=2 and 4 4 , since it matches the full teacher distribution and not only the label.
+Table S6: Distillation on DeiT-Tiny/Pet , top-1 accuracy (%) of the saved run, the one with the highest training accuracy, and mean ± \pm s.d. over five seeds.
+k k
+compiled
+CE saved
+CE mean
+Jeffreys saved
+Jeffreys mean
+1
+15.73
+41.24
+40.94 ± 0.24 40.94\pm 0.24
+41.89
+41.22 ± 0.60 41.22\pm 0.60
+2
+42.95
+64.49
+63.82 ± 0.93 63.82\pm 0.93
+64.57
+65.30 ± 0.47 65.30\pm 0.47
+4
+67.10
+77.02
+77.03 ± 0.18 77.03\pm 0.18
+78.09
+78.22 ± 0.18 78.22\pm 0.18
+8
+79.50
+84.33
+84.40 ± 0.18 84.40\pm 0.18
+84.71
+84.91 ± 0.15 84.91\pm 0.15
+16
+86.24
+88.17
+88.26 ± 0.06 88.26\pm 0.06
+88.58
+88.56 ± 0.19 88.56\pm 0.19
+32
+89.23
+89.92
+90.00 ± 0.19 90.00\pm 0.19
+90.19
+90.18 ± 0.08 90.18\pm 0.08
+64
+90.35
+90.84
+90.45 ± 0.22 90.45\pm 0.22
+90.76
+90.43 ± 0.18 90.43\pm 0.18
+96
+90.76
+90.90
+90.83 ± 0.09 90.83\pm 0.09
+91.25
+90.86 ± 0.22 90.86\pm 0.22
+128
+91.11
+91.11
+91.11 ± 0.00 91.11\pm 0.00
+91.11
+91.11 ± 0.00 91.11\pm 0.00
+197
+91.36
+91.36
+91.36 ± 0.00 91.36\pm 0.00
+91.36
+91.36 ± 0.00 91.36\pm 0.00
+S8. bf16 against fp32
+Table S7 compares bf16 with fp32 for every network with all keys. The bf16 column evaluates the saved models: weights in bf16 and arithmetic under CUDA autocast, as in the main tables. The fp32 column uses the fp32 reference weights and IEEE fp32 arithmetic. Each compiled graph is rebuilt in fp32, so its fixed coefficients are fp32 too. With all keys, no calibrated quantity is active. The DeiT-Tiny and Pythia-70M results repeat exactly between runs. MambaIRv2-Light uses nondeterministic kernels, and two runs differ by up to 0.01 0.01 dB.
+In fp32, every compiled graph with exact GELU reproduces its reference (Theorems 1 and 3 , Proposition 1 ). On Pet, the extended, strict and Hadamard graphs match the accuracy and loss of DeiT-Tiny to four digits. The extended graph matches on ImageNet-1k and WikiText-2, and on Set5 within the run-to-run variation. With x ​ σ ​ ( 1.702 ​ x ) x\,\sigma(1.702x) , the strict and Hadamard graphs compute the same model and give the same fp32 accuracy. bf16 changes the accuracy of DeiT-Tiny by at most 0.46 0.46 points and the PSNR of MambaIRv2-Light by at most 0.04 0.04 dB.
+Pythia-70M runs in fp32. In bf16 its validation NLL rises from 4.55 4.55 to 6.68 6.68 nats, for the reference and the compiled graph alike. Only bf16 weights with fp32 arithmetic give 4.56 4.56 . The degradation cause is the logits. They share a large offset that softmax ignores: their median is 1061 1061 , while the top two differ by a median of 0.73 0.73 . Near 1000 1000 , bf16 resolves steps of 8 8 , so it loses the ranking of the tokens. The output projection causes 1.7 1.7 of the 2.1 2.1 nats and attention the other 0.4 0.4 .
+Table S7: bf16 against fp32 with all keys. Top-1 accuracy (%) for DeiT-Tiny, PSNR (dB) on the Y channel of Set5 for MambaIRv2-Light, validation NLL (nats) for Pythia-70M. Sigmoid GELU: x ​ σ ​ ( 1.702 ​ x ) x\,\sigma(1.702x) .
+Network
+Model
+bf16
+fp32
+bf16 − - fp32
+DeiT-Tiny, Pet
+reference
+91.36
+91.33
++ 0.03 +0.03
+extended
+91.36
+91.33
++ 0.03 +0.03
+strict, GELU
+91.06
+91.33
+− 0.27 -0.27
+Hadamard, GELU
+91.28
+91.33
+− 0.05 -0.05
+strict, sigmoid GELU
+90.73
+90.27
++ 0.46 +0.46
+Hadamard, sigmoid GELU
+90.35
+90.27
++ 0.08 +0.08
+DeiT-Tiny, ImageNet-1k
+reference
+72.02
+72.02
++ 0.01 +0.01
+extended
+72.01
+72.02
+0.00 0.00
+MambaIRv2-Light × 2 \times 2 , Set5
+reference
+38.234
+38.272
+− 0.038 -0.038
+extended
+38.231
+38.270
+− 0.039 -0.039
+MambaIRv2-Light × 4 \times 4 , Set5
+reference
+32.511
+32.512
+− 0.002 -0.002
+extended
+32.502
+32.507
+− 0.006 -0.006
+Pythia-70M, WikiText-2
+reference
+6.681
+4.550
++ 2.131 +2.131
+extended
+6.680
+4.550
++ 2.130 +2.130
+S9. Quantization with exact GELU
+Table 3 reports each graph in its deployment configuration: the strict graph with x ​ σ ​ ( 1.702 ​ x ) x\,\sigma(1.702x) and 12-bit inputs of its fixed affine nodes, before distillation, and the extended graph with GELU and 8-bit codes, after Jeffreys distillation. Table S8 compares the strict graph with exact GELU and with x ​ σ ​ ( 1.702 ​ x ) x\,\sigma(1.702x) under the same PTQ, both before distillation. The quantized graph has 344 nodes with GELU and 380 with its approximation, 332 and 368 at k = 197 k=197 . Exact GELU matches no NPU configuration and serves as a comparison. With either GELU, PTQ costs the strict graph at most 1.5 1.5 points, against 2.5 2.5 to 3.9 3.9 points for the extended graph.
+Table S8: PTQ of the strict graph with exact GELU and with x ​ σ ​ ( 1.702 ​ x ) x\,\sigma(1.702x) on DeiT-Tiny/Pet, before distillation, with the PTQ of Table 3 . bf16: top-1 accuracy (%) of the float model. Δ \Delta : change after PTQ with per-channel or per-tensor weight scales. The approximation columns repeat Table 3 .
+GELU
+x ​ σ ​ ( 1.702 ​ x ) x\,\sigma(1.702x)
+k k
+bf16
+Δ \Delta , per-channel
+Δ \Delta , per-tensor
+bf16
+Δ \Delta , per-channel
+Δ \Delta , per-tensor
+16
+86.37
+− 1.44 -1.44
+− 0.90 -0.90
+84.08
+− 1.47 -1.47
+− 1.06 -1.06
+32
+89.07
+− 0.76 -0.76
+− 0.68 -0.68
+87.98
+− 0.68 -0.68
+− 0.71 -0.71
+64
+90.35
+− 0.49 -0.49
++ 0.05 +0.05
+89.78
+− 0.05 -0.05
+− 0.14 -0.14
+197
+91.06
+− 0.08 -0.08
++ 0.19 +0.19
+90.73
+− 0.46 -0.46
+− 0.98 -0.98
+S10. Tensor sizes
+Native Q ​ K ⊤ QK^{\top} reads 2 ​ N ​ d 2Nd values per head and writes N 2 N^{2} . The unfused strict graph also writes the N 2 ​ d N^{2}d sums q i ​ f + k j ​ f q_{if}+k_{jf} , squares them in place, and reduces over f f . For DeiT-Tiny that is 2.48 × 10 6 2.48\times 10^{6} values per head per image against 3.88 × 10 4 3.88\times 10^{4} , a factor d = 64 d=64 , which drives the memory column of Table 2 . Top- k k mixing reads k k of the N N value rows per query, a fraction k / N k/N of the value traffic of dense mixing.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

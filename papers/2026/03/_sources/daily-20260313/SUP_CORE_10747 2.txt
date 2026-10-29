@@ -1,0 +1,3707 @@
+Pneuma-Seeker: Relational Reification of Information Needs for Agentic Data Discovery and Preparation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1
+Introduction
+2
+Information Needs on Tabular Data
+2.1
+Key Terminology
+2.2
+Problem Statement and Motivation
+2.3
+Solution Requirements
+3
+Relational Reification Mechanism
+4
+Designing a System to Support
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+4.1
+Macro Context Management
+4.2
+Micro Context Management
+5
+The
+Pneuma-Seeker
+System
+5.1
+Conductor
+5.2
+Materializer
+5.3
+Retriever
+5.4
+DBService
+5.5
+LMService
+6
+Validating
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+: Two Examples
+7
+Quantitative Evaluation
+7.1
+RQ1: Answer Quality
+7.1.1
+Overall Answer Quality
+7.1.2
+Value of Context Extraction
+7.1.3
+Value of
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+7.2
+RQ2: Cost and Scalability
+7.2.1
+Cost–Quality Trade-offs
+7.2.2
+Scalability
+7.2.3
+Runtime
+7.3
+RQ3: Microbenchmark
+7.3.1
+Answer Quality with a Non-Reasoning LLM
+7.3.2
+Memory Usage and Runtime–Memory Trade-offs
+7.3.3
+Retrieval Recall as an Upper Bound on Answer Quality
+8
+Related Work
+9
+Conclusion
+References
+License: CC BY-NC-ND 4.0
+arXiv:2603.10747v1 [cs.DB] 11 Mar 2026
+Pneuma-Seeker: Relational Reification of Information Needs for Agentic Data Discovery and Preparation
+Muhammad Imam Luthfi Balaka, John Hillesland, Kemal Badur, Raul Castro Fernandez
+email:
+luthfibalaka, jhillesland, badur, raulcf@uchicago.edu
+Affiliation:
+The University of Chicago
+,
+Chicago
+,
+USA
+Abstract.
+When faced with data problems, many data workers cannot articulate their information need precisely enough for software to help. Although LLMs interpret natural-language requests, they behave brittly when intent is under-specified, e.g., hallucinating fields, assuming join paths, or producing ungrounded answers.
+We present
+Pneuma-Seeker
+, a system built around a central idea: relational reification.
+Pneuma-Seeker
+represents a user’s evolving information need as a relational schema: a concrete, analysis-ready data model shared between user and system. Rather than answering prompts directly,
+Pneuma-Seeker
+iteratively refines this schema, then discovers and prepares relevant sources to construct a relation and executable program that compute the answer.
+Pneuma-Seeker
+employs an LLM-powered agentic architecture with conductor-style planning and macro- and micro-level context management to operate effectively over heterogeneous relational corpora.
+We evaluate
+Pneuma-Seeker
+across multiple domains against state-of-the-art academic and industrial baselines, demonstrating higher answer accuracy. Deployment in a real organization highlights trust and inspectability as essential requirements for LLM-mediated data systems.
+†
+†
+authors:
+.
+PVLDB Reference Format:
+PVLDB, 14(1): XXX-XXX, 2020.
+doi:XX.XX/XXX.XX
+†
+†
+This work is licensed under the Creative Commons BY-NC-ND 4.0 International License. Visit
+https://creativecommons.org/licenses/by-nc-nd/4.0/
+to view a copy of this license. For any use beyond those covered by this license, obtain permission by emailing
+info@vldb.org
+. Copyright is held by the owner/author(s). Publication rights licensed to the VLDB Endowment.
+Proceedings of the VLDB Endowment, Vol. 14, No. 1 ISSN 2150-8097.
+doi:XX.XX/XXX.XX
+PVLDB Artifact Availability:
+The source code, data, and/or other artifacts have been made available at
+https://github.com/TheDataStation/pneuma-seeker
+.
+1.
+Introduction
+Organizations increasingly make operational, financial, and policy decisions “in the loop” with data: analysts, engineers, and domain experts continuously formulate questions, locate relevant datasets, reconcile definitions, and assemble tables or features that can support a decision. In principle, this workflow should be accelerable: a decision maker expresses an
+information need
+, and a system retrieves and prepares the required data. In practice, however, data work remains hampered by two stubborn stages in the data management lifecycle: i) data discovery, identifying and retrieving documents that could satisfy an information need, and; ii) data preparation, transforming those documents into a usable representation for downstream analysis. These stages resist automation because determining
+intent
+is expensive: users rarely articulate what they need precisely enough for software systems to help.
+Large Language Models (LLMs) appear to change the landscape. They can interpret natural-language requests, synthesize explanations, and increasingly orchestrate multi-step workflows. This has led to a tempting conclusion: if LLMs can “understand” a user request, perhaps they can also discover the right datasets, assemble them, and produce the answer. Our experience building and deploying
+Pneuma-Seeker
+suggests a more careful view. The bottleneck is not merely that the system cannot execute steps; it is that the user’s information need is typically vague, evolving, and difficult to operationalize. Questions are moving targets, and without a concrete target, even very capable models behave brittly, e.g., hallucinating missing fields, assuming join paths, or producing plausible but ungrounded reasoning. What is needed is a mechanism that lets users iteratively converge on a precise intent while giving the system a representation it can reliably act on.
+Use Case: Purchase Order.
+Consider a procurement office at a large organization trying to cut costs by reducing re-shipping—items that need to be returned and redelivered. A high-level objective (“reduce re-shipping”) is not directly answerable with data. An analyst may hypothesize that certain categories of items cause more downstream friction and ask a question like:
+Do hazardous materials exhibit higher rates of post-purchase order execution friction?
+Yet the organization’s data may not contain a clean “hazardous” category. Through cross-team conversations the analyst might narrow the concept to radioactive materials; “execution friction” may be clarified into measurable signals such as over-shipment, over-invoicing, or forced invoice matching; and the relevant sources may turn out to be spread across multiple systems maintained by different teams. Even after the question becomes crisp, the analyst still faces a discovery and preparation problem: identify which tables contain the relevant signals, determine join keys and grain, reconcile definitions, and produce an analysis-ready relation.
+This vignette illustrates three challenges of real data work:
+•
+First, information needs are often under-specified initially and become precise only through iteration.
+•
+Second, the iteration is socially and operationally expensive: it requires coordination and knowledge transfer across teams, tools, and institutional memory.
+•
+Third, even after intent stabilizes, retrieval and assembly of the needed data artifacts remains non-trivial.
+The ideal system would help users sharpen their intent while reducing cross-team coordination cost, and then would automatically discover and prepare the data needed to answer the now-precise question. Such a system is not a replacement for human communication; rather, it is a catalyst that accelerates convergence toward high-value questions and makes the path from intent to data explicit and verifiable.
+This paper investigates whether and how that ideal can be approximated in practice. We present
+Pneuma-Seeker
+, an LLM-powered system for interactive data discovery and preparation that is built around a central design decision: reifying a user’s evolving information need as a relational schema that represents a data model bespoke to the user’s information need. Instead of treating the user’s question as a single prompt to be answered,
+Pneuma-Seeker
+treats it as a specification that must be negotiated and made concrete. The system proposes a target relation—attributes, types, and semantics that would constitute an analysis-ready table for the question—and iteratively refines that schema through user feedback. The schema becomes a shared artifact: it is concrete enough for users to critique (“’hazardous’ is too broad; use ’radioactive”’), and structured enough for the system to operationalize discovery (“find columns and join paths that can populate these attributes”).
+Relational reification changes the nature of the interaction. The user is no longer forced to perfectly describe intent upfront; they can react to a proposed schema, correct it, and progressively expose latent assumptions. Meanwhile, the system is no longer forced to guess what the answer should look like; it is tasked with producing a relation that matches a specified schema. This aligns the user’s language-level intent with the system’s data-level operations. Crucially, it also enables explainability and verification: once the target schema is explicit,
+Pneuma-Seeker
+can explain which sources contributed to which fields, what transformations were applied, and what evidence supports a given value—provenance that an analyst can inspect before trusting the result downstream.
+Building on this reification mechanism,
+Pneuma-Seeker
+implements an agentic discovery-and-preparation pipeline that takes a reified schema as its goal and searches for data to fulfill it. The system decomposes the work into specialized subtasks with narrowly scoped contexts (e.g., schema refinement, source retrieval, table materialization, join/path reasoning, program synthesis), and orchestrates these subtasks through a conductor component that can revise plans based on intermediate results. This matters because tabular corpora and enterprise catalogs are large and heterogeneous: naïvely placing all context in a single prompt is ineffective and often infeasible.
+Pneuma-Seeker
+instead treats relational data as a first-class substrate for interaction: agents query a database module on demand, retrieve partial results to ground subsequent steps, and progressively materialize candidate relations that can be inspected and improved.
+We evaluate i) the system’s ability to converge to the correct information need under iterative refinement, ii) the quality of the discovered/prepared relations and the resulting answers, iii) the contribution of context specialization and conductor-style planning relative to alternative designs and baselines, iv) the performance of the system. We also report learnings from deploying
+Pneuma-Seeker
+in a real organizational setting (at The University of Chicago) and use observed user feedback, especially around explainability, iteration cost, and trust, to articulate design requirements for this emerging class of LLM-based data systems. We used such requirements as guidelines for the design of
+Pneuma-Seeker
+.
+In summary, this paper makes the following contributions:
+•
+Reified intent for data discovery and preparation.
+We formalize and operationalize the idea that a user’s evolving information need can be represented as a relational schema, turning “moving-target” questions into a concrete artifact that both users and systems can refine and satisfy.
+•
+Context Management techniques.
+LLM-based systems, including agentic systems, require good context management (what data to feed into the context) for high-performance. Our system design follows what is rapidly becoming standard macro context management: separating tasks into different agents. Crucially, we contribute a micro context management strategy that permits agents interact with large, context-rich relational data efficiently.
+•
+Pneuma-Seeker
+system and architecture.
+We design and implement an agentic system that, given a reified schema, discovers relevant sources, materializes and combines tables, and produces executable programs that compute answers over the resulting relation—while supporting inspection and provenance.
+•
+Evaluation and deployment evidence.
+We empirically study convergence, answer quality, and architectural choices (including micro-level context management) on a benchmark spanning multiple tabular domains, and we complement this with deployment learnings that surface practical requirements for trustworthy, iterative, LLM-mediated data work.
+The rest of the paper is structured as follows. Section
+2
+introduces terminology, the problem statement, and requirements of a good solution, as derived from our experience deploying Pneuma at our university. Section
+3
+presents the relational reification strategy that serves as a nexus between human and machine. Section
+4
+presents the context management techniques needed to implement an effective and efficient relational discovery agentic system, and the techniques inform the architecture of the system. Section
+5
+presents the details of the system. We then present evaluation results (Section
+7
+), followed by related work (Section
+8
+) and conclusions (Section
+9
+).
+2.
+Information Needs on Tabular Data
+This section introduces terminology, presents the problem and its motivation, and states four requirements for a technical solution that we have gathered from deploying the system at our university and gathering feedback from users.
+2.1.
+Key Terminology
+Document.
+A
+document
+is a concrete representation of data
+(
+Castro Fernandez, 2025
+)
+. For example, data about a customer could be represented in a piece of paper, a table in a database, and a PDF, all three representations are documents. In this paper, we concentrate on tabular documents, such as tables in databases, CSV and Parquet files, and spreadsheets.
+Information Need.
+An
+information need
+characterizes the data required to solve a data-driven task
+(
+Castro Fernandez, 2025
+)
+. In this work, we assume a one-to-one correspondence between a task and its associated information need. We are then interested in finding a document that satisfies that information need, i.e., that represents the data required to solve the task that induced such an information need.
+For example, when training a machine learning classifier, the information need characterizes labeled instances with a specific feature schema (e.g., numerical and categorical attributes describing each instance). This information need is fulfilled by surfacing a table whose rows correspond to instances and whose columns correspond to the required features and labels.
+In
+Use Case: Purchase Order
+, the information need characterizes comparable signals of post-purchase order execution friction for specific item categories across procurement, logistics, and finance systems, sufficient to assess which categories contribute disproportionately to re-shipping. This information need is fulfilled by surfacing data that aligns item categories (e.g., radioactive materials) and execution frictions (e.g., over-shipment), allowing the user to identify categories that drive re-shipping and ultimately inform interventions toward the high-level objective.
+However, even when the task is well-defined, users are often unable to fully and precisely articulate the associated information need at the outset. Relevant variables, subpopulations, or confounding factors may only become apparent after inspecting data, and the adequacy of a data specification to solve a task may depend on evidence observed during analysis. As a result, there is a gap between what is ultimately required and what the user can currently articulate. We capture this gap by distinguishing between
+latent
+and
+active
+information needs.
+Latent Information Need.
+A
+latent information need
+ℐ
+∗
+\mathcal{I}^{*}
+denotes the complete and precise characterization of the data required to solve the task.
+ℐ
+∗
+\mathcal{I}^{*}
+is typically unknown to the user a priori, as it may depend on relevant structure in the data (e.g., subpopulations or distributional properties) that is not evident before exploration.
+Active Information Need.
+The
+active information need
+ℐ
++
+\mathcal{I}^{+}
+corresponds to the user’s articulation of
+ℐ
+∗
+\mathcal{I}^{*}
+at a given point in time.
+ℐ
++
+\mathcal{I}^{+}
+reflects the user’s present hypotheses and assumptions and may omit relevant distinctions or constraints. Through interaction with data and intermediate results, the user may revise
+ℐ
++
+\mathcal{I}^{+}
+to better approximate
+ℐ
+∗
+\mathcal{I}^{*}
+(
+Belkin, 1980
+)
+.
+Continuing
+Use Case: Purchase Order
+, the user may initially specify
+ℐ
++
+\mathcal{I}^{+}
+as comparing friction rates between hazardous and non-hazardous products. After observing that hazardous products consist of several categories (radioactive, toxin, etc.) and that sample sizes differ substantially across categories, the user may refine
+ℐ
++
+\mathcal{I}^{+}
+to stratify hazardous products and control for imbalanced sample sizes, thereby moving closer to
+ℐ
+∗
+\mathcal{I}^{*}
+.
+2.2.
+Problem Statement and Motivation
+Data discovery is the problem of identifying and retrieving documents that satisfy an information need
+(
+Castro Fernandez et al., 2018a
+;
+Fernandez, 2025
+)
+. This problem arises across many domains. For instance, analysts in a retail organization may integrate customer profiles and transaction records to study purchasing behavior
+(
+Kim et al., 2024
+)
+. Similarly, domain scientists may explore open data repositories (e.g., Chicago Open Data) to analyze behavioral or socioeconomic phenomena
+(
+Numajiri and Hayashi, 2024
+)
+. More formally:
+Given a collection of tables
+𝒞
+=
+{
+T
+1
+,
+…
+,
+T
+n
+}
+\mathcal{C}=\{T_{1},\dots,T_{n}\}
+and a latent information need
+ℐ
+∗
+\mathcal{I}^{*}
+, the goal is to construct a single document
+𝒟
+\mathcal{D}
+derived from
+𝒞
+\mathcal{C}
+such that
+𝒟
+\mathcal{D}
+fulfills
+ℐ
+∗
+\mathcal{I}^{*}
+.
+Solving such discovery tasks in practice requires evolving
+ℐ
++
+\mathcal{I}^{+}
+into
+ℐ
+∗
+\mathcal{I}^{*}
+and gathering relevant documents across source systems
+(
+Hai et al., 2023
+;
+Abedjan et al., 2025
+)
+. This calls for iterative, human-driven workflows that combine manual data discovery, ad hoc integration, and consultation with stakeholders.
+For example,
+Use Case: Purchase Order
+requires analysts to manually locate and combine purchase order data and invoicing or execution records, and to consult cross-functional teams to interpret observed patterns. These workflows are communication-heavy and may take weeks to produce
+𝒟
+\mathcal{D}
+and eventually fulfill
+ℐ
+∗
+\mathcal{I}^{*}
+.
+Existing Work.
+Existing work and industrial systems partially address this problem and have been widely adopted. For example, business intelligence tools, such as
+Tableau
+1
+1
+1
+https://www.tableau.com
+or
+Microsoft Power BI
+,
+2
+2
+2
+https://powerbi.microsoft.com
+provide interactive dashboards and reporting interfaces that allow users to explore datasets and analyze structured data. Similarly, enterprise and open-source data catalogs
+(
+Jahnke and Otto, 2023
+)
+such as
+Goods
+(
+Halevy et al., 2016
+)
+and
+Amundsen
+,
+3
+3
+3
+https://www.amundsen.io
+improve data visibility and documentation, helping users locate relevant tables and understand their schemas. In addition, data integration platforms, such as
+Fivetran
+,
+4
+4
+4
+https://www.fivetran.com
+automate the extraction and loading of data from multiple sources, and integrate it into a centralized repository. Collectively, these systems have been successful in helping users understand what data is available and in supporting various analytical workflows.
+However, in the overall problem, these solutions largely place the burden on users to translate high-level analytical tasks into concrete data requirements, identify relevant tables, and iteratively refine
+ℐ
++
+\mathcal{I}^{+}
+through manual exploration. As a result, getting
+𝒟
+\mathcal{D}
+to fulfill
+ℐ
+∗
+\mathcal{I}^{*}
+, or even to iterate in order to converge from
+ℐ
++
+\mathcal{I}^{+}
+to
+ℐ
+∗
+\mathcal{I}^{*}
+, remains time-consuming and dependent on the user’s expertise.
+The Opportunity.
+Recent advances in LLMs demonstrate strong capabilities in interpreting natural-language queries and reasoning over human-specified instructions
+(
+Wei et al., 2022
+;
+Kojima et al., 2022
+;
+Yao et al., 2023
+)
+. These capabilities align closely with the need to interpret
+ℐ
++
+\mathcal{I}^{+}
+accurately
+and to reason about what actions would help fulfill such an interpretation. This creates an opportunity to rethink
+how
+LLMs could be leveraged to reduce the time and effort required to address the problem.
+2.3.
+Solution Requirements
+We outline the requirements of a technical intervention
+𝒮
+\mathcal{S}
+for addressing the problem defined in Section
+2.2
+, informed by user feedback at our university.
+•
+R1: Correctness
+𝒮
+\mathcal{S}
+should construct a document
+𝒟
+\mathcal{D}
+that fulfills
+ℐ
+∗
+\mathcal{I}^{*}
+. That is,
+𝒟
+\mathcal{D}
+should surface the data required to solve the task, subject to what is available in
+𝒞
+\mathcal{C}
+.
+•
+R2: Interpretability
+To ensure the user can verify (and hence trust)
+𝒟
+\mathcal{D}
+,
+𝒮
+\mathcal{S}
+should provide an interface that explains how
+𝒟
+\mathcal{D}
+was derived from
+𝒞
+\mathcal{C}
+.
+•
+R3: Refinability
+Since
+ℐ
+∗
+\mathcal{I}^{*}
+may only be partially specified through
+ℐ
++
+\mathcal{I}^{+}
+,
+𝒮
+\mathcal{S}
+should support mechanisms that allow the user to refine
+ℐ
++
+\mathcal{I}^{+}
+and communicate clarifications or constraints.
+•
+R4: Efficiency
+To be practical,
+𝒮
+\mathcal{S}
+must reduce the time and effort required to fulfill an information need compared to current workflows. For example, manual discovery and consultation in procurement scenarios may take weeks and involve multiple stakeholders; an effective
+𝒮
+\mathcal{S}
+should enable producing an actionable
+𝒟
+\mathcal{D}
+within minutes to hours.
+Scope.
+These requirements help delineate the space of feasible solutions. Approaches that fail to satisfy any of these requirements are insufficient for the problem as framed. For example:
+•
+Traditional data catalogs improve visibility and documentation but place the burden on the user to manually identify relevant tables and iteratively refine
+ℐ
++
+\mathcal{I}^{+}
+, failing to satisfy
+R
+•
+‣
+2.3
+and
+R
+•
+‣
+2.3
+.
+•
+Static dashboards or reporting tools (e.g.,
+Tableau
+5
+5
+5
+https://www.tableau.com
+) require users to manually iterate on and refine
+ℐ
++
+\mathcal{I}^{+}
+by rebuilding queries or views, failing to satisfy
+R
+•
+‣
+2.3
+and often
+R
+•
+‣
+2.3
+due to the time-consuming nature of constructing correct queries or views.
+Collectively, these examples illustrate that an acceptable technical intervention must not only surface the required data correctly and efficiently, but also support interpretability and refinement of partially specified information needs.
+3.
+Relational Reification Mechanism
+When an LLM is tasked with directly answering
+ℐ
++
+\mathcal{I}^{+}
+, it must
+implicitly
+adopt an interpretation of the need and attempt to fulfill it by operating on the underlying tables. As a result, the interpretation of
+ℐ
++
+\mathcal{I}^{+}
+and the construction of
+𝒟
+\mathcal{D}
+are entangled in a single process. The user has no structured handle on the system’s interpretation beyond the final natural-language answer and any associated reasoning traces. Without an explicit representation of this interpretation, the system lacks a grounded notion of progress, and the user cannot easily
+understand
+𝒟
+\mathcal{D}
+well enough to help the system make progress.
+For example, in
+Use Case: Purchase Order
+, the LLM might answer simply
+"yes"
+or
+"no"
+, possibly with an explanation of its reasoning. A user seeking to verify correctness may ask follow-up questions, but each response may provide a new explanation, leaving the user uncertain whether to trust it or whether the LLM is hallucinating. Because these explanations are unstructured and inconsistent across queries, the user cannot rely on a uniform method to cross-check answers, making verification ad hoc and error-prone.
+We address this by
+reifying
+ℐ
++
+\mathcal{I}^{+}
+as an explicit relational model. Instead of directly synthesizing
+𝒟
+\mathcal{D}
+, the system first commits to a target model
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+, where
+𝒯
+=
+{
+T
+1
+,
+…
+,
+T
+k
+}
+\mathcal{T}=\{T_{1},\dots,T_{k}\}
+is a set of derived
+views
+and
+S
+S
+is an executable transformation over
+𝒯
+\mathcal{T}
+(e.g., SQL query or Python code). Each
+T
+i
+T_{i}
+is constructed from
+𝒞
+\mathcal{C}
+via operations such as joins, filters, unions, and aggregations.
+Modeling
+𝒯
+\mathcal{T}
+as a set of views (instead of a single view) reflects that complex information needs may decompose into multiple semantically distinct relations; for example, in
+Use Case: Purchase Order
+, different operationalizations of “hazardous materials” and different signals of execution friction naturally give rise to multiple views. Collapsing these into one view can obscure modeling assumptions and hinder reuse and inspection. This enforces a separation between
+interpretation
+and
+generation
+: the system must make its interpretation of
+ℐ
++
+\mathcal{I}^{+}
+explicit as
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+before producing
+𝒟
+\mathcal{D}
+. The task of fulfilling
+ℐ
++
+\mathcal{I}^{+}
+is thus decomposed into (i) defining
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+and (ii) materializing
+𝒯
+\mathcal{T}
+, after which executing
+S
+S
+yields
+𝒟
+\mathcal{D}
+.
+Benefits for the User.
+Reification externalizes the system’s interpretation into concrete, inspectable representations, fulfilling
+R
+•
+‣
+2.3
+. By examining the schemas and sample data of
+T
+T
+, the user can detect logical misalignment (e.g., missing constraints), allowing them to provide feedback to the system to refine
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+.
+Benefits for the System.
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+operationalizes
+ℐ
++
+\mathcal{I}^{+}
+, enabling the system to track progress by checking whether
+T
+T
+has been materialized and whether
+𝒟
+\mathcal{D}
+has been produced by executing
+S
+S
+. It also constrains the system’s operation space to actions that support defining
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+, materializing
+T
+T
+, and executing
+S
+S
+.
+Interpretability and Provenance.
+While
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+specifies how
+𝒟
+\mathcal{D}
+is constructed, users may want to verify the correctness of
+T
+T
+and its derivation. To satisfy
+R
+•
+‣
+2.3
+, the system records the derivation of
+T
+T
+from
+𝒞
+\mathcal{C}
+as a directed acyclic graph (DAG), where nodes represent relational transformations and edges encode data dependencies. This DAG is exposed to the user, and a single executable script is produced by topologically sorting the transformations and appending
+S
+S
+. Although the LLM proposes the transformations, the final output is generated by a deterministic script, providing users end-to-end visibility and control over
+𝒟
+\mathcal{D}
+’s construction.
+Example: Refining the Relational Model.
+Consider
+Use Case: Purchase Order
+, where the user wants to compare post-purchase friction rates for hazardous or radioactive products. The system may initially reify
+ℐ
++
+\mathcal{I}^{+}
+into
+T
+T
+, a single table,
+T
+h
+​
+a
+​
+z
+​
+a
+​
+r
+​
+d
+​
+o
+​
+u
+​
+s
+​
+_
+​
+r
+​
+a
+​
+d
+​
+i
+​
+o
+​
+a
+​
+c
+​
+t
+​
+i
+​
+v
+​
+e
+T_{hazardous\_radioactive}
+, that combines all hazardous and radioactive products.
+Upon inspecting
+T
+h
+​
+a
+​
+z
+​
+a
+​
+r
+​
+d
+​
+o
+​
+u
+​
+s
+​
+_
+​
+r
+​
+a
+​
+d
+​
+i
+​
+o
+​
+a
+​
+c
+​
+t
+​
+i
+​
+v
+​
+e
+T_{hazardous\_radioactive}
+, the user notices that radioactive products are a subset of hazardous products and require separate handling. To enable a more granular analysis, the user refines
+ℐ
++
+\mathcal{I}^{+}
+. The system updates
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+so that
+T
+T
+now consists of three tables: (1) radioactive products, (2) hazardous but non-radioactive products, and (3) non-hazardous products. This refinement ensures that the transformation
+S
+S
+produces a final
+𝒟
+\mathcal{D}
+that correctly accounts for subpopulation differences, bringing the
+ℐ
++
+\mathcal{I}^{+}
+closer to
+ℐ
+∗
+\mathcal{I}^{*}
+.
+4.
+Designing a System to Support
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+This section presents the design of an LLM-based system that reifies
+ℐ
++
+\mathcal{I}^{+}
+as
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. We organize the discussion around two complementary strategies for managing context: macro-level context management, which informs the overall system architecture, and micro-level context management, which governs the interaction of the LLM with individual tables.
+Figure 1
+.
+Architecture of
+Pneuma-Seeker
+4.1.
+Macro Context Management
+Pneuma-Seeker
+is a concrete instantiation of this architecture, as shown in Figure
+1
+. A central design principle is macro context management: decomposing the workflow into multiple components with scoped responsibilities, thereby reducing the context each component must process. This is a first step toward mitigating LLM context window limitations, including the degradation in performance observed with longer contexts
+(
+Du et al., 2025
+)
+.
+Pneuma-Seeker
+realizes this principle through a multi-component design, which decomposes the workflow into three main tasks: (1) retrieval, (2) materialization, and (3) orchestration.
+Rather than processing all tables in
+𝒞
+\mathcal{C}
+,
+Pneuma-Seeker
+retrieves a relevant subset by performing tabular data discovery. We encapsulate the retrieval logic in a component called
+Retriever
+(Section
+5.3
+). Other parts of the system interact with
+Retriever
+only through its interface, which returns relevant tables. Architecturally, this modularization enables extensions such as non-tabular retrieval (Web Search to retrieve data from the web).
+Materializing
+𝒯
+\mathcal{T}
+from its specification—rather than the original natural-language phrasing of
+ℐ
++
+\mathcal{I}^{+}
+—constitutes the second main task: given a specification of
+𝒯
+\mathcal{T}
+(schemas and column descriptions), materialize
+𝒯
+\mathcal{T}
+using tables returned by
+Retriever
+. Isolating this functionality enables targeted optimization, e.g., introducing dedicated relational operators to reduce LLM generation errors. This functionality is implemented in
+Materializer
+(Section
+5.2
+).
+The overall workflow is coordinated by an orchestrator, which implements the relational reification mechanism to transform
+ℐ
++
+\mathcal{I}^{+}
+into
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. The orchestrator retrieves relevant tables via
+Retriever
+to constrain feasible
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+, invokes
+Materializer
+to materialize
+𝒯
+\mathcal{T}
+, and executes
+S
+S
+to produce
+𝒟
+\mathcal{D}
+. It is decoupled from the internal implementations of
+Retriever
+and
+Materializer
+, interacting with them only through their interfaces, and focuses on planning, progress tracking, and user interaction. We define
+Conductor
+as the component fulfilling this role (Section
+5.1
+).
+These three components define the core service, supported by two additional services: (1)
+DBService
+for persistent storage of
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+and
+ProvenanceGraph
+and query execution, and (2)
+LMService
+for access to LLMs and embedding models.
+Overall, this architecture enforces a clear separation of concerns:
+Conductor
+orchestrates the workflow,
+Materializer
+focuses on materializing
+𝒯
+\mathcal{T}
+, and
+Retriever
+reduces the search space of
+𝒞
+\mathcal{C}
+.
+4.2.
+Micro Context Management
+Macro-level decomposition alone does not suffice for effective LLM–table interaction. Even after narrowing the search space via
+Retriever
+, fully including retrieved tables in context is often infeasible. In
+Use Case: Purchase Order
+, the purchase order table has 117 columns and 5 million rows; with
+o3-2025-04-16
+, this would require at least 2.1B tokens—far beyond the 200,000-token limit. We often expect larger and multiple tables to be retrieved at once. Conversely, sampling only a few rows can omit critical evidence, leading to incomplete reasoning or errors in constructing
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+.
+To address this limitation,
+Pneuma-Seeker
+introduces a complementary
+micro-level context management
+strategy. Concretely, micro context management is realized as a structured interaction protocol between the LLM and
+DBService
+: the LLM is prompted to externalize uncertainty about table contents and may invoke executable Python scripts, equipped with APIs of
+DBService
+, to issue queries over retrieved tables. Rather than passively supplying table content, the system actively scaffolds the LLM to
+acquire context
+on demand by executing targeted probes over tables. This mechanism enables the LLM to retrieve precise values, distributions, and structural properties that are directly relevant to
+ℐ
++
+\mathcal{I}^{+}
+.
+For instance, consider a retrieved table with a column
+year
+when the user’s query pertains to 2025. The LLM can invoke a script to verify whether 2025 records exist, summarize their distribution, and determine how this subset should be incorporated into
+𝒯
+\mathcal{T}
+. By treating execution over
+DBService
+as a first-class mechanism for context acquisition, micro-level context management allows the system to handle irregular table structures and fine-grained details that would be missed by naive sampling.
+From a systems perspective, macro context management reduces the contextual load of each component by decomposing the workflow into well-scoped tasks, while micro context management equips the LLM with an explicit, supported action space for fine-grained evidence acquisition within retrieved tables. This explicit support for targeted context extraction directly supports
+R
+•
+‣
+2.3
+. Section
+7.1.2
+shows that micro-level context management helps produce correct
+𝒟
+\mathcal{D}
+.
+For example, consider the query from the Legal dataset in KramaBench
+(
+Lai et al., 2025
+)
+:
+“What is the proportion (round to 3 decimal places) of fraud reporters who lost between $1–$500 in 2024?”
+. The retriever returns a relevant table whose content interleaves coarse-grained and fine-grained bins; for instance, it includes rows such as “$1–$1,000: 624,110” and later “$1–$100: 243,174” and “$101–$200: 114,336.” When only a small set of sample rows is exposed, the LLM assumes that the table provides only coarse-grained aggregates and fails to detect the finer-grained breakdown required to answer the query.
+Although the LLM is in principle capable of generating scripts to probe such irregularities, in practice it does not reliably externalize or act on this uncertainty when context extraction is not an explicit, supported action. With micro context management,
+Pneuma-Seeker
+exposes context extraction as a deliberate action mediated by
+DBService
+. This changes the interaction protocol: the LLM can surface its uncertainty, test it by issuing scripts to probe the table structure (e.g., checking for overlapping bins or finer-grained ranges), surface the relevant rows, and construct
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+accordingly. This enables correct materialization of
+𝒯
+\mathcal{T}
+and, in turn, the correct
+𝒟
+\mathcal{D}
+, despite the table’s non-ideal organization.
+5.
+The
+Pneuma-Seeker
+System
+In this section, we detail
+how
+each main component of
+Pneuma-Seeker
+performs its task to support the overall workflow of reifying
+ℐ
++
+\mathcal{I}^{+}
+as
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+and producing
+𝒟
+\mathcal{D}
+to fulfill
+ℐ
++
+\mathcal{I}^{+}
+by executing
+S
+S
+.
+Dynamic Planning.
+Both
+Conductor
+and
+Materializer
+construct plans dynamically for their respective tasks, rather than following fixed, pre-defined pipelines. In early prototypes, we adopted static pipelines, which became increasingly brittle as new use cases required revisiting control flow decisions (e.g., determining which steps are optional, when to skip or restart actions, and how to integrate new tools), leading to repeated and costly re-engineering. In contrast, new capabilities can be added to the action spaces of
+Conductor
+and
+Materializer
+and immediately leveraged by the planners, without redesigning the overall pipeline, making the system substantially easier to extend as functionality evolves.
+Both
+Conductor
+and
+Materializer
+operate in bounded planning loops surrounding model inference. At each iteration, the planner selects a
+sequence
+of actions, where the first action is always
+Situational Analysis
+, which determines the remaining actions to execute in the same iteration. We allow multiple actions per iteration for efficiency: selecting only a single action per iteration would incur unnecessary model calls and input token overhead, while selecting all actions in a single shot is overly rigid because later actions often depend on the outcomes of earlier ones. For example,
+Conductor
+defines
+𝒯
+\mathcal{T}
+only after evidence is gathered by
+Retriever
+-related actions, and both
+Conductor
+and
+Materializer
+may need to recover from errors observed in prior actions.
+5.1.
+Conductor
+The
+Conductor
+serves as the planner and orchestrator of the system. Users interact with it through a chat interface. Given a user query,
+Conductor
+loops for up to
+c
+c
+iterations (default
+c
+=
+10
+c=10
+). At each iteration,
+Conductor
+selects a sequence of actions to refine
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. Its action space is as follows:
+•
+Situational Analysis.
+Executed at the beginning of each iteration to analyze the current model
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+and prior actions, and to decide which actions to take in the iteration.
+•
+Retriever
+-related Actions.
+Retrieve the top-
+k
+k
+relevant tables from
+Pneuma-Retriever
+, or search and crawl the web.
+•
+Context Extraction.
+Enable micro context management by issuing scripts to probe retrieved tables for relevant evidence (e.g., testing whether specific values exist in certain columns).
+•
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+Manipulation.
+Update
+𝒯
+\mathcal{T}
+,
+S
+S
+, or both, such as adding target tables, refining columns, or adjusting transformations.
+•
+Executor.
+Execute
+S
+S
+over materialized
+𝒯
+\mathcal{T}
+to produce
+𝒟
+\mathcal{D}
+.
+•
+Materializer.
+Invoke
+Materializer
+to materialize
+𝒯
+\mathcal{T}
+, optionally including textual guidance (e.g., to propagate user feedback).
+•
+User-Facing Communication.
+Present results to the user or ask clarifying questions to further refine
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+.
+Stopping Criteria.
+Conductor
+iterates until either (i) it selects User-Facing Communication, which terminates the loop, or (ii) a maximum number of iterations
+c
+c
+is reached. In the latter case, we force a termination by prompting
+Conductor
+to synthesize a user-facing response.
+5.2.
+Materializer
+Materializer
+constructs the tables specified in
+𝒯
+\mathcal{T}
+, taking into account
+S
+S
+(if already defined by
+Conductor
+) and textual guidance provided by
+Conductor
+(if any).
+Conductor
+also passes retrieved data to
+Materializer
+to provide shared context, but
+Materializer
+may re-retrieve data and perform Context Extraction as needed.
+Similar to
+Conductor
+,
+Materializer
+loops for up to
+m
+m
+iterations (default
+m
+=
+10
+m=10
+) to select sequences of actions, producing intermediate tables along the way. The output of
+Materializer
+is the set of intermediate tables corresponding to
+𝒯
+\mathcal{T}
+.
+Prefer Structured Operators over Free-Form Code.
+Materializer
+is designed to favor structured, constrained actions over free-form code generation. Operator-based actions reduce error rates and token usage compared to unconstrained SQL or Python generation. Free-form code generation is maximally expressive but more brittle and often wastes iterations due to regeneration after errors. This design prioritizes reliability and efficiency, while retaining free-form execution as a fallback for cases that cannot be expressed using structured operators. Concretely,
+Materializer
+exposes the following action space:
+•
+Relational Operators.
+We expose common relational operators (join, union, projection) as dedicated actions. The LLM specifies key parameters (e.g., table IDs and join keys), and the application code generates and executes the corresponding queries.
+•
+Semantic Operators.
+We implement a number of semantic operators.
+Semantic join
+matches tuples between two tables based on semantic relatedness between textual attributes rather than exact equality, following prior work on embedding-based dataset linking (e.g.,
+(
+Castro Fernandez et al., 2018b
+)
+) and recent declarative formulations of semantic operators such as in LOTUS
+(
+Patel et al., 2024
+)
+.
+Concretely, we compute embeddings over selected columns and rank candidate matches using a combination of cosine similarity and lightweight syntactic similarity, retaining the top-
+p
+p
+matches per left tuple (default
+p
+=
+1
+p=1
+).
+Semantic column generation
+, inspired by
+Palimpzest
+(
+Liu et al., 2025a
+)
+, adds a column to an intermediate table, where the LLM synthesizes values conditioned on a subset of existing columns.
+•
+Query Executor.
+Although relational and semantic operators can be composed arbitrarily,
+Materializer
+may also define custom SQL queries and persist the resulting relations as intermediate tables. This provides additional flexibility while avoiding the brittleness of unrestricted code generation.
+•
+Python Executor.
+This allows
+Materializer
+to generate arbitrary Python code over retrieved and intermediate tables, with access to the DB service APIs (e.g.,
+execute_query()
+). While maximally expressive, this action is more error-prone than operator-based actions and is therefore used only when the required transformation cannot be expressed using relational, semantic, or query-based operators.
+ProvenanceGraph
+records all transformations performed by
+Materializer
+. Each node corresponds to a transformation (e.g., join), and edges encode data dependencies between transformations and relations. Retrieved tables are represented as nodes as well. Topologically sorting the graph yields a complete derivation of how
+𝒯
+\mathcal{T}
+is materialized from the retrieved tables.
+5.3.
+Retriever
+Retriever
+provides a unified interface for all retrieval mechanisms used by
+Pneuma-Seeker
+. Both
+Conductor
+and
+Materializer
+may issue up to
+q
+q
+retrieval queries at once (default
+q
+=
+3
+q=3
+) to obtain the top-
+k
+k
+relevant data items per query.
+Pneuma-Retriever
+.
+The main retrieval mechanism in
+Retriever
+is
+Pneuma-Retriever
+, which retrieves the top-
+k
+k
+relevant tables (default
+k
+=
+10
+k=10
+) for a given question. We leverage
+Pneuma
+(
+Balaka et al., 2025
+)
+, a state-of-the-art table discovery system. In its offline stage, it summarizes table schemas in combination with sample rows to capture table semantics for discovery.
+However, such coarse summaries miss cell-level details. We therefore augment schema-level retrieval with a content-aware stage inspired by
+Octopus
+(
+Li and Galhotra, 2026
+)
+. Given a question, we prompt the LLM to extract entities likely to appear verbatim in tables, perform a global scan for these strings across all tables using case-insensitive regular expressions, and score matches in column names and cell values. Raw counts are damped by
+log
+⁡
+(
+1
++
+tf
+)
+\log(1+\mathrm{tf})
+and normalized per keyword. Final relevance scores combine the normalized content scores with
+Pneuma
+’s retrieval scores.
+Pneuma-Retriever
+further supports enumeration queries over table identifiers matching a regular expression (e.g.,
+water_body_
+testing_\d{4}
+) after retrieving
+water_body_testing_2020
+), addressing limitations of top-
+k
+k
+retrieval when many tables share schemas but differ in key attributes such as year or location.
+Other retrieval mechanisms include:
+•
+Knowledge Store.
+Inspired by prior work (e.g.,
+(
+Park et al., 2021
+;
+Liu et al., 2025b
+;
+Urban et al., 2025
+)
+), the system captures generalizable knowledge from user interactions and indexes it for reuse, complementing instance-level retrieval with accumulated domain knowledge.
+•
+Web Search.
+Retrieve data from the web using search APIs.
+•
+Web Crawl.
+Crawl user-specified web pages if permitted.
+Extensibility.
+Retriever
+exposes a uniform interface over heterogeneous retrieval mechanisms and is invoked by both
+Conductor
+and
+Materializer
+as part of dynamic planning. New retrieval backends can be integrated by implementing this interface, allowing
+Retriever
+to evolve as new data sources, indexing strategies, or retrieval mechanisms become available.
+5.4.
+DBService
+DBService
+provides query execution and persistent storage for system state, including
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. To support multiple users and concurrent chats, each user–chat pair is assigned a separate workspace database. Using
+DuckDB
+(
+Raasveldt and Mühleisen, 2019
+)
+, each workspace corresponds to a distinct
+workspace.db
+file, isolating sessions and localizing transaction failures. Datasets can either be ingested into the system as their own DuckDB database files (e.g.,
+biomedical.db
+) or remain in external formats such as CSV or Parquet, or even in external databases like PostgreSQL via a connector. In all cases,
+DBService
+can leverage DuckDB’s direct query on files or the
+ATTACH
+feature to connect these datasets to workspaces, allowing queries across local or external data sources seamlessly.
+5.5.
+LMService
+LMService
+provides access to LLMs and embedding models through a unified interface, allowing new models to be added without modifying the core system. We currently support OpenAI and Azure OpenAI endpoints. Azure deployment is used for internal use cases at our university due to data governance constraints.
+6.
+Validating
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+: Two Examples
+We study whether exposing
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+helps users converge from an initially vague, underspecified
+ℐ
++
+\mathcal{I}^{+}
+to
+ℐ
+∗
+\mathcal{I}^{*}
+, i.e., whether
+Pneuma-Seeker
+meets
+R2 and R3
+. Measuring such convergence quantitatively is inherently challenging, as it involves user interpretation, hypothesis refinement, and feedback grounded in the system’s natural-language output and
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. We instead show the value of
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+qualitatively.
+Scenario and Questions.
+We use a real-world procurement dataset from our university, extracted from
+JAGGAER
+,
+6
+6
+6
+https://www.jaggaer.com
+a widely used procurement platform in U.S. higher education. The dataset contains 41 tables and has a size of 15 GB. In addition, we include a FY2025 purchase order table extracted from an
+Oracle
+database (7 MB). Based on discussions with the procurement office at our university, we identify representative analytical questions that reflect information needs. We treat the original questions as
+ℐ
+∗
+\mathcal{I}^{*}
+and manually construct more underspecified versions to simulate
+ℐ
++
+\mathcal{I}^{+}
+.
+•
+ℐ
++
+\mathcal{I}^{+}
+:
+Do hazardous materials exhibit higher rates of post-purchase order execution friction?
+(
+ℐ
+∗
+\mathcal{I}^{*}
+:
+Which categories of hazardous materials are associated with significantly higher rates of post-purchase order execution friction?
+)
+•
+ℐ
++
+\mathcal{I}^{+}
+:
+Did FY2025 reflect a structural shift in purchase order volume and value per purchase order?
+(
+ℐ
+∗
+\mathcal{I}^{*}
+:
+Compared to FY2024, did FY2025 exhibit a statistically significant change in purchase order volume and average order value, indicating a structural shift in procurement behavior?
+)
+For each
+ℐ
++
+\mathcal{I}^{+}
+, we illustrate how access to
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+helps users refine
+ℐ
++
+\mathcal{I}^{+}
+. We compare two conditions: (i) providing only
+Pneuma-Seeker
+’s natural-language answer and (ii) providing both the natural-language answer and the corresponding
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. We qualitatively examine how the availability of
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+changes the specificity, correctness, and usefulness of the resulting refinements.
+Question 1.
+For the first
+ℐ
++
+\mathcal{I}^{+}
+, the system responds by (1) stating assumptions, such as using
+supplier_acknowledgement_status
+as a proxy for post-purchase execution friction (specifically, treating non-
+Accepted
+acknowledgements as friction), while noting that other manifestations of friction (e.g., shipment delays, returns, escalations) are not yet included; (2) reporting the number of purchase order lines with and without hazardous materials and the corresponding friction rates; and (3) suggesting follow-up actions such as refining the definition of friction, drilling into specific friction types or suppliers, or testing statistical significance.
+From the natural-language answer alone, users can infer at a high level that the notion of “friction” is only partially operationalized and that alternative proxies may exist. However, inspecting
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+reveals additional, concrete cues that are not apparent from the answer text. First, the sample rows shown in
+𝒯
+\mathcal{T}
+indicate that
+ack_status
+contains null values, suggesting that this attribute may be sparse or incomplete and therefore a noisy proxy for friction. This observation may prompt users to question the robustness of the reported rates and to consider alternative or complementary signals of execution friction.
+Second,
+𝒯
+\mathcal{T}
+exposes a column
+radio_hazmat_flag
+that is not mentioned in the natural-language answer. By examining
+S
+S
+, users can see that the system defines hazardous materials as those for which either
+is_hazardous_material
+or
+radio_hazmat_flag
+is true. This makes explicit that “hazardous material” is not operationalized as a single boolean attribute, but rather as a composite condition over multiple indicators. This, in turn, suggests that there may be additional subclasses or dimensions of hazardous materials (e.g., radioactive vs. non-radioactive) that warrant separate analysis.
+Together, these cues provide users with a more concrete mental model of how the system operationalizes abstract concepts such as “friction” and “hazardous materials.” This supports more targeted refinements of the
+ℐ
++
+\mathcal{I}^{+}
+(e.g., redefining friction, disaggregating hazardous material categories, or filtering out null-heavy attributes) and guides users toward the more specific
+ℐ
+∗
+\mathcal{I}^{*}
+. In this way,
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+acts as a scaffold for convergence: by exposing modeling assumptions and data idiosyncrasies, it helps users move from an underspecified
+ℐ
++
+\mathcal{I}^{+}
+toward a well-formed
+ℐ
+∗
+\mathcal{I}^{*}
+.
+Question 2.
+For the second
+ℐ
++
+\mathcal{I}^{+}
+, the system responds by reporting the purchase order volume and average value per purchase order for FY2024, FY2025, and FY2026 (partial), and interpreting the observed pattern as evidence of a structural shift toward substantially lower volume and higher-value orders beginning in FY2025. The response further notes caveats regarding the FY2025 data source, which originates from a special export feed, and suggests validating data coverage before drawing strong conclusions.
+From the natural-language answer alone, users receive a seemingly conclusive narrative: FY2025 reflects a pronounced structural shift in procurement behavior. However, inspecting
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+exposes concrete cues about the provenance and comparability of the underlying data that materially affect the validity of this conclusion. In particular,
+𝒯
+\mathcal{T}
+reveals that FY2025 statistics are computed from a separate target table (
+po_fy25
+), whereas historical figures are derived from a different table (
+po_hist
+). These tables differ in both schema and semantics, including the use of
+dispatch_date
+versus
+created_ts
+to define the fiscal year boundary, and
+ordered_amount
+_usd
+versus
+grand_total_usd
+as the measure of purchase order value. This makes explicit that the apparent shift may partially reflect differences in operational definitions rather than a genuine change in organizational behavior.
+Moreover, the presence of distinct primary identifiers (
+purchase_
+order_number
+in
+po_fy25
+versus
+po_id
+in
+po_hist
+) suggests potential differences in deduplication, aggregation, or filtering logic across the two tables. Together, these cues prompt users to consider alternative explanations for the observed volume drop and value increase, such as partial ingestion of FY2025 data or inconsistencies in which business event (order creation versus dispatch) anchors the fiscal year assignment.
+As a result, access to
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+shifts users from passively accepting a high-level narrative (“FY2025 exhibits a structural shift”) toward actively interrogating the methodological soundness of the comparison. This supports targeted refinements of the
+ℐ
++
+\mathcal{I}^{+}
+, such as harmonizing the definition of order value and fiscal-year assignment across tables, validating the coverage of the FY2025 export feed, or recomputing the statistics under consistent inclusion criteria. In contrast to the first example—where
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+primarily exposes alternative operationalizations of domain concepts (e.g., friction and hazardousness)—here
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+functions as a cue for assessing data validity and cross-source comparability, thereby guiding convergence toward a well-formed and testable
+ℐ
+∗
+\mathcal{I}^{*}
+.
+Summary of Results.
+Exposing
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+makes the system’s representation of
+ℐ
++
+\mathcal{I}^{+}
+explicit, enabling users to detect mismatches and cross-source inconsistencies that are not apparent from natural-language answers alone, thereby directly supporting
+R
+•
+‣
+2.3
+and
+R
+•
+‣
+2.3
+. By surfacing concrete modeling assumptions and schema-level cues,
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+enables users to iteratively refine underspecified
+ℐ
++
+\mathcal{I}^{+}
+into a well-formed
+ℐ
+∗
+\mathcal{I}^{*}
+, satisfying
+R
+•
+‣
+2.3
+. In contrast to manual procurement analytics workflows that require more coordination, these refinements are enabled interactively within minutes (
+R
+•
+‣
+2.3
+).
+7.
+Quantitative Evaluation
+In this section, we answer the following questions:
+•
+RQ1 (Answer Quality)
+: Does
+Pneuma-Seeker
+fulfill users’ information needs?
+•
+RQ2 (Cost and Scalability)
+: What cost–quality and scalability trade-offs does
+Pneuma-Seeker
+exhibit?
+•
+RQ3 (Microbenchmarks)
+: How do key design choices in
+Pneuma-Seeker
+shape the trade-offs between answer quality, runtime, memory usage, and retrieval coverage?
+Datasets.
+We evaluate
+Pneuma-Seeker
+on KramaBench
+(
+Lai et al., 2025
+)
+, a benchmark that includes six real-world datasets (Table
+1
+) spanning scientific, legal, and public domains. We filter the questions to retain only those that require reasoning over tabular data. We additionally preprocess several datasets (e.g., extracting CSVs from XLSX files) to standardize the input format across systems. All questions and processed tables are publicly available in our repository.
+7
+7
+7
+https://github.com/TheDataStation/pneuma-seeker
+Table 1
+.
+Dataset Characteristics and Benchmark Statistics
+Name
+#Tables
+#Cols
+‡
+#Rows
+‡
+Size (MB)
+#Q
+Archeology
+5
+16
+11,289
+5.90
+12
+Astronomy
+∗
+1,438
+29
+1,053
+313.87
+4
+Biomedical
+24
+43
+16,297
+76.96
+9
+Environment
+∗
+36
+10
+9,199
+29.45
+17
+Legal
+∗
+144
+3
+25
+0.20
+28
+Wildfire
+∗
+20
+14
+432,277
+1040
+18
+∗
+Filtered to include only questions that require tabular data.
+‡
+Average per table.
+We deliberately choose KramaBench because the questions are non-trivial and predominantly require multi-table integration. In contrast, many existing benchmarks (e.g., MMTU
+(
+Xing et al., 2025
+)
+, RADAR
+(
+Gu et al., 2025
+)
+, DataBench
+(
+Osés Grijalba et al., 2024
+)
+) primarily focus on single-table question answering with relatively simpler queries. While MultiTabQA
+(
+Pal et al., 2023
+)
+supports multi-table integration, its questions are simple. Similarly, TAG
+(
+Biswal et al., 2024
+)
+, which builds on BIRD
+(
+Li et al., 2024
+)
+, contains questions with incorrect annotations
+(
+Jin et al., 2026
+)
+. These issues make such benchmarks less suitable for evaluating precise, data-grounded question-answering over tables.
+Baselines.
+To contextualize our results, we compare
+Pneuma-Seeker
+against the following LLM-based baselines:
+•
+DS-Guru
+(
+Lai et al., 2025
+)
+: A system that instructs an LLM to decompose a question into subtasks, reason through each step, and synthesize Python code implementing the plan.
+•
+smolagents
+(
+Face, 2024
+)
+: An agentic baseline implemented using
+smolagents
+,
+8
+8
+8
+https://huggingface.co/docs/smolagents/en/index
+an open-source agent framework supporting tool calling and code-based reasoning. The agent is provided with tools to execute Python code, list available tables, and inspect schemas and sample rows (up to 5 rows per table).
+System Setup and Configurations.
+All experiments are conducted on a MacBook Air (M4) with 16 GB of RAM. The Python version is 3.12.12. The LLM and embedding models are OpenAI’s
+o3-2025-04-16
+and
+text-embedding-3-small
+, respectively. To ensure a fair comparison with the baselines, we disable Web Search, Web Crawl, and Knowledge Store in
+Pneuma-Seeker
+, and restrict all systems to operate solely over the provided local tables.
+7.1.
+RQ1: Answer Quality
+Here we assume the user has converged into
+ℐ
+∗
+\mathcal{I}^{*}
+(see Section
+6
+) and measure whether the system answers the question correctly, i.e., whether
+Pneuma-Seeker
+meets
+R1
+. Concretely, we treat each question in KramaBench as
+ℐ
+∗
+\mathcal{I}^{*}
+, and define
+answer quality
+as the proportion of correctly answered questions across the benchmark. For questions whose answers are sets or lists of values, we report the F1 score to account for partial correctness.
+Figure 2
+.
+Comparison of Answer Quality
+7.1.1.
+Overall Answer Quality
+As shown in Figure
+2
+(a),
+Pneuma-Seeker
+consistently achieves higher answer quality than the baselines, and is on par with
+smolagents
+on the Astronomy dataset. The performance gap between
+Pneuma-Seeker
+and the baselines is particularly pronounced on the Biomedical and Environment datasets. For example, on the Biomedical dataset,
+Pneuma-Seeker
+attains an answer quality of
+94.44
+%
+94.44\%
+, exceeding
+DS-Guru
+and
+smolagents
+by
+27.77
+27.77
+and
+38.88
+38.88
+percentage points, respectively.
+For
+DS-Guru
+, we limit the number of sampled rows per table to
+5
+5
+on the Biomedical dataset to ensure that the input fits within the LLM context window (200,000 tokens). On the Astronomy dataset, even when restricting the number of sampled rows per table to
+1
+1
+, the input still requires 986,955 tokens, far exceeding the context limit. We therefore omit
+DS-Guru
+on Astronomy.
+7.1.2.
+Value of Context Extraction
+We demonstrate the importance of micro context management for achieving high answer quality. Specifically, we ablate Context Extraction—the action implementing micro context management in
+Pneuma-Seeker
+—and comparing the answer quality of
+Pneuma-Seeker
+with and without this action.
+As shown in Figure
+2
+(b), enabling Context Extraction improves answer quality on
+4
+/
+5
+4/5
+datasets. Beyond the example in Section
+4.2
+, we highlight a representative failure example that arises without Context Extraction. Consider this query from the Archeology dataset:
+“What is the average latitude of capital cities? If there are more than one capital in a country, only count the latitude of the capital with the largest population. Round your answer to 4 decimal places.”
+The relevant table is
+worldcities
+with the following schema:
+[city,lat,lng,capital,...]
+Without Context Extraction,
+Conductor
+directly instantiates a filter predicate based on the surface form of the column name
+capital
+, implicitly assuming that any non-empty value in this column denotes a national capital. This leads to an incorrect predicate of the form
+capital IS NOT NULL AND capital <> ’’
+, which conflates national capitals with administrative and minor capitals. As a result, the query executes successfully, but it computes the statistic over a semantically incorrect population.
+With Context Extraction enabled,
+Conductor
+first inspects the empirical distribution of values in the
+capital
+column prior to defining
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. In this case, Context Extraction reveals that
+capital
+takes values in
+primary
+,
+admin
+,
+minor
+,
+NULL
+, where
+primary
+uniquely identifies national capitals. This observation grounds the subsequent query construction, yielding the correct predicate
+capital = ’primary’
+before applying the per-country max-pop-ulation selection and aggregation.
+Overall, Context Extraction explicitly nudges the LLM to make data-grounded decisions by inspecting actual table values. This directly conditions downstream processes (e.g., defining
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+) on empirical observations rather than implicit assumptions.
+7.1.3.
+Value of
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+In addition to helping transform
+ℐ
++
+\mathcal{I}^{+}
+into
+ℐ
+∗
+\mathcal{I}^{*}
+, the relational reification
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+impacts answer quality as well because it grounds the system’s behavior. We compare the answer quality of
+Pneuma-Seeker
+with and without
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. Specifically, without
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+,
+Conductor
+no longer defines or materializes
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+; instead, it relies on Context Extraction to directly synthesize an answer.
+As shown in Figure
+2
+(c),
+Pneuma-Seeker
+with
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+consistently achieves higher answer quality than without
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. We highlight a representative failure example that arises without
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+. Consider this query from the Legal dataset:
+“How many total Identity Theft reports were there in 2024 from cross-state Metropolitan Statistical Areas?”
+This requires consolidating identity theft data across all states in the U.S.
+Without
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+, the system attempts to generate an answer by reasoning over only the state-level tables it has retrieved, resulting in incomplete coverage. Some states are not included, leading to an underestimated total of 114,392 reports in our experiment.
+With
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+,
+Conductor
+defines
+𝒯
+\mathcal{T}
+as a single table
+identity_
+theft_msa_reports
+with schema:
+[state, metropolitan_area,
+num_of_reports]
+, and
+S
+S
+specifies the operations needed to consolidate, deduplicate, and sum the reports.
+Conductor
+invokes
+Materializer
+with the note to populate
+identity-
+_theft_msa_reports
+by UNION-ing all tables whose names match
+state_msa_identity_
+theft_data_*
+.
+Materializer
+ensures that all relevant tables are retrieved, so no state is omitted. Execution of
+S
+S
+produces the correct total of 243,377 reports as intended.
+Even without
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+, the system can still enumerate tables, but
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+explicitly encodes cues that guide correct materialization, ensuring that all relevant tables contribute to the final answer.
+7.2.
+RQ2: Cost and Scalability
+We compare the cost and scalability of
+Pneuma-Seeker
+against the baselines to study how
+Pneuma-Seeker
+meets
+R4
+. Specifically, we measure: (1) monetary cost for LLM inference, derived from input and output token usage,
+9
+9
+9
+According to OpenAI’s latest pricing as of February 27, 2026,
+o3-2025-04-16
+costs $2 per 1 million input tokens and $8 per 1 million output tokens.
+(2) runtime scalability as dataset size increases, and (3) the overall runtime of the system across datasets.
+7.2.1.
+Cost–Quality Trade-offs
+We derive monetary cost from token usage using the pricing of
+o3-2025-04-16
+and plot average LLM cost against answer quality in Figure
+3(a)
+.
+Pneuma-Seeker
+occupies most of the Pareto-optimal frontier, indicating that across many cost–quality trade-offs, it achieves state-of-the-art efficiency.
+We also report the average input and output token usage for LLM inference across datasets. As shown in Figure
+3(b)
+,
+DS-Guru
+consistently uses the fewest tokens.
+Pneuma-Seeker
+exhibits similar token usage to
+smolagents
+and is lower on 4 out of 6 datasets.
+(a)
+Average LLM Cost vs. Answer Quality
+(b)
+Average Input and Output Token Usage
+Figure 3
+.
+Cost–quality trade-offs and token usage across methods.
+7.2.2.
+Scalability
+We examine the performance profile of
+Pneuma-Seeker
+as dataset size increases. We evaluate runtime scalability using a subset of the procurement dataset introduced in Section
+7.1
+. Specifically, we use two tables corresponding to purchase order lines and item details, and vary the number of rows to construct datasets of increasing size: 224 MB, 608 MB, 1 GB, and 1.9 GB. The query remains fixed:
+“What is the grand total amount for purchase order lines that include green products?”
+As shown in Figure
+4
+,
+Pneuma-Seeker
+is comparable to
+smolagents
+, while
+DS-Guru
+eventually overtakes both systems at the 1 GB scale. At the 1 GB scale, for instance,
+Pneuma-Seeker
+spends 58.74 seconds on LLM inference and 0.37 seconds on non-LLM processing. In comparison,
+smolagents
+and
+DS-Guru
+spend 39.94 and 11.73 seconds on LLM inference, and 15.75 and 51.71 seconds on non-LLM processing, respectively.
+We observe that the runtime bottleneck of
+smolagents
+gradually shifts toward non-LLM processing as dataset size increases, exhibiting a trend similar to
+DS-Guru
+, though less extreme. In contrast, for
+Pneuma-Seeker
+, runtime remains dominated by LLM inference and does not grow visibly relative to non-LLM processing time. This highlights the importance of database-backed execution: even when memory pressure is partially controlled via batching, non-LLM processing overhead can dominate runtime when data are loaded and processed in memory.
+Figure 4
+.
+Scalability of Runtime
+7.2.3.
+Runtime
+While
+Pneuma-Seeker
+incurs higher runtime than
+DS-Guru
+on several datasets, this overhead primarily reflects the additional structured processing introduced by
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+, rather than inefficiencies in data access or execution. As shown in Table
+2
+,
+Pneuma-Seeker
+takes longer than
+DS-Guru
+but is competitive with
+smolagents
+: it is faster on three datasets and slower on three datasets. For example, on the Biomedical dataset,
+Pneuma-Seeker
+spends 60.94 seconds on LLM inference on average (
+σ
+=
+35.51
+\sigma=35.51
+), while
+smolagents
+spends 68.05 seconds on average (
+σ
+=
+49.07
+\sigma=49.07
+). In contrast,
+DS-Guru
+spends 29.86 seconds on average (
+σ
+=
+11.99
+\sigma=11.99
+).
+Across all systems, non-LLM running time is substantially lower than LLM inference time:
+Pneuma-Seeker
+,
+smolagents
+, and
+DS-Guru
+spend 4.55, 4.11, and 1.62 seconds on average, respectively (standard deviations: 1.56, 1.02, and 1.68).
+For both
+Pneuma-Seeker
+and
+smolagents
+, LLM inference dominates runtime, whereas for
+DS-Guru
+, the bottleneck shifts to non-LLM processing on the Wildfire dataset. In this case,
+DS-Guru
+spends 62.10 seconds (
+σ
+=
+9.79
+\sigma=9.79
+) on non-LLM time on average, compared to 27.92 seconds (
+σ
+=
+13.52
+\sigma=13.52
+) on LLM inference. This is because
+DS-Guru
+loads all rows of all tables into memory for processing. In contrast,
+smolagents
+implicitly prompts the LLM to process data in batches, while
+Pneuma-Seeker
+relies on database-backed execution and loads only sample rows into memory. This design substantially reduces non-LLM processing overhead and contributes to the scalability behavior observed in Figure
+4
+. As we further analyze in Section
+7.3.2
+, this overhead manifests primarily as increased runtime rather than increased memory footprint, reflecting a deliberate design trade-off in
+Pneuma-Seeker
+.
+Table 2
+.
+LLM and non-LLM Runtime (s) Breakdown
+Dataset
+Baseline
+LLM
+Non-LLM
+Avg
+StdDev
+Avg
+StdDev
+Archeology
+DS-Guru
+25.15
+12.99
+0.61
+0.23
+smolagents
+76.88
+60.68
+4.31
+1.44
+Pneuma-Seeker
+72.83
+33.11
+2.15
+0.89
+Astronomy
+smolagents
+114.44
+41.39
+8.34
+7.53
+Pneuma-Seeker
+65.53
+16.98
+5.40
+0.78
+Biomedical
+DS-Guru
+29.86
+11.99
+1.62
+1.68
+smolagents
+68.05
+49.07
+4.11
+1.02
+Pneuma-Seeker
+60.94
+35.51
+4.55
+1.56
+Environment
+DS-Guru
+40.25
+26.69
+5.85
+14.69
+smolagents
+73.96
+37.13
+3.96
+0.43
+Pneuma-Seeker
+126.08
+58.36
+3.62
+0.81
+Legal
+DS-Guru
+32.16
+16.50
+0.78
+0.23
+smolagents
+76.48
+32.30
+3.73
+0.44
+Pneuma-Seeker
+106.00
+48.34
+2.92
+0.59
+Wildfire
+DS-Guru
+27.92
+13.53
+62.10
+9.79
+smolagents
+68.64
+38.01
+4.34
+2.16
+Pneuma-Seeker
+94.41
+40.27
+3.36
+1.31
+7.3.
+RQ3: Microbenchmark
+We complement RQ1 and RQ2 with experiments designed to stress-test design trade-offs. These experiments analyze (i) the answer quality on a much weaker, non-reasoning LLM, (ii) memory behavior and runtime–memory trade-offs induced by
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+, and (iii) the retrieval recall of
+Pneuma-Seeker
+.
+7.3.1.
+Answer Quality with a Non-Reasoning LLM
+We replace the LLM with a much weaker, non-reasoning LLM,
+gpt-4.1-mini-20-
+25-04-14
+, and re-evaluate answer quality. We re-run all systems on all benchmarks besides Astronomy, since
+DS-Guru
+cannot run on it, then report the average answer quality across all datasets in Figure
+5
+. All systems experience degradation in answer quality with the non-reasoning LLM, but
+Pneuma-Seeker
+still achieves the highest answer quality:
+49.95
+%
+49.95\%
+, which is
+1.14
+1.14
+and
+12.61
+12.61
+percentage points higher than
+smolagents
+and
+DS-Guru
+, respectively.
+Figure 5
+.
+Answer Quality with a Non-Reasoning LLM
+7.3.2.
+Memory Usage and Runtime–Memory Trade-offs
+We study the feasibility of running the systems locally with limited memory (16 GB, in our case). Across datasets,
+Pneuma-Seeker
+exhibits relatively stable memory usage and is often comparable to or lower than the baselines.
+The largest discrepancy appears on the Wildfire dataset:
+DS-Guru
+loads all rows of all tables into memory and peaks at 5.3 GB, whereas
+smolagents
+and
+Pneuma-Seeker
+use only 186 MB and 149 MB, respectively. Similar trends hold on other datasets: for example, on Biomedical,
+DS-Guru
+peaks at 567 MB, while
+smolagents
+and
+Pneuma-Seeker
+use 135 MB and 186 MB; on Legal,
+Pneuma-Seeker
+peaks at 116 MB, compared to 43 MB for
+smolagents
+and 25 MB for
+DS-Guru
+. Overall, the relative memory differences across the remaining datasets follow similar patterns.
+Scalability.
+We also compare memory usage on the scalability dataset (Section
+7.2.2
+). At larger scales,
+Pneuma-Seeker
+consistently consumes the least memory. For example, at the 1 GB scale,
+Pneuma-Seeker
+uses 135 MB, whereas
+DS-Guru
+and
+smolagents
+use 4.4 GB and 916 MB, respectively (Figure
+6(a)
+).
+We observe irregularities in the runtime and memory usage of
+smolagents
+when scaling from 1 GB to 1.9 GB. The observed reduction in runtime and memory usage at 1.9 GB is due to an internal optimization triggered by data-integrity errors. Specifically, the smaller dataset was processed using a standard, resource-intensive loading strategy, whereas the larger dataset contained noisy strings that caused the agent to switch to a more selective pipeline. This alternative pipeline performs column pruning and hash-based filtering, resulting in lower memory usage and computational overhead than the generic processing strategy applied to the smaller dataset.
+(a)
+Scalability of Memory Usage
+(b)
+Memory Usage vs. Runtime
+(c)
+Retrieval Recall of
+Pneuma-Retriever
+Figure 6
+.
+Scalability, memory–runtime trade-offs, and retrieval recall.
+Runtime vs. Memory Usage.
+Overall, as shown in Figure
+6(b)
+,
+Pneuma-Seeker
+tends to operate in a low-memory but higher-runtime regime.
+smolagents
+is also low-memory and, on average, exhibits lower runtime than
+Pneuma-Seeker
+.
+DS-Guru
+achieves low runtime and memory usage only when the dataset is small.
+This reflects a fundamental trade-off: introducing
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+requires
+Pneuma-Seeker
+to perform additional structured processing, whereas the baselines attempt to directly synthesize answers. The additional overhead introduced by
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+manifests primarily as increased runtime rather than increased memory footprint. This cost is compensated by the improvements in answer accuracy and explainability enabled by
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+, aligning with
+R
+•
+‣
+2.3
+and
+R
+•
+‣
+2.3
+.
+7.3.3.
+Retrieval Recall as an Upper Bound on Answer Quality
+The baselines have access to all tables in each dataset, whereas
+Pneuma-Seeker
+relies on tables retrieved by
+Pneuma-Retriever
+. Consequently, the answer quality of
+Pneuma-Seeker
+is upper-bounded by the recall of
+Pneuma-Retriever
+: if a required table is not retrieved,
+Pneuma-Seeker
+cannot utilize it downstream. To isolate and quantify the impact of retrieval on end-to-end answer quality, we explicitly evaluate the recall of
+Pneuma-Retriever
+and compare it against
+Pneuma
+(
+Balaka et al., 2025
+)
+and
+Pneuma
++ content search (Section
+5.3
+). We note that
+Pneuma-Retriever
+corresponds to
+Pneuma
+augmented with content search and table enumeration.
+As shown in Figure
+6(c)
+,
+Pneuma
++ content search slightly improves recall over
+Pneuma
+on the Legal and Wildfire datasets, by
+3
+%
+3\%
+and
+5
+%
+5\%
+, respectively. In contrast,
+Pneuma-Retriever
+achieves
+100
+%
+100\%
+recall on all datasets except Legal (
+94
+%
+94\%
+). The recall gap between
+Pneuma-Retriever
+and the other retrievers is particularly pronounced on the Astronomy, Environment, and Legal datasets.
+The primary source of this discrepancy is that
+Pneuma-Retriever
+allows
+Conductor
+and
+Materializer
+to further enumerate tables with similar names using regex-based matching, which is not captured by standard top-
+k
+k
+retrieval. For example, the query
+“Does there exist a metropolitan area in which the number of reports of identity theft exceeded the number of reports of fraud in 2024?”
+requires retrieving 104 tables corresponding to fraud and identity-theft reports across all U.S. states. Top-
+k
+k
+retrievers systematically under-retrieve in such settings.
+8.
+Related Work
+We first introduced an early version of
+Pneuma-Seeker
+as part of the Pneuma project
+(
+Balaka and Fernandez, 2026
+)
+. The system has since evolved along three axes: (i) using Python script (
+S
+S
+) rather than SQL queries (
+Q
+Q
+) to support more expressive computation over
+𝒯
+\mathcal{T}
+; (ii) introducing
+DBService
+to enable database-backed actions to improve scalability; and (iii) adding Context Extraction as an action for micro-context management, altering how
+Conductor
+and
+Materializer
+interact with retrieved tables by surfacing doubts and questioning assumptions when defining
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+and materializing
+𝒯
+\mathcal{T}
+. We next situate
+Pneuma-Seeker
+within three related research areas.
+Sensemaking and Exploratory Search.
+Sensemaking and exploratory search frame analysis as iterative processes of foraging, hypothesis formation, and synthesis with feedback and intermediate representations
+(
+Pirolli and Card, 2005
+;
+Marchionini, 2006
+;
+Hearst, 2009
+)
+. This perspective motivates
+Pneuma-Seeker
+’s framing of tabular QA as interactive sensemaking rather than one-shot query answering. Recent mixed-initiative systems such as
+DocWrangler
+(
+Shankar et al., 2025
+)
+,
+ScholarMate
+(
+Ye et al., 2025
+)
+, and
+Sensecape
+(
+Suh et al., 2023
+)
+similarly support iterative refinement, inspection, and evolving information needs.
+Agentic Systems for Tabular Question Answering (QA).
+Recent LLM-based systems move beyond single-step retrieval or end-to-end generation (e.g., RAG
+(
+Lewis et al., 2020
+)
+) toward agentic architectures that integrate planning, tool use, and iterative reasoning
+(
+Yue, 2025
+)
+. These systems implement reason–act–reflect loops (e.g., ReAct
+(
+Yao et al., 2023
+)
+) and orchestrate tools such as database queries, code execution, and web search
+(
+Saadaoui and Alonso, 2025
+;
+Wang and Yuan, 2025
+)
+. In Tabular QA,
+ReAcTable
+(
+Zhang et al., 2024
+)
+,
+Chain-of-Table
+(
+Wang et al., 2024
+)
+, and
+TableZoomer
+(
+Xiong et al., 2025
+)
+leverage intermediate programs and iterative validation, but assume small curated table sets or single-table reasoning. In contrast,
+Pneuma-Seeker
+couples agentic reasoning with large-scale data discovery and multi-table reasoning.
+Tabular Data Discovery.
+Tabular data discovery spans metadata-driven search, view identification, schema matching, and natural-language interfaces. Some systems emphasize structured discovery and joinability analysis, such as
+Aurum
+(
+Castro Fernandez et al., 2018a
+)
+,
+Auctus
+(
+Castelo et al., 2021
+)
+,
+Ver
+(
+Gong et al., 2023
+)
+, and FREYJA
+(
+Maynou et al., 2026
+)
+. Others incorporate learned representations for natural-language and multi-table discovery, such as
+Solo
+(
+Wang and Castro Fernandez, 2023
+)
+and
+Octopus
+(
+Li and Galhotra, 2026
+)
+. Our prior system,
+Pneuma
+(
+Balaka et al., 2025
+)
+, underlies the discovery component in
+Pneuma-Seeker
+; here we extend it to prioritize recall beyond top-
+k
+k
+to support multi-table reasoning, as downstream agentic performance is bounded by discovery completeness.
+9.
+Conclusion
+This paper presented relational reification and a system,
+Pneuma-Seeker
+, that implements this idea within an LLM-powered agentic system to help users articulate their information needs and answer them. Our results show that representing evolving intent as an explicit
+(
+𝒯
+,
+S
+)
+(\mathcal{T},S)
+pair improves answer quality while enabling inspectability. Taken together, these findings suggest that relational reification is a practical foundation for trustworthy LLM-mediated data discovery and preparation.
+References
+Abedjan
+et al.
+(2025)
+Z. Abedjan, M. Esmailoghli, and S. Galhotra
+Data discovery in data lakes: operations, indexes, systems
+.
+Proc. VLDB Endow.
+18
+(
+12
+),
+pp. 5455–5459
+.
+External Links:
+ISSN 2150-8097
+,
+Link
+,
+Document
+Cited by:
+§2.2
+.
+Balaka
+et al.
+(2025)
+M. I. L. Balaka, D. Alexander, Q. Wang, Y. Gong, A. Krisnadhi, and R. Castro Fernandez
+Pneuma: leveraging llms for tabular data representation and retrieval in an end-to-end system
+.
+Proc. ACM Manag. Data
+3
+(
+3
+).
+External Links:
+Link
+,
+Document
+Cited by:
+§5.3
+,
+§7.3.3
+,
+§8
+.
+Balaka and Fernandez (2026)
+M. I. L. Balaka and R. C. Fernandez
+The pneuma project: reifying information needs as relational schemas to automate discovery, guide preparation, and align data with intent
+.
+In
+Proceedings of the Conference on Innovative Database Research (CIDR)
+,
+Cited by:
+§8
+.
+Belkin (1980)
+N.J. Belkin
+Anomalous states of knowledge as a basis for information retrieval
+.
+Canadian Journal of Information Science
+5
+(
+1
+),
+pp. 133–143
+.
+Cited by:
+§2.1
+.
+Biswal
+et al.
+(2024)
+A. Biswal, L. Patel, S. Jha, A. Kamsetty, S. Liu, J. E. Gonzalez, C. Guestrin, and M. Zaharia
+Text2SQL is not enough: unifying ai and databases with tag
+.
+External Links:
+2408.14717
+,
+Link
+Cited by:
+§7
+.
+Castelo
+et al.
+(2021)
+S. Castelo, R. Rampin, A. Santos, A. Bessa, F. Chirigati, and J. Freire
+Auctus: a dataset search engine for data discovery and augmentation
+.
+Proc. VLDB Endow.
+14
+(
+12
+),
+pp. 2791–2794
+.
+External Links:
+ISSN 2150-8097
+,
+Link
+,
+Document
+Cited by:
+§8
+.
+Castro Fernandez
+et al.
+(2018a)
+R. Castro Fernandez, Z. Abedjan, F. Koko, G. Yuan, S. Madden, and M. Stonebraker
+Aurum: a data discovery system
+.
+In
+2018 IEEE 34th International Conference on Data Engineering (ICDE)
+,
+Vol.
+,
+pp. 1001–1012
+.
+External Links:
+Document
+Cited by:
+§2.2
+,
+§8
+.
+Castro Fernandez
+et al.
+(2018b)
+R. Castro Fernandez, E. Mansour, A. A. Qahtan, A. Elmagarmid, I. Ilyas, S. Madden, M. Ouzzani, M. Stonebraker, and N. Tang
+Seeping semantics: linking datasets using word embeddings for data discovery
+.
+In
+2018 IEEE 34th International Conference on Data Engineering (ICDE)
+,
+Vol.
+,
+pp. 989–1000
+.
+External Links:
+Document
+Cited by:
+2nd item
+.
+Castro Fernandez (2025)
+R. Castro Fernandez
+What is the value of data? a theory and systematization
+.
+ACM / IMS J. Data Sci.
+2
+(
+1
+).
+External Links:
+Link
+,
+Document
+Cited by:
+§2.1
+,
+§2.1
+.
+Du
+et al.
+(2025)
+Y. Du, M. Tian, S. Ronanki, S. Rongali, S. B. Bodapati, A. Galstyan, A. Wells, R. Schwartz, E. A. Huerta, and H. Peng
+Context length alone hurts LLM performance despite perfect retrieval
+.
+In
+Findings of the Association for Computational Linguistics: EMNLP 2025
+,
+C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.)
+,
+Suzhou, China
+,
+pp. 23281–23298
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-335-7
+Cited by:
+§4.1
+.
+Face (2024)
+H. Face
+Smolagents: a lightweight library to build agents that write and run python code
+.
+GitHub
+.
+Note:
+https://github.com/huggingface/smolagents
+Accessed: 2026-02-28
+Cited by:
+2nd item
+.
+Fernandez (2025)
+R. C. Fernandez
+Data discovery is a socio‑technical problem: the path from document identification and retrieval to data ecology
+.
+In
+IEEE Computer Society Data Engineering Bulletin
+,
+Note:
+Preprint available at Semantic Scholar (CorpusID:281957015)
+External Links:
+Link
+Cited by:
+§2.2
+.
+Gong
+et al.
+(2023)
+Y. Gong, Z. Zhu, S. Galhotra, and R. C. Fernandez
+Ver: view discovery in the wild
+.
+In
+2023 IEEE 39th International Conference on Data Engineering (ICDE)
+,
+Vol.
+,
+pp. 503–516
+.
+External Links:
+Document
+Cited by:
+§8
+.
+Gu
+et al.
+(2025)
+K. Gu, Z. Zhang, K. Lin, Y. Zhang, A. Paruchuri, H. Yu, M. Kazemi, K. Ayush, A. A. Heydari, M. A. Xu, G. Narayanswamy, Y. Liu, M. Poh, Y. Yang, M. Malhotra, S. Patel, H. Palangi, X. Xu, D. McDuff, T. Althoff, and X. Liu
+RADAR: benchmarking language models on imperfect tabular data
+.
+External Links:
+2506.08249
+,
+Link
+Cited by:
+§7
+.
+Hai
+et al.
+(2023)
+R. Hai, C. Koutras, C. Quix, and M. Jarke
+Data lakes: a survey of functions and systems
+.
+IEEE Transactions on Knowledge and Data Engineering
+35
+(
+12
+),
+pp. 12571–12590
+.
+External Links:
+Document
+Cited by:
+§2.2
+.
+Halevy
+et al.
+(2016)
+A. Halevy, F. Korn, N. F. Noy, C. Olston, N. Polyzotis, S. Roy, and S. E. Whang
+Goods: organizing google’s datasets
+.
+SIGMOD
+.
+Cited by:
+§2.2
+.
+Hearst (2009)
+M. A. Hearst
+Search user interfaces
+.
+Cambridge University Press
+.
+Cited by:
+§8
+.
+Jahnke and Otto (2023)
+N. Jahnke and B. Otto
+Data catalogs in the enterprise: applications and integration
+.
+Datenbank-Spektrum
+23
+(
+2
+),
+pp. 89–96
+.
+External Links:
+ISSN 1610-1995
+,
+Document
+,
+Link
+Cited by:
+§2.2
+.
+Jin
+et al.
+(2026)
+T. Jin, Y. Choi, Y. Zhu, and D. Kang
+Text-to-sql benchmarks are broken: an in-depth analysis of annotation errors
+.
+In
+Proceedings of the 16th Annual Conference on Innovative Data Systems Research (CIDR ’26)
+,
+Chaminade, USA
+.
+External Links:
+Link
+Cited by:
+§7
+.
+Kim
+et al.
+(2024)
+S. Kim, W. Shin, and H. Kim
+Predicting online customer purchase: the integration of customer characteristics and browsing patterns
+.
+Decision Support Systems
+177
+,
+pp. 114105
+.
+External Links:
+ISSN 0167-9236
+,
+Document
+,
+Link
+Cited by:
+§2.2
+.
+Kojima
+et al.
+(2022)
+T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa
+Large language models are zero-shot reasoners
+.
+In
+Proceedings of the 36th International Conference on Neural Information Processing Systems
+,
+NIPS ’22
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713871088
+Cited by:
+§2.2
+.
+Lai
+et al.
+(2025)
+E. Lai, G. Vitagliano, Z. Zhang, O. Chabra, S. Sudhir, A. Zeng, A. A. Zabreyko, C. Li, F. Kossmann, J. Ding, J. Chen, M. Markakis, M. Russo, W. Wang, Z. Wu, M. J. Cafarella, L. Cao, S. Madden, and T. Kraska
+KramaBench: a benchmark for ai systems on data-to-insight pipelines over data lakes
+.
+External Links:
+2506.06541
+,
+Link
+Cited by:
+§4.2
+,
+1st item
+,
+§7
+.
+Lewis
+et al.
+(2020)
+P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. Küttler, M. Lewis, W. Yih, T. Rocktäschel, S. Riedel, and D. Kiela
+Retrieval-augmented generation for knowledge-intensive nlp tasks
+.
+In
+Proceedings of the 34th International Conference on Neural Information Processing Systems
+,
+NIPS ’20
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713829546
+Cited by:
+§8
+.
+Li
+et al.
+(2024)
+S. Li, X. Ning, L. Wang, T. Liu, X. Shi, S. Yan, G. Dai, H. Yang, and Y. Wang
+Can llm already serve as a database interface? a big bench for large-scale database grounded text-to-sqls
+.
+In
+Proceedings of the 37th International Conference on Neural Information Processing Systems (NIPS ’23)
+,
+External Links:
+Document
+Cited by:
+§7
+.
+Li and Galhotra (2026)
+W. Li and S. Galhotra
+Octopus: a lightweight entity-aware system for multi-table data discovery and cell-level retrieval
+.
+External Links:
+2601.02304
+,
+Link
+Cited by:
+§5.3
+,
+§8
+.
+Liu
+et al.
+(2025a)
+C. Liu, M. Russo, M. Cafarella, L. Cao, P. B. Chen, Z. Chen, M. Franklin, T. Kraska, S. Madden, R. Shahout, and G. Vitagliano
+Palimpzest: optimizing ai-powered analytics with declarative query processing
+.
+In
+Proceedings of the Conference on Innovative Database Research (CIDR)
+,
+Cited by:
+2nd item
+.
+Liu
+et al.
+(2025b)
+Y. Liu, M. J. Zhang, and E. Choi
+User feedback in human-LLM dialogues: a lens to understand users but noisy as a learning signal
+.
+In
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing
+,
+C. Christodoulopoulos, T. Chakraborty, C. Rose, and V. Peng (Eds.)
+,
+Suzhou, China
+,
+pp. 2666–2681
+.
+External Links:
+Link
+,
+Document
+,
+ISBN 979-8-89176-332-6
+Cited by:
+1st item
+.
+Marchionini (2006)
+G. Marchionini
+Exploratory search: from finding to understanding
+.
+Commun. ACM
+49
+(
+4
+),
+pp. 41–46
+.
+External Links:
+ISSN 0001-0782
+,
+Link
+,
+Document
+Cited by:
+§8
+.
+Maynou
+et al.
+(2026)
+M. Maynou, S. Nadal, R. Panadero, J. Flores, O. Romero, and A. Queralt
+FREYJA: efficient join discovery in data lakes
+.
+IEEE Transactions on Knowledge and Data Engineering
+.
+Cited by:
+§8
+.
+Numajiri and Hayashi (2024)
+H. Numajiri and T. Hayashi
+Analysis on open data as a foundation for data-driven research
+.
+Scientometrics
+129
+(
+10
+),
+pp. 6315–6332
+.
+External Links:
+ISSN 1588-2861
+,
+Document
+,
+Link
+Cited by:
+§2.2
+.
+Osés Grijalba
+et al.
+(2024)
+J. Osés Grijalba, L. A. Ureña-López, E. Martínez Cámara, and J. Camacho-Collados
+Question answering over tabular data with DataBench: a large-scale empirical evaluation of LLMs
+.
+In
+Proceedings of the 2024 Joint International Conference on Computational Linguistics, Language Resources and Evaluation (LREC-COLING 2024)
+,
+N. Calzolari, M. Kan, V. Hoste, A. Lenci, S. Sakti, and N. Xue (Eds.)
+,
+Torino, Italia
+,
+pp. 13471–13488
+.
+External Links:
+Link
+Cited by:
+§7
+.
+Pal
+et al.
+(2023)
+V. Pal, A. Yates, E. Kanoulas, and M. de Rijke
+MultiTabQA: generating tabular answers for multi-table question answering
+.
+In
+Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)
+,
+A. Rogers, J. Boyd-Graber, and N. Okazaki (Eds.)
+,
+Toronto, Canada
+,
+pp. 6322–6334
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§7
+.
+Park
+et al.
+(2021)
+S. Park, H. Li, A. Patel, S. Mudgal, S. Lee, Y. Kim, S. Matsoukas, and R. Sarikaya
+A scalable framework for learning from implicit user feedback to improve natural language understanding in large-scale conversational AI systems
+.
+In
+Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing
+,
+M. Moens, X. Huang, L. Specia, and S. W. Yih (Eds.)
+,
+Online and Punta Cana, Dominican Republic
+,
+pp. 6054–6063
+.
+External Links:
+Link
+,
+Document
+Cited by:
+1st item
+.
+Patel
+et al.
+(2024)
+L. Patel, S. Jha, M. Pan, H. Gupta, P. Asawa, C. Guestrin, and M. Zaharia
+Semantic operators: a declarative model for rich, ai-based data processing
+.
+External Links:
+Link
+Cited by:
+2nd item
+.
+Pirolli and Card (2005)
+P. Pirolli and S. Card
+The sensemaking process and leverage points for analyst technology as identified through cognitive task analysis
+.
+In
+Proceedings of the International Conference on Intelligence Analysis
+,
+McLean, VA
+.
+Cited by:
+§8
+.
+Raasveldt and Mühleisen (2019)
+M. Raasveldt and H. Mühleisen
+DuckDB: an embeddable analytical database
+.
+In
+Proceedings of the 2019 International Conference on Management of Data
+,
+SIGMOD ’19
+,
+New York, NY, USA
+,
+pp. 1981–1984
+.
+External Links:
+ISBN 9781450356435
+,
+Link
+,
+Document
+Cited by:
+§5.4
+.
+Saadaoui and Alonso (2025)
+S. Saadaoui and E. Alonso
+Coordinated llm multi-agent systems for collaborative question-answer generation
+.
+Knowledge-Based Systems
+330
+,
+pp. 114627
+.
+External Links:
+ISSN 0950-7051
+,
+Document
+,
+Link
+Cited by:
+§8
+.
+Shankar
+et al.
+(2025)
+S. Shankar, B. Chopra, M. Hasan, S. Lee, B. Hartmann, J. Hellerstein, A. Parameswaran, and E. Wu
+Steering semantic data processing with docwrangler
+.
+In
+Proceedings of the 38th Annual ACM Symposium on User Interface Software and Technology
+,
+UIST ’25
+,
+New York, NY, USA
+.
+External Links:
+ISBN 9798400720376
+,
+Link
+,
+Document
+Cited by:
+§8
+.
+Suh
+et al.
+(2023)
+S. Suh, B. Min, S. Palani, and H. Xia
+Sensecape: enabling multilevel exploration and sensemaking with large language models
+.
+In
+Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology
+,
+UIST ’23
+,
+New York, NY, USA
+.
+External Links:
+ISBN 9798400701320
+,
+Link
+,
+Document
+Cited by:
+§8
+.
+Urban
+et al.
+(2025)
+M. Urban, J. Ding, D. Kernert, K. Vaidya, and T. Kraska
+Utilizing past user feedback for more accurate text-to-sql
+.
+In
+Proceedings of the Workshop on Human-In-the-Loop Data Analytics
+,
+HILDA ’25
+,
+New York, NY, USA
+.
+External Links:
+ISBN 9798400719592
+,
+Link
+,
+Document
+Cited by:
+1st item
+.
+Wang and Castro Fernandez (2023)
+Q. Wang and R. Castro Fernandez
+Solo: data discovery using natural language questions via a self-supervised approach
+.
+Proc. ACM Manag. Data
+1
+(
+4
+).
+External Links:
+Link
+,
+Document
+Cited by:
+§8
+.
+Wang
+et al.
+(2024)
+Z. Wang, H. Zhang, C. Li, J. M. Eisenschlos, V. Perot, Z. Wang, L. Miculicich, Y. Fujii, J. Shang, C. Lee, and T. Pfister
+Chain-of-table: evolving tables in the reasoning chain for table understanding
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§8
+.
+Wang and Yuan (2025)
+Z. Wang and B. Yuan
+L-mars: legal multi-agent workflow with orchestrated reasoning and agentic search
+.
+External Links:
+2509.00761
+,
+Link
+Cited by:
+§8
+.
+Wei
+et al.
+(2022)
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. H. Chi, Q. V. Le, and D. Zhou
+Chain-of-thought prompting elicits reasoning in large language models
+.
+In
+Proceedings of the 36th International Conference on Neural Information Processing Systems
+,
+NIPS ’22
+,
+Red Hook, NY, USA
+.
+External Links:
+ISBN 9781713871088
+Cited by:
+§2.2
+.
+Xing
+et al.
+(2025)
+J. Xing, Y. He, M. Zhou, H. Dong, S. Han, L. Chen, D. Zhang, S. Chaudhuri, and H. V. Jagadish
+MMTU: a massive multi-task table understanding and reasoning benchmark
+.
+External Links:
+2506.05587
+,
+Link
+Cited by:
+§7
+.
+Xiong
+et al.
+(2025)
+S. Xiong, Z. He, Z. He, Y. Zhao, C. Pan, J. Zhang, S. Song, and Y. Li
+TableZoomer: a collaborative agent framework for large-scale table question answering
+.
+Vicinagearth
+2
+(
+1
+),
+pp. 11
+.
+External Links:
+ISSN 3005-060X
+,
+Document
+,
+Link
+Cited by:
+§8
+.
+Yao
+et al.
+(2023)
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao
+ReAct: synergizing reasoning and acting in language models
+.
+External Links:
+2210.03629
+,
+Link
+Cited by:
+§2.2
+,
+§8
+.
+Ye
+et al.
+(2025)
+R. Ye, P. Lee, M. Varona, O. Huang, and C. Nobre
+ScholarMate: a mixed-initiative tool for qualitative knowledge work and information sensemaking
+.
+In
+Adjunct Proceedings of the 4th Annual Symposium on Human-Computer Interaction for Work
+,
+CHIWORK ’25 Adjunct
+,
+New York, NY, USA
+.
+External Links:
+ISBN 9798400713972
+,
+Link
+,
+Document
+Cited by:
+§8
+.
+Yue (2025)
+M. Yue
+A survey of large language model agents for question answering
+.
+External Links:
+2503.19213
+,
+Link
+Cited by:
+§8
+.
+Zhang
+et al.
+(2024)
+Y. Zhang, J. Henkel, A. Floratou, J. Cahoon, S. Deep, and J. M. Patel
+ReAcTable: enhancing react for table question answering
+.
+Proc. VLDB Endow.
+17
+(
+8
+),
+pp. 1981–1994
+.
+External Links:
+ISSN 2150-8097
+,
+Link
+,
+Document
+Cited by:
+§8
+.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

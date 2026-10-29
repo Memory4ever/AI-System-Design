@@ -1,0 +1,1427 @@
+wDPO: Winsorized Direct Preference Optimization for Robust LLM Alignment
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract.
+1 Introduction
+2 Preliminaries
+2.1 Preference-based LLM Alignment
+2.2 Direct Preference Optimization
+3 The Proposed Winsorized DPO
+3.1 Gradient Dominance as a Failure Mode
+3.2 Stage I: Margin-aware Soft Label Correction
+3.3 Stage II: Gradient-oriented Winsorization
+3.4 Discussion of wDPO
+Computational Complexity.
+Generality and Applicability.
+4 Experiments
+4.1 Experimental Settings
+4.1.1 Dataset
+4.1.2 Baselines
+4.1.3 Backbones
+4.1.4 Benchmarks and Evaluation Metrics
+4.2 Main Results (RQ1)
+4.3 Robustness under Label-Flip Noise (RQ2)
+4.4 Hyper-parameter Analysis (RQ3)
+4.5 Ablation Study (RQ4)
+5 Related Works
+6 Conclusion
+References
+A Algorithm
+B Stage II Implementation Details
+C Detail of Experimental Settings
+C.1 Baselines
+C.2 Benchmarks
+C.3 Metrics
+C.4 Implementation Details
+D Additional Experimental Results
+D.1 OOD Results on Smaller Backbones
+D.2 Effect of Flip Warmup Ratio
+E Tail Energy Share and HHI Metrics
+E.1 Per-sample gradient energy.
+E.2 Top group energy share.
+E.3 Herfindahl–Hirschman Index.
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.07211v1 [cs.LG] 07 Mar 2026
+wDPO: Winsorized Direct Preference Optimization
+for Robust LLM Alignment
+Jilong Liu
+email: liujilong0116@gmail.com
+Affiliation: Hefei University of Technology, Hefei, Anhui, China
+,
+Yonghui Yang
+email: yyh.hfut@gmail.com
+Affiliation: National University of Singapore , Singapore
+,
+Pengyang Shao
+email: shaopymark@gmail.com
+Affiliation: National University of Singapore , Singapore
+,
+Haokai Ma
+email: haokai.ma1997@gmail.com
+Affiliation: National University of Singapore , Singapore
+,
+Wei Qin
+email: qinwei.hfut@gmail.com
+Affiliation: Hefei University of Technology, Hefei, Anhui, China
+and
+Richang Hong
+email: hongrc.hfut@gmail.com
+Affiliation: Hefei University of Technology, Hefei, Anhui, China
+Abstract.
+Direct Preference Optimization (DPO) aligns large language models by optimizing pairwise preferences and has shown remarkable effectiveness as a simple and scalable alternative to RLHF. However, in practice, preference data are often noisy. Real-world datasets contain both hard noise, where preference labels are reversed, and ambiguous comparisons, where the preferred and rejected responses are nearly indistinguishable. Such noise introduces significant robustness challenges for DPO-based training. Existing robust variants of DPO mainly rely on uniform objective modifications or global reweighting. While partially effective, these methods treat noisy samples as a homogeneous source of uncertainty and fail to distinguish between different noise types, leading to sub-optimal alignment robustness.
+In this work, we show that robust preference alignment benefits from addressing different noise types with targeted interventions rather than uniform regularization. We propose winsorized Direct Preference Optimization (wDPO), a robust LLM alignment approach with hierarchical winsorization. Specifically, wDPO adopts a reward-free hierarchical intervention strategy that leverages only signals already available during DPO training. It first uses the implicit margin from DPO log-ratio to identify heterogeneous noise patterns without relying on external reward models. For hard noise, wDPO performs a data-level intervention by sparsely correcting strongly inconsistent preference pairs. For ambiguous comparisons, it applies a gradient-level intervention through soft winsorization, capping extreme losses in the high-loss tail to prevent weakly informative samples from dominating gradient updates. Extensive experiments on PKU-SafeRLHF and multiple external safety benchmarks demonstrate that wDPO consistently improves preference alignment quality and robustness over vanilla DPO and strong DPO-family baselines, with particularly pronounced gains under controlled label-flip noise. Code is available at https://anonymous.4open.science/r/wDPO-7BBC.
+Keywords: LLM Alignment, Robust Preference Optimization, Hierarchical Winsorization
+1. Introduction
+Aligning large language models (LLMs) with human preferences is essential for developing capable and safe AI systems (Yang et al., 2025; Achiam et al., 2023; Liu et al., 2024; Team et al., 2023).
+While Reinforcement Learning from Human Feedback (RLHF) (Christiano et al., 2017; Ouyang et al., 2022; Bai et al., 2022a; Bai et al., 2022b) established the dominant paradigm, its training complexity and sensitivity to reward model quality have motivated simpler alternatives.
+In practice, RLHF pipelines often rely on policy-gradient methods such as PPO (Schulman et al., 2017), which can be unstable and require careful hyperparameter tuning.
+Direct Preference Optimization (DPO) (Rafailov et al., 2023) has therefore emerged as a standard approach, offering an efficient and scalable way to align LLMs by directly optimizing a preference objective over pairwise comparison data.
+Figure 1.  Left: Reward-score gaps in a preference dataset. Reversed pairs exhibit negative gaps, while a large fraction of samples cluster near zero, corresponding to ambiguous comparisons.
+Right: Under standard DPO, all preference pairs are treated uniformly, causing a small subset of hard or ambiguous pairs to dominate the batch loss and gradient energy, which slows and destabilizes preference separation.
+wDPO introduces a hierarchical intervention: it sparsely corrects strongly inconsistent pairs and applies soft winsorization to cap the high-loss tail, thereby achieving stable and higher margin compared with DPO.xxx
+Despite its success, DPO depends critically on the quality of preference supervision, which in real-world datasets is often imperfect (Bai et al., 2022a; Ji et al., 2023; Ganguli et al., 2022; Shen et al., 2024). As a result, a growing body of work has explored robust preference alignment under noisy supervision. In general, current robust optimization methods mainly rely on uniform regularization of the preference objective, implicitly treating noise as a single, homogeneous source of uncertainty. Under this perspective, robustness is enforced by globally softening preference margins, reweighting losses, or guarding against worst-case distributions. Representative examples include objective-level modifications such as rDPO (Chowdhury et al., 2024) and cDPO (Mitchell, 2023), distributionally robust formulations such as Dr.DPO (Wu et al., 2025), and approaches that rely on external reward models or classifiers to rescore and reconstruct preference data (Zhang et al., 2025). While effective in certain regimes, these methods apply the same form of correction across all preference pairs and therefore fail to account for the heterogeneity of noise in real-world data.
+Looking beyond such uniform robustness objectives, a closer examination of DPO training reveals a more nuanced picture. We show that robustness challenges in DPO stem from the heterogeneous nature of preference noise, where different noise types influence optimization dynamics in fundamentally different ways. As illustrated in Figure 1 (left), an analysis of a typical safety preference dataset reveals two prevalent forms of noise. Hard noise arises when preference labels are reversed, contradicting the underlying reward signal. In contrast, ambiguous comparisons occur when the preferred and rejected responses are nearly indistinguishable, forming a dense cluster near the decision boundary.
+Although ambiguous comparisons are not incorrect, they often induce large gradients with limited learning value.
+Crucially, these two forms of noise manifest their impact through a shared optimization pathology. As shown in Figure 1 (right), the loss distribution under standard DPO is heavily skewed, with a small fraction of samples accounting for a disproportionate share of the batch loss and gradient energy. Consistent with observations in noisy optimization more broadly (Finzi et al., 2026; Yu et al., 2023; Lu et al., 2022; Xia et al., 2021), we find that these dominant samples largely stem from reversed labels and ambiguous comparisons. They generate large but weakly informative gradients that can destabilize training (Fu et al., 2023; Ye et al., 2025).
+From this perspective, mitigating the undue influence of such high-loss, low-yield samples emerges as a concrete objective for robust preference alignment.
+Motivated by the above analysis, we propose winsorized Direct Preference Optimization (wDPO), a robust approach for LLM alignment under heterogeneous preference noise. The central idea behind wDPO is to move beyond uniform regularization and instead intervene hierarchically in the optimization process, reflecting the distinct roles that different noise types play in DPO training. wDPO is designed to operate entirely within the standard DPO framework and leverages only signals that are already available during training. In particular, it uses the implicit DPO reward margin as a consistency signal to characterize heterogeneous noise, without relying on external reward models or additional supervision.
+This signal enables wDPO to distinguish between failure modes that require fundamentally different treatments. Strongly inconsistent preference pairs, which are more plausibly attributed to annotation errors, call for data-level intervention. In contrast, ambiguous comparisons, which are inherently uncertain but not incorrect, primarily affect training through extreme losses and therefore require gradient-level intervention.
+Based on this distinction, wDPO applies two complementary interventions at different stages of optimization. For hard noise, it performs a sparse data-level correction of strongly inconsistent preference pairs, mitigating systematically misleading gradients. For ambiguous comparisons, it applies soft winsorization to the high-loss tail, constraining the influence of extreme but weakly informative losses on gradient updates. By intervening at the appropriate stage for each noise type, wDPO directly addresses the dominant sources of instability identified in the preceding analysis, while preserving all available preference data. We empirically evaluate wDPO on PKU-SafeRLHF and multiple external safety benchmarks. Across a range of settings with both natural and synthetic noise, wDPO consistently improves preference alignment quality and robustness over vanilla DPO and strong DPO-family baselines, with particularly pronounced gains under controlled label-flip noise. Our main contributions are summarized as follows:
+•
+We provide an empirical analysis of DPO training under noisy preferences, showing that a small subset of hard noise and ambiguous pairs can dominate gradient updates and destabilize optimization.
+•
+We propose wDPO, a robust LLM alignment approach with  hierarchical winsorization. wDPO elaborates a hierarchical intervention strategy:
+data-level intervention for hard noise and gradient-level intervention for ambiguous pairs.
+•
+We conduct extensive experiments on preference alignment benchmarks with both natural and synthetic noise, demonstrating that wDPO consistently improves alignment quality and robustness over DPO-family baselines.
+2. Preliminaries
+Figure 2. Training dynamics of DPO and wDPO  on Pythia-2.8B. Top row (a–c): DPO trained for 3 epochs. Bottom row (d–f): wDPO  trained for 1 epoch. (a,d) Top Group energy share, measured as the gradient-energy fraction contributed by a fixed top group of samples. (b,e) Global energy uniformity measured by the Herfindahl–Hirschman Index (HHI). (c,f) Preference separation during training, shown by the DPO margin and preference accuracy.xxx
+2.1. Preference-based LLM Alignment
+LLM alignment is commonly formulated as a preference-based learning problem, where supervision is provided through relative judgments rather than explicit target outputs.
+A canonical instantiation of this paradigm is Reinforcement Learning from Human Feedback (RLHF (Ouyang et al., 2022)), which aligns large language models using human preference data.
+Given a prompt xx, preferences are provided as pairwise comparisons (x,yw,yl)(x,y_{w},y_{l}), where ywy_{w} is preferred over yly_{l}.
+RLHF first trains a reward model rϕ​(x,y)r_{\phi}(x,y) from preference data, typically using a pairwise logistic loss:
+(1)
+ℒRM​(ϕ)=−𝔼(x,yw,yl)​[log⁡σ⁡(rϕ​(x,yw)−rϕ​(x,yl))],\mathcal{L}_{\text{RM}}(\phi)=-\mathbb{E}_{(x,y_{w},y_{l})}\left[\log\sigma\big(r_{\phi}(x,y_{w})-r_{\phi}(x,y_{l})\big)\right],
+where σ⁡(⋅)\sigma(\cdot) denotes the sigmoid function.
+The policy πθ​(y|x)\pi_{\theta}(y|x) is then optimized to maximize the learned reward while remaining close to a reference policy πref\pi_{\text{ref}}, via a KL-regularized objective:
+(2)
+maxπθ𝔼x,y∼πθ[rϕ(x,y)]−β𝔼x[KL(πθ(⋅|x)∥πref(⋅|x))],\max_{\pi_{\theta}}\;\mathbb{E}_{x,\,y\sim\pi_{\theta}}\big[r_{\phi}(x,y)\big]-\beta\,\mathbb{E}_{x}\Big[\mathrm{KL}\big(\pi_{\theta}(\cdot|x)\,\|\,\pi_{\text{ref}}(\cdot|x)\big)\Big],
+where β\beta controls the regularization strength.
+While effective, RLHF introduces additional complexity due to reward modeling and reinforcement learning, motivating simpler preference-based alternatives.
+2.2. Direct Preference Optimization
+Direct Preference Optimization (DPO (Rafailov et al., 2023)) is a simplified alternative to RLHF that directly optimizes the policy using preference data, without training an explicit reward model or performing reinforcement learning. Starting from the KL-regularized RLHF objective in Eq. (2), DPO eliminates the reward model by expressing preference learning directly in terms of policy likelihood ratios. Given a preference pair (x,yw,yl)(x,y_{w},y_{l}), DPO defines a log-probability margin:
+(3)
+s⁡(x,yw,yl)=β⁡[log⁡πθ​(yw∣x)πθ​(yl∣x)−log⁡πref​(yw∣x)πref​(yl∣x)],\displaystyle s(x,y_{w},y_{l})=\beta\Bigg[\log\frac{\pi_{\theta}(y_{w}\mid x)}{\pi_{\theta}(y_{l}\mid x)}-\log\frac{\pi_{\text{ref}}(y_{w}\mid x)}{\pi_{\text{ref}}(y_{l}\mid x)}\Bigg],
+where πref\pi_{\text{ref}} denotes a fixed reference policy and β\beta is a temperature parameter. The DPO objective minimizes a logistic loss over this margin:
+(4)
+ℒDPO​(θ)=−𝔼(x,yw,yl)​[log⁡σ⁡(s⁡(x,yw,yl))].\mathcal{L}_{\text{DPO}}(\theta)=-\mathbb{E}_{(x,y_{w},y_{l})}\left[\log\sigma\big(s(x,y_{w},y_{l})\big)\right].
+By directly optimizing the policy with a supervised objective, DPO avoids the instability and complexity associated with reward modeling and reinforcement learning, while retaining strong empirical performance. However, since each preference pair contributes directly to the optimization signal, the training dynamics of DPO are inherently sensitive to the quality and consistency of the underlying preference data. Next, we analyze how heterogeneous preference quality manifests in DPO training and propose a reward-free intervention strategy to control its influence on optimization.
+3. The Proposed Winsorized DPO
+In this section, we present wDPO, a robust preference optimization method based on hierarchical intervention over DPO training dynamics.
+Rather than applying a uniform correction across all preference pairs, wDPO intervenes at multiple levels using only batch-level optimization signals. Specifically, wDPO combines a data-level label correction and a gradient-level soft intervention to address heterogeneous preference noise.
+At the data level, wDPO performs a soft form of label correction that mitigates the impact of likely reversed preference annotations.
+This is implemented via a sparse, flip-aware loss mixing mechanism, which selectively interpolates between the original and reversed preference losses for a small set of strongly inconsistent pairs. At the gradient level, wDPO applies soft winsorization to the high-loss tail, capping extreme gradients to limit the influence of ambiguous comparisons. In the following, we first provide evidence of a key failure mode in standard DPO, namely gradient dominance by high-loss pairs, and show how this failure mode motivates the hierarchical intervention adopted by wDPO. Then we present the two intervention stages in detail.
+3.1. Gradient Dominance as a Failure Mode
+Figure 2 presents a diagnostic analysis of DPO training dynamics under noisy preference supervision. Rather than evaluating final performance, this analysis aims to reveal a failure mode in how gradient contributions are distributed within a batch, which directly motivates our hierarchical intervention design. To characterize this behavior, we track three batch-level signals during training: (i) the tail energy share, defined as the fraction of total gradient energy contributed by the Top-group (report Top 30%30\%) samples in each batch; (ii) the Herfindahl–Hirschman Index (HHI) (Rhoades, 1993), which measures the concentration of gradient energy across samples; and (iii) validation margin and preference accuracy as indicators of optimization stability. These signals are used to contrast the training dynamics of standard DPO and wDPO under the same setup (formal definitions are provided in Appendix E).
+Figures 2(a–c) illustrate the evolution of these signals for standard DPO. Early in training, the tail energy share decreases, indicating a relatively diffuse gradient distribution.
+However, in the presence of noisy preferences, this behavior does not reflect improved optimization. At this stage, the model has not yet established a reliable preference direction, and both consistent and inconsistent pairs contribute comparably to the update. As training progresses, the model fits a large fraction of consistent pairs, while a small subset of inconsistent or ambiguous pairs remains difficult.
+These pairs retain negative or near-zero margins, which induces disproportionately large losses. As a result, their gradient contributions increasingly dominate the batch update. This transition is reflected by the rising tail energy share and the increasing HHI, where fewer than 30% of samples account for more than half of the total gradient energy. Such dominance concentrates optimization on a small number of problematic pairs and destabilizes training, as also reflected by stagnating or degrading validation signals.
+Figures 2(d–f) show how this behavior changes under wDPO. The overall trend of increasing tail energy share remains, but the early diffuse phase observed in DPO is absent. This reflects the effect of gradient-level intervention, which remains active throughout training and limits the influence of extreme losses from the outset.
+Figure 2(d) further disentangles the two intervention stages. The data-level intervention reduces the contribution of strongly inconsistent pairs by softly correcting their effective labels, while the gradient-level intervention caps the magnitude of extreme losses relative to a batch-dependent threshold. Together, these interventions prevent any single subset of pairs from dominating the update, leading to consistently lower concentration as measured by HHI and more stable optimization behavior.
+Overall, this analysis demonstrates that standard DPO is vulnerable to gradient dominance arising from inverted and ambiguous preference pairs.
+By explicitly controlling gradient contributions at both the data and gradient levels, wDPO addresses this failure mode at its source, which guides the design of the two-stage interventions described next.
+3.2. Stage I: Margin-aware Soft Label Correction
+Preference supervision is heterogeneous: while most preference pairs are consistent with the emerging preference direction, a small subset can be strongly inverted under the current model. Such inverted preference pairs constitute hard noise, as they induce gradients that point against the dominant update and can disproportionately destabilize DPO training.
+Stage I addresses this failure mode with a data-level intervention that performs a sparse and bounded soft correction within each batch.
+For each preference pair (xi,yw,i,yl,i)(x_{i},y_{w,i},y_{l,i}), let si=s⁡(xi,yw,i,yl,i)s_{i}=s(x_{i},y_{w,i},y_{l,i}) denote the DPO margin. We consider two possible preference directions: the observed direction →\rightarrow corresponding to (yw,i,yl,i)(y_{w,i},y_{l,i}), and the swapped direction ←\leftarrow corresponding to (yl,i,yw,i)(y_{l,i},y_{w,i}).
+This yields two logistic losses:
+(5)
+ℓ→​(xi)=−log⁡σ⁡(si),ℓ←​(xi)=−log⁡σ⁡(−si).\ell_{\rightarrow}(x_{i})=-\log\sigma(s_{i}),\qquad\ell_{\leftarrow}(x_{i})=-\log\sigma(-s_{i}).
+If a pair is inverted under the current model, assigning weight to the swapped direction would reduce the loss and better align the update with the prevailing preference signal. Stage I introduces a correction weight wi∈[0,1]w_{i}\in[0,1] for each sample and forms a mixed loss:
+(6)
+ℓ~i=(1−wi)​ℓ→​(xi)+wi​ℓ←​(xi).\tilde{\ell}_{i}=(1-w_{i})\,\ell_{\rightarrow}(x_{i})+w_{i}\,\ell_{\leftarrow}(x_{i}).
+Most samples retain wi=0w_{i}=0, while only a small number of highly inconsistent pairs receive partial correction. To keep this intervention conservative, we impose a batch-level budget controlled by a single hyperparameter ρf\rho_{f}, requiring:
+(7)
+1B​∑i=1Bwi≤ρf.\frac{1}{B}\sum_{i=1}^{B}w_{i}\leq\rho_{f}.
+The correction weights are computed from batch-level signals.
+Using the two-direction losses in Eq. (5), we measure the gain from swapping direction as
+(8)
+gi=ℓ→​(xi)−ℓ←​(xi),g_{i}=\ell_{\rightarrow}(x_{i})-\ell_{\leftarrow}(x_{i}),
+and retain only beneficial gains ui=ReLU⁡(gi)u_{i}=\mathrm{ReLU}(g_{i}).
+We apply sparsemax (Martins and Astudillo, 2016) to the batch score vector 𝐮=(u1,…,uB)\mathbf{u}=(u_{1},\ldots,u_{B}) to obtain sparse allocation weights 𝐚\mathbf{a} with ∑iai=1\sum_{i}a_{i}=1, so that only a few pairs with large gains are selected.
+These allocations are scaled by the budget as w^i=ρf​B​ai\hat{w}_{i}=\rho_{f}B\,a_{i} and projected onto [0,1][0,1] while preserving the total budget, which yields the final correction weights {wi}\{w_{i}\}.
+Since margin estimates are unreliable early in training, Stage I is activated only after a warm-up period.
+Let tt be the current training step, TT the total number of steps, and α∈(0,1)\alpha\in(0,1) a fixed warm-up ratio.
+If t<α​Tt<\alpha T, we set wi=0w_{i}=0 for all samples; otherwise the correction weights are computed as above.
+In our experiments, we use α=0.3\alpha=0.3.
+3.3. Stage II: Gradient-oriented Winsorization
+While Stage I mitigates the impact of inverted preference pairs, ambiguous comparisons can still induce persistently large losses.
+Such samples tend to form the high-loss tail of a batch and can dominate gradient updates, leading to unstable optimization.
+Stage II addresses this issue with a gradient-level intervention that softly caps only the loss tail, limiting the influence of extreme losses while preserving informative gradients.
+Stage II operates on the per-sample mixed losses {ℓ~i}i=1B\{\tilde{\ell}_{i}\}_{i=1}^{B} produced by Stage I.
+We first define a batch-dependent threshold τ\tau that marks the onset of the high-loss tail, set as the qq-quantile of the batch losses:
+(9)
+τ=Quantile⁡({ℓ~i}i=1B,q).\tau=\mathrm{Quantile}\big(\{\tilde{\ell}_{i}\}_{i=1}^{B},\,q\big).
+Samples with ℓ~i>τ\tilde{\ell}_{i}>\tau are treated as tail samples. The strength of loss capping is adapted to the current batch based on margin consistency. Intuitively, batches with many negative or weakly separated margins are more ambiguous and require stronger regularization.
+We therefore compute a batch-level capping budget ρw\rho_{w} from the margin statistics and treat it as a constant during backpropagation.
+This budget controls the total amount of capping applied within the batch.
+Within the tail, capping strength is allocated proportionally to how much each sample exceeds the threshold. Formally, tail losses are softly pulled toward τ\tau according to per-sample cap weights λi∈[0,1]\lambda_{i}\in[0,1] that satisfy a batch-level budget constraint. The resulting winsorized loss takes the form:
+(10)
+ℓiwin=(1−λi)​ℓ~i+λi​τ.\ell^{\mathrm{win}}_{i}=(1-\lambda_{i})\,\tilde{\ell}_{i}+\lambda_{i}\,\tau.
+Finally, we optimize the average winsorized loss over the batch:
+(11)
+ℒ=1B​∑i=1Bℓiwin.\mathcal{L}=\frac{1}{B}\sum_{i=1}^{B}\ell^{\mathrm{win}}_{i}.
+The full specification of how ρw\rho_{w} and λi\lambda_{i} are computed in Appendix B. The overall implementation is summarized in Algorithm 1 in the appendix.
+3.4. Discussion of wDPO
+Computational Complexity.
+wDPO introduces two batch-level interventions on top of standard DPO training. Both stages operate entirely within each batch and do not require additional models, data preprocessing, or extra forward passes.
+Stage I computes per-sample margins and two-direction losses, followed by sparsemax over a batch-sized vector, which incurs O⁡(B​log⁡B)O(B\log B) time in practice. Stage II involves quantile computation and linear allocation over the loss tail, which can be implemented in O⁡(B​log⁡B)O(B\log B) time.
+Overall, the additional overhead of wDPO is modest compared to the cost of model forward and backward passes, and does not change the asymptotic training complexity of DPO.
+Generality and Applicability.
+Although wDPO is developed in the context of DPO, its design principles are not tied to a specific preference optimization objective.
+Both interventions rely only on batch-level signals that are commonly available in preference-based learning, such as per-sample losses and margin statistics. This makes the proposed hierarchical intervention compatible, in principle, with other preference optimization frameworks that exhibit similar gradient dominance behavior, including variants of DPO with alternative loss formulations. More broadly, our analysis suggests that explicitly controlling gradient influence at multiple levels can be an effective design strategy for stabilizing preference learning under heterogeneous supervision.
+4. Experiments
+In this section, we provide more empirical evidences to show the effectiveness of our proposed wDPO and specific design choices underlying its data-level and gradient-level interventions. Specifically, we investigate the following research questions:
+•
+RQ1: Does wDPO consistently outperform DPO-family baselines under standard training conditions?
+•
+RQ2: How robust is wDPO when preference supervision is corrupted by injected label-flip noise?
+•
+RQ3: How sensitive is wDPO to its key hyperparameters that control the two intervention stages?
+•
+RQ4: What is the contribution of each component in wDPO , and how do the data-level and gradient-level interventions interact?
+4.1. Experimental Settings
+4.1.1. Dataset
+Following prior safety alignment work, we run experiments on PKU-SafeRLHF-30K (Ji et al., 2023) from PKU-Alignment.
+It contains about 29.9K paired comparisons, with 26.9K for training and 3.0K for testing.
+Each example consists of a prompt and two responses.
+The dataset provides preference labels for helpfulness and safety, and also includes a binary safety tag for each response.
+4.1.2. Baselines
+We evaluate wDPO against a set of preference alignment baselines.
+We include the Vanilla pretrained backbone, SFT (Ouyang et al., 2022), and DPO (Rafailov et al., 2023).
+We also include robust DPO variants that target noisy comparisons or distributional uncertainty, including IPO (Gheshlaghi Azar et al., 2023), cDPO (Mitchell, 2023), rDPO (Chowdhury et al., 2024), and Dr.DPO (Wu et al., 2025).
+4.1.3. Backbones
+We study wDPO on four base LLMs that have not been safety-aligned via RLHF: Pythia-2.8B (Biderman et al., 2023), Llama-3.2-3B, Llama-3-8B (AI@Meta, 2024), and Qwen2.5-7B (Team, 2024).
+These backbones span multiple model families and scales.
+4.1.4. Benchmarks and Evaluation Metrics
+We evaluate on PKU-SafeRLHF-30K (test split), Do-Not-Answer (Wang et al., 2023), HarmBench (Mazeika et al., 2024), HH-RLHF (Bai et al., 2022a), and Salad Bench (Li et al., 2024).
+On the external safety benchmarks, we report Attack Success Rate (ASR; lower is better) as the primary metric.
+We compute ASR using two widely adopted safety judges: MD-Judge (MD) (Li et al., 2024) and Nemotron Safety Guard (NV) (Joshi et al., 2025).
+In addition, on PKU-SafeRLHF we report Win Rate (WR; higher is better) based on pairwise judgments from the GPT-4.1 mini API. Appendix C provides full details on baseline configurations, backbones, benchmark setup, and evaluation protocols.
+Table 1. Results on PKU-SafeRLHF-30K (test split) across four backbones. Methods include wDPO and DPO-family baselines. We report WR and ASR, where ASR is measured by two judges (MD and NV).
+Methods
+Pythia-2.8B
+Llama-3.2-3B
+Llama-3-8B
+Qwen2.5-7B
+WR↑\uparrow
+MD↓\downarrow
+NV↓\downarrow
+WR↑\uparrow
+MD↓\downarrow
+NV↓\downarrow
+WR↑\uparrow
+MD↓\downarrow
+NV↓\downarrow
+WR↑\uparrow
+MD↓\downarrow
+NV↓\downarrow
+Vanilla
+40.18%
+73.31%
+26.94%
+44.93%
+66.79%
+18.42%
+42.82%
+67.54%
+24.69%
+69.09%
+32.21%
+13.16%
+SFT
+41.05%
+71.30%
+26.32%
+35.93%
+68.67%
+45.36%
+23.85%
+69.92%
+52.51%
+25.09%
+70.55%
+52.88%
+DPO
+44.23%
+57.14%
+19.17%
+73.70%
+11.28%
+6.14%
+69.19%
+26.57%
+14.41%
+75.81%
+20.55%
+7.27%
+IPO
+45.27%
+61.65%
+22.68%
+72.70%
+11.78%
+6.14%
+70.22%
+26.82%
+13.53%
+73.97%
+21.30%
+8.02%
+cDPO
+45.27%
+60.28%
+16.92%
+72.91%
+25.44%
+12.78%
+59.48%
+37.94%
+23.43%
+67.65%
+31.83%
+13.66%
+rDPO
+46.54%
+57.77%
+23.43%
+81.30%
+4.14%
+1.75%
+82.13%
+6.64%
+3.26%
+82.74%
+4.51%
+2.01%
+Dr.DPO
+57.41%
+17.04%
+4.14%
+83.77%
+2.38%
+0.50%
+82.50%
+4.39%
+0.50%
+88.93%
+2.01%
+0.13%
+wDPO
+59.92%
+13.03%
+3.01%
+85.45%
+1.63%
+0.13%
+84.01%
+4.51%
+0.38%
+90.23%
+1.63%
+0.00%
+Table 2. Out-of-distribution ASR on four external safety benchmarks for models trained on PKU-SafeRLHF-30K. Results are shown for Llama-3-8B and Qwen2.5-7B across wDPO  and DPO-family baselines. ASR is measured by two judges, and AVG reports the mean ASR over the four benchmarks.
+Methods
+Do-Not-Answer
+HarmBench
+HH-RLHF
+Salad Bench
+AVG.
+MD↓\downarrow
+NV↓\downarrow
+MD↓\downarrow
+NV↓\downarrow
+MD↓\downarrow
+NV↓\downarrow
+MD↓\downarrow
+NV↓\downarrow
+Llama-3-8B
+54.58%
+12.37%
+87.50%
+23.50%
+65.10%
+19.92%
+73.14%
+23.26%
+46.27%
++ SFT
+53.52%
+33.48%
+93.50%
+81.50%
+69.27%
+47.54%
+75.10%
+58.68%
+64.03%
++ DPO
+14.18%
+7.78%
+41.00%
+28.50%
+23.05%
+10.30%
+31.55%
+19.75%
+22.85%
++ IPO
+14.29%
+7.36%
+33.50%
+17.50%
+21.70%
+8.30%
+30.12%
+15.69%
+20.42%
++ cDPO
+22.39%
+13.86%
+61.00%
+44.00%
+30.32%
+13.34%
+42.53%
+26.44%
+30.7%
++ rDPO
+1.17%
+0.53%
+6.00%
+1.5%
+6.88%
+2.25%
+5.38%
+2.38%
+3.97%
++ Dr.DPO
+0.96%
+0.00%
+2.00%
+0.00%
+4.58%
+0.37%
+3.52%
+0.51%
+2.09%
++ wDPO
+1.07%
+0.11%
+1.5%
+0.00%
+4.17%
+0.39%
+3.33%
+0.45%
+1.95%
+Qwen-2.5-7B
+21.11%
+7.78%
+44.50%
+27.00%
+32.52%
+10.76%
+33.85%
+13.77%
+23.02%
++ SFT
+52.67%
+31.56%
+95.00%
+74.00%
+70.54%
+48.01%
+73.45%
+55.05%
+62.37%
++ DPO
+10.98%
+4.16%
+32.50%
+14.00%
+17.70%
+4.90%
+22.97%
+8.63%
+14.39%
++ IPO
+10.34%
+3.41%
+30.50%
+14.00%
+18.02%
+5.03%
+22.16%
+8.24%
+14.00%
++ cDPO
+16.42%
+5.76%
+45.50%
+19.50%
+26.13%
+8.59%
+32.56%
+13.66%
+21.26%
++ rDPO
+1.17%
+0.32%
+3.00%
+1.00%
+6.14%
+1.76%
+4.23%
+1.76%
+3.18%
++ Dr.DPO
+0.21%
+0.00%
+0.50%
+0.00%
+2.39%
+0.22%
+1.53%
+0.46%
+1.05%
++ wDPO
+0.21%
+0.00%
+0.00%
+0.00%
+1.64%
+0.15%
+1.04%
+0.10%
+0.64%
+4.2. Main Results (RQ1)
+We evaluate wDPO under both in-distribution (IID) and out-of-distribution (OOD) settings to assess whether hierarchical intervention leads to consistently improved safety alignment. Across all settings, wDPO achieves the strongest performance among DPO-family methods, indicating that directly controlling heterogeneous gradient influence is more effective than applying uniform robustness penalties.
+In-Distribution Performance.
+Table 1 reports results on the PKU-SafeRLHF-30K test split. Across all four backbones, wDPO achieves the best overall safety alignment performance. While robust baselines such as cDPO and rDPO improve upon vanilla DPO in several cases, their gains are inconsistent across models and metrics. cDPO adopts a conservative target to reduce overconfidence under noisy supervision, and rDPO assumes a fixed flip rate to debias the loss. Dr.DPO further introduces distributionally robust optimization. However, these methods apply uniform corrections across samples, which limits their ability to address heterogeneous failure sources. In contrast, wDPO explicitly targets two dominant sources of training instability. It applies a sparse, flip-aware correction to mitigate the impact of likely reversed preference pairs, and it caps the high-loss tail to limit the influence of ambiguous comparisons. This targeted design allows wDPO to outperform even strong robust baselines such as Dr.DPO, demonstrating the advantage of sample-adaptive, batch-level intervention over global regularization.
+Out-of-Distribution Generalization.
+Table 2 summarizes results on external safety benchmarks, including Do-Not-Answer, HarmBench, HH-RLHF, and Salad Bench.
+Across all benchmarks, judges, and model backbones, models trained with wDPO consistently outperform DPO-family baselines. Importantly, these gains persist under distribution shifts, where preference patterns and safety criteria differ substantially from those seen during training. This behavior suggests that wDPO does not simply fit the training distribution, but instead improves the underlying optimization dynamics of preference learning. By explicitly limiting the influence of wrong-direction supervision and ambiguous high-loss pairs, wDPO encourages the model to rely on more stable and reliable preference signals during training. As a result, the learned alignment behavior transfers more robustly to unseen safety scenarios, leading to improved generalization beyond the training data.
+Table 3. Results on PKU-SafeRLHF-30K (test split) under synthetic label-flip noise for Pythia-2.8B. A fixed fraction of training preference pairs is randomly flipped (0/10/20/30%).
+Methods
+0% Flipped
+10% Flipped
+20% Flipped
+30% Flipped
+WR↑\uparrow
+MD↓\downarrow
+NV↓\downarrow
+WR↑\uparrow
+MD↓\downarrow
+NV↓\downarrow
+WR↑\uparrow
+MD↓\downarrow
+NV↓\downarrow
+WR↑\uparrow
+MD↓\downarrow
+NV↓\downarrow
+DPO
+44.23%
+57.14%
+19.17%
+45.07%
+60.78%
+17.42%
+43.16%
+66.29%
+23.93%
+41.82%
+69.05%
+25.19%
+rDPO
+46.54%
+57.77%
+23.43%
+46.3%
+59.02%
+20.55%
+44.10%
+60.90%
+21.43%
+42.96%
+65.65%
+22.43%
+cDPO
+45.27%
+60.28%
+16.92%
+44.43%
+66.17%
+23.18%
+43.86%
+67.04%
+20.18%
+42.72%
+71.3%
+22.68%
+IPO
+45.27%
+61.65%
+22.68%
+43.61%
+62.53%
+23.81%
+43.36%
+65.91%
+23.18%
+42.23%
+68.80%
+24.68%
+Dr.DPO
+57.41%
+17.04%
+4.14%
+56.57%
+19.92%
+7.52%
+54.81%
+24.56%
+7.77%
+52.93%
+31.95%
+6.39%
+wDPO
+59.92%
+13.03%
+3.01%
+58.18%
+17.04%
+3.63%
+56.51%
+18.92%
+4.89%
+55.14%
+22.06%
+4.14%
+Figure 3. Hyperparameter sensitivity on Pythia-2.8B, evaluated on PKU-SafeRLHF-30K (test split). Each panel varies one hyperparameter while keeping all others fixed to the default settings in the paper: (a) flip cap ρf\rho_{f}, (b) maximum tail cap ρwmax\rho_{w}^{\max}, and (c) tail quantile qq.
+4.3. Robustness under Label-Flip Noise (RQ2)
+We evaluate robustness under explicit annotation noise by conducting controlled label-flip experiments. A fixed fraction of preference labels in the PKU-SafeRLHF-30K training set is randomly flipped, while evaluation is performed on the clean test split. We consider flip rates of 0%, 10%, 20%, and 30%, with results reported in Table 3. As expected, increasing label-flip noise degrades performance for all methods.
+However, the degradation patterns differ substantially. Vanilla DPO is the most sensitive because it strictly follows observed preference labels, each flipped annotation consistently drives the update in the wrong direction, leading to rapid performance collapse as noise increases.
+Robust variants such as cDPO and rDPO slow down this collapse by introducing global corrections. Nevertheless, their performance still deteriorates markedly at higher flip rates, indicating that uniform robustness penalties are insufficient under heterogeneous, sample-level noise.
+Dr.DPO is the strongest baseline under noisy supervision, benefiting from distributionally robust optimization. Even so, wDPO consistently achieves the best performance across all noise levels, including at 30% flips, and this advantage holds across both WR and ASR judges.
+This robustness stems from the sample-adaptive nature of wDPO.
+Stage I selectively attenuates the influence of pairs that appear reversed under the current margin signal, while Stage II limits the dominance of extreme-loss pairs that become increasingly prevalent as noise grows.
+By preventing noisy and ambiguous samples from disproportionately shaping the update, wDPO maintains a more stable training trajectory. Overall, these results show that wDPO degrades more gracefully as label-flip noise increases. Rather than relying on a fixed global correction, hierarchical intervention enables wDPO to adapt to mixed noise patterns within each batch, resulting in substantially improved robustness under severe annotation corruption.
+4.4. Hyper-parameter Analysis (RQ3)
+We analyze the sensitivity of wDPO to its key hyperparameters to assess whether the proposed hierarchical intervention requires careful tuning.
+All experiments are conducted on Pythia-2.8B. When varying one hyperparameter, all others are fixed to their default values reported in Appendix C.4. Figure 3 summarizes the results.
+•
+Stage I: flip budget ρf\rho_{f}. The parameter ρf\rho_{f} controls the maximum average correction strength applied to inverted preference pairs within a batch. As shown in Figure 3, even a small budget (ρf=0.05\rho_{f}=0.05) already yields noticeable improvement, which is consistent with the fact that strongly inverted pairs typically constitute only a small fraction of the data. Performance remains stable over a wide range of values from 0.050.05 to 0.40.4, indicating that Stage I is not sensitive to the exact budget as long as correction is applied conservatively. When ρf\rho_{f} becomes too large, performance degrades. In this regime, correction begins to affect pairs that are not truly inverted but are merely hard or near-ties, weakening the genuine preference signal. Based on this trade-off, we set ρf=0.3\rho_{f}=0.3.
+•
+Stage II: maximum capping strength ρwmax\rho_{w}^{\max}. The parameter ρwmax\rho_{w}^{\max} determines the upper bound on loss capping strength in Stage II, while the actual capping level is set adaptively per batch. As ρwmax\rho_{w}^{\max} increases from small values, performance improves and then stabilizes across a broad interval. This behavior aligns with the goal of soft winsorization, which limits the influence of extreme losses while leaving most samples unaffected. When ρwmax\rho_{w}^{\max} becomes excessively large, performance drops, as overly aggressive capping suppresses useful gradients from genuinely informative hard pairs. We therefore set ρwmax=0.5\rho_{w}^{\max}=0.5.
+•
+Stage II: tail quantile qq. The quantile qq determines where the loss tail begins. When qq is too small, the tail includes many normal samples, and capping suppresses the clean training signal, leading to degraded performance. As qq increases, performance improves and remains stable over a moderate range, reflecting effective isolation of clear outliers. When qq becomes too large, the tail set becomes too narrow and fails to capture a sufficient number of problematic high-loss pairs, reducing the effectiveness of capping. We set q=0.7q=0.7 to balance these effects.
+xxx
+Figure 4. Ablation results with Pythia-2.8B. Bars show WR on the PKU-SafeRLHF-30K test split. The line shows average ASR across five benchmarks, measured by the two judges. We compare standard DPO, wDPO with only Stage I (w/ SI), only Stage II (w/ SII), and the full two-stage wDPO (full).xxx
+Overall, wDPO exhibits stable performance across broad ranges of its key hyperparameters. The best results consistently arise from moderate intervention strengths at both stages, supporting the design choice of applying conservative, sample-adaptive corrections rather than aggressive global modifications.
+4.5. Ablation Study (RQ4)
+We conduct an ablation study on Pythia-2.8B to examine the individual contributions of the two intervention stages in wDPO. Figure 4 summarizes the results. Each stage provides clear benefits when applied in isolation. Stage I improves alignment by addressing inverted preference pairs that inject misleading, wrong-direction gradients.
+By applying flip-aware loss mixing, Stage I attenuates the influence of these pairs and stabilizes early training. However, the gains from Stage I alone are moderate. This is consistent with our motivation: although inverted pairs can produce large losses, they are typically sparse and occupy only a small portion of the high-loss tail. Stage II yields larger performance improvements on its own. By directly capping the high-loss tail through soft winsorization, Stage II reduces the dominance of extreme-loss samples that frequently arise from hard or ambiguous comparisons. This intervention substantially improves both WR and ASR, indicating that controlling tail-induced gradient dominance is a primary factor in stabilizing preference optimization.
+Combining the two stages consistently achieves the best performance.
+When both stages are enabled, Stage I first reduces the impact of the most strongly inverted pairs, preventing them from acting as extreme outliers.
+Stage II then caps the remaining high-loss tail, which is dominated by hard but not necessarily mislabeled pairs. This clear separation of roles makes the two interventions complementary rather than redundant. Together, they implement a hierarchical control over heterogeneous noise sources and lead to the strongest alignment performance.
+5. Related Works
+Preference Optimization for LLM Alignment.
+Aligning LLMs with human preferences is a central challenge.
+The dominant early paradigm is RLHF (Christiano et al., 2017), which trains a reward model from pairwise comparisons and then optimizes the policy with RL.
+Classic RLHF pipelines typically rely on PPO-style policy optimization (Schulman et al., 2017) and careful tuning. They also require sampling during training, which increases cost and variance. To reduce complexity, many works study direct optimization from preference data. DPO is a representative method that turns preference learning into a simple classification-style objective and avoids explicit reward modeling and RL rollouts (Rafailov et al., 2023). After DPO, several variants adjust the objective or its calibration. Some methods calibrate the implicit reward scale to better reflect preference strength (Xiao et al., 2024). Others modify the margin requirement so that only sufficiently strong preferences drive large updates, such as DPO with an offset (Amini et al., 2024). There are also reference-free or monolithic formulations that simplify training further, including ORPO and SimPO (Hong et al., 2024; Meng et al., 2024). Beyond pairwise contrastive objectives, alternative formulations use different preference signals or decision models, such as RRHF, SLiC-HF, and KTO (Yuan et al., 2023; Zhao et al., 2023; Ethayarajh et al., 2024). Overall, these methods aim to keep preference alignment simple and scalable while improving stability and effectiveness. However, these approaches largely assume clean or well-calibrated preference supervision, and do not explicitly address robustness under heterogeneous preference noise. Our work focuses on this setting and studies how to perform reliable preference optimization when supervision is noisy.
+Robust Alignment under Noisy Preferences.
+Several DPO-family methods improve robustness by modifying the training loss.
+rDPO explicitly models random label flips and derives a corrected objective, but it requires a noise rate as input (Chowdhury et al., 2024).
+Other work introduces a single global control to soften the margin or downweight uncertain pairs, such as cDPO (Mitchell, 2023).
+Some methods also adjust the target margin during training to reduce sensitivity to noisy supervision (Sun et al., 2025).
+A common limitation is that these approaches apply essentially the same rule to all pairs, so they do not distinguish reversed labels from hard but valid comparisons. Another line of work adopts distributionally robust training.
+Dr.DPO optimizes a conservative objective over the preference distribution to hedge against heavy-tailed errors and outliers (Wu et al., 2025).
+This can improve stability, but performance can be sensitive to the strength of the robustness control. A third line relies on external models to denoise the data. For example, Reward-Augmented Data scores responses with a reward model and rebuilds preference pairs using these scores (Zhang et al., 2025).
+This adds extra cost and additional steps, and the results depend on the quality of the scoring model. In contrast, our method stays within the standard DPO setup and uses only batch-level signals. It keeps all pairs, but it limits which pairs dominate the update. Specifically, it applies a sparse data-level correction to strongly inverted preference pairs and a gradient-level intervention that softly caps the high-loss tail based on batch statistics.
+6. Conclusion
+Preference optimization for LLM alignment often assumes reliable supervision.
+Under heterogeneous preference noise, however, DPO training exhibits a concrete failure mode: a small subset of problematic pairs can dominate gradient updates, destabilizing optimization and degrading alignment.
+To address this issue, we propose wDPO, a robust preference optimization method that intervenes directly in training dynamics while preserving the simplicity of the DPO framework. wDPO introduces a hierarchical, batch-level intervention that separates different noise sources. It applies sparse, margin-aware soft correction to strongly inverted preference pairs and adaptive soft winsorization to the high-loss tail to limit the influence of ambiguous comparisons. Empirically, wDPO consistently outperforms vanilla DPO and strong DPO-family baselines across various settings, with especially pronounced gains under injected label-flip noise—directly reflecting the failure mode identified in our analysis.
+More broadly, our results suggest that robustness in preference optimization may require moving beyond uniform objectives toward explicit control of how different samples shape optimization. Understanding and systematically managing the interaction between heterogeneous preference noise and training dynamics remains a fundamental open problem for the community.
+References
+Achiam et al. (2023)
+J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman, S. Anadkat, et al.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774.
+Cited by: §1.
+AI@Meta (2024)
+AI@Meta
+Llama 3 model card.
+External Links: Link
+Cited by: §4.1.3.
+Amini et al. (2024)
+A. Amini, T. Vieira, and R. Cotterell
+Direct preference optimization with an offset.
+Findings of the Association for Computational Linguistics: ACL 2024, pp. 9954–9972.
+Cited by: §5.
+Bai et al. (2022a)
+Y. Bai, A. Jones, K. Ndousse, A. Askell, A. Chen, N. DasSarma, D. Drain, S. Fort, D. Ganguli, T. Henighan, et al.
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+arXiv preprint arXiv:2204.05862.
+Cited by: 4th item,
+§1,
+§1,
+§4.1.4.
+Bai et al. (2022b)
+Y. Bai, S. Kadavath, S. Kundu, A. Askell, J. Kernion, A. Jones, A. Chen, A. Goldie, A. Mirhoseini, C. McKinnon, et al.
+Constitutional ai: harmlessness from ai feedback.
+arXiv preprint arXiv:2212.08073.
+Cited by: §1.
+Biderman et al. (2023)
+S. Biderman, H. Schoelkopf, Q. G. Anthony, H. Bradley, K. O’Brien, E. Hallahan, M. A. Khan, S. Purohit, U. S. Prashanth, E. Raff, et al.
+Pythia: a suite for analyzing large language models across training and scaling.
+In International Conference on Machine Learning,
+pp. 2397–2430.
+Cited by: §4.1.3.
+Chowdhury et al. (2024)
+S. R. Chowdhury, A. Kini, and N. Natarajan
+Provably robust dpo: aligning language models with noisy feedback.
+arXiv preprint arXiv:2403.00409.
+Cited by: 6th item,
+§1,
+§4.1.2,
+§5.
+Christiano et al. (2017)
+P. F. Christiano, J. Leike, T. Brown, M. Martic, S. Legg, and D. Amodei
+Deep reinforcement learning from human preferences.
+Advances in neural information processing systems 30.
+Cited by: §1,
+§5.
+Ethayarajh et al. (2024)
+K. Ethayarajh, W. Xu, N. Muennighoff, D. Jurafsky, and D. Kiela
+Kto: model alignment as prospect theoretic optimization.
+arXiv preprint arXiv:2402.01306.
+Cited by: §5.
+Finzi et al. (2026)
+M. Finzi, S. Qiu, Y. Jiang, P. Izmailov, J. Z. Kolter, and A. G. Wilson
+From entropy to epiplexity: rethinking information for computationally bounded intelligence.
+arXiv preprint arXiv:2601.03220.
+Cited by: §1.
+Fu et al. (2023)
+B. Fu, Y. Peng, and X. Qin
+Learning with noisy labels via logit adjustment based on gradient prior method.
+Applied Intelligence 53 (20), pp. 24393–24406.
+Cited by: §1.
+Ganguli et al. (2022)
+D. Ganguli, L. Lovitt, J. Kernion, A. Askell, Y. Bai, S. Kadavath, B. Mann, E. Perez, N. Schiefer, K. Ndousse, et al.
+Red teaming language models to reduce harms: methods, scaling behaviors, and lessons learned.
+arXiv preprint arXiv:2209.07858.
+Cited by: §1.
+Gheshlaghi Azar et al. (2023)
+M. Gheshlaghi Azar, M. Rowland, B. Piot, D. Guo, D. Calandriello, M. Valko, and R. Munos
+A general theoretical paradigm to understand learning from human preferences.
+arXiv e-prints, pp. arXiv–2310.
+Cited by: 4th item,
+§4.1.2.
+Hong et al. (2024)
+J. Hong, N. Lee, and J. Thorne
+Orpo: monolithic preference optimization without reference model.
+arXiv preprint arXiv:2403.07691.
+Cited by: §5.
+Ji et al. (2023)
+J. Ji, M. Liu, J. Dai, X. Pan, C. Zhang, C. Bian, B. Chen, R. Sun, Y. Wang, and Y. Yang
+Beavertails: towards improved safety alignment of llm via a human-preference dataset.
+Advances in Neural Information Processing Systems 36, pp. 24678–24704.
+Cited by: 1st item,
+§1,
+§4.1.1.
+Joshi et al. (2025)
+R. Joshi, R. Paul, K. Singla, A. Kamath, M. Evans, K. Luna, S. Ghosh, U. Vaidya, E. Long, S. S. Chauhan, et al.
+CultureGuard: towards culturally-aware dataset and guard model for multilingual safety applications.
+arXiv preprint arXiv:2508.01710.
+Cited by: 2nd item,
+§4.1.4.
+Li et al. (2024)
+L. Li, B. Dong, R. Wang, X. Hu, W. Zuo, D. Lin, Y. Qiao, and J. Shao
+SALAD-bench: a hierarchical and comprehensive safety benchmark for large language models.
+arXiv preprint arXiv:2402.05044.
+Cited by: 5th item,
+1st item,
+§4.1.4.
+Liu et al. (2024)
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al.
+Deepseek-v3 technical report.
+arXiv preprint arXiv:2412.19437.
+Cited by: §1.
+Lu et al. (2022)
+Y. Lu, Y. Bo, and W. He
+Noise attention learning: enhancing noise robustness by gradient scaling.
+Advances in Neural Information Processing Systems 35, pp. 23164–23177.
+Cited by: §1.
+Martins and Astudillo (2016)
+A. Martins and R. Astudillo
+From softmax to sparsemax: a sparse model of attention and multi-label classification.
+In International conference on machine learning,
+pp. 1614–1623.
+Cited by: §3.2.
+Mazeika et al. (2024)
+M. Mazeika, L. Phan, X. Yin, A. Zou, Z. Wang, N. Mu, E. Sakhaee, N. Li, S. Basart, B. Li, et al.
+Harmbench: a standardized evaluation framework for automated red teaming and robust refusal.
+arXiv preprint arXiv:2402.04249.
+Cited by: 3rd item,
+§4.1.4.
+Meng et al. (2024)
+Y. Meng, M. Xia, and D. Chen
+Simpo: simple preference optimization with a reference-free reward.
+Advances in Neural Information Processing Systems 37, pp. 124198–124235.
+Cited by: §5.
+Mitchell (2023)
+E. Mitchell
+A note on dpo with noisy preferences & relationship to ipo.
+Cited by: 5th item,
+§1,
+§4.1.2,
+§5.
+Ouyang et al. (2022)
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al.
+Training language models to follow instructions with human feedback.
+Advances in neural information processing systems 35, pp. 27730–27744.
+Cited by: §1,
+§2.1,
+§4.1.2.
+Rafailov et al. (2023)
+R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn
+Direct preference optimization: your language model is secretly a reward model.
+Advances in Neural Information Processing Systems 36, pp. 53728–53741.
+Cited by: 3rd item,
+§1,
+§2.2,
+§4.1.2,
+§5.
+Rhoades (1993)
+S. A. Rhoades
+The herfindahl-hirschman index.
+Fed. Res. Bull. 79, pp. 188.
+Cited by: §3.1.
+Schulman et al. (2017)
+J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov
+Proximal policy optimization algorithms.
+arXiv preprint arXiv:1707.06347.
+Cited by: §1,
+§5.
+Shen et al. (2024)
+J. H. Shen, A. Sharma, and J. Qin
+Towards data-centric rlhf: simple metrics for preference dataset comparison.
+arXiv preprint arXiv:2409.09603.
+Cited by: §1.
+Sun et al. (2025)
+J. Sun, J. Wu, J. Wu, Z. Zhu, X. Lu, J. Zhou, L. Ma, and X. Wang
+Robust preference optimization via dynamic target margins.
+arXiv preprint arXiv:2506.03690.
+Cited by: §5.
+Team et al. (2023)
+G. Team, R. Anil, S. Borgeaud, J. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican, et al.
+Gemini: a family of highly capable multimodal models.
+arXiv preprint arXiv:2312.11805.
+Cited by: §1.
+Team (2024)
+Q. Team
+Qwen2.5: a party of foundation models.
+External Links: Link
+Cited by: §4.1.3.
+Wang et al. (2023)
+Y. Wang, H. Li, X. Han, P. Nakov, and T. Baldwin
+Do-not-answer: a dataset for evaluating safeguards in llms.
+arXiv preprint arXiv:2308.13387.
+Cited by: 2nd item,
+§4.1.4.
+Wu et al. (2025)
+J. Wu, Y. Xie, Z. Yang, J. Wu, J. Chen, J. Gao, B. Ding, X. Wang, and X. He
+Towards robust alignment of language models: distributionally robustifying direct preference optimization.
+In The Thirteenth International Conference on Learning Representations,
+Cited by: 7th item,
+§1,
+§4.1.2,
+§5.
+Xia et al. (2021)
+X. Xia, T. Liu, B. Han, M. Gong, J. Yu, G. Niu, and M. Sugiyama
+Sample selection with uncertainty of losses for learning with noisy labels.
+arXiv preprint arXiv:2106.00445.
+Cited by: §1.
+Xiao et al. (2024)
+T. Xiao, Y. Yuan, H. Zhu, M. Li, and V. G. Honavar
+Cal-dpo: calibrated direct preference optimization for language model alignment.
+Advances in Neural Information Processing Systems 37, pp. 114289–114320.
+Cited by: §5.
+Yang et al. (2025)
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, et al.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388.
+Cited by: §1.
+Ye et al. (2025)
+X. Ye, Y. Wu, W. Zhang, X. Li, Y. Chen, and C. Jin
+Optimized gradient clipping for noisy label learning.
+In Proceedings of the AAAI Conference on Artificial Intelligence,
+Vol. 39, pp. 9463–9471.
+Cited by: §1.
+Yu et al. (2023)
+X. Yu, Y. Jiang, T. Shi, Z. Feng, Y. Wang, M. Song, and L. Sun
+How to prevent the continuous damage of noises to model training?.
+In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition,
+pp. 12054–12063.
+Cited by: §1.
+Yuan et al. (2023)
+H. Yuan, Z. Yuan, C. Tan, W. Wang, S. Huang, and F. Huang
+Rrhf: rank responses to align language models with human feedback.
+Advances in Neural Information Processing Systems 36, pp. 10935–10950.
+Cited by: §5.
+Zhang et al. (2025)
+S. Zhang, Z. Liu, B. Liu, Y. Zhang, Y. Yang, Y. Liu, L. Chen, T. Sun, and Z. Wang
+Reward-augmented data enhances direct preference alignment of llms.
+In Proceedings of the 42nd International Conference on Machine Learning (ICML 2025),
+Vol. 267.
+External Links: Link
+Cited by: §1,
+§5.
+Zhao et al. (2023)
+Y. Zhao, R. Joshi, T. Liu, M. Khalman, M. Saleh, and P. J. Liu
+Slic-hf: sequence likelihood calibration with human feedback.
+arXiv preprint arXiv:2305.10425.
+Cited by: §5.
+Appendix A Algorithm
+Algorithm 1  wDPO: Two-stage robust Winsorized DPO
+0:
+Batch {(xi,yw,i,yl,i)}i=1B\{(x_{i},y_{w,i},y_{l,i})\}_{i=1}^{B}, policy πθ\pi_{\theta}, reference πref\pi_{\mathrm{ref}}, temperature β\beta,
+warmup ratio α\alpha, flip cap ρf\rho_{f}, tail quantile qq,
+winsor cap max ρwmax\rho_{w}^{\max}, winsor floor ρwfloor\rho_{w}^{\mathrm{floor}},
+current step tt, total steps TT.
+0:
+Training loss ℒ\mathcal{L}.
+1:
+Compute log-ratio gaps for each pair:
+Δθ,i\displaystyle\Delta_{\theta,i}
+=log⁡πθ​(yw,i∣xi)−log⁡πθ​(yl,i∣xi),\displaystyle=\;\log\pi_{\theta}(y_{w,i}\mid x_{i})-\log\pi_{\theta}(y_{l,i}\mid x_{i}),
+Δref,i\displaystyle\Delta_{\mathrm{ref},i}
+=log⁡πref​(yw,i∣xi)−log⁡πref​(yl,i∣xi).\displaystyle=\;\log\pi_{\mathrm{ref}}(y_{w,i}\mid x_{i})-\log\pi_{\mathrm{ref}}(y_{l,i}\mid x_{i}).
+2:
+Compute DPO margin si=β⁡(Δθ,i−Δref,i)s_{i}=\beta(\Delta_{\theta,i}-\Delta_{\mathrm{ref},i}).
+3:
+Compute two-direction losses:
+ℓ→,i=−log⁡σ⁡(si),ℓ←,i=−log⁡σ⁡(−si).\ell_{\rightarrow,i}=-\log\sigma(s_{i}),\qquad\ell_{\leftarrow,i}=-\log\sigma(-s_{i}).
+4:
+Stage I: Sparse flip-aware loss mixing
+5:
+if t<α​Tt<\alpha T then
+6:
+Set wi←0w_{i}\leftarrow 0 for all ii.
+7:
+else
+8:
+Compute swap gain gi←ℓ→,i−ℓ←,ig_{i}\leftarrow\ell_{\rightarrow,i}-\ell_{\leftarrow,i}.
+9:
+Compute batch scores ui←max⁡(gi,0)u_{i}\leftarrow\max(g_{i},0).
+10:
+if ∑i=1Bui=0\sum_{i=1}^{B}u_{i}=0 then
+11:
+Set wi←0w_{i}\leftarrow 0 for all ii.
+12:
+else
+13:
+Form score vector 𝐮=(u1,…,uB)\mathbf{u}=(u_{1},\ldots,u_{B}).
+14:
+Compute sparse weights 𝐚=sparsemax⁡(𝐮)\mathbf{a}=\mathrm{sparsemax}(\mathbf{u}), so ∑iai=1\sum_{i}a_{i}=1.
+15:
+Allocate preliminary flip weights w^i←ρf​B​ai\hat{w}_{i}\leftarrow\rho_{f}B\,a_{i}.
+16:
+Clip wi←min⁡(max⁡(w^i,0),1)w_{i}\leftarrow\min(\max(\hat{w}_{i},0),1) for all ii.
+17:
+Let r←ρf​B−∑i=1Bwir\leftarrow\rho_{f}B-\sum_{i=1}^{B}w_{i}.
+18:
+if r>0r>0 then
+19:
+Add the remaining weight rr to indices with wi<1w_{i}<1, proportional to aia_{i}, and clip into [0,1][0,1].
+20:
+end if
+21:
+end if
+22:
+end if
+23:
+Compute mixed loss ℓ~i←(1−wi)​ℓ→,i+wi​ℓ←,i\tilde{\ell}_{i}\leftarrow(1-w_{i})\ell_{\rightarrow,i}+w_{i}\ell_{\leftarrow,i}.
+24:
+Treat wiw_{i} as a constant in backprop.
+25:
+Stage II: Tail loss capping via soft winsorization
+26:
+Compute tail threshold τ←Quantile⁡({ℓ~i}i=1B,q)\tau\leftarrow\mathrm{Quantile}(\{\tilde{\ell}_{i}\}_{i=1}^{B},q).
+27:
+Define tail set 𝒮←{i∣ℓ~i>τ}\mathcal{S}\leftarrow\{i\mid\tilde{\ell}_{i}>\tau\}.
+28:
+if 𝒮=∅\mathcal{S}=\emptyset then
+29:
+Set λi←0\lambda_{i}\leftarrow 0 for all ii.
+30:
+else
+31:
+Compute scale c←1B​∑i=1B|si|c\leftarrow\frac{1}{B}\sum_{i=1}^{B}|s_{i}|.
+32:
+Compute p←1B∑i=1Bσ(−si/c)p\leftarrow\frac{1}{B}\sum_{i=1}^{B}\sigma(-s_{i}/c).
+33:
+Set ρw←ρwfloor+(ρwmax−ρwfloor)​p\rho_{w}\leftarrow\rho_{w}^{\mathrm{floor}}+(\rho_{w}^{\max}-\rho_{w}^{\mathrm{floor}})\,p.
+34:
+Treat ρw\rho_{w} as a constant in backprop.
+35:
+For each ii, compute excess di←max⁡(ℓ~i−τ,0)d_{i}\leftarrow\max(\tilde{\ell}_{i}-\tau,0).
+36:
+Normalize on tail: d¯i←di/∑j∈𝒮dj\bar{d}_{i}\leftarrow d_{i}\Big/\sum_{j\in\mathcal{S}}d_{j} for i∈𝒮i\in\mathcal{S}.
+37:
+Set λi←min⁡(max⁡(ρw​B​d¯i,0),1)\lambda_{i}\leftarrow\min(\max(\rho_{w}B\,\bar{d}_{i},0),1) for i∈𝒮i\in\mathcal{S}, and λi←0\lambda_{i}\leftarrow 0 otherwise.
+38:
+end if
+39:
+Compute capped loss ℓiwin←(1−λi)​ℓ~i+λi​τ\ell^{\mathrm{win}}_{i}\leftarrow(1-\lambda_{i})\tilde{\ell}_{i}+\lambda_{i}\tau.
+40:
+Output objective ℒ←1B​∑i=1Bℓiwin\mathcal{L}\leftarrow\frac{1}{B}\sum_{i=1}^{B}\ell^{\mathrm{win}}_{i}.
+Appendix B Stage II Implementation Details
+In Stage II, the adaptive cap strength ρw\rho_{w} and the per-sample cap weights {λi}i=1B\{\lambda_{i}\}_{i=1}^{B} are computed as follows.
+Tail set.
+Stage II operates on the per-sample mixed losses {ℓ~i}i=1B\{\tilde{\ell}_{i}\}_{i=1}^{B} produced by Stage I.
+It defines a batch-dependent threshold τ\tau as the qq-quantile of the batch losses:
+(12)
+τ=Quantile⁡({ℓ~i}i=1B,q).\tau=\mathrm{Quantile}\big(\{\tilde{\ell}_{i}\}_{i=1}^{B},\,q\big).
+The loss-tail set is
+(13)
+𝒮={i∣ℓ~i>τ}.\mathcal{S}=\{\,i\mid\tilde{\ell}_{i}>\tau\,\}.
+Adaptive cap strength.
+Let si=β⁡(Δθ,i−Δref,i)s_{i}=\beta(\Delta_{\theta,i}-\Delta_{\mathrm{ref},i}) be the DPO margin for sample ii.
+We first compute a self-normalized scale
+(14)
+c=1B​∑i=1B|si|.c=\frac{1}{B}\sum_{i=1}^{B}|s_{i}|.
+We then compute a soft inconsistency score
+(15)
+p=1B​∑i=1Bσ⁡(−sic),p=\frac{1}{B}\sum_{i=1}^{B}\sigma\!\left(-\frac{s_{i}}{c}\right),
+and set the cap strength as
+(16)
+ρw=ρwfloor+(ρwmax−ρwfloor)​p.\rho_{w}=\rho_{w}^{\mathrm{floor}}+(\rho_{w}^{\max}-\rho_{w}^{\mathrm{floor}})\,p.
+During backpropagation, ρw\rho_{w} is treated as a constant.
+Cap weights.
+For each sample, define the tail excess
+(17)
+di=max⁡(ℓ~i−τ,0).d_{i}=\max(\tilde{\ell}_{i}-\tau,0).
+If 𝒮=∅\mathcal{S}=\emptyset or ∑j∈𝒮dj=0\sum_{j\in\mathcal{S}}d_{j}=0, we set λi=0\lambda_{i}=0 for all ii.
+Otherwise, excess losses are normalized within the tail:
+(18)
+d¯i=di∑j∈𝒮dj,i∈𝒮.\bar{d}_{i}=\frac{d_{i}}{\sum_{j\in\mathcal{S}}d_{j}},\qquad i\in\mathcal{S}.
+Cap weights are assigned as
+(19)
+λi=clip⁡(ρw​B​d¯i,0,1),i∈𝒮,\lambda_{i}=\mathrm{clip}(\rho_{w}B\,\bar{d}_{i},0,1),\qquad i\in\mathcal{S},
+where clip⁡(x,0,1)=min⁡(max⁡(x,0),1)\mathrm{clip}(x,0,1)=\min(\max(x,0),1). And for i∉𝒮i\notin\mathcal{S}, λi=0\lambda_{i}=0.
+Appendix C Detail of Experimental Settings
+C.1. Baselines
+We compare wDPO with standard baselines and robust DPO variants.
+Below we briefly describe each method.
+•
+Vanilla is the pretrained backbone without preference alignment.
+•
+SFT fine-tunes the model with supervised targets.
+In our setting, SFT trains on the preferred responses in the dataset.
+•
+DPO (Rafailov et al., 2023) trains on preference pairs (x,yw,yl)(x,y_{w},y_{l}) with a fixed reference model.
+It increases the relative likelihood of ywy_{w} over yly_{l} under the policy, compared with the reference.
+•
+IPO (Gheshlaghi Azar et al., 2023) is a direct preference objective that replaces the DPO loss with an alternative formulation.
+It changes how the margin is mapped into the learning signal.
+•
+cDPO (Mitchell, 2023) modifies DPO with a conservative adjustment to reduce sensitivity to uncertain comparisons.
+It applies a single global control to all pairs.
+•
+rDPO (Chowdhury et al., 2024) models random label flips and adjusts the preference objective accordingly.
+It uses an explicit noise parameter to correct the training signal.
+•
+Dr.DPO (Wu et al., 2025) applies distributionally robust optimization to preference training.
+It optimizes a more conservative objective to reduce sensitivity to hard or high-loss subsets of the preference distribution.
+C.2. Benchmarks
+We evaluate safety alignment across five established benchmarks, covering both IID and OOD test sets.
+PKU-SafeRLHF is used for training and for IID testing.
+We further use four external benchmarks to evaluate generalization.
+Table 4 summarizes dataset sizes.
+Table 4. Statistics of the benchmarks used in this work.
+Benchmark
+Training Samples
+Test Samples
+PKU-SafeRLHF-30K
+26,874
+2,989
+Do-Not-Answer
+–
+938
+HarmBench
+–
+200
+HH-RLHF
+–
+8,273
+Salad Bench
+–
+21,318
+•
+PKU-SafeRLHF (Ji et al., 2023): A bilingual preference dataset for safety alignment.
+Each example contains a prompt and two responses, labeled as chosen and rejected.
+We use the PKU-SafeRLHF-30K subset and follow the standard split for training and in-distribution evaluation.
+For Win Rate, we evaluate on the full PKU-SafeRLHF test set.
+For ASR, we use only the prompt portion, deduplicate prompts, and obtain 798 unique prompts.
+•
+Do-Not-Answer (Wang et al., 2023): A refusal benchmark for harmful requests.
+It contains prompts that a safe model should refuse to answer.
+•
+HarmBench (Mazeika et al., 2024): A benchmark for harmful instruction following and jailbreak robustness.
+It covers multiple harmful behavior categories and uses automatic judging to detect harmful outputs.
+We evaluate on the standard HarmBench evaluation set.
+•
+HH-RLHF (Bai et al., 2022a): A benchmark derived from Anthropic’s helpful and harmless data.
+We use its red-teaming split, which contains prompts designed to elicit unsafe behavior.
+•
+Salad Bench (Li et al., 2024): A benchmark with adversarial prompts that use more complex language.
+It probes safety behavior under harder phrasing and additional constraints.
+C.3. Metrics
+We report two automatic metrics: Win Rate (WR) and Attack Success Rate (ASR).
+Win Rate.
+WR measures how often the model’s response is judged safer than the dataset chosen response.
+For each prompt, we compare response A (the chosen response in the dataset) with response B (the model output).
+We ask a judge to decide which response is safer and more aligned with safety guidelines.
+The judge outputs two lines: a one-sentence comparison and a final choice.
+We use only the Safer: field, which is either “A” or “B”, to compute WR.
+We use GPT-4.1 mini as the judge and use the following prompt:
+Prompt for Win Rate Metric
+For the following query to a chatbot, which response is safer and better aligned with safety guidelines?
+Query: {prompt}
+Response A: {chosen}
+Response B: {response}
+FIRST provide a one-sentence comparison of the two responses and explain
+which you feel is safer and more aligned with responsible AI principles.
+Consider factors such as refusal to provide harmful content, appropriate redirection, privacy protection, and avoidance of dangerous or illegal information.
+SECOND, on a new line, state only "A" or "B" to indicate which response is safer.
+Your response should use the format:
+Comparison: <one-sentence comparison and explanation>
+Safer: <"A" or "B">
+Attack Success Rate.
+ASR measures how often a model produces an unsafe response for an attack prompt.
+For each prompt, the model generates one response, and a judge labels it as safe or unsafe.
+ASR is the fraction of prompts whose responses are labeled as unsafe.
+We use two safety judges:
+•
+MD-Judge (MD) (Li et al., 2024) 11
+1
+https://huggingface.co/OpenSafetyLab/MD-Judge-v0_2-internlm2_7b.
+We use MD-Judge-v0.2-internlm2_7b from OpenSafetyLab.
+It is a safety judge fine-tuned from InternLM2-7B-Chat.
+For each model response, it outputs a binary safety label.
+It also provides a harmfulness score and the violated category when the response is unsafe.
+•
+Nemotron Safety Guard (NV) (Joshi et al., 2025) 22
+2
+https://huggingface.co/nvidia/Llama-3.1-Nemotron-Safety-Guard-8B-v3.
+We use Llama-3.1-Nemotron-Safety-Guard-8B-v3 from NVIDIA, which is built on Llama-3.1-8B-Instruct.
+It can label both prompts and responses as safe or unsafe.
+When a response is unsafe, it returns the violated risk categories.
+C.4. Implementation Details
+We use the same training setup for all preference-based methods.
+We set β=0.1\beta=0.1 and use a learning rate of 5×10−75\times 10^{-7}.
+For Dr.DPO, we also set the additional parameter β′=1.0\beta^{\prime}=1.0, following the original paper.
+For wDPO, Stage I uses ρf=0.15\rho_{f}=0.15 with a warmup ratio α=0.3\alpha=0.3.
+Stage II uses a tail quantile of q=0.7q=0.7.
+For the adaptive cap strength, we set ρwmax=0.5\rho_{w}^{\max}=0.5 and use a fixed floor ρwfloor=0.02\rho_{w}^{\mathrm{floor}}=0.02.
+For evaluation, we compute Win Rate with GPT-4.1 mini as the judge and set its temperature to 0.00.0.
+We compute ASR with two safety judges, MD and NV, using greedy decoding with temperature 0.00.0 and top_p=1.0\texttt{top\_p}=1.0.
+Table 5. Out-of-distribution ASR on four external safety benchmarks for models trained on PKU-SafeRLHF-30K, reported for Pythia-2.8B and Llama-3.2-3B across wDPO and DPO-family baselines.
+Methods
+Do-Not-Answer
+HarmBench
+HH-RLHF
+Salad Bench
+AVG.
+MD↓\downarrow
+NV↓\downarrow
+MD↓\downarrow
+NV↓\downarrow
+MD↓\downarrow
+NV↓\downarrow
+MD↓\downarrow
+NV↓\downarrow
+Pythia-2.8B
+59.70%
+18.34%
+86.00%
+29.50%
+72.02%
+24.95%
+78.95%
+29.69%
+52.30%
++ SFT
+62.26%
+18.44%
+81.00%
+28.00%
+72.21%
+25.75%
+79.05%
+30.23%
+52.68%
++ DPO
+46.26%
+14.50%
+65.00%
+15.00%
+58.82%
+21.06%
+63.60%
+20.79%
+41.21%
++ IPO
+44.99%
+16.52%
+73.00%
+16.50%
+59.49%
+22.78%
+64.55%
+22.74%
+42.58%
++ cDPO
+47.55%
+13.33%
+76.00%
+14.50%
+60.33%
+18.08%
+67.61%
+19.24%
+41.90%
++ rDPO
+39.23%
+14.29%
+55.50%
+17.00%
+55.19%
+21.95%
+60.45%
+20.94%
+39.67%
++ Dr.DPO
+8.96%
+1.28%
+17.50%
+4.50%
+16.77%
+4.76%
+18.82%
+4.90%
+11.35%
++ wDPO
+6.82%
+1.07%
+21.50%
+1.50%
+12.95%
+2.25%
+13.21%
+2.52%
+7.70%
+Llama-3.2-3B
+52.45%
+11.30%
+85.00%
+26.50%
+67.61%
+18.89%
+74.17%
+22.32%
+46.46%
++ SFT
+51.71%
+27.72%
+89.50%
+73.00%
+66.93%
+38.67%
+74.28%
+50.58%
+59.27%
++ DPO
+5.01%
+2.03%
+14.00%
+4.00%
+12.12%
+5.45%
+11.31%
+6.13%
+8.58%
++ IPO
+3.73%
+1.71%
+17.00%
+6.00%
+12.10%
+5.26%
+11.12%
+6.07%
+8.45%
++ cDPO
+11.51%
+5.54%
+65.50%
+15.00%
+24.55%
+10.67%
+26.65%
+13.29%
+19.12%
++ rDPO
+1.17%
+0.64%
+3.50%
+1.00%
+5.92%
+2.02%
+4.19%
+1.97%
+3.27%
++ Dr.DPO
+1.07%
+0.00%
+2.00%
+0.50%
+2.57%
+0.34%
+1.78%
+0.33%
+1.20%
++ wDPO
+0.64%
+0.00%
+2.00%
+0.50%
+2.39%
+0.33%
+1.42%
+0.27%
+0.97%
+Appendix D Additional Experimental Results
+D.1. OOD Results on Smaller Backbones
+Table 5 reports out-of-distribution ASR on four external safety benchmarks for models aligned on PKU-SafeRLHF-30K, using Pythia-2.8B and Llama-3.2-3B backbones.
+Across both backbones, wDPO achieves the lowest average ASR and performs best overall.
+Relative to the strongest baseline Dr.DPO, the improvements on Pythia-2.8B are larger than those on Llama-3.2-3B.
+This pattern is consistent with smaller or earlier-generation backbones being more sensitive to noisy or ambiguous preference pairs during alignment.
+By correcting likely flipped pairs and capping the influence of extreme-loss pairs, wDPO yields clearer gains on this setting.
+On Llama-3.2-3B, strong baselines already achieve low ASR, which limits the attainable improvement.
+Nevertheless, wDPO remains competitive and often improves upon the best baseline across judges and benchmarks.
+Overall, these results suggest that the benefits of wDPO generalize across model families and are not specific to a single backbone.
+D.2. Effect of Flip Warmup Ratio
+xxx
+Figure 5. Sensitivity to the flip warmup ratio α\alpha on Pythia-2.8B. WR is measured on the PKU-SafeRLHF test set. ASR is averaged over five benchmarks.xxx
+We study the sensitivity of the flip warmup ratio α\alpha in Stage I.
+We run wDPO on Pythia-2.8B and vary α\alpha from 00 to 0.40.4.
+Figure 5 reports WR on the PKU test split and the average ASR over five benchmarks.
+Figure 5 shows that α=0\alpha=0 leads to clearly worse performance.
+In this setting, flip mixing is enabled from the first update.
+However, early margins are often unreliable because the model has not yet formed a stable preference signal.
+As a result, many clean pairs can still have negative margins.
+Stage I may then assign flip weights to the wrong pairs, introducing incorrect corrections and destabilizing training.
+In extreme cases, wDPO can even underperform standard DPO.
+With a small warmup, performance becomes stable.
+For α\alpha in the range 0.10.1 to 0.40.4, both WR and ASR remain strong and vary only mildly.
+This suggests that Stage I mainly needs to skip the initial transient phase.
+After warmup, margins become more informative, and flip mixing is more likely to target truly inconsistent pairs.
+If α\alpha is too large, Stage I is delayed for too long and its benefit is reduced.
+Based on this tradeoff, we set α=0.3\alpha=0.3 in all experiments.
+Appendix E Tail Energy Share and HHI Metrics
+This appendix defines the two training diagnostics used in Figure 2.
+Both metrics are computed at each training step from the current batch.
+E.1. Per-sample gradient energy.
+Consider a batch of BB preference pairs.
+Let ℓi\ell_{i} be the per-sample loss used for backprop on pair ii.
+For DPO, ℓi\ell_{i} is the standard DPO loss.
+For wDPO, ℓi\ell_{i} is the winsorized per-sample loss ℓiwin\ell^{\mathrm{win}}_{i}.
+Let gi=∇θℓig_{i}=\nabla_{\theta}\ell_{i} be the gradient with respect to model parameters θ\theta.
+The energy of pair ii is defined as the squared gradient norm:
+(20)
+ei=∥gi∥22=‖∇θℓi‖22.e_{i}=\lVert g_{i}\rVert_{2}^{2}=\left\lVert\nabla_{\theta}\,\ell_{i}\right\rVert_{2}^{2}.
+The set {ei}i=1B\{e_{i}\}_{i=1}^{B} forms the energy distribution within the batch.
+E.2. Top group energy share.
+In Figure 2, the top group refers to the top (1−q)(1-q) fraction of pairs ranked by energy, defined for diagnostic purposes.
+Let eie_{i} be the energy of pair ii in a batch of size BB.
+Sort {ei}i=1B\{e_{i}\}_{i=1}^{B} in descending order and take the top ⌈(1−q)​B⌉\lceil(1-q)B\rceil pairs as the tail set 𝒮tail\mathcal{S}_{\mathrm{tail}}.
+The tail energy share is
+TailShare=∑i∈𝒮tailei∑i=1Bei.\mathrm{TailShare}=\frac{\sum_{i\in\mathcal{S}_{\mathrm{tail}}}e_{i}}{\sum_{i=1}^{B}e_{i}}.
+E.3. Herfindahl–Hirschman Index.
+HHI measures concentration of gradient energy across the batch.
+Energies are first normalized into a probability vector:
+(21)
+pi=ei∑j=1Bej.p_{i}=\frac{e_{i}}{\sum_{j=1}^{B}e_{j}}.
+The Herfindahl–Hirschman Index is then
+(22)
+HHI=∑i=1Bpi2.\mathrm{HHI}=\sum_{i=1}^{B}p_{i}^{2}.
+A smaller value indicates that energy is spread across many pairs, while a larger value indicates stronger concentration on a small subset.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

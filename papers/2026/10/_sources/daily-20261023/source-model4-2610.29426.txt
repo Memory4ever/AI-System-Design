@@ -1,0 +1,1092 @@
+https://arxiv.org/html/2610.29426v1
+BIRD-RL: Scaling Agentic Reinforcement Learning over Stateful Data-Centric Environments
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Preliminaries
+2.1 Task Definition
+Text-to-SQL Generation.
+SQL Issue Resolution.
+2.2 Tool-Centric Agent RL Loop
+3 Bird-RL : Efficient Agentic RL Curriculum for SQL Agent Training
+3.1 Stage 1: Reasoning Imitation
+Training Objective.
+Training Data Construction.
+3.2 Stage 2: Multi-Turn Tool-Use Imitation
+Training Objective.
+Data Construction.
+3.3 Stage 3: Adaptive Reasoning Reinforcement
+RL Training Objective.
+Reward Design.
+3.4 Stage 4: Stateful Interactive Agentic Reinforcement
+Agentic RL Training Objective.
+Reward Design.
+4 Trajectory-Scoped Persistent Execution Infrastructure
+4.1 Worker-Partitioned Database Pool
+4.2 Customized Stateful Agent Loop
+5 Experiments
+5.1 Experiment Settings
+Datasets and Metrics.
+Implementation and Baselines.
+5.2 Overall Performance
+Results on SQL Debugging.
+5.3 Analysis of Database Reuse Efficiency.
+5.4 Results on Heterogeneous SQL Tasks.
+Overall Performance.
+Data Mixture Ratio Discussion.
+5.5 Case Study: Effectiveness of the Adaptive Reasoning Reinforcement Stage
+5.6 Ablation Study
+6 Related Work
+LLMs for Text-to-SQL.
+RL for Reasoning.
+7 Conclusion
+8 Acknowledgments
+References
+A SIX-GYM-SQLite : Training Environment Construction
+A.1 SIX-GYM-SQLite
+B Methodology Details
+B.1 Workflow Orchestration of the Customized Stateful Agent Loop
+B.2 Auxiliary Proxy Reward Designs
+Partial Correctness Reward.
+LLM-as-a-judge trajectory scoring
+Heuristic Rubric-Based Reward.
+C Experiment Details
+C.1 Alias of LLMs
+C.2 Model Implementation Details
+C.3 Compared Methods
+SQL debugging baselines.
+SQL generation baselines.
+D More Analysis
+D.1 Case Study for Stage 3
+D.2 Comparison of Training-Time Database Lifecycle I/O
+D.3 Generalization for Different SQL Dialects
+D.4 Test-time Scaling Analysis
+E Limitations and Future Work
+F Ethics Statement
+G Broader Impact
+H Prompts and Examples
+License: CC BY 4.0
+arXiv:2610.29426v1 [cs.LG] 21 Oct 2026
+BIRD-RL: Scaling Agentic Reinforcement Learning over Stateful Data-Centric Environments
+Ge Qu
+Affiliation: The University of Hong Kong
+Email: quge@connect.hku.hk
+Jinyang Li
+Affiliation: The University of Hong Kong
+Xiaohan Xu
+Affiliation: The University of Hong Kong
+Xiaolong Li
+Affiliation: The University of Hong Kong
+Bowen Qin
+Affiliation: National University of Singapore
+Nan Huo
+Affiliation: The University of Hong Kong
+Ziwei Tang
+Affiliation: The University of Hong Kong
+Chenhao Ma
+Affiliation: The Chinese University of Hong Kong, Shenzhen
+Reynold Cheng
+Affiliation: The University of Hong Kong
+Abstract
+Modern data-centric applications increasingly require language agents capable of operating over live, stateful database environments, where successful problem resolution depends not merely on initial SQL generation, but on reasoning about evolving database states, interacting with execution feedback, and repairing state-mutating operations. While agentic reinforcement learning (RL) has emerged as a promising paradigm for training small language models (SLMs), existing frameworks are predominantly tool-centric and struggle with data-centric environments. Specifically, applying tool-centric frameworks to stateful tasks like SQL debugging introduces severe spatial inefficiencies since proper environment isolation typically requires a separate database container per rollout. Naively reusing databases without tracking evolving states across multi-turn interactions causes trajectory contamination and cross-trajectory interference, which severely destabilizes policy updates.
+To overcome these bottlenecks, we introduce BIRD-RL , a novel four-stage agentic RL curriculum that alternately enhances foundational agent reasoning and trajectory-adaptive on-policy exploration to circumvent the instability inherently associated with direct end-to-end learning. Crucially, to support this curriculum, BIRD-RL is driven by a Trajectory-scoped Persistent Execution Infrastructure , which enables safe database replica reuse while preserving trajectory isolation. This design improves spatial RL efficiency by 12.8x , successfully enabling scalable agentic RL for complex data-centric tasks without needs of Kubernettes. Empirical evaluations on the BIRD-CRITIC-SQLite benchmark demonstrate that our 7B and 14B models achieve Success Rates of 44.40% and 48.00%, respectively, showing competitive performance against strong proprietary model-based agents such as Claude-Opus-4.6 Agent (48.20%). Furthermore, BIRD-RL successfully trains unified SLMs capable of both advanced SQL debugging and generation, highlighting its broader potential for multi-objective optimization across heterogeneous, real-world data-centric tasks. For reproducibility, we release our code at https://github.com/bird-bench/BIRD-RL .
+1 Introduction
+Modern digital applications, from financial systems to web services, heavily rely on relational databases (RDBs) for robust data management [ 9 , 16 , 20 , 49 ] . Structured Query Language (SQL), which functions as the definitive interface for these systems, is indispensable for data query and manipulation [ 5 , 2 ] . Driven by the rapid development of large language models (LLMs) [ 45 , 60 ] , a broad spectrum of LLM-based SQL tasks has emerged. Text-to-SQL, which translates natural language questions into executable SQL queries, has become a representative beneficiary of this progress [ 24 , 57 , 36 , 23 ] . While current models excel at direct SQL generation, effectively resolving SQL issues remains a significant challenge with the evolving user demands in realistic scenarios [ 1 , 30 , 12 , 51 , 15 ] . Such SQL issue resolution often requires considerable manual effort, given the complexity of query semantics, intricate underlying schemas, and heterogeneous database operations. As a result, automating this process offers substantial practical value by improving efficiency and reducing reliance on specialized expertise [ 34 , 62 ] .
+Automatic issue resolution inherently requires stronger agentic capabilities to conduct root cause location and repair through iterative interaction with the database environment [ 25 , 53 , 54 ] . Contemporary approaches to developing reliable debugging agents can be categorized into two primary paradigms: inference-time prompting [ 22 , 54 , 55 ] and post-training-based agent learning [ 25 ] . The former employs elaborate in-context orchestrations, in which LLMs iteratively refine intermediate reasoning decisions based on execution feedback. The latter paradigm strengthens small language models (SLMs) by internalizing these agentic capabilities directly into model parameters through supervised fine-tuning (SFT). Such agents are highly valuable in data-centric applications due to data privacy and security concerns [ 40 ] . This practical need motivates the focus of our work.
+Despite its effectiveness, SFT often fails to promote robust intermediate reasoning and generalizable repair behavior due to its heavy reliance on demonstrated correction trajectories [ 7 , 13 ] . Agentic reinforcement learning (RL), instead, has recently emerged as a promising paradigm for training interactive agents, enabling models to improve reasoning through autonomous exploration driven by environmental reward signals [ 60 , 3 , 61 ] . However, agentic RL for SQL issue resolution presents unique, domain-specific challenges. On the one hand, SQL issue resolution requires a broader action space for root-cause analysis in declarative SQL. Agents often need to verify hypotheses through stateful database operations, including data manipulation ( INSERT , UPDATE , DELETE ) and schema modification ( ALTER TABLE ) [ 9 , 19 ] , placing a strong demand on the underlying infrastructure to support persistent and isolated database interactions at scale. General tool-centric frameworks often manage environments via a container-per-rollout mechanism [ 42 , 53 , 27 ] . However, applying this to data-intensive database environments incurs severe spatial inefficiencies and prohibitive scaling bottlenecks during massive trajectory generation. On the other hand, SQL debugging is a complicated task that simultaneously demands schema-grounded reasoning and dynamic environmental interaction. Direct end-to-end learning may overwhelm the policy within an exponentially large search space, resulting in suboptimal debugging effectiveness [ 10 ] .
+Figure 1 : Overview of the Bird-RL framework. (Left) The four-stage agentic RL curriculum transitioning from static reasoning imitation to interactive stateful exploration. (Right) The Trajectory-Scoped Persistent Execution Infrastructure, enabling scalable and isolated database replica reuse via a customized agent loop and worker-partitioned pool.
+To bridge this gap, we introduce Bird-RL , a novel agentic RL curriculum for SQL issue solving. It decomposes agent learning into four progressive stages: reasoning imitation (Section 3.1 ), tool-use imitation (Section 3.2 ), adaptive reasoning reinforcement (Section 3.3 ), and interactive agentic reinforcement (Section 3.4 ). Such a framework decouples an otherwise densely intertwined skill set into atomic, manageable learning objectives, circumventing the instability inherently associated with direct end-to-end learning. To realize scalable training for the final stage, we further introduce a Trajectory-Scoped Persistent Execution Infrastructure comprising a worker-partitioned database pool (Section 4.1 ) and a customized agent loop (Section 4.2 ), enabling isolated stateful interactions and high-concurrency efficiency via the orchestrated reuse of database replicas.
+Building on Bird-RL , we release the Bird-Talon model family, including 7B and 14B versions. Furthermore, to demonstrate that our curriculum generalizes beyond single-objective optimization, we introduce Bird-Zeno -7B, a unified multi-task model trained under a principled data-mixing ratio for heterogeneous SQL tasks targeting both debugging and query generation. As a resource contribution to the community, we also release SIX-GYM-SQLite , an automatically constructed training environment that extends SIX-GYM [ 25 ] to the SQLite dialect to facilitate future research for SQL agents.
+Empirical evaluations demonstrate that Bird-Talon -7B and 14B achieve Success Rates (SR) of 44.40% and 48.00% on BIRD-CRITIC-SQLite , respectively, performing competitively against strong proprietary model-based agents such as Claude-Opus-4.6 Agent (48.20%). Our trajectory-scoped infrastructure improves RL spatial efficiency by 12.8× under the evaluated SQLite workload, enabling stable and scalable agentic training. Besides, the unified Bird-Zeno model achieves an Execution Accuracy (EX) of 63.90% on the BIRD development set, delivering generation performance comparable to dedicated text-to-SQL models specifically optimized with RL while maintaining its debugging proficiency. These findings establish Bird-RL as a scalable framework for data-centric agent training, with its trajectory-scoped infrastructure paving the way for agentic RL in heavy, stateful database environments, while underscoring the potential of multi-objective training for heterogeneous real-world SQL tasks.
+2 Preliminaries
+2.1 Task Definition
+Text-to-SQL Generation.
+Given a natural language question 𝒬 \mathcal{Q} , with its corresponding database schema 𝒮 \mathcal{S} , the goal of text-to-SQL is to generate the SQL query σ p ​ r ​ e ​ d \sigma_{pred} that could answer the question 𝒬 \mathcal{Q} accurately by:
+σ p ​ r ​ e ​ d = f θ ​ ( 𝒬 , 𝒮 ) , \sigma_{pred}=f_{\mathcal{\theta}}(\mathcal{Q},\mathcal{S}),
+(1)
+where f θ ​ ( ⋅ ) f_{\mathcal{\theta}}\left(\cdot\right) refers to the mapping function with parameters θ \theta applied by the generator.
+SQL Issue Resolution.
+Compared with SQL generation from scratch, SQL issue resolution is a more realistic and challenging task. The task takes as input a user-provided SQL query σ i ​ s ​ s ​ u ​ e \sigma_{issue} , a natural language problem description 𝒫 \mathcal{P} specifying the issue and intended behavior, and the database schema 𝒮 \mathcal{S} . The goal is to produce a revised query σ p ​ r ​ e ​ d \sigma_{pred} that resolves the issue while preserving the user intent by:
+σ p ​ r ​ e ​ d = f θ ​ ( 𝒫 , 𝒮 , σ i ​ s ​ s ​ u ​ e ) , \sigma_{pred}=f_{\mathcal{\theta}}(\mathcal{P},\mathcal{S},\sigma_{issue}),
+(2)
+The target output σ p ​ r ​ e ​ d \sigma_{pred} is expected to satisfy the underlying user intent inferred from the input triplet.
+2.2 Tool-Centric Agent RL Loop
+Given an SQL issue task x = ( 𝒫 , 𝒮 , σ issue ) x=(\mathcal{P},\mathcal{S},\sigma_{\mathrm{issue}}) , a standard tool-centric agent loop [ 42 ] models interaction as a history-conditioned decision process. The agent maintains a textual history h t h_{t} , initialized as h 0 = x h_{0}=x , and at each step samples a structured tool invocation a t ∈ 𝒜 a_{t}\in\mathcal{A} from policy π θ \pi_{\theta} :
+a t ∼ π θ ( ⋅ ∣ h t ) , o t ∼ f k ( ⋅ ∣ a t , e t ) , h t + 1 = h t ⊕ ( a t , o t ) , a_{t}\sim\pi_{\theta}(\cdot\mid h_{t}),\quad o_{t}\sim f_{k}(\cdot\mid a_{t},e_{t}),\quad h_{t+1}=h_{t}\oplus(a_{t},o_{t}),
+(3)
+where f k f_{k} denotes the selected tool, o t o_{t} is the returned observation under environment state e t e_{t} , and ⊕ \oplus denotes history concatenation. The trajectory ends when the agent submits a final answer or reaches the maximum step budget.
+This fundamentally tool-centric loop records tool feedback in the textual context while leaving the persistent environment external to the loop. For many agentic RL tasks [ 42 , 53 , 27 ] , isolation can be approximated by assigning each rollout an independent sandbox. In data-centric tasks such as SQL issue resolution, however, this container-per-rollout design becomes prohibitively expensive, since each trajectory would require its own mutable replica of a potentially large database.
+Reusing database replicas is therefore necessary for scalability, but remains unsafe under a purely tool-centric loop. Without explicit trajectory-to-environment binding, tool calls from the same rollout may fail to access the intended evolving database state, while reused replicas may carry residual mutations from previous rollouts. Such state leakage contaminates execution feedback and induces cross-trajectory interference, thereby destabilizing on-policy RL. These limitations motivate the Trajectory-scoped Persistent Execution Infrastructure introduced in Section 4 .
+3 Bird-RL : Efficient Agentic RL Curriculum for SQL Agent Training
+Autonomous SQL issue resolution requires diagnostic reasoning, tool invocation, and feedback-guided refinement. Directly optimizing these capabilities end-to-end over a large interactive action space can lead to unstable or suboptimal policies [ 10 ] . To address this, Bird-RL adopts a four-stage curriculum, as shown in Figure 1 (left), which contains Reasoning Imitation Section 3.1 , Tool-Use Imitation (Section 3.2 ), Reasoning Reinforcement (Section 3.3 ), and Interactive Agentic Reinforcement (Section 3.4 ). This progressive design decomposes agent learning from static reasoning to stateful interaction, while the final stage is supported by our trajectory-scoped infrastructure for scalable and contamination-free RL.
+3.1 Stage 1: Reasoning Imitation
+Training Objective.
+As the foundation of the curriculum, this initial stage aims to establish a strong reasoning prior for schema-grounded issue solving. Formulated as a single-turn sub-task, the target output for a given input task x = ( 𝒫 , 𝒮 , σ i ​ s ​ s ​ u ​ e ) x=(\mathcal{P},\mathcal{S},\sigma_{issue}) is defined as y = ( t , σ ) y=(t,\sigma) , where t t denotes the reasoning thought, and σ \sigma is the predicted query. The policy π θ \pi_{\theta} is trained via supervised fine-tuning (SFT). The structured diagnostic reasoning capability learned in Stage 1 effectively mitigates the naive exploration (e.g., SELECT * FROM table ) in the ultimate interactive scenarios, resulting in more efficient execution and preventing unnecessary context expansion.
+Training Data Construction.
+To reduce human annotation cost, we use Claude-Sonnet-4.5 as the teacher model to construct reasoning-imitation data in the SIX-GYM-SQLite environment. Details of the environment construction and the protocol for preventing training-evaluation contamination are provided in Appendix A . For each task x = ( 𝒫 , 𝒮 , σ issue ) x=(\mathcal{P},\mathcal{S},\sigma_{\mathrm{issue}}) , the teacher generates a debugging thought t t with access to the corrected query σ ∗ \sigma^{*} , which serves as a reference for constructing the reasoning that diagnoses the SQL errors and motivates the target repair. We pair the generated thought with the corrected query as the supervision target y = ( t , σ ∗ ) y=(t,\sigma^{*}) . To ensure high-quality training data, we only include ( t , σ ∗ ) (t,\sigma^{*}) pairs where the corrected SQL σ ∗ \sigma^{*} can be regenerated from the debugging thought t t and the regenerated solution passes all test cases in 𝒞 \mathcal{C} . This produces 4,982 instances for the Reasoning Imitation stage.
+3.2 Stage 2: Multi-Turn Tool-Use Imitation
+Training Objective.
+Building on the previous stage, Stage 2 performs trajectory fine-tuning with the SQL-Act scaffold [ 25 ] , where executable SQL statements serve as fine-grained actions for database inspection, hypothesis testing, and root-cause localization. Each trajectory τ = { ( t i , a i , o i ) } i = 1 n \tau=\{(t_{i},a_{i},o_{i})\}_{i=1}^{n} interleaves the agent thought t i t_{i} , SQL action a i a_{i} , and database observation o i o_{i} . We implement SQL actions with two tools: execute_sql for exploration and testing, and submit_solution for termination. These tools keep SQL as the core action while providing an explicit stopping signal. Tool descriptions are detailed in Figure 6 .
+Data Construction.
+Following the trajectory formulation defined above, the teacher model Claude-Sonnet-4.5 is guided to generate a verified trajectory τ ~ \tilde{\tau} for each input task suite x x . We further employ the f-plan boosting strategy [ 25 ] to augment successful candidate trajectories. We consider the query σ \sigma submitted via submit_solution as the predicted query of each trajectory and apply the identical verification protocol as Stage 1 to filter ( x , τ ~ ) (x,\tilde{\tau}) pairs. We ultimately collected a training set of 4,502 trajectories.
+3.3 Stage 3: Adaptive Reasoning Reinforcement
+RL Training Objective.
+Although the first two stages provide reasoning and tool-use priors, they are learned from offline imitation and may induce rigid patterns that fail to adapt to new interaction contexts, as evidenced in Section 5.5 . To bridge imitation and on-policy agentic exploration, Stage 3 introduces a reasoning-focused RL phase that encourages adaptive reasoning before multi-turn RL.
+We adopt GRPO [ 41 ] for both reinforcement stages of Bird-RL . In Stage 3, following the single-turn output format y = ( t , σ ) y=(t,\sigma) , the policy samples a group of N N candidate outputs { y i = ( t i , σ i ) } i = 1 N \{y_{i}=(t_{i},\sigma_{i})\}_{i=1}^{N} for each input x x . Each solution σ i \sigma_{i} is evaluated by the execution-based reward defined below, and the resulting group-relative advantages are used to optimize:
+𝒥 GRPO ( θ ) = 𝔼 [ 1 N ∑ i = 1 N min ( ρ i A i , clip ( ρ i , 1 − ϵ , 1 + ϵ ) A i ) ] − β D KL ( π θ ∥ π ref ) , \mathcal{J}_{\mathrm{GRPO}}(\theta)=\mathbb{E}\left[\frac{1}{N}\sum_{i=1}^{N}\min\left(\rho_{i}A_{i},\;\mathrm{clip}(\rho_{i},1-\epsilon,1+\epsilon)A_{i}\right)\right]-\beta D_{\mathrm{KL}}(\pi_{\theta}\,\|\,\pi_{\mathrm{ref}}),
+(4)
+where ρ i = π θ ​ ( y i ∣ x ) π θ old ​ ( y i ∣ x ) \rho_{i}=\frac{\pi_{\theta}(y_{i}\mid x)}{\pi_{\theta_{\mathrm{old}}}(y_{i}\mid x)} is the likelihood ratio, A i A_{i} is the advantage, and π ref \pi_{\mathrm{ref}} is initialized from the Stage 2 policy.
+Reward Design.
+Since reasoning quality is difficult to verify directly, we supervise it through the functional correctness of the generated SQL. Given the test suite 𝒞 \mathcal{C} , the reward is defined as:
+R = 1 | 𝒞 | ​ ∑ c ∈ 𝒞 𝕀 ⁡ ( c ⁡ ( σ ) = True ) , R=\frac{1}{|\mathcal{C}|}\sum_{c\in\mathcal{C}}\mathbb{I}\big(c(\sigma)=\texttt{True}\big),
+(5)
+where 𝕀 ⁡ ( ⋅ ) \mathbb{I}(\cdot) is the indicator function. A solution receives credit for each test case it passes. The reward corresponds to the fraction of test cases passed by the generated SQL.
+3.4 Stage 4: Stateful Interactive Agentic Reinforcement
+Agentic RL Training Objective.
+As the culmination of the training curriculum, Stage 4 aims to enable autonomous multi-turn exploration with tool augmentation through agentic RL training. For each input task x x , a group of N N multi-turn trajectories { τ i } i = 1 N \{\tau_{i}\}_{i=1}^{N} is sampled. The final solution σ i \sigma_{i} is determined by the submit_solution action when available, or otherwise by the last generated query. The optimization follows the GRPO objective in Eq. ( 4 ), formulated at the trajectory level. Specifically, the likelihood ratio is computed over the full trajectory τ i \tau_{i} instead of a single-turn output y i y_{i} , and the reference policy π ref \pi_{\mathrm{ref}} is updated to the policy obtained from Stage 3.
+Reward Design.
+The objective of the final stage is to produce a functionally correct solution through iterative tool-augmented interaction. While prior works [ 37 , 17 ] typically augment verifiable execution rewards with elaborately designed proxy rewards, we observe that these proxy rewards can induce reward hacking in SQL debugging, as demonstrated in Section 5.6 . To this end, we adhere to the execution-based reward defined in Eq.( 5 ) assigned exclusively to the final solution, providing an unbiased signal directly aligned with the stage goal. To encourage unconstrained exploration, we apply no process-level rewards. Eliminating the step-wise credit assignment prevents bias toward specific interactions and purely aligns optimization with the final functional objective. Detailed designs of the proxy-reward variants used for comparison are provided in Appendix B.2 .
+4 Trajectory-Scoped Persistent Execution Infrastructure
+As discussed in Section 2.2 , standard tool-centric loops record tool observations in the textual history but do not explicitly bind a rollout to a persistent execution environment. This design is insufficient for stateful SQL debugging, where each trajectory must retain the database effects of its earlier actions for subsequent hypothesis testing. To support scalable stateful RL with environment isolation, Bird-RL introduces a Trajectory-scoped Persistent Execution Infrastructure, as shown in Figure 1 (right). It consists of two main modules: a worker-partitioned database pool (Section 4.1 ) for reusable storage and a customized stateful agent loop 4.2 for trajectory-level environment binding.
+4.1 Worker-Partitioned Database Pool
+The database pool maintains a pre-allocated set of reusable database replicas to avoid repeatedly instantiating a fresh database for every rollout. Given template databases 𝒟 = { d 1 , … , d N } \mathcal{D}=\{d_{1},\ldots,d_{N}\} , the pool maintains K K working replicas for each database d i d_{i} , denoted as { d i ( 1 ) , … , d i ( K ) } \{d_{i}^{(1)},\ldots,d_{i}^{(K)}\} . Since replica availability is managed locally by distributed rollout workers, replicas are partitioned across W W workers:
+{ d i ( 1 ) , … , d i ( K ) } = ⋃ w = 1 W ℰ i ( w ) , ℰ i ( w ) ∩ ℰ i ( w ′ ) = ∅ ​ ( w ≠ w ′ ) , \{d_{i}^{(1)},\dots,d_{i}^{(K)}\}=\bigcup_{w=1}^{W}\mathcal{E}_{i}^{(w)},\quad\mathcal{E}_{i}^{(w)}\cap\mathcal{E}_{i}^{(w^{\prime})}=\emptyset\;(w\neq w^{\prime}),
+(6)
+where ℰ i ( w ) \mathcal{E}_{i}^{(w)} denotes the worker-exclusive replica subset assigned to worker w w . Each replica in the pool maintains two states, which are is_available for assignment availability and need_reset for whether restoration is needed before reuse. This design enables efficient replica reuse while preventing cross-trajectory contamination.
+4.2 Customized Stateful Agent Loop
+Standard tool-centric loops [ 42 ] usually dispatch each tool invocation as a request-scoped call: the execution backend receives the current tool input and returns an observation, while the request identifier only represents this individual call rather than the entire rollout. Such request-scope abstraction fails to preserve state continuity within a trajectory, which is essential for SQL debugging with state-mutating operations. We therefore make the environment management trajectory-scoped with four designs:
+1) Stable Trajectory Identifier Binding:
+at the start of each rollout, we assign a stable trajectory identifier, and all subsequent execute_sql calls within the same rollout use this identifier to retrieve the same database replica, ensuring intra-trajectory state persistence.
+2) Lightweight Instance Registry:
+we maintain a lightweight registry that maps each trajectory identifier to its allocated database replica, e.g., ( trajectory_id , worker_id , db_id ) (\texttt{trajectory\_id},\texttt{worker\_id},\texttt{db\_id}) . This registry serves as the assignment memory between the agent loop and the database pool, routing each tool call to the intended persistent environment.
+3) Deferred State Release:
+the assigned replica remains bound to the trajectory until termination, rather than being released after each tool call. It is normally released upon the terminal submit_solution action, while an asynchronous timeout mechanism reclaims replicas from abnormal rollouts to prevent resource leakage.
+4) Dirty-Aware Lazy Reset:
+when a released replica has been modified, it is marked with need_reset=True and returned to the pool without resetting at trajectory termination. The reset is deferred until the replica is allocated to a new trajectory, which avoids termination-phase lock contention while ensuring that every new rollout starts from a clean database state. To further clarify the workflow of the customized agent loop shown in Figure 1 , we present its pseudo-code in Algorithm 1 .
+5 Experiments
+5.1 Experiment Settings
+Datasets and Metrics.
+We evaluate Bird-RL on heterogeneous SQL tasks covering both SQL debugging and SQL generation. For SQL debugging, we evaluate on Bird-Critic-SQLite [ 25 ] , which contains 500 SQLite issues across query-like, management, and personalization categories, and Bird-Critic-Multi [ 25 ] , which contains 570 issues across PostgreSQL, MySQL, SQL Server, and Oracle. For SQL generation, we evaluate on the Bird-SQL [ 24 ] development set with 1,534 examples. We report Success Rate (SR) for SQL debugging and Execution Accuracy (EX) for SQL generation following the official metrics of each benchmark.
+Implementation and Baselines.
+We implement Bird-RL on Qwen2.5-Coder-7B and Qwen2.5-Coder-14B, producing the debugging-specialized Bird-Talon models. We also train Bird-Zeno -7B as a unified model for both SQL debugging and generation through mixed-task training. All post-training stages are implemented with VERL [ 42 ] and run on 8 × \times H100 GPUs. Our trajectory-scoped infrastructure is integrated as a plug-and-play patch compatible with general VERL-based rollout pipelines. For baseline comparison, we consider strong general-purpose LLMs, multi-turn SQL agents, and supervised debugging agents on SQL debugging, as well as recent RL-based text-to-SQL methods on SQL generation. Full dataset statistics, training details, inference settings, and compared-method descriptions are provided in Appendix A and C .
+Table 1 : Success Rate (SR %) of different models on
+BIRD-CRITIC-SQLite , evaluated under greedy decoding and grouped by issue category.
+Bold numbers indicate the highest score in each column , and
+underlined numbers indicate the second highest.
+"Quer." refers to query-like issues, "Mana." refers to data-management issues,
+and "Pers." refers to personalized-function issues.
+Type
+Model
+Quer.
+Mana.
+Pers.
+Overall
+General-Purpose Models
+GPT-5.4-Pro
+44.01
+38.67
+39.72
+42.00
+Claude-Opus-4.6
+50.35
+44.00
+39.01
+46.20
+Claude-Sonnet-4.5
+46.83
+36.00
+34.75
+41.80
+Gemini-3.1-Pro
+53.52
+44.00
+41.84
+48.80
+GLM-4.7
+48.24
+40.00
+33.33
+42.80
+Kimi-K2.5
+46.48
+37.33
+35.46
+42.00
+MiniMax-M2-1
+38.03
+30.67
+32.62
+35.40
+Qwen3-Coder-480B
+45.77
+33.33
+37.59
+41.60
+Multi-Turn Agents
+Claude-Opus-4.6
+53.52
+42.67
+40.43
+48.20
+Claude-Sonnet-4.5
+44.01
+54.67
+37.59
+43.80
+Qwen3-Coder-480B
+46.48
+34.67
+39.01
+42.60
+BIRD-FIXER-7B
+37.32
+26.67
+29.79
+33.60
+BIRD-FIXER-14B
+42.96
+37.33
+35.46
+40.00
+Ours
+BIRD-Talon-7B
+46.13
+45.33
+40.43
+44.40
+BIRD-Talon-14B
+51.06
+50.67
+40.43
+48.00
+Table 2 : Detailed comparison of Bird-Talon with other strong baselines on BIRD-CRITIC-SQLite . The SQL-ACT agent employs SQLs as actions. Δ \Delta denotes the absolute improvement of Bird-Talon compared with the base model.
+Model
+Base
+SQL-Act
+Bird-Fixer
+Bird-Talon
+Δ \Delta (%)
+Qwen-2.5-Coder-7B
+26.20
+29.80
+33.60
+44.40
++18.20
+Qwen-2.5-Coder-14B
+33.80
+36.40
+40.00
+48.00
++14.20
+5.2 Overall Performance
+Results on SQL Debugging.
+Table 1 and Table 2 present the performance of Bird-Talon comparing approaches with mainstream LLMs and advanced SQL debugging agents. We can observe that:
+(1) Considerable Challenge in Stateful SQL Issue Debugging:
+Even the strongest proprietary model reaches only 48.80% SR, showing that SQL issue resolution over mutable databases is far from being solved. Category-level results further reveal that the difficulty mainly comes from state-dependent issues in which general-purpose models perform better on query-like cases, with 46.65% average SR, but drop to 38.00% and 36.79% on management and personalization issues, respectively. In addition, multi-turn agentic inference improves average overall SR by only 3.87%. This limited gain suggests that inference-time interaction alone is insufficient for robust stateful SQL debugging, motivating our agentic RL framework that enables adaptive reasoning through persistent database interaction.
+(2) Superior Performance of Bird-Talon :
+As shown in Table 2 , Bird-Talon brings consistent gains across both model scales, improving the Qwen2.5-Coder-7B and 14B backbones by 18.20% and 14.20% , respectively. We can also observe that directly applying the SQL-ACT scaffold produces only limited gains. While supervised trajectory imitation with Bird-Fixer improves performance further, it still falls substantially behind Bird-Talon . This suggests that imitation alone is insufficient to capture the decision dynamics required for multi-turn SQL debugging. Instead, Bird-RL enables the agent to adapt its reasoning and tool use through reasoning and agentic RL. Notably, Bird-Talon -14B achieves 48.00% overall SR, approaching the comparable performance of the Claude-Opus-4.6 agent (48.20%) while employing a much smaller open model, which is especially valuable for privacy-sensitive SQL applications.
+Table 3: Comparison of database lifecycle I/O during interactive rollout execution under trajectory-level isolation. “Emp. I/O” reports the measured online database lifecycle I/O from our implementation and excludes the one-time offline pool materialization cost.
+Strategy
+Training-time I/O
+Emp. I/O ( ↓ \downarrow )
+Cost Ratio
+Per-rollout Container
+O ⁡ ( N ​ R ​ S ¯ ) O(NR\bar{S})
+2.94 TiB
+12.8 × 12.8\times
+Dynamic Reusable Pool
+O ⁡ ( ( B + q / k ) ​ R ​ S ¯ ) O((B+q/k)R\bar{S})
+236 GiB
+1.0 × 1.0\times
+5.3 Analysis of Database Reuse Efficiency.
+To validate our proposed pool-based container isolation strategy, we conduct an efficiency analysis of database lifecycle I/O under trajectory-level isolation. Unlike peak memory and storage capacity, which can be managed through resource provisioning and pool sizing, repeated database materialization and restoration place sustained pressure on storage bandwidth. The resulting I/O saturation can cause rollout stalls or timeouts. Such infrastructure-induced failures can distort the reward signal and destabilize on-policy optimization if recorded as zero-reward trajectories. Reducing this recurring overhead is therefore important for feasible and reliable agentic RL over resource-intensive database environments.
+As shown in Table 3 , the training-time I/O column presents the theoretical online I/O complexity during rollout execution. The related parameter definition and detailed derivation of the complexity terms is provided in Appendix D.2 . The naive per-rollout baseline scales with the total number of generated trajectories. In contrast, the dynamic reusable pool fundamentally amortizes the database instantiation cost via cross-rollout reusability. This strategic shift leaves the online I/O dominated mainly by resetting modified replicas to preserve clean trajectory-level isolation. Benefiting from the SFT stages in our framework, which effectively regularizes the agent’s exploration behavior, only 9.25% of the practical trajectories execute state-altering queries and actually trigger a database reset. As a result, our proposed method guarantees a superior I/O efficiency compared to the naive baseline.
+However, dynamic online allocation is vulnerable to abrupt memory spikes under imbalanced database workloads, which can cause capacity overflows and destabilize rollout execution. We thus apply a pre-allocated database pool to mitigate this risk. Under the evaluated SQLite setting with batch size B = 16 B=16 and rollout R = 16 R=16 , our design reduces the measured online lifecycle I/O by 12.8 × 12.8\times compared to per-rollout containers. The trade-off is an offline pool cost of 69 GiB, which is practically negligible relative to the terabyte-level massive online I/O savings. Notably, since this offline pool scales strictly with the number of unique databases rather than the massive training volume 𝑵 N , its storage overhead remains predictable and highly cost-effective even under large-scale trajectory-level isolation. As the first work to investigate pool-based environment isolation for data-centric tasks, our infrastructure enables stable and scalable stateful agentic RL training for SQL debugging, paving the way for more intelligent database environment management as future work.
+5.4 Results on Heterogeneous SQL Tasks.
+Overall Performance.
+Table 4 : Comparison of Bird-Zeno with strong RL-based generation-specialized methods. "Gen." = "Generation" and "Debug." = "Debugging".
+Model
+Gen.
+Debug.
+Think2SQL-7B
+56.1
+24.0
+SQL-R1-7B
+58.9
+26.6
+ReEX-SQL-7B
+63.4
+-
+Reasoning-SQL-7B
+64.0
+-
+Arctic-T2S-R1-7B
+68.9
+29.8
+SQL-Trail-7B
+60.1
+-
+BIRD-Zeno-7B (Ours)
+63.9
+44.6
+Table 4 reports the performance of Bird-Zeno , which is trained under the data-mixed Bird-RL scaffold, on heterogeneous SQL tasks across SQL generation and issue resolution. Bird-Zeno -7B maintains superior debugging capabilities while achieving results comparable to strong RL-based generation-specific specialists on the BIRD-SQL development set. To our knowledge, this study is the first exploration of unified training in the SQL domain, highlighting the potential for multi-objective optimization within a single framework across real-world data-centric tasks.
+Data Mixture Ratio Discussion.
+The data mixture for multi-task training is a complex trade-off between task-specific performance and cross-task interference [ 31 ] . To estimate a suitable mixture ratio for Bird-Zeno , we conduct a controlled study with Qwen2.5-Coder-7B under three debugging-generation ratios. Specifically, we maintain a fixed total training set of 4,000 instances and evaluate the following settings: debug-heavy (3:1) , balanced (1:1) , and generation-heavy (1:3) . For efficiency, SQL generation is evaluated on Bird-Mini [ 4 ] , a mini subset of the BIRD development set.
+Figure 2 : Effect of data mixture ratio.
+As illustrated in Figure 2 , varying the mixture ratio reveals a clear trade-off between SQL generation and issue resolution. We speculate that this asymmetry arises because the two data sources play different roles within the shared execution-grounded reward space. Generation data primarily establishes schema grounding and compositional SQL priors, whereas debugging data shapes exploration behavior for effective information acquisition from databases. In light of this trade-off, we adopt the debug-heavy ratio of 3:1 as the final mixture for Bird-Zeno , which yields the strongest issue-resolution performance while retaining competitive SQL generation capability.
+5.5 Case Study: Effectiveness of the Adaptive Reasoning Reinforcement Stage
+Table 5 : Case study illustrating the effectiveness of Stage 3, with the full trajectory shown in Figure 4 .
+Setting
+Reasoning Trace
+Action Trace
+w/o Stage 3
+“… the problematic query joins budget and expense … To get the correct total budget per event, I need to aggregate budget amounts at the event level using MAX or MIN, since each event has one budget …”
+SELECT ... SUM(expense.cost), MAX(budget.amount) AS total_budget ... GROUP BY budget.link_to ...
+w/ Stage 3 (Ours)
+“… there are multiple budget lines …, and each budget line has multiple expense records … The solution is to pre-aggregate expenses per budget line first , then join with budget …”
+SELECT SUM(sub_exp.total_cost), SUM(budget.amount) ... FROM ( SELECT link_to_budget, SUM(cost) ... GROUP BY link_to_budget ) sub_exp ...
+Table 5 presents a concrete case illustrating the effectiveness of our Adaptive Reasoning Reinforcement Stage (Stage 3), with the full trajectories provided in Appendix D.1 (Figure 4 ). In this case, both agents correctly identify the root cause as aggregation errors in the earlier step, demonstrating the effectiveness of our first two training stages. However, their solutions later diverge: 1) w/o Stage 3: The agent fails to incorporate feedback and instead produces independent step-wise erroneous reasoning, which is a typical side effect of SFT. 2) w/ Stage 3: RL enables the agent to leverage the context coherently to apply the knowledge acquired during SFT, ultimately resulting in the correct reasoning and actions. This case underscores a critical shift from memorized debugging patterns toward adaptive, evidence-grounded reasoning, proving the necessity of Stage 3.
+5.6 Ablation Study
+Table 6 presents our ablation study, with fine-grained breakdowns across issue categories. The removal of the training stages shown in (a)-(c) leads to obvious performance drops, indicating that the overall gain arises from the progressive curriculum. This pattern underscores the core design principle of Bird-RL : imitation first anchors the policy in structured diagnostic reasoning and coherent tool use, while RL subsequently transforms into a more autonomous policy capable of feedback-driven exploration beyond the demonstrated trajectories. Notably, the effect of excluding the agentic RL stage (Table 6 (a)) is more pronounced on management ( ↓ \downarrow 9.33) and personalization issues ( ↓ \downarrow 7.10) than on query-like cases ( ↓ \downarrow 0.33), suggesting that agentic RL is particularly beneficial for resolutions that require stateful hypothesis testing and iterative revision.
+Table 6 (d)-(f) compares the purely execution-based reward employed in the agentic RL stage with three variants incorporating auxiliary proxy reward signals. Specifically, variant (d) applies rule-based partial-correctness signals to the submitted solution, whereas variants (e) and (f) additionally introduce trajectory-level supervision, scoring both the intermediate steps and the solution via an LLM judge and heuristic rubric criteria, respectively. Detailed reward designs are provided in Appendix B.2 . The superior performance of the sparse, purely execution-based reward indicates that the reward fidelity outweighs density in SQL debugging tasks. Given the extreme error sensitivity of the task, proxy rewards are prone to reward hacking, steering the policy toward superficially plausible syntax or favorable trajectories instead of genuine functional resolution. This suggests that heuristic proxy rewards, while widely used, often require substantial expert effort to construct. To this end, Bird-RL adopts the neat but effective execution-based design while remaining extensible to future sophisticated reward functions to further improve the upper bound of RL in data-centric tasks.
+Table 6 : Ablation study on the training curriculum and reward design of Bird-RL .
+Type
+Method
+Quer.
+Mana.
+Pers.
+Overall
+BIRD-Talon-7B
+46.13
+45.33
+40.43
+44.40
+Training Strategy
+(a) Up to Reasoning RL (Stages 1-3)
+45.77
+36.00
+33.33
+40.60 ( ↓ \downarrow 3.80)
+(b) Up to Tool-Use Imitation (Stages 1-2)
+45.07
+33.33
+30.50
+39.20 ( ↓ \downarrow 5.20)
+(c) Reasoning Imitation Only (Stage 1)
+41.55
+28.00
+26.24
+35.20 ( ↓ \downarrow 9.20)
+Reward Design
+(d) w/ Partial Correctness
+45.77
+41.33
+37.59
+42.80 ( ↓ \downarrow 1.60)
+(e) w/ LLM-as-a-Judge
+45.77
+38.67
+34.04
+41.40 ( ↓ \downarrow 3.00)
+(f) w/ Heuristic Rubric
+45.42
+40.00
+36.17
+42.00 ( ↓ \downarrow 2.40)
+6 Related Work
+LLMs for Text-to-SQL.
+In recent years, the application of LLMs has improved the performance of text-to-SQL to another level of intelligence [ 59 , 52 , 38 , 18 ] . Early research primarily leveraged the in-context learning capabilities of LLMs to build text-to-SQL systems through sophisticated prompt engineering [ 11 , 36 , 11 , 39 , 35 ] . Driven by the advent of language agents, recent text-to-SQL research has pivoted toward multi-agent architectures [ 47 , 50 , 6 ] . A critical component emerging from these architectures is the automatic error correction mechanism. Although recent agents increasingly incorporate automatic correction loops to improve response accuracy [ 43 , 29 , 35 ] , the distinct challenge of debugging the full spectrum of SQL operations for real-world database administration remains largely unexplored. Our work is expressly designed to bridge this gap.
+RL for Reasoning.
+Reinforcement learning (RL) has recently emerged as a promising paradigm for improving the reasoning capabilities of LLMs, enabling models to autonomously learn effective policies with the guidance of reward signals [ 14 , 32 ] . It has shown impressive success on reasoning-intensive tasks such as mathematical solving [ 41 ] , code generation [ 26 , 44 ] , and visual reasoning [ 48 , 46 , 58 ] . In light of these advancements, recent research in the text-to-SQL domain has started to leverage RL-based frameworks to steer the query synthesis process [ 33 , 56 , 28 , 8 , 37 , 17 ] . Our work aims to extend this line of research beyond static one-shot SQL synthesis to dynamic, stateful SQL issue resolution, where the agent must learn to diagnose and revise candidate repairs through multi-step interaction.
+7 Conclusion
+In this work, we introduce Bird-RL , a four-stage agentic RL curriculum for SQL issue resolution. To enable scalable training in data-centric environments, we equip Bird-RL with a Trajectory-scoped Persistent Execution Infrastructure that supports isolated stateful interactions through orchestrated database-replica reuse. Built on this framework, we release the Bird-Talon model family for SQL debugging. We further introduce Bird-Zeno , a unified multi-task model trained with a principled data-mixing strategy, to examine the generality of our curriculum beyond single-objective optimization. Together, these contributions establish Bird-RL as a scalable framework for data-centric agent training, paving the way for agentic RL in heavy, stateful database environments and highlighting the potential of multi-objective training for real-world SQL applications.
+8 Acknowledgments
+We thank the anonymous reviewers and committees for their helpful comments, suggestions and organizations. Reynold Cheng, Ge Qu, Jinyang Li, Xiaohan Xu, Xiaolong Li, Nan Huo, and Ziwei Tang are supported by the Research Grant Council of Hong Kong (RGC Project HKU 17202325) and the University of Hong Kong (Project 2609260682). Ge Qu and Jinyang Li are supported by HKU Presidential PhD Scholar Programme. Ge Qu is also funded by Hong Kong PhD Fellowship Scheme.
+References
+[1]
+A. Ahadi, V. Behbood, A. Vihavainen, J. Prior, and R. Lister (2016)
+Students’ syntactic mistakes in writing seven different types of sql queries and its application to predicting students’ success .
+In Proceedings of the 47th ACM Technical Symposium on Computing Science Education ,
+pp. 401–406 .
+Cited by: §1 .
+[2]
+M. Armbrust, R. S. Xin, C. Lian, Y. Huai, D. Liu, J. K. Bradley, X. Meng, T. Kaftan, M. J. Franklin, A. Ghodsi, and M. Zaharia (2015)
+Spark SQL: relational data processing in spark .
+In Proceedings of the 2015 ACM SIGMOD International Conference on
+Management of Data, Melbourne, Victoria, Australia, May 31 - June
+4, 2015 , T. K. Sellis, S. B. Davidson, and Z. G. Ives (Eds.) ,
+pp. 1383–1394 .
+Cited by: §1 .
+[3]
+H. Bai, Y. Zhou, J. Pan, M. Cemri, A. Suhr, S. Levine, and A. Kumar (2024)
+DigiRL: training in-the-wild device-control agents with autonomous reinforcement learning .
+In The Thirty-eighth Annual Conference on Neural Information Processing Systems ,
+Cited by: §1 .
+[4]
+BIRD Bench Team (2024)
+BIRD-SQL Mini-Dev .
+Note: https://github.com/bird-bench/mini_dev
+Cited by: §5.4 .
+[5]
+D. D. Chamberlin and R. F. Boyce (1974)
+SEQUEL: a structured english query language .
+In Proceedings of the 1974 ACM SIGMOD Workshop on Data Description, Access and Control ,
+pp. 249–264 .
+Cited by: §1 .
+[6]
+S. Chaturvedi, A. Chadha, and L. Bindschaedler (2025)
+SQL-of-thought: multi-agentic text-to-SQL with guided error correction .
+In NeurIPS 2025 Fourth Workshop on Deep Learning for Code ,
+Cited by: §6 .
+[7]
+T. Chu, Y. Zhai, J. Yang, S. Tong, S. Xie, D. Schuurmans, Q. V. Le, S. Levine, and Y. Ma (2025)
+SFT memorizes, RL generalizes: a comparative study of foundation model post-training .
+In Forty-second International Conference on Machine Learning ,
+Cited by: §1 .
+[8]
+Y. Dai, W. Xie, X. Zhuang, T. Yang, Y. Yang, H. Yang, Y. Zhao, P. Chao, and W. Jiang (2025)
+Reex-sql: reasoning with execution-aware reinforcement learning for text-to-sql .
+arXiv preprint arXiv:2505.12768 .
+Cited by: §C.3 ,
+§6 .
+[9]
+C. J. Date (2003)
+An introduction to database systems .
+8th edition , Addison-Wesley / Pearson .
+Cited by: §1 ,
+§1 .
+[10]
+G. Dulac-Arnold, R. Evans, H. van Hasselt, P. Sunehag, T. Lillicrap, J. Hunt, T. Mann, T. Weber, T. Degris, and B. Coppin (2016)
+Deep reinforcement learning in large discrete action spaces .
+Cited by: §1 ,
+§3 .
+[11]
+D. Gao, H. Wang, Y. Li, X. Sun, Y. Qian, B. Ding, and J. Zhou (2023)
+Text-to-sql empowered by large language models: a benchmark evaluation .
+arXiv preprint arXiv:2308.15363 .
+Cited by: §6 .
+[12]
+S. Gathani, P. Lim, and L. Battle (2020)
+Debugging database queries: A survey of tools, techniques, and users .
+In CHI ’20: CHI Conference on Human Factors in Computing Systems,
+Honolulu, HI, USA, April 25-30, 2020 ,
+pp. 1–16 .
+Cited by: §1 .
+[13]
+A. Gudibande, E. Wallace, C. V. Snell, X. Geng, H. Liu, P. Abbeel, S. Levine, and D. Song (2024)
+The false promise of imitating proprietary language models .
+In The Twelfth International Conference on Learning Representations ,
+Cited by: §1 .
+[14]
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, et al. (2025)
+DeepSeek-r1 incentivizes reasoning in llms through reinforcement learning .
+Nature 645 ( 8081 ), pp. 633–638 .
+Cited by: §6 .
+[15]
+S. Haroon, C. Brown, and M. A. Gulzar (2024)
+DeSQL: interactive debugging of SQL in data-intensive scalable computing .
+Proc. ACM Softw. Eng. 1 ( FSE ), pp. 767–788 .
+Cited by: §1 .
+[16]
+J. M. Hellerstein and M. Stonebraker (2005)
+Readings in database systems .
+MIT press .
+Cited by: §1 .
+[17]
+H. Hua, Z. Han, Z. Shen, J. Lee, P. Guan, Q. Zhu, S. Jeoung, Y. Chen, Y. Bai, S. Wang, V. Ioannidis, and H. Rangwala (2026)
+SQL-trail: multi-turn reinforcement learning with interleaved feedback for text-to-sql .
+External Links: 2601.17699
+Cited by: §C.3 ,
+§3.4 ,
+§6 .
+[18]
+N. Huo, J. Li, B. Qin, G. Qu, X. Li, X. Li, C. Ma, and R. Cheng (2025)
+Micro-act: mitigate knowledge conflict in question answering via actionable self-reasoning .
+arXiv preprint arXiv:2506.05278 .
+Cited by: §6 .
+[19]
+N. Huo, X. Xu, J. Li, P. Jacobsson, S. Lin, B. Qin, B. Hui, X. Li, G. Qu, S. Si, L. Han, E. Alexander, X. Zhu, R. Qin, R. Yu, Y. Jin, F. Zhou, W. Zhong, Y. Chen, H. Liu, C. Ma, F. Ozcan, Y. Papakonstantinou, and R. Cheng (2026)
+BIRD-INTERACT: re-imagining text-to-SQL evaluation via lens of dynamic interactions .
+In The Fourteenth International Conference on Learning Representations ,
+Cited by: §1 .
+[20]
+S. Kandel, A. Paepcke, J. M. Hellerstein, and J. Heer (2012)
+Enterprise data analysis and visualization: an interview study .
+IEEE Trans. Vis. Comput. Graph. 18 ( 12 ), pp. 2917–2926 .
+Cited by: §1 .
+[21]
+W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E. Gonzalez, H. Zhang, and I. Stoica (2023)
+Efficient memory management for large language model serving with pagedattention .
+In Proceedings of the ACM SIGOPS 29th Symposium on Operating Systems Principles ,
+Cited by: §C.2 .
+[22]
+F. Lei, J. Chen, Y. Ye, R. Cao, D. Shin, H. SU, Z. SUO, H. Gao, W. Hu, P. Yin, V. Zhong, C. Xiong, R. Sun, Q. Liu, S. Wang, and T. Yu (2025)
+Spider 2.0: evaluating language models on real-world enterprise text-to-SQL workflows .
+In The Thirteenth International Conference on Learning Representations ,
+Cited by: §1 .
+[23]
+H. Li, J. Zhang, H. Liu, J. Fan, X. Zhang, J. Zhu, R. Wei, H. Pan, C. Li, and H. Chen (2024)
+Codes: towards building open-source language models for text-to-sql .
+Proceedings of the ACM on Management of Data 2 ( 3 ), pp. 1–28 .
+Cited by: §1 .
+[24]
+J. Li, B. Hui, G. Qu, J. Yang, B. Li, B. Li, B. Wang, B. Qin, R. Geng, N. Huo, et al. (2024)
+Can llm already serve as a database interface? a big bench for large-scale database grounded text-to-sqls .
+Advances in Neural Information Processing Systems 36 .
+Cited by: §1 ,
+§5.1 .
+[25]
+J. Li, X. Li, G. Qu, P. Jacobsson, B. Qin, B. Hui, S. Si, N. Huo, X. Xu, Y. Zhang, Z. Tang, Y. Li, F. Widjaja, X. Zhu, F. Zhou, Y. Huang, Y. Papakonstantinou, F. Ozcan, C. Ma, and R. Cheng (2026)
+SWE-SQL: illuminating LLM pathways to solve user SQL issues in real-world applications .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+Cited by: §C.3 ,
+§1 ,
+§1 ,
+§3.2 ,
+§3.2 ,
+§5.1 .
+[26]
+J. Liu, Y. Zhu, K. Xiao, Q. FU, X. Han, Y. Wei, and D. Ye (2023)
+RLTF: reinforcement learning from unit test feedback .
+Transactions on Machine Learning Research .
+External Links: ISSN 2835-8856
+Cited by: §6 .
+[27]
+X. Liu, H. Yu, H. Zhang, Y. Xu, X. Lei, H. Lai, Y. Gu, H. Ding, K. Men, K. Yang, S. Zhang, X. Deng, A. Zeng, Z. Du, C. Zhang, S. Shen, T. Zhang, Y. Su, H. Sun, M. Huang, Y. Dong, and J. Tang (2024)
+AgentBench: evaluating LLMs as agents .
+In The Twelfth International Conference on Learning Representations ,
+Cited by: §1 ,
+§2.2 .
+[28]
+P. MA, X. Zhuang, C. Xu, X. Jiang, R. Chen, and J. Guo (2026)
+SQL-r1: training natural language to SQL reasoning model by reinforcement learning .
+In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,
+Cited by: §C.3 ,
+§6 .
+[29]
+A. Madaan, N. Tandon, P. Gupta, S. Hallinan, L. Gao, S. Wiegreffe, U. Alon, N. Dziri, S. Prabhumoye, Y. Yang, S. Gupta, B. P. Majumder, K. Hermann, S. Welleck, A. Yazdanbakhsh, and P. Clark (2023)
+Self-refine: iterative refinement with self-feedback .
+In Thirty-seventh Conference on Neural Information Processing Systems ,
+Cited by: §6 .
+[30]
+F. Miedema, J. Spacco, and R. Lister (2021)
+Patterns of SQL mistakes among novice programmers: an exploratory study .
+In Proc. 26th ACM Conf. on Innovation and Technology in Computer Science Education (ITiCSE) ,
+pp. 55–61 .
+External Links: Document
+Cited by: §1 .
+[31]
+D. Mueller, M. Dredze, and N. Andrews (2024)
+Multi-task transfer matters during instruction-tuning .
+In Findings of the Association for Computational Linguistics: ACL 2024 ,
+pp. 14880–14891 .
+Cited by: §5.4 .
+[32]
+L. Ouyang, J. Wu, X. Jiang, D. Almeida, C. Wainwright, P. Mishkin, C. Zhang, S. Agarwal, K. Slama, A. Ray, et al. (2022)
+Training language models to follow instructions with human feedback .
+Advances in neural information processing systems 35 , pp. 27730–27744 .
+Cited by: §6 .
+[33]
+S. Papicchio, S. Rossi, L. Cagliero, and P. Papotti (2025)
+Think2sql: reinforce llm reasoning capabilities for text2sql .
+arXiv preprint arXiv:2504.15077 .
+Cited by: §C.3 ,
+§6 .
+[34]
+A. Pavlo, G. Angulo, J. Arulraj, H. Lin, J. Lin, L. Ma, P. Menon, T. C. Mowry, M. Perron, I. Quah, et al. (2017)
+Self-driving database management systems. .
+In CIDR ,
+Vol. 4 , pp. 1 .
+Cited by: §1 .
+[35]
+M. Pourreza, H. Li, R. Sun, Y. Chung, S. Talaei, G. T. Kakkar, Y. Gan, A. Saberi, F. Ozcan, and S. O. Arik (2025)
+CHASE-SQL: multi-path reasoning and preference optimized candidate selection in text-to-SQL .
+In The Thirteenth International Conference on Learning Representations ,
+Cited by: §6 .
+[36]
+M. Pourreza and D. Rafiei (2023)
+Din-sql: decomposed in-context learning of text-to-sql with self-correction .
+Advances in Neural Information Processing Systems 36 , pp. 36339–36348 .
+Cited by: §1 ,
+§6 .
+[37]
+M. Pourreza, S. Talaei, R. Sun, X. Wan, H. Li, A. Mirhoseini, A. Saberi, and S. O. Arik (2025)
+Reasoning-SQL: reinforcement learning with SQL tailored partial rewards for reasoning-enhanced text-to-SQL .
+In Second Conference on Language Modeling ,
+Cited by: §C.3 ,
+§3.4 ,
+§6 .
+[38]
+B. Qin, B. Hui, L. Wang, M. Yang, J. Li, B. Li, R. Geng, R. Cao, J. Sun, L. Si, F. Huang, and Y. Li (2022)
+A survey on text-to-sql parsing: concepts, methods, and future directions .
+In arXiv:2208.13629 ,
+Cited by: §6 .
+[39]
+G. Qu, J. Li, B. Li, B. Qin, N. Huo, C. Ma, and R. Cheng (2024)
+Before generation, align it! a novel and effective strategy for mitigating hallucinations in text-to-SQL generation .
+In Findings of the Association for Computational Linguistics ACL 2024 ,
+Cited by: §6 .
+[40]
+G. Qu, J. Li, B. Qin, X. Li, N. Huo, C. Ma, and R. Cheng (2025)
+SHARE: an SLM-based hierarchical action CorREction assistant for text-to-SQL .
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,
+Cited by: §1 .
+[41]
+Z. Shao, P. Wang, Q. Zhu, R. Xu, J. Song, X. Bi, H. Zhang, M. Zhang, Y. Li, Y. Wu, et al. (2024)
+Deepseekmath: pushing the limits of mathematical reasoning in open language models .
+arXiv preprint arXiv:2402.03300 .
+Cited by: §C.2 ,
+§3.3 ,
+§6 .
+[42]
+G. Sheng, C. Zhang, Z. Ye, X. Wu, W. Zhang, R. Zhang, Y. Peng, H. Lin, and C. Wu (2025)
+HybridFlow: A flexible and efficient RLHF framework .
+In Proceedings of the Twentieth European Conference on Computer Systems,
+EuroSys 2025, Rotterdam, The Netherlands, 30 March 2025 - 3 April
+2025 ,
+Cited by: §C.2 ,
+§1 ,
+§2.2 ,
+§2.2 ,
+§4.2 ,
+§5.1 .
+[43]
+N. Shinn, F. Cassano, A. Gopinath, K. R. Narasimhan, and S. Yao (2023)
+Reflexion: language agents with verbal reinforcement learning .
+In Thirty-seventh Conference on Neural Information Processing Systems ,
+Cited by: §6 .
+[44]
+P. Shojaee, A. Jain, S. Tipirneni, and C. K. Reddy (2023)
+Execution-based code generation using deep reinforcement learning .
+Transactions on Machine Learning Research .
+Note:
+External Links: ISSN 2835-8856
+Cited by: §6 .
+[45]
+A. Singh, A. Fry, A. Perelman, A. Tart, A. Ganesh, A. El-Kishky, A. McLaughlin, A. Low, A. Ostrow, A. Ananthram, et al. (2025)
+Openai gpt-5 system card .
+arXiv preprint arXiv:2601.03267 .
+Cited by: §1 .
+[46]
+Z. Sun, S. Shen, S. Cao, H. Liu, C. Li, Y. Shen, C. Gan, L. Gui, Y. Wang, Y. Yang, et al. (2024)
+Aligning large multimodal models with factually augmented rlhf .
+In Findings of the Association for Computational Linguistics: ACL 2024 ,
+pp. 13088–13110 .
+Cited by: §6 .
+[47]
+S. Talaei, M. Pourreza, Y. Chang, A. Mirhoseini, and A. Saberi (2024)
+Chess: contextual harnessing for efficient sql synthesis .
+arXiv preprint arXiv:2405.16755 .
+Cited by: §6 .
+[48]
+K. Team, T. Bai, Y. Bai, Y. Bao, S. Cai, Y. Cao, Y. Charles, H. Che, C. Chen, G. Chen, et al. (2026)
+Kimi k2. 5: visual agentic intelligence .
+arXiv preprint arXiv:2602.02276 .
+Cited by: §6 .
+[49]
+A. Thusoo, J. S. Sarma, N. Jain, Z. Shao, P. Chakka, N. Zhang, S. Anthony, H. Liu, and R. Murthy (2010)
+Hive - a petabyte scale data warehouse using hadoop .
+In Proceedings of the 26th International Conference on Data Engineering,
+ICDE 2010, March 1-6, 2010, Long Beach, California, USA ,
+pp. 996–1005 .
+Cited by: §1 .
+[50]
+B. Wang, C. Ren, J. Yang, X. Liang, J. Bai, L. Chai, Z. Yan, Q. Zhang, D. Yin, X. Sun, et al. (2025)
+MAC-sql: a multi-agent collaborative framework for text-to-sql .
+In Proceedings of the 31st International Conference on Computational Linguistics ,
+pp. 540–557 .
+Cited by: §6 .
+[51]
+Z. Wang, A. Kumar, S. Ni, and C. Li (2020)
+Demonstration of interactive runtime debugging of distributed dataflows in texera .
+Proc. VLDB Endow. 13 ( 12 ), pp. 2953–2956 .
+Cited by: §1 .
+[52]
+N. Yaghmazadeh, Y. Wang, I. Dillig, and T. Dillig (2017)
+SQLizer: query synthesis from natural language .
+Proceedings of the ACM on Programming Languages 1 ( OOPSLA ), pp. 1–26 .
+Cited by: §6 .
+[53]
+J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. Narasimhan, and O. Press (2024)
+Swe-agent: agent-computer interfaces enable automated software engineering .
+Advances in Neural Information Processing Systems 37 , pp. 50528–50652 .
+Cited by: §1 ,
+§1 ,
+§2.2 .
+[54]
+J. Yang, A. Prabhakar, K. R. Narasimhan, and S. Yao (2023)
+InterCode: standardizing and benchmarking interactive coding with execution feedback .
+In Thirty-seventh Conference on Neural Information Processing Systems Datasets and Benchmarks Track ,
+Cited by: §1 .
+[55]
+S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. R. Narasimhan, and Y. Cao (2023)
+ReAct: synergizing reasoning and acting in language models .
+In The Eleventh International Conference on Learning Representations,
+ICLR 2023, Kigali, Rwanda, May 1-5, 2023 ,
+Cited by: §C.3 ,
+§1 .
+[56]
+Z. Yao, G. Sun, L. Borchmann, G. Nuti, Z. Shen, M. Deng, B. Zhai, H. Zhang, A. Li, and Y. He (2025)
+Arctic-text2sql-r1: simple rewards, strong reasoning in text-to-sql .
+arXiv preprint arXiv:2505.20315 .
+Cited by: §C.3 ,
+§6 .
+[57]
+T. Yu, R. Zhang, K. Yang, M. Yasunaga, D. Wang, Z. Li, J. Ma, I. Li, Q. Yao, S. Roman, Z. Zhang, and D. Radev (2018)
+Spider: a large-scale human-labeled dataset for complex and cross-domain semantic parsing and text-to-SQL task .
+In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing ,
+pp. 3911–3921 .
+Cited by: §1 .
+[58]
+T. Yu, H. Zhang, Q. Li, Q. Xu, Y. Yao, D. Chen, X. Lu, G. Cui, Y. Dang, T. He, et al. (2025)
+Rlaif-v: open-source ai feedback leads to super gpt-4v trustworthiness .
+In Proceedings of the Computer Vision and Pattern Recognition Conference ,
+pp. 19985–19995 .
+Cited by: §6 .
+[59]
+J. M. Zelle and R. J. Mooney (1996)
+Learning to parse database queries using inductive logic programming .
+In Proceedings of the Fourteenth National Conference on Artificial Intelligence and Ninth Conference on Innovative Applications of Artificial Intelligence ,
+pp. 1050–1055 .
+Cited by: §6 .
+[60]
+A. Zeng, X. Lv, Z. Hou, Z. Du, Q. Zheng, B. Chen, D. Yin, C. Ge, C. Huang, C. Xie, et al. (2026)
+Glm-5: from vibe coding to agentic engineering .
+arXiv preprint arXiv:2602.15763 .
+Cited by: §1 ,
+§1 .
+[61]
+H. Zhang, M. Liu, S. Zhang, S. Han, J. Hu, Z. Jin, Y. Zhang, S. Diao, X. Lu, B. Xu, Z. Yu, J. Kautz, and Y. Dong (2026)
+ProRL agent: rollout-as-a-service for rl training of multi-turn llm agents .
+Cited by: §1 .
+[62]
+X. Zhou, G. Li, Z. Sun, Z. Liu, W. Chen, J. Wu, J. Liu, R. Feng, and G. Zeng (2024)
+D-bot: database diagnosis system using large language models .
+Proc. VLDB Endow. 17 ( 10 ), pp. 2514–2527 .
+External Links: ISSN 2150-8097
+Cited by: §1 .
+Appendix A SIX-GYM-SQLite : Training Environment Construction
+Training LLMs as autonomous agents for complex tasks fundamentally requires an integrated environment that combines high-quality task suites, executable environments, and rigorous test verification. To efficiently support the massive trial-and-error exploration inherent in optimizing these agents via RL, with server-based database systems such as PostgreSQL and MySQL, the lightweight, in-process nature of SQLite eliminates the client-server overhead of engines like PostgreSQL, enabling the high-throughput parallel rollouts essential for large-scale SQL agent training. While the existing SQL debugging benchmark SWE-SQL has introduced SIX-GYM environment for PostgreSQL, it lacks a dedicated training environment specifically constructed for SQLite. To address this gap, we contribute SIX-GYM-SQLite as a practical resource extension of the prior work, employing it as the underlying sandbox to automatically synthesize the stage-specific training data for Bird-RL .
+A.1 SIX-GYM-SQLite
+Following the SQL-Rewind methodology introduced in SWE-SQL, we construct SIX-GYM-SQLite by adapting the original SIX-GYM training environment to SQLite. The resulting task suite combines instances adapted from the original SIX-GYM task suites with additional instances synthesized from newly collected Stack Overflow posts. We retain 5,000 high-quality instances based on answer quality, SQL complexity, and taxonomic coverage.
+To prevent training–evaluation contamination, the SQLite adaptation preserves the database- and source-level separation established by the SWE-SQL construction protocol. Specifically, SIX-GYM-SQLite and BIRD-CRITIC-SQLite retain the database schemas of their respective counterparts in SWE-SQL, which uses disjoint database domains and instances for training and evaluation. At the source level, the inherited construction protocol excludes Stack Overflow posts used in BIRD-CRITIC from the training source pool by post ID prior to synthesis. During subsequent supervision generation for Stages 1 and 2, the teacher model is provided only with training instances and their reference solutions, without access to evaluation instances.
+Furthermore, we exhaustively compared all 500 × \times 5,000 train–test pairs using a dual-view TF-IDF audit over normalized issue descriptions and buggy SQL. A pair was flagged as a high-confidence near-duplicate only when the same training instance exceeded 0.85 text similarity and 0.90 SQL similarity. Only 3 of 500 tasks (0.6%) are highly similar to training tasks, and all three are permission-privilege-related tasks, a category that is inherently shared, since privilege management (e.g., GRANT/REVOKE and access-control patterns) is core database knowledge that neither training nor evaluation can meaningfully exclude. Excluding these three flagged evaluation tasks leaves our main conclusions unchanged.
+Table 7 summarizes the overall data characteristics, including task categories, token lengths, evaluation scripts, and database coverage.
+Table 8 further breaks down query, issue SQL, solution SQL, and test-case lengths by task category.
+Figure 3 visualizes the distribution of SQL usage categories and database domains, showing that SIX-GYM-SQLite covers diverse SQL operations and application contexts.
+Table 7 : Data characteristics of SIX-GYM-SQLite. Length statistics are reported as mean/max token counts using the cl100k_base tokenizer.
+Statistic
+SIX-GYM-SQLite
+Total Issues
+5,000
+# of query-like issues
+3,094
+# of management issues
+1,087
+# of personalization issues
+819
+user query length (mean/max)
+162.55/917
+issue SQL length (mean/max)
+85.50/898
+solution SQL length (mean/max)
+97.66/1,976
+test-case length (mean/max)
+221.38/1,601
+# distinct test cases
+2,477
+# preprocess SQLs
+3,512
+# clean_up SQLs
+969
+# multi-SQL issue instances
+454
+# database domains
+13
+Table 8 : SIX-GYM-SQLite statistics grouped by task category. Length statistics are reported as mean/max token counts.
+Category
+Count
+User Query
+Issue SQL
+Solution SQL
+Test Cases
+Query
+3,094
+183.93/917
+86.76/751
+96.22/1,976
+143.74/1,601
+Management
+1,087
+120.20/535
+73.51/802
+83.84/802
+446.16/1,085
+Personalization
+819
+138.01/421
+96.63/898
+121.40/1,041
+216.33/1,418
+Overall
+5,000
+162.55/917
+85.50/898
+97.66/1,976
+221.38/1,601
+(a) SQL usage categories. Categories are non-exclusive; percentages indicate the share of tasks containing each feature.
+(b) Database domains. SIX-GYM-SQLite spans 5,000 tasks across 13 SQLite database domains.
+Figure 3 : Statistics of SIX-GYM-SQLite training data, covering SQL feature usage and database-domain distribution.
+Appendix B Methodology Details
+B.1 Workflow Orchestration of the Customized Stateful Agent Loop
+Algorithm 1 presents the pseudo-code of the customized stateful agent loop, illustrating how trajectory-level database binding, dirty-aware lazy reset, and replica release are orchestrated during rollout execution.
+Algorithm 1 Workflow Orchestration Pseudo Code
+1:
+Task instance 𝒙 x , target database template 𝒅 d , worker-partitioned DB pool 𝓟 \mathcal{P}
+2:
+Final submitted solution or timeout termination
+3:
+Generate a unique trajectory identifier 𝐭𝐫𝐚𝐣 ​ _ ​ 𝐢𝐝 \mathrm{traj\_id}
+4:
+Request an available replica 𝒓 r of database 𝒅 d from the local worker pool 𝓟 \mathcal{P}
+5:
+if no replica is immediately available then
+6:
+Wait in the allocation queue until a replica is released or timeout occurs
+7:
+end if
+8:
+if allocation timeout occurs then
+9:
+return timeout failure
+10:
+end if
+11:
+Set 𝒓 . is_available ← False r.\texttt{is\_available}\leftarrow\texttt{False}
+12:
+Register ( 𝐭𝐫𝐚𝐣 ​ _ ​ 𝐢𝐝 , 𝐰𝐨𝐫𝐤𝐞𝐫 ​ _ ​ 𝐢𝐝 , 𝐝𝐛 ​ _ ​ 𝐢𝐝 ) (\mathrm{traj\_id},\mathrm{worker\_id},\mathrm{db\_id}) in the stateful agent loop
+13:
+if 𝒓 . need_reset = True r.\texttt{need\_reset}=\texttt{True} then
+14:
+Restore 𝒓 r from the clean database template
+15:
+Set 𝒓 . need_reset ← False r.\texttt{need\_reset}\leftarrow\texttt{False}
+16:
+end if
+17:
+while the trajectory has not terminated do
+18:
+The agent generates an action 𝒂 a
+19:
+if 𝒂 a is execute_sql then
+20:
+Lookup ( 𝐰𝐨𝐫𝐤𝐞𝐫 ​ _ ​ 𝐢𝐝 , 𝐝𝐛 ​ _ ​ 𝐢𝐝 ) (\mathrm{worker\_id},\mathrm{db\_id}) by 𝐭𝐫𝐚𝐣 ​ _ ​ 𝐢𝐝 \mathrm{traj\_id} in the stateful agent loop
+21:
+Execute the SQL action on the trajectory-bound replica 𝒓 r
+22:
+Return the database observation to the agent
+23:
+if the SQL action mutates the database state then
+24:
+Set 𝒓 . need_reset ← True r.\texttt{need\_reset}\leftarrow\texttt{True}
+25:
+end if
+26:
+else if 𝒂 a is submit_solution then
+27:
+Record the submitted solution
+28:
+Break
+29:
+end if
+30:
+end while
+31:
+Release 𝒓 r back to the local worker pool 𝓟 \mathcal{P}
+32:
+Set 𝒓 . is_available ← True r.\texttt{is\_available}\leftarrow\texttt{True}
+33:
+return submitted solution or timeout result
+B.2 Auxiliary Proxy Reward Designs
+In this section, we detail the auxiliary proxy-reward variants used in the ablation study. These variants augment the final execution-based reward with additional signals intended to provide denser supervision during agentic RL. Specifically, we consider three representative designs: partial-correctness rewards, LLM-as-a-judge trajectory scoring, and heuristic rubric-based rewards. All these rewards are used as auxiliary shaping signals on top of the execution-based reward. They are activated only for trajectories whose execution test pass rate is zero, so that any trajectory passing at least one test case is still primarily optimized by the execution-based reward.
+Partial Correctness Reward.
+For zero-pass trajectories, we provide two lightweight partial signals: one for syntactic correctness and one for schema linking. The first signal rewards SQL that is syntactically valid and executable, while the second measures whether the generated SQL refers to schema elements consistent with the gold SQL.
+Formally, the additional partial reward is defined as:
+𝑹 𝐩𝐚𝐫𝐭𝐢𝐚𝐥 = 0.1 × 𝕀 𝐞𝐱𝐞𝐜 + 0.1 × 𝑭 𝟏 ​ ( 𝒔 𝒑 , 𝒔 𝒈 ) R_{\mathrm{partial}}=0.1\times\mathbb{I}_{\mathrm{exec}}+0.1\times F_{1}(s_{p},s_{g})
+(7)
+where 𝕀 𝐞𝐱𝐞𝐜 \mathbb{I}_{\mathrm{exec}} indicates whether the submitted SQL is syntactically valid and executable. 𝒔 𝒑 s_{p} and 𝒔 𝒈 s_{g} denote the sets of schema items appearing in the predicted and gold SQL queries, respectively. The schema-linking score is computed as:
+𝑭 𝟏 ​ ( 𝒔 𝒑 , 𝒔 𝒈 ) = 𝟐 × 𝑷 ⁡ ( 𝒔 𝒑 , 𝒔 𝒈 ) × 𝑹 ⁡ ( 𝒔 𝒑 , 𝒔 𝒈 ) 𝑷 ⁡ ( 𝒔 𝒑 , 𝒔 𝒈 ) + 𝑹 ⁡ ( 𝒔 𝒑 , 𝒔 𝒈 ) , F_{1}(s_{p},s_{g})=\frac{2\times P(s_{p},s_{g})\times R(s_{p},s_{g})}{P(s_{p},s_{g})+R(s_{p},s_{g})},
+(8)
+with
+𝑷 ⁡ ( 𝒔 𝒑 , 𝒔 𝒈 ) = | 𝒔 𝒑 ∩ 𝒔 𝒈 | | 𝒔 𝒑 | , 𝑹 ⁡ ( 𝒔 𝒑 , 𝒔 𝒈 ) = | 𝒔 𝒑 ∩ 𝒔 𝒈 | | 𝒔 𝒈 | . P(s_{p},s_{g})=\frac{|s_{p}\cap s_{g}|}{|s_{p}|},\hskip 11.49994ptR(s_{p},s_{g})=\frac{|s_{p}\cap s_{g}|}{|s_{g}|}.
+(9)
+LLM-as-a-judge trajectory scoring
+The LLM-as-a-Judge reward uses strong proprietary LLMs as the judge model to score both the debugging trajectory and the final SQL solution using the prompt shown in Figure 13 and 14 . The judge assigns a trajectory quality score 𝒒 𝐭𝐫𝐚𝐣 ∈ [ 𝟎 , 𝟓 ] q_{\mathrm{traj}}\in[0,5] and a solution quality score 𝒒 𝐬𝐨𝐥 ∈ [ 𝟎 , 𝟏𝟎 ] q_{\mathrm{sol}}\in[0,10] , with the maximum total score denoted as 𝑸 𝐦𝐚𝐱 = 𝟏𝟓 Q_{\max}=15 . Since these trajectories have already failed execution tests, the auxiliary final score is computed by:
+𝑹 𝐣𝐮𝐝𝐠𝐞 = 0.2 × 𝒒 𝐭𝐫𝐚𝐣 + 𝒒 𝐬𝐨𝐥 𝑸 𝒎 ​ 𝒂 ​ 𝒙 . R_{\mathrm{judge}}=0.2\times\frac{q_{\mathrm{traj}}+q_{\mathrm{sol}}}{Q_{max}}.
+(10)
+Heuristic Rubric-Based Reward.
+The heuristic rubric-based reward consists of two criteria: 1) whether the submitted SQL executes successfully, and 2) whether the model identifies known bugs in its reasoning. The bug-identification criterion is computed by matching the model’s reasoning against a pre-extracted bug checklist with an LLM verifier. The reward is then computed as
+𝑹 𝐫𝐮𝐛𝐫𝐢𝐜 = 0.1 × 𝕀 𝐞𝐱𝐞𝐜 + 0.1 × 𝑵 𝐛𝐮𝐠 𝐢𝐝 𝑵 𝐛𝐮𝐠 . R_{\mathrm{rubric}}=0.1\times\mathbb{I}_{\mathrm{exec}}+0.1\times\frac{N_{\mathrm{bug}}^{\mathrm{id}}}{N_{\mathrm{bug}}}.
+(11)
+Here, 𝕀 𝐞𝐱𝐞𝐜 \mathbb{I}_{\mathrm{exec}} indicates whether the submitted SQL executes without syntax errors, 𝑵 𝐛𝐮𝐠 N_{\mathrm{bug}} is the number of known bugs in the checklist, and 𝑵 𝐛𝐮𝐠 𝐢𝐝 N_{\mathrm{bug}}^{\mathrm{id}} is the number of bugs identified by the model. The prompts used for bug extraction and verification in this process are presented in Figure 15 and 16 .
+Appendix C Experiment Details
+This section summarizes the implementation details, and compared methods used in our experiments.
+C.1 Alias of LLMs
+The following aliases are used for the models in this work:
+•
+GPT-5.4-Pro : gpt-5.4-pro
+•
+Claude-Opus-4.6 : claude-opus-4.6
+•
+Claude-Sonnet-4.5 : claude-sonnet-4-5-20250929
+•
+Gemini-3.1-Pro : gemini-3.1-pro-preview
+•
+GLM-4.7 : glm-4.7
+•
+Kimi-K2.5 : kimi-k2.5
+•
+MiniMax-M2-1 : minimax-m2-1
+•
+Qwen3-Coder-480B : Qwen3-Coder-480B
+All open-source models are downloaded from Hugging Face 1 1
+1
+https://huggingface.co/ :
+•
+Qwen-Coder : Qwen2.5-Coder-7B-Instruct , Qwen2.5-Coder-14B-Instruct
+•
+SQL generation baselines : Think2SQL-7B , SQL-R1-7B , Arctic-Text2SQL-R1-7B
+C.2 Model Implementation Details
+We post-train all our models using the VERL framework [ 42 ] (v0.7.0.dev0) 2 2
+2
+https://verl.readthedocs.io/en/latest/index.html and vLLM [ 21 ] (v0.11.0) 3 3
+3
+https://docs.vllm.ai/en/latest . All experiments are conducted on 8 × \times H100 GPUs with 80GB memory.
+Our training pipeline has four stages. The first two stages are supervised fine-tuning: Stage 1 trains single-turn SQL reasoning for 3 epochs with batch size 16, maximum length 8192, and learning rate 1e-5; Stage 2 trains multi-turn tool-use trajectories for 3 epochs with batch size 16, maximum length 16000, and learning rate 1e-5. The last two stages use GRPO [ 41 ] . Stage 3 performs single-turn reasoning RL with rollout size 16, batch size 16, PPO mini-batch size 16, learning rate 1e-6, KL coefficient 0.01, maximum prompt length 15000, and maximum response length 5000. Stage 4 performs multi-turn agentic RL with asynchronous vLLM rollouts up to 5 assistant turns. Unless otherwise specified, it follows the same RL hyperparameters as Stage 3, except that the rollout size is set to 4. The specific training hours for each backbone model are shown in Table 9 . During inference, we use vLLM with greedy decoding (temperature 0) and a maximum input length of 15000 tokens. We report experimental results as the average of five repeated trials.
+Table 9 : GPU hours spent to train each backbone model.
+Model
+GPU Hours
+BIRD-Talon-7B
+93.38
+BIRD-Zeno-7B
+80.36
+BIRD-Talon-14B
+152.75
+For proprietary-model inference, we use the official API providers, including OpenAI ( https://openai.com/ ), Anthropic ( https://www.anthropic.com/ ), and Google ( https://gemini.google.com/ ). All open-source models are downloaded from Hugging Face 4 4
+4
+https://huggingface.co/ ; the Qwen-Coder backbones refer to Qwen2.5-Coder-7B-Instruct and Qwen2.5-Coder-14B-Instruct .
+C.3 Compared Methods
+This section provides additional details of the compared methods reported in Tables 1 , 2 , and 4 .
+SQL debugging baselines.
+The General-Purpose Models group evaluates frontier proprietary models and strong open-weight models under a single-turn prompt-based SQL repair setting. Given the user issue description, database schema, and buggy SQL query, the model is directly prompted to produce the corrected SQL solution without interacting with the database during inference. This setting follows the baseline SQL debugging prompt shown in Figure 10 . We include GPT-5.4-Pro, Claude-Opus-4.6, Claude-Sonnet-4.5, Gemini-3.1-Pro, GLM-4.7, Kimi-K2.5, MiniMax-M2-1, and Qwen3-Coder-480B to establish broad baselines on Bird-Critic-SQLite .
+The Multi-Turn Agents group evaluates models with database interaction through the SQL-Act scaffold. Following the ReAct paradigm [ 55 ] , SQL-Act interleaves reasoning, SQL actions, and database observations over multiple turns. At each step, the model may execute an arbitrary SQL statement against the database environment and use the returned observation to refine its diagnosis. The trajectory continues until the model submits a final repaired SQL solution. Compared with tool-based agents whose action space is restricted to predefined operations such as schema inspection or sample retrieval, SQL-Act treats executable SQL itself as the action space, enabling more flexible debugging strategies. The system and user prompts used by this scaffold are shown in Figures 6 and 7 ; the same scaffold is used for Bird-Talon inference. For BIRD-FIXER-7B and BIRD-FIXER-14B, we follow the supervised agent fine-tuning pipeline from the work [ 25 ] to reproduce the training trajectories and fine-tune the models Qwen2.5-Coder-7B-Instruct and Qwen2.5-Coder-14B-Instruct on SIX-GYM-SQLite (Appendix A ).
+In Table 1 , we instantiate the multi-turn agent setting with Claude-Opus-4.6, Claude-Sonnet-4.5, and Qwen3-Coder-480B. In Table 2 , we additionally report SQL-Act results by directly placing the corresponding Qwen2.5-Coder base model into the same interactive scaffold, without Bird-RL training.
+SQL generation baselines.
+We compare Bird-Zeno with recent RL-based text-to-SQL methods that optimize SQL generation through execution feedback, partial rewards, or multi-turn interaction.
+Think2SQL [ 33 ] studies reinforcement learning with verifiable rewards for text-to-SQL reasoning It introduces execution-guided dense rewards to provide more granular feedback than binary execution correctness.
+SQL-R1 [ 28 ] trains natural-language-to-SQL reasoning models with a cold-start SFT phase followed by reinforcement learning on complex examples. Its reward design is tailored to NL2SQL generation and uses database feedback to encourage exploration beyond fixed supervised generation patterns.
+ReEx-SQL [ 8 ] introduces execution-aware reasoning for text-to-SQL by interleaving exploratory SQL execution with model reasoning during generation. It further uses execution-informed rewards and decoding strategies to help the model revise reasoning based on database feedback.
+Reasoning-SQL [ 37 ] applies GRPO with SQL-tailored partial rewards to mitigate the sparsity of binary execution rewards. Its reward components include signals such as schema linking, syntax validity, similarity, and AI feedback to encourage reasoning-enhanced SQL generation.
+Arctic-T2S-R1 [ 56 ] emphasizes simple end-task rewards for text-to-SQL RL, relying mainly on execution correctness and syntax validity instead of complex intermediate supervision.
+SQL-Trail [ 17 ] frames text-to-SQL as a multi-turn RL problem with interleaved database feedback. It uses iterative interaction, adaptive turn allocation, and rewards that balance SQL correctness with efficient exploration.
+Appendix D More Analysis
+D.1 Case Study for Stage 3
+Figure 4 : Case study comparing debugging trajectories with and without Stage 3 adaptive reasoning reinforcement.
+Figure 4 shows a representative SQL debugging case where both agents identify the join-induced budget inflation issue, but diverge in the repair strategy. Without Stage 3, the agent incorrectly assumes that each event has only one budget and uses MAX(budget.amount) , leading to an erroneous fix. With Stage 3, the agent correctly infers that an event may contain multiple budget lines and verifies a repair that pre-aggregates expenses per budget line before joining with the budget table. This illustrates how Stage 3 improves adaptive, evidence-grounded reasoning beyond the imitation-learned trajectory patterns.
+D.2 Comparison of Training-Time Database Lifecycle I/O
+Table 3 formalizes the database lifecycle I/O overhead required to maintain trajectory-level isolation during interactive rollout execution. The naive per-rollout container baseline instantiates a fresh database for every generated trajectory. Consequently, this approach incurs an I/O cost proportional to the total number of rollout trajectories, resulting in the I/O complexity of 𝑶 ⁡ ( 𝑵 ​ 𝑹 ​ 𝑺 ¯ ) O(NR\bar{S}) , where 𝑵 N is the number of training tasks, 𝑹 R is the number of rollout trajectories per task, and 𝑺 ¯ \bar{S} is the average database size.
+To circumvent this exhaustive overhead, we propose a dynamic reusable database pool that fundamentally alters the database lifecycle for data-centric tasks. During interactive rollout execution, the pool continuously tracks the operation state, including the availability and modification status, of each database replica. A trajectory first tries to acquire an available clean replica for its target database. Under an ideal dynamic allocation scheme, a new replica is instantiated online strictly when the concurrent demand exceeds the capacity of existing available replicas. Upon trajectory completion, the leased replica is immediately released back to the pool, avoiding any naive re-instantiation. Crucially, to handle state-changing queries, the pool employs a dirty-aware lazy reset policy. Once a replica is modified, it is not eagerly restored upon release. Instead, the reset operation is deferred until the replica is leased again for a new trajectory.
+To formalize the theoretical I/O reduction over the baseline, we decompose the dynamic pool’s training-time overhead into two analytical components: 1) Bounded Instantiation Overhead : Assuming database requests follow a uniform access distribution across unique databases within a training batch of size 𝑩 B , the dynamic pool size is upper-bounded by the maximum concurrency, 𝑩 × 𝑹 B\times R , limiting the replica creation I/O to 𝑶 ⁡ ( 𝑩 ​ 𝑹 ​ 𝑺 ¯ ) O(BR\bar{S}) . In practical large-scale RL settings (e.g., optimizing a 14B parameter model), GPU memory constraints dictate a small, fixed batch size (typically 𝑩 = 𝟏𝟔 B=16 ). Consequently, this guarantees that 𝑩 ≪ 𝑵 B\ll N . 2) Regularized Reset Overhead : While the dynamic pool eliminates redundant materialization, it unavoidably introduces state-reset operations for modified replicas. We quantify such overhead using an example-effective count 𝒒 = 𝑸 / 𝑹 q=Q/R , where 𝑸 Q denotes the total number of rollout trajectories that actually trigger the reset action during training across all 𝑵 ​ 𝑹 NR rollouts. Let 𝒌 ≥ 𝟏 k\geq 1 denote the empirical I/O reduction factor of an in-place reset relative to full copy-delete materialization. In database systems, targeted state restoration (e.g., table-level truncation or snapshot rollbacks) is considered cheaper than a full physical instantiation. Consequently, the specific value of 𝒌 k depends on the underlying reset optimization deployed. The reset complexity is thus bounded by 𝑶 ⁡ ( 𝒒 ​ 𝑹 ​ 𝑺 ¯ / 𝒌 ) O(qR\bar{S}/k) . Notably, 𝒒 q is intrinsically manageable. The preceding Supervised Fine-Tuning (SFT) phase of our framework effectively regularizes the agent’s exploration behavior, preventing arbitrary database mutations. Empirically, only about 9.25 % 9.25\% of the practical rollouts execute state-altering exploitation in our experiment. Combining both components, the total lifecycle overhead of the dynamic pool evaluates to 𝑶 ⁡ ( ( 𝑩 + 𝒒 / 𝒌 ) ​ 𝑹 ​ 𝑺 ¯ ) O((B+q/k)R\bar{S}) , where 𝑩 + 𝒒 / 𝒌 ≪ 𝑵 B+q/k\ll N . This establishes that the dynamic pool mechanism achieves vastly superior spatial and I/O efficiency compared to the naive per-rollout baseline.
+While the bounded creation overhead holds under a steady-state assumption, real-world RL exploration frequently encounters a highly imbalanced distribution. Concurrent rollouts can heavily skew towards hot databases, triggering sudden capacity overflows and allocation bottlenecks that destabilize the training pipeline. To systematically amortize this risk upfront, our actual implementation replaces dynamic online creation with a pre-materialized database pool. By shifting the database instantiation entirely offline, we decouple resource allocation from the rollout path, eliminating the risk of memory thrashing and I/O contention. Consequently, as rollouts acquire replicas via constant-time ( 𝑶 ⁡ ( 𝟏 ) O(1) ) pool lookups, the online training I/O is dominated by the predictable reset operations with complexity 𝑶 ⁡ ( 𝒒 ​ 𝑹 ​ 𝑺 ¯ / 𝒌 ) O(qR\bar{S}/k) .
+In our practical setting ( 𝑩 = 𝟏𝟔 , 𝑹 = 𝟏𝟔 B=16,R=16 ), we pre-reserve 𝑩 ​ 𝑹 / 𝟐 BR/2 replicas per database in the pool. Empirical observations confirm that this capacity is sufficient to avoid pool exhaustion. As shown in Table 3 , our implementation reduces measured online lifecycle I/O by 12.8 × 12.8\times compared to per-rollout containers. This comes with a one-time pre-materialized storage cost of 69 GiB as a trade-off, which is excluded from the online I/O reported in the table. Such a trade-off is practically negligible relative to the terabyte-level massive online I/O savings. Notably, since this offline pool scales with the number of unique databases rather than the training volume N, its storage cost remains predictable and amortizable, enabling stable large-scale trajectory-level isolation.
+D.3 Generalization for Different SQL Dialects
+Figure 5 : The success rate of Bird-Talon on unseen dialects shows its generalization ability.
+Figure 5 illustrates Bird-Talon ’s robust generalization on unseen dialects, although it is trained only on SQLite tasks within SIX-GYM-SQLite. This can be attributed to Bird-RL strengthening the model with a more general logic of debugging reasoning through environmental interaction, rather than fitting SQLite-specific surface patterns, while preserving the model’s pretrained knowledge of dialect variation. Consequently, Bird-Talon exhibits strong cross-dialect reasoning without extra training, highlighting its potential in realistic database implementation scenarios.
+D.4 Test-time Scaling Analysis
+Although Bird-Talon is evaluated under greedy decoding in the main results, we further study the potential of Bird-Talon -14B under increased test-time sampling. We sample up to 16 independent trajectories using the same decoding configuration, temperature 0.7 and top-p 0.95, and report oracle pass@ 𝒌 k in Table 10 .
+Table 10 : Test-time scaling results of Bird-Talon -14B on BIRD-CRITIC-SQLite .
+Model
+pass@1
+pass@4
+pass@8
+pass@16
+BIRD-Talon-14B
+46.40
+57.40
+60.60
+65.00
+As shown in Table 10 , Bird-Talon -14B benefits consistently from additional samples, indicating that test-time computation can expose correct solutions missed by a single rollout. This suggests that the learned agentic policy provides a useful candidate solution space for future verifier- or reranker-based scaling.
+Appendix E Limitations and Future Work
+This work only focuses on SQL tasks as a representative class of stateful data-centric environments. A natural future direction is to extend BIRD-RL to broader high-value data science tasks, such as data cleaning, transformation, workflow construction, and analytical decision-making, where agents must similarly reason over persistent states, execution feedback, even on top of large data.
+In addition, BIRD-RL currently adopts execution-based rewards to ensure faithful alignment with functional correctness. Future work may explore hybrid reward designs that combine execution signals with semantics-aware verification, while explicitly addressing reward hacking to preserve reliable optimization behavior in complex data-centric settings. This can further advance upper bound of our framework.
+Appendix F Ethics Statement
+In this work, although our method involves data synthesis, all data are derived from databases and resources that are publicly available, ensuring transparency and reproducibility. We take care to avoid sensitive or personally identifiable information, and the generated outputs are SQL queries rather than open-ended natural language, reducing the risk of biased or harmful textual content.
+Appendix G Broader Impact
+This work aims to advance scalable agentic RL for data-centric environments, where agents interact with live, stateful databases rather than static textual contexts. The proposed trajectory-scoped infrastructure may benefit future research on database agents by reducing the cost of isolated rollout execution and making RL training more practical for heavy database workloads. In the long term, such techniques could help build more capable SQL assistants that reduce manual debugging effort, improve developer productivity, and support privacy-sensitive applications through stronger open-source models that can be deployed locally.
+At the same time, beyond improving SQL issue resolution, our method points toward a future paradigm of general-purpose SQL agents. By training over heterogeneous SQL tasks, Bird-RL makes it possible to move beyond narrowly specialized models toward unified agents that can perform query generation, issue diagnosis, execution-based verification, and interactive repair within a single framework. Such agents could serve as a more general interface for real-world database applications, where users often need end-to-end assistance across multiple stages of database interaction rather than isolated text-to-SQL generation.
+Appendix H Prompts and Examples
+This section presents the prompts used in our experiments and example trajectory.
+Figures 6 – 9 show the system and user prompts for SQL debugging and SQL generation tasks.
+Figure 10 presents the baseline SQL debugging prompt.
+Figures 11 and 12 show the prompts used for Stage 1 reasoning imitation data construction and verification.
+Figures 13 – 16 show the system and user prompts for getting heuristic rubric reward and LLM-as-judge reward.
+Figure 17 illustrates an example trajectory produced by Bird-Talon when solving a SQL debugging task.
+Figure 6 : The inference prompt used for SQL debugging task (system prompt).
+Figure 7 : The inference prompt used for SQL debugging task (user prompt).
+Figure 8 : The inference prompt used for SQL generation task (system prompt).
+Figure 9 : The inference prompt used for SQL generation task (user prompt).
+Figure 10 : The baseline prompt used for SQL debugging tasks.
+Figure 11 : The prompt used in Stage 1 reasoning imitation data construction to elicit reasoning thought from teacher model.
+Figure 12 : The prompt used in Stage 1 reasoning imitation data construction to verify whether teacher model could leverage the reasoning thought to regenerate the correct fixed SQL.
+Figure 13 : The prompt used to get LLM-as-judge reward (1/2).
+Figure 14 : The prompt used to get LLM-as-judge reward (2/2).
+Figure 15 : The prompt for the heuristic rubric reward: instructions used to extract a bug checklist from the task context.
+Figure 16 : The prompt for the heuristic rubric reward: instructions used to verify whether the reasoning of agent correctly identifies the checklist bugs.
+Figure 17 : The example of trajectory from Bird-Talon solving SQL debugging task.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from our major funders ,
+member institutions , ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)
+

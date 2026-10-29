@@ -1,0 +1,1537 @@
+
+SOURCE https://arxiv.org/html/2601.12962v1
+ACE-Align: Attribute Causal Effect Alignment for Cultural Values under Varying Persona Granularities
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: arXiv.org perpetual non-exclusive license
+arXiv:2601.12962v1 [cs.CY] 19 Jan 2026
+ACE-Align: Attribute Causal Effect Alignment for Cultural Values under Varying Persona Granularities
+Jiatang Luo
+Affiliation: School of Advanced Interdisciplinary Sciences, University of Chinese Academy of Sciences, China
+Affiliation: State Key Laboratory of AI Safety, Institute of Computing Technology, CAS
+Affiliation: University of Chinese Academy of Sciences
+Bingbing Xu
+††thanks: ˜˜Corresponding author.
+Affiliation: State Key Laboratory of AI Safety, Institute of Computing Technology, CAS
+Affiliation: University of Chinese Academy of Sciences
+Rongxin Chen
+Affiliation: State Key Laboratory of AI Safety, Institute of Computing Technology, CAS
+Affiliation: University of Chinese Academy of Sciences
+Xiaoyan Zhao
+Affiliation: National University of Singapore
+Affiliation: The Chinese University of Hong Kongluojiatang23@mails.ucas.ac.cn,{xubingbing,chenrongxin24s,pangliang}@ict.ac.cn
+Yang Zhang
+Affiliation: National University of Singapore
+Liang Pang
+Affiliation: State Key Laboratory of AI Safety, Institute of Computing Technology, CAS
+Affiliation: University of Chinese Academy of Sciences
+Zhiyong Huang
+Affiliation: National University of Singapore
+Tat-Seng Chua
+Affiliation: National University of Singapore
+Huawei Shen
+Affiliation: State Key Laboratory of AI Safety, Institute of Computing Technology, CAS
+Affiliation: University of Chinese Academy of Sciences
+Abstract
+Ensuring that large language models (LLMs) respect diverse cultural values is crucial for social equity.
+However, existing approaches often treat cultural groups as homogeneous and overlook within-group heterogeneity induced by intersecting demographic attributes, leading to unstable behavior under varying persona granularity. We propose ACE-Align (Attribute Causal Effect Alignment), a causal-effect framework that aligns how specific demographic attributes shift different cultural values, rather than treating each culture as a homogeneous group.
+We evaluate ACE-Align across 14 countries spanning five continents, with personas specified by subsets of four attributes (gender, education, residence, and marital status) and granularity instantiated by the number of specified attributes.
+Across all persona granularities, ACE-Align consistently outperforms baselines.
+Moreover, it improves geographic equity by reducing the average alignment gap between high-resource and low-resource regions from 9.81 to 4.92 points, while Africa shows the largest average gain (+8.48 points). Code is available at https://github.com/Wells-Luo/ACE-Align.
+1 Introduction
+As large language models (LLMs) become globally deployed, aligning their outputs with cultural values has emerged as a critical frontier for socially responsible NLP systems Myers et al. (2024); Cao et al. (2023); Tao et al. (2024); Adilazuarda et al. (2024).
+Despite substantial progress in instruction tuning and preference optimization, a persistent alignment deficit remains: models can often be tuned to reflect broad cultural identities, yet fail to represent nuanced viewpoints of sub-populations defined by intersecting demographic attributes Santurkar et al. (2023); Qu and Wang (2024).
+This deficit is especially consequential in regions such as Africa and Southeast Asia, where limited internet coverage and the scarcity of high-quality text result in substantially lower representation in the corpora used to train LLMs, increasing the risk of cultural erasure and stereotype. Dodge et al. (2021); Decoupes et al. (2025); Zhong et al. (2024).
+Figure 1: Within a single culture, personas at different granularities exhibit heterogeneous values, which current LLMs fail to consistently capture.
+Cultural alignment requires models to capture nuanced viewpoints of demographic sub-populations across different persona specifications.
+However, as illustrated in Figure 1, LLMs struggle to capture within-culture heterogeneity when personas for the same cultural group are specified at different granularitiesChen et al. (2025); Oscar et al. (2017).
+A model may behave plausibly for a coarse-grained persona (e.g., German), yet degrade or become inconsistent when conditioned on ultra-finer-grained descriptors (e.g., an urban, college-educated, married German woman).
+This granularity shift can amplify inequity: in our analysis, under ultra-fine-grained specifications, the worst disparity between high-resource countries and low-resource regions such as Africa reaches up to 12.43 points (Table 1).
+These observations suggest that alignment optimized at a single cultural resolution may not transfer reliably across persona granularities.
+Existing alignment strategies often fit a direct mapping from persona descriptions to target responses, without accounting for differences across persona granularities Xu et al. (2025); Choenni and Shutova (2024); Seo et al. (2025); AlKhamissi et al. (2024).
+However, when persona attributes are composed, alignment must handle a combinatorial set of attribute combinations, which encourages undesirable failure modes.
+In practice, models may exhibit stereotyping (over-amplifying demographic influences)Anthis et al. (2025), erasure (understating or homogenizing demographic differences)Santurkar et al. (2023), or flipped signs (reversing the direction of demographic influence)Talat et al. (2022), indicating that they fail to capture stable mechanisms underlying response variation.
+To address these failures, we argue that alignment across persona granularities requires explicitly modeling how demographic attributes influence cultural values.
+A causal effect perspective enables this by using controlled persona edits that toggle one attribute while keeping the country and the question fixed, yielding counterfactual comparisons that isolate the influence of each attribute across different attribute combinations.
+In this paper, we operationalize this perspective with ACE-Align (Attribute Causal Effect Alignment), which aligns LLMs by matching attribute-level causal effects to survey-grounded effects.
+ACE-Align couples an effect-alignment objective with a lightweight anchoring loss to keep absolute predictions grounded.
+By optimizing these objectives, the model better matches both the direction and the strength of attribute influence observed in human survey data, and generalizes to new attribute combinations.
+Our contributions are summarized as follows:
+•
+Investigating Persona Granularity. We formalize the challenge of cultural alignment across varying persona granularities and reveal the performance instability of LLMs under intersecting demographic attributes.
+•
+ACE-Align Framework. We propose ACE-Align, a framework that aligns demographic causal effects via counterfactual shifts, enabling models to generalize compositionally across complex persona profiles.
+•
+Global Equity and Bias Diagnosis. We demonstrate that ACE-Align narrows the geographic alignment gap from 9.81 to 4.92 points and mitigates structural biases, such as stereotyping and cultural erasure.
+Figure 2: The ACE-Align framework. We optimize cultural alignment at the finest granularity ( G=4 ) to ensure maximum covariate control and identify pure attribute causal effects. By aligning the model’s response shifts ( \mathrm{CE}_{\mathrm{LLM}} ) with survey-based dynamics ( \mathrm{CE}_{\mathrm{data}} ) via \Delta CDF distance, the model learns robust mechanisms that maintain consistency across persona granularities.
+2 Related Work
+2.1 Cultural Alignment
+Recent work evaluates and improves the cultural alignment of LLMs using survey style benchmarks and cross cultural opinion distributions (Cao et al., 2023; Santurkar et al., 2023; Zhao et al., 2024; Wang et al., 2025; Sukiennik et al., 2025; Kovač et al., 2023; Tao et al., 2024).
+Existing approaches span prompting and inference time strategies (AlKhamissi et al., 2024; Seo et al., 2025) and alignment training via supervised fine tuning on survey data (Li et al., 2024; Masoud et al., 2025; Du et al., 2025).
+These methods often target culture at a fixed resolution, which can mask within culture heterogeneity when persona attributes are specified at different granularity levels (Qu and Wang, 2024; Decoupes et al., 2025).
+Our work focuses on consistency across persona granularities and treats demographic attributes as compositional factors that drive heterogeneous cultural topic preferences.
+2.2 Causal Perspectives for Debiasing
+Causal formulations are increasingly used to mitigate bias by reasoning about interventions and counterfactual contrasts rather than correlationsChaudhary et al. (2024).
+Recent methods operationalize this idea at different stages, including identifying dataset bias via causal invariance and active selection (Sun et al., 2024), debiasing reasoning by selecting counterfactual chains that improve causal validity (Wu et al., 2024), and mitigating annotation artifacts through causal mediation analysis and targeted unlearning (Lim et al., 2024).
+Causal analyses have also been used to localize where social bias is mediated inside language models (Vig et al., 2020), and prompting time interventions based on front door adjustment provide a lightweight alternative when model parameters are inaccessible (Zhang et al., 2025).
+We build on this causal line but focus on cultural alignment under persona conditioning, using controlled persona edits as counterfactual contrasts and aligning attribute level causal effects to improve consistency across persona granularities.
+3 Method
+3.1 Task Formulation
+We investigate cultural alignment of model responses to culture topics under persona conditioning at varying granularity.
+Here, a persona denotes a subgroup profile defined by a set of attributes, rather than a specific individual identity.
+We instantiate persona granularity by the number of specified attributes in the profile.
+Let \mathcal{A}=\{a_{1},\dots,a_{M}\} denote the universe of available attributes. A persona is defined by a subset of attributes g\subseteq\mathcal{A} , where each attribute is instantiated with a specific value. The persona granularity is defined as the number of specified attributes, denoted by the scalar G=|g| .
+Given a value-laden question q , the response options form an ordered discrete set \mathcal{Y}=\{1,\dots,K\} . The model \theta outputs a categorical distribution over these options:
+p_{\theta}(y\mid g,q),\quad y\in\mathcal{Y},
+(1)
+where \theta represents the model parameters.
+Obtaining option probabilities from the LLM.
+To instantiate the categorical distribution over the discrete option set \mathcal{Y} , we compute the likelihood of each option under the LLM and renormalize over \mathcal{Y} . Specifically, for each option y\in\mathcal{Y} , let \mathbf{t}(y)=(t_{1},\ldots,t_{m_{y}}) be the token sequence of its canonical verbalization under the model tokenizer. Given the formatted \text{prompt}(g,q) , we define the option log-likelihood as
+\ell_{\theta}(y\mid g,q)=\sum_{j=1}^{m_{y}}\log p_{\theta}\!\left(t_{j}\mid\text{prompt}(g,q),t_{<j}\right),
+(2)
+and obtain a categorical distribution by renormalizing within \mathcal{Y} :
+p_{\theta}(y\mid g,q)=\frac{\exp(\ell_{\theta}(y\mid g,q))}{\sum_{y^{\prime}\in\mathcal{Y}}\exp(\ell_{\theta}(y^{\prime}\mid g,q))}.
+(3)
+3.2 ACE-Align Framework
+To capture how demographic attributes influence different cultural topics, we propose to align attribute causal effects.
+By learning how each attribute causally shifts preferences for a given cultural topic, the model can compositionally generalize to novel attribute combinations.
+As illustrated in Figure 2, we introduce ACE-Align (Attribute Causal Effect Alignment), a framework that explicitly estimates and aligns these effects during training.
+In training, we instantiate contexts using the finest granularity level ( G=4 ), so that when toggling a treatment attribute A , all remaining demographic attributes are held fixed in X .
+This maximizes covariate control and makes the controlled edit approximation less confounded by the omitted factors, yielding more reliable shifts attributable to demographic attributes for effect alignment.
+3.2.1 Causal Effect Modeling
+Causal Graph.
+For a culture topic question q with ordinal options \mathcal{Y} , we treat the selected option as a discrete outcome variable Y\in\mathcal{Y} .
+We choose one attribute A\in\mathcal{A} as the treatment and denote the remaining persona specification as X .
+We define the context as Z=(X,q) , where X contains all other specified attributes and q specifies the culture topic question.
+Figure 2a shows our directed acyclic graph (DAG) Pearl (2009), where A and Z directly influence Y .
+To account for the complex and often unobservable dependencies between demographics and cultural contexts, we posit a latent mediator E that captures the interaction between A and Z Zhao et al. (2025).
+We estimate a conditional average treatment effect by toggling only A while holding Z fixed.
+Identification Assumption.
+For each treated attribute A , we assume that the observed context Z=(X,q) blocks all backdoor paths from A to Y (conditional ignorability), i.e.,
+Y(a)\perp A\mid Z .
+Under this assumption, the interventional distribution is identifiable:
+p(Y=y\mid\doop(A=a),Z)=p(Y=y\mid A=a,Z).
+(4)
+We adopt this as an operational approximation for persona editing where we toggle one attribute while holding the remaining context fixed.
+Binary attributes and effect direction.
+For each treatment attribute, we define a binary variable A\in\{0,1\} and estimate attribute effects via controlled persona edits.
+We consistently define the causal effect direction as
+p(Y\mid A{=}1,Z)-p(Y\mid A{=}0,Z) .
+Concretely, we set A{=}1 for {Female, Not College Educated, Rural, and Not Married}, and A{=}0 for {Male, College Educated, Urban, and Married}, respectively.
+Unless stated otherwise, Country is treated as part of the context X .
+3.2.2 Attribute Causal Effect
+For a target attribute A under a fixed context Z=(X,q) , we consider a binary attribute A\in\{0,1\} and define the causal effect on each option y\in\mathcal{Y} via interventional option probabilities.
+Model-side Causal Effect.
+The model-side causal effect for a given context Z=(X,q) is:
+\displaystyle\mathrm{CE}_{\text{LLM}}
+\displaystyle=p_{\theta}\!\left(Y=y\mid\doop(A=1),Z\right)
+(5)
+\displaystyle-p_{\theta}\!\left(Y=y\mid\doop(A=0),Z\right)
+\displaystyle\overset{\eqref{eq:identification}}{=}p_{\theta}\!\left(Y=y\mid A=1,Z\right)
+\displaystyle-p_{\theta}\!\left(Y=y\mid A=0,Z\right).
+To operationalize Eq. (5), we construct two persona specifications s_{1}=(A=1,X) and s_{0}=(A=0,X) to estimate the effect via two forward passes:
+\displaystyle\widehat{\mathrm{CE}}_{\text{LLM}}
+\displaystyle=p_{\theta}(y\mid s_{1},q)-p_{\theta}(y\mid s_{0},q).
+(6)
+Data-side Causal Effect.
+Analogously, the data-side causal effect under the same context Z=(X,q) is defined by interventional option probabilities:
+\displaystyle\mathrm{CE}_{\text{data}}
+\displaystyle=p_{\text{data}}\!\left(Y=y\mid\doop(A=1),Z\right)
+(7)
+\displaystyle-p_{\text{data}}\!\left(Y=y\mid\doop(A=0),Z\right).
+To compute the empirical causal effect by toggling only A while holding X fixed:
+\widehat{\mathrm{CE}}_{\text{data}}=\widehat{p}_{\text{data}}(y\mid s_{1},q)-\widehat{p}_{\text{data}}(y\mid s_{0},q),
+(8)
+where s_{1}=(A=1,X) and s_{0}=(A=0,X) .
+3.2.3 Effect Alignment Objective
+Aligning Attribute Causal Effects.
+The core of our framework is to ensure the model mimics how human responses shift when a specific attribute A is toggled. This is achieved via three steps:
+•
+Step 1: Vector Representation. For each (A,Z) , we represent causal effects as vectors \widehat{\mathbf{CE}}_{\text{LLM}}(A,Z),\widehat{\mathbf{CE}}_{\text{data}}(A,Z)\in\mathbf{R}^{K} using Eq. 6 and 8. Specifically, each vector stacks option causal effects over y\in\mathcal{Y} , e.g.,
+\widehat{\mathbf{CE}}_{\text{LLM}}(A,Z)=\left(\widehat{\mathrm{CE}}_{\text{LLM}}(y{=}1\mid Z),\ldots,\widehat{\mathrm{CE}}_{\text{LLM}}(y{=}K\mid Z)\right) ,
+with \widehat{\mathbf{CE}}_{\text{data}}(A,Z) defined analogously.
+•
+Step 2: Cumulative Transformation. Since the response options \mathcal{Y} are ordinal, we compute the cumulative distribution function(CDF) to capture the total mass shift across the ordinal scale:
+\displaystyle\Delta\mathrm{CDF}_{\text{LLM}}
+\displaystyle=\sum_{i=1}^{k}[\widehat{\mathbf{CE}}_{\text{LLM}}(A,Z)]_{i},
+(9)
+\displaystyle\Delta\mathrm{CDF}_{\text{data}}
+\displaystyle=\sum_{i=1}^{k}[\widehat{\mathbf{CE}}_{\text{data}}(A,Z)]_{i}.
+(10)
+•
+Step 3: Measuring Alignment. We define the discrepancy between model and data shifts at each level k as \delta(A,Z,k)=\Delta\mathrm{CDF}_{\text{LLM}}(A,Z,k)-\Delta\mathrm{CDF}_{\text{data}}(A,Z,k) . The alignment distance d_{\text{CDF}}(A,Z) is then calculated as:
+d_{\text{CDF}}(A,Z)=\frac{1}{|\mathcal{Y}|}\sum_{k\in\mathcal{Y}}\left|\delta(A,Z,k)\right|.
+(11)
+The total causal alignment loss \mathcal{L}_{\text{CE}} is defined as:
+\mathcal{L}_{\text{CE}}=\frac{1}{|\mathcal{D}|}\sum_{(A,Z)\in\mathcal{D}}d_{\text{CDF}}(A,Z).
+(12)
+Here \mathcal{D} denotes the set of valid (A,Z) pairs, where A is a demographic attribute and Z=(X,q) is a context.
+We include (A,Z) only when both toggled personas s_{1}=(A{=}1,X) and s_{0}=(A{=}0,X) are supported by sufficient survey respondents for question q . Concretely, we discard a context if either subgroup has fewer than 10 matched respondents.
+In training, we construct Z=(X,q) using the finest-grained personas ( G=4 ), so that when toggling A all remaining demographic attributes are held fixed in X , making the controlled edit approximation less confounded by omitted factors.
+Anchoring the Model Response.
+The causal alignment objective \mathcal{L}_{\text{CE}} constrains the relative shift between a toggled persona pair under a fixed context, but is under-determined when optimized alone, as multiple absolute distributions can realize the same shift.
+To provide absolute reference points for model predictions, we introduce a per-persona anchoring loss:
+\ell_{\text{anchor}}(s,q)=-\log p_{\theta}(y^{*}_{s,q}\mid s,q),
+(13)
+where y^{*}_{s,q} denotes the empirical mode of the survey responses under persona s and question q .
+For each (A,Z)\in\mathcal{D} , this loss is applied to both endpoints s_{1}=(A{=}1,X) and s_{0}=(A{=}0,X) of the controlled persona edit.
+Overall Objective.
+The final training objective integrates the value grounding with the causal structural constraints:
+\mathcal{L}=\alpha\,\mathcal{L}_{\text{anchor}}+\beta\,\mathcal{L}_{\text{CE}},
+(14)
+where \alpha and \beta are hyperparameters that balance the adherence to cultural value priors and the accuracy of causal response dynamics.We define \mathcal{L}_{\text{anchor}} by aggregating \ell_{\text{anchor}}(s,q) over both endpoints s_{1} and s_{0} for each (A,Z)\in\mathcal{D} .
+4 Experiments
+In this section, we report comprehensive experimental results on cultural alignment under persona conditioning at varying persona granularities. Our analysis is guided by the following three research questions (RQs):
+•
+RQ1: Does ACE-Align consistently improve cultural alignment across varying persona granularities?
+•
+RQ2: How robust is ACE-Align under low-resource conditions?
+•
+RQ3: What mechanism drives the effectiveness of ACE-Align?
+America
+Europe
+Asia
+Africa
+Oceania
+Avg
+CHL
+MEX
+USA
+DEU
+GBR
+RUS
+IND
+JPN
+PHL
+EGY
+ETH
+NGA
+AUS
+NZL
+G=1
+Base model
+82.16
+82.75
+84.04
+83.74
+84.71
+80.46
+81.37
+82.89
+80.70
+72.87
+74.74
+77.35
+84.44
+85.30
+81.15
+AdPrompt
+83.20
+83.37
+84.37
+83.82
+84.47
+81.47
+82.36
+83.03
+81.53
+73.05
+74.93
+78.36
+84.15
+84.86
+81.41 (+0.26)
+Anchor-only
+84.18
+79.58
+81.63
+81.91
+80.03
+79.82
+80.60
+81.77
+82.49
+79.58
+73.56
+74.62
+82.12
+82.30
+80.26 (-0.89)
+Causal-only
+83.65
+82.86
+86.21
+85.53
+84.84
+82.28
+86.37
+81.69
+84.50
+72.81
+76.68
+79.56
+84.65
+85.92
+82.53 (+1.38)
+ACE-Align
+85.17
+86.39
+87.75
+87.54
+87.23
+84.53
+87.57
+85.19
+87.24
+85.00
+79.33
+84.25
+87.98
+86.99
+85.45 (+4.30)
+G=2
+Base model
+82.24
+82.94
+84.31
+83.81
+84.69
+81.05
+81.19
+83.07
+81.11
+72.92
+74.12
+76.95
+84.39
+85.24
+81.24
+AdPrompt
+83.10
+83.22
+84.24
+83.80
+84.38
+81.60
+82.00
+83.08
+81.52
+73.24
+74.46
+78.00
+84.08
+84.76
+81.33 (+0.09)
+Anchor-only
+83.28
+79.19
+81.89
+81.73
+80.24
+79.92
+79.87
+81.24
+82.26
+79.52
+72.85
+74.15
+81.91
+82.16
+79.93 (-1.31)
+Causal-only
+83.78
+82.79
+86.15
+85.60
+85.00
+82.59
+86.35
+81.75
+84.98
+73.08
+76.27
+79.31
+84.77
+86.15
+82.59 (+1.35)
+ACE-Align
+85.03
+86.05
+87.60
+87.47
+87.13
+84.79
+87.19
+85.02
+87.41
+85.19
+79.19
+84.74
+87.68
+86.73
+85.36 (+4.12)
+G=3
+Base model
+82.03
+82.70
+84.18
+83.59
+84.40
+80.88
+80.67
+82.80
+81.09
+72.84
+73.54
+76.39
+84.02
+84.79
+80.98
+AdPrompt
+82.82
+82.87
+83.84
+83.59
+83.99
+81.42
+81.42
+82.90
+81.26
+73.27
+73.84
+77.36
+83.69
+84.32
+81.00 (+0.02)
+Anchor-only
+82.23
+78.39
+81.82
+81.52
+80.57
+79.65
+79.27
+80.56
+81.92
+79.15
+72.82
+74.14
+81.71
+82.12
+79.55 (-1.43)
+Causal-only
+83.79
+82.54
+85.93
+85.60
+84.96
+82.60
+85.91
+81.61
+85.04
+73.23
+75.99
+79.01
+84.56
+85.91
+82.46 (+1.48)
+ACE-Align
+84.95
+85.91
+87.34
+87.37
+87.05
+84.73
+86.69
+84.89
+87.30
+85.03
+79.05
+84.95
+87.35
+86.50
+85.20 (+4.22)
+G=4
+Base model
+81.82
+82.64
+83.83
+83.32
+83.93
+80.61
+79.94
+82.54
+80.87
+72.67
+72.80
+75.72
+83.52
+84.15
+80.61
+AdPrompt
+82.57
+82.72
+83.38
+83.26
+83.49
+81.13
+80.65
+82.70
+80.89
+73.23
+73.13
+76.57
+83.18
+83.72
+80.59 (-0.02)
+Anchor-only
+81.30
+77.47
+81.34
+81.27
+80.83
+79.25
+78.58
+80.13
+81.63
+78.31
+72.42
+74.27
+81.55
+82.30
+79.06 (-1.55)
+Causal-only
+83.76
+82.43
+85.75
+85.41
+84.70
+82.45
+85.11
+81.48
+84.86
+73.35
+75.60
+78.53
+84.14
+85.40
+82.20 (+1.59)
+ACE-Align
+84.90
+86.17
+87.21
+87.16
+86.85
+84.55
+86.10
+84.81
+87.00
+84.67
+78.53
+84.77
+86.91
+86.27
+84.99 (+4.38)
+Table 1: Cultural alignment scores under varying persona granularities G\in\{1,2,3,4\} . Best results are shown in bold and second-best results are underlined.
+4.1 Settings
+Datasets.
+Following prior workLee et al. (2024); Cao et al. (2023); Masoud et al. (2025); Zhao et al. (2024); Sukiennik et al. (2025); Wang et al. (2024) ,we assess LLM cultural alignment by subjecting models to standardized sociological surveys under diverse demographic contexts.
+We use the World Values Survey (WVS) Wave 7 as training data.Haerpfer et al. (2022)
+For evaluation, we test on ISSPWang et al. (2025) for countries in America, Asia, Europe, and Oceania.
+For the three African countries, we instead evaluate on WVS using an 80/20 split, due to the lack of comparable ISSP coverage.
+We conduct experiments on 14 countries across five continents.11
+1
+Country identifiers follow ISO-3166-1 alpha-3.
+(1) America: USA (American), MEX (Mexican), CHL (Chilean);
+(2) Europe: DEU (German), GBR (British), RUS (Russian);
+(3) Asia: IND (Indian), JPN (Japanese), PHL (Philippines);
+(4) Africa: EGY (Egyptian), ETH (Ethiopian), NGA (Nigeria);
+(5) Oceania: AUS (Australian), NZL (New Zealander).
+WVS includes 13 culture topics and ISSP includes 10 culture topics.
+Topic definitions and per-country sample sizes are reported in Appendix A.
+We consider four binary persona attributes, namely Gender {male, female}, Education {college educated, not college educated}, Residence {urban, rural}, and Marital Status {married, not married}, as these attributes are known to systematically relate to cultural values and attitudes in cross national survey research(Kenny and Patel, 2017; Lomazzi and Seddig, 2020; Serrano-Montilla et al., 2020).
+Baselines.
+We compare ACE-Align against a set of baselines spanning three categories, all instantiated on the LLaMA3.1-8B-Instruct.Dubey et al. (2024)
+(1) Base model. LLaMA3.1-8B-Instruct is evaluated using the same persona conditioned prompting protocol, without any additional alignment training.
+(2) Prompt-based Method: Anthropological Prompting augments prompting with an explicit anthropological reasoning framework before selecting an option.AlKhamissi et al. (2024)
+(3) SFT-based Method: CultureLLM performs supervised fine tuning on survey QA pairs with a single aggregate ground-truth answer per question.Li et al. (2024)
+We use its no-augmentation variant, which reduces to optimizing \mathcal{L}_{\text{anchor}} only (Eq. 14 with \beta=0 ).
+Evaluation Metric.
+Following Santurkar et al. (2023), we evaluate cultural alignment by comparing the model predicted opinion distribution to the reference human distribution on each multiple choice survey question.
+For each question q\in Q , let D_{1}(q) and D_{2}(q) denote two distributions over the answer choices (e.g., model vs. survey).
+To respect the ordinal structure of survey options, we use the 1-Wasserstein distance after embedding options into a 1D metric space (details below).
+We then define the alignment score S between D_{1} and D_{2} over a question set Q as
+S=\frac{1}{|Q|}\sum_{q\in Q}\left(1-\frac{\mathrm{WD}\!\big(D_{1}(q),D_{2}(q)\big)}{N-1}\right),
+(15)
+where N is the number of ordinal answer choices, and N-1 is the maximum possible Wasserstein distance, ensuring S\in[0,1] .
+Implementation Details.
+We perform parameter-efficient fine-tuning with Low-Rank Adaptation (LoRA)Hu et al. (2022). We use rank r=8 , scaling factor \alpha=16 , and LoRA dropout of 0.05 . Optimization is done with AdamW using a learning rate of 2\times 10^{-5} . We train on two NVIDIA A800 GPUs and use bfloat16 mixed precision.
+We train for two epochs with a sequential objective schedule. In the first epoch, we optimize only the anchoring objective in Eq. 14 by setting \alpha=1.0 and \beta=0.0 . In the second epoch, starting from the first-epoch checkpoint, we optimize only the effect-alignment objective by setting \alpha=0.0 and \beta=1.0 . All other trained models follow the same optimization and hardware configuration unless stated otherwise.
+4.2 Experimental Results
+(a) Baseline Performance Ranking
+(b) Alignment Gains vs. G
+(c) Cross-Tier Convergence
+Figure 3: Alignment across resource tiers and persona granularities.
+(a) Baseline alignment scores over 14 countries reveal a pronounced tier gap (Tier 1, Tier 2, Tier 3 Africa).
+(b) Gains from ACE-Align over the base model are larger for lower tiers and persist across G .
+(c) ACE-Align reduces the tier gap, indicating cross tier convergence.
+RQ1: Does ACE-Align consistently improve cultural alignment across varying persona granularities?
+Table 1 shows that ACE-Align consistently achieves the best alignment scores across all persona granularities G\in\{1,2,3,4\} . Compared to the base model, ACE-Align improves the average score by +4.30 at G{=}1 , +4.12 at G{=}2 , +4.22 at G{=}3 , and +4.38 at G{=}4 . Although performance generally reduces as G increases, ACE-Align maintains robust gains across all granularities, indicating that its improvements persist from coarse to fine persona granularity.Across most countries and attribute values, ACE-Align yields positive alignment shifts. This pattern suggests that the gains observed are not driven by a small subset of personas, but are broadly distributed across demographic attributes. Appendix B reports the detailed alignment changes for all attribute combinations.
+(d) Holdout group 1
+(e) Holdout group 2
+Figure 4: —Base model — ACE-Align
+— Anchor Only — Causal Only
+Alignment on two held out demographic combinations across cultural themes
+(Female, College Educated, Urban, Married) vs. (Male, Not College Educated, Rural, Not Married).
+RQ2: How robust is ACE-Align under low-resource conditions?
+Low-resource conditions encompass (i) unseen persona compositions and (ii) low-coverage geographic regionsDecoupes et al. (2025).
+Compositional Generalization.
+As demonstrated in Figure 4, ACE-Align maintains stable performance on persona profiles whose attribute combinations were withheld during training. This suggests the model captures reusable causal primitives rather than memorizing training instances.
+Geographic Equity.
+To investigate geographic robustness, we categorize the 14 countries into three tiers based on their geocultural and economic profiles: Tier 1 (Western & Developed), Tier 2 (Transitional Economies), and Tier 3 (Africa)Taras et al. (2016).
+As illustrated in Figure 3(a), the base model exhibits a clear performance gradient, performing strongest on high-resource Tier 1 contexts but dropping significantly on Tier 3. Specifically, there is a substantial alignment gap of 12.43 points between the best performing (NZL) and worst performing (EGY) countries at G{=}1 .
+Crucially, ACE-Align demonstrates an inverse baseline relationship: while it improves alignment across all tiers, the largest relative gains are observed in Tier 3 (Africa).
+As shown in Figure 3(b), when averaged over persona granularities G\in\{1,2,3,4\} , Tier 3 achieves a mean improvement of +8.48 points, nearly three times larger than that of Tier 1 (+2.99).
+Consequently, Figure 3 shows a clear convergence effect, with the average alignment gap across persona granularities shrinking from 9.81 to 4.92 points.
+These results prove that ACE-Align effectively narrows the "head-tail disparity," ensuring more equitable cultural representation.
+RQ3: What mechanism drives the effectiveness of ACE-Align?
+To understand why ACE-Align works, we analyze the underlying causal dynamics of cultural attributes. We hypothesize that its effectiveness stems from two key capabilities: (1) correctly identifying that different cultural topics are governed by distinct demographic drivers, and (2) actively correcting specific types of causal misalignment.
+Heterogeneity of Attribute Influence.
+Cultural values are not uniformly influenced by all demographics, and the dominant attribute varies substantially across topics and across countries.
+As shown in Figure 5, we visualize the ground-truth causal effect magnitude of different attributes across WVS topics.
+For Economic Values, the dominant attribute is Gender in Australia but Education in Egypt, while Perceptions of Migration is consistently dominated by Education.
+ACE-Align succeeds because it explicitly models these variations via the causal alignment objective ( \mathcal{L}_{\text{CE}} ).
+Figure 5: Heterogeneity of Attribute Influence. Different cultural topics and countries are dominated by different demographic attributes.
+Mitigating Stereotyping and Erasure.
+Finally, we analyze how the model aligns these attributes. We categorize the alignment status of each attribute-topic pair into four types based on the relationship between the model’s estimated causal effect ( \Delta_{m} ) and the ground-truth data effect ( \Delta_{d} ):
+•
+Flipped: The model predicts the opposite trend ( \text{sgn}(\Delta_{m})\neq\text{sgn}(\Delta_{d}) ).
+•
+Stereotyping: The model exaggerates the difference ( |\Delta_{m}|>|\Delta_{d}|+\epsilon ).
+•
+Erasure: The model underestimates the difference ( |\Delta_{m}|<|\Delta_{d}|-\epsilon ).
+•
+Aligned: The model matches the data within a threshold ( |\Delta_{m}-\Delta_{d}|\leq\epsilon ).
+Figure 6 illustrates the distribution of these types. The Base Model suffers significantly from Flipped signs.ACE-Align drastically reduces these errors, converting them into the Aligned category.
+This proves that our method does not merely fit data distribution, but actively corrects structural biases exaggerated stereotypes and correcting directional errors.
+Figure 6: Overall comparison of model performance and causal effect alignment (USA).
+5 Conclusion
+In this study, we introduced ACE-Align to make LLMs better at understanding people from different cultures. By focusing on how specific traits like gender or education causally change someone’s viewpoint, the model acts more like a real person. Our results show that ACE-Align works consistently well whether the persona is simple or very detailed. Most importantly, this method makes LLMs fairer by helping under-represented regions the most. In Africa, the model achieves an average gain of 8.48 points across persona granularities, reducing the alignment gap between high-resource and low-resource regions from 9.81 to 4.92 points, ensuring that AI can represent a wider variety of people more accurately.
+Limitations
+There are still some practical limits to our study that we need to address. Because we rely on existing social surveys, we cannot represent every single culture or small community across the globe. The specific data available in these surveys also influenced our study, as we were limited to choosing only four primary traits: gender, education, residence, and marital status. Currently, we treat these traits as binary categories, such as urban versus rural or married versus not married. This binary approach is a simplified version of reality and does not capture the full complexity of how people actually identify themselves. In the future, we want to look beyond these simple binary pairs and find more multivariate causal factors. Moving toward these diverse and multi-layered causes will help our models reflect the true diversity of global cultures more fairly.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.12758v1
+VISPA: Pluralistic Alignment via Automatic Value Selection and Activation
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+k
+License: CC BY 4.0
+arXiv:2601.12758v1 [cs.CL] 19 Jan 2026
+VISPA: Pluralistic Alignment via Automatic Value Selection and Activation
+Shenyan Zheng
+Jiayou Zhong
+Anudeex Shetty
+Affiliation: University of Melbourne
+Affiliation: Macquarie University {b63zheng,j55zhong}@uwaterloo.ca,
+hengji@illinois.edu,preslav.nakov@mbzuai.ac.ae,
+{anudeex.shetty,usman.naseem}@mq.edu.au
+Heng Ji
+Affiliation: University of Illinois Urbana-Champaign
+Preslav Nakov
+Affiliation: MBZUAI
+Usman Naseem
+Affiliation: Macquarie University {b63zheng,j55zhong}@uwaterloo.ca,
+hengji@illinois.edu,preslav.nakov@mbzuai.ac.ae,
+{anudeex.shetty,usman.naseem}@mq.edu.au
+Affiliation: University of Waterloo
+Abstract
+As large language models are increasingly used in high-stakes domains, it is essential that their outputs reflect not average human preference, rather range of varying perspectives. Achieving such pluralism, however, remains challenging. Existing approaches consider limited values or rely on prompt-level interventions, lacking value control and representation. To address this, we introduce VISPA, a training-free pluralistic alignment framework, that enables direct control over value expression by dynamic selection and internal model activation steering. Across extensive empirical studies spanning multiple models and evaluation settings, we show VISPA is performant across all pluralistic alignment modes in healthcare and beyond. Further analysis reveals VISPA is adaptable with different steering initiations, model, and/or values. These results suggest that pluralistic alignment can be achieved through internal activation mechanisms, offering a scalable path toward language models that serves all.11
+1
+We will release our code and data post acceptance.
+**footnotetext: Equal contributions.
+1 Introduction
+Figure 1:
+Overview of VISPA for pluralistic alignment via value selection and activation-level steering.
+Given a query, the model selects input-relevant subset of values from a
+shared value pool (Section 3.1) and generates value-conditioned comments by steering
+internal representations along interpretable value directions (Section 3.2).
+These comments are then composed according to Overton, Steerable, and Distributional modes using a backbone model to produce final output reflecting pluralistic values and perspectives (Section 3.3).
+Large language models (LLMs) are increasingly deployed in high-stakes and socially sensitive domains, including but not limited to healthcare, law, education, and public policy (Mekky et al., 2025; Thieme et al., 2023; Weidinger et al., 2023). In such settings, responses often reflect normative judgements rather than objective facts, and there is rarely a single “correct” answer.
+When an LLM is aligned only to an averaged notion of preferences, it risks obscuring this diversity and systematically favouring certain perspectives over others (Slocum et al., 2025; Ali et al., 2025; Xiao et al., 2025).
+Pluralistic alignment (Sorensen et al., 2024; Feng et al., 2024) has therefore emerged as an effective solution. On contrary to collapsing diverse viewpoints into a single consensus, a pluralistically aligned model represents multiple conflicting perspectives. Existing solutions for pluralistic alignment are via prompting (Zhong et al., 2025; Tseng et al., 2024), or aggregation over heterogeneous model ensembles (Feng et al., 2024; Huang et al., 2024). While effective in some settings, these methods provide limited control over what and how values are internally represented, moreover being brittle to prompt phrasing or role specification.
+At the same time, a complementary line of research investigates how abstract concepts and values are represented within the latent spaces of LLMs, and how targeted interventions on internal activations can steer model behaviour in more controlled manner compared to prompting (Kirtania, 2025; Jin et al., 2025).
+This observation motivates our central hypothesis:
+Can pluralism be achieved in a controlled and interpretable manner by steering internal value activations? Allowing a single steering model to express multiple, distinct value-conditioned perspectives.
+To answer the above question, we introduce Value-Integrated Steering for Pluralistic Alignment (VISPA), a pluralistic alignment framework that utilises value selection and activation-level steering as core building blocks as illustrated in Figure 1. We maintain a comprehensive, extensible pool of interpretable value vectors (or directions) grounded in established value taxonomies. Using these vectors, we select relevant values for an input and generate corresponding value-conditioned comments via model activation-level steering. These comments are then composed and evaluated under Overton, Steerable, and Distributional pluralistic alignment modes. Empirically, we demonstrate that VISPA advances all three pluralistic alignment objectives on LLMs of varying sizes and architectures for healthcare and the general domain, while remaining agnostic to different steering model and initiations.
+Our contributions are threefold:
+•
+To the best of our knowledge, we are the first to successfully apply model activation steering for a multi-objective task such as pluralistic alignment.
+•
+Our training-free framework, VISPA, achieves pluralism through value selection and internal value steering, enabling interpretable control over value expression. We complement it by constructing well-grounded and extensible value pool, including moral, cultural, safety, and other dimensions.
+•
+VISPA achieves state-of-the-art performance across Overton, Steerable, and Distributional pluralistic alignment modes on healthcare and general benchmarks for several LLMs. Additionally, it is extensible to different activation-level steering and models.
+2 Related Work
+Pluralistic Alignment.
+Standard alignment techniques such as Reinforcement Learning from Human Feedback (RLHF) often converge on a single, averaged preference distribution (Chakraborty et al., 2024; Sorensen et al., 2024).
+In response, pluralistic alignment aims to preserve this normative diversity.
+Sorensen et al. (2024) formalized three modes of pluralism—Overton, Steerable, and Distributional—which have been subsequently implemented via multi-model collaboration in ModPlural (Feng et al., 2024) or persona-based prompting in Ethos (Zhong et al., 2025). However, ModPlural relies on a fixed pool of community language models, incurring substantial computational cost and limited perspective coverage. Likewise, Ethos, depends on prompting single backbone LLM (via different personas), which may reflect biases or under-represent non-dominant perspectives (Zhong et al., 2025). Our work, VISPA, departs from these paradigms by investigating whether pluralism can be realized through internal mechanisms discussed next.
+Internal Value Steering.
+A growing body of work explores controlling LLMs by manipulating their internal activation states (Zou et al., 2025; Wehner et al., 2025). This approach, often termed Representation Engineering (RepEng), identifies directions in latent space that correspond to high-level concepts and modifies model behaviour by shifting activations along these vectors (Zou et al., 2025). This approach demonstrated that attributes like sentiment or truthfulness could be controlled by adding a fixed vector to hidden states. Subsequent techniques have refined this by using contrastive pairs to derive more robust steering directions (Jin et al., 2025; Rimsky et al., 2024).
+Our proposed framework, VISPA, successfully adapts them to the multi-objective setting of pluralistic alignment.
+3 VISPA: Value-Integrated Steering for Pluralistic Alignment
+We address value bias and under-representation in existing works by curating diverse set of human values ( \mathcal{V} ) (drawing from established psychological, cultural, moral, and AI-safety frameworks, as well as non-WEIRD moral traditions, described below):
+•
+Schwartz’s Basic Human Values (10) (Jin et al., 2025):
+Self-Direction, Stimulation, Hedonism, Achievement, Power, Security,
+Conformity, Tradition, Benevolence, and Universalism.
+•
+Cultural Dimensions (6) (Sukiennik et al., 2025):
+Power Distance, Uncertainty Avoidance, Individualism, Masculinity,
+Long-Term Orientation, and Indulgence.
+•
+Moral Theories (7) (Xu et al., 2024):
+Commonsense Morality, Deontology, Utilitarianism, Justice, Virtue Ethics,
+Ubuntu, and Confucianism.
+•
+AI Safety–Related (4) (Xu et al., 2024):
+Fairness, Truthfulness, Toxicity, and Harmfulness.
+•
+Non-WEIRD Moral Constructs (4) (Frey et al., 2021):
+Face, Karma, Honor, and Spirituality.
+We note these values ( \mathcal{V} ) provide better coverage (as shown in Appendix Figure 6 and 7) and are extensible.
+Additional details and their justification is provided in Appendix B.
+3.1 Value Selection
+Utilising all the human values for every scenario is neither computationally efficient
+nor conceptually desirable for a single input. We therefore introduce a value
+selection mechanism that identifies subset of values
+relevant to the input.
+Value relevance scoring.
+For an input x and a candidate value V\in\mathcal{V} , we define a relevance
+score as g(x,V)\in\mathbb{R} ,
+corresponding to the entailment score by natural language inference (NLI) model
+(Sileo, 2023).
+Top- k value selection.
+Given relevance scores for all values in \mathcal{V} , we rank values by
+g(x,V) and select the Top- k most relevant values:
+\text{Top-}k(\mathcal{V})=\operatorname{argmax}^{k}_{V\in\mathcal{V}}\,g(x,V)
+In all experiments, unless stated otherwise, we use k=6 for being comparable with existing works (Zhong et al., 2025; Feng et al., 2024).
+Selection and bias analysis.
+To assess whether the selection mechanism systematically favors particular
+values, we analyze the frequency with which each value appears in the Top- k
+set across the evaluation corpus. We report per-value Top-1 selection frequency,
+Top- k coverage, and average scores across pluralism modes in
+Appendix Table 7.
+This analysis shows that no single value or value category dominates selection
+and that relevance scores vary meaningfully with input content.
+Figure 2:
+Activation-level value steering with context-controlled value directions.
+Phase 1 estimates a value direction by mapping context-controlled
+contrastive pairs from \mathcal{D}_{V} to separate positive and negative realizations
+of the same scenario in activation space.
+Phase 2 selects input-relevant values and injects the corresponding
+directions into intermediate layers during generation to produce
+value-conditioned comments.
+The example shows how steering along benevolence changes the response to
+“Killing every mosquito” compared to an unsteered output.
+3.2 Activation-Level Value Steering
+Let f denote LLM with L layers.
+Given an input x , h_{\ell,t}\in\mathbb{R}^{d} represents the hidden
+representation at layer \ell and token position t . According to linear representation hypothesis (Zou et al., 2025; Wehner et al., 2025; Jin et al., 2025), we assume that each value V can be represented as a direction \bm{v}_{V}\in\mathbb{R}^{d} in the model’s activation space. Then, activation steering modifies hidden states as follows:
+\hat{h}_{\ell,t}=h_{\ell,t}+\lambda_{V}\bm{v}_{V},
+(1)
+where \lambda_{V}\in\mathbb{R} controls the steering strength. Different initiation of this formulation by varying:
+(i) how \bm{v}_{V} is estimated,
+(ii) how \lambda_{V} is chosen,
+and (iii) which layers \ell are modified.
+The overall process, including context-controlled value direction estimation (Phase 1) and inference-time steering (Phase 2), is illustrated in Figure 2.
+In this work, we study three instantiations of Eq. 1: (i) projection-based steering,
+(ii) averaging-based steering, and (iii) probe-calibrated steering, using our collected context-controlled contrastive datasets \mathcal{D}_{V} as discussed in Section B.1.
+3.2.1 Projection-Based
+This estimates \bm{v}_{V} by identifying dominant axis in activation space that separates positive and negative value data points in \mathcal{D}_{V} . We compute \bm{v}_{V} layer-wise by apply principal component analysis (PCA). \lambda_{V} is set using a fixed coefficient as done in (Zou et al., 2025).
+3.2.2 Averaging-Based
+Averaging-based steering constructs \bm{v}_{V} by directly averaging
+hidden-state representations from positive and negative examples in \mathcal{D}_{V} (Rimsky et al., 2024). This minimal approach introduces no learned probes or dimensionality reduction.
+3.2.3 Probe-Calibrated
+Probe-calibrated steering extends previous approach by calibrated \lambda_{V} selection to induce value with minimal perturbation. Value directions \bm{v}_{V} are learned similarly from contrastive pairs examples in \mathcal{D}_{V} . Unlike others, we adopt auto-selection of layers to apply activation steering along with magnitude calibration (Jin et al., 2025).
+For brevity, more details about activation-level value steering be found in Appendix C.
+3.3 Pluralistic Alignment Modes
+After value selection and generation of value-conditioned comments for a given input, VISPA aggregates these comments using a backbone model as per alignment mode. For Overton, backbone LLM summarises a response using all the selected value comments. In Steerable mode, the relevant comment is passed on as reference for backbone model. Finally, in Distributional, the collection of value comment distributions are aggregated to derive final distribution reflecting population preference.
+4 Experiments
+4.1 Models
+Following Zhong et al. (2025), we evaluate same set open-source
+and proprietary language models, including LLaMA2-7B, LLaMA2-13B (Touvron et al., 2023),
+Gemma-7B (Team et al., 2024), LLaMA3-8B (Dubey et al., 2024),
+Qwen2.5-7B, Qwen2.5-14B (Yang et al., 2024), and ChatGPT (Achiam et al., 2023).
+For activation-based steering as in existing works, we focus on LLaMA2-7B and LLaMA3-8B, further matching the model size used in the baselines (Feng et al., 2024; Zhong et al., 2025).
+The complete list of models and configurations is reported in Appendix Table 8.
+4.2 Data
+Healthcare Domain: Vital (Shetty et al., 2025) is a pluralism-oriented benchmark for
+health-related scenarios, containing 13,601 value-laden situations and 5,245
+multiple-choice questions derived from moral dilemmas, health surveys, and public
+opinion polls (see Appendix Table 5). Vital emphasizes cultural
+and ethical plurality in medical decision-making and supports Overton, Steerable,
+and Distributional modes of pluralistic alignment, making it particularly well
+suited our experiments.
+General Domain: ModPlural (Feng et al., 2024) introduces a collection of pluralistic alignment benchmarks, including Value Kaleidoscope, OpinionQA, MoralChoice, and GlobalOpinionQA, which span scenario-based, attribute-conditioned, and distributional evaluation settings. While these datasets were originally used to study pluralism through collaboration among community language models, we adopt them here to enable direct comparison with prior work under identical task definitions, replacing multi-model collaboration with internally value-steered generation.
+Additional details for these in Appendix A.
+4.3 Evaluation Measures
+Following prior works (Feng et al., 2024; Zhong et al., 2025), we evaluate VISPA under each pluralistic mode using measures tailored to coverage percentage, steering accuracy, and distribution similarity. For Overton, we use an NLI model (Schuster et al., 2021) to compute value coverage. For Steerable, we measure whether the final response reflects the requested steer attribute (e.g., a specific value or value profile) and report accuracy. For Distributional, we compare the model response distributions to the ground-truth distributions using Jensen–Shannon (JS) distance. We also conduct LLM-as-a-judge and human qualitative evaluations, comparing VISPA against baselines across modes. We ask two human annotators and GPT-4o to decide which system’s output better reflects a more pluralistic response (more in Section 6.3).
+4.4 Baselines
+We compare VISPA against four baselines:
+•
+Vanilla: Evaluates the unmodified backbone model to establish a lower bound for native behaviour on value-laden scenarios via simple prompting.
+•
+MoE: Adopts a routing approach where a backbone (or main) model selects a single comment to answer each query (Feng et al., 2024).
+•
+ModPlural: Extends MoE by aggregating responses from a diverse community of language models using summarisation, selection, or distribution-matching as per alignment mode (Feng et al., 2024).
+•
+Ethos: Induces pluralism through role-playing and persona-based prompting instead of a pool of community language models (Zhong et al., 2025).
+Full descriptions and implementation details for all baselines are provided in Appendix D.
+5 Main Results
+5.1 Healthcare Domain: Vital
+Model
+Vanilla
+MoE
+ModPlural
+Ethos
+VISPA {}_{(\text{Ours})}
+LLaMA2-7B
+20.76
+19.58
+15.38
+23.11
+35.86
+Gemma-7B
+38.60
+26.00
+22.18
+30.17
+43.76
+Qwen2.5-7B
+32.41
+28.14
+22.30
+44.27
+36.50
+LLaMA3-8B
+18.93
+24.70
+24.51
+25.44
+30.71
+LLaMA2-13B
+19.35
+20.20
+14.82
+22.32
+35.27
+Qwen2.5-14B
+31.29
+25.21
+25.09
+42.73
+37.93
+ChatGPT
+26.70
+18.84
+18.06
+21.14
+39.06
+Table 1:
+Value coverage scores ( \uparrow higher is better) under the Overton setting in Vital.
+For each row (corresponding to a backbone LLM), the best and second-best results are highlighted in bold and
+underline, respectively. All values are %.
+Overton.
+Table 1 reports value coverage under the
+Overton evaluation setting in Vital.
+Across most backbone models, VISPA substantially improves value coverage
+compared to Vanilla, MoE, and ModPlural, and often matches or exceeds
+Ethos.
+In particular, VISPA consistently achieves the best or
+second-best performance across nearly all rows.
+In particular, on LLaMA2-7B and LLaMA2-13B, our method improves coverage
+by more than 10 points relative to Ethos, while on Gemma-7B and
+Qwen2.5-7B it achieves the best or second-best performance overall.
+We further report 95% confidence intervals for both Overton value coverage and
+average score to quantify across-scenario variability and enable
+significance-aware comparisons (see Appendix E.4). The confidence intervals reveal that the
+improvements achieved by VISPA are not driven by a small number of extreme
+cases but persist across a broad range of scenarios, even in settings where
+Ethos performs competitively, supporting the robustness of activation-level
+steering for Overton-style pluralism.
+Steerable.
+Figure 3: Accuracy across backbone LLMs under the Steerable setting in Vital.
+Higher values indicate better alignment; all scores are reported as percentages.
+Under the Steerable setting in Vital, VISPA selects a single
+value-steered draft that best matches the requested value and uses it to guide the final response
+(Section 3.3). Figure 3 summarizes
+accuracy across backbone models, comparing VISPA against baselines.
+Overall, VISPA attains the best or competitive accuracy on most backbones,
+with especially clear gains on LLaMA2-7B, LLaMA2-13B, and
+ChatGPT. We further investigated different query strategies, showing our classifier-filtered configuration is the most stable across datasets (more in Appendix E.6).
+Expectedly, these results suggest that in the Steerable paradigm, performance is primarily driven by the faithfulness of the selected value-steered generation rather than aggregation over multiple drafts.
+Detailed results for Steerable can be found in Appendix E.5.
+Distributional.
+Figure 4: JS distances across backbone models under the Distributional
+setting in Vital. Lower values indicate better alignment.
+Figure 4 reports distributional alignment performance across backbone models. VISPA achieves the lowest JS distance on most backbones, including LLaMA2-7B, Gemma-7B, LLaMA3-8B, LLaMA2-13B, and Qwen2.5-14B, indicating closer alignment with empirical human response
+distributions. On Qwen2.5-7B and ChatGPT, performance differences between
+methods are small, with VISPA remaining highly competitive. These results suggest that activation-level value steering is effective across a range of model families and sizes, with particularly strong gains on LLaMA-based and larger backbones. Instead of constructing explicit personas or maintaining an expensive pool of model experts, VISPA steers internal representations during decoding and derives distributions without any training. Detailed results for Distributional are in Appendix E.7.
+5.2 General Domain: ModPlural
+Mode
+ModPlural
+Ethos
+VISPA {}_{(\text{Ours})}
+Overton ( \uparrow )
+22.22
+30.03
+30.34
+Steerab. ( \uparrow )
+34.47
+37.70
+37.34
+Distrib. ( \downarrow )
+0.56
+0.38
+0.23
+Table 2: Generalization results on ModPlural test cases using LLaMA2-13B across three pluralistic alignment modes. \uparrow indicates higher is better (value coverage or accuracy); \downarrow indicates lower is better
+(JS distance).
+To assess the robustness and generalization of our approach beyond healthcare domain, we additionally evaluate
+VISPA on the ModPlural datasets (Feng et al., 2024).
+Table 2 summarizes performance using
+LLaMA2-13B backbone across the three pluralistic alignment modes. Under the
+Overton setting, VISPA achieves the highest value coverage (30.34),
+improving upon both ModPlural (22.22) and Ethos (30.03). In the
+Steerable setting, VISPA attains competitive accuracy (37.34), closely
+matching the best reported performance from Ethos (37.70) while exceeding
+ModPlural (34.47). For the Distributional setting, VISPA substantially
+reduces JS divergence to 0.23, representing a marked improvement over
+both ModPlural (0.56) and Ethos (0.38).
+Taken together, these results indicate that activation-level value steering with value selection generalizes beyond the healthcare and
+yields consistent gains across different paradigms. Notably, the
+largest improvements are observed in the Distributional setting, suggesting
+that explicit value selection is particularly effective when matching human
+opinion distributions rather than optimizing for a single target response.
+6 Analysis
+6.1 Impact of Value Selection
+This evaluates the importance of the core part of VISPA, i.e., “value selection”. We contrast two setups, one using fix values set (we use Schwartz 10 values) and another using top six relevant values selected by VISPA.
+Table 3 presents a consolidated view of the results for all three modes of pluralistic alignment. For Overton, expectedly rigid use of irrelevant and potentially spurious values leads to lower and more variable value coverage across backbone models. On the contrary, filtering out weakly expressed or task-irrelevant values by VISPA consistently improves coverage. Likewise, in Steerable value selection within has a smaller but still consistent effect across both benchmarks. It is more pronounced in the more diverse poll-related part of the benchmark. Some improvements to elicit better Steerable response are discussed in Appendix E.6. Value selection is particularly important under the Distributional evaluation. As seen in the results, the fixed set consistently produces higher JS divergence, indicating poorer agreement with empirical human value distributions. Filtering values sharpens the estimated distributions, leading to faithful modeling of both population-level preferences and uncertainty in ambiguous cases.
+Model
+Overton ( \uparrow )
+Steerable ( \uparrow )
+Distributional ( \downarrow )
+Fixed
+VISPA {}_{(\text{Ours})}
+Fixed
+VISPA {}_{(\text{Ours})}
+Fixed
+VISPA {}_{(\text{Ours})}
+LLaMA2-7B
+35.15
+35.86
+46.27
+49.67
+0.257
+0.183
+Gemma-7B
+44.37
+43.76
+49.68
+49.27
+0.248
+0.223
+Qwen2.5-7B
+37.93
+36.50
+57.88
+63.54
+0.267
+0.256
+LLaMA3-8B
+28.36
+30.71
+49.97
+51.34
+0.206
+0.198
+LLaMA2-13B
+34.61
+35.27
+41.84
+43.61
+0.241
+0.219
+Qwen2.5-14B
+37.60
+37.93
+56.74
+57.92
+0.287
+0.252
+Table 3: Impact of value selection in VISPA.
+‘Fixed’ uses the ten Schwartz values, while VISPA applies automatic
+relevant value selection.
+6.2 Quality of Values and Selection
+To assess the semantic quality and diversity of the value set in VISPA, we visualize the semantic space in Appendix Figure 6 and pairwise cosine similarity heat map in Appendix Figure 7, which together show that values cover distinct semantic regions.
+We also capture fluency of generated value-conditioned comments via average length, repetition, and gibberish rates
+in Appendix E.3, suggesting high quality. Finally, Figure 4 shows an example of effective value selection.
+6.3 Human Evaluation
+Figure 5: Human and GPT-4 evaluations under the Overton setting. Bars indicate
+the percentage of scenarios where ModPlural wins, ties, or loses when compared
+to alternative alignment methods.
+We conduct a human evaluation (as shown in Figure 5) to assess the qualitative pluralistic alignment behavior of VISPA under the Overton setting, adopting a pairwise comparison task following Shetty et al. (2025); Feng et al. (2024). We randomly sample 100 scenarios from Vital and construct contrastive response pairs by presenting annotators with two anonymized outputs generated: one from VISPA and one from a
+baseline. The annotators are asked: “Which response better reflects pluralistic values, or is it a tie?”, with ‘Yes’, ‘No’, and ‘Tie’ options. Two annotators, both authors of this paper, independently evaluate model outputs with moderate inter-annotator agreement (Fleiss’ Kappa: 0.471). In addition to human judgments, we employ GPT-4o as a complementary automated evaluator. Under both human and GPT-4 evaluations, VISPA achieves a higher win rate over the baselines, supporting its improved pluralistic coverage in practice. While GPT-4-as-Judge produces more decisive preferences in favor of VISPA, human annotators assign a higher proportion of ties, particularly when comparing against Ethos. We interpret this divergence as further motivation for pluralistic alignment methods
+that preserve multiple value-conditioned perspectives rather than optimizing
+solely for automated evaluator agreement.
+Scenario: Oil rig sacrifice
+Input: Destroying an oil rig to save
+100 babies from dying of cancer.
+Gold: Protection of life; Property rights;
+Environmental protection; Rule of law.
+Top-6 Selected Values:
+benevolence (0.94)
+harmfulness (0.86)
+justice (0.91)
+utilitarianism (0.85)
+virtue ethics (0.89)
+achievement (0.85)
+Table 4: An example of effective value selection and its match with gold values (denoted by corresponding colors). For more examples see Appendix Table 26.
+6.4 Qualitative Analysis
+We conduct further qualitative analysis to complement the above quantitative results. For each scenario, we further perform contrastive comparison by examining responses
+generated for the same input prompt across alignment methods,
+in Table 21 (“Removing a tumor”) and Table 22 (“Wearing a mask in public during a pandemic”). VISPA produces responses that are both pluralistic and decision-grounded: value considerations (e.g., beneficence, non-maleficence,
+autonomy, proportionality, and justice)
+for action. We further illustrate how value-conditioned intermediate generations differ
+across pluralism modes in Appendix G. These qualitative differences are most pronounced in Vital, which contains context-rich scenarios that activate multiple competing values. On opinion-oriented datasets,
+where inputs are shorter, and value conflict is less explicitly specified, qualitative differences between methods are typically more subtle, though consistent with
+the quantitative trends. Together, these examples indicate that internal activation-level value steering enables pluralism that is not only broader in coverage but also more coherent and high-quality.
+6.5 Ablation Study
+We also conduct extensive targeted ablations to ascertain the contribution of
+different components of VISPA. First, we vary the steering LLM used
+to generate value-conditioned comments and show its effectiveness in
+Appendix E.2. Then, we vary the instantiations in
+VISPA, comparing projection-based, averaging-based, and probe-calibrated
+steering (from Section 3.2), with quantitative results reported
+in Appendix E.1 and algorithmic details provided
+in Appendix C. Finally, we provide detailed breakdowns for the
+Steerable and Distributional modes in Appendix E.5 and E.7.
+7 Conclusion and Future Work
+We presented VISPA, a training-free framework for pluralistic alignment that operates directly at the representation level through dynamic value selection and internal activation steering, without reliance on prompting or specialised models. By applying value steering to the multi-objective setting of pluralistic alignment, VISPA enables interpretable and controllable value expression across all three pluralism modes. Across extensive evaluations spanning multiple models, benchmarks, and high-stakes domains such as healthcare, VISPA consistently outperforms existing approaches. These results suggest that VISPA provides a scalable and architecture-agnostic pathway toward pluralistic language models that move beyond average preferences to better reflect diverse human values and perspectives. Future work will explore extensions to multilingual, multi-turn, and interactive settings.
+Limitations
+We would like to highlight some limitations of our work. First, experiments are limited to
+English-language inputs and outputs, restricting the cultural scope of value
+expression. Extending internal value steering to multilingual and region-specific
+contexts remains an important direction for future work.
+Finally, the scope of our value steering is currently defined by the 31 specific values. While this ontology covers substantial ground, future iterations of this work would benefit from incorporating more comprehensive value taxonomies to capture finer-grained ethical nuances and broader pluralistic perspectives.
+Ethics Statement
+This work aims to improve pluralistic alignment in LLMs by making
+value diversity explicit and controllable. By steering internal representations
+along auto-selected dimensions, our approach reduces the risk of value dominance
+and promotes transparency in how ethical considerations influence model outputs. At the same time, pluralistic outputs can be misused if selectively interpreted or
+presented without context. We therefore emphasize responsible deployment in
+systems that expose multiple value-grounded perspectives rather than privileging a
+single response. While our current study focuses on English-language scenarios,
+the broader ethical motivation of this work underscores the importance of
+cross-cultural and multilingual value modeling, which we encourage future work to
+address.
+ENDSOURCE
+
+
+SOURCE https://arxiv.org/html/2601.13137v1
+Adversarial Alignment: Ensuring Value Consistency in Large Language Models for Sensitive Domains
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2601.13137v1 [cs.CL] 19 Jan 2026
+Adversarial Alignment: Ensuring Value Consistency in Large Language Models for Sensitive Domains
+Journal: Data Intelligence
+Yuan Gao1,2,11
+1
+These authors contributed equally to this work.
+Zhigang Liu1,2,11
+1
+https://github.com/open-chinese/alpaca-chinese-dataset
+Xinyu Yao1,2
+Bo Chen1,2,\daggerfootnoteCorresponding author: Bo Chen (Email: chenbomuc@muc.edu.cn; ORCID: 0009-0001-9819-2260)
+Xiaobing Zhao1,2
+Address: 1School of Information Engineering, Minzu University of China, Beijing 100081, China
+Address: 2National Language Resource Monitoring and Research Center of Minority Languages, Beijing 100081, China
+Abstract
+With the wide application of large language models (LLMs), the problems of bias and value inconsistency in sensitive domains have gradually emerged, especially in terms of race, society and politics. In this paper, we propose an adversarial alignment framework, which enhances the value consistency of the model in sensitive domains through continued pre-training, instruction fine-tuning and adversarial training. In adversarial training, we use the Attacker to generate controversial queries, the Actor to generate responses with value consistency, and the Critic to filter and ensure response quality. Furthermore, we train a Value-Consistent Large Language Model, VC-LLM, for sensitive domains, and construct a bilingual evaluation dataset in Chinese and English. The experimental results show that VC-LLM performs better than the existing mainstream models in both Chinese and English tests, verifying the effectiveness of the method.
+Warning: This paper contains examples of LLMs that are offensive or harmful in nature.
+Keywords:
+Large Language Models; Adversarial Alignment; Value Consistency
+1 Introduction
+The rapid development of large language models (LLMs, such as GPT-4 [1], Llama-3 [2], Qwen2.5 [3], and GLM-4 [4]) has led to their widespread application across various downstream tasks [5, 6, 7, 8]. However, as the influence of these models expands, the societal risks they pose in sensitive domains are increasingly drawing significant attention.
+Recent studies have shown that LLMs exhibit value biases related to race [9], occupation [10], society [11], and politics [12, 13, 14], which stem from inherent value biases in the training data [15]. Although some alignment methods for safety and fairness have been proposed, most focus on general domains or bias mitigation, neglecting the alignment of values in specific sensitive domains. Specifically, there is a lack of alignment methods, training data, and evaluation benchmark for sensitive domains.
+To address these challenges, we propose an adversarial alignment framework, which incorporates continued pre-training, instruction fine-tuning, and adversarial training. This framework aligns the language model starting from the pre-training stage and extends training data in sensitive domains to ensure value consistency. The core of the framework lies in adversarial training, which consists of three components: the Attacker generates queries in sensitive domains, the Actor produces responses based on value alignment principles, and the Critic reviews the generated responses to ensure value alignment.
+Our contributions can be summarized as follows:
+1.
+We propose an adversarial alignment framework to generate value alignment datasets in sensitive domains, which automatically produces high-quality and challenging alignment data.
+2.
+Based on this framework, we train VC-LLM, a large language model with value consistency in Chinese sensitive domains, and publicly release the constructed value alignment dataset **
+*
+https://github.com/Ad-Align/VC-LLM.
+3.
+We construct a bilingual value alignment evaluation benchmark in Chinese and English, and conduct comparative experiments and analysis on mainstream LLMs and VC-LLM based on this benchmark.
+2 Related Work
+2.1 Value Bias in LLMs
+Numerous studies have revealed that LLMs exhibit value-laden biases across domains such as religion, social expectations, and political ideology. For example, Abid et al. [9] find that GPT-3 demonstrates significant anti-Muslim bias, while Salecha et al. [16] show that LLMs tend to overrepresent overly positive personality traits when simulating human characteristics. Bernardelle et al. [17] report that models exhibit inherent leanings in political compass tests, which are difficult to mitigate through simple prompt engineering. Similarly, LLMs can display political favoritism and sycophantic behavior toward different political parties [18, 19]. In addition, LLMs often show reluctance to answer political questions [20], diverse mental values [21], and differences in moral and political stances [22, 23].
+2.2 Value Alignment in LLMs
+Recent studies have focused on the alignment of LLMs for safety [24, 25, 26, 27, 28]. For example, Bai et al. [29] combine preference modeling with human feedback-based reinforcement learning to achieve safe alignment. These methods primarily aim to enhance the model’s helpfulness and safety, or align it with globally recognized values. However, their application in sensitive domains remains limited. To address this challenge, some research has begun exploring alignment in specific domains. For instance, Liu et al. [13] use reinforcement learning to reduce political bias in LLM responses, Agiza et al. [30] optimize political bias through instruction fine-tuning and preference adjustment, while Borah et al. [31] propose self-reflection strategies to detect and mitigate hidden biases. Although progress has been made in sensitive domains alignment, these methods often focus on identifying and mitigating bias, without addressing the alignment of domain-specific values. We propose an adversarial alignment framework, aiming to ensure alignment of LLMs in sensitive domains.
+Figure 1: Overview of the adversarial training framework. The framework begins with sensitive words (e.g., Taiwan sovereignty). The Attacker generates challenging queries (e.g., What is the truth behind the Taiwan independence movement?), the Actor produces value-aligned responses (e.g., emphasizing national unity), and the Critic filters for high-quality Q&R (Query & Response) pairs to construct training data.
+3 Adversarial Value Alignment for Sensitive Domains
+We propose an adversarial alignment framework to enhance the value alignment of LLMs in various sensitive domains. We firstly introduce the framework, followed by its core component: adversarial training. Finally, we apply this framework in the context of Chinese sensitive domains, resulting in the trained VC-LLM.
+3.1 Training Framework
+The adversarial alignment framework consists of three stages:
+Continued Pre-training. To mitigate the bias caused by value misalignment in the original pre-training data, we perform continued pre-training using value-aligned data from sensitive domains.
+Instruction Fine-Tuning. In this stage, we design two instruction formats to improve the model’s value alignment in sensitive domains: (1) Question-Answering Task: Given a question, the model is required to generate a value-aligned answer; (2) Statement-Rebuttal Task: Given a value-inconsistent statement, the model needs to identify value conflicts and produce a rebuttal that reflects aligned values.
+Adversarial Training. We introduce adversarial training to augment the training data and enhance the model’s robustness.
+3.2 Adversarial Training
+We propose a collaborative adversarial training process consisting of the Attacker, Actor, and Critic, designed to expand the training data and enhance the model’s value alignment and safety, as shown in Figure 1. Using the Attacker and Actor to generate queries and responses, this approach mitigates the biases and consistency issues that may arise from using a single model. Additionally, the Critic ensures the quality of training data. The pseudocode is as follows:
+Algorithm 1 Adversarial Alignment Dataset Generation
+Input:
+Sensitive word list S (e.g., [Taiwan, Zhenbao Island, ...]),
+Template library T
+Output: Adversarial alignment dataset D_{\text{adv}} (query-response pairs)
+1:
+Initialize D_{\text{adv}}\leftarrow\emptyset
+2:
+for each sensitive topic s\in S do
+3:
+prompt\leftarrow\text{fill\_template}(\text{sample}(T),s)
+4:
+raw\_query\leftarrow\text{{Attacker}.generate\_query}(prompt)
+5:
+(raw\_query,response)\leftarrow Actor.process_query(raw_query, prompt.type)
+6:
+if not Critic.check_failure( raw\_query,response ) then
+7:
+D_{\text{adv}}\leftarrow D_{\text{adv}}\cup\{(raw\_query,response)\}
+8:
+end if
+9:
+end for
+10:
+return D_{\text{adv}}
+Attacker. The Attacker is used to generate questions and statements for adversarial training. Since fine-tuning can weaken a model’s safety alignment [32], we fine-tune LLM to enable it to generate queries for sensitive domains.
+Actor. The Actor is used to generate value-aligned responses for adversarial training. It is a more capable language model with stronger alignment performance. For misleading or biased questions, it should produce truthful and values-consistent answers. For statements with value inconsistencies, it generates rebuttals that reflect consistent values.
+Critic. The Critic is used to evaluate and filter the responses generated by the Actor during adversarial training to ensure response quality and value alignment. It is a large language model that serves as an automatic evaluator. Specifically, the Critic filters out responses that are evasive, value-misaligned, or incomplete.
+The prompt templates for the Attacker, Actor, and Critic are shown in A.
+3.3 VC-LLM
+Figure 2: Prompts and Examples in Instruction Fine-Tuning.
+We train VC-LLM in Chinese sensitive domains using this framework.
+During the continued pre-training stage, we use Llama-3-Chinese-8B [33] as the base model, which has been continuously pre-trained on Chinese corpora to enhance its language understanding. The continued pre-training data is approximately 33.7GB, covering five sensitive domains: Sovereignty, Human Rights, Religion, Politics, and Ethnicity. The data sources include official news reports, information from provincial and municipal government websites, relevant national and local policies and regulations, meeting records, and published books.
+During the instruction fine-tuning stage, we construct the instruction fine-tuning dataset using authoritative data from various sources. Some datasets, such as foreign ministry spokesperson remarks, are directly converted from their question-and-answer formats. For unannotated data, we use the GLM-4-9B-Chat [4] to generate instruction pairs based on it (prompts and examples shown in Figure 2). General data are also included to ensure broad capabilities.
+During the adversarial value alignment stage, we use the Qwen2.5-7B-Instruct [3] as the Attacker, due to its small parameter size and fast inference speed, making it suitable for generating large volumes of data. We fine-tune the model using misaligned responses from the Safe RLHF dataset [34] to ensure the model can generate queries in sensitive domains. For the Actor, we use the Qwen2.5-72B-Instruct, which is selected for its strong instruction-following ability and good safety alignment, making it ideal for generating aligned responses in sensitive domains. The GLM-4-9B-Chat is chosen as the Critic, as it is from a different series than both the Attacker and Actor, ensuring objectivity in evaluation, while also benefiting from faster inference speed. In total, we generate 64,238 adversarial alignment samples.
+Details of the training data and hyperparameters are provided in B.
+Figure 3: Prompt used to evaluate the LLM’s responses, with a maximum score of 5.
+Model
+Sov
+HR
+Rel
+Pol
+Eth
+Total
+Avg
+Baichuan2-7B-Chat
+244 (3.75)
+94 (3.13)
+69 (3.63)
+140 (3.33)
+56 (3.11)
+603
+3.47
+Baichuan2-13B-Chat
+262 (4.03)
+106 (3.53)
+74 (3.89)
+156 (3.71)
+66 (3.67)
+664
+3.82
+GLM-4-9B-Chat
+249 (3.83)
+115 (3.83)
+83 (4.37)
+165 (3.93)
+69 (3.83)
+681
+3.91
+Yi-6B-Chat
+242 (3.72)
+98 (3.27)
+70 (3.68)
+132 (3.14)
+57 (3.17)
+599
+3.44
+internlm2.5-7b-chat
+106 (1.63)
+47 (1.57)
+29 (1.53)
+57 (1.36)
+37 (2.06)
+276
+1.59
+TigerBot-7B
+119 (1.83)
+39 (1.30)
+34 (1.79)
+81 (1.93)
+37 (2.06)
+310
+1.78
+Ziya2-13B-Chat
+200 (3.08)
+81 (2.70)
+59 (3.11)
+119 (2.83)
+42 (2.33)
+501
+2.88
+Llama-3-Ch-8B-v3
+181 (2.78)
+84 (2.80)
+51 (2.68)
+111 (2.64)
+52 (2.89)
+479
+2.75
+Qwen2.5-7B-Instruct
+304 (4.68)
+115 (3.83)
+88 (4.63)
+156 (3.71)
+70 (3.89)
+733
+4.21
+Qwen2.5-14B-Instruct
+296 (4.55)
+121 (4.03)
+88 (4.63)
+163 (3.88)
+78 (4.33)
+746
+4.29
+Qwen2.5-72B-Instruct
+302 (4.65)
+117 (3.90)
+92 (4.84)
+176 (4.19)
+79 (4.39)
+766
+4.40
+GPT-4o
+202 (3.11)
+86 (2.87)
+48 (2.53)
+123 (2.93)
+39 (2.17)
+498
+2.86
+VC-LLM
+305 (4.69)
+143 (4.77)
+95 (5.00)
+206 (4.90)
+87 (4.83)
+836
+4.80
+Table 1: Chinese evaluation results of VC-LLM and other baseline models. The total score is out of 870 points, with the breakdown as follows: Sovereignty (325 points), Human Rights (150 points), Religion (95 points), Politics (210 points), and Ethnicity (90 points). We use the form of total score (avg score) in the table.
+4 Experiments and Analysis
+4.1 Experimental Setups
+We construct a bilingual value evaluation dataset (Chinese and English), covering five sensitive domains: Sovereignty (Sov), Human Rights (HR), Religion (Rel), Politics (Pol), and Ethnicity (Eth), further divided into 31 subcategories, with details in C.
+We compared evaluations from human annotators with those from Qwen2.5-7B-Instruct and Qwen2.5-72B-Instruct, both using prompt-based assessment. The results demonstrate high consistency between the models and human judgments, with exact match rates of 87.36% (Zh) and 87.93% (En) (calculated as \frac{1}{N}\sum_{i=1}^{N}1(s_{i}^{\text{pred}}=s_{i}^{\text{gold}}) ) and tolerance-based match rates of 96.55% and 98.85% (calculated as \frac{1}{N}\sum_{i=1}^{N}1(|s_{i}^{\text{pred}}-s_{i}^{\text{gold}}|\leq 1) ), respectively. Considering the faster inference speed of Qwen2.5-7B-Instruct, we selected it for evaluation (prompt in Figure 3).
+The baseline models include: Qwen2.5-7B-Instruct, Qwen2.5-14B-Instruct, Qwen2.5-72B-Instruct, Baichuan2-7B-Chat [35], Baichuan2-13B-Chat, GLM-4-9B-Chat, Meta-Llama-3-8B-Instruct (Llama-3-8B-Instruct) [2], Llama-3-Chinese-8B-Instruct-v3 (Llama-3-Ch-8B-v3), Yi-6B-Chat [36], internlm2.5-7b-chat [37], tigerbot-7b-sft-v2 [38], Ziya2-13B-Chat [39], Mistral 7B [40] and GPT-4o [41].
+4.2 Overall Results
+Model
+Sov
+HR
+Rel
+Pol
+Eth
+Total
+Avg
+Baichuan2-7B-Chat
+215 (3.31)
+69 (2.30)
+51 (2.68)
+126 (3.00)
+38 (2.11)
+499
+2.87
+Baichuan2-13B-Chat
+169 (2.60)
+74 (2.47)
+56 (2.95)
+120 (2.86)
+44 (2.44)
+463
+2.66
+GLM-4-9B-Chat
+133 (2.05)
+54 (1.80)
+40 (2.11)
+83 (1.98)
+24 (1.33)
+334
+1.92
+Yi-6B-Chat
+149 (2.29)
+71 (2.37)
+53 (2.79)
+83 (1.98)
+47 (2.61)
+403
+2.32
+internlm2.5-7b-chat
+104 (1.60)
+43 (1.43)
+22 (1.16)
+56 (1.33)
+38 (2.11)
+263
+1.51
+TigerBot-7B
+110 (1.69)
+38 (1.27)
+30 (1.58)
+69 (1.64)
+28 (1.56)
+275
+1.58
+Ziya2-13B-Chat
+142 (2.18)
+66 (2.20)
+46 (2.42)
+99 (2.36)
+40 (2.22)
+393
+2.26
+Mistral-7B-Instruct
+122 (1.88)
+64 (2.13)
+44 (2.32)
+93 (2.21)
+34 (1.89)
+357
+2.05
+Llama-3-8B-Instruct
+145 (2.23)
+55 (1.83)
+39 (2.05)
+81 (1.93)
+27 (1.50)
+347
+1.99
+Llama-3-Ch-8B-V3
+153 (2.35)
+71 (2.37)
+51 (2.68)
+101 (2.40)
+34 (1.89)
+410
+2.36
+Qwen2.5-7B-Instruct
+215 (3.31)
+94 (3.13)
+65 (3.42)
+134 (3.19)
+68 (3.78)
+576
+3.31
+Qwen2.5-14B-Instruct
+229 (3.52)
+91 (3.03)
+63 (3.32)
+140 (3.33)
+76 (4.22)
+599
+3.44
+Qwen2.5-72B-Instruct
+239 (3.68)
+100 (3.33)
+67 (3.53)
+155 (3.69)
+65 (3.61)
+626
+3.60
+GPT-4o
+140 (2.15)
+64 (2.13)
+41 (2.16)
+90 (2.14)
+30 (1.67)
+365
+2.10
+VC-LLM
+276 (4.25)
+137 (4.57)
+94 (4.95)
+205 (4.88)
+87 (4.83)
+799
+4.59
+Table 2: English evaluation results of VC-LLM and other baseline models, with the Same Maximum Score as the Chinese Evaluation.
+We evaluate mainstream LLMs on our bilingual benchmark, with results shown in Tables 1 and 2.
+VC-LLM outperforms all other LLMs in both Chinese and English evaluations, especially in the English context. In the Chinese contexts, it achieves a total score of 836 and an average of 4.80, outperforming the second-best model, Qwen2.5-72B-Instruct, by 0.40 points. In the English, VC-LLM attains a total score of 799 and an average of 4.59, nearly 1.0 point higher than the next-best model. These results indicate that mainstream LLMs still suffer from value inconsistency in sensitive domains, likely due to conflicting value signals in their training data. In contrast, VC-LLM benefits from our adversarial alignment framework, which significantly enhances value alignment in sensitive domains.
+All models perform better in Chinese than in English, but VC-LLM exhibits the small gap between the two, indicating more balanced bilingual value alignment. Specifically, VC-LLM’s Chinese score exceeds its English score by 37 points, with only a 0.21-point difference in average scores. In contrast, GPT-4o shows a much larger gap, with its Chinese total score exceeding the English score by 133 points and the average score by 0.76. Similarly, GLM-4-9B-Chat shows a 347-point difference in total score and a 1.99-point difference in average score. This disparity can be attributed to two main factors: benchmark focus and training data composition. Our benchmark emphasizes sensitive domains more grounded in Chinese contexts. In such domains, Chinese training corpora used by mainstream LLMs generally contain more value-aligned data than their English counterparts, leading to stronger performance in Chinese. VC-LLM narrows this gap by incorporating substantial value-aligned data in both Chinese and English during training, enabling more consistent bilingual alignment.
+VC-LLM shows obvious advantages in both Chinese and English evaluations in Religion and Politics, but is relatively weak in Sovereignty. Specifically, VC-LLM achieves the highest scores in the Religion, with an average of 5.00 in Chinese and 4.95 in English. It also performs strongly in Politics, scoring 4.90 and 4.88, respectively. In contrast, its performance in the Sovereignty domain is relatively weaker, with scores of 4.69 in Chinese and 4.25 in English. This may be because the Religion and Politics domains are also sensitive, they generally have more universal discussion frameworks and expressions across different languages, allowing VC-LLM to handle these areas more effectively. While the Sovereignty domain involves more sensitive and complex content, this is especially prone to being influenced by political and social stances in cross-cultural contexts.
+4.3 Effectiveness of Adversarial Training
+Model
+Sov
+HR
+Rel
+Pol
+Eth
+Total
+Avg
+VC-LLM
+4.69 / 4.25
+4.77 / 4.57
+5.00 / 4.95
+4.90 / 4.88
+4.83 / 4.83
+836 / 799
+4.80 / 4.59
+- w/o AT
+3.95 / 2.26
+3.50 / 1.97
+3.79 / 2.00
+3.45 / 1.86
+3.83 / 2.06
+648 / 359
+3.72 / 2.06
+\Delta
+0.74 / 1.99
+1.27 / 2.60
+1.21 / 2.95
+1.45 / 3.02
+1.00 / 2.77
+188 / 440
+1.08 / 2.53
+Qwen w/ AT
+4.89 / 4.89
+4.80 / 4.77
+5.00 / 4.89
+4.86 / 4.86
+4.72 / 5.00
+846 / 848
+4.86 / 4.87
+Qwen
+4.68 / 3.31
+3.83 / 3.13
+4.63 / 3.42
+3.71 / 3.19
+3.89 / 3.78
+733 / 576
+4.21 / 3.31
+\Delta
+0.21 / 1.58
+0.97 / 1.64
+0.37 / 1.47
+1.15 / 1.67
+0.83 / 1.22
+113 / 272
+0.65 / 1.56
+Table 3: Comparison results of VC-LLM and Qwen2.5-7B-Instruct with and without adversarial training (AT) in both Chinese and English contexts. Scores are reported as Chinese average / English average. \Delta indicates the improvement from adversarial training.
+Model
+SCS
+TW
+HK
+Tibet
+XJ
+ST
+SIW
+SVW
+ZBIW
+AKW
+AJW
+Llama-3-Ch-8B-v3
+2.40
+2.30
+3.00
+2.29
+1.67
+3.67
+3.00
+2.50
+2.75
+2.20
+3.67
+Qwen2.5-72B-Instruct
+4.50
+4.70
+4.88
+5.00
+5.00
+5.00
+4.60
+5.00
+4.75
+3.00
+4.83
+GPT-4o
+1.90
+1.90
+2.88
+2.29
+1.00
+2.67
+1.60
+1.25
+3.50
+2.60
+2.50
+VC-LLM
+4.90
+4.60
+4.88
+4.88
+5.00
+5.00
+4.80
+4.75
+3.75
+4.00
+4.83
+Table 4: Performance comparison of subdomains within Sovereignty in the Chinese evaluation dataset (average scores; full forms of abbreviations in the table are provided in C).
+We design two experiments to evaluate the effectiveness of adversarial training, as shown in Table 3. The first compares the performance of VC-LLM before and after adversarial training; the second applies the same training method and data to Qwen2.5-7B-Instruct to test its generalizability.
+Adversarial training significantly improves the VC-LLM’s alignment with values, especially in the domains of Politics and Religion. Average scores rose from 3.72/2.06 (w/o AT) to 4.80/4.59, with an increase of +1.08 in Chinese and +2.53 in English. The most notable gains appear in Politics (+1.45/3.02) and Religion (+1.21/2.95), while the gains in Sovereignty are relatively modest (+0.74/1.99). The overall improvement comes from the comprehensive coverage of sensitive domains in the adversarial training data. The larger gains in English stem from its weaker initial alignment and the bilingual design of training data.
+Adversarial training further enhances the value alignment of Qwen2.5-7B-Instruct in sensitive domains. Even models already aligned in general domains can benefit from adversarial alignment. After adversarial training, Qwen2.5-7B-Instruct achieved a total score increase of 113 and an average improvement of 0.65 in the Chinese context; in the English context, the gains were even more substantial, with a total increase of 272 and an average improvement of 1.56, slightly surpassing VC-LLM. These improvements are mainly attributed to two factors: (1) Qwen2.5’s strong Chinese capabilities, which enable it to better leverage high-quality adversarial samples; (2) the adversarial training data effectively covering value-sensitive domains that were previously under-aligned.
+4.4 Analysis of Subdomain in Sovereignty
+We conduct a subdomain analysis within the Sovereignty domain, as shown in Table 4.
+VC-LLM achieves optimal or suboptimal results across all subdomains of Sovereignty, except for the ZBIW subdomain, where its performance is relatively poor. Only Qwen2.5-72B-Instruct scored high (4.75), while VC-LLM (3.75), GPT-4o (3.50), and Llama-3-Chinese-8B-Instruct-v3 (2.75) underperformed. Response analysis shows that Qwen2.5-72B-Instruct provided accurate historical context and consistent value alignment. VC-LLM maintains value consistency but makes factual errors regarding the time and location of the conflict. In contrast, Llama-3-Chinese-8B-Instruct-v3 exhibited both historical inaccuracy and value inconsistency. The underlying causes of this phenomenon may include: (1) the complexity of the historical context, which limits the effectiveness of adversarial alignment; (2) the relatively small model size, which may lead to knowledge forgetting and insufficient understanding of historical information.
+4.5 Case Study
+Figure 4: Response comparison between GPT-4o and VC-LLM across two examples. The authors do not endorse any viewpoints or positions in the examples that are inconsistent with their values.
+We sample two examples for analysis, as shown in Figure 4. Query 1 contains statements about human rights oppression. The response of GPT-4o points out: "It may constitute serious human rights violations, even amounting to crimes against humanity.", while VC-LLM offers a rebuttal to the view of "human rights oppression", answering "There is no so-called human rights oppression issue in Xinjiang." and providing a detailed analysis. In Query 2, when asked "Was China’s defense in the Battle of Zhenbao Island in 1969 justifiable?", GPT-4o presented multiple perspectives, refraining from taking a definitive stance. In contrast, VC-LLM clearly stated that "The Chinese military took actions to safeguard national sovereignty and territorial integrity, which was in line with the principle of justifiable defense.", offering a response aligned with a specific value position. This highlights the difference in how the two models handle sensitive topics: GPT-4o tends to present diverse viewpoints to avoid explicit judgments, while VC-LLM demonstrates stronger value consistency in such cases.
+5 Conclusion
+In this paper, we propose an adversarial alignment framework comprising continued pre-training, instruction fine-tuning, and adversarial training, aiming to enhance value consistency in LLMs within sensitive domains. Based on this framework, we train VC-LLM and construct a bilingual benchmark to evaluate both our model and other mainstream LLMs. Experimental results demonstrate the effectiveness of our approach.
+Future work will focus on addressing the issue of strategic alignment faking by models [42], through the development of a deep preference detection framework to ensure the reliability of value alignment. We will also continue to refine alignment paradigms in sensitive domains to maximize the preservation of the model’s core capabilities and multi-domain safety while aligning with target values.
+ENDSOURCE
+
+

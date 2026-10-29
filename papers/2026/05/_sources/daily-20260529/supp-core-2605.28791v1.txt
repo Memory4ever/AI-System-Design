@@ -1,0 +1,1428 @@
+Source: https://arxiv.org/html/2605.28791v1
+Main text extraction; fulltext_chars=80838
+
+arXiv:2605.28791v1 [cs.CL] 27 May 2026 
+ 
+ 
+ Skill-Conditioned Gated Self-Distillation for LLM Reasoning 
+
+ 
+ 
+ 
+ Jiazhen Huang
+ 
+ Affiliation:  Tsinghua University
+ 
+ Email:  huangjiazhen1125@gmail.com 
+ 
+    
+ Xiao Chen
+ 
+ Affiliation:  Tsinghua University
+ 
+    
+ Xiao Luo
+ 
+ Affiliation:  University of Wisconsin-Madison
+ 
+    
+ Yong Dai
+ 
+ Affiliation:  Fudan University
+ 
+    
+ Senkang Hu
+ 
+ Affiliation:  City University of Hong Kong
+ 
+    
+ Yuzhi Zhao
+ 
+ Affiliation:  Huazhong University of Science and Technology
+ 
+
+ Abstract 
+    
+ On-policy self-distillation (SD) improves LLM reasoning by using teacher-side privileged information (PI) to turn sparse verifier outcomes into dense token-level supervision.
+Existing methods usually assume trusted PI, such as reference answers or successful traces.
+We ask whether PI can instead come from an experience-derived skill bank, where retrieved skills are compact and reusable but may also be irrelevant or misleading.
+We propose  S kill-Conditioned  G ated  S elf- D istillation ( SGSD) , which formulates skill-based SD as teacher hypothesis validation rather than unconditional imitation.
+SGSD retrieves skill-mistake pairs, constructs a multi-teacher pool, and lets all skill-conditioned teachers score the same plain-prompt student rollout.
+The verifier validates each teacher’s polarity: supporting a success or suppressing a failure gives positive supervision, while the opposite stance is reversed.
+A robust gated objective then distills informative teacher-student disagreements while suppressing uncertain or extreme signals.
+Experiments on multiple mathematical reasoning benchmarks show that SGSD consistently improves over GRPO and remains competitive with answer-conditioned OPSD under a weaker PI assumption.
+For example, on Qwen3-1.7B, SGSD outperforms GRPO by 6.2% and OPSD by 1.7% on average on AIME24, AIME25, and HMMT25.
+Our code is available at  https://github.com/walawalagoose/SGSD . 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ Reinforcement learning with verifiable rewards (RLVR) has become a central recipe for post-training large language models (LLMs) with reasoning capability.
+RLVR methods (e.g., GRPO  ( Shao et al., 2024 ) ) sample solutions, verify the final answer, and improve the policy from environmental outcome feedback.
+This setting is attractive because it requires only a verifier, not token-level annotations or a larger teacher model.
+Its weakness is equally well known: the reward signal is sparse, delayed, and nearly uniform across the entire trajectory.
+On-policy distillation (OPD)  ( Agarwal et al., 2024 )  addresses this limitation by letting a stronger teacher provide dense token-level supervision on the student’s sampled rollouts.
+On-policy self-distillation (SD) 1 1 
+             1 
+            
+            
+            
+          To distinguish from another representative method OPSD, we uniformly use the abbreviation ”SD” throughout this paper.  goes one step further: the same model acts as teacher and student under different contexts, removing the need for a separate teacher model  ( Zhao et al., 2026 ;  Cui et al., 2026 ) .
+Therefore, SD promises the on-policy nature of RLVR together with richer credit assignment. 
+
+ 
+ 
+ 
+ Table 1:  Comparison of representative post-training paradigms for LLM reasoning.  SGSD keeps on-policy dense self-supervision under a weaker PI assumption, using environment (verifier) outcomes and skill-conditioned teacher signals to decide the update direction. 
+ 
+ 
+ 
+ 
+ 
+ 
+ Sampling 
+ 
+ 
+ 
+ Signal 
+ 
+ 
+ 
+ Teacher 
+ 
+ 
+ 
+ PI Assumption 
+ 
+ 
+ 
+ Direction Anchoring 
+ 
+ 
+ 
+ 
+ 
+ 
+ Distillation 
+ 
+ 
+ 
+ × \times  off-policy 
+ 
+ 
+ 
+ ✓ \checkmark  dense 
+ 
+ 
+ 
+ × \times  external 
+ 
+ 
+ 
+ — 
+ 
+ 
+ 
+ × \times  teacher 
+ 
+ 
+ 
+ 
+ On-policy distillation 
+ 
+ 
+ 
+ ✓ \checkmark  on-policy 
+ 
+ 
+ 
+ ✓ \checkmark  dense 
+ 
+ 
+ 
+ × \times  external 
+ 
+ 
+ 
+ — 
+ 
+ 
+ 
+ × \times  teacher 
+ 
+ 
+ 
+ 
+ RLVR (e.g., GRPO) 
+ 
+ 
+ 
+ ✓ \checkmark  on-policy 
+ 
+ 
+ 
+ × \times  sparse 
+ 
+ 
+ 
+ — 
+ 
+ 
+ 
+ — 
+ 
+ 
+ 
+ × \times  environment 
+ 
+ 
+ 
+ 
+ OPSD 
+ 
+ 
+ 
+ ✓ \checkmark  on-policy 
+ 
+ 
+ 
+ ✓ \checkmark  dense 
+ 
+ 
+ 
+ ✓ \checkmark  self 
+ 
+ 
+ 
+ × \times  strong 
+ 
+ 
+ 
+ × \times  teacher 
+ 
+ 
+ 
+ 
+ SGSD  (ours) 
+ 
+ 
+ 
+ ✓ \checkmark  on-policy 
+ 
+ 
+ 
+ ✓ \checkmark  dense 
+ 
+ 
+ 
+ ✓ \checkmark  self 
+ 
+ 
+ 
+ ✓ \checkmark  weak 
+ 
+ 
+ 
+ ✓ \checkmark  environment & teacher 
+ 
+ 
+ 
+
+ 
+ 
+ 
+ The effectiveness of SD depends on the teacher-side privileged context information (PI).
+Prior work usually gives the teacher a reference solution, a successful trace, textual feedback, or demonstrations  ( Zhao et al., 2026 ;  Yang et al., 2026 ;  Hübotter et al., 2026 ;  Shenfeld et al., 2026 ) .
+In mathematical reasoning, this raises a natural question: can PI instead come from a structured  skill bank , as in prior work for agentic tasks  ( Wang et al., 2026 ) ?
+Skills  ( Anthropic, 2024 )  are a common abstraction in agentic learning and memory-like systems: previous trajectories are compressed into reusable natural-language principles, tactics, and mistake warnings  ( Shinn et al., 2023 ;  Zhao et al., 2024 ;  Xia et al., 2026 ) .
+Compared with full traces or reference answers, skills are more compact and potentially more reusable across problems, making them appealing for mathematical reasoning in a weaker supervision regime.
+Here, training may have only verifier feedback rather than a ground-truth answer. 
+
+ 
+ 
+ 
+ However, skills introduce a harder reliability problem than the privileged contexts used in standard SD.
+A retrieved skill can be relevant, partially relevant, stale, or simply wrong for the current problem.
+More importantly, even a reasonable skill should not be copied unconditionally.
+For example: supporting a successful rollout is helpful, but supporting a failed rollout is harmful; suppressing an incorrect trajectory is useful, but suppressing a correct one is not.
+This leads to a central question:  can experience-derived skills serve as training-only privileged information without assuming that every retrieved skill is trusted? 
+
+ 
+ 
+ 
+ Answering this question requires solving three challenges:
+ (1)  First, the privileged information is no longer a single, trusted source but a set of retrieved skill hypotheses with uncertain relevance.
+ (2)  Second, the value of a skill is outcome-dependent: the same teacher support can be beneficial or misleading depending on whether the sampled rollout succeeds.
+ (3)  Third, multiple skill-conditioned teachers can produce noisy or conflicting token-level signals, so the method must extract useful disagreement without being dominated by prompt artifacts or extreme logits. 
+
+ 
+ 
+ 
+ Therefore, we propose  Skill-Conditioned Gated Self-Distillation (SGSD) .
+SGSD maintains a structured bank of general skills and common mistake patterns distilled from past trajectories.
+For each problem, it retrieves relevant skills and mistakes, pairs them into a skill-conditioned multi-teacher pool, and lets all teachers score the same student rollout while the student itself sees only the plain problem.
+SGSD then combines each teacher’s support with the rollout outcome to infer its polarity: a teacher is helpful when it supports a success or suppresses a failure, and harmful otherwise.
+A robust gated objective finally learns from informative teacher-student disagreements while downweighting ambiguous or extreme signals.
+These designs enable SGSD to achieve comparable performances even under a weaker PI assumption.
+Moreover, in contrast to prior distillation methods whose update direction is controlled by a teacher alone, SGSD derives the direction jointly from the environment outcome and the skill-conditioned teacher support.
+Tab.  1  summarizes the differences between SGSD and related paradigms. 
+
+ 
+ 
+ 
+ Our contributions can be concluded as follows: 
+
+ 
+ 
+ •  
+ 
+ We introduce skills and self-distillation to mathematical reasoning with verifier feedback, and formulate it as a teacher hypothesis validation problem rather than assuming retrieved skills should be imitated by default. 
+
+ 
+ 
+ •  
+ 
+ We propose SGSD, a multi-teacher, skill-conditioned self-distillation framework that infers teacher polarity from the alignment between teacher support and rollout outcome, then applies a robust gated objective. 
+
+ 
+ 
+ •  
+ 
+ We provide empirical results on several mathematical reasoning benchmarks, showing that our SGSD improves over GRPO and remains competitive with SD baselines. For example, on Qwen3-1.7B, SGSD improves the average score across AIME24, AIME25, and HMMT25 from 37.4 to 43.7. 
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 2  Our proposed SGSD 
+
+ 
+
+ 
+ Let  x ∼ 𝒟 x\sim\mathcal{D}  denote a problem and  y y  a sampled reasoning trajectory.
+SGSD uses one policy model  π θ \pi_{\theta}  in two roles.
+The student is the plain-prompt policy  p S ( ⋅ ∣ x ) = π θ ( ⋅ ∣ x ) p_{S}(\cdot\mid x)=\pi_{\theta}(\cdot\mid x) , which samples 
+
+ 
+ 
+
+ 
+ 
+ y ∼ p S ( ⋅ ∣ x ) . y\sim p_{S}(\cdot\mid x). 
+ 
+ (1) 
+ 
+
+ 
+ After generation, an answer verifier gives a scalar outcome  r ∈ { − 1 , 1 } r\in\{-1,1\} .
+The student is never given retrieved skills during rollout or evaluation.
+Skills are only injected as teacher-side PI during training. 
+
+ 
+ 
+ 
+ Figure 1:  Overview of SGSD.  The student samples a rollout from the plain problem, while retrieved skill–mistake pairs instantiate a pool of skill-conditioned teachers. Multiple teachers score the same rollout, the verifier outcome validates their polarity, and a gated distillation objective turns teacher-student gaps into dense supervision. 
+ 
+ 
+ 2.1  Structured Skill Bank Construction 
+
+ 
+
+ 
+ SGSD uses a structured skill bank  ℬ = { 𝒢 , ℰ } \mathcal{B}=\{\mathcal{G},\mathcal{E}\}  rather than raw historical trajectories 2 2 
+               2 
+              
+              
+              
+            In this paper, a skill means an experience-derived natural-language principle, not an external tool or executable function. .
+ 𝒢 \mathcal{G}  contains  general skills , which encode reusable reasoning principles with a short title and conditions for use.
+ ℰ \mathcal{E}  contains  common mistake patterns , which describe an error, why it occurs, and how to avoid it.
+Detailed schemas and prompt templates are given in App.  B  and App.  C , respectively. 
+
+ 
+ 
+ 
+ The bank is initialized before training by a cold-start extraction process.
+We first sample a subset of training problems as the cold-start seed set and generate solution traces for them with the initial policy.
+These traces are then converted into structured records.
+Specifically, successful traces are summarized into candidate general skills, failed traces are summarized into candidate mistake patterns, and redundant candidates are merged into a compact bank.
+This follows the same spirit as skill-library construction in agent learning  ( Xia et al., 2026 ) : preserve reusable experience while removing noisy trajectory details.
+App.  C.2  gives the concrete construction procedure. 
+
+ 
+ 
+ 
+ The central unit used by SGSD is a skill pair  ( g k , e k ) (g_{k},e_{k}) , where  g k ∈ 𝒢 g_{k}\in\mathcal{G}  provides positive guidance about what to do and  e k ∈ ℰ e_{k}\in\mathcal{E}  provides negative guidance about what to avoid.
+Pairing the two creates a balanced teacher context instead of appending a large unstructured memory block.
+During training, each retrieved pair becomes a separate teacher-side PI block, and all resulting teachers score the same student rollout. 
+
+ 
+ 
+ 
+ 
+ 2.2  Skill-Conditioned Multi-Teacher Pool 
+
+ 
+
+ 
+ For a new problem  x x , SGSD performs semantic-similarity retrieval over the skill bank, obtaining: 
+
+ 
+ 
+
+ 
+ 
+ 𝒢 ⁡ ( x ) = { g 1 , … , g K x } , ℰ ⁡ ( x ) = { e 1 , … , e K x } . \mathcal{G}(x)=\{g_{1},\ldots,g_{K_{x}}\},\quad\mathcal{E}(x)=\{e_{1},\ldots,e_{K_{x}}\}. 
+ 
+ (2) 
+ 
+
+ 
+ The  k k -th retrieved skill and mistake are concatenated with the problem to form the corresponding teacher-side PI: 
+
+ 
+ 
+
+ 
+ 
+ c k ​ ( x ) = g k ⊕ e k ⊕ x , c_{k}(x)=g_{k}\oplus e_{k}\oplus x, 
+ 
+ (3) 
+ 
+
+ 
+ where  ⊕ \oplus  denotes prompt concatenation.
+These contexts define a pool of  K x K_{x}  skill-conditioned teachers. The  k k -th teacher distribution is 
+
+ 
+ 
+
+ 
+ 
+ p T ( k ) ​ ( y t ∣ x , y < t ) = π θ ¯ ​ ( y t ∣ c k ​ ( x ) , y < t ) , p_{T}^{(k)}(y_{t}\mid x,y_{<t})=\pi_{\bar{\theta}}(y_{t}\mid c_{k}(x),y_{<t}), 
+ 
+ (4) 
+ 
+
+ 
+ where  θ ¯ \bar{\theta}  is the stop-gradient copy of the current policy parameters.
+Thus, all teachers share the same policy model as the student, but differ in the skill-conditioned PI they observe.
+The student distribution remains 
+
+ 
+ 
+
+ 
+ 
+ p S ​ ( y t ∣ x , y < t ) = π θ ​ ( y t ∣ x , y < t ) . p_{S}(y_{t}\mid x,y_{<t})=\pi_{\theta}(y_{t}\mid x,y_{<t}). 
+ 
+ (5) 
+ 
+
+ 
+ 
+ 
+ SGSD assigns each teacher a relevance weight  α k ​ ( x ) \alpha_{k}(x)  from the semantic retrieval scores.
+Let  s k ( g ) s_{k}^{(g)}  and  s k ( e ) s_{k}^{(e)}  be the similarity scores of the paired skill and mistake; we use the average score  s k ​ ( x ) = ( s k ( g ) ​ ( x ) + s k ( e ) ​ ( x ) ) / 2 s_{k}(x)=(s_{k}^{(g)}(x)+s_{k}^{(e)}(x))/2  and normalize 
+
+ 
+ 
+
+ 
+ 
+ α k ​ ( x ) = exp ⁡ ( s k ​ ( x ) ) ∑ j = 1 K x exp ⁡ ( s j ​ ( x ) ) . \alpha_{k}(x)=\frac{\exp(s_{k}(x))}{\sum_{j=1}^{K_{x}}\exp(s_{j}(x))}. 
+ 
+ (6) 
+ 
+
+ 
+ 
+ 
+ 
+ 2.3  Outcome-Validated Teacher Polarity 
+
+ 
+
+ 
+ The purpose of SGSD is not to imitate every teacher induced by retrieved skills, but to decide which teacher stances agree with the observed outcome and thus deserve to be distilled. 
+
+ 
+ 
+ 
+ For each generated token  y t y_{t} , SGSD computes the teacher-student log-probability gap: 
+
+ 
+ 
+
+ 
+ 
+ Δ t ( k ) = log ⁡ p T ( k ) ​ ( y t ∣ x , y < t ) − log ⁡ p S ​ ( y t ∣ x , y < t ) . \Delta_{t}^{(k)}=\log p_{T}^{(k)}(y_{t}\mid x,y_{<t})-\log p_{S}(y_{t}\mid x,y_{<t}). 
+ 
+ (7) 
+ 
+
+ 
+ This gap is the token-level credit that appears in reverse-KL-style policy-gradient form.
+Positive  Δ t ( k ) \Delta_{t}^{(k)}  means teacher  k k  assigns higher probability to the sampled token than the student does and thus supports the token, while negative  Δ t ( k ) \Delta_{t}^{(k)}  means the teacher suppresses the sampled token. 
+
+ 
+ 
+ 
+ Next, define the plain teacher-level support score 
+
+ 
+ 
+
+ 
+ 
+ a k = 1 T ​ ∑ t = 1 T Δ t ( k ) . a_{k}=\frac{1}{T}\sum_{t=1}^{T}\Delta_{t}^{(k)}.\vskip-8.5359pt 
+ 
+ (8) 
+ 
+
+ 
+ The direction of  a k a_{k}  summarizes whether teacher  k k  supports or suppresses the sampled rollout over the whole trajectory.
+The outcome then validates this stance. Define 
+
+ 
+ 
+
+ 
+ 
+ sgn out ⁡ ( r ) = { 1 , r > 0 , − 1 , r < 0 , \vskip-2.84544pt\operatorname{sgn}_{\mathrm{out}}(r)=\begin{cases}1,&r>0,\\
+-1,&r<0,\end{cases}\vskip-4.26773pt 
+ 
+ (9) 
+ 
+
+ 
+ the plain polarity is 
+
+ 
+ 
+
+ 
+ 
+ ρ k plain = sgn out ⁡ ( r ) ​ sgn ⁡ ( a k ) . \rho_{k}^{\mathrm{plain}}=\operatorname{sgn}_{\mathrm{out}}(r)\operatorname{sgn}(a_{k}). 
+ 
+ (10) 
+ 
+
+ 
+ Here,  sgn ⁡ ( 0 ) = 0 \operatorname{sgn}(0)=0 .
+Therefore, a teacher is useful when it supports a successful rollout or suppresses a failed rollout, while it is misleading when it supports a failure or suppresses a success.
+Tab.  2  summarizes the decision rule. 
+
+ 
+ 
+ 
+ Table 2:  Decision rule of teacher polarity. 
+SGSD distills a skill-conditioned teacher when its polarity agrees with the verifier outcome, and reverses it otherwise. 
+ 
+ 
+ 
+ 
+ Decision 
+ Rule 
+ Case 
+ Interpretation 
+ 
+ 
+ 
+ Distill 
+ sign ⁡ ( r ) = sign ⁡ ( a k ) \mathrm{sign}(r)=\mathrm{sign}(a_{k}) 
+ r > 0 , a k > 0 r>0,\ a_{k}>0 
+ Helpful teacher 
+ 
+ r < 0 , a k < 0 r<0,\ a_{k}<0 
+ Warning teacher 
+ 
+ Reverse 
+ sign ⁡ ( r ) ≠ sign ⁡ ( a k ) \mathrm{sign}(r)\neq\mathrm{sign}(a_{k}) 
+ r > 0 , a k < 0 r>0,\ a_{k}<0 
+ Over-suppressive teacher 
+ 
+ r ⁡ < 0 , a k > ​ 0 r<0,\ a_{k}>0 
+ Misleading teacher 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ 
+ 2.4  Robust Support Estimation 
+
+ 
+
+ 
+ The plain support score  a k a_{k}  can be distorted by formatting tokens, prompt artifacts, or a few extreme token gaps.
+SGSD therefore estimates a robust support score  a ~ k \widetilde{a}_{k}  before deciding the final polarity.
+A token mask  m t ∈ { 0 , 1 } m_{t}\in\{0,1\}  first selects effective reasoning positions and removes special tokens, chat-template tokens, thinking delimiters, and pure-formatting tokens from aggregation.
+For support estimation, each gap is then clipped as 
+
+ 
+ 
+
+ 
+ 
+ Δ ~ t ( k ) = clip ⁡ ( Δ t ( k ) , − c Δ , c Δ ) , \widetilde{\Delta}_{t}^{(k)}=\operatorname{clip}(\Delta_{t}^{(k)},-c_{\Delta},c_{\Delta}), 
+ 
+ (11) 
+ 
+
+ 
+ where  c Δ > 0 c_{\Delta}>0  is the clipping bound.
+The robust support score is 
+
+ 
+ 
+
+ 
+ 
+ a ~ k = ∑ t = 1 T m t ​ Δ ~ t ( k ) ∑ t = 1 T m t + ϵ , \vskip-5.69046pt\widetilde{a}_{k}=\frac{\sum_{t=1}^{T}m_{t}\widetilde{\Delta}_{t}^{(k)}}{\sum_{t=1}^{T}m_{t}+\epsilon}, 
+ 
+ (12) 
+ 
+
+ 
+ where  ϵ > 0 \epsilon>0  prevents division by zero.
+Furthermore, the final polarity uses a confidence threshold  ϵ a ≥ 0 \epsilon_{a}\geq 0  to allow uncertain teachers to be ignored: 
+
+ 
+ 
+
+ 
+ 
+ ρ k = { sgn out ⁡ ( r ) ​ sgn ⁡ ( a ~ k ) , | a ~ k | > ϵ a , 0 , | a ~ k | ≤ ϵ a . \rho_{k}=\begin{cases}\operatorname{sgn}_{\mathrm{out}}(r)\operatorname{sgn}(\widetilde{a}_{k}),&|\widetilde{a}_{k}|>\epsilon_{a},\\
+0,&|\widetilde{a}_{k}|\leq\epsilon_{a}.\end{cases}\vskip-5.69046pt 
+ 
+ (13) 
+ 
+
+ 
+ Overall, masking preserves the effective reasoning tokens, clipping prevents outlier gaps from flipping the teacher-level stance, and thresholding creates a neutral zone for uncertain evidence. 
+
+ 
+ 
+ 
+ 
+ 2.5  Gated Distillation Objective 
+
+ 
+
+ 
+ After polarity decides whether a teacher should be distilled, reversed, or ignored for the current rollout, the remaining question is how strongly to learn from each teacher-student disagreement.
+Directly optimizing a sampled-token reverse-KL-style gap can overreact to very large discrepancies: extreme positive or negative gaps may dominate the optimization, while near-zero gaps carry little information.
+SGSD therefore uses a bounded gated loss: 
+
+ 
+ 
+
+ 
+ 
+ ℓ gate ​ ( Δ ) = log ⁡ 2 − log ⁡ ( 1 + exp ⁡ ( − Δ 2 2 ​ τ g ) ) , \ell_{\mathrm{gate}}(\Delta)=\log 2-\log\left(1+\exp\left(-\frac{\Delta^{2}}{2\tau_{g}}\right)\right),\vskip-5.69046pt 
+ 
+ (14) 
+ 
+
+ 
+ where  τ g > 0 \tau_{g}>0  controls the width of the informative region, and the  log ⁡ 2 \log 2  constant normalizes the loss to be zero at  Δ = 0 \Delta=0 .
+The loss value is near zero when teacher and student agree, grows for moderate disagreement, and saturates for extreme mismatch.
+And, the induced update remains bounded rather than being dominated by outlier gaps.
+Section  3  shows that its gradient yields a bounded policy-gradient-style correction and can be viewed as a sampled-token, polarity-aware approximation to local reverse-KL behavior. 
+
+ 
+ 
+ 
+ For each skill-conditioned teacher, the gated loss is 
+
+ 
+ 
+
+ 
+ 
+ ℓ ¯ ( k ) = ∑ t = 1 T m t ​ ℓ gate ​ ( Δ t ( k ) ) ∑ t = 1 T m t + ϵ . \bar{\ell}^{(k)}=\frac{\sum_{t=1}^{T}m_{t}\ell_{\mathrm{gate}}(\Delta_{t}^{(k)})}{\sum_{t=1}^{T}m_{t}+\epsilon}.\vskip-2.84544pt 
+ 
+ (15) 
+ 
+
+ 
+ The overall distillation objective is then given by: 
+
+ 
+ 
+
+ 
+ 
+ ℒ SGSD ​ ( x ) = ∑ k = 1 K x α k ​ ( x ) ​ ρ k ​ ℓ ¯ ( k ) . \mathcal{L}_{\mathrm{SGSD{}}}(x)=\sum_{k=1}^{K_{x}}\alpha_{k}(x)\rho_{k}\bar{\ell}^{(k)}.\vskip-2.84544pt 
+ 
+ (16) 
+ 
+
+ 
+ Since the teachers are stop-gradient,  ρ k \rho_{k}  controls the direction of the update: helpful teachers distill their stance, misleading teachers reverse it, and uncertain teachers with  ρ k = 0 \rho_{k}=0  contribute nothing. 
+
+ 
+ 
+ 
+ 
+ 2.6  Online Skill Update and Maintenance 
+
+ 
+
+ 
+ SGSD can update its skill bank during training, so that retrieved skills can reflect the current policy’s observed successes and failures.
+At fixed update intervals, recent student rollouts are collected into a window  𝒲 \mathcal{W}  with verifier outcomes.
+When recent success rate is already high, the update is skipped.
+Otherwise, the window is split into successful traces  𝒲 + \mathcal{W}^{+}  and failed traces  𝒲 − \mathcal{W}^{-} .
+Successful traces are summarized into new general-skill candidates, while failed traces are summarized into new common-mistake candidates.
+New candidates are then merged with existing bank entries, written back as dynamic entries, and pruned under a capacity limit to keep the bank compact.
+App.  C.4  gives the detailed update procedure, and Alg.  1  summarizes the overall procedure of SGSD. 
+
+ 
+ 
+ 
+ Algorithm 1    Overall Procedure of SGSD 
+ 
+ 
+               1: 
+              
+              
+            Training set  𝒟 \mathcal{D} , policy model  π θ \pi_{\theta} , skill bank  ℬ = { 𝒢 , ℰ } \mathcal{B}=\{\mathcal{G},\mathcal{E}\} , retrieved pair count  K K 
+
+ 
+ 
+               2: 
+              
+              
+             for  each update  do 
+
+ 
+ 
+               3: 
+              
+              
+              Sample a minibatch  𝒳 ⊂ 𝒟 \mathcal{X}\subset\mathcal{D} 
+
+ 
+ 
+               4: 
+              
+              
+               for  each problem  x ∈ 𝒳 x\in\mathcal{X}   do 
+
+ 
+ 
+               5: 
+              
+              
+               Retrieve  K K  ranked skill–mistake pairs  { ( g k , e k ) } k = 1 K x \{(g_{k},e_{k})\}_{k=1}^{K_{x}}  from  ℬ \mathcal{B} 
+
+ 
+ 
+               6: 
+              
+              
+               Compute teacher weights  { α k ​ ( x ) } k = 1 K x \{\alpha_{k}(x)\}_{k=1}^{K_{x}}  from retrieval scores
+
+ 
+ 
+               7: 
+              
+              
+               Form skill-conditioned teacher contexts  c k ​ ( x ) = g k ⊕ e k ⊕ x c_{k}(x)=g_{k}\oplus e_{k}\oplus x 
+
+ 
+ 
+               8: 
+              
+              
+               Sample a plain-prompt student rollout  y ∼ p S ( ⋅ ∣ x ) y\sim p_{S}(\cdot\mid x)  and evaluate outcome  r r 
+
+ 
+ 
+               9: 
+              
+              
+                for  each teacher context  c k ​ ( x ) c_{k}(x)   do 
+
+ 
+ 
+               10: 
+              
+              
+                 Score the fixed rollout with the stop-gradient teacher:  p T ( k ) ​ ( y t ∣ x , y < t ) = π θ ¯ ​ ( y t ∣ c k ​ ( x ) , y < t ) p_{T}^{(k)}(y_{t}\mid x,y_{<t})=\pi_{\bar{\theta}}(y_{t}\mid c_{k}(x),y_{<t}) 
+
+ 
+ 
+               11: 
+              
+              
+                 Compute token gaps  Δ t ( k ) \Delta_{t}^{(k)}  and robust support  a ~ k \widetilde{a}_{k} 
+
+ 
+ 
+               12: 
+              
+              
+                 Infer polarity  ρ k \rho_{k}  from  a ~ k \widetilde{a}_{k}  and  r r 
+
+ 
+ 
+               13: 
+              
+              
+                 Compute the gated teacher loss  ℓ ¯ ( k ) \bar{\ell}^{(k)} 
+
+ 
+ 
+               14: 
+              
+              
+                end   for 
+ 
+ 
+               15: 
+              
+              
+               Accumulate the per-example objective:  ℒ SGSD ​ ( x ) = ∑ k = 1 K x α k ​ ( x ) ​ ρ k ​ ℓ ¯ ( k ) \mathcal{L}_{\mathrm{SGSD{}}}(x)=\sum_{k=1}^{K_{x}}\alpha_{k}(x)\rho_{k}\bar{\ell}^{(k)} 
+
+ 
+ 
+               16: 
+              
+              
+               end   for 
+ 
+ 
+               17: 
+              
+              
+              Update  θ \theta  with the minibatch SGSD objective
+
+ 
+ 
+               18: 
+              
+              
+              Update  ℬ \mathcal{B}  from recent successful and failed rollouts
+
+ 
+ 
+               19: 
+              
+              
+             end   for 
+ 
+ 
+ 
+ 
+ 
+ 
+ 3  Theoretical Analysis 
+
+ 
+
+ 
+ This section analyzes why the gated distillation objective works.
+The key is its derivative 
+
+ 
+ 
+
+ 
+ 
+ g τ ​ ( Δ ) = ∂ ℓ gate ​ ( Δ ) ∂ Δ = Δ τ g ​ ( 1 + exp ⁡ ( Δ 2 / ( 2 ​ τ g ) ) ) , g_{\tau}(\Delta)=\frac{\partial\ell_{\mathrm{gate}}(\Delta)}{\partial\Delta}=\frac{\Delta}{\tau_{g}\left(1+\exp\left(\Delta^{2}/(2\tau_{g})\right)\right)}, 
+ 
+ (17) 
+ 
+
+ 
+ because  g τ g_{\tau}  directly determines how each teacher-student gap enters the policy gradient. Detailed derivations are deferred to Apps.  D  and  D.5 , with a visualization in App.  D.2 . 
+
+ 
+ 
+ 
+ Policy-gradient form. 
+Since teacher distributions are stop-gradient targets, we have 
+
+ 
+ 
+
+ 
+ 
+ ∇ θ Δ t ( k ) = − ∇ θ ​ log ​ p S ​ ( y t ∣ x , y < t ) . \nabla_{\theta}\Delta_{t}^{(k)}=-\nabla_{\theta}\log p_{S}(y_{t}\mid x,y_{<t}). 
+ 
+ (18) 
+ 
+
+ 
+ Let  Z = ∑ t = 1 T m t + ϵ Z=\sum_{t=1}^{T}m_{t}+\epsilon . Substituting the derivative of  ℓ gate \ell_{\mathrm{gate}}  into Eq. ( 16 ) gives 
+
+ 
+ 
+
+ 
+ 
+ − ∇ θ ℒ SGSD ​ ( x ) \displaystyle-\nabla_{\theta}\mathcal{L}_{\mathrm{SGSD{}}}(x) 
+ = ∑ k = 1 K x ∑ t = 1 T α k ​ ( x ) ​ ρ k ​ m t Z ​ g τ ​ ( Δ t ( k ) ) \displaystyle=\sum_{k=1}^{K_{x}}\sum_{t=1}^{T}\alpha_{k}(x)\rho_{k}\frac{m_{t}}{Z}g_{\tau}(\Delta_{t}^{(k)}) 
+ 
+ 
+ 
+ 
+ ⋅ ∇ θ ​ log ​ p S ​ ( y t ∣ x , y < t ) . \displaystyle\quad\cdot\nabla_{\theta}\log p_{S}(y_{t}\mid x,y_{<t}).\vskip-8.5359pt 
+ 
+ (19) 
+ 
+
+ 
+ Thus SGSD is a policy-gradient-style update with dense token-level coefficient 
+
+ 
+ 
+
+ 
+ 
+ W t ( k ) = α k ​ ( x ) ​ ρ k ​ m t Z ​ g τ ​ ( Δ t ( k ) ) . W_{t}^{(k)}=\alpha_{k}(x)\rho_{k}\frac{m_{t}}{Z}g_{\tau}(\Delta_{t}^{(k)}).\vskip-8.5359pt 
+ 
+ (20) 
+ 
+
+ 
+ In this sense,  W t ( k ) W_{t}^{(k)}  acts as an advantage-like dense credit.
+The effectiveness of the loss reduces to whether  g τ g_{\tau}  induces the right gradient shape.
+Specifically, this gradient has three properties as follows. 
+
+ 
+ 
+ 
+ Sign consistency. 
+We have 
+
+ 
+ 
+
+ 
+ 
+ sign ⁡ ( g τ ​ ( Δ ) ) = sign ⁡ ( Δ ) ( Δ ≠ 0 ) . \operatorname{sign}(g_{\tau}(\Delta))=\operatorname{sign}(\Delta)\quad(\Delta\neq 0). 
+ 
+ (21) 
+ 
+
+ 
+ Therefore, after applying  ρ k \rho_{k} , helpful teachers reinforce their supporting tokens and misleading teachers reverse them. 
+
+ 
+ 
+ 
+ Bounded informative region. 
+We introduce the following proposition: 
+
+ 
+ 
+ 
+ Proposition 3.1 . 
+ 
+ For every  Δ ∈ ℝ \Delta\in\mathbb{R} , we have 
+
+ 
+ 
+
+ 
+ 
+ | g τ ​ ( Δ ) | ≤ 1 e ​ τ g , |g_{\tau}(\Delta)|\leq\frac{1}{\sqrt{e\,\tau_{g}}},\vskip-4.26773pt 
+ 
+ (22) 
+ 
+
+ 
+ Furthermore, 
+
+ 
+ 
+
+ 
+ 
+ g τ ​ ( Δ ) = Δ 2 ​ τ g + O ⁡ ( Δ 3 τ g 2 ) as  ​ Δ → 0 , g_{\tau}(\Delta)=\frac{\Delta}{2\tau_{g}}+O\left(\frac{\Delta^{3}}{\tau_{g}^{2}}\right)\quad\text{as }\Delta\to 0,\vskip-4.26773pt 
+ 
+ (23) 
+ 
+
+ 
+ while 
+
+ 
+ 
+
+ 
+ 
+ g τ ​ ( Δ ) = Δ τ g ​ exp ⁡ ( − Δ 2 2 ​ τ g ) ​ ( 1 + o ⁡ ( 1 ) ) as  ​ | Δ | → ∞ . g_{\tau}(\Delta)=\frac{\Delta}{\tau_{g}}\exp\left(-\frac{\Delta^{2}}{2\tau_{g}}\right)(1+o(1))\quad\text{as }|\Delta|\to\infty.\vskip-4.26773pt 
+ 
+ (24) 
+ 
+
+ 
+ 
+ 
+ 
+ This proposition captures the intended behavior of the gated loss:
+(1) Near zero, the update vanishes linearly, so negligible teacher-student disagreements do not inject noise.
+(2) For very large gaps, the exponential factor suppresses extreme mismatches instead of letting them dominate optimization.
+(3) Between these two regimes, the update is concentrated on medium gaps of order  τ g \sqrt{\tau_{g}} , which is exactly the informative region where the teacher disagrees enough to matter but not so much that the signal is likely driven by outliers. 
+
+ 
+ 
+ 
+ Local reverse-KL approximation. 
+The same derivative also explains why the gated loss behaves like a reasonable distillation objective in the informative region. When teacher and student are locally close, reverse KL admits the second-order expansion 
+
+ 
+ 
+
+ 
+ 
+ D KL ( p T ∥ p S ) = 1 2 ∑ v p T , v Δ v 2 + O ( ∥ Δ ∥ 3 ) , D_{\mathrm{KL}}(p_{T}\,\|\,p_{S})=\frac{1}{2}\sum_{v}p_{T,v}\Delta_{v}^{2}+O(\|\Delta\|^{3}), 
+ 
+ (25) 
+ 
+
+ 
+ where  Δ v = log ⁡ p T ​ ( v ∣ h t ) − log ⁡ p S ​ ( v ∣ h t ) \Delta_{v}=\log p_{T}(v\mid h_{t})-\log p_{S}(v\mid h_{t}) .
+Hence, the local reverse-KL gradient is linear in the log-probability gap.
+Our gated objective has the matching local form 
+
+ 
+ 
+
+ 
+ 
+ g τ ​ ( Δ ) = Δ 2 ​ τ g + O ⁡ ( Δ 3 τ g 2 ) , g_{\tau}(\Delta)=\frac{\Delta}{2\tau_{g}}+O\left(\frac{\Delta^{3}}{\tau_{g}^{2}}\right), 
+ 
+ (26) 
+ 
+
+ 
+ so in the locally close regime, SGSD behaves like a sampled-token, polarity-aware reverse-KL correction up to a constant scale.
+Outside that regime, the gate deliberately departs from reverse KL by exponentially damping extreme gaps. 
+
+ 
+ 
+ 
+ 
+ 4  Experiments 
+
+ 
+
+ 
+ 4.1  Experimental Setup 
+
+ 
+
+ 
+ Models and datasets. 
+We use Qwen3-1.7B, Qwen3-4B, and Qwen3-8B as the base models  ( Yang et al., 2025 ) .
+We train on the English subset of DAPO-Math-17K  ( Yu et al., 2026 ) , and evaluate out of domain on three challenging competition-style mathematical reasoning benchmarks: AIME24, AIME25, and HMMT25. 
+
+ 
+ 
+ 
+ Baselines and evaluation. 
+We compare our method against  (1) GRPO   ( Shao et al., 2024 ) , a standard RLVR baseline that optimizes group-relative rewards from sampled rollouts, and
+ (2) OPSD   ( Zhao et al., 2026 ) , a representative SD baseline that uses the reference solution as teacher-side PI for dense token-level self-supervision.
+Different from the standard OPSD implementation, we provide the teacher with the ground-truth answer rather than a full distillation trajectory.
+We also include several skill-augmented variants:
+ (1) Base+Skill  retrieves skills at inference;
+ (2) GRPO+Skill  injects retrieved skills into training rollouts but evaluates with the plain problem prompt; and
+ (3) OPSD+Skill  exposes both teacher and student to skills during training and also evaluates without skills.
+We train the base models for 200 steps, checkpoint every 25 steps, and report the highest avg@12 accuracy among recorded checkpoints. 
+
+ 
+ 
+ 
+ Implementation details. 
+For each model, we randomly select 256 in-domain problems from the training set to build the cold-start skill bank.
+The teacher policy is synchronized with the student during training.
+Following OPSD, we disable thinking mode for the student and enable thinking mode for the teacher.
+We use Qwen3-Embedding-0.6B as the retriever to retrieve the top-8 skill pairs, and compute full-vocabulary distillation.
+The skill bank is updated every 25 steps.
+All experiments are conducted on eight NVIDIA A800 GPUs with LoRA adaptation  ( Hu et al., 2022 ) , TRL framework  ( von Werra et al., 2020 ) .
+For more experimental details, please refer to App.  E . 
+
+ 
+ 
+ 
+ 
+ 4.2  Main Results 
+
+ 
+
+ 
+ Table 3:  Main comparison results on mathematical reasoning benchmarks.  The best and second-best results are highlighted in  bold  and  underlined , respectively. We report the avg@12 accuracy for the best checkpoint on AIME24, AIME25, and HMMT25. Skill-conditioned SGSD improves over GRPO, and remains competitive with answer-conditioned OPSD under a weaker PI assumption. 
+ 
+ 
+ 
+ Model 
+ Method 
+ AIME24 
+ AIME25 
+ HMMT25 
+ Avg. 
+ 
+ 
+ 
+ Qwen3-1.7B 
+ Base 
+ 51.1 
+ 36.9 
+ 24.2 
+ 37.4 
+ 
+ Base+Skill 
+ 49.2 
+ 38.3 
+ 20.3 
+ 35.9 
+ 
+ GRPO 
+ 50.0 
+ 36.7 
+ 25.8 
+ 37.5 
+ 
+ GRPO+Skill 
+ 52.2 
+ 38.9 
+ 25.8 
+ 39.0 
+ 
+ OPSD 
+ 55.8 
+ 43.3 
+ 26.9 
+ 42.0 
+ 
+ OPSD+Skill 
+ 54.4 
+ 40.3 
+ 27.2 
+ 40.6 
+ 
+ SGSD 
+ 57.8 
+ 43.6 
+ 29.7 
+ 43.7 
+ 
+ Qwen3-4B 
+ Base 
+ 73.9 
+ 69.7 
+ 43.3 
+ 62.3 
+ 
+ Base+Skill 
+ 71.9 
+ 65.6 
+ 42.2 
+ 59.9 
+ 
+ GRPO 
+ 76.1 
+ 66.7 
+ 45.3 
+ 62.7 
+ 
+ GRPO+Skill 
+ 73.9 
+ 65.3 
+ 44.7 
+ 61.3 
+ 
+ OPSD 
+ 75.3 
+ 69.2 
+ 46.1 
+ 63.5 
+ 
+ OPSD+Skill 
+ 75.3 
+ 66.7 
+ 44.7 
+ 62.2 
+ 
+ SGSD 
+ 75.3 
+ 70.8 
+ 46.7 
+ 64.3 
+ 
+ Qwen3-8B 
+ Base 
+ 75.3 
+ 66.1 
+ 45.0 
+ 62.1 
+ 
+ Base+Skill 
+ 78.3 
+ 68.1 
+ 40.8 
+ 62.4 
+ 
+ GRPO 
+ 79.2 
+ 69.7 
+ 46.1 
+ 65.0 
+ 
+ GRPO+Skill 
+ 78.3 
+ 66.9 
+ 45.0 
+ 63.4 
+ 
+ OPSD 
+ 79.2 
+ 73.1 
+ 48.1 
+ 66.8 
+ 
+ OPSD+Skill 
+ 77.8 
+ 65.3 
+ 43.9 
+ 62.3 
+ 
+ SGSD 
+ 78.9 
+ 70.6 
+ 46.9 
+ 65.5 
+ 
+ 
+
+ 
+ 
+ 
+ Figure 2:  Training dynamics on Qwen3-1.7B.  GRPO shows limited improvement under sparse outcome rewards, while SGSD maintains more stable gains than OPSD in the later training stage. 
+ 
+ 
+ Skill-conditioned SD improves reasoning under weaker PI. 
+Tab.  3  shows the main comparison.
+GRPO brings only limited gains, which is consistent with the sparsity of final-answer, trajectory-level rewards.
+OPSD and SGSD turn sparse rewards into dense token-level supervision, yielding stronger improvements across model scales.
+Surprisingly, SGSD performs competitively with OPSD, and even achieves better performance on smaller models.
+For example, on Qwen3-1.7B, SGSD improves the average score from 37.4% to 43.7%, outperforming GRPO by 6.2% and OPSD by 1.7%.
+This is achieved under a weaker PI assumption: OPSD uses a trusted reference answer as PI, whereas SGSD only assumes a verifier and a skill pair that may be misleading.
+Although SGSD still underperforms OPSD on Qwen3-8B, the results already suggest that outcome-validated skill-conditioned teachers can also approach answer-conditioned teachers for reasoning. 
+
+ 
+ 
+ 
+ Skill injection alone is not sufficient. 
+The skill-augmented variants do not perform well in Tab.  3 , showing that the gains do not come from simply exposing the model to more skills.
+Base+Skill can underperform the plain base model, likely because a single retrieval step does not always return skills that are useful for the current reasoning problem.
+GRPO+Skill and OPSD+Skill show a similar issue: when skills are directly visible during training, the model may rely on them to solve the problem, rather than internalizing them to reason without skills.
+This issue is even clearer for OPSD+Skill, where teacher and student observe the same skills, leaving little teacher-student contrast for distillation.
+SGSD instead keeps skills on the teacher side only, using a multi-teacher pool so that skill-conditioned teachers can provide relevant guidance for the student to internalize. 
+
+ 
+ 
+ 
+ 
+ 4.3  Training Dynamics 
+
+ 
+
+ 
+ Fig.  2  illustrates the training dynamics of on Qwen3-1.7B over 200 update steps.
+As shown, GRPO often stays below the base model, reflecting the weak learning signal from sparse outcome rewards.
+OPSD improves rapidly in the early stage, but gradually degrades after the mid-training checkpoints.
+In contrast, SGSD shows a more stable improvement pattern, reaching 42.3% average performance at step 100 and keeps a clear advantage over OPSD in the later stage.
+By validating teacher support with verifier outcomes and suppressing uncertain or extreme updates, SGSD keeps useful dense supervision available as both the policy and the skill bank evolve online. 
+
+ 
+ 
+ 
+ 
+ 4.4  Ablation Studies 
+
+ 
+
+ 
+ Figure 3:  Further discussions on Qwen3-1.7B.  (a) Full-vocabulary distillation consistently outperforms Top-100 support distillation on AIME24. (b) The live (synchronized) teacher used by SGSD reaches the strongest later checkpoints, while alternative update strategies either lag or fluctuate. (c) The gated objective obtains the highest peak among divergence-style losses on AIME24. (d) Compared with vanilla SGSD, adding OPSD-style answer PI to skill-conditioned teachers causes a large performance drop and thus collapse on both AIME24 and AIME25. 
+ 
+ 
+ We ablate the main components of SGSD on Qwen3-1.7B model, AIME24 dataset. 
+
+ 
+ 
+ 
+ Robust support estimation improves training stability. 
+As shown in Tab.  4 , removing either token masking, clipping, or thresholding weakens model performance, and this phenomenon becomes more obvious in the later training stage.
+Removing all three even falls below the base model at step 100.
+Together, these components enable robust and stable distillation. 
+
+ 
+ 
+ 
+ Teacher polarity and diversity are essential. 
+Fig.  4  shows that removing polarity yields a short-term gain but eventually leads to collapse.
+Without polarity, all teachers are distilled in the same direction, introducing misleading supervision.
+Moreover, the variant without the multi-teacher pool consistently underperforms SGSD.
+This highlights the importance of teacher diversity: a single retrieved skill–mistake pair may be irrelevant or only partially useful for the problem, while the multi-teacher pool provides multiple hypotheses and a better chance to distill relevant guidance. 
+
+ 
+ 
+ 
+ Table 4:  Robust support estimation ablations on Qwen3-1.7B, AIME24.  Arrows indicate changes relative to the Avg@12 accuracy of base model. 
+ 
+ 
+ 
+ 
+ Method 
+ Step 50 
+ Step 100 
+ 
+ 
+ 
+ Base 
+ 51.1 
+ 
+ SGSD 
+ 55.6   ↑ \uparrow 4.5 
+ 54.4   ↑ \uparrow 3.3 
+ 
+ w/o token mask 
+ 53.1  ↑ \uparrow 2.0 
+ 54.2  ↑ \uparrow 3.1 
+ 
+ w/o clipping 
+ 53.6  ↑ \uparrow 2.5 
+ 52.5  ↑ \uparrow 1.4 
+ 
+ w/o threshold 
+ 54.4  ↑ \uparrow 3.3 
+ 51.4  ↑ \uparrow 0.3 
+ 
+ w/o all three 
+ 54.2  ↑ \uparrow 3.1 
+ 48.1  ↓ \downarrow 3.0 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ Figure 4:  Core ablations on Qwen3-1.7B.  Removing polarity causes late-stage collapse, while replacing the teacher pool with a single teacher remains below SGSD. 
+ 
+ 
+ 
+ 4.5  Further Discussions 
+
+ 
+
+ 
+ We further study several design choices to understand when skill-conditioned SD remains reliable. 
+
+ 
+ 
+ 
+ Full-vocabulary distillation vs. Top-K support. 
+Fig.  3 (a) compares the default full-vocabulary distillation with a top-100 support approximation.
+Specifically, we keep the teacher’s top  K = 100 K=100  tokens at each position, re-normalize teacher and student distributions on this local support, and apply the gated signal.
+As shown, full-vocabulary distillation performs better at every checkpoint.
+This suggests that tail probabilities still help calibrate teacher-student log-probability gaps, and truncating to top- k k  can distort support estimation and weaken polarity-aware supervision. 
+
+ 
+ 
+ 
+ Teacher policy update. 
+Fig.  3 (b) studies alternative teacher policy update strategies, including frozen, periodic, and EMA teachers.
+Synchronizing the teacher with the student is an aggressive choice, since both policies may confidently drift together during self-distillation.
+Nevertheless, the live teacher used by SGSD surprisingly performs well, reaching the highest peak accuracy and remain stable.
+This suggests that outcome-derived polarity and robust support estimation can stabilize training and make fresh teacher signals usable. 
+
+ 
+ 
+ 
+ Divergence-style distillation objective. 
+Fig.  3 (c) compares our gated loss with several standard divergence-style objectives.
+Reverse KL is stable and competitive, but the gated loss obtains the highest peak, while forward KL and JSD are generally weaker.
+This matches the intended role of the gate: it preserves local reverse-KL-style correction for informative gaps while suppressing negligible disagreements and extreme mismatches. 
+
+ 
+ 
+ 
+ Adding answer PI to SGSD. 
+Fig.  3 (d) adds the OPSD-style answer PI to the skill-conditioned teacher context.
+We observe that although this variant slightly improves at early stage, it soon consistently degrades and finally collapses on both AIME24 and AIME25, leaving SGSD ahead by 9.7% and 10.0% at step 100.
+One possible reason is that answer PI and polarity-controlled skill PI impose different information structures: when some teachers are intentionally reversed, attaching the same answer to every teacher may make the direction signal inconsistent.
+Thus, SGSD benefits from reusable skill PI, rather than simply giving the teacher richer privileged information. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Conclusion 
+
+ 
+
+ 
+ We introduced SGSD, a skill-conditioned self-distillation framework for mathematical reasoning with verifier feedback.
+Rather than assuming that retrieved skills should always be trusted, SGSD treats skill–mistake pairs as teacher hypotheses, validates their polarity with rollout outcomes, and learns from informative teacher-student disagreements through a robust gated objective.
+Experiments on competition-style mathematical reasoning benchmarks show that SGSD improves over GRPO and simple skill-injection baselines, while remaining competitive with answer-conditioned OPSD under a weaker PI assumption.
+These results suggest that experience-derived skills can provide useful dense supervision when their direction is validated by on-policy evidence. 
+
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ SGSD is evaluated mainly on mathematical reasoning tasks with automatic answer verification.
+This setting is well suited to our goal of studying outcome-validated skill-conditioned teachers, while extensions to open-ended generation may require a calibrated judge or another reliable outcome signal.
+Our skill bank uses a simple cold-start construction and rank-wise pairing between general skills and mistake patterns; more adaptive retrieval, pairing, or weighting strategies may further improve the teacher pool.
+The main experiments report the best checkpoint among recorded training steps for comparability with recent self-distillation work, so future studies could complement this protocol with held-out model selection.
+Finally, most ablations are conducted on Qwen3-1.7B to control computational cost, leaving a fuller sweep across larger models and additional hyperparameters for future work. 
+
+ 
+ 
+ 
+ 
+ Ethical Considerations 
+
+ 
+
+ 
+ This work studies post-training for mathematical reasoning using public-style benchmark problems, automatically generated model traces, and verifiable answers.
+It does not involve human subjects, private user data, or sensitive attributes.
+Because SGSD stores experience-derived skills, care should be taken to keep the skill bank aligned with the intended training data and to avoid mixing evaluation problems into skill construction.
+The method also uses verifier outcomes to decide teacher polarity, so applications beyond mathematical reasoning should ensure that the outcome signal is appropriate for the task.
+As with other reasoning post-training methods, improved mathematical performance should not be interpreted as broad reliability in high-stakes domains without separate validation. 
+
+ 
+ 
+ 
+ 
+ 

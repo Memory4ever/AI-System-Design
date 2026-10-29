@@ -232,6 +232,10 @@ World size 改变还可能影响：
 
 能够加载 weights 不等于能够无缝恢复 optimizer trajectory。系统应明确支持：same-layout resume、resharded resume、weights-only conversion 中的哪一种。
 
+跨训练、评价和推理复用时，checkpoint还可先拆成独立可序列化的typed checkpointables：参数、optimizer与data iterator各自有handler，consumer只加载自己需要的部分；step-level manager负责保存序列与curation，单个checkpoint接口则负责具体一次读写。Abstract对象另声明shape、dtype与sharding，具体对象负责真实值和磁盘表示，加载时以abstract规格提出cast/reshard或部分读取，不能由文件存在或weight可读推断完整resume成立。
+
+[Orbax的JAX设计](https://arxiv.org/html/2605.23066v1#S3)提供该契约实例，但custom handler与metadata兼容维护有成本，类型描述也不替代跨组件的一致step或最终化。保存先复制稳定host snapshot，背景IO结束且global metadata合并/finalize后才能称完整；异步save返回不代表持久化完成。作者A10040GB/GCS上20次隔离IO测试不是整段训练加速，较小模型与blocking阶段仍有反退。类型/布局或finalize不能验证时，保留原生框架格式、完整state与上一已提交checkpoint，不因可定制加载自动批准optimizer轨迹等价。<!-- source-family:SF-2026-ARXIV-2605-23066 -->
+
 ## Data Cursor 为什么必须保存
 
 第 27 章说明 data loader 参与定义实际训练分布。若 checkpoint 恢复参数到 step `s`，却从 shard 开头重新读取：
@@ -424,6 +428,12 @@ Tier policy 必须拥有 save acknowledgment、replica validity、promotion、re
 
 <!-- source-family:SF-2026-ARXIV-2605-21468 -->
 
+方向估计也可以先消除同一训练轨迹的局部摆动，再做外推，而不是直接把原始 checkpoint 的最大变化方向当作下降方向。[Extra-Merge 的受限分支](https://arxiv.org/html/2605.26484v1)先平均相邻 checkpoints，再对最近若干份平均产物作 PCA，沿时间推进的首方向提出候选，并用 validation line search 选择步长。这里平均负责平滑、PCA 负责估计方向、验证集负责选点；局部首成分解释率高，不证明整条真实训练轨迹是一维直线，river 理论还依赖局部恒定方向、噪声和谱间隙等条件。相同下游题目兼作搜索 indicator 时，所报提升不能再当独立最终测试；保存与平均、参数内积、每个候选的验证和目标 artifact 回归均需计费。曲率、方向或独立质量失配时，保留最后已验 checkpoint 或普通平均，不由“无需梯度更新”签发免费收敛或发布保证。<!-- source-family:SF-2026-ARXIV-2605-26484 -->
+
+若变化来自数据域随时间漂移，候选也可由多个时间域的参数版本构成，而不只外推同一训练轨迹。一个[受限专家平均分支](https://arxiv.org/html/2509.26045v1#S3)从共同base出发，以重要性约束得到同架构的逐域experts，将参数差投到低维坐标并外推目标时间，再按预测距离配权，合并成单一候选；它不是按请求路由多个模型，也没有观察未来真实最优权重。距离只是选择代理，权重平均近似输出ensemble还依赖局部参数与光滑条件，突变域或不兼容坐标不能继承这条解释。旧域数据、重要性状态、多个快照、坐标预测与每次刷新合并都增加离线成本，不能由最终单模型推理推导零适配费用。原证据限平滑漂移下的分类模型，部分任务反退；候选仍须独立未来域与旧能力验证，预测或归一退化时保留最后已验版本、普通平均或重新适配，不把时间外推当作发布保证。
+
+<!-- source-family:SF-2025-ARXIV-2509-26045 -->
+
 Training checkpoint 可能使用 sharded tensors、optimizer-specific format 和内部 names。Inference runtime 需要：
 
 - Consolidated 或目标并行布局 weights。
@@ -444,14 +454,32 @@ training checkpoint
 
 LoRA merge、TP reshard、tensor-name mapping 和 quantization 都可能改变输出。转换完成必须重新验证，不应把源 checkpoint 的评估结果无条件继承给目标 artifact。
 
+在线权重交接还要覆盖实际消费这些参数的全部模型路径，而不只是主模型的load调用。推测解码运行时可能另持有draft model和加载后构建的表示；只刷新target，或只复制draft原始tensor而未按其配置执行post-processing，都不能据此宣布运行状态已更新。[checkpoint-engine的一项V2修正](https://github.com/MoonshotAI/checkpoint-engine/commit/0ac607299eb711cdd6b164e9eba04a7ade9cf98b)为get_draft_model路径补load，并在相应后处理分支使用draft_model_config。这是具体消费路径的正确性修复，不证明所有双路径组合、跨rank原子发布或输出等价。增加loader适配、派生状态重建与回归的费用后，仍须在切换前检查目标版本和固定输入；这些是部署验收要求，不是该补丁已验证的保证。拓扑或后处理语义不明时，保留已验证的完整加载与旧版本，而不以IPC传输完成代替生效。<!-- source-family:SF-2026-MOONSHOT-CHECKPOINT-ENGINE-PR112 -->
+
 完整转换与全量装载仍是容易校验的权重交接路径；频繁、跨区域的 policy 更新可改传相对共同已提交版本的 changed bits。训练 shard 先映射到 canonical tensor coordinates，再由唯一 source owner 投影到目标 loader 的存储位置；只有转换和 dtype 保持存储位、写入范围不冲突时才用 XOR，其余位置绝对覆写。省下的是更新传输，不是源 baseline、全模型比较、转换或目标装载。
 
 Delta 要求所有 receiver 以同一 baseline 应用固定 candidate：XOR 必须去重；失败先隔离并等待旧写入停止，再对完整 changed set 作 absolute overwrite；新 receiver 先恢复已提交全量版本。Device apply 与所需 ACK 完成后才原子提交版本、推进 source baseline，KV 每次 transition 失效。[NeMo-DCR v1](https://arxiv.org/html/2610.08430v1)只支持 fail-stop、可信通道与可用且 fenced 的控制面。比较、host staging、drain 和 apply 仍付费；无法满足 loader 条件或变化密集时保留 dense refit，合成1T扩层及 transport-only 对照不授通用端到端 RL 加速。<!-- source-family:SF-2026-ARXIV-2610-08430 -->
 
+组合模型的产物也不一定是一份已平均的权重：可保留冻结的外部encoder，把其输出映射到目标decoder输入空间，再由输入内容与语言标识产生两路正scalar权重，将映射表示和原目标embedding一起交给decoder。这里目标侧只需读取输入embedding，并非为取特征先运行完整reasoner；但外部encoder、映射/gate、边界tokens和decoder仍共同构成运行产物，不能按静态checkpoint merge只交一份融合参数。
+
+[ST-Merge的受限多语对照](https://arxiv.org/html/2606.19002v1#S3)支持输入条件化组合与固定融合分别验收，不证明gate已识别真实语言理解/推理能力或任意backbone可直接拼接。各语言仍有反退，语言ID、tokenizer、feature shape与训练阶段都须绑定；总计时表的相同舍入值也不授每请求零开销。源模型驻留、外部编码、桥接训练/前向、扩展decoder输入与完整能力回归均付费；坐标、语言或净预算失配时保独立原模型、已验固定桥接或不组合，不由冻结权重和更高平均分批准单模型成本、免费知识相加或上线等价。
+
+<!-- source-family:SF-2026-ARXIV-2606-19002 -->
+
 融合两个从共同 base 出发的 task vectors，还可能需要任务不对称的筛选，而不只是统一平均。在受限 reasoning/task 合并分支中，分别用各自 calibration 数据的梯度幅度，选择 reasoning 向量的低梯度位置与任务向量的高梯度位置，再从双方集合都去掉 overlap，按缩放系数加回共同 base。这个 mask 是模型、loss 与校准数据依赖的转换 proposal；不同选择方向和交集排除不证明推理或安全知识已被定位到独立地址，也不保证参数互不重叠就没有行为干扰。[有限模型与mask消融](https://arxiv.org/html/2601.05560v1)支持该受测分支，同时提醒低攻击成功率可能来自输出崩溃；因此目标 artifact 要同时再验任务效用、reasoning、输出完整性和安全，而不继承源模型成绩。梯度采集、筛选与发布矩阵都有成本；共同 base 不同、校准迁移或回归未过时，保留源 artifact、原合并方法或不合并。
 <!-- source-family:SF-2026-ARXIV-2601-05560 -->
 
+训练时为恢复保留的Adam二阶历史，也可以成为构造新合并产物的输入，而不再临时访问原训练数据重新估计每个位置的重要性。[受限的同基座合并分支](https://arxiv.org/html/2509.11167v1#S4)用二阶统计与task delta平方提出保留mask，未选增量回到共同base，再以由统计导出的正对角权重聚合；这是分别决定保留哪些变化、怎样加权的两个代理，不是精确Fisher或完整task loss的最优解。历史来自不同训练人口、尺度、batch与optimizer时钟，故base/参数坐标、loss口径、EMA版本、mask和聚合配置都须随新artifact保存，不能只交接无来源的统计矩阵。用行列统计近似二阶数组可节省这一构造输入的存储，却可能改变排序和权重；该近似也不替代原checkpoint恢复所需的完整状态。更多保留位置或较相似的统计图不保证能力可无损叠加，有限对照仍有任务和压缩反退。源专家训练、统计保存/重建、密度搜索及目标模型的独立效用和保留回归均计费；统计身份或任务验收失配时，保留完整合并输入、普通平均、独立专家或不合并，而不让局部几何代理取得发布资格。
+
+<!-- source-family:SF-2025-ARXIV-2509-11167 -->
+
+同基座增量很稀疏，也不表示可把两个后训练产物直接叠加。应先在同一dtype与阈值下分清未变化、单方private、同向overlap和反向conflict，再决定不同区域的规则；一种受限分支仅在反向冲突位置，在校准数据上分别对各源模型计算对角梯度平方分数，选择保留哪一方。它不同于复用optimizer历史，也不把较高局部敏感度当作更正确的任务或独立知识地址。
+
+[稀疏RLVR合并的有限反证](https://arxiv.org/html/2606.18521v1#S5)中，低冲突率仍伴任务退步，仲裁与private-region稀疏/缩放也未普遍超过较好parent；二维activation密度更不证明weight空间的因果路径。该证据限共base的1.5B/7B双模型，SFT与RLVR来源训练未完全匹配，完整private增量拼接的印式也不直接作可执行配方。全部源训练、校准前反向、mask/尺度搜索、合并与各parent能力回归均付费；校准、坐标或保留不稳时，保普通平均、独立源artifact或不合并，不由稀疏率和proxy分数授免费能力聚合。<!-- source-family:SF-2026-ARXIV-2606-18521 -->
+
 对同一基座、架构与张量坐标兼容，且均已完成后训练与对齐的最终 checkpoints，统一平均是成本和语义都容易解释的起点，但总体分数接近不等于各能力类别互补。另一条受限分支是在类别评分矩阵中寻找低相关的能力切片，从各切片选择 checkpoint experts，再搜索非均匀平均系数；因此“平均哪些模型”和“用什么权重平均”必须与用于选择的类别样本、评分及搜索过程一起成为 artifact build 的输入，而不能只记录最终权重文件。[同基座 checkpoint 的受限对照](https://arxiv.org/pdf/2511.13254v1)区分全体均匀平均、选定子集均匀平均与选定子集加权平均，支持这个选择分支，不证明任意架构、任务或弱互补类别都获益；其公开榜单分数参与选择和调权，独立开发集只是后续建议，不能把所报结果当测试独立的泛化证据。候选加载、类别评价、系数搜索及目标验收仍有费用，“不再训练”不等于零成本。由此推导的发布要求是保留 source checkpoints、子集与系数、选择人口和 scorer lineage，再按第 66 章分离开发反馈与独立最终验收；类别样本不足以分辨互补、回归不稳或验收失败时，保留均匀方案、单一已验模型或不合并，而不是让搜索结果直接取得 release 资格。<!-- source-family:SF-2025-ARXIV-2511-13254 -->
+
+反复合并大批兼容checkpoint时，瓶颈还可能是读取全部experts，而不只是选择系数。可先用既有catalog中的block norm/sketch与覆盖信息，在共同base、张量坐标及物理read-unit成本下提出预算mask，只物化选中的delta，并将plan、实际读取和目标artifact谱系分别保存。[MergePipe的受限分支](https://arxiv.org/html/2605.29489v1#S3)在固定且不随mask变化的系数下，对省略delta给参数范数误差界；selected-only重归一另有系数漂移，TIES/DARE等非线性或随机算子不能继承同一界，参数接近更不保证能力保持。预算成立还要求执行实读不超过同口径计划；实测有actual大于pre-plan，缺完整cap审计时不能宣运行自动守预算。catalog初扫、base/output、规划、完整合并与独立质量验证均付费，少read在小池或算子占优时墙钟收益很小，任务质量亦可反退。读预算、坐标或质量不合时，保留全量merge、单一已验checkpoint或不合并，不让省略块数、manifest存在或发布伪码自行取得release资格。<!-- source-family:SF-2026-ARXIV-2605-29489 -->
 
 第 66 章将进一步要求 equivalence Evaluation 绑定 source/target artifact、转换配置、runtime、dataset 与 scorer identity。只有证据可追溯到实际被部署的 target artifact，Registry 和 release gate 才能消费它。
 
@@ -618,6 +646,16 @@ Checkpoint 是训练系统的状态事务。模型参数只是其中一部分；
 
 ## Review notes
 
+- `SF-2025-ARXIV-2509-26045` — Daily2025-10-02补Oct01；[TEA exact-v1](https://arxiv.org/html/2509.26045v1)必要域B25/R51，2+1+2=5，参数版本来源/merge接口差额深入。只同base时间域候选，保source随机validation非未来、CDGTD的10%旧域buffer、全距离相等分母为零/PCA少域秩不齐、MSE局部近似与最坏bias/equal-variance有限前提及全费；不采用未来最优、LLM规模或净部署倍率保证。未核代码/复现；A30原稿/R66通过后root保存，Helmholtz R75唯一实际写后通过；仅同步既成，不预整日完成。
+
+- `SF-2026-MOONSHOT-CHECKPOINT-ENGINE-PR112` — Daily2026-10-23，Oct22合入事件；[精确commit](https://github.com/MoonshotAI/checkpoint-engine/commit/0ac607299eb711cdd6b164e9eba04a7ade9cf98b)两hunk及worker上下文、PR112时间。2+1+2=5，实际正确性修正受影响域深入；只采V2 draft load与draft-specific后处理，不授任意双路径、原子发布、输出正确或性能。固定输入验收与回退为项目工程推导。独立reader必要Source/实际owner/精确PRE通过；root已保存单段，独立reader实际POST已通过，未运行代码或复现。
+
+- `SF-2026-ARXIV-2605-29489` — Daily2026-05-30补May29，2+2+3=7；精确v1必要Source由唯一reader R39实际读，作者完整消费不第三抓；仅预算read/固定alpha省略与manifest接口，保actual>preplan未闭/selected-only漂移、TIES与DARE不继承、质量反退及全费，不授实际cap/功能无损/原子发布实现。R43当前owner/A21逐字PRE通过，root授本单段+本人note，作者真实保存后指定非writer reader R46已实际完整新增/完整直接两侧/本人注POST通过，窄位生效释放，本次仅行政同步既成事实；未核实现/复现。
+
+- `SF-2026-ARXIV-2605-26484` — Daily2026-05-28补May27；作者实际[exact-v1](https://arxiv.org/html/2605.26484v1)§4–6/B必要配置与C3条件域，2+2+2=6，平均/PCA/validation分责长期缺口深入。只有限candidate分支，river/eigengap不授全局rank1，Pythia同下游indicator不当独立测试；全checkpoint/参数内积/line-search费与普通平均退路近文保留。reader必要Source/owner/逐字稿通过、root授21468后本单段与本人注，作者已保存待唯一实际POST；未核artifact/复现，不预DAY。
+
+- `SF-2026-ARXIV-2605-23066` — Daily2026-05-26补May25；[Orbax exact-v1](https://arxiv.org/html/2605.23066v1) §2–5/C–E/F2–F3必要，2+2+2=6，typedseparable checkpointables/abstractconcrete与finalize具体差额深入。保异步返回非durable、20次隔离IO/小模型blocking反退及handler/metadata维护费，不授完整训练加速或optimizer等价。reader必要Source/actualowner/逐字PRE通过，root授两段及本人注，指定reader已实际重读保存正文、完整直接两侧与本人注，唯一非writer POST通过，窄位生效释放；未核实现/复现，不授DAY。
+
 - `SF-2026-ARXIV-2605-09370` — Daily2026-05-13补May12；exact-v1 §§4.2/4.3.4–5/5及必要3.1，2+2+2=6，具体归因反证深入。只phase/path/RPCqueue-service诊断，不采128slot唯一因果、网络upgrade无效、粗样18s精确pause或2.7xchain-vs-session因果；保观察/配置/成本边界，未核内部frameworktrace/代码/复现。Source rootR10通过；逐字PRE/窄写许可已通过，正文/marker/本人注真实保存并作者完整局部顺读；root R13非作者实际POST通过，窄位释放。 本次仅同步已成事实，不重写机制或认证实现/复现、全覆盖或整日Gate。
 
 - Daily `2026-10-08`：`SF-2026-ARXIV-2610-07688`，[FailBench v1](https://arxiv.org/html/2610.07688v1) IV–X受影响评价；142tuple中10直接恢复/继续、123analytical lower bound、9infeasible，process-group重建2–10s为敏感性假设。两节点8V100/FP32小型proxy与watchdog干预不授完整LLM/survivor orchestration；只采用恢复成本分账与测量人口边界。
@@ -660,4 +698,7 @@ Primary-source / official documentation 校验入口：
 
 - `SF-2025-ARXIV-2508-21613` — Godel，Daily2025-09-02补Sep01；[Odyssey exact-v1](https://arxiv.org/html/2508.21613v1)II-B/C、III–VI/Alg1/eq1–14必要Source，2+2+2=6。仅无spare恢复policy/reroute-vs重分plan与状态一致/过渡费用分责；保planner仅minstep/缺全间隔选择、Fi=Ndp边界、greedy非全局/weight非全state、真实Ascendvs模拟及全部费，不授optimal/生产故障或exact-resume。世代/consumer验收与退路为项目推导，未看像素/核代码/复现，不回投current Chameleon。Newton46实际必要Source/具体owner/本有限逐字PRE通过，root协调DeadPool完整在线repair末段后/FailureDomain标题前本单段/独立marker/本人注；已按稿保存，Newton50一次真实完整新增/直接两侧/本人注POST通过，指定窄位即时生效释放；不预整日DAY。
 
-- `SF-2025-ARXIV-2509-03047` — Boyle，Daily2025-09-05补Sep4；exact-v1 II–IV/原建模式/T1–3/必要caption已实际读，2+2+2=6。只optimizer前/中phase→等待/停止→可恢复step交接；保DP完整state前提、sharding/标签完成与group身份、相关fault/持久退路及全费，不授任意一step精确恢复/scaleindependentSLO。未看图像素/核补丁或复现；root72必要Source/具体owner/原PRE与本精确位通过，本一段/独立marker/本人注已真实保存并自读完整两侧，待root一次真实非writer POST，不预生效/DAY。
+- `SF-2025-ARXIV-2509-03047` — Boyle，Daily2025-09-05补Sep4；exact-v1 II–IV/原建模式/T1–3/必要caption已实际读，2+2+2=6。只optimizer前/中phase→等待/停止→可恢复step交接；保DP完整state前提、sharding/标签完成与group身份、相关fault/持久退路及全费，不授任意一step精确恢复/scaleindependentSLO。未看图像素/核补丁或复现；root72必要Source/具体owner/原PRE与本精确位通过，本一段/独立marker/本人注已真实保存并自读完整两侧；root73实际非writer完整新增/两侧/本人注POST通过，生效释放。Bernoulli继任仅同步既成POST事实，不重读机制正文，不授DAY。
+
+- `SF-2025-ARXIV-2509-11167` — Sep16补窗/Bernoulli；OTA exact-v1 §3–6/Eq1–12/T1–3/A/B2–3/D必要域，2+1+2=5，L89必要采用/唯一Ch35 gap通过。仅Adam历史作为新merge build输入，delta筛选与聚合代理/统计压缩、原resume完整状态和目标独立回归分责；保局部/条件理论、任务与rank1反侧、所有保存/搜索/验证费，未核代码/复现。L91纯PRE/root本次fresh精确窄位通过，已按原三项真实保存；Lovelace124唯一actual完整新增/完整直接两侧/本人注POST已通过，I19生效、指定窄位释放；本注只同步既成结果，不第三正文/Source，不预DAY。
+- `SF-2026-ARXIV-2606-19002` — exact-v1 §3–4/T1–4/Limitations/A2T8，2+1+2=5深入；仅runtime复合artifact与静态weightmerge分责，保HB仅Embedding/全path驻留、局部多语反退/rounded费用及口径限制，未核代码复现，不授gate语义真值/无开销或普遍兼容。 sole必要/完整PRE及实际SAVE/fullselfread/独立POST均已通过（本日SUP_REVIEW R42–R64实际层）；仅同步既成状态，不另授DAY。

@@ -83,6 +83,12 @@ reset、KDA prefix cache、PD retraction 与 CUDA graph replay 的修复。这�
 reset、generation 与 rollback contract 越要显式。**Metadata 命中但额外状态 stale，和
 KV block 已被回收一样，属于 correctness failure 而不是一次普通 cache miss。
 
+### Hybrid SWA 的命中还要通过窗口有效性检查
+
+完整 Attention 的 exact-prefix reuse 原本就要求模型、位置、mask 与前缀身份兼容，且对应物理 KV 仍然存活；token 相同从来不能单独保证状态可读。Hybrid SWA 在这一合同上再增加一条独立生命周期：Full Attention 层保留完整历史，SWA 层却可按窗口回收。即使 radix node 仍表示一整段 token，所需尾部窗口的槽位也可能已经释放或覆盖。因此匹配结果应是“仍有有效 SWA 尾部的可复用长度”，不是逻辑最长公共前缀；不满足窗口安全长度时截断命中并重算，不能让 scheduler 消费一个伪命中。
+
+一种实现分工让 Full KV 与 SWA KV 使用独立物理池，树节点保存 Full 段索引及 SWA 映射，上层仍看到同一 sequence identity。Admission 同时检查两池容量；长 Prefill chunk、Decode 与请求结束按各自边界回收窗口外 SWA，SWA 部分的跨层搬运只恢复有效窗口，Full 层仍需完整且兼容的前缀状态。它把局部窗口的容量优势交给真实 cache manager，却增加双索引、独立驱逐与异步一致性成本：device 的有效窗口不证明 host/远端层已经补齐，完成事件和当前映射都要在复用前验证。[MiMo 的官方工程说明 §2.1](https://mimo.xiaomi.com/blog/mimo-v2-5-inference)支持这份实现取舍，不证明所有 SGLang 版本已具备它，也不把架构容量比例或线上命中率变成通用吞吐保证。低复用、短请求或新状态路径尚未验收时，保留成熟完整缓存与重算路径；窗口安全检查失败则按 miss 处理。<!-- source-family:SF-2026-MIMO-V25-INFERENCE -->
+
 ## 从 Exact Prefix 到 Dependency-Aware Reusable Blocks
 
 Exact prefix reuse 保持原 causal order，因此语义最容易验证。但结构化 workload 可能反复引用同一批
@@ -141,11 +147,16 @@ JSON 合法并不保证抽取字段逐字来自输入。对 NER、拼写检查�
 
 这仍不认证语义标签或重复文本的 occurrence identity：同一 span 出现多次时，额外的 occurrence index 也要独立验证；格式约束可能改变模型的推理方式，循环输出也仍可耗尽预算。[LogitMatch exact-v1 §3.4–6](https://arxiv.org/html/2601.16946v1) 的有限抽取任务显示这种绑定可减少 span mismatch，但不证明所有模型质量都提高或任意接口都支持 logits mask。无法取得 logits、状态实现不完整或标签判断优先时，保留 tagging、显式位置输出及生成后 parser/verifier；本章吸收约束状态边界，不声称 SGLang 已实现该论文。
 
+结构列表的停止单位也可以是完整记录，而不是重复token：先解析并规范化已完成对象，将类别与坐标等payload作为记录key，遇到第一个exact重复时保留此前prefix并结束列表。[有限dense-grounding对照](https://arxiv.org/html/2606.14507v1#S4)中，同类别可合法出现多次，token n-gram阻断会伤格式或漏对象，记录级停止则提供另一种质量—终止取舍；但相同物体的不同坐标不是exact重复，停止后的新对象也可能被漏掉。Request因而须同时保存parser/规范化版本、已见记录集合、保留边界与真实结束原因，不能将提前闭合冒充完整召回或任务成功。自然语言数量预算、格式合法、exact记录重复与定位质量应分别验收，较高F1或不重复也不授语义正确。Adapter训练、全部生成与记录检查、预算选择和独立定位回归均计费；前缀无效、等价规则失配或召回下降时，保留原生成、较保守预算与parser/verifier，不由有限样本的parse通过或重叠置信区间批准通用无损和实时收益。本章吸收记录状态接口，不声称SGLang已实现该分支。
+<!-- source-family:SF-2026-ARXIV-2606-14507 -->
+
 ### 语义前缀的安全剪枝不等于可完成性
 
 Syntax mask 在格式约束明确时最简单；加入类型与名称绑定后，prefix oracle 只应拒绝无法被后续输入修复的稳定语义矛盾。未完成前缀仍可能是 Live，却没有任何合法 completion，因此“没误剪一个可完成前缀”与“每个保留前缀都可完成”是两个合同。后者另需 grammar 的可生成性、类型需求覆盖与左到右约束流；字符级结论移到 token 序列，还须精确拼写和词表覆盖。Decoder 的 mask 不拥有程序行为正确性的认证权。
 
 维护增量约束与候选检查增加 CPU 状态、采样和验证成本；错误实现、未覆盖类型或有限 proposal search 仍可停在死路。[Semantic Prefix Oracles v1 §2–4/6](https://arxiv.org/html/2609.35425v1) 的有限 differential tests 不等于实现的机械证明，STLC/tool 的实验分支也没有统一可完成性保证。条件不成立时保留 syntax-only、生成后 compiler/verifier 或明确失败，不能因一组零 false-prune 就承诺任意 tokenizer 或程序都有效。<!-- source-family:SF-2026-ARXIV-2609-35425 -->
+
+语义约束也可以改变runtime的主artifact，而不只为文本prefix增加一个判定器：与已生成文本并行维护typed partial graph，将元素区分为certain、possible、absent与error；对syntax允许的token先尝试refine图，再检查模型约束，只让未出现已知error的候选进入mask。[Projectional Decoding的有限DSL原型](https://arxiv.org/html/2605.30054v1#S3)说明这种不确定状态接口，却不保证每份保留图都有completion，死路仍可能导致提前结束和无效输出；图约束合法也不证明任务答案正确。四值状态、metamodel、token-to-graph映射、checker与真实终止原因须共同保留，不能把possible静默当certain或把无候选当成功。逐token候选refinement、graph检查与全部生成均付费，作者相对per-token时费不是完整请求SLO；接口不完整、死路或净质量失配时保syntax-only、明确失败、backtracking或生成后compiler/verifier，不把此原型当SGLang已实现的通用语义保证。<!-- source-family:SF-2026-ARXIV-2605-30054 -->
 
 ### 异步加载把 Adapter Readiness 变成调度前置条件
 
@@ -316,6 +327,12 @@ SGLang 展示了 runtime 可以利用比“独立请求”更丰富的结构：t
 下一章将视角从单个 Serving engine 提升到分布式 inference runtime：多个 engine pools、KV transfer、routing 与 autoscaling 怎样形成系统级 control loop。
 
 ## Review notes
+
+- `SF-2026-ARXIV-2606-14507` — Daily2026-06-16补Jun15；[exact-v1](https://arxiv.org/html/2606.14507v1)§2–8/10/T1–6必要，2+2+2=6，记录级终止/定位权限差额深入。保exact≠同物体/完整召回、nonbbox固定shape混杂/不同adaptersteps与metric选择、bootstrap非trainseed及全部费用，不授通用合法/无损/SGLang现有实现；未核图像素/code/复现。作者唯一首备，reader§142必要/actualowner/整体PRE通过并直接窄授，作者已真实SAVE，reader§144唯一实际POST通过、窄位释放；本注仅行政同步既成，不预DAY。
+
+- `SF-2026-ARXIV-2605-30054` — Daily2026-05-30补May29，2+2+2=6；exact-v1必要Source/当前owner/A43原PRE经reader R78通过。只typed partialgraph四值状态与token-refine检查接口。保无已知error≠有completion、死路/提前终止、CLEVR原型与质量反退/全费，不声称SGLang已实现。未核实现/复现。root明确授本单段+本人note，已真实保存，唯一reader R82实际完整新增/直接两侧/本人注POST通过并释放。
+
+- `SF-2026-MIMO-V25-INFERENCE` — Daily2026-05-31补May30；[官方工程说明](https://mimo.xiaomi.com/blog/mimo-v2-5-inference)页面及bundle均标2026-05-30，当前HTML§2.1/2.2/2.3。3+2+3=8，采用window-safe长度、双索引/双池与异步restore分责；Full Attention仍需完整identity/物理存活，不授通用7倍、93%命中率或生产SLO。未核代码/实验复现；root非作者必要Source与逐字PRE通过，获窄位后实际写入；root本日R5实际完整正文/两侧邻接/本人note及SWA主语澄清读回POST通过，窄位释放。
 
 - `SF-2026-ARXIV-2604-28028` — May02补May1，v1§3/Algo2–3/4.1/5.3–5.5，6分，static/dynamic分区及跨边界token缺口深入；保误配/质量/速度反侧，不采layernorm因果或全局倍率。未核实现/复现；非writer D11必要Source/owner/逐字PRE通过，root窄写本段与本人note，非writer D12实际新增正文、完整邻接与本人note POST通过；root仅行政同步并释放窄lease，不授DAY。
 

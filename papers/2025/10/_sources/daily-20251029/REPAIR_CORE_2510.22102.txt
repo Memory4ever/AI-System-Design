@@ -1,0 +1,1254 @@
+Mitigating Coordinate Prediction Bias from Positional Encoding Failures
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+Coordinate prediction with MLLMs
+Visual position encoding
+3 Methodology
+3.1 Causal view of coordinate prediction
+3.2 Bias analysis
+Overall algorithm.
+Seeds aggregation.
+Coefficient decay.
+Summary.
+4 Experiments
+4.1 Experimental settings
+Datasets.
+Models.
+Method configurations.
+Compared models
+4.2 Overall performance
+4.3 Ablation study
+4.3.1 seeds aggregation
+4.3.2 Coefficient decay
+5 Conclusion
+References
+A Proof of Proposition (VPSG token guidance)
+Setup.
+CFG form.
+Digit-only positive affine rescaling.
+Equivalence under greedy decoding.
+Normalization and distributional form.
+Remarks on assumptions.
+B Algorithm of VPSG
+C Expected distance in the unit square
+D More Experiment Result
+D.1 distance analysis
+D.2 Case study with per-step logits.
+D.3 Ablation: removing seeds aggregation.
+D.4 More details about bias analysis
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.22102v1 [cs.CV] 25 Oct 2025
+Mitigating Coordinate Prediction Bias from Positional Encoding Failures
+Xingjian Tao
+Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+Email: taoxj2001@outlook.com
+Yiwei Wang
+Affiliation: University of California, Merced
+Email: wangyw.evan@gmail.com
+Yujun Cai
+Affiliation: The University of Queensland
+Email: jingtang@ust.hkhttps://github.com/taoxj2001/VPSGmagentahttps://github.com/taoxj2001/VPSG
+Yihong Luo
+Affiliation: The Hong Kong University of Science and Technology
+Jing Tang
+††thanks: ˜˜Corresponding Author: Jing Tang.
+Affiliation: The Hong Kong University of Science and Technology (Guangzhou)
+Affiliation: The Hong Kong University of Science and Technology
+Abstract
+Multimodal large language models (MLLMs) excel at vision-language tasks such as VQA and document understanding, yet precise coordinate prediction remains challenging.
+High-resolution inputs exacerbate this difficulty by producing long token sequences that weaken positional encodings and introduce directional biases in coordinate outputs.
+We investigate this phenomenon by analyzing how MLLMs behave when visual positional encodings (VPEs) are deliberately perturbed through shuffling.
+Our analysis reveals that such perturbations induce predictable, non-random coordinate biases rather than random errors, suggesting that models rely on internal positional priors when spatial grounding signals are degraded.
+Crucially, we observe similar directional error patterns in natural high-resolution datasets, indicating that positional encoding failures are a key bottleneck for accurate coordinate prediction at scale.
+To address this issue, we propose Vision-PE Shuffle Guidance (VPSG), a training-free test-time method that leverages the directional nature of these biases for correction. VPSG runs auxiliary decoding with shuffled VPEs to isolate position-unconditioned tendencies, then uses this as negative evidence to guide digit prediction while preserving coordinate format through a lightweight finite-state machine.
+Experiments on ScreenSpot-Pro demonstrate reliable improvements, highlighting positional encoding robustness as a critical factor for spatial reasoning in MLLMs.
+1 Introduction
+Recent advances in large language models (LLMs; Touvron et al. 2023a; Chiang et al. 2023; Almazrouei et al. 2023; MosaicML 2023; Touvron et al. 2023b; OpenAI 2022; Google 2023) have improved language understanding and generation, but their text-only I/O limits perceptual and interactive use. Multi-modal LLMs (MLLMs) combine vision and text—e.g., Flamingo (Alayrac et al., 2022), Gemini (Team et al., 2023), and Qwen-VL (Bai et al., 2023; Wang et al., 2024; Bai et al., 2025)—to enable tasks such as visual QA, captioning, and document understanding.
+Coordinate prediction supports applications like object manipulation and GUI automation, where an MLLM outputs a 2-D point or bounding box (e.g., “[1000,500]”). High-resolution inputs make this harder: token and compute costs rise, and larger spatial extents increase pixel–patch misalignment, leading to coordinate drift (Li et al., 2025; Gao et al., 2024; Hsieh et al., 2024; Yen et al., 2024).
+This coordinate drift primarily stems from the degradation of positional encodings at high resolutions, where conventional spatial anchors fail to scale reliably (Zhang et al., 2024). Positional encodings anchor visual tokens to image geometry and are crucial for coordinate prediction. VLMs typically apply (i) 2-D encodings in the vision encoder (e.g., ViT (Dosovitskiy et al., 2020)) and (ii) sequence-level schemes in the LLM (e.g., RoPE (Su et al., 2024)). High-resolution inputs push models into a long-context regime where attention diffuses and fine-grained spatial cues weaken. Cropping-based solutions (Tao et al., 2025; Wu et al., 2025) require coarse pre-localization and risk losing global semantics. Methods that enhance positional encodings (Ge et al., 2024; Chen et al., 2025b; Heo et al., 2024) help coarse tasks (e.g., VQA) but remain inadequate for precise coordinate prediction, where small biases cause numerical errors.
+For both humans and machines, coordinate prediction requires precise awareness of the spatial arrangement of elements within an image. When the positional encodings of vision tokens are disrupted, for instance, by dividing the image into patches and shuffling their order, humans typically fail to recover the correct coordinates and resort to random guesses. In contrast, MLLMs exhibit different behavior.
+Our experiments show that under such perturbations, the deviations in their outputs are not random but display systematic directional biases.
+Furthermore, we observe that a substantial fraction of errors in high-resolution image datasets follows a distribution similar to that seen in these perturbation experiments. This suggests that, in long-context scenarios induced by high-resolution image inputs, the weakening of positional information amplifies the model’s inherent directional biases, which in turn degrade coordinate prediction accuracy as shown in Figure 1. In this work, we seek to mitigate such biases and reinforce the contribution of positional encodings, thereby improving the robustness of MLLMs on position-sensitive tasks.
+We propose Vision-PE Shuffle Guidance (VPSG), a training-free test-time guidance scheme that probes failure modes online and suppresses them during generation using only the base model.
+We view decoding through conditional probabilities where the main route estimates a position-conditioned token distribution (given image, prompt, and valid positional encodings), while the auxiliary routes approximate a position-unconditioned reference by shuffling the visual positional encodings. VPSG fuses these two signals at test time: the conditional–unconditional contrast amplifies information that is consistent with correct positions and suppresses content that persists when positional cues are removed. Practically, at each step we adjust only digit tokens by boosting the position-conditioned evidence and down-weighting the position-free tendency, and a lightweight FSM leaves commas, spaces, and brackets untouched. Under greedy decoding this behaves like subtracting a scaled “negative score” on digits, thereby strengthening the influence of positional information and stabilizing [x,y][x,y] outputs without any training or architectural changes.
+Figure 1:
+Effect of shuffling visual positional encodings: removing spatial conditioning causes the model to collapse to similar coordinate predictions across independent runs, indicating a position-unconditioned, directional bias rather than random variation. We also observe a similar clustered error pattern on high-resolution images (without shuffling), consistent with position-encoding failures.
+Two key design choices make VPSG precise and stable. Rather than relying on a single PE-shuffled auxiliary route, VPSG aggregates multiple shuffled routes in log space (geometric mean), yielding a robust estimate of the position-unconditioned bias and stabilizing the negative-evidence signal across inputs. In addition, VPSG applies a position-aware coefficient schedule: the guidance weight starts high for the first digit of xx, decays geometrically for subsequent digits, resets at the first digit of yy, and then decays again. This concentrates correction on the most influential digits while avoiding over-regularization of later positions and preserving natural numeric formatting.
+Our contributions can be summarized as follows:
+•
+Positional fragility analysis. We show that perturbing visual positional encodings (VPEs) induces directional, repeatable biases in MLLM coordinate prediction, with similar effects at high resolution—revealing a resolution-dependent failure mode.
+•
+Training-free guidance. We propose Vision-PE Shuffle Guidance (VPSG), a model-agnostic test-time method that shuffles VPEs to form counterfactual routes and guides final-layer digit logits via a lightweight finite-state machine.
+2 Related Work
+Coordinate prediction with MLLMs
+With the rise of multi-modal LLMs (MLLMs) (Bai et al., 2023; Wang et al., 2024; Bai et al., 2025; Alayrac et al., 2022; Team et al., 2023; Ma et al., 2023; Yang et al., 2023; Liu et al., 2023a; Li et al., 2023; Liu et al., 2023b; Xu et al., 2025), coordinate prediction has been reformulated as a language-driven grounding problem, where models output coordinates as discrete token sequences rather than continuous regression targets. A particularly relevant domain is graphical user interface (GUI) interaction. There are many works that propose datasets to evaluate the performance of large models on GUI-related tasks (Cheng et al., 2024; Wu et al., 2024; Li et al., 2025). Recent works explore grounding instructions in screenshots for automated operation, mobile app understanding, or agent-based UI navigation. Data-centric approaches such as ShowUI (Lin et al., 2024) and UGround (Gou et al., 2025) synthesize large-scale training datasets to support the learning of efficient GUI agent models. OmniParser (Lu et al., 2024) leverages auxiliary visual models to annotate the positions of interface elements, thereby improving the performance of GPT-4V in GUI agent benchmarks. WebGUM(Furuta et al., 2023) introduces a hierarchical planning framework that integrates LLMs with execution modules and perceptual grounding, enabling structured decision-making in web-based tasks.
+Visual position encoding
+Recent works emphasize that visual position encoding is crucial for scaling vision and multi-modal transformers (Wang et al., 2025). Beyond absolute or relative embeddings, variable schemes such as V2PE (Ge et al., 2024) and PyPE (Chen et al., 2025b) improve robustness in long-context and hierarchical perception. In structured document tasks, DocLayLLM (Liao et al., 2025) shows that lightweight 2D markers enhance layout understanding. Analyses of RoPE (Heo et al., 2024) highlight its extrapolation benefits, while semantic-aware encodings (Chen et al., 2025a) adapt to perceptual similarity. More recent efforts generalize or reinterpret RoPE via Fourier analysis (FoPE, Hua et al. (2024)) or trainable commuting matrices (ComRoPE, Yu et al. (2025)), and study its interaction with pooling mechanisms (Lee et al., 2025). Qi et al. analyzes how disproportionately large vision embedding norms suppress positional encodings in Vision-Language Models, leading to spatial reasoning failures. These results collectively indicate that designing flexible and resolution-robust encodings is central to advancing vision–language models. There is currently a lack of discussion on tasks that require precise location information, such as coordinate prediction.
+3 Methodology
+Figure 2: Causal view of coordinate prediction. Image content and prompt provide the intended causal effect on output digits (left). When VPEs are missing (e.g., at high resolution), the model relies on spurious correlations, leading to directional digit biases (right).
+In this section, we introduce Vision-PE Shuffle Guidance (VPSG), a training-free, test-time guidance that stabilizes coordinate outputs in multimodal LLMs. VPSG runs the base model once on the normal input and in parallel creates shuffle-guided auxiliary views by perturbing only the visual positional encodings; discrepancies across these views reveal spurious numeric tendencies. Using this as negative evidence, VPSG gently steers the main decoding on digit tokens (leaving non-digits untouched) and improves [x,y][x,y] reliability without fine-tuning or architectural changes.
+3.1 Causal view of coordinate prediction
+At the core of our study lies the observation that coordinate prediction in multimodal LLMs is governed by a causal mechanism: the output depends simultaneously on position-conditioned signals (e.g., visual positional encodings) and position-unconditioned signals (e.g., default digit tendencies). Prior analyses largely overlook the influence of these position-independent inputs, treating prediction errors as random noise. In contrast, we hypothesize that the non-positional pathway can introduce directional bias when positional information is weak or missing. Motivated by this insight, we adopt a causal graph (Pearl et al., 2016; Pearl, 2018; Tang et al., 2020; Wang et al., 2022) as the analytical framework to explicitly model how position-related and position-free factors jointly shape the output and to identify spurious routes that degrade coordinate accuracy.
+Ideally, the output digits [x,y][x,y] are determined jointly by the image content and the textual prompt, with visual positional encodings (VPEs) supplying spatial grounding.
+However, when VPEs are missing or unreliable—such as in high-resolution inputs, the causal pathway is disrupted. Lacking accurate positional cues, the model tends to rely on spurious correlations, for example overpredicting certain digits or repeating biased numeric patterns that are not grounded in the image.
+As shown in Figure 2,
+we model coordinate prediction with a simple structural view over four nodes: input information XX (image content and prompt), positional encodings PP (visual spatial cues), spurious correlations SS (default numeric tendencies that emerge independently of the input, such as frequently repeated digits or preferred coordinate patterns), and the predicted coordinates YY.
+Here, SS captures position-unconditioned regularities in the model’s training data or internal priors that can influence outputs even when visual evidence is weak or missing.
+A minimal Structural Causal Model is
+Y=g⁡(X,P,S),Y=g(X,P,S), where PP is provided by the vision encoder (and varies with resolution), and SS summarizes non-causal numeric regularities the model can fall back on.
+When PP is available and reliable, it supplies spatial grounding. The dominant pathways are X→YX\!\to\!Y and P→YP\!\to\!Y. The influence of SS is negligible (dotted edges): although spurious patterns exist in the model’s priors, they are largely blocked in practice because the model can rely on informative XX and PP.
+When PP is absent or unreliable, the informative pathway weakens (P⇢YP\!\dashrightarrow\!Y), and the spurious path without positional condition S→YS\!\to\!Y becomes comparatively strong. The model then defaults to biased numeric templates (e.g., over-predicting certain digits or repeating patterns) that are not supported by the input. In potential-outcome terms, the discrepancy
+S⁡(x)=Y⁡(x,pbad)−Y⁡(x,pgood)S(x)\;=\;Y(x,p_{\text{bad}})\;-\;Y(x,p_{\text{good}})
+captures the shift in predictions attributable to the loss of positional grounding, with pgoodp_{\text{good}} denoting a reliable PE setting and pbadp_{\text{bad}} an out-of-range or missing one.
+This causal view clarifies the failure mode: positional degradation amplifies the non-causal route from SS to YY, yielding directional digit errors even when XX is unchanged. It also motivates our methodology: design a test-time procedure that (i) exposes the spurious route when PP is weak and (ii) suppresses its influence on the numeric tokens while preserving the informative flow from XX (and any usable PP).
+3.2 Bias analysis
+Given the causal graph in Figure 2, weakening the positional encodings PP increases the relative influence of spurious correlations SS on the output YY, distorting the digit distribution and pulling predictions away from the evidence in XX. We therefore propose a two-part intervention: (i) expose the spurious route when PP is weak by constructing counterfactual views that differ only in positional cues, and (ii) suppress its impact on numeric tokens while preserving the informative flow from XX (and any usable PP). Before presenting the intervention, we first establish empirically that the resulting errors are directional rather than random, confirming that the S→YS\!\to\!Y pathway is measurable.
+Let xx be an input of size (Wx,Hx)(W_{x},H_{x}) with diagonal dx=Wx2+Hx2d_{x}=\sqrt{W_{x}^{2}+H_{x}^{2}} to normalize scale across images.
+Under shuffled PEs, we run the model on SS cases and compute pairwise distances
+d(i,j)​(x)=‖𝐲^(i)​(x)−𝐲^(j)​(x)‖2,1≤i<j≤S,d^{(i,j)}(x)=\big\|\hat{\mathbf{y}}^{(i)}(x)-\hat{\mathbf{y}}^{(j)}(x)\big\|_{2},\qquad 1\leq i<j\leq S,
+(1)
+then normalize as
+d~(i,j)​(x)=d(i,j)​(x)dx\tilde{d}^{(i,j)}(x)=\frac{d^{(i,j)}(x)}{d_{x}}.
+Pooling d~(i,j)​(x)\tilde{d}^{(i,j)}(x) over all inputs yields the shuffled-PE distance distribution 𝒫shuffle\mathcal{P}_{\text{shuffle}}, while normal PEs give 𝒫normal\mathcal{P}_{\text{normal}}.
+We compare their empirical means, against the scale-aware baseline μ0≈0.5214\mu_{0}\approx 0.5214 (Appendix C) to assess whether shuffled predictions collapse toward a small coordinate subset.
+Evidence of systematic, non-random bias is a clear left shift of 𝒫shuffle\mathcal{P}_{\text{shuffle}} toward zero relative to both μ0\mu_{0} (i.e., 𝔼⁡[d~]≪μ0\mathbb{E}[\tilde{d}]\ll\mu_{0}) and 𝒫normal\mathcal{P}_{\text{normal}}, indicating that predictions under shuffled PEs collapse to a few favored coordinates rather than dispersing as random fluctuations would.
+Figure 4 summarizes the distance statistics. Across both Qwen2.5-VL-3B and Qwen2.5-VL-7B, the diagonal-normalized average pairwise distance under shuffled positional encodings is consistently small (d~≈0.16\tilde{d}\approx 0.16),
+whereas the normal-PE condition exhibits substantially larger dispersion (d~≈0.40\tilde{d}\approx 0.40–0.440.44).
+This substantial gap, far exceeding the baseline dispersion of random uniform points, confirms that when positional encodings are disrupted the model outputs collapse to a small set of preferred coordinates rather than spreading randomly. The consistent pattern across model scales demonstrates that the observed systematic directional bias is an inherent property of the architecture rather than a size-related artifact.
+Figure 3:
+Diagonal-normalized average pairwise distance d~\tilde{d} between coordinate predictions under Normal PEs and Shuffled PEs.
+Figure 4:
+We obtain a position-unconditioned reference by shuffling visual positional encodings (left) and fuse it with the position-conditioned prediction (right).
+This conditional–unconditional contrast serves as negative evidence for digits, strengthening positional cues and suppressing spurious numeric patterns during decoding.
+Based on the empirical and causal analysis of systematic bias caused by missing positional encodings presented above, we propose a bias-reduction strategy that remains unchanged during training but is inserted during inference: Vision-PE Shuffle Guidance (VPSG). Inspired by classifier-free guidance (CFG) (Ho & Salimans, 2022), we mitigate the impact of directional bias from the perspective of probability distribution.
+Overall algorithm.
+VPSG runs one main route with normal visual positional encodings (PEs) and several auxiliary routes with randomly shuffled PEs. We let ctc_{t} denote the position-conditioned context at step tt, which primarily captures the positional encoding information from the visual encoder that provides spatial grounding for decoding.
+At each decoding step, we contrast the position-conditioned prediction pA​(v∣ct)p_{A}(v\mid c_{t}) from the main route with an aggregated, position-unconditioned reference pB​(v)p_{B}(v) formed by combining multiple shuffled routes.
+This contrast acts as negative evidence on digit tokens, while non-digit tokens (commas, spaces, brackets) remain untouched as shown in Figure 4.
+A finite-state machine (FSM) tracks whether the model is decoding the xx or yy coordinate and indicates when digit-specific guidance should be applied.
+This mechanism preserves the required [x,y][x,y] format throughout decoding and prevents structural errors that could arise from spurious tokens or misaligned guidance.
+Proposition 1 (VPSG token guidance).
+Let 𝒟⊂𝒱\mathcal{D}\subset\mathcal{V} denote the digit subset of the vocabulary and αt\alpha_{t} the step-wise guidance coefficient determined by the FSM.
+The VPSG-adjusted distribution satisfies
+pVPSG​(v∣ct)∝{exp⁡(log⁡pA​(v∣ct)−αt​ℓ~B​(v)),v∈𝒟,pA​(v∣ct),v∉𝒟,p_{\mathrm{VPSG}}(v\mid c_{t})\propto\begin{cases}\exp\!\big(\log p_{A}(v\mid c_{t})-\alpha_{t}\tilde{\ell}_{B}(v)\big),&v\in\mathcal{D},\\[3.0pt]
+p_{A}(v\mid c_{t}),&v\notin\mathcal{D},\end{cases}
+(2)
+where ℓ~B​(v)=log⁡pB​(v)\tilde{\ell}_{B}(v)=\log p_{B}(v) is the log-probability of the position-unconditioned reference.
+This compact formula shows that VPSG subtracts a scaled log-probability from the digit logits of the main route while leaving non-digit tokens unchanged.
+The aggregation of pB​(v)p_{B}(v) and the scheduling of αt\alpha_{t} are described below; the proof that this form is equivalent to the classifier-free guidance view is provided in Appendix A.
+Seeds aggregation.
+The auxiliary reference pB​(v)p_{B}(v) is estimated by running the model on SS independent PE-shuffled seeds and aggregating their log-probabilities,
+ℓ~B​(v)=𝔼σ∼ν​[log⁡pB(σ)​(v)]=∫σ∈𝒮log⁡pB(σ)​(v)​𝑑ν​(σ)≈1S​∑s=1Slog⁡pB(s)​(v),\tilde{\ell}_{B}(v)\;=\;\mathbb{E}_{\sigma\sim\nu}\!\left[\,\log p_{B}^{(\sigma)}(v)\,\right]\;=\;\int_{\sigma\in\mathcal{S}}\log p_{B}^{(\sigma)}(v)\,d\nu(\sigma)\;\approx\;\frac{1}{S}\sum_{s=1}^{S}\log p_{B}^{(s)}(v),
+(3)
+where σ\sigma indexes shuffle transformations and ν\nu is the (uniform) seed measure.
+This log-space (geometric mean) aggregation provides a robust Monte-Carlo estimate of the position-unconditioned bias prior.
+Coefficient decay.
+To focus correction on the most influential digits, VPSG uses a geometric decay on αt\alpha_{t} along the decoding sequence.
+Let kxk_{x} (resp. kyk_{y}) be the index of the current digit within xx (resp. yy).
+The guidance coefficient is scheduled as
+αt={α​decaykx−1,decoding the ​kx​-th digit of ​x,α,first digit of ​y,α​decayky−1,decoding the ​ky​-th digit of ​y,\alpha_{t}=\begin{cases}\alpha\,\mathrm{decay}^{\,k_{x}-1},&\text{decoding the }k_{x}\text{-th digit of }x,\\[2.0pt]
+\alpha,&\text{first digit of }y,\\[2.0pt]
+\alpha\,\mathrm{decay}^{\,k_{y}-1},&\text{decoding the }k_{y}\text{-th digit of }y,\end{cases}
+(4)
+where 0<decay<10<\mathrm{decay}<1.
+This schedule emphasizes the most significant digits, resets at the first yy digit, and then tapers off, preventing over-regularization on later positions.
+Summary.
+Overall, VPSG addresses this by effectively “asking twice”: once with the normal input and again with a version whose visual positions are shuffled. Disagreements from the shuffled view act as negative evidence, gently steering the model’s digit choices back toward what the image supports, while leaving non-digit text untouched. The result is a simple, plug-in procedure at inference time that stabilizes [x,y][x,y] predictions without changing training or model architecture.
+It is model-agnostic, requires no retraining, and exactly recovers the baseline behavior when αt→0\alpha_{t}\to 0. The complete VPSG algorithm is shown in Appendix B. As shown in Figure 5, we provide a qualitative example of VPSG on a Screenspot-Pro case.
+Figure 5:
+Qualitative example of VPSG on a Screenspot-Pro case.
+The base model with normal positional encodings produces a biased coordinate prediction ([1024, 512]), while the same model with shuffled positional encodings collapses to a similar but consistently biased point ([1024, 356]), revealing a directional position-unconditioned tendency. Applying VPSG corrects this bias and outputs the accurate ground truth ([659, 857]) by integrating negative evidence from multiple shuffled runs and reweighting digit logits, demonstrating how VPSG suppresses spurious patterns and restores faithful spatial grounding.
+4 Experiments
+In this section, we evaluate the performance of VPSG when applied to VLLMs. As a plug-and-play, training-free approach, VPSG enhances existing models on coordinate prediction tasks, providing consistent improvements without requiring additional fine-tuning or architectural modifications.
+4.1 Experimental settings
+Datasets.
+We adopt the widely used ScreenSpot-Pro dataset to evaluate the performance of our method. ScreenSpot-Pro is a recently released benchmark for GUI grounding, consisting of real high-resolution desktop screenshots spanning 23 applications (e.g., VSCode, Photoshop, AutoCAD), five industry categories, and three operating systems, with precise annotations provided by professional users as shown in Table 1. The dataset is particularly challenging because target UI elements are often extremely small, occupying on average only 0.07% of the screen area. We evaluate VPSG under this realistic, high-resolution, and difficult setting to validate its effectiveness in improving localization accuracy.
+Table 1: Category and UI-type counts in Screenspot-Pro.
+Group
+Text
+Icon
+Total
+CAD
+197
+64
+261
+Creative
+198
+143
+341
+Dev
+154
+145
+299
+OS
+107
+89
+196
+Office
+177
+53
+230
+Scientific
+144
+110
+254
+All
+977
+604
+1581
+Models.
+We adopt Qwen2.5-VL (Bai et al., 2025) as our test model, including configurations with 3B and 7B parameters. Unlike previous multimodal models, Qwen2.5-VL can directly output absolute coordinates for grounding tasks without requiring additional post-hoc alignment. The Qwen2.5-VL series has demonstrated strong performance on standard coordinate prediction benchmarks, even surpassing some specialized GUI models. However, its performance still degrades considerably in high-resolution scenarios, highlighting the inherent difficulty of precise localization under long-context inputs.
+Method configurations.
+For all evaluated models, we adopt greedy decoding to eliminate randomness and ensure reproducibility.
+For our proposed method VPSG, we identify the optimal hyperparameter configuration through grid search,
+with α=0.55\alpha=0.55 and decay=0.4\text{decay}=0.4.
+Compared models
+We evaluate a broad spectrum of multimodal models with
+an emphasis on general-purpose and training-free baselines, which are particularly important for assessing the effectiveness of our method without additional fine-tuning.
+This group includes Qwen-VL-7B (Bai et al., 2023), GPT-4o (Achiam et al., 2023), Qwen2-VL-7B (Wang et al., 2024), and MiniCPM-V, representing strong
+generalist vision–language models that can directly perform coordinate prediction. We further include the recent Qwen2.5-VL family (3B and 7B), which serves as our primary base model for applying VPSG and can output absolute coordinates without post-hoc alignment.
+For completeness, we also report results of specialized GUI action models such as SeeClick (Cheng et al., 2024), OS-Atlas-4B/7B (Wu et al., 2024), ShowUI-2B (Lin et al., 2024), CogAgent (Hong et al., 2024), Aria-GUI (Yang et al., 2024), and UGround-7B (Gou et al., 2025), which are trained or
+instruction-tuned specifically for interface grounding tasks.
+This diverse set of baselines enables a comprehensive evaluation of VPSG across both generic and domain-specific settings.
+The experimental results of the above model are cited from Li et al. (2025).
+4.2 Overall performance
+Table 2: Screen-based grounding results on Screenspot-Pro. Each column reports the evaluation score (higher is better) for a category (Development, Creative, CAD, Scientific, Office, OS) split by UI type (Text/Icon); Avg is the unweighted mean across all columns. Rows marked “ + VPSG” apply our test-time guidance to the same base model, isolating the effect of the method. The best result among generalist models or training-free methods are highlighted in bold font.
+Model
+Development
+Creative
+CAD
+Scientific
+Office
+OS
+Avg
+Text
+Icon
+Text
+Icon
+Text
+Icon
+Text
+Icon
+Text
+Icon
+Text
+Icon
+Trained GUI Action Models
+SeeClick
+0.6
+0.0
+1.0
+0.0
+2.5
+0.0
+3.5
+0.0
+1.1
+0.0
+2.8
+0.0
+1.1
+OS-Atlas-4B
+7.1
+0.0
+3.0
+1.4
+2.0
+0.0
+9.0
+5.5
+5.1
+3.8
+5.6
+0.0
+3.7
+ShowUI-2B
+16.9
+1.4
+9.1
+0.0
+2.5
+0.0
+13.2
+7.3
+15.3
+7.5
+10.3
+2.2
+7.7
+CogAgent-18B
+14.914.9
+0.70.7
+9.69.6
+0.00.0
+7.17.1
+3.13.1
+22.222.2
+1.81.8
+13.013.0
+0.00.0
+5.65.6
+0.00.0
+7.7
+Aria-GUI
+16.216.2
+0.00.0
+23.723.7
+2.12.1
+7.67.6
+1.61.6
+27.127.1
+6.46.4
+20.320.3
+1.91.9
+4.7
+0.00.0
+11.3
+UGround-7B
+26.6
+2.12.1
+27.327.3
+2.82.8
+14.2
+1.61.6
+31.931.9
+2.72.7
+31.631.6
+11.311.3
+17.8
+0.00.0
+16.5
+OS-Atlas-7B
+33.1
+1.41.4
+28.8
+2.82.8
+12.212.2
+4.7
+37.5
+7.37.3
+33.9
+5.75.7
+27.1
+4.5
+18.9
+Generalist Models or Training-free Methods
+Qwen-VL-7B
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.7
+0.0
+0.0
+0.0
+0.0
+0.0
+0.1
+GPT-4o
+1.3
+0.0
+1.0
+0.0
+2.0
+0.0
+2.1
+0.0
+1.1
+0.0
+0.0
+0.0
+0.8
+Qwen2-VL-7B
+2.6
+0.0
+1.5
+0.0
+0.5
+0.0
+6.3
+0.0
+3.4
+1.9
+0.9
+0.0
+1.6
+MiniCPM-V
+7.1
+0.0
+2.0
+0.0
+4.1
+1.6
+8.3
+0.0
+2.8
+3.8
+3.7
+1.1
+3.0
+Qwen2.5-VL-3B
+18.8
+1.4
+16.7
+1.4
+8.1
+1.6
+20.8
+5.5
+24.3
+1.9
+16.8
+3.4
+11.6
+Qwen2.5-VL-3B + VPSG
+24.7
+2.1
+20.2
+2.1
+10.2
+1.6
+21.5
+5.5
+26.6
+5.7
+15.9
+1.1
+13.3
+Qwen2.5-VL-7B
+37.7
+2.8
+19.7
+2.1
+7.6
+1.6
+31.3
+5.5
+41.8
+11.3
+29.9
+10.1
+18.5
+Qwen2.5-VL-7B + VPSG
+40.9
+2.1
+19.8
+2.8
+8.1
+1.6
+30.6
+5.6
+43.5
+13.2
+29.9
+10.1
+19.1
+As shown in Table 2, VPSG consistently improves both base models on the Screenspot-Pro benchmark when measured by percentage correct. On Qwen2.5-VL-3B, the overall percentage correct increases from 11.6 to 13.3, a gain of 1.7 percentage points. Clear improvements appear in multiple text-oriented categories, including Development (Text) from 18.8 to 24.7 (+5.9 points), Creative (Text) from 16.7 to 20.2 (+3.5 points), CAD (Text) from 8.1 to 10.2 (+2.1 points), Office (Text) from 24.3 to 26.6 (+2.3 points)), and Scientific (Text) from 20.8 to 21.5 (+0.7 points). Several icon-oriented settings also benefit; for example, Development (Icon) rises from 1.4 to 2.1 (+0.7 points), Office (Icon) rises from 1.9 to 5.7 (+3.8 points) indicating that mitigating position-induced bias can stabilize landmark selection even when the target is an icon rather than text.
+For Qwen2.5-VL-7B, the overall percentage correct increases from 18.5 to 19.1 (+0.6 points). Notable gains include Development (Text) from 37.7 to 40.9 (+3.2 points) and Office (Text) from 41.8 to 43.5 (+1.7 points), along with improvements in icon-oriented cases such as Office (Icon) from 11.3 to 13.2 (+1.9 points). Taken together, these results show that test-time negative-evidence guidance yields reliable lifts across model scales and interaction modes, enhancing both text-oriented and icon-oriented behaviors by suppressing spurious effects that emerge when positional signals are unreliable.
+Our results underscore that a causal analysis of error pathways is essential for effectively mitigating coordinate prediction bias. By explicitly contrasting a position-conditioned distribution—obtained from normal positional encodings—with a position-unconditioned reference—derived from shuffled positional encodings—VPSG highlights and strengthens the influence of positional information in the final token distribution, while suppressing the position-agnostic tendencies that drive systematic, directional errors.
+This comparison clarifies how positional cues causally affect output coordinates and ensures that guidance is grounded in a measurable contrast rather than heuristic adjustment. Because the intervention operates solely on the final-layer logits at test time, it remains fully compatible with pretrained MLLMs and introduces no additional training cost, architectural changes, or data requirements. Consequently, VPSG serves as a model-agnostic, plug-in method applicable to a broad range of coordinate-prediction tasks, enabling consistent and reproducible improvements across datasets and resolutions without modifying the existing training pipeline.
+4.3 Ablation study
+Table 3: Ablation study results. The analyzed method components include:
+(i) seeds aggregation, the robust log-space aggregation of multiple PE-shuffled auxiliary routes (w/o seeds aggregation: use a single seed, no aggregation); and
+(ii) coefficient decay, the position-aware geometric decay of the digit-only guidance weight with a reset at the first yy digit (w/o coefficient decay: use a constant guidance weight across digits).
+Qwen2.5-VL-3B
+Setting
+Avg
+Δ\Delta
+VPSG
+13.3
+–
+w/o Seeds aggregation
+13.0
+↓\downarrow 0.3
+w/o Coefficient decay
+11.9
+↓\downarrow 1.4
+Qwen2.5-VL-7B
+Setting
+Avg
+Δ\Delta
+VPSG
+19.1
+–
+w/o Seeds aggregation
+18.6
+↓\downarrow 0.5
+w/o Coefficient decay
+18.2
+↓\downarrow 0.9
+We perform ablations on Screenspot-Pro (percentage correct) to quantify the contribution of each VPSG component while holding all other settings fixed (same base model and decoding strategy).
+4.3.1 seeds aggregation
+The first component is seeds aggregation: instead of relying on a single PE-shuffled auxiliary route, the full method aggregates multiple routes in log space (geometric mean). Removing this component (w/o seeds aggregation) leads to a drop in performance. The rationale is that, although the errors induced by missing positional encodings are directional, any single random shuffle yields only a noisy sample from the underlying bias distribution and may not be representative. Aggregating across multiple seeds provides a more faithful estimate of the expectation of this position-unconditioned bias prior.
+This multi-path aggregation better recovers the output distribution absent positional conditioning.
+4.3.2 Coefficient decay
+The second key component of VPSG is coefficient decay.
+Table 3 highlights the importance of this design:
+removing coefficient decay (w/o coefficient decay) reduces the average percentage correct from
+13.3 →\rightarrow 11.9 (↓\downarrow 1.4) on Qwen2.5-VL-3B and from
+19.1 →\rightarrow 18.2 (↓\downarrow 0.9) on Qwen2.5-VL-7B.
+These drops are substantially larger than those caused by removing seeds aggregation,
+underscoring that position-aware scheduling is a primary driver of VPSG’s gains.
+Beyond its positional-error weighting, coefficient decay also compensates for
+confidence attenuation along the digit sequence.
+Empirically, we observe that when the model predicts a multi-digit coordinate such as
+[1234,567][1234,567], the confidence (logit margin between the top token and the runner-up)
+for the first digit is typically higher than for later digits:
+This progressive narrowing of logit margins indicates that later tokens are intrinsically more ambiguous, making them more sensitive to over-regularization.
+Applying a constant guidance coefficient would over-penalize these low-confidence positions,
+potentially distorting fine-scale digits or even the [x,y][x,y] template.
+By geometrically decaying αt\alpha_{t} and resetting at the start of the yy coordinate,
+VPSG aligns the guidance strength with both positional importance and intrinsic confidence:
+it strongly constrains the high-order digits that dominate absolute error, while reducing the weight
+where the model’s own uncertainty is higher and logit gaps are small.
+This targeted scheduling suppresses position-unconditioned biases without compromising the natural
+fine-grained structure of the output.
+Taken together, these analyses confirm that coefficient decay is essential for balancing guidance strength with positional and confidence-based considerations, enabling VPSG to suppress position-unconditioned biases effectively.
+5 Conclusion
+We presented Vision-PE Shuffle Guidance (VPSG), a training-free and model-agnostic test-time method to improve coordinate prediction in multimodal large language models.
+Through a causal analysis of positional encodings, we showed that high-resolution inputs or perturbed visual positional embeddings induce systematic directional, position-unconditioned biases that cannot be eliminated by standard decoding. VPSG addresses this issue by running auxiliary decoding routes with shuffled positional encodings, using their outputs as negative evidence to suppress spurious numeric patterns while leaving non-digit tokens
+untouched. Key design elements such as multi-seed aggregation and position-aware coefficient decay—validated by ablation studies—ensure stable guidance that adapts to the natural confidence hierarchy of digit sequences. Extensive experiments on the ScreenSpot-Pro benchmark demonstrate consistent gains across model scales, including the strong Qwen2.5-VL series, without any fine-tuning or architectural changes. Our findings highlight the critical role of robust positional encoding for fine-grained spatial reasoning, and suggest that VPSG can serve as a practical plug-in for a wide range of grounding and coordinate-sensitive tasks in future vision–language systems.
+References
+Achiam et al. (2023)
+Josh Achiam, Steven Adler, Sandhini Agarwal, Lama Ahmad, Ilge Akkaya, Florencia Leoni Aleman, Diogo Almeida, Janko Altenschmidt, Sam Altman, Shyamal Anadkat, et al.
+Gpt-4 technical report.
+arXiv preprint arXiv:2303.08774, 2023.
+Alayrac et al. (2022)
+Jean-Baptiste Alayrac, Jeff Donahue, Pauline Luc, Antoine Miech, Iain Barr, Yana Hasson, Karel Lenc, Arthur Mensch, Katherine Millican, Malcolm Reynolds, et al.
+Flamingo: a visual language model for few-shot learning.
+Advances in neural information processing systems, 35:23716–23736, 2022.
+Almazrouei et al. (2023)
+Ebtesam Almazrouei, Hamza Alobeidli, Abdulaziz Alshamsi, Alessandro Cappelli, Ruxandra Cojocaru, Merouane Debbah, Etienne Goffinet, Daniel Heslow, Julien Launay, Quentin Malartic, Badreddine Noune, Baptiste Pannier, and Guilherme Penedo.
+Falcon-40B: an open large language model with state-of-the-art performance.
+2023.
+Bai et al. (2023)
+Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan, Wenbin Ge, Yu Han, Fei Huang, et al.
+Qwen technical report.
+arXiv preprint arXiv:2309.16609, 2023.
+Bai et al. (2025)
+Shuai Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, Sibo Song, Kai Dang, Peng Wang, Shijie Wang, Jun Tang, Humen Zhong, Yuanzhi Zhu, Mingkun Yang, Zhaohai Li, Jianqiang Wan, Pengfei Wang, Wei Ding, Zheren Fu, Yiheng Xu, Jiabo Ye, Xi Zhang, Tianbao Xie, Zesen Cheng, Hang Zhang, Zhibo Yang, Haiyang Xu, and Junyang Lin.
+Qwen2.5-vl technical report, 2025.
+URL https://arxiv.org/abs/2502.13923.
+Chen et al. (2025a)
+Xi Chen, Shiyang Zhou, Muqi Huang, Jiaxu Feng, Yun Xiong, Kun Zhou, Biao Yang, Yuhui Zhang, Huishuai Bao, Sijia Peng, et al.
+A 2d semantic-aware position encoding for vision transformers.
+arXiv preprint arXiv:2505.09466, 2025a.
+Chen et al. (2025b)
+Zhanpeng Chen, Mingxiao Li, Ziyang Chen, Nan Du, Xiaolong Li, and Yuexian Zou.
+Advancing general multimodal capability of vision-language models with pyramid-descent visual position encoding.
+arXiv preprint arXiv:2501.10967, 2025b.
+Cheng et al. (2024)
+Kanzhi Cheng, Qiushi Sun, Yougang Chu, Fangzhi Xu, Yantao Li, Jianbing Zhang, and Zhiyong Wu.
+Seeclick: Harnessing gui grounding for advanced visual gui agents.
+arXiv preprint arXiv:2401.10935, 2024.
+Chiang et al. (2023)
+Wei-Lin Chiang, Zhuohan Li, Zi Lin, Ying Sheng, Zhanghao Wu, Hao Zhang, Lianmin Zheng, Siyuan Zhuang, Yonghao Zhuang, Joseph E. Gonzalez, Ion Stoica, and Eric P. Xing.
+Vicuna: An open-source chatbot impressing gpt-4 with 90%* chatgpt quality, March 2023.
+URL https://lmsys.org/blog/2023-03-30-vicuna/.
+Dosovitskiy et al. (2020)
+Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al.
+An image is worth 16x16 words: Transformers for image recognition at scale.
+arXiv preprint arXiv:2010.11929, 2020.
+Furuta et al. (2023)
+Hiroki Furuta, Kuang-Huei Lee, Ofir Nachum, Yutaka Matsuo, Aleksandra Faust, Shixiang Shane Gu, and Izzeddin Gur.
+Multimodal web navigation with instruction-finetuned foundation models.
+arXiv preprint arXiv:2305.11854, 2023.
+Gao et al. (2024)
+Muhan Gao, TaiMing Lu, Kuai Yu, Adam Byerly, and Daniel Khashabi.
+Insights into llm long-context failures: when transformers know but don’t tell.
+In Findings of the Association for Computational Linguistics: EMNLP 2024, pp. 7611–7625, 2024.
+Ge et al. (2024)
+Junqi Ge, Ziyi Chen, Jintao Lin, Jinguo Zhu, Xihui Liu, Jifeng Dai, and Xizhou Zhu.
+V2pe: Improving multimodal long-context capability of vision-language models with variable visual position encoding.
+arXiv preprint arXiv:2412.09616, 2024.
+Google (2023)
+Google.
+An important next step on our ai journey, 2023.
+URL https://blog.google/technology/ai/bard-google-ai-search-updates/.
+Gou et al. (2025)
+Boyu Gou, Ruohan Wang, Boyuan Zheng, Yanan Xie, Cheng Chang, Yiheng Shu, Huan Sun, and Yu Su.
+Navigating the digital world as humans do: Universal visual grounding for GUI agents.
+In The Thirteenth International Conference on Learning Representations, 2025.
+URL https://openreview.net/forum?id=kxnoqaisCT.
+Heo et al. (2024)
+Byeongho Heo, Song Park, Dongyoon Han, and Sangdoo Yun.
+Rotary position embedding for vision transformer.
+In European Conference on Computer Vision, pp. 289–305. Springer, 2024.
+Ho & Salimans (2022)
+Jonathan Ho and Tim Salimans.
+Classifier-free diffusion guidance.
+arXiv preprint arXiv:2207.12598, 2022.
+Hong et al. (2024)
+Wenyi Hong, Weihan Wang, Qingsong Lv, Jiazheng Xu, Wenmeng Yu, Junhui Ji, Yan Wang, Zihan Wang, Yuxiao Dong, Ming Ding, et al.
+Cogagent: A visual language model for gui agents.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 14281–14290, 2024.
+Hsieh et al. (2024)
+Cheng-Yu Hsieh, Yung-Sung Chuang, Chun-Liang Li, Zifeng Wang, Long T Le, Abhishek Kumar, James Glass, Alexander Ratner, Chen-Yu Lee, Ranjay Krishna, et al.
+Found in the middle: Calibrating positional attention bias improves long context utilization.
+arXiv preprint arXiv:2406.16008, 2024.
+Hua et al. (2024)
+Ermo Hua, Che Jiang, Xingtai Lv, Kaiyan Zhang, Youbang Sun, Yuchen Fan, Xuekai Zhu, Biqing Qi, Ning Ding, and Bowen Zhou.
+Fourier position embedding: Enhancing attention’s periodic extension for length generalization.
+arXiv preprint arXiv:2412.17739, 2024.
+Lee et al. (2025)
+Wonjun Lee, Bumsub Ham, and Suhyun Kim.
+Maximizing the position embedding for vision transformers with global average pooling.
+In Proceedings of the AAAI Conference on Artificial Intelligence, volume 39, pp. 18154–18162, 2025.
+Li et al. (2023)
+Chunyuan Li, Cliff Wong, Sheng Zhang, Naoto Usuyama, Haotian Liu, Jianwei Yang, Tristan Naumann, Hoifung Poon, and Jianfeng Gao.
+Llava-med: Training a large language-and-vision assistant for biomedicine in one day.
+Advances in Neural Information Processing Systems, 36:28541–28564, 2023.
+Li et al. (2025)
+Kaixin Li, Ziyang Meng, Hongzhan Lin, Ziyang Luo, Yuchen Tian, Jing Ma, Zhiyong Huang, and Tat-Seng Chua.
+Screenspot-pro: Gui grounding for professional high-resolution computer use.
+arXiv preprint arXiv:2504.07981, 2025.
+Liao et al. (2025)
+Wenhui Liao, Jiapeng Wang, Hongliang Li, Chengyu Wang, Jun Huang, and Lianwen Jin.
+Doclayllm: An efficient multi-modal extension of large language models for text-rich document understanding.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pp. 4038–4049, 2025.
+Lin et al. (2024)
+Kevin Qinghong Lin, Linjie Li, Difei Gao, Zhengyuan Yang, Shiwei Wu, Zechen Bai, Weixian Lei, Lijuan Wang, and Mike Zheng Shou.
+Showui: One vision-language-action model for gui visual agent.
+arXiv preprint arXiv:2411.17465, 2024.
+Liu et al. (2023a)
+Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee.
+Visual instruction tuning.
+Advances in neural information processing systems, 36:34892–34916, 2023a.
+Liu et al. (2023b)
+Shilong Liu, Hao Cheng, Haotian Liu, Hao Zhang, Feng Li, Tianhe Ren, Xueyan Zou, Jianwei Yang, Hang Su, Jun Zhu, Lei Zhang, Jianfeng Gao, and Chunyuan Li.
+Llava-plus: Learning to use tools for creating multimodal agents, 2023b.
+URL https://arxiv.org/abs/2311.05437.
+Lu et al. (2024)
+Yadong Lu, Jianwei Yang, Yelong Shen, and Ahmed Awadallah.
+Omniparser for pure vision based gui agent.
+arXiv preprint arXiv:2408.00203, 2024.
+Ma et al. (2023)
+Xinyin Ma, Gongfan Fang, and Xinchao Wang.
+Llm-pruner: On the structural pruning of large language models.
+Advances in neural information processing systems, 36:21702–21720, 2023.
+MosaicML (2023)
+MosaicML.
+Introducing mpt-7b: A new standard for open-source, commercially usable llms, 2023.
+URL www.mosaicml.com/blog/mpt-7b.
+Accessed: 2023-05-05.
+OpenAI (2022)
+OpenAI.
+OpenAI: Introducing ChatGPT, 2022.
+URL https://openai.com/blog/chatgpt.
+Pearl (2018)
+Judea Pearl.
+Causal and counterfactual inference.
+The Handbook of Rationality, pp. 1–41, 2018.
+Pearl et al. (2016)
+Judea Pearl, Madelyn Glymour, and Nicholas P Jewell.
+Causal inference in statistics: A primer.
+John Wiley & Sons, 2016.
+Qi et al. (2025)
+Jianing Qi, Jiawei Liu, Hao Tang, and Zhigang Zhu.
+Beyond semantics: Rediscovering spatial awareness in vision-language models.
+arXiv preprint arXiv:2503.17349, 2025.
+Su et al. (2024)
+Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu.
+Roformer: Enhanced transformer with rotary position embedding.
+Neurocomputing, 568:127063, 2024.
+Tang et al. (2020)
+Kaihua Tang, Yulei Niu, Jianqiang Huang, Jiaxin Shi, and Hanwang Zhang.
+Unbiased scene graph generation from biased training.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pp. 3716–3725, 2020.
+Tao et al. (2025)
+Xingjian Tao, Yiwei Wang, Yujun Cai, Zhicheng Yang, and Jing Tang.
+Understanding gui agent localization biases through logit sharpness.
+arXiv preprint arXiv:2506.15425, 2025.
+Team et al. (2023)
+Gemini Team, Rohan Anil, Sebastian Borgeaud, Jean-Baptiste Alayrac, Jiahui Yu, Radu Soricut, Johan Schalkwyk, Andrew M Dai, Anja Hauth, Katie Millican, et al.
+Gemini: a family of highly capable multimodal models.
+arXiv preprint arXiv:2312.11805, 2023.
+Touvron et al. (2023a)
+Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al.
+Llama: Open and efficient foundation language models.
+arXiv preprint arXiv:2302.13971, 2023a.
+Touvron et al. (2023b)
+Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov, Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al.
+Llama 2: Open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288, 2023b.
+Wang et al. (2024)
+Peng Wang, Shuai Bai, Sinan Tan, Shijie Wang, Zhihao Fan, Jinze Bai, Keqin Chen, Xuejing Liu, Jialin Wang, Wenbin Ge, et al.
+Qwen2-vl: Enhancing vision-language model’s perception of the world at any resolution.
+arXiv preprint arXiv:2409.12191, 2024.
+Wang et al. (2022)
+Yiwei Wang, Muhao Chen, Wenxuan Zhou, Yujun Cai, Yuxuan Liang, Dayiheng Liu, Baosong Yang, Juncheng Liu, and Bryan Hooi.
+Should we rely on entity mentions for relation extraction? debiasing relation extraction with counterfactual analysis.
+arXiv preprint arXiv:2205.03784, 2022.
+Wang et al. (2025)
+Ziqi Wang, Hanlin Zhang, Xiner Li, Kuan-Hao Huang, Chi Han, Shuiwang Ji, Sham M. Kakade, Hao Peng, and Heng Ji.
+Eliminating position bias of language models: A mechanistic approach, 2025.
+URL https://arxiv.org/abs/2407.01100.
+Wu et al. (2025)
+Hang Wu, Hongkai Chen, Yujun Cai, Chang Liu, Qingwen Ye, Ming-Hsuan Yang, and Yiwei Wang.
+Dimo-gui: Advancing test-time scaling in gui grounding via modality-aware visual reasoning.
+arXiv preprint arXiv:2507.00008, 2025.
+Wu et al. (2024)
+Zhiyong Wu, Zhenyu Wu, Fangzhi Xu, Yian Wang, Qiushi Sun, Chengyou Jia, Kanzhi Cheng, Zichen Ding, Liheng Chen, Paul Pu Liang, et al.
+Os-atlas: A foundation action model for generalist gui agents.
+arXiv preprint arXiv:2410.23218, 2024.
+Xu et al. (2025)
+Jin Xu, Zhifang Guo, Jinzheng He, Hangrui Hu, Ting He, Shuai Bai, Keqin Chen, Jialin Wang, Yang Fan, Kai Dang, Bin Zhang, Xiong Wang, Yunfei Chu, and Junyang Lin.
+Qwen2.5-omni technical report, 2025.
+URL https://arxiv.org/abs/2503.20215.
+Yang et al. (2024)
+Yuhao Yang, Yue Wang, Dongxu Li, Ziyang Luo, Bei Chen, Chao Huang, and Junnan Li.
+Aria-ui: Visual grounding for gui instructions.
+arXiv preprint arXiv:2412.16256, 2024.
+Yang et al. (2023)
+Zhengyuan Yang, Linjie Li, Kevin Lin, Jianfeng Wang, Chung-Ching Lin, Zicheng Liu, and Lijuan Wang.
+The dawn of lmms: Preliminary explorations with gpt-4v (ision).
+arXiv preprint arXiv:2309.17421, 9(1):1, 2023.
+Yen et al. (2024)
+Howard Yen, Tianyu Gao, and Danqi Chen.
+Long-context language modeling with parallel context encoding, 2024.
+URL https://arxiv.org/abs/2402.16617.
+Yu et al. (2025)
+Hao Yu, Tangyu Jiang, Shuning Jia, Shannan Yan, Shunning Liu, Haolong Qian, Guanghao Li, Shuting Dong, and Chun Yuan.
+Comrope: Scalable and robust rotary position embedding parameterized by trainable commuting angle matrices.
+In Proceedings of the Computer Vision and Pattern Recognition Conference, pp. 4508–4517, 2025.
+Zhang et al. (2024)
+Yi-Fan Zhang, Qingsong Wen, Chaoyou Fu, Xue Wang, Zhang Zhang, Liang Wang, and Rong Jin.
+Beyond llava-hd: Diving into high-resolution large multimodal models.
+arXiv preprint arXiv:2406.08487, 2024.
+Appendix A Proof of Proposition (VPSG token guidance)
+Setup.
+Let 𝒱\mathcal{V} be the vocabulary and 𝒟⊂𝒱\mathcal{D}\subset\mathcal{V} the digit subset.
+At decoding step tt, denote by pA​(v∣ct)p_{A}(v\mid c_{t}) the position-conditioned (main-route) distribution and by pB​(v)p_{B}(v) the position-unconditioned reference obtained from PE-shuffled auxiliary routes.
+Write ℓA​(v∣ct)=log⁡pA​(v∣ct)\ell_{A}(v\mid c_{t})=\log p_{A}(v\mid c_{t}) and ℓ~B​(v)=log⁡pB​(v)\tilde{\ell}_{B}(v)=\log p_{B}(v).
+We assume:
+(i) the same logits processors are applied to both routes before any guidance;
+(ii) guidance acts only at the final-layer logits; and
+(iii) decoding is greedy, i.e., depends on the arg⁡max\arg\max over logits.
+CFG form.
+Consider the (digit-only) classifier-free guidance (CFG) mixing:
+pCFG​(v∣ct)∝{pA​(v∣ct) 1+λtpB​(v)λt,v∈𝒟,pA​(v∣ct),v∉𝒟,p_{\mathrm{CFG}}(v\mid c_{t})\;\propto\;\begin{cases}\dfrac{p_{A}(v\mid c_{t})^{\,1+\lambda_{t}}}{p_{B}(v)^{\,\lambda_{t}}},&v\in\mathcal{D},\\[6.0pt]
+p_{A}(v\mid c_{t}),&v\notin\mathcal{D},\end{cases}
+(5)
+with normalization constant ZCFG​(ct)Z_{\mathrm{CFG}}(c_{t}) implicit over v∈𝒱v\in\mathcal{V}.
+Taking logs for v∈𝒟v\in\mathcal{D},
+log⁡pCFG​(v∣ct)=(1+λt)​ℓA​(v∣ct)−λt​ℓ~B​(v)−log⁡ZCFG​(ct).\log p_{\mathrm{CFG}}(v\mid c_{t})=(1+\lambda_{t})\,\ell_{A}(v\mid c_{t})-\lambda_{t}\,\tilde{\ell}_{B}(v)-\log Z_{\mathrm{CFG}}(c_{t}).
+(6)
+Digit-only positive affine rescaling.
+Define, for v∈𝒟v\in\mathcal{D},
+ψt​(v)=11+λt​(log⁡pCFG​(v∣ct)+log⁡ZCFG​(ct))=ℓA​(v∣ct)−λt1+λt⏟αt​ℓ~B​(v).\psi_{t}(v)\;=\;\frac{1}{1+\lambda_{t}}\Big(\log p_{\mathrm{CFG}}(v\mid c_{t})+\log Z_{\mathrm{CFG}}(c_{t})\Big)\;=\;\ell_{A}(v\mid c_{t})\;-\;\underbrace{\frac{\lambda_{t}}{1+\lambda_{t}}}_{\alpha_{t}}\,\tilde{\ell}_{B}(v).
+(7)
+For v∉𝒟v\notin\mathcal{D}, keep ψt​(v)=log⁡pA​(v∣ct)\psi_{t}(v)=\log p_{A}(v\mid c_{t}) (no change).
+Lemma 1 (Argmax invariance under positive affine transforms).
+Let S⊆𝒱S\subseteq\mathcal{V} and a>0a>0, b∈ℝb\in\mathbb{R}.
+For any scores {u⁡(v)}v∈S\{u(v)\}_{v\in S}, arg⁡maxv∈S⁡u⁡(v)=arg⁡maxv∈S​{a​u​(v)+b}\arg\max_{v\in S}u(v)=\arg\max_{v\in S}\{a\,u(v)+b\}.
+Proof.
+For a>0a>0, u⁡(v1)≥u⁡(v2)⇔a​u​(v1)+b≥a​u​(v2)+bu(v_{1})\geq u(v_{2})\iff a\,u(v_{1})+b\geq a\,u(v_{2})+b.
+∎
+Applying the lemma to equation 6 with a=11+λta=\tfrac{1}{1+\lambda_{t}} and b=log⁡ZCFG​(ct)1+λtb=\tfrac{\log Z_{\mathrm{CFG}}(c_{t})}{1+\lambda_{t}} restricted to v∈𝒟v\in\mathcal{D} shows that
+arg⁡maxv∈𝒟⁡log⁡pCFG​(v∣ct)=arg⁡maxv∈𝒟​ψt​(v)=arg⁡maxv∈𝒟⁡(ℓA​(v∣ct)−αt​ℓ~B​(v)).\arg\max_{v\in\mathcal{D}}\log p_{\mathrm{CFG}}(v\mid c_{t})\;=\;\arg\max_{v\in\mathcal{D}}\psi_{t}(v)\;=\;\arg\max_{v\in\mathcal{D}}\big(\ell_{A}(v\mid c_{t})-\alpha_{t}\,\tilde{\ell}_{B}(v)\big).
+Since pCFG​(v∣ct)=pA​(v∣ct)p_{\mathrm{CFG}}(v\mid c_{t})=p_{A}(v\mid c_{t}) for v∉𝒟v\notin\mathcal{D} by equation 5, the combined (digit/non-digit) arg⁡max\arg\max under CFG equals that under the piecewise score
+s⁡(v)={ℓA​(v∣ct)−αt​ℓ~B​(v),v∈𝒟,ℓA​(v∣ct),v∉𝒟,s(v)\;=\;\begin{cases}\ell_{A}(v\mid c_{t})-\alpha_{t}\,\tilde{\ell}_{B}(v),&v\in\mathcal{D},\\[3.0pt]
+\ell_{A}(v\mid c_{t}),&v\notin\mathcal{D},\end{cases}
+which is the VPSG “negative-evidence” scoring form.
+Moreover, equation 7 yields the exact parameter mapping
+αt=λt1+λt⟺λt=αt1−αt.\boxed{\quad\alpha_{t}=\dfrac{\lambda_{t}}{1+\lambda_{t}}\quad}\qquad\Longleftrightarrow\qquad\boxed{\quad\lambda_{t}=\dfrac{\alpha_{t}}{1-\alpha_{t}}\quad}.
+Equivalence under greedy decoding.
+Greedy decoding selects v^t=arg⁡maxv∈𝒱​log​pCFG​(v∣ct)\hat{v}_{t}=\arg\max_{v\in\mathcal{V}}\log p_{\mathrm{CFG}}(v\mid c_{t}).
+By the lemma and the piecewise definition above, the same v^t\hat{v}_{t} is obtained by maximizing s⁡(v)s(v), because:
+(i) on digits we used a positive affine transform of log⁡pCFG\log p_{\mathrm{CFG}};
+(ii) on non-digits the two forms coincide; and
+(iii) both are compared in the same joint candidate set 𝒱\mathcal{V}.
+Therefore CFG equation 5 and VPSG scoring s⁡(v)s(v) are decision-equivalent under greedy decoding.
+Normalization and distributional form.
+If a normalized distribution is desired, define
+pVPSG​(v∣ct)=exp⁡(s⁡(v))∑u∈𝒱exp⁡(s⁡(u)).p_{\mathrm{VPSG}}(v\mid c_{t})\;=\;\frac{\exp(s(v))}{\sum_{u\in\mathcal{V}}\exp(s(u))}.
+This coincides with equation 5 up to the digit-only affine rescaling leading to the same arg⁡max\arg\max, and yields the proposition’s statement:
+pVPSG​(v∣ct)∝{exp⁡(ℓA​(v∣ct)−αt​ℓ~B​(v)),v∈𝒟,pA​(v∣ct),v∉𝒟.p_{\mathrm{VPSG}}(v\mid c_{t})\propto\begin{cases}\exp\!\big(\ell_{A}(v\mid c_{t})-\alpha_{t}\,\tilde{\ell}_{B}(v)\big),&v\in\mathcal{D},\\[3.0pt]
+p_{A}(v\mid c_{t}),&v\notin\mathcal{D}.\end{cases}
+Remarks on assumptions.
+(1) Same logits processors: ensures that when αt→0\alpha_{t}\to 0 (or λt→0\lambda_{t}\to 0) the VPSG rule recovers the baseline exactly.
+(2) Final-layer intervention: guarantees that the affine transformation does not change any upstream normalization.
+(3) Greedy decoding: makes decision-equivalence depend only on arg⁡max\arg\max; for sampling or beam search, the same mapping holds at the score level, but selection statistics may also depend on temperature/length penalties (which can still be shared across routes).
+□\square
+Appendix B Algorithm of VPSG
+The complete algorithm is shown in Algorithm 1.
+Algorithm 1 Vision-PE Shuffle Guidance (VPSG)
+1:
+Image II, prompt qq, base model ℳ\mathcal{M}, seeds {s1,…,sS}\{s_{1},\dots,s_{S}\}, base coefficient α\alpha, decay factor 0<decay<10<\mathrm{decay}<1
+2:
+Coordinate prediction y^=[x,y]\hat{y}=[x,y]
+3:
+Main route (position-conditioned):
+4:
+Run ℳ\mathcal{M} on (I,q)(I,q) with normal positional encodings (PEs) to obtain token distribution pA​(v∣ct)p_{A}(v\mid c_{t}).
+5:
+Auxiliary routes (position-unconditioned):
+6:
+for each seed ss do
+7:
+Shuffle PEs and run ℳ\mathcal{M} to get pB(s)​(v)p_{B}^{(s)}(v).
+8:
+end for
+9:
+Aggregate in log-space:
+ℓ~B​(v)←1S​∑s=1Slog⁡pB(s)​(v).\tilde{\ell}_{B}(v)\leftarrow\frac{1}{S}\sum_{s=1}^{S}\log p_{B}^{(s)}(v).
+10:
+FSM state tracking:
+11:
+Use a finite-state machine aligned to the [x,y][x,y] template to determine whether the model is decoding a digit in xx or yy.
+12:
+Coefficient scheduling:
+13:
+if decoding the kxk_{x}-th digit of xx then
+14:
+αt←α⋅decaykx−1\alpha_{t}\leftarrow\alpha\cdot\mathrm{decay}^{\,k_{x}-1}
+15:
+else if decoding the first digit of yy then
+16:
+αt←α\alpha_{t}\leftarrow\alpha
+17:
+else if decoding the kyk_{y}-th digit of yy then
+18:
+αt←α⋅decayky−1\alpha_{t}\leftarrow\alpha\cdot\mathrm{decay}^{\,k_{y}-1}
+19:
+end if
+20:
+Negative-evidence scoring:
+21:
+for each token vv do
+22:
+s⁡(v)←{log⁡pA​(v∣ct)−αt​ℓ~B​(v),v∈𝒟,log⁡pA​(v∣ct),v∉𝒟.s(v)\leftarrow\begin{cases}\log p_{A}(v\mid c_{t})-\alpha_{t}\tilde{\ell}_{B}(v),&v\in\mathcal{D},\\[4.0pt]
+\log p_{A}(v\mid c_{t}),&v\notin\mathcal{D}.\end{cases}
+23:
+end for
+24:
+Token selection:
+25:
+Choose v^t←arg⁡maxv⁡s⁡(v)\hat{v}_{t}\leftarrow\arg\max_{v}s(v), append to output, and advance FSM.
+26:
+Termination:
+27:
+Repeat Steps 3–6 until EOS. Decode tokens into coordinates y^\hat{y}.
+Appendix C Expected distance in the unit square
+Claim. If X=(X1,X2)X=(X_{1},X_{2}) and Y=(Y1,Y2)Y=(Y_{1},Y_{2}) are independent and uniformly distributed on [0,1]2[0,1]^{2}, then
+𝔼⁡[‖X−Y‖2]=2+2+5​ln⁡(1+2)15≈ 0.521405433.\mathbb{E}\big[\|X-Y\|_{2}\big]=\frac{2+\sqrt{2}+5\ln(1+\sqrt{2})}{15}\;\approx\;0.521405433.
+Proof. Let
+U=|X1−Y1|,V=|X2−Y2|.U=\lvert X_{1}-Y_{1}\rvert,\qquad V=\lvert X_{2}-Y_{2}\rvert.
+For u,v∈[0,1]u,v\in[0,1], the joint density of (U,V)(U,V) is
+fU,V​(u,v)=4​(1−u)​(1−v),f_{U,V}(u,v)=4(1-u)(1-v),
+since each marginal UU (and VV) is triangular with density fU​(u)=2​(1−u)f_{U}(u)=2(1-u) and U,VU,V are independent. The Euclidean distance is R=U2+V2R=\sqrt{U^{2}+V^{2}}. Hence
+𝔼⁡[R]=∫01∫01u2+v2​ 4​(1−u)​(1−v)​𝑑u​𝑑v.\mathbb{E}[R]=\int_{0}^{1}\!\!\int_{0}^{1}\sqrt{u^{2}+v^{2}}\,4(1-u)(1-v)\,du\,dv.
+Switch to polar coordinates on the first quadrant: u=r​cos⁡θ,v=r​sin⁡θu=r\cos\theta,\;v=r\sin\theta with θ∈[0,π/2]\theta\in[0,\pi/2] and Jacobian r​d​r​d​θr\,dr\,d\theta. The square boundary imposes
+0≤r≤rmax​(θ)=min⁡{1/cos⁡θ, 1/sin⁡θ}.0\leq r\leq r_{\max}(\theta)=\min\{1/\cos\theta,\;1/\sin\theta\}.
+Noting u2+v2=r\sqrt{u^{2}+v^{2}}=r and (1−u)​(1−v)=(1−r​cos⁡θ)​(1−r​sin⁡θ)(1-u)(1-v)=(1-r\cos\theta)(1-r\sin\theta), we obtain
+𝔼⁡[R]=∫0π/2∫0rmax​(θ)(1−r​cos⁡θ)​(1−r​sin⁡θ)​r2​𝑑r​𝑑θ.\mathbb{E}[R]=4\!\int_{0}^{\pi/2}\!\!\int_{0}^{r_{\max}(\theta)}(1-r\cos\theta)(1-r\sin\theta)\,r^{2}\,dr\,d\theta.
+Split at θ=π/4\theta=\pi/4, where rmaxr_{\max} changes:
+𝔼⁡[R]=∫0π/4∫0sec⁡θ(1−r​cos⁡θ)​(1−r​sin⁡θ)​r2​𝑑r​𝑑θ+∫π/4π/2∫0csc⁡θ(1−r​cos⁡θ)​(1−r​sin⁡θ)​r2​𝑑r​𝑑θ.\mathbb{E}[R]=4\!\int_{0}^{\pi/4}\!\!\int_{0}^{\sec\theta}(1-r\cos\theta)(1-r\sin\theta)\,r^{2}\,dr\,d\theta+4\!\int_{\pi/4}^{\pi/2}\!\!\int_{0}^{\csc\theta}(1-r\cos\theta)(1-r\sin\theta)\,r^{2}\,dr\,d\theta.
+For fixed θ\theta, expand and integrate in rr:
+∫0a(r2−r3​(cos⁡θ+sin⁡θ)+r4​sin⁡θ​cos⁡θ)​𝑑r=a33−cos⁡θ+sin⁡θ4​a4+sin⁡θ​cos⁡θ5​a5.\int_{0}^{a}\!\!\big(r^{2}-r^{3}(\cos\theta+\sin\theta)+r^{4}\sin\theta\cos\theta\big)dr=\frac{a^{3}}{3}-\frac{\cos\theta+\sin\theta}{4}a^{4}+\frac{\sin\theta\cos\theta}{5}a^{5}.
+With a=sec⁡θa=\sec\theta on [0,π/4][0,\pi/4] and a=csc⁡θa=\csc\theta on [π/4,π/2][\pi/4,\pi/2], we simplify:
+J1​(θ)\displaystyle J_{1}(\theta)
+=sec3⁡θ3−cos⁡θ+sin⁡θ4​sec4⁡θ+sin⁡θ​cos⁡θ5​sec5⁡θ=sec3⁡θ⁡(112−120​tan⁡θ),\displaystyle=\frac{\sec^{3}\theta}{3}-\frac{\cos\theta+\sin\theta}{4}\sec^{4}\theta+\frac{\sin\theta\cos\theta}{5}\sec^{5}\theta=\sec^{3}\theta\!\left(\frac{1}{12}-\frac{1}{20}\tan\theta\right),
+J2​(θ)\displaystyle J_{2}(\theta)
+=csc3⁡θ3−cos⁡θ+sin⁡θ4​csc4⁡θ+sin⁡θ​cos⁡θ5​csc5⁡θ=csc3⁡θ⁡(112−120​cot⁡θ).\displaystyle=\frac{\csc^{3}\theta}{3}-\frac{\cos\theta+\sin\theta}{4}\csc^{4}\theta+\frac{\sin\theta\cos\theta}{5}\csc^{5}\theta=\csc^{3}\theta\!\left(\frac{1}{12}-\frac{1}{20}\cot\theta\right).
+Therefore
+𝔼⁡[R]=∫0π/4(112​sec3⁡θ−120​sec3⁡θ​tan⁡θ)​𝑑θ+∫π/4π/2(112​csc3⁡θ−120​csc3⁡θ​cot⁡θ)​𝑑θ.\mathbb{E}[R]=4\!\int_{0}^{\pi/4}\!\!\left(\frac{1}{12}\sec^{3}\theta-\frac{1}{20}\sec^{3}\theta\tan\theta\right)d\theta+4\!\int_{\pi/4}^{\pi/2}\!\!\left(\frac{1}{12}\csc^{3}\theta-\frac{1}{20}\csc^{3}\theta\cot\theta\right)d\theta.
+Use the antiderivatives
+∫sec3⁡θ​𝑑θ=12​(sec⁡θ​tan⁡θ+ln⁡(sec⁡θ+tan⁡θ)),∫sec3⁡θ​tan⁡θ​𝑑θ=13​sec3⁡θ,\int\sec^{3}\theta\,d\theta=\tfrac{1}{2}\big(\sec\theta\tan\theta+\ln(\sec\theta+\tan\theta)\big),\quad\int\sec^{3}\theta\tan\theta\,d\theta=\tfrac{1}{3}\sec^{3}\theta,
+∫csc3⁡θ​𝑑θ=12​(−csc⁡θ​cot⁡θ+ln⁡(csc⁡θ−cot⁡θ)),∫csc3⁡θ​cot⁡θ​𝑑θ=−13​csc3⁡θ,\int\csc^{3}\theta\,d\theta=\tfrac{1}{2}\big(-\csc\theta\cot\theta+\ln(\csc\theta-\cot\theta)\big),\quad\int\csc^{3}\theta\cot\theta\,d\theta=-\tfrac{1}{3}\csc^{3}\theta,
+evaluate at the limits θ∈{0,π/4,π/2}\theta\in\{0,\pi/4,\pi/2\}, and use ln⁡(2−1)=−ln⁡(2+1)\ln(\sqrt{2}-1)=-\ln(\sqrt{2}+1). The two θ\theta-ranges contribute symmetrically, giving
+𝔼⁡[R]=13​(2+ln⁡(1+2))−215​(2​2−1)=2+2+5​ln⁡(1+2)15.\mathbb{E}[R]=\frac{1}{3}\big(\sqrt{2}+\ln(1+\sqrt{2})\big)-\frac{2}{15}\big(2\sqrt{2}-1\big)=\frac{2+\sqrt{2}+5\ln(1+\sqrt{2})}{15}.
+This completes the proof. □\square
+Remark (application to images). The constant μ□\mu_{\square} is the dispersion benchmark for a unit square. For arbitrary image sizes (W,H)(W,H), either (i) anisotropically rescale coordinates to [0,1]2[0,1]^{2} before computing distances and compare to μ□\mu_{\square}, or (ii) form a per-image Monte-Carlo null by sampling i.i.d. uniform points from [0,W]×[0,H][0,W]\times[0,H] to estimate the appropriate baseline for that aspect ratio.
+Appendix D More Experiment Result
+D.1 distance analysis
+More details of distance analysis results are shown in Table 4
+Table 4:
+Comparison of mean pairwise Euclidean distances (diagonal-normalized) across image resolutions on Screenspot-Pro.
+Normal PEs exhibit significantly larger within-input distances, while shuffled PEs lead to much tighter clustering and systematic collapse of coordinate predictions, demonstrating the impact of positional information on spatial diversity.
+Image size
+Qwen2.5-VL-3B
+Qwen2.5-VL-7B
+Normal
+Shuffled
+Normal
+Shuffled
+1920×\times1080
+0.123
+0.202
+0.211
+0.128
+2160×\times1440
+0.391
+0.146
+0.437
+0.159
+2560×\times1440
+0.392
+0.171
+0.436
+0.180
+2560×\times1600
+0.357
+0.072
+0.348
+0.048
+2560×\times1664
+0.428
+0.139
+0.471
+0.211
+2880×\times1800
+0.379
+0.119
+0.462
+0.111
+2992×\times1870
+0.463
+0.175
+0.347
+0.061
+3456×\times2160
+0.471
+0.122
+0.348
+0.081
+3456×\times2234
+0.457
+0.169
+0.466
+0.106
+3840×\times1080
+0.298
+0.227
+0.287
+0.140
+3840×\times2160
+0.468
+0.117
+0.504
+0.146
+5120×\times1440
+0.435
+0.133
+0.404
+0.058
+5120×\times2880
+0.399
+0.168
+0.408
+0.052
+6016×\times3384
+0.341
+0.117
+0.335
+0.057
+Overall mean
+0.402
+0.164
+0.435
+0.162
+D.2 Case study with per-step logits.
+Figure 6:
+An image case from dataset ScreenSpot-Pro (ppt_windows/screenshot_2024-10-27_21-07-29.png)
+To better illustrate how VPSG corrects coordinate prediction bias, we analyze a single case from Screenspot-Pro (ppt_windows/screenshot_2024-10-27_21-07-29.png) Figure 6.
+The ground-truth bounding box center is [659,857][659,857].
+The base model without guidance predicts [1024,856][1024,856], while VPSG successfully outputs the correct [659,857][659,857].
+Table 5 lists the top-10 logits probabilities at each decoding step.
+At the earliest xx-digit steps, the uncorrected model shows a strong bias toward larger numbers (e.g., tokens “1” and “0” dominate), reflecting spurious numeric priors induced by missing or unreliable positional encodings.
+VPSG integrates negative evidence from multiple shuffled PE runs and systematically downweights these spurious peaks, allowing the true digit sequence to emerge and stabilizing the final [x,y][x,y] prediction.
+Table 5:
+Per-step top-1 logits probabilities for each decoded token in a representative example.
+The base model without guidance drifts toward spurious large-xx digits (e.g., “1”, “0” early), yielding an incorrect coordinate [1024,856][1024,856].
+VPSG, by integrating negative evidence from multiple shuffled PE runs, suppresses these biased peaks and converges to the correct coordinate [659,857][659,857].
+This example highlights how VPSG stabilizes numeric decoding and restores faithful spatial grounding.
+Step
+Token
+VPSG Prob.
+Base Prob.
+1
+[
+0.805
+0.805
+2
+6
+0.243
+0.210
+3
+5
+0.172
+0.264 (0 highest)
+4
+9
+0.221
+0.140 (2 highest)
+5
+,
+0.999
+0.987
+6
+space
+0.999
+0.976
+7
+8
+0.740
+0.355
+8
+5
+0.589
+0.642 (but 6/3 confused)
+9
+7
+0.272
+0.421 (6 highest)
+10
+]
+0.999
+0.999
+11
+<eos>
+0.993
+0.996
+D.3 Ablation: removing seeds aggregation.
+To evaluate the contribution of seeds aggregation in VPSG, we remove the multi-seed log-space aggregation and instead rely on a single randomly shuffled positional encoding as the auxiliary route.
+Table 6 reports the detailed category- and type-level accuracies (percentage of correct predictions) for both Qwen2.5-VL-3B and Qwen2.5-VL-7B models.
+Without aggregation, accuracy drops across almost all groups and UI-types, confirming that a single random shuffle provides only a noisy sample of the underlying position-unconditioned bias distribution and cannot capture its full expectation.
+This validates the theoretical claim that multi-seed aggregation approximates the expected bias prior and yields more stable and accurate guidance.
+Table 6:
+Accuracy (%) of VPSG without seeds aggregation across categories and UI types.
+Both model sizes show clear drops compared with the full VPSG (see main text Table X): for instance, the 3B model drops from 13.3%13.3\% overall to 13.0%13.0\%, and the 7B model from 19.1%19.1\% to 18.6%18.6\%.
+Losses are consistent across text and icon settings, supporting the view that multi-seed aggregation provides a faithful estimate of the expected position-unconditioned bias and stabilizes the guidance effect.
+Category / UI type
+3B
+7B
+Text (%)
+Icon (%)
+Text (%)
+Icon (%)
+CAD
+10.66
+1.56
+6.60
+1.56
+Creative
+18.69
+2.10
+19.70
+2.80
+Dev
+22.73
+2.07
+41.56
+3.45
+OS
+15.89
+2.25
+28.97
+12.36
+Office
+29.38
+5.66
+41.81
+13.21
+Scientific
+20.14
+2.73
+27.78
+4.55
+Overall
+19.55
+2.48
+26.71
+5.46
+D.4 More details about bias analysis
+Table 7 reports the ten most frequent individual numbers across all [x,y][x,y] coordinate predictions.
+Normal PE = standard positional encodings; shuffled PE = visual positional encodings randomly shuffled at inference time.
+All counts reflect total occurrences of a number as either the xx or yy component of predicted coordinates.
+Table 7: Top-10 most frequent numbers appearing in prediction results for Qwen2.5-VL-3B and Qwen2.5-VL-7B under normal and shuffled positional encodings.
+Qwen2.5-VL-7B (normal PE)
+Qwen2.5-VL-3B (normal PE)
+Qwen2.5-VL-3B (shuffled PE)
+Qwen2.5-VL-7B (shuffled PE)
+Rank
+Number
+Freq
+Rank
+Number
+Freq
+Rank
+Number
+Freq
+Rank
+Number
+Freq
+1
+1024
+296
+1
+1024
+397
+1
+1024
+591
+1
+1024
+902
+2
+105
+54
+2
+1056
+82
+2
+1056
+426
+2
+1234
+582
+3
+10
+35
+3
+356
+73
+3
+568
+184
+3
+567
+580
+4
+2048
+26
+4
+35
+44
+4
+1000
+182
+4
+672
+270
+5
+2058
+26
+5
+36
+39
+5
+238
+159
+5
+368
+266
+6
+2016
+25
+6
+10
+36
+6
+512
+141
+6
+384
+162
+7
+1940
+23
+7
+1234
+28
+7
+560
+141
+7
+200
+41
+8
+100
+23
+8
+105
+27
+8
+1052
+128
+8
+36
+33
+9
+200
+21
+9
+102
+25
+9
+200
+121
+9
+38
+27
+10
+1056
+20
+10
+1048
+23
+10
+248
+119
+10
+896
+26
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

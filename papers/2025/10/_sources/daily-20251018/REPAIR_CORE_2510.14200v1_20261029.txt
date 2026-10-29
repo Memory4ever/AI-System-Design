@@ -1,0 +1,2560 @@
+
+
+
+RLSR: Reinforcement Learning with Supervised Reward Outperforms SFT in Instruction Following
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+    
+      Report GitHub Issue
+      ×
+    
+
+    
+      Title:
+      
+
+      
+Content selection saved. Describe the issue below:
+
+      Description:
+      
+    
+
+    
+      Submit without GitHub
+      Submit in GitHub
+    
+  
+
+    
+    arXiv is now an independent nonprofit!
+    Learn more
+    ×
+  
+
+
+  
+    
+      Back to arXiv
+    
+  
+  
+  
+    Why HTML?
+    
+      
+        
+      
+      Report Issue
+    
+    
+      
+        
+        
+      
+      Back to Abstract
+    
+    
+    
+      
+        
+      
+      Download PDF
+    
+    
+      
+        
+        
+      
+    
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+          
+          
+        
+      
+      
+        
+          
+          
+        
+      
+      
+        
+          
+          
+        
+      
+    
+  
+
+
+
+
+Abstract
+
+1 Introduction
+
+2 Methodology
+
+
+2.1 SFT
+
+2.2 RLHF, RLVR and RFT
+
+2.3 RLSR
+
+2.4 Differences between RLSR and RFT
+
+
+3 Experiments
+
+
+3.1 Models, Datasets, and Evaluation
+
+3.2 Performance Evaluation and Analysis
+
+
+3.2.1 Comparison Between SFT and RLSR
+
+3.2.2 Comparison Between SFT and SFT+RLSR
+
+3.2.3 Comparison Between RLSR and SFT+RLSR
+
+3.2.4 Comparison Among Different Reward Models
+
+
+
+4 Literature Review
+
+5 Limitation
+
+6 Conclusion
+
+7 Acknowledgement
+
+References
+
+
+
+
+  
+    License: CC BY 4.0
+  
+  
+arXiv:2510.14200v1 [cs.CL] 16 Oct 2025
+
+
+
+RLSR: Reinforcement Learning with Supervised Reward Outperforms SFT in Instruction Following
+
+
+
+Zhichao Wang
+††thanks: Corresponding Author: zcwang0201@gmail.com
+  
+Andy Wong
+
+  
+Ruslan Belkin
+
+Affiliation: Inflection AI
+
+
+Abstract
+    
+
+After the pretraining stage of LLMs, techniques such as SFT, RLHF, RLVR, and RFT are applied to enhance instruction-following ability, mitigate undesired responses, improve reasoning capability and enable efficient domain adaptation with minimal data. SFT relies on the next-token prediction objective to strengthen instruction following in a base model using a large corpus of human-labeled responses. In contrast, RFT employs a RL-based approach to adapt fine-tuned reasoning models to specific domains with limited supervision. Inspired by RFT, we propose replacing SFT with RLSR to leverage the extensive SFT dataset in an RL framework, thereby improving the base model’s instruction-following ability. In RLSR, the base model generates multiple responses for each prompt, and reward scores are computed as the cosine similarity in the semantic embedding space between the generated and human-labeled responses. RLSR can be utilized in multiple ways. It can directly replace SFT, achieving superior performance on instruction-following benchmarks-for example, RLSR (SB) on Qwen-7B (INFINITY) achieved an AlpacaEval win rate of 26.34%, surpassing SFT’s 21.01%. Furthermore, combining SFT and RLSR further enhances downstream task performance; Qwen-7B (INFINITY) achieved a win rate of 30.73% when trained with SFT + RLSR.
+  
+
+
+     
+     
+    
+
+
+
+
+
+
+
+
+
+  
+
+
+
+Keywords SFT, RFT, RLSR, Embedding, Cosine Similarity
+
+
+Figure 1: (a) SFT fine-tunes the base model on human-labeled responses to maximize the likelihood of next-token prediction. (b) RFT adapts the reasoning model to specific domains with minimal data with a RL framework, employing a grader function that may optionally incorporate human-labeled responses. (c) RLSR builds upon the RFT framework while leveraging the data used in SFT. It strengthens the base model’s instruction-following ability by defining a reward function based on the cosine similarity between the embedding representations of the model-generated and human-labeled responses, utilizing large-scale SFT data.
+
+
+
+
+1 Introduction
+
+
+
+Large Language Models (LLMs) have demonstrated transformative potential across a myriad of tasks following their initial "pretraining stage". However, to become truly capable and safe assistants, they must undergo subsequent post-training to enhance their instruction-following ability, mitigate undesired responses, improve complex reasoning capability, and enable efficient domain adaptation. This typically involves techniques such as Supervised Fine-Tuning (SFT), Reinforcement Learning from Human Feedback (RLHF) [1], Reinforcement Learning with Verifiable Rewards (RLVR) [2], and Reinforcement Fine-Tuning (RFT) [3].
+
+
+
+The prevailing standard for initial alignment is SFT. SFT leverages a dataset of high-quality, human-labeled (prompt,response)(\text{prompt},\text{response}) pairs, optimizing the model with a next-token prediction objective (cross-entropy loss) [4]. While effective and computationally stable, SFT is a "teacher-forcing" method that strictly enforces human-labeled generations at the token level, inherently limiting the model’s "exploratory capacity" and potentially confining it to suboptimal local optima.
+
+
+
+In contrast, methods based on Reinforcement Learning (RL), such as RLHF and RLVR, have proven highly effective for complex objectives like safety and reasoning. These approaches shift the objective from token-level match to "maximizing a reward signal", allowing for a crucial balance between exploration and exploitation. RLHF, for instance, trains a Reward Model (RM) on human preference data to guide a subsequent policy optimization step, typically with Proximal Policy Optimization (PPO) [5] or its variants like Group Relative Preference Optimization (GRPO) [2]. In RLVR, the reward model is replaced with a verifiable function to improve the model’s capability on math and coding tasks. Similarly, RFT adapts a fine-tuned reasoning model to specific domains by utilizing a programmable grader to assign rewards for nuanced objectives.
+
+
+
+This disparity raises a critical question: Can we replace or augment SFT with a purely RL-based approach that makes full use of the existing, extensive SFT human-labeled dataset to improve the base model’s core instruction-following capability?
+
+
+
+Inspired by the success of RL-based methods in enhancing model capabilities beyond SFT’s token-level constraints, we propose Reinforcement Learning with Supervised Reward (RLSR). Borrowing ideas from RFT, RLSR re-frames the SFT process within an RL framework. For each prompt, the base model generates multiple candidate responses. Instead of relying on a learned reward model or sparse correctness signals, RLSR computes a reward score for each candidate based on the cosine similarity in the semantic embedding space between the generated response and the human-labeled response. This reward function directly leverages the high-quality SFT data while introducing the necessary element of exploration inherent to RL. We define the reward r⁡(x,y,y∗)r(x,y,y^{*}) as the cosine similarity between the embeddings E⁡(x,y)E(x,y) of the prompt and generated response yy and E⁡(x,y∗)E(x,y^{*}) of the prompt and human-labeled response y∗y^{*}. We demonstrate that RLSR can be utilized in two powerful ways:
+
+
+1. 
+
+
+Direct SFT Replacement: RLSR can directly substitute the SFT phase, achieving superior performance on instruction-following benchmarks.
+
+
+2. 
+
+
+SFT Enhancement: RLSR can be applied as a subsequent fine-tuning stage after SFT, creating an SFT + RLSR pipeline that further boosts downstream task performance.
+
+
+
+
+
+Our extensive experiments across three model sizes (Llama-8B, Qwen-7B, Qwen-32B) and two high-quality SFT datasets (TULU and INFINITY) reveal the significant advantage of our RLSR method. We show that RLSR consistently outperforms the traditional SFT method on key instruction-following and generation metrics:
+
+
+• 
+
+
+RLSR Outperforms SFT: On the Qwen-7B model fine-tuned with the INFINITY dataset, RLSR (SB) achieved an AlpacaEval win rate of 26.34%, significantly surpassing the SFT win rate of 21.01%. This indicates a superior ability to follow open-ended instructions as judged by a leading evaluation benchmark.
+
+
+• 
+
+
+SFT+RLSR is the Strongest Approach: Combining the methods further maximizes performance. The SFT + RLSR pipeline pushed the Qwen-7B (INFINITY) model to its highest performance, achieving an AlpacaEval win rate of 30.73%.
+
+
+
+These results confirm our hypothesis: by leveraging the supervisory signal of SFT data within an RL framework, RLSR significantly enhances the LLM’s instruction-following capability beyond the limits of token-level supervision.
+
+
+
+
+
+2 Methodology
+
+
+
+
+2.1 SFT
+
+
+
+While the pretrained base models exhibit strong generative capabilities, they often fail to reliably follow instructions-frequently producing repetitive or input-extending outputs. To better align these models with instruction-following and question-answering tasks, a SFT stage is introduced.
+
+
+
+In SFT, the base model is trained on a dataset of prompt–response pairs, where each prompt is denoted by xx and its corresponding target response by yy. The model defines a conditional probability distribution πθ​(y|x)\pi_{\theta}(y|x), representing the likelihood of generating response yy given input xx. The objective of SFT is to optimize the model parameters θ\theta by maximizing this conditional likelihood-equivalently, minimizing the negative log-likelihood or cross-entropy loss as formulated in Eq. 1, where {y1,⋯,yN}\{y_{1},\cdots,y_{N}\} denote the NN tokens in the response sequence:
+
+
+
+
+
+
+
+LSFT(πθ)=−logπθ(y|x)=−∑i=1Nlogπθ(yi∣x,y<i)L_{\text{SFT}}(\pi_{\theta})=-\log\pi_{\theta}(y|x)=-\sum_{i=1}^{N}\log\pi_{\theta}(y_{i}\mid x,y_{<i})
+
+(1)
+
+
+
+
+Empirical studies have demonstrated that SFT substantially enhances an LLM’s ability to follow user instructions and generate contextually appropriate answers. However, because SFT relies on a teacher-forcing paradigm-where the model is always conditioned on the ground-truth sequence during training-it limits the model’s capacity for autonomous exploration and generalization. Moreover, even after SFT, undesired behaviors such as biased or unsafe generations may still persist.
+
+
+
+
+
+2.2 RLHF, RLVR and RFT
+
+
+
+To mitigate the generation of biased or toxic content in the instruct model from SFT, RLHF has been proposed. RLHF consists of two main stages: (1) RM training and (2) reinforcement learning fine-tuning. In the first stage, the reward model is trained on pairwise human preference data, where each sample consists of a prompt xx and two responses ywy_{w} (desired) and yly_{l} (undesired), following the Bradley–Terry (BT) model. The content of RM deviates from the main topic of this paper and more details can be found in [1].
+
+
+
+Once the reward model is trained, it is employed to guide an online reinforcement learning process. The policy πθ\pi_{\theta} is optimized to maximize the expected reward while remaining close to a reference policy πref\pi_{\text{ref}}, which reflects the pretrained distribution of the base model. This trade-off between reward maximization and policy stability is expressed as:
+
+
+
+
+
+
+
+πθ∗(y|x)=argmaxπθ𝔼x∼D[𝔼y∼πθ​(y|x)[rϕ(x,y)]−βDKL(πθ(y|x)∥πref(y|x))]\pi^{*}_{\theta}(y|x)=\arg\max_{\pi_{\theta}}\mathbb{E}_{x\sim D}\Big[\mathbb{E}_{y\sim\pi_{\theta}(y|x)}[r_{\phi}(x,y)]-\beta D_{\text{KL}}\big(\pi_{\theta}(y|x)\,\|\,\pi_{\text{ref}}(y|x)\big)\Big]
+
+(2)
+
+
+
+
+where β\beta controls the strength of the KL-divergence penalty. Proximal Policy Optimization (PPO) is typically used to solve this objective. The objective in Equation 2 is shared among RLHF, RLVR, RFT and RLSR and the only difference is the definition of the reward model.
+
+
+
+Although RLHF is effective, it demands substantial computational resources-it requires maintaining separate reward, value, and policy networks-and often suffers from instability during training. To alleviate these challenges, GRPO has been proposed as a simplified alternative to PPO. Unlike PPO’s actor–critic framework, which trains a value function using cumulative rewards from the RM, GRPO replaces the learned value function with the mean reward computed across multiple sampled responses. This modification eliminates the need for a separate value model, thereby reducing FLOPs, memory usage, and training complexity.
+
+
+
+LLMs fine-tuned with RLHF and GRPO exhibit a strong ability to suppress undesired or harmful generations. However, these methods still struggle on complex reasoning tasks such as mathematics or programming. To address this limitation, RLVR has been introduced. Unlike RLHF, which relies on a learned reward model, RLVR uses verifiable, automatically computed signals-such as correctness of a mathematical answer or whether generated code passes test cases-as rewards. Although these rewards are sparse, they are precise and directly aligned with task success. The combination of RLVR and GRPO, as implemented in DeepSeek R1 [3], substantially improves an LLM’s reasoning ability, enabling longer and more coherent chains of thought (CoT) and fostering “aha moments,” where the model recognizes and corrects prior reasoning errors.
+
+
+
+While RLHF primarily focuses on mitigating harmful outputs and RLVR enhances reasoning performance, RFT aims to adapt an OpenAI reasoning model (e.g., o4-mini) to expert-level performance in domain-specific applications [6]. Instead of relying on fixed “correct” answers as in SFT, RFT employs a programmable grader function that evaluates model outputs using user-defined feedback signals. Typical components of the grader include (1) string matching, (2) semantic similarity, (3) score-model grading, (4) label-model grading, and (5) Python-based code execution, which optionally utilizes the human-labeled responses. The model is trained to prioritize high-scoring outputs, aligning generation behavior with nuanced objectives such as style, safety, or domain accuracy. This paradigm is particularly valuable in low-resource or domain-shift settings where human-labeled data are scarce and traditional fine-tuning methods generalize poorly.
+
+
+
+
+
+2.3 RLSR
+
+
+
+From previous studies, it can be observed that RL-based methods, which incorporate a balance between exploration and exploitation, substantially enhance the capabilities of LLMs. However, the SFT stage remains a purely teacher-forcing process, involving only exploitation without exploration. This naturally raises a question: Can the SFT data itself be leveraged within an RL framework to further improve model performance?
+
+
+
+Motivated by the question of how to effectively leverage SFT data within an RL framework, and inspired by the RFT paradigm, we propose RLSR, a method that fine-tunes the base model using reinforcement learning while fully utilizing the existing SFT dataset. The key component of RLSR lies in the design of its reward function, which is derived directly from the SFT prompt–response pairs labeled by humans. In line with the principle of SFT, the reward reflects the semantic similarity between the model-generated response and the human-labeled response, under the assumption that semantically closer responses are of higher quality and more desirable. Following the embedding-based approaches adopted in DSSM [7], CLIP [8], and RAG [9], we define the reward as the cosine similarity between the embeddings of the generated response yiy^{i} and the human-labeled response y∗y^{*}. Let E⁡(⋅)E(\cdot) denote the text encoder that extracts embeddings from responses. The reward function is formulated as:
+
+
+
+
+
+
+
+r⁡(x,yi,y∗)=E⁡(yi)⋅E⁡(y∗)‖E⁡(yi)‖2⋅‖E⁡(y∗)‖2r(x,y^{i},y^{*})=\frac{E(y^{i})\cdot E(y^{*})}{||E(y^{i})||_{2}\cdot||E(y^{*})||_{2}}
+
+(3)
+
+
+
+
+Here, E⁡(yi)E(y^{i}) and E⁡(y∗)E(y^{*}) represent the embeddings of the generated and human-labeled responses, respectively. The cosine similarity ensures that semantically aligned responses yield higher rewards, which are subsequently used in the reinforcement learning process to fine-tune the language model.
+
+
+
+There are two primary strategies to integrate RLSR. The first approach replaces SFT entirely with RLSR, and empirical results indicate that RLSR consistently outperforms SFT across various models, datasets, and benchmarks. The second approach introduces RLSR as an intermediate stage between SFT and RLHF/RLVR, resulting in the following training pipeline:
+
+
+1. 
+
+
+Supervised Fine-Tuning (SFT),
+
+
+2. 
+
+
+Reinforcement Learning with Supervised Reward (RLSR),
+
+
+3. 
+
+
+Reinforcement Learning from Human Feedback or Verifiable Reward (RLHF/RLVR).
+
+
+
+
+
+Finally, we summarize the advantages and trade-offs between RLSR and SFT. The primary strengths of SFT lie in its efficiency and stability-by using a teacher-forcing paradigm, the model directly learns the correct next token, which accelerates convergence but eliminates exploration. In contrast, RLSR introduces exploration by evaluating diverse candidate responses through reward-guided optimization. Although this process consumes more computational resources (FLOPs), it often leads to better overall performance when appropriate reward signals are designed.
+
+
+
+
+
+2.4 Differences between RLSR and RFT
+
+
+
+It is essential to distinguish between RLSR and RFT across four key dimensions: model, goal, data scale, and reward.
+From the model perspective, RFT operates on a reasoning model, whereas RLSR fine-tunes the base model directly.
+From the goal perspective, RFT aims to efficiently adapt the model to new domains with minimal data, while RLSR focuses on enhancing the instruction-following capability of the base model.
+Regarding the data scale, RFT seeks to minimize data usage due to the scarcity of domain-specific data, whereas RLSR leverages the full SFT dataset, which is typically large in scale.
+Finally, from the reward perspective, RFT employs a grader function-either rule-based or model-based-that may optionally incorporate human-labeled responses.
+In contrast, RLSR defines its reward based on the cosine similarity between the embeddings of generated responses and human-labeled responses, aligning the base model’s behavior with human preferences through explicit supervision.
+
+
+
+
+
+
+3 Experiments
+
+
+
+This section presents the experimental setup used to evaluate the effectiveness of RLSR compared to SFT in fine-tuning base models for instruction-following tasks. We describe the models, datasets, and evaluation protocols employed in our study.
+
+
+
+
+3.1 Models, Datasets, and Evaluation
+
+
+
+We conduct experiments using three representative base models: (1) meta-llama/Llama-3.1-8B [10], (2) Qwen/Qwen2.5-7B [11], and (3) Qwen/Qwen2.5-32B [11]. These models are chosen to represent two major open-source LLM families-LLaMA and Qwen-providing diversity in both architectural design and model scale. For consistency in prompt formatting, their instruction-tuned variants-Llama-3.1-8B-Instruct, Qwen2.5-7B-Instruct, and Qwen2.5-32B-Instruct-are adopted.
+
+
+
+Two embedding models are employed as reward functions: sentence-transformers/all-MiniLM-L6-v2 (SentenceBERT, abbreviated as SB) [12] and Qwen/Qwen3-Embedding-8B (Qwen-EM) [13]. The SB model is relatively lightweight, containing 33 million parameters and supporting a 512-token context window. During embedding generation, inputs are truncated to the first 512 tokens-sufficient for most outputs. In contrast, the Qwen model is substantially larger, with 8 billion parameters and a 32k-token context window, enabling it to encode entire sequences without truncation. To clearly distinguish between the base and embedding models, we denote the base models as Qwen-7B and Qwen-32B, and refer to the embedding model simply as Qwen-EM.
+
+
+Table 1: Fine-tune Llama-8B, Qwen-7B and Qwen-32B utilizing SFT, RLSR and SFT+RLSR with TULU and INFINITY datasets and their performances on truthfulqa, hendrycks_math, humaneval, bbq, winogrande and mmlu_pro.
+
+
+
+
+Model (TULU)
+truthfulqa
+hendrycks_math
+humaneval
+bbq
+winogrande
+mmlu_pro
+
+
+Llama
+45.23
+14.00
+37.20
+43.89
+77.19
+32.95
+
+
+SFT
+49.22
+10.12
+44.51
+49.19
+76.64
+23.11
+
+
+RLSR (SB)
+52.50
+13.82
+40.24
+46.75
+76.64
+32.72
+
+
+RLSR (Qwen-EM)
+50.83
+13.62
+42.07
+47.05
+78.14
+34.15
+
+
+SFT+RLSR (SB)
+50.42
+10.84
+46.34
+50.38
+71.98
+24.26
+
+
+SFT+RLSR (Qwen-EM)
+51.11
+11.28
+47.56
+50.75
+71.82
+24.79
+
+
+Qwen7B
+56.37
+25.00
+56.71
+49.31
+75.69
+43.97
+
+
+SFT
+48.86
+20.00
+65.24
+47.22
+74.43
+41.62
+
+
+RLSR (SB)
+53.83
+24.30
+56.71
+50.39
+74.35
+44.31
+
+
+RLSR (Qwen-EM)
+57.91
+24.88
+62.80
+49.54
+74.35
+44.10
+
+
+SFT+RLSR (SB)
+50.40
+17.36
+66.46
+49.52
+71.90
+40.88
+
+
+SFT+RLSR (Qwen-EM)
+52.15
+18.30
+64.63
+52.20
+69.14
+41.62
+
+
+Qwen32B
+57.76
+35.78
+48.17
+51.44
+81.85
+58.14
+
+
+SFT
+48.60
+33.24
+65.24
+51.72
+80.66
+55.39
+
+
+RLSR (SB)
+57.79
+33.02
+54.27
+51.86
+80.82
+58.08
+
+
+RLSR (Qwen-EM)
+58.67
+34.24
+59.15
+51.64
+82.32
+58.21
+
+
+SFT+RLSR (SB)
+49.16
+30.68
+62.80
+54.72
+78.22
+55.81
+
+
+SFT+RLSR (Qwen-EM)
+49.64
+31.66
+68.90
+55.15
+78.53
+56.86
+
+
+Model (INFINITY)
+truthfulqa
+hendrycks_math
+humaneval
+bbq
+winogrande
+mmlu_pro
+
+
+Llama
+45.23
+14.00
+37.20
+43.89
+77.19
+32.95
+
+
+SFT
+51.85
+12.20
+34.15
+48.22
+74.27
+29.49
+
+
+RLSR (SB)
+52.29
+14.02
+39.63
+44.95
+76.80
+33.72
+
+
+RLSR (Qwen-EM)
+52.71
+14.30
+39.02
+45.64
+76.48
+33.10
+
+
+SFT+RLSR (SB)
+52.60
+13.02
+28.05
+49.57
+72.69
+30.08
+
+
+SFT+RLSR (Qwen-EM)
+53.64
+12.92
+43.29
+50.22
+71.35
+30.11
+
+
+Qwen7B
+56.37
+25.00
+56.71
+49.31
+75.69
+43.97
+
+
+SFT
+54.26
+24.56
+63.41
+46.12
+75.06
+43.85
+
+
+RLSR (SB)
+59.06
+25.00
+57.93
+49.35
+75.77
+44.07
+
+
+RLSR (Qwen-EM)
+58.20
+24.96
+60.37
+49.84
+74.66
+43.89
+
+
+SFT+RLSR (SB)
+56.60
+23.42
+68.90
+45.89
+73.72
+43.79
+
+
+SFT+RLSR (Qwen-EM)
+57.18
+23.64
+65.24
+47.46
+74.66
+44.14
+
+
+Qwen32B
+57.76
+35.78
+48.17
+51.44
+81.85
+58.14
+
+
+SFT
+58.45
+36.60
+57.93
+51.74
+82.00
+56.22
+
+
+RLSR (SB)
+59.40
+32.18
+52.44
+51.64
+81.53
+58.49
+
+
+RLSR (Qwen-EM)
+59.33
+34.86
+53.05
+51.73
+81.93
+58.14
+
+
+SFT+RLSR (SB)
+55.27
+37.12
+57.93
+51.80
+80.66
+56.42
+
+
+SFT+RLSR (Qwen-EM)
+55.62
+36.64
+60.98
+52.16
+81.22
+56.65
+
+
+
+
+Table 2: Fine-tune Llama-8B, Qwen-7B and Qwen-32B utilizing SFT, RLSR and SFT+RLSR with TULU and INFINITY datasets and their performances on gsm8k, gpqa, mmlu, mbpp, arc_challenge and toxigen.
+
+
+
+
+Model (TULU)
+gsm8k
+gpqa
+mmlu
+mbpp
+arc_challenge
+toxigen
+
+
+Llama
+49.81
+31.88
+65.40
+48.6
+54.52
+42.66
+
+
+SFT
+58.61
+27.94
+57.01
+42.2
+54.27
+56.70
+
+
+RLSR (SB)
+59.67
+31.04
+65.03
+50.2
+57.51
+43.30
+
+
+RLSR (Qwen-EM)
+58.53
+30.70
+65.45
+49.6
+59.13
+44.26
+
+
+SFT+RLSR (SB)
+68.16
+28.02
+57.61
+45.6
+55.63
+50.85
+
+
+SFT+RLSR (Qwen-EM)
+68.16
+28.69
+57.74
+44.0
+55.29
+49.26
+
+
+Qwen7B
+81.50
+32.63
+74.24
+63.8
+59.39
+57.13
+
+
+SFT
+73.46
+31.96
+72.26
+61.0
+58.11
+56.70
+
+
+RLSR (SB)
+83.17
+31.12
+74.23
+66.6
+61.35
+56.91
+
+
+RLSR (Qwen-EM)
+84.38
+31.54
+74.37
+65.6
+62.37
+57.45
+
+
+SFT+RLSR (SB)
+76.27
+32.47
+72.16
+60.2
+59.04
+57.13
+
+
+SFT+RLSR (Qwen-EM)
+77.03
+32.97
+71.99
+62.8
+59.22
+56.81
+
+
+Qwen32B
+84.61
+39.35
+83.29
+73.2
+67.06
+81.49
+
+
+SFT
+87.95
+39.51
+83.03
+73.6
+65.10
+54.89
+
+
+RLSR (SB)
+91.66
+39.68
+83.11
+74.4
+69.03
+81.06
+
+
+RLSR (Qwen-EM)
+90.75
+39.60
+83.41
+76.4
+69.80
+86.17
+
+
+SFT+RLSR (SB)
+90.52
+40.10
+82.77
+74.2
+68.26
+71.91
+
+
+SFT+RLSR (Qwen-EM)
+89.99
+40.52
+82.89
+73.4
+67.92
+70.74
+
+
+Model (INFINITY)
+gsm8k
+gpqa
+mmlu
+mbpp
+arc_challenge
+toxigen
+
+
+Llama
+49.81
+31.88
+65.40
+48.6
+54.52
+42.66
+
+
+SFT
+51.10
+28.44
+61.47
+43.0
+54.86
+42.55
+
+
+RLSR (SB)
+57.16
+29.61
+65.05
+52.2
+56.31
+45.11
+
+
+RLSR (Qwen-EM)
+58.83
+32.63
+65.35
+51.4
+56.14
+43.30
+
+
+SFT+RLSR (SB)
+54.51
+27.60
+61.73
+41.8
+56.48
+42.45
+
+
+SFT+RLSR (Qwen-EM)
+55.04
+27.77
+61.72
+43.4
+56.14
+42.55
+
+
+Qwen7B
+81.50
+32.63
+74.24
+63.8
+59.39
+57.13
+
+
+SFT
+78.54
+32.21
+72.86
+65.0
+56.74
+55.96
+
+
+RLSR (SB)
+83.47
+32.05
+74.41
+66.6
+59.81
+56.91
+
+
+RLSR (Qwen-EM)
+83.47
+32.89
+74.20
+66.2
+62.37
+56.91
+
+
+SFT+RLSR (SB)
+84.23
+33.14
+72.74
+63.6
+59.90
+56.81
+
+
+SFT+RLSR (Qwen-EM)
+84.23
+32.97
+72.84
+63.2
+61.09
+56.17
+
+
+Qwen32B
+84.61
+39.35
+83.29
+73.2
+67.06
+81.49
+
+
+SFT
+82.87
+37.67
+83.21
+73.6
+68.09
+67.02
+
+
+RLSR (SB)
+81.96
+39.01
+83.21
+75.6
+67.49
+77.66
+
+
+RLSR (Qwen-EM)
+83.40
+38.84
+83.20
+75.0
+68.94
+86.38
+
+
+SFT+RLSR (SB)
+84.15
+37.08
+83.20
+74.2
+69.28
+79.68
+
+
+SFT+RLSR (Qwen-EM)
+82.87
+37.92
+82.87
+77.0
+70.48
+83.19
+
+
+
+
+Table 3: Fine-tune Llama-8B, Qwen-7B and Qwen-32B utilizing SFT, RLSR and SFT+RLSR with TULU and INFINITY datasets and their performances on math_hard, ifeval, hellaswag, musr, winogender and bbh.
+
+
+
+
+Model (TULU)
+math_hard
+ifeval
+hellaswag
+musr
+winogender
+bbh
+
+
+Llama
+5.51
+17.99
+61.51
+38.10
+61.11
+46.22
+
+
+SFT
+7.55
+58.39
+59.11
+40.61
+62.50
+44.28
+
+
+RLSR (SB)
+7.10
+20.62
+63.88
+42.33
+61.53
+47.68
+
+
+RLSR (Qwen-EM)
+5.44
+13.67
+63.64
+47.09
+61.11
+48.05
+
+
+SFT+RLSR (SB)
+9.59
+62.71
+60.88
+43.92
+63.75
+45.79
+
+
+SFT+RLSR (Qwen-EM)
+8.99
+65.83
+60.28
+42.86
+64.03
+46.09
+
+
+Qwen7B
+22.81
+41.97
+60.32
+43.78
+58.61
+53.84
+
+
+SFT
+24.70
+56.71
+58.95
+44.71
+56.81
+51.15
+
+
+RLSR (SB)
+26.06
+53.60
+61.40
+45.50
+60.00
+52.65
+
+
+RLSR (Qwen-EM)
+27.72
+55.64
+61.22
+43.52
+60.42
+52.06
+
+
+SFT+RLSR (SB)
+27.19
+66.67
+61.46
+46.16
+58.19
+51.71
+
+
+SFT+RLSR (Qwen-EM)
+29.61
+67.51
+61.80
+45.63
+58.33
+52.92
+
+
+Qwen32B
+36.25
+49.16
+65.87
+48.81
+60.14
+67.44
+
+
+SFT
+39.73
+68.23
+65.05
+46.83
+61.53
+65.53
+
+
+RLSR (SB)
+39.27
+60.31
+67.23
+49.87
+61.25
+66.50
+
+
+RLSR (Qwen-EM)
+41.09
+65.47
+67.05
+50.26
+61.94
+66.36
+
+
+SFT+RLSR (SB)
+44.94
+75.54
+68.16
+49.47
+61.39
+66.13
+
+
+SFT+RLSR (Qwen-EM)
+43.20
+81.53
+69.03
+48.41
+61.25
+66.46
+
+
+Model (INFINITY)
+math_hard
+ifeval
+hellaswag
+musr
+winogender
+bbh
+
+
+Llama
+5.51
+17.99
+61.51
+38.10
+61.11
+46.22
+
+
+SFT
+5.29
+46.16
+59.55
+41.27
+60.69
+46.14
+
+
+RLSR (SB)
+7.02
+17.39
+62.58
+46.03
+61.11
+47.54
+
+
+RLSR (Qwen-EM)
+6.34
+17.87
+62.96
+42.86
+61.11
+47.79
+
+
+SFT+RLSR (SB)
+7.63
+46.52
+60.37
+46.56
+61.25
+47.08
+
+
+SFT+RLSR (Qwen-EM)
+6.34
+47.24
+60.64
+44.84
+61.94
+47.91
+
+
+Qwen7B
+22.81
+41.97
+60.32
+43.78
+58.61
+53.84
+
+
+SFT
+21.98
+50.36
+59.36
+45.77
+57.22
+54.30
+
+
+RLSR (SB)
+26.51
+55.52
+61.21
+41.93
+60.00
+53.71
+
+
+RLSR (Qwen-EM)
+26.96
+57.43
+61.62
+43.52
+59.17
+53.55
+
+
+SFT+RLSR (SB)
+21.30
+54.68
+60.39
+46.43
+59.17
+53.79
+
+
+SFT+RLSR (Qwen-EM)
+21.68
+56.35
+60.86
+44.71
+59.44
+53.79
+
+
+Qwen32B
+36.25
+49.16
+65.87
+48.81
+60.14
+67.44
+
+
+SFT
+36.56
+64.27
+65.13
+47.49
+59.86
+69.50
+
+
+RLSR (SB)
+38.97
+67.15
+66.91
+47.09
+59.58
+67.11
+
+
+RLSR (Qwen-EM)
+39.20
+66.79
+67.15
+49.07
+64.58
+66.83
+
+
+SFT+RLSR (SB)
+36.78
+68.23
+66.33
+49.07
+58.47
+69.14
+
+
+SFT+RLSR (Qwen-EM)
+36.03
+68.47
+66.46
+47.88
+61.25
+67.82
+
+
+
+
+
+Two instruction-tuning datasets, TULU [14] and INFINITY [15], each containing 100k sampled single-turn examples, are employed as the high-quality instruction-following data. RLSR is implemented using VERL [16], while SFT is conducted with OpenRLHF [17] because VERL’s SFT module is unstable and generating repetitive responses. Learning rates are empirically tuned for stability—set to 1×10−61\times 10^{-6} for LLaMA and 3×10−63\times 10^{-6} for both Qwen models. During rollout, the maximum sequence length is capped at 4096 tokens and the number of rollout for each prompt is 8, and the KL coefficient in the reward function is set to 0.001. The training batch size for training is 1024 and the PPO mini batch size is 256. For SFT training, a uniform learning rate of 3×10−53\times 10^{-5} is applied across all models and the training batch size is 256.
+
+
+
+In addition, we introduce a specific technique to mitigate repetitive generation. The Longest Common Substring (LCS) algorithm is employed to detect the longest repeated segment within the generated response. A penalty reward of −1-1 is applied if the following two conditions are satisfied: (1) L​C​S​(y)>100LCS(y)>100, meaning the detected substring exceeds 100 characters in length; and (2) L​C​S​(y)|y∗|>0.1\frac{LCS(y)}{|y^{*}|}>0.1, indicating that the repeated segment accounts for more than 10% of the human-labeled reference response. Although we observe that the training process remains stable even without this penalty, we include it as a precautionary measure to further reduce redundancy.
+
+
+
+Model performance is assessed using 18 standardized benchmarks from the LM Evaluation Harness [18], encompassing reasoning, mathematics, programming, bias, and factuality. These benchmarks include truthfulQA [19], hendrycks_Math [20], humanEval [21], BBQ [22], Winogrande [23], MMLU-Pro [24], GSM8K [25], GPQA [26], MMLU [27], MBPP [28], ARC-Challenge [29], ToxiGen [30], Math_Hard [31], IFEval [32], HellaSwag [33], MuSR [34], Winogender [23], and BBH [35]. In addition, AlpacaEval [36] and Arena-Hard [37] are employed to evaluate instruction-following ability and open-ended generation quality using human-preference metrics.
+
+
+Table 4: Fine-tune Llama-8B, Qwen-7B and Qwen-32B utilizing SFT, RLSR and SFT+RLSR with TULU and INFINITY datasets and their performances on generation tasks including Alpaca-eval and Arena-hard.
+
+
+
+
+Model Name (TULU)
+Alpaca-eval
+Arena-hard
+
+
+
+LC WR
+WR
+Length
+Creative Writing
+Style Control
+
+
+Llama
+0.16
+0.50
+26514
+0.1
+0.7
+
+
+SFT
+4.08
+3.82
+2205
+0.3
+1.1
+
+
+RLSR (SB)
+8.61
+6.22
+1177
+0.9
+1.5
+
+
+RLSR (Qwen-EM)
+7.22
+4.89
+1118
+1.2
+1.3
+
+
+SFT+RLSR (SB)
+10.82
+9.09
+1460
+1.3
+1.6
+
+
+SFT+RLSR (Qwen-EM)
+10.56
+7.27
+1077
+1.2
+1.4
+
+
+Qwen-7B
+8.98
+9.70
+7021
+0.9
+1.4
+
+
+SFT
+8.28
+6.74
+1508
+1.0
+1.6
+
+
+RLSR (SB)
+16.43
+8.14
+933
+1.9
+2.1
+
+
+RLSR (Qwen-EM)
+14.23
+7.21
+940
+1.2
+2.3
+
+
+SFT+RLSR (SB)
+15.72
+8.84
+1152
+1.5
+2.2
+
+
+SFT+RLSR (Qwen-EM)
+17.49
+9.66
+1064
+1.4
+2.0
+
+
+Qwen-32B
+5.97
+7.11
+14293
+2.0
+2.1
+
+
+SFT
+14.09
+10.85
+1350
+0.6
+2.9
+
+
+RLSR (SB)
+19.11
+10.33
+983
+2.5
+3.2
+
+
+RLSR (Qwen-EM)
+20.13
+10.36
+968
+2.9
+4.2
+
+
+SFT+RLSR (SB)
+19.43
+13.10
+1152
+2.8
+4.0
+
+
+SFT+RLSR (Qwen-EM)
+20.51
+13.11
+1055
+3.5
+3.9
+
+
+Model Name (INFINITY)
+Alpaca-eval
+Arena-hard
+
+
+
+LC WR
+WR
+Length
+Creative Writing
+Style Control
+
+
+Llama
+0.16
+0.50
+26514
+0.1
+0.7
+
+
+SFT
+14.92
+15.23
+3370
+0.7
+1.2
+
+
+RLSR (SB)
+11.17
+8.97
+1504
+1.2
+1.5
+
+
+RLSR (Qwen-EM)
+10.83
+10.04
+1759
+0.9
+1.3
+
+
+SFT+RLSR (SB)
+24.70
+21.36
+1845
+2.1
+1.4
+
+
+SFT+RLSR (Qwen-EM)
+30.51
+29.51
+1977
+2.8
+1.4
+
+
+Qwen-7B
+8.98
+9.70
+7021
+0.9
+1.4
+
+
+SFT
+21.01
+19.56
+2164
+0.8
+1.6
+
+
+RLSR (SB)
+26.34
+22.57
+1785
+2.8
+2.3
+
+
+RLSR (Qwen-EM)
+30.36
+34.96
+2269
+3.0
+2.2
+
+
+SFT+RLSR (SB)
+30.73
+22.64
+1576
+3.1
+2.1
+
+
+SFT+RLSR (Qwen-EM)
+31.85
+27.56
+1797
+3.6
+2.5
+
+
+Qwen-32B
+5.97
+7.11
+14293
+2.0
+2.1
+
+
+SFT
+37.10
+29.57
+1691
+2.4
+3.0
+
+
+RLSR (SB)
+35.94
+32.33
+1857
+4.5
+3.7
+
+
+RLSR (Qwen-EM)
+42.21
+43.79
+2145
+6.9
+4.7
+
+
+SFT+RLSR (SB)
+45.28
+34.33
+1670
+5.0
+3.9
+
+
+SFT+RLSR (Qwen-EM)
+46.53
+37.69
+1742
+5.1
+4.6
+
+
+
+
+
+
+
+3.2 Performance Evaluation and Analysis
+
+
+
+In this subsection, we present a comprehensive performance comparison across multiple configurations and perspectives. We begin by contrasting SFT with RLSR to demonstrate the benefits of the proposed reinforcement-based approach. Subsequently, we examine the impact of different reward models within RLSR. Finally, we analyze the synergy of combining SFT and RLSR (denoted as SFT+RLSR) and discuss its advantages over standalone SFT.
+
+
+
+
+3.2.1 Comparison Between SFT and RLSR
+
+
+
+We evaluated the performance of SFT and RLSR across 18 diverse benchmarks from the LM Eval Harness in Tables 1, 2, and 3. The experimental results show consistent improvements of RLSR (SB) over SFT across different base models and datasets. For the Llama-8B model fine-tuned on the TULU dataset, RLSR (SB) surpasses SFT on 12 out of 18 benchmarks (Table 1). When trained on the INFINITY dataset, the advantage becomes even more pronounced, with RLSR (SB) outperforming SFT on 16 out of 18 benchmarks. For the Qwen-7B model, RLSR (SB) achieves higher scores on 14 out of 18 benchmarks for both TULU and INFINITY datasets (Table 2). For the larger Qwen-32B model, RLSR (SB) exceeds SFT on 13 of 18 benchmarks (TULU) and 9 of 18 benchmarks (INFINITY) as shown in Table 3. The relatively smaller gain on Qwen-32B primarily stems from the limited representational capability of the SB reward model. When the reward is replaced with embeddings from the more powerful Qwen model, RLSR (Qwen-EM) demonstrates a clear advantage again-outperforming SFT on 15 of 18 (TULU) and 12 of 18 (INFINITY) benchmarks.
+
+
+
+Beyond classification-oriented tasks, we also evaluated on two open-ended generation benchmarks: AlpacaEval and Arena-Hard as shown in Table 4. Both datasets are designed for instruction-following evaluation. On AlpacaEval, RLSR-trained models show substantial improvements in Length-Controlled Win Rate (LC WR) over SFT, particularly for TULU-based training. When stronger reward signals from Qwen-EM are employed, the superiority of RLSR becomes more apparent, particularly for the larger Qwen-32B model. Although the gains on Arena-Hard are smaller, RLSR consistently outperforms SFT across all three models and both datasets. In summary, RLSR demonstrates a consistent and robust improvement over SFT across diverse architectures and datasets.
+
+
+
+
+
+3.2.2 Comparison Between SFT and SFT+RLSR
+
+
+
+We next evaluate the combined training strategy, SFT+RLSR, which applies RLSR fine-tuning on top of an SFT-trained model. While this setup involves slightly more training FLOPs, it provides a fair measure of how reinforcement refinement complements supervised pretraining. For Llama-8B, SFT+RLSR (SB) trained on TULU outperforms SFT on 16 out of 18 tasks, and on INFINITY it achieves superiority in 13 out of 18 tasks. For Qwen-7B, SFT+RLSR (SB) exceeds SFT on 13 of 18 (TULU) and 10 of 18 (INFINITY) tasks. For Qwen-32B, the combined approach improves over SFT on 13 of 18 (TULU) and 12 of 18 (INFINITY) benchmarks. Overall, SFT+RLSR demonstrates consistent and significant improvements over SFT across most benchmarks, confirming the complementarity between supervised and reinforcement-based fine-tuning.
+
+
+
+In the generative evaluation, SFT+RLSR (SB) surpasses SFT across all three models, both datasets on both benchmarks. These findings confirm that reinforcement refinement enhances both factual and stylistic alignment in instruction-following tasks.
+
+
+
+
+
+3.2.3 Comparison Between RLSR and SFT+RLSR
+
+
+
+We further compare RLSR and SFT+RLSR to assess whether reinforcement-only or hybrid fine-tuning yields superior outcomes. For classification tasks, RLSR tends to outperform SFT+RLSR. Using SB rewards as an example, RLSR surpasses SFT+RLSR on 10/18 (Llama-TULU), 11/18 (Llama-INFINITY), 11/18 (Qwen-7B-TULU), 12/18 (Qwen-7B-INFINITY), 11/18 (Qwen-32B-TULU), and 9/18 (Qwen-32B-INFINITY) benchmarks.
+
+
+
+However, for generative instruction-following tasks, SFT+RLSR generally achieves higher scores. On AlpacaEval, SFT+RLSR outperforms RLSR in 5 out of 6 model-dataset combinations, and on Arena-Hard, it achieves better performance in 5 of 6 creative writing tasks and 4 of 6 style control tasks. This trade-off reveals that while RLSR excels in discriminative reasoning tasks, SFT+RLSR better preserves linguistic fluency and generation quality-making it a more effective strategy for instruction-tuned language models.
+
+
+
+
+
+3.2.4 Comparison Among Different Reward Models
+
+
+
+Finally, we analyze the influence of different reward embeddings. In comparison, SB is a light model with relative coarse embedding, while Qwen is a heavy model with relative accurate embedding. For classification tasks, RLSR tends to outperform SFT+RLSR. Using SB rewards as an example, RLSR (Qwen-EM) surpasses RLSR (SB) on 9/18 (Llama-TULU), 10/18 (Llama-INFINITY), 12/18 (Qwen-7B-TULU), 10/18 (Qwen-7B-INFINITY), 13/18 (Qwen-32B-TULU), and 11/18 (Qwen-32B-INFINITY) benchmarks.
+
+
+
+On generative benchmarks, the same trend largely holds. For smaller models, SB yields better on smaller models on Alpaca-eval and Arena-hard, while larger models (e.g., Qwen-32B) consistently gain more from Qwen-based rewards on both benchmarks. This indicates a scale-dependent alignment effect: smaller models prefer simpler reward signals, whereas larger models leverage the additional semantic richness of larger embedding-based rewards for more refined behavior alignment.
+
+
+
+Overall, these experiments validate that (1) RLSR outperforms SFT on most tasks, (2) SFT+RLSR effectively combines the advantages of both paradigms, and (3) larger and more informative reward models yield better alignment and generalization performance across both classification and generative tasks on larger LLMs, while smaller embedding has better performance on smaller LLMs.
+
+
+
+
+
+
+
+4 Literature Review
+
+
+
+LLMs undergo extensive pretraining on vast datasets, enabling strong generative capabilities but often lacking precise alignment with human expectations or task-specific requirements [4]. Post-training techniques, such as SFT and RL-based methods, are critical for enhancing instruction-following, reasoning, and ethical alignment [38]. This section reviews key advancements in these areas, emphasizing their contributions to instruction-following and their relevance to our proposed RLSR method.
+
+
+
+SFT is a cornerstone of LLM post-training, optimizing models on high-quality, human-labeled prompt-response pairs using a next-token prediction objective [4]. Studies, such as those on TULU [14] and INFINITY [15], demonstrate that SFT significantly improves instruction-following. However, its teacher-forcing paradigm limits exploration, potentially trapping models in local optima and constraining generalization [39]. This rigidity motivates exploration of RL-based alternatives that balance exploitation with exploratory learning.
+
+
+
+RLHF addresses SFT’s limitations by optimizing models against a reward model trained on human preference data, typically using Proximal Policy Optimization (PPO) [1, 5]. RLHF enhances alignment with human values, as seen in models like GPT-4 and Claude [40, 41]. To reduce the cost of human feedback, Reinforcement Learning from AI Feedback (RLAIF) employs AI-generated feedback, offering scalability while maintaining alignment quality [42, 43]. For tasks requiring complex reasoning, such as mathematics and coding, RLVR uses precise, task-specific reward signals, improving performance on benchmarks like hendrycks_Math, humanEval and AIME [20, 21, 44]. GRPO, a simplified RL approach, further enhances efficiency by eliminating the need for a separate value model [2]. The integration of RLVR and GRPO serves as the cornerstone of the DeepSeek R1 model [3].
+
+
+
+RFT focuses on adapting reasoning models to specialized domains with limited data by employing programmable grader functions that assess outputs through semantic similarity or code execution metrics [6]. It emphasizes adaptability and flexibility in low-resource settings, offering reward designs that may incorporate human-labeled responses. However, RFT does not explore improving base models for general instruction-following, nor does it leverage large-scale SFT data or embedding-based rewards to enhance alignment with human intent.
+
+
+
+Recent research has shown that while SFT primarily promotes memorization, RL encourages generalization [39]. Embedding-based reward functions, as demonstrated in DSSM and CLIP, provide strong semantic similarity signals [7, 8]. Motivated by these findings and previous identified gaps, RLSR extends SFT by integrating large-scale SFT data into an RL framework, using cosine similarity in embedding space to reward responses consistent with human-labeled data. In doing so, RLSR directly enhances the instruction-following ability of base models, achieving broader generalization and alignment without relying on domain-specific or sparse reward signals.
+
+
+
+
+
+5 Limitation
+
+
+
+While RLSR outperforms SFT, it has limitations requiring further exploration. First, RLSR relies on cosine similarity in embedding space for rewards. Exploring alternatives like pretrained Bradley-Terry reward models or generative reward models could enhance performance [1]. Additionally, investigating RLSR’s relationship with RLHF using these reward models could clarify their synergy or differences in achieving alignment.
+
+
+
+Second, experiments were limited to models up to 32 billion parameters with datasets of 100k samples. Testing RLSR on trillion-parameter models with industrial-scale SFT datasets (billions of tokens) is needed to validate its scalability and robustness in complex, real-world settings [40]. Addressing these limitations will strengthen RLSR’s applicability and effectiveness for advanced LLM alignment.
+
+
+
+
+
+6 Conclusion
+
+
+
+In this work, we introduced RLSR, a novel approach that redefines the SFT process within a reinforcement learning framework to enhance the instruction-following capabilities of base LLMs. By leveraging the extensive human-labeled datasets typically used in SFT and defining a reward function based on cosine similarity in the semantic embedding space, RLSR enables a critical balance between exploration and exploitation, overcoming the limitations of SFT’s teacher-forcing paradigm. Our comprehensive experiments across three model sizes (Llama-8B, Qwen-7B, and Qwen-32B) and two high-quality datasets (TULU and INFINITY) demonstrate that RLSR consistently outperforms SFT on a wide range of benchmarks, achieving notable improvements in instruction-following tasks, as evidenced by a significant increase in AlpacaEval win rate (e.g., 26.34% for RLSR (SB) vs. 21.01% for SFT on Qwen-7B with INFINITY). Furthermore, the hybrid SFT+RLSR pipeline amplifies these gains, reaching a peak AlpacaEval win rate of 30.73% on the same model and dataset, highlighting the complementary strengths of supervised and reinforcement learning. These results validate RLSR’s ability to enhance base model performance, offering a scalable and effective alternative to traditional fine-tuning methods.
+
+
+
+
+
+7 Acknowledgement
+
+
+
+The authors would like to thank Zhichao Wang’s fiancée, Zhonghan Hao, for her assistance in verifying the accuracy of the tables, ensuring the correct transfer of data from Excel, and carefully counting the number of tasks where one method outperforms another across the various comparisons.
+
+
+
+
+
+References
+
+
+      
+
+[1]
+
+Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul Christiano, Jan Leike, and Ryan Lowe.
+
+
+Training language models to follow instructions with human feedback, 2022.
+
+
+      
+
+[2]
+
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo.
+
+
+Deepseekmath: Pushing the limits of mathematical reasoning in open language models, 2024.
+
+
+      
+
+[3]
+
+DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu, Shirong Ma, Peiyi Wang, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou, Zhihong Shao, Zhuoshu Li, Ziyi Gao, Aixin Liu, Bing Xue, Bingxuan Wang, Bochao Wu, Bei Feng, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, Damai Dai, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Han Bao, Hanwei Xu, Haocheng Wang, Honghui Ding, Huajian Xin, Huazuo Gao, Hui Qu, Hui Li, Jianzhong Guo, Jiashi Li, Jiawei Wang, Jingchang Chen, Jingyang Yuan, Junjie Qiu, Junlong Li, J. L. Cai, Jiaqi Ni, Jian Liang, Jin Chen, Kai Dong, Kai Hu, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang, Liang Zhao, Litong Wang, Liyue Zhang, Lei Xu, Leyi Xia, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Meng Li, Miaojun Wang, Mingming Li, Ning Tian, Panpan Huang, Peng Zhang, Qiancheng Wang, Qinyu Chen, Qiushi Du, Ruiqi Ge, Ruisong
+Zhang, Ruizhe Pan, Runji Wang, R. J. Chen, R. L. Jin, Ruyi Chen, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shengfeng Ye, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, S. S. Li, Shuang Zhou, Shaoqing Wu, Shengfeng Ye, Tao Yun, Tian Pei, Tianyu Sun, T. Wang, Wangding Zeng, Wanjia Zhao, Wen Liu, Wenfeng Liang, Wenjun Gao, Wenqin Yu, Wentao Zhang, W. L. Xiao, Wei An, Xiaodong Liu, Xiaohan Wang, Xiaokang Chen, Xiaotao Nie, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu, Xinyu Yang, Xinyuan Li, Xuecheng Su, Xuheng Lin, X. Q. Li, Xiangyue Jin, Xiaojin Shen, Xiaosha Chen, Xiaowen Sun, Xiaoxiang Wang, Xinnan Song, Xinyi Zhou, Xianzu Wang, Xinxia Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Yang Zhang, Yanhong Xu, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Wang, Yi Yu, Yichao Zhang, Yifan Shi, Yiliang Xiong, Ying He, Yishi Piao, Yisong Wang, Yixuan Tan, Yiyang Ma, Yiyuan Liu, Yongqiang Guo, Yuan Ou, Yuduan Wang, Yue Gong, Yuheng Zou, Yujia He, Yunfan Xiong, Yuxiang Luo, Yuxiang You, Yuxuan Liu, Yuyang Zhou, Y. X. Zhu,
+Yanhong Xu, Yanping Huang, Yaohui Li, Yi Zheng, Yuchen Zhu, Yunxian Ma, Ying Tang, Yukun Zha, Yuting Yan, Z. Z. Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda Xie, Zhengyan Zhang, Zhewen Hao, Zhicheng Ma, Zhigang Yan, Zhiyu Wu, Zihui Gu, Zijia Zhu, Zijun Liu, Zilin Li, Ziwei Xie, Ziyang Song, Zizheng Pan, Zhen Huang, Zhipeng Xu, Zhongyu Zhang, and Zhen Zhang.
+
+
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning, 2025.
+
+
+      
+
+[4]
+
+Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei.
+
+
+Language models are few-shot learners, 2020.
+
+
+      
+
+[5]
+
+John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov.
+
+
+Proximal policy optimization algorithms, 2017.
+
+
+      
+
+[6]
+
+OpenAI.
+
+
+Reinforcement fine tuning.
+
+
+https://platform.openai.com/docs/guides/rft-use-cases, 2025.
+
+
+Accessed: 2025-10-15.
+
+
+      
+
+[7]
+
+Po-Sen Huang, Xiaodong He, Jianfeng Gao, Li Deng, Alex Acero, and Larry Heck.
+
+
+Learning deep structured semantic models for web search using clickthrough data.
+
+
+In Proceedings of the 22nd ACM international conference on Information & Knowledge Management, pages 2333–2338, 2013.
+
+
+      
+
+[8]
+
+Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever.
+
+
+Learning transferable visual models from natural language supervision, 2021.
+
+
+      
+
+[9]
+
+Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen tau Yih, Tim Rocktäschel, Sebastian Riedel, and Douwe Kiela.
+
+
+Retrieval-augmented generation for knowledge-intensive nlp tasks, 2021.
+
+
+      
+
+[10]
+
+Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, Amy Yang, Angela Fan, Anirudh Goyal, Anthony Hartshorn, Aobo Yang, Archi Mitra, Archie Sravankumar, Artem Korenev, Arthur Hinsvark, Arun Rao, Aston Zhang, Aurelien Rodriguez, Austen Gregerson, Ava Spataru, Baptiste Roziere, Bethany Biron, Binh Tang, Bobbie Chern, Charlotte Caucheteux, Chaya Nayak, Chloe Bi, Chris Marra, Chris McConnell, Christian Keller, Christophe Touret, Chunyang Wu, Corinne Wong, Cristian Canton Ferrer, Cyrus Nikolaidis, Damien Allonsius, Daniel Song, Danielle Pintz, Danny Livshits, Danny Wyatt, David Esiobu, Dhruv Choudhary, Dhruv Mahajan, Diego Garcia-Olano, Diego Perino, Dieuwke Hupkes, Egor Lakomkin, Ehab AlBadawy, Elina Lobanova, Emily Dinan, Eric Michael Smith, Filip Radenovic, Francisco Guzmán, Frank Zhang, Gabriel Synnaeve, Gabrielle Lee, Georgia Lewis Anderson, Govind Thattai, Graeme Nail, Gregoire Mialon, Guan Pang,
+Guillem Cucurell, Hailey Nguyen, Hannah Korevaar, Hu Xu, Hugo Touvron, Iliyan Zarov, Imanol Arrieta Ibarra, Isabel Kloumann, Ishan Misra, Ivan Evtimov, Jack Zhang, Jade Copet, Jaewon Lee, Jan Geffert, Jana Vranes, Jason Park, Jay Mahadeokar, Jeet Shah, Jelmer van der Linde, Jennifer Billock, Jenny Hong, Jenya Lee, Jeremy Fu, Jianfeng Chi, Jianyu Huang, Jiawen Liu, Jie Wang, Jiecao Yu, Joanna Bitton, Joe Spisak, Jongsoo Park, Joseph Rocca, Joshua Johnstun, Joshua Saxe, Junteng Jia, Kalyan Vasuden Alwala, Karthik Prasad, Kartikeya Upasani, Kate Plawiak, Ke Li, Kenneth Heafield, Kevin Stone, Khalid El-Arini, Krithika Iyer, Kshitiz Malik, Kuenley Chiu, Kunal Bhalla, Kushal Lakhotia, Lauren Rantala-Yeary, Laurens van der Maaten, Lawrence Chen, Liang Tan, Liz Jenkins, Louis Martin, Lovish Madaan, Lubo Malo, Lukas Blecher, Lukas Landzaat, Luke de Oliveira, Madeline Muzzi, Mahesh Pasupuleti, Mannat Singh, Manohar Paluri, Marcin Kardas, Maria Tsimpoukelli, Mathew Oldham, Mathieu Rita, Maya Pavlova, Melanie Kambadur,
+Mike Lewis, Min Si, Mitesh Kumar Singh, Mona Hassan, Naman Goyal, Narjes Torabi, Nikolay Bashlykov, Nikolay Bogoychev, Niladri Chatterji, Ning Zhang, Olivier Duchenne, Onur Çelebi, Patrick Alrassy, Pengchuan Zhang, Pengwei Li, Petar Vasic, Peter Weng, Prajjwal Bhargava, Pratik Dubal, Praveen Krishnan, Punit Singh Koura, Puxin Xu, Qing He, Qingxiao Dong, Ragavan Srinivasan, Raj Ganapathy, Ramon Calderer, Ricardo Silveira Cabral, Robert Stojnic, Roberta Raileanu, Rohan Maheswari, Rohit Girdhar, Rohit Patel, Romain Sauvestre, Ronnie Polidoro, Roshan Sumbaly, Ross Taylor, Ruan Silva, Rui Hou, Rui Wang, Saghar Hosseini, Sahana Chennabasappa, Sanjay Singh, Sean Bell, Seohyun Sonia Kim, Sergey Edunov, Shaoliang Nie, Sharan Narang, Sharath Raparthy, Sheng Shen, Shengye Wan, Shruti Bhosale, Shun Zhang, Simon Vandenhende, Soumya Batra, Spencer Whitman, Sten Sootla, Stephane Collot, Suchin Gururangan, Sydney Borodinsky, Tamar Herman, Tara Fowler, Tarek Sheasha, Thomas Georgiou, Thomas Scialom, Tobias Speckbacher,
+Todor Mihaylov, Tong Xiao, Ujjwal Karn, Vedanuj Goswami, Vibhor Gupta, Vignesh Ramanathan, Viktor Kerkez, Vincent Gonguet, Virginie Do, Vish Vogeti, Vítor Albiero, Vladan Petrovic, Weiwei Chu, Wenhan Xiong, Wenyin Fu, Whitney Meers, Xavier Martinet, Xiaodong Wang, Xiaofang Wang, Xiaoqing Ellen Tan, Xide Xia, Xinfeng Xie, Xuchao Jia, Xuewei Wang, Yaelle Goldschlag, Yashesh Gaur, Yasmine Babaei, Yi Wen, Yiwen Song, Yuchen Zhang, Yue Li, Yuning Mao, Zacharie Delpierre Coudert, Zheng Yan, Zhengxing Chen, Zoe Papakipos, Aaditya Singh, Aayushi Srivastava, Abha Jain, Adam Kelsey, Adam Shajnfeld, Adithya Gangidi, Adolfo Victoria, Ahuva Goldstand, Ajay Menon, Ajay Sharma, Alex Boesenberg, Alexei Baevski, Allie Feinstein, Amanda Kallet, Amit Sangani, Amos Teo, Anam Yunus, Andrei Lupu, Andres Alvarado, Andrew Caples, Andrew Gu, Andrew Ho, Andrew Poulton, Andrew Ryan, Ankit Ramchandani, Annie Dong, Annie Franco, Anuj Goyal, Aparajita Saraf, Arkabandhu Chowdhury, Ashley Gabriel, Ashwin Bharambe, Assaf Eisenman, Azadeh
+Yazdan, Beau James, Ben Maurer, Benjamin Leonhardi, Bernie Huang, Beth Loyd, Beto De Paola, Bhargavi Paranjape, Bing Liu, Bo Wu, Boyu Ni, Braden Hancock, Bram Wasti, Brandon Spence, Brani Stojkovic, Brian Gamido, Britt Montalvo, Carl Parker, Carly Burton, Catalina Mejia, Ce Liu, Changhan Wang, Changkyu Kim, Chao Zhou, Chester Hu, Ching-Hsiang Chu, Chris Cai, Chris Tindal, Christoph Feichtenhofer, Cynthia Gao, Damon Civin, Dana Beaty, Daniel Kreymer, Daniel Li, David Adkins, David Xu, Davide Testuggine, Delia David, Devi Parikh, Diana Liskovich, Didem Foss, Dingkang Wang, Duc Le, Dustin Holland, Edward Dowling, Eissa Jamil, Elaine Montgomery, Eleonora Presani, Emily Hahn, Emily Wood, Eric-Tuan Le, Erik Brinkman, Esteban Arcaute, Evan Dunbar, Evan Smothers, Fei Sun, Felix Kreuk, Feng Tian, Filippos Kokkinos, Firat Ozgenel, Francesco Caggioni, Frank Kanayet, Frank Seide, Gabriela Medina Florez, Gabriella Schwarz, Gada Badeer, Georgia Swee, Gil Halpern, Grant Herman, Grigory Sizov, Guangyi, Zhang, Guna
+Lakshminarayanan, Hakan Inan, Hamid Shojanazeri, Han Zou, Hannah Wang, Hanwen Zha, Haroun Habeeb, Harrison Rudolph, Helen Suk, Henry Aspegren, Hunter Goldman, Hongyuan Zhan, Ibrahim Damlaj, Igor Molybog, Igor Tufanov, Ilias Leontiadis, Irina-Elena Veliche, Itai Gat, Jake Weissman, James Geboski, James Kohli, Janice Lam, Japhet Asher, Jean-Baptiste Gaya, Jeff Marcus, Jeff Tang, Jennifer Chan, Jenny Zhen, Jeremy Reizenstein, Jeremy Teboul, Jessica Zhong, Jian Jin, Jingyi Yang, Joe Cummings, Jon Carvill, Jon Shepard, Jonathan McPhie, Jonathan Torres, Josh Ginsburg, Junjie Wang, Kai Wu, Kam Hou U, Karan Saxena, Kartikay Khandelwal, Katayoun Zand, Kathy Matosich, Kaushik Veeraraghavan, Kelly Michelena, Keqian Li, Kiran Jagadeesh, Kun Huang, Kunal Chawla, Kyle Huang, Lailin Chen, Lakshya Garg, Lavender A, Leandro Silva, Lee Bell, Lei Zhang, Liangpeng Guo, Licheng Yu, Liron Moshkovich, Luca Wehrstedt, Madian Khabsa, Manav Avalani, Manish Bhatt, Martynas Mankus, Matan Hasson, Matthew Lennie, Matthias Reso, Maxim
+Groshev, Maxim Naumov, Maya Lathi, Meghan Keneally, Miao Liu, Michael L. Seltzer, Michal Valko, Michelle Restrepo, Mihir Patel, Mik Vyatskov, Mikayel Samvelyan, Mike Clark, Mike Macey, Mike Wang, Miquel Jubert Hermoso, Mo Metanat, Mohammad Rastegari, Munish Bansal, Nandhini Santhanam, Natascha Parks, Natasha White, Navyata Bawa, Nayan Singhal, Nick Egebo, Nicolas Usunier, Nikhil Mehta, Nikolay Pavlovich Laptev, Ning Dong, Norman Cheng, Oleg Chernoguz, Olivia Hart, Omkar Salpekar, Ozlem Kalinli, Parkin Kent, Parth Parekh, Paul Saab, Pavan Balaji, Pedro Rittner, Philip Bontrager, Pierre Roux, Piotr Dollar, Polina Zvyagina, Prashant Ratanchandani, Pritish Yuvraj, Qian Liang, Rachad Alao, Rachel Rodriguez, Rafi Ayub, Raghotham Murthy, Raghu Nayani, Rahul Mitra, Rangaprabhu Parthasarathy, Raymond Li, Rebekkah Hogan, Robin Battey, Rocky Wang, Russ Howes, Ruty Rinott, Sachin Mehta, Sachin Siby, Sai Jayesh Bondu, Samyak Datta, Sara Chugh, Sara Hunt, Sargun Dhillon, Sasha Sidorov, Satadru Pan, Saurabh Mahajan,
+Saurabh Verma, Seiji Yamamoto, Sharadh Ramaswamy, Shaun Lindsay, Shaun Lindsay, Sheng Feng, Shenghao Lin, Shengxin Cindy Zha, Shishir Patil, Shiva Shankar, Shuqiang Zhang, Shuqiang Zhang, Sinong Wang, Sneha Agarwal, Soji Sajuyigbe, Soumith Chintala, Stephanie Max, Stephen Chen, Steve Kehoe, Steve Satterfield, Sudarshan Govindaprasad, Sumit Gupta, Summer Deng, Sungmin Cho, Sunny Virk, Suraj Subramanian, Sy Choudhury, Sydney Goldman, Tal Remez, Tamar Glaser, Tamara Best, Thilo Koehler, Thomas Robinson, Tianhe Li, Tianjun Zhang, Tim Matthews, Timothy Chou, Tzook Shaked, Varun Vontimitta, Victoria Ajayi, Victoria Montanez, Vijai Mohan, Vinay Satish Kumar, Vishal Mangla, Vlad Ionescu, Vlad Poenaru, Vlad Tiberiu Mihailescu, Vladimir Ivanov, Wei Li, Wenchen Wang, Wenwen Jiang, Wes Bouaziz, Will Constable, Xiaocheng Tang, Xiaojian Wu, Xiaolan Wang, Xilun Wu, Xinbo Gao, Yaniv Kleinman, Yanjun Chen, Ye Hu, Ye Jia, Ye Qi, Yenda Li, Yilin Zhang, Ying Zhang, Yossi Adi, Youngjin Nam, Yu, Wang, Yu Zhao, Yuchen Hao, Yundi
+Qian, Yunlu Li, Yuzi He, Zach Rait, Zachary DeVito, Zef Rosnbrick, Zhaoduo Wen, Zhenyu Yang, Zhiwei Zhao, and Zhiyu Ma.
+
+
+The llama 3 herd of models, 2024.
+
+
+      
+
+[11]
+
+Qwen, :, An Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu.
+
+
+Qwen2.5 technical report, 2025.
+
+
+      
+
+[12]
+
+Edoardo Federici.
+
+
+sentence-bert-base, sentence-transformer for italian, 2022.
+
+
+      
+
+[13]
+
+Yanzhao Zhang, Mingxin Li, Dingkun Long, Xin Zhang, Huan Lin, Baosong Yang, Pengjun Xie, An Yang, Dayiheng Liu, Junyang Lin, Fei Huang, and Jingren Zhou.
+
+
+Qwen3 embedding: Advancing text embedding and reranking through foundation models.
+
+
+arXiv preprint arXiv:2506.05176, 2025.
+
+
+      
+
+[14]
+
+Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, Faeze Brahman, Lester James V. Miranda, Alisa Liu, Nouha Dziri, Shane Lyu, Yuling Gu, Saumya Malik, Victoria Graf, Jena D. Hwang, Jiangjiang Yang, Ronan Le Bras, Oyvind Tafjord, Chris Wilhelm, Luca Soldaini, Noah A. Smith, Yizhong Wang, Pradeep Dasigi, and Hannaneh Hajishirzi.
+
+
+Tulu 3: Pushing frontiers in open language model post-training, 2025.
+
+
+      
+
+[15]
+
+Jijie Li, Li Du, Hanyu Zhao, Bo wen Zhang, Liangdong Wang, Boyan Gao, Guang Liu, and Yonghua Lin.
+
+
+Infinity instruct: Scaling instruction selection and synthesis to enhance language models, 2025.
+
+
+      
+
+[16]
+
+Guangming Sheng, Chi Zhang, Zilingfeng Ye, Xibin Wu, Wang Zhang, Ru Zhang, Yanghua Peng, Haibin Lin, and Chuan Wu.
+
+
+Hybridflow: A flexible and efficient rlhf framework.
+
+
+arXiv preprint arXiv: 2409.19256, 2024.
+
+
+      
+
+[17]
+
+Jian Hu, Xibin Wu, Wei Shen, Jason Klein Liu, Zilin Zhu, Weixun Wang, Songlin Jiang, Haoran Wang, Hao Chen, Bin Chen, Weikai Fang, Xianyu, Yu Cao, Haotian Xu, and Yiming Liu.
+
+
+Openrlhf: An easy-to-use, scalable and high-performance rlhf framework, 2025.
+
+
+      
+
+[18]
+
+Leo Gao, Jonathan Tow, Baber Abbasi, Stella Biderman, Sid Black, Anthony DiPofi, Charles Foster, Laurence Golding, Jeffrey Hsu, Alain Le Noac’h, Haonan Li, Kyle McDonell, Niklas Muennighoff, Chris Ociepa, Jason Phang, Laria Reynolds, Hailey Schoelkopf, Aviya Skowron, Lintang Sutawika, Eric Tang, Anish Thite, Ben Wang, Kevin Wang, and Andy Zou.
+
+
+The language model evaluation harness, 07 2024.
+
+
+      
+
+[19]
+
+Stephanie Lin, Jacob Hilton, and Owain Evans.
+
+
+Truthfulqa: Measuring how models mimic human falsehoods, 2022.
+
+
+      
+
+[20]
+
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt.
+
+
+Measuring mathematical problem solving with the math dataset.
+
+
+NeurIPS, 2021.
+
+
+      
+
+[21]
+
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe Petroski Such, Dave Cummings, Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain, William Saunders, Christopher Hesse, Andrew N. Carr, Jan Leike, Josh Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech Zaremba.
+
+
+Evaluating large language models trained on code, 2021.
+
+
+      
+
+[22]
+
+Alicia Parrish, Angelica Chen, Nikita Nangia, Vishakh Padmakumar, Jason Phang, Jana Thompson, Phu Mon Htut, and Samuel Bowman.
+
+
+BBQ: A hand-built bias benchmark for question answering.
+
+
+In Smaranda Muresan, Preslav Nakov, and Aline Villavicencio, editors, Findings of the Association for Computational Linguistics: ACL 2022, pages 2086–2105, Dublin, Ireland, May 2022. Association for Computational Linguistics.
+
+
+      
+
+[23]
+
+Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi.
+
+
+Winogrande: An adversarial winograd schema challenge at scale, 2019.
+
+
+      
+
+[24]
+
+Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, et al.
+
+
+Mmlu-pro: A more robust and challenging multi-task language understanding benchmark.
+
+
+arXiv preprint arXiv:2406.01574, 2024.
+
+
+      
+
+[25]
+
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman.
+
+
+Training verifiers to solve math word problems.
+
+
+arXiv preprint arXiv:2110.14168, 2021.
+
+
+      
+
+[26]
+
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang, Julien Dirani, Julian Michael, and Samuel R. Bowman.
+
+
+Gpqa: A graduate-level google-proof q&a benchmark, 2023.
+
+
+      
+
+[27]
+
+Dan Hendrycks, Collin Burns, Steven Basart, Andrew Critch, Jerry Li, Dawn Song, and Jacob Steinhardt.
+
+
+Aligning ai with shared human values.
+
+
+Proceedings of the International Conference on Learning Representations (ICLR), 2021.
+
+
+      
+
+[28]
+
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al.
+
+
+Program synthesis with large language models.
+
+
+arXiv preprint arXiv:2108.07732, 2021.
+
+
+      
+
+[29]
+
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord.
+
+
+Think you have solved question answering? try arc, the ai2 reasoning challenge, 2018.
+
+
+      
+
+[30]
+
+Thomas Hartvigsen, Saadia Gabriel, Hamid Palangi, Maarten Sap, Dipankar Ray, and Ece Kamar.
+
+
+Toxigen: A large-scale machine-generated dataset for adversarial and implicit hate speech detection, 2022.
+
+
+      
+
+[31]
+
+Jingxuan Fan, Sarah Martinson, Erik Y. Wang, Kaylie Hausknecht, Jonah Brenner, Danxian Liu, Nianli Peng, Corey Wang, and Michael P. Brenner.
+
+
+Hardmath: A benchmark dataset for challenging problems in applied mathematics, 2024.
+
+
+      
+
+[32]
+
+Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha Brahma, Sujoy Basu, Yi Luan, Denny Zhou, and Le Hou.
+
+
+Instruction-following evaluation for large language models, 2023.
+
+
+      
+
+[33]
+
+Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi.
+
+
+Hellaswag: Can a machine really finish your sentence?
+
+
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, 2019.
+
+
+      
+
+[34]
+
+Zayne Sprague, Xi Ye, Kaj Bostrom, Swarat Chaudhuri, and Greg Durrett.
+
+
+Musr: Testing the limits of chain-of-thought with multistep soft reasoning, 2024.
+
+
+      
+
+[35]
+
+Mirac Suzgun, Nathan Scales, Nathanael Schärli, Sebastian Gehrmann, Yi Tay, Hyung Won Chung, Aakanksha Chowdhery, Quoc V. Le, Ed H. Chi, Denny Zhou, and Jason Wei.
+
+
+Challenging big-bench tasks and whether chain-of-thought can solve them, 2022.
+
+
+      
+
+[36]
+
+Yann Dubois, Balázs Galambosi, Percy Liang, and Tatsunori B Hashimoto.
+
+
+Length-controlled alpacaeval: A simple way to debias automatic evaluators.
+
+
+arXiv preprint arXiv:2404.04475, 2024.
+
+
+      
+
+[37]
+
+Tianle Li, Wei-Lin Chiang, Evan Frick, Lisa Dunlap, Banghua Zhu, Joseph E. Gonzalez, and Ion Stoica.
+
+
+From live data to high-quality benchmarks: The arena-hard pipeline.
+
+
+https://lmsys.org/blog/2024-04-19-arena-hard/, April 2024.
+
+
+      
+
+[38]
+
+Zhichao Wang, Bin Bi, Shiva Kumar Pentyala, Kiran Ramnath, Sougata Chaudhuri, Shubham Mehrotra, Zixu, Zhu, Xiang-Bo Mao, Sitaram Asur, Na, and Cheng.
+
+
+A comprehensive survey of llm alignment techniques: Rlhf, rlaif, ppo, dpo and more, 2024.
+
+
+      
+
+[39]
+
+Tianzhe Chu, Yuexiang Zhai, Jihan Yang, Shengbang Tong, Saining Xie, Dale Schuurmans, Quoc V. Le, Sergey Levine, and Yi Ma.
+
+
+Sft memorizes, rl generalizes: A comparative study of foundation model post-training, 2025.
+
+
+      
+
+[40]
+
+OpenAI, :, Aaron Hurst, Adam Lerer, Adam P. Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, Aleksander Mądry, Alex Baker-Whitcomb, Alex Beutel, Alex Borzunov, Alex Carney, Alex Chow, Alex Kirillov, Alex Nichol, Alex Paino, Alex Renzin, Alex Tachard Passos, Alexander Kirillov, Alexi Christakis, Alexis Conneau, Ali Kamali, Allan Jabri, Allison Moyer, Allison Tam, Amadou Crookes, Amin Tootoochian, Amin Tootoonchian, Ananya Kumar, Andrea Vallone, Andrej Karpathy, Andrew Braunstein, Andrew Cann, Andrew Codispoti, Andrew Galu, Andrew Kondrich, Andrew Tulloch, Andrey Mishchenko, Angela Baek, Angela Jiang, Antoine Pelisse, Antonia Woodford, Anuj Gosalia, Arka Dhar, Ashley Pantuliano, Avi Nayak, Avital Oliver, Barret Zoph, Behrooz Ghorbani, Ben Leimberger, Ben Rossen, Ben Sokolowsky, Ben Wang, Benjamin Zweig, Beth Hoover, Blake Samic, Bob McGrew, Bobby Spero, Bogo Giertler, Bowen Cheng, Brad Lightcap, Brandon Walkin, Brendan Quinn, Brian Guarraci, Brian Hsu,
+Bright Kellogg, Brydon Eastman, Camillo Lugaresi, Carroll Wainwright, Cary Bassin, Cary Hudson, Casey Chu, Chad Nelson, Chak Li, Chan Jun Shern, Channing Conger, Charlotte Barette, Chelsea Voss, Chen Ding, Cheng Lu, Chong Zhang, Chris Beaumont, Chris Hallacy, Chris Koch, Christian Gibson, Christina Kim, Christine Choi, Christine McLeavey, Christopher Hesse, Claudia Fischer, Clemens Winter, Coley Czarnecki, Colin Jarvis, Colin Wei, Constantin Koumouzelis, Dane Sherburn, Daniel Kappler, Daniel Levin, Daniel Levy, David Carr, David Farhi, David Mely, David Robinson, David Sasaki, Denny Jin, Dev Valladares, Dimitris Tsipras, Doug Li, Duc Phong Nguyen, Duncan Findlay, Edede Oiwoh, Edmund Wong, Ehsan Asdar, Elizabeth Proehl, Elizabeth Yang, Eric Antonow, Eric Kramer, Eric Peterson, Eric Sigler, Eric Wallace, Eugene Brevdo, Evan Mays, Farzad Khorasani, Felipe Petroski Such, Filippo Raso, Francis Zhang, Fred von Lohmann, Freddie Sulit, Gabriel Goh, Gene Oden, Geoff Salmon, Giulio Starace, Greg Brockman, Hadi
+Salman, Haiming Bao, Haitang Hu, Hannah Wong, Haoyu Wang, Heather Schmidt, Heather Whitney, Heewoo Jun, Hendrik Kirchner, Henrique Ponde de Oliveira Pinto, Hongyu Ren, Huiwen Chang, Hyung Won Chung, Ian Kivlichan, Ian O’Connell, Ian O’Connell, Ian Osband, Ian Silber, Ian Sohl, Ibrahim Okuyucu, Ikai Lan, Ilya Kostrikov, Ilya Sutskever, Ingmar Kanitscheider, Ishaan Gulrajani, Jacob Coxon, Jacob Menick, Jakub Pachocki, James Aung, James Betker, James Crooks, James Lennon, Jamie Kiros, Jan Leike, Jane Park, Jason Kwon, Jason Phang, Jason Teplitz, Jason Wei, Jason Wolfe, Jay Chen, Jeff Harris, Jenia Varavva, Jessica Gan Lee, Jessica Shieh, Ji Lin, Jiahui Yu, Jiayi Weng, Jie Tang, Jieqi Yu, Joanne Jang, Joaquin Quinonero Candela, Joe Beutler, Joe Landers, Joel Parish, Johannes Heidecke, John Schulman, Jonathan Lachman, Jonathan McKay, Jonathan Uesato, Jonathan Ward, Jong Wook Kim, Joost Huizinga, Jordan Sitkin, Jos Kraaijeveld, Josh Gross, Josh Kaplan, Josh Snyder, Joshua Achiam, Joy Jiao, Joyce Lee, Juntang
+Zhuang, Justyn Harriman, Kai Fricke, Kai Hayashi, Karan Singhal, Katy Shi, Kavin Karthik, Kayla Wood, Kendra Rimbach, Kenny Hsu, Kenny Nguyen, Keren Gu-Lemberg, Kevin Button, Kevin Liu, Kiel Howe, Krithika Muthukumar, Kyle Luther, Lama Ahmad, Larry Kai, Lauren Itow, Lauren Workman, Leher Pathak, Leo Chen, Li Jing, Lia Guy, Liam Fedus, Liang Zhou, Lien Mamitsuka, Lilian Weng, Lindsay McCallum, Lindsey Held, Long Ouyang, Louis Feuvrier, Lu Zhang, Lukas Kondraciuk, Lukasz Kaiser, Luke Hewitt, Luke Metz, Lyric Doshi, Mada Aflak, Maddie Simens, Madelaine Boyd, Madeleine Thompson, Marat Dukhan, Mark Chen, Mark Gray, Mark Hudnall, Marvin Zhang, Marwan Aljubeh, Mateusz Litwin, Matthew Zeng, Max Johnson, Maya Shetty, Mayank Gupta, Meghan Shah, Mehmet Yatbaz, Meng Jia Yang, Mengchao Zhong, Mia Glaese, Mianna Chen, Michael Janner, Michael Lampe, Michael Petrov, Michael Wu, Michele Wang, Michelle Fradin, Michelle Pokrass, Miguel Castro, Miguel Oom Temudo de Castro, Mikhail Pavlov, Miles Brundage, Miles Wang, Minal
+Khan, Mira Murati, Mo Bavarian, Molly Lin, Murat Yesildal, Nacho Soto, Natalia Gimelshein, Natalie Cone, Natalie Staudacher, Natalie Summers, Natan LaFontaine, Neil Chowdhury, Nick Ryder, Nick Stathas, Nick Turley, Nik Tezak, Niko Felix, Nithanth Kudige, Nitish Keskar, Noah Deutsch, Noel Bundick, Nora Puckett, Ofir Nachum, Ola Okelola, Oleg Boiko, Oleg Murk, Oliver Jaffe, Olivia Watkins, Olivier Godement, Owen Campbell-Moore, Patrick Chao, Paul McMillan, Pavel Belov, Peng Su, Peter Bak, Peter Bakkum, Peter Deng, Peter Dolan, Peter Hoeschele, Peter Welinder, Phil Tillet, Philip Pronin, Philippe Tillet, Prafulla Dhariwal, Qiming Yuan, Rachel Dias, Rachel Lim, Rahul Arora, Rajan Troll, Randall Lin, Rapha Gontijo Lopes, Raul Puri, Reah Miyara, Reimar Leike, Renaud Gaubert, Reza Zamani, Ricky Wang, Rob Donnelly, Rob Honsby, Rocky Smith, Rohan Sahai, Rohit Ramchandani, Romain Huet, Rory Carmichael, Rowan Zellers, Roy Chen, Ruby Chen, Ruslan Nigmatullin, Ryan Cheu, Saachi Jain, Sam Altman, Sam Schoenholz, Sam
+Toizer, Samuel Miserendino, Sandhini Agarwal, Sara Culver, Scott Ethersmith, Scott Gray, Sean Grove, Sean Metzger, Shamez Hermani, Shantanu Jain, Shengjia Zhao, Sherwin Wu, Shino Jomoto, Shirong Wu, Shuaiqi, Xia, Sonia Phene, Spencer Papay, Srinivas Narayanan, Steve Coffey, Steve Lee, Stewart Hall, Suchir Balaji, Tal Broda, Tal Stramer, Tao Xu, Tarun Gogineni, Taya Christianson, Ted Sanders, Tejal Patwardhan, Thomas Cunninghman, Thomas Degry, Thomas Dimson, Thomas Raoux, Thomas Shadwell, Tianhao Zheng, Todd Underwood, Todor Markov, Toki Sherbakov, Tom Rubin, Tom Stasi, Tomer Kaftan, Tristan Heywood, Troy Peterson, Tyce Walters, Tyna Eloundou, Valerie Qi, Veit Moeller, Vinnie Monaco, Vishal Kuo, Vlad Fomenko, Wayne Chang, Weiyi Zheng, Wenda Zhou, Wesam Manassra, Will Sheu, Wojciech Zaremba, Yash Patil, Yilei Qian, Yongjik Kim, Youlong Cheng, Yu Zhang, Yuchen He, Yuchen Zhang, Yujia Jin, Yunxing Dai, and Yury Malkov.
+
+
+Gpt-4o system card, 2024.
+
+
+      
+
+[41]
+
+AI Anthropic.
+
+
+The claude 3 model family: Opus, sonnet, haiku.
+
+
+Claude-3 Model Card, 1, 2024.
+
+
+      
+
+[42]
+
+Yuntao Bai, Saurav Kadavath, Sandipan Kundu, Amanda Askell, Jackson Kernion, Andy Jones, Anna Chen, Anna Goldie, Azalia Mirhoseini, Cameron McKinnon, Carol Chen, Catherine Olsson, Christopher Olah, Danny Hernandez, Dawn Drain, Deep Ganguli, Dustin Li, Eli Tran-Johnson, Ethan Perez, Jamie Kerr, Jared Mueller, Jeffrey Ladish, Joshua Landau, Kamal Ndousse, Kamile Lukosuite, Liane Lovitt, Michael Sellitto, Nelson Elhage, Nicholas Schiefer, Noemi Mercado, Nova DasSarma, Robert Lasenby, Robin Larson, Sam Ringer, Scott Johnston, Shauna Kravec, Sheer El Showk, Stanislav Fort, Tamera Lanham, Timothy Telleen-Lawton, Tom Conerly, Tom Henighan, Tristan Hume, Samuel R. Bowman, Zac Hatfield-Dodds, Ben Mann, Dario Amodei, Nicholas Joseph, Sam McCandlish, Tom Brown, and Jared Kaplan.
+
+
+Constitutional ai: Harmlessness from ai feedback, 2022.
+
+
+      
+
+[43]
+
+Harrison Lee, Samrat Phatale, Hassan Mansoor, Thomas Mesnard, Johan Ferret, Kellie Lu, Colton Bishop, Ethan Hall, Victor Carbune, Abhinav Rastogi, and Sushant Prakash.
+
+
+Rlaif: Scaling reinforcement learning from human feedback with ai feedback, 2023.
+
+
+      
+
+[44]
+
+AIME.
+
+
+Aime dataset.
+
+
+https://huggingface.co/datasets/AI-MO/aimo-validation-aime, 2025.
+
+
+    
+
+
+
+
+
+
+  
+    Experimental support, please
+    view the build logs
+    for errors. Generated by
+    
+      
+        L
+        A
+        T
+        E
+      
+      xml
+      
+    .
+  
+  
+    
+Instructions for reporting errors
+    
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+    
+      
+Click the "Report Issue" (
+            
+          ) button, located in the page header.
+    
+    
+Tip: You can select the relevant text first, to include it in your report.
+    
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+    
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+  
+
+  
+    
+      
+        We gratefully acknowledge support from
+        our major funders,
+        member institutions, ,
+        and all contributors.
+      
+      
+        About
+        ·
+        Help
+        ·
+        Contact
+        ·
+        Subscribe
+        ·
+        Copyright
+        ·
+        Privacy
+        ·
+        Accessibility
+        ·
+        Operational Status (opens in new tab)
+      
+    
+
+    
+      Major funding support from
+      
+        
+          
+        
+        
+          
+        
+        
+          
+        
+      
+    
+  
+
+  
+    
+      
+    
+  
+
+

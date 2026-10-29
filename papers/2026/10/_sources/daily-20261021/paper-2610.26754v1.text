@@ -1,0 +1,685 @@
+TokenGate: Adapting LLMs for Fast and Memory-Efficient Prefill withLearned Token Pruning
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+License: CC BY 4.0
+arXiv:2610.26754v1 [cs.CL] 19 Oct 2026
+TokenGate : Adapting LLMs for Fast and Memory-Efficient Prefill with
+Learned Token Pruning
+Liana Patel 1 , Rishabh Ranjan 1 , Ion Stoica 2 , Matei Zaharia 2 , Carlos Guestrin 1
+1 Stanford University 2 UC Berkeley
+https://github.com/tokengate-models/TokenGate
+Abstract
+Expert human readers process large inputs (e.g., code repositories and long documents) by skimming to closely read only what matters. On the other hand, language models process all input tokens through each model layer, resulting in significant processing costs for long-context inputs.
+We introduce TokenGate , a small, drop-in component that extends existing trained models to enable end-to-end learnable token pruning over long-context inputs for fast and memory-efficient prefill.
+To enable end-to-end learning despite the non-differentiable top- K K operator for token pruning, we introduce token-gated attention , a mechanism inspired by Mixture-of-Experts that re-weights attention logits using token importance scores.
+Across diverse tasks, TokenGate achieves 1.4 1.4 - 11.3 × 11.3\times faster time-to-first token (TTFT) and 1.5 1.5 - 3.4 × 3.4\times lower peak memory at no accuracy degradation for prefill in transformers.
+Compared to the best-performing prior methods for token-pruning, TokenGate gives up to 6.4 × 6.4\times faster prefill and 2 × 2\times lower peak memory.
+TokenGate natively extends both standard transformers (e.g., Qwen3) and hybrid-attention models (e.g., Qwen3.5) with simple lightweight adaptation comparable to standard parameter-efficient fine-tuning.
+We make our code available at: https://github.com/tokengate-models/TokenGate .
+† † footnotetext: Correspondence to: lianapat@stanford.edu ,
+matei@berkeley.edu ,
+guestrin@stanford.edu .
+1 Introduction
+Long-context inputs underpin exciting recent language model deployments, where the model’s ability to process vast swaths of personalized user data and live content during inference has led to transformative capabilities in deep research, large-scale document processing, coding agents, and data agents ( OpenAI, 2025b ; Gemini, 2025 ; Anthropic, 2025b ; Anthropic, 2025a ; Anysphere, 2025 ; GitHub, 2025 ) .
+When processing large inputs, like code or long documents, experts readers skim to closely read only what matters.
+Yet, transformers process every token of their input through each layer, whether or not the token bears critical information. The cost of this full read is attention compute that grows quadratically with input length, as well as MLP compute and KV-cache memory that grow linearly, making long-context prefill a key bottleneck in model serving.
+Figure 1: Overview of TokenGate . (a) Layers up to L L prefill all N N context tokens as usual; at layer L L the gate module keeps K K of them, and every layer above L L processes only those K K tokens. (b) The gate module scores each hidden state with a small scoring network, and a top- K K selector forwards the kept hidden states together with their importance scores. (c) Token-gated attention multiplies each attention weight by the gate value g j g_{j} of its key, which enables end-to-end training. (d) On 2WikiMultihopQA question answering, with Qwen3-1.7B, TokenGate pushes the Pareto frontier of accuracy versus time-to-first-token and peak prefill memory; at 95 % 95\% of the full-context accuracy it prefills 3.0 × 3.0\times faster and with 2.7 × 2.7\times less memory, outperforming the best training-free token pruning methods, like FastKV ( Jo et al., 2025 ) and SlimInfer ( Long et al., 2025 ) .
+Recent research proposes to address this efficiency challenge for long-context prefill through two primary approaches. First, one body of work proposes training-free token pruning , using attention-based scoring heuristics to prune token hidden states, forwarding only the highest-scoring tokens to upper layers ( Jo et al., 2025 ; Long et al., 2025 ; Jin et al., 2025 ; Shi et al., 2024 ; Yang et al., 2024a ; Fu et al., 2024 ; Chen et al., 2026 ; Wang et al., 2021 ) . These methods are inexpensive to deploy, requiring no model training, but demonstrate limited speedups before degrading accuracy.
+Alternatively, a large body of work instead develops architectural modifications to the standard transformer architecture ( Vaswani et al., 2017 ) . These methods offer promising prefill-efficiency improvements, but are expensive to train, often requiring pre-training from scratch and substantially different hardware and software than existing ecosystems ( Dehghani et al., 2018 ; Bae et al., 2025 ; Graves, 2016 ; Raposo et al., 2024 ; Ainslie et al., 2023 ; Kim et al., 2021 ; He et al., 2025 ; Gu & Dao, 2023 ; Dao & Gu, 2024 ) .
+To bridge this gap, we ask the question, can we endow existing trained models with improved long-context prefill efficiency while maintaining strong accuracy?
+In this work, we introduce TokenGate , a small, drop-in component that extends transformer-based models, enabling end-to-end trainable token pruning over long-context inputs for efficient prefill.
+The model forward pass using TokenGate decomposes into three parts, as Figure 1 a shows. First, layers below the gate module perform a standard forward pass, processing all tokens through each layer. Second, tokens pass through the gate module, which produces a score for each token, retaining only the top- K K for continued processing. Third, the layers above the gate module process the selected tokens with token-gated attention , a mechanism that re-weights the attention computation using the generated importance scores. TokenGate reduces prefill compute and memory because pruned tokens are never forwarded through the post-gate layers and these layers never generate KV cache entries.
+Token pruning uses a non-differentiable top- K K operator, which presents a challenge for end-to-end learning. We introduce token-gated attention to overcome this issue.
+Our method takes inspiration from Mixture-of-Experts (MoE) ( Shazeer et al., 2017 ; Fedus et al., 2022 ) , which achieve sparsity over activated model parameters by gating expert sub-networks. We use a similar form, but instead weight attention logits to achieve sparsity over processed tokens . Using this technique, we demonstrate that we can adapt existing trained models with cost similar to standard adaptation techniques. For instance, we can fine-tune existing models with TokenGate using simple next-token-prediction loss, with no auxiliary loss and total train time similar to supervised fine-tuning on the base model. The resulting TokenGate model matches or exceeds accuracy over the trained base model, while significantly reducing prefill latency and memory.
+We evaluate TokenGate on diverse tasks, including code completion, multi-hop QA, multi-doc summarization, medical extraction, and needle-in-a-haystack, using both traditional transformer models and a recent hybrid attention one. Overall, we show the following findings (1) TokenGate reduces TTFT and peak prefill memory by 1.4 1.4 - 11.3 × 11.3\times and 1.5 1.5 - 3.4 × 3.4\times , respectively, at no accuracy degradation compared to the finetuned model baseline with full-context, and outperforms all training-free token pruning methods, by up to 6.4 × 6.4\times faster prefill (TTFT) and 2 × 2\times lower peak prefill memory relative to the next-best baseline,
+(2) TokenGate natively extends existing recent hybrid-attention architectures , like Qwen3.5-2B ( Qwen Team, 2026 ) , where it achieves 3.8 × 3.8\times lower TTFT over the full-context baseline at no accuracy degradation, and 2.1 × 2.1\times lower TTFT than the next best-performing token-pruning method at fixed accuracy.
+(3) Training models is efficient with TokenGate , incurring minimal overhead compared to standard parameter-efficient fine-tuning techniques, like LoRA ( Hu et al., 2021 ) .
+Overall, we summarize our contributions as follows:
+•
+We introduce TokenGate , a small, drop-in component that extends existing trained models to enable end-to-end learnable token pruning for fast and memory-efficient prefill.
+•
+We propose token-gated attention , a mechanism for training models end-to-end despite the gate module’s non-differentiable top- K K operator.
+•
+Our systematic evaluation finds that TokenGate reduces TTFT and peak prefill memory by up to 6.4 × 6.4\times and 2 × 2\times , respectively, compared to the next best-performing baselines, TokenGate natively extends transformer-based models, including recent hybrid-attention architectures.
+Further, training is efficient, with total train time comparable to standard parameter-efficient fine-tuning techniques.
+2 Related Works
+Training-free Token Pruning.
+One body of prior work optimizes prefill using training-free token-pruning methods (e.g., FastKV, SlimInfer, DASH, and GemFilter) ( Jo et al., 2025 ; Long et al., 2025 ; Jin et al., 2025 ; Shi et al., 2024 ; Yang et al., 2024a ; Fu et al., 2024 ; Chen et al., 2026 ; Wang et al., 2021 ) . These methods prune token hidden states at a mid-layer of the model using attention-based heuristics to rank tokens, forwarding only the highest-scoring tokens to upper layers of the model. This body of work is closest to ours, however, unlike our work, these methods are not trainable. As we observe in (Section 5 ), these methods offer limited speedups before degrading accuracy because they employ heuristic attention-based token-ranking functions that under-perform our end-to-end trained scoring network, and they prevent co-adaptation of the model backbone with the pruning function, which our end-to-end trainable design enables.
+Architectural Modifications.
+Several lines of work explore architectural modifications to the self-attention-based transformer ( Vaswani et al., 2017 ) , reducing the compute and memory of processing long-context inputs.
+First, one body of work studies architectures that achieve adaptive compute per token through dynamic token routing or learned pruning decisions, but are expensive to train. These works require pre-training from scratch ( Dehghani et al., 2018 ; Bae et al., 2025 ; Graves, 2016 ; Raposo et al., 2024 ; Ainslie et al., 2023 ) or expensive fine-tuning with auxiliary loss terms that fix the token budget during train time, requiring re-training for each inference-time token budget ( Kim et al., 2021 ; He et al., 2025 ; Goyal et al., 2020 ; Rao et al., 2021 ) .
+In contrast to all of these works, TokenGate natively extends popular pre-trained language models and is simple and efficient to train. We show that with a single fine-tuning pass, the resulting TokenGate model generalizes across input lengths and token budgets (Section 5 , Appendix D.3 ).
+Other works on sub-quadratic architectures for language modeling introduce promising, new algorithms that reduce the per token compute and memory of attention operations, including new compute primitives and sparse attention mechanisms ( Gu & Dao, 2023 ; Dao & Gu, 2024 ; Yang et al., 2024c ; Yang et al., 2024b ; Katharopoulos et al., 2020 ; Sun et al., 2024 ; Gao et al., 2024 ; Liu et al., 2025 ; Yuan et al., 2025 ; Lu et al., 2025 ; Xiao et al., 2024 ; Huang et al., 2025 ; Jiang et al., 2024 ; Lai et al., 2025 ) .
+However, unlike TokenGate , these architectures still process all tokens through each model layer.
+In Section 5 we demonstrate TokenGate natively extends recent hybrid architectures with sub-quadratic layers ( Qwen Team, 2026 ) , and enables even more efficient prefill.
+Conditional Computation. Mixture-of-experts layers achieve sparsity over the activated model parameters, making it possible to efficiently scale model capacity ( Shazeer et al., 2017 ; Fedus et al., 2022 ; Liu et al., 2024 ) . Our work is inspired by the success of this line of work, however, we focus on achieving sparsity over a different axis, the input context length, for scalable long-context prefill.
+Decode Optimizations. A large body of work targets the cost of decoding rather than prefill, evicting or merging KV-cache entries after prefill ( Zhang et al., 2023 ; Li et al., 2024 ; Xiao et al., 2023 ; Ge et al., 2023 ; Cai et al., 2024 ; Kim et al., 2025 ) , and performing early exit or per-token routing for decoded tokens ( Schuster et al., 2022 ; Elhoushi et al., 2024 ) . These methods do not improve prefill efficiency and are complementary to prefill optimizations like ours.
+3 Preliminaries
+Transformer Models and Notation.
+Given a sequence of tokens x = ( x 1 , … , x N ) x=(x_{1},\dots,x_{N}) , the language model embeds each token x i x_{i} into a vector h i 0 ∈ ℝ d model h^{0}_{i}\in\mathbb{R}^{d_{\mathrm{model}}} and passes the sequence through a stack of N L N_{L} transformer layers. Layer ℓ ∈ { 0 , … , N L − 1 } \ell\in\{0,\dots,N_{L}-1\} reads the residual stream h i ℓ h^{\ell}_{i} and applies a self-attention sub-layer followed by a token-wise MLP. Both sub-components are preceded by a normalization layer and add their output back to the residual stream, as given by:
+a i ℓ = h i ℓ + Attn ℓ ​ ( LN 1 ​ ( h ℓ ) ) i , h i ℓ + 1 = a i ℓ + MLP ℓ ​ ( a ~ i ℓ ) , a ~ i ℓ = LN 2 ​ ( a i ℓ ) . \displaystyle a^{\ell}_{i}\;=\;h^{\ell}_{i}+\mathrm{Attn}^{\ell}\big(\mathrm{LN}_{1}(h^{\ell})\big)_{i},\qquad h^{\ell+1}_{i}\;=\;a^{\ell}_{i}+\mathrm{MLP}^{\ell}\big(\tilde{a}^{\ell}_{i}\big),\qquad\tilde{a}^{\ell}_{i}\;=\;\mathrm{LN}_{2}(a^{\ell}_{i}).
+(1)
+We call a i ℓ a^{\ell}_{i} the post-attention residual of token i i at layer ℓ \ell . The MLP acts on each position independently, whereas attention mixes information across positions.
+In standard self-attention, the normalized inputs LN 1 ​ ( h ℓ ) \mathrm{LN}_{1}(h^{\ell}) are projected to queries, keys, and values q i , k j , v j ∈ ℝ d head q_{i},k_{j},v_{j}\in\mathbb{R}^{d_{\mathrm{head}}} , and token i i attends causally to itself and the tokens before it:
+Attn i = ∑ j ≤ i α i ​ j ​ v j , α i ​ j = softmax j ≤ i ⁡ ( z i ​ j ) = exp ⁡ ( z i ​ j ) ∑ j ′ ≤ i exp ⁡ ( z i ​ j ′ ) , z i ​ j = q i ⊤ ​ k j d head . \displaystyle\mathrm{Attn}_{i}\;=\;\sum_{j\leq i}\alpha_{ij}\,v_{j},\quad\alpha_{ij}\;=\;\operatorname{softmax}_{j\leq i}\big(z_{ij}\big)\;=\;\frac{\exp(z_{ij})}{\sum_{j^{\prime}\leq i}\exp(z_{ij^{\prime}})},\quad z_{ij}\;=\;\frac{q_{i}^{\top}k_{j}}{\sqrt{d_{\mathrm{head}}}}.
+(2)
+Prefill, decode, and the KV cache.
+Generation proceeds in two phases. Prefill runs Eq. 1 over the whole input of N N tokens and stores every layer’s keys and values, the KV cache { ( k j ℓ , v j ℓ ) } j ≤ N \{(k^{\ell}_{j},v^{\ell}_{j})\}_{j\leq N} . Decode then produces one token per step, computing attention against the cache and appending to it. The cost of both phases grows with the input length N N . Prefill compute scales as O ⁡ ( N 2 ⋅ N L ) O(N^{2}\cdot N_{L}) for attention and O ⁡ ( N ⋅ N L ) O(N\cdot N_{L}) for the MLPs, and the KV cache occupies O ⁡ ( N ⋅ N L ) O(N\cdot N_{L}) memory.
+Figure 2: Visualization of TokenGate applied on sample inputs from the 2WikiMultihopQA dataset (left) and MultiNews dataset (right), with K = 256 K=256 kept tokens, highlighted in red (darker denotes higher token importance score by the gate).
+Detailed visualizations of real samples from all datasets are in Appendix E .
+3.1 Problem Setting
+We consider an LLM input prompt x = [ x R , x D ] x=[x_{R},x_{D}] , where x R = ( x 1 , … , x r ) x_{R}=(x_{1},\dots,x_{r}) is a request instruction or question and x D = ( x r + 1 , … , x N ) x_{D}=(x_{r+1},\dots,x_{N}) are the “documents” needed to respond to it, such as research articles, code repositories, medical records, legal documents, or financial filings.
+In practice, x D x_{D} may be supplied by the user or retrieved by a system or an agent given x R x_{R} .
+As an example, a user uploads a document study as a PDF to an AI assistant and asks “what are the side effects reported in this study?” ( Google, 2023 ; OpenAI, 2025a ; Anthropic, 2024 ; Google, 2025 ; Microsoft, 2025 ; Adobe, 2025 ; Perplexity AI, 2025 ; ChatPDF, 2025 ) . Here, x R x_{R} corresponds to the user’s question, and x D x_{D} corresponds to the attached document, which can be thousands to hundreds of thousands of tokens. Figure 2 shows two such input prompts from our datasets.
+In this setting, the documents are provided only at request time, so its KV cache cannot be precomputed. Our goal is two-fold: we aim to maximize quality , measured by task accuracy, and minimize cost , both prefill time-to-first-token (TTFT), which is the latency users experience before seeing any response, and prefill memory footprint, which limits throughput and concurrent user requests.
+4 Trainable Token Pruning with TokenGate
+TokenGate is a drop-in neural network component, which places a gate module within a specified transformer layer 1 1
+1
+The design generalizes to multiple gate modules at different layers, each selecting from the tokens kept by the layers below it and contributing to the token-gated attention in layers above. , L L , to score and prune tokens, as shown in Figure 1 .
+In this section, we describe how TokenGate enables trainable token pruning using two key components, the gate module (Section 4.1 ) and token-gated attention (Section 4.2 ). We will then overview an end-to-end training recipe for adapting existing models (Section 4.3 ).
+Overall, the full TokenGate forward pass with gating at layer L L decomposes into three phases. First, tokens pass through layers below the gate module, using a standard forward pass. Second, the gate module processes all tokens, producing a score for each, and selecting a subset to prune. Third, the model performs a pruned forward , processing only selected tokens in layers above the gate module, using token-gated attention , which re-weights attention scores using the importance scores.
+TokenGate reduces both the compute and memory footprint during prefill by preventing model layers after the gate module from processing pruned tokens or generating KV-cache entries for them.
+4.1 Gate Module
+The gate module is placed within a transformer layer, L L , and selects a subset of tokens to continue processing through the remaining model layers during prefill. As Figure 1 b shows, the gate module consists of two simple sub-components: a scoring network and a top- K K selector .
+Scoring Network.
+For each token j j in the set of prunable tokens 𝒫 \mathcal{P} , an MLP reads its normalized post-attention residual at layer L L , a ~ j L \tilde{a}^{L}_{j} (Eq. 1 ), and emits a scalar score b ~ j \tilde{b}_{j} , which we normalize along the sequence with RMSNorm ( Zhang & Sennrich, 2019 ) into the
+importance score b j b_{j} , following:
+b ~ j = MLP θ ​ ( a ~ j L ) , b j = b ~ j 1 | 𝒫 | ​ ∑ j ′ ∈ 𝒫 b ~ j ′ 2 + ϵ ​ for ​ j ∈ 𝒫 , b j := 0 ​ for ​ j ∈ 𝒩 , \displaystyle\tilde{b}_{j}=\mathrm{MLP}_{\theta}\big(\tilde{a}^{L}_{j}\big),\qquad b_{j}=\frac{\tilde{b}_{j}}{\sqrt{\frac{1}{|\mathcal{P}|}\sum_{j^{\prime}\in\mathcal{P}}\tilde{b}_{j^{\prime}}^{2}+\epsilon}}\ \text{ for }j\in\mathcal{P},\qquad b_{j}:=0\ \text{ for }j\in\mathcal{N},
+(3)
+where the scores are fixed to zero for the non-prunable tokens 𝒩 \mathcal{N} ,
+which can consist of answer tokens during model training, decoded tokens, or any optionally specified tokens during preill, e.g., a user question.
+The MLP is initialized to output zero, so that b j = 0 b_{j}=0 for all j j at the start of training.
+Top- K K Selector. The gate selects the token-set S S , consisting of the K K highest-scoring prunable tokens, as well as any non-prunable tokens, for continued processing:
+S = top ​ - ​ K j ∈ 𝒫 ​ b j ∪ 𝒩 . \displaystyle S=\mathrm{top}\text{-}K_{j\in\mathcal{P}}\,b_{j}\;\cup\;\mathcal{N}.
+(4)
+The residual stream for pruned tokens is stopped at layer L L , and the selected tokens S S are forwarded through the layer L L MLP and layers ℓ > L \ell>L .
+4.2 Token-Gated Attention
+The gate module’s top- K K selector introduces a non-differentiability, creating a challenge for end-to-end learning. To overcome this challenge, we introduce token-gated attention , which integrates token importance scores generated by the gate module into upper model layers, providing a gradient path. Our method is inspired by Mixture-of-Experts (MoE) ( Shazeer et al., 2017 ) .
+In MoE, a router network weights the outputs of expert sub-networks to achieve sparsity over activated model parameters .
+In contrast, token-gated attention re-weights attention logits
+to achieve sparsity over processed tokens .
+Token-gated attention multiplies each token’s attention weight by the gate value g j g_{j} , computed from it’s importance score b j b_{j} (Eqs. 5 ), in layers ℓ > L \ell>L . Specifically, for self-attention, in contrast to Eq. 2 , the attention weights with token-gated attention take the form of Eq. 5 .
+At the start of training with a base model, token-gated attention is equivalent to top- K K attention
+as the importance scores are 0 0 .
+α i ​ j = exp ⁡ ( z i ​ j ) ​ g j ∑ j ′ ∈ S , j ′ ≤ i exp ⁡ ( z i ​ j ′ ) ​ g j ′ , i , j ∈ S , g j = softmax j ∈ S ⁡ ( b j ) \displaystyle\alpha_{ij}=\frac{\exp(z_{ij})\,g_{j}}{\sum_{j^{\prime}\in S,\,j^{\prime}\leq i}\exp(z_{ij^{\prime}})\,g_{j^{\prime}}},\qquad i,j\in S,\qquad g_{j}=\operatorname{softmax}_{j\in S}(b_{j})
+(5)
+We make two modifications to this basic form: head-wise scaling , to allow different heads to have different scales for the gate value, and temperature scaling , to enable length generalization so that trained models perform robustly at various pruning ratios. We ablate both decisions in Appendix D .
+Head-wise. We scale the normalized importance scores b j b_{j} by a learnable gain factor, γ ℓ ​ h \gamma^{\ell h} , indexed by layer ℓ \ell and head h h , and the gate value is the softmax of the result (Eq. 6 ).
+g j ℓ ​ h = softmax j ∈ S ⁡ ( softplus ⁡ ( γ ℓ ​ h ) ​ b j ) \displaystyle g^{\ell h}_{j}=\operatorname{softmax}_{j\in S}\big(\mathrm{softplus}(\gamma^{\ell h})\,b_{j}\big)
+(6)
+Intuitively, γ ℓ ​ h \gamma^{\ell h} learns how strongly each attention head gates the attention logits. The softplus keeps every gain positive, so a higher importance score corresponds to higher attention weight. At initialization,
+softplus ​ ( γ ℓ ​ h ) \text{softplus}({\gamma^{\ell h})} is set to the standard deviation of layer ℓ \ell ’s logits
+so that it is
+on the same scale as the attention logits.
+Temperature Scaling. Pruning shrinks the number of keys each query sees from its original position p i p_{i} to its rank m i m_{i} among kept tokens. This pruning sharpens the softmax relative to the full-context model. We use temperature scaling ( Guo et al., 2017 ; Ranjan et al., 2024 ) to recalibrate the softmax. The temperature is learnable, positive, and scaled by the log-ratio of the two counts (Eq. 7 ), inspired by SSMax ( Nakanishi, 2025 ) . The parameter σ \sigma is initialized such that temperature is 1 1 at full context.
+τ i ℓ ​ h = softplus ⁡ ( σ ℓ ​ h ) ⋅ log ⁡ m i log ⁡ max ⁡ ( 2 , p i ) \displaystyle\tau^{\ell h}_{i}=\mathrm{softplus}(\sigma^{\ell h})\cdot\frac{\log m_{i}}{\log\max(2,p_{i})}
+(7)
+Putting everything together. Substituting Eq. 6 into Eq. 5 , we can write the token-gated attention as
+α i ​ j ℓ ​ h = softmax j ∈ S , j ≤ i ⁡ ( τ i ℓ ​ h ​ ( q i ⊤ ​ k j d head + softplus ⁡ ( γ ℓ ​ h ) ​ b j ) ) . \displaystyle\alpha^{\ell h}_{ij}=\operatorname{softmax}_{j\in S,\,j\leq i}\Big(\tau^{\ell h}_{i}\big(\tfrac{q_{i}^{\top}k_{j}}{\sqrt{d_{\mathrm{head}}}}+\mathrm{softplus}(\gamma^{\ell h})\,b_{j}\big)\Big).
+(8)
+This form is straightforward to implement as an efficient kernel based on FlashAttention ( Dao, 2023 ) (Appendix A ).
+4.3 End-to-end Gate Training
+Despite TokenGate ’s non-differentiable top- K K selection (Eq. 4 ), the task loss is a differentiable function of the scoring network, almost everywhere. This is due to token-gated attention, which injects the top- K K gate values into the attention logits at each layer above the token gate. When we choose K > 1 K>1 , the gate value g j g_{j} has non-zero derivatives with respect to the scoring network weights. This mirrors how the router is trained in MoE through its top- K K expert selection: the router’s value multiplies the output of each selected expert, just as our gate value multiplies the attention score of each selected token ( Shazeer et al., 2017 ; Fedus et al., 2022 ) . Intuitively, a token whose additional attention mass lowers the task loss receives a larger score. A token that distracts receives a smaller one, allowing the scoring network to learn token importance. This mechanism allows TokenGate to be trained end-to-end jointly with the model backbone simply using standard task losses.
+Loss Function. In Section 5 , we fine-tune existing pretrained models with LoRA ( Hu et al., 2021 ) along with the TokenGate parameters, demonstrating that the model backbone and gate layer can co-adapt with minimal overhead to standard training. Under this setting, training the model with TokenGate uses a standard next-token, cross-entropy loss,
+ℒ K = − ∑ t ∈ target log p ϕ ( x t ∣ x < t ; K ) , \displaystyle\mathcal{L}_{K}=-\sum_{t\in\mathrm{target}}\log p_{\phi}\big(x_{t}\mid x_{<t};\,K\big),
+(9)
+where p ϕ ​ ( ⋅ , K ) p_{\phi}(\cdot\,;K) is the next token probability with a token budget of K K . The trainable parameters ϕ \phi are the scoring network parameters θ \theta , the scale factors { γ , σ } ℓ ​ h \{\gamma,\sigma\}^{\ell h} , and the LoRA ( Hu et al., 2021 ) parameters on the model backbone following standard practice.
+Top- K K Budget Sampling.
+Training with the TokenGate should ensure that the model both adapts to the task, improving its accuracy at full context, and learns a strong scoring network, improving its accuracy at restricted token budgets. As such, a simple choice for the top- K K budget to ensure both criteria are met is to use the full-context length with K full K_{\text{full}} as all prunable tokens | 𝒫 | |\mathcal{P}| and also sample a smaller K prune K_{\mathrm{prune}} per training instance. We average the resulting losses as follows: 2 2
+2
+In practice, we sample from a discrete list following this distribution for training efficiency with PyTorch compilation.
+K full = | 𝒫 | , K prune ∼ LogUniform ⁡ ( 1 , | 𝒫 | / 2 ) , ℒ = 1 2 ​ ( ℒ K full + ℒ K prune ) . \displaystyle K_{\mathrm{full}}=|\mathcal{P}|,\qquad K_{\mathrm{prune}}\sim\mathrm{LogUniform}\big(1,\ |\mathcal{P}|/2\big),\qquad\mathcal{L}=\tfrac{1}{2}\Big(\mathcal{L}_{K_{\mathrm{full}}}+\mathcal{L}_{K_{\mathrm{prune}}}\Big).
+(10)
+The K full K_{\text{full}} term anchors the model’s accuracy at full context and gives every token a gradient, including tokens the sampled budget pruned. Meanwhile, the log-uniform term exposes the gate to a range of pruning ratios, allowing the trained model to generalize across a wide budget range without re-training. In Section 5 , we demonstrate that using this budget sampling, models with the TokenGate can be trained efficiently, with minimal overhead compared to standard training. For each step, the forward pass up to the gate layer runs once at full context, and the two forwards after using K full K_{\mathrm{full}} and K prune K_{\mathrm{prune}} share the compute graph. Thus, the overhead of each TokenGate train step comes solely from the pruned forward at K prune K_{\mathrm{prune}} . Since K prune ≪ K full K_{\mathrm{prune}}\ll K_{\mathrm{full}} , this overhead is minimal, as we show in Section 5 .
+5 Experimental Results
+Figure 3:
+Accuracy vs. time-to-first-token (top) and accuracy vs. peak GPU prefill memory (bottom) with Qwen3-1.7B. Points that incur significant overhead over standard prefill at full context (grey cross),
+or significantly poor accuracy, are excluded; see Appendix D.2 for full plots.
+We evaluate the effectiveness of TokenGate on diverse tasks, including code completion, multi-hop QA, summarization, medical extraction, and needle-in-a-haystack. Overall, results demonstrate:
+•
+TokenGate reduces TTFT and peak prefill memory by 1.4 1.4 - 11.3 × 11.3\times and 1.5 1.5 - 3.4 × 3.4\times , respectively, at no accuracy degradation compared to the base model with full-context, and outperforms the next best-performing token pruning baselines by up to 6.4 × 6.4\times and 2 × 2\times , respectively.
+•
+TokenGate extends existing transformer-based models , including recent hybrid-attention architectures, achieving 3.8 × 3.8\times lower TTFT than the full-context baseline at no accuracy degradation and 2.1 × 2.1\times lower TTFT than the best prior methods, at fixed accuracy.
+•
+Training models with TokenGate is efficient, incurring minimal training overhead , with total training time comparable to standard parameter efficient fine-tuning.
+We provide details of our experimental setup in Appendix C , additional experimental results including context-length extrapolation and ablations in Appendix D ,
+and visualization in Appendix E .
+Datasets.
+We evaluate on five diverse tasks, including 3 3 LongBench datasets with available train sets ( Bai et al., 2024 ) , 2WikiMultihopQA ( Ho et al., 2020 ) , a multi-hop QA dataset, RepoBench-P ( Liu et al., 2023 ) , a next-line code completion dataset, and MultiNews ( Fabbri et al., 2019 ) , a summarization dataset, as well as two additional tasks, BioDEX’s drug-reaction extraction over biomedical papers ( D’Oosterlinck et al., 2023 ) and needle-in-a-haystack (NIAH) ( Kamradt, 2023 ) . We use the official evaluation metric for each.
+Baselines.
+We compare TokenGate against state-of-the-art token-pruning methods, FastKV ( Jo et al., 2025 ) , SlimInfer ( Long et al., 2025 ) , DASH ( Chen et al., 2026 ) , and GemFilter ( Shi et al., 2024 ) , as well as sparse attention methods, FlexPrefill ( Lai et al., 2025 ) and MInference ( Jiang et al., 2024 ) . We run each baseline using a fine-tuned base model trained to convergence with LoRA ( Hu et al., 2021 ) ( r = 16 r{=}16 ). We train our model with TokenGate to convergence using the same LoRA configuration. We train both a standard transformer model, Qwen3-1.7B ( Yang et al., 2025 ) , and a hybrid architecture, Qwen3-2B ( Qwen Team, 2026 ) , each on 4 A100 GPUS.
+5.1 Fast and Memory-Efficient Prefill
+We evaluate the prefill efficiency of models trained with TokenGate .
+First, Figure 3 (top) shows the accuracy vs TTFT of each benchmarked method, demonstrating that across all datasets, the trained TokenGate model achieves pareto-optimal performance. Specifically, TokenGate reduces TTFT by 1.4 1.4 – 11.3 × 11.3\times at no accuracy degradation compared to standard prefill, and by 1.2 1.2 – 6.4 × 6.4\times compared to the next best-performing baseline. We measure FastKV, one of the best-performing baselines both at its default layer and at layer 1, the same layer index as the TokenGate . Notably, we observe that compared to FastKV (Layer 1), TokenGate significantly outperforms across all datasets, indicating the promise of end-to-end trainable token pruning for achieving prefill speedups.
+Turning our attention to the bottom row of Figure 3 , we study the prefill memory footprint, reporting accuracy versus peak prefill memory. Once again, across all dataset, the TokenGate model establishes the Pareto-frontier, reducing peak memory by 1.5 1.5 – 3.4 × 3.4\times compared to standard prefill at matched accuracy. Moreover the TokenGate model achieves up to 2.1 × 2.1\times lower peak memory compared to the next best-performing baseline at matched accuracy.
+Overall, the results demonstrate that TokenGate significantly outperforms prior token-pruning methods, offering an exciting direction for improved prefill efficiency.
+5.2 Ablation Study: Understanding the Performance of TokenGate Models
+We hypothesize that TokenGate owes its superiority to end-to-end learnable token pruning.
+Our visualizations of the kept tokens for real samples (Appendix E )
+shows that TokenGate flexibly learns very different pruning patterns in a task-dependent manner,
+ranging from keeping answer keywords for question answering to keeping stop-words at the ends of phrases for summarization (Figure 2 ).
+To understand this more rigorously, we investigate two key mechanisms: trainable token-selection, and co-adaptation with the trained backbone.
+Trainable selector. First, to study the effectiveness of TokenGate ’s learned selector, we compare performance of the trained TokenGate model (Layer 1), to the same model with random token selection on 2WikiMultihopQA. Figure 5 , demonstrates that the trained selector significantly outperforms the random-K selector on accuracy across all token budgets. Moreover, we compare against the FastKV selector applied at the same layer, Layer 1, of the finetuned base model. Notably, the TokenGate selector significantly outperforms the FastKV selector. This result demonstrates the value of an end-to-end trained gate module for token pruning: the trained scoring network leads to far better token selection compared to FastKV, which relies on a heuristic using attention scores that offer only weak signal at early layers, resulting in accuracy degradation for aggressive pruning.
+Co-adaptation. Secondly, we analyze the effect of co-adaptation for TokenGate , which allows the model backbone and gate module to co-adapt. We compare the performance of random-K selection over the TokenGate model to the random-K selection over the finetuned base model. Notably, with the same random-K selector, the TokenGate model still outperforms the fine-tuned model, achieving higher accuracy across all token budgets, as Figure 5 shows. This result shows that TokenGate ’s end-to-end training allows the model to become more robust to token-pruning, likely redistributing information among tokens.
+Overall, the results show that end-to-end training with TokenGate enables state-of-the-art prefill performance through two complementary mechanism: the effectiveness of the learned scoring network, and co-adaptation, which allows the model to adapt jointly with the gating module for improved robustness to token pruning.
+5.3 Generalization to Alternative Architectures
+Figure 4: Accuracy vs. TTFT with the Qwen3.5-2B hybrid-attention architecture. Unlike TokenGate , FastKV can only prune at attention layers.
+Figure 5:
+F1 vs. kept context tokens on 2WikiMultihopQA with Qwen3-1.7B for gate and Random-K selection on the TokenGate model and FastKV and Random-K selection on the LoRA-trained model.
+We evaluate how TokenGate ’s performance extends to a recent hybrid-attention model, Qwen3.5-2B ( Qwen Team, 2026 ) model, which uses full-attention layers every fourth layer and a Gated-DeltaNet ( Yang et al., 2024b ) for all other layer. We compare TokenGate against FastKV ( Jo et al., 2025 ) , the best-performing baseline in our main results (Section 5.1 ). We measure FastKV over the LoRA-tuned base model and the LoRA-tuned model with TokenGate , both at varying layers. FastKV uses an attention-based score function and natively applies only to full-attention layers (i.e., layer 3, 7, 11, etc). TokenGate natively extends both the full attention and Gated-DeltaNet layers, so we apply it over both. We provide further details on TokenGate for Qwen3.5 in Appendix C.4 .
+Figure 5 shows the accuracy vs TTFT of both methods at varying layers on the NIAH 32K dataset, demonstrating that TokenGate ’s strong performance extends to the hybrid-attention model. TokenGate (Layer 3) matches the accuracy of standard prefill at 3.8 × 3.8\times lower TTFT, and 2.1 × 2.1\times lower TTFT than the best-performing FastKV run at the same accuracy.
+Applying the TokenGate at the lower GatedDeltaNet layers (Layer 1,2) enable even higher TTFT reductions, up to 7.8 × 7.8\times faster prefill, at accuracy within 6 % 6\% of standard prefill, once again significantly outperforming FastKV.
+5.4 Gate Training Efficiency
+We evaluate overhead of training models with TokenGate compared standard models, both with LoRA fine-tuning ( r = 16 r=16 ).
+Table 2 in Appendix D.1 compares both, reporting total training time in A100 hours and the average per-step time during training for each evaluated dataset.
+Overall, we observe that a TokenGate step is slower by 1.3 × 1.3\times compared to the baseline due to its sampling at two token budgets per step. However, the TokenGate train runs converge after fewer steps on four of five tasks, leading to modestly reduced overall training time compared to the standard training.
+6 Conclusion
+In this work, we introduced TokenGate , a neural network component that extends existing trained transformer models, enabling end-to-end trainable token pruning using token-gated attention .
+We demonstrate that that across diverse tasks, TokenGate reduces TTFT and peak prefill memory by up to 11.3 × 11.3\times and 3.4 × 3.4\times , respectively, at no accuracy degradation compared to standard prefill, and by up to 6.4 × 6.4\times and 2 × 2\times , respectively, compared to the best performing baselines.
+Crucially, TokenGate is compatible with diverse transformer-based architectures, is simple to train, and incurs minimal training overhead, making it a promising drop-in replacement for standard fine-tuning over trained backbones.
+In the future, we envision models trained with TokenGate will enable a broad range of applications, including medical extraction, deep research, and coding agents, where processing long-context inputs is critical, but currently prohibitively expensive.
+Acknowledgments
+This research was supported in part by affiliate members and other supporters of the Stanford DAWN project, including Meta, Google, and VMware, as well as Cisco, SAP, and a Sloan Fellowship. Any opinions, findings, and conclusions or recommendations expressed in this material are those of the authors and do not necessarily reflect the views of the sponsors.
+References
+Adobe (2025)
+Adobe.
+Adobe Acrobat AI Assistant, 2025.
+URL https://www.adobe.com/acrobat/generative-ai-pdf.html .
+Ainslie et al. (2023)
+Joshua Ainslie, Tao Lei, Michiel de Jong, Santiago Ontañón, Siddhartha Brahma, Yury Zemlyanskiy, David Uthus, Mandy Guo, James Lee-Thorp, Yi Tay, Yun-Hsuan Sung, and Sumit Sanghai.
+Colt5: Faster long-range transformers with conditional computation.
+arXiv preprint arXiv:2303.09752 , 2023.
+Anthropic (2024)
+Anthropic.
+Collaborate with Claude on Projects, 2024.
+URL https://www.anthropic.com/news/projects .
+Anthropic (2025a)
+Anthropic.
+Claude code: Deep coding at terminal velocity, 2025a.
+URL https://www.anthropic.com/claude-code .
+Anthropic (2025b)
+Anthropic.
+Claude takes research to new places, 2025b.
+URL https://www.anthropic.com/news/research .
+Anysphere (2025)
+Anysphere.
+Cursor: The ai code editor, 2025.
+URL https://cursor.com .
+Bae et al. (2025)
+Sangmin Bae, Yujin Kim, Reza Bayat, Sungnyun Kim, Jiyoun Ha, Tal Schuster, Adam Fisch, Hrayr Harutyunyan, Ziwei Ji, Aaron Courville, and Se-Young Yun.
+Mixture-of-recursions: Learning dynamic recursive depths for adaptive token-level computation.
+arXiv preprint arXiv:2507.10524 , 2025.
+Bai et al. (2024)
+Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, Yuxiao Dong, Jie Tang, and Juanzi Li.
+Longbench: A bilingual, multitask benchmark for long context understanding.
+In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (ACL) , 2024.
+Cai et al. (2024)
+Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Yucheng Li, Tianyu Liu, Keming Lu, Wayne Xiong, Yue Dong, Junjie Hu, and Wen Xiao.
+Pyramidkv: Dynamic kv cache compression based on pyramidal information funneling.
+arXiv preprint arXiv:2406.02069 , 2024.
+ChatPDF (2025)
+ChatPDF.
+ChatPDF: Chat with any PDF, 2025.
+URL https://www.chatpdf.com .
+Chen et al. (2026)
+Yujie Chen, Tailai Chen, Yifeng Gao, Zoe Wanying He, Yijue Xu, Shaobo Wang, and Linfeng Zhang.
+Stability implies redundancy: Delta attention selective halting for efficient long-context prefilling.
+arXiv preprint arXiv:2604.18103 , 2026.
+Dao (2023)
+Tri Dao.
+Flashattention-2: Faster attention with better parallelism and work partitioning.
+arXiv preprint arXiv:2307.08691 , 2023.
+Dao & Gu (2024)
+Tri Dao and Albert Gu.
+Transformers are ssms: Generalized models and efficient algorithms through structured state space duality.
+arXiv preprint arXiv:2405.21060 , 2024.
+Dehghani et al. (2018)
+Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob Uszkoreit, and Łukasz Kaiser.
+Universal transformers.
+arXiv preprint arXiv:1807.03819 , 2018.
+Dong et al. (2024)
+Juechu Dong, Boyuan Feng, Driss Guessous, Yanbo Liang, and Horace He.
+Flex attention: A programming model for generating optimized attention kernels.
+arXiv preprint arXiv:2412.05496 , 2024.
+D’Oosterlinck et al. (2023)
+Karel D’Oosterlinck, François Remy, Johannes Deleu, Thomas Demeester, Chris Develder, Klim Zaporojets, Aneiss Ghodsi, Simon Ellershaw, Jack Collins, and Christopher Potts.
+Biodex: Large-scale biomedical adverse drug event extraction for real-world pharmacovigilance.
+In Findings of the Association for Computational Linguistics: EMNLP 2023 , 2023.
+Elhoushi et al. (2024)
+Mostafa Elhoushi, Akshat Shrivastava, Diana Liskovich, Basil Hosmer, Bram Wasti, Liangzhen Lai, Anas Mahmoud, Bilge Acun, Saurabh Agarwal, Ahmed Roman, Ahmed A Aly, Beidi Chen, and Carole-Jean Wu.
+Layerskip: Enabling early exit inference and self-speculative decoding.
+arXiv preprint arXiv:2404.16710 , 2024.
+Fabbri et al. (2019)
+Alexander R. Fabbri, Irene Li, Tianwei She, Suyi Li, and Dragomir R. Radev.
+Multi-news: A large-scale multi-document summarization dataset and abstractive hierarchical model.
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics (ACL) , 2019.
+Fedus et al. (2022)
+William Fedus, Barret Zoph, and Noam Shazeer.
+Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity.
+Journal of Machine Learning Research , 2022.
+Fu et al. (2024)
+Qichen Fu, Minsik Cho, Thomas Merth, Sachin Mehta, Mohammad Rastegari, and Mahyar Najibi.
+Lazyllm: Dynamic token pruning for efficient long context llm inference.
+arXiv preprint arXiv:2407.14057 , 2024.
+Gao et al. (2024)
+Yizhao Gao, Zhichen Zeng, Dayou Du, Shijie Cao, Peiyuan Zhou, Jiaxing Qi, Junjie Lai, Hayden Kwok-Hay So, Ting Cao, Fan Yang, and Mao Yang.
+Seerattention: Learning intrinsic sparse attention in your llms.
+arXiv preprint arXiv:2410.13276 , 2024.
+Ge et al. (2023)
+Suyu Ge, Yunan Zhang, Liyuan Liu, Minjia Zhang, Jiawei Han, and Jianfeng Gao.
+Model tells you what to discard: Adaptive kv cache compression for llms.
+arXiv preprint arXiv:2310.01801 , 2023.
+Gemini (2025)
+Gemini.
+Gemini Deep Research — your personal research assistant, 2025.
+URL https://gemini.google/overview/deep-research/ .
+GitHub (2025)
+GitHub.
+Github copilot: Your ai pair programmer, 2025.
+URL https://github.com/features/copilot .
+Google (2023)
+Google.
+NotebookLM: Your personalized AI research assistant, 2023.
+URL https://notebooklm.google .
+Google (2025)
+Google.
+Gemini for Google Workspace, 2025.
+URL https://workspace.google.com/solutions/ai/ .
+Goyal et al. (2020)
+Saurabh Goyal, Anamitra R. Choudhury, Saurabh M. Raje, Venkatesan T. Chakaravarthy, Yogish Sabharwal, and Ashish Verma.
+Power-bert: Accelerating bert inference via progressive word-vector elimination.
+arXiv preprint arXiv:2001.08950 , 2020.
+Graves (2016)
+Alex Graves.
+Adaptive computation time for recurrent neural networks.
+arXiv preprint arXiv:1603.08983 , 2016.
+Gu & Dao (2023)
+Albert Gu and Tri Dao.
+Mamba: Linear-time sequence modeling with selective state spaces.
+arXiv preprint arXiv:2312.00752 , 2023.
+Guo et al. (2017)
+Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Weinberger.
+On calibration of modern neural networks.
+In International Conference on Machine Learning , 2017.
+He et al. (2025)
+Shwai He, Tao Ge, Guoheng Sun, Bowei Tian, Xiaoyang Wang, and Dong Yu.
+Router-Tuning: A Simple and Effective Approach for Enabling Dynamic-Depth in Transformers, September 2025.
+URL http://arxiv.org/abs/2410.13184 .
+arXiv:2410.13184 [cs.CL].
+Ho et al. (2020)
+Xanh Ho, Anh-Khoa Duong Nguyen, Saku Sugawara, and Akiko Aizawa.
+Constructing a multi-hop qa dataset for comprehensive evaluation of reasoning steps.
+In Proceedings of the 28th International Conference on Computational Linguistics (COLING) , 2020.
+Hu et al. (2021)
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen.
+Lora: Low-rank adaptation of large language models.
+arXiv preprint arXiv:2106.09685 , 2021.
+Huang et al. (2025)
+Yen-Chieh Huang, Pi-Cheng Hsiu, Rui Fang, and Ming-Syan Chen.
+Kv admission: Learning what to write for efficient long-context llm inference.
+arXiv preprint arXiv:2512.17452 , 2025.
+Jiang et al. (2024)
+Huiqiang Jiang, Yucheng Li, Chengruidong Zhang, Qianhui Wu, Xufang Luo, Surin Ahn, Zhenhua Han, Amir H. Abdi, Dongsheng Li, Chin-Yew Lin, Yuqing Yang, and Lili Qiu.
+Minference 1.0: Accelerating pre-filling for long-context llms via dynamic sparse attention.
+arXiv preprint arXiv:2407.02490 , 2024.
+Jin et al. (2025)
+Weisheng Jin, Maojia Song, Tej Deep Pala, Yew Ken Chia, Amir Zadeh, Chuan Li, and Soujanya Poria.
+Promptdistill: Query-based selective token retention in intermediate layers for efficient large language model inference.
+arXiv preprint arXiv:2503.23274 , 2025.
+Jo et al. (2025)
+Dongwon Jo, Jiwon Song, Yulhwa Kim, and Jae-Joon Kim.
+Fastkv: Decoupling of context reduction and kv cache compression for prefill-decoding acceleration.
+arXiv preprint arXiv:2502.01068 , 2025.
+Jordan et al. (2024)
+Keller Jordan, Yuchen Jin, Vlado Boza, Jiacheng You, Franz Cesista, Laker Newhouse, and Jeremy Bernstein.
+Muon: An optimizer for hidden layers in neural networks.
+https://kellerjordan.github.io/posts/muon/ , 2024.
+Kamradt (2023)
+Gregory Kamradt.
+Needle in a haystack – pressure testing llms.
+https://github.com/gkamradt/LLMTest_NeedleInAHaystack , 2023.
+Katharopoulos et al. (2020)
+Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret.
+Transformers are rnns: Fast autoregressive transformers with linear attention.
+arXiv preprint arXiv:2006.16236 , 2020.
+Kim et al. (2025)
+Jang-Hyun Kim, Jinuk Kim, Sangwoo Kwon, Jae W. Lee, Sangdoo Yun, and Hyun Oh Song.
+Kvzip: Query-agnostic kv cache compression with context reconstruction.
+arXiv preprint arXiv:2505.23416 , 2025.
+Kim et al. (2021)
+Sehoon Kim, Sheng Shen, David Thorsley, Amir Gholami, Woosuk Kwon, Joseph Hassoun, and Kurt Keutzer.
+Learned token pruning for transformers.
+arXiv preprint arXiv:2107.00910 , 2021.
+Lai et al. (2025)
+Xunhao Lai, Jianqiao Lu, Yao Luo, Yiyuan Ma, and Xun Zhou.
+Flexprefill: A context-aware sparse attention mechanism for efficient long-sequence inference.
+arXiv preprint arXiv:2502.20766 , 2025.
+Li et al. (2024)
+Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Locatelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen.
+Snapkv: Llm knows what you are looking for before generation.
+arXiv preprint arXiv:2404.14469 , 2024.
+Liu et al. (2024)
+Aixin Liu, Bei Feng, Bin Wang, Bingxuan Wang, Bo Liu, Chenggang Zhao, Chengqi Dengr, Chong Ruan, Damai Dai, Daya Guo, Dejian Yang, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Hanwei Xu, Hao Yang, Haowei Zhang, Honghui Ding, Huajian Xin, Huazuo Gao, Hui Li, Hui Qu, J. L. Cai, Jian Liang, Jianzhong Guo, Jiaqi Ni, Jiashi Li, Jin Chen, Jingyang Yuan, Junjie Qiu, Junxiao Song, Kai Dong, Kaige Gao, Kang Guan, Lean Wang, Lecong Zhang, Lei Xu, Leyi Xia, Liang Zhao, Liyue Zhang, Meng Li, Miaojun Wang, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingming Li, Ning Tian, Panpan Huang, Peiyi Wang, Peng Zhang, Qihao Zhu, Qinyu Chen, Qiushi Du, R. J. Chen, R. L. Jin, Ruiqi Ge, Ruizhe Pan, Runxin Xu, Ruyi Chen, S. S. Li, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shaoqing Wu, Shengfeng Ye, Shirong Ma, Shiyu Wang, Shuang Zhou, Shuiping Yu, Shunfeng Zhou, Size Zheng, T. Wang, Tian Pei, Tian Yuan, Tianyu Sun, W. L. Xiao, Wangding Zeng, Wei An, Wen Liu, Wenfeng
+Liang, Wenjun Gao, Wentao Zhang, X. Q. Li, Xiangyue Jin, Xianzu Wang, Xiao Bi, Xiaodong Liu, Xiaohan Wang, Xiaojin Shen, Xiaokang Chen, Xiaosha Chen, Xiaotao Nie, Xiaowen Sun, Xiaoxiang Wang, Xin Liu, Xin Xie, Xingkai Yu, Xinnan Song, Xinyi Zhou, Xinyu Yang, Xuan Lu, Xuecheng Su, Y. Wu, Y. K. Li, Y. X. Wei, Y. X. Zhu, Yanhong Xu, Yanping Huang, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Li, Yaohui Wang, Yi Zheng, Yichao Zhang, Yiliang Xiong, Yilong Zhao, Ying He, Ying Tang, Yishi Piao, Yixin Dong, Yixuan Tan, Yiyuan Liu, Yongji Wang, Yongqiang Guo, Yuchen Zhu, Yuduan Wang, Yuheng Zou, Yukun Zha, Yunxian Ma, Yuting Yan, Yuxiang You, Yuxuan Liu, Z. Z. Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhen Huang, Zhen Zhang, Zhenda Xie, Zhewen Hao, Zhihong Shao, Zhiniu Wen, Zhipeng Xu, Zhongyu Zhang, Zhuoshu Li, Zihan Wang, Zihui Gu, Zilin Li, and Ziwei Xie.
+Deepseek-v2: A strong, economical, and efficient mixture-of-experts language model.
+arXiv preprint arXiv:2405.04434 , 2024.
+Liu et al. (2025)
+Aixin Liu, Aoxue Mei, Bangcai Lin, Bing Xue, Bingxuan Wang, Bingzheng Xu, Bochao Wu, Bowei Zhang, Chaofan Lin, Chen Dong, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenhao Xu, Chong Ruan, Damai Dai, Daya Guo, Dejian Yang, Deli Chen, Erhang Li, Fangqi Zhou, Fangyun Lin, Fucong Dai, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Hanwei Xu, Hao Li, Haofen Liang, Haoran Wei, Haowei Zhang, Haowen Luo, Haozhe Ji, Honghui Ding, Hongxuan Tang, Huanqi Cao, Huazuo Gao, Hui Qu, Hui Zeng, Jialiang Huang, Jiashi Li, Jiaxin Xu, Jiewen Hu, Jingchang Chen, Jingting Xiang, Jingyang Yuan, Jingyuan Cheng, Jinhua Zhu, Jun Ran, Junguang Jiang, Junjie Qiu, Junlong Li, Junxiao Song, Kai Dong, Kaige Gao, Kang Guan, Kexin Huang, Kexing Zhou, Kezhao Huang, Kuai Yu, Lean Wang, Lecong Zhang, Lei Wang, Liang Zhao, Liangsheng Yin, Lihua Guo, Lingxiao Luo, Linwang Ma, Litong Wang, Liyue Zhang, M. S. Di, M. Y Xu, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingxu Zhou, Panpan Huang, Peixin Cong, Peiyi Wang, Qiancheng Wang, Qihao Zhu,
+Qingyang Li, Qinyu Chen, Qiushi Du, Ruiling Xu, Ruiqi Ge, Ruisong Zhang, Ruizhe Pan, Runji Wang, Runqiu Yin, Runxin Xu, Ruomeng Shen, Ruoyu Zhang, S. H. Liu, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shaofei Cai, Shaoyuan Chen, Shengding Hu, Shengyu Liu, Shiqiang Hu, Shirong Ma, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, Songyang Zhou, Tao Ni, Tao Yun, Tian Pei, Tian Ye, Tianyuan Yue, Wangding Zeng, Wen Liu, Wenfeng Liang, Wenjie Pang, Wenjing Luo, Wenjun Gao, Wentao Zhang, Xi Gao, Xiangwen Wang, Xiao Bi, Xiaodong Liu, Xiaohan Wang, Xiaokang Chen, Xiaokang Zhang, Xiaotao Nie, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu, Xingkai Yu, Xingyou Li, Xinyu Yang, Xinyuan Li, Xu Chen, Xuecheng Su, Xuehai Pan, Xuheng Lin, Xuwei Fu, Y. Q. Wang, Yang Zhang, Yanhong Xu, Yanru Ma, Yao Li, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Wang, Yi Qian, Yi Yu, Yichao Zhang, Yifan Ding, Yifan Shi, Yiliang Xiong, Ying He, Ying Zhou, Yinmin Zhong, Yishi Piao, Yisong Wang, Yixiao Chen, Yixuan Tan, Yixuan Wei, Yiyang Ma, Yiyuan
+Liu, Yonglun Yang, Yongqiang Guo, Yongtong Wu, Yu Wu, Yuan Cheng, Yuan Ou, Yuanfan Xu, Yuduan Wang, Yue Gong, Yuhan Wu, Yuheng Zou, Yukun Li, Yunfan Xiong, Yuxiang Luo, Yuxiang You, Yuxuan Liu, Yuyang Zhou, Z. F. Wu, Z. Z. Ren, Zehua Zhao, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda Xie, Zhengyan Zhang, Zhewen Hao, Zhibin Gou, Zhicheng Ma, Zhigang Yan, Zhihong Shao, Zhixian Huang, Zhiyu Wu, Zhuoshu Li, Zhuping Zhang, Zian Xu, Zihao Wang, Zihui Gu, Zijia Zhu, Zilin Li, Zipeng Zhang, Ziwei Xie, Ziyi Gao, Zizheng Pan, Zongqing Yao, Bei Feng, Hui Li, J. L. Cai, Jiaqi Ni, Lei Xu, Meng Li, Ning Tian, R. J. Chen, R. L. Jin, S. S. Li, Shuang Zhou, Tianyu Sun, X. Q. Li, Xiangyue Jin, Xiaojin Shen, Xiaosha Chen, Xinnan Song, Xinyi Zhou, Y. X. Zhu, Yanping Huang, Yaohui Li, Yi Zheng, Yuchen Zhu, Yunxian Ma, Zhen Huang, Zhipeng Xu, Zhongyu Zhang, Dongjie Ji, Jian Liang, Jianzhong Guo, Jin Chen, Leyi Xia, Miaojun Wang, Mingming Li, Peng Zhang, Ruyi Chen, Shangmian Sun, Shaoqing Wu, Shengfeng Ye, T. Wang, W. L.
+Xiao, Wei An, Xianzu Wang, Xiaowen Sun, Xiaoxiang Wang, Ying Tang, Yukun Zha, Zekai Zhang, Zhe Ju, Zhen Zhang, and Zihua Qu.
+Deepseek-v3.2: Pushing the frontier of open large language models.
+arXiv preprint arXiv:2512.02556 , 2025.
+Liu et al. (2023)
+Tianyang Liu, Canwen Xu, and Julian McAuley.
+Repobench: Benchmarking repository-level code auto-completion systems.
+arXiv preprint arXiv:2306.03091 , 2023.
+Long et al. (2025)
+Lingkun Long, Rubing Yang, Yushi Huang, Desheng Hui, Ao Zhou, and Jianlei Yang.
+Sliminfer: Accelerating long-context llm inference via dynamic token pruning.
+arXiv preprint arXiv:2508.06447 , 2025.
+Lu et al. (2025)
+Enzhe Lu, Zhejun Jiang, Jingyuan Liu, Yulun Du, Tao Jiang, Chao Hong, Shaowei Liu, Weiran He, Enming Yuan, Yuzhi Wang, Zhiqi Huang, Huan Yuan, Suting Xu, Xinran Xu, Guokun Lai, Yanru Chen, Huabin Zheng, Junjie Yan, Jianlin Su, Yuxin Wu, Neo Y. Zhang, Zhilin Yang, Xinyu Zhou, Mingxing Zhang, and Jiezhong Qiu.
+Moba: Mixture of block attention for long-context llms.
+arXiv preprint arXiv:2502.13189 , 2025.
+Microsoft (2025)
+Microsoft.
+Microsoft 365 Copilot, 2025.
+URL https://www.microsoft.com/microsoft-365/copilot .
+Nakanishi (2025)
+Ken M. Nakanishi.
+Scalable-softmax is superior for attention.
+arXiv preprint arXiv:2501.19399 , 2025.
+OpenAI (2025a)
+OpenAI.
+File uploads FAQ, 2025a.
+URL https://help.openai.com/en/articles/8555545-file-uploads-faq .
+OpenAI (2025b)
+OpenAI.
+Introducing deep research | OpenAI, 2025b.
+URL https://openai.com/index/introducing-deep-research/ .
+Perplexity AI (2025)
+Perplexity AI.
+File uploads, 2025.
+URL https://www.perplexity.ai/help-center/en/articles/10354807-file-uploads .
+Qwen Team (2026)
+Qwen Team.
+Qwen3.5.
+https://qwenlm.github.io/ , 2026.
+Ranjan et al. (2024)
+Rishabh Ranjan, Saurabh Garg, Mrigank Raman, Carlos Guestrin, and Zachary Lipton.
+Post-hoc reversal: Are we selecting models prematurely?
+In Advances in Neural Information Processing Systems , 2024.
+Rao et al. (2021)
+Yongming Rao, Wenliang Zhao, Benlin Liu, Jiwen Lu, Jie Zhou, and Cho-Jui Hsieh.
+Dynamicvit: Efficient vision transformers with dynamic token sparsification.
+arXiv preprint arXiv:2106.02034 , 2021.
+Raposo et al. (2024)
+David Raposo, Sam Ritter, Blake Richards, Timothy Lillicrap, Peter Conway Humphreys, and Adam Santoro.
+Mixture-of-depths: Dynamically allocating compute in transformer-based language models.
+arXiv preprint arXiv:2404.02258 , 2024.
+Schuster et al. (2022)
+Tal Schuster, Adam Fisch, Jai Gupta, Mostafa Dehghani, Dara Bahri, Vinh Q. Tran, Yi Tay, and Donald Metzler.
+Confident adaptive language modeling.
+arXiv preprint arXiv:2207.07061 , 2022.
+Shazeer et al. (2017)
+Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hinton, and Jeff Dean.
+Outrageously large neural networks: The sparsely-gated mixture-of-experts layer.
+arXiv preprint arXiv:1701.06538 , 2017.
+Shi et al. (2024)
+Zhenmei Shi, Yifei Ming, Xuan-Phi Nguyen, Yingyu Liang, and Shafiq Joty.
+Discovering the gems in early layers: Accelerating long-context llms with 1000x input token reduction.
+arXiv preprint arXiv:2409.17422 , 2024.
+Sun et al. (2024)
+Yu Sun, Xinhao Li, Karan Dalal, Jiarui Xu, Arjun Vikram, Genghan Zhang, Yann Dubois, Xinlei Chen, Xiaolong Wang, Sanmi Koyejo, Tatsunori Hashimoto, and Carlos Guestrin.
+Learning to (learn at test time): Rnns with expressive hidden states.
+arXiv preprint arXiv:2407.04620 , 2024.
+Vaswani et al. (2017)
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, and Illia Polosukhin.
+Attention is all you need.
+In Advances in Neural Information Processing Systems , volume 30, 2017.
+Wang et al. (2021)
+Hanrui Wang, Zhekai Zhang, and Song Han.
+Spatten: Efficient sparse attention architecture with cascade token and head pruning.
+In IEEE International Symposium on High-Performance Computer Architecture (HPCA) , 2021.
+arXiv:2012.09852.
+Xiao et al. (2023)
+Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike Lewis.
+Efficient streaming language models with attention sinks.
+arXiv preprint arXiv:2309.17453 , 2023.
+Xiao et al. (2024)
+Guangxuan Xiao, Jiaming Tang, Jingwei Zuo, Junxian Guo, Shang Yang, Haotian Tang, Yao Fu, and Song Han.
+Duoattention: Efficient long-context llm inference with retrieval and streaming heads.
+arXiv preprint arXiv:2410.10819 , 2024.
+Yang et al. (2025)
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu.
+Qwen3 technical report.
+arXiv preprint arXiv:2505.09388 , 2025.
+Yang et al. (2024a)
+Dongjie Yang, XiaoDong Han, Yan Gao, Yao Hu, Shilin Zhang, and Hai Zhao.
+Pyramidinfer: Pyramid kv cache compression for high-throughput llm inference.
+arXiv preprint arXiv:2405.12532 , 2024a.
+Yang et al. (2024b)
+Songlin Yang, Jan Kautz, and Ali Hatamizadeh.
+Gated delta networks: Improving mamba2 with delta rule.
+arXiv preprint arXiv:2412.06464 , 2024b.
+Yang et al. (2024c)
+Songlin Yang, Bailin Wang, Yu Zhang, Yikang Shen, and Yoon Kim.
+Parallelizing linear transformers with the delta rule over sequence length.
+arXiv preprint arXiv:2406.06484 , 2024c.
+Yuan et al. (2025)
+Jingyang Yuan, Huazuo Gao, Damai Dai, Junyu Luo, Liang Zhao, Zhengyan Zhang, Zhenda Xie, Y. X. Wei, Lean Wang, Zhiping Xiao, Yuqing Wang, Chong Ruan, Ming Zhang, Wenfeng Liang, and Wangding Zeng.
+Native sparse attention: Hardware-aligned and natively trainable sparse attention.
+arXiv preprint arXiv:2502.11089 , 2025.
+Zhang & Sennrich (2019)
+Biao Zhang and Rico Sennrich.
+Root mean square layer normalization.
+arXiv preprint arXiv:1910.07467 , 2019.
+Zhang et al. (2023)
+Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark Barrett, Zhangyang Wang, and Beidi Chen.
+H 2 o: Heavy-hitter oracle for efficient generative inference of large language models.
+arXiv preprint arXiv:2306.14048 , 2023.
+Appendix A Efficient kernels for TokenGate
+Token-gated attention (Eq. 8 ) differs from standard causal attention in two ways: a per-query temperature τ i ℓ ​ h \tau^{\ell h}_{i} and a per-key, per-head gate term added to the attention logits. The temperature is applied by scaling each query before the attention call, so it needs no kernel support. The gate term needs a per-key bias, which standard fused kernels do not accept, and unfused or score-modifying kernels are substantially slower. We therefore patch FlashAttention-2 ( Dao, 2023 ) to read a per-key, per-head bias vector, which it adds to each tile of attention scores before the online softmax. This keeps the fused structure of the kernel: the bias adds one vector load per key block, and a biased call costs 1.0 1.0 – 1.1 × 1.1\times a plain one. The kernel supports head dimensions 128 (Qwen3) and 256 (Qwen3.5).
+Training. The same kernel provides the backward pass: the gradient of the bias of key j j is the sum over queries of the gradient of its attention scores, which the kernel accumulates alongside the usual gradients, so the task loss reaches the scoring network through the fused kernel. The two targets of each training step (Eq. 10 ) are packed into one variable-length call. For Qwen3.5, whose Gated DeltaNet layers are not supported by this path, we train with FlexAttention ( Dong et al., 2024 ) and add the bias as a score modification,
+but more optimized kernels are possible.
+Inference. Layers at and below the gate use the standard fused kernel (cuDNN on A100). The pruned forward of the post-gate layers is captured as one CUDA graph per padded length: the kept sequence is padded to a multiple of 64, and pad keys receive a bias of − 10 9 -10^{9} so the result is exact. The gather of the KV cache of layers ℓ ≤ L \ell\leq L to the kept tokens (Appendix B ) runs on a separate stream, concurrently with the post-gate layers. During decoding, the gate term of each kept key is fixed, so it is folded once into an additive attention mask per post-gate layer and decoding uses standard attention.
+Appendix B Decoding with TokenGate
+The layers above the gate, ℓ > L \ell>L , never compute KV entries for pruned tokens, so during decoding each new token attends there only to the kept tokens S S and the tokens generated so far. The layers at and below the gate, ℓ ≤ L \ell\leq L , process the full context during prefill, so by default their KV cache holds every context token, and decode tokens attend to the full context in these layers and to the pruned context above them. Optionally, TokenGate can also prune the cache of layers ℓ ≤ L \ell\leq L .
+In the post-gate layers, decode tokens use the same token-gated softmax as prefill (Eq. 8 ). The gate term softplus ⁡ ( γ ℓ ​ h ) ​ b j \mathrm{softplus}(\gamma^{\ell h})\,b_{j} of each kept key is computed once at prefill and stored with the cache as a constant per-key bias, and each generated token is a non-prunable token with gate term 0 0 (Eq. 3 ). The temperature τ i ℓ ​ h \tau^{\ell h}_{i} of a decode query follows Eq. 7 , with m i m_{i} its rank among the kept and generated tokens and p i p_{i} its original position; generated tokens continue from the original position of the last prompt token.
+Appendix C Details of Experimental Setup
+C.1 Datasets
+All datasets are evaluated on Qwen3-1.7B with greedy decoding for up to 1024 new tokens. Each model is fine-tuned on a training set that is disjoint from its evaluation set.
+RepoBench-P. RepoBench-P ( Liu et al., 2023 ) is a next-line code completion task. We use the LongBench ( Bai et al., 2024 ) version, whose prompts contain cross-file code context and an in-file prefix, and the model completes the next line. We evaluate on all 500 samples (mean context 11.0k tokens, up to 39k) and report edit similarity, 1 − Levenshtein / max ⁡ ( length ) 1-\mathrm{Levenshtein}/\max(\text{length}) , on the first generated line. For training, we use 14.9k samples from the RepoBench v1.1 Python and Java cross-file splits, deduplicated against the evaluation set.
+2WikiMultihopQA. 2WikiMultihopQA ( Ho et al., 2020 ) is a multi-hop question answering task over several Wikipedia passages; we use the LongBench version. We evaluate on all 200 samples (mean context 7.5k tokens) and report token-level F1 against the gold answers. For training, we use 20k 2WikiMultihopQA questions with contexts rebuilt from full Wikipedia articles and decontaminated against LongBench.
+MultiNews. MultiNews ( Fabbri et al., 2019 ) is a multi-document news summarization task; we use the LongBench version. We evaluate on all 200 samples (mean context 2.7k tokens, up to 14k) and report ROUGE-L. For training, we use 44.8k samples from the MultiNews training split in the LongBench prompt format.
+BioDEX. BioDEX-Reactions ( D’Oosterlinck et al., 2023 ) is an adverse drug reaction extraction task over full-text biomedical papers: given a paper, the model lists the reported adverse reactions as MedDRA terms. We evaluate on 500 samples drawn from the official validation split with articles between 2k and 39k tokens (mean 4.5k), and report set F1 between predicted and gold reactions, counting a predicted reaction as correct if it matches a gold term up to substring containment. For training, we use 9.8k papers from the official training split.
+NIAH. NIAH ( Kamradt, 2023 ) is needle-in-a-haystack retrieval at 16k tokens. The haystack is built from Paul Graham essays, and the needle, “The best thing to do in city is activity .”, is inserted at a sentence boundary at a given depth; the model is then asked for the best thing to do in that city. The 200 evaluation samples cover 20 held-out cities at 10 depths evenly spaced from 0 to 1, and we report accuracy, i.e., whether the gold activity appears in the answer. For training, we use 12k generated samples with haystacks of 14k–16.4k tokens and uniformly random depths; the essays and cities are disjoint from the evaluation set.
+C.2 Baselines
+All baselines run on the same SFT model, fine-tuned on each dataset with LoRA ( r = 16 r{=}16 , α = 32 \alpha{=}32 ) on the query and value projections of all layers. The pruning baselines keep all non-document tokens and prune only document tokens, with the same kept-token budgets K K as TokenGate ( 64 64 – 8192 8192 ). We briefly describe each baseline below, and the configurations used. We run each method, applying its optimization for prefill-only.
+FastKV ( Jo et al., 2025 ) . At a token-selective propagation layer, FastKV scores tokens by the attention they receive from a window of the last queries, max-pools the scores, and propagates only the top- K K tokens to deeper layers. We use the paper’s observation window of 8 tokens and pooling kernel of 7. We run it at layer 13 by default, following the paper and its hyper-parameter search, which chooses relative depth of 46 % 46\% for its models. We additionally run the baseline at layer 1, the layer at which we apply TokenGate , to compare performance at a matched layer index.
+SlimInfer ( Long et al., 2025 ) . SlimInfer prunes hidden states in several stages: at layers 8, 17 and 25 it keeps 3 ​ K 3K , 1.5 ​ K 1.5K and K K tokens, scoring 64-token blocks by the attention of the last 4 queries. We use the paper’s block size, kernel and layer schedule, and its budget ratios, following the paper’s hyperparameter search.
+GemFilter ( Shi et al., 2024 ) . GemFilter runs the first layers on the full prompt, selects the top- K K tokens by the last query’s attention scores at a filter layer, and then runs a fresh forward pass over only the selected tokens. We use filter layer 12, at the same relative depth (0.4) as recommended by the original paper, and the official pooling kernel.
+DASH ( Chen et al., 2026 ) . DASH halts tokens whose representations have stabilized: at layer 11 ( 0.4 × 0.4\times the number of layers, the official default), it ranks tokens by the change in their hidden state from the previous layer and drops the most stable ones, keeping K K document tokens.
+FlexPrefill ( Lai et al., 2025 ) . FlexPrefill is a sparse-attention method: it keeps all tokens but computes a query-adaptive sparse attention pattern during prefill, controlled by a cumulative-attention threshold γ \gamma . We use the official kernel and its recommended hyperparameters (divergence threshold τ = 0.1 \tau{=}0.1 , which decides per head whether to use a query-aware or a vertical-slash pattern; minimum budget 1024; block size 128) and sweep γ ∈ { 0.1 , 0.2 , … , 0.9 , 0.95 , 0.97 } \gamma\in\{0.1,0.2,\dots,0.9,0.95,0.97\} , extending the range until accuracy degrades.
+MInference ( Jiang et al., 2024 ) . MInference uses per-head sparse attention patterns found by an offline search, which for Qwen3-1.7B selects vertical-and-slash patterns for all heads. We run the official implementation with patterns searched on Qwen3-1.7B, and sweep its budget by scaling the vertical and slash sizes of the searched configuration by { 0.25 , 0.5 , 1 , 2 , 4 } \{0.25,0.5,1,2,4\} , which keeps the searched pattern shape.
+Implementation and timing. All methods run the same fine-tuned backbone in bf16 with the LoRA adapter folded into the weights, and all dense decoder layers are torch.compile d. Dense causal attention uses the same fused kernel in every lane (cuDNN on the A100; FlashAttention-2 on Qwen3.5-2B); the only kernel that differs is in the TokenGate ’s post-gate layers, which require a per-key bias and use a FlashAttention-2 variant at 1.0 1.0 – 1.1 × 1.1\times the cost of a plain call (Appendix A ). FastKV and GemFilter run through the compiled layers directly. The official SlimInfer and DASH prefills bypass the compiled layer forward, so we reimplemented both in compile-friendly form and verified that they select the same tokens as the official code (DASH bit-identical; SlimInfer identical selection), which made them 1.2 1.2 – 2.4 × 2.4\times and 1.25 1.25 – 1.56 × 1.56\times faster; we report the faster versions. MInference is compiled around its sparse kernel with identical accuracy, and FlexPrefill runs eager, its fastest configuration, since its data-dependent block selection triggers recompilation under torch.compile . The pruned forward of the TokenGate and of FastKV is captured as one CUDA graph per padded length; the remaining baselines have no fixed-shape pruned phase to capture. Both FastKV and the TokenGate optionally prune the KV cache of the layers below their pruning layer to the selected tokens once prefill completes, so that decoding holds K K entries at every layer; we disable this setting for both in all experiments since KV cache pruning presents an orthogonal set of optimizations and our experiments instead isolate the effect of token pruning for prefill optimization (Appendix B ). Inference timings are measured at batch size of 1 on one A100.
+C.3 Training Hyperparameters
+Table 1 lists the hyperparameters used to train the TokenGate models and the SFT baseline on each dataset. Both use the same LoRA configuration, learning rate, schedule and training data; they differ only in the optimizer of the TokenGate parameters and in the token budgets sampled during training.
+Hyperparameter
+Value
+Base model
+Qwen3-1.7B, bf16
+LoRA
+r = 16 r{=}16 , α = 32 \alpha{=}32 on query and value projections, all layers
+Optimizer
+AdamW; Muon ( Jordan et al., 2024 ) for the gate matrices ( TokenGate only)
+Learning rate
+10 − 4 10^{-4} , linear warmup over 1000 steps, then constant
+Weight decay
+0.1 0.1
+Gradient clipping
+global norm 1.0 1.0
+Batch size
+1 sequence per GPU
+Training context
+documents of 2k–16k tokens
+Gate layer ( TokenGate only)
+L = 1 L=1
+Budgets per step ( TokenGate only)
+K ∼ K\sim log-uniform, plus full context
+Table 1: Training hyperparameters for TokenGate and the SFT baseline, shared across all five datasets.
+C.4 Extension to Alternative Hybrid-Attention Architectures
+Qwen3.5 architecture. Qwen3.5-2B ( Qwen Team, 2026 ) is a hybrid-attention model with 24 layers. Every fourth layer, ℓ ∈ 𝒜 = { 3 , 7 , 11 , 15 , 19 , 23 } \ell\in\mathcal{A}=\{3,7,11,15,19,23\} , is a full-attention layer whose output is multiplied by a learned sigmoid output gate. All other layers are Gated DeltaNet layers ( Yang et al., 2024b ) , which replace softmax attention with a linear recurrence over a fixed-size state and therefore have no attention weights.
+Gate module. We place the TokenGate at layer L ∈ { 1 , 2 , 3 } L\in\{1,2,3\} , where layers 1 and 2 are Gated DeltaNet layers and layer 3 is the first full-attention layer. The scoring network (Eq. 3 ) and the top- K K selector (Eq. 4 ) are unchanged. The only difference is the token mixer of layer L L : the scoring network reads the normalized residual after layer L L ’s mixer,
+a ~ j L = LN 2 ​ ( h j L + Mixer L ​ ( LN 1 ​ ( h L ) ) j ) , Mixer L ∈ { GatedDeltaNet L , Attn L } , \displaystyle\tilde{a}^{L}_{j}=\mathrm{LN}_{2}\big(h^{L}_{j}+\mathrm{Mixer}_{L}(\mathrm{LN}_{1}(h^{L}))_{j}\big),\qquad\mathrm{Mixer}_{L}\in\{\mathrm{GatedDeltaNet}_{L},\ \mathrm{Attn}_{L}\},
+(11)
+which for a Gated DeltaNet layer is the output of its recurrence rather than of self-attention.
+Token-gated attention. Since Gated DeltaNet layers have no attention logits to bias, token-gated attention (Eq. 8 ), including the gains γ ℓ ​ h \gamma^{\ell h} and the temperature, is applied only in the full-attention layers above the gate, ℓ ∈ 𝒜 , ℓ > L \ell\in\mathcal{A},\ \ell>L . The Gated DeltaNet layers above the gate run unchanged on the kept tokens S S , starting from an empty state, so that their recurrent state is built from the kept tokens only:
+h S ℓ = { token-gated attention layer (Eq. 8 ) ℓ ∈ 𝒜 , ℓ > L , GatedDeltaNet ℓ ​ ( h S ℓ − 1 ) ℓ ∉ 𝒜 , ℓ > L . \displaystyle h^{\ell}_{S}=\begin{cases}\text{token-gated attention layer (Eq.~\ref{eq:tokengated})}&\ell\in\mathcal{A},\ \ell>L,\\
+\mathrm{GatedDeltaNet}_{\ell}\big(h^{\ell-1}_{S}\big)&\ell\notin\mathcal{A},\ \ell>L.\end{cases}
+(12)
+Kept tokens keep their original positions for rotary embeddings in the full-attention layers.
+Decoding. The recurrent state of a Gated DeltaNet layer summarizes all tokens it has seen in a fixed-size matrix and cannot be pruned per token. The Gated DeltaNet layers ℓ ≤ L \ell\leq L therefore decode from a state built over the full prompt, while the KV cache of full-attention layers are pruned, as in Appendix B .
+Training. As for Qwen3, we train the TokenGate jointly with LoRA ( r = 16 r{=}16 ) on the query and value projections, which in Qwen3.5 exist only in the full-attention layers; the Gated DeltaNet layers are not adapted.
+Appendix D Additional Experimental Results
+D.1 Training Time
+Full train time
+Per-step time
+Dataset
+SFT
+Ours
+Ratio ↓ \downarrow
+SFT
+Ours
+Ratio ↓ \downarrow
+Repo
+1.7h
+1.1h
+0.6 × 0.6\times
+0.50s
+0.64s
+1.3 × 1.3\times
+2Wiki
+3.8h
+4.0h
+1.1 × 1.1\times
+0.34s
+0.43s
+1.3 × 1.3\times
+MNews
+1.3h
+1.8h
+1.4 × 1.4\times
+0.21s
+0.27s
+1.3 × 1.3\times
+BioDEX
+1.2h
+1.0h
+0.8 × 0.8\times
+0.23s
+0.30s
+1.3 × 1.3\times
+NIAH
+2.8h
+1.0h
+0.4 × 0.4\times
+0.99s
+1.24s
+1.3 × 1.3\times
+Mean
+2.2h
+1.8h
+0.8 × 0.8\times
+0.45s
+0.58s
+1.3 × 1.3\times
+Table 2: Training time for SFT baseline and model trained with TokenGate for Qwen3-1.7B on one A100. Ratio shows Ours / SFT.
+D.2 Main Results without Axis Limits
+Below, Figure 6 shows the main results (Figure 3 ), but without axis limits and with every point shown.
+Figure 6: Main results (Figure 3 ) without x or y limits: accuracy vs. time-to-first-token (top) and accuracy vs. peak GPU prefill memory (bottom) with Qwen3-1.7B, all points shown.
+D.3 Extrapolating to Longer Context
+NIAH 16k
+NIAH 32k
+NIAH 64k
+NIAH 128k
+TTFT speedup
+11.3 × 11.3\times
+12.8 × 12.8\times
+13.0 × 13.0\times
+13.0 × 13.0\times
+Peak memory reduction
+3.42 × 3.42\times
+3.43 × 3.43\times
+3.43 × 3.43\times
+3.43 × 3.43\times
+Table 3: TokenGate TTFT speedup and peak prefill memory reduction at no accuracy degradation over full context for the NIAH-16k, 32k, 64k and 128k test sets with Qwen3-1.7B.
+We study the ability of the trained TokenGate to extrapolate to inference settings with longer context. We take the fine-tuned base model and TokenGate model, both trained on the 16k-NIAH task using Qwen1.7B, and we evaluate prefill performance on the NIAH task with 32k, 64k and 128k-length test sets. Table 3 shows the TTFT speedups and peak memory reductions of the TokenGate model at no accuracy degradation over the full at full-context accuracy on each dataset. The results demonstrate that TokenGate extrapolates across varying context lengths at inference, retaining accuracy with greater than 11.3 11.3 - 13 × 13\times speedups. We observe that the TTFT speedups of the trained TokenGate model are highest at the longest context-length ranges, where trainable token pruning can significantly reduce costs. Meanwhile, the peak memory reduction is consistent across all length ranges, as expected, since peak memory is dominated by memory footprint of the standard forward that occurs without pruning in layers below the gate.
+D.4 Ablating the TokenGate Design
+In this section we ablate the TokenGate design (Section 4 ). First, Figure 7 (left) compares the accuracy vs TTFT performance of TokenGate on BioDEX with Qwen3-1.7B against three variants: (a) removing the full-context loss term L K full L_{K_{\mathrm{full}}} from the per-step loss (Eq. 10 ), (b) removing the temperature scaling term during token-gated attention, and (c) removing the head-wise scaling. The results demonstrate that training without the full-context loss most significantly degrades inference accuracy at full-context, and removing the temperature scaling and head-wise gain also degrades accuracy, leading to sub-optimal accuracy vs TTFT.
+We additionally analyze layer selection, a hyperparameter for TokenGate . Figure 7 (right) shows performance on BioDEX of Qwen3-1.7B models trained with the TokenGate at Layer 0, 1, and 2. Notably, the model with gating at Layer 0 is Pareto-suboptimal relative to the Layer 1 and 2 gate models, suggesting that the Layer 0 post-attention residuals provide insufficient signal for the TokenGate scoring network. On the other hand, the Layer 1 and Layer 2 TokenGate models both lie along the Pareto frontier, suggesting that by Layer 1, the post-attention residuals passed to the gate module are sufficiently rich to learn an effective scoring network for trainable token pruning.
+Figure 7: Left: token-gated forward and training ablations on BioDEX (Qwen3-1.7B, gate at layer 1): F1 vs. TTFT (batch 1, A100) for the full TokenGate recipe against three single-change variants: no full-context loss (no full-context term in Eq. 10 ), no temperature scaling (Eq. 7 removed), and no head-wise scaling (raw bias, with no normalization or gain; Eq. 3 removed). Right: gate-layer ablation on BioDEX (Qwen3-1.7B): F1 vs. TTFT (batch 1, A100) with the TokenGate placed at layer 0, 1, or 2.
+Appendix E Visualizing Kept Tokens on Real Samples
+Figures 8 – 12 show which context tokens TokenGate keeps on one real evaluation prompt per dataset, using the layer-1 checkpoints of Figure 3 (Qwen3-1.7B). To avoid selecting favorable examples, each prompt is the first of the seeded test draw used by the benchmarks. The strip at the top of each figure spans the whole prompt: the context in light grey, each kept token in red, and the non-prunable tokens 𝒩 \mathcal{N} of Section 4 (instruction, question and answer template; the scaffold) in darker grey at either end. The box below shows the part of the context under the bracket, chosen as the window of that length holding the most kept tokens. For each prompt we show the smallest budget K ∈ { 64,128,256,512 , 1024 } K\in\{64,128,256,512,1024\} at which the greedy answer equals that of the same model with the full context, or K = 256 K=256 where no budget does. The shown budgets keep between 0.4 % 0.4\% (NIAH) and 13 % 13\% (MultiNews) of the context.
+Selection is global, not local. In every sample the kept tokens fall in all ten deciles of the context, so the gate does not reduce to a recency window or to the start of the document. At the same time it concentrates the budget where the task needs it: on NIAH, 21 21 of the 24 24 tokens of the needle sentence, which sits at 78 % 78\% depth in a 15,843 15{,}843 -token haystack, are among the 64 64 kept tokens, and the model answers exactly. The same holds for all eight NIAH prompts we checked, whose answer at K = 64 K=64 matches the reference.
+What is kept, and what it costs. Table 4 summarizes the five examples. On 2WikiMultihopQA, BioDEX and NIAH the gate keeps content: entities and years, the terms that describe a medical case, and, where the reference answer occurs verbatim in the context, a large share of its tokens (all of the needle’s answer on NIAH). On RepoBench-P the selection is instead dominated by code structure: most kept tokens contain no letter, and they are spread thinly over the retrieved files, whereas on NIAH most kept tokens have a kept neighbor and form contiguous spans. This suggests that for code completion the post-gate layers use the kept tokens more as anchors on the structure of the retrieved files than as a copy of their content. The examples also show where pruning costs accuracy: on MultiNews the gate keeps mostly function words and under-keeps capitalized tokens, and the summary at K = 256 K=256 reports the right events but gets the names and places wrong, and for drug reaction extraction on BioDEX the pruned model recovers one of the two reactions found with the full context.
+Dataset
+What is kept
+Failure mode
+RepoBench-P
+code syntax rather than identifiers: commas and empty argument lists “()” dominate, line breaks are avoided, and kept tokens are isolated rather than spans
+wrong line, as with the full context
+2WikiMultihopQA
+entities and dates: names and years are over-kept and function words avoided; on the shown prompt, the answer phrase (“Film Award for …Director”)
+a different award at small budgets, exact at the shown one; multi-hop answers need the largest budgets to match the full context
+MultiNews
+mostly function words and scattered event words (“charged”, “president”); names and places are under-kept
+right events, but wrong name, occupation and place, consistent with the under-kept names
+BioDEX
+terms of the diagnosis and outcome (“septic shock”, “failure”) and the connectives of lists (“and”, “or”); numbers are almost never kept
+misses reactions, but so does the full-context model, which bounds the score
+NIAH 16k
+the needle sentence as one contiguous span, plus rare subwords elsewhere (“-haired”, “Lisp”, “.html”)
+none: exact at every budget
+Table 4: Summary of what TokenGate keeps and how its answers fail. Examples refer to the prompts of Figures 8 – 12 at their shown budgets; the patterns hold over the first eight prompts of each test draw.
+Figure 8: Context tokens kept by TokenGate on one RepoBench-P test prompt (Appendix E ), with the reference answer and the model’s greedy answers at the shown budget and with the full context. Kept tokens are shaded by gate score (darker is higher) and pruned tokens are grey.
+Figure 9: Context tokens kept by TokenGate on one 2WikiMultihopQA test prompt (Appendix E ), with the reference answer and the model’s greedy answers at the shown budget and with the full context. Kept tokens are shaded by gate score (darker is higher) and pruned tokens are grey.
+Figure 10: Context tokens kept by TokenGate on one MultiNews test prompt (Appendix E ), with the reference answer and the model’s greedy answers at the shown budget and with the full context. Kept tokens are shaded by gate score (darker is higher) and pruned tokens are grey.
+Figure 11: Context tokens kept by TokenGate on one BioDEX test prompt (Appendix E ), with the reference answer and the model’s greedy answers at the shown budget and with the full context. Kept tokens are shaded by gate score (darker is higher) and pruned tokens are grey.
+Figure 12: Context tokens kept by TokenGate on one NIAH 16k test prompt (Appendix E ), with the reference answer and the model’s greedy answers at the shown budget and with the full context. Kept tokens are shaded by gate score (darker is higher) and pruned tokens are grey.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues . We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion , and welcome developer contributions .
+We gratefully acknowledge support from
+our major funders ,
+member institutions , ,
+and all contributors.
+Major funding support from

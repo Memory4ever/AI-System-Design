@@ -1,0 +1,609 @@
+MWM: Mobile World Models for Action-Conditioned Consistent Prediction
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I INTRODUCTION
+II Related Work
+III The Proposed Method
+III-A Overview
+III-B Two-Stage Training Pipeline For MWM
+III-B1 Stage I: Structure Pretraining
+III-B2 Stage II: Action-Conditioned Consistency (ACC) Post-training
+III-C Inference-Consistent State Distillation (ICSD)
+III-D Planning with MWM
+IV Experiments
+IV-A Experimental Settings
+IV-B Main Results
+IV-C Ablation Studies
+IV-D RealWorld Evaluation
+IV-D1 Robot Setup
+IV-D2 Scene setup and task types
+IV-D3 Quantitative real-world evaluation
+IV-D4 Qualitative real-world evaluation
+V CONCLUSIONS
+References
+License: CC BY-NC-SA 4.0
+arXiv:2603.07799v1 [cs.CV] 08 Mar 2026
+MWM: Mobile World Models for Action-Conditioned Consistent Prediction
+Han Yan*Zishang Xiang*
+Zeyu Zhang
+Hao Tang School of Computer Science, Peking University
+*Equal contribution. Project lead.
+Corresponding author: bjdxtanghao@gmail.com.
+Abstract
+World models enable planning in imagined future predicted space, offering a promising framework for embodied navigation. However, existing navigation world models often lack action-conditioned consistency, so visually plausible predictions can still drift under multi-step rollout and degrade planning. Moreover, efficient deployment requires few-step diffusion inference, but existing distillation methods do not explicitly preserve rollout consistency, creating a training–inference mismatch. To address these challenges, we propose MWM, a mobile world model for planning-based image-goal navigation. Specifically, we introduce a two-stage training framework that combines structure pretraining with Action-Conditioned Consistency (ACC) post-training to improve action-conditioned rollout consistency. We further introduce Inference-Consistent State Distillation (ICSD) for few-step diffusion distillation with improved rollout consistency. Our experiments on benchmark and real-world tasks demonstrate consistent gains in visual fidelity, trajectory accuracy, planning success, and inference efficiency.
+Code: https://github.com/AIGeeksGroup/MWM.
+Website: https://aigeeksgroup.github.io/MWM.
+I INTRODUCTION
+World models have emerged as a promising approach for Embodied-AI [1, 2, 3, 4]. For robot navigation, they enable planning in the predicted future observation space instead of relying solely on end-to-end action policies. Given the current observation and candidate actions, a world model can generate future visual rollouts and support planning by scoring candidate trajectories against task-specific objectives, such as goal observations or language-conditioned task requirements.
+Although existing embodied navigation world models can produce visually faithful future observations [5, 6, 7, 8], their action-conditioned consistency remains insufficient for planning. In particular, the predicted visual rollout may look realistic frame by frame, yet still deviate from the true trajectory that would be induced by the same action sequence in the real world. This mismatch is especially problematic for model predictive control (MPC) [9], which relies on searching over imagined trajectories to select the best action sequence. When the model prediction is not well aligned with the real execution outcome, MPC may favor trajectories that appear correct in the generated rollout but lead to erroneous behavior when executed on the robot. Second, real-world deployment requires fast inference for responsive planning and control, which makes it necessary to perform a few-step distillation. However, existing diffusion distillation methods are mostly designed to match the teacher model at the distribution level [10, 11, 12, 13, 14]. While this improves sampling efficiency, such distribution-level alignment does not explicitly preserve action-conditioned consistency during rollout, and may therefore weaken the consistency required for reliable planning.
+For the first challenge, our motivation is to explicitly reduce the discrepancy between model-predicted rollouts and real observations, which we interpret as a form of error accumulation [15, 16]. Even over relatively short planning action sequences, small deviations at each prediction step can compound over time, causing the final predicted state to drift substantially from the true spatial position. Therefore, we need a training strategy that can preserve high-fidelity image generation while reducing error accumulation during action-conditioned rollout. For the second challenge, our motivation is that for MPC-based world models, few-step distillation should be performed at the level of consistency rather than merely at the level of distribution. Since downstream planning depends on the reliability of rollouts rather than distributional similarity alone, the distilled model should preserve rollout consistency with respect to the real trajectory.
+To this end, we propose MWM, a mobile world model designed to enhance action-conditioned consistency in visual planning. Our first contribution is a two-stage training pipeline consisting of structure pretraining followed by Action-Conditioned Consistency (ACC) post-training. In the first stage, the model learns stable scene structure and appearance through supervised training. In the second stage, ACC post-training explicitly trains the model under self-conditioned action rollout contexts, with the goal of mitigating error accumulation so that autoregressive predictions remain better aligned with the real observations. Our second contribution is Inference-Consistent State Distillation (ICSD), which extends the same ACC post-training objective—namely, a consistency distillation objective—to efficient few-step diffusion distillation. By introducing an Inference-Consistent State, ICSD better preserves action-conditioned rollout consistency during planning. Our third contribution is a comprehensive evaluation on both benchmark and real-world navigation tasks. Our method reduces DreamSim [17] by 20.4% and FID [18] by 17.5% while delivering at least a 4×\times inference speedup, improves trajectory accuracy by 10.9% in ATE [19] and 8.5% in RPE [19] on benchmark evaluation, and achieves a 50% relative improvement in success rate and a 32.1% reduction in navigation error in real-world deployment.
+The main contributions of our work can be summarized as follows:
+•
+We propose a two-stage training pipeline for MWM, consisting of structure pretraining and Action-Conditioned Consistency (ACC) post-training. The post-training explicitly trains the model under self-conditioned action rollout contexts to mitigate error accumulation while preserving high-fidelity visual generation and improving alignment between autoregressive predictions and real observations.
+•
+We introduce Inference-Consistent State Distillation (ICSD) within the post-training stage, which supports efficient few-step diffusion inference under the consistency distillation objective by reducing the discrepancy between training-time diffusion states and the denoising states encountered during accelerated deployment, thereby improving both rollout reliability and inference efficiency.
+•
+We conduct comprehensive evaluations on both benchmark and real-world navigation tasks. Our method reduces DreamSim by 20.4% and FID by 17.5% while achieving at least a 4×\times faster inference speed, improves trajectory accuracy by 10.9% in ATE and 8.5% in RPE on benchmark evaluation, and achieves a 50% relative improvement in success rate together with a 32.1% reduction in navigation error in real-world deployment.
+II Related Work
+Learning-Based Visual Navigation.
+Goal-conditioned visual navigation has been extensively studied in robotics, with early methods relying on hand-crafted features and metric maps for motion planning [20, 21]. The advent of large-scale deep learning brought substantial advances through end-to-end policies trained on diverse robot datasets. GNM demonstrated platform-agnostic generalization via goal-conditioned topological planning [22], while ViNT extended this with transformer-based pretraining for robust zero-shot transfer across indoor and outdoor environments [23]. NoMaD unified goal-directed navigation and open-ended exploration with a goal-masked diffusion policy, improving robustness to multimodal action distributions [24]. More recent work integrates vision-language models to execute tasks from open-vocabulary natural language instructions without explicit waypoint supervision [25]. Despite this progress, these reactive, end-to-end approaches share a fundamental limitation: they do not explicitly model the future visual consequences of candidate actions, making them ill-suited for environments where lookahead planning is necessary.
+World Model-Based Embodied Navigation.
+World models have a rich history in model-based reinforcement learning [26, 27, 28], where they simulate state transitions to support planning and policy optimization. The Dreamer series showed that compact latent world models enable efficient policy learning across diverse continuous control tasks [29, 1]. Recent work extends this paradigm to real-world visual navigation: Navigation World Models (NWM) [30]proposed a navigation world model based on a conditional diffusion transformer (CDiT) that generates egocentric future observations conditioned on robot actions, supporting model predictive control entirely in the imagined visual space. UniSim further demonstrated that large-scale video prediction models trained on diverse interaction data can serve as interactive simulators for robot tasks [31]. However, a critical limitation persists across these models: visual realism does not imply action-conditioned consistency. Predicted frame sequences may appear locally plausible yet deviate substantially from the trajectory that the same action sequence would induce in reality—a mismatch that directly undermines MPC, whose planning quality depends on whether imagined rollouts faithfully reflect real execution outcomes.
+Diffusion Acceleration and Autoregressive Consistency.
+Diffusion probabilistic models have become the dominant paradigm for high-fidelity visual generation and have been widely adopted in robot learning for policy generation and world modeling [32]. A key practical bottleneck for deploying diffusion-based world models in online planning is inference latency: standard DDPM sampling requires hundreds of sequential denoising steps, making real-time MPC infeasible on robot hardware. DDIM [33], DPM-Solver [34], and consistency distillation [35] progressively reduce function evaluations to tens or even single steps, but these methods are designed to preserve distributional fidelity at the individual frame level and do not explicitly maintain action-conditioned rollout consistency under accelerated sampling. This limitation is closely connected to the problem of autoregressive error accumulation. Under teacher-forced training, the model always conditions on ground-truth past frames, whereas at test time it must condition on its own predictions; the resulting distribution shift causes per-step deviations to compound over multi-step rollouts. Scheduled sampling [15] and DAgger [16] addressed analogous train-test discrepancies in sequence models and imitation learning, respectively. More recently, Self-Forcing applied this idea to diffusion-based video generation, demonstrating that training under self-generated context substantially reduces long-horizon error accumulation [36]. In robotic world models, this issue is especially consequential, since planning accuracy depends directly on whether the predicted terminal state corresponds to the robot’s true physical location after executing the planned action sequence.
+(a) Stage I.
+(b) Stage II.
+Fig. 2: Overview of the Two-stage training pipeline for MWM. Our training paradigm first performs structure pretraining to learn fine-grained geometry and illumination-dependent appearance, then applies ACC post-training to mitigate compounding error while freezing the CDiT backbone and updating only AdaLN. Within post-training, we introduce ICSD to enable distillation that preserves the consistency objective, while aligning truncated training-time estimates with the inference-time endpoint.
+III The Proposed Method
+III-A Overview
+We propose a two-stage training pipeline that follows a “structure-first, consistency-refine” paradigm for MWM. In the first stage, we perform structure pretraining to learn high-fidelity scene dynamics and capture fine-grained environmental structure, including detailed geometry and illumination-dependent appearance. In the second stage, we post-train the model on the same dataset under the Action-Conditioned Consistency (ACC) post-training paradigm, which refines autoregressive rollout behavior without destroying the detailed structures acquired from pretraining. This stage is designed to mitigate error accumulation and improve action-conditioned observation alignment with ground-truth trajectories, while simultaneously reducing the train–test gap induced by pretraining. In addition, we design an Inference-Consistent State Distillation (ICSD) mechanism within the ACC post-training by modifying how the diffusion timestep is injected into the backbone, enabling few-step diffusion distillation. Crucially, ICSD introduces an inference-consistent state that aligns the truncated estimate state of training-time (often too smooth/blurred when obtained from an intermediate denoising step) with the inference-time state produced at s=0, which is substantially closer to the result of full progressive denoising, thus reducing the truncation-induced train–test discrepancy (See Fig. 2 for the two-stage training pipeline). For planning, we adopt the CEM-based search method in the world-model rollout space used in prior work [30].
+III-B Two-Stage Training Pipeline For MWM
+III-B1 Stage I: Structure Pretraining
+We find this stage to be necessary for learning fine-grained scene structure and illumination-dependent appearance in the new environment, which provides a strong initialization for the subsequent ACC post-training. We pretrain MWM as an action-conditioned diffusion model under a teacher-forcing setup, where the ground-truth next representation sτ+1s_{\tau+1} is provided and the model learns to denoise it given (sτ,aτ)(s_{\tau},a_{\tau}). We sample a diffusion step t∈{1,…,T}t\in\{1,\dots,T\} and form a noised target:
+sτ+1(t)=α¯t​sτ+1+1−α¯t​ϵ,ϵ∼𝒩⁡(0,I),s^{(t)}_{\tau+1}=\sqrt{\bar{\alpha}_{t}}\,s_{\tau+1}+\sqrt{1-\bar{\alpha}_{t}}\,\epsilon,\quad\epsilon\sim\mathcal{N}(0,I),
+(1)
+where {α¯t}\{\bar{\alpha}_{t}\} is the cumulative noise schedule [32] (we follow CDiT settings [30]). The denoiser FθF_{\theta} takes (sτ+1(t),sτ,aτ,t)(s^{(t)}_{\tau+1},s_{\tau},a_{\tau},t) as input and predicts a clean target:
+s^τ+1=Fθ​(sτ+1(t)∣sτ,aτ,t).\hat{s}_{\tau+1}=F_{\theta}\!\left(s^{(t)}_{\tau+1}\mid s_{\tau},a_{\tau},t\right).
+(2)
+We optimize the reconstruction loss over randomly sampled timesteps:
+ℒsimple=𝔼(sτ,aτ,sτ+1),ϵ,t​[‖sτ+1−s^τ+1‖22].\mathcal{L}_{\mathrm{simple}}=\mathbb{E}_{(s_{\tau},a_{\tau},s_{\tau+1}),\,\epsilon,\,t}\left[\left\|s_{\tau+1}-\hat{s}_{\tau+1}\right\|_{2}^{2}\right].
+(3)
+As shown in Fig. 2, the action aτa_{\tau} and timestep tt are encoded with sin–cos features and injected into every CDiT block via AdaLN. The context sτs_{\tau} attends to a memory of past states {sτ−1,…,sτ−m}\{s_{\tau-1},\ldots,s_{\tau-m}\} through cross-attention.
+III-B2 Stage II: Action-Conditioned Consistency (ACC) Post-training
+We continue training on the same dataset as Stage I, but expose the model to its own predictions as context, thereby reducing the train–test mismatch between (i) pretraining, where the context is always ground truth, and (ii) deployment, where the context quickly becomes model-generated after a few rollout steps.
+Our procedure follows the core self-forcing idea [36]: for a rollout of length NN, we generate frames autoregressively with a diffusion model, and randomly choose a truncation denoising step k∼Uniform⁡({1,…,T′})k\sim\mathrm{Uniform}(\{1,\dots,T^{\prime}\}), where {t1,t2,…,tT′}\{t_{1},t_{2},\ldots,t_{T^{\prime}}\} denotes a subset of denoising timesteps selected from the full schedule {1,…,T}\{1,\ldots,T\}. For each frame τ\tau, we start from Gaussian noise and run the reverse process from t=tT′t=t_{T^{\prime}} down to t=tkt=t_{k}. Importantly, we treat the intermediate denoising steps as stop-gradient updates, and only enable gradient computation when producing the final prediction at the truncation step,
+s^τ(0)=Gθ​(sτ(tk),tk,s^<τ(0),aτ−1),\hat{s}^{(0)}_{\tau}=G_{\theta}\!\left(s^{(t_{k})}_{\tau};\,t_{k},\,\hat{s}^{(0)}_{<\tau},\,a_{\tau-1}\right),
+(4)
+where s^<τ(0)\hat{s}^{(0)}_{<\tau} denotes the previously generated frames used as autoregressive context. This setup explicitly trains the model under the same self-conditioned context distribution encountered at test time.
+Different from distillation-oriented objectives, we update parameters using an observation-level consistency loss. Specifically, we supervise the rollout against ground-truth observations {sτ}τ=1N\{s_{\tau}\}_{\tau=1}^{N} with a multi-frame averaged perceptual loss based on LPIPS [37]:
+ℒCSF=1N​∑τ=1NLPIPS⁡(s^τ(0),sτ).\mathcal{L}_{\mathrm{CSF}}=\frac{1}{N}\sum_{\tau=1}^{N}\mathrm{LPIPS}\!\left(\hat{s}^{(0)}_{\tau},\,s_{\tau}\right).
+(5)
+To preserve the high-fidelity image quality learned in Stage I, we freeze the CDiT backbone and optimize only the lightweight AdaLN modulation layers (i.e., the linear projections that inject the action aτa_{\tau} conditioning into each block). In practice, this targeted post-training improves multi-step observation alignment without degrading the fine-grained structure and appearance captured by pretraining.
+We interpret the discrepancy between self-rolled predictions and real observations as compounding error: as rollout length increases, the deviation typically grows, which directly hurts planning accuracy when the terminal predicted frame is used to assess goal-reaching. By reducing this self-conditioning gap, ACC post-training yields more reliable terminal predictions, leading to more accurate trajectory evaluation and improved navigation performance.
+Fig. 3: Qualitative results on SCAND. The predicted frames exhibit action-conditioned consistency (ACC) with the ground-truth frames.
+III-C Inference-Consistent State Distillation (ICSD)
+In addition, we design an Inference-Consistent State Distillation (ICSD) mechanism within the ACC post-training stage to enable low-step diffusion self-distillation. Rather than introducing a separate training stage or a new objective, ICSD operates under the same consistency supervision as ACC by introducing an inference-consistent state. This mechanism enables distillation at the level of action-conditioned consistency, rather than merely matching output distributions. More importantly, ICSD introduces an inference-consistent state. Without the inference-consistent state, the ACC supervision can be severely weakened by the over-smoothed intermediate states caused by truncation and skip-step denoising.
+Specifically, we inject the diffusion timestep together with the action condition through the same AdaLN modulation network. Consequently, freezing the backbone and optimizing only the AdaLN modulation in Stage II not only adapts the action-conditioning pathway, but also implicitly updates how timestep information is incorporated into the model. This updated timestep conditioning facilitates few-step diffusion at inference time.
+As described in Stage II, we randomly choose a truncation denoising step
+k∼Uniform⁡({1,…,T})k\sim\mathrm{Uniform}(\{1,\ldots,T\}) and use the corresponding
+estimate/state (e.g., s^τ(k)→(0)\hat{s}^{(k)\rightarrow(0)}_{\tau}) for rollouts.
+However, the estimate s^τ(k)→(0)\hat{s}^{(k)\rightarrow(0)}_{\tau} obtained by truncating the reverse process at step kk is often overly smooth/blurred, not only because it is extracted from an intermediate truncation level, but also because it is generated by denoising along a skip-step subsampled timestep set {t1,…,tT′}⊆{1,…,T}\{t_{1},\ldots,t_{T^{\prime}}\}\subseteq\{1,\ldots,T\} rather than the full progressive chain, and therefore exhibits a mismatch with the inference-time endpoint. To reduce this gap, ICSD introduces an inference-consistent state sτICs^{\mathrm{IC}}_{\tau} to explicitly bridge the discrepancy between the truncated training-time state and the inference-time denoising endpoint. We use a deterministic DDIM update [33] (with η=0\eta=0) from tjt_{j} to tj−1t_{j\!-\!1}:
+sτ(tj−1)=α¯tj−1​s^τ(0)+1−α¯tj−1​sτ(tj)−α¯tj​s^τ(0)1−α¯tj.s_{\tau}^{(t_{j-1})}=\sqrt{\bar{\alpha}_{t_{j-1}}}\;\hat{s}_{\tau}^{(0)}+\sqrt{1-\bar{\alpha}_{t_{j-1}}}\;\frac{s_{\tau}^{(t_{j})}-\sqrt{\bar{\alpha}_{t_{j}}}\;\hat{s}_{\tau}^{(0)}}{\sqrt{1-\bar{\alpha}_{t_{j}}}}.
+(6)
+where s^τ(0)\hat{s}_{\tau}^{(0)} is obtained by updating Eq. (4) as follows:
+s^τ(0)=Gθ​(sτ(tk),tk,s<τI​C,aτ−1),\hat{s}^{(0)}_{\tau}=G_{\theta}\!\left(s^{(t_{k})}_{\tau};\,t_{k},\,s^{IC}_{<\tau},\,a_{\tau-1}\right),
+(7)
+when t=tkt=t_{k}, the sτICs^{\mathrm{IC}}_{\tau} is obtained from Eq. (7).
+This explicit alignment reduces the truncation-induced train–test mismatch and improves multi-step rollout consistency under few-step sampling.
+III-D Planning with MWM
+Following NWM, we formulate navigation as MPC and optimize action sequences with CEM in the world-model rollout space [30]. In general, a trajectory evaluator can be instantiated by a VLM to score language instruction alignment or detect obstacles; in this work, we use a terminal-frame perceptual objective:
+S⁡(sT,x∗)=−LPIPS⁡(Dec⁡(sT),x∗),S(s_{T},x^{*})\;=\;-\,\mathrm{LPIPS}\!\left(\mathrm{Dec}(s_{T}),\,x^{*}\right),
+(8)
+where sTs_{T} is the rolled-out terminal latent, Dec⁡(⋅)\mathrm{Dec}(\cdot) decodes it to pixels, and x∗x^{*} is the goal image. CEM iteratively samples action sequences, ranks them by S⁡(⋅)S(\cdot), and updates the action distribution using the top-kk elites until convergence or a fixed iteration budget.
+IV Experiments
+TABLE I: ACC measured by LPIPS and DreamSim at different rollout horizons on SCAND.
+Model
+1s
+2s
+4s
+8s
+16s
+LPIPS↓\downarrow
+DreamSim↓\downarrow
+LPIPS↓\downarrow
+DreamSim↓\downarrow
+LPIPS↓\downarrow
+DreamSim↓\downarrow
+LPIPS↓\downarrow
+DreamSim↓\downarrow
+LPIPS↓\downarrow
+DreamSim↓\downarrow
+NWM (DDIM 25) [30]
+0.478
+0.309
+0.494
+0.308
+0.508
+0.321
+0.540
+0.345
+0.569
+0.373
+NWM (DDIM 5) [30]
+0.581
+0.436
+0.591
+0.435
+0.614
+0.455
+0.678
+0.513
+0.734
+0.568
+MWM (ours, DDIM 5)
+0.368
+0.244
+0.395
+0.260
+0.421
+0.276
+0.459
+0.306
+0.495
+0.337
+IV-A Experimental Settings
+Datasets. For the public dataset, we use SCAND, a large-scale dataset of human-teleoperated, socially compliant navigation demonstrations collected in diverse indoor and outdoor environments around a university. SCAND contains 8.7 hours of data from 138 trajectories (25 miles total) and provides multi-modal streams including 3D LiDAR, RGB video, IMU, odometry, and joystick commands, collected on two mobile robot platforms (Boston Dynamics Spot and Clearpath Jackal) [38]. We additionally collect MMK2-RealNav, an indoor navigation dataset using the MMK2 robot in a university building, consisting of 18 teleoperated trajectories (1.3km total) with 2 hours of synchronized egocentric RGB observations and planar robot poses.
+Evaluation Metrics. For trajectory quality, we measure Absolute Trajectory Error (ATE) to quantify global localization accuracy and Relative Pose Error (RPE) to assess local motion consistency between consecutive poses [19]. We further evaluate task success with Success Rate (SR), and use Navigation Error (NE) as the distance-to-goal error at the end of an episode. For ACC, we compare predicted observations against ground-truth images using feature-based perceptual similarity, reporting DreamSim [17]. Finally, to assess overall visual fidelity at the distribution level, we compute FID [18] between the predicted frames and the corresponding ground-truth frames.
+Implementation Details. We initialize MWM from the 1B-parameter variant of a CDiT-XL backbone with a context of 4 frames [30]. Teacher-forcing diffusion pretraining is trained with AdamW using a learning rate of 6×10−56\times 10^{-5} and a batch size of 12 on 4×\times RTX PRO 6000 (96GB) GPUs with 4 different navigation goals, leading to a final total batch size of 192. ACC post-training is run for 1.5K optimization steps with a learning rate of 2×10−42\times 10^{-4} on a single RTX PRO 6000 (96GB). We use a batch size of 2, where each sample contains an 8-step rollout segment. We found that increasing the number of post-training steps beyond this budget yields negligible additional gains. During self-forcing, we insert LoRA adapters [39] into the AdaLN modulation linear layers and train only these adapters, using r=64r{=}64, α=16\alpha{=}16, and dropout 0.10.1.Since the CDiT initialization has already undergone teacher-forcing training on SCAND, we skip Stage I on SCAND and directly apply self-forcing post-training for experiments on this dataset. For SCAND evaluation, we run CEM for one iteration with 120 sampled action sequences; each candidate is simulated three times and scored by its best outcome to reduce rollout stochasticity. For real-robot evaluation, we use three CEM iterations with 120 samples per iteration, simulating each candidate once. Unless otherwise specified, we use DDIM with 25 denoising steps for NWM and 5 for MWM.
+IV-B Main Results
+ACC. As shown in Tab. I, MWM achieves lower LPIPS and DreamSim across all rollout horizons compared to NWM, indicating better action-conditioned observation consistency with ground-truth trajectories on SCAND. Notably, MWM under DDIM 5 (which accelerates diffusion inference by reducing the denoising steps from the NWM default of 250 steps to 5 steps using DDIM) not only surpasses NWM with the same accelerated setting, but also outperforms the much slower DDIM setting of NWM (DDIM 25), demonstrating that our post-training enables diffusion inference with at least an 80% reduction in denoising steps while improving multi-step rollout quality.
+TABLE II: Distribution-level visual fidelity on SCAND.
+Model
+FID↓\downarrow
+1s
+2s
+4s
+8s
+16s
+NWM (DDIM 25) [30]
+96.68
+91.57
+90.37
+91.29
+93.63
+NWM (DDIM 5) [30]
+167.43
+153.87
+148.70
+158.13
+168.28
+MWM (ours, DDIM 5)
+80.97
+87.92
+85.19
+85.80
+93.12
+TABLE III: Inference efficiency measured on an NVIDIA RTX PRO 6000 GPU.
+Model
+Average Rollout Time (s)↓\downarrow
+NWM (DDIM 25) [30]
+9.6
+NWM (DDIM 5) [30]
+2.6
+MWM (ours, DDIM 5)
+2.3
+Generation Quality and Inference Efficiency. As shown in Tab. II and Tab. III, MWM not only achieves lower FID than NWM with DDIM 25, but also provides at least a 4×\times speedup. As a comparison, NWM with DDIM 5 suffers a substantial drop in generation quality.
+Navigation Performance. As shown in Tab. IV, MWM achieves the lowest ATE and RPE on SCAND under CEM-based goal-image planning, outperforming all compared baselines and reaching state-of-the-art navigation performance.
+Qualitative Results. Fig. 3 shows qualitative results on SCAND. The predicted frames exhibit good action-conditioned consistency with the ground-truth frames, remaining temporally coherent and aligned with the executed actions across rollout steps.
+TABLE IV: Goal-image navigation performance on SCAND with CEM planning.
+Model
+ATE↓\downarrow
+RPE↓\downarrow
+Forward
+2.97
+0.62
+GNM [22]
+2.12
+0.61
+NoMaD [24]
+2.24
+0.49
+NWM + NoMaD (×\times16) [30]
+2.18
+0.48
+NWM + NoMaD (×\times32) [30]
+2.19
+0.47
+NWM [30]
+1.28
+0.33
+MWM (ours)
+1.14
+0.302
+Fig. 4: Qualitative real-world evaluation. MWM generates planned rollouts that align better with real observations than NWM, indicating reduced multi-step error accumulation and improved planning quality. Blank frames in the figure indicate cases where the robot was forcibly emergency-stopped due to imminent collision.
+IV-C Ablation Studies
+We conduct ablation studies to isolate the effects of (i) the ACC loss design, (ii) the two-stage training paradigm, and (iii) ICSD, with results summarized in Tab. V–VII.
+Effect of ACC loss design. Tab. V compares different loss choices for ACC on SCAND. Overall, the perceptual LPIPS-based ACC consistently performs best across all three metrics, while pixel-wise objectives (L1/L2) are worse, with L2 being the worst. This suggests that enforcing action-conditioned consistency in a perceptual feature space provides a more suitable learning signal than directly matching pixels.
+Effect of training paradigm design. Since the initial weights of our model have already undergone Stage-I training on SCAND, we study the impact of different training strategies on MMK2-RealNav under this initialization, as shown in Tab. VI. The two-stage pipeline (structure training followed by ACC refinement) achieves the best overall performance. In contrast, training with ACC only yields the worst results, while structure-only training sits in between. These results support our design choice that structure learning establishes a strong predictive prior, and ACC learning further improves action grounding and execution fidelity.
+Effect of inference-consistent state.
+Tab. VII evaluates ICSD on SCAND by varying the context used during training. Using the inference-consistent context s<τI​Cs_{<\tau}^{IC} (ICSD) consistently performs better than using s^<τ(0)\hat{s}_{<\tau}^{(0)} as context. These results suggest that without ICSD, the consistency supervision in ACC post-training is undermined by mismatched intermediate states and the step-skipping gap between training and inference.
+TABLE V: Ablation of ACC loss on SCAND.
+Loss
+FID (16s)↓\downarrow
+DreamSim (16s)↓\downarrow
+LPIPS (16s)↓\downarrow
+L2 loss
+352.62
+0.769
+0.883
+L1 loss
+341.77
+0.750
+0.857
+LPIPS loss (ACC)
+93.12
+0.337
+0.495
+TABLE VI: Ablation of training paradigm on MMK2-RealNav.
+Training paradigm
+FID (16s)↓\downarrow
+DreamSim (16s)↓\downarrow
+LPIPS (16s)↓\downarrow
+Only structure training
+119.00
+0.480
+0.715
+Only ACC training
+196.72
+0.657
+0.729
+Structure training + ACC training
+98.17
+0.382
+0.639
+TABLE VII: Ablation of ICSD on SCAND.
+Rollout context in ACC training
+FID (16s)↓\downarrow
+DreamSim (16s)↓\downarrow
+LPIPS (16s)↓\downarrow
+s^<τ(0)\hat{s}_{<\tau}^{(0)}
+109.75
+0.400
+0.569
+s<τI​Cs_{<\tau}^{IC} (ICSD)
+93.12
+0.337
+0.495
+Fig. 5: Real-world deployment setup on the AIRBOT Mobile Manipulation Kit 2 (MMK2).
+(a) Hardware platform.
+(b) Deployment process.
+IV-D RealWorld Evaluation
+IV-D1 Robot Setup
+As shown in Fig. 5, we use the AIRBOT Mobile Manipulation Kit 2 (MMK2)
+mobile manipulation platform for real-world evaluation.
+MMK2 is a dual-arm mobile system equipped with multiple
+onboard sensors (e.g., vision sensors and LiDAR) and is
+designed for mobile operation and data acquisition in indoor
+environments. In our experiments, the navigation policies operate on
+RGB-only observations, without using additional
+sensing modalities such as LiDAR or depth. We lower the robot head
+to the spine midpoint to obtain a wider and more stable field
+of view, and record all RGB observations using the head-mounted camera. All RGB
+observations are transmitted to a remote RTX PRO 6000
+server for inference, and the returned actions are executed to
+control the robot base in a open loop during navigation.
+IV-D2 Scene setup and task types
+We evaluate real-world navigation in an indoor setting in a university building. To cover diverse geometric layouts and visual appearances, we define four representative goal locations: cabinet, window, pillar, and corridor. For each goal, the robot is tasked with goal-image navigation from different starting viewpoints within the same floor, which allows us to assess robustness to viewpoint changes and error accumulation under real-world sensing and actuation noise.
+For each episode, we first manually move the robot to the goal location to capture the goal image, then move it to the start location and capture four RGB frames as the initial context.
+TABLE VIII: Quantitative real-world goal-image navigation results aggregated over four targets.
+Model
+SR↑\uparrow
+NE↓\downarrow
+NoMaD [24]
+0.08
+2.88
+NWM [30]
+0.20
+3.18
+MWM (ours)
+0.30
+2.16
+IV-D3 Quantitative real-world evaluation
+As shown in Tab. VIII, MWM outperforms previous models in real-world goal-image navigation. For fairness, all three methods are evaluated in an open-loop setting, i.e., each method receives only the initial observation frame and performs one-shot planning to the goal. When aggregating results over all four targets, MWM achieves a higher SR and a lower NE, indicating more reliable execution under real-world sensing and actuation noise.
+IV-D4 Qualitative real-world evaluation
+As shown in Fig. 4, MWM produces planned rollouts whose best trajectories are more consistent with the robot’s real observations than those generated by NWM. The improved alignment between imagined and observed visual sequences indicates reduced error accumulation during rollout, which directly benefits goal-directed planning and execution. These qualitative results support the effectiveness of our two-stage training framework and help explain the stronger real-world navigation performance achieved by MWM. Fig.  shows the navigation results from a third-person perspective.
+V CONCLUSIONS
+In this work, we show that combining a two-stage training paradigm with consistency-oriented few-step distillation allows MWM to improve both prediction quality and the practical utility of imagined rollouts for downstream planning. Results on benchmark and real-world tasks further suggest that MWM can serve as an effective interface between visual prediction and navigation control. At the same time, our current system still performs open-loop, one-shot planning: an action sequence is optimized from the current observation and then executed without online replanning from newly observed feedback. For the future work, we aim to extend MWM to real-time closed-loop navigation, where the model continuously updates its imagined rollouts and replans as the robot interacts with dynamic and uncertain environments.
+ACKNOWLEDGMENT
+The authors used ChatGPT (OpenAI) to assist with drafting, revising, and language refinement throughout the main text of this manuscript, including the Introduction, Related Work, Method, Experiments, and Conclusion. The AI-assisted text was reviewed, edited, and verified by the authors.
+References
+[1]
+D. Hafner, J. Pasukonis, J. Ba, and T. Lillicrap (2023)
+Mastering diverse domains through world models.
+arXiv preprint arXiv:2301.04104.
+Cited by: §I,
+§II.
+[2]
+N. Agarwal, A. Ali, M. Bala, Y. Balaji, E. Barker, T. Cai, P. Chattopadhyay, Y. Chen, Y. Cui, Y. Ding, et al. (2025)
+Cosmos world foundation model platform for physical ai.
+arXiv preprint arXiv:2501.03575.
+Cited by: §I.
+[3]
+Y. Du, S. Yang, B. Dai, H. Dai, O. Nachum, J. Tenenbaum, D. Schuurmans, and P. Abbeel (2023)
+Learning universal policies via text-guided video generation.
+Advances in neural information processing systems 36, pp. 9156–9172.
+Cited by: §I.
+[4]
+E. Alonso, A. Jelley, V. Micheli, A. Kanervisto, A. J. Storkey, T. Pearce, and F. Fleuret (2024)
+Diffusion for world modeling: visual details matter in atari.
+Advances in Neural Information Processing Systems 37, pp. 58757–58791.
+Cited by: §I.
+[5]
+F. Zhu, H. Wu, S. Guo, Y. Liu, C. Cheang, and T. Kong (2024)
+Irasim: learning interactive real-robot action simulators.
+arXiv preprint arXiv:2406.14540 1 (2), pp. 3.
+Cited by: §I.
+[6]
+K. Black, M. Nakamoto, P. Atreya, H. Walke, C. Finn, A. Kumar, and S. Levine (2023)
+Zero-shot robotic manipulation with pretrained image-editing diffusion models.
+arXiv preprint arXiv:2310.10639.
+Cited by: §I.
+[7]
+H. Wu, Y. Jing, C. Cheang, G. Chen, J. Xu, X. Li, M. Liu, H. Li, and T. Kong (2023)
+Unleashing large-scale video generative pre-training for visual robot manipulation.
+arXiv preprint arXiv:2312.13139.
+Cited by: §I.
+[8]
+X. Wang, Z. Zhu, G. Huang, B. Wang, X. Chen, and J. Lu (2024)
+Worlddreamer: towards general world models for video generation via predicting masked tokens.
+arXiv preprint arXiv:2401.09985.
+Cited by: §I.
+[9]
+G. Williams, N. Wagener, B. Goldfain, P. Drews, J. M. Rehg, B. Boots, and E. A. Theodorou (2017)
+Information theoretic mpc for model-based reinforcement learning.
+In 2017 IEEE international conference on robotics and automation (ICRA),
+pp. 1714–1721.
+Cited by: §I.
+[10]
+S. Luo, Y. Tan, L. Huang, J. Li, and H. Zhao (2023)
+Latent consistency models: synthesizing high-resolution images with few-step inference.
+arXiv preprint arXiv:2310.04378.
+Cited by: §I.
+[11]
+A. Sauer, D. Lorenz, A. Blattmann, and R. Rombach (2024)
+Adversarial diffusion distillation.
+In European Conference on Computer Vision,
+pp. 87–103.
+Cited by: §I.
+[12]
+J. Zheng, M. Hu, Z. Fan, C. Wang, C. Ding, D. Tao, and T. Cham (2024)
+Trajectory consistency distillation: improved latent consistency distillation by semi-linear consistency function with trajectory mapping.
+arXiv preprint arXiv:2402.19159.
+Cited by: §I.
+[13]
+Y. Ren, X. Xia, Y. Lu, J. Zhang, J. Wu, P. Xie, X. Wang, and X. Xiao (2024)
+Hyper-sd: trajectory segmented consistency model for efficient image synthesis.
+Advances in neural information processing systems 37, pp. 117340–117362.
+Cited by: §I.
+[14]
+F. Wang, Z. Huang, A. Bergman, D. Shen, P. Gao, M. Lingelbach, K. Sun, W. Bian, G. Song, Y. Liu, et al. (2024)
+Phased consistency models.
+Advances in neural information processing systems 37, pp. 83951–84009.
+Cited by: §I.
+[15]
+S. Bengio, O. Vinyals, N. Jaitly, and N. Shazeer (2015)
+Scheduled sampling for sequence prediction with recurrent neural networks.
+Advances in neural information processing systems 28.
+Cited by: §I,
+§II.
+[16]
+S. Ross, G. Gordon, and D. Bagnell (2011)
+A reduction of imitation learning and structured prediction to no-regret online learning.
+In Proceedings of the fourteenth international conference on artificial intelligence and statistics,
+pp. 627–635.
+Cited by: §I,
+§II.
+[17]
+S. Fu, N. Y. Tamir, S. Sundaram, L. Chai, R. Zhang, T. Dekel, and P. Isola (2023)
+DreamSim: learning new dimensions of human visual similarity using synthetic data.
+Advances in Neural Information Processing Systems 36, pp. 2208.
+Cited by: §I,
+§IV-A.
+[18]
+M. Heusel, H. Ramsauer, T. Unterthiner, B. Nessler, and S. Hochreiter (2017)
+Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+Advances in neural information processing systems 30.
+Cited by: §I,
+§IV-A.
+[19]
+J. Sturm, N. Engelhard, F. Endres, W. Burgard, and D. Cremers (2012)
+A benchmark for the evaluation of rgb-d slam systems.
+In 2012 IEEE/RSJ International Conference on Intelligent Robots and Systems,
+Vol. , pp. 573–580.
+External Links: Document
+Cited by: §I,
+§IV-A.
+[20]
+T. Huang, D. Li, R. Yang, Z. Zhang, Z. Yang, and H. Tang (2025)
+Mobilevla-r1: reinforcing vision-language-action for mobile robots.
+arXiv preprint arXiv:2511.17889.
+Cited by: §II.
+[21]
+Q. Liu, T. Huang, Z. Zhang, and H. Tang (2025)
+Nav-r1: reasoning and navigation in embodied scenes.
+arXiv preprint arXiv:2509.10884.
+Cited by: §II.
+[22]
+D. Shah, A. Sridhar, A. Bhorkar, N. Hirose, and S. Levine (2023)
+GNM: a general navigation model to drive any robot.
+In 2023 IEEE International Conference on Robotics and Automation (ICRA),
+pp. 7226–7233.
+Cited by: §II,
+TABLE IV.
+[23]
+D. Shah, A. Sridhar, N. Dashora, K. Stachowicz, K. Black, N. Hirose, and S. Levine (2023)
+ViNT: a foundation model for visual navigation.
+In Conference on Robot Learning,
+pp. 711–733.
+Cited by: §II.
+[24]
+A. Sridhar, D. Shah, C. Glossop, and S. Levine (2024)
+Nomad: goal masked diffusion policies for navigation and exploration.
+In 2024 IEEE International Conference on Robotics and Automation (ICRA),
+pp. 63–70.
+Cited by: §II,
+TABLE IV,
+TABLE VIII.
+[25]
+D. Shah, B. Osiński, S. Levine, et al. (2023)
+Lm-nav: robotic navigation with large pre-trained models of language, vision, and action.
+In Conference on robot learning,
+pp. 492–504.
+Cited by: §II.
+[26]
+D. Ha and J. Schmidhuber (2018)
+Recurrent world models facilitate policy evolution.
+In Advances in Neural Information Processing Systems,  S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett (Eds.),
+Vol. 31, pp. .
+Cited by: §II.
+[27]
+Z. Zhang, D. Li, I. Reid, and R. Hartley (2026)
+GeoWorld: geometric world models.
+arXiv preprint arXiv:2602.23058.
+Cited by: §II.
+[28]
+Y. Zhang, Y. Wang, Z. Zhang, and H. Tang (2026)
+Code2Worlds: empowering coding llms for 4d world generation.
+arXiv preprint arXiv:2602.11757.
+Cited by: §II.
+[29]
+D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi (2019)
+Dream to control: learning behaviors by latent imagination.
+arXiv preprint arXiv:1912.01603.
+Cited by: §II.
+[30]
+A. Bar, G. Zhou, D. Tran, T. Darrell, and Y. LeCun (2025)
+Navigation world models.
+In Proceedings of the Computer Vision and Pattern Recognition Conference,
+pp. 15791–15801.
+Cited by: §II,
+§III-A,
+§III-B1,
+§III-D,
+§IV-A,
+TABLE I,
+TABLE I,
+TABLE II,
+TABLE II,
+TABLE III,
+TABLE III,
+TABLE IV,
+TABLE IV,
+TABLE IV,
+TABLE VIII.
+[31]
+M. Yang, Y. Du, K. Ghasemipour, J. Tompson, D. Schuurmans, and P. Abbeel (2023)
+Learning interactive real-world simulators.
+arXiv preprint arXiv:2310.06114 1 (2), pp. 6.
+Cited by: §II.
+[32]
+J. Ho, A. Jain, and P. Abbeel (2020)
+Denoising diffusion probabilistic models.
+Advances in neural information processing systems 33, pp. 6840–6851.
+Cited by: §II,
+§III-B1.
+[33]
+J. Song, C. Meng, and S. Ermon (2020)
+Denoising diffusion implicit models.
+arXiv preprint arXiv:2010.02502.
+Cited by: §II,
+§III-C.
+[34]
+C. Lu, Y. Zhou, F. Bao, J. Chen, C. Li, and J. Zhu (2022)
+Dpm-solver: a fast ode solver for diffusion probabilistic model sampling in around 10 steps.
+Advances in neural information processing systems 35, pp. 5775–5787.
+Cited by: §II.
+[35]
+Y. Song, P. Dhariwal, M. Chen, and I. Sutskever (2023)
+Consistency models.
+In International Conference on Machine Learning,
+pp. 32211–32252.
+Cited by: §II.
+[36]
+X. Huang, Z. Li, G. He, M. Zhou, and E. Shechtman (2025)
+Self forcing: bridging the train-test gap in autoregressive video diffusion.
+arXiv preprint arXiv:2506.08009.
+Cited by: §II,
+§III-B2.
+[37]
+R. Zhang, P. Isola, A. A. Efros, E. Shechtman, and O. Wang (2018)
+The unreasonable effectiveness of deep features as a perceptual metric.
+In Proceedings of the IEEE conference on computer vision and pattern recognition,
+pp. 586–595.
+Cited by: §III-B2.
+[38]
+H. Karnan, A. Nair, X. Xiao, G. Warnell, S. Pirk, A. Toshev, J. Hart, J. Biswas, and P. Stone (2022)
+Socially compliant navigation dataset (scand): a large-scale dataset of demonstrations for social navigation.
+IEEE Robotics and Automation Letters 7 (4), pp. 11807–11814.
+Cited by: §IV-A.
+[39]
+E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang, and W. Chen (2021)
+LoRA: low-rank adaptation of large language models.
+arXiv preprint arXiv:2106.09685.
+Cited by: §IV-A.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

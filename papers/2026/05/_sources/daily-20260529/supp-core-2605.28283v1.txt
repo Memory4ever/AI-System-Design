@@ -1,0 +1,893 @@
+https://arxiv.org/html/2605.28283v1
+
+arXiv:2605.28283v1 [cs.CL] 27 May 2026 
+ 
+ 
+ PrunePath: Towards Highly Structured Sparse Language Models 
+
+ 
+ 
+ 
+ Zhexuan GU
+ 
+    
+ Zixun FU
+ 
+    
+ Yancheng Yuan
+ † † thanks:  Corresponding author. 
+ Affiliation:  Department of Applied Mathematics, The Hong Kong Polytechnic University
+ 
+ Affiliation:  {zhexuan.gu, zixun.fu}@connect.polyu.hk ,
+ yancheng.yuan@polyu.edu.hk 
+ 
+
+ Abstract 
+    
+ Feed-forward networks (FFNs) dominate the parameter count and computation of modern language models, yet existing pruning methods often struggle to convert sparsity into hardware-friendly inference efficiency gains. We introduce  PrunePath , a budget-adaptive structured sparsification framework for FFN layers. Built on MoEfication, PrunePath replaces independent expert-wise thresholding with a softmax-normalized routing distribution and activates important experts under a cumulative-mass threshold. This formulation imposes a token-level probability budget, enabling adaptive expert counts and a direct inference-time sparsity knob from a single checkpoint. Across NLU, NLG, and instruction-tuning evaluations, PrunePath achieves a favorable sparsity–performance trade-off compared with existing static pruning and MoEfication-based methods.
+We further implement Triton kernels for KV-cache decoding to translate the resulting structured sparsity into practical memory savings and measurable decoding-speed improvements. These results demonstrate the superior performance of PrunePath for building highly sparse, deployment-friendly large language models. 
+
+ 
+  
+ 
+ 
+ 
+
+ 
+ 
+ 
+ 1  Introduction 
+
+ 
+
+ 
+ The exponential scaling of large language model (LLM) parameters has driven remarkable advances across diverse tasks, from natural language understanding (NLU) to complex reasoning in mathematics and code generation  Brown et al. (2020) ;  Yang et al. (2024) . However, this massive parameterization imposes a severe memory wall: the static footprint for model residency and the transient peak memory from intermediate activations together constrain deployment, especially on resource-limited devices  Li et al. (2025) . 
+
+ 
+ 
+ 
+ Significant strides have been made in optimizing the attention module  Vaswani et al. (2017) . From a systems perspective, the FlashAttention series  Dao et al. (2022) ;  Dao (2024)  eliminates the materialization of large intermediate tensors through IO-aware execution. Algorithmically, sparse attention  Beltagy et al. (2020) ;  Xu et al. (2025)  and linear attention  Katharopoulos et al. (2020)  decouple the quadratic complexity from sequence length. At the deployment level, KV-cache management techniques such as H2O  Zhang et al. (2023)  and efficient serving engines  Kwon et al. (2023) ;  Zheng et al. (2024b)  further reduce memory overhead. 
+
+ 
+ 
+ 
+ Figure 1:  PrunePath visualization. 
+ 
+ 
+ Compared to the systematic optimization of attention, the pursuit of an ideal balance between FFN efficiency and hardware-friendly deployment remains an open challenge. The FFN typically accounts for two-thirds of total parameters  Wang et al. (2022)  and dominates computational FLOPs under typical sequence lengths  Kaplan et al. (2020) . The large matrix multiplications within FFN layers materialize high-dimensional intermediate activations, creating a peak memory bottleneck that is particularly acute on edge devices. 
+
+ 
+ 
+ 
+ To address the FFN bottleneck, various pruning strategies have been explored. Early efforts primarily focused on fine-grained pruning, employing either heuristic-based neuron importance  Han et al. (2016) ;  Sun et al. (2024)  or optimization-based methods leveraging second-order derivative information  LeCun et al. (1989) ;  Frantar and Alistarh (2023)  to sparsify weight matrices.
+However, the resulting unstructured sparsity fails to translate into tangible inference speedups due to irregular memory access. The hardware-friendly N:M sparsity pattern  Mishra et al. (2021)  addresses this irregularity, yet its rigid structure often incurs non-negligible performance degradation compared to fine-grained counterparts. 
+
+ 
+ 
+ 
+ A more promising direction toward structured compression is MoEfication  Zhang et al. (2022) , which partitions dense FFN layers into a Mixture-of-Experts (MoE) structure and activates only a subset of experts per token during inference. Although the total model size is preserved, the reduced expert dimensionality lowers both peak memory and per-token FLOPs. The sparse activation principle underlying MoE has proven highly effective in
+production-grade models such as Mixtral  Jiang et al. (2024)  and DeepSeek-V3  Liu et al. (2024) . 
+
+ 
+ 
+ 
+ Building on MoEfication, Learn-to-be-Efficient (LTE)  Zheng et al. (2024a)  represents the current state-of-the-art method. LTE clusters FFN neurons into expert groups and trains sigmoid-based routers that independently score each expert, activating those whose scores exceed a predefined threshold. While this design avoids using softmax-normalized weights for output aggregation, it treats expert activation as a set of independent binary decisions. As a result, the number of activated experts is controlled only indirectly by the threshold, which may lead to conservative over-activation. As illustrated in Figure  2 , LTE exhibits larger reconstruction error when only a small number of top-ranked experts are retained. 
+
+ 
+ 
+ 
+ To bridge this gap, we present  PrunePath  as visualized in Figure  1 , a budget-adaptive sparse FFN framework that activates a set of important experts under a cumulative-mass threshold  τ \tau . This routing strategy introduces competition among experts under a token-level global probability budget, providing a direct knob for controlling token-wise sparsity. Extensive evaluations across diverse benchmarks demonstrate that PrunePath achieves substantial sparsity while maintaining competitive task performance over practical sparsity ranges.
+Our contributions are as follows: 
+
+ 
+ 
+ 
+ 
+ •  
+ 
+ Cumulative-Mass Competitive Routing. 
+PrunePath replaces independent sigmoid-threshold routing with a softmax-normalized expert distribution and activates top-ranked experts controlled by a cumulative probability threshold. By imposing a token-level global probability budget, PrunePath enables adaptive per-token expert counts and mitigates the potential conservative over-activation. 
+
+ 
+ 
+ •  
+ 
+ Single-Checkpoint Dynamic Sparsity. 
+PrunePath’s progressive training yields a single checkpoint with an inference-time sparsity knob. By adjusting the cumulative-mass threshold  τ \tau , the same checkpoint traces a smooth efficiency–accuracy frontier over a practical range of sparsity levels, enabling flexible efficiency–accuracy trade-offs without retraining or checkpoint switching. 
+
+ 
+ 
+ •  
+ 
+ Triton-Accelerated Sparse FFN Inference. 
+We implement custom Triton  Tillet et al. (2019)  kernels for KV-cache autoregressive decoding that translate structured FFN sparsity into substantial peak-memory reductions and decode-only latency improvements. 
+
+ 
+ 
+ 
+ 
+ 
+ Figure 2:  
+ Motivating top- k k  reconstruction analysis. 
+We compare LTE and PrunePath by retaining only the top- k k  ranked experts and measuring the MSE to each method’s own all-expert reference output.  
+ 
+ 
+ 
+ 2  Preliminaries 
+
+ 
+
+ 
+ 2.1  Feed-Forward Networks in Modern LLMs 
+
+ 
+
+ 
+ Modern LLMs predominantly adopt gated FFN architectures
+with bias-free linear projections  Chowdhery et al. (2023) ;  Yang et al. (2024) .
+A representative formulation is the SwiGLU variant  Shazeer (2020) : 
+
+ 
+ 
+
+ 
+ 
+ FFN ⁡ ( x ) = ( ϕ ⁡ ( x ​ W gate ) ⊙ x ​ W up ) ​ W down , \mathrm{FFN}(x)=\left(\phi(xW_{\mathrm{gate}})\odot xW_{\mathrm{up}}\right)W_{\mathrm{down}}, 
+ 
+ (1) 
+ 
+
+ 
+ where  x ∈ ℝ d x\in\mathbb{R}^{d}  is a hidden representation for a token,  W gate , W up ∈ ℝ d × d ff W_{\mathrm{gate}},W_{\mathrm{up}}\in\mathbb{R}^{d\times d_{\mathrm{ff}}} ,
+ W down ∈ ℝ d ff × d W_{\mathrm{down}}\in\mathbb{R}^{d_{\mathrm{ff}}\times d}  are weight matrices,  ϕ ⁡ ( ⋅ ) \phi(\cdot) 
+denotes the activation function (e.g., SiLU), and  ⊙ \odot  is the Hadamard product.
+The key structural property is that the intermediate representation
+ h = ϕ ⁡ ( x ​ W gate ) ⊙ x ​ W up ∈ ℝ d ff h=\phi(xW_{\mathrm{gate}})\odot xW_{\mathrm{up}}\in\mathbb{R}^{d_{\mathrm{ff}}} 
+is computed element-wise along the intermediate dimension  d ff d_{\mathrm{ff}} ,
+making intermediate neurons separable along this dimension. The analysis below
+extends naturally to any FFN variant that preserves this separability. 
+
+ 
+ 
+ 
+ 
+ 2.2  MoEfication 
+
+ 
+
+ 
+ MoEfication  Zhang et al. (2022)  decomposes a dense FFN into an
+equivalent MoE by clustering neurons along the intermediate dimension. Specifically, balanced  k k -means clustering  Bradley et al. (2000)  is applied to intermediate-neuron weights to obtain a permutation matrix
+ Π ∈ { 0 , 1 } d ff × d ff \Pi\in\{0,1\}^{d_{\mathrm{ff}}\times d_{\mathrm{ff}}} 
+that groups similar neurons into contiguous blocks. Defining the permuted weights as 
+
+ 
+ 
+
+ 
+ 
+ W ~ gate = W gate Π , W ~ up = W up Π , W ~ down = Π ⊤ W down , \displaystyle\tilde{W}_{\mathrm{gate}}=W_{\mathrm{gate}}\,\Pi,\tilde{W}_{\mathrm{up}}=W_{\mathrm{up}}\,\Pi,\tilde{W}_{\mathrm{down}}=\Pi^{\top}W_{\mathrm{down}}, 
+ 
+ 
+
+ 
+ the intermediate dimension  d ff d_{\mathrm{ff}}  is evenly partitioned into  E E 
+experts, each of width  d e = d ff / E d_{e}=d_{\mathrm{ff}}/E . Since the Hadamard product
+operates element-wise along the intermediate dimension, we know that 
+
+ 
+ 
+
+ 
+ 
+ FFN ⁡ ( x ) = ( ϕ ⁡ ( x ​ W gate ) ⊙ x ​ W up ) ​ Π ​ Π ⊤ ​ W down = ∑ e = 1 E ( ϕ ⁡ ( x ​ W ~ gate ( e ) ) ⊙ x ​ W ~ up ( e ) ) ​ W ~ down ( e ) ⏟ FFN e ​ ( x ) , \begin{array}[]{ll}\mathrm{FFN}(x)&=\left(\phi(xW_{\mathrm{gate}})\odot xW_{\mathrm{up}}\right)\Pi\Pi^{\top}W_{\mathrm{down}}\\
+&=\sum\limits_{e=1}^{E}\underbrace{\left(\phi\!\left(x\tilde{W}_{\mathrm{gate}}^{(e)}\right)\odot\,x\tilde{W}_{\mathrm{up}}^{(e)}\right)\tilde{W}_{\mathrm{down}}^{(e)}}_{\displaystyle\mathrm{FFN}_{e}(x)},\end{array} 
+ 
+ (2) 
+ 
+
+ 
+ where  W ~ gate ( e ) , W ~ up ( e ) ∈ ℝ d × d e \tilde{W}_{\mathrm{gate}}^{(e)},\tilde{W}_{\mathrm{up}}^{(e)}\in\mathbb{R}^{d\times d_{e}}  and  W ~ down ( e ) ∈ ℝ d e × d \tilde{W}_{\mathrm{down}}^{(e)}\in\mathbb{R}^{d_{e}\times d}  are the sub-matrices of the  e e -th expert.
+Crucially, Eq. ( 2 ) is an  identity
+transformation : activating all  E E  experts recovers the original dense
+FFN output exactly. The goal of subsequent expert routing is therefore to identify a small activated set  𝒜 ⊂ { 1 , … , E } \mathcal{A}\subset\{1,\dots,E\}  such that the aggregation of selected expert outputs approximates the dense FFN output while reducing computation. 
+
+ 
+ 
+ 
+ 
+ 2.3  Expert Routing in LTE 
+
+ 
+
+ 
+ LTE  Zheng et al. (2024a)  trains a lightweight router to determine which experts to activate.
+For each expert  e e , the router computes an independent score through a sigmoid gate: 
+
+ 
+ 
+
+ 
+ 
+ G e ​ ( x ) = sigmoid ⁡ ( w e ⊤ ​ x ) , G_{e}(x)=\mathrm{sigmoid}\!\left(w_{e}^{\top}x\right), 
+ 
+ (3) 
+ 
+
+ 
+ where  w e ∈ ℝ d w_{e}\in\mathbb{R}^{d}  is a learnable routing vector. 
+
+ 
+ 
+ 
+ LTE employs a two-stage training procedure. In the first stage, it uses a soft routing mode with all experts activated and weighted by sigmoid scores: 
+
+ 
+ 
+
+ 
+ 
+ y soft = ∑ e = 1 E G e ​ ( x ) ⋅ FFN e ​ ( x ) . y_{\mathrm{soft}}=\sum_{e=1}^{E}G_{e}(x)\cdot\mathrm{FFN}_{e}(x). 
+ 
+ (4) 
+ 
+
+ 
+ In the hard routing mode used for model adaptation and inference, experts are selected by an expert-wise threshold: 
+
+ 
+ 
+
+ 
+ 
+ 𝒜 LTE ​ ( x ) = { e ∣ G e ​ ( x ) > δ } , \mathcal{A}_{\mathrm{LTE}}(x)=\{e\mid G_{e}(x)>\delta\}, 
+ 
+ (5) 
+ 
+
+ 
+ and the layer output is computed by aggregating the selected expert outputs: 
+
+ 
+ 
+
+ 
+ 
+ y hard = ∑ e ∈ 𝒜 LTE ​ ( x ) FFN e ​ ( x ) , y_{\mathrm{hard}}=\sum_{e\in\mathcal{A}_{\mathrm{LTE}}(x)}\mathrm{FFN}_{e}(x), 
+ 
+ (6) 
+ 
+
+ 
+ where  δ \delta  is a predefined threshold. 
+
+ 
+ 
+ 
+ Although LTE uses an efficiency penalty to encourage sparse routing during training, inference-time activation is still determined by independently thresholding each expert score. Thus, the active expert count is controlled only indirectly by the learned score distribution and the threshold  δ \delta . 
+
+ 
+ 
+ 
+ 
+ 
+ 3  Our Method 
+
+ 
+
+ 
+ We present  PrunePath , a budget-adaptive sparse FFN framework built on the MoEficated FFN decomposition.
+Instead of making independent binary decisions for each expert, PrunePath constructs a normalized routing distribution and activates important experts under a prescribed cumulative-mass budget.
+This cumulative-mass routing provides a direct sparsity knob through the threshold  τ \tau  and enables adaptive per-token expert counts. 
+
+ 
+ 
+ 
+ 3.1  Cumulative-Mass Expert Activation 
+
+ 
+
+ 
+ Given a token representation  x ∈ ℝ d x\in\mathbb{R}^{d} , a lightweight linear router with weight  W r ∈ ℝ d × E W_{r}\in\mathbb{R}^{d\times E}  produces expert logits 
+
+ 
+ 
+
+ 
+ 
+ g = W r ⊤ ​ x ∈ ℝ E , g=W_{r}^{\top}x\in\mathbb{R}^{E}, 
+ 
+ (7) 
+ 
+
+ 
+ where  E E  is the number of experts. We normalize the logits with softmax: 
+
+ 
+ 
+
+ 
+ 
+ p j = exp ⁡ ( g j ) ∑ i = 1 E exp ⁡ ( g i ) , j = 1 , … , E . p_{j}=\frac{\exp(g_{j})}{\sum_{i=1}^{E}\exp(g_{i})},\quad j=1,\dots,E. 
+ 
+ (8) 
+ 
+
+ 
+ 
+ 
+ Let  π \pi  denote the descending order of expert probabilities, i.e.,
+ p π 1 ≥ p π 2 ≥ ⋯ ≥ p π E p_{\pi_{1}}\geq p_{\pi_{2}}\geq\cdots\geq p_{\pi_{E}} .
+PrunePath activates the high-probability experts whose cumulative mass remains below a threshold  τ \tau , while always retaining the top-ranked expert: 
+
+ 
+ 
+
+ 
+ 
+ 𝒜 τ ​ ( x ) = { π 1 } ∪ { π i | ∑ r = 1 i p π r < τ } . \mathcal{A}_{\tau}(x)=\{\pi_{1}\}\cup\left\{\pi_{i}\;\middle|\;\sum_{r=1}^{i}p_{\pi_{r}}<\tau\right\}. 
+ 
+ (9) 
+ 
+
+ 
+ This selection rule is inspired by top- p p  nucleus sampling  Holtzman et al. (2020) , in the sense that both operate on a probability-sorted sequence controlled by cumulative probability mass. 
+
+ 
+ 
+ 
+ For output aggregation, we adopt sigmoid-gated expert weighting, analogous to the soft
+routing stage of LTE  Zheng et al. (2024a) , but apply it only to the experts selected by the cumulative-mass rule: 
+
+ 
+ 
+
+ 
+ 
+ y τ ​ ( x ) = ∑ e ∈ 𝒜 τ ​ ( x ) sigmoid ⁡ ( g e ) ⋅ FFN e ​ ( x ) . y_{\tau}(x)=\sum_{e\in\mathcal{A}_{\tau}(x)}\mathrm{sigmoid}(g_{e})\cdot\mathrm{FFN}_{e}(x). 
+ 
+ (10) 
+ 
+
+ 
+ This decouples competitive expert selection from output scaling: softmax imposes a global probability budget for deciding which experts to execute, while sigmoid gates provide independent, non-normalized scaling for selected expert outputs. 
+
+ 
+ 
+ 
+ 
+ 3.2  Progressive Sparsity-Path Training 
+
+ 
+
+ 
+ Directly training under an aggressive sparsity target can be unstable, since many experts receive limited task signal once excluded by the hard routing mask.
+PrunePath first uses an all-expert warm-up stage with
+ τ warm = 1.05 \tau_{\mathrm{warm}}=1.05 , so that all experts are activated. It is followed by a progressive sparsity path and
+decrease the cumulative-mass threshold toward a target value  τ min \tau_{\min} : 
+
+ 
+ 
+
+ 
+ 
+ τ t = 1.0 − ( 1.0 − τ min ) t T , t = 1 , … , T , \tau_{t}=1.0-(1.0-\tau_{\min})\frac{t}{T},\quad t=1,\ldots,T, 
+ 
+ (11) 
+ 
+
+ 
+ where  T T  is the number of training rounds.
+As  τ t \tau_{t}  decreases, the model is progressively exposed to sparser expert subsets. 
+
+ 
+ 
+ 
+ To make cumulative-mass pruning effective, we encourage token-level routing distributions to be sharp.
+Given a batch of  B B  token representations, let  p i ​ j p_{ij}  be the softmax routing probability from token  i i  to expert  j j . We minimize the entropy loss: 
+
+ 
+ 
+
+ 
+ 
+ ℒ ent = − 1 B ∑ i = 1 B ∑ j = 1 E p i ​ j log ( p i ​ j + ϵ ) , \mathcal{L}_{\mathrm{ent}}=-\frac{1}{B}\sum_{i=1}^{B}\sum_{j=1}^{E}p_{ij}\log(p_{ij}+\epsilon), 
+ 
+ (12) 
+ 
+
+ 
+ where  ϵ \epsilon  is a small constant for numerical stability. 
+
+ 
+ 
+ 
+ Entropy minimization alone may collapse routing mass onto a few experts.
+We therefore add a batch-level load balancing loss: 
+
+ 
+ 
+
+ 
+ 
+ ℒ bal = E ​ ∑ j = 1 E ( 1 B ​ ∑ i = 1 B p i ​ j ) 2 . \mathcal{L}_{\mathrm{bal}}=E\sum_{j=1}^{E}\left(\frac{1}{B}\sum_{i=1}^{B}p_{ij}\right)^{2}. 
+ 
+ (13) 
+ 
+
+ 
+ The entropy loss encourages token-level specialization, while the load balancing loss prevents global expert collapse. 
+
+ 
+ 
+ 
+ The final objective is: 
+
+ 
+ 
+
+ 
+ 
+ ℒ = ℒ task + η ​ ℒ ent + λ ​ ℒ bal , \mathcal{L}=\mathcal{L}_{\mathrm{task}}+\eta\mathcal{L}_{\mathrm{ent}}+\lambda\mathcal{L}_{\mathrm{bal}}, 
+ 
+ (14) 
+ 
+
+ 
+ where  η \eta  and  λ \lambda  control the strengths of entropy minimization and load balancing. 
+
+ 
+ 
+ 
+ 
+ 
+ 4  Experiment 
+
+ 
+
+ 
+ 4.1  Experimental Settings 
+
+ 
+
+ 
+ Models and Datasets. 
+We evaluate PrunePath across NLU, NLG, and instruction-tuning settings. The comprehensive configurations of models and benchmarks are summarized in Table  1 . 
+
+ 
+ 
+ 
+ Table 1:  Overview of evaluation settings, models, and datasets. 
+ 
+ 
+ 
+ Setting 
+ Models 
+ Datasets 
+ 
+ NLU 
+ 
+ 
+ 
+ RoBERTa-large 
+ 
+ Liu et al. (2019) 
+ 
+ 
+ 
+ 
+ SST-2  Socher et al. (2013) 
+ 
+ MNLI  Williams et al. (2018) 
+ 
+ QNLI  Rajpurkar et al. (2016) 
+ 
+ MRPC  Dolan and Brockett (2005) 
+ 
+ 
+ NLG 
+ 
+ 
+ 
+ GPT-2 Medium 
+ 
+ Radford et al. (2019) 
+ 
+ Pangu-1B 
+ 
+ Chen et al. (2025) 
+ 
+ 
+ 
+ 
+ XSum  Narayan et al. (2018) 
+ 
+ WikiText  Merity et al. (2016) 
+ 
+ 
+ SFT 
+ 
+ 
+ 
+ Qwen2-7B 
+ 
+ Yang et al. (2024) 
+ 
+ 
+ 
+ 
+ Fine-tuning: tulu-v2  Ivison et al. (2023) 
+ 
+ Eval: MMLU  Hendrycks et al. (2021b) ;  Hendrycks et al. (2021a) 
+ 
+ 
+
+ 
+ 
+ 
+ 
+ We report FFN sparsity as the primary efficiency metric following LTE. For an input containing
+ N N  tokens and a model with  L L  FFN layers, let  𝒜 ℓ ​ ( x i ) \mathcal{A}_{\ell}(x_{i}) 
+denote the set of experts activated for token  x i x_{i}  at layer  ℓ \ell . We
+define the average FFN neuron sparsity as 
+
+ 
+ 
+
+ 
+ 
+ s FFN = 1 − 1 N ​ L ​ E ​ ∑ i = 1 N ∑ ℓ = 1 L | 𝒜 ℓ ​ ( x i ) | . s_{\mathrm{FFN}}=1-\frac{1}{NLE}\sum_{i=1}^{N}\sum_{\ell=1}^{L}|\mathcal{A}_{\ell}(x_{i})|. 
+ 
+ (15) 
+ 
+
+ 
+ For dynamic MoEfication-based methods, this metric measures the average fraction
+of inactive FFN experts. For Wanda, we report the target FFN weight sparsity of
+its static pruning mask. 
+
+ 
+ 
+ 
+ Baselines. 
+We compare PrunePath with two representative pruning baselines:
+(a) LTE  Zheng et al. (2024a) , a strong MoEfication-based pruning method which serves as our main baseline; (b) Wanda  Sun et al. (2024) , a widely used post-training weight pruning method. 
+
+ 
+ 
+ 
+ 
+ 4.2  Results and Analysis 
+
+ 
+
+ 
+ 4.2.1  Performance on NLU Tasks 
+
+ 
+
+ 
+ We show the performance of PrunePath, LTE, and Wanda on four NLU tasks across different sparsity levels in Figure  3 . Overall, PrunePath provides the strongest sparsity–accuracy trade-off on three of the four tasks and remains competitive on MNLI. Wanda is effective only under mild sparsity and degrades rapidly as the sparsity increases. LTE is more stable than Wanda, but its performance drops earlier than PrunePath at high sparsity. These results indicate that PrunePath better preserves NLU accuracy over a broad FFN sparsity range. 
+
+ 
+ 
+ 
+ 
+ 
+ Figure 3:  NLU results with RoBERTa-large. PrunePath maintains stronger accuracy over a
+wider FFN sparsity range than Wanda and LTE. 
+ 
+ 
+ 
+ 4.2.2  Performance on NLG Tasks 
+
+ 
+
+ 
+ Compared to NLU tasks, NLG tasks are more sensitive to sparse activation and therefore are more challenging.
+Figure  4  shows the performance of the three pruning methods for the GPT-2 Medium model over XSum and WikiText, measured by ROUGE-L and perplexity (PPL), respectively. 
+
+ 
+ 
+ 
+ PrunePath again achieves the best sparsity–quality trade-off. Wanda degrades very fast as sparsity increases, with ROUGE-L dropping quickly on XSum and PPL increasing rapidly on WikiText. LTE is more robust than Wanda but still shows noticeable degradation at high sparsity. In contrast, PrunePath preserves XSum generation quality over a wider sparsity range and substantially suppresses the PPL growth on WikiText, demonstrating stronger robustness on NLG tasks. 
+
+ 
+ 
+ 
+ 
+ 
+ Figure 4:  NLG results with GPT-2 Medium. We report ROUGE-L( ↑ \uparrow ) on XSum and PPL ( ↓ \downarrow ) on WikiText. 
+ 
+ 
+ 
+ 4.2.3  Performance on Instruction Tuning Tasks 
+
+ 
+
+ 
+ We further evaluate whether PrunePath generalizes to instruction-tuned LLMs. We apply PrunePath to Qwen2-7B and perform supervised fine-tuning on Tulu-v2, followed by evaluation on MMLU. Compared with task-specific NLU and NLG fine-tuning, instruction tuning presents an additional routing calibration challenge. In early experiments, we observed that entropy minimization alone often produced highly sharp softmax distributions but also large positive router logits. This made many sigmoid aggregation weights close to one, even for experts that would later be removed when lowering  τ \tau , increasing the mismatch between all-expert and sparse execution. 
+
+ 
+ 
+ 
+ To address this issue, we add a gate-magnitude regularizer for Qwen2-7B SFT: 
+
+ 
+ 
+
+ 
+ 
+ ℒ gate = 1 B ​ E ​ ∑ i = 1 B ∑ j = 1 E sigmoid ⁡ ( g i ​ j ) , \mathcal{L}_{\mathrm{gate}}=\frac{1}{BE}\sum_{i=1}^{B}\sum_{j=1}^{E}\mathrm{sigmoid}(g_{ij}), 
+ 
+ (16) 
+ 
+
+ 
+ where  g i ​ j g_{ij}  is the router logit for token  i i  and expert  j j . The final instruction-tuning objective becomes 
+
+ 
+ 
+
+ 
+ 
+ ℒ = ℒ task + η ​ ℒ ent + λ ​ ℒ bal + γ ​ ℒ gate . \mathcal{L}=\mathcal{L}_{\mathrm{task}}+\eta\mathcal{L}_{\mathrm{ent}}+\lambda\mathcal{L}_{\mathrm{bal}}+\gamma\mathcal{L}_{\mathrm{gate}}. 
+ 
+ (17) 
+ 
+
+ 
+ This regularizer discourages uniformly large sigmoid gates and better aligns the softmax-based expert selection with the sigmoid-scaled expert aggregation. Table  2  shows that this regularizer improves the
+sparsity–accuracy frontier on the Qwen2-7B MMLU benchmark. In particular, it enables higher
+FFN sparsity with less accuracy degradation, suggesting that it reduces the
+selection–aggregation mismatch caused by large sigmoid gates. 
+
+ 
+ 
+ 
+ Table 2:  Effect of gate-magnitude regularization on the Qwen2-7B MMLU sparsity–accuracy frontier. 
+ 
+ 
+ Setting 
+ τ \tau 
+ Sparsity ( % \% ) 
+ MMLU ( % \% ) 
+ 
+ w/o  ℒ gate \mathcal{L}_{\mathrm{gate}} 
+ 0.95 
+ 24.81 
+ 62.53 
+ 
+ w/  ℒ gate \mathcal{L}_{\mathrm{gate}} 
+ 0.97 
+ 34.70 
+ 61.58 
+ 
+ w/o  ℒ gate \mathcal{L}_{\mathrm{gate}} 
+ 0.90 
+ 40.83 
+ 56.28 
+ 
+ w/  ℒ gate \mathcal{L}_{\mathrm{gate}} 
+ 0.94 
+ 48.97 
+ 58.50 
+ 
+
+ 
+ 
+ 
+ Figure 5:  5-shot MMLU accuracy of Qwen2-7B after Tulu-v2 SFT. PrunePath uses a single
+checkpoint trained with  τ train = 0.94 \tau_{\mathrm{train}}=0.94 , and other points are
+obtained by varying only inference-time  τ \tau .
+ 
+ 
+ 
+ Figure  5  reports 5-shot MMLU accuracy under different
+FFN sparsity levels. PrunePath uses a single checkpoint trained with
+ τ train = 0.94 \tau_{\mathrm{train}}=0.94 , and all sparsity levels are obtained by varying
+ τ \tau  only at inference time. Wanda, calibrated on C4  Dodge et al. (2021) , is competitive below 50% sparsity, showing that static pruning remains effective under mild pruning budgets. However, its accuracy drops sharply under more aggressive sparsity. At higher sparsity levels, PrunePath extends a single checkpoint to 60%+ sparsity with a smooth degradation curve, while preserving the threshold-sweep property. The main LTE frontier uses  η ∈ { 0.3 , 0.5 , 0.7 } \eta\in\{0.3,0.5,0.7\}  for its efficiency loss, and its highest-sparsity point corresponds to  η = 0.7 \eta=0.7 . We additionally mark a higher- η \eta  LTE run ( η = 0.9 \eta=0.9 ), which shows an abrupt MMLU drop, indicating sensitivity to the sparsity-control coefficient. We further discuss how the mismatch between instruction-tuning data and pretraining-like calibration data may affect PrunePath in Appendix  A . 
+
+ 
+ 
+ 
+ 
+ 4.2.4  Performance on SFT Generative Models 
+
+ 
+
+ 
+ We extend our evaluation to a supervised fine-tuned (SFT) model. Due to the tighter parameter dependencies introduced by supervised task adaptation, SFT models typically present a more challenging scenario for efficiency-aware methods. We benchmark Pangu-1B model on the XSum dataset, and Figure  6  illustrates the performance trends across varying FFN sparsity levels. 
+
+ 
+ 
+ 
+ All evaluated methods experience a gradual performance decline as sparsity increases, underscoring the higher sensitivity of task-adapted generation models to sparse execution. Even in this stricter scenario, PrunePath consistently maintains a clear advantage over both Wanda and LTE baselines across the entire evaluated sparsity range. Specifically, Wanda degrades steadily from the outset, failing to preserve acceptable generation quality at higher sparsity. LTE is more robust than Wanda but still tracks consistently below our curve. In contrast, PrunePath effectively dampens the rate of performance loss throughout all levels, demonstrating stronger generalization and robustness on task-adapted generative models. 
+
+ 
+ 
+ 
+ 
+ 
+ Figure 6:  XSum ROUGE-L of the SFT Pangu-1B model under varying FFN activation sparsity. 
+ 
+ 
+ 
+ 
+ 4.3  Ablation Study 
+
+ 
+
+ 
+ 4.3.1  Effect of Expert Initialization Strategy 
+
+ 
+
+ 
+ We study how the choice of weights used for expert clustering affects PrunePath. Specifically, we compare two initialization strategies:
+(1) clustering FFN neurons using the pretrained weights, and
+(2) clustering FFN neurons using the downstream fine-tuned weights.
+Fine-tuned weights are expected to provide more task-adapted neuron representations, while pre-trained weights offer a more generic initialization that does not rely on downstream adaptation before expert construction. 
+
+ 
+ 
+ 
+ Figure  7  shows the results on SST-2 and QNLI with RoBERTa-large. Clustering with fine-tuned weights can yield the best sparsity–accuracy trade-off, confirming that task-adapted weights provide better priors for constructing experts. Importantly, even when experts are initialized from pre-trained weights, PrunePath remains competitive and still outperforms LTE over different sparsity levels. This indicates that PrunePath’s advantage is not solely due to favorable expert initialization, but also comes from its cumulative-mass routing and progressive sparsity-path training. 
+
+ 
+ 
+ 
+ 
+ 
+ Figure 7:  Effect of expert initialization on SST-2 and QNLI with RoBERTa-large. 
+ 
+ 
+ 
+ 4.3.2  Top- k k  Reconstruction Analysis 
+
+ 
+
+ 
+ We further analyze whether PrunePath learns a more compact expert ranking than LTE. Since the two methods use different training procedures, we first define the reference and sparse checkpoints used in this analysis. For LTE, the Stage-1 checkpoint corresponds to its soft-router mode, where all experts are evaluated and weighted by sigmoid router scores; the Stage-2 checkpoint corresponds to the hard-routing mode. For PrunePath, the Stage-1 checkpoint corresponds to the all-expert warm-up setting with  τ = 1.05 \tau=1.05 , while the Stage-2 checkpoint corresponds to the sparse routing regime with  τ < 1 \tau<1 . We select LTE and PrunePath checkpoints such that their Stage-1 task performance is comparable and their Stage-2 sparsity levels after adaptation are matched. 
+
+ 
+ 
+ 
+ Given 100 WikiText prompts of length 512, we feed the inputs into the Stage-2 checkpoints and force both methods to retain only the top- k k  experts ranked by their own routers at each FFN layer, with  k ∈ { 1 , 2 , 4 , … , 128 } k\in\{1,2,4,\ldots,128\} . For each method, we compute the mean squared error (MSE) between the resulting top- k k  FFN output and its corresponding Stage-1 all-expert output. We report the MSE over all FFN layers as a measure of how well the learned expert ranking reconstructs the high-fidelity Stage-1 representation under a fixed expert budget. 
+
+ 
+ 
+ 
+ Figure  2  shows that PrunePath achieves substantially lower reconstruction error than LTE under small expert budgets. For example, at Top-1 and Top-8, PrunePath reduces the average MSE to approximately 3.5 and 3.3, respectively, compared with 4.9 and 4.1 for LTE. As  k k  increases, both methods approach their Stage-1 references and the gap narrows. These results suggest that cumulative-mass routing can place more informative experts earlier in the activation set than independent sigmoid thresholding. 
+
+ 
+ 
+ 
+ 
+ 
+ 4.4  Single-Checkpoint Dynamic Sparsity 
+
+ 
+
+ 
+ A key practical advantage of PrunePath is that a single checkpoint can support multiple inference-time sparsity targets. To verify this, we take one GPT-2 Medium checkpoint on WikiText from our sparsity path, corresponding to the operating point  τ = 0.80 \tau=0.80 , and vary only the inference-time threshold  τ \tau   without further fine-tuning . This produces a range of activation sparsity levels from the same checkpoint. We compare this training-free threshold sweep with LTE, which requires training separate checkpoints for different sparsity targets. 
+
+ 
+ 
+ 
+ Figure  8  shows the resulting sparsity–perplexity trade-off. Adjusting  τ \tau  smoothly controls activation sparsity, and in a broad practical sparsity range, the single PrunePath checkpoint achieves lower PPL than individually trained LTE models. This demonstrates that the learned sparsity path provides a reusable inference-time efficiency knob. However, PPL increases rapidly at extremely high sparsity, indicating that further fine-tuning is necessary when targeting very aggressive sparsity levels. 
+
+ 
+ 
+ 
+ Figure 8:  Inference-time  τ \tau  sweep using one GPT-2 Medium checkpoint on WikiText. 
+ 
+ 
+ Figure 9:  Per-prompt decode-only latency and throughput with KV-cache. 
+ 
+ 
+ Table 3:  
+Overall decode-only inference efficiency with KV-cache on 20 XSum validation prompts.
+ 
+ 
+ 
+ Method 
+ Peak VRAM (MB)  ↓ \downarrow 
+ Decode Latency (ms)  ↓ \downarrow 
+ Step Latency (ms)  ↓ \downarrow 
+ Decode TP (tok/s)  ↑ \uparrow 
+ 
+ Dense GPT-2 Medium 
+ 2116.30  ± \pm  12.63 
+ 306.15  ± \pm  62.30 
+ 13.05 
+ 76.60 
+ 
+ PrunePath-Triton 
+ 1736.88  ± \pm  12.02 
+ 292.59  ± \pm  59.78 
+ 12.48 
+ 80.15 
+ 
+ Improvement 
+ 17.93% 
+ 4.45% 
+ 4.45% 
+ 1.046 × \times 
+ 
+
+ 
+ 
+ 
+ 
+ 4.5  Triton-Accelerated Sparse FFN Inference 
+
+ 
+
+ 
+ To translate PrunePath’s structured FFN sparsity into practical inference benefits, we implement Triton sparse FFN kernels for GPT-2 Medium. After MoEfication, neurons assigned to the same expert are stored contiguously, allowing each selected expert to be evaluated as a dense block rather than by scattered neuron indexing. The inference path consists of lightweight routing, selected-expert evaluation, and output reduction.
+Our prototype focuses on KV-cache autoregressive decoding. Although prefill is
+functionally supported, it requires multi-token routing, sorting, dispatch, and
+expert-wise accumulation, and is less optimized. We therefore report decode-only
+latency as the main speed metric, measuring only the single-token decoding loop
+after prompt prefill constructs the KV cache. 
+
+ 
+ 
+ 
+ Specifically, we first run prompt prefill outside the timing region to construct the KV-cache, and then measure only the subsequent single-token decoding loop. Following HuggingFace generation, the first generated token is produced from the prefill logits; therefore, for a target summary length of  T T , we time  T − 1 T-1  decode steps. 
+
+ 
+ 
+ 
+ Table  3  shows that PrunePath-Triton reduces peak GPU
+memory by 17.9% and improves decode-only latency by 4.4%, increasing decoding
+throughput from 76.60 to 80.15 tokens/s. The latency gain is moderate because
+attention, KV-cache access, LM head computation, and generation-control
+overheads are unaffected by FFN sparsity. Figure  9 
+further shows consistent per-prompt latency and throughput improvements. 
+
+ 
+ 
+ 
+ 
+ 
+ 5  Conclusion 
+
+ 
+
+ 
+ We presented PrunePath, a budget-adaptive structured sparsification framework
+for FFN layers in language models. PrunePath builds on MoEfication and replaces
+independent expert-wise thresholding with cumulative-mass expert activation,
+introducing a token-level probability budget and a direct inference-time
+sparsity knob from a single checkpoint. Across NLU, NLG, and instruction-tuning evaluations, PrunePath achieves a favorable
+sparsity–performance trade-off compared with static pruning and prior
+MoEfication-based routing methods. Additional analyses show that PrunePath
+learns more compact expert rankings and supports flexible single-checkpoint
+threshold sweeping. Finally, our Triton implementation demonstrates that the
+resulting structured sparsity can yield practical memory savings and measurable
+decode-time speedups. These results suggest that cumulative-mass expert
+activation is a simple and effective path toward deployment-friendly sparse
+FFN inference. 
+
+ 
+ 
+ 
+ 
+ Limitations 
+
+ 
+
+ 
+ PrunePath provides a flexible mechanism for token-adaptive structured FFN sparsity, but it also has several limitations.
+First, cumulative-mass expert activation introduces routing overhead, since sorting expert probabilities and computing cumulative mass are less hardware-friendly than fixed top- k k  or simple thresholding. Therefore, the realized latency gain can be smaller than the theoretical FFN computation reduction.
+Second, our Triton implementation is mainly optimized for KV-cache decoding. Although we support prefill for functional completeness, the current prefill path requires multi-token routing, dispatch, sorting, and expert-wise accumulation, and remains less optimized. We thus report decode-only latency as the main speed metric and leave prefill optimization to future work.
+Finally, while we evaluate RoBERTa-large, GPT-2 Medium, Pangu-1B, and Qwen2-7B, validation on larger 10B+ models and production-scale serving settings remains future work. 
+
+ 
+ 
+ 
+ 
+ 
+ 

@@ -1,0 +1,832 @@
+Abstract
+Long-horizon dialogue agents need to keep user memories stable enough for personalization while adapting when the user genuinely changes. Existing memory systems often append every observation or overwrite old entries by heuristic rules, which makes transient noise hard to distinguish from real belief drift. We introduce PreCoMem , a memory consolidation framework inspired by predictive coding that represents memory as confidence-weighted beliefs about the user’s state. Its core signal, Effective Surprisal , combines semantic deviation and contradiction evidence, then downweights this signal when retrieval is diffuse and unreliable. According to effective surprisal, a two-threshold gate maps each turn to one of three deterministic updates: MAINTAIN reinforces supported beliefs, PROFILE stores ambiguous cues as low-confidence hypotheses, and CORRECT softly decays reliably contradicted facts. The PROFILE stage acts as an explicit waiting room, preventing premature commitment to noisy evidence. Experiments on LoCoMo, LongMemEval - S, and PersonaMem - v2 show consistent state-of-the-art accuracy; our new DiMoBench confirms that PreCoMem adapts to non-stationary belief drift without over-reacting to noise. The code is available at https://github.com/ZhongWishing/PreCoMem .
+ 1 Introduction
+ Figure 1 : Memory evolution case study (coffee  \rightarrow  tea). PreCoMem autonomously manages the lifecycle of facts and hypotheses, achieving a stable transition between conflicting belief states without manual intervention. 
+Large Language Models (LLMs) are moving from stateless responders toward long-term partners that interact with the user over hundreds or thousands of turns  [ 32 , 39 , 44 ] . Such partners need more than stored transcripts; they require a user model to sustain personalized interaction  [ 51 , 15 ] .
+To formalize the core units of this user model, we define a belief as a compact, actionable claim about the user’s preferences, goals, or life context, paired with a confidence weight that can be reinforced or revised over time.
+This user model underpins both agent personalization and behavioral self-correction, thereby redefining the role of long-term memory: rather than merely serving as simple context extension  [ 30 , 41 ] , long-term memory enables the agent to maintain consistent behavior across sessions.
+The harder question is not whether information can be stored, but how it should be consolidated and revised. A practical memory consolidation mechanism must decide which observations to retain, how strongly to trust them, and when to maintain, revise, or correct stored items without explicit supervision. We refer to this as the memory stability–plasticity problem : the agent should preserve stable user traits while remaining plastic enough to adapt when those traits change  [ 6 ] . Long-horizon interaction makes the problem hard for three coupled reasons. First, most turns carry little signal, while a small fraction may contain cues indicative of more persistent user states. Second, user preferences and life facts evolve over time  [ 5 ] , so the system must adapt under non-stationarity and belief drift   [ 49 , 7 ] . Third, corrective feedback is rarely explicit  [ 14 ] , and noisy retrieval over long contexts further blurs the picture  [ 48 , 25 , 4 , 43 ] . Therefore, the brittle memory update mechanism causes two opposite failures: premature correction from noise, or persistent over-reliance on outdated memories, which we call old-memory pull , a phenomenon related to loss of plasticity and retrieval interference in continual adaptation systems  [ 6 , 11 ] .
+Recent memory systems have made impressive progress on retrieval and storage organization. Hierarchical and OS-style stores  [ 30 , 23 , 10 ] , structured indices with timestamps or topic shards  [ 34 , 40 , 21 , 38 ] , and agentic retrievers  [ 45 , 46 ] all sharpen what the system can recall. However, the question of when to update is still often handled by recency overwriting, fixed-threshold importance, or one-shot append rules  [ 51 , 2 ] . These triggers cannot reliably separate persistent drift from transient noise  [ 11 ] , so they collapse the stability–plasticity trade-off precisely where long-horizon dialogue stresses it most. A fuller literature discussion is provided in Appendix  Appendix   A .
+We draw inspiration from predictive coding , which posits that learning is driven by mismatch between expectation and reality, i.e., prediction error  [ 8 , 3 ] . In information theory the same quantity is called surprisal   [ 19 , 29 ] . We use this view as a design principle for the update path rather than as a claim that dialogue memory is a fully specified probabilistic model. The resulting criterion is simple: events consistent with current memory should be reinforced, while surprising events may require learning or correction  [ 33 , 36 ] . Crucially, surprisal must be paired with a measure of retrieval reliability , so that update decisions stay conservative when recall itself is uncertain or noisy  [ 18 , 48 ] .
+Building on this view, we propose PreCoMem (Predictive Cognitive Memory) , a self-evolving long-term memory framework for conversational LLM agents. PreCoMem operates in two active phases over a shared memory store. In memory leveraging , it retrieves confidence-weighted beliefs to condition response generation. In memory evolution , it compares new observations with recalled evidence and computes Effective Surprisal S_{\mathrm{eff}} , a reliability-adjusted mismatch score. A two-threshold gate then routes each update to MAINTAIN , PROFILE , or CORRECT , corresponding to consistent, ambiguous, and reliably contradictory evidence. Figure  1 illustrates this loop on a coffee-to-tea preference shift, where a low-confidence hypothesis is gradually promoted to a fact while the contradicted old fact is softly decayed.
+In summary, we (i) propose PreCoMem , a memory consolidation framework that casts long-term memory as a dynamic prediction of the user’s state; (ii) introduce a reliability-weighted surprisal signal that gates each update through MAINTAIN , PROFILE , or CORRECT ; and (iii) evaluate on LoCoMo, LongMemEval - S, PersonaMem - v2, and DiMoBench/DiMoBench - XL, controlled write-path stress tests with gradual drift and decoy retrieval. PreCoMem outperforms the strongest contemporary baselines while keeping effective memory stable across 1050 turns.
+ 2 PreCoMem
+ 2.1 Framework overview
+ Figure 2 : The PreCoMem framework. Two active phases operate over a shared memory store. Phase 1, Memory Leveraging : a confidence-modulated retrieval score combines semantic, lexical, and topic signals to select Top- K beliefs \mathcal{C}_{t} for response generation. Phase 2, Memory Evolution : the effective surprisal S_{\mathrm{eff}} and a two-threshold gate route each turn to MAINTAIN , PROFILE , or CORRECT , illustrated by representative low/medium/high- S_{\mathrm{eff}} turns. Memory Store : an editable Belief Store \mathcal{B} of FACT / HYPO nodes with confidence weights, linked by provenance to an immutable Episodic Cache \mathcal{E} under a shared topic index; belief items are updated independently, and the drawn links are provenance pointers and topic groupings (Appendix  Section   C.11 ). 
+As illustrated in Figure   2 , PreCoMem operates as a closed loop of two active phases around a shared memory store. Memory Leveraging retrieves confidence-weighted beliefs and uses them to condition response generation. Memory Evolution then revises the memory state in light of the new interaction: it computes Effective Surprisal S_{\mathrm{eff}} against recalled evidence, and routes the update to one of three deterministic operators— MAINTAIN , PROFILE , or CORRECT . This read–write loop differs from prior memory systems in two ways. First, every belief item carries a continuous confidence weight w_{t}(m)\!\in\![0,1] that is reinforced or softly decayed by the operators, instead of relying on discrete commit decisions such as Add / Ignore / Update in O-Mem  [ 40 ] or binary expiry intervals in EverMemOS  [ 10 ] . Second, PROFILE buffers ambiguous observations as low-confidence hypotheses, letting weak evidence accumulate across turns before it is committed or discarded.
+In implementation, each operator pairs a closed-form update rule with a fixed-prompt LLM sub-agent. The sub-agent only identifies which items are relevant and emits one bounded scalar, such as evidence_strength , severity , or initial_confidence . The deterministic layer then plugs these scalars into Equations   7 , 8 and  10 . Thus the LLM proposes local magnitudes, while the gate, confidence bounds, and closed-form w updates control when and how memory changes accumulate. Algorithm  1 (Appendix  Section   B.4 ) gives the per-turn pipeline.
+ 2.2 Memory primitives
+ Dialogue and memory state.  At turn t=1,2,\ldots , the user input is u_{t} , the agent response is y_{t} , and Q_{t-1} is a rolling working-memory window. Long-term memory is \mathcal{M}_{t}=(\mathcal{B}_{t},\mathcal{E}_{t},\mathcal{T}_{t}) . The belief store \mathcal{B}_{t} contains editable facts and hypotheses with confidence weights. The episodic cache \mathcal{E}_{t} stores immutable raw dialogue traces with source pointers. The optional topic table \mathcal{T}_{t} is only a retrieval prior. This keeps beliefs editable and evidence traceable.
+ Items, confidence, and hypothesis lifecycle.  A memory item m has content c(m) , type \tau(m)\in\{\texttt{FACT},\texttt{HYPOTHESIS}\} , and retrieval metadata such as embeddings, topic labels, entities, timestamps, and source pointers into \mathcal{E}_{t} . For belief items, w_{t}(m)\in[0,1] is an operational support score. Episodic traces are fixed at w_{t}(e)\equiv 1 and used only as provenance, not in confidence-weighted Top- K ranking. A HYPOTHESIS is a provisional belief: it is reinforced under supporting evidence, decayed when evidence stays absent, and promoted to FACT when confidence crosses \tau_{\mathrm{promote}} . Type transitions are one-way. Contradicted facts are softly decayed by CORRECT ( Section   2.4 ) rather than demoted, yielding low-confidence “deprecated” facts that confidence-weighted retrieval naturally deprioritizes. Appendix  Section   C.7 confirms this retention is accuracy-neutral.
+ 2.3 Memory leveraging: evidence recall and response generation
+In Memory Leveraging , PreCoMem recalls a compact evidence set from long-term memory and leverages it to generate the current response.
+ Evidence recall.  Given u_{t} and short-term context Q_{t-1} , PreCoMem ranks candidates in \mathcal{B}_{t} with a confidence-modulated score. The score combines three retrieval signals: semantic similarity, lexical overlap (BM25), and topic relevance. Omitting Q_{t-1} in the notation,
+ s(u_{t},m)=w_{t}(m)\sum_{j=1}^{3}\alpha_{j}s_{j}(u_{t},m),\quad m\in\mathcal{B}_{t}, 
+ (1) 
+where (s_{1},s_{2},s_{3})=(s_{\mathrm{sem}},s_{\mathrm{fact}},s_{\mathrm{topic}}) and \boldsymbol{\alpha}=(\alpha_{1},\alpha_{2},\alpha_{3})^{\top} is a convex weight vector. The multiplier w_{t}(m) biases retrieval toward high-confidence items. The Top- K belief items form \mathcal{C}_{t}=\{m_{i}\}_{i=1}^{K} with retrieval scores \mathbf{s}_{t} . Linked episodic traces from \mathcal{E}_{t} are appended as provenance context, but they do not participate in Top- K ranking. The same scores \mathbf{s}_{t} are retained for the reliability estimate in Section   2.4 .
+ Evidence-conditioned response.  The recalled evidence texts \{c(m)\mid m\in\mathcal{C}_{t}\} , together with u_{t} and the short-term window Q_{t-1} , condition the response model:
+ y_{t}=\texttt{Respond}(u_{t},Q_{t-1},\mathcal{C}_{t}). 
+ (2) 
+We reuse the same recall outputs (\mathcal{C}_{t},\mathbf{s}_{t}) to perform memory evolution in Section   2.4 .
+ 2.4 Memory evolution: regime-gated belief updating
+Given the recall outputs (\mathcal{C}_{t},\mathbf{s}_{t}) and the new interaction (u_{t},y_{t}) ,
+PreCoMem computes a prediction-error signal adjusted by retrieval reliability,
+and applies a regime-gated update to the belief store.
+It also writes the new turn back into the episodic cache for future provenance and recall.
+ Retrieval reliability.  Surprisal computed against recalled evidence can be misleading when recall is uncertain, so we derive a reliability coefficient from the entropy of retrieval scores. Let \mathbf{s}_{t}=\{s_{i}\}_{i=1}^{|\mathcal{C}_{t}|} denote the Top- K retrieval scores returned with \mathcal{C}_{t} , and let \hat{s}_{i}=(s_{i}+\epsilon)/\sum_{j}(s_{j}+\epsilon) be the smoothed normalization. We define the normalized entropy H_{t} and the reliability coefficient \rho_{t} as
+ H_{t}=\frac{-\sum_{i}\hat{s}_{i}\log\hat{s}_{i}}{\log\max\{|\mathcal{C}_{t}|,2\}}\in[0,1],\qquad\rho_{t}=1-H_{t}. 
+ (3) 
+Because H_{t} is minimized when one item dominates and maximized under near-uniform scores, \rho_{t} measures score concentration as a proxy for evidence precision. Diffuse recall (small \rho_{t} ) downweights deviation signals to avoid over-updating; concentrated recall (large \rho_{t} ) preserves them for correction. Thus the gate becomes aggressive only when recall is concentrated and the raw contradiction/deviation signal is large. Since \rho_{t} enters only multiplicatively, it can defer an update but never trigger one on its own; whether CORRECT fires still depends on the contradiction term below, and Appendix  Section   C.8 verifies empirically that \rho_{t} tracks evidence precision. The constant \epsilon>0 ensures numerical stability.
+ Raw surprisal proxy.  We define:
+ S_{\mathrm{raw}}(u_{t})=\lambda\,d_{\mathrm{sem}}(u_{t},\mathcal{C}_{t})+(1-\lambda)\,d_{\mathrm{conf}}(u_{t},\mathcal{C}_{t}), 
+ (4) 
+where \lambda\in(0,1) , d_{\mathrm{sem}} is the normalized semantic deviation between u_{t} and score-weighted recalled evidence, and d_{\mathrm{conf}} is a verifier-based contradiction score quantifying how strongly u_{t} conflicts with recalled beliefs (see Appendix  Section   B.2 ).
+ Effective surprisal.  We define:
+ S_{\mathrm{eff}}(u_{t})=\rho_{t}\,S_{\mathrm{raw}}(u_{t}), 
+ (5) 
+which corresponds to a precision-weighted prediction error that becomes conservative when recall is unreliable.
+We use x_{t}:=S_{\mathrm{eff}}(u_{t}) as the scalar gate score below. Appendix  Section   B.1 gives an optimization view that interprets x_{t} as a Monte Carlo surrogate of a long-horizon predictive objective.
+ Regime-gated evolution.  Given two ordered thresholds \theta_{\mathrm{low}}<\theta_{\mathrm{high}} , PreCoMem maps the gate score x_{t} into three regimes:
+ a_{t}=\begin{cases}\texttt{MAINTAIN},&x_{t}\leq\theta_{\mathrm{low}}\\
+\texttt{PROFILE},&\theta_{\mathrm{low}}<x_{t}\leq\theta_{\mathrm{high}}\\
+\texttt{CORRECT},&x_{t}>\theta_{\mathrm{high}}.\end{cases} 
+ (6) 
+ Two-threshold gate.  Low, medium, and high x_{t} correspond to consistent, ambiguous, and reliably contradictory evidence. PROFILE handles the middle regime that a binary maintain/correct rule must either ignore or overwrite. We fix (\theta_{\mathrm{low}},\theta_{\mathrm{high}})=(0.2,0.6) throughout the main experiments to keep behavior controllable and the comparison reproducible across benchmarks; the cost-sensitive break-even derivation, operator ablations, threshold sensitivity, and dynamic-threshold variant are in Appendix  Sections   B.3 , C.4 , C.5 and  C.5 .
+ MAINTAIN (reinforcement).
+When surprisal is low, PreCoMem strengthens supported beliefs in \mathcal{C}_{t} via:
+ w_{t+1}(m)=w_{t}(m)+\eta_{t}(m)\,(1-w_{t}(m)),\quad m\in\mathcal{C}_{t}\cap\mathcal{B}_{t}, 
+ (7) 
+where \eta_{t}(m)\in(0,1] is the per-item evidence_strength returned by the Maintain-Agent ; weakly supported items barely move, while strongly supported ones are pulled toward 1 . The optimization view in Appendix  Section   B.3 treats \eta_{t}(m) as a scalar step size.
+ PROFILE (hypothesis writing).
+When surprisal is medium, the observation is novel but not decisively contradictory. PreCoMem generates a low-confidence hypothesis h and writes it as a HYPOTHESIS belief:
+ \displaystyle h 
+ \displaystyle=\texttt{GenerateHypothesis}(u_{t},\mathcal{C}_{t}),\qquad\tau(h)=\texttt{HYPOTHESIS}, 
+ (8) 
+ \displaystyle b_{t}^{(c)} 
+ \displaystyle=w_{\min}^{(c)}+\sigma(x_{t})\bigl(w_{\max}^{(c)}-w_{\min}^{(c)}\bigr),\qquad w_{0}(h)=\tfrac{1}{2}\,b_{t}^{(c)}+\tfrac{1}{2}\,\mathrm{clip}\bigl(q_{t},[w_{\min}^{(c)},w_{\max}^{(c)}]\bigr), 
+where GenerateHypothesis is the Profile-Agent under a fixed prompt, \sigma(x)=1/(1+e^{-x}) , c\!\in\!\{\textsc{explicit},\textsc{latent}\} is the class label assigned by the agent, and q_{t} is the agent’s initial_confidence , clipped to the class band [w_{\min}^{(c)},w_{\max}^{(c)}] . The gate score thus supplies a reproducible prior b_{t}^{(c)} inside the band, and the agent scalar can shift w_{0} by at most half the band width. Explicit-event hypotheses paraphrase stated facts or actions and use the band [0.60,0.70] . Latent-inference hypotheses capture deduced traits, moods, or hidden goals and use [0.50,0.59] . These initial values are low relative to stable FACT s, which sit at w\!\geq\!0.80 and meet the promotion threshold \tau_{\mathrm{promote}}\!=\!0.80 . A fresh hypothesis therefore ranks below committed facts in confidence-weighted retrieval ( Equation   1 ) and still needs repeated support to graduate. In later turns, hypotheses are reinforced under MAINTAIN when supported and decayed when evidence remains absent:
+ w_{t}(h)\leftarrow w_{t}(h)\exp\bigl(-\gamma\,a_{t}(h)\bigr),\qquad a_{t}(h)=t-\ell(h), 
+ (9) 
+where \ell(h) is the turn at which h was created or last received supporting evidence and \gamma>0 is a decay rate. The rule is applied once per turn to unsupported hypotheses: any supporting update resets \ell(h) and skips the decay in that turn, and hypotheses flagged as decay_protection by the agent (explicit events) are exempt, so the compounding decay over consecutive unsupported turns (cumulative factor \exp(-\gamma\,n(n+1)/2) after n turns; Appendix  Section   B.3 ) prunes only guesses that are never revalidated. Hypotheses are promoted to facts once confidence crosses \tau_{\mathrm{promote}} , with 0\!\leq\!w_{\min}^{(c)}\!<\!w_{\max}^{(c)}\!<\!\tau_{\mathrm{promote}}\!\leq\!1 enforced for every class so that promotion always requires repeated support.
+ CORRECT (soft correction).
+When surprisal is high and recall is reliable, the new observation likely contradicts existing high-confidence beliefs. PreCoMem records the new observation as a fresh belief node (a FACT with initial weight 0.85 ) and separately decays the retrieved beliefs it contradicts. The decay side is:
+ w_{t+1}(m)=w_{t}(m)\exp\!\bigl(-\beta\,x_{t}\,\zeta_{t}(m)\bigr),\quad m\in\mathcal{C}_{t}\cap\mathcal{B}_{t}, 
+ (10) 
+where \beta>0 controls the correction strength and \zeta_{t}(m)\!\in\![0,1] is the per-item contradiction severity returned by the Correct-Agent ; non-contradictory items receive \zeta_{t}(m)\!\approx\!0 and are essentially unchanged, enabling selective correction without extra thresholds. We deliberately separate this context-aware decay magnitude from the fixed NLI contradiction score that feeds d_{\mathrm{conf}} ( Equation   22 in Appendix  Section   B.2 ): the NLI score drives the gate via S_{\mathrm{raw}} , whereas \zeta_{t} localizes how strongly each retrieved belief should decay. A derivation is provided in Appendix  Section   B.3 .
+Trace and topic write-back.
+After generating y_{t} , PreCoMem appends the turn trace (u_{t},y_{t}) to the episodic cache \mathcal{E}_{t+1} with a fixed-capacity eviction policy; optionally, new topics are added to \mathcal{T}_{t+1} when detected, yielding \mathcal{M}_{t+1}=(\mathcal{B}_{t+1},\mathcal{E}_{t+1},\mathcal{T}_{t+1}) .
+When PROFILE / MAINTAIN / CORRECT creates or updates belief items, we record source pointers to supporting traces so beliefs remain editable while evidence remains traceable.
+ Table 1 : Main evaluation on LoCoMo and LongMemEval - S. Accuracies are reported as mean \pm std over three seeds; within each backbone block, bold marks the best score per column and underline marks the second-best. Avg. Tokens reports the average response-model input token usage per query. LongMemEval - S columns are question types: SSU/SSA/SSP = single-session user/assistant/preference, MS = multi-session, KU = knowledge update, and TR = temporal reasoning. 
+ LoCoMo (1,540 questions; four splits) 
+ Method 
+ Avg. Tokens 
+ Single-Hop 
+ Multi-Hop 
+ Temporal 
+ Open-Domain 
+ Overall 
+ Backbone:   gpt-4o-mini 
+ MemoryOS 
+ 5.5k 
+ 66.68  \pm  0.85 
+ 54.83  \pm  0.87 
+ 52.90  \pm  0.59 
+ 32.16  \pm  0.11 
+ 59.58  \pm  0.06 
+ Mem0 
+ 1.6k 
+ 62.17  \pm  0.77 
+ 52.91  \pm  0.70 
+ 59.44  \pm  0.37 
+ 33.89  \pm  0.96 
+ 58.36  \pm  0.31 
+ A-Mem 
+ 2.7k 
+ 45.15  \pm  0.53 
+ 23.99  \pm  0.46 
+ 53.67  \pm  0.23 
+ 30.71  \pm  0.84 
+ 42.18  \pm  0.65 
+ GAM 
+ 3.5k 
+ 68.24  \pm  0.76 
+ 55.47  \pm  0.43 
+ 58.19  \pm  0.54 
+ 33.50  \pm  0.09 
+ 61.62  \pm  0.22 
+ MemBox 
+ 3.3k 
+ 70.89  \pm  0.68 
+ 53.31  \pm  0.15 
+ 62.70  \pm  0.57 
+ 35.18  \pm  0.77 
+ 63.30  \pm  0.48 
+ MemOS 
+ 2.5k 
+ 77.05  \pm  0.93 
+ 68.34  \pm  0.79 
+ 61.27  \pm  0.01 
+ 39.26  \pm  0.07 
+ 70.20  \pm  0.66 
+ EverMemOS 
+ 2.6k 
+ 83.69  \pm  0.30 
+ 59.97  \pm  0.72 
+ 66.00  \pm  0.39 
+ 36.95  \pm  0.56 
+ 70.13  \pm  0.55 
+ O-Mem 
+ 2.9k 
+ 78.59  \pm  0.04 
+ 71.08  \pm  0.34 
+ 60.20  \pm  0.91 
+ 37.41  \pm  0.87 
+ 70.88  \pm  0.22 
+ TiMem 
+ 2.8k 
+ 76.64  \pm  0.60 
+ 60.43  \pm  0.80 
+ 76.74  \pm  0.48 
+ 38.86  \pm  0.94 
+ 71.88  \pm  0.61 
+ PreCoMem 
+ 3.3k 
+ 81.41  \pm  0.51 
+ 68.49  \pm  0.98 
+ 66.21  \pm  0.12 
+ 39.63  \pm  0.25 
+ 73.57  \pm  0.28 
+ Backbone:   gpt-4.1 
+ MemoryOS 
+ 5.2k 
+ 72.21  \pm  0.38 
+ 63.66  \pm  0.18 
+ 63.10  \pm  0.83 
+ 43.33  \pm  0.88 
+ 66.02  \pm  0.25 
+ Mem0 
+ 1.8k 
+ 72.59  \pm  0.73 
+ 62.37  \pm  0.49 
+ 67.85  \pm  0.20 
+ 42.98  \pm  0.89 
+ 67.17  \pm  0.51 
+ A-Mem 
+ 2.9k 
+ 50.63  \pm  0.09 
+ 35.96  \pm  0.39 
+ 59.50  \pm  0.24 
+ 34.30  \pm  0.54 
+ 48.90  \pm  0.22 
+ GAM 
+ 3.4k 
+ 70.35  \pm  0.38 
+ 67.45  \pm  0.02 
+ 68.47  \pm  0.64 
+ 39.03  \pm  0.05 
+ 68.81  \pm  0.11 
+ MemBox 
+ 3.4k 
+ 76.76  \pm  0.10 
+ 67.47  \pm  0.33 
+ 68.40  \pm  0.52 
+ 41.78  \pm  0.82 
+ 71.29  \pm  0.92 
+ MemOS 
+ 2.4k 
+ 84.57  \pm  0.70 
+ 80.14  \pm  0.56 
+ 70.79  \pm  0.43 
+ 46.93  \pm  0.87 
+ 78.62  \pm  0.76 
+ O-Mem 
+ 2.7k 
+ 86.81  \pm  0.73 
+ 84.32  \pm  0.42 
+ 68.04  \pm  0.03 
+ 42.24  \pm  0.75 
+ 80.08  \pm  0.14 
+ EverMemOS 
+ 2.5k 
+ 92.13  \pm  0.94 
+ 77.75  \pm  0.52 
+ 74.72  \pm  0.91 
+ 43.32  \pm  0.31 
+ 82.27  \pm  0.86 
+ TiMem 
+ 2.7k 
+ 87.00  \pm  0.58 
+ 83.95  \pm  0.15 
+ 85.92  \pm  0.71 
+ 45.82  \pm  0.60 
+ 84.04  \pm  0.84 
+ PreCoMem 
+ 3.1k 
+ 90.41  \pm  0.35 
+ 83.48  \pm  0.29 
+ 84.74  \pm  0.80 
+ 48.23  \pm  0.65 
+ 85.06  \pm  0.07 
+ LongMemEval - S (500 questions; six splits) 
+ Method 
+ Avg. Tokens 
+ SSU 
+ SSA 
+ SSP 
+ MS 
+ KU 
+ TR 
+ Overall 
+ Backbone:   gpt-4.1  (gpt-4o-mini results in Appendix  Section   C.3 ) 
+ MemoryOS 
+ 6.8k 
+ 62.77  \pm  0.01 
+ 63.53  \pm  0.19 
+ 48.71  \pm  0.00 
+ 59.27  \pm  0.57 
+ 58.94  \pm  0.67 
+ 54.95  \pm  0.14 
+ 58.49  \pm  0.04 
+ MemOS 
+ 2.6k 
+ 80.88  \pm  0.48 
+ 73.29  \pm  0.20 
+ 58.43  \pm  0.15 
+ 70.10  \pm  0.65 
+ 75.05  \pm  0.55 
+ 68.32  \pm  0.21 
+ 72.74  \pm  0.40 
+ TiMem 
+ 3.5k 
+ 85.06  \pm  0.03 
+ 79.18  \pm  0.54 
+ 71.22  \pm  0.62 
+ 76.58  \pm  0.84 
+ 81.96  \pm  0.50 
+ 89.86  \pm  0.41 
+ 79.63  \pm  0.79 
+ GAM 
+ 4.2k 
+ 80.90  \pm  0.70 
+ 83.73  \pm  0.26 
+ 70.82  \pm  0.02 
+ 80.81  \pm  0.46 
+ 78.30  \pm  0.51 
+ 79.28  \pm  0.23 
+ 80.91  \pm  0.34 
+ MemBox 
+ 4.0k 
+ 82.07  \pm  0.42 
+ 85.13  \pm  0.64 
+ 73.68  \pm  0.61 
+ 80.56  \pm  0.38 
+ 79.59  \pm  0.78 
+ 81.52  \pm  0.89 
+ 81.24  \pm  0.60 
+ O-Mem 
+ 3.4k 
+ 91.25  \pm  0.12 
+ 86.76  \pm  0.74 
+ 74.69  \pm  0.07 
+ 83.89  \pm  0.64 
+ 87.05  \pm  0.29 
+ 82.77  \pm  0.88 
+ 85.36  \pm  0.08 
+ EverMemOS 
+ 3.1k 
+ 96.31  \pm  0.92 
+ 83.33  \pm  0.97 
+ 72.45  \pm  0.47 
+ 80.66  \pm  0.37 
+ 86.25  \pm  0.11 
+ 79.17  \pm  0.75 
+ 86.16  \pm  0.69 
+ PreCoMem 
+ 3.8k 
+ 94.09  \pm  0.98 
+ 90.72  \pm  0.12 
+ 83.93  \pm  0.85 
+ 87.44  \pm  0.99 
+ 91.80  \pm  0.87 
+ 84.35  \pm  0.83 
+ 89.39  \pm  0.76 
+ Figure 3 : Backbone generalization and PersonaMem - v2 system comparison. 
+ (a)–(d) Scale-vs-mechanism comparison on LoCoMo, LongMemEval - S, PersonaMem - v2 (32k), and PersonaMem - v2 (128k). Within each group the answer model is fixed (Qwen3.5-35B, Qwen3.5-122B, or GPT-5-Chat): the left bar runs it with its native O-Mem memory, while the right bar keeps the same answer model and delegates memory construction to PreCoMem on a one-tier-smaller backbone (Qwen3.5-9B, Qwen3.5-35B, GPT-5-mini); the protocol is detailed in Appendix  Section   C.2 .
+ (e)–(f) Head-to-head with the five strongest baselines on PersonaMem - v2 under gpt-4.1 , in both MCQ and Open-Ended formats. Error bars are \pm std over three seeds. 
+ 3 Experiments
+ 3.1 Experimental setup
+ Benchmarks.  We evaluate on LoCoMo  [ 28 ] (1,500+ questions in long contexts), LongMemEval - S [ 43 ] (500 questions covering six question types over five long-term memory abilities), and PersonaMem - v2  [ 16 ] ( 1{,}000 personas and 20{,}000+ implicit preferences, evaluated under both 32k and 128k contexts; Figure   3 (c)–(f)). To stress-test belief drift under sparse signals we additionally introduce DiMoBench, which adds controlled non-stationarity and decoy retrieval ( Section   3.3 ). Two third-party benchmarks, AMemGym  [ 1 ] and LoCoMo - Plus  [ 22 ] , are evaluated under their official protocols in Appendix  Section   C.1 .
+ Baselines.  We compare PreCoMem against O-Mem  [ 40 ] , MemoryOS  [ 17 ] , MemOS  [ 23 ] , Mem0  [ 2 ] , A-Mem  [ 45 ] , GAM  [ 46 ] , MemBox  [ 38 ] , TiMem  [ 21 ] , and EverMemOS  [ 10 ] , each under its officially recommended configuration; we standardize the backbone LLM and embedding model across methods whenever applicable.
+ Evaluation protocol.  We adopt the LLM-as-a-judge protocol from MemOS  [ 23 ] : each answer is scored by a primary judge ( gpt-4.1-mini ) and two auxiliary gemini-2.5-flash judges (run with distinct system prompts to reduce judge-correlation) in a blinded setup, with accuracy reported as the average of the three binary judgments  [ 20 , 9 , 12 , 35 , 47 ] . Appendix  Section   C.3 reports human–LLM agreement on LoCoMo, LongMemEval - S, and DiMoBench plus a cross-method spot-check on baseline outputs.
+ Implementation details.  PreCoMem uses gpt-4.1 (or gpt-4o-mini ) for all LLM-based reasoning and memory operations and Qwen3-Embedding-0.6B for dense embeddings across methods. Unless otherwise specified, k{=}10 , (\theta_{\mathrm{low}},\theta_{\mathrm{high}})=(0.2,0.6) , \lambda{=}0.5 , \beta{=}1.0 , \boldsymbol{\alpha}{=}(0.4,0.4,0.2) , and \gamma{=}0.05 ; sensitivity studies and the adaptive variant are in Appendix  Sections   C.5 , C.5 and  C.5 .
+ 3.2 Main results
+Main results are reported in Table   1 : the upper block on LoCoMo and the lower block on LongMemEval - S. We make three observations.
+(1) Overall performance. PreCoMem achieves the best overall accuracy on both tabulated benchmarks. On LoCoMo it leads the strongest baseline (TiMem) by +1.69 with gpt-4o-mini ( 73.57 vs. 71.88 ) and +1.02 with gpt-4.1 ( 85.06 vs. 84.04 ); both gaps exceed the cross-seed standard deviation of either system reported in Table   1 . On LongMemEval - S it reaches 89.39 under gpt-4.1 ( +3.23 over EverMemOS), and the gpt-4o-mini appendix block follows the same pattern ( 84.28 , +1.96 ; Appendix  Section   C.3 ). On PersonaMem - v2 ( Figure   3 (e)–(f)) under gpt-4.1 , PreCoMem reaches 72.31 Open-Ended at 32k and 67.84 at 128k, +3.37 and +2.89 over EverMemOS. The advantage also holds on two third-party benchmarks we did not design: 0.458 Overall / 0.329 normalized Memory on AMemGym against 0.430 / 0.296 for the strongest system reported there, and 22.4 on LoCoMo - Plus against 21.05 for full-context GPT-4o (Appendix  Section   C.1 ). Figure   3 (a)–(d) further shows that, with the answer model held fixed, delegating memory construction to PreCoMem on a one-tier-smaller backbone still beats the larger backbone’s native memory in all twelve comparisons.
+(2) Where gains come from. 
+On LoCoMo, the gain concentrates on the Open-Domain split (PreCoMem 48.23 under gpt-4.1 , +1.30 over MemOS; consistently best under gpt-4o-mini ), whose questions typically ask for a latent state that is not stated in a single turn and must be inferred from cues spread across sessions (Appendix  Section   C.3 ), while EverMemOS, O-Mem, and TiMem retain narrow leads on Single-Hop / Multi-Hop / Temporal under gpt-4.1 from their dedicated read-path designs.
+On LongMemEval - S ( gpt-4.1 ), the largest gains occur on the question types whose answers depend on updating or aggregating user-specific memory: SSP (single-session preference, +9.24 over O-Mem), KU (knowledge update, +4.75 over O-Mem; every KU question carries an old value superseded by a newer one), and MS (multi-session aggregation, +3.55 ). The SSA gain (assistant-side single-session information, +3.96 ) reflects selective memory use: the single target session lies among 48.9 sessions on average, and confidence-weighted retrieval acts as an implicit reranker. PersonaMem - v2 reproduces this pattern: PreCoMem’s lead is largest on anti-stereotypical, dynamic, and ownership-disambiguation categories that most stress write-path quality, and shrinks to under two points on stereotypical or static cues where population priors suffice. PreCoMem’s advantage is therefore strongest when answers require selective memory use, belief updating, or cross-session aggregation; a structural analysis attributes the gains to two design properties absent from contemporary baselines—continuous per-belief confidence that buffers ambiguous cues, and a confidence-weighted retrieval score that acts as an implicit reranker (Appendix  Section   C.10 ).
+(3) Accuracy–efficiency trade-off. Figure   5 (a) shows the LoCoMo performance–cost frontier as we vary k : PreCoMem peaks at k\!=\!10 with moderate token usage, while larger k yields diminishing returns. Supporting diagnostics on hypothesis lifecycle, Top- k sensitivity, and memory footprint are reported in Appendix  Sections   C.3 , C.5 and  C.7 .
+ 3.3 Ablation studies and belief-drift adaptation
+ Figure 4 : Component ablation and DiMoBench dynamics. 
+ (a) Component ablation on LoCoMo and LongMemEval - S.
+ (b) Moving-average accuracy under implicit drift on DiMoBench.
+ (c) Operator-level ablation on DiMoBench. 
+ Component ablation.  We ablate three core components while keeping the backbone, prompts, and hyperparameters fixed. ES removes the effective-surprisal gate by setting the gate score to 0 ; RR removes retrieval-reliability adjustment via \rho_{t}\!\equiv\!1 ; CW removes confidence weighting globally, in retrieval and in every lifecycle test, by setting all belief weights to 1 . Figure   4 (a) reports LLM-judge accuracy on LoCoMo and LongMemEval - S. Removing ES causes the largest drop on LoCoMo ( 73.57\!\to\!31.46 ; similar on LongMemEval - S): with the gate score zeroed every turn is routed to MAINTAIN , so this reinforce-only variant marks the lower bound of surprisal-gated evolution , the primary mechanism under non-stationarity, while route-matched controls that isolate the gate’s marginal value are reported in Appendix  Section   C.4 . Removing CW ( \!\to\!43.42 ) and RR ( \!\to\!56.81 ) also substantially reduces accuracy, with the same trend on LongMemEval - S. Letting the same LLM emit the entire write decision end-to-end instead of bounded scalars lowers accuracy by 2.75 / 3.15 points on LoCoMo / LongMemEval - S and raises the cross-seed standard deviation 20\times on LoCoMo (under gpt-4.1 ; Appendix  Section   C.4 ). Appendix  Section   C.4 shows the NLI contradiction term drives most gains.
+ DiMoBench setup.   DiMoBench (Dialogue Implicit Memory Drift Benchmark) is a controlled diagnostic setting for gradual attitude and preference drift. A user’s latent stance reverses around a change point, while keyword-matched chatter and entity confounders pollute the stream so naive retrieval and overwrite-style updates become brittle. The released suite has five independent 350 -turn dialogues, each driven by a distinct persona, with 200 QA pairs per dialogue ( 1{,}000 total; results averaged across personas); DiMoBench - XL extends this to 1050 turns and three sequential drifts, with 420 QA pairs each, 2,100 in total (Appendix  Sections   C.6 and  C.6 ).
+ Update dynamics.   Figure   4 (b) plots LLM-judge accuracy across dialogue turns. Before the change point all methods are stable; afterwards PreCoMem experiences a transient drop but recovers fastest and stabilizes at 84\% , while EverMemOS, TiMem, and O-Mem plateau at 78–80% and Mem0 fails to recover ( 54\% ). End-to-end traces are provided in Appendix  Section   C.11 .
+ Operator ablation on DiMoBench.  Ablating each operator individually ( Figure   4 (c)) yields qualitatively distinct failure modes: removing PROFILE caps the asymptote at 72\% (vs. 84\% ); removing CORRECT delays recovery (turn 320 vs. 250 ) and lowers the plateau to 77\% ; removing MAINTAIN fails to stabilize within the horizon ( 54\% at the end), confirming that the three operators play distinct stabilizing roles. Appendix  Section   C.4 provides the full analysis, and the same three qualitative signatures reproduce on the third-party AMemGym benchmark (Appendix  Section   C.1 ).
+ 3.4 Hyperparameter analysis
+We sweep the retrieval budget k\!\in\!\{1,\ldots,20\} on LoCoMo ( gpt-4.1 ). Accuracy rises sharply through k\!\approx\!6 , peaks at k\!=\!10 (Overall 85.06\% ), then drops mildly. Larger k flattens the Top- k score distribution, lowering \rho_{t} and dampening the effective surprisal x_{t} that drives CORRECT . It also increases the chance that one retrieved item spuriously appears contradictory under the max-based contradiction component d_{\mathrm{conf}} . We therefore fix k\!=\!10 ; the full sweep and retrieval-latency profile are reported in Appendix  Sections   C.5 and  C.9 . Because the write path acts only on retrieved beliefs, Appendix  Section   C.8 further measures how often the belief due for an update actually enters the Top- k and what a miss costs.
+ 3.5 Memory scalability
+ Figure 5 : Hyperparameter and memory-scalability analysis. 
+ (a) LoCoMo accuracy–efficiency frontier as the retrieval budget k varies; overall accuracy peaks at k\!=\!10 , beyond which additional context yields diminishing returns and dilutes retrieval reliability \rho_{t} .
+ (b, c) Memory scalability under long-horizon belief drift: raw memory grows linearly, while effective memory quickly plateaus on both DiMoBench and DiMoBench - XL (panel (c) shows one representative persona). 
+A natural concern for any long-term memory system is whether storage and retrieval cost scale gracefully with the conversation length. We examine this on three settings spanning natural and stress-test horizons: the LoCoMo benchmark (ten multi-session dialogues, mean \bar{N}\!=\!588 turns), DiMoBench (350 turns, 1 drift), and DiMoBench - XL (1050 turns, 3 drifts; five personas, of which a representative one is plotted, the others staying within \pm 1.4 of it; Appendix  Section   C.6 ). Two quantities are tracked every 10 turns on DiMoBench and every 50 turns on DiMoBench - XL:
+ • 
+ Raw count N_{\mathrm{raw}}(t)=|\mathcal{B}_{t}| : the number of belief items physically stored, including deprecated facts . Deprecated facts are previously committed FACT s whose confidence has been softly decayed below 0.1 by repeated CORRECT updates ( Equation   10 ); we keep them in \mathcal{B}_{t} as provenance hooks rather than deleting them.
+ • 
+ Effective count N_{\mathrm{eff}}(t)=\sum_{m\in\mathcal{B}_{t}}w_{t}(m) : the confidence-weighted total mass. Intuitively, this is the equivalent number of fully-supported items the agent “acts on” through the confidence-weighted retrieval score in Equation   1 . A deprecated fact at w\!=\!0.05 contributes only 0.05 to N_{\mathrm{eff}} , which matches its negligible influence on Top- K ranking.
+ Figure   5 (b, c) shows N_{\mathrm{raw}} grows roughly linearly with the dialogue, but N_{\mathrm{eff}} saturates by turn 200 (at 25.8 – 28.5 on the representative persona, with the other personas within \pm 1.4 of it) and, apart from a transient dip at each drift, stays in that band. Moreover, deprecated facts occupy only 1.0\% of Top-10 slots on average even after 1050 turns and three drifts (Appendix  Table   19 ). Confidence weighting therefore turns linearly growing storage into a roughly constant retrieval surface.
+ Table 2: Memory footprint vs. accuracy on the ten LoCoMo dialogues (mean turns \bar{N}\!=\!588 ). All numbers are measured under the same backbone ( gpt-4o-mini ) and embedding model. “Per-item conf.” indicates whether the system maintains a continuous confidence weight per stored item; under discrete commit decisions, the effective count N_{\mathrm{eff}} and the average Top-10 weight are not defined. PreCoMem (A1) is the optional pruning configuration that drops items with w_{t}\!<\!0.05 .
+ Method 
+ Per-item conf. 
+ N_{\mathrm{raw}}^{\mathrm{end}} 
+ N_{\mathrm{eff}}^{\mathrm{end}} 
+ Top-10 avg. w 
+ LoCoMo Overall 
+ O-Mem  [ 40 ] 
+ ✗ ( Add / Ignore / Update ) 
+ 232 
+ – 
+ – 
+ 70.88 
+ EverMemOS  [ 10 ] 
+ ✗ ( [t_{s},t_{e}] expiry) 
+ 264 
+ – 
+ – 
+ 70.13 
+ PreCoMem (A0, default) 
+ ✓ ( w_{t}\!\in\![0,1] ) 
+ 287 
+ 95.7 
+ 0.81 
+ 73.57 
+ PreCoMem (A1, w<0.05 prune) 
+ ✓ ( w_{t}\!\in\![0,1] ) 
+ 168 
+ 95.6 
+ 0.83 
+ 73.51 
+ Table   2 extends this picture to physical storage on LoCoMo, where we measure the final \mathcal{B}_{t} size of each system under matched backbone and embedding protocols. By default (A0) PreCoMem keeps deprecated facts as provenance hooks for traits that may resurface later, since confidence-weighted retrieval already filters them out of the Top- K ; the optional A1 configuration ( w\!<\!0.05 prune) trades this provenance for tighter storage and matches A0 within seed variance (Appendix  Section   C.7 ). Both O-Mem and EverMemOS commit each interaction through a discrete decision ( Add / Ignore / Update in O-Mem; episodic-trace formation with a binary [t_{\mathrm{start}},t_{\mathrm{end}}] validity in EverMemOS), so neither maintains a continuous per-item confidence and N_{\mathrm{eff}} is undefined. Even on raw count alone, A1 stores fewer items than both baselines while still leading on accuracy by +2.6 and +3.4 overall points, so storage remains bounded in both the soft sense ( N_{\mathrm{eff}} plateau) and the hard sense. This suggests the memory gain is not purchased by unchecked accumulation.
+ 4 Conclusion
+PreCoMem treats long-horizon conversational memory not as a transcript to be stored, but as confidence-weighted beliefs about the user’s state that must be continually checked. A reliability-adjusted surprisal signal routes each turn into MAINTAIN (reinforce supported beliefs), PROFILE (buffer ambiguous cues as low-confidence hypotheses), or CORRECT (softly decay contradicted facts). The PROFILE waiting room is the central design choice: it lets evidence accumulate before commitment, so the agent stays consistent under noise without freezing under genuine drift. Across LoCoMo, LongMemEval - S, PersonaMem - v2, and DiMoBench, this discipline yields the best overall accuracy while keeping memory bounded over a thousand turns; qualitative case studies (Appendix  Section   C.11 ) show calibrated recommendations beyond retrieval-only baselines. We see continuous confidence and explicit hypothesis lifecycles as a useful baseline for long-term memory systems, where what to commit matters as much as what to recall . Our evaluation covers English dialogue benchmarks; other languages and modalities are left for future work.
+Acknowledgments and Disclosure of Funding
+We thank the anonymous reviewers and the area chair for their constructive feedback.
+Funding.
+This research is supported by the National Natural Science Foundation of China under Grant 62406163, the Tianjin Science and Technology Plan Project under Grant 25ZXSFSN00150, and the Fundamental Research Funds for the Central Universities under Grant 63261039.
+Competing interests.
+The authors declare no competing interests.
+
+
+NECESSARY C.8/C.9 (math placeholders; no adopted formula from this appendix)
+
+ C.8 Retrieval dependence and reliability calibration
+
+
+ 
+
+The write path acts only on the retrieved set [math] : if the belief that should be revised is not retrieved, the contradiction cannot be detected and CORRECT cannot fire in that turn. This section quantifies that dependence and then examines what the reliability coefficient [math] actually tracks.
+
+ 
+
+
+
+Belief-update recall and failure decomposition.
+
+
+ 
+
+We call an update-due event a point at which a stored belief must be revised for a later question to be answered correctly (one per evaluation question on DiMoBench and DiMoBench - XL, one per state transition with a pre-existing belief on AMemGym, and one per knowledge-update turn on LongMemEval - S KU), and we measure the Recall@10 of the belief due for update, i.e., how often it enters the write-path Top-10 at that event. Table   23 shows that recall covers most events (89–95%), leaving an explicit 5–11% blind spot, and that misses matter: question accuracy on events whose target was retrieved exceeds that on missed events by 16–22 points. Retrieval is favorable here because a contradictory utterance shares the attribute of the belief it contradicts with opposite polarity, so the target scores high on the semantic and lexical terms of Equation   1 . Decomposing all update-due events pooled over the four benchmarks, 89.3% succeed; the residual 10.7% splits into unrecovered retrieval misses (5.4%; a further 1.4% of events are missed at retrieval but corrected later), gate misses (3.1%; the target was retrieved but the turn was not routed to CORRECT ) and localization misses (2.2%; the turn was routed to CORRECT but the target was not decayed). Retrieval is thus the largest single source, with half of the failures (5.3 of the 10.7 points) sitting in gating and localization; on LongMemEval - S KU, where each update is stated once, retrieval misses dominate. A miss does not stall adaptation: the observation still enters the episodic cache and can form a hypothesis, and 20% of missed events (147 of 718) are corrected later by subsequent cues or hypothesis promotion.
+
+ 
+ 
+
+To separate association from causation we force the target belief into the Top-10 at every missed event (displacing the lowest-ranked item) and re-run the write path and the question. This closes only 26–32% of the hit–miss gap (last column of Table   23 ): forcing the hit raises accuracy on the affected questions by 4.5–6.5 points, while the rest of the gap reflects that missed events are intrinsically harder and that gating and localization can still fail once the target is retrieved.
+
+ 
+ 
+
+ Table 23: Belief-update recall and the cost of a miss. Recall@10 of the belief due for update (mean [math] std over three seeds); question accuracy (%) on events whose target was retrieved (hit) or not (miss), and on missed events after forcing the target into the Top-10 (forced hit); the last column is the share of the hit–miss gap recovered by the forced hit. AMemGym accuracies are changed-state probe accuracies.
+
+ 
+ 
+
+
+ Benchmark 
+ Recall@10 
+ QA (hit) 
+ QA (miss) 
+ QA (forced hit) 
+ Gap recovered 
+
+ 
+ 
+
+
+ DiMoBench 
+ 95.0  [math]  0.4 
+ 84.8 
+ 64.2 
+ 70.7 
+ 32% 
+
+
+
+ DiMoBench - XL 
+ 93.0  [math]  0.2 
+ 84.7 
+ 63.0 
+ 69.4 
+ 29% 
+
+
+
+ LongMemEval - S KU 
+ 90.0  [math]  0.5 
+ 93.4 
+ 75.8 
+ 80.3 
+ 26% 
+
+
+
+ AMemGym 
+ 89.1  [math]  0.5 
+ 72.1 
+ 55.8 
+ 60.6 
+ 29% 
+
+ 
+ 
+ 
+
+
+
+
+
+What [math] measures: calibration.
+
+
+ 
+
+ [math] is the normalized concentration of the Top- [math] retrieval scores. It does not judge whether an individual retrieved item is correct; it weights how far the surprisal computed from that recall can be trusted, and because it enters only multiplicatively it can make the gate more conservative but never more aggressive. Two cases illustrate the behavior. If several relevant memories are correctly retrieved with similar scores, [math] is lower and the update is dampened and deferred; no information is lost, since supporting evidence keeps accumulating through the hypothesis lifecycle and a genuine change is still committed after slightly more confirmation. If a wrong memory receives a very high score, [math] is high, but [math] is deliberately not the sole trigger: whether CORRECT fires still depends on [math] , an NLI verifier run against the actual new utterance, and the change is a bounded, reversible soft decay that keeps provenance.
+
+ 
+ 
+
+To check that concentration is a usable proxy for evidence precision, we stratify the 2,829 gate events of the AMemGym runs (943 per seed) into quintiles of [math] and measure, per quintile, the precision of the retrieved set against the user’s current gold state, the recall of the belief due for update, the accuracy of the contradiction decision against 400 blind-annotated events (80 per quintile), the correctness of the resulting update, the share of CORRECT firings judged unwarranted (false- CORRECT ), and the accuracy of the next state-query probe on the touched attribute ( Table   24 ). Precision, contradiction accuracy, update correctness and downstream accuracy all rise monotonically from Q1 to Q5, and false corrections fall from 2.1% to 0.6% (only 5 of the 612 CORRECT firings were judged false overall), whereas recall is non-monotone and peaks in the middle quintiles. [math] therefore tracks evidence precision, as a precision weight on the prediction error should.
+
+ 
+ 
+
+ Table 24: Calibration of [math] on AMemGym (2,829 gate events over three seeds, split into [math] quintiles from Q1, lowest, to Q5, highest; means over seeds). Precision@ [math] and Recall@ [math] use different references (the user’s current gold state versus the single belief due for update); false- CORRECT is the share of CORRECT firings in the quintile judged unwarranted in the blind audit.
+
+ 
+ 
+
+
+ 
+ Q1 
+ Q2 
+ Q3 
+ Q4 
+ Q5 
+
+
+
+ Gold-evidence Precision@ [math] [math] 
+ 0.58 
+ 0.68 
+ 0.76 
+ 0.82 
+ 0.87 
+
+
+
+ Gold-evidence Recall@ [math] 
+ 0.86 
+ 0.88 
+ 0.89 
+ 0.86 
+ 0.82 
+
+
+
+ Contradiction accuracy [math] 
+ 0.71 
+ 0.79 
+ 0.84 
+ 0.89 
+ 0.92 
+
+
+
+ Update correctness [math] 
+ 0.74 
+ 0.80 
+ 0.85 
+ 0.90 
+ 0.93 
+
+
+
+ False- CORRECT (%) [math] 
+ 2.1 
+ 1.0 
+ 0.8 
+ 0.7 
+ 0.6 
+
+
+
+ Downstream probe accuracy [math] 
+ 0.66 
+ 0.71 
+ 0.75 
+ 0.78 
+ 0.81 
+
+ 
+ 
+ 
+
+
+
+
+
+Correction delay during drift.
+
+
+ 
+
+A related concern is that genuine drift produces mixed retrieval evidence, old facts and new contradictions both in the Top- [math] , which raises [math] and may delay CORRECT precisely when it is needed. We measure this on the 600 gold transitions of the AMemGym runs (20 profiles [math] 10 transitions [math] 3 seeds). In the first period after a change, a fresh belief node encoding the new state is created for 91.3% of the transitions and enters the answering Top-10 for 88.7%; the remaining 2.6% is a read-path ranking loss, since the new belief exists but does not enter the answering Top-10. A low [math] delays a warranted CORRECT in 14.2% of the transitions; of these delays 78.0% clear within one period and 94.0% within two, and only 2.8% persist to the end of the run. End-to-end, this bounded delay is what separates PreCoMem’s one-period recovery from the two periods of AWE and the 1.8–3.2 periods of the ablated variants ( Section   C.1 ); removing the weighting altogether instead costs 16.76 points on LoCoMo (RR in Figure   4 (a)).
+
+ 
+ 
+
+The same analysis on DiMoBench, which has gold change points, uses the [math] -assessability criterion that a gold shift counts only when the outdated belief is in the Top- [math] and [math] , so that [math] would route the turn to CORRECT ; the delay [math] is measured in turns ( Table   25 ). Delays are the exception and bounded on both tracks: 7.3% of the assessable shifts on DiMoBench and 14.8% on DiMoBench - XL are delayed, and 71.4% of the delays clear within one turn and 85.7% within two. DiMoBench - XL exceeds the base track, consistent with its three drifts over 1050 turns and denser decoys. Since DiMoBench counts turns whereas AMemGym counts periods, the two rates agree in magnitude without sharing a unit, which is why we report them per track.
+
+ 
+ 
+
+ Table 25: CORRECT delay at gold change points on DiMoBench and DiMoBench - XL (counts pooled over three seeds). A shift is [math] -assessable when the outdated belief is in the Top- [math] and [math] ; [math] is the delay in turns.
+
+ 
+ 
+
+
+ Track 
+ Gold shifts 
+ [math] -assessable 
+ [math] 
+ [math] 
+ [math] 
+ [math] 
+ Any delay 
+
+ 
+ 
+
+
+ DiMoBench 
+ 45 
+ 41 
+ 38 
+ 3 
+ 0 
+ 0 
+ [math] 
+
+
+
+ DiMoBench - XL 
+ 135 
+ 122 
+ 104 
+ 12 
+ 3 
+ 3 
+ [math] 
+
+ 
+ 
+ 
+
+
+
+
+
+Cold start and genuinely new topics.
+
+
+ 
+
+A genuinely new topic differs from every stored belief, so its semantic-deviation term [math] is high while [math] , and [math] is driven up by novelty; even when all absolute similarities are small, one loosely related item normally dominates the Top- [math] , so [math] stays moderate and [math] lands in the PROFILE band. MAINTAIN would require an unsurprising cue with low [math] , which a new topic is not. In cold-start probes on the AMemGym profiles, a first-time cue is written on an empty store 96.5% of the time (579 of 600 probes, each starting from a reset store); when the store is populated and the cue matches little, a usable belief forms within one period in 84.2% of cases and within two in 92.7% (600 new-topic probes), while only 5.6% of 180 distractor cues are written as hypotheses. A low match therefore costs at most a short confirmation delay. Section   C.11 walks through an example.
+
+ 
+
+
+
+
+
+
+
+ C.9 Retrieval and end-to-end latency analysis
+
+
+
+
+
+Experimental setup.
+
+
+ 
+
+We conduct all latency evaluations on the LoCoMo dataset. To ensure a rigorous comparison, we standardize the hardware and model environment across all systems:
+
+ 
+
+ • 
+ 
+
+ LLM Backbone: gpt-4o-mini serves as the backbone for all generation and retrieval operations.
+
+ 
+
+
+ • 
+ 
+
+ Embeddings: All embeddings are generated using
+ Qwen3-Embedding-0.6B with 1024 dimensions.
+
+ 
+
+
+ • 
+ 
+
+ Configuration: Each baseline operates under its official recommended hyperparameters.
+
+ 
+
+ 
+ 
+
+
+
+
+
+Metrics.
+
+
+ 
+
+We report P50 and P95 latency for both the retrieval stage and the full end-to-end (E2E) response:
+
+ 
+
+ • 
+ 
+
+ Retrieval latency measures only the cost of producing the retrieved evidence set [math] (memory read, scoring, and any re-ranking), and isolates the architectural cost of the memory system itself.
+
+ 
+
+
+ • 
+ 
+
+ End-to-end (E2E) latency measures the full user-visible time from receiving a query [math] to emitting the final answer, including retrieval plus generation.
+
+ 
+
+
+ • 
+ 
+
+ P50 (Median): The median latency, representing the typical time required to process a query.
+
+ 
+
+
+ • 
+ 
+
+ P95 (95th Percentile): The threshold within which 95% of queries are completed, reflecting performance stability under high load or ambiguity.
+
+ 
+
+ 
+ 
+
+
+
+
+
+Results and analysis.
+
+
+ 
+
+ Table   26 summarizes the comparative performance. PreCoMem achieves a retrieval P50 / P95 of 1.95s / 3.86s and an E2E P50 / P95 of 2.35s / 4.36s.
+
+ 
+
+ • 
+ 
+
+ Efficiency via vectorized scoring: PreCoMem achieves a competitive P50 by leveraging a confidence-modulated hybrid scoring mechanism ( Equation   1 ). Rather than relying on computationally intensive generative re-ranking or iterative graph traversals, our approach efficiently aggregates semantic and lexical signals through parallelizable matrix operations. This design ensures that the computational overhead remains modest relative to pure vector retrieval, even as the complexity of the belief store increases.
+
+ 
+
+
+ • 
+ 
+
+ Stability via deterministic flow: A critical advantage of PreCoMem is its robustness against latency spikes. Unlike agentic architectures (e.g., A-Mem) that may trigger unpredictable, recursive reasoning loops to resolve ambiguities, PreCoMem employs a deterministic, non-recursive retrieval flow. This architectural choice constrains both the retrieval tail (P95: 3.86s) and the E2E tail (P95: 4.36s), ensuring consistent performance without the extreme delays (E2E P95 up to 7.68s for A-Mem) often observed in stochastic agentic systems.
+
+ 
+
+
+ • 
+ 
+
+ Retrieval vs. E2E gap: The gap between retrieval and E2E latency is dominated by generation, which is largely independent of the memory backend. PreCoMem’s E2E overhead over the retrieval stage (0.4s at P50, 0.5s at P95) is comparable to other non-agentic baselines, confirming that adding PROFILE / CORRECT does not materially inflate generation cost.
+
+ 
+
+ 
+ 
+ 
+
+ Table 26: Retrieval and end-to-end latency comparison. Evaluated on LoCoMo with gpt-4o-mini . “Retrieval” is the memory read/scoring cost only; “E2E” is the full query-to-answer time (retrieval + generation). PreCoMem obtains competitive typical latency and a well-controlled tail at both stages, without the extreme P95 spikes seen for recursive agentic baselines.
+
+ 
+ 
+
+
+ Method 
+ Retrieval 
+ End-to-End 
+
+
+
+ P50 
+ P95 
+ P50 
+ P95 
+
+ 
+ 
+
+
+ MemoryOS 
+ 1.66s 
+ 2.21s 
+ – 
+ – 
+
+
+
+ MemOS 
+ 1.69s 
+ 3.44s 
+ 2.04s 
+ 3.89s 
+
+
+
+ A-Mem 
+ 1.74s 
+ 7.23s 
+ 2.09s 
+ 7.68s 
+
+
+
+ Mem0 
+ 2.44s 
+ 4.29s 
+ 2.74s 
+ 4.69s 
+
+
+
+ PreCoMem (Ours) 
+ 1.95s 
+ 3.86s 
+ 2.35s 
+ 4.36s

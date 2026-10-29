@@ -1,0 +1,1708 @@
+DepthCache: Depth-Guided Training-Free Visual Token Merging for Vision-Language-Action Model Inference
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+I
+INTRODUCTION
+II
+RELATED WORK
+III
+METHOD
+III-A
+Overview
+III-B
+Primary View: Depth-Guided Progressive Token Merging
+III-B
+1
+Scene Initialization
+III-B
+2
+Depth-Based Region Partitioning
+III-B
+3
+Progressive Token Merging
+III-B
+4
+Re-initialization
+III-C
+Auxiliary View: Motion-Adaptive Token Reduction
+III-D
+Overall Token Budget
+IV
+EXPERIMENTS
+IV-A
+Experimental Setup
+IV-B
+Simulation Results
+IV-C
+Real-World Experiments
+IV-C
+1
+Core Tasks
+IV-C
+2
+Extended Scenarios
+IV-D
+Ablation Study
+IV-D
+1
+Component Analysis
+IV-D
+2
+Parameter Sensitivity
+V
+CONCLUSION
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2603.10469v1 [cs.RO] 11 Mar 2026
+DepthCache: Depth-Guided Training-Free Visual Token
+Merging for Vision-Language-Action Model Inference
+Yuquan Li
+Affiliation:
+School of Artificial Intelligence and Automation, Huazhong University of Science and Technology, Wuhan, China.
+{yuquanli, yingyi1048596, ljzhu}@hust.edu.cn
+Lianjie Ma
+Affiliation:
+School of Artificial Intelligence and Automation, Huazhong University of Science and Technology, Wuhan, China.
+{yuquanli, yingyi1048596, ljzhu}@hust.edu.cn
+Han Ding
+Affiliation:
+School of Mechanical Science and Engineering, Huazhong University of Science and Technology, Wuhan, China.
+Lijun Zhu
+†
+†
+thanks:
+†
+Corresponding author.
+Affiliation:
+School of Artificial Intelligence and Automation, Huazhong University of Science and Technology, Wuhan, China.
+{yuquanli, yingyi1048596, ljzhu}@hust.edu.cn
+Abstract
+Vision-Language-Action (VLA) models enable generalist robotic manipulation but suffer from high inference latency. This bottleneck stems from the massive number of visual tokens processed by large language backbones. Existing methods either prune or merge tokens uniformly, degrading the spatial reasoning essential for robotic control. We present DepthCache, a training-free framework that leverages depth as a structural prior for visual token compression. It partitions observations into depth-based regions and applies spatially differentiated merge ratios, preserving the near-field workspace while compressing the distant background. To exploit temporal redundancy, DepthCache distributes the merging process across consecutive frames, ensuring consistent representations while reducing per-step computation. A motion-adaptive pipeline further optimizes auxiliary view compression based on end-effector dynamics. The framework requires no model modification, generalizing across diverse VLA architectures. On the LIBERO benchmark, DepthCache achieves up to 1.28
+×
+\times
+inference speedup with less than 1% average success rate degradation across three VLA models (
+π
+0.5
+\pi_{0.5}
+, OpenVLA, GR00T), whereas pruning and merging baselines incur 4–24% degradation at comparable compression. Real-world experiments on a physical manipulator demonstrate that DepthCache enables faster task throughput and more responsive closed-loop control in latency-sensitive scenarios.
+†
+†
+footnotetext:
+This work has been submitted to the IEEE for possible publication.
+Copyright may be transferred without notice, after which this version
+may no longer be accessible.
+I
+INTRODUCTION
+Vision-Language-Action (VLA) models have emerged as a promising paradigm for generalist robotic manipulation, leveraging the world knowledge encoded in pretrained vision-language backbones to map free-form language instructions and raw visual observations directly to low-level motor commands
+[
+1
+,
+2
+]
+.
+This integration, however, comes at a steep computational cost: each camera view generates hundreds of visual patch tokens that are subsequently processed by a billion-scale language model, creating inference latencies that fundamentally conflict with the real-time demands of reactive manipulation
+[
+3
+,
+4
+]
+.
+As multi-view setups become standard for dexterous tasks, the visual token budget grows proportionally, further widening this latency gap.
+Fig. 1
+:
+DepthCache enables training-free inference acceleration for VLA models with negligible performance loss.
+Top: speedup and success rate on LIBERO across three VLA architectures.
+Bottom: directly transplanting token merging (ToSA, left) causes hesitation during grasping; DepthCache (right) maintains fluid execution with reduced latency.
+To bridge this gap, a growing body of work has pursued inference-time token
+pruning
+, which selectively discards visual tokens that score low on task relevance, and reported encouraging speedups
+[
+5
+,
+6
+,
+7
+,
+8
+]
+.
+However, pruning is inherently lossy: regardless of how sophisticatedly tokens are scored, each discarded token severs spatial relationships with its neighbours.
+Recent evidence confirms that such destruction degrades fine-grained spatial reasoning in vision-language models
+[
+9
+]
+, a risk amplified in manipulation where precise geometric understanding of the workspace is indispensable.
+Token
+merging
+, which aggregates rather than eliminates, offers an alternative that reduces token count while preserving aggregated information
+[
+10
+,
+11
+]
+.
+Yet existing formulations operate within the vision encoder on a per-layer basis.
+Since different VLA models employ distinct vision encoders (e.g., SigLIP, DaViT), each requiring a tailored implementation, such methods lack cross-architecture portability.
+Moreover, they apply uniform merge ratios across the entire image, disregarding the spatial disparity between task-relevant near-field objects and distant backgrounds.
+An instructive parallel arises from human visuomotor control: during grasping, foveal vision concentrates high-acuity processing on the target and its boundaries, while peripheral regions are perceived at reduced resolution—compressed but never discarded—providing the spatial context essential for online motor coordination
+[
+12
+]
+.
+What remains absent is a compression mechanism that, like biological vision, modulates its intensity
+both spatially and temporally
+: preserving full resolution where precision matters, compressing aggressively where it does not, and maintaining a stable compressed representation across consecutive observations rather than reprocessing every frame from scratch.
+A key observation is that robotic manipulation scenes already carry the structural signal needed for such spatially differentiated compression: the
+depth map
+, available directly from simulators or onboard RGB-D sensors.
+Depth naturally delineates the near-field workspace from the distant background and reveals object boundaries—yet no prior work leverages this readily available signal for guiding inference-time compression; existing methods that incorporate depth treat it exclusively as a perceptual input requiring model training
+[
+13
+,
+14
+,
+15
+]
+.
+Building on this observation, we propose DepthCache, a training-free visual token compression framework that repurposes depth from a perceptual modality into a
+structural prior
+for region-aware token merging.
+Unprotected tokens are partitioned into depth-based regions, each assigned a merge ratio proportional to its distance from the workspace, compressing distant backgrounds aggressively while preserving near-field detail.
+Merging is distributed progressively across the temporal axis, exploiting the high inter-frame visual overlap inherent in sequential robotic control rather than concentrating all reduction within a single forward pass.
+A dual protection mechanism, combining the language model’s cross-attention as a semantic importance signal with depth-gradient edge detection for geometric boundary preservation, shields task-critical tokens from any compression.
+For wrist-mounted cameras, a lightweight motion-adaptive state machine adjusts compression to end-effector dynamics.
+The entire framework operates outside the vision encoder, requires no model modification or retraining, and is applicable to any VLA model that accepts visual token inputs.
+Our contributions are summarized as follows:
+•
+We present DepthCache, a training-free framework that, to our knowledge, is the first to leverage depth as an external structural prior for spatially differentiated visual token compression in VLA inference.
+•
+We introduce a temporally coherent compression pipeline that distributes token merging across consecutive frames and couples depth-proportional region partitioning with dual semantic-geometric protection, eliminating the inter-frame instability and uniform-ratio limitations of existing merge methods.
+•
+We validate DepthCache on three architecturally diverse VLA models (
+π
+0.5
+\pi_{0.5}
+, OpenVLA, GR00T) across the LIBERO benchmark, achieving up to 1.28
+×
+\times
+inference speedup with less than 1% average SR degradation. Real-world experiments on a physical manipulator demonstrate 1.33
+×
+\times
+speedup across three manipulation tasks and two extended latency-sensitive scenarios.
+II
+RELATED WORK
+Visual Token Optimization for VLA Inference.
+The computational bottleneck of VLA models stems largely from the volume of visual tokens processed by the LLM backbone: a single camera view typically produces 256–576 patch tokens, and multi-view setups multiply this proportionally
+[
+3
+]
+.
+A growing line of work addresses this through inference-time token reduction, predominantly via
+pruning
+—selectively discarding tokens deemed less relevant to the current task.
+These methods generally derive importance scores from one of two sources:
+cross-modal attention between language instructions and visual tokens
+[
+5
+,
+16
+,
+17
+]
+, or temporal consistency across consecutive frames
+[
+6
+,
+8
+]
+.
+Several approaches further condition pruning on the robot’s action state, increasing retention during precision-critical phases and pruning more aggressively during coarse motion
+[
+7
+,
+17
+]
+.
+However, pruning irreversibly discards spatial relationships among tokens.
+Nüwa
+[
+9
+]
+quantifies this risk, showing 7–47% degradation on visual grounding tasks due to disrupted spatial reference frames.
+This motivates the exploration of alternatives that reduce token count while
+preserving
+aggregated information.
+Fig. 2
+:
+Overview of DepthCache.
+The primary view pipeline (top) forms a cyclic process: initialization computes dual protection sets, depth-based partitioning assigns differentiated merge ratios, and progressive merging reduces tokens across frames until scene change triggers re-initialization.
+The auxiliary view pipeline (bottom) employs a two-state machine to gate wrist camera compression by end-effector motion.
+Depth and 3D Representations in VLA Models.
+A separate but active research direction seeks to enhance VLA models’ spatial reasoning by incorporating depth or 3D geometric information.
+Existing approaches broadly fall into two paradigms:
+explicit 3D input
+, where point clouds (e.g., PointVLA
+[
+13
+]
+) or depth maps
+[
+18
+,
+15
+,
+19
+]
+are provided as additional input channels, and
+implicit geometric encoding
+, where 3D priors are injected through spatial position encoding (e.g., SpatialVLA
+[
+14
+]
+), stereo feature fusion
+[
+20
+]
+, or knowledge distillation from geometry-aware foundation models
+[
+21
+,
+22
+]
+.
+Despite their methodological diversity, these approaches share a common assumption: depth serves as a
+perceptual
+signal—an additional modality that the model must learn to interpret.
+Consequently, all require pretraining or fine-tuning to acquire geometric representations, precluding training-free deployment.
+No prior work has explored depth as an
+external structural prior
+for guiding inference-time compression decisions.
+From Pruning to Merging in VLA Settings.
+The information loss inherent in pruning naturally motivates
+token merging
+, which reduces token count through aggregation rather than elimination.
+ToMe
+[
+10
+]
+established the foundational framework via bipartite soft matching within ViT layers, later extended to video
+[
+23
+]
+and VLA settings
+[
+24
+]
+; ToSA
+[
+11
+]
+further incorporated depth-derived spatial tokens to improve merge quality.
+However, these methods require architecture-specific modifications to the vision encoder and apply a uniform merge ratio that treats foreground and background identically.
+DepthCache addresses both limitations through depth-guided, spatially differentiated compression that operates entirely outside the vision encoder without retraining (Sec.
+III
+).
+III
+METHOD
+III-A
+Overview
+We present DepthCache, a training-free visual token reduction framework for VLA models.
+Our approach is motivated by a key observation: robotic manipulation scenes possess inherent structural regularities that remain largely unexploited by existing token reduction methods
+[
+10
+]
+.
+Specifically, we identify three such regularities:
+(i)
+spatial structure
+—patches residing at similar depth levels exhibit high inter-token redundancy, while distant regions carry substantially lower information density than the near-field workspace;
+(ii)
+temporal continuity
+—under typical manipulation control frequencies, the majority of scene regions remain visually static across consecutive inference steps;
+and
+(iii)
+multi-view asymmetry
+—wrist-mounted cameras yield motion-blurred, low-value imagery during arm transit but provide indispensable close-up views during fine manipulation phases.
+To systematically exploit these properties, DepthCache organizes its processing into two camera-specific pipelines (Fig.
+2
+):
+•
+Primary View Pipeline
+(Sec.
+III-B
+): handles the third-person camera through depth-guided region partitioning, progressive cross-frame token merging, and change-triggered re-initialization.
+•
+Auxiliary View Pipeline
+(Sec.
+III-C
+): governs wrist cameras via a lightweight state machine that adapts token reduction to end-effector motion dynamics.
+III-B
+Primary View: Depth-Guided Progressive Token Merging
+The primary view pipeline constitutes the core of DepthCache.
+It operates as a cyclic process:
+scene initialization
+→
+\rightarrow
+depth-based partitioning
+→
+\rightarrow
+progressive merging
+→
+\rightarrow
+change detection
+→
+\rightarrow
+re-initialization
+, enabling continuous adaptation to evolving task phases.
+III-B
+1
+Scene Initialization
+During the first
+N
+N
+warmup frames, the system executes standard forward passes while collecting two complementary protection signals.
+Attention-based Semantic Protection.
+Since single-frame cross-attention maps can be noisy, we accumulate the LLM’s cross-attention weights over image tokens across
+N
+N
+warmup frames and average them over all heads to obtain a robust estimate of task-relevant regions.
+Patches whose aggregated attention exceeds a dynamic threshold
+τ
+att
+=
+μ
++
+σ
+\tau_{\text{att}}=\mu+\sigma
+, where
+μ
+\mu
+and
+σ
+\sigma
+are the mean and standard deviation of the per-patch attention scores, form the semantic protection set
+𝒫
+att
+\mathcal{P}_{\text{att}}
+, identifying task-relevant entities such as the target object and receptacle.
+Depth-based Geometric Protection.
+We extract geometric boundaries from the depth map via spatial gradient computation.
+Patches with depth gradients above threshold
+τ
+edge
+\tau_{\text{edge}}
+form the geometric protection set
+𝒫
+edge
+\mathcal{P}_{\text{edge}}
+, preserving object boundaries and occlusion contours.
+Combined Protection Set.
+The union
+𝒫
+=
+𝒫
+att
+∪
+𝒫
+edge
+\mathcal{P}=\mathcal{P}_{\text{att}}\cup\mathcal{P}_{\text{edge}}
+integrates semantic and geometric signals: attention captures
+what matters
+for the task, while depth edges capture
+where objects are delineated
+.
+𝒫
+\mathcal{P}
+is computed once during initialization and refreshed only upon re-initialization (Sec.
+III-B4
+), avoiding per-frame attention extraction (illustrated in the initialization stage of Fig.
+2
+).
+III-B
+2
+Depth-Based Region Partitioning
+Following initialization, unprotected patches (
+i
+∉
+𝒫
+i\notin\mathcal{P}
+) are partitioned into
+K
+K
+regions via K-Means clustering on their depth values.
+Each region
+R
+k
+R_{k}
+is assigned a merge ratio that scales linearly with its mean depth
+d
+¯
+k
+\bar{d}_{k}
+:
+r
+k
+=
+r
+min
++
+(
+r
+max
+−
+r
+min
+)
+⋅
+d
+¯
+k
+−
+d
+min
+d
+max
+−
+d
+min
+r_{k}=r_{\min}+(r_{\max}-r_{\min})\cdot\frac{\bar{d}_{k}-d_{\min}}{d_{\max}-d_{\min}}
+(1)
+where
+r
+min
+r_{\min}
+and
+r
+max
+r_{\max}
+define the merge ratio range.
+Protected tokens are assigned
+r
+=
+0
+r{=}0
+and remain at full resolution throughout.
+III-B
+3
+Progressive Token Merging
+DepthCache distributes token merging
+across the temporal axis
+rather than completing it within a single inference step.
+Motivation.
+Existing approaches such as ToMe
+[
+10
+]
+perform all merging within one forward pass across ViT layers.
+While effective for image classification, this one-shot paradigm raises three concerns in sequential manipulation control.
+First, merge group assignments are re-computed independently per frame; the resulting inter-frame inconsistencies can cause action hesitation in dynamic control.
+Second, concentrating all merges in a single step compounds matching errors within one forward pass, whereas distributing merges across frames allows each step to benefit from fresh visual observations.
+Third, at typical control frequencies (5–20 Hz), consecutive frames share substantial visual overlap that can be exploited for temporally coherent token reduction.
+Merge Pair Construction.
+Within each depth region
+R
+k
+R_{k}
+, we construct merge pairs via bipartite soft matching
+[
+10
+]
+on patch embeddings.
+Cosine similarity determines greedy assignments between source and target token subsets; the target merge count per region is determined by the depth-assigned ratio
+r
+k
+r_{k}
+and the region size
+|
+R
+k
+|
+|R_{k}|
+.
+These pairings remain relatively stable across frames to ensure consistent cross-frame merging topology.
+Temporal Spreading.
+Rather than executing all
+m
+k
+m_{k}
+merges instantaneously, DepthCache distributes them linearly over a window of
+W
+W
+consecutive frames:
+m
+k
+(
+t
+)
+=
+⌊
+min
+⁡
+(
+t
+−
+t
+0
+,
+W
+)
+W
+⋅
+m
+k
+⌋
+m_{k}^{(t)}=\left\lfloor\frac{\min(t-t_{0},\;W)}{W}\cdot m_{k}\right\rfloor
+(2)
+where
+t
+0
+t_{0}
+denotes the first post-initialization frame and
+m
+k
+m_{k}
+the target merge count for region
+R
+k
+R_{k}
+.
+The per-step merge fraction
+η
+=
+1
+/
+W
+\eta=1/W
+controls how quickly compression converges to its target.
+Each frame merges only the highest-similarity pairs scheduled for that step, using size-weighted averaging to maintain unbiased token representations across multiple merge rounds.
+This design is conceptually analogous to how ToMe distributes merging across ViT layers—but DepthCache operates
+outside
+the ViT architecture along the temporal dimension, requiring no model modification and incurring no per-layer synchronization overhead (see the progressive merging stage in Fig.
+2
+).
+Depth Variation Detection and Dynamic Recovery.
+Progressive merging must account for scene dynamics.
+We monitor depth variation for each patch over a sliding window: a patch is deemed static if its depth variation remains below threshold
+ϵ
+\epsilon
+across recent frames.
+When the fraction of non-static patches within region
+R
+k
+R_{k}
+exceeds threshold
+γ
+\gamma
+, the entire region is restored to full token resolution:
+Restore
+​
+R
+k
+​
+if
+​
+|
+{
+i
+∈
+R
+k
+∣
+¬
+static
+i
+}
+|
+|
+R
+k
+|
+>
+γ
+\text{Restore }R_{k}\;\text{ if }\;\frac{|\{i\in R_{k}\mid\neg\,\text{static}_{i}\}|}{|R_{k}|}>\gamma
+(3)
+Restored regions restart progressive merging from scratch upon re-convergence.
+This yields adaptive behaviour: static backgrounds are gradually merged, while dynamic regions promptly recover full resolution.
+TABLE I
+:
+Main results on LIBERO simulation benchmark.
+Success Rate (%)
+Efficiency
+Method
+Spatial
+Object
+Goal
+Long
+Avg.
+Speedup
+ρ
+\rho
+OpenVLA
+83.3
+91.2
+78.6
+53.7
+76.7
+1.00
+×
+\times
+100
+OpenVLA + FastV
+75.8
+70.3
+67.3
+42.5
+64.0
+-12.7
+1.39
+×
+\times
+75.0
+OpenVLA + SP-VLA
+†
+80.0
+82.4
+73.6
+51.6
+71.9
+-4.8
+1.50
+×
+\times
+dyn.
+‡
+OpenVLA + DepthCache
+83.1
+90.7
+77.8
+51.2
+75.7
+-1.0
+1.21
+×
+\times
+78.9
+π
+0.5
+\pi_{0.5}
+99.0
+97.0
+99.0
+96.5
+97.9
+1.00
+×
+\times
+100
+π
+0.5
+\pi_{0.5}
++ FastV
+73.4
+89.4
+79.1
+68.5
+77.6
+-20.3
+1.30
+×
+\times
+68.0
+π
+0.5
+\pi_{0.5}
++ ToSA
+79.3
+82.0
+71.6
+62.4
+73.8
+-24.1
+0.94
+×
+\times
+57.8
+π
+0.5
+\pi_{0.5}
++ DepthCache
+98.9
+97.1
+98.3
+96.1
+97.6
+-0.3
+1.28
+×
+\times
+68.2
+GR00T
+91.7
+97.6
+93.0
+90.2
+93.1
+1.00
+×
+\times
+100
+GR00T + DepthCache
+93.3
+96.4
+92.5
+89.6
+92.9
+-0.2
+1.07
+×
+\times
+87.5
+•
+All methods are training-free and require no model modification.
+ρ
+\rho
+: token retention ratio (lower
+=
+=
+more reduction).
+†
+\dagger
+: cited from the original publication.
+‡
+\ddagger
+:
+ρ
+\rho
+varies dynamically with end-effector velocity.
+III-B
+4
+Re-initialization
+Scene initialization is not a one-time operation.
+Although the target object naturally moves with the end-effector during coordinated manipulation, it may also be displaced independently—e.g., by an external perturbation or after placement at a new location.
+To detect such independent displacement, DepthCache monitors the mean depth change within
+𝒫
+att
+\mathcal{P}_{\text{att}}
+while the gripper is
+not
+actively transporting an object:
+Δ
+​
+d
+¯
+=
+1
+|
+𝒫
+att
+|
+​
+∑
+i
+∈
+𝒫
+att
+|
+d
+i
+(
+t
+)
+−
+d
+i
+(
+t
+init
+)
+|
+>
+δ
+reinit
+\bar{\Delta d}=\frac{1}{|\mathcal{P}_{\text{att}}|}\!\sum_{i\in\mathcal{P}_{\text{att}}}\!\left|d_{i}^{(t)}-d_{i}^{(t_{\text{init}})}\right|>\delta_{\text{reinit}}
+(4)
+where
+t
+init
+t_{\text{init}}
+denotes the most recent initialization frame.
+This condition is evaluated only when the gripper is not carrying an object, ensuring that coordinated arm–object motion does not spuriously trigger re-initialization.
+Upon triggering, the system re-enters initialization (Sec.
+III-B1
+), refreshes
+𝒫
+\mathcal{P}
+, re-partitions depth regions, and restarts progressive merging.
+III-C
+Auxiliary View: Motion-Adaptive Token Reduction
+The wrist-mounted camera presents fundamentally different dynamics.
+During arm transit and object transport, it produces motion-blurred imagery of limited informational value; during fine manipulation, it provides close-up views indispensable for precise control.
+DepthCache employs a two-state machine governed jointly by gripper aperture stability and end-effector motion magnitude, evaluated over the predicted action chunk to enable anticipatory switching.
+The system enters
+Merge
+when the gripper aperture remains stable and end-effector motion is significant, indicating transit or transport phases.
+It transitions to
+Full-View
+when the gripper undergoes an opening or closing transition with low end-effector motion, signaling the onset of a precision-critical grasp or release.
+By inspecting the entire action chunk, the system detects upcoming motion trends and switches state preemptively, eliminating temporal lag.
+III-D
+Overall Token Budget
+After progressive merging converges, typically within
+W
+W
+frames, the system reaches a steady-state token retention ratio.
+In our dual-camera configuration, the combined 512 patch tokens are reduced to approximately 300 in steady state, yielding substantial reductions in VLM computation while preserving task-critical visual information.
+IV
+EXPERIMENTS
+We evaluate DepthCache across multiple VLA architectures on both simulated and real-world manipulation tasks.
+Our experiments are designed to answer the following research questions:
+•
+RQ1
+: Can DepthCache reduce VLA inference latency while preserving task success rates across different model architectures?
+•
+RQ2
+: Does DepthCache transfer effectively to real-world robotic manipulation?
+•
+RQ3
+: What is the contribution of each design component to the overall performance?
+IV-A
+Experimental Setup
+Simulation Benchmark.
+We evaluate on LIBERO
+[
+25
+]
+, a widely adopted manipulation benchmark comprising four task suites (Spatial, Object, Goal, Long) with 40 tasks of increasing difficulty.
+Each task is evaluated over 100 episodes; we report the average success rate (SR) per suite and the grand average.
+VLA Baselines.
+To validate the generality of DepthCache as a model-agnostic compression framework, we apply it to three architecturally diverse VLA models:
+(1)
+π
+0.5
+\pi_{0.5}
+[
+2
+]
+(3.3B), pairing a SigLIP vision encoder with a Gemma language backbone and a flow-matching action expert;
+(2) OpenVLA
+[
+26
+]
+(7B), fusing SigLIP and DINOv2 encoders with a Llama 2 backbone for autoregressive action prediction;
+and (3) GR00T
+[
+27
+]
+(2.2B), adopting an Eagle vision-language model with a Diffusion Transformer action head.
+These models differ in vision encoders, language backbones, and action generation paradigms, providing a rigorous testbed for cross-architecture generality.
+All checkpoints are sourced from Hugging Face and fine-tuned on LIBERO.
+Metrics.
+We report:
+(i) task success rate (SR, %),
+(ii) end-to-end inference latency per action step (ms),
+(iii) inference speedup relative to the uncompressed baseline (
+×
+\times
+),
+and (iv) average token compression ratio (
+ρ
+\rho
+, fraction of tokens retained after compression).
+Latency is measured as the wall-clock time from image observation to action output, averaged over all evaluation episodes.
+Real-World Platform.
+For real-world validation, we deploy on a PIPER 6-DoF manipulator with two Intel RealSense D435 RGB-D cameras providing an external static view and a wrist-mounted eye-in-hand view.
+Depth observations are acquired directly from the onboard stereo depth sensor.
+Implementation Details.
+Both simulation and real-world experiments are conducted on a single NVIDIA RTX 4090 GPU (24 GB).
+Unless otherwise noted, DepthCache uses
+N
+=
+5
+N{=}5
+warmup frames,
+K
+=
+3
+K{=}3
+depth clusters, and a progressive merge window of
+W
+=
+5
+W{=}5
+steps.
+IV-B
+Simulation Results
+To contextualize DepthCache’s design, we compare against baselines spanning pruning and merging paradigms (Table
+I
+).
+For pruning, we evaluate FastV
+[
+28
+]
+on both
+π
+0.5
+\pi_{0.5}
+and OpenVLA, and include SP-VLA
+[
+17
+]
+results on OpenVLA.
+FastV drops average SR by 20.3% on
+π
+0.5
+\pi_{0.5}
+and 12.7% on OpenVLA, with particularly severe losses on spatial tasks (Spatial
+−
+25.6
+%
+-25.6\%
+on
+π
+0.5
+\pi_{0.5}
+; Object
+−
+20.9
+%
+-20.9\%
+on OpenVLA).
+SP-VLA, which adds action-aware scheduling to semantic pruning, achieves a higher speedup (
+1.50
+×
+1.50\times
+) but still incurs a
+4.8
+%
+4.8\%
+average SR loss.
+These results confirm that pruning visual tokens, regardless of the selection criterion, systematically degrades manipulation performance by destroying spatial context.
+We note that ADP
+[
+7
+]
+augments pruning with action-aware gating on OpenVLA-OFT, a parallel-decoding variant with a different baseline, precluding direct numerical comparison; its pruning core is the same mechanism evaluated via FastV.
+For merging, ToSA
+[
+11
+]
+applies uniform intra-ViT merging on
+π
+0.5
+\pi_{0.5}
+, reducing SR by 24.1% with no speedup (
+0.94
+×
+0.94\times
+) due to integration overhead.
+Three structural limitations explain this result: a uniform merge ratio across all patches, per-frame re-partitioning that introduces temporal discontinuity, and frequent merging of the gripper with the target object during grasping.
+Cross-architecture results.
+Across all three architectures, DepthCache achieves
+1.07
+1.07
+–
+1.28
+×
+1.28\times
+speedup with less than
+1
+%
+1\%
+average SR loss.
+In every case, DepthCache loses less than
+1
+%
+1\%
+average SR while all pruning and merging baselines exceed
+4
+%
+4\%
+degradation at comparable or lower
+ρ
+\rho
+.
+IV-C
+Real-World Experiments
+To validate that DepthCache transfers to physical manipulation, we evaluate on five real-world tasks using a PIPER robotic arm with dual RealSense D435 cameras (Sec.
+IV-A
+).
+We organize the evaluation into two tiers: three core tasks that assess fundamental manipulation competence under compression, and two extended scenarios that probe the practical benefits of reduced inference latency.
+IV-C
+1
+Core Tasks
+Task Design.
+We select three tasks that exercise distinct aspects of DepthCache:
+1.
+Pick & Place
+: grasp a cube from the table and place it at a designated bin.
+Tests basic manipulation robustness under token compression.
+2.
+Stack Blocks
+: pick up a cube and stack it on top of another cube.
+Requires precise spatial alignment, exercising the dual protection mechanism that preserves object boundaries during fine positioning.
+3.
+Open Drawer & Place
+: open a drawer, grasp an object, and place it inside.
+A multi-phase task whose scene-structure changes (drawer opening, object relocation) exercise the depth variation detection mechanism, testing whether token reduction adapts correctly across distinct manipulation phases.
+Each task is evaluated over 20 trials for both the baseline and DepthCache-augmented
+π
+0.5
+\pi_{0.5}
+policy.
+TABLE II
+:
+Real-world core task results with
+π
+0.5
+\pi_{0.5}
+.
+Task
+Successes / 20
+Baseline
++ Ours
+Pick & Place
+20 / 20
+20 / 20
+Stack Blocks
+18 / 20
+17 / 20
+Drawer & Place
+17 / 20
+15 / 20
+Total
+55 / 60
+52 / 60
+Avg. Latency (ms)
+191
+143
+Speedup
+1.00
+×
+\times
+1.33
+×
+\times
+As shown in Table
+II
+, DepthCache maintains comparable success rates to the uncompressed baseline across all three core tasks (Fig.
+3
+), with an average inference speedup of 1.33
+×
+\times
+.
+(a)
+Stack Blocks
+(b)
+Open Drawer & Place
+Fig. 3
+:
+Real-world core task execution
+with DepthCache-augmented
+π
+0.5
+\pi_{0.5}
+. Perturbation recovery is shown in Fig.
+1
+.
+IV-C
+2
+Extended Scenarios
+Sequential Multi-Object Sorting.
+We place 3 colored cubes on the table and instruct the robot to sort them into designated bin one by one.
+This task chains multiple pick-and-place cycles, accumulating latency differences into a visible gap in total task completion time (Fig.
+4
+).
+Each trial is recorded as a side-by-side synchronized video; we report the average total elapsed time across 15 trials.
+Fig. 4
+:
+Sequential multi-object sorting comparison.
+Top: baseline
+π
+0.5
+\pi_{0.5}
+. Bottom:
+π
+0.5
+\pi_{0.5}
++ DepthCache.
+The time gap accumulates across successive pick-and-place cycles.
+Perturbation Recovery.
+During a pick-and-place trial, while the arm is moving toward the target cube, we manually push the cube approximately 2–3 cm away from its original position.
+The reduced inference latency provided by DepthCache enables more frequent re-planning, allowing the policy to detect and correct for the displacement more promptly.
+TABLE III
+:
+Extended scenario results (15 trials each).
+Scenario
+Successes / 15
+Time (s)
+Baseline
++ Ours
+Baseline
++ Ours
+Multi-Object Sorting
+15 / 15
+13 / 15
+28.6
+22.1
+Perturbation Recovery
+11 / 15
+12 / 15
+17.4
+13.7
+As shown in Table
+III
+, DepthCache reduces multi-object sorting time by 22.7% (28.6 s
+→
+\rightarrow
+22.1 s) while maintaining a comparable success rate, confirming that per-step inference savings accumulate into a substantial throughput gain over repeated manipulation cycles.
+In the perturbation scenario, the faster re-planning loop improves recovery time by 21.3% (17.4 s
+→
+\rightarrow
+13.7 s) and slightly raises the success rate (11/15
+→
+\rightarrow
+12/15), indicating that the policy benefits from receiving corrective observations sooner.
+IV-D
+Ablation Study
+We conduct ablation experiments on LIBERO using
+π
+0.5
+\pi_{0.5}
+to quantify the contribution of each component.
+IV-D
+1
+Component Analysis
+Table
+IV
+shows that the two
+spatial
+mechanisms, Depth Partitioning and Progressive Merge, have the largest impact on task performance (
+Δ
+=
+−
+18.2
+%
+\Delta=-18.2\%
+and
+−
+16.6
+%
+-16.6\%
+), while the remaining components serve complementary roles in safety, adaptation, and multi-view acceleration.
+Across all ablations, Object and Long suites are consistently the most affected, as both require sustained precision over fine-grained spatial features and are therefore most sensitive to token information loss.
+Depth Partitioning is the single most critical component.
+Replacing depth-proportional allocation with a uniform merge ratio removes the inductive bias that near-field tokens carry denser task-relevant information than distant background.
+Without this prior, compression erodes gripper-object geometry and target features equally, causing severe failure on Object (
+−
+22.0
+%
+-22.0\%
+) and Long (
+−
+25.0
+%
+-25.0\%
+).
+Progressive Merge ranks second: one-shot application of the full merge ratio introduces a step discontinuity in the visual conditioning signal, which is especially destructive for Object tasks (
+−
+29.0
+%
+-29.0\%
+) where grasp trajectories depend on smooth inter-chunk feature consistency.
+Among the remaining components, Dual Protection removal yields a moderate SR drop (
+−
+7.3
+%
+-7.3\%
+) while
+increasing
+speedup to
+1.48
+×
+1.48\times
+, confirming that protection trades compression headroom for safety.
+Re-initialization primarily benefits Spatial (
+−
+7.1
+%
+-7.1\%
+) and Long (
+−
+6.7
+%
+-6.7\%
+) tasks where scene geometry evolves during execution, with negligible effect on static-scene Object tasks.
+The Auxiliary View Pipeline contributes a speedup gain from
+1.06
+×
+1.06\times
+to
+1.28
+×
+1.28\times
+with near-zero SR impact (
++
+0.2
+%
++0.2\%
+), validating the auxiliary-view state machine as a safe acceleration mechanism.
+IV-D
+2
+Parameter Sensitivity
+Fig. 5
+:
+Parameter sensitivity analysis
+on
+π
+0.5
+\pi_{0.5}
+(LIBERO). (a) Effect of maximum merge ratio
+r
+max
+r_{\max}
+on success rate and speedup. (b) Effect of progressive merge step ratio
+η
+\eta
+on success rate (log-scale
+x
+x
+-axis). Default values (
+r
+max
+=
+0.7
+r_{\max}=0.7
+,
+η
+=
+0.2
+\eta=0.2
+) are highlighted.
+We investigate the sensitivity of DepthCache to its two key hyperparameters (Fig.
+5
+).
+Maximum merge ratio
+r
+max
+r_{\max}
+modulates the overall compression rate via the depth-proportional mapping
+r
+k
+∈
+[
+r
+min
+,
+r
+max
+]
+r_{k}\in[r_{\min},r_{\max}]
+.
+Across a broad range (
+r
+max
+∈
+[
+0.3
+,
+0.7
+]
+r_{\max}\in[0.3,0.7]
+), SR remains nearly invariant, demonstrating a wide and flat safe operating plateau.
+This robustness stems from the dual protection mechanism, which unconditionally shields task-critical tokens from merging, and the depth-proportional assignment, which concentrates compression on low-value distant regions.
+Degradation appears only beyond
+r
+max
+≈
+0.7
+r_{\max}\approx 0.7
+, where even the moderately compressed near-field regions begin to lose spatial resolution.
+The default
+r
+max
+=
+0.7
+r_{\max}=0.7
+thus represents the Pareto-optimal trade-off: maximum speedup at the boundary of the safe zone.
+Progressive merge step ratio
+η
+\eta
+controls the transition speed to target compression (
+W
+≈
+1
+/
+η
+W\approx 1/\eta
+frames).
+In VLA inference, each action chunk is conditioned on visual tokens from the preceding step;
+a step change in token count between chunks introduces a discontinuity in the conditioning signal, disrupting the smoothness of generated trajectories.
+Progressive merging amortizes this transition, allowing consecutive action chunks to be conditioned on gradually varying inputs.
+At the extreme (
+η
+=
+1.0
+\eta=1.0
+, one-shot merge), the system degenerates to the
+w/o Progressive Merge
+ablation (SR
+81.0
+%
+81.0\%
+), confirming that temporal smoothing is essential rather than optional.
+TABLE IV
+:
+Ablation study on DepthCache components using
+π
+0.5
+\pi_{0.5}
+.
+Configuration
+Success Rate (%)
+Efficiency
+Spatial
+Object
+Goal
+Long
+Avg.
+Δ
+\Delta
+Speedup
+ρ
+\rho
+Full DepthCache
+98.9
+97.1
+98.3
+96.1
+97.6
+—
+1.28
+×
+\times
+68.2
+w/o Depth Partitioning
+92.9
+75.1
+78.4
+71.1
+79.4
+-18.2
+1.34
+×
+\times
+67.5
+w/o Dual Protection
+96.0
+85.7
+92.1
+87.2
+90.3
+-7.3
+1.48
+×
+\times
+55.6
+w/o Progressive Merge
+94.7
+68.1
+82.5
+78.6
+81.0
+-16.6
+1.32
+×
+\times
+65.4
+w/o Re-initialization
+91.8
+97.2
+92.6
+89.4
+92.8
+-4.8
+1.25
+×
+\times
+72.5
+w/o Auxiliary View Pipeline
+98.2
+98.0
+98.6
+96.2
+97.8
++0.2
+1.06
+×
+\times
+88.0
+•
+Each row removes one component from the full method.
+Δ
+\Delta
+: change in average SR relative to the full method (percentage points).
+V
+CONCLUSION
+We showed that depth, commonly treated as a perceptual input for VLA models, can instead serve as a structural prior for inference-time visual token compression.
+The resulting framework, DepthCache, applies spatially differentiated and temporally coherent merging without model modification, generalizing across three architecturally distinct VLA backbones with less than 1% success rate degradation on the LIBERO benchmark.
+Real-world experiments further confirm that inference savings translate into faster task throughput and more responsive closed-loop control on a physical manipulator.
+Two principal limitations remain.
+First, as a purely inference-time method, DepthCache compresses visual tokens but does not accelerate the action decoding stage (e.g., flow-matching denoising), bounding achievable speedup by Amdahl’s law.
+Second, our evaluation covers three VLA architectures on the LIBERO benchmark and a single 6-DoF arm; extending to more diverse benchmarks, embodiments, and real-world settings would further validate generality.
+Incorporating depth-aware compression into the training pipeline and combining token merging with complementary strategies such as KV-cache optimization are promising directions for lifting these ceilings.
+References
+[1]
+K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom,
+K. Hausman, B. Ichter
+et al.
+, “
+π
+0
+\pi_{0}
+: A vision-language-action
+flow model for general robot control,”
+arXiv preprint
+arXiv:2410.24164
+, 2024.
+[2]
+K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi,
+C. Finn, N. Fusai, M. Y. Galliker
+et al.
+, “
+π
+0.5
+\pi_{0.5}
+: A
+vision-language-action model with open-world generalization,” in
+Annual Conference on Robot Learning (CoRL)
+, 2025.
+[3]
+Z. Yu, B. Wang, P. Zeng, H. Zhang, J. Zhang, Z. Wang, L. Gao, J. Song, N. Sebe,
+and H. T. Shen, “A survey on efficient vision-language-action models,”
+arXiv preprint arXiv:2510.24795
+, 2025.
+[4]
+K. Black, M. Y. Galliker, and S. Levine, “Real-time execution of action
+chunking flow policies,” in
+Advances in Neural Information Processing
+Systems (NeurIPS)
+, 2025.
+[5]
+Y. Yang, Y. Wang, Z. Wen, L. Zhong, C. Zou, Z. Zhang, C. Wen, and L. Zhang,
+“EfficientVLA: Training-free acceleration and compression for
+vision-language-action models,” in
+Advances in Neural Information
+Processing Systems (NeurIPS)
+, 2025.
+[6]
+H. Wang, J. Xu, Y. Xiang, J. Pan, Y. Zhou, Y.-L. Li, and G. Dai,
+“SpecPrune-VLA: Accelerating vision-language-action models via
+action-aware self-speculative pruning,”
+arXiv preprint
+arXiv:2509.05614
+, 2025.
+[7]
+X. Pei, Y. Chen, S. Xu, Y. Wang, Y. Shi, and C. Xu, “Action-aware dynamic
+pruning for efficient vision-language-action manipulation,” in
+International Conference on Learning Representations (ICLR)
+, 2026.
+[8]
+S. Xu, Y. Wang, C. Xia, D. Zhu, T. Huang, and C. Xu, “VLA-Cache: Efficient
+vision-language-action manipulation via adaptive token caching,” in
+Advances in Neural Information Processing Systems (NeurIPS)
+, 2025.
+[9]
+Y. Huang, F. Ma, Y. Shao, J. Guo, Z. Yu, L. Cui, and Q. Tian, “Nüwa:
+Mending the spatial integrity torn by VLM token pruning,” in
+International Conference on Learning Representations (ICLR)
+, 2026.
+[10]
+D. Bolya, C.-Y. Fu, X. Dai, P. Zhang, C. Feichtenhofer, and J. Hoffman, “Token
+merging: Your ViT but faster,” in
+International Conference on
+Learning Representations (ICLR)
+, 2023.
+[11]
+H.-W. Huang, W. Chai, K.-M. Chen, C.-Y. Yang, and J.-N. Hwang, “ToSA: Token
+merging with spatial awareness,” in
+IEEE/RSJ International Conference
+on Intelligent Robots and Systems (IROS)
+, 2025, pp. 9654–9660.
+[12]
+M. A. Goodale and A. D. Milner, “Action without perception in human vision,”
+Cognitive Neuropsychology
+, vol. 25, no. 7-8, pp. 891–919, 2008.
+[13]
+C. Li, J. Wen, Y. Peng, Y. Peng, F. Feng, and Y. Zhu, “PointVLA: Injecting
+the 3D world into vision-language-action models,”
+arXiv preprint
+arXiv:2503.07511
+, 2025.
+[14]
+D. Qu, H. Song, Q. Chen, Y. Yao, X. Ye, Y. Ding, Z. Wang, J. Gu, B. Zhao,
+D. Wang
+et al.
+, “SpatialVLA: Exploring spatial representations for
+visual-language-action model,”
+arXiv preprint arXiv:2501.15830
+, 2025.
+[15]
+T. Yuan, Y. Liu, C. Lu, Z. Chen, T. Jiang, and H. Zhao, “Depthvla: Enhancing
+vision-language-action models with depth-aware spatial reasoning,”
+arXiv preprint arXiv:2510.13375
+, 2025.
+[16]
+X. Tan, Y. Yang, P. Ye, J. Zheng, B. Bai, X. Wang, J. Hao, and T. Chen, “Think
+twice, act once: Token-aware compression and action reuse for efficient
+inference in vision-language-action models,”
+arXiv preprint
+arXiv:2505.21200
+, 2025.
+[17]
+Y. Li, Y. Meng, Z. Sun, K. Ji, C. Tang, J. Fan, X. Ma, S.-T. Xia, Z. Wang, and
+W. Zhu, “SP-VLA: A joint model scheduling and token pruning approach for
+VLA model acceleration,” in
+International Conference on Learning
+Representations (ICLR)
+, 2026.
+[18]
+V. Bhat, Y.-H. Lan, P. Krishnamurthy, R. Karri, and F. Khorrami, “3D CAVLA:
+Leveraging depth and 3D context to generalize vision language action models
+for unseen tasks,”
+arXiv preprint arXiv:2505.05800
+, 2025.
+[19]
+H. Zhen, X. Qiu, P. Chen, J. Yang, X. Yan, Y. Du, Y. Hong, and C. Gan,
+“3D-VLA: A 3D vision-language-action generative world model,” in
+Proc. International Conference on Machine Learning (ICML)
+, 2024, pp.
+61 229–61 245.
+[20]
+S. Deng, M. Yan, Y. Zheng, J. Su, W. Zhang, X. Zhao, H. Cui, Z. Zhang, and
+H. Wang, “Stereovla: Enhancing vision-language-action models with stereo
+vision,”
+arXiv preprint arXiv:2512.21970
+, 2025.
+[21]
+M. Guo, M. Cao, J. Tao, R. Xu, Y. Yan, X. Liang, I. Laptev, and X. Chang,
+“Glad: Geometric latent distillation for vision-language-action models,”
+arXiv preprint arXiv:2512.09619
+, 2025.
+[22]
+Q. Fan, Z. Li, Y. Lu, W. Chen, Q. Shen, X.-x. Long, Y. Cai, T. Lu, S. Wang, and
+X. Cao, “PEAfowl: Perception-enhanced multi-view vision-language-action
+for bimanual manipulation,”
+arXiv preprint arXiv:2601.17885
+, 2026.
+[23]
+J. Choi, S. Lee, J. Chu, M. Choi, and H. J. Kim, “vid-tldr: Training free
+token merging for light-weight video transformer,” in
+Proc. IEEE/CVF
+Conf. Computer Vision and Pattern Recognition (CVPR)
+, 2024, pp.
+18 771–18 781.
+[24]
+Y. Ye, J. Ma, J. Cen, and Z. Lu, “Token expand-merge: Training-free token
+compression for vision-language-action models,”
+arXiv preprint
+arXiv:2512.09927
+, 2025.
+[25]
+B. Liu, Y. Zhu, C. Gao, Y. Feng, Q. Liu, Y. Zhu, and P. Stone, “LIBERO:
+Benchmarking knowledge transfer for lifelong robot learning,” in
+Advances in Neural Information Processing Systems (NeurIPS)
+, vol. 36,
+2023, pp. 44 776–44 791.
+[26]
+M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair,
+R. Rafailov, E. P. Foster, P. R. Sanketi, Q. Vuong, T. Kollar, B. Burchfiel,
+R. Tedrake, D. Sadigh, S. Levine, P. Liang, and C. Finn, “OpenVLA: An
+open-source vision-language-action model,” in
+Proc. Conference on
+Robot Learning (CoRL)
+, 2025, pp. 2679–2713.
+[27]
+J. Bjorck, F. Castañeda, N. Cherniadev, X. Da, R. Ding, L. Fan, Y. Fang,
+D. Fox, F. Hu, S. Huang
+et al.
+, “GR00T N1: An open foundation model
+for generalist humanoid robots,”
+arXiv preprint arXiv:2503.14734
+,
+2025.
+[28]
+L. Chen, H. Zhao, T. Cai, Y. Cao, Y. Chen, and Y. Lu, “An image is worth 1/2
+tokens after layer 2: Plug-and-play inference acceleration for large
+vision-language models,” in
+European Conference on Computer Vision
+(ECCV)
+, 2024.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from

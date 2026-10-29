@@ -1,0 +1,355 @@
+FlowSynth: Instrument Generation Through Distributional Flow Matching and Test-Time Search
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1 Introduction
+2 Distributional Flow Matching
+2.1 Probabilistic Velocity Field Formulation
+2.2 Training via Negative Log-Likelihood
+2.3 Uncertainty-Guided Sampling
+3 FlowSynth
+3.1 Architecture
+3.2 Conditioning Signals
+3.3 Test-Time Optimization for Timbre Consistency
+4 Experiments
+4.1 Dataset
+4.2 Evaluation Metrics
+4.3 Experimental Setup
+4.4 Results
+4.4.1 Test-Time Scaling Analysis
+5 Conclusion
+References
+License: CC BY 4.0
+arXiv:2510.21667v1 [cs.SD] 24 Oct 2025
+1]Smule Labs
+2]University of California, San Diego
+\contribution[†]Work done during internship at Smule
+FlowSynth: Instrument Generation Through Distributional Flow Matching and Test-Time Search
+Qihui Yang
+Randal Leistikow
+Yongyi Zang
+Affiliation: [
+Affiliation: [
+Abstract
+Virtual instrument generation requires maintaining consistent timbre across different pitches and velocities, a challenge that existing note-level models struggle to address. We present FlowSynth, which combines distributional flow matching (DFM) with test-time optimization for high-quality instrument synthesis. Unlike standard flow matching that learns deterministic mappings, DFM parameterizes the velocity field as a Gaussian distribution and optimizes via negative log-likelihood, enabling the model to express uncertainty in its predictions. This probabilistic formulation allows principled test-time search: we sample multiple trajectories weighted by model confidence and select outputs that maximize timbre consistency. FlowSynth outperforms the current state-of-the-art TokenSynth baseline in both single-note quality and cross-note consistency. Our approach demonstrates that modeling predictive uncertainty in flow matching, combined with music-specific consistency objectives, provides an effective path to professional-quality virtual instruments suitable for real-time performance.
+1 Introduction
+Modern music production demands precise control over timbre, pitch, and dynamics at the note level. While recent advances in flow matching (Lipman et al., 2023) have enabled high-quality music generation through models (Prajwal et al., 2024; Ning et al., 2025), maintaining consistent timbre across an instrument’s range remains a fundamental challenge for note-level generation. This gap limits the adoption of AI-generated instruments in professional music production, where musicians expect reliable timbral behavior comparable to physical instruments or high-quality sample libraries.
+Virtual instrument generation, the task of synthesizing individual notes with specified pitch, velocity, and timbre for real-time playability, has evolved significantly from early neural approaches. NSynth (Engel et al., 2017) pioneered learned instrument synthesis, while DDSP (Engel et al., 2020) introduced differentiable signal processing for more controllable generation. The current state-of-the-art, TokenSynth (Kim et al., 2025), employs transformer architectures with CLAP embeddings (Wu et al., 2024) to achieve reasonable timbre consistency across 88 piano keys. However, even these advanced models exhibit timbral drift: a ”warm piano” with a fundamental frequency of C3 (131 Hz) may sound metallic at C6 (1046 Hz), despite identical text conditioning. This inconsistency partly stems from the deterministic nature of current generation pipelines, which lack mechanisms to explore multiple solutions and select for consistency, a limitation noted in studies on timbre disentanglement (Luo et al., 2019). Meanwhile, the broader generative modeling community has explored probabilistic approaches to address similar challenges. Variational Rectified Flow Matching (Guo and Schwing, 2025) introduces latent variables for capturing multi-modal velocity fields in graph generation, while energy-weighted flow matching (Woo and Ahn, 2024) uses importance weighting for challenging distributions. In parallel, test-time compute scaling has demonstrated remarkable gains in language models (Snell et al., 2024), with best-of-N sampling and its variants proving effective across domains (Mudgal et al., 2024; Gui et al., 2024). However, these advances have not been adapted to address the specific challenge of cross-note timbre consistency in virtual instruments.
+We introduce FlowSynth, which addresses timbre consistency through distributional flow matching (DFM), a novel formulation that learns distributions over velocity fields rather than point estimates. While Variational Rectified Flow Matching (Guo and Schwing, 2025) also models velocity field uncertainty through latent variables optimized with an evidence lower bound (ELBO) objective assuming unit Gaussian priors, DFM takes a more direct approach: we parameterize the velocity field itself as a Gaussian distribution with learned mean and variance, optimized via negative log-likelihood (NLL). NLL optimization without unit Gaussian prior assumptions enables our model to learn problem-specific uncertainty patterns. The NLL objective naturally encourages higher-variance predictions in regions of genuine ambiguity (where multiple valid velocities exist), while maintaining confident predictions elsewhere. This learned uncertainty map proves crucial for test-time search, allowing us to explore more extensively in ambiguous regions while preserving high-confidence predictions, ultimately enabling the principled trajectory sampling that drives our consistency improvements.
+At test time, we leverage this learned uncertainty through a temperature-controlled sampling strategy that scales with computational budget. Drawing inspiration from extreme value theory, we design a sublinear temperature schedule that balances exploration with stability. For each note generation after the first, we sample multiple trajectories weighted by the model’s confidence and evaluate them against a timbre consistency objective—transforming generation from a single-shot process to an optimization problem where additional compute directly improves instrument quality.
+FlowSynth builds on established audio generation architectures, employing a Diffusion Transformer (DiT) (Peebles and Xie, 2023) with adaptive layer normalization for conditioning, similar to recent models like AudioX (Tian et al., 2025). We leverage CLAP encoders (Wu et al., 2024) for text-audio alignment and adopt the VAE from DiffRhythm (Ning et al., 2025) for efficient latent space modeling. This architectural foundation, combined with our distributional formulation, delivers substantial improvements: even without test-time search, FlowSynth surpasses TokenSynth in audio quality and timbre consistency, with comparable prompt adherence when using unconditional search. The true strength of DFM emerges with test-time compute scaling: increasing the search budget by 8×8\times improves timbre consistency by 1313% and prompt adherence by 246246%, demonstrating that our uncertainty-aware approach effectively converts compute into quality gains.
+Our contributions are: (1) Distributional flow matching (DFM), a formulation using negative log-likelihood optimization that captures predictive uncertainty for improved generation; (2) A test-time optimization framework combining confidence-weighted sampling with music-specific consistency objectives; (3) FlowSynth, achieving state-of-the-art results in virtual instrument generation with demonstrated compute scaling benefits. By combining uncertainty-aware generation with domain-specific optimization, we provide a practical path toward professional-quality virtual instruments that maintain consistent timbre across their entire range.
+Figure 1: Proposed distributional flow matching (DFM) architecture. (Left) Training phase: The diffusion transformer (DiT) learns to predict the instantaneous velocity field by projecting latent representations into mean (μ\mu) and variance (σ\sigma) parameters of a Gaussian distribution. Negative log-likelihood (NLL) loss is minimized between the ground-truth latent at current timestep and this learned distribution. (Right) Inference phase: Multiple velocity field samples are drawn from the learned Gaussian distribution at each generation timestep tt. These samples undergo iterative one-step generation until the final timestep TT, where a search metric evaluates all candidate latents to select the optimal output for the current timestep.
+2 Distributional Flow Matching
+Standard flow matching learns deterministic mappings from source to target distributions, providing no mechanism to express predictive uncertainty or explore alternative generation paths. We propose Distributional Flow Matching (DFM), which reformulates velocity field prediction as learning a probability distribution over possible velocities, enabling uncertainty-aware generation and principled test-time exploration.
+2.1 Probabilistic Velocity Field Formulation
+In conventional flow matching, a neural network fθf_{\theta} predicts a deterministic velocity field vθ​(xt,t)v_{\theta}(x_{t},t) that transports samples along an optimal transport path. We extend this framework by modeling the velocity field as a conditional probability distribution:
+|
+p⁡(v|xt,t,c)=𝒩⁡(v,μθ​(xt,t,c),σθ2​(xt,t,c)​I),p(v|x_{t},t,c)=\mathcal{N}(v;\mu_{\theta}(x_{t},t,c),\sigma^{2}_{\theta}(x_{t},t,c)I), |
+|
+(1) |
+where xtx_{t} denotes the state at time tt, cc represents optional conditioning information, and II is the identity matrix. The neural network jointly predicts the distribution parameters:
+|
+[μθ​(xt,t,c),log⁡σθ2​(xt,t,c)]=fθ​(xt,t,c).[\mu_{\theta}(x_{t},t,c),\log\sigma^{2}_{\theta}(x_{t},t,c)]=f_{\theta}(x_{t},t,c). |
+|
+(2) |
+We parameterize the log-variance to ensure numerical stability and strictly positive variance values through the exponential transformation.
+2.2 Training via Negative Log-Likelihood
+Unlike variational approaches that introduce auxiliary latent variables and optimize an evidence lower bound, DFM directly optimizes the negative log-likelihood of ground-truth velocities under the predicted distribution. Given training pairs (xt,vt)(x_{t},v_{t}) sampled from the optimal transport path between data distributions, we minimize:
+|
+ℒDFM=𝔼(xt,t,vt)​[d2​log⁡σθ2+‖vt−μθ‖22​σθ2],\mathcal{L}_{\text{DFM}}=\mathbb{E}_{(x_{t},t,v_{t})}\left[\frac{d}{2}\log\sigma^{2}_{\theta}+\frac{\|v_{t}-\mu_{\theta}\|^{2}}{2\sigma^{2}_{\theta}}\right], |
+|
+(3) |
+where dd is the velocity dimensionality. This objective exhibits two properties: (1) the variance acts as an adaptive weighting mechanism, where the model can express uncertainty through higher variance predictions, which down-weights the reconstruction penalty in ambiguous regions; (2) the log-variance penalty prevents degenerate solutions, encouraging confident predictions where the transport path is unambiguous. The learned variance structure allows for higher variance to emerge at distribution boundaries and multi-modal regions where multiple valid velocities exist, while maintaining low variance along clear transport paths.
+2.3 Uncertainty-Guided Sampling
+During inference, we leverage the learned uncertainty to guide trajectory sampling. Rather than deterministic integration or arbitrary noise injection, we sample velocities proportional to the model’s confidence:
+|
+vsampled=μθ​(xt,t,c)+τ⋅σθ​(xt,t,c)⋅ϵ,v_{\text{sampled}}=\mu_{\theta}(x_{t},t,c)+\tau\cdot\sigma_{\theta}(x_{t},t,c)\cdot\bm{\epsilon}, |
+|
+(4) |
+where ϵ∼𝒩⁡(0,I)\bm{\epsilon}\sim\mathcal{N}(0,I) and τ\tau is a temperature parameter controlling exploration strength. This formulation ensures exploration is concentrated in regions of genuine ambiguity while preserving high-fidelity generation where the model is confident.
+The temperature parameter enables a spectrum of behaviors: τ=0\tau=0 recovers deterministic generation using the mean prediction, small values (τ≈0.1\tau\approx 0.1) enable local refinement, and moderate values (τ≈1\tau\approx 1) allow broader exploration while respecting the learned uncertainty structure. Crucially, because the variance is learned rather than prescribed, the effective exploration adapts to the inherent difficulty of each generation step.
+3 FlowSynth
+We instantiate DFM for virtual instrument generation through FlowSynth, a system that combines uncertainty-aware generation with domain-specific consistency objectives to produce high-quality, playable instruments.
+3.1 Architecture
+FlowSynth employs a Diffusion Transformer (DiT) (Peebles and Xie, 2023) backbone operating in a learned latent space. We adopt the variational autoencoder from DiffRhythm (Ning et al., 2025), which provides an efficient latent representation. The transformer processes flattened latent sequences through 24 layers with hidden dimension 1024, using rotary position embeddings for spatial awareness.
+The network outputs both velocity mean and log-variance through separate projection heads from the final transformer layer. To prevent variance collapse during early training, we initialize the log-variance head to output log⁡(0.1)\log(0.1) and apply gradient clipping specifically to variance predictions.
+3.2 Conditioning Signals
+Virtual instrument generation requires precise control over multiple attributes. FlowSynth integrates three conditioning signals:
+Text Description. We encode text prompts using a frozen CLAP encoder (Wu et al., 2024), projecting the 512-dimensional embeddings to the model’s hidden dimension. This provides semantic control over timbre characteristics (e.g., ”warm vintage piano”).
+Pitch Control. MIDI pitch values (21-108 for piano range) are embedded through a learned lookup table, enabling precise frequency control while maintaining timbre consistency across octaves.
+Velocity Dynamics. MIDI velocity (1-127) is similarly embedded, controlling amplitude and timbral brightness as in acoustic instruments, where harder strikes produce both louder and brighter tones.
+These signals combine through adaptive layer normalization (AdaLN), where the summed conditioning vector modulates each transformer block via learned scale (γ\gamma), shift (β\beta), and gating (α\alpha) parameters:
+|
+x′=x+α⊙Block​(LN​(x)⋅(1+γ)+β).x^{\prime}=x+\alpha\odot\text{Block}(\text{LN}(x)\cdot(1+\gamma)+\beta). |
+|
+(5) |
+3.3 Test-Time Optimization for Timbre Consistency
+We design a temperature schedule that scales with computational budget while preventing instability:
+|
+τ⁡(N)=min⁡(τmax,τ0​2​ln⁡(N+1)),\tau(N)=\min\left(\tau_{\max},\tau_{0}\sqrt{2\ln(N+1)}\right), |
+|
+(6) |
+where NN is the number of candidate trajectories. The 2​ln⁡(N+1)\sqrt{2\ln(N+1)} scaling follows from extreme value theory, ensuring the expected maximum deviation grows sublinearly with samples. We find τ0=0.01\tau_{0}=0.01 and τmax=0.08\tau_{\max}=0.08 work robustly across instruments.
+For each generated note after the first, we sample NN trajectories and evaluate timbre consistency using CLAP audio embeddings:
+|
+si=1M−1​∑j≠icos​(ϕCLAP​(xi),ϕCLAP​(xj)),s_{i}=\frac{1}{M-1}\sum_{j\neq i}\text{cos}(\phi_{\text{CLAP}}(x_{i}),\phi_{\text{CLAP}}(x_{j})), |
+|
+(7) |
+where MM is the number of previously generated notes in the instrument. This encourages selection of trajectories that maintain consistent timbral characteristics across the pitch range. We balance consistency with text prompt adherence by computing:
+|
+stotal=λ⋅sconsistency+(1−λ)⋅sprompt,s_{\text{total}}=\lambda\cdot s_{\text{consistency}}+(1-\lambda)\cdot s_{\text{prompt}}, |
+|
+(8) |
+where sprompts_{\text{prompt}} measures alignment between generated audio and text embedding. We set λ=0.7\lambda=0.7 to prioritize consistency while maintaining semantic control.
+4 Experiments
+4.1 Dataset
+We train and evaluate on the NSynth dataset (Engel et al., 2017), which contains 305,979 musical notes from 1,006 instruments across 11 instrument families. Each 4-second audio sample is annotated with pitch (MIDI notes 21-108), velocity (5 levels: 25, 31, 50, 75, 100), and instrument family. We use the standard train/validation/test split with 289,205/12,678/4,096 samples respectively. For multi-note evaluation, we construct virtual instruments by sampling multiple pitches from the same source instrument, ensuring consistent timbre ground truth. We focus on the 88-key piano range (A0 to C8) as it represents the most demanding use case for timbral consistency.
+4.2 Evaluation Metrics
+We employ complementary metrics to assess generation quality, controllability, and consistency:
+Audio Quality. Fréchet Audio Distance (FAD) (Kilgour et al., 2019) measures distributional similarity between generated and real audio using VGGish embeddings. Lower values indicate better quality.
+Pitch Accuracy. Mean Absolute Deviation (MADpitch{}_{\text{pitch}}) quantifies pitch control by comparing the fundamental frequency of generated audio (extracted via YIN algorithm(de Cheveigné and Kawahara, 2002) against the target MIDI pitch. We report deviation in cents (1/100th semitone).
+Prompt Adherence. CLAP score (Wu et al., 2024) measures semantic alignment between text prompts and generated audio using cosine similarity in the CLAP embedding space. Higher values indicate better text-to-audio correspondence.
+Timbre Consistency Loss. Following InstrumentGen(Nercessian and Imort, 2023), we compute the timbre consistency loss using a two-level averaging strategy to ensure scale-invariant evaluation across different numbers of audio clips and varying temporal lengths:
+The timbre consistency loss is calculated using a two-level averaging process to ensure fair comparisons across different conditions. First, for each pair of modified MFCC representations (yiy_{i}, yjy_{j}) in a group, we compute a pairwise distance di​j=(1/D)​‖yi−yj‖1d_{ij}=(1/D)\|y_{i}-y_{j}\|_{1}, which is normalized by the feature dimensionality DD to remove dependence on feature vector length. Second, we average these distances across all K⁡(K−1)2\frac{K(K-1)}{2} unique pairs in the group of KK clips to obtain the final loss, Ltimbre=(2/[K⁡(K−1)])​∑i<jdi​jL_{\text{timbre}}=(2/[K(K-1)])\sum_{i<j}d_{ij}. This group-level normalization makes the loss magnitude independent of the number of clips in the group, ensuring a consistent metric.
+Perceptual Quality. Multi-Scale Spectral (MSS) loss (Schwär and Müller, 2023) evaluates spectral fidelity at multiple time scales. For multi-note evaluation, we report the onset F-score to assess attack transient quality, crucial for playability.
+4.3 Experimental Setup
+Baselines. We compare against TokenSynth (Kim et al., 2025), the current state-of-the-art for controllable instrument generation. We evaluate our model in multiple configurations: (1) deterministic generation without search (τ=0\tau=0), (2) unconditional search with varying budgets (N={8, 16, 32}), and (3) guided search using task-specific objectives.
+Training Configuration. Training uses the AdamW optimizer with learning rate 10−410^{-4} and cosine schedule over 500K steps. We train on 8 NVIDIA A100 GPUs with batch size 32 per device. The flow matching process uses linear interpolation between Gaussian noise and data with 1000 discrete timesteps during training. Variance predictions are regularized with gradient clipping at 1.0 to prevent instability.
+Inference Configuration. We employ a dopri5 solver with 16 integration steps for generation. For test-time search, we sample trajectories using the temperature schedule in Eq. 6. The search evaluates candidates in parallel batches, with early stopping when the consistency metric plateaus (typically after 10-20 candidates).
+Table 1: Single Note Results without guided search
+Model |
+MADpitch↓\downarrow |
+MSS↓\downarrow |
+CLAP↑\uparrow |
+FADvgg↓\downarrow |
+TCC↓\downarrow |
+Ground Truth |
+67.63 |
+0.0 |
+0.1601 |
+0.0 |
+2.819 |
+TokenSynth (Kim et al., 2025) |
+37.99 |
+31.29 |
+0.1290 |
+9.359 |
+3.055 |
+No Search |
+23.42 |
+17.71 |
+0.0583 |
+3.977 |
+1.523 |
+Uncond. Search (N=8) |
+18.55 |
+16.95 |
+0.1437 |
+3.965 |
+1.346 |
+Uncond. Search (N=16) |
+22.11 |
+16.75 |
+0.1625 |
+3.976 |
+1.336 |
+Uncond. Search (N=32) |
+26.06 |
+16.65 |
+0.1821 |
+3.832 |
+1.385 |
+4.4 Results
+Single-Note Generation. Table 1 evaluates single-note quality without guided search.
+When evaluating without any sampling by directly taking the predicted mean of the velocity field distribution (the “No Search” setting), FlowSynth already surpasses TokenSynth across all metrics but CLAP score, demonstrating that distributional training improves the learned velocity field even when using only the mean prediction. Unconditional search with increasing budgets shows consistent improvements, with N=32 achieving 3.73.7% lower FAD and 212212% higher CLAP scores compared to deterministic generation. This validates that DFM’s learned uncertainty identifies meaningful variation in the generation space.
+Multi-Note Generation.
+The power of guided search emerges when optimizing the combined objective:
+|
+scombined=λ⋅TCC​({xi}i=1M)+(1−λ)⋅(1−CLAP​(xi,ctext)),s_{\text{combined}}=\lambda\cdot\text{TCC}(\{x_{i}\}_{i=1}^{M})+(1-\lambda)\cdot(1-\text{CLAP}(x_{i},c_{\text{text}})), |
+|
+(9) |
+where λ=0.7\lambda=0.7 balances consistency with prompt adherence. This guided approach achieves 25% lower TCC than TokenSynth while maintaining competitive CLAP scores, effectively solving the timbre drift problem that limits current virtual instruments.
+Table 2 presents results for complete instrument generation across 12 uniformly-spaced pitches (one per octave). The gap between FlowSynth and TokenSynth widens substantially: even without search, FlowSynth achieves 8585% lower FAD and 1111% lower TCC, indicating superior authenticity and cross-pitch consistency, respectively. Unconditional search provides modest gains, as random exploration cannot specifically target consistency.
+Model |
+F-score↑\uparrow |
+CLAP↑\uparrow |
+FADvgg↓\downarrow |
+TCC↓\downarrow |
+Ground Truth |
+1.0 |
+0.1920 |
+0.0 |
+1.219 |
+TokenSynth |
+0.5999 |
+0.1560 |
+10.68 |
+2.597 |
+No Search |
+0.9171 |
+0.0942 |
+1.652 |
+2.328 |
+Uncond. Search (N=8) |
+0.9152 |
+0.1203 |
+1.620 |
+2.303 |
+Uncond. Search (N=16) |
+0.9105 |
+0.1401 |
+1.677 |
+2.297 |
+Uncond. Search (N=32) |
+0.9091 |
+0.1575 |
+1.680 |
+2.303 |
+Table 2: Multi-Note Results without guided search
+4.4.1 Test-Time Scaling Analysis
+For guided single-note generation, we employ CLAP score as the sole search objective:
+|
+x∗=arg⁡maxx∈𝒳N​cos​(ϕCLAP​(x),ϕCLAP​(ctext)),x^{*}=\arg\max_{x\in\mathcal{X}_{N}}\text{cos}(\phi_{\text{CLAP}}(x),\phi_{\text{CLAP}}(c_{\text{text}})), |
+|
+(10) |
+where 𝒳N\mathcal{X}_{N} represents N sampled trajectories. This pure prompt-adherence objective improves CLAP scores while maintaining audio quality, confirming that uncertainty-guided exploration effectively navigates the trade-off between fidelity and controllability.
+Figure 2 shows how the CLAP score scales with the number of guided steps for a fixed trajectory count (N=32N=32). For single-note generation with CLAP-only guidance, performance exhibits a clear logarithmic improvement. Initial steps yield substantial gains in prompt adherence, but the curve quickly plateaus, demonstrating diminishing returns. This confirms that a moderate number of guided steps offers an efficient trade-off, achieving most of the possible quality improvement while minimizing computational cost.
+Figure 2: Sample CLAP score v.s. guided sampling steps
+The computational overhead scales linearly with N due to parallel evaluation. On a single A100 GPU, generating a complete 88-key instrument takes 45 seconds (deterministic), 1.5 minutes (N=8), or 3 minutes (N=16). This positions FlowSynth as practical for studio use while offering a clear quality-compute trade-off for different production contexts.
+5 Conclusion
+We introduce FlowSynth, a framework that improves virtual instrument timbre consistency using Distributional Flow Matching (DFM) and test-time search. By modeling velocity fields probabilistically, DFM captures predictive uncertainty, enabling an inference-time search that converts computational budget directly into quality gains.
+FlowSynth outperforms the state-of-the-art baseline, achieving superior consistency and a natural timbre, as indicated by low Fréchet Audio Distance (FAD) scores. With our guided optimization, performance scales effectively, significantly improving timbre consistency and prompt adherence. This approach demonstrates a practical path toward professional-quality, AI-generated instruments with reliable timbre. Given that we achieved these results on a standard, relatively small dataset, we believe the potential of FlowSynth will be even greater when trained on larger-scale instrument data.
+References
+de Cheveigné and Kawahara (2002)
+Alain de Cheveigné and Hideki Kawahara.
+Yin, a fundamental frequency estimator for speech and music.
+The Journal of the Acoustical Society of America, 111 4:1917–30, 2002.
+URL https://api.semanticscholar.org/CorpusID:1607434.
+Engel et al. (2017)
+Jesse Engel, Cinjon Resnick, Adam Roberts, Sander Dieleman, Douglas Eck, Karen Simonyan, and Mohammad Norouzi.
+Neural audio synthesis of musical notes with wavenet autoencoders, 2017.
+URL https://arxiv.org/abs/1704.01279.
+Engel et al. (2020)
+Jesse Engel, Lamtharn Hantrakul, Chenjie Gu, and Adam Roberts.
+Ddsp: Differentiable digital signal processing, 2020.
+URL https://arxiv.org/abs/2001.04643.
+Gui et al. (2024)
+Lin Gui, Cristina Gârbacea, and Victor Veitch.
+Bonbon alignment for large language models and the sweetness of best-of-n sampling, 2024.
+URL https://arxiv.org/abs/2406.00832.
+Guo and Schwing (2025)
+Pengsheng Guo and Alexander G. Schwing.
+Variational rectified flow matching, 2025.
+URL https://arxiv.org/abs/2502.09616.
+Kilgour et al. (2019)
+Kevin Kilgour, Mauricio Zuluaga, Dominik Roblek, and Matthew Sharifi.
+Fréchet audio distance: A metric for evaluating music enhancement algorithms, 2019.
+URL https://arxiv.org/abs/1812.08466.
+Kim et al. (2025)
+Kyungsu Kim, Junghyun Koo, Sungho Lee, Haesun Joung, and Kyogu Lee.
+Tokensynth: A token-based neural synthesizer for instrument cloning and text-to-instrument, 2025.
+URL https://arxiv.org/abs/2502.08939.
+Lipman et al. (2023)
+Yaron Lipman, Ricky T. Q. Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le.
+Flow matching for generative modeling, 2023.
+URL https://arxiv.org/abs/2210.02747.
+Luo et al. (2019)
+Yin-Jyun Luo, Kat Agres, and Dorien Herremans.
+Learning disentangled representations of timbre and pitch for musical instrument sounds using gaussian mixture variational autoencoders, 2019.
+URL https://arxiv.org/abs/1906.08152.
+Mudgal et al. (2024)
+Sidharth Mudgal, Jong Lee, Harish Ganapathy, YaGuang Li, Tao Wang, Yanping Huang, Zhifeng Chen, Heng-Tze Cheng, Michael Collins, Trevor Strohman, Jilin Chen, Alex Beutel, and Ahmad Beirami.
+Controlled decoding from language models, 2024.
+URL https://arxiv.org/abs/2310.17022.
+Nercessian and Imort (2023)
+Shahan Nercessian and Johannes Imort.
+Instrumentgen: Generating sample-based musical instruments from text, 2023.
+URL https://arxiv.org/abs/2311.04339.
+Ning et al. (2025)
+Ziqian Ning, Huakang Chen, Yuepeng Jiang, Chunbo Hao, Guobin Ma, Shuai Wang, Jixun Yao, and Lei Xie.
+Diffrhythm: Blazingly fast and embarrassingly simple end-to-end full-length song generation with latent diffusion, 2025.
+URL https://arxiv.org/abs/2503.01183.
+Peebles and Xie (2023)
+William Peebles and Saining Xie.
+Scalable diffusion models with transformers, 2023.
+URL https://arxiv.org/abs/2212.09748.
+Prajwal et al. (2024)
+K R Prajwal, Bowen Shi, Matthew Lee, Apoorv Vyas, Andros Tjandra, Mahi Luthra, Baishan Guo, Huiyu Wang, Triantafyllos Afouras, David Kant, and Wei-Ning Hsu.
+Musicflow: Cascaded flow matching for text guided music generation, 2024.
+URL https://arxiv.org/abs/2410.20478.
+Schwär and Müller (2023)
+Simon Schwär and Meinard Müller.
+Multi-scale spectral loss revisited.
+IEEE Signal Processing Letters, 30:1712–1716, 2023.
+10.1109/LSP.2023.3333205.
+Snell et al. (2024)
+Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar.
+Scaling llm test-time compute optimally can be more effective than scaling model parameters, 2024.
+URL https://arxiv.org/abs/2408.03314.
+Tian et al. (2025)
+Zeyue Tian, Yizhu Jin, Zhaoyang Liu, Ruibin Yuan, Xu Tan, Qifeng Chen, Wei Xue, and Yike Guo.
+Audiox: Diffusion transformer for anything-to-audio generation, 2025.
+URL https://arxiv.org/abs/2503.10522.
+Woo and Ahn (2024)
+Dongyeop Woo and Sungsoo Ahn.
+Iterated energy-based flow matching for sampling from boltzmann densities, 2024.
+URL https://arxiv.org/abs/2408.16249.
+Wu et al. (2024)
+Yusong Wu, Ke Chen, Tianyu Zhang, Yuchen Hui, Marianna Nezhurina, Taylor Berg-Kirkpatrick, and Shlomo Dubnov.
+Large-scale contrastive language-audio pretraining with feature fusion and keyword-to-caption augmentation, 2024.
+URL https://arxiv.org/abs/2211.06687.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from
+our major funders,
+member institutions, ,
+and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status (opens in new tab)
+Major funding support from

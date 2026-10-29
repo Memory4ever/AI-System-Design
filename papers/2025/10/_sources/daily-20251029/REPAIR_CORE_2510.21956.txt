@@ -1,0 +1,653 @@
+Transformer Based Linear Attention with Optimized GPU Kernel Implementation
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Background
+2.1 Regular Attention
+2.2 Linear Attention
+3 Method
+3.1 Forward-Pass
+3.2 Backward-Pass
+3.3 Normalization
+4 Optimized Implementation
+4.1 Forward-Pass
+4.2 Backward-Pass
+5 Evaluation
+5.1 Standalone Layer
+5.2 Training an LLM
+6 Conclusion
+References
+A Implementation Pseudo Codes
+B RNN and Transformer-Based Linear Attention
+B.1 RNN-Based
+B.2 Transformer-Based
+License: CC BY 4.0
+arXiv:2510.21956v1 [cs.LG] 24 Oct 2025
+Transformer Based Linear Attention with Optimized GPU Kernel Implementation
+Armin Gerami
+Affiliation: Department of Computer Science, Umiacs
+Affiliation: University of Maryland
+Ramani Duraiswami
+Affiliation: College Park, MD
+Affiliation: [agerami, ramanid]@umd.edu
+Abstract
+The original softmax-based attention mechanism (regular attention) in the extremely successful Transformer architecture computes attention between NN tokens, each embedded in a DD-dimensional head, with a time complexity of O⁡(N2​D)O(N^{2}D). Given the success of Transformers, improving their runtime during both training and inference is a popular research area. One such approach is the introduction of the linear attention (LA) mechanisms, which offers a linear time complexity of O⁡(N​D2)O(ND^{2}) and have demonstrated comparable accuracy to regular attention. However, LA in practice lags behind its theoretical efficiency. We propose a novel method for LA’s forward and backward passes, along with a highly-optimized CUDA implementation. Our approach outperforms the state-of-the-art by 3.3× in speed and reduces memory consumption by 3.6×. We validate these improvements in both single-layer and end-to-end settings by training a 1.4 billion parameter language model, which demonstrates similar expressivity to regular attention on major reasoning benchmarks.
+1 Introduction
+Transformers are the foundational deep learning architecture behind many recent successes in diverse fields such as natural language processing, speech, computer vision, biology, and more. They incorporate a Softmax-based all-to-all "Attention" mechanism (Regular Attention) between input tokens Vaswani et al. (2017). While this mechanism has proven to be extraordinarily effective in learning tasks, it has a time and memory complexity of O⁡(N2​D)O(N^{2}D) and O⁡(N2+N​D)O(N^{2}+ND) respectively, where NN is the number of tokens and DD the dimension per attention head. Efficient hardware implementation can offer constant speedup, and significant memory reduction, and a notable example is the widely used FlashAttention-2 Dao (2024); Dao et al. (2022), where the memory complexity is reduced to O⁡(N​D)O(ND), but the time complexity remains O⁡(N2​D)O(N^{2}D). With industrial models trending towards increasingly large sequence lengths (N=107N=10^{7} in Llama411
+1
+https://ai.meta.com/blog/llama-4-multimodal-intelligence/), the growing ubiquity of Transformers in generative AI, and the significant interest in deploying large language models on computationally limited devices such as smartphones, the search for efficient attention mechanisms is a crucial area of research.
+One promising avenue for an efficient attention implementation is the linear attention (LA) mechanism, also known as Kernel Separation. This approach calculates the all-to-all attention with a time complexity of O⁡(N​D2)O(ND^{2}) by employing a linear attention kernel (a+b​xa+bx) instead of the exponential softmax kernel (exp⁡x\exp{x}) employed in Regular Attention, and has been shown in previous work to achieve comparable results on various benchmarks. The motivation for LA stemmed from observing the mathematical similarities between Recurrent Neural Networks (RNNs) and Transformers when using a linear attention kernel Katharopoulos et al. (2020). While both RNNs and LA-based Transformers could theoretically yield the same results, RNNs suffer from limited parallelization due to their sequential nature, whereas Transformers are inherently highly parallelizable. Recent work Yang et al. (2023) has explored improving the parallelization of LA within RNNs through I/O-aware implementation. Furthermore, several studies suggest that LA can be computed in linear time using the Transformer architecture itself Han et al. (2023); Cai et al. (2022); Zhang et al. (2024); Wang et al. (); Shen et al. (2021) and accelerated with Speculative Decoding You et al. (2024). However, these approaches often underperform their RNN counterparts due to a lack of efficient GPU kernel implementation. Appendix B provides a discussion on the difference of RNN and Transformer-based approaches.
+Another line of research proposes combining LA with Regular Attention, where some of the attention layers compute attention over a limited window of N\sqrt{N} adjacent tokens, while others apply LA across all tokens Qin et al. (2022a); Qin et al. (2023); Qin et al. (2024). Table 1 provides a summary of several approaches. Other approaches aimed at efficient attention include hierarchically-nested attention Ma et al. (2021), the use of cos⁡x\cos{x} as the attention kernel Qin et al. (2022b), approximating Regular Attention with the fast multipole method Nguyen et al. (2021), attending to a sparse set of tokens per layer Zaheer et al. (); Zhou et al. (), and projecting tokens into a lower-dimensional subspace Yu et al. (2023); Singhania et al. (2024). However, these alternative methods have not yet achieved the same level of practical success as Linear Attention. Further, they also lack the highly optimized GPU implementations that regular attention has, and which we seek to provide for the transformer based linear kernel attention in this paper.
+Mechanism
+Attention Kernel
+Time
+Complexity
+Memory Complexity
+(w. / w.o. causal mask)
+Forward-Pass
+Time (ms)
+Forward-Pass
+Memory (GB)
+Regular Attention
+f⁡(x)=exp⁡xf(x)=\exp{x}
+O⁡(N2​D)O(N^{2}D)
+O⁡(N2+N​D)/O⁡(N2+N​D)O(N^{2}+ND)\,\,/\,\,O(N^{2}+ND)
+OOM
+OOM
+FlashAttention-2 Dao (2024)
+f⁡(x)=exp⁡xf(x)=\exp{x}
+O⁡(N2​D)O(N^{2}D)
+O⁡(N​D)/O⁡(N​D)O(ND)\,\,/\,\,O(ND)
+100
+1.5
+Speculative
+Decoding LA You et al. (2024)
+f⁡(x)=b​xf(x)=bx
+O⁡(N​D2)O(ND^{2})
+O⁡(N​D)/O⁡(N​D2)O(ND)\,\,/\,\,O(ND^{2})
+OOM
+OOM
+Gated LA Yang et al. (2023)
+f⁡(x)=b​xf(x)=bx
+O⁡(N​D2)O(ND^{2})
+O⁡(N​D)/O⁡(N​D)O(ND)\,\,/\,\,O(ND)
+100
+5
+Our LA
+f⁡(x)=a+b​xf(x)=a+bx
+O⁡(N​D2)O(ND^{2})
+O⁡(N​D)/O⁡(N​D)O(ND)\,\,/\,\,O(ND)
+25
+1.5
+Table 1: Comparing the time and memory complexity of attention mechanisms. We achieve 3.3×3.3\times speedup and 3.6×3.6\times memory reduction compared to the sota linear attention (LA) implementation Gate LA. The forward-pass time and memory is for a single attention layer with a batch size of 44, 1616 heads, dimension per head of 128128, token length of 10410^{4}, and causal mask applied. (OOM = out of memory)
+Due to the less established nature of LA, its implementation is far less optimized compared to Regular Attention, and leaving considerable room for improvement. Given LA’s apparently comparable expressivity on certain problems and its increasing popularity, evidenced by deployable LA LLMs MiniMax et al. (2025), enhancing LA implementation efficiency is crucial. Our contribution is as follows:
+•
+We derive a novel method for calculating the forward and backward-pass of attention layer with LA based on the Transformer architecture in time complexity of O⁡(N​D2)O(ND^{2}) and O⁡(N​D)O(ND) memory (Section 3). This method aims to enable a parallelized implementation with minimal off-chip memory access.
+•
+We implement the forward and backward-pass on GPU using CUDA, extensively optimizing both data movement and thread scheduling (Section 4).
+•
+We evaluate our implementation in an isolated setting as a standalone attention layer, and in an end-to-end setting where we train a 1.4 billion parameter LLM. We achieve 3.3×3.3\times speedup and a 3.6×3.6\times reduction in memory consumption compared to the state-of-the-art LA implementation Yang et al. (2023) on A6000 GPU.
+By improving the implementation efficiency of Linear Attention (LA) is critical for its practical adoption, as it directly enables the deployment of large transformer models on resource-constrained platforms like edge devices and mobile hardware. This gain in efficiency democratizes access to advanced AI capabilities by allowing complex models to run effectively on smartphones, embedded systems, and other low-power devices. To elaborate, LA enables faster inference speeds and lower energy consumption, which are essential for real-time applications and battery-powered systems. Moreover, the predictable linear scaling of efficient LA simplifies deployment planning and optimizes batching strategies, making it a viable solution for production environments operating under strict computational budgets.
+2 Background
+At its core, the Transformer architecture Vaswani et al. (2017) processes sequential data through three main components. First, the input sequence is transformed into three sets of matrices Query (𝐐\mathbf{Q}), Key (𝐊\mathbf{K}), and Value (𝐕\mathbf{V}) by passing the input embeddings through linear projection layers. The attention layer then calculates its Output (𝐎\mathbf{O}) as a weighted sum of the Value vectors, where the weights are determined by the similarity between the Query of one position and the Key of all positions. This attention mechanism allows the model to weigh the importance of different parts of the input sequence when processing each position. The Output is then processed by a feed-forward network, which applies non-linear transformations. These layers are typically stacked multiple times, along with residual connections to build deep and powerful models. Our focus is solely on the attention mechanism.
+Notation: Bold upper case letters, e.g., 𝐗\mathbf{X} indicate matrices, and bold lower case letters 𝐱i\mathbf{x}_{i} and 𝐱i​j\mathbf{x}_{ij} the ii-th row and the element at the ii-th row and jj-th column of 𝐗\mathbf{X} respectively. Letters X,x,xi,xj​k​l(i)X,x,x_{i},x^{(i)}_{jkl} indicate scalars.
+2.1 Regular Attention
+In the Regular Attention mechanism, given a sequence of NN tokens, model dimension of CC, HH heads, and dimension per head of D=C/HD=C/H, each head takes in three matrices 𝐐,𝐊,𝐕∈ℝN×D\mathbf{Q},\mathbf{K},\mathbf{V}\in\mathbb{R}^{N\times D}, and gives an output matrix 𝐎∈ℝN×D\mathbf{O}\in\mathbb{R}^{N\times D}. The output is calculated using a matrix vector product (MVP) of the Attention matrix 𝐀\mathbf{A} with 𝐕\mathbf{V} as follows:
+𝐎=𝐀𝐕,𝐀=Softmax​(𝐐𝐊T),\displaystyle\mathbf{O}=\mathbf{A}\mathbf{V},\,\,\mathbf{A}=\mbox{Softmax}\left(\mathbf{Q}\mathbf{K}^{T}\right),
+(1)
+𝐨𝐢𝐣=∑n=1Nexp(𝐪i.𝐤𝐧/D)𝐯𝐧,𝐣∑n=1Nexp(𝐪i.𝐤n/D)=∑n=1Nf(𝐪i.𝐤𝐧)𝐯𝐧,𝐣∑n=1Nf(𝐪i.𝐤n)\displaystyle\mathbf{o_{ij}}\!=\!\dfrac{\sum_{n=1}^{N}{\exp(\mathbf{q}_{i}.\mathbf{k_{n}}/\sqrt{D})\mathbf{v_{n,j}}}}{\sum_{n=1}^{N}{\exp(\mathbf{q}_{i}.\mathbf{k}_{n}/\sqrt{D})}}\!=\!\dfrac{\sum_{n=1}^{N}{f(\mathbf{q}_{i}.\mathbf{k_{n}})\mathbf{v_{n,j}}}}{\sum_{n=1}^{N}{f(\mathbf{q}_{i}.\mathbf{k}_{n})}}
+(2)
+where f⁡(x)f(x) is the Attention kernel. Therefore, each head has a computational complexity of O⁡(N2​D)O(N^{2}D). The final output is given by concatenating outputs from each head. We can apply a causal mask by changing Eq. 2 to
+𝐎=tril​(𝐀)​𝐕,tril​(𝐀)i​j={𝐚i​j,j≤i0,j>i,𝐨i​j=∑n=1if(𝐪i.𝐤n)𝐯n,j∑n=1if(𝐪i.𝐤n).\displaystyle\mathbf{O}=\mbox{tril}(\mathbf{A})\mathbf{V},\quad\mbox{tril}(\mathbf{A})_{ij}=\begin{cases}\mathbf{a}_{ij},j\leq i\\
+0,\,j>i\end{cases},\quad\mathbf{o}_{ij}=\dfrac{\sum_{n=1}^{i}{f(\mathbf{q}_{i}.\mathbf{k}_{n})\mathbf{v}_{n,j}}}{\sum_{n=1}^{i}{f(\mathbf{q}_{i}.\mathbf{k}_{n})}}.
+(3)
+The traditional softmax attention kernel, defined by f​(x)=exp​(x/D)f(x)=\mbox{exp}(x/\sqrt{D}), is not the sole viable option for deriving the attention matrix. In fact, any definite positive convex function can substitute for the attention kernel, with the choice impacting the model’s expressivity.
+2.2 Linear Attention
+Using LA, the attention kernel is chosen to be f⁡(x)=a+b​xf(x)=a+bx, with the coefficients either as the Taylor expansion of the exponential or as learnable parameters. The output with (left) and without (right) causal mask will be
+𝐨𝐢𝐣=∑n=1N(a+b𝐪i.𝐤n)𝐯𝐧,𝐣∑n=1Na+b​𝐪i.𝐤n,𝐨𝐢𝐣=∑n=1i(a+b𝐪i.𝐤n)𝐯𝐧,𝐣∑n=1ia+b​𝐪i.𝐤n,\displaystyle\mathbf{o_{ij}}=\dfrac{\sum_{n=1}^{N}(a+b\mathbf{q}_{i}.\mathbf{k}_{n})\mathbf{v_{n,j}}}{\sum_{n=1}^{N}a+b\mathbf{q}_{i}.\mathbf{k}_{n}},\quad\mathbf{o_{ij}}=\dfrac{\sum_{n=1}^{i}(a+b\mathbf{q}_{i}.\mathbf{k}_{n})\mathbf{v_{n,j}}}{\sum_{n=1}^{i}a+b\mathbf{q}_{i}.\mathbf{k}_{n}},
+(4)
+which can be implemented using either an RNN architecture Katharopoulos et al. (2020); Yang et al. (2023) or a Transformer Han et al. (2023); Cai et al. (2022); Zhang et al. (2024); Wang et al. (); Shen et al. (2021); You et al. (2024) in O⁡(N​D2)O(ND^{2}) time. Our approach is based on the Transformer architecture. In Section 3 we demonstrate our novel method for calculating the forward and backward-pass of LA, and in Section 4 our optimized implementation.
+3 Method
+We analyze LA to identify and reuse repeated computation patterns, thereby reducing the computational cost of both the forward and backward-passes. We will demonstrate this process with a causal mask applied; attention without a causal mask follows a similar procedure. Our method and its subsequent implementation are intrinsically linked. The computational pattern we devise is specifically designed to enable a highly parallelized implementation with minimal data movement, as we elaborate in Section 4.
+3.1 Forward-Pass
+With f⁡(x)=a+b​xf(x)=a+bx as the attention kernel and causal mask applied, the output matrix 𝐎\mathbf{O} can be broken down to
+𝐨i​j=∑n=1if⁡(𝐪iT​𝐤𝐧)​𝐯n​j∑n=1if⁡(𝐪iT​𝐤𝐧)=𝐟i​j𝐠i,\displaystyle\mathbf{o}_{ij}=\dfrac{\sum_{n=1}^{i}{f(\mathbf{q}_{i}^{T}\mathbf{k_{n}})\mathbf{v}_{nj}}}{\sum_{n=1}^{i}{f(\mathbf{q}_{i}^{T}\mathbf{k_{n}})}}=\dfrac{\mathbf{f}_{ij}}{\mathbf{g}_{i}},
+(5)
+𝐟i​j=∑n=1i(a+b​∑m=1D𝐪i​m​𝐤n,m)​𝐯n​j,𝐠i=∑n=1i(a+b​∑m=1D𝐪i​m​𝐤n,m).\displaystyle\mathbf{f}_{ij}\!=\!\sum_{n=1}^{i}\!\left(a+b\!\sum_{m=1}^{D}\!{\mathbf{q}_{im}\mathbf{k}_{n,m}}\right)\mathbf{v}_{nj},\quad\mathbf{g}_{i}\!=\!\sum_{n=1}^{i}\left(a+b\sum_{m=1}^{D}\!{\mathbf{q}_{im}\mathbf{k}_{n,m}}\right).
+(6)
+Changing the summation orders we get
+𝐟i​j=a​∑n=1i𝐯n​j+b​∑m=1D∑n=1i𝐪i​m​𝐤n,m​𝐯n​j,𝐠i=a​∑n=1i1+b​∑m=1D∑n=1i𝐪i​m​𝐤n,m.\displaystyle\mathbf{f}_{ij}=a\sum_{n=1}^{i}{\mathbf{v}_{nj}}+b\sum_{m=1}^{D}{\sum_{n=1}^{i}{\mathbf{q}_{im}\mathbf{k}_{n,m}\mathbf{v}_{nj}}},\quad\quad\mathbf{g}_{i}=a\sum_{n=1}^{i}{1}+b\sum_{m=1}^{D}{\sum_{n=1}^{i}{\mathbf{q}_{im}\mathbf{k}_{n,m}}}.
+(7)
+Factorizing the repeated computation we arrive at
+𝐟i​j=xi​j(1)+∑m=1D𝐪i​m​xi​j​m(2),𝐠i=yi(1)+∑m=1D𝐪i​m​yi​m(2),\displaystyle\mathbf{f}_{ij}=x^{(1)}_{ij}+\sum_{m=1}^{D}{\mathbf{q}_{im}x^{(2)}_{ijm}},\quad\mathbf{g}_{i}=y^{(1)}_{i}+\sum_{m=1}^{D}{\mathbf{q}_{im}y^{(2)}_{im}},
+(8)
+where the x,yx,y, are the identified repeated computation patterns and can be derived in linear time as
+x1​j(1)=a​𝐯1​j,xi​j(1)\displaystyle x^{(1)}_{1j}=a\,\mathbf{v}_{1j},\quad x^{(1)}_{ij}
+=xi−1​j(1)+a​𝐯i​j,\displaystyle=x^{(1)}_{i-1j}+a\,\mathbf{v}_{ij},
+x1​j​m(2)=b​𝐤1​m​𝐯1​j,xi​j​m(2)\displaystyle x^{(2)}_{1jm}=b\,\mathbf{k}_{1m}\mathbf{v}_{1j},\quad x^{(2)}_{ijm}
+=xi−1​j​m(2)+b​𝐤i​m​𝐯i​j,\displaystyle=x^{(2)}_{i-1jm}+b\,\mathbf{k}_{im}\mathbf{v}_{ij},
+yi(1)=a​i,y1​m(2)=b​𝐤1​m,\displaystyle y^{(1)}_{i}=a\,i,\quad y^{(2)}_{1m}=b\,\mathbf{k}_{1m},\quad
+yi​m(2)=yi−1​m(2)+b​𝐤i​m.\displaystyle y^{(2)}_{im}=y^{(2)}_{i-1m}+b\,\mathbf{k}_{im}.
+(9)
+Equation 5 requires O⁡(N​D)O(ND) operations, while Equations 7 and 9 both require O⁡(N​D2)O(ND^{2}) operations. Therefore, the overall computational complexity of the forward-pass will be O⁡(N​D2)O(ND^{2}). When using a differentiable programming library such as JAX or PyTorch, all operations must be tracked in the computational graph. Consequently, all intermediate variables from Eq. 9 need to be stored, resulting in a high memory consumption of O⁡(N​D2)O(ND^{2}). To reduce the memory consumption and to also improve runtime efficiency, we derive the analytical gradient of the LA attention head and manually implement the backward-pass, instead of relying on these libraries.
+3.2 Backward-Pass
+To maintain an overall linear time scaling during training, the backward-pass must also be calculated with a time complexity of O⁡(N​D2)O(ND^{2}). Let us denote the dot product 𝐪i.𝐤j\mathbf{q}_{i}.\mathbf{k}_{j} as si​js_{ij}, and write the attention 𝐚\mathbf{a} and output 𝐨\mathbf{o} with causal mask applied as
+𝐨i​j=∑n=1i𝐚i​n​𝐯n​j,𝐚i​n=f⁡(si​j)∑m=1if⁡(si​m)=f⁡(si​j)𝐠i,f⁡(x)=a+b​x\displaystyle\mathbf{o}_{ij}=\sum_{n=1}^{i}{\mathbf{a}_{in}\mathbf{v}_{nj}},\quad\mathbf{a}_{in}=\dfrac{f(s_{ij})}{\sum_{m=1}^{i}f(s_{im})}=\dfrac{f(s_{ij})}{\mathbf{g}_{i}},\quad f(x)=a+bx
+(10)
+Taking the derivative with respect to si​ls_{il}, we find ∂𝐨i​j∂si​l\dfrac{\partial\mathbf{o}_{ij}}{\partial s_{il}} as
+∂𝐚i​n∂si​l\displaystyle\dfrac{\partial\mathbf{a}_{in}}{\partial s_{il}}
+={b⁡(1−𝐚i​j)∑m=1if⁡(si​m),n=lb⁡(−𝐚i​j)∑m=1if⁡(si​m),n≠l\displaystyle=\begin{cases}\dfrac{b\,(1-\mathbf{a}_{ij})}{\sum_{m=1}^{i}f(s_{im})},n=l\vskip 5.0pt\\
+\dfrac{b\,(-\mathbf{a}_{ij})}{\sum_{m=1}^{i}f(s_{im})},n\neq l\end{cases}
+(11)
+∂𝐨i​j∂si​l\displaystyle\dfrac{\partial\mathbf{o}_{ij}}{\partial s_{il}}
+=∑n=1i∂𝐚i​n∂si​l​𝐯n​j=b⁡(𝐯l​j−∑n=1i𝐚i​n​𝐯n​j)∑m=1if⁡(si​m)=b𝐠i​(𝐯l​j−𝐨i​j).\displaystyle=\sum_{n=1}^{i}\dfrac{\partial\mathbf{a}_{in}}{\partial s_{il}}\mathbf{v}_{nj}=\dfrac{b\,(\mathbf{v}_{lj}-\sum_{n=1}^{i}\mathbf{a}_{in}\mathbf{v}_{nj})}{\sum_{m=1}^{i}f(s_{im})}=\dfrac{b}{\mathbf{g}_{i}}(\mathbf{v}_{lj}-\mathbf{o}_{ij}).
+(12)
+We now derive the partial derivative with respect to 𝐐,𝐊,𝐕\mathbf{Q},\mathbf{K},\mathbf{V}
+∂𝐨i​j∂𝐪i​r\displaystyle\dfrac{\partial\mathbf{o}_{ij}}{\partial\mathbf{q}_{ir}}
+=∑l=1i∂si​l∂𝐪i​r​∂𝐨i​j∂si​l=∑l=1ib​𝐤l,r𝐠i​(𝐯l​j−𝐨i​j)\displaystyle=\sum_{l=1}^{i}\dfrac{\partial s_{il}}{\partial\mathbf{q}_{ir}}\dfrac{\partial\mathbf{o}_{ij}}{\partial s_{il}}=\dfrac{\sum_{l=1}^{i}b\,\mathbf{k}_{l,r}}{\mathbf{g}_{i}}(\mathbf{v}_{lj}-\mathbf{o}_{ij})
+(13)
+∂𝐨i​j∂𝐤p,r\displaystyle\dfrac{\partial\mathbf{o}_{ij}}{\partial\mathbf{k}_{p,r}}
+=∂si​p∂𝐤p,r​∂𝐨i​j∂si​p=b​𝐪i​r𝐠i​(𝐯p,j−𝐨i​j)\displaystyle=\dfrac{\partial s_{ip}}{\partial\mathbf{k}_{p,r}}\dfrac{\partial\mathbf{o}_{ij}}{\partial s_{ip}}=\dfrac{b\,\mathbf{q}_{ir}}{\mathbf{g}_{i}}(\mathbf{v}_{p,j}-\mathbf{o}_{ij})
+(14)
+∂𝐨i​j∂𝐯p,j\displaystyle\dfrac{\partial\mathbf{o}_{ij}}{\partial\mathbf{v}_{p,j}}
+=𝐚i​p=f⁡(si​p)𝐠i.\displaystyle=\mathbf{a}_{ip}=\dfrac{f(s_{ip})}{\mathbf{g}_{i}}.
+(15)
+During the backward-pass, given the gradient of the layer in front 𝛀\mathbf{\Omega}, the gradient of the attention head ∇𝚿\nabla\mathbf{\Psi} is calculated as follows
+∇𝐪i​r𝚿\displaystyle\nabla_{\mathbf{q}_{ir}}\mathbf{\Psi}
+=∑j=1D∂𝐨i​j∂𝐪i​r​𝛀i​j=∑j=1D∑l=1ib​𝐤l,r​(𝐯l​j−𝐨i​j)𝐠i​𝛀i​j\displaystyle=\sum_{j=1}^{D}\dfrac{\partial\mathbf{o}_{ij}}{\partial\mathbf{q}_{ir}}\mathbf{\Omega}_{ij}=\sum_{j=1}^{D}\dfrac{\sum_{l=1}^{i}b\,\mathbf{k}_{l,r}(\mathbf{v}_{lj}-\mathbf{o}_{ij})}{\mathbf{g}_{i}}\,\mathbf{\Omega}_{ij}
+(16)
+∇𝐤p,r𝚿\displaystyle\nabla_{\mathbf{k}_{p,r}}\mathbf{\Psi}
+=∑i=1p∑j=1D∂𝐨i​j∂𝐤p,r​𝛀i​j=∑i=1p∑j=1Db​𝐪i​r𝐠i​(𝐯p,j−𝐨i​j)​𝛀i​j\displaystyle=\sum_{i=1}^{p}\sum_{j=1}^{D}\dfrac{\partial\mathbf{o}_{ij}}{\partial\mathbf{k}_{p,r}}\mathbf{\Omega}_{ij}=\sum_{i=1}^{p}\sum_{j=1}^{D}\dfrac{b\,\mathbf{q}_{ir}}{\mathbf{g}_{i}}(\mathbf{v}_{p,j}-\mathbf{o}_{ij})\,\mathbf{\Omega}_{ij}
+(17)
+∇𝐯p,j𝚿\displaystyle\nabla_{\mathbf{v}_{p,j}}\mathbf{\Psi}
+=∑i=1p∂𝐨i​j∂𝐯p,j​𝛀i​j=∑i=1pf⁡(si​p)𝐠i​𝛀i​j\displaystyle=\sum_{i=1}^{p}\dfrac{\partial\mathbf{o}_{ij}}{\partial\mathbf{v}_{p,j}}\mathbf{\Omega}_{ij}=\sum_{i=1}^{p}\dfrac{f(s_{ip})}{\mathbf{g}_{i}}\,\mathbf{\Omega}_{ij}
+(18)
+Changing the summation order and factorizing the repeated computation we get
+∇𝐪i​r𝚿=∑j=1Dαi​j​rQ−βi​rQ​𝐨i​j​𝛀^i​j,∇𝐤i​r𝚿=∑j=1Dαi​r​jK​𝐯i​j−βi​r​jK,\displaystyle\nabla_{\mathbf{q}_{ir}}\mathbf{\Psi}=\sum_{j=1}^{D}\alpha_{ijr}^{Q}-\beta_{ir}^{Q}\,\mathbf{o}_{ij}\,\hat{\mathbf{\Omega}}_{ij},\quad\quad\nabla_{\mathbf{k}_{ir}}\mathbf{\Psi}=\sum_{j=1}^{D}\alpha_{irj}^{K}\,\mathbf{v}_{ij}-\beta_{irj}^{K},
+(19)
+∇𝐯i​j𝚿=αi​jV+∑j=1Dβr​jV​𝐤i​r,𝛀^i​j=𝛀i​j𝐠i.\displaystyle\nabla_{\mathbf{v}_{ij}}\mathbf{\Psi}=\alpha_{ij}^{V}+\sum_{j=1}^{D}\beta_{rj}^{V}\,\mathbf{k}_{ir},\quad\quad\hat{\mathbf{\Omega}}_{ij}=\dfrac{\mathbf{\Omega}_{ij}}{\mathbf{g}_{i}}.
+(20)
+where the α\alpha and β\beta are the factorized coefficients and are defined as
+α1​j​rQ=b​𝐤1​r​𝐯1​j,αi​j​rQ=αi−1​j​rQ+b​𝐤i​r​𝐯i​j,\displaystyle\alpha_{1jr}^{Q}=b\,\mathbf{k}_{1r}\,\mathbf{v}_{1j},\quad\alpha_{ijr}^{Q}=\alpha_{i-1jr}^{Q}+b\,\mathbf{k}_{ir}\,\mathbf{v}_{ij},
+β1​rQ=b​𝐤1​r,βi​rQ=βi−1​rQ+b​𝐤i​r,\displaystyle\beta_{1r}^{Q}=b\,\mathbf{k}_{1r},\quad\beta_{ir}^{Q}=\beta_{i-1r}^{Q}+b\,\mathbf{k}_{ir},
+αN​r​jK=b​𝐪N​r​𝛀^N​j,αi​r​jK=αi+1​r​jK+b​𝐪i​r​𝛀^i​j,\displaystyle\alpha_{Nrj}^{K}=b\,\mathbf{q}_{Nr}\,\hat{\mathbf{\Omega}}_{Nj},\quad\alpha_{irj}^{K}=\alpha_{i+1rj}^{K}+b\,\mathbf{q}_{ir}\,\hat{\mathbf{\Omega}}_{ij},
+βN​r​jK=b​𝐪N​r​𝐨N​j​𝛀^N​j,βi​r​jK=βi+1​r​jK+b​𝐪i​r​𝐨i​j​𝛀^i​j,\displaystyle\beta_{Nrj}^{K}=b\,\mathbf{q}_{Nr}\,\mathbf{o}_{Nj}\,\hat{\mathbf{\Omega}}_{Nj},\quad\beta_{irj}^{K}=\beta_{i+1rj}^{K}+b\,\mathbf{q}_{ir}\,\mathbf{o}_{ij}\,\hat{\mathbf{\Omega}}_{ij},
+αN​jV=a​𝛀^N​j,αN​jV=αi+1​jV+a​𝛀^i​j,\displaystyle\alpha_{Nj}^{V}=a\,\hat{\mathbf{\Omega}}_{Nj},\quad\alpha_{Nj}^{V}=\alpha_{i+1j}^{V}+a\,\hat{\mathbf{\Omega}}_{ij},
+βN​r​jV=b,𝐪N​r​𝛀^N​j,βi​r​jV=βi+1​r​jV+b,𝐪i​r​𝛀^i​j.\displaystyle\beta_{Nrj}^{V}=b,\ \mathbf{q}_{Nr}\,\hat{\mathbf{\Omega}}_{Nj},\quad\beta_{irj}^{V}=\beta_{i+1rj}^{V}+b,\ \mathbf{q}_{ir}\,\hat{\mathbf{\Omega}}_{ij}.
+(21)
+Put into words, gradient of the output matrix 𝐎\mathbf{O} can be calculated by storing 𝐐\mathbf{Q}, 𝐊\mathbf{K}, 𝐕\mathbf{V}, 𝐎\mathbf{O}, and 𝐠i\mathbf{g}_{i}; resulting in a reduced memory consumption of O⁡(N​D)O(ND) elements. The time complexity is O⁡(N​D2)O(ND^{2}) since we perform O⁡(D)O(D) operations for 1≤i≤N, 1≤j≤D1\leq i\leq N,\,1\leq j\leq D in Equation 21, which is the same time complexity as the forward-pass.
+3.3 Normalization
+It has been suggested Qin et al. (2022a) that the lack of expressivity in other subquadratic attention mechanisms rises due to the possibility of their gradients either blowing up or vanishing. To prevent such behavior, we recommend normalizing the query and key vectors before the attention calculation. To be specific, given 𝐐\mathbf{Q} and 𝐊\mathbf{K}, we first normalize 𝐐\mathbf{Q} and 𝐊\mathbf{K} row-wise as
+𝐪i=𝐪i‖𝐪i‖,𝐤i=𝐤i‖𝐤i‖,∀1≤i≤N.\displaystyle\mathbf{q}_{i}=\dfrac{\mathbf{q}_{i}}{||\mathbf{q}_{i}||},\quad\mathbf{k}_{i}=\dfrac{\mathbf{k}_{i}}{||\mathbf{k}_{i}||},\quad\forall 1\leq i\leq N.
+(22)
+4 Optimized Implementation
+Calculating LA in the specific format detailed in Section 3 offers the potential to increase both the data reuse rate (the number of times each element is used per off-chip memory access) and parallelization. Specifically, the operations are ordered to ensure that each data segment is accessed by a single thread. This ordering prevents scenarios where multiple threads conflict over the same element or where individual threads require data exceeding the shared memory (L1 cache) size, thereby preventing redundant off-chip memory accesses. In this section we will provide the details of our optimized CUDA implementation such as data movement and thread scheduling for the forward and backward-pass. We employ attention kernel of f⁡(x)=1+xf(x)=1+x, and the variables are stored as three dimensional tensors.
+4.1 Forward-Pass
+To calculate the output 𝐎\mathbf{O}, we require 𝐟i​j\mathbf{f}_{ij} and 𝐠i\mathbf{g}_{i}, where 𝐟i​j\mathbf{f}_{ij} and 𝐠i\mathbf{g}_{i} are obtained according to Equation 8. We will detail the process for calculating 𝐟i​j\mathbf{f}_{ij}, and 𝐠i\mathbf{g}_{i} follows a similar, simpler process.
+To derive 𝐟i​j\mathbf{f}_{ij}, we need to find two sets of coefficients x(1)x^{(1)} and x(2)x^{(2)}, as described by Equation 9. The derivation of x(1)x^{(1)} and x(2)x^{(2)} is sequential, meaning that xi​j(1)x^{(1)}_{ij} and xi​j​m(2)x^{(2)}_{ijm} depend on xi−1​j(1)x^{(1)}_{i-1j} and xi−1​j(2)x^{(2)}_{i-1j}. As a result, the derivation of each individual xi​j(1)x^{(1)}_{ij} and xi​j​m(2)x^{(2)}_{ijm} cannot be parallelized; at least not without employing ‘reduction‘ techniques22
+2
+https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf. For now, let’s assume a non-parallelized approach. Similarly, the derivation of each individual fi​jf_{ij} is also inherently sequential. Therefore, the computation of xi​j(1)x^{(1)}_{ij}, xi​j​m(2)x^{(2)}_{ijm} and fi​jf_{ij} for each jj should be performed within the same thread as well.
+As a reminder 𝐟i​j\mathbf{f}_{ij} is calculated as
+𝐟i​j=xj(1)+∑m=1D𝐪i​m​xj​m(2),\displaystyle\mathbf{f}_{ij}=x^{(1)}_{j}+\sum_{m=1}^{D}{\mathbf{q}_{im}x^{(2)}_{jm}},
+(23)
+which we refer to the left term xj(1)x^{(1)}_{j} as the Constant term and the right term ∑m=1D𝐪i,m​xj​m(2)\sum_{m=1}^{D}{\mathbf{q}_{i,m}x^{(2)}_{jm}} as the Linear term. Let’s first proceed with the Constant term. We call DD threads for 1≤j≤D1\leq j\leq D, in each thread perform a loop for 1≤i≤N1\leq i\leq N to calculate xi​j(1)x^{(1)}_{ij}, and assign it to fi​jf_{ij} as shown in Algorithm 1 in the Appendix. Since the xi​j(1)x^{(1)}_{ij} values for each jj is only accessed within a thread, we can use a single register to store and update the xi​j(1)x^{(1)}_{ij} values in the for loop, rather than store them for each ii. This will accelerate the read operations (accessing in-thread registers is considerably faster than accessing shared memory) and reduce the memory consumption. Furthermore, each thread jj will access the off-chip memory to read the 𝐯i​j\mathbf{v}_{ij} values for 1≤i≤N1\leq i\leq N, and to write 𝐟i​j\mathbf{f}_{ij}. To leverage the efficient data movement capabilities of NVIDIA GPU Streaming Multiprocessors (SMs), which fetch adjacent data blocks from off-chip memory to the L2 and L1 caches for adjacent blocks and threads, the 𝐕i​j\mathbf{V}_{ij} and 𝐟i​j\mathbf{f}_{ij} values should be stored with jj as the first tensor dimension and ii as the second.
+To calculate the Linear term, we call DD threads for 1≤j≤D1\leq j\leq D, and in each thread perform a loop for 1≤m≤D1\leq m\leq D within a loop for 1≤i≤N1\leq i\leq N to calculate xi​j​m(2)x^{(2)}_{ijm} and add it to fi​jf_{ij}, as shown in Algorithm 2. Since the xi​j​m(2)x^{(2)}_{ijm} values for each jj are only accessed within a thread, we can use an array of registers to store them for each mm, and sequentially update it as the xi​j​m(2)x^{(2)}_{ijm} values to accelerate read operations. However, the value of DD is often too large for the whole xi​j​m(2)x^{(2)}_{ijm} 1≤m≤D1\leq m\leq D to be stored in thread registers. As a workaround we perform reduction, where we break the inner loop into separate LL block of threads, that is, we call LL blocks, each with DD threads, and in each thread performing loop for 1≤m≤D/L1\leq m\leq D/L within a loop for 1≤i≤N1\leq i\leq N. By applying reduction, multiple threads might edit the same fi​jf_{ij}, and therefore we would have to use ‘Race Aware‘ operations when updating fi​jf_{ij}. We use L=D32L=\dfrac{D}{32} in our implementation.
+Furthermore, since the 𝐪i​m\mathbf{q}_{im} and 𝐤i​m\mathbf{k}_{im} values for each mm are accessed within the same block of threads, we can store them in shared memory (note that multiple block of threads will access the same 𝐪i​m\mathbf{q}_{im} and 𝐤i​m\mathbf{k}_{im}). To be specific, within every iteration of the outer loop (for 1≤i≤n1\leq i\leq n), each thread moves one element of 𝐪\mathbf{q} and 𝐤\mathbf{k} from the off-chip memory to the shared memory; a total of 2×D2\times D elements. Since 64≤D≤51264\leq D\leq 512, there is enough shared memory for storage. In order to enable the adjacent threads utilize the shared memory, corresponding 𝐪i​m\mathbf{q}_{im} and 𝐤i​m\mathbf{k}_{im} values should be stored with mm as the first tensor dimension and ii as the second. By parallelizing the read operations and utilizing shared memory, we reduce the read time from N​D​to​cND\,t_{oc} to N,to​c+D​tsN,t_{oc}+D\,t_{s}, where to​ct_{oc} and tst_{s} are the read time for off-chip and shared memory ( ts<<to​ct_{s}<<t_{oc}). For context, to​ct_{oc} is on the order of a hundred cycles, where tst_{s} a few cycles.
+Finally, considering the multiple attention heads HH in each Transformer layer and multiple input batches BB, the entire process is executed across B×HB\times H parallel blocks. The values are stored such that the third tensor dimension corresponds to the batch and head numbers. Overall, the process involves B×HB\times H outer blocks, LL inner blocks, and DD threads per block. For instance, Figure 1 illustrates the structure of the 𝐪r​i​j\mathbf{q}_{rij} values and the data movement pattern for calculating the Linear term with a batch size of B=2B=2, number of heads H=4H=4, dimension per head D=6D=6, sequence length N=8N=8, and reduction block size L=2L=2 (indicated as A and B blocks), where 1≤r≤B×H1\leq r\leq B\times H, 1≤i≤N1\leq i\leq N, and 1≤j≤D1\leq j\leq D. Cells sharing the same color belong to the same outer block, cells with the same letter (A or B) belong to the same inner block, and each cell within an inner block is accessed by D threads. The 𝐪\mathbf{q} cells are then processed sequentially, with the left number in each cell indicating the outer loop iteration (line 11 in Algorithm 2) and the right number indicating the inner loop iteration (line 16 in Algorithm 2). In a 1-dimensional view, the data are arranged so that data processed by adjacent threads are spatially adjacent. For example, cells with the same color and the same letter are positioned next to each other.
+Note that the data movement differs for other tensors such as 𝐤\mathbf{k} and 𝐯\mathbf{v}. We should also mention that we must ensure threads related to the Constant term complete their execution before invoking threads related to the Linear term to prevent race conditions, as both sets of threads might modify the same fi​jf_{ij}.
+Figure 1: Structure of the Query (𝐐\mathbf{Q}) storage and its data movement pattern for calculating the Linear term with a batch size of B=2B=2, number of heads H=4H=4, dimension per head D=6D=6, sequence length N=8N=8, and reduction block size L=2L=2. Cells with the same color and letter (A or B) are processed by the same block of threads, and the left and right numbers on each cell denote the sequential order of processing in each thread’s outer and inner loops.
+4.2 Backward-Pass
+During the backward-pass, the attention layer takes the incoming gradient of the layer in front, and produces the gradient with respect to 𝐐\mathbf{Q}, 𝐊\mathbf{K} and 𝐕\mathbf{V}, as shown in Equations 19-20. We will detail the process for calculating the gradient with respect to 𝐊\mathbf{K} (∇𝐊𝚿\nabla_{\mathbf{K}}\mathbf{\Psi}), and ∇𝐐𝚿,∇𝐕𝚿\nabla_{\mathbf{Q}}\mathbf{\Psi},\,\nabla_{\mathbf{V}}\mathbf{\Psi} follows a similar process. To derive 𝐟i​j\mathbf{f}_{ij}, we need to find two sets of coefficients αK\alpha^{K} and βK\beta^{K}. Similar to the forward-pass, these coefficients are determined sequentially, as described by Equation 21. As a reminder ∇𝐤i​r𝚿\nabla_{\mathbf{k}_{ir}}\mathbf{\Psi} is calculated as
+∇𝐤i​j𝚿=∑m=1Dαi​j​mK​𝐯i​m−∑m=1Dβi​j​mK,\displaystyle\nabla_{\mathbf{k}_{ij}}\mathbf{\Psi}=\sum_{m=1}^{D}\alpha_{ijm}^{K}\,\mathbf{v}_{im}-\sum_{m=1}^{D}\beta_{ijm}^{K},
+(24)
+where we refer to the left term ∑m=1Dαi​j​mK​𝐯i​m\sum_{m=1}^{D}\alpha_{ijm}^{K}\,\mathbf{v}_{im} as the Alpha term, and the right term ∑m=1Dβi​j​mK\sum_{m=1}^{D}\beta_{ijm}^{K} the Beta term. To derive them, we take an approach similar to calculation of Linear term in forward-pass; to call B×HB\times H outer blocks, LL inner blocks, and DD threads per block.
+To calculate the Alpha term, each thread consists of an outer loop for 1≤i≤N1\leq i\leq N and an inner loop for 1≤m≤D/L1\leq m\leq D/L. The αi​j​mK\alpha_{ijm}^{K} are then calculated sequentially and assigned to ∇𝐤i​j𝚿\nabla_{\mathbf{k}_{ij}}\mathbf{\Psi}, as shown in Algorithm 3. Given that the 𝐪i​j\mathbf{q}_{ij} values for each jj are solely accessed within a thread, we can use a single register to store and update them in the for loop. Furthermore, since the αi​j​mK\alpha_{ijm}^{K} values are accessed only within a thread as well, we use an array of registers to store them, employing the same reduction techniques to manage the limited register space.
+The 𝐯i​m\mathbf{v}_{im} and 𝛀^i​m\mathbf{\hat{\Omega}}_{im} for each mm are accessed within the same block of threads. Therefore, we can store them in shared memory. Analogous to the Linear terms in forward pass, the data movement from the off-chip to shared memory is parallelized among each block of threads to reduce the read time from N​D​to​cND\,t_{oc} to N,to​c+D​tsN,t_{oc}+D\,t_{s}. To optimize data movement for 𝛀^i​j\mathbf{\hat{\Omega}}_{ij} and ∇𝐤i​j𝚿\nabla_{\mathbf{k}_{ij}}\mathbf{\Psi} by the SMs, we should store them with mm and ii mapping to the first and second tensor dimensions respectively. This arrangement allows adjacent threads to access adjacent memory, enhancing efficiency.
+Similarly, to calculate the Beta term, each thread consists of an outer loop for 1≤i≤N1\leq i\leq N and an inner loop for 1≤m≤D/L1\leq m\leq D/L, where the β​i​j​mK\beta{ijm}^{K} are calculated sequentially and deducted from ∇𝐤i​j𝚿\nabla_{\mathbf{k}_{ij}}\mathbf{\Psi}, as shown in Algorithm 4. The main difference compared to Alpha term calculation is that instead of storing 𝐯i​m\mathbf{v}_{im} and 𝛀^i​m\mathbf{\hat{\Omega}}_{im} in the shared memory, 𝐨i​m\mathbf{o}_{im} and 𝛀^i​m\mathbf{\hat{\Omega}}_{im} will be stored.
+5 Evaluation
+We evaluate our work through two sets of evaluations: first, in an isolated setting as a standalone attention layer with causal mask applied, and second, in an end-to-end setting where we train an LLM. We refer to our implementation as ‘Our LA‘, and compare our results with Gated LA Yang et al. (2023) (the state-of-the-art LA implementation), Speculative Decoding (Spec. Dec.) LA You et al. (2024), and baseline LA where we use the default Pytorch operations. We also compare with efficient I/O aware implementation of Regular Attention, FlashAttention-2 Dao (2024).
+FP Time vs Sequence Length (NN)
+FP Memory vs Sequence Length (NN)
+FP Time vs Dimension Per Head (DD)
+FP Memory vs Dimension Per Head (DD)
+Figure 2: Time and memory scaling of our LA implementation, FlashAttention-2 Dao (2024) (Regular Attention), Gated LA Yang et al. (2023), Speculative Decoding LA You et al. (2024), and baseline Pytorch LA implementation on an A6000 GPU during forward-pass (FP). The top two figures show the time and memory scaling as a function of number of tokens NN for dimension per head of D=128D=128, batch size B=4B=4, and number of heads H=16H=16. The bottom two the figures show the scaling as a function of DD for N=4096N=4096. The ‘Reg. Att.‘ and ‘Our LA‘ lines overlap in the memory scaling plots.
+5.1 Standalone Layer
+The upper plots in Figure 2 show a log-log analysis of the time and memory complexity of a single attention head’s forward-pass as a function of sequence length NN, ranging from 10310^{3} to 3​×​1053\texttimes 10^{5} tokens. These evaluations were conducted with a batch size of B=4B=4, number of heads H=16H=16 attention heads, and a per-head dimension of D=128D=128, with the reported results representing the average of 100 iterations performed on an NVIDIA A6000 GPU and precision of float-32. The slopes observed in the plots indicate the order of dependency on NN. All LA implementations exhibit a runtime scaling linearly with the number of tokens, while Regular Attention scales quadratically. Given the current trend of transformers scaling to ∼107\sim 10^{7} context length, LA would be substantially more efficient. Furthermore, our implementation is 3.3×3.3\times faster than Gated LA. The observed performance improvement is attributed to our reduced data movement, and the implementation of LA using the Transformer architecture, in contrast to Gated LA’s use of an RNN. Specifically, the inherent sequential structure of RNNs results in sequential computation of the output matrix, thereby limiting parallelization. In contrast, Transformers inherently allow for parallel computation of the output matrix. Moreover, the baseline and Spec. Dec. LA, which are based on Transformer architecture, are an order of magnitude slower, showcasing the effectiveness of our method and implementation. Regarding memory consumption, all implementations scale linearly with NN. Our LA and Regular Attention have the lowest consumption, achieving 3.6×3.6\times less memory consumption than Gated LA and an order of magnitude lower than the baseline and Spec. Dec. LA.
+BP Time vs Sequence Length (NN)
+BP Memory vs Sequence Length (NN)
+BP Time vs Dimension Per Head (DD)
+BP Memory vs Dimension Per Head (DD)
+Figure 3: Time and memory scaling of our LA implementation, FlashAttention-2 Dao (2024) (Regular Attention), Gated LA Yang et al. (2023), Speculative Decoding LA You et al. (2024), and baseline Pytorch LA implementation on an A6000 GPU during backward-pass (BP). The upper two figures show the time and memory scaling as a function of number of tokens NN for dimension per head of D=128D=128, batch size B=4B=4, and number of heads H=16H=16. The bottom two the figures show the scaling as a function of DD for N=4096N=4096. The ‘Reg. Att.‘ and ‘Our LA‘ lines overlap in the memory scaling plots.
+The bottom plots in Figure 2 show the time and memory scaling of an attention head against dimension per head DD under the same setting, except 32≤D≤25632\leq D\leq 256 and N=4096N=4096. All of the LA implementations have a runtime scaling quadratcially with dimension per head, whereas Regular Attention scales linearly. Fortunately, the dimension per head is a constant parameter (102~10^{2}) in the Transformer architecture, and is relatively small (D<<ND<<N). As for the memory consumption, Our LA, Gated LA and Regular Attention have a linear scaling with DD, whereas baseline and Spec. Dec. LA scale quadratically. This quadratic scaling arises from the application of a causal mask. To be specific, relying on a differentiable programming library to derive the backward-pass for LA with a causal mask results in O⁡(N​D2)O(ND^{2}) memory complexity, as discussed in Section 3.2. In contrast, Our LA and Gated LA employ manually derived backward-passes.
+The upper and bottom plots in Figure 3 show the time and memory scaling for a single backward-pass under the same setting as above against NN and DD respectively. The scaling trends mirror those observed in the forward-pass. Specifically, Regular Attention exhibits a quadratic runtime scaling, while the LA implementations demonstrate linear scaling, with our implementation significantly outperforming other LA variants in terms of time and memory consumption.
+Figure 4 presents the ratio of time spent on data movement (primarily off-chip memory read/write) to the total runtime (left), and the total data movement time (right) for LA implementations averaged over 100 runs on an A6000. Our method allows for a computational pattern that maximizes data reuse rate, and our implementation achieves this efficiency through specific thread scheduling and data movement, as elaborated in Section 4. As a result, our implementation exhibits minimal data movement. Compared to other LA implementations, the portion of time spent on data movement is significantly lower, where it is roughly one-third of the next lowest ratio, observed in Gated LA (71%)(71\%). This optimized data movement becomes even more apparent when examining the total data movement time, where our implementation achieves an order of magnitude reduction compared to the next best, Gated LA.
+Data Movement to Total Time Ratio Time Spent on Data Movement
+Figure 4: Ratio of data movement time to total runtime (left), and total data movement time for the forward-pass (right) across various sequence lengths for LA implementations. Empty bars indicate out of memory. Our approach minimizes data movement, resulting in significantly lower ratio and movement time.
+Compared to baseline LA implementation, where default Pytorch functions are used, the difference is a staggering 100×100\times. This significant gap arises from the inherent limitations of differentiable programming libraries. More precisely, to derive gradients during the backward-pass, these libraries must store every operation within a computational graph and apply the ‘Chain Rule‘. This approach becomes highly inefficient for element-wise operations, especially with extremely large data dimensions, as storing operations for each element results in a massive graph. Instead, tensor-wise operations should be employed, where the same operation is applied to the entire tensor and can be stored efficiently in the graph. However, the drawback of tensor-wise operations is that they restrict the flexibility of calculation patterns, and each such operation necessitates a read/write access to off-chip memory, which is extremely slow and can take hundreds of cycles. On the A6000 architecture, off-chip memory access typically ranges from 300 to 800 cycles, depending on memory traffic. In contrast, a custom CUDA implementation grants us the freedom to implement intricate computational and data movement patterns, which in turn enables optimized implementations, such as the one described in Section 4.
+In conclusion, our implementation scales linearly with NN and DD in terms of both time and memory, achieving a 3.3×3.3\times faster runtime and 3.6×3.6\times lower memory consumption compared to Gated LA, the state-of-the-art LA implementation. In comparison to efficient I/O-aware Regular Attention implementation FlashAttention-2, our approach demonstrates a faster runtime for N>3000N>3000 while maintaining similar memory consumption.
+5.2 Training an LLM
+To demonstrate the usefulness of our LA in practice, we train an LLM on the English partition of Wiki-40B Guo et al. (2020). We chose Pythia-1.4B Biderman et al. (2023) as our LLM architecture with a token length of N=8192N=8192. We deployed our model using LitGPT AI (2023) using eight A6000 GPUs. We use rotary positional encoding Su et al. (2024), cosine warmup and decay with a minimum and maximum learning rate of 5​e−55e-5 and 1​e−31e-3, and global batch size of 256256. We train the model using our implementation of LA, Gated LA, and Regular Attention (FlashAttention-2). The hyperparameters used are the same for both methods.
+The plots in Figure 5 show the learning curves for training loss as a function of wall-clock time (left) and training step (right). Compared to Regular Attention, both LA implementations have a slower convergence based on iteration count. However, they converge to the same loss, hinting to the fact that LA has comparable expresivity to Regular Attention. As for wall-clock time, our LA implementation exhibits substantial speedup of 2.8×2.8\times compared to Gated LA. Compared to Regular Attention, we exhibit 1.8×1.8\times speedup. The latter is attributed to O⁡(N)O(N) time scaling of LA, as opposed to Regular Attention’s scaling of O⁡(N2)O(N^{2}).
+Learning Curve - Wall-Clock Time Learning Curve -Training Step
+Figure 5: The learning curves of Pythia-1.4B, trained on the English segment of the Wiki-40B with a context length of 81928192 using eight A6000 GPUs. The learning curves are presented as a function of wall-clock time (left) and training step (right). Both models were trained for the same number of steps. Our linear attention (LA) implementation offers speedup over Regular Attention and Gated LA. The loss measures cross-entropy.
+Table 2 shows the comparison between LA implementations and Regular Attention in terms of accuracy on a the MMLU Hendrycks et al. (2020), PIQA Bisk et al. (2020), and ARC Clark et al. (2018) benchmarks. In agreement to results demonstrated by previous work Yang et al. (2023); You et al. (2024); Katharopoulos et al. (2020); Han et al. (2023); Cai et al. (2022); Zhang et al. (2024); Wang et al. (); Shen et al. (2021); Arora et al. (2024), LA is able to achieve comparable results to Regular Attention. This is significant as it implies that LA holds promise for replacing Regular Attention in resource-constrained devices such as smartphones, laptops, and edge devices. Our implementation of LA offers a substantial speedup over both state-of-the art LA implementation and efficient I/O aware Regular Attention in an end to end LLM setting, facilitating practical usage of LA.
+Table 2: Comparing accuracy of Regular Attention and linear attention (LA) implementations. Unlike regular attention, which scales at O⁡(N2)O(N^{2}) with the number of tokens NN, LA scales linearly at O⁡(N)O(N) while achieving comparable accuracy.
+Mechanism
+MMLU
+(0-shot)
+MMLU
+(5-shot)
+PIQA
+ARC-C
+ARC-E
+ARC-E
+Regular Attention
+22.10
+23.04
+69.18
+33.83
+61.12
+60.34
+Gated LA Yang et al. (2023)
+21.15
+22.27
+65.38
+30.52
+57.73
+58.12
+Our LA
+21.16
+25.90
+68.63
+32.43
+59.95
+59.08
+6 Conclusion
+Transformers use a Softmax-based mechanism known as attention, which has a quadratic scaling with number of tokens taken in context. This problem is particularly important since the current applications are moving towards higher number of tokens, and that there is significant interest in deploying large language models on devices with limited computational power such as smart phones. Consequently, the search for an efficient attention mechanism has become an important and active area of research. One of the promising approaches is Linear Attention (LA) with a linear time complexity of O⁡(N​D2)O(ND^{2}), where NN is the number of tokens and DD the dimension per attention head. However, due to the less established nature of LA, its implementation is far less optimized compared to regular attention and there is much room for improvement. We present an extensively optimized LA implementation.
+In summary, we propose a novel approach for calculating LA, use it to derive the analytical gradient of Attention heads, demonstrate how forward and backward passes can be calculated in O⁡(N)O(N) time, and provide the details of our optimized implementation. Our method and its implementation work hand-in-hand in the sense that the computational pattern we devise allows for a highly parallelized implementation with minimal data movement. We evaluate our implementation in an isolated setting as a standalone attention layer, and in an end-to-end setting where we train an LLM. We achieve 3.3×3.3\times speedup and a 3.6×3.6\times reduction in memory consumption compared to the state-of-the-art LA implementation Yang et al. (2023). Our implementation is in format of a PyTorch library, and can be used as a plug-and-play module. By improving the efficiency of LA implementation, we are paving the path for its practical usage, which will be particularly beneficial for deploying LLMs on computationally constrained devices.
+References
+AI (2023)
+Lightning AI.
+Litgpt.
+https://github.com/Lightning-AI/litgpt, 2023.
+Arora et al. (2024)
+Simran Arora, Sabri Eyuboglu, Michael Zhang, Aman Timalsina, Silas Alberti, Dylan Zinsley, James Zou, Atri Rudra, and Christopher Ré.
+Simple linear attention language models balance the recall-throughput tradeoff.
+arXiv preprint arXiv:2402.18668, 2024.
+Biderman et al. (2023)
+Stella Biderman, Hailey Schoelkopf, Quentin Gregory Anthony, Herbie Bradley, Kyle O’Brien, Eric Hallahan, Mohammad Aflah Khan, Shivanshu Purohit, USVSN Sai Prashanth, Edward Raff, et al.
+Pythia: A suite for analyzing large language models across training and scaling.
+In International Conference on Machine Learning, pp. 2397–2430. PMLR, 2023.
+Bisk et al. (2020)
+Yonatan Bisk, Rowan Zellers, Jianfeng Gao, Yejin Choi, et al.
+Piqa: Reasoning about physical commonsense in natural language.
+In Proceedings of the AAAI conference on artificial intelligence, volume 34, pp. 7432–7439, 2020.
+Cai et al. (2022)
+Han Cai, Chuang Gan, and Song Han.
+Efficientvit: Enhanced linear attention for high-resolution low-computation visual recognition.
+arXiv preprint arXiv:2205.14756, 3, 2022.
+Clark et al. (2018)
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord.
+Think you have solved question answering? try arc, the ai2 reasoning challenge.
+arXiv preprint arXiv:1803.05457, 2018.
+Dao (2024)
+Tri Dao.
+Flashattention-2: Faster attention with better parallelism and work partitioning.
+In The Twelfth International Conference on Learning Representations, 2024.
+URL https://openreview.net/forum?id=mZn2Xyh9Ec.
+Dao & Gu (2024)
+Tri Dao and Albert Gu.
+Transformers are ssms: Generalized models and efficient algorithms through structured state space duality.
+arXiv preprint arXiv:2405.21060, 2024.
+Dao et al. (2022)
+Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher Ré.
+Flashattention: Fast and memory-efficient exact attention with io-awareness.
+Advances in Neural Information Processing Systems, 35:16344–16359, 2022.
+Gu & Dao (2023)
+Albert Gu and Tri Dao.
+Mamba: Linear-time sequence modeling with selective state spaces.
+arXiv preprint arXiv:2312.00752, 2023.
+Guo et al. (2020)
+Mandy Guo, Zihang Dai, Denny Vrandečić, and Rami Al-Rfou.
+Wiki-40b: Multilingual language model dataset.
+In Proceedings of the Twelfth Language Resources and Evaluation Conference, pp. 2440–2452, 2020.
+Han et al. (2023)
+Dongchen Han, Xuran Pan, Yizeng Han, Shiji Song, and Gao Huang.
+Flatten transformer: Vision transformer using focused linear attention.
+In Proceedings of the IEEE/CVF International Conference on Computer Vision, pp. 5961–5971, 2023.
+Hendrycks et al. (2020)
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+Measuring massive multitask language understanding.
+arXiv preprint arXiv:2009.03300, 2020.
+Katharopoulos et al. (2020)
+Angelos Katharopoulos, Apoorv Vyas, Nikolaos Pappas, and François Fleuret.
+Transformers are RNNs: Fast autoregressive transformers with linear attention.
+In Hal Daumé III and Aarti Singh (eds.), Proceedings of the 37th International Conference on Machine Learning, volume 119 of Proceedings of Machine Learning Research, pp. 5156–5165. PMLR, 13–18 Jul 2020.
+URL https://proceedings.mlr.press/v119/katharopoulos20a.html.
+Ma et al. (2021)
+Xuezhe Ma, Xiang Kong, Sinong Wang, Chunting Zhou, Jonathan May, Hao Ma, and Luke Zettlemoyer.
+Luna: Linear unified nested attention.
+Advances in Neural Information Processing Systems, 34:2441–2453, 2021.
+MiniMax et al. (2025)
+MiniMax, Aonian Li, Bangwei Gong, Bo Yang, Boji Shan, Chang Liu, Cheng Zhu, Chunhao Zhang, Congchao Guo, Da Chen, Dong Li, Enwei Jiao, Gengxin Li, Guojun Zhang, Haohai Sun, Houze Dong, Jiadai Zhu, Jiaqi Zhuang, Jiayuan Song, Jin Zhu, Jingtao Han, Jingyang Li, Junbin Xie, Junhao Xu, Junjie Yan, Kaishun Zhang, Kecheng Xiao, Kexi Kang, Le Han, Leyang Wang, Lianfei Yu, Liheng Feng, Lin Zheng, Linbo Chai, Long Xing, Meizhi Ju, Mingyuan Chi, Mozhi Zhang, Peikai Huang, Pengcheng Niu, Pengfei Li, Pengyu Zhao, Qi Yang, Qidi Xu, Qiexiang Wang, Qin Wang, Qiuhui Li, Ruitao Leng, Shengmin Shi, Shuqi Yu, Sichen Li, Songquan Zhu, Tao Huang, Tianrun Liang, Weigao Sun, Weixuan Sun, Weiyu Cheng, Wenkai Li, Xiangjun Song, Xiao Su, Xiaodong Han, Xinjie Zhang, Xinzhu Hou, Xu Min, Xun Zou, Xuyang Shen, Yan Gong, Yingjie Zhu, Yipeng Zhou, Yiran Zhong, Yongyi Hu, Yuanxiang Fan, Yue Yu, Yufeng Yang, Yuhao Li, Yunan Huang, Yunji Li, Yunpeng Huang, Yunzhi Xu, Yuxin Mao, Zehan Li, Zekang Li, Zewei Tao, Zewen Ying, Zhaoyang Cong, Zhen
+Qin, Zhenhua Fan, Zhihang Yu, Zhuo Jiang, and Zijia Wu.
+Minimax-01: Scaling foundation models with lightning attention, 2025.
+URL https://arxiv.org/abs/2501.08313.
+Nguyen et al. (2021)
+Tan Nguyen, Vai Suliafu, Stanley Osher, Long Chen, and Bao Wang.
+FMMformer: Efficient and flexible transformer via decomposed near-field and far-field attention.
+In M. Ranzato, A. Beygelzimer, Y. Dauphin, P.S. Liang, and J. Wortman Vaughan (eds.), Advances in Neural Information Processing Systems, volume 34, pp. 29449–29463. Curran Associates, Inc., 2021.
+URL https://proceedings.neurips.cc/paper_files/paper/2021/file/f621585df244e9596dc70a39b579efb1-Paper.pdf.
+Qin et al. (2022a)
+Zhen Qin, Xiaodong Han, Weixuan Sun, Dongxu Li, Lingpeng Kong, Nick Barnes, and Yiran Zhong.
+The devil in linear transformer.
+October 2022a.
+URL http://arxiv.org/abs/2210.10340.
+Qin et al. (2022b)
+Zhen Qin, Weixuan Sun, Hui Deng, Dongxu Li, Yunshen Wei, Baohong Lv, Junjie Yan, Lingpeng Kong, and Yiran Zhong.
+cosformer: Rethinking softmax in attention.
+arXiv preprint arXiv:2202.08791, 2022b.
+Qin et al. (2023)
+Zhen Qin, Dong Li, Weigao Sun, Weixuan Sun, Xuyang Shen, Xiaodong Han, Yunshen Wei, Baohong Lv, Xiao Luo, Yu Qiao, et al.
+Transnormerllm: A faster and better large language model with improved transnormer.
+2023.
+Qin et al. (2024)
+Zhen Qin, Weigao Sun, Dong Li, Xuyang Shen, Weixuan Sun, and Yiran Zhong.
+Lightning attention-2: A free lunch for handling unlimited sequence lengths in large language models.
+arXiv preprint arXiv:2401.04658, 2024.
+Schlag et al. (2021)
+Imanol Schlag, Kazuki Irie, and Jürgen Schmidhuber.
+Linear transformers are secretly fast weight programmers.
+In International conference on machine learning, pp. 9355–9366. PMLR, 2021.
+Shen et al. (2021)
+Zhuoran Shen, Mingyuan Zhang, Haiyu Zhao, Shuai Yi, and Hongsheng Li.
+Efficient attention: Attention with linear complexities.
+In Proceedings of the IEEE/CVF winter conference on applications of computer vision, pp. 3531–3539, 2021.
+Singhania et al. (2024)
+Prajwal Singhania, Siddharth Singh, Shwai He, Soheil Feizi, and Abhinav Bhatele.
+Loki: Low-rank keys for efficient sparse attention.
+arXiv preprint arXiv:2406.02542, 2024.
+Su et al. (2024)
+Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu.
+Roformer: Enhanced transformer with rotary position embedding.
+Neurocomputing, 568:127063, 2024.
+Vaswani et al. (2017)
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Lukasz Kaiser, and Illia Polosukhin.
+Attention is all you need.
+arXiv [cs.CL], June 2017.
+URL http://arxiv.org/abs/1706.03762.
+(27)
+Sinong Wang, Belinda Z. Li, Madian Khabsa, Han Fang, and Hao Ma.
+Linformer: Self-Attention with Linear Complexity.
+URL http://arxiv.org/abs/2006.04768.
+Yang et al. (2023)
+Songlin Yang, Bailin Wang, Yikang Shen, Rameswar Panda, and Yoon Kim.
+Gated linear attention transformers with hardware-efficient training.
+arXiv preprint arXiv:2312.06635, 2023.
+Yang et al. (2024)
+Songlin Yang, Jan Kautz, and Ali Hatamizadeh.
+Gated delta networks: Improving mamba2 with delta rule.
+arXiv preprint arXiv:2412.06464, 2024.
+You et al. (2024)
+Haoran You, Yichao Fu, Zheng Wang, Amir Yazdanbakhsh, and Yingyan Celine Lin.
+When linear attention meets autoregressive decoding: Towards more effective and efficient linearized large language models.
+arXiv preprint arXiv:2406.07368, 2024.
+Yu et al. (2023)
+Yaodong Yu, Sam Buchanan, Druv Pai, Tianzhe Chu, Ziyang Wu, Shengbang Tong, Hao Bai, Yuexiang Zhai, Benjamin D. Haeffele, and Yi Ma.
+White-box transformers via sparse rate reduction: Compression is all there is?, 2023.
+(32)
+Manzil Zaheer, Guru Guruganesh, Avinava Dubey, Joshua Ainslie, Chris Alberti, Santiago Ontanon, Philip Pham, Anirudh Ravula, Qifan Wang, Li Yang, and Amr Ahmed.
+Big Bird: Transformers for Longer Sequences.
+URL http://arxiv.org/abs/2007.14062.
+Zhang et al. (2024)
+Michael Zhang, Kush Bhatia, Hermann Kumbong, and Christopher Ré.
+The hedgehog & the porcupine: Expressive linear attentions with softmax mimicry.
+arXiv preprint arXiv:2402.04347, 2024.
+(34)
+Haoyi Zhou, Shanghang Zhang, Jieqi Peng, Shuai Zhang, Jianxin Li, Hui Xiong, and Wancai Zhang.
+Informer: Beyond Efficient Transformer for Long Sequence Time-Series Forecasting.
+URL https://arxiv.org/abs/2012.07436v3.
+Appendix A Implementation Pseudo Codes
+This appendix provides the CUDA pseudo codes of our implementations referenced in Section 4
+Algorithm 1 Forward-Pass, Constant term
+1:
+Input: v ∈ℝB×H,N,D\in\mathbb{R}^{B\times H,\,N,\,D}
+2:
+Output: f ∈ℝB×H,N,D\in\mathbb{R}^{B\times H,\,N,\,D}
+3:
+Call B×HB\times H blocks (1≤b​h≤B×H1\leq bh\leq B\times H)
+4:
+Call DD threads in each block (1≤j≤D1\leq j\leq D)
+5:
+In each thread:
+6:
+x = 0 (on-thread register)
+7:
+for i←1i\leftarrow 1 to NN do
+8:
+x += v[b​hbh][ii][jj]
+9:
+f[b​hbh][ii][jj] = x
+10:
+end for
+Algorithm 2 Forward-Pass, Linear term
+1:
+Input: q, k, v ∈ℝB×H,N,D\in\mathbb{R}^{B\times H,\,N,\,D}
+2:
+Output: f ∈ℝB×H,N,D\in\mathbb{R}^{B\times H,\,N,\,D}
+3:
+Call B×HB\times H outer blocks (1≤b​h≤B×H1\leq bh\leq B\times H)
+4:
+Call LL inner blocks (1≤l≤L1\leq l\leq L)
+5:
+Call DD threads in each block (1≤j≤D1\leq j\leq D)
+6:
+In each thread:
+7:
+vr, x = 0 (on-thread register)
+8:
+r[11 to D/LD/L] = 0 (on-thread register)
+9:
+sq[11 to DD] = 0 (shared memory)
+10:
+sk[11 to DD] = 0 (shared memory)
+11:
+for i←1i\leftarrow 1 to NN do
+12:
+x = 0
+13:
+vr = v[b​hbh][ii][jj]
+14:
+load k[b​hbh][ii][jj] to sk[jj]
+15:
+load q[b​hbh][ii][jj] to sq[jj]
+16:
+for m←1m\leftarrow 1 to D/LD/L do
+17:
+r[mm] += vr×\timessk[l×D/L+ml\times D/L+m]
+18:
+x += r[mm]×\timessq[l×D/L+ml\times D/L+m]
+19:
+end for
+20:
+f[bh][i][j] += x
+21:
+end for
+Algorithm 3 Backward-Pass, Alpha term
+1:
+Input: q, v, Ω^\hat{\Omega} ∈ℝB×H,N,D\in\mathbb{R}^{B\times H,\,N,\,D}
+2:
+Output: ∇𝐤𝚿\nabla_{\mathbf{k}}\mathbf{\Psi} ∈ℝB×H,N,D\in\mathbb{R}^{B\times H,\,N,\,D}
+3:
+Call B×HB\times H outer blocks (1≤b​h≤B×H1\leq bh\leq B\times H)
+4:
+Call LL inner blocks (1≤l≤L1\leq l\leq L)
+5:
+Call DD threads in each block (1≤j≤D1\leq j\leq D)
+6:
+In each thread:
+7:
+qr, x = 0 (on-thread register)
+8:
+r[11 to D/LD/L] = 0 (on-thread register)
+9:
+sv[11 to DD] = 0 (shared memory)
+10:
+sg[11 to DD] = 0 (shared memory)
+11:
+for i←Ni\leftarrow N to 11 do
+12:
+x = 0
+13:
+qr = q[b​hbh][ii][jj]
+14:
+load v[b​hbh][ii][jj] to sv[jj]
+15:
+load Ω^\hat{\Omega}[b​hbh][ii][jj] to sg[jj]
+16:
+for m←1m\leftarrow 1 to D/LD/L do
+17:
+r[mm] += qr×\timessg[l×D/L+ml\times D/L+m]
+18:
+x += r[mm]×\timessv[l×D/L+ml\times D/L+m]
+19:
+end for
+20:
+∇𝐤𝚿\nabla_{\mathbf{k}}\mathbf{\Psi}[bh][i][j] = x
+21:
+end for
+Algorithm 4 Backward-Pass, Beta term
+1:
+Input: q, v, Ω^\hat{\Omega} ∈ℝB×H,N,D\in\mathbb{R}^{B\times H,\,N,\,D}
+2:
+Output: ∇𝐤𝚿\nabla_{\mathbf{k}}\mathbf{\Psi} ∈ℝB×H,N,D\in\mathbb{R}^{B\times H,\,N,\,D}
+3:
+Call B×HB\times H outer blocks (1≤b​h≤B×H1\leq bh\leq B\times H)
+4:
+Call LL inner blocks (1≤l≤L1\leq l\leq L)
+5:
+Call DD threads in each block (1≤j≤D1\leq j\leq D)
+6:
+In each thread:
+7:
+qr, x = 0 (on-thread register)
+8:
+r[11 to D/LD/L] = 0 (on-thread register)
+9:
+so[11 to DD] = 0 (shared memory)
+10:
+sg[11 to DD] = 0 (shared memory)
+11:
+for i←Ni\leftarrow N to 11 do
+12:
+x = 0
+13:
+qr = q[b​hbh][ii][jj]
+14:
+load o[b​hbh][ii][jj] to so[jj]
+15:
+load Ω^\hat{\Omega}[b​hbh][ii][jj] to sg[jj]
+16:
+for m←1m\leftarrow 1 to D/LD/L do
+17:
+r[mm] += qr×\timessg[l×D/L+ml\times D/L+m]×\timesso[l×D/L+ml\times D/L+m]
+18:
+x += r[mm]
+19:
+end for
+20:
+∇𝐤𝚿\nabla_{\mathbf{k}}\mathbf{\Psi}[bh][i][j] -= x
+21:
+end for
+Appendix B RNN and Transformer-Based Linear Attention
+The original softmax-based attention mechanism in Transformers can be expressed as below, where the q,k,vq,k,v represent the Query, Key, Value matrices, and oo the attention layer output.(See Section 2)
+𝐨𝐢𝐣=∑n=1Nexp(𝐪i.𝐤𝐧/D)𝐯𝐧,𝐣∑n=1Nexp(𝐪i.𝐤n/D)\displaystyle\mathbf{o_{ij}}\!=\!\dfrac{\sum_{n=1}^{N}{\exp(\mathbf{q}_{i}.\mathbf{k_{n}}/\sqrt{D})\mathbf{v_{n,j}}}}{\sum_{n=1}^{N}{\exp(\mathbf{q}_{i}.\mathbf{k}_{n}/\sqrt{D})}}
+(25)
+By substituting the exponential in Equation 25 with a linear approximation we arrive at Linear Attention (LA), expressed as below
+𝐨𝐢𝐣=∑n=1N(𝐪i.𝐤𝐧+1)𝐯𝐧,𝐣∑n=1N(𝐪i.𝐤𝐧+1)\displaystyle\mathbf{o_{ij}}\!=\!\dfrac{\sum_{n=1}^{N}{(\mathbf{q}_{i}.\mathbf{k_{n}}+1)\mathbf{v_{n,j}}}}{\sum_{n=1}^{N}{(\mathbf{q}_{i}.\mathbf{k_{n}}+1)}}
+(26)
+There are generally two approaches to calculate LA: 1. Transformer-based and 2. RNN-based.
+B.1 RNN-Based
+First proposed in 2020 Katharopoulos et al. (2020), Linear Attention (LA) can be implemented using Recurrent Neural Networks (RNNs). Specifically, by defining the hidden state as St=∑i=1t𝐤i.𝐯iS_{t}=\sum_{i=1}^{t}\mathbf{k}_{i}.\mathbf{v}_{i} and the update state as zt=∑i=1t𝐤iz_{t}=\sum_{i=1}^{t}\mathbf{k}_{i}, Equation 26 can be expressed in the following recurrent format:
+St=St−1+𝐤t.𝐯t,𝐨t=𝐪t​St𝐪t​zt.\displaystyle S_{t}=S_{t-1}+\mathbf{k}_{t}.\mathbf{v}_{t},\quad\mathbf{o}_{t}=\dfrac{\mathbf{q}_{t}\,S_{t}}{\mathbf{q}_{t}\,z_{t}}.
+(27)
+However, the normalizing term, 𝐪t​zt\mathbf{q}_{t}\,z_{t}, is observed to cause instability and is often omitted, resulting in 𝐨t=𝐪t​St\mathbf{o}_{t}=\mathbf{q}_{t}\,S_{t}. Recent works have studied use of gates (ϕ(.)\phi(.)) alternative to the linear kernel, with the general formulation expressed as below
+St=∑i=1tϕ(𝐤i.𝐯i),St=St−1+ϕ(𝐤t.𝐯t),ot=ϕ(𝐪t)St.\displaystyle S_{t}=\sum_{i=1}^{t}\phi({\mathbf{k}_{i}}.\mathbf{v}_{i}),\quad S_{t}=S_{t-1}+\phi({\mathbf{k}_{t}}.\mathbf{v}_{t}),\quad o_{t}=\phi({\mathbf{q}_{t}})\,S_{t}.
+(28)
+The ideal choice for ϕ(.)\phi(.) is an open area of research, and Table 3 provides a summary on recent work and their recurrent formulation.
+Table 3: Comparison of RNN-based linear attention formulations.
+Model
+Recurrence
+Layer Output
+LA Katharopoulos et al. (2020)
+St=St−1+vt​kt⊤S_{t}=S_{t-1}+v_{t}k_{t}^{\top}
+ot=St​qto_{t}=S_{t}q_{t}
+LA with Normalization
+St=St−1+vt​ϕ​(kt)⊤,zt=zt−1+ϕ⁡(kt)S_{t}=S_{t-1}+v_{t}\phi(k_{t})^{\top},\quad z_{t}=z_{t-1}+\phi(k_{t})
+ot=qt​St/(qt​zt)o_{t}=q_{t}\,S_{t}/(q_{t}\,z_{t})
+DeltaNet Schlag et al. (2021)
+St=St−1​(I−βt​kt​kt⊤)+βt​vt​kt⊤S_{t}=S_{t-1}(I-\beta_{t}k_{t}k_{t}^{\top})+\beta_{t}v_{t}k_{t}^{\top}
+ot=St​qto_{t}=S_{t}q_{t}
+Mamba Gu & Dao (2023)
+St=St−1⊙exp(−(αt𝟏⊤)⊙exp(A))+(αt⊙vt)kt⊤S_{t}=S_{t-1}\odot\exp(-(\alpha_{t}\mathbf{1}^{\top})\odot\exp(A))+(\alpha_{t}\odot v_{t})k_{t}^{\top}
+ot=St​qt+D⊙vto_{t}=S_{t}q_{t}+D\odot v_{t}
+GLA Yang et al. (2023)
+St=St−1⊙(𝟏​αt⊤)+vt​kt⊤,St=St−1​Diag​(αt)+vt​kt⊤S_{t}=S_{t-1}\odot(\mathbf{1}\alpha_{t}^{\top})+v_{t}k_{t}^{\top},\quad S_{t}=S_{t-1}\text{Diag}(\alpha_{t})+v_{t}k_{t}^{\top}
+ot=St​qto_{t}=S_{t}q_{t}
+Mamba-2 Dao & Gu (2024)
+St=γ​St−1+vt​kt⊤S_{t}=\gamma S_{t-1}+v_{t}k_{t}^{\top}
+ot=St​qto_{t}=S_{t}q_{t}
+Gated DeltaNet Yang et al. (2024)
+St=St−1​(αt​(I−βt​kt​kt⊤))+βt​vt​kt⊤S_{t}=S_{t-1}\left(\alpha_{t}(I-\beta_{t}k_{t}k_{t}^{\top})\right)+\beta_{t}v_{t}k_{t}^{\top}
+ot=St​qto_{t}=S_{t}q_{t}
+Traditional RNNs struggle with learning long-term dependencies, which can be addressed with the use of Forget Gates. Similarly, Mamba Gu & Dao (2023) introduces a selection mechanism to selectively remember important tokens, and to selectively forget irrelevant ones by choosing to compress or reset the token’s state. Furthermore, due to sequential nature of RNNs, RNNs are known to suffer from limited parallelizability. GLA Yang et al. (2023) proposes an efficient GPU implementation chunk-wise attention calculation, where instead of processing the sequence token-by-token (like an RNN) or all at once (which can exhaust memory), the sequence is divided into fixed-size segments, or "chunks". The final hidden state from the end of one chunk is saved and used as the initial hidden state for the beginning of the next chunk. This "carries over" the contextual information, mimicking the behavior of the sequential RNN and ensuring that information flows across the entire sequence. DeltaNet Schlag et al. (2021) introduces a novel linear attention mechanism based on the delta rule, a classic error-correction learning principle. Instead of just adding new information to a memory state like in standard linear attention, DeltaNet retrieves an old value from memory associated with the current query, and computes the "delta" or difference between this old value and the new incoming value, and uses this difference to update the memory.
+Although the choice of omitting the normalization and use of various gates will result in a considerable deviation from the original Attention mechanism, these models have gained more popularity compared to Transformer-based LA. One reason contributing to this choice is a lack of convenient and efficient implementation of Transformer-based LA.
+B.2 Transformer-Based
+The Transformer-based approach follows the same formulation as Equation 26. This implementation closely resembles a standard Transformer architecture, with attention computed using the traditional all-to-all softmax mechanism, but with one key modification: the exponential function is replaced by a linear approximation. This substitution enables reordering of operations, reducing computational complexity from quadratic to linear time (see Section 3.
+We should emphasize that the RNN and Transformer-based approaches employ fundamentally different architectures. The RNN-based approach derives layer outputs, 𝐨𝐢,∀1≤i≤N\mathbf{o_{i}},\,\forall 1\leq i\leq N, sequentially through a recurrent formulation, where each state ii depends on the previous state i−1i-1 and a gating function applied to the ii-th Query, Key, and Value. In contrast, the Transformer-based approach computes outputs by constructing an attention matrix from Query and Key vectors, then multiplying this matrix with the Value vectors. Since the row and column operations in attention matrix construction and matrix multiplication are independent of one another, the computation of all layer outputs 𝐨𝐢\mathbf{o_{i}} can be performed in parallel for 1≤i≤N1\leq i\leq N. This makes the Transformer-based approach inherently more parallelizable than its RNN counterpart.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

@@ -1,0 +1,1237 @@
+More Than Memory Savings: Zeroth-Order Optimization Mitigates Forgetting in Continual Learning
+Skip to main content
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Contents
+Reading mode
+Colour theme
+Abstract
+1 Introduction
+2 Related Work
+2.1 PEFT-based Class-incremental Learning
+2.2 Zeroth-Order Optimization
+3 Rethinking Zeroth-Order Optimization for Continual Learning
+4 Method
+4.1 Direct ZO Substitution in CL Fails
+4.2 ZO-FC: ZO optimization for PEFT module with FO learnable classifier
+5 Experiments
+5.1 Experimental Details
+5.2 Main Results
+5.3 Analysis and Ablation Study
+6 Conclusion
+References
+License: arXiv.org perpetual non-exclusive license
+arXiv:2510.21019v1 [cs.LG] 23 Oct 2025
+More Than Memory Savings: Zeroth-Order Optimization Mitigates Forgetting in Continual Learning
+Wanhao Yu
+Affiliation: Department of Computer Science at University of North Carolina at Charlotte
+Email: wyu6@charlotte.edu
+Zheng Wang
+Affiliation: Department of Computer Science at University of Houston
+Email: lyang50@charlotte.edu
+Shuteng Niu
+Affiliation: Department of Artificial Intelligence &\& Informatics at Mayo Clinic
+Email: zwang214@cougarnet.uh.edu
+Sen Lin
+Email: slin50@cougarnet.uh.edu
+Li Yang
+Email: niu.shuteng@mayo.edu
+Abstract
+Zeroth-order (ZO) optimization has gained attention as a memory-efficient alternative to first-order (FO) methods, particularly in settings where gradient computation is expensive or even impractical. Beyond its memory efficiency, in this work, we investigate ZO optimization for continual learning (CL) as a novel approach to address the plasticity-stability-efficiency trilemma.
+Through theoretical analysis and empirical evidence, we show that ZO optimization naturally leads to flatter loss landscapes, which in turn reduce forgetting in CL. However, this stability comes at a cost of plasticity: due to its imprecise gradient estimates and slower convergence, ZO optimization tends to be less effective than FO in acquiring new task-specific knowledge, particularly under constrained training budgets.
+To better understand this trade-off, we conduct a holistic evaluation of ZO optimization applied to various existing CL methods. Our findings reveal that ZO optimization enhances stability but often undermines plasticity, particularly when used with learnable classifiers.
+Motivated by this insight, we propose ZO-FC, a simple but effective approach that applies ZO optimization to a single adapter-based PEFT module with FO optimized classifier. This design leverages the stability benefits of ZO while preserving the adaptability of FO updates with negligible memory overhead. Experiments demonstrate that ZO-FC achieves an effective balance between stability and plasticity, offering a practical and memory-efficient solution for on-device CL.
+22footnotetext: Corresponding author
+1 Introduction
+Emulating the human ability to learn continuously from new experiences is a key inspiration in artificial intelligence. This pursuit has driven significant attention to Continual Learning (CL) [17, 7, 47], a paradigm aiming to train models on a sequence of tasks while preserving previously acquired knowledge. A primary challenge of CL is to maintain a balance between plasticity, the ability to learn new knowledge, and stability, the ability to retain previously learned knowledge by preventing catastrophic forgetting: a phenomenon where models lose prior knowledge when training on new tasks [13].
+(a)
+(b)
+Figure 1: Illustrating the difference between FO and ZO optimization in addressing the plasticity–stability dilemma in continual learning:
+(a) FO optimization offers high plasticity, enabling effective learning of new tasks, but suffers from low stability, leading to significant forgetting of previous knowledge;
+(b) In contrast, ZO optimization exhibits high stability with reduced forgetting, but lower plasticity, making it less effective at acquiring new task-specific knowledge.
+To address this plasticity-stability dilemma, recent progress in CL has shifted from “continual training from scratch” to a new paradigm of “continual fine-tuning from pre-trained models”. In particular, driven by the increasingly powerful pre-trained foundation models, such as Vision Transformers (ViTs) [8, 43], and the effectiveness of parameter-efficient fine-tuning (PEFT) techniques (i.e., prompts [24], adapters [19], or LoRAs [20]), recent CL methods [48, 15, 53, 54, 25] follow the recipe to freeze the backbone and train lightweight modules across tasks. This setup inherits strong plasticity that new tasks are learned quickly from a good initialization so the critical challenge becomes mitigating catastrophic forgetting to enhance stability. These methods therefore isolate task-specific information into PEFT modules to minimize interference with previously learned tasks.
+In this work, we take a step back to revisit the plasticity-stability dilemma from the perspective of the optimization process itself. We argue that the high plasticity low stability characteristic of PEFT-based CL methods is intrinsically related to standard first-order gradient-based optimization. The precise nature of gradient descent enables the model to quickly reach sharp, low-loss minima, resulting in high accuracy for the current task and strong plasticity. However, these sharp minima are inherently sensitive, meaning that small changes introduced by learning new tasks may disturb the model parameters, causing performance drops on previously learned tasks and thereby undermining stability, as shown in Figure 1(a).
+Recently, zeroth-order (ZO) optimization has shown promising results in fine-tuning large language models [29, 52], providing a memory-efficient alternative to traditional first-order (FO) optimization while achieving comparable accuracy. ZO optimization eliminates the need for backpropagation and the associated storage of intermediate activations, making training memory close to inference.
+In this work, we target low-memory, on-device CL settings and further look beyond this established memory advantage. We hypothesize that ZO’s gradient-free search makes it naturally tend to wider, flatter minima, which is known to be more robust to catastrophic forgetting [12, 38].
+Motivated by this potential, we investigate ZO optimization for CL as a novel approach to address the plasticity-stability-efficiency trilemma, aiming to achieve accuracy comparable to FO methods at a fraction of the training memory overhead.
+To this end, our contribution can be summarized as follows:
+•
+We provide a formal analysis linking ZO optimization to the plasticity-stability dilemma, showing that its inherent stochastic search promotes convergence to flatter minima, enhancing stability and mitigating forgetting, while also revealing its limitation in plasticity due to imprecise gradient estimation, as shown in Figure 1(b).
+•
+We conduct a comprehensive empirical investigation and discover that naively applying ZO to existing PEFT-based CL methods fails, specifically due to the learnable classifiers. Based on this insight, we propose ZO-FC, a simple and yet effective method that combines the ZO optimization PEFT module with the standard first-order optimization for the classifier.
+•
+Empirically, our proposed ZO-FC overcomes the catastrophic failure of naive ZO substitutions. It achieves accuracy comparable to state-of-the-art FO
+methods across 3 benchmarks, while using 6x less training memory. Furthermore, we empirically verify that ZO-FC guides the model toward wider, flatter regions, demonstrating the direct link between its optimization path and enhanced stability. We hope our work inspires future research to further explore ZO optimization as a promising direction for tackling the plasticity–stability–efficiency trade-off, especially in resource-constrained CL scenarios.
+2 Related Work
+2.1 PEFT-based Class-incremental Learning
+Class-incremental learning (CIL) is a widely used and challenging setting in continual learning, where new groups of classes are introduced sequentially, and the model must learn to classify all previously seen classes without access to task or class identity during inference [55]. With the growing adoption of large-scale pre-trained foundation models (e.g., Vision Transformer [8, 43]), a common learning paradigm in CIL is to use the pre-trained model as a strong initialization and perform continual fine-tuning on sequential tasks using parameter-efficient fine-tuning (PEFT),
+while keeping the pre-trained backbone frozen. PEFT enables efficient adaptation by introducing lightweight trainable modules, with common techniques including prompts [24], adapters [19], and LoRAs [20]. These PEFT-based CIL methods [48, 15, 53, 54, 25] have shown strong performance, even under rehearsal-free settings where no data from previous tasks is used during the training of new tasks.
+By leveraging strong pre-trained models as initialization, PEFT-based CIL methods inherently exhibit high plasticity. As a result, their primary focus is on mitigating forgetting to enhance stability in learning each task. First of all, SimpleCIL [53] achieves good accuracy, particularly on simpler datasets such as CIFAR100, by only applying prototype-based classification on top of a frozen pre-trained model without any learning. This result empirically highlights the effectiveness of leveraging pre-trained representations. Moreover, to mitigate forgetting when introducing task adaptive PEFT modules, a series of methods has been proposed.
+L2P [48] uses a learnable pool of prompts to activate task-specific representations, effectively isolating knowledge across tasks. CODA-Prompt [40] refines L2P by applying contrastive alignment to ensure consistent representation. LAE [15] maintains an online PEFT module for current-task learning and an offline PEFT module updated via exponential moving average (EMA) so that these modules can be ensembled at inference to combine plastic adaptation and stable accumulation. APER [53] extends SimpleCIL to adapt the pre-trained model only during the first task, then merges features from both the frozen pre-trained backbone and the adapted model to form a merged feature extractor. EASE [54] adopts a task-specific adapter for each task, and introduces a semantic-guided prototype synthesis strategy that reconstructs old class representations in the current subspace to mitigate forgetting. InfLoRA [25] adapts LoRA-based CL with an interference-free design by constraining the update directions of LoRA modules to be task-orthogonal to reduce cross-task interference. In this work, these methods serve as FO optimization baselines for evaluating the application of ZO optimization.
+2.2 Zeroth-Order Optimization
+Zeroth-order (ZO) optimization has been extensively studied [41, 32, 26, 28] as a gradient-free alternative to first-order (FO) methods. By estimating gradients using only function evaluations without the need for backpropagation, ZO optimization is appealing in privacy-sensitive, black-box, or resource-constrained settings, such as federated learning and edge device deployment [4, 45, 10, 39]. A representative ZO method is Simultaneous Perturbation Stochastic Approximation (SPSA) [41], which estimates gradients by computing finite differences of the loss function along randomly sampled direction vectors. Given model parameters θ\theta and a loss function LL, the ZO gradient estimate can be expressed as:
+|
+g^=L⁡(θ+ε​Δ)−L⁡(θ−ε​Δ)2​ε⋅Δ−1,\hat{g}=\frac{L(\theta+\varepsilon\Delta)-L(\theta-\varepsilon\Delta)}{2\varepsilon}\cdot\Delta^{-1}, |
+|
+(1) |
+where Δ∼±1d\Delta\sim{\pm 1}^{d} is a random perturbation vector, dd is the parameter dimension, and ε\varepsilon is a small perturbation scale. This ZO estimate can be further incorporated into standard optimizers, such as stochastic gradient descent (SGD), to yield batch-wise zeroth-order stochastic gradient descent (ZO-SGD) [16, 32]. To reduce the high variance inherent in single-direction estimates for each updating step, a common practical extension is to average over QQ queries of independent perturbation directions per gradient step [42].
+Notably, recent work MeZO [29] has demonstrated that ZO-SGD fine-tuning on large language models can achieve accuracy comparable to its FO counterpart. In addition, while there are other ZO techniques, including Forward-Grad [1, 36], Sign-based variants [27, 29], and adaptive methods such as ZO-AdaMM [6], recent benchmark studies [52, 11] show that no single method consistently outperforms others in all tasks. Therefore, we adopt SPSA and its mini-batch extension, ZO-SGD, as our default ZO optimization strategy.
+3 Rethinking Zeroth-Order Optimization for Continual Learning
+In this work, we intuitively hypothesize that ZO optimization is inherently well-suited for mitigating catastrophic forgetting, thereby enhancing the stability of continual learning (CL) when adapting to new tasks. To support this hypothesis, we provide a theoretical analysis that connects ZO optimization to the core challenge of plasticity-stability dilemma in CL. Our analysis is grounded in two key lines of research: (1) flat minima of loss landscape are known to reduce forgetting, and (2) ZO optimization tends to favor convergence to flatter minima.
+1) Loss Flatness Mitigates Forgetting:
+Let θt∈ℝd\theta_{t}\!\in\!\mathbb{R}^{d} denote the model parameters after training on task tt. When learning
+task t+1t{+}1, the parameters are updated by Δ​θ=θt+1−θt\Delta\theta=\theta_{t+1}-\theta_{t}.
+Following [31],
+we quantify forgetting on previous tasks as the increase in their cumulative loss:
+|
+Ft=Lold​(θt+Δ​θ)−Lold​(θt),F_{t}=L_{\text{old}}\!\bigl(\theta_{t}+\Delta\theta\bigr)-\,L_{\text{old}}\!\bigl(\theta_{t}\bigr), |
+|
+(2) |
+where Lold​(θ)=∑i=1tLi​(θ)L_{\text{old}}(\theta)=\sum_{i=1}^{t}L_{i}(\theta) represents the sum of per-task losses of all previous tasks. A second-order Taylor expansion of LoldL_{\text{old}} around θt\theta_{t} gives:
+|
+Ft=12​Δ​θ⊤​Ht​Δ​θ+O⁡(‖Δ​θ‖3)F_{t}=\tfrac{1}{2}\,\Delta\theta^{\!\top}H_{t}\,\Delta\theta+O(\|\Delta\theta\|^{3}) |
+|
+(3) |
+where Ht=∇2Lold​(θt)H_{t}=\nabla^{2}L_{\text{old}}(\theta_{t}), representing the Hessian of the old-task loss. As proved by prior works [30], the forgetting can be bounded by:
+|
+Ft≤12​λmax​(Ht)​‖Δ​θ‖2F_{t}\;\leq\;\tfrac{1}{2}\,\lambda_{\max}(H_{t})\,\|\Delta\theta\|^{2} |
+|
+(4) |
+where λmax​(Ht)\lambda_{\max}(H_{t}) is the largest eigenvalue of the Hessian matrix at task tt. As revealed by [21],
+this eigenvalue captures the sharpness of the loss landscape: a higher λmax​(Ht)\lambda_{\max}(H_{t}) indicates a sharper curvature, meaning that small changes in parameters Δ​θ\Delta\theta can result in large increases in loss. As a result, models operating in sharper regions are more prone to catastrophic forgetting, since even minor updates can severely disrupt performance on previously learned tasks.
+Furthermore, recent work [22] empirically confirms that smaller curvature (i.e., lower λmax​(Ht)\lambda_{\max}(H_{t})) corresponds to flatter regions of the loss surface, which are associated with reduced forgetting in continual learning. Motivated by this, several studies [31, 49, 2, 38] have proposed augmenting standard FO optimization with auxiliary loss terms or steps aimed at minimizing curvature surrogates to promote flatter minima.
+In contrast, we aim to explore mitigating forgetting through the intrinsic bias of ZO optimization.
+2) ZO optimization tends to flatter minima:
+Foundational work [32] has theoretically shown that
+every ZO optimization step (Eq.1) is, in fact, an update on a smoothed version of the original loss. For any twice-differentiable loss L⁡(θ)L(\theta) and an isotropic random direction Δ\Delta, the smooth loss is defined as the following expected loss:
+|
+Lε​(θ)=𝔼Δ​[L⁡(θ+ε​Δ)].L_{\varepsilon}(\theta)=\mathbb{E}_{\Delta}[L(\theta+\varepsilon\Delta)]. |
+|
+(5) |
+A second-order Taylor expansion gives:
+|
+Lε​(θ)=L⁡(θ)+ε22​Tr​(∇2L​(θ))+O⁡(ε4),L_{\varepsilon}(\theta)=L(\theta)+\frac{\varepsilon^{2}}{2}\text{Tr}(\nabla^{2}L(\theta))+O(\varepsilon^{4}), |
+|
+(6) |
+where the noise term O⁡(ε4)O(\varepsilon^{4}) is negligible. The extra term ε22​Tr⁡(∇2L)\frac{\varepsilon^{2}}{2}\operatorname{Tr}(\nabla^{2}L) is proportional to the trace of the Hessian, which can be seen as a measure of curvature of the loss landscape [51]. Minimizing LεL_{\varepsilon} through ZO optimization therefore minimizes the original loss and simultaneously penalizes large positive curvature. Because sharp minima possess large positive Hessian trace, they receive a larger penalty in LεL_{\varepsilon}. ZO SPSA updates, which descend on this smoothed objective, are statistically steered away from narrow valleys and into flatter regions of the landscape. When ZO optimization converges to a stationary point of LεL_{\varepsilon}, the trace of the Hessian of the original loss at that point is also minimized. Therefore, ZO optimization inherently favors flat minima without the need for explicit regularization.
+The untapped benefit and limitation of ZO optimization for plasticity-stability dilemma:
+Given the above analysis that reveals 1) flatter loss landscapes help mitigate forgetting by reducing sensitivity to parameter changes and 2) ZO optimization naturally tends toward flatter minima, we can build a connection that:
+|
+ZO optimization⟹λmax​(Ht)↓⟹Ft↓\text{ZO optimization}\Longrightarrow\lambda_{\max}(H_{t})\!\downarrow\Longrightarrow F_{t}\downarrow\ |
+|
+(7) |
+To this end, it suggests that ZO optimization naturally obtains high stability in continual learning by mitigating catastrophic forgetting (FtF_{t}).
+However, this benefit comes with a trade-off in plasticity. Unlike FO optimization, which efficiently converges toward local minima via accurate gradient information, ZO optimization relies on stochastic perturbations and typically exhibits slower convergence. Specifically, the convergence rate of ZO methods is O⁡(d/Q)O(d/Q), worse than their FO counterparts [16], where dd is the parameter dimension and QQ is the number of random queries per step, making them less efficient than FO [32]. As a result, given the limited training budget for CL, this slow convergence may prevent ZO methods from reaching sufficiently good local minima, thus impairing plasticity and overall task adaptation.
+(a) Methods with prototype classifiers on CIFAR100.
+(b) Methods with prototype classifiers on ImageNet-R.
+(c) Methods with learnable classifiers on CIFAR100.
+(d) Methods with learnable classifiers on ImageNet-R.
+Figure 2: Comparison of FO and ZO optimization methods under 5-class incremental learning on CIFAR100 and ImageNet-R.
+4 Method
+4.1 Direct ZO Substitution in CL Fails
+To investigate the effectiveness of ZO optimization in CL, we begin with a comprehensive empirical evaluation by applying ZO optimization directly to existing PEFT-based methods. Specifically, we select 8 representative approaches, whose FO baseline performance on CIFAR100 and ImageNet-R is summarized in Table 2. Moreover, as shown in Table 1, these methods can be broadly categorized based on their classifier types: (1) prototype-based classifiers, which compute predictions by measuring the distance between input features and task-specific class prototypes; and (2) unified learnable classifiers, which maintain a single trainable classification head shared across all observed tasks.
+To ensure a fair comparison, we use a consistent pre-trained ViT backbone and standardized training configurations across all experiments.
+It is important to note that due to the finite-difference nature of ZO optimization (as shown in Eq. 1), each ZO update requires two forward passes per iteration.
+From the results shown in Figure 2,
+we find that naively replacing FO optimization with ZO optimization leads to consistent failure across all evaluated methods. Interestingly, the two classifier families exhibit notably distinct behaviors. Such that, to better understand the discrepancy, we further analyze the results of each classifier family separately in the following sections.
+Classifier family
+|
+Decision Mechanism
+|
+Methods
+|
+Prototype[34]
+(nearest-centroid)
+|
+Centroid: cy=1|Dy|​∑fθ​(x)c_{y}=\dfrac{1}{|D_{y}|}\sum\!f_{\theta}(x)
+Predict: y^=arg⁡miny⁡‖h−cy‖2\hat{y}=\arg\min_{y}\|h-c_{y}\|^{2}
+|
+SimpleCIL[53]
+EASE[54]
+APER_Adapter[53]
+|
+Unified learnable
+(linear / cosine)
+|
+Linear: sy​(h)=wy⊤​hs_{y}(h)=w_{y}^{\!\top}h
+Cosine[46]: sy​(h)=α​wy⊤​h‖wy‖​‖h‖s_{y}(h)=\alpha\dfrac{w_{y}^{\!\top}h}{\|w_{y}\|\|h\|}
+Predict: y^=arg⁡maxy​sy​(h)\hat{y}=\arg\max_{y}s_{y}(h)
+|
+Adapter[5]
+LAE[15]
+L2P[48]
+CODA-Prompt[40]
+InfLoRA[25]
+|
+Table 1: Two classifier families used by rehearsal-free PEFT CIL.
+Methods with prototype-based classifier:
+Among these three methods as shown in Table 1, SimpleCIL serves as a naive baseline that performs prototype classification without any additional trainable parameters, providing a lower-bound reference for performance.
+At first glance, the results in Figure 2 (a) and (b) show that applying ZO optimization to EASE and APER seems to yield performance comparable to FO optimization on the CIFAR100 dataset. But this trend does not hold on the more challenging ImageNet-R dataset, where ZO optimization causes significant performance degradation for APER and EASE.
+To further interpret this behavior, we compare the ZO-optimized versions of all three methods to the FO baseline of SimpleCIL. It’s interesting to find that:
+applying ZO optimization to all three methods results in performance that closely matches that of SimpleCIL, which is the simplest baseline that has no training parameters and only generates prototypes from the frozen backbone of each task for classification.
+This observation suggests that applying ZO optimization to the PEFT components in EASE and APER has minimal impact on the decisions made by the prototype-based classifier. We hypothesize that when ZO optimization is applied to PEFT modules, its reliance on random perturbations for gradient estimation may lead to insufficiently informative updates. Without strong directional signals, the optimizer struggles to induce the fine-grained adaptations necessary to shift the feature embeddings meaningfully. As a result, the nearest prototypes remain largely unchanged, and the overall classification behavior is unaffected.
+Methods with unified learnable classifier:
+As shown in Figure 2 (c) and (d), ZO optimization leads to a clear accuracy degradation across all methods compared to their FO counterparts. Notably, the extent of degradation varies significantly, with L2P, CODA-Prompt, InfLoRA performing even worse than random guessing on the CIFAR100 dataset.
+To better understand these failures, we further examine the training loss and identify distinct underlying causes:
+1.
+L2P, CODA-Prompt, and InfLoRA. The main reason ZO variants of these methods perform poorly is that they fail to converge within the unified training budget. These methods depend on gradient-precise regularizers, e.g., prompt routing with auxiliary penalties, contrastive alignment losses and orthogonality constraints. Such objectives rely on low-variance, directionally accurate gradients. SPSA ZO estimators provide only noisy information. With finite query budgets such noise destabilizes those regularizers, leading to divergence. Achieving better performance may therefore require an unaffordable increase in training budget or more advanced ZO gradient estimation methods.
+2.
+Single-adapter and classifier-only methods: For methods such as “Adapter + Learnable Classifier”, “LAE Adapter”, and “Learnable Classifier” alone, we observe that the training loss converges far better than the prior 3 methods under ZO optimization. It motivates us to use the single shared PEFT module across tasks for ZO optimization. However, ZO optimized loss remains substantially higher than FO optimized loss, indicating suboptimal solutions. This suggests that while ZO optimization is capable of reducing the loss, its noisy gradient estimates hinder plasticity, limiting the model’s ability to effectively acquire new knowledge in continual learning.
+Pitfall of learnable classifier for ZO optimization:
+In PEFT-based CL methods with a learnable classifier, there are typically two ZO-optimized components: the PEFT module and the classifier. To better understand the impact of each component, particularly in adapter-based methods where training loss converges, we analyze their individual contributions. As shown in Figure 2 (c) and (d), we compare “Adapter + Learnable Classifier” with “Learnable Classifier”, where the only difference is that “Adapter + Learnable Classifier” further trains an adapter continually upon the frozen backbone. Surprisingly, adding a single adapter optimized via ZO significantly improves accuracy compared to using the learnable classifier alone.
+This result suggests that ZO optimization applied to the adapter contributes positively by enhancing plasticity, while ZO optimization applied to the classifier is likely the primary source of performance degradation.
+We hypothesize that effective classifier training requires precise, directional updates to establish robust decision boundaries, which ZO optimization, with its stochastic and less accurate gradient estimates, struggles to provide.
+4.2 ZO-FC: ZO optimization for PEFT module with FO learnable classifier
+Based on our analysis in Section 4.1, we propose a simple yet effective solution, ZO-FC, which applies ZO optimization to a single PEFT module on top of a frozen pre-trained backbone, while retaining FO optimization for the learnable classifier, as shown in Figure 3. It is important to note that our use of a single-PEFT continual learning setup is motivated by the observation that, when built upon a strong pre-trained backbone, a single PEFT module updated across all tasks serves as a simple yet strong FO baseline as shown in Table 2. In contrast, more complex CL methods, such as those relying on prototype-based classifiers or additional regularization, tend to be less compatible with ZO optimization.
+Moreover, through empirical comparison of different PEFT choices, including prompts, adapters, and LoRA, we find that adapters consistently yield the best performance. Therefore, we adopt the adapter as the default PEFT module in ZO-FC.
+Figure 3: The overview of the proposed ZO-FC.
+Although ZO-FC employs FO optimization for the classifier, it still benefits from the flat minima effect: the ZO updates bias the adapter representation toward flatter solutions, while the FO classifier preserves decision-boundary plasticity (proof in Appendix C). Besides, its impact on memory efficiency remains negligible. This is because the classifier is the final layer in the model and does not propagate gradients back to earlier layers. As a result, intermediate activations from the backbone and adapter do not need to be stored during training, significantly reducing memory usage. Therefore, ZO-FC retains the key advantage of memory efficiency while benefiting from the precision of first-order updates where they matter most. The full procedure is detailed in Algorithm 1
+in Appendix B.
+5 Experiments
+Method |
+CIFAR100 Inc-5 |
+ImageNet-R Inc-5 |
+DomainNet Inc-69 |
+avg↑\uparrow |
+last↑\uparrow |
+fgt↓\downarrow |
+avg↑\uparrow |
+last↑\uparrow |
+fgt↓\downarrow |
+avg↑\uparrow |
+last↑\uparrow |
+fgt↓\downarrow |
+Classifier Only |
+SimpleCIL[53] |
+87.57 |
+81.26 |
+6.11 |
+62.39 |
+54.33 |
+8.36 |
+65.76 |
+59.91 |
+7.02 |
+FO Optimization |
+Learnable Cls.[18] |
+85.61 |
+78.33 |
+5.17 |
+60.60 |
+52.12 |
+3.98 |
+75.85 |
+69.88 |
+3.70 |
+Adapter + Cls. |
+88.41 |
+83.64 |
+9.58 |
+74.71 |
+69.62 |
+8.49 |
+78.67 |
+72.85 |
+4.64 |
+LAE Adapter[15] |
+88.05 |
+82.31 |
+8.35 |
+66.28 |
+55.78 |
+9.93 |
+74.55 |
+68.03 |
+15.17 |
+L2P[48] |
+85.05 |
+78.59 |
+9.09 |
+69.60 |
+62.35 |
+6.12 |
+76.39 |
+70.30 |
+12.22 |
+CODA-Prompt[40] |
+87.58 |
+80.60 |
+7.04 |
+64.54 |
+55.23 |
+5.30 |
+78.84 |
+73.29 |
+10.20 |
+APER Adapter[53] |
+87.90 |
+81.68 |
+6.01 |
+71.52 |
+63.42 |
+7.48 |
+71.24 |
+64.93 |
+6.72 |
+EASE[54] |
+91.13 |
+85.45 |
+7.05 |
+78.78 |
+71.93 |
+7.54 |
+75.91 |
+70.24 |
+8.54 |
+InfLoRA[25] |
+89.41 |
+82.89 |
+6.95 |
+73.33 |
+64.52 |
+7.95 |
+79.70 |
+74.05 |
+7.43 |
+ZO Optimization |
+Learnable Cls. |
+62.85 |
+43.55 |
+3.99 |
+25.60 |
+17.08 |
+9.18 |
+52.70 |
+46.21 |
+7.37 |
+Adapter + Cls. |
+79.45 |
+70.46 |
+8.72 |
+34.87 |
+27.33 |
+6.36 |
+48.24 |
+44.29 |
+4.56 |
+LAE Adapter |
+49.18 |
+36.49 |
+18.43 |
+16.92 |
+8.87 |
+8.23 |
+34.62 |
+26.94 |
+8.54 |
+L2P |
+15.05 |
+2.36 |
+14.02 |
+4.55 |
+1.42 |
+4.24 |
+17.89 |
+14.78 |
+11.86 |
+CODA-Prompt |
+3.53 |
+1.21 |
+2.49 |
+3.10 |
+0.92 |
+1.90 |
+3.09 |
+1.12 |
+2.17 |
+APER Adapter |
+87.70 |
+81.49 |
+6.07 |
+62.60 |
+54.50 |
+8.55 |
+62.45 |
+56.67 |
+6.89 |
+EASE |
+87.32 |
+81.07 |
+6.87 |
+62.65 |
+54.47 |
+9.84 |
+63.10 |
+56.80 |
+7.22 |
+InfLoRA |
+2.78 |
+0.94 |
+2.29 |
+2.26 |
+0.89 |
+1.97 |
+4.78 |
+3.23 |
+2.65 |
+ZO-FC (Ours) |
+88.39 |
+83.34 |
+5.26 |
+72.01 |
+66.63 |
+4.40 |
+77.17 |
+71.05 |
+4.19 |
+Table 2: Results(%) on CIFAR100, ImageNet-R and DomainNet with existing FO PEFT-based CIL methods and their ZO counterparts.
+5.1 Experimental Details
+We evaluate the methods on three widely-used benchmarks in CIL works: CIFAR100 [23], ImageNet-R [37] and DomainNet [33]. Following the settings in prior work [35, 40], we conduct the experiments using two settings: 5-class and 10-class per task for CIFAR100 and ImageNet-R, 69-class per task for DomainNet.
+Evaluation Metric:
+Across all experiments, we report three key metrics following [44]: (1) average accuracy (avg) across all tasks at the end of training, (2) last-task accuracy (last) on the latest task, and (3) catastrophic forgetting (fgt), defined as the average drop in accuracy of old tasks from their best observed accuracy to their final accuracy [9]. Formal definitions are provided in Appendix A.
+Training Details:
+All methods use a ViT-B/16 [8] backbone pre-trained on ImageNet-21K [37]. Following [15], we insert a LoRA-like adapter module with rank r=5r=5 in parallel to the MLP layers in each of the first five transformer blocks. For ZO optimization, we set the perturbation magnitude to ε=0.001\varepsilon=0.001 and the query budget to Q=4Q=4 with L2 clipping at 1.0 for the ZO updates. In ZO-FC, the classifier is optimized with SGD (LR=0.01, cosine decay), and the adapter with ZO-SGD (LR=0.01, constant). Note that, we adopt the official implementations and follow the hyperparameter settings recommended in their original papers and the LAMDA-PILOT benchmark [44]. And the compared methods are conducted by using same checkpoints of the pre-trained model and task orders to ensure a fair comparison. The other related training configurations can be found in Appendix A.
+5.2 Main Results
+Table 2 illustrates the performance comparison with existing CIL methods and their ZO optimization counterparts.
+First of all, compared to the other ZO optimization that applied to the PEFT-based methods, our method consistently achieves significantly better accuracy and low forgetting. For example, compared to ZO-EASE, ZO-FC boosts accuracy over 12%\% last accuracy on ImageNet-R dataset. In addition, compared to original FO PEFT-based CIL baselines, the proposed ZO-FC achieves better last accuracy compared to 6 prior methods on CIFAR100 and ImageNet-R, and only behind “Adapter + Cls.” and EASE methods. Furthermore, to evaluate robustness under domain shift, we conduct experiments on DomainNet [33]. ZO-FC consistently achieves the lowest forgetting among FO PEFT-based CIL baselines except the learnable classifier, while also outperforming 5 prior methods and achieving a clear performance gain over their ZO variants. In addition, under the 10-incremental setup on CIFAR100 and ImageNet-R in Table 3, the proposed ZO-FC achieves the lowest forgetting while maintaining competitive accuracy compared to the FO baselines.
+Method |
+CIFAR100 Inc-10 |
+ImageNet-R Inc-10 |
+avg↑\uparrow |
+last↑\uparrow |
+fgt↓\downarrow |
+avg↑\uparrow |
+last↑\uparrow |
+fgt↓\downarrow |
+SimpleCIL |
+87.13 |
+81.26 |
+6.08 |
+61.99 |
+54.55 |
+8.08 |
+FO Optimization |
+Learnable Cls. |
+87.03 |
+80.92 |
+4.31 |
+65.67 |
+57.52 |
+3.67 |
+Adapter + Cls. |
+92.04 |
+88.54 |
+5.48 |
+78.89 |
+73.27 |
+7.04 |
+LAE Adapter |
+91.31 |
+86.54 |
+5.58 |
+71.68 |
+62.43 |
+7.95 |
+L2P |
+87.59 |
+82.43 |
+11.56 |
+74.14 |
+68.08 |
+6.45 |
+CODA-Prompt |
+90.76 |
+85.7 |
+4.23 |
+74.15 |
+67.22 |
+4.56 |
+APER Adapter |
+92.15 |
+87.41 |
+4.42 |
+73.20 |
+65.88 |
+7.04 |
+EASE |
+92.10 |
+87.67 |
+5.94 |
+80.64 |
+74.38 |
+7.41 |
+InfLoRA |
+91.60 |
+86.44 |
+4.60 |
+79.54 |
+71.08 |
+9.01 |
+ZO-FC (Ours) |
+91.13 |
+86.93 |
+3.42 |
+75.80 |
+70.10 |
+3.64 |
+Table 3: Results(%) on CIFAR100 and ImageNet-R under Inc-10 setup.
+ZO-FC exhibits strong stability for continual learning:
+By diving into the results in Table 2 and Table 3, ZO-FC consistently has lower forgetting than other PEFT FO baselines, and in Inc-10 it is even below Learnable Cls., which updates only the classifier with FO. This indicates that the primary source of forgetting in ZO-FC arises from the first-order optimized classifier, while the ZO-optimized adapter remains highly stable and exhibits minimal additional forgetting combined with the classifier.
+Trade-off between accuracy and resource cost: For on-device CL, peak training memory is often the hard bottleneck. As illustrated in Figure 4, ZO-FC demonstrates a better trade-off: 1) By leveraging the gradient-free nature of ZO optimization, ZO-FC requires only 0.7 GB of training memory, achieving up to a 6×\times reduction compared to FO methods. 2) ZO-FC significantly outperforms other ZO approaches in accuracy. We therefore foreground the accuracy-memory trade-off in the main text and provide compute and runtime details in Appendix F. Practically, the extra ZO forward overhead can be amortized via parallel or batched perturbation evaluation, e.g., P-RGE[14] to support ZO-FC under real deployment budgets.
+Figure 4: Memory–accuracy trade-off across CIL methods on ImageNet-R. Note that, same color denotes the same method.
+5.3 Analysis and Ablation Study
+ZO-FC finds flatter shared region to mitigate forgetting:
+To validate our analysis in Section 4, which shows that ZO-FC guides the model toward wider and flatter minima that mitigate forgetting, we quantify loss-landscape flatness during CL. While the curvature of the loss landscape can be characterized by Hessian eigenvalues, it is computationally expensive to compute them directly. We adopt an approach inspired by Sharpness-Aware Minimization (SAM) [12] as a more efficient alternative, which perturbs model parameters within a small neighborhood and measures the induced loss change.
+Concretely, for model parameters (θ\theta) and the old-task loss (LoldL_{\text{old}}),
+we define the flatness metric as:
+|
+ΦZO​(θ,ρ)=Lold​(θ+)−Lold​(θ)ρ​(Lold​(θ)+ϵ),\Phi_{\mathrm{ZO}}(\theta;\rho)\;=\;\frac{L_{\mathrm{old}}(\theta^{+})-L_{\mathrm{old}}(\theta)}{\rho\,\bigl(L_{\mathrm{old}}(\theta)+\epsilon\bigr)}, |
+|
+(8) |
+where θ+\theta^{+} represent the perturbed parameters with a small radius ρ\rho, and ϵ=10−12\epsilon=10^{-12}. The denominator is used to normalize the metric score. Lower score means flatter landscape.
+As shown in Figure 5, the SAM-based loss changes are consistently smaller under ZO-FC than FO. This indicates that ZO-FC tends to converge to flatter minima, matching its lower forgetting. The late-task ‘plateau’ comes from the proxy itself: with fixed ρ\rho and training already in a low-loss, near-quadratic regime, both the perturbation loss increase (numerator) and the current loss (denominator) shrink together; meanwhile averaging over more old tasks further smooths the curve. Thus the SAM curves narrow for all methods even while end-of-sequence metrics (last, fgt) still clearly favor ZO-FC. In short, ZO optimization on the adapter pushes features toward wider minima, while FO on the classifier supplies boundary plasticity.
+(a) CIFAR100
+(b) ImageNet-R
+Figure 5: SAM-based flatness score of FO and ZO optimization on CIFAR100 and ImageNet-R Inc-5.
+Ablation on the query number sensitivity in ZO-FC: Table 7 varies the query number Q∈\in1,2,4,8,32,64. On CIFAR100, accuracy changes little because coarse ZO estimates are sufficient for effective learning on such simpler dataset, making the benefit of additional queries marginal. On the more complex and more diverse ImageNet-R, accuracy rises with Q. As Q increases, the ZO gradient approximation becomes more accurate, improving model adaptation and overall accuracy, though the improvement grows slowly at higher Q when approaching saturation. Unlike accuracy, forgetting is not monotone with Q increasing. It can rise slightly at small–mid Q, then saturates or even drops once the estimator variance is low.
+Method |
+CIFAR100 Inc-5 |
+ImageNet-R Inc-5 |
+avg↑\uparrow |
+last↑\uparrow |
+fgt↓\downarrow |
+avg↑\uparrow |
+last↑\uparrow |
+fgt↓\downarrow |
+Q=1 |
+87.9 |
+82.36 |
+4.61 |
+65.31 |
+60.27 |
+3.0 |
+Q=2 |
+88.15 |
+82.69 |
+4.72 |
+69.17 |
+64.05 |
+4.0 |
+Q=4 |
+88.39 |
+83.34 |
+5.26 |
+72.01 |
+66.63 |
+4.40 |
+Q=8 |
+88.18 |
+82.96 |
+5.83 |
+72.72 |
+67.15 |
+4.20 |
+Q=16 |
+88.54 |
+83.45 |
+6.0 |
+73.30 |
+67.13 |
+5.38 |
+Q=32 |
+88.82 |
+84.09 |
+6.03 |
+73.65 |
+68.13 |
+4.97 |
+Q=64 |
+88.79 |
+84.11 |
+6.08 |
+73.98 |
+68.17 |
+4.91 |
+Table 4: Ablation study on the query number Q in ZO-FC.
+To fully match the strong FO CL methods (e.g., InfLoRA, EASE), ZO methods may require very large Q or more advanced ZO optimization strategies, which we leave for future work. Our primary focus is to show that under limited training budgets, ZO-FC achieves accuracy on par with many FO methods (e.g., L2P, LAE, APER, CODA-Prompt), clearly outperforms their direct ZO variants, and provides substantial training memory savings, making it highly promising for on-device continual learning in resource-constrained settings.
+6 Conclusion
+In this work, we investigate the use of zeroth-order (ZO) optimization for continual learning. We begin with a theoretical analysis showing that ZO optimization inherently helps mitigate forgetting while suffering from less plasticity. To assess its practical viability, we conduct a comprehensive empirical study applying ZO optimization to existing PEFT-based CL methods and find that naively replacing first-order (FO) optimization with ZO optimization consistently fails, primarily due to the instability caused by applying ZO to the learnable classifier. Motivated by that, we propose ZO-FC, a simple yet effective approach that applies ZO optimization to the adapter with FO updates for the classifier. Experimental results demonstrate that ZO-FC achieves accuracy comparable to FO methods while significantly reducing training memory consumption. In future work, we aim to validate ZO-FC on harder fine-grained CL settings, demonstrate on-device training and explore parallelizing, low-variance ZO methods.
+References
+[1]
+Atılım Güneş Baydin, Barak A Pearlmutter, Don Syme, Frank Wood, and Philip Torr.
+Gradients without backpropagation.
+arXiv preprint arXiv:2202.08587, 2022.
+[2]
+Ang Bian, Wei Li, Hangjie Yuan, Mang Wang, Zixiang Zhao, Aojun Lu, Pengliang Ji, Tao Feng, et al.
+Make continual learning stronger via c-flat.
+Advances in Neural Information Processing Systems, 37:7608–7630, 2024.
+[3]
+Pratik Chaudhari, Anna Choromanska, Stefano Soatto, Yann LeCun, Carlo Baldassi, Christian Borgs, Jennifer Chayes, Levent Sagun, and Riccardo Zecchina.
+Entropy-sgd: Biasing gradient descent into wide valleys.
+Journal of Statistical Mechanics: Theory and Experiment, 2019(12):124018, 2019.
+[4]
+Pin-Yu Chen, Huan Zhang, Yash Sharma, Jinfeng Yi, and Cho-Jui Hsieh.
+ZOO: Zeroth order optimization based black-box attacks to deep neural networks without training substitute models.
+In Proceedings of the 10th ACM Workshop on Artificial Intelligence and Security (AISec), pages 15–26, Dallas, TX, USA, 2017. ACM.
+[5]
+Shoufa Chen, Chongjian GE, Zhan Tong, Jiangliu Wang, Yibing Song, Jue Wang, and Ping Luo.
+Adaptformer: Adapting vision transformers for scalable visual recognition.
+In Advances in Neural Information Processing Systems, pages 16664–16678. Curran Associates, Inc., 2022.
+[6]
+Xiangyi Chen, Sijia Liu, Kaidi Xu, Xingguo Li, Xue Lin, Mingyi Hong, and David Cox.
+Zo-adamm: Zeroth-order adaptive momentum method for black-box optimization.
+Advances in neural information processing systems, 32, 2019.
+[7]
+Matthias De Lange, Rahaf Aljundi, Marc Masana, Sarah Parisot, Xu Jia, Aleš Leonardis, Gregory Slabaugh, and Tinne Tuytelaars.
+A continual learning survey: Defying forgetting in classification tasks.
+IEEE transactions on pattern analysis and machine intelligence, 44(7):3366–3385, 2021.
+[8]
+Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby.
+An image is worth 16x16 words: Transformers for image recognition at scale.
+In International Conference on Learning Representations, 2021.
+[9]
+Natalia Díaz-Rodríguez, Vincenzo Lomonaco, David Filliat, and Davide Maltoni.
+Don’t forget, there is more than forgetting: new metrics for continual learning, 2018.
+[10]
+Wenzhi Fang, Ziyi Yu, Yuning Jiang, Yuanming Shi, Colin N Jones, and Yong Zhou.
+Communication-efficient stochastic zeroth-order optimization for federated learning.
+IEEE Transactions on Signal Processing, 70:5058–5073, 2022.
+[11]
+Tao Feng, Wei Li, Didi Zhu, Hangjie Yuan, Wendi Zheng, Dan Zhang, and Jie Tang.
+Zeroflow: Overcoming catastrophic forgetting is easier than you think.
+In Forty-second International Conference on Machine Learning, 2025.
+[12]
+Pierre Foret, Ariel Kleiner, Hossein Mobahi, and Behnam Neyshabur.
+Sharpness-aware minimization for efficiently improving generalization.
+In International Conference on Learning Representations, 2021.
+[13]
+Robert M. French.
+Catastrophic forgetting in connectionist networks.
+Trends in Cognitive Sciences, 3(4):128–135, 1999.
+[14]
+Lei Gao, Amir Ziashahabi, Yue Niu, Salman Avestimehr, and Murali Annavaram.
+Enabling resource-efficient on-device fine-tuning of llms using only inference engines.
+arXiv preprint arXiv:2409.15520, 2024.
+[15]
+Qiankun Gao, Chen Zhao, Yifan Sun, Teng Xi, Gang Zhang, Bernard Ghanem, and Jian Zhang.
+A unified continual learning framework with general parameter-efficient tuning.
+In 2023 IEEE/CVF International Conference on Computer Vision (ICCV), pages 11449–11459, 2023.
+[16]
+Saeed Ghadimi and Guanghui Lan.
+Stochastic first-and zeroth-order methods for nonconvex stochastic programming.
+SIAM journal on optimization, 23(4):2341–2368, 2013.
+[17]
+Raia Hadsell, Dushyant Rao, Andrei A Rusu, and Razvan Pascanu.
+Embracing change: Continual learning in deep neural networks.
+Trends in cognitive sciences, 24(12):1028–1040, 2020.
+[18]
+Saihui Hou, Xinyu Pan, Chen Change Loy, Zilei Wang, and Dahua Lin.
+Learning a unified classifier incrementally via rebalancing.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2019.
+[19]
+Neil Houlsby, Andrei Giurgiu, Stanislaw Jastrzebski, Bruna Morrone, Quentin De Laroussilhe, Andrea Gesmundo, Mona Attariyan, and Sylvain Gelly.
+Parameter-efficient transfer learning for nlp.
+In International conference on machine learning, pages 2790–2799. PMLR, 2019.
+[20]
+Edward J Hu, yelong shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen.
+LoRA: Low-rank adaptation of large language models.
+In International Conference on Learning Representations, 2022.
+[21]
+{Nitish Shirish} Keskar, Jorge Nocedal, {Ping Tak Peter} Tang, Dheevatsa Mudigere, and Mikhail Smelyanskiy.
+On large-batch training for deep learning: Generalization gap and sharp minima.
+2017.
+5th International Conference on Learning Representations, ICLR 2017 ; Conference date: 24-04-2017 Through 26-04-2017.
+[22]
+Yiping Kong, Lingjuan Liu, Hong Chen, Janusz Kacprzyk, and Dacheng Tao.
+Overcoming catastrophic forgetting in continual learning by exploring eigenvalues of hessian matrix.
+IEEE Transactions on Neural Networks and Learning Systems, 35(11):16196–16210, 2024.
+[23]
+Alex Krizhevsky, Geoffrey Hinton, et al.
+Learning multiple layers of features from tiny images.
+2009.
+[24]
+Brian Lester, Rami Al-Rfou, and Noah Constant.
+The power of scale for parameter-efficient prompt tuning.
+In Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing, pages 3045–3059, Online and Punta Cana, Dominican Republic, 2021. Association for Computational Linguistics.
+[25]
+Yan-Shuo Liang and Wu-Jun Li.
+Inflora: Interference-free low-rank adaptation for continual learning.
+In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 23638–23647, 2024.
+[26]
+Sijia Liu, Bhavya Kailkhura, Pin-Yu Chen, Paishun Ting, Shiyu Chang, and Lisa Amini.
+Zeroth-order stochastic variance reduction for nonconvex optimization.
+Advances in neural information processing systems, 31, 2018.
+[27]
+Sijia Liu, Pin-Yu Chen, Xiangyi Chen, and Mingyi Hong.
+signsgd via zeroth-order oracle.
+In International conference on learning representations, 2019.
+[28]
+Sijia Liu, Pin-Yu Chen, Bhavya Kailkhura, Gaoyuan Zhang, Alfred O. Hero III, and Pramod K. Varshney.
+A primer on zeroth-order optimization in signal processing and machine learning: Principles, recent advances, and applications.
+IEEE Signal Processing Magazine, 37(5):43–54, 2020.
+[29]
+Sadhika Malladi, Tianyu Gao, Eshaan Nichani, Alex Damian, Jason D Lee, Danqi Chen, and Sanjeev Arora.
+Fine-tuning language models with just forward passes.
+Advances in Neural Information Processing Systems, 36:53038–53075, 2023.
+[30]
+Seyed Iman Mirzadeh, Mehrdad Farajtabar, Razvan Pascanu, and Hassan Ghasemzadeh.
+Understanding the role of training regimes in continual learning.
+In Advances in Neural Information Processing Systems, pages 7308–7320. Curran Associates, Inc., 2020.
+[31]
+Seyed Iman Mirzadeh, Mehrdad Farajtabar, Dilan Gorur, Razvan Pascanu, and Hassan Ghasemzadeh.
+Linear mode connectivity in multitask and continual learning.
+In International Conference on Learning Representations, 2021.
+[32]
+Yurii Nesterov and Vladimir Spokoiny.
+Random gradient-free minimization of convex functions.
+Foundations of Computational Mathematics, 17(2):527–566, 2017.
+[33]
+Xingchao Peng, Qinxun Bai, Xide Xia, Zijun Huang, Kate Saenko, and Bo Wang.
+Moment matching for multi-source domain adaptation.
+In Proceedings of the IEEE/CVF international conference on computer vision, pages 1406–1415, 2019.
+[34]
+Sylvestre-Alvise Rebuffi, Alexander Kolesnikov, G. Sperl, and Christoph H. Lampert.
+icarl: Incremental classifier and representation learning.
+2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR), pages 5533–5542, 2016.
+[35]
+Sylvestre-Alvise Rebuffi, Alexander Kolesnikov, Georg Sperl, and Christoph H. Lampert.
+icarl: Incremental classifier and representation learning.
+In 2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR), pages 5533–5542, 2017.
+[36]
+Mengye Ren, Simon Kornblith, Renjie Liao, and Geoffrey Hinton.
+Scaling forward gradient with local losses.
+arXiv preprint arXiv:2210.03310, 2022.
+[37]
+Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, Sanjeev Satheesh, Sean Ma, Zhiheng Huang, Andrej Karpathy, Aditya Khosla, Michael Bernstein, et al.
+Imagenet large scale visual recognition challenge.
+International journal of computer vision, 115(3):211–252, 2015.
+[38]
+Guangyuan SHI, JIAXIN CHEN, Wenlong Zhang, Li-Ming Zhan, and Xiao-Ming Wu.
+Overcoming catastrophic forgetting in incremental few-shot learning by finding flat minima.
+In Advances in Neural Information Processing Systems, pages 6747–6761. Curran Associates, Inc., 2021.
+[39]
+Yao Shu, Xiaoqiang Lin, Zhongxiang Dai, and Bryan Kian Hsiang Low.
+Federated zeroth-order optimization using trajectory-informed surrogate gradients.
+arXiv preprint arXiv:2308.04077, 2023.
+[40]
+James Seale Smith, Leonid Karlinsky, Vyshnavi Gutta, Paola Cascante-Bonilla, Donghyun Kim, Assaf Arbelle, Rameswar Panda, Rogerio Feris, and Zsolt Kira.
+CODA-Prompt: COntinual Decomposed Attention-Based Prompting for Rehearsal-Free Continual Learning .
+In 2023 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 11909–11919, Los Alamitos, CA, USA, 2023. IEEE Computer Society.
+[41]
+James C. Spall.
+A stochastic approximation technique for generating maximum likelihood parameters.
+In Proceedings of the American Control Conference, pages 1161–1167, Minneapolis, MN, USA, 1987. IEEE.
+Introduces the Simultaneous Perturbation Stochastic Approximation (SPSA) algorithm.
+[42]
+James C Spall.
+Adaptive stochastic approximation by the simultaneous perturbation method.
+IEEE transactions on automatic control, 45(10):1839–1853, 2000.
+[43]
+Andreas Steiner, Alexander Kolesnikov, Xiaohua Zhai, Ross Wightman, Jakob Uszkoreit, and Lucas Beyer.
+How to train your vit? data, augmentation, and regularization in vision transformers.
+arXiv preprint arXiv:2106.10270, 2021.
+[44]
+Hai-Long Sun, Da-Wei Zhou, De-Chuan Zhan, and Han-Jia Ye.
+Pilot: A pre-trained model-based continual learning toolbox.
+SCIENCE CHINA Information Sciences, 68(4):147101, 2025.
+[45]
+Chun-Chen Tu, Paishun Ting, Pin-Yu Chen, Sijia Liu, Huan Zhang, Jinfeng Yi, Cho-Jui Hsieh, and Shin-Ming Cheng.
+Autozoom: Autoencoder-based zeroth order optimization method for attacking black-box neural networks.
+In Proceedings of the AAAI conference on artificial intelligence, pages 742–749, 2019.
+[46]
+Hao Wang, Yitong Wang, Zheng Zhou, Xing Ji, Dihong Gong, Jingchao Zhou, Zhifeng Li, and Wei Liu.
+Cosface: Large margin cosine loss for deep face recognition.
+In Proceedings of the IEEE conference on computer vision and pattern recognition, pages 5265–5274, 2018.
+[47]
+Liyuan Wang, Xingxing Zhang, Hang Su, and Jun Zhu.
+A comprehensive survey of continual learning: Theory, method and application.
+IEEE transactions on pattern analysis and machine intelligence, 46(8):5362–5383, 2024.
+[48]
+Zifeng Wang, Zizhao Zhang, Chen-Yu Lee, Han Zhang, Ruoxi Sun, Xiaoqi Ren, Guolong Su, Vincent Perot, Jennifer Dy, and Tomas Pfister.
+Learning to prompt for continual learning.
+In 2022 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 139–149, 2022.
+[49]
+Tao Wu, Tie Luo, and Donald C Wunsch II.
+Cr-sam: Curvature regularized sharpness-aware minimization.
+In Proceedings of the AAAI Conference on Artificial Intelligence, pages 6144–6152, 2024.
+[50]
+Yifan Yang, Kai Zhen, Ershad Banijamali, Athanasios Mouchtaris, and Zheng Zhang.
+AdaZeta: Adaptive zeroth-order tensor-train adaption for memory-efficient large language models fine-tuning.
+In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pages 977–995, Miami, Florida, USA, 2024. Association for Computational Linguistics.
+[51]
+Liang Zhang, Bingcong Li, Kiran Koshy Thekumparampil, Sewoong Oh, Michael Muehlebach, and Niao He.
+Zeroth-order optimization finds flat minima, 2025.
+[52]
+Yihua Zhang, Pingzhi Li, Junyuan Hong, Jiaxiang Li, Yimeng Zhang, Wenqing Zheng, Pin-Yu Chen, Jason D Lee, Wotao Yin, Mingyi Hong, et al.
+Revisiting zeroth-order optimization for memory-efficient llm fine-tuning: A benchmark.
+arXiv preprint arXiv:2402.11592, 2024.
+[53]
+Da-Wei Zhou, Zi-Wen Cai, Han-Jia Ye, De-Chuan Zhan, and Ziwei Liu.
+Revisiting class-incremental learning with pre-trained models: Generalizability and adaptivity are all you need.
+International Journal of Computer Vision, 133:1012–1032, 2024a.
+[54]
+Da-Wei Zhou, Hai-Long Sun, Han-Jia Ye, and De-Chuan Zhan.
+Expandable subspace ensemble for pre-trained model-based class-incremental learning.
+In 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), pages 23554–23564, 2024b.
+[55]
+Fei Zhu, Zhen Cheng, Xu-Yao Zhang, and Cheng-lin Liu.
+Class-incremental learning via dual augmentation.
+Advances in neural information processing systems, 34:14306–14318, 2021.
+Appendix
+A. Training, Evaluation Configurations
+Training configurations:
+For our proposed ZO-FC method, we optimize the classifier using FO SGD with a learning rate of 0.01 that follows a cosine decay schedule; the adapter parameters are updated using the SPSA and ZO SGD with a constant learning rate of 0.01. For SPSA, we set the perturbation magnitude to ε=0.001\varepsilon=0.001, and the query budget to Q=4Q=4, and apply L2 norm clipping at a threshold of 1.0 to the estimated gradients for stability. The training budgets are set per dataset: (1) On CIFAR100, the FO classifier is trained for 10 epochs, and the ZO adapter is trained for 20 epochs; (2) On ImageNet-R, the FO classifier is trained for 20 epochs, and the ZO adapter is trained for 40 epochs. For all baseline methods, we adopt the official implementations and follow the hyperparameter settings recommended in their original papers and the LAMDA-PILOT benchmark [44], running on 1×\timesA6000, to ensure a fair comparison. Specifically, for the baseline combining an adapter with a cosine classifier, we train for a unified 10 epochs on CIFAR100 and 20 epochs on ImageNet-R. All runs use a batch size of 48 to ensure fair comparison of memory usage during optimization.
+Evaluation Metrics:
+Let KK be the number of tasks. Let Ai,jA_{i,j} denote the test accuracy on task jj after completing training on task ii (so the final accuracies are {AK,j}j=1K\{A_{K,j}\}_{j=1}^{K}).
+Average accuracy (avg).
+|
+avg=1K​∑j=1KAK,j.\mathrm{avg}\;=\;\frac{1}{K}\sum_{j=1}^{K}A_{K,j}. |
+|
+Last-task accuracy (last).
+|
+last=AK,K.\mathrm{last}\;=\;A_{K,K}. |
+|
+Catastrophic forgetting (fgt):
+For each old task j<Kj\!<\!K, let Aj⋆A_{j}^{\star} be the best accuracy that task ever achieved during training:
+|
+Aj⋆=maxi∈{j,…,K}⁡Ai,j.A_{j}^{\star}\;=\;\max_{i\in\{j,\dots,K\}}A_{i,j}. |
+|
+Forgetting is the average drop from this best value to the final value:
+|
+fgt=1K−1​∑j=1K−1(Aj⋆−AK,j).\mathrm{fgt}\;=\;\frac{1}{K-1}\sum_{j=1}^{K-1}\!\left(A_{j}^{\star}\;-\;A_{K,j}\right). |
+|
+B. Algorithm
+As shown in Algorithm 1, ZO-FC updates the classifier ψ\psi with standard FO SGD while updating the PEFT adapter ϕ\phi via a two-point ZO (SPSA) step. For each mini-batch, we first compute one FO loss and back-propagate only through the head (Lines 1–3). We then draw QQ Rademacher directions {Δq}q=1Q\{\Delta_{q}\}_{q=1}^{Q} and evaluate the loss at ϕ±ε​Δq\phi\pm\varepsilon\Delta_{q} (Lines 5–10), yielding the finite-difference estimates
+g^q=L+−L−2​ε​Δq\hat{g}_{q}=\frac{L^{+}-L^{-}}{2\varepsilon}\,\Delta_{q} (Line 11). The ZO estimates are averaged and clipped before a ZO-SGD update on ϕ\phi (Lines 12–14).
+Algorithm 1 The proposed ZO-FC
+0:
+mini batch ℬ\mathcal{B}, classifier ψ\psi, adapter ϕ\phi, learning rates ηψ\eta_{\psi}, ηϕ\eta_{\phi}; perturbation scale ε\varepsilon, query budget QQ
+1:
+// FO step on classifier
+2:
+L←L⁡(ϕ,ψ,ℬ)L\leftarrow L(\phi,\psi;\mathcal{B}) {back-prop only through ψ\psi}
+3:
+ψ←ψ−ηψ​∇ψL\psi\leftarrow\psi-\eta_{\psi}\nabla_{\psi}L
+4:
+// ZO step on adapter (SPSA)
+5:
+for q=1q=1 to QQ do
+6:
+sample Δq∼{±1}\Delta_{q}\sim\{\pm 1\} {store Δq\Delta_{q} only}
+7:
+ϕ′←ϕ+ε​Δq\phi^{\prime}\leftarrow\phi+\varepsilon\Delta_{q}
+8:
+L+←L⁡(ϕ′,ψ,ℬ)L^{+}\leftarrow L(\phi^{\prime},\psi;\mathcal{B})
+9:
+L−←L⁡(ϕ′−2​ε​Δq,ψ,ℬ)L^{-}\leftarrow L(\phi^{\prime}-2\varepsilon\Delta_{q},\psi;\mathcal{B})
+10:
+restore ϕ′←ϕ\phi^{\prime}\leftarrow\phi {no need to store ϕ′\phi^{\prime}}
+11:
+g^q←L+−L−2​ε​Δq\hat{g}_{q}\leftarrow\frac{L^{+}-L^{-}}{2\varepsilon}\Delta_{q}
+12:
+end for
+13:
+g¯ϕ←1Q​∑qg^q\bar{g}_{\phi}\leftarrow\frac{1}{Q}\sum_{q}\hat{g}_{q}
+14:
+ϕ←ϕ−ηϕ​clip​(g¯ϕ)\phi\leftarrow\phi-\eta_{\phi}\,\text{clip}(\bar{g}_{\phi})
+C. Proof Assumptions for ZO SPSA searches flat minima
+Under the standard assumptions that LL is convex, three-times continuously differentiable, and its third derivatives are bounded (the usual “L3L_{3}-smoothness” condition), Zhang et al. [51] proved that in T=𝒪~​(d4/ε2)T=\tilde{\mathcal{O}}(d^{4}/\varepsilon^{2}) iterations: SPSA drives the ε\varepsilon-smoothed loss L~ε​(θ)\tilde{L}_{\varepsilon}(\theta) to within ε\varepsilon of its global minimum:
+|
+L~ε​(θT)−minθ⁡L~ε​(θ)≤ε,\tilde{L}_{\varepsilon}(\theta_{T})-\min_{\theta}\tilde{L}_{\varepsilon}(\theta)\;\leq\;\varepsilon, |
+|
+(9) |
+where θT\theta_{T} is the final parameters after TT SPSA steps.
+By the definition of L~ε\tilde{L}_{\varepsilon}, Zhang et al. [51] also showed
+|
+Tr​[∇2ℒ​(θT)]−minθ∗⁡Tr​[∇2ℒ​(θ∗)]≤ε,\text{Tr}\left[\nabla^{2}\mathcal{L}(\theta_{T})\right]-\min_{\theta^{*}}\text{Tr}\left[\nabla^{2}\mathcal{L}(\theta^{*})\right]\;\leq\;\varepsilon, |
+|
+(10) |
+that is, among all minimizers of the original loss L⁡(θ)L(\theta), SPSA selects those with the smallest Hessian trace-flatter minima.
+Standard GD optimizes the raw loss ff, which does not guarantee bias toward flatter minima. Empirically, SGD sometimes finds wide valleys due to noise, but this is incidental and depends on schedule and noise scale. Explicit methods such as Entropy-SGD [3], Sharpness-Aware Minimization (SAM) [12] bias GD trajectories into wide valleys by injecting perturbations into the update rule. In contrast, two-point ZO always optimizes the smoothed loss f~\tilde{f}, and theory shows it minimizes to within ϵ\epsilon of the smallest-Hessian-trace solution. This explains why our ZO-FC retains low forgetting across various streams: it consistently biases the shared adapter toward flat representations, without extra regularization.
+D. Proof for flat minima in Training dynamics of ZO-FC
+When combining zeroth order adapter with first order classifier, the flat minima effect is maintained for continual learning. For the adapter ϕ\phi and classifier ψ\psi, a two-point SPSA step on ϕ\phi is an unbiased estimator of the gradient of the Gaussian-smoothed loss
+L~ε​(ϕ,ψ)=𝔼u​[L⁡(ϕ+ε​u,ψ)]\tilde{L}_{\varepsilon}(\phi,\psi)=\mathbb{E}_{u}[L(\phi+\varepsilon u,\psi)]:
+𝔼⁡[gϕ]=∇ϕL~ε​(ϕ,ψ)\mathbb{E}[g_{\phi}]=\nabla_{\phi}\tilde{L}_{\varepsilon}(\phi,\psi).
+If the classifier ψ\psi is updated on a faster time-scale (FO) while ϕ\phi evolves slowly (ZO), the limiting dynamics follow
+ψ¯=−∇ψL​(ϕ,ψ)\bar{\psi}=-\nabla_{\psi}L(\phi,\psi) (fast) with ψ⋆​(ϕ)=arg⁡minψ⁡L⁡(ϕ,ψ)\psi^{\star}(\phi)=\arg\min_{\psi}L(\phi,\psi), and
+ϕ¯=−∇ϕL~ε​(ϕ,ψ⋆​(ϕ))\bar{\phi}=-\nabla_{\phi}\tilde{L}_{\varepsilon}(\phi,\psi^{\star}(\phi)) (slow).
+Hence the hybrid iterates descend the reduced objective
+J⁡(ϕ)=minψ⁡L~ε​(ϕ,ψ)J(\phi)=\min_{\psi}\tilde{L}_{\varepsilon}(\phi,\psi).
+This connects ZO-FC to flat minima: smoothing acts directly on the representation ϕ\phi, biasing toward lower curvature for stability, while FO keeping the classifier plastic.
+E. Component Analysis: Classifier Variants and FO, ZO swap
+We further investigate the design of our approach by comparing the impact of different learnable classifiers (cosine vs. linear) and trainable component optimization strategies (FO vs. ZO). Table 5 and Table 6 present detailed results on the Inc-5 setting for both CIFAR100 and ImageNet-R.
+Classifier Choice:
+As shown in Table 5, the FO optimized adapter performs closely no matter combined with either a cosine or linear classifier though cosine classifier works better than linear classifier when without adapter. FO-optimized adapters achieve strong performance regardless of whether they are paired with a cosine or linear classifier. However, the cosine classifier consistently yields higher accuracy and lower forgetting than its linear counterpart when used alone or within hybrid settings. When combined with linear classifiers, ZO adapter struggle with catastrophic forgetting, suggesting poor alignment between the decision boundary and the adapted feature space under noisy updates. This performance gap indicates that the cosine classifier better captures and reflects the fine-grained adaptations introduced by the ZO-optimized adapter, leading to superior retention and generalization.We also evaluate an EASE-style variant: the temporary FO classifier used during training is discarded and replaced by per-class prototypes after each task as final classifier. Replacing the temporary FO learnable classifier during training with prototypes as final classifier yields performance near SimpleCIL but clearly below ZO-FC and with higher forgetting.
+Method |
+CIFAR100 Inc-5 |
+ImageNet-R Inc-5 |
+avg |
+last |
+fgt |
+avg |
+last |
+fgt |
+Cosine Cls. |
+85.61 |
+78.33 |
+5.17 |
+60.6 |
+52.12 |
+3.98 |
+Linear Cls. |
+84.78 |
+76.24 |
+9.32 |
+61.19 |
+44.42 |
+17.63 |
+Adapter + Cosine Cls. |
+88.41 |
+83.64 |
+9.58 |
+74.71 |
+69.62 |
+8.49 |
+Adapter + Linear Cls. |
+90.19 |
+83.97 |
+7.69 |
+73.08 |
+66.12 |
+9.01 |
+ZO-FC (Cosine) |
+88.39 |
+83.34 |
+5.26 |
+72.01 |
+66.63 |
+4.40 |
+ZO-FC (Linear) |
+85.94 |
+79.61 |
+5.92 |
+62.07 |
+51.78 |
+9.89 |
+ZO Adapter + Prototype |
+84.94 |
+80.87 |
+10.77 |
+67.06 |
+62.98 |
+16.39 |
+Table 5: Ablation study of classifier types under FO optimization of the classifier and ZO updates on the adapter
+Effect of ZO Placement:
+Table 6 isolates the impact of applying ZO optimization to different trainable components of the model. When the adapter is optimized with ZO and the classifier remains FO, that is, ZO-FC, the model achieves strong performance. In contrast, reversing this setup and applying ZO to the classifier while keeping the adapter FO optimized results in remarkable performance degradation. This contrast confirms that the classifier requires precise gradient-based optimization to maintain stable decision boundaries across tasks, while the adapter can tolerate noisy ZO updates without compromising overall performance.
+Method |
+CIFAR100 Inc-5 |
+ImageNet-R Inc-5 |
+avg |
+last |
+fgt |
+avg |
+last |
+fgt |
+ZO-FC |
+88.39 |
+83.34 |
+5.26 |
+72.01 |
+66.63 |
+4.40 |
+FO adapter + ZO Cls. |
+62.45 |
+53.22 |
+25.65 |
+23.35 |
+11.72 |
+18.07 |
+Table 6: Effect of ZO,FO components placement
+These results separate the roles of representation smoothing (adapter) and decision-boundary plasticity (classifier), and motivate our choice of a single shared adapter.
+F. Data Augmentation and Effects
+All image augmentations are applied in the dataloader before the model forward. No augmentation is performed inside the forward pass. This pipeline is identical for FO, ZO, and ZO-FC. Stochastic layers in the backbone (e.g., dropout) are disabled during ZO updates. The detailed augmentations are shown below, following configurations in [44] and [25]:
+CIFAR100, ImageNet-R. Train: RandomResizedCrop( 224, scale ∈\in(0.05,1.0), ratio ∈\in(3/4,4/3) ), RandomHorizontalFlip( p=0.5 ). Test: Resize(256), CenterCrop(224).
+DomainNet. Train: RandomResizedCrop(224), RandomHorizontalFlip, Normalize(μ\mu=(0,0,0),σ\sigma=(1,1,1)). Test: Resize(256), CenterCrop(224), Normalize(μ\mu=(0,0,0), σ\sigma=(1,1,1)).
+Method |
+CIFAR100 Inc-5 |
+ImageNet-R Inc-5 |
+avg |
+last |
+fgt |
+avg |
+last |
+fgt |
+ZO-FC w aug |
+88.39 |
+83.34 |
+5.26 |
+72.01 |
+66.63 |
+4.40 |
+ZO-FC w/o aug |
+88.63 |
+83.14 |
+8.02 |
+73.04 |
+67.35 |
+5.19 |
+Table 7: Effect of data augmentation on ZO-FC.
+Augmentations act as input-space regularization that encourages invariances. In continual learning, that regularization reduces representation drift toward the current task and thus mitigates forgetting. On CIFAR100, removing augmentation (keeping only resize/center-crop) yields similar accuracy, and higher forgetting; on ImageNet-R, the accuracy increases slightly with much higher forgetting. This supports that standard augmentation helps ZO-FC stability rather than hurting ZO quality.
+G. Further studies on Prompt-based Methods
+Method |
+CIFAR100 Inc-5 |
+ImageNet-R Inc-5 |
+avg |
+last |
+fgt |
+avg |
+last |
+fgt |
+L2P |
+26.43 |
+4.79 |
+19.05 |
+11.83 |
+2.52 |
+10.21 |
+CODA-Prompt |
+10.12 |
+2.40 |
+11.53 |
+6.47 |
+1.21 |
+5.83 |
+Table 8: Increased epochs for prompt based method, 100 for Cifar100, 200 for INR.
+We conduct further experiments on L2P and CODA-Prompt with more updates (100 epochs on CIFAR100, 200 on ImageNet-R). Despite the longer schedule, the two prompt based methods fail to converge under ZO optimization and their accuracy results remain far below adapter-based ZO training and ZO-FC. This matches recent studies [50] that prompt-based methods are harder to converge under ZO SPSA because optimizing prompt selection with penalties and contrastive alignment loss requires precise gradients.
+H. Memory and Computation Cost Analysis
+We evaluate the memory efficiency and computational overhead of our ZO-FC method relative to both FO and ZO optimized CIL methods. This is critical for continual learning in resource-constrained environments, such as edge devices.
+Memory–Accuracy Trade-off:
+As shown in Table 9, FO optimization methods that incorporate PEFT modules incur significant memory costs—up to 7.21 GB for CODA-Prompt and over 4 GB for most adapter-based baselines. In contrast, ZO optimization yields dramatic memory savings, with most ZO variants requiring <0.7<0.7 GB, regardless of the adapter type. Notably, our proposed ZO-FC maintains only 0.70 GB of peak GPU memory usage—on par with minimal FO models using fixed classifiers. This demonstrates that our hybrid strategy preserves the memory efficiency of ZO methods, while achieving high performance, as shown in Figure 6, 7.
+Scenario |
+Peak GPU Memory (GB) |
+FO Optimization |
+|
+Learnable Cls. |
+0.70 |
+Adapter + Learnable Cls. |
+4.35 |
+LAE |
+4.48 |
+L2P |
+5.58 |
+CODA-Prompt |
+7.21 |
+APER |
+4.25 |
+EASE |
+4.38 |
+InfLoRA |
+4.98 |
+ZO Optimization |
+|
+Learnable Cls. |
+0.69 |
+Adapter + Learnable Cls. |
+0.69 |
+LAE |
+0.69 |
+APER |
+0.66 |
+EASE |
+0.87 |
+InfLoRA |
+0.88 |
+ZO-FC |
+0.70 |
+Table 9: Per epoch Optimization Memory cost with batch size 48
+Figure 6: Memory–accuracy trade-off across CIL methods on
+CIFAR100. Note that, same color denotes the same method.
+Figure 7: Memory–accuracy trade-off across CIL methods on
+DomainNet. Note that, same color denotes the same method.
+Scenario |
+Peak GPU Memory Cost |
+Running time |
+FO-SGD |
+4.35 GB |
+24.54s |
+ZO-SGD (q=1) |
+0.69 GB |
+19.44s |
+ZO-SGD (q=4) |
+0.69 GB |
+52.31s |
+ZO-FC (q=1) |
+0.70 GB |
+22.15s |
+ZO-FC (q=4) |
+0.70 GB |
+59.36s |
+Table 10: Per epoch Memory cost & Time Cost with batch size 48
+Runtime–Memory Trade-off:
+Table 10 shows the per-epoch training time and corresponding optimization memory cost. ZO methods achieve extreme memory efficiency, but incur increasing compute overhead with higher query budgets, reflecting the cost of additional function queries. Due to optimizer decomposition for different trainable modules, our approach costs slightly longer runtime than ZO. Despite this trade-off, Our approach’s runtime remains manageable to low-resource hardware.
+Computation Cost Analysis:
+We use FLOPs to measure computation cost. Let B be batch size; H×\timesW the input resolution (224×224224{\times}224);
+N the ViT token count (N=1+(H/16)​(W/16)=197N=1+(H/16)(W/16)=197 at 2242224^{2}); D the hidden width (ViT-B: D=768D{=}768);
+C the current #classes; 𝐋𝐚\mathbf{L_{a}} the #blocks with adapters; and r the adapter bottleneck (we use r=5r{=}5).
+Denote the ViT backbone forward cost per image as Fbackbone​(H,W)F_{\text{backbone}}(H,W).
+A bottleneck adapter applies two linear maps per token (D→rD{\to}r and r→Dr{\to}D), so the adapter overhead per image is
+|
+FPET≈La​N​(2​D​r+2​r​D)=La​N​(4​D​r).F_{\text{PET}}\;\approx\;L_{a}\,N\,(2Dr+2rD)\;=\;L_{a}\,N\,(4Dr). |
+|
+(11) |
+For the cosine classifier, each forward computes: feature ℓ2\ell_{2}–norm (∼3​D\sim 3D ops),
+weight ℓ2\ell_{2}–norm across CC classes (∼3​C​D\sim 3CD ops), class dot-products (∼2​C​D\sim 2CD), and a scalar scale σ\sigma (∼C\sim C):
+|
+Fcls≈(5​C​D)+3​D+C.F_{\text{cls}}\;\approx\;(5CD)+3D+C. |
+|
+(12) |
+Note. In our implementation, feature and weight normalizations are recomputed every forward, so the 3​C​D3CD term in (12) is paid per forward. If one caches unit-norm weights (or renormalizes once per optimizer step), then the per-forward cost becomes (2​C​D)+3​D+C(2CD)+3D+C with an additional 3​C​D3CD once per step.
+The total per-image forward FLOPs is
+|
+Ffwd,img≈Fbackbone​(H,W)+La​N​(4​D​r)+(5​C​D+3​D+C).F_{\text{fwd,img}}\;\approx\;F_{\text{backbone}}(H,W)\;+\;L_{a}N(4Dr)\;+\;\big(5CD+3D+C\big). |
+|
+(13) |
+For per-batch multiplicities (FO / ZO / hybrid), We report FLOPs using the standard convention that a backward pass over the trainable subgraph costs ≈\approx2× the forward pass, so one training step is ≈\approx3× the forward FLOPs. So let αFC\alpha_{\text{FC}} be the FC-classifier backward cost in forward-equivalents of the head subgraph (we use αFC≈2\alpha_{\text{FC}}\!\approx\!2), and let qq be the ZO (SPSA) query budget:
+•
+FO: forwards/batch =1=1; backward over trainable parts (adapters+head). Cost: B​Ffwd,img+αFC​B​Fcls\;B\,F_{\text{fwd,img}}\;+\;\alpha_{\text{FC}}\,B\,F_{\text{cls}} plus the adapter backward (captured by the 3×\times rule below).
+•
+ZO on adapters: forwards/batch =2​q+1=2q{+}1; no backward. Cost: (2​q+1)​B​Ffwd,img\;(2q{+}1)\,B\,F_{\text{fwd,img}}.
+•
+ZO-FC (early epochs): 2​q2q ZO forwards on adapters ++ one FO forward for the classifier ++ one eval forward; and a classifier-only backward. Cost: (2​q+2)​B​Ffwd,img+αFC​B​Fcls\;(2q{+}2)\,B\,F_{\text{fwd,img}}\;+\;\alpha_{\text{FC}}\,B\,F_{\text{cls}}.
+•
+ZO-FC (late; classifier frozen): same forwards as ZO: 2​q+12q{+}1. Cost: (2​q+1)​B​Ffwd,img\;(2q{+}1)\,B\,F_{\text{fwd,img}}.
+Using (13), the relative per-batch overhead vs. FO is
+|
+Δ​FZO​vs​FO\displaystyle\Delta F_{\text{ZO}\;\text{vs}\;\text{FO}} |
+≈2​q⋅B⋅Ffwd,img,\displaystyle\approx 2q\cdot B\cdot F_{\text{fwd,img}}, |
+|
+(14) |
+|
+Δ​FZO-FC(early)​vs​FO\displaystyle\Delta F_{\text{ZO-FC(early)}\;\text{vs}\;\text{FO}} |
+≈(2​q+1)⋅B⋅Ffwd,img,\displaystyle\approx(2q{+}1)\cdot B\cdot F_{\text{fwd,img}}, |
+|
+(15) |
+|
+Δ​FZO-FC(late)​vs​FO\displaystyle\Delta F_{\text{ZO-FC(late)}\;\text{vs}\;\text{FO}} |
+≈2​q⋅B⋅Ffwd,img.\displaystyle\approx 2q\cdot B\cdot F_{\text{fwd,img}}. |
+|
+(16) |
+Remarks. (i) In FO we backprop through the trainable parts (adapters+classifier); the ViT backbone is frozen (no grads) but still incurs one forward per batch.
+(ii) For ViT-B/16 at 2242224^{2}, N=197N{=}197 and D=768D{=}768; the adapter overhead scales linearly with rr and is small for La=5L_{a}{=}5, r=5r{=}5.
+Table 11: Per-batch FLOP breakdown for FO, ZO, and ZO-FC.
+Forward FLOPs / batch are measured once with fvcore and scaled by the number of forwards in each regime (baseline single-forward cost: 8.484×10118.484\times 10^{11}).
+Backward FLOPs / batch are estimated: FO via the 3×3\times rule; ZO-FC via the analytical head-only term 2​B​Fcls2B\,F_{\text{cls}} with B=48,D=768,C=5B{=}48,\,D{=}768,\,C{=}5 at the measured epoch.
+Regime |
+q |
+Forwards / batch |
+Forward FLOPs (meas.) |
+Backward FLOPs (est.) |
+Total FLOPs (est.) |
+×\timesFO |
+FO |
+– |
+11 |
+0.848×10120.848\times 10^{12} |
+1.697×10121.697\times 10^{12} |
+2.545×𝟏𝟎𝟏𝟐\mathbf{2.545\times 10^{12}} |
+1.00×\mathbf{1.00\times} |
+ZO |
+1 |
+2​q+1=32q{+}1{=}3 |
+2.545×𝟏𝟎𝟏𝟐\mathbf{2.545\times 10^{12}} |
+00 |
+2.545×𝟏𝟎𝟏𝟐\mathbf{2.545\times 10^{12}} |
+1.00×\mathbf{1.00\times} |
+ZO |
+4 |
+2​q+1=92q{+}1{=}9 |
+7.636×𝟏𝟎𝟏𝟐\mathbf{7.636\times 10^{12}} |
+00 |
+7.636×𝟏𝟎𝟏𝟐\mathbf{7.636\times 10^{12}} |
+3.00×\mathbf{3.00\times} |
+ZO-FC (early) |
+1 |
+≈2​q+1\approx 2q{+}1 |
+2.545×𝟏𝟎𝟏𝟐\mathbf{2.545\times 10^{12}} |
+2.06×1062.06\times 10^{6} |
+2.545×𝟏𝟎𝟏𝟐\mathbf{2.545\times 10^{12}} |
+1.00×\mathbf{1.00\times} |
+ZO-FC (late) |
+1 |
+2​q+1=32q{+}1{=}3 |
+2.545×𝟏𝟎𝟏𝟐\mathbf{2.545\times 10^{12}} |
+00 |
+2.545×𝟏𝟎𝟏𝟐\mathbf{2.545\times 10^{12}} |
+1.00×\mathbf{1.00\times} |
+ZO-FC (early) |
+4 |
+≈2​q+1\approx 2q{+}1 |
+7.636×𝟏𝟎𝟏𝟐\mathbf{7.636\times 10^{12}} |
+2.06×1062.06\times 10^{6} |
+7.636×𝟏𝟎𝟏𝟐\mathbf{7.636\times 10^{12}} |
+3.00×\mathbf{3.00\times} |
+ZO-FC (late) |
+4 |
+2​q+1=92q{+}1{=}9 |
+7.636×𝟏𝟎𝟏𝟐\mathbf{7.636\times 10^{12}} |
+00 |
+7.636×𝟏𝟎𝟏𝟐\mathbf{7.636\times 10^{12}} |
+3.00×\mathbf{3.00\times} |
+Notes: (i) FO backward is estimated via the rule-of-thumb FLOPstotal≈3×FLOPsforward\text{FLOPs}_{\text{total}}\!\approx\!3\times\text{FLOPs}_{\text{forward}} when training adapters+classifier with a frozen backbone.
+(ii) ZO-FC early includes a classifier-only FO step; its backward is 2​B​Fcls2B\,F_{\text{cls}} and scales linearly with CC.
+(iii) Because this term is tiny relative to ViT forwards, totals for ZO and ZO-FC practically coincide at the same qq.
+Computation Cost Measurement:
+We use ViT-B/16 at 2242224^{2} with batch size B=48B{=}48. The measured forward FLOPs per image (fvcore) is 1.768×𝟏𝟎𝟏𝟎\mathbf{1.768\times 10^{10}},
+so per-batch forward FLOPs is 8.484×𝟏𝟎𝟏𝟏\mathbf{8.484\times 10^{11}}. FO total is estimated via the common rule
+FLOPsFO,total≈3×FLOPsforward\text{FLOPs}_{\text{FO,total}}\!\approx\!3\times\text{FLOPs}_{\text{forward}}, yielding 2.545×𝟏𝟎𝟏𝟐\mathbf{2.545\times 10^{12}} per batch.
+ZO performs (2​q+1)(2q{+}1) forward evaluations with no backward; at q=1q{=}1 this matches FO’s total, and at q=4q{=}4 it is 9×9\times the forward-only batch cost, i.e., 7.636×𝟏𝟎𝟏𝟐\mathbf{7.636\times 10^{12}}.
+ZO-FC uses the same ZO forwards and adds a classifier-only backward during early epochs. Given our small CC and a frozen backbone, this extra term (αFC​B​Fcls\alpha_{\text{FC}}\,B\,F_{\text{cls}}) is orders of magnitude smaller than a ViT forward, so totals numerically coincide with ZO at the same qq (both early and late).
+This explicitly reports and quantifies the additional forward passes required by ZO and how training cost scales with qq.
+In practice, parallelizing the 2​q2q ZO forwards [14] can reduce wall-clock time without changing FLOPs and is compatible with ZO-FC for on-device continual learning.
+I. CIL Accuracy Trends: ZO-FC vs. FO Methods
+To have a good view of the effectiveness of our proposed ZO-FC method, we demonstrate the last accuracy trends across the full task stream on both CIFAR100 and ImageNet-R, under two common incremental learning settings: Inc-10 and Inc-5. Figure 8, 9, 10, 11 illustrate the evolution of performance as more tasks are introduced. These trends highlight the long-term stability of ZO-FC under class-incremental learning.
+Figure 8: CIFAR100, Inc-5: last accuracy over tasks.
+Figure 9: ImageNet-R, Inc-5: last accuracy over tasks.
+Figure 10: CIFAR100, Inc-10: last accuracy over tasks.
+Figure 11: ImageNet-R, Inc-10: last accuracy over tasks.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+methods listed below:
+Click the "Report Issue" (
+) button, located in the page header.
+Tip: You can select the relevant text first, to include it in your report.
+Our team has already identified the following issues. We appreciate your time reviewing and reporting rendering errors we
+may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a list of packages that need conversion, and welcome developer contributions.
+We gratefully acknowledge support from our major funders,
+member institutions, ,
+and all contributors.
+About ·
+Help ·
+Contact ·
+Subscribe ·
+Copyright ·
+Privacy ·
+Accessibility ·
+Operational Status (opens in new tab)

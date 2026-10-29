@@ -1,0 +1,851 @@
+Official exact-v1 HTML text: https://arxiv.org/html/2610.30120v1
+Downloaded main text; actual necessary reading scope is recorded separately in SOURCE_MULTIMODAL3.md. Preservation does not assert all included appendices were reviewed.
+Abstract
+World models turn visual representations into predictions and actions.
+We argue that their visual foundation should combine physical-state information, native language alignment, and pixel reconstruction, so that a single representation can support prediction, instruction, and inspection.
+However, existing encoders typically specialize in only one or two of these capabilities; we therefore introduce ALPS, a pretrained visual state encoder that unifies all three in a single set of patch tokens.
+Using only still images and text, we pretrain a ViT-B/16 from scratch with language, reconstruction, and spatial correspondence objectives, and then refine it via cross-view self-distillation.
+In a unified evaluation across fifteen public encoders, ALPS achieves the lowest aggregate LIBERO state-probe error among ViT-B models (matching the 3.5\times larger V-JEPA 2-L) while maintaining strong language alignment and accurate pixel reconstruction.
+Downstream, frozen ALPS tokens reach the highest mean policy success on LIBERO (85.5%) when paired with our native text tower, match or exceed leading encoders on world-model planning across PushT, Wall, and Granular, and allow predicted future tokens to be decoded directly into pixels for visual inspection.
+We hope this work helps establish visual pretraining as a shared foundation for understanding, prediction, and action in world models.
+ 1 Introduction
+World models predict how a scene changes in response to actions and use these predictions to plan.
+Many of them operate in the latent space of a frozen pretrained visual encoder  [ 91 , 6 , 4 ] .
+The encoder therefore decides what the world model can see: only when its tokens encode where objects are and what state they are in can a downstream world model learn how that state changes from scarce interaction data.
+Two complementary interfaces make such an encoder far more versatile.
+With tokens aligned to language, instructions and goals stated in words can be related to the scene without a second visual encoder.
+With tokens that decode back into images, both observed scenes and imagined futures can be rendered and inspected.
+This raises a central question: how can we pretrain a single visual encoder that provides physical-state information, language alignment, and pixel reconstruction at once?
+Existing public encoders typically specialize in only one or two of these capabilities.
+Self-supervised and agglomerative models such as DINOv2, DINOv3, and C-RADIOv3 provide transferable spatial features  [ 53 , 66 , 30 ] , while predictive video encoders such as V-JEPA 2 learn spatiotemporal representations through latent prediction  [ 4 ] .
+Meanwhile, image-text encoders such as CLIP, SigLIP 2, and PE-Core align vision with language  [ 61 , 69 , 7 ] , and reconstruction-based encoders preserve fine visual detail in pixels or latents  [ 29 , 86 ] .
+Combining state information, language alignment, and pixel reconstruction in a single representation is not straightforward.
+A refinement that improves the state information of an image-text encoder, for example, can substantially degrade its language alignment, as we show for SigLIP 2 and CLIP ( Sec.   5.2 ).
+To resolve this tension, we pretrain our encoder in two stages ( Fig.   2 ).
+The first stage establishes language alignment, pixel reconstruction, and spatial features in a shared representation.
+We train a ViT-B/16 from scratch on image-text pairs with contrastive alignment, captioning, reconstruction, and dense correspondence objectives on the same patch tokens.
+The second stage then strengthens state information through cross-view self-distillation, training the encoder to predict scene content across changes in crop, scale, and appearance.
+From an augmented view, the student predicts a frozen first-stage teacher’s patch tokens at corresponding locations in a clean view.
+Both stages train on still images and text alone, without video or interaction supervision.
+We call the final encoder ALPS ( A L anguage-aligned, P ixel-renderable S tate encoder) and the intermediate encoder after the first stage ALPS (Stage 1).
+We compare ALPS with fifteen public encoders, all frozen and evaluated under common protocols ( , Tab.   1 ).
+ALPS achieves the lowest aggregate LIBERO state-probe error among ViT-B encoders, matching the 3.5\times larger V-JEPA 2-L, while retaining strong language alignment and accurate pixel reconstruction.
+Cross-view refinement reduces state-probe error by 17% while changing image-text retrieval by at most 0.5 points, and also improves world-model prediction.
+In contrast, the same refinement lowers ImageNet zero-shot accuracy and image-to-text retrieval by 4–12 points for SigLIP 2 and CLIP ( Fig.   5 ).
+Frozen ALPS tokens achieve the highest mean policy success in our LIBERO comparison when paired with our native text tower, and support leading planning performance on PushT, Wall, and Granular ( Sec.   5.3 ).
+Predicted future tokens can also be decoded into images for inspection.
+Our contributions are as follows:
+ • 
+We formulate visual state pretraining for world models and establish a unified evaluation protocol spanning physical-state information, native language alignment, pixel reconstruction, and downstream control, planning, and prediction.
+ • 
+We introduce ALPS, pretrained from scratch on still images and text with joint language, reconstruction, and spatial objectives followed by cross-view self-distillation.
+ • 
+We demonstrate that one frozen representation can combine competitive performance across all three capabilities and serve as a shared visual foundation for robot policies and world models.
+ 2 Related Work
+ Figure 2 : Two-stage visual state pretraining. 
+Stage 1 trains an encoder E from scratch with four objectives on shared patch tokens.
+Stage 2 initializes a student from E and keeps E frozen as the teacher.
+Given student tokens from an augmented crop A and query tokens encoding position and relative scale, a predictor regresses standardized teacher tokens from a clean crop B .
+Only patches of B whose centers lie inside A contribute to the loss.
+After training, the predictor is discarded and the refined student serves as ALPS. 
+Image-text and unified visual pretraining.
+Contrastive image-text pretraining connects visual representations to language  [ 61 , 84 ] .
+Subsequent approaches incorporate captioning supervision  [ 82 , 40 , 44 ] , self-distillation and masked prediction  [ 69 ] , spatial objectives  [ 49 , 12 ] , image reconstruction  [ 67 ] , or autoregressive patch prediction  [ 23 ] .
+Meanwhile, unified tokenizers and multimodal models couple understanding with generation  [ 46 , 89 , 76 ] .
+Other work instead adapts a frozen self-supervised backbone to language, as in dino.txt  [ 32 ] , or encodes the latents of a generative autoencoder, as in OpenVision 3  [ 86 ] .
+Instead of adapting a frozen backbone or encoding autoencoder latents, our first stage jointly trains unnormalized patch tokens for language alignment, pixel reconstruction, and dense correspondence, providing a unified initialization for stage-two cross-view refinement.
+Self-supervised and agglomerative representations.
+Self-distillation  [ 13 , 92 , 53 , 66 ] , latent prediction  [ 3 , 18 ] , and multi-teacher distillation  [ 63 , 30 ] learn transferable patch representations.
+To further strengthen dense spatial features, recent methods align region features with crop embeddings  [ 75 ] , match patch-neighborhood orderings across views  [ 55 ] , enforce locality alignment  [ 17 ] , apply spatial refinement as in Perception Encoder  [ 7 ] , or supervise predictions at multiple depths  [ 51 ] .
+Without relying on external teachers, our second stage refines the encoder from its own frozen first-stage weights through geometry-conditioned cross-view self-distillation, sharpening state information while preserving native language alignment and pixel reconstruction.
+Visual representations for robot learning.
+Policies using pretrained visual representations can be competitive with those using ground-truth state inputs  [ 54 ] .
+Robot representations have been learned from egocentric video  [ 52 ] , masked autoencoding  [ 62 , 48 ] , language supervision  [ 33 ] , foundation-model distillation  [ 65 ] , and neural rendering  [ 93 ] .
+Comparative studies find no single dominant representation  [ 48 ] , show that general vision datasets can match egocentric video for visuomotor pretraining  [ 19 ] , and note that domain-specific pretraining does not guarantee robustness under visual shifts  [ 11 ] .
+Pretrained on general-domain images and text, ALPS provides frozen state tokens and a native text tower that transfer directly to language-conditioned manipulation.
+Representations for world models.
+World models can learn a visual autoencoder before fitting latent dynamics  [ 27 ] , learn representations jointly with dynamics  [ 28 , 47 , 36 ] , or build on pretrained features  [ 6 ] .
+In particular, DINO-WM plans over frozen DINOv2 tokens  [ 91 ] , V-JEPA 2 connects video pretraining to action-conditioned planning  [ 4 ] , and frozen features also support language-conditioned planning  [ 38 ] , whereas RepWAM learns visual and action tokenizers directly from robot data  [ 70 ] .
+Generative world models instead simulate observations using learned tokenizers with autoregressive or diffusion dynamics  [ 50 , 9 , 1 ] , or via pixel-space diffusion  [ 2 ] .
+Recent studies further show that off-the-shelf features do not automatically improve sample efficiency in model-based reinforcement learning  [ 64 ] , that pixel reconstruction fidelity alone is an unreliable proxy for recovering actions from latent transitions  [ 80 ] , and that static image encoders can outperform video encoders depending on downstream protocols  [ 68 ] .
+We focus on pretraining the visual encoder whose frozen tokens serve as the state representation for downstream world models.
+ 3 Method
+Let E map an image x to patch tokens z=E(x)\in\mathbb{R}^{N\times d} .
+Downstream state probes, policies, world models, and pixel decoders operate directly on the frozen tokens z .
+For language alignment, a linear projection W_{\text{img}} followed by average pooling and \ell_{2} normalization maps z to a global image embedding v=\text{norm}\!\left(\frac{1}{N}\sum_{i=1}^{N}W_{\text{img}}z_{i}\right)\in\mathbb{R}^{D} , which is paired with a text encoder E_{\text{text}} .
+ 3.1 Stage 1: joint pretraining from scratch
+Stage 1 builds a shared representation through complementary language, pixel, and spatial supervision ( Fig.   2 , top).
+Contrastive alignment and captioning connect the tokens to language, reconstruction preserves visual detail, and dense correspondence supervises local spatial relationships across views.
+Architecture.
+The image encoder E is a ViT-B/16  [ 22 ] with fixed sine-cosine position embeddings.
+It outputs the raw patch tokens z of the last transformer block without a final normalization layer.
+We jointly train a text encoder and a caption decoder with the same width and depth as E ( Sec.   S1 ).
+A lightweight convolutional decoder D maps z to pixels for the pretraining reconstruction objective, whereas all reported reconstructions use a separate evaluation decoder trained on frozen tokens ( Sec.   4 ).
+Objectives.
+Four objectives supervise the same patch tokens:
+ \mathcal{L}_{1}=\mathcal{L}_{\text{itc}}+\mathcal{L}_{\text{cap}}+w_{\text{rec}}\,\mathcal{L}_{\text{rec}}+0.25\,\mathcal{L}_{\text{dense}}. 
+ (1) 
+ Contrastive alignment. 
+Each image is paired with its web caption and one sentence from a longer synthetic caption.
+We compute an InfoNCE loss  [ 61 ] between the mean-pooled, projected image tokens and each caption set, then average the two losses to obtain \mathcal{L}_{\text{itc}} .
+Each loss uses its own softmax, so the two captions paired with the same image are never treated as negatives of each other.
+ Captioning. 
+The caption decoder autoregressively predicts the full synthetic caption, conditioned on the image tokens and preceding text  [ 82 ] .
+ Reconstruction. 
+The decoder D reconstructs x from both z and a noisy copy of z .
+The objective combines \ell_{1} , structural similarity, and image gradient terms ( Sec.   S1 ).
+We do not apply color augmentation to x , which directly serves as the reconstruction target.
+ Dense correspondence. 
+This objective directly supervises patch correspondence across crops, scales, and flips.
+We form a second view g(x) via a random crop and flip of x , so the location of each patch in the original view is known.
+A small projection head maps the tokens of both views to contrastive features.
+For each patch of g(x) , the positive feature is sampled bilinearly from the projected token field of x at the corresponding location.
+Features at other locations in the same image and from other images serve as negatives in an InfoNCE loss \mathcal{L}_{\text{dense}} ( Sec.   S1 ), encouraging local discriminability.
+Following prior work on dense correspondence and pixel-level consistency  [ 71 , 77 ] , this term adds explicit cross-view patch supervision to global image-text alignment and single-image reconstruction.
+Data.
+We train on DataComp-1B  [ 24 ] using its web captions and synthetic captions generated by the LLaVA-LLaMA-3 captioner from Recap-DataComp-1B  [ 39 ] , conditioned on the original web caption  [ 44 ] .
+Because the captioner uses a frozen CLIP ViT-L/14  [ 39 ] , knowledge from this image-text model reaches our encoder only through text; no external visual model supplies feature targets.
+Training processes 12.8 billion samples at 128\times 128 resolution, followed by 1.0 billion samples at 224\times 224 resolution ( Sec.   S1 ).
+After Stage 1, we retain the image encoder, text encoder, and image projection, while discarding the caption decoder, dense-correspondence projector, and D .
+ Figure 3 : The LIBERO state probe. 
+(a) A lightweight probe reads frozen tokens from the last 16 frames to estimate the current scene state from observations alone (readout) or predict the state 1 or 3 s ahead given robot actions (prediction).
+(b) State predictions 3 s ahead from ALPS and SigLIP 2, overlaid on the frame observed 3 s later, shown on the held-out LIBERO-Spatial episode with the median error difference between the two encoders.
+(c) Per-object position errors at this step, the manipulated bowl’s error over the episode, and its mean error across 50 held-out episodes. 
+ 3.2 Stage 2: cross-view self-distillation on single images
+Stage 2 refines the shared representation through cross-view self-distillation ( Fig.   2 , bottom).
+From an augmented crop, the student predicts the tokens produced by a frozen Stage 1 teacher for a clean crop of the same image.
+Known crop geometry specifies the target locations, and supervision focuses on the overlap between views.
+Teacher and student.
+Both the frozen teacher and the trainable student are initialized from the Stage 1 encoder, and only the student encoder and predictor are updated.
+Before training, we compute fixed per-channel statistics to standardize the teacher tokens throughout this stage.
+For each image, we independently sample two views: the teacher receives a clean crop B covering 40% to 100% of the image, while the student receives with equal probability a local crop A (10% to 40%) or a global crop (40% to 100%) with photometric augmentation ( Sec.   S1 ).
+Geometry queries.
+Geometry queries specify where and at what scale the predictor should estimate teacher features.
+A four-layer transformer predictor P reads the student tokens E(A) and produces one output for each query q_{i} associated with patch i of B .
+In each layer, the queries first attend to one another and then to E(A) .
+The crop boxes determine the position of each teacher patch center in the coordinate frame of A .
+Each query encodes this position using a fixed sine-cosine embedding, measured in the patch units of A , and encodes the log side-length ratio of B to A through a learned embedding ( Tab.   S2 ).
+The queries thus supply the geometric correspondence, while the student features provide the visual content used to predict the teacher tokens.
+Training objective.
+Let V denote the set of teacher patches whose centers fall inside the student crop A .
+We minimize the mean squared error between the predicted features and the standardized teacher tokens over V :
+ \mathcal{L}_{2}=\frac{1}{|V|\,d}\sum_{i\in V}\big\|P\big(E(A),q_{i}\big)-\bar{z}^{\,\text{teacher}}_{i}(B)\big\|^{2}. 
+ (2) 
+Patches outside V are excluded from the loss, and we resample the student crop if |V|<16 .
+Unlike masked prediction of unseen regions, this geometry-conditioned objective trains local patch tokens to remain consistent across changes in crop context, scale, and appearance while staying aligned with the frozen Stage 1 teacher.
+Data and output.
+Stage 2 trains on 5 million single-image samples drawn from a curated collection of public image-editing datasets ( Sec.   S1 ).
+These sources provide high-resolution, object-centric scenes well-suited for local cross-view crops, which we sample as individual images without edit-pair or instruction supervision.
+After training, we discard the predictor and retain the refined student encoder as ALPS, paired directly with the unchanged Stage 1 text encoder and image projection.
+ 4 Evaluation protocol
+We evaluate the encoders across three core capabilities (physical-state information, language alignment, and pixel reconstruction; Sec.   1 ), as well as downstream control, planning, and world-model prediction.
+All encoders remain frozen and follow a shared evaluation protocol on each benchmark.
+ State probe (LIBERO, relative error  \downarrow ) 
+ Language alignment  \uparrow 
+ Reconstruction  \downarrow 
+ read- 
+ IN-1k 
+ Flickr30k R@1 
+ COCO R@1 
+ Encoder 
+ out 
+ +1 s 
+ +3 s 
+ mean 
+ 0-shot 
+ I \to T 
+ T \to I 
+ I \to T 
+ T \to I 
+ \ell_{1} 
+ LPIPS 
+ Spatial & self-supervised encoders 
+ TIPSv2-B/14  [ 12 ] 
+ .947 
+ .946 
+ .995 
+ .963 
+ 71.1 
+ 86.5 
+ 72.2 
+ 63.7 
+ 48.2 
+ .204 
+ .467 
+ DINOv2-B/14  [ 53 ] 
+ .916 
+ .901 
+ 1.010 
+ .942 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ .248 
+ .535 
+ PE-Spatial-B/16  [ 7 ] 
+ 1.000 
+ .892 
+ .917 
+ .936 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ .160 
+ .386 
+ DINOv3-B/16  [ 66 ] 
+ .860 
+ .911 
+ .840 
+ .870 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ .196 
+ .424 
+ C-RADIOv3-B  [ 30 ] 
+ .876 
+ .838 
+ .877 
+ .864 
+ 66.5 
+ 85.7 
+ 74.3 
+ 56.5 
+ 46.0 
+ .161 
+ .359 
+ Image-text encoders 
+ CLIP-B/16  [ 61 ] 
+ 1.091 
+ 1.110 
+ 1.380 
+ 1.194 
+ 68.4 
+ 81.9 
+ 62.0 
+ 52.5 
+ 33.1 
+ .291 
+ .579 
+ SigLIP 2-B/16  [ 69 ] 
+ 1.149 
+ 1.202 
+ 1.130 
+ 1.160 
+ 77.6 
+ 91.7 
+ 78.1 
+ 67.9 
+ 52.4 
+ .264 
+ .541 
+ PE-Core-B/16  [ 7 ] 
+ 1.118 
+ 1.099 
+ 1.292 
+ 1.170 
+ 78.4 
+ 93.9 
+ 80.9 
+ 71.1 
+ 50.3 
+ .264 
+ .559 
+ OpenVision-B/16  [ 40 ] 
+ 1.042 
+ 1.008 
+ 1.032 
+ 1.027 
+ 73.3 
+ 94.5 
+ 78.9 
+ 71.3 
+ 51.3 
+ .258 
+ .551 
+ Pixel & latent reconstruction encoders 
+ MAE-B/16  [ 29 ] 
+ .935 
+ 1.008 
+ 1.027 
+ .990 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ .109 
+ .260 
+ VC-1-B  [ 48 ] 
+ 1.064 
+ .841 
+ .924 
+ .943 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ .106 
+ .258 
+ OpenVision 3-B  [ 86 ] 
+ 1.029 
+ .934 
+ 1.071 
+ 1.011 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ .104 
+ .243 
+ Larger encoders, ViT-L (304M to 330M parameters) 
+ OpenVision 2-L/14  [ 44 ] 
+ .969 
+ .881 
+ .987 
+ .945 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ .311 
+ .602 
+ V-JEPA 2-L/16  [ 4 ] 
+ .741 
+ .841 
+ .904 
+ .829 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ n/a 
+ .173 
+ .413 
+ dino.txt-L/14  [ 32 ] 
+ 1.090 
+ 1.170 
+ 1.418 
+ 1.226 
+ 81.6 
+ 90.7 
+ 75.8 
+ 64.9 
+ 46.7 
+ .239 
+ .552 
+ ALPS (Stage 1) 
+ 1.000 
+ 1.000 
+ 1.000 
+ 1.000 
+ 74.5 
+ 93.4 
+ 79.4 
+ 70.6 
+ 52.0 
+ .112 
+ .365 
+ ALPS 
+ .842 
+ .834 
+ .813 
+ .829 
+ 73.4 
+ 93.2 
+ 78.9 
+ 70.2 
+ 51.9 
+ .120 
+ .372 
+ Table 1: Frozen encoders on state, language, and pixels: ALPS has the lowest state-probe error among the ViT-B encoders. 
+State probe: LIBERO position error relative to ALPS (Stage 1); language: each model’s own text tower.
+ Bold : best ViT-B encoder in each column, ALPS (Stage 1) not ranked; gray : ViT-L references; n/a: no released text tower (not zero).
+Encoders.
+We compare fifteen public encoders with our first-stage encoder and ALPS ( Tab.   1 ).
+Fourteen of the public models are image encoders, while V-JEPA 2 ViT-L  [ 4 ] is a video encoder that takes the last 16 frames at 256\times 256 resolution and outputs tokens for the current frame.
+Our primary comparison uses ViT-B image towers at 224\times 224 resolution (196 tokens for B/16 and 256 for B/14), taking each encoder’s last-layer patch tokens with its default normalization.
+Alongside the ViT-B models, OpenVision 2, V-JEPA 2, and dino.txt  [ 32 ] serve as ViT-L references; for dino.txt, we extract the patch tokens after its language-aligned vision head.
+State probe.
+The state probe evaluates scene-state readout and action-conditioned prediction directly from frozen tokens ( Fig.   3 ).
+Using demonstrations from LIBERO-Object and LIBERO-Spatial  [ 42 ] , a two-layer attentive probe (2.5M parameters) reads the tokens of the last 16 frames to estimate the movable objects’ 3D positions, orientations, and binary predicates against simulator ground truth.
+In the readout setting, the probe estimates the current state from the frames alone; in the two prediction settings, it additionally receives the robot actions over the next 1 or 3 seconds to predict the future state at that horizon.
+We report position error relative to our first-stage encoder, averaged across the six combinations of the two suites and three settings ( Tab.   S4 reports absolute errors in centimeters).
+World models instead predict future tokens in latent space and are evaluated separately ( Sec.   5.3 ).
+Language alignment.
+We evaluate language alignment using each model’s native text tower, reporting ImageNet-1k  [ 20 ] zero-shot accuracy and Recall@1 for image-text retrieval on Flickr30k  [ 81 ] and COCO  [ 41 ] .
+For encoders released without a paired text tower, these metrics are marked n/a, indicating the absence of a native text interface rather than a lack of semantic information in the features.
+C-RADIOv3 uses the stronger of its two language adaptor heads, while ALPS uses its Stage 1 language interface without modification.
+Pixel reconstruction.
+To evaluate pixel reconstruction on equal footing, we train a separate lightweight convolutional adapter for each encoder that maps its frozen tokens to the latents of a frozen SDXL autoencoder  [ 57 ] for image decoding.
+The adapter is trained on 19,000 ImageNet validation images and evaluated on 1,000 held-out images (one per class) using \ell_{1} error and LPIPS  [ 87 ] .
+Although much larger generative decoders can reconstruct plausible images from DINOv2 or SigLIP 2 tokens  [ 90 ] , our protocol measures the visual detail directly recoverable by a lightweight probe, and ALPS maintains its advantage when paired with a stronger decoder ( Sec.   S2 ).
+Control.
+For visuomotor control, we train the LIBERO transformer policy  [ 42 ] on frozen visual tokens via behavior cloning with 50 demonstrations per task across four LIBERO suites.
+Task instructions are embedded either by a frozen BERT model  [ 21 ] or by each encoder’s native text tower.
+Each trained policy is evaluated three times over 50 rollouts per task ( Sec.   S2 ).
+World-model prediction and planning.
+We follow the DINO-WM protocol  [ 91 ] on PushT, Wall, PointMaze, Granular, and Rope, and LeWorldModel  [ 47 ] on Reacher.
+On each task, we train an identical dynamics predictor over the frozen patch tokens of each encoder to support both cross-entropy planning and multi-step prediction evaluation ( Sec.   S2 ).
+ 5 Results
+ 5.1 One encoder for state, language, and pixels
+ Figure 4 : Reconstruction from frozen tokens. 
+Following the input column, each column shows the evaluation decoder’s output from one encoder’s frozen tokens, labeled with its mean \ell_{1} error across the 1,000 held-out ImageNet images.
+The rows show the first three images from a random sample ( Fig.   S7 ).
+ ALPS, OpenVision 3, MAE, and VC-1 retain sharp edges and textures.
+C-RADIOv3 and DINOv3 preserve spatial layout with softer detail, while SigLIP 2, PE-Core, and CLIP mainly recover coarse structure. 
+ Table   1 and  (b) compare ALPS with fifteen public encoders on state information, language alignment, and pixel reconstruction.
+State.
+ALPS achieves the lowest aggregate relative position error among the compared ViT-B encoders (.829), followed by C-RADIOv3 (.864) and DINOv3 (.870); together, these three models form a leading group ahead of PE-Spatial (.936).
+ALPS also achieves the lowest error in each of the three individual settings (readout, +1 s, and +3 s) as well as on frames rendered at 256\times 256 resolution ( Tab.   S6 ).
+While V-JEPA 2-L matches its aggregate error using 3.5\times as many parameters and video pretraining, the two models show complementary strengths: V-JEPA 2 reads out the current state more accurately (.741 vs. .842), whereas ALPS is more accurate at 3-second prediction (.813 vs. .904).
+Compared with SigLIP 2 and PE-Core (1.160 and 1.170), ALPS reduces aggregate state-probe error by about 29%, and probing their intermediate layers narrows this gap without closing it ( Sec.   S2 ).
+On moving objects, ALPS reaches a mean error of 3.22 cm across the four prediction settings, matching the 3.04–3.25 cm range of V-JEPA 2, DINOv3, and C-RADIOv3 ( Tab.   S5 ).
+Language.
+ALPS retains retrieval performance close to the strongest image-text encoders in our comparison.
+It reaches 93.2/78.9 Recall@1 on Flickr30k and 70.2/51.9 on COCO (image-to-text/text-to-image), within 2 points of the best score on each of the four measures.
+Its ImageNet zero-shot accuracy is 73.4, compared with 78.4 for PE-Core, the strongest ViT-B image-text encoder on this metric.
+This larger 5.0-point gap on classification is expected when pretraining on descriptive synthetic captions, whose distribution differs from short ImageNet class prompts  [ 43 ] .
+ Figure 5 : The same Stage 2 refinement applied to ALPS (Stage 1), SigLIP 2, and CLIP , each using its own frozen copy as the teacher.
+Lines connect each encoder before and after refinement, and the star marks ALPS.
+Language is evaluated through each encoder’s unchanged head.
+Higher values are better in every panel, with state-probe error relative to ALPS (Stage 1) inverted in (a).
+Endpoint labels show the value after Stage 2 and its change ( Tab.   S20 ).
+ All three improve state information, while only ALPS preserves language alignment. 
+Pixels.
+ALPS preserves fine visual detail that can be decoded directly from its tokens.
+With the evaluation decoder, ALPS achieves an \ell_{1} error of .120 and an LPIPS of .372 ( Fig.   4 ), yielding a lower \ell_{1} error than every compared encoder not explicitly trained to reconstruct pixels or latents.
+In particular, C-RADIOv3 has 34% higher \ell_{1} error (.161), DINOv3 has 63% higher error (.196), and the image-text encoders have more than twice the error.
+Encoders pretrained to reconstruct pixels (MAE at .109 and VC-1 at .106) or autoencoder latents (OpenVision 3 at .104) reconstruct more accurately, but incur 14% to 22% higher state-probe error.
+LPIPS gives a slightly different ordering: these three reconstruction-focused encoders score .243–.260, and C-RADIOv3 also edges out ALPS (.359, about 4% lower).
+Under a stronger decoder configuration, however, ALPS maintains a lower \ell_{1} error than C-RADIOv3 (.107 vs. .141, about 24% lower) and overtakes it on LPIPS (.302 vs. .311; Tab.   S18 ).
+All three at once.
+ALPS combines leading state-probe performance, strong language alignment, and accurate pixel reconstruction in one frozen representation.
+Other leading state encoders have weaker retrieval or no paired text tower, while encoders with comparable retrieval or lower reconstruction error have higher state-probe error ( ).
+We use these interfaces for instruction-conditioned control and visual inspection of predicted world-model rollouts ( Sec.   5.3 ).
+ 5.2 Effect of cross-view refinement on state and language
+Cross-view refinement moves our encoder into the leading state group: before refinement, ALPS (Stage 1) has higher state-probe error than seven public ViT-B encoders in Tab.   1 , whereas after refinement it achieves the lowest.
+ Figure   5 compares the same Stage 2 recipe across our first-stage encoder, SigLIP 2-B/16, and CLIP-B/16, each trained for 5 million samples with its own frozen copy as the teacher and evaluated through its unchanged language head ( Tab.   S20 ).
+For our encoder, refining on DataComp web images also reduces state-probe error, though less than our default curated collection (.886 vs. .829) under the same training budget, reflecting differences in both scene content and native resolution ( Sec.   S3 ).
+All three encoders improve on state probing.
+Stage 2 reduces our encoder’s aggregate state-probe error by 17% (14% to 19% across the six individual settings) and raises DAVIS video object segmentation from .456 to .533 ( Sec.   S2 ).
+Similarly, SigLIP 2 improves from 1.160 to .893 on the state probe and from .503 to .552 on DAVIS, while CLIP improves from 1.194 to .898 and from .574 to .585, respectively.
+ Encoder 
+ Long 
+ Goal 
+ Spatial 
+ Object 
+ mean 
+ Instruction embedded by BERT 
+ CLIP-B/16 
+ 56.3 
+ 74.1 
+ 76.5 
+ 93.2 
+ 75.0 
+ SigLIP 2-B/16 
+ 72.3 
+ 78.8 
+ 84.1 
+ 90.3 
+ 81.4 
+ DINOv2-B/14 
+ 66.5 
+ 78.6 
+ 80.5 
+ 88.1 
+ 78.4 
+ DINOv3-B/16 
+ 68.4 
+ 72.7 
+ 80.7 
+ 94.4 
+ 79.0 
+ C-RADIOv3-B 
+ 66.0 
+ 79.9 
+ 74.9 
+ 92.3 
+ 78.2 
+ ALPS (Stage 1) 
+ 68.9 
+ 84.3 
+ 76.8 
+ 94.3 
+ 81.1 
+ ALPS 
+ 69.7 
+ 85.1 
+ 86.5 
+ 92.2 
+ 83.4 
+ Instruction embedded by the encoder’s own text tower 
+ CLIP-B/16 
+ 61.5 
+ 84.3 
+ 79.1 
+ 91.9 
+ 79.2 
+ SigLIP 2-B/16 
+ 73.3 
+ 90.2 
+ 84.1 
+ 91.7 
+ 84.8 
+ C-RADIOv3-B 
+ 73.4 
+ 89.5 
+ 82.9 
+ 81.4 
+ 81.8 
+ ALPS 
+ 78.5 
+ 87.4 
+ 82.6 
+ 93.7 
+ 85.5 
+ Table 2: Policy learning on LIBERO with frozen tokens: ALPS achieves the highest mean success with both BERT and its native text tower. 
+Success in % (mean of three evaluations, 50 rollouts per task); instructions from BERT (top) or each encoder’s own text tower (bottom). Bold: best in each block.
+ PushT (50) 
+ Wall (50) 
+ PointMaze (50) 
+ Reacher (50) 
+ Granular (10) 
+ Rope (50) 
+ Encoder 
+ success  \uparrow 
+ state dist.  \downarrow 
+ success  \uparrow 
+ state dist.  \downarrow 
+ success  \uparrow 
+ success  \uparrow 
+ Chamfer  \downarrow 
+ Chamfer  \downarrow 
+ DINOv2-B/14 
+ 88 
+ 25.0 
+ 92 
+ 3.62 
+ 100 
+ 76.7 
+ .211 
+ .701 
+ DINOv3-B/16 
+ 88 
+ 24.2 
+ 90 
+ 3.69 
+ 100 
+ 86.0 
+ .275 
+ .681 
+ C-RADIOv3-B 
+ 90 
+ 20.2 
+ 90 
+ 3.31 
+ 100 
+ 82.0 
+ .180 
+ .558 
+ SigLIP 2-B/16 
+ 84 
+ 29.0 
+ 88 
+ 3.73 
+ 100 
+ 74.0 
+ .230 
+ .848 
+ ALPS (Stage 1) 
+ 88 
+ 24.0 
+ 90 
+ 3.43 
+ 100 
+ 76.0 
+ .324 
+ .943 
+ ALPS 
+ 90 
+ 23.4 
+ 92 
+ 3.21 
+ 100 
+ 78.7 
+ .176 
+ .750 
+ Table 3: Planning with world models trained on frozen tokens: ALPS leads or ties the best results on PushT, Wall, and Granular. 
+DINO-WM  [ 91 ] on PushT, Wall, PointMaze, Granular, and Rope and LeWorldModel  [ 47 ] on Reacher, trained with one recipe ( Sec.   S2 ); in parentheses: goals evaluated; Reacher: mean of three planner seeds. Success in %; state dist.: final-to-goal state distance; Chamfer: final-to-goal particle distance. Bold: best of a column; none if all tie.
+ PushT 
+ Wall 
+ Granular 
+ Rope 
+ Reacher 
+ Encoder 
+ block (units) 
+ agent (units) 
+ Chamfer 
+ Chamfer 
+ joints (deg) 
+ DINOv2-B/14 
+ 7.16 
+ 9.69 
+ .246 
+ .410 
+ 1.21 
+ DINOv3-B/16 
+ 8.70 
+ 9.78 
+ .222 
+ .407 
+ 1.03 
+ C-RADIOv3-B 
+ 5.64 
+ 9.75 
+ .218 
+ .372 
+ 1.06 
+ SigLIP 2-B/16 
+ 11.96 
+ 9.91 
+ .268 
+ .469 
+ 2.02 
+ ALPS (Stage 1) 
+ 9.32 
+ 9.81 
+ .272 
+ .424 
+ 1.42 
+ ALPS 
+ 6.73 
+ 9.69 
+ .236 
+ .377 
+ 1.18 
+ Table 4: State read out from predicted tokens, 5 world-model steps ahead: Stage 2 reduces prediction error by 11–28% across four tasks. 
+A probe trained on real frames reads the world-model predictions of Tab.   3 and Tab.   S11 on held-out trajectories; lower is better, positions in workspace units.
+Bold: lowest of a column. Every step and two references: Tab.   S16 ; protocol: Sec.   S2 .
+Only our encoder keeps its language alignment.
+For ALPS, the improvement in state accuracy comes with minimal change to the other capabilities: image-text retrieval shifts by at most 0.5 points, ImageNet accuracy changes by about 1 point, and reconstruction remains close to its first-stage level ( \ell_{1} .120 vs. .112 and LPIPS .372 vs. .365).
+In contrast, the public encoders lose substantially more language performance.
+SigLIP 2 drops by 4.3 points on ImageNet accuracy and by 7.5 and 11.4 points on Flickr30k and COCO image-to-text retrieval, while CLIP drops by 10.2, 10.9, and 11.8 points, respectively.
+These results show that cross-view refinement can strengthen state information while preserving the other interfaces, but this balance depends critically on the encoder being refined.
+Lowering the learning rate does not remove the language gap.
+To test whether SigLIP 2 simply requires a smaller step size, we lower its encoder learning rate from 10^{-5} to 3\times 10^{-6} while keeping all other settings unchanged.
+Its state-probe error then falls by 17% (from 1.160 to .959), matching the relative reduction of our encoder (from 1.000 to .829).
+Yet it still loses more on every language metric: image-to-text Recall@1 falls by 2.3 points on Flickr30k and 2.9 on COCO, compared with 0.2 and 0.4 for ALPS ( Sec.   S5 ).
+Under the default refinement schedule, ALPS also exhibits smaller drift in its patch tokens and image embeddings ( Sec.   S5 ).
+A key structural difference lies in the language readout: ALPS linearly projects mean-pooled patch tokens, whereas SigLIP 2 uses nonlinear attention pooling and CLIP reads a class token.
+Because linear projection commutes with average pooling, zero-mean local token updates can cancel out in the pooled image representation, even without an explicit language constraint in Stage 2.
+ 5.3 Control, planning, and prediction on frozen tokens
+ State probe (LIBERO, relative error  \downarrow ) 
+ Language alignment  \uparrow 
+ Reconstruction  \downarrow 
+ read- 
+ IN-1k 
+ Flickr30k R@1 
+ COCO R@1 
+ Stage 1 objectives 
+ out 
+ +1 s 
+ +3 s 
+ mean 
+ 0-shot 
+ I \to T 
+ T \to I 
+ I \to T 
+ T \to I 
+ \ell_{1} 
+ LPIPS 
+ After Stage 1 at 10% of its schedule 
+ all four objectives 
+ 1.000 
+ 1.000 
+ 1.000 
+ 1.000 
+ 68.9 
+ 89.6 
+ 72.8 
+ 66.3 
+ 46.6 
+ .113 
+ .333 
+ no reconstruction 
+ .956 
+ .917 
+ .873 
+ .915 
+ 69.6 
+ 90.8 
+ 73.7 
+ 67.1 
+ 47.1 
+ .194 
+ .412 
+ no dense correspondence 
+ 1.010 
+ 1.019 
+ .994 
+ 1.008 
+ 69.1 
+ 88.5 
+ 73.4 
+ 66.0 
+ 46.5 
+ .113 
+ .345 
+ no captioning 
+ .978 
+ .940 
+ .953 
+ .957 
+ 67.9 
+ 89.6 
+ 72.5 
+ 66.2 
+ 45.9 
+ .112 
+ .336 
+ contrastive only 
+ .969 
+ 1.043 
+ 1.085 
+ 1.033 
+ 69.8 
+ 91.0 
+ 74.4 
+ 67.1 
+ 47.6 
+ .200 
+ .447 
+ After the Stage 2 refinement of each variant 
+ all four objectives 
+ .838 
+ .822 
+ .932 
+ .864 
+ 67.0 
+ 88.4 
+ 71.4 
+ 65.3 
+ 45.8 
+ .116 
+ .343 
+ no reconstruction 
+ .751 
+ .772 
+ .721 
+ .748 
+ 67.1 
+ 89.7 
+ 72.2 
+ 64.5 
+ 46.5 
+ .196 
+ .400 
+ no dense correspondence 
+ .865 
+ .805 
+ .927 
+ .866 
+ 67.5 
+ 88.4 
+ 71.9 
+ 64.2 
+ 46.0 
+ .116 
+ .351 
+ no captioning 
+ .771 
+ .777 
+ .774 
+ .774 
+ 66.3 
+ 88.5 
+ 71.4 
+ 63.8 
+ 45.5 
+ .116 
+ .350 
+ contrastive only 
+ .822 
+ .840 
+ .948 
+ .870 
+ 67.9 
+ 89.3 
+ 72.9 
+ 64.1 
+ 46.8 
+ .205 
+ .433 
+ Table 5: Stage 1 objectives at one tenth of the budget. 
+Each variant is pretrained from scratch with 10% of the Stage 1 schedule and refined with Stage 2; all keep the contrastive objective. State probe relative to the all-four variant after Stage 1; other columns as in Tab.   1 .
+ Reconstruction gives the pixel interface at a cost in state-probe error. 
+We next test whether the learned representation supports downstream control, planning, and dynamics prediction.
+Policies act directly on the encoded frames, while planners use a world model that predicts future tokens.
+Policies.
+ALPS achieves the highest mean policy success in our LIBERO evaluation ( Tab.   2 ), which tests four suites using shared BERT instructions in the upper block and each encoder’s native text tower in the lower block.
+With BERT, ALPS reaches 83.4% mean success, outperforming spatial encoders such as C-RADIOv3 (78.2%), DINOv2 (78.4%), and DINOv3 (79.0%) as well as SigLIP 2 (81.4%).
+Moreover, Stage 2 refinement raises LIBERO-Spatial success by 9.7 points, from 76.8% to 86.5% (per-suite breakdown in Sec.   S2 ).
+The text tower as the instruction interface.
+We replace BERT with projected embeddings from each encoder’s native text tower, scaled to the mean norm of BERT embeddings.
+Mean success rises from 83.4% to 85.5% for ALPS, from 81.4% to 84.8% for SigLIP 2, from 78.2% to 81.8% for C-RADIOv3, and from 75.0% to 79.2% for CLIP.
+Across three independent training runs per suite, ALPS gains an average of 3.1 percentage points with its native text tower ( Sec.   S2 ).
+These gains, especially on the multi-step instructions in LIBERO-Long, likely benefit from vision-language alignment during pretraining and, for ALPS, joint training on detailed synthetic captions.
+Planning.
+ALPS leads or ties the best planning results on PushT, Wall, and Granular under the shared training protocols ( Tab.   3 ).
+It reaches 90% success on PushT (tied with C-RADIOv3) and 92% on Wall (tied with DINOv2), while all six encoders solve every goal on PointMaze.
+On Granular, refinement substantially lowers the Chamfer distance from .324 (Stage 1) to .176, ahead of DINOv3 and SigLIP 2.
+On the remaining tasks, C-RADIOv3 achieves the lowest error on Rope (.558 vs. .750), and DINOv3 attains the highest success rate on Reacher (86.0% vs. 78.7%).
+World-model prediction.
+Refinement also improves the accuracy of predicted states across four tasks ( Tab.   4 ).
+We evaluate five-step token predictions using state probes trained on real-frame tokens, with true-token readout as a reference ( Tab.   S16 ; protocol and rollout analysis in Sec.   S2 ).
+Stage 2 reduces the first-stage encoder’s prediction error by 28% on PushT, 17% on Reacher, 13% on Granular, and 11% on Rope.
+Compared with specialized spatial encoders, ALPS outperforms DINOv3 on PushT and matches its accuracy on Granular and Rope, while C-RADIOv3 and DINOv3 achieve lower error on Reacher.
+On Wall, true-token readout error is already close to prediction error, leaving little room to differentiate the encoders.
+ Figure 6 : Rendered world-model predictions on PushT (window 834, largest true motion among 200 windows).
+The top row shows ground-truth frames; lower rows show each encoder’s evaluation-decoder outputs from real current tokens (green) and open-loop predicted tokens given recorded actions (blue).
+Mean errors: Tab.   S15 ; full sequence: Fig.   S4 . 
+Rendering predicted tokens.
+The pixel interface makes the world model’s imagined futures visible.
+On PushT, an evaluation decoder trained only on real-frame tokens ( Sec.   4 ) renders the world model’s five-step open-loop predictions without participating in dynamics training or planning ( Figs.   6 and  S15 ).
+The rendered rollouts clearly expose predicted object motion and visual errors, with ALPS achieving lower five-step LPIPS (.020) than DINOv3 (.024), Stage 1 (.025), and SigLIP 2 (.031), behind only C-RADIOv3 (.018).
+ 5.4 Trade-offs between the first-stage objectives
+State, language, and pixels.
+The first-stage objectives contribute differently to the three capabilities.
+We train each variant from scratch at one tenth of the Stage 1 schedule, then apply the same Stage 2 refinement ( Tab.   5 ).
+All variants retain contrastive alignment, so the ablation tests the three auxiliary objectives.
+The reconstruction loss is essential for the pixel interface: the two variants without it incur 72\% and 78\% higher \ell_{1} reconstruction error after Stage 1 (.194 and .200 vs. .113).
+Removing reconstruction or captioning lowers state-probe error by 8.5\% and 4.3\% , respectively, indicating a capacity trade-off among the auxiliary tasks.
+Across all variants, Stage 2 reduces state-probe error by 14\% to 19\% , largely preserves language performance, and changes \ell_{1} error by less than 4\% .
+We therefore retain all objectives in the full recipe, trading a small amount of state-probe accuracy for accurate pixel decoding while still outperforming specialized ViT-B spatial encoders at scale ( Tab.   1 ).
+Language retention across objectives.
+Refinement also preserves language alignment even without the three auxiliary objectives.
+For the contrastive-only variant, ImageNet zero-shot accuracy changes from 69.8 to 67.9, while image-to-text Recall@1 changes from 91.0 to 89.3 on Flickr30k and from 67.1 to 64.1 on COCO.
+Thus, the auxiliary objectives are not required to retain strong language alignment in this reduced-budget setting.
+Dense correspondence.
+Dense correspondence directly supervises local patch matching across crops, scales, and flips ( Sec.   3.1 ).
+Under the one-tenth budget of Tab.   5 , removing \mathcal{L}_{\text{dense}} has minimal impact on global and single-view metrics (changing aggregate state-probe error by less than 1\% , \ell_{1} error by under .001 , LPIPS negligibly, and retrieval by at most 1.1 points), as these benchmarks do not directly test cross-view patch correspondence.
+When evaluated directly on cross-view patch matching ( Sec.   S4 ), however, removing \mathcal{L}_{\text{dense}} reduces matching accuracy by 6.0 points after Stage 1 (from 37.4% to 31.4%), and the full recipe retains a 2.6-point advantage even after Stage 2 refinement (40.8% vs. 38.2%).
+ 6 Conclusion
+ALPS shows that a single frozen visual representation, pretrained on still images and text, can combine competitive state information, native language alignment, and pixel reconstruction.
+Cross-view refinement strengthens state representations while preserving the language and pixel interfaces.
+The same tokens support robot control, world-model prediction and planning, and visual inspection of predicted scenes.
+These results suggest visual state pretraining as a shared foundation for robot policies and world models.
+Limitations and future work.
+We focus on a ViT-B/16 backbone and simulation benchmarks for controlled comparison across fifteen encoders, leaving larger model scales and real-robot deployment to future work.
+On the training side, our recipe relies on a two-stage curriculum to balance reconstruction, language, and spatial state ( Sec.   5.4 ); folding cross-view refinement into a single training stage remains an open question.
+Moreover, ALPS is pretrained without video supervision and is less sensitive to fine-grained temporal actions despite improving cross-frame correspondence on DAVIS ( Sec.   S2 ), which motivates extending Stage 2 to video and interaction data.
+Finally, our downstream evaluations test language-conditioned control and world-model planning in separate settings; integrating state, language, and pixel decoding into a single language-guided, pixel-verifiable planner is a natural next step.

@@ -1,0 +1,4033 @@
+ARROW: Augmented Replay for RObust World models
+Report GitHub Issue
+×
+Title:
+Content selection saved. Describe the issue below:
+Description:
+Submit without GitHub
+Submit in GitHub
+arXiv is now an independent nonprofit!
+Learn more
+×
+Back to arXiv
+Why HTML?
+Report Issue
+Back to Abstract
+Download PDF
+Abstract
+1
+Introduction
+1.1
+The challenge of continual reinforcement learning
+1.2
+Related work and limitations
+1.3
+The neuroscience-inspired alternative
+1.4
+Our contribution
+2
+Background
+3
+Augmented Replay for RObust World models (ARROW)
+3.1
+World model
+3.2
+Actor-critic controller
+3.3
+Augmented replay buffer
+Short-term FIFO buffer
+Long-term global distribution matching (LTDM) buffer
+Spliced rollouts
+3.4
+Task-agnostic exploration
+4
+Experiments
+4.1
+Environments
+Atari (without shared structure)
+CoinRun (shared structure)
+4.2
+Training configurations and baselines
+4.3
+Replay memory allowance
+4.4
+Evaluation metrics
+4.4.1
+Normalized rewards
+4.4.2
+Forgetting (Backward transfer)
+4.4.3
+Forward transfer
+4.4.4
+Stability-plasticity metrics
+Average accuracy (ACC)
+Average minimum accuracy (min-ACC)
+Worst-case accuracy (WC-ACC)
+4.4.5
+Sample efficiency
+4.4.6
+Two-cycle metrics
+Maximum forgetting (Max-F)
+Recovery
+5
+Results
+5.1
+Tasks without shared structure: Atari
+5.2
+Tasks with shared structure: Procgen CoinRun
+5.2.1
+Continual learning sample efficiency
+6
+Discussion
+7
+Conclusion
+References
+A
+Tabular data & additional results
+A.1
+Single task sample efficiency
+A.2
+Validation of DreamerV3 implementation
+A.3
+Single-task runs
+B
+World Models
+B.1
+Training algorithm
+B.2
+Network architecture
+CNN encoder and decoder
+MLP
+B.3
+Augmented replay buffer
+C
+Experimental Details
+C.1
+Experimental parameters and execution time
+License: CC BY 4.0
+arXiv:2603.11395v1 [cs.LG] 12 Mar 2026
+ARROW: Augmented Replay for RObust World models
+Abdulaziz Alyahya
+abalyahya@imamu.edu.saDepartment of Information SystemsImam Mohammad Ibn Saud Islamic University (IMSIU)
+Abdallah Al Siyabi
+abdallah.alsyiabi@monash.eduDepartment of Data Science & AIMonash University
+Markus R. Ernst
+m.ernst@unsw.edu.auSchool of Computer Science and EngineeringUniversity of New South Wales, Sydney
+Luke Yang
+luke.yang@monash.eduDepartment of Data Science & AIMonash University
+Levin Kuhlmann
+levin.kuhlmann@monash.eduDepartment of Data Science & AIMonash University
+Gideon Kowadlo
+gideon@cerenaut.aiCerenaut –
+https://cerenaut.ai
+Abstract
+Continual reinforcement learning challenges agents to acquire new skills while retaining previously learned ones with the goal of improving performance in both past and future tasks. Most existing approaches rely on model-free methods with replay buffers to mitigate catastrophic forgetting; however, these solutions often face significant scalability challenges due to large memory demands.
+Drawing inspiration from neuroscience, where the brain replays experiences to a predictive World Model rather than directly to the policy, we present
+ARROW
+(Augmented Replay for RObust World models), a model-based continual RL algorithm that extends DreamerV3 with a memory-efficient, distribution-matching replay buffer.
+Unlike standard fixed-size FIFO buffers, ARROW maintains two complementary buffers: a short-term buffer for recent experiences and a long-term buffer that preserves task diversity through intelligent sampling.
+We evaluate ARROW on two challenging continual RL settings: Tasks without shared structure (Atari), and tasks with shared structure, where knowledge transfer is possible (Procgen CoinRun variants).
+Compared to model-free and model-based baselines with replay buffers of the same-size, ARROW demonstrates substantially less forgetting on tasks without shared structure, while maintaining comparable forward transfer.
+Our findings highlight the potential of model-based RL and bio-inspired approaches for continual reinforcement learning, warranting further research.
+1
+Introduction
+The ability to continually acquire new skills while retaining old ones is central to intelligence. However, many AI systems suffer from catastrophic forgetting, where learning new tasks abruptly degrades earlier capabilities
+(
+McCloskey and Cohen, 1989
+;
+French, 1999
+)
+. In order to deploy reinforcement learning (RL) agents in open-ended, sequentially changing environments, overcoming this limitation becomes essential.
+1.1
+The challenge of continual reinforcement learning
+Classical RL optimizes expected return in a single, stationary environment
+(
+Sutton and Barto, 1998
+)
+, enabling major successes in Atari, Go, and beyond
+(
+Mnih et al., 2015
+;
+Silver et al., 2017
+;
+Vinyals et al., 2019
+;
+Levine et al., 2016
+)
+. Many real-world settings, however, require adaptation across sequential tasks. In
+continual reinforcement learning
+(CRL), an agent encounters a curriculum
+𝒯
+=
+(
+τ
+1
+,
+τ
+2
+,
+…
+,
+τ
+T
+)
+\mathcal{T}=(\tau_{1},\tau_{2},\dots,\tau_{T})
+, often without task boundaries or identifiers
+(
+Khetarpal et al., 2022
+)
+.
+While continual learning (CL) has long been studied in supervised learning (
+Kirkpatrick et al. (2017)
+;
+Lopez-Paz and Ranzato (2017)
+), supervised pipelines can often mitigate non-stationarity by reshuffling and replaying a fixed dataset
+(
+French, 1999
+)
+. In RL, a stationary data distribution may be unattainable: data are streamed, tasks may not reliably repeat, and the environment itself can be non-stationary.
+Following
+Parisi et al. (2019)
+, CL requires balancing stability, plasticity, and transfer. Agents must retain prior performance (stability) while learning new tasks efficiently (plasticity), and ideally reuse earlier knowledge to accelerate future learning (forward transfer) or improve earlier tasks (backward transfer), especially when tasks share dynamics or visual structure. These goals are inherently in tension
+(
+Parisi et al., 2019
+)
+, forming the
+stability–plasticity dilemma
+(
+Mermillod et al., 2013
+)
+.
+1.2
+Related work and limitations
+Continual learning methods are commonly grouped into parameter regularization, architectural modularity, and rehearsal/replay. Parameter regularization constrains parameter updates to preserve weights important for prior tasks, as in Elastic Weight Consolidation (EWC)
+(
+Kirkpatrick et al., 2017
+)
+. Modularity dedicates task-specific components or routes computation through task-specific pathways, exemplified by PathNet
+(
+Fernando et al., 2017
+)
+and Progress & Compress (P&C)
+(
+Schwarz et al., 2018
+)
+. Replay methods interleave stored experiences with new data to rehearse previous tasks
+(
+Rolnick et al., 2019
+;
+Riemer et al., 2019
+;
+Chaudhry et al., 2021
+)
+and are among the most effective approaches, but naive replay scales poorly because retaining complete experience histories demands large memory
+(
+OpenAI et al., 2019
+)
+.
+The state-of-the-art model-free CRL methods such as CLEAR
+(
+Rolnick et al., 2019
+)
+combine large replay buffers with V-trace off-policy correction and behavior cloning for stability, while replay-buffer augmentations inspired by neuroscience (e.g., selective replay based on surprise or reward) indicate that matching the global training distribution can mitigate catastrophic forgetting without storing all experiences
+(
+Isele and Cosgun, 2018
+)
+.
+1.3
+The neuroscience-inspired alternative
+Complementary Learning Systems (CLS) theory
+(
+Hassabis et al., 2017
+;
+Khetarpal et al., 2022
+)
+posits two interacting memory systems: a fast system that captures recent episodes and a slow system that builds structured knowledge. In this view, the hippocampus replays recent experiences to the neocortex, a slow statistical learner, reducing forgetting; the neocortex can be interpreted as forming a predictive World Model
+(
+Mathis, 2023
+)
+. Yet in RL, replay is typically used to improve model-free policies rather than to train a World Model directly.
+World models are central to model-based RL, predicting action consequences
+(
+Ha and Schmidhuber, 2018
+;
+Hafner et al., 2019
+)
+and underpin DreamerV1-V3
+(
+Hafner et al., 2020
+;
+Hafner et al., 2021
+;
+Hafner et al., 2025
+)
+. They have also been applied to continual RL
+(
+Nagabandi et al., 2019
+;
+Huang et al., 2021
+;
+Kessler et al., 2023
+;
+Rahimi-Kalahroudi et al., 2023
+)
+. Notably,
+Kessler et al. (2022)
+showed that DreamerV2
+(
+Hafner et al., 2021
+)
+with a persistent FIFO buffer can reduce forgetting. However, World Model CL approaches often rely on replay buffers with millions of high-dimensional samples, creating substantial memory and scalability constraints.
+World models are a natural fit for replay because they support off-policy learning, consistent with neuroscientific motivation, but remain underexplored in memory-efficient continual settings. Thus, a key open question is: Can strategic, memory-efficient replay to World Models enable robust continual learning while retaining the sample efficiency of existing approaches?
+1.4
+Our contribution
+Building on the work by
+Yang et al. (2024)
+, we introduce
+ARROW
+(Augmented Replay for RObust World models), a model-based continual RL algorithm that extends DreamerV3
+(
+Hafner et al., 2025
+)
+with a memory-efficient, strategically managed replay mechanism
+(
+Isele and Cosgun, 2018
+)
+to balance recent experience with long-term knowledge; designed for continual learning.
+We evaluate ARROW in two continual learning regimes: (i) tasks
+without shared structure
+, where each task corresponds to a distinct environment and reward function, and (ii) tasks
+with shared structure
+, where common dynamics or visual features enable transfer
+(
+Khetarpal et al., 2022
+)
+(e.g., shifting game conditions
+(
+Riemer et al., 2019
+)
+). This second regime reflects many practical applications, such as a household robot learning related skills. Accordingly, our analysis considers not only forgetting but also forward and backward transfer, while targeting scalability in memory and computation
+(
+Khetarpal et al., 2022
+;
+Chen and Liu, 2018
+)
+.
+We benchmark ARROW against model-based (DreamerV3) and model-free (SAC) baselines matched in the memory footprint of their respective buffers.
+By showing that bio-inspired replay strategies can improve continual learning with modest memory, this work advances lifelong agents that can continuously acquire and refine skills in open-ended environments.
+2
+Background
+We consider continual learning (CL) in finite, discrete-time, partially observable reinforcement learning (RL) environments modeled as Partially Observable Markov Decision Processes (POMDPs)
+(
+Kaelbling et al., 1998
+)
+, a generalization of fully observable MDPs
+(
+Puterman, 1990
+)
+. A POMDP is defined by
+M
+=
+(
+𝒮
+,
+𝒜
+,
+p
+,
+r
+,
+Ω
+,
+𝒪
+,
+γ
+)
+M=(\mathcal{S},\mathcal{A},p,r,\Omega,\mathcal{O},\gamma)
+, where
+s
+t
+∈
+𝒮
+s_{t}\in\mathcal{S}
+evolves via
+s
+t
++
+1
+∼
+p
+⁡
+(
+s
+t
+,
+a
+t
+)
+s_{t+1}\sim p(s_{t},a_{t})
+under actions
+a
+t
+∈
+𝒜
+a_{t}\in\mathcal{A}
+, yielding reward
+r
+⁡
+(
+s
+t
+,
+a
+t
+,
+s
+t
++
+1
+)
+∈
+ℝ
+r(s_{t},a_{t},s_{t+1})\in\mathbb{R}
+. The agent observes
+ω
+t
+∈
+Ω
+\omega_{t}\in\Omega
+generated by
+ω
+t
+∼
+𝒪
+⁡
+(
+s
+t
+)
+\omega_{t}\sim\mathcal{O}(s_{t})
+, and optimizes discounted returns with
+γ
+∈
+(
+0
+,
+1
+)
+\gamma\in(0,1)
+.
+Actions are sampled from a stochastic policy
+a
+t
+∼
+π
+⁡
+(
+ω
+t
+)
+a_{t}\sim\pi(\omega_{t})
+, typically parameterized by a neural network
+π
+θ
+\pi_{\theta}
+. Under a finite horizon
+T
+T
+, the return is
+R
+t
+=
+∑
+i
+=
+t
+T
+γ
+i
+−
+t
+​
+r
+​
+(
+s
+i
+,
+a
+i
+,
+s
+i
++
+1
+)
+R_{t}=\sum_{i=t}^{T}\gamma^{i-t}r(s_{i},a_{i},s_{i+1})
+, and the objective is to maximize
+𝔼
+π
+​
+[
+R
+0
+∣
+s
+0
+]
+\mathbb{E}_{\pi}[R_{0}\mid s_{0}]
+. RL methods may be model-free or model-based: model-free learning directly optimizes
+π
+θ
+\pi_{\theta}
+, while model-based approaches learn a simulator (a
+World Model
+) of
+p
+p
+and
+r
+r
+from past rollouts and can use it to simulate trajectories for planning and action selection, or to train the policy from imagined rollouts. RL algorithms are also on- or off-policy; on-policy methods require fresh data from the latest
+π
+θ
+\pi_{\theta}
+, whereas off-policy methods learn from previously collected samples despite policy mismatch
+(
+Espeholt et al., 2018
+)
+. Off-policy replay buffers can be used to train World Models and improve sample efficiency, often yielding substantially better data efficiency than purely model-free optimization.
+3
+Augmented Replay for RObust World models (ARROW)
+ARROW extends DreamerV3, which achieved state-of-the-art performance on several single-GPU RL benchmarks, not including explicit testing on continual RL.
+It comprises three components: a
+World Model
+of the environment, an
+actor-critic controller
+for decision making, and an
+augmented replay buffer
+that stores experience.
+The replay buffer is used to train the World Model, which then generates imagined (“dreamed”) trajectories used to train the controller, enabling off-policy learning and data augmentation—useful in continual learning when environment interaction is limited.
+ARROW does not require explicit task identifiers, allowing for more flexible adaptation to changing environments.
+The source code is available online
+1
+1
+1
+https://anonymous.4open.science/r/ARROW-B6F2/
+.
+3.1
+World model
+As with DreamerV3, ARROW uses a Recurrent State-Space Model (RSSM)
+(
+Hafner et al., 2019
+)
+to predict dynamics, see
+Fig. 1
+A.
+It maintains a deterministic hidden state
+h
+t
+h_{t}
+and a stochastic latent state
+z
+t
+z_{t}
+conditioned on observations
+x
+1
+:
+t
+x_{1:t}
+and actions
+a
+1
+:
+t
+a_{1:t}
+.
+A GRU models the dynamics by predicting the deterministic state
+h
+t
++
+1
+=
+GRU
+​
+(
+h
+t
+,
+z
+t
+,
+a
+t
+)
+h_{t+1}=\text{GRU}(h_{t},z_{t},a_{t})
+and the stochastic state
+z
+^
+t
++
+1
+=
+f
+⁡
+(
+h
+t
++
+1
+)
+\hat{z}_{t+1}=f(h_{t+1})
+.
+The latent
+z
+t
+z_{t}
+is inferred via a variational encoder
+z
+t
+∼
+q
+θ
+​
+(
+z
+t
+∣
+h
+t
+,
+x
+t
+)
+z_{t}\sim q_{\theta}(z_{t}\mid h_{t},x_{t})
+, while the prior
+z
+^
+t
+∼
+p
+θ
+​
+(
+z
+^
+t
+∣
+h
+t
+)
+\hat{z}_{t}\sim p_{\theta}(\hat{z}_{t}\mid h_{t})
+is used for open-loop dreaming when posteriors are unavailable.
+We use a standard GRU with tanh activation, and set
+z
+t
+z_{t}
+to 32 discrete units with 32 categorical classes.
+Figure 1:
+World Model Learning. (A) Images drawn from the replay buffer are encoded to and reconstructed from a latent space using a recurrent state space model. (B) Learning the policy is achieved with Actor (
+𝒜
+\mathcal{A}
+) and Critic (
+𝒞
+\mathcal{C}
+) networks applied to latent states “dreamt-up” by the model.
+The World Model state at time
+t
+t
+concatenates
+h
+t
+h_{t}
+and
+z
+t
+z_{t}
+, yielding a Markovian representation.
+Training reconstructs images and rewards, using KL balancing
+(
+Hafner et al., 2021
+)
+to stabilize transitions.
+3.2
+Actor-critic controller
+The actor and critic are MLPs that map World Model states to actions and value estimates, see
+Fig. 1
+B.
+They are trained entirely on imagined trajectories generated by the World Model (“dreaming”), using on-policy REINFORCE
+(
+Williams, 1992
+)
+.
+Imagined trajectories are inexpensive and avoid additional environment interaction.
+3.3
+Augmented replay buffer
+The augmented replay buffer,
+Fig. 2
+A, consists of a short-term FIFO buffer
+𝒟
+1
+\mathcal{D}_{1}
+(as in DreamerV3) and a long-term global distribution matching buffer
+𝒟
+2
+\mathcal{D}_{2}
+, used in parallel and sampled uniformly for each minibatch.
+Each buffer stores
+2
+18
+≈
+262,000
+2^{18}\approx 262{,}000
+observations, yielding a smaller total capacity than DreamerV3’s single 1M-observation buffer (in our experiments, all methods are matched at
+2
+19
+2^{19}
+observations), without noticeable performance loss on our benchmarks.
+To further reduce storage pressure, we store
+spliced rollouts
+instead of entire episodes.
+Figure 2:
+Experiment setup. (A) Augmented buffer used in ARROW. (B) Continual learning tasks with and without shared structure. NB: no background, RT: restricted themes, GA: generated assets, MA: monochrome assets, CA: centered agent.
+Short-term FIFO buffer
+The FIFO buffer stores the most recent
+2
+18
+2^{18}
+samples, ensuring the World Model trains on all incoming experience with a recency bias that improves convergence on the current task.
+Long-term global distribution matching (LTDM) buffer
+Matching the global training distribution under limited capacity can reduce catastrophic forgetting
+(
+Isele and Cosgun, 2018
+)
+.
+Our LTDM buffer also has capacity
+2
+18
+2^{18}
+, and stores a uniform random subset of 512 spliced rollouts.
+We use reservoir sampling by assigning each rollout chunk a random key and maintaining a size-limited priority queue that retains the highest keys.
+Spliced rollouts
+With small buffers, storing full episodes can yield too few unique trajectories, biasing training data and reducing World Model accuracy, especially in
+𝒟
+2
+\mathcal{D}_{2}
+, which should retain coverage across tasks.
+We therefore splice rollouts into chunks of length 512, ensuring a controlled sampling granularity.
+The remaining rollouts with fewer than 512 states are concatenated with subsequent episodes, using a reset flag to mark boundaries.
+For efficiency, episodes are also truncated after a fixed number of steps so each iteration collects an identical number of environment steps.
+In practice, splicing provided a simple way to control granularity without harming performance.
+3.4
+Task-agnostic exploration
+In tasks without shared structure, environments can differ sharply in dynamics, visuals, and reward scales, making exploration difficult without task IDs; policies trained on earlier tasks may be insufficiently stochastic on new tasks.
+We apply fixed-entropy regularization (as in DreamerV3) and use predetermined per-environment reward scales (from single-task baselines) during actor-critic training.
+This mitigates exploration issues without adding an explicit exploration system such as Plan2Explore
+(
+Sekar et al., 2020
+)
+.
+4
+Experiments
+4.1
+Environments
+Atari (without shared structure)
+For environments without shared structure, we selected six diverse Atari games from the ALE’s v5 configurations spanning different visual modalities and gameplay dynamics
+(
+Bellemare et al., 2013
+)
+. We chose Ms. Pac-Man, Boxing, Crazy Climber, Frostbite, Seaquest, and Enduro, see
+Fig. 2
+B. We presented the tasks to the agent in this specific but randomly chosen order (henceforth referred to as
+default task order
+) and followed
+(
+Machado et al., 2018
+)
+in using sticky actions.
+CoinRun (shared structure)
+To construct a suite of continual learning tasks with shared structure, we used the CoinRun environment from OpenAI Procgen as the base
+(
+Cobbe et al., 2020
+)
+. We then introduced six progressive visual and behavioral perturbations, as shown in
+Fig. 2
+B and described in Appendix
+Tab. A.1
+.
+4.2
+Training configurations and baselines
+To evaluate continual learning behavior across both Atari and CoinRun, we adopted three training configurations. Training and evaluation details are summarized in Appendix
+Tab. A.2
+.
+Default task order:
+The agent is trained on all tasks once, following the default order shown in
+Fig. 2
+B for each of the two benchmarks.
+Reversed task order:
+The agent is trained on all tasks once but in
+reverse order
+. For Atari: Enduro
+→
+\rightarrow
+Seaquest
+→
+\rightarrow
+Frostbite
+→
+\rightarrow
+Crazy Climber
+→
+\rightarrow
+Boxing
+→
+\rightarrow
+Ms. Pac-Man. For CoinRun: CA
+→
+\rightarrow
+MA
+→
+\rightarrow
+GA
+→
+\rightarrow
+RT
+→
+\rightarrow
+NB
+→
+\rightarrow
+CoinRun.
+Two-cycle training:
+This configuration uses the default task order but splits the total training budget into
+two cycles
+, with identical total environment steps to the two previous configurations. This allows us to examine
+relearning
+,
+retention
+,
+cross-cycle adaptation
+, and quantify performance recovery when a task is revisited.
+To measure the efficacy of the augmented replay buffer, we compared ARROW to DreamerV3 and model-free SAC, each with equal memory allowance for their respective replay buffers. For SAC, we adopted the Target Entropy Scheduled SAC (TES-SAC) variant, an extension proposed by
+Xu et al. (2021)
+that dynamically schedules the entropy target for improved stability and exploration. We also ran single-task baselines that were used for evaluation metrics and normalization.
+4.3
+Replay memory allowance
+All methods are compared under an equal replay memory budget. Replay buffers store
+sequences
+(spliced rollouts) of length
+T
+=
+512
+T=512
+; a capacity of
+512
+512
+sequences corresponds to
+512
+×
+512
+=
+262,144
+=
+2
+18
+512\times 512=262{,}144=2^{18}
+observations.
+For ARROW, we combine a short-term FIFO buffer and a long-term global distribution-matching (LTDM) buffer, each with capacity
+512
+512
+sequences of length
+T
+=
+512
+T=512
+. Consequently,
+N
+ARROW
+=
+2
+×
+512
+=
+1024
+N_{\text{ARROW}}=2\times 512=1024
+and
+T
+×
+N
+ARROW
+=
+512
+×
+1024
+=
+524,288
+=
+2
+19
+.
+T\times N_{\text{ARROW}}=512\times 1024=524{,}288=2^{19}.
+DreamerV3 and TES-SAC use a single FIFO replay buffer with capacity
+1024
+1024
+sequences of length
+T
+=
+512
+T=512
+:
+N
+DV3/TES-SAC
+=
+1024
+⇒
+T
+×
+N
+DV3/TES-SAC
+=
+512
+×
+1024
+=
+524,288
+=
+2
+19
+.
+N_{\text{DV3/TES-SAC}}=1024\quad\Rightarrow\quad T\times N_{\text{DV3/TES-SAC}}=512\times 1024=524{,}288=2^{19}.
+4.4
+Evaluation metrics
+To assess continual learning performance, we evaluated both task-level reward and a set of established stability–plasticity metrics. Following
+Kessler et al. (2023)
+, we report
+forgetting
+and
+forward transfer
+. Following
+Lange et al. (2023)
+, we include ACC, min-ACC, and WC-ACC. For our two-cycle setting, we further report
+Recovery
+and introduce a new cross-cycle metric,
+maximum forgetting
+(Max-F).
+We evaluated performance by normalizing episodic reward to two single-task baselines: ARROW and a random agent.
+4.4.1
+Normalized rewards
+We define an ordered suite of tasks
+𝒯
+=
+(
+τ
+1
+,
+τ
+2
+,
+…
+,
+τ
+T
+)
+{\mathcal{T}}=(\tau_{1},\tau_{2},\dots,\tau_{T})
+, where
+τ
+i
+\tau_{i}
+denotes the
+i
+i
+-th task in the curriculum and
+i
+∈
+{
+1
+,
+…
+,
+T
+}
+i\in\{1,\dots,T\}
+.
+Performance in task
+τ
+∈
+𝒯
+\tau\in{\mathcal{T}}
+after
+n
+n
+steps in single-task experiments is given by
+p
+ST
+τ
+​
+(
+n
+)
+p_{\text{ST}_{\tau}}(n)
+and in CL by
+p
+τ
+​
+(
+n
+)
+p_{\tau}(n)
+.
+Agents were trained on each task for
+n
+=
+N
+n=N
+environment steps in single-task and CL experiments.
+For each task
+τ
+∈
+𝒯
+\tau\in{\mathcal{T}}
+, we calculated the normalized reward using
+p
+ST
+τ
+​
+(
+0
+)
+p_{\text{ST}_{\tau}}(0)
+and
+p
+ST
+τ
+​
+(
+n
+)
+p_{\text{ST}_{\tau}}(n)
+:
+q
+τ
+​
+(
+n
+)
+=
+p
+τ
+​
+(
+n
+)
+−
+p
+ST
+τ
+​
+(
+0
+)
+p
+ST
+τ
+​
+(
+n
+)
+−
+p
+ST
+τ
+​
+(
+0
+)
+.
+q_{\tau}(n)=\frac{p_{\tau}(n)-p_{\text{ST}_{\tau}}(0)}{p_{\text{ST}_{\tau}}(n)-p_{\text{ST}_{\tau}}(0)}.
+(1)
+A normalized score of 0 corresponds to random performance and a score of 1 corresponds to the performance when trained on only that task.
+4.4.2
+Forgetting (Backward transfer)
+Average forgetting for each task is the difference between performance after training on a given task and performance at the end of all tasks. Average forgetting over all tasks is defined as:
+F
+=
+1
+T
+​
+∑
+i
+=
+1
+T
+(
+q
+τ
+i
+​
+(
+i
+×
+N
+)
+−
+q
+τ
+i
+​
+(
+T
+×
+N
+)
+)
+.
+F=\frac{1}{T}\sum_{i=1}^{T}\bigl(q_{\tau_{i}}(i\times N)-q_{\tau_{i}}(T\times N)\bigr).
+(2)
+A lower value indicates improved
+stability
+and a better continual learning method. A negative value implies that the agent has managed to gain performance on earlier tasks, thus exhibiting
+backward transfer
+.
+4.4.3
+Forward transfer
+The forward transfer for a task is the normalized difference between performance in the CL and single-task experiments. The average over all tasks is defined as:
+F
+​
+T
+\displaystyle FT
+=
+1
+T
+​
+∑
+i
+=
+1
+T
+S
+τ
+i
+−
+S
+ST
+τ
+i
+S
+ST
+τ
+i
+,
+\displaystyle=\frac{1}{T}\sum_{i=1}^{T}\frac{S_{\tau_{i}}-S_{\text{ST}_{\tau_{i}}}}{S_{\text{ST}_{\tau_{i}}}},
+(3)
+where
+S
+τ
+i
+\displaystyle S_{\tau_{i}}
+=
+1
+N
+​
+∑
+n
+=
+1
+N
+q
+τ
+i
+​
+(
+(
+i
+−
+1
+)
+×
+N
++
+n
+)
+,
+\displaystyle=\frac{1}{N}\sum_{n=1}^{N}q_{\tau_{i}}((i-1)\times N+n),
+(4)
+S
+ST
+τ
+i
+\displaystyle S_{\text{ST}_{\tau_{i}}}
+=
+1
+N
+​
+∑
+n
+=
+1
+N
+q
+ST
+τ
+i
+​
+(
+n
+)
+.
+\displaystyle=\frac{1}{N}\sum_{n=1}^{N}q_{\text{ST}_{\tau_{i}}}(n).
+(5)
+The larger the forward transfer, the better the continual learning method. A positive value implies effective use of learned knowledge from previous environments and, as a result, accelerated learning in the current environment. When each task is not related to the others, no positive forward transfer is expected. In this case, forward transfer of 0 represents optimal
+plasticity
+, and negative values indicate a barrier to learning newer tasks from previous tasks.
+4.4.4
+Stability-plasticity metrics
+To characterize the stability-plasticity trade-off in continual learning, we follow
+Lange et al. (2023)
+and analyze three complementary metrics: Average accuracy (ACC), average minimum accuracy (min-ACC) and Worst-case Accuracy (WC-ACC). These assess how well the agent learns the current task (
+plasticity
+) while retaining knowledge of previous tasks (
+stability
+).
+Average accuracy (ACC)
+After completion of task
+τ
+k
+\tau_{k}
+, ACC measures performance on all tasks encountered up to that point:
+ACC
+τ
+k
+=
+1
+k
+​
+∑
+i
+=
+1
+k
+q
+τ
+i
+​
+(
+t
+k
+)
+.
+\mathrm{ACC}_{\tau_{k}}=\frac{1}{k}\sum_{i=1}^{k}q_{\tau_{i}}(t_{k}).
+(6)
+Here,
+q
+τ
+i
+​
+(
+t
+k
+)
+q_{\tau_{i}}(t_{k})
+is the normalized performance on task
+τ
+i
+\tau_{i}
+evaluated at the end of task
+τ
+k
+\tau_{k}
+.
+Average minimum accuracy (min-ACC)
+min-ACC tracks the worst performance each previously learned task attains after it has been learned (average of each task’s own minimum):
+min
+​
+-
+​
+ACC
+τ
+k
+=
+1
+k
+−
+1
+​
+∑
+i
+=
+1
+k
+−
+1
+min
+t
+i
+<
+n
+≤
+t
+k
+⁡
+q
+τ
+i
+​
+(
+n
+)
+.
+\mathrm{min\text{-}ACC}_{\tau_{k}}=\frac{1}{k-1}\sum_{i=1}^{k-1}\min_{\,t_{i}<n\leq t_{k}}q_{\tau_{i}}(n).
+(7)
+For each earlier task
+τ
+i
+\tau_{i}
+, we take the minimum normalized performance over evaluation steps
+n
+n
+after
+t
+i
+t_{i}
+and up to
+t
+k
+t_{k}
+, then average these minima over the
+k
+−
+1
+k-1
+previous tasks.
+Worst-case accuracy (WC-ACC)
+WC-ACC can be evaluated at every training iteration. At iteration
+n
+n
+within task
+τ
+k
+\tau_{k}
+:
+WC
+​
+-
+​
+ACC
+n
+=
+1
+k
+​
+q
+τ
+k
+​
+(
+n
+)
++
+(
+1
+−
+1
+k
+)
+​
+min
+​
+-
+​
+ACC
+τ
+k
+.
+\mathrm{WC\text{-}ACC}_{n}=\frac{1}{k}\,q_{\tau_{k}}(n)+\left(1-\frac{1}{k}\right)\mathrm{min\text{-}ACC}_{\tau_{k}}.
+(8)
+The first term,
+1
+k
+​
+q
+τ
+k
+​
+(
+n
+)
+\frac{1}{k}q_{\tau_{k}}(n)
+, reflects performance on the current task and therefore measures plasticity. The second term, weighted by
+1
+−
+1
+k
+1-\frac{1}{k}
+, incorporates the minimum performance that each previously learned task ever achieved through min-ACC, which accounts for the minimum accuracy that each earlier task ever reached. Unlike ACC, which is only defined at task boundaries, WC-ACC provides a continuous view of how the agent trades off learning the present task while maintaining stability on earlier ones throughout training.
+4.4.5
+Sample efficiency
+Another important factor for practical applications, especially where agents operate in the real world (as opposed to simulation), is sample efficiency. Therefore, we analyzed how quickly each method reaches performance thresholds. Sample efficiency is measured as the median number of environment frames required to reach 85% of the maximum median performance across all methods.
+Formally, let
+P
+t
+(
+m
+)
+P^{(m)}_{t}
+denote the median normalized performance of method
+m
+m
+at frame
+t
+t
+, and let
+P
+∗
+=
+max
+m
+,
+t
+⁡
+P
+t
+(
+m
+)
+P^{*}=\max_{m,t}P^{(m)}_{t}
+be the maximum performance achieved by any method during training. The sample efficiency for method
+m
+m
+is defined as:
+SE
+m
+=
+min
+⁡
+{
+t
+:
+P
+t
+(
+m
+)
+≥
+0.85
+⋅
+P
+∗
+}
+.
+\text{SE}_{m}=\min\left\{t:P^{(m)}_{t}\geq 0.85\cdot P^{*}\right\}.
+(9)
+4.4.6
+Two-cycle metrics
+We extended our evaluation to a two-cycle setting that uses the same overall training budget as the one-cycle curriculum. The total number of environment steps allocated to each task is divided into two equal exposures: each task
+τ
+i
+\tau_{i}
+is first encountered during cycle 1 and then revisited for the remaining budget during cycle 2.
+Maximum forgetting (Max-F)
+To quantify the worst degradation that occurs between the first and second exposures of a task, we compute the maximum forgetting experienced by each task
+τ
+i
+\tau_{i}
+across the two-cycle curriculum:
+t
+i
+(
+1
+)
+=
+i
+×
+N
+,
+t
+i
+(
+2
+)
+=
+(
+T
+×
+N
+)
++
+(
+i
+−
+1
+)
+×
+N
+,
+t
+i
+(
+3
+)
+=
+(
+T
+×
+N
+)
++
+i
+×
+N
+,
+t_{i}^{(1)}=i\times N,\qquad t_{i}^{(2)}=(T\times N)+(i-1)\times N,\qquad t_{i}^{(3)}=(T\times N)+i\times N,
+(10)
+Max
+​
+-
+​
+F
+τ
+i
+=
+q
+τ
+i
+​
+(
+t
+i
+(
+1
+)
+)
+−
+q
+τ
+i
+​
+(
+(
+t
+i
+(
+2
+)
+)
+−
+)
+,
+\mathrm{Max\text{-}F}_{\tau_{i}}=q_{\tau_{i}}\bigl(t_{i}^{(1)}\bigr)-q_{\tau_{i}}\bigl((t_{i}^{(2)})^{-}\bigr),
+(11)
+where
+q
+τ
+i
+​
+(
+t
+i
+(
+1
+)
+)
+q_{\tau_{i}}(t_{i}^{(1)})
+denotes the normalized performance at the end of the first exposure to task
+τ
+i
+\tau_{i}
+in cycle 1, and
+q
+τ
+i
+​
+(
+(
+t
+i
+(
+2
+)
+)
+−
+)
+q_{\tau_{i}}\bigl((t_{i}^{(2)})^{-}\bigr)
+denotes the last evaluation
+immediately before
+the second exposure of the same task during cycle 2. We write
+x
+−
+x^{-}
+to denote the final evaluation step strictly before step
+x
+x
+; in particular,
+(
+t
+i
+(
+2
+)
+)
+−
+(t_{i}^{(2)})^{-}
+is the last evaluation of task
+τ
+i
+\tau_{i}
+immediately before its second exposure begins at step
+t
+i
+(
+2
+)
+t_{i}^{(2)}
+. The difference measures how much performance on task
+τ
+i
+\tau_{i}
+has deteriorated while the agent is learning other tasks.
+Using Max-F compares forgetting at an equivalent point for each task: after the agent has completed training on
+all
+other tasks in cycle 1 but
+before
+relearning begins in cycle 2. In this interval, the agent is continuously trained on tasks
+τ
+i
++
+1
+,
+…
+,
+τ
+T
+\tau_{i+1},\dots,\tau_{T}
+. As a result, Max-F captures how resilient a task’s knowledge remains when the agent has been exposed to the maximum possible amount of interference from all other tasks in the curriculum.
+Recovery
+The recovery metric quantifies how much performance on task
+τ
+i
+\tau_{i}
+is regained after the agent relearns the task during cycle 2, where
+t
+i
+(
+3
+)
+t_{i}^{(3)}
+denotes the end of the second exposure to task
+τ
+i
+\tau_{i}
+:
+Rec
+τ
+i
+=
+q
+τ
+i
+​
+(
+t
+i
+(
+3
+)
+)
+q
+τ
+i
+​
+(
+t
+i
+(
+1
+)
+)
+.
+\mathrm{Rec}_{\tau_{i}}=\frac{q_{\tau_{i}}(t_{i}^{(3)})}{q_{\tau_{i}}(t_{i}^{(1)})}.
+(12)
+5
+Results
+5.1
+Tasks without shared structure: Atari
+Figure 3:
+Atari
+median normalized performance (Eq.
+1
+). Shaded area depicts 0.25 and 0.75 quartiles of 5 seeds. Bold line segments indicate training of task. (A) Default order of tasks (one-cycle). (B) Reversed order of tasks (one-cycle). (C) Default order of tasks (two-cycle). The dotted, vertical line marks the end of cycle 1 and the beginning of cycle 2.
+Figure 4:
+Atari
+metrics shown as median with (0.25 - 0.75) quartile confidence intervals, across 5 seeds, and calculated using normalized scores (Eq.
+1
+). (A) Default task order (one-cycle). (B) Reversed task order (one-cycle). (C) Default task order (two-cycle).
+Median normalized performance is shown in
+Fig. 3
+, while other metrics are visualized in
+Fig. 4
+. Detailed numerical results (median [IQR]) are provided in Appendix
+Tab. A.3
+.
+ARROW nearly eliminates catastrophic forgetting, regardless of task order, while DreamerV3 suffers severe forgetting whenever a new task is introduced. TES-SAC also exhibits low forgetting scores, but this is misleading: TES-SAC largely fails to learn the Atari tasks in the first place, so there is little performance to lose.
+Default task order.
+ARROW reduces forgetting by more than six-fold compared to DreamerV3 (0.197 vs. 1.217;
+Fig. 4
+A). DreamerV3 retains a slight edge in forward transfer, indicating that its unconstrained buffer allows faster initial learning on new tasks, whereas ARROW’s augmented buffer introduces a modest plasticity cost. Crucially, ARROW achieves the best overall stability–plasticity trade-off, as reflected by a WC-ACC of 0.615, well above the negative values recorded for both baselines.
+Reversed task order.
+The same pattern holds when the curriculum is reversed (
+Fig. 4
+B). ARROW’s forgetting drops to 0.039, closely matching TES-SAC while DreamerV3 again forgets catastrophically (1.348). ARROW maintains the highest WC-ACC (0.618), confirming that its stability advantage is robust to task ordering.
+Two-cycle training.
+The two-cycle setting reveals ARROW’s most distinctive strength: the ability to recover and even surpass prior performance when tasks are revisited (
+Fig. 4
+C). This is reflected in ARROW’s maximum forgetting (Max-F), which is essentially zero (0.012), indicating that the worst degradation any task experiences between its first and second exposure is negligible. DreamerV3, by contrast, suffers a Max-F of 0.735, and TES-SAC reaches 0.089. Most notably, ARROW again leads in WC-ACC (0.388 vs. negative values for both baselines).
+5.2
+Tasks with shared structure: Procgen CoinRun
+Figure 5:
+CoinRun
+median normalized performance (Eq. equation
+1
+). Shaded area depicts 0.25 and 0.75 quartiles of 5 seeds. Bold line segments indicate training of task. (A) Default order of tasks (one-cycle). (B) Reversed order of tasks (one-cycle). (C) Default order of tasks (two-cycle). The dotted vertical line marks the end of cycle 1 and the beginning of cycle 2.
+Figure 6:
+CoinRun
+metrics shown as median with (0.25 - 0.75) quartile confidence intervals, across 5 seeds, and calculated using normalized scores, Eq.
+1
+. (A) Default order of tasks (one-cycle). (B) Reversed order of tasks (one-cycle). (C) Default order of tasks (two-cycle).
+Median normalized performance is shown in
+Fig. 5
+, while other metrics are visualized in
+Fig. 6
+. Detailed numerical results (median [IQR]) are provided in Appendix
+Tab. A.4
+.
+When tasks share visual and structural features, all methods forget less than in Atari, ARROW in particular achieves near-zero forgetting in the reversed order and negative maximum forgetting in the two-cycle setting. Because forgetting is generally lower across the board, the distinguishing factor becomes the stability–plasticity balance: ARROW attains the highest WC-ACC in every CoinRun configuration, pairing strong forward transfer with reliable retention of earlier tasks.
+Default task order.
+Both model-based methods exhibit strong forward transfer on CoinRun variants (
+Fig. 6
+A), with DreamerV3 slightly ahead (0.787 vs. 0.507 for ARROW). However, ARROW provides a more reliable trade-off, achieving the highest WC-ACC (0.635 vs. 0.328 for DreamerV3). TES-SAC shows minimal forgetting (
+−
+-
+0.012) but also near-zero forward transfer, reflecting limited benefit from shared structure.
+Reversed task order.
+When the curriculum is reversed, ARROW’s forgetting drops to effectively zero (0.000), while its forward transfer rises to 0.715, nearly matching DreamerV3 (0.786). Under this setting, ARROW achieves the strongest overall profile, with WC-ACC exceeding 1.0.
+Two-cycle training.
+In this setting (
+Fig. 6
+C), ARROW’s maximum forgetting is
+negative
+(Max-F =
+−
+-
+0.089), while DreamerV3 reaches 0.233, and TES-SAC is near zero (
+−
+-
+0.026). All three methods achieve recovery above 1.0, confirming that revisiting CoinRun tasks is universally beneficial. However, ARROW stands out in two ways: it attains the lowest Max-F and by far the best WC-ACC (0.912 vs. 0.071 for DreamerV3,  0.600 for TES-SAC).
+5.2.1
+Continual learning sample efficiency
+The last columns of
+Fig. 4
+and
+Fig. 6
+illustrate how quickly each method reaches a performance threshold of 85%. The non-shared tasks (Atari) show dramatic task-order sensitivity as the peak performances vary widely (2.02 for default, 0.82 for reversed and 1.17 for two-cycle).
+In the default task order, DreamerV3 reaches the threshold in 5.652M frames across 4/5 seeds. ARROW does not reach the 2.02 threshold in any seed. TES-SAC also fails to reach the threshold. In the reversed task order, ARROW reaches the 0.82 threshold in 5.079M frames across 4/5 seeds, unmatched by both DreamerV3 and TES-SAC. For the two-cycle training both ARROW and DreamerV3 reach the 85% threshold, with DreamerV3 (3.113M) being slightly more sample efficient than ARROW (3.441M). For detailed statistics including interquartile ranges, see Appendix
+Tab. A.5
+.
+As for the tasks with shared structure, we observe greater consistency between the model-based approaches, where for each task configuration both ARROW and DreamerV3 consistently reach the threshold in all 5 seeds. TES-SAC fails to reach any threshold across all given CoinRun task configurations.
+We observe that the sample efficiency for ARROW is very sensitive to task order. In the default order, DreamerV3 reaches the threshold in a third of the time (0.492M) compared to ARROW (1.638M). In reversed order both model-based approaches are of the same order of magnitude (ARROW: 3.768M, DreamerV3: 3.604M). This pattern can also be observed in the two-cycle training where tasks are presented in the default order again. For detailed statistics including interquartile ranges, see
+Tab. A.6
+.
+6
+Discussion
+The results demonstrate that ARROW tends to be more stable and trades off stability and plasticity better than the model-free and model-based baselines. Our results confirm that augmented replay to a World Model in a model-based approach provides a strong foundation for continual RL.
+For tasks without shared structure, ARROW almost completely eliminates forgetting. This suggests that the distribution-matching principle that ARROW is built upon is able to preserve World Model accuracy across previous and current tasks. Moreover, this is in stark contrast to the results obtained for DreamerV3 which exhibited catastrophic forgetting on every novel Atari task. TES-SAC also showed favorable forgetting statistics, but since TES-SAC fails to adequately learn any of the Atari tasks this does not indicate retention; rather, it must be understood in the context of the overall performance.
+On tasks with shared structure, ARROW showed decreased forgetting. Notably, the magnitude of forgetting is tightly linked to the order of the presented tasks. In fact, the very last task of the default order “+CA” causes the camera to no longer be centered on the agent. This appears to be a significant departure from the other shared structure environments and causes a drop in normalized performance. When the order is reversed the near-zero forgetting of ARROW reappears. When we applied DreamerV3 to the shared structure tasks (CoinRun), we observed the variance was very high, resulting in low minimum average accuracy (min-ACC). ARROW mitigates that variance by making effective use of the augmented replay buffer, where past experiences stabilize the training.
+In addition, ARROW was able to learn multiple tasks with highly varying magnitude of rewards, without task identifiers, which is an important and difficult challenge on its own. Interestingly, for our two-cycle training, ARROW consistently exhibited exceptional recovery. We hypothesize that it also indicates that ARROW learns superior representations through implicit multi-task learning. Alternatively, the training time in the two-cycle approach for some of the tasks may be too limited to fully learn each task in the first cycle.
+Regarding sample efficiency, ARROW clearly surpasses DreamerV3 and TES-SAC in almost all single tasks. For tasks with shared structure we see that ARROW trades its superior stability and forgetting characteristics for a slightly worse sample efficiency when compared to DreamerV3.
+Our methods can be used in conjunction with prior state-of-the-art approaches to combating catastrophic forgetting such as EWC and P&C
+(
+Kirkpatrick et al., 2017
+;
+Schwarz et al., 2018
+)
+which work over network parameters, and CLEAR
+(
+Rolnick et al., 2019
+)
+which uses replay but typically operates over model-free approaches and uses behavior cloning of the policy from environment input to action output.
+Generalization.
+Forward and backward transfer was significantly better for tasks with shared structure than those without shared structure; where the World Model’s ability to generalize across tasks is very beneficial.
+Reward scaling without task IDs.
+While ARROW was sufficiently robust in learning multiple tasks without forgetting, even when reward scales are somewhat different, we found that this property did not hold when reward scales differed significantly (e.g. by a factor of
+10
+2
+10^{2}
+), where only the task with the higher reward scale would be learned. In that case, we found that approximate reward scaling allowed the agent to learn multiple tasks. We hypothesized that the different rewards and subsequent returns cause poorly scaled advantages when training the actor, resulting in the actor only learning tasks with the highest returns. Experiments with automatic scaling of advantages through non-linear squashing transformations proved to hurt learning on individual tasks, so the static, linear, reward transformation was used.
+Memory capacity.
+As RL algorithms often consume high compute, we emphasize the benefit of lower computational and memory costs. ARROW does not scale up the buffer when compared to DreamerV3, but instead splits the available memory and intelligently uses past experience. Despite the benefits and improved memory capacity of ARROW, a key limitation of any buffer-based method is finite capacity. As more tasks are explored and previous tasks are not revisited, an increasing number of samples from previous tasks will inevitably be lost, leading to forgetting.
+Limitations and future work.
+ARROW currently allocates a fixed 50/50 split capacity to short-term and long-term buffers. A natural extension of this idea would be to test different splits or dynamically allocate memory based on task characteristics. Extending ARROW to continuous control or robotics domains like MuJoCo
+(
+Todorov et al., 2012
+)
+could further validate the generalization capabilities of our approach.
+As the specific task ordering can result in significant differences in CL performance (Appendix G in
+(
+Rahimi-Kalahroudi et al., 2023
+)
+) we implemented two randomly chosen task sequences. This approach allowed us to quantify ordering effects while limiting computational cost. A follow-up study could dedicate more time to different permutations to better understand the relationship between individual environments and to shed some light on the unusually high performance of Frostbite in DV3.
+Additionally, the experiments could be expanded by bringing ARROW to other model-based RL algorithms, e.g. TD-MPC
+(
+Hansen et al., 2022
+;
+Hansen et al., 2024
+)
+, or by combining it with existing techniques such as behavior cloning in CLEAR
+(
+Rolnick et al., 2019
+)
+.
+7
+Conclusion
+We extended the DreamerV3 World Model architecture with an augmented replay buffer (ARROW) and studied continual RL in two scenarios: tasks with and without shared structure. ARROW, DreamerV3, and TES-SAC were compared using the same memory budget (same-sized buffers). We evaluated forgetting, forward and backward transfer, and stability–plasticity metrics; ARROW’s augmented replay buffer yielded substantial improvements in tasks without shared structure and a minor benefit in tasks with shared structure. Overall, these results support model-based RL with a World Model and a memory-efficient replay buffer as an effective and practical approach to continual RL, motivating future work.
+References
+Ba
+et al.
+(2016)
+J. L. Ba, J. R. Kiros, and G. E. Hinton
+Layer normalization
+.
+External Links:
+1607.06450
+,
+Link
+Cited by:
+§B.2
+.
+Bellemare
+et al.
+(2013)
+M. G. Bellemare, Y. Naddaf, J. Veness, and M. Bowling
+The Arcade Learning Environment: An Evaluation Platform for General Agents
+.
+Journal of Artificial Intelligence Research
+47
+,
+pp. 253–279
+.
+External Links:
+ISSN 1076-9757
+,
+Document
+Cited by:
+§4.1
+.
+Chaudhry
+et al.
+(2021)
+A. Chaudhry, A. Gordo, P. Dokania, P. Torr, and D. Lopez-Paz
+Using hindsight to anchor past knowledge in continual learning
+.
+Proceedings of the AAAI Conference on Artificial Intelligence
+35
+(
+8
+),
+pp. 6993–7001
+.
+External Links:
+Link
+,
+Document
+Cited by:
+§1.2
+.
+Chen and Liu (2018)
+Z. Chen and B. Liu
+Continual learning and catastrophic forgetting
+.
+In
+Lifelong Machine Learning
+,
+pp. 55–75
+.
+External Links:
+ISBN 978-3-031-01581-6
+,
+Document
+Cited by:
+§1.4
+.
+Cobbe
+et al.
+(2020)
+K. Cobbe, C. Hesse, J. Hilton, and J. Schulman
+Leveraging procedural generation to benchmark reinforcement learning
+.
+In
+Proceedings of the 37th International Conference on Machine Learning
+,
+H. D. III and A. Singh (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+119
+,
+pp. 2048–2056
+.
+External Links:
+Link
+Cited by:
+§4.1
+.
+Espeholt
+et al.
+(2018)
+L. Espeholt, H. Soyer, R. Munos, K. Simonyan, V. Mnih, T. Ward, Y. Doron, V. Firoiu, T. Harley, I. Dunning, S. Legg, and K. Kavukcuoglu
+IMPALA: scalable distributed deep-RL with importance weighted actor-learner architectures
+.
+In
+Proceedings of the 35th International Conference on Machine Learning
+,
+J. Dy and A. Krause (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+80
+,
+pp. 1407–1416
+.
+External Links:
+Link
+Cited by:
+§2
+.
+Fernando
+et al.
+(2017)
+C. Fernando, D. Banarse, C. Blundell, Y. Zwols, D. Ha, A. A. Rusu, A. Pritzel, and D. Wierstra
+PathNet: evolution channels gradient descent in super neural networks
+.
+External Links:
+1701.08734
+,
+Link
+Cited by:
+§1.2
+.
+French (1999)
+R. M. French
+Catastrophic forgetting in connectionist networks
+.
+Trends in Cognitive Sciences
+3
+(
+4
+),
+pp. 128–135
+.
+External Links:
+ISSN 1364-6613
+,
+Document
+,
+Link
+Cited by:
+§1.1
+,
+§1
+.
+Ha and Schmidhuber (2018)
+D. Ha and J. Schmidhuber
+Recurrent world models facilitate policy evolution
+.
+In
+Advances in Neural Information Processing Systems
+,
+S. Bengio, H. Wallach, H. Larochelle, K. Grauman, N. Cesa-Bianchi, and R. Garnett (Eds.)
+,
+Vol.
+31
+,
+pp.
+.
+External Links:
+Link
+Cited by:
+§1.3
+.
+Hafner
+et al.
+(2020)
+D. Hafner, T. Lillicrap, J. Ba, and M. Norouzi
+Dream to control: learning behaviors by latent imagination
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1.3
+.
+Hafner
+et al.
+(2019)
+D. Hafner, T. Lillicrap, I. Fischer, R. Villegas, D. Ha, H. Lee, and J. Davidson
+Learning latent dynamics for planning from pixels
+.
+In
+Proceedings of the 36th International Conference on Machine Learning
+,
+K. Chaudhuri and R. Salakhutdinov (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+97
+,
+pp. 2555–2565
+.
+External Links:
+Link
+Cited by:
+§1.3
+,
+§3.1
+.
+Hafner
+et al.
+(2021)
+D. Hafner, T. P. Lillicrap, M. Norouzi, and J. Ba
+Mastering atari with discrete world models
+.
+In
+International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§1.3
+,
+§3.1
+.
+Hafner
+et al.
+(2025)
+D. Hafner, J. Pasukonis, J. Ba, and T. Lillicrap
+Mastering diverse control tasks through world models
+.
+Nature
+640
+(
+8059
+),
+pp. 647–653
+.
+External Links:
+Document
+Cited by:
+§1.3
+,
+§1.4
+.
+Hansen
+et al.
+(2022)
+N. A. Hansen, H. Su, and X. Wang
+Temporal difference learning for model predictive control
+.
+In
+Proceedings of the 39th International Conference on Machine Learning
+,
+K. Chaudhuri, S. Jegelka, L. Song, C. Szepesvari, G. Niu, and S. Sabato (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+162
+,
+pp. 8387–8406
+.
+External Links:
+Link
+Cited by:
+§6
+.
+Hansen
+et al.
+(2024)
+N. Hansen, H. Su, and X. Wang
+TD-MPC2: scalable, robust world models for continuous control
+.
+In
+The Twelfth International Conference on Learning Representations
+,
+External Links:
+Link
+Cited by:
+§6
+.
+Hassabis
+et al.
+(2017)
+D. Hassabis, D. Kumaran, C. Summerfield, and M. Botvinick
+Neuroscience-inspired artificial intelligence
+.
+Neuron
+95
+(
+2
+),
+pp. 245–258
+.
+External Links:
+ISSN 0896-6273
+,
+Document
+,
+Link
+Cited by:
+§1.3
+.
+Hendrycks and Gimpel (2016)
+D. Hendrycks and K. Gimpel
+Bridging nonlinearities and stochastic regularizers with gaussian error linear units
+.
+Vol.
+abs/1606.08415
+.
+External Links:
+Link
+,
+1606.08415
+Cited by:
+§B.2
+.
+Huang
+et al.
+(2021)
+Y. Huang, K. Xie, H. Bharadhwaj, and F. Shkurti
+Continual model-based reinforcement learning with hypernetworks
+.
+In
+2021 IEEE International Conference on Robotics and Automation (ICRA)
+,
+pp. 799–805
+.
+External Links:
+Document
+Cited by:
+§1.3
+.
+Isele and Cosgun (2018)
+D. Isele and A. Cosgun
+Selective experience replay for lifelong learning
+.
+Proceedings of the AAAI Conference on Artificial Intelligence
+32
+(
+1
+).
+External Links:
+Link
+,
+Document
+Cited by:
+§1.2
+,
+§1.4
+,
+§3.3
+.
+Kaelbling
+et al.
+(1998)
+L. P. Kaelbling, M. L. Littman, and A. R. Cassandra
+Planning and acting in partially observable stochastic domains
+.
+Artificial Intelligence
+101
+(
+1
+),
+pp. 99–134
+.
+External Links:
+ISSN 0004-3702
+,
+Document
+,
+Link
+Cited by:
+§2
+.
+Kessler
+et al.
+(2022)
+S. Kessler, P. Milos, J. Parker-Holder, and S. J. Roberts
+The surprising effectiveness of latent world models for continual reinforcement learning
+.
+In
+Deep Reinforcement Learning Workshop NeurIPS 2022
+,
+External Links:
+Link
+Cited by:
+§1.3
+.
+Kessler
+et al.
+(2023)
+S. Kessler, M. Ostaszewski, M. Bortkiewicz, M. Żarski, M. Wolczyk, J. Parker-Holder, S. J. Roberts, and P. Milos
+The effectiveness of world models for continual reinforcement learning
+.
+In
+Proceedings of The 2nd Conference on Lifelong Learning Agents
+,
+S. Chandar, R. Pascanu, H. Sedghi, and D. Precup (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+232
+,
+pp. 184–204
+.
+External Links:
+Link
+Cited by:
+§1.3
+,
+§4.4
+.
+Khetarpal
+et al.
+(2022)
+K. Khetarpal, M. Riemer, I. Rish, and D. Precup
+Towards continual reinforcement learning: a review and perspectives
+.
+Journal of Artificial Intelligence Research
+75
+,
+pp. 1401–1476
+.
+External Links:
+ISSN 1076-9757
+,
+Document
+Cited by:
+§1.1
+,
+§1.3
+,
+§1.4
+.
+Kirkpatrick
+et al.
+(2017)
+J. Kirkpatrick, R. Pascanu, N. Rabinowitz, J. Veness, G. Desjardins, A. A. Rusu, K. Milan, J. Quan, T. Ramalho, A. Grabska-Barwinska, D. Hassabis, C. Clopath, D. Kumaran, and R. Hadsell
+Overcoming catastrophic forgetting in neural networks
+.
+Proceedings of the National Academy of Sciences
+114
+(
+13
+),
+pp. 3521–3526
+.
+External Links:
+Document
+,
+Link
+,
+https://www.pnas.org/doi/pdf/10.1073/pnas.1611835114
+Cited by:
+§1.1
+,
+§1.2
+,
+§6
+.
+Lange
+et al.
+(2023)
+M. D. Lange, G. van de Ven, and T. Tuytelaars
+Continual evaluation for lifelong learning: identifying the stability gap
+.
+External Links:
+2205.13452
+,
+Link
+Cited by:
+§4.4.4
+,
+§4.4
+.
+LeCun
+et al.
+(1989)
+Y. LeCun, B. Boser, J. S. Denker, D. Henderson, R. E. Howard, W. Hubbard, and L. D. Jackel
+Backpropagation applied to handwritten zip code recognition
+.
+Neural Computation
+1
+(
+4
+),
+pp. 541–551
+.
+External Links:
+Document
+Cited by:
+§B.2
+.
+Levine
+et al.
+(2016)
+S. Levine, C. Finn, T. Darrell, and P. Abbeel
+End-to-end training of deep visuomotor policies
+.
+Journal of Machine Learning Research
+17
+(
+39
+),
+pp. 1–40
+.
+External Links:
+Link
+Cited by:
+§1.1
+.
+Lopez-Paz and Ranzato (2017)
+D. Lopez-Paz and M. Ranzato
+Gradient episodic memory for continual learning
+.
+In
+Advances in Neural Information Processing Systems
+,
+I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (Eds.)
+,
+Vol.
+30
+,
+pp.
+.
+External Links:
+Link
+Cited by:
+§1.1
+.
+Machado
+et al.
+(2018)
+M. C. Machado, M. G. Bellemare, E. Talvitie, J. Veness, M. Hausknecht, and M. Bowling
+Revisiting the Arcade Learning Environment: Evaluation Protocols and Open Problems for General Agents
+.
+Journal of Artificial Intelligence Research
+61
+,
+pp. 523–562
+.
+External Links:
+ISSN 1076-9757
+,
+Document
+Cited by:
+§4.1
+.
+Mathis (2023)
+M. W. Mathis
+The neocortical column as a universal template for perception and world-model learning
+.
+Nature Reviews Neuroscience
+24
+(
+1
+),
+pp. 3–3
+.
+External Links:
+Document
+Cited by:
+§1.3
+.
+McCloskey and Cohen (1989)
+M. McCloskey and N. J. Cohen
+Catastrophic interference in connectionist networks: the sequential learning problem
+.
+In
+Psychology of learning and motivation
+,
+G. H. Bower (Ed.)
+,
+Psychology of Learning and Motivation
+, Vol.
+24
+,
+pp. 109–165
+.
+External Links:
+ISSN 0079-7421
+,
+Document
+,
+Link
+Cited by:
+§1
+.
+Mermillod
+et al.
+(2013)
+M. Mermillod, A. Bugaiska, and P. BONIN
+The stability-plasticity dilemma: investigating the continuum from catastrophic forgetting to age-limited learning effects
+.
+Frontiers in Psychology
+Volume 4 - 2013
+.
+External Links:
+Link
+,
+Document
+,
+ISSN 1664-1078
+Cited by:
+§1.1
+.
+Mnih
+et al.
+(2015)
+V. Mnih, K. Kavukcuoglu, D. Silver, A. A. Rusu, J. Veness, M. G. Bellemare, A. Graves, M. Riedmiller, A. K. Fidjeland, G. Ostrovski, S. Petersen, C. Beattie, A. Sadik, I. Antonoglou, H. King, D. Kumaran, D. Wierstra, S. Legg, and D. Hassabis
+Human-level control through deep reinforcement learning
+.
+Nature
+518
+(
+7540
+),
+pp. 529–533
+.
+Cited by:
+§1.1
+.
+Nagabandi
+et al.
+(2019)
+A. Nagabandi, C. Finn, and S. Levine
+Deep online learning via meta-learning: continual adaptation for model-based RL
+.
+In
+7th International Conference on Learning Representations, ICLR 2019,
+New Orleans, LA, USA, May 6-9, 2019
+,
+External Links:
+Link
+Cited by:
+§1.3
+.
+OpenAI
+et al.
+(2019)
+OpenAI, :, C. Berner, G. Brockman, B. Chan, V. Cheung, P. Dębiak, C. Dennison, D. Farhi, Q. Fischer, S. Hashme, C. Hesse, R. Józefowicz, S. Gray, C. Olsson, J. Pachocki, M. Petrov, H. P. d. O. Pinto, J. Raiman, T. Salimans, J. Schlatter, J. Schneider, S. Sidor, I. Sutskever, J. Tang, F. Wolski, and S. Zhang
+Dota 2 with large scale deep reinforcement learning
+.
+External Links:
+1912.06680
+,
+Link
+Cited by:
+§1.2
+.
+Parisi
+et al.
+(2019)
+G. I. Parisi, R. Kemker, J. L. Part, C. Kanan, and S. Wermter
+Continual lifelong learning with neural networks: a review
+.
+Neural Networks
+113
+,
+pp. 54–71
+.
+External Links:
+Document
+Cited by:
+§1.1
+.
+Puterman (1990)
+M. L. Puterman
+Chapter 8 markov decision processes
+.
+In
+Stochastic Models
+,
+Handbooks in Operations Research and Management Science
+, Vol.
+2
+,
+pp. 331–434
+.
+External Links:
+ISSN 0927-0507
+,
+Document
+,
+Link
+Cited by:
+§2
+.
+Rahimi-Kalahroudi
+et al.
+(2023)
+A. Rahimi-Kalahroudi, J. Rajendran, I. Momennejad, H. van Seijen, and S. Chandar
+Replay buffer with local forgetting for adapting to local environment changes in deep model-based reinforcement learning
+.
+In
+Proceedings of The 2nd Conference on Lifelong Learning Agents
+,
+S. Chandar, R. Pascanu, H. Sedghi, and D. Precup (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+232
+,
+pp. 21–42
+.
+External Links:
+Link
+Cited by:
+§1.3
+,
+§6
+.
+Riemer
+et al.
+(2019)
+M. Riemer, I. Cases, R. Ajemian, M. Liu, I. Rish, Y. Tu, and G. Tesauro
+Learning to learn without forgetting by maximizing transfer and minimizing interference
+.
+In
+7th International Conference on Learning Representations, ICLR 2019,
+New Orleans, LA, USA, May 6-9, 2019
+,
+External Links:
+Link
+Cited by:
+§1.2
+,
+§1.4
+.
+Rolnick
+et al.
+(2019)
+D. Rolnick, A. Ahuja, J. Schwarz, T. Lillicrap, and G. Wayne
+Experience replay for continual learning
+.
+In
+Advances in Neural Information Processing Systems
+,
+H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alché-Buc, E. Fox, and R. Garnett (Eds.)
+,
+Vol.
+32
+,
+pp.
+.
+External Links:
+Link
+Cited by:
+§1.2
+,
+§1.2
+,
+§6
+,
+§6
+.
+Schwarz
+et al.
+(2018)
+J. Schwarz, W. Czarnecki, J. Luketina, A. Grabska-Barwinska, Y. W. Teh, R. Pascanu, and R. Hadsell
+Progress & compress: a scalable framework for continual learning
+.
+In
+Proceedings of the 35th International Conference on Machine Learning
+,
+J. Dy and A. Krause (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+80
+,
+pp. 4528–4537
+.
+External Links:
+Link
+Cited by:
+§1.2
+,
+§6
+.
+Sekar
+et al.
+(2020)
+R. Sekar, O. Rybkin, K. Daniilidis, P. Abbeel, D. Hafner, and D. Pathak
+Planning to explore via self-supervised world models
+.
+In
+Proceedings of the 37th International Conference on Machine Learning
+,
+H. D. III and A. Singh (Eds.)
+,
+Proceedings of Machine Learning Research
+, Vol.
+119
+,
+pp. 8583–8592
+.
+External Links:
+Link
+Cited by:
+§3.4
+.
+Silver
+et al.
+(2017)
+D. Silver, J. Schrittwieser, K. Simonyan, I. Antonoglou, A. Huang, A. Guez, T. Hubert, L. Baker, M. Lai, A. Bolton,
+et al.
+Mastering the game of go without human knowledge
+.
+Nature
+550
+(
+7676
+),
+pp. 354–359
+.
+Cited by:
+§1.1
+.
+Sutton and Barto (1998)
+R. S. Sutton and A. G. Barto
+Reinforcement learning: an introduction
+.
+Vol.
+1
+,
+MIT Press Cambridge
+.
+Cited by:
+§1.1
+.
+Todorov
+et al.
+(2012)
+E. Todorov, T. Erez, and Y. Tassa
+Mujoco: a physics engine for model-based control
+.
+In
+2012 IEEE/RSJ international conference on intelligent robots and systems
+,
+pp. 5026–5033
+.
+External Links:
+Document
+Cited by:
+§6
+.
+Vinyals
+et al.
+(2019)
+O. Vinyals, I. Babuschkin, W. M. Czarnecki, M. Mathieu, A. Dudzik, J. Chung, D. H. Choi, R. Powell, T. Ewalds, P. Georgiev, J. Oh, D. Horgan, M. Kroiss, I. Danihelka, A. Huang, L. Sifre, T. Cai, J. P. Agapiou, M. Jaderberg, A. S. Vezhnevets, R. Leblond, T. Pohlen, V. Dalibard, D. Budden, Y. Sulsky, J. Molloy, T. L. Paine, C. Gulcehre, Z. Wang, T. Pfaff, Y. Wu, R. Ring, D. Yogatama, D. Wünsch, K. McKinney, O. Smith, T. Schaul, T. Lillicrap, K. Kavukcuoglu, D. Hassabis, C. Apps, and D. Silver
+Grandmaster level in starcraft ii using multi-agent reinforcement learning
+.
+Nature
+575
+(
+7782
+),
+pp. 350–354
+.
+External Links:
+Document
+Cited by:
+§1.1
+.
+Williams (1992)
+R. J. Williams
+Simple statistical gradient-following algorithms for connectionist reinforcement learning
+.
+Machine Learning
+8
+(
+3
+),
+pp. 229–256
+.
+External Links:
+Document
+Cited by:
+§3.2
+.
+Xu
+et al.
+(2021)
+Y. Xu, D. Hu, L. Liang, S. M. McAleer, P. Abbeel, and R. Fox
+Target entropy annealing for discrete soft actor-critic
+.
+In
+Deep RL Workshop NeurIPS 2021
+,
+External Links:
+Link
+Cited by:
+§4.2
+.
+Yang
+et al.
+(2024)
+L. Yang, L. Kuhlmann, and G. Kowadlo
+Augmenting replay in world models for continual reinforcement learning
+.
+External Links:
+2401.16650
+,
+Link
+Cited by:
+§1.4
+.
+Appendix A
+Tabular data & additional results
+Variant
+Procgen flag
+Description
+Coinrun
+—
+regularly rendered game
++NB
+use_backgrounds = False
+removes decorative backgrounds
++RT
+restrict_themes = True
+restricts the set of level themes
++GA
+use_generated_assets = True
+enables procedurally generated assets
++MA
+use_monochrome_assets = True
+enables monochrome assets
++CA
+center_agent = False
+camera does not remain centered on the agent
+Table A.1:
+CoinRun task variations (Procgen configuration flags).
+Item
+Specification
+Training budget
+8.84 million environment frames over 540 epochs
+Frame definition
+CoinRun: 1 env. step per frame; Atari: 4 env. steps per frame
+Default / Reversed schedule
+90 epochs per task, then shift to next task (single pass over 540 epochs)
+Two-cycle schedule
+Task shift every 45 epochs; cycle 1 ends at 270 epochs; cycle 2 uses remaining 270 epochs
+Evaluation frequency
+Every 10 epochs (55 checkpoints over 540 epochs, including epoch 0)
+Evaluation scope
+All tasks in the current sequence at each checkpoint
+Policy for evaluation
+Stochastic policy (random policy at epoch 0, trained policy thereafter)
+Rollouts per task
+CoinRun: 256; Atari: 16
+Return computation
+Identify episode boundaries from reset and continuation flags; sum rewards within each episode
+Reported statistics
+Mean and standard deviation of episode returns per task
+Table A.2:
+Training schedule and evaluation protocol.
+Default task order
+Method
+Forgetting
+↓
+\downarrow
+FT
+↑
+\uparrow
+ACC
+↑
+\uparrow
+min-ACC
+↑
+\uparrow
+WC-ACC
+↑
+\uparrow
+ARROW
+0.197 [-0.017 – 0.430]
+-0.157 [-0.589 – 0.179]
+0.659 [0.652 – 0.788]
+0.712 [0.570 – 0.723]
+0.615 [0.493 – 0.618]
+DV3
+1.217 [1.057 – 1.745]
+0.046 [-0.323 – 0.206]
+-0.017 [-0.048 – 0.131]
+-0.324 [-0.361 – -0.259]
+-0.169 [-0.182 – -0.157]
+TES-SAC
+0.194 [0.033 – 0.365]
+-0.901 [-0.990 – -0.594]
+-0.008 [-0.034 – 0.033]
+-0.183 [-0.191 – -0.156]
+-0.143 [-0.152 – -0.119]
+Reversed task order
+Method
+Forgetting
+↓
+\downarrow
+FT
+↑
+\uparrow
+ACC
+↑
+\uparrow
+min-ACC
+↑
+\uparrow
+WC-ACC
+↑
+\uparrow
+ARROW
+0.039 [-0.050 – 0.423]
+-0.077 [-0.449 – 0.161]
+0.962 [0.691 – 1.309]
+0.647 [0.619 – 0.674]
+0.618 [0.583 – 0.643]
+DV3
+1.348 [1.083 – 1.479]
+0.057 [-0.150 – 0.256]
+-0.020 [-0.031 – 0.114]
+-0.291 [-0.311 – -0.264]
+-0.076 [-0.130 – -0.069]
+TES-SAC
+0.039 [0.007 – 0.558]
+-0.954 [-1.063 – -0.461]
+-0.014 [-0.052 – 0.012]
+-0.223 [-0.232 – -0.154]
+-0.148 [-0.158 – -0.123]
+Two-cycle training
+Method
+C1-F
+↓
+\downarrow
+C2-F
+↓
+\downarrow
+Max-F
+↓
+\downarrow
+ARROW
+-0.036 [-0.260 – 0.101]
+0.030 [-0.047 – 0.202]
+0.012 [-0.139 – 0.155]
+DV3
+0.722 [0.415 – 1.256]
+0.378 [0.218 – 0.979]
+0.735 [0.403 – 1.387]
+TES-SAC
+0.194 [0.113 – 0.305]
+0.112 [0.017 – 0.232]
+0.089 [0.004 – 0.263]
+C1-FT
+↑
+\uparrow
+C2-FT
+↑
+\uparrow
+Recovery
+↑
+\uparrow
+ARROW
+-0.554 [-0.854 – -0.228]
+0.309 [-0.490 – 0.793]
+1.418 [1.031 – 1.989]
+DV3
+-0.514 [-0.773 – -0.026]
+-0.750 [-0.918 – -0.028]
+0.610 [0.298 – 1.161]
+TES-SAC
+-0.898 [-1.017 – -0.660]
+-0.882 [-1.045 – -0.699]
+0.767 [0.142 – 1.234]
+ACC
+↑
+\uparrow
+min-ACC
+↑
+\uparrow
+WC-ACC
+↑
+\uparrow
+ARROW
+0.796 [0.777 – 0.845]
+0.442 [0.389 – 0.568]
+0.388 [0.378 – 0.521]
+DV3
+0.009 [0.001 – 0.100]
+-0.393 [-0.499 – -0.304]
+-0.299 [-0.391 – -0.218]
+TES-SAC
+0.044 [0.012 – 0.097]
+-0.203 [-0.288 – -0.201]
+-0.168 [-0.235 – -0.165]
+Table A.3:
+Atari
+metrics using median [IQR] across seeds for (A,B and C). Best performance is written in bold.
+Default task order
+Method
+Forgetting
+↓
+\downarrow
+FT
+↑
+\uparrow
+ACC
+↑
+\uparrow
+min-ACC
+↑
+\uparrow
+WC-ACC
+↑
+\uparrow
+ARROW
+0.407 [0.194 – 0.569]
+0.507 [0.154 – 0.815]
+0.792 [0.656 – 1.003]
+0.612 [0.599 – 0.762]
+0.635 [0.617 – 0.731]
+DV3
+0.560 [0.362 – 0.743]
+0.787 [0.351 – 0.970]
+0.979 [0.872 – 0.992]
+0.125 [-0.656 – 0.299]
+0.328 [-0.353 – 0.435]
+TES-SAC
+-0.012 [-0.122 – 0.147]
+-0.069 [-0.114 – 0.131]
+0.684 [0.677 – 0.871]
+0.510 [0.503 – 0.515]
+0.596 [0.576 – 0.610]
+Reversed task order
+Method
+Forgetting
+↓
+\downarrow
+FT
+↑
+\uparrow
+ACC
+↑
+\uparrow
+min-ACC
+↑
+\uparrow
+WC-ACC
+↑
+\uparrow
+ARROW
+0.000 [-0.165 – 0.043]
+0.715 [0.227 – 1.032]
+1.287 [1.285 – 1.333]
+0.940 [0.875 – 1.055]
+1.026 [0.925 – 1.115]
+DV3
+0.355 [0.211 – 0.636]
+0.786 [0.236 – 1.186]
+1.027 [0.795 – 1.244]
+0.712 [0.590 – 0.830]
+0.797 [0.719 – 0.928]
+TES-SAC
+-0.029 [-0.058 – 0.054]
+0.006 [-0.143 – 0.155]
+0.766 [0.752 – 0.802]
+0.548 [0.526 – 0.552]
+0.584 [0.580 – 0.608]
+Two-cycle training
+Method
+C1-F
+↓
+\downarrow
+C2-F
+↓
+\downarrow
+Max-F
+↓
+\downarrow
+ARROW
+-0.111 [-0.196 – 0.010]
+0.099 [-0.086 – 0.155]
+-0.089 [-0.254 – 0.187]
+DV3
+0.521 [0.127 – 1.127]
+0.528 [0.306 – 0.740]
+0.233 [-0.155 – 0.507]
+TES-SAC
+0.022 [-0.020 – 0.108]
+-0.039 [-0.127 – 0.039]
+-0.026 [-0.200 – 0.037]
+C1-FT
+↑
+\uparrow
+C2-FT
+↑
+\uparrow
+Recovery
+↑
+\uparrow
+ARROW
+0.401 [0.048 – 0.531]
+0.717 [0.585 – 0.931]
+1.184 [1.069 – 1.298]
+DV3
+0.401 [-0.021 – 0.834]
+0.638 [0.453 – 1.005]
+1.159 [1.070 – 1.288]
+TES-SAC
+-0.027 [-0.148 – 0.217]
+0.150 [-0.022 – 0.381]
+1.090 [0.925 – 1.278]
+ACC
+↑
+\uparrow
+min-ACC
+↑
+\uparrow
+WC-ACC
+↑
+\uparrow
+ARROW
+1.331 [1.221 – 1.344]
+0.933 [0.919 – 0.977]
+0.912 [0.863 – 0.922]
+DV3
+0.633 [0.561 – 0.669]
+-0.117 [-0.177 – 0.144]
+0.071 [-0.020 – 0.264]
+TES-SAC
+0.883 [0.790 – 0.945]
+0.482 [0.337 – 0.575]
+0.600 [0.423 – 0.686]
+Table A.4:
+CoinRun
+Metrics using median [IQR] across seeds for (A,B and C). Best performance is written in bold.
+85% Threshold
+Frame at Middle
+Method
+Max Perf.
+Env. Frames (median [q25–q75])
+Runs
+≥
+\geq
+85%
+Default Task Order
+2.02
+4,423,680
+ARROW
+0.88
+Never reached threshold
+0/5
+DV3
+2.38
+5,652,480 [5,447,680 – 5,775,360]
+4/5
+TES-SAC
+0.16
+Never reached threshold
+0/5
+Reversed Task Order
+0.82
+4,423,680
+ARROW
+0.96
+5,079,040 [3,563,520 – 7,045,120]
+4/5
+DV3
+0.31
+Never reached threshold
+0/5
+TES-SAC
+0.15
+Never reached threshold
+0/5
+Two-Cycle Training
+1.17
+4,423,680
+ARROW
+1.04
+3,440,640 [3,194,880 – 3,522,560]
+3/5
+DV3
+1.38
+3,112,960 [2,867,200 – 3,112,960]
+3/5
+TES-SAC
+0.18
+Never reached threshold
+0/5
+Table A.5:
+Atari (Normalized) continual learning sample-efficiency. Best performance is written in bold.
+85% Threshold
+Frame at Middle
+Method
+Max Perf.
+Env. Frames (median [q25–q75])
+Runs
+≥
+\geq
+85%
+Default Task Order
+1.02
+4,423,680
+ARROW
+1.19
+1,638,400 [655,360 – 2,293,760]
+5/5
+DV3
+1.19
+491,520 [327,680 – 819,200]
+5/5
+TES-SAC
+0.86
+Never reached threshold
+0/5
+Reversed Task Order
+1.14
+4,423,680
+ARROW
+1.34
+3,768,320 [3,604,480 – 4,096,000]
+5/5
+DV3
+1.28
+3,604,480 [3,276,800 – 4,751,360]
+5/5
+TES-SAC
+0.85
+Never reached threshold
+0/5
+Two-Cycle Training
+1.13
+4,423,680
+ARROW
+1.33
+3,768,320 [2,949,120 – 3,768,320]
+5/5
+DV3
+1.23
+1,802,240 [1,474,560 – 1,802,240]
+5/5
+TES-SAC
+0.90
+Never reached threshold
+0/5
+Table A.6:
+CoinRun (Normalized) continual learning sample-efficiency. Best performance is written in bold.
+A.1
+Single task sample efficiency
+Tab. A.7
+presents sample efficiency for individual Atari games learned in isolation. The results reveal heterogeneous task difficulty. In all comparisons where both model-based baselines reach the task threshold ARROW proves to be more sample efficient.
+These single-task results establish important context: both ARROW and DreamerV3 struggle with certain games even in isolation, indicating that continual learning performance differences reflect both catastrophic forgetting and inherent task difficulty. The complementary failure modes (ARROW on Ms. Pac-Man/Seaquest, DreamerV3 on Frostbite) suggest different biases in how each method interacts with the game characteristics. The TES-SAC baseline fails to reach the 85 % threshold in every single Atari task.
+Tab. A.8
+presents single-task results for all six CoinRun variants. Both ARROW and DreamerV3 successfully reach the 85 % threshold on all variants.
+However, certain variants seem to be more difficult than others with steps ranging from about 500k (basic CoinRun) to 1.1M (+NB+RT+GA). ARROW outperforms DreamerV3 in all but two variants (+NB+RT+GA and +NB+RT+GA+MA+CA). Interestingly, for the particular variants and the infrequent cases where the TES-SAC algorithm successfully reaches the 85 % threshold it can be considered competitive with regard to sample efficiency.
+Task
+Task-Specific Threshold (85%)
+Method
+Max Perf.
+Env. Frames (median [q25–q75])
+Runs
+≥
+\geq
+85%
+Ms. Pac-Man
+131.43
+ARROW
+96.26
+Never reached 85% of peak
+0/5
+DV3
+154.62
+1,310,720 [1,310,720 – 1,310,720]
+1/5
+TES-SAC
+46.00
+Never reached 85% of peak
+0/5
+Boxing
+84.05
+ARROW
+98.88
+819,200 [655,360 – 983,040]
+5/5
+DV3
+98.71
+983,040 [819,200 – 983,040]
+5/5
+TES-SAC
+3.12
+Never reached 85% of peak
+0/5
+Crazy Climber
+109.27
+ARROW
+128.56
+983,040 [983,040 – 983,040]
+1/5
+DV3
+118.88
+1,228,800 [1,105,920 – 1,351,680]
+4/5
+TES-SAC
+12.31
+Never reached 85% of peak
+0/5
+Frostbite
+68.96
+ARROW
+81.12
+1,474,560 [1,474,560 – 1,474,560]
+1/5
+DV3
+55.42
+Never reached 85% of peak
+0/5
+TES-SAC
+42.12
+Never reached 85% of peak
+0/5
+Seaquest
+533.18
+ARROW
+401.05
+Never reached 85% of peak
+0/5
+DV3
+627.27
+1,310,720 [1,310,720 – 1,310,720]
+1/5
+TES-SAC
+258.75
+Never reached 85% of peak
+0/5
+Enduro
+339.06
+ARROW
+398.89
+1,146,880 [1,146,880 – 1,474,560]
+5/5
+DV3
+374.10
+1,228,800 [1,146,880 – 1,351,680]
+4/5
+TES-SAC
+15.50
+Never reached 85% of peak
+0/5
+Table A.7:
+Atari single-task sample-efficiency (raw rewards). Best performance is written in bold.
+Task
+Task-Specific Threshold (85%)
+Method
+Max Perf.
+Env. Frames (median [q25–q75])
+Runs
+≥
+\geq
+85%
+CoinRun
+6.08
+ARROW
+6.99
+491,520 [491,520 – 819,200]
+5/5
+DV3
+7.15
+491,520 [491,520 – 819,200]
+5/5
+TES-SAC
+6.56
+655,360 [655,360 – 655,360]
+2/5
++NB
+6.84
+ARROW
+7.46
+983,040 [901,120 – 983,040]
+4/5
+DV3
+8.05
+1,146,880 [983,040 – 1,310,720]
+5/5
+TES-SAC
+6.45
+Never reached threshold
+0/5
++NB+RT
+6.24
+ARROW
+7.34
+819,200 [655,360 – 983,040]
+5/5
+DV3
+7.30
+983,040 [983,040 – 1,146,880]
+5/5
+TES-SAC
+6.52
+163,840 [163,840 – 163,840]
+1/5
++NB+RT+GA
+7.04
+ARROW
+8.28
+1,310,720 [1,146,880 – 1,392,640]
+3/5
+DV3
+8.05
+1,146,880 [983,040 – 1,146,880]
+5/5
+TES-SAC
+6.64
+Never reached threshold
+0/5
++NB+RT+GA+MA
+6.97
+ARROW
+8.20
+491,520 [491,520 – 983,040]
+5/5
+DV3
+7.89
+983,040 [819,200 – 983,040]
+5/5
+TES-SAC
+6.02
+Never reached threshold
+0/5
++NB+RT+GA+MA+CA
+5.45
+ARROW
+6.25
+491,520 [491,520 – 655,360]
+5/5
+DV3
+6.41
+491,520 [327,680 – 655,360]
+5/5
+TES-SAC
+6.33
+573,440 [532,480 – 614,400]
+2/5
+Table A.8:
+CoinRun single-task sample-efficiency (raw rewards). Best performance is written in bold.
+A.2
+Validation of DreamerV3 implementation
+To validate that our implementation faithfully represents DreamerV3, we compared it with the author’s open-source implementation
+https://github.com/danijar/dreamerv3
+.
+Both implementations were evaluated on four tasks without shared structure.
+Fig. A.1
+shows a side-by-side comparison, with our implementation on the left and the author’s implementation on the right.
+Figure A.1:
+Performance of DreamerV3, with bold line segments denoting the periods in which certain tasks are being trained. Scores are normalized using min-max normalization. The line is the median and the shaded area is between the 0.25 and 0.75 quantiles, of 5 seeds.
+A.3
+Single-task runs
+The parameters used for single-tasks for CoinRun (shared structure) are shown in
+Tab. A.9
+and for Atari (without shared structure) in
+Tab. A.10
+.
+Env. frames
+Env. steps
+Replay buffer capacity
+ARROW
+1.47M
+1.47M
+2
+×
+512
+2\times 512
+sequences
+×
+T
+=
+512
+\times\,T{=}512
+(
+2
+19
+2^{19}
+obs.)
+DreamerV3
+1.47M
+1.47M
+1024
+1024
+sequences
+×
+T
+=
+512
+\times\,T{=}512
+(
+2
+19
+2^{19}
+obs.)
+TES-SAC
+1.47M
+1.47M
+1024
+1024
+sequences
+×
+T
+=
+512
+\times\,T{=}512
+(
+2
+19
+2^{19}
+obs.)
+Table A.9:
+CoinRun single-task training parameters.
+Env. frames
+Env. steps
+Replay buffer capacity
+ARROW
+1.47M
+5.89M
+2
+×
+512
+2\times 512
+sequences
+×
+T
+=
+512
+\times\,T{=}512
+(
+2
+19
+2^{19}
+obs.)
+DreamerV3
+1.47M
+5.89M
+1024
+1024
+sequences
+×
+T
+=
+512
+\times\,T{=}512
+(
+2
+19
+2^{19}
+obs.)
+TES-SAC
+1.47M
+5.89M
+1024
+1024
+sequences
+×
+T
+=
+512
+\times\,T{=}512
+(
+2
+19
+2^{19}
+obs.)
+Table A.10:
+Atari single-task training parameters.
+The single-task results and the reward scales for Atari (without shared structure) are shown in
+Tab. A.11
+.
+The single-task results for CoinRun (shared structure) are shown in
+Tab. A.12
+.
+Task
+Reward scale
+Random
+ARROW
+Ms. Pac-Man
+0.05
+12.40
+1540.30
+Boxing
+1
+0.51
+90.27
+Crazy Climber
+0.001
+7.49
+109245.16
+Frostbite
+0.2
+14.48
+297.83
+Seaquest
+0.5
+38.47
+439.62
+Enduro
+0.5
+0.01
+707.47
+Table A.11:
+Atari single-task experimental results, median across 5 random seeds. Scores are unnormalized at the end of training.
+Task
+Random
+ARROW
+CoinRun
+2.78
+6.09
++NB
+2.45
+7.14
++NB+RT
+2.70
+6.89
++NB+RT+GA
+2.62
+6.85
++NB+RT+GA+MA
+2.50
+7.89
++NB+RT+GA+MA+CA
+2.69
+5.78
+Table A.12:
+Procgen CoinRun single-task experimental results, median across 5 random seeds. Scores are unnormalized at the end of training.
+Appendix B
+World Models
+B.1
+Training algorithm
+Algorithm 1
+ARROW training algorithm
+Hyperparameters:
+World Model training iterations
+K
+K
+.
+Input:
+World Model
+M
+M
+, augmented replay buffer
+𝒟
+\mathcal{D}
+, sequence of tasks
+𝓣
+1
+:
+T
+=
+(
+τ
+1
+,
+τ
+2
+,
+…
+,
+τ
+T
+)
+\bm{\mathcal{T}}_{1:T}=(\tau_{1},\tau_{2},\dots,\tau_{T})
+.
+for
+τ
+=
+τ
+1
+,
+τ
+2
+,
+…
+,
+τ
+T
+\tau=\tau_{1},\tau_{2},\dots,\tau_{T}
+do
+for
+i
+=
+1
+,
+2
+,
+…
+,
+K
+i=1,2,\dots,K
+do
+Train World Model
+M
+M
+on
+𝒟
+\mathcal{D}
+.
+Train actor
+π
+\pi
+using
+M
+M
+.
+Use
+π
+\pi
+in
+τ
+\tau
+and append episodes to
+𝒟
+\mathcal{D}
+.
+end
+for
+end
+for
+B.2
+Network architecture
+The Actor Critic architecture is shown in
+Fig. B.1
+.
+We adhered to most of the parameters and architectural choices of DreamerV3. Changes were primarily made to benefit wall time, as running continual learning experiments is computationally expensive. See
+Tab. C.1
+.
+Figure B.1:
+Actor critic definition.
+CNN encoder and decoder
+Following DreamerV3, the convolutional feature extractor’s input is a
+64
+×
+64
+64\times 64
+RGB image as a resized environment frame. The encoder convolutional neural network (CNN)
+(
+LeCun et al., 1989
+)
+consists of stride 2 convolutions of doubling depth with the same padding until the image is at a resolution of
+4
+×
+4
+4\times 4
+, where it is flattened. We elected to use the “small” configuration of the hyperparameters controlling network architecture from DreamerV3 to appropriately manage experiment wall time. Hence, 4 convolutional layers were used with depths of 32, 64, 128, and 256 respectively. As with DreamerV3, we used channel-wise layer normalization
+(
+Ba et al., 2016
+)
+and SiLU
+(
+Hendrycks and Gimpel, 2016
+)
+activation for the CNN. The CNN decoder performs a linear transformation of the model state to a
+4
+×
+4
+×
+256
+=
+4096
+4\times 4\times 256=4096
+vector before reshaping to a
+4
+×
+4
+4\times 4
+image and inverting the encoder architecture to reconstruct the original environment frame.
+MLP
+All multi-layer perceptrons (MLP) within the RSSM, actor, and critic are 2 layers and 512 hidden units in accordance with the “small” configuration of DreamerV3.
+B.3
+Augmented replay buffer
+Algorithm 2
+Sampling from combined buffers
+𝒟
+1
+\mathcal{D}_{1}
+and
+𝒟
+2
+\mathcal{D}_{2}
+Combined (augmented) buffer
+𝒟
+​
+=
+˙
+​
+{
+𝒟
+1
+,
+𝒟
+2
+}
+\mathcal{D}\dot{=}\{\mathcal{D}_{1},\mathcal{D}_{2}\}
+.
+Uniformly sample
+i
+∈
+{
+1
+,
+2
+}
+i\in\{1,2\}
+.
+return
+Sampled minibatch from
+𝒟
+i
+\mathcal{D}_{i}
+.
+Appendix C
+Experimental Details
+Name
+ARROW
+DreamerV3
+TES-SAC
+Replay capacity (FIFO)
+0.26M
+0.52M
+0.52M
+Replay capacity (long-term)
+0.26M
+0
+0
+Batch size
+16
+16
+128
+Learning rate
+1
+×
+10
+−
+4
+1\times 10^{-4}
+1
+×
+10
+−
+4
+1\times 10^{-4}
+5
+×
+10
+−
+4
+5\times 10^{-4}
+Activation (MLP)
+LayerNorm+SiLU
+LayerNorm+SiLU
+ReLU
+Activation (GRU)
+tanh
+tanh
+–
+GRU units
+512
+512
+–
+MLP features
+512
+512
+512
+MLP layers
+2
+2
+2
+CNN depth
+32
+32
+32
+Table C.1:
+Hyperparameters.
+Parameter
+Atari
+CoinRun
+Data Collection
+Parallel environments
+4
+4
+Sequence length
+4096
+4096
+Environment repeat
+4
+1
+Data sequences per batch
+32
+32
+Max sequences in buffer
+512
+512
+Sequence time steps
+512
+512
+Minibatch Configuration
+Minibatch time size
+32
+32
+Minibatch number size
+16
+16
+Environment-Specific
+Action space size
+18
+15
+Image size
+64
+×
+64
+64\times 64
+64
+×
+64
+64\times 64
+Table C.2:
+General training and experimental parameters.
+Parameter
+Value
+Learning Rates
+Policy learning rate
+5
+×
+10
+−
+4
+5\times 10^{-4}
+Q-network learning rate
+5
+×
+10
+−
+4
+5\times 10^{-4}
+Entropy coefficient (alpha) learning rate
+5
+×
+10
+−
+4
+5\times 10^{-4}
+Core SAC Hyperparameters
+Batch size
+128
+Discount factor (gamma)
+0.99
+Soft target update (tau)
+0.005
+Initial entropy coefficient (alpha)
+0.2
+Target entropy
+0.8
+×
+log
+⁡
+(
+|
+𝒜
+|
+)
+0.8\times\log(|\mathcal{A}|)
+Gradient clipping
+5.0
+Target Entropy Scheduling (TES-SAC)
+TES lambda
+0.999
+Average threshold
+0.01
+Standard deviation threshold
+0.05
+Discount factor k
+0.98
+TES period T
+1000
+Table C.3:
+TES-SAC Hyperparameters
+C.1
+Experimental parameters and execution time
+General training and experimental parameters are provided in
+Tab. C.2
+. TES-SAC hyperparameters provided in
+Tab. C.3
+. The experimental run breakdown and wall-clock times are detailed in
+Tab. C.4
+and
+Tab. C.5
+respectively.
+Benchmark
+Task
+Runs
+Total
+Atari
+Single-task
+6
+6
+tasks
+×
+\times
+5
+5
+seeds
+30
+30
+Continual learning
+3
+3
+settings (A, B, C)
+×
+\times
+5
+5
+seeds
+15
+15
+CoinRun
+Single-task
+6
+6
+tasks
+×
+\times
+5
+5
+seeds
+30
+30
+Continual learning
+3
+3
+settings (A, B, C)
+×
+\times
+5
+5
+seeds
+15
+15
+Per method, per benchmark
+(
+30
++
+15
+)
+(30+15)
+45
+45
+Per benchmark, all methods (ARROW, DV3, TES-SAC)
+45
+45
+runs
+×
+\times
+3
+3
+methods
+135
+135
+Total (Atari + CoinRun, all methods)
+135
+135
+runs
+×
+\times
+2
+2
+benchmarks
+270
+Table C.4:
+Experimental run breakdown across benchmarks and methods.
+All experiments were executed on a single NVIDIA A40 or A100 GPU (depending on availability).
+Method
+Single-task wall time
+Continual learning wall time
+ARROW / DV3
+6 hours
+1–2 days (CoinRun CL:
+∼
+\sim
+30 hours; Atari CL:
+∼
+\sim
+50 hours)
+TES-SAC
+3 hours
+17 hours
+Table C.5:
+Wall-clock time per method and setting.
+Experimental support, please
+view the build logs
+for errors. Generated by
+L
+A
+T
+E
+xml
+.
+Instructions for reporting errors
+We are continuing to improve HTML versions of papers, and your feedback helps enhance accessibility and mobile
+      support. To report errors in the HTML that will help us improve conversion and rendering, choose any of the
+      methods listed below:
+Click the "Report Issue"
+(
+)
+button, located in the page header.
+Tip:
+You can select the relevant text first, to include it in your report.
+Our team has already identified
+the following issues
+. We appreciate your time reviewing and reporting rendering errors we
+      may not have found yet. Your efforts will help us improve the HTML versions for all readers, because disability
+      should not be a barrier to accessing research. Thank you for your continued support in championing open access for
+      all.
+Have a free development cycle? Help support accessibility at arXiv! Our collaborators at LaTeXML maintain a
+list of packages that need conversion
+, and welcome
+developer contributions
+.
+We gratefully acknowledge support from
+        our
+major funders
+,
+member institutions
+,
+,
+        and all contributors.
+About
+·
+Help
+·
+Contact
+·
+Subscribe
+·
+Copyright
+·
+Privacy
+·
+Accessibility
+·
+Operational Status
+(opens in new tab)
+Major funding support from
